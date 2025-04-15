@@ -5,6 +5,7 @@
 
 /* Implementation of xptiInterfaceInfoManager. */
 
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/XPTInterfaceInfoManager.h"
 
 #include "xptiprivate.h"
@@ -18,8 +19,8 @@
 
 using namespace mozilla;
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(XPTInterfaceInfoManager, 
-                              nsIInterfaceInfoManager)
+NS_IMPL_ISUPPORTS1(XPTInterfaceInfoManager, 
+                   nsIInterfaceInfoManager)
 
 static XPTInterfaceInfoManager* gInterfaceInfoManager = nullptr;
 #ifdef DEBUG
@@ -30,7 +31,7 @@ static int gCallCount = 0;
 NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(XPTMallocSizeOf)
 
 size_t
-XPTInterfaceInfoManager::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+XPTInterfaceInfoManager::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf)
 {
     size_t n = aMallocSizeOf(this);
     ReentrantMonitorAutoEnter monitor(mWorkingSet.mTableReentrantMonitor);

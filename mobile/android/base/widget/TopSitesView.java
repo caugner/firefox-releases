@@ -682,17 +682,23 @@ public class TopSitesView extends GridView {
                         List<String> urls = new ArrayList<String>();
                         urls.add(holder.getUrl());
 
-                        Cursor c = BrowserDB.getThumbnailsForUrls(resolver, urls);
-                        if (c == null || !c.moveToFirst()) {
-                            return null;
-                        }
-
-                        final byte[] b = c.getBlob(c.getColumnIndexOrThrow(Thumbnails.DATA));
                         Bitmap bitmap = null;
-                        if (b != null) {
-                            bitmap = BitmapUtils.decodeByteArray(b);
+                        Cursor c = null;
+
+                        try {
+                            c = BrowserDB.getThumbnailsForUrls(resolver, urls);
+                            if (c != null && c.moveToFirst()) {
+                                final byte[] b = c.getBlob(c.getColumnIndexOrThrow(Thumbnails.DATA));
+
+                                if (b != null) {
+                                    bitmap = BitmapUtils.decodeByteArray(b);
+                                }
+                            }
+                        } finally {
+                            if (c != null) {
+                                c.close();
+                            }
                         }
-                        c.close();
 
                         return bitmap;
                     }

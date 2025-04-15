@@ -47,6 +47,7 @@ class ScrollbarActivity;
 
 class nsGfxScrollFrameInner : public nsIReflowCallback {
 public:
+  typedef mozilla::CSSIntPoint CSSIntPoint;
   typedef mozilla::layout::ScrollbarActivity ScrollbarActivity;
 
   class AsyncScroll;
@@ -191,13 +192,13 @@ public:
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
-  void ScrollToCSSPixels(nsIntPoint aScrollPosition);
+  void ScrollToCSSPixels(const CSSIntPoint& aScrollPosition);
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
   void ScrollToCSSPixelsApproximate(const mozilla::CSSPoint& aScrollPosition);
 
-  nsIntPoint GetScrollPositionCSSPixels();
+  CSSIntPoint GetScrollPositionCSSPixels();
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
@@ -321,7 +322,7 @@ public:
   nsIFrame* mResizerBox;
   nsContainerFrame* mOuter;
   nsRefPtr<AsyncScroll> mAsyncScroll;
-  nsCOMPtr<ScrollbarActivity> mScrollbarActivity;
+  nsRefPtr<ScrollbarActivity> mScrollbarActivity;
   nsTArray<nsIScrollPositionListener*> mListeners;
   nsRect mScrollPort;
   // Where we're currently scrolling to, if we're scrolling asynchronously.
@@ -417,6 +418,7 @@ class nsHTMLScrollFrame : public nsContainerFrame,
                           public nsIAnonymousContentCreator,
                           public nsIStatefulFrame {
 public:
+  typedef mozilla::CSSIntPoint CSSIntPoint;
   friend nsIFrame* NS_NewHTMLScrollFrame(nsIPresShell* aPresShell, nsStyleContext* aContext, bool aIsRoot);
 
   NS_DECL_QUERYFRAME
@@ -534,6 +536,9 @@ public:
     nsBoxLayoutState bls(aPresContext, aRC, 0);
     return mInner.GetNondisappearingScrollbarWidth(&bls);
   }
+  virtual nsRect GetScrolledRect() const MOZ_OVERRIDE {
+    return mInner.GetScrolledRect();
+  }
   virtual nsRect GetScrollPortRect() const MOZ_OVERRIDE {
     return mInner.GetScrollPortRect();
   }
@@ -565,7 +570,7 @@ public:
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
-  virtual void ScrollToCSSPixels(nsIntPoint aScrollPosition) MOZ_OVERRIDE {
+  virtual void ScrollToCSSPixels(const CSSIntPoint& aScrollPosition) MOZ_OVERRIDE {
     mInner.ScrollToCSSPixels(aScrollPosition);
   }
   virtual void ScrollToCSSPixelsApproximate(const mozilla::CSSPoint& aScrollPosition) MOZ_OVERRIDE {
@@ -574,7 +579,7 @@ public:
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
-  virtual nsIntPoint GetScrollPositionCSSPixels() MOZ_OVERRIDE {
+  virtual CSSIntPoint GetScrollPositionCSSPixels() MOZ_OVERRIDE {
     return mInner.GetScrollPositionCSSPixels();
   }
   /**
@@ -688,6 +693,8 @@ class nsXULScrollFrame : public nsBoxFrame,
                          public nsIAnonymousContentCreator,
                          public nsIStatefulFrame {
 public:
+  typedef mozilla::CSSIntPoint CSSIntPoint;
+
   NS_DECL_QUERYFRAME
   NS_DECL_FRAMEARENA_HELPERS
 
@@ -816,6 +823,9 @@ public:
     nsBoxLayoutState bls(aPresContext, aRC, 0);
     return mInner.GetNondisappearingScrollbarWidth(&bls);
   }
+  virtual nsRect GetScrolledRect() const MOZ_OVERRIDE {
+    return mInner.GetScrolledRect();
+  }
   virtual nsRect GetScrollPortRect() const MOZ_OVERRIDE {
     return mInner.GetScrollPortRect();
   }
@@ -847,13 +857,13 @@ public:
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
-  virtual void ScrollToCSSPixels(nsIntPoint aScrollPosition) MOZ_OVERRIDE {
+  virtual void ScrollToCSSPixels(const CSSIntPoint& aScrollPosition) MOZ_OVERRIDE {
     mInner.ScrollToCSSPixels(aScrollPosition);
   }
   virtual void ScrollToCSSPixelsApproximate(const mozilla::CSSPoint& aScrollPosition) MOZ_OVERRIDE {
     mInner.ScrollToCSSPixelsApproximate(aScrollPosition);
   }
-  virtual nsIntPoint GetScrollPositionCSSPixels() MOZ_OVERRIDE {
+  virtual CSSIntPoint GetScrollPositionCSSPixels() MOZ_OVERRIDE {
     return mInner.GetScrollPositionCSSPixels();
   }
   /**

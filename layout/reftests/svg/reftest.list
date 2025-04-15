@@ -32,7 +32,7 @@ include svg-integration/reftest.list
 == clip-02a.svg clip-02-ref.svg
 == clip-02b.svg clip-02-ref.svg
 == clipPath-advanced-01.svg pass.svg
-fuzzy-if(/^Windows\x20NT\x206\.[12]/.test(http.oscpu),1,5) == clipPath-and-shape-rendering-01.svg clipPath-and-shape-rendering-01-ref.svg # bug 614840
+fuzzy-if(/^Windows\x20NT\x206\.[12]/.test(http.oscpu),1,5) fuzzy-if(azureQuartz,1,6) == clipPath-and-shape-rendering-01.svg clipPath-and-shape-rendering-01-ref.svg # bug 614840
 == clipPath-and-transform-01.svg pass.svg
 == clipPath-basic-01.svg pass.svg
 == clipPath-basic-02.svg pass.svg
@@ -73,7 +73,7 @@ fuzzy-if(/^Windows\x20NT\x206\.[12]/.test(http.oscpu),1,5) == clipPath-and-shape
 == dynamic-conditions-11.svg pass.svg
 == dynamic-conditions-12.svg pass.svg
 == dynamic-conditions-13.svg about:blank
-fuzzy-if(Android,4,44) skip-if(B2G) == dynamic-clipPath-01.svg pass.svg
+fuzzy-if(Android,4,87) skip-if(B2G) == dynamic-clipPath-01.svg pass.svg
 == dynamic-clipPath-02.svg pass.svg
 == dynamic-feFlood-01.svg pass.svg
 asserts(0-1) == dynamic-feImage-01.svg pass.svg # intermittent assertions (bug 886080)
@@ -106,7 +106,7 @@ skip-if(B2G) == dynamic-pattern-contents-02.svg pass.svg
 == dynamic-text-01.svg dynamic-text-01-ref.svg
 fuzzy-if(d2d&&layersGPUAccelerated,2,12739) == dynamic-text-02.svg dynamic-text-02-ref.svg # bug 776038 for Win7
 fuzzy-if(d2d&&layersGPUAccelerated,2,10539) == dynamic-text-03.svg dynamic-text-03-ref.svg # bug 776038 for Win7
-random-if(/^Windows\x20NT\x205\.1/.test(http.oscpu)) == dynamic-text-04.svg dynamic-text-04-ref.svg # bug 421587 for WinXP
+random-if(/^Windows\x20NT\x205\.1/.test(http.oscpu)) fuzzy-if(/^Windows\x20NT\x206\.1/.test(http.oscpu),47,89) == dynamic-text-04.svg dynamic-text-04-ref.svg # bug 421587 for WinXP, bug 776038 for Win7
 skip-if(B2G) == dynamic-text-05.svg pass.svg
 skip-if(B2G) == dynamic-text-06.svg pass.svg
 == dynamic-text-07.svg dynamic-text-07-ref.svg
@@ -167,7 +167,7 @@ skip-if(B2G) == foreignObject-start-hidden-01.svg pass.svg # followup from Bug 5
 skip-if(B2G) == foreignObject-start-hidden-02.svg pass.svg
 skip-if(B2G) == foreignObject-style-change-01.svg pass.svg
 == foreignObject-dynamic-abspos-01.html foreignObject-dynamic-abspos-01-ref.html
-fuzzy-if(Android,9,314) == foreignObject-fixedpos-01.html foreignObject-dynamic-abspos-01-ref.html
+fuzzy-if(Android,18,500) == foreignObject-fixedpos-01.html foreignObject-dynamic-abspos-01-ref.html
 == foreignObject-dynamic-fixedpos-01.html foreignObject-dynamic-abspos-01-ref.html
 == getElementById-a-element-01.svg pass.svg
 fuzzy-if(Android,9,980) == gradient-live-01a.svg gradient-live-01-ref.svg
@@ -185,6 +185,7 @@ fuzzy-if(Android,9,980) == gradient-live-01d.svg gradient-live-01-ref.svg
 == marker-attribute-01.svg pass.svg
 == marker-viewBox-01.svg marker-viewBox-01-ref.svg
 == marker-orientation-01.svg marker-orientation-01-ref.svg
+pref(svg.marker-improvements.enabled,true) == marker-orientation-02.svg marker-orientation-02-ref.svg
 == mask-basic-01.svg pass.svg
 == mask-basic-02.svg mask-basic-02-ref.svg
 == mask-basic-03.svg pass.svg
@@ -199,7 +200,7 @@ pref(layout.css.masking.enabled,true) fuzzy-if(d2d,1,6400) == mask-type-04.svg m
 == nested-viewBox-01.svg pass.svg
 == nesting-invalid-01.svg nesting-invalid-01-ref.svg
 == non-scaling-stroke-01.svg non-scaling-stroke-01-ref.svg 
-fuzzy-if(Android,9,61) fuzzy-if(!contentSameGfxBackendAsCanvas,1,99) == non-scaling-stroke-02.svg non-scaling-stroke-02-ref.svg 
+fuzzy-if(Android,1,99) fuzzy-if(!contentSameGfxBackendAsCanvas,9,99) == non-scaling-stroke-02.svg non-scaling-stroke-02-ref.svg 
 == non-scaling-stroke-03.svg non-scaling-stroke-03-ref.svg 
 == objectBoundingBox-and-clipPath.svg pass.svg
 # Bug 588684
@@ -213,10 +214,10 @@ random-if(gtk2Widget) == objectBoundingBox-and-fePointLight-02.svg objectBoundin
 == objectBoundingBox-and-pattern-02.svg pass.svg
 == objectBoundingBox-and-pattern-03.svg objectBoundingBox-and-pattern-03-ref.svg
 == opacity-and-gradient-01.svg pass.svg
-skip-if(d2d) == opacity-and-gradient-02.svg opacity-and-gradient-02-ref.svg
+skip-if(d2d) fuzzy-if(azureQuartz,1,99974) == opacity-and-gradient-02.svg opacity-and-gradient-02-ref.svg
 == opacity-and-pattern-01.svg pass.svg
 == opacity-and-transform-01.svg opacity-and-transform-01-ref.svg
-== outer-svg-border-and-padding-01.svg outer-svg-border-and-padding-01-ref.svg 
+fuzzy-if(Android&&AndroidVersion>=15,8,200) == outer-svg-border-and-padding-01.svg outer-svg-border-and-padding-01-ref.svg 
 == overflow-on-outer-svg-01.svg overflow-on-outer-svg-01-ref.svg
 == overflow-on-outer-svg-02a.xhtml overflow-on-outer-svg-02-ref.xhtml
 == overflow-on-outer-svg-02b.xhtml overflow-on-outer-svg-02-ref.xhtml
@@ -310,7 +311,7 @@ pref(svg.text.css-frames.enabled,true) == text-layout-08.svg text-layout-08-ref.
 HTTP(..) == text-scale-02.svg text-scale-02-ref.svg
 HTTP(..) == text-scale-03.svg text-scale-03-ref.svg
 == text-stroke-scaling-01.svg text-stroke-scaling-01-ref.svg
-== stroke-dasharray-01.svg stroke-dasharray-01-ref.svg
+fails-if(OSX==10.8) == stroke-dasharray-01.svg stroke-dasharray-01-ref.svg # bug 896487
 == stroke-dasharray-and-pathLength-01.svg pass.svg
 == stroke-dasharray-and-text-01.svg stroke-dasharray-and-text-01-ref.svg 
 == stroke-linecap-square-w-zero-length-segs-01.svg pass.svg

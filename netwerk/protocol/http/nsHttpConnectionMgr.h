@@ -40,7 +40,7 @@ class EventTokenBucket;
 class nsHttpConnectionMgr : public nsIObserver
 {
 public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_NSIOBSERVER
 
     // parameter names
@@ -113,7 +113,8 @@ public:
     // connection manager, nor is the submitter obligated to actually submit a
     // real transaction for this connectionInfo.
     nsresult SpeculativeConnect(nsHttpConnectionInfo *,
-                                nsIInterfaceRequestor *);
+                                nsIInterfaceRequestor *,
+                                uint32_t caps = 0);
 
     // called when a connection is done processing a transaction.  if the
     // connection can be reused then it will be added to the idle list, else
@@ -276,7 +277,7 @@ private:
         nsTArray<nsHttpTransaction*> mPendingQ;    // pending transaction queue
         nsTArray<nsHttpConnection*>  mActiveConns; // active connections
         nsTArray<nsHttpConnection*>  mIdleConns;   // idle persistent connections
-        nsTArray<nsHalfOpenSocket*>  mHalfOpens;
+        nsTArray<nsHalfOpenSocket*>  mHalfOpens;   // half open connections
 
         // calculate the number of half open sockets that have not had at least 1
         // connection complete
@@ -389,7 +390,7 @@ private:
     class nsConnectionHandle : public nsAHttpConnection
     {
     public:
-        NS_DECL_ISUPPORTS
+        NS_DECL_THREADSAFE_ISUPPORTS
         NS_DECL_NSAHTTPCONNECTION(mConn)
 
         nsConnectionHandle(nsHttpConnection *conn) { NS_ADDREF(mConn = conn); }
@@ -407,7 +408,7 @@ private:
                                        public nsITimerCallback
     {
     public:
-        NS_DECL_ISUPPORTS
+        NS_DECL_THREADSAFE_ISUPPORTS
         NS_DECL_NSIOUTPUTSTREAMCALLBACK
         NS_DECL_NSITRANSPORTEVENTSINK
         NS_DECL_NSIINTERFACEREQUESTOR

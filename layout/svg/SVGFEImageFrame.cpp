@@ -25,7 +25,7 @@ protected:
   SVGFEImageFrame(nsStyleContext* aContext)
     : SVGFEImageFrameBase(aContext)
   {
-    AddStateBits(NS_FRAME_SVG_LAYOUT | NS_STATE_SVG_NONDISPLAY_CHILD);
+    AddStateBits(NS_FRAME_SVG_LAYOUT | NS_FRAME_IS_NONDISPLAY);
   }
 
 public:
@@ -47,8 +47,6 @@ public:
     return MakeFrameName(NS_LITERAL_STRING("SVGFEImage"), aResult);
   }
 #endif
-
-  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
 
   /**
    * Get the "type" of the frame
@@ -74,13 +72,6 @@ NS_NewSVGFEImageFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(SVGFEImageFrame)
-
-/* virtual */ void
-SVGFEImageFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
-{
-  SVGFEImageFrameBase::DidSetStyleContext(aOldStyleContext);
-  nsSVGEffects::InvalidateRenderingObservers(this);
-}
 
 /* virtual */ void
 SVGFEImageFrame::DestroyFrom(nsIFrame* aDestructRoot)

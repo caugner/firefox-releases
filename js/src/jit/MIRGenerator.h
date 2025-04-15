@@ -9,14 +9,19 @@
 
 // This file declares the data structures used to build a control-flow graph
 // containing MIR.
+
 #include <stdarg.h>
 
 #include "jscntxt.h"
 #include "jscompartment.h"
-#include "IonAllocPolicy.h"
-#include "IonCompartment.h"
-#include "CompileInfo.h"
-#include "RegisterSets.h"
+
+#include "jit/CompileInfo.h"
+#include "jit/IonAllocPolicy.h"
+#include "jit/IonCompartment.h"
+#if defined(JS_ION_PERF)
+# include "jit/PerfSpewer.h"
+#endif
+#include "jit/RegisterSets.h"
 
 namespace js {
 namespace jit {
@@ -53,6 +58,9 @@ class MIRGenerator
     }
     IonCompartment *ionCompartment() const {
         return compartment->ionCompartment();
+    }
+    IonRuntime *ionRuntime() const {
+        return compartment->rt->ionRuntime();
     }
     CompileInfo &info() {
         return *info_;
@@ -110,21 +118,12 @@ class MIRGenerator
         JS_ASSERT(compilingAsmJS());
         return performsAsmJSCall_;
     }
-#ifndef JS_CPU_ARM
     bool noteHeapAccess(AsmJSHeapAccess heapAccess) {
         return asmJSHeapAccesses_.append(heapAccess);
     }
     const Vector<AsmJSHeapAccess, 0, IonAllocPolicy> &heapAccesses() const {
         return asmJSHeapAccesses_;
     }
-#else
-    bool noteBoundsCheck(uint32_t offsetBefore) {
-        return asmJSBoundsChecks_.append(AsmJSBoundsCheck(offsetBefore));
-    }
-    const Vector<AsmJSBoundsCheck, 0, IonAllocPolicy> &asmBoundsChecks() const {
-        return asmJSBoundsChecks_;
-    }
-#endif
     bool noteGlobalAccess(unsigned offset, unsigned globalDataOffset) {
         return asmJSGlobalAccesses_.append(AsmJSGlobalAccess(offset, globalDataOffset));
     }
@@ -146,12 +145,15 @@ class MIRGenerator
 
     uint32_t maxAsmJSStackArgBytes_;
     bool performsAsmJSCall_;
-#ifdef JS_CPU_ARM
-    AsmJSBoundsCheckVector asmJSBoundsChecks_;
-#else
     AsmJSHeapAccessVector asmJSHeapAccesses_;
-#endif
     AsmJSGlobalAccessVector asmJSGlobalAccesses_;
+
+#if defined(JS_ION_PERF)
+    AsmJSPerfSpewer asmJSPerfSpewer_;
+
+  public:
+    AsmJSPerfSpewer &perfSpewer() { return asmJSPerfSpewer_; }
+#endif
 };
 
 } // namespace jit

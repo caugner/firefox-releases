@@ -8,6 +8,9 @@
 
 #include "jsinfer.h"
 
+#ifdef JS_ION
+#include "jit/IonFrames.h"
+#endif
 #include "vm/GlobalObject.h"
 #include "vm/Stack.h"
 
@@ -15,10 +18,6 @@
 
 #include "gc/Barrier-inl.h"
 #include "vm/Stack-inl.h"
-
-#if defined(JS_ION)
-#include "jit/IonFrames.h"
-#endif
 
 using namespace js;
 using namespace js::gc;
@@ -180,12 +179,16 @@ ArgumentsObject::create(JSContext *cx, HandleScript script, HandleFunction calle
     bool strict = callee->strict();
     Class *clasp = strict ? &StrictArgumentsObject::class_ : &NormalArgumentsObject::class_;
 
-    RootedTypeObject type(cx, proto->getNewType(cx, clasp));
+    RootedTypeObject type(cx, cx->getNewType(clasp, proto.get()));
     if (!type)
         return NULL;
 
+    JSObject *metadata = NULL;
+    if (!NewObjectMetadata(cx, &metadata))
+        return NULL;
+
     RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, TaggedProto(proto),
-                                                      proto->getParent(), NewObjectMetadata(cx), FINALIZE_KIND,
+                                                      proto->getParent(), metadata, FINALIZE_KIND,
                                                       BaseShape::INDEXED));
     if (!shape)
         return NULL;
@@ -591,8 +594,8 @@ Class NormalArgumentsObject::class_ = {
     ArgumentsObject::finalize,
     NULL,                    /* checkAccess */
     NULL,                    /* call        */
-    NULL,                    /* construct   */
     NULL,                    /* hasInstance */
+    NULL,                    /* construct   */
     ArgumentsObject::trace,
     {
         NULL,       /* outerObject */
@@ -622,8 +625,8 @@ Class StrictArgumentsObject::class_ = {
     ArgumentsObject::finalize,
     NULL,                    /* checkAccess */
     NULL,                    /* call        */
-    NULL,                    /* construct   */
     NULL,                    /* hasInstance */
+    NULL,                    /* construct   */
     ArgumentsObject::trace,
     {
         NULL,       /* outerObject */

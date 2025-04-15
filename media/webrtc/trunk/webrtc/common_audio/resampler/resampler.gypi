@@ -10,7 +10,7 @@
   'targets': [
     {
       'target_name': 'resampler',
-      'type': '<(library)',
+      'type': 'static_library',
       'dependencies': [
         'signal_processing',
       ],
@@ -38,7 +38,11 @@
       },
       'sources': [
         'include/resampler.h',
+        'push_sinc_resampler.cc',
+        'push_sinc_resampler.h',
         'resampler.cc',
+        'sinc_resampler.cc',
+        'sinc_resampler.h',
       ],
     },
   ], # targets
@@ -51,10 +55,15 @@
           'dependencies': [
             'resampler',
             '<(webrtc_root)/test/test.gyp:test_support_main',
+            '<(DEPTH)/testing/gmock.gyp:gmock',
             '<(DEPTH)/testing/gtest.gyp:gtest',
           ],
           'sources': [
             'resampler_unittest.cc',
+            'push_sinc_resampler_unittest.cc',
+            'sinc_resampler_unittest.cc',
+            'sinusoidal_linear_chirp_source.cc',
+            'sinusoidal_linear_chirp_source.h',
           ],
         }, # resampler_unittests
       ], # targets
@@ -62,8 +71,3 @@
   ], # conditions
 }
 
-# Local Variables:
-# tab-width:2
-# indent-tabs-mode:nil
-# End:
-# vim: set expandtab tabstop=2 shiftwidth=2:

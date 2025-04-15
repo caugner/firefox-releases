@@ -18,6 +18,7 @@
 #include "nsIScrollableFrame.h"
 #include "mozilla/Util.h"
 #include "mozilla/Assertions.h"
+#include "prtime.h"
 
 using namespace mozilla;
 
@@ -101,7 +102,8 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(nsDOMUIEvent)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEvent)
 
 static nsIntPoint
-DevPixelsToCSSPixels(const nsIntPoint& aPoint, nsPresContext* aContext)
+DevPixelsToCSSPixels(const LayoutDeviceIntPoint& aPoint,
+                     nsPresContext* aContext)
 {
   return nsIntPoint(aContext->DevPixelsToIntCSSPixels(aPoint.x),
                     aContext->DevPixelsToIntCSSPixels(aPoint.y));
@@ -128,16 +130,6 @@ nsDOMUIEvent::GetMovementPoint()
   nsIntPoint current = DevPixelsToCSSPixels(mEvent->refPoint, mPresContext);
   nsIntPoint last = DevPixelsToCSSPixels(mEvent->lastRefPoint, mPresContext);
   return current - last;
-}
-
-nsIntPoint
-nsDOMUIEvent::GetClientPoint()
-{
-  if (mIsPointerLocked) {
-    return mLastClientPoint;
-  }
-
-  return CalculateClientPoint(mPresContext, mEvent, &mClientPoint);
 }
 
 NS_IMETHODIMP
@@ -362,7 +354,7 @@ nsDOMUIEvent::IsChar() const
     default:
       return false;
   }
-  MOZ_NOT_REACHED("Switch handles all cases.");
+  MOZ_CRASH("Switch handles all cases.");
 }
 
 NS_IMETHODIMP
@@ -384,7 +376,7 @@ nsDOMUIEvent::DuplicatePrivateData()
                                                        mEvent->refPoint);
   nsresult rv = nsDOMEvent::DuplicatePrivateData();
   if (NS_SUCCEEDED(rv)) {
-    mEvent->refPoint = screenPoint;
+    mEvent->refPoint = LayoutDeviceIntPoint::FromUntyped(screenPoint);
   }
   return rv;
 }

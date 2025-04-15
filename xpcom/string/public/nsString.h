@@ -21,7 +21,7 @@
 #include "nsReadableUtils.h"
 #endif
 
-#include NEW_H
+#include <new>
 
   // enable support for the obsolete string API if not explicitly disabled
 #ifndef MOZ_STRING_WITH_OBSOLETE_API
@@ -48,11 +48,11 @@
 #include "nsTString.h"
 #include "string-template-undef.h"
 
-MOZ_STATIC_ASSERT(sizeof(PRUnichar) == 2, "size of PRUnichar must be 2");
-MOZ_STATIC_ASSERT(sizeof(nsString::char_type) == 2,
-                  "size of nsString::char_type must be 2");
-MOZ_STATIC_ASSERT(sizeof(nsCString::char_type) == 1,
-                  "size of nsCString::char_type must be 1");
+static_assert(sizeof(PRUnichar) == 2, "size of PRUnichar must be 2");
+static_assert(sizeof(nsString::char_type) == 2,
+              "size of nsString::char_type must be 2");
+static_assert(sizeof(nsCString::char_type) == 1,
+              "size of nsCString::char_type must be 1");
 
   /**
    * A helper class that converts a UTF-16 string to ASCII in a lossy manner

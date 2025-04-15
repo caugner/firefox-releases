@@ -67,7 +67,7 @@ public:
      */
     already_AddRefed<gfxASurface> CurrentSurface(gfxFloat *dx, gfxFloat *dy);
     already_AddRefed<gfxASurface> CurrentSurface() {
-        return CurrentSurface(NULL, NULL);
+        return CurrentSurface(nullptr, nullptr);
     }
 
     /**
@@ -204,6 +204,7 @@ public:
      * @param snapToPixels ?
      */
     void Rectangle(const gfxRect& rect, bool snapToPixels = false);
+    void SnappedRectangle(const gfxRect& rect) { return Rectangle(rect, true); }
 
     /**
      * Draw an ellipse at the center corner with the given dimensions.
@@ -452,7 +453,7 @@ public:
     void SetDash(gfxLineType ltype);
     void SetDash(gfxFloat *dashes, int ndash, gfxFloat offset);
     // Return true if dashing is set, false if it's not enabled or the
-    // context is in an error state.  |offset| can be NULL to mean
+    // context is in an error state.  |offset| can be nullptr to mean
     // "don't care".
     bool CurrentDash(FallibleTArray<gfxFloat>& dashes, gfxFloat* offset) const;
     // Returns 0.0 if dashing isn't enabled.

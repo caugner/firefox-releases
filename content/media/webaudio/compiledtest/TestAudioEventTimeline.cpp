@@ -132,7 +132,7 @@ void TestSpecExample()
   is(timeline.GetValueAtTime(0.5), (0.15f * powf(0.75f / 0.15f, 0.5f)), "Correct value");
   is(timeline.GetValueAtTime(0.55), (0.15f * powf(0.75f / 0.15f, 0.15f / 0.2f)), "Correct value");
   is(timeline.GetValueAtTime(0.6), 0.75f, "Correct value");
-  is(timeline.GetValueAtTime(0.65), (0.75f * powf(0.05 / 0.75f, 0.5f)), "Correct value");
+  is(timeline.GetValueAtTime(0.65), (0.75f * powf(0.05f / 0.75f, 0.5f)), "Correct value");
   is(timeline.GetValueAtTime(0.7), -1.0f, "Correct value");
   is(timeline.GetValueAtTime(0.9), 0.0f, "Correct value");
   is(timeline.GetValueAtTime(1.0), 1.0f, "Correct value");
@@ -140,7 +140,7 @@ void TestSpecExample()
 
 void TestInvalidEvents()
 {
-  MOZ_STATIC_ASSERT(numeric_limits<float>::has_quiet_NaN, "Platform must have a quiet NaN");
+  static_assert(numeric_limits<float>::has_quiet_NaN, "Platform must have a quiet NaN");
   const float NaN = numeric_limits<float>::quiet_NaN();
   const float Infinity = numeric_limits<float>::infinity();
   Timeline timeline(10.0f);

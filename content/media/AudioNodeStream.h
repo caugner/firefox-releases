@@ -23,6 +23,7 @@ namespace mozilla {
 namespace dom {
 struct ThreeDPoint;
 class AudioParamTimeline;
+class DelayNodeEngine;
 }
 
 class ThreadSharedFloatArrayBufferList;
@@ -55,7 +56,8 @@ public:
       mKind(aKind),
       mNumberOfInputChannels(2),
       mMarkAsFinishedAfterThisBlock(false),
-      mAudioParamStream(false)
+      mAudioParamStream(false),
+      mMuted(false)
   {
     MOZ_ASSERT(NS_IsMainThread());
     mChannelCountMode = dom::ChannelCountMode::Max;
@@ -99,11 +101,18 @@ public:
                                       dom::ChannelInterpretation aChannelInterpretation);
   virtual void ProduceOutput(GraphTime aFrom, GraphTime aTo);
   TrackTicks GetCurrentPosition();
-  bool AllInputsFinished() const;
   bool IsAudioParamStream() const
   {
     return mAudioParamStream;
   }
+  void Mute() {
+    mMuted = true;
+  }
+
+  void Unmute() {
+    mMuted = false;
+  }
+
   const OutputChunks& LastChunks() const
   {
     return mLastChunks;
@@ -114,14 +123,26 @@ public:
     return (mKind == MediaStreamGraph::SOURCE_STREAM && mFinished) ||
            mKind == MediaStreamGraph::EXTERNAL_STREAM;
   }
+  virtual bool IsIntrinsicallyConsumed() const MOZ_OVERRIDE
+  {
+    return true;
+  }
 
   // Any thread
   AudioNodeEngine* Engine() { return mEngine; }
   TrackRate SampleRate() const { return mSampleRate; }
 
 protected:
+  void AdvanceOutputSegment();
   void FinishOutput();
+  void AccumulateInputChunk(uint32_t aInputIndex, const AudioChunk& aChunk,
+                            AudioChunk* aBlock,
+                            nsTArray<float>* aDownmixBuffer);
+  void UpMixDownMixChunk(const AudioChunk* aChunk, uint32_t aOutputChannelCount,
+                         nsTArray<const void*>& aOutputChannels,
+                         nsTArray<float>& aDownmixBuffer);
 
+  uint32_t ComputeFinalOuputChannelCount(uint32_t aInputChannelCount);
   void ObtainInputBlock(AudioChunk& aTmpChunk, uint32_t aPortIndex);
 
   // The engine that will generate output for this node.
@@ -142,6 +163,8 @@ protected:
   bool mMarkAsFinishedAfterThisBlock;
   // Whether the stream is an AudioParamHelper stream.
   bool mAudioParamStream;
+  // Whether the stream is muted. Access only on the MediaStreamGraph thread.
+  bool mMuted;
 };
 
 }

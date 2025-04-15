@@ -310,6 +310,7 @@ this.PageThumbs = {
       Services.telemetry.getHistogramById("FX_THUMBNAILS_STORE_TIME_MS")
         .add(new Date() - telemetryStoreTime);
 
+      Services.obs.notifyObservers(null, "page-thumbnail:create", aFinalURL);
       // We've been redirected. Create a copy of the current thumbnail for
       // the redirect source. We need to do this because:
       //
@@ -321,8 +322,10 @@ this.PageThumbs = {
       //    Because of bug 559175 this information can get lost when using
       //    Sync and therefore also redirect sources appear on the newtab
       //    page. We also want thumbnails for those.
-      if (aFinalURL != aOriginalURL)
+      if (aFinalURL != aOriginalURL) {
         yield PageThumbsStorage.copy(aFinalURL, aOriginalURL);
+        Services.obs.notifyObservers(null, "page-thumbnail:create", aOriginalURL);
+      }
     });
   },
 
@@ -425,7 +428,7 @@ this.PageThumbs = {
 
   _prefEnabled: function PageThumbs_prefEnabled() {
     try {
-      return Services.prefs.getBoolPref("browser.pageThumbs.enabled");
+      return !Services.prefs.getBoolPref("browser.pagethumbnails.capturing_disabled");
     }
     catch (e) {
       return true;
@@ -528,6 +531,11 @@ this.PageThumbsStorage = {
    */
   wipe: function Storage_wipe() {
     return PageThumbsWorker.post("wipe", [this.path]);
+  },
+
+  isFileRecentForURL: function Storage_isFileRecentForURL(aURL, aMaxSecs) {
+    return PageThumbsWorker.post("isFileRecent",
+                                 [this.getFilePathForURL(aURL), aMaxSecs]);
   },
 
   _calculateMD5Hash: function Storage_calculateMD5Hash(aValue) {

@@ -7,12 +7,26 @@
 #include "nsISVGPoint.h"
 #include "nsSVGTextContainerFrame.h"
 #include "nsSVGTextFrame2.h"
-#include "nsIDOMSVGAnimatedLength.h"
 #include "mozilla/dom/SVGIRect.h"
-#include "nsIDOMSVGAnimatedEnum.h"
 
 namespace mozilla {
 namespace dom {
+
+nsSVGEnumMapping SVGTextContentElement::sLengthAdjustMap[] = {
+  { &nsGkAtoms::spacing, SVG_LENGTHADJUST_SPACING },
+  { &nsGkAtoms::spacingAndGlyphs, SVG_LENGTHADJUST_SPACINGANDGLYPHS },
+  { nullptr, 0 }
+};
+
+nsSVGElement::EnumInfo SVGTextContentElement::sEnumInfo[1] =
+{
+  { &nsGkAtoms::lengthAdjust, sLengthAdjustMap, SVG_LENGTHADJUST_SPACING }
+};
+
+nsSVGElement::LengthInfo SVGTextContentElement::sLengthInfo[1] =
+{
+  { &nsGkAtoms::textLength, 0, nsIDOMSVGLength::SVG_LENGTHTYPE_NUMBER, SVGContentUtils::XY }
+};
 
 nsSVGTextContainerFrame*
 SVGTextContentElement::GetTextContainerFrame()
@@ -39,6 +53,18 @@ SVGTextContentElement::FrameIsSVGText()
 {
   nsIFrame* frame = GetPrimaryFrame(Flush_Layout);
   return frame && frame->IsSVGText();
+}
+
+already_AddRefed<SVGAnimatedLength>
+SVGTextContentElement::TextLength()
+{
+  return LengthAttributes()[TEXTLENGTH].ToDOMAnimatedLength(this);
+}
+
+already_AddRefed<SVGAnimatedEnumeration>
+SVGTextContentElement::LengthAdjust()
+{
+  return EnumAttributes()[LENGTHADJUST].ToDOMAnimatedEnum(this);
 }
 
 //----------------------------------------------------------------------

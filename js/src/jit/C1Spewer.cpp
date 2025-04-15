@@ -6,17 +6,16 @@
 
 #ifdef DEBUG
 
+#include "jit/C1Spewer.h"
+
 #include <stdarg.h>
 #include <time.h>
 
-#include "IonBuilder.h"
-#include "Ion.h"
-#include "C1Spewer.h"
-#include "MIRGraph.h"
-#include "LIR.h"
-#include "LinearScan.h"
-
-#include "jsscriptinlines.h"
+#include "jit/Ion.h"
+#include "jit/IonBuilder.h"
+#include "jit/LinearScan.h"
+#include "jit/LIR.h"
+#include "jit/MIRGraph.h"
 
 using namespace js;
 using namespace js::jit;

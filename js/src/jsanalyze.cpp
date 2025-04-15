@@ -4,15 +4,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsanalyze.h"
+#include "jsanalyzeinlines.h"
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/PodOperations.h"
 
-#include "jscompartment.h"
 #include "jscntxt.h"
+#include "jscompartment.h"
 
-#include "jsanalyzeinlines.h"
 #include "jsinferinlines.h"
 #include "jsopcodeinlines.h"
 
@@ -22,6 +22,7 @@ using namespace js::analyze;
 using mozilla::DebugOnly;
 using mozilla::PodCopy;
 using mozilla::PodZero;
+using mozilla::FloorLog2;
 
 /////////////////////////////////////////////////////////////////////
 // Bytecode
@@ -415,6 +416,10 @@ ScriptAnalysis::analyzeBytecode(JSContext *cx)
           case JSOP_EXCEPTION:
           case JSOP_DEBUGGER:
             isIonInlineable = false;
+            break;
+
+          case JSOP_FINALLY:
+            hasTryFinally_ = true;
             break;
 
           /* Additional opcodes which can be both compiled both normally and inline. */
@@ -1473,9 +1478,7 @@ PhiNodeCapacity(unsigned length)
     if (length <= 4)
         return 4;
 
-    unsigned log2;
-    JS_FLOOR_LOG2(log2, length - 1);
-    return 1 << (log2 + 1);
+    return 1 << (FloorLog2(length - 1) + 1);
 }
 
 bool
@@ -1824,6 +1827,8 @@ ScriptAnalysis::needsArgsObj(JSContext *cx)
     /*
      * Always construct arguments objects when in debug mode and for generator
      * scripts (generators can be suspended when speculation fails).
+     *
+     * FIXME: Don't build arguments for ES6 generator expressions.
      */
     if (cx->compartment()->debugMode() || script_->isGenerator)
         return true;
@@ -2022,7 +2027,7 @@ SSAValue::print() const
         break;
 
       default:
-        JS_NOT_REACHED("Bad kind");
+        MOZ_ASSUME_UNREACHABLE("Bad kind");
     }
 }
 

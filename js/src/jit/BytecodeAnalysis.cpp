@@ -5,7 +5,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/BytecodeAnalysis.h"
+
 #include "jsopcode.h"
+
 #include "jsopcodeinlines.h"
 
 using namespace js;

@@ -69,7 +69,7 @@ void XPCTraceableVariant::TraceJS(JSTracer* trc)
 {
     MOZ_ASSERT(JSVAL_IS_TRACEABLE(mJSVal));
     JS_SET_TRACING_DETAILS(trc, GetTraceName, this, 0);
-    JS_CallValueTracer(trc, &mJSVal, "XPCTraceableVariant::mJSVal");
+    JS_CallHeapValueTracer(trc, &mJSVal, "XPCTraceableVariant::mJSVal");
 }
 
 // static
@@ -78,6 +78,8 @@ XPCTraceableVariant::GetTraceName(JSTracer* trc, char *buf, size_t bufsize)
 {
     JS_snprintf(buf, bufsize, "XPCVariant[0x%p].mJSVal", trc->debugPrintArg);
 }
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(XPCVariant)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(XPCVariant)
     JS::Value val = tmp->GetJSValPreserveColor();

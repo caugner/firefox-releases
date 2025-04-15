@@ -7,9 +7,8 @@
 #ifndef jit_LinearScan_h
 #define jit_LinearScan_h
 
-#include "LiveRangeAllocator.h"
-#include "BitSet.h"
-
+#include "jit/BitSet.h"
+#include "jit/LiveRangeAllocator.h"
 #include "js/Vector.h"
 
 namespace js {

@@ -12,8 +12,16 @@ include $(DEPTH)/config/autoconf.mk
 
 MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_aaa_run_first_leaktest.js \
+	browser_dbg_blackboxing-01.js \
+	browser_dbg_blackboxing-02.js \
+	browser_dbg_blackboxing-03.js \
+	browser_dbg_blackboxing-04.js \
+	browser_dbg_blackboxing-05.js \
+	browser_dbg_blackboxing-06.js \
+	browser_dbg_blackboxing-07.js \
 	browser_dbg_clean-exit.js \
 	browser_dbg_cmd.js \
+	browser_dbg_cmd_blackbox.js \
 	browser_dbg_cmd_break.js \
 	browser_dbg_debuggerstatement.js \
 	browser_dbg_listtabs-01.js \
@@ -40,6 +48,9 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_propertyview-data-getset-01.js \
 	browser_dbg_propertyview-data-getset-02.js \
 	browser_dbg_propertyview-data.js \
+	browser_dbg_propertyview-filter-01.js \
+	browser_dbg_propertyview-filter-02.js \
+	browser_dbg_propertyview-filter-03.js \
 	browser_dbg_propertyview-filter-04.js \
 	browser_dbg_propertyview-filter-05.js \
 	browser_dbg_propertyview-filter-06.js \
@@ -94,6 +105,7 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_bug868163_highight_on_pause.js \
 	browser_dbg_displayName.js \
 	browser_dbg_pause-exceptions.js \
+	browser_dbg_pause-exceptions-reload.js \
 	browser_dbg_multiple-windows.js \
 	browser_dbg_iframes.js \
 	browser_dbg_bfcache.js \
@@ -101,11 +113,18 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_chrome-debugging.js \
 	browser_dbg_source_maps-01.js \
 	browser_dbg_source_maps-02.js \
+	browser_dbg_source_maps-03.js \
 	browser_dbg_step-out.js \
+	browser_dbg_event-listeners.js \
 	head.js \
 	$(NULL)
 
 MOCHITEST_BROWSER_PAGES = \
+	browser_dbg_blackboxing.html \
+	blackboxing_blackboxme.js \
+	blackboxing_one.js \
+	blackboxing_two.js \
+	blackboxing_three.js \
 	browser_dbg_cmd_break.html \
 	browser_dbg_cmd.html \
 	testactors.js \
@@ -137,25 +156,33 @@ MOCHITEST_BROWSER_PAGES = \
 	binary_search.coffee \
 	binary_search.js \
 	binary_search.map \
+	math.js \
+	math.min.js \
+	math.map \
+	minified.html \
 	test-location-changes-bp.js \
 	test-location-changes-bp.html \
 	test-step-out.html \
+	test-pause-exceptions-reload.html \
+	test-event-listeners.html \
 	$(NULL)
 
-# Bug 903750 - Disabled on OSX for intermittent failures
-ifneq ($(OS_ARCH), Darwin)
+# Bug 888811 & bug 891176:
+#   Disable browser_dbg_bug883220_raise_on_pause.js due to frequent failures
+ifneq (Linux,$(OS_ARCH))
 MOCHITEST_BROWSER_TESTS += \
-	browser_dbg_propertyview-filter-01.js \
+	browser_dbg_bug883220_raise_on_pause.js \
+	browser_dbg_createChrome.js \
 	$(NULL)
+else
+$(browser_dbg_createChrome.js disabled to fix for ubuntu hangs, bug 847558)
 endif
 
-# Bug 847588, bug 860349, bug 871713
-#   Disabled on OSX and Linux for intermittent failures
-ifeq (,$(filter Darwin Linux,$(OS_ARCH)))
+# Bug 895426:
+#   Disable browser_dbg_break-on-dom-event.js due to frequent failures
+ifneq (Darwin,$(OS_ARCH))
 MOCHITEST_BROWSER_TESTS += \
-	browser_dbg_createChrome.js \
-	browser_dbg_propertyview-filter-02.js \
-	browser_dbg_propertyview-filter-03.js \
+	browser_dbg_break-on-dom-event.js \
 	$(NULL)
 endif
 

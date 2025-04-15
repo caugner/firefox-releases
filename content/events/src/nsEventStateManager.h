@@ -23,6 +23,7 @@
 #include "nsEventStates.h"
 #include "mozilla/TimeStamp.h"
 #include "nsIFrame.h"
+#include "Units.h"
 
 class nsIPresShell;
 class nsIContent;
@@ -53,6 +54,7 @@ public:
 
   typedef mozilla::TimeStamp TimeStamp;
   typedef mozilla::TimeDuration TimeDuration;
+  typedef mozilla::LayoutDeviceIntPoint LayoutDeviceIntPoint;
 
   nsEventStateManager();
   virtual ~nsEventStateManager();
@@ -192,13 +194,13 @@ public:
   static void SetFullScreenState(mozilla::dom::Element* aElement, bool aIsFullScreen);
 
   static bool IsRemoteTarget(nsIContent* aTarget);
-  static nsIntPoint GetChildProcessOffset(nsFrameLoader* aFrameLoader,
-                                          const nsEvent& aEvent);
+  static LayoutDeviceIntPoint GetChildProcessOffset(nsFrameLoader* aFrameLoader,
+                                                    const nsEvent& aEvent);
 
   static void MapEventCoordinatesForChildProcess(nsFrameLoader* aFrameLoader,
                                                  nsEvent* aEvent);
 
-  static void MapEventCoordinatesForChildProcess(const nsIntPoint& aOffset,
+  static void MapEventCoordinatesForChildProcess(const LayoutDeviceIntPoint& aOffset,
                                                  nsEvent* aEvent);
 
   // Holds the point in screen coords that a mouse event was dispatched to,
@@ -212,7 +214,7 @@ public:
   // Holds the point in client coords of the last mouse event. Used by
   // nsDOMEvent::GetClientCoords() to make mouse events' client coords appear
   // frozen at the last mouse position while the pointer is locked.
-  static nsIntPoint sLastClientPoint;
+  static mozilla::CSSIntPoint sLastClientPoint;
 
   static bool sIsPointerLocked;
   static nsWeakPtr sPointerLockedElement;
@@ -711,14 +713,14 @@ private:
   // Last mouse event refPoint (the offset from the widget's origin in
   // device pixels) when mouse was locked, used to restore mouse position
   // after unlocking.
-  nsIntPoint  mPreLockPoint;
+  mozilla::LayoutDeviceIntPoint mPreLockPoint;
 
   // Stores the refPoint of the last synthetic mouse move we dispatched
   // to re-center the mouse when we were pointer locked. If this is (-1,-1) it
   // means we've not recently dispatched a centering event. We use this to
   // detect when we receive the synth event, so we can cancel and not send it
   // to content.
-  static nsIntPoint sSynthCenteringPoint;
+  static mozilla::LayoutDeviceIntPoint sSynthCenteringPoint;
 
   nsWeakFrame mCurrentTarget;
   nsCOMPtr<nsIContent> mCurrentTargetContent;
@@ -728,10 +730,10 @@ private:
 
   // Stores the refPoint (the offset from the widget's origin in device
   // pixels) of the last mouse event.
-  static nsIntPoint sLastRefPoint;
+  static mozilla::LayoutDeviceIntPoint sLastRefPoint;
 
   // member variables for the d&d gesture state machine
-  nsIntPoint mGestureDownPoint; // screen coordinates
+  mozilla::LayoutDeviceIntPoint mGestureDownPoint; // screen coordinates
   // The content to use as target if we start a d&d (what we drag).
   nsCOMPtr<nsIContent> mGestureDownContent;
   // The content of the frame where the mouse-down event occurred. It's the same

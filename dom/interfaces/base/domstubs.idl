@@ -44,10 +44,6 @@ interface nsIDOMMediaList;
 // Base
 interface nsIDOMWindow;
 interface nsIDOMWindowCollection;
-interface nsIDOMPlugin;
-interface nsIDOMPluginArray;
-interface nsIDOMMimeType;
-interface nsIDOMMimeTypeArray;
 interface nsIDOMNavigator;
 interface nsIDOMScreen;
 interface nsIDOMHistory;
@@ -77,7 +73,6 @@ interface nsIDOMRect;
 interface nsIDOMCSSStyleRule;
 interface nsIDOMCSSStyleRuleCollection;
 interface nsIDOMHTMLTableCaptionElement;
-interface nsIDOMHTMLTableSectionElement;
 
 // Range
 interface nsIDOMRange;

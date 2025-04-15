@@ -261,6 +261,7 @@ nsContextMenu.prototype = {
             .disabled = !this.hasBGImage;
 
     this.showItem("context-viewimageinfo", this.onImage);
+    this.showItem("context-viewimagedesc", this.onImage && this.imageDescURL !== "");
   },
 
   initMiscItems: function CM_initMiscItems() {
@@ -276,6 +277,18 @@ nsContextMenu.prototype = {
     this.showItem("context-keywordfield",
                   this.onTextInput && this.onKeywordField);
     this.showItem("frame", this.inFrame);
+
+    // srcdoc cannot be opened separately due to concerns about web
+    // content with about:srcdoc in location bar masquerading as trusted
+    // chrome/addon content.
+    // No need to also test for this.inFrame as this is checked in the parent
+    // submenu.
+    this.showItem("context-showonlythisframe", !this.inSrcdocFrame);
+    this.showItem("context-openframeintab", !this.inSrcdocFrame);
+    this.showItem("context-openframe", !this.inSrcdocFrame);
+    this.showItem("context-bookmarkframe", !this.inSrcdocFrame);
+    this.showItem("open-frame-sep", !this.inSrcdocFrame);
+
     this.showItem("frame-sep", this.inFrame && isTextSelected);
 
     // Hide menu entries for images, show otherwise
@@ -499,6 +512,7 @@ nsContextMenu.prototype = {
     this.onImage           = false;
     this.onLoadedImage     = false;
     this.onCompletedImage  = false;
+    this.imageDescURL      = "";
     this.onCanvas          = false;
     this.onVideo           = false;
     this.onAudio           = false;
@@ -514,6 +528,7 @@ nsContextMenu.prototype = {
     this.linkProtocol      = "";
     this.onMathML          = false;
     this.inFrame           = false;
+    this.inSrcdocFrame     = false;
     this.inSyntheticDoc    = false;
     this.hasBGImage        = false;
     this.bgImageURL        = "";
@@ -549,6 +564,11 @@ nsContextMenu.prototype = {
           this.onCompletedImage = true;
 
         this.mediaURL = this.target.currentURI.spec;
+
+        var descURL = this.target.getAttribute("longdesc");
+        if (descURL) {
+          this.imageDescURL = makeURLAbsolute(this.target.ownerDocument.body.baseURI, descURL);
+        }
       }
       else if (this.target instanceof HTMLCanvasElement) {
         this.onCanvas = true;
@@ -679,8 +699,13 @@ nsContextMenu.prototype = {
 
     // See if the user clicked in a frame.
     var docDefaultView = this.target.ownerDocument.defaultView;
-    if (docDefaultView != docDefaultView.top)
+    if (docDefaultView != docDefaultView.top) {
       this.inFrame = true;
+
+      if (this.target.ownerDocument.isSrcdocDocument) {
+          this.inSrcdocFrame = true;
+      }
+    }
 
     // if the document is editable, show context menu like in text inputs
     if (!this.onEditableArea) {
@@ -709,6 +734,7 @@ nsContextMenu.prototype = {
           this.onCompletedImage  = false;
           this.onMathML          = false;
           this.inFrame           = false;
+          this.inSrcdocFrame     = false;
           this.hasBGImage        = false;
           this.isDesignMode      = true;
           this.onEditableArea = true;
@@ -897,6 +923,14 @@ nsContextMenu.prototype = {
   viewImageInfo: function() {
     BrowserPageInfo(this.target.ownerDocument.defaultView.top.document,
                     "mediaTab", this.target);
+  },
+
+  viewImageDesc: function(e) {
+    var doc = this.target.ownerDocument;
+    urlSecurityCheck(this.imageDescURL, this.browser.contentPrincipal,
+                     Ci.nsIScriptSecurityManager.DISALLOW_SCRIPT);
+    openUILink(this.imageDescURL, e, { disallowInheritPrincipal: true,
+                             referrerURI: doc.documentURIObject });
   },
 
   viewFrameInfo: function() {

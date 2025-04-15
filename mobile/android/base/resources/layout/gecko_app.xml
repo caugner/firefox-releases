@@ -42,9 +42,13 @@
                         android:layout_alignParentBottom="true">
         </RelativeLayout>
 
-        <include layout="@layout/browser_toolbar"
-                 android:layout_width="fill_parent"
-                 android:layout_height="@dimen/browser_toolbar_height"/>
+        <org.mozilla.gecko.BrowserToolbar android:id="@+id/browser_toolbar"
+                style="@style/BrowserToolbar"
+                android:layout_width="fill_parent"
+                android:layout_height="@dimen/browser_toolbar_height"
+                android:clickable="true"
+                android:focusable="true"/>
+
     </view>
 
     <LinearLayout android:id="@+id/toast"

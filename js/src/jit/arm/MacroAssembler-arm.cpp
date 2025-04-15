@@ -4,10 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jit/arm/MacroAssembler-arm.h"
+
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MathAlgorithms.h"
 
-#include "jit/arm/MacroAssembler-arm.h"
 #include "jit/BaselineFrame.h"
 #include "jit/MoveEmitter.h"
 
@@ -27,6 +28,14 @@ isValueDTRDCandidate(ValueOperand &val)
     if ((val.payloadReg().code() & 1) != 0)
         return false;
     return true;
+}
+
+void
+MacroAssemblerARM::convertBoolToInt32(Register source, Register dest)
+{
+    // Note that C++ bool is only 1 byte, so zero extend it to clear the
+    // higher-order bits.
+    ma_and(Imm32(0xff), source, dest);
 }
 
 void
@@ -703,7 +712,7 @@ MacroAssemblerARM::ma_cmn(Register src1, Register src2, Condition c)
 void
 MacroAssemblerARM::ma_cmn(Register src1, Operand op, Condition c)
 {
-    JS_NOT_REACHED("Feature NYI");
+    MOZ_ASSUME_UNREACHABLE("Feature NYI");
 }
 
 // Compare (src - src2).
@@ -737,8 +746,7 @@ MacroAssemblerARM::ma_cmp(Register src1, Operand op, Condition c)
         as_cmp(src1, O2Reg(ScratchRegister), c);
         break;
       default:
-        JS_NOT_REACHED("trying to compare FP and integer registers");
-        break;
+        MOZ_ASSUME_UNREACHABLE("trying to compare FP and integer registers");
     }
 }
 void
@@ -811,9 +819,7 @@ MacroAssemblerARM::ma_check_mul(Register src1, Register src2, Register dest, Con
         return NotEqual;
     }
 
-    JS_NOT_REACHED("Condition NYI");
-    return Always;
-
+    MOZ_ASSUME_UNREACHABLE("Condition NYI");
 }
 
 Assembler::Condition
@@ -831,8 +837,7 @@ MacroAssemblerARM::ma_check_mul(Register src1, Imm32 imm, Register dest, Conditi
         return NotEqual;
     }
 
-    JS_NOT_REACHED("Condition NYI");
-    return Always;
+    MOZ_ASSUME_UNREACHABLE("Condition NYI");
 }
 
 void
@@ -894,6 +899,33 @@ MacroAssemblerARM::ma_mod_mask(Register src, Register dest, Register hold, int32
 
 }
 
+void
+MacroAssemblerARM::ma_smod(Register num, Register div, Register dest)
+{
+    as_sdiv(ScratchRegister, num, div);
+    as_mls(dest, num, ScratchRegister, div);
+}
+
+void
+MacroAssemblerARM::ma_umod(Register num, Register div, Register dest)
+{
+    as_udiv(ScratchRegister, num, div);
+    as_mls(dest, num, ScratchRegister, div);
+}
+
+// division
+void
+MacroAssemblerARM::ma_sdiv(Register num, Register div, Register dest, Condition cond)
+{
+    as_sdiv(dest, num, div, cond);
+}
+
+void
+MacroAssemblerARM::ma_udiv(Register num, Register div, Register dest, Condition cond)
+{
+    as_udiv(dest, num, div, cond);
+}
+
 // Memory.
 // Shortcut for when we know we're transferring 32 bits of data.
 void
@@ -907,7 +939,7 @@ void
 MacroAssemblerARM::ma_dtr(LoadStore ls, Register rn, Register rm, Register rt,
                           Index mode, Assembler::Condition cc)
 {
-    JS_NOT_REACHED("Feature NYI");
+    MOZ_ASSUME_UNREACHABLE("Feature NYI");
 }
 
 void
@@ -1071,8 +1103,11 @@ MacroAssemblerARM::ma_dataTransferN(LoadStore ls, int size, bool IsSigned,
         if (mode == PreIndex)
             base = rn;
         JS_ASSERT(mode != PostIndex);
-        // at this point, both off - bottom and off + neg_bottom will be reasonable-ish
-        // quantities.
+        // At this point, both off - bottom and off + neg_bottom will be reasonable-ish quantities.
+        //
+        // Note a neg_bottom of 0x1000 can not be encoded as an immediate negative offset in the
+        // instruction and this occurs when bottom is zero, so this case is guarded against below.
+        // 
         if (off < 0) {
             Operand2 sub_off = Imm8(-(off-bottom)); // sub_off = bottom - off
             if (!sub_off.invalid) {
@@ -1080,7 +1115,8 @@ MacroAssemblerARM::ma_dataTransferN(LoadStore ls, int size, bool IsSigned,
                 return as_dtr(ls, size, Offset, rt, DTRAddr(ScratchRegister, DtrOffImm(bottom)), cc);
             }
             sub_off = Imm8(-(off+neg_bottom));// sub_off = -neg_bottom - off
-            if (!sub_off.invalid) {
+            if (!sub_off.invalid && bottom != 0) {
+                JS_ASSERT(neg_bottom < 0x1000);  // Guarded against by: bottom != 0
                 as_sub(ScratchRegister, rn, sub_off, NoSetCond, cc); // - sub_off = neg_bottom + off
                 return as_dtr(ls, size, Offset, rt, DTRAddr(ScratchRegister, DtrOffImm(-neg_bottom)), cc);
             }
@@ -1091,7 +1127,8 @@ MacroAssemblerARM::ma_dataTransferN(LoadStore ls, int size, bool IsSigned,
                 return as_dtr(ls, size, Offset, rt, DTRAddr(ScratchRegister, DtrOffImm(bottom)), cc);
             }
             sub_off = Imm8(off+neg_bottom);// sub_off = neg_bottom + off
-            if (!sub_off.invalid) {
+            if (!sub_off.invalid && bottom != 0) {
+                JS_ASSERT(neg_bottom < 0x1000);  // Guarded against by: bottom != 0
                 as_add(ScratchRegister, rn, sub_off, NoSetCond,  cc); // sub_off = neg_bottom + off
                 return as_dtr(ls, size, Offset, rt, DTRAddr(ScratchRegister, DtrOffImm(-neg_bottom)), cc);
             }
@@ -1103,12 +1140,15 @@ MacroAssemblerARM::ma_dataTransferN(LoadStore ls, int size, bool IsSigned,
         if (off < 256 && off > -256)
             return as_extdtr(ls, size, IsSigned, mode, rt, EDtrAddr(rn, EDtrOffImm(off)), cc);
 
-        // We cannot encode this offset in a a single extldr.  Try to encode it as
+        // We cannot encode this offset in a single extldr.  Try to encode it as
         // an add scratch, base, imm; extldr dest, [scratch, +offset].
         int bottom = off & 0xff;
         int neg_bottom = 0x100 - bottom;
-        // at this point, both off - bottom and off + neg_bottom will be reasonable-ish
-        // quantities.
+        // At this point, both off - bottom and off + neg_bottom will be reasonable-ish quantities.
+        //
+        // Note a neg_bottom of 0x100 can not be encoded as an immediate negative offset in the
+        // instruction and this occurs when bottom is zero, so this case is guarded against below.
+        // 
         if (off < 0) {
             Operand2 sub_off = Imm8(-(off-bottom)); // sub_off = bottom - off
             if (!sub_off.invalid) {
@@ -1118,7 +1158,8 @@ MacroAssemblerARM::ma_dataTransferN(LoadStore ls, int size, bool IsSigned,
                                  cc);
             }
             sub_off = Imm8(-(off+neg_bottom));// sub_off = -neg_bottom - off
-            if (!sub_off.invalid) {
+            if (!sub_off.invalid && bottom != 0) {
+                JS_ASSERT(neg_bottom < 0x100);  // Guarded against by: bottom != 0
                 as_sub(ScratchRegister, rn, sub_off, NoSetCond, cc); // - sub_off = neg_bottom + off
                 return as_extdtr(ls, size, IsSigned, Offset, rt,
                                  EDtrAddr(ScratchRegister, EDtrOffImm(-neg_bottom)),
@@ -1133,7 +1174,8 @@ MacroAssemblerARM::ma_dataTransferN(LoadStore ls, int size, bool IsSigned,
                                  cc);
             }
             sub_off = Imm8(off+neg_bottom);// sub_off = neg_bottom + off
-            if (!sub_off.invalid) {
+            if (!sub_off.invalid && bottom != 0) {
+                JS_ASSERT(neg_bottom < 0x100);  // Guarded against by: bottom != 0
                 as_add(ScratchRegister, rn, sub_off, NoSetCond,  cc); // sub_off = neg_bottom + off
                 return as_extdtr(ls, size, IsSigned, Offset, rt,
                                  EDtrAddr(ScratchRegister, EDtrOffImm(-neg_bottom)),
@@ -1221,7 +1263,7 @@ MacroAssemblerARM::ma_b(void *target, Relocation::Kind reloc, Assembler::Conditi
             m_buffer.markGuard();
         break;
       default:
-        JS_NOT_REACHED("Other methods of generating tracable jumps NYI");
+        MOZ_ASSUME_UNREACHABLE("Other methods of generating tracable jumps NYI");
     }
 }
 
@@ -1399,8 +1441,11 @@ MacroAssemblerARM::ma_vdtr(LoadStore ls, const Operand &addr, VFPRegister rt, Co
     // an add scratch, base, imm; ldr dest, [scratch, +offset].
     int bottom = off & (0xff << 2);
     int neg_bottom = (0x100 << 2) - bottom;
-    // at this point, both off - bottom and off + neg_bottom will be reasonable-ish
-    // quantities.
+    // At this point, both off - bottom and off + neg_bottom will be reasonable-ish quantities.
+    //
+    // Note a neg_bottom of 0x400 can not be encoded as an immediate negative offset in the
+    // instruction and this occurs when bottom is zero, so this case is guarded against below.
+    // 
     if (off < 0) {
         Operand2 sub_off = Imm8(-(off-bottom)); // sub_off = bottom - off
         if (!sub_off.invalid) {
@@ -1408,7 +1453,8 @@ MacroAssemblerARM::ma_vdtr(LoadStore ls, const Operand &addr, VFPRegister rt, Co
             return as_vdtr(ls, rt, VFPAddr(ScratchRegister, VFPOffImm(bottom)), cc);
         }
         sub_off = Imm8(-(off+neg_bottom));// sub_off = -neg_bottom - off
-        if (!sub_off.invalid) {
+        if (!sub_off.invalid && bottom != 0) {
+            JS_ASSERT(neg_bottom < 0x400);  // Guarded against by: bottom != 0
             as_sub(ScratchRegister, base, sub_off, NoSetCond, cc); // - sub_off = neg_bottom + off
             return as_vdtr(ls, rt, VFPAddr(ScratchRegister, VFPOffImm(-neg_bottom)), cc);
         }
@@ -1419,7 +1465,8 @@ MacroAssemblerARM::ma_vdtr(LoadStore ls, const Operand &addr, VFPRegister rt, Co
             return as_vdtr(ls, rt, VFPAddr(ScratchRegister, VFPOffImm(bottom)), cc);
         }
         sub_off = Imm8(off+neg_bottom);// sub_off = neg_bottom + off
-        if (!sub_off.invalid) {
+        if (!sub_off.invalid && bottom != 0) {
+            JS_ASSERT(neg_bottom < 0x400);  // Guarded against by: bottom != 0
             as_add(ScratchRegister, base, sub_off, NoSetCond,  cc); // sub_off = neg_bottom + off
             return as_vdtr(ls, rt, VFPAddr(ScratchRegister, VFPOffImm(-neg_bottom)), cc);
         }
@@ -1987,8 +2034,8 @@ MacroAssemblerARMCompat::store32(const Register &src, const Address &address)
 void
 MacroAssemblerARMCompat::store32(const Imm32 &src, const Address &address)
 {
-    move32(src, ScratchRegister);
-    storePtr(ScratchRegister, address);
+    move32(src, secondScratchReg_);
+    storePtr(secondScratchReg_, address);
 }
 
 void
@@ -2789,7 +2836,7 @@ MacroAssemblerARMCompat::loadValue(Address src, ValueOperand val)
                 mode = IB;
                 break;
               default:
-                JS_NOT_REACHED("Bogus Offset for LoadValue as DTM");
+                MOZ_ASSUME_UNREACHABLE("Bogus Offset for LoadValue as DTM");
             }
             startDataTransferM(IsLoad, Register::FromCode(srcOp.base()), mode);
             transferReg(val.payloadReg());
@@ -2812,10 +2859,10 @@ MacroAssemblerARMCompat::loadValue(Address src, ValueOperand val)
 void
 MacroAssemblerARMCompat::tagValue(JSValueType type, Register payload, ValueOperand dest)
 {
-    JS_ASSERT(payload != dest.typeReg());
-    ma_mov(ImmType(type), dest.typeReg());
+    JS_ASSERT(dest.typeReg() != dest.payloadReg());
     if (payload != dest.payloadReg())
         ma_mov(payload, dest.payloadReg());
+    ma_mov(ImmType(type), dest.typeReg());
 }
 
 void
@@ -2859,7 +2906,7 @@ MacroAssemblerARMCompat::storePayload(Register src, Operand dest)
         ma_str(src, ToPayload(dest));
         return;
     }
-    JS_NOT_REACHED("why do we do all of these things?");
+    MOZ_ASSUME_UNREACHABLE("why do we do all of these things?");
 
 }
 
@@ -2896,7 +2943,7 @@ MacroAssemblerARMCompat::storeTypeTag(ImmTag tag, Operand dest) {
         return;
     }
 
-    JS_NOT_REACHED("why do we do all of these things?");
+    MOZ_ASSUME_UNREACHABLE("why do we do all of these things?");
 
 }
 
@@ -3024,8 +3071,10 @@ MacroAssemblerARMCompat::setupABICall(uint32_t args)
 #else
     usedSlots_ = 0;
 #endif
-    floatArgsInGPR[0] = VFPRegister();
-    floatArgsInGPR[1] = VFPRegister();
+    floatArgsInGPR[0] = MoveOperand();
+    floatArgsInGPR[1] = MoveOperand();
+    floatArgsInGPRValid[0] = false;
+    floatArgsInGPRValid[1] = false;
 }
 
 void
@@ -3110,7 +3159,8 @@ MacroAssemblerARMCompat::passABIArg(const MoveOperand &from)
     MoveOperand dest;
     if (GetIntArgReg(usedSlots_, 0, &destReg)) {
         if (from.isDouble()) {
-            floatArgsInGPR[destReg.code() >> 1] = VFPRegister(from.floatReg());
+            floatArgsInGPR[destReg.code() >> 1] = from;
+            floatArgsInGPRValid[destReg.code() >> 1] = true;
             useResolver = false;
         } else if (from.isGeneralReg() && from.reg() == destReg) {
             // No need to move anything
@@ -3179,8 +3229,26 @@ MacroAssemblerARMCompat::callWithABIPre(uint32_t *stackAdjust)
         emitter.finish();
     }
     for (int i = 0; i < 2; i++) {
-        if (!floatArgsInGPR[i].isInvalid())
-            ma_vxfer(floatArgsInGPR[i], Register::FromCode(i*2), Register::FromCode(i*2+1));
+        if (floatArgsInGPRValid[i]) {
+            MoveOperand from = floatArgsInGPR[i];
+            Register to0 = Register::FromCode(i * 2), to1 = Register::FromCode(i * 2 + 1);
+
+            if (from.isFloatReg()) {
+                ma_vxfer(VFPRegister(from.floatReg()), to0, to1);
+            } else {
+                JS_ASSERT(from.isFloatAddress());
+                // Note: We can safely use the MoveOperand's displacement here,
+                // even if the base is SP: MoveEmitter::toOperand adjusts
+                // SP-relative operands by the difference between the current
+                // stack usage and stackAdjust, which emitter.finish() resets
+                // to 0.
+                //
+                // Warning: if the offset isn't within [-255,+255] then this
+                // will assert-fail (or, if non-debug, load the wrong words).
+                // Nothing uses such an offset at the time of this writing.
+                ma_ldrd(EDtrAddr(from.base(), EDtrOffImm(from.disp())), to0, to1);
+            }
+        }
     }
     checkStackAlignment();
 
@@ -3251,6 +3319,13 @@ MacroAssemblerARMCompat::handleFailureWithHandler(void *handler)
     passABIArg(r0);
     callWithABI(handler);
 
+    IonCode *excTail = GetIonContext()->runtime->ionRuntime()->getExceptionTail();
+    branch(excTail);
+}
+
+void
+MacroAssemblerARMCompat::handleFailureWithHandlerTail()
+{
     Label entryFrame;
     Label catch_;
     Label finally;

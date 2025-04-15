@@ -110,7 +110,7 @@ public:
   }
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(MediaDecoder, nsIObserver)
+NS_IMPL_ISUPPORTS1(MediaDecoder, nsIObserver)
 
 void MediaDecoder::SetDormantIfNecessary(bool aDormant)
 {
@@ -368,6 +368,7 @@ MediaDecoder::MediaDecoder() :
   mDuration(-1),
   mTransportSeekable(true),
   mMediaSeekable(true),
+  mSameOriginMedia(false),
   mReentrantMonitor("media.decoder"),
   mIsDormant(false),
   mPlayState(PLAY_STATE_PAUSED),
@@ -445,8 +446,7 @@ MediaDecoder::~MediaDecoder()
   MOZ_COUNT_DTOR(MediaDecoder);
 }
 
-nsresult MediaDecoder::OpenResource(MediaResource* aResource,
-                                    nsIStreamListener** aStreamListener)
+nsresult MediaDecoder::OpenResource(nsIStreamListener** aStreamListener)
 {
   MOZ_ASSERT(NS_IsMainThread());
   if (aStreamListener) {
@@ -459,24 +459,21 @@ nsresult MediaDecoder::OpenResource(MediaResource* aResource,
     // should be grabbed before the cache lock
     ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
 
-    nsresult rv = aResource->Open(aStreamListener);
+    nsresult rv = mResource->Open(aStreamListener);
     if (NS_FAILED(rv)) {
       LOG(PR_LOG_DEBUG, ("%p Failed to open stream!", this));
       return rv;
     }
-
-    mResource = aResource;
   }
   return NS_OK;
 }
 
-nsresult MediaDecoder::Load(MediaResource* aResource,
-                                nsIStreamListener** aStreamListener,
-                                MediaDecoder* aCloneDonor)
+nsresult MediaDecoder::Load(nsIStreamListener** aStreamListener,
+                            MediaDecoder* aCloneDonor)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  nsresult rv = OpenResource(aResource, aStreamListener);
+  nsresult rv = OpenResource(aStreamListener);
   NS_ENSURE_SUCCESS(rv, rv);
 
   mDecoderStateMachine = CreateStateMachine();
@@ -727,6 +724,9 @@ void MediaDecoder::MetadataLoaded(int aChannels, int aRate, bool aHasAudio, bool
 
   {
     ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+    if (mPlayState == PLAY_STATE_LOADING && mIsDormant) {
+      mIsDormant = false;
+    }
     mDuration = mDecoderStateMachine ? mDecoderStateMachine->GetDuration() : -1;
     // Duration has changed so we should recompute playback rate
     UpdatePlaybackRate();
@@ -837,6 +837,18 @@ void MediaDecoder::DecodeError()
     mOwner->DecodeError();
 
   Shutdown();
+}
+
+void MediaDecoder::UpdateSameOriginStatus(bool aSameOrigin)
+{
+  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+  mSameOriginMedia = aSameOrigin;
+}
+
+bool MediaDecoder::IsSameOriginMedia()
+{
+  GetReentrantMonitor().AssertCurrentThreadIn();
+  return mSameOriginMedia;
 }
 
 bool MediaDecoder::IsSeeking() const
@@ -1144,7 +1156,8 @@ void MediaDecoder::ChangeState(PlayState aState)
     mNextState = PLAY_STATE_PAUSED;
   }
 
-  if (mPlayState == PLAY_STATE_SHUTDOWN) {
+  if ((mPlayState == PLAY_STATE_LOADING && mIsDormant && aState != PLAY_STATE_SHUTDOWN) ||
+       mPlayState == PLAY_STATE_SHUTDOWN) {
     GetReentrantMonitor().NotifyAll();
     return;
   }

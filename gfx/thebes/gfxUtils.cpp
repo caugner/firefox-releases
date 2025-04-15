@@ -153,8 +153,8 @@ gfxUtils::ConvertBGRAtoRGBA(gfxImageSurface *aSourceSurface,
     MOZ_ASSERT(aSourceSurface->Stride() == aSourceSurface->Width() * 4,
                "Source surface stride isn't tightly packed");
 
-    MOZ_ASSERT(aSourceSurface->Format() == gfxASurface::ImageFormatARGB32,
-               "Surfaces must be ARGB32");
+    MOZ_ASSERT(aSourceSurface->Format() == gfxASurface::ImageFormatARGB32 || aSourceSurface->Format() == gfxASurface::ImageFormatRGB24,
+               "Surfaces must be ARGB32 or RGB24");
 
     uint8_t *src = aSourceSurface->Data();
     uint8_t *dst = aDestSurface->Data();
@@ -189,6 +189,7 @@ IsSafeImageTransformComponent(gfxFloat aValue)
   return aValue >= -32768 && aValue <= 32767;
 }
 
+#ifndef MOZ_GFX_OPTIMIZE_MOBILE
 /**
  * This returns the fastest operator to use for solid surfaces which have no
  * alpha channel or their alpha channel is uniformly opaque.
@@ -210,7 +211,6 @@ OptimalFillOperator()
 #endif
 }
 
-#ifndef MOZ_GFX_OPTIMIZE_MOBILE
 // EXTEND_PAD won't help us here; we have to create a temporary surface to hold
 // the subimage of pixels we're allowed to sample.
 static already_AddRefed<gfxDrawable>
@@ -474,15 +474,7 @@ gfxUtils::DrawPixelSnapped(gfxContext*      aContext,
     }
 #endif
 
-    gfxContext::GraphicsOperator op = aContext->CurrentOperator();
-    if ((op == gfxContext::OPERATOR_OVER || workaround.PushedGroup()) &&
-        aFormat == gfxASurface::ImageFormatRGB24) {
-        aContext->SetOperator(OptimalFillOperator());
-    }
-
     drawable->Draw(aContext, aFill, doTile, aFilter, userSpaceToImageSpace);
-
-    aContext->SetOperator(op);
 }
 
 /* static */ int
@@ -575,6 +567,12 @@ ClipToRegionInternal(gfx::DrawTarget* aTarget, const nsIntRegion& aRegion,
 gfxUtils::ClipToRegion(gfxContext* aContext, const nsIntRegion& aRegion)
 {
   ClipToRegionInternal(aContext, aRegion, false);
+}
+
+/*static*/ void
+gfxUtils::ClipToRegion(DrawTarget* aTarget, const nsIntRegion& aRegion)
+{
+  ClipToRegionInternal(aTarget, aRegion, false);
 }
 
 /*static*/ void
@@ -856,5 +854,5 @@ gfxUtils::CopyAsDataURL(DrawTarget* aDT)
 bool gfxUtils::sDumpPaintList = getenv("MOZ_DUMP_PAINT_LIST") != 0;
 bool gfxUtils::sDumpPainting = getenv("MOZ_DUMP_PAINT") != 0;
 bool gfxUtils::sDumpPaintingToFile = getenv("MOZ_DUMP_PAINT_TO_FILE") != 0;
-FILE *gfxUtils::sDumpPaintFile = NULL;
+FILE *gfxUtils::sDumpPaintFile = nullptr;
 #endif

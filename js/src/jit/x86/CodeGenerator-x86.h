@@ -7,8 +7,8 @@
 #ifndef jit_x86_CodeGenerator_x86_h
 #define jit_x86_CodeGenerator_x86_h
 
-#include "Assembler-x86.h"
 #include "jit/shared/CodeGenerator-x86-shared.h"
+#include "jit/x86/Assembler-x86.h"
 
 namespace js {
 namespace jit {

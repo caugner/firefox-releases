@@ -9,6 +9,7 @@
 #include "Image.h"
 #include "nsIStreamListener.h"
 #include "nsIRequest.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/WeakPtr.h"
 
@@ -43,8 +44,8 @@ public:
                 uint32_t aFlags);
   virtual nsIntRect FrameRect(uint32_t aWhichFrame) MOZ_OVERRIDE;
 
-  virtual size_t HeapSizeOfSourceWithComputedFallback(nsMallocSizeOfFun aMallocSizeOf) const;
-  virtual size_t HeapSizeOfDecodedWithComputedFallback(nsMallocSizeOfFun aMallocSizeOf) const;
+  virtual size_t HeapSizeOfSourceWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const;
+  virtual size_t HeapSizeOfDecodedWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const;
   virtual size_t NonHeapSizeOfDecoded() const;
   virtual size_t OutOfProcessSizeOfDecoded() const;
 
@@ -59,8 +60,15 @@ public:
                                        bool aLastPart) MOZ_OVERRIDE;
   virtual nsresult OnNewSourceData() MOZ_OVERRIDE;
 
-  // Callback for SVGRootRenderingObserver.
-  void InvalidateObserver();
+  /**
+   * Callback for SVGRootRenderingObserver.
+   *
+   * This just sets a dirty flag that we check in VectorImage::RequestRefresh,
+   * which is called under the ticks of the refresh driver of any observing
+   * documents that we may have. Only then (after all animations in this image
+   * have been updated) do we send out "frame changed" notifications,
+   */
+  void InvalidateObserversOnNextRefreshDriverTick();
 
   // Callback for SVGParseCompleteListener.
   void OnSVGDocumentParsed();
@@ -89,6 +97,8 @@ private:
   bool           mIsDrawing;              // Are we currently drawing?
   bool           mHaveAnimations;         // Is our SVG content SMIL-animated?
                                           // (Only set after mIsFullyLoaded.)
+  bool           mHasPendingInvalidation; // Invalidate observers next refresh
+                                          // driver tick.
 
   friend class ImageFactory;
 };

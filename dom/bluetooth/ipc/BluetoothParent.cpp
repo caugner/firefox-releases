@@ -67,8 +67,7 @@ public:
   virtual bool
   ParseSuccessfulReply(JS::Value* aValue) MOZ_OVERRIDE
   {
-    MOZ_NOT_REACHED("This should never be called!");
-    return false;
+    MOZ_CRASH("This should never be called!");
   }
 };
 
@@ -231,24 +230,26 @@ BluetoothParent::RecvPBluetoothRequestConstructor(
       return actor->DoRequest(aRequest.get_DisconnectScoRequest());
     case Request::TIsScoConnectedRequest:
       return actor->DoRequest(aRequest.get_IsScoConnectedRequest());
+    case Request::TSendMetaDataRequest:
+      return actor->DoRequest(aRequest.get_SendMetaDataRequest());
+    case Request::TSendPlayStatusRequest:
+      return actor->DoRequest(aRequest.get_SendPlayStatusRequest());
     default:
-      MOZ_NOT_REACHED("Unknown type!");
-      return false;
+      MOZ_CRASH("Unknown type!");
   }
 
-  MOZ_NOT_REACHED("Should never get here!");
-  return false;
+  MOZ_CRASH("Should never get here!");
 }
 
 PBluetoothRequestParent*
-BluetoothParent::AllocPBluetoothRequest(const Request& aRequest)
+BluetoothParent::AllocPBluetoothRequestParent(const Request& aRequest)
 {
   MOZ_ASSERT(mService);
   return new BluetoothRequestParent(mService);
 }
 
 bool
-BluetoothParent::DeallocPBluetoothRequest(PBluetoothRequestParent* aActor)
+BluetoothParent::DeallocPBluetoothRequestParent(PBluetoothRequestParent* aActor)
 {
   delete aActor;
   return true;
@@ -604,5 +605,34 @@ BluetoothRequestParent::DoRequest(const IsScoConnectedRequest& aRequest)
   MOZ_ASSERT(mRequestType == Request::TIsScoConnectedRequest);
 
   mService->IsScoConnected(mReplyRunnable.get());
+  return true;
+}
+
+bool
+BluetoothRequestParent::DoRequest(const SendMetaDataRequest& aRequest)
+{
+  MOZ_ASSERT(mService);
+  MOZ_ASSERT(mRequestType == Request::TSendMetaDataRequest);
+
+  mService->SendMetaData(aRequest.title(),
+                         aRequest.artist(),
+                         aRequest.album(),
+                         aRequest.mediaNumber(),
+                         aRequest.totalMediaCount(),
+                         aRequest.duration(),
+                         mReplyRunnable.get());
+  return true;
+}
+
+bool
+BluetoothRequestParent::DoRequest(const SendPlayStatusRequest& aRequest)
+{
+  MOZ_ASSERT(mService);
+  MOZ_ASSERT(mRequestType == Request::TSendPlayStatusRequest);
+
+  mService->SendPlayStatus(aRequest.duration(),
+                           aRequest.position(),
+                           aRequest.playStatus(),
+                           mReplyRunnable.get());
   return true;
 }

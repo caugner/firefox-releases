@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -23,10 +24,12 @@
 #include "Layers.h"
 #include "ClientLayerManager.h"
 #include "BasicLayers.h"
+#include "FrameMetrics.h"
 #include "Windows.Graphics.Display.h"
 #ifdef MOZ_CRASHREPORTER
 #include "nsExceptionHandler.h"
 #endif
+#include "UIABridgePrivate.h"
 
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
@@ -52,7 +55,17 @@ extern PRLogModuleInfo* gWindowsLog;
 
 static uint32_t gInstanceCount = 0;
 const PRUnichar* kMetroSubclassThisProp = L"MetroSubclassThisProp";
+HWND MetroWidget::sICoreHwnd = NULL;
 static const UINT sDefaultBrowserMsgID = RegisterWindowMessageW(L"DefaultBrowserClosing");
+
+// WM_GETOBJECT id pulled from uia headers
+#define UiaRootObjectId -25
+
+namespace mozilla {
+namespace widget {
+namespace winrt {
+extern ComPtr<IUIABridge> gProviderRoot;
+} } }
 
 namespace {
 
@@ -137,6 +150,9 @@ namespace {
 
 NS_IMPL_ISUPPORTS_INHERITED0(MetroWidget, nsBaseWidget)
 
+
+nsRefPtr<mozilla::layers::APZCTreeManager> MetroWidget::sAPZC;
+
 MetroWidget::MetroWidget() :
   mTransparencyMode(eTransparencyOpaque),
   mWnd(NULL),
@@ -148,6 +164,7 @@ MetroWidget::MetroWidget() :
   if (!gInstanceCount) {
     UserActivity();
     nsTextStore::Initialize();
+    KeyboardLayout::GetInstance()->OnLayoutChange(::GetKeyboardLayout(0));
   } // !gInstanceCount
   gInstanceCount++;
 }
@@ -160,6 +177,7 @@ MetroWidget::~MetroWidget()
 
   // Global shutdown
   if (!gInstanceCount) {
+    MetroWidget::sAPZC = nullptr;
     nsTextStore::Terminate();
   } // !gInstanceCount
 }
@@ -243,9 +261,29 @@ MetroWidget::Destroy()
     return NS_OK;
   Log("[%X] %s mWnd=%X type=%d", this, __FUNCTION__, mWnd, mWindowType);
   mOnDestroyCalled = true;
+
+  nsCOMPtr<nsIWidget> kungFuDeathGrip(this);
+
   RemoveSubclass();
+  NotifyWindowDestroyed();
+
+  // Prevent the widget from sending additional events.
+  mWidgetListener = nullptr;
+  mAttachedWidgetListener = nullptr;
+
+  // Release references to children, device context, toolkit, and app shell.
+  nsBaseWidget::Destroy();
+  nsBaseWidget::OnDestroy();
+
+  if (mLayerManager) {
+    mLayerManager->Destroy();
+  }
+
+  mLayerManager = nullptr;
   mView = nullptr;
   mIdleService = nullptr;
+  mWnd = NULL;
+
   return NS_OK;
 }
 
@@ -450,104 +488,10 @@ MetroWidget::SynthesizeNativeKeyEvent(int32_t aNativeKeyboardLayout,
                                       const nsAString& aCharacters,
                                       const nsAString& aUnmodifiedCharacters)
 {
-  Log("ENTERED SynthesizeNativeKeyEvent");
-
-  // According to MSDN, valid virtual-key codes are in the range 1 to 254.
-  // http://msdn.microsoft.com/en-us/library/windows/desktop/ms646271%28v=vs.85%29.aspx
-  NS_ENSURE_ARG_RANGE(aNativeKeyCode, 1, 254);
-
-  // Store a list of all loaded keyboard layouts
-  int32_t const numKeyboardLayouts = GetKeyboardLayoutList(0, NULL);
-  if (numKeyboardLayouts == 0) {
-    return NS_ERROR_FAILURE;
-  }
-  HKL* keyboardLayoutList = new HKL[numKeyboardLayouts];
-  GetKeyboardLayoutList(numKeyboardLayouts, keyboardLayoutList);
-
-  // Store the current keyboard layout
-  HKL const oldKeyboardLayout = ::GetKeyboardLayout(0);
-  Log("  Current keyboard layout: %08x", oldKeyboardLayout);
-  Log("  Loading keyboard layout: %08x", aNativeKeyboardLayout);
-
-  // Load the requested keyboard layout
-  nsPrintfCString layoutName("%08x", aNativeKeyboardLayout);
-  HKL const newKeyboardLayout = ::LoadKeyboardLayoutA(layoutName.get(),
-                                                      KLF_REPLACELANG);
-  Log("  ::LoadKeyboardLayoutA returned %08x", newKeyboardLayout);
-
-  // We have a list of all keyboard layouts that were loaded before we called
-  // ::LoadKeyboardLayout.  Now, we loop through that list to determine which
-  // of these cases we've hit:
-  //     A) The layout we loaded was already loaded
-  //     B) The layout we loaded was not already loaded, and it replaced
-  //        another layout in the list
-  //     C) The layout we loaded was not already loaded, and it has not
-  //        replaced another layout
-  bool haveLoaded = true;
-  bool haveActivated = false;
-  bool haveReplaced = false;
-  if (GetKeyboardLayoutList(0, NULL) == numKeyboardLayouts) {
-    haveReplaced = true;
-    for (int32_t i = 0; i < numKeyboardLayouts; i++) {
-      if (keyboardLayoutList[i] == newKeyboardLayout) {
-        Log("  %08x found in list of loaded keyboard layouts", newKeyboardLayout);
-        haveLoaded = false;
-        haveReplaced = false;
-        break;
-      }
-    }
-  }
-
-  // If the requested keyboard layout was already active when this function
-  // was called, then we don't need to activate our keyboard layout
-  if (oldKeyboardLayout != newKeyboardLayout) {
-    Log("  %08x != %08x", oldKeyboardLayout, newKeyboardLayout);
-    haveActivated = true;
-    Log("  Activating keyboard layout: %08x", newKeyboardLayout);
-    HKL ret = ::ActivateKeyboardLayout(newKeyboardLayout, KLF_SETFORPROCESS);
-    Log("  ::ActivateKeyboardLayout returned %08x", ret);
-  }
-
-  INPUT inputs[2];
-  memset(&inputs, 0, 2*sizeof(INPUT));
-  inputs[0].type = inputs[1].type = INPUT_KEYBOARD;
-  inputs[0].ki.wVk = inputs[1].ki.wVk = aNativeKeyCode;
-  inputs[1].ki.dwFlags |= KEYEVENTF_KEYUP;
-  SendInputs(aModifierFlags, inputs, 2);
-
-  // Now that all the events have been processed, we can set the keyboard
-  // layout list back to its original state.  If we didn't activate a
-  // keyboard (meaning that the requested keyboard was already the active
-  // keyboard), we don't have to do anything.
-  if (haveActivated) {
-    // If we replaced a keyboard in the layout list, let's be safe and reload
-    // all the keyboards that were in the original list.
-    if (haveReplaced) {
-      Log("  Loading all previous layouts");
-      for (int32_t i = 0; i < numKeyboardLayouts; i++) {
-        nsPrintfCString layoutName("%08x", keyboardLayoutList[i]);
-        HKL ret = ::LoadKeyboardLayoutA(layoutName.get(), KLF_REPLACELANG);
-        Log("    ::LoadKeyboardLayoutA returned %08x", ret);
-      }
-    }
-    // Any keyboards that were in the keyboard layout list when we entered
-    // this function should be loaded, so let's go ahead and activate the
-    // keyboard layout that was active when we entered.
-    Log("  Activating previous layout %08x", oldKeyboardLayout);
-    HKL ret = ::ActivateKeyboardLayout(oldKeyboardLayout, KLF_SETFORPROCESS);
-    Log("  ::ActivateKeyboardLayout returned %08x", ret);
-    // If we loaded a keyboard that was not already loaded, and that didn't
-    // replace another keyboard in the keyboard layout list, let's unload it.
-    if (haveLoaded && !haveReplaced) {
-      Log("  Unloading keyboard layout %08x", newKeyboardLayout);
-      ::UnloadKeyboardLayout(newKeyboardLayout);
-    }
-  }
-
-  delete[] keyboardLayoutList;
-
-  Log("EXITING SynthesizeNativeKeyEvent");
-  return NS_OK;
+  KeyboardLayout* keyboardLayout = KeyboardLayout::GetInstance();
+  return keyboardLayout->SynthesizeNativeKeyEvent(
+           this, aNativeKeyboardLayout, aNativeKeyCode, aModifierFlags,
+           aCharacters, aUnmodifiedCharacters);
 }
 
 nsresult
@@ -681,6 +625,91 @@ MetroWidget::WindowProcedure(HWND aWnd, UINT aMsg, WPARAM aWParam, LPARAM aLPara
       break;
     }
 
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+    {
+      MSG msg = WinUtils::InitMSG(aMsg, aWParam, aLParam, aWnd);
+      // If this method doesn't call NativeKey::HandleKeyDownMessage(), this
+      // method must clean up the redirected message information itself.  For
+      // more information, see above comment of
+      // RedirectedKeyDownMessageManager::AutoFlusher class definition in
+      // KeyboardLayout.h.
+      RedirectedKeyDownMessageManager::AutoFlusher
+        redirectedMsgFlusher(this, msg);
+
+      if (nsTextStore::IsComposingOn(this)) {
+        break;
+      }
+
+      ModifierKeyState modKeyState;
+      NativeKey nativeKey(this, msg, modKeyState);
+      processDefault = !nativeKey.HandleKeyDownMessage();
+      // HandleKeyDownMessage cleaned up the redirected message information
+      // itself, so, we should do nothing.
+      redirectedMsgFlusher.Cancel();
+      break;
+    }
+
+    case WM_KEYUP:
+    case WM_SYSKEYUP:
+    {
+      if (nsTextStore::IsComposingOn(this)) {
+        break;
+      }
+
+      MSG msg = WinUtils::InitMSG(aMsg, aWParam, aLParam, aWnd);
+      ModifierKeyState modKeyState;
+      NativeKey nativeKey(this, msg, modKeyState);
+      processDefault = !nativeKey.HandleKeyUpMessage();
+      break;
+    }
+
+    case WM_CHAR:
+    case WM_SYSCHAR:
+    {
+      if (nsTextStore::IsComposingOn(this)) {
+        nsTextStore::CommitComposition(false);
+      }
+
+      MSG msg = WinUtils::InitMSG(aMsg, aWParam, aLParam, aWnd);
+      ModifierKeyState modKeyState;
+      NativeKey nativeKey(this, msg, modKeyState);
+      processDefault = !nativeKey.HandleCharMessage(msg);
+      break;
+    }
+
+    case WM_INPUTLANGCHANGE:
+    {
+      KeyboardLayout::GetInstance()->
+        OnLayoutChange(reinterpret_cast<HKL>(aLParam));
+      processResult = 1;
+      break;
+    }
+
+    case WM_GETOBJECT:
+    {
+      DWORD dwObjId = (LPARAM)(DWORD) aLParam;
+      // Passing this to CallWindowProc can result in a failure due to a timing issue
+      // in winrt core window server code, so we call it directly here. Also, it's not
+      // clear Windows::UI::Core::WindowServer::OnAutomationProviderRequestedEvent is
+      // compatible with metro enabled desktop browsers, it makes an initial call to
+      // UiaReturnRawElementProvider passing the return result from FrameworkView
+      // OnAutomationProviderRequested as the hwnd (me scratches head) which results in
+      // GetLastError always being set to invalid handle (6) after CallWindowProc returns.
+      if (dwObjId == UiaRootObjectId) {
+        NS_ASSERTION(gProviderRoot.Get(), "gProviderRoot is null??");
+        ComPtr<IRawElementProviderSimple> simple;
+        gProviderRoot.As(&simple);
+        LRESULT res = UiaReturnRawElementProvider(aWnd, aWParam, aLParam, simple.Get());
+        if (res) {
+          return res;
+        }
+        NS_ASSERTION(res, "UiaReturnRawElementProvider failed!");
+        Log("UiaReturnRawElementProvider failed! GetLastError=%X", GetLastError());
+      }
+      break;
+    }
+
     default:
     {
       if (aWParam == WM_USER_TSF_TEXTCHANGE) {
@@ -723,6 +752,7 @@ MetroWidget::FindMetroWindow()
 
   // subclass it
   SetSubclass();
+  sICoreHwnd = mWnd;
   return;
 }
 
@@ -791,6 +821,26 @@ MetroWidget::ShouldUseBasicManager()
 {
   // toolkit or test widgets fall back on empty shadow layers
   return (mWindowType != eWindowType_toplevel);
+}
+
+bool
+MetroWidget::ShouldUseAPZC()
+{
+  const char* kPrefName = "layers.async-pan-zoom.enabled";
+  return ShouldUseOffMainThreadCompositing() &&
+         Preferences::GetBool(kPrefName, false);
+}
+
+CompositorParent* MetroWidget::NewCompositorParent(int aSurfaceWidth, int aSurfaceHeight)
+{
+  CompositorParent *compositor = nsBaseWidget::NewCompositorParent(aSurfaceWidth, aSurfaceHeight);
+
+  if (ShouldUseAPZC()) {
+    CompositorParent::SetControllerForLayerTree(compositor->RootLayerTreeId(), this);
+    MetroWidget::sAPZC = CompositorParent::GetAPZCTreeManager(compositor->RootLayerTreeId());
+  }
+
+  return compositor;
 }
 
 LayerManager*
@@ -963,10 +1013,10 @@ MetroWidget::InitEvent(nsGUIEvent& event, nsIntPoint* aPoint)
   if (!aPoint) {
     event.refPoint.x = event.refPoint.y = 0;
   } else {
-    // convert CSS pixels to device pixels for event.refPoint
-    double scale = GetDefaultScale(); 
-    event.refPoint.x = int32_t(NS_round(aPoint->x * scale));
-    event.refPoint.y = int32_t(NS_round(aPoint->y * scale));
+    CSSIntPoint cssPoint(aPoint->x, aPoint->y);
+    LayoutDeviceIntPoint layoutDeviceIntPoint = CSSIntPointToLayoutDeviceIntPoint(cssPoint);
+    event.refPoint.x = layoutDeviceIntPoint.x;
+    event.refPoint.y = layoutDeviceIntPoint.y;
   }
   event.time = ::GetMessageTime();
 }
@@ -974,10 +1024,10 @@ MetroWidget::InitEvent(nsGUIEvent& event, nsIntPoint* aPoint)
 bool
 MetroWidget::DispatchWindowEvent(nsGUIEvent* aEvent)
 {
-  nsEventStatus aStatus;
-  if (!aEvent || NS_FAILED(DispatchEvent(aEvent, aStatus)))
-    return false;
-  return true;
+  MOZ_ASSERT(aEvent);
+  nsEventStatus status = nsEventStatus_eIgnore;
+  DispatchEvent(aEvent, status);
+  return (status == nsEventStatus_eConsumeNoDefault);
 }
 
 NS_IMETHODIMP
@@ -1010,7 +1060,7 @@ MetroWidget::DispatchEvent(nsGUIEvent* event, nsEventStatus & aStatus)
 
 #ifdef ACCESSIBILITY
 mozilla::a11y::Accessible*
-MetroWidget::GetRootAccessible()
+MetroWidget::GetAccessible()
 {
   // We want the ability to forcibly disable a11y on windows, because
   // some non-a11y-related components attempt to bring it up.  See bug
@@ -1034,7 +1084,7 @@ MetroWidget::GetRootAccessible()
   if (accForceDisable)
       return nullptr;
 
-  return GetAccessible();
+  return GetRootAccessible();
 }
 #endif
 
@@ -1051,6 +1101,15 @@ double MetroWidget::GetDefaultScaleInternal()
     }
   }
   return 1.0;
+}
+
+LayoutDeviceIntPoint
+MetroWidget::CSSIntPointToLayoutDeviceIntPoint(const CSSIntPoint &aCSSPoint)
+{
+  double scale = GetDefaultScale();
+  LayoutDeviceIntPoint devPx(int32_t(NS_round(scale * aCSSPoint.x)),
+                             int32_t(NS_round(scale * aCSSPoint.y)));
+  return devPx;
 }
 
 float MetroWidget::GetDPI()
@@ -1277,4 +1336,130 @@ MetroWidget::HasPendingInputEvent()
   if (HIWORD(GetQueueStatus(QS_INPUT)))
     return true;
   return false;
+}
+
+// GeckoContentController interface impl
+
+#include "nsIBrowserDOMWindow.h"
+#include "nsIWebNavigation.h"
+#include "nsIDocShellTreeItem.h"
+#include "nsIDOMWindow.h"
+#include "nsIDOMChromeWindow.h"
+#include "nsIWindowMediator.h"
+#include "nsIInterfaceRequestorUtils.h"
+
+class RequestContentRepaintEvent : public nsRunnable
+{
+public:
+    RequestContentRepaintEvent(const FrameMetrics& aFrameMetrics) : mFrameMetrics(aFrameMetrics)
+    {
+    }
+
+    NS_IMETHOD Run() {
+        // This event shuts down the worker thread and so must be main thread.
+        MOZ_ASSERT(NS_IsMainThread());
+
+        CSSToScreenScale resolution = mFrameMetrics.CalculateResolution();
+        CSSRect compositedRect = mFrameMetrics.CalculateCompositedRectInCssPixels();
+
+        NS_ConvertASCIItoUTF16 data(nsPrintfCString("{ " \
+                                                    "  \"resolution\": %.2f, " \
+                                                    "  \"scrollId\": %d, " \
+                                                    "  \"compositedRect\": { \"width\": %d, \"height\": %d }, " \
+                                                    "  \"displayPort\":    { \"x\": %d, \"y\": %d, \"width\": %d, \"height\": %d }, " \
+                                                    "  \"scrollTo\":       { \"x\": %d, \"y\": %d }" \
+                                                    "}",
+                                                    (float)(resolution.scale / mFrameMetrics.mDevPixelsPerCSSPixel.scale),
+                                                    (int)mFrameMetrics.mScrollId,
+                                                    (int)compositedRect.width,
+                                                    (int)compositedRect.height,
+                                                    (int)mFrameMetrics.mDisplayPort.x,
+                                                    (int)mFrameMetrics.mDisplayPort.y,
+                                                    (int)mFrameMetrics.mDisplayPort.width,
+                                                    (int)mFrameMetrics.mDisplayPort.height,
+                                                    (int)mFrameMetrics.mScrollOffset.x,
+                                                    (int)mFrameMetrics.mScrollOffset.y));
+
+        MetroUtils::FireObserver("apzc-request-content-repaint", data.get());
+        return NS_OK;
+    }
+protected:
+    const FrameMetrics mFrameMetrics;
+};
+
+void
+MetroWidget::RequestContentRepaint(const FrameMetrics& aFrameMetrics)
+{
+  LogFunction();
+
+  // Send the result back to the main thread so that it can shutdown
+  nsCOMPtr<nsIRunnable> r1 = new RequestContentRepaintEvent(aFrameMetrics);
+  if (!NS_IsMainThread()) {
+    NS_DispatchToMainThread(r1);
+  } else {
+    r1->Run();
+  }
+}
+
+void
+MetroWidget::HandleDoubleTap(const CSSIntPoint& aPoint)
+{
+  LogFunction();
+
+  if (!mMetroInput) {
+    return;
+  }
+
+  mMetroInput->HandleDoubleTap(CSSIntPointToLayoutDeviceIntPoint(aPoint));
+}
+
+void
+MetroWidget::HandleSingleTap(const CSSIntPoint& aPoint)
+{
+  LogFunction();
+
+  if (!mMetroInput) {
+    return;
+  }
+
+  mMetroInput->HandleSingleTap(CSSIntPointToLayoutDeviceIntPoint(aPoint));
+}
+
+void
+MetroWidget::HandleLongTap(const CSSIntPoint& aPoint)
+{
+  LogFunction();
+
+  if (!mMetroInput) {
+    return;
+  }
+
+  mMetroInput->HandleLongTap(CSSIntPointToLayoutDeviceIntPoint(aPoint));
+}
+
+void
+MetroWidget::SendAsyncScrollDOMEvent(FrameMetrics::ViewID aScrollId, const CSSRect &aContentRect, const CSSSize &aScrollableSize)
+{
+  LogFunction();
+}
+
+void
+MetroWidget::PostDelayedTask(Task* aTask, int aDelayMs)
+{
+  LogFunction();
+  MessageLoop::current()->PostDelayedTask(FROM_HERE, aTask, aDelayMs);
+}
+
+void
+MetroWidget::HandlePanBegin()
+{
+  LogFunction();
+  MetroUtils::FireObserver("apzc-handle-pan-begin", L"");
+}
+
+void
+MetroWidget::HandlePanEnd()
+{
+  LogFunction();
+  MetroUtils::FireObserver("apzc-handle-pan-end", L"");
 }

@@ -7,7 +7,7 @@
 #ifndef jit_arm_CodeGenerator_arm_h
 #define jit_arm_CodeGenerator_arm_h
 
-#include "Assembler-arm.h"
+#include "jit/arm/Assembler-arm.h"
 #include "jit/shared/CodeGenerator-shared.h"
 
 namespace js {
@@ -24,8 +24,8 @@ class CodeGeneratorARM : public CodeGeneratorShared
 
   protected:
     // Label for the common return path.
-    HeapLabel *returnLabel_;
-    HeapLabel *deoptLabel_;
+    NonAssertingLabel returnLabel_;
+    NonAssertingLabel deoptLabel_;
     // ugh.  this is not going to be pretty to move over.
     // stack slotted variables are not useful on arm.
     // it looks like this will need to return one of two types.
@@ -75,12 +75,13 @@ class CodeGeneratorARM : public CodeGeneratorShared
     virtual bool visitMulI(LMulI *ins);
 
     virtual bool visitDivI(LDivI *ins);
+    virtual bool visitSoftDivI(LSoftDivI *ins);
     virtual bool visitDivPowTwoI(LDivPowTwoI *ins);
     virtual bool visitModI(LModI *ins);
+    virtual bool visitSoftModI(LSoftModI *ins);
     virtual bool visitModPowTwoI(LModPowTwoI *ins);
     virtual bool visitModMaskI(LModMaskI *ins);
     virtual bool visitPowHalfD(LPowHalfD *ins);
-    virtual bool visitMoveGroup(LMoveGroup *group);
     virtual bool visitShiftI(LShiftI *ins);
     virtual bool visitUrshD(LUrshD *ins);
 
@@ -94,6 +95,7 @@ class CodeGeneratorARM : public CodeGeneratorShared
     virtual bool visitCompareBAndBranch(LCompareBAndBranch *lir);
     virtual bool visitCompareV(LCompareV *lir);
     virtual bool visitCompareVAndBranch(LCompareVAndBranch *lir);
+    virtual bool visitBitAndAndBranch(LBitAndAndBranch *baab);
     virtual bool visitUInt32ToDouble(LUInt32ToDouble *lir);
     virtual bool visitNotI(LNotI *ins);
     virtual bool visitNotD(LNotD *ins);
@@ -117,6 +119,11 @@ class CodeGeneratorARM : public CodeGeneratorShared
 
     void storeElementTyped(const LAllocation *value, MIRType valueType, MIRType elementType,
                            const Register &elements, const LAllocation *index);
+
+    bool divICommon(MDiv *mir, Register lhs, Register rhs, Register output, LSnapshot *snapshot,
+                    Label &done);
+    bool modICommon(MMod *mir, Register lhs, Register rhs, Register output, LSnapshot *snapshot,
+                    Label &done);
 
   public:
     CodeGeneratorARM(MIRGenerator *gen, LIRGraph *graph, MacroAssembler *masm);
@@ -157,8 +164,6 @@ class CodeGeneratorARM : public CodeGeneratorShared
 
     bool generateInvalidateEpilogue();
   protected:
-    bool generateAsmJSPrologue(const MIRTypeVector &argTypes, MIRType returnType,
-                             Label *internalEntry);
     void postAsmJSCall(LAsmJSCall *lir) {
 #if  !defined(JS_CPU_ARM_HARDFP)
         if (lir->mir()->type() == MIRType_Double) {
@@ -166,9 +171,11 @@ class CodeGeneratorARM : public CodeGeneratorShared
         }
 #endif
 }
- 
+
     bool visitEffectiveAddress(LEffectiveAddress *ins);
-    bool visitAsmJSDivOrMod(LAsmJSDivOrMod *ins);
+    bool visitUDiv(LUDiv *ins);
+    bool visitUMod(LUMod *ins);
+    bool visitSoftUDivOrMod(LSoftUDivOrMod *ins);
 };
 
 typedef CodeGeneratorARM CodeGeneratorSpecific;

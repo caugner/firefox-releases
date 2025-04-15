@@ -10,9 +10,10 @@
 // This file declares the data structures used to build a control-flow graph
 // containing MIR.
 
-#include "IonAllocPolicy.h"
-#include "MIRGenerator.h"
-#include "FixedList.h"
+#include "jit/FixedList.h"
+#include "jit/IonAllocPolicy.h"
+#include "jit/MIR.h"
+#include "jit/MIRGenerator.h"
 
 namespace js {
 namespace jit {
@@ -76,9 +77,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     static MBasicBlock *NewPendingLoopHeader(MIRGraph &graph, CompileInfo &info,
                                              MBasicBlock *pred, jsbytecode *entryPc);
     static MBasicBlock *NewSplitEdge(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred);
-    static MBasicBlock *NewParBailout(MIRGraph &graph, CompileInfo &info,
-                                      MBasicBlock *pred, jsbytecode *entryPc,
-                                      MResumePoint *resumePoint);
+    static MBasicBlock *NewAbortPar(MIRGraph &graph, CompileInfo &info,
+                                    MBasicBlock *pred, jsbytecode *entryPc,
+                                    MResumePoint *resumePoint);
 
     bool dominates(MBasicBlock *other);
 
@@ -175,7 +176,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
 
     // Replaces an edge for a given block with a new block. This is
     // used for critical edge splitting and also for inserting
-    // bailouts during ParallelArrayAnalysis.
+    // bailouts during ParallelSafetyAnalysis.
     //
     // Note: If successorWithPhis is set, you must not be replacing it.
     void replacePredecessor(MBasicBlock *old, MBasicBlock *split);
@@ -222,6 +223,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     MInstructionReverseIterator discardAt(MInstructionReverseIterator &iter);
     MDefinitionIterator discardDefAt(MDefinitionIterator &iter);
     void discardAllInstructions();
+    void discardAllPhiOperands();
     void discardAllPhis();
     void discardAllResumePoints(bool discardEntry = true);
 
@@ -468,6 +470,8 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
 
     void dumpStack(FILE *fp);
 
+    void dump(FILE *fp);
+
     // Track bailouts by storing the current pc in MIR instruction added at this
     // cycle. This is also used for tracking calls when profiling.
     void updateTrackedPc(jsbytecode *pc) {
@@ -508,6 +512,17 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     MBasicBlock *loopHeader_;
 
     jsbytecode *trackedPc_;
+
+#if defined (JS_ION_PERF)
+    unsigned lineno_;
+    unsigned columnIndex_;
+
+  public:
+    void setLineno(unsigned l) { lineno_ = l; }
+    unsigned lineno() const { return lineno_; }
+    void setColumnIndex(unsigned c) { columnIndex_ = c; }
+    unsigned columnIndex() const { return columnIndex_; }
+#endif
 };
 
 typedef InlineListIterator<MBasicBlock> MBasicBlockIterator;
@@ -596,6 +611,9 @@ class MIRGraph
     ReversePostorderIterator rpoBegin() {
         return blocks_.begin();
     }
+    ReversePostorderIterator rpoBegin(MBasicBlock *at) {
+        return blocks_.begin(at);
+    }
     ReversePostorderIterator rpoEnd() {
         return blocks_.end();
     }
@@ -659,13 +677,13 @@ class MIRGraph
         return scripts_.begin();
     }
 
-    // The ParSlice is an instance of ForkJoinSlice*, it carries
-    // "per-helper-thread" information.  So as not to modify the
-    // calling convention for parallel code, we obtain the current
-    // slice from thread-local storage.  This helper method will
-    // lazilly insert an MParSlice instruction in the entry block and
-    // return the definition.
-    MDefinition *parSlice();
+    // The per-thread context. So as not to modify the calling convention for
+    // parallel code, we obtain the current slice from thread-local storage.
+    // This helper method will lazilly insert an MForkJoinSlice instruction in
+    // the entry block and return the definition.
+    MDefinition *forkJoinSlice();
+
+    void dump(FILE *fp);
 };
 
 class MDefinitionIterator

@@ -23,16 +23,10 @@
 /**
  * Incorporate the integer data types which XPCOM uses.
  */
-#include "mozilla/StandardInteger.h"
-#include "stddef.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "mozilla/NullPtr.h"
-
-/*
- * This is for functions that are like malloc_usable_size.  Such functions are
- * used for measuring the size of data structures.
- */
-typedef size_t(*nsMallocSizeOfFun)(const void *p);
 
 /* Core XPCOM declarations. */
 
@@ -138,7 +132,13 @@ typedef size_t(*nsMallocSizeOfFun)(const void *p);
 #define NS_IMETHODIMP_(type) type __stdcall
 #define NS_METHOD_(type) type __stdcall
 #define NS_CALLBACK_(_type, _name) _type (__stdcall * _name)
+#ifndef _WIN64
+// Win64 has only one calling convention.  __stdcall will be ignored by the compiler.
 #define NS_STDCALL __stdcall
+#define NS_HAVE_STDCALL
+#else
+#define NS_STDCALL
+#endif
 #define NS_FROZENCALL __cdecl
 
 /*
@@ -241,7 +241,7 @@ typedef size_t(*nsMallocSizeOfFun)(const void *p);
 #define IMPORT_XPCOM_API(type) NS_EXTERN_C NS_IMPORT type NS_FROZENCALL
 #define GLUE_XPCOM_API(type) NS_EXTERN_C NS_HIDDEN_(type) NS_FROZENCALL
 
-#ifdef _IMPL_NS_COM
+#ifdef IMPL_LIBXUL
 #define XPCOM_API(type) EXPORT_XPCOM_API(type)
 #elif defined(XPCOM_GLUE)
 #define XPCOM_API(type) GLUE_XPCOM_API(type)

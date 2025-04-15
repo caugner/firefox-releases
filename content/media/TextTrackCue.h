@@ -7,15 +7,14 @@
 #ifndef mozilla_dom_TextTrackCue_h
 #define mozilla_dom_TextTrackCue_h
 
-#define WEBVTT_NO_CONFIG_H 1
-#define WEBVTT_STATIC 1
-
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/TextTrack.h"
 #include "mozilla/dom/TextTrackCueBinding.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsDOMEventTargetHelper.h"
-#include "webvtt/node.h"
+#include "nsIDocument.h"
+
+struct webvtt_node;
 
 namespace mozilla {
 namespace dom {
@@ -40,24 +39,24 @@ public:
               ErrorResult& aRv)
   {
     nsRefPtr<TextTrackCue> ttcue = new TextTrackCue(aGlobal.Get(), aStartTime,
-                                                    aEndTime, aText);
+                                                    aEndTime, aText, aRv);
     return ttcue.forget();
   }
   TextTrackCue(nsISupports* aGlobal, double aStartTime, double aEndTime,
-               const nsAString& aText);
+               const nsAString& aText, ErrorResult& aRv);
 
   TextTrackCue(nsISupports* aGlobal, double aStartTime, double aEndTime,
                const nsAString& aText, HTMLTrackElement* aTrackElement,
-               webvtt_node* head);
+               webvtt_node* head, ErrorResult& aRv);
 
   ~TextTrackCue();
 
   virtual JSObject* WrapObject(JSContext* aCx,
                                JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
-  nsISupports* GetParentObject()
+  nsINode* GetParentObject()
   {
-    return mGlobal;
+    return mDocument;
   }
 
   TextTrack* GetTrack() const
@@ -134,6 +133,7 @@ public:
     if (mVertical == aVertical)
       return;
 
+    mReset = true;
     mVertical = aVertical;
     CueChanged();
   }
@@ -148,6 +148,7 @@ public:
     if (mSnapToLines == aSnapToLines)
       return;
 
+    mReset = true;
     mSnapToLines = aSnapToLines;
     CueChanged();
   }
@@ -160,6 +161,7 @@ public:
   void SetLine(double aLine)
   {
     //XXX: validate? bug 868519.
+    mReset = true;
     mLine = aLine;
   }
 
@@ -174,6 +176,7 @@ public:
     if (mPosition == aPosition)
       return;
 
+    mReset = true;
     mPosition = aPosition;
     CueChanged();
   }
@@ -193,6 +196,7 @@ public:
       //XXX:throw IndexSizeError; bug 868519.
     }
 
+    mReset = true;
     mSize = aSize;
     CueChanged();
   }
@@ -207,6 +211,7 @@ public:
     if (mAlign == aAlign)
       return;
 
+    mReset = true;
     mAlign = aAlign;
     CueChanged();
   }
@@ -222,6 +227,7 @@ public:
     if (mText == aText)
       return;
 
+    mReset = true;
     mText = aText;
     CueChanged();
   }
@@ -316,8 +322,9 @@ private:
   void CueChanged();
   void SetDefaultCueSettings();
   void CreateCueOverlay();
+  nsresult StashDocument(nsISupports* aGlobal);
 
-  nsCOMPtr<nsISupports> mGlobal;
+  nsRefPtr<nsIDocument> mDocument;
   nsString mText;
   double mStartTime;
   double mEndTime;
@@ -334,8 +341,13 @@ private:
   int mLine;
   TextTrackCueAlign mAlign;
 
-  // Anonymous child which is appended to VideoFrame's caption display div.
-  nsCOMPtr<nsIContent> mCueDiv;
+  // Holds the computed DOM elements that represent the parsed cue text.
+  // http://www.whatwg.org/specs/web-apps/current-work/#text-track-cue-display-state
+  nsCOMPtr<nsIContent> mDisplayState;
+  // Tells whether or not we need to recompute mDisplayState. This is set
+  // anytime a property that relates to the display of the TextTrackCue is
+  // changed.
+  bool mReset;
 };
 
 } // namespace dom

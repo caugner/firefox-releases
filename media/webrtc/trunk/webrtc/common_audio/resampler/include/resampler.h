@@ -45,6 +45,7 @@ public:
     // Reset all states if any parameter has changed
     int ResetIfNeeded(int in_freq, int out_freq, ResamplerType type);
 
+    // Synchronous resampling, all output samples are written to samplesOut
     int Push(const int16_t* samples_in, int length_in,
              int16_t* samples_out, int max_len, int &out_len);
 

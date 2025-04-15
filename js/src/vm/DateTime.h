@@ -9,9 +9,10 @@
 
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/MathAlgorithms.h"
-#include "mozilla/StandardInteger.h"
 
-#include "NumericConversions.h"
+#include <stdint.h>
+
+#include "vm/NumericConversions.h"
 
 namespace js {
 

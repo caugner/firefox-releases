@@ -10,13 +10,13 @@
 #include "nsCOMPtr.h"               // for member, local
 #include "nsGkAtoms.h"              // for nsGkAtoms::baseURIProperty
 #include "nsIDOMNode.h"
-#include "nsIDOMNodeSelector.h"     // base class
 #include "nsINodeInfo.h"            // member (in nsCOMPtr)
 #include "nsIVariant.h"             // for use in GetUserData()
 #include "nsNodeInfoManager.h"      // for use in NodePrincipal()
 #include "nsPropertyTable.h"        // for typedefs
 #include "nsTObserverArray.h"       // for member
 #include "nsWindowMemoryReporter.h" // for NS_DECL_SIZEOF_EXCLUDING_THIS
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/EventTarget.h" // for base class
 
 // Including 'windows.h' will #define GetClassInfo to something else.
@@ -113,8 +113,6 @@ enum {
   // For all Element nodes, NODE_MAY_HAVE_CLASS is guaranteed to be set if the
   // node in fact has a class, but may be set even if it doesn't.
   NODE_MAY_HAVE_CLASS =                   NODE_FLAG_BIT(8),
-
-  NODE_IS_INSERTION_PARENT =              NODE_FLAG_BIT(9),
 
   // Node has an :empty or :-moz-only-whitespace selector
   NODE_HAS_EMPTY_SELECTOR =               NODE_FLAG_BIT(10),
@@ -256,8 +254,8 @@ private:
 
 // IID for the nsINode interface
 #define NS_INODE_IID \
-{ 0x5daa9e95, 0xe49c, 0x4b41, \
-  { 0xb2, 0x02, 0xde, 0xa9, 0xd3, 0x06, 0x21, 0x17 } }
+{ 0xe24a9ddc, 0x2979, 0x40e3, \
+  { 0x82, 0xb0, 0x9d, 0xf8, 0xb0, 0x41, 0xe5, 0x6a } }
 
 /**
  * An internal interface that abstracts some DOMNode-related parts that both
@@ -299,7 +297,7 @@ public:
   // way that |this| points to the start of the allocated object, even in
   // methods of nsINode's sub-classes, and so |aMallocSizeOf(this)| is always
   // safe to call no matter which object it was invoked on.
-  virtual size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const {
+  virtual size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const {
     return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
   }
 
@@ -324,6 +322,7 @@ public:
     mSubtreeRoot(this),
     mSlots(nullptr)
   {
+    SetIsDOMBinding();
   }
 
 #ifdef _MSC_VER
@@ -863,23 +862,6 @@ public:
    */
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const = 0;
 
-  /**
-   * Checks if a node has the same ownerDocument as this one. Note that this
-   * actually compares nodeinfo managers because nodes always have one, even
-   * when they don't have an ownerDocument. If this function returns true
-   * it doesn't mean that the nodes actually have an ownerDocument.
-   *
-   * @param aOther Other node to check
-   * @return Whether the owner documents of this node and of aOther are the
-   *         same.
-   */
-  bool HasSameOwnerDoc(nsINode *aOther)
-  {
-    // We compare nodeinfo managers because nodes always have one, even when
-    // they don't have an ownerDocument.
-    return mNodeInfo->NodeInfoManager() == aOther->mNodeInfo->NodeInfoManager();
-  }
-
   // This class can be extended by subclasses that wish to store more
   // information in the slots.
   class nsSlots
@@ -1086,6 +1068,9 @@ public:
   already_AddRefed<nsINodeList> QuerySelectorAll(const nsAString& aSelector,
                                                  mozilla::ErrorResult& aResult);
 
+  nsresult QuerySelector(const nsAString& aSelector, nsIDOMElement **aReturn);
+  nsresult QuerySelectorAll(const nsAString& aSelector, nsIDOMNodeList **aReturn);
+
   /**
    * Associate an object aData to aKey on this node. If aData is null any
    * previously registered object and UserDataHandler associated to aKey on
@@ -1119,12 +1104,6 @@ public:
   
     return NS_OK;
   }
-
-  /**
-   * Control if GetUserData and SetUserData methods will be exposed to
-   * unprivileged content.
-   */
-  static bool IsChromeOrXBL(JSContext* aCx, JSObject* /* unused */);
 
   void LookupPrefix(const nsAString& aNamespace, nsAString& aResult);
   bool IsDefaultNamespace(const nsAString& aNamespaceURI)
@@ -1312,7 +1291,7 @@ private:
     // Set if a node in the node's parent chain has dir=auto.
     NodeAncestorHasDirAuto,
     // Set if the element is in the scope of a scoped style sheet; this flag is
-    // only accurate for elements bounds to a document
+    // only accurate for elements bound to a document
     ElementIsInStyleScope,
     // Set if the element is a scoped style sheet root
     ElementIsScopedStyleRoot,
@@ -1492,12 +1471,6 @@ protected:
   }
 
 public:
-  // Optimized way to get classinfo.
-  virtual nsXPCClassInfo* GetClassInfo()
-  {
-    return nullptr;
-  }
-
   // Makes nsINode object to keep aObject alive.
   void BindObject(nsISupports* aObject);
   // After calling UnbindObject nsINode object doesn't keep
@@ -1588,10 +1561,17 @@ public:
     return rv.ErrorCode();
   }
 
+  // ChildNode methods
+  mozilla::dom::Element* GetPreviousElementSibling() const;
+  mozilla::dom::Element* GetNextElementSibling() const;
   /**
    * Remove this node from its parent, if any.
    */
   void Remove();
+
+  // ParentNode methods
+  mozilla::dom::Element* GetFirstElementChild() const;
+  mozilla::dom::Element* GetLastElementChild() const;
 
 protected:
 
@@ -1759,29 +1739,6 @@ inline nsINode* NODE_FROM(C& aContent, D& aDocument)
     return static_cast<nsINode*>(aContent);
   return static_cast<nsINode*>(aDocument);
 }
-
-/**
- * A tearoff class for FragmentOrElement to implement NodeSelector
- */
-class nsNodeSelectorTearoff MOZ_FINAL : public nsIDOMNodeSelector
-{
-public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-
-  NS_DECL_NSIDOMNODESELECTOR
-
-  NS_DECL_CYCLE_COLLECTION_CLASS(nsNodeSelectorTearoff)
-
-  nsNodeSelectorTearoff(nsINode *aNode) : mNode(aNode)
-  {
-  }
-
-private:
-  ~nsNodeSelectorTearoff() {}
-
-private:
-  nsCOMPtr<nsINode> mNode;
-};
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsINode, NS_INODE_IID)
 

@@ -4,21 +4,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#ifdef MOZ_VALGRIND
+# include <valgrind/memcheck.h>
+#endif
+
 #include "jsapi.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsgc.h"
 #include "jsprf.h"
 
-#include "js/HashTable.h"
 #include "gc/GCInternals.h"
 #include "gc/Zone.h"
+#include "js/HashTable.h"
 
 #include "jsgcinlines.h"
-
-#ifdef MOZ_VALGRIND
-# include <valgrind/memcheck.h>
-#endif
 
 using namespace js;
 using namespace js::gc;
@@ -164,7 +164,7 @@ CompareRooters(const void *vpA, const void *vpB)
  * over and over, so we need more than a depth-1 memory.
  */
 static bool
-SuppressCheckRoots(Vector<Rooter, 0, SystemAllocPolicy> &rooters)
+SuppressCheckRoots(js::Vector<Rooter, 0, SystemAllocPolicy> &rooters)
 {
     static const unsigned int NumStackMemories = 6;
     static const size_t StackCheckDepth = 10;
@@ -208,7 +208,7 @@ SuppressCheckRoots(Vector<Rooter, 0, SystemAllocPolicy> &rooters)
 }
 
 static void
-GatherRooters(Vector<Rooter, 0, SystemAllocPolicy> &rooters,
+GatherRooters(js::Vector<Rooter, 0, SystemAllocPolicy> &rooters,
               Rooted<void*> **thingGCRooters,
               unsigned thingRootKind)
 {
@@ -255,7 +255,7 @@ JS::CheckStackRoots(JSContext *cx)
     JS_ASSERT(stackMin <= stackEnd);
 
     // Gather up all of the rooters
-    Vector<Rooter, 0, SystemAllocPolicy> rooters;
+    js::Vector<Rooter, 0, SystemAllocPolicy> rooters;
     for (unsigned i = 0; i < THING_ROOT_LIMIT; i++) {
         for (ContextIter cx(rt); !cx.done(); cx.next()) {
             GatherRooters(rooters, cx->thingGCRooters, i);
@@ -444,16 +444,15 @@ NextNode(VerifyNode *node)
 void
 gc::StartVerifyPreBarriers(JSRuntime *rt)
 {
-    if (rt->gcVerifyPreData ||
-        rt->gcIncrementalState != NO_INCREMENTAL ||
-        !IsIncrementalGCSafe(rt))
-    {
+    if (rt->gcVerifyPreData || rt->gcIncrementalState != NO_INCREMENTAL)
         return;
-    }
 
     MinorGC(rt, JS::gcreason::API);
 
     AutoPrepareForTracing prep(rt);
+
+    if (!IsIncrementalGCSafe(rt))
+        return;
 
     for (GCChunkSet::Range r(rt->gcChunkSet.all()); !r.empty(); r.popFront())
         r.front()->bitmap.clear();
@@ -741,9 +740,6 @@ js::gc::EndVerifyPostBarriers(JSRuntime *rt)
     AutoPrepareForTracing prep(rt);
 
     VerifyPostTracer *trc = (VerifyPostTracer *)rt->gcVerifyPostData;
-
-    if (rt->gcStoreBuffer.hasOverflowed())
-        goto oom;
 
     /* Visit every entry in the store buffer and put the edges in a hash set. */
     JS_TracerInit(trc, rt, PostVerifierCollectStoreBufferEdges);

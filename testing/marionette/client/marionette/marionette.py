@@ -516,6 +516,12 @@ class Marionette(object):
         self.window = window_id
         return response
 
+    def get_active_frame(self):
+        response = self._send_message('getActiveFrame', 'value')
+        if response:
+            return HTMLElement(self, response)
+        return None
+
     def switch_to_frame(self, frame=None, focus=True):
         if isinstance(frame, HTMLElement):
             response = self._send_message('switchToFrame', 'ok', element=frame.id, focus=focus)
@@ -586,7 +592,7 @@ class Marionette(object):
 
         return unwrapped
 
-    def execute_js_script(self, script, script_args=None, async=True, new_sandbox=True, special_powers=False, script_timeout=None):
+    def execute_js_script(self, script, script_args=None, async=True, new_sandbox=True, special_powers=False, script_timeout=None, filename=None):
         if script_args is None:
             script_args = []
         args = self.wrapArguments(script_args)
@@ -596,8 +602,10 @@ class Marionette(object):
                                       args=args,
                                       async=async,
                                       newSandbox=new_sandbox,
-                                      specialPowers=special_powers, 
-                                      scriptTimeout=script_timeout)
+                                      specialPowers=special_powers,
+                                      scriptTimeout=script_timeout,
+                                      filename=filename,
+                                      line=None)
         return self.unwrapValue(response)
 
     def execute_script(self, script, script_args=None, new_sandbox=True, special_powers=False, script_timeout=None):

@@ -7,20 +7,18 @@
 
 #include "mozilla/Attributes.h"
 #include "nsGenericHTMLElement.h"
-#include "nsIDOMHTMLDataListElement.h"
 #include "nsContentList.h"
 
 namespace mozilla {
 namespace dom {
 
-class HTMLDataListElement : public nsGenericHTMLElement,
-                            public nsIDOMHTMLDataListElement
+class HTMLDataListElement MOZ_FINAL : public nsGenericHTMLElement,
+                                      public nsIDOMHTMLElement
 {
 public:
   HTMLDataListElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
-    SetIsDOMBinding();
   }
   virtual ~HTMLDataListElement();
 
@@ -35,9 +33,6 @@ public:
 
   // nsIDOMHTMLElement
   NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
-
-  // nsIDOMHTMLDataListElement
-  NS_DECL_NSIDOMHTMLDATALISTELEMENT
 
   nsContentList* Options()
   {

@@ -12,6 +12,8 @@
 namespace mozilla {
 namespace layers {
 
+class CompositorChild;
+
 class ClientLayerManager : public LayerManager,
                            public ShadowLayerForwarder
 {
@@ -53,9 +55,14 @@ public:
   virtual already_AddRefed<ColorLayer> CreateColorLayer();
   virtual already_AddRefed<RefLayer> CreateRefLayer();
 
+  virtual TextureFactoryIdentifier GetTextureFactoryIdentifier() MOZ_OVERRIDE
+  {
+    return mTextureFactoryIdentifier;
+  }
+
   virtual void FlushRendering() MOZ_OVERRIDE;
 
-  virtual bool NeedsWidgetInvalidation() MOZ_OVERRIDE { return Compositor::GetBackend() == LAYERS_BASIC; }
+  virtual bool NeedsWidgetInvalidation() MOZ_OVERRIDE { return false; }
 
   ShadowableLayer* Hold(Layer* aLayer);
 
@@ -88,6 +95,8 @@ public:
 
   void* GetThebesLayerCallbackData() const
   { return mThebesLayerCallbackData; }
+
+  CompositorChild *GetRemoteRenderer();
 
   /**
    * Called for each iteration of a progressive tile update. Fills

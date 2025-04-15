@@ -8,6 +8,7 @@
 
 #include "mozilla/layers/Compositor.h"
 #include "mozilla/layers/TextureClient.h"
+#include "mozilla/layers/TextureHost.h"
 #include "gfxWindowsPlatform.h"
 #include <d3d11.h>
 #include <vector>
@@ -20,10 +21,10 @@ namespace layers {
 class TextureSourceD3D11
 {
 public:
-  TextureSourceD3D11()
-  { }
+  TextureSourceD3D11() {}
+  virtual ~TextureSourceD3D11() {}
 
-  virtual ID3D11Texture2D *GetD3D11Texture() { return mTextures[0]; }
+  virtual ID3D11Texture2D* GetD3D11Texture() const { return mTextures[0]; }
   virtual bool IsYCbCrSource() const { return false; }
 
   struct YCbCrTextures
@@ -32,10 +33,13 @@ public:
     ID3D11Texture2D *mCb;
     ID3D11Texture2D *mCr;
   };
-  virtual YCbCrTextures GetYCbCrTextures() {
+
+  virtual YCbCrTextures GetYCbCrTextures()
+  {
     YCbCrTextures textures = { mTextures[0], mTextures[1], mTextures[2] };
     return textures;
   }
+
 protected:
   virtual gfx::IntSize GetSize() const { return mSize; }
 
@@ -47,8 +51,7 @@ class CompositingRenderTargetD3D11 : public CompositingRenderTarget,
                                      public TextureSourceD3D11
 {
 public:
-  // Use aTexture == nullptr for rendering to the window
-  CompositingRenderTargetD3D11(ID3D11Texture2D *aTexture);
+  CompositingRenderTargetD3D11(ID3D11Texture2D* aTexture);
 
   virtual TextureSourceD3D11* AsSourceD3D11() MOZ_OVERRIDE { return this; }
 
@@ -62,23 +65,30 @@ private:
   RefPtr<ID3D11RenderTargetView> mRTView;
 };
 
-class TextureClientD3D11 : public TextureClient
+class DeprecatedTextureClientD3D11 : public DeprecatedTextureClient
 {
 public:
-  TextureClientD3D11(CompositableForwarder* aCompositableForwarder, const TextureInfo& aTextureInfo);
-  ~TextureClientD3D11();
+  DeprecatedTextureClientD3D11(CompositableForwarder* aCompositableForwarder,
+                               const TextureInfo& aTextureInfo);
+  virtual ~DeprecatedTextureClientD3D11();
 
-  virtual bool SupportsType(TextureClientType aType) MOZ_OVERRIDE { return aType == TEXTURE_CONTENT; }
+  virtual bool SupportsType(DeprecatedTextureClientType aType) MOZ_OVERRIDE
+  {
+    return aType == TEXTURE_CONTENT;
+  }
 
-  virtual void EnsureAllocated(gfx::IntSize aSize, gfxASurface::gfxContentType aType) MOZ_OVERRIDE;
+  virtual bool EnsureAllocated(gfx::IntSize aSize,
+                               gfxASurface::gfxContentType aType) MOZ_OVERRIDE;
 
   virtual gfxASurface* LockSurface() MOZ_OVERRIDE;
   virtual gfx::DrawTarget* LockDrawTarget() MOZ_OVERRIDE;
   virtual void Unlock() MOZ_OVERRIDE;
 
   virtual void SetDescriptor(const SurfaceDescriptor& aDescriptor) MOZ_OVERRIDE;
-  virtual gfxASurface::gfxContentType GetContentType() MOZ_OVERRIDE { return mContentType; }
-
+  virtual gfxASurface::gfxContentType GetContentType() MOZ_OVERRIDE
+  {
+    return mContentType;
+  }
 
 private:
   void EnsureSurface();
@@ -95,12 +105,12 @@ private:
   gfxContentType mContentType;
 };
 
-class TextureHostShmemD3D11 : public TextureHost
-                            , public TextureSourceD3D11
-                            , public TileIterator
+class DeprecatedTextureHostShmemD3D11 : public DeprecatedTextureHost
+                                      , public TextureSourceD3D11
+                                      , public TileIterator
 {
 public:
-  TextureHostShmemD3D11()
+  DeprecatedTextureHostShmemD3D11()
     : mDevice(nullptr)
     , mIsTiled(false)
     , mCurrentTile(0)
@@ -112,13 +122,18 @@ public:
 
   virtual TextureSourceD3D11* AsSourceD3D11() MOZ_OVERRIDE { return this; }
 
-  virtual ID3D11Texture2D *GetD3D11Texture() MOZ_OVERRIDE {
-    return mIsTiled ? mTileTextures[mCurrentTile].get() : TextureSourceD3D11::GetD3D11Texture();
+  virtual ID3D11Texture2D* GetD3D11Texture() const MOZ_OVERRIDE
+  {
+    return mIsTiled ? mTileTextures[mCurrentTile].get()
+                    : TextureSourceD3D11::GetD3D11Texture();
   }
 
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE;
 
-  virtual LayerRenderState GetRenderState() { return LayerRenderState(); }
+  virtual LayerRenderState GetRenderState() MOZ_OVERRIDE
+  {
+    return LayerRenderState();
+  }
 
   virtual bool Lock() MOZ_OVERRIDE { return true; }
 
@@ -128,31 +143,38 @@ public:
   }
 
 #ifdef MOZ_LAYERS_HAVE_LOG
-  virtual const char* Name() { return "TextureHostShmemD3D11"; }
+  virtual const char* Name() MOZ_OVERRIDE
+  {
+    return "DeprecatedTextureHostShmemD3D11";
+  }
 #endif
 
-  virtual void BeginTileIteration() MOZ_OVERRIDE {
+  virtual void BeginTileIteration() MOZ_OVERRIDE
+  {
     mIterating = true;
     mCurrentTile = 0;
   }
-  virtual void EndTileIteration() MOZ_OVERRIDE {
+  virtual void EndTileIteration() MOZ_OVERRIDE
+  {
     mIterating = false;
   }
   virtual nsIntRect GetTileRect() MOZ_OVERRIDE;
   virtual size_t GetTileCount() MOZ_OVERRIDE { return mTileTextures.size(); }
-  virtual bool NextTile() MOZ_OVERRIDE {
+  virtual bool NextTile() MOZ_OVERRIDE
+  {
     return (++mCurrentTile < mTileTextures.size());
   }
 
-  virtual TileIterator* AsTileIterator() MOZ_OVERRIDE {
+  virtual TileIterator* AsTileIterator() MOZ_OVERRIDE
+  {
     return mIsTiled ? this : nullptr;
   }
 protected:
   virtual void UpdateImpl(const SurfaceDescriptor& aSurface,
                           nsIntRegion* aRegion,
                           nsIntPoint *aOffset = nullptr) MOZ_OVERRIDE;
-private:
 
+private:
   gfx::IntRect GetTileRect(uint32_t aID) const;
 
   RefPtr<ID3D11Device> mDevice;
@@ -162,11 +184,11 @@ private:
   bool mIterating;
 };
 
-class TextureHostDXGID3D11 : public TextureHost
-                           , public TextureSourceD3D11
+class DeprecatedTextureHostDXGID3D11 : public DeprecatedTextureHost
+                                     , public TextureSourceD3D11
 {
 public:
-  TextureHostDXGID3D11()
+  DeprecatedTextureHostDXGID3D11()
     : mDevice(nullptr)
   {
   }
@@ -186,7 +208,7 @@ public:
   }
 
 #ifdef MOZ_LAYERS_HAVE_LOG
-  virtual const char* Name() { return "TextureHostDXGID3D11"; }
+  virtual const char* Name() { return "DeprecatedTextureHostDXGID3D11"; }
 #endif
 
 protected:
@@ -197,16 +219,14 @@ private:
   void LockTexture();
   void ReleaseTexture();
 
-  gfx::IntRect GetTileRect(uint32_t aID) const; // TODO[Bas] not defined anywhere?
-
   RefPtr<ID3D11Device> mDevice;
 };
 
-class TextureHostYCbCrD3D11 : public TextureHost
-                            , public TextureSourceD3D11
+class DeprecatedTextureHostYCbCrD3D11 : public DeprecatedTextureHost
+                                      , public TextureSourceD3D11
 {
 public:
-  TextureHostYCbCrD3D11()
+  DeprecatedTextureHostYCbCrD3D11()
     : mDevice(nullptr)
   {
     mFormat = gfx::FORMAT_YUV;
@@ -226,7 +246,10 @@ public:
   }
 
 #ifdef MOZ_LAYERS_HAVE_LOG
-  virtual const char* Name() MOZ_OVERRIDE { return "TextureImageTextureHostD3D11"; }
+  virtual const char* Name() MOZ_OVERRIDE
+  {
+    return "TextureImageDeprecatedTextureHostD3D11";
+  }
 #endif
 
 protected:

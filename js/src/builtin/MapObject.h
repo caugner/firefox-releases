@@ -8,8 +8,9 @@
 #define builtin_MapObject_h
 
 #include "jsapi.h"
-#include "jscntxt.h"
 #include "jsobj.h"
+
+#include "vm/Runtime.h"
 
 namespace js {
 
@@ -35,7 +36,7 @@ class HashableValue {
 
     HashableValue() : value(UndefinedValue()) {}
 
-    bool setValue(JSContext *cx, const Value &v);
+    bool setValue(JSContext *cx, HandleValue v);
     HashNumber hash() const;
     bool operator==(const HashableValue &other) const;
     HashableValue mark(JSTracer *trc) const;
@@ -52,7 +53,7 @@ class AutoHashableValueRooter : private AutoGCRooter
             MOZ_GUARD_OBJECT_NOTIFIER_INIT;
         }
 
-    bool setValue(JSContext *cx, const Value &v) {
+    bool setValue(JSContext *cx, HandleValue v) {
         return value.setValue(cx, v);
     }
 

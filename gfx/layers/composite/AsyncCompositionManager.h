@@ -40,6 +40,14 @@ struct ViewTransform {
       gfx3DMatrix::ScalingMatrix(mScale.scale, mScale.scale, 1);
   }
 
+  bool operator==(const ViewTransform& rhs) const {
+    return mTranslation == rhs.mTranslation && mScale == rhs.mScale;
+  }
+
+  bool operator!=(const ViewTransform& rhs) const {
+    return !(*this == rhs);
+  }
+
   LayerPoint mTranslation;
   LayoutDeviceToScreenScale mScale;
 };
@@ -107,7 +115,7 @@ public:
   bool IsFirstPaint() { return mIsFirstPaint; }
 
 private:
-  void TransformScrollableLayer(Layer* aLayer, const gfx3DMatrix& aRootTransform);
+  void TransformScrollableLayer(Layer* aLayer, const LayoutDeviceToLayerScale& aResolution);
   // Return true if an AsyncPanZoomController content transform was
   // applied for |aLayer|.  *aWantNextFrame is set to true if the
   // controller wants another animation frame.
@@ -123,7 +131,7 @@ private:
                         bool aLayersUpdated,
                         ScreenPoint& aScrollOffset,
                         CSSToScreenScale& aScale,
-                        gfx::Margin& aFixedLayerMargins,
+                        LayerMargin& aFixedLayerMargins,
                         ScreenPoint& aOffset);
   void SyncFrameMetrics(const ScreenPoint& aScrollOffset,
                         float aZoom,
@@ -132,20 +140,23 @@ private:
                         const CSSRect& aDisplayPort,
                         const CSSToLayerScale& aDisplayResolution,
                         bool aIsFirstPaint,
-                        gfx::Margin& aFixedLayerMargins,
+                        LayerMargin& aFixedLayerMargins,
                         ScreenPoint& aOffset);
 
   /**
-   * Recursively applies the given translation to all top-level fixed position
-   * layers that are descendants of the given layer.
-   * aScaleDiff is considered to be the scale transformation applied when
-   * displaying the layers, and is used to make sure the anchor points of
-   * fixed position layers remain in the same position.
+   * Adds a translation to the transform of any fixed-pos layer descendant of
+   * aTransformedSubtreeRoot whose parent layer is not fixed. The translation is
+   * chosen so that the layer's anchor point relative to aTransformedSubtreeRoot's
+   * parent layer is the same as it was when aTransformedSubtreeRoot's
+   * GetLocalTransform() was aPreviousTransformForRoot.
+   * This function will also adjust layers so that the given content document
+   * fixed position margins will be respected during asynchronous panning and
+   * zooming.
    */
-  void TransformFixedLayers(Layer* aLayer,
-                            const gfxPoint& aTranslation,
-                            const gfxSize& aScaleDiff,
-                            const gfx::Margin& aFixedLayerMargins);
+  void AlignFixedLayersForAnchorPoint(Layer* aLayer,
+                                      Layer* aTransformedSubtreeRoot,
+                                      const gfx3DMatrix& aPreviousTransformForRoot,
+                                      const LayerMargin& aFixedLayerMargins);
 
   /**
    * DRAWING PHASE ONLY

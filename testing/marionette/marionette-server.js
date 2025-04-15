@@ -14,7 +14,7 @@ logger.info('marionette-server.js loaded');
 let loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
                .getService(Ci.mozIJSSubScriptLoader);
 loader.loadSubScript("chrome://marionette/content/marionette-simpletest.js");
-loader.loadSubScript("chrome://marionette/content/marionette-log-obj.js");
+loader.loadSubScript("chrome://marionette/content/marionette-common.js");
 Cu.import("chrome://marionette/content/marionette-elements.js");
 let utils = {};
 loader.loadSubScript("chrome://marionette/content/EventUtils.js", utils);
@@ -147,6 +147,7 @@ function MarionetteServerConnection(aPrefix, aTransport, aServer)
   this.curFrame = null; //subframe that currently has focus
   this.importedScripts = FileUtils.getFile('TmpD', ['marionettescriptchrome']);
   this.currentRemoteFrame = null; // a member of remoteFrames
+  this.currentFrameElement = null;
   this.testName = null;
   this.mozBrowserClose = null;
 
@@ -167,7 +168,7 @@ MarionetteServerConnection.prototype = {
       } catch(e) {
         this.conn.send({ error: ("error occurred while processing '" +
                                  aPacket.type),
-                        message: e });
+                        message: e.message });
       }
     } else {
       this.conn.send({ error: "unrecognizedPacketType",
@@ -179,7 +180,7 @@ MarionetteServerConnection.prototype = {
 
   onClosed: function MSC_onClosed(aStatus) {
     this.server._connectionClosed(this);
-    this.deleteSession();
+    this.sessionTearDown();
   },
 
   /**
@@ -262,6 +263,7 @@ MarionetteServerConnection.prototype = {
     messageManager.addMessageListener("Marionette:register", this);
     messageManager.addMessageListener("Marionette:runEmulatorCmd", this);
     messageManager.addMessageListener("Marionette:switchToFrame", this);
+    messageManager.addMessageListener("Marionette:switchedToFrame", this);
   },
 
   /**
@@ -280,6 +282,7 @@ MarionetteServerConnection.prototype = {
     messageManager.removeMessageListener("Marionette:register", this);
     messageManager.removeMessageListener("Marionette:runEmulatorCmd", this);
     messageManager.removeMessageListener("Marionette:switchToFrame", this);
+    messageManager.removeMessageListener("Marionette:switchedToFrame", this);
   },
 
   logRequest: function MDA_logRequest(type, data) {
@@ -378,37 +381,6 @@ MarionetteServerConnection.prototype = {
   sendError: function MDA_sendError(message, status, trace, command_id) {
     let error_msg = {message: message, status: status, stacktrace: trace};
     this.sendToClient({from:this.actorID, error: error_msg}, command_id);
-  },
-
-  /**
-   * Creates an error message for a JavaScript exception thrown during
-   * execute_(async_)script.
-   *
-   * This will generate a [msg, trace] pair like:
-   *
-   * ['ReferenceError: foo is not defined',
-   *  'execute_script @test_foo.py, line 10
-   *   inline javascript, line 2
-   *   src: "return foo;"']
-   *
-   * @param error An Error object passed to a catch() clause.
-            fnName The name of the function to use in the stack trace message
-                   (e.g., 'execute_script').
-            pythonFile The filename of the test file containing the Marionette
-                    command that caused this exception to occur.
-            pythonLine The line number of the above test file.
-            script The JS script being executed in text form.
-   */
-  createStackMessage: function MDA_createStackMessage(error, fnName, pythonFile,
-      pythonLine, script) {
-    let python_stack = fnName + " @" + pythonFile + ", line " + pythonLine;
-    let stack = error.stack.split("\n");
-    let line = stack[0].substr(stack[0].lastIndexOf(':') + 1);
-    let msg = error.name + ": " + error.message;
-    let trace = python_stack +
-                "\ninline javascript, line " + line +
-                "\nsrc: \"" + script.split("\n")[line] + "\"";
-    return [msg, trace];
   },
 
   /**
@@ -848,11 +820,11 @@ MarionetteServerConnection.prototype = {
                                   false, command_id, timeout);
     }
     catch (e) {
-      let error = this.createStackMessage(e,
-                                          "execute_script",
-                                          aRequest.filename,
-                                          aRequest.line,
-                                          script);
+      let error = createStackMessage(e,
+                                     "execute_script",
+                                     aRequest.filename,
+                                     aRequest.line,
+                                     script);
       this.sendError(error[0], 17, error[1], command_id);
     }
   },
@@ -908,7 +880,9 @@ MarionetteServerConnection.prototype = {
                        newSandbox: aRequest.newSandbox,
                        async: aRequest.async,
                        timeout: timeout,
-                       specialPowers: aRequest.specialPowers
+                       specialPowers: aRequest.specialPowers,
+                       filename: aRequest.filename,
+                       line: aRequest.line,
                      },
                      command_id);
    }
@@ -1036,11 +1010,11 @@ MarionetteServerConnection.prototype = {
       this.executeScriptInSandbox(_chromeSandbox, script, directInject,
                                   true, command_id, timeout);
     } catch (e) {
-      let error = this.createStackMessage(e,
-                                          "execute_async_script",
-                                          aRequest.filename,
-                                          aRequest.line,
-                                          script);
+      let error = createStackMessage(e,
+                                     "execute_async_script",
+                                     aRequest.filename,
+                                     aRequest.line,
+                                     script);
       chromeAsyncReturnFunc(error[0], 17, error[1]);
     }
   },
@@ -1223,6 +1197,23 @@ MarionetteServerConnection.prototype = {
                    command_id);
   },
  
+  getActiveFrame: function MDA_getActiveFrame() {
+    this.command_id = this.getCommandId();
+
+    if (this.context == "chrome") {
+      if (this.curFrame) {
+        let frameUid = this.curBrowser.elementManager.addToKnownElements(this.curFrame.frameElement);
+        this.sendResponse(frameUid, this.command_id);
+      } else {
+        // no current frame, we're at toplevel
+        this.sendResponse(null, this.command_id);
+      }
+    } else {
+      // not chrome
+      this.sendResponse(this.currentFrameElement, this.command_id);
+    }
+  },
+
   /**
    * Switch to a given frame within the current window
    *
@@ -1937,7 +1928,8 @@ MarionetteServerConnection.prototype = {
 
       // if there is only 1 window left, delete the session
       if (numOpenWindows === 1){
-        this.deleteSession();
+        this.sessionTearDown();
+        this.sendOk(command_id);
         return;
       }
 
@@ -1962,8 +1954,7 @@ MarionetteServerConnection.prototype = {
    * all other listeners. The main content listener persists after disconnect (it's the homescreen),
    * and can safely be reused.
    */
-  deleteSession: function MDA_deleteSession() {
-    let command_id = this.command_id = this.getCommandId();
+  sessionTearDown: function MDA_sessionTearDown() {
     if (this.curBrowser != null) {
       if (appName == "B2G") {
         this.globalMessageManager.broadcastAsyncMessage(
@@ -1987,7 +1978,6 @@ MarionetteServerConnection.prototype = {
         winEnum.getNext().messageManager.removeDelayedFrameScript(FRAME_SCRIPT); 
       }
     }
-    this.sendOk(command_id);
     this.removeMessageManagerListeners(this.globalMessageManager);
     this.switchToGlobalMessageManager();
     // reset frame to the top-most frame
@@ -2001,6 +1991,16 @@ MarionetteServerConnection.prototype = {
     }
     catch (e) {
     }
+  },
+
+  /**
+   * Processes the 'deleteSession' request from the client by tearing down
+   * the session and responding 'ok'.
+   */
+  deleteSession: function MDA_sessionTearDown() {
+    let command_id = this.command_id = this.getCommandId();
+    this.sessionTearDown();
+    this.sendOk(command_id);
   },
 
   /**
@@ -2163,6 +2163,10 @@ MarionetteServerConnection.prototype = {
         remoteFrames.push(aFrame);
         this.currentRemoteFrame = aFrame;
         break;
+      case "Marionette:switchedToFrame":
+        logger.info("Switched to frame: " + JSON.stringify(message.json));
+        this.currentFrameElement = message.json.frameValue;
+        break;
       case "Marionette:register":
         // This code processes the content listener's registration information
         // and either accepts the listener, or ignores it
@@ -2256,6 +2260,7 @@ MarionetteServerConnection.prototype.requestTypes = {
   "refresh":  MarionetteServerConnection.prototype.refresh,
   "getWindow":  MarionetteServerConnection.prototype.getWindow,
   "getWindows":  MarionetteServerConnection.prototype.getWindows,
+  "getActiveFrame": MarionetteServerConnection.prototype.getActiveFrame,
   "switchToFrame": MarionetteServerConnection.prototype.switchToFrame,
   "switchToWindow": MarionetteServerConnection.prototype.switchToWindow,
   "deleteSession": MarionetteServerConnection.prototype.deleteSession,
@@ -2417,7 +2422,7 @@ this.MarionetteServer = function MarionetteServer(port, forceLocal) {
   if (forceLocal) {
     flags |= Ci.nsIServerSocket.LoopbackOnly;
   }
-  let socket = new ServerSocket(port, flags, 4);
+  let socket = new ServerSocket(port, flags, 0);
   logger.info("Listening on port " + socket.port + "\n");
   socket.asyncListen(this);
   this.listener = socket;

@@ -6,20 +6,21 @@
 #ifndef nsEventListenerManager_h__
 #define nsEventListenerManager_h__
 
-#include "nsEventListenerManager.h"
 #include "jsapi.h"
-#include "nsCOMPtr.h"
-#include "nsIDOMEventListener.h"
+#include "mozilla/dom/EventListenerBinding.h"
+#include "mozilla/dom/EventTarget.h"
+#include "mozilla/MemoryReporting.h"
 #include "nsAutoPtr.h"
 #include "nsCOMArray.h"
+#include "nsCOMPtr.h"
 #include "nsCxPusher.h"
-#include "nsIScriptContext.h"
 #include "nsCycleCollectionParticipant.h"
-#include "nsTObserverArray.h"
+#include "nsGkAtoms.h"
 #include "nsGUIEvent.h"
+#include "nsIDOMEventListener.h"
 #include "nsIJSEventListener.h"
-#include "mozilla/dom/EventTarget.h"
-#include "mozilla/dom/EventListenerBinding.h"
+#include "nsIScriptContext.h"
+#include "nsTObserverArray.h"
 
 class nsIDOMEvent;
 class nsIAtom;
@@ -400,7 +401,7 @@ public:
 
   bool MayHaveMouseEnterLeaveEventListener() { return mMayHaveMouseEnterLeaveEventListener; }
 
-  size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
+  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
   void MarkForCC();
 
@@ -536,11 +537,8 @@ protected:
   mozilla::dom::EventTarget*                mTarget;  //WEAK
   nsCOMPtr<nsIAtom>                         mNoListenerForEventAtom;
 
-  static uint32_t                           mInstanceCount;
-  static jsid                               sAddListenerID;
-
-  friend class nsEventTargetChainItem;
-  static uint32_t                           sCreatedCount;
+  friend class ELMCreationDetector;
+  static uint32_t                           sMainThreadCreatedCount;
 };
 
 /**

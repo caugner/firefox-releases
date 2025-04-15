@@ -13,6 +13,7 @@
 #include "nsCompatibility.h"             // for member
 #include "nsCOMPtr.h"                    // for member
 #include "nsGkAtoms.h"                   // for static class members
+#include "nsIChannel.h"                  // for member
 #include "nsIDocumentEncoder.h"          // for member (in nsCOMPtr)
 #include "nsIDocumentObserver.h"         // for typedef (nsUpdateType)
 #include "nsIFrameRequestCallback.h"     // for member (in nsCOMPtr)
@@ -31,6 +32,7 @@ class nsAString;
 class nsBindingManager;
 class nsCSSStyleSheet;
 class nsDOMNavigationTiming;
+class nsDOMTouchList;
 class nsEventStates;
 class nsFrameLoader;
 class nsHTMLCSSStyleSheet;
@@ -49,9 +51,9 @@ class nsIDOMDocumentFragment;
 class nsIDOMDocumentType;
 class nsIDOMElement;
 class nsIDOMNodeList;
-class nsIDOMTouchList;
 class nsIDOMXPathExpression;
 class nsIDOMXPathNSResolver;
+class nsIHTMLCollection;
 class nsILayoutHistoryState;
 class nsIObjectLoadingContent;
 class nsIObserver;
@@ -255,10 +257,14 @@ public:
   /**
    * Return the base URI for relative URIs in the document (the document uri
    * unless it's overridden by SetBaseURI, HTML <base> tags, etc.).  The
-   * returned URI could be null if there is no document URI.
+   * returned URI could be null if there is no document URI.  If the document
+   * is a srcdoc document, return the parent document's base URL.
    */
   nsIURI* GetDocBaseURI() const
   {
+    if (mIsSrcdocDocument && mParentDocument) {
+      return mParentDocument->GetDocBaseURI();
+    }
     return mDocumentBaseURI ? mDocumentBaseURI : mDocumentURI;
   }
   virtual already_AddRefed<nsIURI> GetBaseURI() const MOZ_OVERRIDE
@@ -627,6 +633,27 @@ public:
   virtual bool WillIgnoreCharsetOverride() {
     return true;
   }
+
+  /**
+   * Return whether the document was created by a srcdoc iframe.
+   */
+  bool IsSrcdocDocument() const {
+    return mIsSrcdocDocument;
+  }
+
+  /**
+   * Sets whether the document was created by a srcdoc iframe.
+   */
+  void SetIsSrcdocDocument(bool aIsSrcdocDocument) {
+    mIsSrcdocDocument = aIsSrcdocDocument;
+  }
+
+  /*
+   * Gets the srcdoc string from within the channel (assuming both exist).
+   * Returns a void string if this isn't a srcdoc document or if
+   * the channel has not been set.
+   */
+  nsresult GetSrcdocData(nsAString& aSrcdocData);
 
   bool DidDocumentOpen() {
     return mDidDocumentOpen;
@@ -1317,18 +1344,6 @@ public:
   bool HaveFiredDOMTitleChange() const {
     return mHaveFiredTitleChange;
   }
-
-  /**
-   * See GetXBLChildNodesFor on nsBindingManager
-   */
-  virtual nsresult GetXBLChildNodesFor(nsIContent* aContent,
-                                       nsIDOMNodeList** aResult) = 0;
-
-  /**
-   * See GetContentListFor on nsBindingManager
-   */
-  virtual nsresult GetContentListFor(nsIContent* aContent,
-                                     nsIDOMNodeList** aResult) = 0;
 
   /**
    * See GetAnonymousElementByAttribute on nsIDOMDocumentXBL.
@@ -2088,11 +2103,11 @@ public:
                 int32_t aScreenX, int32_t aScreenY, int32_t aClientX,
                 int32_t aClientY, int32_t aRadiusX, int32_t aRadiusY,
                 float aRotationAngle, float aForce);
-  already_AddRefed<nsIDOMTouchList> CreateTouchList();
-  already_AddRefed<nsIDOMTouchList>
+  already_AddRefed<nsDOMTouchList> CreateTouchList();
+  already_AddRefed<nsDOMTouchList>
     CreateTouchList(mozilla::dom::Touch& aTouch,
                     const mozilla::dom::Sequence<mozilla::dom::OwningNonNull<mozilla::dom::Touch> >& aTouches);
-  already_AddRefed<nsIDOMTouchList>
+  already_AddRefed<nsDOMTouchList>
     CreateTouchList(const mozilla::dom::Sequence<mozilla::dom::OwningNonNull<mozilla::dom::Touch> >& aTouches);
 
   void SetStyleSheetChangeEventsEnabled(bool aValue)
@@ -2104,6 +2119,14 @@ public:
   {
     return mStyleSheetChangeEventsEnabled;
   }
+
+  void ObsoleteSheet(nsIURI *aSheetURI, mozilla::ErrorResult& rv);
+
+  void ObsoleteSheet(const nsAString& aSheetURI, mozilla::ErrorResult& rv);
+
+  // ParentNode
+  nsIHTMLCollection* Children();
+  uint32_t ChildElementCount();
 
   virtual nsHTMLDocument* AsHTMLDocument() { return nullptr; }
 
@@ -2195,6 +2218,9 @@ protected:
   // Table of element properties for this document.
   nsPropertyTable mPropertyTable;
   nsTArray<nsAutoPtr<nsPropertyTable> > mExtraPropertyTables;
+
+  // Our cached .children collection
+  nsCOMPtr<nsIHTMLCollection> mChildrenCollection;
 
   // Compatibility mode
   nsCompatibility mCompatMode;
@@ -2312,6 +2338,9 @@ protected:
   // Whether style sheet change events will be dispatched for this document
   bool mStyleSheetChangeEventsEnabled;
 
+  // Whether the document was created by a srcdoc iframe.
+  bool mIsSrcdocDocument;
+
   // Records whether we've done a document.open. If this is true, it's possible
   // for nodes from this document to have outdated wrappers in their wrapper
   // caches.
@@ -2336,6 +2365,9 @@ protected:
   uint32_t mSandboxFlags;
 
   nsCString mContentLanguage;
+
+  // The channel that got passed to nsDocument::StartDocumentLoad(), if any.
+  nsCOMPtr<nsIChannel> mChannel;
 private:
   nsCString mContentType;
 protected:

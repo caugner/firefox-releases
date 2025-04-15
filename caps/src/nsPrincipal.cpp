@@ -10,6 +10,7 @@
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "plstr.h"
+#include "pratom.h"
 #include "nsCRT.h"
 #include "nsIURI.h"
 #include "nsIFileURL.h"
@@ -763,8 +764,7 @@ nsExpandedPrincipal::CheckMayLoad(nsIURI* uri, bool aReport, bool aAllowIfInheri
 NS_IMETHODIMP
 nsExpandedPrincipal::GetHashValue(uint32_t* result)
 {
-  MOZ_NOT_REACHED("extended principal should never be used as key in a hash map");
-  return NS_ERROR_FAILURE;
+  MOZ_CRASH("extended principal should never be used as key in a hash map");
 }
 
 NS_IMETHODIMP

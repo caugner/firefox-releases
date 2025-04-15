@@ -242,6 +242,10 @@ nsIParser* nsContentUtils::sXMLFragmentParser = nullptr;
 nsIFragmentContentSink* nsContentUtils::sXMLFragmentSink = nullptr;
 bool nsContentUtils::sFragmentParsingActive = false;
 
+#if !(defined(DEBUG) || defined(MOZ_ENABLE_JS_DUMP))
+bool nsContentUtils::sDOMWindowDumpEnabled;
+#endif
+
 namespace {
 
 static const char kJSStackContractID[] = "@mozilla.org/js/xpc/ContextStack;1";
@@ -433,6 +437,11 @@ nsContentUtils::Init()
   Preferences::AddUintVarCache(&sHandlingInputTimeout,
                                "dom.event.handling-user-input-time-limit",
                                1000);
+
+#if !(defined(DEBUG) || defined(MOZ_ENABLE_JS_DUMP))
+  Preferences::AddBoolVarCache(&sDOMWindowDumpEnabled,
+                               "browser.dom.window.dump.enabled");
+#endif
 
   Element::InitCCCallbacks();
 
@@ -1649,9 +1658,10 @@ nsContentUtils::TraceSafeJSContext(JSTracer* aTrc)
   if (!cx) {
     return;
   }
-  if (JSObject* global = js::GetDefaultGlobalForContext(cx)) {
+  if (JSObject* global = js::DefaultObjectForContextOrNull(cx)) {
+    JS::AssertGCThingMustBeTenured(global);
     JS_CallObjectTracer(aTrc, &global, "safe context");
-    MOZ_ASSERT(global == js::GetDefaultGlobalForContext(cx));
+    MOZ_ASSERT(global == js::DefaultObjectForContextOrNull(cx));
   }
 }
 
@@ -1674,7 +1684,7 @@ nsContentUtils::GetDocumentFromCaller()
   AutoJSContext cx;
 
   nsCOMPtr<nsPIDOMWindow> win =
-    do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(JS_GetGlobalForScopeChain(cx)));
+    do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(JS::CurrentGlobalOrNull(cx)));
   if (!win) {
     return nullptr;
   }
@@ -1748,8 +1758,7 @@ bool
 nsContentUtils::LookupBindingMember(JSContext* aCx, nsIContent *aContent,
                                     JS::HandleId aId, JSPropertyDescriptor* aDesc)
 {
-  nsXBLBinding* binding = aContent->OwnerDoc()->BindingManager()
-                                  ->GetBinding(aContent);
+  nsXBLBinding* binding = aContent->GetXBLBinding();
   if (!binding)
     return true;
   return binding->LookupMember(aCx, aId, aDesc);
@@ -2958,7 +2967,7 @@ nsresult nsContentUtils::FormatLocalizedString(PropertiesFile aFile,
 
 /* static */ nsresult
 nsContentUtils::ReportToConsole(uint32_t aErrorFlags,
-                                const char *aCategory,
+                                const nsACString& aCategory,
                                 nsIDocument* aDocument,
                                 PropertiesFile aFile,
                                 const char *aMessageName,
@@ -2993,7 +3002,7 @@ nsContentUtils::ReportToConsole(uint32_t aErrorFlags,
 /* static */ nsresult
 nsContentUtils::ReportToConsoleNonLocalized(const nsAString& aErrorText,
                                             uint32_t aErrorFlags,
-                                            const char *aCategory,
+                                            const nsACString& aCategory,
                                             nsIDocument* aDocument,
                                             nsIURI* aURI,
                                             const nsAFlatString& aSourceLine,
@@ -3568,8 +3577,7 @@ nsContentUtils::HasMutationListeners(nsINode* aNode,
 
     if (aNode->IsNodeOfType(nsINode::eCONTENT)) {
       nsIContent* content = static_cast<nsIContent*>(aNode);
-      nsIContent* insertionParent =
-        doc->BindingManager()->GetInsertionParent(content);
+      nsIContent* insertionParent = content->GetXBLInsertionParent();
       if (insertionParent) {
         aNode = insertionParent;
         continue;
@@ -4360,6 +4368,13 @@ nsContentUtils::IsSystemPrincipal(nsIPrincipal* aPrincipal)
   return NS_SUCCEEDED(rv) && isSystem;
 }
 
+bool
+nsContentUtils::IsExpandedPrincipal(nsIPrincipal* aPrincipal)
+{
+  nsCOMPtr<nsIExpandedPrincipal> ep = do_QueryInterface(aPrincipal);
+  return !!ep;
+}
+
 nsIPrincipal*
 nsContentUtils::GetSystemPrincipal()
 {
@@ -4525,7 +4540,8 @@ nsContentUtils::DOMEventToNativeKeyEvent(nsIDOMKeyEvent* aKeyEvent,
   aKeyEvent->GetShiftKey(&aNativeEvent->shiftKey);
   aKeyEvent->GetMetaKey(&aNativeEvent->metaKey);
 
-  aNativeEvent->nativeEvent = GetNativeEvent(aKeyEvent);
+  aNativeEvent->mGeckoEvent =
+    static_cast<nsKeyEvent*>(GetNativeEvent(aKeyEvent));
 
   return true;
 }
@@ -4836,30 +4852,6 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
 {
   return aDocument->GetViewportInfo(aDisplayWidth, aDisplayHeight);
 }
-
-#ifdef MOZ_WIDGET_ANDROID
-/* static */
-double
-nsContentUtils::GetDevicePixelsPerMetaViewportPixel(nsIWidget* aWidget)
-{
-  int32_t prefValue = Preferences::GetInt("browser.viewport.scaleRatio", 0);
-  if (prefValue > 0) {
-    return double(prefValue) / 100.0;
-  }
-
-  float dpi = aWidget->GetDPI();
-  if (dpi < 200.0) {
-    // Includes desktop displays, LDPI and MDPI Android devices
-    return 1.0;
-  }
-  if (dpi < 300.0) {
-    // Includes Nokia N900, and HDPI Android devices
-    return 1.5;
-  }
-  // For very high-density displays like the iPhone 4, use an integer ratio.
-  return floor(dpi / 150.0);
-}
-#endif
 
 /* static */
 nsresult
@@ -5683,7 +5675,7 @@ nsContentUtils::CreateBlobBuffer(JSContext* aCx,
   } else {
     return NS_ERROR_OUT_OF_MEMORY;
   }
-  JS::Rooted<JSObject*> scope(aCx, JS_GetGlobalForScopeChain(aCx));
+  JS::Rooted<JSObject*> scope(aCx, JS::CurrentGlobalOrNull(aCx));
   return nsContentUtils::WrapNative(aCx, scope, blob, aBlob.address(), nullptr,
                                     true);
 }
@@ -5771,6 +5763,22 @@ nsContentUtils::AllocClassMatchingInfo(nsINode* aRootNode,
     aRootNode->OwnerDoc()->GetCompatibilityMode() == eCompatibility_NavQuirks ?
     eIgnoreCase : eCaseMatters;
   return info;
+}
+
+// static
+void
+nsContentUtils::DeferredFinalize(nsISupports* aSupports)
+{
+  cyclecollector::DeferredFinalize(aSupports);
+}
+
+// static
+void
+nsContentUtils::DeferredFinalize(mozilla::DeferredFinalizeAppendFunction aAppendFunc,
+                                 mozilla::DeferredFinalizeFunction aFunc,
+                                 void* aThing)
+{
+  cyclecollector::DeferredFinalize(aAppendFunc, aFunc, aThing);
 }
 
 // static
@@ -6100,11 +6108,18 @@ nsContentUtils::SetUpChannelOwner(nsIPrincipal* aLoadingPrincipal,
   if (aForceOwner || ((NS_SUCCEEDED(URIInheritsSecurityContext(aURI, &inherit)) &&
       (inherit || (aSetUpForAboutBlank && NS_IsAboutBlank(aURI)))))) {
 #ifdef DEBUG
-    // Assert that aForceOwner is only set for null principals
+    // Assert that aForceOwner is only set for null principals for non-srcdoc
+    // loads.  (Strictly speaking not all uses of about:srcdoc would be 
+    // srcdoc loads, but the URI is non-resolvable in cases where it is not).
     if (aForceOwner) {
-      nsCOMPtr<nsIURI> ownerURI;
-      nsresult rv = aLoadingPrincipal->GetURI(getter_AddRefs(ownerURI));
-      MOZ_ASSERT(NS_SUCCEEDED(rv) && SchemeIs(ownerURI, NS_NULLPRINCIPAL_SCHEME));
+      nsAutoCString uriStr;
+      aURI->GetSpec(uriStr);
+      if(!uriStr.EqualsLiteral("about:srcdoc") &&
+         !uriStr.EqualsLiteral("view-source:about:srcdoc")) {
+        nsCOMPtr<nsIURI> ownerURI;
+        nsresult rv = aLoadingPrincipal->GetURI(getter_AddRefs(ownerURI));
+        MOZ_ASSERT(NS_SUCCEEDED(rv) && SchemeIs(ownerURI, NS_NULLPRINCIPAL_SCHEME));
+      }
     }
 #endif
     aChannel->SetOwner(aLoadingPrincipal);
@@ -6276,24 +6291,6 @@ nsContentUtils::IsInPointerLockContext(nsIDOMWindow* aWin)
 }
 
 // static
-void
-nsContentUtils::ReleaseWrapper(void* aScriptObjectHolder,
-                               nsWrapperCache* aCache)
-{
-  if (aCache->PreservingWrapper()) {
-    // PreserveWrapper puts new DOM bindings in the JS holders hash, but they
-    // can also be in the DOM expando hash, so we need to try to remove them
-    // from both here.
-    JSObject* obj = aCache->GetWrapperPreserveColor();
-    if (aCache->IsDOMBinding() && obj && js::IsProxy(obj)) {
-        DOMProxyHandler::GetAndClearExpandoObject(obj);
-    }
-    aCache->SetPreservingWrapper(false);
-    DropJSObjects(aScriptObjectHolder);
-  }
-}
-
-// static
 int32_t
 nsContentUtils::GetAdjustedOffsetInTextControl(nsIFrame* aOffsetFrame,
                                                int32_t aOffset)
@@ -6416,4 +6413,17 @@ nsContentUtils::InternalIsSupported(nsISupports* aObject,
 
   // Otherwise, we claim to support everything
   return true;
+}
+
+bool
+nsContentUtils::DOMWindowDumpEnabled()
+{
+#if !(defined(DEBUG) || defined(MOZ_ENABLE_JS_DUMP))
+  // In optimized builds we check a pref that controls if we should
+  // enable output from dump() or not, in debug builds it's always
+  // enabled.
+  return nsContentUtils::sDOMWindowDumpEnabled;
+#else
+  return true;
+#endif
 }

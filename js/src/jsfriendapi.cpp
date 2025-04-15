@@ -7,19 +7,22 @@
 #include "jsfriendapi.h"
 
 #include "mozilla/PodOperations.h"
-#include "mozilla/StandardInteger.h"
+
+#include <stdint.h>
 
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsgc.h"
 #include "jsobj.h"
-#include "jswrapper.h"
-#include "jsweakmap.h"
 #include "jswatchpoint.h"
+#include "jsweakmap.h"
+#include "jswrapper.h"
 #include "prmjtime.h"
 
 #include "builtin/TestingFunctions.h"
+#include "vm/WrapperObject.h"
 
+#include "jsfuninlines.h"
 #include "jsobjinlines.h"
 
 using namespace js;
@@ -71,7 +74,7 @@ JS_FindCompilationScope(JSContext *cx, JSObject *objArg)
      * We unwrap wrappers here. This is a little weird, but it's what's being
      * asked of us.
      */
-    if (obj->isWrapper())
+    if (obj->is<WrapperObject>())
         obj = UncheckedUnwrap(obj);
 
     /*
@@ -376,9 +379,15 @@ js::GetGlobalForObjectCrossCompartment(JSObject *obj)
 }
 
 JS_FRIEND_API(JSObject *)
-js::GetDefaultGlobalForContext(JSContext *cx)
+js::DefaultObjectForContextOrNull(JSContext *cx)
 {
     return cx->maybeDefaultCompartmentObject();
+}
+
+JS_FRIEND_API(void)
+js::SetDefaultObjectForContext(JSContext *cx, JSObject *obj)
+{
+    cx->setDefaultCompartmentObject(obj);
 }
 
 JS_FRIEND_API(void)
@@ -559,12 +568,11 @@ JS_GetCustomIteratorCount(JSContext *cx)
 JS_FRIEND_API(JSBool)
 JS_IsDeadWrapper(JSObject *obj)
 {
-    if (!IsProxy(obj)) {
+    if (!obj->is<ProxyObject>()) {
         return false;
     }
 
-    BaseProxyHandler *handler = GetProxyHandler(obj);
-    return handler->family() == &DeadObjectProxy::sDeadObjectFamily;
+    return obj->as<ProxyObject>().handler()->family() == &DeadObjectProxy::sDeadObjectFamily;
 }
 
 void
@@ -708,7 +716,7 @@ DumpHeapVisitCell(JSRuntime *rt, void *data, void *thing,
                   JSGCTraceKind traceKind, size_t thingSize)
 {
     JSDumpHeapTracer *dtrc = static_cast<JSDumpHeapTracer *>(data);
-    char cellDesc[1024];
+    char cellDesc[1024 * 32];
     JS_GetTraceThingInfo(cellDesc, sizeof(cellDesc), dtrc, thing, traceKind, true);
     fprintf(dtrc->output, "%p %c %s\n", thing, MarkDescriptor(thing), cellDesc);
     JS_TraceChildren(dtrc, thing, traceKind);
@@ -738,6 +746,7 @@ js::DumpHeapComplete(JSRuntime *rt, FILE *fp)
     JSDumpHeapTracer dtrc(fp);
 
     JS_TracerInit(&dtrc, rt, DumpHeapVisitRoot);
+    dtrc.eagerlyTraceWeakMaps = TraceWeakMapKeysValues;
     TraceRuntime(&dtrc);
 
     fprintf(dtrc.output, "==========\n");
@@ -885,8 +894,19 @@ JS::DisableGenerationalGC(JSRuntime *rt)
 {
     rt->gcGenerationalEnabled = false;
 #ifdef JSGC_GENERATIONAL
+    MinorGC(rt, JS::gcreason::API);
     rt->gcNursery.disable();
     rt->gcStoreBuffer.disable();
+#endif
+}
+
+extern JS_FRIEND_API(void)
+JS::EnableGenerationalGC(JSRuntime *rt)
+{
+    rt->gcGenerationalEnabled = true;
+#ifdef JSGC_GENERATIONAL
+    rt->gcNursery.enable();
+    rt->gcStoreBuffer.enable();
 #endif
 }
 
@@ -945,7 +965,7 @@ JS::IncrementalReferenceBarrier(void *ptr, JSGCTraceKind kind)
     else if (kind == JSTRACE_TYPE_OBJECT)
         types::TypeObject::writeBarrierPre((types::TypeObject *) ptr);
     else
-        JS_NOT_REACHED("invalid trace kind");
+        MOZ_ASSUME_UNREACHABLE("invalid trace kind");
 }
 
 JS_FRIEND_API(void)
@@ -1113,10 +1133,32 @@ js_ReportIsNotFunction(JSContext *cx, const JS::Value& v)
     return ReportIsNotFunction(cx, v);
 }
 
-#if defined(DEBUG) && defined(JS_THREADSAFE)
+#ifdef DEBUG
 JS_PUBLIC_API(bool)
 js::IsInRequest(JSContext *cx)
 {
+#ifdef JS_THREADSAFE
     return !!cx->runtime()->requestDepth;
+#else
+    return true;
+#endif
 }
 #endif
+
+#ifdef JSGC_GENERATIONAL
+JS_FRIEND_API(void)
+JS_StoreObjectPostBarrierCallback(JSContext* cx,
+                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  JSObject *key, void *data)
+{
+    cx->runtime()->gcStoreBuffer.putCallback(callback, key, data);
+}
+
+extern JS_FRIEND_API(void)
+JS_StoreStringPostBarrierCallback(JSContext* cx,
+                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  JSString *key, void *data)
+{
+    cx->runtime()->gcStoreBuffer.putCallback(callback, key, data);
+}
+#endif /* JSGC_GENERATIONAL */

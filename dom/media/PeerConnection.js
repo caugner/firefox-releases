@@ -153,12 +153,6 @@ RTCSessionDescription.prototype = {
   __init: function(dict) {
     this.type = dict.type;
     this.sdp  = dict.sdp;
-  },
-
-  // Bug 863402 serializer support workaround
-  toJSON: function() {
-    return { type: this.type, sdp: this.sdp,
-             __exposedProps__: { type: "rw", sdp: "rw" } };
   }
 };
 
@@ -279,7 +273,8 @@ RTCPeerConnection.prototype = {
     this._mustValidateRTCConfiguration(rtcConfig,
         "RTCPeerConnection constructor passed invalid RTCConfiguration");
     if (_globalPCList._networkdown) {
-      throw new Components.Exception("Can't create RTCPeerConnections when the network is down");
+      throw new this._win.DOMError("",
+          "Can't create RTCPeerConnections when the network is down");
     }
 
     this.makeGetterSetterEH("onaddstream");
@@ -311,7 +306,8 @@ RTCPeerConnection.prototype = {
 
   _getPC: function() {
     if (!this._pc) {
-      throw new Components.Exception("RTCPeerConnection is gone (did you enter Offline mode?)");
+      throw new this._win.DOMError("",
+          "RTCPeerConnection is gone (did you enter Offline mode?)");
     }
     return this._pc;
   },
@@ -365,20 +361,19 @@ RTCPeerConnection.prototype = {
    * ErrorMsg is passed in to detail which array-entry failed, if any.
    */
   _mustValidateRTCConfiguration: function(rtcConfig, errorMsg) {
+    var errorCtor = this._win.DOMError;
     function nicerNewURI(uriStr, errorMsg) {
       let ios = Cc['@mozilla.org/network/io-service;1'].getService(Ci.nsIIOService);
       try {
         return ios.newURI(uriStr, null, null);
       } catch (e if (e.result == Cr.NS_ERROR_MALFORMED_URI)) {
-        throw new Components.Exception(errorMsg + " - malformed URI: " + uriStr,
-                                       Cr.NS_ERROR_MALFORMED_URI);
+        throw new errorCtor("", errorMsg + " - malformed URI: " + uriStr);
       }
     }
     function mustValidateServer(server) {
       let url = nicerNewURI(server.url, errorMsg);
       if (!(url.scheme in { stun:1, stuns:1, turn:1, turns:1 })) {
-        throw new Components.Exception(errorMsg + " - improper scheme: " + url.scheme,
-                                       Cr.NS_ERROR_MALFORMED_URI);
+        throw new errorCtor("", errorMsg + " - improper scheme: " + url.scheme);
       }
     }
     if (rtcConfig.iceServers) {
@@ -421,41 +416,40 @@ RTCPeerConnection.prototype = {
     // Parse-aid: Testing for pilot error of missing outer block avoids
     // otherwise silent no-op since both mandatory and optional are optional
     if (!isObject(constraints) || Array.isArray(constraints)) {
-      throw new Components.Exception(errorMsg);
+      throw new this._win.DOMError("", errorMsg);
     }
     if (constraints.mandatory) {
       // Testing for pilot error of using [] on mandatory here throws nicer msg
       // (arrays would throw in loop below regardless but with more cryptic msg)
       if (!isObject(constraints.mandatory) || Array.isArray(constraints.mandatory)) {
-        throw new Components.Exception(errorMsg + " - malformed mandatory constraints");
+        throw new this._win.DOMError("",
+            errorMsg + " - malformed mandatory constraints");
       }
       for (let constraint in constraints.mandatory) {
         if (!(constraint in SUPPORTED_CONSTRAINTS) &&
             constraints.mandatory.hasOwnProperty(constraint)) {
-          throw new Components.Exception(errorMsg + " - " +
-                                         ((constraint in OTHER_KNOWN_CONSTRAINTS)?
-                                          "unsupported" : "unknown") +
-                                         " mandatory constraint: " + constraint);
+          throw new this._win.DOMError("", errorMsg + " - " +
+              ((constraint in OTHER_KNOWN_CONSTRAINTS)? "unsupported" : "unknown") +
+              " mandatory constraint: " + constraint);
         }
       }
     }
     if (constraints.optional) {
       if (!isArraylike(constraints.optional)) {
-        throw new Components.Exception(errorMsg +
-                                       " - malformed optional constraint array");
+        throw new this._win.DOMError("",
+            errorMsg + " - malformed optional constraint array");
       }
       let len = constraints.optional.length;
       for (let i = 0; i < len; i += 1) {
         if (!isObject(constraints.optional[i])) {
-          throw new Components.Exception(errorMsg +
-                                         " - malformed optional constraint: " +
-                                         constraints.optional[i]);
+          throw new this._win.DOMError("", errorMsg +
+              " - malformed optional constraint: " + constraints.optional[i]);
         }
         let constraints_per_entry = 0;
         for (let constraint in constraints.optional[i]) {
           if (constraints.optional[i].hasOwnProperty(constraint)) {
             if (constraints_per_entry) {
-              throw new Components.Exception(errorMsg +
+              throw new this._win.DOMError("", errorMsg +
                   " - optional constraint must be single key/value pair");
             }
             constraints_per_entry += 1;
@@ -471,7 +465,7 @@ RTCPeerConnection.prototype = {
   // spec. See Bug 831756.
   _checkClosed: function() {
     if (this._closed) {
-      throw new Components.Exception("Peer connection is closed");
+      throw new this._win.DOMError("", "Peer connection is closed");
     }
   },
 
@@ -627,11 +621,10 @@ RTCPeerConnection.prototype = {
         type = Ci.IPeerConnection.kActionAnswer;
         break;
       case "pranswer":
-        throw new Components.Exception("pranswer not yet implemented",
-                                       Cr.NS_ERROR_NOT_IMPLEMENTED);
+        throw new this._win.DOMError("", "pranswer not yet implemented");
       default:
-        throw new Components.Exception("Invalid type " + desc.type +
-                                       " provided to setLocalDescription");
+        throw new this._win.DOMError("",
+            "Invalid type " + desc.type + " provided to setLocalDescription");
     }
 
     this._queueOrRun({
@@ -658,11 +651,10 @@ RTCPeerConnection.prototype = {
         type = Ci.IPeerConnection.kActionAnswer;
         break;
       case "pranswer":
-        throw new Components.Exception("pranswer not yet implemented",
-                                       Cr.NS_ERROR_NOT_IMPLEMENTED);
+        throw new this._win.DOMError("", "pranswer not yet implemented");
       default:
-        throw new Components.Exception("Invalid type " + desc.type +
-                                       " provided to setRemoteDescription");
+        throw new this._win.DOMError("",
+            "Invalid type " + desc.type + " provided to setRemoteDescription");
     }
 
     this._queueOrRun({
@@ -674,13 +666,13 @@ RTCPeerConnection.prototype = {
   },
 
   updateIce: function(config, constraints) {
-    throw new Components.Exception("updateIce not yet implemented",
-                                   Cr.NS_ERROR_NOT_IMPLEMENTED);
+    throw new this._win.DOMError("", "updateIce not yet implemented");
   },
 
   addIceCandidate: function(cand, onSuccess, onError) {
     if (!cand.candidate && !cand.sdpMLineIndex) {
-      throw new Components.Exception("Invalid candidate passed to addIceCandidate!");
+      throw new this._win.DOMError("",
+          "Invalid candidate passed to addIceCandidate!");
     }
     this._onAddIceCandidateSuccess = onSuccess || null;
     this._onAddIceCandidateError = onError || null;
@@ -694,7 +686,7 @@ RTCPeerConnection.prototype = {
 
   addStream: function(stream, constraints) {
     if (stream.currentTime === undefined) {
-      throw new Components.Exception("Invalid stream passed to addStream!");
+      throw new this._win.DOMError("", "Invalid stream passed to addStream!");
     }
     // TODO: Implement constraints.
     this._queueOrRun({
@@ -706,13 +698,11 @@ RTCPeerConnection.prototype = {
 
   removeStream: function(stream) {
      //Bug 844295: Not implementing this functionality.
-     throw new Components.Exception("removeStream not yet implemented",
-                                    Cr.NS_ERROR_NOT_IMPLEMENTED);
+     throw new this._win.DOMError("", "removeStream not yet implemented");
   },
 
   getStreamById: function(id) {
-    throw new Components.Exception("getStreamById not yet implemented",
-                                   Cr.NS_ERROR_NOT_IMPLEMENTED);
+    throw new this._win.DOMError("", "getStreamById not yet implemented");
   },
 
   close: function() {
@@ -850,7 +840,8 @@ RTCPeerConnection.prototype = {
 
     if (dict.maxRetransmitTime != undefined &&
         dict.maxRetransmits != undefined) {
-      throw new Components.Exception("Both maxRetransmitTime and maxRetransmits cannot be provided");
+      throw new this._win.DOMError("",
+          "Both maxRetransmitTime and maxRetransmits cannot be provided");
     }
     let protocol;
     if (dict.protocol == undefined) {

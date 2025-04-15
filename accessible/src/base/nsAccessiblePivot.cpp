@@ -298,7 +298,6 @@ nsAccessiblePivot::MoveLast(nsIAccessibleTraversalRule* aRule,
   return NS_OK;
 }
 
-// TODO: Implement
 NS_IMETHODIMP
 nsAccessiblePivot::MoveNextByText(TextBoundaryType aBoundary, bool* aResult)
 {
@@ -306,10 +305,49 @@ nsAccessiblePivot::MoveNextByText(TextBoundaryType aBoundary, bool* aResult)
 
   *aResult = false;
 
-  return NS_ERROR_NOT_IMPLEMENTED;
+  int32_t oldStart = mStartOffset, oldEnd = mEndOffset;
+  HyperTextAccessible* text = mPosition->AsHyperText();
+  Accessible* oldPosition = mPosition;
+  while (!text) {
+    oldPosition = mPosition;
+    mPosition = mPosition->Parent();
+    text = mPosition->AsHyperText();
+  }
+
+  if (mEndOffset == -1)
+    mEndOffset = text != oldPosition ? text->GetChildOffset(oldPosition) : 0;
+
+  if (mEndOffset == text->CharacterCount())
+    return NS_OK;
+
+  AccessibleTextBoundary startBoundary, endBoundary;
+  switch (aBoundary) {
+    case CHAR_BOUNDARY:
+      startBoundary = nsIAccessibleText::BOUNDARY_CHAR;
+      endBoundary = nsIAccessibleText::BOUNDARY_CHAR;
+      break;
+    case WORD_BOUNDARY:
+      startBoundary = nsIAccessibleText::BOUNDARY_WORD_START;
+      endBoundary = nsIAccessibleText::BOUNDARY_WORD_END;
+      break;
+    default:
+      return NS_ERROR_INVALID_ARG;
+  }
+
+  nsAutoString unusedText;
+  int32_t newStart = 0, newEnd = 0;
+  text->GetTextAtOffset(mEndOffset, endBoundary, &newStart, &mEndOffset, unusedText);
+  text->GetTextBeforeOffset(mEndOffset, startBoundary, &newStart, &newEnd,
+                            unusedText);
+  mStartOffset = newEnd == mEndOffset ? newStart : newEnd;
+
+  *aResult = true;
+
+  NotifyOfPivotChange(mPosition, oldStart, oldEnd,
+                      nsIAccessiblePivot::REASON_TEXT);
+  return NS_OK;
 }
 
-// TODO: Implement
 NS_IMETHODIMP
 nsAccessiblePivot::MovePreviousByText(TextBoundaryType aBoundary, bool* aResult)
 {
@@ -317,7 +355,52 @@ nsAccessiblePivot::MovePreviousByText(TextBoundaryType aBoundary, bool* aResult)
 
   *aResult = false;
 
-  return NS_ERROR_NOT_IMPLEMENTED;
+  int32_t oldStart = mStartOffset, oldEnd = mEndOffset;
+  HyperTextAccessible* text = mPosition->AsHyperText();
+  Accessible* oldPosition = mPosition;
+  while (!text) {
+    oldPosition = mPosition;
+    mPosition = mPosition->Parent();
+    text = mPosition->AsHyperText();
+  }
+
+  if (mStartOffset == -1)
+    mStartOffset = text != oldPosition ? text->GetChildOffset(oldPosition) : 0;
+
+  if (mStartOffset == 0)
+    return NS_OK;
+
+  AccessibleTextBoundary startBoundary, endBoundary;
+  switch (aBoundary) {
+    case CHAR_BOUNDARY:
+      startBoundary = nsIAccessibleText::BOUNDARY_CHAR;
+      endBoundary = nsIAccessibleText::BOUNDARY_CHAR;
+      break;
+    case WORD_BOUNDARY:
+      startBoundary = nsIAccessibleText::BOUNDARY_WORD_START;
+      endBoundary = nsIAccessibleText::BOUNDARY_WORD_END;
+      break;
+    default:
+      return NS_ERROR_INVALID_ARG;
+  }
+
+  nsAutoString unusedText;
+  int32_t newStart = 0, newEnd = 0;
+  text->GetTextBeforeOffset(mStartOffset, startBoundary, &newStart, &newEnd,
+                            unusedText);
+  if (newStart < mStartOffset)
+    mStartOffset = newEnd == mStartOffset ? newStart : newEnd;
+  else // XXX: In certain odd cases newStart is equal to mStartOffset
+    text->GetTextBeforeOffset(mStartOffset - 1, startBoundary, &newStart,
+                              &mStartOffset, unusedText);
+  text->GetTextAtOffset(mStartOffset, endBoundary, &newStart, &mEndOffset,
+                        unusedText);
+
+  *aResult = true;
+
+  NotifyOfPivotChange(mPosition, oldStart, oldEnd,
+                      nsIAccessiblePivot::REASON_TEXT);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -416,6 +499,31 @@ nsAccessiblePivot::MovePivotInternal(Accessible* aPosition,
 }
 
 Accessible*
+nsAccessiblePivot::AdjustStartPosition(Accessible* aAccessible,
+                                       RuleCache& aCache,
+                                       uint16_t* aFilterResult,
+                                       nsresult* aResult)
+{
+  Accessible* matched = aAccessible;
+  *aResult = aCache.ApplyFilter(aAccessible, aFilterResult);
+
+  if (aAccessible != mRoot && aAccessible != mModalRoot) {
+    for (Accessible* temp = aAccessible->Parent();
+         temp && temp != mRoot && temp != mModalRoot; temp = temp->Parent()) {
+      uint16_t filtered = nsIAccessibleTraversalRule::FILTER_IGNORE;
+      *aResult = aCache.ApplyFilter(temp, &filtered);
+      NS_ENSURE_SUCCESS(*aResult, nullptr);
+      if (filtered & nsIAccessibleTraversalRule::FILTER_IGNORE_SUBTREE) {
+        *aFilterResult = filtered;
+        matched = temp;
+      }
+    }
+  }
+
+  return matched;
+}
+
+Accessible*
 nsAccessiblePivot::SearchBackward(Accessible* aAccessible,
                                   nsIAccessibleTraversalRule* aRule,
                                   bool aSearchCurrent,
@@ -428,15 +536,13 @@ nsAccessiblePivot::SearchBackward(Accessible* aAccessible,
     return nullptr;
 
   RuleCache cache(aRule);
-  Accessible* accessible = aAccessible;
-
   uint16_t filtered = nsIAccessibleTraversalRule::FILTER_IGNORE;
+  Accessible* accessible = AdjustStartPosition(aAccessible, cache,
+                                               &filtered, aResult);
+  NS_ENSURE_SUCCESS(*aResult, nullptr);
 
-  if (aSearchCurrent) {
-    *aResult = cache.ApplyFilter(accessible, &filtered);
-    NS_ENSURE_SUCCESS(*aResult, nullptr);
-    if (filtered & nsIAccessibleTraversalRule::FILTER_MATCH)
-      return accessible;
+  if (aSearchCurrent && (filtered & nsIAccessibleTraversalRule::FILTER_MATCH)) {
+    return accessible;
   }
 
   Accessible* root = GetActiveRoot();
@@ -492,7 +598,7 @@ nsAccessiblePivot::SearchForward(Accessible* aAccessible,
   RuleCache cache(aRule);
 
   uint16_t filtered = nsIAccessibleTraversalRule::FILTER_IGNORE;
-  *aResult = cache.ApplyFilter(accessible, &filtered);
+  accessible = AdjustStartPosition(accessible, cache, &filtered, aResult);
   NS_ENSURE_SUCCESS(*aResult, nullptr);
   if (aSearchCurrent && (filtered & nsIAccessibleTraversalRule::FILTER_MATCH))
     return accessible;

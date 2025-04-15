@@ -35,6 +35,12 @@
 #include "XPCQuickStubs.h"
 
 #include "mozilla/dom/BindingUtils.h"
+#include "mozilla/dom/IDBIndexBinding.h"
+#include "mozilla/dom/IDBObjectStoreBinding.h"
+#include "mozilla/dom/IDBOpenDBRequestBinding.h"
+#include "mozilla/dom/IDBRequestBinding.h"
+#include "mozilla/dom/IDBTransactionBinding.h"
+#include "mozilla/dom/IDBVersionChangeEventBinding.h"
 #include "mozilla/dom/TextDecoderBinding.h"
 #include "mozilla/dom/TextEncoderBinding.h"
 #include "mozilla/dom/DOMErrorBinding.h"
@@ -53,12 +59,12 @@ using namespace mozilla::dom;
 using namespace xpc;
 using namespace JS;
 
-NS_IMPL_THREADSAFE_ISUPPORTS5(nsXPConnect,
-                              nsIXPConnect,
-                              nsISupportsWeakReference,
-                              nsIThreadObserver,
-                              nsIJSRuntimeService,
-                              nsIJSEngineTelemetryStats)
+NS_IMPL_ISUPPORTS5(nsXPConnect,
+                   nsIXPConnect,
+                   nsISupportsWeakReference,
+                   nsIThreadObserver,
+                   nsIJSRuntimeService,
+                   nsIJSEngineTelemetryStats)
 
 nsXPConnect* nsXPConnect::gSelf = nullptr;
 JSBool       nsXPConnect::gOnceAliveNowDead = false;
@@ -263,14 +269,13 @@ xpc::SystemErrorReporter(JSContext *cx, const char *message, JSErrorReport *rep)
             consoleService->LogMessage(errorObject);
     }
 
-    /* Log to stderr in debug builds. */
-#ifdef DEBUG
-    fprintf(stderr, "System JS : %s %s:%d\n"
-            "                     %s\n",
-            JSREPORT_IS_WARNING(rep->flags) ? "WARNING" : "ERROR",
-            rep->filename, rep->lineno,
-            message ? message : "<no message>");
-#endif
+    if (nsContentUtils::DOMWindowDumpEnabled()) {
+        fprintf(stderr, "System JS : %s %s:%d\n"
+                "                     %s\n",
+                JSREPORT_IS_WARNING(rep->flags) ? "WARNING" : "ERROR",
+                rep->filename, rep->lineno,
+                message ? message : "<no message>");
+    }
 
 }
 
@@ -464,7 +469,8 @@ CreateGlobalObject(JSContext *cx, JSClass *clasp, nsIPrincipal *principal,
     MOZ_ASSERT(principal);
 
     RootedObject global(cx,
-                        JS_NewGlobalObject(cx, clasp, nsJSPrincipals::get(principal), aOptions));
+                        JS_NewGlobalObject(cx, clasp, nsJSPrincipals::get(principal),
+                                           JS::DontFireOnNewGlobalHook, aOptions));
     if (!global)
         return nullptr;
     JSAutoCompartment ac(cx, global);
@@ -542,7 +548,13 @@ nsXPConnect::InitClassesWithNewWrappedGlobal(JSContext * aJSContext,
     MOZ_ASSERT(js::GetObjectClass(global)->flags & JSCLASS_DOM_GLOBAL);
 
     // Init WebIDL binding constructors wanted on all XPConnect globals.
-    if (!TextDecoderBinding::GetConstructorObject(aJSContext, global) ||
+    if (!IDBIndexBinding::GetConstructorObject(aJSContext, global) ||
+        !IDBObjectStoreBinding::GetConstructorObject(aJSContext, global) ||
+        !IDBOpenDBRequestBinding::GetConstructorObject(aJSContext, global) ||
+        !IDBRequestBinding::GetConstructorObject(aJSContext, global) ||
+        !IDBTransactionBinding::GetConstructorObject(aJSContext, global) ||
+        !IDBVersionChangeEventBinding::GetConstructorObject(aJSContext, global) ||
+        !TextDecoderBinding::GetConstructorObject(aJSContext, global) ||
         !TextEncoderBinding::GetConstructorObject(aJSContext, global) ||
         !DOMErrorBinding::GetConstructorObject(aJSContext, global)) {
         return UnexpectedFailure(NS_ERROR_FAILURE);
@@ -593,9 +605,9 @@ nsXPConnect::WrapNative(JSContext * aJSContext,
     NS_ASSERTION(aCOMObj, "bad param");
 
     RootedObject aScope(aJSContext, aScopeArg);
-    jsval v;
+    RootedValue v(aJSContext);
     return NativeInterface2JSObject(aScope, aCOMObj, nullptr, &aIID,
-                                    false, &v, aHolder);
+                                    false, v.address(), aHolder);
 }
 
 /* void wrapNativeToJSVal (in JSContextPtr aJSContext, in JSObjectPtr aScope, in nsISupports aCOMObj, in nsIIDPtr aIID, out jsval aVal, out nsIXPConnectJSObjectHolder aHolder); */
@@ -1216,18 +1228,32 @@ nsXPConnect::GetRuntime(JSRuntime **runtime)
     return NS_OK;
 }
 
-/* [noscript, notxpcom] void registerGCCallback(in JSGCCallback func); */
+/* [noscript, notxpcom] void registerGCCallback(in xpcGCCallback func); */
 NS_IMETHODIMP_(void)
-nsXPConnect::RegisterGCCallback(JSGCCallback func)
+nsXPConnect::RegisterGCCallback(xpcGCCallback func)
 {
     mRuntime->AddGCCallback(func);
 }
 
-/* [noscript, notxpcom] void unregisterGCCallback(in JSGCCallback func); */
+/* [noscript, notxpcom] void unregisterGCCallback(in xpcGCCallback func); */
 NS_IMETHODIMP_(void)
-nsXPConnect::UnregisterGCCallback(JSGCCallback func)
+nsXPConnect::UnregisterGCCallback(xpcGCCallback func)
 {
     mRuntime->RemoveGCCallback(func);
+}
+
+/* [noscript, notxpcom] void registerContextCallback(in xpcContextCallback func); */
+NS_IMETHODIMP_(void)
+nsXPConnect::RegisterContextCallback(xpcContextCallback func)
+{
+    mRuntime->AddContextCallback(func);
+}
+
+/* [noscript, notxpcom] void unregisterContextCallback(in xpcContextCallback func); */
+NS_IMETHODIMP_(void)
+nsXPConnect::UnregisterContextCallback(xpcContextCallback func)
+{
+    mRuntime->RemoveContextCallback(func);
 }
 
 #ifdef MOZ_JSDEBUGGER
@@ -1377,7 +1403,8 @@ namespace xpc {
 bool
 DeferredRelease(nsISupports *obj)
 {
-    return nsXPConnect::GetRuntimeInstance()->DeferredRelease(obj);
+    nsContentUtils::DeferredFinalize(obj);
+    return true;
 }
 
 NS_EXPORT_(bool)
@@ -1386,8 +1413,8 @@ Base64Encode(JSContext *cx, JS::Value val, JS::Value *out)
     MOZ_ASSERT(cx);
     MOZ_ASSERT(out);
 
-    JS::Value root = val;
-    xpc_qsACString encodedString(cx, root, &root, xpc_qsACString::eNull,
+    JS::RootedValue root(cx, val);
+    xpc_qsACString encodedString(cx, root, root.address(), xpc_qsACString::eNull,
                                  xpc_qsACString::eStringify);
     if (!encodedString.IsValid())
         return false;
@@ -1412,8 +1439,8 @@ Base64Decode(JSContext *cx, JS::Value val, JS::Value *out)
     MOZ_ASSERT(cx);
     MOZ_ASSERT(out);
 
-    JS::Value root = val;
-    xpc_qsACString encodedString(cx, root, &root, xpc_qsACString::eNull,
+    JS::RootedValue root(cx, val);
+    xpc_qsACString encodedString(cx, root, root.address(), xpc_qsACString::eNull,
                                  xpc_qsACString::eNull);
     if (!encodedString.IsValid())
         return false;
@@ -1430,14 +1457,6 @@ Base64Decode(JSContext *cx, JS::Value val, JS::Value *out)
 
     *out = STRING_TO_JSVAL(str);
     return true;
-}
-
-void
-DumpJSHeap(FILE* file)
-{
-    NS_ABORT_IF_FALSE(NS_IsMainThread(), "Must dump GC heap on main thread.");
-    nsXPConnect* xpc = nsXPConnect::XPConnect();
-    js::DumpHeapComplete(xpc->GetRuntime()->Runtime(), file);
 }
 
 void
@@ -1645,8 +1664,16 @@ nsXPConnect::ReadFunction(nsIObjectInputStream *stream, JSContext *cx, JSObject 
     return ReadScriptOrFunction(stream, cx, nullptr, functionObjp);
 }
 
+NS_IMETHODIMP
+nsXPConnect::MarkErrorUnreported(JSContext *cx)
+{
+    XPCContext *xpcc = XPCContext::GetXPCContext(cx);
+    xpcc->MarkErrorUnreported();
+    return NS_OK;
+}
+
 /* These are here to be callable from a debugger */
-JS_BEGIN_EXTERN_C
+extern "C" {
 JS_EXPORT_API(void) DumpJSStack()
 {
     nsresult rv;
@@ -1695,5 +1722,19 @@ JS_EXPORT_API(void) DumpCompleteHeap()
     nsJSContext::CycleCollectNow(alltracesListener);
 }
 
-JS_END_EXTERN_C
+} // extern "C"
 
+
+namespace mozilla {
+namespace dom {
+
+bool
+IsChromeOrXBL(JSContext* cx, JSObject* /* unused */)
+{
+  JSCompartment* compartment = js::GetContextCompartment(cx);
+  return AccessCheck::isChrome(compartment) ||
+         IsXBLScope(compartment);
+}
+
+} // namespace dom
+} // namespace mozilla

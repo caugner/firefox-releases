@@ -8,11 +8,10 @@
 #define jit_x86_BaselineHelpers_x86_h
 
 #ifdef JS_ION
-
-#include "jit/IonMacroAssembler.h"
 #include "jit/BaselineFrame.h"
-#include "jit/BaselineRegisters.h"
 #include "jit/BaselineIC.h"
+#include "jit/BaselineRegisters.h"
+#include "jit/IonMacroAssembler.h"
 
 namespace js {
 namespace jit {

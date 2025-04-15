@@ -515,7 +515,7 @@ BrowserTabActor.prototype = {
     // as the title.
     if (!title && this._tabbrowser) {
       title = this._tabbrowser
-                  ._getTabForContentWindow(this.contentWindow).label;
+                  ._getTabForContentWindow(this.window).label;
     }
     return title;
   },
@@ -530,12 +530,30 @@ BrowserTabActor.prototype = {
   },
 
   /**
-   * Getter for the tab content window.
+   * Getter for the tab content window, will be used by child actors to target
+   * the right window.
    * @return nsIDOMWindow
    *         Tab content window.
    */
-  get contentWindow() {
-    return this.browser.contentWindow;
+  get window() {
+    if (this.browser instanceof Ci.nsIDOMWindow) {
+      return this.browser;
+    } else if (this.browser instanceof Ci.nsIDOMElement) {
+      return this.browser.contentWindow;
+    } else {
+      return null;
+    }
+  },
+
+  /**
+   * Getter for the best nsIWebProgress for to watching this window.
+   */
+  get webProgress() {
+    return this.window
+      .QueryInterface(Ci.nsIInterfaceRequestor)
+      .getInterface(Ci.nsIDocShell)
+      .QueryInterface(Ci.nsIInterfaceRequestor)
+      .getInterface(Ci.nsIWebProgress);
   },
 
   grip: function BTA_grip() {
@@ -628,7 +646,7 @@ BrowserTabActor.prototype = {
     this._contextPool = new ActorPool(this.conn);
     this.conn.addActorPool(this._contextPool);
 
-    this.threadActor = new ThreadActor(this, this.contentWindow.wrappedJSObject);
+    this.threadActor = new ThreadActor(this, this.window.wrappedJSObject);
     this._contextPool.addActor(this.threadActor);
   },
 
@@ -696,6 +714,30 @@ BrowserTabActor.prototype = {
   },
 
   /**
+   * Reload the page in this tab.
+   */
+  onReload: function(aRequest) {
+    // Wait a tick so that the response packet can be dispatched before the
+    // subsequent navigation event packet.
+    Services.tm.currentThread.dispatch(makeInfallible(() => {
+      this.window.location.reload();
+    }, "BrowserTabActor.prototype.onReload's delayed body"), 0);
+    return {};
+  },
+
+  /**
+   * Navigate this tab to a new location
+   */
+  onNavigateTo: function(aRequest) {
+    // Wait a tick so that the response packet can be dispatched before the
+    // subsequent navigation event packet.
+    Services.tm.currentThread.dispatch(makeInfallible(() => {
+      this.window.location = aRequest.url;
+    }, "BrowserTabActor.prototype.onNavigateTo's delayed body"), 0);
+    return {};
+  },
+
+  /**
    * Prepare to enter a nested event loop by disabling debuggee events.
    */
   preNest: function BTA_preNest() {
@@ -703,7 +745,7 @@ BrowserTabActor.prototype = {
       // The tab is already closed.
       return;
     }
-    let windowUtils = this.contentWindow
+    let windowUtils = this.window
                           .QueryInterface(Ci.nsIInterfaceRequestor)
                           .getInterface(Ci.nsIDOMWindowUtils);
     windowUtils.suppressEventHandling(true);
@@ -718,7 +760,7 @@ BrowserTabActor.prototype = {
       // The tab is already closed.
       return;
     }
-    let windowUtils = this.contentWindow
+    let windowUtils = this.window
                           .QueryInterface(Ci.nsIInterfaceRequestor)
                           .getInterface(Ci.nsIDOMWindowUtils);
     windowUtils.resumeTimeouts();
@@ -730,8 +772,9 @@ BrowserTabActor.prototype = {
   },
 
   /**
-   * Handle location changes, by sending a tabNavigated notification to the
-   * client.
+   * Handle location changes, by clearing the previous debuggees and enabling
+   * debugging, which may have been disabled temporarily by the
+   * DebuggerProgressListener.
    */
   onWindowCreated:
   makeInfallible(function BTA_onWindowCreated(evt) {
@@ -745,6 +788,7 @@ BrowserTabActor.prototype = {
         this.threadActor.clearDebuggees();
         if (this.threadActor.dbg) {
           this.threadActor.dbg.enabled = true;
+          this.threadActor.maybePauseOnExceptions();
         }
       }
     }
@@ -782,7 +826,9 @@ BrowserTabActor.prototype = {
  */
 BrowserTabActor.prototype.requestTypes = {
   "attach": BrowserTabActor.prototype.onAttach,
-  "detach": BrowserTabActor.prototype.onDetach
+  "detach": BrowserTabActor.prototype.onDetach,
+  "reload": BrowserTabActor.prototype.onReload,
+  "navigateTo": BrowserTabActor.prototype.onNavigateTo
 };
 
 /**
@@ -811,7 +857,7 @@ DebuggerProgressListener.prototype = {
 
     // Skip non-interesting states.
     if (!isWindow || !isNetwork ||
-        aProgress.DOMWindow != this._tabActor.contentWindow) {
+        aProgress.DOMWindow != this._tabActor.window) {
       return;
     }
 
@@ -837,7 +883,7 @@ DebuggerProgressListener.prototype = {
         this._tabActor.threadActor.dbg.enabled = true;
       }
 
-      let window = this._tabActor.contentWindow;
+      let window = this._tabActor.window;
       this._tabActor.conn.send({
         from: this._tabActor.actorID,
         type: "tabNavigated",

@@ -99,6 +99,30 @@ add_test(function test_read_icc_ucs2_string() {
 });
 
 /**
+ * Verify GsmPDUHelper#readDiallingNumber
+ */
+add_test(function test_read_dialling_number() {
+  let worker = newUint8Worker();
+  let helper = worker.GsmPDUHelper;
+  let str = "123456789";
+
+  helper.readHexOctet = function () {
+    return 0x81;
+  };
+
+  helper.readSwappedNibbleBcdString = function (len) {
+    return str.substring(0, len);
+  };
+
+  for (let i = 0; i < str.length; i++) {
+    do_check_eq(str.substring(0, i - 1), // -1 for the TON
+                helper.readDiallingNumber(i));
+  }
+
+  run_next_test();
+});
+
+/**
  * Verify GsmPDUHelper#read8BitUnpackedToString
  */
 add_test(function test_read_8bit_unpacked_to_string() {
@@ -1767,6 +1791,64 @@ add_test(function test_load_linear_fixed_ef() {
 });
 
 /**
+ * Verify ICCRecordHelper.readPBR
+ */
+add_test(function test_read_pbr() {
+  let worker = newUint8Worker();
+  let helper = worker.GsmPDUHelper;
+  let record = worker.ICCRecordHelper;
+  let buf    = worker.Buf;
+  let io     = worker.ICCIOHelper;
+
+  io.loadLinearFixedEF = function fakeLoadLinearFixedEF(options)  {
+    let pbr_1 = [
+      0xa8, 0x05, 0xc0, 0x03, 0x4f, 0x3a, 0x01
+    ];
+
+    // Write data size
+    buf.writeUint32(pbr_1.length * 2);
+
+    // Write pbr
+    for (let i = 0; i < pbr_1.length; i++) {
+      helper.writeHexOctet(pbr_1[i]);
+    }
+
+    // Write string delimiter
+    buf.writeStringDelimiter(pbr_1.length * 2);
+
+    options.totalRecords = 2;
+    if (options.callback) {
+      options.callback(options);
+    }
+  };
+
+  io.loadNextRecord = function fakeLoadNextRecord(options) {
+    let pbr_2 = [
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+    ];
+
+    options.p1++;
+    if (options.callback) {
+      options.callback(options);
+    }
+  };
+
+  let successCb = function successCb(pbrs) {
+    do_check_eq(pbrs[0].adn.fileId, 0x4f3a);
+    do_check_eq(pbrs.length, 1);
+    run_next_test();
+  };
+
+  let errorCb = function errorCb(errorMsg) {
+    do_print("Reading EF_PBR failed, msg = " + errorMsg);
+    do_check_true(false);
+    run_next_test();
+  };
+
+  record.readPBR(successCb, errorCb);
+});
+
+/**
  * Verify ICCRecordHelper.readEmail
  */
 add_test(function test_read_email() {
@@ -2607,7 +2689,42 @@ add_test(function test_unlock_card_lock_corporateLocked() {
 /**
  * Verify MCC and MNC parsing
  */
-add_test(function test_mcc_mnc_parsing()) {
+add_test(function test_mcc_mnc_parsing() {
+  let worker = newUint8Worker();
+  let helper = worker.ICCUtilsHelper;
+
+  function do_test(imsi, mncLength, expectedMcc, expectedMnc) {
+    let result = helper.parseMccMncFromImsi(imsi, mncLength);
+
+    if (!imsi) {
+      do_check_eq(result, null);
+      return;
+    }
+
+    do_check_eq(result.mcc, expectedMcc);
+    do_check_eq(result.mnc, expectedMnc);
+  }
+
+  // Test the imsi is null.
+  do_test(null, null, null, null);
+
+  // Test MCC is Taiwan
+  do_test("466923202422409", 0x02, "466", "92");
+  do_test("466923202422409", 0x03, "466", "923");
+  do_test("466923202422409", null, "466", "92");
+
+  // Test MCC is US
+  do_test("310260542718417", 0x02, "310", "26");
+  do_test("310260542718417", 0x03, "310", "260");
+  do_test("310260542718417", null, "310", "260");
+
+  run_next_test();
+ });
+
+ /**
+  * Verify reading EF_AD and parsing MCC/MNC
+  */
+add_test(function test_reading_ad_and_parsing_mcc_mnc() {
   let worker = newUint8Worker();
   let record = worker.ICCRecordHelper;
   let helper = worker.GsmPDUHelper;

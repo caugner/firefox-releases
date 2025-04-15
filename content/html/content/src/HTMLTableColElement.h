@@ -7,19 +7,17 @@
 
 #include "mozilla/Attributes.h"
 #include "nsGenericHTMLElement.h"
-#include "nsIDOMHTMLTableColElement.h"
 
 namespace mozilla {
 namespace dom {
 
-class HTMLTableColElement : public nsGenericHTMLElement,
-                            public nsIDOMHTMLTableColElement
+class HTMLTableColElement MOZ_FINAL : public nsGenericHTMLElement,
+                                      public nsIDOMHTMLElement
 {
 public:
   HTMLTableColElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
-    SetIsDOMBinding();
   }
   virtual ~HTMLTableColElement();
 
@@ -34,9 +32,6 @@ public:
 
   // nsIDOMHTMLElement
   NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
-
-  // nsIDOMHTMLTableColElement
-  NS_DECL_NSIDOMHTMLTABLECOLELEMENT
 
   uint32_t Span() const
   {

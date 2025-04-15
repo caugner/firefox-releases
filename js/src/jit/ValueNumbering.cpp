@@ -4,11 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "Ion.h"
-#include "IonBuilder.h"
-#include "IonSpewer.h"
-#include "CompileInfo.h"
-#include "ValueNumbering.h"
+#include "jit/ValueNumbering.h"
+
+#include "jit/CompileInfo.h"
+#include "jit/Ion.h"
+#include "jit/IonBuilder.h"
+#include "jit/IonSpewer.h"
 
 using namespace js;
 using namespace js::jit;
@@ -89,7 +90,7 @@ ValueNumberer::simplifyControlInstruction(MControlInstruction *def)
 
     // MControlInstructions should not have consumers.
     JS_ASSERT(repl->isControlInstruction());
-    JS_ASSERT(def->useCount() == 0);
+    JS_ASSERT(!def->hasUses());
 
     if (def->isInWorklist())
         repl->setInWorklist();
@@ -367,8 +368,9 @@ ValueNumberer::eliminateRedundancies()
 
         // Add all immediate dominators to the front of the worklist.
         if (!worklist.append(block->immediatelyDominatedBlocksBegin(),
-                             block->immediatelyDominatedBlocksEnd()))
+                             block->immediatelyDominatedBlocksEnd())) {
             return false;
+        }
 
         // For each instruction, attempt to look up a dominating definition.
         for (MDefinitionIterator iter(block); iter; ) {

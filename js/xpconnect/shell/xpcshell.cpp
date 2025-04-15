@@ -761,7 +761,7 @@ Blob(JSContext *cx, unsigned argc, jsval *vp)
     return false;
   }
 
-  JSObject* global = JS_GetGlobalForScopeChain(cx);
+  JSObject* global = JS::CurrentGlobalOrNull(cx);
   rv = xpc->WrapNativeToJSVal(cx, global, native, nullptr,
                               &NS_GET_IID(nsISupports), true,
                               args.rval().address(), nullptr);
@@ -800,7 +800,7 @@ File(JSContext *cx, unsigned argc, jsval *vp)
     return false;
   }
 
-  JSObject* global = JS_GetGlobalForScopeChain(cx);
+  JSObject* global = JS::CurrentGlobalOrNull(cx);
   rv = xpc->WrapNativeToJSVal(cx, global, native, nullptr,
                               &NS_GET_IID(nsISupports), true,
                               args.rval().address(), nullptr);
@@ -810,6 +810,68 @@ File(JSContext *cx, unsigned argc, jsval *vp)
   }
 
   return true;
+}
+
+Value sScriptedOperationCallback = UndefinedValue();
+
+static JSBool
+XPCShellOperationCallback(JSContext *cx)
+{
+    // If no operation callback was set by script, no-op.
+    if (sScriptedOperationCallback.isUndefined())
+        return true;
+
+    JSAutoCompartment ac(cx, &sScriptedOperationCallback.toObject());
+    RootedValue rv(cx);
+    if (!JS_CallFunctionValue(cx, nullptr, sScriptedOperationCallback,
+                              0, nullptr, rv.address()) || !rv.isBoolean())
+    {
+        NS_WARNING("Scripted operation callback failed! Terminating script.");
+        JS_ClearPendingException(cx);
+        return false;
+    }
+
+    return rv.toBoolean();
+}
+
+static JSBool
+SetOperationCallback(JSContext *cx, unsigned argc, jsval *vp)
+{
+    // Sanity-check args.
+    JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+    if (args.length() != 1) {
+        JS_ReportError(cx, "Wrong number of arguments");
+        return false;
+    }
+
+    // Allow callers to remove the operation callback by passing undefined.
+    if (args[0].isUndefined()) {
+        sScriptedOperationCallback = UndefinedValue();
+        return true;
+    }
+
+    // Otherwise, we should have a callable object.
+    if (!args[0].isObject() || !JS_ObjectIsCallable(cx, &args[0].toObject())) {
+        JS_ReportError(cx, "Argument must be callable");
+        return false;
+    }
+
+    sScriptedOperationCallback = args[0];
+
+    return true;
+}
+
+static JSBool
+SimulateActivityCallback(JSContext *cx, unsigned argc, jsval *vp)
+{
+    // Sanity-check args.
+    JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+    if (args.length() != 1 || !args[0].isBoolean()) {
+        JS_ReportError(cx, "Wrong number of arguments");
+        return false;
+    }
+    xpc::SimulateActivityCallback(args[0].toBoolean());
+    return true;
 }
 
 static const JSFunctionSpec glob_functions[] = {
@@ -836,6 +898,8 @@ static const JSFunctionSpec glob_functions[] = {
     JS_FS("btoa",            Btoa,           1,0),
     JS_FS("Blob",            Blob,           2,JSFUN_CONSTRUCTOR),
     JS_FS("File",            File,           2,JSFUN_CONSTRUCTOR),
+    JS_FS("setOperationCallback", SetOperationCallback, 1,0),
+    JS_FS("simulateActivityCallback", SimulateActivityCallback, 1,0),
     JS_FS_END
 };
 
@@ -1386,9 +1450,6 @@ nsXPCFunctionThisTranslator::TranslateThis(nsISupports *aInitialThis,
 
 #endif
 
-// ContextCallback calls are chained
-static JSContextCallback gOldJSContextCallback;
-
 void
 XPCShellErrorReporter(JSContext *cx, const char *message, JSErrorReport *rep)
 {
@@ -1402,14 +1463,12 @@ XPCShellErrorReporter(JSContext *cx, const char *message, JSErrorReport *rep)
     xpc::SystemErrorReporterExternal(cx, message, rep);
 }
 
-static JSBool
+static bool
 ContextCallback(JSContext *cx, unsigned contextOp)
 {
-    if (gOldJSContextCallback && !gOldJSContextCallback(cx, contextOp))
-        return false;
-
     if (contextOp == JSCONTEXT_NEW) {
         JS_SetErrorReporter(cx, XPCShellErrorReporter);
+        JS_SetOperationCallback(cx, XPCShellOperationCallback);
     }
     return true;
 }
@@ -1581,7 +1640,7 @@ main(int argc, char **argv, char **envp)
             return 1;
         }
 
-        gOldJSContextCallback = JS_SetContextCallback(rt, ContextCallback);
+        rtsvc->RegisterContextCallback(ContextCallback);
 
         cx = JS_NewContext(rt, 8192);
         if (!cx) {
@@ -1693,7 +1752,9 @@ main(int argc, char **argv, char **envp)
             JS_DefineProperty(cx, glob, "__LOCATION__", JSVAL_VOID,
                               GetLocationProperty, NULL, 0);
 
+            JS_AddValueRoot(cx, &sScriptedOperationCallback);
             result = ProcessArgs(cx, glob, argv, argc, &dirprovider);
+            JS_RemoveValueRoot(cx, &sScriptedOperationCallback);
 
             JS_DropPrincipals(rt, gJSPrincipals);
             JS_SetAllNonReservedSlotsToUndefined(cx, glob);

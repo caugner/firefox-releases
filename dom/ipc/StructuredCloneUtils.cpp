@@ -48,17 +48,13 @@ Read(JSContext* aCx, JSStructuredCloneReader* aReader, uint32_t aTag,
       // File should not be mutable.
       nsCOMPtr<nsIMutable> mutableFile = do_QueryInterface(file);
       bool isMutable;
-      if (NS_FAILED(mutableFile->GetMutable(&isMutable))) {
-        MOZ_NOT_REACHED("GetMutable failed!");
-      }
-      else {
-        MOZ_ASSERT(!isMutable);
-      }
+      MOZ_ASSERT(NS_SUCCEEDED(mutableFile->GetMutable(&isMutable)));
+      MOZ_ASSERT(!isMutable);
     }
 #endif
 
     JS::Rooted<JS::Value> wrappedFile(aCx);
-    JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForScopeChain(aCx));
+    JS::Rooted<JSObject*> global(aCx, JS::CurrentGlobalOrNull(aCx));
     nsresult rv = nsContentUtils::WrapNative(aCx, global, file,
                                              &NS_GET_IID(nsIDOMFile),
                                              wrappedFile.address());
@@ -81,17 +77,13 @@ Read(JSContext* aCx, JSStructuredCloneReader* aReader, uint32_t aTag,
       // Blob should not be mutable.
       nsCOMPtr<nsIMutable> mutableBlob = do_QueryInterface(blob);
       bool isMutable;
-      if (NS_FAILED(mutableBlob->GetMutable(&isMutable))) {
-        MOZ_NOT_REACHED("GetMutable failed!");
-      }
-      else {
-        MOZ_ASSERT(!isMutable);
-      }
+      MOZ_ASSERT(NS_SUCCEEDED(mutableBlob->GetMutable(&isMutable)));
+      MOZ_ASSERT(!isMutable);
     }
 #endif
 
     JS::Rooted<JS::Value> wrappedBlob(aCx);
-    JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForScopeChain(aCx));
+    JS::Rooted<JSObject*> global(aCx, JS::CurrentGlobalOrNull(aCx));
     nsresult rv = nsContentUtils::WrapNative(aCx, global, blob,
                                              &NS_GET_IID(nsIDOMBlob),
                                              wrappedBlob.address());

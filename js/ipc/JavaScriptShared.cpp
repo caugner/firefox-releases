@@ -29,9 +29,9 @@ void
 ObjectStore::trace(JSTracer *trc)
 {
     for (ObjectTable::Range r(table_.all()); !r.empty(); r.popFront()) {
-        JSObject *obj = r.front().value;
-        JS_CallObjectTracer(trc, &obj, "ipc-object");
-        MOZ_ASSERT(obj == r.front().value);
+        DebugOnly<JSObject *> prior = r.front().value.get();
+        JS_CallHeapObjectTracer(trc, &r.front().value, "ipc-object");
+        MOZ_ASSERT(r.front().value == prior);
     }
 }
 
@@ -87,9 +87,25 @@ ObjectIdCache::find(JSObject *obj)
 }
 
 bool
-ObjectIdCache::add(JSObject *obj, ObjectId id)
+ObjectIdCache::add(JSContext *cx, JSObject *obj, ObjectId id)
 {
-    return table_.put(obj, id);
+    if (!table_.put(obj, id))
+        return false;
+    JS_StoreObjectPostBarrierCallback(cx, keyMarkCallback, obj, this);
+    return true;
+}
+
+/*
+ * This function is called during minor GCs for each key in the HashMap that has
+ * been moved.
+ */
+/* static */ void
+ObjectIdCache::keyMarkCallback(JSTracer *trc, void *k, void *d) {
+    JSObject *key = static_cast<JSObject*>(k);
+    ObjectIdCache* self = static_cast<ObjectIdCache*>(d);
+    JSObject *prior = key;
+    JS_CallObjectTracer(trc, &key, "ObjectIdCache::table_ key");
+    self->table_.rekey(prior, key);
 }
 
 void
@@ -390,6 +406,81 @@ JavaScriptShared::toDescriptor(JSContext *cx, const PPropertyDescriptor &in, JSP
             out->setter = js_GetterOnlyPropertyStub;
         else
             out->setter = UnknownStrictPropertyStub;
+    }
+
+    return true;
+}
+
+bool
+CpowIdHolder::ToObject(JSContext *cx, JSObject **objp)
+{
+    return js_->Unwrap(cx, cpows_, objp);
+}
+
+bool
+JavaScriptShared::Unwrap(JSContext *cx, const InfallibleTArray<CpowEntry> &aCpows, JSObject **objp)
+{
+    *objp = NULL;
+
+    if (!aCpows.Length())
+        return true;
+
+    RootedObject obj(cx, JS_NewObject(cx, NULL, NULL, NULL));
+    if (!obj)
+        return false;
+
+    RootedValue v(cx);
+    RootedString str(cx);
+    for (size_t i = 0; i < aCpows.Length(); i++) {
+        const nsString &name = aCpows[i].name();
+
+        if (!toValue(cx, aCpows[i].value(), &v))
+            return false;
+
+        if (!JS_DefineUCProperty(cx,
+                                 obj,
+                                 name.BeginReading(),
+                                 name.Length(),
+                                 v,
+                                 NULL,
+                                 NULL,
+                                 JSPROP_ENUMERATE))
+        {
+            return false;
+        }
+    }
+
+    *objp = obj;
+    return true;
+}
+
+bool
+JavaScriptShared::Wrap(JSContext *cx, HandleObject aObj, InfallibleTArray<CpowEntry> *outCpows)
+{
+    if (!aObj)
+        return true;
+
+    AutoIdArray ids(cx, JS_Enumerate(cx, aObj));
+    if (!ids)
+        return false;
+
+    RootedId id(cx);
+    RootedValue v(cx);
+    for (size_t i = 0; i < ids.length(); i++) {
+        id = ids[i];
+
+        nsString str;
+        if (!convertIdToGeckoString(cx, id, &str))
+            return false;
+
+        if (!JS_GetPropertyById(cx, aObj, id, &v))
+            return false;
+
+        JSVariant var;
+        if (!toVariant(cx, v, &var))
+            return false;
+
+        outCpows->AppendElement(CpowEntry(str, var));
     }
 
     return true;

@@ -10,9 +10,10 @@
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsgc.h"
+
+#include "assembler/jit/ExecutableAllocator.h"
 #include "jit/IonCode.h"
 #include "jit/IonCompartment.h"
-#include "assembler/jit/ExecutableAllocator.h"
 #include "jit/IonMacroAssembler.h"
 
 namespace js {

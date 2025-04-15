@@ -511,20 +511,25 @@ var SelectionHelperUI = {
     messageManager.addMessageListener("Content:HandlerShutdown", this);
     messageManager.addMessageListener("Content:SelectionHandlerPong", this);
 
+    // capture phase
     window.addEventListener("keypress", this, true);
-    window.addEventListener("click", this, false);
-    window.addEventListener("touchstart", this, true);
-    window.addEventListener("touchend", this, true);
-    window.addEventListener("touchmove", this, true);
     window.addEventListener("MozPrecisePointer", this, true);
     window.addEventListener("MozDeckOffsetChanging", this, true);
     window.addEventListener("MozDeckOffsetChanged", this, true);
+    window.addEventListener("KeyboardChanged", this, true);
+
+    // bubble phase
+    window.addEventListener("click", this, false);
+    window.addEventListener("touchstart", this, false);
+    window.addEventListener("touchend", this, false);
+    window.addEventListener("touchmove", this, false);
 
     Elements.browsers.addEventListener("URLChanged", this, true);
     Elements.browsers.addEventListener("SizeChanged", this, true);
     Elements.browsers.addEventListener("ZoomChanged", this, true);
 
     Elements.navbar.addEventListener("transitionend", this, true);
+    Elements.navbar.addEventListener("MozAppbarDismissing", this, true);
 
     this.overlay.enabled = true;
   },
@@ -539,18 +544,20 @@ var SelectionHelperUI = {
 
     window.removeEventListener("keypress", this, true);
     window.removeEventListener("click", this, false);
-    window.removeEventListener("touchstart", this, true);
-    window.removeEventListener("touchend", this, true);
-    window.removeEventListener("touchmove", this, true);
+    window.removeEventListener("touchstart", this, false);
+    window.removeEventListener("touchend", this, false);
+    window.removeEventListener("touchmove", this, false);
     window.removeEventListener("MozPrecisePointer", this, true);
     window.removeEventListener("MozDeckOffsetChanging", this, true);
     window.removeEventListener("MozDeckOffsetChanged", this, true);
+    window.removeEventListener("KeyboardChanged", this, true);
 
     Elements.browsers.removeEventListener("URLChanged", this, true);
     Elements.browsers.removeEventListener("SizeChanged", this, true);
     Elements.browsers.removeEventListener("ZoomChanged", this, true);
 
     Elements.navbar.removeEventListener("transitionend", this, true);
+    Elements.navbar.removeEventListener("MozAppbarDismissing", this, true);
 
     this._shutdownAllMarkers();
 
@@ -610,6 +617,16 @@ var SelectionHelperUI = {
     this.startMark.position(targetMark.xPos, targetMark.yPos);
     this.endMark.position(targetMark.xPos, targetMark.yPos);
 
+    // We delay transitioning until we know which direction the user is dragging
+    // based on a hysteresis value in the drag marker code. Down in our caller, we
+    // cache the first drag position in _cachedCaretPos so we can select from the
+    // initial caret drag position. Use those values if we have them. (Note
+    // _cachedCaretPos has already been translated in _getMarkerBaseMessage.)
+    let xpos = this._cachedCaretPos ? this._cachedCaretPos.xPos :
+      this._msgTarget.ctobx(targetMark.xPos, true);
+    let ypos = this._cachedCaretPos ? this._cachedCaretPos.yPos :
+      this._msgTarget.ctoby(targetMark.yPos, true);
+
     // Start the selection monocle drag. SelectionHandler relies on this
     // for getting initialized. This will also trigger a message back for
     // monocle positioning. Note, markerDragMove is still on the stack in
@@ -617,41 +634,9 @@ var SelectionHelperUI = {
     this._sendAsyncMessage("Browser:SelectionSwitchMode", {
       newMode: "selection",
       change: targetMark.tag,
-      xPos: this._msgTarget.ctobx(targetMark.xPos, true),
-      yPos: this._msgTarget.ctoby(targetMark.yPos, true),
+      xPos: xpos,
+      yPos: ypos,
     });
-  },
-
-  /*
-   * _transitionFromSelectionToCaret
-   *
-   * Transitions from text selection mode to caret mode.
-   *
-   * @param aClientX, aClientY - client coordinates of the
-   * tap that initiates the change.
-   */
-  _transitionFromSelectionToCaret: function _transitionFromSelectionToCaret(aClientX, aClientY) {
-    // Reset some of our state
-    this._activeSelectionRect = null;
-
-    // Reset the monocles
-    this._shutdownAllMarkers();
-    this._setupMonocleIdArray();
-
-    // Translate to browser relative client coordinates
-    let coords =
-      this._msgTarget.ptClientToBrowser(aClientX, aClientY, true);
-
-    // Init SelectionHandler and turn on caret selection. Note the focus caret
-    // will have been removed from the target element due to the shutdown call.
-    // This won't set the caret position on its own.
-    this._sendAsyncMessage("Browser:CaretAttach", {
-      xPos: coords.x,
-      yPos: coords.y
-    });
-
-    // Set the caret position
-    this._setCaretPositionAtPoint(coords.x, coords.y);
   },
 
   /*
@@ -786,71 +771,14 @@ var SelectionHelperUI = {
    */
 
   /*
-   * _onTap
-   *
    * Handles taps that move the current caret around in text edits,
    * clear active selection and focus when neccessary, or change
    * modes.
-   * Future: changing selection modes by tapping on a monocle.
    */
-  _onTap: function _onTap(aEvent) {
-    let clientCoords =
-      this._msgTarget.ptBrowserToClient(aEvent.clientX, aEvent.clientY, true);
-
-    // Check for a tap on a monocle
-    if (this.startMark.hitTest(clientCoords.x, clientCoords.y) ||
-        this.endMark.hitTest(clientCoords.x, clientCoords.y)) {
-      aEvent.stopPropagation();
-      aEvent.preventDefault();
-      return;
+  _onClick: function(aEvent) {
+    if (this.layerMode == kChromeLayer && this._targetIsEditable) {
+      this.attachToCaret(this._msgTarget, aEvent.clientX, aEvent.clientY);
     }
-
-    // Is the tap point within the bound of the target element? This
-    // is useful if we are dealing with some sort of input control.
-    // Not so much if the target is a page or div.
-    let pointInTargetElement =
-      Util.pointWithinRect(clientCoords.x, clientCoords.y,
-                           this._targetElementRect);
-
-    // If the tap is within an editable element and the caret monocle is
-    // active, update the caret.
-    if (this.caretMark.visible && pointInTargetElement) {
-      // setCaretPositionAtPoint takes browser relative coords.
-      this._setCaretPositionAtPoint(aEvent.clientX, aEvent.clientY);
-      return;
-    }
-
-    // if the target is editable, we have selection or a caret, and the
-    // user clicks off the target clear selection and remove focus from
-    // the input.
-    if (this._targetIsEditable && !pointInTargetElement) {
-      // shutdown but leave focus alone. the event will fall through
-      // and the dom will update focus for us. If the user tapped on
-      // another input, we'll get a attachToCaret call soonish on the
-      // new input.
-      this.closeEditSession(false);
-      return;
-    }
-
-    if (this._hitTestSelection(aEvent) && this._targetIsEditable) {
-      // Attach to the newly placed caret position
-      this._sendAsyncMessage("Browser:CaretAttach", {
-        xPos: aEvent.clientX,
-        yPos: aEvent.clientY
-      });
-      return;
-    }
-
-    // A tap within an editable but outside active selection, clear the
-    // selection and flip back to caret mode.
-    if (this.startMark.visible && pointInTargetElement &&
-        this._targetIsEditable) {
-      this._transitionFromSelectionToCaret(clientCoords.x, clientCoords.y);
-      return;
-    }
-
-    // Close when we get a single tap in content.
-    this.closeEditSession(false);
   },
 
   _onKeypress: function _onKeypress() {
@@ -890,9 +818,30 @@ var SelectionHelperUI = {
     if (this.layerMode == kContentLayer) {
       return;
     }
+
     if (aEvent.propertyName == "bottom" && Elements.navbar.isShowing) {
       this._sendAsyncMessage("Browser:SelectionUpdate", {});
+      return;
     }
+    
+    if (aEvent.propertyName == "transform" && Elements.navbar.isShowing) {
+      this._sendAsyncMessage("Browser:SelectionUpdate", {});
+      this._showMonocles(ChromeSelectionHandler.hasSelection);
+    }
+  },
+
+  _onNavBarDismissEvent: function _onNavBarDismissEvent() {
+    if (!this.isActive || this.layerMode == kContentLayer) {
+      return;
+    }
+    this._hideMonocles();
+  },
+
+  _onKeyboardChangedEvent: function _onKeyboardChangedEvent() {
+    if (!this.isActive || this.layerMode == kContentLayer) {
+      return;
+    }
+    this._sendAsyncMessage("Browser:SelectionUpdate", {});
   },
 
   /*
@@ -984,12 +933,17 @@ var SelectionHelperUI = {
     }
     switch (aEvent.type) {
       case "click":
-        this._onTap(aEvent);
+        this._onClick(aEvent);
         break;
 
       case "touchstart": {
         if (aEvent.touches.length != 1)
           break;
+        // Only prevent default if we're dragging so that
+        // APZC doesn't scroll.
+        if (this._checkForActiveDrag()) {
+          aEvent.preventDefault();
+        }
         let touch = aEvent.touches[0];
         this._movement.x = touch.clientX;
         this._movement.y = touch.clientY;
@@ -1044,6 +998,14 @@ var SelectionHelperUI = {
       case "transitionend":
         this._onNavBarTransitionEvent(aEvent);
         break;
+
+      case "MozAppbarDismissing":
+        this._onNavBarDismissEvent();
+        break;
+
+      case "KeyboardChanged":
+        this._onKeyboardChangedEvent();
+        break;
     }
   },
 
@@ -1097,6 +1059,7 @@ var SelectionHelperUI = {
   markerDragStart: function markerDragStart(aMarker) {
     let json = this._getMarkerBaseMessage(aMarker.tag);
     if (aMarker.tag == "caret") {
+      this._cachedCaretPos = null;
       this._sendAsyncMessage("Browser:CaretMove", json);
       return;
     }
@@ -1123,8 +1086,13 @@ var SelectionHelperUI = {
         this._transitionFromCaretToSelection(aDirection);
         return false;
       }
+      // Cache for when we start the drag in _transitionFromCaretToSelection.
+      if (!this._cachedCaretPos) {
+        this._cachedCaretPos = this._getMarkerBaseMessage(aMarker.tag).caret;
+      }
       return true;
     }
+    this._cachedCaretPos = null;
 
     // We'll re-display these after the drag is complete.
     this._hideMonocles();

@@ -4,25 +4,22 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "vm/ForkJoin.h"
+
 #include "jscntxt.h"
 
 #ifdef JS_THREADSAFE
-#  include "prthread.h"
-#  include "prprf.h"
-#endif
-
-#include "vm/ForkJoin.h"
-
-#if defined(JS_THREADSAFE)
-#include "jit/BaselineJIT.h"
-#include "vm/Monitor.h"
+# include "prthread.h"
+# include "prprf.h"
+# include "jit/BaselineJIT.h"
+# include "vm/Monitor.h"
 #endif
 
 #if defined(DEBUG) && defined(JS_THREADSAFE) && defined(JS_ION)
-#  include "jit/Ion.h"
-#  include "jit/MIR.h"
-#  include "jit/MIRGraph.h"
-#  include "jit/IonCompartment.h"
+# include "jit/Ion.h"
+# include "jit/IonCompartment.h"
+# include "jit/MIR.h"
+# include "jit/MIRGraph.h"
 #endif // DEBUG && THREADSAFE && ION
 
 #include "vm/Interpreter-inl.h"
@@ -82,26 +79,25 @@ ForkJoinSlice::InitializeTLS()
 JSRuntime *
 ForkJoinSlice::runtime()
 {
-    JS_NOT_REACHED("Not THREADSAFE build");
+    MOZ_ASSUME_UNREACHABLE("Not THREADSAFE build");
 }
 
 bool
 ForkJoinSlice::check()
 {
-    JS_NOT_REACHED("Not THREADSAFE build");
-    return true;
+    MOZ_ASSUME_UNREACHABLE("Not THREADSAFE build");
 }
 
 void
 ForkJoinSlice::requestGC(JS::gcreason::Reason reason)
 {
-    JS_NOT_REACHED("Not THREADSAFE build");
+    MOZ_ASSUME_UNREACHABLE("Not THREADSAFE build");
 }
 
 void
 ForkJoinSlice::requestZoneGC(JS::Zone *zone, JS::gcreason::Reason reason)
 {
-    JS_NOT_REACHED("Not THREADSAFE build");
+    MOZ_ASSUME_UNREACHABLE("Not THREADSAFE build");
 }
 
 void
@@ -110,14 +106,14 @@ ParallelBailoutRecord::setCause(ParallelBailoutCause cause,
                                 JSScript *currentScript,
                                 jsbytecode *currentPc)
 {
-    JS_NOT_REACHED("Not THREADSAFE build");
+    MOZ_ASSUME_UNREACHABLE("Not THREADSAFE build");
 }
 
 void
 ParallelBailoutRecord::addTrace(JSScript *script,
                                 jsbytecode *pc)
 {
-    JS_NOT_REACHED("Not THREADSAFE build");
+    MOZ_ASSUME_UNREACHABLE("Not THREADSAFE build");
 }
 
 bool
@@ -595,12 +591,12 @@ js::ParallelDo::apply()
         // compiled scripts were collected.
         if (ParallelTestsShouldPass(cx_) && worklist_.length() != 0) {
             JS_ReportError(cx_, "ForkJoin: compilation required in par or bailout mode");
-            return ExecutionFatal;
+            return SpewEndOp(ExecutionFatal);
         }
         break;
 
       case NumForkJoinModes:
-        JS_NOT_REACHED("Invalid mode");
+        MOZ_ASSUME_UNREACHABLE("Invalid mode");
     }
 
     while (bailouts < MAX_BAILOUTS) {
@@ -1251,7 +1247,7 @@ class ParallelIonInvoke
   public:
     Value *args;
 
-    ParallelIonInvoke(JSCompartment *compartment,
+    ParallelIonInvoke(JSRuntime *rt,
                       HandleFunction callee,
                       uint32_t argc)
       : argc_(argc),
@@ -1267,7 +1263,7 @@ class ParallelIonInvoke
         IonScript *ion = callee->nonLazyScript()->parallelIonScript();
         IonCode *code = ion->method();
         jitcode_ = code->raw();
-        enter_ = compartment->ionCompartment()->enterJIT();
+        enter_ = rt->ionRuntime()->enterIon();
         calleeToken_ = CalleeToParallelToken(callee);
     }
 
@@ -1474,7 +1470,7 @@ ForkJoinShared::executePortion(PerThreadData *perThread,
                                       NULL, NULL, NULL);
         setAbortFlag(false);
     } else {
-        ParallelIonInvoke<3> fii(cx_->compartment(), callee, 3);
+        ParallelIonInvoke<3> fii(cx_->runtime(), callee, 3);
 
         fii.args[0] = Int32Value(slice.sliceId);
         fii.args[1] = Int32Value(slice.numSlices);
@@ -1716,9 +1712,9 @@ bool
 ForkJoinSlice::InitializeTLS()
 {
     if (!TLSInitialized) {
+        if (PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL) != PR_SUCCESS)
+            return false;
         TLSInitialized = true;
-        PRStatus status = PR_NewThreadPrivateIndex(&ThreadPrivateIndex, NULL);
-        return status == PR_SUCCESS;
     }
     return true;
 }

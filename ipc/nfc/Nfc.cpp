@@ -53,7 +53,7 @@ DispatchNfcEvent::RunTask(JSContext *aCx)
     MOZ_ASSERT(NS_IsMainThread(), "DispatchNfcEvent on main thread");
     MOZ_ASSERT(aCx);
 
-    JSObject *obj = JS_GetGlobalForScopeChain(aCx);
+    JSObject *obj = JS::CurrentGlobalOrNull(aCx);
     JSObject *array = JS_NewUint8Array(aCx, mMessage->mSize);
     if (!array) {
         return false;
@@ -155,7 +155,7 @@ void
 NfcConnector::GetSocketAddr(const sockaddr_any& aAddr,
                             nsAString& aAddrStr)
 {
-    MOZ_NOT_REACHED("This should never be called!");
+    MOZ_CRASH("This should never be called!");
 }
 
 } // anonymous namespace

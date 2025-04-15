@@ -8,7 +8,6 @@
 #include "mozilla/Util.h"
 
 #include "nsIPlatformCharset.h"
-#include "pratom.h"
 #include "nsUConvPropertySearch.h"
 #include "nsCOMPtr.h"
 #include "nsReadableUtils.h"
@@ -37,7 +36,7 @@ static const char* kUnixCharsets[][3] = {
 #include "unixcharset.properties.h"
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset)
+NS_IMPL_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset)
 
 nsPlatformCharset::nsPlatformCharset()
 {

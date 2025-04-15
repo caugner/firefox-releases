@@ -196,6 +196,12 @@ void RgnRectMemoryAllocatorDTOR(void *priv)
 
 nsresult nsRegion::InitStatic()
 {
+  if (gRectPoolTlsIndex.initialized()) {
+    // It's ok to call InitStatic if we called ShutdownStatic first
+    MOZ_ASSERT(gRectPoolTlsIndex.get() == nullptr);
+    return NS_OK;
+  }
+
   return gRectPoolTlsIndex.init() ? NS_OK : NS_ERROR_FAILURE;
 }
 
@@ -1266,6 +1272,18 @@ bool nsRegion::IsEqual (const nsRegion& aRegion) const
       return (TmpRegion.mRectCount == 0);
     }
   }
+}
+
+
+uint64_t nsRegion::Area () const
+{
+  uint64_t area = 0;
+  nsRegionRectIterator iter(*this);
+  const nsRect* r;
+  while ((r = iter.Next()) != nullptr) {
+    area += uint64_t(r->width)*r->height;
+  }
+  return area;
 }
 
 

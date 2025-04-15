@@ -1,11 +1,12 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set ts=8 sts=4 et sw=4 tw=99: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Per JSRuntime object */
 
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/Util.h"
 
 #include "xpcprivate.h"
@@ -22,6 +23,7 @@
 #include "prsystem.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/Services.h"
 
 #include "nsLayoutStatics.h"
 #include "nsContentUtils.h"
@@ -70,9 +72,6 @@ const char* XPCJSRuntime::mStrings[] = {
     "__proto__",            // IDX_PROTO
     "__iterator__",         // IDX_ITERATOR
     "__exposedProps__",     // IDX_EXPOSEDPROPS
-    "baseURIObject",        // IDX_BASEURIOBJECT
-    "nodePrincipal",        // IDX_NODEPRINCIPAL
-    "mozMatchesSelector"    // IDX_MOZMATCHESSELECTOR
 };
 
 /***************************************************************************/
@@ -202,21 +201,63 @@ DetachedWrappedNativeProtoMarker(PLDHashTable *table, PLDHashEntryHdr *hdr,
     return PL_DHASH_NEXT;
 }
 
-// GCCallback calls are chained
-static JSBool
-ContextCallback(JSContext *cx, unsigned operation)
+bool
+XPCJSRuntime::CustomContextCallback(JSContext *cx, unsigned operation)
 {
-    XPCJSRuntime* self = nsXPConnect::GetRuntimeInstance();
-    if (self) {
-        if (operation == JSCONTEXT_NEW) {
-            if (!self->OnJSContextNew(cx))
-                return false;
-        } else if (operation == JSCONTEXT_DESTROY) {
-            delete XPCContext::GetXPCContext(cx);
+    if (operation == JSCONTEXT_NEW) {
+        if (!OnJSContextNew(cx)) {
+            return false;
+        }
+    } else if (operation == JSCONTEXT_DESTROY) {
+        delete XPCContext::GetXPCContext(cx);
+    }
+
+    nsTArray<xpcContextCallback> callbacks(extraContextCallbacks);
+    for (uint32_t i = 0; i < callbacks.Length(); ++i) {
+        if (!callbacks[i](cx, operation)) {
+            return false;
         }
     }
+
     return true;
 }
+
+class AsyncFreeSnowWhite : public nsRunnable
+{
+public:
+  NS_IMETHOD Run()
+  {
+      TimeStamp start = TimeStamp::Now();
+      bool hadSnowWhiteObjects = nsCycleCollector_doDeferredDeletion();
+      Telemetry::Accumulate(Telemetry::CYCLE_COLLECTOR_ASYNC_SNOW_WHITE_FREEING,
+                            uint32_t((TimeStamp::Now() - start).ToMilliseconds()));
+      if (hadSnowWhiteObjects && !mContinuation) {
+          mContinuation = true;
+          if (NS_FAILED(NS_DispatchToCurrentThread(this))) {
+              mActive = false;
+          }
+      } else {
+          mActive = false;
+      }
+      return NS_OK;
+  }
+
+  void Dispatch(bool aContinuation = false)
+  {
+      if (mContinuation) {
+          mContinuation = aContinuation;
+      }
+      if (!mActive && NS_SUCCEEDED(NS_DispatchToCurrentThread(this))) {
+          mActive = true;
+      }
+  }
+
+  AsyncFreeSnowWhite() : mContinuation(false), mActive(false) {}
+
+public:
+  bool mContinuation;
+  bool mActive;
+};
 
 namespace xpc {
 
@@ -292,7 +333,7 @@ bool CompartmentPrivate::TryParseLocationURI()
         // Strip current item and continue
         chain = Substring(chain, 0, idx);
     }
-    MOZ_NOT_REACHED("Chain parser loop does not terminate");
+    MOZ_ASSUME_UNREACHABLE("Chain parser loop does not terminate");
 }
 
 bool CompartmentPrivate::TryParseLocationURICandidate(const nsACString& uristr)
@@ -563,6 +604,12 @@ XPCJSRuntime::PrepareForCollection()
 }
 
 void
+XPCJSRuntime::DispatchDeferredDeletion(bool aContinuation)
+{
+    mAsyncSnowWhiteFreer->Dispatch(aContinuation);
+}
+
+void
 xpc_UnmarkSkippableJSHolders()
 {
     if (nsXPConnect::XPConnect()->GetRuntime()) {
@@ -585,149 +632,6 @@ DoDeferredRelease(nsTArray<T> &array)
     }
 }
 
-struct DeferredFinalizeFunctionHolder
-{
-    DeferredFinalizeFunction run;
-    void *data;
-};
-
-class XPCIncrementalReleaseRunnable : public nsRunnable
-{
-    XPCJSRuntime *runtime;
-    nsTArray<nsISupports *> items;
-    nsAutoTArray<DeferredFinalizeFunctionHolder, 16> deferredFinalizeFunctions;
-    uint32_t finalizeFunctionToRun;
-
-    static const PRTime SliceMillis = 10; /* ms */
-
-  public:
-    XPCIncrementalReleaseRunnable(XPCJSRuntime *rt, nsTArray<nsISupports *> &items);
-    virtual ~XPCIncrementalReleaseRunnable();
-
-    void ReleaseNow(bool limited);
-
-    NS_DECL_NSIRUNNABLE
-};
-
-bool
-ReleaseSliceNow(uint32_t slice, void *data)
-{
-    MOZ_ASSERT(slice > 0, "nonsensical/useless call with slice == 0");
-    nsTArray<nsISupports *> *items = static_cast<nsTArray<nsISupports *>*>(data);
-
-    slice = std::min(slice, items->Length());
-    for (uint32_t i = 0; i < slice; ++i) {
-        // Remove (and NS_RELEASE) the last entry in "items":
-        uint32_t lastItemIdx = items->Length() - 1;
-
-        nsISupports *wrapper = items->ElementAt(lastItemIdx);
-        items->RemoveElementAt(lastItemIdx);
-        NS_RELEASE(wrapper);
-    }
-
-    return items->IsEmpty();
-}
-
-
-XPCIncrementalReleaseRunnable::XPCIncrementalReleaseRunnable(XPCJSRuntime *rt,
-                                                             nsTArray<nsISupports *> &items)
-  : runtime(rt),
-    finalizeFunctionToRun(0)
-{
-    nsLayoutStatics::AddRef();
-    this->items.SwapElements(items);
-    DeferredFinalizeFunctionHolder *function = deferredFinalizeFunctions.AppendElement();
-    function->run = ReleaseSliceNow;
-    function->data = &this->items;
-    for (uint32_t i = 0; i < rt->mDeferredFinalizeFunctions.Length(); ++i) {
-        void *data = (rt->mDeferredFinalizeFunctions[i].start)();
-        if (data) {
-            function = deferredFinalizeFunctions.AppendElement();
-            function->run = rt->mDeferredFinalizeFunctions[i].run;
-            function->data = data;
-        }
-    }
-}
-
-XPCIncrementalReleaseRunnable::~XPCIncrementalReleaseRunnable()
-{
-    MOZ_ASSERT(this != runtime->mReleaseRunnable);
-    nsLayoutStatics::Release();
-}
-
-void
-XPCIncrementalReleaseRunnable::ReleaseNow(bool limited)
-{
-    MOZ_ASSERT(NS_IsMainThread());
-    MOZ_ASSERT(deferredFinalizeFunctions.Length() != 0,
-               "We should have at least ReleaseSliceNow to run");
-    MOZ_ASSERT(finalizeFunctionToRun < deferredFinalizeFunctions.Length(),
-               "No more finalizers to run?");
-
-    TimeDuration sliceTime = TimeDuration::FromMilliseconds(SliceMillis);
-    TimeStamp started = TimeStamp::Now();
-    bool timeout = false;
-    do {
-        const DeferredFinalizeFunctionHolder &function =
-            deferredFinalizeFunctions[finalizeFunctionToRun];
-        if (limited) {
-            bool done = false;
-            while (!timeout && !done) {
-                /*
-                 * We don't want to read the clock too often, so we try to
-                 * release slices of 100 items.
-                 */
-                done = function.run(100, function.data);
-                timeout = TimeStamp::Now() - started >= sliceTime;
-            }
-            if (done)
-                ++finalizeFunctionToRun;
-            if (timeout)
-                break;
-        } else {
-            function.run(UINT32_MAX, function.data);
-            MOZ_ASSERT(!items.Length());
-            ++finalizeFunctionToRun;
-        }
-    } while (finalizeFunctionToRun < deferredFinalizeFunctions.Length());
-
-    if (finalizeFunctionToRun == deferredFinalizeFunctions.Length()) {
-        MOZ_ASSERT(runtime->mReleaseRunnable == this);
-        runtime->mReleaseRunnable = nullptr;
-    }
-}
-
-NS_IMETHODIMP
-XPCIncrementalReleaseRunnable::Run()
-{
-    if (runtime->mReleaseRunnable != this) {
-        /* These items were already processed synchronously in JSGC_BEGIN. */
-        MOZ_ASSERT(!items.Length());
-        return NS_OK;
-    }
-
-    ReleaseNow(true);
-
-    if (items.Length()) {
-        nsresult rv = NS_DispatchToMainThread(this);
-        if (NS_FAILED(rv))
-            ReleaseNow(false);
-    }
-
-    return NS_OK;
-}
-
-void
-XPCJSRuntime::ReleaseIncrementally(nsTArray<nsISupports *> &array)
-{
-    MOZ_ASSERT(!mReleaseRunnable);
-    mReleaseRunnable = new XPCIncrementalReleaseRunnable(this, array);
-
-    nsresult rv = NS_DispatchToMainThread(mReleaseRunnable);
-    if (NS_FAILED(rv))
-        mReleaseRunnable->ReleaseNow(false);
-}
-
 /* static */ void
 XPCJSRuntime::GCSliceCallback(JSRuntime *rt,
                               JS::GCProgress progress,
@@ -746,54 +650,12 @@ XPCJSRuntime::GCSliceCallback(JSRuntime *rt,
         (*self->mPrevGCSliceCallback)(rt, progress, desc);
 }
 
-/* static */ void
-XPCJSRuntime::GCCallback(JSRuntime *rt, JSGCStatus status)
+void
+XPCJSRuntime::CustomGCCallback(JSGCStatus status)
 {
-    XPCJSRuntime* self = nsXPConnect::GetRuntimeInstance();
-    if (!self)
-        return;
-
-    switch (status) {
-        case JSGC_BEGIN:
-        {
-            // We seem to sometime lose the unrooted global flag. Restore it
-            // here. FIXME: bug 584495.
-            JSContext *iter = nullptr;
-            while (JSContext *acx = JS_ContextIterator(rt, &iter)) {
-                if (!js::HasUnrootedGlobal(acx))
-                    JS_ToggleOptions(acx, JSOPTION_UNROOTED_GLOBAL);
-            }
-            break;
-        }
-        case JSGC_END:
-        {
-            /*
-             * If the previous GC created a runnable to release objects
-             * incrementally, and if it hasn't finished yet, finish it now. We
-             * don't want these to build up. We also don't want to allow any
-             * existing incremental release runnables to run after a
-             * non-incremental GC, since they are often used to detect leaks.
-             */
-            if (self->mReleaseRunnable)
-                self->mReleaseRunnable->ReleaseNow(false);
-
-            // Do any deferred releases of native objects.
-            if (JS::WasIncrementalGC(rt)) {
-                self->ReleaseIncrementally(self->mNativesToReleaseArray);
-            } else {
-                DoDeferredRelease(self->mNativesToReleaseArray);
-                for (uint32_t i = 0; i < self->mDeferredFinalizeFunctions.Length(); ++i) {
-                    if (void *data = self->mDeferredFinalizeFunctions[i].start())
-                        self->mDeferredFinalizeFunctions[i].run(UINT32_MAX, data);
-                }
-            }
-            break;
-        }
-    }
-
-    nsTArray<JSGCCallback> callbacks(self->extraGCCallbacks);
+    nsTArray<xpcGCCallback> callbacks(extraGCCallbacks);
     for (uint32_t i = 0; i < callbacks.Length(); ++i)
-        callbacks[i](rt, status);
+        callbacks[i](status);
 }
 
 /* static */ void
@@ -1033,63 +895,313 @@ XPCJSRuntime::FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, JSBool is
     }
 }
 
+static void WatchdogMain(void *arg);
+class Watchdog;
+class WatchdogManager;
 class AutoLockWatchdog {
-    XPCJSRuntime* const mRuntime;
-
+    Watchdog* const mWatchdog;
   public:
-    AutoLockWatchdog(XPCJSRuntime* aRuntime)
-      : mRuntime(aRuntime) {
-        PR_Lock(mRuntime->mWatchdogLock);
-    }
-
-    ~AutoLockWatchdog() {
-        PR_Unlock(mRuntime->mWatchdogLock);
-    }
+    AutoLockWatchdog(Watchdog* aWatchdog);
+    ~AutoLockWatchdog();
 };
 
-bool
-XPCJSRuntime::IsRuntimeActive()
+class Watchdog
 {
-    return mRuntimeState == RUNTIME_ACTIVE;
+  public:
+    Watchdog(WatchdogManager *aManager)
+      : mManager(aManager)
+      , mLock(nullptr)
+      , mWakeup(nullptr)
+      , mThread(nullptr)
+      , mHibernating(false)
+      , mInitialized(false)
+      , mShuttingDown(false)
+    {}
+    ~Watchdog() { MOZ_ASSERT(!Initialized()); }
+
+    WatchdogManager* Manager() { return mManager; }
+    bool Initialized() { return mInitialized; }
+    bool ShuttingDown() { return mShuttingDown; }
+    PRLock *GetLock() { return mLock; }
+    bool Hibernating() { return mHibernating; }
+    void WakeUp()
+    {
+        MOZ_ASSERT(Initialized());
+        MOZ_ASSERT(Hibernating());
+        mHibernating = false;
+        PR_NotifyCondVar(mWakeup);
+    }
+
+    //
+    // Invoked by the main thread only.
+    //
+
+    void Init()
+    {
+        MOZ_ASSERT(NS_IsMainThread());
+        mLock = PR_NewLock();
+        if (!mLock)
+            NS_RUNTIMEABORT("PR_NewLock failed.");
+        mWakeup = PR_NewCondVar(mLock);
+        if (!mWakeup)
+            NS_RUNTIMEABORT("PR_NewCondVar failed.");
+
+        {
+            AutoLockWatchdog lock(this);
+
+            mThread = PR_CreateThread(PR_USER_THREAD, WatchdogMain, this,
+                                      PR_PRIORITY_NORMAL, PR_LOCAL_THREAD,
+                                      PR_UNJOINABLE_THREAD, 0);
+            if (!mThread)
+                NS_RUNTIMEABORT("PR_CreateThread failed!");
+
+            // WatchdogMain acquires the lock and then asserts mInitialized. So
+            // make sure to set mInitialized before releasing the lock here so
+            // that it's atomic with the creation of the thread.
+            mInitialized = true;
+        }
+    }
+
+    void Shutdown()
+    {
+        MOZ_ASSERT(NS_IsMainThread());
+        MOZ_ASSERT(Initialized());
+        {   // Scoped lock.
+            AutoLockWatchdog lock(this);
+
+            // Signal to the watchdog thread that it's time to shut down.
+            mShuttingDown = true;
+
+            // Wake up the watchdog, and wait for it to call us back.
+            PR_NotifyCondVar(mWakeup);
+            PR_WaitCondVar(mWakeup, PR_INTERVAL_NO_TIMEOUT);
+            MOZ_ASSERT(!mShuttingDown);
+        }
+
+        // Destroy state.
+        mThread = nullptr;
+        PR_DestroyCondVar(mWakeup);
+        mWakeup = nullptr;
+        PR_DestroyLock(mLock);
+        mLock = nullptr;
+
+        // All done.
+        mInitialized = false;
+    }
+
+    //
+    // Invoked by the watchdog thread only.
+    //
+
+    void Hibernate()
+    {
+        MOZ_ASSERT(!NS_IsMainThread());
+        mHibernating = true;
+        Sleep(PR_INTERVAL_NO_TIMEOUT);
+    }
+    void Sleep(PRIntervalTime timeout)
+    {
+        MOZ_ASSERT(!NS_IsMainThread());
+        MOZ_ALWAYS_TRUE(PR_WaitCondVar(mWakeup, timeout) == PR_SUCCESS);
+    }
+    void Finished()
+    {
+        MOZ_ASSERT(!NS_IsMainThread());
+        mShuttingDown = false;
+        PR_NotifyCondVar(mWakeup);
+    }
+
+  private:
+    WatchdogManager *mManager;
+
+    PRLock *mLock;
+    PRCondVar *mWakeup;
+    PRThread *mThread;
+    bool mHibernating;
+    bool mInitialized;
+    bool mShuttingDown;
+};
+
+class WatchdogManager : public nsIObserver
+{
+  public:
+
+    NS_DECL_ISUPPORTS
+    WatchdogManager(XPCJSRuntime *aRuntime) : mRuntime(aRuntime)
+                                            , mRuntimeState(RUNTIME_INACTIVE)
+    {
+        // All the timestamps start at zero except for runtime state change.
+        PodArrayZero(mTimestamps);
+        mTimestamps[TimestampRuntimeStateChange] = PR_Now();
+
+        // Enable the watchdog, if appropriate.
+        RefreshWatchdog();
+
+        // Register ourselves as an observer to get updates on the pref.
+        mozilla::Preferences::AddStrongObserver(this, "dom.use_watchdog");
+    }
+    virtual ~WatchdogManager()
+    {
+        // Shutting down the watchdog requires context-switching to the watchdog
+        // thread, which isn't great to do in a destructor. So we require
+        // consumers to shut it down manually before releasing it.
+        MOZ_ASSERT(!mWatchdog);
+        mozilla::Preferences::RemoveObserver(this, "dom.use_watchdog");
+    }
+
+    NS_IMETHOD Observe(nsISupports* aSubject, const char* aTopic,
+                       const PRUnichar* aData)
+    {
+        RefreshWatchdog();
+        return NS_OK;
+    }
+
+    // Runtime statistics. These live on the watchdog manager, are written
+    // from the main thread, and are read from the watchdog thread (holding
+    // the lock in each case).
+    void
+    RecordRuntimeActivity(bool active)
+    {
+        // The watchdog reads this state, so acquire the lock before writing it.
+        MOZ_ASSERT(NS_IsMainThread());
+        Maybe<AutoLockWatchdog> lock;
+        if (mWatchdog)
+            lock.construct(mWatchdog);
+
+        // Write state.
+        mTimestamps[TimestampRuntimeStateChange] = PR_Now();
+        mRuntimeState = active ? RUNTIME_ACTIVE : RUNTIME_INACTIVE;
+
+        // The watchdog may be hibernating, waiting for the runtime to go
+        // active. Wake it up if necessary.
+        if (active && mWatchdog && mWatchdog->Hibernating())
+            mWatchdog->WakeUp();
+    }
+    bool IsRuntimeActive() { return mRuntimeState == RUNTIME_ACTIVE; }
+    PRTime TimeSinceLastRuntimeStateChange()
+    {
+        return PR_Now() - GetTimestamp(TimestampRuntimeStateChange);
+    }
+
+    // Note - Because of the runtime activity timestamp, these are read and
+    // written from both threads.
+    void RecordTimestamp(WatchdogTimestampCategory aCategory)
+    {
+        // The watchdog thread always holds the lock when it runs.
+        Maybe<AutoLockWatchdog> maybeLock;
+        if (NS_IsMainThread() && mWatchdog)
+            maybeLock.construct(mWatchdog);
+        mTimestamps[aCategory] = PR_Now();
+    }
+    PRTime GetTimestamp(WatchdogTimestampCategory aCategory)
+    {
+        // The watchdog thread always holds the lock when it runs.
+        Maybe<AutoLockWatchdog> maybeLock;
+        if (NS_IsMainThread() && mWatchdog)
+            maybeLock.construct(mWatchdog);
+        return mTimestamps[aCategory];
+    }
+
+    XPCJSRuntime* Runtime() { return mRuntime; }
+    Watchdog* GetWatchdog() { return mWatchdog; }
+
+    void RefreshWatchdog()
+    {
+        bool wantWatchdog = Preferences::GetBool("dom.use_watchdog", true);
+        if (wantWatchdog == !!mWatchdog)
+            return;
+        if (wantWatchdog)
+            StartWatchdog();
+        else
+            StopWatchdog();
+    }
+
+    void StartWatchdog()
+    {
+        MOZ_ASSERT(!mWatchdog);
+        mWatchdog = new Watchdog(this);
+        mWatchdog->Init();
+    }
+
+    void StopWatchdog()
+    {
+        MOZ_ASSERT(mWatchdog);
+        mWatchdog->Shutdown();
+        mWatchdog = nullptr;
+    }
+
+  private:
+    XPCJSRuntime *mRuntime;
+    nsAutoPtr<Watchdog> mWatchdog;
+
+    enum { RUNTIME_ACTIVE, RUNTIME_INACTIVE } mRuntimeState;
+    PRTime mTimestamps[TimestampCount];
+};
+
+NS_IMPL_ISUPPORTS1(WatchdogManager, nsIObserver)
+
+AutoLockWatchdog::AutoLockWatchdog(Watchdog *aWatchdog) : mWatchdog(aWatchdog)
+{
+    PR_Lock(mWatchdog->GetLock());
 }
 
-PRTime
-XPCJSRuntime::TimeSinceLastRuntimeStateChange()
+AutoLockWatchdog::~AutoLockWatchdog()
 {
-    return PR_Now() - mTimeAtLastRuntimeStateChange;
+    PR_Unlock(mWatchdog->GetLock());
 }
 
-//static
-void
-XPCJSRuntime::WatchdogMain(void *arg)
+static void
+WatchdogMain(void *arg)
 {
     PR_SetCurrentThreadName("JS Watchdog");
 
-    XPCJSRuntime* self = static_cast<XPCJSRuntime*>(arg);
+    Watchdog* self = static_cast<Watchdog*>(arg);
+    WatchdogManager* manager = self->Manager();
 
     // Lock lasts until we return
     AutoLockWatchdog lock(self);
 
-    PRIntervalTime sleepInterval;
-    while (self->mWatchdogThread) {
+    MOZ_ASSERT(self->Initialized());
+    MOZ_ASSERT(!self->ShuttingDown());
+    while (!self->ShuttingDown()) {
         // Sleep only 1 second if recently (or currently) active; otherwise, hibernate
-        if (self->IsRuntimeActive() || self->TimeSinceLastRuntimeStateChange() <= PRTime(2*PR_USEC_PER_SEC))
-            sleepInterval = PR_TicksPerSecond();
-        else {
-            sleepInterval = PR_INTERVAL_NO_TIMEOUT;
-            self->mWatchdogHibernating = true;
+        if (manager->IsRuntimeActive() ||
+            manager->TimeSinceLastRuntimeStateChange() <= PRTime(2*PR_USEC_PER_SEC))
+        {
+            self->Sleep(PR_TicksPerSecond());
+        } else {
+            manager->RecordTimestamp(TimestampWatchdogHibernateStart);
+            self->Hibernate();
+            manager->RecordTimestamp(TimestampWatchdogHibernateStop);
         }
-        MOZ_ALWAYS_TRUE(PR_WaitCondVar(self->mWatchdogWakeup, sleepInterval) == PR_SUCCESS);
+
+        // Rise and shine.
+        manager->RecordTimestamp(TimestampWatchdogWakeup);
 
         // Don't trigger the operation callback if activity started less than one second ago.
         // The callback is only used for detecting long running scripts, and triggering the
         // callback from off the main thread can be expensive.
-        if (self->IsRuntimeActive() && self->TimeSinceLastRuntimeStateChange() >= PRTime(PR_USEC_PER_SEC))
-            JS_TriggerOperationCallback(self->Runtime());
+        if (manager->IsRuntimeActive() &&
+            manager->TimeSinceLastRuntimeStateChange() >= PRTime(PR_USEC_PER_SEC))
+        {
+            JS_TriggerOperationCallback(manager->Runtime()->Runtime());
+        }
     }
 
-    /* Wake up the main thread waiting for the watchdog to terminate. */
-    PR_NotifyCondVar(self->mWatchdogWakeup);
+    // Tell the manager that we've shut down.
+    self->Finished();
+}
+
+PRTime
+XPCJSRuntime::GetWatchdogTimestamp(WatchdogTimestampCategory aCategory)
+{
+    return mWatchdogManager->GetTimestamp(aCategory);
+}
+
+NS_EXPORT_(void)
+xpc::SimulateActivityCallback(bool aActive)
+{
+    XPCJSRuntime::ActivityCallback(XPCJSRuntime::Get(), aActive);
 }
 
 //static
@@ -1097,17 +1209,7 @@ void
 XPCJSRuntime::ActivityCallback(void *arg, JSBool active)
 {
     XPCJSRuntime* self = static_cast<XPCJSRuntime*>(arg);
-
-    AutoLockWatchdog lock(self);
-
-    self->mTimeAtLastRuntimeStateChange = PR_Now();
-    self->mRuntimeState = active ? RUNTIME_ACTIVE : RUNTIME_INACTIVE;
-
-    // Wake the watchdog up if it is hibernating due to a long period of inactivity.
-    if (active && self->mWatchdogHibernating) {
-        self->mWatchdogHibernating = false;
-        PR_NotifyCondVar(self->mWatchdogWakeup);
-    }
+    self->mWatchdogManager->RecordRuntimeActivity(active);
 }
 
 // static
@@ -1127,7 +1229,7 @@ XPCJSRuntime::CTypesActivityCallback(JSContext *cx, js::CTypesActivityType type)
 }
 
 size_t
-XPCJSRuntime::SizeOfIncludingThis(nsMallocSizeOfFun mallocSizeOf)
+XPCJSRuntime::SizeOfIncludingThis(MallocSizeOf mallocSizeOf)
 {
     size_t n = 0;
     n += mallocSizeOf(this);
@@ -1228,29 +1330,12 @@ void XPCJSRuntime::SystemIsBeingShutDown()
 
 XPCJSRuntime::~XPCJSRuntime()
 {
-    MOZ_ASSERT(!mReleaseRunnable);
-
     JS::SetGCSliceCallback(Runtime(), mPrevGCSliceCallback);
 
     xpc_DelocalizeRuntime(Runtime());
 
-    if (mWatchdogWakeup) {
-        // If the watchdog thread is running, tell it to terminate waking it
-        // up if necessary and wait until it signals that it finished. As we
-        // must release the lock before calling PR_DestroyCondVar, we use an
-        // extra block here.
-        {
-            AutoLockWatchdog lock(this);
-            if (mWatchdogThread) {
-                mWatchdogThread = nullptr;
-                PR_NotifyCondVar(mWatchdogWakeup);
-                PR_WaitCondVar(mWatchdogWakeup, PR_INTERVAL_NO_TIMEOUT);
-            }
-        }
-        PR_DestroyCondVar(mWatchdogWakeup);
-        PR_DestroyLock(mWatchdogLock);
-        mWatchdogWakeup = nullptr;
-    }
+    if (mWatchdogManager->GetWatchdog())
+        mWatchdogManager->StopWatchdog();
 
     if (mCallContext)
         mCallContext->SystemIsBeingShutDown();
@@ -1364,7 +1449,6 @@ XPCJSRuntime::~XPCJSRuntime()
         delete mDetachedWrappedNativeProtoMap;
     }
 
-    JS_ShutDown();
 #ifdef MOZ_ENABLE_PROFILER_SPS
     // Tell the profiler that the runtime is gone
     if (PseudoStack *stack = mozilla_get_pseudo_stack())
@@ -2119,7 +2203,7 @@ ReportJSRuntimeExplicitTreeStats(const JS::RuntimeStats &rtStats,
 class JSCompartmentsMultiReporter MOZ_FINAL : public nsIMemoryMultiReporter
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
 
     NS_IMETHOD GetName(nsACString &name) {
         name.AssignLiteral("compartments");
@@ -2165,7 +2249,7 @@ class JSCompartmentsMultiReporter MOZ_FINAL : public nsIMemoryMultiReporter
     }
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(JSCompartmentsMultiReporter
+NS_IMPL_ISUPPORTS1(JSCompartmentsMultiReporter
                               , nsIMemoryMultiReporter
                               )
 
@@ -2524,29 +2608,13 @@ CompartmentNameCallback(JSRuntime *rt, JSCompartment *comp,
 }
 
 static bool
-PreserveWrapper(JSContext *cx, JSObject *objArg)
+PreserveWrapper(JSContext *cx, JSObject *obj)
 {
     MOZ_ASSERT(cx);
-    MOZ_ASSERT(objArg);
-    MOZ_ASSERT(js::GetObjectClass(objArg)->ext.isWrappedNative ||
-               mozilla::dom::IsDOMObject(objArg));
+    MOZ_ASSERT(obj);
+    MOZ_ASSERT(IS_WN_REFLECTOR(obj) || mozilla::dom::IsDOMObject(obj));
 
-    RootedObject obj(cx, objArg);
-    XPCCallContext ccx(NATIVE_CALLER, cx);
-    if (!ccx.IsValid())
-        return false;
-
-    if (!IS_WN_REFLECTOR(obj))
-        return mozilla::dom::TryPreserveWrapper(obj);
-
-    nsISupports *supports = XPCWrappedNative::Get(obj)->Native();
-
-    // For pre-Paris DOM bindings objects, we only support Node.
-    if (nsCOMPtr<nsINode> node = do_QueryInterface(supports)) {
-        node->PreserveWrapper(supports);
-        return true;
-    }
-    return false;
+    return mozilla::dom::IsDOMObject(obj) && mozilla::dom::TryPreserveWrapper(obj);
 }
 
 static nsresult
@@ -2671,13 +2739,9 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
    mVariantRoots(nullptr),
    mWrappedJSRoots(nullptr),
    mObjectHolderRoots(nullptr),
-   mWatchdogLock(nullptr),
-   mWatchdogWakeup(nullptr),
-   mWatchdogThread(nullptr),
-   mWatchdogHibernating(false),
-   mRuntimeState(RUNTIME_INACTIVE),
-   mTimeAtLastRuntimeStateChange(PR_Now()),
+   mWatchdogManager(new WatchdogManager(this)),
    mJunkScope(nullptr),
+   mAsyncSnowWhiteFreer(new AsyncFreeSnowWhite()),
    mExceptionManagerNotAvailable(false)
 {
 #ifdef XPC_CHECK_WRAPPERS_AT_SHUTDOWN
@@ -2715,10 +2779,8 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
 #else
     JS_SetNativeStackQuota(runtime, 128 * sizeof(size_t) * 1024);
 #endif
-    JS_SetContextCallback(runtime, ContextCallback);
     JS_SetDestroyCompartmentCallback(runtime, CompartmentDestroyedCallback);
     JS_SetCompartmentNameCallback(runtime, CompartmentNameCallback);
-    JS_SetGCCallback(runtime, GCCallback);
     mPrevGCSliceCallback = JS::SetGCSliceCallback(runtime, GCSliceCallback);
     JS_SetFinalizeCallback(runtime, FinalizeCallback);
     JS_SetWrapObjectCallbacks(runtime,
@@ -2772,23 +2834,6 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
     if (!JS_GetGlobalDebugHooks(runtime)->debuggerHandler)
         xpc_InstallJSDebuggerKeywordHandler(runtime);
 #endif
-
-    mWatchdogLock = PR_NewLock();
-    if (!mWatchdogLock)
-        NS_RUNTIMEABORT("PR_NewLock failed.");
-    mWatchdogWakeup = PR_NewCondVar(mWatchdogLock);
-    if (!mWatchdogWakeup)
-        NS_RUNTIMEABORT("PR_NewCondVar failed.");
-
-    {
-        AutoLockWatchdog lock(this);
-
-        mWatchdogThread = PR_CreateThread(PR_USER_THREAD, WatchdogMain, this,
-                                          PR_PRIORITY_NORMAL, PR_LOCAL_THREAD,
-                                          PR_UNJOINABLE_THREAD, 0);
-        if (!mWatchdogThread)
-            NS_RUNTIMEABORT("PR_CreateThread failed!");
-    }
 }
 
 // static
@@ -2810,7 +2855,7 @@ XPCJSRuntime::newXPCJSRuntime(nsXPConnect* aXPConnect)
         self->GetNativeScriptableSharedMap()    &&
         self->GetDyingWrappedNativeProtoMap()   &&
         self->GetMapLock()                      &&
-        self->mWatchdogThread) {
+        self->mWatchdogManager) {
         return self;
     }
 
@@ -2854,9 +2899,6 @@ XPCJSRuntime::OnJSContextNew(JSContext *cx)
     if (!xpc)
         return false;
 
-    // we want to mark the global object ourselves since we use a different color
-    JS_ToggleOptions(cx, JSOPTION_UNROOTED_GLOBAL);
-
     return true;
 }
 
@@ -2899,20 +2941,6 @@ XPCJSRuntime::NoteCustomGCThingXPCOMChildren(js::Class* clasp, JSObject* obj,
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "xpc_GetJSPrivate(obj)->mNative");
     cb.NoteXPCOMChild(to->GetNative());
     return true;
-}
-
-bool
-XPCJSRuntime::DeferredRelease(nsISupports *obj)
-{
-    MOZ_ASSERT(obj);
-
-    if (mNativesToReleaseArray.IsEmpty()) {
-        // This array sometimes has 1000's
-        // of entries, and usually has 50-200 entries. Avoid lots
-        // of incremental grows.  We compact it down when we're done.
-        mNativesToReleaseArray.SetCapacity(256);
-    }
-    return mNativesToReleaseArray.AppendElement(obj) != nullptr;
 }
 
 /***************************************************************************/
@@ -3047,17 +3075,34 @@ XPCRootSetElem::RemoveFromRootSet(XPCLock *lock)
 }
 
 void
-XPCJSRuntime::AddGCCallback(JSGCCallback cb)
+XPCJSRuntime::AddGCCallback(xpcGCCallback cb)
 {
     NS_ASSERTION(cb, "null callback");
     extraGCCallbacks.AppendElement(cb);
 }
 
 void
-XPCJSRuntime::RemoveGCCallback(JSGCCallback cb)
+XPCJSRuntime::RemoveGCCallback(xpcGCCallback cb)
 {
     NS_ASSERTION(cb, "null callback");
     bool found = extraGCCallbacks.RemoveElement(cb);
+    if (!found) {
+        NS_ERROR("Removing a callback which was never added.");
+    }
+}
+
+void
+XPCJSRuntime::AddContextCallback(xpcContextCallback cb)
+{
+    NS_ASSERTION(cb, "null callback");
+    extraContextCallbacks.AppendElement(cb);
+}
+
+void
+XPCJSRuntime::RemoveContextCallback(xpcContextCallback cb)
+{
+    NS_ASSERTION(cb, "null callback");
+    bool found = extraContextCallbacks.RemoveElement(cb);
     if (!found) {
         NS_ERROR("Removing a callback which was never added.");
     }

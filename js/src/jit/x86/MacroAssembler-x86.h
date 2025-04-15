@@ -7,11 +7,11 @@
 #ifndef jit_x86_MacroAssembler_x86_h
 #define jit_x86_MacroAssembler_x86_h
 
-#include "jit/shared/MacroAssembler-x86-shared.h"
+#include "jscompartment.h"
+
 #include "jit/IonFrames.h"
 #include "jit/MoveResolver.h"
-
-#include "jscompartment.h"
+#include "jit/shared/MacroAssembler-x86-shared.h"
 
 namespace js {
 namespace jit {
@@ -55,6 +55,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
 
   public:
     using MacroAssemblerX86Shared::Push;
+    using MacroAssemblerX86Shared::Pop;
     using MacroAssemblerX86Shared::callWithExitFrame;
     using MacroAssemblerX86Shared::branch32;
 
@@ -97,8 +98,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
                            base.scale(), base.disp() + sizeof(void *));
 
           default:
-            JS_NOT_REACHED("unexpected operand kind");
-            return base; // Silence GCC warning.
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void moveValue(const Value &val, Register type, Register data) {
@@ -175,10 +175,10 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         loadValue(Operand(src), val);
     }
     void tagValue(JSValueType type, Register payload, ValueOperand dest) {
-        JS_ASSERT(payload != dest.typeReg());
-        movl(ImmType(type), dest.typeReg());
+        JS_ASSERT(dest.typeReg() != dest.payloadReg());
         if (payload != dest.payloadReg())
             movl(payload, dest.payloadReg());
+        movl(ImmType(type), dest.typeReg());
     }
     void pushValue(ValueOperand val) {
         push(val.typeReg());
@@ -203,6 +203,14 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     void pushValue(const Address &addr) {
         push(tagOf(addr));
         push(payloadOf(addr));
+    }
+    void Push(const ValueOperand &val) {
+        pushValue(val);
+        framePushed_ += sizeof(Value);
+    }
+    void Pop(const ValueOperand &val) {
+        popValue(val);
+        framePushed_ -= sizeof(Value);
     }
     void storePayload(const Value &val, Operand dest) {
         jsval_layout jv = JSVAL_TO_IMPL(val);
@@ -478,6 +486,9 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     }
     void addPtr(Imm32 imm, const Address &dest) {
         addl(imm, Operand(dest));
+    }
+    void addPtr(Imm32 imm, const Operand &dest) {
+        addl(imm, dest);
     }
     void addPtr(const Address &src, const Register &dest) {
         addl(Operand(src), dest);
@@ -782,9 +793,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     }
 
     void loadConstantDouble(double d, const FloatRegister &dest);
-    void loadStaticDouble(const double *dp, const FloatRegister &dest) {
-        movsd(dp, dest);
-    }
+    void loadStaticDouble(const double *dp, const FloatRegister &dest);
 
     void branchTruncateDouble(const FloatRegister &src, const Register &dest, Label *fail) {
         const uint32_t IndefiniteIntegerValue = 0x80000000;
@@ -931,6 +940,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
 
     // Used from within an Exit frame to handle a pending exception.
     void handleFailureWithHandler(void *handler);
+    void handleFailureWithHandlerTail();
 
     void makeFrameDescriptor(Register frameSizeReg, FrameType type) {
         shll(Imm32(FRAMESIZE_SHIFT), frameSizeReg);

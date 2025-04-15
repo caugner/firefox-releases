@@ -159,10 +159,10 @@ inline JSContext *
 xpc_UnmarkGrayContext(JSContext *cx)
 {
     if (cx) {
-        JSObject *global = js::GetDefaultGlobalForContext(cx);
+        JSObject *global = js::DefaultObjectForContextOrNull(cx);
         xpc_UnmarkGrayObject(global);
         if (global && JS_IsInRequest(JS_GetRuntime(cx))) {
-            JSObject *scope = JS_GetGlobalForScopeChain(cx);
+            JSObject *scope = JS::CurrentGlobalOrNull(cx);
             if (scope != global)
                 xpc_UnmarkGrayObject(scope);
         }
@@ -239,8 +239,6 @@ private:
 };
 
 namespace xpc {
-
-bool DeferredRelease(nsISupports *obj);
 
 // If these functions return false, then an exception will be set on cx.
 NS_EXPORT_(bool) Base64Encode(JSContext *cx, JS::Value val, JS::Value *out);
@@ -322,8 +320,6 @@ nsIPrincipal *GetCompartmentPrincipal(JSCompartment *compartment);
 nsIPrincipal *GetObjectPrincipal(JSObject *obj);
 
 bool IsXBLScope(JSCompartment *compartment);
-
-void DumpJSHeap(FILE* file);
 
 void SetLocationForGlobal(JSObject *global, const nsACString& location);
 void SetLocationForGlobal(JSObject *global, nsIURI *locationURI);
@@ -436,6 +432,9 @@ NS_EXPORT_(void)
 SystemErrorReporterExternal(JSContext *cx, const char *message,
                             JSErrorReport *rep);
 
+NS_EXPORT_(void)
+SimulateActivityCallback(bool aActive);
+
 } // namespace xpc
 
 namespace mozilla {
@@ -477,17 +476,13 @@ DefineStaticJSVals(JSContext *cx);
 void
 Register(nsScriptNameSpaceManager* aNameSpaceManager);
 
+/**
+ * A test for whether WebIDL methods that should only be visible to
+ * chrome or XBL scopes should be exposed.
+ */
+bool IsChromeOrXBL(JSContext* cx, JSObject* /* unused */);
+
 } // namespace dom
 } // namespace mozilla
-
-// Called once before the deferred finalization starts. Should hand off the
-// buffer with things to finalize in the return value.
-typedef void* (*DeferredFinalizeStartFunction)();
-
-// Called to finalize a number of objects. Slice is the number of objects
-// to finalize, or if it's UINT32_MAX, all objects should be finalized.
-// data is the pointer returned by DeferredFinalizeStartFunction.
-// Return value indicates whether it finalized all objects in the buffer.
-typedef bool (*DeferredFinalizeFunction)(uint32_t slice, void* data);
 
 #endif

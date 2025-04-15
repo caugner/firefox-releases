@@ -7,8 +7,8 @@
 #ifndef jit_EffectiveAddressAnalysis_h
 #define jit_EffectiveAddressAnalysis_h
 
-#include "MIR.h"
-#include "MIRGraph.h"
+#include "jit/MIR.h"
+#include "jit/MIRGraph.h"
 
 namespace js {
 namespace jit {

@@ -481,6 +481,7 @@ public:
   bool IsHyperText() const { return HasGenericType(eHyperText); }
   HyperTextAccessible* AsHyperText();
 
+  bool IsHTMLBr() const { return mType == eHTMLBRType; }
   bool IsHTMLFileInput() const { return mType == eHTMLFileInputType; }
 
   bool IsHTMLListItem() const { return mType == eHTMLLiType; }
@@ -515,6 +516,7 @@ public:
   bool IsTable() const { return HasGenericType(eTable); }
   virtual TableAccessible* AsTable() { return nullptr; }
 
+  bool IsTableCell() const { return HasGenericType(eTableCell); }
   virtual TableCellAccessible* AsTableCell() { return nullptr; }
   const TableCellAccessible* AsTableCell() const
     { return const_cast<Accessible*>(this)->AsTableCell(); }
@@ -722,6 +724,15 @@ public:
   */
   bool HasNumericValue() const;
 
+  /**
+   * Return true if the accessible state change is processed by handling proper
+   * DOM UI event, if otherwise then false. For example, HTMLCheckboxAccessible
+   * process nsIDocumentObserver::ContentStateChanged instead
+   * 'CheckboxStateChange' event.
+   */
+  bool NeedsDOMUIEvent() const
+    { return !(mStateFlags & eIgnoreDOMUIEvent); }
+
 protected:
 
   /**
@@ -788,6 +799,7 @@ protected:
     eSharedNode = 1 << 2, // accessible shares DOM node from another accessible
     eNotNodeMapEntry = 1 << 3, // accessible shouldn't be in document node map
     eHasNumericValue = 1 << 4, // accessible has a numeric value
+    eIgnoreDOMUIEvent = 1 << 5, // don't process DOM UI events for a11y events
 
     eLastStateFlag = eHasNumericValue
   };

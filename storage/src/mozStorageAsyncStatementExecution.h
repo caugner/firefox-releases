@@ -18,9 +18,9 @@
 #include "SQLiteMutex.h"
 #include "mozIStoragePendingStatement.h"
 #include "mozIStorageStatementCallback.h"
+#include "mozStorageHelper.h"
 
 struct sqlite3_stmt;
-class mozStorageTransaction;
 
 namespace mozilla {
 namespace storage {
@@ -29,11 +29,19 @@ class Connection;
 class ResultSet;
 class StatementData;
 
+/**
+ * An instance of the mozStorageTransaction<> family dedicated
+ * to concrete class |Connection|.
+ */
+typedef mozStorageTransactionBase<mozilla::storage::Connection,
+                                  nsRefPtr<mozilla::storage::Connection> >
+    mozStorageAsyncTransaction;
+
 class AsyncExecuteStatements MOZ_FINAL : public nsIRunnable
                                        , public mozIStoragePendingStatement
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIRUNNABLE
   NS_DECL_MOZISTORAGEPENDINGSTATEMENT
 
@@ -179,7 +187,7 @@ private:
 
   StatementDataArray mStatements;
   nsRefPtr<Connection> mConnection;
-  mozStorageTransaction *mTransactionManager;
+  mozStorageAsyncTransaction *mTransactionManager;
   mozIStorageStatementCallback *mCallback;
   nsCOMPtr<nsIThread> mCallingThread;
   nsRefPtr<ResultSet> mResultSet;

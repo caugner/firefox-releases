@@ -9,7 +9,7 @@
 #include "jsapi.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Mutex.h"
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 #include "nsAutoPtr.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
@@ -225,6 +225,14 @@ void
 ThrowDOMExceptionForNSResult(JSContext* aCx, nsresult aNSResult);
 
 } // namespace exceptions
+
+// Throws the JSMSG_GETTER_ONLY exception.  This shouldn't be used going
+// forward -- getter-only properties should just use JS_PSG for the setter
+// (implying no setter at all), which will not throw when set in non-strict
+// code but will in strict code.  Old code should use this only for temporary
+// compatibility reasons.
+extern JSBool
+GetterOnlyJSNative(JSContext* aCx, unsigned aArgc, JS::Value* aVp);
 
 END_WORKERS_NAMESPACE
 

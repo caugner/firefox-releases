@@ -15,6 +15,8 @@ namespace jit {
 class OutOfLineBailout;
 class OutOfLineUndoALUOperation;
 class MulNegativeZeroCheck;
+class ModOverflowCheck;
+class ReturnZero;
 class OutOfLineTableSwitch;
 
 class CodeGeneratorX86Shared : public CodeGeneratorShared
@@ -30,8 +32,8 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
 
   protected:
     // Label for the common return path.
-    HeapLabel *returnLabel_;
-    HeapLabel *deoptLabel_;
+    NonAssertingLabel returnLabel_;
+    NonAssertingLabel deoptLabel_;
 
     inline Operand ToOperand(const LAllocation &a) {
         if (a.isGeneralReg())
@@ -50,6 +52,7 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     MoveResolver::MoveOperand toMoveOperand(const LAllocation *a) const;
 
     bool bailoutIf(Assembler::Condition condition, LSnapshot *snapshot);
+    bool bailoutIf(Assembler::DoubleCondition condition, LSnapshot *snapshot);
     bool bailoutFrom(Label *label, LSnapshot *snapshot);
     bool bailout(LSnapshot *snapshot);
 
@@ -91,13 +94,13 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     virtual bool visitBitOpI(LBitOpI *ins);
     virtual bool visitShiftI(LShiftI *ins);
     virtual bool visitUrshD(LUrshD *ins);
-    virtual bool visitMoveGroup(LMoveGroup *group);
     virtual bool visitTestIAndBranch(LTestIAndBranch *test);
     virtual bool visitTestDAndBranch(LTestDAndBranch *test);
     virtual bool visitCompare(LCompare *comp);
     virtual bool visitCompareAndBranch(LCompareAndBranch *comp);
     virtual bool visitCompareD(LCompareD *comp);
     virtual bool visitCompareDAndBranch(LCompareDAndBranch *comp);
+    virtual bool visitBitAndAndBranch(LBitAndAndBranch *baab);
     virtual bool visitNotI(LNotI *comp);
     virtual bool visitNotD(LNotD *comp);
     virtual bool visitMathD(LMathD *math);
@@ -107,7 +110,7 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     virtual bool visitGuardObjectType(LGuardObjectType *guard);
     virtual bool visitGuardClass(LGuardClass *guard);
     virtual bool visitEffectiveAddress(LEffectiveAddress *ins);
-    virtual bool visitAsmJSDivOrMod(LAsmJSDivOrMod *ins);
+    virtual bool visitUDivOrMod(LUDivOrMod *ins);
     virtual bool visitAsmJSPassStackArg(LAsmJSPassStackArg *ins);
 
     bool visitNegI(LNegI *lir);
@@ -117,6 +120,8 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     bool visitOutOfLineBailout(OutOfLineBailout *ool);
     bool visitOutOfLineUndoALUOperation(OutOfLineUndoALUOperation *ool);
     bool visitMulNegativeZeroCheck(MulNegativeZeroCheck *ool);
+    bool visitModOverflowCheck(ModOverflowCheck *ool);
+    bool visitReturnZero(ReturnZero *ool);
     bool visitOutOfLineTableSwitch(OutOfLineTableSwitch *ool);
     bool generateInvalidateEpilogue();
 };

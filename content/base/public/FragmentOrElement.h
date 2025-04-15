@@ -13,15 +13,15 @@
 #define FragmentOrElement_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/MemoryReporting.h"
 #include "nsAttrAndChildArray.h"          // member
 #include "nsCycleCollectionParticipant.h" // NS_DECL_CYCLE_*
 #include "nsIContent.h"                   // base class
-#include "nsIDOMTouchEvent.h"             // base class (nsITouchEventReceiver)
 #include "nsIDOMXPathNSResolver.h"        // base class
-#include "nsIInlineEventHandlers.h"       // base class
 #include "nsINodeList.h"                  // base class
 #include "nsIWeakReference.h"             // base class
 #include "nsNodeUtils.h"                  // class member nsNodeUtils::CloneNodeImpl
+#include "nsIHTMLCollection.h"
 
 class ContentUnbinder;
 class nsContentList;
@@ -31,7 +31,6 @@ class nsIControllers;
 class nsICSSDeclaration;
 class nsIDocument;
 class nsDOMStringMap;
-class nsIHTMLCollection;
 class nsINodeInfo;
 class nsIURI;
 
@@ -154,10 +153,6 @@ private:
   nsCOMPtr<nsINode> mNode;
 };
 
-// Forward declare to allow being a friend
-class nsTouchEventReceiverTearoff;
-class nsInlineEventHandlersTearoff;
-
 /**
  * A generic base class for DOM elements, implementing many nsIContent,
  * nsIDOMNode and nsIDOMElement methods.
@@ -172,9 +167,6 @@ class FragmentOrElement : public nsIContent
 public:
   FragmentOrElement(already_AddRefed<nsINodeInfo> aNodeInfo);
   virtual ~FragmentOrElement();
-
-  friend class ::nsTouchEventReceiverTearoff;
-  friend class ::nsInlineEventHandlersTearoff;
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
 
@@ -214,6 +206,11 @@ public:
   virtual bool TextIsOnlyWhitespace() MOZ_OVERRIDE;
   virtual void AppendTextTo(nsAString& aResult) MOZ_OVERRIDE;
   virtual nsIContent *GetBindingParent() const MOZ_OVERRIDE;
+  virtual nsXBLBinding *GetXBLBinding() const MOZ_OVERRIDE;
+  virtual void SetXBLBinding(nsXBLBinding* aBinding,
+                             nsBindingManager* aOldBindingManager = nullptr) MOZ_OVERRIDE;
+  virtual nsIContent *GetXBLInsertionParent() const;
+  virtual void SetXBLInsertionParent(nsIContent* aContent);
   virtual bool IsLink(nsIURI** aURI) const MOZ_OVERRIDE;
 
   virtual void DestroyContent() MOZ_OVERRIDE;
@@ -223,6 +220,10 @@ public:
   NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker) MOZ_OVERRIDE;
 
   nsIHTMLCollection* Children();
+  uint32_t ChildElementCount()
+  {
+    return Children()->Length();
+  }
 
 public:
   /**
@@ -298,7 +299,7 @@ public:
     void Traverse(nsCycleCollectionTraversalCallback &cb, bool aIsXUL);
     void Unlink(bool aIsXUL);
 
-    size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
+    size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
     /**
      * The .style attribute (an interface that forwards to the actual
@@ -358,6 +359,16 @@ public:
      * An object implementing the .classList property for this element.
      */
     nsRefPtr<nsDOMTokenList> mClassList;
+
+    /**
+     * XBL binding installed on the element.
+     */
+    nsRefPtr<nsXBLBinding> mXBLBinding;
+
+    /**
+     * XBL binding installed on the lement.
+     */
+    nsCOMPtr<nsIContent> mXBLInsertionParent;
   };
 
 protected:
@@ -383,46 +394,6 @@ protected:
 
 } // namespace dom
 } // namespace mozilla
-
-/**
- * Tearoff class to implement nsITouchEventReceiver
- */
-class nsTouchEventReceiverTearoff MOZ_FINAL : public nsITouchEventReceiver
-{
-public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-
-  NS_FORWARD_NSITOUCHEVENTRECEIVER(mElement->)
-
-  NS_DECL_CYCLE_COLLECTION_CLASS(nsTouchEventReceiverTearoff)
-
-  nsTouchEventReceiverTearoff(mozilla::dom::FragmentOrElement *aElement) : mElement(aElement)
-  {
-  }
-
-private:
-  nsRefPtr<mozilla::dom::FragmentOrElement> mElement;
-};
-
-/**
- * Tearoff class to implement nsIInlineEventHandlers
- */
-class nsInlineEventHandlersTearoff MOZ_FINAL : public nsIInlineEventHandlers
-{
-public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-
-  NS_FORWARD_NSIINLINEEVENTHANDLERS(mElement->)
-
-  NS_DECL_CYCLE_COLLECTION_CLASS(nsInlineEventHandlersTearoff)
-
-  nsInlineEventHandlersTearoff(mozilla::dom::FragmentOrElement *aElement) : mElement(aElement)
-  {
-  }
-
-private:
-  nsRefPtr<mozilla::dom::FragmentOrElement> mElement;
-};
 
 #define NS_ELEMENT_INTERFACE_TABLE_TO_MAP_SEGUE                               \
     if (NS_SUCCEEDED(rv))                                                     \

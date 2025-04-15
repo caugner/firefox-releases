@@ -6,7 +6,6 @@
 #ifndef mozilla_dom_HTMLSharedElement_h
 #define mozilla_dom_HTMLSharedElement_h
 
-#include "nsIDOMHTMLParamElement.h"
 #include "nsIDOMHTMLBaseElement.h"
 #include "nsIDOMHTMLDirectoryElement.h"
 #include "nsIDOMHTMLQuoteElement.h"
@@ -22,19 +21,17 @@
 namespace mozilla {
 namespace dom {
 
-class HTMLSharedElement : public nsGenericHTMLElement,
-                          public nsIDOMHTMLParamElement,
-                          public nsIDOMHTMLBaseElement,
-                          public nsIDOMHTMLDirectoryElement,
-                          public nsIDOMHTMLQuoteElement,
-                          public nsIDOMHTMLHeadElement,
-                          public nsIDOMHTMLHtmlElement
+class HTMLSharedElement MOZ_FINAL : public nsGenericHTMLElement,
+                                    public nsIDOMHTMLBaseElement,
+                                    public nsIDOMHTMLDirectoryElement,
+                                    public nsIDOMHTMLQuoteElement,
+                                    public nsIDOMHTMLHeadElement,
+                                    public nsIDOMHTMLHtmlElement
 {
 public:
   HTMLSharedElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
-    SetIsDOMBinding();
   }
   virtual ~HTMLSharedElement();
 
@@ -50,14 +47,8 @@ public:
   // nsIDOMHTMLElement
   NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
 
-  // nsIDOMHTMLParamElement
-  NS_DECL_NSIDOMHTMLPARAMELEMENT
-
   // nsIDOMHTMLBaseElement
   NS_DECL_NSIDOMHTMLBASEELEMENT
-
-  // nsIDOMHTMLDirectoryElement
-  NS_DECL_NSIDOMHTMLDIRECTORYELEMENT
 
   // nsIDOMHTMLQuoteElement
   NS_DECL_NSIDOMHTMLQUOTEELEMENT
@@ -99,7 +90,7 @@ public:
 
   virtual nsIDOMNode* AsDOMNode() MOZ_OVERRIDE
   {
-    return static_cast<nsIDOMHTMLParamElement*>(this);
+    return static_cast<nsIDOMHTMLBaseElement*>(this);
   }
 
   // WebIDL API

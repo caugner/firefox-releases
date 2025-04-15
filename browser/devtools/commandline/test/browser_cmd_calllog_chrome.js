@@ -3,8 +3,6 @@
 
 // Tests that the calllog commands works as they should
 
-let HUDService = (Cu.import("resource:///modules/HUDService.jsm", {})).HUDService;
-
 const TEST_URI = "data:text/html;charset=utf-8,cmd-calllog-chrome";
 
 let tests = {};
@@ -49,14 +47,14 @@ tests.testCallLogStatus = function(options) {
 };
 
 tests.testCallLogExec = function(options) {
-  let deferred = Promise.defer();
+  let deferred = promise.defer();
 
   function onWebConsoleOpen(subject) {
     Services.obs.removeObserver(onWebConsoleOpen, "web-console-created");
 
     subject.QueryInterface(Ci.nsISupportsString);
     let hud = HUDService.getHudReferenceById(subject.data);
-    ok(hud.hudId in HUDService.hudReferences, "console open");
+    ok(hud, "console open");
 
     helpers.audit(options, [
       {

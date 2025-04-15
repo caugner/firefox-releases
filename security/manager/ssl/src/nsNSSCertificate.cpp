@@ -68,13 +68,14 @@ NSSCleanupAutoPtrClass_WithParam(PLArenaPool, PORT_FreeArena, FalseParam, false)
 
 /* nsNSSCertificate */
 
-NS_IMPL_THREADSAFE_ISUPPORTS7(nsNSSCertificate, nsIX509Cert,
-                                                nsIX509Cert2,
-                                                nsIX509Cert3,
-                                                nsIIdentityInfo,
-                                                nsISMimeCert,
-                                                nsISerializable,
-                                                nsIClassInfo)
+NS_IMPL_ISUPPORTS7(nsNSSCertificate,
+                   nsIX509Cert,
+                   nsIX509Cert2,
+                   nsIX509Cert3,
+                   nsIIdentityInfo,
+                   nsISMimeCert,
+                   nsISerializable,
+                   nsIClassInfo)
 
 /* static */
 nsNSSCertificate*
@@ -1371,19 +1372,15 @@ nsNSSCertificate::GetASN1Structure(nsIASN1Object * *aASN1Structure)
   nsNSSShutDownPreventionLock locker;
   nsresult rv = NS_OK;
   NS_ENSURE_ARG_POINTER(aASN1Structure);
-  if (!mASN1Structure) {
-    // First create the recursive structure os ASN1Objects
-    // which tells us the layout of the cert.
-    rv = CreateASN1Struct();
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
-#ifdef DEBUG_javi
-    DumpASN1Object(mASN1Structure, 0);
-#endif
+  // First create the recursive structure os ASN1Objects
+  // which tells us the layout of the cert.
+  rv = CreateASN1Struct(aASN1Structure);
+  if (NS_FAILED(rv)) {
+    return rv;
   }
-  *aASN1Structure = mASN1Structure;
-  NS_IF_ADDREF(*aASN1Structure);
+#ifdef DEBUG_javi
+  DumpASN1Object(*aASN1Structure, 0);
+#endif
   return rv;
 }
 
@@ -1476,7 +1473,7 @@ char* nsNSSCertificate::defaultServerNickname(CERTCertificate* cert)
   return nickname;
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsNSSCertList, nsIX509CertList)
+NS_IMPL_ISUPPORTS1(nsNSSCertList, nsIX509CertList)
 
 nsNSSCertList::nsNSSCertList(CERTCertList *certList, bool adopt)
 {
@@ -1582,8 +1579,7 @@ nsNSSCertList::GetEnumerator(nsISimpleEnumerator **_retval)
   return NS_OK;
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsNSSCertListEnumerator, 
-                              nsISimpleEnumerator)
+NS_IMPL_ISUPPORTS1(nsNSSCertListEnumerator, nsISimpleEnumerator)
 
 nsNSSCertListEnumerator::nsNSSCertListEnumerator(CERTCertList *certList)
 {

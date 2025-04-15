@@ -31,7 +31,6 @@
 #include "DictionaryHelpers.h"
 #include "nsLayoutUtils.h"
 #include "nsIScrollableFrame.h"
-#include "nsDOMClassInfoID.h"
 #include "nsDOMEventTargetHelper.h"
 #include "nsPIWindowRoot.h"
 #include "nsGlobalWindow.h"
@@ -131,6 +130,8 @@ NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsDOMEvent)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsDOMEvent)
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMEvent)
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsDOMEvent)
   NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER
@@ -1064,7 +1065,7 @@ nsDOMEvent::Shutdown()
 nsIntPoint
 nsDOMEvent::GetScreenCoords(nsPresContext* aPresContext,
                             nsEvent* aEvent,
-                            nsIntPoint aPoint)
+                            LayoutDeviceIntPoint aPoint)
 {
   if (nsEventStateManager::sIsPointerLocked) {
     return nsEventStateManager::sLastScreenPoint;
@@ -1082,35 +1083,34 @@ nsDOMEvent::GetScreenCoords(nsPresContext* aPresContext,
 
   nsGUIEvent* guiEvent = static_cast<nsGUIEvent*>(aEvent);
   if (!guiEvent->widget) {
-    return aPoint;
+    return LayoutDeviceIntPoint::ToUntyped(aPoint);
   }
 
-  nsIntPoint offset = aPoint + guiEvent->widget->WidgetToScreenOffset();
+  LayoutDeviceIntPoint offset = aPoint +
+    LayoutDeviceIntPoint::FromUntyped(guiEvent->widget->WidgetToScreenOffset());
   nscoord factor = aPresContext->DeviceContext()->UnscaledAppUnitsPerDevPixel();
   return nsIntPoint(nsPresContext::AppUnitsToIntCSSPixels(offset.x * factor),
                     nsPresContext::AppUnitsToIntCSSPixels(offset.y * factor));
 }
 
 //static
-nsIntPoint
+CSSIntPoint
 nsDOMEvent::GetPageCoords(nsPresContext* aPresContext,
                           nsEvent* aEvent,
-                          nsIntPoint aPoint,
-                          nsIntPoint aDefaultPoint)
+                          LayoutDeviceIntPoint aPoint,
+                          CSSIntPoint aDefaultPoint)
 {
-  nsIntPoint pagePoint = nsDOMEvent::GetClientCoords(aPresContext,
-                                                     aEvent,
-                                                     aPoint,
-                                                     aDefaultPoint);
+  CSSIntPoint pagePoint = nsDOMEvent::GetClientCoords(aPresContext,
+                                                      aEvent,
+                                                      aPoint,
+                                                      aDefaultPoint);
 
   // If there is some scrolling, add scroll info to client point.
   if (aPresContext && aPresContext->GetPresShell()) {
     nsIPresShell* shell = aPresContext->GetPresShell();
     nsIScrollableFrame* scrollframe = shell->GetRootScrollFrameAsScrollable();
     if (scrollframe) {
-      nsPoint pt = scrollframe->GetScrollPosition();
-      pagePoint += nsIntPoint(nsPresContext::AppUnitsToIntCSSPixels(pt.x),
-                              nsPresContext::AppUnitsToIntCSSPixels(pt.y));
+      pagePoint += CSSIntPoint::FromAppUnitsRounded(scrollframe->GetScrollPosition());
     }
   }
 
@@ -1118,11 +1118,11 @@ nsDOMEvent::GetPageCoords(nsPresContext* aPresContext,
 }
 
 // static
-nsIntPoint
+CSSIntPoint
 nsDOMEvent::GetClientCoords(nsPresContext* aPresContext,
                             nsEvent* aEvent,
-                            nsIntPoint aPoint,
-                            nsIntPoint aDefaultPoint)
+                            LayoutDeviceIntPoint aPoint,
+                            CSSIntPoint aDefaultPoint)
 {
   if (nsEventStateManager::sIsPointerLocked) {
     return nsEventStateManager::sLastClientPoint;
@@ -1136,21 +1136,24 @@ nsDOMEvent::GetClientCoords(nsPresContext* aPresContext,
        aEvent->eventStructType != NS_DRAG_EVENT &&
        aEvent->eventStructType != NS_SIMPLE_GESTURE_EVENT) ||
       !aPresContext ||
-      !((nsGUIEvent*)aEvent)->widget) {
+      !static_cast<nsGUIEvent*>(aEvent)->widget) {
     return aDefaultPoint;
   }
 
-  nsPoint pt(0, 0);
   nsIPresShell* shell = aPresContext->GetPresShell();
   if (!shell) {
-    return nsIntPoint(0, 0);
+    return CSSIntPoint(0, 0);
   }
-  nsIFrame* rootFrame = shell->GetRootFrame();
-  if (rootFrame)
-    pt = nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, aPoint, rootFrame);
 
-  return nsIntPoint(nsPresContext::AppUnitsToIntCSSPixels(pt.x),
-                    nsPresContext::AppUnitsToIntCSSPixels(pt.y));
+  nsIFrame* rootFrame = shell->GetRootFrame();
+  if (!rootFrame) {
+    return CSSIntPoint(0, 0);
+  }
+  nsPoint pt =
+    nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent,
+      LayoutDeviceIntPoint::ToUntyped(aPoint), rootFrame);
+
+  return CSSIntPoint::FromAppUnitsRounded(pt);
 }
 
 // To be called ONLY by nsDOMEvent::GetType (which has the additional

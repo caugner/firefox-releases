@@ -5,11 +5,13 @@
 from __future__ import unicode_literals
 
 import os
-import time
 
+from mozpack.manifests import (
+    InstallManifest,
+    PurgeManifest,
+)
 from mozunit import main
 
-from mozbuild.backend.configenvironment import ConfigEnvironment
 from mozbuild.backend.recursivemake import RecursiveMakeBackend
 from mozbuild.frontend.emitter import TreeMetadataEmitter
 from mozbuild.frontend.reader import BuildReader
@@ -146,6 +148,9 @@ class TestRecursiveMakeBackend(BackendTester):
                 'CMMSRCS += bar.mm',
                 'CMMSRCS += foo.mm',
             ],
+            'CPP_UNIT_TESTS': [
+                'CPP_UNIT_TESTS += foo.cpp',
+            ],
             'CSRCS': [
                 'CSRCS += bar.c',
                 'CSRCS += foo.c',
@@ -161,6 +166,30 @@ class TestRecursiveMakeBackend(BackendTester):
             'EXTRA_PP_COMPONENTS': [
                 'EXTRA_PP_COMPONENTS += bar.pp.js',
                 'EXTRA_PP_COMPONENTS += foo.pp.js',
+            ],
+            'EXTRA_JS_MODULES': [
+                'EXTRA_JS_MODULES += bar.jsm',
+                'EXTRA_JS_MODULES += foo.jsm',
+            ],
+            'EXTRA_PP_JS_MODULES': [
+                'EXTRA_PP_JS_MODULES += bar.pp.jsm',
+                'EXTRA_PP_JS_MODULES += foo.pp.jsm',
+            ],
+            'GTEST_CMMSRCS': [
+                'GTEST_CMMSRCS += test1.mm',
+                'GTEST_CMMSRCS += test2.mm',
+            ],
+            'GTEST_CPPSRCS': [
+                'GTEST_CPPSRCS += test1.cpp',
+                'GTEST_CPPSRCS += test2.cpp',
+            ],
+            'GTEST_CSRCS': [
+                'GTEST_CSRCS += test1.c',
+                'GTEST_CSRCS += test2.c',
+            ],
+            'HOST_CPPSRCS': [
+                'HOST_CPPSRCS += bar.cpp',
+                'HOST_CPPSRCS += foo.cpp',
             ],
             'HOST_CSRCS': [
                 'HOST_CSRCS += bar.c',
@@ -230,6 +259,13 @@ class TestRecursiveMakeBackend(BackendTester):
             'EXPORTS_nspr/private += pprio.h',
         ])
 
+        # EXPORTS files should appear in the dist_include purge manifest.
+        m = PurgeManifest(path=os.path.join(env.topobjdir,
+            '_build_manifests', 'purge', 'dist_include'))
+        self.assertIn('foo.h', m.entries)
+        self.assertIn('mozilla/mozilla1.h', m.entries)
+        self.assertIn('mozilla/dom/dom2.h', m.entries)
+
     def test_xpcshell_manifests(self):
         """Ensure XPCSHELL_TESTS_MANIFESTS is written out correctly."""
         env = self._consume('xpcshell_manifests', RecursiveMakeBackend)
@@ -256,6 +292,90 @@ class TestRecursiveMakeBackend(BackendTester):
         self.assertEqual(lines, [
             '; THIS FILE WAS AUTOMATICALLY GENERATED. DO NOT MODIFY BY HAND.',
             ''] + ['[include:%s/xpcshell.ini]' % x for x in expected])
+
+    def test_purge_manifests_written(self):
+        env = self._consume('stub0', RecursiveMakeBackend)
+
+        purge_dir = os.path.join(env.topobjdir, '_build_manifests', 'purge')
+        self.assertTrue(os.path.exists(purge_dir))
+
+        expected = [
+            'dist_bin',
+            'dist_include',
+            'dist_private',
+            'dist_public',
+            'dist_sdk',
+            'tests',
+        ]
+
+        for e in expected:
+            full = os.path.join(purge_dir, e)
+            self.assertTrue(os.path.exists(full))
+
+        m = PurgeManifest(path=os.path.join(purge_dir, 'dist_bin'))
+        self.assertEqual(m.relpath, 'dist/bin')
+
+    def test_old_purge_manifest_deleted(self):
+        # Simulate a purge manifest from a previous backend version. Ensure it
+        # is deleted.
+        env = self._get_environment('stub0')
+        purge_dir = os.path.join(env.topobjdir, '_build_manifests', 'purge')
+        manifest_path = os.path.join(purge_dir, 'old_manifest')
+        os.makedirs(purge_dir)
+        m = PurgeManifest()
+        m.write(path=manifest_path)
+
+        self.assertTrue(os.path.exists(manifest_path))
+        self._consume('stub0', RecursiveMakeBackend, env)
+        self.assertFalse(os.path.exists(manifest_path))
+
+    def test_install_manifests_written(self):
+        env, objs = self._emit('stub0')
+        backend = RecursiveMakeBackend(env)
+
+        m = InstallManifest()
+        backend._install_manifests['testing'] = m
+        m.add_symlink(__file__, 'self')
+        backend.consume(objs)
+
+        man_dir = os.path.join(env.topobjdir, '_build_manifests', 'install')
+        self.assertTrue(os.path.isdir(man_dir))
+
+        expected = ['testing']
+        for e in expected:
+            full = os.path.join(man_dir, e)
+            self.assertTrue(os.path.exists(full))
+
+            m2 = InstallManifest(path=full)
+            self.assertEqual(m, m2)
+
+    def test_ipdl_sources(self):
+        """Test that IPDL_SOURCES are written to ipdlsrcs.mk correctly."""
+        env = self._consume('ipdl_sources', RecursiveMakeBackend)
+
+        manifest_path = os.path.join(env.topobjdir,
+            'ipc', 'ipdl', 'ipdlsrcs.mk')
+        lines = [l.strip() for l in open(manifest_path, 'rt').readlines()]
+
+        # Handle Windows paths correctly
+        topsrcdir = env.topsrcdir.replace(os.sep, '/')
+
+        expected = [
+            "ALL_IPDLSRCS += %s/bar/bar.ipdl" % topsrcdir,
+            "CPPSRCS += bar.cpp",
+            "CPPSRCS += barChild.cpp",
+            "CPPSRCS += barParent.cpp",
+            "ALL_IPDLSRCS += %s/bar/bar2.ipdlh" % topsrcdir,
+            "CPPSRCS += bar2.cpp",
+            "ALL_IPDLSRCS += %s/foo/foo.ipdl" % topsrcdir,
+            "CPPSRCS += foo.cpp",
+            "CPPSRCS += fooChild.cpp",
+            "CPPSRCS += fooParent.cpp",
+            "ALL_IPDLSRCS += %s/foo/foo2.ipdlh" % topsrcdir,
+            "CPPSRCS += foo2.cpp",
+            "IPDLDIRS := %s/bar %s/foo" % (topsrcdir, topsrcdir),
+        ]
+        self.assertEqual(lines, expected)
 
 if __name__ == '__main__':
     main()

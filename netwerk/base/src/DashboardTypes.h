@@ -5,7 +5,7 @@
 #ifndef mozilla_net_DashboardTypes_h_
 #define mozilla_net_DashboardTypes_h_
 
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 #include "nsStringGlue.h"
 #include "nsTArray.h"
 
@@ -22,6 +22,11 @@ struct SocketInfo
     bool      tcp;
 };
 
+struct HalfOpenSockets
+{
+    bool speculative;
+};
+
 struct DNSCacheEntries
 {
     nsCString hostname;
@@ -34,6 +39,10 @@ struct HttpConnInfo
 {
     uint32_t ttl;
     uint32_t rtt;
+    nsString protocolVersion;
+
+    void SetHTTP1ProtocolVersion(uint8_t pv);
+    void SetHTTP2ProtocolVersion(uint8_t pv);
 };
 
 struct HttpRetParams
@@ -41,10 +50,16 @@ struct HttpRetParams
     nsCString host;
     nsTArray<HttpConnInfo>   active;
     nsTArray<HttpConnInfo>   idle;
+    nsTArray<HalfOpenSockets> halfOpens;
     uint32_t  counter;
     uint16_t  port;
     bool      spdy;
     bool      ssl;
+};
+
+struct ConnStatus
+{
+    nsString creationSts;
 };
 
 } }

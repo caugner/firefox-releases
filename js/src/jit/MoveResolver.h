@@ -7,9 +7,9 @@
 #ifndef jit_MoveResolver_h
 #define jit_MoveResolver_h
 
-#include "Registers.h"
-#include "InlineList.h"
-#include "IonAllocPolicy.h"
+#include "jit/InlineList.h"
+#include "jit/IonAllocPolicy.h"
+#include "jit/Registers.h"
 
 namespace js {
 namespace jit {
@@ -98,6 +98,9 @@ class MoveResolver
             if (isMemory() || isEffectiveAddress())
                 return disp_ == other.disp_;
             return true;
+        }
+        bool operator !=(const MoveOperand &other) const {
+            return !operator==(other);
         }
     };
 

@@ -12,9 +12,9 @@
 #include "jscntxt.h"
 #include "jscompartment.h"
 
-#include "BaselineJIT.h"
-#include "BaselineIC.h"
-#include "MIR.h"
+#include "jit/BaselineIC.h"
+#include "jit/BaselineJIT.h"
+#include "jit/MIR.h"
 
 namespace js {
 namespace jit {

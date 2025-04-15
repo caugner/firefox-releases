@@ -29,6 +29,7 @@
 #include "nsThreadUtils.h"
 #include "DiscardTracker.h"
 #include "nsISupportsImpl.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/LinkedList.h"
@@ -39,6 +40,10 @@
 #ifdef DEBUG
   #include "imgIContainerDebug.h"
 #endif
+
+// This will enable FrameAnimator approach to image animation.  Before doing
+// so, make sure bug 899861 symptoms are gone.
+// #define USE_FRAME_ANIMATOR 1
 
 class nsIInputStream;
 class nsIThreadPool;
@@ -119,10 +124,6 @@ class nsIThreadPool;
  * @par
  * The mAnim structure has members only needed for animated images, so
  * it's not allocated until the second frame is added.
- *
- * @note
- * mAnimationMode and mLoopCount are not in the mAnim structure because
- * they have public setters.
  */
 
 class ScaleRequest;
@@ -136,6 +137,7 @@ class Image;
 namespace image {
 
 class Decoder;
+class FrameAnimator;
 
 class RasterImage : public ImageResource
                   , public nsIProperties
@@ -145,7 +147,7 @@ class RasterImage : public ImageResource
 #endif
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIPROPERTIES
   NS_DECL_IMGICONTAINER
 #ifdef DEBUG
@@ -176,8 +178,8 @@ public:
   /* The total number of frames in this image. */
   uint32_t GetNumFrames() const;
 
-  virtual size_t HeapSizeOfSourceWithComputedFallback(nsMallocSizeOfFun aMallocSizeOf) const;
-  virtual size_t HeapSizeOfDecodedWithComputedFallback(nsMallocSizeOfFun aMallocSizeOf) const;
+  virtual size_t HeapSizeOfSourceWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const;
+  virtual size_t HeapSizeOfDecodedWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const;
   virtual size_t NonHeapSizeOfDecoded() const;
   virtual size_t OutOfProcessSizeOfDecoded() const;
 
@@ -323,6 +325,7 @@ private:
 
   nsresult OnImageDataCompleteCore(nsIRequest* aRequest, nsISupports*, nsresult aStatus);
 
+#ifndef USE_FRAME_ANIMATOR
   struct Anim
   {
     //! Area of the first frame that needs to be redrawn on subsequent loops.
@@ -336,6 +339,7 @@ private:
       currentAnimationFrameIndex(0)
     {}
   };
+#endif
 
   /**
    * Each RasterImage has a pointer to one or zero heap-allocated
@@ -400,7 +404,7 @@ private:
   class DecodePool : public nsIObserver
   {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_NSIOBSERVER
 
     static DecodePool* Singleton();
@@ -544,6 +548,7 @@ private:
                      uint32_t aFlags,
                      gfxImageSurface **_retval);
 
+#ifndef USE_FRAME_ANIMATOR
   /**
    * Advances the animation. Typically, this will advance a single frame, but it
    * may advance multiple frames. This may happen if we have infrequently
@@ -570,6 +575,7 @@ private:
    * but does not loop, returns 0.
    */
   uint32_t GetSingleLoopTime() const;
+#endif
 
   /**
    * Deletes and nulls out the frame in mFrames[framenum].
@@ -586,11 +592,16 @@ private:
   imgFrame* GetDrawableImgFrame(uint32_t framenum);
   imgFrame* GetCurrentImgFrame();
   uint32_t GetCurrentImgFrameIndex() const;
+#ifndef USE_FRAME_ANIMATOR
   mozilla::TimeStamp GetCurrentImgFrameEndTime() const;
+#endif
 
   size_t SizeOfDecodedWithComputedFallbackIfHeap(gfxASurface::MemoryLocation aLocation,
-                                                 nsMallocSizeOfFun aMallocSizeOf) const;
+                                                 mozilla::MallocSizeOf aMallocSizeOf) const;
 
+#ifdef USE_FRAME_ANIMATOR
+  void EnsureAnimExists();
+#else
   inline void EnsureAnimExists()
   {
     if (!mAnim) {
@@ -613,6 +624,7 @@ private:
       CurrentStatusTracker().RecordImageIsAnimated();
     }
   }
+#endif
 
   nsresult InternalAddFrameHelper(uint32_t framenum, imgFrame *frame,
                                   uint8_t **imageData, uint32_t *imageLength,
@@ -670,10 +682,14 @@ private: // data
   // IMPORTANT: if you use mAnim in a method, call EnsureImageIsDecoded() first to ensure
   // that the frames actually exist (they may have been discarded to save memory, or
   // we maybe decoding on draw).
+#ifdef USE_FRAME_ANIMATOR
+  FrameAnimator* mAnim;
+#else
   RasterImage::Anim*        mAnim;
 
   //! # loops remaining before animation stops (-1 no stop)
   int32_t                    mLoopCount;
+#endif
 
   // Discard members
   uint32_t                   mLockCount;
@@ -714,6 +730,10 @@ private: // data
   bool                       mInDecoder;
   // END LOCKED MEMBER VARIABLES
 
+  // Notification state. Used to avoid recursive notifications.
+  ImageStatusDiff            mStatusDiff;
+  bool                       mNotifying:1;
+
   // Boolean flags (clustered together to conserve space):
   bool                       mHasSize:1;       // Has SetSize() been called?
   bool                       mDecodeOnDraw:1;  // Decoding on draw?
@@ -739,7 +759,16 @@ private: // data
   // off a full decode.
   bool                       mWantFullDecode:1;
 
+  // Set when a decode worker detects an error off-main-thread. Once the error
+  // is handled on the main thread, mError is set, but mPendingError is used to
+  // stop decode work immediately.
+  bool                       mPendingError:1;
+
   // Decoding
+  nsresult RequestDecodeIfNeeded(nsresult aStatus,
+                                 eShutdownIntent aIntent,
+                                 bool aDone,
+                                 bool aWasSize);
   nsresult WantDecodedFrames();
   nsresult SyncDecode();
   nsresult InitDecoder(bool aDoSizeDecode, bool aIsSynchronous = false);
@@ -771,8 +800,28 @@ private: // data
 
   nsresult ShutdownDecoder(eShutdownIntent aIntent);
 
-  // Helpers
+  // Error handling.
   void DoError();
+
+  class HandleErrorWorker : public nsRunnable
+  {
+  public:
+    /**
+     * Called from decoder threads when DoError() is called, since errors can't
+     * be handled safely off-main-thread. Dispatches an event which reinvokes
+     * DoError on the main thread if there isn't one already pending.
+     */
+    static void DispatchIfNeeded(RasterImage* aImage);
+
+    NS_IMETHOD Run();
+
+  private:
+    HandleErrorWorker(RasterImage* aImage);
+
+    nsRefPtr<RasterImage> mImage;
+  };
+
+  // Helpers
   bool CanDiscard();
   bool CanForciblyDiscard();
   bool DiscardingActive();
@@ -790,9 +839,11 @@ inline NS_IMETHODIMP RasterImage::GetAnimationMode(uint16_t *aAnimationMode) {
   return GetAnimationModeInternal(aAnimationMode);
 }
 
+#ifndef USE_FRAME_ANIMATOR
 inline NS_IMETHODIMP RasterImage::SetAnimationMode(uint16_t aAnimationMode) {
   return SetAnimationModeInternal(aAnimationMode);
 }
+#endif
 
 // Asynchronous Decode Requestor
 //

@@ -7,12 +7,12 @@
 #ifndef jit_IonSpewer_h
 #define jit_IonSpewer_h
 
-#include <stdarg.h>
-
 #include "mozilla/DebugOnly.h"
 
-#include "C1Spewer.h"
-#include "JSONSpewer.h"
+#include <stdarg.h>
+
+#include "jit/C1Spewer.h"
+#include "jit/JSONSpewer.h"
 
 namespace js {
 namespace jit {

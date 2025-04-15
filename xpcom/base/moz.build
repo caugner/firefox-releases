@@ -22,6 +22,7 @@ XPIDL_SOURCES += [
     'nsIMessageLoop.idl',
     'nsIMutable.idl',
     'nsIProgrammingLanguage.idl',
+    'nsISecurityConsoleMessage.idl',
     'nsISupports.idl',
     'nsITraceRefcnt.idl',
     'nsIUUIDGenerator.idl',
@@ -41,23 +42,37 @@ XPIDL_MODULE = 'xpcom_base'
 MODULE = 'xpcom'
 
 EXPORTS += [
+    'ErrorList.h',
+    'ErrorListCDefines.h',
+    'ErrorListCxxDefines.h',
     'nsAgg.h',
+    'nsAutoPtr.h',
     'nsAutoRef.h',
     'nsCom.h',
+    'nsCycleCollector.h',
     'nsDebugImpl.h',
+    'nsError.h',
     'nsGZFileWriter.h',
     'nsIAllocator.h',
     'nsIID.h',
     'nsISizeOf.h',
+    'nsISupportsBase.h',
     'nsISupportsObsolete.h',
     'nsInterfaceRequestorAgg.h',
+    'nsObjCExceptions.h',
     'nsStackWalk.h',
     'nsTraceRefcntImpl.h',
     'nsWeakPtr.h',
+    'nscore.h',
 ]
 
 if CONFIG['MOZ_DEBUG']:
     EXPORTS += ['pure.h']
+
+if CONFIG['OS_ARCH'] == 'WINNT':
+    EXPORTS += [
+        'nsWindowsHelpers.h',
+    ]
 
 EXPORTS.mozilla += [
     'AvailableMemoryTracker.h',
@@ -89,6 +104,7 @@ CPP_SOURCES += [
     'nsMemoryInfoDumper.cpp',
     'nsMemoryReporterManager.cpp',
     'nsMessageLoop.cpp',
+    'nsSecurityConsoleMessage.cpp',
     'nsStackWalk.cpp',
     'nsSystemInfo.cpp',
     'nsTraceRefcntImpl.cpp',

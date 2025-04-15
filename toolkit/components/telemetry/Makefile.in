@@ -22,14 +22,6 @@ FAIL_ON_WARNINGS = 1
 LIBRARY_NAME = telemetry
 MSVC_ENABLE_PGO := 1
 
-DISABLED_EXTRA_COMPONENTS = \
-  TelemetryPing.manifest \
-  $(NULL)
-
-EXTRA_JS_MODULES = \
-  TelemetryStopwatch.jsm \
-  ThirdPartyCookieProbe.jsm \
-  $(NULL)
 
 LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/build
 LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/threads
@@ -48,7 +40,6 @@ ifdef MOZ_HISTOGRAMS_VERSION
 DEFINES += -DHISTOGRAMS_FILE_VERSION="$(MOZ_HISTOGRAMS_VERSION)"
 endif
 
-include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/config/rules.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk
 

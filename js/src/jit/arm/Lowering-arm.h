@@ -45,6 +45,8 @@ class LIRGeneratorARM : public LIRGeneratorShared
                      MDefinition *src);
     bool lowerForFPU(LInstructionHelper<1, 2, 0> *ins, MDefinition *mir,
                      MDefinition *lhs, MDefinition *rhs);
+    bool lowerForBitAndAndBranch(LBitAndAndBranch *baab, MInstruction *mir,
+                                 MDefinition *lhs, MDefinition *rhs);
 
     bool lowerTruncateDToInt32(MTruncateToInt32 *ins);
 
@@ -52,6 +54,8 @@ class LIRGeneratorARM : public LIRGeneratorShared
     bool lowerDivI(MDiv *div);
     bool lowerModI(MMod *mod);
     bool lowerMulI(MMul *mul, MDefinition *lhs, MDefinition *rhs);
+    bool lowerUDiv(MInstruction *div);
+    bool lowerUMod(MInstruction *mod);
     bool visitPowHalf(MPowHalf *ins);
     bool visitAsmJSNeg(MAsmJSNeg *ins);
     bool visitAsmJSUDiv(MAsmJSUDiv *ins);
@@ -61,6 +65,7 @@ class LIRGeneratorARM : public LIRGeneratorShared
                                   MTableSwitch *ins);
     LTableSwitchV *newLTableSwitchV(MTableSwitch *ins);
     LGetPropertyCacheT *newLGetPropertyCacheT(MGetPropertyCache *ins);
+    LGetElementCacheT *newLGetElementCacheT(MGetElementCache *ins);
 
   public:
     bool visitConstant(MConstant *ins);

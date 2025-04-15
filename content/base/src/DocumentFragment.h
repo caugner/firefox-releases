@@ -23,21 +23,9 @@ namespace dom {
 class Element;
 class HTMLTemplateElement;
 
-class DocumentFragment : public FragmentOrElement,
-                         public nsIDOMDocumentFragment
+class DocumentFragment MOZ_FINAL : public FragmentOrElement,
+                                   public nsIDOMDocumentFragment
 {
-public:
-  using FragmentOrElement::GetFirstChild;
-
-  // nsISupports
-  NS_DECL_ISUPPORTS_INHERITED
-
-  // interface nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-
-  // interface nsIDOMDocumentFragment
-  // NS_DECL_NSIDOCUMENTFRAGMENT  Empty
-
 private:
   void Init()
   {
@@ -46,11 +34,22 @@ private:
                       mNodeInfo->Equals(nsGkAtoms::documentFragmentNodeName,
                                         kNameSpaceID_None),
                       "Bad NodeType in aNodeInfo");
-
-    SetIsDOMBinding();
   }
 
 public:
+  using FragmentOrElement::GetFirstChild;
+  using nsINode::QuerySelector;
+  using nsINode::QuerySelectorAll;
+
+  // nsISupports
+  NS_DECL_ISUPPORTS_INHERITED
+
+  // interface nsIDOMNode
+  NS_FORWARD_NSIDOMNODE_TO_NSINODE
+
+  // interface nsIDOMDocumentFragment
+  NS_DECL_NSIDOMDOCUMENTFRAGMENT
+
   DocumentFragment(already_AddRefed<nsINodeInfo> aNodeInfo)
     : FragmentOrElement(aNodeInfo), mHost(nullptr)
   {
@@ -75,12 +74,6 @@ public:
                              JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   // nsIContent
-  virtual already_AddRefed<nsINodeInfo>
-    GetExistingAttrNameFromQName(const nsAString& aStr) const MOZ_OVERRIDE
-  {
-    return nullptr;
-  }
-
   nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                    const nsAString& aValue, bool aNotify)
   {

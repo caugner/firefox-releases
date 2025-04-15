@@ -125,7 +125,7 @@ ImageFormatForPixelFormat(android::PixelFormat aFormat)
   case PIXEL_FORMAT_A_8:
     return gfxASurface::ImageFormatA8;
   default:
-    MOZ_NOT_REACHED("Unknown gralloc pixel format");
+    MOZ_CRASH("Unknown gralloc pixel format");
   }
   return gfxASurface::ImageFormatARGB32;
 }
@@ -143,7 +143,7 @@ PixelFormatForImageFormat(gfxASurface::gfxImageFormat aFormat)
   case gfxASurface::ImageFormatA8:
     return android::PIXEL_FORMAT_A_8;
   default:
-    MOZ_NOT_REACHED("Unknown gralloc pixel format");
+    MOZ_CRASH("Unknown gralloc pixel format");
   }
   return gfxASurface::ImageFormatARGB32;
 }
@@ -199,7 +199,7 @@ NS_MEMORY_REPORTER_IMPLEMENT(GrallocBufferActor,
 
 GrallocBufferActor::GrallocBufferActor()
 : mAllocBytes(0)
-, mTextureHost(nullptr)
+, mDeprecatedTextureHost(nullptr)
 {
   static bool registered;
   if (!registered) {
@@ -253,15 +253,15 @@ GrallocBufferActor::Create(const gfxIntSize& aSize,
 // used only for hacky fix in gecko 23 for bug 862324
 void GrallocBufferActor::ActorDestroy(ActorDestroyReason)
 {
-  if (mTextureHost) {
-    mTextureHost->ForgetBuffer();
+  if (mDeprecatedTextureHost) {
+    mDeprecatedTextureHost->ForgetBuffer();
   }
 }
 
 // used only for hacky fix in gecko 23 for bug 862324
-void GrallocBufferActor::SetTextureHost(TextureHost* aTextureHost)
+void GrallocBufferActor::SetDeprecatedTextureHost(DeprecatedTextureHost* aDeprecatedTextureHost)
 {
-  mTextureHost = aTextureHost;
+  mDeprecatedTextureHost = aDeprecatedTextureHost;
 }
 
 /*static*/ already_AddRefed<TextureImage>
@@ -346,13 +346,28 @@ ISurfaceAllocator::PlatformAllocSurfaceDescriptor(const gfxIntSize& aSize,
                                                   SurfaceDescriptor* aBuffer)
 {
 
-  // Check for Nexus S to disable gralloc. We only check for this on ICS or
-  // earlier, in hopes that JB will work.
+  // Check for devices that have problems with gralloc. We only check for
+  // this on ICS or earlier, in hopes that JB will work.
 #if ANDROID_VERSION <= 15
-  char propValue[PROPERTY_VALUE_MAX];
-  property_get("ro.product.device", propValue, "None");
-  if (strcmp("crespo",propValue) == 0) {
-    NS_WARNING("Nexus S has issues with gralloc, falling back to shmem");
+  static bool checkedDevice = false;
+  static bool disableGralloc = false;
+
+  if (!checkedDevice) {
+    char propValue[PROPERTY_VALUE_MAX];
+    property_get("ro.product.device", propValue, "None");
+
+    if (strcmp("crespo",propValue) == 0) {
+      NS_WARNING("Nexus S has issues with gralloc, falling back to shmem");
+      disableGralloc = true;
+    } else if (strcmp("peak", propValue) == 0) {
+      NS_WARNING("Geeksphone Peak has issues with gralloc, falling back to shmem");
+      disableGralloc = true;
+    }
+
+    checkedDevice = true;
+  }
+
+  if (disableGralloc) {
     return false;
   }
 #endif
@@ -486,6 +501,23 @@ ShadowLayerForwarder::PlatformGetDescriptorSurfaceSize(
   sp<GraphicBuffer> buffer =
     GrallocBufferActor::GetFrom(aDescriptor.get_SurfaceDescriptorGralloc());
   *aSize = aDescriptor.get_SurfaceDescriptorGralloc().size();
+  return true;
+}
+
+/*static*/ bool
+ShadowLayerForwarder::PlatformGetDescriptorSurfaceImageFormat(
+  const SurfaceDescriptor& aDescriptor,
+  OpenMode aMode,
+  gfxImageFormat* aImageFormat,
+  gfxASurface** aSurface)
+{
+  if (SurfaceDescriptor::TSurfaceDescriptorGralloc != aDescriptor.type()) {
+    return false;
+  }
+
+  sp<GraphicBuffer> buffer =
+    GrallocBufferActor::GetFrom(aDescriptor.get_SurfaceDescriptorGralloc());
+  *aImageFormat = ImageFormatForPixelFormat(buffer->getPixelFormat());
   return true;
 }
 

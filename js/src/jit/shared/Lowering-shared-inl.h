@@ -7,6 +7,8 @@
 #ifndef jit_shared_Lowering_shared_inl_h
 #define jit_shared_Lowering_shared_inl_h
 
+#include "jit/shared/Lowering-shared.h"
+
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
 

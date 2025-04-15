@@ -23,7 +23,7 @@ protected:
   nsSVGStopFrame(nsStyleContext* aContext)
     : nsSVGStopFrameBase(aContext)
   {
-    AddStateBits(NS_STATE_SVG_NONDISPLAY_CHILD);
+    AddStateBits(NS_FRAME_IS_NONDISPLAY);
   }
 
 public:
@@ -39,8 +39,6 @@ public:
   void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                         const nsRect&           aDirtyRect,
                         const nsDisplayListSet& aLists) MOZ_OVERRIDE {}
-
-  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
 
   NS_IMETHOD AttributeChanged(int32_t         aNameSpaceID,
                               nsIAtom*        aAttribute,
@@ -85,13 +83,6 @@ nsSVGStopFrame::Init(nsIContent* aContent,
   nsSVGStopFrameBase::Init(aContent, aParent, aPrevInFlow);
 }
 #endif /* DEBUG */
-
-/* virtual */ void
-nsSVGStopFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
-{
-  nsSVGStopFrameBase::DidSetStyleContext(aOldStyleContext);
-  nsSVGEffects::InvalidateRenderingObservers(this);
-}
 
 nsIAtom *
 nsSVGStopFrame::GetType() const

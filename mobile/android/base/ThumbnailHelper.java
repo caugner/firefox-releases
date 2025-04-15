@@ -105,7 +105,8 @@ public final class ThumbnailHelper {
         mWidth &= ~0x1; // Ensure the width is always an even number (bug 776906)
         mHeight = Math.round(mWidth * THUMBNAIL_ASPECT_RATIO);
 
-        int capacity = mWidth * mHeight * 2; // Multiply by 2 for 16bpp
+        int pixelSize = (GeckoAppShell.getScreenDepth() == 24) ? 4 : 2;
+        int capacity = mWidth * mHeight * pixelSize;
         if (mBuffer == null || mBuffer.capacity() != capacity) {
             if (mBuffer != null) {
                 mBuffer = DirectBufferAllocator.free(mBuffer);

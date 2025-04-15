@@ -6,6 +6,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/Util.h"
 
 #include "mozilla/dom/ContentChild.h"
@@ -296,7 +297,7 @@ GetURIFromJSObject(JSContext* aCtx,
                    const char* aProperty)
 {
   JS::Rooted<JS::Value> uriVal(aCtx);
-  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, uriVal.address());
+  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, &uriVal);
   NS_ENSURE_TRUE(rc, nullptr);
   return GetJSValueAsURI(aCtx, uriVal);
 }
@@ -354,7 +355,7 @@ GetStringFromJSObject(JSContext* aCtx,
                       nsString& _string)
 {
   JS::Rooted<JS::Value> val(aCtx);
-  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, val.address());
+  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, &val);
   if (!rc) {
     _string.SetIsVoid(true);
     return;
@@ -384,7 +385,7 @@ GetIntFromJSObject(JSContext* aCtx,
                    IntType* _int)
 {
   JS::Rooted<JS::Value> value(aCtx);
-  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, value.address());
+  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, &value);
   NS_ENSURE_TRUE(rc, NS_ERROR_UNEXPECTED);
   if (JSVAL_IS_VOID(value)) {
     return NS_ERROR_INVALID_ARG;
@@ -2233,13 +2234,13 @@ History::FetchPageInfo(VisitData& _place, bool* _exists)
 }
 
 /* static */ size_t
-History::SizeOfEntryExcludingThis(KeyClass* aEntry, nsMallocSizeOfFun aMallocSizeOf, void *)
+History::SizeOfEntryExcludingThis(KeyClass* aEntry, mozilla::MallocSizeOf aMallocSizeOf, void *)
 {
   return aEntry->array.SizeOfExcludingThis(aMallocSizeOf);
 }
 
 size_t
-History::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOfThis)
+History::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOfThis)
 {
   return aMallocSizeOfThis(this) +
          mObservers.SizeOfExcludingThis(SizeOfEntryExcludingThis, aMallocSizeOfThis);
@@ -2724,7 +2725,7 @@ History::GetPlacesInfo(const JS::Value& aPlaceIdentifiers,
       nsCOMPtr<nsIURI> uri = GetJSValueAsURI(aCtx, placeIdentifier);
       if (!uri)
         return NS_ERROR_INVALID_ARG; // neither a guid, nor a uri.
-      *placesInfo.AppendElement(VisitData(uri));
+      placesInfo.AppendElement(VisitData(uri));
     }
   }
 
@@ -2807,7 +2808,7 @@ History::UpdatePlaces(const JS::Value& aPlaceInfos,
     JS::Rooted<JSObject*> visits(aCtx, nullptr);
     {
       JS::Rooted<JS::Value> visitsVal(aCtx);
-      JSBool rc = JS_GetProperty(aCtx, info, "visits", visitsVal.address());
+      JSBool rc = JS_GetProperty(aCtx, info, "visits", &visitsVal);
       NS_ENSURE_TRUE(rc, NS_ERROR_UNEXPECTED);
       if (!JSVAL_IS_PRIMITIVE(visitsVal)) {
         visits = JSVAL_TO_OBJECT(visitsVal);
@@ -2929,7 +2930,7 @@ History::Observe(nsISupports* aSubject, const char* aTopic,
 ////////////////////////////////////////////////////////////////////////////////
 //// nsISupports
 
-NS_IMPL_THREADSAFE_ISUPPORTS4(
+NS_IMPL_ISUPPORTS4(
   History
 , IHistory
 , nsIDownloadHistory

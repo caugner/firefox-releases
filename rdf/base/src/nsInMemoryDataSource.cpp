@@ -197,7 +197,7 @@ Assertion::~Assertion()
 {
     if (mHashEntry && u.hash.mPropertyHash) {
         PL_DHashTableEnumerate(u.hash.mPropertyHash, DeletePropertyHashEntry,
-                               NULL);
+                               nullptr);
         PL_DHashTableDestroy(u.hash.mPropertyHash);
         u.hash.mPropertyHash = nullptr;
     }
@@ -769,6 +769,7 @@ InMemoryDataSource::InMemoryDataSource(nsISupports* aOuter)
     mForwardArcs.ops = nullptr;
     mReverseArcs.ops = nullptr;
     mPropagateChanges = true;
+    MOZ_COUNT_CTOR(InMemoryDataSource);
 }
 
 
@@ -813,7 +814,7 @@ InMemoryDataSource::~InMemoryDataSource()
         // associated with this data source. We only need to do this
         // for the forward arcs, because the reverse arcs table
         // indexes the exact same set of resources.
-        PL_DHashTableEnumerate(&mForwardArcs, DeleteForwardArcsEntry, NULL);
+        PL_DHashTableEnumerate(&mForwardArcs, DeleteForwardArcsEntry, nullptr);
         PL_DHashTableFinish(&mForwardArcs);
     }
     if (mReverseArcs.ops)
@@ -822,6 +823,7 @@ InMemoryDataSource::~InMemoryDataSource()
     PR_LOG(gLog, PR_LOG_NOTICE,
            ("InMemoryDataSource(%p): destroyed.", this));
 
+    MOZ_COUNT_DTOR(InMemoryDataSource);
 }
 
 PLDHashOperator
@@ -844,6 +846,8 @@ InMemoryDataSource::DeleteForwardArcsEntry(PLDHashTable* aTable, PLDHashEntryHdr
 
 
 ////////////////////////////////////////////////////////////////////////
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(InMemoryDataSource)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(InMemoryDataSource)
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mObservers)

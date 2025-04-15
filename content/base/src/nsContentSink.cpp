@@ -66,6 +66,8 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsContentSink)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDocumentObserver)
 NS_INTERFACE_MAP_END
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsContentSink)
+
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsContentSink)
   if (tmp->mDocument) {
     tmp->mDocument->RemoveObserver(tmp);
@@ -1257,10 +1259,9 @@ nsContentSink::IsTimeToNotify()
   }
 
   PRTime now = PR_Now();
-  int64_t interval, diff;
 
-  LL_I2L(interval, GetNotificationInterval());
-  diff = now - mLastNotificationTime;
+  int64_t interval = GetNotificationInterval();
+  int64_t diff = now - mLastNotificationTime;
 
   if (diff > interval) {
     mBackoffCount--;
@@ -1501,7 +1502,7 @@ nsContentSink::IsScriptExecutingImpl()
 nsresult
 nsContentSink::WillParseImpl(void)
 {
-  if (mRunsToCompletion) {
+  if (mRunsToCompletion || !mDocument) {
     return NS_OK;
   }
 

@@ -32,8 +32,8 @@ namespace net {
 // SpdySession3 has multiple inheritance of things that implement
 // nsISupports, so this magic is taken from nsHttpPipeline that
 // implements some of the same abstract classes.
-NS_IMPL_THREADSAFE_ADDREF(SpdySession3)
-NS_IMPL_THREADSAFE_RELEASE(SpdySession3)
+NS_IMPL_ADDREF(SpdySession3)
+NS_IMPL_RELEASE(SpdySession3)
 NS_INTERFACE_MAP_BEGIN(SpdySession3)
     NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsAHttpConnection)
 NS_INTERFACE_MAP_END
@@ -377,6 +377,11 @@ SpdySession3::AddStream(nsAHttpTransaction *aHttpTransaction,
     mQueuedStreams.Push(stream);
   }
 
+  if (!(aHttpTransaction->Caps() & NS_HTTP_ALLOW_KEEPALIVE)) {
+    LOG3(("SpdySession3::AddStream %p transaction %p forces keep-alive off.\n",
+          this, aHttpTransaction));
+    DontReuse();
+  }
   return true;
 }
 
@@ -553,7 +558,7 @@ SpdySession3::EnsureBuffer(nsAutoArrayPtr<T> &buf,
 
   objSize = (newSize + 2048 + 4095) & ~4095;
 
-  MOZ_STATIC_ASSERT(sizeof(T) == 1, "sizeof(T) must be 1");
+  static_assert(sizeof(T) == 1, "sizeof(T) must be 1");
   nsAutoArrayPtr<T> tmp(new T[objSize]);
   memcpy(tmp, buf, preserve);
   buf = tmp;
@@ -628,7 +633,7 @@ SpdySession3::UncompressAndDiscard(uint32_t offset,
     if (zlib_rv == Z_NEED_DICT) {
       if (triedDictionary) {
         LOG3(("SpdySession3::UncompressAndDiscard %p Dictionary Error\n", this));
-        return NS_ERROR_FAILURE;
+        return NS_ERROR_ILLEGAL_VALUE;
       }
 
       triedDictionary = true;
@@ -636,7 +641,10 @@ SpdySession3::UncompressAndDiscard(uint32_t offset,
                            sizeof(SpdyStream3::kDictionary));
     }
 
-    if (zlib_rv == Z_DATA_ERROR || zlib_rv == Z_MEM_ERROR)
+    if (zlib_rv == Z_DATA_ERROR)
+      return NS_ERROR_ILLEGAL_VALUE;
+
+    if (zlib_rv == Z_MEM_ERROR)
       return NS_ERROR_FAILURE;
   }
   while (mDownstreamZlib.avail_in);
@@ -1151,11 +1159,11 @@ SpdySession3::HandleSynReply(SpdySession3 *self)
     if (streamID >= self->mNextStreamID)
       self->GenerateRstStream(RST_INVALID_STREAM, streamID);
 
-    if (NS_FAILED(self->UncompressAndDiscard(12,
-                                             self->mInputFrameDataSize - 4))) {
+    rv = self->UncompressAndDiscard(12, self->mInputFrameDataSize - 4);
+    if (NS_FAILED(rv)) {
       LOG(("SpdySession3::HandleSynReply uncompress failed\n"));
       // this is fatal to the session
-      return NS_ERROR_FAILURE;
+      return rv;
     }
 
     self->ResetDownstreamState();
@@ -1173,7 +1181,7 @@ SpdySession3::HandleSynReply(SpdySession3 *self)
 
   if (NS_FAILED(rv)) {
     LOG(("SpdySession3::HandleSynReply uncompress failed\n"));
-    return NS_ERROR_FAILURE;
+    return rv;
   }
 
   if (self->mInputFrameDataStream->GetFullyOpen()) {
@@ -1531,11 +1539,11 @@ SpdySession3::HandleHeaders(SpdySession3 *self)
     if (streamID >= self->mNextStreamID)
       self->GenerateRstStream(RST_INVALID_STREAM, streamID);
 
-    if (NS_FAILED(self->UncompressAndDiscard(12,
-                                             self->mInputFrameDataSize - 4))) {
+    rv = self->UncompressAndDiscard(12, self->mInputFrameDataSize - 4);
+    if (NS_FAILED(rv)) {
       LOG(("SpdySession3::HandleHeaders uncompress failed\n"));
       // this is fatal to the session
-      return NS_ERROR_FAILURE;
+      return rv;
     }
     self->ResetDownstreamState();
     return NS_OK;
@@ -1551,7 +1559,7 @@ SpdySession3::HandleHeaders(SpdySession3 *self)
                                                self->mInputFrameDataSize - 4);
   if (NS_FAILED(rv)) {
     LOG(("SpdySession3::HandleHeaders uncompress failed\n"));
-    return NS_ERROR_FAILURE;
+    return rv;
   }
 
   self->mInputFrameDataLast = self->mInputFrameBuffer[4] & kFlag_Data_FIN;
@@ -2226,8 +2234,15 @@ SpdySession3::Close(nsresult aReason)
   mStreamIDHash.Clear();
   mStreamTransactionHash.Clear();
 
-  if (NS_SUCCEEDED(aReason))
-    GenerateGoAway(OK);
+  uint32_t goAwayReason;
+  if (NS_SUCCEEDED(aReason)) {
+    goAwayReason = OK;
+  } else if (aReason == NS_ERROR_ILLEGAL_VALUE) {
+    goAwayReason = PROTOCOL_ERROR;
+  } else {
+    goAwayReason = INTERNAL_ERROR;
+  }
+  GenerateGoAway(goAwayReason);
   mConnection = nullptr;
   mSegmentReader = nullptr;
   mSegmentWriter = nullptr;

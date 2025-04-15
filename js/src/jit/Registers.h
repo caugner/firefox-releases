@@ -7,20 +7,21 @@
 #ifndef jit_Registers_h
 #define jit_Registers_h
 
+#include "mozilla/Array.h"
+
 #include "jsutil.h"
-#include "IonTypes.h"
-#if defined(JS_CPU_X86)
-# include "x86/Architecture-x86.h"
-#elif defined(JS_CPU_X64)
-# include "x64/Architecture-x64.h"
-#elif defined(JS_CPU_ARM)
-# include "arm/Architecture-arm.h"
-#endif
-#include "FixedArityList.h"
 
 // ARM defines the RegisterID within Architecture-arm.h
-#if !defined(JS_CPU_ARM) && defined(JS_METHODJIT)
+#if !defined(JS_CPU_ARM)
 #include "assembler/assembler/MacroAssembler.h"
+#endif
+#include "jit/IonTypes.h"
+#if defined(JS_CPU_X86)
+# include "jit/x86/Architecture-x86.h"
+#elif defined(JS_CPU_X64)
+# include "jit/x64/Architecture-x64.h"
+#elif defined(JS_CPU_ARM)
+# include "jit/arm/Architecture-arm.h"
 #endif
 
 namespace js {
@@ -87,8 +88,8 @@ struct FloatRegister {
 // Information needed to recover machine register state.
 class MachineState
 {
-    FixedArityList<uintptr_t *, Registers::Total> regs_;
-    FixedArityList<double *, FloatRegisters::Total> fpregs_;
+    mozilla::Array<uintptr_t *, Registers::Total> regs_;
+    mozilla::Array<double *, FloatRegisters::Total> fpregs_;
 
   public:
     static MachineState FromBailout(uintptr_t regs[Registers::Total],

@@ -32,8 +32,6 @@ HTMLSharedObjectElement::HTMLSharedObjectElement(already_AddRefed<nsINodeInfo> a
 
   // By default we're in the loading state
   AddStatesSilently(NS_EVENT_STATE_LOADING);
-
-  SetIsDOMBinding();
 }
 
 void
@@ -81,6 +79,8 @@ HTMLSharedObjectElement::DoneAddingChildren(bool aHaveNotified)
     }
   }
 }
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLSharedObjectElement)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLSharedObjectElement,
                                                   nsGenericHTMLElement)

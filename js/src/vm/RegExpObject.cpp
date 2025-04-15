@@ -4,18 +4,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "vm/RegExpObject.h"
+#include "vm/RegExpObject-inl.h"
+
+#include "mozilla/MemoryReporting.h"
 
 #include "frontend/TokenStream.h"
-
 #include "vm/MatchPairs.h"
+#include "vm/RegExpStatics.h"
 #include "vm/StringBuffer.h"
+#include "vm/Xdr.h"
 
 #include "jsobjinlines.h"
-
-#include "vm/RegExpObject-inl.h"
-#include "vm/RegExpStatics-inl.h"
-#include "vm/Xdr.h"
 
 using namespace js;
 using js::frontend::TokenStream;
@@ -27,7 +26,7 @@ JS_STATIC_ASSERT(StickyFlag == JSREG_STICKY);
 
 /* RegExpObjectBuilder */
 
-RegExpObjectBuilder::RegExpObjectBuilder(JSContext *cx, RegExpObject *reobj)
+RegExpObjectBuilder::RegExpObjectBuilder(ExclusiveContext *cx, RegExpObject *reobj)
   : cx(cx), reobj_(cx, reobj)
 {}
 
@@ -224,13 +223,13 @@ Class RegExpObject::class_ = {
     NULL,                    /* finalize */
     NULL,                    /* checkAccess */
     NULL,                    /* call */
-    NULL,                    /* construct */
     NULL,                    /* hasInstance */
+    NULL,                    /* construct */
     regexp_trace
 };
 
 RegExpObject *
-RegExpObject::create(JSContext *cx, RegExpStatics *res, const jschar *chars, size_t length,
+RegExpObject::create(ExclusiveContext *cx, RegExpStatics *res, const jschar *chars, size_t length,
                      RegExpFlag flags, TokenStream *tokenStream)
 {
     RegExpFlag staticsFlags = res->getFlags();
@@ -238,7 +237,7 @@ RegExpObject::create(JSContext *cx, RegExpStatics *res, const jschar *chars, siz
 }
 
 RegExpObject *
-RegExpObject::createNoStatics(JSContext *cx, const jschar *chars, size_t length, RegExpFlag flags,
+RegExpObject::createNoStatics(ExclusiveContext *cx, const jschar *chars, size_t length, RegExpFlag flags,
                               TokenStream *tokenStream)
 {
     RootedAtom source(cx, AtomizeChars<CanGC>(cx, chars, length));
@@ -249,7 +248,7 @@ RegExpObject::createNoStatics(JSContext *cx, const jschar *chars, size_t length,
 }
 
 RegExpObject *
-RegExpObject::createNoStatics(JSContext *cx, HandleAtom source, RegExpFlag flags,
+RegExpObject::createNoStatics(ExclusiveContext *cx, HandleAtom source, RegExpFlag flags,
                               TokenStream *tokenStream)
 {
     if (!RegExpShared::checkSyntax(cx, tokenStream, source))
@@ -260,12 +259,12 @@ RegExpObject::createNoStatics(JSContext *cx, HandleAtom source, RegExpFlag flags
 }
 
 bool
-RegExpObject::createShared(JSContext *cx, RegExpGuard *g)
+RegExpObject::createShared(ExclusiveContext *cx, RegExpGuard *g)
 {
     Rooted<RegExpObject*> self(cx, this);
 
     JS_ASSERT(!maybeShared());
-    if (!cx->compartment()->regExps.get(cx, getSource(), getFlags(), g))
+    if (!cx->regExps().get(cx, getSource(), getFlags(), g))
         return false;
 
     self->setShared(cx, **g);
@@ -273,7 +272,7 @@ RegExpObject::createShared(JSContext *cx, RegExpGuard *g)
 }
 
 Shape *
-RegExpObject::assignInitialShape(JSContext *cx)
+RegExpObject::assignInitialShape(ExclusiveContext *cx)
 {
     JS_ASSERT(is<RegExpObject>());
     JS_ASSERT(nativeEmpty());
@@ -305,7 +304,7 @@ RegExpObject::assignInitialShape(JSContext *cx)
 }
 
 bool
-RegExpObject::init(JSContext *cx, HandleAtom source, RegExpFlag flags)
+RegExpObject::init(ExclusiveContext *cx, HandleAtom source, RegExpFlag flags)
 {
     Rooted<RegExpObject *> self(cx, this);
 
@@ -380,12 +379,12 @@ RegExpObject::toString(JSContext *cx) const
 
 /* RegExpShared */
 
-RegExpShared::RegExpShared(JSRuntime *rt, JSAtom *source, RegExpFlag flags)
+RegExpShared::RegExpShared(JSAtom *source, RegExpFlag flags, uint64_t gcNumber)
   : source(source), flags(flags), parenCount(0),
 #if ENABLE_YARR_JIT
     codeBlock(),
 #endif
-    bytecode(NULL), activeUseCount(0), gcNumberWhenUsed(rt->gcNumber)
+    bytecode(NULL), activeUseCount(0), gcNumberWhenUsed(gcNumber)
 {}
 
 RegExpShared::~RegExpShared()
@@ -398,18 +397,18 @@ RegExpShared::~RegExpShared()
 }
 
 void
-RegExpShared::reportYarrError(JSContext *cx, TokenStream *ts, ErrorCode error)
+RegExpShared::reportYarrError(ExclusiveContext *cx, TokenStream *ts, ErrorCode error)
 {
     switch (error) {
       case JSC::Yarr::NoError:
-        JS_NOT_REACHED("Called reportYarrError with value for no error");
-        return;
+        MOZ_ASSUME_UNREACHABLE("Called reportYarrError with value for no error");
 #define COMPILE_EMSG(__code, __msg)                                                              \
       case JSC::Yarr::__code:                                                                    \
         if (ts)                                                                                  \
             ts->reportError(__msg);                                                              \
         else                                                                                     \
-            JS_ReportErrorFlagsAndNumberUC(cx, JSREPORT_ERROR, js_GetErrorMessage, NULL, __msg); \
+            JS_ReportErrorFlagsAndNumberUC(cx->asJSContext(),                                    \
+                                           JSREPORT_ERROR, js_GetErrorMessage, NULL, __msg);     \
         return
       COMPILE_EMSG(PatternTooLarge, JSMSG_REGEXP_TOO_COMPLEX);
       COMPILE_EMSG(QuantifierOutOfOrder, JSMSG_BAD_QUANTIFIER);
@@ -424,12 +423,12 @@ RegExpShared::reportYarrError(JSContext *cx, TokenStream *ts, ErrorCode error)
       COMPILE_EMSG(EscapeUnterminated, JSMSG_TRAILING_SLASH);
 #undef COMPILE_EMSG
       default:
-        JS_NOT_REACHED("Unknown Yarr error code");
+        MOZ_ASSUME_UNREACHABLE("Unknown Yarr error code");
     }
 }
 
 bool
-RegExpShared::checkSyntax(JSContext *cx, TokenStream *tokenStream, JSLinearString *source)
+RegExpShared::checkSyntax(ExclusiveContext *cx, TokenStream *tokenStream, JSLinearString *source)
 {
     ErrorCode error = JSC::Yarr::checkSyntax(*source);
     if (error == JSC::Yarr::NoError)
@@ -682,7 +681,7 @@ RegExpCompartment::sweep(JSRuntime *rt)
 }
 
 bool
-RegExpCompartment::get(JSContext *cx, JSAtom *source, RegExpFlag flags, RegExpGuard *g)
+RegExpCompartment::get(ExclusiveContext *cx, JSAtom *source, RegExpFlag flags, RegExpGuard *g)
 {
     Key key(source, flags);
     Map::AddPtr p = map_.lookupForAdd(key);
@@ -691,7 +690,7 @@ RegExpCompartment::get(JSContext *cx, JSAtom *source, RegExpFlag flags, RegExpGu
         return true;
     }
 
-    ScopedJSDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(cx->runtime(), source, flags));
+    ScopedJSDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(source, flags, cx->gcNumber()));
     if (!shared)
         return false;
 
@@ -724,7 +723,7 @@ RegExpCompartment::get(JSContext *cx, HandleAtom atom, JSString *opt, RegExpGuar
 }
 
 size_t
-RegExpCompartment::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf)
+RegExpCompartment::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf)
 {
     size_t n = 0;
     n += map_.sizeOfExcludingThis(mallocSizeOf);

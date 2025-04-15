@@ -371,24 +371,20 @@ menuitem:not([type]):not(.menuitem-tooltip):not(.menuitem-iconic-tooltip) {
   list-style-image: url("moz-icon://stock/gtk-preferences?size=menu");
 }
 
-#menu_stop,
 #context-stop {
   list-style-image: url("moz-icon://stock/gtk-stop?size=menu");
 }
 
-#menu_stop[disabled],
 #context-stop[disabled] {
   list-style-image: url("moz-icon://stock/gtk-stop?size=menu&state=disabled");
 }
 
-#menu_reload,
 #placesContext_reload,
 #context-reload,
 #context-reloadframe {
   list-style-image: url("moz-icon://stock/gtk-refresh?size=menu");
 }
 
-#menu_reload[disabled],
 #context-reload[disabled] {
   list-style-image: url("moz-icon://stock/gtk-refresh?size=menu&state=disabled");
 }
@@ -405,48 +401,36 @@ menuitem:not([type]):not(.menuitem-tooltip):not(.menuitem-iconic-tooltip) {
   list-style-image: url("moz-icon://stock/gtk-zoom-100?size=menu");
 }
 
-#historyMenuBack,
 #context-back {
   list-style-image: url("moz-icon://stock/gtk-go-back-ltr?size=menu");
 }
 
-#historyMenuBack[disabled],
 #context-back[disabled] {
   list-style-image: url("moz-icon://stock/gtk-go-back-ltr?size=menu&state=disabled");
 }
 
-#historyMenuBack:-moz-locale-dir(rtl),
 #context-back:-moz-locale-dir(rtl) {
   list-style-image: url("moz-icon://stock/gtk-go-back-rtl?size=menu");
 }
 
-#historyMenuBack[disabled]:-moz-locale-dir(rtl),
 #context-back[disabled]:-moz-locale-dir(rtl) {
   list-style-image: url("moz-icon://stock/gtk-go-back-rtl?size=menu&state=disabled");
 }
 
-#historyMenuForward,
 #context-forward {
   list-style-image: url("moz-icon://stock/gtk-go-forward-ltr?size=menu");
 }
 
-#historyMenuForward[disabled],
 #context-forward[disabled] {
   list-style-image: url("moz-icon://stock/gtk-go-forward-ltr?size=menu&state=disabled");
 }
 
-#historyMenuForward:-moz-locale-dir(rtl),
 #context-forward:-moz-locale-dir(rtl) {
   list-style-image: url("moz-icon://stock/gtk-go-forward-rtl?size=menu");
 }
 
-#historyMenuForward[disabled]:-moz-locale-dir(rtl),
 #context-forward[disabled]:-moz-locale-dir(rtl) {
   list-style-image: url("moz-icon://stock/gtk-go-forward-rtl?size=menu&state=disabled");
-}
-
-#historyMenuHome {
-  list-style-image: url("moz-icon://stock/gtk-home?size=menu");
 }
 
 #appmenu_history,
@@ -999,28 +983,14 @@ toolbar[iconsize="small"] #webrtc-status-button {
   color: GrayText;
 }
 
-/* Favicon */
+%include ../shared/identity-block.inc.css
+
 #page-proxy-favicon {
-  width: 16px;
-  height: 16px;
   margin-top: 2px;
   margin-bottom: 2px;
   -moz-margin-start: 4px;
   -moz-margin-end: 3px;
-  list-style-image: url(chrome://browser/skin/identity-icons-generic.png);
   -moz-image-region: rect(0, 16px, 16px, 0);
-}
-
-.verifiedDomain > #page-proxy-favicon[pageproxystate="valid"] {
-  list-style-image: url(chrome://browser/skin/identity-icons-https.png);
-}
-
-.verifiedIdentity > #page-proxy-favicon[pageproxystate="valid"] {
-  list-style-image: url(chrome://browser/skin/identity-icons-https-ev.png);
-}
-
-.mixedActiveContent > #page-proxy-favicon[pageproxystate="valid"] {
-  list-style-image: url(chrome://browser/skin/identity-icons-https-mixed-active.png);
 }
 
 #identity-box:hover > #page-proxy-favicon {
@@ -1030,10 +1000,6 @@ toolbar[iconsize="small"] #webrtc-status-button {
 #identity-box:hover:active > #page-proxy-favicon,
 #identity-box[open=true] > #page-proxy-favicon {
   -moz-image-region: rect(0, 48px, 16px, 32px);
-}
-
-#page-proxy-favicon[pageproxystate="invalid"] {
-  opacity: 0.3;
 }
 
 /* Identity indicator */
@@ -1064,21 +1030,10 @@ toolbar[iconsize="small"] #webrtc-status-button {
   -moz-padding-end: 5px;
 }
 
+#urlbar[pageproxystate="valid"] > #identity-box.chromeUI,
 #urlbar[pageproxystate="valid"] > #identity-box.verifiedIdentity {
   background-color: #fff;
-  color: hsl(92,100%,30%);
   -moz-margin-end: 4px;
-  background-image: linear-gradient(hsla(92,81%,16%,0),
-                                    hsla(92,81%,16%,.2) 25%,
-                                    hsla(92,81%,16%,.2) 75%,
-                                    hsla(92,81%,16%,0));
-  background-position: right;
-  background-size: 1px;
-  background-repeat: no-repeat;
-}
-
-#identity-box.verifiedIdentity:-moz-locale-dir(rtl) {
-  background-position: left;
 }
 
 /* Identity popup icons */
@@ -1141,9 +1096,19 @@ toolbar[iconsize="small"] #webrtc-status-button {
   list-style-image: url("chrome://browser/skin/Secure.png");
 }
 
-/* Identity popup bounding box */
+#identity-popup > .panel-arrowcontainer > .panel-arrowcontent {
+  padding: 0;
+}
+
 #identity-popup-container {
   min-width: 280px;
+  padding: 10px;
+}
+
+#identity-popup-button-container {
+  background: linear-gradient(to bottom, rgba(0,0,0,0.04) 60%, transparent);
+  padding: 10px;
+  margin-top: 5px;
 }
 
 /* Notification popup */
@@ -1220,7 +1185,7 @@ toolbar[iconsize="small"] #webrtc-status-button {
 }
 
 .popup-notification-icon[popupid="webapps-install"] {
-  list-style-image: url(chrome://browser/skin/webapps-64.png);
+  list-style-image: url(chrome://global/skin/icons/webapps-64.png);
 }
 
 .popup-notification-icon[popupid="mixed-content-blocked"] {
@@ -1300,7 +1265,7 @@ toolbar[iconsize="small"] #webrtc-status-button {
 }
 
 #webapps-notification-icon {
-  list-style-image: url(chrome://browser/skin/webapps-16.png);
+  list-style-image: url(chrome://global/skin/icons/webapps-16.png);
 }
 
 #plugins-notification-icon {
@@ -1624,6 +1589,12 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
   background-color: Window;
 }
 
+.browserContainer > findbar {
+  background-color: -moz-dialog;
+  color: -moz-DialogText;
+  text-shadow: none;
+}
+
 /* Throbber */
 #navigator-throbber {
   width: 16px;
@@ -1689,6 +1660,10 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
   background-image: linear-gradient(@selectedTabHighlight@, @toolbarHighlight@ 32%),
                     linear-gradient(-moz-dialog, -moz-dialog);
   color: -moz-dialogtext;
+}
+
+.tabbrowser-tab[remote] {
+  text-decoration: underline;
 }
 
 #main-window[tabsontop=false]:not([disablechrome]) .tabbrowser-tab[selected=true]:not(:-moz-lwtheme) {
@@ -2062,9 +2037,9 @@ toolbar[mode="text"] toolbarbutton.chevron > .toolbarbutton-icon {
 }
 
 #full-screen-warning-message {
-  background-color: hsl(0,0%,15%);
+  background-image: url("chrome://browser/skin/fullscreen-darknoise.png");
   color: white;
-  border-radius: 8px;
+  border-radius: 4px;
   margin-top: 30px;
   padding: 30px 50px;
   box-shadow: 0 0 2px white;

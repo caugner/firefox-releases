@@ -6,9 +6,11 @@
 
 #ifndef jit_shared_IonAssemblerBufferWithConstantPools_h
 #define jit_shared_IonAssemblerBufferWithConstantPools_h
-#include "jit/shared/IonAssemblerBuffer.h"
+
 #include "assembler/wtf/SegmentedVector.h"
 #include "jit/IonSpewer.h"
+#include "jit/shared/IonAssemblerBuffer.h"
+
 namespace js {
 namespace jit {
 typedef Vector<BufferOffset, 512, IonAllocPolicy> LoadOffsets;
@@ -1130,8 +1132,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
             }
             start = poolGroup[idx].other->addPoolSize(start);
         }
-        JS_NOT_REACHED("Entry is not in a pool");
-        return -1;
+        MOZ_ASSUME_UNREACHABLE("Entry is not in a pool");
     }
     void writePoolEntry(PoolEntry pe, uint8_t *buff) {
         size_t size = getPoolEntrySize(pe);

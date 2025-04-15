@@ -6,10 +6,10 @@
 #ifndef MOZILLA_GFX_TYPES_H_
 #define MOZILLA_GFX_TYPES_H_
 
-#include "mozilla/StandardInteger.h"
 #include "mozilla/NullPtr.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 namespace mozilla {
 namespace gfx {
@@ -27,6 +27,7 @@ enum SurfaceType
   SURFACE_COREGRAPHICS_CGCONTEXT, /* Surface wrapping a CG context */
   SURFACE_SKIA, /* Surface wrapping a Skia bitmap */
   SURFACE_DUAL_DT, /* Snapshot of a dual drawtarget */
+  SURFACE_D2D1_1_IMAGE, /* A D2D 1.1 ID2D1Image SourceSurface */
   SURFACE_RECORDING /* Surface used for recording */
 };
 
@@ -50,7 +51,8 @@ enum BackendType
   BACKEND_COREGRAPHICS_ACCELERATED,
   BACKEND_CAIRO,
   BACKEND_SKIA,
-  BACKEND_RECORDING
+  BACKEND_RECORDING,
+  BACKEND_DIRECT2D1_1
 };
 
 enum FontType
@@ -88,13 +90,21 @@ enum FontStyle
   FONT_STYLE_BOLD_ITALIC
 };
 
+enum FontHinting
+{
+  FONT_HINTING_NONE,
+  FONT_HINTING_LIGHT,
+  FONT_HINTING_NORMAL,
+  FONT_HINTING_FULL
+};
+
 enum CompositionOp { OP_OVER, OP_ADD, OP_ATOP, OP_OUT, OP_IN, OP_SOURCE, OP_DEST_IN, OP_DEST_OUT, OP_DEST_OVER, OP_DEST_ATOP, OP_XOR, 
   OP_MULTIPLY, OP_SCREEN, OP_OVERLAY, OP_DARKEN, OP_LIGHTEN, OP_COLOR_DODGE, OP_COLOR_BURN, OP_HARD_LIGHT, OP_SOFT_LIGHT,  OP_DIFFERENCE, OP_EXCLUSION, OP_HUE, OP_SATURATION, OP_COLOR, OP_LUMINOSITY, OP_COUNT };
 enum ExtendMode { EXTEND_CLAMP, EXTEND_REPEAT, EXTEND_REFLECT };
 enum FillRule { FILL_WINDING, FILL_EVEN_ODD };
 enum AntialiasMode { AA_NONE, AA_GRAY, AA_SUBPIXEL, AA_DEFAULT };
 enum Snapping { SNAP_NONE, SNAP_ALIGNED };
-enum Filter { FILTER_LINEAR, FILTER_POINT };
+enum Filter { FILTER_GOOD, FILTER_LINEAR, FILTER_POINT };
 enum PatternType { PATTERN_COLOR, PATTERN_SURFACE, PATTERN_LINEAR_GRADIENT, PATTERN_RADIAL_GRADIENT };
 enum JoinStyle { JOIN_BEVEL, JOIN_ROUND, JOIN_MITER, JOIN_MITER_OR_BEVEL };
 enum CapStyle { CAP_BUTT, CAP_ROUND, CAP_SQUARE };

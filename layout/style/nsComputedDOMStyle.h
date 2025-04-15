@@ -194,6 +194,7 @@ private:
   mozilla::dom::CSSValue* DoGetFontLanguageOverride();
   mozilla::dom::CSSValue* DoGetFontSize();
   mozilla::dom::CSSValue* DoGetFontSizeAdjust();
+  mozilla::dom::CSSValue* DoGetOSXFontSmoothing();
   mozilla::dom::CSSValue* DoGetFontStretch();
   mozilla::dom::CSSValue* DoGetFontStyle();
   mozilla::dom::CSSValue* DoGetFontSynthesis();
@@ -490,6 +491,11 @@ private:
   bool GetFrameBoundsHeightForTransform(nscoord &aHeight);
   bool GetFrameBorderRectWidth(nscoord& aWidth);
   bool GetFrameBorderRectHeight(nscoord& aHeight);
+
+  /* Helper functions for computing the filter property style. */
+  void SetCssTextToCoord(nsAString& aCssText, const nsStyleCoord& aCoord);
+  nsROCSSPrimitiveValue* CreatePrimitiveValueForStyleFilter(
+    const nsStyleFilter& aStyleFilter);
 
   struct ComputedStyleMapEntry
   {

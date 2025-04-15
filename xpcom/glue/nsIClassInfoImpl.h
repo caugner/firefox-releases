@@ -9,7 +9,7 @@
 #include "nsISupportsImpl.h"
 #include "mozilla/Util.h"
 
-#include NEW_H
+#include <new>
 
 /**
  * This header file provides macros which help you make your class implement

@@ -3,8 +3,6 @@
 
 // Tests that the calllog commands works as they should
 
-let HUDService = (Cu.import("resource:///modules/HUDService.jsm", {})).HUDService;
-
 const TEST_URI = "data:text/html;charset=utf-8,gcli-calllog";
 
 let tests = {};
@@ -48,14 +46,14 @@ tests.testCallLogStatus = function(options) {
 };
 
 tests.testCallLogExec = function(options) {
-  var deferred = Promise.defer();
+  var deferred = promise.defer();
 
   var onWebConsoleOpen = function(subject) {
     Services.obs.removeObserver(onWebConsoleOpen, "web-console-created");
 
     subject.QueryInterface(Ci.nsISupportsString);
     let hud = HUDService.getHudReferenceById(subject.data);
-    ok(hud.hudId in HUDService.hudReferences, "console open");
+    ok(hud, "console open");
 
     helpers.audit(options, [
       {
@@ -97,7 +95,7 @@ tests.testCallLogExec = function(options) {
       name: "calllog start",
       setup: function() {
         // This test wants to be in a different event
-        var deferred = Promise.defer();
+        var deferred = promise.defer();
         executeSoon(function() {
           helpers.setInput(options, "calllog start");
           deferred.resolve();

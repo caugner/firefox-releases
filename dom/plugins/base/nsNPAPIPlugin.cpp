@@ -8,6 +8,7 @@
 /* This must occur *after* layers/PLayerTransaction.h to avoid typedefs conflicts. */
 #include "mozilla/Util.h"
 
+#include "pratom.h"
 #include "prmem.h"
 #include "prenv.h"
 #include "prclist.h"
@@ -1246,7 +1247,7 @@ _getpluginelement(NPP npp)
   NS_ENSURE_TRUE(xpc, nullptr);
 
   nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
-  xpc->WrapNative(cx, ::JS_GetGlobalForScopeChain(cx), element,
+  xpc->WrapNative(cx, ::JS::CurrentGlobalOrNull(cx), element,
                   NS_GET_IID(nsIDOMElement),
                   getter_AddRefs(holder));
   NS_ENSURE_TRUE(holder, nullptr);

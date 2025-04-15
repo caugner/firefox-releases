@@ -119,10 +119,7 @@ interface TestExampleInterface {
   TestInterface? receiveNullableSelf();
   TestInterface receiveWeakSelf();
   TestInterface? receiveWeakNullableSelf();
-  // A verstion to test for casting to TestInterface&
   void passSelf(TestInterface arg);
-  // A version we can use to test for the exact type passed in
-  void passSelf2(TestInterface arg);
   void passNullableSelf(TestInterface? arg);
   attribute TestInterface nonNullSelf;
   attribute TestInterface? nullableSelf;
@@ -150,10 +147,7 @@ interface TestExampleInterface {
   IndirectlyImplementedInterface? receiveNullableOther();
   IndirectlyImplementedInterface receiveWeakOther();
   IndirectlyImplementedInterface? receiveWeakNullableOther();
-  // A verstion to test for casting to IndirectlyImplementedInterface&
   void passOther(IndirectlyImplementedInterface arg);
-  // A version we can use to test for the exact type passed in
-  void passOther2(IndirectlyImplementedInterface arg);
   void passNullableOther(IndirectlyImplementedInterface? arg);
   attribute IndirectlyImplementedInterface nonNullOther;
   attribute IndirectlyImplementedInterface? nullableOther;
@@ -167,10 +161,7 @@ interface TestExampleInterface {
   TestExternalInterface? receiveNullableExternal();
   TestExternalInterface receiveWeakExternal();
   TestExternalInterface? receiveWeakNullableExternal();
-  // A verstion to test for casting to TestExternalInterface&
   void passExternal(TestExternalInterface arg);
-  // A version we can use to test for the exact type passed in
-  void passExternal2(TestExternalInterface arg);
   void passNullableExternal(TestExternalInterface? arg);
   attribute TestExternalInterface nonNullExternal;
   attribute TestExternalInterface? nullableExternal;
@@ -184,10 +175,7 @@ interface TestExampleInterface {
   TestCallbackInterface? receiveNullableCallbackInterface();
   TestCallbackInterface receiveWeakCallbackInterface();
   TestCallbackInterface? receiveWeakNullableCallbackInterface();
-  // A verstion to test for casting to TestCallbackInterface&
   void passCallbackInterface(TestCallbackInterface arg);
-  // A version we can use to test for the exact type passed in
-  void passCallbackInterface2(TestCallbackInterface arg);
   void passNullableCallbackInterface(TestCallbackInterface? arg);
   attribute TestCallbackInterface nonNullCallbackInterface;
   attribute TestCallbackInterface? nullableCallbackInterface;
@@ -343,6 +331,15 @@ interface TestExampleInterface {
 
   // Union types
   void passUnion((object or long) arg);
+  // Commented out tests 2-9 to avoid creating all those unused union types
+  /* void passUnion2((long or boolean) arg);
+  void passUnion3((object or long or boolean) arg);
+  void passUnion4((Node or long or boolean) arg);
+  void passUnion5((object or boolean) arg);
+  void passUnion6((object or DOMString) arg);
+  void passUnion7((object or DOMString or long) arg);
+  void passUnion8((object or DOMString or boolean) arg);
+  void passUnion9((object or DOMString or long or boolean) arg); */
   void passUnionWithNullable((object? or long) arg);
   void passNullableUnion((object or long)? arg);
   void passOptionalUnion(optional (object or long) arg);
@@ -359,6 +356,14 @@ interface TestExampleInterface {
   //  void passUnionWithCallback((TestCallback or long) arg);
   void passUnionWithObject((object or long) arg);
   //void passUnionWithDict((Dict or long) arg);
+
+  //(CanvasPattern or CanvasGradient) receiveUnion();
+  //(CanvasPattern? or CanvasGradient) receiveUnionContainingNull();
+  //(CanvasPattern or CanvasGradient)? receiveNullableUnion();
+
+  //attribute (CanvasPattern or CanvasGradient) writableUnion;
+  //attribute (CanvasPattern? or CanvasGradient) writableUnionContainingNull;
+  //attribute (CanvasPattern or CanvasGradient)? writableNullableUnion;
 
   // Date types
   void passDate(Date arg);
@@ -414,14 +419,24 @@ interface TestExampleInterface {
   TestInterface overload1(DOMString strs, TestInterface arg);
   void overload2(TestInterface arg);
   void overload2(optional Dict arg);
+  void overload2(boolean arg);
   void overload2(DOMString arg);
   void overload2(Date arg);
   void overload3(TestInterface arg);
   void overload3(TestCallback arg);
-  void overload3(DOMString arg);
+  void overload3(boolean arg);
   void overload4(TestInterface arg);
   void overload4(TestCallbackInterface arg);
   void overload4(DOMString arg);
+  void overload5(long arg);
+  void overload5(TestEnum arg);
+  void overload6(long arg);
+  void overload6(boolean arg);
+  void overload7(long arg);
+  void overload7(boolean arg);
+  void overload7(ByteString arg);
+  void overload8(long arg);
+  void overload8(TestInterface arg);
 
   // Variadic handling
   void passVariadicThirdArg(DOMString arg1, long arg2, TestInterface... arg3);
@@ -480,6 +495,14 @@ interface TestExampleInterface {
   [GetterThrows] attribute boolean throwingGetterAttr;
   [SetterThrows] attribute boolean throwingSetterAttr;
   legacycaller short(unsigned long arg1, TestInterface arg2);
+  void passArgsWithDefaults(optional long arg1,
+                            optional TestInterface? arg2 = null,
+                            optional Dict arg3, optional double arg4 = 5.0,
+                            optional float arg5);
+  attribute any jsonifierShouldSkipThis;
+  attribute TestParentInterface jsonifierShouldSkipThis2;
+  attribute TestCallbackInterface jsonifierShouldSkipThis3;
+  jsonifier;
 
   // If you add things here, add them to TestCodeGen and TestJSImplGen as well
 };

@@ -1054,7 +1054,7 @@ nsGonkCameraControl::TakePictureError()
 void
 nsGonkCameraControl::SetPreviewSize(uint32_t aWidth, uint32_t aHeight)
 {
-  Vector<Size> previewSizes;
+  android::Vector<Size> previewSizes;
   uint32_t bestWidth = aWidth;
   uint32_t bestHeight = aHeight;
   uint32_t minSizeDelta = UINT32_MAX;
@@ -1437,7 +1437,7 @@ nsGonkCameraControl::GetVideoSizes(nsTArray<idl::CameraSize>& aVideoSizes)
 {
   aVideoSizes.Clear();
 
-  Vector<Size> sizes;
+  android::Vector<Size> sizes;
   mParams.getSupportedVideoSizes(sizes);
   if (sizes.size() == 0) {
     DOM_CAMERA_LOGI("Camera doesn't support video independent of the preview\n");
@@ -1486,8 +1486,8 @@ GonkFrameBuilder(Image* aImage, void* aBuffer, uint32_t aWidth, uint32_t aHeight
    * Cast the generic Image back to our platform-specific type and
    * populate it.
    */
-  GonkIOSurfaceImage* videoImage = static_cast<GonkIOSurfaceImage*>(aImage);
-  GonkIOSurfaceImage::Data data;
+  GrallocImage* videoImage = static_cast<GrallocImage*>(aImage);
+  GrallocImage::GrallocData data;
   data.mGraphicBuffer = static_cast<layers::GraphicBufferLocked*>(aBuffer);
   data.mPicSize = gfxIntSize(aWidth, aHeight);
   videoImage->SetData(data);
@@ -1496,7 +1496,7 @@ GonkFrameBuilder(Image* aImage, void* aBuffer, uint32_t aWidth, uint32_t aHeight
 void
 ReceiveFrame(nsGonkCameraControl* gc, layers::GraphicBufferLocked* aBuffer)
 {
-  if (!gc->ReceiveFrame(aBuffer, ImageFormat::GONK_IO_SURFACE, GonkFrameBuilder)) {
+  if (!gc->ReceiveFrame(aBuffer, ImageFormat::GRALLOC_PLANAR_YCBCR, GonkFrameBuilder)) {
     aBuffer->Unlock();
   }
 }

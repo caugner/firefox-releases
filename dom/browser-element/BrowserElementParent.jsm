@@ -67,6 +67,25 @@ function defineAndExpose(obj, name, value) {
   obj.__exposedProps__[name] = 'r';
 }
 
+function visibilityChangeHandler(e) {
+  // The visibilitychange event's target is the document.
+  let win = e.target.defaultView;
+
+  if (!win._browserElementParents) {
+    return;
+  }
+
+  let beps = Cu.nondeterministicGetWeakMapKeys(win._browserElementParents);
+  if (beps.length == 0) {
+    win.removeEventListener('visibilitychange', visibilityChangeHandler);
+    return;
+  }
+
+  for (let i = 0; i < beps.length; i++) {
+    beps[i]._ownerVisibilityChange();
+  }
+}
+
 this.BrowserElementParentBuilder = {
   create: function create(frameLoader, hasRemoteFrame) {
     return new BrowserElementParent(frameLoader, hasRemoteFrame);
@@ -103,6 +122,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
     "titlechange": this._fireEventFromMsg,
     "iconchange": this._fireEventFromMsg,
     "close": this._fireEventFromMsg,
+    "opensearch": this._fireEventFromMsg,
     "securitychange": this._fireEventFromMsg,
     "error": this._fireEventFromMsg,
     "scroll": this._fireEventFromMsg,
@@ -167,12 +187,25 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   defineDOMRequestMethod('getCanGoBack', 'get-can-go-back');
   defineDOMRequestMethod('getCanGoForward', 'get-can-go-forward');
 
-  // Listen to visibilitychange on the iframe's owner window, and forward it
-  // down to the child.
-  this._window.addEventListener('visibilitychange',
-                                this._ownerVisibilityChange.bind(this),
-                                /* useCapture = */ false,
-                                /* wantsUntrusted = */ false);
+  // Listen to visibilitychange on the iframe's owner window, and forward
+  // changes down to the child.  We want to do this while registering as few
+  // visibilitychange listeners on _window as possible, because such a listener
+  // may live longer than this BrowserElementParent object.
+  //
+  // To accomplish this, we register just one listener on the window, and have
+  // it reference a WeakMap whose keys are all the BrowserElementParent objects
+  // on the window.  Then when the listener fires, we iterate over the
+  // WeakMap's keys (which we can do, because we're chrome) to notify the
+  // BrowserElementParents.
+  if (!this._window._browserElementParents) {
+    this._window._browserElementParents = new WeakMap();
+    this._window.addEventListener('visibilitychange',
+                                  visibilityChangeHandler,
+                                  /* useCapture = */ false,
+                                  /* wantsUntrusted = */ false);
+  }
+
+  this._window._browserElementParents.set(this, null);
 
   // Insert ourself into the prompt service.
   BrowserElementPromptService.mapFrameToBrowserElementParent(this._frameElement, this);

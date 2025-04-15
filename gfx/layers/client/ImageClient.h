@@ -45,11 +45,6 @@ public:
   virtual bool UpdateImage(ImageContainer* aContainer, uint32_t aContentFlags) = 0;
 
   /**
-   * Notify the compositor that this image client has been updated
-   */
-  virtual void Updated() = 0;
-
-  /**
    * The picture rect is the area of the texture which makes up the image. That
    * is, the area that should be composited. In texture space.
    */
@@ -61,10 +56,54 @@ public:
 protected:
   ImageClient(CompositableForwarder* aFwd, CompositableType aType);
 
-  gfxPattern::GraphicsFilter mFilter;
   CompositableType mType;
   int32_t mLastPaintedImageSerial;
   nsIntRect mPictureRect;
+};
+
+/**
+ * An image client which uses a single texture client.
+ */
+class ImageClientSingle : public ImageClient
+{
+public:
+  ImageClientSingle(CompositableForwarder* aFwd,
+                    TextureFlags aFlags,
+                    CompositableType aType);
+
+  virtual bool UpdateImage(ImageContainer* aContainer, uint32_t aContentFlags);
+
+  virtual void Detach() MOZ_OVERRIDE;
+
+  virtual void AddTextureClient(TextureClient* aTexture) MOZ_OVERRIDE;
+
+  virtual TemporaryRef<BufferTextureClient>
+  CreateBufferTextureClient(gfx::SurfaceFormat aFormat) MOZ_OVERRIDE;
+
+  virtual TextureInfo GetTextureInfo() const MOZ_OVERRIDE;
+protected:
+  RefPtr<TextureClient> mFrontBuffer;
+  // Some layers may want to enforce some flags to all their textures
+  // (like disallowing tiling)
+  TextureFlags mTextureFlags;
+};
+
+/**
+ * An image client which uses a two texture clients.
+ */
+class ImageClientBuffered : public ImageClientSingle
+{
+public:
+  ImageClientBuffered(CompositableForwarder* aFwd,
+                      TextureFlags aFlags,
+                      CompositableType aType);
+
+  virtual bool UpdateImage(ImageContainer* aContainer, uint32_t aContentFlags);
+
+  virtual void Detach() MOZ_OVERRIDE;
+
+protected:
+  RefPtr<TextureClient> mBackBuffer;
 };
 
 /**
@@ -72,13 +111,15 @@ protected:
  * buffered. (As opposed to using two texture clients for buffering, as in
  * ContentClientDoubleBuffered, or using multiple clients for YCbCr or tiled
  * images).
+ *
+ * XXX - this is deprecated, use ImageClientSingle
  */
-class ImageClientSingle : public ImageClient
+class DeprecatedImageClientSingle : public ImageClient
 {
 public:
-  ImageClientSingle(CompositableForwarder* aFwd,
-                     TextureFlags aFlags,
-                     CompositableType aType);
+  DeprecatedImageClientSingle(CompositableForwarder* aFwd,
+                              TextureFlags aFlags,
+                              CompositableType aType);
 
   virtual bool UpdateImage(ImageContainer* aContainer, uint32_t aContentFlags);
 
@@ -87,14 +128,14 @@ public:
    * Returns true if the texture client was created succesfully,
    * false otherwise.
    */
-  bool EnsureTextureClient(TextureClientType aType);
+  bool EnsureDeprecatedTextureClient(DeprecatedTextureClientType aType);
 
   virtual void Updated();
 
   virtual void SetDescriptorFromReply(TextureIdentifier aTextureId,
                                       const SurfaceDescriptor& aDescriptor) MOZ_OVERRIDE
   {
-    mTextureClient->SetDescriptorFromReply(aDescriptor);
+    mDeprecatedTextureClient->SetDescriptorFromReply(aDescriptor);
   }
 
   virtual TextureInfo GetTextureInfo() const MOZ_OVERRIDE
@@ -103,14 +144,14 @@ public:
   }
 
 private:
-  RefPtr<TextureClient> mTextureClient;
+  RefPtr<DeprecatedTextureClient> mDeprecatedTextureClient;
   TextureInfo mTextureInfo;
 };
 
 /**
  * Image class to be used for async image uploads using the image bridge
  * protocol.
- * We store the ImageBridge id in the TextureClientIdentifier.
+ * We store the ImageBridge id in the DeprecatedTextureClientIdentifier.
  */
 class ImageClientBridge : public ImageClient
 {

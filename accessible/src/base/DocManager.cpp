@@ -117,10 +117,10 @@ DocManager::Shutdown()
 ////////////////////////////////////////////////////////////////////////////////
 // nsISupports
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(DocManager,
-                              nsIWebProgressListener,
-                              nsIDOMEventListener,
-                              nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS3(DocManager,
+                   nsIWebProgressListener,
+                   nsIDOMEventListener,
+                   nsISupportsWeakReference)
 
 ////////////////////////////////////////////////////////////////////////////////
 // nsIWebProgressListener
@@ -355,6 +355,9 @@ DocManager::RemoveListeners(nsIDocument* aDocument)
     return;
 
   EventTarget* target = window->GetChromeEventHandler();
+  if (!target)
+    return;
+
   nsEventListenerManager* elm = target->GetListenerManager(true);
   elm->RemoveEventListenerByType(this, NS_LITERAL_STRING("pagehide"),
                                  dom::TrustedEventsAtCapture());

@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: Javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10,7 +10,7 @@ this.EXPORTED_SYMBOLS = ["StyleEditorPanel"];
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
+let promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js").Promise;
 Cu.import("resource:///modules/devtools/shared/event-emitter.js");
 Cu.import("resource:///modules/devtools/StyleEditorDebuggee.jsm");
 Cu.import("resource:///modules/devtools/StyleEditorUI.jsm");
@@ -41,17 +41,17 @@ StyleEditorPanel.prototype = {
    * open is effectively an asynchronous constructor
    */
   open: function() {
-    let deferred = Promise.defer();
+    let deferred = promise.defer();
 
-    let promise;
+    let targetPromise;
     // We always interact with the target as if it were remote
     if (!this.target.isRemote) {
-      promise = this.target.makeRemote();
+      targetPromise = this.target.makeRemote();
     } else {
-      promise = Promise.resolve(this.target);
+      targetPromise = promise.resolve(this.target);
     }
 
-    promise.then(() => {
+    targetPromise.then(() => {
       this.target.on("close", this.destroy);
 
       this._debuggee = new StyleEditorDebuggee(this.target);
@@ -119,7 +119,7 @@ StyleEditorPanel.prototype = {
       this.UI.destroy();
     }
 
-    return Promise.resolve(null);
+    return promise.resolve(null);
   },
 }
 

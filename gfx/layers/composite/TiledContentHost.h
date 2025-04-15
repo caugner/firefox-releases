@@ -8,6 +8,7 @@
 
 #include "ContentHost.h"
 #include "ClientTiledThebesLayer.h" // for BasicTiledLayerBuffer
+#include "mozilla/layers/TextureHost.h"
 
 namespace mozilla {
 namespace layers {
@@ -23,41 +24,41 @@ public:
   // essentially, this is a sentinel used to represent an invalid or blank
   // tile.
   TiledTexture()
-    : mTextureHost(nullptr)
+    : mDeprecatedTextureHost(nullptr)
   {}
 
-  // Constructs a TiledTexture from a TextureHost.
-  TiledTexture(TextureHost* aTextureHost)
-    : mTextureHost(aTextureHost)
+  // Constructs a TiledTexture from a DeprecatedTextureHost.
+  TiledTexture(DeprecatedTextureHost* aDeprecatedTextureHost)
+    : mDeprecatedTextureHost(aDeprecatedTextureHost)
   {}
 
   TiledTexture(const TiledTexture& o) {
-    mTextureHost = o.mTextureHost;
+    mDeprecatedTextureHost = o.mDeprecatedTextureHost;
   }
   TiledTexture& operator=(const TiledTexture& o) {
     if (this == &o) {
       return *this;
     }
-    mTextureHost = o.mTextureHost;
+    mDeprecatedTextureHost = o.mDeprecatedTextureHost;
     return *this;
   }
 
   void Validate(gfxReusableSurfaceWrapper* aReusableSurface, Compositor* aCompositor, uint16_t aSize);
 
   bool operator== (const TiledTexture& o) const {
-    if (!mTextureHost || !o.mTextureHost) {
-      return mTextureHost == o.mTextureHost;
+    if (!mDeprecatedTextureHost || !o.mDeprecatedTextureHost) {
+      return mDeprecatedTextureHost == o.mDeprecatedTextureHost;
     }
-    return *mTextureHost == *o.mTextureHost;
+    return *mDeprecatedTextureHost == *o.mDeprecatedTextureHost;
   }
   bool operator!= (const TiledTexture& o) const {
-    if (!mTextureHost || !o.mTextureHost) {
-      return mTextureHost != o.mTextureHost;
+    if (!mDeprecatedTextureHost || !o.mDeprecatedTextureHost) {
+      return mDeprecatedTextureHost != o.mDeprecatedTextureHost;
     }
-    return *mTextureHost != *o.mTextureHost;
+    return *mDeprecatedTextureHost != *o.mDeprecatedTextureHost;
   }
 
-  RefPtr<TextureHost> mTextureHost;
+  RefPtr<DeprecatedTextureHost> mDeprecatedTextureHost;
 };
 
 class TiledLayerBufferComposite
@@ -185,12 +186,12 @@ public:
 
   virtual TiledLayerComposer* AsTiledLayerComposer() MOZ_OVERRIDE { return this; }
 
-  virtual void EnsureTextureHost(TextureIdentifier aTextureId,
+  virtual void EnsureDeprecatedTextureHost(TextureIdentifier aTextureId,
                                  const SurfaceDescriptor& aSurface,
                                  ISurfaceAllocator* aAllocator,
                                  const TextureInfo& aTextureInfo) MOZ_OVERRIDE
   {
-    MOZ_NOT_REACHED("Does nothing");
+    MOZ_CRASH("Does nothing");
   }
 
   virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE
@@ -200,9 +201,11 @@ public:
     mLowPrecisionVideoMemoryTiledBuffer.SetCompositor(aCompositor);
   }
 
-  virtual void Attach(Layer* aLayer, Compositor* aCompositor) MOZ_OVERRIDE;
+  virtual void Attach(Layer* aLayer,
+                      Compositor* aCompositor,
+                      AttachFlags aFlags = NO_FLAGS) MOZ_OVERRIDE;
 
-  virtual void Dump(FILE* aFile=NULL,
+  virtual void Dump(FILE* aFile=nullptr,
                     const char* aPrefix="",
                     bool aDumpHtml=false) MOZ_OVERRIDE;
 

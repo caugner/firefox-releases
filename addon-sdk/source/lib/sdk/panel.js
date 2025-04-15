@@ -32,16 +32,7 @@ const systemEvents = require("./system/events");
 const { filter, pipe } = require("./event/utils");
 const { getNodeView, getActiveView } = require("./view/core");
 const { isNil, isObject } = require("./lang/type");
-
-function getAttachEventType(model) {
-  let when = model.contentScriptWhen;
-  return requiresAddonGlobal(model) ? "sdk-panel-content-changed" :
-         when === "start" ? "sdk-panel-content-changed" :
-         when === "end" ? "sdk-panel-document-loaded" :
-         when === "ready" ? "sdk-panel-content-loaded" :
-         null;
-}
-
+const { getAttachEventType } = require("./content/utils");
 
 let number = { is: ['number', 'undefined', 'null'] };
 let boolean = { is: ['boolean', 'undefined', 'null'] };
@@ -80,6 +71,7 @@ function modelFor(panel) models.get(panel)
 function panelFor(view) panels.get(view)
 function workerFor(panel) workers.get(panel)
 
+
 // Utility function takes `panel` instance and makes sure it will be
 // automatically hidden as soon as other panel is shown.
 let setupAutoHide = new function() {
@@ -92,14 +84,14 @@ let setupAutoHide = new function() {
       // It could be that listener is not GC-ed in the same cycle as
       // panel in such case we remove listener manually.
       let view = viewFor(panel);
-      if (!view) systemEvents.off("sdk-panel-show", listener);
+      if (!view) systemEvents.off("popupshowing", listener);
       else if (subject !== view) panel.hide();
     }
 
     // system event listener is intentionally weak this way we'll allow GC
     // to claim panel if it's no longer referenced by an add-on code. This also
     // helps minimizing cleanup required on unload.
-    systemEvents.on("sdk-panel-show", listener);
+    systemEvents.on("popupshowing", listener);
     // To make sure listener is not claimed by GC earlier than necessary we
     // associate it with `panel` it's associated with. This way it won't be
     // GC-ed earlier than `panel` itself.
@@ -240,17 +232,17 @@ const Panel = Class({
 });
 exports.Panel = Panel;
 
-// Note must be defined only after value to `Panel` is assigned. 
+// Note must be defined only after value to `Panel` is assigned.
 getActiveView.define(Panel, viewFor);
 
 // Filter panel events to only panels that are create by this module.
 let panelEvents = filter(events, function({target}) panelFor(target));
 
 // Panel events emitted after panel has being shown.
-let shows = filter(panelEvents, function({type}) type === "sdk-panel-shown");
+let shows = filter(panelEvents, function({type}) type === "popupshown");
 
 // Panel events emitted after panel became hidden.
-let hides = filter(panelEvents, function({type}) type === "sdk-panel-hidden");
+let hides = filter(panelEvents, function({type}) type === "popuphidden");
 
 // Panel events emitted after content inside panel is ready. For different
 // panels ready may mean different state based on `contentScriptWhen` attribute.
@@ -261,7 +253,7 @@ let ready = filter(panelEvents, function({type, target})
 
 // Panel events emitted after content document in the panel has changed.
 let change = filter(panelEvents, function({type})
-  type === "sdk-panel-content-changed");
+  type === "document-element-inserted");
 
 // Forward panel show / hide events to panel's own event listeners.
 on(shows, "data", function({target}) emit(panelFor(target), "show"));

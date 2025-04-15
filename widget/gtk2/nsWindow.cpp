@@ -67,6 +67,7 @@
 #include "nsIServiceManager.h"
 #include "nsIStringBundle.h"
 #include "nsGfxCIID.h"
+#include "nsGtkUtils.h"
 #include "nsIObserverService.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "nsIIdleServiceInternal.h"
@@ -282,17 +283,6 @@ static GtkWidget *gInvisibleContainer = NULL;
 // Sometimes this actually also includes the state of the modifier keys, but
 // only the button state bits are used.
 static guint gButtonState;
-
-// Some gobject functions expect functions for gpointer arguments.
-// gpointer is void* but C++ doesn't like casting functions to void*.
-template<class T> static inline gpointer
-FuncToGpointer(T aFunction)
-{
-    return reinterpret_cast<gpointer>
-        (reinterpret_cast<uintptr_t>
-         // This cast just provides a warning if T is not a function.
-         (reinterpret_cast<void (*)()>(aFunction)));
-}
 
 // nsAutoRef<pixman_region32> uses nsSimpleRef<> to know how to automatically
 // destroy regions.
@@ -2124,13 +2114,12 @@ nsWindow::OnExposeEvent(cairo_t *cr)
         return TRUE;
     }
     // If this widget uses OMTC...
-    if (GetLayerManager()->AsShadowForwarder() && GetLayerManager()->AsShadowForwarder()->HasShadowManager() &&
-        Compositor::GetBackend() != LAYERS_BASIC) {
+    if (GetLayerManager()->GetBackendType() == LAYERS_CLIENT) {
+        listener->PaintWindow(this, region);
         listener->DidPaintWindow();
 
         g_free(rects);
         return TRUE;
-
     } else if (GetLayerManager()->GetBackendType() == mozilla::layers::LAYERS_OPENGL) {
         LayerManagerOGL *manager = static_cast<LayerManagerOGL*>(GetLayerManager());
         manager->SetClippingRegion(region);
@@ -2199,10 +2188,6 @@ nsWindow::OnExposeEvent(cairo_t *cr)
     {
       if (GetLayerManager()->GetBackendType() == LAYERS_BASIC) {
         AutoLayerManagerSetup setupLayerManager(this, ctx, layerBuffering);
-        painted = listener->PaintWindow(this, region);
-      } else if (GetLayerManager()->GetBackendType() == LAYERS_CLIENT) {
-        ClientLayerManager *manager = static_cast<ClientLayerManager*>(GetLayerManager());
-        manager->SetShadowTarget(ctx);
         painted = listener->PaintWindow(this, region);
       }
     }
@@ -2543,8 +2528,10 @@ nsWindow::OnMotionNotifyEvent(GdkEventMotion *aEvent)
             event.refPoint.x = nscoord(aEvent->x);
             event.refPoint.y = nscoord(aEvent->y);
         } else {
-            nsIntPoint point(NSToIntFloor(aEvent->x_root), NSToIntFloor(aEvent->y_root));
-            event.refPoint = point - WidgetToScreenOffset();
+            LayoutDeviceIntPoint point(NSToIntFloor(aEvent->x_root),
+                                       NSToIntFloor(aEvent->y_root));
+            event.refPoint = point -
+                LayoutDeviceIntPoint::FromUntyped(WidgetToScreenOffset());
         }
 
         modifierState = aEvent->state;
@@ -2620,8 +2607,10 @@ nsWindow::InitButtonEvent(nsMouseEvent &aEvent,
         aEvent.refPoint.x = nscoord(aGdkEvent->x);
         aEvent.refPoint.y = nscoord(aGdkEvent->y);
     } else {
-        nsIntPoint point(NSToIntFloor(aGdkEvent->x_root), NSToIntFloor(aGdkEvent->y_root));
-        aEvent.refPoint = point - WidgetToScreenOffset();
+        LayoutDeviceIntPoint point(NSToIntFloor(aGdkEvent->x_root),
+                                   NSToIntFloor(aGdkEvent->y_root));
+        aEvent.refPoint = point -
+            LayoutDeviceIntPoint::FromUntyped(WidgetToScreenOffset());
     }
 
     guint modifierState = aGdkEvent->state;
@@ -2943,7 +2932,7 @@ nsWindow::OnKeyPressEvent(GdkEventKey *aEvent)
 
     bool isKeyDownCancelled = false;
     if (DispatchKeyDownEvent(aEvent, &isKeyDownCancelled) &&
-        MOZ_UNLIKELY(mIsDestroyed)) {
+        (MOZ_UNLIKELY(mIsDestroyed) || isKeyDownCancelled)) {
         return TRUE;
     }
 
@@ -3004,10 +2993,6 @@ nsWindow::OnKeyPressEvent(GdkEventKey *aEvent)
 
     nsKeyEvent event(true, NS_KEY_PRESS, this);
     KeymapWrapper::InitKeyEvent(event, aEvent);
-    if (isKeyDownCancelled) {
-      // If prevent default set for onkeydown, do the same for onkeypress
-      event.mFlags.mDefaultPrevented = true;
-    }
 
     // before we dispatch a key, check if it's the context menu key.
     // If so, send a context menu key event instead.
@@ -3016,7 +3001,7 @@ nsWindow::OnKeyPressEvent(GdkEventKey *aEvent)
                                       nsMouseEvent::eReal,
                                       nsMouseEvent::eContextMenuKey);
 
-        contextMenuEvent.refPoint = nsIntPoint(0, 0);
+        contextMenuEvent.refPoint = LayoutDeviceIntPoint(0, 0);
         contextMenuEvent.time = aEvent->time;
         contextMenuEvent.clickCount = 1;
         KeymapWrapper::InitInputEvent(contextMenuEvent, aEvent->state);
@@ -3107,8 +3092,10 @@ nsWindow::OnScrollEvent(GdkEventScroll *aEvent)
         // XXX we're never quite sure which GdkWindow the event came from due to our custom bubbling
         // in scroll_event_cb(), so use ScreenToWidget to translate the screen root coordinates into
         // coordinates relative to this widget.
-        nsIntPoint point(NSToIntFloor(aEvent->x_root), NSToIntFloor(aEvent->y_root));
-        wheelEvent.refPoint = point - WidgetToScreenOffset();
+        LayoutDeviceIntPoint point(NSToIntFloor(aEvent->x_root),
+                                   NSToIntFloor(aEvent->y_root));
+        wheelEvent.refPoint = point -
+            LayoutDeviceIntPoint::FromUntyped(WidgetToScreenOffset());
     }
 
     KeymapWrapper::InitInputEvent(wheelEvent, aEvent->state);
@@ -3258,7 +3245,7 @@ nsWindow::DispatchDragEvent(uint32_t aMsg, const nsIntPoint& aRefPoint,
         InitDragEvent(event);
     }
 
-    event.refPoint = aRefPoint;
+    event.refPoint = LayoutDeviceIntPoint::FromUntyped(aRefPoint);
     event.time = aTime;
 
     nsEventStatus status;
@@ -5784,7 +5771,7 @@ nsWindow::CreateRootAccessible()
 {
     if (mIsTopLevel && !mRootAccessible) {
         LOG(("nsWindow:: Create Toplevel Accessibility\n"));
-        mRootAccessible = GetAccessible();
+        mRootAccessible = GetRootAccessible();
     }
 }
 
@@ -5802,7 +5789,7 @@ nsWindow::DispatchEventToRootAccessible(uint32_t aEventType)
     }
 
     // Get the root document accessible and fire event to it.
-    a11y::Accessible* acc = GetAccessible();
+    a11y::Accessible* acc = GetRootAccessible();
     if (acc) {
         accService->FireAccessibleEvent(aEventType, acc);
     }
@@ -5970,6 +5957,24 @@ nsWindow::GetSurfaceForGdkDrawable(GdkDrawable* aDrawable,
     }
 
     return result.forget();
+}
+#endif
+
+#if defined(MOZ_WIDGET_GTK2)
+TemporaryRef<gfx::DrawTarget>
+nsWindow::StartRemoteDrawing()
+{
+  gfxASurface *surf = GetThebesSurface();
+  if (!surf) {
+    return nullptr;
+  }
+
+  gfx::IntSize size(surf->GetSize().width, surf->GetSize().height);
+  if (size.width <= 0 || size.height <= 0) {
+    return nullptr;
+  }
+
+  return gfxPlatform::GetPlatform()->CreateDrawTargetForSurface(surf, size);
 }
 #endif
 
@@ -6206,8 +6211,34 @@ nsWindow::SynthesizeNativeMouseEvent(nsIntPoint aPoint,
   }
 
   GdkDisplay* display = gdk_window_get_display(mGdkWindow);
-  GdkScreen* screen = gdk_window_get_screen(mGdkWindow);
-  gdk_display_warp_pointer(display, screen, aPoint.x, aPoint.y);
+
+  // When a button-release event is requested, create it here and put it in the
+  // event queue. This will not emit a motion event - this needs to be done
+  // explicitly *before* requesting a button-release. You will also need to wait
+  // for the motion event to be dispatched before requesting a button-release
+  // event to maintain the desired event order.
+  if (aNativeMessage == GDK_BUTTON_RELEASE) {
+    GdkEvent event;
+    memset(&event, 0, sizeof(GdkEvent));
+    event.type = (GdkEventType)aNativeMessage;
+    event.button.button = 1;
+    event.button.window = mGdkWindow;
+    event.button.time = GDK_CURRENT_TIME;
+
+#if (MOZ_WIDGET_GTK == 3)
+    // Get device for event source
+    GdkDeviceManager *device_manager = gdk_display_get_device_manager(display);
+    event.button.device = gdk_device_manager_get_client_pointer(device_manager);
+#endif
+
+    gdk_event_put(&event);
+  } else {
+    // We don't support specific events other than button-release. In case
+    // aNativeMessage != GDK_BUTTON_RELEASE we'll synthesize a motion event
+    // that will be emitted by gdk_display_warp_pointer().
+    GdkScreen* screen = gdk_window_get_screen(mGdkWindow);
+    gdk_display_warp_pointer(display, screen, aPoint.x, aPoint.y);
+  }
 
   return NS_OK;
 }

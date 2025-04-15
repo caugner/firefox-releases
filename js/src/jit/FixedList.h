@@ -7,6 +7,11 @@
 #ifndef jit_FixedList_h
 #define jit_FixedList_h
 
+#include <stddef.h>
+
+#include "jit/Ion.h"
+#include "jit/IonAllocPolicy.h"
+
 namespace js {
 namespace jit {
 

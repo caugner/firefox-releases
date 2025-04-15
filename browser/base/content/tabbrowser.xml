@@ -9,6 +9,11 @@
 %tabBrowserDTD;
 ]>
 
+# MAKE_E10S_WORK surrounds code needed to have the front-end try to be smart
+# about using non-remote browsers for loading certain URIs when remote tabs
+# (browser.tabs.remote) are enabled.
+#define MAKE_E10S_WORK 1
+
 <bindings id="tabBrowserBindings"
           xmlns="http://www.mozilla.org/xbl"
           xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
@@ -125,6 +130,10 @@
         false
       </field>
 
+      <field name="_lastFindValue">
+        ""
+      </field>
+
       <property name="_numPinnedTabs" readonly="true">
         <getter><![CDATA[
           for (var i = 0; i < this.tabs.length; i++) {
@@ -134,6 +143,64 @@
           return i;
         ]]></getter>
       </property>
+
+      <method name="isFindBarInitialized">
+        <parameter name="aTab"/>
+        <body><![CDATA[
+          return (aTab || this.selectedTab)._findBar != undefined;
+        ]]></body>
+      </method>
+
+      <method name="getFindBar">
+        <parameter name="aTab"/>
+        <body><![CDATA[
+          if (!aTab)
+            aTab = this.selectedTab;
+
+          if (aTab._findBar)
+            return aTab._findBar;
+
+          let findBar = document.createElementNS(this.namespaceURI, "findbar");
+          let browser = this.getBrowserForTab(aTab);
+          let browserContainer = this.getBrowserContainer(browser);
+          browserContainer.appendChild(findBar);
+
+          // Force a style flush to ensure that our binding is attached.
+          findBar.clientTop;
+
+          findBar.browser = browser;
+          findBar._findField.value = this._lastFindValue;
+
+          aTab._findBar = findBar;
+
+          let event = document.createEvent("Events");
+          event.initEvent("TabFindInitialized", true, false);
+          aTab.dispatchEvent(event);
+
+          return findBar;
+        ]]></body>
+      </method>
+
+      <method name="getStatusPanel">
+        <body><![CDATA[
+          if (!this._statusPanel) {
+            this._statusPanel = document.createElementNS(this.namespaceURI, "statuspanel");
+            this._statusPanel.setAttribute("inactive", "true");
+            this._appendStatusPanel();
+          }
+          return this._statusPanel;
+        ]]></body>
+      </method>
+
+      <method name="_appendStatusPanel">
+        <body><![CDATA[
+          if (this._statusPanel) {
+            let browser = this.selectedBrowser;
+            let browserContainer = this.getBrowserContainer(browser);
+            browserContainer.insertBefore(this._statusPanel, browser.parentNode.nextSibling);
+          }
+        ]]></body>
+      </method>
 
       <method name="updateWindowResizers">
         <body><![CDATA[
@@ -548,10 +615,8 @@
                 if (this._shouldShowProgress(aRequest)) {
                   if (!(aStateFlags & nsIWebProgressListener.STATE_RESTORING)) {
                     this.mTab.setAttribute("busy", "true");
-                    if (!gMultiProcessBrowser) {
-                      if (!(this.mBrowser.docShell.loadType & Ci.nsIDocShell.LOAD_CMD_RELOAD))
-                        this.mTabBrowser.setTabTitleLoading(this.mTab);
-                    }
+                    if (!(aWebProgress.loadType & Ci.nsIDocShell.LOAD_CMD_RELOAD))
+                      this.mTabBrowser.setTabTitleLoading(this.mTab);
                   }
 
                   if (this.mTab.selected)
@@ -650,12 +715,22 @@
                 // previous location.
                 this.mBrowser.missingPlugins = null;
 
+                if (this.mTabBrowser.isFindBarInitialized(this.mTab)) {
+                  let findBar = this.mTabBrowser.getFindBar(this.mTab);
+
+                  // Close the Find toolbar if we're in old-style TAF mode
+                  if (findBar.findMode != findBar.FIND_NORMAL)
+                    findBar.close();
+
+                  // fix bug 253793 - turn off highlight when page changes
+                  findBar.getElement("highlight").checked = false;
+                }
+
                 // Don't clear the favicon if this onLocationChange was
                 // triggered by a pushState or a replaceState.  See bug 550565.
-                if (!gMultiProcessBrowser) {
-                  if (aWebProgress.isLoadingDocument &&
-                      !(this.mBrowser.docShell.loadType & Ci.nsIDocShell.LOAD_CMD_PUSHSTATE))
-                    this.mBrowser.mIconURL = null;
+                if (aWebProgress.isLoadingDocument &&
+                    !(aWebProgress.loadType & Ci.nsIDocShell.LOAD_CMD_PUSHSTATE)) {
+                  this.mBrowser.mIconURL = null;
                 }
 
                 let autocomplete = this.mTabBrowser._placesAutocomplete;
@@ -679,8 +754,10 @@
                                              aFlags]);
               }
 
-              if (topLevel)
+              if (topLevel) {
                 this.mBrowser.lastURI = aLocation;
+                this.mBrowser.lastLocationChange = Date.now();
+              }
             },
 
             onStatusChange: function (aWebProgress, aRequest, aStatus, aMessage) {
@@ -779,30 +856,23 @@
         <parameter name="aTab"/>
         <body>
           <![CDATA[
-            // Bug 691610 - e10s support for useDefaultIcon
-            if (gMultiProcessBrowser)
-              return;
-
             var browser = this.getBrowserForTab(aTab);
-            var docURIObject = browser.contentDocument.documentURIObject;
+            var documentURI = browser.documentURI;
             var icon = null;
-            if (browser.contentDocument instanceof ImageDocument) {
+
+            if (browser.imageDocument) {
               if (Services.prefs.getBoolPref("browser.chrome.site_icons")) {
                 let sz = Services.prefs.getIntPref("browser.chrome.image_icons.max_size");
-                try {
-                  let req = browser.contentDocument.imageRequest;
-                  if (req &&
-                      req.image &&
-                      req.image.width <= sz &&
-                      req.image.height <= sz)
-                    icon = browser.currentURI;
-                } catch (e) { }
+                if (browser.imageDocument.width <= sz &&
+                    browser.imageDocument.height <= sz) {
+                  icon = browser.currentURI;
+                }
               }
             }
             // Use documentURIObject in the check for shouldLoadFavIcon so that we
             // do the right thing with about:-style error pages.  Bug 453442
-            else if (this.shouldLoadFavIcon(docURIObject)) {
-              let url = docURIObject.prePath + "/favicon.ico";
+            else if (this.shouldLoadFavIcon(documentURI)) {
+              let url = documentURI.prePath + "/favicon.ico";
               if (!this.isFailedIcon(url))
                 icon = url;
             }
@@ -938,6 +1008,8 @@
               });
             }
 
+            this._appendStatusPanel();
+
             if (updatePageReport)
               this.mCurrentBrowser.updatePageReport();
 
@@ -969,9 +1041,11 @@
               this.mCurrentTab.removeAttribute("unread");
               this.selectedTab.lastAccessed = Date.now();
 
-              // Bug 666816 - TypeAheadFind support for e10s
-              if (!gMultiProcessBrowser)
-                this._fastFind.setDocShell(this.mCurrentBrowser.docShell);
+              let oldFindBar = oldTab._findBar;
+              if (oldFindBar &&
+                  oldFindBar.findMode == oldFindBar.FIND_NORMAL &&
+                  !oldFindBar.hidden)
+                this._lastFindValue = oldFindBar._findField.value;
 
               this.updateTitlebar();
 
@@ -1052,11 +1126,11 @@
                   }
                 }
 
-                // If the find bar is focused, keep it focused.
-                if (gFindBarInitialized &&
-                    !gFindBar.hidden &&
-                    gFindBar.getElement("findbar-textbox").getAttribute("focused") == "true")
+                // If the find bar is open, focus it.
+                if (gFindBarInitialized && !gFindBar.hidden) {
+                  gFindBar._findField.focus();
                   break;
+                }
 
                 // Otherwise, focus the content area.
                 let fm = Cc["@mozilla.org/focus-manager;1"].getService(Ci.nsIFocusManager);
@@ -1257,6 +1331,73 @@
         ]]></body>
       </method>
 
+#ifdef MAKE_E10S_WORK
+      <method name="_updateBrowserRemoteness">
+        <parameter name="aBrowser"/>
+        <parameter name="aRemote"/>
+        <body>
+          <![CDATA[
+            let isRemote = aBrowser.getAttribute("remote") == "true";
+            if (isRemote == aRemote)
+              return;
+
+            // Unhook our progress listener.
+            let tab = this._getTabForBrowser(aBrowser);
+            let index = tab._tPos;
+            let filter = this.mTabFilters[index];
+            aBrowser.webProgress.removeProgressListener(filter);
+
+            // Change the "remote" attribute.
+            let parent = aBrowser.parentNode;
+            parent.removeChild(aBrowser);
+            aBrowser.setAttribute("remote", aRemote ? "true" : "false");
+            parent.appendChild(aBrowser);
+
+            // Restore the progress listener.
+            aBrowser.webProgress.addProgressListener(filter, Ci.nsIWebProgress.NOTIFY_ALL);
+
+            if (aRemote)
+              tab.setAttribute("remote", "true");
+            else
+              tab.removeAttribute("remote");
+          ]]>
+        </body>
+      </method>
+
+      <!--
+        Returns true if we want to load the content for this URL in a
+        remote process. Eventually this should just check whether aURL
+        is unprivileged. Right now, though, we would like to load
+        some unprivileged URLs (like about:neterror) in the main
+        process since they interact with chrome code through
+        BrowserOnClick.
+      -->
+      <method name="_shouldBrowserBeRemote">
+        <parameter name="aURL"/>
+        <body>
+          <![CDATA[
+            if (!gMultiProcessBrowser)
+              return false;
+
+            // loadURI in browser.xml treats null as about:blank
+            if (!aURL)
+              aURL = "about:blank";
+
+            if (aURL.startsWith("about:") &&
+                aURL.toLowerCase() != "about:home" &&
+                aURL.toLowerCase() != "about:blank") {
+              return false;
+            }
+
+            if (aURL.startsWith("chrome:"))
+              return false;
+
+            return true;
+          ]]>
+        </body>
+      </method>
+#endif
+
       <method name="addTab">
         <parameter name="aURI"/>
         <parameter name="aReferrerURI"/>
@@ -1301,6 +1442,8 @@
 
             t.setAttribute("crop", "end");
             t.setAttribute("onerror", "this.removeAttribute('image');");
+            if (remote)
+              t.setAttribute("remote", "true");
             t.className = "tabbrowser-tab";
 
             this.tabContainer._unlockTabSizing();
@@ -1336,10 +1479,13 @@
             b.setAttribute("contextmenu", this.getAttribute("contentcontextmenu"));
             b.setAttribute("tooltip", this.getAttribute("contenttooltip"));
 
-            if (Services.prefs.getPrefType("browser.tabs.remote") == Services.prefs.PREF_BOOL &&
-                Services.prefs.getBoolPref("browser.tabs.remote")) {
+#ifdef MAKE_E10S_WORK
+            let remote = this._shouldBrowserBeRemote(aURI);
+#else
+            let remote = gMultiProcessBrowser;
+#endif
+            if (remote)
               b.setAttribute("remote", "true");
-            }
 
             if (window.gShowPageResizers && document.getElementById("addon-bar").collapsed &&
                 window.windowState == window.STATE_NORMAL) {
@@ -1407,7 +1553,6 @@
             this.mTabListeners[position] = tabListener;
             this.mTabFilters[position] = filter;
 
-            b._fastFind = this.fastFind;
             b.droppedLinkHandler = handleDroppedLink;
 
             // If we just created a new tab that loads the default
@@ -1415,7 +1560,8 @@
             // Do nothing if we're a private window.
             let docShellsSwapped = false;
             if (aURI == BROWSER_NEW_TAB_URL &&
-                !PrivateBrowsingUtils.isWindowPrivate(window)) {
+                !PrivateBrowsingUtils.isWindowPrivate(window) &&
+                !gMultiProcessBrowser) {
               docShellsSwapped = gBrowserNewTabPreloader.newTab(t);
             }
 
@@ -2032,6 +2178,16 @@
               this._swapBrowserDocShells(aOurTab, otherBrowser);
             }
 
+            // Handle findbar data (if any)
+            let otherFindBar = aOtherTab._findBar;
+            if (otherFindBar &&
+                otherFindBar.findMode == otherFindBar.FIND_NORMAL) {
+              let ourFindBar = this.getFindBar(aOurTab);
+              ourFindBar._findField.value = otherFindBar._findField.value;
+              if (!otherFindBar.hidden)
+                ourFindBar.onFindCommand();
+            }
+
             // Finish tearing down the tab that's going away.
             remoteBrowser._endRemoveTab(aOtherTab);
 
@@ -2492,7 +2648,17 @@
         <parameter name="aCharset"/>
         <body>
           <![CDATA[
+#ifdef MAKE_E10S_WORK
+            this._updateBrowserRemoteness(this.mCurrentBrowser, this._shouldBrowserBeRemote(aURI));
+            try {
+#endif
             return this.mCurrentBrowser.loadURI(aURI, aReferrerURI, aCharset);
+#ifdef MAKE_E10S_WORK
+            } catch (e) {
+              let url = this.mCurrentBrowser.currentURI.spec;
+              this._updateBrowserRemoteness(this.mCurrentBrowser, this._shouldBrowserBeRemote(url));
+            }
+#endif
           ]]>
         </body>
       </method>
@@ -2506,7 +2672,17 @@
         <parameter name="aPostData"/>
         <body>
           <![CDATA[
+#ifdef MAKE_E10S_WORK
+            this._updateBrowserRemoteness(this.mCurrentBrowser, this._shouldBrowserBeRemote(aURI));
+            try {
+#endif
             return this.mCurrentBrowser.loadURIWithFlags(aURI, aFlags, aReferrerURI, aCharset, aPostData);
+#ifdef MAKE_E10S_WORK
+            } catch (e) {
+              let url = this.mCurrentBrowser.currentURI.spec;
+              this._updateBrowserRemoteness(this.mCurrentBrowser, this._shouldBrowserBeRemote(url));
+            }
+#endif
           ]]>
         </body>
       </method>
@@ -2567,21 +2743,6 @@
       <property name="currentURI"
                 onget="return this.mCurrentBrowser.currentURI;"
                 readonly="true"/>
-
-      <field name="_fastFind">null</field>
-      <property name="fastFind"
-                readonly="true">
-        <getter>
-        <![CDATA[
-          if (!this._fastFind) {
-            this._fastFind = Components.classes["@mozilla.org/typeaheadfind;1"]
-                                       .createInstance(Components.interfaces.nsITypeAheadFind);
-            this._fastFind.init(this.docShell);
-          }
-          return this._fastFind;
-        ]]>
-        </getter>
-      </property>
 
       <property name="docShell"
                 onget="return this.mCurrentBrowser.docShell"
@@ -2771,6 +2932,7 @@
             browserStack.removeChild(this.mCurrentBrowser);
             this.mCurrentBrowser.setAttribute("remote", true);
             browserStack.appendChild(this.mCurrentBrowser);
+            this.tabContainer.firstChild.setAttribute("remote", "true");
           }
 
           this.mCurrentTab = this.tabContainer.firstChild;
@@ -4703,17 +4865,16 @@
 
       <method name="_calcMouseTargetRect">
         <body><![CDATA[
-          let alignRight = false;
+          let container = this.parentNode;
+          let alignRight = (getComputedStyle(container).direction == "rtl");
+          let panelRect = this.getBoundingClientRect();
+          let containerRect = container.getBoundingClientRect();
 
-          if (getComputedStyle(document.documentElement).direction == "rtl")
-            alignRight = !alignRight;
-
-          let rect = this.getBoundingClientRect();
           this._mouseTargetRect = {
-            top:    rect.top,
-            bottom: rect.bottom,
-            left:   alignRight ? window.innerWidth - rect.width : 0,
-            right:  alignRight ? window.innerWidth : rect.width
+            top:    panelRect.top,
+            bottom: panelRect.bottom,
+            left:   alignRight ? containerRect.right - panelRect.width : containerRect.left,
+            right:  alignRight ? containerRect.right : containerRect.left + panelRect.width
           };
         ]]></body>
       </method>

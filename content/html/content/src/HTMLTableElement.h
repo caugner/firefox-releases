@@ -18,8 +18,8 @@ namespace dom {
 
 class TableRowsCollection;
 
-class HTMLTableElement : public nsGenericHTMLElement,
-                         public nsIDOMHTMLTableElement
+class HTMLTableElement MOZ_FINAL : public nsGenericHTMLElement,
+                                   public nsIDOMHTMLTableElement
 {
 public:
   HTMLTableElement(already_AddRefed<nsINodeInfo> aNodeInfo);
@@ -39,9 +39,6 @@ public:
   // nsIDOMHTMLElement
   NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
 
-  // nsIDOMHTMLTableElement
-  NS_DECL_NSIDOMHTMLTABLEELEMENT
-
   HTMLTableCaptionElement* GetCaption() const
   {
     return static_cast<HTMLTableCaptionElement*>(GetChild(nsGkAtoms::caption));
@@ -54,7 +51,12 @@ public:
       nsINode::AppendChild(*aCaption, rv);
     }
   }
+
+  void DeleteTFoot();
+
   already_AddRefed<nsGenericHTMLElement> CreateCaption();
+
+  void DeleteCaption();
 
   HTMLTableSectionElement* GetTHead() const
   {
@@ -73,6 +75,8 @@ public:
     }
   }
   already_AddRefed<nsGenericHTMLElement> CreateTHead();
+
+  void DeleteTHead();
 
   HTMLTableSectionElement* GetTFoot() const
   {
@@ -93,6 +97,9 @@ public:
   already_AddRefed<nsGenericHTMLElement> CreateTFoot();
 
   nsIHTMLCollection* TBodies();
+
+  already_AddRefed<nsGenericHTMLElement> CreateTBody();
+
   nsIHTMLCollection* Rows();
 
   already_AddRefed<nsGenericHTMLElement> InsertRow(int32_t aIndex,

@@ -53,7 +53,7 @@ namespace JS { class Value; }
  * nice symbolic type tags, however we can only do this when we can force the
  * underlying type of the enum to be the desired size.
  */
-#if defined(__cplusplus) && !defined(__SUNPRO_CC) && !defined(__xlC__)
+#if !defined(__SUNPRO_CC) && !defined(__xlC__)
 
 #if defined(_MSC_VER)
 # define JS_ENUM_HEADER(id, type)              enum id : type
@@ -132,7 +132,7 @@ JS_STATIC_ASSERT(sizeof(JSValueShiftedTag) == sizeof(uint64_t));
 
 #endif
 
-#else  /* defined(__cplusplus) */
+#else  /* !defined(__SUNPRO_CC) && !defined(__xlC__) */
 
 typedef uint8_t JSValueType;
 #define JSVAL_TYPE_DOUBLE            ((uint8_t)0x00)
@@ -180,7 +180,7 @@ typedef uint64_t JSValueShiftedTag;
 #define JSVAL_SHIFTED_TAG_OBJECT     (((uint64_t)JSVAL_TAG_OBJECT)     << JSVAL_TAG_SHIFT)
 
 #endif  /* JS_BITS_PER_WORD */
-#endif  /* defined(__cplusplus) && !defined(__SUNPRO_CC) */
+#endif  /* !defined(__SUNPRO_CC) && !defined(__xlC__) */
 
 #define JSVAL_LOWER_INCL_TYPE_OF_OBJ_OR_NULL_SET        JSVAL_TYPE_NULL
 #define JSVAL_UPPER_EXCL_TYPE_OF_PRIMITIVE_SET          JSVAL_TYPE_OBJECT
@@ -265,7 +265,7 @@ typedef union jsval_layout
 typedef union jsval_layout
 {
     uint64_t asBits;
-#if (!defined(_WIN64) && defined(__cplusplus))
+#if !defined(_WIN64)
     /* MSVC does not pack these correctly :-( */
     struct {
         uint64_t           payload47 : 47;
@@ -802,21 +802,30 @@ JSVAL_EXTRACT_NON_DOUBLE_TYPE_IMPL(jsval_layout l)
 
 #endif  /* JS_BITS_PER_WORD */
 
-static inline double
-JS_CANONICALIZE_NAN(double d)
-{
-    if (MOZ_UNLIKELY(d != d)) {
-        jsval_layout l;
-        l.asBits = 0x7FF8000000000000LL;
-        return l.asDouble;
-    }
-    return d;
-}
-
 static inline jsval_layout JSVAL_TO_IMPL(JS::Value v);
 static inline JS::Value IMPL_TO_JSVAL(jsval_layout l);
 
 namespace JS {
+
+/**
+ * Returns a generic quiet NaN value, with all payload bits set to zero.
+ *
+ * Among other properties, this NaN's bit pattern conforms to JS::Value's
+ * bit pattern restrictions.
+ */
+static MOZ_ALWAYS_INLINE double
+GenericNaN()
+{
+    return mozilla::SpecificNaN(0, 0x8000000000000ULL);
+}
+
+static inline double
+CanonicalizeNaN(double d)
+{
+    if (MOZ_UNLIKELY(mozilla::IsNaN(d)))
+        return GenericNaN();
+    return d;
+}
 
 /*
  * JS::Value is the interface for a single JavaScript Engine value.  A few
@@ -1467,6 +1476,7 @@ class ValueOperations
     void *toGCThing() const { return value()->toGCThing(); }
 
     JSValueType extractNonDoubleType() const { return value()->extractNonDoubleType(); }
+    uint32_t toPrivateUint32() const { return value()->toPrivateUint32(); }
 
     JSWhyMagic whyMagic() const { return value()->whyMagic(); }
 };
@@ -1644,12 +1654,12 @@ inline Anchor<Value>::~Anchor()
 namespace detail {
 
 struct ValueAlignmentTester { char c; JS::Value v; };
-MOZ_STATIC_ASSERT(sizeof(ValueAlignmentTester) == 16,
-                  "JS::Value must be 16-byte-aligned");
+static_assert(sizeof(ValueAlignmentTester) == 16,
+              "JS::Value must be 16-byte-aligned");
 
 struct LayoutAlignmentTester { char c; jsval_layout l; };
-MOZ_STATIC_ASSERT(sizeof(LayoutAlignmentTester) == 16,
-                  "jsval_layout must be 16-byte-aligned");
+static_assert(sizeof(LayoutAlignmentTester) == 16,
+              "jsval_layout must be 16-byte-aligned");
 
 } // namespace detail
 #endif /* DEBUG */
@@ -1663,8 +1673,8 @@ MOZ_STATIC_ASSERT(sizeof(LayoutAlignmentTester) == 16,
  */
 typedef JS::Value jsval;
 
-MOZ_STATIC_ASSERT(sizeof(jsval_layout) == sizeof(JS::Value),
-                  "jsval_layout and JS::Value must have identical layouts");
+static_assert(sizeof(jsval_layout) == sizeof(JS::Value),
+              "jsval_layout and JS::Value must have identical layouts");
 
 /************************************************************************/
 

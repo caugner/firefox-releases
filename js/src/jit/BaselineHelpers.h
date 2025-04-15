@@ -10,11 +10,11 @@
 #ifdef JS_ION
 
 #if defined(JS_CPU_X86)
-# include "x86/BaselineHelpers-x86.h"
+# include "jit/x86/BaselineHelpers-x86.h"
 #elif defined(JS_CPU_X64)
-# include "x64/BaselineHelpers-x64.h"
+# include "jit/x64/BaselineHelpers-x64.h"
 #elif defined(JS_CPU_ARM)
-# include "arm/BaselineHelpers-arm.h"
+# include "jit/arm/BaselineHelpers-arm.h"
 #else
 # error "Unknown architecture!"
 #endif

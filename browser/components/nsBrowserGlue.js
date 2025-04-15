@@ -20,9 +20,6 @@ XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "UserAgentOverrides",
-                                  "resource://gre/modules/UserAgentOverrides.jsm");
-
 XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
                                   "resource://gre/modules/FileUtils.jsm");
 
@@ -65,6 +62,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "Task",
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesBackups",
                                   "resource://gre/modules/PlacesBackups.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "OS",
+                                  "resource://gre/modules/osfile.jsm");
 
 const PREF_PLUGINS_NOTIFYUSER = "plugins.update.notifyUser";
 const PREF_PLUGINS_UPDATEURL  = "plugins.update.url";
@@ -451,8 +450,6 @@ BrowserGlue.prototype = {
     // handle any UI migration
     this._migrateUI();
 
-    this._setUpUserAgentOverrides();
-
     this._syncSearchEngines();
 
     webappsUI.init();
@@ -466,19 +463,27 @@ BrowserGlue.prototype = {
     Services.obs.notifyObservers(null, "browser-ui-startup-complete", "");
   },
 
-  _setUpUserAgentOverrides: function BG__setUpUserAgentOverrides() {
-    UserAgentOverrides.init();
+  _checkForOldBuildUpdates: function () {
+    // check for update if our build is old
+    if (Services.prefs.getBoolPref("app.update.enabled") &&
+        Services.prefs.getBoolPref("app.update.checkInstallTime")) {
 
-    if (Services.prefs.getBoolPref("general.useragent.complexOverride.moodle")) {
-      UserAgentOverrides.addComplexOverride(function (aHttpChannel, aOriginalUA) {
-        let cookies;
-        try {
-          cookies = aHttpChannel.getRequestHeader("Cookie");
-        } catch (e) { /* no cookie sent */ }
-        if (cookies && cookies.indexOf("MoodleSession") > -1)
-          return aOriginalUA.replace(/Gecko\/[^ ]*/, "Gecko/20100101");
-        return null;
-      });
+      let buildID = Services.appinfo.appBuildID;
+      let today = new Date().getTime();
+      let buildDate = new Date(buildID.slice(0,4),     // year
+                               buildID.slice(4,6) - 1, // months are zero-based.
+                               buildID.slice(6,8),     // day
+                               buildID.slice(8,10),    // hour
+                               buildID.slice(10,12),   // min
+                               buildID.slice(12,14))   // ms
+      .getTime();
+
+      const millisecondsIn24Hours = 86400000;
+      let acceptableAge = Services.prefs.getIntPref("app.update.checkInstallTime.days") * millisecondsIn24Hours;
+
+      if (buildDate + acceptableAge < today) {
+        Cc["@mozilla.org/updates/update-service;1"].getService(Ci.nsIApplicationUpdateService).checkForBackgroundUpdates();
+      }
     }
   },
 
@@ -541,6 +546,41 @@ BrowserGlue.prototype = {
                           nb.PRIORITY_INFO_LOW, buttons);
   },
 
+  /**
+   * Show a notification bar offering a reset if the profile has been unused for some time.
+   */
+  _resetUnusedProfileNotification: function () {
+    let win = this.getMostRecentBrowserWindow();
+    if (!win)
+      return;
+
+    Cu.import("resource://gre/modules/ResetProfile.jsm");
+    if (!ResetProfile.resetSupported())
+      return;
+
+    let productName = Services.strings
+                              .createBundle("chrome://branding/locale/brand.properties")
+                              .GetStringFromName("brandShortName");
+    let resetBundle = Services.strings
+                              .createBundle("chrome://global/locale/resetProfile.properties");
+
+    let message = resetBundle.formatStringFromName("resetUnusedProfile.message", [productName], 1);
+    let buttons = [
+      {
+        label:     resetBundle.formatStringFromName("resetProfile.resetButton.label", [productName], 1),
+        accessKey: resetBundle.GetStringFromName("resetProfile.resetButton.accesskey"),
+        callback: function () {
+          ResetProfile.openConfirmationDialog(win);
+        }
+      },
+    ];
+
+    let nb = win.document.getElementById("global-notificationbox");
+    nb.appendNotification(message, "reset-unused-profile",
+                          "chrome://global/skin/icons/question-16.png",
+                          nb.PRIORITY_INFO_LOW, buttons);
+  },
+
   // the first browser window has finished initializing
   _onFirstWindowLoaded: function BG__onFirstWindowLoaded() {
 #ifdef XP_WIN
@@ -555,6 +595,16 @@ BrowserGlue.prototype = {
 #endif
 
     this._trackSlowStartup();
+
+    // Offer to reset a user's profile if it hasn't been used for 60 days.
+    const OFFER_PROFILE_RESET_INTERVAL_MS = 60 * 24 * 60 * 60 * 1000;
+    let lastUse = Services.appinfo.replacedLockTime;
+    if (lastUse &&
+        Date.now() - lastUse >= OFFER_PROFILE_RESET_INTERVAL_MS) {
+      this._resetUnusedProfileNotification();
+    }
+
+    this._checkForOldBuildUpdates();
   },
 
   /**
@@ -564,7 +614,6 @@ BrowserGlue.prototype = {
    */
   _onProfileShutdown: function BG__onProfileShutdown() {
     BrowserNewTabPreloader.uninit();
-    UserAgentOverrides.uninit();
     webappsUI.uninit();
     SignInToWebsiteUX.uninit();
     webrtcUI.uninit();
@@ -1224,7 +1273,7 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 13;
+    const UI_VERSION = 14;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul#";
     let currentUIVersion = 0;
     try {
@@ -1412,6 +1461,13 @@ BrowserGlue.prototype = {
           Services.prefs.setBoolPref("plugins.notifyMissingFlash", false);
       }
       catch (ex) {}
+    }
+
+    if (currentUIVersion < 14) {
+      // DOM Storage doesn't specially handle about: pages anymore.
+      let path = OS.Path.join(OS.Constants.Path.profileDir,
+                              "chromeappsstore.sqlite");
+      OS.File.remove(path);
     }
 
     if (this._dirty)

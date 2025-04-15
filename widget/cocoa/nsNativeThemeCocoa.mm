@@ -24,14 +24,17 @@
 #include "nsCocoaWindow.h"
 #include "nsNativeThemeColors.h"
 #include "nsIScrollableFrame.h"
-#include "nsIDOMHTMLMeterElement.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/HTMLMeterElement.h"
 #include "nsLookAndFeel.h"
 
 #include "gfxContext.h"
 #include "gfxQuartzSurface.h"
 #include "gfxQuartzNativeDrawing.h"
 #include <algorithm>
+
+using namespace mozilla::gfx;
+using mozilla::dom::HTMLMeterElement;
 
 #define DRAW_IN_FRAME_DEBUG 0
 #define SCROLLBARS_VISUAL_DEBUG 0
@@ -1388,33 +1391,20 @@ nsNativeThemeCocoa::DrawMeter(CGContextRef cgContext, const HIRect& inBoxRect,
 
   NS_PRECONDITION(aFrame, "aFrame should not be null here!");
 
-  nsCOMPtr<nsIDOMHTMLMeterElement> meterElement =
-    do_QueryInterface(aFrame->GetContent());
-
   // When using -moz-meterbar on an non meter element, we will not be able to
   // get all the needed information so we just draw an empty meter.
-  if (!meterElement) {
+  nsIContent* content = aFrame->GetContent();
+  if (!(content && content->IsHTML(nsGkAtoms::meter))) {
     DrawCellWithSnapping(mMeterBarCell, cgContext, inBoxRect,
                          meterSetting, VerticalAlignFactor(aFrame),
                          mCellDrawView, IsFrameRTL(aFrame));
     return;
   }
 
-  double value;
-  double min;
-  double max;
-  double low;
-  double high;
-  double optimum;
-
-  // NOTE: if we were allowed to static_cast to HTMLMeterElement we would be
-  // able to use nicer getters...
-  meterElement->GetValue(&value);
-  meterElement->GetMin(&min);
-  meterElement->GetMax(&max);
-  meterElement->GetLow(&low);
-  meterElement->GetHigh(&high);
-  meterElement->GetOptimum(&optimum);
+  HTMLMeterElement* meterElement = static_cast<HTMLMeterElement*>(content);
+  double value = meterElement->Value();
+  double min = meterElement->Min();
+  double max = meterElement->Max();
 
   NSLevelIndicatorCell* cell = mMeterBarCell;
 
@@ -2038,7 +2028,15 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
       break;
 
     case NS_THEME_MENUITEM: {
-      if (thebesCtx->OriginalSurface()->GetContentType() == gfxASurface::CONTENT_COLOR_ALPHA) {
+      bool isTransparent;
+      if (thebesCtx->IsCairo()) {
+        isTransparent = thebesCtx->OriginalSurface()->GetContentType() == gfxASurface::CONTENT_COLOR_ALPHA;
+      } else {
+        SurfaceFormat format  = thebesCtx->GetDrawTarget()->GetFormat();
+        isTransparent = (format == FORMAT_R8G8B8A8) ||
+                        (format == FORMAT_B8G8R8A8);
+      }
+      if (isTransparent) {
         // Clear the background to get correct transparency.
         CGContextClearRect(cgContext, macRect);
       }

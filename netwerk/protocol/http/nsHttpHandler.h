@@ -41,6 +41,7 @@ namespace mozilla {
 namespace net {
 class ATokenBucketEvent;
 class EventTokenBucket;
+class Tickler;
 }
 }
 
@@ -54,7 +55,7 @@ class nsHttpHandler : public nsIHttpProtocolHandler
                     , public nsISpeculativeConnect
 {
 public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_NSIPROTOCOLHANDLER
     NS_DECL_NSIPROXIEDPROTOCOLHANDLER
     NS_DECL_NSIHTTPPROTOCOLHANDLER
@@ -181,9 +182,11 @@ public:
     }
 
     nsresult SpeculativeConnect(nsHttpConnectionInfo *ci,
-                                nsIInterfaceRequestor *callbacks)
+                                nsIInterfaceRequestor *callbacks,
+                                uint32_t caps = 0)
     {
-        return mConnMgr->SpeculativeConnect(ci, callbacks);
+        TickleWifi(callbacks);
+        return mConnMgr->SpeculativeConnect(ci, callbacks, caps);
     }
 
     //
@@ -301,11 +304,11 @@ private:
 private:
 
     // cached services
-    nsCOMPtr<nsIIOService>              mIOService;
-    nsCOMPtr<nsIStreamConverterService> mStreamConvSvc;
-    nsCOMPtr<nsIObserverService>        mObserverService;
-    nsCOMPtr<nsICookieService>          mCookieService;
-    nsCOMPtr<nsIStrictTransportSecurityService> mSTSService;
+    nsMainThreadPtrHandle<nsIIOService>              mIOService;
+    nsMainThreadPtrHandle<nsIStreamConverterService> mStreamConvSvc;
+    nsMainThreadPtrHandle<nsIObserverService>        mObserverService;
+    nsMainThreadPtrHandle<nsICookieService>          mCookieService;
+    nsMainThreadPtrHandle<nsIStrictTransportSecurityService> mSTSService;
 
     // the authentication credentials cache
     nsHttpAuthCache mAuthCache;
@@ -471,6 +474,10 @@ public:
     {
         mRequestTokenBucket = aTokenBucket;
     }
+
+private:
+    nsRefPtr<mozilla::net::Tickler> mWifiTickler;
+    void TickleWifi(nsIInterfaceRequestor *cb);
 };
 
 extern nsHttpHandler *gHttpHandler;
@@ -488,7 +495,7 @@ public:
     // we basically just want to override GetScheme and GetDefaultPort...
     // all other methods should be forwarded to the nsHttpHandler instance.
 
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_NSIPROTOCOLHANDLER
     NS_FORWARD_NSIPROXIEDPROTOCOLHANDLER (gHttpHandler->)
     NS_FORWARD_NSIHTTPPROTOCOLHANDLER    (gHttpHandler->)

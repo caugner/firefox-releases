@@ -37,7 +37,7 @@ class GonkGPSGeolocationProvider : public nsIGeolocationProvider
                                  , public nsISettingsServiceCallback
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIGEOLOCATIONPROVIDER
   NS_DECL_NSIRILDATACALLBACK
   NS_DECL_NSISETTINGSSERVICECALLBACK
@@ -98,7 +98,7 @@ private:
   const AGpsRilInterface* mAGpsRilInterface;
   nsCOMPtr<nsIGeolocationUpdate> mLocationCallback;
   nsCOMPtr<nsIThread> mInitThread;
-  nsCOMPtr<nsIRadioInterfaceLayer> mRIL;
+  nsCOMPtr<nsIRadioInterface> mRadioInterface;
 };
 
 #endif /* GonkGPSGeolocationProvider_h */

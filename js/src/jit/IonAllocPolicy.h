@@ -10,10 +10,10 @@
 #include "mozilla/GuardObjects.h"
 
 #include "jscntxt.h"
-#include "ds/LifoAlloc.h"
 
-#include "Ion.h"
-#include "InlineList.h"
+#include "ds/LifoAlloc.h"
+#include "jit/InlineList.h"
+#include "jit/Ion.h"
 
 namespace js {
 namespace jit {

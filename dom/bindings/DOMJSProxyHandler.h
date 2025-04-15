@@ -15,7 +15,7 @@
 #include "xpcpublic.h"
 #include "nsStringGlue.h"
 
-#define DOM_PROXY_OBJECT_SLOT js::JSSLOT_PROXY_PRIVATE
+#define DOM_PROXY_OBJECT_SLOT js::PROXY_PRIVATE_SLOT
 
 namespace mozilla {
 namespace dom {
@@ -51,7 +51,7 @@ public:
                JS::Handle<jsid> id, bool* bp) MOZ_OVERRIDE;
   bool enumerate(JSContext* cx, JS::Handle<JSObject*> proxy, JS::AutoIdVector& props) MOZ_OVERRIDE;
   bool has(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id, bool* bp) MOZ_OVERRIDE;
-  bool isExtensible(JSObject *proxy) MOZ_OVERRIDE;
+  bool isExtensible(JSContext *cx, JS::Handle<JSObject*> proxy, bool *extensible) MOZ_OVERRIDE;
 
   static JSObject* GetExpandoObject(JSObject* obj)
   {
@@ -77,14 +77,15 @@ public:
 
   const DOMClass& mClass;
 
-protected:
   // Append the property names in "names" to "props". If
   // shadowPrototypeProperties is false then skip properties that are also
-  // present on our proto chain.
-  bool AppendNamedPropertyIds(JSContext* cx, JS::Handle<JSObject*> proxy,
-                              nsTArray<nsString>& names,
-                              bool shadowPrototypeProperties,
-                              JS::AutoIdVector& props);
+  // present on our proto chain.  If shadowPrototypeProperties is true,
+  // then the "proxy" and "handler" arguments are ignored.
+  static bool AppendNamedPropertyIds(JSContext* cx, JS::Handle<JSObject*> proxy,
+                                     nsTArray<nsString>& names,
+                                     bool shadowPrototypeProperties,
+                                     DOMProxyHandler* handler,
+                                     JS::AutoIdVector& props);
 };
 
 extern jsid s_length_id;

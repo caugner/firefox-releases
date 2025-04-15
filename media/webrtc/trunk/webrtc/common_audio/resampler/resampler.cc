@@ -70,6 +70,7 @@ int Resampler::Reset(int in_freq, int out_freq, ResamplerType type)
 {
   uint32_t channels = (type == kResamplerSynchronousStereo ||
                        type == kResamplerFixedSynchronousStereo) ? 2 : 1;
+
   if (state_)
   {
     speex_resampler_destroy(state_);
@@ -109,7 +110,6 @@ int Resampler::Push(const int16_t* samples_in, int length_in,
       // until Reset() is called
       return -1;
     }
-
     // Fixed-rate, same-freq "resample" - use memcpy, which avoids
     // filtering and delay.  For non-fixed rates, where we might tweak
     // from 48000->48000 to 48000->48001 for drift, we need to resample

@@ -19,7 +19,6 @@
 #include "nsXPIDLString.h"
 #include "prio.h"
 #include "prlog.h"
-#include "prlong.h"
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gLog;
 #endif
@@ -189,7 +188,7 @@ nsDirectoryIndexStream::Create(nsIFile* aDir, nsIInputStream** aResult)
     return NS_OK;
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsDirectoryIndexStream, nsIInputStream)
+NS_IMPL_ISUPPORTS1(nsDirectoryIndexStream, nsIInputStream)
 
 // The below routines are proxied to the UI thread!
 NS_IMETHODIMP

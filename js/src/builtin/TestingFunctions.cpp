@@ -15,7 +15,9 @@
 #include "jswrapper.h"
 
 #include "jit/AsmJS.h"
+#include "jit/AsmJSLink.h"
 #include "vm/ForkJoin.h"
+#include "vm/Interpreter.h"
 
 #include "vm/ObjectImpl-inl.h"
 
@@ -30,14 +32,14 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
     RootedObject info(cx, JS_NewObject(cx, NULL, NULL, NULL));
     if (!info)
         return false;
-    Value value;
+    RootedValue value(cx);
 
 #ifdef JSGC_ROOT_ANALYSIS
     value = BooleanValue(true);
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "rooting-analysis", &value))
+    if (!JS_SetProperty(cx, info, "rooting-analysis", value))
         return false;
 
 #ifdef JSGC_USE_EXACT_ROOTING
@@ -45,7 +47,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "exact-rooting", &value))
+    if (!JS_SetProperty(cx, info, "exact-rooting", value))
         return false;
 
 #ifdef DEBUG
@@ -53,7 +55,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "debug", &value))
+    if (!JS_SetProperty(cx, info, "debug", value))
         return false;
 
 #ifdef JS_HAS_CTYPES
@@ -61,7 +63,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "has-ctypes", &value))
+    if (!JS_SetProperty(cx, info, "has-ctypes", value))
         return false;
 
 #ifdef JS_CPU_X86
@@ -69,7 +71,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "x86", &value))
+    if (!JS_SetProperty(cx, info, "x86", value))
         return false;
 
 #ifdef JS_CPU_X64
@@ -77,7 +79,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "x64", &value))
+    if (!JS_SetProperty(cx, info, "x64", value))
         return false;
 
 #ifdef MOZ_ASAN
@@ -85,7 +87,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "asan", &value))
+    if (!JS_SetProperty(cx, info, "asan", value))
         return false;
 
 #ifdef JS_GC_ZEAL
@@ -93,7 +95,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "has-gczeal", &value))
+    if (!JS_SetProperty(cx, info, "has-gczeal", value))
         return false;
 
 #ifdef JS_THREADSAFE
@@ -101,7 +103,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "threadsafe", &value))
+    if (!JS_SetProperty(cx, info, "threadsafe", value))
         return false;
 
 #ifdef JS_MORE_DETERMINISTIC
@@ -109,7 +111,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "more-deterministic", &value))
+    if (!JS_SetProperty(cx, info, "more-deterministic", value))
         return false;
 
 #ifdef MOZ_PROFILING
@@ -117,7 +119,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "profiling", &value))
+    if (!JS_SetProperty(cx, info, "profiling", value))
         return false;
 
 #ifdef INCLUDE_MOZILLA_DTRACE
@@ -125,7 +127,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "dtrace", &value))
+    if (!JS_SetProperty(cx, info, "dtrace", value))
         return false;
 
 #ifdef MOZ_TRACE_JSCALLS
@@ -133,7 +135,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "trace-jscalls-api", &value))
+    if (!JS_SetProperty(cx, info, "trace-jscalls-api", value))
         return false;
 
 #ifdef JSGC_INCREMENTAL
@@ -141,7 +143,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "incremental-gc", &value))
+    if (!JS_SetProperty(cx, info, "incremental-gc", value))
         return false;
 
 #ifdef JSGC_GENERATIONAL
@@ -149,7 +151,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "generational-gc", &value))
+    if (!JS_SetProperty(cx, info, "generational-gc", value))
         return false;
 
 #ifdef MOZ_VALGRIND
@@ -157,7 +159,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "valgrind", &value))
+    if (!JS_SetProperty(cx, info, "valgrind", value))
         return false;
 
 #ifdef JS_OOM_DO_BACKTRACES
@@ -165,7 +167,7 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "oom-backtraces", &value))
+    if (!JS_SetProperty(cx, info, "oom-backtraces", value))
         return false;
 
 #ifdef ENABLE_PARALLEL_JS
@@ -173,7 +175,15 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 #else
     value = BooleanValue(false);
 #endif
-    if (!JS_SetProperty(cx, info, "parallelJS", &value))
+    if (!JS_SetProperty(cx, info, "parallelJS", value))
+        return false;
+
+#ifdef ENABLE_BINARYDATA
+    value = BooleanValue(true);
+#else
+    value = BooleanValue(false);
+#endif
+    if (!JS_SetProperty(cx, info, "binary-data", value))
         return false;
 
     *vp = ObjectValue(*info);
@@ -230,7 +240,7 @@ MinorGC(JSContext *cx, unsigned argc, jsval *vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     if (args.get(0) == BooleanValue(true))
-        cx->runtime()->gcStoreBuffer.setOverflowed();
+        cx->runtime()->gcStoreBuffer.setAboutToOverflow();
 
     MinorGC(cx->runtime(), gcreason::API);
 #endif
@@ -245,7 +255,8 @@ static const struct ParamPair {
     {"maxMallocBytes",      JSGC_MAX_MALLOC_BYTES},
     {"gcBytes",             JSGC_BYTES},
     {"gcNumber",            JSGC_NUMBER},
-    {"sliceTimeBudget",     JSGC_SLICE_TIME_BUDGET}
+    {"sliceTimeBudget",     JSGC_SLICE_TIME_BUDGET},
+    {"markStackLimit",      JSGC_MARK_STACK_LIMIT}
 };
 
 static JSBool
@@ -329,7 +340,7 @@ IsProxy(JSContext *cx, unsigned argc, jsval *vp)
         args.rval().setBoolean(false);
         return true;
     }
-    args.rval().setBoolean(args[0].toObject().isProxy());
+    args.rval().setBoolean(args[0].toObject().is<ProxyObject>());
     return true;
 }
 
@@ -489,7 +500,7 @@ GCState(JSContext *cx, unsigned argc, jsval *vp)
     else if (globalState == gc::SWEEP)
         state = "sweep";
     else
-        JS_NOT_REACHED("Unobserveable global GC state");
+        MOZ_ASSUME_UNREACHABLE("Unobserveable global GC state");
 
     JSString *str = JS_NewStringCopyZ(cx, state);
     if (!str)
@@ -790,7 +801,7 @@ static JSClass FinalizeCounterClass = {
 static JSBool
 MakeFinalizeObserver(JSContext *cx, unsigned argc, jsval *vp)
 {
-    RootedObject scope(cx, JS_GetGlobalForScopeChain(cx));
+    RootedObject scope(cx, JS::CurrentGlobalOrNull(cx));
     if (!scope)
         return false;
 
@@ -907,18 +918,19 @@ js::testingFunc_inParallelSection(JSContext *cx, unsigned argc, jsval *vp)
 
 static JSObject *objectMetadataFunction = NULL;
 
-static JSObject *
-ShellObjectMetadataCallback(JSContext *cx)
+static bool
+ShellObjectMetadataCallback(JSContext *cx, JSObject **pmetadata)
 {
     Value thisv = UndefinedValue();
 
     RootedValue rval(cx);
-    if (!Invoke(cx, thisv, ObjectValue(*objectMetadataFunction), 0, NULL, rval.address())) {
-        cx->clearPendingException();
-        return NULL;
-    }
+    if (!Invoke(cx, thisv, ObjectValue(*objectMetadataFunction), 0, NULL, &rval))
+        return false;
 
-    return rval.isObject() ? &rval.toObject() : NULL;
+    if (rval.isObject())
+        *pmetadata = &rval.toObject();
+
+    return true;
 }
 
 static JSBool
@@ -973,33 +985,15 @@ GetObjectMetadata(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
-#ifndef JS_ION
 JSBool
-js::IsAsmJSCompilationAvailable(JSContext *cx, unsigned argc, Value *vp)
+js::testingFunc_bailout(JSContext *cx, unsigned argc, jsval *vp)
 {
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().set(BooleanValue(false));
+    // NOP when not in IonMonkey
+    JS_SET_RVAL(cx, vp, JSVAL_VOID);
     return true;
 }
 
-JSBool
-js::IsAsmJSModule(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().set(BooleanValue(false));
-    return true;
-}
-
-JSBool
-js::IsAsmJSFunction(JSContext *cx, unsigned argc, Value *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().set(BooleanValue(false));
-    return true;
-}
-#endif
-
-static JSFunctionSpecWithHelp TestingFunctions[] = {
+static const JSFunctionSpecWithHelp TestingFunctions[] = {
     JS_FN_HELP("gc", ::GC, 0, 0,
 "gc([obj] | 'compartment')",
 "  Run the garbage collector. When obj is given, GC only its compartment.\n"
@@ -1007,9 +1001,9 @@ static JSFunctionSpecWithHelp TestingFunctions[] = {
 "  GC via schedulegc."),
 
     JS_FN_HELP("minorgc", ::MinorGC, 0, 0,
-"minorgc([overflow])",
-"  Run a minor collector on the Nursery. When overflow is true, marks the\n"
-"  store buffer as overflowed before collecting."),
+"minorgc([aboutToOverflow])",
+"  Run a minor collector on the Nursery. When aboutToOverflow is true, marks\n"
+"  the store buffer as about-to-overflow before collecting."),
 
     JS_FN_HELP("gcparam", GCParameter, 2, 0,
 "gcparam(name [, value])",
@@ -1176,6 +1170,10 @@ static JSFunctionSpecWithHelp TestingFunctions[] = {
     JS_FN_HELP("getObjectMetadata", GetObjectMetadata, 1, 0,
 "getObjectMetadata(obj)",
 "  Get the metadata for an object."),
+
+    JS_FN_HELP("bailout", testingFunc_bailout, 0, 0,
+"bailout()",
+"  Force a bailout out of ionmonkey (if running in ionmonkey)."),
 
     JS_FS_HELP_END
 };

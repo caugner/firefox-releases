@@ -230,7 +230,7 @@ protected:
 /**
  * nsIMediaDevice implementation.
  */
-NS_IMPL_THREADSAFE_ISUPPORTS1(MediaDevice, nsIMediaDevice)
+NS_IMPL_ISUPPORTS1(MediaDevice, nsIMediaDevice)
 
 NS_IMETHODIMP
 MediaDevice::GetName(nsAString& aName)
@@ -291,6 +291,34 @@ public:
     if (mSourceStream) {
       mSourceStream->EndAllTrackAndFinish();
     }
+  }
+
+  // Allow getUserMedia to pass input data directly to PeerConnection/MediaPipeline
+  virtual bool AddDirectListener(MediaStreamDirectListener *aListener) MOZ_OVERRIDE
+  {
+    if (mSourceStream) {
+      mSourceStream->AddDirectListener(aListener);
+      return true; // application should ignore NotifyQueuedTrackData
+    }
+    return false;
+  }
+
+  virtual void RemoveDirectListener(MediaStreamDirectListener *aListener) MOZ_OVERRIDE
+  {
+    if (mSourceStream) {
+      mSourceStream->RemoveDirectListener(aListener);
+    }
+  }
+
+  // let us intervene for direct listeners when someone does track.enabled = false
+  virtual void SetTrackEnabled(TrackID aID, bool aEnabled) MOZ_OVERRIDE
+  {
+    // We encapsulate the SourceMediaStream and TrackUnion into one entity, so
+    // we can handle the disabling at the SourceMediaStream
+
+    // We need to find the input track ID for output ID aID, so we let the TrackUnion
+    // forward the request to the source and translate the ID
+    GetStream()->AsProcessedStream()->ForwardTrackEnabled(aID, aEnabled);
   }
 
   // The actual MediaStream is a TrackUnionStream. But these resources need to be
@@ -893,7 +921,7 @@ MediaManager::MediaManager()
   mActiveCallbacks.Init();
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS2(MediaManager, nsIMediaManagerService, nsIObserver)
+NS_IMPL_ISUPPORTS2(MediaManager, nsIMediaManagerService, nsIObserver)
 
 /* static */ StaticRefPtr<MediaManager> MediaManager::sSingleton;
 
@@ -1095,9 +1123,9 @@ MediaManager::GetUserMedia(bool aPrivileged, nsPIDOMWindow* aWindow,
 
 #ifdef MOZ_B2G_CAMERA
   if (mCameraManager == nullptr) {
-    mCameraManager = nsDOMCameraManager::CheckPermissionAndCreateInstance(aWindow);
-    if (!mCameraManager) {
-      aPrivileged = false;
+    aPrivileged = nsDOMCameraManager::CheckPermission(aWindow);
+    if (aPrivileged) {
+      mCameraManager = nsDOMCameraManager::CreateInstance(aWindow);
     }
   }
 #endif

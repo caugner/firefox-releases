@@ -625,41 +625,6 @@ public:
   static void MapScrollingAttributeInto(const nsMappedAttributes* aAttributes,
                                         nsRuleData* aData);
   /**
-   * Get the presentation state for a piece of content, or create it if it does
-   * not exist.  Generally used by SaveState().
-   *
-   * @param aContent the content to get presentation state for.
-   * @param aPresState the presentation state (out param)
-   */
-  static nsresult GetPrimaryPresState(nsGenericHTMLElement* aContent,
-                                      nsPresState** aPresState);
-  /**
-   * Get the layout history object *and* generate the key for a particular
-   * piece of content.
-   *
-   * @param aContent the content to generate the key for
-   * @param aRead if true, won't return a layout history state (and won't
-   *              generate a key) if the layout history state is empty.
-   * @param aState the history state object (out param)
-   * @param aKey the key (out param)
-   */
-  static already_AddRefed<nsILayoutHistoryState>
-  GetLayoutHistoryAndKey(nsGenericHTMLElement* aContent,
-                         bool aRead,
-                         nsACString& aKey);
-  /**
-   * Restore the state for a form control.  Ends up calling
-   * nsIFormControl::RestoreState().
-   *
-   * @param aContent an nsGenericHTMLElement* pointing to the form control
-   * @param aControl an nsIFormControl* pointing to the form control
-   * @return false if RestoreState() was not called, the return
-   *         value of RestoreState() otherwise.
-   */
-  static bool RestoreFormControlState(nsGenericHTMLElement* aContent,
-                                        nsIFormControl* aControl);
-
-  /**
    * Get the presentation context for this content node.
    * @return the presentation context
    */
@@ -1237,6 +1202,52 @@ protected:
   mozilla::dom::HTMLFieldSetElement* mFieldSet;
 };
 
+class nsGenericHTMLFormElementWithState : public nsGenericHTMLFormElement
+{
+public:
+  nsGenericHTMLFormElementWithState(already_AddRefed<nsINodeInfo> aNodeInfo);
+
+  /**
+   * Get the presentation state for a piece of content, or create it if it does
+   * not exist.  Generally used by SaveState().
+   */
+  nsPresState* GetPrimaryPresState();
+
+  /**
+   * Get the layout history object for a particular piece of content.
+   *
+   * @param aRead if true, won't return a layout history state if the
+   *              layout history state is empty.
+   * @return the history state object
+   */
+  already_AddRefed<nsILayoutHistoryState>
+    GetLayoutHistory(bool aRead);
+
+  /**
+   * Restore the state for a form control.  Ends up calling
+   * nsIFormControl::RestoreState().
+   *
+   * @return false if RestoreState() was not called, the return
+   *         value of RestoreState() otherwise.
+   */
+  bool RestoreFormControlState();
+
+  /**
+   * Called when we have been cloned and adopted, and the information of the
+   * node has been changed.
+   */
+  virtual void NodeInfoChanged(nsINodeInfo* aOldNodeInfo) MOZ_OVERRIDE;
+
+protected:
+  /* Generates the state key for saving the form state in the session if not
+     computed already. The result is stored in mStateKey on success */
+  nsresult GenerateStateKey();
+
+  /* Used to store the key to that element in the session. Is void until
+     GenerateStateKey has been used */
+  nsCString mStateKey;
+};
+
 //----------------------------------------------------------------------
 
 /**
@@ -1469,16 +1480,6 @@ protected:
   NS_INTERFACE_MAP_ENTRY_CONDITIONAL(_interface,                              \
                                      mNodeInfo->Equals(nsGkAtoms::_tag))
 
-
-#define NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO_GETTER(_getter) \
-  if (aIID.Equals(NS_GET_IID(nsIClassInfo)) ||               \
-      aIID.Equals(NS_GET_IID(nsXPCClassInfo))) {             \
-    foundInterface = _getter ();                             \
-    if (!foundInterface) {                                   \
-      *aInstancePtr = nullptr;                                \
-      return NS_ERROR_OUT_OF_MEMORY;                         \
-    }                                                        \
-  } else
 
 #define NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC                                \
   NS_IMETHOD GetId(nsAString& aId) MOZ_FINAL {                                 \
@@ -1720,7 +1721,6 @@ protected:
  * A macro to declare the NS_NewHTMLXXXElement() functions.
  */
 #define NS_DECLARE_NS_NEW_HTML_ELEMENT(_elementName)                       \
-class nsHTML##_elementName##Element;                                       \
 namespace mozilla {                                                        \
 namespace dom {                                                            \
 class HTML##_elementName##Element;                                         \
@@ -1738,55 +1738,6 @@ NS_NewHTML##_elementName##Element(already_AddRefed<nsINodeInfo> aNodeInfo, \
   return NS_NewHTMLSharedElement(aNodeInfo, aFromParser);                  \
 }
 
-namespace mozilla {
-namespace dom {
-
-// A helper struct to automatically detect whether HTMLFooElement is implemented
-// as nsHTMLFooElement or as mozilla::dom::HTMLFooElement by using SFINAE to
-// look for the InNavQuirksMode function (which lives on nsGenericHTMLElement)
-// on both types and using whichever one the substitution succeeds with.
-
-struct NewHTMLElementHelper
-{
-  template<typename V, V> struct SFINAE;
-  typedef bool (*InNavQuirksMode)(nsIDocument*);
-
-  template<typename T, typename U>
-  static nsGenericHTMLElement*
-  Create(already_AddRefed<nsINodeInfo> aNodeInfo,
-         SFINAE<InNavQuirksMode, T::InNavQuirksMode>* dummy=nullptr)
-  {
-    return new T(aNodeInfo);
-  }
-  template<typename T, typename U>
-  static nsGenericHTMLElement*
-  Create(already_AddRefed<nsINodeInfo> aNodeInfo,
-         SFINAE<InNavQuirksMode, U::InNavQuirksMode>* dummy=nullptr)
-  {
-    return new U(aNodeInfo);
-  }
-
-  template<typename T, typename U>
-  static nsGenericHTMLElement*
-  Create(already_AddRefed<nsINodeInfo> aNodeInfo,
-         mozilla::dom::FromParser aFromParser,
-         SFINAE<InNavQuirksMode, U::InNavQuirksMode>* dummy=nullptr)
-  {
-    return new U(aNodeInfo, aFromParser);
-  }
-  template<typename T, typename U>
-  static nsGenericHTMLElement*
-  Create(already_AddRefed<nsINodeInfo> aNodeInfo,
-         mozilla::dom::FromParser aFromParser,
-         SFINAE<InNavQuirksMode, T::InNavQuirksMode>* dummy=nullptr)
-  {
-    return new T(aNodeInfo, aFromParser);
-  }
-};
-
-}
-}
-
 /**
  * A macro to implement the NS_NewHTMLXXXElement() functions.
  */
@@ -1795,9 +1746,7 @@ nsGenericHTMLElement*                                                        \
 NS_NewHTML##_elementName##Element(already_AddRefed<nsINodeInfo> aNodeInfo,   \
                                   mozilla::dom::FromParser aFromParser)      \
 {                                                                            \
-  return mozilla::dom::NewHTMLElementHelper::                                \
-    Create<nsHTML##_elementName##Element,                                    \
-           mozilla::dom::HTML##_elementName##Element>(aNodeInfo);            \
+  return new mozilla::dom::HTML##_elementName##Element(aNodeInfo);           \
 }
 
 #define NS_IMPL_NS_NEW_HTML_ELEMENT_CHECK_PARSER(_elementName)               \
@@ -1805,10 +1754,8 @@ nsGenericHTMLElement*                                                        \
 NS_NewHTML##_elementName##Element(already_AddRefed<nsINodeInfo> aNodeInfo,   \
                                   mozilla::dom::FromParser aFromParser)      \
 {                                                                            \
-  return mozilla::dom::NewHTMLElementHelper::                                \
-    Create<nsHTML##_elementName##Element,                                    \
-           mozilla::dom::HTML##_elementName##Element>(aNodeInfo,             \
-                                                      aFromParser);          \
+  return new mozilla::dom::HTML##_elementName##Element(aNodeInfo,            \
+                                                       aFromParser);         \
 }
 
 // Here, we expand 'NS_DECLARE_NS_NEW_HTML_ELEMENT()' by hand.

@@ -24,6 +24,7 @@
 #include "nsLayoutUtils.h"
 #include "nsINameSpaceManager.h"
 #include "nsIContent.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/Element.h"
 #include "nsIFrame.h"
 #include "nsView.h"
@@ -99,7 +100,7 @@ MutationBitForEventType(uint32_t aEventType)
   return 0;
 }
 
-uint32_t nsEventListenerManager::sCreatedCount = 0;
+uint32_t nsEventListenerManager::sMainThreadCreatedCount = 0;
 
 nsEventListenerManager::nsEventListenerManager(EventTarget* aTarget) :
   mMayHavePaintEventListener(false),
@@ -115,7 +116,9 @@ nsEventListenerManager::nsEventListenerManager(EventTarget* aTarget) :
 {
   NS_ASSERTION(aTarget, "unexpected null pointer");
 
-  ++sCreatedCount;
+  if (NS_IsMainThread()) {
+    ++sMainThreadCreatedCount;
+  }
 }
 
 nsEventListenerManager::~nsEventListenerManager() 
@@ -160,9 +163,25 @@ ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
                             const char* aName,
                             unsigned aFlags)
 {
-  CycleCollectionNoteChild(aCallback, aField.mListener.GetISupports(), aName,
-                           aFlags);
+  if (MOZ_UNLIKELY(aCallback.WantDebugInfo())) {
+    nsAutoCString name;
+    name.AppendASCII(aName);
+    if (aField.mTypeAtom) {
+      name.AppendASCII(" event=");
+      name.Append(nsAtomCString(aField.mTypeAtom));
+      name.AppendASCII(" listenerType=");
+      name.AppendInt(aField.mListenerType);
+      name.AppendASCII(" ");
+    }
+    CycleCollectionNoteChild(aCallback, aField.mListener.GetISupports(), name.get(),
+                             aFlags);
+  } else {
+    CycleCollectionNoteChild(aCallback, aField.mListener.GetISupports(), aName,
+                             aFlags);
+  }
 }
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsEventListenerManager)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsEventListenerManager)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mListeners)
@@ -888,7 +907,9 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
     JS::Rooted<JSObject*> boundHandler(cx);
     JS::Rooted<JSObject*> scope(cx, listener->GetEventScope());
     context->BindCompiledEventHandler(mTarget, scope, handler, &boundHandler);
-    if (listener->EventName() == nsGkAtoms::onerror && win) {
+    if (!boundHandler) {
+      listener->ForgetHandler();
+    } else if (listener->EventName() == nsGkAtoms::onerror && win) {
       nsRefPtr<OnErrorEventHandlerNonNull> handlerCallback =
         new OnErrorEventHandlerNonNull(boundHandler);
       listener->SetHandler(handlerCallback);
@@ -1275,7 +1296,7 @@ nsEventListenerManager::GetEventHandlerInternal(nsIAtom *aEventName)
 }
 
 size_t
-nsEventListenerManager::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+nsEventListenerManager::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf)
   const
 {
   size_t n = aMallocSizeOf(this);

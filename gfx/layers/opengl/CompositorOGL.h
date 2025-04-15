@@ -24,7 +24,7 @@ class GLManagerCompositor;
 class CompositorOGL : public Compositor
 {
   typedef mozilla::gl::GLContext GLContext;
-  typedef mozilla::gl::ShaderProgramType ProgramType;
+  typedef ShaderProgramType ProgramType;
   
   friend class GLManagerCompositor;
 
@@ -34,6 +34,9 @@ public:
 
   virtual ~CompositorOGL();
 
+  virtual TemporaryRef<DataTextureSource>
+  CreateDataTextureSource(TextureFlags aFlags = 0) MOZ_OVERRIDE;
+
   virtual bool Initialize() MOZ_OVERRIDE;
 
   virtual void Destroy() MOZ_OVERRIDE;
@@ -41,6 +44,7 @@ public:
   virtual TextureFactoryIdentifier GetTextureFactoryIdentifier() MOZ_OVERRIDE
   {
     return TextureFactoryIdentifier(LAYERS_OPENGL,
+                                    XRE_GetProcessType(),
                                     GetMaxTextureSize(),
                                     mFBOTextureTarget == LOCAL_GL_TEXTURE_2D,
                                     SupportsPartialTextureUpdate());
@@ -130,9 +134,12 @@ public:
   }
 
   GLContext* gl() const { return mGLContext; }
-  gl::ShaderProgramType GetFBOLayerProgramType() const {
+  ShaderProgramType GetFBOLayerProgramType() const {
     return mFBOTextureTarget == LOCAL_GL_TEXTURE_RECTANGLE_ARB ?
-           gl::RGBARectLayerProgramType : gl::RGBALayerProgramType;
+           RGBARectLayerProgramType : RGBALayerProgramType;
+  }
+  gfx::SurfaceFormat GetFBOFormat() const {
+    return gfx::FORMAT_R8G8B8A8;
   }
 
   /**
@@ -216,7 +223,7 @@ private:
                           gfx::Rect *aClipRectOut = nullptr,
                           gfx::Rect *aRenderBoundsOut = nullptr) MOZ_OVERRIDE;
 
-  gl::ShaderProgramType GetProgramTypeForEffect(Effect* aEffect) const;
+  ShaderProgramType GetProgramTypeForEffect(Effect* aEffect) const;
 
   /**
    * Updates all layer programs with a new projection matrix.
@@ -227,9 +234,9 @@ private:
    * Helper method for Initialize, creates all valid variations of a program
    * and adds them to mPrograms
    */
-  void AddPrograms(gl::ShaderProgramType aType);
+  void AddPrograms(ShaderProgramType aType);
 
-  ShaderProgramOGL* GetProgram(gl::ShaderProgramType aType,
+  ShaderProgramOGL* GetProgram(ShaderProgramType aType,
                                MaskType aMask = MaskNone) {
     MOZ_ASSERT(ProgramProfileOGL::ProgramExists(aType, aMask),
                "Invalid program type.");
@@ -331,7 +338,6 @@ private:
   // The index of the texture in this array must correspond to the texture unit.
   nsTArray<GLuint> mTextures;
   static bool sDrawFPS;
-  static bool sFrameCounter;
 };
 
 }

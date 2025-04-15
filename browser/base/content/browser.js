@@ -9,6 +9,9 @@ let Cu = Components.utils;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource:///modules/RecentWindow.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "Task",
+                                  "resource://gre/modules/Task.jsm");
+
 const nsIWebNavigation = Ci.nsIWebNavigation;
 
 var gCharsetMenu = null;
@@ -46,20 +49,13 @@ var gEditUIVisible = true;
 
 // Smart getter for the findbar.  If you don't wish to force the creation of
 // the findbar, check gFindBarInitialized first.
-var gFindBarInitialized = false;
-XPCOMUtils.defineLazyGetter(window, "gFindBar", function() {
-  let XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
-  let findbar = document.createElementNS(XULNS, "findbar");
-  findbar.id = "FindToolbar";
 
-  let browserBottomBox = document.getElementById("browser-bottombox");
-  browserBottomBox.insertBefore(findbar, browserBottomBox.firstChild);
+this.__defineGetter__("gFindBar", function() {
+  return window.gBrowser.getFindBar();
+});
 
-  // Force a style flush to ensure that our binding is attached.
-  findbar.clientTop;
-  findbar.browser = gBrowser;
-  window.gFindBarInitialized = true;
-  return findbar;
+this.__defineGetter__("gFindBarInitialized", function() {
+  return window.gBrowser.isFindBarInitialized();
 });
 
 XPCOMUtils.defineLazyGetter(this, "gPrefService", function() {
@@ -138,11 +134,15 @@ XPCOMUtils.defineLazyModuleGetter(this, "gBrowserNewTabPreloader",
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "SitePermissions",
+  "resource:///modules/SitePermissions.jsm");
+
 let gInitialPages = [
   "about:blank",
   "about:newtab",
   "about:home",
   "about:privatebrowsing",
+  "about:welcomeback",
   "about:sessionrestore"
 ];
 
@@ -806,21 +806,14 @@ var gBrowserInit = {
     // setup our common DOMLinkAdded listener
     gBrowser.addEventListener("DOMLinkAdded", DOMLinkHandler, false);
 
-    // setup our MozApplicationManifest listener
-    gBrowser.addEventListener("MozApplicationManifest",
-                              OfflineApps, false);
-    // listen for offline apps on social
-    let socialBrowser = document.getElementById("social-sidebar-browser");
-    socialBrowser.addEventListener("MozApplicationManifest",
-                              OfflineApps, false);
-
     // setup simple gestures support
     gGestureSupport.init(true);
 
     // setup history swipe animation
     gHistorySwipeAnimation.init();
 
-    if (window.opener && !window.opener.closed) {
+    if (window.opener && !window.opener.closed &&
+        PrivateBrowsingUtils.isWindowPrivate(window) == PrivateBrowsingUtils.isWindowPrivate(window.opener)) {
       let openerSidebarBox = window.opener.document.getElementById("sidebar-box");
       // If the opener had a sidebar, open the same sidebar in our window.
       // The opener can be the hidden window too, if we're coming from the state
@@ -960,6 +953,17 @@ var gBrowserInit = {
 
     this._cancelDelayedStartup();
 
+    // We need to set the MozApplicationManifest event listeners up
+    // before we start loading the home pages in case a document has
+    // a "manifest" attribute, in which the MozApplicationManifest event
+    // will be fired.
+    gBrowser.addEventListener("MozApplicationManifest",
+                              OfflineApps, false);
+    // listen for offline apps on social
+    let socialBrowser = document.getElementById("social-sidebar-browser");
+    socialBrowser.addEventListener("MozApplicationManifest",
+                              OfflineApps, false);
+
     let uriToLoad = this._getUriToLoad();
     var isLoadingBlank = isBlankPageURL(uriToLoad);
 
@@ -1028,7 +1032,6 @@ var gBrowserInit = {
     OfflineApps.init();
     IndexedDBPromptHelper.init();
     gFormSubmitObserver.init();
-    SocialUI.init();
     AddonManager.addAddonListener(AddonsMgrListener);
     WebrtcIndicator.init();
 
@@ -1089,12 +1092,7 @@ var gBrowserInit = {
 
     // initialize the session-restore service (in case it's not already running)
     let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
-    ss.init(window);
-
-    // Enable the Restore Last Session command if needed
-    if (ss.canRestoreLastSession &&
-        !PrivateBrowsingUtils.isWindowPrivate(window))
-      goSetCommandEnabled("Browser:RestoreLastSession", true);
+    let ssPromise = ss.init(window);
 
     PlacesToolbarHelper.init();
 
@@ -1107,7 +1105,15 @@ var gBrowserInit = {
     // If the user manually opens the download manager before the timeout, the
     // downloads will start right away, and getting the service again won't hurt.
     setTimeout(function() {
-      Services.downloads;
+      let DownloadsCommon =
+        Cu.import("resource:///modules/DownloadsCommon.jsm", {}).DownloadsCommon;
+      if (DownloadsCommon.useJSTransfer) {
+        // Open the data link without initalizing nsIDownloadManager.
+        DownloadsCommon.initializeAllDataLinks();
+      } else {
+        // Initalizing nsIDownloadManager will trigger the data link.
+        Services.downloads;
+      }
       let DownloadTaskbarProgress =
         Cu.import("resource://gre/modules/DownloadTaskbarProgress.jsm", {}).DownloadTaskbarProgress;
       DownloadTaskbarProgress.onBrowserWindowLoad(window);
@@ -1157,7 +1163,6 @@ var gBrowserInit = {
 #endif
 
     gBrowserThumbnails.init();
-    TabView.init();
 
     setUrlAndSearchBarWidthForConditionalForwardButton();
     window.addEventListener("resize", function resizeHandler(event) {
@@ -1272,8 +1277,19 @@ var gBrowserInit = {
 #endif
 #endif
 
+    ssPromise.then(() =>{
+      // Enable the Restore Last Session command if needed
+      if (ss.canRestoreLastSession &&
+          !PrivateBrowsingUtils.isWindowPrivate(window))
+        goSetCommandEnabled("Browser:RestoreLastSession", true);
+
+      TabView.init();
+      SocialUI.init();
+
+      setTimeout(function () { BrowserChromeTest.markAsReady(); }, 0);
+    });
+
     Services.obs.notifyObservers(window, "browser-delayed-startup-finished", "");
-    setTimeout(function () { BrowserChromeTest.markAsReady(); }, 0);
     TelemetryTimestamps.add("delayedStartupFinished");
   },
 
@@ -1942,88 +1958,89 @@ function loadURI(uri, referrer, postData, allowThirdPartyFixup) {
   } catch (e) {}
 }
 
-function getShortcutOrURI(aURL, aPostDataRef, aMayInheritPrincipal) {
-  // Initialize outparam to false
-  if (aMayInheritPrincipal)
-    aMayInheritPrincipal.value = false;
+function getShortcutOrURIAndPostData(aURL) {
+  return Task.spawn(function() {
+    let mayInheritPrincipal = false;
+    let postData = null;
+    let shortcutURL = null;
+    let keyword = aURL;
+    let param = "";
 
-  var shortcutURL = null;
-  var keyword = aURL;
-  var param = "";
-
-  var offset = aURL.indexOf(" ");
-  if (offset > 0) {
-    keyword = aURL.substr(0, offset);
-    param = aURL.substr(offset + 1);
-  }
-
-  if (!aPostDataRef)
-    aPostDataRef = {};
-
-  var engine = Services.search.getEngineByAlias(keyword);
-  if (engine) {
-    var submission = engine.getSubmission(param);
-    aPostDataRef.value = submission.postData;
-    return submission.uri.spec;
-  }
-
-  [shortcutURL, aPostDataRef.value] =
-    PlacesUtils.getURLAndPostDataForKeyword(keyword);
-
-  if (!shortcutURL)
-    return aURL;
-
-  var postData = "";
-  if (aPostDataRef.value)
-    postData = unescape(aPostDataRef.value);
-
-  if (/%s/i.test(shortcutURL) || /%s/i.test(postData)) {
-    var charset = "";
-    const re = /^(.*)\&mozcharset=([a-zA-Z][_\-a-zA-Z0-9]+)\s*$/;
-    var matches = shortcutURL.match(re);
-    if (matches)
-      [, shortcutURL, charset] = matches;
-    else {
-      // Try to get the saved character-set.
-      try {
-        // makeURI throws if URI is invalid.
-        // Will return an empty string if character-set is not found.
-        charset = PlacesUtils.history.getCharsetForURI(makeURI(shortcutURL));
-      } catch (e) {}
+    let offset = aURL.indexOf(" ");
+    if (offset > 0) {
+      keyword = aURL.substr(0, offset);
+      param = aURL.substr(offset + 1);
     }
 
-    // encodeURIComponent produces UTF-8, and cannot be used for other charsets.
-    // escape() works in those cases, but it doesn't uri-encode +, @, and /.
-    // Therefore we need to manually replace these ASCII characters by their
-    // encodeURIComponent result, to match the behavior of nsEscape() with
-    // url_XPAlphas
-    var encodedParam = "";
-    if (charset && charset != "UTF-8")
-      encodedParam = escape(convertFromUnicode(charset, param)).
-                     replace(/[+@\/]+/g, encodeURIComponent);
-    else // Default charset is UTF-8
-      encodedParam = encodeURIComponent(param);
+    let engine = Services.search.getEngineByAlias(keyword);
+    if (engine) {
+      let submission = engine.getSubmission(param);
+      postData = submission.postData;
+      throw new Task.Result({ postData: submission.postData,
+                              url: submission.uri.spec,
+                              mayInheritPrincipal: mayInheritPrincipal });
+    }
 
-    shortcutURL = shortcutURL.replace(/%s/g, encodedParam).replace(/%S/g, param);
+    [shortcutURL, postData] =
+      PlacesUtils.getURLAndPostDataForKeyword(keyword);
 
-    if (/%s/i.test(postData)) // POST keyword
-      aPostDataRef.value = getPostDataStream(postData, param, encodedParam,
-                                             "application/x-www-form-urlencoded");
-  }
-  else if (param) {
-    // This keyword doesn't take a parameter, but one was provided. Just return
-    // the original URL.
-    aPostDataRef.value = null;
+    if (!shortcutURL)
+      throw new Task.Result({ postData: postData, url: aURL,
+                              mayInheritPrincipal: mayInheritPrincipal });
 
-    return aURL;
-  }
+    let escapedPostData = "";
+    if (postData)
+      escapedPostData = unescape(postData);
 
-  // This URL came from a bookmark, so it's safe to let it inherit the current
-  // document's principal.
-  if (aMayInheritPrincipal)
-    aMayInheritPrincipal.value = true;
+    if (/%s/i.test(shortcutURL) || /%s/i.test(escapedPostData)) {
+      let charset = "";
+      const re = /^(.*)\&mozcharset=([a-zA-Z][_\-a-zA-Z0-9]+)\s*$/;
+      let matches = shortcutURL.match(re);
+      if (matches)
+        [, shortcutURL, charset] = matches;
+      else {
+        // Try to get the saved character-set.
+        try {
+          // makeURI throws if URI is invalid.
+          // Will return an empty string if character-set is not found.
+          charset = yield PlacesUtils.getCharsetForURI(makeURI(shortcutURL));
+        } catch (e) {}
+      }
 
-  return shortcutURL;
+      // encodeURIComponent produces UTF-8, and cannot be used for other charsets.
+      // escape() works in those cases, but it doesn't uri-encode +, @, and /.
+      // Therefore we need to manually replace these ASCII characters by their
+      // encodeURIComponent result, to match the behavior of nsEscape() with
+      // url_XPAlphas
+      let encodedParam = "";
+      if (charset && charset != "UTF-8")
+        encodedParam = escape(convertFromUnicode(charset, param)).
+                       replace(/[+@\/]+/g, encodeURIComponent);
+      else // Default charset is UTF-8
+        encodedParam = encodeURIComponent(param);
+
+      shortcutURL = shortcutURL.replace(/%s/g, encodedParam).replace(/%S/g, param);
+
+      if (/%s/i.test(escapedPostData)) // POST keyword
+        postData = getPostDataStream(escapedPostData, param, encodedParam,
+                                               "application/x-www-form-urlencoded");
+    }
+    else if (param) {
+      // This keyword doesn't take a parameter, but one was provided. Just return
+      // the original URL.
+      postData = null;
+
+      throw new Task.Result({ postData: postData, url: aURL,
+                              mayInheritPrincipal: mayInheritPrincipal });
+    }
+
+    // This URL came from a bookmark, so it's safe to let it inherit the current
+    // document's principal.
+    mayInheritPrincipal = true;
+
+    throw new Task.Result({ postData: postData, url: shortcutURL,
+                            mayInheritPrincipal: mayInheritPrincipal });
+  });
 }
 
 function getPostDataStream(aStringData, aKeyword, aEncKeyword, aType) {
@@ -2300,11 +2317,12 @@ function BrowserOnAboutPageLoad(doc) {
     if (getBoolPref("browser.aboutHome.apps", false))
       doc.getElementById("apps").removeAttribute("hidden");
 
-    let ss = Components.classes["@mozilla.org/browser/sessionstore;1"].
-             getService(Components.interfaces.nsISessionStore);
-    if (ss.canRestoreLastSession &&
-        !PrivateBrowsingUtils.isWindowPrivate(window))
-      doc.getElementById("launcher").setAttribute("session", "true");
+    let ss = Cu.import("resource:///modules/sessionstore/SessionStore.jsm", {}).SessionStore;
+    ss.promiseInitialized.then(() => {
+      if (ss.canRestoreLastSession &&
+          !PrivateBrowsingUtils.isWindowPrivate(window))
+        doc.getElementById("launcher").setAttribute("session", "true");
+    }).then(null, Cu.reportError);
 
     // Inject search engine and snippets URL.
     let docElt = doc.documentElement;
@@ -2319,12 +2337,14 @@ function BrowserOnAboutPageLoad(doc) {
     }
     docElt.setAttribute("snippetsVersion", AboutHomeUtils.snippetsVersion);
 
-    function updateSearchEngine() {
+    let updateSearchEngine = function() {
       let engine = AboutHomeUtils.defaultSearchEngine;
       docElt.setAttribute("searchEngineName", engine.name);
       docElt.setAttribute("searchEnginePostData", engine.postDataString || "");
+      // Again, keep the searchEngineURL as the last attribute, because the
+      // mutation observer in aboutHome.js is counting on that.
       docElt.setAttribute("searchEngineURL", engine.searchURL);
-    }
+    };
     updateSearchEngine();
 
     // Listen for the event that's triggered when the user changes search engine.
@@ -2861,12 +2881,13 @@ var newTabButtonObserver = {
   onDrop: function (aEvent)
   {
     let url = browserDragAndDrop.drop(aEvent, { });
-    var postData = {};
-    url = getShortcutOrURI(url, postData);
-    if (url) {
-      // allow third-party services to fixup this URL
-      openNewTabWith(url, null, postData.value, aEvent, true);
-    }
+    Task.spawn(function() {
+      let data = yield getShortcutOrURIAndPostData(url);
+      if (data.url) {
+        // allow third-party services to fixup this URL
+        openNewTabWith(data.url, null, data.postData, aEvent, true);
+      }
+    });
   }
 }
 
@@ -2881,12 +2902,13 @@ var newWindowButtonObserver = {
   onDrop: function (aEvent)
   {
     let url = browserDragAndDrop.drop(aEvent, { });
-    var postData = {};
-    url = getShortcutOrURI(url, postData);
-    if (url) {
-      // allow third-party services to fixup this URL
-      openNewWindowWith(url, null, postData.value, true);
-    }
+    Task.spawn(function() {
+      let data = yield getShortcutOrURIAndPostData(url);
+      if (data.url) {
+        // allow third-party services to fixup this URL
+        openNewWindowWith(data.url, null, data.postData, true);
+      }
+    });
   }
 }
 
@@ -2998,8 +3020,7 @@ const DOMLinkHandler = {
             type = type.replace(/^\s+|\s*(?:;.*)?$/g, "");
 
             if (type == "application/opensearchdescription+xml" && link.title &&
-                /^(?:https?|ftp):/i.test(link.href) &&
-                !PrivateBrowsingUtils.isWindowPrivate(window)) {
+                /^(?:https?|ftp):/i.test(link.href)) {
               var engine = { title: link.title, href: link.href };
               BrowserSearch.addEngine(engine, link.ownerDocument);
               searchAdded = true;
@@ -3670,8 +3691,7 @@ var XULBrowserWindow = {
     return this.reloadCommand = document.getElementById("Browser:Reload");
   },
   get statusTextField () {
-    delete this.statusTextField;
-    return this.statusTextField = document.getElementById("statusbar-display");
+    return gBrowser.getStatusPanel();
   },
   get isImage () {
     delete this.isImage;
@@ -3681,14 +3701,8 @@ var XULBrowserWindow = {
   init: function () {
     this.throbberElement = document.getElementById("navigator-throbber");
 
-    // Bug 666809 - SecurityUI support for e10s
-    if (gMultiProcessBrowser)
-      return;
-
-    // Initialize the security button's state and tooltip text.  Remember to reset
-    // _hostChanged, otherwise onSecurityChange will short circuit.
+    // Initialize the security button's state and tooltip text.
     var securityUI = gBrowser.securityUI;
-    this._hostChanged = true;
     this.onSecurityChange(null, null, securityUI.state);
   },
 
@@ -3697,7 +3711,6 @@ var XULBrowserWindow = {
     delete this.throbberElement;
     delete this.stopCommand;
     delete this.reloadCommand;
-    delete this.statusTextField;
     delete this.statusText;
   },
 
@@ -3879,7 +3892,6 @@ var XULBrowserWindow = {
 
   onLocationChange: function (aWebProgress, aRequest, aLocationURI, aFlags) {
     var location = aLocationURI ? aLocationURI.spec : "";
-    this._hostChanged = true;
 
     // Hide the form invalid popup.
     if (gFormSubmitObserver.panel) {
@@ -3935,8 +3947,10 @@ var XULBrowserWindow = {
 
         // Update starring UI
         BookmarkingUI.updateStarState();
-        SocialMark.updateMarkState();
-        SocialShare.update();
+        if (SocialUI.enabled) {
+          SocialMark.updateMarkState();
+          SocialShare.update();
+        }
       }
 
       // Show or hide browser chrome based on the whitelist
@@ -3966,16 +3980,7 @@ var XULBrowserWindow = {
           else
             elt.removeAttribute("disabled");
         }
-        if (gFindBarInitialized) {
-          if (!gFindBar.hidden && aDisable) {
-            gFindBar.hidden = true;
-            this._findbarTemporarilyHidden = true;
-          } else if (this._findbarTemporarilyHidden && !aDisable) {
-            gFindBar.hidden = false;
-            this._findbarTemporarilyHidden = false;
-          }
-        }
-      }.bind(this);
+      }
 
       var onContentRSChange = function onContentRSChange(e) {
         if (e.target.readyState != "interactive" && e.target.readyState != "complete")
@@ -3999,16 +4004,6 @@ var XULBrowserWindow = {
         }
       } else
         disableFindCommands(false);
-
-      if (gFindBarInitialized) {
-        if (gFindBar.findMode != gFindBar.FIND_NORMAL) {
-          // Close the Find toolbar if we're in old-style TAF mode
-          gFindBar.close();
-        }
-
-        // fix bug 253793 - turn off highlight when page changes
-        gFindBar.getElement("highlight").checked = false;
-      }
     }
     UpdateBackForwardCommands(gBrowser.webNavigation);
 
@@ -4040,37 +4035,18 @@ var XULBrowserWindow = {
 
   // Properties used to cache security state used to update the UI
   _state: null,
-  _hostChanged: false, // onLocationChange will flip this bit
+  _lastLocation: null,
 
   onSecurityChange: function (aWebProgress, aRequest, aState) {
     // Don't need to do anything if the data we use to update the UI hasn't
     // changed
+    let uri = gBrowser.currentURI;
+    let spec = uri.spec;
     if (this._state == aState &&
-        !this._hostChanged) {
-#ifdef DEBUG
-      try {
-        var contentHost = gBrowser.contentWindow.location.host;
-        if (this._host !== undefined && this._host != contentHost) {
-            Components.utils.reportError(
-              "ASSERTION: browser.js host is inconsistent. Content window has " +
-              "<" + contentHost + "> but cached host is <" + this._host + ">.\n"
-            );
-        }
-      } catch (ex) {}
-#endif
+        this._lastLocation == spec)
       return;
-    }
     this._state = aState;
-
-#ifdef DEBUG
-    try {
-      this._host = gBrowser.contentWindow.location.host;
-    } catch(ex) {
-      this._host = null;
-    }
-#endif
-
-    this._hostChanged = false;
+    this._lastLocation = spec;
 
     // aState is defined as a bitmask that may be extended in the future.
     // We filter out any unknown bits before testing for known values.
@@ -4099,26 +4075,10 @@ var XULBrowserWindow = {
         gURLBar.removeAttribute("level");
     }
 
-    if (gMultiProcessBrowser)
-      return;
-
-    // Don't pass in the actual location object, since it can cause us to
-    // hold on to the window object too long.  Just pass in the fields we
-    // care about. (bug 424829)
-    var location = gBrowser.contentWindow.location;
-    var locationObj = {};
     try {
-      // about:blank can be used by webpages so pretend it is http
-      locationObj.protocol = location == "about:blank" ? "http:" : location.protocol;
-      locationObj.host = location.host;
-      locationObj.hostname = location.hostname;
-      locationObj.port = location.port;
-    } catch (ex) {
-      // Can sometimes throw if the URL being visited has no host/hostname,
-      // e.g. about:blank. The _state for these pages means we won't need these
-      // properties anyways, though.
-    }
-    gIdentityHandler.checkIdentity(this._state, locationObj);
+      uri = Services.uriFixup.createExposableURI(uri);
+    } catch (e) {}
+    gIdentityHandler.checkIdentity(this._state, uri);
   },
 
   // simulate all change notifications after switching tabs
@@ -4506,6 +4466,10 @@ nsBrowserAccess.prototype = {
 
   isTabContentWindow: function (aWindow) {
     return gBrowser.browsers.some(function (browser) browser.contentWindow == aWindow);
+  },
+
+  get contentWindow() {
+    return gBrowser.contentWindow;
   }
 }
 
@@ -5257,36 +5221,52 @@ function middleMousePaste(event) {
   // bar's behavior (stripsurroundingwhitespace)
   clipboard = clipboard.replace(/\s*\n\s*/g, "");
 
-  let mayInheritPrincipal = { value: false };
-  let url = getShortcutOrURI(clipboard, mayInheritPrincipal);
-  try {
-    makeURI(url);
-  } catch (ex) {
-    // Not a valid URI.
-    return;
+  // if it's not the current tab, we don't need to do anything because the 
+  // browser doesn't exist.
+  let where = whereToOpenLink(event, true, false);
+  let lastLocationChange;
+  if (where == "current") {
+    lastLocationChange = gBrowser.selectedBrowser.lastLocationChange;
   }
 
-  try {
-    addToUrlbarHistory(url);
-  } catch (ex) {
-    // Things may go wrong when adding url to session history,
-    // but don't let that interfere with the loading of the url.
-    Cu.reportError(ex);
-  }
+  Task.spawn(function() {
+    let data = yield getShortcutOrURIAndPostData(clipboard);
+    try {
+      makeURI(data.url);
+    } catch (ex) {
+      // Not a valid URI.
+      return;
+    }
 
-  openUILink(url, event,
-             { ignoreButton: true,
-               disallowInheritPrincipal: !mayInheritPrincipal.value });
+    try {
+      addToUrlbarHistory(data.url);
+    } catch (ex) {
+      // Things may go wrong when adding url to session history,
+      // but don't let that interfere with the loading of the url.
+      Cu.reportError(ex);
+    }
+
+    if (where != "current" ||
+        lastLocationChange == gBrowser.selectedBrowser.lastLocationChange) {
+      openUILink(data.url, event,
+                 { ignoreButton: true,
+                   disallowInheritPrincipal: !data.mayInheritPrincipal });
+    }
+  });
 
   event.stopPropagation();
 }
 
 function handleDroppedLink(event, url, name)
 {
-  let postData = { };
-  let uri = getShortcutOrURI(url, postData);
-  if (uri)
-    loadURI(uri, null, postData.value, false);
+  let lastLocationChange = gBrowser.selectedBrowser.lastLocationChange;
+
+  Task.spawn(function() {
+    let data = yield getShortcutOrURIAndPostData(url);
+    if (data.url &&
+        lastLocationChange == gBrowser.selectedBrowser.lastLocationChange)
+      loadURI(data.url, null, data.postData, false);
+  });
 
   // Keep the event from being handled by the dragDrop listeners
   // built-in to gecko if they happen to be above us.
@@ -5408,7 +5388,6 @@ function charsetLoadListener() {
     gLastBrowserCharset = charset;
   }
 }
-
 
 var gPageStyleMenu = {
 
@@ -6187,17 +6166,15 @@ function BrowserOpenAddonsMgr(aView) {
   }
 }
 
-function AddKeywordForSearchField() {
-  var node = document.popupNode;
-
+function GetSearchFieldBookmarkData(node) {
   var charset = node.ownerDocument.characterSet;
 
-  var docURI = makeURI(node.ownerDocument.URL,
-                       charset);
+  var formBaseURI = makeURI(node.form.baseURI,
+                            charset);
 
   var formURI = makeURI(node.form.getAttribute("action"),
                         charset,
-                        docURI);
+                        formBaseURI);
 
   var spec = formURI.spec;
 
@@ -6252,14 +6229,27 @@ function AddKeywordForSearchField() {
   else
     spec += "?" + formData.join("&");
 
+  return {
+    spec: spec,
+    title: title,
+    description: description,
+    postData: postData,
+    charSet: charset
+  };
+}
+
+
+function AddKeywordForSearchField() {
+  bookmarkData = GetSearchFieldBookmarkData(document.popupNode);
+
   PlacesUIUtils.showBookmarkDialog({ action: "add"
                                    , type: "bookmark"
-                                   , uri: makeURI(spec)
-                                   , title: title
-                                   , description: description
+                                   , uri: makeURI(bookmarkData.spec)
+                                   , title: bookmarkData.title
+                                   , description: bookmarkData.description
                                    , keyword: ""
-                                   , postData: postData
-                                   , charSet: charset
+                                   , postData: bookmarkData.postData
+                                   , charSet: bookmarkData.charset
                                    , hiddenRows: [ "location"
                                                  , "description"
                                                  , "tags"
@@ -6381,16 +6371,17 @@ function formatURL(aFormat, aIsPref) {
  */
 var gIdentityHandler = {
   // Mode strings used to control CSS display
-  IDENTITY_MODE_IDENTIFIED       : "verifiedIdentity", // High-quality identity information
-  IDENTITY_MODE_DOMAIN_VERIFIED  : "verifiedDomain",   // Minimal SSL CA-signed domain verification
-  IDENTITY_MODE_UNKNOWN          : "unknownIdentity",  // No trusted identity information
-  IDENTITY_MODE_MIXED_CONTENT    : "unknownIdentity mixedContent",  // SSL with unauthenticated content
-  IDENTITY_MODE_MIXED_ACTIVE_CONTENT    : "unknownIdentity mixedContent mixedActiveContent",  // SSL with unauthenticated content
-  IDENTITY_MODE_CHROMEUI         : "chromeUI",         // Part of the product's UI
+  IDENTITY_MODE_IDENTIFIED                             : "verifiedIdentity", // High-quality identity information
+  IDENTITY_MODE_DOMAIN_VERIFIED                        : "verifiedDomain",   // Minimal SSL CA-signed domain verification
+  IDENTITY_MODE_UNKNOWN                                : "unknownIdentity",  // No trusted identity information
+  IDENTITY_MODE_MIXED_DISPLAY_LOADED                   : "unknownIdentity mixedContent mixedDisplayContent",  // SSL with unauthenticated display content
+  IDENTITY_MODE_MIXED_ACTIVE_LOADED                    : "unknownIdentity mixedContent mixedActiveContent",  // SSL with unauthenticated active (and perhaps also display) content
+  IDENTITY_MODE_MIXED_DISPLAY_LOADED_ACTIVE_BLOCKED    : "unknownIdentity mixedContent",  // SSL with unauthenticated display content; unauthenticated active content is blocked.
+  IDENTITY_MODE_CHROMEUI                               : "chromeUI",         // Part of the product's UI
 
   // Cache the most recent SSLStatus and Location seen in checkIdentity
   _lastStatus : null,
-  _lastLocation : null,
+  _lastUri : null,
   _mode : "unknownIdentity",
 
   // smart getters
@@ -6398,15 +6389,17 @@ var gIdentityHandler = {
     delete this._encryptionLabel;
     this._encryptionLabel = {};
     this._encryptionLabel[this.IDENTITY_MODE_DOMAIN_VERIFIED] =
-      gNavigatorBundle.getString("identity.encrypted");
+      gNavigatorBundle.getString("identity.encrypted2");
     this._encryptionLabel[this.IDENTITY_MODE_IDENTIFIED] =
-      gNavigatorBundle.getString("identity.encrypted");
+      gNavigatorBundle.getString("identity.encrypted2");
     this._encryptionLabel[this.IDENTITY_MODE_UNKNOWN] =
       gNavigatorBundle.getString("identity.unencrypted");
-    this._encryptionLabel[this.IDENTITY_MODE_MIXED_CONTENT] =
-      gNavigatorBundle.getString("identity.mixed_content");
-    this._encryptionLabel[this.IDENTITY_MODE_MIXED_ACTIVE_CONTENT] =
-      gNavigatorBundle.getString("identity.mixed_content");
+    this._encryptionLabel[this.IDENTITY_MODE_MIXED_DISPLAY_LOADED] =
+      gNavigatorBundle.getString("identity.mixed_display_loaded");
+    this._encryptionLabel[this.IDENTITY_MODE_MIXED_ACTIVE_LOADED] =
+      gNavigatorBundle.getString("identity.mixed_active_loaded2");
+    this._encryptionLabel[this.IDENTITY_MODE_MIXED_DISPLAY_LOADED_ACTIVE_BLOCKED] =
+      gNavigatorBundle.getString("identity.mixed_display_loaded_active_blocked");
     return this._encryptionLabel;
   },
   get _identityPopup () {
@@ -6421,6 +6414,11 @@ var gIdentityHandler = {
     delete this._identityPopupContentBox;
     return this._identityPopupContentBox =
       document.getElementById("identity-popup-content-box");
+  },
+  get _identityPopupChromeLabel () {
+    delete this._identityPopupChromeLabel;
+    return this._identityPopupChromeLabel =
+      document.getElementById("identity-popup-chromeLabel");
   },
   get _identityPopupContentHost () {
     delete this._identityPopupContentHost;
@@ -6464,6 +6462,14 @@ var gIdentityHandler = {
     delete this._identityIcon;
     return this._identityIcon = document.getElementById("page-proxy-favicon");
   },
+  get _permissionsContainer () {
+    delete this._permissionsContainer;
+    return this._permissionsContainer = document.getElementById("identity-popup-permissions");
+  },
+  get _permissionList () {
+    delete this._permissionList;
+    return this._permissionList = document.getElementById("identity-popup-permission-list");
+  },
 
   /**
    * Rebuild cache of the elements that may or may not exist depending
@@ -6474,10 +6480,14 @@ var gIdentityHandler = {
     delete this._identityIconLabel;
     delete this._identityIconCountryLabel;
     delete this._identityIcon;
+    delete this._permissionsContainer;
+    delete this._permissionList;
     this._identityBox = document.getElementById("identity-box");
     this._identityIconLabel = document.getElementById("identity-icon-label");
     this._identityIconCountryLabel = document.getElementById("identity-icon-country-label");
     this._identityIcon = document.getElementById("page-proxy-favicon");
+    this._permissionsContainer = document.getElementById("identity-popup-permissions");
+    this._permissionList = document.getElementById("identity-popup-permission-list");
   },
 
   /**
@@ -6487,6 +6497,7 @@ var gIdentityHandler = {
   handleMoreInfoClick : function(event) {
     displaySecurityInfo();
     event.stopPropagation();
+    this._identityPopup.hidePopup();
   },
 
   /**
@@ -6528,19 +6539,29 @@ var gIdentityHandler = {
    * be called by onSecurityChange
    *
    * @param PRUint32 state
-   * @param JS Object location that mirrors an nsLocation (i.e. has .host and
-   *                           .hostname and .port)
+   * @param nsIURI uri The address for which the UI should be updated.
    */
-  checkIdentity : function(state, location) {
+  checkIdentity : function(state, uri) {
     var currentStatus = gBrowser.securityUI
                                 .QueryInterface(Components.interfaces.nsISSLStatusProvider)
                                 .SSLStatus;
     this._lastStatus = currentStatus;
-    this._lastLocation = location;
+    this._lastUri = uri;
 
     let nsIWebProgressListener = Ci.nsIWebProgressListener;
-    if (location.protocol == "chrome:" || location.protocol == "about:") {
+
+    // For some URIs like data: we can't get a host and so can't do
+    // anything useful here. Chrome URIs however get special treatment.
+    let unknown = false;
+    try {
+      uri.host;
+    } catch (e) { unknown = true; }
+
+    if ((uri.scheme == "chrome" || uri.scheme == "about") &&
+        uri.spec !== "about:blank") {
       this.setMode(this.IDENTITY_MODE_CHROMEUI);
+    } else if (unknown) {
+      this.setMode(this.IDENTITY_MODE_UNKNOWN);
     } else if (state & nsIWebProgressListener.STATE_IDENTITY_EV_TOPLEVEL) {
       this.setMode(this.IDENTITY_MODE_IDENTIFIED);
     } else if (state & nsIWebProgressListener.STATE_IS_SECURE) {
@@ -6548,9 +6569,12 @@ var gIdentityHandler = {
     } else if (state & nsIWebProgressListener.STATE_IS_BROKEN) {
       if ((state & nsIWebProgressListener.STATE_LOADED_MIXED_ACTIVE_CONTENT) &&
           gPrefService.getBoolPref("security.mixed_content.block_active_content")) {
-        this.setMode(this.IDENTITY_MODE_MIXED_ACTIVE_CONTENT);
+        this.setMode(this.IDENTITY_MODE_MIXED_ACTIVE_LOADED);
+      } else if ((state & nsIWebProgressListener.STATE_BLOCKED_MIXED_ACTIVE_CONTENT) &&
+                gPrefService.getBoolPref("security.mixed_content.block_active_content")) {
+        this.setMode(this.IDENTITY_MODE_MIXED_DISPLAY_LOADED_ACTIVE_BLOCKED);
       } else {
-        this.setMode(this.IDENTITY_MODE_MIXED_CONTENT);
+        this.setMode(this.IDENTITY_MODE_MIXED_DISPLAY_LOADED);
       }
     } else {
       this.setMode(this.IDENTITY_MODE_UNKNOWN);
@@ -6586,6 +6610,11 @@ var gIdentityHandler = {
         label: gNavigatorBundle.getString("mixedContentBlocked.unblock.label"),
         accessKey: gNavigatorBundle.getString("mixedContentBlocked.unblock.accesskey"),
         callback: function() {
+          // Use telemetry to measure how often unblocking happens
+          const kMIXED_CONTENT_UNBLOCK_EVENT = 2;
+          let histogram =
+            Services.telemetry.getHistogramById("MIXED_CONTENT_UNBLOCK_COUNTER");
+          histogram.add(kMIXED_CONTENT_UNBLOCK_EVENT);
           // Reload the page with the content unblocked
           BrowserReloadWithFlags(nsIWebNavigation.LOAD_FLAGS_ALLOW_MIXED_CONTENT);
         }
@@ -6608,12 +6637,12 @@ var gIdentityHandler = {
                          .getService(Ci.nsIIDNService);
     try {
       let baseDomain =
-        Services.eTLD.getBaseDomainFromHost(this._lastLocation.hostname);
+        Services.eTLD.getBaseDomainFromHost(this._lastUri.host);
       return this._IDNService.convertToDisplayIDN(baseDomain, {});
     } catch (e) {
-      // If something goes wrong (e.g. hostname is an IP address) just fail back
+      // If something goes wrong (e.g. host is an IP address) just fail back
       // to the full domain.
-      return this._lastLocation.hostname;
+      return this._lastUri.host;
     }
   },
 
@@ -6628,6 +6657,7 @@ var gIdentityHandler = {
       return;
     }
 
+    this._identityPopup.className = newMode;
     this._identityBox.className = newMode;
     this.setIdentityMessages(newMode);
 
@@ -6659,19 +6689,17 @@ var gIdentityHandler = {
       tooltip = gNavigatorBundle.getFormattedString("identity.identified.verifier",
                                                     [iData.caOrg]);
 
-      // Check whether this site is a security exception. XPConnect does the right
-      // thing here in terms of converting _lastLocation.port from string to int, but
-      // the overrideService doesn't like undefined ports, so make sure we have
-      // something in the default case (bug 432241).
-      // .hostname can return an empty string in some exceptional cases -
-      // hasMatchingOverride does not handle that, so avoid calling it.
-      // Updating the tooltip value in those cases isn't critical.
-      // FIXME: Fixing bug 646690 would probably makes this check unnecessary
-      if (this._lastLocation.hostname &&
-          this._overrideService.hasMatchingOverride(this._lastLocation.hostname,
-                                                    (this._lastLocation.port || 443),
-                                                    iData.cert, {}, {}))
+      // This can't throw, because URI's with a host that throw don't end up in this case.
+      let host = this._lastUri.host;
+      let port = 443;
+      try {
+        if (this._lastUri.port > 0)
+          port = this._lastUri.port;
+      } catch (e) {}
+
+      if (this._overrideService.hasMatchingOverride(host, port, iData.cert, {}, {}))
         tooltip = gNavigatorBundle.getString("identity.identified.verified_by_you");
+
       break; }
     case this.IDENTITY_MODE_IDENTIFIED: {
       // If it's identified, then we can populate the dialog with credentials
@@ -6692,6 +6720,8 @@ var gIdentityHandler = {
                         "rtl" : "ltr";
       break; }
     case this.IDENTITY_MODE_CHROMEUI:
+      let brandBundle = document.getElementById("bundle_brand");
+      icon_label = brandBundle.getString("brandShortName");
       break;
     default:
       tooltip = gNavigatorBundle.getString("identity.unknown.tooltip");
@@ -6753,6 +6783,12 @@ var gIdentityHandler = {
       else if (iData.country) // Country only
         supplemental += iData.country;
       break; }
+    case this.IDENTITY_MODE_CHROMEUI: {
+      let brandBundle = document.getElementById("bundle_brand");
+      let brandShortName = brandBundle.getString("brandShortName");
+      this._identityPopupChromeLabel.textContent = gNavigatorBundle.getFormattedString("identity.chrome",
+                                                                                       [brandShortName]);
+      break; }
     }
 
     // Push the appropriate strings out to the UI
@@ -6760,10 +6796,6 @@ var gIdentityHandler = {
     this._identityPopupContentOwner.textContent = owner;
     this._identityPopupContentSupp.textContent = supplemental;
     this._identityPopupContentVerif.textContent = verifier;
-  },
-
-  hideIdentityPopup : function() {
-    this._identityPopup.hidePopup();
   },
 
   /**
@@ -6780,10 +6812,8 @@ var gIdentityHandler = {
       return; // Left click, space or enter only
     }
 
-    // Don't allow left click, space or enter if the location
-    // is chrome UI or the location has been modified.
-    if (this._mode == this.IDENTITY_MODE_CHROMEUI ||
-        gURLBar.getAttribute("pageproxystate") != "valid") {
+    // Don't allow left click, space or enter if the location has been modified.
+    if (gURLBar.getAttribute("pageproxystate") != "valid") {
       TelemetryStopwatch.cancel("FX_IDENTITY_POPUP_OPEN_MS");
       return;
     }
@@ -6794,6 +6824,8 @@ var gIdentityHandler = {
 
     // Update the popup strings
     this.setPopupMessages(this._identityBox.className);
+
+    this.updateSitePermissions();
 
     // Add the "open" attribute to the identity box for styling
     this._identityBox.setAttribute("open", "true");
@@ -6809,7 +6841,11 @@ var gIdentityHandler = {
 
   onPopupShown : function(event) {
     TelemetryStopwatch.finish("FX_IDENTITY_POPUP_OPEN_MS");
+
     document.getElementById('identity-popup-more-info-button').focus();
+
+    this._identityPopup.addEventListener("blur", this, true);
+    this._identityPopup.addEventListener("popuphidden", this);
   },
 
   onDragStart: function (event) {
@@ -6826,6 +6862,74 @@ var gIdentityHandler = {
     dt.setData("text/plain", value);
     dt.setData("text/html", htmlString);
     dt.setDragImage(gProxyFavIcon, 16, 16);
+  },
+ 
+  handleEvent: function (event) {
+    switch (event.type) {
+      case "blur":
+        // Focus hasn't moved yet, need to wait until after the blur event.
+        setTimeout(() => {
+          if (document.activeElement &&
+              document.activeElement.compareDocumentPosition(this._identityPopup) &
+                Node.DOCUMENT_POSITION_CONTAINS)
+            return;
+
+          this._identityPopup.hidePopup();
+        }, 0);
+        break;
+      case "popuphidden":
+        this._identityPopup.removeEventListener("blur", this, true);
+        this._identityPopup.removeEventListener("popuphidden", this);
+        break;
+    }
+  },
+
+  updateSitePermissions: function () {
+    while (this._permissionList.hasChildNodes())
+      this._permissionList.removeChild(this._permissionList.lastChild);
+
+    let uri = gBrowser.currentURI;
+
+    for (let permission of SitePermissions.listPermissions()) {
+      let state = SitePermissions.get(uri, permission);
+
+      if (state == SitePermissions.UNKNOWN)
+        continue;
+
+      let item = this._createPermissionItem(permission, state);
+      this._permissionList.appendChild(item);
+    }
+
+    this._permissionsContainer.hidden = !this._permissionList.hasChildNodes();
+  },
+
+  _createPermissionItem: function (aPermission, aState) {
+    let menulist = document.createElement("menulist");
+    let menupopup = document.createElement("menupopup");
+    for (let state of SitePermissions.getAvailableStates(aPermission)) {
+      if (state == SitePermissions.UNKNOWN)
+        continue;
+      let menuitem = document.createElement("menuitem");
+      menuitem.setAttribute("value", state);
+      menuitem.setAttribute("label", SitePermissions.getStateLabel(aPermission, state));
+      menupopup.appendChild(menuitem);
+    }
+    menulist.appendChild(menupopup);
+    menulist.setAttribute("value", aState);
+    menulist.setAttribute("oncommand", "SitePermissions.set(gBrowser.currentURI, '" +
+                                       aPermission + "', this.value)");
+    menulist.setAttribute("id", "identity-popup-permission:" + aPermission);
+
+    let label = document.createElement("label");
+    label.setAttribute("flex", "1");
+    label.setAttribute("control", menulist.getAttribute("id"));
+    label.setAttribute("value", SitePermissions.getPermissionLabel(aPermission));
+
+    let container = document.createElement("hbox");
+    container.setAttribute("align", "center");
+    container.appendChild(label);
+    container.appendChild(menulist);
+    return container;
   }
 };
 
@@ -7040,8 +7144,13 @@ XPCOMUtils.defineLazyModuleGetter(this, "gDevTools",
 XPCOMUtils.defineLazyModuleGetter(this, "gDevToolsBrowser",
                                   "resource:///modules/devtools/gDevTools.jsm");
 
-XPCOMUtils.defineLazyGetter(this, "HUDConsoleUI", function () {
-  return Cu.import("resource:///modules/HUDService.jsm", {}).HUDService.consoleUI;
+Object.defineProperty(this, "HUDService", {
+  get: function HUDService_getter() {
+    let devtools = Cu.import("resource://gre/modules/devtools/Loader.jsm", {}).devtools;
+    return devtools.require("devtools/webconsole/hudservice");
+  },
+  configurable: true,
+  enumerable: true
 });
 
 // Prompt user to restart the browser in safe mode

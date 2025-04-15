@@ -7,23 +7,22 @@
 
 #include "mozilla/Attributes.h"
 #include "nsGenericHTMLElement.h"
-#include "nsIDOMHTMLTableRowElement.h"
 
 class nsIDOMHTMLTableElement;
-class nsIDOMHTMLTableSectionElement;
 class nsContentList;
 
 namespace mozilla {
 namespace dom {
 
-class HTMLTableRowElement : public nsGenericHTMLElement,
-                            public nsIDOMHTMLTableRowElement
+class HTMLTableSectionElement;
+
+class HTMLTableRowElement MOZ_FINAL : public nsGenericHTMLElement,
+                                      public nsIDOMHTMLElement
 {
 public:
   HTMLTableRowElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
-    SetIsDOMBinding();
   }
 
   NS_IMPL_FROMCONTENT_HTML_WITH_TAG(HTMLTableRowElement, tr)
@@ -39,9 +38,6 @@ public:
 
   // nsIDOMHTMLElement
   NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
-
-  // nsIDOMHTMLTableRowElement
-  NS_DECL_NSIDOMHTMLTABLEROWELEMENT
 
   int32_t RowIndex() const;
   int32_t SectionRowIndex() const;
@@ -109,7 +105,7 @@ protected:
   virtual JSObject* WrapNode(JSContext *aCx,
                              JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
-  already_AddRefed<nsIDOMHTMLTableSectionElement> GetSection() const;
+  HTMLTableSectionElement* GetSection() const;
   HTMLTableElement* GetTable() const;
   nsRefPtr<nsContentList> mCells;
 };

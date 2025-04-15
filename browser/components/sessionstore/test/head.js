@@ -19,6 +19,13 @@ registerCleanupFunction(function () {
   Services.prefs.clearUserPref("browser.sessionstore.restore_on_demand");
 });
 
+// Obtain access to internals
+Services.prefs.setBoolPref("browser.sessionstore.debug", true);
+registerCleanupFunction(function () {
+  Services.prefs.clearUserPref("browser.sessionstore.debug");
+});
+
+
 // This kicks off the search service used on about:home and allows the
 // session restore tests to be run standalone without triggering errors.
 Cc["@mozilla.org/browser/clh;1"].getService(Ci.nsIBrowserHandler).defaultArgs;
@@ -149,31 +156,28 @@ function waitForTabState(aTab, aState, aCallback) {
   ss.setTabState(aTab, JSON.stringify(aState));
 }
 
-// waitForSaveState waits for a state write but not necessarily for the state to
-// turn dirty.
-function waitForSaveState(aSaveStateCallback) {
+/**
+ * Wait for a content -> chrome message.
+ */
+function waitForContentMessage(aBrowser, aTopic, aTimeout, aCallback) {
+  let mm = aBrowser.messageManager;
   let observing = false;
-  let topic = "sessionstore-state-write";
-
-  let sessionSaveTimeout = 1000 +
-    Services.prefs.getIntPref("browser.sessionstore.interval");
-
   function removeObserver() {
     if (!observing)
       return;
-    Services.obs.removeObserver(observer, topic);
+    mm.removeMessageListener(aTopic, observer);
     observing = false;
   }
 
   let timeout = setTimeout(function () {
     removeObserver();
-    aSaveStateCallback();
-  }, sessionSaveTimeout);
+    aCallback(false);
+  }, aTimeout);
 
   function observer(aSubject, aTopic, aData) {
     removeObserver();
     timeout = clearTimeout(timeout);
-    executeSoon(aSaveStateCallback);
+    executeSoon(() => aCallback(true));
   }
 
   registerCleanupFunction(function() {
@@ -184,8 +188,58 @@ function waitForSaveState(aSaveStateCallback) {
   });
 
   observing = true;
-  Services.obs.addObserver(observer, topic, false);
-};
+  mm.addMessageListener(aTopic, observer);
+}
+
+function waitForTopic(aTopic, aTimeout, aCallback) {
+  let observing = false;
+  function removeObserver() {
+    if (!observing)
+      return;
+    Services.obs.removeObserver(observer, aTopic);
+    observing = false;
+  }
+
+  let timeout = setTimeout(function () {
+    removeObserver();
+    aCallback(false);
+  }, aTimeout);
+
+  function observer(aSubject, aTopic, aData) {
+    removeObserver();
+    timeout = clearTimeout(timeout);
+    executeSoon(() => aCallback(true));
+  }
+
+  registerCleanupFunction(function() {
+    removeObserver();
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
+
+  observing = true;
+  Services.obs.addObserver(observer, aTopic, false);
+}
+
+/**
+ * Wait until session restore has finished collecting its data and is
+ * getting ready to write that data ("sessionstore-state-write").
+ *
+ * This function is meant to be called immediately after the code
+ * that will trigger the saving.
+ *
+ * Note that this does not wait for the disk write to be complete.
+ *
+ * @param {function} aCallback If sessionstore-state-write is sent
+ * within buffering interval + 100 ms, the callback is passed |true|,
+ * otherwise, it is passed |false|.
+ */
+function waitForSaveState(aCallback) {
+  let timeout = 100 +
+    Services.prefs.getIntPref("browser.sessionstore.interval");
+  return waitForTopic("sessionstore-state-write", timeout, aCallback);
+}
 
 function whenBrowserLoaded(aBrowser, aCallback = next) {
   aBrowser.addEventListener("load", function onLoad() {
@@ -282,12 +336,32 @@ function closeAllButPrimaryWindow() {
   }
 }
 
-function whenNewWindowLoaded(aIsPrivate, aCallback) {
-  let win = OpenBrowserWindow({private: aIsPrivate});
-  win.addEventListener("load", function onLoad() {
-    win.removeEventListener("load", onLoad, false);
-    aCallback(win);
-  }, false);
+/**
+ * When opening a new window it is not sufficient to wait for its load event.
+ * We need to use whenDelayedStartupFinshed() here as the browser window's
+ * delayedStartup() routine is executed one tick after the window's load event
+ * has been dispatched. browser-delayed-startup-finished might be deferred even
+ * further if parts of the window's initialization process take more time than
+ * expected (e.g. reading a big session state from disk).
+ */
+function whenNewWindowLoaded(aOptions, aCallback) {
+  let win = OpenBrowserWindow(aOptions);
+  whenDelayedStartupFinished(win, () => aCallback(win));
+  return win;
+}
+
+/**
+ * This waits for the browser-delayed-startup-finished notification of a given
+ * window. It indicates that the windows has loaded completely and is ready to
+ * be used for testing.
+ */
+function whenDelayedStartupFinished(aWindow, aCallback) {
+  Services.obs.addObserver(function observer(aSubject, aTopic) {
+    if (aWindow == aSubject) {
+      Services.obs.removeObserver(observer, aTopic);
+      executeSoon(aCallback);
+    }
+  }, "browser-delayed-startup-finished", false);
 }
 
 /**

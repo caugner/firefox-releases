@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: Javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -51,6 +51,7 @@ function moveMouseOver(aElement)
 
 function runIframeTests()
 {
+  getActiveInspector().highlighter.unlock();
   getActiveInspector().selection.once("new-node", performTestComparisons1);
   moveMouseOver(div1)
 }
@@ -74,7 +75,28 @@ function performTestComparisons2()
   is(i.selection.node, div2, "selection matches div2 node");
   is(getHighlitNode(), div2, "highlighter matches selection");
 
-  finish();
+  selectRoot();
+}
+
+function selectRoot()
+{
+  // Select the root document element to clear the breadcrumbs.
+  let i = getActiveInspector();
+  i.selection.setNode(doc.documentElement);
+  i.once("inspector-updated", selectIframe);
+}
+
+function selectIframe()
+{
+  // Directly select an element in an iframe (without navigating to it
+  // with mousemoves).
+  let i = getActiveInspector();
+  i.selection.setNode(div2);
+  i.once("inspector-updated", () => {
+    let breadcrumbs = i.breadcrumbs;
+    is(breadcrumbs.nodeHierarchy.length, 9, "Should have 9 items");
+    finish();
+  });
 }
 
 function test() {

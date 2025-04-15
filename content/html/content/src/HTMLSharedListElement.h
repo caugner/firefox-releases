@@ -9,23 +9,20 @@
 #include "mozilla/Util.h"
 
 #include "nsIDOMHTMLOListElement.h"
-#include "nsIDOMHTMLDListElement.h"
 #include "nsIDOMHTMLUListElement.h"
 #include "nsGenericHTMLElement.h"
 
 namespace mozilla {
 namespace dom {
 
-class HTMLSharedListElement : public nsGenericHTMLElement,
-                              public nsIDOMHTMLOListElement,
-                              public nsIDOMHTMLDListElement,
-                              public nsIDOMHTMLUListElement
+class HTMLSharedListElement MOZ_FINAL : public nsGenericHTMLElement,
+                                        public nsIDOMHTMLOListElement,
+                                        public nsIDOMHTMLUListElement
 {
 public:
   HTMLSharedListElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
-    SetIsDOMBinding();
   }
   virtual ~HTMLSharedListElement();
 
@@ -43,9 +40,6 @@ public:
 
   // nsIDOMHTMLOListElement
   NS_DECL_NSIDOMHTMLOLISTELEMENT
-
-  // nsIDOMHTMLDListElement
-  // fully declared by NS_DECL_NSIDOMHTMLOLISTELEMENT
 
   // nsIDOMHTMLUListElement
   // fully declared by NS_DECL_NSIDOMHTMLOLISTELEMENT

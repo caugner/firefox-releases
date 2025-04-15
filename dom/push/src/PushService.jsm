@@ -30,11 +30,6 @@ const prefs = new Preferences("services.push.");
 const kPUSHDB_DB_NAME = "push";
 const kPUSHDB_DB_VERSION = 1; // Change this if the IndexedDB format changes
 const kPUSHDB_STORE_NAME = "push";
-const kCONFLICT_RETRY_ATTEMPTS = 3; // If channelID registration says 409, how
-                                    // many times to retry with a new channelID
-
-const kERROR_CHID_CONFLICT = 409;   // Error code sent by push server if this
-                                    // channel already exists on the server.
 
 const kUDP_WAKEUP_WS_STATUS_CODE = 4774;  // WebSocket Close status code sent
                                           // by server to signal that it can
@@ -345,30 +340,40 @@ this.PushService = {
         break;
       case "webapps-uninstall":
         debug("webapps-uninstall");
-        let appsService = Cc["@mozilla.org/AppsService;1"]
-                            .getService(Ci.nsIAppsService);
-        var app = appsService.getAppFromObserverMessage(aData);
-        if (!app) {
-          debug("webapps-uninstall: No app found " + aData.origin);
+
+        let data;
+        try {
+          data = JSON.parse(aData);
+        } catch (ex) {
+          debug("webapps-uninstall: JSON parsing error: " + aData);
           return;
         }
 
-        this._db.getAllByManifestURL(app.manifestURL, function(records) {
+        let manifestURL = data.manifestURL;
+        let appsService = Cc["@mozilla.org/AppsService;1"]
+                            .getService(Ci.nsIAppsService);
+        if (appsService.getAppLocalIdByManifestURL(manifestURL) ==
+            Ci.nsIScriptSecurityManager.NO_APP_ID) {
+          debug("webapps-uninstall: No app found " + manifestURL);
+          return;
+        }
+
+        this._db.getAllByManifestURL(manifestURL, function(records) {
           debug("Got " + records.length);
           for (var i = 0; i < records.length; i++) {
             this._db.delete(records[i].channelID, null, function() {
-              debug("app uninstall: " + app.manifestURL +
+              debug("app uninstall: " + manifestURL +
                     " Could not delete entry " + records[i].channelID);
             });
             // courtesy, but don't establish a connection
             // just for it
             if (this._ws) {
               debug("Had a connection, so telling the server");
-              this._request("unregister", {channelID: records[i].channelID});
+              this._sendRequest("unregister", {channelID: records[i].channelID});
             }
           }
         }.bind(this), function() {
-          debug("Error in getAllByManifestURL: url " + app.manifestURL);
+          debug("Error in getAllByManifestURL: url " + manifestURL);
         });
 
         break;
@@ -678,8 +683,15 @@ this.PushService = {
     else if (this._currentState == STATE_READY) {
       // Send a ping.
       // Bypass the queue; we don't want this to be kept pending.
-      this._ws.sendMsg('{}');
-      debug("Sent ping.");
+      // Watch out for exception in case the socket has disconnected.
+      // When this happens, we pretend the ping was sent and don't specially
+      // handle the exception, as the lack of a pong will lead to the socket
+      // being reset.
+      try {
+        this._ws.sendMsg('{}');
+      } catch (e) {
+      }
+
       this._waitingForPong = true;
       this._setAlarm(prefs.get("requestTimeout"));
     }
@@ -1129,22 +1141,10 @@ this.PushService = {
    */
   _onRegisterError: function(aPageRecord, aMessageManager, reply) {
     debug("_onRegisterError()");
-    switch (reply.status) {
-      case kERROR_CHID_CONFLICT:
-        if (typeof aPageRecord._attempts !== "number")
-          aPageRecord._attempts = 0;
 
-        if (aPageRecord._attempts < kCONFLICT_RETRY_ATTEMPTS) {
-          aPageRecord._attempts++;
-          // Since register is async, it's OK to launch it in a callback.
-          debug("CONFLICT: trying again");
-          this.register(aPageRecord, aMessageManager);
-          return;
-        }
-        throw { requestID: aPageRecord.requestID, error: "conflict" };
-      default:
-        debug("General failure " + reply.status);
-        throw { requestID: aPageRecord.requestID, error: reply.error };
+    if (reply.status) {
+      debug("General failure " + reply.status);
+      throw { requestID: aPageRecord.requestID, error: reply.error };    
     }
   },
 
@@ -1200,7 +1200,7 @@ this.PushService = {
       this._db.delete(record.channelID, function() {
         // Let's be nice to the server and try to inform it, but we don't care
         // about the reply.
-        this._sendRequest("unregister", {channelID: record.channelID});
+        this._send("unregister", {channelID: record.channelID});
         aMessageManager.sendAsyncMessage("PushService:Unregister:OK", {
           requestID: aPageRecord.requestID,
           pushEndpoint: aPageRecord.pushEndpoint

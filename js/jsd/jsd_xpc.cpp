@@ -502,7 +502,7 @@ jsds_ErrorHookProc (JSDContext *jsdc, JSContext *cx, const char *message,
         jsval jv;
         JS_GetPendingException(cx, &jv);
         JSDValue *jsdv = JSD_NewValue (jsdc, jv);
-        val = getter_AddRefs(jsdValue::FromPtr(jsdc, jsdv));
+        val = dont_AddRef(jsdValue::FromPtr(jsdc, jsdv));
     }
     
     nsAutoCString fileName;
@@ -567,8 +567,7 @@ jsds_CallHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
 
     JSDStackFrameInfo *native_frame = JSD_GetStackFrame (jsdc, jsdthreadstate);
     nsCOMPtr<jsdIStackFrame> frame =
-        getter_AddRefs(jsdStackFrame::FromPtr(jsdc, jsdthreadstate,
-                                              native_frame));
+        dont_AddRef(jsdStackFrame::FromPtr(jsdc, jsdthreadstate, native_frame));
     gJsds->DoPause(nullptr, true);
     hook->OnCall(frame, type);    
     gJsds->DoUnPause(nullptr, true);
@@ -613,7 +612,7 @@ jsds_ExecutionHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
             gJsds->GetThrowHook(getter_AddRefs(hook));
             if (hook) {
                 JSDValue *jsdv = JSD_GetException (jsdc, jsdthreadstate);
-                js_rv = getter_AddRefs(jsdValue::FromPtr (jsdc, jsdv));
+                js_rv = dont_AddRef(jsdValue::FromPtr (jsdc, jsdv));
             }
             break;
         }
@@ -629,8 +628,7 @@ jsds_ExecutionHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
     
     JSDStackFrameInfo *native_frame = JSD_GetStackFrame (jsdc, jsdthreadstate);
     nsCOMPtr<jsdIStackFrame> frame =
-        getter_AddRefs(jsdStackFrame::FromPtr(jsdc, jsdthreadstate,
-                                              native_frame));
+        dont_AddRef(jsdStackFrame::FromPtr(jsdc, jsdthreadstate, native_frame));
     gJsds->DoPause(nullptr, true);
     jsdIValue *inout_rv = js_rv;
     NS_IF_ADDREF(inout_rv);
@@ -672,7 +670,7 @@ jsds_ScriptHookProc (JSDContext* jsdc, JSDScript* jsdscript, JSBool creating,
         }
             
         nsCOMPtr<jsdIScript> script = 
-            getter_AddRefs(jsdScript::FromPtr(jsdc, jsdscript));
+            dont_AddRef(jsdScript::FromPtr(jsdc, jsdscript));
 #ifdef CAUTIOUS_SCRIPTHOOK
         JS_UNKEEP_ATOMS(rt);
 #endif
@@ -740,7 +738,7 @@ jsds_ScriptHookProc (JSDContext* jsdc, JSDScript* jsdscript, JSBool creating,
 
 /* Contexts */
 /*
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdContext, jsdIContext, jsdIEphemeral);
+NS_IMPL_ISUPPORTS2(jsdContext, jsdIContext, jsdIEphemeral);
 
 NS_IMETHODIMP
 jsdContext::GetJSDContext(JSDContext **_rval)
@@ -751,7 +749,7 @@ jsdContext::GetJSDContext(JSDContext **_rval)
 */
 
 /* Objects */
-NS_IMPL_THREADSAFE_ISUPPORTS1(jsdObject, jsdIObject)
+NS_IMPL_ISUPPORTS1(jsdObject, jsdIObject)
 
 NS_IMETHODIMP
 jsdObject::GetJSDContext(JSDContext **_rval)
@@ -805,7 +803,7 @@ jsdObject::GetValue(jsdIValue **_rval)
 }
 
 /* Properties */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdProperty, jsdIProperty, jsdIEphemeral)
+NS_IMPL_ISUPPORTS2(jsdProperty, jsdIProperty, jsdIEphemeral)
 
 jsdProperty::jsdProperty (JSDContext *aCx, JSDProperty *aProperty) :
     mCx(aCx), mProperty(aProperty)
@@ -896,7 +894,7 @@ jsdProperty::GetValue(jsdIValue **_rval)
 }
 
 /* Scripts */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdScript, jsdIScript, jsdIEphemeral)
+NS_IMPL_ISUPPORTS2(jsdScript, jsdIScript, jsdIEphemeral)
 
 static NS_IMETHODIMP
 AssignToJSString(JSDContext *aCx, nsACString *x, JSString *str)
@@ -1553,7 +1551,7 @@ jsdScript::ClearAllBreakpoints()
 }
 
 /* Contexts */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdContext, jsdIContext, jsdIEphemeral)
+NS_IMPL_ISUPPORTS2(jsdContext, jsdIContext, jsdIEphemeral)
 
 jsdIContext *
 jsdContext::FromPtr (JSDContext *aJSDCx, JSContext *aJSCx)
@@ -1697,7 +1695,7 @@ NS_IMETHODIMP
 jsdContext::GetGlobalObject (jsdIValue **_rval)
 {
     ASSERT_VALID_EPHEMERAL;
-    JSObject *glob = js::GetDefaultGlobalForContext(mJSCx);
+    JSObject *glob = js::DefaultObjectForContextOrNull(mJSCx);
     JSDValue *jsdv = JSD_NewValue (mJSDCx, OBJECT_TO_JSVAL(glob));
     if (!jsdv)
         return NS_ERROR_FAILURE;
@@ -1745,7 +1743,7 @@ jsdContext::SetScriptsEnabled (bool _rval)
 }
 
 /* Stack Frames */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdStackFrame, jsdIStackFrame, jsdIEphemeral)
+NS_IMPL_ISUPPORTS2(jsdStackFrame, jsdIStackFrame, jsdIEphemeral)
 
 jsdStackFrame::jsdStackFrame (JSDContext *aCx, JSDThreadState *aThreadState,
                               JSDStackFrameInfo *aStackFrameInfo) :
@@ -2017,7 +2015,7 @@ jsdStackFrame::Eval (const nsAString &bytes, const nsACString &fileName,
 }        
 
 /* Values */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdValue, jsdIValue, jsdIEphemeral)
+NS_IMPL_ISUPPORTS2(jsdValue, jsdIValue, jsdIEphemeral)
 jsdIValue *
 jsdValue::FromPtr (JSDContext *aCx, JSDValue *aValue)
 {
@@ -2681,7 +2679,7 @@ jsdService::EnumerateContexts (jsdIContextEnumerator *enumerator)
     while ((cx = JS_ContextIterator (mRuntime, &iter)))
     {
         nsCOMPtr<jsdIContext> jsdicx = 
-            getter_AddRefs(jsdContext::FromPtr(mCx, cx));
+            dont_AddRef(jsdContext::FromPtr(mCx, cx));
         if (jsdicx)
         {
             if (NS_FAILED(enumerator->EnumerateContext(jsdicx)))
@@ -2704,7 +2702,7 @@ jsdService::EnumerateScripts (jsdIScriptEnumerator *enumerator)
     JSD_LockScriptSubsystem(mCx);
     while((script = JSD_IterateScripts(mCx, &iter))) {
         nsCOMPtr<jsdIScript> jsdis =
-            getter_AddRefs(jsdScript::FromPtr(mCx, script));
+            dont_AddRef(jsdScript::FromPtr(mCx, script));
         rv = enumerator->EnumerateScript (jsdis);
         if (NS_FAILED(rv))
             break;
@@ -3269,13 +3267,13 @@ NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(jsdService, jsdService::GetService)
 class jsdASObserver MOZ_FINAL : public nsIObserver
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_NSIOBSERVER
 
     jsdASObserver () {}    
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(jsdASObserver, nsIObserver)
+NS_IMPL_ISUPPORTS1(jsdASObserver, nsIObserver)
 
 NS_IMETHODIMP
 jsdASObserver::Observe (nsISupports *aSubject, const char *aTopic,
@@ -3352,7 +3350,7 @@ CreateJSDGlobal(JSContext *aCx, JSClass *aClasp)
     NS_ENSURE_SUCCESS(rv, nullptr);
 
     JSPrincipals *jsPrin = nsJSPrincipals::get(nullPrin);
-    JSObject *global = JS_NewGlobalObject(aCx, aClasp, jsPrin);
+    JS::RootedObject global(aCx, JS_NewGlobalObject(aCx, aClasp, jsPrin, JS::DontFireOnNewGlobalHook));
     NS_ENSURE_TRUE(global, nullptr);
 
     // We have created a new global let's attach a private to it
@@ -3360,6 +3358,8 @@ CreateJSDGlobal(JSContext *aCx, JSClass *aClasp)
     nsCOMPtr<nsIScriptObjectPrincipal> sbp =
         new SandboxPrivate(nullPrin, global);
     JS_SetPrivate(global, sbp.forget().get());
+
+    JS_FireOnNewGlobalObject(aCx, global);
 
     return global;
 }
@@ -3371,7 +3371,7 @@ CreateJSDGlobal(JSContext *aCx, JSClass *aClasp)
 
 #if 0
 /* Thread States */
-NS_IMPL_THREADSAFE_ISUPPORTS1(jsdThreadState, jsdIThreadState); 
+NS_IMPL_ISUPPORTS1(jsdThreadState, jsdIThreadState); 
 
 NS_IMETHODIMP
 jsdThreadState::GetJSDContext(JSDContext **_rval)

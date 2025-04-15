@@ -66,6 +66,11 @@ function injectController(doc, topic, data) {
       return;
     }
 
+    // we always handle window.close on social content, even if they are not
+    // "enabled".  "enabled" is about the worker state and a provider may
+    // still be in e.g. the share panel without having their worker enabled.
+    handleWindowClose(window);
+
     SocialService.getProvider(doc.nodePrincipal.origin, function(provider) {
       if (provider && provider.workerURL && provider.enabled) {
         attachToWindow(provider, window);
@@ -212,7 +217,9 @@ function attachToWindow(provider, targetWindow) {
     // set a timer which will fire after the unload events have all fired.
     schedule(function () { port.close(); });
   });
+}
 
+function handleWindowClose(targetWindow) {
   // We allow window.close() to close the panel, so add an event handler for
   // this, then cancel the event (so the window itself doesn't die) and
   // close the panel instead.
@@ -273,12 +280,23 @@ function findChromeWindowForChats(preferredWindow) {
   // no good - we just use the "most recent" browser window which can host
   // chats (we used to try and "group" all chats in the same browser window,
   // but that didn't work out so well - see bug 835111
+
+  // Try first the most recent window as getMostRecentWindow works
+  // even on platforms where getZOrderDOMWindowEnumerator is broken
+  // (ie. Linux).  This will handle most cases, but won't work if the
+  // foreground window is a popup.
+
+  let mostRecent = Services.wm.getMostRecentWindow("navigator:browser");
+  if (isWindowGoodForChats(mostRecent))
+    return mostRecent;
+
   let topMost, enumerator;
-  // *sigh* - getZOrderDOMWindowEnumerator is broken everywhere other than
-  // Windows.  We use BROKEN_WM_Z_ORDER as that is what the c++ code uses
+  // *sigh* - getZOrderDOMWindowEnumerator is broken except on Mac and
+  // Windows.  We use BROKEN_WM_Z_ORDER as that is what some other code uses
   // and a few bugs recommend searching mxr for this symbol to identify the
   // workarounds - we want this code to be hit in such searches.
-  const BROKEN_WM_Z_ORDER = Services.appinfo.OS != "WINNT";
+  let os = Services.appinfo.OS;
+  const BROKEN_WM_Z_ORDER = os != "WINNT" && os != "Darwin";
   if (BROKEN_WM_Z_ORDER) {
     // this is oldest to newest and no way to change the order.
     enumerator = Services.wm.getEnumerator("navigator:browser");

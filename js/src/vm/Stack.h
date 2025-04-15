@@ -7,9 +7,12 @@
 #ifndef vm_Stack_h
 #define vm_Stack_h
 
+#include "mozilla/MemoryReporting.h"
+
 #include "jsautooplen.h"
 #include "jsfun.h"
 #include "jsscript.h"
+
 #include "jit/IonFrameIterator.h"
 
 struct JSContext;
@@ -1019,6 +1022,14 @@ class FrameRegs
         pc = script->code + script->length - JSOP_STOP_LENGTH;
         JS_ASSERT(*pc == JSOP_STOP);
     }
+
+    MutableHandleValue stackHandleAt(int i) {
+        return MutableHandleValue::fromMarkedLocation(&sp[i]);
+    }
+
+    HandleValue stackHandleAt(int i) const {
+        return HandleValue::fromMarkedLocation(&sp[i]);
+    }
 };
 
 /*****************************************************************************/
@@ -1075,7 +1086,7 @@ class InterpreterStack
 
     inline void purge(JSRuntime *rt);
 
-    size_t sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf) const {
+    size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
         return allocator_.sizeOfExcludingThis(mallocSizeOf);
     }
 };
@@ -1539,9 +1550,18 @@ class ScriptFrameIter
 /* A filtering of the ScriptFrameIter to only stop at non-self-hosted scripts. */
 class NonBuiltinScriptFrameIter : public ScriptFrameIter
 {
+#ifdef DEBUG
+    static bool includeSelfhostedFrames();
+#else
+    static bool includeSelfhostedFrames() {
+        return false;
+    }
+#endif
+
     void settle() {
-        while (!done() && script()->selfHosted)
-            ScriptFrameIter::operator++();
+        if (!includeSelfhostedFrames())
+            while (!done() && script()->selfHosted)
+                ScriptFrameIter::operator++();
     }
 
   public:

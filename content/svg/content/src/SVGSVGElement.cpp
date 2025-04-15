@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 #include "mozilla/Util.h"
 #include "mozilla/Likely.h"
 
@@ -19,6 +19,7 @@
 #include "mozilla/dom/SVGMatrix.h"
 #include "DOMSVGPoint.h"
 #include "nsIFrame.h"
+#include "nsFrameSelection.h"
 #include "nsISVGSVGFrame.h" //XXX
 #include "mozilla/dom/SVGRect.h"
 #include "nsError.h"
@@ -37,6 +38,7 @@
 #include "nsSMILTypes.h"
 #include "SVGAngle.h"
 #include <algorithm>
+#include "prtime.h"
 
 NS_IMPL_NS_NEW_NAMESPACED_SVG_ELEMENT_CHECK_PARSER(SVG)
 
@@ -125,6 +127,8 @@ nsSVGElement::EnumInfo SVGSVGElement::sEnumInfo[1] =
 
 //----------------------------------------------------------------------
 // nsISupports methods
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(SVGSVGElement)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(SVGSVGElement,
                                                 SVGSVGElementBase)
@@ -362,6 +366,16 @@ SVGSVGElement::SetCurrentTime(float seconds)
     FlushAnimations();
   }
   // else we're not the outermost <svg> or not bound to a tree, so silently fail
+}
+
+void
+SVGSVGElement::DeselectAll()
+{
+  nsIFrame* frame = GetPrimaryFrame();
+  if (frame) {
+    nsRefPtr<nsFrameSelection> frameSelection = frame->GetFrameSelection();
+    frameSelection->ClearNormalSelection();
+  }
 }
 
 already_AddRefed<nsIDOMSVGNumber>
@@ -682,7 +696,7 @@ SVGSVGElement::ChildrenOnlyTransformChanged(uint32_t aFlags)
 {
   // Avoid wasteful calls:
   NS_ABORT_IF_FALSE(!(GetPrimaryFrame()->GetStateBits() &
-                      NS_STATE_SVG_NONDISPLAY_CHILD),
+                      NS_FRAME_IS_NONDISPLAY),
                     "Non-display SVG frames don't maintain overflow rects");
 
   nsChangeHint changeHint;

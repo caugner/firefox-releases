@@ -14,6 +14,7 @@ namespace jit {
     _(Constant)                                                             \
     _(Parameter)                                                            \
     _(Callee)                                                               \
+    _(ForceUse)                                                             \
     _(TableSwitch)                                                          \
     _(Goto)                                                                 \
     _(Test)                                                                 \
@@ -39,6 +40,7 @@ namespace jit {
     _(PassArg)                                                              \
     _(Call)                                                                 \
     _(ApplyArgs)                                                            \
+    _(Bail)                                                                 \
     _(GetDynamicName)                                                       \
     _(FilterArguments)                                                      \
     _(CallDirectEval)                                                       \
@@ -65,6 +67,7 @@ namespace jit {
     _(Div)                                                                  \
     _(Mod)                                                                  \
     _(Concat)                                                               \
+    _(ConcatPar)                                                            \
     _(CharCodeAt)                                                           \
     _(FromCharCode)                                                         \
     _(Return)                                                               \
@@ -85,7 +88,9 @@ namespace jit {
     _(NewCallObject)                                                        \
     _(NewStringObject)                                                      \
     _(InitElem)                                                             \
+    _(InitElemGetterSetter)                                                 \
     _(InitProp)                                                             \
+    _(InitPropGetterSetter)                                                 \
     _(Start)                                                                \
     _(OsrEntry)                                                             \
     _(Nop)                                                                  \
@@ -97,6 +102,7 @@ namespace jit {
     _(Elements)                                                             \
     _(ConstantElements)                                                     \
     _(ConvertElementsToDoubles)                                             \
+    _(MaybeToDoubleElement)                                                 \
     _(LoadSlot)                                                             \
     _(StoreSlot)                                                            \
     _(FunctionEnvironment)                                                  \
@@ -184,17 +190,16 @@ namespace jit {
     _(AsmJSPassStackArg)                                                    \
     _(AsmJSCall)                                                            \
     _(AsmJSCheckOverRecursed)                                               \
-    _(ParCheckOverRecursed)                                                 \
-    _(ParNewCallObject)                                                     \
-    _(ParNew)                                                               \
-    _(ParNewDenseArray)                                                     \
-    _(ParBailout)                                                           \
-    _(ParLambda)                                                            \
-    _(ParRest)                                                              \
-    _(ParSlice)                                                             \
-    _(ParWriteGuard)                                                        \
-    _(ParDump)                                                              \
-    _(ParCheckInterrupt)
+    _(CheckOverRecursedPar)                                                 \
+    _(NewCallObjectPar)                                                     \
+    _(NewPar)                                                               \
+    _(NewDenseArrayPar)                                                     \
+    _(AbortPar)                                                             \
+    _(LambdaPar)                                                            \
+    _(RestPar)                                                              \
+    _(ForkJoinSlice)                                                        \
+    _(GuardThreadLocalObject)                                               \
+    _(CheckInterruptPar)
 
 // Forward declarations of MIR types.
 #define FORWARD_DECLARE(op) class M##op;
@@ -212,7 +217,7 @@ class MInstructionVisitor // interface i.e. pure abstract class
 class MInstructionVisitorWithDefaults : public MInstructionVisitor
 {
   public:
-#define VISIT_INS(op) virtual bool visit##op(M##op *) { JS_NOT_REACHED("NYI: " #op); return false; }
+#define VISIT_INS(op) virtual bool visit##op(M##op *) { MOZ_ASSUME_UNREACHABLE("NYI: " #op); }
     MIR_OPCODE_LIST(VISIT_INS)
 #undef VISIT_INS
 };

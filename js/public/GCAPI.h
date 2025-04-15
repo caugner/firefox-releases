@@ -7,7 +7,7 @@
 #ifndef js_GCAPI_h
 #define js_GCAPI_h
 
-#include "HeapAPI.h"
+#include "js/HeapAPI.h"
 
 namespace JS {
 
@@ -181,6 +181,9 @@ DisableIncrementalGC(JSRuntime *rt);
 extern JS_FRIEND_API(void)
 DisableGenerationalGC(JSRuntime *rt);
 
+extern JS_FRIEND_API(void)
+EnableGenerationalGC(JSRuntime *rt);
+
 extern JS_FRIEND_API(bool)
 IsIncrementalBarrierNeeded(JSRuntime *rt);
 
@@ -205,7 +208,7 @@ WasIncrementalGC(JSRuntime *rt);
 
 class ObjectPtr
 {
-    JSObject *value;
+    Heap<JSObject *> value;
 
   public:
     ObjectPtr() : value(NULL) {}
@@ -240,7 +243,7 @@ class ObjectPtr
     }
 
     void trace(JSTracer *trc, const char *name) {
-        JS_CallObjectTracer(trc, &value, name);
+        JS_CallHeapObjectTracer(trc, &value, name);
     }
 
     JSObject &operator*() const { return *value; }

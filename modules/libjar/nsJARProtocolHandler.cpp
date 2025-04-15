@@ -75,8 +75,7 @@ nsJARProtocolHandler::RemoteOpenFileInProgress(
     MOZ_ASSERT(aListener);
 
     if (IsMainProcess()) {
-        MOZ_NOT_REACHED("Shouldn't be called in the main process!");
-        return false;
+        MOZ_CRASH("Shouldn't be called in the main process!");
     }
 
     RemoteFileListenerArray *listeners;
@@ -99,8 +98,7 @@ nsJARProtocolHandler::RemoteOpenFileComplete(nsIHashable *aRemoteFile,
     MOZ_ASSERT(aRemoteFile);
 
     if (IsMainProcess()) {
-        MOZ_NOT_REACHED("Shouldn't be called in the main process!");
-        return;
+        MOZ_CRASH("Shouldn't be called in the main process!");
     }
 
     RemoteFileListenerArray *tempListeners;
@@ -126,7 +124,7 @@ nsJARProtocolHandler::RemoteOpenFileComplete(nsIHashable *aRemoteFile,
     }
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(nsJARProtocolHandler,
+NS_IMPL_ISUPPORTS3(nsJARProtocolHandler,
                               nsIJARProtocolHandler,
                               nsIProtocolHandler,
                               nsISupportsWeakReference)

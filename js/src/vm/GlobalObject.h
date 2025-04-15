@@ -27,6 +27,9 @@ js_InitFunctionClass(JSContext *cx, js::HandleObject obj);
 extern JSObject *
 js_InitTypedArrayClasses(JSContext *cx, js::HandleObject obj);
 
+extern JSObject *
+js_InitBinaryDataClasses(JSContext *cx, js::HandleObject obj);
+
 namespace js {
 
 class Debugger;
@@ -51,11 +54,11 @@ class Debugger;
  *   whether eval is allowed (per the global's Content Security Policy).
  *
  * The first two ranges are necessary to implement js::FindClassObject,
- * FindClassPrototype, and spec language speaking in terms of "the original
- * Array prototype object", or "as if by the expression new Array()" referring
- * to the original Array constructor.  The third range stores the (writable and
- * even deletable) Object, Array, &c. properties (although a slot won't be used
- * again if its property is deleted and readded).
+ * and spec language speaking in terms of "the original Array prototype
+ * object", or "as if by the expression new Array()" referring to the original
+ * Array constructor. The third range stores the (writable and even deletable)
+ * Object, Array, &c. properties (although a slot won't be used again if its
+ * property is deleted and readded).
  */
 class GlobalObject : public JSObject
 {
@@ -327,6 +330,18 @@ class GlobalObject : public JSObject
         return &getPrototype(JSProto_Iterator).toObject();
     }
 
+    JSObject *getOrCreateDataObject(JSContext *cx) {
+        return getOrCreateObject(cx, JSProto_Data, initDataObject);
+    }
+
+    JSObject *getOrCreateTypeObject(JSContext *cx) {
+        return getOrCreateObject(cx, JSProto_Type, initTypeObject);
+    }
+
+    JSObject *getOrCreateArrayTypeObject(JSContext *cx) {
+        return getOrCreateObject(cx, JSProto_ArrayTypeObject, initArrayTypeObject);
+    }
+
   private:
     typedef bool (*ObjectInitOp)(JSContext *cx, Handle<GlobalObject*> global);
 
@@ -429,6 +444,11 @@ class GlobalObject : public JSObject
     static bool initNumberFormatProto(JSContext *cx, Handle<GlobalObject*> global);
     static bool initDateTimeFormatProto(JSContext *cx, Handle<GlobalObject*> global);
 
+    // Implemented in builtin/BinaryData.cpp
+    static bool initTypeObject(JSContext *cx, Handle<GlobalObject*> global);
+    static bool initDataObject(JSContext *cx, Handle<GlobalObject*> global);
+    static bool initArrayTypeObject(JSContext *cx, Handle<GlobalObject*> global);
+
     static bool initStandardClasses(JSContext *cx, Handle<GlobalObject*> global);
 
     typedef js::Vector<js::Debugger *, 0, js::SystemAllocPolicy> DebuggerVector;
@@ -447,6 +467,69 @@ class GlobalObject : public JSObject
 
     static bool addDebugger(JSContext *cx, Handle<GlobalObject*> global, Debugger *dbg);
 };
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<uint8_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_UINT8);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<int8_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_INT8);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<uint16_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_UINT16);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<int16_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_INT16);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<uint32_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_UINT32);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<int32_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_INT32);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<float>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_FLOAT32);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<double>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_FLOAT64);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<uint8_clamped>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_UINT8CLAMPED);
+}
 
 /*
  * Define ctor.prototype = proto as non-enumerable, non-configurable, and

@@ -21,7 +21,7 @@ XPCOMUtils.defineLazyGetter(this, "gStringBundle", function() {
  */
 add_task(function test_getSystemDownloadsDirectory()
 {
-  // Enable test mode for the getSystemDownloadsDirectoy method to return
+  // Enable test mode for the getSystemDownloadsDirectory method to return
   // temp directory instead so we can check whether the desired directory
   // is created or not.
   DownloadIntegration.testMode = true;
@@ -34,10 +34,10 @@ add_task(function test_getSystemDownloadsDirectory()
   let downloadDir;
 
   // OSX / Linux / Windows but not XP/2k
-  if (("nsILocalFileMac" in Ci) ||
-      ("@mozilla.org/gnome-gconf-service;1" in Cc) ||
-      ("@mozilla.org/windows-registry-key;1" in Cc &&
-        parseFloat(Services.sysinfo.getProperty("version")) >= 6)) {
+  if (Services.appinfo.OS == "Darwin" ||
+      Services.appinfo.OS == "Linux" ||
+      (Services.appinfo.OS == "WINNT" &&
+       parseFloat(Services.sysinfo.getProperty("version")) >= 6)) {
     downloadDir = yield DownloadIntegration.getSystemDownloadsDirectory();
     do_check_true(downloadDir instanceof Ci.nsIFile);
     do_check_eq(downloadDir.path, tempDir.path);
@@ -59,7 +59,11 @@ add_task(function test_getSystemDownloadsDirectory()
     do_check_true(info.isDir);
     yield OS.File.removeEmptyDir(targetPath);
   }
+
+  let downloadDirBefore = yield DownloadIntegration.getSystemDownloadsDirectory();
   cleanup();
+  let downloadDirAfter = yield DownloadIntegration.getSystemDownloadsDirectory();
+  do_check_false(downloadDirBefore.equals(downloadDirAfter));
 });
 
 /**
@@ -124,7 +128,6 @@ add_task(function test_getUserDownloadsDirectory()
 
   cleanup();
 });
-
 
 /**
  * Tests that the getTemporaryDownloadsDirectory returns a valid nsFile 

@@ -6,9 +6,9 @@
 
 #include "jscntxt.h"
 #include "jscompartment.h"
+
 #include "jit/Bailouts.h"
 #include "jit/IonCompartment.h"
-#include "jit/IonFrames-inl.h"
 
 using namespace js;
 using namespace js::jit;

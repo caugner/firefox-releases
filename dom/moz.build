@@ -27,7 +27,6 @@ interfaces = [
     'geolocation',
     'notification',
     'permission',
-    'push',
     'svg',
     'smil',
     'apps',
@@ -71,7 +70,7 @@ PARALLEL_DIRS += [
     'workers',
     'camera',
     'audiochannel',
-    'future',
+    'promise',
     'wappush'
 ]
 

@@ -7,6 +7,7 @@ package org.mozilla.gecko;
 
 import org.mozilla.gecko.mozglue.GeckoLoader;
 import org.mozilla.gecko.util.GeckoEventListener;
+import org.mozilla.gecko.util.ThreadUtils;
 
 import org.json.JSONObject;
 
@@ -14,9 +15,12 @@ import android.content.Intent;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.app.Activity;
+import java.io.IOException;
 
 
 import java.util.Locale;
@@ -73,6 +77,7 @@ public class GeckoThread extends Thread implements GeckoEventListener {
         GeckoLoader.loadSQLiteLibs(app, resourcePath);
         GeckoLoader.loadNSSLibs(app, resourcePath);
         GeckoLoader.loadGeckoLibs(app, resourcePath);
+        GeckoJavaSampler.setLibsLoaded();
 
         Locale.setDefault(locale);
 
@@ -94,12 +99,34 @@ public class GeckoThread extends Thread implements GeckoEventListener {
     }
 
     private String addCustomProfileArg(String args) {
-        String profile = GeckoAppShell.getGeckoInterface() == null || GeckoApp.sIsUsingCustomProfile ? "" : (" -P " + GeckoAppShell.getGeckoInterface().getProfile().getName());
-        return (args != null ? args : "") + profile;
+        String profile = "";
+        String guest = "";
+        if (GeckoAppShell.getGeckoInterface() != null) {
+            if (GeckoAppShell.getGeckoInterface().getProfile().inGuestMode()) {
+                try {
+                    profile = " -profile " + GeckoAppShell.getGeckoInterface().getProfile().getDir().getCanonicalPath();
+                } catch (IOException ioe) { Log.e(LOGTAG, "error getting guest profile path", ioe); }
+
+                if (args == null || !args.contains(BrowserApp.GUEST_BROWSING_ARG)) {
+                    guest = " " + BrowserApp.GUEST_BROWSING_ARG;
+                }
+            } else if (!GeckoApp.sIsUsingCustomProfile) {
+                // If nothing was passed in in the intent, force Gecko to use the default profile for
+                // for this activity
+                profile = " -P " + GeckoAppShell.getGeckoInterface().getProfile().getName();
+            }
+        }
+
+        return (args != null ? args : "") + profile + guest;
     }
 
     @Override
     public void run() {
+        Looper.prepare();
+        ThreadUtils.sGeckoThread = this;
+        ThreadUtils.sGeckoHandler = new Handler();
+        ThreadUtils.sGeckoQueue = Looper.myQueue();
+
         String path = initGeckoEnvironment();
 
         Log.w(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - runGecko");
@@ -113,6 +140,8 @@ public class GeckoThread extends Thread implements GeckoEventListener {
         GeckoAppShell.runGecko(path, args, mUri, type);
     }
 
+    private static Object sLock = new Object();
+
     @Override
     public void handleMessage(String event, JSONObject message) {
         if ("Gecko:Ready".equals(event)) {
@@ -123,13 +152,13 @@ public class GeckoThread extends Thread implements GeckoEventListener {
     }
 
     public static boolean checkLaunchState(LaunchState checkState) {
-        synchronized (sLaunchState) {
+        synchronized (sLock) {
             return sLaunchState == checkState;
         }
     }
 
     static void setLaunchState(LaunchState setState) {
-        synchronized (sLaunchState) {
+        synchronized (sLock) {
             sLaunchState = setState;
         }
     }
@@ -139,7 +168,7 @@ public class GeckoThread extends Thread implements GeckoEventListener {
      * state is <code>checkState</code>; otherwise do nothing and return false.
      */
     static boolean checkAndSetLaunchState(LaunchState checkState, LaunchState setState) {
-        synchronized (sLaunchState) {
+        synchronized (sLock) {
             if (sLaunchState != checkState)
                 return false;
             sLaunchState = setState;

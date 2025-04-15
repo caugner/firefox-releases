@@ -63,7 +63,7 @@ struct SetDOMProxyInformation
 {
   SetDOMProxyInformation() {
     js::SetDOMProxyInformation((void*) &HandlerFamily,
-                               js::JSSLOT_PROXY_EXTRA + JSPROXYSLOT_EXPANDO, DOMProxyShadows);
+                               js::PROXY_EXTRA_SLOT + JSPROXYSLOT_EXPANDO, DOMProxyShadows);
   }
 };
 
@@ -144,9 +144,11 @@ DOMProxyHandler::EnsureExpandoObject(JSContext* cx, JS::Handle<JSObject*> obj)
 }
 
 bool
-DOMProxyHandler::isExtensible(JSObject *proxy)
+DOMProxyHandler::isExtensible(JSContext *cx, JS::Handle<JSObject*> proxy, bool *extensible)
 {
-  return true; // always extensible per WebIDL
+  // always extensible per WebIDL
+  *extensible = true;
+  return true;
 }
 
 bool
@@ -214,7 +216,7 @@ DOMProxyHandler::delete_(JSContext* cx, JS::Handle<JSObject*> proxy,
   JS::Rooted<JSObject*> expando(cx);
   if (!xpc::WrapperFactory::IsXrayWrapper(proxy) && (expando = GetExpandoObject(proxy))) {
     JS::Rooted<Value> v(cx);
-    if (!JS_DeletePropertyById2(cx, expando, id, v.address()) ||
+    if (!JS_DeletePropertyById2(cx, expando, id, &v) ||
         !JS_ValueToBoolean(cx, v, &b)) {
       return false;
     }
@@ -228,7 +230,7 @@ bool
 DOMProxyHandler::enumerate(JSContext* cx, JS::Handle<JSObject*> proxy, AutoIdVector& props)
 {
   JS::Rooted<JSObject*> proto(cx);
-  if (!JS_GetPrototype(cx, proxy, proto.address())) {
+  if (!JS_GetPrototype(cx, proxy, &proto))  {
     return false;
   }
   return getOwnPropertyNames(cx, proxy, props) &&
@@ -264,11 +266,13 @@ DOMProxyHandler::has(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid
   return ok;
 }
 
+/* static */
 bool
 DOMProxyHandler::AppendNamedPropertyIds(JSContext* cx,
                                         JS::Handle<JSObject*> proxy,
                                         nsTArray<nsString>& names,
                                         bool shadowPrototypeProperties,
+                                        DOMProxyHandler* handler,
                                         JS::AutoIdVector& props)
 {
   for (uint32_t i = 0; i < names.Length(); ++i) {
@@ -283,7 +287,7 @@ DOMProxyHandler::AppendNamedPropertyIds(JSContext* cx,
     }
 
     if (shadowPrototypeProperties ||
-        !HasPropertyOnPrototype(cx, proxy, this, id)) {
+        !HasPropertyOnPrototype(cx, proxy, handler, id)) {
       if (!props.append(id)) {
         return false;
       }

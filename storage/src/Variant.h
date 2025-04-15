@@ -22,7 +22,7 @@
  * nsString  -> TEXT (use TextVariant)
  * nsCString -> TEXT (use UTF8TextVariant)
  * uint8_t[] -> BLOB (use BlobVariant)
- * nullptr    -> NULL (use NullVariant)
+ * nullptr   -> NULL (use NullVariant)
  */
 
 namespace mozilla {
@@ -34,7 +34,7 @@ namespace storage {
 class Variant_base : public nsIVariant
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIVARIANT
 
 protected:
@@ -278,7 +278,7 @@ struct variant_blob_traits<uint8_t[]>
 };
 
 /**
- * NULL type
+ * nullptr type
  */
 
 class NullVariant : public Variant_base

@@ -523,7 +523,8 @@ LockedFile::SetLocation(JSContext* aCx,
   }
 
   uint64_t location;
-  if (!JS::ToUint64(aCx, aLocation, &location)) {
+  JS::Rooted<JS::Value> value(aCx, aLocation);
+  if (!JS::ToUint64(aCx, value, &location)) {
     return NS_ERROR_TYPE_ERR;
   }
 
@@ -923,7 +924,7 @@ FinishHelper::FinishHelper(LockedFile* aLockedFile)
   mStream.swap(aLockedFile->mStream);
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(FinishHelper, nsIRunnable)
+NS_IMPL_ISUPPORTS1(FinishHelper, nsIRunnable)
 
 NS_IMETHODIMP
 FinishHelper::Run()

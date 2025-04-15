@@ -33,6 +33,13 @@ class nsIComboboxControlFrame;
 class nsPresContext;
 class nsListEventListener;
 
+namespace mozilla {
+namespace dom {
+class HTMLOptionElement;
+class HTMLOptionsCollection;
+} // namespace dom
+} // namespace mozilla
+
 /**
  * Frame-based listbox.
  */
@@ -111,14 +118,14 @@ public:
     // nsIListControlFrame
   virtual void SetComboboxFrame(nsIFrame* aComboboxFrame) MOZ_OVERRIDE;
   virtual int32_t GetSelectedIndex() MOZ_OVERRIDE;
-  virtual already_AddRefed<nsIContent> GetCurrentOption() MOZ_OVERRIDE;
+  virtual mozilla::dom::HTMLOptionElement* GetCurrentOption() MOZ_OVERRIDE;
 
   /**
    * Gets the text of the currently selected item.
    * If the there are zero items then an empty string is returned
    * If there is nothing selected, then the 0th item's text is returned.
    */
-  virtual void GetOptionText(int32_t aIndex, nsAString & aStr) MOZ_OVERRIDE;
+  virtual void GetOptionText(uint32_t aIndex, nsAString& aStr) MOZ_OVERRIDE;
 
   virtual void CaptureMouseEvents(bool aGrabMouseEvents) MOZ_OVERRIDE;
   virtual nscoord GetHeightOfARow() MOZ_OVERRIDE;
@@ -163,27 +170,17 @@ public:
   nsresult MouseUp(nsIDOMEvent* aMouseEvent);
   nsresult MouseMove(nsIDOMEvent* aMouseEvent);
   nsresult DragMove(nsIDOMEvent* aMouseEvent);
+  nsresult KeyDown(nsIDOMEvent* aKeyEvent);
   nsresult KeyPress(nsIDOMEvent* aKeyEvent);
 
   /**
-   * Returns the options collection for aContent, if any.
+   * Returns the options collection for mContent, if any.
    */
-  static already_AddRefed<nsIDOMHTMLOptionsCollection>
-    GetOptions(nsIContent * aContent);
-
+  mozilla::dom::HTMLOptionsCollection* GetOptions() const;
   /**
-   * Returns the nsIDOMHTMLOptionElement for a given index 
-   * in the select's collection.
+   * Returns the HTMLOptionElement for a given index in mContent's collection.
    */
-  static already_AddRefed<nsIDOMHTMLOptionElement>
-    GetOption(nsIDOMHTMLOptionsCollection* aOptions, int32_t aIndex);
-
-  /**
-   * Returns the nsIContent object in the collection 
-   * for a given index.
-   */
-  static already_AddRefed<nsIContent>
-    GetOptionAsContent(nsIDOMHTMLOptionsCollection* aCollection,int32_t aIndex);
+  mozilla::dom::HTMLOptionElement* GetOption(uint32_t aIndex) const;
 
   static void ComboboxFocusSet();
 
@@ -283,11 +280,11 @@ protected:
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
-  nsresult   ScrollToFrame(nsIContent * aOptElement);
+  void ScrollToFrame(mozilla::dom::HTMLOptionElement& aOptElement);
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
-  nsresult   ScrollToIndex(int32_t anIndex);
+  void ScrollToIndex(int32_t anIndex);
 
   /**
    * When the user clicks on the comboboxframe to show the dropdown
@@ -318,10 +315,6 @@ protected:
   nsListControlFrame(nsIPresShell* aShell, nsIDocument* aDocument, nsStyleContext* aContext);
   virtual ~nsListControlFrame();
 
-  // Utility methods
-  nsresult GetSizeAttribute(uint32_t *aSize);
-  nsIContent* GetOptionFromContent(nsIContent *aContent);
-
   /**
    * Sets the mSelectedIndex and mOldSelectedIndex from figuring out what 
    * item was selected using content
@@ -330,26 +323,7 @@ protected:
    */
   nsresult GetIndexFromDOMEvent(nsIDOMEvent* aMouseEvent, int32_t& aCurIndex);
 
-  /**
-   * For a given index it returns the nsIContent object 
-   * from the select.
-   */
-  already_AddRefed<nsIContent> GetOptionContent(int32_t aIndex) const;
-
-  /** 
-   * For a given piece of content, it determines whether the 
-   * content (an option) is selected or not.
-   * @return true if it is, false if it is NOT.
-   */
-  bool     IsContentSelected(nsIContent* aContent) const;
-
-  /**
-   * For a given index is return whether the content is selected.
-   */
-  bool     IsContentSelectedByIndex(int32_t aIndex) const;
-
   bool     CheckIfAllFramesHere();
-  int32_t  GetIndexFromContent(nsIContent *aContent);
   bool     IsLeftButton(nsIDOMEvent* aMouseEvent);
 
   // guess at a row height based on our own style.
@@ -394,6 +368,8 @@ protected:
    */
   bool     HandleListSelection(nsIDOMEvent * aDOMEvent, int32_t selectedIndex);
   void     InitSelectionRange(int32_t aClickedIndex);
+  void     PostHandleKeyEvent(int32_t aNewIndex, uint32_t aCharCode,
+                              bool aIsShift, bool aIsControlOrMeta);
 
 public:
   nsSelectsAreaFrame* GetOptionsContainer() const {

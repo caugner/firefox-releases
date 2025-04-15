@@ -14,6 +14,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Likely.h"
+#include "mozilla/LookAndFeel.h"
 #include "mozilla/Util.h"
 
 #include "nsRuleNode.h"
@@ -40,8 +41,7 @@
 #include "nsPrintfCString.h"
 #include "nsRenderingContext.h"
 #include "nsStyleUtil.h"
-
-#include "mozilla/LookAndFeel.h"
+#include "prtime.h"
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <malloc.h>
@@ -387,9 +387,7 @@ static nscoord CalcLengthWith(const nsCSSValue& aValue,
         if (docElement) {
           rootStyle = aPresContext->StyleSet()->ResolveStyleFor(docElement,
                                                                 nullptr);
-          if (rootStyle) {
-            rootStyleFont = rootStyle->StyleFont();
-          }
+          rootStyleFont = rootStyle->StyleFont();
         }
 
         rootFontSize = rootStyleFont->mFont.size;
@@ -653,6 +651,7 @@ GetFloatFromBoxPosition(int32_t aEnumValue)
 #define SETCOORD_CALC_CLAMP_NONNEGATIVE 0x00040000 // modifier for CALC_LENGTH_ONLY
 #define SETCOORD_STORE_CALC             0x00080000
 #define SETCOORD_BOX_POSITION           0x00100000 // exclusive with _ENUMERATED
+#define SETCOORD_ANGLE                  0x00200000
 
 #define SETCOORD_LP     (SETCOORD_LENGTH | SETCOORD_PERCENT)
 #define SETCOORD_LH     (SETCOORD_LENGTH | SETCOORD_INHERIT)
@@ -764,6 +763,19 @@ static bool SetCoord(const nsCSSValue& aValue, nsStyleCoord& aCoord,
     else {
       result = false;  // didn't set anything
     }
+  }
+  else if ((aMask & SETCOORD_ANGLE) != 0 &&
+           (aValue.IsAngularUnit())) {
+    nsStyleUnit unit;
+    switch (aValue.GetUnit()) {
+      case eCSSUnit_Degree: unit = eStyleUnit_Degree; break;
+      case eCSSUnit_Grad:   unit = eStyleUnit_Grad; break;
+      case eCSSUnit_Radian: unit = eStyleUnit_Radian; break;
+      case eCSSUnit_Turn:   unit = eStyleUnit_Turn; break;
+      default: NS_NOTREACHED("unrecognized angular unit");
+        unit = eStyleUnit_Degree;
+    }
+    aCoord.SetAngleValue(aValue.GetAngleValue(), unit);
   }
   else {
     result = false;  // didn't set anything
@@ -987,18 +999,9 @@ static void SetGradient(const nsCSSValue& aValue, nsPresContext* aPresContext,
   aResult.mRepeating = gradient->mIsRepeating;
 
   // angle
-  if (gradient->mAngle.IsAngularUnit()) {
-    nsStyleUnit unit;
-    switch (gradient->mAngle.GetUnit()) {
-    case eCSSUnit_Degree: unit = eStyleUnit_Degree; break;
-    case eCSSUnit_Grad:   unit = eStyleUnit_Grad; break;
-    case eCSSUnit_Radian: unit = eStyleUnit_Radian; break;
-    case eCSSUnit_Turn:   unit = eStyleUnit_Turn; break;
-    default: NS_NOTREACHED("unrecognized angular unit");
-      unit = eStyleUnit_Degree;
-    }
-    aResult.mAngle.SetAngleValue(gradient->mAngle.GetAngleValue(), unit);
-  } else {
+  const nsStyleCoord dummyParentCoord;
+  if (!SetCoord(gradient->mAngle, aResult.mAngle, dummyParentCoord, SETCOORD_ANGLE,
+                aContext, aPresContext, aCanStoreInRuleTree)) {
     NS_ASSERTION(gradient->mAngle.GetUnit() == eCSSUnit_None,
                  "bad unit for gradient angle");
     aResult.mAngle.SetNoneValue();
@@ -2547,8 +2550,10 @@ ComputeScriptLevelSize(const nsStyleFont* aFont, const nsStyleFont* aParentFont,
   }
 
   // Compute actual value of minScriptSize
-  nscoord minScriptSize =
-    nsStyleFont::ZoomText(aPresContext, aParentFont->mScriptMinSize);
+  nscoord minScriptSize = aParentFont->mScriptMinSize;
+  if (aFont->mAllowZoom) {
+    minScriptSize = nsStyleFont::ZoomText(aPresContext, minScriptSize);
+  }
 
   double scriptLevelScale =
     pow(aParentFont->mScriptSizeMultiplier, scriptLevelChange);
@@ -2874,7 +2879,7 @@ struct SetFontSizeCalcOps : public css::BasicCoordCalcOps,
                             mParentFont,
                             nullptr, mPresContext, mAtRoot,
                             true, mCanStoreInRuleTree);
-      if (!aValue.IsRelativeLengthUnit()) {
+      if (!aValue.IsRelativeLengthUnit() && mParentFont->mAllowZoom) {
         size = nsStyleFont::ZoomText(mPresContext, size);
       }
     }
@@ -2907,14 +2912,16 @@ nsRuleNode::SetFontSize(nsPresContext* aPresContext,
                         bool aAtRoot,
                         bool& aCanStoreInRuleTree)
 {
-  bool zoom = false;
+  // If false, means that *aSize has not been zoomed.  If true, means that
+  // *aSize has been zoomed iff aParentFont->mAllowZoom is true.
+  bool sizeIsZoomedAccordingToParent = false;
+
   int32_t baseSize = (int32_t) aPresContext->
     GetDefaultFont(aFont->mGenericID, aFont->mLanguage)->size;
   const nsCSSValue* sizeValue = aRuleData->ValueForFontSize();
   if (eCSSUnit_Enumerated == sizeValue->GetUnit()) {
     int32_t value = sizeValue->GetIntValue();
 
-    zoom = true;
     if ((NS_STYLE_FONT_SIZE_XXSMALL <= value) &&
         (value <= NS_STYLE_FONT_SIZE_XXLARGE)) {
       *aSize = CalcFontPointSize(value, baseSize,
@@ -2933,8 +2940,10 @@ nsRuleNode::SetFontSize(nsPresContext* aPresContext,
       // Note that relative units here use the parent's size unadjusted
       // for scriptlevel changes. A scriptlevel change between us and the parent
       // is simply ignored.
-      nscoord parentSize =
-        nsStyleFont::UnZoomText(aPresContext, aParentSize);
+      nscoord parentSize = aParentSize;
+      if (aParentFont->mAllowZoom) {
+        parentSize = nsStyleFont::UnZoomText(aPresContext, parentSize);
+      }
 
       if (NS_STYLE_FONT_SIZE_LARGER == value) {
         *aSize = FindNextLargerFontSize(parentSize,
@@ -2958,7 +2967,8 @@ nsRuleNode::SetFontSize(nsPresContext* aPresContext,
            sizeValue->GetUnit() == eCSSUnit_Percent ||
            sizeValue->IsCalcUnit()) {
     SetFontSizeCalcOps ops(aParentSize, aParentFont,
-                           aPresContext, aAtRoot, aCanStoreInRuleTree);
+                           aPresContext, aAtRoot,
+                           aCanStoreInRuleTree);
     *aSize = css::ComputeCalc(*sizeValue, ops);
     if (*aSize < 0) {
       NS_ABORT_IF_FALSE(sizeValue->IsCalcUnit(),
@@ -2966,13 +2976,13 @@ nsRuleNode::SetFontSize(nsPresContext* aPresContext,
                         "by parser");
       *aSize = 0;
     }
-    // Zoom is handled inside the calc ops when needed.
-    zoom = false;
+    // The calc ops will always zoom its result according to the value
+    // of aParentFont->mAllowZoom.
+    sizeIsZoomedAccordingToParent = true;
   }
   else if (eCSSUnit_System_Font == sizeValue->GetUnit()) {
     // this becomes our cascading size
     *aSize = aSystemFont.size;
-    zoom = true;
   }
   else if (eCSSUnit_Inherit == sizeValue->GetUnit()) {
     aCanStoreInRuleTree = false;
@@ -2980,13 +2990,12 @@ nsRuleNode::SetFontSize(nsPresContext* aPresContext,
     // to inherit and we don't want explicit "inherit" to differ from the
     // default.
     *aSize = aScriptLevelAdjustedParentSize;
-    zoom = false;
+    sizeIsZoomedAccordingToParent = true;
   }
   else if (eCSSUnit_Initial == sizeValue->GetUnit()) {
     // The initial value is 'medium', which has magical sizing based on
     // the generic font family, so do that here too.
     *aSize = baseSize;
-    zoom = true;
   } else {
     NS_ASSERTION(eCSSUnit_Null == sizeValue->GetUnit(),
                  "What kind of font-size value is this?");
@@ -3000,13 +3009,20 @@ nsRuleNode::SetFontSize(nsPresContext* aPresContext,
       // store the data in the rule tree.
       aCanStoreInRuleTree = false;
       *aSize = aScriptLevelAdjustedParentSize;
+      sizeIsZoomedAccordingToParent = true;
+    } else {
+      return;
     }
   }
 
   // We want to zoom the cascaded size so that em-based measurements,
   // line-heights, etc., work.
-  if (zoom) {
+  bool currentlyZoomed = sizeIsZoomedAccordingToParent &&
+                         aParentFont->mAllowZoom;
+  if (!currentlyZoomed && aFont->mAllowZoom) {
     *aSize = nsStyleFont::ZoomText(aPresContext, *aSize);
+  } else if (currentlyZoomed && !aFont->mAllowZoom) {
+    *aSize = nsStyleFont::UnZoomText(aPresContext, *aSize);
   }
 }
 
@@ -3026,6 +3042,22 @@ nsRuleNode::SetFont(nsPresContext* aPresContext, nsStyleContext* aContext,
                     bool& aCanStoreInRuleTree)
 {
   bool atRoot = !aContext->GetParent();
+
+  // -x-text-zoom: none, inherit, initial
+  bool allowZoom;
+  const nsCSSValue* textZoomValue = aRuleData->ValueForTextZoom();
+  if (eCSSUnit_Null != textZoomValue->GetUnit()) {
+    if (eCSSUnit_Inherit == textZoomValue->GetUnit()) {
+      allowZoom = aParentFont->mAllowZoom;
+    } else if (eCSSUnit_None == textZoomValue->GetUnit()) {
+      allowZoom = false;
+    } else {
+      MOZ_ASSERT(eCSSUnit_Initial == textZoomValue->GetUnit(),
+                 "unexpected unit");
+      allowZoom = true;
+    }
+    aFont->EnableZoom(aPresContext, allowZoom);
+  }
 
   // mLanguage must be set before before any of the CalcLengthWith calls
   // (direct calls or calls via SetFontSize) for the cases where |aParentFont|
@@ -3048,7 +3080,7 @@ nsRuleNode::SetFont(nsPresContext* aPresContext, nsStyleContext* aContext,
                                  aFont->mLanguage);
 
   // -moz-system-font: enum (never inherit!)
-  MOZ_STATIC_ASSERT(
+  static_assert(
     NS_STYLE_FONT_CAPTION        == LookAndFeel::eFont_Caption &&
     NS_STYLE_FONT_ICON           == LookAndFeel::eFont_Icon &&
     NS_STYLE_FONT_MENU           == LookAndFeel::eFont_Menu &&
@@ -3162,6 +3194,14 @@ nsRuleNode::SetFont(nsPresContext* aPresContext, nsStyleContext* aContext,
   if (aGenericFontID != kGenericFont_NONE) {
     aFont->mGenericID = aGenericFontID;
   }
+
+  // font-smoothing: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForOSXFontSmoothing(),
+              aFont->mFont.smoothing, aCanStoreInRuleTree,
+              SETDSC_ENUMERATED,
+              aParentFont->mFont.smoothing,
+              defaultVariableFont->smoothing,
+              0, 0, 0, 0);
 
   // font-style: enum, inherit, initial, -moz-system-font
   SetDiscrete(*aRuleData->ValueForFontStyle(),
@@ -5507,11 +5547,11 @@ struct BackgroundItemComputer<nsCSSValuePairList, nsStyleBackground::Size>
         size.*(axis->type) = nsStyleBackground::Size::eAuto;
       }
       else if (eCSSUnit_Enumerated == specified.GetUnit()) {
-        MOZ_STATIC_ASSERT(nsStyleBackground::Size::eContain ==
-                          NS_STYLE_BG_SIZE_CONTAIN &&
-                          nsStyleBackground::Size::eCover ==
-                          NS_STYLE_BG_SIZE_COVER,
-                          "background size constants out of sync");
+        static_assert(nsStyleBackground::Size::eContain ==
+                      NS_STYLE_BG_SIZE_CONTAIN &&
+                      nsStyleBackground::Size::eCover ==
+                      NS_STYLE_BG_SIZE_COVER,
+                      "background size constants out of sync");
         NS_ABORT_IF_FALSE(specified.GetIntValue() == NS_STYLE_BG_SIZE_CONTAIN ||
                           specified.GetIntValue() == NS_STYLE_BG_SIZE_COVER,
                           "invalid enumerated value for size coordinate");
@@ -7493,7 +7533,7 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
       break;
 
     case eCSSUnit_Enumerated:
-      MOZ_STATIC_ASSERT
+      static_assert
         (NS_STYLE_PAINT_ORDER_BITWIDTH * NS_STYLE_PAINT_ORDER_LAST_VALUE <= 8,
          "SVGStyleStruct::mPaintOrder not big enough");
       svg->mPaintOrder = static_cast<uint8_t>(paintOrderValue->GetIntValue());
@@ -7679,6 +7719,74 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
   COMPUTE_END_INHERITED(SVG, svg)
 }
 
+static nsStyleFilter::Type
+StyleFilterTypeForFunctionName(nsCSSKeyword functionName)
+{
+  switch (functionName) {
+    case eCSSKeyword_blur:
+      return nsStyleFilter::Type::eBlur;
+    case eCSSKeyword_brightness:
+      return nsStyleFilter::Type::eBrightness;
+    case eCSSKeyword_contrast:
+      return nsStyleFilter::Type::eContrast;
+    case eCSSKeyword_grayscale:
+      return nsStyleFilter::Type::eGrayscale;
+    case eCSSKeyword_hue_rotate:
+      return nsStyleFilter::Type::eHueRotate;
+    case eCSSKeyword_invert:
+      return nsStyleFilter::Type::eInvert;
+    case eCSSKeyword_opacity:
+      return nsStyleFilter::Type::eOpacity;
+    case eCSSKeyword_saturate:
+      return nsStyleFilter::Type::eSaturate;
+    case eCSSKeyword_sepia:
+      return nsStyleFilter::Type::eSepia;
+    default:
+      NS_NOTREACHED("Unknown filter type.");
+      return nsStyleFilter::Type::eNull;
+  }
+}
+
+static void
+SetStyleFilterToCSSValue(nsStyleFilter* aStyleFilter,
+                         const nsCSSValue& aValue,
+                         nsStyleContext* aStyleContext,
+                         nsPresContext* aPresContext,
+                         bool& aCanStoreInRuleTree)
+{
+  nsCSSUnit unit = aValue.GetUnit();
+  if (unit == eCSSUnit_URL) {
+    aStyleFilter->mType = nsStyleFilter::Type::eURL;
+    aStyleFilter->mURL = aValue.GetURLValue();
+    return;
+  }
+
+  NS_ABORT_IF_FALSE(unit == eCSSUnit_Function, "expected a filter function");
+
+  nsCSSValue::Array* filterFunction = aValue.GetArrayValue();
+  nsCSSKeyword functionName =
+    (nsCSSKeyword)filterFunction->Item(0).GetIntValue();
+  aStyleFilter->mType = StyleFilterTypeForFunctionName(functionName);
+
+  int32_t mask = SETCOORD_PERCENT | SETCOORD_FACTOR;
+  if (aStyleFilter->mType == nsStyleFilter::Type::eBlur) {
+    mask = SETCOORD_LENGTH | SETCOORD_STORE_CALC;
+  } else if (aStyleFilter->mType == nsStyleFilter::Type::eHueRotate) {
+    mask = SETCOORD_ANGLE;
+  }
+
+  NS_ABORT_IF_FALSE(filterFunction->Count() == 2,
+                    "all filter functions except drop-shadow should have "
+                    "exactly one argument");
+
+  nsCSSValue& arg = filterFunction->Item(1);
+  DebugOnly<bool> success = SetCoord(arg, aStyleFilter->mFilterParameter,
+                                     nsStyleCoord(), mask,
+                                     aStyleContext, aPresContext,
+                                     aCanStoreInRuleTree);
+  NS_ABORT_IF_FALSE(success, "unexpected unit");
+}
+
 const void*
 nsRuleNode::ComputeSVGResetData(void* aStartStruct,
                                 const nsRuleData* aRuleData,
@@ -7755,14 +7863,34 @@ nsRuleNode::ComputeSVGResetData(void* aStartStruct,
 
   // filter: url, none, inherit
   const nsCSSValue* filterValue = aRuleData->ValueForFilter();
-  if (eCSSUnit_URL == filterValue->GetUnit()) {
-    svgReset->mFilter = filterValue->GetURLValue();
-  } else if (eCSSUnit_None == filterValue->GetUnit() ||
-             eCSSUnit_Initial == filterValue->GetUnit()) {
-    svgReset->mFilter = nullptr;
-  } else if (eCSSUnit_Inherit == filterValue->GetUnit()) {
-    canStoreInRuleTree = false;
-    svgReset->mFilter = parentSVGReset->mFilter;
+  switch (filterValue->GetUnit()) {
+    case eCSSUnit_Null:
+      break;
+    case eCSSUnit_None:
+    case eCSSUnit_Initial:
+      svgReset->mFilters.Clear();
+      break;
+    case eCSSUnit_Inherit:
+      canStoreInRuleTree = false;
+      svgReset->mFilters = parentSVGReset->mFilters;
+      break;
+    case eCSSUnit_List:
+    case eCSSUnit_ListDep: {
+      svgReset->mFilters.Clear();
+      const nsCSSValueList* cur = filterValue->GetListValue();
+      while(cur) {
+        nsStyleFilter styleFilter;
+        SetStyleFilterToCSSValue(&styleFilter, cur->mValue, aContext,
+                                 mPresContext, canStoreInRuleTree);
+        NS_ABORT_IF_FALSE(styleFilter.mType != nsStyleFilter::Type::eNull,
+                          "filter should be set");
+        svgReset->mFilters.AppendElement(styleFilter);
+        cur = cur->mNext;
+      }
+      break;
+    }
+    default:
+      NS_NOTREACHED("unexpected unit");
   }
 
   // mask: url, none, inherit

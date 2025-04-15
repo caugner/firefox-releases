@@ -39,12 +39,6 @@ using namespace mozilla::a11y;
 // HTMLCheckboxAccessible
 ////////////////////////////////////////////////////////////////////////////////
 
-HTMLCheckboxAccessible::
-  HTMLCheckboxAccessible(nsIContent* aContent, DocAccessible* aDoc) :
-  LeafAccessible(aContent, aDoc)
-{
-}
-
 role
 HTMLCheckboxAccessible::NativeRole()
 {
@@ -118,12 +112,6 @@ HTMLCheckboxAccessible::IsWidget() const
 ////////////////////////////////////////////////////////////////////////////////
 // HTMLRadioButtonAccessible
 ////////////////////////////////////////////////////////////////////////////////
-
-HTMLRadioButtonAccessible::
-  HTMLRadioButtonAccessible(nsIContent* aContent, DocAccessible* aDoc) :
-  RadioButtonAccessible(aContent, aDoc)
-{
-}
 
 uint64_t
 HTMLRadioButtonAccessible::NativeState()
@@ -475,22 +463,6 @@ HTMLTextFieldAccessible::GetEditor() const
   editableElt->GetEditor(getter_AddRefs(editor));
 
   return editor.forget();
-}
-
-void
-HTMLTextFieldAccessible::CacheChildren()
-{
-  // XXX: textarea shouldn't contain anything but text leafs. Currently it may
-  // contain a trailing fake HTML br element added for layout needs. We don't
-  // need to expose it since it'd be confusing for AT.
-  TreeWalker walker(this, mContent);
-  Accessible* child = nullptr;
-  while ((child = walker.NextChild())) {
-    if (child->IsTextLeaf())
-      AppendChild(child);
-    else
-      Document()->UnbindFromDocument(child);
-  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -7,13 +7,14 @@
 #ifndef jsscriptinlines_h
 #define jsscriptinlines_h
 
+#include "jsscript.h"
+
 #include "jsautooplen.h"
 #include "jscntxt.h"
 #include "jsfun.h"
 #include "jsopcode.h"
-#include "jsscript.h"
 
-#include "jit/AsmJS.h"
+#include "jit/AsmJSLink.h"
 #include "vm/GlobalObject.h"
 #include "vm/RegExpObject.h"
 #include "vm/Shape.h"
@@ -39,45 +40,11 @@ AliasedFormalIter::AliasedFormalIter(JSScript *script)
     settle();
 }
 
-extern void
-CurrentScriptFileLineOriginSlow(JSContext *cx, const char **file, unsigned *linenop, JSPrincipals **origin);
-
-inline void
-CurrentScriptFileLineOrigin(JSContext *cx, const char **file, unsigned *linenop, JSPrincipals **origin,
-                            LineOption opt = NOT_CALLED_FROM_JSOP_EVAL)
-{
-    if (opt == CALLED_FROM_JSOP_EVAL) {
-        JSScript *script = NULL;
-        jsbytecode *pc = NULL;
-        types::TypeScript::GetPcScript(cx, &script, &pc);
-        JS_ASSERT(JSOp(*pc) == JSOP_EVAL);
-        JS_ASSERT(*(pc + JSOP_EVAL_LENGTH) == JSOP_LINENO);
-        *file = script->filename();
-        *linenop = GET_UINT16(pc + JSOP_EVAL_LENGTH);
-        *origin = script->originPrincipals;
-        return;
-    }
-
-    CurrentScriptFileLineOriginSlow(cx, file, linenop, origin);
-}
-
 inline void
 ScriptCounts::destroy(FreeOp *fop)
 {
     fop->free_(pcCountsVector);
     fop->delete_(ionCounts);
-}
-
-inline void
-MarkScriptBytecode(JSRuntime *rt, const jsbytecode *bytecode)
-{
-    /*
-     * As an invariant, a ScriptBytecodeEntry should not be 'marked' outside of
-     * a GC. Since SweepScriptBytecodes is only called during a full gc,
-     * to preserve this invariant, only mark during a full gc.
-     */
-    if (rt->gcIsFull)
-        SharedScriptData::fromBytecode(bytecode)->marked = true;
 }
 
 void
@@ -130,18 +97,6 @@ JSScript::getRegExp(size_t index)
     return (js::RegExpObject *) obj;
 }
 
-inline bool
-JSScript::isEmpty() const
-{
-    if (length > 3)
-        return false;
-
-    jsbytecode *pc = code;
-    if (noScriptRval && JSOp(*pc) == JSOP_FALSE)
-        ++pc;
-    return JSOp(*pc) == JSOP_STOP;
-}
-
 inline js::GlobalObject &
 JSScript::global() const
 {
@@ -167,11 +122,6 @@ JSScript::writeBarrierPre(JSScript *script)
         JS_ASSERT(tmp == script);
     }
 #endif
-}
-
-inline void
-JSScript::writeBarrierPost(JSScript *script, void *addr)
-{
 }
 
 /* static */ inline void

@@ -11,6 +11,7 @@ const Cu = Components.utils;
 
 const PANE_APPEARANCE_DELAY = 50;
 const PAGE_SIZE_ITEM_COUNT_RATIO = 5;
+const WIDGET_FOCUSABLE_NODES = new Set(["vbox", "hbox"]);
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -377,9 +378,13 @@ function Item(aOwnerView, aAttachment, aContents = []) {
   this.attachment = aAttachment;
 
   let [aLabel, aValue, aDescription] = aContents;
+  // Make sure the label and the value are always strings.
   this._label = aLabel + "";
   this._value = aValue + "";
-  this._description = (aDescription || "") + "";
+  // Make sure the description is also a string, but only if it's available.
+  if (aDescription !== undefined) {
+    this._description = aDescription + "";
+  }
 
   // Allow the insertion of prebuilt nodes, otherwise delegate the item view
   // creation to a widget.
@@ -499,7 +504,7 @@ Item.prototype = {
 
   _label: "",
   _value: "",
-  _description: "",
+  _description: undefined,
   _prebuiltTarget: null,
   _target: null,
   finalize: null,
@@ -605,7 +610,7 @@ this.WidgetMethods = {
    *          - relaxed: true if this container should allow dupes & degenerates
    *          - attachment: some attached primitive/object for the item
    *          - attributes: a batch of attributes set to the displayed element
-   *          - finalize: function invoked when the item is removed
+   *          - finalize: function invokde when the item is removed
    * @return Item
    *         The item associated with the displayed element if an unstaged push,
    *         undefined if the item was staged for a later commit.
@@ -663,9 +668,12 @@ this.WidgetMethods = {
     if (!selectedItem) {
       return false;
     }
+
+    let { _label: label, _value: value, _description: desc } = selectedItem;
     this._widget.removeAttribute("notice");
-    this._widget.setAttribute("label", selectedItem._label);
-    this._widget.setAttribute("tooltiptext", selectedItem._value);
+    this._widget.setAttribute("label", label);
+    this._widget.setAttribute("tooltiptext", desc !== undefined ? desc : value);
+
     return true;
   },
 
@@ -1026,6 +1034,12 @@ this.WidgetMethods = {
   autoFocusOnInput: true,
 
   /**
+   * When focusing on input, allow right clicks?
+   * @see WidgetMethods.autoFocusOnInput
+   */
+  allowFocusOnRightClick: false,
+
+  /**
    * The number of elements in this container to jump when Page Up or Page Down
    * keys are pressed. If falsy, then the page size will be based on the
    * number of visible items in the container.
@@ -1104,16 +1118,21 @@ this.WidgetMethods = {
   _focusChange: function(aDirection) {
     let commandDispatcher = this._commandDispatcher;
     let prevFocusedElement = commandDispatcher.focusedElement;
+    let currFocusedElement;
 
-    commandDispatcher.suppressFocusScroll = true;
-    commandDispatcher[aDirection]();
+    do {
+      commandDispatcher.suppressFocusScroll = true;
+      commandDispatcher[aDirection]();
+      currFocusedElement = commandDispatcher.focusedElement;
 
-    // Make sure the newly focused item is a part of this container.
-    // If the focus goes out of bounds, revert the previously focused item.
-    if (!this.getItemForElement(commandDispatcher.focusedElement)) {
-      prevFocusedElement.focus();
-      return false;
-    }
+      // Make sure the newly focused item is a part of this container. If the
+      // focus goes out of bounds, revert the previously focused item.
+      if (!this.getItemForElement(currFocusedElement)) {
+        prevFocusedElement.focus();
+        return false;
+      }
+    } while (!WIDGET_FOCUSABLE_NODES.has(currFocusedElement.tagName));
+
     // Focus remained within bounds.
     return true;
   },
@@ -1195,7 +1214,10 @@ this.WidgetMethods = {
    */
   getItemForElement: function(aElement) {
     while (aElement) {
-      let item = this._itemsByElement.get(aElement);
+      let item =
+        this._itemsByElement.get(aElement) ||
+        this._itemsByElement.get(aElement.nextElementSibling) ||
+        this._itemsByElement.get(aElement.previousElementSibling);
       if (item) {
         return item;
       }
@@ -1541,12 +1563,12 @@ this.WidgetMethods = {
   },
 
   /**
-   * The keyPress event listener for this container.
+   * The mousePress event listener for this container.
    * @param string aName
    * @param MouseEvent aEvent
    */
   _onWidgetMousePress: function(aName, aEvent) {
-    if (aEvent.button != 0) {
+    if (aEvent.button != 0 && !this.allowFocusOnRightClick) {
       // Only allow left-click to trigger this event.
       return;
     }
@@ -1588,6 +1610,19 @@ this.WidgetMethods = {
    */
   _currentSortPredicate: function(aFirst, aSecond) {
     return +(aFirst._label.toLowerCase() > aSecond._label.toLowerCase());
+  },
+
+  /**
+   * Call a method on this widget named `aMethodName`. Any further arguments are
+   * passed on to the method. Returns the result of the method call.
+   *
+   * @param String aMethodName
+   *        The name of the method you want to call.
+   * @param aArgs
+   *        Optional. Any arguments you want to pass through to the method.
+   */
+  callMethod: function(aMethodName, ...aArgs) {
+    return this._widget[aMethodName].apply(this._widget, aArgs);
   },
 
   _widget: null,

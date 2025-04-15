@@ -3,7 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 function makeWorkerUrl(runner) {
-  return "data:application/javascript;charset=utf-8," + encodeURI("let run=" + runner.toSource()) + ";run();"
+  let prefix =  "http://example.com/browser/toolkit/components/social/test/browser/echo.sjs?";
+  if (typeof runner == "function") {
+    runner = "var run=" + runner.toSource() + ";run();";
+  }
+  return prefix + encodeURI(runner);
 }
 
 var getFrameWorkerHandle;
@@ -124,7 +128,8 @@ let tests = {
     }
     let worker = getFrameWorkerHandle(makeWorkerUrl(run), fakeWindow, "testPrototypes");
     worker.port.onmessage = function(e) {
-      if (e.data.topic == "hello" && e.data.data.somextrafunction) {
+      if (e.data.topic == "hello") {
+        ok(e.data.data.somextrafunction, "have someextrafunction")
         worker.terminate();
         cbnext();
       }
@@ -396,7 +401,7 @@ let tests = {
         port.onmessage = function(e) {
           if (e.data.topic == "ping") {
             try {
-              importScripts("http://foo.bar/error");
+              importScripts("http://mochi.test:8888/error");
             } catch(ex) {
               port.postMessage({topic: "pong", data: ex});
               return;
@@ -455,7 +460,7 @@ let tests = {
     let ioService = Cc["@mozilla.org/network/io-service;1"].getService(Ci.nsIIOService2);
     let oldManage = ioService.manageOfflineStatus;
     let oldOffline = ioService.offline;
-    
+
     ioService.manageOfflineStatus = false;
     let worker = getFrameWorkerHandle(makeWorkerUrl(run), undefined, "testNavigator");
     let expected_topic = "onoffline";
@@ -521,7 +526,7 @@ let tests = {
   },
 
   testEmptyWorker: function(cbnext) {
-    let worker = getFrameWorkerHandle("data:application/javascript;charset=utf-8,",
+    let worker = getFrameWorkerHandle(makeWorkerUrl(''),
                                       undefined, "testEmptyWorker");
     Services.obs.addObserver(function handleError(subj, topic, data) {
       Services.obs.removeObserver(handleError, "social:frameworker-error");
@@ -689,4 +694,35 @@ let tests = {
     }
     worker.port.postMessage({topic: "test-indexeddb-create"})
   },
+
+  testSubworker: function(cbnext) {
+    // the main "frameworker"...
+    let mainworker = function() {
+      onconnect = function(e) {
+        let port = e.ports[0];
+        port.onmessage = function(e) {
+          if (e.data.topic == "go") {
+            let suburl = e.data.data;
+            let worker = new Worker(suburl);
+            worker.onmessage = function(sube) {
+              port.postMessage({topic: "sub-message", data: sube.data});
+            }
+          }
+        }
+      }
+    }
+
+    // The "subworker" that is actually a real, bona-fide worker.
+    let subworker = function() {
+      postMessage("hello");
+    }
+    let worker = getFrameWorkerHandle(makeWorkerUrl(mainworker), undefined, "testSubWorker");
+    worker.port.onmessage = function(e) {
+      if (e.data.topic == "sub-message" && e.data.data == "hello") {
+        worker.terminate();
+        cbnext();
+      }
+    }
+    worker.port.postMessage({topic: "go", data: makeWorkerUrl(subworker)});
+  }
 }

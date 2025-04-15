@@ -4,13 +4,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jit/MIR.h"
+#include "mozilla/MathAlgorithms.h"
+
+#include "jit/arm/Assembler-arm.h"
 #include "jit/Lowering.h"
-#include "Assembler-arm.h"
+#include "jit/MIR.h"
+
 #include "jit/shared/Lowering-shared-inl.h"
 
 using namespace js;
 using namespace js::jit;
+
+using mozilla::FloorLog2;
 
 bool
 LIRGeneratorARM::useBox(LInstruction *lir, size_t n, MDefinition *mir,
@@ -182,6 +187,15 @@ LIRGeneratorARM::lowerForFPU(LInstructionHelper<1, 2, 0> *ins, MDefinition *mir,
 }
 
 bool
+LIRGeneratorARM::lowerForBitAndAndBranch(LBitAndAndBranch *baab, MInstruction *mir,
+                                         MDefinition *lhs, MDefinition *rhs)
+{
+    baab->setOperand(0, useRegister(lhs));
+    baab->setOperand(1, useRegisterOrConstant(rhs));
+    return add(baab, mir);
+}
+
+bool
 LIRGeneratorARM::defineUntypedPhi(MPhi *phi, size_t lirIndex)
 {
     LPhi *type = current->getPhi(lirIndex + VREG_TYPE_OFFSET);
@@ -228,6 +242,9 @@ LIRGeneratorARM::lowerForShift(LInstructionHelper<1, 2, 0> *ins, MDefinition *mi
 bool
 LIRGeneratorARM::lowerDivI(MDiv *div)
 {
+    if (div->isUnsigned())
+        return lowerUDiv(div);
+
     // Division instructions are slow. Division by constant denominators can be
     // rewritten to use other instructions.
     if (div->rhs()->isConstant()) {
@@ -237,8 +254,7 @@ LIRGeneratorARM::lowerDivI(MDiv *div)
         // possible; division by negative powers of two can be optimized in a
         // similar manner as positive powers of two, and division by other
         // constants can be optimized by a reciprocal multiplication technique.
-        int32_t shift;
-        JS_FLOOR_LOG2(shift, rhs);
+        int32_t shift = FloorLog2(rhs);
         if (rhs > 0 && 1 << shift == rhs) {
             LDivPowTwoI *lir = new LDivPowTwoI(useRegisterAtStart(div->lhs()), shift);
             if (div->fallible() && !assignSnapshot(lir))
@@ -247,11 +263,18 @@ LIRGeneratorARM::lowerDivI(MDiv *div)
         }
     }
 
-    LDivI *lir = new LDivI(useFixed(div->lhs(), r0), use(div->rhs(), r1),
-                           tempFixed(r2), tempFixed(r3));
-    if (div->fallible() && !assignSnapshot(lir))
-        return false;
-    return defineFixed(lir, div, LAllocation(AnyRegister(r0)));
+    if (hasIDIV()) {
+        LDivI *lir = new LDivI(useRegister(div->lhs()), useRegister(div->rhs()), temp());
+        if (div->fallible() && !assignSnapshot(lir))
+            return false;
+        return define(lir, div);
+    } else {
+        LSoftDivI *lir = new LSoftDivI(useFixed(div->lhs(), r0), use(div->rhs(), r1),
+                                       tempFixed(r2), tempFixed(r3));
+        if (div->fallible() && !assignSnapshot(lir))
+            return false;
+        return defineFixed(lir, div, LAllocation(AnyRegister(r0)));
+    }
 }
 
 bool
@@ -266,10 +289,12 @@ LIRGeneratorARM::lowerMulI(MMul *mul, MDefinition *lhs, MDefinition *rhs)
 bool
 LIRGeneratorARM::lowerModI(MMod *mod)
 {
+    if (mod->isUnsigned())
+        return lowerUMod(mod);
+
     if (mod->rhs()->isConstant()) {
         int32_t rhs = mod->rhs()->toConstant()->value().toInt32();
-        int32_t shift;
-        JS_FLOOR_LOG2(shift, rhs);
+        int32_t shift = FloorLog2(rhs);
         if (rhs > 0 && 1 << shift == rhs) {
             LModPowTwoI *lir = new LModPowTwoI(useRegister(mod->lhs()), shift);
             if (mod->fallible() && !assignSnapshot(lir))
@@ -282,12 +307,19 @@ LIRGeneratorARM::lowerModI(MMod *mod)
             return define(lir, mod);
         }
     }
-    LModI *lir = new LModI(useFixed(mod->lhs(), r0), use(mod->rhs(), r1),
-                           tempFixed(r2), tempFixed(r3), temp(LDefinition::GENERAL));
 
-    if (mod->fallible() && !assignSnapshot(lir))
-        return false;
-    return defineFixed(lir, mod, LAllocation(AnyRegister(r1)));
+    if (hasIDIV()) {
+        LModI *lir = new LModI(useRegister(mod->lhs()), useRegister(mod->rhs()), temp());
+        if (mod->fallible() && !assignSnapshot(lir))
+            return false;
+        return define(lir, mod);
+    } else {
+        LSoftModI *lir = new LSoftModI(useFixed(mod->lhs(), r0), use(mod->rhs(), r1),
+                                       tempFixed(r2), tempFixed(r3), temp(LDefinition::GENERAL));
+        if (mod->fallible() && !assignSnapshot(lir))
+            return false;
+        return defineFixed(lir, mod, LAllocation(AnyRegister(r1)));
+    }
 }
 
 bool
@@ -316,6 +348,14 @@ LGetPropertyCacheT *
 LIRGeneratorARM::newLGetPropertyCacheT(MGetPropertyCache *ins)
 {
     return new LGetPropertyCacheT(useRegister(ins->object()), LDefinition::BogusTemp());
+}
+
+LGetElementCacheT *
+LIRGeneratorARM::newLGetElementCacheT(MGetElementCache *ins)
+{
+    return new LGetElementCacheT(useRegister(ins->object()),
+                                 useRegister(ins->index()),
+                                 LDefinition::BogusTemp());
 }
 
 bool
@@ -415,22 +455,53 @@ LIRGeneratorARM::visitAsmJSNeg(MAsmJSNeg *ins)
     JS_ASSERT(ins->type() == MIRType_Double);
     return define(new LNegD(useRegisterAtStart(ins->input())), ins);
 }
+
+bool
+LIRGeneratorARM::lowerUDiv(MInstruction *div)
+{
+    MDefinition *lhs = div->getOperand(0);
+    MDefinition *rhs = div->getOperand(1);
+
+    if (hasIDIV()) {
+        LUDiv *lir = new LUDiv;
+        lir->setOperand(0, useRegister(lhs));
+        lir->setOperand(1, useRegister(rhs));
+        return define(lir, div);
+    } else {
+        LSoftUDivOrMod *lir = new LSoftUDivOrMod(useFixed(lhs, r0), useFixed(rhs, r1),
+                                                 tempFixed(r2), tempFixed(r3));
+        return defineFixed(lir, div, LAllocation(AnyRegister(r0)));
+    }
+}
+
 bool
 LIRGeneratorARM::visitAsmJSUDiv(MAsmJSUDiv *div)
 {
-    LAsmJSDivOrMod *lir = new LAsmJSDivOrMod(useFixed(div->lhs(), r0),
-                                         useFixed(div->rhs(), r1),
-                                         tempFixed(r2), tempFixed(r3));
-    return defineFixed(lir, div, LAllocation(AnyRegister(r0)));
+    return lowerUDiv(div);
+}
+
+bool
+LIRGeneratorARM::lowerUMod(MInstruction *mod)
+{
+    MDefinition *lhs = mod->getOperand(0);
+    MDefinition *rhs = mod->getOperand(1);
+
+    if (hasIDIV()) {
+        LUMod *lir = new LUMod;
+        lir->setOperand(0, useRegister(lhs));
+        lir->setOperand(1, useRegister(rhs));
+        return define(lir, mod);
+    } else {
+        LSoftUDivOrMod *lir = new LSoftUDivOrMod(useFixed(lhs, r0), useFixed(rhs, r1),
+                                                 tempFixed(r2), tempFixed(r3));
+        return defineFixed(lir, mod, LAllocation(AnyRegister(r1)));
+    }
 }
 
 bool
 LIRGeneratorARM::visitAsmJSUMod(MAsmJSUMod *mod)
 {
-    LAsmJSDivOrMod *lir = new LAsmJSDivOrMod(useFixed(mod->lhs(), r0),
-                                         useFixed(mod->rhs(), r1),
-                                         tempFixed(r2), tempFixed(r3));
-    return defineFixed(lir, mod, LAllocation(AnyRegister(r1)));
+    return lowerUMod(mod);
 }
 
 bool
@@ -457,7 +528,7 @@ LIRGeneratorARM::visitAsmJSStoreHeap(MAsmJSStoreHeap *ins)
         lir = new LAsmJSStoreHeap(useRegisterAtStart(ins->ptr()),
                                   useRegisterAtStart(ins->value()));
         break;
-      default: JS_NOT_REACHED("unexpected array type");
+      default: MOZ_ASSUME_UNREACHABLE("unexpected array type");
     }
 
     return add(lir, ins);
@@ -481,8 +552,7 @@ LIRGeneratorARM::lowerTruncateDToInt32(MTruncateToInt32 *ins)
 bool
 LIRGeneratorARM::visitStoreTypedArrayElementStatic(MStoreTypedArrayElementStatic *ins)
 {
-    JS_NOT_REACHED("NYI");
-    return true;
+    MOZ_ASSUME_UNREACHABLE("NYI");
 }
 
 //__aeabi_uidiv

@@ -4,6 +4,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "gfxMacFont.h"
+
+#include "mozilla/MemoryReporting.h"
+
 #include "gfxCoreTextShaper.h"
 #include "gfxHarfBuzzShaper.h"
 #include <algorithm>
@@ -57,7 +60,7 @@ gfxMacFont::gfxMacFont(MacOSFontEntry *aFontEntry, const gfxFontStyle *aFontStyl
 
     // synthetic oblique by skewing via the font matrix
     bool needsOblique =
-        (mFontEntry != NULL) &&
+        (mFontEntry != nullptr) &&
         (!mFontEntry->IsItalic() &&
          (mStyle.style & (NS_FONT_STYLE_ITALIC | NS_FONT_STYLE_OBLIQUE)));
 
@@ -81,6 +84,10 @@ gfxMacFont::gfxMacFont(MacOSFontEntry *aFontEntry, const gfxFontStyle *aFontStyl
     if (mAdjustedSize <=
         (gfxFloat)gfxPlatformMac::GetPlatform()->GetAntiAliasingThreshold()) {
         cairo_font_options_set_antialias(fontOptions, CAIRO_ANTIALIAS_NONE);
+        mAntialiasOption = kAntialiasNone;
+    } else if (mStyle.useGrayscaleAntialiasing) {
+        cairo_font_options_set_antialias(fontOptions, CAIRO_ANTIALIAS_GRAY);
+        mAntialiasOption = kAntialiasGrayscale;
     }
 
     mScaledFont = cairo_scaled_font_create(mFontFace, &sizeMatrix, &ctm,
@@ -362,7 +369,7 @@ gfxMacFont::InitMetricsFromPlatform()
 {
     CTFontRef ctFont = ::CTFontCreateWithGraphicsFont(mCGFont,
                                                       mAdjustedSize,
-                                                      NULL, NULL);
+                                                      nullptr, nullptr);
     if (!ctFont) {
         return;
     }
@@ -410,7 +417,7 @@ gfxMacFont::GetScaledFont(DrawTarget *aTarget)
 }
 
 void
-gfxMacFont::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf,
+gfxMacFont::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
                                 FontCacheSizes*   aSizes) const
 {
     gfxFont::SizeOfExcludingThis(aMallocSizeOf, aSizes);
@@ -419,7 +426,7 @@ gfxMacFont::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf,
 }
 
 void
-gfxMacFont::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
+gfxMacFont::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
                                 FontCacheSizes*   aSizes) const
 {
     aSizes->mFontInstances += aMallocSizeOf(this);

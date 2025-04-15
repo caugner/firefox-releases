@@ -51,12 +51,14 @@ class TiledLayerComposer;
 class Transaction;
 class SurfaceDescriptor;
 class CanvasSurface;
-class TextureClientShmem;
+class DeprecatedTextureClientShmem;
+class ShmemTextureClient;
 class ContentClientRemote;
 class CompositableChild;
 class ImageClient;
 class CanvasClient;
 class ContentClient;
+class TextureClient;
 
 
 /**
@@ -135,8 +137,10 @@ class ContentClient;
 class ShadowLayerForwarder : public CompositableForwarder
 {
   friend class AutoOpenSurface;
-  friend class TextureClientShmem;
+  friend class DeprecatedTextureClientShmem;
   friend class ContentClientIncremental;
+
+  typedef gfxASurface::gfxImageFormat gfxImageFormat;
 
 public:
   virtual ~ShadowLayerForwarder();
@@ -228,17 +232,17 @@ public:
   void SetRoot(ShadowableLayer* aRoot);
   /**
    * Insert |aChild| after |aAfter| in |aContainer|.  |aAfter| can be
-   * NULL to indicated that |aChild| should be appended to the end of
+   * nullptr to indicated that |aChild| should be appended to the end of
    * |aContainer|'s child list.
    */
   void InsertAfter(ShadowableLayer* aContainer,
                    ShadowableLayer* aChild,
-                   ShadowableLayer* aAfter=NULL);
+                   ShadowableLayer* aAfter = nullptr);
   void RemoveChild(ShadowableLayer* aContainer,
                    ShadowableLayer* aChild);
   void RepositionChild(ShadowableLayer* aContainer,
                        ShadowableLayer* aChild,
-                       ShadowableLayer* aAfter=NULL);
+                       ShadowableLayer* aAfter = nullptr);
 
   /**
    * Set aMaskLayer as the mask on aLayer.
@@ -302,6 +306,32 @@ public:
    */
   void UpdatePictureRect(CompositableClient* aCompositable,
                          const nsIntRect& aRect);
+
+  /**
+   * See CompositableForwarder::AddTexture
+   */
+  virtual void AddTexture(CompositableClient* aCompositable,
+                          TextureClient* aClient) MOZ_OVERRIDE;
+
+  /**
+   * See CompositableForwarder::RemoveTexture
+   */
+  virtual void RemoveTexture(CompositableClient* aCompositable,
+                             uint64_t aTextureID,
+                             TextureFlags aFlags) MOZ_OVERRIDE;
+
+  /**
+   * See CompositableForwarder::UpdatedTexture
+   */
+  virtual void UpdatedTexture(CompositableClient* aCompositable,
+                              TextureClient* aTexture,
+                              nsIntRegion* aRegion) MOZ_OVERRIDE;
+
+  /**
+   * See CompositableForwarder::UseTexture
+   */
+  virtual void UseTexture(CompositableClient* aCompositable,
+                          TextureClient* aClient) MOZ_OVERRIDE;
 
   /**
    * End the current transaction and forward it to LayerManagerComposite.
@@ -426,6 +456,18 @@ private:
                                    OpenMode aMode,
                                    gfxIntSize* aSize,
                                    gfxASurface** aSurface);
+  // And again, for the image format.
+  // This function will return ImageFormatUnknown only if |aDescriptor|
+  // describes a non-ImageSurface.
+  static gfxImageFormat
+  GetDescriptorSurfaceImageFormat(const SurfaceDescriptor& aDescriptor,
+                                  OpenMode aMode,
+                                  gfxASurface** aSurface);
+  static bool
+  PlatformGetDescriptorSurfaceImageFormat(const SurfaceDescriptor& aDescriptor,
+                                          OpenMode aMode,
+                                          gfxImageFormat* aContent,
+                                          gfxASurface** aSurface);
 
   static already_AddRefed<gfxASurface>
   PlatformOpenDescriptor(OpenMode aMode, const SurfaceDescriptor& aDescriptor);
@@ -472,13 +514,13 @@ public:
 
   /**
    * Return the IPC handle to a Shadow*Layer referring to this if one
-   * exists, NULL if not.
+   * exists, nullptr if not.
    */
   PLayerChild* GetShadow() { return mShadow; }
 
   virtual CompositableClient* GetCompositableClient() { return nullptr; }
 protected:
-  ShadowableLayer() : mShadow(NULL) {}
+  ShadowableLayer() : mShadow(nullptr) {}
 
   PLayerChild* mShadow;
 };

@@ -393,7 +393,7 @@ function pathHandler(metadata, response) {
  * @return  The relative path to the directory where the update will be applied.
  */
 function getApplyDirPath() {
-  return TEST_ID + APPLY_TO_DIR_SUFFIX;
+  return TEST_ID + APPLY_TO_DIR_SUFFIX + "appdir/";
 }
 
 /**
@@ -1238,7 +1238,7 @@ function cleanupUpdaterTest() {
   }
 
   // Try to remove the updates and the apply to directories.
-  let applyToDir = getApplyDirFile(null, true);
+  let applyToDir = getApplyDirFile(null, true).parent;
   try {
     removeDirRecursive(applyToDir);
   }
@@ -1961,10 +1961,6 @@ function getProcessArgs(aExtraArgs) {
     launchScript.create(AUS_Ci.nsILocalFile.NORMAL_FILE_TYPE, PERMS_DIRECTORY);
 
     let scriptContents = "#! /bin/sh\n";
-    // On Mac OS X versions prior to 10.6 the i386 acrhitecture must be used.
-    if (gIsLessThanMacOSX_10_6) {
-      scriptContents += "arch -arch i386 ";
-    }
     scriptContents += gAppBinPath + " -no-remote -process-updates " +
                       aExtraArgs.join(" ") + " 1> " +
                       appConsoleLogPath + " 2>&1";
@@ -2033,45 +2029,6 @@ function getLaunchScript() {
   }
   return launchScript;
 }
-
-// A shell script is used to get the OS version due to nsSystemInfo not
-// returning the actual OS version. It is possible to get the actual OS version
-// using ctypes but it would be more complicated than using a shell script.
-XPCOMUtils.defineLazyGetter(this, "gIsLessThanMacOSX_10_6", function test_gMacVer() {
-  if (!IS_MACOSX) {
-    return false;
-  }
-
-  let [versionScript, versionFile] = getVersionScriptAndFile();
-  // Precreate the script with executable permissions
-  versionScript.create(AUS_Ci.nsILocalFile.NORMAL_FILE_TYPE, PERMS_DIRECTORY);
-  let scriptContents = "#! /bin/sh\nsw_vers -productVersion >> " + versionFile.path;
-  writeFile(versionScript, scriptContents);
-  logTestInfo("created " + versionScript.path + " shell script containing:\n" +
-              scriptContents);
-
-  let versionScriptPath = versionScript.path;
-  if (/ /.test(versionScriptPath)) {
-    versionScriptPath = '"' + versionScriptPath + '"';
-  }
-
-
-  let launchBin = getLaunchBin();
-  let args = [versionScriptPath];
-  let process = AUS_Cc["@mozilla.org/process/util;1"].
-                createInstance(AUS_Ci.nsIProcess);
-  process.init(launchBin);
-  process.run(true, args, args.length);
-  if (process.exitValue != 0) {
-    do_throw("Version script exited with " + process.exitValue + "... unable " +
-             "to get Mac OS X version!");
-  }
-
-  let version = readFile(versionFile).split("\n")[0];
-  logTestInfo("executing on Mac OS X verssion " + version);
-
-  return (Services.vc.compare(version, "10.6") < 0)
-});
 
 /**
  * Checks for the existence of a platform specific application binary that can
@@ -2161,6 +2118,59 @@ function adjustPathsOnWindows() {
 let gWindowsBinDir = null;
 
 /**
+ * This function makes XREExeF and UpdRootD point to unique locations so
+ * xpcshell tests can run in parallel.
+ */
+function adjustGeneralPaths() {
+  let dirProvider = {
+    getFile: function DP_getFile(prop, persistent) {
+      persistent.value = true;
+      if (prop == XRE_EXECUTABLE_FILE)
+        return do_get_file(getApplyDirPath() + "test" + APP_BIN_SUFFIX, true);
+      if (prop == XRE_UPDATE_ROOT_DIR)
+        return do_get_file(getApplyDirPath(), true);
+      return null;
+    },
+    QueryInterface: function(iid) {
+      if (iid.equals(AUS_Ci.nsIDirectoryServiceProvider) ||
+          iid.equals(AUS_Ci.nsISupports))
+        return this;
+      throw AUS_Cr.NS_ERROR_NO_INTERFACE;
+    }
+  };
+  let ds = Services.dirsvc.QueryInterface(AUS_Ci.nsIDirectoryService);
+  ds.registerProvider(dirProvider);
+  do_register_cleanup(function() {
+    ds.unregisterProvider(dirProvider);
+    let testBin = do_get_file(getApplyDirPath() + "test" + APP_BIN_SUFFIX, true);
+    // Try to remove the test.bin file if it exists (it shouldn't).
+    if (testBin.exists()) {
+      try {
+        testBin.remove(false);
+      }
+      catch (e) {
+        dump("Unable to remove file\n" +
+             "path: " + testBin.path + "\n" +
+             "Exception: " + e + "\n");
+      }
+    }
+    let testDir = do_get_file(getApplyDirPath(), true).parent;
+    // Try to remove the directory used to apply updates (this is non-fatal
+    // for the test).
+    if (testDir.exists()) {
+      try {
+        removeDirRecursive(testDir);
+      }
+      catch (e) {
+        dump("Unable to remove directory\n" +
+             "path: " + testDir.path + "\n" +
+             "Exception: " + e + "\n");
+      }
+    }
+  });
+}
+
+/**
  * This function returns the current process directory on Windows and Linux, and
  * the application bundle directory on Mac.
  */
@@ -2209,30 +2219,6 @@ let gTimerCallback = {
   },
   QueryInterface: XPCOMUtils.generateQI([AUS_Ci.nsITimerCallback])
 };
-
-/**
- * Gets the nsIFile references for the shell script to retrieve the Mac OS X
- * version and the nsIFile to pipe the output of the shell script. If either of
- * these files exist they will be removed by this function.
- *
- * @return  array containing two nsIFile references. The first array member is
- *          the nsIFile for the shell script to launch to get the Mac OS X
- *          version and the second array member is the nsIFile for the piped
- *          output from the shell script.
- */
-function getVersionScriptAndFile() {
-  let versionScript = do_get_file("/", true);
-  let versionFile = versionScript.clone();
-  versionScript.append("get_version.sh");
-  if (versionScript.exists()) {
-    versionScript.remove(false);
-  }
-  versionFile.append("version.out");
-  if (versionFile.exists()) {
-    versionFile.remove(false);
-  }
-  return [versionScript, versionFile];
-}
 
 // Environment related globals
 let gShouldResetEnv = undefined;

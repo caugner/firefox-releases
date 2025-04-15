@@ -124,12 +124,14 @@ ProcessNativeEvents(CoreProcessEventsOption eventOption)
   dispatcher->ProcessEvents(eventOption);
 }
 
+// static
 void
 MetroAppShell::ProcessOneNativeEventIfPresent()
 {
   ProcessNativeEvents(CoreProcessEventsOption::CoreProcessEventsOption_ProcessOneIfPresent);
 }
 
+// static
 void
 MetroAppShell::ProcessAllNativeEventsPresent()
 {
@@ -143,7 +145,7 @@ MetroAppShell::ProcessNextNativeEvent(bool mayWait)
 
   if (mayWait) {
     if (!WinUtils::PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {
-      WaitMessage();
+      WinUtils::WaitForMessage();
     }
     ProcessOneNativeEventIfPresent();
     return true;

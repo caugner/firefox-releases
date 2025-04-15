@@ -42,7 +42,7 @@ DisableFontActivation()
 {
     // get the main bundle identifier
     CFBundleRef mainBundle = ::CFBundleGetMainBundle();
-    CFStringRef mainBundleID = NULL;
+    CFStringRef mainBundleID = nullptr;
 
     if (mainBundle) {
         mainBundleID = ::CFBundleGetIdentifier(mainBundle);
@@ -71,7 +71,7 @@ gfxPlatformMac::gfxPlatformMac()
     mFontAntiAliasingThreshold = ReadAntiAliasingThreshold();
 
     uint32_t canvasMask = (1 << BACKEND_CAIRO) | (1 << BACKEND_SKIA) | (1 << BACKEND_COREGRAPHICS);
-    uint32_t contentMask = 0;
+    uint32_t contentMask = (1 << BACKEND_COREGRAPHICS);
     InitBackendPrefs(canvasMask, contentMask);
 }
 
@@ -470,7 +470,7 @@ gfxPlatformMac::GetPlatformCMSOutputProfile()
         return nullptr;
 
     // get the size of location
-    err = NCMGetProfileLocation(cmProfile, NULL, &locationSize);
+    err = NCMGetProfileLocation(cmProfile, nullptr, &locationSize);
     if (err != noErr)
         return nullptr;
 

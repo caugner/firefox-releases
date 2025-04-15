@@ -16,6 +16,7 @@
 #include "nsIOutputStream.h"
 #include "nsIFile.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/MemoryReporting.h"
 
 /**
  * The StartupCache is a persistent cache of simple key-value pairs,
@@ -82,7 +83,7 @@ struct CacheEntry
   {
   }
 
-  size_t SizeOfExcludingThis(nsMallocSizeOfFun mallocSizeOf) {
+  size_t SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
     return mallocSizeOf(data);
   }
 };
@@ -91,7 +92,7 @@ struct CacheEntry
 // refcount its listeners, so we'll let it refcount this instead.
 class StartupCacheListener MOZ_FINAL : public nsIObserver
 {
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIOBSERVER
 };
 
@@ -129,7 +130,7 @@ public:
 
   // This measures all the heap memory used by the StartupCache, i.e. it
   // excludes the mapping.
-  size_t HeapSizeOfIncludingThis(nsMallocSizeOfFun mallocSizeOf);
+  size_t HeapSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf);
 
   size_t SizeOfMapping();
 
@@ -155,7 +156,7 @@ private:
 
   static size_t SizeOfEntryExcludingThis(const nsACString& key,
                                          const nsAutoPtr<CacheEntry>& data,
-                                         nsMallocSizeOfFun mallocSizeOf,
+                                         mozilla::MallocSizeOf mallocSizeOf,
                                          void *);
 
   nsClassHashtable<nsCStringHashKey, CacheEntry> mTable;
@@ -213,7 +214,7 @@ class StartupCacheDebugOutputStream MOZ_FINAL
 class StartupCacheWrapper MOZ_FINAL
   : public nsIStartupCache
 {
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSISTARTUPCACHE
 
   static StartupCacheWrapper* GetSingleton();

@@ -11,24 +11,22 @@
 
 #include "jscntxt.h"
 #include "jscompartment.h"
-#include "IonCode.h"
 #include "jsinfer.h"
 
-#include "vm/Interpreter.h"
-
-#include "IonAllocPolicy.h"
-#include "BaselineJIT.h"
-#include "BaselineIC.h"
-#include "FixedList.h"
-#include "BytecodeAnalysis.h"
-
+#include "jit/BaselineIC.h"
+#include "jit/BaselineJIT.h"
+#include "jit/BytecodeAnalysis.h"
+#include "jit/FixedList.h"
+#include "jit/IonAllocPolicy.h"
+#include "jit/IonCode.h"
 #if defined(JS_CPU_X86)
-# include "x86/BaselineCompiler-x86.h"
+# include "jit/x86/BaselineCompiler-x86.h"
 #elif defined(JS_CPU_X64)
-# include "x64/BaselineCompiler-x64.h"
+# include "jit/x64/BaselineCompiler-x64.h"
 #else
-# include "arm/BaselineCompiler-arm.h"
+# include "jit/arm/BaselineCompiler-arm.h"
 #endif
+#include "vm/Interpreter.h"
 
 namespace js {
 namespace jit {
@@ -184,9 +182,9 @@ namespace jit {
 class BaselineCompiler : public BaselineCompilerSpecific
 {
     FixedList<Label>            labels_;
-    HeapLabel *                 return_;
+    NonAssertingLabel           return_;
 #ifdef JSGC_GENERATIONAL
-    HeapLabel *                 postBarrierSlot_;
+    NonAssertingLabel           postBarrierSlot_;
 #endif
 
     // Native code offset right before the scope chain is initialized.

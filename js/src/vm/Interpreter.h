@@ -131,15 +131,15 @@ Invoke(JSContext *cx, CallArgs args, MaybeConstruct construct = NO_CONSTRUCT);
  */
 extern bool
 Invoke(JSContext *cx, const Value &thisv, const Value &fval, unsigned argc, Value *argv,
-       Value *rval);
+       MutableHandleValue rval);
 
 /*
  * This helper takes care of the infinite-recursion check necessary for
  * getter/setter calls.
  */
 extern bool
-InvokeGetterOrSetter(JSContext *cx, JSObject *obj, const Value &fval, unsigned argc, Value *argv,
-                     Value *rval);
+InvokeGetterOrSetter(JSContext *cx, JSObject *obj, Value fval, unsigned argc, Value *argv,
+                     MutableHandleValue rval);
 
 /*
  * InvokeConstructor implement a function call from a constructor context
@@ -150,7 +150,7 @@ InvokeConstructor(JSContext *cx, CallArgs args);
 
 /* See the fval overload of Invoke. */
 extern bool
-InvokeConstructor(JSContext *cx, const Value &fval, unsigned argc, Value *argv, Value *rval);
+InvokeConstructor(JSContext *cx, Value fval, unsigned argc, Value *argv, Value *rval);
 
 /*
  * Executes a script with the given scopeChain/this. The 'type' indicates
@@ -314,7 +314,7 @@ extern JSType
 TypeOfValue(JSContext *cx, const Value &v);
 
 extern bool
-HasInstance(JSContext *cx, HandleObject obj, HandleValue v, JSBool *bp);
+HasInstance(JSContext *cx, HandleObject obj, HandleValue v, bool *bp);
 
 /*
  * A linked list of the |FrameRegs regs;| variables belonging to all
@@ -350,8 +350,11 @@ class InterpreterFrames {
     ~InterpreterFrames();
 
     /* If this js::Interpret frame is running |script|, enable interrupts. */
-    inline void enableInterruptsIfRunning(JSScript *script);
-    inline void enableInterruptsUnconditionally() { enabler.enable(); }
+    void enableInterruptsIfRunning(JSScript *script) {
+        if (regs->fp()->script() == script)
+            enabler.enable();
+    }
+    void enableInterruptsUnconditionally() { enabler.enable(); }
 
     InterpreterFrames *older;
 
@@ -393,37 +396,6 @@ class TryNoteIter
 
 /************************************************************************/
 
-/*
- * To really poison a set of values, using 'magic' or 'undefined' isn't good
- * enough since often these will just be ignored by buggy code (see bug 629974)
- * in debug builds and crash in release builds. Instead, we use a safe-for-crash
- * pointer.
- */
-static JS_ALWAYS_INLINE void
-Debug_SetValueRangeToCrashOnTouch(Value *beg, Value *end)
-{
-#ifdef DEBUG
-    for (Value *v = beg; v != end; ++v)
-        v->setObject(*reinterpret_cast<JSObject *>(0x42));
-#endif
-}
-
-static JS_ALWAYS_INLINE void
-Debug_SetValueRangeToCrashOnTouch(Value *vec, size_t len)
-{
-#ifdef DEBUG
-    Debug_SetValueRangeToCrashOnTouch(vec, vec + len);
-#endif
-}
-
-static JS_ALWAYS_INLINE void
-Debug_SetValueRangeToCrashOnTouch(HeapValue *vec, size_t len)
-{
-#ifdef DEBUG
-    Debug_SetValueRangeToCrashOnTouch((Value *) vec, len);
-#endif
-}
-
 bool
 Throw(JSContext *cx, HandleValue v);
 
@@ -444,17 +416,14 @@ bool
 GetElement(JSContext *cx, MutableHandleValue lref, HandleValue rref, MutableHandleValue res);
 
 bool
-GetElementMonitored(JSContext *cx, MutableHandleValue lref, HandleValue rref, MutableHandleValue res);
-
-bool
 CallElement(JSContext *cx, MutableHandleValue lref, HandleValue rref, MutableHandleValue res);
 
 bool
 SetObjectElement(JSContext *cx, HandleObject obj, HandleValue index, HandleValue value,
-                 JSBool strict);
+                 bool strict);
 bool
 SetObjectElement(JSContext *cx, HandleObject obj, HandleValue index, HandleValue value,
-                 JSBool strict, HandleScript script, jsbytecode *pc);
+                 bool strict, HandleScript script, jsbytecode *pc);
 
 bool
 InitElementArray(JSContext *cx, jsbytecode *pc,
@@ -496,11 +465,11 @@ SetProperty(JSContext *cx, HandleObject obj, HandleId id, const Value &value);
 
 template <bool strict>
 bool
-DeleteProperty(JSContext *ctx, HandleValue val, HandlePropertyName name, JSBool *bv);
+DeleteProperty(JSContext *ctx, HandleValue val, HandlePropertyName name, bool *bv);
 
 template <bool strict>
 bool
-DeleteElement(JSContext *cx, HandleValue val, HandleValue index, JSBool *bv);
+DeleteElement(JSContext *cx, HandleValue val, HandleValue index, bool *bv);
 
 bool
 DefFunOperation(JSContext *cx, HandleScript script, HandleObject scopeChain, HandleFunction funArg);
@@ -530,15 +499,23 @@ RunOnceScriptPrologue(JSContext *cx, HandleScript script);
 
 bool
 InitGetterSetterOperation(JSContext *cx, jsbytecode *pc, HandleObject obj, HandleId id,
-                          HandleValue val);
+                          HandleObject val);
 
 bool
 InitGetterSetterOperation(JSContext *cx, jsbytecode *pc, HandleObject obj, HandlePropertyName name,
-                          HandleValue val);
+                          HandleObject val);
 
 bool
 InitGetterSetterOperation(JSContext *cx, jsbytecode *pc, HandleObject obj, HandleValue idval,
-                          HandleValue val);
+                          HandleObject val);
+
+inline bool
+SetConstOperation(JSContext *cx, HandleObject varobj, HandlePropertyName name, HandleValue rval)
+{
+    return JSObject::defineProperty(cx, varobj, name, rval,
+                                    JS_PropertyStub, JS_StrictPropertyStub,
+                                    JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY);
+}
 
 }  /* namespace js */
 

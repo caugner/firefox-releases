@@ -12,7 +12,6 @@
 #include "mozilla/dom/SVGGradientElement.h"
 #include "mozilla/dom/SVGStopElement.h"
 #include "nsContentUtils.h"
-#include "nsIDOMSVGAnimatedNumber.h"
 #include "nsSVGEffects.h"
 #include "nsSVGAnimatedTransformList.h"
 
@@ -56,13 +55,6 @@ NS_IMPL_FRAMEARENA_HELPERS(nsSVGGradientFrame)
 
 //----------------------------------------------------------------------
 // nsIFrame methods:
-
-/* virtual */ void
-nsSVGGradientFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
-{
-  nsSVGEffects::InvalidateDirectRenderingObservers(this);
-  nsSVGGradientFrameBase::DidSetStyleContext(aOldStyleContext);
-}
 
 NS_IMETHODIMP
 nsSVGGradientFrame::AttributeChanged(int32_t         aNameSpaceID,

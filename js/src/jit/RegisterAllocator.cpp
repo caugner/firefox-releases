@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "RegisterAllocator.h"
+#include "jit/RegisterAllocator.h"
 
 using namespace js;
 using namespace js::jit;
@@ -286,6 +286,15 @@ AllocationIntegrityState::checkSafepointAllocation(LInstruction *ins,
         }
         JS_ASSERT(safepoint->hasGcPointer(alloc));
         break;
+      case LDefinition::SLOTS:
+        if (populateSafepoints) {
+            IonSpew(IonSpew_RegAlloc, "Safepoint slots v%u i%u %s",
+                    vreg, ins->id(), alloc.toString());
+            if (!safepoint->addSlotsOrElementsPointer(alloc))
+                return false;
+        }
+        JS_ASSERT(safepoint->hasSlotsOrElementsPointer(alloc));
+        break;
 #ifdef JS_NUNBOX32
       // Do not assert that safepoint information for nunbox types is complete,
       // as if a vreg for a value's components are copied in multiple places
@@ -444,7 +453,7 @@ const CodePosition CodePosition::MIN(0);
 bool
 RegisterAllocator::init()
 {
-    if (!insData.init(lir->mir(), graph.numInstructions()))
+    if (!insData.init(mir, graph.numInstructions()))
         return false;
 
     for (size_t i = 0; i < graph.numBlocks(); i++) {

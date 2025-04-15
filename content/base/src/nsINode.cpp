@@ -15,6 +15,7 @@
 #include "mozAutoDocUpdate.h"
 #include "mozilla/CORSMode.h"
 #include "mozilla/Likely.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Util.h"
 #include "nsAsyncDOMEvent.h"
@@ -92,7 +93,6 @@
 #include "nsTextNode.h"
 #include "nsUnicharUtils.h"
 #include "nsXBLBinding.h"
-#include "nsXBLInsertionPoint.h"
 #include "nsXBLPrototypeBinding.h"
 #include "prprf.h"
 #include "xpcpublic.h"
@@ -141,8 +141,8 @@ nsINode::nsSlots::Unlink()
 
 nsINode::~nsINode()
 {
-  NS_ASSERTION(!HasSlots(), "nsNodeUtils::LastRelease was not called?");
-  NS_ASSERTION(mSubtreeRoot == this, "Didn't restore state properly?");
+  MOZ_ASSERT(!HasSlots(), "nsNodeUtils::LastRelease was not called?");
+  MOZ_ASSERT(mSubtreeRoot == this, "Didn't restore state properly?");
 }
 
 void*
@@ -735,15 +735,6 @@ nsINode::GetUserData(JSContext* aCx, const nsAString& aKey, ErrorResult& aError)
   return result;
 }
 
-//static
-bool
-nsINode::IsChromeOrXBL(JSContext* aCx, JSObject* /* unused */)
-{
-  JSCompartment* compartment = js::GetContextCompartment(aCx);
-  return xpc::AccessCheck::isChrome(compartment) ||
-         xpc::IsXBLScope(compartment);
-}
-
 uint16_t
 nsINode::CompareDocumentPosition(nsINode& aOtherNode) const
 {
@@ -1193,8 +1184,7 @@ nsINode::UnoptimizableCCNode() const
   const uintptr_t problematicFlags = (NODE_IS_ANONYMOUS |
                                       NODE_IS_IN_ANONYMOUS_SUBTREE |
                                       NODE_IS_NATIVE_ANONYMOUS_ROOT |
-                                      NODE_MAY_BE_IN_BINDING_MNGR |
-                                      NODE_IS_INSERTION_PARENT);
+                                      NODE_MAY_BE_IN_BINDING_MNGR);
   return HasFlag(problematicFlags) ||
          NodeType() == nsIDOMNode::ATTRIBUTE_NODE ||
          // For strange cases like xbl:content/xbl:children
@@ -1264,9 +1254,9 @@ nsINode::Traverse(nsINode *tmp, nsCycleCollectionTraversalCallback &cb)
 
 /* static */
 void
-nsINode::Unlink(nsINode *tmp)
+nsINode::Unlink(nsINode* tmp)
 {
-  nsContentUtils::ReleaseWrapper(tmp, tmp);
+  tmp->ReleaseWrapper(tmp);
 
   nsSlots *slots = tmp->GetExistingSlots();
   if (slots) {
@@ -1328,7 +1318,7 @@ AdoptNodeIntoOwnerDoc(nsINode *aParent, nsINode *aNode)
   NS_ASSERTION(aParent->OwnerDoc() == doc,
                "ownerDoc chainged while adopting");
   NS_ASSERTION(adoptedNode == node, "Uh, adopt node changed nodes?");
-  NS_ASSERTION(aParent->HasSameOwnerDoc(aNode),
+  NS_ASSERTION(aParent->OwnerDoc() == aNode->OwnerDoc(),
                "ownerDocument changed again after adopting!");
 
   return NS_OK;
@@ -1369,7 +1359,7 @@ nsINode::doInsertChildAt(nsIContent* aKid, uint32_t aIndex,
   nsIDocument* doc = GetCurrentDoc();
   mozAutoDocUpdate updateBatch(doc, UPDATE_CONTENT_MODEL, aNotify);
 
-  if (!HasSameOwnerDoc(aKid)) {
+  if (OwnerDoc() != aKid->OwnerDoc()) {
     rv = AdoptNodeIntoOwnerDoc(this, aKid);
     NS_ENSURE_SUCCESS(rv, rv);
   } else if (OwnerDoc()->DidDocumentOpen()) {
@@ -1427,6 +1417,34 @@ nsINode::doInsertChildAt(nsIContent* aKid, uint32_t aIndex,
   return NS_OK;
 }
 
+Element*
+nsINode::GetPreviousElementSibling() const
+{
+  nsIContent* previousSibling = GetPreviousSibling();
+  while (previousSibling) {
+    if (previousSibling->IsElement()) {
+      return previousSibling->AsElement();
+    }
+    previousSibling = previousSibling->GetPreviousSibling();
+  }
+
+  return nullptr;
+}
+
+Element*
+nsINode::GetNextElementSibling() const
+{
+  nsIContent* nextSibling = GetNextSibling();
+  while (nextSibling) {
+    if (nextSibling->IsElement()) {
+      return nextSibling->AsElement();
+    }
+    nextSibling = nextSibling->GetNextSibling();
+  }
+
+  return nullptr;
+}
+
 void
 nsINode::Remove()
 {
@@ -1440,6 +1458,34 @@ nsINode::Remove()
     return;
   }
   parent->RemoveChildAt(uint32_t(index), true);
+}
+
+Element*
+nsINode::GetFirstElementChild() const
+{
+  for (nsIContent* child = GetFirstChild();
+       child;
+       child = child->GetNextSibling()) {
+    if (child->IsElement()) {
+      return child->AsElement();
+    }
+  }
+
+  return nullptr;
+}
+
+Element*
+nsINode::GetLastElementChild() const
+{
+  for (nsIContent* child = GetLastChild();
+       child;
+       child = child->GetPreviousSibling()) {
+    if (child->IsElement()) {
+      return child->AsElement();
+    }
+  }
+
+  return nullptr;
 }
 
 void
@@ -1929,7 +1975,7 @@ nsINode::ReplaceOrInsertBefore(bool aReplace, nsINode* aNewChild,
   // DocumentType nodes are the only nodes that can have a null
   // ownerDocument according to the DOM spec, and we need to allow
   // inserting them w/o calling AdoptNode().
-  if (!HasSameOwnerDoc(newContent)) {
+  if (OwnerDoc() != newContent->OwnerDoc()) {
     aError = AdoptNodeIntoOwnerDoc(this, aNewChild);
     if (aError.Failed()) {
       return nullptr;
@@ -2101,7 +2147,7 @@ nsINode::UnbindObject(nsISupports* aObject)
 }
 
 size_t
-nsINode::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = 0;
   nsEventListenerManager* elm =
@@ -2218,33 +2264,6 @@ nsINode::Length() const
   default:
     return GetChildCount();
   }
-}
-
-NS_IMPL_CYCLE_COLLECTION_1(nsNodeSelectorTearoff, mNode)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsNodeSelectorTearoff)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMNodeSelector)
-NS_INTERFACE_MAP_END_AGGREGATED(mNode)
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(nsNodeSelectorTearoff)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(nsNodeSelectorTearoff)
-
-NS_IMETHODIMP
-nsNodeSelectorTearoff::QuerySelector(const nsAString& aSelector,
-                                     nsIDOMElement **aReturn)
-{
-  ErrorResult rv;
-  nsIContent* result = mNode->QuerySelector(aSelector, rv);
-  return result ? CallQueryInterface(result, aReturn) : rv.ErrorCode();
-}
-
-NS_IMETHODIMP
-nsNodeSelectorTearoff::QuerySelectorAll(const nsAString& aSelector,
-                                        nsIDOMNodeList **aReturn)
-{
-  ErrorResult rv;
-  *aReturn = mNode->QuerySelectorAll(aSelector, rv).get();
-  return rv.ErrorCode();
 }
 
 // NOTE: The aPresContext pointer is NOT addrefed.
@@ -2413,6 +2432,27 @@ nsINode::QuerySelectorAll(const nsAString& aSelector, ErrorResult& aResult)
   aResult = FindMatchingElements<false>(this, aSelector, *contentList);
 
   return contentList.forget();
+}
+
+nsresult
+nsINode::QuerySelector(const nsAString& aSelector, nsIDOMElement **aReturn)
+{
+  ErrorResult rv;
+  Element* result = nsINode::QuerySelector(aSelector, rv);
+  if (rv.Failed()) {
+    return rv.ErrorCode();
+  }
+  nsCOMPtr<nsIDOMElement> elt = do_QueryInterface(result);
+  elt.forget(aReturn);
+  return NS_OK;
+}
+
+nsresult
+nsINode::QuerySelectorAll(const nsAString& aSelector, nsIDOMNodeList **aReturn)
+{
+  ErrorResult rv;
+  *aReturn = nsINode::QuerySelectorAll(aSelector, rv).get();
+  return rv.ErrorCode();
 }
 
 JSObject*

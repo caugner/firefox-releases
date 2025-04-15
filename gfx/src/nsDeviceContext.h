@@ -6,16 +6,24 @@
 #ifndef _NS_DEVICECONTEXT_H_
 #define _NS_DEVICECONTEXT_H_
 
+#include "gfxTypes.h"
+#include "nsAutoPtr.h"
 #include "nsCOMPtr.h"
-#include "nsIDeviceContextSpec.h"
-#include "nsIScreenManager.h"
-#include "nsIWidget.h"
 #include "nsCoord.h"
-#include "gfxContext.h"
+#include "nsMathUtils.h"
 
-class nsIAtom;
-class nsFontCache;
+class gfxASurface;
 class gfxUserFontSet;
+class nsFont;
+class nsFontCache;
+class nsFontMetrics;
+class nsIAtom;
+class nsIDeviceContextSpec;
+class nsIScreen;
+class nsIScreenManager;
+class nsIWidget;
+class nsRect;
+class nsRenderingContext;
 
 class nsDeviceContext
 {
@@ -163,7 +171,7 @@ public:
      * EndDocument() or AbortDocument().
      *
      * @param aTitle - title of Document
-     * @param aPrintToFileName - name of file to print to, if NULL
+     * @param aPrintToFileName - name of file to print to, if nullptr
      * then don't print to file
      * @param aStartPage - starting page number (must be greater than zero)
      * @param aEndPage - ending page number (must be less than or
@@ -171,10 +179,10 @@ public:
      *
      * @return error status
      */
-    nsresult BeginDocument(PRUnichar  *aTitle,
-                           PRUnichar  *aPrintToFileName,
-                           int32_t     aStartPage,
-                           int32_t     aEndPage);
+    nsresult BeginDocument(const nsAString& aTitle,
+                           PRUnichar*       aPrintToFileName,
+                           int32_t          aStartPage,
+                           int32_t          aEndPage);
 
     /**
      * Inform the output device that output of a document is ending.

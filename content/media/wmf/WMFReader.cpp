@@ -106,8 +106,8 @@ WMFReader::InitializeDXVA()
 {
   if (!Preferences::GetBool("media.windows-media-foundation.use-dxva", false) ||
       WinUtils::GetWindowsVersion() == WinUtils::VISTA_VERSION) {
-    // Don't use DXVA on Vista until bug 901944's fix has time to bake on
-    // the release train.
+    // Don't use DXVA on Vista until bug 901944's fix has time to ride
+    // ride the release train.
     return false;
   }
 

@@ -121,6 +121,7 @@
 #include "secerr.h"
 #include "secport.h"
 #include "sslerr.h"
+#include "ocsp.h"
 
 #ifdef PR_LOGGING
 extern PRLogModuleInfo* gPIPNSSLog;
@@ -444,7 +445,8 @@ CreateCertErrorRunnable(PRErrorCode defaultErrorCodeToReport,
                         TransportSecurityInfo * infoObject,
                         CERTCertificate * cert,
                         const void * fdForLogging,
-                        uint32_t providerFlags)
+                        uint32_t providerFlags,
+                        PRTime now)
 {
   MOZ_ASSERT(infoObject);
   MOZ_ASSERT(cert);
@@ -477,8 +479,6 @@ CreateCertErrorRunnable(PRErrorCode defaultErrorCodeToReport,
     return nullptr;
   }
   
-  PRTime now = PR_Now();
-
   PLArenaPool *log_arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
   PLArenaPoolCleanerFalseParam log_arena_cleaner(log_arena);
   if (!log_arena) {
@@ -614,6 +614,7 @@ public:
   static SECStatus Dispatch(const void * fdForLogging,
                             TransportSecurityInfo * infoObject,
                             CERTCertificate * serverCert,
+                            SECItem * stapledOCSPResponse,
                             uint32_t providerFlags);
 private:
   NS_DECL_NSIRUNNABLE
@@ -622,22 +623,26 @@ private:
   SSLServerCertVerificationJob(const void * fdForLogging,
                                TransportSecurityInfo * infoObject, 
                                CERTCertificate * cert,
+                               SECItem * stapledOCSPResponse,
                                uint32_t providerFlags);
   const void * const mFdForLogging;
   const RefPtr<TransportSecurityInfo> mInfoObject;
   const ScopedCERTCertificate mCert;
   const uint32_t mProviderFlags;
   const TimeStamp mJobStartTime;
+  const ScopedSECItem mStapledOCSPResponse;
 };
 
 SSLServerCertVerificationJob::SSLServerCertVerificationJob(
     const void * fdForLogging, TransportSecurityInfo * infoObject,
-    CERTCertificate * cert, uint32_t providerFlags)
+    CERTCertificate * cert, SECItem * stapledOCSPResponse,
+    uint32_t providerFlags)
   : mFdForLogging(fdForLogging)
   , mInfoObject(infoObject)
   , mCert(CERT_DupCertificate(cert))
   , mProviderFlags(providerFlags)
   , mJobStartTime(TimeStamp::Now())
+  , mStapledOCSPResponse(SECITEM_DupItem(stapledOCSPResponse))
 {
 }
 
@@ -807,10 +812,11 @@ BlockServerCertChangeForSpdy(nsNSSSocketInfo *infoObject,
     return SECSuccess;
 
   // If GetNegotiatedNPN() failed we will assume spdy for safety's safe
-  if (NS_FAILED(rv))
+  if (NS_FAILED(rv)) {
     PR_LOG(gPIPNSSLog, PR_LOG_DEBUG,
            ("BlockServerCertChangeForSpdy failed GetNegotiatedNPN() call."
             " Assuming spdy.\n"));
+  }
 
   // Check to see if the cert has actually changed
   ScopedCERTCertificate c(cert2->GetCert());
@@ -828,7 +834,7 @@ BlockServerCertChangeForSpdy(nsNSSSocketInfo *infoObject,
 
 SECStatus
 AuthCertificate(TransportSecurityInfo * infoObject, CERTCertificate * cert,
-                uint32_t providerFlags)
+                SECItem * stapledOCSPResponse, uint32_t providerFlags)
 {
   if (cert->serialNumber.data &&
       cert->issuerName &&
@@ -868,12 +874,21 @@ AuthCertificate(TransportSecurityInfo * infoObject, CERTCertificate * cert,
     }
   }
 
+  SECStatus rv;
+  if (stapledOCSPResponse) {
+    CERTCertDBHandle *handle = CERT_GetDefaultCertDB();
+    rv = CERT_CacheOCSPResponseFromSideChannel(handle, cert, PR_Now(),
+                                               stapledOCSPResponse,
+                                               infoObject);
+    if (rv != SECSuccess) {
+      return rv;
+    }
+  }
+
   CERTCertList *verifyCertChain = nullptr;
   SECOidTag evOidPolicy;
-  SECStatus rv = PSM_SSL_PKIX_AuthCertificate(cert, infoObject,
-                                              infoObject->GetHostName(),
-                                              &verifyCertChain,
-                                              &evOidPolicy);
+  rv = PSM_SSL_PKIX_AuthCertificate(cert, infoObject, infoObject->GetHostName(),
+                                    &verifyCertChain, &evOidPolicy);
 
   // We want to remember the CA certs in the temp db, so that the application can find the
   // complete chain at any time it might need it.
@@ -987,6 +1002,7 @@ AuthCertificate(TransportSecurityInfo * infoObject, CERTCertificate * cert,
 SSLServerCertVerificationJob::Dispatch(const void * fdForLogging,
                                        TransportSecurityInfo * infoObject,
                                        CERTCertificate * serverCert,
+                                       SECItem * stapledOCSPResponse,
                                        uint32_t providerFlags)
 {
   // Runs on the socket transport thread
@@ -998,7 +1014,7 @@ SSLServerCertVerificationJob::Dispatch(const void * fdForLogging,
   
   RefPtr<SSLServerCertVerificationJob> job(
     new SSLServerCertVerificationJob(fdForLogging, infoObject, serverCert,
-                                     providerFlags));
+                                     stapledOCSPResponse, providerFlags));
 
   nsresult nrv;
   if (!gCertVerificationThreadPool) {
@@ -1041,8 +1057,9 @@ SSLServerCertVerificationJob::Run()
   } else {
     // Reset the error code here so we can detect if AuthCertificate fails to
     // set the error code if/when it fails.
-    PR_SetError(0, 0); 
-    SECStatus rv = AuthCertificate(mInfoObject, mCert, mProviderFlags);
+    PR_SetError(0, 0);
+    SECStatus rv = AuthCertificate(mInfoObject, mCert, mStapledOCSPResponse,
+                                   mProviderFlags);
     if (rv == SECSuccess) {
       uint32_t interval = (uint32_t) ((TimeStamp::Now() - mJobStartTime).ToMilliseconds());
       Telemetry::ID telemetryID;
@@ -1086,7 +1103,7 @@ SSLServerCertVerificationJob::Run()
     }
     if (error != 0) {
       RefPtr<CertErrorRunnable> runnable(CreateCertErrorRunnable(
-        error, mInfoObject, mCert, mFdForLogging, mProviderFlags));
+        error, mInfoObject, mCert, mFdForLogging, mProviderFlags, PR_Now()));
       if (!runnable) {
         // CreateCertErrorRunnable set a new error code
         error = PR_GetError(); 
@@ -1162,7 +1179,7 @@ AuthCertificateHook(void *arg, PRFileDesc *fd, PRBool checkSig, PRBool isServer)
       PR_SetError(PR_INVALID_STATE_ERROR, 0);
       return SECFailure;
   }
-      
+
   if (BlockServerCertChangeForSpdy(socketInfo, serverCert) != SECSuccess)
     return SECFailure;
 
@@ -1180,6 +1197,17 @@ AuthCertificateHook(void *arg, PRFileDesc *fd, PRBool checkSig, PRBool isServer)
     return SECFailure;
   }
 
+  // SSL_PeerStapledOCSPResponses will never return a non-empty response if
+  // OCSP stapling wasn't enabled because libssl wouldn't have let the server
+  // return a stapled OCSP response.
+  // We don't own these pointers.
+  const SECItemArray *csa = SSL_PeerStapledOCSPResponses(fd);
+  SECItem *stapledOCSPResponse = nullptr;
+  // we currently only support single stapled responses
+  if (csa && csa->len == 1) {
+    stapledOCSPResponse = &csa->items[0];
+  }
+
   uint32_t providerFlags = 0;
   socketInfo->GetProviderFlags(&providerFlags);
 
@@ -1191,8 +1219,8 @@ AuthCertificateHook(void *arg, PRFileDesc *fd, PRBool checkSig, PRBool isServer)
     // because of the performance benefits of doing so.
     socketInfo->SetCertVerificationWaiting();
     SECStatus rv = SSLServerCertVerificationJob::Dispatch(
-                           static_cast<const void *>(fd), socketInfo, serverCert,
-                           providerFlags);
+                     static_cast<const void *>(fd), socketInfo, serverCert,
+                     stapledOCSPResponse, providerFlags);
     return rv;
   }
   
@@ -1200,7 +1228,9 @@ AuthCertificateHook(void *arg, PRFileDesc *fd, PRBool checkSig, PRBool isServer)
   // thread doing the network I/O may not interrupt its network I/O on receipt
   // of our SSLServerCertVerificationResult event, and/or it might not even be
   // a non-blocking socket.
-  SECStatus rv = AuthCertificate(socketInfo, serverCert, providerFlags);
+
+  SECStatus rv = AuthCertificate(socketInfo, serverCert, stapledOCSPResponse,
+                                 providerFlags);
   if (rv == SECSuccess) {
     return SECSuccess;
   }
@@ -1209,7 +1239,7 @@ AuthCertificateHook(void *arg, PRFileDesc *fd, PRBool checkSig, PRBool isServer)
   if (error != 0) {
     RefPtr<CertErrorRunnable> runnable(CreateCertErrorRunnable(
                     error, socketInfo, serverCert,
-                    static_cast<const void *>(fd), providerFlags));
+                    static_cast<const void *>(fd), providerFlags, PR_Now()));
     if (!runnable) {
       // CreateCertErrorRunnable sets a new error code when it fails
       error = PR_GetError();

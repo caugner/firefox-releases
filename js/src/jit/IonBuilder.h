@@ -12,8 +12,8 @@
 // This file declares the data structures for building a MIRGraph from a
 // JSScript.
 
-#include "MIR.h"
-#include "MIRGraph.h"
+#include "jit/MIR.h"
+#include "jit/MIRGraph.h"
 
 namespace js {
 namespace jit {
@@ -37,7 +37,7 @@ class IonBuilder : public MIRGenerator
         // Normal write like a[b] = c.
         SetElem_Normal,
 
-        // Write due to UnsafeSetElement:
+        // Write due to UnsafePutElements:
         // - assumed to be in bounds,
         // - not checked for data races
         SetElem_Unsafe,
@@ -422,7 +422,9 @@ class IonBuilder : public MIRGenerator
     bool jsop_newobject(HandleObject baseObj);
     bool jsop_initelem();
     bool jsop_initelem_array();
+    bool jsop_initelem_getter_setter();
     bool jsop_initprop(HandlePropertyName name);
+    bool jsop_initprop_getter_setter(PropertyName *name);
     bool jsop_regexp(RegExpObject *reobj);
     bool jsop_object(JSObject *obj);
     bool jsop_lambda(JSFunction *fun);
@@ -485,7 +487,7 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineRegExpTest(CallInfo &callInfo);
 
     // Array intrinsics.
-    InliningStatus inlineUnsafeSetElement(CallInfo &callInfo);
+    InliningStatus inlineUnsafePutElements(CallInfo &callInfo);
     bool inlineUnsafeSetDenseArrayElement(CallInfo &callInfo, uint32_t base);
     bool inlineUnsafeSetTypedArrayElement(CallInfo &callInfo, uint32_t base, int arrayType);
     InliningStatus inlineNewDenseArray(CallInfo &callInfo);
@@ -497,7 +499,6 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineUnsafeGetReservedSlot(CallInfo &callInfo);
 
     // Parallel intrinsics.
-    InliningStatus inlineForceSequentialOrInParallelSection(CallInfo &callInfo);
     InliningStatus inlineNewParallelArray(CallInfo &callInfo);
     InliningStatus inlineParallelArray(CallInfo &callInfo);
     InliningStatus inlineParallelArrayTail(CallInfo &callInfo,
@@ -507,12 +508,15 @@ class IonBuilder : public MIRGenerator
                                            uint32_t discards);
 
     // Utility intrinsics.
-    InliningStatus inlineThrowError(CallInfo &callInfo);
     InliningStatus inlineIsCallable(CallInfo &callInfo);
     InliningStatus inlineNewObjectWithClassPrototype(CallInfo &callInfo);
     InliningStatus inlineHaveSameClass(CallInfo &callInfo);
     InliningStatus inlineToObject(CallInfo &callInfo);
     InliningStatus inlineDump(CallInfo &callInfo);
+
+    // Testing functions.
+    InliningStatus inlineForceSequentialOrInParallelSection(CallInfo &callInfo);
+    InliningStatus inlineBailout(CallInfo &callInfo);
 
     // Main inlining functions
     InliningStatus inlineNativeCall(CallInfo &callInfo, JSNative native);
@@ -609,18 +613,28 @@ class IonBuilder : public MIRGenerator
     }
     IonBuilder *callerBuilder_;
 
+    struct LoopHeader {
+        jsbytecode *pc;
+        MBasicBlock *header;
+
+        LoopHeader(jsbytecode *pc, MBasicBlock *header)
+          : pc(pc), header(header)
+        {}
+    };
+
     Vector<CFGState, 8, IonAllocPolicy> cfgStack_;
     Vector<ControlFlowInfo, 4, IonAllocPolicy> loops_;
     Vector<ControlFlowInfo, 0, IonAllocPolicy> switches_;
     Vector<ControlFlowInfo, 2, IonAllocPolicy> labels_;
     Vector<MInstruction *, 2, IonAllocPolicy> iterators_;
+    Vector<LoopHeader, 0, IonAllocPolicy> loopHeaders_;
     BaselineInspector *inspector;
 
     size_t inliningDepth_;
 
     // Cutoff to disable compilation if excessive time is spent reanalyzing
     // loop bodies to compute a fixpoint of the types for loop variables.
-    static const size_t MAX_LOOP_RESTARTS = 20;
+    static const size_t MAX_LOOP_RESTARTS = 40;
     size_t numLoopRestarts_;
 
     // True if script->failedBoundsCheck is set for the current script or
@@ -649,14 +663,15 @@ class CallInfo
     Vector<MDefinition *> args_;
 
     bool constructing_;
-    bool lambda_;
+    bool setter_;
 
   public:
     CallInfo(JSContext *cx, bool constructing)
       : fun_(NULL),
         thisArg_(NULL),
         args_(cx),
-        constructing_(constructing)
+        constructing_(constructing),
+        setter_(false)
     { }
 
     bool init(CallInfo &callInfo) {
@@ -720,7 +735,7 @@ class CallInfo
         return args_;
     }
 
-    MDefinition *getArg(uint32_t i) {
+    MDefinition *getArg(uint32_t i) const {
         JS_ASSERT(i < argc());
         return args_[i];
     }
@@ -743,11 +758,11 @@ class CallInfo
         return constructing_;
     }
 
-    bool isLambda() const {
-        return lambda_;
+    bool isSetter() const {
+        return setter_;
     }
-    void setLambda(bool lambda) {
-        lambda_ = lambda;
+    void markAsSetter() {
+        setter_ = true;
     }
 
     void wrapArgs(MBasicBlock *current) {

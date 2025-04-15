@@ -4,14 +4,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jit/JSONSpewer.h"
+
 #include <stdarg.h>
 
-#include "JSONSpewer.h"
-#include "LIR.h"
-#include "MIR.h"
-#include "MIRGraph.h"
-#include "LinearScan.h"
-#include "RangeAnalysis.h"
+#include "jit/LinearScan.h"
+#include "jit/LIR.h"
+#include "jit/MIR.h"
+#include "jit/MIRGraph.h"
+#include "jit/RangeAnalysis.h"
+
 using namespace js;
 using namespace js::jit;
 
@@ -251,7 +253,7 @@ JSONSpewer::spewMDef(MDefinition *def)
     endList();
 
     beginListProperty("inputs");
-    for (size_t i = 0; i < def->numOperands(); i++)
+    for (size_t i = 0, e = def->numOperands(); i < e; i++)
         integerValue(def->getOperand(i)->id());
     endList();
 

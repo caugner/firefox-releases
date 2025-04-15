@@ -81,9 +81,14 @@ CPP_SOURCES += [
     'nsSimplePageSequence.cpp',
     'nsSplittableFrame.cpp',
     'nsSubDocumentFrame.cpp',
-    'nsTextFrameThebes.cpp',
+    'nsTextFrame.cpp',
     'nsTextFrameUtils.cpp',
     'nsTextRunTransformations.cpp',
     'nsVideoFrame.cpp',
     'nsViewportFrame.cpp',
 ]
+
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
+    CMMSRCS += [
+        'nsPluginUtilsOSX.mm',
+    ]

@@ -4,9 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jscompartment.h"
+#include "jscompartmentinlines.h"
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/MemoryReporting.h"
 
 #include "jscntxt.h"
 #include "jsgc.h"
@@ -21,7 +22,9 @@
 #endif
 #include "js/RootingAPI.h"
 #include "vm/StopIterationObject.h"
+#include "vm/WrapperObject.h"
 
+#include "jsfuninlines.h"
 #include "jsgcinlines.h"
 #include "jsobjinlines.h"
 
@@ -39,6 +42,9 @@ JSCompartment::JSCompartment(Zone *zone, const JS::CompartmentOptions &options =
     principals(NULL),
     isSystem(false),
     marked(true),
+#ifdef DEBUG
+    firedOnNewGlobalObject(false),
+#endif
     global_(NULL),
     enterCompartmentDepth(0),
     lastCodeRelease(0),
@@ -86,7 +92,7 @@ JSCompartment::init(JSContext *cx)
 {
     /*
      * As a hack, we clear our timezone cache every time we create a new
-     * compartment.  This ensures that the cache is always relatively fresh, but
+     * compartment. This ensures that the cache is always relatively fresh, but
      * shouldn't interfere with benchmarks which create tons of date objects
      * (unless they also create tons of iframes, which seems unlikely).
      */
@@ -228,6 +234,7 @@ JSCompartment::wrap(JSContext *cx, MutableHandleValue vp, HandleObject existingA
      * This loses us some transparency, and is generally very cheesy.
      */
     HandleObject global = cx->global();
+    JS_ASSERT(global);
 
     /* Unwrap incoming objects. */
     if (vp.isObject()) {
@@ -271,7 +278,7 @@ JSCompartment::wrap(JSContext *cx, MutableHandleValue vp, HandleObject existingA
         vp.set(p->value);
         if (vp.isObject()) {
             DebugOnly<JSObject *> obj = &vp.toObject();
-            JS_ASSERT(obj->isCrossCompartmentWrapper());
+            JS_ASSERT(obj->is<CrossCompartmentWrapperObject>());
             JS_ASSERT(obj->getParent() == global);
         }
         return true;
@@ -311,7 +318,8 @@ JSCompartment::wrap(JSContext *cx, MutableHandleValue vp, HandleObject existingA
     if (existing) {
         /* Is it possible to reuse |existing|? */
         if (!existing->getTaggedProto().isLazy() ||
-            existing->getClass() != &ObjectProxyClass ||
+            // Note: don't use is<ObjectProxyObject>() here -- it also matches subclasses!
+            existing->getClass() != &ObjectProxyObject::class_ ||
             existing->getParent() != global ||
             obj->isCallable())
         {
@@ -454,15 +462,15 @@ JSCompartment::markCrossCompartmentWrappers(JSTracer *trc)
     for (WrapperMap::Enum e(crossCompartmentWrappers); !e.empty(); e.popFront()) {
         Value v = e.front().value;
         if (e.front().key.kind == CrossCompartmentKey::ObjectWrapper) {
-            JSObject *wrapper = &v.toObject();
+            ProxyObject *wrapper = &v.toObject().as<ProxyObject>();
 
             /*
              * We have a cross-compartment wrapper. Its private pointer may
              * point into the compartment being collected, so we should mark it.
              */
-            Value referent = GetProxyPrivate(wrapper);
+            Value referent = wrapper->private_();
             MarkValueRoot(trc, &referent, "cross-compartment wrapper");
-            JS_ASSERT(referent == GetProxyPrivate(wrapper));
+            JS_ASSERT(referent == wrapper->private_());
         }
     }
 }
@@ -490,6 +498,8 @@ JSCompartment::markAllCrossCompartmentWrappers(JSTracer *trc)
 void
 JSCompartment::mark(JSTracer *trc)
 {
+    JS_ASSERT(!trc->runtime->isHeapMinorCollecting());
+
 #ifdef JS_ION
     if (ionCompartment_)
         ionCompartment_->mark(trc, this);
@@ -827,7 +837,7 @@ JSCompartment::clearTraps(FreeOp *fop)
 }
 
 void
-JSCompartment::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, size_t *compartmentObject,
+JSCompartment::sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, size_t *compartmentObject,
                                    JS::TypeInferenceSizes *tiSizes, size_t *shapesCompartmentTables,
                                    size_t *crossCompartmentWrappersArg, size_t *regexpCompartment,
                                    size_t *debuggeesSet, size_t *baselineStubsOptimized)

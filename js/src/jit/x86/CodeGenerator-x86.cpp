@@ -4,18 +4,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jit/x86/CodeGenerator-x86.h"
+
 #include "mozilla/DebugOnly.h"
 
 #include "jsnum.h"
 
-#include "CodeGenerator-x86.h"
+#include "jit/ExecutionModeInlines.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
-#include "jit/shared/CodeGenerator-shared-inl.h"
 #include "vm/Shape.h"
 
 #include "jsscriptinlines.h"
-#include "jit/ExecutionModeInlines.h"
+
+#include "jit/shared/CodeGenerator-shared-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -415,15 +417,15 @@ CodeGeneratorX86::loadViewTypeElement(ArrayBufferView::ViewType vt, const Addres
                                       const LDefinition *out)
 {
     switch (vt) {
-      case ArrayBufferView::TYPE_INT8:    masm.movxblWithPatch(srcAddr, ToRegister(out)); break;
+      case ArrayBufferView::TYPE_INT8:    masm.movsblWithPatch(srcAddr, ToRegister(out)); break;
       case ArrayBufferView::TYPE_UINT8_CLAMPED:
       case ArrayBufferView::TYPE_UINT8:   masm.movzblWithPatch(srcAddr, ToRegister(out)); break;
-      case ArrayBufferView::TYPE_INT16:   masm.movxwlWithPatch(srcAddr, ToRegister(out)); break;
+      case ArrayBufferView::TYPE_INT16:   masm.movswlWithPatch(srcAddr, ToRegister(out)); break;
       case ArrayBufferView::TYPE_UINT16:  masm.movzwlWithPatch(srcAddr, ToRegister(out)); break;
       case ArrayBufferView::TYPE_INT32:   masm.movlWithPatch(srcAddr, ToRegister(out)); break;
       case ArrayBufferView::TYPE_UINT32:  masm.movlWithPatch(srcAddr, ToRegister(out)); break;
       case ArrayBufferView::TYPE_FLOAT64: masm.movsdWithPatch(srcAddr, ToFloatRegister(out)); break;
-      default: JS_NOT_REACHED("unexpected array type");
+      default: MOZ_ASSUME_UNREACHABLE("unexpected array type");
     }
 }
 
@@ -494,13 +496,13 @@ CodeGeneratorX86::visitAsmJSLoadHeap(LAsmJSLoadHeap *ins)
         uint32_t after = masm.size();
         masm.cvtss2sd(dest, dest);
         masm.bind(ool->rejoin());
-        return gen->noteHeapAccess(AsmJSHeapAccess(cmp.offset(), before, after, vt, AnyRegister(dest)));
+        return gen->noteHeapAccess(AsmJSHeapAccess(before, after, vt, AnyRegister(dest), cmp.offset()));
     }
     uint32_t before = masm.size();
     loadViewTypeElement(vt, srcAddr, out);
     uint32_t after = masm.size();
     masm.bind(ool->rejoin());
-    return gen->noteHeapAccess(AsmJSHeapAccess(cmp.offset(), before, after, vt, ToAnyRegister(out)));
+    return gen->noteHeapAccess(AsmJSHeapAccess(before, after, vt, ToAnyRegister(out), cmp.offset()));
 }
 
 bool
@@ -529,7 +531,7 @@ CodeGeneratorX86::storeViewTypeElement(ArrayBufferView::ViewType vt, const LAllo
       case ArrayBufferView::TYPE_INT32:   masm.movlWithPatch(ToRegister(value), dstAddr); break;
       case ArrayBufferView::TYPE_UINT32:  masm.movlWithPatch(ToRegister(value), dstAddr); break;
       case ArrayBufferView::TYPE_FLOAT64: masm.movsdWithPatch(ToFloatRegister(value), dstAddr); break;
-      default: JS_NOT_REACHED("unexpected array type");
+      default: MOZ_ASSUME_UNREACHABLE("unexpected array type");
     }
 }
 
@@ -581,13 +583,13 @@ CodeGeneratorX86::visitAsmJSStoreHeap(LAsmJSStoreHeap *ins)
         masm.movssWithPatch(ScratchFloatReg, dstAddr);
         uint32_t after = masm.size();
         masm.bind(&rejoin);
-        return gen->noteHeapAccess(AsmJSHeapAccess(cmp.offset(), before, after));
+        return gen->noteHeapAccess(AsmJSHeapAccess(before, after, cmp.offset()));
     }
     uint32_t before = masm.size();
     storeViewTypeElement(vt, value, dstAddr);
     uint32_t after = masm.size();
     masm.bind(&rejoin);
-    return gen->noteHeapAccess(AsmJSHeapAccess(cmp.offset(), before, after));
+    return gen->noteHeapAccess(AsmJSHeapAccess(before, after, cmp.offset()));
 }
 
 bool
@@ -658,7 +660,15 @@ CodeGeneratorX86::postAsmJSCall(LAsmJSCall *lir)
 }
 
 void
-ParallelGetPropertyIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
+DispatchIonCache::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
+{
+    // On x86, where there is no general purpose scratch register available,
+    // child cache classes must manually specify a dispatch scratch register.
+    MOZ_ASSUME_UNREACHABLE("x86 needs manual assignment of dispatchScratch");
+}
+
+void
+GetPropertyParIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
 {
     // We don't have a scratch register, but only use the temp if we needed
     // one, it's BogusTemp otherwise.
@@ -667,6 +677,18 @@ ParallelGetPropertyIC::initializeAddCacheState(LInstruction *ins, AddCacheState 
         addState->dispatchScratch = output_.scratchReg().gpr();
     else
         addState->dispatchScratch = ToRegister(ins->toGetPropertyCacheT()->temp());
+}
+
+void
+GetElementParIC::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
+{
+    // We don't have a scratch register, but only use the temp if we needed
+    // one, it's BogusTemp otherwise.
+    JS_ASSERT(ins->isGetElementCacheV() || ins->isGetElementCacheT());
+    if (ins->isGetElementCacheV() || ins->toGetElementCacheT()->temp()->isBogusTemp())
+        addState->dispatchScratch = output_.scratchReg().gpr();
+    else
+        addState->dispatchScratch = ToRegister(ins->toGetElementCacheT()->temp());
 }
 
 namespace js {

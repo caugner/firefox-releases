@@ -48,7 +48,7 @@ private:
 bool
 DispatchRILEvent::RunTask(JSContext *aCx)
 {
-    JSObject *obj = JS_GetGlobalForScopeChain(aCx);
+    JSObject *obj = JS::CurrentGlobalOrNull(aCx);
 
     JSObject *array = JS_NewUint8Array(aCx, mMessage->mSize);
     if (!array) {
@@ -156,8 +156,7 @@ void
 RilConnector::GetSocketAddr(const sockaddr_any& aAddr,
                             nsAString& aAddrStr)
 {
-    // Unused.
-    MOZ_NOT_REACHED("This should never be called!");
+    MOZ_CRASH("This should never be called!");
 }
 
 } // anonymous namespace

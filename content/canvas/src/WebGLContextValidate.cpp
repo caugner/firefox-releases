@@ -12,6 +12,7 @@
 #include "WebGLFramebuffer.h"
 #include "WebGLRenderbuffer.h"
 #include "WebGLTexture.h"
+#include "WebGLVertexArray.h"
 
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Preferences.h"
@@ -78,9 +79,9 @@ WebGLProgram::UpdateInfo()
         mUniformInfoMap->Init();
         for (size_t i = 0; i < mAttachedShaders.Length(); i++) {
             for (size_t j = 0; j < mAttachedShaders[i]->mUniforms.Length(); j++) {
-	        const WebGLMappedIdentifier& uniform = mAttachedShaders[i]->mUniforms[j];
-	        const WebGLUniformInfo& info = mAttachedShaders[i]->mUniformInfos[j];
-	        mUniformInfoMap->Put(uniform.mapped, info);
+            const WebGLMappedIdentifier& uniform = mAttachedShaders[i]->mUniforms[j];
+            const WebGLUniformInfo& info = mAttachedShaders[i]->mUniformInfos[j];
+            mUniformInfoMap->Put(uniform.mapped, info);
             }
         }
     }
@@ -112,9 +113,9 @@ WebGLContext::ValidateBuffers(uint32_t *maxAllowedCount, const char *info)
     }
 
     uint32_t maxAllowed = UINT32_MAX;
-    uint32_t attribs = mAttribBuffers.Length();
+    uint32_t attribs = mBoundVertexArray->mAttribs.Length();
     for (uint32_t i = 0; i < attribs; ++i) {
-        const WebGLVertexAttribData& vd = mAttribBuffers[i];
+        const WebGLVertexAttribData& vd = mBoundVertexArray->mAttribs[i];
 
         // If the attrib array isn't enabled, there's nothing to check;
         // it's a static value.
@@ -195,10 +196,19 @@ bool WebGLContext::ValidateBlendEquationEnum(WebGLenum mode, const char *info)
         case LOCAL_GL_FUNC_SUBTRACT:
         case LOCAL_GL_FUNC_REVERSE_SUBTRACT:
             return true;
+        case LOCAL_GL_MIN:
+        case LOCAL_GL_MAX:
+            if (IsWebGL2()) {
+                // http://www.opengl.org/registry/specs/EXT/blend_minmax.txt
+                return true;
+            }
+            break;
         default:
-            ErrorInvalidEnumInfo(info, mode);
-            return false;
+            break;
     }
+
+    ErrorInvalidEnumInfo(info, mode);
+    return false;
 }
 
 bool WebGLContext::ValidateBlendFuncDstEnum(WebGLenum factor, const char *info)
@@ -850,18 +860,7 @@ WebGLContext::ValidateUniformSetter(const char* name, WebGLUniformLocation *loca
 
 bool WebGLContext::ValidateAttribIndex(WebGLuint index, const char *info)
 {
-    if (index >= mAttribBuffers.Length()) {
-        if (index == WebGLuint(-1)) {
-             ErrorInvalidValue("%s: index -1 is invalid. That probably comes from a getAttribLocation() call, "
-                               "where this return value -1 means that the passed name didn't correspond to an active attribute in "
-                               "the specified program.", info);
-        } else {
-             ErrorInvalidValue("%s: index %d is out of range", info, index);
-        }
-        return false;
-    } else {
-        return true;
-    }
+    return mBoundVertexArray->EnsureAttrib(index, info);
 }
 
 bool WebGLContext::ValidateStencilParamsForDrawCall()
@@ -885,11 +884,13 @@ bool WebGLContext::ValidateStencilParamsForDrawCall()
 static inline int32_t floorPOT(int32_t x)
 {
     MOZ_ASSERT(x > 0);
-    int32_t POT = 1;
-    while (POT < 0x40000000 && POT * 2 <= x) {
-        POT *= 2;
+    int32_t pot = 1;
+    while (pot < 0x40000000) {
+        if (x < pot*2)
+            break;
+        pot *= 2;
     }
-    return POT;
+    return pot;
 }
 
 bool
@@ -915,13 +916,10 @@ WebGLContext::InitAndValidateGL()
     mActiveTexture = 0;
     mWebGLError = LOCAL_GL_NO_ERROR;
 
-    mAttribBuffers.Clear();
-
     mBound2DTextures.Clear();
     mBoundCubeMapTextures.Clear();
 
     mBoundArrayBuffer = nullptr;
-    mBoundElementArrayBuffer = nullptr;
     mCurrentProgram = nullptr;
 
     mBoundFramebuffer = nullptr;
@@ -943,8 +941,6 @@ WebGLContext::InitAndValidateGL()
         GenerateWarning("GL_MAX_VERTEX_ATTRIBS: %d is < 8!", mGLMaxVertexAttribs);
         return false;
     }
-
-    mAttribBuffers.SetLength(mGLMaxVertexAttribs);
 
     // Note: GL_MAX_TEXTURE_UNITS is fixed at 4 for most desktop hardware,
     // even though the hardware supports much more.  The
@@ -1035,22 +1031,12 @@ WebGLContext::InitAndValidateGL()
         // specifically enabled on desktop GLSL.
         gl->fEnable(LOCAL_GL_VERTEX_PROGRAM_POINT_SIZE);
 
-        // we don't do the following glEnable(GL_POINT_SPRITE) on ATI cards on Windows, because bug 602183 shows that it causes
-        // crashes in the ATI/Windows driver; and point sprites on ATI seem like a lost cause anyway, see
-        //    http://www.gamedev.net/community/forums/topic.asp?topic_id=525643
-        // Also, if the ATI/Windows driver implements a recent GL spec version, this shouldn't be needed anyway.
-#ifdef XP_WIN
-        if (!(gl->WorkAroundDriverBugs() &&
-              gl->Vendor() == gl::GLContext::VendorATI))
-#else
-        if (true)
-#endif
-        {
-            // gl_PointCoord is always available in ES2 GLSL and in newer desktop GLSL versions, but apparently
-            // not in OpenGL 2 and apparently not (due to a driver bug) on certain NVIDIA setups. See:
-            //   http://www.opengl.org/discussion_boards/ubbthreads.php?ubb=showflat&Number=261472
-            gl->fEnable(LOCAL_GL_POINT_SPRITE);
-        }
+        // gl_PointCoord is always available in ES2 GLSL and in newer desktop GLSL versions, but apparently
+        // not in OpenGL 2 and apparently not (due to a driver bug) on certain NVIDIA setups. See:
+        //   http://www.opengl.org/discussion_boards/ubbthreads.php?ubb=showflat&Number=261472
+        // Note that this used to cause crashes on old ATI drivers... hopefully not a significant
+        // problem anymore. See bug 602183.
+        gl->fEnable(LOCAL_GL_POINT_SPRITE);
     }
 
 #ifdef XP_MACOSX
@@ -1087,6 +1073,17 @@ WebGLContext::InitAndValidateGL()
         return false;
     }
 
+    if (IsWebGL2() &&
+        (!IsExtensionSupported(OES_vertex_array_object) ||
+         !IsExtensionSupported(WEBGL_draw_buffers) ||
+         !gl->IsExtensionSupported(gl::GLContext::EXT_gpu_shader4) ||
+         !gl->IsExtensionSupported(gl::GLContext::EXT_blend_minmax) ||
+         !gl->IsExtensionSupported(gl::GLContext::XXX_draw_instanced)
+        ))
+    {
+        return false;
+    }
+
     mMemoryPressureObserver
         = new WebGLMemoryPressureObserver(this);
     nsCOMPtr<nsIObserverService> observerService
@@ -1095,6 +1092,18 @@ WebGLContext::InitAndValidateGL()
         observerService->AddObserver(mMemoryPressureObserver,
                                      "memory-pressure",
                                      false);
+    }
+
+    mDefaultVertexArray = new WebGLVertexArray(this);
+    mDefaultVertexArray->mAttribs.SetLength(mGLMaxVertexAttribs);
+    mBoundVertexArray = mDefaultVertexArray;
+
+    if (IsWebGL2()) {
+        EnableExtension(OES_vertex_array_object);
+        EnableExtension(WEBGL_draw_buffers);
+
+        MOZ_ASSERT(IsExtensionEnabled(OES_vertex_array_object));
+        MOZ_ASSERT(IsExtensionEnabled(WEBGL_draw_buffers));
     }
 
     return true;

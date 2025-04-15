@@ -83,10 +83,10 @@ protected:
                                    const Request& aRequest) MOZ_OVERRIDE;
 
   virtual PBluetoothRequestParent*
-  AllocPBluetoothRequest(const Request& aRequest) MOZ_OVERRIDE;
+  AllocPBluetoothRequestParent(const Request& aRequest) MOZ_OVERRIDE;
 
   virtual bool
-  DeallocPBluetoothRequest(PBluetoothRequestParent* aActor) MOZ_OVERRIDE;
+  DeallocPBluetoothRequestParent(PBluetoothRequestParent* aActor) MOZ_OVERRIDE;
 
   virtual void
   Notify(const BluetoothSignal& aSignal) MOZ_OVERRIDE;
@@ -194,6 +194,12 @@ protected:
 
   bool
   DoRequest(const IsScoConnectedRequest& aRequest);
+
+  bool
+  DoRequest(const SendMetaDataRequest& aRequest);
+
+  bool
+  DoRequest(const SendPlayStatusRequest& aRequest);
 };
 
 END_BLUETOOTH_NAMESPACE

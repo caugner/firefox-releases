@@ -4,17 +4,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jit/shared/CodeGenerator-shared-inl.h"
+
 #include "mozilla/DebugOnly.h"
 
-#include "CodeGenerator-shared.h"
-#include "jit/MIRGenerator.h"
-#include "jit/IonFrames-inl.h"
-#include "jit/MIR.h"
-#include "CodeGenerator-shared-inl.h"
-#include "jit/IonSpewer.h"
-#include "jit/IonMacroAssembler.h"
-#include "jit/ParallelFunctions.h"
 #include "builtin/ParallelArray.h"
+#include "jit/IonMacroAssembler.h"
+#include "jit/IonSpewer.h"
+#include "jit/MIR.h"
+#include "jit/MIRGenerator.h"
+#include "jit/ParallelFunctions.h"
+
+#include "jit/IonFrames-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -135,7 +136,7 @@ CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
 {
     IonSpew(IonSpew_Codegen, "Encoding %u of resume point %p's operands starting from %u",
             resumePoint->numOperands(), (void *) resumePoint, *startIndex);
-    for (uint32_t slotno = 0; slotno < resumePoint->numOperands(); slotno++) {
+    for (uint32_t slotno = 0, e = resumePoint->numOperands(); slotno < e; slotno++) {
         uint32_t i = slotno + *startIndex;
         MDefinition *mir = resumePoint->getOperand(slotno);
 
@@ -273,11 +274,16 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
                 // include the this. When inlining that is not included.
                 // So the exprStackSlots will be one less.
                 JS_ASSERT(stackDepth - exprStack <= 1);
-            } else if (JSOp(*bailPC) != JSOP_FUNAPPLY) {
+            } else if (JSOp(*bailPC) != JSOP_FUNAPPLY && !IsGetterPC(bailPC) && !IsSetterPC(bailPC)) {
                 // For fun.apply({}, arguments) the reconstructStackDepth will
                 // have stackdepth 4, but it could be that we inlined the
                 // funapply. In that case exprStackSlots, will have the real
                 // arguments in the slots and not be 4.
+
+                // With accessors, we have different stack depths depending on whether or not we
+                // inlined the accessor, as the inlined stack contains a callee function that should
+                // never have been there and we might just be capturing an uneventful property site,
+                // in which case there won't have been any violence.
                 JS_ASSERT(exprStack == stackDepth);
             }
         }
@@ -422,6 +428,10 @@ CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins, const Regi
     // Different execution modes have different sets of VM functions.
     JS_ASSERT(fun.executionMode == gen->info().executionMode());
 
+    // If we're calling a function with an out parameter type of double, make
+    // sure we have an FPU.
+    JS_ASSERT_IF(fun.outParam == Type_Double, GetIonContext()->runtime->jitSupportsFloatingPoint);
+
 #ifdef DEBUG
     if (ins->mirRaw()) {
         JS_ASSERT(ins->mirRaw()->isInstruction());
@@ -439,8 +449,7 @@ CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins, const Regi
 #endif
 
     // Get the wrapper of the VM function.
-    IonCompartment *ion = GetIonContext()->compartment->ionCompartment();
-    IonCode *wrapper = ion->getVMWrapper(fun);
+    IonCode *wrapper = gen->ionRuntime()->getVMWrapper(fun);
     if (!wrapper)
         return false;
 
@@ -555,20 +564,18 @@ CodeGeneratorShared::markArgumentSlots(LSafepoint *safepoint)
     return true;
 }
 
-OutOfLineParallelAbort *
-CodeGeneratorShared::oolParallelAbort(ParallelBailoutCause cause,
-                                      MBasicBlock *basicBlock,
-                                      jsbytecode *bytecode)
+OutOfLineAbortPar *
+CodeGeneratorShared::oolAbortPar(ParallelBailoutCause cause, MBasicBlock *basicBlock,
+                                 jsbytecode *bytecode)
 {
-    OutOfLineParallelAbort *ool = new OutOfLineParallelAbort(cause, basicBlock, bytecode);
+    OutOfLineAbortPar *ool = new OutOfLineAbortPar(cause, basicBlock, bytecode);
     if (!ool || !addOutOfLineCode(ool))
         return NULL;
     return ool;
 }
 
-OutOfLineParallelAbort *
-CodeGeneratorShared::oolParallelAbort(ParallelBailoutCause cause,
-                                      LInstruction *lir)
+OutOfLineAbortPar *
+CodeGeneratorShared::oolAbortPar(ParallelBailoutCause cause, LInstruction *lir)
 {
     MDefinition *mir = lir->mirRaw();
     MBasicBlock *block = mir->block();
@@ -579,35 +586,35 @@ CodeGeneratorShared::oolParallelAbort(ParallelBailoutCause cause,
         else
             pc = block->pc();
     }
-    return oolParallelAbort(cause, block, pc);
+    return oolAbortPar(cause, block, pc);
 }
 
-OutOfLinePropagateParallelAbort *
-CodeGeneratorShared::oolPropagateParallelAbort(LInstruction *lir)
+OutOfLinePropagateAbortPar *
+CodeGeneratorShared::oolPropagateAbortPar(LInstruction *lir)
 {
-    OutOfLinePropagateParallelAbort *ool = new OutOfLinePropagateParallelAbort(lir);
+    OutOfLinePropagateAbortPar *ool = new OutOfLinePropagateAbortPar(lir);
     if (!ool || !addOutOfLineCode(ool))
         return NULL;
     return ool;
 }
 
 bool
-OutOfLineParallelAbort::generate(CodeGeneratorShared *codegen)
+OutOfLineAbortPar::generate(CodeGeneratorShared *codegen)
 {
-    codegen->callTraceLIR(0xDEADBEEF, NULL, "ParallelBailout");
-    return codegen->visitOutOfLineParallelAbort(this);
+    codegen->callTraceLIR(0xDEADBEEF, NULL, "AbortPar");
+    return codegen->visitOutOfLineAbortPar(this);
 }
 
 bool
-OutOfLinePropagateParallelAbort::generate(CodeGeneratorShared *codegen)
+OutOfLinePropagateAbortPar::generate(CodeGeneratorShared *codegen)
 {
-    codegen->callTraceLIR(0xDEADBEEF, NULL, "ParallelBailout");
-    return codegen->visitOutOfLinePropagateParallelAbort(this);
+    codegen->callTraceLIR(0xDEADBEEF, NULL, "AbortPar");
+    return codegen->visitOutOfLinePropagateAbortPar(this);
 }
 
 bool
 CodeGeneratorShared::callTraceLIR(uint32_t blockIndex, LInstruction *lir,
-                                    const char *bailoutName)
+                                  const char *bailoutName)
 {
     JS_ASSERT_IF(!lir, bailoutName);
 

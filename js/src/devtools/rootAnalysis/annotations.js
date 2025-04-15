@@ -24,6 +24,10 @@ function indirectCallCannotGC(caller, name)
     if (name == "params" && caller == "PR_ExplodeTime")
         return true;
 
+    var CheckCallArgs = "AsmJS.cpp:uint8 CheckCallArgs(FunctionCompiler*, js::frontend::ParseNode*, (uint8)(FunctionCompiler*,js::frontend::ParseNode*,Type)*, FunctionCompiler::Call*)";
+    if (name == "checkArg" && caller == CheckCallArgs)
+        return true;
+
     // hook called during script finalization which cannot GC.
     if (/CallDestroyScriptHook/.test(caller))
         return true;
@@ -93,10 +97,6 @@ function ignoreEdgeUse(edge, variable)
         if (callee.Kind == "Var") {
             var name = callee.Variable.Name[0];
             if (/~Anchor/.test(name))
-                return true;
-            if (/::Unrooted\(\)/.test(name))
-                return true;
-            if (/::~Unrooted\(\)/.test(name))
                 return true;
             if (/~DebugOnly/.test(name))
                 return true;

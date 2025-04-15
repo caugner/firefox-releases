@@ -145,6 +145,15 @@ static bool ConvertToMidasInternalCommand(const nsAString & inCommandID,
 // ==================================================================
 // =
 // ==================================================================
+static void
+ReportUseOfDeprecatedMethod(nsHTMLDocument* aDoc, const char* aWarning)
+{
+  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                  "DOM Events", aDoc,
+                                  nsContentUtils::eDOM_PROPERTIES,
+                                  aWarning);
+}
+
 static nsresult
 RemoveFromAgentSheets(nsCOMArray<nsIStyleSheet> &aAgentSheets, const nsAString& url)
 {
@@ -196,14 +205,14 @@ nsHTMLDocument::nsHTMLDocument()
   mIsRegularHTML = true;
   mDefaultElementType = kNameSpaceID_XHTML;
   mCompatMode = eCompatibility_NavQuirks;
-
-  SetIsDOMBinding();
 }
 
 nsHTMLDocument::~nsHTMLDocument()
 {
   mAll = nullptr;
 }
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLDocument)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsHTMLDocument, nsDocument)
   NS_ASSERTION(!nsCCUncollectableMarker::InGeneration(cb, tmp->GetMarkedCCGeneration()),
@@ -1071,20 +1080,20 @@ nsHTMLDocument::SetDomain(const nsAString& aDomain, ErrorResult& rv)
 nsGenericHTMLElement*
 nsHTMLDocument::GetBody()
 {
-  Element* body = GetBodyElement();
-
-  if (body) {
-    // There is a body element, return that as the body.
-    return static_cast<nsGenericHTMLElement*>(body);
+  Element* html = GetHtmlElement();
+  if (!html) {
+    return nullptr;
   }
 
-  // The document is most likely a frameset document so look for the
-  // outer most frameset element
-  nsRefPtr<nsContentList> nodeList =
-    NS_GetContentList(this, kNameSpaceID_XHTML, NS_LITERAL_STRING("frameset"));
-  Element* frameset = nodeList->GetElementAt(0);
-  MOZ_ASSERT(!frameset || frameset->IsHTML());
-  return static_cast<nsGenericHTMLElement*>(frameset);
+  for (nsIContent* child = html->GetFirstChild();
+       child;
+       child = child->GetNextSibling()) {
+    if (child->IsHTML(nsGkAtoms::body) || child->IsHTML(nsGkAtoms::frameset)) {
+      return static_cast<nsGenericHTMLElement*>(child);
+    }
+  }
+
+  return nullptr;
 }
 
 NS_IMETHODIMP
@@ -2245,18 +2254,14 @@ nsHTMLDocument::GetSelection(ErrorResult& rv)
 NS_IMETHODIMP
 nsHTMLDocument::CaptureEvents(int32_t aEventFlags)
 {
+  ReportUseOfDeprecatedMethod(this, "UseOfCaptureEventsWarning");
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsHTMLDocument::ReleaseEvents(int32_t aEventFlags)
 {
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLDocument::RouteEvent(nsIDOMEvent* aEvt)
-{
+  ReportUseOfDeprecatedMethod(this, "UseOfReleaseEventsWarning");
   return NS_OK;
 }
 

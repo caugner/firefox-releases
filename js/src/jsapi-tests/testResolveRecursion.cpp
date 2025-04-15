@@ -5,8 +5,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
-#include "tests.h"
+#include "jsapi-tests/tests.h"
 
 /*
  * Test that resolve hook recursion for the same object and property is
@@ -28,6 +27,10 @@ BEGIN_TEST(testResolveRecursion)
         JS_ConvertStub
     };
 
+    obj1 = obj2 = NULL;
+    JS_AddObjectRoot(cx, &obj1);
+    JS_AddObjectRoot(cx, &obj2);
+
     obj1 = JS_NewObject(cx, &my_resolve_class, NULL, NULL);
     CHECK(obj1);
     obj2 = JS_NewObject(cx, &my_resolve_class, NULL, NULL);
@@ -47,6 +50,9 @@ BEGIN_TEST(testResolveRecursion)
     CHECK_SAME(v, JSVAL_FALSE);
     CHECK_EQUAL(resolveEntryCount, 4);
     CHECK_EQUAL(resolveExitCount, 4);
+
+    JS_RemoveObjectRoot(cx, &obj1);
+    JS_RemoveObjectRoot(cx, &obj2);
     return true;
 }
 

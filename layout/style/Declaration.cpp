@@ -8,6 +8,7 @@
  * stylesheet
  */
 
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/Util.h"
 
 #include "mozilla/css/Declaration.h"
@@ -19,8 +20,8 @@ namespace css {
 
 // check that we can fit all the CSS properties into a uint16_t
 // for the mOrder array
-MOZ_STATIC_ASSERT(eCSSProperty_COUNT_no_shorthands - 1 <= UINT16_MAX,
-                  "CSS longhand property numbers no longer fit in a uint16_t");
+static_assert(eCSSProperty_COUNT_no_shorthands - 1 <= UINT16_MAX,
+              "CSS longhand property numbers no longer fit in a uint16_t");
 
 Declaration::Declaration()
   : mImmutable(false)
@@ -105,6 +106,37 @@ Declaration::AppendValueToString(nsCSSProperty aProperty,
 
   val->AppendToString(aProperty, aResult);
   return true;
+}
+
+// Helper to append |aString| with the shorthand sides notation used in e.g.
+// 'padding'. |aProperties| and |aValues| are expected to have 4 elements.
+static void
+AppendSidesShorthandToString(const nsCSSProperty aProperties[],
+                             const nsCSSValue* aValues[],
+                             nsAString& aString)
+{
+  const nsCSSValue& value1 = *aValues[0];
+  const nsCSSValue& value2 = *aValues[1];
+  const nsCSSValue& value3 = *aValues[2];
+  const nsCSSValue& value4 = *aValues[3];
+
+  NS_ABORT_IF_FALSE(value1.GetUnit() != eCSSUnit_Null, "null value 1");
+  value1.AppendToString(aProperties[0], aString);
+  if (value1 != value2 || value1 != value3 || value1 != value4) {
+    aString.Append(PRUnichar(' '));
+    NS_ABORT_IF_FALSE(value2.GetUnit() != eCSSUnit_Null, "null value 2");
+    value2.AppendToString(aProperties[1], aString);
+    if (value1 != value3 || value2 != value4) {
+      aString.Append(PRUnichar(' '));
+      NS_ABORT_IF_FALSE(value3.GetUnit() != eCSSUnit_Null, "null value 3");
+      value3.AppendToString(aProperties[2], aString);
+      if (value2 != value4) {
+        aString.Append(PRUnichar(' '));
+        NS_ABORT_IF_FALSE(value4.GetUnit() != eCSSUnit_Null, "null value 4");
+        value4.AppendToString(aProperties[3], aString);
+      }
+    }
+  }
 }
 
 void
@@ -201,29 +233,13 @@ Declaration::GetValue(nsCSSProperty aProperty, nsAString& aValue) const
                         kNotFound, "third subprop must be bottom");
       NS_ABORT_IF_FALSE(nsCSSProps::GetStringValue(subprops[3]).Find("-left") !=
                         kNotFound, "fourth subprop must be left");
-      const nsCSSValue &topValue = *data->ValueFor(subprops[0]);
-      const nsCSSValue &rightValue = *data->ValueFor(subprops[1]);
-      const nsCSSValue &bottomValue = *data->ValueFor(subprops[2]);
-      const nsCSSValue &leftValue = *data->ValueFor(subprops[3]);
-
-      NS_ABORT_IF_FALSE(topValue.GetUnit() != eCSSUnit_Null, "null top");
-      topValue.AppendToString(subprops[0], aValue);
-      if (topValue != rightValue || topValue != leftValue ||
-          topValue != bottomValue) {
-        aValue.Append(PRUnichar(' '));
-        NS_ABORT_IF_FALSE(rightValue.GetUnit() != eCSSUnit_Null, "null right");
-        rightValue.AppendToString(subprops[1], aValue);
-        if (topValue != bottomValue || rightValue != leftValue) {
-          aValue.Append(PRUnichar(' '));
-          NS_ABORT_IF_FALSE(bottomValue.GetUnit() != eCSSUnit_Null, "null bottom");
-          bottomValue.AppendToString(subprops[2], aValue);
-          if (rightValue != leftValue) {
-            aValue.Append(PRUnichar(' '));
-            NS_ABORT_IF_FALSE(leftValue.GetUnit() != eCSSUnit_Null, "null left");
-            leftValue.AppendToString(subprops[3], aValue);
-          }
-        }
-      }
+      const nsCSSValue* vals[4] = {
+        data->ValueFor(subprops[0]),
+        data->ValueFor(subprops[1]),
+        data->ValueFor(subprops[2]),
+        data->ValueFor(subprops[3])
+      };
+      AppendSidesShorthandToString(subprops, vals, aValue);
       break;
     }
     case eCSSProperty_border_radius:
@@ -240,28 +256,22 @@ Declaration::GetValue(nsCSSProperty aProperty, nsAString& aValue) const
       // For compatibility, only write a slash and the y-values
       // if they're not identical to the x-values.
       bool needY = false;
+      const nsCSSValue* xVals[4];
+      const nsCSSValue* yVals[4];
       for (int i = 0; i < 4; i++) {
         if (vals[i]->GetUnit() == eCSSUnit_Pair) {
           needY = true;
-          vals[i]->GetPairValue().mXValue.AppendToString(subprops[i], aValue);
+          xVals[i] = &vals[i]->GetPairValue().mXValue;
+          yVals[i] = &vals[i]->GetPairValue().mYValue;
         } else {
-          vals[i]->AppendToString(subprops[i], aValue);
+          xVals[i] = yVals[i] = vals[i];
         }
-        if (i < 3)
-          aValue.Append(PRUnichar(' '));
       }
 
+      AppendSidesShorthandToString(subprops, xVals, aValue);
       if (needY) {
         aValue.AppendLiteral(" / ");
-        for (int i = 0; i < 4; i++) {
-          if (vals[i]->GetUnit() == eCSSUnit_Pair) {
-            vals[i]->GetPairValue().mYValue.AppendToString(subprops[i], aValue);
-          } else {
-            vals[i]->AppendToString(subprops[i], aValue);
-          }
-          if (i < 3)
-            aValue.Append(PRUnichar(' '));
-        }
+        AppendSidesShorthandToString(subprops, yVals, aValue);
       }
       break;
     }
@@ -468,13 +478,13 @@ Declaration::GetValue(nsCSSProperty aProperty, nsAString& aValue) const
           MOZ_ASSERT(nsCSSProps::kKeywordTableTable[
                        eCSSProperty_background_clip] ==
                      nsCSSProps::kBackgroundOriginKTable);
-          MOZ_STATIC_ASSERT(NS_STYLE_BG_CLIP_BORDER ==
-                            NS_STYLE_BG_ORIGIN_BORDER &&
-                            NS_STYLE_BG_CLIP_PADDING ==
-                            NS_STYLE_BG_ORIGIN_PADDING &&
-                            NS_STYLE_BG_CLIP_CONTENT ==
-                            NS_STYLE_BG_ORIGIN_CONTENT,
-                            "bg-clip and bg-origin style constants must agree");
+          static_assert(NS_STYLE_BG_CLIP_BORDER ==
+                        NS_STYLE_BG_ORIGIN_BORDER &&
+                        NS_STYLE_BG_CLIP_PADDING ==
+                        NS_STYLE_BG_ORIGIN_PADDING &&
+                        NS_STYLE_BG_CLIP_CONTENT ==
+                        NS_STYLE_BG_ORIGIN_CONTENT,
+                        "bg-clip and bg-origin style constants must agree");
           aValue.Append(PRUnichar(' '));
           origin->mValue.AppendToString(eCSSProperty_background_origin, aValue);
 
@@ -1078,7 +1088,7 @@ Declaration::EnsureMutable()
 }
 
 size_t
-Declaration::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+Declaration::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
 {
   size_t n = aMallocSizeOf(this);
   n += mOrder.SizeOfExcludingThis(aMallocSizeOf);

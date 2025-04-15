@@ -7,10 +7,10 @@
 #ifndef jit_SnapshotReader_h
 #define jit_SnapshotReader_h
 
-#include "IonTypes.h"
-#include "IonCode.h"
-#include "Registers.h"
-#include "CompactBuffer.h"
+#include "jit/CompactBuffer.h"
+#include "jit/IonCode.h"
+#include "jit/IonTypes.h"
+#include "jit/Registers.h"
 
 namespace js {
 namespace jit {

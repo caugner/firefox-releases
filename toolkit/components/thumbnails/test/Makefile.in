@@ -11,7 +11,6 @@ relativesrcdir  = @relativesrcdir@
 include $(DEPTH)/config/autoconf.mk
 
 MOCHITEST_BROWSER_FILES := \
-	browser_thumbnails_background.js \
 	browser_thumbnails_capture.js \
 	browser_thumbnails_expiration.js \
 	browser_thumbnails_privacy.js \
@@ -25,7 +24,15 @@ MOCHITEST_BROWSER_FILES := \
 	background_red_scroll.html \
 	background_red_redirect.sjs \
 	privacy_cache_control.sjs \
-	thumbnails_background.sjs \
 	$(NULL)
+
+ifndef RELEASE_BUILD
+MOCHITEST_BROWSER_FILES += \
+	browser_thumbnails_background.js \
+	browser_thumbnails_update.js \
+	thumbnails_background.sjs \
+	thumbnails_update.sjs \
+	$(NULL)
+endif
 
 include $(topsrcdir)/config/rules.mk

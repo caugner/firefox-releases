@@ -57,7 +57,7 @@
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/BindingUtils.h"
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/StaticPtr.h"
 #include "nsContentUtils.h"
@@ -492,7 +492,7 @@ nsScriptSecurityManager::CheckObjectAccess(JSContext *cx, JS::Handle<JSObject*> 
     nsScriptSecurityManager *ssm =
         nsScriptSecurityManager::GetScriptSecurityManager();
 
-    NS_ASSERTION(ssm, "Failed to get security manager service");
+    NS_WARN_IF_FALSE(ssm, "Failed to get security manager service");
     if (!ssm)
         return JS_FALSE;
 
@@ -2322,9 +2322,9 @@ nsScriptSecurityManager::nsScriptSecurityManager(void)
       mIsJavaScriptEnabled(false),
       mPolicyPrefsChanged(true)
 {
-    MOZ_STATIC_ASSERT(sizeof(intptr_t) == sizeof(void*),
-                      "intptr_t and void* have different lengths on this platform. "
-                      "This may cause a security failure with the SecurityLevel union.");
+    static_assert(sizeof(intptr_t) == sizeof(void*),
+                  "intptr_t and void* have different lengths on this platform. "
+                  "This may cause a security failure with the SecurityLevel union.");
 }
 
 nsresult nsScriptSecurityManager::Init()
@@ -2405,13 +2405,12 @@ nsScriptSecurityManager::Shutdown()
 nsScriptSecurityManager *
 nsScriptSecurityManager::GetScriptSecurityManager()
 {
-    if (!gScriptSecMan)
+    if (!gScriptSecMan && nsXPConnect::XPConnect())
     {
         nsRefPtr<nsScriptSecurityManager> ssManager = new nsScriptSecurityManager();
 
         nsresult rv;
         rv = ssManager->Init();
-        NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to initialize nsScriptSecurityManager");
         if (NS_FAILED(rv)) {
             return nullptr;
         }

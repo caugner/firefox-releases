@@ -1341,7 +1341,7 @@ nsObjectLoadingContent::CheckProcessPolicy(int16_t *aContentPolicy)
   *aContentPolicy = nsIContentPolicy::ACCEPT;
   nsresult rv =
     NS_CheckContentProcessPolicy(objectType,
-                                 mURI,
+                                 mURI ? mURI : mBaseURI,
                                  doc->NodePrincipal(),
                                  static_cast<nsIImageLoadingContent*>(this),
                                  mContentType,
@@ -3069,8 +3069,7 @@ nsObjectLoadingContent::ShouldPlay(FallbackType &aReason, bool aIgnoreCurrentTyp
   case nsIPluginTag::STATE_CLICKTOPLAY:
     return false;
   }
-  MOZ_NOT_REACHED("Unexpected enabledState");
-  return false;
+  MOZ_CRASH("Unexpected enabledState");
 }
 
 nsIDocument*
@@ -3158,7 +3157,7 @@ nsObjectLoadingContent::LegacyCall(JSContext* aCx,
   JS::Rooted<JSObject*> pi_obj(aCx);
   JS::Rooted<JSObject*> pi_proto(aCx);
 
-  rv = GetPluginJSObject(aCx, obj, pi, pi_obj.address(), pi_proto.address());
+  rv = GetPluginJSObject(aCx, obj, pi, &pi_obj, &pi_proto);
   if (NS_FAILED(rv)) {
     aRv.Throw(rv);
     return JS::UndefinedValue();
@@ -3170,8 +3169,8 @@ nsObjectLoadingContent::LegacyCall(JSContext* aCx,
   }
 
   JS::Rooted<JS::Value> retval(aCx);
-  bool ok = ::JS::Call(aCx, thisVal, pi_obj, args.Length(),
-                       args.Elements(), retval.address());
+  bool ok = JS::Call(aCx, thisVal, pi_obj, args.Length(), args.Elements(),
+                     &retval);
   if (!ok) {
     aRv.Throw(NS_ERROR_FAILURE);
     return JS::UndefinedValue();
@@ -3224,7 +3223,7 @@ nsObjectLoadingContent::SetupProtoChain(JSContext* aCx,
   JS::Rooted<JSObject*> pi_obj(aCx); // XPConnect-wrapped peer object, when we get it.
   JS::Rooted<JSObject*> pi_proto(aCx); // 'pi.__proto__'
 
-  rv = GetPluginJSObject(aCx, aObject, pi, pi_obj.address(), pi_proto.address());
+  rv = GetPluginJSObject(aCx, aObject, pi, &pi_obj, &pi_proto);
   if (NS_FAILED(rv)) {
     return;
   }
@@ -3246,7 +3245,7 @@ nsObjectLoadingContent::SetupProtoChain(JSContext* aCx,
     return;
   }
 
-  if (pi_proto && js::GetObjectClass(pi_proto) != &js::ObjectClass) {
+  if (pi_proto && js::GetObjectClass(pi_proto) != js::ObjectClassPtr) {
     // The plugin wrapper has a proto that's not Object.prototype, set
     // 'pi.__proto__.__proto__' to the original 'this.__proto__'
     if (pi_proto != my_proto && !::JS_SetPrototype(aCx, pi_proto, my_proto)) {
@@ -3311,21 +3310,18 @@ nsresult
 nsObjectLoadingContent::GetPluginJSObject(JSContext *cx,
                                           JS::Handle<JSObject*> obj,
                                           nsNPAPIPluginInstance *plugin_inst,
-                                          JSObject **plugin_obj,
-                                          JSObject **plugin_proto)
+                                          JS::MutableHandle<JSObject*> plugin_obj,
+                                          JS::MutableHandle<JSObject*> plugin_proto)
 {
-  *plugin_obj = nullptr;
-  *plugin_proto = nullptr;
-
   // NB: We need an AutoEnterCompartment because we can be called from
   // nsObjectFrame when the plugin loads after the JS object for our content
   // node has been created.
   JSAutoCompartment ac(cx, obj);
 
   if (plugin_inst) {
-    plugin_inst->GetJSObject(cx, plugin_obj);
-    if (*plugin_obj) {
-      if (!::JS_GetPrototype(cx, *plugin_obj, plugin_proto)) {
+    plugin_inst->GetJSObject(cx, plugin_obj.address());
+    if (plugin_obj) {
+      if (!::JS_GetPrototype(cx, plugin_obj, plugin_proto)) {
         return NS_ERROR_UNEXPECTED;
       }
     }
@@ -3353,7 +3349,7 @@ nsObjectLoadingContent::TeardownProtoChain()
   // all JS objects of the class sNPObjectJSWrapperClass
   bool removed = false;
   while (obj) {
-    if (!::JS_GetPrototype(cx, obj, proto.address())) {
+    if (!::JS_GetPrototype(cx, obj, &proto)) {
       return;
     }
     if (!proto) {
@@ -3363,7 +3359,7 @@ nsObjectLoadingContent::TeardownProtoChain()
     // an NP object, that counts too.
     if (JS_GetClass(js::UncheckedUnwrap(proto)) == &sNPObjectJSWrapperClass) {
       // We found an NPObject on the proto chain, get its prototype...
-      if (!::JS_GetPrototype(cx, proto, proto.address())) {
+      if (!::JS_GetPrototype(cx, proto, &proto)) {
         return;
       }
 
@@ -3380,8 +3376,8 @@ nsObjectLoadingContent::TeardownProtoChain()
 
 bool
 nsObjectLoadingContent::DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObject,
-                                     JS::Handle<jsid> aId, unsigned aFlags,
-                                     JS::MutableHandle<JSObject*> aObjp)
+                                     JS::Handle<jsid> aId,
+                                     JS::MutableHandle<JS::Value> aValue)
 {
   // We don't resolve anything; we just try to make sure we're instantiated
 
@@ -3392,6 +3388,19 @@ nsObjectLoadingContent::DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObje
   }
   return true;
 }
+
+void
+nsObjectLoadingContent::GetOwnPropertyNames(JSContext* aCx,
+                                            nsTArray<nsString>& /* unused */,
+                                            ErrorResult& aRv)
+{
+  // Just like DoNewResolve, just make sure we're instantiated.  That will do
+  // the work our Enumerate hook needs to do, and we don't want to return these
+  // property names from Xrays anyway.
+  nsRefPtr<nsNPAPIPluginInstance> pi;
+  aRv = ScriptRequestPluginInstance(aCx, getter_AddRefs(pi));
+}
+
 
 // SetupProtoChainRunner implementation
 nsObjectLoadingContent::SetupProtoChainRunner::SetupProtoChainRunner(

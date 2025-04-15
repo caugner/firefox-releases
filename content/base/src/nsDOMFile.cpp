@@ -37,7 +37,6 @@
 #include "mozilla/Attributes.h"
 
 #include "mozilla/dom/FileListBinding.h"
-
 using namespace mozilla;
 using namespace mozilla::dom;
 
@@ -57,7 +56,7 @@ public:
                          uint32_t aLength,
                          nsIInputStream** _retval);
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
 
   // These are mandatory.
   NS_FORWARD_NSIINPUTSTREAM(mStream->)
@@ -83,8 +82,8 @@ private:
   nsCOMPtr<nsIIPCSerializableInputStream> mSerializableInputStream;
 };
 
-NS_IMPL_THREADSAFE_ADDREF(DataOwnerAdapter)
-NS_IMPL_THREADSAFE_RELEASE(DataOwnerAdapter)
+NS_IMPL_ADDREF(DataOwnerAdapter)
+NS_IMPL_RELEASE(DataOwnerAdapter)
 
 NS_INTERFACE_MAP_BEGIN(DataOwnerAdapter)
   NS_INTERFACE_MAP_ENTRY(nsIInputStream)
@@ -446,11 +445,13 @@ NS_INTERFACE_MAP_BEGIN(nsDOMFile)
 NS_INTERFACE_MAP_END
 
 // Threadsafe when GetMutable() == false
-NS_IMPL_THREADSAFE_ADDREF(nsDOMFile)
-NS_IMPL_THREADSAFE_RELEASE(nsDOMFile)
+NS_IMPL_ADDREF(nsDOMFile)
+NS_IMPL_RELEASE(nsDOMFile)
 
 ////////////////////////////////////////////////////////////////////////////
 // nsDOMFileCC implementation
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMFileCC)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_0(nsDOMFileCC)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDOMFileCC)
@@ -625,7 +626,7 @@ NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(DOMMemoryFileDataOwnerMallocSizeOf)
 class nsDOMMemoryFileDataOwnerMemoryReporter MOZ_FINAL
   : public nsIMemoryMultiReporter
 {
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
 
   NS_IMETHOD GetName(nsACString& aName)
   {
@@ -712,6 +713,7 @@ NS_IMPL_ISUPPORTS1(nsDOMMemoryFileDataOwnerMemoryReporter,
 /* static */ void
 nsDOMMemoryFile::DataOwner::EnsureMemoryReporterRegistered()
 {
+  sDataOwnerMutex.AssertCurrentThreadOwns();
   if (sMemoryReporterRegistered) {
     return;
   }
@@ -775,4 +777,27 @@ nsDOMFileInternalUrlHolder::~nsDOMFileInternalUrlHolder() {
     CopyUTF16toUTF8(mUrl, narrowUrl);
     nsBlobProtocolHandler::RemoveDataEntry(narrowUrl);
   }
+}
+
+////////////////////////////////////////////////////////////////////////////
+// nsDOMTemporaryFileBlob implementation
+already_AddRefed<nsIDOMBlob>
+nsDOMTemporaryFileBlob::CreateSlice(uint64_t aStart, uint64_t aLength,
+                                    const nsAString& aContentType)
+{
+  if (aStart + aLength > mLength)
+    return nullptr;
+
+  nsCOMPtr<nsIDOMBlob> t =
+    new nsDOMTemporaryFileBlob(this, aStart + mStartPos, aLength, aContentType);
+  return t.forget();
+}
+
+NS_IMETHODIMP
+nsDOMTemporaryFileBlob::GetInternalStream(nsIInputStream **aStream)
+{
+  nsCOMPtr<nsTemporaryFileInputStream> stream =
+    new nsTemporaryFileInputStream(mFileDescOwner, mStartPos, mStartPos + mLength);
+  stream.forget(aStream);
+  return NS_OK;
 }

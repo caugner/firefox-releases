@@ -34,8 +34,8 @@ namespace {
 
 // If JS_STRUCTURED_CLONE_VERSION changes then we need to update our major
 // schema version.
-MOZ_STATIC_ASSERT(JS_STRUCTURED_CLONE_VERSION == 2,
-                  "Need to update the major schema version.");
+static_assert(JS_STRUCTURED_CLONE_VERSION == 2,
+              "Need to update the major schema version.");
 
 // Major schema version. Bump for almost everything.
 const uint32_t kMajorSchemaVersion = 14;
@@ -47,10 +47,10 @@ const uint32_t kMinorSchemaVersion = 0;
 // The schema version we store in the SQLite database is a (signed) 32-bit
 // integer. The major version is left-shifted 4 bits so the max value is
 // 0xFFFFFFF. The minor version occupies the lower 4 bits and its max is 0xF.
-MOZ_STATIC_ASSERT(kMajorSchemaVersion <= 0xFFFFFFF,
-                  "Major version needs to fit in 28 bits.");
-MOZ_STATIC_ASSERT(kMinorSchemaVersion <= 0xF,
-                  "Minor version needs to fit in 4 bits.");
+static_assert(kMajorSchemaVersion <= 0xFFFFFFF,
+              "Major version needs to fit in 28 bits.");
+static_assert(kMinorSchemaVersion <= 0xF,
+              "Minor version needs to fit in 4 bits.");
 
 inline
 int32_t
@@ -1479,8 +1479,7 @@ protected:
                                             const ResponseValue& aResponseValue)
                                             MOZ_OVERRIDE
   {
-    MOZ_NOT_REACHED("Should never get here!");
-    return NS_ERROR_UNEXPECTED;
+    MOZ_CRASH("Should never get here!");
   }
 
   uint64_t RequestedVersion() const
@@ -1559,8 +1558,7 @@ protected:
                                             const ResponseValue& aResponseValue)
                                             MOZ_OVERRIDE
   {
-    MOZ_NOT_REACHED("Should never get here!");
-    return NS_ERROR_UNEXPECTED;
+    MOZ_CRASH("Should never get here!");
   }
 
 private:
@@ -1682,7 +1680,7 @@ private:
 
 } // anonymous namespace
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(OpenDatabaseHelper, nsIRunnable)
+NS_IMPL_ISUPPORTS1(OpenDatabaseHelper, nsIRunnable)
 
 nsresult
 OpenDatabaseHelper::Init()
@@ -1983,8 +1981,8 @@ OpenDatabaseHelper::CreateDatabaseConnection(
     }
     else  {
       // This logic needs to change next time we change the schema!
-      MOZ_STATIC_ASSERT(kSQLiteSchemaVersion == int32_t((14 << 4) + 0),
-                        "Need upgrade code from schema version increase.");
+      static_assert(kSQLiteSchemaVersion == int32_t((14 << 4) + 0),
+                    "Need upgrade code from schema version increase.");
 
       while (schemaVersion != kSQLiteSchemaVersion) {
         if (schemaVersion == 4) {
@@ -2061,7 +2059,7 @@ OpenDatabaseHelper::StartSetVersion()
   nsresult rv = EnsureSuccessResult();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsTArray<nsString> storesToOpen;
+  Sequence<nsString> storesToOpen;
   nsRefPtr<IDBTransaction> transaction =
     IDBTransaction::Create(mDatabase, storesToOpen,
                            IDBTransaction::VERSION_CHANGE, true);

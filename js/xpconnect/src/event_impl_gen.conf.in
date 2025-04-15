@@ -29,6 +29,7 @@ simple_events = [
     'StyleSheetApplicableStateChangeEvent',
 #ifdef MOZ_B2G_BT
     'BluetoothDeviceEvent',
+    'BluetoothStatusChangedEvent',
 #endif
 #ifdef MOZ_B2G_RIL
     'CallEvent',
@@ -50,6 +51,7 @@ simple_events = [
     'DeviceStorageChangeEvent',
     'PopupBlockedEvent',
     'BlobEvent',
+    'RecordErrorEvent',
 #ifdef MOZ_GAMEPAD
     'GamepadEvent',
     'GamepadButtonEvent',
@@ -57,13 +59,11 @@ simple_events = [
 #endif
 #ifdef MOZ_WEBSPEECH
     'SpeechRecognitionEvent',
-    'SpeechRecognitionError',
 #endif
   ]
 
 """ include file names """
 special_includes = [
-    'DictionaryHelpers.h',
     'nsContentUtils.h',
     'nsIDOMApplicationRegistry.h',
     'nsIDOMFile.h'

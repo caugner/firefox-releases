@@ -159,8 +159,8 @@ static const char* kObservedPrefs[] = {
 , nullptr
 };
 
-NS_IMPL_THREADSAFE_ADDREF(nsNavHistory)
-NS_IMPL_THREADSAFE_RELEASE(nsNavHistory)
+NS_IMPL_ADDREF(nsNavHistory)
+NS_IMPL_RELEASE(nsNavHistory)
 
 NS_IMPL_CLASSINFO(nsNavHistory, NULL, nsIClassInfo::SINGLETON,
                   NS_NAVHISTORYSERVICE_CID)
@@ -2773,6 +2773,8 @@ NS_IMETHODIMP
 nsNavHistory::SetCharsetForURI(nsIURI* aURI,
                                const nsAString& aCharset)
 {
+  PLACES_WARN_DEPRECATED();
+
   NS_ASSERTION(NS_IsMainThread(), "This can only be called on the main thread");
   NS_ENSURE_ARG(aURI);
 
@@ -2809,6 +2811,8 @@ NS_IMETHODIMP
 nsNavHistory::GetCharsetForURI(nsIURI* aURI, 
                                nsAString& aCharset)
 {
+  PLACES_WARN_DEPRECATED();
+
   NS_ASSERTION(NS_IsMainThread(), "This can only be called on the main thread");
   NS_ENSURE_ARG(aURI);
 

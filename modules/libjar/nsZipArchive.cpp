@@ -26,7 +26,7 @@
 #endif
 
 // For placement new used for arena allocations of zip file list
-#include NEW_H
+#include <new>
 #define ZIP_ARENABLOCKSIZE (1*1024)
 
 #ifdef XP_UNIX
@@ -163,8 +163,8 @@ nsZipHandle::nsZipHandle()
   MOZ_COUNT_CTOR(nsZipHandle);
 }
 
-NS_IMPL_THREADSAFE_ADDREF(nsZipHandle)
-NS_IMPL_THREADSAFE_RELEASE(nsZipHandle)
+NS_IMPL_ADDREF(nsZipHandle)
+NS_IMPL_RELEASE(nsZipHandle)
 
 nsresult nsZipHandle::Init(nsIFile *file, nsZipHandle **ret, PRFileDesc **aFd)
 {
@@ -825,8 +825,8 @@ nsZipArchive::nsZipArchive()
   memset(mFiles, 0, sizeof(mFiles));
 }
 
-NS_IMPL_THREADSAFE_ADDREF(nsZipArchive)
-NS_IMPL_THREADSAFE_RELEASE(nsZipArchive)
+NS_IMPL_ADDREF(nsZipArchive)
+NS_IMPL_RELEASE(nsZipArchive)
 
 nsZipArchive::~nsZipArchive()
 {

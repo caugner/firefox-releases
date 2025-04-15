@@ -7,10 +7,11 @@
 #ifndef jit_LiveRangeAllocator_h
 #define jit_LiveRangeAllocator_h
 
+#include "mozilla/Array.h"
 #include "mozilla/DebugOnly.h"
 
-#include "RegisterAllocator.h"
-#include "StackSlotAllocator.h"
+#include "jit/RegisterAllocator.h"
+#include "jit/StackSlotAllocator.h"
 
 // Common structures and functions used by register allocators that operate on
 // virtual register live ranges.
@@ -117,9 +118,8 @@ UseCompatibleWith(const LUse *use, LAllocation alloc)
           // UsePosition is only used as hint.
         return alloc.isRegister();
       default:
-        JS_NOT_REACHED("Unknown use policy");
+        MOZ_ASSUME_UNREACHABLE("Unknown use policy");
     }
-    return false;
 }
 
 #ifdef DEBUG
@@ -147,9 +147,8 @@ DefinitionCompatibleWith(LInstruction *ins, const LDefinition *def, LAllocation 
       case LDefinition::PASSTHROUGH:
         return true;
       default:
-        JS_NOT_REACHED("Unknown definition policy");
+        MOZ_ASSUME_UNREACHABLE("Unknown definition policy");
     }
-    return false;
 }
 
 #endif // DEBUG
@@ -477,14 +476,6 @@ class VirtualRegisterMap
     }
 };
 
-static inline AnyRegister
-GetFixedRegister(LDefinition *def, LUse *use)
-{
-    return def->type() == LDefinition::DOUBLE
-           ? AnyRegister(FloatRegister::FromCode(use->registerCode()))
-           : AnyRegister(Register::FromCode(use->registerCode()));
-}
-
 static inline bool
 IsNunbox(VirtualRegister *vreg)
 {
@@ -494,6 +485,12 @@ IsNunbox(VirtualRegister *vreg)
 #else
     return false;
 #endif
+}
+
+static inline bool
+IsSlotsOrElements(VirtualRegister *vreg)
+{
+    return vreg->type() == LDefinition::SLOTS;
 }
 
 static inline bool
@@ -518,7 +515,7 @@ class LiveRangeAllocator : public RegisterAllocator
     // Computed inforamtion
     BitSet **liveIn;
     VirtualRegisterMap<VREG> vregs;
-    FixedArityList<LiveInterval *, AnyRegister::Total> fixedIntervals;
+    mozilla::Array<LiveInterval *, AnyRegister::Total> fixedIntervals;
 
     // Union of all ranges in fixedIntervals, used to quickly determine
     // whether an interval intersects with a fixed register.
@@ -534,7 +531,6 @@ class LiveRangeAllocator : public RegisterAllocator
     // Allocation state
     StackSlotAllocator stackSlotAllocator;
 
-  public:
     LiveRangeAllocator(MIRGenerator *mir, LIRGenerator *lir, LIRGraph &graph, bool forLSRA)
       : RegisterAllocator(mir, lir, graph),
         liveIn(NULL),
@@ -545,7 +541,6 @@ class LiveRangeAllocator : public RegisterAllocator
 
     bool buildLivenessInfo();
 
-  protected:
     bool init();
 
     bool addFixedRangeAtHead(AnyRegister reg, CodePosition from, CodePosition to) {

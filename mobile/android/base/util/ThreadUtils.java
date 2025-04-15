@@ -6,6 +6,7 @@
 package org.mozilla.gecko.util;
 
 import android.os.Handler;
+import android.os.MessageQueue;
 import android.util.Log;
 
 import java.util.Map;
@@ -14,10 +15,17 @@ public final class ThreadUtils {
     private static final String LOGTAG = "ThreadUtils";
 
     private static Thread sUiThread;
-    private static Thread sGeckoThread;
     private static Thread sBackgroundThread;
 
     private static Handler sUiHandler;
+
+    // Referenced directly from GeckoAppShell in highly performance-sensitive code (The extra
+    // function call of the getter was harming performance. (Bug 897123))
+    // Once Bug 709230 is resolved we should reconsider this as ProGuard should be able to optimise
+    // this out at compile time.
+    public static Handler sGeckoHandler;
+    public static MessageQueue sGeckoQueue;
+    public static Thread sGeckoThread;
 
     @SuppressWarnings("serial")
     public static class UiThreadBlockedException extends RuntimeException {
@@ -55,10 +63,6 @@ public final class ThreadUtils {
         sUiHandler = handler;
     }
 
-    public static void setGeckoThread(Thread thread) {
-        sGeckoThread = thread;
-    }
-
     public static void setBackgroundThread(Thread thread) {
         sBackgroundThread = thread;
     }
@@ -73,10 +77,6 @@ public final class ThreadUtils {
 
     public static void postToUiThread(Runnable runnable) {
         sUiHandler.post(runnable);
-    }
-
-    public static Thread getGeckoThread() {
-        return sGeckoThread;
     }
 
     public static Thread getBackgroundThread() {
@@ -96,7 +96,7 @@ public final class ThreadUtils {
     }
 
     public static void assertOnGeckoThread() {
-        assertOnThread(getGeckoThread());
+        assertOnThread(sGeckoThread);
     }
 
     public static void assertOnBackgroundThread() {

@@ -11,6 +11,7 @@
 #include "nsIContent.h"
 #include "nsStyleContext.h"
 #include "nsCSSProps.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/TimeStamp.h"
 #include "nsRefreshDriver.h"
 #include "nsRuleProcessorData.h"
@@ -141,7 +142,7 @@ ElementTransitions::HasAnimationOfProperty(nsCSSProperty aProperty) const
 bool
 ElementTransitions::CanPerformOnCompositorThread(CanAnimateFlags aFlags) const
 {
-  nsIFrame* frame = mElement->GetPrimaryFrame();
+  nsIFrame* frame = nsLayoutUtils::GetStyleFrame(mElement);
   if (!frame) {
     return false;
   }
@@ -218,13 +219,13 @@ static void ReparentBeforeAndAfter(dom::Element* aElement,
     nsRefPtr<nsStyleContext> beforeStyle =
       aStyleSet->ReparentStyleContext(before->StyleContext(),
                                      aNewStyle, aElement);
-    before->SetStyleContextWithoutNotification(beforeStyle);
+    before->SetStyleContext(beforeStyle);
   }
   if (nsIFrame* after = nsLayoutUtils::GetBeforeFrame(aPrimaryFrame)) {
     nsRefPtr<nsStyleContext> afterStyle =
       aStyleSet->ReparentStyleContext(after->StyleContext(),
                                      aNewStyle, aElement);
-    after->SetStyleContextWithoutNotification(afterStyle);
+    after->SetStyleContext(afterStyle);
   }
 }
 
@@ -259,7 +260,7 @@ nsTransitionManager::UpdateThrottledStyle(dom::Element* aElement,
                                      nsCSSPseudoElements::ePseudo_NotPseudoElement,
                                      false), "element not transitioning");
 
-  nsIFrame* primaryFrame = aElement->GetPrimaryFrame();
+  nsIFrame* primaryFrame = nsLayoutUtils::GetStyleFrame(aElement);
   if (!primaryFrame) {
     return nullptr;
   }
@@ -317,7 +318,7 @@ nsTransitionManager::UpdateThrottledStyle(dom::Element* aElement,
   aChangeList.AppendChange(primaryFrame, primaryFrame->GetContent(),
                            styleChange);
 
-  primaryFrame->SetStyleContextWithoutNotification(newStyle);
+  primaryFrame->SetStyleContext(newStyle);
 
   ReparentBeforeAndAfter(aElement, primaryFrame, newStyle, mPresContext->PresShell()->StyleSet());
 
@@ -350,14 +351,14 @@ nsTransitionManager::UpdateThrottledStylesForSubtree(nsIContent* aContent,
   } else {
     // reparent the element's style
     nsStyleSet* styleSet = mPresContext->PresShell()->StyleSet();
-    nsIFrame* primaryFrame = aContent->GetPrimaryFrame();
+    nsIFrame* primaryFrame = nsLayoutUtils::GetStyleFrame(aContent);
     if (!primaryFrame) {
       return;
     }
 
     newStyle = styleSet->ReparentStyleContext(primaryFrame->StyleContext(),
                                               aParentStyle, element);
-    primaryFrame->SetStyleContextWithoutNotification(newStyle);
+    primaryFrame->SetStyleContext(newStyle);
     ReparentBeforeAndAfter(element, primaryFrame, newStyle, styleSet);
   }
 
@@ -423,16 +424,37 @@ nsTransitionManager::UpdateAllThrottledStyles()
 
     nsIFrame* primaryFrame;
     if (element &&
-        (primaryFrame = element->GetPrimaryFrame())) {
+        (primaryFrame = nsLayoutUtils::GetStyleFrame(element))) {
       UpdateThrottledStylesForSubtree(element,
         primaryFrame->StyleContext()->GetParent(), changeList);
     }
   }
 
-  mPresContext->PresShell()->FrameConstructor()->
-    ProcessRestyledFrames(changeList);
-  mPresContext->PresShell()->FrameConstructor()->
-    FlushOverflowChangedTracker();
+  RestyleManager* restyleManager = mPresContext->RestyleManager();
+  restyleManager->ProcessRestyledFrames(changeList);
+  restyleManager->FlushOverflowChangedTracker();
+}
+
+void
+nsTransitionManager::ElementDataRemoved()
+{
+  // If we have no transitions or animations left, remove ourselves from
+  // the refresh driver.
+  if (PR_CLIST_IS_EMPTY(&mElementData)) {
+    mPresContext->RefreshDriver()->RemoveRefreshObserver(this, Flush_Style);
+  }
+}
+
+void
+nsTransitionManager::AddElementData(CommonElementAnimationData* aData)
+{
+  if (PR_CLIST_IS_EMPTY(&mElementData)) {
+    // We need to observe the refresh driver.
+    nsRefreshDriver *rd = mPresContext->RefreshDriver();
+    rd->AddRefreshObserver(this, Flush_Style);
+  }
+
+  PR_INSERT_BEFORE(aData, &mElementData);
 }
 
 already_AddRefed<nsIStyleRule>
@@ -964,13 +986,13 @@ nsTransitionManager::RulesMatching(XULTreeRuleProcessorData* aData)
 #endif
 
 /* virtual */ size_t
-nsTransitionManager::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+nsTransitionManager::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 {
   return CommonAnimationManager::SizeOfExcludingThis(aMallocSizeOf);
 }
 
 /* virtual */ size_t
-nsTransitionManager::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+nsTransitionManager::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
 }
@@ -1118,9 +1140,6 @@ nsTransitionManager::FlushTransitions(FlushFlags aFlags)
       }
     }
   }
-
-  // We might have removed transitions above.
-  ElementDataRemoved();
 
   if (didThrottle) {
     mPresContext->Document()->SetNeedStyleFlush();

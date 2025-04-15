@@ -92,6 +92,7 @@
 #endif
 
 #include "AudioStream.h"
+#include "WebAudioUtils.h"
 
 #ifdef MOZ_WIDGET_GONK
 #include "nsVolumeService.h"
@@ -116,6 +117,7 @@ using namespace mozilla::system;
 #include "mozilla/dom/time/DateCacheCleaner.h"
 #include "nsIMEStateManager.h"
 #include "nsDocument.h"
+#include "mozilla/dom/HTMLVideoElement.h"
 
 extern void NS_ShutdownEventTargetChainItemRecyclePool();
 
@@ -272,6 +274,8 @@ nsLayoutStatics::Initialize()
 
   InitializeDateCacheCleaner();
 
+  HTMLVideoElement::Init();
+
   return NS_OK;
 }
 
@@ -350,6 +354,7 @@ nsLayoutStatics::Shutdown()
 #endif
 
   AudioStream::ShutdownLibrary();
+  WebAudioUtils::Shutdown();
 
 #ifdef MOZ_WMF
   WMFDecoder::UnloadDLLs();

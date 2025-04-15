@@ -154,7 +154,11 @@ public:
                           StreamTime aDesiredTime,
                           TrackTicks &aLastEndTime);
 
-  NS_DECL_ISUPPORTS
+  virtual bool IsFake() {
+    return false;
+  }
+
+  NS_DECL_THREADSAFE_ISUPPORTS
 #ifdef MOZ_B2G_CAMERA
   NS_DECL_NSICAMERAGETCAMERACALLBACK
   NS_DECL_NSICAMERAPREVIEWSTREAMCALLBACK
@@ -292,12 +296,16 @@ public:
                           StreamTime aDesiredTime,
                           TrackTicks &aLastEndTime);
 
+  virtual bool IsFake() {
+    return false;
+  }
+
   // VoEMediaProcess.
   void Process(const int channel, const webrtc::ProcessingTypes type,
                WebRtc_Word16 audio10ms[], const int length,
                const int samplingFreq, const bool isStereo);
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
 
 private:
   static const unsigned int KMaxDeviceNameLength = 128;

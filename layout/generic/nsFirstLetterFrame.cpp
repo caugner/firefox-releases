@@ -15,6 +15,7 @@
 #include "nsAutoPtr.h"
 #include "nsStyleSet.h"
 #include "nsFrameManager.h"
+#include "RestyleManager.h"
 #include "nsPlaceholderFrame.h"
 #include "nsCSSFrameConstructor.h"
 
@@ -69,8 +70,7 @@ nsFirstLetterFrame::Init(nsIContent*      aContent,
     if (parentStyleContext) {
       newSC = PresContext()->StyleSet()->
         ResolveStyleForNonElement(parentStyleContext);
-      if (newSC)
-        SetStyleContextWithoutNotification(newSC);
+      SetStyleContextWithoutNotification(newSC);
     }
   }
 
@@ -81,11 +81,11 @@ NS_IMETHODIMP
 nsFirstLetterFrame::SetInitialChildList(ChildListID  aListID,
                                         nsFrameList& aChildList)
 {
-  nsFrameManager *frameManager = PresContext()->FrameManager();
+  RestyleManager* restyleManager = PresContext()->RestyleManager();
 
   for (nsFrameList::Enumerator e(aChildList); !e.AtEnd(); e.Next()) {
     NS_ASSERTION(e.get()->GetParent() == this, "Unexpected parent");
-    frameManager->ReparentStyleContext(e.get());
+    restyleManager->ReparentStyleContext(e.get());
   }
 
   mFrames.SetFrames(aChildList);
@@ -327,9 +327,7 @@ nsFirstLetterFrame::CreateContinuationForFloatingParent(nsPresContext* aPresCont
   if (parentSC) {
     nsRefPtr<nsStyleContext> newSC;
     newSC = presShell->StyleSet()->ResolveStyleForNonElement(parentSC);
-    if (newSC) {
-      continuation->SetStyleContext(newSC);
-    }
+    continuation->SetStyleContext(newSC);
   }
 
   //XXX Bidi may not be involved but we have to use the list name
@@ -380,9 +378,7 @@ nsFirstLetterFrame::DrainOverflowFrames(nsPresContext* aPresContext)
       NS_ASSERTION(kidContent->IsNodeOfType(nsINode::eTEXT),
                    "should contain only text nodes");
       sc = aPresContext->StyleSet()->ResolveStyleForNonElement(mStyleContext);
-      if (sc) {
-        kid->SetStyleContext(sc);
-      }
+      kid->SetStyleContext(sc);
     }
   }
 }

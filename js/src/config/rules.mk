@@ -15,11 +15,17 @@ endif
 # present. If they are, this is a violation of the separation of
 # responsibility between Makefile.in and mozbuild files.
 _MOZBUILD_EXTERNAL_VARIABLES := \
+  CPP_UNIT_TESTS \
   DIRS \
   EXTRA_PP_COMPONENTS \
+  EXTRA_PP_JS_MODULES \
+  GTEST_CMMSRCS \
+  GTEST_CPPSRCS \
+  GTEST_CSRCS \
   HOST_CSRCS \
   HOST_LIBRARY_NAME \
   MODULE \
+  NO_DIST_INSTALL \
   PARALLEL_DIRS \
   TEST_DIRS \
   TIERS \
@@ -162,9 +168,15 @@ ifdef CPP_UNIT_TESTS
 # through TestHarness.h, by modifying the list of includes and the libs against
 # which stuff links.
 CPPSRCS += $(CPP_UNIT_TESTS)
-SIMPLE_PROGRAMS += $(CPP_UNIT_TESTS:.cpp=$(BIN_SUFFIX))
+CPP_UNIT_TEST_BINS := $(CPP_UNIT_TESTS:.cpp=$(BIN_SUFFIX))
+SIMPLE_PROGRAMS += $(CPP_UNIT_TEST_BINS)
 INCLUDES += -I$(DIST)/include/testing
 LIBS += $(XPCOM_GLUE_LDOPTS) $(NSPR_LIBS) $(MOZ_JS_LIBS) $(if $(JS_SHARED_LIBRARY),,$(MOZ_ZLIB_LIBS))
+
+ifndef MOZ_PROFILE_GENERATE
+libs:: $(CPP_UNIT_TEST_BINS) $(call mkdir_deps,$(DIST)/cppunittests)
+	$(NSINSTALL) $(CPP_UNIT_TEST_BINS) $(DIST)/cppunittests
+endif
 
 check::
 	@$(PYTHON) $(topsrcdir)/testing/runcppunittests.py --xre-path=$(DIST)/bin --symbols-path=$(DIST)/crashreporter-symbols $(subst .cpp,$(BIN_SUFFIX),$(CPP_UNIT_TESTS))
@@ -351,15 +363,15 @@ ifndef TARGETS
 TARGETS			= $(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(HOST_LIBRARY) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(JAVA_LIBRARY)
 endif
 
-COBJS = $(CSRCS:.c=.$(OBJ_SUFFIX))
-SOBJS = $(SSRCS:.S=.$(OBJ_SUFFIX))
-CCOBJS = $(patsubst %.cc,%.$(OBJ_SUFFIX),$(filter %.cc,$(CPPSRCS)))
-CPPOBJS = $(patsubst %.cpp,%.$(OBJ_SUFFIX),$(filter %.cpp,$(CPPSRCS)))
-CMOBJS = $(CMSRCS:.m=.$(OBJ_SUFFIX))
-CMMOBJS = $(CMMSRCS:.mm=.$(OBJ_SUFFIX))
-ASOBJS = $(ASFILES:.$(ASM_SUFFIX)=.$(OBJ_SUFFIX))
+COBJS = $(notdir $(CSRCS:.c=.$(OBJ_SUFFIX)))
+SOBJS = $(notdir $(SSRCS:.S=.$(OBJ_SUFFIX)))
+# CPPSRCS can have different extensions (eg: .cpp, .cc)
+CPPOBJS = $(notdir $(addsuffix .$(OBJ_SUFFIX),$(basename $(CPPSRCS))))
+CMOBJS = $(notdir $(CMSRCS:.m=.$(OBJ_SUFFIX)))
+CMMOBJS = $(notdir $(CMMSRCS:.mm=.$(OBJ_SUFFIX)))
+ASOBJS = $(notdir $(ASFILES:.$(ASM_SUFFIX)=.$(OBJ_SUFFIX)))
 ifndef OBJS
-_OBJS = $(COBJS) $(SOBJS) $(CCOBJS) $(CPPOBJS) $(CMOBJS) $(CMMOBJS) $(ASOBJS)
+_OBJS = $(COBJS) $(SOBJS) $(CPPOBJS) $(CMOBJS) $(CMMOBJS) $(ASOBJS)
 OBJS = $(strip $(_OBJS))
 endif
 
@@ -430,7 +442,7 @@ define SUBMAKE # $(call SUBMAKE,target,directory,static)
 endef # The extra line is important here! don't delete it
 
 define TIER_DIR_SUBMAKE
-@echo "BUILDSTATUS TIERDIR_START $(2)"
+@echo "BUILDSTATUS TIERDIR_START  $(2)"
 $(call SUBMAKE,$(1),$(2),$(3))
 @echo "BUILDSTATUS TIERDIR_FINISH $(2)"
 
@@ -878,7 +890,7 @@ ifdef MOZ_PROFILE_GENERATE
 	touch -t `date +%Y%m%d%H%M.%S -d "now+5seconds"` pgo.relink
 endif
 else # !WINNT || GNU_CC
-	$(EXPAND_CCC) -o $@ $(CXXFLAGS) $(PROGOBJS) $(RESFILE) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(LIBS_DIR) $(LIBS) $(MOZ_GLUE_PROGRAM_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(BIN_FLAGS) $(EXE_DEF_FILE)
+	$(EXPAND_CCC) -o $@ $(CXXFLAGS) $(PROGOBJS) $(RESFILE) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(LIBS_DIR) $(LIBS) $(MOZ_GLUE_PROGRAM_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(BIN_FLAGS) $(EXE_DEF_FILE) $(STLPORT_LIBS)
 	@$(call CHECK_STDCXX,$@)
 endif # WINNT && !GNU_CC
 
@@ -932,7 +944,7 @@ ifdef MSMANIFEST_TOOL
 	fi
 endif	# MSVC with manifest tool
 else
-	$(EXPAND_CCC) $(CXXFLAGS) -o $@ $< $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(LIBS_DIR) $(LIBS) $(MOZ_GLUE_PROGRAM_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(BIN_FLAGS)
+	$(EXPAND_CCC) $(CXXFLAGS) -o $@ $< $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(LIBS_DIR) $(LIBS) $(MOZ_GLUE_PROGRAM_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(BIN_FLAGS) $(STLPORT_LIBS)
 	@$(call CHECK_STDCXX,$@)
 endif # WINNT && !GNU_CC
 
@@ -1028,10 +1040,10 @@ ifdef DTRACE_LIB_DEPENDENT
 ifndef XP_MACOSX
 	dtrace -G -C -s $(MOZILLA_DTRACE_SRC) -o  $(DTRACE_PROBE_OBJ) $(shell $(EXPAND_LIBS) $(MOZILLA_PROBE_LIBS))
 endif
-	$(EXPAND_MKSHLIB) $(SHLIB_LDSTARTFILE) $(OBJS) $(LOBJS) $(SUB_SHLOBJS) $(DTRACE_PROBE_OBJ) $(MOZILLA_PROBE_LIBS) $(RESFILE) $(LDFLAGS) $(WRAP_LDFLAGS) $(SHARED_LIBRARY_LIBS) $(EXTRA_DSO_LDOPTS) $(MOZ_GLUE_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(DEF_FILE) $(SHLIB_LDENDFILE)
+	$(EXPAND_MKSHLIB) $(SHLIB_LDSTARTFILE) $(OBJS) $(LOBJS) $(SUB_SHLOBJS) $(DTRACE_PROBE_OBJ) $(MOZILLA_PROBE_LIBS) $(RESFILE) $(LDFLAGS) $(WRAP_LDFLAGS) $(SHARED_LIBRARY_LIBS) $(EXTRA_DSO_LDOPTS) $(MOZ_GLUE_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(DEF_FILE) $(SHLIB_LDENDFILE) $(if $(LIB_IS_C_ONLY),,$(STLPORT_LIBS))
 	@$(RM) $(DTRACE_PROBE_OBJ)
 else # ! DTRACE_LIB_DEPENDENT
-	$(EXPAND_MKSHLIB) $(SHLIB_LDSTARTFILE) $(OBJS) $(LOBJS) $(SUB_SHLOBJS) $(RESFILE) $(LDFLAGS) $(WRAP_LDFLAGS) $(SHARED_LIBRARY_LIBS) $(EXTRA_DSO_LDOPTS) $(MOZ_GLUE_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(DEF_FILE) $(SHLIB_LDENDFILE)
+	$(EXPAND_MKSHLIB) $(SHLIB_LDSTARTFILE) $(OBJS) $(LOBJS) $(SUB_SHLOBJS) $(RESFILE) $(LDFLAGS) $(WRAP_LDFLAGS) $(SHARED_LIBRARY_LIBS) $(EXTRA_DSO_LDOPTS) $(MOZ_GLUE_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(DEF_FILE) $(SHLIB_LDENDFILE) $(if $(LIB_IS_C_ONLY),,$(STLPORT_LIBS))
 endif # DTRACE_LIB_DEPENDENT
 	@$(call CHECK_STDCXX,$@)
 
@@ -1076,6 +1088,16 @@ fi
 endef
 endif # Sun Studio on Solaris
 
+# The object file is in the current directory, and the source file can be any
+# relative path. This macro adds the dependency obj: src for each source file.
+# This dependency must be first for the $< flag to work correctly, and the
+# rules that have commands for these targets must not list any other
+# prerequisites, or they will override the $< variable.
+define src_objdep
+$(basename $(notdir $1)).$(OBJ_SUFFIX): $1 $(call mkdir_deps,$(MDDEPDIR))
+endef
+$(foreach f,$(CSRCS) $(SSRCS) $(CPPSRCS) $(CMSRCS) $(CMMSRCS) $(ASFILES),$(eval $(call src_objdep,$(f))))
+
 $(OBJS) $(HOST_OBJS) $(PROGOBJS) $(HOST_PROGOBJS): $(GLOBAL_DEPS)
 
 # Rules for building native targets must come first because of the host_ prefix
@@ -1099,7 +1121,7 @@ $(HOST_CMMOBJS): host_%.$(OBJ_SUFFIX): %.mm
 	$(REPORT_BUILD)
 	$(ELOG) $(HOST_CXX) $(HOST_OUTOPTION)$@ -c $(HOST_CXXFLAGS) $(HOST_CMMFLAGS) $(INCLUDES) $(NSPR_CFLAGS) $(_VPATH_SRCS)
 
-$(COBJS): %.$(OBJ_SUFFIX): %.c $(call mkdir_deps,$(MDDEPDIR))
+$(COBJS):
 	$(REPORT_BUILD)
 	@$(MAKE_DEPS_AUTO_CC)
 	$(ELOG) $(CC) $(OUTOPTION)$@ -c $(COMPILE_CFLAGS) $(TARGET_LOCAL_INCLUDES) $(_VPATH_SRCS)
@@ -1119,32 +1141,24 @@ qrc_%.cpp: %.qrc
 ifdef ASFILES
 # The AS_DASH_C_FLAG is needed cause not all assemblers (Solaris) accept
 # a '-c' flag.
-$(ASOBJS): %.$(OBJ_SUFFIX): %.$(ASM_SUFFIX)
+$(ASOBJS):
 	$(AS) $(ASOUTOPTION)$@ $(ASFLAGS) $(AS_DASH_C_FLAG) $(_VPATH_SRCS)
 endif
 
-$(SOBJS): %.$(OBJ_SUFFIX): %.S
+$(SOBJS):
 	$(AS) -o $@ $(ASFLAGS) $(LOCAL_INCLUDES) $(TARGET_LOCAL_INCLUDES) -c $<
 
-#
-# Please keep the next two rules in sync.
-#
-$(CCOBJS): %.$(OBJ_SUFFIX): %.cc $(call mkdir_deps,$(MDDEPDIR))
+$(CPPOBJS):
 	$(REPORT_BUILD)
 	@$(MAKE_DEPS_AUTO_CXX)
 	$(ELOG) $(CCC) $(OUTOPTION)$@ -c $(COMPILE_CXXFLAGS) $(TARGET_LOCAL_INCLUDES) $(_VPATH_SRCS)
 
-$(CPPOBJS): %.$(OBJ_SUFFIX): %.cpp $(call mkdir_deps,$(MDDEPDIR))
-	$(REPORT_BUILD)
-	@$(MAKE_DEPS_AUTO_CXX)
-	$(ELOG) $(CCC) $(OUTOPTION)$@ -c $(COMPILE_CXXFLAGS) $(TARGET_LOCAL_INCLUDES) $(_VPATH_SRCS)
-
-$(CMMOBJS): $(OBJ_PREFIX)%.$(OBJ_SUFFIX): %.mm $(call mkdir_deps,$(MDDEPDIR))
+$(CMMOBJS):
 	$(REPORT_BUILD)
 	@$(MAKE_DEPS_AUTO_CXX)
 	$(ELOG) $(CCC) -o $@ -c $(COMPILE_CXXFLAGS) $(COMPILE_CMMFLAGS) $(TARGET_LOCAL_INCLUDES) $(_VPATH_SRCS)
 
-$(CMOBJS): $(OBJ_PREFIX)%.$(OBJ_SUFFIX): %.m $(call mkdir_deps,$(MDDEPDIR))
+$(CMOBJS):
 	$(REPORT_BUILD)
 	@$(MAKE_DEPS_AUTO_CC)
 	$(ELOG) $(CC) -o $@ -c $(COMPILE_CFLAGS) $(COMPILE_CMFLAGS) $(TARGET_LOCAL_INCLUDES) $(_VPATH_SRCS)
@@ -1182,22 +1196,13 @@ else
 endif
 endif
 
-# need 3 separate lines for OS/2
-%:: %.pl
-	$(RM) $@
-	cp $< $@
-	chmod +x $@
-
-%:: %.sh
-	$(RM) $@
-	cp $< $@
-	chmod +x $@
-
 # Cancel these implicit rules
 #
 %: %,v
 
 %: RCS/%,v
+
+%: RCS/%
 
 %: s.%
 
@@ -1490,21 +1495,23 @@ libs:: $(call mkdir_deps,$(FINAL_TARGET))
 endif
 
 ################################################################################
-# Copy each element of EXTRA_JS_MODULES to JS_MODULES_PATH, or
-# $(FINAL_TARGET)/modules if that isn't defined.
-JS_MODULES_PATH ?= $(FINAL_TARGET)/modules
+# Copy each element of EXTRA_JS_MODULES to
+# $(FINAL_TARGET)/$(JS_MODULES_PATH). JS_MODULES_PATH defaults to "modules"
+# if it is undefined.
+JS_MODULES_PATH ?= modules
+FINAL_JS_MODULES_PATH := $(FINAL_TARGET)/$(JS_MODULES_PATH)
 
 ifdef EXTRA_JS_MODULES
 ifndef NO_DIST_INSTALL
 EXTRA_JS_MODULES_FILES := $(EXTRA_JS_MODULES)
-EXTRA_JS_MODULES_DEST := $(JS_MODULES_PATH)
+EXTRA_JS_MODULES_DEST := $(FINAL_JS_MODULES_PATH)
 INSTALL_TARGETS += EXTRA_JS_MODULES
 endif
 endif
 
 ifdef EXTRA_PP_JS_MODULES
 ifndef NO_DIST_INSTALL
-EXTRA_PP_JS_MODULES_PATH := $(JS_MODULES_PATH)
+EXTRA_PP_JS_MODULES_PATH := $(FINAL_JS_MODULES_PATH)
 PP_TARGETS += EXTRA_PP_JS_MODULES
 endif
 endif
@@ -1871,6 +1878,7 @@ FREEZE_VARIABLES = \
   MOCHITEST_BROWSER_FILES \
   MOCHITEST_BROWSER_FILES_PARTS \
   MOCHITEST_A11Y_FILES \
+  MOCHITEST_METRO_FILES \
   MOCHITEST_ROBOCOP_FILES \
   MOCHITEST_WEBAPPRT_CHROME_FILES \
   $(NULL)

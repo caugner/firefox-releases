@@ -37,8 +37,6 @@ HTMLObjectElement::HTMLObjectElement(already_AddRefed<nsINodeInfo> aNodeInfo,
 
   // By default we're in the loading state
   AddStatesSilently(NS_EVENT_STATE_LOADING);
-
-  SetIsDOMBinding();
 }
 
 HTMLObjectElement::~HTMLObjectElement()
@@ -65,11 +63,14 @@ HTMLObjectElement::DoneAddingChildren(bool aHaveNotified)
   }
 }
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLObjectElement)
+
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLObjectElement,
                                                   nsGenericHTMLFormElement)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mValidity)
   nsObjectLoadingContent::Traverse(tmp, cb);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLObjectElement,
                                                 nsGenericHTMLFormElement)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mValidity)

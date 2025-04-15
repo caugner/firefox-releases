@@ -1230,7 +1230,7 @@ ContainerState::CreateOrRecycleMaskImageLayerFor(Layer* aLayer)
     if (!result)
       return nullptr;
     result->SetUserData(&gMaskLayerUserData, new MaskLayerUserData());
-    result->SetForceSingleTile(true);
+    result->SetDisallowBigImage(true);
   }
   
   return result.forget();
@@ -1579,15 +1579,9 @@ ContainerState::PopThebesLayerData()
       colorLayer->SetBaseTransform(data->mLayer->GetBaseTransform());
       colorLayer->SetPostScale(data->mLayer->GetPostXScale(), data->mLayer->GetPostYScale());
 
-      // Clip colorLayer to its visible region, since ColorLayers are
-      // allowed to paint outside the visible region. Here we rely on the
-      // fact that uniform display items fill rectangles; obviously the
-      // area to fill must contain the visible region, and because it's
-      // a rectangle, it must therefore contain the visible region's GetBounds.
-      // Note that the visible region is already clipped appropriately.
       nsIntRect visibleRect = data->mVisibleRegion.GetBounds();
-      visibleRect.MoveBy(mParameters.mOffset);
-      colorLayer->SetClipRect(&visibleRect);
+      visibleRect.MoveBy(-GetTranslationForThebesLayer(data->mLayer));
+      colorLayer->SetBounds(visibleRect);
 
       layer = colorLayer;
     }
@@ -3324,7 +3318,7 @@ FrameLayerBuilder::DrawThebesLayer(ThebesLayer* aLayer,
     aContext->Restore();
   }
 
-  if (presContext->RefreshDriver()->GetPaintFlashing()) {
+  if (presContext->GetPaintFlashing()) {
     FlashPaint(aContext);
   }
 

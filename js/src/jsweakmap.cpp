@@ -12,6 +12,7 @@
 #include "jscntxt.h"
 #include "jsfriendapi.h"
 #include "jsobj.h"
+#include "jswrapper.h"
 
 #include "vm/GlobalObject.h"
 #include "vm/WeakMapObject.h"
@@ -117,12 +118,11 @@ WeakMapBase::removeWeakMapFromList(WeakMapBase *weakmap)
 static JSObject *
 GetKeyArg(JSContext *cx, CallArgs &args)
 {
-    Value *vp = &args[0];
-    if (vp->isPrimitive()) {
+    if (args[0].isPrimitive()) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_NOT_NONNULL_OBJECT);
         return NULL;
     }
-    return &vp->toObject();
+    return &args[0].toObject();
 }
 
 JS_ALWAYS_INLINE bool
@@ -258,7 +258,8 @@ TryPreserveReflector(JSContext *cx, HandleObject obj)
 {
     if (obj->getClass()->ext.isWrappedNative ||
         (obj->getClass()->flags & JSCLASS_IS_DOMJSCLASS) ||
-        (obj->isProxy() && GetProxyHandler(obj)->family() == GetDOMProxyHandlerFamily()))
+        (obj->is<ProxyObject>() &&
+         obj->as<ProxyObject>().handler()->family() == GetDOMProxyHandlerFamily()))
     {
         JS_ASSERT(cx->runtime()->preserveWrapperCallback);
         if (!cx->runtime()->preserveWrapperCallback(cx, obj)) {
@@ -340,6 +341,8 @@ JS_NondeterministicGetWeakMapKeys(JSContext *cx, JSObject *objArg, JSObject **re
         return false;
     ObjectValueMap *map = obj->as<WeakMapObject>().getMap();
     if (map) {
+        // Prevent GC from mutating the weakmap while iterating.
+        gc::AutoSuppressGC suppress(cx);
         for (ObjectValueMap::Base::Range r = map->all(); !r.empty(); r.popFront()) {
             RootedObject key(cx, r.front().key);
             if (!JS_WrapObject(cx, key.address()))

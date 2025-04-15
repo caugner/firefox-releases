@@ -133,10 +133,12 @@ GetBackendName(mozilla::gfx::BackendType aBackend)
         return "skia";
       case mozilla::gfx::BACKEND_RECORDING:
         return "recording";
+      case mozilla::gfx::BACKEND_DIRECT2D1_1:
+        return "direct2d 1.1";
       case mozilla::gfx::BACKEND_NONE:
         return "none";
   }
-  MOZ_NOT_REACHED("Incomplete switch");
+  MOZ_CRASH("Incomplete switch");
 }
 
 class gfxPlatform {
@@ -180,6 +182,9 @@ public:
     virtual mozilla::RefPtr<mozilla::gfx::DrawTarget>
       CreateDrawTargetForSurface(gfxASurface *aSurface, const mozilla::gfx::IntSize& aSize);
 
+    virtual mozilla::RefPtr<mozilla::gfx::DrawTarget>
+      CreateDrawTargetForUpdateSurface(gfxASurface *aSurface, const mozilla::gfx::IntSize& aSize);
+
     /*
      * Creates a SourceSurface for a gfxASurface. This function does no caching,
      * so the caller should cache the gfxASurface if it will be used frequently.
@@ -190,6 +195,8 @@ public:
      */
     virtual mozilla::RefPtr<mozilla::gfx::SourceSurface>
       GetSourceSurfaceForSurface(mozilla::gfx::DrawTarget *aTarget, gfxASurface *aSurface);
+
+    static void ClearSourceSurfaceForSurface(gfxASurface *aSurface);
 
     virtual mozilla::TemporaryRef<mozilla::gfx::ScaledFont>
       GetScaledFontForFont(mozilla::gfx::DrawTarget* aTarget, gfxFont *aFont);
@@ -223,10 +230,6 @@ public:
       CreateDrawTargetForData(unsigned char* aData, const mozilla::gfx::IntSize& aSize, 
                               int32_t aStride, mozilla::gfx::SurfaceFormat aFormat);
 
-    virtual mozilla::RefPtr<mozilla::gfx::DrawTarget>
-      CreateDrawTargetForFBO(unsigned int aFBOID, mozilla::gl::GLContext* aGLContext,
-                             const mozilla::gfx::IntSize& aSize, mozilla::gfx::SurfaceFormat aFormat);
-
     /**
      * Returns true if we will render content using Azure using a gfxPlatform
      * provided DrawTarget.
@@ -248,6 +251,7 @@ public:
 
     void GetAzureBackendInfo(mozilla::widget::InfoObject &aObj) {
       aObj.DefineProperty("AzureCanvasBackend", GetBackendName(mPreferredCanvasBackend));
+      aObj.DefineProperty("AzureSkiaAccelerated", UseAcceleratedSkiaCanvas());
       aObj.DefineProperty("AzureFallbackCanvasBackend", GetBackendName(mFallbackCanvasBackend));
       aObj.DefineProperty("AzureContentBackend", GetBackendName(mContentBackend));
     }
@@ -467,7 +471,14 @@ public:
     static bool GetPrefLayersAccelerationDisabled();
     static bool GetPrefLayersPreferOpenGL();
     static bool GetPrefLayersPreferD3D9();
+    static bool CanUseDirect3D9();
+    static int  GetPrefLayoutFrameRate();
 
+    /**
+     * Is it possible to use buffer rotation
+     */
+    static bool BufferRotationEnabled();
+    static void DisableBufferRotation();
     /**
      * Are we going to try color management?
      */
@@ -488,7 +499,7 @@ public:
     /**
      * Convert a pixel using a cms transform in an endian-aware manner.
      *
-     * Sets 'out' to 'in' if transform is NULL.
+     * Sets 'out' to 'in' if transform is nullptr.
      */
     static void TransformPixel(const gfxRGBA& in, gfxRGBA& out, qcms_transform *transform);
 
@@ -550,6 +561,15 @@ public:
     uint32_t GetOrientationSyncMillis() const;
 
     static bool DrawLayerBorders();
+    static bool DrawFrameCounter();
+    /**
+     * Returns true if we should use raw memory to send data to the compositor
+     * rather than using shmems.
+     *
+     * This method should not be called from the compositor thread.
+     */
+    bool PreferMemoryOverShmem() const;
+    bool UseDeprecatedTextures() const { return mLayersUseDeprecated; }
 
 protected:
     gfxPlatform();
@@ -653,6 +673,8 @@ private:
     mozilla::RefPtr<mozilla::gfx::DrawEventRecorder> mRecorder;
     bool mWidgetUpdateFlashing;
     uint32_t mOrientationSyncMillis;
+    bool mLayersPreferMemoryOverShmem;
+    bool mLayersUseDeprecated;
 };
 
 #endif /* GFX_PLATFORM_H */

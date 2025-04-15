@@ -241,7 +241,7 @@ class MediaDecoder : public nsIObserver,
 public:
   typedef mozilla::layers::Image Image;
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIOBSERVER
 
   // Enumeration for the valid play states (see mPlayState)
@@ -277,16 +277,12 @@ public:
 
   // Start downloading the media. Decode the downloaded data up to the
   // point of the first frame of data.
-  // aResource is the media stream to use. Ownership of aResource passes to
-  // the decoder, even if Load returns an error.
   // This is called at most once per decoder, after Init().
-  virtual nsresult Load(MediaResource* aResource,
-                        nsIStreamListener** aListener,
+  virtual nsresult Load(nsIStreamListener** aListener,
                         MediaDecoder* aCloneDonor);
 
-  // Called in |Load| to open the media resource.
-  nsresult OpenResource(MediaResource* aResource,
-                        nsIStreamListener** aStreamListener);
+  // Called in |Load| to open mResource.
+  nsresult OpenResource(nsIStreamListener** aStreamListener);
 
   // Called when the video file has completed downloading.
   virtual void ResourceLoaded();
@@ -305,6 +301,11 @@ public:
   MediaResource* GetResource() const MOZ_FINAL MOZ_OVERRIDE
   {
     return mResource;
+  }
+  void SetResource(MediaResource* aResource)
+  {
+    NS_ASSERTION(NS_IsMainThread(), "Should only be called on main thread");
+    mResource = aResource;
   }
 
   // Return the principal of the current URI being played or downloaded.
@@ -640,6 +641,10 @@ public:
   // The actual playback rate computation. The monitor must be held.
   virtual double ComputePlaybackRate(bool* aReliable);
 
+  // Return true when the media is same-origin with the element. The monitor
+  // must be held.
+  bool IsSameOriginMedia();
+
   // Returns true if we can play the entire media through without stopping
   // to buffer, given the current download and playback rates.
   bool CanPlayThrough();
@@ -736,6 +741,9 @@ public:
   // Notifies the element that decoding has failed.
   virtual void DecodeError();
 
+  // Indicate whether the media is same-origin with the element.
+  void UpdateSameOriginStatus(bool aSameOrigin);
+
   MediaDecoderOwner* GetOwner() MOZ_OVERRIDE;
 
 #ifdef MOZ_RAW
@@ -818,6 +826,7 @@ public:
 
     FrameStatistics() :
         mReentrantMonitor("MediaDecoder::FrameStats"),
+        mTotalFrameDelay(0.0),
         mParsedFrames(0),
         mDecodedFrames(0),
         mPresentedFrames(0) {}
@@ -844,6 +853,11 @@ public:
       return mPresentedFrames;
     }
 
+    double GetTotalFrameDelay() {
+      ReentrantMonitorAutoEnter mon(mReentrantMonitor);
+      return mTotalFrameDelay;
+    }
+
     // Increments the parsed and decoded frame counters by the passed in counts.
     // Can be called on any thread.
     void NotifyDecodedFrames(uint32_t aParsed, uint32_t aDecoded) {
@@ -861,21 +875,32 @@ public:
       ++mPresentedFrames;
     }
 
+    // Tracks the sum of display delay.
+    // Can be called on any thread.
+    void NotifyFrameDelay(double aFrameDelay) {
+      ReentrantMonitorAutoEnter mon(mReentrantMonitor);
+      mTotalFrameDelay += aFrameDelay;
+    }
+
   private:
 
     // ReentrantMonitor to protect access of playback statistics.
     ReentrantMonitor mReentrantMonitor;
 
+    // Sum of displayed frame delays.
+    // Access protected by mReentrantMonitor.
+    double mTotalFrameDelay;
+
     // Number of frames parsed and demuxed from media.
-    // Access protected by mStatsReentrantMonitor.
+    // Access protected by mReentrantMonitor.
     uint32_t mParsedFrames;
 
     // Number of parsed frames which were actually decoded.
-    // Access protected by mStatsReentrantMonitor.
+    // Access protected by mReentrantMonitor.
     uint32_t mDecodedFrames;
 
     // Number of decoded frames which were actually sent down the rendering
-    // pipeline to be painted ("presented"). Access protected by mStatsReentrantMonitor.
+    // pipeline to be painted ("presented"). Access protected by mReentrantMonitor.
     uint32_t mPresentedFrames;
   };
 
@@ -940,6 +965,10 @@ public:
 
   // True if the media is seekable (i.e. supports random access).
   bool mMediaSeekable;
+
+  // True if the media is same-origin with the element. Data can only be
+  // passed to MediaStreams when this is true.
+  bool mSameOriginMedia;
 
   /******
    * The following member variables can be accessed from any thread.

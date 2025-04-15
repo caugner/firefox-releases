@@ -50,9 +50,9 @@ class nsCycleCollectionParticipant;
 // slot for the unforgeable holder is needed.
 #define DOM_INTERFACE_PROTO_SLOTS_BASE (DOM_XRAY_EXPANDO_SLOT + 1)
 
-MOZ_STATIC_ASSERT(DOM_PROTO_INSTANCE_CLASS_SLOT != DOM_XRAY_EXPANDO_SLOT,
-                  "Interface prototype object use both of these, so they must "
-                  "not be the same slot.");
+static_assert(DOM_PROTO_INSTANCE_CLASS_SLOT != DOM_XRAY_EXPANDO_SLOT,
+              "Interface prototype object use both of these, so they must "
+              "not be the same slot.");
 
 namespace mozilla {
 namespace dom {
@@ -260,11 +260,11 @@ HasProtoAndIfaceArray(JSObject* global)
   return !js::GetReservedSlot(global, DOM_PROTOTYPE_SLOT).isUndefined();
 }
 
-inline JSObject**
+inline JS::Heap<JSObject*>*
 GetProtoAndIfaceArray(JSObject* global)
 {
   MOZ_ASSERT(js::GetObjectClass(global)->flags & JSCLASS_DOM_GLOBAL);
-  return static_cast<JSObject**>(
+  return static_cast<JS::Heap<JSObject*>*>(
     js::GetReservedSlot(global, DOM_PROTOTYPE_SLOT).toPrivate());
 }
 

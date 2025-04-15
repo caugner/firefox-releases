@@ -37,6 +37,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ImageFormat;
 import android.graphics.Paint;
+import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
@@ -55,6 +56,7 @@ import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.MessageQueue;
@@ -134,6 +136,7 @@ public class GeckoAppShell
     static private final boolean LOGGING = false;
 
     static private int sDensityDpi = 0;
+    static private int sScreenDepth = 0;
 
     private static final EventDispatcher sEventDispatcher = new EventDispatcher();
 
@@ -195,6 +198,14 @@ public class GeckoAppShell
                 try {
                     Log.e(LOGTAG, ">>> REPORTING UNCAUGHT EXCEPTION FROM THREAD "
                                   + thread.getId() + " (\"" + thread.getName() + "\")", e);
+
+                    Thread mainThread = ThreadUtils.getUiThread();
+                    if (mainThread != null && thread != mainThread) {
+                        Log.e(LOGTAG, "Main thread stack:");
+                        for (StackTraceElement ste : mainThread.getStackTrace()) {
+                            Log.e(LOGTAG, ste.toString());
+                        }
+                    }
 
                     if (e instanceof OutOfMemoryError) {
                         SharedPreferences prefs =
@@ -283,7 +294,19 @@ public class GeckoAppShell
     }
 
     public static void runGecko(String apkPath, String args, String url, String type) {
-        Looper.prepare();
+        // Preparation for pumpMessageLoop()
+        MessageQueue.IdleHandler idleHandler = new MessageQueue.IdleHandler() {
+            @Override public boolean queueIdle() {
+                final Handler geckoHandler = ThreadUtils.sGeckoHandler;
+                Message idleMsg = Message.obtain(geckoHandler);
+                // Use |Message.obj == GeckoHandler| to identify our "queue is empty" message
+                idleMsg.obj = geckoHandler;
+                geckoHandler.sendMessageAtFrontOfQueue(idleMsg);
+                // Keep this IdleHandler
+                return true;
+            }
+        };
+        Looper.myQueue().addIdleHandler(idleHandler);
 
         // run gecko -- it will spawn its own thread
         GeckoAppShell.nativeInit();
@@ -312,6 +335,9 @@ public class GeckoAppShell
 
         // and go
         GeckoLoader.nativeRun(combinedArgs);
+
+        // Remove pumpMessageLoop() idle handler
+        Looper.myQueue().removeIdleHandler(idleHandler);
     }
 
     // Called on the UI thread after Gecko loads.
@@ -625,26 +651,26 @@ public class GeckoAppShell
         gRestartScheduled = true;
     }
 
-    public static File preInstallWebApp(String aTitle, String aURI, String aUniqueURI) {
-        int index = WebAppAllocator.getInstance(getContext()).findAndAllocateIndex(aUniqueURI, aTitle, (String) null);
+    public static File preInstallWebApp(String aTitle, String aURI, String aOrigin) {
+        int index = WebAppAllocator.getInstance(getContext()).findAndAllocateIndex(aOrigin, aTitle, (String) null);
         GeckoProfile profile = GeckoProfile.get(getContext(), "webapp" + index);
         return profile.getDir();
     }
 
-    public static void postInstallWebApp(String aTitle, String aURI, String aUniqueURI, String aIconURL) {
+    public static void postInstallWebApp(String aTitle, String aURI, String aOrigin, String aIconURL, String aOriginalOrigin) {
     	WebAppAllocator allocator = WebAppAllocator.getInstance(getContext());
-		int index = allocator.getIndexForApp(aUniqueURI);
+		int index = allocator.getIndexForApp(aOriginalOrigin);
     	assert index != -1 && aIconURL != null;
-    	allocator.updateAppAllocation(aUniqueURI, index, BitmapUtils.getBitmapFromDataURI(aIconURL));
-    	createShortcut(aTitle, aURI, aUniqueURI, aIconURL, "webapp");
+    	allocator.updateAppAllocation(aOrigin, index, BitmapUtils.getBitmapFromDataURI(aIconURL));
+    	createShortcut(aTitle, aURI, aOrigin, aIconURL, "webapp");
     }
 
-    public static Intent getWebAppIntent(String aURI, String aUniqueURI, String aTitle, Bitmap aIcon) {
+    public static Intent getWebAppIntent(String aURI, String aOrigin, String aTitle, Bitmap aIcon) {
         int index;
         if (aIcon != null && !TextUtils.isEmpty(aTitle))
-            index = WebAppAllocator.getInstance(getContext()).findAndAllocateIndex(aUniqueURI, aTitle, aIcon);
+            index = WebAppAllocator.getInstance(getContext()).findAndAllocateIndex(aOrigin, aTitle, aIcon);
         else
-            index = WebAppAllocator.getInstance(getContext()).getIndexForApp(aUniqueURI);
+            index = WebAppAllocator.getInstance(getContext()).getIndexForApp(aOrigin);
 
         if (index == -1)
             return null;
@@ -812,11 +838,6 @@ public class GeckoAppShell
         Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(bitmap);
 
-        if (aType.equalsIgnoreCase(SHORTCUT_TYPE_WEBAPP)) {
-            Rect iconBounds = new Rect(0, 0, size, size);
-            canvas.drawBitmap(aSource, null, iconBounds, null);
-            return bitmap;
-        }
 
         // draw a base color
         Paint paint = new Paint();
@@ -824,6 +845,11 @@ public class GeckoAppShell
             // If we aren't drawing a favicon, just use an orange color.
             paint.setColor(Color.HSVToColor(DEFAULT_LAUNCHER_ICON_HSV));
             canvas.drawRoundRect(new RectF(kOffset, kOffset, size - kOffset, size - kOffset), kRadius, kRadius, paint);
+        } else if (aType.equalsIgnoreCase(SHORTCUT_TYPE_WEBAPP) || aSource.getWidth() >= insetSize || aSource.getHeight() >= insetSize) {
+            // otherwise, if this is a webapp or if the icons is lare enough, just draw it
+            Rect iconBounds = new Rect(0, 0, size, size);
+            canvas.drawBitmap(aSource, null, iconBounds, null);
+            return bitmap;
         } else {
             // otherwise use the dominant color from the icon + a layer of transparent white to lighten it somewhat
             int color = BitmapUtils.getDominantColor(aSource);
@@ -844,13 +870,6 @@ public class GeckoAppShell
         // by default, we scale the icon to this size
         int sWidth = insetSize / 2;
         int sHeight = sWidth;
-
-        if (aSource.getWidth() > insetSize || aSource.getHeight() > insetSize) {
-            // however, if the icon is larger than our minimum, we allow it to be drawn slightly larger
-            // (but not necessarily at its full resolution)
-            sWidth = Math.min(size / 3, aSource.getWidth() / 2);
-            sHeight = Math.min(size / 3, aSource.getHeight() / 2);
-        }
 
         int halfSize = size / 2;
         canvas.drawBitmap(aSource,
@@ -918,13 +937,12 @@ public class GeckoAppShell
     }
 
     static String getMimeTypeFromExtensions(String aFileExt) {
-        MimeTypeMap mtm = MimeTypeMap.getSingleton();
         StringTokenizer st = new StringTokenizer(aFileExt, ".,; ");
         String type = null;
         String subType = null;
         while (st.hasMoreElements()) {
             String ext = st.nextToken();
-            String mt = mtm.getMimeTypeFromExtension(ext);
+            String mt = getMimeTypeFromExtension(ext);
             if (mt == null)
                 continue;
             int slash = mt.indexOf('/');
@@ -1307,6 +1325,58 @@ public class GeckoAppShell
         return sDensityDpi;
     }
 
+    private static boolean isHighMemoryDevice() {
+        BufferedReader br = null;
+        FileReader fr = null;
+        try {
+            fr = new FileReader("/proc/meminfo");
+            if (fr == null)
+                return false;
+            br = new BufferedReader(fr);
+            String line = br.readLine();
+            while (line != null && !line.startsWith("MemTotal")) {
+                line = br.readLine();
+            }
+            String[] tokens = line.split("\\s+");
+            if (tokens.length >= 2 && Long.parseLong(tokens[1]) >= 786432 /* 768MB in kb*/) {
+                return true;
+            }
+        } catch (Exception ex) {
+        } finally {
+            try {
+                if (fr != null)
+                    fr.close();
+            } catch (IOException ioe) {}
+        }
+        return false;
+    }
+
+    /**
+     * Returns the colour depth of the default screen. This will either be
+     * 24 or 16.
+     */
+    public static synchronized int getScreenDepth() {
+        if (sScreenDepth == 0) {
+            sScreenDepth = 16;
+            PixelFormat info = new PixelFormat();
+            PixelFormat.getPixelFormatInfo(getGeckoInterface().getActivity().getWindowManager().getDefaultDisplay().getPixelFormat(), info);
+            if (info.bitsPerPixel >= 24 && isHighMemoryDevice()) {
+                sScreenDepth = 24;
+            }
+        }
+
+        return sScreenDepth;
+    }
+
+    public static synchronized void setScreenDepthOverride(int aScreenDepth) {
+        if (sScreenDepth != 0) {
+            Log.e(LOGTAG, "Tried to override screen depth after it's already been set");
+            return;
+        }
+
+        sScreenDepth = aScreenDepth;
+    }
+
     public static void setFullScreen(boolean fullscreen) {
         if (getGeckoInterface() != null)
             getGeckoInterface().setFullScreen(fullscreen);
@@ -1634,6 +1704,14 @@ public class GeckoAppShell
     }
 
     public static void scanMedia(String aFile, String aMimeType) {
+        // If the platform didn't give us a mimetype, try to guess one from the filename
+        if (TextUtils.isEmpty(aMimeType)) {
+            int extPosition = aFile.lastIndexOf(".");
+            if (extPosition > 0 && extPosition < aFile.length() - 1) {
+                aMimeType = getMimeTypeFromExtension(aFile.substring(extPosition+1));
+            }
+        }
+
         Context context = getContext();
         GeckoMediaScannerClient.startScan(context, aFile, aMimeType);
     }
@@ -1668,10 +1746,14 @@ public class GeckoAppShell
         }
     }
 
+    private static String getMimeTypeFromExtension(String ext) {
+        final MimeTypeMap mtm = MimeTypeMap.getSingleton();
+        return mtm.getMimeTypeFromExtension(ext);
+    }
+    
     private static Drawable getDrawableForExtension(PackageManager pm, String aExt) {
         Intent intent = new Intent(Intent.ACTION_VIEW);
-        MimeTypeMap mtm = MimeTypeMap.getSingleton();
-        String mimeType = mtm.getMimeTypeFromExtension(aExt);
+        final String mimeType = getMimeTypeFromExtension(aExt);
         if (mimeType != null && mimeType.length() > 0)
             intent.setType(mimeType);
         else
@@ -1704,11 +1786,11 @@ public class GeckoAppShell
     }
 
     public static void addPluginView(View view,
-                                     int x, int y,
-                                     int w, int h,
+                                     float x, float y,
+                                     float w, float h,
                                      boolean isFullScreen) {
         if (getGeckoInterface() != null)
-             getGeckoInterface().addPluginView(view, new Rect(x, y, x + w, y + h), isFullScreen);
+             getGeckoInterface().addPluginView(view, new RectF(x, y, x + w, y + h), isFullScreen);
     }
 
     public static void removePluginView(View view, boolean isFullScreen) {
@@ -1957,7 +2039,7 @@ public class GeckoAppShell
         public SensorEventListener getSensorEventListener();
         public void doRestart();
         public void setFullScreen(boolean fullscreen);
-        public void addPluginView(View view, final Rect rect, final boolean isFullScreen);
+        public void addPluginView(View view, final RectF rect, final boolean isFullScreen);
         public void removePluginView(final View view, final boolean isFullScreen);
         public void enableCameraView();
         public void disableCameraView();
@@ -2389,10 +2471,16 @@ public class GeckoAppShell
     }
 
     public static boolean pumpMessageLoop() {
-        MessageQueue mq = Looper.myQueue();
-        Message msg = getNextMessageFromQueue(mq); 
+        Handler geckoHandler = ThreadUtils.sGeckoHandler;
+        Message msg = getNextMessageFromQueue(ThreadUtils.sGeckoQueue);
+
         if (msg == null)
             return false;
+        if (msg.obj == geckoHandler && msg.getTarget() == geckoHandler) {
+            // Our "queue is empty" message; see runGecko()
+            msg.recycle();
+            return false;
+        }
         if (msg.getTarget() == null) 
             Looper.myLooper().quit();
         else

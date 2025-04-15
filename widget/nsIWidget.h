@@ -22,6 +22,7 @@
 #include "nsTArray.h"
 #include "nsXULAppAPI.h"
 #include "mozilla/layers/LayersTypes.h"
+#include "mozilla/RefPtr.h"
 
 // forward declarations
 class   nsFontMetrics;
@@ -46,6 +47,9 @@ class Composer2D;
 class CompositorChild;
 class LayerManager;
 class PLayerTransactionChild;
+}
+namespace gfx {
+class DrawTarget;
 }
 }
 
@@ -92,8 +96,8 @@ typedef nsEventStatus (* EVENT_CALLBACK)(nsGUIEvent *event);
 #endif
 
 #define NS_IWIDGET_IID \
-{ 0x5b9152, 0x56c8, 0x4a2d, \
-  { 0x94, 0x9e, 0xec, 0xf5, 0x3, 0x83, 0x3d, 0x48 } }
+{ 0x1ebdb596, 0x0f90, 0x4f02, \
+  { 0x97, 0x07, 0x4e, 0xc1, 0x16, 0xcd, 0x54, 0xf6 } }
 
 /*
  * Window shadow styles
@@ -187,13 +191,14 @@ enum nsTopLevelWidgetZPlacement { // for PlaceBehind()
 /**
  * Preference for receiving IME updates
  *
- * If mWantUpdates is true, nsTextStateManager will observe text change and
- * selection change and call nsIWidget::NotifyIMEOfTextChange() and
- * nsIWidget::NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE). The observing cost is
- * very expensive.
+ * If mWantUpdates is not NOTIFY_NOTHING, nsTextStateManager will observe text
+ * change and/or selection change and call nsIWidget::NotifyIMEOfTextChange()
+ * and/or nsIWidget::NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE).
+ * Please note that the text change observing cost is very expensive especially
+ * on an HTML editor has focus.
  * If the IME implementation on a particular platform doesn't care about
- * NotifyIMEOfTextChange and NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE), they
- * should set mWantUpdates to false to avoid the cost.
+ * NotifyIMEOfTextChange() and/or NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE),
+ * they should set mWantUpdates to NOTIFY_NOTHING to avoid the cost.
  *
  * If mWantHints is true, PuppetWidget will forward the content of text fields
  * to the chrome process to be cached. This way we return the cached content
@@ -204,15 +209,25 @@ enum nsTopLevelWidgetZPlacement { // for PlaceBehind()
  */
 struct nsIMEUpdatePreference {
 
+  typedef int8_t Notifications;
+
+  enum
+  {
+    NOTIFY_NOTHING           = 0x0000,
+    NOTIFY_SELECTION_CHANGE  = 0x0001,
+    NOTIFY_TEXT_CHANGE       = 0x0002
+  };
+
   nsIMEUpdatePreference()
-    : mWantUpdates(false), mWantHints(false)
+    : mWantUpdates(NOTIFY_NOTHING), mWantHints(false)
   {
   }
-  nsIMEUpdatePreference(bool aWantUpdates, bool aWantHints)
+  nsIMEUpdatePreference(Notifications aWantUpdates, bool aWantHints)
     : mWantUpdates(aWantUpdates), mWantHints(aWantHints)
   {
   }
-  bool mWantUpdates;
+
+  Notifications mWantUpdates;
   bool mWantHints;
 };
 
@@ -1193,6 +1208,31 @@ class nsIWidget : public nsISupports {
     virtual void DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect) = 0;
 
     /**
+     * Return a DrawTarget for the window which can be composited into.
+     *
+     * Called by BasicCompositor on the compositor thread for OMTC drawing
+     * before each composition.
+     */
+    virtual mozilla::TemporaryRef<mozilla::gfx::DrawTarget> StartRemoteDrawing() = 0;
+
+    /**
+     * Ensure that what was painted into the DrawTarget returned from
+     * StartRemoteDrawing reaches the screen.
+     *
+     * Called by BasicCompositor on the compositor thread for OMTC drawing
+     * after each composition.
+     */
+    virtual void EndRemoteDrawing() = 0;
+
+    /**
+     * Clean up any resources used by Start/EndRemoteDrawing.
+     *
+     * Called by BasicCompositor on the compositor thread for OMTC drawing
+     * when the compositor is destroyed.
+     */
+    virtual void CleanupRemoteDrawing() = 0;
+
+    /**
      * Called when Gecko knows which themed widgets exist in this window.
      * The passed array contains an entry for every themed widget of the right
      * type (currently only NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR and
@@ -1705,6 +1745,13 @@ class nsIWidget : public nsISupports {
      */
     virtual Composer2D* GetComposer2D()
     { return nullptr; }
+
+    /**
+     * Some platforms (only cocoa right now) round widget coordinates to the
+     * nearest even pixels (see bug 892994), this function allows us to
+     * determine how widget coordinates will be rounded.
+     */
+    virtual int32_t RoundsWidgetCoordinatesTo() { return 1; }
 
 protected:
     /**

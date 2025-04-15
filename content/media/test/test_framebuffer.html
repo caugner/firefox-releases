@@ -13,15 +13,15 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=490705
 <a target="_blank" href="https://bugzilla.mozilla.org/show_bug.cgi?id=490705">Mozilla Bug 490705</a>
 
 <!-- mute audio, since there is no need to hear the sound for these tests -->
-<audio id='a1' controls></audio>
+<audio id="a1" preload="metadata" controls></audio>
 
 <pre id="test">
 <script class="testbody" type="text/javascript">
 var testFile = "bug495794.ogg";
 var testFileDuration = 0.30;
-var testFileChannelCount = 6;
+var testFileChannelCount = 2;
 var testFileSampleRate = 48000;
-var testFileFrameBufferLength = 6 * 1024;
+var testFileFrameBufferLength = testFileChannelCount * 1024;
 
 var undef;
 

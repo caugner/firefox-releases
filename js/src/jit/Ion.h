@@ -9,12 +9,14 @@
 
 #ifdef JS_ION
 
+#include "mozilla/MemoryReporting.h"
+
 #include "jscntxt.h"
 #include "jscompartment.h"
-#include "IonCode.h"
-#include "CompileInfo.h"
 #include "jsinfer.h"
 
+#include "jit/CompileInfo.h"
+#include "jit/IonCode.h"
 #include "vm/Interpreter.h"
 
 namespace js {
@@ -175,7 +177,7 @@ struct IonOptions
     // How many uses of a parallel kernel before we attempt compilation.
     //
     // Default: 1
-    uint32_t usesBeforeCompileParallel;
+    uint32_t usesBeforeCompilePar;
 
     void setEagerCompilation() {
         eagerCompilation = true;
@@ -211,7 +213,7 @@ struct IonOptions
         inlineMaxTotalBytecodeLength(1000),
         inlineUseCountRatio(128),
         eagerCompilation(false),
-        usesBeforeCompileParallel(1)
+        usesBeforeCompilePar(1)
     {
     }
 
@@ -344,12 +346,20 @@ IsIonEnabled(JSContext *cx)
         cx->typeInferenceEnabled();
 }
 
+inline bool
+IsIonInlinablePC(jsbytecode *pc) {
+    // CALL, FUNCALL, FUNAPPLY, EVAL, NEW (Normal Callsites)
+    // GETPROP, CALLPROP, and LENGTH. (Inlined Getters)
+    // SETPROP, SETNAME, SETGNAME (Inlined Setters)
+    return IsCallPC(pc) || IsGetterPC(pc) || IsSetterPC(pc);
+}
+
 void ForbidCompilation(JSContext *cx, JSScript *script);
 void ForbidCompilation(JSContext *cx, JSScript *script, ExecutionMode mode);
 uint32_t UsesBeforeIonRecompile(JSScript *script, jsbytecode *pc);
 
 void PurgeCaches(JSScript *script, JS::Zone *zone);
-size_t SizeOfIonData(JSScript *script, JSMallocSizeOfFun mallocSizeOf);
+size_t SizeOfIonData(JSScript *script, mozilla::MallocSizeOf mallocSizeOf);
 void DestroyIonScripts(FreeOp *fop, JSScript *script);
 void TraceIonScripts(JSTracer* trc, JSScript *script);
 

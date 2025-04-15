@@ -8,14 +8,17 @@
 #include "nsContentUtils.h"
 #include "nsPIDOMWindow.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/dom/AnalyserNode.h"
 #include "mozilla/dom/AudioContextBinding.h"
+#include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/dom/OfflineAudioContextBinding.h"
 #include "MediaStreamGraph.h"
-#include "mozilla/dom/AnalyserNode.h"
 #include "AudioDestinationNode.h"
 #include "AudioBufferSourceNode.h"
 #include "AudioBuffer.h"
 #include "GainNode.h"
+#include "MediaElementAudioSourceNode.h"
+#include "MediaStreamAudioSourceNode.h"
 #include "DelayNode.h"
 #include "PannerNode.h"
 #include "AudioListener.h"
@@ -28,6 +31,7 @@
 #include "WaveShaperNode.h"
 #include "PeriodicWave.h"
 #include "ConvolverNode.h"
+#include "OscillatorNode.h"
 #include "nsNetUtil.h"
 
 namespace mozilla {
@@ -49,8 +53,8 @@ AudioContext::AudioContext(nsPIDOMWindow* aWindow,
                            uint32_t aLength,
                            float aSampleRate)
   : mSampleRate(aIsOffline ? aSampleRate : IdealAudioRate())
-  , mDestination(new AudioDestinationNode(this, aIsOffline,
-                                          aNumberOfChannels,
+  , mDestination(new AudioDestinationNode(MOZ_THIS_IN_INITIALIZER_LIST(),
+                                          aIsOffline, aNumberOfChannels,
                                           aLength, aSampleRate))
   , mNumberOfChannels(aNumberOfChannels)
   , mIsOffline(aIsOffline)
@@ -58,15 +62,22 @@ AudioContext::AudioContext(nsPIDOMWindow* aWindow,
   // Actually play audio
   mDestination->Stream()->AddAudioOutput(&gWebAudioOutputKey);
   nsDOMEventTargetHelper::BindToOwner(aWindow);
+  aWindow->AddAudioContext(this);
   SetIsDOMBinding();
 
+  mActiveNodes.Init();
   mPannerNodes.Init();
   mAudioBufferSourceNodes.Init();
+  mOscillatorNodes.Init();
   mScriptProcessorNodes.Init();
 }
 
 AudioContext::~AudioContext()
 {
+  nsPIDOMWindow* window = GetOwner();
+  if (window) {
+    window->RemoveAudioContext(this);
+  }
 }
 
 JSObject*
@@ -89,7 +100,6 @@ AudioContext::Constructor(const GlobalObject& aGlobal, ErrorResult& aRv)
   }
 
   nsRefPtr<AudioContext> object = new AudioContext(window, false);
-  window->AddAudioContext(object);
   return object.forget();
 }
 
@@ -121,7 +131,6 @@ AudioContext::Constructor(const GlobalObject& aGlobal,
                                                    aNumberOfChannels,
                                                    aLength,
                                                    aSampleRate);
-  window->AddAudioContext(object);
   return object.forget();
 }
 
@@ -253,6 +262,36 @@ AudioContext::CreateAnalyser()
   return analyserNode.forget();
 }
 
+already_AddRefed<MediaElementAudioSourceNode>
+AudioContext::CreateMediaElementSource(HTMLMediaElement& aMediaElement,
+                                       ErrorResult& aRv)
+{
+  if (mIsOffline) {
+    aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    return nullptr;
+  }
+  nsRefPtr<DOMMediaStream> stream = aMediaElement.MozCaptureStream(aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+  nsRefPtr<MediaElementAudioSourceNode> mediaElementAudioSourceNode =
+    new MediaElementAudioSourceNode(this, stream);
+  return mediaElementAudioSourceNode.forget();
+}
+
+already_AddRefed<MediaStreamAudioSourceNode>
+AudioContext::CreateMediaStreamSource(DOMMediaStream& aMediaStream,
+                                      ErrorResult& aRv)
+{
+  if (mIsOffline) {
+    aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    return nullptr;
+  }
+  nsRefPtr<MediaStreamAudioSourceNode> mediaStreamAudioSourceNode =
+    new MediaStreamAudioSourceNode(this, &aMediaStream);
+  return mediaStreamAudioSourceNode.forget();
+}
+
 already_AddRefed<GainNode>
 AudioContext::CreateGain()
 {
@@ -337,6 +376,15 @@ AudioContext::CreateBiquadFilter()
   return filterNode.forget();
 }
 
+already_AddRefed<OscillatorNode>
+AudioContext::CreateOscillator()
+{
+  nsRefPtr<OscillatorNode> oscillatorNode =
+    new OscillatorNode(this);
+  mOscillatorNodes.PutEntry(oscillatorNode);
+  return oscillatorNode.forget();
+}
+
 already_AddRefed<PeriodicWave>
 AudioContext::CreatePeriodicWave(const Float32Array& aRealData,
                                  const Float32Array& aImagData,
@@ -350,8 +398,11 @@ AudioContext::CreatePeriodicWave(const Float32Array& aRealData,
   }
 
   nsRefPtr<PeriodicWave> periodicWave =
-    new PeriodicWave(this, aRealData.Data(), aRealData.Length(),
-                     aImagData.Data(), aImagData.Length());
+    new PeriodicWave(this, aRealData.Data(), aImagData.Data(),
+                     aImagData.Length(), aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
   return periodicWave.forget();
 }
 
@@ -396,6 +447,18 @@ AudioContext::RemoveFromDecodeQueue(WebAudioDecodeJob* aDecodeJob)
 }
 
 void
+AudioContext::RegisterActiveNode(AudioNode* aNode)
+{
+  mActiveNodes.PutEntry(aNode);
+}
+
+void
+AudioContext::UnregisterActiveNode(AudioNode* aNode)
+{
+  mActiveNodes.RemoveEntry(aNode);
+}
+
+void
 AudioContext::UnregisterAudioBufferSourceNode(AudioBufferSourceNode* aNode)
 {
   mAudioBufferSourceNodes.RemoveEntry(aNode);
@@ -406,6 +469,15 @@ void
 AudioContext::UnregisterPannerNode(PannerNode* aNode)
 {
   mPannerNodes.RemoveEntry(aNode);
+  if (mListener) {
+    mListener->UnregisterPannerNode(aNode);
+  }
+}
+
+void
+AudioContext::UnregisterOscillatorNode(OscillatorNode* aNode)
+{
+  mOscillatorNodes.RemoveEntry(aNode);
 }
 
 void
@@ -442,7 +514,10 @@ AudioContext::Graph() const
 MediaStream*
 AudioContext::DestinationStream() const
 {
-  return Destination()->Stream();
+  if (Destination()) {
+    return Destination()->Stream();
+  }
+  return nullptr;
 }
 
 double
@@ -468,24 +543,14 @@ GetHashtableElements(nsTHashtable<nsPtrHashKey<T> >& aHashtable, nsTArray<T*>& a
 }
 
 void
-AudioContext::ShutdownDecoder()
-{
-  mDecoder.Shutdown();
-}
-
-void
 AudioContext::Shutdown()
 {
   Suspend();
 
-  // We need to hold the AudioContext object alive here to make sure that
-  // it doesn't get destroyed before our decoder shutdown runnable has had
-  // a chance to run.
-  nsCOMPtr<nsIRunnable> threadShutdownEvent =
-    NS_NewRunnableMethod(this, &AudioContext::ShutdownDecoder);
-  if (threadShutdownEvent) {
-    NS_DispatchToCurrentThread(threadShutdownEvent);
-  }
+  // Release references to active nodes.
+  // Active AudioNodes don't unregister in destructors, at which point the
+  // Node is already unregistered.
+  mActiveNodes.Clear();
 
   // Stop all audio buffer source nodes, to make sure that they release
   // their self-references.
@@ -499,6 +564,14 @@ AudioContext::Shutdown()
     ErrorResult rv;
     sourceNodes[i]->Stop(0.0, rv, true);
   }
+  // Stop all Oscillator nodes to make sure they release their
+  // playing reference.
+  nsTArray<OscillatorNode*> oscNodes;
+  GetHashtableElements(mOscillatorNodes, oscNodes);
+  for (uint32_t i = 0; i < oscNodes.Length(); ++i) {
+    ErrorResult rv;
+    oscNodes[i]->Stop(0.0, rv);
+  }
   // Stop all script processor nodes, to make sure that they release
   // their self-references.
   nsTArray<ScriptProcessorNode*> spNodes;
@@ -508,8 +581,8 @@ AudioContext::Shutdown()
   }
 
   // For offline contexts, we can destroy the MediaStreamGraph at this point.
-  if (mIsOffline) {
-    mDestination->DestroyGraph();
+  if (mIsOffline && mDestination) {
+    mDestination->OfflineShutdown();
   }
 }
 

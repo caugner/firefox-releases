@@ -178,7 +178,7 @@ XPCConvert::NativeData2JS(jsval* d, const void* s,
                 nsID* iid2 = *((nsID**)s);
                 if (!iid2)
                     break;
-                RootedObject scope(cx, JS_GetGlobalForScopeChain(cx));
+                RootedObject scope(cx, JS::CurrentGlobalOrNull(cx));
                 JSObject* obj;
                 if (!(obj = xpc_NewIDObject(cx, scope, *iid2)))
                     return false;
@@ -819,7 +819,7 @@ XPCConvert::NativeInterface2JSObject(jsval* d,
     // optimal -- we could detect this and roll the functionality into a
     // single wrapper, but the current solution is good enough for now.
     AutoJSContext cx;
-    XPCWrappedNativeScope* xpcscope = GetObjectScope(JS_GetGlobalForScopeChain(cx));
+    XPCWrappedNativeScope* xpcscope = GetObjectScope(JS::CurrentGlobalOrNull(cx));
     if (!xpcscope)
         return false;
 
@@ -855,8 +855,9 @@ XPCConvert::NativeInterface2JSObject(jsval* d,
     // with objects that don't provide necessary QIs (such as objects under
     // the new DOM bindings). We expect the other side of the CPOW to have
     // the appropriate wrappers in place.
-    if (JSObject *cpow = UnwrapNativeCPOW(aHelper.Object())) {
-        if (!JS_WrapObject(cx, &cpow))
+    RootedObject cpow(cx, UnwrapNativeCPOW(aHelper.Object()));
+    if (cpow) {
+        if (!JS_WrapObject(cx, cpow.address()))
             return false;
         *d = OBJECT_TO_JSVAL(cpow);
         return true;
@@ -1113,13 +1114,12 @@ private:
 
 // static
 nsresult
-XPCConvert::JSValToXPCException(jsval sArg,
+XPCConvert::JSValToXPCException(MutableHandleValue s,
                                 const char* ifaceName,
                                 const char* methodName,
                                 nsIException** exceptn)
 {
     AutoJSContext cx;
-    RootedValue s(cx, sArg);
     AutoExceptionRestorer aer(cx, s);
 
     if (!JSVAL_IS_PRIMITIVE(s)) {
@@ -1315,7 +1315,7 @@ XPCConvert::JSErrorToXPCException(const char* message,
             uclinebuf ? nsDependentString(uclinebuf) : EmptyString(),
             report->lineno,
             report->uctokenptr - report->uclinebuf, report->flags,
-            "XPConnect JavaScript",
+            NS_LITERAL_CSTRING("XPConnect JavaScript"),
             nsJSUtils::GetCurrentlyRunningCodeInnerWindowID(cx));
     }
 
@@ -1575,7 +1575,7 @@ XPCConvert::JSTypedArray2Native(void** d,
 
 // static
 JSBool
-XPCConvert::JSArray2Native(void** d, JS::Value s,
+XPCConvert::JSArray2Native(void** d, HandleValue s,
                            uint32_t count, const nsXPTType& type,
                            const nsID* iid, nsresult* pErr)
 {
@@ -1759,7 +1759,7 @@ XPCConvert::NativeStringWithSize2JS(jsval* d, const void* s,
 
 // static
 JSBool
-XPCConvert::JSStringWithSize2Native(void* d, jsval s,
+XPCConvert::JSStringWithSize2Native(void* d, HandleValue s,
                                     uint32_t count, const nsXPTType& type,
                                     nsresult* pErr)
 {

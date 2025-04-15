@@ -105,7 +105,7 @@ VPATH += 	$(srcdir)/assembler/assembler \
 endif
 
 #
-# END enclude sources for the Nitro assembler
+# END include sources for the Nitro assembler
 #############################################
 
 ifdef JS_HAS_CTYPES
@@ -116,11 +116,6 @@ LOCAL_INCLUDES = $(MOZ_FFI_CFLAGS)
 else
 LOCAL_INCLUDES = -Ictypes/libffi/include
 endif
-
-LOCAL_INCLUDES += \
-    -I. \
-    $(NULL)
-
 
 ifdef MOZ_NATIVE_FFI
 EXTRA_DSO_LDOPTS += $(MOZ_FFI_LIBS)
@@ -245,8 +240,6 @@ LOCAL_INCLUDES += \
 ifdef ENABLE_INTL_API
 
 ifeq ($(OS_ARCH),WINNT)
-  # Parallel gmake is buggy on Windows
-  ICU_GMAKE_OPTIONS="-j1"
   # Library names: On Windows, ICU uses modified library names for static
   # and debug libraries.
   ifdef MOZ_DEBUG
@@ -254,6 +247,12 @@ ifeq ($(OS_ARCH),WINNT)
   endif
   ICU_LIB_RENAME = $(foreach libname,$(ICU_LIB_NAMES),\
                      cp -p intl/icu/lib/s$(libname)$(ICU_LIB_SUFFIX).lib intl/icu/lib/$(libname).lib;)
+endif
+
+ifdef .PYMAKE
+ICU_MAKE = $(GMAKE)
+else
+ICU_MAKE = $(MAKE)
 endif
 
 # - Build ICU as part of the "export" target, so things get built
@@ -264,7 +263,8 @@ endif
 #   will discard all files with a non-standard suffix (bug 857450).
 # - Options for genrb: -k strict parsing; -R omit collation tailoring rules.
 export::
-	$(GMAKE) $(ICU_GMAKE_OPTIONS) -C intl/icu STATIC_O=$(OBJ_SUFFIX) GENRBOPTS='-k -R'
+# ICU's build system is full of races, so force non-parallel build.
+	+$(ICU_MAKE) -j1 -C intl/icu STATIC_O=$(OBJ_SUFFIX) GENRBOPTS='-k -R'
 	$(ICU_LIB_RENAME)
 
 distclean clean::
@@ -303,12 +303,15 @@ JITTEST_VALGRIND_FLAG = --valgrind
 endif
 endif
 
+check-style::
+	(cd $(srcdir) && $(PYTHON) config/check_spidermonkey_style.py);
+
 check-jit-test::
 	$(wildcard $(RUN_TEST_PROGRAM)) $(PYTHON) -u $(srcdir)/jit-test/jit_test.py \
 	        --no-slow --no-progress --tinderbox --tbpl $(JITTEST_VALGRIND_FLAG) \
 	        $(DIST)/bin/$(JS_SHELL_NAME)$(BIN_SUFFIX)
 
-check:: check-jit-test
+check:: check-style check-jit-test
 
 # jstests doesn't have a --jitflags option, so we need to loop, updating the
 # exit code (RC) after each invocation.
@@ -339,27 +342,19 @@ check-jstests:
 #
 #   Bug 652155: On Mac, SM(d) doesn't work for unknown reasons
 
-ifeq ($(OS_ARCH),WINNT)
-ifdef ENABLE_METHODJIT
-endif
-else
+ifneq ($(OS_ARCH),WINNT)
 ifndef HAVE_DTRACE
 #check:: check-jstests
 endif
 endif
 
 DIST_GARBAGE = config.cache config.log config.status* \
-   config/autoconf.mk config/emptyvars.mk \
-   unallmakefiles $(JS_CONFIG_NAME) js-config.h js-confdefs.h \
-   backend.mk config/backend.mk devtools/backend.mk editline/backend.mk \
-   gdb/backend.mk jsapi-tests/backend.mk shell/backend.mk tests/backend.mk \
-   backend.RecursiveMakeBackend.built backend.RecursiveMakeBackend.built.pp \
-   devtools/rootAnalysis/Makefile
+   config/autoconf.mk \
+   unallmakefiles $(JS_CONFIG_NAME) js-config.h js-confdefs.h
 
 distclean::
 	cat unallmakefiles | $(XARGS) rm -f
 	$(RM) $(DIST_GARBAGE)
-	rm -rf intl _virtualenv
 
 DEFINES		+= -DEXPORT_JS_API
 
@@ -379,15 +374,6 @@ NSPR_STATIC_PATH = $(subst -L,,$(findstring -L,$(NSPR_LIBS)))
 else
 NSPR_STATIC_PATH = $(DIST)/lib
 endif
-
-ifdef MOZ_VTUNE
-ifeq ($(OS_ARCH), WINNT)
-EXTRA_DSO_LDOPTS += $(VTUNE_LIBRARIES)
-LIBS += $(VTUNE_LIBRARIES)
-else
-SHARED_LIBRARY_LIBS += $(VTUNE_LIBRARIES)
-endif # WINNT
-endif # MOZ_VTUNE
 
 ifdef MOZ_ETW
 # This will get the ETW provider resources into the library mozjs.dll
@@ -523,7 +509,7 @@ JS_CONFIG_SUBSTITUTIONS=\
 	-DMOZJS_ALPHA="$(MOZJS_ALPHA)" \
 	-DNSPR_CFLAGS="$(NSPR_CFLAGS)" \
 	-DNSPR_PKGCONF_CHECK="$(NSPR_PKGCONF_CHECK)" \
-	-DUSE_CXX11="$(USE_CXX11)"
+	$(NULL)
 
 $(JS_CONFIG_NAME): js-config.in Makefile $(DEPTH)/config/autoconf.mk $(topsrcdir)/config/config.mk $(topsrcdir)/config/rules.mk
 	$(RM) $@.tmp
@@ -655,6 +641,8 @@ selfhosting_srcs := \
   $(srcdir)/builtin/Number.js \
   $(srcdir)/builtin/ParallelArray.js \
   $(srcdir)/builtin/String.js \
+  $(srcdir)/builtin/Set.js \
+  $(srcdir)/builtin/Map.js \
   $(NULL)
 
 selfhosted_out_h_deps := \
@@ -687,35 +675,6 @@ ifneq (,$(ENABLE_YARR_JIT))
 CXXFLAGS +=  -DENABLE_JIT=1
 endif
 
-INCLUDES +=	-I$(srcdir)/assembler -I$(srcdir)/yarr
-
 #
 # END kludges for the Nitro assembler
 ###############################################
-
-###############################################
-# Generating source package tarballs
-# (only possible when tar is found)
-ifneq (,$(TAR))
-
-source-package:
-	SRCDIR=$(srcdir) \
-	DIST=$(DIST) \
-	MAKE=$(MAKE) \
-	MKDIR=$(MKDIR) \
-	TAR=$(TAR) \
-	MOZJS_MAJOR_VERSION=$(MOZJS_MAJOR_VERSION) \
-	MOZJS_MINOR_VERSION=$(MOZJS_MINOR_VERSION) \
-	MOZJS_PATCH_VERSION=$(MOZJS_PATCH_VERSION) \
-	MOZJS_ALPHA=$(MOZJS_ALPHA) \
-	$(srcdir)/make-source-package.sh
-
-clean::
-	DIST=$(DIST) \
-	MOZJS_MAJOR_VERSION=$(MOZJS_MAJOR_VERSION) \
-	MOZJS_MINOR_VERSION=$(MOZJS_MINOR_VERSION) \
-	MOZJS_PATCH_VERSION=$(MOZJS_PATCH_VERSION) \
-	MOZJS_ALPHA=$(MOZJS_ALPHA) \
-	$(srcdir)/make-source-package.sh clean
-
-endif

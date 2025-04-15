@@ -84,6 +84,9 @@ endif
 ifeq ($(_MSC_VER),1700)
 JSSHELL_BINS += $(DIST)/bin/msvcr110.dll
 endif
+ifeq ($(_MSC_VER),1800)
+JSSHELL_BINS += $(DIST)/bin/msvcr120.dll
+endif
 ifdef MOZ_FOLD_LIBS
 JSSHELL_BINS += $(DIST)/bin/$(DLL_PREFIX)nss3$(DLL_SUFFIX)
 else
@@ -525,6 +528,7 @@ NO_PKG_FILES += \
 	ssltunnel* \
 	certutil* \
 	pk12util* \
+	OCSPStaplingServer* \
 	winEmbed.exe \
 	chrome/chrome.rdf \
 	chrome/app-chrome.manifest \

@@ -20,6 +20,7 @@
 #include "nsIArray.h"
 #include "nsIURI.h"
 #include "jsapi.h"
+#include "jsfriendapi.h"
 #include "nsString.h"
 #include "nsIConsoleService.h"
 #include "nsIScriptError.h"
@@ -89,16 +90,11 @@ uint32_t nsXULPrototypeDocument::gRefCnt;
 void
 nsXULPDGlobalObject_finalize(JSFreeOp *fop, JSObject *obj)
 {
-    nsISupports *nativeThis = (nsISupports*)JS_GetPrivate(obj);
-
-    nsCOMPtr<nsIScriptGlobalObject> sgo(do_QueryInterface(nativeThis));
-
-    if (sgo) {
-        sgo->OnFinalize(obj);
-    }
+    nsXULPDGlobalObject* nativeThis = static_cast<nsXULPDGlobalObject*>(JS_GetPrivate(obj));
+    nativeThis->OnFinalize(obj);
 
     // The addref was part of JSObject construction
-    NS_RELEASE(nativeThis);
+    nsContentUtils::DeferredFinalize(nativeThis);
 }
 
 
@@ -162,6 +158,8 @@ nsXULPrototypeDocument::~nsXULPrototypeDocument()
         NS_IF_RELEASE(gSystemGlobal);
     }
 }
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULPrototypeDocument)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXULPrototypeDocument)
     tmp->mPrototypeWaiters.Clear();
@@ -722,6 +720,8 @@ nsXULPDGlobalObject::~nsXULPDGlobalObject()
 {
 }
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULPDGlobalObject)
+
 NS_IMPL_CYCLE_COLLECTION_UNLINK_0(nsXULPDGlobalObject)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsXULPDGlobalObject)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mContext)
@@ -763,14 +763,16 @@ nsXULPDGlobalObject::EnsureScriptEnvironment()
   {
     AutoPushJSContext cx(ctxNew->GetNativeContext());
     JS::CompartmentOptions options;
-    options.setZone(JS::SystemZone);
+    options.setZone(JS::SystemZone)
+           .setInvisibleToDebugger(true);
     JS::Rooted<JSObject*> newGlob(cx,
       JS_NewGlobalObject(cx, &gSharedGlobalClass,
-                         nsJSPrincipals::get(GetPrincipal()), options));
+                         nsJSPrincipals::get(GetPrincipal()), JS::DontFireOnNewGlobalHook,
+                         options));
     if (!newGlob)
         return NS_OK;
 
-    ::JS_SetGlobalObject(cx, newGlob);
+    js::SetDefaultObjectForContext(cx, newGlob);
 
     // Add an owning reference from JS back to us. This'll be
     // released when the JSObject is finalized.

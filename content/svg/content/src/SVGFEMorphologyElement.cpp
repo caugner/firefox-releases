@@ -64,19 +64,19 @@ SVGFEMorphologyElement::In1()
   return mStringAttributes[IN1].ToDOMAnimatedString(this);
 }
 
-already_AddRefed<nsIDOMSVGAnimatedEnumeration>
+already_AddRefed<SVGAnimatedEnumeration>
 SVGFEMorphologyElement::Operator()
 {
   return mEnumAttributes[OPERATOR].ToDOMAnimatedEnum(this);
 }
 
-already_AddRefed<nsIDOMSVGAnimatedNumber>
+already_AddRefed<SVGAnimatedNumber>
 SVGFEMorphologyElement::RadiusX()
 {
   return mNumberPairAttributes[RADIUS].ToDOMAnimatedNumber(nsSVGNumberPair::eFirst, this);
 }
 
-already_AddRefed<nsIDOMSVGAnimatedNumber>
+already_AddRefed<SVGAnimatedNumber>
 SVGFEMorphologyElement::RadiusY()
 {
   return mNumberPairAttributes[RADIUS].ToDOMAnimatedNumber(nsSVGNumberPair::eSecond, this);
@@ -156,9 +156,9 @@ DoMorphology(nsSVGFilterInstance* instance,
              int32_t rx,
              int32_t ry)
 {
-  MOZ_STATIC_ASSERT(Operator == SVG_OPERATOR_ERODE ||
-                    Operator == SVG_OPERATOR_DILATE,
-                    "unexpected morphology operator");
+  static_assert(Operator == SVG_OPERATOR_ERODE ||
+                Operator == SVG_OPERATOR_DILATE,
+                "unexpected morphology operator");
 
   volatile uint8_t extrema[4];         // RGBA magnitude of extrema
 

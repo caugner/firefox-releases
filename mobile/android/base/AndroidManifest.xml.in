@@ -10,12 +10,16 @@
 #endif
       >
     <uses-sdk android:minSdkVersion="8"
-              android:targetSdkVersion="14"/>
+              android:targetSdkVersion="16"/>
 
 #include ../services/manifests/AnnouncementsAndroidManifest_permissions.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_permissions.xml.in
 #include ../services/manifests/SyncAndroidManifest_permissions.xml.in
 
+#ifndef RELEASE_BUILD
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+#endif
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -26,9 +30,6 @@
 
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
-#ifdef MOZ_ANDROID_WALLPAPER
-    <uses-permission android:name="android.permission.SET_WALLPAPER"/>
-#endif
     <uses-permission android:name="@ANDROID_PACKAGE_NAME@.permissions.PASSWORD_PROVIDER"/>
     <uses-permission android:name="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
     <uses-permission android:name="@ANDROID_PACKAGE_NAME@.permissions.FORMHISTORY_PROVIDER"/>
@@ -44,6 +45,13 @@
     <uses-feature android:name="android.hardware.location" android:required="false"/>
     <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
     <uses-feature android:name="android.hardware.touchscreen"/>
+
+#ifdef NIGHTLY_BUILD
+    <!-- Contacts API -->
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
+    <uses-permission android:name="android.permission.WRITE_CONTACTS"/>
+    <uses-permission android:name="android.permission.GET_ACCOUNTS"/>
+#endif
 
 #ifdef MOZ_ANDROID_BEAM
     <!-- Android Beam support -->
@@ -193,6 +201,7 @@
 
         <activity android:name="org.mozilla.gecko.Restarter"
                   android:process="@ANDROID_PACKAGE_NAME@Restarter"
+                  android:noHistory="true"
                   android:theme="@style/Gecko">
           <intent-filter>
             <action android:name="org.mozilla.gecko.restart"/>

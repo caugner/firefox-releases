@@ -93,8 +93,7 @@ struct DisallowedConversion {
 private:
   static inline bool converter(JSContext* cx, JS::Handle<JS::Value> v,
                                jstype* retval) {
-    MOZ_NOT_REACHED("This should never be instantiated!");
-    return false;
+    MOZ_CRASH("This should never be instantiated!");
   }
 };
 
@@ -225,8 +224,8 @@ template<typename T>
 inline bool
 PrimitiveConversionTraits_EnforceRange(JSContext* cx, const double& d, T* retval)
 {
-  MOZ_STATIC_ASSERT(std::numeric_limits<T>::is_integer,
-                    "This can only be applied to integers!");
+  static_assert(std::numeric_limits<T>::is_integer,
+                "This can only be applied to integers!");
 
   if (!mozilla::IsFinite(d)) {
     return ThrowErrorMessage(cx, MSG_ENFORCE_RANGE_NON_FINITE, TypeName<T>::value());
@@ -253,8 +252,8 @@ template<typename T>
 inline bool
 PrimitiveConversionTraits_Clamp(JSContext* cx, const double& d, T* retval)
 {
-  MOZ_STATIC_ASSERT(std::numeric_limits<T>::is_integer,
-                    "This can only be applied to integers!");
+  static_assert(std::numeric_limits<T>::is_integer,
+                "This can only be applied to integers!");
 
   if (mozilla::IsNaN(d)) {
     *retval = 0;

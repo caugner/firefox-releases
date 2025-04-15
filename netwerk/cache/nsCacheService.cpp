@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Util.h"
 
@@ -120,7 +121,7 @@ const int32_t PRE_GECKO_2_0_DEFAULT_CACHE_SIZE = 50 * 1024;
 class nsCacheProfilePrefObserver : public nsIObserver
 {
 public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_NSIOBSERVER
 
     nsCacheProfilePrefObserver()
@@ -200,12 +201,12 @@ private:
     bool                    mClearCacheOnShutdown;
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsCacheProfilePrefObserver, nsIObserver)
+NS_IMPL_ISUPPORTS1(nsCacheProfilePrefObserver, nsIObserver)
 
 class nsSetDiskSmartSizeCallback MOZ_FINAL : public nsITimerCallback
 {
 public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
 
     NS_IMETHOD Notify(nsITimer* aTimer) {
         if (nsCacheService::gService) {
@@ -217,7 +218,7 @@ public:
     }
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsSetDiskSmartSizeCallback, nsITimerCallback)
+NS_IMPL_ISUPPORTS1(nsSetDiskSmartSizeCallback, nsITimerCallback)
 
 // Runnable sent to main thread after the cache IO thread calculates available
 // disk space, so that there is no race in setting mDiskCacheCapacity.
@@ -1071,7 +1072,7 @@ private:
  *****************************************************************************/
 nsCacheService *   nsCacheService::gService = nullptr;
 
-NS_IMPL_THREADSAFE_ISUPPORTS2(nsCacheService, nsICacheService, nsICacheServiceInternal)
+NS_IMPL_ISUPPORTS2(nsCacheService, nsICacheService, nsICacheServiceInternal)
 
 nsCacheService::nsCacheService()
     : mObserver(nullptr),
@@ -1496,10 +1497,31 @@ NS_IMETHODIMP nsCacheService::VisitEntries(nsICacheVisitor *visitor)
     return NS_OK;
 }
 
+void nsCacheService::FireClearNetworkCacheStoredAnywhereNotification()
+{
+    MOZ_ASSERT(NS_IsMainThread());
+    nsCOMPtr<nsIObserverService> obsvc = mozilla::services::GetObserverService();
+    if (obsvc) {
+        obsvc->NotifyObservers(nullptr,
+                               "network-clear-cache-stored-anywhere",
+                               nullptr);
+    }
+}
 
 NS_IMETHODIMP nsCacheService::EvictEntries(nsCacheStoragePolicy storagePolicy)
 {
-    return  EvictEntriesForClient(nullptr, storagePolicy);
+    if (storagePolicy == nsICache::STORE_ANYWHERE) {
+        // if not called on main thread, dispatch the notification to the main thread to notify observers
+        if (!NS_IsMainThread()) { 
+            nsCOMPtr<nsIRunnable> event = NS_NewRunnableMethod(this,
+                                                               &nsCacheService::FireClearNetworkCacheStoredAnywhereNotification);
+            NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
+        } else {
+            // else you're already on main thread - notify observers
+            FireClearNetworkCacheStoredAnywhereNotification(); 
+        }
+    }
+    return EvictEntriesForClient(nullptr, storagePolicy);
 }
 
 NS_IMETHODIMP nsCacheService::GetCacheIOTarget(nsIEventTarget * *aCacheIOTarget)

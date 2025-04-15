@@ -87,7 +87,7 @@ try { // nsIXULRuntime is not available in some configurations.
           Components.classes["@mozilla.org/toolkit/crash-reporter;1"]
           .getService(Components.interfaces.nsICrashReporter)) {
       crashReporter.enabled = true;
-      crashReporter.minidumpPath = do_get_cwd();
+      crashReporter.minidumpPath = do_get_tempdir();
     }
   }
 }
@@ -344,7 +344,7 @@ function _execute_test() {
     // possible that this will mask an NS_ERROR_ABORT that happens after a
     // do_check failure though.
     if (!_quit || e != Components.results.NS_ERROR_ABORT) {
-      msg = "TEST-UNEXPECTED-FAIL | ";
+      let msg = "TEST-UNEXPECTED-FAIL | ";
       if (e.fileName) {
         msg += e.fileName;
         if (e.lineNumber) {
@@ -477,9 +477,12 @@ function do_execute_soon(callback, aName) {
 function do_throw(error, stack) {
   let filename = "";
   if (!stack) {
-    if (error instanceof Error) {
-      // |error| is an exception object
+    // Use duck typing rather than instanceof in case error came
+    // from another context
+    if ("filename" in error)
       filename = error.fileName;
+    if ("stack" in error) {
+      // |error| is likely an exception object
       stack = error.stack;
     } else {
       stack = Components.stack.caller;
@@ -915,6 +918,23 @@ function do_register_cleanup(aFunction)
 }
 
 /**
+ * Returns the directory for a temp dir, which is created by the
+ * test harness. Every test gets its own temp dir.
+ *
+ * @return nsILocalFile of the temporary directory
+ */
+function do_get_tempdir() {
+  let env = Components.classes["@mozilla.org/process/environment;1"]
+                      .getService(Components.interfaces.nsIEnvironment);
+  // the python harness sets this in the environment for us
+  let path = env.get("XPCSHELL_TEST_TEMP_DIR");
+  let file = Components.classes["@mozilla.org/file/local;1"]
+                       .createInstance(Components.interfaces.nsILocalFile);
+  file.initWithPath(path);
+  return file;
+}
+
+/**
  * Registers a directory with the profile service,
  * and return the directory as an nsILocalFile.
  *
@@ -1156,3 +1176,14 @@ function run_next_test()
     do_test_finished(_gRunningTest.name);
   }
 }
+
+try {
+  if (runningInParent) {
+    // Always use network provider for geolocation tests
+    // so we bypass the OSX dialog raised by the corelocation provider
+    let prefs = Components.classes["@mozilla.org/preferences-service;1"]
+      .getService(Components.interfaces.nsIPrefBranch);
+
+    prefs.setBoolPref("geo.provider.testing", true);
+  }
+} catch (e) { }

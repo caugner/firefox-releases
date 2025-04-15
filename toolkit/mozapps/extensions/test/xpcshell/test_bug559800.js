@@ -5,8 +5,16 @@
 // This verifies that deleting the database from the profile doesn't break
 // anything
 
+const EXTENSIONS_DB = "extensions.sqlite";
+
 const profileDir = gProfD.clone();
 profileDir.append("extensions");
+
+// getting an unused port
+Components.utils.import("resource://testing-common/httpd.js");
+let gServer = new HttpServer();
+gServer.start(-1);
+gPort = gServer.identity.primaryPort;
 
 function run_test() {
   createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "1", "1.9.2");
@@ -14,7 +22,7 @@ function run_test() {
   writeInstallRDFForExtension({
     id: "addon1@tests.mozilla.org",
     version: "1.0",
-    updateURL: "http://localhost:4444/data/test_update.rdf",
+    updateURL: "http://localhost:" + gPort + "/data/test_update.rdf",
     targetApplications: [{
       id: "xpcshell@tests.mozilla.org",
       minVersion: "1",
@@ -31,7 +39,7 @@ function run_test() {
 }
 
 function end_test() {
-  do_test_finished();
+  gServer.stop(do_test_finished);
 }
 
 function run_test_1() {
@@ -42,10 +50,10 @@ function run_test_1() {
     shutdownManager();
 
     let db = gProfD.clone();
-    db.append("extensions.sqlite");
+    db.append(EXTENSIONS_DB);
     db.remove(true);
 
-    check_test_1();
+    do_execute_soon(check_test_1);
   });
 }
 
@@ -57,7 +65,7 @@ function check_test_1() {
     do_check_eq(a1.version, "1.0");
 
     let db = gProfD.clone();
-    db.append("extensions.sqlite");
+    db.append(EXTENSIONS_DB);
     do_check_true(db.exists());
     do_check_true(db.fileSize > 0);
 

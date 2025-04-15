@@ -237,7 +237,10 @@ var SelectionHandler = {
       return this._contentWindow.getSelection();
   },
 
-  _getSelectedText: function sh_getSelectedText() {
+  getSelectedText: function sh_getSelectedText() {
+    if (!this._contentWindow)
+      return "";
+
     let selection = this._getSelection();
     if (selection)
       return selection.toString().trim();
@@ -332,7 +335,12 @@ var SelectionHandler = {
 
       // Get rect of editor
       let editorBounds = this._domWinUtils.sendQueryContentEvent(this._domWinUtils.QUERY_EDITOR_RECT, 0, 0, 0, 0);
-      let editorRect = new Rect(editorBounds.left, editorBounds.top, editorBounds.width, editorBounds.height);
+      // the return value from sendQueryContentEvent is in LayoutDevice pixels and we want CSS pixels, so
+      // divide by the pixel ratio
+      let editorRect = new Rect(editorBounds.left / window.devicePixelRatio,
+                                editorBounds.top / window.devicePixelRatio,
+                                editorBounds.width / window.devicePixelRatio,
+                                editorBounds.height / window.devicePixelRatio);
 
       // Use intersection of the text rect and the editor rect
       let rect = new Rect(textBounds.left, textBounds.top, textBounds.width, textBounds.height);
@@ -368,7 +376,7 @@ var SelectionHandler = {
   },
 
   copySelection: function sh_copySelection() {
-    let selectedText = this._getSelectedText();
+    let selectedText = this.getSelectedText();
     if (selectedText.length) {
       let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper);
       clipboard.copyString(selectedText, this._contentWindow.document);
@@ -378,12 +386,26 @@ var SelectionHandler = {
   },
 
   shareSelection: function sh_shareSelection() {
-    let selectedText = this._getSelectedText();
+    let selectedText = this.getSelectedText();
     if (selectedText.length) {
       sendMessageToJava({
         type: "Share:Text",
         text: selectedText
       });
+    }
+    this._closeSelection();
+  },
+
+  searchSelection: function sh_searchSelection() {
+    let selectedText = this.getSelectedText();
+    if (selectedText.length) {
+      let req = Services.search.defaultEngine.getSubmission(selectedText);
+      let parent = BrowserApp.selectedTab;
+      let isPrivate = PrivateBrowsingUtils.isWindowPrivate(parent.browser.contentWindow);
+      // Set current tab as parent of new tab, and set new tab as private if the parent is.
+      BrowserApp.addTab(req.uri.spec, {parentId: parent.id,
+                                       selected: true,
+                                       isPrivate: isPrivate});
     }
     this._closeSelection();
   },
@@ -498,8 +520,10 @@ var SelectionHandler = {
       // The left and top properties returned are relative to the client area
       // of the window, so we don't need to account for a sub-frame offset.
       let cursor = this._domWinUtils.sendQueryContentEvent(this._domWinUtils.QUERY_CARET_RECT, this._targetElement.selectionEnd, 0, 0, 0);
-      let x = cursor.left;
-      let y = cursor.top + cursor.height;
+      // the return value from sendQueryContentEvent is in LayoutDevice pixels and we want CSS pixels, so
+      // divide by the pixel ratio
+      let x = cursor.left / window.devicePixelRatio;
+      let y = (cursor.top + cursor.height) / window.devicePixelRatio;
       positions = [{ handle: this.HANDLE_TYPE_MIDDLE,
                      left: x + scrollX.value,
                      top: y + scrollY.value,

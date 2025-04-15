@@ -37,7 +37,7 @@ typedef ptrdiff_t GLintptr;
 
 #endif /* #if !defined(__gltypes_h_) && !defined(__gl_h_) */
 
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 
 // ARB_sync
 typedef struct __GLsync* GLsync;
@@ -3028,6 +3028,9 @@ typedef uint64_t EGLTime;
 #define LOCAL_GL_WIN_specular_fog 1
 #define LOCAL_GL_FOG_SPECULAR_TEXTURE_WIN 0x80EC
 #define LOCAL_GL_WIN_swap_hint 1
+
+// ARB_vertex_array_object
+#define LOCAL_GL_VERTEX_ARRAY_BINDING             0x85B5
 
 // ARB_sync
 #define LOCAL_GL_MAX_SERVER_WAIT_TIMEOUT          0x9111

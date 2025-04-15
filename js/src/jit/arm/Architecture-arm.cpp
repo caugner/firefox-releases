@@ -4,18 +4,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#define HWCAP_ARMv7 (1 << 31)
-#include <mozilla/StandardInteger.h>
+#include "jit/arm/Architecture-arm.h"
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include <elf.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-// lame check for kernel version
-// see bug 586550
+#include "jit/arm/Assembler-arm.h"
+
 #if !(defined(ANDROID) || defined(MOZ_B2G))
+#define HWCAP_ARMv7 (1 << 31)
 #include <asm/hwcap.h>
 #else
 #define HWCAP_VFP      (1<<0)
@@ -27,8 +27,7 @@
 #define HWCAP_NEON     (1<<6)
 #define HWCAP_ARMv7    (1<<7)
 #endif
-#include "jit/arm/Architecture-arm.h"
-#include "jit/arm/Assembler-arm.h"
+
 namespace js {
 namespace jit {
 
@@ -122,6 +121,15 @@ bool has32DP()
 bool useConvReg()
 {
     return has32DP();
+}
+
+bool hasIDIV()
+{
+#if defined HWCAP_IDIVA
+    return js::jit::getFlags() & HWCAP_IDIVA;
+#else
+    return false;
+#endif
 }
 
 } // namespace jit

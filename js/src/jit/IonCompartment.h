@@ -9,12 +9,15 @@
 
 #ifdef JS_ION
 
-#include "IonCode.h"
+#include "mozilla/MemoryReporting.h"
+
 #include "jsweakcache.h"
+
+#include "jit/CompileInfo.h"
+#include "jit/IonCode.h"
+#include "jit/IonFrames.h"
 #include "js/Value.h"
 #include "vm/Stack.h"
-#include "IonFrames.h"
-#include "CompileInfo.h"
 
 namespace js {
 namespace jit {
@@ -64,7 +67,7 @@ typedef Vector<IonBuilder*, 0, SystemAllocPolicy> OffThreadCompilationVector;
 // Optimized stubs are allocated per-compartment and are always purged when
 // JIT-code is discarded. Fallback stubs are allocated per BaselineScript and
 // are only destroyed when the BaselineScript is destroyed.
-struct ICStubSpace
+class ICStubSpace
 {
   protected:
     LifoAlloc allocator_;
@@ -80,7 +83,7 @@ struct ICStubSpace
 
     JS_DECLARE_NEW_METHODS(allocate, alloc, inline)
 
-    size_t sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf) const {
+    size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
         return allocator_.sizeOfExcludingThis(mallocSizeOf);
     }
 };
@@ -123,6 +126,12 @@ class IonRuntime
 
     // Executable allocator.
     JSC::ExecutableAllocator *execAlloc_;
+
+    // Shared post-exception-handler tail
+    IonCode *exceptionTail_;
+
+    // Shared post-bailout-handler tail.
+    IonCode *bailoutTail_;
 
     // Trampoline for entering JIT code. Contains OSR prologue.
     IonCode *enterJIT_;
@@ -167,6 +176,8 @@ class IonRuntime
     AutoFlushCache *flusher_;
 
   private:
+    IonCode *generateExceptionTailStub(JSContext *cx);
+    IonCode *generateBailoutTailStub(JSContext *cx);
     IonCode *generateEnterJIT(JSContext *cx, EnterJitType type);
     IonCode *generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void **returnAddrOut);
     IonCode *generateBailoutTable(JSContext *cx, uint32_t frameClass);
@@ -175,8 +186,6 @@ class IonRuntime
     IonCode *generatePreBarrier(JSContext *cx, MIRType type);
     IonCode *generateDebugTrapHandler(JSContext *cx);
     IonCode *generateVMWrapper(JSContext *cx, const VMFunction &f);
-
-    IonCode *debugTrapHandler(JSContext *cx);
 
   public:
     IonRuntime();
@@ -194,6 +203,55 @@ class IonRuntime
     void setFlusher(AutoFlushCache *fl) {
         if (!flusher_ || !fl)
             flusher_ = fl;
+    }
+
+    IonCode *getVMWrapper(const VMFunction &f);
+    IonCode *debugTrapHandler(JSContext *cx);
+
+    IonCode *getGenericBailoutHandler() const {
+        return bailoutHandler_;
+    }
+
+    IonCode *getExceptionTail() const {
+        return exceptionTail_;
+    }
+
+    IonCode *getBailoutTail() const {
+        return bailoutTail_;
+    }
+
+    IonCode *getBailoutTable(const FrameSizeClass &frameClass);
+
+    IonCode *getArgumentsRectifier(ExecutionMode mode) const {
+        switch (mode) {
+          case SequentialExecution: return argumentsRectifier_;
+          case ParallelExecution:   return parallelArgumentsRectifier_;
+          default:                  MOZ_ASSUME_UNREACHABLE("No such execution mode");
+        }
+    }
+
+    void *getArgumentsRectifierReturnAddr() const {
+        return argumentsRectifierReturnAddr_;
+    }
+
+    IonCode *getInvalidationThunk() const {
+        return invalidator_;
+    }
+
+    EnterIonCode enterIon() const {
+        return enterJIT_->as<EnterIonCode>();
+    }
+
+    EnterIonCode enterBaseline() const {
+        return enterBaselineJIT_->as<EnterIonCode>();
+    }
+
+    IonCode *valuePreBarrier() const {
+        return valuePreBarrier_;
+    }
+
+    IonCode *shapePreBarrier() const {
+        return shapePreBarrier_;
     }
 };
 
@@ -214,9 +272,11 @@ class IonCompartment
     typedef WeakValueCache<uint32_t, ReadBarriered<IonCode> > ICStubCodeMap;
     ICStubCodeMap *stubCodes_;
 
-    // Keep track of offset into baseline ICCall_Scripted stub's code at return
+    // Keep track of offset into various baseline stubs' code at return
     // point from called script.
     void *baselineCallReturnAddr_;
+    void *baselineGetPropReturnAddr_;
+    void *baselineSetPropReturnAddr_;
 
     // Allocated space for optimized baseline stubs.
     OptimizedICStubSpace optimizedStubSpace_;
@@ -226,12 +286,11 @@ class IonCompartment
     // pointers. This has to be a weak pointer to avoid keeping the whole
     // compartment alive.
     ReadBarriered<IonCode> stringConcatStub_;
+    ReadBarriered<IonCode> parallelStringConcatStub_;
 
-    IonCode *generateStringConcatStub(JSContext *cx);
+    IonCode *generateStringConcatStub(JSContext *cx, ExecutionMode mode);
 
   public:
-    IonCode *getVMWrapper(const VMFunction &f);
-
     OffThreadCompilationVector &finishedOffThreadCompilations() {
         return finishedOffThreadCompilations_;
     }
@@ -258,6 +317,22 @@ class IonCompartment
         JS_ASSERT(baselineCallReturnAddr_ != NULL);
         return baselineCallReturnAddr_;
     }
+    void initBaselineGetPropReturnAddr(void *addr) {
+        JS_ASSERT(baselineGetPropReturnAddr_ == NULL);
+        baselineGetPropReturnAddr_ = addr;
+    }
+    void *baselineGetPropReturnAddr() {
+        JS_ASSERT(baselineGetPropReturnAddr_ != NULL);
+        return baselineGetPropReturnAddr_;
+    }
+    void initBaselineSetPropReturnAddr(void *addr) {
+        JS_ASSERT(baselineSetPropReturnAddr_ == NULL);
+        baselineSetPropReturnAddr_ = addr;
+    }
+    void *baselineSetPropReturnAddr() {
+        JS_ASSERT(baselineSetPropReturnAddr_ != NULL);
+        return baselineSetPropReturnAddr_;
+    }
 
     void toggleBaselineStubBarriers(bool enabled);
 
@@ -277,50 +352,12 @@ class IonCompartment
         return rt->execAlloc_;
     }
 
-    IonCode *getGenericBailoutHandler() {
-        return rt->bailoutHandler_;
-    }
-
-    IonCode *getBailoutTable(const FrameSizeClass &frameClass);
-
-    IonCode *getArgumentsRectifier(ExecutionMode mode) {
+    IonCode *stringConcatStub(ExecutionMode mode) {
         switch (mode) {
-          case SequentialExecution: return rt->argumentsRectifier_;
-          case ParallelExecution:   return rt->parallelArgumentsRectifier_;
-          default:                  JS_NOT_REACHED("No such execution mode");
+          case SequentialExecution: return stringConcatStub_;
+          case ParallelExecution:   return parallelStringConcatStub_;
+          default:                  MOZ_ASSUME_UNREACHABLE("No such execution mode");
         }
-    }
-
-    void *getArgumentsRectifierReturnAddr() {
-        return rt->argumentsRectifierReturnAddr_;
-    }
-
-    IonCode *getInvalidationThunk() {
-        return rt->invalidator_;
-    }
-
-    EnterIonCode enterJIT() {
-        return rt->enterJIT_->as<EnterIonCode>();
-    }
-
-    EnterIonCode enterBaselineJIT() {
-        return rt->enterBaselineJIT_->as<EnterIonCode>();
-    }
-
-    IonCode *valuePreBarrier() {
-        return rt->valuePreBarrier_;
-    }
-
-    IonCode *shapePreBarrier() {
-        return rt->shapePreBarrier_;
-    }
-
-    IonCode *debugTrapHandler(JSContext *cx) {
-        return rt->debugTrapHandler(cx);
-    }
-
-    IonCode *stringConcatStub() {
-        return stringConcatStub_;
     }
 
     AutoFlushCache *flusher() {

@@ -11,7 +11,6 @@ from mozpack.files import (
 import mozpack.path
 import errno
 from collections import (
-    namedtuple,
     OrderedDict,
 )
 
@@ -19,13 +18,19 @@ from collections import (
 def ensure_parent_dir(file):
     '''Ensures the directory parent to the given file exists'''
     dir = os.path.dirname(file)
-    if not dir or os.path.exists(dir):
+    if not dir:
         return
+
     try:
         os.makedirs(dir)
     except OSError as error:
         if error.errno != errno.EEXIST:
             raise
+
+    if not os.access(dir, os.W_OK):
+        umask = os.umask(0077)
+        os.umask(umask)
+        os.chmod(dir, 0777 & ~umask)
 
 
 class FileRegistry(object):
@@ -128,8 +133,30 @@ class FileRegistry(object):
         return self._files.iteritems()
 
 
-FileCopyResult = namedtuple('FileCopyResult', ['removed_files_count',
-    'removed_directories_count'])
+class FileCopyResult(object):
+    """Represents results of a FileCopier.copy operation."""
+
+    def __init__(self):
+        self.updated_files = set()
+        self.existing_files = set()
+        self.removed_files = set()
+        self.removed_directories = set()
+
+    @property
+    def updated_files_count(self):
+        return len(self.updated_files)
+
+    @property
+    def existing_files_count(self):
+        return len(self.existing_files)
+
+    @property
+    def removed_files_count(self):
+        return len(self.removed_files)
+
+    @property
+    def removed_directories_count(self):
+        return len(self.removed_directories)
 
 
 class FileCopier(FileRegistry):
@@ -151,32 +178,44 @@ class FileCopier(FileRegistry):
         '''
         assert isinstance(destination, basestring)
         assert not os.path.exists(destination) or os.path.isdir(destination)
+        result = FileCopyResult()
         destination = os.path.normpath(destination)
         dest_files = set()
         for path, file in self:
             destfile = os.path.normpath(os.path.join(destination, path))
             dest_files.add(destfile)
             ensure_parent_dir(destfile)
-            file.copy(destfile, skip_if_older)
+            if file.copy(destfile, skip_if_older):
+                result.updated_files.add(destfile)
+            else:
+                result.existing_files.add(destfile)
 
         actual_dest_files = set()
         for root, dirs, files in os.walk(destination):
             for f in files:
                 actual_dest_files.add(os.path.normpath(os.path.join(root, f)))
 
-        file_remove_count = 0
-        directory_remove_count = 0
-
         for f in actual_dest_files - dest_files:
-            os.remove(f)
-            file_remove_count += 1
-        for root, dirs, files in os.walk(destination):
-            if not files and not dirs:
-                os.removedirs(root)
-                directory_remove_count += 1
+            # Windows requires write access to remove files.
+            if os.name == 'nt' and not os.access(f, os.W_OK):
+                # It doesn't matter what we set the permissions to since we
+                # will remove this file shortly.
+                os.chmod(f, 0600)
 
-        return FileCopyResult(removed_files_count=file_remove_count,
-            removed_directories_count=directory_remove_count)
+            os.remove(f)
+            result.removed_files.add(f)
+
+        for root, dirs, files in os.walk(destination):
+            if files or dirs:
+                continue
+
+            # Like files, permissions may not allow deletion. So, ensure write
+            # access is in place before attempting delete.
+            os.chmod(root, 0700)
+            os.removedirs(root)
+            result.removed_directories.add(root)
+
+        return result
 
 
 class FilePurger(FileCopier):

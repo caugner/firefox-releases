@@ -9,9 +9,9 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/PodOperations.h"
-#include "mozilla/StandardInteger.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "jspubtd.h"
 #include "jstypes.h"
@@ -98,7 +98,8 @@ struct Cell
     MOZ_ALWAYS_INLINE void unmark(uint32_t color) const;
 
     inline JSRuntime *runtime() const;
-    inline Zone *tenuredZone() const;
+    inline JS::Zone *tenuredZone() const;
+    inline bool tenuredIsInsideZone(JS::Zone *zone) const;
 
 #ifdef DEBUG
     inline bool isAligned() const;
@@ -456,7 +457,7 @@ struct ArenaHeader : public JS::shadow::ArenaHeader
         return allocKind < size_t(FINALIZE_LIMIT);
     }
 
-    void init(Zone *zoneArg, AllocKind kind) {
+    void init(JS::Zone *zoneArg, AllocKind kind) {
         JS_ASSERT(!allocated());
         JS_ASSERT(!markOverflow);
         JS_ASSERT(!allocatedDuringIncremental);
@@ -780,7 +781,7 @@ struct Chunk
         return info.numArenasFree != 0;
     }
 
-    inline void addToAvailableList(Zone *zone);
+    inline void addToAvailableList(JS::Zone *zone);
     inline void insertToAvailableList(Chunk **insertPoint);
     inline void removeFromAvailableList();
 
@@ -986,12 +987,19 @@ Cell::unmark(uint32_t color) const
     chunk()->bitmap.unmark(this, color);
 }
 
-Zone *
+JS::Zone *
 Cell::tenuredZone() const
 {
     JS_ASSERT(InSequentialOrExclusiveParallelSection());
     JS_ASSERT(isTenured());
     return arenaHeader()->zone;
+}
+
+bool
+Cell::tenuredIsInsideZone(JS::Zone *zone) const
+{
+    JS_ASSERT(isTenured());
+    return zone == arenaHeader()->zone;
 }
 
 #ifdef DEBUG

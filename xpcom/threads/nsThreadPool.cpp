@@ -37,8 +37,26 @@ GetThreadPoolLog()
 #define DEFAULT_IDLE_THREAD_LIMIT 1
 #define DEFAULT_IDLE_THREAD_TIMEOUT PR_SecondsToInterval(60)
 
-NS_IMPL_THREADSAFE_ADDREF(nsThreadPool)
-NS_IMPL_THREADSAFE_RELEASE(nsThreadPool)
+class ShutdownHelper MOZ_FINAL : public nsRunnable
+{
+public:
+  NS_DECL_NSIRUNNABLE
+
+  ShutdownHelper(nsCOMArray<nsIThread>& aThreads,
+                 already_AddRefed<nsIThreadPoolListener> aListener)
+  : mListener(aListener)
+  {
+    MOZ_ASSERT(!aThreads.IsEmpty());
+    mThreads.SwapElements(aThreads);
+  }
+
+private:
+  nsCOMArray<nsIThread> mThreads;
+  nsCOMPtr<nsIThreadPoolListener> mListener;
+};
+
+NS_IMPL_ADDREF(nsThreadPool)
+NS_IMPL_RELEASE(nsThreadPool)
 NS_IMPL_CLASSINFO(nsThreadPool, NULL, nsIClassInfo::THREADSAFE,
                   NS_THREADPOOL_CID)
 NS_IMPL_QUERY_INTERFACE3_CI(nsThreadPool, nsIThreadPool, nsIEventTarget,
@@ -56,7 +74,28 @@ nsThreadPool::nsThreadPool()
 
 nsThreadPool::~nsThreadPool()
 {
-  Shutdown();
+  // Calling Shutdown() directly is not safe since it will spin the event loop
+  // (perhaps during a GC). Instead we try to delay-shutdown each thread that is
+  // still alive.
+  nsCOMArray<nsIThread> threads;
+  nsCOMPtr<nsIThreadPoolListener> listener;
+  {
+    ReentrantMonitorAutoEnter mon(mEvents.GetReentrantMonitor());
+    if (!mShutdown) {
+      NS_WARNING("nsThreadPool destroyed before Shutdown() was called!");
+
+      mThreads.SwapElements(threads);
+      mListener.swap(listener);
+    }
+  }
+
+  if (!threads.IsEmpty()) {
+    nsRefPtr<ShutdownHelper> helper =
+      new ShutdownHelper(threads, listener.forget());
+    if (NS_FAILED(NS_DispatchToMainThread(helper, NS_DISPATCH_NORMAL))) {
+      NS_WARNING("Unable to shut down threads in this thread pool!");
+    }
+  }
 }
 
 nsresult
@@ -100,7 +139,15 @@ nsThreadPool::PutEvent(nsIRunnable *event)
   }
   LOG(("THRD-P(%p) put [%p kill=%d]\n", this, thread.get(), killThread));
   if (killThread) {
-    thread->Shutdown();
+    // Pending events are processed on the current thread during
+    // nsIThread::Shutdown() execution, so if nsThreadPool::Dispatch() is called
+    // under caller's lock then deadlock could occur. This happens e.g. in case
+    // of nsStreamCopier. To prevent this situation, dispatch a shutdown event
+    // to the current thread instead of calling nsIThread::Shutdown() directly.
+
+    nsRefPtr<nsIRunnable> r = NS_NewRunnableMethod(thread,
+                                                   &nsIThread::Shutdown);
+    NS_DispatchToCurrentThread(r);
   } else {
     thread->Dispatch(this, NS_DISPATCH_NORMAL);
   }
@@ -364,5 +411,19 @@ nsThreadPool::SetName(const nsACString& aName)
   }
 
   mName = aName;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+ShutdownHelper::Run()
+{
+  MOZ_ASSERT(!mThreads.IsEmpty());
+
+  for (int32_t i = 0; i < mThreads.Count(); ++i)
+    mThreads[i]->Shutdown();
+
+  mThreads.Clear();
+
+  mListener = nullptr;
   return NS_OK;
 }

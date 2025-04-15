@@ -9,6 +9,7 @@
 
 #include "nsCSSRules.h"
 #include "nsCSSValue.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/css/ImportRule.h"
 #include "mozilla/css/NameSpaceRule.h"
 
@@ -117,7 +118,7 @@ Rule::GetParentStyleSheet(nsIDOMCSSStyleSheet** aSheet)
 
 size_t
 Rule::SizeOfCOMArrayElementIncludingThis(css::Rule* aElement,
-                                         nsMallocSizeOfFun aMallocSizeOf,
+                                         MallocSizeOf aMallocSizeOf,
                                          void* aData)
 {
   return aElement->SizeOfIncludingThis(aMallocSizeOf);
@@ -134,9 +135,10 @@ public:
 
   NS_DECL_ISUPPORTS
 
-  NS_DECL_NSIDOMCSSRULELIST
-
-  virtual nsIDOMCSSRule* GetItemAt(uint32_t aIndex, nsresult* aResult);
+  virtual nsIDOMCSSRule*
+  IndexedGetter(uint32_t aIndex, bool& aFound) MOZ_OVERRIDE;
+  virtual uint32_t
+  Length() MOZ_OVERRIDE;
 
   void DropReference() { mGroupRule = nullptr; }
 
@@ -170,45 +172,30 @@ NS_INTERFACE_MAP_END
 NS_IMPL_ADDREF(GroupRuleRuleList)
 NS_IMPL_RELEASE(GroupRuleRuleList)
 
-NS_IMETHODIMP
-GroupRuleRuleList::GetLength(uint32_t* aLength)
+uint32_t
+GroupRuleRuleList::Length()
 {
-  if (mGroupRule) {
-    *aLength = (uint32_t)mGroupRule->StyleRuleCount();
-  } else {
-    *aLength = 0;
+  if (!mGroupRule) {
+    return 0;
   }
 
-  return NS_OK;
+  return SafeCast<uint32_t>(mGroupRule->StyleRuleCount());
 }
 
 nsIDOMCSSRule*
-GroupRuleRuleList::GetItemAt(uint32_t aIndex, nsresult* aResult)
+GroupRuleRuleList::IndexedGetter(uint32_t aIndex, bool& aFound)
 {
-  *aResult = NS_OK;
+  aFound = false;
 
   if (mGroupRule) {
     nsRefPtr<Rule> rule = mGroupRule->GetStyleRuleAt(aIndex);
     if (rule) {
+      aFound = true;
       return rule->GetDOMRule();
     }
   }
 
   return nullptr;
-}
-
-NS_IMETHODIMP
-GroupRuleRuleList::Item(uint32_t aIndex, nsIDOMCSSRule** aReturn)
-{
-  nsresult rv;
-  nsIDOMCSSRule* rule = GetItemAt(aIndex, &rv);
-  if (!rule) {
-    *aReturn = nullptr;
-    return rv;
-  }
-
-  NS_ADDREF(*aReturn = rule);
-  return NS_OK;
 }
 
 } // namespace css
@@ -328,7 +315,7 @@ CharsetRule::GetParentRule(nsIDOMCSSRule** aParentRule)
 }
 
 /* virtual */ size_t
-CharsetRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+CharsetRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   return aMallocSizeOf(this);
 
@@ -504,7 +491,7 @@ ImportRule::GetStyleSheet(nsIDOMCSSStyleSheet * *aStyleSheet)
 }
 
 /* virtual */ size_t
-ImportRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+ImportRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   return aMallocSizeOf(this);
 
@@ -578,6 +565,8 @@ SetStyleSheetReference(Rule* aRule, void* aSheet)
   aRule->SetStyleSheet(sheet);
   return true;
 }
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(GroupRule)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(GroupRule)
   tmp->mRules.EnumerateForwards(SetParentRuleReference, nullptr);
@@ -700,7 +689,7 @@ GroupRule::ReplaceStyleRule(Rule* aOld, Rule* aNew)
   return NS_OK;
 }
 
-nsresult
+void
 GroupRule::AppendRulesToCssText(nsAString& aCssText)
 {
   aCssText.AppendLiteral(" {\n");
@@ -719,8 +708,6 @@ GroupRule::AppendRulesToCssText(nsAString& aCssText)
   }
 
   aCssText.AppendLiteral("}");
-
-  return NS_OK;
 }
 
 // nsIDOMCSSMediaRule or nsIDOMCSSMozDocumentRule methods
@@ -766,7 +753,7 @@ GroupRule::DeleteRule(uint32_t aIndex)
 }
 
 /* virtual */ size_t
-GroupRule::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+GroupRule::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 {
   return mRules.SizeOfExcludingThis(Rule::SizeOfCOMArrayElementIncludingThis,
                                     aMallocSizeOf);
@@ -884,7 +871,8 @@ MediaRule::GetCssText(nsAString& aCssText)
 {
   aCssText.AssignLiteral("@media ");
   AppendConditionText(aCssText);
-  return GroupRule::AppendRulesToCssText(aCssText);
+  GroupRule::AppendRulesToCssText(aCssText);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -970,7 +958,7 @@ MediaRule::UseForPresentation(nsPresContext* aPresContext,
 }
 
 /* virtual */ size_t
-MediaRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+MediaRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = aMallocSizeOf(this);
   n += GroupRule::SizeOfExcludingThis(aMallocSizeOf);
@@ -1091,7 +1079,8 @@ DocumentRule::GetCssText(nsAString& aCssText)
 {
   aCssText.AssignLiteral("@-moz-document ");
   AppendConditionText(aCssText);
-  return GroupRule::AppendRulesToCssText(aCssText);
+  GroupRule::AppendRulesToCssText(aCssText);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1200,7 +1189,7 @@ DocumentRule::URL::~URL()
 }
 
 /* virtual */ size_t
-DocumentRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+DocumentRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = aMallocSizeOf(this);
   n += GroupRule::SizeOfExcludingThis(aMallocSizeOf);
@@ -1361,7 +1350,7 @@ NameSpaceRule::GetParentRule(nsIDOMCSSRule** aParentRule)
 }
 
 /* virtual */ size_t
-NameSpaceRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+NameSpaceRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   return aMallocSizeOf(this);
 
@@ -1762,6 +1751,8 @@ nsCSSFontFaceRule::Clone() const
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsCSSFontFaceRule)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsCSSFontFaceRule)
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsCSSFontFaceRule)
+
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsCSSFontFaceRule)
   // Trace the wrapper for our declaration.  This just expands out
   // NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER which we can't use
@@ -1773,7 +1764,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsCSSFontFaceRule)
   // Unlink the wrapper for our declaraton.  This just expands out
   // NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER which we can't use
   // directly because the wrapper is on the declaration, not on us.
-  nsContentUtils::ReleaseWrapper(static_cast<nsISupports*>(p), &tmp->mDecl);
+  tmp->mDecl.ReleaseWrapper(static_cast<nsISupports*>(p));
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsCSSFontFaceRule)
@@ -1901,7 +1892,7 @@ nsCSSFontFaceRule::GetDesc(nsCSSFontDesc aDescID, nsCSSValue & aValue)
 }
 
 /* virtual */ size_t
-nsCSSFontFaceRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+nsCSSFontFaceRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   return aMallocSizeOf(this);
 
@@ -2155,7 +2146,7 @@ nsCSSFontFeatureValuesRule::AddValueList(int32_t aVariantAlternate,
 
 size_t
 nsCSSFontFeatureValuesRule::SizeOfIncludingThis(
-  nsMallocSizeOfFun aMallocSizeOf) const
+  MallocSizeOf aMallocSizeOf) const
 {
   return aMallocSizeOf(this);
 }
@@ -2257,6 +2248,7 @@ nsCSSKeyframeRule::Clone() const
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsCSSKeyframeRule)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsCSSKeyframeRule)
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsCSSKeyframeRule)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsCSSKeyframeRule)
   if (tmp->mDOMDeclaration) {
@@ -2424,7 +2416,7 @@ nsCSSKeyframeRule::ChangeDeclaration(css::Declaration* aDeclaration)
 }
 
 /* virtual */ size_t
-nsCSSKeyframeRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+nsCSSKeyframeRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   return aMallocSizeOf(this);
 
@@ -2639,7 +2631,7 @@ nsCSSKeyframesRule::UseForPresentation(nsPresContext* aPresContext,
 }
 
 /* virtual */ size_t
-nsCSSKeyframesRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+nsCSSKeyframesRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = aMallocSizeOf(this);
   n += GroupRule::SizeOfExcludingThis(aMallocSizeOf);
@@ -2746,6 +2738,8 @@ nsCSSPageRule::Clone() const
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsCSSPageRule)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsCSSPageRule)
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsCSSPageRule)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsCSSPageRule)
   if (tmp->mDOMDeclaration) {
@@ -2870,7 +2864,7 @@ nsCSSPageRule::ChangeDeclaration(css::Declaration* aDeclaration)
 }
 
 /* virtual */ size_t
-nsCSSPageRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+nsCSSPageRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   return aMallocSizeOf(this);
 }
@@ -2950,7 +2944,8 @@ CSSSupportsRule::GetCssText(nsAString& aCssText)
 {
   aCssText.AssignLiteral("@supports ");
   aCssText.Append(mCondition);
-  return css::GroupRule::AppendRulesToCssText(aCssText);
+  css::GroupRule::AppendRulesToCssText(aCssText);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -3005,7 +3000,7 @@ CSSSupportsRule::SetConditionText(const nsAString& aConditionText)
 }
 
 /* virtual */ size_t
-CSSSupportsRule::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+CSSSupportsRule::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = aMallocSizeOf(this);
   n += css::GroupRule::SizeOfExcludingThis(aMallocSizeOf);

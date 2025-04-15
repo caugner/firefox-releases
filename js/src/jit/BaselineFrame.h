@@ -12,7 +12,7 @@
 #include "jscntxt.h"
 #include "jscompartment.h"
 
-#include "IonFrames.h"
+#include "jit/IonFrames.h"
 #include "vm/Stack.h"
 
 namespace js {

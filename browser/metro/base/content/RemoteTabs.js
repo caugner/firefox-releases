@@ -28,6 +28,9 @@ function RemoteTabsView(aSet, aSetUIAccessList) {
   // If you want to change this code, talk to the fx-si team
   Weave.Svc.Obs.add("weave:service:sync:finish", this);
   Weave.Svc.Obs.add("weave:service:start-over", this);
+
+  Services.obs.addObserver(this, "metro_viewstate_changed", false);
+
   if (this.isSyncEnabled() ) {
     this.populateGrid();
   }
@@ -36,7 +39,7 @@ function RemoteTabsView(aSet, aSetUIAccessList) {
   }
 }
 
-RemoteTabsView.prototype = {
+RemoteTabsView.prototype = Util.extend(Object.create(View.prototype), {
   _set: null,
   _uiAccessElements: [],
 
@@ -47,6 +50,9 @@ RemoteTabsView.prototype = {
 
   observe: function(subject, topic, data) {
     switch (topic) {
+      case "metro_viewstate_changed":
+        this.onViewStateChange(data);
+        break;
       case "weave:service:sync:finish":
         this.populateGrid();
         break;
@@ -94,6 +100,7 @@ RemoteTabsView.prototype = {
   },
 
   destruct: function destruct() {
+    Services.obs.removeObserver(this, "metro_viewstate_changed");
     Weave.Svc.Obs.remove("weave:engine:sync:finish", this);
     Weave.Svc.Obs.remove("weave:service:logout:start-over", this);
   },
@@ -102,7 +109,7 @@ RemoteTabsView.prototype = {
     return (Weave.Status.checkSetup() != Weave.CLIENT_NOT_CONFIGURED);
   }
 
-};
+});
 
 let RemoteTabsStartView = {
   _view: null,
@@ -120,28 +127,5 @@ let RemoteTabsStartView = {
 
   show: function show() {
     this._grid.arrangeItems();
-  }
-};
-
-let RemoteTabsPanelView = {
-  _view: null,
-
-  get _grid() { return document.getElementById("remotetabs-list"); },
-  get visible() { return PanelUI.isPaneVisible("remotetabs-container"); },
-
-  init: function init() {
-    //decks are fragile, don't hide the tab panel(bad things happen), hide link in menu.
-    let menuEntry = document.getElementById("menuitem-remotetabs");
-    let snappedEntry = document.getElementById("snappedRemoteTabsLabel");
-    let uiList = [menuEntry, snappedEntry];
-    this._view = new RemoteTabsView(this._grid, uiList);
-  },
-
-  show: function show() {
-    this._grid.arrangeItems();
-  },
-
-  uninit: function uninit() {
-    this._view.destruct();
   }
 };

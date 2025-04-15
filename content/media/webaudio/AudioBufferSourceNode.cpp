@@ -17,6 +17,8 @@
 namespace mozilla {
 namespace dom {
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(AudioBufferSourceNode)
+
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(AudioBufferSourceNode)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mBuffer)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPlaybackRate)
@@ -443,7 +445,8 @@ AudioBufferSourceNode::AudioBufferSourceNode(AudioContext* aContext)
   , mLoopEnd(0.0)
   , mOffset(0.0)
   , mDuration(std::numeric_limits<double>::min())
-  , mPlaybackRate(new AudioParam(this, SendPlaybackRateToStream, 1.0f))
+  , mPlaybackRate(new AudioParam(MOZ_THIS_IN_INITIALIZER_LIST(),
+                  SendPlaybackRateToStream, 1.0f))
   , mLoop(false)
   , mStartCalled(false)
   , mStopped(false)

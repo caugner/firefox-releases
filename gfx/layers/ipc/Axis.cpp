@@ -298,8 +298,7 @@ float Axis::GetOrigin() {
 
 float Axis::GetCompositionLength() {
   const FrameMetrics& metrics = mAsyncPanZoomController->GetFrameMetrics();
-  CSSRect cssCompositedRect =
-    AsyncPanZoomController::CalculateCompositedRectInCssPixels(metrics);
+  CSSRect cssCompositedRect = metrics.CalculateCompositedRectInCssPixels();
   return GetRectLength(cssCompositedRect);
 }
 
@@ -318,7 +317,7 @@ bool Axis::ScaleWillOverscrollBothSides(float aScale) {
 
   CSSRect cssContentRect = metrics.mScrollableRect;
 
-  CSSToScreenScale scale(metrics.mZoom.scale * aScale);
+  CSSToScreenScale scale(metrics.CalculateResolution().scale * aScale);
   CSSIntRect cssCompositionBounds = RoundedIn(metrics.mCompositionBounds / scale);
 
   return GetRectLength(cssContentRect) < GetRectLength(CSSRect(cssCompositionBounds));

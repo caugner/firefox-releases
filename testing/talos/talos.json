@@ -1,15 +1,15 @@
 {
     "talos.zip": {
-        "url": "http://talos-bundles.pvt.build.mozilla.org/zips/talos.a11542b55a70.zip",
+        "url": "http://talos-bundles.pvt.build.mozilla.org/zips/talos.fcbb9d7d3c78.zip",
         "path": ""
     },
     "global": {
         "talos_repo": "http://hg.mozilla.org/build/talos",
-        "talos_revision": "a11542b55a70"
+        "talos_revision": "4063ef2a221e"
     },
     "suites": {
         "chromez": {
-            "tests": ["tdhtmlr", "tresize"],
+            "tests": ["tresize"],
             "talos_options": [
                 "--mozAfterPaint",
                 "--filter",
@@ -126,6 +126,44 @@
                 "--filter",
                 "median",
                 "C:/slave/talos-data/talos/xperf.config"
+            ]
+        }
+    },
+    "mobile-suites": {
+        "remote-ts": {
+            "tests": ["ts"],
+            "talos_options": [
+                "--mozAfterPaint"
+            ]
+        },
+        "remote-tsvg": {
+            "tests": ["tsvg"],
+            "talos_options": [
+                "--noChrome"
+            ]
+        },
+        "remote-trobopan": {
+            "tests": ["trobopan"],
+            "talos_options": [
+                "--fennecIDs", "../fennec_ids.txt"
+            ]
+        },
+        "remote-troboprovider": {
+            "tests": ["tprovider"],
+            "talos_options": [
+                "--fennecIDs", "../fennec_ids.txt"
+            ]
+        },
+        "remote-trobocheck2": {
+            "tests": ["tcheck2"],
+            "talos_options": [
+                "--fennecIDs", "../fennec_ids.txt"
+            ]
+        },
+        "remote-tp4m_nochrome": {
+            "tests": ["tp4m"],
+            "talos_options": [
+                "--noChrome", "--rss"
             ]
         }
     }

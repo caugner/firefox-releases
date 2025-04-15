@@ -13,7 +13,6 @@ include $(DEPTH)/config/autoconf.mk
 
 # Disabled due to timeouts.
 # 		test_bug563329.html
-
 MOCHITEST_FILES = \
 		test_bug226361.xhtml \
 		     bug226361_iframe.xhtml \
@@ -37,7 +36,7 @@ MOCHITEST_FILES = \
 		test_bug412567.html \
 		test_bug422132.html \
 		test_bug426082.html \
-		     bug426082.html \
+		bug426082.html \
 		test_bug427537.html \
 		test_bug432698.html \
 		test_bug443985.html \
@@ -72,6 +71,8 @@ MOCHITEST_FILES = \
 		test_bug641477.html \
 		test_bug648573.html \
 		test_bug615597.html \
+		test_bug656379-1.html \
+		bug656379-1.html \
 		test_bug656379-2.html \
 		test_bug656954.html \
 		test_bug659071.html \
@@ -95,7 +96,6 @@ MOCHITEST_FILES = \
 		test_wheel_default_action.html \
 		window_wheel_default_action.html \
 		test_bug603008.html \
-		test_bug716822.html \
 		test_bug742376.html \
 		test_dragstart.html \
 		test_bug812744.html \
@@ -103,14 +103,15 @@ MOCHITEST_FILES = \
 		test_focus_disabled.html \
 		test_bug847597.html \
 		test_bug855741.html \
+		test_dblclick_explicit_original_target.html \
 		$(NULL)
 
-# Disabled on Windows due to intermittent failures.
-ifneq ($(OS_ARCH), WINNT)
+ifeq (,$(filter gonk,$(MOZ_WIDGET_TOOLKIT)))
+# THESE TESTS (BELOW) DO NOT RUN ON B2G
 MOCHITEST_FILES += \
-		test_bug656379-1.html \
-		     bug656379-1.html \
+		test_bug864040.html \
 		$(NULL)
+# THESE TESTS (ABOVE) DO NOT RUN ON B2G
 endif
 
 MOCHITEST_CHROME_FILES = \

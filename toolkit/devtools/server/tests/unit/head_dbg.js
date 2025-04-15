@@ -18,6 +18,7 @@ Services.prefs.setBoolPref("devtools.debugger.remote-enabled", true);
 Cu.import("resource://gre/modules/devtools/dbg-server.jsm");
 Cu.import("resource://gre/modules/devtools/dbg-client.jsm");
 Cu.import("resource://gre/modules/devtools/Loader.jsm");
+Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm");
 
 function testExceptionHook(ex) {
   try {
@@ -43,13 +44,19 @@ function scriptErrorFlagsToKind(aFlags) {
   return kind;
 }
 
+// Redeclare dbg_assert with a fatal behavior.
+function dbg_assert(cond, e) {
+  if (!cond) {
+    throw e;
+  }
+}
+
 // Register a console listener, so console messages don't just disappear
 // into the ether.
 let errorCount = 0;
 let listener = {
   observe: function (aMessage) {
     errorCount++;
-    var shouldThrow = true;
     try {
       // If we've been given an nsIScriptError, then we can print out
       // something nicely formatted, for tools like Emacs to pick up.
@@ -58,7 +65,6 @@ let listener = {
            scriptErrorFlagsToKind(aMessage.flags) + ": " +
            aMessage.errorMessage + "\n");
       var string = aMessage.errorMessage;
-      shouldThrow = !aMessage.flags;
     } catch (x) {
       // Be a little paranoid with message, as the whole goal here is to lose
       // no information.
@@ -73,8 +79,7 @@ let listener = {
     while (DebuggerServer.xpcInspector.eventLoopNestLevel > 0) {
       DebuggerServer.xpcInspector.exitNestedEventLoop();
     }
-    if (shouldThrow)
-      do_throw("head_dbg.js got console message: " + string + "\n");
+    do_throw("head_dbg.js got console message: " + string + "\n");
   }
 };
 
@@ -160,8 +165,19 @@ function attachTestTabAndResume(aClient, aTitle, aCallback) {
  */
 function initTestDebuggerServer()
 {
+  DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/root.js");
   DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/script.js");
   DebuggerServer.addActors("resource://test/testactors.js");
+  // Allow incoming connections.
+  DebuggerServer.init(function () { return true; });
+}
+
+function initTestTracerServer()
+{
+  DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/root.js");
+  DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/script.js");
+  DebuggerServer.addActors("resource://test/testactors.js");
+  DebuggerServer.registerModule("devtools/server/actors/tracer");
   // Allow incoming connections.
   DebuggerServer.init(function () { return true; });
 }
@@ -326,3 +342,14 @@ TracingTransport.prototype = {
     }
   }
 };
+
+function StubTransport() { }
+StubTransport.prototype.ready = function () {};
+StubTransport.prototype.send  = function () {};
+StubTransport.prototype.close = function () {};
+
+function executeSoon(aFunc) {
+  Services.tm.mainThread.dispatch({
+    run: DevToolsUtils.makeInfallible(aFunc)
+  }, Ci.nsIThread.DISPATCH_NORMAL);
+}

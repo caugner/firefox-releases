@@ -198,7 +198,7 @@ public:
     float GetX(JNIEnv *env);
     float GetY(JNIEnv *env);
     float GetScale(JNIEnv *env);
-    void GetFixedLayerMargins(JNIEnv *env, gfx::Margin &aFixedLayerMargins);
+    void GetFixedLayerMargins(JNIEnv *env, LayerMargin &aFixedLayerMargins);
     float GetOffsetX(JNIEnv *env);
     float GetOffsetY(JNIEnv *env);
 
@@ -274,10 +274,10 @@ public:
     void SetPageRect(const CSSRect& aCssPageRect);
     void SyncViewportInfo(const LayerIntRect& aDisplayPort, const CSSToLayerScale& aDisplayResolution,
                           bool aLayersUpdated, ScreenPoint& aScrollOffset, CSSToScreenScale& aScale,
-                          gfx::Margin& aFixedLayerMargins, ScreenPoint& aOffset);
+                          LayerMargin& aFixedLayerMargins, ScreenPoint& aOffset);
     void SyncFrameMetrics(const ScreenPoint& aScrollOffset, float aZoom, const CSSRect& aCssPageRect,
                           bool aLayersUpdated, const CSSRect& aDisplayPort, const CSSToLayerScale& aDisplayResolution,
-                          bool aIsFirstPaint, gfx::Margin& aFixedLayerMargins, ScreenPoint& aOffset);
+                          bool aIsFirstPaint, LayerMargin& aFixedLayerMargins, ScreenPoint& aOffset);
     bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent, const LayerRect& aDisplayPort, float aDisplayResolution, bool aDrawingCritical, gfx::Rect& aViewport, float& aScaleX, float& aScaleY);
     bool CreateFrame(AutoLocalJNIFrame *jniFrame, AndroidLayerRendererFrame& aFrame);
     bool ActivateProgram(AutoLocalJNIFrame *jniFrame);
@@ -580,12 +580,15 @@ public:
     nsGeoPosition* GeoPosition() { return mGeoPosition; }
     double Bandwidth() { return mBandwidth; }
     bool CanBeMetered() { return mCanBeMetered; }
+    bool IsWifi() { return mIsWifi; }
+    int DHCPGateway() { return mDHCPGateway; }
     short ScreenOrientation() { return mScreenOrientation; }
     RefCountedJavaObject* ByteBuffer() { return mByteBuffer; }
     int Width() { return mWidth; }
     int Height() { return mHeight; }
     nsTouchEvent MakeTouchEvent(nsIWidget* widget);
     MultiTouchInput MakeMultiTouchInput(nsIWidget* widget);
+    nsMouseEvent MakeMouseEvent(nsIWidget* widget);
     void UnionRect(nsIntRect const& aRect);
     nsIObserver *Observer() { return mObserver; }
 
@@ -615,6 +618,8 @@ protected:
     nsRefPtr<nsGeoPosition> mGeoPosition;
     double mBandwidth;
     bool mCanBeMetered;
+    bool mIsWifi;
+    int mDHCPGateway;
     short mScreenOrientation;
     nsRefPtr<RefCountedJavaObject> mByteBuffer;
     int mWidth, mHeight;
@@ -681,6 +686,8 @@ protected:
 
     static jfieldID jBandwidthField;
     static jfieldID jCanBeMeteredField;
+    static jfieldID jIsWifiField;
+    static jfieldID jDHCPGatewayField;
 
     static jfieldID jScreenOrientationField;
     static jfieldID jByteBufferField;

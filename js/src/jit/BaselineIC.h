@@ -14,10 +14,10 @@
 #include "jsgc.h"
 #include "jsopcode.h"
 #include "jsproxy.h"
-#include "BaselineJIT.h"
-#include "BaselineRegisters.h"
 
 #include "gc/Heap.h"
+#include "jit/BaselineJIT.h"
+#include "jit/BaselineRegisters.h"
 
 namespace js {
 namespace jit {
@@ -544,8 +544,7 @@ class ICStub
             IC_STUB_KIND_LIST(DEF_KIND_STR)
 #undef DEF_KIND_STR
           default:
-            JS_NOT_REACHED("Invalid kind.");
-            return "INVALID_KIND";
+            MOZ_ASSUME_UNREACHABLE("Invalid kind.");
         }
     }
 
@@ -744,6 +743,11 @@ class ICStub
           case SetProp_CallScripted:
           case SetProp_CallNative:
           case RetSub_Fallback:
+          // These two fallback stubs don't actually make non-tail calls,
+          // but the fallback code for the bailout path needs to pop the stub frame
+          // pushed during the bailout.
+          case GetProp_Fallback:
+          case SetProp_Fallback:
             return true;
           default:
             return false;
@@ -980,9 +984,9 @@ class ICStubCompiler
     // Prevent GC in the middle of stub compilation.
     js::gc::AutoSuppressGC suppressGC;
 
-    mozilla::DebugOnly<bool> entersStubFrame_;
 
   protected:
+    mozilla::DebugOnly<bool> entersStubFrame_;
     JSContext *cx;
     ICStub::Kind kind;
 
@@ -1046,7 +1050,7 @@ class ICStubCompiler
             regs.take(R1);
             break;
           default:
-            JS_NOT_REACHED("Invalid numInputs");
+            MOZ_ASSUME_UNREACHABLE("Invalid numInputs");
         }
 
         return regs;
@@ -3759,7 +3763,9 @@ class ICGetProp_Fallback : public ICMonitoredFallbackStub
 
     class Compiler : public ICStubCompiler {
       protected:
+        uint32_t returnOffset_;
         bool generateStubCode(MacroAssembler &masm);
+        bool postGenerateStubCode(MacroAssembler &masm, Handle<IonCode *> code);
 
       public:
         Compiler(JSContext *cx)
@@ -4390,7 +4396,7 @@ class ICGetProp_CallDOMProxyWithGenerationNative : public ICGetPropCallDOMProxyN
 
 class ICGetPropCallDOMProxyNativeCompiler : public ICStubCompiler {
     ICStub *firstMonitorStub_;
-    RootedObject obj_;
+    Rooted<ProxyObject*> proxy_;
     RootedObject holder_;
     RootedFunction getter_;
     uint32_t pcOffset_;
@@ -4401,7 +4407,7 @@ class ICGetPropCallDOMProxyNativeCompiler : public ICStubCompiler {
 
   public:
     ICGetPropCallDOMProxyNativeCompiler(JSContext *cx, ICStub::Kind kind,
-                                        ICStub *firstMonitorStub, HandleObject obj,
+                                        ICStub *firstMonitorStub, Handle<ProxyObject*> proxy,
                                         HandleObject holder, HandleFunction getter,
                                         uint32_t pcOffset);
 
@@ -4455,18 +4461,18 @@ class ICGetProp_DOMProxyShadowed : public ICMonitoredStub
 
     class Compiler : public ICStubCompiler {
         ICStub *firstMonitorStub_;
-        RootedObject obj_;
+        Rooted<ProxyObject*> proxy_;
         RootedPropertyName name_;
         uint32_t pcOffset_;
 
         bool generateStubCode(MacroAssembler &masm);
 
       public:
-        Compiler(JSContext *cx, ICStub *firstMonitorStub, HandleObject obj, HandlePropertyName name,
-                 uint32_t pcOffset)
+        Compiler(JSContext *cx, ICStub *firstMonitorStub, Handle<ProxyObject*> proxy,
+                 HandlePropertyName name, uint32_t pcOffset)
           : ICStubCompiler(cx, ICStub::GetProp_CallNative),
             firstMonitorStub_(firstMonitorStub),
-            obj_(cx, obj),
+            proxy_(cx, proxy),
             name_(cx, name),
             pcOffset_(pcOffset)
         {}
@@ -4549,7 +4555,9 @@ class ICSetProp_Fallback : public ICFallbackStub
 
     class Compiler : public ICStubCompiler {
       protected:
+        uint32_t returnOffset_;
         bool generateStubCode(MacroAssembler &masm);
+        bool postGenerateStubCode(MacroAssembler &masm, Handle<IonCode *> code);
 
       public:
         Compiler(JSContext *cx)
@@ -5525,38 +5533,6 @@ class ICTypeOf_Typed : public ICFallbackStub
 
         ICStub *getStub(ICStubSpace *space) {
             return ICTypeOf_Typed::New(space, getStubCode(), type_);
-        }
-    };
-};
-
-// Rest
-//      JSOP_REST
-class ICRest_Fallback : public ICFallbackStub
-{
-    friend class ICStubSpace;
-
-    ICRest_Fallback(IonCode *stubCode)
-      : ICFallbackStub(ICStub::Rest_Fallback, stubCode)
-    { }
-
-  public:
-    static inline ICRest_Fallback *New(ICStubSpace *space, IonCode *code) {
-        if (!code)
-            return NULL;
-        return space->allocate<ICRest_Fallback>(code);
-    }
-
-    class Compiler : public ICStubCompiler {
-      protected:
-        bool generateStubCode(MacroAssembler &masm);
-
-      public:
-        Compiler(JSContext *cx)
-          : ICStubCompiler(cx, ICStub::Rest_Fallback)
-        { }
-
-        ICStub *getStub(ICStubSpace *space) {
-            return ICRest_Fallback::New(space, getStubCode());
         }
     };
 };

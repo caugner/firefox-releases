@@ -20,6 +20,7 @@
 #ifndef nsIPresShell_h___
 #define nsIPresShell_h___
 
+#include "mozilla/MemoryReporting.h"
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
 #include "nsISupports.h"
@@ -35,7 +36,7 @@
 #include <stdio.h> // for FILE definition
 #include "nsChangeHint.h"
 #include "nsGUIEvent.h"
-#include "nsInterfaceHashtable.h"
+#include "nsRefPtrHashtable.h"
 #include "nsEventStates.h"
 #include "nsPresArena.h"
 #include "nsIImageLoadingContent.h"
@@ -172,7 +173,8 @@ protected:
   typedef mozilla::layers::LayerManager LayerManager;
 
   enum eRenderFlag {
-    STATE_IGNORING_VIEWPORT_SCROLLING = 0x1
+    STATE_IGNORING_VIEWPORT_SCROLLING = 0x1,
+    STATE_DRAWWINDOW_NOT_FLUSHING = 0x2
   };
   typedef uint8_t RenderFlags; // for storing the above flags
 
@@ -205,7 +207,7 @@ public:
    * are also recycled using free lists.  Separate free lists are
    * maintained for each frame type (aID), which must always correspond
    * to the same aSize value.  AllocateFrame returns zero-filled memory.
-   * AllocateFrame is fallible, it returns nullptr on out-of-memory.
+   * AllocateFrame is infallible and will abort on out-of-memory.
    */
   void* AllocateFrame(nsQueryFrame::FrameIID aID, size_t aSize)
   {
@@ -230,7 +232,7 @@ public:
    * This is for allocating other types of objects (not frames).  Separate free
    * lists are maintained for each type (aID), which must always correspond to
    * the same aSize value.  AllocateByObjectID returns zero-filled memory.
-   * AllocateByObjectID is fallible, it returns nullptr on out-of-memory.
+   * AllocateByObjectID is infallible and will abort on out-of-memory.
    */
   void* AllocateByObjectID(nsPresArena::ObjectID aID, size_t aSize)
   {
@@ -256,7 +258,7 @@ public:
    * from a separate set of per-size free lists.  Note that different types
    * of objects that has the same size are allocated from the same list.
    * AllocateMisc does *not* clear the memory that it returns.
-   * AllocateMisc is fallible, it returns nullptr on out-of-memory.
+   * AllocateMisc is infallible and will abort on out-of-memory.
    *
    * @deprecated use AllocateByObjectID/FreeByObjectID instead
    */
@@ -982,7 +984,8 @@ public:
     RENDER_CARET = 0x04,
     RENDER_USE_WIDGET_LAYERS = 0x08,
     RENDER_ASYNC_DECODE_IMAGES = 0x10,
-    RENDER_DOCUMENT_RELATIVE = 0x20
+    RENDER_DOCUMENT_RELATIVE = 0x20,
+    RENDER_DRAWWINDOW_NOT_FLUSHING = 0x40
   };
   virtual NS_HIDDEN_(nsresult) RenderDocument(const nsRect& aRect, uint32_t aFlags,
                                               nscolor aBackgroundColor,
@@ -1126,7 +1129,7 @@ public:
 
   static CapturingContentInfo gCaptureInfo;
 
-  static nsInterfaceHashtable<nsUint32HashKey, nsIDOMTouch> gCaptureTouchList;
+  static nsRefPtrHashtable<nsUint32HashKey, mozilla::dom::Touch> gCaptureTouchList;
   static bool gPreventMouseEvents;
 
   /**
@@ -1220,6 +1223,13 @@ public:
   float GetYResolution() { return mYResolution; }
 
   /**
+   * Returns whether we are in a DrawWindow() call that used the
+   * DRAWWINDOW_DO_NOT_FLUSH flag.
+   */
+  bool InDrawWindowNotFlushing() const
+  { return mRenderFlags & STATE_DRAWWINDOW_NOT_FLUSHING; }
+
+  /**
    * Set the isFirstPaint flag.
    */
   void SetIsFirstPaint(bool aIsFirstPaint) { mIsFirstPaint = aIsFirstPaint; }
@@ -1283,7 +1293,7 @@ public:
   virtual bool IsVisible() = 0;
   virtual void DispatchSynthMouseMove(nsGUIEvent *aEvent, bool aFlushOnHoverChange) = 0;
 
-  virtual void SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
+  virtual void SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
                                    nsArenaMemoryStats *aArenaObjectsSize,
                                    size_t *aPresShellSize,
                                    size_t *aStyleSetsSize,

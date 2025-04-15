@@ -9,10 +9,18 @@ import logging
 import os
 import types
 
+import mozpack.path
+from mozpack.copier import FilePurger
+from mozpack.manifests import (
+    InstallManifest,
+    PurgeManifest,
+)
+
 from .base import BuildBackend
 from ..frontend.data import (
     ConfigFileSubstitution,
     DirectoryTraversal,
+    IPDLFile,
     SandboxDerived,
     VariablePassthru,
     Exports,
@@ -107,6 +115,7 @@ class RecursiveMakeBackend(BuildBackend):
 
     def _init(self):
         self._backend_files = {}
+        self._ipdl_sources = set()
 
         self.summary.managed_count = 0
         self.summary.created_count = 0
@@ -126,6 +135,17 @@ class RecursiveMakeBackend(BuildBackend):
 
         self.backend_input_files.add(os.path.join(self.environment.topobjdir,
             'config', 'autoconf.mk'))
+
+        self._install_manifests = dict()
+
+        self._purge_manifests = dict(
+            dist_bin=PurgeManifest(relpath='dist/bin'),
+            dist_include=PurgeManifest(relpath='dist/include'),
+            dist_private=PurgeManifest(relpath='dist/private'),
+            dist_public=PurgeManifest(relpath='dist/public'),
+            dist_sdk=PurgeManifest(relpath='dist/sdk'),
+            tests=PurgeManifest(relpath='_tests'),
+        )
 
     def _update_from_avoid_write(self, result):
         existed, updated = result
@@ -164,6 +184,9 @@ class RecursiveMakeBackend(BuildBackend):
                     backend_file.write('%s := %s\n' % (k, v))
         elif isinstance(obj, Exports):
             self._process_exports(obj.exports, backend_file)
+
+        elif isinstance(obj, IPDLFile):
+            self._ipdl_sources.add(mozpack.path.join(obj.srcdir, obj.basename))
 
         elif isinstance(obj, Program):
             self._process_program(obj.program, backend_file)
@@ -222,6 +245,28 @@ class RecursiveMakeBackend(BuildBackend):
             self._update_from_avoid_write(bf.close())
             self.summary.managed_count += 1
 
+
+        # Write out a master list of all IPDL source files.
+        ipdls = FileAvoidWrite(os.path.join(self.environment.topobjdir,
+            'ipc', 'ipdl', 'ipdlsrcs.mk'))
+        for p in sorted(self._ipdl_sources):
+            ipdls.write('ALL_IPDLSRCS += %s\n' % p)
+            base = os.path.basename(p)
+            root, ext = os.path.splitext(base)
+
+            # Both .ipdl and .ipdlh become .cpp files
+            ipdls.write('CPPSRCS += %s.cpp\n' % root)
+            if ext == '.ipdl':
+                # .ipdl also becomes Child/Parent.cpp files
+                ipdls.write('CPPSRCS += %sChild.cpp\n' % root)
+                ipdls.write('CPPSRCS += %sParent.cpp\n' % root)
+
+        ipdls.write('IPDLDIRS := %s\n' % ' '.join(sorted(set(os.path.dirname(p)
+            for p in self._ipdl_sources))))
+
+        self._update_from_avoid_write(ipdls.close())
+        self.summary.managed_count += 1
+
         # Write out a dependency file used to determine whether a config.status
         # re-run is needed.
         backend_built_path = os.path.join(self.environment.topobjdir,
@@ -251,6 +296,9 @@ class RecursiveMakeBackend(BuildBackend):
                 mastermanifest.write("[include:%s]\n" % manifest)
             self._update_from_avoid_write(mastermanifest.close())
             self.summary.managed_count += 1
+
+        self._write_manifests('install', self._install_manifests)
+        self._write_manifests('purge', self._purge_manifests)
 
     def _process_directory_traversal(self, obj, backend_file):
         """Process a data.DirectoryTraversal instance."""
@@ -309,6 +357,10 @@ class RecursiveMakeBackend(BuildBackend):
         if strings:
             backend_file.write('%s += %s\n' % (export_name, ' '.join(strings)))
 
+            for s in strings:
+                p = '%s%s' % (namespace, s)
+                self._purge_manifests['dist_include'].add(p)
+
         children = exports.get_children()
         for subdir in sorted(children):
             self._process_exports(children[subdir], backend_file,
@@ -323,3 +375,20 @@ class RecursiveMakeBackend(BuildBackend):
         if obj.relativedir != '':
             manifest = '%s/%s' % (obj.relativedir, manifest)
         self.xpcshell_manifests.append(manifest)
+
+    def _write_manifests(self, dest, manifests):
+        man_dir = os.path.join(self.environment.topobjdir, '_build_manifests',
+            dest)
+
+        # We have a purger for the manifests themselves to ensure legacy
+        # manifests are deleted.
+        purger = FilePurger()
+
+        for k, manifest in manifests.items():
+            purger.add(k)
+
+            fh = FileAvoidWrite(os.path.join(man_dir, k))
+            manifest.write(fileobj=fh)
+            self._update_from_avoid_write(fh.close())
+
+        purger.purge(man_dir)

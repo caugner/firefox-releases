@@ -9,12 +9,12 @@
 
 #include "mozilla/Attributes.h"
 
-#include "Ion.h"
-#include "MIR.h"
-#include "MIRGraph.h"
-#include "InlineList.h"
-#include "LIR.h"
-#include "Lowering.h"
+#include "jit/InlineList.h"
+#include "jit/Ion.h"
+#include "jit/LIR.h"
+#include "jit/Lowering.h"
+#include "jit/MIR.h"
+#include "jit/MIRGraph.h"
 
 // Generic structures and functions for use by register allocators.
 
@@ -65,9 +65,9 @@ struct AllocationIntegrityState
 
         InstructionInfo(const InstructionInfo &o)
         {
-            inputs.append(o.inputs);
-            temps.append(o.temps);
-            outputs.append(o.outputs);
+            inputs.appendAll(o.inputs);
+            temps.appendAll(o.temps);
+            outputs.appendAll(o.outputs);
         }
     };
     Vector<InstructionInfo, 0, SystemAllocPolicy> instructions;
@@ -76,7 +76,7 @@ struct AllocationIntegrityState
         Vector<InstructionInfo, 5, SystemAllocPolicy> phis;
         BlockInfo() {}
         BlockInfo(const BlockInfo &o) {
-            phis.append(o.phis);
+            phis.appendAll(o.phis);
         }
     };
     Vector<BlockInfo, 0, SystemAllocPolicy> blocks;
@@ -297,14 +297,13 @@ class RegisterAllocator
     // Computed data
     InstructionDataMap insData;
 
-  public:
     RegisterAllocator(MIRGenerator *mir, LIRGenerator *lir, LIRGraph &graph)
       : mir(mir),
         lir(lir),
         graph(graph),
         allRegisters_(RegisterSet::All())
     {
-        if (FramePointer != InvalidReg && lir->mir()->instrumentedProfiling())
+        if (FramePointer != InvalidReg && mir->instrumentedProfiling())
             allRegisters_.take(AnyRegister(FramePointer));
 #if defined(JS_CPU_X64)
         if (mir->compilingAsmJS())
@@ -318,7 +317,6 @@ class RegisterAllocator
 #endif
     }
 
-  protected:
     bool init();
 
     CodePosition outputOf(uint32_t pos) const {
@@ -355,6 +353,14 @@ class RegisterAllocator
         return i;
     }
 };
+
+static inline AnyRegister
+GetFixedRegister(LDefinition *def, const LUse *use)
+{
+    return def->type() == LDefinition::DOUBLE
+           ? AnyRegister(FloatRegister::FromCode(use->registerCode()))
+           : AnyRegister(Register::FromCode(use->registerCode()));
+}
 
 } // namespace jit
 } // namespace js

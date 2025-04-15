@@ -134,7 +134,6 @@
 @BINPATH@/components/dom.xpt
 @BINPATH@/components/dom_apps.xpt
 @BINPATH@/components/dom_base.xpt
-@BINPATH@/components/dom_battery.xpt
 @BINPATH@/components/dom_camera.xpt
 @BINPATH@/components/dom_canvas.xpt
 @BINPATH@/components/dom_core.xpt
@@ -157,6 +156,7 @@
 @BINPATH@/components/dom_quota.xpt
 @BINPATH@/components/dom_range.xpt
 @BINPATH@/components/dom_settings.xpt
+@BINPATH@/components/dom_permissionsettings.xpt
 @BINPATH@/components/dom_sidebar.xpt
 @BINPATH@/components/dom_mobilemessage.xpt
 @BINPATH@/components/dom_storage.xpt
@@ -294,6 +294,10 @@
 @BINPATH@/components/BrowserFeeds.manifest
 @BINPATH@/components/FeedConverter.js
 @BINPATH@/components/FeedWriter.js
+@BINPATH@/components/PermissionSettings.js
+@BINPATH@/components/PermissionSettings.manifest
+@BINPATH@/components/PermissionPromptService.js
+@BINPATH@/components/PermissionPromptService.manifest
 @BINPATH@/components/fuelApplication.manifest
 @BINPATH@/components/fuelApplication.js
 @BINPATH@/components/WebContentConverter.js
@@ -392,6 +396,7 @@
 
 @BINPATH@/components/TCPSocket.js
 @BINPATH@/components/TCPSocketParentIntermediary.js
+@BINPATH@/components/TCPServerSocket.js
 @BINPATH@/components/TCPSocket.manifest
 
 #ifdef MOZ_WEBRTC
@@ -547,7 +552,6 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/chrome/chrome.manifest
 @BINPATH@/components/AboutRedirector.js
 @BINPATH@/components/AddonUpdateService.js
-@BINPATH@/components/AlertsService.js
 @BINPATH@/components/BlocklistPrompt.js
 @BINPATH@/components/BrowserCLH.js
 @BINPATH@/components/ContentDispatchChooser.js

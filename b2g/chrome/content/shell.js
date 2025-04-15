@@ -39,16 +39,6 @@ XPCOMUtils.defineLazyServiceGetter(this, 'gSystemMessenger',
                                    '@mozilla.org/system-message-internal;1',
                                    'nsISystemMessagesInternal');
 
-#ifdef MOZ_WIDGET_GONK
-XPCOMUtils.defineLazyServiceGetter(Services, 'audioManager',
-                                   '@mozilla.org/telephony/audiomanager;1',
-                                   'nsIAudioManager');
-#else
-Services.audioManager = {
-  'masterVolume': 0
-};
-#endif
-
 XPCOMUtils.defineLazyServiceGetter(Services, 'fm',
                                    '@mozilla.org/focus-manager;1',
                                    'nsIFocusManager');
@@ -344,9 +334,6 @@ var shell = {
       this.timer = null;
     }
 
-#ifndef MOZ_WIDGET_GONK
-    delete Services.audioManager;
-#endif
     UserAgentOverrides.uninit();
     IndexedDBPromptHelper.uninit();
   },
@@ -482,9 +469,6 @@ var shell = {
 
         this.reportCrash(true);
 
-        let chromeWindow = window.QueryInterface(Ci.nsIDOMChromeWindow);
-        chromeWindow.browserDOMWindow = new nsBrowserAccess();
-
         Cu.import('resource://gre/modules/Webapps.jsm');
         DOMApplicationRegistry.allAppsLaunchable = true;
 
@@ -571,8 +555,11 @@ var shell = {
       url: msg.uri,
       manifestURL: msg.manifest,
       isActivity: (msg.type == 'activity'),
+      onlyShowApp: msg.onlyShowApp,
+      showApp: msg.showApp,
       target: msg.target,
-      expectingSystemMessage: true
+      expectingSystemMessage: true,
+      extra: msg.extra
     });
   },
 
@@ -605,37 +592,6 @@ var shell = {
         sender.sendAsyncMessage(activity.response, { success: false });
       }
     }
-  }
-};
-
-function nsBrowserAccess() {
-}
-
-nsBrowserAccess.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIBrowserDOMWindow]),
-
-  openURI: function openURI(uri, opener, where, context) {
-    // TODO This should be replaced by an 'open-browser-window' intent
-    let content = shell.contentBrowser.contentWindow;
-    let contentWindow = content.wrappedJSObject;
-    if (!('getApplicationManager' in contentWindow))
-      return null;
-
-    let applicationManager = contentWindow.getApplicationManager();
-    if (!applicationManager)
-      return null;
-
-    let url = uri ? uri.spec : 'about:blank';
-    let window = applicationManager.launch(url, where);
-    return window.contentWindow;
-  },
-
-  openURIInFrame: function openURIInFrame(uri, opener, where, context) {
-    throw new Error('Not Implemented');
-  },
-
-  isTabContentWindow: function isTabContentWindow(contentWindow) {
-    return contentWindow == window;
   }
 };
 
@@ -1023,17 +979,21 @@ let RemoteDebugger = {
     if (!DebuggerServer.initialized) {
       // Ask for remote connections.
       DebuggerServer.init(this.prompt.bind(this));
+      DebuggerServer.chromeWindowType = "navigator:browser";
       DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webbrowser.js");
-#ifndef MOZ_WIDGET_GONK
-      DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/script.js");
-      DebuggerServer.addGlobalActor(DebuggerServer.ChromeDebuggerActor, "chromeDebugger");
-      DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webconsole.js");
-      DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/gcli.js");
-#endif
-      if ("nsIProfiler" in Ci) {
-        DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/profiler.js");
+      // Until we implement unix domain socket, we enable content actors
+      // only on development devices
+      if (Services.prefs.getBoolPref("devtools.debugger.enable-content-actors")) {
+        DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/script.js");
+        DebuggerServer.addGlobalActor(DebuggerServer.ChromeDebuggerActor, "chromeDebugger");
+        DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webconsole.js");
+        DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/gcli.js");
+        if ("nsIProfiler" in Ci) {
+          DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/profiler.js");
+        }
+        DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/styleeditor.js");
+        DebuggerServer.enableWebappsContentActor = true;
       }
-      DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/styleeditor.js");
       DebuggerServer.addActors('chrome://browser/content/dbg-browser-actors.js');
       DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webapps.js");
     }

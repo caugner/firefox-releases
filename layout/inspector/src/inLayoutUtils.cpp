@@ -12,6 +12,7 @@
 #include "nsIDocShell.h"
 #include "nsIPresShell.h"
 #include "nsPresContext.h"
+#include "mozilla/dom/Element.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -68,19 +69,6 @@ inLayoutUtils::GetEventStateManagerFor(nsIDOMElement *aElement)
   return shell->GetPresContext()->EventStateManager();
 }
 
-nsBindingManager* 
-inLayoutUtils::GetBindingManagerFor(nsIDOMNode* aNode)
-{
-  nsCOMPtr<nsIDOMDocument> domdoc;
-  aNode->GetOwnerDocument(getter_AddRefs(domdoc));
-  if (domdoc) {
-    nsCOMPtr<nsIDocument> doc = do_QueryInterface(domdoc);
-    return doc->BindingManager();
-  }
-  
-  return nullptr;
-}
-
 nsIDOMDocument*
 inLayoutUtils::GetSubDocumentFor(nsIDOMNode* aNode)
 {
@@ -93,19 +81,19 @@ inLayoutUtils::GetSubDocumentFor(nsIDOMNode* aNode)
       return domdoc;
     }
   }
-  
+
   return nullptr;
 }
 
 nsIDOMNode*
-inLayoutUtils::GetContainerFor(nsIDOMDocument* aDoc)
+inLayoutUtils::GetContainerFor(const nsIDocument& aDoc)
 {
-  nsCOMPtr<nsIDocument> doc = do_QueryInterface(aDoc);
-  if (!doc) return nullptr;
+  nsPIDOMWindow* pwin = aDoc.GetWindow();
+  if (!pwin) {
+    return nullptr;
+  }
 
-  nsPIDOMWindow *pwin = doc->GetWindow();
-  if (!pwin) return nullptr;
-
-  return pwin->GetFrameElementInternal();
+  nsCOMPtr<nsIDOMNode> node = do_QueryInterface(pwin->GetFrameElementInternal());
+  return node;
 }
 

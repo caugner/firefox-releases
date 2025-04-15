@@ -7,8 +7,6 @@
 #include "jit/Ion.h"
 #include "jit/IonFrames.h"
 
-#include "jsscriptinlines.h"
-
 using namespace js;
 using namespace js::jit;
 

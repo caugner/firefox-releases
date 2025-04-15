@@ -23,9 +23,12 @@ SVGTextPathElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
   return SVGTextPathElementBinding::Wrap(aCx, aScope, this);
 }
 
-nsSVGElement::LengthInfo SVGTextPathElement::sLengthInfo[1] =
+nsSVGElement::LengthInfo SVGTextPathElement::sLengthInfo[2] =
 {
-  { &nsGkAtoms::startOffset, 0, nsIDOMSVGLength::SVG_LENGTHTYPE_NUMBER, SVGContentUtils::X },
+  // from SVGTextContentElement:
+  { &nsGkAtoms::textLength, 0, nsIDOMSVGLength::SVG_LENGTHTYPE_NUMBER, SVGContentUtils::XY },
+  // from SVGTextPathElement:
+  { &nsGkAtoms::startOffset, 0, nsIDOMSVGLength::SVG_LENGTHTYPE_NUMBER, SVGContentUtils::X }
 };
 
 nsSVGEnumMapping SVGTextPathElement::sMethodMap[] = {
@@ -40,8 +43,14 @@ nsSVGEnumMapping SVGTextPathElement::sSpacingMap[] = {
   {nullptr, 0}
 };
 
-nsSVGElement::EnumInfo SVGTextPathElement::sEnumInfo[2] =
+nsSVGElement::EnumInfo SVGTextPathElement::sEnumInfo[3] =
 {
+  // from SVGTextContentElement:
+  { &nsGkAtoms::lengthAdjust,
+    sLengthAdjustMap,
+    SVG_LENGTHADJUST_SPACING
+  },
+  // from SVGTextPathElement:
   { &nsGkAtoms::method,
     sMethodMap,
     TEXTPATH_METHODTYPE_ALIGN
@@ -84,13 +93,13 @@ SVGTextPathElement::StartOffset()
   return mLengthAttributes[STARTOFFSET].ToDOMAnimatedLength(this);
 }
 
-already_AddRefed<nsIDOMSVGAnimatedEnumeration>
+already_AddRefed<SVGAnimatedEnumeration>
 SVGTextPathElement::Method()
 {
   return mEnumAttributes[METHOD].ToDOMAnimatedEnum(this);
 }
 
-already_AddRefed<nsIDOMSVGAnimatedEnumeration>
+already_AddRefed<SVGAnimatedEnumeration>
 SVGTextPathElement::Spacing()
 {
   return mEnumAttributes[SPACING].ToDOMAnimatedEnum(this);

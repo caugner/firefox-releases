@@ -27,7 +27,6 @@
 #include "nsIDOMXPathNSResolver.h"
 #include "nsPresContext.h"
 #include "nsDOMClassInfoID.h" // DOMCI_DATA
-#include "nsIInlineEventHandlers.h"
 #include "mozilla/CORSMode.h"
 #include "mozilla/Attributes.h"
 #include "nsContentUtils.h"
@@ -38,7 +37,7 @@
 #include "nsEvent.h"
 #include "nsAttrValue.h"
 #include "mozilla/dom/BindingDeclarations.h"
-#include "nsIHTMLCollection.h"
+#include "Units.h"
 
 class nsIDOMEventListener;
 class nsIFrame;
@@ -406,7 +405,20 @@ public:
                               bool aCompileEventHandlers) MOZ_OVERRIDE;
   virtual void UnbindFromTree(bool aDeep = true,
                               bool aNullParent = true) MOZ_OVERRIDE;
-  virtual already_AddRefed<nsINodeInfo> GetExistingAttrNameFromQName(const nsAString& aStr) const MOZ_OVERRIDE;
+
+  /**
+   * Normalizes an attribute name and returns it as a nodeinfo if an attribute
+   * with that name exists. This method is intended for character case
+   * conversion if the content object is case insensitive (e.g. HTML). Returns
+   * the nodeinfo of the attribute with the specified name if one exists or
+   * null otherwise.
+   *
+   * @param aStr the unparsed attribute string
+   * @return the node info. May be nullptr.
+   */
+  already_AddRefed<nsINodeInfo>
+  GetExistingAttrNameFromQName(const nsAString& aStr) const;
+
   nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                    const nsAString& aValue, bool aNotify)
   {
@@ -599,36 +611,6 @@ public:
                            ErrorResult& aError);
   already_AddRefed<nsIHTMLCollection>
     GetElementsByClassName(const nsAString& aClassNames);
-  Element* GetFirstElementChild() const;
-  Element* GetLastElementChild() const;
-  Element* GetPreviousElementSibling() const
-  {
-    nsIContent* previousSibling = GetPreviousSibling();
-    while (previousSibling) {
-      if (previousSibling->IsElement()) {
-        return previousSibling->AsElement();
-      }
-      previousSibling = previousSibling->GetPreviousSibling();
-    }
-
-    return nullptr;
-  }
-  Element* GetNextElementSibling() const
-  {
-    nsIContent* nextSibling = GetNextSibling();
-    while (nextSibling) {
-      if (nextSibling->IsElement()) {
-        return nextSibling->AsElement();
-      }
-      nextSibling = nextSibling->GetNextSibling();
-    }
-
-    return nullptr;
-  }
-  uint32_t ChildElementCount()
-  {
-    return Children()->Length();
-  }
   bool MozMatchesSelector(const nsAString& aSelector,
                           ErrorResult& aError);
   void SetCapture(bool aRetargetToElement)
@@ -674,8 +656,8 @@ public:
   {
     nsIScrollableFrame* sf = GetScrollFrame();
     if (sf) {
-      sf->ScrollToCSSPixels(nsIntPoint(sf->GetScrollPositionCSSPixels().x,
-                                       aScrollTop));
+      sf->ScrollToCSSPixels(CSSIntPoint(sf->GetScrollPositionCSSPixels().x,
+                                        aScrollTop));
     }
   }
   int32_t ScrollLeft()
@@ -687,8 +669,8 @@ public:
   {
     nsIScrollableFrame* sf = GetScrollFrame();
     if (sf) {
-      sf->ScrollToCSSPixels(nsIntPoint(aScrollLeft,
-                                       sf->GetScrollPositionCSSPixels().y));
+      sf->ScrollToCSSPixels(CSSIntPoint(aScrollLeft,
+                                        sf->GetScrollPositionCSSPixels().y));
     }
   }
   int32_t ScrollWidth();
@@ -1272,14 +1254,6 @@ _elementName::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const        \
   return rv;                                                                \
 }
 
-#define DOMCI_NODE_DATA(_interface, _class)                             \
-  DOMCI_DATA(_interface, _class)                                        \
-  nsXPCClassInfo* _class::GetClassInfo()                                \
-  {                                                                     \
-    return static_cast<nsXPCClassInfo*>(                                \
-      NS_GetDOMClassInfoInstance(eDOMClassInfo_##_interface##_id));     \
-  }
-
 /**
  * A macro to implement the getter and setter for a given string
  * valued content property. The method uses the generic GetAttr and
@@ -1622,6 +1596,18 @@ NS_IMETHOD MozRequestPointerLock(void) MOZ_FINAL                              \
 {                                                                             \
   Element::MozRequestPointerLock();                                           \
   return NS_OK;                                                               \
+}                                                                             \
+using nsINode::QuerySelector;                                                 \
+NS_IMETHOD QuerySelector(const nsAString& aSelector,                          \
+                         nsIDOMElement **aReturn) MOZ_FINAL                   \
+{                                                                             \
+  return nsINode::QuerySelector(aSelector, aReturn);                          \
+}                                                                             \
+using nsINode::QuerySelectorAll;                                              \
+NS_IMETHOD QuerySelectorAll(const nsAString& aSelector,                       \
+                            nsIDOMNodeList **aReturn) MOZ_FINAL               \
+{                                                                             \
+  return nsINode::QuerySelectorAll(aSelector, aReturn);                       \
 }
 
 #endif // mozilla_dom_Element_h__

@@ -19,7 +19,6 @@
 #include "nsTArray.h"
 #include "nsIURI.h"
 #include "mozilla/dom/EventTarget.h"
-
 #include "js/RootingAPI.h"
 
 #define DOM_WINDOW_DESTROYED_TOPIC "dom-window-destroyed"
@@ -54,6 +53,7 @@ class nsPIWindowRoot;
 namespace mozilla {
 namespace dom {
 class AudioContext;
+class Element;
 }
 }
 
@@ -196,34 +196,8 @@ public:
   // Internal getter/setter for the frame element, this version of the
   // getter crosses chrome boundaries whereas the public scriptable
   // one doesn't for security reasons.
-  nsIDOMElement* GetFrameElementInternal() const
-  {
-    if (mOuterWindow) {
-      return mOuterWindow->GetFrameElementInternal();
-    }
-
-    NS_ASSERTION(!IsInnerWindow(),
-                 "GetFrameElementInternal() called on orphan inner window");
-
-    return mFrameElement;
-  }
-
-  void SetFrameElementInternal(nsIDOMElement *aFrameElement)
-  {
-    if (IsOuterWindow()) {
-      mFrameElement = aFrameElement;
-
-      return;
-    }
-
-    if (!mOuterWindow) {
-      NS_ERROR("frameElement set on inner window with no outer!");
-
-      return;
-    }
-
-    mOuterWindow->SetFrameElementInternal(aFrameElement);
-  }
+  mozilla::dom::Element* GetFrameElementInternal() const;
+  void SetFrameElementInternal(mozilla::dom::Element* aFrameElement);
 
   bool IsLoadingOrRunningTimeout() const
   {
@@ -339,9 +313,8 @@ public:
   nsPIDOMWindow *EnsureInnerWindow()
   {
     NS_ASSERTION(IsOuterWindow(), "EnsureInnerWindow called on inner window");
-    // GetDocument forces inner window creation if there isn't one already
-    nsCOMPtr<nsIDOMDocument> doc;
-    GetDocument(getter_AddRefs(doc));
+    // GetDoc forces inner window creation if there isn't one already
+    GetDoc();
     return GetCurrentInnerWindow();
   }
 
@@ -644,6 +617,7 @@ public:
                  const nsAString& aOptions, nsIDOMWindow **_retval) = 0;
 
   void AddAudioContext(mozilla::dom::AudioContext* aAudioContext);
+  void RemoveAudioContext(mozilla::dom::AudioContext* aAudioContext);
   void MuteAudioContexts();
   void UnmuteAudioContexts();
 
@@ -698,7 +672,7 @@ protected:
   nsCOMPtr<mozilla::dom::EventTarget> mParentTarget; // strong
 
   // These members are only used on outer windows.
-  nsCOMPtr<nsIDOMElement> mFrameElement;
+  nsCOMPtr<mozilla::dom::Element> mFrameElement;
   nsIDocShell           *mDocShell;  // Weak Reference
 
   // mPerformance is only used on inner windows.
@@ -740,7 +714,7 @@ protected:
   nsCOMPtr<nsIContent> mFocusedNode;
 
   // The AudioContexts created for the current document, if any.
-  nsTArray<nsRefPtr<mozilla::dom::AudioContext> > mAudioContexts;
+  nsTArray<mozilla::dom::AudioContext*> mAudioContexts; // Weak
 
   // A unique (as long as our 64-bit counter doesn't roll over) id for
   // this window.

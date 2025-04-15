@@ -214,6 +214,10 @@
                 onget="return this.webNavigation.currentURI;"
                 readonly="true"/>
 
+      <property name="documentURI"
+                onget="return this.contentDocument.documentURIObject;"
+                readonly="true"/>
+
       <property name="preferences"
                 onget="return this.mPrefs.QueryInterface(Components.interfaces.nsIPrefService);"
                 readonly="true"/>
@@ -237,6 +241,22 @@
             return false;
           ]]>
         </setter>
+      </property>
+
+      <property name="imageDocument"
+                readonly="true">
+        <getter>
+          <![CDATA[
+            var document = this.contentDocument;
+            if (!document || !(document instanceof Ci.nsIImageDocument))
+              return null;
+
+            try {
+                return {width: document.imageRequest.image.width, height: document.imageRequest.image.height };
+            } catch (e) {}
+            return null;
+          ]]>
+        </getter>
       </property>
 
       <property name="isRemoteBrowser"
@@ -360,7 +380,7 @@
               return null;
 
             var tabBrowser = this.getTabBrowser();
-            if (tabBrowser)
+            if (tabBrowser && "fastFind" in tabBrowser)
               return this._fastFind = tabBrowser.fastFind;
 
             if (!this.docShell)
@@ -565,7 +585,8 @@
             if (!this.docShell || !this.fastFind)
               return;
             var tabBrowser = this.getTabBrowser();
-            if (!tabBrowser || tabBrowser.mCurrentBrowser == this)
+            if (!tabBrowser || !("fastFind" in tabBrowser) ||
+                tabBrowser.selectedBrowser == this)
               this.fastFind.setDocShell(this.docShell);
 
             if (this._scrollable) {
@@ -1119,16 +1140,16 @@
                 this.stopScroll();
                 break;
               }
-              case "keypress": {
+              case "keydown": {
                 if (aEvent.keyCode == aEvent.DOM_VK_ESCAPE) {
                   // the escape key will be processed by
-                  // nsXULPopupManager::KeyPress and the panel will be closed.
-                  // So, nothing to do here.
+                  // nsXULPopupManager::KeyDown and the panel will be closed.
+                  // So, don't consume the key event here.
                   break;
                 }
-                // don't break here. we need to eat keypress events.
+                // don't break here. we need to eat keydown events.
               }
-              case "keydown":
+              case "keypress":
               case "keyup": {
                 // All keyevents should be eaten here during autoscrolling.
                 aEvent.stopPropagation();

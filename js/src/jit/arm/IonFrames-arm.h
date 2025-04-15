@@ -8,7 +8,6 @@
 #define jit_arm_IonFrames_arm_h
 
 #include "jit/shared/IonFrames-shared.h"
-//#include "jit/arm/Assembler-arm.h"
 
 namespace js {
 namespace jit {

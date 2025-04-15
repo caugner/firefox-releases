@@ -55,7 +55,10 @@ public:
   MediaChannelStatistics(MediaChannelStatistics * aCopyFrom)
   {
     MOZ_ASSERT(aCopyFrom);
-    *this = *aCopyFrom;
+    mAccumulatedBytes = aCopyFrom->mAccumulatedBytes;
+    mAccumulatedTime = aCopyFrom->mAccumulatedTime;
+    mLastStartTime = aCopyFrom->mLastStartTime;
+    mIsStarted = aCopyFrom->mIsStarted;
   }
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaChannelStatistics)
@@ -189,7 +192,8 @@ inline MediaByteRange::MediaByteRange(TimestampedMediaByteRange& aByteRange)
  * Decoder they are called on the Decode thread for example. You must
  * ensure that no threads are calling these methods once Close is called.
  *
- * Instances of this class are explicitly managed. 'delete' it when done.
+ * Instances of this class are reference counted. Use nsRefPtr for
+ * managing the lifetime of instances of this class.
  *
  * The generic implementation of this class is ChannelMediaResource, which can
  * handle any URI for which Necko supports AsyncOpen.
@@ -247,6 +251,12 @@ public:
   // available bytes is less than aCount. Always check *aBytes after
   // read, and call again if necessary.
   virtual nsresult Read(char* aBuffer, uint32_t aCount, uint32_t* aBytes) = 0;
+  // Read up to aCount bytes from the stream. The read starts at
+  // aOffset in the stream, seeking to that location initially if
+  // it is not the current stream offset. The remaining arguments,
+  // results and requirements are the same as per the Read method.
+  virtual nsresult ReadAt(int64_t aOffset, char* aBuffer,
+                          uint32_t aCount, uint32_t* aBytes) = 0;
   // Seek to the given bytes offset in the stream. aWhence can be
   // one of:
   //   NS_SEEK_SET
@@ -518,6 +528,8 @@ public:
   virtual void     SetReadMode(MediaCacheStream::ReadMode aMode);
   virtual void     SetPlaybackRate(uint32_t aBytesPerSecond);
   virtual nsresult Read(char* aBuffer, uint32_t aCount, uint32_t* aBytes);
+  virtual nsresult ReadAt(int64_t offset, char* aBuffer,
+                          uint32_t aCount, uint32_t* aBytes);
   virtual nsresult Seek(int32_t aWhence, int64_t aOffset);
   virtual void     StartSeekingForMetadata();
   virtual void     EndSeekingForMetadata();

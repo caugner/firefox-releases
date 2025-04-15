@@ -213,7 +213,7 @@ class ReftestServer:
         self._process = self._automation.Process([xpcshell] + args, env = env)
         pid = self._process.pid
         if pid < 0:
-            print "Error starting server."
+            print "TEST-UNEXPECTED-FAIL | remotereftests.py | Error starting server."
             return 2
         self._automation.log.info("INFO | remotereftests.py | Server pid: %d", pid)
 
@@ -233,7 +233,7 @@ class ReftestServer:
             time.sleep(1)
             i += 1
         else:
-            print "Timed out while waiting for server startup."
+            print "TEST-UNEXPECTED-FAIL | remotereftests.py | Timed out while waiting for server startup."
             self.stop()
             return 1
 
@@ -399,6 +399,16 @@ user_pref("capability.principal.codebase.p2.id", "http://%s:%s");
     def getManifestPath(self, path):
         return path
 
+    def printDeviceInfo(self, printLogcat=False):
+        try:
+            if printLogcat:
+                logcat = self._devicemanager.getLogcat(filterOutRegexps=fennecLogcatFilters)
+                print ''.join(logcat)
+            print "Device info: %s" % self._devicemanager.getInfo()
+            print "Test root: %s" % self._devicemanager.getDeviceRoot()
+        except devicemanager.DMError:
+            print "WARNING: Error getting device information"
+
     def cleanup(self, profileDir):
         # Pull results back from device
         if self.remoteLogFile and \
@@ -435,7 +445,7 @@ def main(args):
         else:
             dm = droid.DroidSUT(options.deviceIP, options.devicePort, deviceRoot=options.remoteTestRoot)
     except devicemanager.DMError:
-        print "Error: exception while initializing devicemanager.  Most likely the device is not in a testable state."
+        print "Automation Error: exception while initializing devicemanager.  Most likely the device is not in a testable state."
         return 1
 
     automation.setDeviceManager(dm)
@@ -486,7 +496,7 @@ def main(args):
     if (dm.processExist(procName)):
         dm.killProcess(procName)
 
-    print dm.getInfo()
+    reftest.printDeviceInfo()
 
 #an example manifest name to use on the cli
 #    manifest = "http://" + options.remoteWebServer + "/reftests/layout/reftests/reftest-sanity/reftest.list"
@@ -503,12 +513,8 @@ def main(args):
         retVal = 1
 
     reftest.stopWebServer(options)
-    try:
-        logcat = dm.getLogcat(filterOutRegexps=fennecLogcatFilters)
-        print ''.join(logcat)
-        print dm.getInfo()
-    except devicemanager.DMError:
-        print "WARNING: Error getting device information at end of test"
+
+    reftest.printDeviceInfo(printLogcat=True)
 
     return retVal
 

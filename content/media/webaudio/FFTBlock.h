@@ -23,19 +23,30 @@ public:
     , mIFFT(nullptr)
     , mFFTSize(aFFTSize)
   {
+    MOZ_COUNT_CTOR(FFTBlock);
     mOutputBuffer.SetLength(aFFTSize / 2 + 1);
     PodZero(mOutputBuffer.Elements(), aFFTSize / 2 + 1);
   }
   ~FFTBlock()
   {
+    MOZ_COUNT_DTOR(FFTBlock);
     Clear();
   }
 
+  // Return a new FFTBlock with frequency components interpolated between
+  // |block0| and |block1| with |interp| between 0.0 and 1.0.
+  static FFTBlock*
+  CreateInterpolatedBlock(const FFTBlock& block0,
+                          const FFTBlock& block1, double interp);
+
+  // Transform FFTSize() points of aData and store the result internally.
   void PerformFFT(const float* aData)
   {
     EnsureFFT();
     kiss_fftr(mFFT, aData, mOutputBuffer.Elements());
   }
+  // Inverse-transform internal data and store the resulting FFTSize()
+  // points in aData.
   void PerformInverseFFT(float* aData)
   {
     EnsureIFFT();
@@ -44,6 +55,27 @@ public:
       aData[i] /= mFFTSize;
     }
   }
+  // Inverse-transform the FFTSize()/2+1 points of data in each
+  // of aRealDataIn and aImagDataIn and store the resulting
+  // FFTSize() points in aRealDataOut.
+  void PerformInverseFFT(float* aRealDataIn,
+                         float *aImagDataIn,
+                         float *aRealDataOut)
+  {
+    EnsureIFFT();
+    const uint32_t inputSize = mFFTSize / 2 + 1;
+    nsTArray<kiss_fft_cpx> inputBuffer;
+    inputBuffer.SetLength(inputSize);
+    for (uint32_t i = 0; i < inputSize; ++i) {
+      inputBuffer[i].r = aRealDataIn[i];
+      inputBuffer[i].i = aImagDataIn[i];
+    }
+    kiss_fftri(mIFFT, inputBuffer.Elements(), aRealDataOut);
+    for (uint32_t i = 0; i < mFFTSize; ++i) {
+      aRealDataOut[i] /= mFFTSize;
+    }
+  }
+
   void Multiply(const FFTBlock& aFrame)
   {
     BufferComplexMultiply(reinterpret_cast<const float*>(mOutputBuffer.Elements()),
@@ -70,6 +102,9 @@ public:
     Clear();
   }
 
+  // Return the average group delay and removes this from the frequency data.
+  double ExtractAverageGroupDelay();
+
   uint32_t FFTSize() const
   {
     return mFFTSize;
@@ -84,6 +119,9 @@ public:
   }
 
 private:
+  FFTBlock(const FFTBlock& other) MOZ_DELETE;
+  void operator=(const FFTBlock& other) MOZ_DELETE;
+
   void EnsureFFT()
   {
     if (!mFFT) {
@@ -102,8 +140,10 @@ private:
     free(mIFFT);
     mFFT = mIFFT = nullptr;
   }
+  void AddConstantGroupDelay(double sampleFrameDelay);
+  void InterpolateFrequencyComponents(const FFTBlock& block0,
+                                      const FFTBlock& block1, double interp);
 
-private:
   kiss_fftr_cfg mFFT, mIFFT;
   nsTArray<kiss_fft_cpx> mOutputBuffer;
   uint32_t mFFTSize;

@@ -66,20 +66,35 @@ enum SrcNoteType {
 
     SRC_CATCH       = 16,       /* catch block has guard */
 
+    SRC_TRY         = 17,       /* JSOP_TRY, offset points to goto at the
+                                   end of the try block. */
+
     /* All notes below here are "gettable".  See SN_IS_GETTABLE below. */
-    SRC_LAST_GETTABLE = SRC_CATCH,
+    SRC_LAST_GETTABLE = SRC_TRY,
 
-    SRC_COLSPAN     = 17,       /* number of columns this opcode spans */
-    SRC_NEWLINE     = 18,       /* bytecode follows a source newline */
-    SRC_SETLINE     = 19,       /* a file-absolute source line number note */
+    SRC_COLSPAN     = 18,       /* number of columns this opcode spans */
+    SRC_NEWLINE     = 19,       /* bytecode follows a source newline */
+    SRC_SETLINE     = 20,       /* a file-absolute source line number note */
 
-    SRC_UNUSED20    = 20,
     SRC_UNUSED21    = 21,
     SRC_UNUSED22    = 22,
     SRC_UNUSED23    = 23,
 
     SRC_XDELTA      = 24        /* 24-31 are for extended delta notes */
 };
+
+/* A source note array is terminated by an all-zero element. */
+inline void
+SN_MAKE_TERMINATOR(jssrcnote *sn)
+{
+    *sn = SRC_NULL;
+}
+
+inline bool
+SN_IS_TERMINATOR(jssrcnote *sn)
+{
+    return *sn == SRC_NULL;
+}
 
 }  // namespace js
 
@@ -140,10 +155,6 @@ enum SrcNoteType {
 #define SN_LENGTH(sn)           ((js_SrcNoteSpec[SN_TYPE(sn)].arity == 0) ? 1 \
                                  : js_SrcNoteLength(sn))
 #define SN_NEXT(sn)             ((sn) + SN_LENGTH(sn))
-
-/* A source note array is terminated by an all-zero element. */
-#define SN_MAKE_TERMINATOR(sn)  (*(sn) = SRC_NULL)
-#define SN_IS_TERMINATOR(sn)    (*(sn) == SRC_NULL)
 
 struct JSSrcNoteSpec {
     const char      *name;      /* name for disassembly/debugging output */

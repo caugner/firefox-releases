@@ -4,10 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "Lowering-x64.h"
+#include "jit/x64/Lowering-x64.h"
 
 #include "jit/MIR.h"
-#include "Assembler-x64.h"
+#include "jit/x64/Assembler-x64.h"
+
 #include "jit/shared/Lowering-shared-inl.h"
 
 using namespace js;
@@ -157,7 +158,7 @@ LIRGeneratorX64::visitAsmJSStoreHeap(MAsmJSStoreHeap *ins)
         lir = new LAsmJSStoreHeap(useRegisterAtStart(ins->ptr()),
                                   useRegisterAtStart(ins->value()));
         break;
-      default: JS_NOT_REACHED("unexpected array type");
+      default: MOZ_ASSUME_UNREACHABLE("unexpected array type");
     }
 
     return add(lir, ins);
@@ -175,9 +176,16 @@ LIRGeneratorX64::newLGetPropertyCacheT(MGetPropertyCache *ins)
     return new LGetPropertyCacheT(useRegister(ins->object()), LDefinition::BogusTemp());
 }
 
+LGetElementCacheT *
+LIRGeneratorX64::newLGetElementCacheT(MGetElementCache *ins)
+{
+    return new LGetElementCacheT(useRegister(ins->object()),
+                                 useRegister(ins->index()),
+                                 LDefinition::BogusTemp());
+}
+
 bool
 LIRGeneratorX64::visitStoreTypedArrayElementStatic(MStoreTypedArrayElementStatic *ins)
 {
-    JS_NOT_REACHED("NYI");
-    return true;
+    MOZ_ASSUME_UNREACHABLE("NYI");
 }

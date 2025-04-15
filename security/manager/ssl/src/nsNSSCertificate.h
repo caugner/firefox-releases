@@ -35,7 +35,7 @@ class nsNSSCertificate : public nsIX509Cert3,
                          public nsNSSShutDownObject
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIX509CERT
   NS_DECL_NSIX509CERT2
   NS_DECL_NSIX509CERT3
@@ -60,8 +60,7 @@ private:
   mozilla::ScopedCERTCertificate mCert;
   bool             mPermDelete;
   uint32_t         mCertType;
-  nsCOMPtr<nsIASN1Object> mASN1Structure;
-  nsresult CreateASN1Struct();
+  nsresult CreateASN1Struct(nsIASN1Object** aRetVal);
   nsresult CreateTBSCertificateASN1Struct(nsIASN1Sequence **retSequence,
                                           nsINSSComponent *nssComponent);
   nsresult GetSortableDate(PRTime aTime, nsAString &_aSortableDate);
@@ -80,7 +79,7 @@ private:
 class nsNSSCertList: public nsIX509CertList
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIX509CERTLIST
 
   nsNSSCertList(CERTCertList *certList = nullptr, bool adopt = false);
@@ -98,7 +97,7 @@ private:
 class nsNSSCertListEnumerator: public nsISimpleEnumerator
 {
 public:
-   NS_DECL_ISUPPORTS
+   NS_DECL_THREADSAFE_ISUPPORTS
    NS_DECL_NSISIMPLEENUMERATOR
 
    nsNSSCertListEnumerator(CERTCertList *certList);

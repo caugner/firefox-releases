@@ -7,11 +7,11 @@
 #ifndef jit_SnapshotWriter_h
 #define jit_SnapshotWriter_h
 
-#include "Ion.h"
-#include "IonCode.h"
-#include "Registers.h"
-#include "CompactBuffer.h"
-#include "Bailouts.h"
+#include "jit/Bailouts.h"
+#include "jit/CompactBuffer.h"
+#include "jit/Ion.h"
+#include "jit/IonCode.h"
+#include "jit/Registers.h"
 
 namespace js {
 namespace jit {

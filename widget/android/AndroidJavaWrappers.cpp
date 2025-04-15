@@ -54,6 +54,8 @@ jfieldID AndroidGeckoEvent::jRangeLineColorField = 0;
 jfieldID AndroidGeckoEvent::jLocationField = 0;
 jfieldID AndroidGeckoEvent::jBandwidthField = 0;
 jfieldID AndroidGeckoEvent::jCanBeMeteredField = 0;
+jfieldID AndroidGeckoEvent::jIsWifiField = 0;
+jfieldID AndroidGeckoEvent::jDHCPGatewayField = 0;
 jfieldID AndroidGeckoEvent::jScreenOrientationField = 0;
 jfieldID AndroidGeckoEvent::jByteBufferField = 0;
 jfieldID AndroidGeckoEvent::jWidthField = 0;
@@ -258,6 +260,8 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jLocationField = getField("mLocation", "Landroid/location/Location;");
     jBandwidthField = getField("mBandwidth", "D");
     jCanBeMeteredField = getField("mCanBeMetered", "Z");
+    jIsWifiField = getField("mIsWifi", "Z");
+    jDHCPGatewayField = getField("mDHCPGateway", "I");
     jScreenOrientationField = getField("mScreenOrientation", "S");
     jByteBufferField = getField("mBuffer", "Ljava/nio/ByteBuffer;");
     jWidthField = getField("mWidth", "I");
@@ -657,6 +661,8 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
         case NETWORK_CHANGED: {
             mBandwidth = jenv->GetDoubleField(jobj, jBandwidthField);
             mCanBeMetered = jenv->GetBooleanField(jobj, jCanBeMeteredField);
+            mIsWifi = jenv->GetBooleanField(jobj, jIsWifiField);
+            mDHCPGateway = jenv->GetIntField(jobj, jDHCPGatewayField);
             break;
         }
 
@@ -781,9 +787,19 @@ AndroidGeckoEvent::MakeTouchEvent(nsIWidget* widget)
     const nsIntPoint& offset = widget->WidgetToScreenOffset();
     event.touches.SetCapacity(endIndex - startIndex);
     for (int i = startIndex; i < endIndex; i++) {
+        // In this code branch, we are dispatching this event directly
+        // into Gecko (as opposed to going through the AsyncPanZoomController),
+        // and the Points() array has points in CSS pixels, which we need
+        // to convert.
+        nsIntPoint pt(
+            (Points()[i].x * widget->GetDefaultScale()) - offset.x,
+            (Points()[i].y * widget->GetDefaultScale()) - offset.y);
+        nsIntPoint radii(
+            PointRadii()[i].x * widget->GetDefaultScale(),
+            PointRadii()[i].y * widget->GetDefaultScale());
         nsRefPtr<Touch> t = new Touch(PointIndicies()[i],
-                                      Points()[i] - offset,
-                                      PointRadii()[i],
+                                      pt,
+                                      radii,
                                       Orientations()[i],
                                       Pressures()[i]);
         event.touches.AppendElement(t);
@@ -846,6 +862,53 @@ AndroidGeckoEvent::MakeMultiTouchInput(nsIWidget* widget)
                              Pressures()[i]);
         event.mTouches.AppendElement(data);
     }
+
+    return event;
+}
+
+nsMouseEvent
+AndroidGeckoEvent::MakeMouseEvent(nsIWidget* widget)
+{
+    uint32_t msg = NS_EVENT_NULL;
+    if (Points().Length() > 0) {
+        switch (Action()) {
+            case AndroidMotionEvent::ACTION_HOVER_MOVE:
+                msg = NS_MOUSE_MOVE;
+                break;
+            case AndroidMotionEvent::ACTION_HOVER_ENTER:
+                msg = NS_MOUSEENTER;
+                break;
+            case AndroidMotionEvent::ACTION_HOVER_EXIT:
+                msg = NS_MOUSELEAVE;
+                break;
+            default:
+                break;
+        }
+    }
+
+    nsMouseEvent event(true, msg, widget,
+                       nsMouseEvent::eReal, nsMouseEvent::eNormal);
+
+    if (msg == NS_EVENT_NULL) {
+        // unknown type, or no point data. abort
+        return event;
+    }
+
+    // XXX can we synthesize different buttons?
+    event.button = nsMouseEvent::eLeftButton;
+    if (msg != NS_MOUSE_MOVE) {
+        event.clickCount = 1;
+    }
+    event.modifiers = 0;
+    event.time = Time();
+
+    // We are dispatching this event directly into Gecko (as opposed to going
+    // through the AsyncPanZoomController), and the Points() array has points
+    // in CSS pixels, which we need to convert to LayoutDevice pixels.
+    const nsIntPoint& offset = widget->WidgetToScreenOffset();
+    float scale = (float)widget->GetDefaultScale();
+    event.refPoint = LayoutDeviceIntPoint((Points()[0].x * scale) - offset.x,
+                                          (Points()[0].y * scale) - offset.y);
 
     return event;
 }
@@ -933,7 +996,7 @@ AndroidGeckoLayerClient::SetPageRect(const CSSRect& aCssPageRect)
 void
 AndroidGeckoLayerClient::SyncViewportInfo(const LayerIntRect& aDisplayPort, const CSSToLayerScale& aDisplayResolution,
                                           bool aLayersUpdated, ScreenPoint& aScrollOffset, CSSToScreenScale& aScale,
-                                          gfx::Margin& aFixedLayerMargins, ScreenPoint& aOffset)
+                                          LayerMargin& aFixedLayerMargins, ScreenPoint& aOffset)
 {
     NS_ASSERTION(!isNull(), "SyncViewportInfo called on null layer client!");
     JNIEnv *env = GetJNIForThread();    // this is called on the compositor thread
@@ -965,7 +1028,7 @@ AndroidGeckoLayerClient::SyncViewportInfo(const LayerIntRect& aDisplayPort, cons
 void
 AndroidGeckoLayerClient::SyncFrameMetrics(const ScreenPoint& aScrollOffset, float aZoom, const CSSRect& aCssPageRect,
                                           bool aLayersUpdated, const CSSRect& aDisplayPort, const CSSToLayerScale& aDisplayResolution,
-                                          bool aIsFirstPaint, gfx::Margin& aFixedLayerMargins, ScreenPoint& aOffset)
+                                          bool aIsFirstPaint, LayerMargin& aFixedLayerMargins, ScreenPoint& aOffset)
 {
     NS_ASSERTION(!isNull(), "SyncFrameMetrics called on null layer client!");
     JNIEnv *env = GetJNIForThread();    // this is called on the compositor thread
@@ -1242,7 +1305,7 @@ AndroidViewTransform::GetScale(JNIEnv *env)
 }
 
 void
-AndroidViewTransform::GetFixedLayerMargins(JNIEnv *env, gfx::Margin &aFixedLayerMargins)
+AndroidViewTransform::GetFixedLayerMargins(JNIEnv *env, LayerMargin &aFixedLayerMargins)
 {
     if (!env)
         return;

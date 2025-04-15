@@ -59,8 +59,6 @@
 // images
 #include "mozilla/dom/HTMLImageElement.h"
 
-DOMCI_NODE_DATA(HTMLFormElement, mozilla::dom::HTMLFormElement)
-
 // construction, destruction
 nsGenericHTMLElement*
 NS_NewHTMLFormElement(already_AddRefed<nsINodeInfo> aNodeInfo,
@@ -253,8 +251,6 @@ HTMLFormElement::HTMLFormElement(already_AddRefed<nsINodeInfo> aNodeInfo)
 {
   mImageNameLookupTable.Init(NS_FORM_CONTROL_LIST_HASHTABLE_SIZE);
   mPastNameLookupTable.Init(NS_FORM_CONTROL_LIST_HASHTABLE_SIZE);
-
-  SetIsDOMBinding();
 }
 
 HTMLFormElement::~HTMLFormElement()
@@ -303,6 +299,8 @@ ElementTraverser(const nsAString& key, nsIDOMHTMLInputElement* element,
   return PL_DHASH_NEXT;
 }
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLFormElement)
+
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLFormElement,
                                                   nsGenericHTMLElement)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mControls)
@@ -337,7 +335,6 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLFormElement)
                                 nsIWebProgressListener,
                                 nsIRadioGroupContainer)
   NS_INTERFACE_TABLE_TO_MAP_SEGUE
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(HTMLFormElement)
 NS_ELEMENT_INTERFACE_MAP_END
 
 
@@ -2419,6 +2416,8 @@ nsFormControlList::FlushPendingNotifications()
     }
   }
 }
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsFormControlList)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsFormControlList)
   tmp->Clear();

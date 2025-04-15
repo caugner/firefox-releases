@@ -71,16 +71,22 @@ public:
    * This should only be called if you are certain that the return value won't
    * be passed into a JS API function and that it won't be stored without being
    * rooted (or otherwise signaling the stored value to the CC).
-   *
-   * This can return a handle because we trace our mCallback.
    */
   JS::Handle<JSObject*> CallbackPreserveColor() const
   {
-    return mCallback;
+    // Calling fromMarkedLocation() is safe because we trace our mCallback, and
+    // because the value of mCallback cannot change after if has been set.
+    return JS::Handle<JSObject*>::fromMarkedLocation(mCallback.address());
   }
 
   enum ExceptionHandling {
+    // Report any exception and don't throw it to the caller code.
     eReportExceptions,
+    // Throw an exception to the caller code if the thrown exception is a
+    // binding object for a DOMError from the caller's scope, otherwise report
+    // it.
+    eRethrowContentExceptions,
+    // Throw any exception to the caller code.
     eRethrowExceptions
   };
 
@@ -93,6 +99,7 @@ protected:
 private:
   inline void Init(JSObject* aCallback)
   {
+    MOZ_ASSERT(aCallback && !mCallback);
     // Set mCallback before we hold, on the off chance that a GC could somehow
     // happen in there... (which would be pretty odd, granted).
     mCallback = aCallback;
@@ -122,8 +129,11 @@ protected:
      * non-null.
      */
   public:
+    // If aExceptionHandling == eRethrowContentExceptions then aCompartment
+    // needs to be set to the caller's compartment.
     CallSetup(JS::Handle<JSObject*> aCallable, ErrorResult& aRv,
-              ExceptionHandling aExceptionHandling);
+              ExceptionHandling aExceptionHandling,
+              JSCompartment* aCompartment = nullptr);
     ~CallSetup();
 
     JSContext* GetContext() const
@@ -135,9 +145,15 @@ protected:
     // We better not get copy-constructed
     CallSetup(const CallSetup&) MOZ_DELETE;
 
+    bool ShouldRethrowException(JS::Handle<JS::Value> aException);
+
     // Members which can go away whenever
     JSContext* mCx;
     nsCOMPtr<nsIScriptContext> mCtx;
+
+    // Caller's compartment. This will only have a sensible value if
+    // mExceptionHandling == eRethrowContentExceptions.
+    JSCompartment* mCompartment;
 
     // And now members whose construction/destruction order we need to control.
 

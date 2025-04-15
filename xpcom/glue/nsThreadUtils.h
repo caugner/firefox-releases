@@ -37,8 +37,8 @@ template <size_t LEN>
 inline NS_COM_GLUE void
 NS_SetThreadName(nsIThread *thread, const char (&name)[LEN])
 {
-  MOZ_STATIC_ASSERT(LEN <= 16,
-                    "Thread name must be no more than 16 characters");
+  static_assert(LEN <= 16,
+                "Thread name must be no more than 16 characters");
   NS_SetThreadName(thread, nsDependentCString(name));
 }
 
@@ -99,7 +99,13 @@ bool NS_IsMainThread();
 // This is defined in nsThreadManager.cpp and initialized to `Main` for the
 // main thread by nsThreadManager::Init.
 extern NS_TLS mozilla::threads::ID gTLSThreadID;
-inline bool NS_IsMainThread()
+#ifdef MOZ_ASAN
+// Temporary workaround, see bug 895845
+MOZ_ASAN_BLACKLIST static
+#else
+inline
+#endif
+bool NS_IsMainThread()
 {
   return gTLSThreadID == mozilla::threads::Main;
 }
@@ -236,7 +242,7 @@ extern NS_COM_GLUE nsIThread *NS_GetCurrentThread();
 class NS_COM_GLUE nsRunnable : public nsIRunnable
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIRUNNABLE
 
   nsRunnable() {
@@ -251,7 +257,7 @@ protected:
 class NS_COM_GLUE nsCancelableRunnable : public nsICancelableRunnable
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIRUNNABLE
   NS_DECL_NSICANCELABLERUNNABLE
 
@@ -321,9 +327,9 @@ struct nsRunnableMethodTraits<R (C::*)(), Owning> {
   typedef nsRunnableMethod<C, R, Owning> base_type;
 };
 
-#ifdef HAVE_STDCALL
+#ifdef NS_HAVE_STDCALL
 template <class C, typename R, bool Owning>
-struct nsRunnableMethodTraits<R (__stdcall C::*)(), Owning> {
+struct nsRunnableMethodTraits<R (NS_STDCALL C::*)(), Owning> {
   typedef C class_type;
   typedef R return_type;
   typedef nsRunnableMethod<C, R, Owning> base_type;

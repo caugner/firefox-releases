@@ -39,9 +39,18 @@
  * (like querySelector) will include the extra nodes needed to satisfy this
  * requirement.  The client keeps track of this parent relationship, so the
  * node fronts form a tree that is a subset of the actual DOM tree.
+ *
+ *
+ * We maintain this guarantee to support the ability to release subtrees on
+ * the client - when a node is disconnected from the DOM tree we want to be
+ * able to free the client objects for all the children nodes.
+ *
+ * So to be able to answer "all the children of a given node that we have
+ * seen on the client side", we guarantee that every time we've seen a node,
+ * we connect it up through its parents.
  */
 
-const {Cc, Ci, Cu} = require("chrome");
+const {Cc, Ci, Cu, Cr} = require("chrome");
 
 const protocol = require("devtools/server/protocol");
 const {Arg, Option, method, RetVal, types} = protocol;
@@ -53,6 +62,10 @@ const { Unknown } = require("sdk/platform/xpcom");
 const { Class } = require("sdk/core/heritage");
 
 const PSEUDO_CLASSES = [":hover", ":active", ":focus"];
+
+const HIDDEN_CLASS = "__fx-devtools-hide-shortcut__";
+
+const HELPER_SHEET = "." + HIDDEN_CLASS + " { visibility: hidden !important }";
 
 Cu.import("resource://gre/modules/Services.jsm");
 
@@ -393,6 +406,11 @@ let NodeFront = protocol.FrontClass(NodeActor, {
     return (name in this._attrMap);
   },
 
+  get hidden() {
+    let cls = this.getAttribute("class");
+    return cls && cls.indexOf(HIDDEN_CLASS) > -1;
+  },
+
   get attributes() this._form.attrs,
 
   get pseudoClassLocks() this._form.pseudoClassLocks || [],
@@ -505,7 +523,7 @@ types.addDictType("disconnectedNode", {
   node: "domnode",
 
   // Nodes that are needed to connect the node to a node the client has already seen
-  newNodes: "array:domnode"
+  newParents: "array:domnode"
 });
 
 types.addDictType("disconnectedNodeArray", {
@@ -513,7 +531,7 @@ types.addDictType("disconnectedNodeArray", {
   nodes: "array:domnode",
 
   // Nodes that are needed to connect those nodes to the root.
-  newNodes: "array:domnode"
+  newParents: "array:domnode"
 });
 
 types.addDictType("dommutation", {});
@@ -562,10 +580,10 @@ var NodeListActor = exports.NodeListActor = protocol.ActorClass({
    */
   item: method(function(index) {
     let node = this.walker._ref(this.nodeList[index]);
-    let newNodes = [node for (node of this.walker.ensurePathToRoot(node))];
+    let newParents = [node for (node of this.walker.ensurePathToRoot(node))];
     return {
       node: node,
-      newNodes: newNodes
+      newParents: newParents
     }
   }, {
     request: { item: Arg(0) },
@@ -577,20 +595,20 @@ var NodeListActor = exports.NodeListActor = protocol.ActorClass({
    */
   items: method(function(start=0, end=this.nodeList.length) {
     let items = [this.walker._ref(item) for (item of Array.prototype.slice.call(this.nodeList, start, end))];
-    let newNodes = new Set();
+    let newParents = new Set();
     for (let item of items) {
-      this.walker.ensurePathToRoot(item, newNodes);
+      this.walker.ensurePathToRoot(item, newParents);
     }
     return {
       nodes: items,
-      newNodes: [node for (node of newNodes)]
+      newParents: [node for (node of newParents)]
     }
   }, {
     request: {
-      start: Arg(0, "number", { optional: true }),
-      end: Arg(1, "number", { optional: true })
+      start: Arg(0, "nullable:number"),
+      end: Arg(1, "nullable:number")
     },
-    response: { nodes: RetVal("disconnectedNodeArray") }
+    response: RetVal("disconnectedNodeArray")
   }),
 
   release: method(function() {}, { release: true })
@@ -655,7 +673,7 @@ let traversalMethod = {
     whatToShow: Option(1)
   },
   response: {
-    node: RetVal("domnode", {optional: true})
+    node: RetVal("nullable:domnode")
   }
 }
 
@@ -674,17 +692,29 @@ var ProgressListener = Class({
   extends: Unknown,
   interfaces: ["nsIWebProgressListener", "nsISupportsWeakReference"],
 
-  initialize: function(webProgress) {
+  initialize: function(tabActor) {
     Unknown.prototype.initialize.call(this);
-    this.webProgress = webProgress;
-    this.webProgress.addProgressListener(this);
+    this.webProgress = tabActor.webProgress;
+    this.webProgress.addProgressListener(
+      this, Ci.nsIWebProgress.NOTIFY_ALL
+    );
   },
 
   destroy: function() {
-    this.webProgress.removeProgressListener(this);
+    try {
+      this.webProgress.removeProgressListener(this);
+    } catch(ex) {
+      // This can throw during browser shutdown.
+    }
+    this.webProgress = null;
   },
 
   onStateChange: makeInfallible(function stateChange(progress, request, flag, status) {
+    if (!this.webProgress) {
+      console.warn("got an onStateChange after destruction");
+      return;
+    }
+
     let isWindow = flag & Ci.nsIWebProgressListener.STATE_IS_WINDOW;
     let isDocument = flag & Ci.nsIWebProgressListener.STATE_IS_DOCUMENT;
     if (!(isWindow || isDocument)) {
@@ -721,9 +751,9 @@ var WalkerActor = protocol.ActorClass({
    * @param DebuggerServerConnection conn
    *    The server connection.
    */
-  initialize: function(conn, document, webProgress, options) {
+  initialize: function(conn, tabActor, options) {
     protocol.Actor.prototype.initialize.call(this, conn);
-    this.rootDoc = document;
+    this.rootDoc = tabActor.window.document;
     this._refMap = new Map();
     this._pendingMutations = [];
     this._activePseudoClassLocks = new Set();
@@ -742,7 +772,7 @@ var WalkerActor = protocol.ActorClass({
     this.onFrameLoad = this.onFrameLoad.bind(this);
     this.onFrameUnload = this.onFrameUnload.bind(this);
 
-    this.progressListener = ProgressListener(webProgress);
+    this.progressListener = ProgressListener(tabActor);
 
     events.on(this.progressListener, "windowchange-start", this.onFrameUnload);
     events.on(this.progressListener, "windowchange-stop", this.onFrameLoad);
@@ -830,7 +860,7 @@ var WalkerActor = protocol.ActorClass({
     let doc = node ? nodeDocument(node.rawNode) : this.rootDoc;
     return this._ref(doc);
   }, {
-    request: { node: Arg(0, "domnode", {optional: true}) },
+    request: { node: Arg(0, "nullable:domnode") },
     response: { node: RetVal("domnode") },
   }),
 
@@ -845,7 +875,7 @@ var WalkerActor = protocol.ActorClass({
     let elt = node ? nodeDocument(node.rawNode).documentElement : this.rootDoc.documentElement;
     return this._ref(elt);
   }, {
-    request: { node: Arg(0, "domnode", {optional: true}) },
+    request: { node: Arg(0, "nullable:domnode") },
     response: { node: RetVal("domnode") },
   }),
 
@@ -1199,7 +1229,7 @@ var WalkerActor = protocol.ActorClass({
     let newParents = this.ensurePathToRoot(node);
     return {
       node: node,
-      newNodes: [parent for (parent of newParents)]
+      newParents: [parent for (parent of newParents)]
     }
   }, {
     request: {
@@ -1282,6 +1312,33 @@ var WalkerActor = protocol.ActorClass({
     return true;
   },
 
+  _installHelperSheet: function(node) {
+    if (!this.installedHelpers) {
+      this.installedHelpers = new WeakMap;
+    }
+    let win = node.rawNode.ownerDocument.defaultView;
+    if (!this.installedHelpers.has(win)) {
+      let { Style } = require("sdk/stylesheet/style");
+      let { attach } = require("sdk/content/mod");
+      let style = Style({source: HELPER_SHEET, type: "agent" });
+      attach(style, win);
+      this.installedHelpers.set(win, style);
+    }
+  },
+
+  hideNode: method(function(node) {
+    this._installHelperSheet(node);
+    node.rawNode.classList.add(HIDDEN_CLASS);
+  }, {
+    request: { node: Arg(0, "domnode") }
+  }),
+
+  unhideNode: method(function(node) {
+    node.rawNode.classList.remove(HIDDEN_CLASS);
+  }, {
+    request: { node: Arg(0, "domnode") }
+  }),
+
   /**
    * Remove a pseudo-class lock from a node.
    *
@@ -1348,7 +1405,7 @@ var WalkerActor = protocol.ActorClass({
     }
   }, {
     request: {
-      node: Arg(0, "domnode", { optional: true }),
+      node: Arg(0, "nullable:domnode")
     },
     response: {}
   }),
@@ -1379,6 +1436,46 @@ var WalkerActor = protocol.ActorClass({
     response: {
       value: RetVal("longstring")
     }
+  }),
+
+  /**
+   * Removes a node from its parent node.
+   *
+   * @returns The node's nextSibling before it was removed.
+   */
+  removeNode: method(function(node) {
+    if ((node.rawNode.ownerDocument &&
+         node.rawNode.ownerDocument.documentElement === this.rawNode) ||
+         node.rawNode.nodeType === Ci.nsIDOMNode.DOCUMENT_NODE) {
+      throw Error("Cannot remove document or document elements.");
+    }
+    let nextSibling = this.nextSibling(node);
+    if (node.rawNode.parentNode) {
+      node.rawNode.parentNode.removeChild(node.rawNode);
+      // Mutation events will take care of the rest.
+    }
+    return nextSibling;
+  }, {
+    request: {
+      node: Arg(0, "domnode")
+    },
+    response: {
+      nextSibling: RetVal("nullable:domnode")
+    }
+  }),
+
+  /**
+   * Insert a node into the DOM.
+   */
+  insertBefore: method(function(node, parent, sibling) {
+    parent.rawNode.insertBefore(node.rawNode, sibling ? sibling.rawNode : null);
+  }, {
+    request: {
+      node: Arg(0, "domnode"),
+      parent: Arg(1, "domnode"),
+      sibling: Arg(2, "nullable:domnode")
+    },
+    response: {}
   }),
 
   /**
@@ -1532,6 +1629,14 @@ var WalkerActor = protocol.ActorClass({
 
   onFrameLoad: function(window) {
     let frame = window.frameElement;
+    if (!frame && !this.rootDoc) {
+      this.rootDoc = window.document;
+      this.rootNode = this.document();
+      this.queueMutation({
+        type: "newRoot",
+        target: this.rootNode.form()
+      });
+    }
     let frameActor = this._refMap.get(frame);
     if (!frameActor) {
       return;
@@ -1592,6 +1697,11 @@ var WalkerActor = protocol.ActorClass({
       return;
     }
 
+    if (this.rootDoc === doc) {
+      this.rootDoc = null;
+      this.rootNode = null;
+    }
+
     this.queueMutation({
       type: "documentUnload",
       target: documentActor.actorID
@@ -1624,6 +1734,7 @@ var WalkerFront = exports.WalkerFront = protocol.FrontClass(WalkerActor, {
   autoCleanup: true,
 
   initialize: function(client, form) {
+    this._createRootNodePromise();
     protocol.Front.prototype.initialize.call(this, client, form);
     this._orphaned = new Set();
     this._retainedOrphans = new Set();
@@ -1635,8 +1746,30 @@ var WalkerFront = exports.WalkerFront = protocol.FrontClass(WalkerActor, {
 
   // Update the object given a form representation off the wire.
   form: function(json) {
-    this.actorID = json.actorID;
+    this.actorID = json.actor;
     this.rootNode = types.getType("domnode").read(json.root, this);
+    this._rootNodeDeferred.resolve(this.rootNode);
+  },
+
+  /**
+   * Clients can use walker.rootNode to get the current root node of the
+   * walker, but during a reload the root node might be null.  This
+   * method returns a promise that will resolve to the root node when it is
+   * set.
+   */
+  getRootNode: function() {
+    return this._rootNodeDeferred.promise;
+  },
+
+  /**
+   * Create the root node promise, triggering the "new-root" notification
+   * on resolution.
+   */
+  _createRootNodePromise: function() {
+    this._rootNodeDeferred = promise.defer();
+    this._rootNodeDeferred.promise.then(() => {
+      events.emit(this, "new-root");
+    });
   },
 
   /**
@@ -1744,8 +1877,19 @@ var WalkerFront = exports.WalkerFront = protocol.FrontClass(WalkerActor, {
       let emitMutations = [];
       for (let change of mutations) {
         // The target is only an actorID, get the associated front.
-        let targetID = change.target;
-        let targetFront = this.get(targetID);
+        let targetID;
+        let targetFront;
+
+        if (change.type === "newRoot") {
+          this.rootNode = types.getType("domnode").read(change.target, this);
+          this._rootNodeDeferred.resolve(this.rootNode);
+          targetID = this.rootNode.actorID;
+          targetFront = this.rootNode;
+        } else {
+          targetID = change.target;
+          targetFront = this.get(targetID);
+        }
+
         if (!targetFront) {
           console.trace("Got a mutation for an unexpected actor: " + targetID + ", please file a bug on bugzilla.mozilla.org!");
           continue;
@@ -1799,6 +1943,10 @@ var WalkerFront = exports.WalkerFront = protocol.FrontClass(WalkerActor, {
             }
           }
         } else if (change.type === "documentUnload") {
+          if (targetFront === this.rootNode) {
+            this._createRootNodePromise();
+          }
+
           // We try to give fronts instead of actorIDs, but these fronts need
           // to be destroyed now.
           emittedMutation.target = targetFront.actorID;
@@ -1931,25 +2079,22 @@ var InspectorActor = protocol.ActorClass({
     this.tabActor = tabActor;
   },
 
-  get window() {
-    let tabActor = this.tabActor;
-    if (tabActor.browser instanceof Ci.nsIDOMWindow) {
-      return tabActor.browser;
-    } else if (tabActor.browser instanceof Ci.nsIDOMElement) {
-      return tabActor.browser.contentWindow;
-    }
-    return null;
-  },
+  get window() this.tabActor.window,
 
   getWalker: method(function(options={}) {
+    if (this._walkerPromise) {
+      return this._walkerPromise;
+    }
+
     let deferred = promise.defer();
+    this._walkerPromise = deferred.promise;
 
     let window = this.window;
-
     var domReady = () => {
       let tabActor = this.tabActor;
       window.removeEventListener("DOMContentLoaded", domReady, true);
-      deferred.resolve(WalkerActor(this.conn, window.document, tabActor._tabbrowser, options));
+      this.walker = WalkerActor(this.conn, tabActor, options);
+      deferred.resolve(this.walker);
     };
 
     if (window.document.readyState === "loading") {
@@ -1958,7 +2103,7 @@ var InspectorActor = protocol.ActorClass({
       domReady();
     }
 
-    return deferred.promise;
+    return this._walkerPromise;
   }, {
     request: {},
     response: {
@@ -2003,7 +2148,7 @@ function nodeDocument(node) {
 function DocumentWalker(aNode, aShow, aFilter, aExpandEntityReferences)
 {
   let doc = nodeDocument(aNode);
-  this.walker = doc.createTreeWalker(nodeDocument(aNode),
+  this.walker = doc.createTreeWalker(doc,
     aShow, aFilter, aExpandEntityReferences);
   this.walker.currentNode = aNode;
   this.filter = aFilter;

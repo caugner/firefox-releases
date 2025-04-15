@@ -8,6 +8,7 @@
 #define gc_Barrier_inl_h
 
 #include "gc/Barrier.h"
+
 #include "gc/Marking.h"
 #include "gc/StoreBuffer.h"
 
@@ -37,7 +38,7 @@ RelocatablePtr<T>::post()
 {
 #ifdef JSGC_GENERATIONAL
     JS_ASSERT(this->value);
-    this->value->runtime()->gcStoreBuffer.putRelocatableCell((gc::Cell **)&this->value);
+    T::writeBarrierPostRelocate(this->value, &this->value);
 #endif
 }
 
@@ -46,7 +47,7 @@ inline void
 RelocatablePtr<T>::relocate(JSRuntime *rt)
 {
 #ifdef JSGC_GENERATIONAL
-    rt->gcStoreBuffer.removeRelocatableCell((gc::Cell **)&this->value);
+    T::writeBarrierPostRemove(this->value, &this->value);
 #endif
 }
 
@@ -54,20 +55,6 @@ inline
 EncapsulatedValue::~EncapsulatedValue()
 {
     pre();
-}
-
-inline void
-EncapsulatedValue::init(const Value &v)
-{
-    JS_ASSERT(!IsPoisonedValue(v));
-    value = v;
-}
-
-inline void
-EncapsulatedValue::init(JSRuntime *rt, const Value &v)
-{
-    JS_ASSERT(!IsPoisonedValue(v));
-    value = v;
 }
 
 inline EncapsulatedValue &
@@ -322,7 +309,7 @@ HeapSlot::HeapSlot(JSObject *obj, Kind kind, uint32_t slot, const Value &v)
     : EncapsulatedValue(v)
 {
     JS_ASSERT(!IsPoisonedValue(v));
-    post(obj, kind, slot);
+    post(obj, kind, slot, v);
 }
 
 inline
@@ -330,7 +317,7 @@ HeapSlot::HeapSlot(JSObject *obj, Kind kind, uint32_t slot, const HeapSlot &s)
     : EncapsulatedValue(s.value)
 {
     JS_ASSERT(!IsPoisonedValue(s.value));
-    post(obj, kind, slot);
+    post(obj, kind, slot, s);
 }
 
 inline
@@ -343,14 +330,14 @@ inline void
 HeapSlot::init(JSObject *obj, Kind kind, uint32_t slot, const Value &v)
 {
     value = v;
-    post(obj, kind, slot);
+    post(obj, kind, slot, v);
 }
 
 inline void
 HeapSlot::init(JSRuntime *rt, JSObject *obj, Kind kind, uint32_t slot, const Value &v)
 {
     value = v;
-    post(rt, obj, kind, slot);
+    post(rt, obj, kind, slot, v);
 }
 
 inline void
@@ -362,7 +349,7 @@ HeapSlot::set(JSObject *obj, Kind kind, uint32_t slot, const Value &v)
     pre();
     JS_ASSERT(!IsPoisonedValue(v));
     value = v;
-    post(obj, kind, slot);
+    post(obj, kind, slot, v);
 }
 
 inline void
@@ -375,35 +362,40 @@ HeapSlot::set(Zone *zone, JSObject *obj, Kind kind, uint32_t slot, const Value &
     pre(zone);
     JS_ASSERT(!IsPoisonedValue(v));
     value = v;
-    post(zone->rt, obj, kind, slot);
+    post(zone->rt, obj, kind, slot, v);
 }
 
 inline void
-HeapSlot::writeBarrierPost(JSObject *obj, Kind kind, uint32_t slot)
+HeapSlot::writeBarrierPost(JSObject *obj, Kind kind, uint32_t slot, Value target)
 {
 #ifdef JSGC_GENERATIONAL
-    obj->runtime()->gcStoreBuffer.putSlot(obj, kind, slot);
+    writeBarrierPost(obj->runtime(), obj, kind, slot, target);
 #endif
 }
 
 inline void
-HeapSlot::writeBarrierPost(JSRuntime *rt, JSObject *obj, Kind kind, uint32_t slot)
+HeapSlot::writeBarrierPost(JSRuntime *rt, JSObject *obj, Kind kind, uint32_t slot, Value target)
 {
 #ifdef JSGC_GENERATIONAL
-    rt->gcStoreBuffer.putSlot(obj, kind, slot);
+    JS_ASSERT_IF(kind == Slot, obj->getSlotAddressUnchecked(slot)->get() == target);
+    JS_ASSERT_IF(kind == Element,
+                 static_cast<HeapSlot *>(obj->getDenseElements() + slot)->get() == target);
+
+    if (target.isObject())
+        rt->gcStoreBuffer.putSlot(obj, kind, slot, &target.toObject());
 #endif
 }
 
 inline void
-HeapSlot::post(JSObject *owner, Kind kind, uint32_t slot)
+HeapSlot::post(JSObject *owner, Kind kind, uint32_t slot, Value target)
 {
-    HeapSlot::writeBarrierPost(owner, kind, slot);
+    HeapSlot::writeBarrierPost(owner, kind, slot, target);
 }
 
 inline void
-HeapSlot::post(JSRuntime *rt, JSObject *owner, Kind kind, uint32_t slot)
+HeapSlot::post(JSRuntime *rt, JSObject *owner, Kind kind, uint32_t slot, Value target)
 {
-    HeapSlot::writeBarrierPost(rt, owner, kind, slot);
+    HeapSlot::writeBarrierPost(rt, owner, kind, slot, target);
 }
 
 #ifdef JSGC_GENERATIONAL
@@ -441,7 +433,9 @@ DenseRangeWriteBarrierPost(JSRuntime *rt, JSObject *obj, uint32_t start, uint32_
 }
 
 /*
- * This is a post barrier for HashTables whose key can be moved during a GC.
+ * This is a post barrier for HashTables whose key is a GC pointer. Any
+ * insertion into a HashTable not marked as part of the runtime, with a GC
+ * pointer as a key, must call this immediately after each insertion.
  */
 template <class Map, class Key>
 inline void
@@ -452,6 +446,7 @@ HashTableWriteBarrierPost(JSRuntime *rt, Map *map, const Key &key)
         rt->gcStoreBuffer.putGeneric(gc::HashKeyRef<Map, Key>(map, key));
 #endif
 }
+
 
 inline
 EncapsulatedId::~EncapsulatedId()

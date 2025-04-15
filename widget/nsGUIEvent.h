@@ -30,6 +30,8 @@
 #include "nsStyleConsts.h"
 #include "nsAutoPtr.h"
 #include "mozilla/dom/EventTarget.h"
+#include "mozilla/dom/Touch.h"
+#include "Units.h"
 
 namespace mozilla {
 namespace dom {
@@ -461,6 +463,12 @@ enum nsEventStructType {
 #define NS_NETWORK_UPLOAD_EVENT      (NS_NETWORK_EVENT_START + 1)
 #define NS_NETWORK_DOWNLOAD_EVENT    (NS_NETWORK_EVENT_START + 2)
 
+// MediaRecorder events.
+#define NS_MEDIARECORDER_EVENT_START 5700
+#define NS_MEDIARECORDER_DATAAVAILABLE  (NS_MEDIARECORDER_EVENT_START + 1)
+#define NS_MEDIARECORDER_WARNING        (NS_MEDIARECORDER_EVENT_START + 2)
+#define NS_MEDIARECORDER_STOP           (NS_MEDIARECORDER_EVENT_START + 3)
+
 #ifdef MOZ_GAMEPAD
 // Gamepad input events
 #define NS_GAMEPAD_START         6000
@@ -587,7 +595,7 @@ private:
 
   inline void SetRawFlags(RawFlags aRawFlags)
   {
-    MOZ_STATIC_ASSERT(sizeof(BaseEventFlags) <= sizeof(RawFlags),
+    static_assert(sizeof(BaseEventFlags) <= sizeof(RawFlags),
       "mozilla::widget::EventFlags must not be bigger than the RawFlags");
     memcpy(this, &aRawFlags, sizeof(BaseEventFlags));
   }
@@ -670,9 +678,9 @@ public:
   uint32_t    message;
   // Relative to the widget of the event, or if there is no widget then it is
   // in screen coordinates. Not modified by layout code.
-  nsIntPoint  refPoint;
+  mozilla::LayoutDeviceIntPoint refPoint;
   // The previous refPoint, if known, used to calculate mouse movement deltas.
-  nsIntPoint  lastRefPoint;
+  mozilla::LayoutDeviceIntPoint lastRefPoint;
   // Elapsed time, in milliseconds, from a platform-specific zero time
   // to the time the message was created
   uint64_t    time;
@@ -1069,7 +1077,8 @@ public:
     : nsInputEvent(isTrusted, msg, w, NS_KEY_EVENT),
       keyCode(0), charCode(0),
       location(nsIDOMKeyEvent::DOM_KEY_LOCATION_STANDARD), isChar(0),
-      mKeyNameIndex(mozilla::widget::KEY_NAME_INDEX_Unidentified)
+      mKeyNameIndex(mozilla::widget::KEY_NAME_INDEX_Unidentified),
+      mNativeKeyEvent(nullptr)
   {
   }
 
@@ -1086,6 +1095,8 @@ public:
   bool            isChar;
   // DOM KeyboardEvent.key
   mozilla::widget::KeyNameIndex mKeyNameIndex;
+  // OS-specific native event can optionally be preserved
+  void*           mNativeKeyEvent;
 
   void GetDOMKeyName(nsAString& aKeyName)
   {
@@ -1493,7 +1504,7 @@ public:
     mInput.mLength = aLength;
   }
 
-  void InitForQueryDOMWidgetHittest(nsIntPoint& aPoint)
+  void InitForQueryDOMWidgetHittest(const mozilla::LayoutDeviceIntPoint& aPoint)
   {
     NS_ASSERTION(message == NS_QUERY_DOM_WIDGET_HITTEST,
                  "wrong initializer is called");
@@ -1639,7 +1650,7 @@ public:
     MOZ_COUNT_DTOR(nsTouchEvent);
   }
 
-  nsTArray<nsCOMPtr<nsIDOMTouch> > touches;
+  nsTArray< nsRefPtr<mozilla::dom::Touch> > touches;
 };
 
 /**

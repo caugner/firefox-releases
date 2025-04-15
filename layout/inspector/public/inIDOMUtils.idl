@@ -16,10 +16,13 @@ interface nsIDOMFontFaceList;
 interface nsIDOMRange;
 interface nsIDOMCSSStyleSheet;
 
-[scriptable, uuid(c10e5142-e936-45d7-ad5b-21a32ce739a3)]
+[scriptable, uuid(ceae6c68-f5d4-4597-a3d9-ca5646c25f1a)]
 interface inIDOMUtils : nsISupports
 {
   // CSS utilities
+  void getAllStyleSheets (in nsIDOMDocument aDoc,
+                          [optional] out unsigned long aLength,
+                          [array, size_is (aLength), retval] out nsISupports aSheets);
   nsISupportsArray getCSSStyleRules(in nsIDOMElement aElement, [optional] in DOMString aPseudo);
   unsigned long getRuleLine(in nsIDOMCSSStyleRule aRule);
   unsigned long getRuleColumn(in nsIDOMCSSStyleRule aRule);
@@ -54,6 +57,11 @@ interface inIDOMUtils : nsISupports
   void getCSSPropertyNames([optional] in unsigned long aFlags,
 			   [optional] out unsigned long aCount,
 			   [retval, array, size_is(aCount)] out wstring aProps);
+
+  // Get a list of all valid keywords and colors for aProperty.
+  void getCSSValuesForProperty(in AString aProperty,
+                               [optional] out unsigned long aLength,
+                               [array, size_is(aLength), retval] out wstring aValues);
 
   // Utilities for working with CSS colors
   [implicit_jscontext]

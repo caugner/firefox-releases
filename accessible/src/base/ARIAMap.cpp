@@ -112,7 +112,7 @@ static nsRoleMapEntry sWAIRoleMaps[] =
     eNoLiveAttr,
     eTableCell,
     kNoReqStates,
-    eARIASelectable,
+    eARIASelectableIfDefined,
     eARIAReadonlyOrEditableIfDefined
   },
   { // combobox
@@ -176,9 +176,10 @@ static nsRoleMapEntry sWAIRoleMaps[] =
     eNoAction,
     eNoLiveAttr,
     eSelect | eTable,
-    states::FOCUSABLE,
+    kNoReqStates,
     eARIAMultiSelectable,
-    eARIAReadonlyOrEditable
+    eARIAReadonlyOrEditable,
+    eFocusableUntilDisabled
   },
   { // gridcell
     &nsGkAtoms::gridcell,
@@ -263,7 +264,8 @@ static nsRoleMapEntry sWAIRoleMaps[] =
     eListControl | eSelect,
     kNoReqStates,
     eARIAMultiSelectable,
-    eARIAReadonly
+    eARIAReadonly,
+    eFocusableUntilDisabled
   },
   { // listitem
     &nsGkAtoms::listitem,
@@ -463,7 +465,7 @@ static nsRoleMapEntry sWAIRoleMaps[] =
     eNoLiveAttr,
     eTableCell,
     kNoReqStates,
-    eARIASelectable,
+    eARIASelectableIfDefined,
     eARIAReadonlyOrEditableIfDefined
   },
   { // scrollbar
@@ -539,7 +541,7 @@ static nsRoleMapEntry sWAIRoleMaps[] =
     kUseMapRole,
     eNoValue,
     eNoAction,
-    ePoliteLiveAttr,
+    eNoLiveAttr,
     eSelect,
     kNoReqStates
   },
@@ -605,7 +607,8 @@ static nsRoleMapEntry sWAIRoleMaps[] =
     eSelect,
     kNoReqStates,
     eARIAReadonly,
-    eARIAMultiSelectable
+    eARIAMultiSelectable,
+    eFocusableUntilDisabled
   },
   { // treegrid
     &nsGkAtoms::treegrid,
@@ -616,8 +619,9 @@ static nsRoleMapEntry sWAIRoleMaps[] =
     eNoLiveAttr,
     eSelect | eTable,
     kNoReqStates,
-    eARIAReadonly,
-    eARIAMultiSelectable
+    eARIAReadonlyOrEditable,
+    eARIAMultiSelectable,
+    eFocusableUntilDisabled
   },
   { // treeitem
     &nsGkAtoms::treeitem,
@@ -685,7 +689,7 @@ struct AttrCharacteristics
 
 static const AttrCharacteristics gWAIUnivAttrMap[] = {
   {&nsGkAtoms::aria_activedescendant,  ATTR_BYPASSOBJ                               },
-  {&nsGkAtoms::aria_atomic,                             ATTR_VALTOKEN | ATTR_GLOBAL },
+  {&nsGkAtoms::aria_atomic,   ATTR_BYPASSOBJ_IF_FALSE | ATTR_VALTOKEN | ATTR_GLOBAL },
   {&nsGkAtoms::aria_busy,                               ATTR_VALTOKEN | ATTR_GLOBAL },
   {&nsGkAtoms::aria_checked,           ATTR_BYPASSOBJ | ATTR_VALTOKEN               }, /* exposes checkable obj attr */
   {&nsGkAtoms::aria_controls,          ATTR_BYPASSOBJ                 | ATTR_GLOBAL },

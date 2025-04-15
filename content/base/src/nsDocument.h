@@ -25,7 +25,6 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsIContent.h"
 #include "nsEventListenerManager.h"
-#include "nsIDOMNodeSelector.h"
 #include "nsIPrincipal.h"
 #include "nsIParser.h"
 #include "nsBindingManager.h"
@@ -62,9 +61,9 @@
 #include "nsISecurityEventSink.h"
 #include "nsIChannelEventSink.h"
 #include "imgIRequest.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/DOMImplementation.h"
 #include "nsIDOMTouchEvent.h"
-#include "nsIInlineEventHandlers.h"
 #include "nsDataHashtable.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Attributes.h"
@@ -94,6 +93,7 @@ class nsWindowSizes;
 class nsHtml5TreeOpExecutor;
 class nsDocumentOnStack;
 class nsPointerLockPermissionRequest;
+class nsISecurityConsoleMessage;
 
 namespace mozilla {
 namespace dom {
@@ -224,7 +224,7 @@ public:
   };
 
   static size_t SizeOfExcludingThis(nsIdentifierMapEntry* aEntry,
-                                    nsMallocSizeOfFun aMallocSizeOf,
+                                    mozilla::MallocSizeOf aMallocSizeOf,
                                     void* aArg);
 
 private:
@@ -503,8 +503,6 @@ class nsDocument : public nsIDocument,
                    public nsIRadioGroupContainer,
                    public nsIApplicationCacheContainer,
                    public nsStubMutationObserver,
-                   public nsIDOMDocumentTouch,
-                   public nsIInlineEventHandlers,
                    public nsIObserver
 {
 public:
@@ -755,6 +753,7 @@ public:
 
 private:
   nsRadioGroupStruct* GetRadioGroupInternal(const nsAString& aName) const;
+  void SendToConsole(nsCOMArray<nsISecurityConsoleMessage>& aMessages);
 
 public:
   // nsIDOMNode
@@ -779,15 +778,6 @@ public:
 
   // nsIApplicationCacheContainer
   NS_DECL_NSIAPPLICATIONCACHECONTAINER
-
-  // nsITouchEventReceiver
-  NS_DECL_NSITOUCHEVENTRECEIVER
-
-  // nsIDOMDocumentTouch
-  NS_DECL_NSIDOMDOCUMENTTOUCH
-
-  // nsIInlineEventHandlers
-  NS_DECL_NSIINLINEEVENTHANDLERS
 
   // nsIObserver
   NS_DECL_NSIOBSERVER
@@ -818,10 +808,6 @@ public:
   already_AddRefed<nsIBoxObject> GetBoxObjectFor(mozilla::dom::Element* aElement,
                                                  mozilla::ErrorResult& aRv) MOZ_OVERRIDE;
 
-  virtual NS_HIDDEN_(nsresult) GetXBLChildNodesFor(nsIContent* aContent,
-                                                   nsIDOMNodeList** aResult);
-  virtual NS_HIDDEN_(nsresult) GetContentListFor(nsIContent* aContent,
-                                                 nsIDOMNodeList** aResult);
   virtual NS_HIDDEN_(Element*)
     GetAnonymousElementByAttribute(nsIContent* aElement,
                                    nsIAtom* aAttrName,
@@ -1293,9 +1279,6 @@ protected:
   uint8_t mXMLDeclarationBits;
 
   nsInterfaceHashtable<nsPtrHashKey<nsIContent>, nsPIBoxObject> *mBoxObjectTable;
-
-  // The channel that got passed to StartDocumentLoad(), if any
-  nsCOMPtr<nsIChannel> mChannel;
 
   // A document "without a browsing context" that owns the content of
   // HTMLTemplateElement.

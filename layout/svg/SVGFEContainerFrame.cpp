@@ -25,7 +25,7 @@ protected:
   SVGFEContainerFrame(nsStyleContext* aContext)
     : SVGFEContainerFrameBase(aContext)
   {
-    AddStateBits(NS_FRAME_SVG_LAYOUT | NS_STATE_SVG_NONDISPLAY_CHILD);
+    AddStateBits(NS_FRAME_SVG_LAYOUT | NS_FRAME_IS_NONDISPLAY);
   }
 
 public:
@@ -43,8 +43,6 @@ public:
     return MakeFrameName(NS_LITERAL_STRING("SVGFEContainer"), aResult);
   }
 #endif
-
-  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
 
 #ifdef DEBUG
   virtual void Init(nsIContent* aContent,
@@ -75,13 +73,6 @@ NS_NewSVGFEContainerFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(SVGFEContainerFrame)
-
-/* virtual */ void
-SVGFEContainerFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
-{
-  SVGFEContainerFrameBase::DidSetStyleContext(aOldStyleContext);
-  nsSVGEffects::InvalidateRenderingObservers(this);
-}
 
 #ifdef DEBUG
 void

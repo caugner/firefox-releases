@@ -10,6 +10,9 @@
 /*
  * JavaScript iterators.
  */
+
+#include "mozilla/MemoryReporting.h"
+
 #include "jscntxt.h"
 
 #include "gc/Barrier.h"
@@ -116,10 +119,12 @@ class PropertyIteratorObject : public JSObject
   public:
     static Class class_;
 
-    inline NativeIterator *getNativeIterator() const;
+    NativeIterator *getNativeIterator() const {
+        return static_cast<js::NativeIterator *>(getPrivate());
+    }
     inline void setNativeIterator(js::NativeIterator *ni);
 
-    size_t sizeOfMisc(JSMallocSizeOfFun mallocSizeOf) const;
+    size_t sizeOfMisc(mozilla::MallocSizeOf mallocSizeOf) const;
 
   private:
     static void trace(JSTracer *trc, JSObject *obj);
@@ -295,10 +300,10 @@ class ForOfIterator
         return ok && !currentValue.get().isMagic(JS_NO_ITER_VALUE);
     }
 
-    Value &value() {
+    MutableHandleValue value() {
         JS_ASSERT(ok);
         JS_ASSERT(!closed);
-        return currentValue.get();
+        return &currentValue;
     }
 
     bool close() {
@@ -320,8 +325,6 @@ class ForOfIterator
 };
 
 } /* namespace js */
-
-#if JS_HAS_GENERATORS
 
 /*
  * Generator state codes.
@@ -354,7 +357,6 @@ bool
 GeneratorHasMarkableFrame(JSGenerator *gen);
 
 } /* namespace js */
-#endif
 
 extern JSObject *
 js_InitIteratorClasses(JSContext *cx, js::HandleObject obj);

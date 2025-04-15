@@ -58,6 +58,7 @@ namespace mozilla {
 namespace widget {
 class NativeKey;
 class ModifierKeyState;
+struct MSGResult;
 } // namespace widget
 } // namespacw mozilla;
 
@@ -72,6 +73,7 @@ class nsWindow : public nsWindowBase
   typedef mozilla::widget::WindowHook WindowHook;
   typedef mozilla::widget::TaskbarWindowPreview TaskbarWindowPreview;
   typedef mozilla::widget::NativeKey NativeKey;
+  typedef mozilla::widget::MSGResult MSGResult;
 public:
   nsWindow();
   virtual ~nsWindow();
@@ -204,7 +206,10 @@ public:
   void                    SuppressBlurEvents(bool aSuppress); // Called from nsFilePicker
   bool                    BlurEventsSuppressed();
 #ifdef ACCESSIBILITY
-  mozilla::a11y::Accessible* GetRootAccessible();
+  /**
+   * Return an accessible associated with the window.
+   */
+  mozilla::a11y::Accessible* GetAccessible();
 #endif // ACCESSIBILITY
 
   /**
@@ -222,7 +227,6 @@ public:
    * Misc.
    */
   virtual bool            AutoErase(HDC dc);
-  nsIntPoint*             GetLastPoint() { return &mLastPoint; }
   bool                    IsTopLevelWidget() { return mIsTopWidgetWindow; }
   /**
    * Start allowing Direct3D9 to be used by widgets when GetLayerManager is
@@ -269,7 +273,7 @@ public:
 
   bool                    const DestroyCalled() { return mDestroyCalled; }
 
-  virtual mozilla::layers::LayersBackend GetPreferredCompositorBackend() { return mozilla::layers::LAYERS_D3D11; }
+  virtual mozilla::layers::LayersBackend GetPreferredCompositorBackend();
 
 protected:
 
@@ -325,8 +329,11 @@ protected:
   void                    RelayMouseEvent(UINT aMsg, WPARAM wParam, LPARAM lParam);
   virtual bool            ProcessMessage(UINT msg, WPARAM &wParam,
                                          LPARAM &lParam, LRESULT *aRetValue);
+  bool                    ExternalHandlerProcessMessage(
+                                         UINT aMessage, WPARAM& aWParam,
+                                         LPARAM& aLParam, MSGResult& aResult);
   bool                    ProcessMessageForPlugin(const MSG &aMsg,
-                                                  LRESULT *aRetValue, bool &aCallDefWndProc);
+                                                  MSGResult& aResult);
   LRESULT                 ProcessCharMessage(const MSG &aMsg,
                                              bool *aEventDispatched);
   LRESULT                 ProcessKeyUpMessage(const MSG &aMsg,
@@ -530,6 +537,11 @@ protected:
   // The point in time at which the last paint completed. We use this to avoid
   //  painting too rapidly in response to frequent input events.
   TimeStamp mLastPaintEndTime;
+
+  // Caching for hit test results
+  POINT mCachedHitTestPoint;
+  TimeStamp mCachedHitTestTime;
+  int32_t mCachedHitTestResult;
 
   static bool sNeedsToInitMouseWheelSettings;
   static void InitMouseWheelScrollData();

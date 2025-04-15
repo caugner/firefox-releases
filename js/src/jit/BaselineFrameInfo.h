@@ -12,12 +12,12 @@
 #include "jscntxt.h"
 #include "jscompartment.h"
 
-#include "BaselineJIT.h"
-#include "BaselineFrame.h"
-#include "BaselineRegisters.h"
-#include "BytecodeAnalysis.h"
-#include "IonMacroAssembler.h"
-#include "FixedList.h"
+#include "jit/BaselineFrame.h"
+#include "jit/BaselineJIT.h"
+#include "jit/BaselineRegisters.h"
+#include "jit/BytecodeAnalysis.h"
+#include "jit/FixedList.h"
+#include "jit/IonMacroAssembler.h"
 
 namespace js {
 namespace jit {

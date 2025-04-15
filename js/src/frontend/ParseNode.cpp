@@ -4,11 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "frontend/ParseNode-inl.h"
+
 #include "builtin/Module.h"
-#include "frontend/ParseNode.h"
 #include "frontend/Parser.h"
 
-#include "frontend/Parser-inl.h"
+#include "jscntxtinlines.h"
 
 using namespace js;
 using namespace js::frontend;
@@ -242,7 +243,7 @@ ParseNodeAllocator::allocNode()
         return pn;
     }
 
-    void *p = cx->tempLifoAlloc().alloc(sizeof (ParseNode));
+    void *p = alloc.alloc(sizeof (ParseNode));
     if (!p)
         js_ReportOutOfMemory(cx);
     return p;
@@ -381,16 +382,15 @@ Parser<FullParseHandler>::cloneParseTree(ParseNode *opn)
 
       case PN_CODE:
         if (pn->getKind() == PNK_MODULE) {
-            JS_NOT_REACHED("module nodes cannot be cloned");
-            return NULL;
-        } else {
-            NULLCHECK(pn->pn_funbox =
-                      newFunctionBox(opn->pn_funbox->function(), pc, opn->pn_funbox->strict));
-            NULLCHECK(pn->pn_body = cloneParseTree(opn->pn_body));
-            pn->pn_cookie = opn->pn_cookie;
-            pn->pn_dflags = opn->pn_dflags;
-            pn->pn_blockid = opn->pn_blockid;
+            MOZ_ASSUME_UNREACHABLE("module nodes cannot be cloned");
         }
+        NULLCHECK(pn->pn_funbox =
+                  newFunctionBox(pn, opn->pn_funbox->function(), pc,
+                                 Directives(/* strict = */ opn->pn_funbox->strict)));
+        NULLCHECK(pn->pn_body = cloneParseTree(opn->pn_body));
+        pn->pn_cookie = opn->pn_cookie;
+        pn->pn_dflags = opn->pn_dflags;
+        pn->pn_blockid = opn->pn_blockid;
         break;
 
       case PN_LIST:

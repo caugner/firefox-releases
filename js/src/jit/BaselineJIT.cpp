@@ -4,16 +4,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "BaselineCompiler.h"
-#include "BaselineIC.h"
-#include "BaselineJIT.h"
-#include "CompileInfo.h"
-#include "IonSpewer.h"
-#include "IonFrames-inl.h"
+#include "jit/BaselineJIT.h"
 
-#include "vm/Stack-inl.h"
+#include "mozilla/MemoryReporting.h"
+
+#include "jit/BaselineCompiler.h"
+#include "jit/BaselineIC.h"
+#include "jit/CompileInfo.h"
+#include "jit/IonSpewer.h"
 
 #include "jsopcodeinlines.h"
+
+#include "jit/IonFrames-inl.h"
+#include "vm/Stack-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -82,7 +85,7 @@ EnterBaseline(JSContext *cx, EnterJitData &data)
     JS_ASSERT(jit::IsBaselineEnabled(cx));
     JS_ASSERT_IF(data.osrFrame, CheckFrame(data.osrFrame));
 
-    EnterIonCode enter = cx->compartment()->ionCompartment()->enterBaselineJIT();
+    EnterIonCode enter = cx->runtime()->ionRuntime()->enterBaseline();
 
     // Caller must construct |this| before invoking the Ion function.
     JS_ASSERT_IF(data.constructing, data.maxArgv[0].isObject());
@@ -183,6 +186,10 @@ jit::EnterBaselineAtBranch(JSContext *cx, StackFrame *fp, jsbytecode *pc)
             data.calleeToken = CalleeToToken(fp->script());
     }
 
+#if JS_TRACE_LOGGING
+    TraceLogging::defaultLogger()->log(TraceLogging::INFO_ENGINE_BASELINE);
+#endif
+
     IonExecStatus status = EnterBaseline(cx, data);
     if (status != IonExec_Ok)
         return status;
@@ -242,7 +249,13 @@ CanEnterBaselineJIT(JSContext *cx, HandleScript script, bool osr)
     // Check script use count. However, always eagerly compile scripts if JSD
     // is enabled, so that we don't have to OSR and don't have to update the
     // frame pointer stored in JSD's frames list.
-    if (IsJSDEnabled(cx)) {
+    //
+    // Also eagerly compile if we are in parallel warmup, the point of which
+    // is to gather type information so that the script may be compiled for
+    // parallel execution. We want to avoid the situation of OSRing during
+    // warmup and only gathering type information for the loop, and not the
+    // rest of the function.
+    if (IsJSDEnabled(cx) || cx->runtime()->parallelWarmup > 0) {
         if (osr)
             return Method_Skipped;
     } else if (script->incUseCount() <= js_IonOptions.baselineUsesBeforeCompile) {
@@ -488,8 +501,7 @@ BaselineScript::icEntryFromPCOffset(uint32_t pcOffset)
         if (icEntry(i).isForOp())
             return icEntry(i);
     }
-    JS_NOT_REACHED("Invalid PC offset for IC entry.");
-    return icEntry(mid);
+    MOZ_ASSUME_UNREACHABLE("Invalid PC offset for IC entry.");
 }
 
 ICEntry &
@@ -634,8 +646,7 @@ BaselineScript::nativeCodeForPC(JSScript *script, jsbytecode *pc, PCMappingSlotI
         curPC += GetBytecodeLength(curPC);
     }
 
-    JS_NOT_REACHED("Invalid pc");
-    return NULL;
+    MOZ_ASSUME_UNREACHABLE("Invalid pc");
 }
 
 jsbytecode *
@@ -679,8 +690,7 @@ BaselineScript::pcForReturnOffset(JSScript *script, uint32_t nativeOffset)
         curPC += GetBytecodeLength(curPC);
     }
 
-    JS_NOT_REACHED("Invalid pc");
-    return NULL;
+    MOZ_ASSUME_UNREACHABLE("Invalid pc");
 }
 
 jsbytecode *
@@ -843,7 +853,7 @@ jit::IonCompartment::toggleBaselineStubBarriers(bool enabled)
 }
 
 void
-jit::SizeOfBaselineData(JSScript *script, JSMallocSizeOfFun mallocSizeOf, size_t *data,
+jit::SizeOfBaselineData(JSScript *script, mozilla::MallocSizeOf mallocSizeOf, size_t *data,
                         size_t *fallbackStubs)
 {
     *data = 0;

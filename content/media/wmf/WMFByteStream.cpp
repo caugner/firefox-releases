@@ -36,11 +36,11 @@ static const uint32_t NumWMFIoThreads = 4;
 // on this thread, so we need MSCOM working.
 class ThreadPoolListener MOZ_FINAL : public nsIThreadPoolListener {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSITHREADPOOLLISTENER
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(ThreadPoolListener, nsIThreadPoolListener)
+NS_IMPL_ISUPPORTS1(ThreadPoolListener, nsIThreadPoolListener)
 
 NS_IMETHODIMP
 ThreadPoolListener::OnThreadCreated()
@@ -100,7 +100,6 @@ public:
 WMFByteStream::WMFByteStream(MediaResource* aResource,
                              WMFSourceReaderCallback* aSourceReaderCallback)
   : mSourceReaderCallback(aSourceReaderCallback),
-    mResourceMonitor("WMFByteStream.MediaResource"),
     mResource(aResource),
     mReentrantMonitor("WMFByteStream.Data"),
     mOffset(0),
@@ -108,7 +107,6 @@ WMFByteStream::WMFByteStream(MediaResource* aResource,
     mIsShutdown(false)
 {
   NS_ASSERTION(NS_IsMainThread(), "Must be on main thread.");
-  NS_ASSERTION(mResource, "Must have a valid media resource");
   NS_ASSERTION(mSourceReaderCallback, "Must have a source reader callback.");
 
 #ifdef PR_LOGGING
@@ -116,7 +114,7 @@ WMFByteStream::WMFByteStream(MediaResource* aResource,
     gWMFByteStreamLog = PR_NewLogModule("WMFByteStream");
   }
 #endif
-
+  LOG("[%p] WMFByteStream CTOR", this);
   MOZ_COUNT_CTOR(WMFByteStream);
 }
 
@@ -129,6 +127,7 @@ WMFByteStream::~WMFByteStream()
   nsCOMPtr<nsIRunnable> event =
     new ReleaseWMFByteStreamResourcesEvent(mResource.forget());
   NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
+  LOG("[%p] WMFByteStream DTOR", this);
 }
 
 nsresult
@@ -179,7 +178,7 @@ WMFByteStream::Init()
                                 contentTypeUTF16.get());
     NS_ENSURE_TRUE(SUCCEEDED(hr), NS_ERROR_FAILURE);
 
-    LOG("WMFByteStream has Content-Type=%s", mResource->GetContentType().get());
+    LOG("[%p] WMFByteStream has Content-Type=%s", this, mResource->GetContentType().get());
   }
   return NS_OK;
 }
@@ -199,7 +198,7 @@ WMFByteStream::Shutdown()
 STDMETHODIMP
 WMFByteStream::QueryInterface(REFIID aIId, void **aInterface)
 {
-  LOG("WMFByteStream::QueryInterface %s", GetGUIDName(aIId).get());
+  LOG("[%p] WMFByteStream::QueryInterface %s", this, GetGUIDName(aIId).get());
 
   if (aIId == IID_IMFByteStream) {
     return DoGetInterface(static_cast<IMFByteStream*>(this), aInterface);
@@ -215,8 +214,8 @@ WMFByteStream::QueryInterface(REFIID aIId, void **aInterface)
   return E_NOINTERFACE;
 }
 
-NS_IMPL_THREADSAFE_ADDREF(WMFByteStream)
-NS_IMPL_THREADSAFE_RELEASE(WMFByteStream)
+NS_IMPL_ADDREF(WMFByteStream)
+NS_IMPL_RELEASE(WMFByteStream)
 
 
 // Stores data regarding an async read opreation.
@@ -240,12 +239,12 @@ public:
   ULONG mBytesRead;
 
   // IUnknown ref counting.
-  nsAutoRefCnt mRefCnt;
+  ThreadSafeAutoRefCnt mRefCnt;
   NS_DECL_OWNINGTHREAD
 };
 
-NS_IMPL_THREADSAFE_ADDREF(ReadRequest)
-NS_IMPL_THREADSAFE_RELEASE(ReadRequest)
+NS_IMPL_ADDREF(ReadRequest)
+NS_IMPL_RELEASE(ReadRequest)
 
 // IUnknown Methods
 STDMETHODIMP
@@ -291,8 +290,8 @@ WMFByteStream::BeginRead(BYTE *aBuffer,
   NS_ENSURE_TRUE(aCallback, E_POINTER);
 
   ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-  LOG("WMFByteStream::BeginRead() mOffset=%lld tell=%lld length=%lu mIsShutdown=%d",
-      mOffset, mResource->Tell(), aLength, mIsShutdown);
+  LOG("[%p] WMFByteStream::BeginRead() mOffset=%lld tell=%lld length=%lu mIsShutdown=%d",
+      this, mOffset, mResource->Tell(), aLength, mIsShutdown);
 
   if (mIsShutdown || mOffset < 0) {
     return E_INVALIDARG;
@@ -328,17 +327,6 @@ WMFByteStream::BeginRead(BYTE *aBuffer,
 nsresult
 WMFByteStream::Read(ReadRequest* aRequestState)
 {
-  ReentrantMonitorAutoEnter mon(mResourceMonitor);
-
-  // Ensure the read head is at the correct offset in the resource. It may not
-  // be if the SourceReader seeked.
-  if (mResource->Tell() != aRequestState->mOffset) {
-    nsresult rv = mResource->Seek(nsISeekableStream::NS_SEEK_SET,
-                                  aRequestState->mOffset);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-  NS_ASSERTION(mResource->Tell() == aRequestState->mOffset, "State mismatch!");
-
   // Read in a loop to ensure we fill the buffer, when possible.
   ULONG totalBytesRead = 0;
   nsresult rv = NS_OK;
@@ -346,9 +334,10 @@ WMFByteStream::Read(ReadRequest* aRequestState)
     BYTE* buffer = aRequestState->mBuffer + totalBytesRead;
     ULONG bytesRead = 0;
     ULONG length = aRequestState->mBufferLength - totalBytesRead;
-    rv = mResource->Read(reinterpret_cast<char*>(buffer),
-                         length,
-                         reinterpret_cast<uint32_t*>(&bytesRead));
+    rv = mResource->ReadAt(aRequestState->mOffset + totalBytesRead,
+                           reinterpret_cast<char*>(buffer),
+                           length,
+                           reinterpret_cast<uint32_t*>(&bytesRead));
     NS_ENSURE_SUCCESS(rv, rv);
     totalBytesRead += bytesRead;
     if (bytesRead == 0) {
@@ -368,7 +357,7 @@ WMFByteStream::ProcessReadRequest(IMFAsyncResult* aResult,
       aRequestState->mOffset > mResource->GetLength()) {
     aResult->SetStatus(S_OK);
     wmf::MFInvokeCallback(aResult);
-    LOG("WMFByteStream::Invoke() read offset greater than length, soft-failing read");
+    LOG("[%p] WMFByteStream::ProcessReadRequest() read offset greater than length, soft-failing read", this);
     return;
   }
 
@@ -380,8 +369,8 @@ WMFByteStream::ProcessReadRequest(IMFAsyncResult* aResult,
     aResult->SetStatus(S_OK);
   }
 
-  LOG("WMFByteStream::Invoke() read %d at %lld finished rv=%x",
-       aRequestState->mBytesRead, aRequestState->mOffset, rv);
+  LOG("[%p] WMFByteStream::ProcessReadRequest() read %d at %lld finished rv=%x",
+       this, aRequestState->mBytesRead, aRequestState->mOffset, rv);
 
   // Let caller know read is complete.
   DebugOnly<HRESULT> hr = wmf::MFInvokeCallback(aResult);
@@ -393,14 +382,14 @@ WMFByteStream::BeginWrite(const BYTE *, ULONG ,
                           IMFAsyncCallback *,
                           IUnknown *)
 {
-  LOG("WMFByteStream::BeginWrite()");
+  LOG("[%p] WMFByteStream::BeginWrite()", this);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP
 WMFByteStream::Close()
 {
-  LOG("WMFByteStream::Close()");
+  LOG("[%p] WMFByteStream::Close()", this);
   return S_OK;
 }
 
@@ -433,8 +422,8 @@ WMFByteStream::EndRead(IMFAsyncResult* aResult, ULONG *aBytesRead)
   // Report result.
   *aBytesRead = requestState->mBytesRead;
 
-  LOG("WMFByteStream::EndRead() offset=%lld *aBytesRead=%u mOffset=%lld status=0x%x hr=0x%x eof=%d",
-      requestState->mOffset, *aBytesRead, mOffset, aResult->GetStatus(), hr, IsEOS());
+  LOG("[%p] WMFByteStream::EndRead() offset=%lld *aBytesRead=%u mOffset=%lld status=0x%x hr=0x%x eof=%d",
+      this, requestState->mOffset, *aBytesRead, mOffset, aResult->GetStatus(), hr, IsEOS());
 
   if (SUCCEEDED(aResult->GetStatus())) {
     mBytesConsumed += requestState->mBytesRead;
@@ -446,21 +435,21 @@ WMFByteStream::EndRead(IMFAsyncResult* aResult, ULONG *aBytesRead)
 STDMETHODIMP
 WMFByteStream::EndWrite(IMFAsyncResult *, ULONG *)
 {
-  LOG("WMFByteStream::EndWrite()");
+  LOG("[%p] WMFByteStream::EndWrite()", this);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP
 WMFByteStream::Flush()
 {
-  LOG("WMFByteStream::Flush()");
+  LOG("[%p] WMFByteStream::Flush()", this);
   return S_OK;
 }
 
 STDMETHODIMP
 WMFByteStream::GetCapabilities(DWORD *aCapabilities)
 {
-  LOG("WMFByteStream::GetCapabilities()");
+  LOG("[%p] WMFByteStream::GetCapabilities()", this);
   NS_ENSURE_TRUE(aCapabilities, E_POINTER);
   ReentrantMonitorAutoEnter mon(mReentrantMonitor);
   bool seekable = mResource->IsTransportSeekable();
@@ -485,7 +474,7 @@ WMFByteStream::GetCurrentPosition(QWORD *aPosition)
   // seek to < 0 and read, the read is expected to fails... So
   // go figure...
   *aPosition = mOffset < 0 ? mResource->GetLength() : mOffset;
-  LOG("WMFByteStream::GetCurrentPosition() %lld", mOffset);
+  LOG("[%p] WMFByteStream::GetCurrentPosition() %lld", this, mOffset);
   return S_OK;
 }
 
@@ -495,7 +484,7 @@ WMFByteStream::GetLength(QWORD *aLength)
   NS_ENSURE_TRUE(aLength, E_POINTER);
   ReentrantMonitorAutoEnter mon(mReentrantMonitor);
   *aLength = mResource->GetLength();
-  LOG("WMFByteStream::GetLength() %lld", *aLength);
+  LOG("[%p] WMFByteStream::GetLength() %lld", this, *aLength);
   return S_OK;
 }
 
@@ -513,7 +502,7 @@ WMFByteStream::IsEndOfStream(BOOL *aEndOfStream)
 {
   NS_ENSURE_TRUE(aEndOfStream, E_POINTER);
   *aEndOfStream = IsEOS();
-  LOG("WMFByteStream::IsEndOfStream() %d", *aEndOfStream);
+  LOG("[%p] WMFByteStream::IsEndOfStream() %d", this, *aEndOfStream);
   return S_OK;
 }
 
@@ -523,14 +512,14 @@ WMFByteStream::Read(BYTE* aBuffer, ULONG aBufferLength, ULONG* aOutBytesRead)
   ReentrantMonitorAutoEnter mon(mReentrantMonitor);
   ReadRequest request(mOffset, aBuffer, aBufferLength);
   if (NS_FAILED(Read(&request))) {
-    LOG("WMFByteStream::Read() offset=%lld failed!", mOffset);
+    LOG("[%p] WMFByteStream::Read() offset=%lld failed!", this, mOffset);
     return E_FAIL;
   }
   if (aOutBytesRead) {
     *aOutBytesRead = request.mBytesRead;
   }
-  LOG("WMFByteStream::Read() offset=%lld length=%u bytesRead=%u",
-      mOffset, aBufferLength, request.mBytesRead);
+  LOG("[%p] WMFByteStream::Read() offset=%lld length=%u bytesRead=%u",
+      this, mOffset, aBufferLength, request.mBytesRead);
   mOffset += request.mBytesRead;
   return S_OK;
 }
@@ -541,7 +530,7 @@ WMFByteStream::Seek(MFBYTESTREAM_SEEK_ORIGIN aSeekOrigin,
                     DWORD aSeekFlags,
                     QWORD *aCurrentPosition)
 {
-  LOG("WMFByteStream::Seek(%d, %lld)", aSeekOrigin, aSeekOffset);
+  LOG("[%p] WMFByteStream::Seek(%d, %lld)", this, aSeekOrigin, aSeekOffset);
 
   ReentrantMonitorAutoEnter mon(mReentrantMonitor);
 
@@ -568,8 +557,8 @@ STDMETHODIMP
 WMFByteStream::SetCurrentPosition(QWORD aPosition)
 {
   ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-  LOG("WMFByteStream::SetCurrentPosition(%lld)",
-      aPosition);
+  LOG("[%p] WMFByteStream::SetCurrentPosition(%lld)",
+      this, aPosition);
 
   int64_t length = mResource->GetLength();
   if (length > -1) {
@@ -584,14 +573,14 @@ WMFByteStream::SetCurrentPosition(QWORD aPosition)
 STDMETHODIMP
 WMFByteStream::SetLength(QWORD)
 {
-  LOG("WMFByteStream::SetLength()");
+  LOG("[%p] WMFByteStream::SetLength()", this);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP
 WMFByteStream::Write(const BYTE *, ULONG, ULONG *)
 {
-  LOG("WMFByteStream::Write()");
+  LOG("[%p] WMFByteStream::Write()", this);
   return E_NOTIMPL;
 }
 

@@ -19,6 +19,8 @@
 using namespace mozilla;
 using namespace mozilla::dom;
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsGenericHTMLFrameElement)
+
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsGenericHTMLFrameElement,
                                                   nsGenericHTMLElement)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFrameLoader)
@@ -229,7 +231,9 @@ nsGenericHTMLFrameElement::SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                                               aValue, aNotify);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::src) {
+  if (aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::src &&
+      (Tag() != nsGkAtoms::iframe || 
+       !HasAttr(kNameSpaceID_None,nsGkAtoms::srcdoc))) {
     // Don't propagate error here. The attribute was successfully set, that's
     // what we should reflect.
     LoadSrc();

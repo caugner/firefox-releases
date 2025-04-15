@@ -37,6 +37,7 @@
 #include "nsISizeOfEventTarget.h"
 
 #include "mozilla/Assertions.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/TypedArray.h"
 #include "mozilla/dom/XMLHttpRequestBinding.h"
@@ -227,7 +228,7 @@ public:
 
   // nsISizeOfEventTarget
   virtual size_t
-    SizeOfEventTargetIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
+    SizeOfEventTargetIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
   NS_REALLY_FORWARD_NSIDOMEVENTTARGET(nsXHREventTarget)
 
@@ -687,8 +688,7 @@ class nsXMLHttpRequestXPCOMifier MOZ_FINAL : public nsIStreamListener,
                                              public nsIChannelEventSink,
                                              public nsIProgressEventSink,
                                              public nsIInterfaceRequestor,
-                                             public nsITimerCallback,
-                                             public nsCycleCollectionParticipant
+                                             public nsITimerCallback
 {
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsXMLHttpRequestXPCOMifier,

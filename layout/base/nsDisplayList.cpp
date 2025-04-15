@@ -51,7 +51,7 @@
 #include "ImageContainer.h"
 #include "nsCanvasFrame.h"
 
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 #include <algorithm>
 
 using namespace mozilla;
@@ -635,7 +635,7 @@ static void RecordFrameMetrics(nsIFrame* aForFrame,
 
   nsIntRect visible = aVisibleRect.ScaleToNearestPixels(
     resolution.scale, resolution.scale, auPerDevPixel);
-  aRoot->SetVisibleRegion(nsIntRegion(visible));
+  aRoot->SetVisibleRegion(visible);
 
   FrameMetrics metrics;
   metrics.mViewport = CSSRect::FromAppUnits(aViewport);
@@ -718,17 +718,6 @@ nsDisplayListBuilder::GetBackgroundPaintFlags() {
   return flags;
 }
 
-static uint64_t RegionArea(const nsRegion& aRegion)
-{
-  uint64_t area = 0;
-  nsRegionRectIterator iter(aRegion);
-  const nsRect* r;
-  while ((r = iter.Next()) != nullptr) {
-    area += uint64_t(r->width)*r->height;
-  }
-  return area;
-}
-
 void
 nsDisplayListBuilder::SubtractFromVisibleRegion(nsRegion* aVisibleRegion,
                                                 const nsRegion& aRegion)
@@ -743,7 +732,7 @@ nsDisplayListBuilder::SubtractFromVisibleRegion(nsRegion* aVisibleRegion,
   // Do let aVisibleRegion get more complex if by doing so we reduce its
   // area by at least half.
   if (GetAccurateVisibleRegions() || tmp.GetNumRects() <= 15 ||
-      RegionArea(tmp) <= RegionArea(*aVisibleRegion)/2) {
+      tmp.Area() <= aVisibleRegion->Area()/2) {
     *aVisibleRegion = tmp;
   }
 }
@@ -1141,7 +1130,16 @@ void nsDisplayList::PaintForFrame(nsDisplayListBuilder* aBuilder,
     BuildContainerLayerFor(aBuilder, layerManager, aForFrame, nullptr, *this,
                            containerParameters, nullptr);
 
-  if (widgetTransaction) {
+  nsIDocument* document = nullptr;
+  if (presShell) {
+    document = presShell->GetDocument();
+  }
+
+  if (widgetTransaction ||
+      // SVG-as-an-image docs don't paint as part of the retained layer tree,
+      // but they still need the invalidation state bits cleared in order for
+      // invalidation for CSS/SMIL animation to work properly.
+      (document && document->IsBeingUsedAsImage())) {
     aForFrame->ClearInvalidationStateBits();
   }
 
@@ -1170,13 +1168,10 @@ void nsDisplayList::PaintForFrame(nsDisplayListBuilder* aBuilder,
   }
 
   bool mayHaveTouchListeners = false;
-  if (presShell) {
-    nsIDocument* document = presShell->GetDocument();
-    if (document) {
-      nsCOMPtr<nsPIDOMWindow> innerWin(document->GetInnerWindow());
-      if (innerWin) {
-        mayHaveTouchListeners = innerWin->HasTouchEventListeners();
-      }
+  if (document) {
+    nsCOMPtr<nsPIDOMWindow> innerWin(document->GetInnerWindow());
+    if (innerWin) {
+      mayHaveTouchListeners = innerWin->HasTouchEventListeners();
     }
   }
 
@@ -1469,6 +1464,20 @@ void nsDisplayList::Sort(nsDisplayListBuilder* aBuilder,
   ::Sort(this, Count(), aCmp, aClosure);
 }
 
+void
+nsDisplayItem::AddInvalidRegionForSyncDecodeBackgroundImages(
+  nsDisplayListBuilder* aBuilder,
+  const nsDisplayItemGeometry* aGeometry,
+  nsRegion* aInvalidRegion)
+{
+  if (aBuilder->ShouldSyncDecodeImages()) {
+    if (!nsCSSRendering::AreAllBackgroundImagesDecodedForFrame(mFrame)) {
+      bool snap;
+      aInvalidRegion->Or(*aInvalidRegion, GetBounds(aBuilder, &snap));
+    }
+  }
+}
+
 /* static */ bool
 nsDisplayItem::ForceActiveLayers()
 {
@@ -1552,29 +1561,15 @@ RegisterThemeGeometry(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
 nsDisplayBackgroundImage::nsDisplayBackgroundImage(nsDisplayListBuilder* aBuilder,
                                                    nsIFrame* aFrame,
                                                    uint32_t aLayer,
-                                                   bool aIsThemed,
                                                    const nsStyleBackground* aBackgroundStyle)
   : nsDisplayImageContainer(aBuilder, aFrame)
   , mBackgroundStyle(aBackgroundStyle)
   , mLayer(aLayer)
-  , mIsThemed(aIsThemed)
   , mIsBottommostLayer(true)
 {
   MOZ_COUNT_CTOR(nsDisplayBackgroundImage);
 
-  if (mIsThemed) {
-    const nsStyleDisplay* disp = mFrame->StyleDisplay();
-    mFrame->IsThemed(disp, &mThemeTransparency);
-    // Perform necessary RegisterThemeGeometry
-    if (disp->mAppearance == NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR ||
-        disp->mAppearance == NS_THEME_TOOLBAR ||
-        disp->mAppearance == NS_THEME_WINDOW_TITLEBAR) {
-      RegisterThemeGeometry(aBuilder, aFrame);
-    } else if (disp->mAppearance == NS_THEME_WIN_BORDERLESS_GLASS ||
-               disp->mAppearance == NS_THEME_WIN_GLASS) {
-      aBuilder->SetGlassDisplayItem(this);
-    }
-  } else if (mBackgroundStyle) {
+  if (mBackgroundStyle) {
     // Set HasFixedItems if we construct a background-attachment:fixed item
     if (mLayer != mBackgroundStyle->mImageCount - 1) {
       mIsBottommostLayer = false;
@@ -1595,17 +1590,6 @@ nsDisplayBackgroundImage::~nsDisplayBackgroundImage()
   MOZ_COUNT_DTOR(nsDisplayBackgroundImage);
 #endif
 }
-
-#ifdef MOZ_DUMP_PAINTING
-void
-nsDisplayBackgroundImage::WriteDebugInfo(FILE *aOutput)
-{
-  if (mIsThemed) {
-    fprintf(aOutput, "(themed, appearance:%d) ", mFrame->StyleDisplay()->mAppearance);
-  }
-
-}
-#endif
 
 static nsStyleContext* GetBackgroundStyleContext(nsIFrame* aFrame)
 {
@@ -1630,11 +1614,10 @@ static nsStyleContext* GetBackgroundStyleContext(nsIFrame* aFrame)
   return sc;
 }
 
-/*static*/ nsresult
+/*static*/ bool
 nsDisplayBackgroundImage::AppendBackgroundItemsToTop(nsDisplayListBuilder* aBuilder,
                                                      nsIFrame* aFrame,
-                                                     nsDisplayList* aList,
-                                                     nsDisplayBackgroundImage** aBackground)
+                                                     nsDisplayList* aList)
 {
   nsStyleContext* bgSC = nullptr;
   const nsStyleBackground* bg = nullptr;
@@ -1666,36 +1649,28 @@ nsDisplayBackgroundImage::AppendBackgroundItemsToTop(nsDisplayListBuilder* aBuil
   }
 
   if (isThemed) {
-    nsDisplayBackgroundImage* bgItem =
-      new (aBuilder) nsDisplayBackgroundImage(aBuilder, aFrame, 0, isThemed, nullptr);
+    nsDisplayThemedBackground* bgItem =
+      new (aBuilder) nsDisplayThemedBackground(aBuilder, aFrame);
     aList->AppendNewToTop(bgItem);
-    if (aBackground) {
-      *aBackground = bgItem;
-    }
-    return NS_OK;
+    return true;
   }
 
   if (!bg) {
-    return NS_OK;
+    return false;
   }
  
   // Passing bg == nullptr in this macro will result in one iteration with
   // i = 0.
-  bool backgroundSet = !aBackground;
   NS_FOR_VISIBLE_BACKGROUND_LAYERS_BACK_TO_FRONT(i, bg) {
     if (bg->mLayers[i].mImage.IsEmpty()) {
       continue;
     }
     nsDisplayBackgroundImage* bgItem =
-      new (aBuilder) nsDisplayBackgroundImage(aBuilder, aFrame, i, isThemed, bg);
+      new (aBuilder) nsDisplayBackgroundImage(aBuilder, aFrame, i, bg);
     aList->AppendNewToTop(bgItem);
-    if (!backgroundSet) {
-      *aBackground = bgItem;
-      backgroundSet = true;
-    }
   }
 
-  return NS_OK;
+  return false;
 }
 
 // Check that the rounded border of aFrame, added to aToReferenceFrame,
@@ -1734,7 +1709,7 @@ nsDisplayBackgroundImage::IsSingleFixedPositionImage(nsDisplayListBuilder* aBuil
                                                      const nsRect& aClipRect,
                                                      gfxRect* aDestRect)
 {
-  if (mIsThemed || !mBackgroundStyle)
+  if (!mBackgroundStyle)
     return false;
 
   if (mBackgroundStyle->mLayers.Length() != 1)
@@ -1772,7 +1747,7 @@ bool
 nsDisplayBackgroundImage::TryOptimizeToImageLayer(LayerManager* aManager,
                                                   nsDisplayListBuilder* aBuilder)
 {
-  if (mIsThemed || !mBackgroundStyle)
+  if (!mBackgroundStyle)
     return false;
 
   nsPresContext* presContext = mFrame->PresContext();
@@ -1844,7 +1819,7 @@ nsDisplayBackgroundImage::GetLayerState(nsDisplayListBuilder* aBuilder,
                                         const FrameLayerBuilder::ContainerParameters& aParameters)
 {
   bool animated = false;
-  if (!mIsThemed && mBackgroundStyle) {
+  if (mBackgroundStyle) {
     const nsStyleBackground::Layer &layer = mBackgroundStyle->mLayers[mLayer];
     const nsStyleImage* image = &layer.mImage;
     if (image->GetType() == eStyleImageType_Image) {
@@ -1935,18 +1910,9 @@ nsDisplayBackgroundImage::HitTest(nsDisplayListBuilder* aBuilder,
                                   HitTestState* aState,
                                   nsTArray<nsIFrame*> *aOutFrames)
 {
-  if (mIsThemed) {
-    // For theme backgrounds, assume that any point in our border rect is a hit.
-    if (!nsRect(ToReferenceFrame(), mFrame->GetSize()).Intersects(aRect))
-      return;
-  } else {
-    if (!RoundedBorderIntersectsRect(mFrame, ToReferenceFrame(), aRect)) {
-      // aRect doesn't intersect our border-radius curve.
-      return;
-    }
+  if (RoundedBorderIntersectsRect(mFrame, ToReferenceFrame(), aRect)) {
+    aOutFrames->AppendElement(mFrame);
   }
-
-  aOutFrames->AppendElement(mFrame);
 }
 
 bool
@@ -1962,7 +1928,7 @@ nsDisplayBackgroundImage::ComputeVisibility(nsDisplayListBuilder* aBuilder,
   // Return false if the background was propagated away from this
   // frame. We don't want this display item to show up and confuse
   // anything.
-  return mIsThemed || mBackgroundStyle;
+  return mBackgroundStyle;
 }
 
 /* static */ nsRegion
@@ -2012,13 +1978,6 @@ nsDisplayBackgroundImage::GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
                                           bool* aSnap) {
   nsRegion result;
   *aSnap = false;
-  // theme background overrides any other background
-  if (mIsThemed) {
-    if (mThemeTransparency == nsITheme::eOpaque) {
-      result = nsRect(ToReferenceFrame(), mFrame->GetSize());
-    }
-    return result;
-  }
 
   if (!mBackgroundStyle)
     return result;
@@ -2045,17 +2004,6 @@ nsDisplayBackgroundImage::GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
 
 bool
 nsDisplayBackgroundImage::IsUniform(nsDisplayListBuilder* aBuilder, nscolor* aColor) {
-  // theme background overrides any other background
-  if (mIsThemed) {
-    const nsStyleDisplay* disp = mFrame->StyleDisplay();
-    if (disp->mAppearance == NS_THEME_WIN_BORDERLESS_GLASS ||
-        disp->mAppearance == NS_THEME_WIN_GLASS) {
-      *aColor = NS_RGBA(0,0,0,0);
-      return true;
-    }
-    return false;
-  }
-
   if (!mBackgroundStyle) {
     *aColor = NS_RGBA(0,0,0,0);
     return true;
@@ -2067,10 +2015,6 @@ bool
 nsDisplayBackgroundImage::IsVaryingRelativeToMovingFrame(nsDisplayListBuilder* aBuilder,
                                                          nsIFrame* aFrame)
 {
-  // theme background overrides any other background and is never fixed
-  if (mIsThemed)
-    return false;
-
   if (!mBackgroundStyle)
     return false;
   if (!mBackgroundStyle->HasFixedBackground())
@@ -2087,9 +2031,6 @@ nsDisplayBackgroundImage::IsVaryingRelativeToMovingFrame(nsDisplayListBuilder* a
 nsRect
 nsDisplayBackgroundImage::GetPositioningArea()
 {
-  if (mIsThemed) {
-    return nsRect(ToReferenceFrame(), mFrame->GetSize());
-  }
   if (!mBackgroundStyle) {
     return nsRect();
   }
@@ -2104,10 +2045,6 @@ nsDisplayBackgroundImage::GetPositioningArea()
 bool
 nsDisplayBackgroundImage::RenderingMightDependOnPositioningAreaSizeChange()
 {
-  // theme background overrides any other background and we don't know what to do here
-  if (mIsThemed)
-    return true;
-
   if (!mBackgroundStyle)
     return false;
 
@@ -2163,7 +2100,7 @@ void nsDisplayBackgroundImage::ComputeInvalidationRegion(nsDisplayListBuilder* a
                                                          const nsDisplayItemGeometry* aGeometry,
                                                          nsRegion* aInvalidRegion)
 {
-  if (!mIsThemed && !mBackgroundStyle) {
+  if (!mBackgroundStyle) {
     return;
   }
 
@@ -2179,6 +2116,12 @@ void nsDisplayBackgroundImage::ComputeInvalidationRegion(nsDisplayListBuilder* a
     // so invalidate everything (both old and new painting areas).
     aInvalidRegion->Or(bounds, geometry->mBounds);
     return;
+  }
+  if (aBuilder->ShouldSyncDecodeImages()) {
+    if (mBackgroundStyle &&
+        !nsCSSRendering::IsBackgroundImageDecodedForStyleContextAndLayer(mBackgroundStyle, mLayer)) {
+      aInvalidRegion->Or(*aInvalidRegion, bounds);
+    }
   }
   if (!bounds.IsEqualInterior(geometry->mBounds)) {
     // Positioning area is unchanged, so invalidate just the change in the
@@ -2196,19 +2139,6 @@ nsDisplayBackgroundImage::GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap)
 nsRect
 nsDisplayBackgroundImage::GetBoundsInternal(nsDisplayListBuilder* aBuilder) {
   nsPresContext* presContext = mFrame->PresContext();
-
-  if (mIsThemed) {
-    nsRect r(nsPoint(0,0), mFrame->GetSize());
-    presContext->GetTheme()->
-        GetWidgetOverflow(presContext->DeviceContext(), mFrame,
-                          mFrame->StyleDisplay()->mAppearance, &r);
-#ifdef XP_MACOSX
-    // Bug 748219
-    r.Inflate(mFrame->PresContext()->AppUnitsPerDevPixel());
-#endif
-
-    return r + ToReferenceFrame();
-  }
 
   if (!mBackgroundStyle) {
     return nsRect();
@@ -2232,6 +2162,149 @@ nsDisplayBackgroundImage::GetPerFrameKey()
 {
   return (mLayer << nsDisplayItem::TYPE_BITS) |
     nsDisplayItem::GetPerFrameKey();
+}
+
+nsDisplayThemedBackground::nsDisplayThemedBackground(nsDisplayListBuilder* aBuilder,
+                                                     nsIFrame* aFrame)
+  : nsDisplayItem(aBuilder, aFrame)
+{
+  MOZ_COUNT_CTOR(nsDisplayThemedBackground);
+
+  const nsStyleDisplay* disp = mFrame->StyleDisplay();
+  mAppearance = disp->mAppearance;
+  mFrame->IsThemed(disp, &mThemeTransparency);
+  // Perform necessary RegisterThemeGeometry
+  if (mAppearance == NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR ||
+      mAppearance == NS_THEME_TOOLBAR ||
+      mAppearance == NS_THEME_WINDOW_TITLEBAR) {
+    RegisterThemeGeometry(aBuilder, aFrame);
+  } else if (mAppearance == NS_THEME_WIN_BORDERLESS_GLASS ||
+             mAppearance == NS_THEME_WIN_GLASS) {
+    aBuilder->SetGlassDisplayItem(this);
+  }
+
+  mBounds = GetBoundsInternal();
+}
+
+nsDisplayThemedBackground::~nsDisplayThemedBackground()
+{
+#ifdef NS_BUILD_REFCNT_LOGGING
+  MOZ_COUNT_DTOR(nsDisplayThemedBackground);
+#endif
+}
+
+#ifdef MOZ_DUMP_PAINTING
+void
+nsDisplayThemedBackground::WriteDebugInfo(FILE *aOutput)
+{
+  fprintf(aOutput, "(themed, appearance:%d) ", mAppearance);
+}
+#endif
+
+void
+nsDisplayThemedBackground::HitTest(nsDisplayListBuilder* aBuilder,
+                                  const nsRect& aRect,
+                                  HitTestState* aState,
+                                  nsTArray<nsIFrame*> *aOutFrames)
+{
+  // Assume that any point in our border rect is a hit.
+  if (nsRect(ToReferenceFrame(), mFrame->GetSize()).Intersects(aRect)) {
+    aOutFrames->AppendElement(mFrame);
+  }
+}
+
+nsRegion
+nsDisplayThemedBackground::GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
+                                           bool* aSnap) {
+  nsRegion result;
+  *aSnap = false;
+
+  if (mThemeTransparency == nsITheme::eOpaque) {
+    result = nsRect(ToReferenceFrame(), mFrame->GetSize());
+  }
+  return result;
+}
+
+bool
+nsDisplayThemedBackground::IsUniform(nsDisplayListBuilder* aBuilder, nscolor* aColor) {
+  if (mAppearance == NS_THEME_WIN_BORDERLESS_GLASS ||
+      mAppearance == NS_THEME_WIN_GLASS) {
+    *aColor = NS_RGBA(0,0,0,0);
+    return true;
+  }
+  return false;
+}
+
+nsRect
+nsDisplayThemedBackground::GetPositioningArea()
+{
+  return nsRect(ToReferenceFrame(), mFrame->GetSize());
+}
+
+void
+nsDisplayThemedBackground::Paint(nsDisplayListBuilder* aBuilder,
+                                 nsRenderingContext* aCtx)
+{
+  PaintInternal(aBuilder, aCtx, mVisibleRect, nullptr);
+}
+
+void
+nsDisplayThemedBackground::PaintInternal(nsDisplayListBuilder* aBuilder,
+                                         nsRenderingContext* aCtx, const nsRect& aBounds,
+                                         nsRect* aClipRect)
+{
+  // XXXzw this ignores aClipRect.
+  nsPresContext* presContext = mFrame->PresContext();
+  nsITheme *theme = presContext->GetTheme();
+  nsRect borderArea(ToReferenceFrame(), mFrame->GetSize());
+  nsRect drawing(borderArea);
+  theme->GetWidgetOverflow(presContext->DeviceContext(), mFrame, mAppearance,
+                           &drawing);
+  drawing.IntersectRect(drawing, aBounds);
+  theme->DrawWidgetBackground(aCtx, mFrame, mAppearance, borderArea, drawing);
+}
+
+void nsDisplayThemedBackground::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                                          const nsDisplayItemGeometry* aGeometry,
+                                                          nsRegion* aInvalidRegion)
+{
+  const nsDisplayThemedBackgroundGeometry* geometry = static_cast<const nsDisplayThemedBackgroundGeometry*>(aGeometry);
+
+  bool snap;
+  nsRect bounds = GetBounds(aBuilder, &snap);
+  nsRect positioningArea = GetPositioningArea();
+  if (!positioningArea.IsEqualInterior(geometry->mPositioningArea)) {
+    // Invalidate everything (both old and new painting areas).
+    aInvalidRegion->Or(bounds, geometry->mBounds);
+    return;
+  }
+  if (!bounds.IsEqualInterior(geometry->mBounds)) {
+    // Positioning area is unchanged, so invalidate just the change in the
+    // painting area.
+    aInvalidRegion->Xor(bounds, geometry->mBounds);
+  }
+}
+
+nsRect
+nsDisplayThemedBackground::GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) {
+  *aSnap = true;
+  return mBounds;
+}
+
+nsRect
+nsDisplayThemedBackground::GetBoundsInternal() {
+  nsPresContext* presContext = mFrame->PresContext();
+
+  nsRect r(nsPoint(0,0), mFrame->GetSize());
+  presContext->GetTheme()->
+      GetWidgetOverflow(presContext->DeviceContext(), mFrame,
+                        mFrame->StyleDisplay()->mAppearance, &r);
+#ifdef XP_MACOSX
+  // Bug 748219
+  r.Inflate(mFrame->PresContext()->AppUnitsPerDevPixel());
+#endif
+
+  return r + ToReferenceFrame();
 }
 
 void
@@ -2994,16 +3067,16 @@ nsDisplayFixedPosition::BuildLayer(nsDisplayListBuilder* aBuilder,
   // coordinate-space of the built layer.
   float factor = presContext->AppUnitsPerDevPixel();
   nsPoint origin = viewportFrame->GetOffsetToCrossDoc(ReferenceFrame());
-  gfxRect anchorRect(NSAppUnitsToFloatPixels(origin.x, factor) *
-                       aContainerParameters.mXScale,
-                     NSAppUnitsToFloatPixels(origin.y, factor) *
-                       aContainerParameters.mYScale,
-                     NSAppUnitsToFloatPixels(containingBlockSize.width, factor) *
-                       aContainerParameters.mXScale,
-                     NSAppUnitsToFloatPixels(containingBlockSize.height, factor) *
-                       aContainerParameters.mYScale);
+  LayerRect anchorRect(NSAppUnitsToFloatPixels(origin.x, factor) *
+                         aContainerParameters.mXScale,
+                       NSAppUnitsToFloatPixels(origin.y, factor) *
+                         aContainerParameters.mYScale,
+                       NSAppUnitsToFloatPixels(containingBlockSize.width, factor) *
+                         aContainerParameters.mXScale,
+                       NSAppUnitsToFloatPixels(containingBlockSize.height, factor) *
+                         aContainerParameters.mYScale);
 
-  gfxPoint anchor(anchorRect.x, anchorRect.y);
+  LayerPoint anchor = anchorRect.TopLeft();
 
   const nsStylePosition* position = mFixedPosFrame->StylePosition();
   if (position->mOffset.GetRightUnit() != eStyleUnit_Auto)
@@ -3016,14 +3089,14 @@ nsDisplayFixedPosition::BuildLayer(nsDisplayListBuilder* aBuilder,
   // Also make sure the layer is aware of any fixed position margins that have
   // been set.
   nsMargin fixedMargins = presContext->PresShell()->GetContentDocumentFixedPositionMargins();
-  mozilla::gfx::Margin fixedLayerMargins(NSAppUnitsToFloatPixels(fixedMargins.top, factor) *
-                                           aContainerParameters.mYScale,
-                                         NSAppUnitsToFloatPixels(fixedMargins.right, factor) *
-                                           aContainerParameters.mXScale,
-                                         NSAppUnitsToFloatPixels(fixedMargins.bottom, factor) *
-                                           aContainerParameters.mYScale,
-                                         NSAppUnitsToFloatPixels(fixedMargins.left, factor) *
-                                           aContainerParameters.mXScale);
+  LayerMargin fixedLayerMargins(NSAppUnitsToFloatPixels(fixedMargins.top, factor) *
+                                  aContainerParameters.mYScale,
+                                NSAppUnitsToFloatPixels(fixedMargins.right, factor) *
+                                  aContainerParameters.mXScale,
+                                NSAppUnitsToFloatPixels(fixedMargins.bottom, factor) *
+                                  aContainerParameters.mYScale,
+                                NSAppUnitsToFloatPixels(fixedMargins.left, factor) *
+                                  aContainerParameters.mXScale);
 
   // If the frame is auto-positioned on either axis, set the top/left layer
   // margins to -1, to indicate to the compositor that this layer is
@@ -3258,7 +3331,7 @@ nsDisplayScrollInfoLayer::nsDisplayScrollInfoLayer(
   nsDisplayListBuilder* aBuilder,
   nsIFrame* aScrolledFrame,
   nsIFrame* aScrollFrame)
-  : nsDisplayScrollLayer(aBuilder, aScrolledFrame, aScrolledFrame, aScrollFrame)
+  : nsDisplayScrollLayer(aBuilder, aScrollFrame, aScrolledFrame, aScrollFrame)
 {
 #ifdef NS_BUILD_REFCNT_LOGGING
   MOZ_COUNT_CTOR(nsDisplayScrollInfoLayer);

@@ -9,7 +9,6 @@
 
 #ifdef JS_ION
 
-#include "jstypedarray.h"
 #include "jscompartment.h"
 
 #if defined(JS_CPU_X86)
@@ -19,13 +18,14 @@
 #elif defined(JS_CPU_ARM)
 # include "jit/arm/MacroAssembler-arm.h"
 #endif
-#include "jit/AsmJS.h"
 #include "jit/IonCompartment.h"
 #include "jit/IonInstrumentation.h"
 #include "jit/ParallelFunctions.h"
 #include "jit/VMFunctions.h"
 #include "vm/ForkJoin.h"
+#include "vm/ProxyObject.h"
 #include "vm/Shape.h"
+#include "vm/TypedArrayObject.h"
 
 namespace js {
 namespace jit {
@@ -109,6 +109,19 @@ class MacroAssembler : public MacroAssemblerSpecific
 #endif
     }
 
+    // asm.js compilation handles its own IonContet-pushing
+    struct AsmJSToken {};
+    MacroAssembler(AsmJSToken)
+      : enoughMemory_(true),
+        embedsNurseryPointers_(false),
+        sps_(NULL)
+    {
+#ifdef JS_CPU_ARM
+        initWithAllocator();
+        m_buffer.id = 0;
+#endif
+    }
+
     void setInstrumentation(IonInstrumentation *sps) {
         sps_ = sps;
     }
@@ -189,7 +202,7 @@ class MacroAssembler : public MacroAssemblerSpecific
           case MIRType_Object:      return testObject(cond, val);
           case MIRType_Double:      return testDouble(cond, val);
           default:
-            JS_NOT_REACHED("Bad MIRType");
+            MOZ_ASSUME_UNREACHABLE("Bad MIRType");
         }
     }
 
@@ -203,6 +216,12 @@ class MacroAssembler : public MacroAssemblerSpecific
     void branchIfFalseBool(const Register &reg, Label *label) {
         // Note that C++ bool is only 1 byte, so ignore the higher-order bits.
         branchTest32(Assembler::Zero, reg, Imm32(0xFF), label);
+    }
+
+    // Branches to |label| if |reg| is true. |reg| should be a C++ bool.
+    void branchIfTrueBool(const Register &reg, Label *label) {
+        // Note that C++ bool is only 1 byte, so ignore the higher-order bits.
+        branchTest32(Assembler::NonZero, reg, Imm32(0xFF), label);
     }
 
     void loadObjPrivate(Register obj, uint32_t nfixed, Register dest) {
@@ -272,6 +291,11 @@ class MacroAssembler : public MacroAssemblerSpecific
     void storeCallResult(Register reg) {
         if (reg != ReturnReg)
             mov(ReturnReg, reg);
+    }
+
+    void storeCallFloatResult(const FloatRegister &reg) {
+        if (reg != ReturnFloatReg)
+            moveDouble(ReturnFloatReg, reg);
     }
 
     void storeCallResultValue(AnyRegister dest) {
@@ -359,6 +383,7 @@ class MacroAssembler : public MacroAssemblerSpecific
     }
 
     using MacroAssemblerSpecific::Push;
+    using MacroAssemblerSpecific::Pop;
 
     void Push(jsid id, Register scratchReg) {
         if (JSID_IS_GCTHING(id)) {
@@ -478,10 +503,10 @@ class MacroAssembler : public MacroAssemblerSpecific
         Push(PreBarrierReg);
         computeEffectiveAddress(address, PreBarrierReg);
 
-        JSCompartment *compartment = GetIonContext()->compartment;
+        JSRuntime *runtime = GetIonContext()->runtime;
         IonCode *preBarrier = (type == MIRType_Shape)
-                              ? compartment->ionCompartment()->shapePreBarrier()
-                              : compartment->ionCompartment()->valuePreBarrier();
+                              ? runtime->ionRuntime()->shapePreBarrier()
+                              : runtime->ionRuntime()->valuePreBarrier();
 
         call(preBarrier);
         Pop(PreBarrierReg);
@@ -531,38 +556,36 @@ class MacroAssembler : public MacroAssemblerSpecific
     template<typename S, typename T>
     void storeToTypedIntArray(int arrayType, const S &value, const T &dest) {
         switch (arrayType) {
-          case TypedArray::TYPE_INT8:
-          case TypedArray::TYPE_UINT8:
-          case TypedArray::TYPE_UINT8_CLAMPED:
+          case TypedArrayObject::TYPE_INT8:
+          case TypedArrayObject::TYPE_UINT8:
+          case TypedArrayObject::TYPE_UINT8_CLAMPED:
             store8(value, dest);
             break;
-          case TypedArray::TYPE_INT16:
-          case TypedArray::TYPE_UINT16:
+          case TypedArrayObject::TYPE_INT16:
+          case TypedArrayObject::TYPE_UINT16:
             store16(value, dest);
             break;
-          case TypedArray::TYPE_INT32:
-          case TypedArray::TYPE_UINT32:
+          case TypedArrayObject::TYPE_INT32:
+          case TypedArrayObject::TYPE_UINT32:
             store32(value, dest);
             break;
           default:
-            JS_NOT_REACHED("Invalid typed array type");
-            break;
+            MOZ_ASSUME_UNREACHABLE("Invalid typed array type");
         }
     }
 
     template<typename S, typename T>
     void storeToTypedFloatArray(int arrayType, const S &value, const T &dest) {
         switch (arrayType) {
-          case TypedArray::TYPE_FLOAT32:
+          case TypedArrayObject::TYPE_FLOAT32:
             convertDoubleToFloat(value, ScratchFloatReg);
             storeFloat(ScratchFloatReg, dest);
             break;
-          case TypedArray::TYPE_FLOAT64:
+          case TypedArrayObject::TYPE_FLOAT64:
             storeDouble(value, dest);
             break;
           default:
-            JS_NOT_REACHED("Invalid typed array type");
-            break;
+            MOZ_ASSUME_UNREACHABLE("Invalid typed array type");
         }
     }
 
@@ -593,18 +616,29 @@ class MacroAssembler : public MacroAssemblerSpecific
         bind(&done);
     }
 
+    // Emit type case branch on tag matching if the type tag in the definition
+    // might actually be that type.
+    void branchEqualTypeIfNeeded(MIRType type, MDefinition *def, const Register &tag,
+                                 Label *label);
+
     // Inline allocation.
     void newGCThing(const Register &result, gc::AllocKind allocKind, Label *fail);
     void newGCThing(const Register &result, JSObject *templateObject, Label *fail);
     void newGCString(const Register &result, Label *fail);
     void newGCShortString(const Register &result, Label *fail);
 
-    void parNewGCThing(const Register &result,
-                       const Register &threadContextReg,
-                       const Register &tempReg1,
-                       const Register &tempReg2,
-                       JSObject *templateObject,
-                       Label *fail);
+    void newGCThingPar(const Register &result, const Register &slice,
+                       const Register &tempReg1, const Register &tempReg2,
+                       gc::AllocKind allocKind, Label *fail);
+    void newGCThingPar(const Register &result, const Register &slice,
+                       const Register &tempReg1, const Register &tempReg2,
+                       JSObject *templateObject, Label *fail);
+    void newGCStringPar(const Register &result, const Register &slice,
+                        const Register &tempReg1, const Register &tempReg2,
+                        Label *fail);
+    void newGCShortStringPar(const Register &result, const Register &slice,
+                             const Register &tempReg1, const Register &tempReg2,
+                             Label *fail);
     void initGCThing(const Register &obj, JSObject *templateObject);
 
     // Compares two strings for equality based on the JSOP.
@@ -614,8 +648,7 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     // Checks the flags that signal that parallel code may need to interrupt or
     // abort.  Branches to fail in that case.
-    void parCheckInterruptFlags(const Register &tempReg,
-                                Label *fail);
+    void checkInterruptFlagsPar(const Register &tempReg, Label *fail);
 
     // If the IonCode that created this assembler needs to transition into the VM,
     // we want to store the IonCode on the stack in order to mark it during a GC.
@@ -637,11 +670,21 @@ class MacroAssembler : public MacroAssemblerSpecific
         Push(ImmWord(uintptr_t(NULL)));
     }
 
+    void loadForkJoinSlice(Register slice, Register scratch);
+    void loadContext(Register cxReg, Register scratch, ExecutionMode executionMode);
+
     void enterParallelExitFrameAndLoadSlice(const VMFunction *f, Register slice,
                                             Register scratch);
 
     void enterExitFrameAndLoadContext(const VMFunction *f, Register cxReg, Register scratch,
                                       ExecutionMode executionMode);
+
+    void enterFakeParallelExitFrame(Register slice, Register scratch,
+                                    IonCode *codeVal = NULL);
+
+    void enterFakeExitFrame(Register cxReg, Register scratch,
+                            ExecutionMode executionMode,
+                            IonCode *codeVal = NULL);
 
     void leaveExitFrame() {
         freeStack(IonExitFooterFrame::Size());
@@ -728,14 +771,16 @@ class MacroAssembler : public MacroAssemblerSpecific
         // of the JSObject::isWrapper test performed in EmulatesUndefined.  If none
         // of the branches are taken, we can check class flags directly.
         loadObjClass(objReg, scratch);
-        branchPtr(Assembler::Equal, scratch, ImmWord(&ObjectProxyClass), slowCheck);
-        branchPtr(Assembler::Equal, scratch, ImmWord(&OuterWindowProxyClass), slowCheck);
-        branchPtr(Assembler::Equal, scratch, ImmWord(&FunctionProxyClass), slowCheck);
+        branchPtr(Assembler::Equal, scratch, ImmWord(&ObjectProxyObject::class_), slowCheck);
+        branchPtr(Assembler::Equal, scratch, ImmWord(&OuterWindowProxyObject::class_), slowCheck);
+        branchPtr(Assembler::Equal, scratch, ImmWord(&FunctionProxyObject::class_), slowCheck);
 
         test32(Address(scratch, Class::offsetOfFlags()), Imm32(JSCLASS_EMULATES_UNDEFINED));
         return truthy ? Assembler::Zero : Assembler::NonZero;
     }
 
+    void pushCalleeToken(Register callee, ExecutionMode mode);
+    void PushCalleeToken(Register callee, ExecutionMode mode);
     void tagCallee(Register callee, ExecutionMode mode);
     void clearCalleeTag(Register callee, ExecutionMode mode);
 
@@ -903,7 +948,11 @@ class MacroAssembler : public MacroAssemblerSpecific
     void printf(const char *output);
     void printf(const char *output, Register value);
 
-    void copyMem(Register copyFrom, Register copyEnd, Register copyTo, Register temp);
+#if JS_TRACE_LOGGING
+    void tracelogStart(JSScript *script);
+    void tracelogStop();
+    void tracelogLog(TraceLogging::Type type);
+#endif
 
     void convertInt32ValueToDouble(const Address &address, Register scratch, Label *done);
     void convertValueToDouble(ValueOperand value, FloatRegister output, Label *fail);
@@ -929,8 +978,7 @@ JSOpToDoubleCondition(JSOp op)
       case JSOP_GE:
         return Assembler::DoubleGreaterThanOrEqual;
       default:
-        JS_NOT_REACHED("Unexpected comparison operation");
-        return Assembler::DoubleEqual;
+        MOZ_ASSUME_UNREACHABLE("Unexpected comparison operation");
     }
 }
 
@@ -957,8 +1005,7 @@ JSOpToCondition(JSOp op, bool isSigned)
           case JSOP_GE:
             return Assembler::GreaterThanOrEqual;
           default:
-            JS_NOT_REACHED("Unrecognized comparison operation");
-            return Assembler::Equal;
+            MOZ_ASSUME_UNREACHABLE("Unrecognized comparison operation");
         }
     } else {
         switch (op) {
@@ -977,33 +1024,10 @@ JSOpToCondition(JSOp op, bool isSigned)
           case JSOP_GE:
             return Assembler::AboveOrEqual;
           default:
-            JS_NOT_REACHED("Unrecognized comparison operation");
-            return Assembler::Equal;
+            MOZ_ASSUME_UNREACHABLE("Unrecognized comparison operation");
         }
     }
 }
-
-typedef Vector<MIRType, 8> MIRTypeVector;
-
-class ABIArgIter
-{
-    ABIArgGenerator gen_;
-    const MIRTypeVector &types_;
-    unsigned i_;
-
-  public:
-    ABIArgIter(const MIRTypeVector &argTypes);
-
-    void operator++(int);
-    bool done() const { return i_ == types_.length(); }
-
-    ABIArg *operator->() { JS_ASSERT(!done()); return &gen_.current(); }
-    ABIArg &operator*() { JS_ASSERT(!done()); return gen_.current(); }
-
-    unsigned index() const { JS_ASSERT(!done()); return i_; }
-    MIRType mirType() const { JS_ASSERT(!done()); return types_[i_]; }
-    uint32_t stackBytesConsumedSoFar() const { return gen_.stackBytesConsumedSoFar(); }
-};
 
 } // namespace jit
 } // namespace js

@@ -103,9 +103,9 @@ private:
 /**
  * Implementation of &lt;select&gt;
  */
-class HTMLSelectElement : public nsGenericHTMLFormElement,
-                          public nsIDOMHTMLSelectElement,
-                          public nsIConstraintValidation
+class HTMLSelectElement MOZ_FINAL : public nsGenericHTMLFormElementWithState,
+                                    public nsIDOMHTMLSelectElement,
+                                    public nsIConstraintValidation
 {
 public:
   using nsIConstraintValidation::GetValidationMessage;
@@ -152,7 +152,7 @@ public:
   }
   HTMLFormElement* GetForm() const
   {
-    return nsGenericHTMLFormElement::GetForm();
+    return nsGenericHTMLFormElementWithState::GetForm();
   }
   bool Multiple() const
   {
@@ -194,10 +194,7 @@ public:
   {
     return mOptions->Length();
   }
-  void SetLength(uint32_t aLength, ErrorResult& aRv)
-  {
-    aRv = SetLength(aLength);
-  }
+  void SetLength(uint32_t aLength, ErrorResult& aRv);
   Element* IndexedGetter(uint32_t aIdx, bool& aFound) const
   {
     return mOptions->IndexedGetter(aIdx, aFound);
@@ -301,6 +298,7 @@ public:
    */
   NS_IMETHOD IsOptionDisabled(int32_t aIndex,
                               bool* aIsDisabled);
+  bool IsOptionDisabled(HTMLOptionElement* aOption);
 
   /**
    * Sets multiple options (or just sets startIndex if select is single)
@@ -319,13 +317,12 @@ public:
    * @param aNotify whether to notify frames and such
    * @return whether any options were actually changed
    */
-  NS_IMETHOD SetOptionsSelectedByIndex(int32_t aStartIndex,
-                                       int32_t aEndIndex,
-                                       bool aIsSelected,
-                                       bool aClearAll,
-                                       bool aSetDisabled,
-                                       bool aNotify,
-                                       bool* aChangedSomething);
+  bool SetOptionsSelectedByIndex(int32_t aStartIndex,
+                                 int32_t aEndIndex,
+                                 bool aIsSelected,
+                                 bool aClearAll,
+                                 bool aSetDisabled,
+                                 bool aNotify);
 
   /**
    * Finds the index of a given option element
@@ -372,7 +369,7 @@ public:
   virtual nsresult Clone(nsINodeInfo* aNodeInfo, nsINode** aResult) const MOZ_OVERRIDE;
 
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(HTMLSelectElement,
-                                           nsGenericHTMLFormElement)
+                                           nsGenericHTMLFormElementWithState)
 
   HTMLOptionsCollection* GetOptions()
   {
@@ -463,10 +460,10 @@ protected:
    * @param aListIndex the index to start adding options into the list at
    * @param aDepth the depth of aOptions (1=direct child of select ...)
    */
-  nsresult InsertOptionsIntoList(nsIContent* aOptions,
-                                 int32_t aListIndex,
-                                 int32_t aDepth,
-                                 bool aNotify);
+  void InsertOptionsIntoList(nsIContent* aOptions,
+                             int32_t aListIndex,
+                             int32_t aDepth,
+                             bool aNotify);
   /**
    * Remove option(s) from the options[] array
    * @param aOptions the option or optgroup being added
@@ -483,9 +480,9 @@ protected:
    * @param aInsertIndex the index to start adding options into the list at
    * @param aDepth the depth of aOptions (1=direct child of select ...)
    */
-  nsresult InsertOptionsIntoListRecurse(nsIContent* aOptions,
-                                        int32_t* aInsertIndex,
-                                        int32_t aDepth);
+  void InsertOptionsIntoListRecurse(nsIContent* aOptions,
+                                    int32_t* aInsertIndex,
+                                    int32_t aDepth);
   /**
    * Remove option(s) from the options[] array (called by RemoveOptionsFromList)
    * @param aOptions the option or optgroup being added

@@ -5,9 +5,17 @@ MARIONETTE_TIMEOUT = 30000;
 
 SpecialPowers.addPermission("mobileconnection", true, document);
 
-let connection = navigator.mozMobileConnection;
-ok(connection instanceof MozMobileConnection,
-   "connection is instanceof " + connection.constructor);
+// Permission changes can't change existing Navigator.prototype
+// objects, so grab our objects from a new Navigator
+let ifr = document.createElement("iframe");
+let connection;
+ifr.onload = function() {
+  connection = ifr.contentWindow.navigator.mozMobileConnection;
+  ok(connection instanceof ifr.contentWindow.MozMobileConnection,
+     "connection is instanceof " + connection.constructor);
+  testConnectionInfo();
+};
+document.body.appendChild(ifr);
 
 let emulatorCmdPendingCount = 0;
 function setEmulatorVoiceState(state) {
@@ -37,27 +45,45 @@ function testConnectionInfo() {
 }
 
 function testCellLocation() {
-  let voice = connection.voice;
+  let cell = connection.voice.cell;
 
   // Emulator always reports valid lac/cid value because its AT command parser
   // insists valid value for every complete response. See source file
   // hardare/ril/reference-ril/at_tok.c, function at_tok_nexthexint().
-  ok(voice.cell, "location available");
+  ok(cell, "location available");
 
-  // Initial LAC/CID. Android emulator initializes both value to -1.
-  is(voice.cell.gsmLocationAreaCode, 65535);
-  is(voice.cell.gsmCellId, 268435455);
+  // Initial LAC/CID. Android emulator initializes both value to 0xffff/0xffffffff.
+  is(cell.gsmLocationAreaCode, 65535);
+  is(cell.gsmCellId, 268435455);
+  is(cell.cdmaBaseStationId, -1);
+  is(cell.cdmaBaseStationLatitude, -2147483648);
+  is(cell.cdmaBaseStationLongitude, -2147483648);
+  is(cell.cdmaSystemId, -1);
+  is(cell.cdmaNetworkId, -1);
 
   connection.addEventListener("voicechange", function onvoicechange() {
     connection.removeEventListener("voicechange", onvoicechange);
 
-    is(voice.cell.gsmLocationAreaCode, 100);
-    is(voice.cell.gsmCellId, 100);
+    is(cell.gsmLocationAreaCode, 100);
+    is(cell.gsmCellId, 100);
+    is(cell.cdmaBaseStationId, -1);
+    is(cell.cdmaBaseStationLatitude, -2147483648);
+    is(cell.cdmaBaseStationLongitude, -2147483648);
+    is(cell.cdmaSystemId, -1);
+    is(cell.cdmaNetworkId, -1);
 
-    testUnregistered();
+    testSignalStrength();
   });
 
   setEmulatorGsmLocation(100, 100);
+}
+
+function testSignalStrength() {
+  // Android emulator initializes the signal strength to -99 dBm
+  is(connection.voice.signalStrength, -99);
+  is(connection.voice.relSignalStrength, 44);
+
+  testUnregistered();
 }
 
 function testUnregistered() {
@@ -70,17 +96,13 @@ function testUnregistered() {
     is(connection.voice.state, "notSearching");
     is(connection.voice.emergencyCallsOnly, false);
     is(connection.voice.roaming, false);
+    is(connection.voice.cell, null);
 
     testSearching();
   });
 }
 
 function testSearching() {
-  // For some reason, requesting the "searching" state puts the fake modem
-  // into "registered"... Skipping this test for now.
-  testDenied();
-  return;
-
   setEmulatorVoiceState("searching");
 
   connection.addEventListener("voicechange", function onvoicechange() {
@@ -90,6 +112,7 @@ function testSearching() {
     is(connection.voice.state, "searching");
     is(connection.voice.emergencyCallsOnly, false);
     is(connection.voice.roaming, false);
+    is(connection.voice.cell, null);
 
     testDenied();
   });
@@ -105,6 +128,7 @@ function testDenied() {
     is(connection.voice.state, "denied");
     is(connection.voice.emergencyCallsOnly, false);
     is(connection.voice.roaming, false);
+    is(connection.voice.cell, null);
 
     testRoaming();
   });
@@ -149,5 +173,3 @@ function cleanUp() {
   SpecialPowers.removePermission("mobileconnection", document);
   finish();
 }
-
-testConnectionInfo();

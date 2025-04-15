@@ -64,6 +64,19 @@ public:
                           UINT aLastMessage, UINT aOption);
   static bool GetMessage(LPMSG aMsg, HWND aWnd, UINT aFirstMessage,
                          UINT aLastMessage);
+
+  /**
+   * Wait until a message is ready to be processed.
+   * Prefer using this method to directly calling ::WaitMessage since
+   * ::WaitMessage will wait if there is an unread message in the queue.
+   * That can cause freezes until another message enters the queue if the
+   * message is marked read by a call to PeekMessage which the caller is
+   * not aware of (e.g., from a different thread).
+   * Note that this method may cause sync dispatch of sent (as opposed to
+   * posted) messages.
+   */
+  static void WaitForMessage();
+
   /**
    * Gets the value of a string-typed registry value.
    *
@@ -296,7 +309,7 @@ class AsyncEncodeAndWriteIcon : public nsIRunnable
 {
 public:
   const bool mURLShortcut;
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIRUNNABLE
 
   // Warning: AsyncEncodeAndWriteIcon assumes ownership of the aData buffer passed in
@@ -320,7 +333,7 @@ private:
 class AsyncDeleteIconFromDisk : public nsIRunnable
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIRUNNABLE
 
   AsyncDeleteIconFromDisk(const nsAString &aIconPath);
@@ -333,7 +346,7 @@ private:
 class AsyncDeleteAllFaviconsFromDisk : public nsIRunnable
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIRUNNABLE
 
   AsyncDeleteAllFaviconsFromDisk();

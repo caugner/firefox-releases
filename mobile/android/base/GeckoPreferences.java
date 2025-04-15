@@ -31,6 +31,7 @@ import android.preference.EditTextPreference;
 import android.preference.ListPreference;
 import android.preference.Preference;
 import android.preference.Preference.OnPreferenceChangeListener;
+import android.preference.Preference.OnPreferenceClickListener;
 import android.preference.PreferenceActivity;
 import android.preference.PreferenceGroup;
 import android.preference.PreferenceManager;
@@ -72,7 +73,11 @@ public class GeckoPreferences
     private static String PREFS_MENU_CHAR_ENCODING = "browser.menu.showCharacterEncoding";
     private static String PREFS_MP_ENABLED = "privacy.masterpassword.enabled";
     private static String PREFS_UPDATER_AUTODOWNLOAD = "app.update.autodownload";
+    private static String PREFS_GEO_REPORTING = "app.geo.reportdata";
     private static String PREFS_HEALTHREPORT_LINK = NON_PREF_PREFIX + "healthreport.link";
+    private static String PREFS_DEVTOOLS_REMOTE_ENABLED = "devtools.debugger.remote-enabled";
+    private static String PREFS_DISPLAY_REFLOW_ON_ZOOM = "browser.zoom.reflowOnZoom";
+    private static String PREFS_SYNC = NON_PREF_PREFIX + "sync";
 
     // These values are chosen to be distinct from other Activity constants.
     private static int REQUEST_CODE_PREF_SCREEN = 5;
@@ -91,13 +96,23 @@ public class GeckoPreferences
         // Use setResourceToOpen to specify these extras.
         Bundle intentExtras = getIntent().getExtras();
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB) {
+            int res = 0;
             if (intentExtras != null && intentExtras.containsKey(INTENT_EXTRA_RESOURCES)) {
+                // Fetch resource id from intent.
                 String resourceName = intentExtras.getString(INTENT_EXTRA_RESOURCES);
-                int resource = getResources().getIdentifier(resourceName, "xml", getPackageName());
-                addPreferencesFromResource(resource);
-            } else {
-                addPreferencesFromResource(R.xml.preferences);
+                if (resourceName != null) {
+                    res = getResources().getIdentifier(resourceName, "xml", getPackageName());
+                    if (res == 0) {
+                        Log.e(LOGTAG, "No resource found named " + resourceName);
+                    }
+                }
             }
+            if (res == 0) {
+                // No resource specified, or the resource was invalid; use the default preferences screen.
+                Log.e(LOGTAG, "Displaying default settings.");
+                res = R.xml.preferences;
+            }
+            addPreferencesFromResource(res);
         }
 
         registerEventListener("Sanitize:Finished");
@@ -122,14 +137,14 @@ public class GeckoPreferences
         Bundle fragmentArgs = new Bundle();
         // Add resource argument to fragment if it exists.
         if (intentExtras != null && intentExtras.containsKey(INTENT_EXTRA_RESOURCES)) {
-            String resource = intentExtras.getString(INTENT_EXTRA_RESOURCES);
-            fragmentArgs.putString(INTENT_EXTRA_RESOURCES, resource);
+            String resourceName = intentExtras.getString(INTENT_EXTRA_RESOURCES);
+            fragmentArgs.putString(INTENT_EXTRA_RESOURCES, resourceName);
         } else {
             // Use top-level settings screen.
             if (!onIsMultiPane()) {
                 fragmentArgs.putString(INTENT_EXTRA_RESOURCES, "preferences");
             } else {
-                fragmentArgs.putString(INTENT_EXTRA_RESOURCES, "preferences_general");
+                fragmentArgs.putString(INTENT_EXTRA_RESOURCES, "preferences_customize_tablet");
             }
         }
 
@@ -278,6 +293,12 @@ public class GeckoPreferences
                     preferences.removePreference(pref);
                     i--;
                     continue;
+                } else if (AppConstants.RELEASE_BUILD &&
+                           PREFS_DISPLAY_REFLOW_ON_ZOOM.equals(key)) {
+                    // Remove UI for reflow on release builds.
+                    preferences.removePreference(pref);
+                    i--;
+                    continue;
                 } else if (!AppConstants.MOZ_TELEMETRY_REPORTING &&
                            PREFS_TELEMETRY_ENABLED.equals(key)) {
                     preferences.removePreference(pref);
@@ -291,6 +312,30 @@ public class GeckoPreferences
                     continue;
                 } else if (!AppConstants.MOZ_CRASHREPORTER &&
                            PREFS_CRASHREPORTER_ENABLED.equals(key)) {
+                    preferences.removePreference(pref);
+                    i--;
+                    continue;
+                } else if (PREFS_GEO_REPORTING.equals(key) &&
+                           ("release".equals(AppConstants.MOZ_UPDATE_CHANNEL) ||
+                            "beta".equals(AppConstants.MOZ_UPDATE_CHANNEL))) {
+                    // We don't build wifi/cell tower collection in release builds, so hide the UI.
+                    preferences.removePreference(pref);
+                    i--;
+                    continue;
+                } else if (PREFS_DEVTOOLS_REMOTE_ENABLED.equals(key)) {
+                    final Context thisContext = this;
+                    pref.setOnPreferenceClickListener(new OnPreferenceClickListener() {
+                        @Override
+                        public boolean onPreferenceClick(Preference preference) {
+                            // Display toast to remind setting up tcp forwarding.
+                            if (((CheckBoxPreference) preference).isChecked()) {
+                                Toast.makeText(thisContext, R.string.devtools_remote_debugging_forward, Toast.LENGTH_SHORT).show();
+                            }
+                            return true;
+                        }
+                    });
+                } else if (PREFS_SYNC.equals(key) && GeckoProfile.get(this).inGuestMode()) {
+                    // Don't show sync prefs while in guest mode.
                     preferences.removePreference(pref);
                     i--;
                     continue;
@@ -425,6 +470,9 @@ public class GeckoPreferences
         String prefName = preference.getKey();
         if (PREFS_MP_ENABLED.equals(prefName)) {
             showDialog((Boolean) newValue ? DIALOG_CREATE_MASTER_PASSWORD : DIALOG_REMOVE_MASTER_PASSWORD);
+
+            // We don't want the "use master password" pref to change until the
+            // user has gone through the dialog.
             return false;
         } else if (PREFS_MENU_CHAR_ENCODING.equals(prefName)) {
             setCharEncodingState(((String) newValue).equals("true"));
@@ -440,12 +488,16 @@ public class GeckoPreferences
             // background uploader service, which will start or stop the
             // repeated background upload attempts.
             broadcastHealthReportUploadPref(GeckoAppShell.getContext(), ((Boolean) newValue).booleanValue());
-            return true;
+        } else if (PREFS_GEO_REPORTING.equals(prefName)) {
+            // Translate boolean value to int for geo reporting pref.
+            newValue = ((Boolean) newValue) ? 1 : 0;
         }
 
-        if (!TextUtils.isEmpty(prefName)) {
+        // Send Gecko-side pref changes to Gecko
+        if (!TextUtils.isEmpty(prefName) && !prefName.startsWith(NON_PREF_PREFIX)) {
             PrefsHelper.setPref(prefName, newValue);
         }
+
         if (preference instanceof ListPreference) {
             // We need to find the entry for the new value
             int newIndex = ((ListPreference) preference).findIndexOfValue((String) newValue);
@@ -458,6 +510,7 @@ public class GeckoPreferences
             final FontSizePreference fontSizePref = (FontSizePreference) preference;
             fontSizePref.setSummary(fontSizePref.getSavedFontSizeName());
         }
+
         return true;
     }
 
@@ -693,6 +746,27 @@ public class GeckoPreferences
                             fontSizePref.setSummary(fontSizeName); // Ex: "Small".
                         }
                     });
+                }
+            }
+
+            @Override
+            public void prefValue(String prefName, final int value) {
+                final Preference pref = getField(prefName);
+                final CheckBoxPrefSetter prefSetter;
+                if (PREFS_GEO_REPORTING.equals(prefName)) {
+                    if (Build.VERSION.SDK_INT < 14) {
+                        prefSetter = new CheckBoxPrefSetter();
+                    } else {
+                        prefSetter = new TwoStatePrefSetter();
+                    }
+                    ThreadUtils.postToUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            prefSetter.setBooleanPref(pref, value == 1);
+                        }
+                    });
+                } else {
+                    Log.w(LOGTAG, "Unhandled int value for pref [" + pref + "]");
                 }
             }
 

@@ -87,7 +87,7 @@ typedef struct AndroidSystemColors {
 
 class nsFilePickerCallback : nsISupports {
 public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     virtual void handleResult(nsAString& filePath) = 0;
     nsFilePickerCallback() {}
 protected:
@@ -256,6 +256,7 @@ public:
     void CloseNotification(const nsAString& aAlertName);
 
     int GetDPI();
+    int GetScreenDepth();
 
     void ShowFilePickerForExtensions(nsAString& aFilePath, const nsAString& aExtensions);
     void ShowFilePickerForMimeType(nsAString& aFilePath, const nsAString& aMimeType);
@@ -375,12 +376,12 @@ public:
     void SetPageRect(const CSSRect& aCssPageRect);
     void SyncViewportInfo(const LayerIntRect& aDisplayPort, const CSSToLayerScale& aDisplayResolution,
                           bool aLayersUpdated, ScreenPoint& aScrollOffset, CSSToScreenScale& aScale,
-                          gfx::Margin& aFixedLayerMargins, ScreenPoint& aOffset);
+                          LayerMargin& aFixedLayerMargins, ScreenPoint& aOffset);
     void SyncFrameMetrics(const ScreenPoint& aScrollOffset, float aZoom, const CSSRect& aCssPageRect,
                           bool aLayersUpdated, const CSSRect& aDisplayPort, const CSSToLayerScale& aDisplayResolution,
-                          bool aIsFirstPaint, gfx::Margin& aFixedLayerMargins, ScreenPoint& aOffset);
+                          bool aIsFirstPaint, LayerMargin& aFixedLayerMargins, ScreenPoint& aOffset);
 
-    void AddPluginView(jobject view, const gfxRect& rect, bool isFullScreen);
+    void AddPluginView(jobject view, const LayoutDeviceRect& rect, bool isFullScreen);
     void RemovePluginView(jobject view, bool isFullScreen);
 
     // These methods don't use a ScreenOrientation because it's an
@@ -482,6 +483,7 @@ protected:
     jmethodID jAlertsProgressListener_OnProgress;
     jmethodID jCloseNotification;
     jmethodID jGetDpi;
+    jmethodID jGetScreenDepth;
     jmethodID jSetFullScreen;
     jmethodID jShowInputMethodPicker;
     jmethodID jNotifyDefaultPrevented;
@@ -599,7 +601,9 @@ public:
     void HandleDoubleTap(const CSSIntPoint& aPoint) MOZ_OVERRIDE;
     void HandleSingleTap(const CSSIntPoint& aPoint) MOZ_OVERRIDE;
     void HandleLongTap(const CSSIntPoint& aPoint) MOZ_OVERRIDE;
-    void SendAsyncScrollDOMEvent(const CSSRect& aContentRect, const CSSSize& aScrollableSize) MOZ_OVERRIDE;
+    void SendAsyncScrollDOMEvent(mozilla::layers::FrameMetrics::ViewID aScrollId,
+                                 const CSSRect& aContentRect,
+                                 const CSSSize& aScrollableSize) MOZ_OVERRIDE;
     void PostDelayedTask(Task* aTask, int aDelayMs) MOZ_OVERRIDE;
     int64_t RunDelayedTasks();
 };

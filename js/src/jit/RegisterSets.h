@@ -7,8 +7,10 @@
 #ifndef jit_RegisterSets_h
 #define jit_RegisterSets_h
 
-#include "Registers.h"
+#include "mozilla/MathAlgorithms.h"
+
 #include "jit/IonAllocPolicy.h"
+#include "jit/Registers.h"
 
 namespace js {
 namespace jit {
@@ -331,16 +333,8 @@ class TypedRegisterSet
     static inline TypedRegisterSet NonVolatile() {
         return TypedRegisterSet(T::Codes::AllocatableMask & T::Codes::NonVolatileMask);
     }
-    void intersect(TypedRegisterSet other) {
-        bits_ &= ~other.bits_;
-    }
     bool has(T reg) const {
         return !!(bits_ & (1 << reg.code()));
-    }
-    bool hasNextRegister(T reg) const {
-        if (reg.code() == sizeof(bits_)*8)
-            return false;
-        return !!(bits_ & (1 << (reg.code()+1)));
     }
     void addUnchecked(T reg) {
         bits_ |= (1 << reg.code());
@@ -370,7 +364,7 @@ class TypedRegisterSet
     }
     void take(T reg) {
         JS_ASSERT(has(reg));
-        bits_ &= ~(1 << reg.code());
+        takeUnchecked(reg);
     }
     void takeUnchecked(T reg) {
         bits_ &= ~(1 << reg.code());
@@ -397,13 +391,15 @@ class TypedRegisterSet
     }
     T getAny() const {
         JS_ASSERT(!empty());
-        int ireg;
-        JS_FLOOR_LOG2(ireg, bits_);
-        return T::FromCode(ireg);
+        return T::FromCode(mozilla::FloorLog2(bits_));
     }
     T getFirst() const {
         JS_ASSERT(!empty());
-        int ireg = js_bitscan_ctz32(bits_);
+        return T::FromCode(mozilla::CountTrailingZeroes32(bits_));
+    }
+    T getLast() const {
+        JS_ASSERT(!empty());
+        int ireg = 31 - mozilla::CountLeadingZeroes32(bits_);
         return T::FromCode(ireg);
     }
     T takeAny() {
@@ -436,6 +432,12 @@ class TypedRegisterSet
     T takeFirst() {
         JS_ASSERT(!empty());
         T reg = getFirst();
+        take(reg);
+        return reg;
+    }
+    T takeLast() {
+        JS_ASSERT(!empty());
+        T reg = getLast();
         take(reg);
         return reg;
     }
@@ -590,26 +592,23 @@ class RegisterSet {
     }
 
     void maybeTake(Register reg) {
-        if (gpr_.has(reg))
-            gpr_.take(reg);
+        gpr_.takeUnchecked(reg);
     }
     void maybeTake(FloatRegister reg) {
-        if (fpu_.has(reg))
-            fpu_.take(reg);
+        fpu_.takeUnchecked(reg);
     }
     void maybeTake(AnyRegister reg) {
-        if (has(reg))
-            take(reg);
+        if (reg.isFloat())
+            fpu_.takeUnchecked(reg.fpu());
+        else
+            gpr_.takeUnchecked(reg.gpr());
     }
     void maybeTake(ValueOperand value) {
 #if defined(JS_NUNBOX32)
-        if (gpr_.has(value.typeReg()))
-            gpr_.take(value.typeReg());
-        if (gpr_.has(value.payloadReg()))
-            gpr_.take(value.payloadReg());
+        gpr_.takeUnchecked(value.typeReg());
+        gpr_.takeUnchecked(value.payloadReg());
 #elif defined(JS_PUNBOX64)
-        if (gpr_.has(value.valueReg()))
-            gpr_.take(value.valueReg());
+        gpr_.takeUnchecked(value.valueReg());
 #else
 #error "Bad architecture"
 #endif
@@ -622,7 +621,9 @@ class RegisterSet {
     }
 };
 
-// iterates backwards, that is, rn to r0
+// iterates in whatever order happens to be convenient.
+// Use TypedRegisterBackwardIterator or TypedRegisterForwardIterator if a
+// specific order is required.
 template <typename T>
 class TypedRegisterIterator
 {
@@ -651,6 +652,36 @@ class TypedRegisterIterator
     }
 };
 
+// iterates backwards, that is, rn to r0
+template <typename T>
+class TypedRegisterBackwardIterator
+{
+    TypedRegisterSet<T> regset_;
+
+  public:
+    TypedRegisterBackwardIterator(TypedRegisterSet<T> regset) : regset_(regset)
+    { }
+    TypedRegisterBackwardIterator(const TypedRegisterBackwardIterator &other)
+      : regset_(other.regset_)
+    { }
+
+    bool more() const {
+        return !regset_.empty();
+    }
+    TypedRegisterBackwardIterator<T> operator ++(int) {
+        TypedRegisterBackwardIterator<T> old(*this);
+        regset_.takeLast();
+        return old;
+    }
+    TypedRegisterBackwardIterator<T>& operator ++() {
+        regset_.takeLast();
+        return *this;
+    }
+    T operator *() const {
+        return regset_.getLast();
+    }
+};
+
 // iterates forwards, that is r0 to rn
 template <typename T>
 class TypedRegisterForwardIterator
@@ -667,7 +698,7 @@ class TypedRegisterForwardIterator
         return !regset_.empty();
     }
     TypedRegisterForwardIterator<T> operator ++(int) {
-        TypedRegisterIterator<T> old(*this);
+        TypedRegisterForwardIterator<T> old(*this);
         regset_.takeFirst();
         return old;
     }
@@ -682,6 +713,8 @@ class TypedRegisterForwardIterator
 
 typedef TypedRegisterIterator<Register> GeneralRegisterIterator;
 typedef TypedRegisterIterator<FloatRegister> FloatRegisterIterator;
+typedef TypedRegisterBackwardIterator<Register> GeneralRegisterBackwardIterator;
+typedef TypedRegisterBackwardIterator<FloatRegister> FloatRegisterBackwardIterator;
 typedef TypedRegisterForwardIterator<Register> GeneralRegisterForwardIterator;
 typedef TypedRegisterForwardIterator<FloatRegister> FloatRegisterForwardIterator;
 
@@ -752,76 +785,59 @@ class ABIArg
 class AsmJSHeapAccess
 {
     uint32_t offset_;
-    uint8_t opLength_;
 #if defined(JS_CPU_X86)
-    uint8_t cmpDelta_;
+    uint8_t cmpDelta_;  // the number of bytes from the cmp to the load/store instruction
 #endif
+#if defined(JS_CPU_X86) || defined(JS_CPU_X64)
+    uint8_t opLength_;  // the length of the load/store instruction
     uint8_t isFloat32Load_;
     jit::AnyRegister::Code loadedReg_ : 8;
+#endif
 
     JS_STATIC_ASSERT(jit::AnyRegister::Total < UINT8_MAX);
 
   public:
-#if defined(JS_CPU_X86)
-    AsmJSHeapAccess(uint32_t cmp, uint32_t offset, uint32_t after, ArrayBufferView::ViewType vt,
-                    AnyRegister loadedReg)
-      : offset_(offset),
-        opLength_(after - offset),
-        cmpDelta_(offset - cmp),
-        isFloat32Load_(vt == ArrayBufferView::TYPE_FLOAT32),
-        loadedReg_(loadedReg.code())
-    {}
-    AsmJSHeapAccess(uint32_t cmp, uint32_t offset, uint8_t after)
-      : offset_(offset),
-        opLength_(after - offset),
-        cmpDelta_(offset - cmp),
-        isFloat32Load_(false),
-        loadedReg_(UINT8_MAX)
-    {}
-#else
+#if defined(JS_CPU_X86) || defined(JS_CPU_X64)
     AsmJSHeapAccess(uint32_t offset, uint32_t after, ArrayBufferView::ViewType vt,
-                    AnyRegister loadedReg)
+                    AnyRegister loadedReg, uint32_t cmp = UINT32_MAX)
       : offset_(offset),
+# if defined(JS_CPU_X86)
+        cmpDelta_(offset - cmp),
+# endif
         opLength_(after - offset),
         isFloat32Load_(vt == ArrayBufferView::TYPE_FLOAT32),
         loadedReg_(loadedReg.code())
     {}
-    AsmJSHeapAccess(uint32_t offset, uint8_t after)
+    AsmJSHeapAccess(uint32_t offset, uint8_t after, uint32_t cmp = UINT32_MAX)
       : offset_(offset),
+# if defined(JS_CPU_X86)
+        cmpDelta_(offset - cmp),
+# endif
         opLength_(after - offset),
         isFloat32Load_(false),
         loadedReg_(UINT8_MAX)
+    {}
+#elif defined(JS_CPU_ARM)
+    explicit AsmJSHeapAccess(uint32_t offset)
+      : offset_(offset)
     {}
 #endif
 
     uint32_t offset() const { return offset_; }
-    unsigned opLength() const { return opLength_; }
-    bool isLoad() const { return loadedReg_ != UINT8_MAX; }
-    bool isFloat32Load() const { return isFloat32Load_; }
-    jit::AnyRegister loadedReg() const { return jit::AnyRegister::FromCode(loadedReg_); }
-
+    void setOffset(uint32_t offset) { offset_ = offset; }
 #if defined(JS_CPU_X86)
     void *patchLengthAt(uint8_t *code) const { return code + (offset_ - cmpDelta_); }
     void *patchOffsetAt(uint8_t *code) const { return code + (offset_ + opLength_); }
 #endif
-    void updateOffset(uint32_t offset) { offset_ = offset; }
+#if defined(JS_CPU_X86) || defined(JS_CPU_X64)
+    unsigned opLength() const { return opLength_; }
+    bool isLoad() const { return loadedReg_ != UINT8_MAX; }
+    bool isFloat32Load() const { return isFloat32Load_; }
+    jit::AnyRegister loadedReg() const { return jit::AnyRegister::FromCode(loadedReg_); }
+#endif
 };
 
 typedef Vector<AsmJSHeapAccess, 0, IonAllocPolicy> AsmJSHeapAccessVector;
-
-#ifdef JS_CPU_ARM
-struct AsmJSBoundsCheck
-{
-    unsigned offset_;
-    AsmJSBoundsCheck(unsigned offset)
-    : offset_(offset)
-    {}
-    void setOffset(uint32_t offset) { offset_ = offset; }
-    unsigned offset() {return offset_;}
-};
-
-typedef Vector<AsmJSBoundsCheck, 0, IonAllocPolicy> AsmJSBoundsCheckVector;
-#endif
 
 } // namespace jit
 } // namespace js

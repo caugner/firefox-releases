@@ -77,11 +77,16 @@ function test() {
   var gNumSet = 0;
   function testOnWindow(options, callback) {
     var win = OpenBrowserWindow(options);
-    win.addEventListener("load", function onLoad() {
-      win.removeEventListener("load", onLoad, false);
-      windowsToClose.push(win);
-      executeSoon(function() callback(win));
-    }, false);
+    whenDelayedStartupFinished(win, () => callback(win));
+  }
+
+  function whenDelayedStartupFinished(aWindow, aCallback) {
+    Services.obs.addObserver(function observer(aSubject, aTopic) {
+      if (aWindow == aSubject) {
+        Services.obs.removeObserver(observer, aTopic);
+        executeSoon(aCallback);
+      }
+    }, "browser-delayed-startup-finished", false);
   }
 
   mockTransferRegisterer.register();
@@ -106,6 +111,9 @@ function test() {
 
   function onExamineResponse(subject) {
     let channel = subject.QueryInterface(Ci.nsIHttpChannel);
+    if (channel.URI.spec != "http://mochi.test:8888/browser/browser/base/content/test/bug792517.sjs") {
+      return;
+    }
     try {
       let cookies = channel.getResponseHeader("set-cookie");
       // From browser/base/content/test/bug792715.sjs, we receive a Set-Cookie
@@ -117,6 +125,9 @@ function test() {
 
   function onModifyRequest(subject) {
     let channel = subject.QueryInterface(Ci.nsIHttpChannel);
+    if (channel.URI.spec != "http://mochi.test:8888/browser/browser/base/content/test/bug792517.sjs") {
+      return;
+    }
     try {
       let cookies = channel.getRequestHeader("cookie");
       // From browser/base/content/test/bug792715.sjs, we should never send a

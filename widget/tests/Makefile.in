@@ -26,8 +26,6 @@ endif
 #                 $(NULL)
 endif
 
-CPP_UNIT_TESTS += TestAppShellSteadyState.cpp
-
 MOCHITEST_CHROME_FILES =	test_bug343416.xul \
 		test_bug429954.xul \
 		window_bug429954.xul \
@@ -79,6 +77,7 @@ MOCHITEST_CHROME_FILES += native_menus_window.xul \
                test_bug673301.xul \
                test_taskbar_progress.xul \
                test_secure_input.html \
+               test_native_key_bindings_mac.html \
                $(NULL)
 endif
 

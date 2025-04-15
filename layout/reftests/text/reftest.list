@@ -50,7 +50,7 @@ skip-if(!(d2d||cocoaWidget)) random-if(d2d) != subpixel-glyphs-x-2a.html subpixe
 skip-if(B2G) HTTP(..) == subpixel-glyphs-x-3a.html subpixel-glyphs-x-3b.html
 # No platforms do subpixel positioning vertically
 == subpixel-glyphs-y-1a.html subpixel-glyphs-y-1b.html
-fuzzy-if((Android||B2G),231,603) == subpixel-lineheight-1a.html subpixel-lineheight-1b.html
+fuzzy-if((Android||B2G),231,653) == subpixel-lineheight-1a.html subpixel-lineheight-1b.html
 == swash-1.html swash-1-ref.html
 HTTP(..) != synthetic-bold-metrics-01.html synthetic-bold-metrics-01-notref.html
 HTTP(..) == synthetic-bold-papyrus-01.html synthetic-bold-papyrus-01-ref.html
@@ -276,3 +276,8 @@ pref(gfx.font_rendering.graphite.enabled,true) HTTP(..) == glyph-decomposition-g
 != auto-hyphenation-sv-1.html auto-hyphenation-sv-1-notref.html # verify swedish != english
 == auto-hyphenation-tr-1.html auto-hyphenation-tr-1-ref.html
 == auto-hyphenation-uk-1.html auto-hyphenation-uk-1-ref.html
+
+# osx-font-smoothing - with and without subpixel AA, only under OSX
+fails-if(!cocoaWidget||OSX==10.6||OSX==10.7) != osx-font-smoothing.html osx-font-smoothing-ref.html
+fails-if(!cocoaWidget||OSX==10.6||OSX==10.7) != osx-font-smoothing-2.html osx-font-smoothing-2-notref.html
+== osx-font-smoothing-2.html osx-font-smoothing-2-ref.html

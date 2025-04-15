@@ -18,6 +18,8 @@
     _(Value)                        \
     _(Parameter)                    \
     _(Callee)                       \
+    _(ForceUseV)                    \
+    _(ForceUseT)                    \
     _(TableSwitch)                  \
     _(TableSwitchV)                 \
     _(Goto)                         \
@@ -28,20 +30,23 @@
     _(NewDeclEnvObject)             \
     _(NewCallObject)                \
     _(NewStringObject)              \
-    _(ParNew)                       \
-    _(ParNewDenseArray)             \
-    _(ParNewCallObject)             \
-    _(ParBailout)                   \
+    _(NewPar)                       \
+    _(NewDenseArrayPar)             \
+    _(NewCallObjectPar)             \
+    _(AbortPar)                     \
     _(InitElem)                     \
+    _(InitElemGetterSetter)         \
     _(InitProp)                     \
+    _(InitPropGetterSetter)         \
     _(CheckOverRecursed)            \
-    _(ParCheckOverRecursed)         \
+    _(CheckOverRecursedPar)         \
     _(DefVar)                       \
     _(DefFun)                       \
     _(CallKnown)                    \
     _(CallGeneric)                  \
     _(CallNative)                   \
     _(ApplyArgsGeneric)             \
+    _(Bail)                         \
     _(GetDynamicName)               \
     _(FilterArguments)              \
     _(CallDirectEval)               \
@@ -81,6 +86,7 @@
     _(CompareV)                     \
     _(CompareVAndBranch)            \
     _(CompareVM)                    \
+    _(BitAndAndBranch)              \
     _(IsNullOrLikeUndefined)        \
     _(IsNullOrLikeUndefinedAndBranch)\
     _(EmulatesUndefined)            \
@@ -108,6 +114,7 @@
     _(ModD)                         \
     _(BinaryV)                      \
     _(Concat)                       \
+    _(ConcatPar)                    \
     _(CharCodeAt)                   \
     _(FromCharCode)                 \
     _(Int32ToDouble)                \
@@ -116,6 +123,7 @@
     _(DoubleToInt32)                \
     _(TruncateDToInt32)             \
     _(IntToString)                  \
+    _(DoubleToString)               \
     _(Start)                        \
     _(OsrEntry)                     \
     _(OsrValue)                     \
@@ -124,11 +132,12 @@
     _(RegExpTest)                   \
     _(Lambda)                       \
     _(LambdaForSingleton)           \
-    _(ParLambda)                    \
+    _(LambdaPar)                    \
     _(ImplicitThis)                 \
     _(Slots)                        \
     _(Elements)                     \
     _(ConvertElementsToDoubles)     \
+    _(MaybeToDoubleElement)         \
     _(LoadSlotV)                    \
     _(LoadSlotT)                    \
     _(StoreSlotV)                   \
@@ -136,8 +145,7 @@
     _(GuardShape)                   \
     _(GuardObjectType)              \
     _(GuardClass)                   \
-    _(ParWriteGuard)                \
-    _(ParDump)                      \
+    _(GuardThreadLocalObject)       \
     _(TypeBarrier)                  \
     _(MonitorTypes)                 \
     _(PostWriteBarrierO)            \
@@ -174,7 +182,7 @@
     _(StoreFixedSlotV)              \
     _(StoreFixedSlotT)              \
     _(FunctionEnvironment)          \
-    _(ParSlice)                     \
+    _(ForkJoinSlice)                \
     _(GetPropertyCacheV)            \
     _(GetPropertyCacheT)            \
     _(GetPropertyPolymorphicV)      \
@@ -210,7 +218,7 @@
     _(GetArgument)                  \
     _(RunOncePrologue)              \
     _(Rest)                         \
-    _(ParRest)                      \
+    _(RestPar)                      \
     _(TypeOfV)                      \
     _(ToIdV)                        \
     _(Floor)                        \
@@ -238,14 +246,14 @@
     _(AsmJSPassStackArg)            \
     _(AsmJSCall)                    \
     _(AsmJSCheckOverRecursed)       \
-    _(ParCheckInterrupt)
+    _(CheckInterruptPar)
 
 #if defined(JS_CPU_X86)
-# include "x86/LOpcodes-x86.h"
+# include "jit/x86/LOpcodes-x86.h"
 #elif defined(JS_CPU_X64)
-# include "x64/LOpcodes-x64.h"
+# include "jit/x64/LOpcodes-x64.h"
 #elif defined(JS_CPU_ARM)
-# include "arm/LOpcodes-arm.h"
+# include "jit/arm/LOpcodes-arm.h"
 #endif
 
 #define LIR_OPCODE_LIST(_)          \

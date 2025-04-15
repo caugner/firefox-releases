@@ -4,28 +4,32 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jit/RangeAnalysis.h"
+
 #include "mozilla/MathAlgorithms.h"
 
 #include <math.h>
 #include <stdio.h>
 
-#include "vm/NumericConversions.h"
+#include "jsanalyze.h"
 
-#include "Ion.h"
-#include "IonAnalysis.h"
-#include "MIR.h"
-#include "MIRGraph.h"
-#include "RangeAnalysis.h"
-#include "IonSpewer.h"
+#include "jit/Ion.h"
+#include "jit/IonAnalysis.h"
+#include "jit/IonSpewer.h"
+#include "jit/MIR.h"
+#include "jit/MIRGraph.h"
+#include "vm/NumericConversions.h"
 
 using namespace js;
 using namespace js::jit;
 
 using mozilla::Abs;
+using mozilla::CountLeadingZeroes32;
 using mozilla::ExponentComponent;
 using mozilla::IsInfinite;
 using mozilla::IsNaN;
 using mozilla::IsNegative;
+using mozilla::Swap;
 
 // This algorithm is based on the paper "Eliminating Range Checks Using
 // Static Single Assignment Form" by Gough and Klaren.
@@ -349,37 +353,48 @@ Range::intersect(const Range *lhs, const Range *rhs, bool *emptyRange)
 void
 Range::unionWith(const Range *other)
 {
-   lower_infinite_ |= other->lower_infinite_;
-   upper_infinite_ |= other->upper_infinite_;
-   decimal_ |= other->decimal_;
-   max_exponent_ = Max(max_exponent_, other->max_exponent_);
-   setLower(Min(lower_, other->lower_));
-   setUpper(Max(upper_, other->upper_));
+   bool decimal = decimal_ | other->decimal_;
+   uint16_t max_exponent = Max(max_exponent_, other->max_exponent_);
+
+   if (lower_infinite_ || other->lower_infinite_)
+       makeLowerInfinite();
+   else
+       setLower(Min(lower_, other->lower_));
+
+   if (upper_infinite_ || other->upper_infinite_)
+       makeUpperInfinite();
+   else
+       setUpper(Max(upper_, other->upper_));
+
+   decimal_ = decimal;
+   max_exponent_ = max_exponent;
 }
 
-static const Range emptyRange;
+const int64_t RANGE_INF_MAX = int64_t(JSVAL_INT_MAX) + 1;
+const int64_t RANGE_INF_MIN = int64_t(JSVAL_INT_MIN) - 1;
 
 Range::Range(const MDefinition *def)
   : symbolicLower_(NULL),
     symbolicUpper_(NULL)
 {
     const Range *other = def->range();
-    if (!other)
-        other = &emptyRange;
+    if (!other) {
+        if (def->type() == MIRType_Int32)
+            set(JSVAL_INT_MIN, JSVAL_INT_MAX);
+        else if (def->type() == MIRType_Boolean)
+            set(0, 1);
+        else
+            set(RANGE_INF_MIN, RANGE_INF_MAX, true, MaxDoubleExponent);
+        symbolicLower_ = symbolicUpper_ = NULL;
+        return;
+    }
 
-    lower_ = other->lower_;
-    lower_infinite_ = other->lower_infinite_;
-    upper_ = other->upper_;
-    upper_infinite_ = other->upper_infinite_;
-    decimal_ = other->decimal_;
-    max_exponent_ = other->max_exponent_;
+    *this = *other;
+    symbolicLower_ = symbolicUpper_ = NULL;
 
-    if (def->type() == MIRType_Int32)
-        truncate();
+    if (def->type() == MIRType_Boolean)
+        wrapAroundToBoolean();
 }
-
-const int64_t RANGE_INF_MAX = (int64_t) JSVAL_INT_MAX + 1;
-const int64_t RANGE_INF_MIN = (int64_t) JSVAL_INT_MIN - 1;
 
 static inline bool
 HasInfinite(const Range *lhs, const Range *rhs)
@@ -421,6 +436,8 @@ Range::sub(const Range *lhs, const Range *rhs)
 Range *
 Range::and_(const Range *lhs, const Range *rhs)
 {
+    JS_ASSERT(lhs->isInt32());
+    JS_ASSERT(rhs->isInt32());
     int64_t lower;
     int64_t upper;
 
@@ -449,6 +466,132 @@ Range::and_(const Range *lhs, const Range *rhs)
 }
 
 Range *
+Range::or_(const Range *lhs, const Range *rhs)
+{
+    JS_ASSERT(lhs->isInt32());
+    JS_ASSERT(rhs->isInt32());
+    // When one operand is always 0 or always -1, it's a special case where we
+    // can compute a fully precise result. Handling these up front also
+    // protects the code below from calling CountLeadingZeroes32 with a zero
+    // operand or from shifting an int32_t by 32.
+    if (lhs->lower_ == lhs->upper_) {
+        if (lhs->lower_ == 0)
+            return new Range(*rhs);
+        if (lhs->lower_ == -1)
+            return new Range(*lhs);;
+    }
+    if (rhs->lower_ == rhs->upper_) {
+        if (rhs->lower_ == 0)
+            return new Range(*lhs);
+        if (rhs->lower_ == -1)
+            return new Range(*rhs);;
+    }
+
+    // The code below uses CountLeadingZeroes32, which has undefined behavior
+    // if its operand is 0. We rely on the code above to protect it.
+    JS_ASSERT_IF(lhs->lower_ >= 0, lhs->upper_ != 0);
+    JS_ASSERT_IF(rhs->lower_ >= 0, rhs->upper_ != 0);
+    JS_ASSERT_IF(lhs->upper_ < 0, lhs->lower_ != -1);
+    JS_ASSERT_IF(rhs->upper_ < 0, rhs->lower_ != -1);
+
+    int64_t lower = INT32_MIN;
+    int64_t upper = INT32_MAX;
+
+    if (lhs->lower_ >= 0 && rhs->lower_ >= 0) {
+        // Both operands are non-negative, so the result won't be less than either.
+        lower = Max(lhs->lower_, rhs->lower_);
+        // The result will have leading zeros where both operands have leading zeros.
+        upper = UINT32_MAX >> Min(CountLeadingZeroes32(lhs->upper_),
+                                  CountLeadingZeroes32(rhs->upper_));
+    } else {
+        // The result will have leading ones where either operand has leading ones.
+        if (lhs->upper_ < 0) {
+            unsigned leadingOnes = CountLeadingZeroes32(~lhs->lower_);
+            lower = Max(lower, int64_t(~int32_t(UINT32_MAX >> leadingOnes)));
+            upper = -1;
+        }
+        if (rhs->upper_ < 0) {
+            unsigned leadingOnes = CountLeadingZeroes32(~rhs->lower_);
+            lower = Max(lower, int64_t(~int32_t(UINT32_MAX >> leadingOnes)));
+            upper = -1;
+        }
+    }
+
+    return new Range(lower, upper);
+}
+
+Range *
+Range::xor_(const Range *lhs, const Range *rhs)
+{
+    JS_ASSERT(lhs->isInt32());
+    JS_ASSERT(rhs->isInt32());
+    int32_t lhsLower = lhs->lower_;
+    int32_t lhsUpper = lhs->upper_;
+    int32_t rhsLower = rhs->lower_;
+    int32_t rhsUpper = rhs->upper_;
+    bool invertAfter = false;
+
+    // If either operand is negative, bitwise-negate it, and arrange to negate
+    // the result; ~((~x)^y) == x^y. If both are negative the negations on the
+    // result cancel each other out; effectively this is (~x)^(~y) == x^y.
+    // These transformations reduce the number of cases we have to handle below.
+    if (lhsUpper < 0) {
+        lhsLower = ~lhsLower;
+        lhsUpper = ~lhsUpper;
+        Swap(lhsLower, lhsUpper);
+        invertAfter = !invertAfter;
+    }
+    if (rhsUpper < 0) {
+        rhsLower = ~rhsLower;
+        rhsUpper = ~rhsUpper;
+        Swap(rhsLower, rhsUpper);
+        invertAfter = !invertAfter;
+    }
+
+    // Handle cases where lhs or rhs is always zero specially, because they're
+    // easy cases where we can be perfectly precise, and because it protects the
+    // CountLeadingZeroes32 calls below from seeing 0 operands, which would be
+    // undefined behavior.
+    int32_t lower = INT32_MIN;
+    int32_t upper = INT32_MAX;
+    if (lhsLower == 0 && lhsUpper == 0) {
+        upper = rhsUpper;
+        lower = rhsLower;
+    } else if (rhsLower == 0 && rhsUpper == 0) {
+        upper = lhsUpper;
+        lower = lhsLower;
+    } else if (lhsLower >= 0 && rhsLower >= 0) {
+        // Both operands are non-negative. The result will be non-negative.
+        lower = 0;
+        // To compute the upper value, take each operand's upper value and
+        // set all bits that don't correspond to leading zero bits in the
+        // other to one. For each one, this gives an upper bound for the
+        // result, so we can take the minimum between the two.
+        unsigned lhsLeadingZeros = CountLeadingZeroes32(lhsUpper);
+        unsigned rhsLeadingZeros = CountLeadingZeroes32(rhsUpper);
+        upper = Min(rhsUpper | int32_t(UINT32_MAX >> lhsLeadingZeros),
+                    lhsUpper | int32_t(UINT32_MAX >> rhsLeadingZeros));
+    }
+
+    // If we bitwise-negated one (but not both) of the operands above, apply the
+    // bitwise-negate to the result, completing ~((~x)^y) == x^y.
+    if (invertAfter) {
+        lower = ~lower;
+        upper = ~upper;
+        Swap(lower, upper);
+    }
+
+    return new Range(lower, upper);
+}
+
+Range *
+Range::not_(const Range *op)
+{
+    JS_ASSERT(op->isInt32());
+    return new Range(~op->upper_, ~op->lower_);
+}
+
+Range *
 Range::mul(const Range *lhs, const Range *rhs)
 {
     bool decimal = lhs->isDecimal() || rhs->isDecimal();
@@ -466,21 +609,114 @@ Range::mul(const Range *lhs, const Range *rhs)
 }
 
 Range *
-Range::shl(const Range *lhs, int32_t c)
+Range::lsh(const Range *lhs, int32_t c)
 {
+    JS_ASSERT(lhs->isInt32());
     int32_t shift = c & 0x1f;
-    return new Range(
-        (int64_t)lhs->lower_ << shift,
-        (int64_t)lhs->upper_ << shift);
+
+    // If the shift doesn't loose bits or shift bits into the sign bit, we
+    // can simply compute the correct range by shifting.
+    if ((int32_t)((uint32_t)lhs->lower_ << shift << 1 >> shift >> 1) == lhs->lower_ &&
+        (int32_t)((uint32_t)lhs->upper_ << shift << 1 >> shift >> 1) == lhs->upper_)
+    {
+        return new Range(
+            (uint32_t)lhs->lower_ << shift,
+            (uint32_t)lhs->upper_ << shift);
+    }
+
+    return new Range(INT32_MIN, INT32_MAX);
 }
 
 Range *
-Range::shr(const Range *lhs, int32_t c)
+Range::rsh(const Range *lhs, int32_t c)
 {
+    JS_ASSERT(lhs->isInt32());
     int32_t shift = c & 0x1f;
     return new Range(
         (int64_t)lhs->lower_ >> shift,
         (int64_t)lhs->upper_ >> shift);
+}
+
+Range *
+Range::ursh(const Range *lhs, int32_t c)
+{
+    int32_t shift = c & 0x1f;
+
+    // If the value is always non-negative or always negative, we can simply
+    // compute the correct range by shifting.
+    if ((lhs->lower_ >= 0 && !lhs->isUpperInfinite()) ||
+        (lhs->upper_ < 0 && !lhs->isLowerInfinite()))
+    {
+        return new Range(
+            (int64_t)((uint32_t)lhs->lower_ >> shift),
+            (int64_t)((uint32_t)lhs->upper_ >> shift));
+    }
+
+    // Otherwise return the most general range after the shift.
+    return new Range(0, (int64_t)(UINT32_MAX >> shift));
+}
+
+Range *
+Range::lsh(const Range *lhs, const Range *rhs)
+{
+    JS_ASSERT(lhs->isInt32());
+    JS_ASSERT(rhs->isInt32());
+    return new Range(INT32_MIN, INT32_MAX);
+}
+
+Range *
+Range::rsh(const Range *lhs, const Range *rhs)
+{
+    JS_ASSERT(lhs->isInt32());
+    JS_ASSERT(rhs->isInt32());
+    return new Range(Min(lhs->lower(), 0), Max(lhs->upper(), 0));
+}
+
+Range *
+Range::ursh(const Range *lhs, const Range *rhs)
+{
+    return new Range(0, (lhs->lower() >= 0 && !lhs->isUpperInfinite()) ? lhs->upper() : UINT32_MAX);
+}
+
+Range *
+Range::abs(const Range *op)
+{
+    // Get the lower and upper values of the operand, and adjust them
+    // for infinities. Range's constructor treats any value beyond the
+    // int32_t range as infinity.
+    int64_t l = (int64_t)op->lower() - op->isLowerInfinite();
+    int64_t u = (int64_t)op->upper() + op->isUpperInfinite();
+
+    return new Range(Max(Max(int64_t(0), l), -u),
+                     Max(Abs(l), Abs(u)),
+                     op->isDecimal(),
+                     op->exponent());
+}
+
+Range *
+Range::min(const Range *lhs, const Range *rhs)
+{
+    // If either operand is NaN (implied by isInfinite here), the result is NaN.
+    if (lhs->isInfinite() || rhs->isInfinite())
+        return new Range();
+
+    return new Range(Min(lhs->lower(), rhs->lower()),
+                     Min(lhs->upper(), rhs->upper()),
+                     lhs->isDecimal() || rhs->isDecimal(),
+                     Max(lhs->exponent(), rhs->exponent()));
+}
+
+Range *
+Range::max(const Range *lhs, const Range *rhs)
+{
+    // If either operand is NaN (implied by isInfinite here), the result is NaN.
+    if (lhs->isInfinite() || rhs->isInfinite())
+        return new Range();
+
+    return new Range(Max(lhs->lower(), rhs->lower()),
+                     Max(lhs->upper(), rhs->upper()),
+                     lhs->isDecimal() || rhs->isDecimal(),
+                     Max(lhs->exponent(), rhs->exponent()));
 }
 
 bool
@@ -535,7 +771,7 @@ MPhi::computeRange()
 
     Range *range = NULL;
     JS_ASSERT(getOperand(0)->op() != MDefinition::Op_OsrValue);
-    for (size_t i = 0; i < numOperands(); i++) {
+    for (size_t i = 0, e = numOperands(); i < e; i++) {
         if (getOperand(i)->block()->earlyAbort()) {
             IonSpew(IonSpew_Range, "Ignoring unreachable input %d", getOperand(i)->id());
             continue;
@@ -558,8 +794,19 @@ MPhi::computeRange()
     }
 
     setRange(range);
+}
 
-    if (block()->isLoopHeader()) {
+void
+MBeta::computeRange()
+{
+    bool emptyRange = false;
+
+    Range *range = Range::intersect(val_->range(), comparison_, &emptyRange);
+    if (emptyRange) {
+        IonSpew(IonSpew_Range, "Marking block for inst %d unexitable", id());
+        block()->setEarlyAbort();
+    } else {
+        setRange(range);
     }
 }
 
@@ -638,31 +885,97 @@ MBitAnd::computeRange()
 {
     Range left(getOperand(0));
     Range right(getOperand(1));
+    left.wrapAroundToInt32();
+    right.wrapAroundToInt32();
+
     setRange(Range::and_(&left, &right));
+}
+
+void
+MBitOr::computeRange()
+{
+    Range left(getOperand(0));
+    Range right(getOperand(1));
+    left.wrapAroundToInt32();
+    right.wrapAroundToInt32();
+
+    setRange(Range::or_(&left, &right));
+}
+
+void
+MBitXor::computeRange()
+{
+    Range left(getOperand(0));
+    Range right(getOperand(1));
+    left.wrapAroundToInt32();
+    right.wrapAroundToInt32();
+
+    setRange(Range::xor_(&left, &right));
+}
+
+void
+MBitNot::computeRange()
+{
+    Range op(getOperand(0));
+    op.wrapAroundToInt32();
+
+    setRange(Range::not_(&op));
 }
 
 void
 MLsh::computeRange()
 {
-    MDefinition *right = getOperand(1);
-    if (!right->isConstant())
-        return;
+    Range left(getOperand(0));
+    Range right(getOperand(1));
+    left.wrapAroundToInt32();
 
-    int32_t c = right->toConstant()->value().toInt32();
-    Range other(getOperand(0));
-    setRange(Range::shl(&other, c));
+    MDefinition *rhs = getOperand(1);
+    if (!rhs->isConstant()) {
+        right.wrapAroundToShiftCount();
+        setRange(Range::lsh(&left, &right));
+        return;
+    }
+
+    int32_t c = rhs->toConstant()->value().toInt32();
+    setRange(Range::lsh(&left, c));
 }
 
 void
 MRsh::computeRange()
 {
-    MDefinition *right = getOperand(1);
-    if (!right->isConstant())
-        return;
+    Range left(getOperand(0));
+    Range right(getOperand(1));
+    left.wrapAroundToInt32();
 
-    int32_t c = right->toConstant()->value().toInt32();
-    Range other(getOperand(0));
-    setRange(Range::shr(&other, c));
+    MDefinition *rhs = getOperand(1);
+    if (!rhs->isConstant()) {
+        right.wrapAroundToShiftCount();
+        setRange(Range::rsh(&left, &right));
+        return;
+    }
+
+    int32_t c = rhs->toConstant()->value().toInt32();
+    setRange(Range::rsh(&left, c));
+}
+
+void
+MUrsh::computeRange()
+{
+    Range left(getOperand(0));
+    Range right(getOperand(1));
+
+    MDefinition *rhs = getOperand(1);
+    if (!rhs->isConstant()) {
+        right.wrapAroundToShiftCount();
+        setRange(Range::ursh(&left, &right));
+    } else {
+        int32_t c = rhs->toConstant()->value().toInt32();
+        setRange(Range::ursh(&left, c));
+    }
+
+    JS_ASSERT(range()->lower() >= 0);
+    if (type() == MIRType_Int32 && range()->isUpperInfinite())
+        range()->extendUInt32ToInt32Min();
 }
 
 void
@@ -672,12 +985,21 @@ MAbs::computeRange()
         return;
 
     Range other(getOperand(0));
+    setRange(Range::abs(&other));
 
-    Range *range = new Range(0,
-                             Max(Abs<int64_t>(other.lower()), Abs<int64_t>(other.upper())),
-                             other.isDecimal(),
-                             other.exponent());
-    setRange(range);
+    if (implicitTruncate_ && !range()->isInt32())
+        setRange(new Range(INT32_MIN, INT32_MAX));
+}
+
+void
+MMinMax::computeRange()
+{
+    if (specialization_ != MIRType_Int32 && specialization_ != MIRType_Double)
+        return;
+
+    Range left(getOperand(0));
+    Range right(getOperand(1));
+    setRange(isMax() ? Range::max(&left, &right) : Range::min(&left, &right));
 }
 
 void
@@ -689,6 +1011,9 @@ MAdd::computeRange()
     Range right(getOperand(1));
     Range *next = Range::add(&left, &right);
     setRange(next);
+
+    if (isTruncated() && !range()->isInt32())
+        setRange(new Range(INT32_MIN, INT32_MAX));
 }
 
 void
@@ -700,18 +1025,25 @@ MSub::computeRange()
     Range right(getOperand(1));
     Range *next = Range::sub(&left, &right);
     setRange(next);
+
+    if (isTruncated() && !range()->isInt32())
+        setRange(new Range(INT32_MIN, INT32_MAX));
 }
 
 void
 MMul::computeRange()
 {
-    if ((specialization() != MIRType_Int32 && specialization() != MIRType_Double) || isTruncated())
+    if (specialization() != MIRType_Int32 && specialization() != MIRType_Double)
         return;
     Range left(getOperand(0));
     Range right(getOperand(1));
     if (canBeNegativeZero())
         canBeNegativeZero_ = Range::negativeZeroMul(&left, &right);
     setRange(Range::mul(&left, &right));
+
+    // Truncated multiplications could overflow in both directions
+    if (isTruncated() && !range()->isInt32())
+        setRange(new Range(INT32_MIN, INT32_MAX));
 }
 
 void
@@ -722,23 +1054,40 @@ MMod::computeRange()
     Range lhs(getOperand(0));
     Range rhs(getOperand(1));
 
-    // Infinite % x is NaN
-    if (lhs.isInfinite())
+    // If either operand is a NaN, the result is NaN. This also conservatively
+    // handles Infinity cases.
+    if (lhs.isInfinite() || rhs.isInfinite())
         return;
 
+    // Math.abs(lhs % rhs) == Math.abs(lhs) % Math.abs(rhs).
+    // First, the absolute value of the result will always be less than the
+    // absolute value of rhs. (And if rhs is zero, the result is NaN).
     int64_t a = Abs<int64_t>(rhs.lower());
     int64_t b = Abs<int64_t>(rhs.upper());
     if (a == 0 && b == 0)
         return;
-    int64_t bound = Max(a, b);
+    int64_t rhsAbsBound = Max(a, b);
 
     // If the value is known to be integer, less-than abs(rhs) is equivalent
     // to less-than-or-equal abs(rhs)-1. This is important for being able to
     // say that the result of x%256 is an 8-bit unsigned number.
     if (!lhs.isDecimal() && !rhs.isDecimal())
-        --bound;
+        --rhsAbsBound;
 
-    setRange(new Range(-bound, bound, lhs.isDecimal() || rhs.isDecimal()));
+    // Next, the absolute value of the result will never be greater than the
+    // absolute value of lhs.
+    int64_t lhsAbsBound = Max(Abs<int64_t>(lhs.lower()), Abs<int64_t>(lhs.upper()));
+
+    // This gives us two upper bounds, so we can take the best one.
+    int64_t absBound = Min(lhsAbsBound, rhsAbsBound);
+
+    // Now consider the sign of the result.
+    // If lhs is non-negative, the result will be non-negative.
+    // If lhs is non-positive, the result will be non-positive.
+    int64_t lower = lhs.lower() >= 0 ? 0 : -absBound;
+    int64_t upper = lhs.upper() <= 0 ? 0 : absBound;
+
+    setRange(new Range(lower, upper, lhs.isDecimal() || rhs.isDecimal()));
 }
 
 void
@@ -750,27 +1099,54 @@ MToDouble::computeRange()
 void
 MTruncateToInt32::computeRange()
 {
-    Range input(getOperand(0));
-    int32_t lower = input.lower();
-    int32_t upper = input.upper();
-    if (input.isLowerInfinite() || input.isUpperInfinite()) {
-        lower = JSVAL_INT_MIN;
-        upper = JSVAL_INT_MAX;
-    }
-    setRange(new Range(lower, upper));
+    Range *output = new Range(getOperand(0));
+    output->wrapAroundToInt32();
+    setRange(output);
 }
 
 void
 MToInt32::computeRange()
 {
-    Range input(getOperand(0));
-    setRange(new Range(input.lower(), input.upper()));
+    Range *output = new Range(getOperand(0));
+    output->clampToInt32();
+    setRange(output);
+}
+
+static Range *GetTypedArrayRange(int type)
+{
+    switch (type) {
+      case TypedArrayObject::TYPE_UINT8_CLAMPED:
+      case TypedArrayObject::TYPE_UINT8:  return new Range(0, UINT8_MAX);
+      case TypedArrayObject::TYPE_UINT16: return new Range(0, UINT16_MAX);
+      case TypedArrayObject::TYPE_UINT32: return new Range(0, UINT32_MAX);
+
+      case TypedArrayObject::TYPE_INT8:   return new Range(INT8_MIN, INT8_MAX);
+      case TypedArrayObject::TYPE_INT16:  return new Range(INT16_MIN, INT16_MAX);
+      case TypedArrayObject::TYPE_INT32:  return new Range(INT32_MIN, INT32_MAX);
+
+      case TypedArrayObject::TYPE_FLOAT32:
+      case TypedArrayObject::TYPE_FLOAT64:
+        break;
+    }
+
+  return NULL;
+}
+
+void
+MLoadTypedArrayElement::computeRange()
+{
+    if (Range *range = GetTypedArrayRange(arrayType())) {
+        if (type() == MIRType_Int32 && range->isUpperInfinite())
+            range->extendUInt32ToInt32Min();
+        setRange(range);
+    }
 }
 
 void
 MLoadTypedArrayElementStatic::computeRange()
 {
-    setRange(new Range(this));
+    if (Range *range = GetTypedArrayRange(typedArray_->type()))
+        setRange(range);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -797,6 +1173,8 @@ RangeAnalysis::markBlocksInLoopBody(MBasicBlock *header, MBasicBlock *current)
 void
 RangeAnalysis::analyzeLoop(MBasicBlock *header)
 {
+    JS_ASSERT(header->hasUniqueBackedge());
+
     // Try to compute an upper bound on the number of times the loop backedge
     // will be taken. Look for tests that dominate the backedge and which have
     // an edge leaving the loop body.
@@ -850,17 +1228,14 @@ RangeAnalysis::analyzeLoop(MBasicBlock *header)
     // Try to compute symbolic bounds for the phi nodes at the head of this
     // loop, expressed in terms of the iteration bound just computed.
 
-    for (MDefinitionIterator iter(header); iter; iter++) {
-        MDefinition *def = *iter;
-        if (def->isPhi())
-            analyzeLoopPhi(header, iterationBound, def->toPhi());
-    }
+    for (MPhiIterator iter(header->phisBegin()); iter != header->phisEnd(); iter++)
+        analyzeLoopPhi(header, iterationBound, *iter);
 
     // Try to hoist any bounds checks from the loop using symbolic bounds.
 
     Vector<MBoundsCheck *, 0, IonAllocPolicy> hoistedChecks;
 
-    for (ReversePostorderIterator iter(graph_.rpoBegin()); iter != graph_.rpoEnd(); iter++) {
+    for (ReversePostorderIterator iter(graph_.rpoBegin(header)); iter != graph_.rpoEnd(); iter++) {
         MBasicBlock *block = *iter;
         if (!block->isMarked())
             continue;
@@ -1011,8 +1386,7 @@ RangeAnalysis::analyzeLoopPhi(MBasicBlock *header, LoopIterationBound *loopBound
     // but is required to change at most N and be either nondecreasing or
     // nonincreasing.
 
-    if (phi->numOperands() != 2)
-        return;
+    JS_ASSERT(phi->numOperands() == 2);
 
     MBasicBlock *preLoop = header->loopPredecessor();
     JS_ASSERT(!preLoop->isMarked() && preLoop->successorWithPhis() == header);
@@ -1110,24 +1484,27 @@ ConvertLinearSum(MBasicBlock *block, const LinearSum &sum)
             } else {
                 def = term.term;
             }
-        } else {
+        } else if (term.scale == -1) {
             if (!def) {
                 def = MConstant::New(Int32Value(0));
                 block->insertBefore(block->lastIns(), def->toInstruction());
             }
-            if (term.scale == -1) {
-                def = MSub::New(def, term.term);
-                def->toSub()->setInt32();
-                block->insertBefore(block->lastIns(), def->toInstruction());
-            } else {
-                MConstant *factor = MConstant::New(Int32Value(term.scale));
-                block->insertBefore(block->lastIns(), factor);
-                MMul *mul = MMul::New(term.term, factor);
-                mul->setInt32();
-                block->insertBefore(block->lastIns(), mul);
+            def = MSub::New(def, term.term);
+            def->toSub()->setInt32();
+            block->insertBefore(block->lastIns(), def->toInstruction());
+        } else {
+            JS_ASSERT(term.scale != 0);
+            MConstant *factor = MConstant::New(Int32Value(term.scale));
+            block->insertBefore(block->lastIns(), factor);
+            MMul *mul = MMul::New(term.term, factor);
+            mul->setInt32();
+            block->insertBefore(block->lastIns(), mul);
+            if (def) {
                 def = MAdd::New(def, mul);
                 def->toAdd()->setInt32();
                 block->insertBefore(block->lastIns(), def->toInstruction());
+            } else {
+                def = mul;
             }
         }
     }
@@ -1237,13 +1614,34 @@ RangeAnalysis::analyze()
 ///////////////////////////////////////////////////////////////////////////////
 
 void
-Range::truncate()
+Range::clampToInt32()
 {
     if (isInt32())
         return;
     int64_t l = isLowerInfinite() ? JSVAL_INT_MIN : lower();
     int64_t h = isUpperInfinite() ? JSVAL_INT_MAX : upper();
-    set(l, h, false, 32);
+    set(l, h);
+}
+
+void
+Range::wrapAroundToInt32()
+{
+    if (!isInt32())
+        set(JSVAL_INT_MIN, JSVAL_INT_MAX);
+}
+
+void
+Range::wrapAroundToShiftCount()
+{
+    if (lower() < 0 || upper() >= 32)
+        set(0, 31);
+}
+
+void
+Range::wrapAroundToBoolean()
+{
+    if (!isBoolean())
+        set(0, 1);
 }
 
 bool
@@ -1260,10 +1658,11 @@ MConstant::truncate()
         return false;
 
     // Truncate the double to int, since all uses truncates it.
-    value_.setInt32(ToInt32(value_.toDouble()));
+    int32_t res = ToInt32(value_.toDouble());
+    value_.setInt32(res);
     setResultType(MIRType_Int32);
     if (range())
-        range()->truncate();
+        range()->set(res, res);
     return true;
 }
 
@@ -1280,7 +1679,7 @@ MAdd::truncate()
     specialization_ = MIRType_Int32;
     setResultType(MIRType_Int32);
     if (range())
-        range()->truncate();
+        range()->wrapAroundToInt32();
     return true;
 }
 
@@ -1297,7 +1696,7 @@ MSub::truncate()
     specialization_ = MIRType_Int32;
     setResultType(MIRType_Int32);
     if (range())
-        range()->truncate();
+        range()->wrapAroundToInt32();
     return true;
 }
 
@@ -1317,7 +1716,7 @@ MMul::truncate()
     }
 
     if (truncated && range()) {
-        range()->truncate();
+        range()->wrapAroundToInt32();
         setTruncated(true);
         setCanBeNegativeZero(false);
     }
@@ -1331,6 +1730,13 @@ MDiv::truncate()
     // Remember analysis, needed to remove negative zero checks.
     setTruncated(true);
 
+    // Divisions where the lhs and rhs are unsigned and the result is
+    // truncated can be lowered more efficiently.
+    if (specialization() == MIRType_Int32 && tryUseUnsignedOperands()) {
+        unsigned_ = true;
+        return true;
+    }
+
     // No modifications.
     return false;
 }
@@ -1341,6 +1747,12 @@ MMod::truncate()
     // Remember analysis, needed to remove negative zero checks.
     setTruncated(true);
 
+    // As for division, handle unsigned modulus with a truncated result.
+    if (specialization() == MIRType_Int32 && tryUseUnsignedOperands()) {
+        unsigned_ = true;
+        return true;
+    }
+
     // No modifications.
     return false;
 }
@@ -1350,11 +1762,11 @@ MToDouble::truncate()
 {
     JS_ASSERT(type() == MIRType_Double);
 
-    // We use the return type to flag that this MToDouble sould be replaced by a
-    // MTruncateToInt32 when modifying the graph.
+    // We use the return type to flag that this MToDouble should be replaced by
+    // a MTruncateToInt32 when modifying the graph.
     setResultType(MIRType_Int32);
     if (range())
-        range()->truncate();
+        range()->wrapAroundToInt32();
 
     return true;
 }
@@ -1410,6 +1822,24 @@ MToDouble::isOperandTruncated(size_t index) const
     return type() == MIRType_Int32;
 }
 
+bool
+MStoreTypedArrayElement::isOperandTruncated(size_t index) const
+{
+    return index == 2 && !isFloatArray();
+}
+
+bool
+MStoreTypedArrayElementHole::isOperandTruncated(size_t index) const
+{
+    return index == 3 && !isFloatArray();
+}
+
+bool
+MStoreTypedArrayElementStatic::isOperandTruncated(size_t index) const
+{
+    return index == 1 && !isFloatArray();
+}
+
 // Ensure that all observables uses can work with a truncated
 // version of the |candidate|'s result.
 static bool
@@ -1450,7 +1880,7 @@ void
 AdjustTruncatedInputs(MInstruction *truncated)
 {
     MBasicBlock *block = truncated->block();
-    for (size_t i = 0; i < truncated->numOperands(); i++) {
+    for (size_t i = 0, e = truncated->numOperands(); i < e; i++) {
         if (!truncated->isOperandTruncated(i))
             continue;
         if (truncated->getOperand(i)->type() == MIRType_Int32)
@@ -1502,9 +1932,16 @@ RangeAnalysis::truncate()
             }
 
             // Set truncated flag if range analysis ensure that it has no
-            // rounding errors and no freactional part.
+            // rounding errors and no fractional part.
             const Range *r = iter->range();
-            if (!r || r->hasRoundingErrors())
+            bool hasRoundingErrors = !r || r->hasRoundingErrors();
+
+            // Special case integer division: the result of a/b can be infinite
+            // but cannot actually have rounding errors induced by truncation.
+            if (iter->isDiv() && iter->toDiv()->specialization() == MIRType_Int32)
+                hasRoundingErrors = false;
+
+            if (hasRoundingErrors)
                 continue;
 
             // Ensure all observable uses are truncated.
@@ -1532,6 +1969,22 @@ RangeAnalysis::truncate()
         AdjustTruncatedInputs(ins);
     }
 
+    // Collect range information as soon as the truncate phased is finished to
+    // ensure that we do not collect information from any operand out-side the
+    // scope of the Range Analysis.
+    //
+    // As the range is attached to the MIR nodes and we remove the bit-ops, we
+    // cannot safely access any information of the range of any operands.
+    //
+    // Example of ranges:
+    //   (x >>> 0)               range() == [0 .. +inf[
+    //   ((x >>> 0) | 0)         range() == [INT32_MIN .. INT32_MAX]
+    //   ((x >>> 0) | 0) % -1    Check   lhs->range()->lower() > 0
+    for (ReversePostorderIterator block(graph_.rpoBegin()); block != graph_.rpoEnd(); block++) {
+        for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++)
+            iter->collectRangeInfo();
+    }
+
     // Fold any unnecessary bitops in the graph, such as (x | 0) on an integer
     // input. This is done after range analysis rather than during GVN as the
     // presence of the bitop can change which instructions are truncated.
@@ -1543,4 +1996,26 @@ RangeAnalysis::truncate()
     }
 
     return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Collect Range information of operands
+///////////////////////////////////////////////////////////////////////////////
+
+void
+MInArray::collectRangeInfo()
+{
+    needsNegativeIntCheck_ = !index()->range() || index()->range()->lower() < 0;
+}
+
+void
+MLoadElementHole::collectRangeInfo()
+{
+    needsNegativeIntCheck_ = !index()->range() || index()->range()->lower() < 0;
+}
+
+void
+MMod::collectRangeInfo()
+{
+    canBeNegativeDividend_ = !lhs()->range() || lhs()->range()->lower() < 0;
 }

@@ -4,9 +4,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "MacroAssembler-x86.h"
-#include "jit/MoveEmitter.h"
+#include "jit/x86/MacroAssembler-x86.h"
+
+#include "mozilla/Casting.h"
+
+#include "jit/BaselineFrame.h"
 #include "jit/IonFrames.h"
+#include "jit/MoveEmitter.h"
 
 #include "jsscriptinlines.h"
 
@@ -16,12 +20,7 @@ using namespace js::jit;
 void
 MacroAssemblerX86::loadConstantDouble(double d, const FloatRegister &dest)
 {
-    union DoublePun {
-        uint64_t u;
-        double d;
-    } dpun;
-    dpun.d = d;
-    if (maybeInlineDouble(dpun.u, dest))
+    if (maybeInlineDouble(d, dest))
         return;
 
     if (!doubleMap_.initialized()) {
@@ -41,8 +40,19 @@ MacroAssemblerX86::loadConstantDouble(double d, const FloatRegister &dest)
             return;
     }
     Double &dbl = doubles_[doubleIndex];
-    masm.movsd_mr(reinterpret_cast<void *>(dbl.uses.prev()), dest.code());
+    JS_ASSERT(!dbl.uses.bound());
+
+    masm.movsd_mr(reinterpret_cast<const void *>(dbl.uses.prev()), dest.code());
     dbl.uses.setPrev(masm.size());
+}
+
+void
+MacroAssemblerX86::loadStaticDouble(const double *dp, const FloatRegister &dest) {
+    if (maybeInlineDouble(*dp, dest))
+        return;
+
+    // x86 can just load from any old immediate address.
+    movsd(dp, dest);
 }
 
 void
@@ -204,6 +214,13 @@ MacroAssemblerX86::handleFailureWithHandler(void *handler)
     passABIArg(eax);
     callWithABI(handler);
 
+    IonCode *excTail = GetIonContext()->runtime->ionRuntime()->getExceptionTail();
+    jmp(excTail);
+}
+
+void
+MacroAssemblerX86::handleFailureWithHandlerTail()
+{
     Label entryFrame;
     Label catch_;
     Label finally;

@@ -8,6 +8,8 @@
 #define jit_arm_Architecture_arm_h
 
 #include <limits.h>
+#include <stdint.h>
+
 // gcc appears to use __ARM_PCS_VFP to denote that the target is a hard-float target.
 #ifdef __ARM_PCS_VFP
 #define JS_CPU_ARM_HARDFP
@@ -211,6 +213,7 @@ bool hasMOVWT();
 bool hasVFPv3();
 bool hasVFP();
 bool has16DP();
+bool hasIDIV();
 
 } // namespace jit
 } // namespace js

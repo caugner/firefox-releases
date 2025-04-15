@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: Javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -54,6 +54,7 @@ FontInspector.prototype = {
    */
   onNewNode: function FI_onNewNode() {
     if (this.isActive() &&
+        this.inspector.selection.isLocal() &&
         this.inspector.selection.isConnected() &&
         this.inspector.selection.isElementNode() &&
         this.inspector.selection.reason != "highlighter") {
@@ -179,13 +180,13 @@ FontInspector.prototype = {
      *   p {font-family: {name};}
      *   * {font-size: 40px;line-height:60px;padding:0 10px;margin:0};
      *   </style>
-     *   <p contenteditable>Abc</p>
+     *   <p contenteditable spellcheck='false'>Abc</p>
      */
     let extraCSS = "* {padding:0;margin:0}";
     extraCSS += ".theme-dark {color: white}";
     extraCSS += "p {font-size: 40px;line-height:60px;padding:0 10px;margin:0;}";
     cssCode += extraCSS;
-    let src = "data:text/html;charset=utf-8,<!DOCTYPE HTML><head><base></base></head><style></style><p contenteditable>Abc</p>";
+    let src = "data:text/html;charset=utf-8,<!DOCTYPE HTML><head><base></base></head><style></style><p contenteditable spellcheck='false'>Abc</p>";
     iframe.addEventListener("load", function onload() {
       iframe.removeEventListener("load", onload, true);
       let doc = iframe.contentWindow.document;

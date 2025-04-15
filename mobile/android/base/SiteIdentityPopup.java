@@ -10,6 +10,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import android.content.res.Resources;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -44,12 +45,10 @@ public class SiteIdentityPopup extends ArrowPopup
 
     private Resources mResources;
 
+    private LinearLayout mIdentity;
     private TextView mHost;
     private TextView mOwner;
-    private TextView mSupplemental;
     private TextView mVerifier;
-    private TextView mEncrypted;
-    private ImageView mLarry;
 
     private DoorHanger mMixedContentNotification;
 
@@ -84,13 +83,12 @@ public class SiteIdentityPopup extends ArrowPopup
         setFocusable(true);
 
         LayoutInflater inflater = LayoutInflater.from(mActivity);
-        LinearLayout layout = (LinearLayout) inflater.inflate(R.layout.site_identity, null);
-        mContent.addView(layout);
+        mIdentity = (LinearLayout) inflater.inflate(R.layout.site_identity, null);
+        mContent.addView(mIdentity);
 
-        mHost = (TextView) layout.findViewById(R.id.host);
-        mOwner = (TextView) layout.findViewById(R.id.owner);
-        mVerifier = (TextView) layout.findViewById(R.id.verifier);
-        mLarry = (ImageView) layout.findViewById(R.id.larry);
+        mHost = (TextView) mIdentity.findViewById(R.id.host);
+        mOwner = (TextView) mIdentity.findViewById(R.id.owner);
+        mVerifier = (TextView) mIdentity.findViewById(R.id.verifier);
     }
 
     private void setIdentity(JSONObject identityData) {
@@ -100,37 +98,38 @@ public class SiteIdentityPopup extends ArrowPopup
 
             String owner = identityData.getString("owner");
 
-            try {
-                String supplemental = identityData.getString("supplemental");
+            // Supplemental data is optional.
+            String supplemental = identityData.optString("supplemental");
+            if (!TextUtils.isEmpty(supplemental)) {
                 owner += "\n" + supplemental;
-            } catch (JSONException e) { }
-
+            }
             mOwner.setText(owner);
 
             String verifier = identityData.getString("verifier");
             String encrypted = identityData.getString("encrypted");
             mVerifier.setText(verifier + "\n" + encrypted);
+
+            mContent.setPadding(0, 0, 0, 0);
+            mIdentity.setVisibility(View.VISIBLE);
+
         } catch (JSONException e) {
-            Log.e(LOGTAG, "Exception trying to get identity data", e);
+            // Hide the identity data if there isn't valid site identity data.
+            // Set some top padding on the popup content to create a of light blue
+            // between the popup arrow and the mixed content notification.
+            mContent.setPadding(0, (int) mResources.getDimension(R.dimen.identity_padding_top), 0, 0);
+            mIdentity.setVisibility(View.GONE);
         }
     }
 
     @Override
     public void onButtonClick(DoorHanger dh, String tag) {
-        if (tag.equals("disable")) {
-            // To disable mixed content blocking, reload the page with a flag to load mixed content.
-            try {
-                JSONObject data = new JSONObject();
-                data.put("allowMixedContent", true);
-                GeckoEvent e = GeckoEvent.createBroadcastEvent("Session:Reload", data.toString());
-                GeckoAppShell.sendEventToGecko(e);
-            } catch (JSONException e) {
-                Log.e(LOGTAG, "Exception creating message to allow mixed content", e);
-            }
-        } else if (tag.equals("enable")) {
-            // To enable mixed content blocking, reload the page without any flags.
-            GeckoEvent e = GeckoEvent.createBroadcastEvent("Session:Reload", "");
+        try {
+            JSONObject data = new JSONObject();
+            data.put("allowMixedContent", tag.equals("disable"));
+            GeckoEvent e = GeckoEvent.createBroadcastEvent("Session:Reload", data.toString());
             GeckoAppShell.sendEventToGecko(e);
+        } catch (JSONException e) {
+            Log.e(LOGTAG, "Exception creating message to enable/disable mixed content blocking", e);
         }
 
         dismiss();
@@ -139,7 +138,7 @@ public class SiteIdentityPopup extends ArrowPopup
     private void addMixedContentNotification(boolean blocked) {
         // Remove any exixting mixed content notification.
         removeMixedContentNotification();
-        mMixedContentNotification = new DoorHanger(mActivity);
+        mMixedContentNotification = new DoorHanger(mActivity, DoorHanger.Theme.DARK);
 
         String message;
         if (blocked) {
@@ -152,13 +151,13 @@ public class SiteIdentityPopup extends ArrowPopup
         mMixedContentNotification.addLink(mActivity.getString(R.string.learn_more), MIXED_CONTENT_SUPPORT_URL, "\n\n");
 
         if (blocked) {
+            mMixedContentNotification.setIcon(R.drawable.shield_doorhanger);
             mMixedContentNotification.addButton(mActivity.getString(R.string.disable_protection), "disable", this);
             mMixedContentNotification.addButton(mActivity.getString(R.string.keep_blocking), "keepBlocking", this);
         } else {
+            mMixedContentNotification.setIcon(R.drawable.warning_doorhanger);
             mMixedContentNotification.addButton(mActivity.getString(R.string.enable_protection), "enable", this);
         }
-        mMixedContentNotification.hideDivider();
-        mMixedContentNotification.setBackgroundColor(0xFFDDE4EA);
 
         mContent.addView(mMixedContentNotification);
     }
@@ -192,23 +191,7 @@ public class SiteIdentityPopup extends ArrowPopup
 
         setIdentity(identityData);
 
-        if (VERIFIED.equals(mode)) {
-            // Use a blue theme for SSL
-            mLarry.setImageResource(R.drawable.larry_blue);
-            mHost.setTextColor(mResources.getColor(R.color.identity_verified));
-            mOwner.setTextColor(mResources.getColor(R.color.identity_verified));
-        } else if (IDENTIFIED.equals(mode)) {
-            // Use a green theme for EV
-            mLarry.setImageResource(R.drawable.larry_green);
-            mHost.setTextColor(mResources.getColor(R.color.identity_identified));
-            mOwner.setTextColor(mResources.getColor(R.color.identity_identified));
-        } else {
-            // Use a gray theme for sites with mixed content
-            // FIXME: Get a gray larry
-            mLarry.setImageResource(R.drawable.larry_blue);
-            mHost.setTextColor(mResources.getColor(R.color.identity_mixed_content));
-            mOwner.setTextColor(mResources.getColor(R.color.identity_mixed_content));
-
+        if (MIXED_CONTENT_BLOCKED.equals(mode) || MIXED_CONTENT_LOADED.equals(mode)) {
             addMixedContentNotification(MIXED_CONTENT_BLOCKED.equals(mode));
         }
     }

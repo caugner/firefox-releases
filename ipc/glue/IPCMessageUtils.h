@@ -16,7 +16,9 @@
 #endif
 #include "mozilla/Util.h"
 #include "mozilla/gfx/2D.h"
-#include "mozilla/StandardInteger.h"
+#include "mozilla/gfx/Point.h"
+
+#include <stdint.h>
 
 #include "nsID.h"
 #include "nsMemory.h"
@@ -722,6 +724,24 @@ struct ParamTraits<nsIntPoint>
 };
 
 template<>
+struct ParamTraits<mozilla::gfx::IntSize>
+{
+  typedef mozilla::gfx::IntSize paramType;
+
+  static void Write(Message* msg, const paramType& param)
+  {
+    WriteParam(msg, param.width);
+    WriteParam(msg, param.height);
+  }
+
+  static bool Read(const Message* msg, void** iter, paramType* result)
+  {
+    return (ReadParam(msg, iter, &result->width) &&
+            ReadParam(msg, iter, &result->height));
+  }
+};
+
+template<>
 struct ParamTraits<nsIntRect>
 {
   typedef nsIntRect paramType;
@@ -906,6 +926,28 @@ template<>
 struct ParamTraits<mozilla::gfx::Margin>
 {
   typedef mozilla::gfx::Margin paramType;
+
+  static void Write(Message* msg, const paramType& param)
+  {
+    WriteParam(msg, param.top);
+    WriteParam(msg, param.right);
+    WriteParam(msg, param.bottom);
+    WriteParam(msg, param.left);
+  }
+
+  static bool Read(const Message* msg, void** iter, paramType* result)
+  {
+    return (ReadParam(msg, iter, &result->top) &&
+            ReadParam(msg, iter, &result->right) &&
+            ReadParam(msg, iter, &result->bottom) &&
+            ReadParam(msg, iter, &result->left));
+  }
+};
+
+template<class T>
+struct ParamTraits< mozilla::gfx::MarginTyped<T> >
+{
+  typedef mozilla::gfx::MarginTyped<T> paramType;
 
   static void Write(Message* msg, const paramType& param)
   {
@@ -1149,14 +1191,14 @@ struct ParamTraits<mozilla::layers::TextureInfo>
   static void Write(Message* aMsg, const paramType& aParam)
   {
     WriteParam(aMsg, aParam.mCompositableType);
-    WriteParam(aMsg, aParam.mTextureHostFlags);
+    WriteParam(aMsg, aParam.mDeprecatedTextureHostFlags);
     WriteParam(aMsg, aParam.mTextureFlags);
   }
 
   static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
   {
     return ReadParam(aMsg, aIter, &aResult->mCompositableType) &&
-           ReadParam(aMsg, aIter, &aResult->mTextureHostFlags) &&
+           ReadParam(aMsg, aIter, &aResult->mDeprecatedTextureHostFlags) &&
            ReadParam(aMsg, aIter, &aResult->mTextureFlags);
   }
 };
@@ -1166,6 +1208,13 @@ struct ParamTraits<mozilla::layers::CompositableType>
   : public EnumSerializer<mozilla::layers::CompositableType,
                           mozilla::layers::BUFFER_UNKNOWN,
                           mozilla::layers::BUFFER_COUNT>
+{};
+
+template <>
+struct ParamTraits<mozilla::gfx::SurfaceFormat>
+  : public EnumSerializer<mozilla::gfx::SurfaceFormat,
+                          mozilla::gfx::FORMAT_B8G8R8A8,
+                          mozilla::gfx::FORMAT_UNKNOWN>
 {};
 
 } /* namespace IPC */

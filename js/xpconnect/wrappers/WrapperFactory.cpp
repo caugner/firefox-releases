@@ -93,7 +93,7 @@ WrapperFactory::CreateXrayWaiver(JSContext *cx, HandleObject obj)
           JSObject2JSObjectMap::newMap(XPC_WRAPPER_MAP_SIZE);
         MOZ_ASSERT(scope->mWaiverWrapperMap);
     }
-    if (!scope->mWaiverWrapperMap->Add(obj, waiver))
+    if (!scope->mWaiverWrapperMap->Add(cx, obj, waiver))
         return nullptr;
     return waiver;
 }
@@ -576,7 +576,7 @@ WrapperFactory::WrapSOWObject(JSContext *cx, JSObject *objArg)
     // XUL domain, in which we can't have SOWs. We should never be called in
     // that case.
     MOZ_ASSERT(xpc::AllowXBLScope(js::GetContextCompartment(cx)));
-    if (!JS_GetPrototype(cx, obj, proto.address()))
+    if (!JS_GetPrototype(cx, obj, &proto))
         return NULL;
     JSObject *wrapperObj =
         Wrapper::New(cx, obj, proto, JS_GetGlobalForObject(cx, obj),
@@ -596,7 +596,7 @@ JSObject *
 WrapperFactory::WrapComponentsObject(JSContext *cx, HandleObject obj)
 {
     RootedObject proto(cx);
-    if (!JS_GetPrototype(cx, obj, proto.address()))
+    if (!JS_GetPrototype(cx, obj, &proto))
         return NULL;
     JSObject *wrapperObj =
         Wrapper::New(cx, obj, proto, JS_GetGlobalForObject(cx, obj),
@@ -623,7 +623,7 @@ WrapperFactory::WrapForSameCompartmentXray(JSContext *cx, JSObject *obj)
     else if (type == XrayForDOMObject)
         wrapper = &SCPermissiveXrayDOM::singleton;
     else
-        MOZ_NOT_REACHED("Bad Xray type");
+        MOZ_ASSUME_UNREACHABLE("Bad Xray type");
 
     // Make the Xray.
     JSObject *parent = JS_GetGlobalForObject(cx, obj);

@@ -11,12 +11,14 @@ const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource:///modules/devtools/shared/event-emitter.js");
-Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
+let promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js").Promise;
 Cu.import("resource://gre/modules/devtools/Loader.jsm");
-Cu.import("resource:///modules/devtools/ProfilerController.jsm");
+
+var ProfilerController = devtools.require("devtools/profiler/controller");
 
 const FORBIDDEN_IDS = new Set(["toolbox", ""]);
 const MAX_ORDINAL = 99;
+
 
 /**
  * DevTools is a class that represents a set of developer tools, it holds a
@@ -186,22 +188,22 @@ DevTools.prototype = {
    *        The toolbox that was opened
    */
   showToolbox: function(target, toolId, hostType) {
-    let deferred = Promise.defer();
+    let deferred = promise.defer();
 
     let toolbox = this._toolboxes.get(target);
     if (toolbox) {
 
-      let promise = (hostType != null && toolbox.hostType != hostType) ?
+      let hostPromise = (hostType != null && toolbox.hostType != hostType) ?
           toolbox.switchHost(hostType) :
-          Promise.resolve(null);
+          promise.resolve(null);
 
       if (toolId != null && toolbox.currentToolId != toolId) {
-        promise = promise.then(function() {
+        hostPromise = hostPromise.then(function() {
           return toolbox.selectTool(toolId);
         });
       }
 
-      return promise.then(function() {
+      return hostPromise.then(function() {
         toolbox.raise();
         return toolbox;
       });
@@ -344,15 +346,24 @@ let gDevToolsBrowser = {
   selectToolCommand: function(gBrowser, toolId) {
     let target = devtools.TargetFactory.forTab(gBrowser.selectedTab);
     let toolbox = gDevTools.getToolbox(target);
+    let tools = gDevTools.getToolDefinitionMap();
+    let toolDefinition = tools.get(toolId);
 
     if (toolbox && toolbox.currentToolId == toolId) {
-      if (toolbox.hostType == devtools.Toolbox.HostType.WINDOW) {
+      toolbox.fireCustomKey(toolId);
+
+      if (toolDefinition.preventClosingOnKey || toolbox.hostType == devtools.Toolbox.HostType.WINDOW) {
         toolbox.raise();
       } else {
         toolbox.destroy();
       }
     } else {
-      gDevTools.showToolbox(target, toolId);
+      gDevTools.showToolbox(target, toolId).then(() => {
+        let target = devtools.TargetFactory.forTab(gBrowser.selectedTab);
+        let toolbox = gDevTools.getToolbox(target);
+
+        toolbox.fireCustomKey(toolId);
+      });
     }
   },
 
@@ -373,6 +384,11 @@ let gDevToolsBrowser = {
     gDevToolsBrowser._trackedBrowserWindows.add(win);
     gDevToolsBrowser._addAllToolsToMenu(win.document);
 
+    if (this._isFirebugInstalled()) {
+      let broadcaster = win.document.getElementById("devtoolsMenuBroadcaster_DevToolbox");
+      broadcaster.removeAttribute("key");
+    }
+
     let tabContainer = win.document.getElementById("tabbrowser-tabs")
     tabContainer.addEventListener("TabSelect",
                                   gDevToolsBrowser._updateMenuCheckbox, false);
@@ -391,6 +407,7 @@ let gDevToolsBrowser = {
    */
   attachKeybindingsToBrowser: function DT_attachKeybindingsToBrowser(doc, keys) {
     let devtoolsKeyset = doc.getElementById("devtoolsKeyset");
+
     if (!devtoolsKeyset) {
       devtoolsKeyset = doc.createElement("keyset");
       devtoolsKeyset.setAttribute("id", "devtoolsKeyset");
@@ -398,6 +415,17 @@ let gDevToolsBrowser = {
     devtoolsKeyset.appendChild(keys);
     let mainKeyset = doc.getElementById("mainKeyset");
     mainKeyset.parentNode.insertBefore(devtoolsKeyset, mainKeyset);
+  },
+
+
+  /**
+   * Detect the presence of a Firebug.
+   *
+   * @return promise
+   */
+  _isFirebugInstalled: function DT_isFirebugInstalled() {
+    let bootstrappedAddons = Services.prefs.getCharPref("extensions.bootstrappedAddons");
+    return bootstrappedAddons.indexOf("firebug@software.joehewitt.com") != -1;
   },
 
   /**
@@ -724,6 +752,7 @@ let gDevToolsBrowser = {
     Services.obs.removeObserver(gDevToolsBrowser.destroy, "quit-application");
   },
 }
+
 this.gDevToolsBrowser = gDevToolsBrowser;
 
 gDevTools.on("tool-registered", function(ev, toolId) {

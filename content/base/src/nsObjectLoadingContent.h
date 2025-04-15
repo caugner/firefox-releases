@@ -148,8 +148,12 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     void TeardownProtoChain();
 
     // Helper for WebIDL newResolve
-    bool DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObject, JS::Handle<jsid> aId,
-                      unsigned aFlags, JS::MutableHandle<JSObject*> aObjp);
+    bool DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObject,
+                      JS::Handle<jsid> aId,
+                      JS::MutableHandle<JS::Value> aValue);
+    // Helper for WebIDL enumeration
+    void GetOwnPropertyNames(JSContext* aCx, nsTArray<nsString>& /* unused */,
+                             mozilla::ErrorResult& aRv);
 
     // WebIDL API
     nsIDocument* GetContentDocument();
@@ -480,8 +484,8 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     static nsresult GetPluginJSObject(JSContext *cx,
                                       JS::Handle<JSObject*> obj,
                                       nsNPAPIPluginInstance *plugin_inst,
-                                      JSObject **plugin_obj,
-                                      JSObject **plugin_proto);
+                                      JS::MutableHandle<JSObject*> plugin_obj,
+                                      JS::MutableHandle<JSObject*> plugin_proto);
 
     // The final listener for mChannel (uriloader, pluginstreamlistener, etc.)
     nsCOMPtr<nsIStreamListener> mFinalListener;

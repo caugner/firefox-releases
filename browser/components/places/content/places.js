@@ -11,6 +11,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "BookmarkJSONUtils",
                                   "resource://gre/modules/BookmarkJSONUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesBackups",
                                   "resource://gre/modules/PlacesBackups.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "DownloadUtils",
+                                  "resource://gre/modules/DownloadUtils.jsm");
 
 var PlacesOrganizer = {
   _places: null,
@@ -37,6 +39,50 @@ var PlacesOrganizer = {
       PlacesUtils.asContainer(this._places.selectedNode).containerOpen = true;
   },
 
+  /**
+   * Opens a given hierarchy in the left pane, stopping at the last reachable
+   * container.
+   *
+   * @param aHierarchy A single container or an array of containers, sorted from
+   *                   the outmost to the innermost in the hierarchy. Each
+   *                   container may be either an item id, a Places URI string,
+   *                   or a named query.
+   * @see PlacesUIUtils.leftPaneQueries for supported named queries.
+   */
+  selectLeftPaneContainerByHierarchy:
+  function PO_selectLeftPaneContainerByHierarchy(aHierarchy) {
+    if (!aHierarchy)
+      throw new Error("Invalid containers hierarchy");
+    let hierarchy = [].concat(aHierarchy);
+    let selectWasSuppressed = this._places.view.selection.selectEventsSuppressed;
+    if (!selectWasSuppressed)
+      this._places.view.selection.selectEventsSuppressed = true;
+    try {
+      for (let container of hierarchy) {
+        switch (typeof container) {
+          case "number":
+            this._places.selectItems([container]);
+            break;
+          case "string":
+            if (container.substr(0, 6) == "place:")
+              this._places.selectPlaceURI(container);
+            else if (container in PlacesUIUtils.leftPaneQueries)
+              this.selectLeftPaneQuery(container);
+            else
+              throw new Error("Invalid container found: " + container);
+            break;
+          default:
+            throw new Error("Invalid container type found: " + container);
+            break;
+        }
+        PlacesUtils.asContainer(this._places.selectedNode).containerOpen = true;
+      }
+    } finally {
+      if (!selectWasSuppressed)
+        this._places.view.selection.selectEventsSuppressed = false;
+    }
+  },
+
   init: function PO_init() {
     ContentArea.init();
 
@@ -47,12 +93,13 @@ var PlacesOrganizer = {
     if (window.arguments && window.arguments[0])
       leftPaneSelection = window.arguments[0];
 
-    this.selectLeftPaneQuery(leftPaneSelection);
-    if (leftPaneSelection == "History") {
+    this.selectLeftPaneContainerByHierarchy(leftPaneSelection);
+    if (leftPaneSelection === "History") {
       let historyNode = this._places.selectedNode;
       if (historyNode.childCount > 0)
         this._places.selectNode(historyNode.getChild(0));
     }
+
     // clear the back-stack
     this._backHistory.splice(0, this._backHistory.length);
     document.getElementById("OrganizerCommand:Back").setAttribute("disabled", true);
@@ -74,13 +121,6 @@ var PlacesOrganizer = {
     for (var i=0; i < elements.length; i++) {
       document.getElementById(elements[i]).setAttribute("disabled", "true");
     }
-    
-    // 3. Disable the keyboard shortcut for the History menu back/forward
-    // in order to support those in the Library
-    var historyMenuBack = document.getElementById("historyMenuBack");
-    historyMenuBack.removeAttribute("key");
-    var historyMenuForward = document.getElementById("historyMenuForward");
-    historyMenuForward.removeAttribute("key");
 #endif
 
     // remove the "Properties" context-menu item, we've our own details pane
@@ -373,6 +413,21 @@ var PlacesOrganizer = {
 
     // Populate menu with backups.
     for (let i = 0; i < backupFiles.length; i++) {
+      let [size, unit] = DownloadUtils.convertByteUnits(backupFiles[i].fileSize);
+      let sizeString = PlacesUtils.getFormattedString("backupFileSizeText",
+                                                      [size, unit]);
+      let sizeInfo;
+      let bookmarkCount = PlacesBackups.getBookmarkCountForFile(backupFiles[i]);
+      if (bookmarkCount != null) {
+        sizeInfo = " (" + sizeString + " - " +
+                   PlacesUIUtils.getPluralString("detailsPane.itemsCountLabel",
+                                                  bookmarkCount,
+                                                  [bookmarkCount]) +
+                   ")";
+      } else {
+        sizeInfo = " (" + sizeString + ")";
+      }
+
       let backupDate = PlacesBackups.getDateForFile(backupFiles[i]);
       let m = restorePopup.insertBefore(document.createElement("menuitem"),
                                         document.getElementById("restoreFromFile"));
@@ -381,7 +436,8 @@ var PlacesOrganizer = {
                                         Ci.nsIScriptableDateFormat.dateFormatLong,
                                         backupDate.getFullYear(),
                                         backupDate.getMonth() + 1,
-                                        backupDate.getDate()));
+                                        backupDate.getDate()) +
+                                        sizeInfo);
       m.setAttribute("value", backupFiles[i].leafName);
       m.setAttribute("oncommand",
                      "PlacesOrganizer.onRestoreMenuItemClick(this);");
@@ -478,7 +534,7 @@ var PlacesOrganizer = {
     let fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
     let fpCallback = function fpCallback_done(aResult) {
       if (aResult != Ci.nsIFilePicker.returnCancel) {
-        BookmarkJSONUtils.exportToFile(fp.file);
+        PlacesBackups.saveBookmarksToJSONFile(fp.file);
       }
     };
 

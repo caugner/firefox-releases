@@ -4,15 +4,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "BaselineFrame.h"
-#include "BaselineFrame-inl.h"
-#include "BaselineIC.h"
-#include "BaselineJIT.h"
-#include "Ion.h"
-#include "IonFrames-inl.h"
+#include "jit/BaselineFrame-inl.h"
 
+#include "jit/BaselineIC.h"
+#include "jit/BaselineJIT.h"
+#include "jit/Ion.h"
 #include "vm/Debugger.h"
 #include "vm/ScopeObject.h"
+
+#include "jit/IonFrames-inl.h"
+#include "vm/Stack-inl.h"
 
 using namespace js;
 using namespace js::jit;

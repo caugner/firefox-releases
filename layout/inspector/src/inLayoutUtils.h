@@ -6,7 +6,7 @@
 #ifndef __inLayoutUtils_h__
 #define __inLayoutUtils_h__
 
-class nsBindingManager;
+class nsIDocument;
 class nsIDOMDocument;
 class nsIDOMElement;
 class nsIDOMNode;
@@ -24,9 +24,8 @@ public:
   static nsIPresShell* GetPresShellFor(nsISupports* aThing);
   static nsIFrame* GetFrameFor(nsIDOMElement* aElement);
   static nsEventStateManager* GetEventStateManagerFor(nsIDOMElement *aElement);
-  static nsBindingManager* GetBindingManagerFor(nsIDOMNode* aNode);
   static nsIDOMDocument* GetSubDocumentFor(nsIDOMNode* aNode);
-  static nsIDOMNode* GetContainerFor(nsIDOMDocument* aDoc);
+  static nsIDOMNode* GetContainerFor(const nsIDocument& aDoc);
 };
 
 #endif // __inLayoutUtils_h__

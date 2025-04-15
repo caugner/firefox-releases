@@ -4,24 +4,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "Ion.h"
-#include "IonCompartment.h"
-#include "jit/BaselineFrame-inl.h"
-#include "jit/BaselineIC.h"
-#include "jit/IonFrames.h"
-
-#include "vm/Debugger.h"
-#include "vm/Interpreter.h"
-#include "vm/StringObject-inl.h"
+#include "jit/VMFunctions.h"
 
 #include "builtin/ParallelArray.h"
-
 #include "frontend/BytecodeCompiler.h"
+#include "jit/BaselineIC.h"
+#include "jit/Ion.h"
+#include "jit/IonCompartment.h"
+#include "jit/IonFrames.h"
+#include "vm/ArrayObject.h"
+#include "vm/Debugger.h"
+#include "vm/Interpreter.h"
 
-#include "jsboolinlines.h"
-
-#include "jit/IonFrames-inl.h" // for GetTopIonJSScript
-
+#include "jit/BaselineFrame-inl.h"
 #include "vm/Interpreter-inl.h"
 #include "vm/StringObject-inl.h"
 
@@ -75,7 +70,13 @@ InvokeFunction(JSContext *cx, HandleFunction fun0, uint32_t argc, Value *argv, V
     // we use InvokeConstructor that creates it at the callee side.
     if (thisv.isMagic(JS_IS_CONSTRUCTING))
         return InvokeConstructor(cx, ObjectValue(*fun), argc, argvWithoutThis, rval);
-    return Invoke(cx, thisv, ObjectValue(*fun), argc, argvWithoutThis, rval);
+
+    RootedValue rv(cx);
+    if (!Invoke(cx, thisv, ObjectValue(*fun), argc, argvWithoutThis, &rv))
+        return false;
+
+    *rval = rv;
+    return true;
 }
 
 JSObject *
@@ -143,94 +144,72 @@ InitProp(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValue v
 
 template<bool Equal>
 bool
-LooselyEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
+LooselyEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res)
 {
-    bool equal;
-    if (!js::LooselyEqual(cx, lhs, rhs, &equal))
+    if (!js::LooselyEqual(cx, lhs, rhs, res))
         return false;
-    *res = (equal == Equal);
+    if (!Equal)
+        *res = !*res;
     return true;
 }
 
-template bool LooselyEqual<true>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res);
-template bool LooselyEqual<false>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res);
+template bool LooselyEqual<true>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res);
+template bool LooselyEqual<false>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res);
 
 template<bool Equal>
 bool
-StrictlyEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
+StrictlyEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res)
 {
-    bool equal;
-    if (!js::StrictlyEqual(cx, lhs, rhs, &equal))
+    if (!js::StrictlyEqual(cx, lhs, rhs, res))
         return false;
-    *res = (equal == Equal);
+    if (!Equal)
+        *res = !*res;
     return true;
 }
 
-template bool StrictlyEqual<true>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res);
-template bool StrictlyEqual<false>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res);
+template bool StrictlyEqual<true>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res);
+template bool StrictlyEqual<false>(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res);
 
 bool
-LessThan(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
+LessThan(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res)
 {
-    bool cond;
-    if (!LessThanOperation(cx, lhs, rhs, &cond))
-        return false;
-    *res = cond;
-    return true;
+    return LessThanOperation(cx, lhs, rhs, res);
 }
 
 bool
-LessThanOrEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
+LessThanOrEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res)
 {
-    bool cond;
-    if (!LessThanOrEqualOperation(cx, lhs, rhs, &cond))
-        return false;
-    *res = cond;
-    return true;
+    return LessThanOrEqualOperation(cx, lhs, rhs, res);
 }
 
 bool
-GreaterThan(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
+GreaterThan(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res)
 {
-    bool cond;
-    if (!GreaterThanOperation(cx, lhs, rhs, &cond))
-        return false;
-    *res = cond;
-    return true;
+    return GreaterThanOperation(cx, lhs, rhs, res);
 }
 
 bool
-GreaterThanOrEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, JSBool *res)
+GreaterThanOrEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, bool *res)
 {
-    bool cond;
-    if (!GreaterThanOrEqualOperation(cx, lhs, rhs, &cond))
-        return false;
-    *res = cond;
-    return true;
+    return GreaterThanOrEqualOperation(cx, lhs, rhs, res);
 }
 
 template<bool Equal>
 bool
-StringsEqual(JSContext *cx, HandleString lhs, HandleString rhs, JSBool *res)
+StringsEqual(JSContext *cx, HandleString lhs, HandleString rhs, bool *res)
 {
-    bool equal;
-    if (!js::EqualStrings(cx, lhs, rhs, &equal))
+    if (!js::EqualStrings(cx, lhs, rhs, res))
         return false;
-    *res = (equal == Equal);
+    if (!Equal)
+        *res = !*res;
     return true;
 }
 
-template bool StringsEqual<true>(JSContext *cx, HandleString lhs, HandleString rhs, JSBool *res);
-template bool StringsEqual<false>(JSContext *cx, HandleString lhs, HandleString rhs, JSBool *res);
-
-JSBool
-ObjectEmulatesUndefined(JSObject *obj)
-{
-    return EmulatesUndefined(obj);
-}
+template bool StringsEqual<true>(JSContext *cx, HandleString lhs, HandleString rhs, bool *res);
+template bool StringsEqual<false>(JSContext *cx, HandleString lhs, HandleString rhs, bool *res);
 
 bool
-IteratorMore(JSContext *cx, HandleObject obj, JSBool *res)
+IteratorMore(JSContext *cx, HandleObject obj, bool *res)
 {
     RootedValue tmp(cx);
     if (!js_IteratorMore(cx, obj, &tmp))
@@ -309,7 +288,7 @@ NewInitObjectWithClassPrototype(JSContext *cx, HandleObject templateObject)
 bool
 ArrayPopDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 {
-    JS_ASSERT(obj->isArray());
+    JS_ASSERT(obj->is<ArrayObject>());
 
     AutoDetectInvalidation adi(cx, rval.address());
 
@@ -329,7 +308,7 @@ ArrayPopDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 bool
 ArrayPushDense(JSContext *cx, HandleObject obj, HandleValue v, uint32_t *length)
 {
-    JS_ASSERT(obj->isArray());
+    JS_ASSERT(obj->is<ArrayObject>());
 
     Value argv[] = { UndefinedValue(), ObjectValue(*obj), v };
     AutoValueArray ava(cx, argv, 3);
@@ -343,7 +322,7 @@ ArrayPushDense(JSContext *cx, HandleObject obj, HandleValue v, uint32_t *length)
 bool
 ArrayShiftDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 {
-    JS_ASSERT(obj->isArray());
+    JS_ASSERT(obj->is<ArrayObject>());
 
     AutoDetectInvalidation adi(cx, rval.address());
 
@@ -361,20 +340,20 @@ ArrayShiftDense(JSContext *cx, HandleObject obj, MutableHandleValue rval)
 }
 
 JSObject *
-ArrayConcatDense(JSContext *cx, HandleObject obj1, HandleObject obj2, HandleObject res)
+ArrayConcatDense(JSContext *cx, HandleObject obj1, HandleObject obj2, HandleObject objRes)
 {
-    JS_ASSERT(obj1->isArray());
-    JS_ASSERT(obj2->isArray());
-    JS_ASSERT_IF(res, res->isArray());
+    Rooted<ArrayObject*> arr1(cx, &obj1->as<ArrayObject>());
+    Rooted<ArrayObject*> arr2(cx, &obj2->as<ArrayObject>());
+    Rooted<ArrayObject*> arrRes(cx, objRes ? &objRes->as<ArrayObject>() : NULL);
 
-    if (res) {
+    if (arrRes) {
         // Fast path if we managed to allocate an object inline.
-        if (!js::array_concat_dense(cx, obj1, obj2, res))
+        if (!js::array_concat_dense(cx, arr1, arr2, arrRes))
             return NULL;
-        return res;
+        return arrRes;
     }
 
-    Value argv[] = { UndefinedValue(), ObjectValue(*obj1), ObjectValue(*obj2) };
+    Value argv[] = { UndefinedValue(), ObjectValue(*arr1), ObjectValue(*arr2) };
     AutoValueArray ava(cx, argv, 3);
     if (!js::array_concat(cx, 1, argv))
         return NULL;
@@ -476,7 +455,7 @@ SPSExit(JSContext *cx, HandleScript script)
 }
 
 bool
-OperatorIn(JSContext *cx, HandleValue key, HandleObject obj, JSBool *out)
+OperatorIn(JSContext *cx, HandleValue key, HandleObject obj, bool *out)
 {
     RootedId id(cx);
     if (!ValueToId<CanGC>(cx, key, &id))
@@ -492,7 +471,7 @@ OperatorIn(JSContext *cx, HandleValue key, HandleObject obj, JSBool *out)
 }
 
 bool
-OperatorInI(JSContext *cx, uint32_t index, HandleObject obj, JSBool *out)
+OperatorInI(JSContext *cx, uint32_t index, HandleObject obj, bool *out)
 {
     RootedValue key(cx, Int32Value(index));
     return OperatorIn(cx, key, obj, out);
@@ -568,7 +547,7 @@ GetDynamicName(JSContext *cx, JSObject *scopeChain, JSString *str, Value *vp)
     vp->setUndefined();
 }
 
-JSBool
+bool
 FilterArguments(JSContext *cx, JSString *str)
 {
     // getChars() is fallible, but cannot GC: it can only allocate a character
@@ -611,7 +590,7 @@ GetIndexFromString(JSString *str)
 }
 
 bool
-DebugPrologue(JSContext *cx, BaselineFrame *frame, JSBool *mustReturn)
+DebugPrologue(JSContext *cx, BaselineFrame *frame, bool *mustReturn)
 {
     *mustReturn = false;
 
@@ -632,12 +611,12 @@ DebugPrologue(JSContext *cx, BaselineFrame *frame, JSBool *mustReturn)
         return false;
 
       default:
-        JS_NOT_REACHED("Invalid trap status");
+        MOZ_ASSUME_UNREACHABLE("Invalid trap status");
     }
 }
 
 bool
-DebugEpilogue(JSContext *cx, BaselineFrame *frame, JSBool ok)
+DebugEpilogue(JSContext *cx, BaselineFrame *frame, bool ok)
 {
     // Unwind scope chain to stack depth 0.
     UnwindScope(cx, frame, 0);
@@ -700,43 +679,34 @@ NewArgumentsObject(JSContext *cx, BaselineFrame *frame, MutableHandleValue res)
 
 JSObject *
 InitRestParameter(JSContext *cx, uint32_t length, Value *rest, HandleObject templateObj,
-                  HandleObject res)
+                  HandleObject objRes)
 {
-    if (res) {
-        JS_ASSERT(res->isArray());
-        JS_ASSERT(!res->getDenseInitializedLength());
-        JS_ASSERT(res->type() == templateObj->type());
+    if (objRes) {
+        Rooted<ArrayObject*> arrRes(cx, &objRes->as<ArrayObject>());
+
+        JS_ASSERT(!arrRes->getDenseInitializedLength());
+        JS_ASSERT(arrRes->type() == templateObj->type());
 
         // Fast path: we managed to allocate the array inline; initialize the
         // slots.
         if (length > 0) {
-            if (!res->ensureElements(cx, length))
+            if (!arrRes->ensureElements(cx, length))
                 return NULL;
-            res->setDenseInitializedLength(length);
-            res->initDenseElements(0, rest, length);
-            res->setArrayLengthInt32(length);
-
-            // Ensure that values in the rest array are represented in the
-            // type of the array.
-            for (unsigned i = 0; i < length; i++)
-                types::AddTypePropertyId(cx, res, JSID_VOID, rest[i]);
+            arrRes->setDenseInitializedLength(length);
+            arrRes->initDenseElements(0, rest, length);
+            arrRes->setLengthInt32(length);
         }
-        return res;
+        return arrRes;
     }
 
-    JSObject *obj = NewDenseCopiedArray(cx, length, rest, NULL);
-    if (!obj)
-        return NULL;
-    obj->setType(templateObj->type());
-
-    for (unsigned i = 0; i < length; i++)
-        types::AddTypePropertyId(cx, obj, JSID_VOID, rest[i]);
-
-    return obj;
+    ArrayObject *arrRes = NewDenseCopiedArray(cx, length, rest, NULL);
+    if (arrRes)
+        arrRes->setType(templateObj->type());
+    return arrRes;
 }
 
 bool
-HandleDebugTrap(JSContext *cx, BaselineFrame *frame, uint8_t *retAddr, JSBool *mustReturn)
+HandleDebugTrap(JSContext *cx, BaselineFrame *frame, uint8_t *retAddr, bool *mustReturn)
 {
     *mustReturn = false;
 
@@ -777,14 +747,14 @@ HandleDebugTrap(JSContext *cx, BaselineFrame *frame, uint8_t *retAddr, JSBool *m
         return false;
 
       default:
-        JS_NOT_REACHED("Invalid trap status");
+        MOZ_ASSUME_UNREACHABLE("Invalid trap status");
     }
 
     return true;
 }
 
 bool
-OnDebuggerStatement(JSContext *cx, BaselineFrame *frame, jsbytecode *pc, JSBool *mustReturn)
+OnDebuggerStatement(JSContext *cx, BaselineFrame *frame, jsbytecode *pc, bool *mustReturn)
 {
     *mustReturn = false;
 
@@ -815,7 +785,7 @@ OnDebuggerStatement(JSContext *cx, BaselineFrame *frame, jsbytecode *pc, JSBool 
         return false;
 
       default:
-        JS_NOT_REACHED("Invalid trap status");
+        MOZ_ASSUME_UNREACHABLE("Invalid trap status");
     }
 }
 

@@ -91,10 +91,10 @@ static int ComponentValue(const PRUnichar* aColorSpec, int aLen, int color, int 
   return component;
 }
 
-NS_GFX_(bool) NS_HexToRGB(const nsString& aColorSpec,
+NS_GFX_(bool) NS_HexToRGB(const nsAString& aColorSpec,
                                        nscolor* aResult)
 {
-  const PRUnichar* buffer = aColorSpec.get();
+  const PRUnichar* buffer = aColorSpec.BeginReading();
 
   int nameLen = aColorSpec.Length();
   if ((nameLen == 3) || (nameLen == 6)) {
@@ -215,6 +215,14 @@ NS_GFX_(bool) NS_ColorNameToRGB(const nsAString& aColorName, nscolor* aResult)
     return true;
   }
   return false;
+}
+
+// Returns kColorNames, an array of all possible color names, and sets
+// *aSizeArray to the size of that array. Do NOT call free() on this array.
+NS_GFX_(const char * const *) NS_AllColorNames(size_t *aSizeArray)
+{
+  *aSizeArray = ArrayLength(kColorNames);
+  return kColorNames;
 }
 
 // Macro to blend two colors

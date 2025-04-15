@@ -4,13 +4,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jit/AsmJSSignalHandlers.h"
+
 #include "jscntxt.h"
 
-#include "jstypedarrayinlines.h"
-
-#include "jit/AsmJS.h"
-#include "jit/AsmJSModule.h"
 #include "assembler/assembler/MacroAssembler.h"
+#include "jit/AsmJSModule.h"
+
+#include "vm/ObjectImpl-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -996,14 +997,3 @@ js::TriggerOperationCallbackForAsmJSCode(JSRuntime *rt)
         MOZ_CRASH();
 #endif
 }
-
-#ifdef MOZ_ASAN
-// When running with asm.js under AddressSanitizer, we need to explicitely
-// tell AddressSanitizer to allow custom signal handlers because it will 
-// otherwise trigger ASan's SIGSEGV handler for the internal SIGSEGVs that 
-// asm.js would otherwise handle.
-extern "C" MOZ_ASAN_BLACKLIST
-const char* __asan_default_options() {
-    return "allow_user_segv_handler=1";
-}
-#endif

@@ -146,16 +146,17 @@ GetAvailableContentWidth(const nsHTMLReflowState& aReflowState)
   return std::max(0, aReflowState.availableWidth - borderPaddingWidth);
 }
 
-static nscoord
-GetAvailableContentHeight(const nsHTMLReflowState& aReflowState)
+nscoord
+nsColumnSetFrame::GetAvailableContentHeight(const nsHTMLReflowState& aReflowState)
 {
   if (aReflowState.availableHeight == NS_INTRINSICSIZE) {
     return NS_INTRINSICSIZE;
   }
-  nscoord borderPaddingHeight =
-    aReflowState.mComputedBorderPadding.top +
-    aReflowState.mComputedBorderPadding.bottom;
-  return std::max(0, aReflowState.availableHeight - borderPaddingHeight);
+
+  nsMargin bp = aReflowState.mComputedBorderPadding;
+  ApplySkipSides(bp, &aReflowState);
+  bp.bottom = aReflowState.mComputedBorderPadding.bottom;
+  return std::max(0, aReflowState.availableHeight - bp.TopBottom());
 }
 
 static nscoord
@@ -189,11 +190,20 @@ nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState,
   if (aReflowState.ComputedWidth() != NS_INTRINSICSIZE) {
     availContentWidth = aReflowState.ComputedWidth();
   }
+
+  nscoord consumedHeight = GetConsumedHeight();
+
+  // The effective computed height is the height of the current continuation
+  // of the column set frame. This should be the same as the computed height
+  // if we have an unconstrained available height.
+  nscoord computedHeight = GetEffectiveComputedHeight(aReflowState,
+                                                      consumedHeight);
   nscoord colHeight = GetAvailableContentHeight(aReflowState);
+
   if (aReflowState.ComputedHeight() != NS_INTRINSICSIZE) {
     colHeight = aReflowState.ComputedHeight();
   } else if (aReflowState.mComputedMaxHeight != NS_INTRINSICSIZE) {
-    colHeight = aReflowState.mComputedMaxHeight;
+    colHeight = std::min(colHeight, aReflowState.mComputedMaxHeight);
   }
 
   nscoord colGap = GetColumnGap(this, colStyle);
@@ -302,7 +312,7 @@ nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState,
 #endif
   ReflowConfig config = { numColumns, colWidth, expectedWidthLeftOver, colGap,
                           colHeight, isBalancing, knownFeasibleHeight,
-                          knownInfeasibleHeight };
+                          knownInfeasibleHeight, computedHeight, consumedHeight };
   return config;
 }
 
@@ -325,10 +335,9 @@ nsColumnSetFrame::ReflowColumns(nsHTMLReflowMetrics& aDesiredSize,
     // We need to reflow our children again one last time, otherwise we might
     // end up with a stale column height for some of our columns, since we
     // bailed out of balancing.
-    // Return value doesn't matter when !mIsBalancing.
-    ReflowChildren(aDesiredSize, aReflowState, aReflowStatus,
-                   aConfig, aLastColumnUnbounded,
-                   aCarriedOutBottomMargin, aColData);
+    feasible = ReflowChildren(aDesiredSize, aReflowState, aReflowStatus,
+                              aConfig, aLastColumnUnbounded,
+                              aCarriedOutBottomMargin, aColData);
   }
 
   return feasible;
@@ -454,7 +463,8 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
   }
 
   // get our border and padding
-  const nsMargin &borderPadding = aReflowState.mComputedBorderPadding;
+  nsMargin borderPadding = aReflowState.mComputedBorderPadding;
+  ApplySkipSides(borderPadding, &aReflowState);
   
   nsRect contentRect(0, 0, 0, 0);
   nsOverflowAreas overflowRects;
@@ -725,30 +735,32 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
   nsSize contentSize = nsSize(contentRect.XMost(), contentRect.YMost());
 
   // Apply computed and min/max values
-  if (aReflowState.ComputedHeight() != NS_INTRINSICSIZE) {
-    contentSize.height = aReflowState.ComputedHeight();
+  if (aConfig.mComputedHeight != NS_INTRINSICSIZE) {
+    if (aReflowState.availableHeight != NS_INTRINSICSIZE) {
+      contentSize.height = std::min(contentSize.height,
+                                    aConfig.mComputedHeight);
+    } else {
+      contentSize.height = aConfig.mComputedHeight;
+    }
   } else {
-    if (NS_UNCONSTRAINEDSIZE != aReflowState.mComputedMaxHeight) {
-      contentSize.height = std::min(aReflowState.mComputedMaxHeight, contentSize.height);
-    }
-    if (NS_UNCONSTRAINEDSIZE != aReflowState.mComputedMinHeight) {
-      contentSize.height = std::max(aReflowState.mComputedMinHeight, contentSize.height);
-    }
+    // We add the "consumed" height back in so that we're applying
+    // constraints to the correct height value, then subtract it again
+    // after we've finished with the min/max calculation. This prevents us from
+    // having a last continuation that is smaller than the min height. but which
+    // has prev-in-flows, trigger a larger height than actually required.
+    contentSize.height = aReflowState.ApplyMinMaxHeight(contentSize.height,
+                                                        aConfig.mConsumedHeight);
   }
   if (aReflowState.ComputedWidth() != NS_INTRINSICSIZE) {
     contentSize.width = aReflowState.ComputedWidth();
   } else {
-    if (NS_UNCONSTRAINEDSIZE != aReflowState.mComputedMaxWidth) {
-      contentSize.width = std::min(aReflowState.mComputedMaxWidth, contentSize.width);
-    }
-    if (NS_UNCONSTRAINEDSIZE != aReflowState.mComputedMinWidth) {
-      contentSize.width = std::max(aReflowState.mComputedMinWidth, contentSize.width);
-    }
+    contentSize.width = aReflowState.ApplyMinMaxWidth(contentSize.width);
   }
-    
-  aDesiredSize.height = borderPadding.top + contentSize.height +
-    borderPadding.bottom;
-  aDesiredSize.width = contentSize.width + borderPadding.left + borderPadding.right;
+
+  aDesiredSize.height = contentSize.height +
+                        borderPadding.TopBottom();
+  aDesiredSize.width = contentSize.width +
+                       borderPadding.LeftRight();
   aDesiredSize.mOverflowAreas = overflowRects;
   aDesiredSize.UnionOverflowAreasWithDesiredBounds();
 
@@ -787,6 +799,164 @@ nsColumnSetFrame::DrainOverflowColumns()
   }
 }
 
+void
+nsColumnSetFrame::FindBestBalanceHeight(const nsHTMLReflowState& aReflowState,
+                                        nsPresContext* aPresContext,
+                                        ReflowConfig& aConfig,
+                                        ColumnBalanceData& aColData,
+                                        nsHTMLReflowMetrics& aDesiredSize,
+                                        nsCollapsingMargin& aOutMargin,
+                                        bool& aUnboundedLastColumn,
+                                        bool& aRunWasFeasible,
+                                        nsReflowStatus& aStatus)
+{
+  bool feasible = aRunWasFeasible;
+
+  nsMargin bp = aReflowState.mComputedBorderPadding;
+  ApplySkipSides(bp);
+  bp.bottom = aReflowState.mComputedBorderPadding.bottom;
+
+  nscoord availableContentHeight =
+    GetAvailableContentHeight(aReflowState);
+
+  // Termination of the algorithm below is guaranteed because
+  // aConfig.knownFeasibleHeight - aConfig.knownInfeasibleHeight decreases in every
+  // iteration.
+
+  // We set this flag when we detect that we may contain a frame
+  // that can break anywhere (thus foiling the linear decrease-by-one
+  // search)
+  bool maybeContinuousBreakingDetected = false;
+
+  while (!aPresContext->HasPendingInterrupt()) {
+    nscoord lastKnownFeasibleHeight = aConfig.mKnownFeasibleHeight;
+
+    // Record what we learned from the last reflow
+    if (feasible) {
+      // maxHeight is feasible. Also, mLastBalanceHeight is feasible.
+      aConfig.mKnownFeasibleHeight = std::min(aConfig.mKnownFeasibleHeight,
+                                              aColData.mMaxHeight);
+      aConfig.mKnownFeasibleHeight = std::min(aConfig.mKnownFeasibleHeight,
+                                              mLastBalanceHeight);
+
+      // Furthermore, no height less than the height of the last
+      // column can ever be feasible. (We might be able to reduce the
+      // height of a non-last column by moving content to a later column,
+      // but we can't do that with the last column.)
+      if (mFrames.GetLength() == aConfig.mBalanceColCount) {
+        aConfig.mKnownInfeasibleHeight = std::max(aConfig.mKnownInfeasibleHeight,
+                                       aColData.mLastHeight - 1);
+      }
+    } else {
+      aConfig.mKnownInfeasibleHeight = std::max(aConfig.mKnownInfeasibleHeight,
+                                                mLastBalanceHeight);
+      // If a column didn't fit in its available height, then its current
+      // height must be the minimum height for unbreakable content in
+      // the column, and therefore no smaller height can be feasible.
+      aConfig.mKnownInfeasibleHeight = std::max(aConfig.mKnownInfeasibleHeight,
+                                         aColData.mMaxOverflowingHeight - 1);
+
+      if (aUnboundedLastColumn) {
+        // The last column is unbounded, so all content got reflowed, so the
+        // mColMaxHeight is feasible.
+        aConfig.mKnownFeasibleHeight = std::min(aConfig.mKnownFeasibleHeight,
+                                                aColData.mMaxHeight);
+      }
+    }
+
+#ifdef DEBUG_roc
+    printf("*** nsColumnSetFrame::Reflow balancing knownInfeasible=%d knownFeasible=%d\n",
+           aConfig.mKnownInfeasibleHeight, aConfig.mKnownFeasibleHeight);
+#endif
+
+
+    if (aConfig.mKnownInfeasibleHeight >= aConfig.mKnownFeasibleHeight - 1) {
+      // aConfig.mKnownFeasibleHeight is where we want to be
+      break;
+    }
+
+    if (aConfig.mKnownInfeasibleHeight >= availableContentHeight) {
+      break;
+    }
+
+    if (lastKnownFeasibleHeight - aConfig.mKnownFeasibleHeight == 1) {
+      // We decreased the feasible height by one twip only. This could
+      // indicate that there is a continuously breakable child frame
+      // that we are crawling through.
+      maybeContinuousBreakingDetected = true;
+    }
+
+    nscoord nextGuess = (aConfig.mKnownFeasibleHeight + aConfig.mKnownInfeasibleHeight)/2;
+    // The constant of 600 twips is arbitrary. It's about two line-heights.
+    if (aConfig.mKnownFeasibleHeight - nextGuess < 600 &&
+        !maybeContinuousBreakingDetected) {
+      // We're close to our target, so just try shrinking just the
+      // minimum amount that will cause one of our columns to break
+      // differently.
+      nextGuess = aConfig.mKnownFeasibleHeight - 1;
+    } else if (aUnboundedLastColumn) {
+      // Make a guess by dividing that into N columns. Add some slop
+      // to try to make it on the feasible side.  The constant of
+      // 600 twips is arbitrary. It's about two line-heights.
+      nextGuess = aColData.mSumHeight/aConfig.mBalanceColCount + 600;
+      // Sanitize it
+      nextGuess = clamped(nextGuess, aConfig.mKnownInfeasibleHeight + 1,
+                                     aConfig.mKnownFeasibleHeight - 1);
+    } else if (aConfig.mKnownFeasibleHeight == NS_INTRINSICSIZE) {
+      // This can happen when we had a next-in-flow so we didn't
+      // want to do an unbounded height measuring step. Let's just increase
+      // from the infeasible height by some reasonable amount.
+      nextGuess = aConfig.mKnownInfeasibleHeight*2 + 600;
+    }
+    // Don't bother guessing more than our height constraint.
+    nextGuess = std::min(availableContentHeight, nextGuess);
+
+#ifdef DEBUG_roc
+    printf("*** nsColumnSetFrame::Reflow balancing choosing next guess=%d\n", nextGuess);
+#endif
+
+    aConfig.mColMaxHeight = nextGuess;
+
+    aUnboundedLastColumn = false;
+    AddStateBits(NS_FRAME_IS_DIRTY);
+    feasible = ReflowColumns(aDesiredSize, aReflowState, aStatus, aConfig, false,
+                             &aOutMargin, aColData);
+
+    if (!aConfig.mIsBalancing) {
+      // Looks like we had excess height when balancing, so we gave up on
+      // trying to balance.
+      break;
+    }
+  }
+
+  if (aConfig.mIsBalancing && !feasible &&
+      !aPresContext->HasPendingInterrupt()) {
+    // We may need to reflow one more time at the feasible height to
+    // get a valid layout.
+    bool skip = false;
+    if (aConfig.mKnownInfeasibleHeight >= availableContentHeight) {
+      aConfig.mColMaxHeight = availableContentHeight;
+      if (mLastBalanceHeight == availableContentHeight) {
+        skip = true;
+      }
+    } else {
+      aConfig.mColMaxHeight = aConfig.mKnownFeasibleHeight;
+    }
+    if (!skip) {
+      // If our height is unconstrained, make sure that the last column is
+      // allowed to have arbitrary height here, even though we were balancing.
+      // Otherwise we'd have to split, and it's not clear what we'd do with
+      // that.
+      AddStateBits(NS_FRAME_IS_DIRTY);
+      feasible = ReflowColumns(aDesiredSize, aReflowState, aStatus, aConfig,
+                               availableContentHeight == NS_UNCONSTRAINEDSIZE,
+                               &aOutMargin, aColData);
+    }
+  }
+
+  aRunWasFeasible = feasible;
+}
+
 NS_IMETHODIMP 
 nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
                          nsHTMLReflowMetrics&     aDesiredSize,
@@ -805,7 +975,7 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
   // Our children depend on our height if we have a fixed height.
   if (aReflowState.ComputedHeight() != NS_AUTOHEIGHT) {
     NS_ASSERTION(aReflowState.ComputedHeight() != NS_INTRINSICSIZE,
-                 "Unexpected mComputedHeight");
+                 "Unexpected computed height");
     AddStateBits(NS_FRAME_CONTAINS_RELATIVE_HEIGHT);
   }
   else {
@@ -832,145 +1002,13 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
                                 unboundedLastColumn, &carriedOutBottomMargin,
                                 colData);
 
+  // If we're not balancing, then we're already done, since we should have
+  // reflown all of our children, and there is no need for a binary search to
+  // determine proper column height.
   if (config.mIsBalancing && !aPresContext->HasPendingInterrupt()) {
-    nscoord availableContentHeight = GetAvailableContentHeight(aReflowState);
-
-    // Termination of the algorithm below is guaranteed because
-    // config.mKnownFeasibleHeight - config.mKnownInfeasibleHeight decreases
-    // in every iteration.
-
-    // We set this flag when we detect that we may contain a frame
-    // that can break anywhere (thus foiling the linear decrease-by-one
-    // search)
-    bool maybeContinuousBreakingDetected = false;
-
-    while (!aPresContext->HasPendingInterrupt()) {
-      nscoord lastKnownFeasibleHeight = config.mKnownFeasibleHeight;
-
-      // Record what we learned from the last reflow
-      if (feasible) {
-        // maxHeight is feasible. Also, mLastBalanceHeight is feasible.
-        config.mKnownFeasibleHeight = std::min(config.mKnownFeasibleHeight,
-                                               colData.mMaxHeight);
-        config.mKnownFeasibleHeight = std::min(config.mKnownFeasibleHeight,
-                                               mLastBalanceHeight);
-
-        // Furthermore, no height less than the height of the last
-        // column can ever be feasible. (We might be able to reduce the
-        // height of a non-last column by moving content to a later column,
-        // but we can't do that with the last column.)
-        if (mFrames.GetLength() == config.mBalanceColCount) {
-          config.mKnownInfeasibleHeight =
-            std::max(config.mKnownInfeasibleHeight, colData.mLastHeight - 1);
-        }
-      } else {
-        config.mKnownInfeasibleHeight =
-          std::max(config.mKnownInfeasibleHeight, mLastBalanceHeight);
-        // If a column didn't fit in its available height, then its current
-        // height must be the minimum height for unbreakable content in
-        // the column, and therefore no smaller height can be feasible.
-        config.mKnownInfeasibleHeight =
-          std::max(config.mKnownInfeasibleHeight,
-                   colData.mMaxOverflowingHeight - 1);
-
-        if (unboundedLastColumn) {
-          // The last column is unbounded, so all content got reflowed, so the
-          // mColMaxHeight is feasible.
-          config.mKnownFeasibleHeight = std::min(config.mKnownFeasibleHeight,
-                                                 colData.mMaxHeight);
-        }
-      }
-
-#ifdef DEBUG_roc
-      printf("*** nsColumnSetFrame::Reflow balancing knownInfeasible=%d knownFeasible=%d\n",
-             config.mKnownInfeasibleHeight, config.mKnownFeasibleHeight);
-#endif
-
-
-      if (config.mKnownInfeasibleHeight >= config.mKnownFeasibleHeight - 1) {
-        // config.mKnownFeasibleHeight is where we want to be
-        break;
-
-      }
-      if (config.mKnownInfeasibleHeight >= availableContentHeight) {
-        break;
-      }
-
-      if (lastKnownFeasibleHeight - config.mKnownFeasibleHeight == 1) {
-        // We decreased the feasible height by one twip only. This could
-        // indicate that there is a continuously breakable child frame
-        // that we are crawling through.
-        maybeContinuousBreakingDetected = true;
-      }
-
-      nscoord nextGuess =
-        (config.mKnownFeasibleHeight + config.mKnownInfeasibleHeight)/2;
-      // The constant of 600 twips is arbitrary. It's about two line-heights.
-      if (config.mKnownFeasibleHeight - nextGuess < 600 &&
-          !maybeContinuousBreakingDetected) {
-        // We're close to our target, so just try shrinking just the
-        // minimum amount that will cause one of our columns to break
-        // differently.
-        nextGuess = config.mKnownFeasibleHeight - 1;
-      } else if (unboundedLastColumn) {
-        // Make a guess by dividing that into N columns. Add some slop
-        // to try to make it on the feasible side.  The constant of
-        // 600 twips is arbitrary. It's about two line-heights.
-        nextGuess = colData.mSumHeight/config.mBalanceColCount + 600;
-        // Sanitize it
-        nextGuess = clamped(nextGuess, config.mKnownInfeasibleHeight + 1,
-                                       config.mKnownFeasibleHeight - 1);
-      } else if (config.mKnownFeasibleHeight == NS_INTRINSICSIZE) {
-        // This can happen when we had a next-in-flow so we didn't
-        // want to do an unbounded height measuring step. Let's just increase
-        // from the infeasible height by some reasonable amount.
-        nextGuess = config.mKnownInfeasibleHeight*2 + 600;
-      }
-      // Don't bother guessing more than our height constraint.
-      nextGuess = std::min(availableContentHeight, nextGuess);
-
-#ifdef DEBUG_roc
-      printf("*** nsColumnSetFrame::Reflow balancing choosing next guess=%d\n", nextGuess);
-#endif
-
-      config.mColMaxHeight = nextGuess;
-
-      unboundedLastColumn = false;
-      AddStateBits(NS_FRAME_IS_DIRTY);
-      feasible = ReflowColumns(aDesiredSize, aReflowState, aStatus, config, false,
-                               &carriedOutBottomMargin, colData);
-
-      if (!config.mIsBalancing) {
-        // Looks like we had excess height when balancing, so we gave up on
-        // trying to balance.
-        break;
-      }
-    }
-
-    if (config.mIsBalancing && !feasible &&
-        !aPresContext->HasPendingInterrupt()) {
-      // We may need to reflow one more time at the feasible height to
-      // get a valid layout.
-      bool skip = false;
-      if (config.mKnownInfeasibleHeight >= availableContentHeight) {
-          config.mColMaxHeight = availableContentHeight;
-        if (mLastBalanceHeight == availableContentHeight) {
-          skip = true;
-        }
-      } else {
-        config.mColMaxHeight = config.mKnownFeasibleHeight;
-      }
-      if (!skip) {
-        // If our height is unconstrained, make sure that the last column is
-        // allowed to have arbitrary height here, even though we were balancing.
-        // Otherwise we'd have to split, and it's not clear what we'd do with
-        // that.
-        AddStateBits(NS_FRAME_IS_DIRTY);
-        ReflowColumns(aDesiredSize, aReflowState, aStatus, config,
-                      availableContentHeight == NS_UNCONSTRAINEDSIZE,
-                      &carriedOutBottomMargin, colData);
-      }
-    }
+    FindBestBalanceHeight(aReflowState, aPresContext, config, colData,
+                          aDesiredSize, carriedOutBottomMargin,
+                          unboundedLastColumn, feasible, aStatus);
   }
 
   if (aPresContext->HasPendingInterrupt() &&

@@ -6,10 +6,9 @@
 
 #ifdef DEBUG
 
-#include "Ion.h"
-#include "IonSpewer.h"
+#include "jit/IonSpewer.h"
 
-#include "jsscriptinlines.h"
+#include "jit/Ion.h"
 
 #ifndef ION_SPEW_DIR
 # if defined(_WIN32)
@@ -187,7 +186,10 @@ void
 IonSpewer::endFunction()
 {
     if (!isSpewingFunction()) {
-        filteredOutCompilations--;
+        if (inited_) {
+            JS_ASSERT(filteredOutCompilations != 0);
+            filteredOutCompilations--;
+        }
         return;
     }
 

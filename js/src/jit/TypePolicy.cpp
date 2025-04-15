@@ -4,9 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "TypePolicy.h"
-#include "MIR.h"
-#include "MIRGraph.h"
+#include "jit/TypePolicy.h"
+
+#include "jit/MIR.h"
+#include "jit/MIRGraph.h"
 
 using namespace js;
 using namespace js::jit;
@@ -24,7 +25,7 @@ BoxInputsPolicy::boxAt(MInstruction *at, MDefinition *operand)
 bool
 BoxInputsPolicy::adjustInputs(MInstruction *ins)
 {
-    for (size_t i = 0; i < ins->numOperands(); i++) {
+    for (size_t i = 0, e = ins->numOperands(); i < e; i++) {
         MDefinition *in = ins->getOperand(i);
         if (in->type() == MIRType_Value)
             continue;
@@ -41,7 +42,7 @@ ArithPolicy::adjustInputs(MInstruction *ins)
 
     JS_ASSERT(ins->type() == MIRType_Double || ins->type() == MIRType_Int32);
 
-    for (size_t i = 0; i < ins->numOperands(); i++) {
+    for (size_t i = 0, e = ins->numOperands(); i < e; i++) {
         MDefinition *in = ins->getOperand(i);
         if (in->type() == ins->type())
             continue;
@@ -77,7 +78,7 @@ BinaryStringPolicy::adjustInputs(MInstruction *ins)
             continue;
 
         MInstruction *replace = NULL;
-        if (in->type() == MIRType_Int32) {
+        if (in->type() == MIRType_Int32 || in->type() == MIRType_Double) {
             replace = MToString::New(in);
         } else {
             if (in->type() != MIRType_Value)
@@ -191,8 +192,11 @@ ComparePolicy::adjustInputs(MInstruction *def)
                 convert = MToDouble::NonNullNonStringPrimitives;
             else if (compare->compareType() == MCompare::Compare_DoubleMaybeCoerceRHS && i == 1)
                 convert = MToDouble::NonNullNonStringPrimitives;
-            if (convert == MToDouble::NumbersOnly && in->type() == MIRType_Boolean)
+            if (in->type() == MIRType_Null ||
+                (in->type() == MIRType_Boolean && convert == MToDouble::NumbersOnly))
+            {
                 in = boxAt(def, in);
+            }
             replace = MToDouble::New(in, convert);
             break;
           }
@@ -206,8 +210,7 @@ ComparePolicy::adjustInputs(MInstruction *def)
             replace = MUnbox::New(in, MIRType_String, MUnbox::Infallible);
             break;
           default:
-            JS_NOT_REACHED("Unknown compare specialization");
-            return false;
+            MOZ_ASSUME_UNREACHABLE("Unknown compare specialization");
         }
 
         def->block()->insertBefore(def, replace);
@@ -256,7 +259,7 @@ BitwisePolicy::adjustInputs(MInstruction *ins)
     JS_ASSERT(specialization_ == MIRType_Int32 || specialization_ == MIRType_Double);
 
     // This policy works for both unary and binary bitwise operations.
-    for (size_t i = 0; i < ins->numOperands(); i++) {
+    for (size_t i = 0, e = ins->numOperands(); i < e; i++) {
         MDefinition *in = ins->getOperand(i);
         if (in->type() == MIRType_Int32)
             continue;
@@ -297,7 +300,7 @@ StringPolicy<Op>::staticAdjustInputs(MInstruction *def)
         return true;
 
     MInstruction *replace;
-    if (in->type() == MIRType_Int32) {
+    if (in->type() == MIRType_Int32 || in->type() == MIRType_Double) {
         replace = MToString::New(in);
     } else {
         if (in->type() != MIRType_Value)
@@ -312,6 +315,7 @@ StringPolicy<Op>::staticAdjustInputs(MInstruction *def)
 
 template bool StringPolicy<0>::staticAdjustInputs(MInstruction *ins);
 template bool StringPolicy<1>::staticAdjustInputs(MInstruction *ins);
+template bool StringPolicy<2>::staticAdjustInputs(MInstruction *ins);
 
 template <unsigned Op>
 bool
@@ -320,6 +324,9 @@ IntPolicy<Op>::staticAdjustInputs(MInstruction *def)
     MDefinition *in = def->getOperand(Op);
     if (in->type() == MIRType_Int32)
         return true;
+
+    if (in->type() != MIRType_Value)
+        in = boxAt(def, in);
 
     MUnbox *replace = MUnbox::New(in, MIRType_Int32, MUnbox::Fallible);
     def->block()->insertBefore(def, replace);
@@ -439,7 +446,7 @@ CallSetElementPolicy::adjustInputs(MInstruction *ins)
     SingleObjectPolicy::adjustInputs(ins);
 
     // Box the index and value operands.
-    for (size_t i = 1; i < ins->numOperands(); i++) {
+    for (size_t i = 1, e = ins->numOperands(); i < e; i++) {
         MDefinition *in = ins->getOperand(i);
         if (in->type() == MIRType_Value)
             continue;
@@ -465,7 +472,7 @@ StoreTypedArrayPolicy::adjustValueInput(MInstruction *ins, int arrayType,
 {
     MDefinition *curValue = value;
     // First, ensure the value is int32, boolean, double or Value.
-    // The conversion is based on TypedArrayTemplate::setElementTail.
+    // The conversion is based on TypedArrayObjectTemplate::setElementTail.
     switch (value->type()) {
       case MIRType_Int32:
       case MIRType_Double:
@@ -487,8 +494,7 @@ StoreTypedArrayPolicy::adjustValueInput(MInstruction *ins, int arrayType,
         value = boxAt(ins, value);
         break;
       default:
-        JS_NOT_REACHED("Unexpected type");
-        break;
+        MOZ_ASSUME_UNREACHABLE("Unexpected type");
     }
 
     if (value != curValue) {
@@ -502,31 +508,30 @@ StoreTypedArrayPolicy::adjustValueInput(MInstruction *ins, int arrayType,
               value->type() == MIRType_Value);
 
     switch (arrayType) {
-      case TypedArray::TYPE_INT8:
-      case TypedArray::TYPE_UINT8:
-      case TypedArray::TYPE_INT16:
-      case TypedArray::TYPE_UINT16:
-      case TypedArray::TYPE_INT32:
-      case TypedArray::TYPE_UINT32:
+      case TypedArrayObject::TYPE_INT8:
+      case TypedArrayObject::TYPE_UINT8:
+      case TypedArrayObject::TYPE_INT16:
+      case TypedArrayObject::TYPE_UINT16:
+      case TypedArrayObject::TYPE_INT32:
+      case TypedArrayObject::TYPE_UINT32:
         if (value->type() != MIRType_Int32) {
             value = MTruncateToInt32::New(value);
             ins->block()->insertBefore(ins, value->toInstruction());
         }
         break;
-      case TypedArray::TYPE_UINT8_CLAMPED:
+      case TypedArrayObject::TYPE_UINT8_CLAMPED:
         // IonBuilder should have inserted ClampToUint8.
         JS_ASSERT(value->type() == MIRType_Int32);
         break;
-      case TypedArray::TYPE_FLOAT32:
-      case TypedArray::TYPE_FLOAT64:
+      case TypedArrayObject::TYPE_FLOAT32:
+      case TypedArrayObject::TYPE_FLOAT64:
         if (value->type() != MIRType_Double) {
             value = MToDouble::New(value);
             ins->block()->insertBefore(ins, value->toInstruction());
         }
         break;
       default:
-        JS_NOT_REACHED("Invalid array type");
-        break;
+        MOZ_ASSUME_UNREACHABLE("Invalid array type");
     }
 
     if (value != curValue) {
@@ -561,9 +566,9 @@ bool
 StoreTypedArrayElementStaticPolicy::adjustInputs(MInstruction *ins)
 {
     MStoreTypedArrayElementStatic *store = ins->toStoreTypedArrayElementStatic();
-    JS_ASSERT(store->ptr()->type() == MIRType_Int32);
 
-    return adjustValueInput(ins, store->viewType(), store->value(), 1);
+    return IntPolicy<0>::staticAdjustInputs(ins) &&
+        adjustValueInput(ins, store->viewType(), store->value(), 1);
 }
 
 bool

@@ -10,6 +10,7 @@
 #include "jsapi.h"
 #include "jscntxt.h"
 #include "jsobj.h"
+
 #include "gc/Marking.h"
 
 namespace js {
@@ -31,7 +32,7 @@ class WeakCache : public HashMap<Key, Value, HashPolicy, AllocPolicy> {
 
   public:
     explicit WeakCache(JSRuntime *rt) : Base(rt) { }
-    explicit WeakCache(JSContext *cx) : Base(cx) { }
+    explicit WeakCache(JSContext *cx) : Base(cx->runtime()) { }
 
   public:
     // Sweep all entries which have unmarked key or value.
@@ -82,7 +83,7 @@ class WeakValueCache : public HashMap<Key, Value, HashPolicy, AllocPolicy>
     typedef typename Base::Enum Enum;
 
     explicit WeakValueCache(JSRuntime *rt) : Base(rt) { }
-    explicit WeakValueCache(JSContext *cx) : Base(cx) { }
+    explicit WeakValueCache(JSContext *cx) : Base(cx->runtime()) { }
 
   public:
     // Sweep all entries which have unmarked key or value.

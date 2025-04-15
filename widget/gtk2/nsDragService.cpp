@@ -33,6 +33,7 @@
 #include "nsISelection.h"
 #include "nsViewManager.h"
 #include "nsIFrame.h"
+#include "nsGtkUtils.h"
 
 // This sets how opaque the drag image is
 #define DRAG_IMAGE_ALPHA_LEVEL 0.5
@@ -45,17 +46,6 @@ enum {
   MOZ_GTK_DRAG_RESULT_SUCCESS,
   MOZ_GTK_DRAG_RESULT_NO_TARGET
 };
-
-// Some gobject functions expect functions for gpointer arguments.
-// gpointer is void* but C++ doesn't like casting functions to void*.
-template<class T> static inline gpointer
-FuncToGpointer(T aFunction)
-{
-    return reinterpret_cast<gpointer>
-        (reinterpret_cast<uintptr_t>
-         // This cast just provides a warning if T is not a function.
-         (reinterpret_cast<void (*)()>(aFunction)));
-}
 
 static PRLogModuleInfo *sDragLm = NULL;
 
@@ -718,6 +708,10 @@ nsDragService::GetData(nsITransferable * aTransferable,
                 if ( strcmp(flavorStr, kFileMime) == 0 ) {
                     gdkFlavor = gdk_atom_intern(kTextMime, FALSE);
                     GetTargetDragData(gdkFlavor);
+                    if (!mTargetDragData) {
+                        gdkFlavor = gdk_atom_intern(gTextUriListType, FALSE);
+                        GetTargetDragData(gdkFlavor);
+                    }
                     if (mTargetDragData) {
                         const char* text = static_cast<char*>(mTargetDragData);
                         PRUnichar* convertedText = nullptr;
@@ -997,7 +991,8 @@ nsDragService::IsDataFlavorSupported(const char *aDataFlavor,
         if (!*_retval && 
             name &&
             (strcmp(name, gTextUriListType) == 0) &&
-            (strcmp(aDataFlavor, kURLMime) == 0)) {
+            (strcmp(aDataFlavor, kURLMime) == 0 ||
+             strcmp(aDataFlavor, kFileMime) == 0)) {
             PR_LOG(sDragLm, PR_LOG_DEBUG,
                    ("good! ( it's text/uri-list and \
                    we're checking against text/x-moz-url )\n"));

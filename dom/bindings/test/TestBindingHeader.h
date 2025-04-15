@@ -275,7 +275,6 @@ public:
   TestInterface* ReceiveWeakSelf();
   TestInterface* ReceiveWeakNullableSelf();
   void PassSelf(TestInterface&);
-  void PassSelf2(NonNull<TestInterface>&);
   void PassNullableSelf(TestInterface*);
   already_AddRefed<TestInterface> NonNullSelf();
   void SetNonNullSelf(TestInterface&);
@@ -297,7 +296,6 @@ public:
   IndirectlyImplementedInterface* ReceiveWeakOther();
   IndirectlyImplementedInterface* ReceiveWeakNullableOther();
   void PassOther(IndirectlyImplementedInterface&);
-  void PassOther2(NonNull<IndirectlyImplementedInterface>&);
   void PassNullableOther(IndirectlyImplementedInterface*);
   already_AddRefed<IndirectlyImplementedInterface> NonNullOther();
   void SetNonNullOther(IndirectlyImplementedInterface&);
@@ -312,7 +310,6 @@ public:
   TestExternalInterface* ReceiveWeakExternal();
   TestExternalInterface* ReceiveWeakNullableExternal();
   void PassExternal(TestExternalInterface*);
-  void PassExternal2(TestExternalInterface*);
   void PassNullableExternal(TestExternalInterface*);
   already_AddRefed<TestExternalInterface> NonNullExternal();
   void SetNonNullExternal(TestExternalInterface*);
@@ -327,7 +324,6 @@ public:
   TestCallbackInterface* ReceiveWeakCallbackInterface();
   TestCallbackInterface* ReceiveWeakNullableCallbackInterface();
   void PassCallbackInterface(TestCallbackInterface&);
-  void PassCallbackInterface2(OwningNonNull<TestCallbackInterface>);
   void PassNullableCallbackInterface(TestCallbackInterface*);
   already_AddRefed<TestCallbackInterface> NonNullCallbackInterface();
   void SetNonNullCallbackInterface(TestCallbackInterface&);
@@ -511,6 +507,16 @@ public:
   //void PassUnionWithCallback(JSContext*, const TestCallbackOrLong&);
   void PassUnionWithObject(JSContext*, const ObjectOrLong&);
 
+  void ReceiveUnion(const CanvasPatternOrCanvasGradientReturnValue&);
+  void ReceiveUnionContainingNull(const CanvasPatternOrNullOrCanvasGradientReturnValue&);
+  void ReceiveNullableUnion(const Nullable<CanvasPatternOrCanvasGradientReturnValue>&);
+  void GetWritableUnion(const CanvasPatternOrCanvasGradientReturnValue&);
+  void SetWritableUnion(const CanvasPatternOrCanvasGradient&);
+  void GetWritableUnionContainingNull(const CanvasPatternOrNullOrCanvasGradientReturnValue&);
+  void SetWritableUnionContainingNull(const CanvasPatternOrNullOrCanvasGradient&);
+  void GetWritableNullableUnion(const Nullable<CanvasPatternOrCanvasGradientReturnValue>&);
+  void SetWritableNullableUnion(const Nullable<CanvasPatternOrCanvasGradient>&);
+
   // Date types
   void PassDate(Date);
   void PassNullableDate(const Nullable<Date>&);
@@ -558,14 +564,24 @@ public:
   TestInterface* Overload1(const nsAString&, TestInterface&);
   void Overload2(TestInterface&);
   void Overload2(JSContext*, const Dict&);
+  void Overload2(bool);
   void Overload2(const nsAString&);
   void Overload2(Date);
   void Overload3(TestInterface&);
   void Overload3(const TestCallback&);
-  void Overload3(const nsAString&);
+  void Overload3(bool);
   void Overload4(TestInterface&);
   void Overload4(TestCallbackInterface&);
   void Overload4(const nsAString&);
+  void Overload5(int32_t);
+  void Overload5(TestEnum);
+  void Overload6(int32_t);
+  void Overload6(bool);
+  void Overload7(int32_t);
+  void Overload7(bool);
+  void Overload7(const nsCString&);
+  void Overload8(int32_t);
+  void Overload8(TestInterface&);
 
   // Variadic handling
   void PassVariadicThirdArg(const nsAString&, int32_t,
@@ -602,6 +618,12 @@ public:
   TestInterface* PutForwardsAttr();
   TestInterface* PutForwardsAttr2();
   TestInterface* PutForwardsAttr3();
+  JS::Value JsonifierShouldSkipThis(JSContext*);
+  void SetJsonifierShouldSkipThis(JSContext*, JS::Rooted<JS::Value>&);
+  TestParentInterface* JsonifierShouldSkipThis2();
+  void SetJsonifierShouldSkipThis2(TestParentInterface&);
+  TestCallbackInterface* JsonifierShouldSkipThis3();
+  void SetJsonifierShouldSkipThis3(TestCallbackInterface&);
   void ThrowingMethod(ErrorResult& aRv);
   bool GetThrowingAttr(ErrorResult& aRv) const;
   void SetThrowingAttr(bool arg, ErrorResult& aRv);
@@ -610,6 +632,9 @@ public:
   bool ThrowingSetterAttr() const;
   void SetThrowingSetterAttr(bool arg, ErrorResult& aRv);
   int16_t LegacyCall(JS::Value, uint32_t, TestInterface&);
+  void PassArgsWithDefaults(JSContext*, const Optional<int32_t>&,
+                            TestInterface*, const Dict&, double,
+                            const Optional<float>&);
 
   // Methods and properties imported via "implements"
   bool ImplementedProperty();
@@ -805,6 +830,28 @@ private:
   void PassVariadicAny(JSContext*, Sequence<JS::Value>&) MOZ_DELETE;
   void PassVariadicObject(JSContext*, Sequence<JSObject*>&) MOZ_DELETE;
   void PassVariadicNullableObject(JSContext*, Sequence<JSObject*>&) MOZ_DELETE;
+
+  // Ensure NonNull does not leak in
+  void PassSelf(NonNull<TestInterface>&) MOZ_DELETE;
+  void PassSelf(OwningNonNull<TestInterface>&) MOZ_DELETE;
+  void PassSelf(const NonNull<TestInterface>&) MOZ_DELETE;
+  void PassSelf(const OwningNonNull<TestInterface>&) MOZ_DELETE;
+  void PassOther(NonNull<IndirectlyImplementedInterface>&) MOZ_DELETE;
+  void PassOther(const NonNull<IndirectlyImplementedInterface>&) MOZ_DELETE;
+  void PassOther(OwningNonNull<IndirectlyImplementedInterface>&) MOZ_DELETE;
+  void PassOther(const OwningNonNull<IndirectlyImplementedInterface>&) MOZ_DELETE;
+  void PassCallbackInterface(OwningNonNull<TestCallbackInterface>&) MOZ_DELETE;
+  void PassCallbackInterface(const OwningNonNull<TestCallbackInterface>&) MOZ_DELETE;
+  void PassCallbackInterface(NonNull<TestCallbackInterface>&) MOZ_DELETE;
+  void PassCallbackInterface(const NonNull<TestCallbackInterface>&) MOZ_DELETE;
+  void PassCallback(OwningNonNull<TestCallback>&) MOZ_DELETE;
+  void PassCallback(const OwningNonNull<TestCallback>&) MOZ_DELETE;
+  void PassCallback(NonNull<TestCallback>&) MOZ_DELETE;
+  void PassCallback(const NonNull<TestCallback>&) MOZ_DELETE;
+  void PassString(const NonNull<nsAString>&) MOZ_DELETE;
+  void PassString(NonNull<nsAString>&) MOZ_DELETE;
+  void PassString(const OwningNonNull<nsAString>&) MOZ_DELETE;
+  void PassString(OwningNonNull<nsAString>&) MOZ_DELETE;
 };
 
 class TestIndexedGetterInterface : public nsISupports,

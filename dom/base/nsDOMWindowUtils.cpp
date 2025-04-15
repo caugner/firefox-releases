@@ -620,14 +620,13 @@ nsDOMWindowUtils::SendMouseEventToWindow(const nsAString& aType,
                               aInputSourceArg, true, nullptr);
 }
 
-static nsIntPoint
-ToWidgetPoint(float aX, float aY, const nsPoint& aOffset,
+static LayoutDeviceIntPoint
+ToWidgetPoint(const CSSPoint& aPoint, const nsPoint& aOffset,
               nsPresContext* aPresContext)
 {
-  double appPerDev = aPresContext->AppUnitsPerDevPixel();
-  nscoord appPerCSS = nsPresContext::AppUnitsPerCSSPixel();
-  return nsIntPoint(NSToIntRound((aX*appPerCSS + aOffset.x)/appPerDev),
-                    NSToIntRound((aY*appPerCSS + aOffset.y)/appPerDev));
+  return LayoutDeviceIntPoint::FromAppUnits(
+    CSSPoint::ToAppUnits(aPoint) + aOffset,
+    aPresContext->AppUnitsPerDevPixel());
 }
 
 static inline int16_t
@@ -714,7 +713,7 @@ nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
   if (!presContext)
     return NS_ERROR_FAILURE;
 
-  event.refPoint = ToWidgetPoint(aX, aY, offset, presContext);
+  event.refPoint = ToWidgetPoint(CSSPoint(aX, aY), offset, presContext);
   event.ignoreRootScrollFrame = aIgnoreRootScrollFrame;
 
   nsEventStatus status;
@@ -786,7 +785,7 @@ nsDOMWindowUtils::SendWheelEvent(float aX,
   nsPresContext* presContext = GetPresContext();
   NS_ENSURE_TRUE(presContext, NS_ERROR_FAILURE);
 
-  wheelEvent.refPoint = ToWidgetPoint(aX, aY, offset, presContext);
+  wheelEvent.refPoint = ToWidgetPoint(CSSPoint(aX, aY), offset, presContext);
 
   nsEventStatus status;
   nsresult rv = widget->DispatchEvent(&wheelEvent, status);
@@ -882,9 +881,10 @@ nsDOMWindowUtils::SendTouchEvent(const nsAString& aType,
   }
   event.touches.SetCapacity(aCount);
   for (uint32_t i = 0; i < aCount; ++i) {
-    nsIntPoint pt = ToWidgetPoint(aXs[i], aYs[i], offset, presContext);
+    LayoutDeviceIntPoint pt =
+      ToWidgetPoint(CSSPoint(aXs[i], aYs[i]), offset, presContext);
     nsRefPtr<Touch> t = new Touch(aIdentifiers[i],
-                                  pt,
+                                  LayoutDeviceIntPoint::ToUntyped(pt),
                                   nsIntPoint(aRxs[i], aRys[i]),
                                   aRotationAngles[i],
                                   aForces[i]);
@@ -997,6 +997,7 @@ nsDOMWindowUtils::SendKeyEvent(const nsAString& aType,
 
   event.refPoint.x = event.refPoint.y = 0;
   event.time = PR_IntervalNow();
+  event.mFlags.mIsSynthesizedForTests = true;
 
   if (aAdditionalFlags & KEY_FLAG_PREVENT_DEFAULT) {
     event.mFlags.mDefaultPrevented = true;
@@ -1265,7 +1266,7 @@ nsDOMWindowUtils::SendSimpleGestureEvent(const nsAString& aType,
   if (!presContext)
     return NS_ERROR_FAILURE;
 
-  event.refPoint = ToWidgetPoint(aX, aY, offset, presContext);
+  event.refPoint = ToWidgetPoint(CSSPoint(aX, aY), offset, presContext);
 
   nsEventStatus status;
   return widget->DispatchEvent(&event, status);
@@ -1755,7 +1756,7 @@ nsDOMWindowUtils::DispatchDOMEventViaPresShell(nsIDOMNode* aTarget,
 }
 
 static void
-InitEvent(nsGUIEvent &aEvent, nsIntPoint *aPt = nullptr)
+InitEvent(nsGUIEvent& aEvent, LayoutDeviceIntPoint* aPt = nullptr)
 {
   if (aPt) {
     aEvent.refPoint = *aPt;
@@ -1923,7 +1924,7 @@ nsDOMWindowUtils::SendQueryContentEvent(uint32_t aType,
   }
 
   nsCOMPtr<nsIWidget> targetWidget = widget;
-  nsIntPoint pt(aX, aY);
+  LayoutDeviceIntPoint pt(aX, aY);
 
   if (aType == QUERY_CHARACTER_AT_POINT) {
     // Looking for the widget at the point.
@@ -1939,7 +1940,8 @@ nsDOMWindowUtils::SendQueryContentEvent(uint32_t aType,
 
     // There is no popup frame at the point and the point isn't in our widget,
     // we cannot process this request.
-    NS_ENSURE_TRUE(popupFrame || widgetBounds.Contains(pt),
+    NS_ENSURE_TRUE(popupFrame ||
+                   widgetBounds.Contains(LayoutDeviceIntPoint::ToUntyped(pt)),
                    NS_ERROR_FAILURE);
 
     // Fire the event on the widget at the point
@@ -1948,7 +1950,8 @@ nsDOMWindowUtils::SendQueryContentEvent(uint32_t aType,
     }
   }
 
-  pt += widget->WidgetToScreenOffset() - targetWidget->WidgetToScreenOffset();
+  pt += LayoutDeviceIntPoint::FromUntyped(
+    widget->WidgetToScreenOffset() - targetWidget->WidgetToScreenOffset());
 
   nsQueryContentEvent queryEvent(true, aType, targetWidget);
   InitEvent(queryEvent, &pt);
@@ -2504,15 +2507,9 @@ nsDOMWindowUtils::RenderDocument(const nsRect& aRect,
     nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
     NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
 
-    // Get DOM Document
-    nsresult rv;
-    nsCOMPtr<nsIDOMDocument> ddoc;
-    rv = window->GetDocument(getter_AddRefs(ddoc));
-    NS_ENSURE_SUCCESS(rv, rv);
-
     // Get Document
-    nsCOMPtr<nsIDocument> doc = do_QueryInterface(ddoc, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIDocument> doc = window->GetDoc();
+    NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
 
     // Get Primary Shell
     nsCOMPtr<nsIPresShell> presShell = doc->GetShell();
@@ -3164,7 +3161,8 @@ nsDOMWindowUtils::SelectAtPoint(float aX, float aY, uint32_t aSelectBehavior,
   // Get the target frame at the client coordinates passed to us
   nsPoint offset;
   nsCOMPtr<nsIWidget> widget = GetWidget(&offset);
-  nsIntPoint pt = ToWidgetPoint(aX, aY, offset, GetPresContext());
+  nsIntPoint pt = LayoutDeviceIntPoint::ToUntyped(
+    ToWidgetPoint(CSSPoint(aX, aY), offset, GetPresContext()));
   nsPoint ptInRoot =
     nsLayoutUtils::GetEventCoordinatesRelativeTo(widget, pt, rootFrame);
   nsIFrame* targetFrame = nsLayoutUtils::GetFrameForPoint(rootFrame, ptInRoot);
@@ -3216,23 +3214,15 @@ nsDOMWindowUtils::LoadSheet(nsIURI *aSheetURI, uint32_t aSheetType)
                 aSheetType == USER_SHEET ||
                 aSheetType == AUTHOR_SHEET);
 
-  nsCOMPtr<nsIDOMWindow> window = do_QueryReferent(mWindow);
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
   NS_ENSURE_TRUE(window, NS_ERROR_INVALID_ARG);
-  
-  nsCOMPtr<nsIDOMDocument> ddoc;
-  nsresult rv = window->GetDocument(getter_AddRefs(ddoc));
-  NS_ENSURE_SUCCESS(rv, rv);
-  NS_ENSURE_TRUE(ddoc, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIDocument> doc = do_QueryInterface(ddoc);
-  NS_ENSURE_TRUE(doc, NS_ERROR_INVALID_ARG);
+  nsCOMPtr<nsIDocument> doc = window->GetDoc();
+  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
 
   nsIDocument::additionalSheetType type = convertSheetType(aSheetType);
 
-  rv = doc->LoadAdditionalStyleSheet(type, aSheetURI);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return NS_OK;
+  return doc->LoadAdditionalStyleSheet(type, aSheetURI);
 }
 
 NS_IMETHODIMP
@@ -3247,16 +3237,11 @@ nsDOMWindowUtils::RemoveSheet(nsIURI *aSheetURI, uint32_t aSheetType)
                 aSheetType == USER_SHEET ||
                 aSheetType == AUTHOR_SHEET);
 
-  nsCOMPtr<nsIDOMWindow> window = do_QueryReferent(mWindow);
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
   NS_ENSURE_TRUE(window, NS_ERROR_INVALID_ARG);
 
-  nsCOMPtr<nsIDOMDocument> ddoc;
-  nsresult rv = window->GetDocument(getter_AddRefs(ddoc));
-  NS_ENSURE_SUCCESS(rv, rv);
-  NS_ENSURE_TRUE(ddoc, NS_ERROR_FAILURE);
-
-  nsCOMPtr<nsIDocument> doc = do_QueryInterface(ddoc);
-  NS_ENSURE_TRUE(doc, NS_ERROR_INVALID_ARG);
+  nsCOMPtr<nsIDocument> doc = window->GetDoc();
+  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
 
   nsIDocument::additionalSheetType type = convertSheetType(aSheetType);
 
@@ -3346,7 +3331,7 @@ nsDOMWindowUtils::SetPaintFlashing(bool aPaintFlashing)
 {
   nsPresContext* presContext = GetPresContext();
   if (presContext) {
-    presContext->RefreshDriver()->SetPaintFlashing(aPaintFlashing);
+    presContext->SetPaintFlashing(aPaintFlashing);
     // Clear paint flashing colors
     nsIPresShell* presShell = GetPresShell();
     if (!aPaintFlashing && presShell) {
@@ -3365,7 +3350,7 @@ nsDOMWindowUtils::GetPaintFlashing(bool* aRetVal)
   *aRetVal = false;
   nsPresContext* presContext = GetPresContext();
   if (presContext) {
-    *aRetVal = presContext->RefreshDriver()->GetPaintFlashing();
+    *aRetVal = presContext->GetPaintFlashing();
   }
   return NS_OK;
 }

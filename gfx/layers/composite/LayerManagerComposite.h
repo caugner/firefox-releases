@@ -165,6 +165,8 @@ public:
                             EffectChain& aEffect,
                             bool aIs3D = false);
 
+  static void RemoveMaskEffect(Layer* aMaskLayer);
+
   /**
    * Creates a DrawTarget which is optimized for inter-operating with this
    * layermanager.
@@ -235,6 +237,11 @@ private:
    * Render the current layer tree to the active target.
    */
   void Render();
+
+  /**
+   * Render debug overlays such as the FPS/FrameCounter above the frame.
+   */
+  void RenderDebugOverlay(const gfx::Rect& aBounds);
 
   void WorldTransformRect(nsIntRect& aRect);
 

@@ -55,7 +55,11 @@ public:
                           StreamTime aDesiredTime,
                           TrackTicks &aLastEndTime) {}
 
-  NS_DECL_ISUPPORTS
+  virtual bool IsFake() {
+    return true;
+  }
+
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSITIMERCALLBACK
 
 protected:
@@ -97,7 +101,11 @@ public:
                           StreamTime aDesiredTime,
                           TrackTicks &aLastEndTime) {}
 
-  NS_DECL_ISUPPORTS
+  virtual bool IsFake() {
+    return true;
+  }
+
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSITIMERCALLBACK
 
 protected:
@@ -106,6 +114,7 @@ protected:
 
   SourceMediaStream* mSource;
 };
+
 
 class MediaEngineDefault : public MediaEngine
 {

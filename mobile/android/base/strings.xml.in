@@ -18,8 +18,6 @@
 <resources>
   <string name="moz_app_displayname">@MOZ_APP_DISPLAYNAME@</string>
 #include ../services/strings.xml.in
-  <string name="splash_settingup">&splash_settingup;</string>
-  <string name="splash_bookmarks_history">&splash_bookmarks_history;</string>
   <string name="no_space_to_start_error">&no_space_to_start_error;</string>
   <string name="error_loading_file">&error_loading_file;</string>
 
@@ -44,11 +42,11 @@
 
   <string name="launcher_shortcuts_title">&launcher_shortcuts_title;</string>
   <string name="launcher_shortcuts_empty">&launcher_shortcuts_empty;</string>
-  
+
   <string name="choose_file">&choose_file;</string>
 
   <string name="awesomebar_default_text">&awesomebar_default_text;</string>
-  
+
   <string name="remote_tabs">&remote_tabs;</string>
   <string name="remote_tabs_show_all">&remote_tabs_show_all;</string>
 
@@ -79,14 +77,24 @@
 
   <string name="settings">&settings;</string>
   <string name="settings_title">&settings_title;</string>
-  <string name="pref_category_general">&pref_category_general;</string>
-  <string name="pref_category_privacy">&pref_category_privacy;</string>
-  <string name="pref_category_content">&pref_category_content;</string>
+  <string name="pref_category_advanced">&pref_category_advanced;</string>
+  <string name="pref_category_customize">&pref_category_customize;</string>
+  <string name="pref_category_search">&pref_category_search2;</string>
+  <string name="pref_category_display">&pref_category_display;</string>
+  <string name="pref_category_privacy_short">&pref_category_privacy_short;</string>
+  <string name="pref_category_vendor">&pref_category_vendor;</string>
   <string name="pref_category_datareporting">&pref_category_datareporting;</string>
-  <string name="pref_header_general">&pref_header_general;</string>
-  <string name="pref_header_privacy">&pref_header_privacy;</string>
-  <string name="pref_header_content">&pref_header_content;</string>
-  <string name="pref_about_firefox">&pref_about_firefox;</string>
+  <string name="pref_category_installed_search_engines">&pref_category_installed_search_engines;</string>
+  <string name="pref_category_devtools">&pref_category_devtools;</string>
+  <string name="pref_developer_remotedebugging">&pref_developer_remotedebugging;</string>
+  <string name="pref_developer_remotedebugging_docs">&pref_developer_remotedebugging_docs;</string>
+
+  <string name="pref_header_customize">&pref_header_customize;</string>
+  <string name="pref_header_display">&pref_header_display;</string>
+  <string name="pref_header_privacy_short">&pref_header_privacy_short;</string>
+  <string name="pref_header_vendor">&pref_header_vendor;</string>
+  <string name="pref_header_devtools">&pref_header_devtools;</string>
+
   <string name="pref_remember_signons">&pref_remember_signons;</string>
 
   <string name="pref_cookies_menu">&pref_cookies_menu;</string>
@@ -116,7 +124,11 @@
   <string name="pref_font_size_set">&pref_font_size_set;</string>
   <string name="pref_font_size_adjust_char">&pref_font_size_adjust_char;</string>
   <string name="pref_font_size_preview_text">&pref_font_size_preview_text;</string>
-  <string name="pref_reflow_on_zoom">&pref_reflow_on_zoom3;</string>
+  <string name="pref_reflow_on_zoom">&pref_reflow_on_zoom4;</string>
+  <string name="pref_restore">&pref_restore;</string>
+  <string name="pref_restore_always">&pref_restore_always;</string>
+  <string name="pref_restore_crash">&pref_restore_crash;</string>
+  <string name="pref_restore_never">&pref_restore_never;</string>
   <string name="pref_show_product_announcements">&pref_show_product_announcements;</string>
   <string name="pref_sync">&pref_sync;</string>
   <string name="pref_search_suggestions">&pref_search_suggestions;</string>
@@ -133,6 +145,11 @@
   <string name="pref_update_autodownload_wifi">&pref_update_autodownload_wifi;</string>
   <string name="pref_update_autodownload_disabled">&pref_update_autodownload_disabled;</string>
   <string name="pref_update_autodownload_enabled">&pref_update_autodownload_enabled;</string>
+
+
+  <string name="pref_about_firefox">&pref_about_firefox;</string>
+  <string name="pref_vendor_faqs">&pref_vendor_faqs;</string>
+  <string name="pref_vendor_feedback">&pref_vendor_feedback;</string>
 
   <string name="datareporting_notification_title">&datareporting_notification_title;</string>
   <string name="datareporting_notification_action_long">&datareporting_notification_action_long;</string>
@@ -184,7 +201,8 @@
   <string name="reading_list_removed">&reading_list_removed;</string>
   <string name="reading_list_failed">&reading_list_failed;</string>
   <string name="reading_list_duplicate">&reading_list_duplicate;</string>
-  <string name="reader">&reader;</string>
+
+  <string name="page_action_dropmarker_description">&page_action_dropmarker_description;</string>
 
   <string name="contextmenu_open_new_tab">&contextmenu_open_new_tab;</string>
   <string name="contextmenu_open_private_tab">&contextmenu_open_private_tab;</string>
@@ -234,7 +252,7 @@
   <string name="abouthome_about_apps">&abouthome_about_apps3;</string>
   <string name="abouthome_sync_bold_name">&abouthome_sync_bold_name;</string>
   <string name="abouthome_apps_bold_name">&abouthome_apps_bold_name2;</string>
-  
+
   <string name="abouthome_topsites_edit">&abouthome_topsites_edit;</string>
   <string name="abouthome_topsites_pin">&abouthome_topsites_pin;</string>
   <string name="abouthome_topsites_unpin">&abouthome_topsites_unpin;</string>
@@ -286,24 +304,39 @@
 
   <string name="searchable_description">&searchable_description;</string>
 
+  <string name="devtools_remote_debugging_forward">&devtools_remote_debugging_forward;</string>
+
   <!-- Updater notifications -->
   <string name="updater_start_title">&updater_start_title2;</string>
   <string name="updater_start_select">&updater_start_select2;</string>
- 
+
   <string name="updater_downloading_title">&updater_downloading_title2;</string>
   <string name="updater_downloading_title_failed">&updater_downloading_title_failed2;</string>
   <string name="updater_downloading_select">&updater_downloading_select2;</string>
   <string name="updater_downloading_retry">&updater_downloading_retry2;</string>
-   
+
   <string name="updater_apply_title">&updater_apply_title2;</string>
   <string name="updater_apply_select">&updater_apply_select2;</string>
 
   <!-- Search suggestions opt-in -->
   <string name="suggestions_prompt">&suggestions_prompt2;</string>
 
-  <!-- Wallpaper Notifications -->
-  <string name="wallpaper_success">&wallpaper_success;</string>
-  <string name="wallpaper_progress">&wallpaper_progress;</string>
-  <string name="wallpaper_fail">&wallpaper_fail;</string>
+  <!-- Set Image Notifications -->
+  <string name="set_image_fail">&set_image_fail;</string>
+  <string name="set_image_chooser_title">&set_image_chooser_title;</string>
 
+  <!-- Contacts API -->
+  <string name="contacts_account_chooser_dialog_title">Share contacts from...</string>
+
+
+  <!-- Guest mode -->
+  <string name="new_guest_session">&new_guest_session;</string>
+  <string name="exit_guest_session">&exit_guest_session;</string>
+  <string name="guest_session_dialog_continue">&guest_session_dialog_continue;</string>
+  <string name="guest_session_dialog_cancel">&guest_session_dialog_cancel;</string>
+  <string name="new_guest_session_title">&new_guest_session_title;</string>
+  <string name="new_guest_session_text">&new_guest_session_text;</string>
+
+  <string name="exit_guest_session_title">&exit_guest_session_title;</string>
+  <string name="exit_guest_session_text">&exit_guest_session_text;</string>
 </resources>

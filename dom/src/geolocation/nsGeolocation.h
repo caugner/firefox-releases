@@ -28,7 +28,6 @@
 #include "nsIDOMGeoPositionError.h"
 #include "nsIDOMGeoPositionCallback.h"
 #include "nsIDOMGeoPositionErrorCallback.h"
-#include "nsIDOMNavigatorGeolocation.h"
 #include "mozilla/dom/GeolocationBinding.h"
 #include "mozilla/dom/PositionErrorBinding.h"
 #include "mozilla/dom/CallbackObject.h"
@@ -109,7 +108,7 @@ public:
   static already_AddRefed<nsGeolocationService> GetGeolocationService();
   static mozilla::StaticRefPtr<nsGeolocationService> sService;
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIGEOLOCATIONUPDATE
   NS_DECL_NSIOBSERVER
 
@@ -294,10 +293,6 @@ public:
 
   int16_t Code() const {
     return mCode;
-  }
-
-  void GetMessage(nsString& aRetVal) const {
-    aRetVal.Truncate();
   }
 
   void NotifyCallback(const GeoPositionErrorCallback& callback);

@@ -29,9 +29,9 @@
 #include "mozilla/Likely.h"
 #include <algorithm>
 
-MOZ_STATIC_ASSERT((((1 << nsStyleStructID_Length) - 1) &
-                   ~(NS_STYLE_INHERIT_MASK)) == 0,
-                  "Not enough bits in NS_STYLE_INHERIT_MASK");
+static_assert((((1 << nsStyleStructID_Length) - 1) &
+               ~(NS_STYLE_INHERIT_MASK)) == 0,
+              "Not enough bits in NS_STYLE_INHERIT_MASK");
 
 inline bool IsFixedUnit(const nsStyleCoord& aCoord, bool aEnumOK)
 {
@@ -100,6 +100,7 @@ nsStyleFont::nsStyleFont(const nsStyleFont& aSrc)
   , mGenericID(aSrc.mGenericID)
   , mScriptLevel(aSrc.mScriptLevel)
   , mExplicitLanguage(aSrc.mExplicitLanguage)
+  , mAllowZoom(aSrc.mAllowZoom)
   , mScriptUnconstrainedSize(aSrc.mScriptUnconstrainedSize)
   , mScriptMinSize(aSrc.mScriptMinSize)
   , mScriptSizeMultiplier(aSrc.mScriptSizeMultiplier)
@@ -128,6 +129,7 @@ nsStyleFont::Init(nsPresContext* aPresContext)
       NS_POINTS_TO_TWIPS(NS_MATHML_DEFAULT_SCRIPT_MIN_SIZE_PT));
   mScriptLevel = 0;
   mScriptSizeMultiplier = NS_MATHML_DEFAULT_SCRIPT_SIZE_MULTIPLIER;
+  mAllowZoom = true;
 
   nsAutoString language;
   aPresContext->Document()->GetContentLanguage(language);
@@ -161,8 +163,30 @@ nsStyleFont::Destroy(nsPresContext* aContext) {
   aContext->FreeToShell(sizeof(nsStyleFont), this);
 }
 
+void
+nsStyleFont::EnableZoom(nsPresContext* aContext, bool aEnable)
+{
+  if (mAllowZoom == aEnable) {
+    return;
+  }
+  mAllowZoom = aEnable;
+  if (mAllowZoom) {
+    mSize = nsStyleFont::ZoomText(aContext, mSize);
+    mFont.size = nsStyleFont::ZoomText(aContext, mFont.size);
+    mScriptUnconstrainedSize =
+      nsStyleFont::ZoomText(aContext, mScriptUnconstrainedSize);
+  } else {
+    mSize = nsStyleFont::UnZoomText(aContext, mSize);
+    mFont.size = nsStyleFont::UnZoomText(aContext, mFont.size);
+    mScriptUnconstrainedSize =
+      nsStyleFont::UnZoomText(aContext, mScriptUnconstrainedSize);
+  }
+}
+
 nsChangeHint nsStyleFont::CalcDifference(const nsStyleFont& aOther) const
 {
+  MOZ_ASSERT(mAllowZoom == aOther.mAllowZoom,
+             "expected mAllowZoom to be the same on both nsStyleFonts");
   if (mSize != aOther.mSize ||
       mLanguage != aOther.mLanguage ||
       mExplicitLanguage != aOther.mExplicitLanguage) {
@@ -191,6 +215,7 @@ nsChangeHint nsStyleFont::CalcFontDifference(const nsFont& aFont1, const nsFont&
       (aFont1.variant == aFont2.variant) &&
       (aFont1.weight == aFont2.weight) &&
       (aFont1.stretch == aFont2.stretch) &&
+      (aFont1.smoothing == aFont2.smoothing) &&
       (aFont1.name == aFont2.name) &&
       (aFont1.kerning == aFont2.kerning) &&
       (aFont1.synthesis == aFont2.synthesis) &&
@@ -977,6 +1002,48 @@ nsChangeHint nsStyleSVG::CalcDifference(const nsStyleSVG& aOther) const
 }
 
 // --------------------
+// nsStyleFilter
+//
+nsStyleFilter::nsStyleFilter()
+  : mType(eNull)
+{
+  MOZ_COUNT_CTOR(nsStyleFilter);
+}
+
+nsStyleFilter::nsStyleFilter(const nsStyleFilter& aSource)
+  : mType(aSource.mType)
+{
+  MOZ_COUNT_CTOR(nsStyleFilter);
+
+  if (mType == eURL) {
+    mURL = aSource.mURL;
+  } else if (mType != eNull) {
+    mFilterParameter = aSource.mFilterParameter;
+  }
+}
+
+nsStyleFilter::~nsStyleFilter()
+{
+  MOZ_COUNT_DTOR(nsStyleFilter);
+}
+
+bool
+nsStyleFilter::operator==(const nsStyleFilter& aOther) const
+{
+  if (mType != aOther.mType) {
+      return false;
+  }
+
+  if (mType == eURL) {
+    return EqualURIs(mURL, aOther.mURL);
+  } else if (mType != eNull) {
+    return mFilterParameter == aOther.mFilterParameter;
+  }
+
+  return true;
+}
+
+// --------------------
 // nsStyleSVGReset
 //
 nsStyleSVGReset::nsStyleSVGReset() 
@@ -986,7 +1053,6 @@ nsStyleSVGReset::nsStyleSVGReset()
     mFloodColor              = NS_RGB(0,0,0);
     mLightingColor           = NS_RGB(255,255,255);
     mClipPath                = nullptr;
-    mFilter                  = nullptr;
     mMask                    = nullptr;
     mStopOpacity             = 1.0f;
     mFloodOpacity            = 1.0f;
@@ -1007,7 +1073,7 @@ nsStyleSVGReset::nsStyleSVGReset(const nsStyleSVGReset& aSource)
   mFloodColor = aSource.mFloodColor;
   mLightingColor = aSource.mLightingColor;
   mClipPath = aSource.mClipPath;
-  mFilter = aSource.mFilter;
+  mFilters = aSource.mFilters;
   mMask = aSource.mMask;
   mStopOpacity = aSource.mStopOpacity;
   mFloodOpacity = aSource.mFloodOpacity;
@@ -1021,8 +1087,8 @@ nsChangeHint nsStyleSVGReset::CalcDifference(const nsStyleSVGReset& aOther) cons
   nsChangeHint hint = nsChangeHint(0);
 
   if (!EqualURIs(mClipPath, aOther.mClipPath) ||
-      !EqualURIs(mFilter, aOther.mFilter)     ||
-      !EqualURIs(mMask, aOther.mMask)) {
+      !EqualURIs(mMask, aOther.mMask) ||
+      mFilters != aOther.mFilters) {
     NS_UpdateHint(hint, nsChangeHint_UpdateEffects);
     NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
   }
@@ -1685,6 +1751,28 @@ nsStyleImage::IsComplete() const
   }
 }
 
+bool
+nsStyleImage::IsLoaded() const
+{
+  switch (mType) {
+    case eStyleImageType_Null:
+      return false;
+    case eStyleImageType_Gradient:
+    case eStyleImageType_Element:
+      return true;
+    case eStyleImageType_Image:
+    {
+      uint32_t status = imgIRequest::STATUS_ERROR;
+      return NS_SUCCEEDED(mImage->GetImageStatus(&status)) &&
+             !(status & imgIRequest::STATUS_ERROR) &&
+             (status & imgIRequest::STATUS_LOAD_COMPLETE);
+    }
+    default:
+      NS_NOTREACHED("unexpected image type");
+      return false;
+  }
+}
+
 static inline bool
 EqualRects(const nsStyleSides* aRect1, const nsStyleSides* aRect2)
 {
@@ -2013,12 +2101,12 @@ void nsTimingFunction::AssignFromKeyword(int32_t aTimingFunctionType)
       break;
   }
 
-  MOZ_STATIC_ASSERT(NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE == 0 &&
-                    NS_STYLE_TRANSITION_TIMING_FUNCTION_LINEAR == 1 &&
-                    NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_IN == 2 &&
-                    NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_OUT == 3 &&
-                    NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_IN_OUT == 4,
-                    "transition timing function constants not as expected");
+  static_assert(NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE == 0 &&
+                NS_STYLE_TRANSITION_TIMING_FUNCTION_LINEAR == 1 &&
+                NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_IN == 2 &&
+                NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_OUT == 3 &&
+                NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_IN_OUT == 4,
+                "transition timing function constants not as expected");
 
   static const float timingFunctionValues[5][4] = {
     { 0.25f, 0.10f, 0.25f, 1.00f }, // ease

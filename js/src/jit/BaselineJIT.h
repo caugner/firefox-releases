@@ -9,20 +9,21 @@
 
 #ifdef JS_ION
 
+#include "mozilla/MemoryReporting.h"
+
 #include "jscntxt.h"
 #include "jscompartment.h"
 
-#include "IonCode.h"
-#include "IonMacroAssembler.h"
-#include "Bailouts.h"
-
 #include "ds/LifoAlloc.h"
+#include "jit/Bailouts.h"
+#include "jit/IonCode.h"
+#include "jit/IonMacroAssembler.h"
 
 namespace js {
 namespace jit {
 
 class StackValue;
-struct ICEntry;
+class ICEntry;
 class ICStub;
 
 class PCMappingSlotInfo
@@ -157,7 +158,7 @@ struct BaselineScript
         return offsetof(BaselineScript, method_);
     }
 
-    void sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, size_t *data,
+    void sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, size_t *data,
                              size_t *fallbackStubs) const {
         *data = mallocSizeOf(this);
 
@@ -278,7 +279,7 @@ void
 FinishDiscardBaselineScript(FreeOp *fop, JSScript *script);
 
 void
-SizeOfBaselineData(JSScript *script, JSMallocSizeOfFun mallocSizeOf, size_t *data,
+SizeOfBaselineData(JSScript *script, mozilla::MallocSizeOf mallocSizeOf, size_t *data,
                    size_t *fallbackStubs);
 
 void

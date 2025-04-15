@@ -7,7 +7,7 @@
 #define SURFACE_TYPES_H_
 
 #include "mozilla/TypedEnum.h"
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 
 #include <cstring>
 
@@ -78,6 +78,7 @@ MOZ_BEGIN_ENUM_CLASS(SharedSurfaceType, uint8_t)
     DXGLInterop,
     DXGLInterop2,
     Gralloc,
+    IOSurface,
 
     Max
 MOZ_END_ENUM_CLASS(SharedSurfaceType)

@@ -5,24 +5,15 @@
 
 DOMCI_CLASS(Window)
 DOMCI_CLASS(Location)
-DOMCI_CLASS(Navigator)
-DOMCI_CLASS(Plugin)
-DOMCI_CLASS(PluginArray)
-DOMCI_CLASS(MimeType)
-DOMCI_CLASS(MimeTypeArray)
 DOMCI_CLASS(History)
 DOMCI_CLASS(DOMPrototype)
 DOMCI_CLASS(DOMConstructor)
 
 // Core classes
 DOMCI_CLASS(DOMException)
-DOMCI_CLASS(Element)
 
 DOMCI_CLASS(DeviceAcceleration)
 DOMCI_CLASS(DeviceRotationRate)
-
-// HTML element classes
-DOMCI_CLASS(HTMLFormElement)
 
 // CSS classes
 DOMCI_CLASS(CSSStyleRule)
@@ -54,10 +45,6 @@ DOMCI_CLASS(TreeContentView)
 #ifndef MOZ_DISABLE_CRYPTOLEGACY
 DOMCI_CLASS(CRMFObject)
 #endif
-DOMCI_CLASS(Crypto)
-
-// Rect object used by getComputedStyle
-DOMCI_CLASS(CSSRect)
 
 // DOM Chrome Window class, almost identical to Window
 DOMCI_CLASS(ChromeWindow)
@@ -78,9 +65,6 @@ DOMCI_CLASS(CSSMozDocumentRule)
 DOMCI_CLASS(CSSSupportsRule)
 
 // other SVG classes
-DOMCI_CLASS(SVGAnimatedEnumeration)
-DOMCI_CLASS(SVGAnimatedInteger)
-DOMCI_CLASS(SVGAnimatedNumber)
 DOMCI_CLASS(SVGLength)
 DOMCI_CLASS(SVGNumber)
 
@@ -107,13 +91,9 @@ DOMCI_CLASS(File)
 // DOM modal content window class, almost identical to Window
 DOMCI_CLASS(ModalContentWindow)
 
-// Geolocation
-DOMCI_CLASS(GeoPositionCoords)
-
 DOMCI_CLASS(MozPowerManager)
 DOMCI_CLASS(MozWakeLock)
 
-DOMCI_CLASS(MozSmsManager)
 DOMCI_CLASS(MozMobileMessageManager)
 DOMCI_CLASS(MozSmsMessage)
 DOMCI_CLASS(MozMmsMessage)
@@ -138,18 +118,7 @@ DOMCI_CLASS(ContentFrameMessageManager)
 DOMCI_CLASS(ChromeMessageBroadcaster)
 DOMCI_CLASS(ChromeMessageSender)
 
-DOMCI_CLASS(IDBFileHandle)
-DOMCI_CLASS(IDBRequest)
-DOMCI_CLASS(IDBDatabase)
-DOMCI_CLASS(IDBObjectStore)
-DOMCI_CLASS(IDBTransaction)
-DOMCI_CLASS(IDBCursor)
-DOMCI_CLASS(IDBCursorWithValue)
 DOMCI_CLASS(IDBKeyRange)
-DOMCI_CLASS(IDBIndex)
-DOMCI_CLASS(IDBOpenDBRequest)
-
-DOMCI_CLASS(TouchList)
 
 DOMCI_CLASS(MozCSSKeyframeRule)
 DOMCI_CLASS(MozCSSKeyframesRule)
@@ -184,3 +153,11 @@ DOMCI_CLASS(AsyncScrollEventDetail)
 DOMCI_CLASS(LockedFile)
 
 DOMCI_CLASS(CSSFontFeatureValuesRule)
+
+DOMCI_CLASS(UserDataHandler)
+DOMCI_CLASS(GeoPositionError)
+DOMCI_CLASS(LoadStatus)
+DOMCI_CLASS(XPathNamespace)
+DOMCI_CLASS(XULButtonElement)
+DOMCI_CLASS(XULCheckboxElement)
+DOMCI_CLASS(XULPopupElement)

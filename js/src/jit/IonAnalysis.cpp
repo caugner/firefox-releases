@@ -4,11 +4,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "IonBuilder.h"
-#include "MIRGraph.h"
-#include "Ion.h"
-#include "IonAnalysis.h"
-#include "LIR.h"
+#include "jit/IonAnalysis.h"
+
+#include "jsanalyze.h"
+
+#include "jit/Ion.h"
+#include "jit/IonBuilder.h"
+#include "jit/LIR.h"
+#include "jit/MIRGraph.h"
 
 using namespace js;
 using namespace js::jit;
@@ -321,7 +324,7 @@ jit::EliminatePhis(MIRGenerator *mir, MIRGraph &graph,
         }
 
         // The current phi is/was used, so all its operands are used.
-        for (size_t i = 0; i < phi->numOperands(); i++) {
+        for (size_t i = 0, e = phi->numOperands(); i < e; i++) {
             MDefinition *in = phi->getOperand(i);
             if (!in->isPhi() || !in->isUnused() || in->isInWorklist())
                 continue;
@@ -396,7 +399,7 @@ static MIRType
 GuessPhiType(MPhi *phi)
 {
     MIRType type = MIRType_None;
-    for (size_t i = 0; i < phi->numOperands(); i++) {
+    for (size_t i = 0, e = phi->numOperands(); i < e; i++) {
         MDefinition *in = phi->getOperand(i);
         if (in->isPhi()) {
             if (!in->toPhi()->triedToSpecialize())
@@ -413,6 +416,10 @@ GuessPhiType(MPhi *phi)
             continue;
         }
         if (type != in->type()) {
+            // Ignore operands which we've never observed.
+            if (in->resultTypeSet() && in->resultTypeSet()->empty())
+                continue;
+
             // Specialize phis with int32 and double operands as double.
             if (IsNumberType(type) && IsNumberType(in->type()))
                 type = MIRType_Double;
@@ -508,27 +515,49 @@ TypeAnalyzer::adjustPhiInputs(MPhi *phi)
 {
     MIRType phiType = phi->type();
 
-    if (phiType == MIRType_Double) {
-        // Convert int32 operands to double.
-        for (size_t i = 0; i < phi->numOperands(); i++) {
+    // If we specialized a type that's not Value, there are 3 cases:
+    // 1. Every input is of that type.
+    // 2. Every observed input is of that type (i.e., some inputs haven't been executed yet).
+    // 3. Inputs were doubles and int32s, and was specialized to double.
+    if (phiType != MIRType_Value) {
+        for (size_t i = 0, e = phi->numOperands(); i < e; i++) {
             MDefinition *in = phi->getOperand(i);
+            if (in->type() == phiType)
+                continue;
 
-            if (in->type() == MIRType_Int32) {
-                MToDouble *toDouble = MToDouble::New(in);
-                in->block()->insertBefore(in->block()->lastIns(), toDouble);
-                phi->replaceOperand(i, toDouble);
+            if (in->isBox() && in->toBox()->input()->type() == phiType) {
+                phi->replaceOperand(i, in->toBox()->input());
             } else {
-                JS_ASSERT(in->type() == MIRType_Double);
+                MInstruction *replacement;
+
+                if (phiType == MIRType_Double && in->type() == MIRType_Int32) {
+                    // Convert int32 operands to double.
+                    replacement = MToDouble::New(in);
+                } else {
+                    // If we know this branch will fail to convert to phiType,
+                    // insert a box that'll immediately fail in the fallible unbox
+                    // below.
+                    if (in->type() != MIRType_Value) {
+                        MBox *box = MBox::New(in);
+                        in->block()->insertBefore(in->block()->lastIns(), box);
+                        in = box;
+                    }
+
+                    // Be optimistic and insert unboxes when the operand is a
+                    // value.
+                    replacement = MUnbox::New(in, phiType, MUnbox::Fallible);
+                }
+
+                in->block()->insertBefore(in->block()->lastIns(), replacement);
+                phi->replaceOperand(i, replacement);
             }
         }
+
         return;
     }
 
-    if (phiType != MIRType_Value)
-        return;
-
     // Box every typed input.
-    for (size_t i = 0; i < phi->numOperands(); i++) {
+    for (size_t i = 0, e = phi->numOperands(); i < e; i++) {
         MDefinition *in = phi->getOperand(i);
         if (in->type() == MIRType_Value)
             continue;
@@ -570,8 +599,7 @@ TypeAnalyzer::replaceRedundantPhi(MPhi *phi)
         v = MagicValue(JS_OPTIMIZED_ARGUMENTS);
         break;
       default:
-        JS_NOT_REACHED("unexpected type");
-        return;
+        MOZ_ASSUME_UNREACHABLE("unexpected type");
     }
     MConstant *c = MConstant::New(v);
     // The instruction pass will insert the box
@@ -787,8 +815,9 @@ jit::BuildDominatorTree(MIRGraph &graph)
         block->setDomIndex(index);
 
         if (!worklist.append(block->immediatelyDominatedBlocksBegin(),
-                             block->immediatelyDominatedBlocksEnd()))
+                             block->immediatelyDominatedBlocksEnd())) {
             return false;
+        }
         index++;
     }
 
@@ -924,7 +953,7 @@ jit::AssertBasicGraphCoherency(MIRGraph &graph)
 
         // Assert that use chains are valid for this instruction.
         for (MInstructionIterator ins = block->begin(); ins != block->end(); ins++) {
-            for (uint32_t i = 0; i < ins->numOperands(); i++)
+            for (uint32_t i = 0, e = ins->numOperands(); i < e; i++)
                 JS_ASSERT(CheckOperandImpliesUse(*ins, ins->getOperand(i)));
         }
         for (MInstructionIterator ins = block->begin(); ins != block->end(); ins++) {
@@ -1358,8 +1387,9 @@ jit::EliminateRedundantChecks(MIRGraph &graph)
 
         // Add all immediate dominators to the front of the worklist.
         if (!worklist.append(block->immediatelyDominatedBlocksBegin(),
-                             block->immediatelyDominatedBlocksEnd()))
+                             block->immediatelyDominatedBlocksEnd())) {
             return false;
+        }
 
         for (MDefinitionIterator iter(block); iter; ) {
             bool eliminated = false;
@@ -1433,7 +1463,7 @@ jit::UnsplitEdges(LIRGraph *lir)
         // over-conservative, but we're attempting to keep everything in MIR
         // current as we modify the LIR, so only proceed if the MIR is simple.
         if (mirBlock->numPredecessors() == 0 || mirBlock->numSuccessors() != 1 ||
-            !mirBlock->resumePointsEmpty() || !mirBlock->begin()->isGoto())
+            !mirBlock->begin()->isGoto())
         {
             continue;
         }

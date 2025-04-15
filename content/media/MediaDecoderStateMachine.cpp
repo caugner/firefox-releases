@@ -10,7 +10,7 @@
 #endif
  
 #include "mozilla/DebugOnly.h"
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 #include "mozilla/Util.h"
 
 #include "MediaDecoderStateMachine.h"
@@ -618,6 +618,10 @@ void MediaDecoderStateMachine::SendStreamData()
 
   if (mState == DECODER_STATE_DECODING_METADATA)
     return;
+
+  if (!mDecoder->IsSameOriginMedia()) {
+    return;
+  }
 
   // If there's still an audio thread alive, then we can't send any stream
   // data yet since both SendStreamData and the audio thread want to be in
@@ -2044,8 +2048,11 @@ void MediaDecoderStateMachine::DecodeSeek()
     }
   }
   mDecoder->StartProgressUpdates();
-  if (mState == DECODER_STATE_SHUTDOWN)
+  if (mState == DECODER_STATE_DECODING_METADATA ||
+      mState == DECODER_STATE_DORMANT ||
+      mState == DECODER_STATE_SHUTDOWN) {
     return;
+  }
 
   // Try to decode another frame to detect if we're at the end...
   LOG(PR_LOG_DEBUG, ("%p Seek completed, mCurrentFrameTime=%lld\n",
@@ -2466,11 +2473,13 @@ void MediaDecoderStateMachine::AdvanceFrame()
     while (mRealTime || clock_time >= frame->mTime) {
       mVideoFrameEndTime = frame->mEndTime;
       currentFrame = frame;
-      LOG(PR_LOG_DEBUG, ("%p Decoder discarding video frame %lld", mDecoder.get(), frame->mTime));
 #ifdef PR_LOGGING
-      if (droppedFrames++) {
-        LOG(PR_LOG_DEBUG, ("%p Decoder discarding video frame %lld (%d so far)",
-              mDecoder.get(), frame->mTime, droppedFrames - 1));
+      if (!PR_GetEnv("MOZ_QUIET")) {
+        LOG(PR_LOG_DEBUG, ("%p Decoder discarding video frame %lld", mDecoder.get(), frame->mTime));
+        if (droppedFrames++) {
+          LOG(PR_LOG_DEBUG, ("%p Decoder discarding video frame %lld (%d so far)",
+            mDecoder.get(), frame->mTime, droppedFrames - 1));
+        }
       }
 #endif
       mReader->VideoQueue().PopFront();
@@ -2533,7 +2542,11 @@ void MediaDecoderStateMachine::AdvanceFrame()
       ScheduleStateMachine();
       return;
     }
-    mDecoder->GetFrameStatistics().NotifyPresentedFrame();
+    MediaDecoder::FrameStatistics& frameStats = mDecoder->GetFrameStatistics();
+    frameStats.NotifyPresentedFrame();
+    double frameDelay = double(clock_time - currentFrame->mTime) / USECS_PER_S;
+    NS_ASSERTION(frameDelay >= 0.0, "Frame should never be displayed early.");
+    frameStats.NotifyFrameDelay(frameDelay);
     remainingTime = currentFrame->mEndTime - clock_time;
     currentFrame = nullptr;
   }

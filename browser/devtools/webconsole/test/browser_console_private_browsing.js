@@ -15,6 +15,10 @@ function test()
   let privateWindow, privateBrowser, privateTab, privateContent;
   let hud, expectedMessages, nonPrivateMessage;
 
+  // This test is slightly more involved: it opens the web console twice,
+  // a new private window once, and the browser console twice. We can get
+  // a timeout with debug builds on slower machines.
+  requestLongerTimeout(2);
   start();
 
   function start()
@@ -128,7 +132,7 @@ function test()
     info("testBrowserConsole()");
     closeConsole(privateTab, () => {
       info("web console closed");
-      privateWindow.HUDConsoleUI.toggleBrowserConsole().then(onBrowserConsoleOpen);
+      privateWindow.HUDService.toggleBrowserConsole().then(onBrowserConsoleOpen);
     });
   }
 
@@ -167,10 +171,10 @@ function test()
       checkNoPrivateMessages();
 
       info("close the browser console");
-      privateWindow.HUDConsoleUI.toggleBrowserConsole().then(() => {
+      privateWindow.HUDService.toggleBrowserConsole().then(() => {
         info("reopen the browser console");
         executeSoon(() =>
-          HUDConsoleUI.toggleBrowserConsole().then(onBrowserConsoleReopen));
+          HUDService.toggleBrowserConsole().then(onBrowserConsoleReopen));
       });
     });
     privateWindow.BrowserTryToCloseWindow();

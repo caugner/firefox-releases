@@ -4,10 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "UnreachableCodeElimination.h"
-#include "IonAnalysis.h"
-#include "AliasAnalysis.h"
-#include "ValueNumbering.h"
+#include "jit/UnreachableCodeElimination.h"
+
+#include "jit/AliasAnalysis.h"
+#include "jit/IonAnalysis.h"
+#include "jit/ValueNumbering.h"
 
 using namespace js;
 using namespace jit;

@@ -260,6 +260,7 @@ protected:
   SetBuffer(gfxASurface* aBuffer,
             const nsIntRect& aBufferRect, const nsIntPoint& aBufferRotation)
   {
+    MOZ_ASSERT(!SupportsAzureContent());
     nsRefPtr<gfxASurface> tmp = mBuffer.forget();
     mBuffer = aBuffer;
     mBufferRect = aBufferRect;
@@ -286,7 +287,7 @@ protected:
    * unset the provider when inactive, by calling
    * SetBufferProvider(nullptr).
    */
-  void SetBufferProvider(TextureClient* aClient)
+  void SetBufferProvider(DeprecatedTextureClient* aClient)
   {
     // Only this buffer provider can give us a buffer.  If we
     // already have one, something has gone wrong.
@@ -299,7 +300,7 @@ protected:
     } 
   }
   
-  void SetBufferProviderOnWhite(TextureClient* aClient)
+  void SetBufferProviderOnWhite(DeprecatedTextureClient* aClient)
   {
     // Only this buffer provider can give us a buffer.  If we
     // already have one, something has gone wrong.
@@ -350,8 +351,8 @@ protected:
    * when we're using surfaces that require explicit map/unmap. Only one
    * may be used at a time.
    */
-  TextureClient* mBufferProvider;
-  TextureClient* mBufferProviderOnWhite;
+  DeprecatedTextureClient* mBufferProvider;
+  DeprecatedTextureClient* mBufferProviderOnWhite;
 
   BufferSizePolicy      mBufferSizePolicy;
 };

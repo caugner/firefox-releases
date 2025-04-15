@@ -183,7 +183,7 @@ OpusTrackEncoder::GetHeader(nsTArray<uint8_t>* aOutput)
     }
   }
 
-  if (mCanceled) {
+  if (mCanceled || mDoneEncoding) {
     return NS_ERROR_FAILURE;
   }
 
@@ -220,8 +220,7 @@ OpusTrackEncoder::GetHeader(nsTArray<uint8_t>* aOutput)
     // No more headers.
     break;
   default:
-    MOZ_NOT_REACHED("Invalid state");
-    break;
+    MOZ_CRASH("Invalid state");
   }
   return NS_OK;
 }
@@ -243,7 +242,7 @@ OpusTrackEncoder::GetEncodedTrack(nsTArray<uint8_t>* aOutput,
       mReentrantMonitor.Wait();
     }
 
-    if (mCanceled) {
+    if (mCanceled || mDoneEncoding) {
       return NS_ERROR_FAILURE;
     }
 

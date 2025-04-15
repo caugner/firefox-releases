@@ -86,6 +86,7 @@ LayerManagerComposite::ClearCachedResources(Layer* aSubtree)
 LayerManagerComposite::LayerManagerComposite(Compositor* aCompositor)
 : mCompositor(aCompositor)
 {
+  MOZ_ASSERT(aCompositor);
 }
 
 LayerManagerComposite::~LayerManagerComposite()
@@ -258,6 +259,41 @@ LayerManagerComposite::RootLayer() const
   return static_cast<LayerComposite*>(mRoot->ImplData());
 }
 
+static uint16_t sFrameCount = 0;
+void
+LayerManagerComposite::RenderDebugOverlay(const Rect& aBounds)
+{
+  if (!gfxPlatform::DrawFrameCounter()) {
+    return;
+  }
+
+  profiler_set_frame_number(sFrameCount);
+
+  uint16_t frameNumber = sFrameCount;
+  const uint16_t bitWidth = 3;
+  float opacity = 1.0;
+  gfx::Rect clip(0,0, bitWidth*16, bitWidth);
+  for (size_t i = 0; i < 16; i++) {
+
+    gfx::Color bitColor;
+    if ((frameNumber >> i) & 0x1) {
+      bitColor = gfx::Color(0, 0, 0, 1.0);
+    } else {
+      bitColor = gfx::Color(1.0, 1.0, 1.0, 1.0);
+    }
+    EffectChain effects;
+    effects.mPrimaryEffect = new EffectSolidColor(bitColor);
+    mCompositor->DrawQuad(gfx::Rect(bitWidth*i, 0, bitWidth, bitWidth),
+                          clip,
+                          effects,
+                          opacity,
+                          gfx::Matrix4x4(),
+                          gfx::Point());
+  }
+  // We intentionally overflow at 2^16.
+  sFrameCount++;
+}
+
 void
 LayerManagerComposite::Render()
 {
@@ -307,6 +343,9 @@ LayerManagerComposite::Render()
                                                               actualBounds.y,
                                                               actualBounds.width,
                                                               actualBounds.height));
+
+  // Debugging
+  RenderDebugOverlay(actualBounds);
 
   mCompositor->EndFrame();
 }
@@ -422,17 +461,6 @@ LayerManagerComposite::ComputeRenderIntegrityInternal(Layer* aLayer,
   }
 }
 
-static int
-GetRegionArea(const nsIntRegion& aRegion)
-{
-  int area = 0;
-  nsIntRegionRectIterator it(aRegion);
-  while (const nsIntRect* rect = it.Next()) {
-    area += rect->width * rect->height;
-  }
-  return area;
-}
-
 #ifdef MOZ_ANDROID_OMTC
 static float
 GetDisplayportCoverage(const CSSRect& aDisplayPort,
@@ -452,7 +480,7 @@ GetDisplayportCoverage(const CSSRect& aDisplayPort,
   if (!displayport.Contains(aScreenRect)) {
     nsIntRegion coveredRegion;
     coveredRegion.And(aScreenRect, displayport);
-    return GetRegionArea(coveredRegion) / (float)(aScreenRect.width * aScreenRect.height);
+    return coveredRegion.Area() / (float)(aScreenRect.width * aScreenRect.height);
   }
 
   return 1.0f;
@@ -544,10 +572,10 @@ LayerManagerComposite::ComputeRenderIntegrity()
     // Calculate the area of the region. All rects in an nsRegion are
     // non-overlapping.
     float screenArea = screenRect.width * screenRect.height;
-    float highPrecisionIntegrity = GetRegionArea(screenRegion) / screenArea;
+    float highPrecisionIntegrity = screenRegion.Area() / screenArea;
     float lowPrecisionIntegrity = 1.f;
     if (!lowPrecisionScreenRegion.IsEqual(screenRect)) {
-      lowPrecisionIntegrity = GetRegionArea(lowPrecisionScreenRegion) / screenArea;
+      lowPrecisionIntegrity = lowPrecisionScreenRegion.Area() / screenArea;
     }
 
     return ((highPrecisionIntegrity * highPrecisionMultiplier) +
@@ -632,6 +660,21 @@ LayerManagerComposite::AddMaskEffect(Layer* aMaskLayer, EffectChain& aEffects, b
   gfx::Matrix4x4 transform;
   ToMatrix4x4(aMaskLayer->GetEffectiveTransform(), transform);
   return maskLayerComposite->GetCompositableHost()->AddMaskEffect(aEffects, transform, aIs3D);
+}
+
+/* static */ void
+LayerManagerComposite::RemoveMaskEffect(Layer* aMaskLayer)
+{
+  if (!aMaskLayer) {
+    return;
+  }
+  LayerComposite* maskLayerComposite = static_cast<LayerComposite*>(aMaskLayer->ImplData());
+  if (!maskLayerComposite->GetCompositableHost()) {
+    NS_WARNING("Mask layer with no compositable host");
+    return;
+  }
+
+  maskLayerComposite->GetCompositableHost()->RemoveMaskEffect();
 }
 
 TemporaryRef<DrawTarget>

@@ -242,15 +242,20 @@ public:
    * Return an accessible for the given DOM node or container accessible if
    * the node is not accessible.
    */
-  Accessible* GetAccessibleOrContainer(nsINode* aNode);
+  Accessible* GetAccessibleOrContainer(nsINode* aNode) const;
 
   /**
    * Return a container accessible for the given DOM node.
    */
-  Accessible* GetContainerAccessible(nsINode* aNode)
+  Accessible* GetContainerAccessible(nsINode* aNode) const
   {
     return aNode ? GetAccessibleOrContainer(aNode->GetParentNode()) : nullptr;
   }
+
+  /**
+   * Return an accessible for the given node or its first accessible descendant.
+   */
+  Accessible* GetAccessibleOrDescendant(nsINode* aNode) const;
 
   /**
    * Return true if the given ID is referred by relation attribute.
@@ -444,8 +449,13 @@ protected:
 
   /**
    * Create accessible tree.
+   *
+   * @param aRoot       [in] a root of subtree to create
+   * @param aFocusedAcc [in, optional] a focused accessible under created
+   *                      subtree if any
    */
-  void CacheChildrenInSubtree(Accessible* aRoot);
+  void CacheChildrenInSubtree(Accessible* aRoot,
+                              Accessible** aFocusedAcc = nullptr);
 
   /**
    * Remove accessibles in subtree from node to accessible map.

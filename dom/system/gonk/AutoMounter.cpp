@@ -18,6 +18,7 @@
 #include <android/log.h>
 
 #include "AutoMounter.h"
+#include "nsVolumeService.h"
 #include "AutoMounterSetting.h"
 #include "base/message_loop.h"
 #include "mozilla/FileUtils.h"
@@ -28,6 +29,7 @@
 #include "nsString.h"
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
+#include "OpenFileFinder.h"
 #include "Volume.h"
 #include "VolumeManager.h"
 
@@ -71,8 +73,9 @@ using namespace mozilla::hal;
 #define USE_DEBUG 0
 
 #undef LOG
-#define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "AutoMounter" , ## args)
-#define ERR(args...)  __android_log_print(ANDROID_LOG_ERROR, "AutoMounter" , ## args)
+#define LOG(args...)  __android_log_print(ANDROID_LOG_INFO,  "AutoMounter", ## args)
+#define LOGW(args...) __android_log_print(ANDROID_LOG_WARN,  "AutoMounter", ## args)
+#define ERR(args...)  __android_log_print(ANDROID_LOG_ERROR, "AutoMounter", ## args)
 
 #if USE_DEBUG
 #define DBG(args...)  __android_log_print(ANDROID_LOG_DEBUG, "AutoMounter" , ## args)
@@ -402,19 +405,50 @@ AutoMounter::UpdateState()
           if (vol->IsMountLocked()) {
             // The volume is currently locked, so leave it in the mounted
             // state.
-            DBG("UpdateState: Mounted volume %s is locked, leaving",
-                vol->NameStr());
+            LOGW("UpdateState: Mounted volume %s is locked, not sharing",
+                 vol->NameStr());
             break;
           }
+
+          // Check to see if there are any open files on the volume and
+          // don't initiate the unmount while there are open files.
+          OpenFileFinder::Info fileInfo;
+          OpenFileFinder fileFinder(vol->MountPoint());
+          if (fileFinder.First(&fileInfo)) {
+            LOGW("The following files are open under '%s'",
+                 vol->MountPoint().get());
+            do {
+              LOGW("  PID: %d file: '%s' app: '%s' comm: '%s' exe: '%s'\n",
+                   fileInfo.mPid,
+                   fileInfo.mFileName.get(),
+                   fileInfo.mAppName.get(),
+                   fileInfo.mComm.get(),
+                   fileInfo.mExe.get());
+            } while (fileFinder.Next(&fileInfo));
+            LOGW("UpdateState: Mounted volume %s has open files, not sharing",
+                 vol->NameStr());
+
+            // Check again in 5 seconds to see if the files are closed. Since
+            // we're trying to share the volume, this implies that we're
+            // plugged into the PC via USB and this in turn implies that the
+            // battery is charging, so we don't need to be too concerned about
+            // wasting battery here.
+            MessageLoopForIO::current()->
+              PostDelayedTask(FROM_HERE,
+                              NewRunnableMethod(this, &AutoMounter::UpdateState),
+                              5000);
+            break;
+          }
+
           // Volume is mounted, we need to unmount before
           // we can share.
-          DBG("UpdateState: Unmounting %s", vol->NameStr());
+          LOG("UpdateState: Unmounting %s", vol->NameStr());
           vol->StartUnmount(mResponseCallback);
           return; // UpdateState will be called again when the Unmount command completes
         }
         case nsIVolume::STATE_IDLE: {
           // Volume is unmounted. We can go ahead and share.
-          DBG("UpdateState: Sharing %s", vol->NameStr());
+          LOG("UpdateState: Sharing %s", vol->NameStr());
           vol->StartShare(mResponseCallback);
           return; // UpdateState will be called again when the Share command completes
         }
@@ -428,14 +462,14 @@ AutoMounter::UpdateState()
       switch (volState) {
         case nsIVolume::STATE_SHARED: {
           // Volume is shared. We can go ahead and unshare.
-          DBG("UpdateState: Unsharing %s", vol->NameStr());
+          LOG("UpdateState: Unsharing %s", vol->NameStr());
           vol->StartUnshare(mResponseCallback);
           return; // UpdateState will be called again when the Unshare command completes
         }
         case nsIVolume::STATE_IDLE: {
           // Volume is unmounted, try to mount.
 
-          DBG("UpdateState: Mounting %s", vol->NameStr());
+          LOG("UpdateState: Mounting %s", vol->NameStr());
           vol->StartMount(mResponseCallback);
           return; // UpdateState will be called again when Mount command completes
         }
@@ -534,9 +568,68 @@ public:
 static StaticRefPtr<UsbCableObserver> sUsbCableObserver;
 static StaticRefPtr<AutoMounterSetting> sAutoMounterSetting;
 
+static void
+InitVolumeConfig()
+{
+  // This function uses /system/etc/volume.cfg to add additional volumes
+  // to the Volume Manager.
+  //
+  // This is useful on devices like the Nexus 4, which have no physical sd card
+  // or dedicated partition.
+  //
+  // The format of the volume.cfg file is as follows:
+  // create volume-name mount-point
+  // Blank lines and lines starting with the hash character "#" will be ignored.
+
+  nsCOMPtr<nsIVolumeService> vs = do_GetService(NS_VOLUMESERVICE_CONTRACTID);
+  NS_ENSURE_TRUE_VOID(vs);
+
+  ScopedCloseFile fp;
+  int n = 0;
+  char line[255];
+  char *command, *vol_name_cstr, *mount_point_cstr, *save_ptr;
+  const char *filename = "/system/etc/volume.cfg";
+  if (!(fp = fopen(filename, "r"))) {
+    LOG("Unable to open volume configuration file '%s' - ignoring", filename);
+    return;
+  }
+  while(fgets(line, sizeof(line), fp)) {
+    char *delim = " \t\n";
+    n++;
+
+    if (line[0] == '#')
+      continue;
+    if (!(command = strtok_r(line, delim, &save_ptr))) {
+      // Blank line - ignore
+      continue;
+    }
+    if (!strcmp(command, "create")) {
+      if (!(vol_name_cstr = strtok_r(NULL, delim, &save_ptr))) {
+        ERR("No vol_name in %s line %d",  filename, n);
+        continue;
+      }
+      if (!(mount_point_cstr = strtok_r(NULL, delim, &save_ptr))) {
+        ERR("No mount point for volume '%s'. %s line %d", vol_name_cstr, filename, n);
+        continue;
+      }
+      nsString  mount_point = NS_ConvertUTF8toUTF16(mount_point_cstr);
+      nsString vol_name = NS_ConvertUTF8toUTF16(vol_name_cstr);
+      nsresult rv;
+      rv = vs->CreateFakeVolume(vol_name, mount_point);
+      NS_ENSURE_SUCCESS_VOID(rv);
+      rv = vs->SetFakeVolumeState(vol_name, nsIVolume::STATE_MOUNTED);
+      NS_ENSURE_SUCCESS_VOID(rv);
+    }
+    else {
+      ERR("Unrecognized command: '%s'", command);
+    }
+  }
+}
+
 void
 InitAutoMounter()
 {
+  InitVolumeConfig();
   InitVolumeManager();
   sAutoMounterSetting = new AutoMounterSetting();
 

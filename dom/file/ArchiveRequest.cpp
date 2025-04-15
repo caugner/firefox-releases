@@ -11,7 +11,6 @@
 #include "nsCxPusher.h"
 #include "nsLayoutStatics.h"
 #include "nsEventDispatcher.h"
-#include "nsDOMClassInfoID.h"
 
 USING_FILE_NAMESPACE
 
@@ -223,7 +222,7 @@ ArchiveRequest::GetFileResult(JSContext* aCx,
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (filename == mFilename) {
-      JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForScopeChain(aCx));
+      JS::Rooted<JSObject*> global(aCx, JS::CurrentGlobalOrNull(aCx));
       return nsContentUtils::WrapNative(aCx, global, file,
                                         &NS_GET_IID(nsIDOMFile), aValue);
     }
@@ -246,7 +245,7 @@ ArchiveRequest::GetFilesResult(JSContext* aCx,
     nsCOMPtr<nsIDOMFile> file = aFileList[i];
 
     JS::Rooted<JS::Value> value(aCx);
-    JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForScopeChain(aCx));
+    JS::Rooted<JSObject*> global(aCx, JS::CurrentGlobalOrNull(aCx));
     nsresult rv = nsContentUtils::WrapNative(aCx, global, file,
                                              &NS_GET_IID(nsIDOMFile),
                                              value.address());
@@ -279,5 +278,3 @@ NS_INTERFACE_MAP_END_INHERITING(DOMRequest)
 
 NS_IMPL_ADDREF_INHERITED(ArchiveRequest, DOMRequest)
 NS_IMPL_RELEASE_INHERITED(ArchiveRequest, DOMRequest)
-
-DOMCI_DATA(ArchiveRequest, ArchiveRequest)

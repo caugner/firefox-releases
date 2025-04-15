@@ -1,12 +1,13 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Template-based metaprogramming and type-testing facilities. */
 
-#ifndef mozilla_TypeTraits_h_
-#define mozilla_TypeTraits_h_
+#ifndef mozilla_TypeTraits_h
+#define mozilla_TypeTraits_h
 
 /*
  * These traits are approximate copies of the traits and semantics from C++11's
@@ -125,6 +126,28 @@ struct IsPointer : FalseType {};
 
 template<typename T>
 struct IsPointer<T*> : TrueType {};
+
+namespace detail {
+
+// __is_enum is a supported extension across all of our supported compilers.
+template<typename T>
+struct IsEnumHelper
+  : IntegralConstant<bool, __is_enum(T)>
+{};
+
+} // namespace detail
+
+/**
+ * IsEnum determines whether a type is an enum type.
+ *
+ * mozilla::IsEnum<enum S>::value is true;
+ * mozilla::IsEnum<enum S*>::value is false;
+ * mozilla::IsEnum<int>::value is false;
+ */
+template<typename T>
+struct IsEnum
+  : detail::IsEnumHelper<typename RemoveCV<T>::Type>
+{};
 
 /* 20.9.4.2 Composite type traits [meta.unary.comp] */
 
@@ -665,4 +688,4 @@ struct Conditional<false, A, B>
 
 } /* namespace mozilla */
 
-#endif  /* mozilla_TypeTraits_h_ */
+#endif /* mozilla_TypeTraits_h */

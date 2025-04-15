@@ -5,20 +5,25 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jscompartment.h"
-#include "assembler/assembler/MacroAssembler.h"
-#include "jit/IonCompartment.h"
-#include "jit/IonLinker.h"
-#include "jit/IonFrames.h"
-#include "jit/Bailouts.h"
-#include "jit/VMFunctions.h"
-#include "jit/IonSpewer.h"
-#include "jit/x64/BaselineHelpers-x64.h"
-#include "jit/ExecutionModeInlines.h"
 
-#include "jsscriptinlines.h"
+#include "assembler/assembler/MacroAssembler.h"
+#include "jit/Bailouts.h"
+#include "jit/ExecutionModeInlines.h"
+#include "jit/IonCompartment.h"
+#include "jit/IonFrames.h"
+#include "jit/IonLinker.h"
+#include "jit/IonSpewer.h"
+#include "jit/VMFunctions.h"
+#include "jit/x64/BaselineHelpers-x64.h"
 
 using namespace js;
 using namespace js::jit;
+
+// All registers to save and restore. This includes the stack pointer, since we
+// use the ability to reference register values on the stack by index.
+static const RegisterSet AllRegs =
+  RegisterSet(GeneralRegisterSet(Registers::AllMask),
+              FloatRegisterSet(FloatRegisters::AllMask));
 
 /* This method generates a trampoline on x64 for a c++ function with
  * the following signature:
@@ -201,7 +206,7 @@ IonRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
         Label error;
         masm.addPtr(Imm32(IonExitFrameLayout::SizeWithFooter()), rsp);
         masm.addPtr(Imm32(BaselineFrame::Size()), framePtr);
-        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &error);
+        masm.branchIfFalseBool(ReturnReg, &error);
 
         masm.jump(reg_code);
 
@@ -282,15 +287,7 @@ IonRuntime::generateInvalidator(JSContext *cx)
     masm.addq(Imm32(sizeof(uintptr_t)), rsp);
 
     // Push registers such that we can access them from [base + code].
-    for (uint32_t i = Registers::Total; i > 0; ) {
-        i--;
-        masm.Push(Register::FromCode(i));
-    }
-
-    // Push xmm registers, such that we can access them from [base + code].
-    masm.reserveStack(FloatRegisters::Total * sizeof(double));
-    for (uint32_t i = 0; i < FloatRegisters::Total; i++)
-        masm.movsd(FloatRegister::FromCode(i), Operand(rsp, i * sizeof(double)));
+    masm.PushRegsInMask(AllRegs);
 
     masm.movq(rsp, rax); // Argument to jit::InvalidationBailout.
 
@@ -314,7 +311,9 @@ IonRuntime::generateInvalidator(JSContext *cx)
     // Pop the machine state and the dead frame.
     masm.lea(Operand(rsp, rbx, TimesOne, sizeof(InvalidationBailoutStack)), rsp);
 
-    masm.generateBailoutTail(rdx, r9);
+    // Jump to shared bailout tail. The BailoutInfo pointer has to be in r9.
+    IonCode *bailoutTail = cx->runtime()->ionRuntime()->getBailoutTail();
+    masm.jmp(bailoutTail);
 
     Linker linker(masm);
     return linker.newCode(cx, JSC::OTHER_CODE);
@@ -383,7 +382,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 
     // Construct IonJSFrameLayout.
     masm.push(rdx); // numActualArgs
-    masm.push(rax); // calleeToken
+    masm.pushCalleeToken(rax, mode);
     masm.push(r9); // descriptor
 
     // Call the target function.
@@ -416,15 +415,7 @@ static void
 GenerateBailoutThunk(JSContext *cx, MacroAssembler &masm, uint32_t frameClass)
 {
     // Push registers such that we can access them from [base + code].
-    for (uint32_t i = Registers::Total; i > 0; ) {
-        i--;
-        masm.Push(Register::FromCode(i));
-    }
-
-    // Push xmm registers, such that we can access them from [base + code].
-    masm.reserveStack(FloatRegisters::Total * sizeof(double));
-    for (uint32_t i = 0; i < FloatRegisters::Total; i++)
-        masm.movsd(FloatRegister::FromCode(i), Operand(rsp, i * sizeof(double)));
+    masm.PushRegsInMask(AllRegs);
 
     // Get the stack pointer into a register, pre-alignment.
     masm.movq(rsp, r8);
@@ -454,14 +445,15 @@ GenerateBailoutThunk(JSContext *cx, MacroAssembler &masm, uint32_t frameClass)
     masm.pop(rcx);
     masm.lea(Operand(rsp, rcx, TimesOne, sizeof(void *)), rsp);
 
-    masm.generateBailoutTail(rdx, r9);
+    // Jump to shared bailout tail. The BailoutInfo pointer has to be in r9.
+    IonCode *bailoutTail = cx->runtime()->ionRuntime()->getBailoutTail();
+    masm.jmp(bailoutTail);
 }
 
 IonCode *
 IonRuntime::generateBailoutTable(JSContext *cx, uint32_t frameClass)
 {
-    JS_NOT_REACHED("x64 does not use bailout tables");
-    return NULL;
+    MOZ_ASSUME_UNREACHABLE("x64 does not use bailout tables");
 }
 
 IonCode *
@@ -533,8 +525,15 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         break;
 
       case Type_Int32:
+      case Type_Bool:
         outReg = regs.takeAny();
         masm.reserveStack(sizeof(int32_t));
+        masm.movq(esp, outReg);
+        break;
+
+      case Type_Double:
+        outReg = regs.takeAny();
+        masm.reserveStack(sizeof(double));
         masm.movq(esp, outReg);
         break;
 
@@ -572,8 +571,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
                 break;
               case VMFunction::DoubleByValue:
               case VMFunction::DoubleByRef:
-                JS_NOT_REACHED("NYI: x64 callVM should not be used with 128bits values.");
-                break;
+                MOZ_ASSUME_UNREACHABLE("NYI: x64 callVM should not be used with 128bits values.");
             }
         }
     }
@@ -598,8 +596,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         masm.branchPtr(Assembler::NotEqual, rax, Imm32(TP_SUCCESS), &failure);
         break;
       default:
-        JS_NOT_REACHED("unknown failure kind");
-        break;
+        MOZ_ASSUME_UNREACHABLE("unknown failure kind");
     }
 
     // Load the outparam and free any allocated stack.
@@ -616,6 +613,17 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
       case Type_Int32:
         masm.load32(Address(esp, 0), ReturnReg);
         masm.freeStack(sizeof(int32_t));
+        break;
+
+      case Type_Bool:
+        masm.load8ZeroExtend(Address(esp, 0), ReturnReg);
+        masm.freeStack(sizeof(int32_t));
+        break;
+
+      case Type_Double:
+        JS_ASSERT(cx->runtime()->jitSupportsFloatingPoint);
+        masm.loadDouble(Address(esp, 0), ReturnFloatReg);
+        masm.freeStack(sizeof(double));
         break;
 
       case Type_Pointer:
@@ -677,7 +685,7 @@ IonRuntime::generatePreBarrier(JSContext *cx, MIRType type)
     return linker.newCode(cx, JSC::OTHER_CODE);
 }
 
-typedef bool (*HandleDebugTrapFn)(JSContext *, BaselineFrame *, uint8_t *, JSBool *);
+typedef bool (*HandleDebugTrapFn)(JSContext *, BaselineFrame *, uint8_t *, bool *);
 static const VMFunction HandleDebugTrapInfo = FunctionInfo<HandleDebugTrapFn>(HandleDebugTrap);
 
 IonCode *
@@ -702,8 +710,7 @@ IonRuntime::generateDebugTrapHandler(JSContext *cx)
     masm.movePtr(ImmWord((void *)NULL), BaselineStubReg);
     EmitEnterStubFrame(masm, scratch3);
 
-    IonCompartment *ion = cx->compartment()->ionCompartment();
-    IonCode *code = ion->getVMWrapper(HandleDebugTrapInfo);
+    IonCode *code = cx->runtime()->ionRuntime()->getVMWrapper(HandleDebugTrapInfo);
     if (!code)
         return NULL;
 
@@ -726,6 +733,28 @@ IonRuntime::generateDebugTrapHandler(JSContext *cx)
     masm.mov(rbp, rsp);
     masm.pop(rbp);
     masm.ret();
+
+    Linker linker(masm);
+    return linker.newCode(cx, JSC::OTHER_CODE);
+}
+
+IonCode *
+IonRuntime::generateExceptionTailStub(JSContext *cx)
+{
+    MacroAssembler masm;
+
+    masm.handleFailureWithHandlerTail();
+
+    Linker linker(masm);
+    return linker.newCode(cx, JSC::OTHER_CODE);
+}
+
+IonCode *
+IonRuntime::generateBailoutTailStub(JSContext *cx)
+{
+    MacroAssembler masm;
+
+    masm.generateBailoutTail(rdx, r9);
 
     Linker linker(masm);
     return linker.newCode(cx, JSC::OTHER_CODE);

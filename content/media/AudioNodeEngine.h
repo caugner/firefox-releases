@@ -15,6 +15,7 @@ namespace mozilla {
 
 namespace dom {
 struct ThreeDPoint;
+class DelayNodeEngine;
 }
 
 class AudioNodeStream;
@@ -88,6 +89,14 @@ void AllocateAudioBlock(uint32_t aChannelCount, AudioChunk* aChunk);
 void WriteZeroesToAudioBlock(AudioChunk* aChunk, uint32_t aStart, uint32_t aLength);
 
 /**
+ * Copy with scale. aScale == 1.0f should be optimized.
+ */
+void AudioBufferCopyWithScale(const float* aInput,
+                              float aScale,
+                              float* aOutput,
+                              uint32_t aSize);
+
+/**
  * Pointwise multiply-add operation. aScale == 1.0f should be optimized.
  */
 void AudioBufferAddWithScale(const float* aInput,
@@ -125,6 +134,11 @@ void BufferComplexMultiply(const float* aInput,
                            const float* aScale,
                            float* aOutput,
                            uint32_t aSize);
+
+/**
+ * Vector maximum element magnitude ( max(abs(aInput)) ).
+ */
+float AudioBufferPeakValue(const float* aInput, uint32_t aSize);
 
 /**
  * In place gain. aScale == 1.0f should be optimized.
@@ -192,6 +206,8 @@ public:
     MOZ_ASSERT(!mNode, "The node reference must be already cleared");
     MOZ_COUNT_DTOR(AudioNodeEngine);
   }
+
+  virtual dom::DelayNodeEngine* AsDelayNodeEngine() { return nullptr; }
 
   virtual void SetStreamTimeParameter(uint32_t aIndex, TrackTicks aParam)
   {

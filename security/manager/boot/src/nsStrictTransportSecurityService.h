@@ -17,6 +17,7 @@
 #include "nsIURI.h"
 #include "nsString.h"
 #include "nsTHashtable.h"
+#include "prtime.h"
 
 // {16955eee-6c48-4152-9309-c42a465138a1}
 #define NS_STRICT_TRANSPORT_SECURITY_CID \
@@ -124,7 +125,7 @@ class nsStrictTransportSecurityService : public nsIStrictTransportSecurityServic
                                        , public nsIObserver
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIOBSERVER
   NS_DECL_NSISTRICTTRANSPORTSECURITYSERVICE
 

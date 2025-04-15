@@ -10,35 +10,6 @@
 "use strict";
 
 ////////////////////////////////////////////////////////////////////////////////
-//// Globals
-
-/**
- * Returns a new DownloadList object.
- *
- * @return {Promise}
- * @resolves The newly created DownloadList object.
- * @rejects JavaScript exception.
- */
-function promiseNewDownloadList() {
-  // Force the creation of a new public download list.
-  Downloads._publicDownloadList = null;
-  return Downloads.getPublicDownloadList();
-}
-
-/**
- * Returns a new private DownloadList object.
- *
- * @return {Promise}
- * @resolves The newly created DownloadList object.
- * @rejects JavaScript exception.
- */
-function promiseNewPrivateDownloadList() {
-  // Force the creation of a new public download list.
-  Downloads._privateDownloadList = null;
-  return Downloads.getPrivateDownloadList();
-}
-
-////////////////////////////////////////////////////////////////////////////////
 //// Tests
 
 /**
@@ -63,14 +34,14 @@ add_task(function test_add_getAll()
 {
   let list = yield promiseNewDownloadList();
 
-  let downloadOne = yield promiseSimpleDownload();
+  let downloadOne = yield promiseNewDownload();
   list.add(downloadOne);
 
   let itemsOne = yield list.getAll();
   do_check_eq(itemsOne.length, 1);
   do_check_eq(itemsOne[0], downloadOne);
 
-  let downloadTwo = yield promiseSimpleDownload();
+  let downloadTwo = yield promiseNewDownload();
   list.add(downloadTwo);
 
   let itemsTwo = yield list.getAll();
@@ -89,14 +60,14 @@ add_task(function test_remove()
 {
   let list = yield promiseNewDownloadList();
 
-  list.add(yield promiseSimpleDownload());
-  list.add(yield promiseSimpleDownload());
+  list.add(yield promiseNewDownload());
+  list.add(yield promiseNewDownload());
 
   let items = yield list.getAll();
   list.remove(items[0]);
 
   // Removing an item that was never added should not raise an error.
-  list.remove(yield promiseSimpleDownload());
+  list.remove(yield promiseNewDownload());
 
   items = yield list.getAll();
   do_check_eq(items.length, 1);
@@ -110,8 +81,8 @@ add_task(function test_notifications_add_remove()
 {
   let list = yield promiseNewDownloadList();
 
-  let downloadOne = yield promiseSimpleDownload();
-  let downloadTwo = yield promiseSimpleDownload();
+  let downloadOne = yield promiseNewDownload();
+  let downloadTwo = yield promiseNewDownload();
   list.add(downloadOne);
   list.add(downloadTwo);
 
@@ -132,7 +103,7 @@ add_task(function test_notifications_add_remove()
   do_check_eq(addNotifications, 2);
 
   // Check that we receive add notifications for new elements.
-  list.add(yield promiseSimpleDownload());
+  list.add(yield promiseNewDownload());
   do_check_eq(addNotifications, 3);
 
   // Check that we receive remove notifications.
@@ -154,7 +125,7 @@ add_task(function test_notifications_add_remove()
 
   // We should not receive add notifications after the view is removed.
   list.removeView(viewOne);
-  list.add(yield promiseSimpleDownload());
+  list.add(yield promiseNewDownload());
   do_check_eq(addNotifications, 3);
 });
 
@@ -165,8 +136,8 @@ add_task(function test_notifications_change()
 {
   let list = yield promiseNewDownloadList();
 
-  let downloadOne = yield promiseSimpleDownload();
-  let downloadTwo = yield promiseSimpleDownload();
+  let downloadOne = yield promiseNewDownload();
+  let downloadTwo = yield promiseNewDownload();
   list.add(downloadOne);
   list.add(downloadTwo);
 
@@ -189,6 +160,47 @@ add_task(function test_notifications_change()
 });
 
 /**
+ * Checks that the reference to "this" is correct in the view callbacks.
+ */
+add_task(function test_notifications_this()
+{
+  let list = yield promiseNewDownloadList();
+
+  // Check that we receive change notifications.
+  let receivedOnDownloadAdded = false;
+  let receivedOnDownloadChanged = false;
+  let receivedOnDownloadRemoved = false;
+  let view = {
+    onDownloadAdded: function () {
+      do_check_eq(this, view);
+      receivedOnDownloadAdded = true;
+    },
+    onDownloadChanged: function () {
+      // Only do this check once.
+      if (!receivedOnDownloadChanged) {
+        do_check_eq(this, view);
+        receivedOnDownloadChanged = true;
+      }
+    },
+    onDownloadRemoved: function () {
+      do_check_eq(this, view);
+      receivedOnDownloadRemoved = true;
+    },
+  };
+  list.addView(view);
+
+  let download = yield promiseNewDownload();
+  list.add(download);
+  yield download.start();
+  list.remove(download);
+
+  // Verify that we executed the checks.
+  do_check_true(receivedOnDownloadAdded);
+  do_check_true(receivedOnDownloadChanged);
+  do_check_true(receivedOnDownloadRemoved);
+});
+
+/**
  * Checks that download is removed on history expiration.
  */
 add_task(function test_history_expiration()
@@ -203,11 +215,11 @@ add_task(function test_history_expiration()
 
   // Add expirable visit for downloads.
   yield promiseAddDownloadToHistory();
-  yield promiseAddDownloadToHistory(TEST_INTERRUPTIBLE_URI);
+  yield promiseAddDownloadToHistory(httpUrl("interruptible.txt"));
 
   let list = yield promiseNewDownloadList();
-  let downloadOne = yield promiseSimpleDownload();
-  let downloadTwo = yield promiseSimpleDownload(TEST_INTERRUPTIBLE_URI);
+  let downloadOne = yield promiseNewDownload();
+  let downloadTwo = yield promiseNewDownload(httpUrl("interruptible.txt"));
   list.add(downloadOne);
   list.add(downloadTwo);
 
@@ -250,8 +262,8 @@ add_task(function test_history_clear()
   yield promiseAddDownloadToHistory();
 
   let list = yield promiseNewDownloadList();
-  let downloadOne = yield promiseSimpleDownload();
-  let downloadTwo = yield promiseSimpleDownload();
+  let downloadOne = yield promiseNewDownload();
+  let downloadTwo = yield promiseNewDownload();
   list.add(downloadOne);
   list.add(downloadTwo);
 

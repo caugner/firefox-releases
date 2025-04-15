@@ -8,6 +8,7 @@
 
 #include "mozilla/gfx/Matrix.h"
 #include "mozilla/layers/Compositor.h"
+#include "mozilla/layers/TextureHost.h"
 #include "LayersLogging.h"
 #include "mozilla/RefPtr.h"
 
@@ -29,22 +30,6 @@ namespace layers {
  * effects may be added by the layer or compositable. The effect chain is passed
  * to the compositor by the compositable host as a parameter to DrawQuad.
  */
-
-
-enum EffectTypes
-{
-  EFFECT_MASK,
-  EFFECT_MAX_SECONDARY, // sentinel for the count of secondary effect types
-  EFFECT_BGRX,
-  EFFECT_RGBX,
-  EFFECT_BGRA,
-  EFFECT_RGBA,
-  EFFECT_YCBCR,
-  EFFECT_COMPONENT_ALPHA,
-  EFFECT_SOLID_COLOR,
-  EFFECT_RENDER_TARGET,
-  EFFECT_MAX  //sentinel for the count of all effect types
-};
 
 struct Effect : public RefCounted<Effect>
 {
@@ -224,50 +209,81 @@ struct EffectChain
   RefPtr<Effect> mSecondaryEffects[EFFECT_MAX_SECONDARY];
 };
 
+/**
+ * Create a Textured effect corresponding to aFormat and using
+ * aSource as the (first) texture source.
+ *
+ * Note that aFormat can be different form aSource->GetFormat if, we are
+ * creating an effect that takes several texture sources (like with YCBCR
+ * where aFormat would be FOMRAT_YCBCR and each texture source would be
+ * a one-channel A8 texture)
+ */
 inline TemporaryRef<TexturedEffect>
-CreateTexturedEffect(TextureHost *aTextureHost,
-                     TextureHost *aTextureHostOnWhite,
+CreateTexturedEffect(gfx::SurfaceFormat aFormat,
+                     TextureSource* aSource,
                      const gfx::Filter& aFilter)
 {
-  if (aTextureHostOnWhite) {
-    MOZ_ASSERT(aTextureHost->GetFormat() == gfx::FORMAT_R8G8B8X8 ||
-               aTextureHost->GetFormat() == gfx::FORMAT_B8G8R8X8);
-    return new EffectComponentAlpha(aTextureHost, aTextureHostOnWhite, aFilter);
-  }
-
+  MOZ_ASSERT(aSource);
   RefPtr<TexturedEffect> result;
-  switch (aTextureHost->GetFormat()) {
+  switch (aFormat) {
   case gfx::FORMAT_B8G8R8A8:
-    result = new EffectBGRA(aTextureHost, true, aFilter);
+    result = new EffectBGRA(aSource, true, aFilter);
     break;
   case gfx::FORMAT_B8G8R8X8:
-    result = new EffectBGRX(aTextureHost, true, aFilter);
+    result = new EffectBGRX(aSource, true, aFilter);
     break;
   case gfx::FORMAT_R8G8B8X8:
-    result = new EffectRGBX(aTextureHost, true, aFilter);
+    result = new EffectRGBX(aSource, true, aFilter);
     break;
   case gfx::FORMAT_R5G6B5:
-    result = new EffectRGBX(aTextureHost, true, aFilter);
+    result = new EffectRGBX(aSource, true, aFilter);
     break;
   case gfx::FORMAT_R8G8B8A8:
-    result = new EffectRGBA(aTextureHost, true, aFilter);
+    result = new EffectRGBA(aSource, true, aFilter);
     break;
   case gfx::FORMAT_YUV:
-    result = new EffectYCbCr(aTextureHost, aFilter);
+    result = new EffectYCbCr(aSource, aFilter);
     break;
   default:
-    MOZ_NOT_REACHED("unhandled program type");
+    MOZ_CRASH("unhandled program type");
   }
 
   return result;
 }
 
+/**
+ * Create a textured effect based on aSource format and the presence of
+ * aSourceOnWhite.
+ *
+ * aSourceOnWhite can be null.
+ */
 inline TemporaryRef<TexturedEffect>
-CreateTexturedEffect(TextureHost *aTextureHost,
+CreateTexturedEffect(TextureSource* aSource,
+                     TextureSource* aSourceOnWhite,
                      const gfx::Filter& aFilter)
 {
-  return CreateTexturedEffect(aTextureHost, nullptr, aFilter);
+  MOZ_ASSERT(aSource);
+  if (aSourceOnWhite) {
+    MOZ_ASSERT(aSource->GetFormat() == gfx::FORMAT_R8G8B8X8 ||
+               aSourceOnWhite->GetFormat() == gfx::FORMAT_B8G8R8X8);
+    return new EffectComponentAlpha(aSource, aSourceOnWhite, aFilter);
+  }
+
+  return CreateTexturedEffect(aSource->GetFormat(), aSource, aFilter);
 }
+
+/**
+ * Create a textured effect based on aSource format.
+ *
+ * This version excudes the possibility of component alpha.
+ */
+inline TemporaryRef<TexturedEffect>
+CreateTexturedEffect(TextureSource *aTexture,
+                     const gfx::Filter& aFilter)
+{
+  return CreateTexturedEffect(aTexture, nullptr, aFilter);
+}
+
 
 } // namespace layers
 } // namespace mozilla

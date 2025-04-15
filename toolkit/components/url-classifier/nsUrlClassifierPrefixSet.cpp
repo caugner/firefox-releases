@@ -16,6 +16,7 @@
 #include "nsToolkitCompsCID.h"
 #include "nsTArray.h"
 #include "nsThreadUtils.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/FileUtils.h"
@@ -39,7 +40,7 @@ public:
   nsPrefixSetReporter(nsUrlClassifierPrefixSet* aParent, const nsACString& aName);
   virtual ~nsPrefixSetReporter() {}
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIMEMORYREPORTER
 
 private:
@@ -47,7 +48,7 @@ private:
   nsUrlClassifierPrefixSet* mParent;
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsPrefixSetReporter, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS1(nsPrefixSetReporter, nsIMemoryReporter)
 
 NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(StoragePrefixSetMallocSizeOf)
 
@@ -314,7 +315,7 @@ nsUrlClassifierPrefixSet::Contains(uint32_t aPrefix, bool* aFound)
 }
 
 size_t
-nsUrlClassifierPrefixSet::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+nsUrlClassifierPrefixSet::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf)
 {
   size_t n = 0;
   n += aMallocSizeOf(this);

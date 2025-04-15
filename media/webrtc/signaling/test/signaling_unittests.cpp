@@ -24,7 +24,6 @@
 #include "PeerConnectionImpl.h"
 #include "PeerConnectionCtx.h"
 #include "runnable_utils.h"
-#include "nsStaticComponents.h"
 #include "nsServiceManagerUtils.h"
 #include "nsNetUtil.h"
 #include "nsIIOService.h"
@@ -178,7 +177,7 @@ public:
 
   std::vector<DOMMediaStream *> GetStreams() { return streams; }
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_IPEERCONNECTIONOBSERVER
 
   ResponseState state;
@@ -194,9 +193,9 @@ private:
   std::vector<DOMMediaStream *> streams;
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS2(TestObserver,
-                              IPeerConnectionObserver,
-                              nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS2(TestObserver,
+                   IPeerConnectionObserver,
+                   nsISupportsWeakReference)
 
 NS_IMETHODIMP
 TestObserver::OnCreateOfferSuccess(const char* offer)
@@ -2284,12 +2283,10 @@ TEST_F(SignalingTest, missingUfrag)
   // FSM. This may change in the future.
   a1_.CreateOffer(constraints, OFFER_AV, SHOULD_SENDRECV_AV);
   a1_.SetLocal(TestObserver::OFFER, offer, true);
-  a2_.SetRemote(TestObserver::OFFER, offer, true);
-  a2_.CreateAnswer(constraints, offer, OFFER_AV | ANSWER_AV);
-  a2_.SetLocal(TestObserver::ANSWER, a2_.answer(), true);
-  a1_.SetRemote(TestObserver::ANSWER, a2_.answer(), true);
-  // We don't check anything in particular for success here -- simply not
-  // crashing by now is enough to declare success.
+  // We now detect the missing ICE parameters at SetRemoteDescription
+  a2_.SetRemote(TestObserver::OFFER, offer, true, 
+    sipcc::PeerConnectionImpl::kSignalingStable);
+  ASSERT_TRUE(a2_.pObserver->state == TestObserver::stateError);
 }
 
 } // End namespace test.

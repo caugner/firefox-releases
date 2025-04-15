@@ -206,10 +206,10 @@ struct ParamTraits<nsTouchEvent>
     WriteParam(aMsg, static_cast<const nsInputEvent&>(aParam));
     // Sigh, Touch bites us again!  We want to be able to do
     //   WriteParam(aMsg, aParam.touches);
-    const nsTArray<nsCOMPtr<nsIDOMTouch> >& touches = aParam.touches;
+    const nsTArray< nsRefPtr<mozilla::dom::Touch> >& touches = aParam.touches;
     WriteParam(aMsg, touches.Length());
     for (uint32_t i = 0; i < touches.Length(); ++i) {
-      mozilla::dom::Touch* touch = static_cast<mozilla::dom::Touch*>(touches[i].get());
+      mozilla::dom::Touch* touch = touches[i];
       WriteParam(aMsg, touch->mIdentifier);
       WriteParam(aMsg, touch->mRefPoint);
       WriteParam(aMsg, touch->mRadius);
@@ -227,7 +227,7 @@ struct ParamTraits<nsTouchEvent>
     }
     for (uint32_t i = 0; i < numTouches; ++i) {
         int32_t identifier;
-        nsIntPoint refPoint;
+        mozilla::LayoutDeviceIntPoint refPoint;
         nsIntPoint radius;
         float rotationAngle;
         float force;
@@ -239,7 +239,9 @@ struct ParamTraits<nsTouchEvent>
           return false;
         }
         aResult->touches.AppendElement(
-          new mozilla::dom::Touch(identifier, refPoint, radius, rotationAngle, force));
+          new mozilla::dom::Touch(
+            identifier, mozilla::LayoutDeviceIntPoint::ToUntyped(refPoint),
+            radius, rotationAngle, force));
     }
     return true;
   }
@@ -258,6 +260,8 @@ struct ParamTraits<nsKeyEvent>
     WriteParam(aMsg, aParam.charCode);
     WriteParam(aMsg, aParam.isChar);
     WriteParam(aMsg, aParam.location);
+    // An OS-specific native event might be attached in |mNativeKeyEvent|,  but
+    // that cannot be copied across process boundaries.
   }
 
   static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
