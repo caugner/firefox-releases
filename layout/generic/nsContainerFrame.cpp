@@ -37,7 +37,7 @@
 #include "nsCSSFrameConstructor.h"
 #include "mozilla/dom/Element.h"
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 #undef NOISY
 #else
 #undef NOISY
@@ -87,7 +87,7 @@ nsContainerFrame::SetInitialChildList(ChildListID  aListID,
     NS_NOTREACHED("unknown frame list");
     result = NS_ERROR_INVALID_ARG;
   } else {
-#ifdef NS_DEBUG
+#ifdef DEBUG
     nsFrame::VerifyDirtyBitSet(aChildList);
 #endif
     mFrames.SetFrames(aChildList);
@@ -1499,14 +1499,20 @@ nsContainerFrame::MoveOverflowToChildList(nsPresContext* aPresContext)
     }
   }
 
-  // It's also possible that we have an overflow list for ourselves
+  // It's also possible that we have an overflow list for ourselves.
+  return DrainSelfOverflowList() || result;
+}
+
+bool
+nsContainerFrame::DrainSelfOverflowList()
+{
   nsAutoPtr<nsFrameList> overflowFrames(StealOverflowFrames());
   if (overflowFrames) {
     NS_ASSERTION(mFrames.NotEmpty(), "overflow list w/o frames");
     mFrames.AppendFrames(nsnull, *overflowFrames);
-    result = true;
+    return true;
   }
-  return result;
+  return false;
 }
 
 nsOverflowContinuationTracker::nsOverflowContinuationTracker(nsPresContext*    aPresContext,
@@ -1715,7 +1721,7 @@ nsOverflowContinuationTracker::Finish(nsIFrame* aChild)
 /////////////////////////////////////////////////////////////////////////////
 // Debugging
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 NS_IMETHODIMP
 nsContainerFrame::List(FILE* out, PRInt32 aIndent) const
 {

@@ -25,6 +25,22 @@ USING_WORKERS_NAMESPACE
 using namespace mozilla::dom;
 using mozilla::ErrorResult;
 
+// These are temporary until these classes are moved to be codegenerated.
+bool
+WorkerResolveProperty(JSContext* cx, JSObject* wrapper, jsid id, bool set,
+                      JSPropertyDescriptor* desc)
+{
+  return true;
+}
+bool
+WorkerEnumerateProperties(JS::AutoIdVector& props)
+{
+  return true;
+}
+NativePropertyHooks mozilla::dom::workers::sNativePropertyHooks =
+  { WorkerResolveProperty, WorkerEnumerateProperties, NULL };
+
+
 namespace {
 
 class Worker
@@ -217,7 +233,7 @@ private:
   Finalize(JSFreeOp* aFop, JSObject* aObj)
   {
     JS_ASSERT(JS_GetClass(aObj) == Class());
-    WorkerPrivate* worker = UnwrapDOMObject<WorkerPrivate>(aObj, Class());
+    WorkerPrivate* worker = UnwrapDOMObject<WorkerPrivate>(aObj);
     if (worker) {
       worker->_finalize(aFop);
     }
@@ -227,7 +243,7 @@ private:
   Trace(JSTracer* aTrc, JSObject* aObj)
   {
     JS_ASSERT(JS_GetClass(aObj) == Class());
-    WorkerPrivate* worker = UnwrapDOMObject<WorkerPrivate>(aObj, Class());
+    WorkerPrivate* worker = UnwrapDOMObject<WorkerPrivate>(aObj);
     if (worker) {
       worker->_trace(aTrc);
     }
@@ -287,7 +303,7 @@ DOMJSClass Worker::sClass = {
   },
   { prototypes::id::EventTarget_workers, prototypes::id::_ID_Count,
     prototypes::id::_ID_Count },
-  -1, false, DOM_OBJECT_SLOT
+  -1, false, &sNativePropertyHooks
 };
 
 JSPropertySpec Worker::sProperties[] = {
@@ -358,7 +374,7 @@ private:
     if (aObj) {
       JSClass* classPtr = JS_GetClass(aObj);
       if (classPtr == Class()) {
-        return UnwrapDOMObject<WorkerPrivate>(aObj, Class());
+        return UnwrapDOMObject<WorkerPrivate>(aObj);
       }
     }
 
@@ -375,7 +391,7 @@ private:
   Finalize(JSFreeOp* aFop, JSObject* aObj)
   {
     JS_ASSERT(JS_GetClass(aObj) == Class());
-    WorkerPrivate* worker = UnwrapDOMObject<WorkerPrivate>(aObj, Class());
+    WorkerPrivate* worker = UnwrapDOMObject<WorkerPrivate>(aObj);
     if (worker) {
       worker->_finalize(aFop);
     }
@@ -385,7 +401,7 @@ private:
   Trace(JSTracer* aTrc, JSObject* aObj)
   {
     JS_ASSERT(JS_GetClass(aObj) == Class());
-    WorkerPrivate* worker = UnwrapDOMObject<WorkerPrivate>(aObj, Class());
+    WorkerPrivate* worker = UnwrapDOMObject<WorkerPrivate>(aObj);
     if (worker) {
       worker->_trace(aTrc);
     }
@@ -405,7 +421,7 @@ DOMJSClass ChromeWorker::sClass = {
   },
   { prototypes::id::EventTarget_workers, prototypes::id::_ID_Count,
     prototypes::id::_ID_Count },
-  -1, false, DOM_OBJECT_SLOT
+  -1, false, &sNativePropertyHooks
 };
 
 WorkerPrivate*
@@ -414,7 +430,7 @@ Worker::GetInstancePrivate(JSContext* aCx, JSObject* aObj,
 {
   JSClass* classPtr = JS_GetClass(aObj);
   if (classPtr == Class() || classPtr == ChromeWorker::Class()) {
-    return UnwrapDOMObject<WorkerPrivate>(aObj, classPtr);
+    return UnwrapDOMObject<WorkerPrivate>(aObj);
   }
 
   JS_ReportErrorNumber(aCx, js_GetErrorMessage, NULL, JSMSG_INCOMPATIBLE_PROTO,

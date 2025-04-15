@@ -24,7 +24,9 @@
 @APPNAME@/Contents/Info.plist
 @APPNAME@/Contents/PkgInfo
 @APPNAME@/Contents/Resources/
+#ifdef MOZ_SIGNING
 @APPNAME@/Contents/_CodeSignature/CodeResources
+#endif
 #endif
 
 [@AB_CD@]
@@ -58,9 +60,11 @@
 #ifndef MOZ_STATIC_JS
 @BINPATH@/@DLL_PREFIX@mozjs@DLL_SUFFIX@
 #endif
+#ifndef MOZ_NATIVE_NSPR
 @BINPATH@/@DLL_PREFIX@nspr4@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@plc4@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@plds4@DLL_SUFFIX@
+#endif
 @BINPATH@/@DLL_PREFIX@xpcom@DLL_SUFFIX@
 #ifdef XP_MACOSX
 @BINPATH@/XUL
@@ -91,6 +95,9 @@
 #elif MOZ_MSVC_REDIST == 1700
 @BINPATH@/msvcp110.dll
 @BINPATH@/msvcr110.dll
+#ifdef MOZ_METRO
+@BINPATH@/vccorlib110.dll
+#endif
 #endif
 #endif
 #endif
@@ -109,7 +116,9 @@
 #endif
 @BINPATH@/platform.ini
 #ifndef XP_OS2
+#ifndef MOZ_NATIVE_SQLITE
 @BINPATH@/@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@
+#endif
 #else
 @BINPATH@/mozsqlt3@DLL_SUFFIX@
 #endif
@@ -155,6 +164,7 @@
 @BINPATH@/components/dom.xpt
 @BINPATH@/components/dom_apps.xpt
 @BINPATH@/components/dom_base.xpt
+@BINPATH@/components/dom_system.xpt
 #ifdef MOZ_B2G_RIL
 @BINPATH@/components/dom_telephony.xpt
 @BINPATH@/components/dom_wifi.xpt
@@ -166,6 +176,7 @@
 #endif
 @BINPATH@/components/dom_canvas.xpt
 @BINPATH@/components/dom_contacts.xpt
+@BINPATH@/components/dom_alarm.xpt
 @BINPATH@/components/dom_core.xpt
 @BINPATH@/components/dom_css.xpt
 @BINPATH@/components/dom_devicestorage.xpt
@@ -182,6 +193,7 @@
 #ifdef MOZ_B2G_RIL
 @BINPATH@/components/dom_mms.xpt
 #endif
+@BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_power.xpt
 @BINPATH@/components/dom_range.xpt
 @BINPATH@/components/dom_settings.xpt
@@ -210,6 +222,7 @@
 @BINPATH@/components/gfx.xpt
 @BINPATH@/components/html5.xpt
 @BINPATH@/components/htmlparser.xpt
+@BINPATH@/components/identity.xpt
 @BINPATH@/components/imglib2.xpt
 @BINPATH@/components/imgicon.xpt
 @BINPATH@/components/inspector.xpt
@@ -440,11 +453,16 @@
 @BINPATH@/components/nsINIProcessor.js
 @BINPATH@/components/nsPrompter.manifest
 @BINPATH@/components/nsPrompter.js
+#ifdef MOZ_SERVICES_AITC
+@BINPATH@/components/AitcComponents.manifest
+@BINPATH@/components/Aitc.js
+#endif
+#ifdef MOZ_SERVICES_NOTIFICATIONS
+@BINPATH@/components/NotificationsComponents.manifest
+#endif
 #ifdef MOZ_SERVICES_SYNC
 @BINPATH@/components/SyncComponents.manifest
-@BINPATH@/components/AitcComponents.manifest
 @BINPATH@/components/Weave.js
-@BINPATH@/components/Aitc.js
 #endif
 @BINPATH@/components/TelemetryPing.js
 @BINPATH@/components/TelemetryPing.manifest
@@ -452,11 +470,24 @@
 @BINPATH@/components/messageWakeupService.manifest
 @BINPATH@/components/SettingsManager.js
 @BINPATH@/components/SettingsManager.manifest
+@BINPATH@/components/Webapps.js
+@BINPATH@/components/Webapps.manifest
 @BINPATH@/components/AppsService.js
 @BINPATH@/components/AppsService.manifest
+@BINPATH@/components/nsDOMIdentity.js
+@BINPATH@/components/nsIDService.js
+@BINPATH@/components/Identity.manifest
 
 @BINPATH@/components/ContactManager.js
 @BINPATH@/components/ContactManager.manifest
+@BINPATH@/components/AlarmsManager.js
+@BINPATH@/components/AlarmsManager.manifest
+#ifdef ENABLE_MARIONETTE
+@BINPATH@/chrome/marionette@JAREXT@
+@BINPATH@/chrome/marionette.manifest
+@BINPATH@/components/MarionetteComponents.manifest
+@BINPATH@/components/marionettecomponent.js
+#endif
 
 ; Modules
 @BINPATH@/modules/*
@@ -465,6 +496,8 @@
 #ifdef MOZ_SAFE_BROWSING
 @BINPATH@/components/nsSafebrowsingApplication.manifest
 @BINPATH@/components/nsSafebrowsingApplication.js
+#endif
+#ifdef MOZ_URL_CLASSIFIER
 @BINPATH@/components/nsURLClassifier.manifest
 @BINPATH@/components/nsUrlClassifierHashCompleter.js
 @BINPATH@/components/nsUrlClassifierListManager.js
@@ -478,7 +511,7 @@
 #endif
 
 ; ANGLE GLES-on-D3D rendering library
-#ifdef MOZ_ANGLE
+#ifdef MOZ_ANGLE_RENDERER
 @BINPATH@/libEGL.dll
 @BINPATH@/libGLESv2.dll
 @BINPATH@/@MOZ_D3DX9_DLL@
@@ -515,9 +548,14 @@
 ; All the pref files must be part of base to prevent migration bugs
 @BINPATH@/@PREF_DIR@/firefox.js
 @BINPATH@/@PREF_DIR@/firefox-branding.js
+#ifdef MOZ_SERVICES_AITC
+@BINPATH@/@PREF_DIR@/services-aitc.js
+#endif
+#ifdef MOZ_SERVICES_NOTIFICATIONS
+@BINPATH@/@PREF_DIR@/services-notifications.js
+#endif
 #ifdef MOZ_SERVICES_SYNC
 @BINPATH@/@PREF_DIR@/services-sync.js
-@BINPATH@/@PREF_DIR@/services-aitc.js
 #endif
 @BINPATH@/greprefs.js
 @BINPATH@/defaults/autoconfig/platform.js
@@ -579,6 +617,7 @@
 ; NSS libraries are signed in the staging directory,
 ; meaning their .chk files are created there directly.
 ;
+#ifndef MOZ_NATIVE_NSS
 @BINPATH@/@DLL_PREFIX@freebl3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@nss3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@nssckbi@DLL_SUFFIX@
@@ -589,6 +628,7 @@
 @BINPATH@/@DLL_PREFIX@smime3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@softokn3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@ssl3@DLL_SUFFIX@
+#endif
 @BINPATH@/chrome/pippki@JAREXT@
 @BINPATH@/chrome/pippki.manifest
 @BINPATH@/components/pipboot.xpt
@@ -660,6 +700,8 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/webapprt/chrome.manifest
 @BINPATH@/webapprt/chrome/webapprt@JAREXT@
 @BINPATH@/webapprt/chrome/webapprt.manifest
+@BINPATH@/webapprt/chrome/@AB_CD@@JAREXT@
+@BINPATH@/webapprt/chrome/@AB_CD@.manifest
 @BINPATH@/webapprt/components/CommandLineHandler.js
 @BINPATH@/webapprt/components/ContentPermission.js
 @BINPATH@/webapprt/components/ContentPolicy.js
@@ -667,4 +709,5 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/webapprt/components/components.manifest
 @BINPATH@/webapprt/defaults/preferences/prefs.js
 @BINPATH@/webapprt/modules/WebappRT.jsm
+@BINPATH@/webapprt/modules/WebappsHandler.jsm
 #endif

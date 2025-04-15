@@ -20,6 +20,7 @@
 #include "nsIDOMGeoPositionCallback.h"
 #include "nsIMemoryReporter.h"
 #include "nsCOMArray.h"
+#include "nsDataHashtable.h"
 
 class nsFrameMessageManager;
 namespace mozilla {
@@ -44,6 +45,15 @@ private:
 
 public:
     static ContentParent* GetNewOrUsed();
+
+    /**
+     * Get or create a content process for the given app.  A given app
+     * (identified by its manifest URL) gets one process all to itself.
+     *
+     * If the given manifest is the empty string, then this method is equivalent
+     * to GetNewOrUsed().
+     */
+    static ContentParent* GetForApp(const nsAString& aManifestURL);
     static void GetAll(nsTArray<ContentParent*>& aArray);
 
     NS_DECL_ISUPPORTS
@@ -51,7 +61,13 @@ public:
     NS_DECL_NSITHREADOBSERVER
     NS_DECL_NSIDOMGEOPOSITIONCALLBACK
 
-    TabParent* CreateTab(PRUint32 aChromeFlags);
+    /**
+     * Create a new tab.
+     *
+     * |aIsBrowserFrame| indicates whether this tab is part of an
+     * <iframe mozbrowser>.
+     */
+    TabParent* CreateTab(PRUint32 aChromeFlags, bool aIsBrowserFrame);
 
     TestShellParent* CreateTestShell();
     bool DestroyTestShell(TestShellParent* aTestShell);
@@ -77,7 +93,8 @@ protected:
     virtual void ActorDestroy(ActorDestroyReason why);
 
 private:
-    static nsTArray<ContentParent*>* gContentParents;
+    static nsDataHashtable<nsStringHashKey, ContentParent*> *gAppContentParents;
+    static nsTArray<ContentParent*>* gNonAppContentParents;
     static nsTArray<ContentParent*>* gPrivateContent;
 
     // Hide the raw constructor methods since we don't want client code
@@ -85,13 +102,16 @@ private:
     using PContentParent::SendPBrowserConstructor;
     using PContentParent::SendPTestShellConstructor;
 
-    ContentParent();
+    ContentParent(const nsAString& aAppManifestURL);
     virtual ~ContentParent();
 
     void Init();
 
-    virtual PBrowserParent* AllocPBrowser(const PRUint32& aChromeFlags);
+    virtual PBrowserParent* AllocPBrowser(const PRUint32& aChromeFlags, const bool& aIsBrowserFrame);
     virtual bool DeallocPBrowser(PBrowserParent* frame);
+
+    virtual PDeviceStorageRequestParent* AllocPDeviceStorageRequest(const DeviceStorageParams&);
+    virtual bool DeallocPDeviceStorageRequest(PDeviceStorageRequestParent*);
 
     virtual PCrashReporterParent* AllocPCrashReporter(const NativeThreadId& tid,
                                                       const PRUint32& processType);
@@ -102,6 +122,13 @@ private:
 
     NS_OVERRIDE virtual PHalParent* AllocPHal();
     NS_OVERRIDE virtual bool DeallocPHal(PHalParent*);
+
+    virtual PIndexedDBParent* AllocPIndexedDB();
+
+    virtual bool DeallocPIndexedDB(PIndexedDBParent* aActor);
+
+    virtual bool
+    RecvPIndexedDBConstructor(PIndexedDBParent* aActor);
 
     virtual PMemoryReportRequestParent* AllocPMemoryReportRequest();
     virtual bool DeallocPMemoryReportRequest(PMemoryReportRequestParent* actor);
@@ -205,6 +232,7 @@ private:
     bool mIsAlive;
     bool mSendPermissionUpdates;
 
+    const nsString mAppManifestURL;
     nsRefPtr<nsFrameMessageManager> mMessageManager;
 
     friend class CrashReporterParent;

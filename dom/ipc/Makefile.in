@@ -19,7 +19,7 @@ ifneq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 TEST_DIRS += tests
 endif
 
-EXPORTS = TabMessageUtils.h PCOMContentPermissionRequestChild.h
+EXPORTS = PCOMContentPermissionRequestChild.h
 
 EXPORTS_NAMESPACES = mozilla/dom
 
@@ -77,6 +77,7 @@ LOCAL_INCLUDES += \
 	-I$(topsrcdir)/toolkit/xre \
 	-I$(topsrcdir)/hal/sandbox \
 	-I$(topsrcdir)/dom/sms/src/ipc \
+	-I$(topsrcdir)/dom/devicestorage \
 	$(NULL)
 
 DEFINES += -DBIN_SUFFIX='"$(BIN_SUFFIX)"'

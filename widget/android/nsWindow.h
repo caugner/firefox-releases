@@ -8,7 +8,7 @@
 
 #include "nsBaseWidget.h"
 #include "gfxPoint.h"
-
+#include "nsIIdleServiceInternal.h"
 #include "nsTArray.h"
 
 #ifdef MOZ_JAVA_COMPOSITOR
@@ -17,7 +17,6 @@
 #endif
 
 class gfxASurface;
-class nsIdleService;
 
 struct ANPEvent;
 
@@ -52,7 +51,7 @@ public:
     void OnDraw(mozilla::AndroidGeckoEvent *ae);
     bool OnMultitouchEvent(mozilla::AndroidGeckoEvent *ae);
     void OnGestureEvent(mozilla::AndroidGeckoEvent *ae);
-    void OnMotionEvent(mozilla::AndroidGeckoEvent *ae);
+    void OnMouseEvent(mozilla::AndroidGeckoEvent *ae);
     void OnKeyEvent(mozilla::AndroidGeckoEvent *ae);
     void OnIMEEvent(mozilla::AndroidGeckoEvent *ae);
 
@@ -153,8 +152,7 @@ public:
     virtual void DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect);
 
     static void SetCompositor(mozilla::layers::CompositorParent* aCompositorParent,
-                              mozilla::layers::CompositorChild* aCompositorChild,
-                              ::base::Thread* aCompositorThread);
+                              mozilla::layers::CompositorChild* aCompositorChild);
     static void ScheduleComposite();
     static void SchedulePauseComposition();
     static void ScheduleResumeComposition(int width, int height);
@@ -188,7 +186,7 @@ protected:
     double mSwipeMaxPinchDelta;
     double mSwipeMinDistance;
 
-    nsCOMPtr<nsIdleService> mIdleService;
+    nsCOMPtr<nsIIdleServiceInternal> mIdleService;
 
     bool mIMEComposing;
     nsString mIMEComposingText;
@@ -220,7 +218,6 @@ private:
     static nsRefPtr<mozilla::layers::CompositorParent> sCompositorParent;
     static nsRefPtr<mozilla::layers::CompositorChild> sCompositorChild;
     static bool sCompositorPaused;
-    static base::Thread *sCompositorThread;
 #endif
 };
 

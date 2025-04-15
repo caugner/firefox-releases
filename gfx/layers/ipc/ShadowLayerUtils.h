@@ -26,6 +26,16 @@ struct SurfaceDescriptorX11 {
 } }
 #endif
 
+#if defined(MOZ_WIDGET_GONK)
+# include "mozilla/layers/ShadowLayerUtilsGralloc.h"
+#else
+namespace mozilla { namespace layers {
+struct MagicGrallocBufferHandle {
+  bool operator==(const MagicGrallocBufferHandle&) const { return false; }
+};
+} }
+#endif
+
 namespace IPC {
 
 template <>
@@ -63,7 +73,7 @@ struct ParamTraits<mozilla::layers::SurfaceDescriptorX11> {
   static void Write(Message*, const paramType&) {}
   static bool Read(const Message*, void**, paramType*) { return false; }
 };
-#endif  // !defined(MOZ_HAVE_XSURFACEDESCRIPTOR)
+#endif  // !defined(MOZ_HAVE_XSURFACEDESCRIPTORX11)
 
 template<>
 struct ParamTraits<mozilla::gl::TextureImage::TextureShareType>
@@ -87,6 +97,15 @@ struct ParamTraits<mozilla::gl::TextureImage::TextureShareType>
     return true;
   }
 };
+
+#if !defined(MOZ_HAVE_SURFACEDESCRIPTORGRALLOC)
+template <>
+struct ParamTraits<mozilla::layers::MagicGrallocBufferHandle> {
+  typedef mozilla::layers::MagicGrallocBufferHandle paramType;
+  static void Write(Message*, const paramType&) {}
+  static bool Read(const Message*, void**, paramType*) { return false; }
+};
+#endif  // !defined(MOZ_HAVE_XSURFACEDESCRIPTORGRALLOC)
 
 }
 

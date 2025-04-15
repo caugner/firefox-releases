@@ -69,7 +69,7 @@
 #include "nsGfxCIID.h"
 #include "nsIObserverService.h"
 
-#include "nsIdleService.h"
+#include "nsIIdleServiceInternal.h"
 #include "nsIPropertyBag2.h"
 
 #ifdef ACCESSIBILITY
@@ -84,7 +84,6 @@ using namespace mozilla::widget;
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsXPIDLString.h"
 #include "nsIFile.h"
-#include "nsILocalFile.h"
 
 /* SetCursor(imgIContainer*) */
 #include <gdk/gdk.h>
@@ -323,10 +322,10 @@ static inline bool TimestampIsNewerThan(guint32 a, guint32 b)
 static void
 UpdateLastInputEventTime(void *aGdkEvent)
 {
-    nsCOMPtr<nsIdleService> idleService =
+    nsCOMPtr<nsIIdleServiceInternal> idleService =
         do_GetService("@mozilla.org/widget/idleservice;1");
     if (idleService) {
-        idleService->ResetIdleTimeOut();
+        idleService->ResetIdleTimeOut(0);
     }
 
     guint timestamp = gdk_event_get_time(static_cast<GdkEvent*>(aGdkEvent));
@@ -1064,6 +1063,8 @@ nsWindow::Resize(PRInt32 aWidth, PRInt32 aHeight, bool aRepaint)
         }
     }
 
+    NotifyRollupGeometryChange(gRollupListener);
+
     // synthesize a resize event if this isn't a toplevel
     if (mIsTopLevel || mListenForResizes) {
         nsIntRect rect(mBounds.x, mBounds.y, aWidth, aHeight);
@@ -1128,6 +1129,8 @@ nsWindow::Resize(PRInt32 aX, PRInt32 aY, PRInt32 aWidth, PRInt32 aHeight,
         }
     }
 
+    NotifyRollupGeometryChange(gRollupListener);
+
     if (mIsTopLevel || mListenForResizes) {
         // synthesize a resize event
         nsIntRect rect(aX, aY, aWidth, aHeight);
@@ -1191,6 +1194,7 @@ nsWindow::Move(PRInt32 aX, PRInt32 aY)
         gdk_window_move(mGdkWindow, aX, aY);
     }
 
+    NotifyRollupGeometryChange(gRollupListener);
     return NS_OK;
 }
 
@@ -1740,7 +1744,7 @@ nsWindow::SetIcon(const nsAString& aIconSpec)
         AppendUTF16toUTF8(aIconSpec, iconName);
     }
     
-    nsCOMPtr<nsILocalFile> iconFile;
+    nsCOMPtr<nsIFile> iconFile;
     nsCAutoString path;
 
     gint *iconSizes =

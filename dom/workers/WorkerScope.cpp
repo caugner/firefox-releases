@@ -681,7 +681,7 @@ public:
     nsRefPtr<DedicatedWorkerGlobalScope> scope =
       new DedicatedWorkerGlobalScope(aCx, aWorkerPrivate);
 
-    js::SetReservedSlot(aObj, DOM_GLOBAL_OBJECT_SLOT, PRIVATE_TO_JSVAL(scope));
+    js::SetReservedSlot(aObj, DOM_OBJECT_SLOT, PRIVATE_TO_JSVAL(scope));
 
     scope->SetIsDOMBinding();
     scope->SetWrapper(aObj);
@@ -768,7 +768,7 @@ private:
   {
     JSClass* classPtr = JS_GetClass(aObj);
     if (classPtr == Class()) {
-      return UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj, classPtr);
+      return UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj);
     }
 
     JS_ReportErrorNumber(aCx, js_GetErrorMessage, NULL,
@@ -787,14 +787,14 @@ private:
 
   static JSBool
   Resolve(JSContext* aCx, JSHandleObject aObj, JSHandleId aId, unsigned aFlags,
-          JSObject** aObjp)
+          JSMutableHandleObject aObjp)
   {
     JSBool resolved;
     if (!JS_ResolveStandardClass(aCx, aObj, aId, &resolved)) {
       return false;
     }
 
-    *aObjp = resolved ? aObj.value() : NULL;
+    aObjp.set(resolved ? aObj.get() : NULL);
     return true;
   }
 
@@ -803,7 +803,7 @@ private:
   {
     JS_ASSERT(JS_GetClass(aObj) == Class());
     DedicatedWorkerGlobalScope* scope =
-      UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj, Class());
+      UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj);
     if (scope) {
       DestroyProtoOrIfaceCache(aObj);
       scope->_finalize(aFop);
@@ -815,7 +815,7 @@ private:
   {
     JS_ASSERT(JS_GetClass(aObj) == Class());
     DedicatedWorkerGlobalScope* scope =
-      UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj, Class());
+      UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj);
     if (scope) {
       mozilla::dom::TraceProtoOrIfaceCache(aTrc, aObj);
       scope->_trace(aTrc);
@@ -859,7 +859,7 @@ DOMJSClass DedicatedWorkerGlobalScope::sClass = {
   },
   { prototypes::id::EventTarget_workers, prototypes::id::_ID_Count,
     prototypes::id::_ID_Count },
-  -1, false, DOM_GLOBAL_OBJECT_SLOT
+  -1, false, &sNativePropertyHooks
 };
 
 JSPropertySpec DedicatedWorkerGlobalScope::sProperties[] = {
@@ -888,7 +888,7 @@ WorkerGlobalScope::GetInstancePrivate(JSContext* aCx, JSObject* aObj,
   JS_ASSERT(classPtr != Class());
 
   if (classPtr == DedicatedWorkerGlobalScope::Class()) {
-    return UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj, classPtr);
+    return UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj);
   }
 
   JS_ReportErrorNumber(aCx, js_GetErrorMessage, NULL, JSMSG_INCOMPATIBLE_PROTO,
@@ -909,8 +909,8 @@ CreateDedicatedWorkerGlobalScope(JSContext* aCx)
   JS_ASSERT(worker);
 
   JSObject* global =
-    JS_NewCompartmentAndGlobalObject(aCx, DedicatedWorkerGlobalScope::Class(),
-                                     GetWorkerPrincipal());
+    JS_NewGlobalObject(aCx, DedicatedWorkerGlobalScope::Class(),
+                       GetWorkerPrincipal());
   if (!global) {
     return NULL;
   }
@@ -977,11 +977,13 @@ CreateDedicatedWorkerGlobalScope(JSContext* aCx)
     return NULL;
   }
 
-  // Init other paris-bindings.
-  if (!XMLHttpRequestBinding_workers::CreateInterfaceObjects(aCx, global,
-                                                             global) ||
-      !XMLHttpRequestUploadBinding_workers::CreateInterfaceObjects(aCx, global,
-                                                                   global)) {
+  // Init other paris-bindings.  Use GetProtoObject so the proto will
+  // be correctly cached in the proto cache.  Otherwise we'll end up
+  // double-calling CreateInterfaceObjects when we actually create an
+  // object which has these protos, which breaks things like
+  // instanceof.
+  if (!XMLHttpRequestBinding_workers::GetProtoObject(aCx, global, global) ||
+      !XMLHttpRequestUploadBinding_workers::GetProtoObject(aCx, global, global)) {
     return NULL;
   }
 

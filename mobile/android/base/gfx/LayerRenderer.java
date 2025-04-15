@@ -134,8 +134,8 @@ public class LayerRenderer {
         "    gl_FragColor = texture2D(sTexture, vTexCoord);\n" +
         "}\n";
 
-    public void setCheckerboardBitmap(Bitmap bitmap, RectF pageRect) {
-        mCheckerboardLayer.setBitmap(bitmap);
+    public void setCheckerboardBitmap(ByteBuffer data, int width, int height, RectF pageRect, Rect copyRect) {
+        mCheckerboardLayer.setBitmap(data, width, height, copyRect);
         mCheckerboardLayer.beginTransaction();
         try {
             mCheckerboardLayer.setPosition(RectUtils.round(pageRect));
@@ -623,7 +623,7 @@ public class LayerRenderer {
 
                 /* restrict the viewport to page bounds so we don't
                  * count overscroll as checkerboard */
-                if (!viewport.intersect(0, 0, mPageRect.width(), mPageRect.height())) {
+                if (!viewport.intersect(mPageRect)) {
                     /* if the rectangles don't intersect
                        intersect() doesn't change viewport
                        so we set it to empty by hand */

@@ -22,7 +22,6 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsDocument.h"
 #include "nsUnicharUtils.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsContentList.h"
 #include "nsIObserver.h"
 #include "nsIBaseWindow.h"
@@ -161,7 +160,6 @@
 #include "nsHTMLCSSStyleSheet.h"
 
 #include "mozilla/dom/Link.h"
-#include "nsIHTMLDocument.h"
 #include "nsXULAppAPI.h"
 #include "nsDOMTouchEvent.h"
 
@@ -409,6 +407,15 @@ nsIdentifierMapEntry::RemoveNameElement(Element* aElement)
   if (mNameContentList) {
     mNameContentList->RemoveElement(aElement);
   }
+}
+
+// static
+size_t
+nsIdentifierMapEntry::SizeOfExcludingThis(nsIdentifierMapEntry* aEntry,
+                                          nsMallocSizeOfFun aMallocSizeOf,
+                                          void*)
+{
+  return aEntry->GetKey().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
 }
 
 // Helper structs for the content->subdoc map
@@ -1170,8 +1177,7 @@ nsExternalResourceMap::ExternalResource::~ExternalResource()
 // If we ever have an nsIDocumentObserver notification for stylesheet title
 // changes, we could make this inherit from nsDOMStringList instead of
 // reimplementing nsIDOMDOMStringList.
-class nsDOMStyleSheetSetList : public nsIDOMDOMStringList
-                          
+class nsDOMStyleSheetSetList MOZ_FINAL : public nsIDOMDOMStringList
 {
 public:
   NS_DECL_ISUPPORTS
@@ -3355,18 +3361,6 @@ nsDocument::IsNodeOfType(PRUint32 aFlags) const
     return !(aFlags & ~eDOCUMENT);
 }
 
-PRUint16
-nsDocument::NodeType()
-{
-    return (PRUint16)nsIDOMNode::DOCUMENT_NODE;
-}
-
-void
-nsDocument::NodeName(nsAString& aNodeName)
-{
-  aNodeName.AssignLiteral("#document");
-}
-
 Element*
 nsIDocument::GetRootElement() const
 {
@@ -4138,20 +4132,18 @@ nsDocument::DispatchContentLoadedEvents()
       nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(parent);
 
       nsCOMPtr<nsIDOMEvent> event;
-      nsCOMPtr<nsIPrivateDOMEvent> privateEvent;
       if (domDoc) {
         domDoc->CreateEvent(NS_LITERAL_STRING("Events"),
                             getter_AddRefs(event));
 
-        privateEvent = do_QueryInterface(event);
       }
 
-      if (event && privateEvent) {
+      if (event) {
         event->InitEvent(NS_LITERAL_STRING("DOMFrameContentLoaded"), true,
                          true);
 
-        privateEvent->SetTarget(target_frame);
-        privateEvent->SetTrusted(true);
+        event->SetTarget(target_frame);
+        event->SetTrusted(true);
 
         // To dispatch this event we must manually call
         // nsEventDispatcher::Dispatch() on the ancestor document since the
@@ -4159,7 +4151,7 @@ nsDocument::DispatchContentLoadedEvents()
         // the ancestor document if we used the normal event
         // dispatching code.
 
-        nsEvent* innerEvent = privateEvent->GetInternalNSEvent();
+        nsEvent* innerEvent = event->GetInternalNSEvent();
         if (innerEvent) {
           nsEventStatus status = nsEventStatus_eIgnore;
 
@@ -4262,22 +4254,25 @@ nsDocument::StyleRuleRemoved(nsIStyleSheet* aStyleSheet,
 //
 // nsIDOMDocument interface
 //
+nsIContent*
+nsIDocument::GetDocumentType() const
+{
+  for (nsIContent* child = GetFirstChild();
+       child;
+       child = child->GetNextSibling()) {
+    if (child->NodeType() == nsIDOMNode::DOCUMENT_TYPE_NODE) {
+      return child;
+    }
+  }
+  return NULL;
+}
+
 NS_IMETHODIMP
 nsDocument::GetDoctype(nsIDOMDocumentType** aDoctype)
 {
-  NS_ENSURE_ARG_POINTER(aDoctype);
-
-  *aDoctype = nsnull;
-  PRInt32 i, count;
-  count = mChildren.ChildCount();
-  for (i = 0; i < count; i++) {
-    CallQueryInterface(mChildren.ChildAt(i), aDoctype);
-
-    if (*aDoctype) {
-      return NS_OK;
-    }
-  }
-
+  MOZ_ASSERT(aDoctype);
+  nsCOMPtr<nsIDOMDocumentType> doctype = do_QueryInterface(GetDocumentType());
+  doctype.forget(aDoctype);
   return NS_OK;
 }
 
@@ -4421,12 +4416,6 @@ NS_IMETHODIMP
 nsDocument::CreateComment(const nsAString& aData, nsIDOMComment** aReturn)
 {
   *aReturn = nsnull;
-
-  // Make sure the substring "--" is not present in aData.  Otherwise
-  // we'll create a document that can't be serialized.
-  if (FindInReadable(NS_LITERAL_STRING("--"), aData)) {
-    return NS_ERROR_DOM_INVALID_CHARACTER_ERR;
-  }
 
   nsCOMPtr<nsIContent> comment;
   nsresult rv = NS_NewCommentNode(getter_AddRefs(comment), mNodeInfoManager);
@@ -7207,12 +7196,11 @@ nsDocument::DispatchPageTransition(nsIDOMEventTarget* aDispatchTarget,
     nsCOMPtr<nsIDOMEvent> event;
     CreateEvent(NS_LITERAL_STRING("pagetransition"), getter_AddRefs(event));
     nsCOMPtr<nsIDOMPageTransitionEvent> ptEvent = do_QueryInterface(event);
-    nsCOMPtr<nsIPrivateDOMEvent> pEvent = do_QueryInterface(ptEvent);
-    if (pEvent && NS_SUCCEEDED(ptEvent->InitPageTransitionEvent(aType, true,
-                                                                true,
-                                                                aPersisted))) {
-      pEvent->SetTrusted(true);
-      pEvent->SetTarget(this);
+    if (ptEvent && NS_SUCCEEDED(ptEvent->InitPageTransitionEvent(aType, true,
+                                                                 true,
+                                                                 aPersisted))) {
+      event->SetTrusted(true);
+      event->SetTarget(this);
       nsEventDispatcher::DispatchDOMEvent(aDispatchTarget, nsnull, event,
                                           nsnull, nsnull);
     }
@@ -7709,7 +7697,7 @@ namespace {
  * Stub for LoadSheet(), since all we want is to get the sheet into
  * the CSSLoader's style cache
  */
-class StubCSSLoaderObserver : public nsICSSLoaderObserver {
+class StubCSSLoaderObserver MOZ_FINAL : public nsICSSLoaderObserver {
 public:
   NS_IMETHOD
   StyleSheetLoaded(nsCSSStyleSheet*, bool, nsresult)
@@ -9001,6 +8989,7 @@ nsDocument::RequestFullScreen(Element* aElement, bool aWasCallerChrome)
   // to the document's principal's host, if it has one.
   if (!mIsApprovedForFullscreen) {
     mIsApprovedForFullscreen =
+      GetWindow()->IsPartOfApp() ||
       nsContentUtils::IsSitePermAllow(NodePrincipal(), "fullscreen");
   }
 
@@ -9552,7 +9541,8 @@ nsDocument::UpdateVisibilityState()
   if (oldState != mVisibilityState) {
     nsContentUtils::DispatchTrustedEvent(this, static_cast<nsIDocument*>(this),
                                          NS_LITERAL_STRING("mozvisibilitychange"),
-                                         false, false);
+                                         /* bubbles = */ true,
+                                         /* cancelable = */ false);
   }
 }
 
@@ -9605,15 +9595,24 @@ nsDocument::GetMozVisibilityState(nsAString& aState)
 /* virtual */ void
 nsIDocument::DocSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const
 {
-  aWindowSizes->mDOM +=
+  aWindowSizes->mDOMOther +=
     nsINode::SizeOfExcludingThis(aWindowSizes->mMallocSizeOf);
 
   if (mPresShell) {
     mPresShell->SizeOfIncludingThis(aWindowSizes->mMallocSizeOf,
-                                    &aWindowSizes->mLayoutArenas,
+                                    &aWindowSizes->mArenaStats,
+                                    &aWindowSizes->mLayoutPresShell,
                                     &aWindowSizes->mLayoutStyleSets,
                                     &aWindowSizes->mLayoutTextRuns,
                                     &aWindowSizes->mLayoutPresContext);
+  }
+
+  aWindowSizes->mPropertyTables +=
+    mPropertyTable.SizeOfExcludingThis(aWindowSizes->mMallocSizeOf);
+  for (PRUint32 i = 0, count = mExtraPropertyTables.Length();
+       i < count; ++i) {
+    aWindowSizes->mPropertyTables +=
+      mExtraPropertyTables[i]->SizeOfExcludingThis(aWindowSizes->mMallocSizeOf);
   }
 
   // Measurement of the following members may be added later if DMD finds it
@@ -9624,7 +9623,7 @@ nsIDocument::DocSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const
 void
 nsIDocument::DocSizeOfIncludingThis(nsWindowSizes* aWindowSizes) const
 {
-  aWindowSizes->mDOM += aWindowSizes->mMallocSizeOf(this);
+  aWindowSizes->mDOMOther += aWindowSizes->mMallocSizeOf(this);
   DocSizeOfExcludingThis(aWindowSizes);
 }
 
@@ -9656,17 +9655,44 @@ nsDocument::DocSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const
        node;
        node = node->GetNextNode(this))
   {
-    aWindowSizes->mDOM +=
-      node->SizeOfIncludingThis(aWindowSizes->mMallocSizeOf);
+    size_t nodeSize = node->SizeOfIncludingThis(aWindowSizes->mMallocSizeOf);
+    size_t* p;
+
+    switch (node->NodeType()) {
+    case nsIDOMNode::ELEMENT_NODE:
+      p = &aWindowSizes->mDOMElementNodes;
+      break;
+    case nsIDOMNode::TEXT_NODE:
+      p = &aWindowSizes->mDOMTextNodes;
+      break;
+    case nsIDOMNode::CDATA_SECTION_NODE:
+      p = &aWindowSizes->mDOMCDATANodes;
+      break;
+    case nsIDOMNode::COMMENT_NODE:
+      p = &aWindowSizes->mDOMCommentNodes;
+      break;
+    default:
+      p = &aWindowSizes->mDOMOther;
+      break;
+    }
+
+    *p += nodeSize;
   }
 
   aWindowSizes->mStyleSheets +=
     mStyleSheets.SizeOfExcludingThis(SizeOfStyleSheetsElementIncludingThis,
                                      aWindowSizes->mMallocSizeOf); 
-  aWindowSizes->mDOM +=
+  aWindowSizes->mDOMOther +=
     mAttrStyleSheet ?
     mAttrStyleSheet->DOMSizeOfIncludingThis(aWindowSizes->mMallocSizeOf) :
     0;
+
+  aWindowSizes->mDOMOther +=
+    mStyledLinks.SizeOfExcludingThis(NULL, aWindowSizes->mMallocSizeOf);
+
+  aWindowSizes->mDOMOther +=
+    mIdentifierMap.SizeOfExcludingThis(nsIdentifierMapEntry::SizeOfExcludingThis,
+                                       aWindowSizes->mMallocSizeOf);
 
   // Measurement of the following members may be added later if DMD finds it
   // is worthwhile:

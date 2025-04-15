@@ -12,7 +12,7 @@
 #include "nsIComponentManager.h"
 #include "nsIComponentRegistrar.h"
 #include "nsIServiceManager.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "mozilla/Module.h"
 #include "mozilla/ModuleLoader.h"
 #include "mozilla/ReentrantMonitor.h"
@@ -26,7 +26,6 @@
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsWeakReference.h"
-#include "nsIFile.h"
 #include "plarena.h"
 #include "nsCOMArray.h"
 #include "nsDataHashtable.h"
@@ -35,6 +34,7 @@
 #include "nsTArray.h"
 
 #include "mozilla/Omnijar.h"
+#include "mozilla/Attributes.h"
 
 struct nsFactoryEntry;
 class nsIServiceManager;
@@ -69,7 +69,7 @@ struct nsLoaderdata {
     nsCString                 type;
 };
 
-class nsComponentManagerImpl
+class nsComponentManagerImpl MOZ_FINAL
     : public nsIComponentManager
     , public nsIServiceManager
     , public nsSupportsWeakReference
@@ -87,7 +87,7 @@ public:
     nsresult RegistryLocationForFile(nsIFile* aFile,
                                      nsCString& aResult);
     nsresult FileForRegistryLocation(const nsCString &aLocation,
-                                     nsILocalFile **aSpec);
+                                     nsIFile **aSpec);
 
     NS_DECL_NSISERVICEMANAGER
 

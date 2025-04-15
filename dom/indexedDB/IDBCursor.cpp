@@ -64,15 +64,6 @@ private:
   IndexedDBCursorRequestChild* mActor;
 };
 
-inline
-already_AddRefed<IDBRequest>
-GenerateRequest(IDBCursor* aCursor)
-{
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
-  IDBDatabase* database = aCursor->Transaction()->Database();
-  return IDBRequest::Create(aCursor, database, aCursor->Transaction());
-}
-
 } // anonymous namespace
 
 BEGIN_INDEXEDDB_NAMESPACE
@@ -456,22 +447,10 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(IDBCursor)
                "Should have a cached primary key");
   NS_ASSERTION(tmp->mHaveCachedValue || JSVAL_IS_VOID(tmp->mCachedValue),
                "Should have a cached value");
-  if (tmp->mScriptOwner) {
-    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_CALLBACK(tmp->mScriptOwner,
-                                               "mScriptOwner")
-  }
-  if (JSVAL_IS_GCTHING(tmp->mCachedKey)) {
-    void *gcThing = JSVAL_TO_GCTHING(tmp->mCachedKey);
-    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_CALLBACK(gcThing, "mCachedKey")
-  }
-  if (JSVAL_IS_GCTHING(tmp->mCachedPrimaryKey)) {
-    void *gcThing = JSVAL_TO_GCTHING(tmp->mCachedPrimaryKey);
-    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_CALLBACK(gcThing, "mCachedPrimaryKey")
-  }
-  if (JSVAL_IS_GCTHING(tmp->mCachedValue)) {
-    void *gcThing = JSVAL_TO_GCTHING(tmp->mCachedValue);
-    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_CALLBACK(gcThing, "mCachedValue")
-  }
+  NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mScriptOwner)
+  NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mCachedKey)
+  NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mCachedPrimaryKey)
+  NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mCachedValue)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(IDBCursor)
@@ -706,23 +685,12 @@ IDBCursor::Update(const jsval& aValue,
 
   Key& objectKey = (mType == OBJECTSTORE) ? mKey : mObjectKey;
 
-  if (!mObjectStore->KeyPath().IsEmpty()) {
-    // This has to be an object.
-    if (JSVAL_IS_PRIMITIVE(aValue)) {
-      return NS_ERROR_DOM_INDEXEDDB_DATA_ERR;
-    }
-
+  if (mObjectStore->HasValidKeyPath()) {
     // Make sure the object given has the correct keyPath value set on it.
-    const nsString& keyPath = mObjectStore->KeyPath();
-
-    jsval prop;
-    JSBool ok = JS_GetUCProperty(aCx, JSVAL_TO_OBJECT(aValue),
-                                 reinterpret_cast<const jschar*>(keyPath.get()),
-                                 keyPath.Length(), &prop);
-    NS_ENSURE_TRUE(ok, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
-
+    const KeyPath& keyPath = mObjectStore->GetKeyPath();
     Key key;
-    rv = key.SetFromJSVal(aCx, prop);
+
+    rv = keyPath.ExtractKey(aCx, aValue, key);
     if (NS_FAILED(rv)) {
       return rv;
     }
@@ -772,11 +740,11 @@ IDBCursor::Delete(JSContext* aCx,
 }
 
 NS_IMETHODIMP
-IDBCursor::Advance(PRInt32 aCount)
+IDBCursor::Advance(PRInt64 aCount)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 
-  if (aCount < 1) {
+  if (aCount < 1 || aCount > PR_UINT32_MAX) {
     return NS_ERROR_TYPE_ERR;
   }
 
@@ -875,7 +843,7 @@ ContinueHelper::GetSuccessResult(JSContext* aCx,
   UpdateCursorState();
 
   if (mKey.IsUnset()) {
-    *aVal = JSVAL_VOID;
+    *aVal = JSVAL_NULL;
   }
   else {
     nsresult rv = WrapNative(aCx, mCursor, aVal);

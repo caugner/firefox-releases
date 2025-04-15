@@ -13,6 +13,7 @@
 class nsEventStateManager;
 class nsGlobalWindow;
 class nsFocusManager;
+class nsICSSDeclaration;
 
 // Element-specific flags
 enum {
@@ -56,8 +57,8 @@ class Link;
 
 // IID for the dom::Element interface
 #define NS_ELEMENT_IID \
-{ 0x8493dd61, 0x4d59, 0x410a, \
-  { 0x97, 0x40, 0xd0, 0xa0, 0xc2, 0x03, 0xff, 0x52 } }
+{ 0xc6c049a1, 0x96e8, 0x4580, \
+  { 0xa6, 0x93, 0xb9, 0x5f, 0x53, 0xbe, 0xe8, 0x1c } }
 
 class Element : public nsIContent
 {
@@ -116,7 +117,7 @@ public:
       return mState;
     }
     return StyleStateFromLocks();
-  };
+  }
 
   /**
    * The style state locks applied to this element.
@@ -180,10 +181,8 @@ public:
    *
    * Note: This method is analogous to the 'GetStyle' method in
    * nsGenericHTMLElement and nsStyledElement.
-   *
-   * TODO: Bug 744157 - All callers QI to nsICSSDeclaration.
    */
-  virtual nsIDOMCSSStyleDeclaration* GetSMILOverrideStyle() = 0;
+  virtual nsICSSDeclaration* GetSMILOverrideStyle() = 0;
 
   /**
    * Returns if the element is labelable as per HTML specification.
@@ -260,9 +259,16 @@ NS_DEFINE_STATIC_IID_ACCESSOR(Element, NS_ELEMENT_IID)
 } // namespace dom
 } // namespace mozilla
 
-inline mozilla::dom::Element* nsINode::AsElement() {
-  NS_ASSERTION(IsElement(), "Not an element?");
+inline mozilla::dom::Element* nsINode::AsElement()
+{
+  MOZ_ASSERT(IsElement());
   return static_cast<mozilla::dom::Element*>(this);
+}
+
+inline const mozilla::dom::Element* nsINode::AsElement() const
+{
+  MOZ_ASSERT(IsElement());
+  return static_cast<const mozilla::dom::Element*>(this);
 }
 
 #endif // mozilla_dom_Element_h__

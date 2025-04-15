@@ -5,8 +5,9 @@
 
 #include "WebGLContext.h"
 
-#include "mozilla/Preferences.h"
 #include "mozilla/CheckedInt.h"
+#include "mozilla/Preferences.h"
+#include "mozilla/Services.h"
 
 #include "jsfriendapi.h"
 
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 
+#include "mozilla/Services.h"
 #include "nsIObserverService.h"
 
 using namespace mozilla;
@@ -449,6 +451,11 @@ bool WebGLContext::ValidateLevelWidthHeightForTarget(WebGLenum target, WebGLint 
 
 uint32_t WebGLContext::GetBitsPerTexel(WebGLenum format, WebGLenum type)
 {
+    // If there is no defined format or type, we're not taking up any memory
+    if (!format || !type) {
+        return 0;
+    }
+
     if (type == LOCAL_GL_UNSIGNED_BYTE || type == LOCAL_GL_FLOAT) {
         int multiplier = type == LOCAL_GL_FLOAT ? 32 : 8;
         switch (format) {
@@ -485,7 +492,7 @@ bool WebGLContext::ValidateTexFormatAndType(WebGLenum format, WebGLenum type, in
                                               uint32_t *texelSize, const char *info)
 {
     if (type == LOCAL_GL_UNSIGNED_BYTE ||
-        (IsExtensionEnabled(WebGL_OES_texture_float) && type == LOCAL_GL_FLOAT))
+        (IsExtensionEnabled(OES_texture_float) && type == LOCAL_GL_FLOAT))
     {
         if (jsArrayType != -1) {
             if ((type == LOCAL_GL_UNSIGNED_BYTE && jsArrayType != js::ArrayBufferView::TYPE_UINT8) ||
@@ -599,20 +606,6 @@ WebGLContext::InitAndValidateGL()
         GenerateWarning("GL error 0x%x occurred during OpenGL context initialization, before WebGL initialization!", error);
         return false;
     }
-
-#ifdef ANDROID
-    // bug 736123, blacklist WebGL on Adreno
-    bool forceEnabled = Preferences::GetBool("webgl.force-enabled", false);
-    if (!forceEnabled) {
-        int renderer = gl->Renderer();
-        if (renderer == gl::GLContext::RendererAdreno200 ||
-            renderer == gl::GLContext::RendererAdreno205)
-        {
-            GenerateWarning("WebGL blocked on this Adreno driver!");
-            return false;
-        }
-    }
-#endif
 
     mMinCapability = Preferences::GetBool("webgl.min_capability_mode", false);
     mDisableExtensions = Preferences::GetBool("webgl.disable-extensions", false);
@@ -752,6 +745,15 @@ WebGLContext::InitAndValidateGL()
             gl->fEnable(LOCAL_GL_POINT_SPRITE);
         }
     }
+
+#ifdef XP_MACOSX
+    if (gl->WorkAroundDriverBugs() &&
+        gl->Vendor() == gl::GLContext::VendorATI) {
+        // The Mac ATI driver, in all known OSX version up to and including 10.8,
+        // renders points sprites upside-down. Apple bug 11778921
+        gl->fPointParameterf(LOCAL_GL_POINT_SPRITE_COORD_ORIGIN, LOCAL_GL_LOWER_LEFT);
+    }
+#endif
 
     // Check the shader validator pref
     NS_ENSURE_TRUE(Preferences::GetRootBranch(), false);

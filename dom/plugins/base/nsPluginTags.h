@@ -27,17 +27,13 @@ struct nsPluginInfo;
 #define NS_PLUGIN_FLAG_FROMCACHE    0x0004    // this plugintag info was loaded from cache
 #define NS_PLUGIN_FLAG_UNWANTED     0x0008    // this is an unwanted plugin
 #define NS_PLUGIN_FLAG_BLOCKLISTED  0x0010    // this is a blocklisted plugin
+#define NS_PLUGIN_FLAG_CLICKTOPLAY  0x0020    // this is a click-to-play plugin
 
 // A linked-list of plugin information that is used for instantiating plugins
 // and reflecting plugin information into JavaScript.
 class nsPluginTag : public nsIPluginTag
 {
 public:
-  enum nsRegisterType {
-    ePluginRegister,
-    ePluginUnregister
-  };
-  
   NS_DECL_ISUPPORTS
   NS_DECL_NSIPLUGINTAG
   
@@ -64,8 +60,6 @@ public:
   PRUint32 Flags();
   bool Equals(nsPluginTag* aPluginTag);
   bool IsEnabled();
-  void RegisterWithCategoryManager(bool aOverrideInternalTypes,
-                                   nsRegisterType aType = ePluginRegister);
   
   nsRefPtr<nsPluginTag> mNext;
   nsPluginHost *mPluginHost;
@@ -77,7 +71,6 @@ public:
   PRLibrary     *mLibrary;
   nsRefPtr<nsNPAPIPlugin> mPlugin;
   bool          mIsJavaPlugin;
-  bool          mIsNPRuntimeEnabledJavaPlugin;
   bool          mIsFlashPlugin;
   nsCString     mFileName; // UTF-8
   nsCString     mFullPath; // UTF-8

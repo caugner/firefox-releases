@@ -17,11 +17,15 @@ FAIL_ON_WARNINGS = 1
 
 
 EXPORTS		= \
+		nsGenericHTMLElement.h \
+		nsHTMLIFrameElement.h \
 		nsClientRect.h \
 		nsHTMLDNSPrefetch.h \
+		nsTimeRanges.h \
 		$(NULL)
 
 CPPSRCS		= \
+		HTMLPropertiesCollection.cpp \
 		nsClientRect.cpp \
 		nsHTMLDNSPrefetch.cpp \
 		nsGenericHTMLElement.cpp \
@@ -55,6 +59,7 @@ CPPSRCS		= \
 		nsHTMLMenuElement.cpp \
 		nsHTMLMenuItemElement.cpp \
 		nsHTMLMetaElement.cpp \
+		nsHTMLMeterElement.cpp \
 		nsHTMLModElement.cpp \
 		nsHTMLObjectElement.cpp \
 		nsHTMLOListElement.cpp \
@@ -116,6 +121,7 @@ INCLUDES	+= \
 		-I$(srcdir)/../../../../dom/base \
 		-I$(srcdir)/../../../../editor/libeditor/base \
 		-I$(srcdir)/../../../../editor/libeditor/text \
+		-I$(srcdir)/../../../../editor/txmgr/src \
 		-I$(srcdir) \
 		-I$(topsrcdir)/xpcom/ds \
 		$(NULL)

@@ -7,9 +7,7 @@
 #include "nsSMILCompositor.h"
 #include "nsSMILCSSProperty.h"
 #include "nsCSSProps.h"
-#include "nsComponentManagerUtils.h"
 #include "nsITimer.h"
-#include "nsIContent.h"
 #include "mozilla/dom/Element.h"
 #include "nsIDocument.h"
 #include "nsISMILAnimationElement.h"
@@ -358,6 +356,10 @@ nsSMILAnimationController::DoSample(bool aSkipUnchangedContainers)
 {
   if (!mDocument) {
     NS_ERROR("Shouldn't be sampling after document has disconnected");
+    return;
+  }
+  if (mRunningSample) {
+    NS_ERROR("Shouldn't be recursively sampling");
     return;
   }
 
@@ -772,7 +774,8 @@ nsSMILAnimationController::GetTargetIdentifierForAnimation(
         isCSS = targetElem->GetNameSpaceID() != kNameSpaceID_SVG;
       } else {
         nsCSSProperty prop =
-          nsCSSProps::LookupProperty(nsDependentAtomString(attributeName));
+          nsCSSProps::LookupProperty(nsDependentAtomString(attributeName),
+                                     nsCSSProps::eEnabled);
         isCSS = nsSMILCSSProperty::IsPropertyAnimatable(prop);
       }
     }

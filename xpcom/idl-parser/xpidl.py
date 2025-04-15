@@ -198,6 +198,8 @@ class NameMap(object):
     def set(self, object):
         if object.name in builtinMap:
             raise IDLError("name '%s' is a builtin and cannot be redeclared" % (object.name), object.location)
+        if object.name.startswith("_"):
+            object.name = object.name[1:]
         if object.name in self._d:
             old = self._d[object.name]
             if old == object: return
@@ -515,6 +517,9 @@ class BaseInterface(object):
 
             if self.attributes.scriptable and not realbase.attributes.scriptable:
                 print >>sys.stderr, IDLError("interface '%s' is scriptable but derives from non-scriptable '%s'" % (self.name, self.base), self.location, warning=True)
+
+            if self.attributes.scriptable and realbase.attributes.builtinclass and not self.attributes.builtinclass:
+                raise IDLError("interface '%s' is not builtinclass but derives from builtinclass '%s'" % (self.name, self.base), self.location)
 
         forwardedMembers = set()
         for member in self.members:
@@ -1115,7 +1120,7 @@ class IDLParser(object):
     t_IID.__doc__ = r'%(c)s{8}-%(c)s{4}-%(c)s{4}-%(c)s{4}-%(c)s{12}' % {'c': hexchar}
 
     def t_IDENTIFIER(self, t):
-        r'(unsigned\ long\ long|unsigned\ short|unsigned\ long|long\ long)(?![A-Za-z][A-Za-z_0-9])|[A-Za-z][A-Za-z_0-9]*'
+        r'(unsigned\ long\ long|unsigned\ short|unsigned\ long|long\ long)(?!_?[A-Za-z][A-Za-z_0-9])|_?[A-Za-z][A-Za-z_0-9]*'
         t.type = self.keywords.get(t.value, 'IDENTIFIER')
         return t
 

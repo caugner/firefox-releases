@@ -63,7 +63,8 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
       mSyncDecodeImages(false),
       mIsPaintingToWindow(false),
       mHasDisplayPort(false),
-      mHasFixedItems(false)
+      mHasFixedItems(false),
+      mIsInFixedPosition(false)
 {
   MOZ_COUNT_CTOR(nsDisplayListBuilder);
   PL_InitArenaPool(&mPool, "displayListArena", 1024,
@@ -2000,6 +2001,81 @@ nsDisplayOwnLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, mList,
                            aContainerParameters, nsnull);
   return layer.forget();
+}
+
+nsDisplayFixedPosition::nsDisplayFixedPosition(nsDisplayListBuilder* aBuilder,
+                                               nsIFrame* aFrame,
+                                               nsIFrame* aFixedPosFrame,
+                                               nsDisplayList* aList)
+    : nsDisplayOwnLayer(aBuilder, aFrame, aList)
+    , mFixedPosFrame(aFixedPosFrame) {
+  MOZ_COUNT_CTOR(nsDisplayFixedPosition);
+}
+
+#ifdef NS_BUILD_REFCNT_LOGGING
+nsDisplayFixedPosition::~nsDisplayFixedPosition() {
+  MOZ_COUNT_DTOR(nsDisplayFixedPosition);
+}
+#endif
+
+already_AddRefed<Layer>
+nsDisplayFixedPosition::BuildLayer(nsDisplayListBuilder* aBuilder,
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aContainerParameters) {
+  nsRefPtr<Layer> layer =
+    nsDisplayOwnLayer::BuildLayer(aBuilder, aManager, aContainerParameters);
+
+  // Work out the anchor point for this fixed position layer. We assume that
+  // any positioning set (left/top/right/bottom) indicates that the
+  // corresponding side of its container should be the anchor point,
+  // defaulting to top-left.
+  nsIFrame* viewportFrame = mFixedPosFrame->GetParent();
+  nsPresContext *presContext = viewportFrame->PresContext();
+
+  // Fixed position frames are reflowed into the scroll-port size if one has
+  // been set.
+  nsSize containingBlockSize = viewportFrame->GetSize();
+  if (presContext->PresShell()->IsScrollPositionClampingScrollPortSizeSet()) {
+    containingBlockSize = presContext->PresShell()->
+      GetScrollPositionClampingScrollPortSize();
+  }
+
+  // Find out the rect of the viewport frame relative to the reference frame.
+  // This, in conjunction with the container scale, will correspond to the
+  // coordinate-space of the built layer.
+  float factor = presContext->AppUnitsPerDevPixel();
+  nsPoint origin = aBuilder->ToReferenceFrame(viewportFrame);
+  gfxRect anchorRect(NSAppUnitsToFloatPixels(origin.x, factor) *
+                       aContainerParameters.mXScale,
+                     NSAppUnitsToFloatPixels(origin.y, factor) *
+                       aContainerParameters.mYScale,
+                     NSAppUnitsToFloatPixels(containingBlockSize.width, factor) *
+                       aContainerParameters.mXScale,
+                     NSAppUnitsToFloatPixels(containingBlockSize.height, factor) *
+                       aContainerParameters.mYScale);
+
+  gfxPoint anchor(anchorRect.x, anchorRect.y);
+
+  const nsStylePosition* position = mFixedPosFrame->GetStylePosition();
+  if (position->mOffset.GetRightUnit() != eStyleUnit_Auto)
+    anchor.x = anchorRect.XMost();
+  if (position->mOffset.GetBottomUnit() != eStyleUnit_Auto)
+    anchor.y = anchorRect.YMost();
+
+  layer->SetFixedPositionAnchor(anchor);
+
+  return layer.forget();
+}
+
+bool nsDisplayFixedPosition::TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) {
+  if (aItem->GetType() != TYPE_FIXED_POSITION)
+    return false;
+  // Items with the same fixed position frame can be merged.
+  nsDisplayFixedPosition* other = static_cast<nsDisplayFixedPosition*>(aItem);
+  if (other->mFixedPosFrame != mFixedPosFrame)
+    return false;
+  MergeFromTrackingMergedFrames(other);
+  return true;
 }
 
 nsDisplayScrollLayer::nsDisplayScrollLayer(nsDisplayListBuilder* aBuilder,

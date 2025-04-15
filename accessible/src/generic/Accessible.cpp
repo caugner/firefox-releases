@@ -67,7 +67,7 @@
 #include "nsNetUtil.h"
 #include "nsEventStates.h"
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 #include "nsIDOMCharacterData.h"
 #endif
 
@@ -111,7 +111,7 @@ Accessible::QueryInterface(REFNSIID aIID, void** aInstancePtr)
   *aInstancePtr = nsnull;
 
   if (aIID.Equals(NS_GET_IID(nsXPCOMCycleCollectionParticipant))) {
-    *aInstancePtr = &NS_CYCLE_COLLECTION_NAME(Accessible);
+    *aInstancePtr = NS_CYCLE_COLLECTION_PARTICIPANT(Accessible);
     return NS_OK;
   }
 
@@ -192,6 +192,12 @@ void
 Accessible::SetRoleMapEntry(nsRoleMapEntry* aRoleMapEntry)
 {
   mRoleMapEntry = aRoleMapEntry;
+}
+
+bool
+Accessible::Init()
+{
+  return true;
 }
 
 NS_IMETHODIMP
@@ -345,7 +351,7 @@ Accessible::Description(nsString& aDescription)
 }
 
 NS_IMETHODIMP
-Accessible::GetKeyboardShortcut(nsAString& aAccessKey)
+Accessible::GetAccessKey(nsAString& aAccessKey)
 {
   aAccessKey.Truncate();
 
@@ -649,8 +655,7 @@ Accessible::NativeState()
 {
   PRUint64 state = 0;
 
-  DocAccessible* document = Document();
-  if (!document || !document->IsInDocument(this))
+  if (!IsInDocument())
     state |= states::STALE;
 
   if (mContent->IsElement()) {
@@ -800,38 +805,11 @@ Accessible::ChildAtPoint(PRInt32 aX, PRInt32 aY,
   if (!accessible)
     return fallbackAnswer;
 
-  if (accessible == this) {
-    // Manually walk through accessible children and see if the are within this
-    // point. Skip offscreen or invisible accessibles. This takes care of cases
-    // where layout won't walk into things for us, such as image map areas and
-    // sub documents (XXX: subdocuments should be handled by methods of
-    // OuterDocAccessibles).
-    PRUint32 childCount = ChildCount();
-    for (PRUint32 childIdx = 0; childIdx < childCount; childIdx++) {
-      Accessible* child = GetChildAt(childIdx);
-
-      PRInt32 childX, childY, childWidth, childHeight;
-      child->GetBounds(&childX, &childY, &childWidth, &childHeight);
-      if (aX >= childX && aX < childX + childWidth &&
-          aY >= childY && aY < childY + childHeight &&
-          (child->State() & states::INVISIBLE) == 0) {
-
-        if (aWhichChild == eDeepestChild)
-          return child->ChildAtPoint(aX, aY, eDeepestChild);
-
-        return child;
-      }
-    }
-
-    // The point is in this accessible but not in a child. We are allowed to
-    // return |this| as the answer.
-    return accessible;
-  }
-
+  // Hurray! We have an accessible for the frame that layout gave us.
   // Since DOM node of obtained accessible may be out of flow then we should
   // ensure obtained accessible is a child of this accessible.
   Accessible* child = accessible;
-  while (true) {
+  while (child != this) {
     Accessible* parent = child->Parent();
     if (!parent) {
       // Reached the top of the hierarchy. These bounds were inside an
@@ -839,13 +817,37 @@ Accessible::ChildAtPoint(PRInt32 aX, PRInt32 aY,
       return fallbackAnswer;
     }
 
-    if (parent == this)
-      return aWhichChild == eDeepestChild ? accessible : child;
+    // If we landed on a legitimate child of |this|, and we want the direct
+    // child, return it here.
+    if (parent == this && aWhichChild == eDirectChild)
+        return child;
 
     child = parent;
   }
 
-  return nsnull;
+  // Manually walk through accessible children and see if the are within this
+  // point. Skip offscreen or invisible accessibles. This takes care of cases
+  // where layout won't walk into things for us, such as image map areas and
+  // sub documents (XXX: subdocuments should be handled by methods of
+  // OuterDocAccessibles).
+  PRUint32 childCount = accessible->ChildCount();
+  for (PRUint32 childIdx = 0; childIdx < childCount; childIdx++) {
+    Accessible* child = accessible->GetChildAt(childIdx);
+
+    PRInt32 childX, childY, childWidth, childHeight;
+    child->GetBounds(&childX, &childY, &childWidth, &childHeight);
+    if (aX >= childX && aX < childX + childWidth &&
+        aY >= childY && aY < childY + childHeight &&
+        (child->State() & states::INVISIBLE) == 0) {
+
+      if (aWhichChild == eDeepestChild)
+        return child->ChildAtPoint(aX, aY, eDeepestChild);
+
+      return child;
+    }
+  }
+
+  return accessible;
 }
 
 // nsIAccessible getChildAtPoint(in long x, in long y)
@@ -881,88 +883,14 @@ Accessible::GetDeepestChildAtPoint(PRInt32 aX, PRInt32 aY,
 void
 Accessible::GetBoundsRect(nsRect& aTotalBounds, nsIFrame** aBoundingFrame)
 {
-/*
- * This method is used to determine the bounds of a content node.
- * Because HTML wraps and links are not always rectangular, this
- * method uses the following algorithm:
- *
- * 1) Start with an empty rectangle
- * 2) Add the rect for the primary frame from for the DOM node.
- * 3) For each next frame at the same depth with the same DOM node, add that rect to total
- * 4) If that frame is an inline frame, search deeper at that point in the tree, adding all rects
- */
-
-  // Initialization area
-  *aBoundingFrame = nsnull;
-  nsIFrame* firstFrame = GetFrame();
-  if (!firstFrame)
-    return;
-
-  // Find common relative parent
-  // This is an ancestor frame that will incompass all frames for this content node.
-  // We need the relative parent so we can get absolute screen coordinates
-  nsIFrame *ancestorFrame = firstFrame;
-
-  while (ancestorFrame) {  
-    *aBoundingFrame = ancestorFrame;
-    // If any other frame type, we only need to deal with the primary frame
-    // Otherwise, there may be more frames attached to the same content node
-    if (ancestorFrame->GetType() != nsGkAtoms::inlineFrame &&
-        ancestorFrame->GetType() != nsGkAtoms::textFrame)
-      break;
-    ancestorFrame = ancestorFrame->GetParent();
-  }
-
-  nsIFrame *iterFrame = firstFrame;
-  nsCOMPtr<nsIContent> firstContent(mContent);
-  nsIContent* iterContent = firstContent;
-  PRInt32 depth = 0;
-
-  // Look only at frames below this depth, or at this depth (if we're still on the content node we started with)
-  while (iterContent == firstContent || depth > 0) {
-    // Coordinates will come back relative to parent frame
-    nsRect currFrameBounds = iterFrame->GetRect();
-    
-    // Make this frame's bounds relative to common parent frame
-    currFrameBounds +=
-      iterFrame->GetParent()->GetOffsetToExternal(*aBoundingFrame);
-
-    // Add this frame's bounds to total
-    aTotalBounds.UnionRect(aTotalBounds, currFrameBounds);
-
-    nsIFrame *iterNextFrame = nsnull;
-
-    if (iterFrame->GetType() == nsGkAtoms::inlineFrame) {
-      // Only do deeper bounds search if we're on an inline frame
-      // Inline frames can contain larger frames inside of them
-      iterNextFrame = iterFrame->GetFirstPrincipalChild();
-    }
-
-    if (iterNextFrame) 
-      ++depth;  // Child was found in code above this: We are going deeper in this iteration of the loop
-    else {  
-      // Use next sibling if it exists, or go back up the tree to get the first next-in-flow or next-sibling 
-      // within our search
-      while (iterFrame) {
-        iterNextFrame = iterFrame->GetNextContinuation();
-        if (!iterNextFrame)
-          iterNextFrame = iterFrame->GetNextSibling();
-        if (iterNextFrame || --depth < 0) 
-          break;
-        iterFrame = iterFrame->GetParent();
-      }
-    }
-
-    // Get ready for the next round of our loop
-    iterFrame = iterNextFrame;
-    if (iterFrame == nsnull)
-      break;
-    iterContent = nsnull;
-    if (depth == 0)
-      iterContent = iterFrame->GetContent();
+  nsIFrame* frame = GetFrame();
+  if (frame) {
+    *aBoundingFrame = nsLayoutUtils::GetContainingBlockForClientRect(frame);
+    aTotalBounds = nsLayoutUtils::
+      GetAllInFlowRectsUnion(frame, *aBoundingFrame,
+                             nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
   }
 }
-
 
 /* void getBounds (out long x, out long y, out long width, out long height); */
 NS_IMETHODIMP
@@ -1605,7 +1533,7 @@ Accessible::ApplyARIAState(PRUint64* aState) const
   dom::Element* element = mContent->AsElement();
 
   // Test for universal states first
-  *aState |= nsARIAMap::UniversalStatesFor(element);
+  *aState |= aria::UniversalStatesFor(element);
 
   if (mRoleMapEntry) {
 
@@ -1753,34 +1681,13 @@ Accessible::SetName(const nsAString& aName)
 }
 
 NS_IMETHODIMP
-Accessible::GetDefaultKeyBinding(nsAString& aKeyBinding)
+Accessible::GetKeyboardShortcut(nsAString& aKeyBinding)
 {
   aKeyBinding.Truncate();
   if (IsDefunct())
     return NS_ERROR_FAILURE;
 
   KeyboardShortcut().ToString(aKeyBinding);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-Accessible::GetKeyBindings(PRUint8 aActionIndex,
-                             nsIDOMDOMStringList** aKeyBindings)
-{
-  // Currently we support only unique key binding on element for default action.
-  NS_ENSURE_TRUE(aActionIndex == 0, NS_ERROR_INVALID_ARG);
-
-  nsAccessibleDOMStringList* keyBindings = new nsAccessibleDOMStringList();
-  NS_ENSURE_TRUE(keyBindings, NS_ERROR_OUT_OF_MEMORY);
-
-  nsAutoString defaultKey;
-  nsresult rv = GetDefaultKeyBinding(defaultKey);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!defaultKey.IsEmpty())
-    keyBindings->Add(defaultKey);
-
-  NS_ADDREF(*aKeyBindings = keyBindings);
   return NS_OK;
 }
 

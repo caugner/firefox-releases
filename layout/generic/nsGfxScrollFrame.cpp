@@ -16,6 +16,7 @@
 #include "nsGfxScrollFrame.h"
 #include "nsGkAtoms.h"
 #include "nsINameSpaceManager.h"
+#include "nsContentList.h"
 #include "nsIDocument.h"
 #include "nsFontMetrics.h"
 #include "nsIDocumentObserver.h"
@@ -51,6 +52,7 @@
 #include "nsSMILKeySpline.h"
 #include "nsSubDocumentFrame.h"
 #include "nsSVGOuterSVGFrame.h"
+#include "mozilla/Attributes.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -929,7 +931,7 @@ nsHTMLScrollFrame::Reflow(nsPresContext*           aPresContext,
 
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 NS_IMETHODIMP
 nsHTMLScrollFrame::GetFrameName(nsAString& aResult) const
 {
@@ -1248,7 +1250,7 @@ nsXULScrollFrame::GetMaxSize(nsBoxLayoutState& aState)
   return maxSize;
 }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 NS_IMETHODIMP
 nsXULScrollFrame::GetFrameName(nsAString& aResult) const
 {
@@ -1281,7 +1283,7 @@ const double kCurrentVelocityWeighting = 0.25;
 const double kStopDecelerationWeighting = 0.4;
 
 // AsyncScroll has ref counting.
-class nsGfxScrollFrameInner::AsyncScroll : public nsARefreshObserver {
+class nsGfxScrollFrameInner::AsyncScroll MOZ_FINAL : public nsARefreshObserver {
 public:
   typedef mozilla::TimeStamp TimeStamp;
   typedef mozilla::TimeDuration TimeDuration;
@@ -1553,7 +1555,7 @@ IsSmoothScrollingEnabled()
   return Preferences::GetBool(SMOOTH_SCROLL_PREF_NAME, false);
 }
 
-class ScrollFrameActivityTracker : public nsExpirationTracker<nsGfxScrollFrameInner,4> {
+class ScrollFrameActivityTracker MOZ_FINAL : public nsExpirationTracker<nsGfxScrollFrameInner,4> {
 public:
   // Wait for 3-4s between scrolls before we remove our layers.
   // That's 4 generations of 1s each.
@@ -1797,12 +1799,6 @@ CanScrollWithBlitting(nsIFrame* aFrame)
         f->IsFrameOfType(nsIFrame::eSVG)) {
       return false;
     }
-#ifndef MOZ_ENABLE_MASK_LAYERS
-    nsIScrollableFrame* sf = do_QueryFrame(f);
-    if ((sf || f->IsFrameOfType(nsIFrame::eReplaced)) &&
-        nsLayoutUtils::HasNonZeroCorner(f->GetStyleBorder()->mBorderRadius))
-      return false;
-#endif
     if (nsLayoutUtils::IsPopup(f))
       break;
   }
@@ -1962,38 +1958,34 @@ void nsGfxScrollFrameInner::ScrollVisual(nsPoint aOldScrolledFramePos)
 }
 
 /**
- * Adjust the desired scroll value in given range
- * in order to get resulting scroll by whole amount of layer pixels.
- * Current implementation is not checking that result value is the best.
- * Ideally it's would be possible to find best value by implementing
- * test function which is repeating last part of CreateOrRecycleThebesLayer,
- * and checking other points in allowed range, but that may cause another perf hit.
- * Let's keep it as TODO.
+ * Return an appunit value close to aDesired and between aLower and aUpper
+ * such that (aDesired - aCurrent)*aRes/aAppUnitsPerPixel is an integer (or
+ * as close as we can get modulo rounding to appunits). If that
+ * can't be done, just returns aDesired.
  */
 static nscoord
-RestrictToLayerPixels(nscoord aDesired, nscoord aLower,
-                      nscoord aUpper, nscoord aAppUnitsPerPixel,
-                      double aRes, double aCurrentLayerOffset)
+AlignWithLayerPixels(nscoord aDesired, nscoord aLower,
+                     nscoord aUpper, nscoord aAppUnitsPerPixel,
+                     double aRes, nscoord aCurrent)
 {
-  // convert the result to layer pixels
-  double layerVal = aRes * double(aDesired) / aAppUnitsPerPixel;
+  double currentLayerVal = (aRes*aCurrent)/aAppUnitsPerPixel;
+  double desiredLayerVal = (aRes*aDesired)/aAppUnitsPerPixel;
+  double delta = desiredLayerVal - currentLayerVal;
+  double nearestVal = NS_round(delta) + currentLayerVal;
 
-  // Correct value using current layer offset
-  layerVal -= aCurrentLayerOffset;
-
-  // Try nearest pixel bound first
-  double nearestVal = NS_round(layerVal);
+  // Convert back from ThebesLayer space to appunits relative to the top-left
+  // of the scrolled frame.
   nscoord nearestAppUnitVal =
-    NSToCoordRoundWithClamp(nearestVal * aAppUnitsPerPixel / aRes);
+    NSToCoordRoundWithClamp(nearestVal*aAppUnitsPerPixel/aRes);
 
   // Check if nearest layer pixel result fit into allowed and scroll range
   if (nearestAppUnitVal >= aLower && nearestAppUnitVal <= aUpper) {
     return nearestAppUnitVal;
-  } else if (nearestVal != layerVal) {
+  } else if (nearestVal != desiredLayerVal) {
     // Check if opposite pixel boundary fit into scroll range
-    double oppositeVal = nearestVal + ((nearestVal < layerVal) ? 1 : -1);
+    double oppositeVal = nearestVal + ((nearestVal < desiredLayerVal) ? 1 : -1);
     nscoord oppositeAppUnitVal =
-      NSToCoordRoundWithClamp(oppositeVal * aAppUnitsPerPixel / aRes);
+      NSToCoordRoundWithClamp(oppositeVal*aAppUnitsPerPixel/aRes);
     if (oppositeAppUnitVal >= aLower && oppositeAppUnitVal <= aUpper) {
       return oppositeAppUnitVal;
     }
@@ -2002,17 +1994,17 @@ RestrictToLayerPixels(nscoord aDesired, nscoord aLower,
 }
 
 /**
- * Clamp desired scroll position aPt to aBounds (if aBounds is non-null) and then snap
- * it to the nearest layer pixel edges, keeping it within aRange during snapping
- * (if aRange is non-null). aCurrScroll is the current scroll position.
+ * Clamp desired scroll position aPt to aBounds and then snap
+ * it to the same layer pixel edges as aCurrent, keeping it within aRange
+ * during snapping. aCurrent is the current scroll position.
  */
 static nsPoint
-ClampAndRestrictToLayerPixels(const nsPoint& aPt,
-                              const nsRect& aBounds,
-                              nscoord aAppUnitsPerPixel,
-                              const nsRect& aRange,
-                              double aXRes, double aYRes,
-                              const gfxPoint& aCurrScroll)
+ClampAndAlignWithLayerPixels(const nsPoint& aPt,
+                             const nsRect& aBounds,
+                             const nsRect& aRange,
+                             const nsPoint& aCurrent,
+                             nscoord aAppUnitsPerPixel,
+                             const gfxSize& aScale)
 {
   nsPoint pt = aBounds.ClampPoint(aPt);
   // Intersect scroll range with allowed range, by clamping the corners
@@ -2020,10 +2012,10 @@ ClampAndRestrictToLayerPixels(const nsPoint& aPt,
   nsPoint rangeTopLeft = aBounds.ClampPoint(aRange.TopLeft());
   nsPoint rangeBottomRight = aBounds.ClampPoint(aRange.BottomRight());
 
-  return nsPoint(RestrictToLayerPixels(pt.x, rangeTopLeft.x, rangeBottomRight.x,
-                                       aAppUnitsPerPixel, aXRes, aCurrScroll.x),
-                 RestrictToLayerPixels(pt.y, rangeTopLeft.y, rangeBottomRight.y,
-                                       aAppUnitsPerPixel, aYRes, aCurrScroll.y));
+  return nsPoint(AlignWithLayerPixels(pt.x, rangeTopLeft.x, rangeBottomRight.x,
+                                      aAppUnitsPerPixel, aScale.width, aCurrent.x),
+                 AlignWithLayerPixels(pt.y, rangeTopLeft.y, rangeBottomRight.y,
+                                      aAppUnitsPerPixel, aScale.height, aCurrent.y));
 }
 
 /* static */ void
@@ -2056,19 +2048,28 @@ nsGfxScrollFrameInner::ScrollToImpl(nsPoint aPt, const nsRect& aRange)
 {
   nsPresContext* presContext = mOuter->PresContext();
   nscoord appUnitsPerDevPixel = presContext->AppUnitsPerDevPixel();
-
-  double xres = 1.0, yres = 1.0;
-  gfxPoint activeScrolledRootPosition;
-  FrameLayerBuilder::GetThebesLayerResolutionForFrame(mScrolledFrame, &xres, &yres,
-                                                      &activeScrolledRootPosition);
-  nsPoint pt =
-    ClampAndRestrictToLayerPixels(aPt,
-                                  GetScrollRangeForClamping(),
-                                  appUnitsPerDevPixel,
-                                  aRange, xres, yres,
-                                  activeScrolledRootPosition);
-
+  // 'scale' is our estimate of the scale factor that will be applied
+  // when rendering the scrolled content to its own ThebesLayer.
+  gfxSize scale = FrameLayerBuilder::GetThebesLayerScaleForFrame(mScrolledFrame);
   nsPoint curPos = GetScrollPosition();
+  // Try to align aPt with curPos so they have an integer number of layer
+  // pixels between them. This gives us the best chance of scrolling without
+  // having to invalidate due to changes in subpixel rendering.
+  // Note that when we actually draw into a ThebesLayer, the coordinates
+  // that get mapped onto the layer buffer pixels are from the display list,
+  // which are relative to the display root frame's top-left increasing down,
+  // whereas here our coordinates are scroll positions which increase upward
+  // and are relative to the scrollport top-left. This difference doesn't actually
+  // matter since all we are about is that there be an integer number of
+  // layer pixels between pt and curPos.
+  nsPoint pt =
+    ClampAndAlignWithLayerPixels(aPt,
+                                 GetScrollRangeForClamping(),
+                                 aRange,
+                                 curPos,
+                                 appUnitsPerDevPixel,
+                                 scale);
+
   if (pt == curPos) {
     return;
   }
@@ -3194,9 +3195,12 @@ void nsGfxScrollFrameInner::PostOverflowEvent()
     return;
   }
 
-  nsRefPtr<AsyncScrollPortEvent> ev = new AsyncScrollPortEvent(this);
-  if (NS_SUCCEEDED(NS_DispatchToCurrentThread(ev)))
-    mAsyncScrollPortEvent = ev;
+  nsRootPresContext* rpc = mOuter->PresContext()->GetRootPresContext();
+  if (!rpc)
+    return;
+
+  mAsyncScrollPortEvent = new AsyncScrollPortEvent(this);
+  rpc->AddWillPaintObserver(mAsyncScrollPortEvent.get());
 }
 
 bool

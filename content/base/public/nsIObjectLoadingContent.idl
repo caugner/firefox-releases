@@ -20,6 +20,7 @@ interface nsIURI;
 /**
  * This interface represents a content node that loads objects.
  */
+
 [scriptable, uuid(e3e284a3-b4a8-49ef-af6b-c8c4a158db86)]
 interface nsIObjectLoadingContent : nsISupports
 {

@@ -30,10 +30,10 @@ extern PRLogModuleInfo* gBuiltinDecoderLog;
 #define LOG(type, msg)
 #endif
 
-// Wait this number of milliseconds when buffering, then leave and play
+// Wait this number of seconds when buffering, then leave and play
 // as best as we can if the required amount of data hasn't been
 // retrieved.
-static const PRUint32 BUFFERING_WAIT = 30000;
+static const PRUint32 BUFFERING_WAIT_S = 30;
 
 // If audio queue has less than this many usecs of decoded audio, we won't risk
 // trying to decode the video, we'll skip decoding video up to the next
@@ -264,7 +264,7 @@ void StateMachineTracker::EnsureGlobalStateMachine()
   ReentrantMonitorAutoEnter mon(mMonitor);
   if (mStateMachineCount == 0) {
     NS_ASSERTION(!mStateMachineThread, "Should have null state machine thread!");
-    DebugOnly<nsresult> rv = NS_NewThread(&mStateMachineThread, nsnull);
+    DebugOnly<nsresult> rv = NS_NewNamedThread("Media State", &mStateMachineThread, nsnull);
     NS_ABORT_IF_FALSE(NS_SUCCEEDED(rv), "Can't create media state machine thread");
   }
   mStateMachineCount++;
@@ -417,7 +417,7 @@ nsBuiltinDecoderStateMachine::nsBuiltinDecoderStateMachine(nsBuiltinDecoder* aDe
   if (Preferences::GetBool("media.realtime_decoder.enabled", false) == false)
     mRealTime = false;
 
-  mBufferingWait = mRealTime ? 0 : BUFFERING_WAIT;
+  mBufferingWait = mRealTime ? 0 : BUFFERING_WAIT_S;
   mLowDataThresholdUsecs = mRealTime ? 0 : LOW_DATA_THRESHOLD_USECS;
 }
 
@@ -1617,9 +1617,10 @@ nsBuiltinDecoderStateMachine::StartDecodeThread()
 
   mRequestedNewDecodeThread = false;
 
-  nsresult rv = NS_NewThread(getter_AddRefs(mDecodeThread),
-                              nsnull,
-                              MEDIA_THREAD_STACK_SIZE);
+  nsresult rv = NS_NewNamedThread("Media Decode",
+                                  getter_AddRefs(mDecodeThread),
+                                  nsnull,
+                                  MEDIA_THREAD_STACK_SIZE);
   if (NS_FAILED(rv)) {
     // Give up, report error to media element.
     nsCOMPtr<nsIRunnable> event =
@@ -1644,14 +1645,16 @@ nsBuiltinDecoderStateMachine::StartAudioThread()
   mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
   mStopAudioThread = false;
   if (HasAudio() && !mAudioThread && !mAudioCaptured) {
-    nsresult rv = NS_NewThread(getter_AddRefs(mAudioThread),
-                               nsnull,
-                               MEDIA_THREAD_STACK_SIZE);
+    nsresult rv = NS_NewNamedThread("Media Audio",
+                                    getter_AddRefs(mAudioThread),
+                                    nsnull,
+                                    MEDIA_THREAD_STACK_SIZE);
     if (NS_FAILED(rv)) {
       LOG(PR_LOG_DEBUG, ("%p Changed state to SHUTDOWN because failed to create audio thread", mDecoder.get()));
       mState = DECODER_STATE_SHUTDOWN;
       return rv;
     }
+
     nsCOMPtr<nsIRunnable> event =
       NS_NewRunnableMethod(this, &nsBuiltinDecoderStateMachine::AudioLoop);
     mAudioThread->Dispatch(event, NS_DISPATCH_NORMAL);

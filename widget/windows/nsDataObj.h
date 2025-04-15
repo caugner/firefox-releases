@@ -11,7 +11,7 @@
 
 #include "nsCOMPtr.h"
 #include "nsString.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsIURI.h"
 #include "nsIInputStream.h"
 #include "nsIStreamListener.h"
@@ -87,7 +87,7 @@ class nsDataObj : public IDataObject,
 {
   public: // construction, destruction
     nsDataObj(nsIURI *uri = nsnull);
-    ~nsDataObj();
+    virtual ~nsDataObj();
 
 	public: // IUnknown methods - see iunknown.h for documentation
 		STDMETHODIMP_(ULONG) AddRef        ();

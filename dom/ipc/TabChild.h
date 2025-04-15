@@ -14,7 +14,7 @@
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsIWebBrowserChrome2.h"
-#include "nsIEmbeddingSiteWindow2.h"
+#include "nsIEmbeddingSiteWindow.h"
 #include "nsIWebBrowserChromeFocus.h"
 #include "nsIWidget.h"
 #include "nsIDOMEventListener.h"
@@ -42,6 +42,7 @@
 #include "nsIScriptContext.h"
 #include "nsWeakReference.h"
 #include "nsITabChild.h"
+#include "mozilla/Attributes.h"
 
 struct gfxMatrix;
 
@@ -115,7 +116,7 @@ public:
   TabChild* mTabChild;
 };
 
-class ContentListener : public nsIDOMEventListener
+class ContentListener MOZ_FINAL : public nsIDOMEventListener
 {
 public:
   ContentListener(TabChild* aTabChild) : mTabChild(aTabChild) {}
@@ -128,7 +129,7 @@ protected:
 class TabChild : public PBrowserChild,
                  public nsFrameScriptExecutor,
                  public nsIWebBrowserChrome2,
-                 public nsIEmbeddingSiteWindow2,
+                 public nsIEmbeddingSiteWindow,
                  public nsIWebBrowserChromeFocus,
                  public nsIInterfaceRequestor,
                  public nsIWindowProvider,
@@ -139,7 +140,13 @@ class TabChild : public PBrowserChild,
     typedef mozilla::layout::RenderFrameChild RenderFrameChild;
 
 public:
-    TabChild(PRUint32 aChromeFlags);
+    /**
+     * Create a new TabChild object.
+     *
+     * |aIsBrowserFrame| indicates whether the TabChild is inside an
+     * <iframe mozbrowser>.
+     */
+    TabChild(PRUint32 aChromeFlags, bool aIsBrowserFrame);
     virtual ~TabChild();
     nsresult Init();
 
@@ -147,7 +154,6 @@ public:
     NS_DECL_NSIWEBBROWSERCHROME
     NS_DECL_NSIWEBBROWSERCHROME2
     NS_DECL_NSIEMBEDDINGSITEWINDOW
-    NS_DECL_NSIEMBEDDINGSITEWINDOW2
     NS_DECL_NSIWEBBROWSERCHROMEFOCUS
     NS_DECL_NSIINTERFACEREQUESTOR
     NS_DECL_NSIWINDOWPROVIDER
@@ -238,7 +244,7 @@ protected:
     virtual PIndexedDBChild* AllocPIndexedDB(const nsCString& aASCIIOrigin,
                                              bool* /* aAllowed */);
 
-    virtual bool DeallocPIndexedDB(PIndexedDBChild* actor);
+    virtual bool DeallocPIndexedDB(PIndexedDBChild* aActor);
 
 private:
     void ActorDestroy(ActorDestroyReason why);
@@ -247,6 +253,17 @@ private:
     bool InitWidget(const nsIntSize& size);
     void DestroyWindow();
 
+    // Call RecvShow(nsIntSize(0, 0)) and block future calls to RecvShow().
+    void DoFakeShow();
+
+    nsresult
+    BrowserFrameProvideWindow(nsIDOMWindow* aOpener,
+                              nsIURI* aURI,
+                              const nsAString& aName,
+                              const nsACString& aFeatures,
+                              bool* aWindowIsNew,
+                              nsIDOMWindow** aReturn);
+
     nsCOMPtr<nsIWebNavigation> mWebNav;
     nsCOMPtr<nsIWidget> mWidget;
     RenderFrameChild* mRemoteFrame;
@@ -254,6 +271,8 @@ private:
     PRUint32 mChromeFlags;
     nsIntRect mOuterRect;
     nscolor mLastBackgroundColor;
+    bool mDidFakeShow;
+    bool mIsBrowserFrame;
 
     DISALLOW_EVIL_CONSTRUCTORS(TabChild);
 };

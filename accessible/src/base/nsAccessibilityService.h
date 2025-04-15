@@ -26,6 +26,17 @@ namespace a11y {
  */
 FocusManager* FocusMgr();
 
+enum EPlatformDisabledState {
+  ePlatformIsForceEnabled = -1,
+  ePlatformIsEnabled = 0,
+  ePlatformIsDisabled = 1
+};
+
+/**
+ * Return the platform disabled state.
+ */
+EPlatformDisabledState PlatformDisabledState();
+
 #ifdef MOZ_ACCESSIBILITY_ATK
 /**
  * Perform initialization that should be done as soon as possible, in order
@@ -33,10 +44,12 @@ FocusManager* FocusMgr();
  * XXX: this function and the next defined in ApplicationAccessibleWrap.cpp
  */
 void PreInit();
+#endif
 
+#if defined(MOZ_ACCESSIBILITY_ATK) || defined(XP_MACOSX)
 /**
  * Is platform accessibility enabled.
- * Only used on linux with atk for now.
+ * Only used on linux with atk and MacOS for now.
  */
 bool ShouldA11yBeEnabled();
 #endif
@@ -109,16 +122,25 @@ public:
   already_AddRefed<Accessible>
     CreateOuterDocAccessible(nsIContent* aContent, nsIPresShell* aPresShell);
 
+  /**
+   * Adds/remove ATK root accessible for gtk+ native window to/from children
+   * of the application accessible.
+   */
   virtual Accessible* AddNativeRootAccessible(void* aAtkAccessible);
   virtual void RemoveNativeRootAccessible(Accessible* aRootAccessible);
 
-  virtual void ContentRangeInserted(nsIPresShell* aPresShell,
-                                    nsIContent* aContainer,
-                                    nsIContent* aStartChild,
-                                    nsIContent* aEndChild);
+  /**
+   * Notification used to update the accessible tree when new content is
+   * inserted.
+   */
+  void ContentRangeInserted(nsIPresShell* aPresShell, nsIContent* aContainer,
+                            nsIContent* aStartChild, nsIContent* aEndChild);
 
-  virtual void ContentRemoved(nsIPresShell* aPresShell, nsIContent* aContainer,
-                              nsIContent* aChild);
+  /**
+   * Notification used to update the accessible tree when content is removed.
+   */
+  void ContentRemoved(nsIPresShell* aPresShell, nsIContent* aContainer,
+                      nsIContent* aChild);
 
   virtual void UpdateText(nsIPresShell* aPresShell, nsIContent* aContent);
 
@@ -140,9 +162,17 @@ public:
    */
   void UpdateImageMap(nsImageFrame* aImageFrame);
 
-  virtual void NotifyOfAnchorJumpTo(nsIContent *aTarget);
+  /**
+   * Notify accessibility that anchor jump has been accomplished to the given
+   * target. Used by layout.
+   */
+  void NotifyOfAnchorJumpTo(nsIContent *aTarget);
 
-  virtual void PresShellDestroyed(nsIPresShell* aPresShell);
+  /**
+   * Notify the accessibility service that the given presshell is
+   * being destroyed.
+   */
+  void PresShellDestroyed(nsIPresShell* aPresShell);
 
   /**
    * Notify that presshell is activated.
@@ -168,18 +198,12 @@ public:
    * one.
    *
    * @param  aNode             [in] the given node
-   * @param  aDoc              [in] the doc accessible of the node  
+   * @param  aDoc              [in] the doc accessible of the node
    * @param  aIsSubtreeHidden  [out, optional] indicates whether the node's
    *                             frame and its subtree is hidden
    */
   Accessible* GetOrCreateAccessible(nsINode* aNode, DocAccessible* aDoc,
                                     bool* aIsSubtreeHidden = nsnull);
-
-  /**
-   * Return an accessible for the given DOM node and eventually a presentation
-   * shell.
-   */
-  Accessible* GetAccessible(nsINode* aNode, nsIPresShell* aPresShell);
 
 private:
   // nsAccessibilityService creation is controlled by friend

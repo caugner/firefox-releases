@@ -13,7 +13,6 @@
 
 #include "mozStorageCID.h"
 #include "mozStorageHelper.h"
-#include "nsContentUtils.h"
 
 #include "FileInfo.h"
 #include "IndexedDatabaseManager.h"
@@ -194,7 +193,7 @@ FileManager::Invalidate()
 already_AddRefed<nsIFile>
 FileManager::GetDirectory()
 {
-  nsCOMPtr<nsILocalFile> directory =
+  nsCOMPtr<nsIFile> directory =
     do_CreateInstance(NS_LOCAL_FILE_CONTRACTID);
   NS_ENSURE_TRUE(directory, nsnull);
 

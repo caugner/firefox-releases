@@ -32,7 +32,6 @@
 #include "nsIEditingSession.h"
 #include "nsEventStateManager.h"
 #include "nsIFrame.h"
-#include "nsHTMLSelectAccessible.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsINameSpaceManager.h"
 #include "nsIPresShell.h"
@@ -925,10 +924,12 @@ DocAccessible::Observe(nsISupports* aSubject, const char* aTopic,
 NS_IMETHODIMP
 DocAccessible::OnPivotChanged(nsIAccessiblePivot* aPivot,
                               nsIAccessible* aOldAccessible,
-                              PRInt32 aOldStart, PRInt32 aOldEnd)
+                              PRInt32 aOldStart, PRInt32 aOldEnd,
+                              PivotMoveReason aReason)
 {
   nsRefPtr<AccEvent> event = new AccVCChangeEvent(this, aOldAccessible,
-                                                  aOldStart, aOldEnd);
+                                                  aOldStart, aOldEnd,
+                                                  aReason);
   nsEventShell::FireEvent(event);
 
   return NS_OK;
@@ -2007,11 +2008,22 @@ DocAccessible::CacheChildrenInSubtree(Accessible* aRoot)
     if (child && child->IsContent())
       CacheChildrenInSubtree(child);
   }
+
+  // Fire document load complete on ARIA documents.
+  // XXX: we should delay an event if the ARIA document has aria-busy.
+  if (aRoot->HasARIARole() && !aRoot->IsDoc()) {
+    a11y::role role = aRoot->ARIARole();
+    if (role == roles::DIALOG || role == roles::DOCUMENT)
+      FireDelayedAccessibleEvent(nsIAccessibleEvent::EVENT_DOCUMENT_LOAD_COMPLETE,
+                                 aRoot->GetContent());
+  }
 }
 
 void
 DocAccessible::UncacheChildrenInSubtree(Accessible* aRoot)
 {
+  aRoot->mFlags |= eIsNotInDocument;
+
   if (aRoot->IsElement())
     RemoveDependentIDsFor(aRoot);
 

@@ -10,6 +10,34 @@
  * httpd.js.
  */
 
+const EXPORTED_SYMBOLS = [
+  "HTTP_400",
+  "HTTP_401",
+  "HTTP_402",
+  "HTTP_403",
+  "HTTP_404",
+  "HTTP_405",
+  "HTTP_406",
+  "HTTP_407",
+  "HTTP_408",
+  "HTTP_409",
+  "HTTP_410",
+  "HTTP_411",
+  "HTTP_412",
+  "HTTP_413",
+  "HTTP_414",
+  "HTTP_415",
+  "HTTP_417",
+  "HTTP_500",
+  "HTTP_501",
+  "HTTP_502",
+  "HTTP_503",
+  "HTTP_504",
+  "HTTP_505",
+  "HttpError",
+  "HttpServer",
+];
+
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const Cc = Components.classes;
@@ -762,7 +790,7 @@ nsHttpServer.prototype =
     // Bug 508125: Add a GC here else we'll use gigabytes of memory running
     // mochitests. We can't rely on xpcshell doing an automated GC, as that
     // would interfere with testing GC stuff...
-    gc();
+    Components.utils.forceGC();
   },
 
   /**
@@ -776,6 +804,7 @@ nsHttpServer.prototype =
   }
 };
 
+var HttpServer = nsHttpServer;
 
 //
 // RFC 2396 section 3.2.2:
@@ -1609,7 +1638,8 @@ RequestReader.prototype =
     // clients and servers SHOULD accept any amount of SP or HT characters
     // between fields, even though only a single SP is required (section 19.3)
     var request = line.split(/[ \t]+/);
-    if (!request || request.length != 3) {
+    if (!request || request.length != 3)
+    {
       dumpn("*** No request in line");
       throw HTTP_400;
     }
@@ -1619,7 +1649,8 @@ RequestReader.prototype =
     // get the HTTP version
     var ver = request[2];
     var match = ver.match(/^HTTP\/(\d+\.\d+)$/);
-    if (!match) {
+    if (!match)
+    {
       dumpn("*** No HTTP version in line");
       throw HTTP_400;
     }
@@ -1646,7 +1677,8 @@ RequestReader.prototype =
     if (fullPath.charAt(0) != "/")
     {
       // No absolute paths in the request line in HTTP prior to 1.1
-      if (!metadata._httpVersion.atLeast(nsHttpVersion.HTTP_1_1)) {
+      if (!metadata._httpVersion.atLeast(nsHttpVersion.HTTP_1_1))
+      {
         dumpn("*** Metadata version too low");
         throw HTTP_400;
       }
@@ -1663,10 +1695,15 @@ RequestReader.prototype =
         if (port === -1)
         {
           if (scheme === "http")
+          {
             port = 80;
+          }
           else if (scheme === "https")
+          {
             port = 443;
-          else {
+          }
+          else
+          {
             dumpn("*** Unknown scheme: " + scheme);
             throw HTTP_400;
           }
@@ -1681,7 +1718,8 @@ RequestReader.prototype =
         throw HTTP_400;
       }
 
-      if (!serverIdentity.has(scheme, host, port) || fullPath.charAt(0) != "/") {
+      if (!serverIdentity.has(scheme, host, port) || fullPath.charAt(0) != "/")
+      {
         dumpn("*** serverIdentity unknown or path does not start with '/'");
         throw HTTP_400;
       }
@@ -1777,8 +1815,7 @@ RequestReader.prototype =
         // multi-line header if we've already seen a header line
         if (!lastName)
         {
-          // we don't have a header to continue!
-          dumpn("No header to continue");
+          dumpn("We don't have a header to continue!");
           throw HTTP_400;
         }
 
@@ -1805,8 +1842,7 @@ RequestReader.prototype =
         var colon = lineText.indexOf(":"); // first colon must be splitter
         if (colon < 1)
         {
-          // no colon or missing header field-name
-          dumpn("*** No colon in header");
+          dumpn("*** No colon or missing header field-name");
           throw HTTP_400;
         }
 
@@ -1904,12 +1940,13 @@ LineData.prototype =
     if (length < 0)
     {
       this._start = data.length;
+
       // But if our data ends in a CR, we have to back up one, because
       // the first byte in the next packet might be an LF and if we
       // start looking at data.length we won't find it.
-      if (data[data.length - 1] == CR) {
+      if (data.length > 0 && data[data.length - 1] === CR)
         --this._start;
-      }
+
       return false;
     }
 
@@ -2548,7 +2585,8 @@ ServerHandler.prototype =
         this._getTypeFromFile(file) !== SJS_TYPE)
     {
       var rangeMatch = metadata.getHeader("Range").match(/^bytes=(\d+)?-(\d+)?$/);
-      if (!rangeMatch) {
+      if (!rangeMatch)
+      {
         dumpn("*** Range header bogosity: '" + metadata.getHeader("Range") + "'");
         throw HTTP_400;
       }
@@ -2559,7 +2597,8 @@ ServerHandler.prototype =
       if (rangeMatch[2] !== undefined)
         end = parseInt(rangeMatch[2], 10);
 
-      if (start === undefined && end === undefined) {
+      if (start === undefined && end === undefined)
+      {
         dumpn("*** More Range header bogosity: '" + metadata.getHeader("Range") + "'");
         throw HTTP_400;
       }
@@ -4668,7 +4707,8 @@ const headerUtils =
    */
   normalizeFieldName: function(fieldName)
   {
-    if (fieldName == "") {
+    if (fieldName == "")
+    {
       dumpn("*** Empty fieldName");
       throw Cr.NS_ERROR_INVALID_ARG;
     }
@@ -4724,7 +4764,8 @@ const headerUtils =
     // that should have taken care of all CTLs, so val should contain no CTLs
     dumpn("*** Normalized value: '" + val + "'");
     for (var i = 0, len = val.length; i < len; i++)
-      if (isCTL(val.charCodeAt(i))) {
+      if (isCTL(val.charCodeAt(i)))
+      {
         dump("*** Char " + i + " has charcode " + val.charCodeAt(i));
         throw Cr.NS_ERROR_INVALID_ARG;
       }

@@ -248,9 +248,18 @@ static nsresult
 GetResolution(nsPresContext* aPresContext, const nsMediaFeature*,
               nsCSSValue& aResult)
 {
-    // Resolution values are in device pixels, not CSS pixels.
-    nsDeviceContext *dx = GetDeviceContextFor(aPresContext);
-    float dpi = float(dx->AppUnitsPerPhysicalInch()) / float(dx->AppUnitsPerDevPixel());
+    // Resolution measures device pixels per CSS (inch/cm/pixel).  We
+    // return it in device pixels per CSS inches.
+    //
+    // However, on platforms where the CSS viewport is not fixed to the
+    // screen viewport, use the device resolution instead (bug 779527).
+    nsIPresShell *shell = aPresContext->PresShell();
+    float appUnitsPerInch = shell->GetIsViewportOverridden() ?
+            GetDeviceContextFor(aPresContext)->AppUnitsPerPhysicalInch() :
+            nsPresContext::AppUnitsPerCSSInch();
+
+    float dpi = appUnitsPerInch /
+                float(aPresContext->AppUnitsPerDevPixel());
     aResult.SetFloatValue(dpi, eCSSUnit_Inch);
     return NS_OK;
 }

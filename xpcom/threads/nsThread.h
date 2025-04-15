@@ -14,9 +14,11 @@
 #include "nsThreadUtils.h"
 #include "nsString.h"
 #include "nsTObserverArray.h"
+#include "mozilla/Attributes.h"
 
 // A native thread
-class nsThread : public nsIThreadInternal, public nsISupportsPriority
+class nsThread MOZ_FINAL : public nsIThreadInternal,
+                           public nsISupportsPriority
 {
 public:
   NS_DECL_ISUPPORTS
@@ -92,7 +94,6 @@ private:
   struct nsThreadShutdownContext *mShutdownContext;
 
   bool mShutdownRequired;
-  bool mShutdownPending;
   // Set to true when events posted to this thread will never run.
   bool mEventsAreDoomed;
   MainThreadFlag mIsMainThread;

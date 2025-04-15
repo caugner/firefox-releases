@@ -2,30 +2,53 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/Attributes.h"
+#include "mozilla/dom/Element.h"
+#include "mozilla/mozalloc.h"
+#include "nsAString.h"
+#include "nsAutoPtr.h"
+#include "nsCOMPtr.h"
+#include "nsContentUtils.h"
+#include "nsDebug.h"
+#include "nsEditProperty.h"
+#include "nsError.h"
+#include "nsHTMLCSSUtils.h"
 #include "nsHTMLEditor.h"
-
+#include "nsIAtom.h"
 #include "nsIContent.h"
-#include "nsIDocument.h"
-#include "nsIEditor.h"
-#include "nsIPresShell.h"
-#include "nsPresContext.h"
-
-#include "nsISelection.h"
-
-#include "nsTextEditUtils.h"
-#include "nsEditorUtils.h"
-#include "nsHTMLEditUtils.h"
-#include "nsTextEditRules.h"
-
-#include "nsIDOMHTMLElement.h"
-#include "nsIDOMEventTarget.h"
-
-#include "nsIDOMCSSValue.h"
+#include "nsID.h"
 #include "nsIDOMCSSPrimitiveValue.h"
 #include "nsIDOMCSSStyleDeclaration.h"
+#include "nsIDOMCSSValue.h"
+#include "nsIDOMElement.h"
+#include "nsIDOMEventTarget.h"
+#include "nsIDOMHTMLElement.h"
+#include "nsIDOMNode.h"
+#include "nsIDOMWindow.h"
+#include "nsIDocument.h"
+#include "nsIDocumentObserver.h"
+#include "nsIHTMLAbsPosEditor.h"
+#include "nsIHTMLEditor.h"
+#include "nsIHTMLInlineTableEditor.h"
+#include "nsIHTMLObjectResizer.h"
 #include "nsIMutationObserver.h"
+#include "nsINode.h"
+#include "nsIPresShell.h"
+#include "nsISupportsImpl.h"
+#include "nsISupportsUtils.h"
+#include "nsLiteralString.h"
+#include "nsPresContext.h"
+#include "nsReadableUtils.h"
+#include "nsString.h"
+#include "nsStringFwd.h"
 #include "nsUnicharUtils.h"
-#include "nsContentUtils.h"
+#include "nscore.h"
+#include "prtypes.h"
+
+class nsIDOMEventListener;
+class nsISelection;
+
+using namespace mozilla;
 
 // retrieve an integer stored into a CSS computed float value
 static PRInt32 GetCSSFloatValue(nsIDOMCSSStyleDeclaration * aDecl,
@@ -123,7 +146,7 @@ nsHTMLEditor::CreateAnonymousElement(const nsAString & aTag, nsIDOMNode *  aPare
   NS_ENSURE_TRUE(ps, NS_ERROR_NOT_INITIALIZED);
 
   // Create a new node through the element factory
-  nsCOMPtr<nsIContent> newContent;
+  nsCOMPtr<dom::Element> newContent;
   nsresult res = CreateHTMLContent(aTag, getter_AddRefs(newContent));
   NS_ENSURE_SUCCESS(res, res);
 
@@ -251,6 +274,13 @@ nsHTMLEditor::CheckSelectionStateForAnonymousButtons(nsISelection * aSelection)
   nsresult res  = GetSelectionContainer(getter_AddRefs(focusElement));
   NS_ENSURE_TRUE(focusElement, NS_OK);
   NS_ENSURE_SUCCESS(res, res);
+
+  // If we're not in a document, don't try to add resizers
+  nsCOMPtr<dom::Element> focusElementNode = do_QueryInterface(focusElement);
+  NS_ENSURE_STATE(focusElementNode);
+  if (!focusElementNode->IsInDoc()) {
+    return NS_OK;
+  }
 
   // what's its tag?
   nsAutoString focusTagName;

@@ -69,7 +69,6 @@ _SERV_FILES = 	\
 		redirect.html \
 		$(topsrcdir)/build/pgo/server-locations.txt \
 		$(topsrcdir)/netwerk/test/httpserver/httpd.js \
-		mozprefs.js \
 		pywebsocket_wrapper.py \
  	 	plain-loop.html \
 		android.json \

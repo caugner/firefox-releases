@@ -11,7 +11,7 @@
 #include "nsXULAppAPI.h"
 
 #include <stdlib.h>
-#if defined(MOZ_WIDGET_GTK2)
+#if defined(MOZ_WIDGET_GTK)
 #include <glib.h>
 #endif
 
@@ -20,7 +20,7 @@
 #include "nsIAppShell.h"
 #include "nsIAppStartupNotifier.h"
 #include "nsIDirectoryService.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsIToolkitChromeRegistry.h"
 #include "nsIToolkitProfile.h"
 
@@ -110,7 +110,7 @@ static const PRUnichar kShellLibraryName[] =  L"shell32.dll";
 #endif
 
 nsresult
-XRE_LockProfileDirectory(nsILocalFile* aDirectory,
+XRE_LockProfileDirectory(nsIFile* aDirectory,
                          nsISupports* *aLockObject)
 {
   nsCOMPtr<nsIProfileLock> lock;
@@ -126,8 +126,8 @@ XRE_LockProfileDirectory(nsILocalFile* aDirectory,
 static PRInt32 sInitCounter;
 
 nsresult
-XRE_InitEmbedding2(nsILocalFile *aLibXULDirectory,
-		   nsILocalFile *aAppDirectory,
+XRE_InitEmbedding2(nsIFile *aLibXULDirectory,
+		   nsIFile *aAppDirectory,
 		   nsIDirectoryServiceProvider *aAppDirProvider)
 {
   // Initialize some globals to make nsXREDirProvider happy
@@ -226,7 +226,7 @@ GeckoProcessType sChildProcessType = GeckoProcessType_Default;
 // IPDL wants access to this crashreporter interface, and
 // crashreporter is built in such a way to make that awkward
 bool
-XRE_TakeMinidumpForChild(PRUint32 aChildPid, nsILocalFile** aDump,
+XRE_TakeMinidumpForChild(PRUint32 aChildPid, nsIFile** aDump,
                          PRUint32* aSequence)
 {
   return CrashReporter::TakeMinidumpForChild(aChildPid, aDump, aSequence);
@@ -363,7 +363,7 @@ XRE_InitChildProcess(int aArgc,
   gArgv = aArgv;
   gArgc = aArgc;
 
-#if defined(MOZ_WIDGET_GTK2)
+#if defined(MOZ_WIDGET_GTK)
   g_thread_init(NULL);
 #endif
 

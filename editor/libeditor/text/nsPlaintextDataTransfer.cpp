@@ -4,42 +4,47 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/Util.h"
-
-#include "nsPlaintextEditor.h"
-
-#include "nsIDOMDocument.h"
-#include "nsIDocument.h"
-#include "nsIContent.h"
-#include "nsIFormControl.h"
-#include "nsIDOMEventTarget.h" 
-#include "nsIDOMNSEvent.h"
-#include "nsIDOMMouseEvent.h"
-#include "nsIDOMDragEvent.h"
-#include "nsISelection.h"
+#include "nsAString.h"
+#include "nsCOMPtr.h"
 #include "nsCRT.h"
-#include "nsServiceManagerUtils.h"
-#include "nsIPrivateDOMEvent.h"
-
-#include "nsIDOMRange.h"
-#include "nsIDOMDOMStringList.h"
-#include "nsIDocumentEncoder.h"
-#include "nsISupportsPrimitives.h"
-
-// Drag & Drop, Clipboard
-#include "nsIClipboard.h"
-#include "nsITransferable.h"
-#include "nsIDragService.h"
-#include "nsIDOMUIEvent.h"
-#include "nsCopySupport.h"
-#include "nsITransferable.h"
-
-// Misc
-#include "nsEditorUtils.h"
-#include "nsContentCID.h"
-#include "nsISelectionPrivate.h"
-#include "nsFrameSelection.h"
-#include "nsEventDispatcher.h"
+#include "nsComponentManagerUtils.h"
 #include "nsContentUtils.h"
+#include "nsDebug.h"
+#include "nsEditor.h"
+#include "nsEditorUtils.h"
+#include "nsError.h"
+#include "nsGUIEvent.h"
+#include "nsIClipboard.h"
+#include "nsIContent.h"
+#include "nsIDOMDataTransfer.h"
+#include "nsIDOMDocument.h"
+#include "nsIDOMDragEvent.h"
+#include "nsIDOMEvent.h"
+#include "nsIDOMNode.h"
+#include "nsIDOMRange.h"
+#include "nsIDOMUIEvent.h"
+#include "nsIDocument.h"
+#include "nsIDragService.h"
+#include "nsIDragSession.h"
+#include "nsIEditor.h"
+#include "nsIEditorIMESupport.h"
+#include "nsIFormControl.h"
+#include "nsIPlaintextEditor.h"
+#include "nsISelection.h"
+#include "nsISupportsPrimitives.h"
+#include "nsITransferable.h"
+#include "nsIVariant.h"
+#include "nsLiteralString.h"
+#include "nsPlaintextEditor.h"
+#include "nsSelectionState.h"
+#include "nsServiceManagerUtils.h"
+#include "nsString.h"
+#include "nsXPCOM.h"
+#include "nscore.h"
+#include "prtypes.h"
+
+class nsILoadContext;
+class nsISupports;
 
 using namespace mozilla;
 
@@ -51,6 +56,10 @@ NS_IMETHODIMP nsPlaintextEditor::PrepareTransferable(nsITransferable **transfera
 
   // Get the nsITransferable interface for getting the data from the clipboard
   if (transferable) {
+    nsCOMPtr<nsIDocument> destdoc = GetDocument();
+    nsILoadContext* loadContext = destdoc ? destdoc->GetLoadContext() : nsnull;
+    (*transferable)->Init(loadContext);
+
     (*transferable)->AddDataFlavor(kUnicodeMime);
     (*transferable)->AddDataFlavor(kMozTextInternal);
   };
@@ -164,8 +173,7 @@ nsresult nsPlaintextEditor::InsertFromDrop(nsIDOMEvent* aDropEvent)
   nsCOMPtr<nsIDragSession> dragSession = nsContentUtils::GetDragSession();
   NS_ASSERTION(dragSession, "No drag session");
 
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aDropEvent));
-  nsDragEvent* dragEventInternal = static_cast<nsDragEvent *>(privateEvent->GetInternalNSEvent());
+  nsDragEvent* dragEventInternal = static_cast<nsDragEvent *>(aDropEvent->GetInternalNSEvent());
   if (nsContentUtils::CheckForSubFrameDrop(dragSession, dragEventInternal)) {
     return NS_OK;
   }
@@ -227,10 +235,8 @@ nsresult nsPlaintextEditor::InsertFromDrop(nsIDOMEvent* aDropEvent)
     //      The decision for dropping before or after the
     //      subtree should really be done based on coordinates.
 
-    rv = GetNodeLocation(userSelectNode, address_of(newSelectionParent),
-                         &newSelectionOffset);
+    newSelectionParent = GetNodeLocation(userSelectNode, &newSelectionOffset);
 
-    NS_ENSURE_SUCCESS(rv, rv);
     NS_ENSURE_TRUE(newSelectionParent, NS_ERROR_FAILURE);
   }
 

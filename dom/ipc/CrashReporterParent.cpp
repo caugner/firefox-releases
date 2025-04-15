@@ -99,7 +99,7 @@ CrashReporterParent::GenerateHangCrashReport(const AnnotationTable* processNotes
 }
 
 bool
-CrashReporterParent::GenerateCrashReportForMinidump(nsILocalFile* minidump,
+CrashReporterParent::GenerateCrashReportForMinidump(nsIFile* minidump,
     const AnnotationTable* processNotes)
 {
     if (!CrashReporter::GetIDFromMinidump(minidump, mChildDumpID))

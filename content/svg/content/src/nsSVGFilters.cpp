@@ -149,7 +149,13 @@ nsSVGFE::SetupScalingFilter(nsSVGFilterInstance *aInstance,
   r.RoundOut();
   if (!gfxUtils::GfxRectToIntRect(r, &result.mDataRect))
     return result;
-  
+
+  // Rounding in the code above can mean that result.mDataRect is not contained
+  // within the bounds of the surfaces that we're about to create. We must
+  // clamp to these bounds to prevent out-of-bounds reads and writes:
+  result.mDataRect.IntersectRect(result.mDataRect,
+                                 nsIntRect(nsIntPoint(), scaledSize));
+
   result.mSource = new gfxImageSurface(scaledSize,
                                        gfxASurface::ImageFormatARGB32);
   result.mTarget = new gfxImageSurface(scaledSize,
@@ -3306,10 +3312,10 @@ nsSVGFETurbulenceElement::Filter(nsSVGFilterInstance *instance,
   InitSeed((PRInt32)seed);
 
   // XXXroc this makes absolutely no sense to me.
-  float filterX = instance->GetFilterRect().X();
-  float filterY = instance->GetFilterRect().Y();
-  float filterWidth = instance->GetFilterRect().Width();
-  float filterHeight = instance->GetFilterRect().Height();
+  float filterX = instance->GetFilterRegion().X();
+  float filterY = instance->GetFilterRegion().Y();
+  float filterWidth = instance->GetFilterRegion().Width();
+  float filterHeight = instance->GetFilterRegion().Height();
 
   bool doStitch = false;
   if (stitch == nsIDOMSVGFETurbulenceElement::SVG_STITCHTYPE_STITCH) {

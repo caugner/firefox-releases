@@ -104,7 +104,11 @@ static const char sSolidColorLayerFS[] = "/* sSolidColorLayerFS */\n\
 #define NO_LAYER_OPACITY 1\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -129,7 +133,11 @@ static const char sSolidColorLayerMaskFS[] = "/* sSolidColorLayerMaskFS */\n\
 #define NO_LAYER_OPACITY 1\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -147,7 +155,7 @@ uniform sampler2D uMaskTexture;\n\
 uniform vec4 uRenderColor;\n\
 void main()\n\
 {\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = mask * uRenderColor;\n\
 }\n\
@@ -156,7 +164,11 @@ gl_FragColor = mask * uRenderColor;\n\
 static const char sRGBATextureLayerFS[] = "/* sRGBATextureLayerFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -180,7 +192,11 @@ gl_FragColor = texture2D(uTexture, vTexCoord) * uLayerOpacity * mask;\n\
 static const char sRGBATextureLayerMaskFS[] = "/* sRGBATextureLayerMaskFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -198,7 +214,7 @@ uniform sampler2D uMaskTexture;\n\
 uniform sampler2D uTexture;\n\
 void main()\n\
 {\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = texture2D(uTexture, vTexCoord) * uLayerOpacity * mask;\n\
 }\n\
@@ -207,7 +223,11 @@ gl_FragColor = texture2D(uTexture, vTexCoord) * uLayerOpacity * mask;\n\
 static const char sRGBATextureLayerMask3DFS[] = "/* sRGBATextureLayerMask3DFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -226,7 +246,7 @@ uniform sampler2D uTexture;\n\
 void main()\n\
 {\n\
 vec2 maskCoords = vMaskCoord.xy / vMaskCoord.z;\n\
-float mask = texture2D(uMaskTexture, maskCoords).a;\n\
+float mask = texture2D(uMaskTexture, maskCoords).r;\n\
 \n\
 gl_FragColor = texture2D(uTexture, vTexCoord) * uLayerOpacity * mask;\n\
 }\n\
@@ -234,9 +254,14 @@ gl_FragColor = texture2D(uTexture, vTexCoord) * uLayerOpacity * mask;\n\
 
 static const char sRGBATextureLayerExternalFS[] = "/* sRGBATextureLayerExternalFS */\n\
 #extension GL_OES_EGL_image_external : require\n\
+#define MEDIUMP_SHADER 1\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -260,9 +285,14 @@ gl_FragColor = texture2D(uTexture, (uTextureTransform * vec4(vTexCoord.x, vTexCo
 
 static const char sRGBATextureLayerExternalMaskFS[] = "/* sRGBATextureLayerExternalMaskFS */\n\
 #extension GL_OES_EGL_image_external : require\n\
+#define MEDIUMP_SHADER 1\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -281,7 +311,7 @@ uniform samplerExternalOES uTexture;\n\
 uniform mat4 uTextureTransform;\n\
 void main()\n\
 {\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = texture2D(uTexture, (uTextureTransform * vec4(vTexCoord.x, vTexCoord.y, 0.0, 1.0)).xy) * uLayerOpacity * mask;\n\
 }\n\
@@ -289,9 +319,14 @@ gl_FragColor = texture2D(uTexture, (uTextureTransform * vec4(vTexCoord.x, vTexCo
 
 static const char sRGBATextureLayerExternalMask3DFS[] = "/* sRGBATextureLayerExternalMask3DFS */\n\
 #extension GL_OES_EGL_image_external : require\n\
+#define MEDIUMP_SHADER 1\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -311,7 +346,7 @@ uniform mat4 uTextureTransform;\n\
 void main()\n\
 {\n\
 vec2 maskCoords = vMaskCoord.xy / vMaskCoord.z;\n\
-float mask = texture2D(uMaskTexture, maskCoords).a;\n\
+float mask = texture2D(uMaskTexture, maskCoords).r;\n\
 \n\
 gl_FragColor = texture2D(uTexture, (uTextureTransform * vec4(vTexCoord.x, vTexCoord.y, 0.0, 1.0)).xy) * uLayerOpacity * mask;\n\
 }\n\
@@ -321,7 +356,11 @@ static const char sRGBARectTextureLayerFS[] = "/* sRGBARectTextureLayerFS */\n\
 #extension GL_ARB_texture_rectangle : enable\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -355,7 +394,11 @@ static const char sRGBARectTextureLayerMaskFS[] = "/* sRGBARectTextureLayerMaskF
 #extension GL_ARB_texture_rectangle : enable\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -376,7 +419,7 @@ uniform sampler2DRect uTexture;\n\
 uniform vec2 uTexCoordMultiplier;\n\
 void main()\n\
 {\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = texture2DRect(uTexture, vec2(vTexCoord * uTexCoordMultiplier)) * uLayerOpacity * mask;\n\
 }\n\
@@ -392,7 +435,11 @@ static const char sRGBARectTextureLayerMask3DFS[] = "/* sRGBARectTextureLayerMas
 #extension GL_ARB_texture_rectangle : enable\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -414,7 +461,7 @@ uniform vec2 uTexCoordMultiplier;\n\
 void main()\n\
 {\n\
 vec2 maskCoords = vMaskCoord.xy / vMaskCoord.z;\n\
-float mask = texture2D(uMaskTexture, maskCoords).a;\n\
+float mask = texture2D(uMaskTexture, maskCoords).r;\n\
 \n\
 gl_FragColor = texture2DRect(uTexture, vec2(vTexCoord * uTexCoordMultiplier)) * uLayerOpacity * mask;\n\
 }\n\
@@ -429,7 +476,11 @@ gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);\n\
 static const char sBGRATextureLayerFS[] = "/* sBGRATextureLayerFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -453,7 +504,11 @@ gl_FragColor = texture2D(uTexture, vTexCoord).bgra * uLayerOpacity * mask;\n\
 static const char sBGRATextureLayerMaskFS[] = "/* sBGRATextureLayerMaskFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -471,7 +526,7 @@ uniform sampler2D uMaskTexture;\n\
 uniform sampler2D uTexture;\n\
 void main()\n\
 {\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = texture2D(uTexture, vTexCoord).bgra * uLayerOpacity * mask;\n\
 }\n\
@@ -480,7 +535,11 @@ gl_FragColor = texture2D(uTexture, vTexCoord).bgra * uLayerOpacity * mask;\n\
 static const char sRGBXTextureLayerFS[] = "/* sRGBXTextureLayerFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -504,7 +563,11 @@ gl_FragColor = vec4(texture2D(uTexture, vTexCoord).rgb, 1.0) * uLayerOpacity * m
 static const char sRGBXTextureLayerMaskFS[] = "/* sRGBXTextureLayerMaskFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -522,7 +585,7 @@ uniform sampler2D uMaskTexture;\n\
 uniform sampler2D uTexture;\n\
 void main()\n\
 {\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = vec4(texture2D(uTexture, vTexCoord).rgb, 1.0) * uLayerOpacity * mask;\n\
 }\n\
@@ -531,7 +594,11 @@ gl_FragColor = vec4(texture2D(uTexture, vTexCoord).rgb, 1.0) * uLayerOpacity * m
 static const char sBGRXTextureLayerFS[] = "/* sBGRXTextureLayerFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -555,7 +622,11 @@ gl_FragColor = vec4(texture2D(uTexture, vTexCoord).bgr, 1.0) * uLayerOpacity * m
 static const char sBGRXTextureLayerMaskFS[] = "/* sBGRXTextureLayerMaskFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -573,7 +644,7 @@ uniform sampler2D uMaskTexture;\n\
 uniform sampler2D uTexture;\n\
 void main()\n\
 {\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = vec4(texture2D(uTexture, vTexCoord).bgr, 1.0) * uLayerOpacity * mask;\n\
 }\n\
@@ -582,7 +653,11 @@ gl_FragColor = vec4(texture2D(uTexture, vTexCoord).bgr, 1.0) * uLayerOpacity * m
 static const char sYCbCrTextureLayerFS[] = "/* sYCbCrTextureLayerFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -622,7 +697,11 @@ gl_FragColor = color * uLayerOpacity * mask;\n\
 static const char sYCbCrTextureLayerMaskFS[] = "/* sYCbCrTextureLayerMaskFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -656,7 +735,7 @@ color.r = y + cr * 1.596;\n\
 color.g = y - 0.813 * cr - 0.391 * cb;\n\
 color.b = y + cb * 2.018;\n\
 color.a = 1.0;\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = color * uLayerOpacity * mask;\n\
 }\n\
@@ -665,7 +744,11 @@ gl_FragColor = color * uLayerOpacity * mask;\n\
 static const char sComponentPass1FS[] = "/* sComponentPass1FS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -693,7 +776,11 @@ gl_FragColor = alphas * uLayerOpacity * mask;\n\
 static const char sComponentPassMask1FS[] = "/* sComponentPassMask1FS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -715,7 +802,7 @@ void main()\n\
 vec3 onBlack = texture2D(uBlackTexture, vTexCoord).bgr;\n\
 vec3 onWhite = texture2D(uWhiteTexture, vTexCoord).bgr;\n\
 vec4 alphas = (1.0 - onWhite + onBlack).rgbg;\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = alphas * uLayerOpacity * mask;\n\
 }\n\
@@ -724,7 +811,11 @@ gl_FragColor = alphas * uLayerOpacity * mask;\n\
 static const char sComponentPass2FS[] = "/* sComponentPass2FS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -752,7 +843,11 @@ gl_FragColor = vec4(onBlack, alphas.a) * uLayerOpacity * mask;\n\
 static const char sComponentPassMask2FS[] = "/* sComponentPassMask2FS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 #ifndef NO_LAYER_OPACITY\n\
@@ -774,7 +869,7 @@ void main()\n\
 vec3 onBlack = texture2D(uBlackTexture, vTexCoord).bgr;\n\
 vec3 onWhite = texture2D(uWhiteTexture, vTexCoord).bgr;\n\
 vec4 alphas = (1.0 - onWhite + onBlack).rgbg;\n\
-float mask = texture2D(uMaskTexture, vMaskCoord).a;\n\
+float mask = texture2D(uMaskTexture, vMaskCoord).r;\n\
 \n\
 gl_FragColor = vec4(onBlack, alphas.a) * uLayerOpacity * mask;\n\
 }\n\
@@ -795,7 +890,11 @@ vTexCoord = aTexCoord;\n\
 static const char sCopy2DFS[] = "/* sCopy2DFS */\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 varying vec2 vTexCoord;\n\
@@ -810,7 +909,11 @@ static const char sCopy2DRectFS[] = "/* sCopy2DRectFS */\n\
 #extension GL_ARB_texture_rectangle : enable\n\
 /* Fragment Shader */\n\
 #ifdef GL_ES\n\
+#ifdef MEDIUMP_SHADER\n\
+precision mediump float;\n\
+#else\n\
 precision lowp float;\n\
+#endif\n\
 #endif\n\
 \n\
 varying vec2 vTexCoord;\n\

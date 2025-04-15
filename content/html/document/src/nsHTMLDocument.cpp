@@ -555,6 +555,7 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
   bool xhtml = !html && contentType.EqualsLiteral(APPLICATION_XHTML_XML);
   bool plainText = !html && !xhtml && (contentType.EqualsLiteral(TEXT_PLAIN) ||
     contentType.EqualsLiteral(TEXT_CSS) ||
+    contentType.EqualsLiteral(TEXT_CACHE_MANIFEST) ||
     contentType.EqualsLiteral(APPLICATION_JAVASCRIPT) ||
     contentType.EqualsLiteral(APPLICATION_XJAVASCRIPT) ||
     contentType.EqualsLiteral(TEXT_ECMASCRIPT) ||
@@ -1773,6 +1774,84 @@ nsHTMLDocument::GetElementsByName(const nsAString& aElementName,
   return NS_OK;
 }
 
+static bool MatchItems(nsIContent* aContent, PRInt32 aNameSpaceID, 
+                       nsIAtom* aAtom, void* aData)
+{
+  if (!(aContent->IsElement() && aContent->AsElement()->IsHTML())) {
+    return false;
+  }
+
+  nsGenericHTMLElement* elem = static_cast<nsGenericHTMLElement*>(aContent);
+  if (!elem->HasAttr(kNameSpaceID_None, nsGkAtoms::itemscope) ||
+      elem->HasAttr(kNameSpaceID_None, nsGkAtoms::itemprop)) {
+    return false;
+  }
+
+  nsTArray<nsCOMPtr<nsIAtom> >* tokens = static_cast<nsTArray<nsCOMPtr<nsIAtom> >*>(aData);
+  if (tokens->IsEmpty()) {
+    return true;
+  }
+ 
+  const nsAttrValue* attr = elem->GetParsedAttr(nsGkAtoms::itemtype);
+  if (!attr)
+    return false;
+
+  for (PRUint32 i = 0; i < tokens->Length(); i++) {
+    if (!attr->Contains(tokens->ElementAt(i), eCaseMatters)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static void DestroyTokens(void* aData)
+{
+  nsTArray<nsCOMPtr<nsIAtom> >* tokens = static_cast<nsTArray<nsCOMPtr<nsIAtom> >*>(aData);
+  delete tokens;
+}
+
+static void* CreateTokens(nsINode* aRootNode, const nsString* types)
+{
+  nsTArray<nsCOMPtr<nsIAtom> >* tokens = new nsTArray<nsCOMPtr<nsIAtom> >();
+  nsAString::const_iterator iter, end;
+  types->BeginReading(iter);
+  types->EndReading(end);
+  
+  // skip initial whitespace
+  while (iter != end && nsContentUtils::IsHTMLWhitespace(*iter)) {
+    ++iter;
+  }
+
+  // parse the tokens
+  while (iter != end) {
+    nsAString::const_iterator start(iter);
+
+    do {
+      ++iter;
+    } while (iter != end && !nsContentUtils::IsHTMLWhitespace(*iter));
+
+    tokens->AppendElement(do_GetAtom(Substring(start, iter)));
+
+    // skip whitespace
+    while (iter != end && nsContentUtils::IsHTMLWhitespace(*iter)) {
+      ++iter;
+    }
+  }
+  return tokens;
+}
+
+NS_IMETHODIMP
+nsHTMLDocument::GetItems(const nsAString& types, nsIDOMNodeList** aReturn)
+{
+  nsRefPtr<nsContentList> elements = 
+    NS_GetFuncStringContentList(this, MatchItems, DestroyTokens, 
+                                CreateTokens, types);
+  NS_ENSURE_TRUE(elements, NS_ERROR_OUT_OF_MEMORY);
+  elements.forget(aReturn);
+  return NS_OK;
+}
+
+
 void
 nsHTMLDocument::AddedForm()
 {
@@ -2795,7 +2874,8 @@ static const struct MidasCommand gMidasCommandTable[] = {
   { "cut",           "cmd_cut",             "", true,  false },
   { "copy",          "cmd_copy",            "", true,  false },
   { "paste",         "cmd_paste",           "", true,  false },
-  { "delete",        "cmd_delete",          "", true,  false },
+  { "delete",        "cmd_deleteCharBackward", "", true,  false },
+  { "forwarddelete", "cmd_deleteCharForward", "", true,  false },
   { "selectall",     "cmd_selectAll",       "", true,  false },
   { "undo",          "cmd_undo",            "", true,  false },
   { "redo",          "cmd_redo",            "", true,  false },
@@ -2812,6 +2892,7 @@ static const struct MidasCommand gMidasCommandTable[] = {
   { "createlink",    "cmd_insertLinkNoUI",  "", false, false },
   { "insertimage",   "cmd_insertImageNoUI", "", false, false },
   { "inserthtml",    "cmd_insertHTML",      "", false, false },
+  { "inserttext",    "cmd_insertText",      "", false, false },
   { "gethtml",       "cmd_getContents",     "", false, false },
   { "justifyleft",   "cmd_align",       "left", true,  false },
   { "justifyright",  "cmd_align",      "right", true,  false },
@@ -2821,7 +2902,7 @@ static const struct MidasCommand gMidasCommandTable[] = {
   { "unlink",        "cmd_removeLinks",     "", true,  false },
   { "insertorderedlist",   "cmd_ol",        "", true,  false },
   { "insertunorderedlist", "cmd_ul",        "", true,  false },
-  { "insertparagraph", "cmd_paragraphState", "p", true, false },
+  { "insertparagraph", "cmd_paragraphState", "p", true,  false },
   { "formatblock",   "cmd_paragraphState",  "", false, false },
   { "heading",       "cmd_paragraphState",  "", false, false },
   { "styleWithCSS",  "cmd_setDocumentUseCSS", "", false, true },
@@ -3109,6 +3190,13 @@ nsHTMLDocument::ExecCommand(const nsAString& commandID,
     return NS_OK;
   }
 
+  // Return false for disabled commands (bug 760052)
+  bool enabled = false;
+  cmdMgr->IsCommandEnabled(cmdToDispatch.get(), window, &enabled);
+  if (!enabled) {
+    return NS_OK;
+  }
+
   if (!isBool && paramStr.IsEmpty()) {
     rv = cmdMgr->DoCommand(cmdToDispatch.get(), nsnull, window);
   } else {
@@ -3121,7 +3209,8 @@ nsHTMLDocument::ExecCommand(const nsAString& commandID,
       rv = cmdParams->SetBooleanValue("state_attribute", boolVal);
     } else if (cmdToDispatch.EqualsLiteral("cmd_fontFace")) {
       rv = cmdParams->SetStringValue("state_attribute", value);
-    } else if (cmdToDispatch.EqualsLiteral("cmd_insertHTML")) {
+    } else if (cmdToDispatch.EqualsLiteral("cmd_insertHTML") ||
+               cmdToDispatch.EqualsLiteral("cmd_insertText")) {
       rv = cmdParams->SetStringValue("state_data", value);
     } else {
       rv = cmdParams->SetCStringValue("state_attribute", paramStr.get());

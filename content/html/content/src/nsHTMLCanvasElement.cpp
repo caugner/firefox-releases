@@ -11,9 +11,12 @@
 #include "prmem.h"
 #include "nsDOMFile.h"
 
+#include "nsICanvasRenderingContextInternal.h"
+#include "nsIDOMCanvasRenderingContext2D.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIXPConnect.h"
 #include "jsapi.h"
+#include "jsfriendapi.h"
 #include "nsContentUtils.h"
 #include "nsJSUtils.h"
 #include "nsMathUtils.h"
@@ -121,7 +124,7 @@ nsHTMLCanvasElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
 }
 
 nsresult
-nsHTMLCanvasElement::CopyInnerTo(nsGenericElement* aDest) const
+nsHTMLCanvasElement::CopyInnerTo(nsGenericElement* aDest)
 {
   nsresult rv = nsGenericHTMLElement::CopyInnerTo(aDest);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -453,15 +456,9 @@ nsHTMLCanvasElement::GetContextHelper(const nsAString& aContextId,
     return NS_OK;
   }
 
-  rv = ctx->SetCanvasElement(this);
-  if (NS_FAILED(rv)) {
-    *aContext = nsnull;
-    return rv;
-  }
-
+  ctx->SetCanvasElement(this);
   ctx.forget(aContext);
-
-  return rv;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -683,6 +680,19 @@ nsHTMLCanvasElement::InvalidateCanvasContent(const gfxRect* damageRect)
   if (layer) {
     static_cast<CanvasLayer*>(layer)->Updated();
   }
+
+  /*
+   * Treat canvas invalidations as animation activity for JS. Frequently
+   * invalidating a canvas will feed into heuristics and cause JIT code to be
+   * kept around longer, for smoother animations.
+   */
+  nsIScriptGlobalObject *scope = OwnerDoc()->GetScriptGlobalObject();
+  if (scope) {
+    JSObject *obj = scope->GetGlobalJSObject();
+    if (obj) {
+      js::NotifyAnimationActivity(obj);
+    }
+  }
 }
 
 void
@@ -769,12 +779,8 @@ nsresult
 NS_NewCanvasRenderingContext2D(nsIDOMCanvasRenderingContext2D** aResult)
 {
   Telemetry::Accumulate(Telemetry::CANVAS_2D_USED, 1);
-  if (Preferences::GetBool("gfx.canvas.azure.enabled", false)) {
-    nsresult rv = NS_NewCanvasRenderingContext2DAzure(aResult);
-    // If Azure fails, fall back to a classic canvas.
-    if (NS_SUCCEEDED(rv)) {
-      return rv;
-    }
+  if (AzureCanvasEnabled()) {
+    return NS_NewCanvasRenderingContext2DAzure(aResult);
   }
 
   return NS_NewCanvasRenderingContext2DThebes(aResult);

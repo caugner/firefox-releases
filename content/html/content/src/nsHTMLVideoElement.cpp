@@ -13,8 +13,6 @@
 #include "nsGkAtoms.h"
 #include "nsSize.h"
 #include "nsIFrame.h"
-#include "nsIDocument.h"
-#include "nsIDOMDocument.h"
 #include "nsDOMError.h"
 #include "nsNodeInfoManager.h"
 #include "plbase64.h"
@@ -78,6 +76,20 @@ nsHTMLVideoElement::nsHTMLVideoElement(already_AddRefed<nsINodeInfo> aNodeInfo)
 
 nsHTMLVideoElement::~nsHTMLVideoElement()
 {
+}
+
+void
+nsHTMLVideoElement::GetItemValueText(nsAString& aValue)
+{
+  // Can't call GetSrc because we don't have a JSContext
+  GetURIAttr(nsGkAtoms::src, nsnull, aValue);
+}
+
+void
+nsHTMLVideoElement::SetItemValueText(const nsAString& aValue)
+{
+  // Can't call SetSrc because we don't have a JSContext
+  SetAttr(kNameSpaceID_None, nsGkAtoms::src, aValue, true);
 }
 
 nsresult nsHTMLVideoElement::GetVideoSize(nsIntSize* size)

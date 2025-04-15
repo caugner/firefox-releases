@@ -33,7 +33,6 @@
 #include "nsIWeakReferenceUtils.h"
 #include "nsCSSRendering.h"
 #include "prprf.h"
-#include "nsIDOMDocument.h"
 #include "nsAutoPtr.h"
 #include "nsEventStateManager.h"
 #include "nsThreadUtils.h"
@@ -53,7 +52,6 @@
 #include "nsStyleStructInlines.h"
 #include "nsIAppShell.h"
 #include "prenv.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsIDOMEventTarget.h"
 #include "nsObjectFrame.h"
 #include "nsTransitionManager.h"
@@ -109,18 +107,20 @@ private:
 
 } // anonymous namespace
 
-static nscolor
-MakeColorPref(const nsString& aColor)
+nscolor
+nsPresContext::MakeColorPref(const nsString& aColor)
 {
-  nscolor color;
   nsCSSParser parser;
-  nsresult rv =
-    parser.ParseColorString(aColor, nsnull, 0, &color);
-  if (NS_FAILED(rv)) {
+  nsCSSValue value;
+  if (!parser.ParseColorString(aColor, nsnull, 0, value)) {
     // Any better choices?
-    color = NS_RGB(0, 0, 0);
+    return NS_RGB(0, 0, 0);
   }
-  return color;
+
+  nscolor color;
+  return nsRuleNode::ComputeColor(value, this, nsnull, color)
+    ? color
+    : NS_RGB(0, 0, 0);
 }
 
 int
@@ -800,7 +800,7 @@ nsPresContext::InvalidateThebesLayers()
     // FrameLayerBuilder caches invalidation-related values that depend on the
     // appunits-per-dev-pixel ratio, so ensure that all ThebesLayer drawing
     // is completely flushed.
-    FrameLayerBuilder::InvalidateThebesLayersInSubtree(rootFrame);
+    FrameLayerBuilder::InvalidateThebesLayersInSubtreeWithUntrustedFrameGeometry(rootFrame);
   }
 }
 
@@ -2077,14 +2077,15 @@ nsPresContext::FireDOMPaintEvent()
   NS_NewDOMNotifyPaintEvent(getter_AddRefs(event), this, nsnull,
                             NS_AFTERPAINT,
                             &mInvalidateRequests);
-  nsCOMPtr<nsIPrivateDOMEvent> pEvent = do_QueryInterface(event);
-  if (!pEvent) return;
+  if (!event) {
+    return;
+  }
 
   // Even if we're not telling the window about the event (so eventTarget is
   // the chrome event handler, not the window), the window is still
   // logically the event target.
-  pEvent->SetTarget(eventTarget);
-  pEvent->SetTrusted(true);
+  event->SetTarget(eventTarget);
+  event->SetTrusted(true);
   nsEventDispatcher::DispatchDOMEvent(dispatchTarget, nsnull, event, this, nsnull);
 }
 

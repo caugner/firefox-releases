@@ -52,9 +52,6 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
   private LinearLayout        pinError;
 
   // UI elements for pairing through PIN generation.
-  private TextView            setupTitleView;
-  private TextView            setupNoDeviceLinkTitleView;
-  private TextView            setupSubtitleView;
   private TextView            pinTextView1;
   private TextView            pinTextView2;
   private TextView            pinTextView3;
@@ -80,6 +77,13 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
     mContext = getApplicationContext();
     Logger.debug(LOG_TAG, "AccountManager.get(" + mContext + ")");
     mAccountManager = AccountManager.get(mContext);
+
+    // Set "screen on" flag for this activity. Screen will not automatically dim as long as this
+    // activity is at the top of the stack.
+    // Attempting to set this flag more than once causes hanging, so we set it here, not in onResume().
+    Window w = getWindow();
+    w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    Logger.debug(LOG_TAG, "Successfully set screen-on flag.");
   }
 
   @Override
@@ -105,11 +109,6 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
 
   public void finishResume(Account[] accts) {
     Logger.debug(LOG_TAG, "Finishing Resume after fetching accounts.");
-
-    // Set "screen on" flag.
-    Logger.debug(LOG_TAG, "Setting screen-on flag.");
-    Window w = getWindow();
-    w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
     if (accts.length == 0) { // Start J-PAKE for pairing if no accounts present.
       Logger.debug(LOG_TAG, "No accounts; starting J-PAKE receiver.");
@@ -328,7 +327,9 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
     fields.put(Constants.JSON_KEY_PASSWORD, password);
     fields.put(Constants.JSON_KEY_SERVER,   serverURL);
 
-    Logger.debug(LOG_TAG, "Extracted account data: " + jAccount.toJSONString());
+    if (Logger.LOG_PERSONAL_INFORMATION) {
+      Logger.pii(LOG_TAG, "Extracted account data: " + jAccount.toJSONString());
+    }
     return jAccount;
   }
 
@@ -385,9 +386,8 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
    * @param jCreds
    */
   public void onComplete(JSONObject jCreds) {
-    boolean result = true;
-
     if (!pairWithPin) {
+      // Create account from received credentials.
       String accountName  = (String) jCreds.get(Constants.JSON_KEY_ACCOUNT);
       String password     = (String) jCreds.get(Constants.JSON_KEY_PASSWORD);
       String syncKey      = (String) jCreds.get(Constants.JSON_KEY_SYNCKEY);
@@ -400,30 +400,41 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
         Logger.warn(LOG_TAG, "Unsupported encoding when decoding UTF-8 ASCII J-PAKE message. Ignoring.");
       }
 
-      final SyncAccountParameters syncAccount = new SyncAccountParameters(mContext, mAccountManager,
-          accountName, syncKey, password, serverURL);
-      final Account account = SyncAccounts.createSyncAccount(syncAccount);
-      result = (account != null);
-
-      final Intent intent = new Intent(); // The intent to return.
-      intent.putExtra(AccountManager.KEY_ACCOUNT_NAME, syncAccount.username);
-      intent.putExtra(AccountManager.KEY_ACCOUNT_TYPE, Constants.ACCOUNTTYPE_SYNC);
-      intent.putExtra(AccountManager.KEY_AUTHTOKEN, Constants.ACCOUNTTYPE_SYNC);
-      setAccountAuthenticatorResult(intent.getExtras());
-
-      if (result) {
-        setResult(RESULT_OK, intent);
-      } else {
-        setResult(RESULT_CANCELED, intent);
-      }
+      final SyncAccountParameters syncAccount = new SyncAccountParameters(mContext, mAccountManager, accountName,
+                                                                          syncKey, password, serverURL);
+      createAccountOnThread(syncAccount);
+    } else {
+      // No need to create an account; just clean up.
+      displayResultAndFinish(true);
     }
+  }
 
-    jClient = null; // Sync should be set up. Kill reference to JPakeClient object.
-    final boolean res = result;
+  private void displayResultAndFinish(final boolean isSuccess) {
+    jClient = null;
     runOnUiThread(new Runnable() {
       @Override
       public void run() {
-        displayResult(res);
+        int result = isSuccess ? RESULT_OK : RESULT_CANCELED;
+        setResult(result);
+        displayResult(isSuccess);
+      }
+    });
+  }
+
+  private void createAccountOnThread(final SyncAccountParameters syncAccount) {
+    ThreadPool.run(new Runnable() {
+      @Override
+      public void run() {
+        Account account = SyncAccounts.createSyncAccount(syncAccount);
+        boolean isSuccess = (account != null);
+        if (isSuccess) {
+          Bundle resultBundle = new Bundle();
+          resultBundle.putString(AccountManager.KEY_ACCOUNT_NAME, syncAccount.username);
+          resultBundle.putString(AccountManager.KEY_ACCOUNT_TYPE, Constants.ACCOUNTTYPE_SYNC);
+          resultBundle.putString(AccountManager.KEY_AUTHTOKEN, Constants.ACCOUNTTYPE_SYNC);
+          setAccountAuthenticatorResult(resultBundle);
+        }
+        displayResultAndFinish(isSuccess);
       }
     });
   }
@@ -431,7 +442,6 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
   /*
    * Helper functions
    */
-
   private void activateButton(Button button, boolean toActivate) {
     button.setEnabled(toActivate);
     button.setClickable(toActivate);
@@ -447,19 +457,24 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
    * Displays Sync account setup result to user.
    *
    * @param isSetup
-   *          true is account was set up successfully, false otherwise.
+   *          true if account was set up successfully, false otherwise.
    */
   private void displayResult(boolean isSuccess) {
     Intent intent = null;
     if (isSuccess) {
       intent = new Intent(mContext, SetupSuccessActivity.class);
-    }  else {
+      intent.setFlags(Constants.FLAG_ACTIVITY_REORDER_TO_FRONT_NO_ANIMATION);
+      intent.putExtra(Constants.INTENT_EXTRA_IS_SETUP, !pairWithPin);
+      startActivity(intent);
+      finish();
+    } else {
       intent = new Intent(mContext, SetupFailureActivity.class);
+      intent.putExtra(Constants.INTENT_EXTRA_IS_ACCOUNTERROR, true);
+      intent.setFlags(Constants.FLAG_ACTIVITY_REORDER_TO_FRONT_NO_ANIMATION);
+      intent.putExtra(Constants.INTENT_EXTRA_IS_SETUP, !pairWithPin);
+      startActivity(intent);
+      // Do not finish, so user can retry setup by hitting "back."
     }
-    intent.setFlags(Constants.FLAG_ACTIVITY_REORDER_TO_FRONT_NO_ANIMATION);
-    intent.putExtra(Constants.INTENT_EXTRA_IS_SETUP, !pairWithPin);
-    startActivity(intent);
-    finish();
   }
 
   /**
@@ -581,23 +596,9 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
         setContentView(R.layout.sync_setup);
 
         // Set up UI.
-        setupTitleView = ((TextView) findViewById(R.id.setup_title));
-        setupSubtitleView = (TextView) findViewById(R.id.setup_subtitle);
-        setupNoDeviceLinkTitleView = (TextView) findViewById(R.id.link_nodevice);
         pinTextView1 = ((TextView) findViewById(R.id.text_pin1));
         pinTextView2 = ((TextView) findViewById(R.id.text_pin2));
         pinTextView3 = ((TextView) findViewById(R.id.text_pin3));
-
-        // UI checks.
-        if (setupTitleView == null) {
-          Logger.error(LOG_TAG, "No title view.");
-        }
-        if (setupSubtitleView == null) {
-          Logger.error(LOG_TAG, "No subtitle view.");
-        }
-        if (setupNoDeviceLinkTitleView == null) {
-          Logger.error(LOG_TAG, "No 'no device' link view.");
-        }
       }
     });
   }

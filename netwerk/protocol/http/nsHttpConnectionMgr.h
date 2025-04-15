@@ -18,6 +18,7 @@
 #include "mozilla/ReentrantMonitor.h"
 #include "nsISocketTransportService.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/Attributes.h"
 
 #include "nsIObserver.h"
 #include "nsITimer.h"
@@ -264,6 +265,13 @@ private:
         nsTArray<nsHttpConnection*>  mIdleConns;   // idle persistent connections
         nsTArray<nsHalfOpenSocket*>  mHalfOpens;
 
+        // calculate the number of half open sockets that have not had at least 1
+        // connection complete
+        PRUint32 UnconnectedHalfOpens();
+
+        // Remove a particular half open socket from the mHalfOpens array
+        void RemoveHalfOpen(nsHalfOpenSocket *);
+
         // Pipeline depths for various states
         const static PRUint32 kPipelineUnlimited  = 1024; // fully open - extended green
         const static PRUint32 kPipelineOpen       = 6;    // 6 on each conn - normal green
@@ -361,10 +369,10 @@ private:
     // nsHalfOpenSocket is used to hold the state of an opening TCP socket
     // while we wait for it to establish and bind it to a connection
 
-    class nsHalfOpenSocket : public nsIOutputStreamCallback,
-                             public nsITransportEventSink,
-                             public nsIInterfaceRequestor,
-                             public nsITimerCallback
+    class nsHalfOpenSocket MOZ_FINAL : public nsIOutputStreamCallback,
+                                       public nsITransportEventSink,
+                                       public nsIInterfaceRequestor,
+                                       public nsITimerCallback
     {
     public:
         NS_DECL_ISUPPORTS
@@ -387,7 +395,10 @@ private:
         void     SetupBackupTimer();
         void     CancelBackupTimer();
         void     Abandon();
-        
+        double   Duration(mozilla::TimeStamp epoch);
+        nsISocketTransport *SocketTransport() { return mSocketTransport; }
+        nsISocketTransport *BackupTransport() { return mBackupTransport; }
+
         nsAHttpTransaction *Transaction() { return mTransaction; }
 
         bool IsSpeculative() { return mSpeculative; }
@@ -485,7 +496,7 @@ private:
 
     nsConnectionEntry *GetOrCreateConnectionEntry(nsHttpConnectionInfo *);
 
-    bool     MakeNewConnection(nsConnectionEntry *ent,
+    nsresult MakeNewConnection(nsConnectionEntry *ent,
                                nsHttpTransaction *trans);
     bool     AddToShortestPipeline(nsConnectionEntry *ent,
                                    nsHttpTransaction *trans,
@@ -581,8 +592,8 @@ private:
     nsCOMPtr<nsITimer> mTimer;
 
     // A 1s tick to call nsHttpConnection::ReadTimeoutTick on
-    // active http/1 connections. Disabled when there are no
-    // active connections.
+    // active http/1 connections and check for orphaned half opens.
+    // Disabled when there are no active or half open connections.
     nsCOMPtr<nsITimer> mReadTimeoutTick;
     bool mReadTimeoutTickArmed;
 

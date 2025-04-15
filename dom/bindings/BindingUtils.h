@@ -20,6 +20,7 @@
 #include "xpcpublic.h"
 #include "nsTraceRefcnt.h"
 #include "nsWrapperCacheInlines.h"
+#include "mozilla/Likely.h"
 
 // nsGlobalWindow implements nsWrapperCache, but doesn't always use it. Don't
 // try to use it without fixing that first.
@@ -60,20 +61,19 @@ IsDOMClass(const JSClass* clasp)
   return clasp->flags & JSCLASS_IS_DOMJSCLASS;
 }
 
+inline bool
+IsDOMClass(const js::Class* clasp)
+{
+  return IsDOMClass(Jsvalify(clasp));
+}
+
 template <class T>
 inline T*
-UnwrapDOMObject(JSObject* obj, const JSClass* clasp)
+UnwrapDOMObject(JSObject* obj)
 {
-  MOZ_ASSERT(IsDOMClass(clasp));
-  MOZ_ASSERT(JS_GetClass(obj) == clasp);
+  MOZ_ASSERT(IsDOMClass(JS_GetClass(obj)));
 
-  size_t slot = DOMJSClass::FromJSClass(clasp)->mNativeSlot;
-  MOZ_ASSERT((slot == DOM_OBJECT_SLOT &&
-              !(clasp->flags & JSCLASS_DOM_GLOBAL)) ||
-             (slot == DOM_GLOBAL_OBJECT_SLOT &&
-              (clasp->flags & JSCLASS_DOM_GLOBAL)));
-
-  JS::Value val = js::GetReservedSlot(obj, slot);
+  JS::Value val = js::GetReservedSlot(obj, DOM_OBJECT_SLOT);
   // XXXbz/khuey worker code tries to unwrap interface objects (which have
   // nothing here).  That needs to stop.
   // XXX We don't null-check UnwrapObject's result; aren't we going to crash
@@ -83,13 +83,6 @@ UnwrapDOMObject(JSObject* obj, const JSClass* clasp)
   }
   
   return static_cast<T*>(val.toPrivate());
-}
-
-template <class T>
-inline T*
-UnwrapDOMObject(JSObject* obj, const js::Class* clasp)
-{
-  return UnwrapDOMObject<T>(obj, Jsvalify(clasp));
 }
 
 // Some callers don't want to set an exception when unwrappin fails
@@ -129,7 +122,7 @@ UnwrapObject(JSContext* cx, JSObject* obj, U& value)
   DOMJSClass* domClass = DOMJSClass::FromJSClass(clasp);
   if (domClass->mInterfaceChain[PrototypeTraits<PrototypeID>::Depth] ==
       PrototypeID) {
-    value = UnwrapDOMObject<T>(obj, clasp);
+    value = UnwrapDOMObject<T>(obj);
     return NS_OK;
   }
 
@@ -195,7 +188,7 @@ inline nsresult
 UnwrapObject(JSContext* cx, JSObject* obj, U& value)
 {
   return UnwrapObject<static_cast<prototypes::ID>(
-           PrototypeIDMap<T>::PrototypeID)>(cx, obj, value);
+           PrototypeIDMap<T>::PrototypeID), T>(cx, obj, value);
 }
 
 const size_t kProtoOrIfaceCacheCount =
@@ -341,12 +334,48 @@ WrapNewBindingObject(JSContext* cx, JSObject* scope, T* value, JS::Value* vp)
 }
 
 // Helper for smart pointers (nsAutoPtr/nsRefPtr/nsCOMPtr).
-template <template <class> class SmartPtr, class T>
+template <template <typename> class SmartPtr, class T>
 inline bool
 WrapNewBindingObject(JSContext* cx, JSObject* scope, const SmartPtr<T>& value,
                      JS::Value* vp)
 {
   return WrapNewBindingObject(cx, scope, value.get(), vp);
+}
+
+template <class T>
+inline bool
+WrapNewBindingNonWrapperCachedObject(JSContext* cx, JSObject* scope, T* value,
+                                     JS::Value* vp)
+{
+  // We try to wrap in the compartment of the underlying object of "scope"
+  JSObject* obj;
+  {
+    // scope for the JSAutoEnterCompartment so that we restore the
+    // compartment before we call JS_WrapValue.
+    JSAutoEnterCompartment ac;
+    if (js::IsWrapper(scope)) {
+      scope = xpc::Unwrap(cx, scope, false);
+      if (!scope || !ac.enter(cx, scope)) {
+        return false;
+      }
+    }
+
+    obj = value->WrapObject(cx, scope);
+  }
+
+  // We can end up here in all sorts of compartments, per above.  Make
+  // sure to JS_WrapValue!
+  *vp = JS::ObjectValue(*obj);
+  return JS_WrapValue(cx, vp);
+}
+
+// Helper for smart pointers (nsAutoPtr/nsRefPtr/nsCOMPtr).
+template <template <typename> class SmartPtr, typename T>
+inline bool
+WrapNewBindingNonWrapperCachedObject(JSContext* cx, JSObject* scope,
+                                     const SmartPtr<T>& value, JS::Value* vp)
+{
+  return WrapNewBindingNonWrapperCachedObject(cx, scope, value.get(), vp);
 }
 
 /**
@@ -372,7 +401,7 @@ HandleNewBindingWrappingFailure(JSContext* cx, JSObject* scope, T* value,
 }
 
 // Helper for smart pointers (nsAutoPtr/nsRefPtr/nsCOMPtr).
-template <template <class> class SmartPtr, class T>
+template <template <typename> class SmartPtr, class T>
 MOZ_ALWAYS_INLINE bool
 HandleNewBindingWrappingFailure(JSContext* cx, JSObject* scope,
                                 const SmartPtr<T>& value, JS::Value* vp)
@@ -448,7 +477,7 @@ struct ParentObject {
     mWrapperCache(GetWrapperCache(aObject))
   {}
 
-  template<class T, template<class> class SmartPtr>
+  template<class T, template<typename> class SmartPtr>
   ParentObject(const SmartPtr<T>& aObject) :
     mObject(aObject.get()),
     mWrapperCache(GetWrapperCache(aObject.get()))
@@ -473,13 +502,13 @@ template<class T>
 inline nsISupports*
 GetParentPointer(T* aObject)
 {
-  return aObject;
+  return ToSupports(aObject);
 }
 
 inline nsISupports*
 GetParentPointer(const ParentObject& aObject)
 {
-  return aObject.mObject;
+  return ToSupports(aObject.mObject);
 }
 
 // Only set allowNativeWrapper to false if you really know you need it, if in
@@ -580,6 +609,16 @@ WrapNativeParent(JSContext* cx, JSObject* scope, const T& p)
          NULL;
 }
 
+static inline bool
+InternJSString(JSContext* cx, jsid& id, const char* chars)
+{
+  if (JSString *str = ::JS_InternString(cx, chars)) {
+    id = INTERNED_STRING_TO_JSID(cx, str);
+    return true;
+  }
+  return false;
+}
+
 // Spec needs a name property
 template <typename Spec>
 static bool
@@ -592,12 +631,9 @@ InitIds(JSContext* cx, Prefable<Spec>* prefableSpecs, jsid* ids)
     // because this is only done once per application runtime.
     Spec* spec = prefableSpecs->specs;
     do {
-      JSString *str = ::JS_InternString(cx, spec->name);
-      if (!str) {
+      if (!InternJSString(cx, *ids, spec->name)) {
         return false;
       }
-
-      *ids = INTERNED_STRING_TO_JSID(cx, str);
     } while (++ids, (++spec)->name);
 
     // We ran out of ids for that pref.  Put a JSID_VOID in on the id
@@ -826,6 +862,25 @@ class Sequence : public AutoFallibleTArray<T, 16>
 {
 public:
   Sequence() : AutoFallibleTArray<T, 16>() {}
+};
+
+// Class for holding the type of members of a union. The union type has an enum
+// to keep track of which of its UnionMembers has been constructed.
+template<class T>
+class UnionMember {
+    AlignedStorage2<T> storage;
+
+public:
+    T& SetValue() {
+      new (storage.addr()) T();
+      return *storage.addr();
+    }
+    const T& Value() const {
+      return *storage.addr();
+    }
+    void Destroy() {
+      storage.addr()->~T();
+    }
 };
 
 // Implementation of the bits that XrayWrapper needs

@@ -29,6 +29,7 @@ EXPORTS_NAMESPACES = mozilla
 EXPORTS		= \
 		FrameLayerBuilder.h \
 		FramePropertyTable.h \
+		nsArenaMemoryStats.h \
 		nsBidi.h \
 		nsBidiPresUtils.h \
 		nsCaret.h \
@@ -63,6 +64,7 @@ EXPORTS_mozilla = \
 
 CPPSRCS		= \
 		FrameLayerBuilder.cpp \
+		MaskLayerImageCache.cpp \
 		FramePropertyTable.cpp \
 		RestyleTracker.cpp \
 		nsCSSColorUtils.cpp \

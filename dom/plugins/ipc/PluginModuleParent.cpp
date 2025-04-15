@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
 #include <glib.h>
 #elif XP_MACOSX
 #include "PluginInterposeOSX.h"
@@ -28,7 +28,7 @@
 #include "nsAutoPtr.h"
 #include "nsCRT.h"
 #include "nsNPAPIPlugin.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 
 #ifdef XP_WIN
 #include "mozilla/widget/AudioSession.h"
@@ -240,13 +240,13 @@ PluginModuleParent::CrashReporter()
 
 #ifdef MOZ_CRASHREPORTER
 static void
-RemoveMinidump(nsILocalFile* minidump)
+RemoveMinidump(nsIFile* minidump)
 {
     if (!minidump)
         return;
 
     minidump->Remove(false);
-    nsCOMPtr<nsILocalFile> extraFile;
+    nsCOMPtr<nsIFile> extraFile;
     if (GetExtraFileForMinidump(minidump,
                                 getter_AddRefs(extraFile))) {
         extraFile->Remove(true);
@@ -270,12 +270,12 @@ PluginModuleParent::ProcessFirstMinidump()
     }
 
     PRUint32 sequence = PR_UINT32_MAX;
-    nsCOMPtr<nsILocalFile> dumpFile;
+    nsCOMPtr<nsIFile> dumpFile;
     nsCAutoString flashProcessType;
     TakeMinidump(getter_AddRefs(dumpFile), &sequence);
 
 #ifdef MOZ_CRASHREPORTER_INJECTOR
-    nsCOMPtr<nsILocalFile> childDumpFile;
+    nsCOMPtr<nsIFile> childDumpFile;
     PRUint32 childSequence;
 
     if (mFlashProcess1 &&
@@ -1054,7 +1054,7 @@ PluginModuleParent::AnswerProcessSomeEvents()
     return true;
 }
 
-#elif !defined(MOZ_WIDGET_GTK2)
+#elif !defined(MOZ_WIDGET_GTK)
 bool
 PluginModuleParent::AnswerProcessSomeEvents()
 {

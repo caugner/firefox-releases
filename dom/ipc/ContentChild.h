@@ -55,8 +55,12 @@ public:
     /* if you remove this, please talk to cjones or dougt */
     virtual bool RecvDummy(Shmem& foo) { return true; }
 
-    virtual PBrowserChild* AllocPBrowser(const PRUint32& aChromeFlags);
+    virtual PBrowserChild* AllocPBrowser(const PRUint32& aChromeFlags,
+                                         const bool& aIsBrowserFrame);
     virtual bool DeallocPBrowser(PBrowserChild*);
+
+    virtual PDeviceStorageRequestChild* AllocPDeviceStorageRequest(const DeviceStorageParams&);
+    virtual bool DeallocPDeviceStorageRequest(PDeviceStorageRequestChild*);
 
     virtual PCrashReporterChild*
     AllocPCrashReporter(const mozilla::dom::NativeThreadId& id,
@@ -66,6 +70,9 @@ public:
 
     NS_OVERRIDE virtual PHalChild* AllocPHal();
     NS_OVERRIDE virtual bool DeallocPHal(PHalChild*);
+
+    virtual PIndexedDBChild* AllocPIndexedDB();
+    virtual bool DeallocPIndexedDB(PIndexedDBChild* aActor);
 
     virtual PMemoryReportRequestChild*
     AllocPMemoryReportRequest();

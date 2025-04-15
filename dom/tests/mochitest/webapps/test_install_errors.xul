@@ -27,7 +27,7 @@ function go() {
 }
 
 steps = [setUp, no_args, parse_error, invalid_manifest, permission_denied, invalid_content,
-         mgmt_api_errors, mgmt_api_add_listener, tearDown];
+         install_package_not_implemented, mgmt_api_errors, mgmt_api_add_listener, fileURL, tearDown];
 
 function setUp(next) {
   debug("in " + arguments.callee.name);
@@ -47,29 +47,31 @@ function no_args(next)  {
 function parse_error(next)  {
   debug("in " + arguments.callee.name);  
   mozAppscb(navigator.mozApps.install(SERVERS['json_syntax_error'], null), 
-          [{ status: "== \"error\"",
-            name: "== \"MANIFEST_PARSE_ERROR\""}], ok, next);
+          [{ name: "== \"MANIFEST_PARSE_ERROR\"" }], "error", ok, next);
 }
 
 function invalid_manifest(next) {
   debug("in " + arguments.callee.name);
   mozAppscb(navigator.mozApps.install(SERVERS['missing_required_field'], null),
-          [{ status: "== \"error\"",
-            name: "== \"INVALID_MANIFEST\""}], ok, next);
+          [{ name: "== \"INVALID_MANIFEST\"" }], "error", ok, next);
 }
 
 function permission_denied(next) {
   debug("in " + arguments.callee.name);
   mozAppscb(navigator.mozApps.install(SERVERS['no_delegated_install'], null),
-          [{ status: "== \"error\"",
-            name: "== \"DENIED\""}], todo, next);
+          [{ name: "== \"DENIED\"" }], "error", todo, next);
 }
 
 function invalid_content(next) {
   debug("in " + arguments.callee.name);
   mozAppscb(navigator.mozApps.install(SERVERS['bad_content_type'], null),
-          [{ status: "== \"error\"",
-             name: "== \"INVALID_MANIFEST\""}], todo, next);
+          [{ name: "== \"INVALID_MANIFEST\"" }], "error", todo, next);
+}
+
+function install_package_not_implemented(next) {
+  ok(!("installPackage" in navigator.mozApps),
+     "installPackage not in navigator.mozApps");
+  next();
 }
 
 function mgmt_api_errors(next) {
@@ -84,7 +86,27 @@ function mgmt_api_add_listener(next) {
   document.getElementById("no_delegated_install").contentWindow.postMessage("mgmt.event_error", '*');
 }
 
+function fileURL(next) {
+  try {
+    navigator.mozApps.install("file:///nonexistent");
+    ok(false,
+       "attempt to install nonexistent file: URL doesn't throw exception");
+  } catch(ex) {
+    is(ex.message, "INVALID_URL_SCHEME: 'file'; must be 'http' or 'https'",
+       "attempt to install nonexistent file: URL throws exception");
+  }
+
+  try {
+    navigator.mozApps.install("file:///");
+    ok(false, "attempt to install existent file: URL doesn't throw exception");
+  } catch(ex) {
+    is(ex.message, "INVALID_URL_SCHEME: 'file'; must be 'http' or 'https'",
+       "attempt to install existent file: URL throws exception");
+  }
+
+  next();
+}
+
 </script> 
 
 </window>
-

@@ -4,7 +4,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "gfxSharedImageSurface.h"
+#include "mozilla/layers/ImageContainerParent.h"
 
+#include "ipc/AutoOpenSurface.h"
 #include "ImageLayerOGL.h"
 #include "gfxImageSurface.h"
 #include "gfxUtils.h"
@@ -290,6 +292,9 @@ ImageLayerOGL::RenderLayer(int,
     if (!cairoImage->mSurface) {
       return;
     }
+
+    NS_ASSERTION(cairoImage->mSurface->GetContentType() != gfxASurface::CONTENT_ALPHA,
+                 "Image layer has alpha image");
 
     CairoOGLBackendData *data =
       static_cast<CairoOGLBackendData*>(cairoImage->GetBackendData(LayerManager::LAYERS_OPENGL));
@@ -614,6 +619,9 @@ ImageLayerOGL::LoadAsTexture(GLuint aTextureUnit, gfxIntSize* aSize)
     cairoImage->GetBackendData(LayerManager::LAYERS_OPENGL));
 
   if (!data) {
+    NS_ASSERTION(cairoImage->mSurface->GetContentType() == gfxASurface::CONTENT_ALPHA,
+                 "OpenGL mask layers must be backed by alpha surfaces");
+
     // allocate a new texture and save the details in the backend data
     data = new CairoOGLBackendData;
     data->mTextureSize = CalculatePOTSize(cairoImage->mSize, gl());
@@ -676,7 +684,7 @@ ShadowImageLayerOGL::~ShadowImageLayerOGL()
 bool
 ShadowImageLayerOGL::Init(const SharedImage& aFront)
 {
-  if (aFront.type() == SharedImage::TSurfaceDescriptor) {    
+  if (aFront.type() == SharedImage::TSurfaceDescriptor) {
     SurfaceDescriptor surface = aFront.get_SurfaceDescriptor();
     if (surface.type() == SurfaceDescriptor::TSharedTextureDescriptor) {
       SharedTextureDescriptor texture = surface.get_SharedTextureDescriptor();
@@ -685,12 +693,10 @@ ShadowImageLayerOGL::Init(const SharedImage& aFront)
       mShareType = texture.shareType();
       mInverted = texture.inverted();
     } else {
-      SurfaceDescriptor desc = aFront.get_SurfaceDescriptor();
-      nsRefPtr<gfxASurface> surf =
-        ShadowLayerForwarder::OpenDescriptor(desc);
-      mSize = surf->GetSize();
+      AutoOpenSurface autoSurf(OPEN_READ_ONLY, surface);
+      mSize = autoSurf.Size();
       mTexImage = gl()->CreateTextureImage(nsIntSize(mSize.width, mSize.height),
-                                           surf->GetContentType(),
+                                           autoSurf.ContentType(),
                                            LOCAL_GL_CLAMP_TO_EDGE,
                                            mForceSingleTile
                                             ? TextureImage::ForceSingleTile
@@ -699,15 +705,11 @@ ShadowImageLayerOGL::Init(const SharedImage& aFront)
   } else {
     YUVImage yuv = aFront.get_YUVImage();
 
-    nsRefPtr<gfxSharedImageSurface> surfY =
-      gfxSharedImageSurface::Open(yuv.Ydata());
-    nsRefPtr<gfxSharedImageSurface> surfU =
-      gfxSharedImageSurface::Open(yuv.Udata());
-    nsRefPtr<gfxSharedImageSurface> surfV =
-      gfxSharedImageSurface::Open(yuv.Vdata());
+    AutoOpenSurface surfY(OPEN_READ_ONLY, yuv.Ydata());
+    AutoOpenSurface surfU(OPEN_READ_ONLY, yuv.Udata());
 
-    mSize = surfY->GetSize();
-    mCbCrSize = surfU->GetSize();
+    mSize = surfY.Size();
+    mCbCrSize = surfU.Size();
 
     if (!mYUVTexture[0].IsAllocated()) {
       mYUVTexture[0].Allocate(gl());
@@ -734,7 +736,15 @@ ShadowImageLayerOGL::Swap(const SharedImage& aNewFront,
                           SharedImage* aNewBack)
 {
   if (!mDestroyed) {
-    if (aNewFront.type() == SharedImage::TSurfaceDescriptor) {
+    if (aNewFront.type() == SharedImage::TSharedImageID) {
+      // We are using ImageBridge protocol. The image data will be queried at render
+      // time in the parent side.
+      PRUint64 newID = aNewFront.get_SharedImageID().id();
+      if (newID != mImageContainerID) {
+        mImageContainerID = newID;
+        mImageVersion = 0;
+      }
+    } else if (aNewFront.type() == SharedImage::TSurfaceDescriptor) {
       SurfaceDescriptor surface = aNewFront.get_SurfaceDescriptor();
 
       if (surface.type() == SurfaceDescriptor::TSharedTextureDescriptor) {
@@ -750,44 +760,19 @@ ShadowImageLayerOGL::Swap(const SharedImage& aNewFront,
         mSharedHandle = newHandle;
         mShareType = texture.shareType();
       } else {
-        nsRefPtr<gfxASurface> surf =
-          ShadowLayerForwarder::OpenDescriptor(aNewFront.get_SurfaceDescriptor());
-        gfxIntSize size = surf->GetSize();
+        AutoOpenSurface surf(OPEN_READ_ONLY, surface);
+        gfxIntSize size = surf.Size();
         if (mSize != size || !mTexImage ||
-            mTexImage->GetContentType() != surf->GetContentType()) {
+            mTexImage->GetContentType() != surf.ContentType()) {
           Init(aNewFront);
         }
         // XXX this is always just ridiculously slow
         nsIntRegion updateRegion(nsIntRect(0, 0, size.width, size.height));
-        mTexImage->DirectUpdate(surf, updateRegion);
+        mTexImage->DirectUpdate(surf.Get(), updateRegion);
       }
     } else {
       const YUVImage& yuv = aNewFront.get_YUVImage();
-
-      nsRefPtr<gfxSharedImageSurface> surfY =
-        gfxSharedImageSurface::Open(yuv.Ydata());
-      nsRefPtr<gfxSharedImageSurface> surfU =
-        gfxSharedImageSurface::Open(yuv.Udata());
-      nsRefPtr<gfxSharedImageSurface> surfV =
-        gfxSharedImageSurface::Open(yuv.Vdata());
-      mPictureRect = yuv.picture();
-
-      gfxIntSize size = surfY->GetSize();
-      gfxIntSize CbCrSize = surfU->GetSize();
-      if (size != mSize || mCbCrSize != CbCrSize || !mYUVTexture[0].IsAllocated()) {
-        Init(aNewFront);
-      }
-
-      PlanarYCbCrImage::Data data;
-      data.mYChannel = surfY->Data();
-      data.mYStride = surfY->Stride();
-      data.mYSize = surfY->GetSize();
-      data.mCbChannel = surfU->Data();
-      data.mCrChannel = surfV->Data();
-      data.mCbCrStride = surfU->Stride();
-      data.mCbCrSize = surfU->GetSize();
-
-      UploadYUVToTexture(gl(), data, &mYUVTexture[0], &mYUVTexture[1], &mYUVTexture[2]);
+      UploadSharedYUVToTexture(yuv);
     }
   }
 
@@ -815,13 +800,77 @@ ShadowImageLayerOGL::GetLayer()
   return this;
 }
 
+void ShadowImageLayerOGL::UploadSharedYUVToTexture(const YUVImage& yuv)
+{
+  AutoOpenSurface asurfY(OPEN_READ_ONLY, yuv.Ydata());
+  AutoOpenSurface asurfU(OPEN_READ_ONLY, yuv.Udata());
+  AutoOpenSurface asurfV(OPEN_READ_ONLY, yuv.Vdata());
+  nsRefPtr<gfxImageSurface> surfY = asurfY.GetAsImage();
+  nsRefPtr<gfxImageSurface> surfU = asurfU.GetAsImage();
+  nsRefPtr<gfxImageSurface> surfV = asurfV.GetAsImage();
+  mPictureRect = yuv.picture();
+
+  gfxIntSize size = surfY->GetSize();
+  gfxIntSize CbCrSize = surfU->GetSize();
+  if (size != mSize || mCbCrSize != CbCrSize || !mYUVTexture[0].IsAllocated()) {
+    
+    mSize = surfY->GetSize();
+    mCbCrSize = surfU->GetSize();
+
+    if (!mYUVTexture[0].IsAllocated()) {
+      mYUVTexture[0].Allocate(gl());
+      mYUVTexture[1].Allocate(gl());
+      mYUVTexture[2].Allocate(gl());
+    }
+
+    NS_ASSERTION(mYUVTexture[0].IsAllocated() &&
+                 mYUVTexture[1].IsAllocated() &&
+                 mYUVTexture[2].IsAllocated(),
+                 "Texture allocation failed!");
+
+    gl()->MakeCurrent();
+    SetClamping(gl(), mYUVTexture[0].GetTextureID());
+    SetClamping(gl(), mYUVTexture[1].GetTextureID());
+    SetClamping(gl(), mYUVTexture[2].GetTextureID());
+  }
+
+  PlanarYCbCrImage::Data data;
+  data.mYChannel = surfY->Data();
+  data.mYStride = surfY->Stride();
+  data.mYSize = surfY->GetSize();
+  data.mCbChannel = surfU->Data();
+  data.mCrChannel = surfV->Data();
+  data.mCbCrStride = surfU->Stride();
+  data.mCbCrSize = surfU->GetSize();
+
+  UploadYUVToTexture(gl(), data, &mYUVTexture[0], &mYUVTexture[1], &mYUVTexture[2]);
+}
+
+
 void
 ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
                                  const nsIntPoint& aOffset)
 {
   mOGLManager->MakeCurrent();
+  if (mImageContainerID) {
+    ImageContainerParent::SetCompositorIDForImage(mImageContainerID,
+                                                  mOGLManager->GetCompositorID());
+    PRUint32 imgVersion = ImageContainerParent::GetSharedImageVersion(mImageContainerID);
+    if (imgVersion != mImageVersion) {
+      SharedImage* img = ImageContainerParent::GetSharedImage(mImageContainerID);
+      if (img && (img->type() == SharedImage::TYUVImage)) {
+        UploadSharedYUVToTexture(img->get_YUVImage());
+  
+        mImageVersion = imgVersion;
+      }
+    }
+  }
+
 
   if (mTexImage) {
+    NS_ASSERTION(mTexImage->GetContentType() != gfxASurface::CONTENT_ALPHA,
+                 "Image layer has alpha image");
+
     ShaderProgramOGL *colorProgram =
       mOGLManager->GetProgram(mTexImage->GetShaderProgramType(), GetMaskLayer());
 
@@ -923,6 +972,9 @@ ShadowImageLayerOGL::LoadAsTexture(GLuint aTextureUnit, gfxIntSize* aSize)
   }
 
   mTexImage->BindTextureAndApplyFilter(aTextureUnit);
+
+  NS_ASSERTION(mTexImage->GetContentType() == gfxASurface::CONTENT_ALPHA,
+               "OpenGL mask layers must be backed by alpha surfaces");
 
   // We're assuming that the gl backend won't cheat and use NPOT
   // textures when glContext says it can't (which seems to happen

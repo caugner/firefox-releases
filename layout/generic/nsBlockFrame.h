@@ -268,6 +268,12 @@ public:
                               nsIAtom*        aAttribute,
                               PRInt32         aModType);
 
+  /**
+   * Move any frames on our overflow list to the end of our principal list.
+   * @return true if there were any overflow frames
+   */
+  virtual bool DrainSelfOverflowList();
+
   virtual nsresult StealFrame(nsPresContext* aPresContext,
                               nsIFrame*      aChild,
                               bool           aForceNormal = false);
@@ -781,7 +787,7 @@ protected:
   // Remove and return the pushed floats list.
   nsFrameList* RemovePushedFloats();
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
   void VerifyLines(bool aFinalCheckOK);
   void VerifyOverflowSituation();
   PRInt32 GetDepth() const;

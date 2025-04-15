@@ -22,14 +22,12 @@ public:
 
   // nsIDOMUIEvent Interface
   NS_DECL_NSIDOMUIEVENT
-
-  // nsIPrivateDOMEvent interface
-  NS_IMETHOD DuplicatePrivateData();
-  virtual void Serialize(IPC::Message* aMsg, bool aSerializeInterfaceType);
-  virtual bool Deserialize(const IPC::Message* aMsg, void** aIter);
   
   // Forward to nsDOMEvent
-  NS_FORWARD_TO_NSDOMEVENT
+  NS_FORWARD_TO_NSDOMEVENT_NO_SERIALIZATION_NO_DUPLICATION
+  NS_IMETHOD DuplicatePrivateData();
+  NS_IMETHOD_(void) Serialize(IPC::Message* aMsg, bool aSerializeInterfaceType);
+  NS_IMETHOD_(bool) Deserialize(const IPC::Message* aMsg, void** aIter);
 
   NS_FORWARD_NSIDOMNSEVENT(nsDOMEvent::)
 
@@ -93,7 +91,6 @@ public:
 
 protected:
   // Internal helper functions
-  nsIntPoint GetScreenPoint();
   nsIntPoint GetClientPoint();
   nsIntPoint GetMovementPoint();
   nsIntPoint GetLayerPoint();
@@ -116,7 +113,6 @@ protected:
   nsIntPoint mPagePoint;
   nsIntPoint mMovementPoint;
   bool mIsPointerLocked;
-  nsIntPoint mLastScreenPoint;
   nsIntPoint mLastClientPoint;
 
   typedef mozilla::widget::Modifiers Modifiers;
@@ -124,8 +120,22 @@ protected:
   bool GetModifierStateInternal(const nsAString& aKey);
 };
 
-#define NS_FORWARD_TO_NSDOMUIEVENT \
-  NS_FORWARD_NSIDOMUIEVENT(nsDOMUIEvent::) \
-  NS_FORWARD_TO_NSDOMEVENT
+#define NS_FORWARD_TO_NSDOMUIEVENT                          \
+  NS_FORWARD_NSIDOMUIEVENT(nsDOMUIEvent::)                  \
+  NS_FORWARD_TO_NSDOMEVENT_NO_SERIALIZATION_NO_DUPLICATION  \
+  NS_IMETHOD DuplicatePrivateData()                         \
+  {                                                         \
+    return nsDOMUIEvent::DuplicatePrivateData();            \
+  }                                                         \
+  NS_IMETHOD_(void) Serialize(IPC::Message* aMsg,           \
+                              bool aSerializeInterfaceType) \
+  {                                                         \
+    nsDOMUIEvent::Serialize(aMsg, aSerializeInterfaceType); \
+  }                                                         \
+  NS_IMETHOD_(bool) Deserialize(const IPC::Message* aMsg,   \
+                                void** aIter)               \
+  {                                                         \
+    return nsDOMUIEvent::Deserialize(aMsg, aIter);          \
+  }
 
 #endif // nsDOMUIEvent_h

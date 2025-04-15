@@ -11,6 +11,8 @@
 { 0x2cc50d11, 0x9909, 0x433f, \
   { 0xb6, 0xfb, 0x4c, 0xf2, 0x56, 0xe5, 0xe5, 0x71 } }
 
+#include "nsEditor.h"
+
 class nsPlaintextEditor;
 class nsISelection;
 
@@ -46,7 +48,7 @@ public:
                         nsIEditor::EDirection aDirection) = 0;
   NS_IMETHOD AfterEdit(nsEditor::OperationID action,
                        nsIEditor::EDirection aDirection) = 0;
-  NS_IMETHOD WillDoAction(nsTypedSelection* aSelection, nsRulesInfo* aInfo,
+  NS_IMETHOD WillDoAction(mozilla::Selection* aSelection, nsRulesInfo* aInfo,
                           bool* aCancel, bool* aHandled) = 0;
   NS_IMETHOD DidDoAction(nsISelection *aSelection, nsRulesInfo *aInfo, nsresult aResult)=0;
   NS_IMETHOD DocumentIsEmpty(bool *aDocumentIsEmpty)=0;

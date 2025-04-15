@@ -14,6 +14,7 @@
 #include "nsLayoutCID.h"
 #include "nsITextControlFrame.h" 
 #include "nsIPlaintextEditor.h"
+#include "nsIDOMCharacterData.h"
 #include "nsIDOMDocument.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsTextControlFrame.h"
@@ -33,10 +34,11 @@
 #include "nsServiceManagerUtils.h"
 #include "nsIEditor.h"
 #include "nsTextEditRules.h"
-#include "nsTypedSelection.h"
+#include "mozilla/Selection.h"
 #include "nsEventListenerManager.h"
 #include "nsContentUtils.h"
 
+using namespace mozilla;
 using namespace mozilla::dom;
 
 static NS_DEFINE_CID(kTextEditorCID, NS_TEXTEDITOR_CID);
@@ -1765,7 +1767,7 @@ nsTextEditorState::SetValue(const nsAString& aValue, bool aUserInput,
     // this is necessary to avoid infinite recursion
     if (!currentValue.Equals(aValue))
     {
-      nsTextControlFrame::ValueSetter valueSetter(mBoundFrame, mEditor);
+      nsTextControlFrame::ValueSetter valueSetter(mEditor);
 
       // \r is an illegal character in the dom, but people use them,
       // so convert windows and mac platform linebreaks to \n:

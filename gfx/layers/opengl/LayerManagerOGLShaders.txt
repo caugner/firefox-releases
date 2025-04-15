@@ -136,7 +136,11 @@ $VERTEX_MASK_STUFF<mask>$
 @define FRAGMENT_SHADER_HEADER
 /* Fragment Shader */
 #ifdef GL_ES
+#ifdef MEDIUMP_SHADER
+precision mediump float;
+#else
 precision lowp float;
+#endif
 #endif
 @end
 
@@ -176,12 +180,12 @@ uniform sampler2D uMaskTexture;
 @end
 
 @define FRAGMENT_CALC_MASK<Mask>
-  float mask = texture2D(uMaskTexture, vMaskCoord).a;
+  float mask = texture2D(uMaskTexture, vMaskCoord).r;
 @end
 
 @define FRAGMENT_CALC_MASK<Mask3D>
   vec2 maskCoords = vMaskCoord.xy / vMaskCoord.z;
-  float mask = texture2D(uMaskTexture, maskCoords).a;
+  float mask = texture2D(uMaskTexture, maskCoords).r;
 @end
 
 // Solid color rendering.
@@ -215,6 +219,7 @@ $FRAGMENT_CALC_MASK<mask>$
 @shader sRGBATextureLayerExternal<mask:,Mask,Mask3D>FS
 #extension GL_OES_EGL_image_external : require
 
+#define MEDIUMP_SHADER 1
 $LAYER_FRAGMENT<mask>$
 
 uniform samplerExternalOES uTexture;

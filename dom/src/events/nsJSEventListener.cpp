@@ -5,14 +5,12 @@
 #include "nsJSEventListener.h"
 #include "nsJSUtils.h"
 #include "nsString.h"
-#include "nsReadableUtils.h"
 #include "nsIServiceManager.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIScriptContext.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptRuntime.h"
 #include "nsIXPConnect.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsGUIEvent.h"
 #include "nsContentUtils.h"
 #include "nsDOMScriptObjectHolder.h"
@@ -25,7 +23,7 @@
 #include "xpcpublic.h"
 #include "nsJSEnvironment.h"
 #include "nsDOMJSUtils.h"
-#ifdef NS_DEBUG
+#ifdef DEBUG
 
 #include "nspr.h" // PR_fprintf
 
@@ -128,10 +126,9 @@ nsJSEventListener::HandleEvent(nsIDOMEvent* aEvent)
 
   bool handledScriptError = false;
   if (mEventName == nsGkAtoms::onerror) {
-    nsCOMPtr<nsIPrivateDOMEvent> priv(do_QueryInterface(aEvent));
-    NS_ENSURE_TRUE(priv, NS_ERROR_UNEXPECTED);
+    NS_ENSURE_TRUE(aEvent, NS_ERROR_UNEXPECTED);
 
-    nsEvent *event = priv->GetInternalNSEvent();
+    nsEvent* event = aEvent->GetInternalNSEvent();
     if (event->message == NS_LOAD_ERROR &&
         event->eventStructType == NS_SCRIPT_ERROR_EVENT) {
       nsScriptErrorEvent *scriptEvent =
@@ -176,7 +173,7 @@ nsJSEventListener::HandleEvent(nsIDOMEvent* aEvent)
 
   // mContext is the same context which event listener manager pushes
   // to JS context stack.
-#ifdef NS_DEBUG
+#ifdef DEBUG
   JSContext* cx = nsnull;
   nsCOMPtr<nsIJSContextStack> stack =
     do_GetService("@mozilla.org/js/xpc/ContextStack;1");

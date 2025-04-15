@@ -22,8 +22,6 @@ DIRS = \
 EXTRA_PP_COMPONENTS = \
   ConsoleAPI.js \
   ConsoleAPI.manifest \
-  BrowserElementParent.js \
-  BrowserElementParent.manifest \
   $(NULL)
 
 EXTRA_JS_MODULES = ConsoleAPIStorage.jsm \
@@ -49,7 +47,6 @@ EXPORTS = \
   nsDOMJSUtils.h \
   nsDOMScriptObjectHolder.h \
   nsDOMString.h \
-  nsIBaseDOMException.h \
   nsIDOMClassInfo.h \
   nsIDOMScriptObjectFactory.h \
   nsIJSEventListener.h \
@@ -59,7 +56,7 @@ EXPORTS = \
   nsIScriptGlobalObject.h \
   nsIScriptGlobalObjectOwner.h \
   nsIScriptNameSpaceManager.h \
-  nsIScriptObjectOwner.h \
+  nsIScriptEventHandlerOwner.h \
   nsIScriptObjectPrincipal.h \
   nsIScriptRuntime.h \
   nsIScriptTimeoutHandler.h \

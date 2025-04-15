@@ -18,7 +18,7 @@
 #include <stdarg.h>
 
 #include "nsCOMPtr.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsStringGlue.h"
 
 #ifdef XP_WIN
@@ -102,7 +102,7 @@ static const nsDynamicFunctionLoad kXULFuncs[] = {
 
 static int do_main(int argc, char* argv[])
 {
-  nsCOMPtr<nsILocalFile> appini;
+  nsCOMPtr<nsIFile> appini;
   nsresult rv;
 
   // Allow firefox.exe to launch XULRunner apps via -app <application.ini>
@@ -174,19 +174,12 @@ int main(int argc, char* argv[])
   struct rusage initialRUsage;
   gotCounters = !getrusage(RUSAGE_SELF, &initialRUsage);
 #elif defined(XP_WIN)
-  // GetProcessIoCounters().ReadOperationCount seems to have little to
-  // do with actual read operations. It reports 0 or 1 at this stage
-  // in the program. Luckily 1 coincides with when prefetch is
-  // enabled. If Windows prefetch didn't happen we can do our own
-  // faster dll preloading.
   IO_COUNTERS ioCounters;
   gotCounters = GetProcessIoCounters(GetCurrentProcess(), &ioCounters);
-  if (gotCounters && !ioCounters.ReadOperationCount)
 #endif
-  {
-      XPCOMGlueEnablePreload();
-  }
 
+  // We do this because of data in bug 771745
+  XPCOMGlueEnablePreload();
 
   rv = XPCOMGlueStartup(exePath);
   if (NS_FAILED(rv)) {

@@ -8,12 +8,13 @@
 #include "nsRect.h"
 #include "nsIWidget.h"
 #include "nsWidgetsCID.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
 #include "nsGUIEvent.h"
 #include "nsAutoPtr.h"
 #include "BasicLayers.h"
+#include "nsIRollupListener.h"
 
 class nsIContent;
 class nsAutoRollup;
@@ -209,12 +210,12 @@ public:
 
   nsWindowType            GetWindowType() { return mWindowType; }
 
-  static bool             UseOffMainThreadCompositing();
+  virtual bool            UseOffMainThreadCompositing();
 protected:
 
   virtual void            ResolveIconName(const nsAString &aIconName,
                                           const nsAString &aIconSuffix,
-                                          nsILocalFile **aResult);
+                                          nsIFile **aResult);
   virtual void            OnDestroy();
   virtual void            BaseCreate(nsIWidget *aParent,
                                      const nsIntRect &aRect,
@@ -265,6 +266,15 @@ protected:
 
   BasicLayerManager* CreateBasicLayerManager();
 
+  nsPopupType PopupType() const { return mPopupType; }
+
+  void NotifyRollupGeometryChange(nsIRollupListener* aRollupListener)
+  {
+    if (aRollupListener) {
+      aRollupListener->NotifyGeometryChange();
+    }
+  }
+
 protected:
   /**
    * Starts the OMTC compositor destruction sequence.
@@ -286,7 +296,6 @@ protected:
   nsRefPtr<LayerManager> mBasicLayerManager;
   nsRefPtr<CompositorChild> mCompositorChild;
   nsRefPtr<CompositorParent> mCompositorParent;
-  Thread*           mCompositorThread;
   nscolor           mBackground;
   nscolor           mForeground;
   nsCursor          mCursor;
@@ -304,6 +313,7 @@ protected:
   PRInt32           mZIndex;
   nsSizeMode        mSizeMode;
   nsPopupLevel      mPopupLevel;
+  nsPopupType       mPopupType;
 
   // the last rolled up popup. Only set this when an nsAutoRollup is in scope,
   // so it can be cleared automatically.

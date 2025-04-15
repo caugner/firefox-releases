@@ -14,6 +14,7 @@
 #include "nsDOMJSUtils.h"
 #include "nsContentUtils.h"
 #include "nsEventDispatcher.h"
+#include "nsJSUtils.h"
 #include "nsPIDOMWindow.h"
 #include "nsStringGlue.h"
 #include "nsThreadUtils.h"
@@ -30,7 +31,8 @@ IDBRequest::IDBRequest()
 : mResultVal(JSVAL_VOID),
   mActorParent(nsnull),
   mErrorCode(NS_OK),
-  mHaveResultOrErrorCode(false)
+  mHaveResultOrErrorCode(false),
+  mLineNo(0)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 }
@@ -44,7 +46,8 @@ IDBRequest::~IDBRequest()
 already_AddRefed<IDBRequest>
 IDBRequest::Create(nsISupports* aSource,
                    IDBWrapperCache* aOwnerCache,
-                   IDBTransaction* aTransaction)
+                   IDBTransaction* aTransaction,
+                   JSContext* aCallingCx)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
   nsRefPtr<IDBRequest> request(new IDBRequest());
@@ -55,6 +58,8 @@ IDBRequest::Create(nsISupports* aSource,
   if (!request->SetScriptOwner(aOwnerCache->GetScriptOwner())) {
     return nsnull;
   }
+
+  request->CaptureCaller(aCallingCx);
 
   return request.forget();
 }
@@ -106,6 +111,8 @@ IDBRequest::NotifyHelperCompleted(HelperBase* aHelper)
   JSAutoRequest ar(cx);
   JSAutoEnterCompartment ac;
   if (ac.enter(cx, global)) {
+    AssertIsRooted();
+
     rv = aHelper->GetSuccessResult(cx, &mResultVal);
     if (NS_FAILED(rv)) {
       NS_WARNING("GetSuccessResult failed!");
@@ -198,6 +205,33 @@ IDBRequest::GetJSContext()
   return cx;
 }
 
+void
+IDBRequest::CaptureCaller(JSContext* aCx)
+{
+  if (!aCx) {
+    // We may not have a JSContext.  This happens if our caller is in another
+    // process.
+    return;
+  }
+
+  const char* filename = nsnull;
+  PRUint32 lineNo = 0;
+  if (!nsJSUtils::GetCallingLocation(aCx, &filename, &lineNo)) {
+    NS_WARNING("Failed to get caller.");
+    return;
+  }
+
+  mFilename.Assign(NS_ConvertUTF8toUTF16(filename));
+  mLineNo = lineNo;
+}
+
+void
+IDBRequest::FillScriptErrorEvent(nsScriptErrorEvent* aEvent) const
+{
+  aEvent->lineNr = mLineNo;
+  aEvent->fileName = mFilename.get();
+}
+
 NS_IMETHODIMP
 IDBRequest::GetReadyState(nsAString& aReadyState)
 {
@@ -253,8 +287,7 @@ IDBRequest::GetError(nsIDOMDOMError** aError)
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 
   if (!mHaveResultOrErrorCode) {
-    // XXX Need a real error code here.
-    return NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR;
+    return NS_ERROR_DOM_INVALID_STATE_ERR;
   }
 
   NS_IF_ADDREF(*aError = mError);
@@ -284,10 +317,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(IDBRequest, IDBWrapperCache)
   // Don't need NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER because
   // nsDOMEventTargetHelper does it for us.
-  if (JSVAL_IS_GCTHING(tmp->mResultVal)) {
-    void *gcThing = JSVAL_TO_GCTHING(tmp->mResultVal);
-    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_CALLBACK(gcThing, "mResultVal")
-  }
+  NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mResultVal)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(IDBRequest)
@@ -321,7 +351,8 @@ IDBOpenDBRequest::~IDBOpenDBRequest()
 // static
 already_AddRefed<IDBOpenDBRequest>
 IDBOpenDBRequest::Create(nsPIDOMWindow* aOwner,
-                         JSObject* aScriptOwner)
+                         JSObject* aScriptOwner,
+                         JSContext* aCallingCx)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
   nsRefPtr<IDBOpenDBRequest> request(new IDBOpenDBRequest());
@@ -330,6 +361,8 @@ IDBOpenDBRequest::Create(nsPIDOMWindow* aOwner,
   if (!request->SetScriptOwner(aScriptOwner)) {
     return nsnull;
   }
+
+  request->CaptureCaller(aCallingCx);
 
   return request.forget();
 }
@@ -375,33 +408,5 @@ NS_IMPL_EVENT_HANDLER(IDBOpenDBRequest, upgradeneeded);
 nsresult
 IDBOpenDBRequest::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
 {
-  NS_ENSURE_TRUE(aVisitor.mDOMEvent, NS_ERROR_UNEXPECTED);
-
-  nsPIDOMWindow* owner = GetOwner();
-  if (!owner) {
-    return NS_OK;
-  }
-
-  if (aVisitor.mEventStatus != nsEventStatus_eConsumeNoDefault) {
-    nsString type;
-    nsresult rv = aVisitor.mDOMEvent->GetType(type);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    if (type.EqualsLiteral(ERROR_EVT_STR)) {
-      nsRefPtr<nsDOMEvent> duplicateEvent =
-        CreateGenericEvent(type, eDoesNotBubble, eNotCancelable);
-      NS_ENSURE_STATE(duplicateEvent);
-
-      nsCOMPtr<nsIDOMEventTarget> target(do_QueryInterface(owner));
-      NS_ASSERTION(target, "How can this happen?!");
-
-      bool dummy;
-      rv = target->DispatchEvent(duplicateEvent, &dummy);
-      if (NS_FAILED(rv)) {
-        return rv;
-      }
-    }
-  }
-
-  return NS_OK;
+  return IndexedDatabaseManager::FireWindowOnError(GetOwner(), aVisitor);
 }

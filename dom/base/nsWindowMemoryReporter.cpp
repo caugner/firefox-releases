@@ -10,6 +10,7 @@
 #include "mozilla/Preferences.h"
 #include "nsNetCID.h"
 #include "nsPrintfCString.h"
+#include "XPCJSMemoryReporter.h"
 
 using namespace mozilla;
 
@@ -101,10 +102,14 @@ AppendWindowURI(nsGlobalWindow *aWindow, nsACString& aStr)
 
 NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(DOMStyleMallocSizeOf, "windows")
 
+// The key is the window ID.
+typedef nsDataHashtable<nsUint64HashKey, nsCString> WindowPaths;
+
 static nsresult
 CollectWindowReports(nsGlobalWindow *aWindow,
                      nsWindowSizes *aWindowTotalSizes,
                      nsTHashtable<nsUint64HashKey> *aGhostWindowIDs,
+                     WindowPaths *aWindowPaths,
                      nsIMemoryMultiReporterCallback *aCb,
                      nsISupports *aClosure)
 {
@@ -140,6 +145,9 @@ CollectWindowReports(nsGlobalWindow *aWindow,
   AppendWindowURI(aWindow, windowPath);
   windowPath += NS_LITERAL_CSTRING(")");
 
+  // Remember the path for later.
+  aWindowPaths->Put(aWindow->WindowID(), windowPath);
+
 #define REPORT(_pathTail, _amount, _desc)                                     \
   do {                                                                        \
     if (_amount > 0) {                                                        \
@@ -156,18 +164,56 @@ CollectWindowReports(nsGlobalWindow *aWindow,
   nsWindowSizes windowSizes(DOMStyleMallocSizeOf);
   aWindow->SizeOfIncludingThis(&windowSizes);
 
-  REPORT("/dom", windowSizes.mDOM,
-         "Memory used by a window and the DOM within it.");
-  aWindowTotalSizes->mDOM += windowSizes.mDOM;
+  REPORT("/dom/other", windowSizes.mDOMOther,
+         "Memory used by a window's DOM, excluding element, text, CDATA, "
+         "and comment nodes.");
+  aWindowTotalSizes->mDOMOther += windowSizes.mDOMOther;
+
+  REPORT("/dom/element-nodes", windowSizes.mDOMElementNodes,
+         "Memory used by the element nodes in a window's DOM.");
+  aWindowTotalSizes->mDOMElementNodes += windowSizes.mDOMElementNodes;
+
+  REPORT("/dom/text-nodes", windowSizes.mDOMTextNodes,
+         "Memory used by the text nodes in a window's DOM.");
+  aWindowTotalSizes->mDOMTextNodes += windowSizes.mDOMTextNodes;
+
+  REPORT("/dom/cdata-nodes", windowSizes.mDOMCDATANodes,
+         "Memory used by the CDATA nodes in a window's DOM.");
+  aWindowTotalSizes->mDOMCDATANodes += windowSizes.mDOMCDATANodes;
+
+  REPORT("/dom/comment-nodes", windowSizes.mDOMCommentNodes,
+         "Memory used by the comment nodes in a window's DOM.");
+  aWindowTotalSizes->mDOMCommentNodes += windowSizes.mDOMCommentNodes;
+
+  REPORT("/property-tables",
+         windowSizes.mPropertyTables,
+         "Memory used for the property tables within a window.");
+  aWindowTotalSizes->mPropertyTables += windowSizes.mPropertyTables;
 
   REPORT("/style-sheets", windowSizes.mStyleSheets,
          "Memory used by style sheets within a window.");
   aWindowTotalSizes->mStyleSheets += windowSizes.mStyleSheets;
 
-  REPORT("/layout/arenas", windowSizes.mLayoutArenas,
-         "Memory used by layout PresShell, PresContext, and other related "
-         "areas within a window.");
-  aWindowTotalSizes->mLayoutArenas += windowSizes.mLayoutArenas;
+  REPORT("/layout/pres-shell", windowSizes.mLayoutPresShell,
+         "Memory used by layout's PresShell, along with any structures "
+         "allocated in its arena and not measured elsewhere, "
+         "within a window.");
+  aWindowTotalSizes->mLayoutPresShell += windowSizes.mLayoutPresShell;
+
+  REPORT("/layout/line-boxes", windowSizes.mArenaStats.mLineBoxes,
+         "Memory used by line boxes within a window.");
+  aWindowTotalSizes->mArenaStats.mLineBoxes
+    += windowSizes.mArenaStats.mLineBoxes;
+
+  REPORT("/layout/rule-nodes", windowSizes.mArenaStats.mRuleNodes,
+         "Memory used by CSS rule nodes within a window.");
+  aWindowTotalSizes->mArenaStats.mRuleNodes
+    += windowSizes.mArenaStats.mRuleNodes;
+
+  REPORT("/layout/style-contexts", windowSizes.mArenaStats.mStyleContexts,
+         "Memory used by style contexts within a window.");
+  aWindowTotalSizes->mArenaStats.mStyleContexts
+    += windowSizes.mArenaStats.mStyleContexts;
 
   REPORT("/layout/style-sets", windowSizes.mLayoutStyleSets,
          "Memory used by style sets within a window.");
@@ -183,6 +229,34 @@ CollectWindowReports(nsGlobalWindow *aWindow,
          "within a window.");
   aWindowTotalSizes->mLayoutPresContext += windowSizes.mLayoutPresContext;
 
+  // There are many different kinds of frames, but it is very likely
+  // that only a few matter.  Implement a cutoff so we don't bloat
+  // about:memory with many uninteresting entries.
+  static const size_t FRAME_SUNDRIES_THRESHOLD = 8192;
+  size_t frameSundriesSize = 0;
+#define FRAME_ID(classname)                                             \
+  {                                                                     \
+    size_t frameSize                                                    \
+      = windowSizes.mArenaStats.FRAME_ID_STAT_FIELD(classname);         \
+    if (frameSize < FRAME_SUNDRIES_THRESHOLD) {                         \
+      frameSundriesSize += frameSize;                                   \
+    } else {                                                            \
+      REPORT("/layout/frames/" # classname, frameSize,                  \
+             "Memory used by frames of "                                \
+             "type " #classname " within a window.");                   \
+    }                                                                   \
+    aWindowTotalSizes->mArenaStats.FRAME_ID_STAT_FIELD(classname)       \
+      += frameSize;                                                     \
+  }
+#include "nsFrameIdList.h"
+#undef FRAME_ID
+
+  if (frameSundriesSize > 0) {
+    REPORT("/layout/frames/sundries", frameSundriesSize,
+           "The sum of all memory used by frames which were too small "
+           "to be shown individually.");
+  }
+ 
 #undef REPORT
 
   return NS_OK;
@@ -228,13 +302,22 @@ nsWindowMemoryReporter::CollectReports(nsIMemoryMultiReporterCallback* aCb,
     NS_EFFECTIVETLDSERVICE_CONTRACTID);
   NS_ENSURE_STATE(tldService);
 
+  WindowPaths windowPaths;
+  windowPaths.Init();
+
   // Collect window memory usage.
   nsWindowSizes windowTotalSizes(NULL);
   for (PRUint32 i = 0; i < windows.Length(); i++) {
     nsresult rv = CollectWindowReports(windows[i], &windowTotalSizes,
-                                       &ghostWindows, aCb, aClosure);
+                                       &ghostWindows, &windowPaths,
+                                       aCb, aClosure);
     NS_ENSURE_SUCCESS(rv, rv);
   }
+
+  // Report JS memory usage.  We do this from here because the JS memory
+  // multi-reporter needs to be passed |windowPaths|.
+  nsresult rv = xpc::JSMemoryMultiReporter::CollectReports(&windowPaths, aCb, aClosure);
+  NS_ENSURE_SUCCESS(rv, rv);
 
 #define REPORT(_path, _amount, _desc)                                         \
   do {                                                                        \
@@ -246,30 +329,77 @@ nsWindowMemoryReporter::CollectReports(nsIMemoryMultiReporterCallback* aCb,
     NS_ENSURE_SUCCESS(rv, rv);                                                \
   } while (0)
 
-  REPORT("window-objects-dom", windowTotalSizes.mDOM, 
-         "Memory used for the DOM within windows. "
-         "This is the sum of all windows' 'dom' numbers.");
-    
-  REPORT("window-objects-style-sheets", windowTotalSizes.mStyleSheets, 
+  REPORT("window-objects/dom/other", windowTotalSizes.mDOMOther, 
+         "Memory used for the DOM within windows, "
+         "excluding element, text, CDATA, and comment nodes. "
+         "This is the sum of all windows' 'dom/other' numbers.");
+
+  REPORT("window-objects/dom/element-nodes", windowTotalSizes.mDOMElementNodes,
+         "Memory used for DOM element nodes within windows. "
+         "This is the sum of all windows' 'dom/element-nodes' numbers.");
+
+  REPORT("window-objects/dom/text-nodes", windowTotalSizes.mDOMTextNodes,
+         "Memory used for DOM text nodes within windows. "
+         "This is the sum of all windows' 'dom/text-nodes' numbers.");
+
+  REPORT("window-objects/dom/cdata-nodes", windowTotalSizes.mDOMCDATANodes,
+         "Memory used for DOM CDATA nodes within windows. "
+         "This is the sum of all windows' 'dom/cdata-nodes' numbers.");
+
+  REPORT("window-objects/dom/comment-nodes", windowTotalSizes.mDOMCommentNodes,
+         "Memory used for DOM comment nodes within windows. "
+         "This is the sum of all windows' 'dom/comment-nodes' numbers.");
+
+  REPORT("window-objects/property-tables",
+         windowTotalSizes.mPropertyTables,
+         "Memory used for property tables within windows. "
+         "This is the sum of all windows' 'property-tables' numbers.");
+
+  REPORT("window-objects/style-sheets", windowTotalSizes.mStyleSheets, 
          "Memory used for style sheets within windows. "
          "This is the sum of all windows' 'style-sheets' numbers.");
     
-  REPORT("window-objects-layout-arenas", windowTotalSizes.mLayoutArenas, 
+  REPORT("window-objects/layout/pres-shell", windowTotalSizes.mLayoutPresShell, 
          "Memory used by layout PresShell and other related "
          "areas within windows. This is the sum of all windows' "
          "'layout/arenas' numbers.");
     
-  REPORT("window-objects-layout-style-sets", windowTotalSizes.mLayoutStyleSets, 
+  REPORT("window-objects/layout/line-boxes",
+         windowTotalSizes.mArenaStats.mLineBoxes, 
+         "Memory used for line-boxes within windows. "
+         "This is the sum of all windows' 'layout/line-boxes' numbers.");
+
+  REPORT("window-objects/layout/rule-nodes",
+         windowTotalSizes.mArenaStats.mRuleNodes,
+         "Memory used for CSS rule nodes within windows. "
+         "This is the sum of all windows' 'layout/rule-nodes' numbers.");
+
+  REPORT("window-objects/layout/style-contexts",
+         windowTotalSizes.mArenaStats.mStyleContexts,
+         "Memory used for style contexts within windows. "
+         "This is the sum of all windows' 'layout/style-contexts' numbers.");
+
+  REPORT("window-objects/layout/style-sets", windowTotalSizes.mLayoutStyleSets, 
          "Memory used for style sets within windows. "
          "This is the sum of all windows' 'layout/style-sets' numbers.");
     
-  REPORT("window-objects-layout-text-runs", windowTotalSizes.mLayoutTextRuns, 
+  REPORT("window-objects/layout/text-runs", windowTotalSizes.mLayoutTextRuns, 
          "Memory used for text runs within windows. "
          "This is the sum of all windows' 'layout/text-runs' numbers.");
 
-  REPORT("window-objects-layout-pres-contexts", windowTotalSizes.mLayoutPresContext,
+  REPORT("window-objects/layout/pres-contexts", windowTotalSizes.mLayoutPresContext,
          "Memory used for layout PresContexts within windows. "
          "This is the sum of all windows' 'layout/pres-contexts' numbers.");
+
+  size_t frameTotal = 0;
+#define FRAME_ID(classname)                \
+  frameTotal += windowTotalSizes.mArenaStats.FRAME_ID_STAT_FIELD(classname);
+#include "nsFrameIdList.h"
+#undef FRAME_ID
+
+  REPORT("window-objects/layout/frames", frameTotal,
+         "Memory used for layout frames within windows. "
+         "This is the sum of all windows' 'layout/frames/' numbers.");
 
 #undef REPORT
     
@@ -279,9 +409,9 @@ nsWindowMemoryReporter::CollectReports(nsIMemoryMultiReporterCallback* aCb,
 NS_IMETHODIMP
 nsWindowMemoryReporter::GetExplicitNonHeap(PRInt64* aAmount)
 {
-  // This reporter only measures heap memory.
-  *aAmount = 0;
-  return NS_OK;
+  // This reporter only measures heap memory, so we don't need to report any
+  // bytes for it.  However, the JS multi-reporter needs to be invoked.
+  return xpc::JSMemoryMultiReporter::GetExplicitNonHeap(aAmount);
 }
 
 PRUint32
@@ -575,7 +705,7 @@ ReportGhostWindowsEnumerator(nsUint64HashKey* aIDHashKey, void* aClosure)
   nsresult rv = data->callback->Callback(
     /* process = */ EmptyCString(),
     path,
-    nsIMemoryReporter::KIND_SUMMARY,
+    nsIMemoryReporter::KIND_OTHER,
     nsIMemoryReporter::UNITS_COUNT,
     /* amount = */ 1,
     /* desc = */ EmptyCString(),

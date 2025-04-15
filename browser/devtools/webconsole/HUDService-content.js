@@ -88,21 +88,19 @@ let Manager = {
    */
   receiveMessage: function Manager_receiveMessage(aMessage)
   {
-    if (!_alive) {
+    if (!_alive || !aMessage.json) {
       return;
     }
 
-    if (!aMessage.json || (aMessage.name != "WebConsole:Init" &&
-                           aMessage.json.hudId != this.hudId)) {
-      Cu.reportError("Web Console content script: received message " +
-                     aMessage.name + " from wrong hudId!");
+    if (aMessage.name == "WebConsole:Init" && !this.hudId) {
+      this._onInit(aMessage.json);
+      return;
+    }
+    if (aMessage.json.hudId != this.hudId) {
       return;
     }
 
     switch (aMessage.name) {
-      case "WebConsole:Init":
-        this._onInit(aMessage.json);
-        break;
       case "WebConsole:EnableFeature":
         this.enableFeature(aMessage.json.feature, aMessage.json);
         break;
@@ -291,7 +289,8 @@ let Manager = {
       case "LocationChange":
         ConsoleProgressListener.startMonitor(ConsoleProgressListener
                                              .MONITOR_LOCATION_CHANGE);
-        ConsoleProgressListener.sendLocation();
+        ConsoleProgressListener.sendLocation(this.window.location.href,
+                                             this.window.document.title);
         break;
       default:
         Cu.reportError("Web Console content: unknown feature " + aFeature);
@@ -1287,17 +1286,8 @@ let ConsoleListener = {
       return;
     }
 
-    switch (aScriptError.category) {
-      // We ignore chrome-originating errors as we only care about content.
-      case "XPConnect JavaScript":
-      case "component javascript":
-      case "chrome javascript":
-      case "chrome registration":
-      case "XBL":
-      case "XBL Prototype Handler":
-      case "XBL Content Sink":
-      case "xbl javascript":
-        return;
+    if (!this.isCategoryAllowed(aScriptError.category)) {
+      return;
     }
 
     let errorWindow =
@@ -1308,6 +1298,33 @@ let ConsoleListener = {
     }
 
     Manager.sendMessage("WebConsole:PageError", { pageError: aScriptError });
+  },
+
+
+  /**
+   * Check if the given script error category is allowed to be tracked or not.
+   * We ignore chrome-originating errors as we only care about content.
+   *
+   * @param string aCategory
+   *        The nsIScriptError category you want to check.
+   * @return boolean
+   *         True if the category is allowed to be logged, false otherwise.
+   */
+  isCategoryAllowed: function CL_isCategoryAllowed(aCategory)
+  {
+    switch (aCategory) {
+      case "XPConnect JavaScript":
+      case "component javascript":
+      case "chrome javascript":
+      case "chrome registration":
+      case "XBL":
+      case "XBL Prototype Handler":
+      case "XBL Content Sink":
+      case "xbl javascript":
+        return false;
+    }
+
+    return true;
   },
 
   /**
@@ -1327,14 +1344,15 @@ let ConsoleListener = {
 
     (errors.value || []).forEach(function(aError) {
       if (!(aError instanceof Ci.nsIScriptError) ||
-          aError.innerWindowID != innerWindowId) {
+          aError.innerWindowID != innerWindowId ||
+          !this.isCategoryAllowed(aError.category)) {
         return;
       }
 
       let remoteMessage = WebConsoleUtils.cloneObject(aError);
       remoteMessage._type = "PageError";
       result.push(remoteMessage);
-    });
+    }, this);
 
     return result;
   },
@@ -2209,7 +2227,7 @@ let NetworkMonitor = {
 
     // DNS timing information is available only in when the DNS record is not
     // cached.
-    harTimings.dns = timings.STATUS_RESOLVING ?
+    harTimings.dns = timings.STATUS_RESOLVING && timings.STATUS_RESOLVED ?
                      timings.STATUS_RESOLVED.last -
                      timings.STATUS_RESOLVING.first : -1;
 
@@ -2455,17 +2473,24 @@ let ConsoleProgressListener = {
   _checkLocationChange:
   function CPL__checkLocationChange(aProgress, aRequest, aState, aStatus)
   {
+    let isStart = aState & Ci.nsIWebProgressListener.STATE_START;
     let isStop = aState & Ci.nsIWebProgressListener.STATE_STOP;
     let isNetwork = aState & Ci.nsIWebProgressListener.STATE_IS_NETWORK;
     let isWindow = aState & Ci.nsIWebProgressListener.STATE_IS_WINDOW;
 
     // Skip non-interesting states.
-    if (!isStop || !isNetwork || !isWindow ||
+    if (!isNetwork || !isWindow ||
         aProgress.DOMWindow != Manager.window) {
       return;
     }
 
-    this.sendLocation();
+    if (isStart && aRequest instanceof Ci.nsIChannel) {
+      this.sendLocation(aRequest.URI.spec, "");
+    }
+    else if (isStop) {
+      this.sendLocation(Manager.window.location.href,
+                        Manager.window.document.title);
+    }
   },
 
   onLocationChange: function() {},
@@ -2477,12 +2502,17 @@ let ConsoleProgressListener = {
    * Send the location of the current top window to the remote Web Console.
    * A "WebConsole:LocationChange" message is sent. The JSON object holds two
    * properties: location and title.
+   *
+   * @param string aLocation
+   *        Current page address.
+   * @param string aTitle
+   *        Current page title.
    */
-  sendLocation: function CPL_sendLocation()
+  sendLocation: function CPL_sendLocation(aLocation, aTitle)
   {
     let message = {
-      "location": Manager.window.location.href,
-      "title": Manager.window.document.title,
+      "location": aLocation,
+      "title": aTitle,
     };
     Manager.sendMessage("WebConsole:LocationChange", message);
   },

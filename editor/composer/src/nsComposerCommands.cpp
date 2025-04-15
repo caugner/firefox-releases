@@ -4,26 +4,31 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 
-#include "nsIEditor.h"
-#include "nsIHTMLEditor.h"
-#include "nsIHTMLAbsPosEditor.h"
+#include <stdio.h>                      // for printf
 
-#include "nsIDOMElement.h"
-#include "nsIAtom.h"
-#include "nsGkAtoms.h"
-
-#include "nsIClipboard.h"
-
-#include "nsCOMPtr.h"
-
+#include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
+#include "nsAString.h"
+#include "nsCOMPtr.h"                   // for nsCOMPtr, do_QueryInterface, etc
+#include "nsComponentManagerUtils.h"    // for do_CreateInstance
 #include "nsComposerCommands.h"
-#include "nsReadableUtils.h"
-#include "nsUnicharUtils.h"
-#include "nsICommandParams.h"
-#include "nsComponentManagerUtils.h"
-#include "nsCRT.h"
+#include "nsDebug.h"                    // for NS_ENSURE_TRUE, etc
+#include "nsError.h"                    // for NS_OK, NS_ERROR_FAILURE, etc
+#include "nsGkAtoms.h"                  // for nsGkAtoms, nsGkAtoms::font, etc
+#include "nsIAtom.h"                    // for nsIAtom, etc
+#include "nsIClipboard.h"               // for nsIClipboard, etc
+#include "nsICommandParams.h"           // for nsICommandParams, etc
+#include "nsID.h"
+#include "nsIDOMElement.h"              // for nsIDOMElement
+#include "nsIEditor.h"                  // for nsIEditor
+#include "nsIHTMLAbsPosEditor.h"        // for nsIHTMLAbsPosEditor
+#include "nsIHTMLEditor.h"              // for nsIHTMLEditor, etc
+#include "nsLiteralString.h"            // for NS_LITERAL_STRING
+#include "nsReadableUtils.h"            // for EmptyString
+#include "nsString.h"                   // for nsAutoString, nsString, etc
+#include "nsStringFwd.h"                // for nsAFlatString
+#include "prtypes.h"                    // for PRInt32
 
-#include "mozilla/Assertions.h"
+class nsISupports;
 
 //prototype
 nsresult GetListState(nsIHTMLEditor* aEditor, bool* aMixed,
@@ -494,18 +499,14 @@ nsOutdentCommand::IsCommandEnabled(const char * aCommandName,
                                    nsISupports *refCon,
                                    bool *outCmdEnabled)
 {
+  *outCmdEnabled = false;
+
   nsCOMPtr<nsIEditor> editor = do_QueryInterface(refCon);
-  nsCOMPtr<nsIHTMLEditor> htmlEditor = do_QueryInterface(refCon);
-  if (editor && htmlEditor)
-  {
-    bool canIndent, isEditable = false;
-    nsresult rv = editor->GetIsSelectionEditable(&isEditable);
+  if (editor) {
+    nsresult rv = editor->GetIsSelectionEditable(outCmdEnabled);
     NS_ENSURE_SUCCESS(rv, rv);
-    if (isEditable)
-      return htmlEditor->GetIndentState(&canIndent, outCmdEnabled);
   }
 
-  *outCmdEnabled = false;
   return NS_OK;
 }
 
@@ -1351,10 +1352,11 @@ nsInsertHTMLCommand::GetCommandStateParams(const char *aCommandName,
 
 NS_IMPL_ISUPPORTS_INHERITED0(nsInsertTagCommand, nsBaseComposerCommand)
 
-nsInsertTagCommand::nsInsertTagCommand(const char* aTagName)
+nsInsertTagCommand::nsInsertTagCommand(nsIAtom* aTagName)
 : nsBaseComposerCommand()
 , mTagName(aTagName)
 {
+  MOZ_ASSERT(mTagName);
 }
 
 nsInsertTagCommand::~nsInsertTagCommand()
@@ -1380,21 +1382,17 @@ nsInsertTagCommand::IsCommandEnabled(const char * aCommandName,
 NS_IMETHODIMP
 nsInsertTagCommand::DoCommand(const char *aCmdName, nsISupports *refCon)
 {
-  if (0 == nsCRT::strcmp(mTagName, "hr"))
-  {
-    nsCOMPtr<nsIHTMLEditor> editor = do_QueryInterface(refCon);
-    NS_ENSURE_TRUE(editor, NS_ERROR_NOT_IMPLEMENTED);
+  NS_ENSURE_TRUE(mTagName == nsGkAtoms::hr, NS_ERROR_NOT_IMPLEMENTED);
 
-    nsCOMPtr<nsIDOMElement> domElem;
-    nsresult rv;
-    rv = editor->CreateElementWithDefaults(NS_ConvertASCIItoUTF16(mTagName),
-                                           getter_AddRefs(domElem));
-    NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIHTMLEditor> editor = do_QueryInterface(refCon);
+  NS_ENSURE_TRUE(editor, NS_ERROR_NOT_IMPLEMENTED);
 
-    return editor->InsertElementAtSelection(domElem, true);
-  }
+  nsCOMPtr<nsIDOMElement> domElem;
+  nsresult rv = editor->CreateElementWithDefaults(
+    nsDependentAtomString(mTagName), getter_AddRefs(domElem));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return editor->InsertElementAtSelection(domElem, true);
 }
 
 NS_IMETHODIMP
@@ -1405,8 +1403,9 @@ nsInsertTagCommand::DoCommandParams(const char *aCommandName,
   NS_ENSURE_ARG_POINTER(refCon);
 
   // inserting an hr shouldn't have an parameters, just call DoCommand for that
-  if (0 == nsCRT::strcmp(mTagName, "hr"))
+  if (mTagName == nsGkAtoms::hr) {
     return DoCommand(aCommandName, refCon);
+  }
 
   NS_ENSURE_ARG_POINTER(aParams);
 
@@ -1424,16 +1423,16 @@ nsInsertTagCommand::DoCommandParams(const char *aCommandName,
 
   // filter out tags we don't know how to insert
   nsAutoString attributeType;
-  if (0 == nsCRT::strcmp(mTagName, "a")) {
+  if (mTagName == nsGkAtoms::a) {
     attributeType.AssignLiteral("href");
-  } else if (0 == nsCRT::strcmp(mTagName, "img")) {
+  } else if (mTagName == nsGkAtoms::img) {
     attributeType.AssignLiteral("src");
   } else {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
   nsCOMPtr<nsIDOMElement> domElem;
-  rv = editor->CreateElementWithDefaults(NS_ConvertASCIItoUTF16(mTagName),
+  rv = editor->CreateElementWithDefaults(nsDependentAtomString(mTagName),
                                          getter_AddRefs(domElem));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1441,7 +1440,7 @@ nsInsertTagCommand::DoCommandParams(const char *aCommandName,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // do actual insertion
-  if (0 == nsCRT::strcmp(mTagName, "a"))
+  if (mTagName == nsGkAtoms::a)
     return editor->InsertLinkAroundSelection(domElem);
 
   return editor->InsertElementAtSelection(domElem, true);

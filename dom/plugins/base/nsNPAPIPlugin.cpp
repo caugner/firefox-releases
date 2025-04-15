@@ -19,6 +19,7 @@
 #include "nsNPAPIPlugin.h"
 #include "nsNPAPIPluginInstance.h"
 #include "nsNPAPIPluginStreamListener.h"
+#include "nsPluginStreamListenerPeer.h"
 #include "nsIServiceManager.h"
 #include "nsThreadUtils.h"
 #include "mozilla/Preferences.h"
@@ -30,7 +31,6 @@
 #include "nsIJSContextStack.h"
 
 #include "nsIDOMElement.h"
-#include "nsIDOMDocument.h"
 #include "nsPIDOMWindow.h"
 #include "nsIDocument.h"
 #include "nsIContent.h"
@@ -55,10 +55,12 @@
 #endif
 
 // needed for nppdf plugin
-#ifdef MOZ_WIDGET_GTK2
+#if (MOZ_WIDGET_GTK)
 #include <gdk/gdk.h>
 #include <gdk/gdkx.h>
+#if (MOZ_WIDGET_GTK == 2)
 #include "gtk2xtbin.h"
+#endif
 #endif
 
 #ifdef XP_OS2
@@ -555,11 +557,12 @@ nsNPAPIPlugin::RetainStream(NPStream *pstream, nsISupports **aRetainedPeer)
     return NPERR_GENERIC_ERROR;
   }
 
-  nsPluginStreamListenerPeer* peer = listener->GetStreamListenerPeer();
-  if (!peer)
+  nsIStreamListener* streamListener = listener->GetStreamListenerPeer();
+  if (!streamListener) {
     return NPERR_GENERIC_ERROR;
+  }
 
-  *aRetainedPeer = (nsISupports*) peer;
+  *aRetainedPeer = streamListener;
   NS_ADDREF(*aRetainedPeer);
   return NS_OK;
 }
@@ -2033,7 +2036,7 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
   }
 
   case NPNVToolkit: {
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
     *((NPNToolkitType*)result) = NPNVGtk2;
 #endif
 
@@ -2048,7 +2051,7 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
   }
 
   case NPNVSupportsXEmbedBool: {
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
     *(NPBool*)result = true;
 #elif defined(MOZ_WIDGET_QT)
     // Desktop Flash fail to initialize if browser does not support NPNVSupportsXEmbedBool
@@ -2075,7 +2078,7 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
 
   case NPNVSupportsWindowless: {
 #if defined(XP_WIN) || defined(XP_MACOSX) || \
-    (defined(MOZ_X11) && (defined(MOZ_WIDGET_GTK2) || defined(MOZ_WIDGET_QT)))
+    (defined(MOZ_X11) && (defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_QT)))
     *(NPBool*)result = true;
 #else
     *(NPBool*)result = false;
@@ -2532,10 +2535,10 @@ _requestread(NPStream *pstream, NPByteRange *rangeList)
   if (streamtype != NP_SEEK)
     return NPERR_STREAM_NOT_SEEKABLE;
 
-  if (!streamlistener->mStreamInfo)
+  if (!streamlistener->mStreamListenerPeer)
     return NPERR_GENERIC_ERROR;
 
-  nsresult rv = streamlistener->mStreamInfo->RequestRead((NPByteRange *)rangeList);
+  nsresult rv = streamlistener->mStreamListenerPeer->RequestRead((NPByteRange *)rangeList);
   if (NS_FAILED(rv))
     return NPERR_GENERIC_ERROR;
 

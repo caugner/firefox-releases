@@ -11,7 +11,6 @@
 
 #include "nsTArray.h"
 #include "nsDataHashtable.h"
-#include "nsRefPtrHashtable.h"
 #include "nsHashKeys.h"
 
 #include "nsIDocShell.h"
@@ -19,18 +18,14 @@
 #include "nsIDOMWebGLRenderingContext.h"
 #include "nsICanvasRenderingContextInternal.h"
 #include "nsHTMLCanvasElement.h"
-#include "nsWeakReference.h"
 #include "nsIDOMHTMLElement.h"
 #include "nsIMemoryReporter.h"
 #include "nsIJSNativeInitializer.h"
-#include "nsContentUtils.h"
 #include "nsWrapperCache.h"
 #include "nsIObserver.h"
 
 #include "GLContextProvider.h"
 #include "Layers.h"
-
-#include "nsDataHashtable.h"
 
 #include "mozilla/LinkedList.h"
 #include "mozilla/CheckedInt.h"
@@ -65,7 +60,6 @@
 #define MINVALUE_GL_MAX_RENDERBUFFER_SIZE             1024  // Different from the spec, which sets it to 1 on page 164
 #define MINVALUE_GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS  8     // Page 164
 
-class nsIDocShell;
 class nsIPropertyBag;
 
 namespace mozilla {
@@ -482,10 +476,6 @@ public:
     NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(WebGLContext,
                                                            nsIDOMWebGLRenderingContext)
 
-    nsINode* GetParentObject() {
-        return HTMLCanvasElement();
-    }
-
     virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
                                  bool *triedToWrap);
 
@@ -494,11 +484,6 @@ public:
     NS_DECL_NSITIMERCALLBACK
 
     // nsICanvasRenderingContextInternal
-    NS_IMETHOD SetCanvasElement(nsHTMLCanvasElement* aParentCanvas);
-    nsHTMLCanvasElement* HTMLCanvasElement() const {
-        return static_cast<nsHTMLCanvasElement*>(mCanvasElement.get());
-    }
-
     NS_IMETHOD SetDimensions(PRInt32 width, PRInt32 height);
     NS_IMETHOD InitializeWithSurface(nsIDocShell *docShell, gfxASurface *surface, PRInt32 width, PRInt32 height)
         { return NS_ERROR_NOT_IMPLEMENTED; }
@@ -619,7 +604,7 @@ public:
 
     // WebIDL WebGLRenderingContext API
     nsHTMLCanvasElement* GetCanvas() const {
-        return HTMLCanvasElement();
+        return mCanvasElement;
     }
     WebGLsizei GetDrawingBufferWidth() const {
         if (!IsContextStable())
@@ -1107,8 +1092,6 @@ protected:
         return ((x + y - 1) / y) * y;
     }
 
-    nsCOMPtr<nsIDOMHTMLCanvasElement> mCanvasElement;
-
     nsRefPtr<gl::GLContext> gl;
 
     CheckedUint32 mGeneration;
@@ -1164,19 +1147,23 @@ protected:
 
     // extensions
     enum WebGLExtensionID {
-        WebGL_OES_texture_float,
-        WebGL_OES_standard_derivatives,
-        WebGL_EXT_texture_filter_anisotropic,
-        WebGL_WEBGL_lose_context,
-        WebGL_WEBGL_compressed_texture_s3tc,
-        WebGLExtensionID_Max
+        OES_texture_float,
+        OES_standard_derivatives,
+        EXT_texture_filter_anisotropic,
+        WEBGL_lose_context,
+        WEBGL_compressed_texture_s3tc,
+        WebGLExtensionID_number_of_extensions,
+        WebGLExtensionID_unknown_extension
     };
-    nsAutoTArray<nsRefPtr<WebGLExtension>, WebGLExtensionID_Max> mEnabledExtensions;
-    bool IsExtensionEnabled(WebGLExtensionID ext) const {
-        NS_ABORT_IF_FALSE(ext >= 0 && ext < WebGLExtensionID_Max, "bogus index!");
-        return mEnabledExtensions[ext] != nsnull;
+    nsAutoTArray<nsRefPtr<WebGLExtension>, WebGLExtensionID_number_of_extensions> mExtensions;
+
+    // returns true if the extension has been enabled by calling getExtension.
+    bool IsExtensionEnabled(WebGLExtensionID ext) {
+        return mExtensions[ext];
     }
-    bool IsExtensionSupported(WebGLExtensionID ei);
+
+    // returns true if the extension is supported (as returned by getSupportedExtensions)
+    bool IsExtensionSupported(WebGLExtensionID ext);
 
     nsTArray<WebGLenum> mCompressedTextureFormats;
 
@@ -2550,6 +2537,12 @@ public:
     
     int64_t MemoryUsage() const {
         int64_t pixels = int64_t(Width()) * int64_t(Height());
+
+        // If there is no defined format, we're not taking up any memory
+        if (!mInternalFormatForGL) {
+            return 0;
+        }
+
         switch (mInternalFormatForGL) {
             case LOCAL_GL_STENCIL_INDEX8:
                 return pixels;
@@ -3025,6 +3018,8 @@ public:
     GLint Location() const { return mLocation; }
     uint32_t ProgramGeneration() const { return mProgramGeneration; }
     int ElementSize() const { return mElementSize; }
+
+    virtual JSObject* WrapObject(JSContext *cx, JSObject *scope);
 
     NS_DECL_ISUPPORTS
     NS_DECL_NSIWEBGLUNIFORMLOCATION

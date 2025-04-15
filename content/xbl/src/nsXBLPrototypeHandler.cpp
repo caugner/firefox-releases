@@ -16,7 +16,6 @@
 #include "nsINameSpaceManager.h"
 #include "nsIScriptContext.h"
 #include "nsIDocument.h"
-#include "nsIDOMDocument.h"
 #include "nsIJSEventListener.h"
 #include "nsIController.h"
 #include "nsIControllers.h"
@@ -28,7 +27,6 @@
 #include "nsEventListenerManager.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIDOMEventListener.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsIDOMNSEvent.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
@@ -281,6 +279,12 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventTarget* aTarget,
     scriptTarget = aTarget;
   }
 
+  // We're about to create a new nsJSEventListener, which means that we're
+  // responsible for pushing the context of the event target. See the similar
+  // comment in nsEventManagerListener.cpp.
+  nsCxPusher pusher;
+  NS_ENSURE_STATE(pusher.Push(aTarget));
+
   rv = EnsureEventHandler(boundGlobal, boundContext, onEventAtom, handler);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -363,9 +367,8 @@ nsXBLPrototypeHandler::DispatchXBLCommand(nsIDOMEventTarget* aTarget, nsIDOMEven
   if (preventDefault)
     return NS_OK;
 
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(aEvent);
-  if (privateEvent) {
-    bool dispatchStopped = privateEvent->IsDispatchStopped();
+  if (aEvent) {
+    bool dispatchStopped = aEvent->IsDispatchStopped();
     if (dispatchStopped)
       return NS_OK;
   }
@@ -781,18 +784,21 @@ nsXBLPrototypeHandler::ConstructPrototype(nsIContent* aKeyElement,
   if (!key.IsEmpty()) {
     if (mKeyMask == 0)
       mKeyMask = cAllModifiers;
-    nsContentUtils::ASCIIToLower(key);
+    ToLowerCase(key);
 
     // We have a charcode.
     mMisc = 1;
     mDetail = key[0];
     const PRUint8 GTK2Modifiers = cShift | cControl | cShiftMask | cControlMask;
     if ((mKeyMask & GTK2Modifiers) == GTK2Modifiers &&
-        modifiers.First() != PRUnichar(',') && mDetail == 'u')
+        modifiers.First() != PRUnichar(',') &&
+        (mDetail == 'u' || mDetail == 'U'))
       ReportKeyConflict(key.get(), modifiers.get(), aKeyElement, "GTK2Conflict");
     const PRUint8 WinModifiers = cControl | cAlt | cControlMask | cAltMask;
     if ((mKeyMask & WinModifiers) == WinModifiers &&
-        modifiers.First() != PRUnichar(',') && ('a' <= mDetail && mDetail <= 'z'))
+        modifiers.First() != PRUnichar(',') &&
+        (('A' <= mDetail && mDetail <= 'Z') ||
+         ('a' <= mDetail && mDetail <= 'z')))
       ReportKeyConflict(key.get(), modifiers.get(), aKeyElement, "WinConflict");
   }
   else {

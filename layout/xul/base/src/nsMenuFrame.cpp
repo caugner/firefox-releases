@@ -27,7 +27,6 @@
 #include "nsCSSFrameConstructor.h"
 #include "nsIDOMKeyEvent.h"
 #include "nsEventDispatcher.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
@@ -42,6 +41,7 @@
 #include "mozilla/Services.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/Attributes.h"
 
 using namespace mozilla;
 
@@ -97,8 +97,7 @@ public:
                                                     getter_AddRefs(event)))) {
       event->InitEvent(domEventToFire, true, true);
 
-      nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(event));
-      privateEvent->SetTrusted(true);
+      event->SetTrusted(true);
 
       nsEventDispatcher::DispatchDOMEvent(mMenu, nsnull, event,
                                           mPresContext, nsnull);
@@ -213,7 +212,7 @@ nsMenuFrame::InitMenuParent(nsIFrame* aParent)
   }
 }
 
-class nsASyncMenuInitialization : public nsIReflowCallback
+class nsASyncMenuInitialization MOZ_FINAL : public nsIReflowCallback
 {
 public:
   nsASyncMenuInitialization(nsIFrame* aFrame)

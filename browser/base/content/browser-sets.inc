@@ -89,13 +89,14 @@
     <command id="Tools:Search" oncommand="BrowserSearch.webSearch();"/>
     <command id="Tools:Downloads" oncommand="BrowserDownloadsUI();"/>
     <command id="Tools:DevToolbar" oncommand="DeveloperToolbar.toggle();" disabled="true"/>
+    <command id="Tools:DevToolbarFocus" oncommand="DeveloperToolbar.focus();" disabled="true"/>
     <command id="Tools:WebConsole" oncommand="HUDConsoleUI.toggleHUD();"/>
     <command id="Tools:Inspect" oncommand="InspectorUI.toggleInspectorUI();" disabled="true"/>
     <command id="Tools:Debugger" oncommand="DebuggerUI.toggleDebugger();" disabled="true"/>
     <command id="Tools:RemoteDebugger" oncommand="DebuggerUI.toggleRemoteDebugger();" disabled="true"/>
     <command id="Tools:ChromeDebugger" oncommand="DebuggerUI.toggleChromeDebugger();" disabled="true"/>
     <command id="Tools:Scratchpad" oncommand="Scratchpad.openScratchpad();" disabled="true"/>
-    <command id="Tools:StyleEditor" oncommand="StyleEditor.openChrome();" disabled="true"/>
+    <command id="Tools:StyleEditor" oncommand="StyleEditor.toggle();" disabled="true"/>
     <command id="Tools:ResponsiveUI" oncommand="ResponsiveUI.toggle();" disabled="true"/>
     <command id="Tools:Addons" oncommand="BrowserOpenAddonsMgr();"/>
     <command id="Tools:Sanitize"
@@ -104,6 +105,8 @@
     <command id="History:UndoCloseTab" oncommand="undoCloseTab();"/>
     <command id="History:UndoCloseWindow" oncommand="undoCloseWindow();"/>
     <command id="Browser:ToggleAddonBar" oncommand="toggleAddonBar();"/>
+    <command id="Social:SharePage" oncommand="SocialShareButton.sharePage();"/>
+    <command id="Social:UnsharePage" oncommand="SocialShareButton.unsharePage();"/>
   </commandset>
 
   <commandset id="placesCommands">
@@ -225,13 +228,8 @@
 #endif
     <key id="key_openAddons" key="&addons.commandkey;" command="Tools:Addons" modifiers="accel,shift"/>
     <key id="key_errorConsole" key="&errorConsoleCmd.commandkey;" oncommand="toJavaScriptConsole();" modifiers="accel,shift" disabled="true"/>
-    <key id="key_devToolbar" key="&devToolbar.commandkey;" command="Tools:DevToolbar"
-#ifdef XP_MACOSX
-         modifiers="accel,alt"
-#else
-         modifiers="accel,shift"
-#endif
-    />
+    <key id="key_devToolbar" keycode="&devToolbar.keycode;" modifiers="shift"
+         keytext="&devToolbar.keytext;" command="Tools:DevToolbarFocus"/>
     <key id="key_webConsole" key="&webConsoleCmd.commandkey;" oncommand="HUDConsoleUI.toggleHUD();"
 #ifdef XP_MACOSX
         modifiers="accel,alt"
@@ -341,6 +339,7 @@
 # overridden for other purposes there.
     <key id="viewBookmarksSidebarWinKb" key="&bookmarksWinCmd.commandkey;" command="viewBookmarksSidebar" modifiers="accel"/>
 #endif
+    <key id="sharePage" key="&sharePageCmd.commandkey;" command="Social:SharePage" modifiers="accel,shift"/>
 
 # don't use |command="Browser:Stop"|, ESC is being used to freeze animated gifs,
 # even if the stop button and menuitem are disabled (see Bug 284140)

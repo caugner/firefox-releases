@@ -140,7 +140,7 @@ static void RefreshContentFrames(nsPresContext* aPresContext, nsIContent * aStar
 
 // Formerly the nsIFrameDebug interface
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 static bool gShowFrameBorders = false;
 
 void nsFrame::ShowFrameBorders(bool aEnable)
@@ -1331,15 +1331,22 @@ nsFrame::DisplaySelectionOverlay(nsDisplayListBuilder*   aBuilder,
   SelectionDetails *details;
   //look up to see what selection(s) are on this frame
   details = frameSelection->LookUpSelection(newContent, offset, 1, false);
-  // XXX is the above really necessary? We don't actually DO anything
-  // with the details other than test that they're non-null
   if (!details)
     return NS_OK;
   
+  bool normal = false;
   while (details) {
+    if (details->mType == nsISelectionController::SELECTION_NORMAL) {
+      normal = true;
+    }
     SelectionDetails *next = details->mNext;
     delete details;
     details = next;
+  }
+
+  if (!normal && aContentType == nsISelectionDisplay::DISPLAY_IMAGES) {
+    // Don't overlay an image if it's not in the primary selection.
+    return NS_OK;
   }
 
   return aList->AppendNewToTop(new (aBuilder)
@@ -1607,7 +1614,7 @@ BuildDisplayListWithOverflowClip(nsDisplayListBuilder* aBuilder, nsIFrame* aFram
   return aFrame->OverflowClip(aBuilder, set, aSet, aClipRect, aClipRadii);
 }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 static void PaintDebugBorder(nsIFrame* aFrame, nsRenderingContext* aCtx,
      const nsRect& aDirtyRect, nsPoint aPt) {
   nsRect r(aPt, aFrame->GetSize());
@@ -1750,33 +1757,24 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
         nsDisplayTransform::ShouldPrerenderTransformedContent(aBuilder, this)) {
       dirtyRect = GetVisualOverflowRectRelativeToSelf();
     } else {
-      if (Preserves3D()) {
-        // Preserve3D frames are difficult. Trying to  back-transform arbitrary rects
-        // gives us really weird results. I believe this is from points that lie beyond the
-        // vanishing point. As a workaround we transform the overflow rect into screen space
-        // and compare in that coordinate system.
+      // Trying to  back-transform arbitrary rects gives us really weird results. I believe 
+      // this is from points that lie beyond the vanishing point. As a workaround we transform t
+      // he overflow rect into screen space and compare in that coordinate system.
         
-        // Transform the overflow rect into screen space
-        nsRect overflow = GetVisualOverflowRectRelativeToSelf();
-        nsPoint offset = aBuilder->ToReferenceFrame(this);
-        overflow += offset;
-        overflow = nsDisplayTransform::TransformRect(overflow, this, offset);
+      // Transform the overflow rect into screen space
+      nsRect overflow = GetVisualOverflowRectRelativeToSelf();
+      nsPoint offset = aBuilder->ToReferenceFrame(this);
+      overflow += offset;
+      overflow = nsDisplayTransform::TransformRect(overflow, this, offset);
 
-        dirtyRect += offset;
+      dirtyRect += offset;
 
-        if (dirtyRect.Intersects(overflow)) {
-          dirtyRect = GetVisualOverflowRectRelativeToSelf();
-        } else {
-          dirtyRect.SetEmpty();
-        }
+      if (dirtyRect.Intersects(overflow)) {
+        // If they intersect, we take our whole overflow rect. We could instead take the intersection
+        // and then reverse transform it but I doubt this extra work is worthwhile.
+        dirtyRect = GetVisualOverflowRectRelativeToSelf();
       } else {
-        // Transform dirtyRect into our frame's local coordinate space. Note that
-        // the new value is the bounds of the old value's transformed vertices, so
-        // the area covered by dirtyRect may increase here.
-        if (!nsDisplayTransform::UntransformRect(dirtyRect, this, nsPoint(0, 0), &dirtyRect)) {
-          // we have a singular transform - surely we must be drawing nothing.
-          dirtyRect.SetEmpty();
-        }
+        dirtyRect.SetEmpty();
       }
       if (!Preserves3DChildren() && !dirtyRect.Intersects(GetVisualOverflowRectRelativeToSelf())) {
         return NS_OK;
@@ -1873,7 +1871,7 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   // The element's outline items need to all come before any child outline
   // items.
   set.Outlines()->SortByContentOrder(aBuilder, GetContent());
-#ifdef NS_DEBUG
+#ifdef DEBUG
   DisplayDebugBorders(aBuilder, this, set);
 #endif
   resultList.AppendToTop(set.Outlines());
@@ -1942,6 +1940,13 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
 
   aList->AppendToTop(&resultList);
   return rv;
+}
+
+static bool
+IsRootScrollFrameActive(nsIPresShell* aPresShell)
+{
+  nsIScrollableFrame* sf = aPresShell->GetRootScrollFrameAsScrollable();
+  return sf && sf->IsScrollingActive();
 }
 
 nsresult
@@ -2070,8 +2075,27 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     pseudoStackingContext = true;
   }
 
+  // This controls later whether we build an nsDisplayWrapList or an
+  // nsDisplayFixedPosition. We check if we're already building a fixed-pos
+  // item and disallow nesting, to prevent the situation of bug #769541
+  // occurring.
+  // We also disallow fixed position items when there is no display port. The
+  // logic behind this is that fixed position items are only useful to
+  // perform asynchronous zooming, and the presence of a display-port implies
+  // that async zooming may be performed.
+  // Don't build an nsDisplayFixedPosition if our root scroll frame is not
+  // active, that's pointless and the extra layer(s) created may be wasteful.
+  nsIFrame* rootScrollFrame;
+  nsIContent* rootContent;
+  bool buildFixedPositionItem = disp->mPosition == NS_STYLE_POSITION_FIXED &&
+    !child->GetParent()->GetParent() && !aBuilder->IsInFixedPosition() &&
+	(rootScrollFrame = PresContext()->PresShell()->GetRootScrollFrame()) &&
+    (rootContent = rootScrollFrame->GetContent()) &&
+    (nsLayoutUtils::GetDisplayPort(rootContent, nsnull)) &&
+    IsRootScrollFrameActive(PresContext()->PresShell());
+
   nsDisplayListBuilder::AutoBuildingDisplayList
-    buildingForChild(aBuilder, child, pseudoStackingContext);
+    buildingForChild(aBuilder, child, pseudoStackingContext, buildFixedPositionItem);
 
   nsRect overflowClip;
   nscoord overflowClipRadii[8];
@@ -2101,7 +2125,7 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
         rv = aBuilder->DisplayCaret(child, dirty, aLists.Content());
       }
     }
-#ifdef NS_DEBUG
+#ifdef DEBUG
     DisplayDebugBorders(aBuilder, child, aLists);
 #endif
     return rv;
@@ -2157,7 +2181,7 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     list.AppendToTop(pseudoStack.Content());
     list.AppendToTop(pseudoStack.Outlines());
     extraPositionedDescendants.AppendToTop(pseudoStack.PositionedDescendants());
-#ifdef NS_DEBUG
+#ifdef DEBUG
     DisplayDebugBorders(aBuilder, child, aLists);
 #endif
   }
@@ -2168,9 +2192,30 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     // Genuine stacking contexts, and positioned pseudo-stacking-contexts,
     // go in this level.
     if (!list.IsEmpty()) {
-      rv = aLists.PositionedDescendants()->AppendNewToTop(new (aBuilder)
-          nsDisplayWrapList(aBuilder, child, &list));
+      // Make sure the root of a fixed position frame sub-tree gets the
+      // correct displaylist item type.
+      nsDisplayItem* item;
+      if (buildFixedPositionItem) {
+        item = new (aBuilder) nsDisplayFixedPosition(aBuilder, child, child, &list);
+      } else {
+        item = new (aBuilder) nsDisplayWrapList(aBuilder, child, &list);
+      }
+
+      rv = aLists.PositionedDescendants()->AppendNewToTop(item);
       NS_ENSURE_SUCCESS(rv, rv);
+
+      // Make sure that extra positioned descendants don't escape having
+      // their fixed-position metadata applied to them.
+      if (buildFixedPositionItem) {
+        while (!extraPositionedDescendants.IsEmpty()) {
+          item = extraPositionedDescendants.RemoveBottom();
+          nsDisplayList fixedPosDescendantList;
+          fixedPosDescendantList.AppendToTop(item);
+          aLists.PositionedDescendants()->AppendNewToTop(
+              new (aBuilder) nsDisplayFixedPosition(aBuilder, item->GetUnderlyingFrame(),
+                                                    child, &fixedPosDescendantList));
+        }
+      }
     }
   } else if (disp->IsFloating()) {
     if (!list.IsEmpty()) {
@@ -2249,15 +2294,16 @@ nsFrame::HandleEvent(nsPresContext* aPresContext,
                      nsEventStatus*  aEventStatus)
 {
 
-  if (aEvent->message == NS_MOUSE_MOVE) {
+  if (aEvent->message == NS_MOUSE_MOVE || aEvent->message == NS_TOUCH_MOVE) {
     return HandleDrag(aPresContext, aEvent, aEventStatus);
   }
 
-  if (aEvent->eventStructType == NS_MOUSE_EVENT &&
-      static_cast<nsMouseEvent*>(aEvent)->button == nsMouseEvent::eLeftButton) {
-    if (aEvent->message == NS_MOUSE_BUTTON_DOWN) {
+  if ((aEvent->eventStructType == NS_MOUSE_EVENT &&
+      static_cast<nsMouseEvent*>(aEvent)->button == nsMouseEvent::eLeftButton) ||
+      aEvent->eventStructType == NS_TOUCH_EVENT) {
+    if (aEvent->message == NS_MOUSE_BUTTON_DOWN || aEvent->message == NS_TOUCH_START) {
       HandlePress(aPresContext, aEvent, aEventStatus);
-    } else if (aEvent->message == NS_MOUSE_BUTTON_UP) {
+    } else if (aEvent->message == NS_MOUSE_BUTTON_UP || aEvent->message == NS_TOUCH_END) {
       HandleRelease(aPresContext, aEvent, aEventStatus);
     }
   }
@@ -2463,6 +2509,11 @@ nsFrame::HandlePress(nsPresContext* aPresContext,
 {
   NS_ENSURE_ARG_POINTER(aEventStatus);
   if (nsEventStatus_eConsumeNoDefault == *aEventStatus) {
+    return NS_OK;
+  }
+
+  NS_ENSURE_ARG_POINTER(aEvent);
+  if (aEvent->eventStructType == NS_TOUCH_EVENT) {
     return NS_OK;
   }
 
@@ -2949,6 +3000,10 @@ NS_IMETHODIMP nsFrame::HandleRelease(nsPresContext* aPresContext,
                                      nsGUIEvent*    aEvent,
                                      nsEventStatus* aEventStatus)
 {
+  if (aEvent->eventStructType != NS_MOUSE_EVENT) {
+    return NS_OK;
+  }
+
   nsIFrame* activeFrame = GetActiveSelectionFrame(aPresContext, this);
 
   nsCOMPtr<nsIContent> captureContent = nsIPresShell::GetCapturingContent();
@@ -4605,11 +4660,6 @@ nsIFrame::InvalidateInternalAfterResize(const nsRect& aDamageRect, nscoord aX,
 
   if ((mState & NS_FRAME_HAS_CONTAINER_LAYER) &&
       !(aFlags & INVALIDATE_NO_THEBES_LAYERS)) {
-    // XXX for now I'm going to assume this is in the local coordinate space
-    // This only matters for frames with transforms and retained layers,
-    // which can't happen right now since transforms trigger fallback
-    // rendering and the display items that trigger layers are nested inside
-    // the nsDisplayTransform
     // XXX need to set INVALIDATE_NO_THEBES_LAYERS for certain kinds of
     // invalidation, e.g. video update, 'opacity' change
     FrameLayerBuilder::InvalidateThebesLayerContents(this,
@@ -4649,7 +4699,7 @@ nsIFrame::InvalidateInternal(const nsRect& aDamageRect, nscoord aX, nscoord aY,
 {
   nsSVGEffects::InvalidateDirectRenderingObservers(this);
   if (nsSVGIntegrationUtils::UsingEffectsForFrame(this)) {
-    nsRect r = nsSVGIntegrationUtils::GetInvalidAreaForChangedSource(this,
+    nsRect r = nsSVGIntegrationUtils::AdjustInvalidAreaForSVGEffects(this,
             aDamageRect + nsPoint(aX, aY));
     /* Rectangle is now in our own local space, so aX and aY are effectively
      * zero.  Thus we'll pretend that the entire time this was in our own
@@ -4918,7 +4968,7 @@ ComputeOutlineAndEffectsRect(nsIFrame* aFrame, bool* aAnyOutlineOrEffects,
       aFrame->Properties().
         Set(nsIFrame::PreEffectsBBoxProperty(), new nsRect(r));
     }
-    r = nsSVGIntegrationUtils::ComputeFrameEffectsRect(aFrame, r);
+    r = nsSVGIntegrationUtils::ComputePostEffectsVisualOverflowRect(aFrame, r);
   }
 
   return r;
@@ -4993,6 +5043,14 @@ nsIFrame::GetVisualOverflowRectRelativeToSelf() const
       return preTransformOverflows->VisualOverflow();
   }
   return GetVisualOverflowRect();
+}
+
+nsRect
+nsIFrame::GetPreEffectsVisualOverflowRect() const
+{
+  nsRect* r = static_cast<nsRect*>
+    (Properties().Get(nsIFrame::PreEffectsBBoxProperty()));
+  return r ? *r : GetVisualOverflowRectRelativeToSelf();
 }
 
 /* virtual */ bool
@@ -5202,7 +5260,7 @@ nsIFrame::GetContainingBlock() const
   return GetNearestBlockContainer(GetParent());
 }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 
 PRInt32 nsFrame::ContentIndexInContainer(const nsIFrame* aFrame)
 {
@@ -5454,7 +5512,7 @@ nsIFrame::GetConstFrameSelection() const
   return PresContext()->PresShell()->ConstFrameSelection();
 }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 NS_IMETHODIMP
 nsFrame::DumpRegressionData(nsPresContext* aPresContext, FILE* out, PRInt32 aIndent)
 {
@@ -8029,7 +8087,7 @@ nsFrame::GetBoxName(nsAutoString& aName)
 }
 #endif
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 static void
 GetTagName(nsFrame* aFrame, nsIContent* aContent, PRIntn aResultSize,
            char* aResult)

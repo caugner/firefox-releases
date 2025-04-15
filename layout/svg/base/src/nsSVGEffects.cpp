@@ -235,7 +235,8 @@ nsSVGFilterProperty::GetFilterFrame()
 static void
 InvalidateAllContinuations(nsIFrame* aFrame)
 {
-  for (nsIFrame* f = aFrame; f; f = f->GetNextContinuation()) {
+  for (nsIFrame* f = aFrame; f;
+       f = nsLayoutUtils::GetNextContinuationOrSpecialSibling(f)) {
     f->InvalidateOverflowRect();
   }
 }
@@ -299,7 +300,7 @@ nsSVGPaintingProperty::DoUpdate()
   if (!mFrame)
     return;
 
-  if (mFrame->IsFrameOfType(nsIFrame::eSVG)) {
+  if (mFrame->GetStateBits() & NS_FRAME_SVG_LAYOUT) {
     nsSVGUtils::InvalidateBounds(mFrame);
   } else {
     InvalidateAllContinuations(mFrame);

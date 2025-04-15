@@ -35,6 +35,7 @@
 #include "nsGUIEvent.h"
 #include "nsContentUtils.h"
 #include "nsRefreshDriver.h"
+#include "mozilla/Attributes.h"
 
 class nsRange;
 class nsIDragService;
@@ -316,10 +317,11 @@ public:
   }
 
   void SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
-                           size_t *aArenasSize,
+                           nsArenaMemoryStats *aArenaObjectsSize,
+                           size_t *aPresShellSize,
                            size_t *aStyleSetsSize,
                            size_t *aTextRunsSize,
-                           size_t *aPresContextSize) const;
+                           size_t *aPresContextSize);
   size_t SizeOfTextRuns(nsMallocSizeOfFun aMallocSizeOf) const;
 
   // This data is stored as a content property (nsGkAtoms::scrolling) on
@@ -429,7 +431,7 @@ protected:
   friend class nsPresShellEventCB;
 
   bool mCaretEnabled;
-#ifdef NS_DEBUG
+#ifdef DEBUG
   nsStyleSet* CloneStyleSet(nsStyleSet* aSet);
   bool VerifyIncrementalReflow();
   bool mInVerifyReflow;
@@ -595,7 +597,7 @@ protected:
   // Check if aEvent is a mouse event and record the mouse location for later
   // synth mouse moves.
   void RecordMouseLocation(nsGUIEvent* aEvent);
-  class nsSynthMouseMoveEvent : public nsARefreshObserver {
+  class nsSynthMouseMoveEvent MOZ_FINAL : public nsARefreshObserver {
   public:
     nsSynthMouseMoveEvent(PresShell* aPresShell, bool aFromScroll)
       : mPresShell(aPresShell), mFromScroll(aFromScroll) {

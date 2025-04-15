@@ -23,6 +23,7 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsNetUtil.h"
 #include "nsThreadUtils.h"
+#include "mozilla/Attributes.h"
 
 #ifdef XP_WIN
 #include <windows.h>
@@ -158,7 +159,7 @@ public:
   }
 };
 
-class EventListener : public nsIDOMEventListener
+class EventListener MOZ_FINAL : public nsIDOMEventListener
 {
   nsCOMPtr<nsIAppShell> mAppShell;
 
@@ -398,7 +399,7 @@ Test4Internal(nsIAppShell* aAppShell)
   }
 
   nsCOMPtr<nsIURI> uri;
-  if (NS_FAILED(NS_NewURI(getter_AddRefs(uri), "about:blank", NULL))) {
+  if (NS_FAILED(NS_NewURI(getter_AddRefs(uri), "about:", NULL))) {
     fail("Failed to create new uri");
     return false;
   }

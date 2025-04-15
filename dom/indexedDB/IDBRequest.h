@@ -35,7 +35,8 @@ public:
   static
   already_AddRefed<IDBRequest> Create(nsISupports* aSource,
                                       IDBWrapperCache* aOwnerCache,
-                                      IDBTransaction* aTransaction);
+                                      IDBTransaction* aTransaction,
+                                      JSContext* aCallingCx);
 
   // nsIDOMEventTarget
   virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor);
@@ -78,6 +79,10 @@ public:
     return mActorParent;
   }
 
+  void CaptureCaller(JSContext* aCx);
+
+  void FillScriptErrorEvent(nsScriptErrorEvent* aEvent) const;
+
 protected:
   IDBRequest();
   ~IDBRequest();
@@ -96,6 +101,9 @@ protected:
 
   nsresult mErrorCode;
   bool mHaveResultOrErrorCode;
+
+  nsString mFilename;
+  PRUint32 mLineNo;
 };
 
 class IDBOpenDBRequest : public IDBRequest,
@@ -110,15 +118,8 @@ public:
   static
   already_AddRefed<IDBOpenDBRequest>
   Create(nsPIDOMWindow* aOwner,
-         JSObject* aScriptOwner);
-
-  static
-  already_AddRefed<IDBOpenDBRequest>
-  Create(IDBWrapperCache* aOwnerCache)
-  {
-    return Create(aOwnerCache->GetOwner(),
-                  aOwnerCache->GetScriptOwner());
-  }
+         JSObject* aScriptOwner,
+         JSContext* aCallingCx);
 
   void SetTransaction(IDBTransaction* aTransaction);
 

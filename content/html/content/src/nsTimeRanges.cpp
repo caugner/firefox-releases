@@ -5,8 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsTimeRanges.h"
+#include "nsDOMClassInfoID.h"
 #include "nsDOMError.h"
-#include "nsContentUtils.h"
 
 NS_IMPL_ADDREF(nsTimeRanges)
 NS_IMPL_RELEASE(nsTimeRanges)
@@ -75,6 +75,10 @@ nsTimeRanges::Normalize()
     // This merges the intervals.
     TimeRange current(mRanges[0]);
     for (PRUint32 i = 1; i < mRanges.Length(); i++) {
+      if (current.mStart <= mRanges[i].mStart &&
+          current.mEnd >= mRanges[i].mEnd) {
+        continue;
+      }
       if (current.mEnd >= mRanges[i].mStart) {
         current.mEnd = mRanges[i].mEnd;
       } else {

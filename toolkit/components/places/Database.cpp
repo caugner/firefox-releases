@@ -6,7 +6,7 @@
 
 #include "nsINavBookmarksService.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 
 #include "nsNavHistory.h"
 #include "nsPlacesTables.h"
@@ -23,6 +23,7 @@
 #include "mozilla/Util.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
+#include "mozilla/Attributes.h"
 
 // Time between corrupt database backups.
 #define RECENT_BACKUP_TIME_MICROSEC (PRInt64)86400 * PR_USEC_PER_SEC // 24H
@@ -208,7 +209,7 @@ SetJournalMode(nsCOMPtr<mozIStorageConnection>& aDBConn,
   return JOURNAL_DELETE;
 }
 
-class BlockingConnectionCloseCallback : public mozIStorageCompletionCallback {
+class BlockingConnectionCloseCallback MOZ_FINAL : public mozIStorageCompletionCallback {
   bool mDone;
 
 public:

@@ -68,6 +68,7 @@
 #include "nsIInlineEventHandlers.h"
 #include "nsDataHashtable.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/Attributes.h"
 
 #define XML_DECLARATION_BITS_DECLARATION_EXISTS   (1 << 0)
 #define XML_DECLARATION_BITS_ENCODING_EXISTS      (1 << 1)
@@ -214,6 +215,10 @@ public:
     ChangeCallback mKey;
   };
 
+  static size_t SizeOfExcludingThis(nsIdentifierMapEntry* aEntry,
+                                    nsMallocSizeOfFun aMallocSizeOf,
+                                    void* aArg);
+
 private:
   void FireChangeCallbacks(Element* aOldElement, Element* aNewElement,
                            bool aImageOnly = false);
@@ -286,7 +291,7 @@ protected:
   nsIDocument*  mDocument;
 };
 
-class nsOnloadBlocker : public nsIRequest
+class nsOnloadBlocker MOZ_FINAL : public nsIRequest
 {
 public:
   nsOnloadBlocker() {}
@@ -388,7 +393,7 @@ protected:
   };
   friend class PendingLoad;
 
-  class LoadgroupCallbacks : public nsIInterfaceRequestor
+  class LoadgroupCallbacks MOZ_FINAL : public nsIInterfaceRequestor
   {
   public:
     LoadgroupCallbacks(nsIInterfaceRequestor* aOtherCallbacks)
@@ -409,8 +414,8 @@ protected:
     
     // XXXbz I wish we could just derive the _allcaps thing from _i
 #define DECL_SHIM(_i, _allcaps)                                              \
-    class _i##Shim : public nsIInterfaceRequestor,                           \
-                     public _i                                               \
+    class _i##Shim MOZ_FINAL : public nsIInterfaceRequestor,                 \
+                               public _i                                     \
     {                                                                        \
     public:                                                                  \
       _i##Shim(nsIInterfaceRequestor* aIfreq, _i* aRealPtr)                  \
@@ -420,8 +425,8 @@ protected:
         NS_ASSERTION(mRealPtr, "Expected non-null here");                    \
       }                                                                      \
       NS_DECL_ISUPPORTS                                                      \
-      NS_FORWARD_NSIINTERFACEREQUESTOR(mIfReq->);                            \
-      NS_FORWARD_##_allcaps(mRealPtr->);                                     \
+      NS_FORWARD_NSIINTERFACEREQUESTOR(mIfReq->)                             \
+      NS_FORWARD_##_allcaps(mRealPtr->)                                      \
     private:                                                                 \
       nsCOMPtr<nsIInterfaceRequestor> mIfReq;                                \
       nsCOMPtr<_i> mRealPtr;                                                 \
@@ -682,8 +687,6 @@ public:
 
   // nsINode
   virtual bool IsNodeOfType(PRUint32 aFlags) const;
-  virtual PRUint16 NodeType();
-  virtual void NodeName(nsAString& aNodeName);
   virtual nsIContent *GetChildAt(PRUint32 aIndex) const;
   virtual nsIContent * const * GetChildArray(PRUint32* aChildCount) const;
   virtual PRInt32 IndexOf(nsINode* aPossibleChild) const;

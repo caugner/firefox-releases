@@ -26,7 +26,11 @@ import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.animation.AlphaAnimation;
+import android.view.animation.Animation;
+import android.view.animation.DecelerateInterpolator;
 import android.view.animation.TranslateAnimation;
+import android.view.inputmethod.InputMethodManager;
 import android.view.ContextMenu;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -43,7 +47,6 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.LinearLayout.LayoutParams;
 import android.widget.PopupWindow;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
@@ -53,10 +56,15 @@ import android.widget.ViewSwitcher;
 
 public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                                        Tabs.OnTabsChangedListener,
-                                       GeckoMenu.ActionItemBarPresenter {
+                                       GeckoMenu.ActionItemBarPresenter,
+                                       Animation.AnimationListener {
     private static final String LOGTAG = "GeckoToolbar";
     private LinearLayout mLayout;
     private Button mAwesomeBar;
+    private TextView mTitle;
+    private int mTitlePadding;
+    private boolean mSiteSecurityVisible;
+    private boolean mAnimateSiteSecurity;
     private ImageButton mTabs;
     private ImageView mBack;
     private ImageView mForward;
@@ -75,13 +83,10 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     final private Context mContext;
     private LayoutInflater mInflater;
     private Handler mHandler;
-    private int[] mPadding;
     private boolean mHasSoftMenuButton;
 
     private boolean mShowSiteSecurity;
     private boolean mShowReader;
-
-    private ReaderPopup mReaderPopup;
 
     private static List<View> sActionItems;
 
@@ -90,6 +95,10 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     private TranslateAnimation mSlideUpOut;
     private TranslateAnimation mSlideDownIn;
     private TranslateAnimation mSlideDownOut;
+
+    private AlphaAnimation mLockFadeIn;
+    private TranslateAnimation mTitleSlideLeft;
+    private TranslateAnimation mTitleSlideRight;
 
     private int mCount;
 
@@ -101,7 +110,8 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mInflater = LayoutInflater.from(context);
 
         sActionItems = new ArrayList<View>();
-        Tabs.getInstance().registerOnTabsChangedListener(this);
+        Tabs.registerOnTabsChangedListener(this);
+        mAnimateSiteSecurity = true;
     }
 
     public void from(LinearLayout layout) {
@@ -109,7 +119,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
 
         mShowSiteSecurity = false;
         mShowReader = false;
-        mReaderPopup = null;
+
+        mTitle = (TextView) mLayout.findViewById(R.id.awesome_bar_title);
+        mTitlePadding = mTitle.getPaddingRight();
 
         mAwesomeBar = (Button) mLayout.findViewById(R.id.awesome_bar);
         mAwesomeBar.setOnClickListener(new Button.OnClickListener() {
@@ -146,11 +158,6 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             }
         });
 
-        mPadding = new int[] { mAwesomeBar.getPaddingLeft(),
-                               mAwesomeBar.getPaddingTop(),
-                               mAwesomeBar.getPaddingRight(),
-                               mAwesomeBar.getPaddingBottom() };
-
         mTabs = (ImageButton) mLayout.findViewById(R.id.tabs);
         mTabs.setOnClickListener(new Button.OnClickListener() {
             public void onClick(View v) {
@@ -179,21 +186,21 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             }
         });
 
-        mFavicon = (ImageButton) mLayout.findViewById(R.id.favicon);
-        mSiteSecurity = (ImageButton) mLayout.findViewById(R.id.site_security);
-        mSiteSecurity.setOnClickListener(new Button.OnClickListener() {
+        Button.OnClickListener faviconListener = new Button.OnClickListener() {
             public void onClick(View view) {
-                int[] lockLocation = new int[2];
-                view.getLocationOnScreen(lockLocation);
+                if (mSiteSecurity.getVisibility() != View.VISIBLE)
+                    return;
 
-                RelativeLayout.LayoutParams iconsLayoutParams =
-                        (RelativeLayout.LayoutParams) ((View) view.getParent()).getLayoutParams();
-
-                // Calculate the left margin for the arrow based on the position of the lock icon.
-                int leftMargin = lockLocation[0] - iconsLayoutParams.rightMargin;
-                SiteIdentityPopup.getInstance().show(mSiteSecurity, leftMargin);
+                SiteIdentityPopup.getInstance().show(mSiteSecurity);
             }
-        });
+        };
+
+        mFavicon = (ImageButton) mLayout.findViewById(R.id.favicon);
+        mFavicon.setOnClickListener(faviconListener);
+
+        mSiteSecurity = (ImageButton) mLayout.findViewById(R.id.site_security);
+        mSiteSecurity.setOnClickListener(faviconListener);
+        mSiteSecurityVisible = (mSiteSecurity.getVisibility() == View.VISIBLE);
 
         mProgressSpinner = (AnimationDrawable) mContext.getResources().getDrawable(R.drawable.progress_spinner);
         
@@ -209,10 +216,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mReader = (ImageButton) mLayout.findViewById(R.id.reader);
         mReader.setOnClickListener(new Button.OnClickListener() {
             public void onClick(View view) {
-                if (mReaderPopup == null)
-                    mReaderPopup = new ReaderPopup(GeckoApp.mAppContext);
-
-                mReaderPopup.show();
+                Tab tab = Tabs.getInstance().getSelectedTab();
+                if (tab != null)
+                    tab.readerMode();
             }
         });
 
@@ -229,6 +235,26 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mSlideUpOut.setDuration(mDuration);
         mSlideDownIn.setDuration(mDuration);
         mSlideDownOut.setDuration(mDuration);
+
+        float slideWidth = mContext.getResources().getDimension(R.dimen.browser_toolbar_lock_width);
+
+        LinearLayout.LayoutParams siteSecParams = (LinearLayout.LayoutParams) mSiteSecurity.getLayoutParams();
+        final float scale = mContext.getResources().getDisplayMetrics().density;
+        slideWidth += (siteSecParams.leftMargin + siteSecParams.rightMargin) * scale + 0.5f;
+
+        mLockFadeIn = new AlphaAnimation(0.0f, 1.0f);
+        mLockFadeIn.setAnimationListener(this);
+
+        mTitleSlideLeft = new TranslateAnimation(slideWidth, 0, 0, 0);
+        mTitleSlideLeft.setAnimationListener(this);
+
+        mTitleSlideRight = new TranslateAnimation(-slideWidth, 0, 0, 0);
+        mTitleSlideRight.setAnimationListener(this);
+
+        final int lockAnimDuration = 300;
+        mLockFadeIn.setDuration(lockAnimDuration);
+        mTitleSlideLeft.setDuration(lockAnimDuration);
+        mTitleSlideRight.setDuration(lockAnimDuration);
 
         mMenu = (ImageButton) mLayout.findViewById(R.id.menu);
         mActionItemBar = (LinearLayout) mLayout.findViewById(R.id.menu_items);
@@ -295,13 +321,13 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 break;
             case START:
                 if (Tabs.getInstance().isSelectedTab(tab)) {
-                    setSecurityMode(tab.getSecurityMode());
-                    setReaderVisibility(tab.getReaderEnabled());
                     updateBackButton(tab.canDoBack());
                     updateForwardButton(tab.canDoForward());
                     Boolean showProgress = (Boolean)data;
                     if (showProgress && tab.getState() == Tab.STATE_LOADING)
                         setProgressVisibility(true);
+                    setSecurityMode(tab.getSecurityMode());
+                    setReaderMode(tab.getReaderEnabled());
                 }
                 break;
             case STOP:
@@ -313,11 +339,16 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 break;
             case RESTORED:
             case SELECTED:
+                // We should not animate the lock icon when switching or
+                // restoring tabs.
+                mAnimateSiteSecurity = false;
+                // fall through
             case LOCATION_CHANGE:
             case LOAD_ERROR:
                 if (Tabs.getInstance().isSelectedTab(tab)) {
                     refresh();
                 }
+                mAnimateSiteSecurity = true;
                 break;
             case CLOSED:
             case ADDED:
@@ -325,6 +356,27 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 updateBackButton(false);
                 updateForwardButton(false);
                 break;
+        }
+    }
+
+    @Override
+    public void onAnimationStart(Animation animation) {
+        if (animation.equals(mLockFadeIn)) {
+            if (mSiteSecurityVisible)
+                mSiteSecurity.setVisibility(View.VISIBLE);
+        }
+    }
+
+    @Override
+    public void onAnimationRepeat(Animation animation) {
+    }
+
+    @Override
+    public void onAnimationEnd(Animation animation) {
+        if (animation.equals(mTitleSlideLeft)) {
+            mSiteSecurity.setVisibility(View.GONE);
+        } else if (animation.equals(mTitleSlideRight)) {
+            mSiteSecurity.startAnimation(mLockFadeIn);
         }
     }
 
@@ -343,10 +395,16 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     }
 
     private void toggleTabs() {
-        if (GeckoApp.mAppContext.areTabsShown())
-            GeckoApp.mAppContext.hideTabs();
-        else
+        if (GeckoApp.mAppContext.areTabsShown()) {
+            if (GeckoApp.mAppContext.hasTabsSideBar())
+                GeckoApp.mAppContext.hideTabs();
+        } else {
+            // hide the virtual keyboard
+            InputMethodManager imm =
+                    (InputMethodManager) mContext.getSystemService(Context.INPUT_METHOD_SERVICE);
+            imm.hideSoftInputFromWindow(mTabs.getWindowToken(), 0);
             GeckoApp.mAppContext.showLocalTabs();
+        }
     }
 
     public void updateTabCountAndAnimate(int count) {
@@ -361,9 +419,10 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         }
 
         mTabsCount.setText(String.valueOf(count));
+        mTabs.setContentDescription((count > 1) ?
+                                    mContext.getString(R.string.num_tabs, count) :
+                                    mContext.getString(R.string.one_tab));
         mCount = count;
-        mTabs.setContentDescription(mContext.getString(R.string.num_tabs, count));
-
         mHandler.postDelayed(new Runnable() {
             public void run() {
                 ((TextView) mTabsCount.getCurrentView()).setTextColor(mContext.getResources().getColor(R.color.url_bar_text_highlight));
@@ -379,7 +438,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
 
     public void updateTabCount(int count) {
         mTabsCount.setCurrentText(String.valueOf(count));
-        mTabs.setContentDescription(mContext.getString(R.string.num_tabs, count));
+        mTabs.setContentDescription((count > 1) ?
+                                    mContext.getString(R.string.num_tabs, count) :
+                                    mContext.getString(R.string.one_tab));
         mCount = count;
         updateTabs(GeckoApp.mAppContext.areTabsShown());
     }
@@ -412,11 +473,11 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         if (visible) {
             mFavicon.setImageDrawable(mProgressSpinner);
             mProgressSpinner.start();
-            setStopVisibility(true);
+            setPageActionVisibility(true);
             Log.i(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - Throbber start");
         } else {
             mProgressSpinner.stop();
-            setStopVisibility(false);
+            setPageActionVisibility(false);
             Tab selectedTab = Tabs.getInstance().getSelectedTab();
             if (selectedTab != null)
                 setFavicon(selectedTab.getFavicon());
@@ -424,18 +485,48 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         }
     }
 
-    public void setStopVisibility(boolean visible) {
-        mStop.setVisibility(visible ? View.VISIBLE : View.GONE);
+    public void setPageActionVisibility(boolean isLoading) {
+        // Handle the loading mode page actions
+        mStop.setVisibility(isLoading ? View.VISIBLE : View.GONE);
 
-        mSiteSecurity.setVisibility(mShowSiteSecurity && !visible ? View.VISIBLE : View.GONE);
-        mReader.setVisibility(mShowReader && !visible ? View.VISIBLE : View.GONE);
+        // Handle the viewing mode page actions
+        setSiteSecurityVisibility(mShowSiteSecurity && !isLoading);
+        mReader.setVisibility(mShowReader && !isLoading ? View.VISIBLE : View.GONE);
 
-        if (!visible && !mShowSiteSecurity && !mShowReader)
-            mAwesomeBar.setPadding(mPadding[0], mPadding[1], mPadding[2], mPadding[3]);
-        else
-            mAwesomeBar.setPadding(mPadding[0], mPadding[1], mPadding[0], mPadding[3]);
+        // We want title to fill the whole space available for it when there are icons
+        // being shown on the right side of the toolbar as the icons already have some
+        // padding in them. This is just to avoid wasting space when icons are shown.
+        mTitle.setPadding(0, 0, (!mShowReader && !isLoading ? mTitlePadding : 0), 0);
 
         updateFocusOrder();
+    }
+
+    private void setSiteSecurityVisibility(final boolean visible) {
+        if (visible == mSiteSecurityVisible)
+            return;
+
+        mSiteSecurityVisible = visible;
+
+        if (!mAnimateSiteSecurity) {
+            mSiteSecurity.setVisibility(visible ? View.VISIBLE : View.GONE);
+            return;
+        }
+
+        mTitle.clearAnimation();
+        mSiteSecurity.clearAnimation();
+
+        // If any of these animations were cancelled as a result of the
+        // clearAnimation() calls above, we need to reset them.
+        mLockFadeIn.reset();
+        mTitleSlideLeft.reset();
+        mTitleSlideRight.reset();
+
+        if (visible)
+            mSiteSecurity.setVisibility(View.INVISIBLE);
+        else
+            mSiteSecurity.setVisibility(View.GONE);
+
+        mTitle.startAnimation(visible ? mTitleSlideRight : mTitleSlideLeft);
     }
 
     private void updateFocusOrder() {
@@ -471,7 +562,8 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         if (tab != null && "about:home".equals(tab.getURL()))
             title = null;
 
-        mAwesomeBar.setText(title);
+        mTitle.setText(title);
+        mAwesomeBar.setContentDescription(title != null ? title : mTitle.getHint());
     }
 
     public void setFavicon(Drawable image) {
@@ -495,10 +587,13 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             mSiteSecurity.setImageLevel(0);
             mShowSiteSecurity = false;
         }
+
+        setPageActionVisibility(mStop.getVisibility() == View.VISIBLE);
     }
 
-    public void setReaderVisibility(boolean showReader) {
+    public void setReaderMode(boolean showReader) {
         mShowReader = showReader;
+        setPageActionVisibility(mStop.getVisibility() == View.VISIBLE);
     }
 
     public void setVisibility(int visibility) {
@@ -552,9 +647,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             String url = tab.getURL();
             setTitle(tab.getDisplayTitle());
             setFavicon(tab.getFavicon());
-            setSecurityMode(tab.getSecurityMode());
-            setReaderVisibility(tab.getReaderEnabled());
             setProgressVisibility(tab.getState() == Tab.STATE_LOADING);
+            setSecurityMode(tab.getSecurityMode());
+            setReaderMode(tab.getReaderEnabled());
             setShadowVisibility((url == null) || !url.startsWith("about:"));
             updateTabCount(Tabs.getInstance().getCount());
             updateBackButton(tab.canDoBack());
@@ -612,56 +707,6 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         public void setPanelView(View view) {
             mPanel.removeAllViews();
             mPanel.addView(view);
-        }
-    }
-
-    public class ReaderPopup extends PopupWindow {
-        private int mWidth;
-
-        private ReaderPopup(Context context) {
-            super(context);
-
-            setBackgroundDrawable(new BitmapDrawable());
-            setOutsideTouchable(true);
-            setWindowLayoutMode(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-
-            LayoutInflater inflater = LayoutInflater.from(context);
-            FrameLayout layout = (FrameLayout) inflater.inflate(R.layout.reader_popup, null);
-            setContentView(layout);
-
-            layout.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
-            mWidth = layout.getMeasuredWidth();
-
-            Button readingListButton = (Button) layout.findViewById(R.id.reading_list);
-            readingListButton.setOnClickListener(new Button.OnClickListener() {
-                public void onClick(View v) {
-                    Tab selectedTab = Tabs.getInstance().getSelectedTab();
-                    if (selectedTab != null) {
-                        selectedTab.addToReadingList();
-                    }
-
-                    Toast.makeText(GeckoApp.mAppContext,
-                                   R.string.reading_list_added, Toast.LENGTH_SHORT).show();
-
-                    dismiss();
-                }
-            });
-
-            Button readerModeButton = (Button) layout.findViewById(R.id.reader_mode);
-            readerModeButton.setOnClickListener(new Button.OnClickListener() {
-                public void onClick(View v) {
-                    Tab selectedTab = Tabs.getInstance().getSelectedTab();
-                    if (selectedTab != null) {
-                        selectedTab.readerMode();
-                    }
-
-                    dismiss();
-                }
-            });
-        }
-
-        public void show() {
-            showAsDropDown(mReader, (mReader.getWidth() - mWidth) / 2, 0);
         }
     }
 

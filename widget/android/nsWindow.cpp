@@ -171,7 +171,7 @@ nsWindow::~nsWindow()
         top->mFocus = nsnull;
     ALOG("nsWindow %p destructor", (void*)this);
 #ifdef MOZ_JAVA_COMPOSITOR
-    SetCompositor(NULL, NULL, NULL);
+    SetCompositor(NULL, NULL);
 #endif
 }
 
@@ -697,7 +697,7 @@ nsWindow::GetLayerManager(PLayersChild*, LayersBackend, LayerManagerPersistence,
     if (useCompositor) {
         CreateCompositor();
         if (mLayerManager) {
-            SetCompositor(mCompositorParent, mCompositorChild, mCompositorThread);
+            SetCompositor(mCompositorParent, mCompositorChild);
             return mLayerManager;
         }
 
@@ -842,10 +842,9 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
                     if (!preventDefaultActions && ae->Count() == 2) {
                         target->OnGestureEvent(ae);
                     }
-#ifndef MOZ_ONLY_TOUCH_EVENTS
+
                     if (!preventDefaultActions && ae->Count() < 2)
-                        target->OnMotionEvent(ae);
-#endif
+                        target->OnMouseEvent(ae);
                 }
             }
             break;
@@ -1288,10 +1287,12 @@ nsWindow::GetNativeData(PRUint32 aDataType)
 }
 
 void
-nsWindow::OnMotionEvent(AndroidGeckoEvent *ae)
+nsWindow::OnMouseEvent(AndroidGeckoEvent *ae)
 {
     PRUint32 msg;
+    PRInt16 buttons = nsMouseEvent::eLeftButtonFlag;
     switch (ae->Action() & AndroidMotionEvent::ACTION_MASK) {
+#ifndef MOZ_ONLY_TOUCH_EVENTS
         case AndroidMotionEvent::ACTION_DOWN:
             msg = NS_MOUSE_BUTTON_DOWN;
             break;
@@ -1303,6 +1304,14 @@ nsWindow::OnMotionEvent(AndroidGeckoEvent *ae)
         case AndroidMotionEvent::ACTION_UP:
         case AndroidMotionEvent::ACTION_CANCEL:
             msg = NS_MOUSE_BUTTON_UP;
+            break;
+#endif
+
+        case AndroidMotionEvent::ACTION_HOVER_ENTER:
+        case AndroidMotionEvent::ACTION_HOVER_MOVE:
+        case AndroidMotionEvent::ACTION_HOVER_EXIT:
+            msg = NS_MOUSE_MOVE;
+            buttons = 0;
             break;
 
         default:
@@ -2051,7 +2060,7 @@ nsWindow::UserActivity()
   }
 
   if (mIdleService) {
-    mIdleService->ResetIdleTimeOut();
+    mIdleService->ResetIdleTimeOut(0);
   }
 }
 
@@ -2270,17 +2279,14 @@ nsWindow::DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect)
 
 nsRefPtr<mozilla::layers::CompositorParent> nsWindow::sCompositorParent = 0;
 nsRefPtr<mozilla::layers::CompositorChild> nsWindow::sCompositorChild = 0;
-base::Thread * nsWindow::sCompositorThread = 0;
 bool nsWindow::sCompositorPaused = false;
 
 void
 nsWindow::SetCompositor(mozilla::layers::CompositorParent* aCompositorParent,
-                        mozilla::layers::CompositorChild* aCompositorChild,
-                        ::base::Thread* aCompositorThread)
+                        mozilla::layers::CompositorChild* aCompositorChild)
 {
     sCompositorParent = aCompositorParent;
     sCompositorChild = aCompositorChild;
-    sCompositorThread = aCompositorThread;
 }
 
 void

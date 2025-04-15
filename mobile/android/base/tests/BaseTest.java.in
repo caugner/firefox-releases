@@ -22,6 +22,9 @@ import java.util.HashMap;
  *  A convenient base class suitable for most Robocop tests.
  */
 abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
+    public static final int TEST_MOCHITEST = 0;
+    public static final int TEST_TALOS = 1;
+
     private static final String TARGET_PACKAGE_ID = "org.mozilla.gecko";
     private static final String LAUNCH_ACTIVITY_FULL_CLASSNAME="@ANDROID_PACKAGE_NAME@.App";
 
@@ -33,7 +36,6 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
     protected Actions mActions;
     protected String mBaseUrl;
     protected String mRawBaseUrl;
-    private String mTestType;
     private String mLogFile;
     protected String mProfile;
 
@@ -48,6 +50,8 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
     public BaseTest() {
         super(TARGET_PACKAGE_ID, mLauncherActivityClass);
     }
+
+    protected abstract int getTestType();
 
     @Override
     protected void setUp() throws Exception {
@@ -64,26 +68,37 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         setActivityIntent(i);
         mActivity = getActivity();
 
-        // Set up Robotium.solo and Driver objects
-        mSolo = new Solo(getInstrumentation());
-        mDriver = new FennecNativeDriver(mActivity, mSolo);
-        mActions = new FennecNativeActions(mActivity, mSolo, getInstrumentation());
-
         mLogFile = (String)config.get("logfile");
         mBaseUrl = ((String)config.get("host")).replaceAll("(/$)", "");
         mRawBaseUrl = ((String)config.get("rawhost")).replaceAll("(/$)", "");
-    }
 
-    public void setTestType(String type) {
-        mTestType = type;
-
-        if (mTestType.equals("talos")) {
+        // Initialize the asserter
+        if (getTestType() == TEST_TALOS) {
             mAsserter = new FennecTalosAssert();
         } else {
             mAsserter = new FennecMochitestAssert();
         }
         mAsserter.setLogFile(mLogFile);
         mAsserter.setTestName(this.getClass().getName());
+
+        // Set up Robotium.solo and Driver objects
+        mSolo = new Solo(getInstrumentation());
+        mDriver = new FennecNativeDriver(mActivity, mSolo);
+        mActions = new FennecNativeActions(mActivity, mSolo, getInstrumentation(), mAsserter);
+    }
+
+    @Override
+    protected void runTest() throws Throwable {
+        try {
+            super.runTest();
+        } catch (Throwable t) {
+            if (mAsserter != null) {
+                mAsserter.dumpLog("Exception caught during test!", t);
+                mAsserter.ok(false, "Exception caught", t.toString());
+            }
+            // re-throw to continue bail-out
+            throw t;
+        }
     }
 
     @Override
@@ -98,6 +113,14 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         super.tearDown();
     }
 
+    public void assertMatches(String value, String regex, String name) {
+        if (value == null) {
+            mAsserter.ok(false, name, "Expected /" + regex + "/, got null");
+            return;
+        }
+        mAsserter.ok(value.matches(regex), name, "Expected /" + regex +"/, got \"" + value + "\"");
+    }
+
     /**
      * Click on the specified element and return the resulting activity.
      * @return The created activity, or null if the element cannot be clicked.
@@ -110,14 +133,18 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
             mAsserter.ok(clicked != false, "checking that awesome bar clicked", "awesome bar was clicked");
             return null;
         }
-        // wait for click to take effect before waiting for activity
-        // (otherwise we sometimes get the previous activity)
-        getInstrumentation().waitForIdleSync();
+        // Wait for click to take effect before waiting for activity
+        // (otherwise we sometimes get the previous activity).
+        // Previously, waitForIdleSync was used here but it was found
+        // to hang very occasionally.
+        mSolo.sleep(2000);
         Activity activity = inst.waitForMonitor(monitor);
-        // give the activity time to render itself and initialize views 
+        // Give the activity time to render itself and initialize views 
         // before continuing, so that views are created before access
-        // attempts are made
-        getInstrumentation().waitForIdleSync();
+        // attempts are made. Again, waitForIdleSync was used here
+        // previously, but replaced with a sleep to avoid hangs.
+        // TODO: Investigate and document why these pauses are required.
+        mSolo.sleep(2000);
         return activity;
     }
 
@@ -160,7 +187,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         hitEnterAndWait();
     }
 
-    protected final void verifyUrl(String url) {
+    public final void verifyUrl(String url) {
         Activity awesomeBarActivity = clickOnAwesomeBar();
         Element urlbar = mDriver.findElement(awesomeBarActivity, "awesomebar_text");
         String urlbarText = null;

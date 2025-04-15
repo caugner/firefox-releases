@@ -9,8 +9,9 @@
 #include "nsIDOMTouchEvent.h"
 #include "nsString.h"
 #include "nsTArray.h"
+#include "mozilla/Attributes.h"
 
-class nsDOMTouch : public nsIDOMTouch
+class nsDOMTouch MOZ_FINAL : public nsIDOMTouch
 {
 public:
   nsDOMTouch(nsIDOMEventTarget* aTarget,
@@ -104,7 +105,7 @@ public:
 
   nsDOMTouchList() { }
   nsDOMTouchList(nsTArray<nsCOMPtr<nsIDOMTouch> > &aTouches);
-  
+
   void Append(nsIDOMTouch* aPoint)
   {
     mPoints.AppendElement(aPoint);
@@ -114,6 +115,7 @@ public:
   {
     return mPoints.SafeElementAt(aIndex, nsnull);
   }
+
 protected:
   nsTArray<nsCOMPtr<nsIDOMTouch> > mPoints;
 };

@@ -107,7 +107,7 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
-  nsresult CopyInnerTo(nsGenericElement* aDest) const;
+  nsresult CopyInnerTo(nsGenericElement* aDest);
 
   void StartObjectLoad() { StartObjectLoad(true); }
 
@@ -153,6 +153,9 @@ private:
   // mIsDoneAddingChildren is only really used for <applet>.  This boolean is
   // always true for <embed>, per the documentation in nsIContent.h.
   bool mIsDoneAddingChildren;
+
+  virtual void GetItemValueText(nsAString& text);
+  virtual void SetItemValueText(const nsAString& text);
 };
 
 
@@ -169,6 +172,26 @@ nsHTMLSharedObjectElement::nsHTMLSharedObjectElement(already_AddRefed<nsINodeInf
 
   // By default we're in the loading state
   AddStatesSilently(NS_EVENT_STATE_LOADING);
+}
+
+void
+nsHTMLSharedObjectElement::GetItemValueText(nsAString& aValue)
+{
+  if (mNodeInfo->Equals(nsGkAtoms::applet)) {
+    nsGenericHTMLElement::GetItemValueText(aValue);
+  } else {
+    GetSrc(aValue);
+  }
+}
+
+void
+nsHTMLSharedObjectElement::SetItemValueText(const nsAString& aValue)
+{
+  if (mNodeInfo->Equals(nsGkAtoms::applet)) {
+    nsGenericHTMLElement::SetItemValueText(aValue);
+  } else {
+    SetSrc(aValue);
+  }
 }
 
 nsHTMLSharedObjectElement::~nsHTMLSharedObjectElement()
@@ -486,7 +509,7 @@ nsHTMLSharedObjectElement::DestroyContent()
 }
 
 nsresult
-nsHTMLSharedObjectElement::CopyInnerTo(nsGenericElement* aDest) const
+nsHTMLSharedObjectElement::CopyInnerTo(nsGenericElement* aDest)
 {
   nsresult rv = nsGenericHTMLElement::CopyInnerTo(aDest);
   NS_ENSURE_SUCCESS(rv, rv);

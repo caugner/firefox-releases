@@ -874,7 +874,7 @@ public:
      */
     virtual SharedTextureHandle CreateSharedHandle(TextureImage::TextureShareType aType,
                                                    void* aBuffer,
-                                                   SharedTextureBufferType aBufferType) { return nsnull; }  
+                                                   SharedTextureBufferType aBufferType) { return 0; }
     /**
      * Publish GLContext content to intermediate buffer attached to shared handle.
      * Shared handle content is ready to be used after call returns, and no need extra Flush/Finish are required.
@@ -1565,6 +1565,7 @@ public:
         EXT_robustness,
         ARB_sync,
         OES_EGL_image,
+        OES_EGL_sync,
         Extensions_Max
     };
 
@@ -2511,6 +2512,12 @@ public:
     void fPixelStorei(GLenum pname, GLint param) {
         BEFORE_GL_CALL;
         mSymbols.fPixelStorei(pname, param);
+        AFTER_GL_CALL;
+    }
+
+    void fPointParameterf(GLenum pname, GLfloat param) {
+        BEFORE_GL_CALL;
+        mSymbols.fPointParameterf(pname, param);
         AFTER_GL_CALL;
     }
 

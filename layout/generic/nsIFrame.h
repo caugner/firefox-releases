@@ -238,6 +238,10 @@ typedef PRUint64 nsFrameState;
 // placeholder.  This can happen for two reasons:  (1) the float was
 // split, and this piece is the continuation, or (2) the entire float
 // didn't fit on the page.
+// Note that this bit is also shared by text frames for
+// TEXT_FORCE_TRIM_WHITESPACE.  That's OK because we only check the
+// NS_FRAME_IS_PUSHED_FLOAT bit on frames which we already know are
+// out-of-flow.
 #define NS_FRAME_IS_PUSHED_FLOAT                    NS_FRAME_STATE_BIT(32)
 
 // This bit acts as a loop flag for recursive paint server drawing.
@@ -623,7 +627,7 @@ public:
    *            name,
    *          NS_ERROR_UNEXPECTED if the frame is an atomic frame,
    *          NS_OK otherwise.  In this case, AppendFrames empties out
-   *            aChildList in the process of moving the frames over to its own
+   *            aFrameList in the process of moving the frames over to its own
    *            child list.
    */
   NS_IMETHOD AppendFrames(ChildListID     aListID,
@@ -642,7 +646,7 @@ public:
    *            name,
    *          NS_ERROR_UNEXPECTED if the frame is an atomic frame,
    *          NS_OK otherwise.  In this case, InsertFrames empties out
-   *            aChildList in the process of moving the frames over to its own
+   *            aFrameList in the process of moving the frames over to its own
    *            child list.
    */
   NS_IMETHOD InsertFrames(ChildListID     aListID,
@@ -677,6 +681,12 @@ public:
    * May return nsnull during reflow
    */
   virtual nsIFrame* GetContentInsertionFrame() { return this; }
+
+  /**
+   * Move any frames on our overflow list to the end of our principal list.
+   * @return true if there were any overflow frames
+   */
+  virtual bool DrainSelfOverflowList() { return false; }
 
   /**
    * Get the frame that should be scrolled if the content associated
@@ -901,7 +911,7 @@ public:
   // The initial overflow area passed to FinishAndStoreOverflow. This is only set
   // on frames that Preserve3D(), and when at least one of the overflow areas
   // differs from the frame bound rect.
-  NS_DECLARE_FRAME_PROPERTY(InitialOverflowProperty, DestroyOverflowAreas);
+  NS_DECLARE_FRAME_PROPERTY(InitialOverflowProperty, DestroyOverflowAreas)
 
   NS_DECLARE_FRAME_PROPERTY(UsedMarginProperty, DestroyMargin)
   NS_DECLARE_FRAME_PROPERTY(UsedPaddingProperty, DestroyMargin)
@@ -1388,7 +1398,7 @@ public:
    *
    * @param aStates the changed states
    */
-  virtual void ContentStatesChanged(nsEventStates aStates) { };
+  virtual void ContentStatesChanged(nsEventStates aStates) { }
 
   /**
    * Return how your frame can be split.
@@ -2312,6 +2322,13 @@ public:
   nsRect GetVisualOverflowRectRelativeToSelf() const;
 
   /**
+   * Returns this frame's visual overflow rect as it would be before taking
+   * account of SVG effects or transforms. The rect returned is relative to
+   * this frame.
+   */
+  nsRect GetPreEffectsVisualOverflowRect() const;
+
+  /**
    * Store the overflow area in the frame's mOverflow.mVisualDeltas
    * fields or as a frame property in the frame manager so that it can
    * be retrieved later without reflowing the frame. Returns true if either of
@@ -2690,7 +2707,7 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
   NS_HIDDEN_(nsresult) Redraw(nsBoxLayoutState& aState, const nsRect* aRect = nsnull);
   NS_IMETHOD RelayoutChildAtOrdinal(nsBoxLayoutState& aState, nsIBox* aChild)=0;
   // XXX take this out after we've branched
-  virtual bool GetMouseThrough() const { return false; };
+  virtual bool GetMouseThrough() const { return false; }
 
 #ifdef DEBUG_LAYOUT
   NS_IMETHOD SetDebug(nsBoxLayoutState& aState, bool aDebug)=0;
@@ -2981,7 +2998,7 @@ protected:
    *              Input: mDirection
    *              Output: mResultContent, mContentOffset
    */
-   nsresult PeekOffsetParagraph(nsPeekOffsetStruct *aPos);
+  nsresult PeekOffsetParagraph(nsPeekOffsetStruct *aPos);
 
 private:
   nsOverflowAreas* GetOverflowAreasProperty();
@@ -3005,7 +3022,7 @@ private:
   bool SetOverflowAreas(const nsOverflowAreas& aOverflowAreas);
   nsPoint GetOffsetToCrossDoc(const nsIFrame* aOther, const PRInt32 aAPD) const;
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 public:
   // Formerly nsIFrameDebug
   NS_IMETHOD  List(FILE* out, PRInt32 aIndent) const = 0;

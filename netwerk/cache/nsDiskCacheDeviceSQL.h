@@ -9,7 +9,6 @@
 #include "nsCacheDevice.h"
 #include "nsIApplicationCache.h"
 #include "nsIApplicationCacheService.h"
-#include "nsILocalFile.h"
 #include "nsIObserver.h"
 #include "mozIStorageConnection.h"
 #include "mozIStorageFunction.h"
@@ -20,11 +19,12 @@
 #include "nsInterfaceHashtable.h"
 #include "nsClassHashtable.h"
 #include "nsWeakReference.h"
+#include "mozilla/Attributes.h"
 
 class nsIURI;
 class nsOfflineCacheDevice;
 
-class nsApplicationCacheNamespace : public nsIApplicationCacheNamespace
+class nsApplicationCacheNamespace MOZ_FINAL : public nsIApplicationCacheNamespace
 {
 public:
   NS_DECL_ISUPPORTS
@@ -38,7 +38,7 @@ private:
   nsCString mData;
 };
 
-class nsOfflineCacheEvictionFunction : public mozIStorageFunction {
+class nsOfflineCacheEvictionFunction MOZ_FINAL : public mozIStorageFunction {
 public:
   NS_DECL_ISUPPORTS
   NS_DECL_MOZISTORAGEFUNCTION
@@ -165,11 +165,13 @@ public:
    * Preference accessors
    */
 
-  void                    SetCacheParentDirectory(nsILocalFile * parentDir);
+  void                    SetCacheParentDirectory(nsIFile * parentDir);
   void                    SetCapacity(PRUint32  capacity);
+  void                    SetAutoShutdown() { mAutoShutdown = true; }
+  bool                    AutoShutdown(nsIApplicationCache * aAppCache);
 
-  nsILocalFile *          BaseDirectory() { return mBaseDirectory; }
-  nsILocalFile *          CacheDirectory() { return mCacheDirectory; }
+  nsIFile *               BaseDirectory() { return mBaseDirectory; }
+  nsIFile *               CacheDirectory() { return mCacheDirectory; }
   PRUint32                CacheCapacity() { return mCacheCapacity; }
   PRUint32                CacheSize();
   PRUint32                EntryCount();
@@ -253,10 +255,11 @@ private:
   nsCOMPtr<mozIStorageStatement>  mStatement_EnumerateGroups;
   nsCOMPtr<mozIStorageStatement>  mStatement_EnumerateGroupsTimeOrder;
 
-  nsCOMPtr<nsILocalFile>          mBaseDirectory;
-  nsCOMPtr<nsILocalFile>          mCacheDirectory;
+  nsCOMPtr<nsIFile>               mBaseDirectory;
+  nsCOMPtr<nsIFile>               mCacheDirectory;
   PRUint32                        mCacheCapacity; // in bytes
   PRInt32                         mDeltaCounter;
+  bool                            mAutoShutdown;
 
   nsInterfaceHashtable<nsCStringHashKey, nsIWeakReference> mCaches;
   nsClassHashtable<nsCStringHashKey, nsCString> mActiveCachesByGroup;

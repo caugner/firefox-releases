@@ -85,6 +85,8 @@ public:
                                nsIPluginInstanceOwner *aOwner);
   nsresult IsPluginEnabledForType(const char* aMimeType);
   nsresult IsPluginEnabledForExtension(const char* aExtension, const char* &aMimeType);
+  bool     IsPluginClickToPlayForType(const char *aMimeType);
+  nsresult GetBlocklistStateForType(const char *aMimeType, PRUint32 *state);
 
   nsresult GetPluginCount(PRUint32* aPluginCount);
   nsresult GetPlugins(PRUint32 aPluginCount, nsIDOMPlugin** aPluginArray);
@@ -115,7 +117,6 @@ public:
                                        char **outPostData, PRUint32 *outPostDataLen);
   nsresult CreateTempFileToPost(const char *aPostDataURL, nsIFile **aTmpFile);
   nsresult NewPluginNativeWindow(nsPluginNativeWindow ** aPluginNativeWindow);
-  nsresult InstantiateDummyJavaPlugin(nsIPluginInstanceOwner *aOwner);
 
   void AddIdleTimeTarget(nsIPluginInstanceOwner* objectFrame, bool isVisible);
   void RemoveIdleTimeTarget(nsIPluginInstanceOwner* objectFrame);
@@ -157,6 +158,10 @@ public:
   // Writes updated plugins settings to disk and unloads the plugin
   // if it is now disabled
   nsresult UpdatePluginInfo(nsPluginTag* aPluginTag);
+  
+  // Helper that checks if a type is whitelisted in plugin.allowed_types.
+  // Always returns true if plugin.allowed_types is not set
+  static bool IsTypeWhitelisted(const char *aType);
 
   // checks whether aTag is a "java" plugin tag (a tag for a plugin
   // that does Java)
@@ -227,6 +232,11 @@ private:
   nsresult
   FindPlugins(bool aCreatePluginList, bool * aPluginsChanged);
 
+  // Registers or unregisters the given mime type with the category manager
+  // (performs no checks - see UpdateCategoryManager)
+  enum nsRegisterType { ePluginRegister, ePluginUnregister };
+  void RegisterWithCategoryManager(nsCString &aMimeType, nsRegisterType aType);
+
   nsresult
   ScanPluginsDirectory(nsIFile *pluginsDir,
                        bool aCreatePluginList,
@@ -277,6 +287,8 @@ private:
 
   // set by pref plugin.disable
   bool mPluginsDisabled;
+  // set by pref plugins.click_to_play
+  bool mPluginsClickToPlay;
 
   // Any instances in this array will have valid plugin objects via GetPlugin().
   // When removing an instance it might not die - be sure to null out it's plugin.

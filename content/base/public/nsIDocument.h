@@ -11,8 +11,6 @@
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
 #include "nsIURI.h"
-#include "nsWeakPtr.h"
-#include "nsIWeakReferenceUtils.h"
 #include "nsILoadGroup.h"
 #include "nsCRT.h"
 #include "mozFlushType.h"
@@ -22,7 +20,6 @@
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
 #include "nsNodeInfoManager.h"
-#include "nsIStreamListener.h"
 #include "nsIVariant.h"
 #include "nsIObserver.h"
 #include "nsGkAtoms.h"
@@ -34,8 +31,12 @@
 #include "nsIFrameRequestCallback.h"
 #include "nsEventStates.h"
 #include "nsIStructuredCloneContainer.h"
-#include "nsIBFCacheEntry.h"
+#include "nsILoadContext.h"
 
+class nsIRequest;
+class nsPIDOMWindow;
+class nsIStreamListener;
+class nsIBFCacheEntry;
 class nsIContent;
 class nsPresContext;
 class nsIPresShell;
@@ -92,8 +93,8 @@ class Element;
 } // namespace mozilla
 
 #define NS_IDOCUMENT_IID \
-{ 0x7bac702d, 0xca67, 0x4ce1, \
- { 0x80, 0x3c, 0x35, 0xde, 0x81, 0x26, 0x04, 0x97 } }
+{ 0x8c6a1e62, 0xd5ad, 0x4297, \
+  { 0xb9, 0x41, 0x64, 0x49, 0x22, 0x2e, 0xc4, 0xf0 } }
 
 // Flag for AddStyleSheet().
 #define NS_STYLESHEET_FROM_CATALOG                (1 << 0)
@@ -502,9 +503,14 @@ public:
   virtual Element* FindContentForSubDocument(nsIDocument* aDocument) const = 0;
 
   /**
+   * Return the doctype for this document.
+   */
+  nsIContent* GetDocumentType() const;
+
+  /**
    * Return the root element for this document.
    */
-  Element *GetRootElement() const;
+  Element* GetRootElement() const;
 
 protected:
   virtual Element *GetRootElementInternal() const = 0;
@@ -674,6 +680,12 @@ public:
     return mWindow ? mWindow->GetOuterWindow() : GetWindowInternal();
   }
 
+  bool IsInBackgroundWindow() const
+  {
+    nsPIDOMWindow* outer = mWindow ? mWindow->GetOuterWindow() : nsnull;
+    return outer && outer->IsBackground();
+  }
+  
   /**
    * Return the inner window used as the script compilation scope for
    * this document. If you're not absolutely sure you need this, use
@@ -874,6 +886,19 @@ public:
       CallQueryReferent(mDocumentContainer.get(), &container);
 
     return container;
+  }
+
+  /**
+   * Get the container's load context for this document.
+   */
+  nsILoadContext* GetLoadContext() const
+  {
+    nsCOMPtr<nsISupports> container = GetContainer();
+    if (container) {
+      nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(container);
+      return loadContext;
+    }
+    return nsnull;
   }
 
   /**
@@ -2035,6 +2060,12 @@ nsINode::GetOwnerDocument() const
   nsIDocument* ownerDoc = OwnerDoc();
 
   return ownerDoc != this ? ownerDoc : nsnull;
+}
+
+inline nsINode*
+nsINode::OwnerDocAsNode() const
+{
+  return OwnerDoc();
 }
 
 #endif /* nsIDocument_h___ */

@@ -9,7 +9,6 @@
 #include "RuntimeService.h"
 
 #include "nsIDOMChromeWindow.h"
-#include "nsIDocument.h"
 #include "nsIEffectiveTLDService.h"
 #include "nsIObserverService.h"
 #include "nsIPlatformCharset.h"
@@ -35,6 +34,8 @@
 #include "Events.h"
 #include "Worker.h"
 #include "WorkerPrivate.h"
+
+#include "OSFileConstants.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -147,6 +148,7 @@ enum {
   PREF_methodjit,
   PREF_methodjit_always,
   PREF_typeinference,
+  PREF_allow_xml,
   PREF_jit_hardening,
   PREF_mem_max,
 
@@ -166,6 +168,7 @@ const char* gPrefsToWatch[] = {
   JS_OPTIONS_DOT_STR "methodjit.content",
   JS_OPTIONS_DOT_STR "methodjit_always",
   JS_OPTIONS_DOT_STR "typeinference",
+  JS_OPTIONS_DOT_STR "allow_xml",
   JS_OPTIONS_DOT_STR "jit_hardening",
   JS_OPTIONS_DOT_STR "mem.max"
 
@@ -214,7 +217,9 @@ PrefCallback(const char* aPrefName, void* aClosure)
     if (Preferences::GetBool(gPrefsToWatch[PREF_typeinference])) {
       newOptions |= JSOPTION_TYPE_INFERENCE;
     }
-    newOptions |= JSOPTION_ALLOW_XML;
+    if (Preferences::GetBool(gPrefsToWatch[PREF_allow_xml])) {
+      newOptions |= JSOPTION_ALLOW_XML;
+    }
 
     RuntimeService::SetDefaultJSContextOptions(newOptions);
     rts->UpdateAllWorkerJSContextOptions();
@@ -363,13 +368,13 @@ BEGIN_WORKERS_NAMESPACE
 // Entry point for the DOM.
 JSBool
 ResolveWorkerClasses(JSContext* aCx, JSHandleObject aObj, JSHandleId aId, unsigned aFlags,
-                     JSObject** aObjp)
+                     JSMutableHandleObject aObjp)
 {
   AssertIsOnMainThread();
 
-  // Don't care about assignments or declarations, bail now.
-  if (aFlags & (JSRESOLVE_ASSIGNING | JSRESOLVE_DECLARING)) {
-    *aObjp = nsnull;
+  // Don't care about assignments, bail now.
+  if (aFlags & JSRESOLVE_ASSIGNING) {
+    aObjp.set(nsnull);
     return true;
   }
 
@@ -413,7 +418,7 @@ ResolveWorkerClasses(JSContext* aCx, JSHandleObject aObj, JSHandleId aId, unsign
   if (shouldResolve) {
     // Don't do anything if workers are disabled.
     if (!isChrome && !Preferences::GetBool(PREF_WORKERS_ENABLED)) {
-      *aObjp = nsnull;
+      aObjp.set(nsnull);
       return true;
     }
 
@@ -435,12 +440,12 @@ ResolveWorkerClasses(JSContext* aCx, JSHandleObject aObj, JSHandleId aId, unsign
       return false;
     }
 
-    *aObjp = aObj;
+    aObjp.set(aObj);
     return true;
   }
 
   // Not resolved.
-  *aObjp = nsnull;
+  aObjp.set(nsnull);
   return true;
 }
 
@@ -777,8 +782,9 @@ RuntimeService::ScheduleWorker(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
   }
 
   if (!thread) {
-    if (NS_FAILED(NS_NewThread(getter_AddRefs(thread), nsnull,
-                               WORKER_STACK_SIZE))) {
+    if (NS_FAILED(NS_NewNamedThread("DOM Worker",
+                                    getter_AddRefs(thread), nsnull,
+                                    WORKER_STACK_SIZE))) {
       UnregisterWorker(aCx, aWorkerPrivate);
       JS_ReportError(aCx, "Could not create new thread!");
       return false;
@@ -924,6 +930,11 @@ RuntimeService::Init()
                                      mSystemCharset);
   }
 
+  rv = InitOSFileConstants();
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
   return NS_OK;
 }
 
@@ -1038,6 +1049,8 @@ RuntimeService::Cleanup()
       mObserved = NS_FAILED(rv);
     }
   }
+
+  CleanupOSFileConstants();
 }
 
 // static

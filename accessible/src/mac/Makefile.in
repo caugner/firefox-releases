@@ -14,10 +14,9 @@ LIBRARY_NAME = accessibility_toolkit_s
 EXPORT_LIBRARY = ..
 LIBXUL_LIBRARY = 1
 
-  
-  
 CMMSRCS = \
           AccessibleWrap.mm \
+          ApplicationAccessibleWrap.mm \
           DocAccessibleWrap.mm \
           nsAccessNodeWrap.mm \
           mozAccessible.mm \
@@ -45,5 +44,9 @@ LOCAL_INCLUDES += \
   -I$(srcdir)/../generic \
   -I$(srcdir)/../html \
   -I$(srcdir)/../xul \
+  -I$(topsrcdir)/widget/cocoa \
+  -I$(topsrcdir)/widget/xpwidgets \
+  -I$(topsrcdir)/layout/xul/base/src \
+  -I$(topsrcdir)/layout/generic \
   $(NULL)
 

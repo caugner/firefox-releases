@@ -15,30 +15,19 @@
 class Accessible;
 class nsINode;
 class nsIContent;
-class nsIDocument;
 class nsIFrame;
 class nsIPresShell;
 class nsObjectFrame;
 
 // 10ff6dca-b219-4b64-9a4c-67a62b86edce
 #define NS_IACCESSIBILITYSERVICE_IID \
-{ 0x10ff6dca, 0xb219, 0x4b64, \
- { 0x9a, 0x4c, 0x67, 0xa6, 0x2b, 0x86, 0xed, 0xce } }
+{ 0x84dd9182, 0x6639, 0x4377, \
+ { 0xa4, 0x13, 0xad, 0xe1, 0xae, 0x4e, 0x52, 0xdd } }
 
 class nsIAccessibilityService : public nsIAccessibleRetrieval
 {
 public:
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_IACCESSIBILITYSERVICE_IID)
-
-  /**
-   * Return an accessible object for a DOM node in the given pres shell.
-   *
-   * @param  aNode      [in] the DOM node to get an accessible for
-   * @param  aPresShell [in] the presentation shell which contains layout info
-   *                         for the DOM node
-   */
-  virtual Accessible* GetAccessible(nsINode* aNode,
-                                    nsIPresShell* aPresShell) = 0;
 
   /**
    * Return root document accessible that is or contains a document accessible
@@ -57,33 +46,6 @@ public:
    */
   virtual Accessible* AddNativeRootAccessible(void* aAtkAccessible) = 0;
   virtual void RemoveNativeRootAccessible(Accessible* aRootAccessible) = 0;
-
-  /**
-   * Notification used to update the accessible tree when new content is
-   * inserted.
-   */
-  virtual void ContentRangeInserted(nsIPresShell* aPresShell,
-                                    nsIContent* aContainer,
-                                    nsIContent* aStartChild,
-                                    nsIContent* aEndChild) = 0;
-
-  /**
-   * Notification used to update the accessible tree when content is removed.
-   */
-  virtual void ContentRemoved(nsIPresShell* aPresShell, nsIContent* aContainer,
-                              nsIContent* aChild) = 0;
-
-  /**
-   * Notify accessibility that anchor jump has been accomplished to the given
-   * target. Used by layout.
-   */
-  virtual void NotifyOfAnchorJumpTo(nsIContent *aTarget) = 0;
-
-  /**
-   * Notify the accessibility service that the given presshell is
-   * being destroyed.
-   */
-  virtual void PresShellDestroyed(nsIPresShell *aPresShell) = 0;
 
   /**
    * Fire accessible event of the given type for the given target.

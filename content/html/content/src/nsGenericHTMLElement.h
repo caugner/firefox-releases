@@ -10,7 +10,6 @@
 #include "nsIDOMHTMLElement.h"
 #include "nsINameSpaceManager.h"  // for kNameSpaceID_None
 #include "nsIFormControl.h"
-#include "nsFrameLoader.h"
 #include "nsGkAtoms.h"
 #include "nsContentCreatorFunctions.h"
 
@@ -33,6 +32,9 @@ struct nsSize;
 class nsHTMLFormElement;
 class nsIDOMDOMStringMap;
 class nsIDOMHTMLMenuElement;
+class nsIDOMHTMLCollection;
+class nsDOMSettableTokenList;
+class nsIDOMHTMLPropertiesCollection;
 
 typedef nsMappedAttributeElement nsGenericHTMLElementBase;
 
@@ -69,7 +71,7 @@ public:
                              void **aInstancePtr);
 
   // From nsGenericElement
-  nsresult CopyInnerTo(nsGenericElement* aDest) const;
+  nsresult CopyInnerTo(nsGenericElement* aDest);
 
   // Implementation for nsIDOMElement
   NS_METHOD SetAttribute(const nsAString& aName,
@@ -114,6 +116,26 @@ public:
   NS_IMETHOD SetSpellcheck(bool aSpellcheck);
   NS_IMETHOD GetDraggable(bool* aDraggable);
   NS_IMETHOD SetDraggable(bool aDraggable);
+  NS_IMETHOD GetItemScope(bool* aItemScope);
+  NS_IMETHOD SetItemScope(bool aItemScope);
+  NS_IMETHOD GetItemValue(nsIVariant** aValue);
+  NS_IMETHOD SetItemValue(nsIVariant* aValue);
+protected:
+  // These methods are used to implement element-specific behavior of Get/SetItemValue
+  // when an element has @itemprop but no @itemscope.
+  virtual void GetItemValueText(nsAString& text);
+  virtual void SetItemValueText(const nsAString& text);
+  nsDOMSettableTokenList* GetTokenList(nsIAtom* aAtom);
+public:
+  NS_IMETHOD GetItemType(nsIVariant** aType);
+  NS_IMETHOD SetItemType(nsIVariant* aType);
+  NS_IMETHOD GetItemId(nsAString& aId);
+  NS_IMETHOD SetItemId(const nsAString& aId);
+  NS_IMETHOD GetItemRef(nsIVariant** aRef);
+  NS_IMETHOD SetItemRef(nsIVariant* aValue);
+  NS_IMETHOD GetItemProp(nsIVariant** aProp);
+  NS_IMETHOD SetItemProp(nsIVariant* aValue);
+  NS_IMETHOD GetProperties(nsIDOMHTMLPropertiesCollection** aReturn);
   NS_IMETHOD GetAccessKey(nsAString &aAccessKey);
   NS_IMETHOD SetAccessKey(const nsAString& aAccessKey);
   NS_IMETHOD GetAccessKeyLabel(nsAString& aLabel);
@@ -124,6 +146,11 @@ public:
   // Callback for destructor of of dataset to ensure to null out weak pointer.
   nsresult ClearDataset();
   nsresult GetContextMenu(nsIDOMHTMLMenuElement** aContextMenu);
+
+  /**
+   * Get width and height, using given image request if attributes are unset.
+   */
+  nsSize GetWidthHeightForImage(imgIRequest *aImageRequest);
 
 protected:
   nsresult GetMarkup(bool aIncludeSelf, nsAString& aMarkup);
@@ -773,9 +800,6 @@ private:
   void ChangeEditableState(PRInt32 aChange);
 };
 
-
-//----------------------------------------------------------------------
-
 class nsHTMLFieldSetElement;
 
 /**
@@ -1146,31 +1170,6 @@ PR_STATIC_ASSERT(ELEMENT_TYPE_SPECIFIC_BITS_OFFSET + 1 < 32);
   }
 
 /**
- * A macro to implement the getter and setter for a given content
- * property that needs to set a positive integer. The method uses
- * the generic GetAttr and SetAttr methods. This macro is much like
- * the NS_IMPL_NON_NEGATIVE_INT_ATTR macro except the exception is
- * thrown also when the value is equal to 0.
- */
-#define NS_IMPL_POSITIVE_INT_ATTR(_class, _method, _atom)                 \
-  NS_IMPL_POSITIVE_INT_ATTR_DEFAULT_VALUE(_class, _method, _atom, 1)
-
-#define NS_IMPL_POSITIVE_INT_ATTR_DEFAULT_VALUE(_class, _method, _atom, _default)  \
-  NS_IMETHODIMP                                                           \
-  _class::Get##_method(PRInt32* aValue)                                   \
-  {                                                                       \
-    return GetIntAttr(nsGkAtoms::_atom, _default, aValue);                \
-  }                                                                       \
-  NS_IMETHODIMP                                                           \
-  _class::Set##_method(PRInt32 aValue)                                    \
-  {                                                                       \
-    if (aValue <= 0) {                                                    \
-      return NS_ERROR_DOM_INDEX_SIZE_ERR;                                 \
-    }                                                                     \
-    return SetIntAttr(nsGkAtoms::_atom, aValue);                          \
-  }
-
-/**
  * QueryInterface() implementation helper macros
  */
 
@@ -1380,6 +1379,45 @@ PR_STATIC_ASSERT(ELEMENT_TYPE_SPECIFIC_BITS_OFFSET + 1 < 32);
   NS_SCRIPTABLE NS_IMETHOD Blur() { \
     return _to Blur(); \
   } \
+  NS_SCRIPTABLE NS_IMETHOD GetItemScope(bool* aItemScope) { \
+    return _to GetItemScope(aItemScope); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD SetItemScope(bool aItemScope) { \
+    return _to SetItemScope(aItemScope); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD GetItemType(nsIVariant** aType) { \
+    return _to GetItemType(aType); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD SetItemType(nsIVariant* aType) { \
+    return _to SetItemType(aType); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD GetItemId(nsAString& aId) { \
+    return _to GetItemId(aId); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD SetItemId(const nsAString& aId) { \
+    return _to SetItemId(aId); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD GetProperties(nsIDOMHTMLPropertiesCollection** aReturn) { \
+    return _to GetProperties(aReturn); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD GetItemValue(nsIVariant** aValue) { \
+    return _to GetItemValue(aValue); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD SetItemValue(nsIVariant* aValue) { \
+    return _to SetItemValue(aValue); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD GetItemRef(nsIVariant** aRef) { \
+    return _to GetItemRef(aRef); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD SetItemRef(nsIVariant* aRef) { \
+    return _to SetItemRef(aRef); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD GetItemProp(nsIVariant** aProp) { \
+    return _to GetItemProp(aProp); \
+  } \
+  NS_SCRIPTABLE NS_IMETHOD SetItemProp(nsIVariant* aProp) { \
+    return _to SetItemProp(aProp); \
+  } \
   NS_SCRIPTABLE NS_IMETHOD GetAccessKey(nsAString& aAccessKey) { \
     return _to GetAccessKey(aAccessKey); \
   } \
@@ -1515,6 +1553,7 @@ NS_DECLARE_NS_NEW_HTML_ELEMENT(Map)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Menu)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(MenuItem)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Meta)
+NS_DECLARE_NS_NEW_HTML_ELEMENT(Meter)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Object)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(OptGroup)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Option)

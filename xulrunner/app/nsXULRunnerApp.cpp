@@ -13,7 +13,7 @@
 #endif
 
 #include "nsAppRunner.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsIXULAppInstall.h"
 #include "nsCOMPtr.h"
 #include "nsMemory.h"
@@ -97,7 +97,7 @@ GetGREVersion(const char *argv0,
   if (aVersion)
     aVersion->Assign("<Error>");
 
-  nsCOMPtr<nsILocalFile> iniFile;
+  nsCOMPtr<nsIFile> iniFile;
   nsresult rv = BinaryPath::GetFile(argv0, getter_AddRefs(iniFile));
   if (NS_FAILED(rv))
     return rv;
@@ -167,7 +167,7 @@ GetXULRunnerDir(const char *argv0, nsIFile* *aResult)
 {
   nsresult rv;
 
-  nsCOMPtr<nsILocalFile> appFile;
+  nsCOMPtr<nsIFile> appFile;
   rv = BinaryPath::GetFile(argv0, getter_AddRefs(appFile));
   if (NS_FAILED(rv)) {
     Output(true, "Could not find XULRunner application path.\n");
@@ -187,8 +187,8 @@ InstallXULApp(nsIFile* aXULRunnerDir,
               const char *aInstallTo,
               const char *aLeafName)
 {
-  nsCOMPtr<nsILocalFile> appLocation;
-  nsCOMPtr<nsILocalFile> installTo;
+  nsCOMPtr<nsIFile> appLocation;
+  nsCOMPtr<nsIFile> installTo;
   nsString leafName;
 
   nsresult rv = XRE_GetFileFromPath(aAppLocation, getter_AddRefs(appLocation));
@@ -232,7 +232,7 @@ InstallXULApp(nsIFile* aXULRunnerDir,
 class AutoAppData
 {
 public:
-  AutoAppData(nsILocalFile* aINIFile) : mAppData(nsnull) {
+  AutoAppData(nsIFile* aINIFile) : mAppData(nsnull) {
     nsresult rv = XRE_CreateAppData(aINIFile, &mAppData);
     if (NS_FAILED(rv))
       mAppData = nsnull;
@@ -369,7 +369,7 @@ int main(int argc, char* argv[])
     putenv(kAppEnv);
   }
 
-  nsCOMPtr<nsILocalFile> appDataLF;
+  nsCOMPtr<nsIFile> appDataLF;
   rv = XRE_GetFileFromPath(appDataFile, getter_AddRefs(appDataLF));
   if (NS_FAILED(rv)) {
     Output(true, "Error: unrecognized application.ini path.\n");

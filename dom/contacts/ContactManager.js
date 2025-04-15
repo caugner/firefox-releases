@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict"
+"use strict";
 
 /* static functions */
 let DEBUG = 0;
@@ -78,6 +78,29 @@ ContactAddress.prototype = {
   QueryInterface : XPCOMUtils.generateQI([nsIDOMContactAddress])
 }
 
+//ContactEmail
+
+const CONTACTEMAIL_CONTRACTID = "@mozilla.org/contactEmail;1";
+const CONTACTEMAIL_CID        = Components.ID("{94811520-c11f-11e1-afa7-0800200c9a66}");
+const nsIDOMContactEmail      = Components.interfaces.nsIDOMContactEmail;
+
+function ContactEmail(aType, aAddress) {
+  this.type = aType || null;
+  this.address = aAddress || null;
+};
+
+ContactEmail.prototype = {
+
+  classID : CONTACTEMAIL_CID,
+  classInfo : XPCOMUtils.generateCI({classID: CONTACTEMAIL_CID,
+                                     contractID: CONTACTEMAIL_CONTRACTID,
+                                     classDescription: "ContactEmail",
+                                     interfaces: [nsIDOMContactEmail],
+                                     flags: nsIClassInfo.DOM_OBJECT}),
+
+  QueryInterface : XPCOMUtils.generateQI([nsIDOMContactEmail])
+}
+
 //ContactTelephone
 
 const CONTACTTELEPHONE_CONTRACTID = "@mozilla.org/contactTelephone;1";
@@ -133,10 +156,16 @@ Contact.prototype = {
   
   init: function init(aProp) {
     // Accept non-array strings for DOMString[] properties and convert them.
-    function _create(aField) {
-      if (typeof aField == "string")
-        return new Array(aField);
-      return aField;
+    function _create(aField) {   
+      if (Array.isArray(aField)) {
+        for (let i = 0; i < aField.length; i++) {
+          if (typeof aField[i] !== "string")
+            aField[i] = String(aField[i]);
+        }
+        return aField;
+      } else if (aField != null) {
+        return [String(aField)];
+      }
     };
 
     this.name =            _create(aProp.name) || null;
@@ -146,7 +175,16 @@ Contact.prototype = {
     this.familyName =      _create(aProp.familyName) || null;
     this.honorificSuffix = _create(aProp.honorificSuffix) || null;
     this.nickname =        _create(aProp.nickname) || null;
-    this.email =           _create(aProp.email) || null;
+
+    if (aProp.email) {
+      aProp.email = Array.isArray(aProp.email) ? aProp.email : [aProp.email];
+      this.email = new Array();
+      for (let i = 0; i < aProp.email.length; i++)
+        this.email.push(new ContactEmail(aProp.email[i].type, aProp.email[i].address));
+    } else {
+      this.email = null;
+    }
+
     this.photo =           _create(aProp.photo) || null;
     this.url =             _create(aProp.url) || null;
     this.category =        _create(aProp.category) || null;
@@ -340,7 +378,10 @@ ContactManager.prototype = {
 
         // Fire oncontactchange event
         if (this._oncontactchange) {
-          let event = new MozContactEvent(msg.contactID, req.reason);
+          let event = new this._window.MozContactChangeEvent("contactchanged", {
+            contactID: msg.contactID,
+            reason: req.reason
+          });
           this._oncontactchange.handleEvent(event);
         }
         break;
@@ -441,32 +482,5 @@ ContactManager.prototype = {
                                      flags: nsIClassInfo.DOM_OBJECT})
 }
 
-// MozContactEvent object
-function MozContactEvent(aContactID, aReason) {
-  debug("ContactEventConstr: " + aContactID + ", " + aReason);
-  this._contactID = aContactID;
-  this._reason = aReason;
-}
-
-MozContactEvent.prototype = {
-  get contactID() {
-    return this._contactID;
-  },
-
-  get reason() {
-    return this._reason;
-  },
-
-  classID: Components.ID("{a8cd4ba0-93d1-11e1-b0c4-0800200c9a66}"),
-
-  QueryInterface: XPCOMUtils.generateQI([Ci.mozIDOMContactEvent]),
-
-  classInfo: XPCOMUtils.generateCI({classID: Components.ID("{a8cd4ba0-93d1-11e1-b0c4-0800200c9a66}"),
-                                    contractID: "@mozilla.org/contact-event;1",
-                                    interfaces: [Ci.mozIDOMContactEvent],
-                                    flags: Ci.nsIClassInfo.DOM_OBJECT,
-                                    classDescription: "Contact Change Event"})
-}
-
 const NSGetFactory = XPCOMUtils.generateNSGetFactory(
-                       [Contact, ContactManager, ContactProperties, ContactAddress, ContactTelephone, ContactFindOptions])
+                       [Contact, ContactManager, ContactProperties, ContactAddress, ContactTelephone, ContactFindOptions, ContactEmail])

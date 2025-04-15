@@ -5,6 +5,7 @@
 
 #include "mozilla/dom/ContentChild.h"
 
+#include "mozilla/Attributes.h"
 #include "mozilla/Util.h"
 #include "mozilla/HashFunctions.h"
 
@@ -18,7 +19,6 @@
 #include "nsNetUtil.h"
 #include "nsIFile.h"
 #include "nsIInputStream.h"
-#include "nsILocalFile.h"
 #include "nsIObserverService.h"
 #include "nsIStringEnumerator.h"
 #include "nsIZipReader.h"
@@ -100,8 +100,8 @@ public:
   PrefChangedFunc mCallback;
 };
 
-class ValueObserver : public nsIObserver,
-                      public ValueObserverHashKey
+class ValueObserver MOZ_FINAL : public nsIObserver,
+                                public ValueObserverHashKey
 {
 public:
   NS_DECL_ISUPPORTS

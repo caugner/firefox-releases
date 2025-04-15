@@ -20,6 +20,7 @@
 #include "nsIFile.h"
 
 class nsDOMFileList;
+class nsIFilePicker;
 class nsIRadioGroupContainer;
 class nsIRadioGroupVisitor;
 class nsIRadioVisitor;
@@ -36,7 +37,7 @@ public:
    * @param aURI URI of the current page
    * @param aFile path to the last used directory
    */
-  nsresult FetchLastUsedDirectory(nsIURI* aURI, nsILocalFile** aFile);
+  nsresult FetchLastUsedDirectory(nsIURI* aURI, nsIFile** aFile);
 
   /**
    * Store the last used directory for this location using the
@@ -45,7 +46,7 @@ public:
    * @param aFile file chosen by the user - the path to the parent of this
    *        file will be stored
    */
-  nsresult StoreLastUsedDirectory(nsIURI* aURI, nsILocalFile* aFile);
+  nsresult StoreLastUsedDirectory(nsIURI* aURI, nsIFile* aFile);
 };
 
 class nsHTMLInputElement : public nsGenericHTMLFormElement,
@@ -215,10 +216,16 @@ public:
   bool     IsValueMissing() const;
   bool     HasTypeMismatch() const;
   bool     HasPatternMismatch() const;
+  bool     IsRangeOverflow() const;
+  bool     IsRangeUnderflow() const;
+  bool     HasStepMismatch() const;
   void     UpdateTooLongValidityState();
   void     UpdateValueMissingValidityState();
   void     UpdateTypeMismatchValidityState();
   void     UpdatePatternMismatchValidityState();
+  void     UpdateRangeOverflowValidityState();
+  void     UpdateRangeUnderflowValidityState();
+  void     UpdateStepMismatchValidityState();
   void     UpdateAllValidityStates(bool aNotify);
   void     UpdateBarredFromConstraintValidation();
   nsresult GetValidationMessage(nsAString& aValidationMessage,
@@ -232,6 +239,23 @@ public:
    * @note This method shouldn't be called if the radio elemnet hasn't a group.
    */
   void     UpdateValueMissingValidityStateForRadio(bool aIgnoreSelf);
+
+  /**
+   * Set filters to the filePicker according to the accept attribute value.
+   *
+   * See:
+   * http://dev.w3.org/html5/spec/forms.html#attr-input-accept
+   *
+   * @note You should not call this function if the element has no @accept.
+   * @note "All Files" filter is always set, no matter if there is a valid
+   * filter specifed or not.
+   * @note If there is only one valid filter that is audio or video or image,
+   * it will be selected as the default filter. Otherwise "All files" remains
+   * the default filter.
+   * @note If more than one valid filter is found, the "All Supported Types"
+   * filter is added, which is the concatenation of all valid filters.
+   */
+  void SetFilePickerFiltersFromAccept(nsIFilePicker* filePicker);
 
   /**
    * Returns the filter which should be used for the file picker according to
@@ -446,6 +470,26 @@ protected:
   bool DoesPatternApply() const;
 
   /**
+   * Returns if the min and max attributes apply for the current type.
+   */
+  bool DoesMinMaxApply() const;
+
+  /**
+   * Returns if the step attribute apply for the current type.
+   */
+  bool DoesStepApply() const { return DoesMinMaxApply(); }
+
+  /**
+   * Returns if stepDown and stepUp methods apply for the current type.
+   */
+  bool DoStepDownStepUpApply() const { return DoesStepApply(); }
+
+  /**
+   * Returns if valueAsNumber attribute applies for the current type.
+   */
+  bool DoesValueAsNumberApply() const { return DoesMinMaxApply(); }
+
+  /**
    * Returns if the maxlength attribute applies for the current type.
    */
   bool MaxLengthApplies() const { return IsSingleLineTextControl(false, mType); }
@@ -515,6 +559,62 @@ protected:
    */
   nsIRadioGroupContainer* GetRadioGroupContainer() const;
 
+  /**
+   * Returns the input element's value as a double-precision float.
+   * Returns NaN if the current element's value is not a floating point number.
+   *
+   * @return the input element's value as a double-precision float.
+   */
+  double GetValueAsDouble() const;
+
+  /**
+   * Sets the value of the element to the string representation of the double.
+   *
+   * @param aValue The double that will be used to set the value.
+   */
+  void SetValue(double aValue);
+
+  /**
+   * Update the HAS_RANGE bit field value.
+   */
+  void UpdateHasRange();
+
+  /**
+   * Returns the min attribute as a double.
+   * Returns NaN if the min attribute isn't a valid floating point number.
+   */
+  double GetMinAsDouble() const;
+
+  /**
+   * Returns the max attribute as a double.
+   * Returns NaN if the max attribute isn't a valid floating point number.
+   */
+  double GetMaxAsDouble() const;
+
+  /**
+   * Returns the current step value.
+   * Returns kStepAny if the current step is "any" string.
+   *
+   * @return the current step value.
+   */
+  double GetStep() const;
+
+  /**
+   * Return the base used to compute if a value matches step.
+   * Basically, it's the min attribute if present and a default value otherwise.
+   *
+   * @return The step base.
+   */
+  double GetStepBase() const;
+
+  /**
+   * Apply a step change from stepUp or stepDown by multiplying aStep by the
+   * current step value.
+   *
+   * @param aStep The value used to be multiplied against the step value.
+   */
+  nsresult ApplyStep(PRInt32 aStep);
+
   nsCOMPtr<nsIControllers> mControllers;
 
   /*
@@ -560,6 +660,11 @@ protected:
    */
   nsString mFocusedValue;  
 
+  // Default step base value when a type do not have specific one.
+  static const double kDefaultStepBase;
+  // Float alue returned by GetStep() when the step attribute is set to 'any'.
+  static const double kStepAny;
+
   /**
    * The type of this input (<input type=...>) as an integer.
    * @see nsIFormControl.h (specifically NS_FORM_INPUT_*)
@@ -578,6 +683,52 @@ protected:
   bool                     mInhibitRestoration  : 1;
   bool                     mCanShowValidUI      : 1;
   bool                     mCanShowInvalidUI    : 1;
+  bool                     mHasRange            : 1;
+
+private:
+  struct nsFilePickerFilter {
+    nsFilePickerFilter()
+      : mFilterMask(0), mIsTrusted(false) {}
+
+    nsFilePickerFilter(PRInt32 aFilterMask)
+      : mFilterMask(aFilterMask), mIsTrusted(true) {}
+
+    nsFilePickerFilter(const nsString& aTitle,
+                       const nsString& aFilter,
+                       const bool aIsTrusted = false)
+      : mFilterMask(0), mTitle(aTitle), mFilter(aFilter), mIsTrusted(aIsTrusted) {}
+
+    nsFilePickerFilter(const nsFilePickerFilter& other) {
+      mFilterMask = other.mFilterMask;
+      mTitle = other.mTitle;
+      mFilter = other.mFilter;
+      mIsTrusted = other.mIsTrusted;
+    }
+
+    bool operator== (const nsFilePickerFilter& other) const {
+      if ((mFilter == other.mFilter) && (mFilterMask == other.mFilterMask)) {
+        NS_ASSERTION(mIsTrusted == other.mIsTrusted,
+                     "Filter with similar list of extensions and mask should"
+                     " have the same trusted flag value");
+        return true;
+      } else {
+        return false;
+      }
+    }
+    
+    // Filter mask, using values defined in nsIFilePicker
+    PRInt32 mFilterMask;
+    // If mFilterMask is defined, mTitle and mFilter are useless and should be
+    // ignored
+    nsString mTitle;
+    nsString mFilter;
+    // mIsTrusted is true if mime type comes from a "trusted" source (e.g. our
+    // hard-coded set).
+    // false means it may come from an "untrusted" source (e.g. OS mime types
+    // mapping, which can be different accross OS, user's personal configuration, ...)
+    // For now, only mask filters are considered to be "trusted".
+    bool mIsTrusted; 
+  };
 };
 
 #endif

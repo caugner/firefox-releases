@@ -45,6 +45,7 @@
 
 #include "mozilla/FunctionTimer.h"
 #include "mozilla/CORSMode.h"
+#include "mozilla/Attributes.h"
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gCspPRLog;
@@ -57,7 +58,7 @@ using namespace mozilla::dom;
 // Per-request data structure
 //////////////////////////////////////////////////////////////
 
-class nsScriptLoadRequest : public nsISupports {
+class nsScriptLoadRequest MOZ_FINAL : public nsISupports {
 public:
   nsScriptLoadRequest(nsIScriptElement* aElement,
                       PRUint32 aVersion,
@@ -392,10 +393,6 @@ nsScriptLoader::ProcessScriptElement(nsIScriptElement *aElement)
     return false;
   }
 
-  // Default script language is whatever the root element specifies
-  // (which may come from a header or http-meta tag), or if there
-  // is no root element, from the script global object.
-  Element* rootElement = mDocument->GetRootElement();
   PRUint32 typeID = nsIProgrammingLanguage::JAVASCRIPT;
   PRUint32 version = 0;
   nsAutoString language, type, src;

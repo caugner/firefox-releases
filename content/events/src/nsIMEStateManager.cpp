@@ -34,6 +34,7 @@
 #include "nsIFormControl.h"
 #include "nsIForm.h"
 #include "nsHTMLFormElement.h"
+#include "mozilla/Attributes.h"
 
 using namespace mozilla::widget;
 
@@ -61,7 +62,7 @@ nsIMEStateManager::OnDestroyPresContext(nsPresContext* aPresContext)
                               InputContextAction::LOST_FOCUS);
     SetIMEState(newState, nsnull, widget, action);
   }
-  sContent = nsnull;
+  NS_IF_RELEASE(sContent);
   sPresContext = nsnull;
   OnTextStateBlur(nsnull, nsnull);
   return NS_OK;
@@ -89,7 +90,7 @@ nsIMEStateManager::OnRemoveContent(nsPresContext* aPresContext,
     SetIMEState(newState, nsnull, widget, action);
   }
 
-  sContent = nsnull;
+  NS_IF_RELEASE(sContent);
   sPresContext = nsnull;
 
   return NS_OK;
@@ -172,7 +173,10 @@ nsIMEStateManager::OnChangeFocusInternal(nsPresContext* aPresContext,
   SetIMEState(newState, aContent, widget, aAction);
 
   sPresContext = aPresContext;
-  sContent = aContent;
+  if (sContent != aContent) {
+    NS_IF_RELEASE(sContent);
+    NS_IF_ADDREF(sContent = aContent);
+  }
 
   return NS_OK;
 }
@@ -386,8 +390,8 @@ nsIMEStateManager::GetWidget(nsPresContext* aPresContext)
 // sTextStateObserver points to the currently active nsTextStateManager
 // sTextStateObserver is null if there is no focused editor
 
-class nsTextStateManager : public nsISelectionListener,
-                           public nsStubMutationObserver
+class nsTextStateManager MOZ_FINAL : public nsISelectionListener,
+                                     public nsStubMutationObserver
 {
 public:
   nsTextStateManager();

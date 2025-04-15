@@ -71,10 +71,11 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/Util.h" // for DebugOnly
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/Attributes.h"
 
 #include "sampler.h"
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 #undef NOISY_BLINK
 #undef NOISY_REFLOW
 #undef NOISY_TRIM
@@ -192,6 +193,9 @@ NS_DECLARE_FRAME_PROPERTY(FontSizeInflationProperty, nsnull)
 
 // nsTextFrame.h has
 // #define TEXT_HAS_NONCOLLAPSED_CHARACTERS NS_FRAME_STATE_BIT(31)
+
+// nsTextFrame.h has
+// #define TEXT_FORCE_TRIM_WHITESPACE       NS_FRAME_STATE_BIT(32)
 
 // Set when this text frame is mentioned in the userdata for the
 // uninflated textrun property
@@ -498,7 +502,7 @@ static FrameTextRunCache *gTextRuns = nsnull;
 /*
  * Cache textruns and expire them after 3*10 seconds of no use.
  */
-class FrameTextRunCache : public nsExpirationTracker<gfxTextRun,3> {
+class FrameTextRunCache MOZ_FINAL : public nsExpirationTracker<gfxTextRun,3> {
 public:
   enum { TIMEOUT_SECONDS = 10 };
   FrameTextRunCache()
@@ -857,7 +861,7 @@ public:
     }
   };
 
-  class BreakSink : public nsILineBreakSink {
+  class BreakSink MOZ_FINAL : public nsILineBreakSink {
   public:
     BreakSink(gfxTextRun* aTextRun, gfxContext* aContext, PRUint32 aOffsetIntoTextRun,
               bool aExistingTextRun) :
@@ -4771,7 +4775,7 @@ static void DrawSelectionDecorations(gfxContext* aContext,
     nsTextFrame* aFrame,
     nsTextPaintStyle& aTextPaintStyle,
     const nsTextRangeStyle &aRangeStyle,
-    const gfxPoint& aPt, gfxFloat aWidth,
+    const gfxPoint& aPt, gfxFloat aXInFrame, gfxFloat aWidth,
     gfxFloat aAscent, const gfxFont::Metrics& aFontMetrics)
 {
   gfxPoint pt(aPt);
@@ -4848,8 +4852,8 @@ static void DrawSelectionDecorations(gfxContext* aContext,
       return;
   }
   size.height *= relativeSize;
-  nsCSSRendering::PaintDecorationLine(
-    aContext, aDirtyRect, color, pt, size, aAscent, aFontMetrics.underlineOffset,
+  nsCSSRendering::PaintDecorationLine(aFrame, aContext, aDirtyRect, color, pt,
+    pt.x - aPt.x + aXInFrame, size, aAscent, aFontMetrics.underlineOffset,
     NS_STYLE_TEXT_DECORATION_LINE_UNDERLINE, style, descentLimit);
 }
 
@@ -5288,9 +5292,10 @@ nsTextFrame::PaintTextSelectionDecorations(gfxContext* aCtx,
       pt.x = (aFramePt.x + xOffset -
              (mTextRun->IsRightToLeft() ? advance : 0)) / app;
       gfxFloat width = NS_ABS(advance) / app;
-      DrawSelectionDecorations(aCtx, dirtyRect, aSelectionType, this, aTextPaintStyle,
-                               selectedStyle,
-                               pt, width, mAscent / app, decorationMetrics);
+      gfxFloat xInFrame = pt.x - (aFramePt.x / app);
+      DrawSelectionDecorations(aCtx, dirtyRect, aSelectionType, this,
+                               aTextPaintStyle, selectedStyle, pt, xInFrame,
+                               width, mAscent / app, decorationMetrics);
     }
     iterator.UpdateWithAdvance(advance);
   }
@@ -5347,6 +5352,7 @@ nsTextFrame::GetCaretColorAt(PRInt32 aOffset)
 {
   NS_PRECONDITION(aOffset >= 0, "aOffset must be positive");
 
+  nscolor result = nsFrame::GetCaretColorAt(aOffset);
   gfxSkipCharsIterator iter = EnsureTextRun(nsTextFrame::eInflated);
   PropertyProvider provider(this, iter, nsTextFrame::eInflated);
   PRInt32 contentOffset = provider.GetStart().GetOriginalOffset();
@@ -5356,13 +5362,12 @@ nsTextFrame::GetCaretColorAt(PRInt32 aOffset)
                   "aOffset must be in the frame's range");
   PRInt32 offsetInFrame = aOffset - contentOffset;
   if (offsetInFrame < 0 || offsetInFrame >= contentLength) {
-    return nsFrame::GetCaretColorAt(aOffset);
+    return result;
   }
 
   nsTextPaintStyle textPaintStyle(this);
   SelectionDetails* details = GetSelectionDetails();
   SelectionDetails* sdptr = details;
-  nscolor result = nsFrame::GetCaretColorAt(aOffset);
   SelectionType type = 0;
   while (sdptr) {
     PRInt32 start = NS_MAX(0, sdptr->mStart - contentOffset);
@@ -5641,9 +5646,9 @@ nsTextFrame::DrawTextRunAndDecorations(
       decPt.y = (frameTop - dec.mBaselineOffset) / app;
 
       const nscolor lineColor = aDecorationOverrideColor ? *aDecorationOverrideColor : dec.mColor;
-      nsCSSRendering::PaintDecorationLine(aCtx, dirtyRect, lineColor, decPt, decSize, ascent,
-        metrics.underlineOffset, NS_STYLE_TEXT_DECORATION_LINE_UNDERLINE,
-        dec.mStyle);
+      nsCSSRendering::PaintDecorationLine(this, aCtx, dirtyRect, lineColor,
+        decPt, 0.0, decSize, ascent, metrics.underlineOffset,
+        NS_STYLE_TEXT_DECORATION_LINE_UNDERLINE, dec.mStyle);
     }
     // Overlines
     for (PRUint32 i = aDecorations.mOverlines.Length(); i-- > 0; ) {
@@ -5658,8 +5663,9 @@ nsTextFrame::DrawTextRunAndDecorations(
       decPt.y = (frameTop - dec.mBaselineOffset) / app;
 
       const nscolor lineColor = aDecorationOverrideColor ? *aDecorationOverrideColor : dec.mColor;
-      nsCSSRendering::PaintDecorationLine(aCtx, dirtyRect, lineColor, decPt, decSize, ascent,
-        metrics.maxAscent, NS_STYLE_TEXT_DECORATION_LINE_OVERLINE, dec.mStyle);
+      nsCSSRendering::PaintDecorationLine(this, aCtx, dirtyRect, lineColor,
+        decPt, 0.0, decSize, ascent, metrics.maxAscent,
+        NS_STYLE_TEXT_DECORATION_LINE_OVERLINE, dec.mStyle);
     }
 
     // CSS 2.1 mandates that text be painted after over/underlines, and *then*
@@ -5680,9 +5686,9 @@ nsTextFrame::DrawTextRunAndDecorations(
       decPt.y = (frameTop - dec.mBaselineOffset) / app;
 
       const nscolor lineColor = aDecorationOverrideColor ? *aDecorationOverrideColor : dec.mColor;
-      nsCSSRendering::PaintDecorationLine(aCtx, dirtyRect, lineColor, decPt, decSize, ascent,
-        metrics.strikeoutOffset, NS_STYLE_TEXT_DECORATION_LINE_LINE_THROUGH,
-        dec.mStyle);
+      nsCSSRendering::PaintDecorationLine(this, aCtx, dirtyRect, lineColor,
+        decPt, 0.0, decSize, ascent, metrics.strikeoutOffset,
+        NS_STYLE_TEXT_DECORATION_LINE_LINE_THROUGH, dec.mStyle);
     }
 }
 
@@ -7322,7 +7328,8 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
       length = newLineOffset + 1 - offset;
     }
   }
-  if (atStartOfLine && !textStyle->WhiteSpaceIsSignificant()) {
+  if ((atStartOfLine && !textStyle->WhiteSpaceIsSignificant()) ||
+      (GetStateBits() & TEXT_FORCE_TRIM_WHITESPACE)) {
     // Skip leading whitespace. Make sure we don't skip a 'pre-line'
     // newline if there is one.
     PRInt32 skipLength = newLineOffset >= 0 ? length - 1 : length;
@@ -7480,7 +7487,8 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
   bool usedHyphenation;
   gfxFloat trimmedWidth = 0;
   gfxFloat availWidth = aAvailableWidth;
-  bool canTrimTrailingWhitespace = !textStyle->WhiteSpaceIsSignificant();
+  bool canTrimTrailingWhitespace = !textStyle->WhiteSpaceIsSignificant() ||
+                                   (GetStateBits() & TEXT_FORCE_TRIM_WHITESPACE);
   PRInt32 unusedOffset;  
   gfxBreakPriority breakPriority;
   aLineLayout.GetLastOptionalBreakPosition(&unusedOffset, &breakPriority);
@@ -7549,11 +7557,12 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
     // the line. (If we actually do end up at the end of the line, we'll have
     // to trim it off again in TrimTrailingWhiteSpace, and we'd like to avoid
     // having to re-do it.)
-    if (brokeText) {
+    if (brokeText ||
+        (GetStateBits() & TEXT_FORCE_TRIM_WHITESPACE)) {
       // We're definitely going to break so our trailing whitespace should
-      // definitely be timmed. Record that we've already done it.
+      // definitely be trimmed. Record that we've already done it.
       AddStateBits(TEXT_TRIMMED_TRAILING_WHITESPACE);
-    } else {
+    } else if (!(GetStateBits() & TEXT_FORCE_TRIM_WHITESPACE)) {
       // We might not be at the end of the line. (Note that even if this frame
       // ends in breakable whitespace, it might not be at the end of the line
       // because it might be followed by breakable, but preformatted, whitespace.)

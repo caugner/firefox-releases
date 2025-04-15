@@ -236,8 +236,18 @@ private:
 #define NS_EVENT_STATE_FULL_SCREEN_ANCESTOR   NS_DEFINE_EVENT_STATE_MACRO(35)
 // Handler for click to play plugin
 #define NS_EVENT_STATE_TYPE_CLICK_TO_PLAY NS_DEFINE_EVENT_STATE_MACRO(36)
+// Content is in the optimum region.
+#define NS_EVENT_STATE_OPTIMUM NS_DEFINE_EVENT_STATE_MACRO(37)
+// Content is in the suboptimal region.
+#define NS_EVENT_STATE_SUB_OPTIMUM NS_DEFINE_EVENT_STATE_MACRO(38)
+// Content is in the sub-suboptimal region.
+#define NS_EVENT_STATE_SUB_SUB_OPTIMUM NS_DEFINE_EVENT_STATE_MACRO(39)
+// Handler for click to play plugin (vulnerable w/update)
+#define NS_EVENT_STATE_VULNERABLE_UPDATABLE NS_DEFINE_EVENT_STATE_MACRO(40)
+// Handler for click to play plugin (vulnerable w/no update)
+#define NS_EVENT_STATE_VULNERABLE_NO_UPDATE NS_DEFINE_EVENT_STATE_MACRO(41)
 // Platform does not support plugin content (some mobile platforms)
-#define NS_EVENT_STATE_TYPE_UNSUPPORTED_PLATFORM NS_DEFINE_EVENT_STATE_MACRO(37)
+#define NS_EVENT_STATE_TYPE_UNSUPPORTED_PLATFORM NS_DEFINE_EVENT_STATE_MACRO(42)
 
 /**
  * NOTE: do not go over 63 without updating nsEventStates::InternalType!

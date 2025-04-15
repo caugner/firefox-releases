@@ -6,21 +6,42 @@
 #ifndef nsHTMLEditRules_h__
 #define nsHTMLEditRules_h__
 
-#include "nsTextEditRules.h"
-#include "nsIHTMLEditor.h"
-#include "nsIEditActionListener.h"
-#include "nsCOMArray.h"
-#include "nsCOMPtr.h"
-#include "nsString.h"
-#include "nsEditorUtils.h"
 #include "TypeInState.h"
-#include "nsReadableUtils.h"
+#include "nsAutoPtr.h"
+#include "nsCOMPtr.h"
+#include "nsEditor.h"
+#include "nsIEditActionListener.h"
+#include "nsIEditor.h"
+#include "nsIHTMLEditor.h"
+#include "nsISupportsImpl.h"
+#include "nsSelectionState.h"
 #include "nsTArray.h"
-#include "nsRange.h"
+#include "nsTextEditRules.h"
+#include "nsTraceRefcnt.h"
+#include "nscore.h"
+#include "prtypes.h"
 
-class nsIDOMElement;
-class nsIEditor;
 class nsHTMLEditor;
+class nsIAtom;
+class nsIDOMCharacterData;
+class nsIDOMDocument;
+class nsIDOMElement;
+class nsIDOMNode;
+class nsIDOMRange;
+class nsIEditor;
+class nsINode;
+class nsISelection;
+class nsPlaintextEditor;
+class nsRange;
+class nsRulesInfo;
+namespace mozilla {
+class Selection;
+namespace dom {
+class Element;
+}  // namespace dom
+}  // namespace mozilla
+struct DOMPoint;
+template <class E> class nsCOMArray;
 
 struct StyleCache : public PropItem
 {
@@ -60,7 +81,7 @@ public:
                         nsIEditor::EDirection aDirection);
   NS_IMETHOD AfterEdit(nsEditor::OperationID action,
                        nsIEditor::EDirection aDirection);
-  NS_IMETHOD WillDoAction(nsTypedSelection* aSelection, nsRulesInfo* aInfo,
+  NS_IMETHOD WillDoAction(mozilla::Selection* aSelection, nsRulesInfo* aInfo,
                           bool* aCancel, bool* aHandled);
   NS_IMETHOD DidDoAction(nsISelection *aSelection, nsRulesInfo *aInfo, nsresult aResult);
   NS_IMETHOD DocumentModified();
@@ -108,18 +129,19 @@ protected:
   // nsHTMLEditRules implementation methods
   nsresult WillInsert(nsISelection *aSelection, bool *aCancel);
   nsresult WillInsertText(  nsEditor::OperationID aAction,
-                            nsISelection *aSelection, 
+                            mozilla::Selection* aSelection,
                             bool            *aCancel,
                             bool            *aHandled,
                             const nsAString *inString,
                             nsAString       *outString,
                             PRInt32          aMaxLength);
   nsresult WillLoadHTML(nsISelection *aSelection, bool *aCancel);
-  nsresult WillInsertBreak(nsISelection *aSelection, bool *aCancel, bool *aHandled);
+  nsresult WillInsertBreak(mozilla::Selection* aSelection,
+                           bool* aCancel, bool* aHandled);
   nsresult StandardBreakImpl(nsIDOMNode *aNode, PRInt32 aOffset, nsISelection *aSelection);
   nsresult DidInsertBreak(nsISelection *aSelection, nsresult aResult);
   nsresult SplitMailCites(nsISelection *aSelection, bool aPlaintext, bool *aHandled);
-  nsresult WillDeleteSelection(nsISelection* aSelection,
+  nsresult WillDeleteSelection(mozilla::Selection* aSelection,
                                nsIEditor::EDirection aAction,
                                nsIEditor::EStripWrappers aStripWrappers,
                                bool* aCancel, bool* aHandled);
@@ -185,7 +207,16 @@ protected:
                               bool aIsBlockIndentedWithCSS,
                               nsCOMPtr<nsIDOMNode> *aLeftNode = 0,
                               nsCOMPtr<nsIDOMNode> *aRightNode = 0);
-  nsresult ConvertListType(nsIDOMNode *aList, nsCOMPtr<nsIDOMNode> *outList, const nsAString& aListType, const nsAString& aItemType);
+
+  nsresult ConvertListType(nsIDOMNode* aList,
+                           nsCOMPtr<nsIDOMNode>* outList,
+                           nsIAtom* aListType,
+                           nsIAtom* aItemType);
+  nsresult ConvertListType(nsINode* aList,
+                           mozilla::dom::Element** aOutList,
+                           nsIAtom* aListType,
+                           nsIAtom* aItemType);
+
   nsresult CreateStyleForInsertText(nsISelection *aSelection, nsIDOMDocument *aDoc);
   nsresult IsEmptyBlock(nsIDOMNode *aNode, 
                         bool *outIsEmptyBlock, 
@@ -201,9 +232,9 @@ protected:
   bool IsFirstNode(nsIDOMNode *aNode);
   bool IsLastNode(nsIDOMNode *aNode);
   nsresult NormalizeSelection(nsISelection *inSelection);
-  nsresult GetPromotedPoint(RulesEndpoint aWhere, nsIDOMNode *aNode,
-                            PRInt32 aOffset, nsEditor::OperationID actionID,
-                            nsCOMPtr<nsIDOMNode> *outNode, PRInt32 *outOffset);
+  void GetPromotedPoint(RulesEndpoint aWhere, nsIDOMNode* aNode,
+                        PRInt32 aOffset, nsEditor::OperationID actionID,
+                        nsCOMPtr<nsIDOMNode>* outNode, PRInt32* outOffset);
   nsresult GetPromotedRanges(nsISelection *inSelection, 
                              nsCOMArray<nsIDOMRange> &outArrayOfRanges, 
                              nsEditor::OperationID inOperationType);
@@ -224,7 +255,7 @@ protected:
                                  nsCOMArray<nsIDOMNode>& arrayOfNodes,
                                  bool aDontTouchContent=false);
   nsresult GetListActionNodes(nsCOMArray<nsIDOMNode> &outArrayOfNodes, bool aEntireList, bool aDontTouchContent=false);
-  nsresult GetDefinitionListItemTypes(nsIDOMNode *aNode, bool &aDT, bool &aDD);
+  void GetDefinitionListItemTypes(mozilla::dom::Element* aElement, bool* aDT, bool* aDD);
   nsresult GetParagraphFormatNodes(nsCOMArray<nsIDOMNode>& outArrayOfNodes, bool aDontTouchContent=false);
   nsresult LookInsideDivBQandList(nsCOMArray<nsIDOMNode>& aNodeArray);
   nsresult BustUpInlinesAtRangeEndpoints(nsRangeStore &inRange);

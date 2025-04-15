@@ -103,6 +103,10 @@ public:
 
     already_AddRefed<gfxASurface> CreateOffscreenSurface(const gfxIntSize& size,
                                                          gfxASurface::gfxContentType contentType);
+    virtual already_AddRefed<gfxASurface>
+      CreateOffscreenImageSurface(const gfxIntSize& aSize,
+                                  gfxASurface::gfxContentType aContentType);
+
     virtual mozilla::RefPtr<mozilla::gfx::ScaledFont>
       GetScaledFontForFont(gfxFont *aFont);
     virtual already_AddRefed<gfxASurface>
@@ -206,7 +210,8 @@ public:
         kWindowsXP = 0x50001,
         kWindowsServer2003 = 0x50002,
         kWindowsVista = 0x60000,
-        kWindows7 = 0x60001
+        kWindows7 = 0x60001,
+        kWindows8 = 0x60002
     };
 
     static PRInt32 WindowsOSVersion(PRInt32 *aBuildNum = nsnull);

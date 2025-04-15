@@ -52,6 +52,7 @@ let DebuggerController = {
     DebuggerView.initializePanes();
     DebuggerView.initializeEditor();
     DebuggerView.StackFrames.initialize();
+    DebuggerView.Breakpoints.initialize();
     DebuggerView.Properties.initialize();
     DebuggerView.Scripts.initialize();
     DebuggerView.showCloseButton(!this._isRemoteDebugger && !this._isChromeDebugger);
@@ -71,13 +72,13 @@ let DebuggerController = {
     this._isDestroyed = true;
     window.removeEventListener("unload", this._shutdownDebugger, true);
 
-    DebuggerView.destroyPanes();
-    DebuggerView.destroyEditor();
     DebuggerView.Scripts.destroy();
     DebuggerView.StackFrames.destroy();
+    DebuggerView.Breakpoints.destroy();
     DebuggerView.Properties.destroy();
+    DebuggerView.destroyPanes();
+    DebuggerView.destroyEditor();
 
-    DebuggerController.Breakpoints.destroy();
     DebuggerController.SourceScripts.disconnect();
     DebuggerController.StackFrames.disconnect();
     DebuggerController.ThreadState.disconnect();
@@ -113,8 +114,8 @@ let DebuggerController = {
         this.dispatchEvent("Debugger:Close");
         return false;
       }
-      Prefs.remoteHost = prompt.uri.host;
-      Prefs.remotePort = prompt.uri.port;
+      Prefs.remoteHost = prompt.remote.host;
+      Prefs.remotePort = prompt.remote.port;
     }
 
     // If this debugger is connecting remotely to a server, we need to check
@@ -156,7 +157,7 @@ let DebuggerController = {
 
     let client = this.client = new DebuggerClient(transport);
 
-    client.addListener("tabNavigated", this._onTabDetached);
+    client.addListener("tabNavigated", this._onTabNavigated);
     client.addListener("tabDetached", this._onTabDetached);
 
     client.connect(function(aType, aTraits) {
@@ -172,7 +173,7 @@ let DebuggerController = {
    * Closes the debugger client and removes event handlers as necessary.
    */
   _disconnect: function DC__disconnect() {
-    this.client.removeListener("tabNavigated", this._onTabDetached);
+    this.client.removeListener("tabNavigated", this._onTabNavigated);
     this.client.removeListener("tabDetached", this._onTabDetached);
     this.client.close();
 
@@ -182,21 +183,14 @@ let DebuggerController = {
   },
 
   /**
-   * Starts debugging the current tab. This function is called on each location
-   * change in this tab.
+   * This function is called on each location change in this tab.
    */
   _onTabNavigated: function DC__onTabNavigated(aNotification, aPacket) {
-    let client = this.client;
-
-    client.activeThread.detach(function() {
-      client.activeTab.detach(function() {
-        client.listTabs(function(aResponse) {
-          let tab = aResponse.tabs[aResponse.selected];
-          this._startDebuggingTab(client, tab);
-          this.dispatchEvent("Debugger:Connecting");
-        }.bind(this));
-      }.bind(this));
-    }.bind(this));
+    DebuggerController.ThreadState._handleTabNavigation(function() {
+      DebuggerController.StackFrames._handleTabNavigation(function() {
+        DebuggerController.SourceScripts._handleTabNavigation();
+      });
+    });
   },
 
   /**
@@ -260,7 +254,8 @@ let DebuggerController = {
    * @return boolean
    */
   get _isChromeDebugger() {
-    return !window.parent.content && !this._isRemoteDebugger;
+    // Directly accessing window.parent.content may throw in some cases.
+    return !("content" in window.parent) && !this._isRemoteDebugger;
   },
 
   /**
@@ -323,7 +318,7 @@ ThreadState.prototype = {
     this.activeThread.addListener("resumed", this._update);
     this.activeThread.addListener("detached", this._update);
 
-    this._update();
+    this._handleTabNavigation();
 
     aCallback && aCallback();
   },
@@ -338,6 +333,15 @@ ThreadState.prototype = {
     this.activeThread.removeListener("paused", this._update);
     this.activeThread.removeListener("resumed", this._update);
     this.activeThread.removeListener("detached", this._update);
+  },
+
+  /**
+   * Handles any initialization on a tab navigation event issued by the client.
+   */
+  _handleTabNavigation: function TS__handleTabNavigation(aCallback) {
+    DebuggerView.StackFrames.updateState(this.activeThread.state);
+
+    aCallback && aCallback();
   },
 
   /**
@@ -394,13 +398,12 @@ StackFrames.prototype = {
   connect: function SF_connect(aCallback) {
     window.addEventListener("Debugger:FetchedVariables", this._onFetchedVars, false);
 
-    this._onFramesCleared();
-
     this.activeThread.addListener("paused", this._onPaused);
     this.activeThread.addListener("resumed", this._onResume);
     this.activeThread.addListener("framesadded", this._onFrames);
     this.activeThread.addListener("framescleared", this._onFramesCleared);
 
+    this._handleTabNavigation();
     this.updatePauseOnExceptions(this.pauseOnExceptions);
 
     aCallback && aCallback();
@@ -410,15 +413,23 @@ StackFrames.prototype = {
    * Disconnect from the client.
    */
   disconnect: function SF_disconnect() {
-    window.removeEventListener("Debugger:FetchedVariables", this._onFetchedVars, false);
-
     if (!this.activeThread) {
       return;
     }
+    window.removeEventListener("Debugger:FetchedVariables", this._onFetchedVars, false);
     this.activeThread.removeListener("paused", this._onPaused);
     this.activeThread.removeListener("resumed", this._onResume);
     this.activeThread.removeListener("framesadded", this._onFrames);
     this.activeThread.removeListener("framescleared", this._onFramesCleared);
+  },
+
+  /**
+   * Handles any initialization on a tab navigation event issued by the client.
+   */
+  _handleTabNavigation: function SF__handleTabNavigation(aCallback) {
+    // Nothing to do here yet.
+
+    aCallback && aCallback();
   },
 
   /**
@@ -434,6 +445,7 @@ StackFrames.prototype = {
     if (aPacket.why.type == "exception") {
       this.exception = aPacket.why.exception;
     }
+
     this.activeThread.fillFrames(this.pageSize);
   },
 
@@ -484,7 +496,7 @@ StackFrames.prototype = {
    * Called soon after the thread client's framescleared notification.
    */
   _afterFramesCleared: function SF__afterFramesCleared() {
-    if (this.activeThread && !this.activeThread.cachedFrames.length) {
+    if (!this.activeThread.cachedFrames.length) {
       DebuggerView.StackFrames.emptyText();
       DebuggerView.Properties.emptyText();
       DebuggerController.dispatchEvent("Debugger:AfterFramesCleared");
@@ -505,12 +517,47 @@ StackFrames.prototype = {
     let line = frame.where.line;
     let editor = DebuggerView.editor;
 
-    // Move the editor's caret to the proper line.
-    if (DebuggerView.Scripts.isSelected(url) && line) {
-      editor.setDebugLocation(line - 1);
-    } else {
-      editor.setDebugLocation(-1);
+    this.updateEditorToLocation(url, line, true);
+  },
+
+  /**
+   * Update the source editor's current caret and debug location based on
+   * a specified url and line.
+   *
+   * @param string aUrl
+   *        The target source url.
+   * @param number aLine
+   *        The target line number in the source.
+   * @param boolean aNoSwitch
+   *        Pass true to not switch to the script if not currently selected.
+   * @param boolean aNoCaretFlag
+   *        Pass true to not set the caret location at the specified line.
+   * @param boolean aNoDebugFlag
+   *        Pass true to not set the debug location at the specified line.
+   */
+  updateEditorToLocation:
+  function SF_updateEditorToLocation(aUrl, aLine, aNoSwitch, aNoCaretFlag, aNoDebugFlag) {
+    let editor = DebuggerView.editor;
+
+    function set() {
+      if (!aNoCaretFlag) {
+        editor.setCaretPosition(aLine - 1);
+      }
+      if (!aNoDebugFlag) {
+        editor.setDebugLocation(aLine - 1);
+      }
     }
+
+    // Move the editor's caret to the proper url and line.
+    if (DebuggerView.Scripts.isSelected(aUrl)) {
+      return set();
+    }
+    if (!aNoSwitch && DebuggerView.Scripts.contains(aUrl)) {
+      DebuggerView.Scripts.selectScript(aUrl);
+      return set();
+    }
+    editor.setCaretPosition(-1);
+    editor.setDebugLocation(-1);
   },
 
   /**
@@ -549,20 +596,9 @@ StackFrames.prototype = {
 
     let url = frame.where.url;
     let line = frame.where.line;
-    let editor = DebuggerView.editor;
 
     // Move the editor's caret to the proper line.
-    if (DebuggerView.Scripts.isSelected(url) && line) {
-      editor.setCaretPosition(line - 1);
-      editor.setDebugLocation(line - 1);
-    }
-    else if (DebuggerView.Scripts.contains(url)) {
-      DebuggerView.Scripts.selectScript(url);
-      editor.setCaretPosition(line - 1);
-    }
-    else {
-      editor.setDebugLocation(-1);
-    }
+    this.updateEditorToLocation(url, line);
 
     // Start recording any added variables or properties in any scope.
     DebuggerView.Properties.createHierarchyStore();
@@ -754,7 +790,7 @@ StackFrames.prototype = {
    */
   _addFrame: function SF__addFrame(aFrame) {
     let depth = aFrame.depth;
-    let label = DebuggerController.SourceScripts._getScriptLabel(aFrame.where.url);
+    let label = DebuggerController.SourceScripts.getScriptLabel(aFrame.where.url);
 
     let startText = this._getFrameTitle(aFrame);
     let endText = label + ":" + aFrame.where.line;
@@ -807,7 +843,6 @@ StackFrames.prototype = {
 function SourceScripts() {
   this._onNewScript = this._onNewScript.bind(this);
   this._onScriptsAdded = this._onScriptsAdded.bind(this);
-  this._onScriptsCleared = this._onScriptsCleared.bind(this);
   this._onShowScript = this._onShowScript.bind(this);
   this._onLoadSource = this._onLoadSource.bind(this);
   this._onLoadSourceFinished = this._onLoadSourceFinished.bind(this);
@@ -842,33 +877,35 @@ SourceScripts.prototype = {
    */
   connect: function SS_connect(aCallback) {
     window.addEventListener("Debugger:LoadSource", this._onLoadSource, false);
-
     this.debuggerClient.addListener("newScript", this._onNewScript);
-    this.activeThread.addListener("scriptsadded", this._onScriptsAdded);
-    this.activeThread.addListener("scriptscleared", this._onScriptsCleared);
 
-    this._clearLabelsCache();
-    this._onScriptsCleared();
-
-    // Retrieve the list of scripts known to the server from before the client
-    // was ready to handle new script notifications.
-    this.activeThread.fillScripts();
-
+    this._handleTabNavigation();
     aCallback && aCallback();
   },
 
   /**
    * Disconnect from the client.
    */
-  disconnect: function TS_disconnect() {
-    window.removeEventListener("Debugger:LoadSource", this._onLoadSource, false);
-
+  disconnect: function SS_disconnect() {
     if (!this.activeThread) {
       return;
     }
+    window.removeEventListener("Debugger:LoadSource", this._onLoadSource, false);
     this.debuggerClient.removeListener("newScript", this._onNewScript);
-    this.activeThread.removeListener("scriptsadded", this._onScriptsAdded);
-    this.activeThread.removeListener("scriptscleared", this._onScriptsCleared);
+  },
+
+  /**
+   * Handles any initialization on a tab navigation event issued by the client.
+   */
+  _handleTabNavigation: function SS__handleTabNavigation(aCallback) {
+    this._clearLabelsCache();
+    this._onScriptsCleared();
+
+    // Retrieve the list of scripts known to the server from before the client
+    // was ready to handle new script notifications.
+    this.activeThread.getScripts(this._onScriptsAdded);
+
+    aCallback && aCallback();
   },
 
   /**
@@ -881,29 +918,38 @@ SourceScripts.prototype = {
     }
 
     this._addScript({ url: aPacket.url, startLine: aPacket.startLine }, true);
-    // If there are any stored breakpoints for this script, display them again.
-    for each (let bp in DebuggerController.Breakpoints.store) {
-      if (bp.location.url == aPacket.url) {
-        DebuggerController.Breakpoints.displayBreakpoint(bp.location);
+
+    // If there are any stored breakpoints for this script, display them again,
+    // both in the editor and the pane.
+    for each (let breakpoint in DebuggerController.Breakpoints.store) {
+      if (breakpoint.location.url == aPacket.url) {
+        DebuggerController.Breakpoints.displayBreakpoint(breakpoint);
       }
     }
+
+    DebuggerController.dispatchEvent("Debugger:AfterNewScript");
   },
 
   /**
-   * Handler for the thread client's scriptsadded notification.
+   * Callback for the getScripts() method.
    */
-  _onScriptsAdded: function SS__onScriptsAdded() {
-    for each (let script in this.activeThread.cachedScripts) {
+  _onScriptsAdded: function SS__onScriptsAdded(aResponse) {
+    for each (let script in aResponse.scripts) {
       this._addScript(script, false);
     }
     DebuggerView.Scripts.commitScripts();
+    DebuggerController.Breakpoints.updatePaneBreakpoints();
+
+    DebuggerController.dispatchEvent("Debugger:AfterScriptsAdded");
   },
 
   /**
-   * Handler for the thread client's scriptscleared notification.
+   * Called during navigation to clear the currently-loaded scripts.
    */
   _onScriptsCleared: function SS__onScriptsCleared() {
     DebuggerView.Scripts.empty();
+    DebuggerView.Breakpoints.emptyText();
+    DebuggerView.editor.setText("");
   },
 
   /**
@@ -966,7 +1012,7 @@ SourceScripts.prototype = {
    * @return string
    *         The resulting label at the final step.
    */
-  _trimURL: function SS__trimURL(aUrl, aLabel, aSeq) {
+  _trimUrl: function SS__trimUrl(aUrl, aLabel, aSeq) {
     if (!(aUrl instanceof Ci.nsIURL)) {
       try {
         // Use an nsIURL to parse all the url path parts.
@@ -1011,7 +1057,7 @@ SourceScripts.prototype = {
     if (aSeq === 1) {
       let query = aUrl.query;
       if (query) {
-        return this._trimURL(aUrl, aLabel + "?" + query, aSeq + 1);
+        return this._trimUrl(aUrl, aLabel + "?" + query, aSeq + 1);
       }
       aSeq++;
     }
@@ -1019,7 +1065,7 @@ SourceScripts.prototype = {
     if (aSeq === 2) {
       let ref = aUrl.ref;
       if (ref) {
-        return this._trimURL(aUrl, aLabel + "#" + aUrl.ref, aSeq + 1);
+        return this._trimUrl(aUrl, aLabel + "#" + aUrl.ref, aSeq + 1);
       }
       aSeq++;
     }
@@ -1027,7 +1073,7 @@ SourceScripts.prototype = {
     if (aSeq === 3) {
       let dir = aUrl.directory;
       if (dir) {
-        return this._trimURL(aUrl, dir.replace(/^\//, "") + aLabel, aSeq + 1);
+        return this._trimUrl(aUrl, dir.replace(/^\//, "") + aLabel, aSeq + 1);
       }
       aSeq++;
     }
@@ -1035,13 +1081,13 @@ SourceScripts.prototype = {
     if (aSeq === 4) {
       let host = aUrl.hostPort;
       if (host) {
-        return this._trimURL(aUrl, host + "/" + aLabel, aSeq + 1);
+        return this._trimUrl(aUrl, host + "/" + aLabel, aSeq + 1);
       }
       aSeq++;
     }
     // Use the whole url spec but ignoring the reference.
     if (aSeq === 5) {
-      return this._trimURL(aUrl, aUrl.specIgnoringRef, aSeq + 1);
+      return this._trimUrl(aUrl, aUrl.specIgnoringRef, aSeq + 1);
     }
     // Give up.
     return aUrl.spec;
@@ -1058,8 +1104,8 @@ SourceScripts.prototype = {
    * @return string
    *         The simplified label.
    */
-  _getScriptLabel: function SS__getScriptLabel(aUrl, aHref) {
-    return this._labelsCache[aUrl] || (this._labelsCache[aUrl] = this._trimURL(aUrl));
+  getScriptLabel: function SS_getScriptLabel(aUrl, aHref) {
+    return this._labelsCache[aUrl] || (this._labelsCache[aUrl] = this._trimUrl(aUrl));
   },
 
   /**
@@ -1080,7 +1126,7 @@ SourceScripts.prototype = {
    */
   _addScript: function SS__addScript(aScript, aForceFlag) {
     DebuggerView.Scripts.addScript(
-      this._getScriptLabel(aScript.url), aScript, aForceFlag);
+      this.getScriptLabel(aScript.url), aScript, aForceFlag);
   },
 
   /**
@@ -1230,6 +1276,23 @@ SourceScripts.prototype = {
     element.setUserData("sourceScript", script, null);
 
     this.showScript(script, aOptions);
+  },
+
+  /**
+   * Gets the text in a source editor's specified line.
+   *
+   * @param number aLine [optional]
+   *        The line to get the text from.
+   *        If unspecified, it defaults to the current caret position line.
+   * @return string
+   *         The specified line text
+   */
+  getLineText: function SS_getLineText(aLine) {
+    let editor = DebuggerView.editor;
+    let line = aLine || editor.getCaretPosition().line;
+    let start = editor.getLineStart(line);
+    let end = editor.getLineEnd(line);
+    return editor.getText(start, end);
   },
 
   /**
@@ -1395,6 +1458,25 @@ Breakpoints.prototype = {
   },
 
   /**
+   * Update the breakpoints in the pane view. This function is invoked when the
+   * scripts are added (typically after a page navigation).
+   */
+  updatePaneBreakpoints: function BP_updatePaneBreakpoints() {
+    let url = DebuggerView.Scripts.selected;
+    if (!url) {
+      return;
+    }
+
+    this._skipEditorBreakpointChange = true;
+    for each (let breakpoint in this.store) {
+      if (DebuggerView.Scripts.contains(breakpoint.location.url)) {
+        this.displayBreakpoint(breakpoint, true);
+      }
+    }
+    this._skipEditorBreakpointChange = false;
+  },
+
+  /**
    * Add a breakpoint.
    *
    * @param object aLocation
@@ -1411,9 +1493,11 @@ Breakpoints.prototype = {
    * @param boolean [aNoEditorUpdate=false]
    *        Tells if you want to skip editor updates. Typically the editor is
    *        updated to visually indicate that a breakpoint has been added.
+   * @param boolean [aNoPaneUpdate=false]
+   *        Tells if you want to skip any breakpoint pane updates.
    */
   addBreakpoint:
-  function BP_addBreakpoint(aLocation, aCallback, aNoEditorUpdate) {
+  function BP_addBreakpoint(aLocation, aCallback, aNoEditorUpdate, aNoPaneUpdate) {
     let breakpoint = this.getBreakpoint(aLocation.url, aLocation.line);
     if (breakpoint) {
       aCallback && aCallback(breakpoint);
@@ -1422,7 +1506,7 @@ Breakpoints.prototype = {
 
     this.activeThread.setBreakpoint(aLocation, function(aResponse, aBpClient) {
       this.store[aBpClient.actor] = aBpClient;
-      this.displayBreakpoint(aLocation, aNoEditorUpdate);
+      this.displayBreakpoint(aBpClient, aNoEditorUpdate, aNoPaneUpdate);
       aCallback && aCallback(aBpClient, aResponse.error);
     }.bind(this));
   },
@@ -1430,23 +1514,36 @@ Breakpoints.prototype = {
   /**
    * Update the editor to display the specified breakpoint in the gutter.
    *
-   * @param object aLocation
-   *        The location where you want the breakpoint. This object must have
-   *        two properties:
-   *          - url - the URL of the script.
-   *          - line - the line number (starting from 1).
+   * @param object aBreakpoint
+   *        The breakpoint you want to display.
    * @param boolean [aNoEditorUpdate=false]
    *        Tells if you want to skip editor updates. Typically the editor is
    *        updated to visually indicate that a breakpoint has been added.
+   * @param boolean [aNoPaneUpdate=false]
+   *        Tells if you want to skip any breakpoint pane updates.
    */
-  displayBreakpoint: function BP_displayBreakpoint(aLocation, aNoEditorUpdate) {
+  displayBreakpoint:
+  function BP_displayBreakpoint(aBreakpoint, aNoEditorUpdate, aNoPaneUpdate) {
     if (!aNoEditorUpdate) {
       let url = DebuggerView.Scripts.selected;
-      if (url == aLocation.url) {
+      if (url == aBreakpoint.location.url) {
         this._skipEditorBreakpointChange = true;
-        this.editor.addBreakpoint(aLocation.line - 1);
+        this.editor.addBreakpoint(aBreakpoint.location.line - 1);
         this._skipEditorBreakpointChange = false;
       }
+    }
+    if (!aNoPaneUpdate) {
+      let { url: url, line: line } = aBreakpoint.location;
+
+      if (!aBreakpoint.lineText || !aBreakpoint.lineInfo) {
+        let scripts = DebuggerController.SourceScripts;
+        aBreakpoint.lineText = scripts.getLineText(line - 1);
+        aBreakpoint.lineInfo = scripts.getScriptLabel(url) + ":" + line;
+      }
+      DebuggerView.Breakpoints.addBreakpoint(
+        aBreakpoint.actor,
+        aBreakpoint.lineInfo,
+        aBreakpoint.lineText, url, line);
     }
   },
 
@@ -1462,9 +1559,11 @@ Breakpoints.prototype = {
    * @param boolean [aNoEditorUpdate=false]
    *        Tells if you want to skip editor updates. Typically the editor is
    *        updated to visually indicate that a breakpoint has been removed.
+   * @param boolean [aNoPaneUpdate=false]
+   *        Tells if you want to skip any breakpoint pane updates.
    */
   removeBreakpoint:
-  function BP_removeBreakpoint(aBreakpoint, aCallback, aNoEditorUpdate) {
+  function BP_removeBreakpoint(aBreakpoint, aCallback, aNoEditorUpdate, aNoPaneUpdate) {
     if (!(aBreakpoint.actor in this.store)) {
       aCallback && aCallback(aBreakpoint.location);
       return;
@@ -1480,6 +1579,9 @@ Breakpoints.prototype = {
           this.editor.removeBreakpoint(aBreakpoint.location.line - 1);
           this._skipEditorBreakpointChange = false;
         }
+      }
+      if (!aNoPaneUpdate) {
+        DebuggerView.Breakpoints.removeBreakpoint(aBreakpoint.actor);
       }
 
       aCallback && aCallback(aBreakpoint.location);

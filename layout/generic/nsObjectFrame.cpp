@@ -46,7 +46,6 @@
 #include "nsIDOMWindow.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIDOMNSEvent.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsIDocumentEncoder.h"
 #include "nsXPIDLString.h"
 #include "nsIDOMRange.h"
@@ -388,9 +387,10 @@ nsObjectFrame::PrepForDrawing(nsIWidget *aWidget)
   }
 
   if (mWidget) {
-    // XXX this breaks plugins in popups ... do we care?
-    nsIWidget* parentWidget = rpc->PresShell()->FrameManager()->GetRootFrame()->GetNearestWidget();
-    if (!parentWidget) {
+    // Disallow plugins in popups
+    nsIFrame* rootFrame = rpc->PresShell()->FrameManager()->GetRootFrame();
+    nsIWidget* parentWidget = rootFrame->GetNearestWidget();
+    if (!parentWidget || nsLayoutUtils::GetDisplayRootFrame(this) != rootFrame) {
       return NS_ERROR_FAILURE;
     }
 
@@ -746,20 +746,20 @@ nsObjectFrame::SetInstanceOwner(nsPluginInstanceOwner* aOwner)
       if (mWidget) {
         if (mInnerView) {
           mInnerView->DetachWidgetEventHandler(mWidget);
-        }
 
-        rpc->UnregisterPluginForGeometryUpdates(this);
-        // Make sure the plugin is hidden in case an update of plugin geometry
-        // hasn't happened since this plugin became hidden.
-        nsIWidget* parent = mWidget->GetParent();
-        if (parent) {
-          nsTArray<nsIWidget::Configuration> configurations;
-          this->GetEmptyClipConfiguration(&configurations);
-          parent->ConfigureChildren(configurations);
+          rpc->UnregisterPluginForGeometryUpdates(this);
+          // Make sure the plugin is hidden in case an update of plugin geometry
+          // hasn't happened since this plugin became hidden.
+          nsIWidget* parent = mWidget->GetParent();
+          if (parent) {
+            nsTArray<nsIWidget::Configuration> configurations;
+            this->GetEmptyClipConfiguration(&configurations);
+            parent->ConfigureChildren(configurations);
 
-          mWidget->Show(false);
-          mWidget->Enable(false);
-          mWidget->SetParent(nsnull);
+            mWidget->Show(false);
+            mWidget->Enable(false);
+            mWidget->SetParent(nsnull);
+          }
         }
       } else {
 #ifndef XP_MACOSX
@@ -1081,6 +1081,10 @@ nsObjectFrame::ComputeWidgetGeometry(const nsRegion& aRegion,
       mInstanceOwner->UpdateWindowVisibility(!aRegion.IsEmpty());
     }
 #endif
+    return;
+  }
+
+  if (!mInnerView) {
     return;
   }
 
@@ -2232,7 +2236,7 @@ nsObjectFrame::EndSwapDocShells(nsIContent* aContent, void*)
   nsObjectFrame* objectFrame = static_cast<nsObjectFrame*>(obj);
   nsRootPresContext* rootPC = objectFrame->PresContext()->GetRootPresContext();
   NS_ASSERTION(rootPC, "unable to register the plugin frame");
-  nsIWidget* widget = objectFrame->GetWidget();
+  nsIWidget* widget = objectFrame->mWidget;
   if (widget) {
     // Reparent the widget.
     nsIWidget* parent =

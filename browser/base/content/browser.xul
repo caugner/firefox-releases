@@ -24,7 +24,7 @@
         xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
         xmlns:svg="http://www.w3.org/2000/svg"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
-        onload="BrowserStartup()" onunload="BrowserShutdown()" onclose="return WindowIsClosing();"
+        onload="gBrowserInit.onLoad()" onunload="gBrowserInit.onUnload()" onclose="return WindowIsClosing();"
         title="&mainWindow.title;@PRE_RELEASE_SUFFIX@"
         title_normal="&mainWindow.title;@PRE_RELEASE_SUFFIX@"
 #ifdef XP_MACOSX
@@ -137,6 +137,7 @@
            footertype="promobox"
            orient="vertical"
            ignorekeys="true"
+           consumeoutsideclicks="true"
            hidden="true"
            onpopupshown="StarUI.panelShown(event);"
            aria-labelledby="editBookmarkPanelTitle">
@@ -179,6 +180,49 @@
                 oncommand="StarUI.panel.hidePopup();"/>
 #endif
       </hbox>
+    </panel>
+
+    <panel id="editSharePopup"
+           type="arrow"
+           orient="vertical"
+           ignorekeys="true"
+           hidden="true"
+           onpopupshown="SocialShareButton.panelShown(event);"
+           consumeoutsideclicks="true"
+           level="top">
+      <hbox id="editSharePopupBottomButtons" pack="end">
+#ifdef XP_UNIX
+        <button id="editSharePopupUndoButton"
+                class="editSharePopupBottomButton"
+                label="&social.sharePopup.undo.label;"
+                accesskey="&social.sharePopup.undo.accesskey;"
+                command="Social:UnsharePage"/>
+        <button id="editSharePopupOkButton"
+                class="editSharePopupBottomButton"
+                default="true"
+                autofocus="autofocus"
+                label="&social.sharePopup.ok.label;"
+                accesskey="&social.sharePopup.ok.accesskey;"
+                oncommand="SocialShareButton.dismissSharePopup();"/>
+#else
+        <button id="editSharePopupOkButton"
+                class="editSharePopupBottomButton"
+                default="true"
+                autofocus="autofocus"
+                label="&social.sharePopup.ok.label;"
+                accesskey="&social.sharePopup.ok.accesskey;"
+                oncommand="SocialShareButton.dismissSharePopup();"/>
+        <button id="editSharePopupUndoButton"
+                class="editSharePopupBottomButton"
+                label="&social.sharePopup.undo.label;"
+                accesskey="&social.sharePopup.undo.accesskey;"
+                command="Social:UnsharePage"/>
+#endif
+      </hbox>
+    </panel>
+
+    <panel id="social-notification-panel" type="arrow" hidden="true" noautofocus="true">
+      <browser id="social-notification-browser" type="content" flex="1"/>
     </panel>
 
     <menupopup id="inspector-node-popup">
@@ -259,6 +303,7 @@
            type="arrow"
            hidden="true"
            noautofocus="true"
+           consumeoutsideclicks="true"
            onpopupshown="gIdentityHandler.onPopupShown(event);"
            level="top">
       <hbox id="identity-popup-container" align="top">
@@ -344,11 +389,8 @@
     <tooltip id="bhTooltip"/>
 
     <panel id="customizeToolbarSheetPopup"
-           noautohide="true">
-      <iframe id="customizeToolbarSheetIFrame"
-              style="&dialog.dimensions;"
-              hidden="true"/>
-    </panel>
+           noautohide="true"
+           sheetstyle="&dialog.dimensions;"/>
 
     <tooltip id="tabbrowser-tab-tooltip" onpopupshowing="gBrowser.createTooltip(event);"/>
 
@@ -487,19 +529,16 @@
                We only add the identity-box button to the tab order when the location bar
                has focus, otherwise pressing F6 focuses it instead of the location bar -->
           <box id="identity-box" role="button"
+               align="center"
                onclick="gIdentityHandler.handleIdentityButtonEvent(event);"
                onkeypress="gIdentityHandler.handleIdentityButtonEvent(event);"
                ondragstart="gIdentityHandler.onDragStart(event);">
-            <hbox id="identity-box-inner" align="center">
-              <hbox id="page-proxy-stack"
-                    onclick="PageProxyClickHandler(event);">
-                <image id="page-proxy-favicon"
-                       pageproxystate="invalid"/>
-              </hbox>
-              <hbox id="identity-icon-labels">
-                <label id="identity-icon-label" class="plain" flex="1"/>
-                <label id="identity-icon-country-label" class="plain"/>
-              </hbox>
+            <image id="page-proxy-favicon"
+                   onclick="PageProxyClickHandler(event);"
+                   pageproxystate="invalid"/>
+            <hbox id="identity-icon-labels">
+              <label id="identity-icon-label" class="plain" flex="1"/>
+              <label id="identity-icon-country-label" class="plain"/>
             </hbox>
           </box>
           <box id="urlbar-display-box" align="center">
@@ -511,6 +550,12 @@
                    hidden="true"
                    tooltiptext="&pageReportIcon.tooltip;"
                    onclick="gPopupBlockerObserver.onReportButtonClick(event);"/>
+
+            <label id="share-button-status" collapsed="true" role="status"/>
+            <image id="share-button"
+                   class="urlbar-icon"
+                   hidden="true"
+                   onclick="SocialShareButton.onClick(event);"/>
 
             <image id="star-button"
                    class="urlbar-icon"
@@ -562,6 +607,45 @@
                      ondragexit="homeButtonObserver.onDragExit(event)"
                      onclick="BrowserGoHome(event);"
                      aboutHomeOverrideTooltip="&abouthome.pageTitle;"/>
+
+      <toolbaritem id="social-toolbar-button"
+                   class="toolbarbutton-1 chromeclass-toolbar-additional"
+                   removable="false"
+                   title="&socialToolbar.title;"
+                   hidden="true">
+        <hbox id="social-toolbar-button-box" class="social-statusarea-container">
+          <button id="social-provider-image" type="menu">
+            <menupopup id="social-statusarea-popup">
+              <hbox id="social-statusarea-user" pack="left" align="center">
+                <image id="social-statusarea-user-portrait"/>
+                <vbox>
+                  <label id="social-statusarea-notloggedin"
+                         value="&social.notLoggedIn.label;"/>
+                  <button id="social-statusarea-username"
+                          oncommand="SocialUI.showProfile(); document.getElementById('social-statusarea-popup').hidePopup();"/>
+                </vbox>
+              </hbox>
+            </menupopup>
+          </button>
+          <hbox id="social-status-iconbox" flex="1">
+            <box class="social-notification-icon-container" collapsed="true"
+                     onclick="SocialToolbar.showAmbientPopup(this);">
+              <image class="social-notification-icon-image"/>
+              <box class="social-notification-icon-counter" collapsed="true"/>
+            </box>
+            <box class="social-notification-icon-container" collapsed="true"
+                     onclick="SocialToolbar.showAmbientPopup(this);">
+              <image class="social-notification-icon-image"/>
+              <box class="social-notification-icon-counter" collapsed="true"/>
+            </box>
+            <box class="social-notification-icon-container" collapsed="true"
+                     onclick="SocialToolbar.showAmbientPopup(this);">
+              <image class="social-notification-icon-image"/>
+              <box class="social-notification-icon-counter" collapsed="true"/>
+            </box>
+          </hbox>
+        </hbox>
+      </toolbaritem>
 
       <toolbaritem id="bookmarks-menu-button-container"
                    class="chromeclass-toolbar-additional"
@@ -1042,21 +1126,21 @@
           </stack>
           <toolbarbutton id="developer-toolbar-webconsole"
                          label="&webConsoleButton.label;"
-                         class="devtools-toolbarbutton"
+                         class="developer-toolbar-button"
                          command="Tools:WebConsole"/>
           <toolbarbutton id="developer-toolbar-inspector"
                          label="&inspectorButton.label;"
-                         class="devtools-toolbarbutton"
+                         class="developer-toolbar-button"
                          hidden="true"
                          command="Tools:Inspect"/>
-          <toolbarbutton id="developer-toolbar-responsiveui"
-                         label="&responsiveDesignTool.label;"
-                         class="devtools-toolbarbutton"
+          <toolbarbutton id="developer-toolbar-styleeditor"
+                         label="&styleeditor.label;"
+                         class="developer-toolbar-button"
                          hidden="true"
-                         command="Tools:ResponsiveUI"/>
+                         command="Tools:StyleEditor"/>
           <toolbarbutton id="developer-toolbar-debugger"
-                         label="&scriptsButton.label;"
-                         class="devtools-toolbarbutton"
+                         label="&debuggerMenu.label2;"
+                         class="developer-toolbar-button"
                          hidden="true"
                          command="Tools:Debugger"/>
 #ifndef XP_MACOSX

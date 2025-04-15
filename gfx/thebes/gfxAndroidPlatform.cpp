@@ -35,7 +35,7 @@ gfxAndroidPlatform::gfxAndroidPlatform()
 
     mOffscreenFormat = mScreenDepth == 16
                        ? gfxASurface::ImageFormatRGB16_565
-                       : gfxASurface::ImageFormatARGB32;
+                       : gfxASurface::ImageFormatRGB24;
 }
 
 gfxAndroidPlatform::~gfxAndroidPlatform()
@@ -54,17 +54,6 @@ gfxAndroidPlatform::CreateOffscreenSurface(const gfxIntSize& size,
     newSurface = new gfxImageSurface(size, OptimalFormatForContent(contentType));
 
     return newSurface.forget();
-}
-
-mozilla::gfx::SurfaceFormat
-gfxAndroidPlatform::Optimal2DFormatForContent(gfxASurface::gfxContentType aContent)
-{
-    // On Android we always use RGB565 for now.
-    if (aContent == gfxASurface::CONTENT_COLOR) {
-        return mozilla::gfx::FORMAT_R5G6B5;
-    } else {
-        return gfxPlatform::Optimal2DFormatForContent(aContent);
-    }
 }
 
 nsresult

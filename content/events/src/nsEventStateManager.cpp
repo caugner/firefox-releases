@@ -30,7 +30,6 @@
 #include "nsIBaseWindow.h"
 #include "nsISelection.h"
 #include "nsFrameSelection.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
 #include "nsIEnumerator.h"
@@ -97,6 +96,7 @@
 
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/Attributes.h"
 #include "sampler.h"
 
 #include "nsIDOMClientRect.h"
@@ -124,7 +124,6 @@ nsEventStateManager* nsEventStateManager::sActiveESM = nsnull;
 nsIDocument* nsEventStateManager::sMouseOverDocument = nsnull;
 nsWeakFrame nsEventStateManager::sLastDragOverFrame = nsnull;
 nsIntPoint nsEventStateManager::sLastRefPoint = nsIntPoint(0,0);
-nsIntPoint nsEventStateManager::sLastScreenOffset = nsIntPoint(0,0);
 nsIntPoint nsEventStateManager::sLastScreenPoint = nsIntPoint(0,0);
 nsIntPoint nsEventStateManager::sLastClientPoint = nsIntPoint(0,0);
 bool nsEventStateManager::sIsPointerLocked = false;
@@ -218,7 +217,7 @@ PrintDocTreeAll(nsIDocShellTreeItem* aItem)
 }
 #endif
 
-class nsUITimerCallback : public nsITimerCallback
+class nsUITimerCallback MOZ_FINAL : public nsITimerCallback
 {
 public:
   nsUITimerCallback() : mPreviousCount(0) {}
@@ -391,9 +390,11 @@ OutOfTime(PRUint32 aBaseTime, PRUint32 aThreshold)
 }
 
 static bool
-CanScrollInRange(nscoord aMin, nscoord aValue, nscoord aMax, PRInt32 aDirection)
+CanScrollInRange(nscoord aMin, nscoord aValue, nscoord aMax,
+                 PRInt32 aDirection, nscoord aOneDevPixel)
 {
-  return aDirection > 0 ? aValue < aMax : aMin < aValue;
+  return (aDirection > 0 ? aValue < aMax : aMin < aValue) &&
+         (aMax - aMin >= aOneDevPixel);
 }
 
 static bool
@@ -405,9 +406,14 @@ CanScrollOn(nsIScrollableFrame* aScrollFrame, PRInt32 aNumLines,
   nsPoint scrollPt = aScrollFrame->GetScrollPosition();
   nsRect scrollRange = aScrollFrame->GetScrollRange();
 
+  nscoord oneDevPixel =
+    aScrollFrame->GetScrolledFrame()->PresContext()->AppUnitsPerDevPixel();
+
   return aScrollHorizontal
-    ? CanScrollInRange(scrollRange.x, scrollPt.x, scrollRange.XMost(), aNumLines)
-    : CanScrollInRange(scrollRange.y, scrollPt.y, scrollRange.YMost(), aNumLines);
+    ? CanScrollInRange(scrollRange.x, scrollPt.x, scrollRange.XMost(),
+                       aNumLines, oneDevPixel)
+    : CanScrollInRange(scrollRange.y, scrollPt.y, scrollRange.YMost(),
+                       aNumLines, oneDevPixel);
 }
 
 void
@@ -1679,10 +1685,10 @@ nsEventStateManager::IsRemoteTarget(nsIContent* target) {
   // <frame/iframe mozbrowser>
   nsCOMPtr<nsIMozBrowserFrame> browserFrame = do_QueryInterface(target);
   if (browserFrame) {
-    bool isRemote = false;
-    browserFrame->GetReallyIsBrowser(&isRemote);
-    if (isRemote) {
-      return true;
+    bool isBrowser = false;
+    browserFrame->GetReallyIsBrowser(&isBrowser);
+    if (isBrowser) {
+      return !!TabParent::GetFrom(target);
     }
   }
 
@@ -1902,6 +1908,7 @@ nsEventStateManager::FireContextClick()
                              type == NS_FORM_INPUT_URL ||
                              type == NS_FORM_INPUT_PASSWORD ||
                              type == NS_FORM_INPUT_FILE ||
+                             type == NS_FORM_INPUT_NUMBER ||
                              type == NS_FORM_TEXTAREA);
       }
       else if (tag == nsGkAtoms::applet ||
@@ -2318,7 +2325,7 @@ nsEventStateManager::DoDefaultDragStart(nsPresContext* aPresContext,
   nsIDOMElement* dragImage = aDataTransfer->GetDragImage(&imageX, &imageY);
 
   nsCOMPtr<nsISupportsArray> transArray;
-  aDataTransfer->GetTransferables(getter_AddRefs(transArray));
+  aDataTransfer->GetTransferables(getter_AddRefs(transArray), dragTarget);
   if (!transArray)
     return false;
 
@@ -3873,8 +3880,14 @@ public:
 
   ~MouseEnterLeaveDispatcher()
   {
-    for (PRInt32 i = 0; i < mTargets.Count(); ++i) {
-      mESM->DispatchMouseEvent(mEvent, mType, mTargets[i], mRelatedTarget);
+    if (mType == NS_MOUSEENTER) {
+      for (PRInt32 i = mTargets.Count() - 1; i >= 0; --i) {
+        mESM->DispatchMouseEvent(mEvent, mType, mTargets[i], mRelatedTarget);
+      }
+    } else {
+      for (PRInt32 i = 0; i < mTargets.Count(); ++i) {
+        mESM->DispatchMouseEvent(mEvent, mType, mTargets[i], mRelatedTarget);
+      }
     }
   }
 

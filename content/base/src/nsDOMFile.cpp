@@ -14,7 +14,6 @@
 #include "nsICharsetConverterManager.h"
 #include "nsIConverterInputStream.h"
 #include "nsIDocument.h"
-#include "nsIDOMDocument.h"
 #include "nsIFileStreams.h"
 #include "nsIInputStream.h"
 #include "nsIIPCSerializable.h"
@@ -31,6 +30,7 @@
 #include "nsJSUtils.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/Attributes.h"
 
 #include "plbase64.h"
 #include "prmem.h"
@@ -44,8 +44,8 @@ using namespace mozilla::dom;
 // ensure that the buffer underlying the stream we get
 // from NS_NewByteInputStream is held alive as long as the
 // stream is.  We do that by passing back this class instead.
-class DataOwnerAdapter : public nsIInputStream,
-                         public nsISeekableStream
+class DataOwnerAdapter MOZ_FINAL : public nsIInputStream,
+                                   public nsISeekableStream
 {
   typedef nsDOMMemoryFile::DataOwner DataOwner;
 public:
@@ -599,12 +599,8 @@ nsDOMFileFile::Initialize(nsISupports* aOwner,
       return NS_ERROR_XPC_BAD_CONVERT_JS;
     }
 
-    nsCOMPtr<nsILocalFile> localFile;
-    rv = NS_NewLocalFile(xpcomStr, false, getter_AddRefs(localFile));
+    rv = NS_NewLocalFile(xpcomStr, false, getter_AddRefs(file));
     NS_ENSURE_SUCCESS(rv, rv);
-
-    file = do_QueryInterface(localFile);
-    NS_ASSERTION(file, "This should never happen");
   }
 
   bool exists;

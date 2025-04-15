@@ -21,6 +21,10 @@ class PropertyProvider;
 // reflow
 #define TEXT_HAS_NONCOLLAPSED_CHARACTERS NS_FRAME_STATE_BIT(31)
 
+// This state bit is set on frames which are forced to trim their leading and
+// trailing whitespaces
+#define TEXT_FORCE_TRIM_WHITESPACE       NS_FRAME_STATE_BIT(32)
+
 #define TEXT_HAS_FONT_INFLATION          NS_FRAME_STATE_BIT(61)
 
 class nsTextFrame : public nsFrame {
@@ -116,7 +120,7 @@ public:
    * This is called only on the primary text frame. It indicates that
    * the selection state of the given character range has changed.
    * Text in the range is unconditionally invalidated
-   * (nsTypedSelection::Repaint depends on this).
+   * (Selection::Repaint depends on this).
    * @param aSelected true if the selection has been added to the range,
    * false otherwise
    * @param aType the type of selection added or removed
@@ -396,7 +400,7 @@ public:
   struct TrimmedOffsets {
     PRInt32 mStart;
     PRInt32 mLength;
-    PRInt32 GetEnd() { return mStart + mLength; }
+    PRInt32 GetEnd() const { return mStart + mLength; }
   };
   TrimmedOffsets GetTrimmedOffsets(const nsTextFragment* aFrag,
                                    bool aTrimAfter);

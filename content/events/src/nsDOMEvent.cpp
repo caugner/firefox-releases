@@ -77,6 +77,7 @@ static const char* const sEventNames[] = {
   "MozRotateGesture",
   "MozTapGesture",
   "MozPressTapGesture",
+  "MozEdgeUIGesture",
   "MozTouchDown",
   "MozTouchMove",
   "MozTouchUp",
@@ -175,7 +176,6 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDOMEvent)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMEvent)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEvent)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSEvent)
-  NS_INTERFACE_MAP_ENTRY(nsIPrivateDOMEvent)
   NS_INTERFACE_MAP_ENTRY(nsIJSNativeInitializer)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(Event)
 NS_INTERFACE_MAP_END
@@ -573,7 +573,8 @@ nsDOMEvent::InitEvent(const nsAString& aEventTypeArg, bool aCanBubbleArg, bool a
   return NS_OK;
 }
 
-NS_METHOD nsDOMEvent::DuplicatePrivateData()
+NS_IMETHODIMP
+nsDOMEvent::DuplicatePrivateData()
 {
   // FIXME! Simplify this method and make it somehow easily extendable,
   //        Bug 329127
@@ -839,6 +840,7 @@ NS_METHOD nsDOMEvent::DuplicatePrivateData()
       isInputEvent = true;
       simpleGestureEvent->direction = oldSimpleGestureEvent->direction;
       simpleGestureEvent->delta = oldSimpleGestureEvent->delta;
+      simpleGestureEvent->clickCount = oldSimpleGestureEvent->clickCount;
       newEvent = simpleGestureEvent;
       break;
     }
@@ -913,7 +915,8 @@ NS_METHOD nsDOMEvent::DuplicatePrivateData()
   return NS_OK;
 }
 
-NS_METHOD nsDOMEvent::SetTarget(nsIDOMEventTarget* aTarget)
+NS_IMETHODIMP
+nsDOMEvent::SetTarget(nsIDOMEventTarget* aTarget)
 {
 #ifdef DEBUG
   {
@@ -1502,6 +1505,8 @@ const char* nsDOMEvent::GetEventName(PRUint32 aEventType)
     return sEventNames[eDOMEvents_MozTapGesture];
   case NS_SIMPLE_GESTURE_PRESSTAP:
     return sEventNames[eDOMEvents_MozPressTapGesture];
+  case NS_SIMPLE_GESTURE_EDGEUI:
+    return sEventNames[eDOMEvents_MozEdgeUIGesture];
   case NS_MOZTOUCH_DOWN:
     return sEventNames[eDOMEvents_MozTouchDown];
   case NS_MOZTOUCH_MOVE:
@@ -1557,7 +1562,7 @@ nsDOMEvent::GetDefaultPrevented(bool* aReturn)
   return GetPreventDefault(aReturn);
 }
 
-void
+NS_IMETHODIMP_(void)
 nsDOMEvent::Serialize(IPC::Message* aMsg, bool aSerializeInterfaceType)
 {
   if (aSerializeInterfaceType) {
@@ -1583,7 +1588,7 @@ nsDOMEvent::Serialize(IPC::Message* aMsg, bool aSerializeInterfaceType)
   // No timestamp serialization for now!
 }
 
-bool
+NS_IMETHODIMP_(bool)
 nsDOMEvent::Deserialize(const IPC::Message* aMsg, void** aIter)
 {
   nsString type;

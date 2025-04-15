@@ -33,7 +33,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Macros to help detect thread-safety:
 
-#if defined(NS_DEBUG) && !defined(XPCOM_GLUE_AVOID_NSPR)
+#if defined(DEBUG) && !defined(XPCOM_GLUE_AVOID_NSPR)
 
 class nsAutoOwningThread {
 public:
@@ -58,13 +58,13 @@ private:
     } \
   } while (0)
 
-#else // !NS_DEBUG
+#else // !DEBUG
 
 #define NS_DECL_OWNINGTHREAD            /* nothing */
 #define NS_ASSERT_OWNINGTHREAD(_class)  ((void)0)
 #define NS_ASSERT_OWNINGTHREAD_AND_NOT_CCTHREAD(_class)  ((void)0)
 
-#endif // NS_DEBUG
+#endif // DEBUG
 
 #define NS_CCAR_REFCNT_BIT 1
 #define NS_CCAR_REFCNT_TO_TAGGED(rc_) \
@@ -1128,12 +1128,6 @@ NS_IMETHODIMP_(nsrefcnt) Class::Release(void)                                 \
   NS_INTERFACE_TABLE_INHERITED9(Class, i1, i2, i3, i4, i5, i6, i7, i8, i9)    \
   NS_INTERFACE_TABLE_TAIL_INHERITING(Super)
 
-#define NS_IMPL_QUERY_INTERFACE_INHERITED10(Class,Super,i1,i2,i3,i4,i5,i6,       \
-                                            i7,i8,i9,i10)                        \
-  NS_INTERFACE_TABLE_HEAD(Class)                                                 \
-  NS_INTERFACE_TABLE_INHERITED10(Class, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10) \
-  NS_INTERFACE_TABLE_TAIL_INHERITING(Super)
-
 /**
  * Convenience macros for implementing all nsISupports methods for
  * a simple class.
@@ -1254,11 +1248,6 @@ NS_IMETHODIMP_(nsrefcnt) Class::Release(void)                                 \
 
 #define NS_IMPL_ISUPPORTS_INHERITED9(Class, Super, i1, i2, i3, i4, i5, i6, i7, i8, i9) \
     NS_IMPL_QUERY_INTERFACE_INHERITED9(Class, Super, i1, i2, i3, i4, i5, i6, i7, i8, i9) \
-    NS_IMPL_ADDREF_INHERITED(Class, Super)                                    \
-    NS_IMPL_RELEASE_INHERITED(Class, Super)                                   \
-
-#define NS_IMPL_ISUPPORTS_INHERITED10(Class, Super, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10) \
-    NS_IMPL_QUERY_INTERFACE_INHERITED10(Class, Super, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10) \
     NS_IMPL_ADDREF_INHERITED(Class, Super)                                    \
     NS_IMPL_RELEASE_INHERITED(Class, Super)                                   \
 /*

@@ -40,6 +40,7 @@
 #include "prlog.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/Attributes.h"
 
 using namespace mozilla;
 
@@ -78,8 +79,8 @@ private:
 // nsOfflineCachePendingUpdate
 //-----------------------------------------------------------------------------
 
-class nsOfflineCachePendingUpdate : public nsIWebProgressListener
-                                  , public nsSupportsWeakReference
+class nsOfflineCachePendingUpdate MOZ_FINAL : public nsIWebProgressListener
+                                            , public nsSupportsWeakReference
 {
 public:
     NS_DECL_ISUPPORTS
@@ -436,7 +437,7 @@ nsOfflineCacheUpdateService::Schedule(nsIURI *aManifestURI,
                                       nsIURI *aDocumentURI,
                                       nsIDOMDocument *aDocument,
                                       nsIDOMWindow* aWindow,
-                                      nsILocalFile* aCustomProfileDir,
+                                      nsIFile* aCustomProfileDir,
                                       nsIOfflineCacheUpdate **aUpdate)
 {
     nsCOMPtr<nsIOfflineCacheUpdate> update;
@@ -472,7 +473,7 @@ nsOfflineCacheUpdateService::ScheduleUpdate(nsIURI *aManifestURI,
 NS_IMETHODIMP
 nsOfflineCacheUpdateService::ScheduleCustomProfileUpdate(nsIURI *aManifestURI,
                                                          nsIURI *aDocumentURI,
-                                                         nsILocalFile *aProfileDir,
+                                                         nsIFile *aProfileDir,
                                                          nsIOfflineCacheUpdate **aUpdate)
 {
     // The profile directory is mandatory

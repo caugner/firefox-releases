@@ -26,7 +26,6 @@
 
 #include "nsIServiceManager.h"
 #include "nsIComponentManager.h"
-#include "nsContentUtils.h"
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
@@ -63,7 +62,7 @@ nsBulletFrame::DestroyFrom(nsIFrame* aDestructRoot)
   nsFrame::DestroyFrom(aDestructRoot);
 }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 NS_IMETHODIMP
 nsBulletFrame::GetFrameName(nsAString& aResult) const
 {
@@ -1277,11 +1276,8 @@ nsBulletFrame::GetDesiredSize(nsPresContext*  aCX,
     if (status & imgIRequest::STATUS_SIZE_AVAILABLE &&
         !(status & imgIRequest::STATUS_ERROR)) {
       // auto size the image
-      mComputedSize.width = mIntrinsicSize.width;
-      mComputedSize.height = mIntrinsicSize.height;
-
-      aMetrics.width = mComputedSize.width;
-      aMetrics.ascent = aMetrics.height = mComputedSize.height;
+      aMetrics.width = mIntrinsicSize.width;
+      aMetrics.ascent = aMetrics.height = mIntrinsicSize.height;
 
       AddStateBits(BULLET_FRAME_IMAGE_LOADING);
 

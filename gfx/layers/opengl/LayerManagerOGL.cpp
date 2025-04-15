@@ -426,6 +426,13 @@ LayerManagerOGL::EndTransaction(DrawThebesLayerCallback aCallback,
 #endif
 }
 
+already_AddRefed<gfxASurface>
+LayerManagerOGL::CreateOptimalMaskSurface(const gfxIntSize &aSize)
+{
+  return gfxPlatform::GetPlatform()->
+    CreateOffscreenImageSurface(aSize, gfxASurface::CONTENT_ALPHA);
+}
+
 already_AddRefed<ThebesLayer>
 LayerManagerOGL::CreateThebesLayer()
 {

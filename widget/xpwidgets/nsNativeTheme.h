@@ -42,6 +42,7 @@ class nsNativeTheme : public nsITimerCallback
   };
 
   nsNativeTheme();
+  virtual ~nsNativeTheme() {}
 
   // Returns the content state (hover, focus, etc), see nsEventStateManager.h
   nsEventStates GetContentState(nsIFrame* aFrame, PRUint8 aWidgetType);
@@ -135,6 +136,9 @@ class nsNativeTheme : public nsITimerCallback
   // progressbar:
   bool IsIndeterminateProgress(nsIFrame* aFrame, nsEventStates aEventStates);
   bool IsVerticalProgress(nsIFrame* aFrame);
+
+  // meter:
+  bool IsVerticalMeter(nsIFrame* aFrame);
 
   // textfield:
   bool IsReadOnly(nsIFrame* aFrame) {

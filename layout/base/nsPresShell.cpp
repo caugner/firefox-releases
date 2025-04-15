@@ -53,7 +53,7 @@
 #include "nsHTMLParts.h"
 #include "nsISelection.h"
 #include "nsISelectionPrivate.h"
-#include "nsTypedSelection.h"
+#include "mozilla/Selection.h"
 #include "nsLayoutCID.h"
 #include "nsGkAtoms.h"
 #include "nsIDOMRange.h"
@@ -229,7 +229,7 @@ struct RangePaintInfo {
 
 // ----------------------------------------------------------------------
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 // Set the environment variable GECKO_VERIFY_REFLOW_FLAGS to one or
 // more of the following flags (comma separated) for handy debug
 // output.
@@ -472,6 +472,13 @@ public:
         mPresShell->FlushPendingNotifications(Flush_Layout);
       }
       nsIFrame* frame = mPresShell->GetCurrentEventFrame();
+      if (!frame &&
+          (aVisitor.mEvent->message == NS_MOUSE_BUTTON_UP ||
+           aVisitor.mEvent->message == NS_TOUCH_END)) {
+        // Redirect BUTTON_UP and TOUCH_END events to the root frame to ensure
+        // that capturing is released.
+        frame = mPresShell->GetRootFrame();
+      }
       if (frame) {
         frame->HandleEvent(aVisitor.mPresContext,
                            (nsGUIEvent*) aVisitor.mEvent,
@@ -511,7 +518,7 @@ bool PresShell::sDisableNonTestMouseEvents = false;
 PRLogModuleInfo* PresShell::gLog;
 #endif
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 static void
 VerifyStyleTree(nsPresContext* aPresContext, nsFrameManager* aFrameManager)
 {
@@ -530,7 +537,7 @@ static bool gVerifyReflowEnabled;
 bool
 nsIPresShell::GetVerifyReflowEnable()
 {
-#ifdef NS_DEBUG
+#ifdef DEBUG
   static bool firstTime = true;
   if (firstTime) {
     firstTime = false;
@@ -1143,7 +1150,7 @@ nsresult PresShell::ClearPreferenceStyleRules(void)
     if (mStyleSet) {
       // remove the sheet from the styleset: 
       // - note that we have to check for success by comparing the count before and after...
-#ifdef NS_DEBUG
+#ifdef DEBUG
       PRInt32 numBefore = mStyleSet->SheetCount(nsStyleSet::eUserSheet);
       NS_ASSERTION(numBefore > 0, "no user stylesheets in styleset, but we have one!");
 #endif
@@ -1593,7 +1600,7 @@ PresShell::InitialReflow(nscoord aWidth, nscoord aHeight)
   nsCOMPtr<nsIPresShell> kungFuDeathGrip(this);
   mDidInitialReflow = true;
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
   if (VERIFY_REFLOW_NOISY_RC & gVerifyReflowFlags) {
     if (mDocument) {
       nsIURI *uri = mDocument->GetDocumentURI();
@@ -1946,7 +1953,7 @@ PresShell::NotifyDestroyingFrame(nsIFrame* aFrame)
       mCurrentEventFrame = nsnull;
     }
 
-  #ifdef NS_DEBUG
+  #ifdef DEBUG
     if (aFrame == mDrawEventTargetFrame) {
       mDrawEventTargetFrame = nsnull;
     }
@@ -4080,9 +4087,10 @@ PresShell::ContentRemoved(nsIDocument *aDocument,
     oldNextSibling = nsnull;
   }
   
-  if (aContainer)
+  if (aContainer && aContainer->IsElement()) {
     mFrameConstructor->RestyleForRemove(aContainer->AsElement(), aChild,
                                         oldNextSibling);
+  }
 
   bool didReconstruct;
   mFrameConstructor->ContentRemoved(aContainer, aChild, oldNextSibling,
@@ -5900,6 +5908,47 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
     PresShell* shell =
         static_cast<PresShell*>(frame->PresContext()->PresShell());
 
+    switch (aEvent->message) {
+      case NS_TOUCH_MOVE:
+      case NS_TOUCH_CANCEL:
+      case NS_TOUCH_END: {
+        // Remove the changed touches
+        // need to make sure we only remove touches that are ending here
+        nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
+        nsTArray<nsCOMPtr<nsIDOMTouch> >  &touches = touchEvent->touches;
+        for (PRUint32 i = 0; i < touches.Length(); ++i) {
+          nsIDOMTouch *touch = touches[i];
+          if (!touch) {
+            break;
+          }
+  
+          PRInt32 id;
+          touch->GetIdentifier(&id);
+          nsCOMPtr<nsIDOMTouch> oldTouch;
+          gCaptureTouchList.Get(id, getter_AddRefs(oldTouch));
+          if (!oldTouch) {
+            break;
+          }
+  
+          nsCOMPtr<nsPIDOMEventTarget> targetPtr;
+          oldTouch->GetTarget(getter_AddRefs(targetPtr));
+          nsCOMPtr<nsIContent> content = do_QueryInterface(targetPtr);
+          if (!content) {
+            break;
+          }
+
+          nsIFrame* contentFrame = content->GetPrimaryFrame();
+          if (!contentFrame) {
+            break;
+          }
+
+          shell = static_cast<PresShell*>(
+                      contentFrame->PresContext()->PresShell());
+        }
+        break;
+      }
+    }
+
     // Check if we have an active EventStateManager which isn't the
     // EventStateManager of the current PresContext.
     // If that is the case, and mouse is over some ancestor document,
@@ -6022,7 +6071,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
       rv = HandleEventInternal(aEvent, aEventStatus);
     }
   
-#ifdef NS_DEBUG
+#ifdef DEBUG
     ShowEventTargetDebug();
 #endif
     PopCurrentEventInfo();
@@ -6074,7 +6123,7 @@ PresShell::GetTouchEventTargetDocument()
 }
 #endif
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 void
 PresShell::ShowEventTargetDebug()
 {
@@ -6138,7 +6187,7 @@ PresShell::HandlePositionedEvent(nsIFrame*      aTargetFrame,
     rv = HandleEventInternal(aEvent, aEventStatus);
   }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
   ShowEventTargetDebug();
 #endif
   PopCurrentEventInfo();
@@ -6476,7 +6525,22 @@ PresShell::DispatchTouchEvent(nsEvent *aEvent,
                             touchEvent);
       newEvent.target = targetPtr;
 
-      nsCOMPtr<nsIContent> content(do_QueryInterface(targetPtr));
+      // If someone is capturing, all touch events are filtered to their target
+      nsCOMPtr<nsIContent> content = GetCapturingContent();
+
+      // if no one is capturing, set the capturing target
+      if (!content) {
+        content = do_QueryInterface(targetPtr);
+      }
+      nsRefPtr<PresShell> contentPresShell;
+      if (content && content->OwnerDoc() == mDocument) {
+        contentPresShell = static_cast<PresShell*>
+            (content->OwnerDoc()->GetShell());
+        if (contentPresShell) {
+          contentPresShell->PushCurrentEventInfo(
+              content->GetPrimaryFrame(), content);
+        }
+      }
       nsPresContext *context = nsContentUtils::GetContextForContent(content);
       if (!context) {
         context = mPresContext;
@@ -6486,6 +6550,9 @@ PresShell::DispatchTouchEvent(nsEvent *aEvent,
                                   &newEvent, nsnull, &tmpStatus, aEventCB);
       if (nsEventStatus_eConsumeNoDefault == tmpStatus) {
         preventDefault = true;
+      }
+      if (contentPresShell) {
+        contentPresShell->PopCurrentEventInfo();
       }
     }
   } else {
@@ -6733,8 +6800,12 @@ PresShell::PrepareToUseCaretPosition(nsIWidget* aEventWidget, nsIntPoint& aTarge
     // an edit box below the current view, you'll get the edit box aligned with
     // the top of the window. This is arguably better behavior anyway.
     rv = ScrollContentIntoView(content,
-                               ScrollAxis(),
-                               ScrollAxis(),
+                               nsIPresShell::ScrollAxis(
+                                 nsIPresShell::SCROLL_MINIMUM,
+                                 nsIPresShell::SCROLL_IF_NOT_VISIBLE),
+                               nsIPresShell::ScrollAxis(
+                                 nsIPresShell::SCROLL_MINIMUM,
+                                 nsIPresShell::SCROLL_IF_NOT_VISIBLE),
                                SCROLL_OVERFLOW_HIDDEN);
     NS_ENSURE_SUCCESS(rv, false);
     frame = content->GetPrimaryFrame();
@@ -7753,7 +7824,7 @@ nsIPresShell::RemoveRefreshObserverExternal(nsARefreshObserver* aObserver,
 
 // Start of DEBUG only code
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 #include "nsIURL.h"
 #include "nsILinkHandler.h"
 
@@ -8045,7 +8116,7 @@ DumpToPNG(nsIPresShell* shell, nsAString& name) {
                         imgIEncoder::INPUT_FORMAT_HOSTARGB, EmptyString());
 
   // XXX not sure if this is the right way to write to a file
-  nsCOMPtr<nsILocalFile> file = do_CreateInstance("@mozilla.org/file/local;1");
+  nsCOMPtr<nsIFile> file = do_CreateInstance("@mozilla.org/file/local;1");
   NS_ENSURE_TRUE(file, NS_ERROR_FAILURE);
   rv = file->InitWithPath(name);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -8927,13 +8998,15 @@ PresShell::GetRootPresShell()
 
 void
 PresShell::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
-                               size_t *aArenasSize,
+                               nsArenaMemoryStats *aArenaObjectsSize,
+                               size_t *aPresShellSize,
                                size_t *aStyleSetsSize,
                                size_t *aTextRunsSize,
-                               size_t *aPresContextSize) const
+                               size_t *aPresContextSize)
 {
-  *aArenasSize = aMallocSizeOf(this);
-  *aArenasSize += mFrameArena.SizeOfExcludingThis(aMallocSizeOf);
+  mFrameArena.SizeOfExcludingThis(aMallocSizeOf, aArenaObjectsSize);
+  *aPresShellSize = aMallocSizeOf(this);
+  *aPresShellSize += aArenaObjectsSize->mOther;
 
   *aStyleSetsSize = StyleSet()->SizeOfIncludingThis(aMallocSizeOf);
 
@@ -8962,9 +9035,23 @@ PresShell::SizeOfTextRuns(nsMallocSizeOfFun aMallocSizeOf) const
 void
 nsIPresShell::SetScrollPositionClampingScrollPortSize(nscoord aWidth, nscoord aHeight)
 {
-  mScrollPositionClampingScrollPortSizeSet = true;
-  mScrollPositionClampingScrollPortSize.width = aWidth;
-  mScrollPositionClampingScrollPortSize.height = aHeight;
+  if (!mScrollPositionClampingScrollPortSizeSet ||
+      mScrollPositionClampingScrollPortSize.width != aWidth ||
+      mScrollPositionClampingScrollPortSize.height != aHeight) {
+    mScrollPositionClampingScrollPortSizeSet = true;
+    mScrollPositionClampingScrollPortSize.width = aWidth;
+    mScrollPositionClampingScrollPortSize.height = aHeight;
+
+    // Reflow fixed position children.
+    nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
+    if (rootFrame) {
+      const nsFrameList& childList = rootFrame->GetChildList(nsIFrame::kFixedList);
+      for (nsIFrame* child = childList.FirstChild(); child;
+           child = child->GetNextSibling()) {
+        FrameNeedsReflow(child, eResize, NS_FRAME_IS_DIRTY);
+      }
+    }
+  }
 }
 
 void

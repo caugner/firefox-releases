@@ -47,7 +47,6 @@ using mozilla::DefaultXDisplay;
 #include "nsIDocShellTreeItem.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsLayoutUtils.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsIPluginWidget.h"
 #include "nsIViewManager.h"
 #include "nsIDocShellTreeOwner.h"
@@ -764,7 +763,7 @@ NS_IMETHODIMP nsPluginInstanceOwner::GetNetscapeWindow(void *value)
   }
 
   return rv;
-#elif (defined(MOZ_WIDGET_GTK2) || defined(MOZ_WIDGET_QT)) && defined(MOZ_X11)
+#elif (defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_QT)) && defined(MOZ_X11)
   // X11 window managers want the toplevel window for WM_TRANSIENT_FOR.
   nsIWidget* win = mObjectFrame->GetNearestWidget();
   if (!win)
@@ -1809,7 +1808,7 @@ already_AddRefed<ImageContainer> nsPluginInstanceOwner::GetImageContainerForVide
 
   data.mHandle = mInstance->GLContext()->CreateSharedHandle(gl::TextureImage::ThreadShared, aVideoInfo->mSurfaceTexture, gl::GLContext::SurfaceTexture);
   data.mShareType = mozilla::gl::TextureImage::ThreadShared;
-  data.mInverted = mInstance->Inverted();
+  data.mInverted = AndroidBridge::Bridge()->IsHoneycomb() ? true : mInstance->Inverted();
   data.mSize = gfxIntSize(aVideoInfo->mDimensions.width, aVideoInfo->mDimensions.height);
 
   SharedTextureImage* pluginImage = static_cast<SharedTextureImage*>(img.get());
@@ -1817,17 +1816,6 @@ already_AddRefed<ImageContainer> nsPluginInstanceOwner::GetImageContainerForVide
   container->SetCurrentImage(img);
 
   return container.forget();
-}
-
-nsIntRect nsPluginInstanceOwner::GetVisibleRect()
-{
-  gfxRect r = nsIntRect(0, 0, mPluginWindow->width, mPluginWindow->height);
-
-  float xResolution = mObjectFrame->PresContext()->GetRootPresContext()->PresShell()->GetXResolution();
-  float yResolution = mObjectFrame->PresContext()->GetRootPresContext()->PresShell()->GetYResolution();
-  r.Scale(xResolution, yResolution);
-
-  return nsIntRect(r.x, r.y, r.width, r.height);
 }
 
 void nsPluginInstanceOwner::Invalidate() {
@@ -1915,22 +1903,17 @@ nsresult nsPluginInstanceOwner::DispatchFocusToPlugin(nsIDOMEvent* aFocusEvent)
   }
 #endif
 
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aFocusEvent));
-  if (privateEvent) {
-    nsEvent * theEvent = privateEvent->GetInternalNSEvent();
-    if (theEvent) {
-      // we only care about the message in ProcessEvent
-      nsGUIEvent focusEvent(NS_IS_TRUSTED_EVENT(theEvent), theEvent->message,
-                            nsnull);
-      nsEventStatus rv = ProcessEvent(focusEvent);
-      if (nsEventStatus_eConsumeNoDefault == rv) {
-        aFocusEvent->PreventDefault();
-        aFocusEvent->StopPropagation();
-      }
-    }
-    else NS_ASSERTION(false, "nsPluginInstanceOwner::DispatchFocusToPlugin failed, focusEvent null");   
+  nsEvent* theEvent = aFocusEvent->GetInternalNSEvent();
+  if (theEvent) {
+    // we only care about the message in ProcessEvent
+    nsGUIEvent focusEvent(NS_IS_TRUSTED_EVENT(theEvent), theEvent->message,
+                          nsnull);
+    nsEventStatus rv = ProcessEvent(focusEvent);
+    if (nsEventStatus_eConsumeNoDefault == rv) {
+      aFocusEvent->PreventDefault();
+      aFocusEvent->StopPropagation();
+    }   
   }
-  else NS_ASSERTION(false, "nsPluginInstanceOwner::DispatchFocusToPlugin failed, privateEvent null");   
   
   return NS_OK;
 }    
@@ -1939,19 +1922,14 @@ nsresult nsPluginInstanceOwner::DispatchFocusToPlugin(nsIDOMEvent* aFocusEvent)
 nsresult nsPluginInstanceOwner::Text(nsIDOMEvent* aTextEvent)
 {
   if (mInstance) {
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aTextEvent));
-    if (privateEvent) {
-      nsEvent *event = privateEvent->GetInternalNSEvent();
-      if (event && event->eventStructType == NS_TEXT_EVENT) {
-        nsEventStatus rv = ProcessEvent(*static_cast<nsGUIEvent*>(event));
-        if (nsEventStatus_eConsumeNoDefault == rv) {
-          aTextEvent->PreventDefault();
-          aTextEvent->StopPropagation();
-        }
+    nsEvent *event = aTextEvent->GetInternalNSEvent();
+    if (event && event->eventStructType == NS_TEXT_EVENT) {
+      nsEventStatus rv = ProcessEvent(*static_cast<nsGUIEvent*>(event));
+      if (nsEventStatus_eConsumeNoDefault == rv) {
+        aTextEvent->PreventDefault();
+        aTextEvent->StopPropagation();
       }
-      else NS_ASSERTION(false, "nsPluginInstanceOwner::DispatchTextToPlugin failed, textEvent null");
     }
-    else NS_ASSERTION(false, "nsPluginInstanceOwner::DispatchTextToPlugin failed, privateEvent null");
   }
 
   return NS_OK;
@@ -1966,16 +1944,13 @@ nsresult nsPluginInstanceOwner::KeyPress(nsIDOMEvent* aKeyEvent)
     // KeyPress events are really synthesized keyDown events.
     // Here we check the native message of the event so that
     // we won't send the plugin two keyDown events.
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aKeyEvent));
-    if (privateEvent) {
-      nsEvent *theEvent = privateEvent->GetInternalNSEvent();
-      const EventRecord *ev;
-      if (theEvent &&
-          theEvent->message == NS_KEY_PRESS &&
-          (ev = (EventRecord*)(((nsGUIEvent*)theEvent)->pluginEvent)) &&
-          ev->what == keyDown)
-        return aKeyEvent->PreventDefault(); // consume event
-    }
+    nsEvent *theEvent = aKeyEvent->GetInternalNSEvent();
+    const EventRecord *ev;
+    if (theEvent &&
+        theEvent->message == NS_KEY_PRESS &&
+        (ev = (EventRecord*)(((nsGUIEvent*)theEvent)->pluginEvent)) &&
+        ev->what == keyDown)
+      return aKeyEvent->PreventDefault(); // consume event
 
     // Nasty hack to avoid recursive event dispatching with Java. Java can
     // dispatch key events to a TSM handler, which comes back and calls 
@@ -2017,19 +1992,14 @@ nsresult nsPluginInstanceOwner::DispatchKeyToPlugin(nsIDOMEvent* aKeyEvent)
 #endif
 
   if (mInstance) {
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aKeyEvent));
-    if (privateEvent) {
-      nsEvent *event = privateEvent->GetInternalNSEvent();
-      if (event && event->eventStructType == NS_KEY_EVENT) {
-        nsEventStatus rv = ProcessEvent(*static_cast<nsGUIEvent*>(event));
-        if (nsEventStatus_eConsumeNoDefault == rv) {
-          aKeyEvent->PreventDefault();
-          aKeyEvent->StopPropagation();
-        }
-      }
-      else NS_ASSERTION(false, "nsPluginInstanceOwner::DispatchKeyToPlugin failed, keyEvent null");   
+    nsEvent *event = aKeyEvent->GetInternalNSEvent();
+    if (event && event->eventStructType == NS_KEY_EVENT) {
+      nsEventStatus rv = ProcessEvent(*static_cast<nsGUIEvent*>(event));
+      if (nsEventStatus_eConsumeNoDefault == rv) {
+        aKeyEvent->PreventDefault();
+        aKeyEvent->StopPropagation();
+      }   
     }
-    else NS_ASSERTION(false, "nsPluginInstanceOwner::DispatchKeyToPlugin failed, privateEvent null");   
   }
 
   return NS_OK;
@@ -2056,18 +2026,13 @@ nsPluginInstanceOwner::MouseDown(nsIDOMEvent* aMouseEvent)
     }
   }
 
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aMouseEvent));
-  if (privateEvent) {
-    nsEvent* event = privateEvent->GetInternalNSEvent();
-      if (event && event->eventStructType == NS_MOUSE_EVENT) {
-        nsEventStatus rv = ProcessEvent(*static_cast<nsGUIEvent*>(event));
-      if (nsEventStatus_eConsumeNoDefault == rv) {
-        return aMouseEvent->PreventDefault(); // consume event
-      }
+  nsEvent* event = aMouseEvent->GetInternalNSEvent();
+    if (event && event->eventStructType == NS_MOUSE_EVENT) {
+      nsEventStatus rv = ProcessEvent(*static_cast<nsGUIEvent*>(event));
+    if (nsEventStatus_eConsumeNoDefault == rv) {
+      return aMouseEvent->PreventDefault(); // consume event
     }
-    else NS_ASSERTION(false, "nsPluginInstanceOwner::MouseDown failed, mouseEvent null");   
   }
-  else NS_ASSERTION(false, "nsPluginInstanceOwner::MouseDown failed, privateEvent null");   
   
   return NS_OK;
 }
@@ -2083,20 +2048,14 @@ nsresult nsPluginInstanceOwner::DispatchMouseToPlugin(nsIDOMEvent* aMouseEvent)
   if (!mWidgetVisible)
     return NS_OK;
 
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aMouseEvent));
-  if (privateEvent) {
-    nsEvent* event = privateEvent->GetInternalNSEvent();
-    if (event && event->eventStructType == NS_MOUSE_EVENT) {
-      nsEventStatus rv = ProcessEvent(*static_cast<nsGUIEvent*>(event));
-      if (nsEventStatus_eConsumeNoDefault == rv) {
-        aMouseEvent->PreventDefault();
-        aMouseEvent->StopPropagation();
-      }
+  nsEvent* event = aMouseEvent->GetInternalNSEvent();
+  if (event && event->eventStructType == NS_MOUSE_EVENT) {
+    nsEventStatus rv = ProcessEvent(*static_cast<nsGUIEvent*>(event));
+    if (nsEventStatus_eConsumeNoDefault == rv) {
+      aMouseEvent->PreventDefault();
+      aMouseEvent->StopPropagation();
     }
-    else NS_ASSERTION(false, "nsPluginInstanceOwner::DispatchMouseToPlugin failed, mouseEvent null");   
   }
-  else NS_ASSERTION(false, "nsPluginInstanceOwner::DispatchMouseToPlugin failed, privateEvent null");   
-  
   return NS_OK;
 }
 
@@ -2149,17 +2108,14 @@ nsPluginInstanceOwner::HandleEvent(nsIDOMEvent* aEvent)
 
   nsCOMPtr<nsIDOMDragEvent> dragEvent(do_QueryInterface(aEvent));
   if (dragEvent && mInstance) {
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aEvent));
-    if (privateEvent) {
-      nsEvent* ievent = privateEvent->GetInternalNSEvent();
-      if ((ievent && NS_IS_TRUSTED_EVENT(ievent)) &&
-           ievent->message != NS_DRAGDROP_ENTER && ievent->message != NS_DRAGDROP_OVER) {
-        aEvent->PreventDefault();
-      }
-
-      // Let the plugin handle drag events.
-      aEvent->StopPropagation();
+    nsEvent* ievent = aEvent->GetInternalNSEvent();
+    if ((ievent && NS_IS_TRUSTED_EVENT(ievent)) &&
+         ievent->message != NS_DRAGDROP_ENTER && ievent->message != NS_DRAGDROP_OVER) {
+      aEvent->PreventDefault();
     }
+
+    // Let the plugin handle drag events.
+    aEvent->StopPropagation();
   }
   return NS_OK;
 }
@@ -2479,7 +2435,7 @@ nsEventStatus nsPluginInstanceOwner::ProcessEvent(const nsGUIEvent& anEvent)
         nsIntPoint rootPoint(-1,-1);
         if (widget)
           rootPoint = anEvent.refPoint + widget->WidgetToScreenOffset();
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
         Window root = GDK_ROOT_WINDOW();
 #elif defined(MOZ_WIDGET_QT)
         Window root = RootWindowOfScreen(DefaultScreenOfDisplay(mozilla::DefaultXDisplay()));
@@ -2567,7 +2523,7 @@ nsEventStatus nsPluginInstanceOwner::ProcessEvent(const nsGUIEvent& anEvent)
       if (anEvent.pluginEvent)
         {
           XKeyEvent &event = pluginEvent.xkey;
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
           event.root = GDK_ROOT_WINDOW();
           event.time = anEvent.time;
           const GdkEventKey* gdkEvent =
@@ -3073,17 +3029,11 @@ void nsPluginInstanceOwner::Paint(gfxContext* aContext,
   aContext->Translate(pluginRect.TopLeft());
 
   Renderer renderer(window, this, pluginSize, pluginDirtyRect);
-#ifdef MOZ_WIDGET_GTK2
-  // This is the visual used by the widgets, 24-bit if available.
-  GdkVisual* gdkVisual = gdk_rgb_get_visual();
-  Visual* visual = gdk_x11_visual_get_xvisual(gdkVisual);
-  Screen* screen =
-    gdk_x11_screen_get_xscreen(gdk_visual_get_screen(gdkVisual));
-#else
+
   Display* dpy = mozilla::DefaultXDisplay();
   Screen* screen = DefaultScreenOfDisplay(dpy);
   Visual* visual = DefaultVisualOfScreen(screen);
-#endif
+
   renderer.Draw(aContext, nsIntSize(window->width, window->height),
                 rendererFlags, screen, visual, nsnull);
 }

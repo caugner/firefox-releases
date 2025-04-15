@@ -223,6 +223,11 @@ public:
   void SetPaintingToWindow(bool aToWindow) { mIsPaintingToWindow = aToWindow; }
   bool IsPaintingToWindow() const { return mIsPaintingToWindow; }
   /**
+   * @return Returns if the builder is currently building an
+   * nsDisplayFixedPosition sub-tree.
+   */
+  bool IsInFixedPosition() const { return mIsInFixedPosition; }
+  /**
    * Display the caret if needed.
    */
   nsresult DisplayCaret(nsIFrame* aFrame, const nsRect& aDirtyRect,
@@ -391,8 +396,8 @@ public:
   
   /**
    * A helper class to temporarily set the value of
-   * mIsAtRootOfPseudoStackingContext and temporarily update
-   * mCachedOffsetFrame/mCachedOffset from a frame to its child.
+   * mIsAtRootOfPseudoStackingContext and mIsInFixedPosition, and temporarily
+   * update mCachedOffsetFrame/mCachedOffset from a frame to its child.
    */
   class AutoBuildingDisplayList;
   friend class AutoBuildingDisplayList;
@@ -406,11 +411,13 @@ public:
       aBuilder->mIsAtRootOfPseudoStackingContext = aIsRoot;
     }
     AutoBuildingDisplayList(nsDisplayListBuilder* aBuilder,
-                            nsIFrame* aForChild, bool aIsRoot)
+                            nsIFrame* aForChild, bool aIsRoot,
+                            bool aIsInFixedPosition)
       : mBuilder(aBuilder),
         mPrevCachedOffsetFrame(aBuilder->mCachedOffsetFrame),
         mPrevCachedOffset(aBuilder->mCachedOffset),
-        mPrevIsAtRootOfPseudoStackingContext(aBuilder->mIsAtRootOfPseudoStackingContext) {
+        mPrevIsAtRootOfPseudoStackingContext(aBuilder->mIsAtRootOfPseudoStackingContext),
+        mPrevIsInFixedPosition(aBuilder->mIsInFixedPosition) {
       if (mPrevCachedOffsetFrame == aForChild->GetParent()) {
         aBuilder->mCachedOffset += aForChild->GetPosition();
       } else {
@@ -418,17 +425,22 @@ public:
       }
       aBuilder->mCachedOffsetFrame = aForChild;
       aBuilder->mIsAtRootOfPseudoStackingContext = aIsRoot;
+      if (aIsInFixedPosition) {
+        aBuilder->mIsInFixedPosition = aIsInFixedPosition;
+      }
     }
     ~AutoBuildingDisplayList() {
       mBuilder->mCachedOffsetFrame = mPrevCachedOffsetFrame;
       mBuilder->mCachedOffset = mPrevCachedOffset;
       mBuilder->mIsAtRootOfPseudoStackingContext = mPrevIsAtRootOfPseudoStackingContext;
+      mBuilder->mIsInFixedPosition = mPrevIsInFixedPosition;
     }
   private:
     nsDisplayListBuilder* mBuilder;
     const nsIFrame*       mPrevCachedOffsetFrame;
     nsPoint               mPrevCachedOffset;
     bool                  mPrevIsAtRootOfPseudoStackingContext;
+    bool                  mPrevIsInFixedPosition;
   };
 
   /**
@@ -536,6 +548,7 @@ private:
   bool                           mIsPaintingToWindow;
   bool                           mHasDisplayPort;
   bool                           mHasFixedItems;
+  bool                           mIsInFixedPosition;
 };
 
 class nsDisplayItem;
@@ -1910,6 +1923,30 @@ public:
 };
 
 /**
+ * A display item used to represent fixed position elements. This will ensure
+ * the contents gets its own layer, and that the built layer will have
+ * position-related metadata set on it.
+ */
+class nsDisplayFixedPosition : public nsDisplayOwnLayer {
+public:
+  nsDisplayFixedPosition(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                         nsIFrame* aFixedPosFrame, nsDisplayList* aList);
+#ifdef NS_BUILD_REFCNT_LOGGING
+  virtual ~nsDisplayFixedPosition();
+#endif
+
+  virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
+                                             LayerManager* aManager,
+                                             const ContainerParameters& aContainerParameters);
+  virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem);
+
+  NS_DISPLAY_DECL_NAME("FixedPosition", TYPE_FIXED_POSITION)
+
+protected:
+  nsIFrame* mFixedPosFrame;
+};
+
+/**
  * This potentially creates a layer for the given list of items, whose
  * visibility is determined by the displayport for the given frame instead of
  * what is passed in to ComputeVisibility.
@@ -2211,7 +2248,7 @@ public:
   }
 #endif
 
-  NS_DISPLAY_DECL_NAME("nsDisplayTransform", TYPE_TRANSFORM);
+  NS_DISPLAY_DECL_NAME("nsDisplayTransform", TYPE_TRANSFORM)
 
   virtual nsRect GetComponentAlphaBounds(nsDisplayListBuilder* aBuilder)
   {

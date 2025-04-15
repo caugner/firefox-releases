@@ -6,16 +6,19 @@
 #ifndef __wsrunobject_h__
 #define __wsrunobject_h__
 
-#include "nsCOMPtr.h"
-#include "nsIDOMNode.h"
 #include "nsCOMArray.h"
+#include "nsCOMPtr.h"
 #include "nsIContent.h"
+#include "nsIDOMNode.h"
 #include "nsIEditor.h"
-#include "nsEditorUtils.h"
+#include "nsINode.h"
+#include "nscore.h"
+#include "prtypes.h"
 
+class nsHTMLEditor;
 class nsIDOMDocument;
 class nsIDOMNode;
-class nsHTMLEditor;
+struct DOMPoint;
 
 // class nsWSRunObject represents the entire whitespace situation
 // around a given point.  It collects up a list of nodes that contain
@@ -132,22 +135,22 @@ class NS_STACK_CLASS nsWSRunObject
     // it returns what is before the ws run.  Note that 
     // {outVisNode,outVisOffset} is set to just AFTER the visible
     // object.
-    nsresult PriorVisibleNode(nsIDOMNode *aNode, 
-                              PRInt32 aOffset, 
-                              nsCOMPtr<nsIDOMNode> *outVisNode, 
-                              PRInt32 *outVisOffset,
-                              PRInt16 *outType);
+    void PriorVisibleNode(nsIDOMNode *aNode,
+                          PRInt32 aOffset,
+                          nsCOMPtr<nsIDOMNode> *outVisNode,
+                          PRInt32 *outVisOffset,
+                          PRInt16 *outType);
 
     // NextVisibleNode returns the first piece of visible thing
     // after {aNode,aOffset}.  If there is no visible ws qualifying
     // it returns what is after the ws run.  Note that 
     // {outVisNode,outVisOffset} is set to just BEFORE the visible
     // object.
-    nsresult NextVisibleNode (nsIDOMNode *aNode, 
-                              PRInt32 aOffset, 
-                              nsCOMPtr<nsIDOMNode> *outVisNode, 
-                              PRInt32 *outVisOffset,
-                              PRInt16 *outType);
+    void NextVisibleNode(nsIDOMNode *aNode,
+                         PRInt32 aOffset,
+                         nsCOMPtr<nsIDOMNode> *outVisNode,
+                         PRInt32 *outVisOffset,
+                         PRInt16 *outType);
     
     // AdjustWhitespace examines the ws object for nbsp's that can
     // be safely converted to regular ascii space and converts them.
@@ -179,8 +182,8 @@ class NS_STACK_CLASS nsWSRunObject
     {
       nsCOMPtr<nsIDOMNode> mStartNode;  // node where ws run starts
       nsCOMPtr<nsIDOMNode> mEndNode;    // node where ws run ends
-      PRInt16 mStartOffset;             // offset where ws run starts
-      PRInt16 mEndOffset;               // offset where ws run ends
+      PRInt32 mStartOffset;             // offset where ws run starts
+      PRInt32 mEndOffset;               // offset where ws run ends
       PRInt16 mType, mLeftType, mRightType;  // type of ws, and what is to left and right of it
       WSFragment *mLeft, *mRight;            // other ws runs to left or right.  may be null.
 
@@ -230,16 +233,16 @@ class NS_STACK_CLASS nsWSRunObject
     already_AddRefed<nsIDOMNode> GetWSBoundingParent();
 
     nsresult GetWSNodes();
-    nsresult GetRuns();
+    void     GetRuns();
     void     ClearRuns();
-    nsresult MakeSingleWSRun(PRInt16 aType);
+    void     MakeSingleWSRun(PRInt16 aType);
     nsresult PrependNodeToList(nsIDOMNode *aNode);
     nsresult AppendNodeToList(nsIDOMNode *aNode);
     nsresult GetPreviousWSNode(nsIDOMNode *aStartNode, 
                                nsIDOMNode *aBlockParent, 
                                nsCOMPtr<nsIDOMNode> *aPriorNode);
     nsresult GetPreviousWSNode(nsIDOMNode *aStartNode,
-                               PRInt16      aOffset, 
+                               PRInt32      aOffset,
                                nsIDOMNode  *aBlockParent, 
                                nsCOMPtr<nsIDOMNode> *aPriorNode);
     nsresult GetPreviousWSNode(DOMPoint aPoint,
@@ -249,7 +252,7 @@ class NS_STACK_CLASS nsWSRunObject
                            nsIDOMNode *aBlockParent, 
                            nsCOMPtr<nsIDOMNode> *aNextNode);
     nsresult GetNextWSNode(nsIDOMNode *aStartNode,
-                           PRInt16     aOffset, 
+                           PRInt32     aOffset,
                            nsIDOMNode *aBlockParent, 
                            nsCOMPtr<nsIDOMNode> *aNextNode);
     nsresult GetNextWSNode(DOMPoint aPoint,
@@ -260,19 +263,19 @@ class NS_STACK_CLASS nsWSRunObject
     nsresult DeleteChars(nsIDOMNode *aStartNode, PRInt32 aStartOffset, 
                          nsIDOMNode *aEndNode, PRInt32 aEndOffset,
                          AreaRestriction aAR = eAnywhere);
-    nsresult GetCharAfter(nsIDOMNode *aNode, PRInt32 aOffset, WSPoint *outPoint);
-    nsresult GetCharBefore(nsIDOMNode *aNode, PRInt32 aOffset, WSPoint *outPoint);
-    nsresult GetCharAfter(WSPoint &aPoint, WSPoint *outPoint);
-    nsresult GetCharBefore(WSPoint &aPoint, WSPoint *outPoint);
+    WSPoint  GetCharAfter(nsIDOMNode *aNode, PRInt32 aOffset);
+    WSPoint  GetCharBefore(nsIDOMNode *aNode, PRInt32 aOffset);
+    WSPoint  GetCharAfter(const WSPoint &aPoint);
+    WSPoint  GetCharBefore(const WSPoint &aPoint);
     nsresult ConvertToNBSP(WSPoint aPoint,
                            AreaRestriction aAR = eAnywhere);
-    nsresult GetAsciiWSBounds(PRInt16 aDir, nsIDOMNode *aNode, PRInt32 aOffset,
+    void     GetAsciiWSBounds(PRInt16 aDir, nsIDOMNode *aNode, PRInt32 aOffset,
                                 nsCOMPtr<nsIDOMNode> *outStartNode, PRInt32 *outStartOffset,
                                 nsCOMPtr<nsIDOMNode> *outEndNode, PRInt32 *outEndOffset);
-    nsresult FindRun(nsIDOMNode *aNode, PRInt32 aOffset, WSFragment **outRun, bool after);
+    void     FindRun(nsIDOMNode *aNode, PRInt32 aOffset, WSFragment **outRun, bool after);
     PRUnichar GetCharAt(nsIContent *aTextNode, PRInt32 aOffset);
-    nsresult GetWSPointAfter(nsIDOMNode *aNode, PRInt32 aOffset, WSPoint *outPoint);
-    nsresult GetWSPointBefore(nsIDOMNode *aNode, PRInt32 aOffset, WSPoint *outPoint);
+    WSPoint  GetWSPointAfter(nsIDOMNode *aNode, PRInt32 aOffset);
+    WSPoint  GetWSPointBefore(nsIDOMNode *aNode, PRInt32 aOffset);
     nsresult CheckTrailingNBSPOfRun(WSFragment *aRun);
     nsresult CheckTrailingNBSP(WSFragment *aRun, nsIDOMNode *aNode, PRInt32 aOffset);
     nsresult CheckLeadingNBSP(WSFragment *aRun, nsIDOMNode *aNode, PRInt32 aOffset);

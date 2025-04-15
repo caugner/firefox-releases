@@ -92,6 +92,8 @@ public:
     mThebesLayerItems.Init();
   }
 
+  static void Shutdown();
+
   void Init(nsDisplayListBuilder* aBuilder);
 
   /**
@@ -193,6 +195,7 @@ public:
    * the NS_FRAME_HAS_CONTAINER_LAYER state bit. Only the nearest
    * ancestor frame of the damaged frame that has
    * NS_FRAME_HAS_CONTAINER_LAYER needs to be invalidated this way.
+   * It is assumed that aRect does NOT have the frame's transforms applied.
    */
   static void InvalidateThebesLayerContents(nsIFrame* aFrame,
                                             const nsRect& aRect);
@@ -204,6 +207,12 @@ public:
    * being moved and we need to invalidate everything in aFrame's subtree.
    */
   static void InvalidateThebesLayersInSubtree(nsIFrame* aFrame);
+
+  /**
+   * As InvalidateThebesLayersInSubtree, but don't trust frame geometry
+   * (e.g. because appunits-per-dev-pixel changed).
+   */
+  static void InvalidateThebesLayersInSubtreeWithUntrustedFrameGeometry(nsIFrame* aFrame);
 
   /**
    * Call this to force all retained layers to be discarded and recreated at
@@ -221,6 +230,8 @@ public:
   /**
    * This callback must be provided to EndTransaction. The callback data
    * must be the nsDisplayListBuilder containing this FrameLayerBuilder.
+   * This function can be called multiple times in a row to draw
+   * different regions.
    */
   static void DrawThebesLayer(ThebesLayer* aLayer,
                               gfxContext* aContext,
@@ -320,15 +331,13 @@ public:
   nsIntPoint GetLastPaintOffset(ThebesLayer* aLayer);
 
   /**
-   * Return resolution and scroll offset of ThebesLayer content associated
-   * with aFrame's subtree.
-   * Returns true if some ThebesLayer was found.
-   * This just looks for the first ThebesLayer and returns its data. There
-   * could be other ThebesLayers with different resolution and offsets.
+   * Return the resolution at which we expect to render aFrame's contents,
+   * assuming they are being painted to retained layers. This takes into account
+   * the resolution the contents of the ContainerLayer containing aFrame are
+   * being rendered at, as well as any currently-inactive transforms between
+   * aFrame and that container layer.
    */
-  static bool GetThebesLayerResolutionForFrame(nsIFrame* aFrame,
-                                               double* aXRes, double* aYRes,
-                                               gfxPoint* aPoint);
+  static gfxSize GetThebesLayerScaleForFrame(nsIFrame* aFrame);
 
   /**
    * Clip represents the intersection of an optional rectangle with a

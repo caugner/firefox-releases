@@ -36,7 +36,7 @@
 #  define WIDGET_MODULES MODULE(nsWidgetMacModule)
 #elif defined(XP_OS2)
 #  define WIDGET_MODULES MODULE(nsWidgetOS2Module)
-#elif defined(MOZ_WIDGET_GTK2)
+#elif defined(MOZ_WIDGET_GTK)
 #  define WIDGET_MODULES MODULE(nsWidgetGtk2Module)
 #elif defined(MOZ_WIDGET_QT)
 #  define WIDGET_MODULES MODULE(nsWidgetQtModule)
@@ -67,12 +67,7 @@
 #endif
 
 #ifdef MOZ_PREF_EXTENSIONS
-#ifdef MOZ_ENABLE_GTK2
-#define SYSTEMPREF_MODULES \
-    MODULE(nsAutoConfigModule)
-#else
 #define SYSTEMPREF_MODULES MODULE(nsAutoConfigModule)
-#endif
 #else
 #define SYSTEMPREF_MODULES
 #endif
@@ -125,7 +120,7 @@
 #endif
 
 #ifdef MOZ_XUL
-#ifdef MOZ_ENABLE_GTK2
+#ifdef MOZ_WIDGET_GTK
 #define UNIXPROXY_MODULE MODULE(nsUnixProxyModule)
 #endif
 #if defined(MOZ_WIDGET_QT)
@@ -219,6 +214,7 @@
     JSCTYPES_MODULE                          \
     MODULE(jsreflect)                        \
     MODULE(jsperf)                           \
+    MODULE(identity)                         \
     MODULE(nsServicesCryptoModule)           \
     MOZ_APP_COMPONENT_MODULES                \
     MODULE(nsTelemetryModule)                \

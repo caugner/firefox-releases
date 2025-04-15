@@ -6,9 +6,6 @@
 
 #include "IDBEvents.h"
 
-#include "nsIPrivateDOMEvent.h"
-
-#include "nsContentUtils.h"
 #include "nsDOMClassInfoID.h"
 #include "nsDOMException.h"
 #include "nsJSON.h"

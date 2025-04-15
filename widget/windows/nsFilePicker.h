@@ -20,7 +20,7 @@
 #define _WIN32_IE _WIN32_IE_IE70
 #endif
 
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsITimer.h"
 #include "nsISimpleEnumerator.h"
 #include "nsCOMArray.h"
@@ -60,7 +60,7 @@ public:
   NS_IMETHOD SetDefaultExtension(const nsAString& aDefaultExtension);
   NS_IMETHOD GetFilterIndex(PRInt32 *aFilterIndex);
   NS_IMETHOD SetFilterIndex(PRInt32 aFilterIndex);
-  NS_IMETHOD GetFile(nsILocalFile * *aFile);
+  NS_IMETHOD GetFile(nsIFile * *aFile);
   NS_IMETHOD GetFileURL(nsIURI * *aFileURL);
   NS_IMETHOD GetFiles(nsISimpleEnumerator **aFiles);
   NS_IMETHOD Show(PRInt16 *aReturnVal); 
@@ -91,8 +91,8 @@ protected:
   bool FilePickerWrapper(OPENFILENAMEW* ofn, PickerType aType);
   bool ShowXPFolderPicker(const nsString& aInitialDir);
   bool ShowXPFilePicker(const nsString& aInitialDir);
-  bool ShowFolderPicker(const nsString& aInitialDir);
-  bool ShowFilePicker(const nsString& aInitialDir);
+  bool ShowFolderPicker(const nsString& aInitialDir, bool &aWasInitError);
+  bool ShowFilePicker(const nsString& aInitialDir, bool &aWasInitError);
   void AppendXPFilter(const nsAString& aTitle, const nsAString& aFilter);
   void RememberLastUsedDirectory();
   bool IsPrivacyModeEnabled();
@@ -114,7 +114,7 @@ protected:
   nsString               mDefaultExtension;
   nsString               mFilterList;
   PRInt16                mSelectedType;
-  nsCOMArray<nsILocalFile> mFiles;
+  nsCOMArray<nsIFile>    mFiles;
   static char            mLastUsedDirectory[];
   nsString               mUnicodeFile;
   static PRUnichar      *mLastUsedUnicodeDirectory;

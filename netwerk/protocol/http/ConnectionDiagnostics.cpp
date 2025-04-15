@@ -131,8 +131,8 @@ nsHttpConnection::PrintDiagnostics(nsCString &log)
   log.AppendPrintf("    spdyVersion = %d  reportedSpdy = %d everspdy = %d\n",
                    mUsingSpdyVersion, mReportedSpdy, mEverUsedSpdy);
 
-  log.AppendPrintf("    iskeepalive = %d  dontReuse = NA isReused = %d\n",
-                   IsKeepAlive(), mIsReused);
+  log.AppendPrintf("    iskeepalive = %d  dontReuse = %d isReused = %d\n",
+                   IsKeepAlive(), mDontReuse, mIsReused);
 
   log.AppendPrintf("    mTransaction = %d mSpdySession = %d\n",
                    !!mTransaction.get(), !!mSpdySession.get());

@@ -10,9 +10,8 @@ VPATH		= @srcdir@
 relativesrcdir	= dom/tests/mochitest/bugs
 
 include $(DEPTH)/config/autoconf.mk
-include $(topsrcdir)/config/rules.mk
 
-_TEST_FILES	= \
+MOCHITEST_FILES	= \
 		test_bug42976.html \
 		test_bug49312.html \
 		iframe_bug49312.html \
@@ -130,7 +129,7 @@ _TEST_FILES	= \
 		worker_bug743615.js \
 		test_bug750051.html \
 		test_bug755320.html \
+		test_bug777628.html \
 		$(NULL)
 
-libs:: 	$(_TEST_FILES)
-	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/tests/$(relativesrcdir)
+include $(topsrcdir)/config/rules.mk

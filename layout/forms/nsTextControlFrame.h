@@ -26,6 +26,11 @@ class nsIAccessible;
 #endif
 class EditorInitializerEntryTracker;
 class nsTextEditorState;
+namespace mozilla {
+namespace dom {
+class Element;
+}
+}
 
 class nsTextControlFrame : public nsStackFrame,
                            public nsIAnonymousContentCreator,
@@ -73,7 +78,7 @@ public:
   virtual already_AddRefed<Accessible> CreateAccessible();
 #endif
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const
   {
     aResult.AssignLiteral("nsTextControlFrame");
@@ -150,6 +155,8 @@ public:
 
   nsresult GetText(nsString& aText);
 
+  NS_IMETHOD PeekOffset(nsPeekOffsetStruct *aPos);
+
   NS_DECL_QUERYFRAME
 
   // Temp reference to scriptrunner
@@ -166,13 +173,10 @@ public: //for methods who access nsTextControlFrame directly
 
   NS_STACK_CLASS class ValueSetter {
   public:
-    ValueSetter(nsTextControlFrame* aFrame,
-                nsIEditor* aEditor)
-      : mFrame(aFrame)
-      , mEditor(aEditor)
+    ValueSetter(nsIEditor* aEditor)
+      : mEditor(aEditor)
       , mCanceled(false)
     {
-      MOZ_ASSERT(aFrame);
       MOZ_ASSERT(aEditor);
 
       // To protect against a reentrant call to SetValue, we check whether
@@ -195,7 +199,6 @@ public: //for methods who access nsTextControlFrame directly
     }
 
   private:
-    nsTextControlFrame* mFrame;
     nsCOMPtr<nsIEditor> mEditor;
     bool mOuterTransaction;
     bool mCanceled;
@@ -286,7 +289,6 @@ protected:
     nsTextControlFrame* mFrame;
   };
 
-  nsresult DOMPointToOffset(nsIDOMNode* aNode, PRInt32 aNodeOffset, PRInt32 *aResult);
   nsresult OffsetToDOMPoint(PRInt32 aOffset, nsIDOMNode** aResult, PRInt32* aPosition);
 
   /**
@@ -347,6 +349,7 @@ private:
   /**
    * Return the root DOM element, and implicitly initialize the editor if needed.
    */
+  mozilla::dom::Element* GetRootNodeAndInitializeEditor();
   nsresult GetRootNodeAndInitializeEditor(nsIDOMElement **aRootElement);
 
   void FinishedInitializer() {

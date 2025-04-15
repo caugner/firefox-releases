@@ -19,7 +19,6 @@
 #include "nsIContentViewer.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIDOMKeyEvent.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMElement.h"
 #include "nsIFormControl.h"
@@ -301,8 +300,12 @@ nsFormFillController::SetPopupOpen(bool aPopupOpen)
       docShell->GetPresShell(getter_AddRefs(presShell));
       NS_ENSURE_STATE(presShell);
       presShell->ScrollContentIntoView(content,
-                                       nsIPresShell::ScrollAxis(),
-                                       nsIPresShell::ScrollAxis(),
+                                       nsIPresShell::ScrollAxis(
+                                         nsIPresShell::SCROLL_MINIMUM,
+                                         nsIPresShell::SCROLL_IF_NOT_VISIBLE),
+                                       nsIPresShell::ScrollAxis(
+                                         nsIPresShell::SCROLL_MINIMUM,
+                                         nsIPresShell::SCROLL_IF_NOT_VISIBLE),
                                        nsIPresShell::SCROLL_OVERFLOW_HIDDEN);
       // mFocusedPopup can be destroyed after ScrollContentIntoView, see bug 420089
       if (mFocusedPopup)
@@ -540,15 +543,14 @@ nsFormFillController::OnTextEntered(bool* aPrevent)
 
   nsCOMPtr<nsIDOMEvent> event;
   domDoc->CreateEvent(NS_LITERAL_STRING("Events"), getter_AddRefs(event));
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(event));
-  NS_ENSURE_STATE(privateEvent);
+  NS_ENSURE_STATE(event);
 
   event->InitEvent(NS_LITERAL_STRING("DOMAutoComplete"), true, true);
 
   // XXXjst: We mark this event as a trusted event, it's up to the
   // callers of this to ensure that it's only called from trusted
   // code.
-  privateEvent->SetTrusted(true);
+  event->SetTrusted(true);
 
   nsCOMPtr<nsIDOMEventTarget> targ = do_QueryInterface(mFocusedInput);
 

@@ -84,7 +84,7 @@ public:
     void ClearGREDir() { mGREDir = nsnull; }
 
 private:
-    nsCOMPtr<nsILocalFile> mGREDir;
+    nsCOMPtr<nsIFile> mGREDir;
 };
 
 inline XPCShellEnvironment*
@@ -880,20 +880,6 @@ FullTrustSecMan::GetCxSubjectPrincipalAndFrame(JSContext *cx,
     return mSystemPrincipal;
 }
 
-NS_IMETHODIMP
-FullTrustSecMan::PushContextPrincipal(JSContext *cx,
-                                      JSStackFrame *fp,
-                                      nsIPrincipal *principal)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::PopContextPrincipal(JSContext *cx)
-{
-    return NS_OK;
-}
-
 NS_IMETHODIMP_(nsrefcnt)
 XPCShellDirProvider::AddRef()
 {
@@ -1095,9 +1081,7 @@ XPCShellEnvironment::Init()
 
     nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
     rv = xpc->InitClassesWithNewWrappedGlobal(cx, backstagePass,
-                                              principal,
-                                              nsIXPConnect::
-                                                  FLAG_SYSTEM_GLOBAL_OBJECT,
+                                              principal, 0,
                                               getter_AddRefs(holder));
     if (NS_FAILED(rv)) {
         NS_ERROR("InitClassesWithNewWrappedGlobal failed!");

@@ -12,6 +12,8 @@
 #include "nsWeakReference.h"
 #include "nsAutoPtr.h"
 #include "mozilla/TimeStamp.h"
+#include "nsArenaMemoryStats.h"
+#include "mozilla/Attributes.h"
 
 // This should be used for any nsINode sub-class that has fields of its own
 // that it needs to measure;  any sub-class that doesn't use it will inherit
@@ -27,12 +29,18 @@ public:
     mMallocSizeOf = aMallocSizeOf;
   }
   nsMallocSizeOfFun mMallocSizeOf;
-  size_t mDOM;
+  nsArenaMemoryStats mArenaStats;
+  size_t mDOMElementNodes;
+  size_t mDOMTextNodes;
+  size_t mDOMCDATANodes;
+  size_t mDOMCommentNodes;
+  size_t mDOMOther;
   size_t mStyleSheets;
-  size_t mLayoutArenas;
+  size_t mLayoutPresShell;
   size_t mLayoutStyleSets;
   size_t mLayoutTextRuns;
   size_t mLayoutPresContext;
+  size_t mPropertyTables;
 };
 
 /**
@@ -97,9 +105,9 @@ public:
  *   the tab.
  *
  */
-class nsWindowMemoryReporter: public nsIMemoryMultiReporter,
-                              public nsIObserver,
-                              public nsSupportsWeakReference
+class nsWindowMemoryReporter MOZ_FINAL : public nsIMemoryMultiReporter,
+                                         public nsIObserver,
+                                         public nsSupportsWeakReference
 {
 public:
   NS_DECL_ISUPPORTS
@@ -115,7 +123,7 @@ private:
    * this list, running this report is faster than running
    * nsWindowMemoryReporter.
    */
-  class GhostURLsReporter: public nsIMemoryMultiReporter
+  class GhostURLsReporter MOZ_FINAL : public nsIMemoryMultiReporter
   {
   public:
     GhostURLsReporter(nsWindowMemoryReporter* aWindowReporter);
@@ -131,7 +139,7 @@ private:
    * nsGhostWindowReporter generates the "ghost-windows" single-report, which
    * counts the number of ghost windows present.
    */
-  class NumGhostsReporter: public nsIMemoryReporter
+  class NumGhostsReporter MOZ_FINAL : public nsIMemoryReporter
   {
   public:
     NumGhostsReporter(nsWindowMemoryReporter* aWindowReporter);

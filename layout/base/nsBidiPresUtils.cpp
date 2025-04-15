@@ -381,12 +381,20 @@ struct BidiLineData {
 /* Some helper methods for Resolve() */
 
 // Should this frame be split between text runs?
-bool
-IsBidiSplittable(nsIFrame* aFrame) {
-  nsIAtom* frameType = aFrame->GetType();
+static bool
+IsBidiSplittable(nsIFrame* aFrame)
+{
   // Bidi inline containers should be split, unless they're line frames.
   return aFrame->IsFrameOfType(nsIFrame::eBidiInlineContainer)
-    && frameType != nsGkAtoms::lineFrame;
+    && aFrame->GetType() != nsGkAtoms::lineFrame;
+}
+
+// Should this frame be treated as a leaf (e.g. when building mLogicalFrames)?
+static bool
+IsBidiLeaf(nsIFrame* aFrame)
+{
+  nsIFrame* kid = aFrame->GetFirstPrincipalChild();
+  return !kid || !aFrame->IsFrameOfType(nsIFrame::eBidiInlineContainer);
 }
 
 /**
@@ -580,7 +588,7 @@ nsBidiPresUtils::Resolve(nsBlockFrame* aBlockFrame)
   BidiParagraphData bpd;
   bpd.Init(aBlockFrame);
 
-  // handle bidi-override being set on the block itself before calling
+  // Handle bidi-override being set on the block itself before calling
   // TraverseFrames.
   const nsStyleTextReset* text = aBlockFrame->GetStyleTextReset();
   PRUnichar ch = 0;
@@ -603,6 +611,7 @@ nsBidiPresUtils::Resolve(nsBlockFrame* aBlockFrame)
     bpd.mPrevFrame = nsnull;
     bpd.GetSubParagraph()->mPrevFrame = nsnull;
     TraverseFrames(aBlockFrame, &lineIter, block->GetFirstPrincipalChild(), &bpd);
+    // XXX what about overflow lines?
   }
 
   if (ch != 0) {
@@ -891,13 +900,6 @@ nsBidiPresUtils::ResolveParagraph(nsBlockFrame* aBlockFrame,
   return rv;
 }
 
-// Should this frame be treated as a leaf (e.g. when building mLogicalFrames)?
-bool IsBidiLeaf(nsIFrame* aFrame) {
-  nsIFrame* kid = aFrame->GetFirstPrincipalChild();
-  return !kid
-    || !aFrame->IsFrameOfType(nsIFrame::eBidiInlineContainer);
-}
-
 void
 nsBidiPresUtils::TraverseFrames(nsBlockFrame*              aBlockFrame,
                                 nsBlockInFlowLineIterator* aLineIter,
@@ -1098,11 +1100,11 @@ nsBidiPresUtils::TraverseFrames(nsBlockFrame*              aBlockFrame,
           ResolveParagraphWithinBlock(aBlockFrame, aBpd);
         }
       }
-    }
-    else {
+    } else {
       // For a non-leaf frame, recurse into TraverseFrames
       nsIFrame* kid = frame->GetFirstPrincipalChild();
-      if (kid) {
+      nsIFrame* overflowKid = frame->GetFirstChild(nsIFrame::kOverflowList);
+      if (kid || overflowKid) {
         const nsStyleTextReset* text = frame->GetStyleTextReset();
         if (text->mUnicodeBidi & NS_STYLE_UNICODE_BIDI_ISOLATE ||
             text->mUnicodeBidi & NS_STYLE_UNICODE_BIDI_PLAINTEXT) {
@@ -1126,6 +1128,7 @@ nsBidiPresUtils::TraverseFrames(nsBlockFrame*              aBlockFrame,
             subParagraph->Reset(frame, aBpd);
           }
           TraverseFrames(aBlockFrame, aLineIter, kid, subParagraph);
+          TraverseFrames(aBlockFrame, aLineIter, overflowKid, subParagraph);
           if (isLastContinuation) {
             ResolveParagraph(aBlockFrame, subParagraph);
             subParagraph->EmptyBuffer();
@@ -1136,6 +1139,7 @@ nsBidiPresUtils::TraverseFrames(nsBlockFrame*              aBlockFrame,
           aBpd->AppendControlChar(kObjectSubstitute);
         } else {
           TraverseFrames(aBlockFrame, aLineIter, kid, aBpd);
+          TraverseFrames(aBlockFrame, aLineIter, overflowKid, aBpd);
         }
       }
     }

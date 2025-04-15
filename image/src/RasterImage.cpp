@@ -1462,7 +1462,6 @@ RasterImage::AddSourceData(const char *aBuffer, PRUint32 aCount)
   // so that there's no gap for anything to miss us.
   if (mMultipart && mBytesDecoded == 0) {
     // Our previous state may have been animated, so let's clean up
-    bool wasAnimating = mAnimating;
     if (mAnimating) {
       StopAnimation();
       mAnimating = false;

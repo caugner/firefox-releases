@@ -36,8 +36,6 @@
 #include "nsSMILTypes.h"
 #include "nsIContentIterator.h"
 
-nsresult NS_NewContentIterator(nsIContentIterator** aInstancePtrResult);
-
 using namespace mozilla;
 using namespace mozilla::dom;
 
@@ -190,7 +188,7 @@ nsSVGSVGElement::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const
 
   nsCOMPtr<nsINode> kungFuDeathGrip = it;
   nsresult rv = it->Init();
-  rv |= CopyInnerTo(it);
+  rv |= const_cast<nsSVGSVGElement*>(this)->CopyInnerTo(it);
   if (NS_SUCCEEDED(rv)) {
     kungFuDeathGrip.swap(*aResult);
   }
@@ -735,7 +733,7 @@ nsSVGSVGElement::SetZoomAndPan(PRUint16 aZoomAndPan)
     return NS_OK;
   }
 
-  return NS_ERROR_DOM_SVG_INVALID_VALUE_ERR;
+  return NS_ERROR_RANGE_ERR;
 }
 
 //----------------------------------------------------------------------
@@ -937,7 +935,7 @@ nsSVGSVGElement::GetViewBoxTransform() const
 }
 
 void
-nsSVGSVGElement::ChildrenOnlyTransformChanged()
+nsSVGSVGElement::ChildrenOnlyTransformChanged(PRUint32 aFlags)
 {
   // Avoid wasteful calls:
   NS_ABORT_IF_FALSE(!(GetPrimaryFrame()->GetStateBits() &
@@ -958,7 +956,15 @@ nsSVGSVGElement::ChildrenOnlyTransformChanged()
                  nsChangeHint_UpdateOverflow |
                  nsChangeHint_ChildrenOnlyTransform);
 
-  nsLayoutUtils::PostRestyleEvent(this, nsRestyleHint(0), changeHint);
+  // If we're not reconstructing the frame tree, then we only call
+  // PostRestyleEvent if we're not being called under reflow to avoid recursing
+  // to death. See bug 767056 comments 10 and 12. Since our nsSVGOuterSVGFrame
+  // is being reflowed we're going to invalidate and repaint its entire area
+  // anyway (which will include our children).
+  if ((changeHint & nsChangeHint_ReconstructFrame) ||
+      !(aFlags & eDuringReflow)) {
+    nsLayoutUtils::PostRestyleEvent(this, nsRestyleHint(0), changeHint);
+  }
 
   mHasChildrenOnlyTransform = hasChildrenOnlyTransform;
 }
@@ -1145,16 +1151,6 @@ nsSVGSVGElement::GetLength(PRUint8 aCtxType)
     return float(nsSVGUtils::ComputeNormalizedHypotenuse(w, h));
   }
   return 0;
-}
-
-void
-nsSVGSVGElement::SyncWidthOrHeight(nsIAtom* aName, nsSVGElement *aTarget) const
-{
-  NS_ASSERTION(aName == nsGkAtoms::width || aName == nsGkAtoms::height,
-               "The clue is in the function name");
-
-  PRUint32 index = *sLengthInfo[WIDTH].mName == aName ? WIDTH : HEIGHT;
-  aTarget->SetLength(aName, mLengthAttributes[index]);
 }
 
 //----------------------------------------------------------------------

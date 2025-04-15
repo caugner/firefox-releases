@@ -132,7 +132,7 @@ nsDeleteDir::InitThread()
   if (mThread)
     return NS_OK;
 
-  nsresult rv = NS_NewThread(getter_AddRefs(mThread));
+  nsresult rv = NS_NewNamedThread("Cache Deleter", getter_AddRefs(mThread));
   if (NS_FAILED(rv)) {
     NS_WARNING("Can't create background thread");
     return rv;
@@ -276,7 +276,7 @@ nsDeleteDir::GetTrashDir(nsIFile *target, nsCOMPtr<nsIFile> *result)
   char* cachePath = getenv("CACHE_DIRECTORY");
   if (cachePath) {
     rv = NS_NewNativeLocalFile(nsDependentCString(cachePath),
-                               true, (nsILocalFile**)(nsIFile**)getter_AddRefs(*result));
+                               true, getter_AddRefs(*result));
     if (NS_FAILED(rv))
       return rv;
 

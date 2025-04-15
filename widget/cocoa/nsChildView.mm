@@ -25,7 +25,7 @@
 #include "nsIRollupListener.h"
 #include "nsIViewManager.h"
 #include "nsIInterfaceRequestor.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsILocalFileMac.h"
 #include "nsGfxCIID.h"
 #include "nsIDOMSimpleGestureEvent.h"
@@ -51,6 +51,9 @@
 #include "LayerManagerOGL.h"
 #include "GLContext.h"
 #include "mozilla/layers/CompositorCocoaWidgetHelper.h"
+#ifdef ACCESSIBILITY
+#include "nsAccessibilityService.h"
+#endif
 
 #include "mozilla/Preferences.h"
 
@@ -301,20 +304,20 @@ nsresult nsChildView::Create(nsIWidget *aParent,
     // inherit the top-level window. NS_NATIVE_WIDGET is always a NSView
     // regardless of if we're asking a window or a view (for compatibility
     // with windows).
-    mParentView = (NSView*)aParent->GetNativeData(NS_NATIVE_WIDGET); 
+    mParentView = (NSView<mozView>*)aParent->GetNativeData(NS_NATIVE_WIDGET); 
     mParentWidget = aParent;   
   } else {
     // This is the normal case. When we're the root widget of the view hiararchy,
     // aNativeParent will be the contentView of our window, since that's what
     // nsCocoaWindow returns when asked for an NS_NATIVE_VIEW.
-    mParentView = reinterpret_cast<NSView*>(aNativeParent);
+    mParentView = reinterpret_cast<NSView<mozView>*>(aNativeParent);
   }
   
   // create our parallel NSView and hook it up to our parent. Recall
   // that NS_NATIVE_WIDGET is the NSView.
   NSRect r;
   nsCocoaUtils::GeckoRectToNSRect(mBounds, r);
-  mView = [CreateCocoaView(r) retain];
+  mView = [(NSView<mozView>*)CreateCocoaView(r) retain];
   if (!mView) return NS_ERROR_FAILURE;
 
   [(ChildView*)mView setIsPluginView:(mWindowType == eWindowType_plugin)];
@@ -706,7 +709,7 @@ nsChildView::ReparentNativeWidget(nsIWidget* aNewParent)
     return NS_OK;
 
   NSView<mozView>* newParentView =
-   (NSView*)aNewParent->GetNativeData(NS_NATIVE_WIDGET); 
+   (NSView<mozView>*)aNewParent->GetNativeData(NS_NATIVE_WIDGET); 
   NS_ENSURE_TRUE(newParentView, NS_ERROR_FAILURE);
 
   // we hold a ref to mView, so this is safe
@@ -835,6 +838,7 @@ NS_IMETHODIMP nsChildView::Move(PRInt32 aX, PRInt32 aY)
   if (mVisible)
     [mView setNeedsDisplay:YES];
 
+  NotifyRollupGeometryChange(gRollupListener);
   ReportMoveEvent();
 
   return NS_OK;
@@ -859,6 +863,7 @@ NS_IMETHODIMP nsChildView::Resize(PRInt32 aWidth, PRInt32 aHeight, bool aRepaint
   if (mVisible && aRepaint)
     [mView setNeedsDisplay:YES];
 
+  NotifyRollupGeometryChange(gRollupListener);
   ReportSizeEvent();
 
   return NS_OK;
@@ -891,6 +896,7 @@ NS_IMETHODIMP nsChildView::Resize(PRInt32 aX, PRInt32 aY, PRInt32 aWidth, PRInt3
   if (mVisible && aRepaint)
     [mView setNeedsDisplay:YES];
 
+  NotifyRollupGeometryChange(gRollupListener);
   if (isMoving) {
     ReportMoveEvent();
     if (mOnDestroyCalled)
@@ -1394,6 +1400,14 @@ nsChildView::GetShouldAccelerate()
     return false;
 
   return nsBaseWidget::GetShouldAccelerate();
+}
+
+bool
+nsChildView::UseOffMainThreadCompositing()
+{
+  // OMTC doesn't work with Basic Layers on OS X right now. Once it works, we'll
+  // still want to disable it for certain kinds of windows (e.g. popups).
+  return nsBaseWidget::UseOffMainThreadCompositing() && GetShouldAccelerate();
 }
 
 inline PRUint16 COLOR8TOCOLOR16(PRUint8 color8)
@@ -1905,6 +1919,9 @@ nsChildView::EndSecureKeyboardInput()
 already_AddRefed<Accessible>
 nsChildView::GetDocumentAccessible()
 {
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return nsnull;
+
   Accessible *docAccessible = nsnull;
   if (mAccessible) {
     CallQueryReferent(mAccessible.get(), &docAccessible);
@@ -3693,17 +3710,26 @@ NSEvent* gLastDragMouseDownEvent = nil;
   }
 
   // Some scrolling devices supports pixel scrolling, e.g. a Macbook
-  // touchpad or a Mighty Mouse. On those devices, [event deviceDeltaX/Y]
-  // contains the amount of pixels to scroll. 
+  // touchpad or a Mighty Mouse. On those devices, [theEvent deviceDeltaX/Y]
+  // contains the amount of pixels to scroll. Since Lion this has changed 
+  // to [theEvent scrollingDeltaX/Y].
   if (inAxis & nsMouseScrollEvent::kIsVertical) {
     scrollDelta       = -[theEvent deltaY];
     if (checkPixels && (scrollDelta == 0 || scrollDelta != floor(scrollDelta))) {
-      scrollDeltaPixels = -[theEvent deviceDeltaY];
+      if ([theEvent respondsToSelector:@selector(scrollingDeltaY)]) {
+        scrollDeltaPixels = -[theEvent scrollingDeltaY];
+      } else {
+        scrollDeltaPixels = -[theEvent deviceDeltaY];
+      }
     }
   } else if (inAxis & nsMouseScrollEvent::kIsHorizontal) {
     scrollDelta       = -[theEvent deltaX];
     if (checkPixels && (scrollDelta == 0 || scrollDelta != floor(scrollDelta))) {
-      scrollDeltaPixels = -[theEvent deviceDeltaX];
+      if ([theEvent respondsToSelector:@selector(scrollingDeltaX)]) {
+        scrollDeltaPixels = -[theEvent scrollingDeltaX];
+      } else {
+        scrollDeltaPixels = -[theEvent deviceDeltaX];
+      }
     }
   } else {
     return; // caller screwed up
@@ -4530,7 +4556,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   NSEvent *currentEvent = [NSApp currentEvent];
   gUserCancelledDrag = ([currentEvent type] == NSKeyDown &&
-                        [currentEvent keyCode] == kEscapeKeyCode);
+                        [currentEvent keyCode] == kVK_Escape);
 
   if (!mDragService) {
     CallGetService(kDragServiceContractID, &mDragService);
@@ -4590,7 +4616,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   PR_LOG(sCocoaLog, PR_LOG_ALWAYS, ("ChildView namesOfPromisedFilesDroppedAtDestination: entering callback for promised files\n"));
 
-  nsCOMPtr<nsILocalFile> targFile;
+  nsCOMPtr<nsIFile> targFile;
   NS_NewLocalFile(EmptyString(), true, getter_AddRefs(targFile));
   nsCOMPtr<nsILocalFileMac> macLocalFile = do_QueryInterface(targFile);
   if (!macLocalFile) {
@@ -4619,8 +4645,9 @@ NSEvent* gLastDragMouseDownEvent = nil;
       NS_ERROR("no transferable");
       return nil;
     }
+    item->Init(nsnull);
 
-    item->SetTransferData(kFilePromiseDirectoryMime, macLocalFile, sizeof(nsILocalFile*));
+    item->SetTransferData(kFilePromiseDirectoryMime, macLocalFile, sizeof(nsIFile*));
     
     // now request the kFilePromiseMime data, which will invoke the data provider
     // If successful, the returned data is a reference to the resulting file.
@@ -4773,6 +4800,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
   nsCOMPtr<nsITransferable> trans = do_CreateInstance("@mozilla.org/widget/transferable;1", &rv);
   if (NS_FAILED(rv))
     return NO;
+  trans->Init(nsnull);
 
   trans->AddDataFlavor(kUnicodeMime);
   trans->AddDataFlavor(kHTMLMime);
@@ -4813,16 +4841,15 @@ NSEvent* gLastDragMouseDownEvent = nil;
   nsAutoRetainCocoaObject kungFuDeathGrip(self);
   nsCOMPtr<nsIWidget> kungFuDeathGrip2(mGeckoChild);
   nsRefPtr<Accessible> accessible = mGeckoChild->GetDocumentAccessible();
-  if (!mGeckoChild)
+  if (!accessible)
     return nil;
 
-  if (accessible)
-    accessible->GetNativeInterface((void**)&nativeAccessible);
+  accessible->GetNativeInterface((void**)&nativeAccessible);
 
 #ifdef DEBUG_hakan
   NSAssert(![nativeAccessible isExpired], @"native acc is expired!!!");
 #endif
-  
+
   return nativeAccessible;
 }
 
@@ -4857,16 +4884,25 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
 - (BOOL)accessibilityIsIgnored
 {
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return [super accessibilityIsIgnored];
+
   return [[self accessible] accessibilityIsIgnored];
 }
 
 - (id)accessibilityHitTest:(NSPoint)point
 {
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return [super accessibilityHitTest:point];
+
   return [[self accessible] accessibilityHitTest:point];
 }
 
 - (id)accessibilityFocusedUIElement
 {
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return [super accessibilityFocusedUIElement];
+
   return [[self accessible] accessibilityFocusedUIElement];
 }
 
@@ -4874,16 +4910,25 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
 - (NSArray*)accessibilityActionNames
 {
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return [super accessibilityActionNames];
+
   return [[self accessible] accessibilityActionNames];
 }
 
 - (NSString*)accessibilityActionDescription:(NSString*)action
 {
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return [super accessibilityActionDescription:action];
+
   return [[self accessible] accessibilityActionDescription:action];
 }
 
 - (void)accessibilityPerformAction:(NSString*)action
 {
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return [super accessibilityPerformAction:action];
+
   return [[self accessible] accessibilityPerformAction:action];
 }
 
@@ -4891,11 +4936,17 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
 - (NSArray*)accessibilityAttributeNames
 {
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return [super accessibilityAttributeNames];
+
   return [[self accessible] accessibilityAttributeNames];
 }
 
 - (BOOL)accessibilityIsAttributeSettable:(NSString*)attribute
 {
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return [super accessibilityIsAttributeSettable:attribute];
+
   return [[self accessible] accessibilityIsAttributeSettable:attribute];
 }
 
@@ -4903,8 +4954,11 @@ NSEvent* gLastDragMouseDownEvent = nil;
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NIL;
 
+  if (!mozilla::a11y::ShouldA11yBeEnabled())
+    return [super accessibilityAttributeValue:attribute];
+
   id<mozAccessible> accessible = [self accessible];
-  
+
   // if we're the root (topmost) accessible, we need to return our native AXParent as we
   // traverse outside to the hierarchy of whoever embeds us. thus, fall back on NSView's
   // default implementation for this attribute.

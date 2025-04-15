@@ -46,6 +46,7 @@ public class SetupSuccessActivity extends Activity {
     SyncAccounts.openSyncSettings(this);
   }
 
+
   public void launchBrowser(View target) {
     Intent intent = new Intent(Intent.ACTION_MAIN);
     intent.setClassName(GlobalConstants.BROWSER_INTENT_PACKAGE, GlobalConstants.BROWSER_INTENT_CLASS);

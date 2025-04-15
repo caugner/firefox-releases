@@ -56,8 +56,6 @@
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsIAppShell.h"
 #include "nsWidgetsCID.h"
-
-#include "nsIPrivateDOMEvent.h"
 #include "nsIDOMNotifyAudioAvailableEvent.h"
 #include "nsMediaFragmentURIParser.h"
 #include "nsURIHashKey.h"
@@ -1274,7 +1272,7 @@ NS_IMETHODIMP nsHTMLMediaElement::SetCurrentTime(double aCurrentTime)
   LOG(PR_LOG_DEBUG, ("%p SetCurrentTime(%f) starting seek", this, aCurrentTime));
   nsresult rv = mDecoder->Seek(clampedTime);
   // Start a new range at position we seeked to.
-  mCurrentPlayRangeStart = clampedTime;
+  mCurrentPlayRangeStart = mDecoder->GetCurrentTime();
 
   // We changed whether we're seeking so we need to AddRemoveSelfReference.
   AddRemoveSelfReference();
@@ -2083,8 +2081,9 @@ const char nsHTMLMediaElement::gH264Types[3][17] = {
   "video/quicktime",
 };
 
-char const *const nsHTMLMediaElement::gH264Codecs[6] = {
+char const *const nsHTMLMediaElement::gH264Codecs[7] = {
   "avc1.42E01E",
+  "avc1.42001E",
   "avc1.58A01E",
   "avc1.4D401E",
   "avc1.64001E",
@@ -2156,7 +2155,7 @@ nsHTMLMediaElement::CanHandleMediaType(const char* aMIMEType,
 #ifdef MOZ_GSTREAMER
   if (IsH264Type(nsDependentCString(aMIMEType))) {
     *aCodecList = gH264Codecs;
-    return CANPLAY_YES;
+    return CANPLAY_MAYBE;
   }
 #endif
 #ifdef MOZ_MEDIA_PLUGINS
@@ -2577,6 +2576,7 @@ void nsHTMLMediaElement::EndMediaStreamPlayback()
   if (mPaused) {
     GetMediaStream()->ChangeExplicitBlockerCount(-1);
   }
+  mVideoFrameContainer->GetImageContainer()->SetCurrentImage(nsnull);
   if (mPausedForInactiveDocument) {
     GetMediaStream()->ChangeExplicitBlockerCount(-1);
   }
@@ -2993,7 +2993,8 @@ VideoFrameContainer* nsHTMLMediaElement::GetVideoFrameContainer()
     return nsnull;
 
   mVideoFrameContainer =
-    new VideoFrameContainer(this, LayerManager::CreateImageContainer());
+    new VideoFrameContainer(this, LayerManager::CreateAsynchronousImageContainer());
+
   return mVideoFrameContainer;
 }
 
@@ -3322,7 +3323,7 @@ already_AddRefed<nsILoadGroup> nsHTMLMediaElement::GetDocumentLoadGroup()
 }
 
 nsresult
-nsHTMLMediaElement::CopyInnerTo(nsGenericElement* aDest) const
+nsHTMLMediaElement::CopyInnerTo(nsGenericElement* aDest)
 {
   nsresult rv = nsGenericHTMLElement::CopyInnerTo(aDest);
   NS_ENSURE_SUCCESS(rv, rv);

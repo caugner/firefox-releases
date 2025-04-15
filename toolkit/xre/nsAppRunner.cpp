@@ -24,8 +24,10 @@
 #include "mozilla/dom/ContentChild.h"
 
 #include "mozilla/Util.h"
+#include "mozilla/Attributes.h"
 
 #include "nsAppRunner.h"
+#include "mozilla/AppData.h"
 #include "nsUpdateDriver.h"
 #include "ProfileReset.h"
 
@@ -211,7 +213,7 @@ static int    gQtOnlyArgc;
 static char **gQtOnlyArgv;
 #endif
 
-#if defined(MOZ_WIDGET_GTK2)
+#if defined(MOZ_WIDGET_GTK)
 #if defined(DEBUG) || defined(NS_BUILD_REFCNT_LOGGING) \
   || defined(NS_TRACE_MALLOC)
 #define CLEANUP_MEMORY 1
@@ -273,11 +275,11 @@ SaveFileToEnv(const char *name, nsIFile *file)
 }
 
 // Load the path of a file saved with SaveFileToEnv
-static already_AddRefed<nsILocalFile>
+static already_AddRefed<nsIFile>
 GetFileFromEnv(const char *name)
 {
   nsresult rv;
-  nsILocalFile *file = nsnull;
+  nsIFile *file = nsnull;
 
 #ifdef XP_WIN
   WCHAR path[_MAX_PATH];
@@ -782,9 +784,8 @@ nsXULAppInfo::InvalidateCachesOnRestart()
   
   file->AppendNative(FILE_COMPATIBILITY_INFO);
 
-  nsCOMPtr<nsILocalFile> localFile(do_QueryInterface(file));
   nsINIParser parser;
-  rv = parser.Init(localFile);
+  rv = parser.Init(file);
   if (NS_FAILED(rv)) {
     // This fails if compatibility.ini is not there, so we'll
     // flush the caches on the next restart anyways.
@@ -796,7 +797,7 @@ nsXULAppInfo::InvalidateCachesOnRestart()
   
   if (NS_FAILED(rv)) {
     PRFileDesc *fd = nsnull;
-    localFile->OpenNSPRFileDesc(PR_RDWR | PR_APPEND, 0600, &fd);
+    file->OpenNSPRFileDesc(PR_RDWR | PR_APPEND, 0600, &fd);
     if (!fd) {
       NS_ERROR("could not create output stream");
       return NS_ERROR_NOT_AVAILABLE;
@@ -883,7 +884,7 @@ nsXULAppInfo::SetEnabled(bool aEnabled)
       // no point in erroring for double-enabling
       return NS_OK;
 
-    nsCOMPtr<nsILocalFile> xreDirectory;
+    nsCOMPtr<nsIFile> xreDirectory;
     if (gAppData) {
       xreDirectory = gAppData->xreDirectory;
     }
@@ -953,7 +954,7 @@ nsXULAppInfo::SetServerURL(nsIURL* aServerURL)
 }
 
 NS_IMETHODIMP
-nsXULAppInfo::GetMinidumpPath(nsILocalFile** aMinidumpPath)
+nsXULAppInfo::GetMinidumpPath(nsIFile** aMinidumpPath)
 {
   if (!CrashReporter::GetEnabled())
     return NS_ERROR_NOT_INITIALIZED;
@@ -968,7 +969,7 @@ nsXULAppInfo::GetMinidumpPath(nsILocalFile** aMinidumpPath)
 }
 
 NS_IMETHODIMP
-nsXULAppInfo::SetMinidumpPath(nsILocalFile* aMinidumpPath)
+nsXULAppInfo::SetMinidumpPath(nsIFile* aMinidumpPath)
 {
   nsAutoString path;
   nsresult rv = aMinidumpPath->GetPath(path);
@@ -1180,7 +1181,7 @@ ScopedXPCOMStartup::Initialize()
  * This is a little factory class that serves as a singleton-service-factory
  * for the nativeappsupport object.
  */
-class nsSingletonFactory : public nsIFactory
+class nsSingletonFactory MOZ_FINAL : public nsIFactory
 {
 public:
   NS_DECL_ISUPPORTS
@@ -1464,13 +1465,13 @@ RemoteCommandLine(const char* aDesktopStartupID)
 #endif // MOZ_ENABLE_XREMOTE
 
 void
-XRE_InitOmnijar(nsILocalFile* greOmni, nsILocalFile* appOmni)
+XRE_InitOmnijar(nsIFile* greOmni, nsIFile* appOmni)
 {
   mozilla::Omnijar::Init(greOmni, appOmni);
 }
 
 nsresult
-XRE_GetBinaryPath(const char* argv0, nsILocalFile* *aResult)
+XRE_GetBinaryPath(const char* argv0, nsIFile* *aResult)
 {
   return mozilla::BinaryPath::GetFile(argv0, aResult);
 }
@@ -1608,7 +1609,7 @@ static nsresult LaunchChild(nsINativeAppSupport* aNative,
   restartMode = gRestartMode;
   LaunchChildMac(gRestartArgc, gRestartArgv, restartMode);
 #else
-  nsCOMPtr<nsILocalFile> lf;
+  nsCOMPtr<nsIFile> lf;
   nsresult rv = XRE_GetBinaryPath(gArgv[0], getter_AddRefs(lf));
   if (NS_FAILED(rv))
     return rv;
@@ -1659,7 +1660,7 @@ static const char kProfileProperties[] =
   "chrome://mozapps/locale/profile/profileSelection.properties";
 
 static nsresult
-ProfileLockedDialog(nsILocalFile* aProfileDir, nsILocalFile* aProfileLocalDir,
+ProfileLockedDialog(nsIFile* aProfileDir, nsIFile* aProfileLocalDir,
                     nsIProfileUnlocker* aUnlocker,
                     nsINativeAppSupport* aNative, nsIProfileLock* *aResult)
 {
@@ -1792,19 +1793,19 @@ static nsresult
 ProfileLockedDialog(nsIToolkitProfile* aProfile, nsIProfileUnlocker* aUnlocker,
                     nsINativeAppSupport* aNative, nsIProfileLock* *aResult)
 {
-  nsCOMPtr<nsILocalFile> profileDir;
+  nsCOMPtr<nsIFile> profileDir;
   nsresult rv = aProfile->GetRootDir(getter_AddRefs(profileDir));
   if (NS_FAILED(rv)) return rv;
 
-  nsCOMPtr<nsILocalFile> profileLocalDir;
-  rv = aProfile->GetLocalDir(getter_AddRefs(profileLocalDir));
-  if (NS_FAILED(rv)) return rv;
-
   bool exists;
-  profileLocalDir->Exists(&exists);
+  profileDir->Exists(&exists);
   if (!exists) {
     return ProfileMissingDialog(aNative);
   }
+
+  nsCOMPtr<nsIFile> profileLocalDir;
+  rv = aProfile->GetLocalDir(getter_AddRefs(profileLocalDir));
+  if (NS_FAILED(rv)) return rv;
 
   return ProfileLockedDialog(profileDir, profileLocalDir, aUnlocker, aNative,
                              aResult);
@@ -1819,7 +1820,7 @@ ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
 {
   nsresult rv;
 
-  nsCOMPtr<nsILocalFile> profD, profLD;
+  nsCOMPtr<nsIFile> profD, profLD;
   PRUnichar* profileNamePtr;
   nsCAutoString profileName;
 
@@ -1907,13 +1908,13 @@ ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
 
 static nsresult
 GetCurrentProfileIsDefault(nsIToolkitProfileService* aProfileSvc,
-                           nsILocalFile* aCurrentProfileRoot, bool *aResult)
+                           nsIFile* aCurrentProfileRoot, bool *aResult)
 {
   nsresult rv;
   // Check that the profile to reset is the default since reset and the associated migration are
   // only supported in that case.
   nsCOMPtr<nsIToolkitProfile> selectedProfile;
-  nsCOMPtr<nsILocalFile> selectedProfileRoot;
+  nsCOMPtr<nsIFile> selectedProfileRoot;
   rv = aProfileSvc->GetSelectedProfile(getter_AddRefs(selectedProfile));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1936,7 +1937,7 @@ GetCurrentProfileIsDefault(nsIToolkitProfileService* aProfileSvc,
  */
 static nsresult
 SetCurrentProfileAsDefault(nsIToolkitProfileService* aProfileSvc,
-                           nsILocalFile* aCurrentProfileRoot)
+                           nsIFile* aCurrentProfileRoot)
 {
   NS_ENSURE_ARG_POINTER(aProfileSvc);
 
@@ -1949,7 +1950,7 @@ SetCurrentProfileAsDefault(nsIToolkitProfileService* aProfileSvc,
   nsCOMPtr<nsIToolkitProfile> profile;
   rv = profiles->GetNext(getter_AddRefs(profile));
   while (NS_SUCCEEDED(rv)) {
-    nsCOMPtr<nsILocalFile> profileRoot;
+    nsCOMPtr<nsIFile> profileRoot;
     profile->GetRootDir(getter_AddRefs(profileRoot));
     profileRoot->Equals(aCurrentProfileRoot, &foundMatchingProfile);
     if (foundMatchingProfile && profile) {
@@ -2016,9 +2017,9 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
     gDoMigration = true;
   }
 
-  nsCOMPtr<nsILocalFile> lf = GetFileFromEnv("XRE_PROFILE_PATH");
+  nsCOMPtr<nsIFile> lf = GetFileFromEnv("XRE_PROFILE_PATH");
   if (lf) {
-    nsCOMPtr<nsILocalFile> localDir =
+    nsCOMPtr<nsIFile> localDir =
       GetFileFromEnv("XRE_PROFILE_LOCAL_PATH");
     if (!localDir) {
       localDir = lf;
@@ -2080,7 +2081,7 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
       gDoProfileReset = false;
     }
 
-    nsCOMPtr<nsILocalFile> lf;
+    nsCOMPtr<nsIFile> lf;
     rv = XRE_GetFileFromPath(arg, getter_AddRefs(lf));
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -2113,7 +2114,7 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
 
     const char* delim = strchr(arg, ' ');
     if (delim) {
-      nsCOMPtr<nsILocalFile> lf;
+      nsCOMPtr<nsIFile> lf;
       rv = NS_NewNativeLocalFile(nsDependentCString(delim + 1),
                                    true, getter_AddRefs(lf));
       if (NS_FAILED(rv)) {
@@ -2139,7 +2140,7 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
 
     // XXXben need to ensure prefs.js exists here so the tinderboxes will
     //        not go orange.
-    nsCOMPtr<nsILocalFile> prefsJSFile;
+    nsCOMPtr<nsIFile> prefsJSFile;
     profile->GetRootDir(getter_AddRefs(prefsJSFile));
     prefsJSFile->AppendNative(NS_LITERAL_CSTRING("prefs.js"));
     nsCAutoString pathStr;
@@ -2281,7 +2282,7 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
 static bool
 CheckCompatibility(nsIFile* aProfileDir, const nsCString& aVersion,
                    const nsCString& aOSABI, nsIFile* aXULRunnerDir,
-                   nsIFile* aAppDir, nsILocalFile* aFlagFile, 
+                   nsIFile* aAppDir, nsIFile* aFlagFile, 
                    bool* aCachesOK)
 {
   *aCachesOK = false;
@@ -2292,8 +2293,7 @@ CheckCompatibility(nsIFile* aProfileDir, const nsCString& aVersion,
   file->AppendNative(FILE_COMPATIBILITY_INFO);
 
   nsINIParser parser;
-  nsCOMPtr<nsILocalFile> localFile(do_QueryInterface(file));
-  nsresult rv = parser.Init(localFile);
+  nsresult rv = parser.Init(file);
   if (NS_FAILED(rv))
     return false;
 
@@ -2310,7 +2310,7 @@ CheckCompatibility(nsIFile* aProfileDir, const nsCString& aVersion,
   if (NS_FAILED(rv))
     return false;
 
-  nsCOMPtr<nsILocalFile> lf;
+  nsCOMPtr<nsIFile> lf;
   rv = NS_NewNativeLocalFile(buf, false,
                              getter_AddRefs(lf));
   if (NS_FAILED(rv))
@@ -2369,8 +2369,6 @@ WriteVersion(nsIFile* aProfileDir, const nsCString& aVersion,
     return;
   file->AppendNative(FILE_COMPATIBILITY_INFO);
 
-  nsCOMPtr<nsILocalFile> lf = do_QueryInterface(file);
-
   nsCAutoString platformDir;
   aXULRunnerDir->GetNativePath(platformDir);
 
@@ -2379,7 +2377,7 @@ WriteVersion(nsIFile* aProfileDir, const nsCString& aVersion,
     aAppDir->GetNativePath(appDir);
 
   PRFileDesc *fd = nsnull;
-  lf->OpenNSPRFileDesc(PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE, 0600, &fd);
+  file->OpenNSPRFileDesc(PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE, 0600, &fd);
   if (!fd) {
     NS_ERROR("could not create output stream");
     return;
@@ -2513,7 +2511,7 @@ public:
 };
 #endif
 
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
 #include "prlink.h"
 typedef void (*_g_set_application_name_fn)(const gchar *application_name);
 typedef void (*_gtk_window_set_auto_startup_notification_fn)(gboolean setting);
@@ -2710,7 +2708,7 @@ public:
 #ifdef MOZ_ENABLE_XREMOTE
     , mDisableRemote(false)
 #endif
-#if defined(MOZ_WIDGET_GTK2)
+#if defined(MOZ_WIDGET_GTK)
     , mGdkDisplay(nsnull)
 #endif
   {};
@@ -2732,8 +2730,8 @@ public:
   
   nsCOMPtr<nsINativeAppSupport> mNativeApp;
   nsCOMPtr<nsIToolkitProfileService> mProfileSvc;
-  nsCOMPtr<nsILocalFile> mProfD;
-  nsCOMPtr<nsILocalFile> mProfLD;
+  nsCOMPtr<nsIFile> mProfD;
+  nsCOMPtr<nsIFile> mProfLD;
   nsCOMPtr<nsIProfileLock> mProfileLock;
 #ifdef MOZ_ENABLE_XREMOTE
   nsCOMPtr<nsIRemoteService> mRemoteService;
@@ -2751,7 +2749,7 @@ public:
   bool mDisableRemote;
 #endif
 
-#if defined(MOZ_WIDGET_GTK2)
+#if defined(MOZ_WIDGET_GTK)
   GdkDisplay* mGdkDisplay;
 #endif
 };
@@ -2862,7 +2860,7 @@ XREMain::XRE_mainInit(const nsXREAppData* aAppData, bool* aExitFlag)
     return 1;
   }
   else if (ar == ARG_FOUND) {
-    nsCOMPtr<nsILocalFile> overrideLF;
+    nsCOMPtr<nsIFile> overrideLF;
     rv = XRE_GetFileFromPath(override, getter_AddRefs(overrideLF));
     if (NS_FAILED(rv)) {
       Output(true, "Error: unrecognized override.ini path.\n");
@@ -2892,7 +2890,7 @@ XREMain::XRE_mainInit(const nsXREAppData* aAppData, bool* aExitFlag)
   // XRE_mainInit.
 
   if (!mAppData->xreDirectory) {
-    nsCOMPtr<nsILocalFile> lf;
+    nsCOMPtr<nsIFile> lf;
     rv = XRE_GetBinaryPath(gArgv[0], getter_AddRefs(lf));
     if (NS_FAILED(rv))
       return 2;
@@ -2971,7 +2969,7 @@ XREMain::XRE_mainInit(const nsXREAppData* aAppData, bool* aExitFlag)
     CrashReporter::SetRestartArgs(gArgc, gArgv);
 
     // annotate other data (user id etc)
-    nsCOMPtr<nsILocalFile> userAppDataDir;
+    nsCOMPtr<nsIFile> userAppDataDir;
     if (NS_SUCCEEDED(mDirProvider.GetUserAppDataDirectory(
                                                          getter_AddRefs(userAppDataDir)))) {
       CrashReporter::SetupExtraData(userAppDataDir,
@@ -3166,7 +3164,7 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     return 1;
   *aExitFlag = false;
 
-#if defined(MOZ_WIDGET_GTK2) || defined(MOZ_ENABLE_XREMOTE)
+#if defined(MOZ_WIDGET_GTK) || defined(MOZ_ENABLE_XREMOTE)
   // Stash DESKTOP_STARTUP_ID in malloc'ed memory because gtk_init will clear it.
 #define HAVE_DESKTOP_STARTUP_ID
   const char* desktopStartupIDEnv = PR_GetEnv("DESKTOP_STARTUP_ID");
@@ -3206,13 +3204,15 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
   }
   gQtOnlyArgv[gQtOnlyArgc] = nsnull;
 #endif
-#if defined(MOZ_WIDGET_GTK2)
+#if defined(MOZ_WIDGET_GTK)
   // setup for private colormap.  Ideally we'd like to do this
   // in nsAppShell::Create, but we need to get in before gtk
   // has been initialized to make sure everything is running
   // consistently.
+#if (MOZ_WIDGET_GTK == 2)
   if (CheckArg("install"))
     gdk_rgb_set_install(TRUE);
+#endif
 
   // Set program name to the one defined in application.ini.
   {
@@ -3292,7 +3292,7 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     XInitThreads();
   }
 #endif
-#if defined(MOZ_WIDGET_GTK2)
+#if defined(MOZ_WIDGET_GTK)
   mGdkDisplay = gdk_display_open(display_name);
   if (!mGdkDisplay) {
     PR_fprintf(PR_STDERR, "Error: cannot open display: %s\n", display_name);
@@ -3313,8 +3313,10 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     _gtk_window_set_auto_startup_notification(false);
   }
 
+#if (MOZ_WIDGET_GTK == 2)
   gtk_widget_set_default_colormap(gdk_rgb_get_colormap());
-#endif /* MOZ_WIDGET_GTK2 */
+#endif /* (MOZ_WIDGET_GTK == 2) */
+#endif /* defined(MOZ_WIDGET_GTK) */
 #ifdef MOZ_X11
   // Do this after initializing GDK, or GDK will install its own handler.
   InstallX11ErrorHandler();
@@ -3335,7 +3337,7 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     return 1;
   }
 
-#if defined(HAVE_DESKTOP_STARTUP_ID) && defined(MOZ_WIDGET_GTK2)
+#if defined(HAVE_DESKTOP_STARTUP_ID) && defined(MOZ_WIDGET_GTK)
   // DESKTOP_STARTUP_ID is cleared now,
   // we recover it in case we need a restart.
   if (!mDesktopStartupID.IsEmpty()) {
@@ -3459,7 +3461,7 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
   // If we see .purgecaches, that means someone did a make. 
   // Re-register components to catch potential changes.
   // We only offer this in debug builds, though.
-  nsCOMPtr<nsILocalFile> flagFile;
+  nsCOMPtr<nsIFile> flagFile;
 
   rv = NS_ERROR_FILE_NOT_FOUND;
   nsCOMPtr<nsIFile> fFlagFile;
@@ -3617,8 +3619,7 @@ XREMain::XRE_mainRun()
     mDirProvider.GetAppDir()->Clone(getter_AddRefs(file));
     file->AppendNative(NS_LITERAL_CSTRING("override.ini"));
     nsINIParser parser;
-    nsCOMPtr<nsILocalFile> localFile(do_QueryInterface(file));
-    nsresult rv = parser.Init(localFile);
+    nsresult rv = parser.Init(file);
     if (NS_SUCCEEDED(rv)) {
       nsCAutoString buf;
       rv = parser.GetString("XRE", "EnableProfileMigrator", buf);
@@ -3721,7 +3722,7 @@ XREMain::XRE_mainRun()
     rv = appStartup->CreateHiddenWindow();
     NS_ENSURE_SUCCESS(rv, 1);
 
-#if defined(HAVE_DESKTOP_STARTUP_ID) && defined(MOZ_WIDGET_GTK2)
+#if defined(HAVE_DESKTOP_STARTUP_ID) && defined(MOZ_WIDGET_GTK)
     nsGTKToolkit* toolkit = nsGTKToolkit::GetToolkit();
     if (toolkit && !mDesktopStartupID.IsEmpty()) {
       toolkit->SetDesktopStartupID(mDesktopStartupID);
@@ -3831,7 +3832,7 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 
   ScopedLogging log;
 
-#if defined(MOZ_WIDGET_GTK2)
+#if defined(MOZ_WIDGET_GTK)
 #ifdef MOZ_MEMORY
   // Disable the slice allocator, since jemalloc already uses similar layout
   // algorithms, and using a sub-allocator tends to increase fragmentation.
@@ -3910,7 +3911,7 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
     SaveFileToEnvIfUnset("XRE_PROFILE_LOCAL_PATH", mProfLD);
     SaveWordToEnvIfUnset("XRE_PROFILE_NAME", mProfileName);
 
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
     MOZ_gdk_display_close(mGdkDisplay);
 #endif
 
@@ -3923,7 +3924,7 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
     return rv == NS_ERROR_LAUNCHED_CHILD_PROCESS ? 0 : 1;
   }
 
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
   // gdk_display_close also calls gdk_display_manager_set_default_display
   // appropriately when necessary.
   MOZ_gdk_display_close(mGdkDisplay);
@@ -3943,7 +3944,9 @@ int
 XRE_main(int argc, char* argv[], const nsXREAppData* aAppData, PRUint32 aFlags)
 {
   XREMain main;
-  return main.XRE_main(argc, argv, aAppData);
+  int result = main.XRE_main(argc, argv, aAppData);
+  mozilla::RecordShutdownEndTimeStamp();
+  return result;
 }
 
 nsresult
@@ -3959,7 +3962,7 @@ XRE_InitCommandLine(int aArgc, char* aArgv[])
   char** canonArgs = new char*[aArgc];
 
   // get the canonical version of the binary's path
-  nsCOMPtr<nsILocalFile> binFile;
+  nsCOMPtr<nsIFile> binFile;
   rv = XRE_GetBinaryPath(aArgv[0], getter_AddRefs(binFile));
   if (NS_FAILED(rv))
     return NS_ERROR_FAILURE;
@@ -3995,7 +3998,7 @@ XRE_InitCommandLine(int aArgc, char* aArgv[])
   if (!path)
     return rv;
 
-  nsCOMPtr<nsILocalFile> greOmni;
+  nsCOMPtr<nsIFile> greOmni;
   rv = XRE_GetFileFromPath(path, getter_AddRefs(greOmni));
   if (NS_FAILED(rv)) {
     PR_fprintf(PR_STDERR, "Error: argument -greomni requires a valid path\n");
@@ -4008,7 +4011,7 @@ XRE_InitCommandLine(int aArgc, char* aArgv[])
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsILocalFile> appOmni;
+  nsCOMPtr<nsIFile> appOmni;
   if (path) {
       rv = XRE_GetFileFromPath(path, getter_AddRefs(appOmni));
       if (NS_FAILED(rv)) {

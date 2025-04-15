@@ -7,7 +7,6 @@
 
 #include "nsIDOMMouseEvent.h"
 #include "nsIDOMEventTarget.h"
-#include "nsIDOMDocument.h"
 #include "nsIDOMXULDocument.h"
 #include "nsIDOMXULElement.h"
 #include "nsIDocument.h"
@@ -22,7 +21,6 @@
 #include "nsITreeView.h"
 #endif
 #include "nsGUIEvent.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsIScriptContext.h"
 #include "nsPIDOMWindow.h"
 #ifdef MOZ_XUL

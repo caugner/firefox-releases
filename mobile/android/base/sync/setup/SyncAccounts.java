@@ -14,6 +14,7 @@ import org.mozilla.gecko.sync.Utils;
 import org.mozilla.gecko.sync.config.AccountPickler;
 import org.mozilla.gecko.sync.repositories.android.RepoUtils;
 import org.mozilla.gecko.sync.syncadapter.SyncAdapter;
+import org.mozilla.gecko.sync.ThreadPool;
 
 import android.accounts.Account;
 import android.accounts.AccountManager;
@@ -41,7 +42,6 @@ public class SyncAccounts {
   private static final String MOTO_BLUR_PACKAGE           = "com.motorola.blur.setup";
 
   public final static String DEFAULT_SERVER = "https://auth.services.mozilla.com/";
-  private static final String GLOBAL_LOG_TAG = "FxSync";
 
   /**
    * Returns true if a Sync account is set up, or we have a pickled Sync account
@@ -206,7 +206,7 @@ public class SyncAccounts {
       try {
         return createSyncAccount(syncAccount, syncAutomatically);
       } catch (Exception e) {
-        Log.e(GLOBAL_LOG_TAG, "Unable to create account.", e);
+        Log.e(Logger.GLOBAL_LOG_TAG, "Unable to create account.", e);
         return null;
       }
     }
@@ -301,13 +301,13 @@ public class SyncAccounts {
       // We use Log rather than Logger here to avoid possibly hiding these errors.
       final String message = e.getMessage();
       if (message != null && (message.indexOf("is different than the authenticator's uid") > 0)) {
-        Log.wtf(GLOBAL_LOG_TAG,
+        Log.wtf(Logger.GLOBAL_LOG_TAG,
                 "Unable to create account. " +
                 "If you have more than one version of " +
                 "Firefox/Beta/Aurora/Nightly/Fennec installed, that's why.",
                 e);
       } else {
-        Log.e(GLOBAL_LOG_TAG, "Unable to create account.", e);
+        Log.e(Logger.GLOBAL_LOG_TAG, "Unable to create account.", e);
       }
     }
 
@@ -326,6 +326,13 @@ public class SyncAccounts {
     // TODO: add other ContentProviders as needed (e.g. passwords)
     // TODO: for each, also add to res/xml to make visible in account settings
     Logger.debug(LOG_TAG, "Finished setting syncables.");
+
+    // Purging global prefs assumes we have only a single Sync account at one time.
+    // TODO: Bug 761682: don't do anything with global prefs here.
+    if (clearPreferences) {
+      Logger.info(LOG_TAG, "Clearing global prefs.");
+      SyncAdapter.purgeGlobalPrefs(context);
+    }
 
     try {
       SharedPreferences.Editor editor = Utils.getSharedPreferences(context, username, serverURL).edit();
@@ -357,6 +364,15 @@ public class SyncAccounts {
     Logger.debug(LOG_TAG, "Setting authority " + authority + " to " +
                           (syncAutomatically ? "" : "not ") + "sync automatically.");
     ContentResolver.setSyncAutomatically(account, authority, syncAutomatically);
+  }
+
+  public static void backgroundSetSyncAutomatically(final Account account, final boolean syncAutomatically) {
+    ThreadPool.run(new Runnable() {
+      @Override
+      public void run() {
+        setSyncAutomatically(account, syncAutomatically);
+      }
+    });
   }
 
   /**

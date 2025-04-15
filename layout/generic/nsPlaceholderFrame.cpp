@@ -82,7 +82,7 @@ nsPlaceholderFrame::AddInlineMinWidth(nsRenderingContext *aRenderingContext,
   // false.
 
   // ...but push floats onto the list
-  if (mOutOfFlowFrame->GetStyleDisplay()->mFloats != NS_STYLE_FLOAT_NONE) {
+  if (mOutOfFlowFrame->GetStyleDisplay()->IsFloating()) {
     nscoord floatWidth =
       nsLayoutUtils::IntrinsicForContainer(aRenderingContext,
                                            mOutOfFlowFrame,
@@ -103,7 +103,7 @@ nsPlaceholderFrame::AddInlinePrefWidth(nsRenderingContext *aRenderingContext,
   // false.
 
   // ...but push floats onto the list
-  if (mOutOfFlowFrame->GetStyleDisplay()->mFloats != NS_STYLE_FLOAT_NONE) {
+  if (mOutOfFlowFrame->GetStyleDisplay()->IsFloating()) {
     nscoord floatWidth =
       nsLayoutUtils::IntrinsicForContainer(aRenderingContext,
                                            mOutOfFlowFrame,

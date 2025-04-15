@@ -78,6 +78,7 @@ class nsARefreshObserver;
 class nsAccessibilityService;
 #endif
 class nsIWidget;
+struct nsArenaMemoryStats;
 
 typedef short SelectionType;
 typedef PRUint64 nsFrameState;
@@ -1014,7 +1015,7 @@ public:
 #endif
   }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
   nsIFrame* GetDrawEventTargetFrame() { return mDrawEventTargetFrame; }
 #endif
 
@@ -1187,6 +1188,7 @@ public:
    * The resolution defaults to 1.0.
    */
   virtual nsresult SetResolution(float aXResolution, float aYResolution) = 0;
+  gfxSize GetResolution() { return gfxSize(mXResolution, mYResolution); }
   float GetXResolution() { return mXResolution; }
   float GetYResolution() { return mYResolution; }
 
@@ -1231,10 +1233,11 @@ public:
   virtual void DispatchSynthMouseMove(nsGUIEvent *aEvent, bool aFlushOnHoverChange) = 0;
 
   virtual void SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
-                                   size_t *aArenasSize,
+                                   nsArenaMemoryStats *aArenaObjectsSize,
+                                   size_t *aPresShellSize,
                                    size_t *aStyleSetsSize,
                                    size_t *aTextRunsSize,
-                                   size_t *aPresContextSize) const = 0;
+                                   size_t *aPresContextSize) = 0;
 
   /**
    * Methods that retrieve the cached font inflation preferences.
@@ -1322,7 +1325,7 @@ protected:
   nsFrameManagerBase*       mFrameManager;
   nsWeakPtr                 mForwardingContainer;
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
   nsIFrame*                 mDrawEventTargetFrame;
   // Ensure that every allocation from the PresArena is eventually freed.
   PRUint32                  mPresArenaAllocCount;

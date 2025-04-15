@@ -158,6 +158,7 @@ InitializeSSLServerCertVerificationThreads()
   (void) gCertVerificationThreadPool->SetIdleThreadLimit(5);
   (void) gCertVerificationThreadPool->SetIdleThreadTimeout(30 * 1000);
   (void) gCertVerificationThreadPool->SetThreadLimit(5);
+  (void) gCertVerificationThreadPool->SetName(NS_LITERAL_CSTRING("SSL Cert"));
 }
 
 // Called when the socket transport thread finishes, to destroy the thread
@@ -298,7 +299,7 @@ CertErrorRunnable::CheckCertOverrides()
       if (NS_SUCCEEDED(nsrv) && haveOverride) 
       {
        // remove the errors that are already overriden
-        remaining_display_errors -= overrideBits;
+        remaining_display_errors &= ~overrideBits;
       }
     }
 
@@ -484,6 +485,7 @@ CreateCertErrorRunnable(PRErrorCode defaultErrorCodeToReport,
       case SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE:
       case SEC_ERROR_UNTRUSTED_CERT:
       case SEC_ERROR_INADEQUATE_KEY_USAGE:
+      case SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED:
         // We group all these errors as "cert not trusted"
         collected_errors |= nsICertOverrideService::ERROR_UNTRUSTED;
         if (errorCodeTrust == SECSuccess) {

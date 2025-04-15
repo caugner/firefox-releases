@@ -9,7 +9,6 @@
 #include "nsIURI.h"
 #include "nsIPrincipal.h"
 #include "nsIObserver.h"
-#include "nsIDocument.h"
 #include "nsIContent.h"
 #include "nsCSPService.h"
 #include "nsIContentSecurityPolicy.h"
@@ -58,6 +57,7 @@ CSPService::ShouldLoad(PRUint32 aContentType,
                        nsISupports *aRequestContext,
                        const nsACString &aMimeTypeGuess,
                        nsISupports *aExtra,
+                       nsIPrincipal *aRequestPrincipal,
                        PRInt16 *aDecision)
 {
     if (!aContentLocation)
@@ -125,6 +125,7 @@ CSPService::ShouldProcess(PRUint32         aContentType,
                           nsISupports      *aRequestContext,
                           const nsACString &aMimeTypeGuess,
                           nsISupports      *aExtra,
+                          nsIPrincipal     *aRequestPrincipal,
                           PRInt16          *aDecision)
 {
     if (!aContentLocation)
@@ -268,7 +269,7 @@ CSPService::AsyncOnChannelRedirect(nsIChannel *oldChannel,
   // The redirecting channel isn't a writable property bag, we won't be able
   // to enforce the load policy if it redirects again, so we stop it now.
   nsCAutoString newUriSpec;
-  newUri->GetSpec(newUriSpec);
+  rv = newUri->GetSpec(newUriSpec);
   const PRUnichar *formatParams[] = { NS_ConvertUTF8toUTF16(newUriSpec).get() };
   if (NS_SUCCEEDED(rv)) {
     nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,

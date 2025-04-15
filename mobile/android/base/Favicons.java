@@ -22,6 +22,8 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -151,6 +153,10 @@ public class Favicons {
         return mHttpClient;
     }
 
+    public String getFaviconUrlForPageUrl(String pageUrl) {
+        return mDbHelper.getFaviconUrlForPageUrl(pageUrl);
+    }
+
     public long loadFavicon(String pageUrl, String faviconUrl,
             OnFaviconLoadedListener listener) {
 
@@ -266,6 +272,19 @@ public class Favicons {
                 return GeckoJarReader.getBitmapDrawable(mFaviconUrl);
             }
 
+            URI uri;
+            try {
+                uri = faviconUrl.toURI();
+            } catch (URISyntaxException e) {
+                Log.d(LOGTAG, "Could not get URI for favicon URL: " + mFaviconUrl);
+                return null;
+            }
+
+            // only get favicons for HTTP/HTTPS
+            String scheme = uri.getScheme();
+            if (!"http".equals(scheme) && !"https".equals(scheme))
+                return null;
+
             // skia decoder sometimes returns null; workaround is to use BufferedHttpEntity
             // http://groups.google.com/group/android-developers/browse_thread/thread/171b8bf35dbbed96/c3ec5f45436ceec8?lnk=raot 
             BitmapDrawable image = null;
@@ -275,8 +294,6 @@ public class Favicons {
                 BufferedHttpEntity bufferedEntity = new BufferedHttpEntity(entity);
                 InputStream contentStream = bufferedEntity.getContent();
                 image = (BitmapDrawable) Drawable.createFromStream(contentStream, "src");
-            } catch (IOException e) {
-                // just close up and return null
             } catch (Exception e) {
                 Log.e(LOGTAG, "Error reading favicon", e);
             }

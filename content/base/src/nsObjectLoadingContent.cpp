@@ -26,7 +26,6 @@
 #include "nsIPermissionManager.h"
 #include "nsPluginHost.h"
 #include "nsIPresShell.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIStreamConverterService.h"
@@ -81,20 +80,6 @@ static PRLogModuleInfo* gObjectLog = PR_NewLogModule("objlc");
 
 #define LOG(args) PR_LOG(gObjectLog, PR_LOG_DEBUG, args)
 #define LOG_ENABLED() PR_LOG_TEST(gObjectLog, PR_LOG_DEBUG)
-
-#include "mozilla/Preferences.h"
-
-static bool gClickToPlayPlugins = false;
-
-static void
-InitPrefCache()
-{
-  static bool initializedPrefCache = false;
-  if (!initializedPrefCache) {
-    mozilla::Preferences::AddBoolVarCache(&gClickToPlayPlugins, "plugins.click_to_play");
-  }
-  initializedPrefCache = true;
-}
 
 class nsAsyncInstantiateEvent : public nsRunnable {
 public:
@@ -183,6 +168,12 @@ nsPluginErrorEvent::Run()
     case ePluginClickToPlay:
       type = NS_LITERAL_STRING("PluginClickToPlay");
       break;
+    case ePluginVulnerableUpdatable:
+      type = NS_LITERAL_STRING("PluginVulnerableUpdatable");
+      break;
+    case ePluginVulnerableNoUpdate:
+      type = NS_LITERAL_STRING("PluginVulnerableNoUpdate");
+      break;
     case ePluginUnsupported:
       type = NS_LITERAL_STRING("PluginNotFound");
       break;
@@ -251,16 +242,15 @@ nsPluginCrashedEvent::Run()
   nsCOMPtr<nsIDOMEvent> event;
   domDoc->CreateEvent(NS_LITERAL_STRING("datacontainerevents"),
                       getter_AddRefs(event));
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(event));
   nsCOMPtr<nsIDOMDataContainerEvent> containerEvent(do_QueryInterface(event));
-  if (!privateEvent || !containerEvent) {
+  if (!containerEvent) {
     NS_WARNING("Couldn't QI event for PluginCrashed event!");
     return NS_OK;
   }
 
   event->InitEvent(NS_LITERAL_STRING("PluginCrashed"), true, true);
-  privateEvent->SetTrusted(true);
-  privateEvent->GetInternalNSEvent()->flags |= NS_EVENT_FLAG_ONLY_CHROME_DISPATCH;
+  event->SetTrusted(true);
+  event->GetInternalNSEvent()->flags |= NS_EVENT_FLAG_ONLY_CHROME_DISPATCH;
   
   nsCOMPtr<nsIWritableVariant> variant;
 
@@ -487,7 +477,11 @@ nsresult nsObjectLoadingContent::IsPluginEnabledForType(const nsCString& aMIMETy
     return rv;
   }
 
-  if (!mShouldPlay) {
+  if (!pluginHost->IsPluginClickToPlayForType(aMIMEType.get())) {
+    mCTPPlayable = true;
+  }
+
+  if (!mCTPPlayable) {
     nsCOMPtr<nsIContent> thisContent = do_QueryInterface(static_cast<nsIObjectLoadingContent*>(this));
     MOZ_ASSERT(thisContent);
     nsIDocument* ownerDoc = thisContent->OwnerDoc();
@@ -508,12 +502,17 @@ nsresult nsObjectLoadingContent::IsPluginEnabledForType(const nsCString& aMIMETy
     nsCOMPtr<nsIPermissionManager> permissionManager = do_GetService(NS_PERMISSIONMANAGER_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
     PRUint32 permission;
-    rv = permissionManager->TestPermission(topUri,
-                                           "plugins",
-                                           &permission);
+    rv = permissionManager->TestPermission(topUri, "plugins", &permission);
     NS_ENSURE_SUCCESS(rv, rv);
-    if (permission == nsIPermissionManager::ALLOW_ACTION) {
-      mShouldPlay = true;
+
+    PRUint32 state;
+    rv = pluginHost->GetBlocklistStateForType(aMIMEType.get(), &state);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (permission == nsIPermissionManager::ALLOW_ACTION &&
+        state != nsIBlocklistService::STATE_VULNERABLE_UPDATE_AVAILABLE &&
+        state != nsIBlocklistService::STATE_VULNERABLE_NO_UPDATE) {
+      mCTPPlayable = true;
     } else {
       return NS_ERROR_PLUGIN_CLICKTOPLAY;
     }
@@ -545,12 +544,9 @@ GetExtensionFromURI(nsIURI* uri, nsCString& ext)
  */
 bool nsObjectLoadingContent::IsPluginEnabledByExtension(nsIURI* uri, nsCString& mimeType)
 {
-  if (!mShouldPlay) {
-    return false;
-  }
-
   nsCAutoString ext;
   GetExtensionFromURI(uri, ext);
+  bool enabled = false;
 
   if (ext.IsEmpty()) {
     return false;
@@ -565,9 +561,18 @@ bool nsObjectLoadingContent::IsPluginEnabledByExtension(nsIURI* uri, nsCString& 
   const char* typeFromExt;
   if (NS_SUCCEEDED(pluginHost->IsPluginEnabledForExtension(ext.get(), typeFromExt))) {
     mimeType = typeFromExt;
-    return true;
+    enabled = true;
+
+    if (!pluginHost->IsPluginClickToPlayForType(mimeType.get())) {
+      mCTPPlayable = true;
+    }
   }
-  return false;
+
+  if (!mCTPPlayable) {
+    return false;
+  } else {
+    return enabled;
+  }
 }
 
 nsresult
@@ -601,13 +606,8 @@ nsObjectLoadingContent::nsObjectLoadingContent()
   , mIsStopping(false)
   , mSrcStreamLoading(false)
   , mFallbackReason(ePluginOtherState)
-{
-  InitPrefCache();
-  // If plugins.click_to_play is false, plugins should always play
-  mShouldPlay = !gClickToPlayPlugins;
-  // If plugins.click_to_play is true, track the activated state of plugins.
-  mActivated = !gClickToPlayPlugins;
-}
+  , mCTPPlayable(false)
+  , mActivated(false) {}
 
 nsObjectLoadingContent::~nsObjectLoadingContent()
 {
@@ -620,12 +620,13 @@ nsObjectLoadingContent::~nsObjectLoadingContent()
 nsresult
 nsObjectLoadingContent::InstantiatePluginInstance(const char* aMimeType, nsIURI* aURI)
 {
-  if (!mShouldPlay) {
-    return NS_ERROR_PLUGIN_CLICKTOPLAY;
-  }
-
   // Don't do anything if we already have an active instance.
   if (mInstanceOwner) {
+    return NS_OK;
+  }
+
+  // We don't want to have nsPluginHost handle channel opening
+  if (strlen(aMimeType) == 0) {
     return NS_OK;
   }
 
@@ -666,6 +667,14 @@ nsObjectLoadingContent::InstantiatePluginInstance(const char* aMimeType, nsIURI*
   nsPluginHost* pluginHost = static_cast<nsPluginHost*>(pluginHostCOM.get());
   if (NS_FAILED(rv)) {
     return rv;
+  }
+
+  if (!pluginHost->IsPluginClickToPlayForType(aMimeType)) {
+    mCTPPlayable = true;
+  }
+
+  if (!mCTPPlayable) {
+    return NS_ERROR_PLUGIN_CLICKTOPLAY;
   }
 
   // If you add early return(s), be sure to balance this call to
@@ -778,20 +787,31 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest *aRequest,
     chan->SetContentType(channelType);
   }
 
-  // We want to use the channel type unless one of the following is true:
+  // We want to ignore the channel type if one of the following is true:
   //
-  // 1) The channel type is application/octet-stream and we have a
-  //    type hint and the type hint is not a document type.
-  // 2) Our type hint is a type that we support with a plugin.
-  if (((channelType.EqualsASCII(APPLICATION_OCTET_STREAM) ||
-        channelType.EqualsASCII(BINARY_OCTET_STREAM)) && 
-       !mContentType.IsEmpty() &&
-       GetTypeOfContent(mContentType) != eType_Document) ||
-      // Need to check IsPluginEnabledForType() in addition to GetTypeOfContent()
-      // because otherwise the default plug-in's catch-all behavior would
-      // confuse things.
-      (NS_SUCCEEDED(IsPluginEnabledForType(mContentType)) && 
-       GetTypeOfContent(mContentType) == eType_Plugin)) {
+  // 1) The channel type is application/octet-stream or binary/octet-stream 
+  //    and we have a type hint (in mContentType) and the type hint is not a
+  //    document type.
+  // 2) Our type hint is a type that we support with a plugin
+  //    (where "support" means it is enabled or it is click-to-play)
+  //    and this object loading content has the capability to load a plugin.
+  //    We have to be careful here - there might be a plugin that supports
+  //    image types, so make sure the type of the content is not an image.
+  bool isOctetStream = (channelType.EqualsASCII(APPLICATION_OCTET_STREAM) ||
+                        channelType.EqualsASCII(BINARY_OCTET_STREAM));
+  ObjectType typeOfContent = GetTypeOfContent(mContentType);
+  bool caseOne = (isOctetStream &&
+                  !mContentType.IsEmpty() &&
+                  typeOfContent != eType_Document);
+  nsresult pluginState = IsPluginEnabledForType(mContentType);
+  bool pluginSupported = (NS_SUCCEEDED(pluginState) || 
+                          pluginState == NS_ERROR_PLUGIN_CLICKTOPLAY);
+  PRUint32 caps = GetCapabilities();
+  bool caseTwo = (pluginSupported && 
+                  (caps & eSupportPlugins) &&
+                  typeOfContent != eType_Image &&
+                  typeOfContent != eType_Document);
+  if (caseOne || caseTwo) {
     // Set the type we'll use for dispatch on the channel.  Otherwise we could
     // end up trying to dispatch to a nsFrameLoader, which will complain that
     // it couldn't find a way to handle application/octet-stream
@@ -1183,6 +1203,10 @@ nsObjectLoadingContent::ObjectState() const
       switch (mFallbackReason) {
         case ePluginClickToPlay:
           return NS_EVENT_STATE_TYPE_CLICK_TO_PLAY;
+        case ePluginVulnerableUpdatable:
+          return NS_EVENT_STATE_VULNERABLE_UPDATABLE;
+        case ePluginVulnerableNoUpdate:
+          return NS_EVENT_STATE_VULNERABLE_NO_UPDATE;
         case ePluginDisabled:
           state |= NS_EVENT_STATE_HANDLER_DISABLED;
           break;
@@ -1932,8 +1956,10 @@ nsObjectLoadingContent::GetPluginSupportState(nsIContent* aContent,
   }
 
   PluginSupportState pluginDisabledState = GetPluginDisabledState(aContentType);
-  if (pluginDisabledState == ePluginClickToPlay) {
-    return ePluginClickToPlay;
+  if (pluginDisabledState == ePluginClickToPlay ||
+      pluginDisabledState == ePluginVulnerableUpdatable ||
+      pluginDisabledState == ePluginVulnerableNoUpdate) {
+    return pluginDisabledState;
   } else if (hasAlternateContent) {
     return ePluginOtherState;
   } else {
@@ -1945,12 +1971,28 @@ PluginSupportState
 nsObjectLoadingContent::GetPluginDisabledState(const nsCString& aContentType)
 {
   nsresult rv = IsPluginEnabledForType(aContentType);
-  if (rv == NS_ERROR_PLUGIN_DISABLED)
+  if (rv == NS_ERROR_PLUGIN_DISABLED) {
     return ePluginDisabled;
-  if (rv == NS_ERROR_PLUGIN_CLICKTOPLAY)
+  }
+  if (rv == NS_ERROR_PLUGIN_CLICKTOPLAY) {
+    PRUint32 state;
+    nsCOMPtr<nsIPluginHost> pluginHostCOM(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID));
+    nsPluginHost *pluginHost = static_cast<nsPluginHost*>(pluginHostCOM.get());
+    if (pluginHost) {
+      rv = pluginHost->GetBlocklistStateForType(aContentType.get(), &state);
+      if (NS_SUCCEEDED(rv)) {
+        if (state == nsIBlocklistService::STATE_VULNERABLE_UPDATE_AVAILABLE) {
+          return ePluginVulnerableUpdatable;
+        } else if (state == nsIBlocklistService::STATE_VULNERABLE_NO_UPDATE) {
+          return ePluginVulnerableNoUpdate;
+        }
+      }
+    }
     return ePluginClickToPlay;
-  if (rv == NS_ERROR_PLUGIN_BLOCKLISTED)
+  }
+  if (rv == NS_ERROR_PLUGIN_BLOCKLISTED) {
     return ePluginBlocklisted;
+  }
   return ePluginUnsupported;
 }
 
@@ -2212,7 +2254,7 @@ nsObjectLoadingContent::PlayPlugin()
   if (!nsContentUtils::IsCallerChrome())
     return NS_OK;
 
-  mShouldPlay = true;
+  mCTPPlayable = true;
   return LoadObject(mURI, true, mContentType, true);
 }
 

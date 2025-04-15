@@ -31,6 +31,7 @@
 #include "nsCrossSiteListenerProxy.h"
 #include "nsWrapperCacheInlines.h"
 #include "nsDOMEventTargetHelper.h"
+#include "mozilla/Attributes.h"
 
 using namespace mozilla;
 
@@ -638,7 +639,7 @@ nsEventSource::OnStopRequest(nsIRequest *aRequest,
  * Simple helper class that just forwards the redirect callback back
  * to the nsEventSource.
  */
-class AsyncVerifyRedirectCallbackFwr : public nsIAsyncVerifyRedirectCallback
+class AsyncVerifyRedirectCallbackFwr MOZ_FINAL : public nsIAsyncVerifyRedirectCallback
 {
 public:
   AsyncVerifyRedirectCallbackFwr(nsEventSource* aEventsource)
@@ -976,8 +977,7 @@ nsEventSource::AnnounceConnection()
     return;
   }
 
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(event);
-  privateEvent->SetTrusted(true);
+  event->SetTrusted(true);
 
   rv = DispatchDOMEvent(nsnull, event, nsnull, nsnull);
   if (NS_FAILED(rv)) {
@@ -1047,8 +1047,7 @@ nsEventSource::ReestablishConnection()
     return;
   }
 
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(event);
-  privateEvent->SetTrusted(true);
+  event->SetTrusted(true);
 
   rv = DispatchDOMEvent(nsnull, event, nsnull, nsnull);
   if (NS_FAILED(rv)) {
@@ -1204,8 +1203,7 @@ nsEventSource::FailConnection()
     return;
   }
 
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(event);
-  privateEvent->SetTrusted(true);
+  event->SetTrusted(true);
 
   rv = DispatchDOMEvent(nsnull, event, nsnull, nsnull);
   if (NS_FAILED(rv)) {
@@ -1439,8 +1437,7 @@ nsEventSource::DispatchAllMessageEvents()
       return;
     }
 
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(event);
-    privateEvent->SetTrusted(true);
+    messageEvent->SetTrusted(true);
 
     rv = DispatchDOMEvent(nsnull, event, nsnull, nsnull);
     if (NS_FAILED(rv)) {

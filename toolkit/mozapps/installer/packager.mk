@@ -786,6 +786,10 @@ endif
 	$(PYTHON) $(MOZILLA_DIR)/toolkit/mozapps/installer/link-manifests.py \
 	  $(DIST)/$(MOZ_PKG_DIR)/$(_BINPATH)/chrome/localized.manifest \
 	  $(patsubst %,$(DIST)/manifests/%/chrome,$(MOZ_LOCALIZED_PKG_LIST))
+ifdef MOZ_WEBAPP_RUNTIME
+	mv $(DIST)/$(MOZ_PKG_DIR)/$(_BINPATH)/webapprt/chrome/$(AB_CD).manifest $(DIST)/$(MOZ_PKG_DIR)/$(_BINPATH)/webapprt/chrome/localized.manifest
+	sed 's/$(AB_CD)/localized/' $(DIST)/bin/webapprt/chrome.manifest > $(DIST)/$(MOZ_PKG_DIR)/$(_BINPATH)/webapprt/chrome.manifest
+endif
 	printf "manifest components/interfaces.manifest\nmanifest components/components.manifest\nmanifest chrome/nonlocalized.manifest\nmanifest chrome/localized.manifest\n" > $(DIST)/$(MOZ_PKG_DIR)/$(_BINPATH)/chrome.manifest
 else # !MOZ_PKG_MANIFEST
 ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
@@ -992,7 +996,6 @@ UPLOAD_FILES= \
 
 SIGN_CHECKSUM_CMD=
 ifdef MOZ_SIGN_CMD
-ifeq (gpg,$(filter gpg,$(MOZ_EXTERNAL_SIGNING_FORMAT)))
 # If we're signing with gpg, we'll have a bunch of extra detached signatures to
 # upload. We also want to sign our checksums file
 SIGN_CHECKSUM_CMD=$(MOZ_SIGN_CMD) -f gpg $(CHECKSUM_FILE)
@@ -1002,7 +1005,6 @@ UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(COMPLETE_MAR).asc)
 UPLOAD_FILES += $(call QUOTED_WILDCARD,$(wildcard $(DIST)/$(PARTIAL_MAR).asc))
 UPLOAD_FILES += $(call QUOTED_WILDCARD,$(INSTALLER_PACKAGE).asc)
 UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PACKAGE).asc)
-endif
 endif
 
 checksum:

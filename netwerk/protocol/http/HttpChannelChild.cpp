@@ -1041,7 +1041,7 @@ HttpChannelChild::AsyncOpen(nsIStreamListener *listener, nsISupports *aContext)
                 mPriority, mRedirectionLimit, mAllowPipelining,
                 mForceAllowThirdPartyCookie, mSendResumeAt,
                 mStartPos, mEntityID, mChooseApplicationCache, 
-                appCacheClientId, mAllowSpdy, UsePrivateBrowsing());
+                appCacheClientId, mAllowSpdy);
 
   return NS_OK;
 }
@@ -1220,6 +1220,21 @@ HttpChannelChild::SetApplicationCache(nsIApplicationCache *aApplicationCache)
 //-----------------------------------------------------------------------------
 // HttpChannelChild::nsIApplicationCacheChannel
 //-----------------------------------------------------------------------------
+
+NS_IMETHODIMP
+HttpChannelChild::GetApplicationCacheForWrite(nsIApplicationCache **aApplicationCache)
+{
+  *aApplicationCache = nsnull;
+  return NS_OK;
+}
+NS_IMETHODIMP
+HttpChannelChild::SetApplicationCacheForWrite(nsIApplicationCache *aApplicationCache)
+{
+  NS_ENSURE_TRUE(!mWasOpened, NS_ERROR_ALREADY_OPENED);
+
+  // Child channels are not intended to be used for cache writes
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
 
 NS_IMETHODIMP
 HttpChannelChild::GetLoadedFromApplicationCache(bool *aLoadedFromApplicationCache)

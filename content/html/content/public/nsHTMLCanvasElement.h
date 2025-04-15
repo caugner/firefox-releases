@@ -11,19 +11,17 @@
 #include "nsGkAtoms.h"
 #include "nsSize.h"
 #include "nsIFrame.h"
-#include "nsIDocument.h"
-#include "nsIDOMDocument.h"
 #include "nsDOMError.h"
 #include "nsNodeInfoManager.h"
 
-#include "nsICanvasRenderingContextInternal.h"
 #include "nsICanvasElementExternal.h"
-#include "nsIDOMCanvasRenderingContext2D.h"
 #include "nsLayoutUtils.h"
 
 #include "Layers.h"
 
+class nsICanvasRenderingContextInternal;
 class nsIDOMFile;
+class nsIPropertyBag;
 
 class nsHTMLCanvasElement : public nsGenericHTMLElement,
                             public nsICanvasElementExternal,
@@ -126,7 +124,7 @@ public:
                            nsIAtom* aPrefix, const nsAString& aValue,
                            bool aNotify);
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-  nsresult CopyInnerTo(nsGenericElement* aDest) const;
+  nsresult CopyInnerTo(nsGenericElement* aDest);
 
   /*
    * Helpers called by various users of Canvas

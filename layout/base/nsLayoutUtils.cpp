@@ -10,7 +10,6 @@
 #include "nsIFormControlFrame.h"
 #include "nsPresContext.h"
 #include "nsIContent.h"
-#include "nsIDOMDocument.h"
 #include "nsIDOMHTMLDocument.h"
 #include "nsIDOMHTMLElement.h"
 #include "nsFrameList.h"
@@ -23,7 +22,6 @@
 #include "nsPlaceholderFrame.h"
 #include "nsIScrollableFrame.h"
 #include "nsCSSFrameConstructor.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsIDOMEvent.h"
 #include "nsGUIEvent.h"
 #include "nsDisplayList.h"
@@ -390,7 +388,7 @@ nsLayoutUtils::GetChildListNameFor(nsIFrame* aChildFrame)
     }
   }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
   // Verify that the frame is actually in that child list or in the
   // corresponding overflow list.
   nsIFrame* parent = aChildFrame->GetParent();
@@ -887,13 +885,14 @@ nsLayoutUtils::GetNearestScrollableFrameForDirection(nsIFrame* aFrame,
       nsRect scrollRange = scrollableFrame->GetScrollRange();
       // Require visible scrollbars or something to scroll to in
       // the given direction.
+      nscoord oneDevPixel = f->PresContext()->DevPixelsToAppUnits(1);
       if (aDirection == eVertical ?
           (ss.mVertical != NS_STYLE_OVERFLOW_HIDDEN &&
            ((scrollbarVisibility & nsIScrollableFrame::VERTICAL) ||
-            scrollRange.height > 0)) :
+            scrollRange.height >= oneDevPixel)) :
           (ss.mHorizontal != NS_STYLE_OVERFLOW_HIDDEN &&
            ((scrollbarVisibility & nsIScrollableFrame::HORIZONTAL) ||
-            scrollRange.width > 0)))
+            scrollRange.width >= oneDevPixel)))
         return scrollableFrame;
     }
   }
@@ -938,11 +937,9 @@ nsLayoutUtils::HasPseudoStyle(nsIContent* aContent,
 nsPoint
 nsLayoutUtils::GetDOMEventCoordinatesRelativeTo(nsIDOMEvent* aDOMEvent, nsIFrame* aFrame)
 {
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aDOMEvent));
-  NS_ASSERTION(privateEvent, "bad implementation");
-  if (!privateEvent)
+  if (!aDOMEvent)
     return nsPoint(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
-  nsEvent *event = privateEvent->GetInternalNSEvent();
+  nsEvent *event = aDOMEvent->GetInternalNSEvent();
   if (!event)
     return nsPoint(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
   return GetEventCoordinatesRelativeTo(event, aFrame);
@@ -1929,21 +1926,25 @@ nsLayoutUtils::GetAllInFlowBoxes(nsIFrame* aFrame, BoxCallback* aCallback)
   }
 }
 
-struct BoxToBorderRect : public nsLayoutUtils::BoxCallback {
+struct BoxToRect : public nsLayoutUtils::BoxCallback {
+  typedef nsSize (*GetRectFromFrameFun)(nsIFrame*);
+
   nsIFrame* mRelativeTo;
   nsLayoutUtils::RectCallback* mCallback;
   PRUint32 mFlags;
+  GetRectFromFrameFun mRectFromFrame;
 
-  BoxToBorderRect(nsIFrame* aRelativeTo, nsLayoutUtils::RectCallback* aCallback,
-                  PRUint32 aFlags)
-    : mRelativeTo(aRelativeTo), mCallback(aCallback), mFlags(aFlags) {}
+  BoxToRect(nsIFrame* aRelativeTo, nsLayoutUtils::RectCallback* aCallback,
+            PRUint32 aFlags, GetRectFromFrameFun aRectFromFrame)
+    : mRelativeTo(aRelativeTo), mCallback(aCallback), mFlags(aFlags),
+      mRectFromFrame(aRectFromFrame) {}
 
   virtual void AddBox(nsIFrame* aFrame) {
     nsRect r;
     nsIFrame* outer = nsSVGUtils::GetOuterSVGFrameAndCoveredRegion(aFrame, &r);
     if (!outer) {
       outer = aFrame;
-      r = nsRect(nsPoint(0, 0), aFrame->GetSize());
+      r = nsRect(nsPoint(0, 0), mRectFromFrame(aFrame));
     }
     if (mFlags & nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS) {
       r = nsLayoutUtils::TransformFrameRectToAncestor(outer, r, mRelativeTo);
@@ -1954,11 +1955,31 @@ struct BoxToBorderRect : public nsLayoutUtils::BoxCallback {
   }
 };
 
+static nsSize
+GetFrameBorderSize(nsIFrame* aFrame)
+{
+  return aFrame->GetSize();
+}
+
 void
 nsLayoutUtils::GetAllInFlowRects(nsIFrame* aFrame, nsIFrame* aRelativeTo,
                                  RectCallback* aCallback, PRUint32 aFlags)
 {
-  BoxToBorderRect converter(aRelativeTo, aCallback, aFlags);
+  BoxToRect converter(aRelativeTo, aCallback, aFlags, &GetFrameBorderSize);
+  GetAllInFlowBoxes(aFrame, &converter);
+}
+
+static nsSize
+GetFramePaddingSize(nsIFrame* aFrame)
+{
+  return aFrame->GetPaddingRect().Size();
+}
+
+void
+nsLayoutUtils::GetAllInFlowPaddingRects(nsIFrame* aFrame, nsIFrame* aRelativeTo,
+                                        RectCallback* aCallback, PRUint32 aFlags)
+{
+  BoxToRect converter(aRelativeTo, aCallback, aFlags, &GetFramePaddingSize);
   GetAllInFlowBoxes(aFrame, &converter);
 }
 
@@ -1992,6 +2013,17 @@ nsLayoutUtils::GetAllInFlowRectsUnion(nsIFrame* aFrame, nsIFrame* aRelativeTo,
                                       PRUint32 aFlags) {
   RectAccumulator accumulator;
   GetAllInFlowRects(aFrame, aRelativeTo, &accumulator, aFlags);
+  return accumulator.mResultRect.IsEmpty() ? accumulator.mFirstRect
+          : accumulator.mResultRect;
+}
+
+nsRect
+nsLayoutUtils::GetAllInFlowPaddingRectsUnion(nsIFrame* aFrame,
+                                             nsIFrame* aRelativeTo,
+                                             PRUint32 aFlags)
+{
+  RectAccumulator accumulator;
+  GetAllInFlowPaddingRects(aFrame, aRelativeTo, &accumulator, aFlags);
   return accumulator.mResultRect.IsEmpty() ? accumulator.mFirstRect
           : accumulator.mResultRect;
 }

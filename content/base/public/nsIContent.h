@@ -45,8 +45,8 @@ enum nsLinkState {
 
 // IID for the nsIContent interface
 #define NS_ICONTENT_IID \
-{ 0xa887c108, 0xc25e, 0x42ab, \
-  { 0x87, 0xef, 0xad, 0x4b, 0xee, 0x50, 0x28, 0x28 } }
+{ 0x98fb308d, 0xc6dd, 0x4c6d, \
+  { 0xb7, 0x7c, 0x91, 0x18, 0x0c, 0xf0, 0x6f, 0x23 } }
 
 /**
  * A node of content in a document's content model. This interface
@@ -61,11 +61,11 @@ public:
   // nsIContent is that it exists with an IID
 
   nsIContent(already_AddRefed<nsINodeInfo> aNodeInfo)
-    : nsINode(aNodeInfo),
-      mPrimaryFrame(nsnull)
+    : nsINode(aNodeInfo)
   {
     NS_ASSERTION(mNodeInfo,
                  "No nsINodeInfo passed to nsIContent, PREPARE TO CRASH!!!");
+    SetNodeIsContent();
   }
 #endif // MOZILLA_INTERNAL_API
 
@@ -254,58 +254,57 @@ public:
    * Get the namespace that this element's tag is defined in
    * @return the namespace
    */
-  PRInt32 GetNameSpaceID() const
+  inline PRInt32 GetNameSpaceID() const
   {
     return mNodeInfo->NamespaceID();
-  }
-
-  /**
-   * Get the tag for this element. This will always return a non-null
-   * atom pointer (as implied by the naming of the method).
-   */
-  nsIAtom *Tag() const
-  {
-    return mNodeInfo->NameAtom();
   }
 
   /**
    * Get the NodeInfo for this element
    * @return the nodes node info
    */
-  nsINodeInfo *NodeInfo() const
+  inline nsINodeInfo* NodeInfo() const
   {
     return mNodeInfo;
   }
 
-  inline bool IsInNamespace(PRInt32 aNamespace) const {
+  inline bool IsInNamespace(PRInt32 aNamespace) const
+  {
     return mNodeInfo->NamespaceID() == aNamespace;
   }
 
-  inline bool IsHTML() const {
+  inline bool IsHTML() const
+  {
     return IsInNamespace(kNameSpaceID_XHTML);
   }
 
-  inline bool IsHTML(nsIAtom* aTag) const {
+  inline bool IsHTML(nsIAtom* aTag) const
+  {
     return mNodeInfo->Equals(aTag, kNameSpaceID_XHTML);
   }
 
-  inline bool IsSVG() const {
+  inline bool IsSVG() const
+  {
     return IsInNamespace(kNameSpaceID_SVG);
   }
 
-  inline bool IsSVG(nsIAtom* aTag) const {
+  inline bool IsSVG(nsIAtom* aTag) const
+  {
     return mNodeInfo->Equals(aTag, kNameSpaceID_SVG);
   }
 
-  inline bool IsXUL() const {
+  inline bool IsXUL() const
+  {
     return IsInNamespace(kNameSpaceID_XUL);
   }
 
-  inline bool IsMathML() const {
+  inline bool IsMathML() const
+  {
     return IsInNamespace(kNameSpaceID_MathML);
   }
 
-  inline bool IsMathML(nsIAtom* aTag) const {
+  inline bool IsMathML(nsIAtom* aTag) const
+  {
     return mNodeInfo->Equals(aTag, kNameSpaceID_MathML);
   }
 
@@ -817,8 +816,12 @@ public:
    * In the case of absolutely positioned elements and floated elements, this
    * frame is the out of flow frame, not the placeholder.
    */
-  nsIFrame* GetPrimaryFrame() const { return mPrimaryFrame; }
+  nsIFrame* GetPrimaryFrame() const
+  {
+    return IsInDoc() ? mPrimaryFrame : nsnull;
+  }
   void SetPrimaryFrame(nsIFrame* aFrame) {
+    NS_ASSERTION(IsInDoc(), "This will end badly!");
     NS_PRECONDITION(!aFrame || !mPrimaryFrame || aFrame == mPrimaryFrame,
                     "Losing track of existing primary frame");
     mPrimaryFrame = aFrame;
@@ -873,6 +876,7 @@ public:
   virtual bool IsPurple() = 0;
   virtual void RemovePurple() = 0;
 
+  virtual bool OwnedOnlyByTheDOMTree() { return false; }
 protected:
   /**
    * Hook for implementing GetID.  This is guaranteed to only be
@@ -886,11 +890,6 @@ private:
    * called if the NODE_MAY_HAVE_CLASS flag is set.
    */
   virtual const nsAttrValue* DoGetClasses() const = 0;
-
-  /**
-   * Pointer to our primary frame.  Might be null.
-   */
-  nsIFrame* mPrimaryFrame;
 
 public:
 #ifdef DEBUG
@@ -924,5 +923,11 @@ public:
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIContent, NS_ICONTENT_IID)
+
+inline nsIContent* nsINode::AsContent()
+{
+  MOZ_ASSERT(IsContent());
+  return static_cast<nsIContent*>(this);
+}
 
 #endif /* nsIContent_h___ */

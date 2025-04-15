@@ -297,6 +297,11 @@ public:
   friend class nsAttrAndChildArray;
 
 #ifdef MOZILLA_INTERNAL_API
+#ifdef _MSC_VER
+#pragma warning(push)
+// Disable annoying warning about 'this' in initializers.
+#pragma warning(disable:4355)
+#endif
   nsINode(already_AddRefed<nsINodeInfo> aNodeInfo)
   : mNodeInfo(aNodeInfo),
     mParent(nsnull),
@@ -305,10 +310,14 @@ public:
     mNextSibling(nsnull),
     mPreviousSibling(nsnull),
     mFirstChild(nsnull),
+    mSubtreeRoot(this),
     mSlots(nsnull)
   {
   }
 
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #endif
 
   virtual ~nsINode();
@@ -364,6 +373,13 @@ public:
    * for which IsElement() is true.  This is defined inline in Element.h.
    */
   mozilla::dom::Element* AsElement();
+  const mozilla::dom::Element* AsElement() const;
+
+  /**
+   * Return this node as nsIContent.  Should only be used for nodes for which
+   * IsContent() is true.  This is defined inline in nsIContent.h.
+   */
+  nsIContent* AsContent();
 
   virtual nsIDOMNode* AsDOMNode() = 0;
 
@@ -418,6 +434,12 @@ public:
   }
 
   /**
+   * Return the "owner document" of this node as an nsINode*.  Implemented
+   * in nsIDocument.h.
+   */
+  nsINode *OwnerDocAsNode() const;
+
+  /**
    * Returns true if the content has an ancestor that is a document.
    *
    * @return whether this content is in a document tree
@@ -453,6 +475,17 @@ public:
   const nsString& LocalName() const
   {
     return mNodeInfo->LocalName();
+  }
+
+  /**
+   * Get the tag for this element. This will always return a non-null atom
+   * pointer (as implied by the naming of the method).  For elements this is
+   * the non-namespaced tag, and for other nodes it's something like "#text",
+   * "#comment", "#document", etc.
+   */
+  nsIAtom* Tag() const
+  {
+    return mNodeInfo->NameAtom();
   }
 
   nsINode*
@@ -711,6 +744,35 @@ public:
   mozilla::dom::Element* GetElementParent() const
   {
     return mParent && mParent->IsElement() ? mParent->AsElement() : nsnull;
+  }
+
+  /**
+   * Get the root of the subtree this node belongs to.  This never returns
+   * null.  It may return 'this' (e.g. for document nodes, and nodes that
+   * are the roots of disconnected subtrees).
+   */
+  nsINode* SubtreeRoot() const
+  {
+    // There are three cases of interest here.  nsINodes that are really:
+    // 1. nsIDocument nodes - Are always in the document.
+    // 2. nsIContent nodes - Are either in the document, or mSubtreeRoot
+    //    is updated in BindToTree/UnbindFromTree.
+    // 3. nsIAttribute nodes - Are never in the document, and mSubtreeRoot
+    //    is always 'this' (as set in nsINode's ctor).
+    nsINode* node = IsInDoc() ? OwnerDocAsNode() : mSubtreeRoot;
+    NS_ASSERTION(node, "Should always have a node here!");
+#ifdef DEBUG
+    {
+      const nsINode* slowNode = this;
+      const nsINode* iter = slowNode;
+      while ((iter = iter->GetNodeParent())) {
+        slowNode = iter;
+      }
+
+      NS_ASSERTION(slowNode == node, "These should always be in sync!");
+    }
+#endif
+    return node;
   }
 
   /**
@@ -1108,6 +1170,8 @@ public:
   bool Contains(const nsINode* aOther) const;
   nsresult Contains(nsIDOMNode* aOther, bool* aReturn);
 
+  bool UnoptimizableCCNode() const;
+
 private:
 
   nsIContent* GetNextNodeImpl(const nsINode* aRoot,
@@ -1225,6 +1289,8 @@ private:
     ElementHasPointerLock,
     // Set if the node may have DOMMutationObserver attached to it.
     NodeMayHaveDOMMutationObserver,
+    // Set if node is Content
+    NodeIsContent,
     // Guard value
     BooleanFlagCount
   };
@@ -1254,6 +1320,7 @@ public:
     { return GetBoolFlag(NodeHasRenderingObservers); }
   void SetHasRenderingObservers(bool aValue)
     { SetBoolFlag(NodeHasRenderingObservers, aValue); }
+  bool IsContent() const { return GetBoolFlag(NodeIsContent); }
   bool HasID() const { return GetBoolFlag(ElementHasID); }
   bool MayHaveStyle() const { return GetBoolFlag(ElementMayHaveStyle); }
   bool HasName() const { return GetBoolFlag(ElementHasName); }
@@ -1292,6 +1359,7 @@ public:
 protected:
   void SetParentIsContent(bool aValue) { SetBoolFlag(ParentIsContent, aValue); }
   void SetInDocument() { SetBoolFlag(IsInDocument); }
+  void SetNodeIsContent() { SetBoolFlag(NodeIsContent); }
   void ClearInDocument() { ClearBoolFlag(IsInDocument); }
   void SetIsElement() { SetBoolFlag(NodeIsElement); }
   void ClearIsElement() { ClearBoolFlag(NodeIsElement); }
@@ -1308,6 +1376,18 @@ protected:
   void ClearHasLockedStyleStates() { ClearBoolFlag(ElementHasLockedStyleStates); }
   bool HasLockedStyleStates() const
     { return GetBoolFlag(ElementHasLockedStyleStates); }
+
+    void SetSubtreeRootPointer(nsINode* aSubtreeRoot)
+  {
+    NS_ASSERTION(aSubtreeRoot, "aSubtreeRoot can never be null!");
+    NS_ASSERTION(!(IsNodeOfType(eCONTENT) && IsInDoc()), "Shouldn't be here!");
+    mSubtreeRoot = aSubtreeRoot;
+  }
+
+  void ClearSubtreeRootPointer()
+  {
+    mSubtreeRoot = nsnull;
+  }
 
 public:
   // Optimized way to get classinfo.
@@ -1463,6 +1543,14 @@ protected:
   nsIContent* mNextSibling;
   nsIContent* mPreviousSibling;
   nsIContent* mFirstChild;
+
+  union {
+    // Pointer to our primary frame.  Might be null.
+    nsIFrame* mPrimaryFrame;
+
+    // Pointer to the root of our subtree.  Might be null.
+    nsINode* mSubtreeRoot;
+  };
 
   // Storage for more members that are usually not needed; allocated lazily.
   nsSlots* mSlots;

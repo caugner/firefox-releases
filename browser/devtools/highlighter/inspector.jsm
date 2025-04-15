@@ -440,7 +440,7 @@ InspectorUI.prototype = {
   /**
    * Toggle the TreePanel.
    */
-  toggleHTMLPanel: function TP_toggleHTMLPanel()
+  toggleHTMLPanel: function IUI_toggleHTMLPanel()
   {
     if (this.treePanel.isOpen()) {
       this.treePanel.close();
@@ -653,15 +653,10 @@ InspectorUI.prototype = {
    setupNavigationKeys: function IUI_setupNavigationKeys()
    {
      // UI elements that are arrow keys sensitive:
-     // - highlighter veil;
-     // - content window (when the highlighter `veil is pointer-events:none`;
      // - the Inspector toolbar.
 
      this.onKeypress = this.onKeypress.bind(this);
 
-     this.highlighter.highlighterContainer.addEventListener("keypress",
-       this.onKeypress, true);
-     this.win.addEventListener("keypress", this.onKeypress, true);
      this.toolbar.addEventListener("keypress", this.onKeypress, true);
    },
 
@@ -670,9 +665,6 @@ InspectorUI.prototype = {
    */
    removeNavigationKeys: function IUI_removeNavigationKeys()
    {
-      this.highlighter.highlighterContainer.removeEventListener("keypress",
-        this.onKeypress, true);
-      this.win.removeEventListener("keypress", this.onKeypress, true);
       this.toolbar.removeEventListener("keypress", this.onKeypress, true);
    },
 
@@ -812,6 +804,10 @@ InspectorUI.prototype = {
     this.inspectCommand.setAttribute("checked", "false");
 
     this.inspecting = false;
+
+    if (this.closing)
+      return;
+
     if (this.highlighter.getNode()) {
       this.select(this.highlighter.getNode(), true, !aPreventScroll);
     } else {
@@ -857,7 +853,7 @@ InspectorUI.prototype = {
 
     this.breadcrumbs.update();
     this.chromeWin.Tilt.update(aNode);
-    this.treePanel.select(aNode, aScroll);
+    this.treePanel.select(aNode, aScroll, aFrom);
 
     this._notifySelected(aFrom);
   },
@@ -893,7 +889,9 @@ InspectorUI.prototype = {
   clearPseudoClassLocks: function IUI_clearPseudoClassLocks()
   {
     this.breadcrumbs.nodeHierarchy.forEach(function(crumb) {
-      DOMUtils.clearPseudoClassLocks(crumb.node);
+      if (LayoutHelpers.isNodeConnected(crumb.node)) {
+        DOMUtils.clearPseudoClassLocks(crumb.node);
+      }
     });
   },
 
@@ -1104,7 +1102,7 @@ InspectorUI.prototype = {
    */
   copyInnerHTML: function IUI_copyInnerHTML()
   {
-    clipboardHelper.copyString(this.selection.innerHTML);
+    clipboardHelper.copyString(this.selection.innerHTML, this.selection.ownerDocument);
   },
 
   /**
@@ -1113,7 +1111,7 @@ InspectorUI.prototype = {
    */
   copyOuterHTML: function IUI_copyOuterHTML()
   {
-    clipboardHelper.copyString(this.selection.outerHTML);
+    clipboardHelper.copyString(this.selection.outerHTML, this.selection.ownerDocument);
   },
 
   /**
@@ -1234,7 +1232,7 @@ InspectorUI.prototype = {
 
   /**
    * Destroy the InspectorUI instance. This is called by the InspectorUI API
-   * "user", see BrowserShutdown() in browser.js.
+   * "user", see gBrowserInit.onUnload() in browser.js.
    */
   destroy: function IUI_destroy()
   {
@@ -1922,7 +1920,7 @@ HTMLBreadcrumbs.prototype = {
 
     let classesLabel = this.IUI.chromeDoc.createElement("label");
     classesLabel.className = "inspector-breadcrumbs-classes plain";
-    
+
     let pseudosLabel = this.IUI.chromeDoc.createElement("label");
     pseudosLabel.className = "inspector-breadcrumbs-pseudo-classes plain";
 
@@ -2151,6 +2149,7 @@ HTMLBreadcrumbs.prototype = {
     };
 
     button.onclick = (function _onBreadcrumbsRightClick(aEvent) {
+      button.focus();
       if (aEvent.button == 2) {
         this.openSiblingMenu(button, aNode);
       }

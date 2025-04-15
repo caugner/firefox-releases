@@ -8,8 +8,8 @@ import java.io.UnsupportedEncodingException;
 import java.security.NoSuchAlgorithmException;
 
 import org.mozilla.gecko.sync.Logger;
+import org.mozilla.gecko.sync.Utils;
 import org.mozilla.gecko.sync.config.AccountPickler;
-import org.mozilla.gecko.sync.crypto.KeyBundle;
 import org.mozilla.gecko.sync.setup.activities.SetupSyncActivity;
 
 import android.accounts.AbstractAccountAuthenticator;
@@ -101,7 +101,6 @@ public class SyncAuthenticatorService extends Service {
 
       // Extract the username and password from the Account Manager, and ask
       // the server for an appropriate AuthToken.
-      Logger.info(LOG_TAG, "AccountManager.get(" + mContext + ")");
       final AccountManager am = AccountManager.get(mContext);
       final String password = am.getPassword(account);
       if (password != null) {
@@ -119,9 +118,9 @@ public class SyncAuthenticatorService extends Service {
 
         // Username after hashing.
         try {
-          String username = KeyBundle.usernameFromAccount(account.name);
-          Logger.pii(LOG_TAG, "Account " + account.name + " hashes to " + username);
-          Logger.info(LOG_TAG, "Setting username. Null? " + (username == null));
+          String username = Utils.usernameFromAccount(account.name);
+          Logger.pii(LOG_TAG, "Account " + account.name + " hashes to " + username + ".");
+          Logger.debug(LOG_TAG, "Setting username. Null? " + (username == null));
           result.putString(Constants.OPTION_USERNAME, username);
         } catch (NoSuchAlgorithmException e) {
           // Do nothing. Calling code must check for missing value.
@@ -131,7 +130,7 @@ public class SyncAuthenticatorService extends Service {
 
         // Sync key.
         final String syncKey = am.getUserData(account, Constants.OPTION_SYNCKEY);
-        Logger.info(LOG_TAG, "Setting Sync Key. Null? " + (syncKey == null));
+        Logger.debug(LOG_TAG, "Setting sync key. Null? " + (syncKey == null));
         result.putString(Constants.OPTION_SYNCKEY, syncKey);
 
         // Password.

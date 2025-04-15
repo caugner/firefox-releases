@@ -78,6 +78,7 @@ static const char *sExtensionNames[] = {
     "GL_EXT_robustness",
     "GL_ARB_sync",
     "GL_OES_EGL_image",
+    "GL_OES_EGL_sync",
     nsnull
 };
 
@@ -264,6 +265,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 { (PRFuncPtr*) &mSymbols.fReadBuffer, { "ReadBuffer", NULL } },
                 { (PRFuncPtr*) &mSymbols.fMapBuffer, { "MapBuffer", NULL } },
                 { (PRFuncPtr*) &mSymbols.fUnmapBuffer, { "UnmapBuffer", NULL } },
+                { (PRFuncPtr*) &mSymbols.fPointParameterf, { "PointParameterf", NULL } },
                 { NULL, { NULL } },
             };
 
@@ -315,10 +317,24 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
         }
     }
 
+#ifdef DEBUG
+    if (PR_GetEnv("MOZ_GL_DEBUG"))
+        sDebugMode |= DebugEnabled;
+
+    // enables extra verbose output, informing of the start and finish of every GL call.
+    // useful e.g. to record information to investigate graphics system crashes/lockups
+    if (PR_GetEnv("MOZ_GL_DEBUG_VERBOSE"))
+        sDebugMode |= DebugTrace;
+
+    // aborts on GL error. Can be useful to debug quicker code that is known not to generate any GL error in principle.
+    if (PR_GetEnv("MOZ_GL_DEBUG_ABORT_ON_ERROR"))
+        sDebugMode |= DebugAbortOnError;
+#endif
+
     if (mInitialized) {
 #ifdef DEBUG
         static bool once = false;
-        if (!once) {
+        if (DebugMode() && !once) {
             const char *vendors[VendorOther] = {
                 "Intel",
                 "NVIDIA",
@@ -459,7 +475,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
             };
 
             if (!LoadSymbols(&imageSymbols[0], trygl, prefix)) {
-                NS_ERROR("GL supports ARB_sync without supplying its functions.");
+                NS_ERROR("GL supports OES_EGL_image without supplying its functions.");
 
                 MarkExtensionUnsupported(OES_EGL_image);
                 mSymbols.fImageTargetTexture2D = nsnull;
@@ -503,20 +519,6 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
 
         UpdateActualFormat();
     }
-
-#ifdef DEBUG
-    if (PR_GetEnv("MOZ_GL_DEBUG"))
-        sDebugMode |= DebugEnabled;
-
-    // enables extra verbose output, informing of the start and finish of every GL call.
-    // useful e.g. to record information to investigate graphics system crashes/lockups
-    if (PR_GetEnv("MOZ_GL_DEBUG_VERBOSE"))
-        sDebugMode |= DebugTrace;
-
-    // aborts on GL error. Can be useful to debug quicker code that is known not to generate any GL error in principle.
-    if (PR_GetEnv("MOZ_GL_DEBUG_ABORT_ON_ERROR"))
-        sDebugMode |= DebugAbortOnError;
-#endif
 
     if (mInitialized)
         reporter.SetSuccessful();
@@ -902,12 +904,12 @@ TiledTextureImage::TiledTextureImage(GLContext* aGL,
                                      TextureImage::Flags aFlags)
     : TextureImage(aSize, LOCAL_GL_CLAMP_TO_EDGE, aContentType, aFlags)
     , mCurrentImage(0)
+    , mIterationCallback(nsnull)
     , mInUpdate(false)
     , mRows(0)
     , mColumns(0)
     , mGL(aGL)
     , mTextureState(Created)
-    , mIterationCallback(nsnull)
 {
     mTileSize = (!(aFlags & TextureImage::ForceSingleTile) && mGL->WantsSmallTiles())
         ? 256 : mGL->GetMaxTextureSize();
@@ -1277,8 +1279,13 @@ GLContext::ChooseGLFormats(ContextFormat& aCF, ColorByteOrder aByteOrder)
     GLFormats formats;
 
     if (aCF.alpha) {
-        formats.texColor = LOCAL_GL_RGBA;
         if (mIsGLES2 && IsExtensionSupported(EXT_texture_format_BGRA8888) && aByteOrder != ForceRGBA) {
+            formats.texColor = LOCAL_GL_BGRA;
+        } else {
+            formats.texColor = LOCAL_GL_RGBA;
+        }
+
+        if (mIsGLES2 && !IsExtensionSupported(OES_rgb8_rgba8)) {
             formats.rbColor = LOCAL_GL_RGBA4;
             aCF.red = aCF.green = aCF.blue = aCF.alpha = 4;
         } else {
@@ -1503,7 +1510,9 @@ GLContext::AssembleOffscreenFBOs(const GLuint colorMSRB,
     if (status != LOCAL_GL_FRAMEBUFFER_COMPLETE) {
         NS_WARNING("DrawFBO: Incomplete");
   #ifdef DEBUG
-        printf_stderr("Framebuffer status: %X\n", status);
+        if (DebugMode()) {
+            printf_stderr("Framebuffer status: %X\n", status);
+        }
   #endif
         isComplete = false;
     }
@@ -1513,7 +1522,9 @@ GLContext::AssembleOffscreenFBOs(const GLuint colorMSRB,
     if (status != LOCAL_GL_FRAMEBUFFER_COMPLETE) {
         NS_WARNING("ReadFBO: Incomplete");
   #ifdef DEBUG
-        printf_stderr("Framebuffer status: %X\n", status);
+        if (DebugMode()) {
+            printf_stderr("Framebuffer status: %X\n", status);
+        }
   #endif
         isComplete = false;
     }
@@ -2363,7 +2374,7 @@ GLContext::TexImage2D(GLenum target, GLint level, GLint internalformat,
 {
     if (mIsGLES2) {
 
-        NS_ASSERTION(format == internalformat,
+        NS_ASSERTION(format == (GLenum)internalformat,
                     "format and internalformat not the same for glTexImage2D on GLES2");
 
         if (!CanUploadNonPowerOfTwo()
@@ -2944,11 +2955,9 @@ RemoveNamesFromArray(GLContext *aOrigin, GLsizei aCount, GLuint *aNames, nsTArra
         if (name == 0)
             continue;
 
-        bool found = false;
         for (PRUint32 i = 0; i < aArray.Length(); ++i) {
             if (aArray[i].name == name) {
                 aArray.RemoveElementAt(i);
-                found = true;
                 break;
             }
         }
@@ -3033,19 +3042,21 @@ ReportArrayContents(const nsTArray<GLContext::NamedResource>& aArray)
 void
 GLContext::ReportOutstandingNames()
 {
-    printf_stderr("== GLContext %p ==\n", this);
-    printf_stderr("Outstanding Textures:\n");
-    ReportArrayContents(mTrackedTextures);
-    printf_stderr("Outstanding Buffers:\n");
-    ReportArrayContents(mTrackedBuffers);
-    printf_stderr("Outstanding Programs:\n");
-    ReportArrayContents(mTrackedPrograms);
-    printf_stderr("Outstanding Shaders:\n");
-    ReportArrayContents(mTrackedShaders);
-    printf_stderr("Outstanding Framebuffers:\n");
-    ReportArrayContents(mTrackedFramebuffers);
-    printf_stderr("Outstanding Renderbuffers:\n");
-    ReportArrayContents(mTrackedRenderbuffers);
+    if (DebugMode()) {
+        printf_stderr("== GLContext %p ==\n", this);
+        printf_stderr("Outstanding Textures:\n");
+        ReportArrayContents(mTrackedTextures);
+        printf_stderr("Outstanding Buffers:\n");
+        ReportArrayContents(mTrackedBuffers);
+        printf_stderr("Outstanding Programs:\n");
+        ReportArrayContents(mTrackedPrograms);
+        printf_stderr("Outstanding Shaders:\n");
+        ReportArrayContents(mTrackedShaders);
+        printf_stderr("Outstanding Framebuffers:\n");
+        ReportArrayContents(mTrackedFramebuffers);
+        printf_stderr("Outstanding Renderbuffers:\n");
+        ReportArrayContents(mTrackedRenderbuffers);
+    }
 }
 
 #endif /* DEBUG */

@@ -25,6 +25,7 @@
 #include "nsIURI.h"
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
+#include "mozilla/LinkedList.h"
 
 class nsHtml5Parser;
 class nsHtml5TreeBuilder;
@@ -42,7 +43,8 @@ enum eHtml5FlushState {
 
 class nsHtml5TreeOpExecutor : public nsContentSink,
                               public nsIContentSink,
-                              public nsAHtml5TreeOpSink
+                              public nsAHtml5TreeOpSink,
+                              public mozilla::LinkedListElement<nsHtml5TreeOpExecutor>
 {
   friend class nsHtml5FlushLoopGuard;
 
@@ -209,21 +211,6 @@ class nsHtml5TreeOpExecutor : public nsContentSink,
     void InitializeDocWriteParserState(nsAHtml5TreeBuilderState* aState, PRInt32 aLine);
 
     bool IsScriptEnabled();
-
-    /**
-     * Enables the fragment mode.
-     *
-     * @param aPreventScriptExecution if true, scripts are prevented from
-     * executing; don't set to false when parsing a fragment directly into
-     * a document--only when parsing to an actual DOM fragment
-     */
-    void EnableFragmentMode(bool aPreventScriptExecution) {
-      mPreventScriptExecution = aPreventScriptExecution;
-    }
-    
-    void PreventScriptExecution() {
-      mPreventScriptExecution = true;
-    }
 
     bool BelongsToStringParser() {
       return mRunsToCompletion;

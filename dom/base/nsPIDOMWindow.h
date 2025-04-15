@@ -16,13 +16,13 @@
 #include "nsIDOMEventTarget.h"
 #include "nsIDOMDocument.h"
 #include "nsCOMPtr.h"
-#include "nsEvent.h"
 #include "nsIURI.h"
 
 #define DOM_WINDOW_DESTROYED_TOPIC "dom-window-destroyed"
 #define DOM_WINDOW_FROZEN_TOPIC "dom-window-frozen"
 #define DOM_WINDOW_THAWED_TOPIC "dom-window-thawed"
 
+class nsIIdleObserver;
 class nsIPrincipal;
 
 // Popup control state enum. The values in this enum must go from most
@@ -48,8 +48,8 @@ class nsIArray;
 class nsPIWindowRoot;
 
 #define NS_PIDOMWINDOW_IID \
-{ 0x41dd6a62, 0xda59, 0x46e5, \
-      { 0x9d, 0x74, 0x45, 0xf4, 0x49, 0x4e, 0x1a, 0x70 } }
+{ 0x0c4d0b84, 0xb524, 0x4572, \
+  { 0x8e, 0xd1, 0x7f, 0x78, 0x14, 0x7c, 0x4d, 0xf1 } }
 
 class nsPIDOMWindow : public nsIDOMWindowInternal
 {
@@ -69,6 +69,9 @@ public:
                     "active state is only maintained on outer windows");
     mIsActive = aActive;
   }
+
+  virtual nsresult RegisterIdleObserver(nsIIdleObserver* aIdleObserver) = 0;
+  virtual nsresult UnregisterIdleObserver(nsIIdleObserver* aIdleObserver) = 0;
 
   bool IsActive()
   {
@@ -263,14 +266,10 @@ public:
     return win->mIsHandlingResizeEvent;
   }
 
-  // Tell this window who opened it.  This only has an effect if there is
-  // either no document currently in the window or if the document is the
-  // original document this window came with (an about:blank document either
-  // preloaded into it when it was created, or created by
-  // CreateAboutBlankContentViewer()).
-  virtual void SetOpenerScriptPrincipal(nsIPrincipal* aPrincipal) = 0;
-  // Ask this window who opened it.
+  // These functions are no-ops and return NULL/void. We're leaving it in for
+  // mozilla16 to avoid the IID rev.
   virtual nsIPrincipal* GetOpenerScriptPrincipal() = 0;
+  virtual void SetOpenerScriptPrincipal(nsIPrincipal* aPrincipal) = 0;
 
   virtual PopupControlState PushPopupControlState(PopupControlState aState,
                                                   bool aForce) const = 0;
@@ -370,6 +369,8 @@ public:
    * called with a pointer to the current document, in that case the
    * document remains unchanged, but a new inner window will be
    * created.
+   *
+   * aDocument must not be null.
    */
   virtual nsresult SetNewDocument(nsIDocument *aDocument,
                                   nsISupports *aState,
@@ -464,12 +465,7 @@ public:
   void SetHasMouseEnterLeaveEventListeners()
   {
     mMayHaveMouseEnterLeaveEventListener = true;
-  }  
-
-  /**
-   * Initialize window.java and window.Packages.
-   */
-  virtual void InitJavaProperties() = 0;
+  }
 
   virtual JSObject* GetCachedXBLPrototypeHandler(nsXBLPrototypeHandler* aKey) = 0;
   virtual void CacheXBLPrototypeHandler(nsXBLPrototypeHandler* aKey,
@@ -594,6 +590,13 @@ public:
    * and that the compartment principal needs to be updated.
    */
   virtual void RefreshCompartmentPrincipal() = 0;
+
+  /**
+   * Returns if the window is part of an application.
+   * It will check for the window app state and its parents until a window has
+   * an app state different from |TriState_Unknown|.
+   */
+  virtual bool IsPartOfApp() = 0;
 
 protected:
   // The nsPIDOMWindow constructor. The aOuterWindow argument should
@@ -733,5 +736,20 @@ private:
 };
 
 #define nsAutoPopupStatePusher NS_AUTO_POPUP_STATE_PUSHER
+
+#define NS_PIDOMWINDOW2_IID \
+{ 0x9884e714, 0xc5b7, 0x49ec, \
+  { 0x96, 0xd9, 0xdd, 0xf1, 0x35, 0x30, 0xe1, 0xb0 } }
+
+class nsPIDOMWindow2 : public nsISupports
+{
+public:
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_PIDOMWINDOW2_IID)
+  // Set the window up with an about:blank document with the current subject
+  // principal.
+  virtual void SetInitialPrincipalToSubject() = 0;
+};
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsPIDOMWindow2, NS_PIDOMWINDOW2_IID)
 
 #endif // nsPIDOMWindow_h__

@@ -48,10 +48,13 @@ DIRS += \
   base \
   bindings \
   battery \
+  browser-element \
   contacts \
+  alarm \
   devicestorage \
   file \
   media \
+  messages \
   power \
   settings \
   sms \
@@ -64,6 +67,7 @@ DIRS += \
   indexedDB \
   system \
   ipc \
+  identity \
   workers \
   $(NULL)
 

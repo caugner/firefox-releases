@@ -8,7 +8,9 @@ include protocol PAudio;
 include protocol PBrowser;
 include protocol PCrashReporter;
 include protocol PExternalHelperApp;
+include protocol PDeviceStorageRequest;
 include protocol PHal;
+include protocol PIndexedDB;
 include protocol PMemoryReportRequest;
 include protocol PNecko;
 include protocol PSms;
@@ -64,22 +66,60 @@ struct FontListEntry {
     PRUint8   index;
 };
 
+struct DeviceStorageAddParams
+{
+  nsString fullpath;
+  PRUint8[] bits;
+};
+
+struct DeviceStorageGetParams
+{
+  nsString fullpath;
+};
+
+struct DeviceStorageDeleteParams
+{
+  nsString fullpath;
+};
+
+struct DeviceStorageEnumerationParams
+{
+  nsString fullpath;
+  PRUint32 since;
+};
+
+union DeviceStorageParams
+{
+  DeviceStorageAddParams;
+  DeviceStorageGetParams;
+  DeviceStorageDeleteParams;
+  DeviceStorageEnumerationParams;
+};
 rpc protocol PContent
 {
     manages PAudio;
     manages PBrowser;
     manages PCrashReporter;
+    manages PDeviceStorageRequest;
     manages PExternalHelperApp;
     manages PHal;
+    manages PIndexedDB;
     manages PMemoryReportRequest;
     manages PNecko;
     manages PSms;
     manages PStorage;
     manages PTestShell;
 
-child:
-    PBrowser(PRUint32 chromeFlags);
+both:
+    // Depending on exactly how the new browser is being created, it might be
+    // created from either the child or parent process!
+    //
+    // The child creates the PBrowser as part of
+    // TabChild::BrowserFrameProvideWindow, and the parent creates the PBrowser
+    // as part of ContentParent::CreateTab.
+    async PBrowser(PRUint32 chromeFlags, bool isBrowserFrame);
 
+child:
     PMemoryReportRequest();
 
     PTestShell();
@@ -123,9 +163,13 @@ child:
 parent:
     PAudio(PRInt32 aNumChannels, PRInt32 aRate, PRInt32 aFormat);
 
+    PDeviceStorageRequest(DeviceStorageParams params);
+
     sync PCrashReporter(NativeThreadId tid, PRUint32 processType);
 
     PHal();
+
+    PIndexedDB();
 
     PNecko();
 

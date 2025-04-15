@@ -18,7 +18,6 @@
 #include "nsINameSpaceManager.h"
 #include "nsCOMPtr.h"
 #include "nsIDOMElement.h"
-#include "nsIDOMDocument.h"
 #include "nsIDocument.h"
 #include "nsIPresShell.h"
 #include "nsXPCOM.h"
@@ -28,7 +27,7 @@
 #include "nsIDOMMouseEvent.h"
 #include "nsINodeInfo.h"
 #include "nsIDOMEventTarget.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsHTMLInputElement.h"
 #include "nsNodeInfoManager.h"
 #include "nsContentCreatorFunctions.h"
@@ -373,12 +372,11 @@ nsFileControlFrame::CaptureMouseListener::HandleEvent(nsIDOMEvent* aMouseEvent)
     // Tell our input element that this update of the value is a user
     // initiated change. Otherwise it'll think that the value is being set by
     // a script and not fire onchange when it should.
-   
+
     inputElement->SetFiles(newFiles, true);
-    
-    // Should fire a change event here since the SetFiles() call above ensures 
-    // a different value from the mFocusedValue of the inputElement. 
-    inputElement->FireChangeEventIfNeeded();
+    nsContentUtils::DispatchTrustedEvent(content->OwnerDoc(), content,
+                                         NS_LITERAL_STRING("change"), true,
+                                         false);
   }
 
   return NS_OK;
@@ -439,9 +437,10 @@ nsFileControlFrame::BrowseMouseListener::HandleEvent(nsIDOMEvent* aEvent)
     nsCOMPtr<nsIDOMFileList> fileList;
     dataTransfer->GetFiles(getter_AddRefs(fileList));
 
-    
     inputElement->SetFiles(fileList, true);
-    inputElement->FireChangeEventIfNeeded();
+    nsContentUtils::DispatchTrustedEvent(content->OwnerDoc(), content,
+                                         NS_LITERAL_STRING("change"), true,
+                                         false);
   }
 
   return NS_OK;
@@ -555,7 +554,7 @@ nsFileControlFrame::IsLeaf() const
   return true;
 }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 NS_IMETHODIMP
 nsFileControlFrame::GetFrameName(nsAString& aResult) const
 {

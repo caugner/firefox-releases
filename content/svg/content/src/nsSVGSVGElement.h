@@ -18,6 +18,7 @@
 #include "nsSVGStylableElement.h"
 #include "nsSVGViewBox.h"
 #include "SVGAnimatedPreserveAspectRatio.h"
+#include "mozilla/Attributes.h"
 
 class nsIDOMSVGMatrix;
 class nsSMILTimeContainer;
@@ -59,7 +60,7 @@ public:
 
 private:
 
-  struct DOMVal : public nsIDOMSVGPoint {
+  struct DOMVal MOZ_FINAL : public nsIDOMSVGPoint {
     NS_DECL_CYCLE_COLLECTING_ISUPPORTS
     NS_DECL_CYCLE_COLLECTION_CLASS(DOMVal)
 
@@ -173,8 +174,6 @@ public:
  
   // nsSVGSVGElement methods:
   float GetLength(PRUint8 mCtxType);
-  // Copy our width or height to the target
-  void SyncWidthOrHeight(nsIAtom* aName, nsSVGElement *aTarget) const;
 
   // public helpers:
 
@@ -211,6 +210,10 @@ public:
     return mHasChildrenOnlyTransform;
   }
 
+  enum ChildrenOnlyTransformChangedFlags {
+    eDuringReflow = 1
+  };
+
   /**
    * This method notifies the style system that the overflow rects of our
    * immediate childrens' frames need to be updated. It is called by our own
@@ -221,7 +224,7 @@ public:
    * GetAttributeChangeHint is because we need to act on non-attribute (e.g.
    * currentScale) changes in addition to attribute (e.g. viewBox) changes.
    */
-  void ChildrenOnlyTransformChanged();
+  void ChildrenOnlyTransformChanged(PRUint32 aFlags = 0);
 
   // This services any pending notifications for the transform on on this root
   // <svg> node needing to be recalculated.  (Only applicable in

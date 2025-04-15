@@ -50,7 +50,7 @@
 #include "nsIEntropyCollector.h"
 #include "nsIBufEntropyCollector.h"
 #include "nsIServiceManager.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsITokenPasswordDialogs.h"
 #include "nsICRLManager.h"
 #include "nsNSSShutDown.h"
@@ -365,7 +365,9 @@ nsNSSComponent::createBackgroundThreads()
                "Cert verification thread already created.");
 
   mCertVerificationThread = new nsCertVerificationThread;
-  nsresult rv = mCertVerificationThread->startThread();
+  nsresult rv = mCertVerificationThread->startThread(
+    NS_LITERAL_CSTRING("Cert Verify"));
+
   if (NS_FAILED(rv)) {
     delete mCertVerificationThread;
     mCertVerificationThread = nsnull;
@@ -801,7 +803,7 @@ nsNSSComponent::InstallLoadableRoots()
   };
 
   for (size_t il = 0; il < sizeof(possible_ckbi_locations)/sizeof(const char*); ++il) {
-    nsCOMPtr<nsILocalFile> mozFile;
+    nsCOMPtr<nsIFile> mozFile;
     char *fullLibraryPath = nsnull;
 
     if (!possible_ckbi_locations[il])
@@ -818,7 +820,7 @@ nsNSSComponent::InstallLoadableRoots()
           continue;
         }
         // Get the directory containing the nss3 library.
-        nsCOMPtr<nsILocalFile> nssLib(do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv));
+        nsCOMPtr<nsIFile> nssLib(do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv));
         if (NS_SUCCEEDED(rv)) {
           rv = nssLib->InitWithNativePath(nsDependentCString(nss_path));
         }
@@ -831,7 +833,7 @@ nsNSSComponent::InstallLoadableRoots()
         }
       } else {
         directoryService->Get( possible_ckbi_locations[il],
-                               NS_GET_IID(nsILocalFile), 
+                               NS_GET_IID(nsIFile), 
                                getter_AddRefs(mozFile));
       }
   
@@ -1285,7 +1287,7 @@ nsresult nsNSSComponent::getParamsForNextCrlToDownload(nsAutoString *url, PRTime
     char *tempTimeString;
     PRTime tempTime;
     nsCAutoString timingPrefCString(updateTimePref);
-    timingPrefCString.AppendWithConversion(tempCrlKey);
+    LossyAppendUTF16toASCII(tempCrlKey, timingPrefCString);
     // No PRTime/Int64 type in prefs; stored as string; parsed here as PRInt64
     rv = pref->GetCharPref(timingPrefCString.get(), &tempTimeString);
     if (NS_FAILED(rv)){
@@ -1325,7 +1327,7 @@ nsresult nsNSSComponent::getParamsForNextCrlToDownload(nsAutoString *url, PRTime
 
     if(nearestUpdateTime == 0 || tempTime < nearestUpdateTime){
       nsCAutoString urlPrefCString(updateURLPref);
-      urlPrefCString.AppendWithConversion(tempCrlKey);
+      LossyAppendUTF16toASCII(tempCrlKey, urlPrefCString);
       rv = pref->GetCharPref(urlPrefCString.get(), &tempUrl);
       if (NS_FAILED(rv) || (!tempUrl)){
         continue;
@@ -3298,7 +3300,6 @@ PSMContentDownloader::handleContentDownloadError(nsresult errCode)
       //This is the case for automatic download. Update failure history
       nsCAutoString updateErrCntPrefStr(CRL_AUTOUPDATE_ERRCNT_PREF);
       nsCAutoString updateErrDetailPrefStr(CRL_AUTOUPDATE_ERRDETAIL_PREF);
-      PRUnichar *nameInDb;
       nsCString errMsg;
       PRInt32 errCnt;
 
@@ -3307,9 +3308,8 @@ PSMContentDownloader::handleContentDownloadError(nsresult errCode)
         return rv;
       }
       
-      nameInDb = (PRUnichar *)mCrlAutoDownloadKey.get();
-      updateErrCntPrefStr.AppendWithConversion(nameInDb);
-      updateErrDetailPrefStr.AppendWithConversion(nameInDb);  
+      LossyAppendUTF16toASCII(mCrlAutoDownloadKey, updateErrCntPrefStr);
+      LossyAppendUTF16toASCII(mCrlAutoDownloadKey, updateErrDetailPrefStr);
       errMsg.AssignWithConversion(tmpMessage.get());
       
       rv = pref->GetIntPref(updateErrCntPrefStr.get(),&errCnt);

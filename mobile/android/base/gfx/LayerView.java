@@ -18,6 +18,7 @@ import android.view.MotionEvent;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.RelativeLayout;
+import android.util.AttributeSet;
 import android.util.Log;
 import java.nio.IntBuffer;
 
@@ -86,7 +87,12 @@ public class LayerView extends SurfaceView implements SurfaceHolder.Callback {
         if (GeckoApp.mAppContext != null && GeckoApp.mAppContext.mFormAssistPopup != null)
             GeckoApp.mAppContext.mFormAssistPopup.hide();
 
-        return mTouchEventHandler.handleEvent(event);
+        return mTouchEventHandler == null ? false : mTouchEventHandler.handleEvent(event);
+    }
+
+    @Override
+    public boolean onHoverEvent(MotionEvent event) {
+        return mTouchEventHandler == null ? false : mTouchEventHandler.handleEvent(event);
     }
 
     public LayerController getController() { return mController; }
@@ -233,6 +239,7 @@ public class LayerView extends SurfaceView implements SurfaceHolder.Callback {
     public static GLController registerCxxCompositor() {
         try {
             LayerView layerView = GeckoApp.mAppContext.getLayerController().getView();
+            layerView.mListener.compositorCreated();
             return layerView.getGLController();
         } catch (Exception e) {
             Log.e(LOGTAG, "### Exception! " + e);
@@ -241,6 +248,7 @@ public class LayerView extends SurfaceView implements SurfaceHolder.Callback {
     }
 
     public interface Listener {
+        void compositorCreated();
         void renderRequested();
         void compositionPauseRequested();
         void compositionResumeRequested(int width, int height);

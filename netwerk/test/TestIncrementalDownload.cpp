@@ -14,11 +14,12 @@
 #include "nsAutoPtr.h"
 #include "prprf.h"
 #include "prenv.h"
+#include "mozilla/Attributes.h"
 
 //-----------------------------------------------------------------------------
 
-class FetchObserver : public nsIRequestObserver
-                    , public nsIProgressEventSink
+class FetchObserver MOZ_FINAL : public nsIRequestObserver
+                              , public nsIProgressEventSink
 {
 public:
   NS_DECL_ISUPPORTS
@@ -68,7 +69,7 @@ static nsresult
 DoIncrementalFetch(const char *uriSpec, const char *resultPath, PRInt32 chunkSize,
                    PRInt32 interval)
 {
-  nsCOMPtr<nsILocalFile> resultFile;
+  nsCOMPtr<nsIFile> resultFile;
   nsresult rv = NS_NewNativeLocalFile(nsDependentCString(resultPath),
                                       false, getter_AddRefs(resultFile));
   if (NS_FAILED(rv))

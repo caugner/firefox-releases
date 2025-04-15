@@ -22,6 +22,7 @@
 #include "nsIIOService.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
+#include "nsIPrivateBrowsingService.h"
 #include "nsIStreamConverterService.h"
 #include "nsICacheSession.h"
 #include "nsICookieService.h"
@@ -94,6 +95,7 @@ public:
     PRUint32       SpdySendingChunkSize() { return mSpdySendingChunkSize; }
     PRIntervalTime SpdyPingThreshold() { return mSpdyPingThreshold; }
     PRIntervalTime SpdyPingTimeout() { return mSpdyPingTimeout; }
+    PRUint32       ConnectTimeout()  { return mConnectTimeout; }
 
     bool           PromptTempRedirect()      { return mPromptTempRedirect; }
 
@@ -101,7 +103,7 @@ public:
     nsHttpConnectionMgr *ConnMgr()   { return mConnMgr; }
 
     // cache support
-    nsresult GetCacheSession(nsCacheStoragePolicy, bool isPrivate, nsICacheSession **);
+    bool UseCache() const { return mUseCache; }
     PRUint32 GenerateUniqueID() { return ++mLastUniqueID; }
     PRUint32 SessionStartTime() { return mSessionStartTime; }
 
@@ -160,6 +162,9 @@ public:
     {
         return mConnMgr->SpeculativeConnect(ci, callbacks, target);
     }
+
+    // for anything that wants to know if we're in private browsing mode.
+    bool InPrivateBrowsingMode();
 
     //
     // The HTTP handler caches pointers to specific XPCOM services, and
@@ -310,6 +315,13 @@ private:
     bool mPipeliningOverSSL;
     bool mEnforceAssocReq;
 
+    // cached value of whether or not the browser is in private browsing mode.
+    enum {
+        PRIVATE_BROWSING_OFF = false,
+        PRIVATE_BROWSING_ON = true,
+        PRIVATE_BROWSING_UNKNOWN = 2
+    } mInPrivateBrowsingMode;
+
     nsCString mAccept;
     nsCString mAcceptLanguages;
     nsCString mAcceptEncodings;
@@ -331,6 +343,7 @@ private:
     nsXPIDLCString mAppName;
     nsXPIDLCString mAppVersion;
     nsCString      mCompatFirefox;
+    bool           mCompatFirefoxEnabled;
     nsXPIDLCString mCompatDevice;
 
     nsCString      mUserAgent;
@@ -366,6 +379,10 @@ private:
     PRUint32       mSpdySendingChunkSize;
     PRIntervalTime mSpdyPingThreshold;
     PRIntervalTime mSpdyPingTimeout;
+
+    // The maximum amount of time to wait for socket transport to be
+    // established. In milliseconds.
+    PRUint32       mConnectTimeout;
 };
 
 //-----------------------------------------------------------------------------

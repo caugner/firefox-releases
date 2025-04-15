@@ -94,6 +94,9 @@ MOZ_STATIC_ASSERT((CSS_PROPERTY_PARSE_PROPERTY_MASK &
 
 // NOTE: next free bit is (1<<15)
 
+// Is this property (which must be a shorthand) really an alias?
+#define CSS_PROPERTY_IS_ALIAS                     (1<<17)
+
 /**
  * Types of animatable values.
  */
@@ -150,8 +153,14 @@ public:
   static void ReleaseTable(void);
 
   // Given a property string, return the enum value
-  static nsCSSProperty LookupProperty(const nsAString& aProperty);
-  static nsCSSProperty LookupProperty(const nsACString& aProperty);
+  enum EnabledState {
+    eEnabled,
+    eAny
+  };
+  static nsCSSProperty LookupProperty(const nsAString& aProperty,
+                                      EnabledState aEnabled);
+  static nsCSSProperty LookupProperty(const nsACString& aProperty,
+                                      EnabledState aEnabled);
 
   static inline bool IsShorthand(nsCSSProperty aProperty) {
     NS_ABORT_IF_FALSE(0 <= aProperty && aProperty < eCSSProperty_COUNT,
@@ -295,6 +304,17 @@ public:
     return gPropertyIndexInStruct[aProperty];
   }
 
+private:
+  static bool gPropertyEnabled[eCSSProperty_COUNT];
+
+public:
+
+  static bool IsEnabled(nsCSSProperty aProperty) {
+    NS_ABORT_IF_FALSE(0 <= aProperty && aProperty < eCSSProperty_COUNT,
+                      "out of range");
+    return gPropertyEnabled[aProperty];
+  }
+
 public:
 
 #define CSSPROPS_FOR_SHORTHAND_SUBPROPERTIES(iter_, prop_)                    \
@@ -350,6 +370,12 @@ public:
   static const PRInt32 kDisplayKTable[];
   static const PRInt32 kElevationKTable[];
   static const PRInt32 kEmptyCellsKTable[];
+#ifdef MOZ_FLEXBOX
+  static const PRInt32 kAlignItemsKTable[];
+  static const PRInt32 kAlignSelfKTable[];
+  static const PRInt32 kFlexDirectionKTable[];
+  static const PRInt32 kJustifyContentKTable[];
+#endif // MOZ_FLEXBOX
   static const PRInt32 kFloatKTable[];
   static const PRInt32 kFloatEdgeKTable[];
   static const PRInt32 kFontKTable[];
@@ -376,6 +402,7 @@ public:
   static const PRInt32 kPositionKTable[];
   static const PRInt32 kRadialGradientShapeKTable[];
   static const PRInt32 kRadialGradientSizeKTable[];
+  static const PRInt32 kRadialGradientLegacySizeKTable[];
   static const PRInt32 kResizeKTable[];
   static const PRInt32 kSpeakKTable[];
   static const PRInt32 kSpeakHeaderKTable[];

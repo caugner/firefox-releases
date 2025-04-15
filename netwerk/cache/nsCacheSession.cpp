@@ -21,8 +21,6 @@ nsCacheSession::nsCacheSession(const char *         clientID,
   if (streamBased) MarkStreamBased();
   else SetStoragePolicy(nsICache::STORE_IN_MEMORY);
 
-  MarkPublic();
-
   MarkDoomEntriesIfExpired();
 }
 
@@ -41,7 +39,7 @@ NS_IMETHODIMP nsCacheSession::GetDoomEntriesIfExpired(bool *result)
 }
 
 
-NS_IMETHODIMP nsCacheSession::SetProfileDirectory(nsILocalFile *profileDir)
+NS_IMETHODIMP nsCacheSession::SetProfileDirectory(nsIFile *profileDir)
 {
   if (StoragePolicy() != nsICache::STORE_OFFLINE && profileDir) {
         // Profile directory override is currently implemented only for
@@ -55,7 +53,7 @@ NS_IMETHODIMP nsCacheSession::SetProfileDirectory(nsILocalFile *profileDir)
     return NS_OK;
 }
 
-NS_IMETHODIMP nsCacheSession::GetProfileDirectory(nsILocalFile **profileDir)
+NS_IMETHODIMP nsCacheSession::GetProfileDirectory(nsIFile **profileDir)
 {
     if (mProfileDir)
         NS_ADDREF(*profileDir = mProfileDir);
@@ -124,19 +122,4 @@ NS_IMETHODIMP nsCacheSession::DoomEntry(const nsACString &key,
                                         nsICacheListener *listener)
 {
     return nsCacheService::DoomEntry(this, key, listener);
-}
-
-NS_IMETHODIMP nsCacheSession::GetIsPrivate(bool* aPrivate)
-{
-    *aPrivate = IsPrivate();
-    return NS_OK;
-}
-
-NS_IMETHODIMP nsCacheSession::SetIsPrivate(bool aPrivate)
-{
-    if (aPrivate)
-        MarkPrivate();
-    else
-        MarkPublic();
-    return NS_OK;
 }

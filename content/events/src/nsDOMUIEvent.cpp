@@ -28,7 +28,6 @@ nsDOMUIEvent::nsDOMUIEvent(nsPresContext* aPresContext, nsGUIEvent* aEvent)
                static_cast<nsEvent *>(new nsUIEvent(false, 0, 0)))
   , mClientPoint(0, 0), mLayerPoint(0, 0), mPagePoint(0, 0), mMovementPoint(0, 0)
   , mIsPointerLocked(nsEventStateManager::sIsPointerLocked)
-  , mLastScreenPoint(nsEventStateManager::sLastScreenPoint)
   , mLastClientPoint(nsEventStateManager::sLastClientPoint)
 {
   if (aEvent) {
@@ -95,6 +94,13 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(nsDOMUIEvent)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(UIEvent)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEvent)
 
+static nsIntPoint
+DevPixelsToCSSPixels(const nsIntPoint& aPoint, nsPresContext* aContext)
+{
+  return nsIntPoint(aContext->DevPixelsToIntCSSPixels(aPoint.x),
+                    aContext->DevPixelsToIntCSSPixels(aPoint.y));
+}
+
 nsIntPoint
 nsDOMUIEvent::GetMovementPoint()
 {
@@ -103,6 +109,7 @@ nsDOMUIEvent::GetMovementPoint()
   }
 
   if (!mEvent ||
+      !((nsGUIEvent*)mEvent)->widget ||
        (mEvent->eventStructType != NS_MOUSE_EVENT &&
         mEvent->eventStructType != NS_POPUP_EVENT &&
         mEvent->eventStructType != NS_MOUSE_SCROLL_EVENT &&
@@ -112,31 +119,10 @@ nsDOMUIEvent::GetMovementPoint()
     return nsIntPoint(0, 0);
   }
 
-  if (!((nsGUIEvent*)mEvent)->widget) {
-    return mEvent->lastRefPoint;
-  }
-
-  // Calculate the delta between the previous screen point and the current one.
-  nsIntPoint currentPoint = CalculateScreenPoint(mPresContext, mEvent);
-
-  // Adjust previous event's refPoint so it compares to current screenX, screenY
-  nsIntPoint offset = mEvent->lastRefPoint +
-    ((nsGUIEvent*)mEvent)->widget->WidgetToScreenOffset();
-  nscoord factor = mPresContext->DeviceContext()->UnscaledAppUnitsPerDevPixel();
-  nsIntPoint lastPoint = nsIntPoint(nsPresContext::AppUnitsToIntCSSPixels(offset.x * factor),
-                                    nsPresContext::AppUnitsToIntCSSPixels(offset.y * factor));
-
-  return currentPoint - lastPoint;
-}
-
-nsIntPoint
-nsDOMUIEvent::GetScreenPoint()
-{
-  if (mIsPointerLocked) {
-    return mLastScreenPoint;
-  }
-
-  return CalculateScreenPoint(mPresContext, mEvent);
+  // Calculate the delta between the last screen point and the current one.
+  nsIntPoint current = DevPixelsToCSSPixels(mEvent->refPoint, mPresContext);
+  nsIntPoint last = DevPixelsToCSSPixels(mEvent->lastRefPoint, mPresContext);
+  return current - last;
 }
 
 nsIntPoint
@@ -376,7 +362,7 @@ nsDOMUIEvent::GetIsChar(bool* aIsChar)
   }
 }
 
-NS_METHOD
+NS_IMETHODIMP
 nsDOMUIEvent::DuplicatePrivateData()
 {
   mClientPoint = nsDOMEvent::GetClientCoords(mPresContext,
@@ -400,7 +386,7 @@ nsDOMUIEvent::DuplicatePrivateData()
   return rv;
 }
 
-void
+NS_IMETHODIMP_(void)
 nsDOMUIEvent::Serialize(IPC::Message* aMsg, bool aSerializeInterfaceType)
 {
   if (aSerializeInterfaceType) {
@@ -414,7 +400,7 @@ nsDOMUIEvent::Serialize(IPC::Message* aMsg, bool aSerializeInterfaceType)
   IPC::WriteParam(aMsg, detail);
 }
 
-bool
+NS_IMETHODIMP_(bool)
 nsDOMUIEvent::Deserialize(const IPC::Message* aMsg, void** aIter)
 {
   NS_ENSURE_TRUE(nsDOMEvent::Deserialize(aMsg, aIter), false);

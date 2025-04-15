@@ -63,6 +63,9 @@ public class GeckoLayerClient implements GeckoEventResponder,
     /* Used as a temporary ViewTransform by syncViewportInfo */
     private ViewTransform mCurrentViewTransform;
 
+    /* This is written by the compositor thread and read by the UI thread. */
+    private volatile boolean mCompositorCreated;
+
     public GeckoLayerClient(Context context) {
         // we can fill these in with dummy values because they are always written
         // to before being read
@@ -72,6 +75,8 @@ public class GeckoLayerClient implements GeckoEventResponder,
         mRecordDrawTimes = true;
         mDrawTimingQueue = new DrawTimingQueue();
         mCurrentViewTransform = new ViewTransform(0, 0, 1);
+
+        mCompositorCreated = false;
     }
 
     /** Attaches the root layer to the layer controller so that Gecko appears. */
@@ -358,16 +363,11 @@ public class GeckoLayerClient implements GeckoEventResponder,
       * is invoked on a frame, then this function will not be. For any given frame, this
       * function will be invoked before syncViewportInfo.
       */
-    public void setPageRect(float zoom, float pageLeft, float pageTop, float pageRight, float pageBottom,
-            float cssPageLeft, float cssPageTop, float cssPageRight, float cssPageBottom) {
+    public void setPageRect(float cssPageLeft, float cssPageTop, float cssPageRight, float cssPageBottom) {
         synchronized (mLayerController) {
-            // adjust the page dimensions to account for differences in zoom
-            // between the rendered content (which is what the compositor tells us)
-            // and our zoom level (which may have diverged).
-            RectF pageRect = new RectF(pageLeft, pageTop, pageRight, pageBottom);
             RectF cssPageRect = new RectF(cssPageLeft, cssPageTop, cssPageRight, cssPageBottom);
             float ourZoom = mLayerController.getZoomFactor();
-            mLayerController.setPageRect(RectUtils.scale(pageRect, ourZoom / zoom), cssPageRect);
+            mLayerController.setPageRect(RectUtils.scale(cssPageRect, ourZoom), cssPageRect);
             // Here the page size of the document has changed, but the document being displayed
             // is still the same. Therefore, we don't need to send anything to browser.js; any
             // changes we need to make to the display port will get sent the next time we call
@@ -458,7 +458,9 @@ public class GeckoLayerClient implements GeckoEventResponder,
         // Gecko draw events have been processed.  When this returns, composition is
         // definitely paused -- it'll synchronize with the Gecko event loop, which
         // in turn will synchronize with the compositor thread.
-        GeckoAppShell.sendEventToGeckoSync(GeckoEvent.createCompositorPauseEvent());
+        if (mCompositorCreated) {
+            GeckoAppShell.sendEventToGeckoSync(GeckoEvent.createCompositorPauseEvent());
+        }
     }
 
     /** Implementation of LayerView.Listener */
@@ -467,8 +469,10 @@ public class GeckoLayerClient implements GeckoEventResponder,
         // https://bugzilla.mozilla.org/show_bug.cgi?id=735230#c23), so we
         // resume the compositor directly. We still need to inform Gecko about
         // the compositor resuming, so that Gecko knows that it can now draw.
-        GeckoAppShell.scheduleResumeComposition(width, height);
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createCompositorResumeEvent());
+        if (mCompositorCreated) {
+            GeckoAppShell.scheduleResumeComposition(width, height);
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createCompositorResumeEvent());
+        }
     }
 
     /** Implementation of LayerView.Listener */
@@ -480,6 +484,11 @@ public class GeckoLayerClient implements GeckoEventResponder,
         // aware of the changed surface.
         compositionResumeRequested(width, height);
         renderRequested();
+    }
+
+    /** Implementation of LayerView.Listener */
+    public void compositorCreated() {
+        mCompositorCreated = true;
     }
 
     /** Used by robocop for testing purposes. Not for production use! This is called via reflection by robocop. */

@@ -335,12 +335,20 @@ GfxInfo::Init()
           /* we've found the driver we're looking for */
           dwcbData = sizeof(value);
           result = RegQueryValueExW(key, L"DriverVersion", NULL, NULL, (LPBYTE)value, &dwcbData);
-          if (result == ERROR_SUCCESS)
+          if (result == ERROR_SUCCESS) {
             mDriverVersion = value;
+          } else {
+            // If the entry wasn't found, assume the worst (0.0.0.0).
+            mDriverVersion.AssignLiteral("0.0.0.0");
+          }
           dwcbData = sizeof(value);
           result = RegQueryValueExW(key, L"DriverDate", NULL, NULL, (LPBYTE)value, &dwcbData);
-          if (result == ERROR_SUCCESS)
+          if (result == ERROR_SUCCESS) {
             mDriverDate = value;
+          } else {
+            // Again, assume the worst
+            mDriverDate.AssignLiteral("01-01-1970");
+          }
           RegCloseKey(key); 
           break;
         }
@@ -694,9 +702,9 @@ GfxInfo::AddCrashReportAnnotations()
   if (vendorID == GfxDriverInfo::GetDeviceVendor(VendorAll)) {
     /* if we didn't find a valid vendorID lets append the mDeviceID string to try to find out why */
     note.Append(", ");
-    note.AppendWithConversion(mDeviceID);
+    LossyAppendUTF16toASCII(mDeviceID, note);
     note.Append(", ");
-    note.AppendWithConversion(mDeviceKeyDebug);
+    LossyAppendUTF16toASCII(mDeviceKeyDebug, note);
     LossyAppendUTF16toASCII(mDeviceKeyDebug, note);
   }
   note.Append("\n");
@@ -737,6 +745,8 @@ WindowsVersionToOperatingSystem(PRInt32 aWindowsVersion)
       return DRIVER_OS_WINDOWS_VISTA;
     case gfxWindowsPlatform::kWindows7:
       return DRIVER_OS_WINDOWS_7;
+    case gfxWindowsPlatform::kWindows8:
+      return DRIVER_OS_WINDOWS_8;
     case gfxWindowsPlatform::kWindowsUnknown:
     default:
       return DRIVER_OS_UNKNOWN;
@@ -774,6 +784,18 @@ GfxInfo::GetGfxDriverInfo()
       (nsAString&) GfxDriverInfo::GetDeviceVendor(VendorAMD), GfxDriverInfo::allDevices,
       GfxDriverInfo::allFeatures, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
       DRIVER_LESS_THAN, V(8,741,0,0), "10.6" );
+
+    /*
+     * Bug 783517 - crashes in AMD driver on Windows 8
+     */
+    APPEND_TO_DRIVER_BLOCKLIST( DRIVER_OS_WINDOWS_8,
+      (nsAString&) GfxDriverInfo::GetDeviceVendor(VendorATI), GfxDriverInfo::allDevices,
+      GfxDriverInfo::allFeatures, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
+      DRIVER_LESS_THAN_OR_EQUAL, V(8,982,0,0), "> 12.8" );
+    APPEND_TO_DRIVER_BLOCKLIST( DRIVER_OS_WINDOWS_8,
+      (nsAString&) GfxDriverInfo::GetDeviceVendor(VendorAMD), GfxDriverInfo::allDevices,
+      GfxDriverInfo::allFeatures, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
+      DRIVER_LESS_THAN_OR_EQUAL, V(8,982,0,0), "> 12.8" );
 
     /* OpenGL on any ATI/AMD hardware is discouraged
      * See:

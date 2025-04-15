@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
 #include <gtk/gtk.h>
 #endif
 
@@ -28,6 +28,7 @@
 #include "mozilla/jsipc/PContextWrapperChild.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/Attributes.h"
 
 #if defined(MOZ_SYDNEYAUDIO)
 #include "nsAudioStream.h"
@@ -78,13 +79,16 @@
 #endif
 
 #include "mozilla/dom/sms/SmsChild.h"
+#include "mozilla/dom/devicestorage/DeviceStorageRequestChild.h"
 
 using namespace mozilla::hal_sandbox;
 using namespace mozilla::ipc;
 using namespace mozilla::net;
 using namespace mozilla::places;
 using namespace mozilla::docshell;
+using namespace mozilla::dom::devicestorage;
 using namespace mozilla::dom::sms;
+using namespace mozilla::dom::indexedDB;
 
 namespace mozilla {
 namespace dom {
@@ -141,7 +145,7 @@ private:
     nsString mData;
 };
 
-class ConsoleListener : public nsIConsoleListener
+class ConsoleListener MOZ_FINAL : public nsIConsoleListener
 {
 public:
     ConsoleListener(ContentChild* aChild)
@@ -217,7 +221,7 @@ ContentChild::Init(MessageLoop* aIOLoop,
                    base::ProcessHandle aParentHandle,
                    IPC::Channel* aChannel)
 {
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
     // sigh
     gtk_init(NULL, NULL);
 #endif
@@ -282,7 +286,7 @@ ContentChild::AllocPMemoryReportRequest()
 
 // This is just a wrapper for InfallibleTArray<MemoryReport> that implements
 // nsISupports, so it can be passed to nsIMemoryMultiReporter::CollectReports.
-class MemoryReportsWrapper : public nsISupports {
+class MemoryReportsWrapper MOZ_FINAL : public nsISupports {
 public:
     NS_DECL_ISUPPORTS
     MemoryReportsWrapper(InfallibleTArray<MemoryReport> *r) : mReports(r) { }
@@ -290,7 +294,7 @@ public:
 };
 NS_IMPL_ISUPPORTS0(MemoryReportsWrapper)
 
-class MemoryReportCallback : public nsIMemoryMultiReporterCallback
+class MemoryReportCallback MOZ_FINAL : public nsIMemoryMultiReporterCallback
 {
 public:
     NS_DECL_ISUPPORTS
@@ -381,9 +385,9 @@ ContentChild::DeallocPMemoryReportRequest(PMemoryReportRequestChild* actor)
 }
 
 PBrowserChild*
-ContentChild::AllocPBrowser(const PRUint32& aChromeFlags)
+ContentChild::AllocPBrowser(const PRUint32& aChromeFlags, const bool& aIsBrowserFrame)
 {
-    nsRefPtr<TabChild> iframe = new TabChild(aChromeFlags);
+    nsRefPtr<TabChild> iframe = new TabChild(aChromeFlags, aIsBrowserFrame);
     return NS_SUCCEEDED(iframe->Init()) ? iframe.forget().get() : NULL;
 }
 
@@ -424,6 +428,20 @@ ContentChild::DeallocPHal(PHalChild* aHal)
 {
     delete aHal;
     return true;
+}
+
+PIndexedDBChild*
+ContentChild::AllocPIndexedDB()
+{
+  NS_NOTREACHED("Should never get here!");
+  return NULL;
+}
+
+bool
+ContentChild::DeallocPIndexedDB(PIndexedDBChild* aActor)
+{
+  delete aActor;
+  return true;
 }
 
 PTestShellChild*
@@ -467,6 +485,19 @@ ContentChild::DeallocPAudio(PAudioChild* doomed)
     AudioChild *child = static_cast<AudioChild*>(doomed);
     NS_RELEASE(child);
 #endif
+    return true;
+}
+
+PDeviceStorageRequestChild*
+ContentChild::AllocPDeviceStorageRequest(const DeviceStorageParams& aParams)
+{
+    return new DeviceStorageRequestChild();
+}
+
+bool
+ContentChild::DeallocPDeviceStorageRequest(PDeviceStorageRequestChild* aDeviceStorage)
+{
+    delete aDeviceStorage;
     return true;
 }
 
@@ -743,14 +774,14 @@ ContentChild::RecvActivateA11y()
 bool
 ContentChild::RecvGarbageCollect()
 {
-    nsJSContext::GarbageCollectNow(js::gcreason::DOM_IPC, nsGCNormal, true);
+    nsJSContext::GarbageCollectNow(js::gcreason::DOM_IPC);
     return true;
 }
 
 bool
 ContentChild::RecvCycleCollect()
 {
-    nsJSContext::GarbageCollectNow(js::gcreason::DOM_IPC, nsGCNormal, true);
+    nsJSContext::GarbageCollectNow(js::gcreason::DOM_IPC);
     nsJSContext::CycleCollectNow();
     return true;
 }

@@ -9,7 +9,7 @@
 #include "nsGNOMEShellService.h"
 #include "nsShellService.h"
 #include "nsIServiceManager.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsIProperties.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsIPrefService.h"
@@ -107,8 +107,8 @@ nsGNOMEShellService::Init()
     (do_GetService("@mozilla.org/file/directory_service;1"));
   NS_ENSURE_TRUE(dirSvc, NS_ERROR_NOT_AVAILABLE);
 
-  nsCOMPtr<nsILocalFile> appPath;
-  rv = dirSvc->Get(NS_XPCOM_CURRENT_PROCESS_DIR, NS_GET_IID(nsILocalFile),
+  nsCOMPtr<nsIFile> appPath;
+  rv = dirSvc->Get(NS_XPCOM_CURRENT_PROCESS_DIR, NS_GET_IID(nsIFile),
                    getter_AddRefs(appPath));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -197,6 +197,7 @@ nsGNOMEShellService::CheckHandlerMatchesAppName(const nsACString &handler) const
 
 NS_IMETHODIMP
 nsGNOMEShellService::IsDefaultBrowser(bool aStartupCheck,
+                                      bool aForAllTypes,
                                       bool* aIsDefaultBrowser)
 {
   *aIsDefaultBrowser = false;
@@ -641,7 +642,7 @@ nsGNOMEShellService::OpenApplication(PRInt32 aApplication)
 }
 
 NS_IMETHODIMP
-nsGNOMEShellService::OpenApplicationWithURI(nsILocalFile* aApplication, const nsACString& aURI)
+nsGNOMEShellService::OpenApplicationWithURI(nsIFile* aApplication, const nsACString& aURI)
 {
   nsresult rv;
   nsCOMPtr<nsIProcess> process = 
@@ -659,7 +660,7 @@ nsGNOMEShellService::OpenApplicationWithURI(nsILocalFile* aApplication, const ns
 }
 
 NS_IMETHODIMP
-nsGNOMEShellService::GetDefaultFeedReader(nsILocalFile** _retval)
+nsGNOMEShellService::GetDefaultFeedReader(nsIFile** _retval)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }

@@ -26,6 +26,8 @@
 #include "cutils/properties.h"
 
 #define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Gonk" , ## args)
+#define LOGW(args...) __android_log_print(ANDROID_LOG_WARN, "Gonk", ## args)
+#define LOGE(args...) __android_log_print(ANDROID_LOG_ERROR, "Gonk", ## args)
 
 #define IS_TOPLEVEL() (mWindowType == eWindowType_toplevel || mWindowType == eWindowType_dialog)
 
@@ -49,6 +51,7 @@ static nsWindow *gFocusedWindow = nsnull;
 static android::FramebufferNativeWindow *gNativeWindow = nsnull;
 static bool sFramebufferOpen;
 static bool sUsingOMTC;
+static bool sScreenInitialized;
 static nsRefPtr<gfxASurface> sOMTCSurface;
 static pthread_t sFramebufferWatchThread;
 
@@ -120,7 +123,7 @@ static void *frameBufferWatcher(void *) {
 
 nsWindow::nsWindow()
 {
-    if (!sGLContext && !sFramebufferOpen && !sUsingOMTC) {
+    if (!sScreenInitialized) {
         // workaround Bug 725143
         hal::SetScreenEnabled(true);
 
@@ -130,36 +133,14 @@ nsWindow::nsWindow()
             NS_RUNTIMEABORT("Failed to create framebufferWatcherThread, aborting...");
         }
 
-        sUsingOMTC = UseOffMainThreadCompositing();
-
         // We (apparently) don't have a way to tell if allocating the
         // fbs succeeded or failed.
         gNativeWindow = new android::FramebufferNativeWindow();
-        if (sUsingOMTC) {
-            nsIntSize screenSize;
-            bool gotFB = Framebuffer::GetSize(&screenSize);
-            MOZ_ASSERT(gotFB);
-            gScreenBounds = nsIntRect(nsIntPoint(0, 0), screenSize);
 
-            sOMTCSurface = new gfxImageSurface(gfxIntSize(1, 1),
-                gfxASurface::ImageFormatRGB24);
-        } else {
-            sGLContext = GLContextProvider::CreateForWindow(this);
-            // CreateForWindow sets up gScreenBounds
-            if (!sGLContext) {
-                LOG("Failed to create GL context for fb, trying /dev/graphics/fb0");
-
-                // We can't delete gNativeWindow.
-
-                nsIntSize screenSize;
-                sFramebufferOpen = Framebuffer::Open(&screenSize);
-                gScreenBounds = nsIntRect(nsIntPoint(0, 0), screenSize);
-                if (!sFramebufferOpen) {
-                    LOG("Failed to mmap fb(?!?), aborting ...");
-                    NS_RUNTIMEABORT("Can't open GL context and can't fall back on /dev/graphics/fb0 ...");
-                }
-            }
-        }
+        nsIntSize screenSize;
+        bool gotFB = Framebuffer::GetSize(&screenSize);
+        MOZ_ASSERT(gotFB);
+        gScreenBounds = nsIntRect(nsIntPoint(0, 0), screenSize);
 
         char propValue[PROPERTY_VALUE_MAX];
         property_get("ro.sf.hwrotation", propValue, "0");
@@ -181,7 +162,23 @@ nsWindow::nsWindow()
         }
         sVirtualBounds = gScreenBounds;
 
+        sScreenInitialized = true;
+
         nsAppShell::NotifyScreenInitialized();
+
+        // This is a hack to force initialization of the compositor
+        // resources, if we're going to use omtc.
+        //
+        // NB: GetPlatform() will create the gfxPlatform, which wants
+        // to know the color depth, which asks our native window.
+        // This has to happen after other init has finished.
+        gfxPlatform::GetPlatform();
+        sUsingOMTC = UseOffMainThreadCompositing();
+
+        if (sUsingOMTC) {
+          sOMTCSurface = new gfxImageSurface(gfxIntSize(1, 1),
+                                             gfxASurface::ImageFormatRGB24);
+        }
     }
 }
 
@@ -267,6 +264,7 @@ nsWindow::Create(nsIWidget *aParent,
 
     nsWindow *parent = (nsWindow *)aNativeParent;
     mParent = parent;
+    mVisible = false;
 
     if (!aNativeParent) {
         mBounds = sVirtualBounds;
@@ -491,10 +489,13 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
     if (mLayerManager)
         return mLayerManager;
 
+    // Set mUseAcceleratedRendering here to make it consistent with
+    // nsBaseWidget::GetLayerManager
+    mUseAcceleratedRendering = GetShouldAccelerate();
     nsWindow *topWindow = sTopWindows[0];
 
     if (!topWindow) {
-        LOG(" -- no topwindow\n");
+        LOGW(" -- no topwindow\n");
         return nsnull;
     }
 
@@ -504,17 +505,38 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
             return mLayerManager;
     }
 
-    if (sGLContext) {
-        nsRefPtr<LayerManagerOGL> layerManager = new LayerManagerOGL(this);
+    if (mUseAcceleratedRendering) {
+        DebugOnly<nsIntRect> fbBounds = gScreenBounds;
+        if (!sGLContext) {
+            sGLContext = GLContextProvider::CreateForWindow(this);
+        }
 
-        if (layerManager->Initialize(sGLContext))
-            mLayerManager = layerManager;
-        else
-            LOG("Could not create OGL LayerManager");
-    } else {
-        MOZ_ASSERT(sFramebufferOpen);
-        mLayerManager = new BasicShadowLayerManager(this);
+        MOZ_ASSERT(fbBounds.value == gScreenBounds);
+        if (sGLContext) {
+            nsRefPtr<LayerManagerOGL> layerManager = new LayerManagerOGL(this);
+
+            if (layerManager->Initialize(sGLContext)) {
+                mLayerManager = layerManager;
+                return mLayerManager;
+            } else {
+                LOGW("Could not create OGL LayerManager");
+            }
+        } else {
+            LOGW("GL context was not created");
+        }
     }
+
+    // Fall back to software rendering.
+    sFramebufferOpen = Framebuffer::Open();
+    if (sFramebufferOpen) {
+        LOG("Falling back to framebuffer software rendering");
+    } else {
+        LOGE("Failed to mmap fb(?!?), aborting ...");
+        NS_RUNTIMEABORT("Can't open GL context and can't fall back on /dev/graphics/fb0 ...");
+    }
+
+    mLayerManager = new BasicShadowLayerManager(this);
+    mUseAcceleratedRendering = false;
 
     return mLayerManager;
 }
@@ -555,7 +577,7 @@ nsWindow::UserActivity()
     }
 
     if (mIdleService) {
-        mIdleService->ResetIdleTimeOut();
+        mIdleService->ResetIdleTimeOut(0);
     }
 }
 
@@ -604,7 +626,13 @@ nsScreenGonk::GetAvailRect(PRInt32 *outLeft,  PRInt32 *outTop,
 static uint32_t
 ColorDepth()
 {
-    return gNativeWindow->getDevice()->format == GGL_PIXEL_FORMAT_RGB_565 ? 16 : 24;
+    switch (gNativeWindow->getDevice()->format) {
+    case GGL_PIXEL_FORMAT_RGB_565:
+        return 16;
+    case GGL_PIXEL_FORMAT_RGBA_8888:
+        return 32;
+    }
+    return 24; // GGL_PIXEL_FORMAT_RGBX_8888
 }
 
 NS_IMETHODIMP

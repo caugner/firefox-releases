@@ -17,7 +17,6 @@
 #include "nsMutationEvent.h"
 #include "nsINameSpaceManager.h"
 #include "nsIURI.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMText.h"
 #include "nsCOMPtr.h"
@@ -489,6 +488,10 @@ nsGenericDOMDataNode::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
 
   // Set document
   if (aDocument) {
+    // We no longer need to track the subtree pointer (and in fact we'll assert
+    // if we do this any later).
+    ClearSubtreeRootPointer();
+
     // XXX See the comment in nsGenericElement::BindToTree
     SetInDocument();
     if (mText.IsBidi()) {
@@ -496,6 +499,9 @@ nsGenericDOMDataNode::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     }
     // Clear the lazy frame construction bits.
     UnsetFlags(NODE_NEEDS_FRAME | NODE_DESCENDANTS_NEED_FRAMES);
+  } else {
+    // If we're not in the doc, update our subtree pointer.
+    SetSubtreeRootPointer(aParent->SubtreeRoot());
   }
 
   nsNodeUtils::ParentChainChanged(this);
@@ -534,6 +540,9 @@ nsGenericDOMDataNode::UnbindFromTree(bool aDeep, bool aNullParent)
     SetParentIsContent(false);
   }
   ClearInDocument();
+
+  // Begin keeping track of our subtree root.
+  SetSubtreeRootPointer(aNullParent ? this : mParent->SubtreeRoot());
 
   nsDataSlots *slots = GetExistingDataSlots();
   if (slots) {

@@ -8,7 +8,7 @@
 #include "nsIAppShellService.h"
 #include "nsPIDOMWindow.h"
 #include "nsIInterfaceRequestor.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "nsIObserverService.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
@@ -38,6 +38,8 @@
 #include "nsIXPConnect.h"
 #include "jsapi.h"
 #include "prenv.h"
+#include "nsAppDirectoryServiceDefs.h"
+#include "mozilla/mozPoisonWrite.h"
 
 #if defined(XP_WIN)
 #include <windows.h>
@@ -260,6 +262,66 @@ nsAppStartup::Run(void)
   return mRestart ? NS_SUCCESS_RESTART_APP : NS_OK;
 }
 
+static TimeStamp gRecordedShutdownStartTime;
+static char *gRecordedShutdownTimeFileName = NULL;
+
+static void
+RecordShutdownStartTimeStamp() {
+  if (!Telemetry::CanRecord())
+    return;
+
+  gRecordedShutdownStartTime = TimeStamp::Now();
+
+  nsCOMPtr<nsIFile> mozFile;
+  NS_GetSpecialDirectory(NS_APP_PREFS_50_DIR, getter_AddRefs(mozFile));
+  if (!mozFile)
+    return;
+
+  mozFile->AppendNative(NS_LITERAL_CSTRING("Telemetry.ShutdownTime.txt"));
+  nsCAutoString nativePath;
+  nsresult rv = mozFile->GetNativePath(nativePath);
+  if (!NS_SUCCEEDED(rv))
+    return;
+
+  gRecordedShutdownTimeFileName = PL_strdup(nativePath.get());
+}
+
+namespace mozilla {
+void
+RecordShutdownEndTimeStamp() {
+  if (!gRecordedShutdownTimeFileName)
+    return;
+
+  nsCString name(gRecordedShutdownTimeFileName);
+  PL_strfree(gRecordedShutdownTimeFileName);
+  gRecordedShutdownTimeFileName = NULL;
+
+  nsCString tmpName = name;
+  tmpName += ".tmp";
+  FILE *f = fopen(tmpName.get(), "w");
+  if (!f)
+    return;
+  // On a normal release build this should be called just before
+  // calling _exit, but on a debug build or when the user forces a full
+  // shutdown this is called as late as possible, so we have to
+  // white list this write as write poisoning will be enabled.
+  int fd = fileno(f);
+  MozillaRegisterDebugFD(fd);
+
+  TimeStamp now = TimeStamp::Now();
+  MOZ_ASSERT(now >= gRecordedShutdownStartTime);
+  TimeDuration diff = now - gRecordedShutdownStartTime;
+  uint32_t diff2 = diff.ToMilliseconds();
+  int written = fprintf(f, "%d\n", diff2);
+  int rv = fclose(f);
+  MozillaUnRegisterDebugFD(fd);
+  if (written < 0 || rv != 0) {
+    PR_Delete(tmpName.get());
+    return;
+  }
+  PR_Rename(tmpName.get(), name.get());
+}
+}
 
 NS_IMETHODIMP
 nsAppStartup::Quit(uint32_t aMode)
@@ -274,6 +336,8 @@ nsAppStartup::Quit(uint32_t aMode)
 
   if (mShuttingDown)
     return NS_OK;
+
+  RecordShutdownStartTimeStamp();
 
   // If we're considering quitting, we will only do so if:
   if (ferocity == eConsiderQuit) {
@@ -642,6 +706,8 @@ JiffiesSinceBoot(const char *file)
 static void
 ThreadedCalculateProcessCreationTimestamp(void *aClosure)
 {
+  PR_SetCurrentThreadName("Startup Timer");
+
   PRTime now = PR_Now();
   long hz = sysconf(_SC_CLK_TCK);
   if (!hz)

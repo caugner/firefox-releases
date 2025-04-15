@@ -285,6 +285,18 @@ nsStyleAnimation::ComputeDistance(nsCSSProperty aProperty,
       return true;
     }
     case eUnit_Float: {
+#ifdef MOZ_FLEXBOX
+      // Special case for flex-grow and flex-shrink: animations are
+      // disallowed between 0 and other values.
+      if ((aProperty == eCSSProperty_flex_grow ||
+           aProperty == eCSSProperty_flex_shrink) &&
+          (aStartValue.GetFloatValue() == 0.0f ||
+           aEndValue.GetFloatValue() == 0.0f) &&
+          aStartValue.GetFloatValue() != aEndValue.GetFloatValue()) {
+        return false;
+      }
+#endif // MOZ_FLEXBOX
+
       float startFloat = aStartValue.GetFloatValue();
       float endFloat = aEndValue.GetFloatValue();
       aDistance = fabs(double(endFloat - startFloat));
@@ -1495,9 +1507,8 @@ AddTransformLists(const nsCSSValueList* aList1, double aCoeff1,
         NS_ABORT_IF_FALSE(a2->Count() == 2 || a2->Count() == 3,
                           "unexpected count");
 
-        // This is different from skew() and translate(), since an
-        // omitted second parameter repeats the first rather than being
-        // zero.
+        // This is different from translate(), since an omitted second
+        // parameter repeats the first rather than being zero.
         // Add Y component of scale.
         AddTransformScale(a1->Count() == 3 ? a1->Item(2) : a1->Item(1),
                           aCoeff1,
@@ -1696,6 +1707,18 @@ nsStyleAnimation::AddWeighted(nsCSSProperty aProperty,
       return true;
     }
     case eUnit_Float: {
+#ifdef MOZ_FLEXBOX
+      // Special case for flex-grow and flex-shrink: animations are
+      // disallowed between 0 and other values.
+      if ((aProperty == eCSSProperty_flex_grow ||
+           aProperty == eCSSProperty_flex_shrink) &&
+          (aValue1.GetFloatValue() == 0.0f ||
+           aValue2.GetFloatValue() == 0.0f) &&
+          aValue1.GetFloatValue() != aValue2.GetFloatValue()) {
+        return false;
+      }
+#endif // MOZ_FLEXBOX
+
       aResultValue.SetFloatValue(RestrictValue(aProperty,
         aCoeff1 * aValue1.GetFloatValue() +
         aCoeff2 * aValue2.GetFloatValue()));
@@ -2628,6 +2651,16 @@ nsStyleAnimation::ExtractComputedValue(nsCSSProperty aProperty,
           }
           break;
         }
+
+#ifdef MOZ_FLEXBOX
+        case eCSSProperty_order: {
+          const nsStylePosition *stylePosition =
+            static_cast<const nsStylePosition*>(styleStruct);
+          aComputedValue.SetIntValue(stylePosition->mOrder,
+                                     eUnit_Integer);
+          break;
+        }
+#endif // MOZ_FLEXBOX
 
         case eCSSProperty_text_decoration_color: {
           const nsStyleTextReset *styleTextReset =

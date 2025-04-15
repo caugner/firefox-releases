@@ -18,6 +18,7 @@
 #include "nsIPrefService.h"
 #include "nsIJSContextStack.h"
 #include "nspr.h"
+#include "mozilla/Attributes.h"
 #include "nsContentUtils.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsJSPrincipals.h"
@@ -27,7 +28,7 @@ extern PRLogModuleInfo *MCD;
 // Security Manager for new XPCONNECT enabled JS Context
 // Right now it allows all access
 
-class AutoConfigSecMan : public nsIXPCSecurityManager
+class AutoConfigSecMan MOZ_FINAL : public nsIXPCSecurityManager
 {
 public:
     NS_DECL_ISUPPORTS
@@ -130,7 +131,7 @@ nsresult CentralizedAdminPrefManagerInit()
         static_cast<nsIXPCSecurityManager*>(new AutoConfigSecMan());
     xpc->SetSecurityManagerForJSContext(autoconfig_cx, secman, 0);
 
-    autoconfig_glob = JS_NewCompartmentAndGlobalObject(autoconfig_cx, &global_class, NULL);
+    autoconfig_glob = JS_NewGlobalObject(autoconfig_cx, &global_class, NULL);
     if (autoconfig_glob) {
         JSAutoEnterCompartment ac;
         if(!ac.enter(autoconfig_cx, autoconfig_glob))

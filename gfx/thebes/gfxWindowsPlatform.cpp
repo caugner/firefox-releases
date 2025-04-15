@@ -17,7 +17,7 @@
 #include "nsTArray.h"
 
 #include "nsIWindowsRegKey.h"
-#include "nsILocalFile.h"
+#include "nsIFile.h"
 #include "plbase64.h"
 #include "nsIXULRuntime.h"
 
@@ -117,6 +117,35 @@ NS_MEMORY_REPORTER_IMPLEMENT(
     "Video memory used by D2D surfaces.")
 
 #endif
+
+namespace
+{
+
+PRInt64 GetD2DVRAMUsageDrawTarget() {
+    return mozilla::gfx::Factory::GetD2DVRAMUsageDrawTarget();
+}
+
+PRInt64 GetD2DVRAMUsageSourceSurface() {
+    return mozilla::gfx::Factory::GetD2DVRAMUsageSourceSurface();
+}
+
+} // anonymous namespace
+
+NS_MEMORY_REPORTER_IMPLEMENT(
+    D2DVRAMDT,
+    "gfx-d2d-vram-drawtarget",
+    KIND_OTHER,
+    UNITS_BYTES,
+    GetD2DVRAMUsageDrawTarget,
+    "Video memory used by D2D DrawTargets.")
+
+NS_MEMORY_REPORTER_IMPLEMENT(
+    D2DVRAMSS,
+    "gfx-d2d-vram-sourcesurface",
+    KIND_OTHER,
+    UNITS_BYTES,
+    GetD2DVRAMUsageSourceSurface,
+    "Video memory used by D2D SourceSurfaces.")
 
 #define GFX_USE_CLEARTYPE_ALWAYS "gfx.font_rendering.cleartype.always_use_for_content"
 #define GFX_DOWNLOADABLE_FONTS_USE_CLEARTYPE "gfx.font_rendering.cleartype.use_for_downloadable_fonts"
@@ -330,6 +359,8 @@ gfxWindowsPlatform::gfxWindowsPlatform()
     NS_RegisterMemoryReporter(new NS_MEMORY_REPORTER_NAME(D2DVram));
     mD2DDevice = nsnull;
 #endif
+    NS_RegisterMemoryReporter(new NS_MEMORY_REPORTER_NAME(D2DVRAMDT));
+    NS_RegisterMemoryReporter(new NS_MEMORY_REPORTER_NAME(D2DVRAMSS));
 
     UpdateRenderMode();
 
@@ -679,6 +710,24 @@ gfxWindowsPlatform::CreateOffscreenSurface(const gfxIntSize& size,
     NS_IF_ADDREF(surf);
 
     return surf;
+}
+
+already_AddRefed<gfxASurface>
+gfxWindowsPlatform::CreateOffscreenImageSurface(const gfxIntSize& aSize,
+                                                gfxASurface::gfxContentType aContentType)
+{
+#ifdef CAIRO_HAS_D2D_SURFACE
+    if (mRenderMode == RENDER_DIRECT2D) {
+        return new gfxImageSurface(aSize, OptimalFormatForContent(aContentType));
+    }
+#endif
+
+    nsRefPtr<gfxASurface> surface = CreateOffscreenSurface(aSize, aContentType);
+#ifdef DEBUG
+    nsRefPtr<gfxImageSurface> imageSurface = surface->GetAsImageSurface();
+    NS_ASSERTION(imageSurface, "Surface cannot be converted to a gfxImageSurface");
+#endif
+    return surface.forget();
 }
 
 RefPtr<ScaledFont>

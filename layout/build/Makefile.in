@@ -62,6 +62,7 @@ SHARED_LIBRARY_LIBS = \
 	$(DEPTH)/dom/base/$(LIB_PREFIX)jsdombase_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/battery/$(LIB_PREFIX)dom_battery_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/contacts/$(LIB_PREFIX)jsdomcontacts_s.$(LIB_SUFFIX) \
+	$(DEPTH)/dom/alarm/$(LIB_PREFIX)domalarm_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/devicestorage/$(LIB_PREFIX)domdevicestorage_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/file/$(LIB_PREFIX)domfile_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/power/$(LIB_PREFIX)dom_power_s.$(LIB_SUFFIX) \
@@ -80,6 +81,7 @@ SHARED_LIBRARY_LIBS = \
 	$(DEPTH)/dom/workers/$(LIB_PREFIX)domworkers_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/indexedDB/$(LIB_PREFIX)dom_indexeddb_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/indexedDB/ipc/$(LIB_PREFIX)dom_indexeddb_ipc_s.$(LIB_SUFFIX) \
+	$(DEPTH)/dom/browser-element/$(LIB_PREFIX)dom_browserelement_s.$(LIB_SUFFIX) \
 	$(DEPTH)/editor/libeditor/text/$(LIB_PREFIX)texteditor_s.$(LIB_SUFFIX) \
 	$(DEPTH)/editor/libeditor/base/$(LIB_PREFIX)editorbase_s.$(LIB_SUFFIX) \
 	$(DEPTH)/parser/html/$(LIB_PREFIX)html5p_s.$(LIB_SUFFIX) \
@@ -128,6 +130,7 @@ endif #}
 ifdef MOZ_MEDIA
 SHARED_LIBRARY_LIBS 	+= \
 	$(DEPTH)/content/media/$(LIB_PREFIX)gkconmedia_s.$(LIB_SUFFIX) \
+	$(DEPTH)/content/media/webrtc/$(LIB_PREFIX)gkconwebrtc_s.$(LIB_SUFFIX) \
 	$(NULL)
 endif
 
@@ -250,6 +253,7 @@ LOCAL_INCLUDES	+= -I$(srcdir)/../base \
 		   -I$(topsrcdir)/editor/libeditor/base \
 		   -I$(topsrcdir)/editor/libeditor/text \
 		   -I$(topsrcdir)/editor/libeditor/html \
+		   -I$(topsrcdir)/editor/txmgr/src \
 		   -I$(topsrcdir)/editor/txtsvc/src \
 		   -I$(topsrcdir)/editor/composer/src \
 		   -I$(topsrcdir)/js/xpconnect/src \
