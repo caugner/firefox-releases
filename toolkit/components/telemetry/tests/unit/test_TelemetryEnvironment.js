@@ -128,7 +128,7 @@ var PluginHost = {
 
     throw Components.results.NS_ERROR_NO_INTERFACE;
   }
-}
+};
 
 function registerFakePluginHost() {
   MockRegistrar.register("@mozilla.org/plugin/host;1", PluginHost);
@@ -411,7 +411,6 @@ function checkSettingsSection(data) {
   const EXPECTED_FIELDS_TYPES = {
     blocklistEnabled: "boolean",
     e10sEnabled: "boolean",
-    e10sCohort: "string",
     telemetryEnabled: "boolean",
     locale: "string",
     update: "object",
@@ -829,7 +828,7 @@ function checkExperimentsSection(data) {
 
     // Check that we have valid experiment info.
     let experimentData = experiments[id];
-    Assert.ok("branch" in experimentData, "The experiment must have branch data.")
+    Assert.ok("branch" in experimentData, "The experiment must have branch data.");
     Assert.ok(checkString(experimentData.branch), "The experiment data must be valid.");
     if ("type" in experimentData) {
       Assert.ok(checkString(experimentData.type));
@@ -1030,6 +1029,24 @@ add_task(async function test_prefDefault() {
   TelemetryEnvironment.testWatchPreferences(PREFS_TO_WATCH);
 
   Assert.strictEqual(TelemetryEnvironment.currentEnvironment.settings.userPrefs[PREF_TEST], expectedValue);
+});
+
+add_task(async function test_prefDefaultState() {
+  const PREF_TEST = "toolkit.telemetry.test.defaultpref2";
+  const expectedValue = "some-test-value";
+
+  const PREFS_TO_WATCH = new Map([
+    [PREF_TEST, {what: TelemetryEnvironment.RECORD_DEFAULTPREF_STATE}],
+  ]);
+
+  TelemetryEnvironment.testWatchPreferences(PREFS_TO_WATCH);
+
+  Assert.equal(PREF_TEST in TelemetryEnvironment.currentEnvironment.settings.userPrefs, false);
+
+  // Set the preference to a default value.
+  Services.prefs.getDefaultBranch(null).setCharPref(PREF_TEST, expectedValue);
+
+  Assert.strictEqual(TelemetryEnvironment.currentEnvironment.settings.userPrefs[PREF_TEST], "<set>");
 });
 
 add_task(async function test_addonsWatch_InterestingChange() {

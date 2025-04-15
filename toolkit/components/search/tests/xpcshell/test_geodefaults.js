@@ -12,8 +12,6 @@ const kDayInSeconds = 86400;
 const kYearInSeconds = kDayInSeconds * 365;
 
 function run_test() {
-  installTestEngine();
-
   let srv = new HttpServer();
 
   srv.registerPathHandler("/lookup_defaults", (metadata, response) => {
@@ -66,6 +64,10 @@ add_task(async function no_request_if_prefed_off() {
   Services.prefs.setBoolPref("browser.search.geoSpecificDefaults", false);
   await asyncInit();
   checkNoRequest();
+  await promiseAfterCache();
+
+  // Install kTestEngineName and wait for it to reach the disk.
+  await installTestEngine();
   await promiseAfterCache();
 
   // The default engine should be set based on the prefs.
@@ -195,9 +197,9 @@ add_task(async function should_recheck_when_broken_hash() {
 
   // Synchronously check the current default engine, to force a sync init.
   // The hash is wrong, so we should fallback to the default engine from prefs.
-  do_check_false(Services.search.isInitialized)
+  do_check_false(Services.search.isInitialized);
   do_check_eq(Services.search.currentEngine.name, getDefaultEngineName(false));
-  do_check_true(Services.search.isInitialized)
+  do_check_true(Services.search.isInitialized);
 
   await reInitPromise;
   checkRequest();

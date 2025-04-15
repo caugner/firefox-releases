@@ -4,9 +4,6 @@
 const kUrlPref = "geoSpecificDefaults.url";
 
 function run_test() {
-  removeMetadata();
-  removeCacheFile();
-
   do_load_manifest("data/chrome.manifest");
 
   configureToLoadJarEngines();
@@ -25,7 +22,7 @@ function run_test() {
 }
 
 add_task(async function async_init() {
-  let commitPromise = promiseAfterCache()
+  let commitPromise = promiseAfterCache();
   await asyncInit();
 
   let engines = Services.search.getEngines();

@@ -2,9 +2,6 @@
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
 function run_test() {
-  removeMetadata();
-  removeCacheFile();
-
   do_load_manifest("data/chrome.manifest");
 
   configureToLoadJarEngines();
@@ -14,7 +11,7 @@ function run_test() {
 }
 
 add_task(async function ignore_cache_files_without_engines() {
-  let commitPromise = promiseAfterCache()
+  let commitPromise = promiseAfterCache();
   await asyncInit();
 
   let engineCount = Services.search.getEngines().length;
@@ -29,7 +26,7 @@ add_task(async function ignore_cache_files_without_engines() {
   await promiseSaveCacheData(cache);
 
   // Check that after an async re-initialization, we still have the same engine count.
-  commitPromise = promiseAfterCache()
+  commitPromise = promiseAfterCache();
   await asyncReInit();
   do_check_eq(engineCount, Services.search.getEngines().length);
   await commitPromise;

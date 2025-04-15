@@ -28,6 +28,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "RecentWindow",
   "resource:///modules/RecentWindow.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
   "resource://gre/modules/PluralForm.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "setTimeout",
+  "resource://gre/modules/Timer.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "clearTimeout",
+  "resource://gre/modules/Timer.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "gNavigatorBundle", function() {
   const url = "chrome://browser/locale/browser.properties";
@@ -40,6 +44,9 @@ const PENDING_CRASH_REPORT_DAYS = 28;
 const DAY = 24 * 60 * 60 * 1000; // milliseconds
 const DAYS_TO_SUPPRESS = 30;
 const MAX_UNSEEN_CRASHED_CHILD_IDS = 20;
+
+// Time after which we will begin scanning for unsubmitted crash reports
+const CHECK_FOR_UNSUBMITTED_CRASH_REPORTS_DELAY_MS = 60 * 10000; // 10 minutes
 
 /**
  * BrowserWeakMap is exactly like a WeakMap, but expects <xul:browser>
@@ -249,7 +256,7 @@ this.TabCrashHandler = {
    */
   onSelectedBrowserCrash(browser) {
     if (!browser.isRemoteBrowser) {
-      Cu.reportError("Selected crashed browser is not remote.")
+      Cu.reportError("Selected crashed browser is not remote.");
       return;
     }
     if (!browser.frameLoader) {
@@ -361,8 +368,14 @@ this.TabCrashHandler = {
    *        even if they are empty.
    */
   maybeSendCrashReport(message) {
-    if (!AppConstants.MOZ_CRASHREPORTER)
+    if (!AppConstants.MOZ_CRASHREPORTER) {
       return;
+    }
+
+    if (!message.data.hasReport) {
+      // There was no report, so nothing to do.
+      return;
+    }
 
     let browser = message.target.browser;
 
@@ -374,8 +387,9 @@ this.TabCrashHandler = {
 
     let childID = this.browserMap.get(browser);
     let dumpID = this.childMap.get(childID);
-    if (!dumpID)
-      return
+    if (!dumpID) {
+      return;
+    }
 
     if (!message.data.sendReport) {
       Services.telemetry.getHistogramById("FX_CONTENT_CRASH_NOT_SUBMITTED").add(1);
@@ -554,7 +568,7 @@ this.TabCrashHandler = {
 
     return this.childMap.get(this.browserMap.get(browser));
   },
-}
+};
 
 /**
  * This component is responsible for scanning the pending
@@ -584,6 +598,8 @@ this.UnsubmittedCrashHandler = {
   // some number of days. See the documentation for
   // shouldShowPendingSubmissionsNotification().
   suppressed: false,
+
+  _checkTimeout: null,
 
   init() {
     if (this.initialized) {
@@ -621,6 +637,11 @@ this.UnsubmittedCrashHandler = {
 
     this.initialized = false;
 
+    if (this._checkTimeout) {
+      clearTimeout(this._checkTimeout);
+      this._checkTimeout = null;
+    }
+
     if (!this.enabled) {
       return;
     }
@@ -646,6 +667,14 @@ this.UnsubmittedCrashHandler = {
         break;
       }
     }
+  },
+
+  scheduleCheckForUnsubmittedCrashReports() {
+    this._checkTimeout = setTimeout(() => {
+      Services.tm.idleDispatchToMainThread(() => {
+        this.checkForUnsubmittedCrashReports();
+      });
+    }, CHECK_FOR_UNSUBMITTED_CRASH_REPORTS_DELAY_MS);
   },
 
   /**
@@ -880,11 +909,11 @@ this.UnsubmittedCrashHandler = {
 
   get autoSubmit() {
     return Services.prefs
-                   .getBoolPref("browser.crashReports.unsubmittedCheck.autoSubmit");
+                   .getBoolPref("browser.crashReports.unsubmittedCheck.autoSubmit2");
   },
 
   set autoSubmit(val) {
-    Services.prefs.setBoolPref("browser.crashReports.unsubmittedCheck.autoSubmit",
+    Services.prefs.setBoolPref("browser.crashReports.unsubmittedCheck.autoSubmit2",
                                val);
   },
 

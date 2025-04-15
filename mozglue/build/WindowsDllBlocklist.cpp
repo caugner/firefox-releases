@@ -243,9 +243,13 @@ static const DllBlockInfo sWindowsDllBlocklist[] = {
   { "idmcchandler5_64.dll", ALL_VERSIONS },
 
   // Nahimic 2 breaks applicaton update (bug 1356637)
-  { "nahimic2devprops.dll", ALL_VERSIONS },
+  { "nahimic2devprops.dll", MAKE_VERSION(2, 5, 19, 0xffff) },
   // Nahimic is causing crashes, bug 1233556
-  { "nahimicmsiosd.dll", ALL_VERSIONS },
+  { "nahimicmsiosd.dll", UNVERSIONED },
+  // Nahimic is causing crashes, bug 1360029
+  { "nahimicvrdevprops.dll", UNVERSIONED },
+  { "nahimic2osd.dll", MAKE_VERSION(2, 5, 19, 0xffff) },
+  { "nahimicmsidevprops.dll", UNVERSIONED },
 
   // Bug 1268470 - crashes with Kaspersky Lab on Windows 8
   { "klsihk64.dll", MAKE_VERSION(14, 0, 456, 0xffff), DllBlockInfo::BLOCK_WIN8_ONLY },
@@ -255,6 +259,9 @@ static const DllBlockInfo sWindowsDllBlocklist[] = {
 
   // Avecto Privilege Guard causes crashes, bug 1385542
   { "pghook.dll", ALL_VERSIONS },
+
+  // Old versions of G DATA BankGuard, bug 1421991
+  { "banksafe64.dll", MAKE_VERSION(1, 2, 15299, 65535) },
 
   { nullptr, 0 }
 };
@@ -309,10 +316,8 @@ printf_stderr(const char *fmt, ...)
 }
 
 
-#ifdef _M_IX86
 typedef MOZ_NORETURN_PTR void (__fastcall* BaseThreadInitThunk_func)(BOOL aIsInitialThread, void* aStartAddress, void* aThreadParam);
 static BaseThreadInitThunk_func stub_BaseThreadInitThunk = nullptr;
-#endif
 
 typedef NTSTATUS (NTAPI *LdrLoadDll_func) (PWCHAR filePath, PULONG flags, PUNICODE_STRING moduleFileName, PHANDLE handle);
 static LdrLoadDll_func stub_LdrLoadDll;
@@ -794,7 +799,6 @@ continue_loading:
   return stub_LdrLoadDll(filePath, flags, moduleFileName, handle);
 }
 
-#ifdef _M_IX86
 static bool
 ShouldBlockThread(void* aStartAddress)
 {
@@ -829,8 +833,6 @@ patched_BaseThreadInitThunk(BOOL aIsInitialThread, void* aStartAddress,
 
   stub_BaseThreadInitThunk(aIsInitialThread, aStartAddress, aThreadParam);
 }
-
-#endif // _M_IX86
 
 
 static WindowsDllInterceptor NtDllIntercept;
@@ -870,6 +872,13 @@ DllBlocklist_Initialize(uint32_t aInitFlags)
 #endif
   }
 
+  // If someone injects a thread early that causes user32.dll to load off the
+  // main thread this causes issues, so load it as soon as we've initialized
+  // the block-list. (See bug 1400637)
+  if (!sUser32BeforeBlocklist) {
+    ::LoadLibraryW(L"user32.dll");
+  }
+
   Kernel32Intercept.Init("kernel32.dll");
 
 #ifdef _M_AMD64
@@ -880,8 +889,6 @@ DllBlocklist_Initialize(uint32_t aInitFlags)
                               (void**)&stub_RtlInstallFunctionTableCallback);
   }
 #endif
-
-#ifdef _M_IX86 // Minimize impact. Crashes in BaseThreadInitThunk are more frequent on x86
 
   // Bug 1361410: WRusr.dll will overwrite our hook and cause a crash.
   // Workaround: If we detect WRusr.dll, don't hook.
@@ -894,7 +901,6 @@ DllBlocklist_Initialize(uint32_t aInitFlags)
 #endif
     }
   }
-#endif // _M_IX86
 }
 
 MFBT_API void

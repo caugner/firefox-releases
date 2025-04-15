@@ -19,20 +19,13 @@ if test "$OS_ARCH" = "WINNT"; then
     if test "$MOZ_UPDATE_CHANNEL" = "nightly" -o \
             "$MOZ_UPDATE_CHANNEL" = "nightly-try" -o \
             "$MOZ_UPDATE_CHANNEL" = "aurora" -o \
-            "$MOZ_UPDATE_CHANNEL" = "aurora-dev" -o \
             "$MOZ_UPDATE_CHANNEL" = "beta" -o \
-            "$MOZ_UPDATE_CHANNEL" = "beta-dev" -o \
-            "$MOZ_UPDATE_CHANNEL" = "release" -o \
-            "$MOZ_UPDATE_CHANNEL" = "release-dev"; then
+            "$MOZ_UPDATE_CHANNEL" = "release"; then
       if ! test "$MOZ_DEBUG"; then
         MOZ_STUB_INSTALLER=1
       fi
     fi
   fi
-fi
-
-if test "$NIGHTLY_BUILD"; then
-  MOZ_RUST_URLPARSE=1
 fi
 
 # Enable building ./signmar and running libmar signature tests

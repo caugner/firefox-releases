@@ -1,6 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
+/* eslint-disable mozilla/no-cpows-in-tests */
+
 Services.prefs.setBoolPref("browser.preferences.instantApply", true);
 
 registerCleanupFunction(function() {
@@ -53,7 +55,7 @@ add_task(async function() {
   }
 
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.crashReports.unsubmittedCheck.autoSubmit", true]],
+    set: [["browser.crashReports.unsubmittedCheck.autoSubmit2", true]],
   });
   await openPreferencesViaOpenPreferencesAPI("privacy-reports", {leaveOpen: true});
 
@@ -74,7 +76,7 @@ add_task(async function() {
   }
 
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.crashReports.unsubmittedCheck.autoSubmit", false]],
+    set: [["browser.crashReports.unsubmittedCheck.autoSubmit2", false]],
   });
   await openPreferencesViaOpenPreferencesAPI("privacy-reports", {leaveOpen: true});
 

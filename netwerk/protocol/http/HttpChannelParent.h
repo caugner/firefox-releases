@@ -83,6 +83,7 @@ public:
   MOZ_MUST_USE nsresult SuspendForDiversion() override;
   MOZ_MUST_USE nsresult SuspendMessageDiversion() override;
   MOZ_MUST_USE nsresult ResumeMessageDiversion() override;
+  MOZ_MUST_USE nsresult CancelDiversion() override;
 
   // Calls OnStartRequest for "DivertTo" listener, then notifies child channel
   // that it should divert OnDataAvailable and OnStopRequest calls to this
@@ -118,6 +119,8 @@ public:
   void OnBackgroundParentReady(HttpBackgroundChannelParent* aBgParent);
   // Callback while background channel is destroyed.
   void OnBackgroundParentDestroyed();
+
+  base::ProcessId OtherPid() const override;
 
 protected:
   // used to connect redirected-to channel in parent with just created
@@ -193,7 +196,7 @@ protected:
                                                       const bool& aChooseAppcache) override;
   virtual mozilla::ipc::IPCResult RecvUpdateAssociatedContentSecurity(const int32_t& broken,
                                                    const int32_t& no) override;
-  virtual mozilla::ipc::IPCResult RecvDocumentChannelCleanup() override;
+  virtual mozilla::ipc::IPCResult RecvDocumentChannelCleanup(const bool& clearCacheEntry) override;
   virtual mozilla::ipc::IPCResult RecvMarkOfflineCacheEntryAsForeign() override;
   virtual mozilla::ipc::IPCResult RecvDivertOnDataAvailable(const nsCString& data,
                                          const uint64_t& offset,
@@ -260,7 +263,7 @@ private:
   friend class DivertStopRequestEvent;
   friend class DivertCompleteEvent;
 
-  RefPtr<nsHttpChannel>       mChannel;
+  RefPtr<HttpBaseChannel>       mChannel;
   nsCOMPtr<nsICacheEntry>       mCacheEntry;
   nsCOMPtr<nsIAssociatedContentSecurity>  mAssociatedContentSecurity;
   bool mIPCClosed;                // PHttpChannel actor has been Closed()

@@ -21,6 +21,7 @@
 #include "nsISupportsPriority.h"
 #include "nsITimer.h"
 #include "nsIURI.h"
+#include "nsIXULRuntime.h"
 #include "nsPIDOMWindow.h"
 
 #include <algorithm>
@@ -40,8 +41,10 @@
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/ErrorEventBinding.h"
 #include "mozilla/dom/EventTargetBinding.h"
+#include "mozilla/dom/FetchUtil.h"
 #include "mozilla/dom/MessageChannel.h"
 #include "mozilla/dom/MessageEventBinding.h"
+#include "mozilla/dom/PerformanceService.h"
 #include "mozilla/dom/WorkerBinding.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/IndexedDatabaseManager.h"
@@ -52,7 +55,6 @@
 #include "nsContentUtils.h"
 #include "nsCycleCollector.h"
 #include "nsDOMJSUtils.h"
-#include "nsIIPCBackgroundChildCreateCallback.h"
 #include "nsISupportsImpl.h"
 #include "nsLayoutStatics.h"
 #include "nsNetUtil.h"
@@ -321,6 +323,15 @@ LoadContextOptions(const char* aPrefName, void* /* aClosure */)
                 .setStreams(GetWorkerPref<bool>(NS_LITERAL_CSTRING("streams")))
                 .setExtraWarnings(GetWorkerPref<bool>(NS_LITERAL_CSTRING("strict")));
 
+  nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
+  if (xr) {
+    bool safeMode = false;
+    xr->GetInSafeMode(&safeMode);
+    if (safeMode) {
+      contextOptions.disableOptionsForSafeMode();
+    }
+  }
+
   RuntimeService::SetDefaultContextOptions(contextOptions);
 
   if (rts) {
@@ -586,7 +597,7 @@ InterruptCallback(JSContext* aCx)
   MOZ_ASSERT(worker);
 
   // Now is a good time to turn on profiling if it's pending.
-  profiler_js_interrupt_callback();
+  PROFILER_JS_INTERRUPT_CALLBACK();
 
   return worker->InterruptCallback(aCx);
 }
@@ -813,6 +824,22 @@ DispatchToEventLoop(void* aClosure, JS::Dispatchable* aDispatchable)
   return r->Dispatch();
 }
 
+static bool
+ConsumeStream(JSContext* aCx,
+              JS::HandleObject aObj,
+              JS::MimeType aMimeType,
+              JS::StreamConsumer* aConsumer)
+{
+  WorkerPrivate* worker = GetWorkerPrivateFromContext(aCx);
+  if (!worker) {
+    JS_ReportErrorNumberASCII(aCx, js::GetErrorMessage, nullptr,
+                              JSMSG_ERROR_CONSUMING_RESPONSE);
+    return false;
+  }
+
+  return FetchUtil::StreamResponseToJS(aCx, aObj, aMimeType, aConsumer, worker);
+}
+
 class WorkerJSContext;
 
 class WorkerThreadContextPrivate : private PerThreadAtomCache
@@ -899,6 +926,8 @@ InitJSContextForWorker(WorkerPrivate* aWorkerPrivate, JSContext* aWorkerCx)
   // A WorkerPrivate lives strictly longer than its JSRuntime so we can safely
   // store a raw pointer as the callback's closure argument on the JSRuntime.
   JS::InitDispatchToEventLoop(aWorkerCx, DispatchToEventLoop, (void*)aWorkerPrivate);
+
+  JS::InitConsumeStreamCallback(aWorkerCx, ConsumeStream);
 
   if (!JS::InitSelfHostedCode(aWorkerCx)) {
     NS_WARNING("Could not init self-hosted code!");
@@ -1277,40 +1306,6 @@ PlatformOverrideChanged(const char* /* aPrefName */, void* /* aClosure */)
     runtime->UpdatePlatformOverridePreference(override);
   }
 }
-
-class BackgroundChildCallback final
-  : public nsIIPCBackgroundChildCreateCallback
-{
-public:
-  BackgroundChildCallback()
-  {
-    AssertIsOnMainThread();
-  }
-
-  NS_DECL_ISUPPORTS
-
-private:
-  ~BackgroundChildCallback()
-  {
-    AssertIsOnMainThread();
-  }
-
-  virtual void
-  ActorCreated(PBackgroundChild* aActor) override
-  {
-    AssertIsOnMainThread();
-    MOZ_ASSERT(aActor);
-  }
-
-  virtual void
-  ActorFailed() override
-  {
-    AssertIsOnMainThread();
-    MOZ_CRASH("Unable to connect PBackground actor for the main thread!");
-  }
-};
-
-NS_IMPL_ISUPPORTS(BackgroundChildCallback, nsIIPCBackgroundChildCreateCallback)
 
 } /* anonymous namespace */
 
@@ -1924,15 +1919,6 @@ RuntimeService::Init()
 
   nsLayoutStatics::AddRef();
 
-  // Make sure PBackground actors are connected as soon as possible for the main
-  // thread in case workers clone remote blobs here.
-  if (!BackgroundChild::GetForCurrentThread()) {
-    RefPtr<BackgroundChildCallback> callback = new BackgroundChildCallback();
-    if (!BackgroundChild::GetOrCreateForCurrentThread(callback)) {
-      MOZ_CRASH("Unable to connect PBackground actor for the main thread!");
-    }
-  }
-
   // Initialize JSSettings.
   if (sDefaultJSSettings.gcSettings[0].key.isNothing()) {
     sDefaultJSSettings.contextOptions = JS::ContextOptions();
@@ -1955,7 +1941,7 @@ RuntimeService::Init()
     do_GetService(kStreamTransportServiceCID, &rv);
   NS_ENSURE_TRUE(sts, NS_ERROR_FAILURE);
 
-  mIdleThreadTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
+  mIdleThreadTimer = NS_NewTimer();
   NS_ENSURE_STATE(mIdleThreadTimer);
 
   nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
@@ -2047,14 +2033,18 @@ RuntimeService::Init()
                         MAX_HARDWARE_CONCURRENCY);
   gMaxHardwareConcurrency = std::max(0, maxHardwareConcurrency);
 
-  rv = InitOSFileConstants();
-  if (NS_FAILED(rv)) {
-    return rv;
+  RefPtr<OSFileConstantsService> osFileConstantsService =
+    OSFileConstantsService::GetOrCreate();
+  if (NS_WARN_IF(!osFileConstantsService)) {
+    return NS_ERROR_FAILURE;
   }
 
   if (NS_WARN_IF(!IndexedDatabaseManager::GetOrCreate())) {
     return NS_ERROR_UNEXPECTED;
   }
+
+  // PerformanceService must be initialized on the main-thread.
+  PerformanceService::GetOrCreate();
 
   return NS_OK;
 }
@@ -2220,7 +2210,6 @@ RuntimeService::Cleanup()
     }
   }
 
-  CleanupOSFileConstants();
   nsLayoutStatics::Release();
 }
 
@@ -2421,7 +2410,7 @@ RuntimeService::CreateSharedWorkerFromLoadInfo(JSContext* aCx,
   if (!workerPrivate) {
     workerPrivate =
       WorkerPrivate::Constructor(aCx, aScriptURL, false,
-                                 WorkerTypeShared, aName, NullCString(),
+                                 WorkerTypeShared, aName, VoidCString(),
                                  aLoadInfo, rv);
     NS_ENSURE_TRUE(workerPrivate, rv.StealNSResult());
 
@@ -2755,8 +2744,6 @@ WorkerThreadPrimaryRunnable::Run()
 {
   using mozilla::ipc::BackgroundChild;
 
-  char stackBaseGuess;
-
   NS_SetCurrentThreadName("DOM Worker");
 
   nsAutoCString threadName;
@@ -2764,7 +2751,7 @@ WorkerThreadPrimaryRunnable::Run()
   threadName.Append(NS_LossyConvertUTF16toASCII(mWorkerPrivate->ScriptURL()));
   threadName.Append('\'');
 
-  profiler_register_thread(threadName.get(), &stackBaseGuess);
+  AUTO_PROFILER_REGISTER_THREAD(threadName.get());
 
   // Note: GetOrCreateForCurrentThread() must be called prior to
   //       mWorkerPrivate->SetThread() in order to avoid accidentally consuming
@@ -2829,7 +2816,7 @@ WorkerThreadPrimaryRunnable::Run()
     }
 
     {
-      profiler_set_js_context(cx);
+      PROFILER_SET_JS_CONTEXT(cx);
 
       {
         JSAutoRequest ar(cx);
@@ -2843,7 +2830,7 @@ WorkerThreadPrimaryRunnable::Run()
 
       BackgroundChild::CloseForCurrentThread();
 
-      profiler_clear_js_context();
+      PROFILER_CLEAR_JS_CONTEXT();
     }
 
     // There may still be runnables on the debugger event queue that hold a
@@ -2883,7 +2870,6 @@ WorkerThreadPrimaryRunnable::Run()
   MOZ_ALWAYS_SUCCEEDS(mainTarget->Dispatch(finishedRunnable,
                                            NS_DISPATCH_NORMAL));
 
-  profiler_unregister_thread();
   return NS_OK;
 }
 

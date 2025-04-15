@@ -44,8 +44,8 @@ function search_observer(subject, topic, data) {
     case "engine-removed":
       let engineNameOutput = " for Test search engine";
       expectedLog = expectedLog.map(logLine => logLine + engineNameOutput);
-      do_print("expectedLog:\n" + expectedLog.join("\n"))
-      do_print("gTestLog:\n" + gTestLog.join("\n"))
+      do_print("expectedLog:\n" + expectedLog.join("\n"));
+      do_print("gTestLog:\n" + gTestLog.join("\n"));
       for (let i = 0; i < expectedLog.length; i++) {
         do_check_eq(gTestLog[i], expectedLog[i]);
       }
@@ -56,7 +56,6 @@ function search_observer(subject, topic, data) {
 }
 
 function run_test() {
-  removeMetadata();
   useHttpServer();
 
   do_register_cleanup(function cleanup() {

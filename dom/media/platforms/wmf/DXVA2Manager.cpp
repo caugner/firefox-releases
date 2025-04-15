@@ -929,7 +929,7 @@ D3D11DXVA2Manager::CopyToImage(IMFSample* aVideoSample,
   NS_ENSURE_TRUE(client, E_FAIL);
 
   RefPtr<IDXGIKeyedMutex> mutex;
-  HRESULT hr;
+  HRESULT hr = S_OK;
   RefPtr<ID3D11Texture2D> texture = image->GetTexture();
 
   texture->QueryInterface((IDXGIKeyedMutex**)getter_AddRefs(mutex));
@@ -987,7 +987,9 @@ D3D11DXVA2Manager::CopyToImage(IMFSample* aVideoSample,
     // It appears some race-condition may allow us to arrive here even when mSyncObject
     // is null. It's better to avoid that crash.
     client->SyncWithObject(mSyncObject);
-    mSyncObject->Synchronize();
+    if (!mSyncObject->Synchronize(true)) {
+      return DXGI_ERROR_DEVICE_RESET;
+    }
   }
 
   image.forget(aOutImage);
@@ -1263,7 +1265,7 @@ DXVA2Manager::IsNV12Supported(uint32_t aVendorID,
     // AMD driver earlier than 21.19.411.0 have bugs in their handling of NV12
     // surfaces.
     uint64_t driverVersion;
-    if (widget::ParseDriverVersion(aDriverVersionString, &driverVersion) &&
+    if (!widget::ParseDriverVersion(aDriverVersionString, &driverVersion) ||
         driverVersion < widget::V(21, 19, 411, 0)) {
       return false;
     }

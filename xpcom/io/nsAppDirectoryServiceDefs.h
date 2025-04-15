@@ -38,11 +38,9 @@
 #define NS_APP_RES_DIR                          "ARes"
 #define NS_APP_CHROME_DIR                       "AChrom"
 #define NS_APP_PLUGINS_DIR                      "APlugns"       // Deprecated - use NS_APP_PLUGINS_DIR_LIST
-#define NS_APP_SEARCH_DIR                       "SrchPlugns"
 
 #define NS_APP_CHROME_DIR_LIST                  "AChromDL"
 #define NS_APP_PLUGINS_DIR_LIST                 "APluginsDL"
-#define NS_APP_SEARCH_DIR_LIST                  "SrchPluginsDL"
 #define NS_APP_DISTRIBUTION_SEARCH_DIR_LIST     "SrchPluginsDistDL"
 
 // --------------------------------------------------------------------------------------
@@ -60,7 +58,6 @@
 #define NS_APP_PREFS_50_DIR                     "PrefD"         // Directory which contains user prefs
 #define NS_APP_PREFS_50_FILE                    "PrefF"
 #define NS_APP_PREFS_DEFAULTS_DIR_LIST          "PrefDL"
-#define NS_EXT_PREFS_DEFAULTS_DIR_LIST          "ExtPrefDL"
 #define NS_APP_PREFS_OVERRIDE_DIR               "PrefDOverride" // Directory for per-profile defaults
 
 #define NS_APP_USER_PROFILE_50_DIR              "ProfD"
@@ -72,8 +69,6 @@
 #define NS_APP_LOCALSTORE_50_FILE               "LclSt"
 #define NS_APP_USER_PANELS_50_FILE              "UPnls"
 #define NS_APP_CACHE_PARENT_DIR                 "cachePDir"
-
-#define NS_APP_SEARCH_50_FILE                   "SrchF"
 
 #define NS_APP_INSTALL_CLEANUP_DIR              "XPIClnupD"  //location of xpicleanup.dat xpicleanup.exe
 

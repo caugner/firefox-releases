@@ -10,6 +10,7 @@
 #include "mozilla/Attributes.h"
 #include "nsContentUtils.h"
 #include "nsDOMNavigationTiming.h"
+#include "nsRFPService.h"
 #include "nsWrapperCache.h"
 #include "Performance.h"
 
@@ -68,10 +69,10 @@ public:
    *          page), if the given TimeStamp is valid. Otherwise, it will return
    *          the FetchStart timing value.
    */
-  inline DOMHighResTimeStamp TimeStampToDOMHighResOrFetchStart(TimeStamp aStamp)
+  inline DOMHighResTimeStamp TimeStampToReducedDOMHighResOrFetchStart(TimeStamp aStamp)
   {
     return (!aStamp.IsNull())
-        ? TimeStampToDOMHighRes(aStamp)
+        ? nsRFPService::ReduceTimePrecisionAsMSecs(TimeStampToDOMHighRes(aStamp))
         : FetchStartHighRes();
   }
 
@@ -120,7 +121,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetNavigationStart();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetNavigationStart());
   }
 
   DOMTimeMilliSec UnloadEventStart()
@@ -129,7 +131,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetUnloadEventStart();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetUnloadEventStart());
   }
 
   DOMTimeMilliSec UnloadEventEnd()
@@ -138,10 +141,11 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetUnloadEventEnd();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetUnloadEventEnd());
   }
 
-  uint16_t GetRedirectCount() const;
+  uint8_t GetRedirectCount() const;
 
   // Checks if the resource is either same origin as the page that started
   // the load, or if the response contains the Timing-Allow-Origin header
@@ -157,7 +161,12 @@ public:
   // the timing-allow-origin check in HttpBaseChannel::TimingAllowCheck
   bool ShouldReportCrossOriginRedirect() const;
 
+  // The last channel's AsyncOpen time.  This may occur before the FetchStart
+  // in some cases.
+  DOMHighResTimeStamp AsyncOpenHighRes();
+
   // High resolution (used by resource timing)
+  DOMHighResTimeStamp WorkerStartHighRes();
   DOMHighResTimeStamp FetchStartHighRes();
   DOMHighResTimeStamp RedirectStartHighRes();
   DOMHighResTimeStamp RedirectEndHighRes();
@@ -189,7 +198,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetDomLoading();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetDomLoading());
   }
 
   DOMTimeMilliSec DomInteractive() const
@@ -198,7 +208,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetDomInteractive();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetDomInteractive());
   }
 
   DOMTimeMilliSec DomContentLoadedEventStart() const
@@ -207,7 +218,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetDomContentLoadedEventStart();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetDomContentLoadedEventStart());
   }
 
   DOMTimeMilliSec DomContentLoadedEventEnd() const
@@ -216,7 +228,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetDomContentLoadedEventEnd();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetDomContentLoadedEventEnd());
   }
 
   DOMTimeMilliSec DomComplete() const
@@ -225,7 +238,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetDomComplete();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetDomComplete());
   }
 
   DOMTimeMilliSec LoadEventStart() const
@@ -234,7 +248,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetLoadEventStart();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetLoadEventStart());
   }
 
   DOMTimeMilliSec LoadEventEnd() const
@@ -243,7 +258,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetLoadEventEnd();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetLoadEventEnd());
   }
 
   DOMTimeMilliSec TimeToNonBlankPaint() const
@@ -252,7 +268,8 @@ public:
         nsContentUtils::ShouldResistFingerprinting()) {
       return 0;
     }
-    return GetDOMTiming()->GetTimeToNonBlankPaint();
+    return nsRFPService::ReduceTimePrecisionAsMSecs(
+      GetDOMTiming()->GetTimeToNonBlankPaint());
   }
 
 private:
@@ -285,7 +302,13 @@ private:
   TimeStamp mCacheReadStart;
   TimeStamp mResponseEnd;
   TimeStamp mCacheReadEnd;
-  uint16_t mRedirectCount;
+
+  // ServiceWorker interception timing information
+  TimeStamp mWorkerStart;
+  TimeStamp mWorkerRequestStart;
+  TimeStamp mWorkerResponseEnd;
+
+  uint8_t mRedirectCount;
   bool mTimingAllowed;
   bool mAllRedirectsSameOrigin;
   bool mInitialized;
@@ -294,6 +317,8 @@ private:
   // redirectEnd attributes. It is false if there were no redirects, or if
   // any of the responses didn't pass the timing-allow-check
   bool mReportCrossOriginRedirect;
+
+  bool mSecureConnection;
 };
 
 } // namespace dom
