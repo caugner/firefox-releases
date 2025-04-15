@@ -153,7 +153,6 @@ const RESTORE_TAB_CONTENT_REASON = {
 };
 
 Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm", this);
-Cu.import("resource://gre/modules/Promise.jsm", this);
 Cu.import("resource://gre/modules/Services.jsm", this);
 Cu.import("resource://gre/modules/TelemetryStopwatch.jsm", this);
 Cu.import("resource://gre/modules/TelemetryTimestamps.jsm", this);
@@ -355,6 +354,10 @@ this.SessionStore = {
 
   restoreLastSession: function ss_restoreLastSession() {
     SessionStoreInternal.restoreLastSession();
+  },
+
+  speculativeConnectOnTabHover(tab) {
+    SessionStoreInternal.speculativeConnectOnTabHover(tab);
   },
 
   getCurrentState(aUpdateAll) {
@@ -721,6 +724,8 @@ var SessionStoreInternal = {
     this._max_windows_undo = this._prefBranch.getIntPref("sessionstore.max_windows_undo");
     this._prefBranch.addObserver("sessionstore.max_windows_undo", this, true);
 
+    this._restore_on_demand = this._prefBranch.getBoolPref("sessionstore.restore_on_demand");
+    this._prefBranch.addObserver("sessionstore.restore_on_demand", this, true);
 
     gResistFingerprintingEnabled = Services.prefs.getBoolPref("privacy.resistFingerprinting");
     Services.prefs.addObserver("privacy.resistFingerprinting", this);
@@ -1833,6 +1838,9 @@ var SessionStoreInternal = {
         break;
       case "privacy.resistFingerprinting":
         gResistFingerprintingEnabled = Services.prefs.getBoolPref("privacy.resistFingerprinting");
+        break;
+      case "sessionstore.restore_on_demand":
+        this._restore_on_demand = this._prefBranch.getBoolPref("sessionstore.restore_on_demand");
         break;
     }
   },
@@ -3280,8 +3288,7 @@ var SessionStoreInternal = {
       }
     }
 
-    let restoreTabsLazily = this._prefBranch.getBoolPref("sessionstore.restore_tabs_lazily") &&
-      this._prefBranch.getBoolPref("sessionstore.restore_on_demand");
+    let restoreTabsLazily = this._prefBranch.getBoolPref("sessionstore.restore_tabs_lazily") && this._restore_on_demand;
 
     for (var t = 0; t < newTabCount; t++) {
       let tabData = winData.tabs[t];
@@ -3289,6 +3296,8 @@ var SessionStoreInternal = {
       let userContextId = tabData.userContextId;
       let select = t == selectTab - 1;
       let tab;
+
+      /* Disabled because of bug 1388628:
 
       // Re-use existing selected tab if possible to avoid the overhead of
       // selecting a new tab.
@@ -3303,6 +3312,7 @@ var SessionStoreInternal = {
           tabbrowser.updateBrowserRemoteness(tab.linkedBrowser, true);
         }
       }
+      */
 
       // Add a new tab if needed.
       if (!tab) {
@@ -3408,6 +3418,10 @@ var SessionStoreInternal = {
     tabstrip.smoothScroll = smoothScroll;
 
     TelemetryStopwatch.finish("FX_SESSION_RESTORE_RESTORE_WINDOW_MS");
+    if (Services.prefs.getIntPref("browser.tabs.restorebutton") != 0 ) {
+      Services.telemetry.scalarAdd("browser.session.restore.number_of_tabs", winData.tabs.length);
+      Services.telemetry.scalarAdd("browser.session.restore.number_of_win", 1);
+    }
 
     this._setWindowStateReady(aWindow);
 
@@ -3416,6 +3430,46 @@ var SessionStoreInternal = {
     Services.obs.notifyObservers(aWindow, NOTIFY_SINGLE_WINDOW_RESTORED);
 
     this._sendRestoreCompletedNotifications();
+  },
+
+  /**
+   * Prepare connection to host beforehand.
+   *
+   * @param url
+   *        URL of a host.
+   * @returns a flag indicates whether a connection has been made
+   */
+  prepareConnectionToHost(url) {
+    if (!url.startsWith("about:")) {
+      let sc = Services.io.QueryInterface(Ci.nsISpeculativeConnect);
+      let uri = Services.io.newURI(url);
+      sc.speculativeConnect(uri, null, null);
+      return true;
+    }
+    return false;
+  },
+
+  /**
+   * Make a connection to a host when users hover mouse on a tab.
+   * This will also set a flag in the tab to prevent us from speculatively
+   * connecting a second time.
+   *
+   * @param tab
+   *        a tab to speculatively connect on mouse hover.
+   */
+  speculativeConnectOnTabHover(tab) {
+    if (this._restore_on_demand && !tab.__SS_connectionPrepared && tab.hasAttribute("pending")) {
+      let url = this.getLazyTabValue(tab, "url");
+      let prepared = this.prepareConnectionToHost(url);
+      // This is used to test if a connection has been made beforehand.
+      if (gDebuggingEnabled) {
+        tab.__test_connection_prepared = prepared;
+        tab.__test_connection_url = url;
+      }
+      // A flag indicate that we've prepared a connection for this tab and
+      // if is called again, we shouldn't prepare another connection.
+      tab.__SS_connectionPrepared = true;
+    }
   },
 
   /**
@@ -3600,6 +3654,10 @@ var SessionStoreInternal = {
       tab.toggleMuteAudio(tabData.muteReason);
     }
 
+    if (!tabData.mediaBlocked) {
+      browser.resumeMedia();
+    }
+
     if (tabData.lastAccessed) {
       tab.updateLastAccessed(tabData.lastAccessed);
     }
@@ -3644,7 +3702,6 @@ var SessionStoreInternal = {
       storage: tabData.storage || null,
       formdata: tabData.formdata || null,
       disallow: tabData.disallow || null,
-      pageStyle: tabData.pageStyle || null,
       userContextId: tabData.userContextId || 0,
 
       // This information is only needed until the tab has finished restoring.
@@ -3680,6 +3737,19 @@ var SessionStoreInternal = {
         this.restoreTabContent(tab, options);
       } else if (!forceOnDemand) {
         TabRestoreQueue.add(tab);
+        // Check if a tab is in queue and will be restored
+        // after the currently loading tabs. If so, prepare
+        // a connection to host to speed up page loading.
+        if (TabRestoreQueue.willRestoreSoon(tab)) {
+          if (activeIndex in tabData.entries) {
+            let url = tabData.entries[activeIndex].url;
+            let prepared = this.prepareConnectionToHost(url);
+            if (gDebuggingEnabled) {
+              tab.__test_connection_prepared = prepared;
+              tab.__test_connection_url = url;
+            }
+          }
+        }
         this.restoreNextTab();
       }
     } else {
@@ -3896,6 +3966,8 @@ var SessionStoreInternal = {
     var _this = this;
     function win_(aName) { return _this._getWindowDimension(win, aName); }
 
+    const dwu = win.QueryInterface(Ci.nsIInterfaceRequestor)
+                   .getInterface(Ci.nsIDOMWindowUtils);
     // find available space on the screen where this window is being placed
     let screen = gScreenManager.screenForRect(aLeft, aTop, aWidth, aHeight);
     if (screen) {
@@ -3943,38 +4015,47 @@ var SessionStoreInternal = {
       aHeight = bottom - aTop;
     }
 
-    // only modify those aspects which aren't correct yet
-    if (!isNaN(aLeft) && !isNaN(aTop) && (aLeft != win_("screenX") || aTop != win_("screenY"))) {
-      aWindow.moveTo(aLeft, aTop);
-    }
-    if (aWidth && aHeight && (aWidth != win_("width") || aHeight != win_("height")) && !gResistFingerprintingEnabled) {
-      // Don't resize the window if it's currently maximized and we would
-      // maximize it again shortly after.
-      if (aSizeMode != "maximized" || win_("sizemode") != "maximized") {
-        aWindow.resizeTo(aWidth, aHeight);
+    // Suppress animations.
+    dwu.suppressAnimation(true);
+
+    // We want to make sure users will get their animations back in case an exception is thrown.
+    try {
+      // only modify those aspects which aren't correct yet
+      if (!isNaN(aLeft) && !isNaN(aTop) && (aLeft != win_("screenX") || aTop != win_("screenY"))) {
+        aWindow.moveTo(aLeft, aTop);
       }
-    }
-    if (aSizeMode && win_("sizemode") != aSizeMode && !gResistFingerprintingEnabled) {
-      switch (aSizeMode) {
-      case "maximized":
-        aWindow.maximize();
-        break;
-      case "minimized":
-        aWindow.minimize();
-        break;
-      case "normal":
-        aWindow.restore();
-        break;
+      if (aWidth && aHeight && (aWidth != win_("width") || aHeight != win_("height")) && !gResistFingerprintingEnabled) {
+        // Don't resize the window if it's currently maximized and we would
+        // maximize it again shortly after.
+        if (aSizeMode != "maximized" || win_("sizemode") != "maximized") {
+          aWindow.resizeTo(aWidth, aHeight);
+        }
       }
-    }
-    var sidebar = aWindow.document.getElementById("sidebar-box");
-    if (sidebar.getAttribute("sidebarcommand") != aSidebar) {
-      aWindow.SidebarUI.show(aSidebar);
-    }
-    // since resizing/moving a window brings it to the foreground,
-    // we might want to re-focus the last focused window
-    if (this.windowToFocus) {
-      this.windowToFocus.focus();
+      if (aSizeMode && win_("sizemode") != aSizeMode && !gResistFingerprintingEnabled) {
+        switch (aSizeMode) {
+        case "maximized":
+          aWindow.maximize();
+          break;
+        case "minimized":
+          aWindow.minimize();
+          break;
+        case "normal":
+          aWindow.restore();
+          break;
+        }
+      }
+      var sidebar = aWindow.document.getElementById("sidebar-box");
+      if (sidebar.getAttribute("sidebarcommand") != aSidebar) {
+        aWindow.SidebarUI.show(aSidebar);
+      }
+      // since resizing/moving a window brings it to the foreground,
+      // we might want to re-focus the last focused window
+      if (this.windowToFocus) {
+        this.windowToFocus.focus();
+      }
+    } finally {
+      // Enable animations.
+      dwu.suppressAnimation(false);
     }
   },
 

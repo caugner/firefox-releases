@@ -215,7 +215,9 @@ class FilteringMessageManager {
    *     The handler object to unregister.
    */
   removeHandler(messageName, handler) {
-    this.handlers.get(messageName).delete(handler);
+    if (this.handlers.has(messageName)) {
+      this.handlers.get(messageName).delete(handler);
+    }
   }
 }
 
@@ -780,6 +782,7 @@ this.MessageChannel = {
   abortResponses(sender, reason = this.REASON_DISCONNECTED) {
     for (let response of this.pendingResponses) {
       if (this.matchesFilter(sender, response.sender)) {
+        this.pendingResponses.delete(response);
         this.abortedResponses.add(response.channelId);
         response.reject(reason);
       }

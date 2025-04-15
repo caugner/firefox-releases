@@ -18,6 +18,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "ConsoleAPI",
                                   "resource://gre/modules/Console.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "MessageChannel",
                                   "resource://gre/modules/MessageChannel.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "OS",
+                                  "resource://gre/modules/osfile.jsm");
 
 function getConsole() {
   return new ConsoleAPI({
@@ -28,11 +30,18 @@ function getConsole() {
 
 XPCOMUtils.defineLazyGetter(this, "console", getConsole);
 
+const appinfo = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULRuntime);
+
 let nextId = 0;
-XPCOMUtils.defineLazyGetter(this, "uniqueProcessID", () => Services.appinfo.uniqueProcessID);
+XPCOMUtils.defineLazyGetter(this, "uniqueProcessID", () => appinfo.uniqueProcessID);
 
 function getUniqueId() {
   return `${nextId++}-${uniqueProcessID}`;
+}
+
+async function promiseFileContents(file) {
+  let res = await OS.File.read(file.path);
+  return res.buffer;
 }
 
 
@@ -149,6 +158,15 @@ function getInnerWindowID(window) {
   return getWinUtils(window).currentInnerWindowID;
 }
 
+function withHandlingUserInput(window, callable) {
+  let handle = getWinUtils(window).setHandlingUserInput(true);
+  try {
+    return callable();
+  } finally {
+    handle.destruct();
+  }
+}
+
 const LISTENERS = Symbol("listeners");
 const ONCE_MAP = Symbol("onceMap");
 
@@ -245,24 +263,37 @@ class EventEmitter {
 /**
  * A set with a limited number of slots, which flushes older entries as
  * newer ones are added.
+ *
+ * @param {integer} limit
+ *        The maximum size to trim the set to after it grows too large.
+ * @param {integer} [slop = limit * .25]
+ *        The number of extra entries to allow in the set after it
+ *        reaches the size limit, before it is truncated to the limit.
+ * @param {iterable} [iterable]
+ *        An iterable of initial entries to add to the set.
  */
 class LimitedSet extends Set {
-  constructor(limit, iterable = undefined) {
+  constructor(limit, slop = Math.round(limit * .25), iterable = undefined) {
     super(iterable);
     this.limit = limit;
+    this.slop = slop;
   }
 
   truncate(limit) {
     for (let item of this) {
-      if (this.size <= limit) {
-        break;
+      // Live set iterators can ge relatively expensive, since they need
+      // to be updated after every modification to the set. Since
+      // breaking out of the loop early will keep the iterator alive
+      // until the next full GC, we're currently better off finishing
+      // the entire loop even after we're done truncating.
+      if (this.size > limit) {
+        this.delete(item);
       }
-      this.delete(item);
     }
   }
 
   add(item) {
-    if (!this.has(item) && this.size >= this.limit) {
+    if (!this.has(item) && this.size >= this.limit + this.slop) {
       this.truncate(this.limit - 1);
     }
     super.add(item);
@@ -624,11 +655,13 @@ this.ExtensionUtils = {
   promiseDocumentLoaded,
   promiseDocumentReady,
   promiseEvent,
+  promiseFileContents,
   promiseObserved,
   runSafe,
   runSafeSync,
   runSafeSyncWithoutClone,
   runSafeWithoutClone,
+  withHandlingUserInput,
   DefaultMap,
   DefaultWeakMap,
   EventEmitter,
