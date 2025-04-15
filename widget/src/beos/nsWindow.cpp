@@ -23,7 +23,7 @@
  *   Paul Ashford <arougthopher@lizardland.net>
  *   Sergei Dolgov <sergei_d@fi.tartu.ee>
  *   Fredrik Holmqvist <thesuckiestemail@yahoo.se>
- *   Mats Palmgren <mats.palmgren@bredband.net>
+ *   Mats Palmgren <matspal@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -92,6 +92,7 @@ static NS_DEFINE_IID(kCDragServiceCID,  NS_DRAGSERVICE_CID);
 
 // Rollup Listener - static variable defintions
 static nsIRollupListener * gRollupListener           = nsnull;
+static nsIMenuRollup     * gMenuRollup               = nsnull;
 static nsIWidget         * gRollupWidget             = nsnull;
 static PRBool              gRollupConsumeRollupEvent = PR_FALSE;
 // Tracking last activated BWindow
@@ -173,6 +174,8 @@ void nsIMEBeOS::RunIME(uint32 *args, nsWindow *target, BView *fView)
 		break;
 
 	case B_INPUT_METHOD_LOCATION_REQUEST:
+// XXX NS_COMPOSITION_QUERY was dropped, use content query content events to get the caret rect.
+#if 0
 		if (fView && fView->LockLooper()) 
 		{
 			BPoint caret(imeCaret);
@@ -191,13 +194,16 @@ void nsIMEBeOS::RunIME(uint32 *args, nsWindow *target, BView *fView)
 			imeMessenger.SendMessage(&reply);
 			fView->UnlockLooper();
 		}
+#endif
 		break;
 
 	case B_INPUT_METHOD_STARTED:
 		imeTarget = target;
 		DispatchIME(NS_COMPOSITION_START);
+// XXX NS_COMPOSITION_QUERY was dropped, use content query content events to get the caret rect.
+#if 0
 		DispatchIME(NS_COMPOSITION_QUERY);
-
+#endif
 		msg.FindMessenger("be:reply_to", &imeMessenger);
 		break;
 	
@@ -256,12 +262,15 @@ void nsIMEBeOS::DispatchIME(PRUint32 what)
 	DispatchWindowEvent(&compEvent);
 	imeState = what;
 
+// XXX NS_COMPOSITION_QUERY was dropped, use content query content events to get the caret rect.
+#if 0
 	if (what == NS_COMPOSITION_QUERY) 
 	{
 		imeCaret.Set(compEvent.theReply.mCursorPosition.x,
 		           compEvent.theReply.mCursorPosition.y);
 		imeHeight = compEvent.theReply.mCursorPosition.height+4;
 	}
+#endif
 }
 
 PRBool nsIMEBeOS::DispatchWindowEvent(nsGUIEvent* event)
@@ -387,6 +396,13 @@ void nsWindow::InitEvent(nsGUIEvent& event, nsPoint* aPoint)
 	event.time = PR_IntervalNow();
 }
 
+NS_IMETHODIMP nsWindow::ReparentNativeWidget(nsIWidget* aNewParent)
+{
+	NS_PRECONDITION(aNewParent, "");
+
+	return NS_OK;
+}
+
 //-------------------------------------------------------------------------
 //
 // Invokes callback and  ProcessEvent method on Event Listener object
@@ -400,9 +416,6 @@ NS_IMETHODIMP nsWindow::DispatchEvent(nsGUIEvent* event, nsEventStatus & aStatus
 
 	if (mEventCallback)
 		aStatus = (*mEventCallback)(event);
-
-	if ((aStatus != nsEventStatus_eIgnore) && (mEventListener))
-		aStatus = mEventListener->ProcessEvent(*event);
 
 	return NS_OK;
 }
@@ -673,7 +686,7 @@ NS_METHOD nsWindow::Show(PRBool bState)
 	//and Show() checks. BeBook:
 	// If Hide() is called more than once, you'll need to call Show()
 	// an equal number of times for the window to become visible again.
-	if (bState == PR_FALSE)
+	if (!bState)
 	{
 		if (mView->Window() && !mView->Window()->IsHidden())
 			mView->Window()->Hide();
@@ -707,7 +720,10 @@ NS_METHOD nsWindow::CaptureMouse(PRBool aCapture)
 //-------------------------------------------------------------------------
 // Capture Roolup Events
 //-------------------------------------------------------------------------
-NS_METHOD nsWindow::CaptureRollupEvents(nsIRollupListener * aListener, PRBool aDoCapture, PRBool aConsumeRollupEvent)
+NS_METHOD nsWindow::CaptureRollupEvents(nsIRollupListener * aListener,
+                                        nsIMenuRollup * aMenuRollup,
+                                        PRBool aDoCapture,
+                                        PRBool aConsumeRollupEvent)
 {
 	if (!mEnabled)
 		return NS_OK;
@@ -719,16 +735,18 @@ NS_METHOD nsWindow::CaptureRollupEvents(nsIRollupListener * aListener, PRBool aD
 		// assure that remains true.
 		NS_ASSERTION(!gRollupWidget, "rollup widget reassigned before release");
 		gRollupConsumeRollupEvent = aConsumeRollupEvent;
-		NS_IF_RELEASE(gRollupListener);
 		NS_IF_RELEASE(gRollupWidget);
 		gRollupListener = aListener;
-		NS_ADDREF(aListener);
+		NS_IF_RELEASE(gMenuRollup);
+		gMenuRollup = aMenuRollup;
+		NS_IF_ADDREF(aMenuRollup);
 		gRollupWidget = this;
 		NS_ADDREF(this);
 	} 
 	else 
 	{
-		NS_IF_RELEASE(gRollupListener);
+		gRollupListener == nsnull;
+    NS_IF_RELEASE(gMenuRollup);
 		NS_IF_RELEASE(gRollupWidget);
 	}
 
@@ -778,11 +796,10 @@ nsWindow::DealWithPopups(uint32 methodID, nsPoint pos)
 		// want to rollup if the click is in a parent menu of the current submenu.
 		if (rollup) 
 		{
-			nsCOMPtr<nsIMenuRollup> menuRollup ( do_QueryInterface(gRollupListener) );
-			if ( menuRollup ) 
+			if ( gMenuRollup ) 
 			{
 				nsAutoTArray<nsIWidget*, 5> widgetChain;
-				menuRollup->GetSubmenuWidgetChain(&widgetChain);
+				gMenuRollup->GetSubmenuWidgetChain(&widgetChain);
 
 				for ( PRUint32 i = 0; i < widgetChain.Length(); ++i ) 
 				{
@@ -1084,7 +1101,7 @@ NS_METHOD nsWindow::SetFocus(PRBool aRaise)
 	if (mView && mView->LockLooper())
 	{
 		if (mView->Window() && 
-		    aRaise == PR_TRUE &&
+		    aRaise &&
 		    eWindowType_popup != mWindowType && 
 			  !mView->Window()->IsActive() && 
 			  gLastActiveWindow != mView->Window())
@@ -1326,7 +1343,7 @@ NS_METHOD nsWindow::SetCursor(nsCursor aCursor)
 				break;
 
 			default:
-				NS_ASSERTION(0, "Invalid cursor type");
+				NS_ERROR("Invalid cursor type");
 				break;
 		}
 		NS_ASSERTION(newCursor != nsnull, "Cursor not stored in array properly!");
@@ -1334,40 +1351,6 @@ NS_METHOD nsWindow::SetCursor(nsCursor aCursor)
 		be_app->SetCursor(newCursor, true);
 	}
 	return NS_OK;
-}
-
-//-------------------------------------------------------------------------
-//
-// Invalidate this component visible area
-//
-//-------------------------------------------------------------------------
-NS_METHOD nsWindow::Invalidate(PRBool aIsSynchronous)
-{
-	nsresult rv = NS_ERROR_FAILURE;
-	// Asynchronous painting is performed with via nsViewBeOS::Draw() call and its message queue. 
-	// All update rects are collected in nsViewBeOS member  "paintregion".
-	// Flushing of paintregion happens in nsViewBeOS::GetPaintRegion(),
-	// cleanup  - in nsViewBeOS::Validate(), called in OnPaint().
-	BRegion reg;
-	reg.MakeEmpty();
-	if (mView && mView->LockLooper())
-	{
-		if (PR_TRUE == aIsSynchronous)
-		{
-			mView->paintregion.Include(mView->Bounds());
-			reg.Include(mView->Bounds());
-		}
-		else
-		{
-			mView->Draw(mView->Bounds());
-			rv = NS_OK;
-		}
-		mView->UnlockLooper();
-	}
-	// Instant repaint.
-	if (PR_TRUE == aIsSynchronous)
-		rv = OnPaint(&reg);
-	return rv;
 }
 
 //-------------------------------------------------------------------------

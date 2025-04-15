@@ -47,6 +47,9 @@
 #include "nsEscape.h"
 #include "nsIFile.h"
 #include "nsDebug.h"
+#if defined(XP_WIN)
+#include <windows.h>
+#endif
 
 /*---------------------------------------------
  *  nsISupports implementation
@@ -87,8 +90,10 @@ nsJARInputStream::InitFile(nsJAR *aJar, nsZipItem *item)
     }
    
     // Must keep handle to filepointer and mmap structure as long as we need access to the mmapped data
-    mFd = aJar->mZip.GetFD();
-    mZs.next_in = aJar->mZip.GetData(item);
+    mFd = aJar->mZip->GetFD();
+    mZs.next_in = (Bytef *)aJar->mZip->GetData(item);
+    if (!mZs.next_in)
+        return NS_ERROR_FILE_CORRUPTED;
     mZs.avail_in = item->Size();
     mOutSize = item->RealSize();
     mZs.total_out = 0;
@@ -145,7 +150,7 @@ nsJARInputStream::InitDirectory(nsJAR* aJar,
     }
     nsCAutoString pattern = escDirName + NS_LITERAL_CSTRING("?*~") +
                             escDirName + NS_LITERAL_CSTRING("?*/?*");
-    rv = mJar->mZip.FindInit(pattern.get(), &find);
+    rv = mJar->mZip->FindInit(pattern.get(), &find);
     if (NS_FAILED(rv)) return rv;
 
     const char *name;
@@ -210,6 +215,7 @@ nsJARInputStream::Read(char* aBuffer, PRUint32 aCount, PRUint32 *aBytesRead)
     *aBytesRead = 0;
 
     nsresult rv = NS_OK;
+MOZ_WIN_MEM_TRY_BEGIN
     switch (mMode) {
       case MODE_NOTINITED:
         return NS_OK;
@@ -234,7 +240,7 @@ nsJARInputStream::Read(char* aBuffer, PRUint32 aCount, PRUint32 *aBytesRead)
 
       case MODE_COPY:
         if (mFd) {
-          PRUint32 count = PR_MIN(aCount, mOutSize - mZs.total_out);
+          PRUint32 count = NS_MIN(aCount, mOutSize - PRUint32(mZs.total_out));
           if (count) {
               memcpy(aBuffer, mZs.next_in + mZs.total_out, count);
               mZs.total_out += count;
@@ -248,6 +254,7 @@ nsJARInputStream::Read(char* aBuffer, PRUint32 aCount, PRUint32 *aBytesRead)
         }
         break;
     }
+MOZ_WIN_MEM_TRY_CATCH(rv = NS_ERROR_FAILURE)
     return rv;
 }
 
@@ -286,7 +293,7 @@ nsJARInputStream::ContinueInflate(char* aBuffer, PRUint32 aCount,
     const PRUint32 oldTotalOut = mZs.total_out;
     
     // make sure we aren't reading too much
-    mZs.avail_out = PR_MIN(aCount, (mOutSize-oldTotalOut));
+    mZs.avail_out = NS_MIN(aCount, (mOutSize-oldTotalOut));
     mZs.next_out = (unsigned char*)aBuffer;
 
     // now inflate
@@ -339,12 +346,12 @@ nsJARInputStream::ReadDirectory(char* aBuffer, PRUint32 aCount, PRUint32 *aBytes
 
             const char * entryName = mArray[mArrPos].get();
             PRUint32 entryNameLen = mArray[mArrPos].Length();
-            nsZipItem* ze = mJar->mZip.GetItem(entryName);
+            nsZipItem* ze = mJar->mZip->GetItem(entryName);
             NS_ENSURE_TRUE(ze, NS_ERROR_FILE_TARGET_DOES_NOT_EXIST);
 
             // Last Modified Time
             PRExplodedTime tm;
-            PR_ExplodeTime(GetModTime(ze->Date(), ze->Time()), PR_GMTParameters, &tm);
+            PR_ExplodeTime(ze->LastModTime(), PR_GMTParameters, &tm);
             char itemLastModTime[65];
             PR_FormatTimeUSEnglish(itemLastModTime,
                                    sizeof(itemLastModTime),
@@ -383,7 +390,7 @@ nsJARInputStream::ReadDirectory(char* aBuffer, PRUint32 aCount, PRUint32 *aBytes
 PRUint32
 nsJARInputStream::CopyDataToBuffer(char* &aBuffer, PRUint32 &aCount)
 {
-    const PRUint32 writeLength = PR_MIN(aCount, mBuffer.Length() - mCurPos);
+    const PRUint32 writeLength = NS_MIN(aCount, mBuffer.Length() - mCurPos);
 
     if (writeLength > 0) {
         memcpy(aBuffer, mBuffer.get() + mCurPos, writeLength);

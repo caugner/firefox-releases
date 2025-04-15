@@ -16,7 +16,7 @@
  * The Original Code is mozilla.org code.
  *
  * The Initial Developer of the Original Code is
- * Mozilla Corporation.
+ * the Mozilla Foundation.
  * Portions created by the Initial Developer are Copyright (C) 2008
  * the Initial Developer. All Rights Reserved.
  *
@@ -55,10 +55,8 @@ function book_tag_sql_fragment(aName, aColumn, aForTag)
     "JOIN moz_bookmarks t ",
       "ON t.id = b.parent ",
       "AND t.parent ", (aForTag ? "" : "!"), "= :parent ",
-    "WHERE b.type = ", Ci.nsINavBookmarksService.TYPE_BOOKMARK, " ",
-      "AND b.fk = h.id ",
-    (aForTag ? "AND LENGTH(t.title) > 0" :
-               "ORDER BY b.lastModified DESC LIMIT 1"),
+    "WHERE b.fk = h.id ",
+    (aForTag ? "" : "ORDER BY b.lastModified DESC LIMIT 1"),
   ") AS ", aName].join("");
 }
 
@@ -72,7 +70,7 @@ const kBookTagSQLFragment =
   book_tag_sql_fragment("tags", "GROUP_CONCAT(t.title, ',')", true);
 
 // observer topics
-const kQuitApplication = "quit-application";
+const kTopicShutdown = "places-shutdown";
 const kPrefChanged = "nsPref:changed";
 
 // Match type constants.  These indicate what type of search function we should
@@ -94,6 +92,7 @@ const kQueryIndexVisitCount = 6;
 const kQueryIndexTyped = 7;
 const kQueryIndexPlaceId = 8;
 const kQueryIndexQueryType = 9;
+const kQueryIndexOpenPageCount = 10;
 
 // AutoComplete query type constants.  Describes the various types of queries
 // that we can process.
@@ -107,32 +106,47 @@ const kTitleTagsSeparator = " \u2013 ";
 
 const kBrowserUrlbarBranch = "browser.urlbar.";
 
+
 ////////////////////////////////////////////////////////////////////////////////
-//// Global Functions
+//// Helpers
 
 /**
- * Generates the SQL subquery to get the best favicon for a given revhost.  This
- * is the favicon for the most recent visit.
+ * Initializes our temporary table on a given database.
  *
- * @param aTableName
- *        The table to join to the moz_favicons table with.  This must have a
- *        column called favicon_id.
- * @return the SQL subquery (in string form) to get the best favicon.
+ * @param aDatabase
+ *        The mozIStorageConnection to set up the temp table on.
  */
-function best_favicon_for_revhost(aTableName)
+function initTempTable(aDatabase)
 {
-  return "(" +
-    "SELECT f.url " +
-    "FROM " + aTableName + " " +
-    "JOIN moz_favicons f ON f.id = favicon_id " +
-    "WHERE rev_host = IFNULL( " +
-      "(SELECT rev_host FROM moz_places_temp WHERE id = b.fk), " +
-      "(SELECT rev_host FROM moz_places WHERE id = b.fk) " +
-    ") " +
-    "ORDER BY frecency DESC " +
-    "LIMIT 1 " +
-  ")";
+  // Keep our temporary table in memory.
+  aDatabase.executeSimpleSQL("PRAGMA temp_store = MEMORY");
+
+  // Note: this should be kept up-to-date with the definition in
+  //       nsPlacesTables.h.
+  let stmt = aDatabase.createAsyncStatement(
+    "CREATE TEMP TABLE moz_openpages_temp ( "
+  + "  url TEXT PRIMARY KEY "
+  + ", open_count INTEGER "
+  + ") "
+  );
+  stmt.executeAsync();
+  stmt.finalize();
+
+  // Note: this should be kept up-to-date with the definition in
+  //       nsPlacesTriggers.h.
+  stmt = aDatabase.createAsyncStatement(
+    "CREATE TEMPORARY TRIGGER moz_openpages_temp_afterupdate_trigger "
+  + "AFTER UPDATE OF open_count ON moz_openpages_temp FOR EACH ROW "
+  + "WHEN NEW.open_count = 0 "
+  + "BEGIN "
+  +   "DELETE FROM moz_openpages_temp "
+  +   "WHERE url = NEW.url; "
+  + "END "
+  );
+  stmt.executeAsync();
+  stmt.finalize();
 }
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //// AutoCompleteStatementCallbackWrapper class
@@ -210,165 +224,191 @@ function nsPlacesAutoComplete()
   //////////////////////////////////////////////////////////////////////////////
   //// Shared Constants for Smart Getters
 
-  // Define common pieces of various queries.
   // TODO bug 412736 in case of a frecency tie, break it with h.typed and
   // h.visit_count which is better than nothing.  This is slow, so not doing it
   // yet...
-  // Note: h.frecency is only selected because we need it for ordering.
-  function sql_base_fragment(aTableName) {
-    return "SELECT h.url, h.title, f.url, " + kBookTagSQLFragment + ", " +
-                  "h.visit_count, h.typed, h.id, :query_type, h.frecency " +
-           "FROM " + aTableName + " h " +
-           "LEFT OUTER JOIN moz_favicons f ON f.id = h.favicon_id " +
-           "WHERE h.frecency <> 0 " +
-           "AND AUTOCOMPLETE_MATCH(:searchString, h.url, " +
-                                  "IFNULL(bookmark, h.title), tags, " +
-                                  "h.visit_count, h.typed, parent, " +
-                                  ":matchBehavior, :searchBehavior) " +
-          "{ADDITIONAL_CONDITIONS} ";
-  }
-  const SQL_BASE = sql_base_fragment("moz_places_temp") +
-                   "UNION ALL " +
-                   sql_base_fragment("moz_places") +
-                   "AND +h.id NOT IN (SELECT id FROM moz_places_temp) " +
-                   "ORDER BY h.frecency DESC, h.id DESC " +
-                   "LIMIT :maxResults";
+  const SQL_BASE = "SELECT h.url, h.title, f.url, " + kBookTagSQLFragment + ", "
+                 +        "h.visit_count, h.typed, h.id, :query_type, "
+                 +        "t.open_count "
+                 + "FROM moz_places h "
+                 + "LEFT JOIN moz_favicons f ON f.id = h.favicon_id "
+                 + "LEFT JOIN moz_openpages_temp t ON t.url = h.url "
+                 + "WHERE h.frecency <> 0 "
+                 +   "AND AUTOCOMPLETE_MATCH(:searchString, h.url, "
+                 +                          "IFNULL(bookmark, h.title), tags, "
+                 +                          "h.visit_count, h.typed, parent, "
+                 +                          "t.open_count, "
+                 +                          ":matchBehavior, :searchBehavior) "
+                 +  "{ADDITIONAL_CONDITIONS} "
+                 + "ORDER BY h.frecency DESC, h.id DESC "
+                 + "LIMIT :maxResults";
 
   //////////////////////////////////////////////////////////////////////////////
   //// Smart Getters
 
-  this.__defineGetter__("_db", function() {
-    delete this._db;
-    return this._db = Cc["@mozilla.org/browser/nav-history-service;1"].
-                      getService(Ci.nsPIPlacesDatabase).
-                      DBConnection;
+  XPCOMUtils.defineLazyGetter(this, "_db", function() {
+    // Get a cloned, read-only version of the database.  We'll only ever write
+    // to our own in-memory temp table, and having a cloned copy means we do not
+    // run the risk of our queries taking longer due to the main database
+    // connection performing a long-running task.
+    let db = Cc["@mozilla.org/browser/nav-history-service;1"].
+             getService(Ci.nsPIPlacesDatabase).
+             DBConnection.
+             clone(true);
+
+    // Create our in-memory tables for tab tracking.
+    initTempTable(db);
+
+    return db;
   });
 
-  this.__defineGetter__("_bh", function() {
-    delete this._bh;
-    return this._bh = Cc["@mozilla.org/browser/global-history;2"].
-                      getService(Ci.nsIBrowserHistory);
-  });
+  XPCOMUtils.defineLazyServiceGetter(this, "_bh",
+                                     "@mozilla.org/browser/global-history;2",
+                                     "nsIBrowserHistory");
 
-  this.__defineGetter__("_textURIService", function() {
-    delete this._textURIService;
-    return this._textURIService = Cc["@mozilla.org/intl/texttosuburi;1"].
-                                  getService(Ci.nsITextToSubURI);
-  });
+  XPCOMUtils.defineLazyServiceGetter(this, "_textURIService",
+                                     "@mozilla.org/intl/texttosuburi;1",
+                                     "nsITextToSubURI");
 
-  this.__defineGetter__("_bs", function() {
-    delete this._bs;
-    return this._bs = Cc["@mozilla.org/browser/nav-bookmarks-service;1"].
-                      getService(Ci.nsINavBookmarksService);
-  });
+  XPCOMUtils.defineLazyServiceGetter(this, "_bs",
+                                     "@mozilla.org/browser/nav-bookmarks-service;1",
+                                     "nsINavBookmarksService");
 
-  this.__defineGetter__("_ioService", function() {
-    delete this._ioService;
-    return this._ioService = Cc["@mozilla.org/network/io-service;1"].
-                             getService(Ci.nsIIOService);
-  });
+  XPCOMUtils.defineLazyServiceGetter(this, "_ioService",
+                                     "@mozilla.org/network/io-service;1",
+                                     "nsIIOService");
 
-  this.__defineGetter__("_faviconService", function() {
-    delete this._faviconService;
-    return this._faviconService = Cc["@mozilla.org/browser/favicon-service;1"].
-                                  getService(Ci.nsIFaviconService);
-  });
+  XPCOMUtils.defineLazyServiceGetter(this, "_faviconService",
+                                     "@mozilla.org/browser/favicon-service;1",
+                                     "nsIFaviconService");
 
-  this.__defineGetter__("_defaultQuery", function() {
-    delete this._defaultQuery;
+  XPCOMUtils.defineLazyGetter(this, "_defaultQuery", function() {
     let replacementText = "";
-    return this._defaultQuery = this._db.createStatement(
+    return this._db.createAsyncStatement(
       SQL_BASE.replace("{ADDITIONAL_CONDITIONS}", replacementText, "g")
     );
   });
 
-  this.__defineGetter__("_historyQuery", function() {
-    delete this._historyQuery;
+  XPCOMUtils.defineLazyGetter(this, "_historyQuery", function() {
     let replacementText = "AND h.visit_count > 0";
-    return this._historyQuery = this._db.createStatement(
+    return this._db.createAsyncStatement(
       SQL_BASE.replace("{ADDITIONAL_CONDITIONS}", replacementText, "g")
     );
   });
 
-  this.__defineGetter__("_bookmarkQuery", function() {
-    delete this._bookmarkQuery;
+  XPCOMUtils.defineLazyGetter(this, "_bookmarkQuery", function() {
     let replacementText = "AND bookmark IS NOT NULL";
-    return this._bookmarkQuery = this._db.createStatement(
+    return this._db.createAsyncStatement(
       SQL_BASE.replace("{ADDITIONAL_CONDITIONS}", replacementText, "g")
     );
   });
 
-  this.__defineGetter__("_tagsQuery", function() {
-    delete this._tagsQuery;
+  XPCOMUtils.defineLazyGetter(this, "_tagsQuery", function() {
     let replacementText = "AND tags IS NOT NULL";
-    return this._tagsQuery = this._db.createStatement(
+    return this._db.createAsyncStatement(
       SQL_BASE.replace("{ADDITIONAL_CONDITIONS}", replacementText, "g")
     );
   });
 
-  this.__defineGetter__("_typedQuery", function() {
-    delete this._typedQuery;
+  XPCOMUtils.defineLazyGetter(this, "_openPagesQuery", function() {
+    return this._db.createAsyncStatement(
+      "SELECT t.url, t.url, NULL, NULL, NULL, NULL, NULL, NULL, NULL, "
+    +         ":query_type, t.open_count, NULL "
+    + "FROM moz_openpages_temp t "
+    + "LEFT JOIN moz_places h ON h.url = t.url "
+    + "WHERE h.id IS NULL "
+    +   "AND AUTOCOMPLETE_MATCH(:searchString, t.url, t.url, NULL, "
+    +                          "NULL, NULL, NULL, t.open_count, "
+    +                          ":matchBehavior, :searchBehavior) "
+    + "ORDER BY t.ROWID DESC "
+    + "LIMIT :maxResults "
+    );
+  });
+
+  XPCOMUtils.defineLazyGetter(this, "_typedQuery", function() {
     let replacementText = "AND h.typed = 1";
-    return this._typedQuery = this._db.createStatement(
+    return this._db.createAsyncStatement(
       SQL_BASE.replace("{ADDITIONAL_CONDITIONS}", replacementText, "g")
     );
   });
 
-  this.__defineGetter__("_adaptiveQuery", function() {
-    delete this._adaptiveQuery;
+  XPCOMUtils.defineLazyGetter(this, "_adaptiveQuery", function() {
     // In this query, we are taking kBookTagSQLFragment only for h.id because it
     // uses data from the moz_bookmarks table and we sync tables on bookmark
     // insert.  So, most likely, h.id will always be populated when we have any
-    // bookmark.  We still need to join on moz_places_temp for other data (eg.
-    // title).
-    return this._adaptiveQuery = this._db.createStatement(
-      "/* do not warn (bug 487789) */ " +
-      "SELECT IFNULL(h_t.url, h.url) AS c_url, " +
-             "IFNULL(h_t.title, h.title) AS c_title, f.url, " +
-              kBookTagSQLFragment + ", " +
-              "IFNULL(h_t.visit_count, h.visit_count) AS c_visit_count, " +
-              "IFNULL(h_t.typed, h.typed) AS c_typed, " +
-              "IFNULL(h_t.id, h.id), :query_type, rank " +
-      "FROM ( " +
-        "SELECT ROUND(MAX(((i.input = :search_string) + " +
-                          "(SUBSTR(i.input, 1, LENGTH(:search_string)) = :search_string)) * " +
-                          "i.use_count), 1) AS rank, place_id " +
-        "FROM moz_inputhistory i " +
-        "GROUP BY i.place_id " +
-        "HAVING rank > 0 " +
-      ") AS i " +
-      "LEFT JOIN moz_places h ON h.id = i.place_id " +
-      "LEFT JOIN moz_places_temp h_t ON h_t.id = i.place_id " +
-      "LEFT JOIN moz_favicons f ON f.id = IFNULL(h_t.favicon_id, h.favicon_id) " + 
-      "WHERE c_url NOTNULL " +
-      "AND AUTOCOMPLETE_MATCH(:searchString, c_url, " +
-                             "IFNULL(bookmark, c_title), tags, " +
-                             "c_visit_count, c_typed, parent, " +
-                             ":matchBehavior, :searchBehavior) " +
-      "ORDER BY rank DESC, IFNULL(h_t.frecency, h.frecency) DESC"
+    // bookmark.
+    return this._db.createAsyncStatement(
+      "/* do not warn (bug 487789) */ "
+    + "SELECT h.url, h.title, f.url, " + kBookTagSQLFragment + ", "
+    +         "h.visit_count, h.typed, h.id, :query_type, t.open_count, rank "
+    + "FROM ( "
+    +   "SELECT ROUND( "
+    +     "MAX(((i.input = :search_string) + "
+    +          "(SUBSTR(i.input, 1, LENGTH(:search_string)) = :search_string) "
+    +         ") * i.use_count "
+    +     ") , 1 " // Round at first decimal.
+    +   ") AS rank, place_id "
+    +   "FROM moz_inputhistory i "
+    +   "GROUP BY i.place_id "
+    +   "HAVING rank > 0 "
+    + ") AS i "
+    + "JOIN moz_places h ON h.id = i.place_id "
+    + "LEFT JOIN moz_favicons f ON f.id = h.favicon_id "
+    + "LEFT JOIN moz_openpages_temp t ON t.url = h.url "
+    + "WHERE AUTOCOMPLETE_MATCH(NULL, h.url, "
+    +                          "IFNULL(bookmark, h.title), tags, "
+    +                          "h.visit_count, h.typed, parent, "
+    +                          "t.open_count, "
+    +                          ":matchBehavior, :searchBehavior) "
+    + "ORDER BY rank DESC, h.frecency DESC "
     );
   });
 
-  this.__defineGetter__("_keywordQuery", function() {
-    delete this._keywordQuery;
-    return this._keywordQuery = this._db.createStatement(
-      "/* do not warn (bug 487787) */ " +
-      "SELECT IFNULL( " +
-          "(SELECT REPLACE(url, '%s', :query_string) FROM moz_places_temp WHERE id = b.fk), " +
-          "(SELECT REPLACE(url, '%s', :query_string) FROM moz_places WHERE id = b.fk) " +
-        ") AS search_url, IFNULL(h_t.title, h.title), " +
-        "COALESCE(f.url, " + best_favicon_for_revhost("moz_places_temp") + "," +
-                  best_favicon_for_revhost("moz_places") + "), b.parent, " +
-        "b.title, NULL, IFNULL(h_t.visit_count, h.visit_count), " +
-        "IFNULL(h_t.typed, h.typed), COALESCE(h_t.id, h.id, b.fk), " +
-        ":query_type " +
-      "FROM moz_keywords k " +
-      "JOIN moz_bookmarks b ON b.keyword_id = k.id " +
-      "LEFT JOIN moz_places AS h ON h.url = search_url " +
-      "LEFT JOIN moz_places_temp AS h_t ON h_t.url = search_url " +
-      "LEFT JOIN moz_favicons f ON f.id = IFNULL(h_t.favicon_id, h.favicon_id) " +
-      "WHERE LOWER(k.keyword) = LOWER(:keyword) " +
-      "ORDER BY IFNULL(h_t.frecency, h.frecency) DESC"
+  XPCOMUtils.defineLazyGetter(this, "_keywordQuery", function() {
+    return this._db.createAsyncStatement(
+      "/* do not warn (bug 487787) */ "
+    + "SELECT "
+    +  "(SELECT REPLACE(url, '%s', :query_string) FROM moz_places WHERE id = b.fk) "
+    +  "AS search_url, h.title, "
+    +  "IFNULL(f.url, (SELECT f.url "
+    +                 "FROM moz_places "
+    +                 "JOIN moz_favicons f ON f.id = favicon_id "
+    +                 "WHERE rev_host = (SELECT rev_host FROM moz_places WHERE id = b.fk) "
+    +                 "ORDER BY frecency DESC "
+    +                 "LIMIT 1) "
+    + "), b.parent, b.title, NULL, h.visit_count, h.typed, IFNULL(h.id, b.fk), "
+    +  ":query_type, t.open_count "
+    +  "FROM moz_keywords k "
+    +  "JOIN moz_bookmarks b ON b.keyword_id = k.id "
+    +  "LEFT JOIN moz_places h ON h.url = search_url "
+    +  "LEFT JOIN moz_favicons f ON f.id = h.favicon_id "
+    +  "LEFT JOIN moz_openpages_temp t ON t.url = search_url "
+    +  "WHERE LOWER(k.keyword) = LOWER(:keyword) "
+    +  "ORDER BY h.frecency DESC "
+    );
+  });
+
+  XPCOMUtils.defineLazyGetter(this, "_registerOpenPageQuery", function() {
+    return this._db.createAsyncStatement(
+      "INSERT OR REPLACE INTO moz_openpages_temp (url, open_count) "
+    + "VALUES (:page_url, "
+    +   "IFNULL("
+    +     "("
+    +        "SELECT open_count + 1 "
+    +        "FROM moz_openpages_temp "
+    +        "WHERE url = :page_url "
+    +      "), "
+    +     "1"
+    +   ")"
+    + ")"
+    );
+  });
+
+  XPCOMUtils.defineLazyGetter(this, "_unregisterOpenPageQuery", function() {
+    return this._db.createAsyncStatement(
+      "UPDATE moz_openpages_temp "
+    + "SET open_count = open_count - 1 "
+    + "WHERE url = :page_url"
     );
   });
 
@@ -384,7 +424,7 @@ function nsPlacesAutoComplete()
   // register observers
   this._os = Cc["@mozilla.org/observer-service;1"].
               getService(Ci.nsIObserverService);
-  this._os.addObserver(this, kQuitApplication, false);
+  this._os.addObserver(this, kTopicShutdown, false);
 
 }
 
@@ -395,6 +435,11 @@ nsPlacesAutoComplete.prototype = {
   startSearch: function PAC_startSearch(aSearchString, aSearchParam,
                                         aPreviousResult, aListener)
   {
+    // If a previous query is running and the controller has not taken care
+    // of stopping it, kill it.
+    if ("_pendingQuery" in this)
+      this.stopSearch();
+
     // Note: We don't use aPreviousResult to make sure ordering of results are
     //       consistent.  See bug 412730 for more details.
 
@@ -404,6 +449,9 @@ nsPlacesAutoComplete.prototype = {
 
     this._currentSearchString =
       this._fixupSearchText(this._originalSearchString.toLowerCase());
+
+    var searchParamParts = aSearchParam.split(" ");
+    this._enableActions = searchParamParts.indexOf("enable-actions") != -1;
 
     this._listener = aListener;
     let result = Cc["@mozilla.org/autocomplete/simple-result;1"].
@@ -424,25 +472,26 @@ nsPlacesAutoComplete.prototype = {
     else
       this._behavior = this._emptySearchDefaultBehavior;
 
-    // For any given search, we run up to three queries:
+    // For any given search, we run up to four queries:
     // 1) keywords (this._keywordQuery)
     // 2) adaptive learning (this._adaptiveQuery)
-    // 3) query from this._getSearch
-    // We always run (2) and (3), but (1) only gets ran if we get any filtered
-    // tokens from this._getSearch (if there are no tokens, there is nothing to
-    // match, so there is no reason to run the query).
+    // 3) open pages not supported by history (this._openPagesQuery)
+    // 4) query from this._getSearch
+    // (1) only gets ran if we get any filtered tokens from this._getSearch,
+    // since if there are no tokens, there is nothing to match, so there is no
+    // reason to run the query).
     let {query, tokens} =
       this._getSearch(this._getUnfilteredSearchTokens(this._currentSearchString));
     let queries = tokens.length ?
-      [this._getBoundKeywordQuery(tokens), this._getBoundAdaptiveQuery(), query] :
-      [this._getBoundAdaptiveQuery(), query];
+      [this._getBoundKeywordQuery(tokens), this._getBoundAdaptiveQuery(), this._getBoundOpenPagesQuery(tokens), query] :
+      [this._getBoundAdaptiveQuery(), this._getBoundOpenPagesQuery(tokens), query];
 
     // Start executing our queries.
     this._executeQueries(queries);
 
     // Set up our persistent state for the duration of the search.
     this._searchTokens = tokens;
-    this._usedPlaceIds = {};
+    this._usedPlaces = {};
   },
 
   stopSearch: function PAC_stopSearch()
@@ -463,6 +512,25 @@ nsPlacesAutoComplete.prototype = {
   {
     if (aRemoveFromDB)
       this._bh.removePage(this._ioService.newURI(aURISpec, null, null));
+  },
+
+  //////////////////////////////////////////////////////////////////////////////
+  //// mozIPlacesAutoComplete
+
+  registerOpenPage: function PAC_registerOpenPage(aURI)
+  {
+    let stmt = this._registerOpenPageQuery;
+    stmt.params.page_url = aURI.spec;
+
+    stmt.executeAsync();
+  },
+
+  unregisterOpenPage: function PAC_unregisterOpenPage(aURI)
+  {
+    let stmt = this._unregisterOpenPageQuery;
+    stmt.params.page_url = aURI.spec;
+
+    stmt.executeAsync();
   },
 
   //////////////////////////////////////////////////////////////////////////////
@@ -493,7 +561,8 @@ nsPlacesAutoComplete.prototype = {
 
   handleError: function PAC_handleError(aError)
   {
-    Components.utils.reportError("Places AutoComplete: " + aError);
+    Components.utils.reportError("Places AutoComplete: An async statement encountered an " +
+                                 "error: " + aError.result + ", '" + aError.message + "'");
   },
 
   handleCompletion: function PAC_handleCompletion(aReason)
@@ -524,11 +593,11 @@ nsPlacesAutoComplete.prototype = {
 
   observe: function PAC_observe(aSubject, aTopic, aData)
   {
-    if (aTopic == kQuitApplication) {
-      this._os.removeObserver(this, kQuitApplication);
+    if (aTopic == kTopicShutdown) {
+      this._os.removeObserver(this, kTopicShutdown);
 
       // Remove our preference observer.
-      this._prefs.removeObserver("", this);
+      this._prefs.QueryInterface(Ci.nsIPrefBranch2).removeObserver("", this);
       delete this._prefs;
 
       // Finalize the statements that we have used.
@@ -537,16 +606,23 @@ nsPlacesAutoComplete.prototype = {
         "_historyQuery",
         "_bookmarkQuery",
         "_tagsQuery",
+        "_openPagesQuery",
         "_typedQuery",
         "_adaptiveQuery",
         "_keywordQuery",
+        "_registerOpenPageQuery",
+        "_unregisterOpenPageQuery",
       ];
       for (let i = 0; i < stmts.length; i++) {
         // We do not want to create any query we haven't already created, so
-        // see if it is a getter first.  __lookupGetter__ returns null if it is
-        // actually a statement.
-        if (!this.__lookupGetter__(stmts[i]))
+        // see if it is a getter first.
+        if (Object.getOwnPropertyDescriptor(this, stmts[i]).value !== undefined) {
           this[stmts[i]].finalize();
+        }
+      }
+
+      if (Object.getOwnPropertyDescriptor(this, "_db").value !== undefined) {
+        this._db.asyncClose();
       }
     }
     else if (aTopic == kPrefChanged) {
@@ -575,6 +651,9 @@ nsPlacesAutoComplete.prototype = {
       uri = uri.slice(8);
     else if (uri.indexOf("ftp://") == 0)
       uri = uri.slice(6);
+
+    if (uri.indexOf("www.") == 0)
+      uri = uri.slice(4);
 
     return this._textURIService.unEscapeURIForUI("UTF-8", uri);
   },
@@ -613,9 +692,10 @@ nsPlacesAutoComplete.prototype = {
     delete this._searchTokens;
     delete this._listener;
     delete this._result;
-    delete this._usedPlaceIds;
+    delete this._usedPlaces;
     delete this._pendingQuery;
     this._secondPass = false;
+    this._enableActions = false;
   },
 
   /**
@@ -698,13 +778,16 @@ nsPlacesAutoComplete.prototype = {
     this._restrictBookmarkToken = safeGetter("restrict.bookmark", "*");
     this._restrictTypedToken = safeGetter("restrict.typed", "~");
     this._restrictTagToken = safeGetter("restrict.tag", "+");
+    this._restrictOpenPageToken = safeGetter("restrict.openpage", "%");
     this._matchTitleToken = safeGetter("match.title", "#");
     this._matchURLToken = safeGetter("match.url", "@");
     this._defaultBehavior = safeGetter("default.behavior", 0);
     // Further restrictions to apply for "empty searches" (i.e. searches for "").
-    // By default we use (HISTORY | TYPED) = 33.
-    this._emptySearchDefaultBehavior = this._defaultBehavior |
-                                       safeGetter("default.behavior.emptyRestriction", 33);
+    this._emptySearchDefaultBehavior =
+      this._defaultBehavior |
+      safeGetter("default.behavior.emptyRestriction",
+                 Ci.mozIPlacesAutoComplete.BEHAVIOR_HISTORY |
+                 Ci.mozIPlacesAutoComplete.BEHAVIOR_TYPED);
 
     // Validate matchBehavior; default to MATCH_BOUNDARY_ANYWHERE.
     if (this._matchBehavior != MATCH_ANYWHERE &&
@@ -744,6 +827,11 @@ nsPlacesAutoComplete.prototype = {
           break;
         case this._restrictTagToken:
           this._setBehavior("tag");
+          break;
+        case this._restrictOpenPageToken:
+          if (!this._enableActions)
+            continue;
+          this._setBehavior("openpage");
           break;
         case this._matchTitleToken:
           this._setBehavior("title");
@@ -794,6 +882,9 @@ nsPlacesAutoComplete.prototype = {
     // We use more optimized queries for restricted searches, so we will always
     // return the most restrictive one to the least restrictive one if more than
     // one token is found.
+    // Note: "openpages" behavior is supported by the default query.
+    //       _openPagesQuery instead returns only pages not supported by
+    //       history and it is always executed.
     let query = this._hasBehavior("tag") ? this._tagsQuery :
                 this._hasBehavior("bookmark") ? this._bookmarkQuery :
                 this._hasBehavior("typed") ? this._typedQuery :
@@ -819,6 +910,24 @@ nsPlacesAutoComplete.prototype = {
     return query;
   },
 
+  _getBoundOpenPagesQuery: function PAC_getBoundOpenPagesQuery(aTokens)
+  {
+    let query = this._openPagesQuery;
+
+    // Bind the needed parameters to the query so consumers can use it.
+    let (params = query.params) {
+      params.query_type = kQueryTypeFiltered;
+      params.matchBehavior = this._matchBehavior;
+      params.searchBehavior = this._behavior;
+      // We only want to search the tokens that we are left with - not the
+      // original search string.
+      params.searchString = aTokens.join(" ");
+      params.maxResults = this._maxRichResults;
+    }
+
+    return query;
+  },
+
   /**
    * Obtains the keyword query with the properly bound parameters.
    *
@@ -831,7 +940,10 @@ nsPlacesAutoComplete.prototype = {
     // The keyword is the first word in the search string, with the parameters
     // following it.
     let searchString = this._originalSearchString;
-    let queryString = searchString.substring(searchString.indexOf(" ") + 1);
+    let queryString = "";
+    let queryIndex = searchString.indexOf(" ");
+    if (queryIndex != -1)
+      queryString = searchString.substring(queryIndex + 1);
 
     // We need to escape the parameters as if they were the query in a URL
     queryString = encodeURIComponent(queryString).replace("%20", "+", "g");
@@ -885,10 +997,19 @@ nsPlacesAutoComplete.prototype = {
   {
     // Before we do any work, make sure this entry isn't already in our results.
     let entryId = aRow.getResultByIndex(kQueryIndexPlaceId);
-    if (this._inResults(entryId))
-      return false;
-
     let escapedEntryURL = aRow.getResultByIndex(kQueryIndexURL);
+    let openPageCount = aRow.getResultByIndex(kQueryIndexOpenPageCount) || 0;
+
+    // If actions are enabled and the page is open, add only the switch-to-tab
+    // result.  Otherwise, add the normal result.
+    let [url, action] = this._enableActions && openPageCount > 0 ?
+                        ["moz-action:switchtab," + escapedEntryURL, "action "] :
+                        [escapedEntryURL, ""];
+
+    if (this._inResults(entryId || url)) {
+      return false;
+    }
+
     let entryTitle = aRow.getResultByIndex(kQueryIndexTitle) || "";
     let entryFavicon = aRow.getResultByIndex(kQueryIndexFaviconURL) || "";
     let entryParentId = aRow.getResultByIndex(kQueryIndexParentId);
@@ -941,21 +1062,20 @@ nsPlacesAutoComplete.prototype = {
         style = "favicon";
     }
 
-    // And finally add this to our results.
-    this._addToResults(entryId, escapedEntryURL, title, entryFavicon, style);
+    this._addToResults(entryId, url, title, entryFavicon, action + style);
     return true;
   },
 
   /**
    * Checks to see if the given place has already been added to the results.
    *
-   * @param aPlaceId
-   *        The place_id to check for.
+   * @param aPlaceIdOrUrl
+   *        The place id or url (if the entry does not have a id) to check for.
    * @return true if the place has been added, false otherwise.
    */
-  _inResults: function PAC_inResults(aPlaceId)
+  _inResults: function PAC_inResults(aPlaceIdOrUrl)
   {
-    return (aPlaceId in this._usedPlaceIds);
+    return aPlaceIdOrUrl in this._usedPlaces;
   },
 
   /**
@@ -978,8 +1098,12 @@ nsPlacesAutoComplete.prototype = {
                                            aFaviconSpec, aStyle)
   {
     // Add this to our internal tracker to ensure duplicates do not end up in
-    // the result.  _usedPlaceIds is an Object that is being used as a set.
-    this._usedPlaceIds[aPlaceId] = true;
+    // the result.  _usedPlaces is an Object that is being used as a set.
+    // Not all entries have a place id, thus we fallback to the url for them.
+    // We cannot use only the url since keywords entries are modified to
+    // include the search string, and would be returned multiple times.  Ids
+    // are faster too.
+    this._usedPlaces[aPlaceId || aURISpec] = true;
 
     // Obtain the favicon for this URI.
     let favicon;
@@ -1046,23 +1170,16 @@ nsPlacesAutoComplete.prototype = {
   //////////////////////////////////////////////////////////////////////////////
   //// nsISupports
 
-  classDescription: "AutoComplete result generator for Places.",
   classID: Components.ID("d0272978-beab-4adc-a3d4-04b76acfa4e7"),
-  contractID: "@mozilla.org/autocomplete/search;1?name=history",
 
   QueryInterface: XPCOMUtils.generateQI([
     Ci.nsIAutoCompleteSearch,
     Ci.nsIAutoCompleteSimpleResultListener,
+    Ci.mozIPlacesAutoComplete,
     Ci.mozIStorageStatementCallback,
     Ci.nsIObserver,
   ])
 };
 
-////////////////////////////////////////////////////////////////////////////////
-//// Module Registration
-
 let components = [nsPlacesAutoComplete];
-function NSGetModule(compMgr, fileSpec)
-{
-  return XPCOMUtils.generateModule(components);
-}
+const NSGetFactory = XPCOMUtils.generateNSGetFactory(components);

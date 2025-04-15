@@ -45,14 +45,10 @@
 #include "xrecore.h"
 #include "nsXPCOM.h"
 #include "nsISupports.h"
+#include "prlog.h"
 
 /**
  * Application-specific data needed to start the apprunner.
- *
- * @status FROZEN - This API is stable. Additional fields may be added to the
- *                  end of the structure in the future. Runtime detection
- *                  of the version of nsXREAppData can be determined by
- *                  examining the "size" field.
  *
  * @note When this structure is allocated and manipulated by XRE_CreateAppData,
  *       string fields will be allocated with NS_Alloc, and interface pointers
@@ -267,6 +263,12 @@ struct nsXREAppData
 #define XRE_USER_SYS_EXTENSION_DIR "XREUSysExt"
 
 /**
+ * A directory service key which specifies the distribution specific files for
+ * the application.
+ */
+#define XRE_APP_DISTRIBUTION_DIR "XREAppDist"
+
+/**
  * Begin an XUL application. Does not return until the user exits the
  * application.
  *
@@ -304,11 +306,10 @@ XRE_API(nsresult,
         XRE_GetBinaryPath, (const char *argv0, nsILocalFile* *aResult))
 
 /**
- * Get the static components built in to libxul.
+ * Get the static module built in to libxul.
  */
-XRE_API(void,
-        XRE_GetStaticComponents, (nsStaticModuleInfo const **aStaticComponents,
-                                  PRUint32 *aComponentCount))
+XRE_API(const mozilla::Module*,
+        XRE_GetStaticModule, ())
 
 /**
  * Lock a profile directory using platform-specific semantics.
@@ -333,12 +334,6 @@ XRE_API(nsresult,
  * @param aAppDirProvider    A directory provider for the application. This
  *                           provider will be aggregated by a libxul provider
  *                           which will provide the base required GRE keys.
- * @param aStaticComponents  Static components provided by the embedding
- *                           application. This should *not* include the
- *                           components from XRE_GetStaticComponents. May be
- *                           null if there are no static components.
- * @param aStaticComponentCount the number of static components in
- *                           aStaticComponents
  *
  * @note This function must be called from the "main" thread.
  *
@@ -348,11 +343,63 @@ XRE_API(nsresult,
  */
 
 XRE_API(nsresult,
-        XRE_InitEmbedding, (nsILocalFile *aLibXULDirectory,
-                            nsILocalFile *aAppDirectory,
-                            nsIDirectoryServiceProvider *aAppDirProvider,
-                            nsStaticModuleInfo const *aStaticComponents,
-                            PRUint32 aStaticComponentCount))
+        XRE_InitEmbedding2, (nsILocalFile *aLibXULDirectory,
+                             nsILocalFile *aAppDirectory,
+                             nsIDirectoryServiceProvider *aAppDirProvider))
+
+/**
+ * Register static XPCOM component information.
+ * This method may be called at any time before or after XRE_main or
+ * XRE_InitEmbedding.
+ */
+XRE_API(nsresult,
+        XRE_AddStaticComponent, (const mozilla::Module* aComponent))
+
+/**
+ * Register XPCOM components found in an array of files/directories.
+ * This method may be called at any time before or after XRE_main or
+ * XRE_InitEmbedding.
+ *
+ * @param aFiles An array of files or directories.
+ * @param aFileCount the number of items in the aFiles array.
+ * @note appdir/components is registered automatically.
+ *
+ * NS_COMPONENT_LOCATION specifies a location to search for binary XPCOM
+ * components as well as component/chrome manifest files.
+ *
+ * NS_SKIN_LOCATION specifies a location to search for chrome manifest files
+ * which are only allowed to register only skin packages and style overlays.
+ */
+enum NSLocationType
+{
+  NS_COMPONENT_LOCATION,
+  NS_SKIN_LOCATION
+};
+
+XRE_API(nsresult,
+        XRE_AddManifestLocation, (NSLocationType aType,
+                                  nsILocalFile* aLocation))
+
+/**
+ * Register XPCOM components found in a JAR.
+ * This is similar to XRE_AddManifestLocation except the file specified
+ * must be a zip archive with a manifest named chrome.manifest
+ * This method may be called at any time before or after XRE_main or
+ * XRE_InitEmbedding.
+ *
+ * @param aFiles An array of files or directories.
+ * @param aFileCount the number of items in the aFiles array.
+ * @note appdir/components is registered automatically.
+ *
+ * NS_COMPONENT_LOCATION specifies a location to search for binary XPCOM
+ * components as well as component/chrome manifest files.
+ *
+ * NS_SKIN_LOCATION specifies a location to search for chrome manifest files
+ * which are only allowed to register only skin packages and style overlays.
+ */
+XRE_API(nsresult,
+        XRE_AddJarManifestLocation, (NSLocationType aType,
+                                     nsILocalFile* aLocation))
 
 /**
  * Fire notifications to inform the toolkit about a new profile. This
@@ -418,4 +465,101 @@ XRE_API(nsresult,
 XRE_API(void,
         XRE_FreeAppData, (nsXREAppData *aAppData))
 
+enum GeckoProcessType {
+  GeckoProcessType_Default = 0,
+
+  GeckoProcessType_Plugin,
+  GeckoProcessType_Content,
+  GeckoProcessType_Jetpack,
+
+  GeckoProcessType_IPDLUnitTest,
+
+  GeckoProcessType_End,
+  GeckoProcessType_Invalid = GeckoProcessType_End
+};
+
+static const char* const kGeckoProcessTypeString[] = {
+  "default",
+  "plugin",
+  "tab",
+  "jetpack",
+  "ipdlunittest"
+};
+
+PR_STATIC_ASSERT(sizeof(kGeckoProcessTypeString) /
+                 sizeof(kGeckoProcessTypeString[0]) ==
+                 GeckoProcessType_End);
+
+
+XRE_API(const char*,
+        XRE_ChildProcessTypeToString, (GeckoProcessType aProcessType))
+
+XRE_API(GeckoProcessType,
+        XRE_StringToChildProcessType, (const char* aProcessTypeString))
+
+#if defined(MOZ_CRASHREPORTER)
+// Used in the "master" parent process hosting the crash server
+XRE_API(PRBool,
+        XRE_TakeMinidumpForChild, (PRUint32 aChildPid, nsILocalFile** aDump))
+
+// Used in child processes.
+XRE_API(PRBool,
+        XRE_SetRemoteExceptionHandler, (const char* aPipe))
+#endif
+
+XRE_API(nsresult,
+        XRE_InitChildProcess, (int aArgc,
+                               char* aArgv[],
+                               GeckoProcessType aProcess))
+
+XRE_API(GeckoProcessType,
+        XRE_GetProcessType, ())
+
+typedef void (*MainFunction)(void* aData);
+
+XRE_API(nsresult,
+        XRE_InitParentProcess, (int aArgc,
+                                char* aArgv[],
+                                MainFunction aMainFunction,
+                                void* aMainFunctionExtraData))
+
+XRE_API(int,
+        XRE_RunIPDLTest, (int aArgc,
+                          char* aArgv[]))
+
+XRE_API(nsresult,
+        XRE_RunAppShell, ())
+
+XRE_API(nsresult,
+        XRE_InitCommandLine, (int aArgc, char* aArgv[]))
+
+XRE_API(nsresult,
+        XRE_DeinitCommandLine, ())
+
+class MessageLoop;
+
+XRE_API(void,
+        XRE_ShutdownChildProcess, ())
+
+XRE_API(MessageLoop*,
+        XRE_GetIOMessageLoop, ())
+
+struct JSContext;
+struct JSString;
+
+XRE_API(bool,
+        XRE_SendTestShellCommand, (JSContext* aCx,
+                                   JSString* aCommand,
+                                   void* aCallback))
+struct JSObject;
+
+XRE_API(bool,
+        XRE_GetChildGlobalObject, (JSContext* aCx,
+                                   JSObject** globalp))
+
+XRE_API(bool,
+        XRE_ShutdownTestShell, ())
+
+XRE_API(void,
+        XRE_InstallX11ErrorHandler, ())
 #endif // _nsXULAppAPI_h__

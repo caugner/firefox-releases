@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla code.
  *
- * The Initial Developer of the Original Code is Mozilla Corporation
+ * The Initial Developer of the Original Code is Mozilla Foundation
  * Portions created by the Initial Developer are Copyright (C) 2009
  * the Initial Developer. All Rights Reserved.
  *
@@ -35,9 +35,17 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#ifdef MOZ_IPC
+#include "base/basictypes.h"
+#include "IPC/IPCMessageUtils.h"
+#endif
+
 #include "nsDOMScrollAreaEvent.h"
 #include "nsGUIEvent.h"
 #include "nsClientRect.h"
+#include "nsDOMClassInfoID.h"
+#include "nsIClassInfo.h"
+#include "nsIXPCScriptable.h"
 
 nsDOMScrollAreaEvent::nsDOMScrollAreaEvent(nsPresContext *aPresContext,
                                            nsScrollAreaEvent *aEvent)
@@ -59,9 +67,11 @@ nsDOMScrollAreaEvent::~nsDOMScrollAreaEvent()
 NS_IMPL_ADDREF_INHERITED(nsDOMScrollAreaEvent, nsDOMUIEvent)
 NS_IMPL_RELEASE_INHERITED(nsDOMScrollAreaEvent, nsDOMUIEvent)
 
+DOMCI_DATA(ScrollAreaEvent, nsDOMScrollAreaEvent)
+
 NS_INTERFACE_MAP_BEGIN(nsDOMScrollAreaEvent)
   NS_INTERFACE_MAP_ENTRY(nsIDOMScrollAreaEvent)
-  NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(ScrollAreaEvent)
+  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(ScrollAreaEvent)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMUIEvent)
 
 
@@ -105,6 +115,44 @@ nsDOMScrollAreaEvent::InitScrollAreaEvent(const nsAString &aEventType,
 
   return NS_OK;
 }
+
+#ifdef MOZ_IPC
+void
+nsDOMScrollAreaEvent::Serialize(IPC::Message* aMsg,
+                                PRBool aSerializeInterfaceType)
+{
+  if (aSerializeInterfaceType) {
+    IPC::WriteParam(aMsg, NS_LITERAL_STRING("scrollareaevent"));
+  }
+
+  nsDOMEvent::Serialize(aMsg, PR_FALSE);
+
+  float val;
+  mClientArea.GetLeft(&val);
+  IPC::WriteParam(aMsg, val);
+  mClientArea.GetTop(&val);
+  IPC::WriteParam(aMsg, val);
+  mClientArea.GetWidth(&val);
+  IPC::WriteParam(aMsg, val);
+  mClientArea.GetHeight(&val);
+  IPC::WriteParam(aMsg, val);
+}
+
+PRBool
+nsDOMScrollAreaEvent::Deserialize(const IPC::Message* aMsg, void** aIter)
+{
+  NS_ENSURE_TRUE(nsDOMEvent::Deserialize(aMsg, aIter), PR_FALSE);
+
+  float x, y, width, height;
+  NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &x), PR_FALSE);
+  NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &y), PR_FALSE);
+  NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &width), PR_FALSE);
+  NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &height), PR_FALSE);
+  mClientArea.SetRect(x, y, width, height);
+
+  return PR_TRUE;
+}
+#endif
 
 nsresult
 NS_NewDOMScrollAreaEvent(nsIDOMEvent **aInstancePtrResult,

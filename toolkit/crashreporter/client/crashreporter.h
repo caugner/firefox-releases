@@ -48,7 +48,7 @@ typedef std::map<std::string, std::string> StringTable;
 #define ST_EXTRAREPORTINFO           "ExtraReportInfo"
 #define ST_CHECKSUBMIT               "CheckSendReport"
 #define ST_CHECKURL                  "CheckIncludeURL"
-#define ST_CHECKEMAIL                "CheckSendEmail"
+#define ST_CHECKEMAIL                "CheckAllowEmail"
 #define ST_EMAILGRAYTEXT             "EmailGrayText"
 #define ST_REPORTPRESUBMIT           "ReportPreSubmit2"
 #define ST_REPORTDURINGSUBMIT        "ReportDuringSubmit2"
@@ -103,6 +103,8 @@ namespace CrashReporter {
   void LogMessage(const std::string& message);
   void DeleteDump();
   bool ShouldEnableSending();
+
+  static const unsigned int kSaveCount = 10;
 }
 
 //=============================================================================
@@ -135,6 +137,7 @@ bool UIMoveFile(const std::string& oldfile, const std::string& newfile);
 bool UIDeleteFile(const std::string& oldfile);
 std::ifstream* UIOpenRead(const std::string& filename);
 std::ofstream* UIOpenWrite(const std::string& filename, bool append=false);
+void UIPruneSavedDumps(const std::string& directory);
 
 #ifdef _MSC_VER
 # pragma warning( pop )

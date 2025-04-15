@@ -80,7 +80,8 @@ nsDOMWorkerTimeout::FunctionCallback::FunctionCallback(PRUint32 aArgc,
 
   JSRuntime* rt;
   *aRv = nsDOMThreadService::JSRuntimeService()->GetRuntime(&rt);
-  NS_ENSURE_SUCCESS(*aRv,);
+  if (NS_FAILED(*aRv))
+    return;
 
   JSBool ok = mCallback.Hold(rt);
   CONSTRUCTOR_ENSURE_TRUE(ok, *aRv);
@@ -119,7 +120,7 @@ nsresult
 nsDOMWorkerTimeout::FunctionCallback::Run(nsDOMWorkerTimeout* aTimeout,
                                           JSContext* aCx)
 {
-  PRInt32 lateness = PR_MAX(0, PRInt32(PR_Now() - aTimeout->mTargetTime)) /
+  PRInt32 lateness = NS_MAX(0, PRInt32(PR_Now() - aTimeout->mTargetTime)) /
                      (PRTime)PR_USEC_PER_MSEC;
   mCallbackArgs[mCallbackArgsLength - 1] = INT_TO_JSVAL(lateness);
 
@@ -153,11 +154,13 @@ nsDOMWorkerTimeout::ExpressionCallback::ExpressionCallback(PRUint32 aArgc,
 
   JSString* expr = JS_ValueToString(aCx, aArgv[0]);
   *aRv = expr ? NS_OK : NS_ERROR_FAILURE;
-  NS_ENSURE_SUCCESS(*aRv,);
+  if (NS_FAILED(*aRv))
+    return;
 
   JSRuntime* rt;
   *aRv = nsDOMThreadService::JSRuntimeService()->GetRuntime(&rt);
-  NS_ENSURE_SUCCESS(*aRv,);
+  if (NS_FAILED(*aRv))
+    return;
 
   JSBool ok = mExpression.Hold(rt);
   CONSTRUCTOR_ENSURE_TRUE(ok, *aRv);
@@ -193,10 +196,9 @@ nsDOMWorkerTimeout::ExpressionCallback::Run(nsDOMWorkerTimeout* aTimeout,
   JSString* expression = JS_ValueToString(aCx, mExpression);
   NS_ENSURE_TRUE(expression, NS_ERROR_FAILURE);
 
-  jschar* string = JS_GetStringChars(expression);
+  size_t stringLength;
+  const jschar* string = JS_GetStringCharsAndLength(aCx, expression, &stringLength);
   NS_ENSURE_TRUE(string, NS_ERROR_FAILURE);
-
-  size_t stringLength = JS_GetStringLength(expression);
 
   jsval rval;
   PRBool success = JS_EvaluateUCScriptForPrincipals(aCx, global, principal,
@@ -253,6 +255,7 @@ nsDOMWorkerTimeout::Init(JSContext* aCx, PRUint32 aArgc, jsval* aArgv,
   else {
     // If no interval was specified, treat this like a timeout, to avoid
     // setting an interval of 0 milliseconds.
+    interval = 0;
     aIsInterval = PR_FALSE;
   }
 
@@ -383,7 +386,7 @@ nsDOMWorkerTimeout::Suspend()
 
   mTimer->Cancel();
 
-  mSuspendInterval = PR_MAX(0, PRInt32(mTargetTime - PR_Now())) /
+  mSuspendInterval = NS_MAX(0, PRInt32(mTargetTime - PR_Now())) /
                      (PRTime)PR_USEC_PER_MSEC;
 
   LOG(("Worker [0x%p] suspending timeout [0x%p] with id %u (interval = %u)",

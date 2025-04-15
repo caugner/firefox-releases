@@ -42,22 +42,23 @@
 #include "nsIDOMSVGDocument.h"
 #endif
 #include "nsGkAtoms.h"
-#include "nsPresContext.h"
-#include "nsIPresShell.h"
 #include "nsIDocument.h"
 #include "nsMappedAttributes.h"
 #include "nsDOMError.h"
 #include "nsRuleData.h"
 #include "nsStyleConsts.h"
 
-class nsHTMLIFrameElement : public nsGenericHTMLFrameElement,
-                            public nsIDOMHTMLIFrameElement
+using namespace mozilla::dom;
+
+class nsHTMLIFrameElement : public nsGenericHTMLFrameElement
+                          , public nsIDOMHTMLIFrameElement
 #ifdef MOZ_SVG
-                            , public nsIDOMGetSVGDocument
+                          , public nsIDOMGetSVGDocument
 #endif
 {
 public:
-  nsHTMLIFrameElement(nsINodeInfo *aNodeInfo);
+  nsHTMLIFrameElement(already_AddRefed<nsINodeInfo> aNodeInfo,
+                      mozilla::dom::FromParser aFromParser = mozilla::dom::NOT_FROM_PARSER);
   virtual ~nsHTMLIFrameElement();
 
   // nsISupports
@@ -89,14 +90,16 @@ public:
   virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
+  virtual nsXPCClassInfo* GetClassInfo();
 };
 
 
-NS_IMPL_NS_NEW_HTML_ELEMENT(IFrame)
+NS_IMPL_NS_NEW_HTML_ELEMENT_CHECK_PARSER(IFrame)
 
 
-nsHTMLIFrameElement::nsHTMLIFrameElement(nsINodeInfo *aNodeInfo)
-  : nsGenericHTMLFrameElement(aNodeInfo)
+nsHTMLIFrameElement::nsHTMLIFrameElement(already_AddRefed<nsINodeInfo> aNodeInfo,
+                                         FromParser aFromParser)
+  : nsGenericHTMLFrameElement(aNodeInfo, aFromParser)
 {
 }
 
@@ -107,6 +110,8 @@ nsHTMLIFrameElement::~nsHTMLIFrameElement()
 
 NS_IMPL_ADDREF_INHERITED(nsHTMLIFrameElement,nsGenericElement)
 NS_IMPL_RELEASE_INHERITED(nsHTMLIFrameElement,nsGenericElement)
+
+DOMCI_NODE_DATA(HTMLIFrameElement, nsHTMLIFrameElement)
 
 // QueryInterface implementation for nsHTMLIFrameElement
 NS_INTERFACE_TABLE_HEAD(nsHTMLIFrameElement)
@@ -157,16 +162,16 @@ nsHTMLIFrameElement::ParseAttribute(PRInt32 aNamespaceID,
 {
   if (aNamespaceID == kNameSpaceID_None) {
     if (aAttribute == nsGkAtoms::marginwidth) {
-      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+      return aResult.ParseSpecialIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::marginheight) {
-      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+      return aResult.ParseSpecialIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::width) {
-      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+      return aResult.ParseSpecialIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::height) {
-      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+      return aResult.ParseSpecialIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::frameborder) {
       return ParseFrameborderValue(aValue, aResult);

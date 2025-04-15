@@ -58,6 +58,10 @@ ifdef NS_PRINTING
 PARALLEL_DIRS += printing
 endif
 
+ifdef MOZ_IPC
+PARALLEL_DIRS += ipc
+endif
+
 ifdef MOZ_MATHML
 PARALLEL_DIRS += \
   mathml \
@@ -68,11 +72,9 @@ ifdef MOZ_SVG
 PARALLEL_DIRS += svg/base/src
 endif
 
-ifndef MOZ_NO_INSPECTOR_APIS
 PARALLEL_DIRS += inspector/public inspector/src
 ifdef ENABLE_TESTS
 PARALLEL_DIRS += inspector/tests
-endif
 endif
 
 DIRS           += build
@@ -83,12 +85,12 @@ PARALLEL_DIRS += \
   xul/base/test \
   $(NULL)
 
-TOOL_DIRS      += tools/reftest
+TOOL_DIRS      += tools/reftest reftests/fonts reftests/fonts/mplus
 DIRS           += tools/pageloader
-ifndef MOZ_ENABLE_LIBXUL
-TOOL_DIRS	+= html/tests
+
+ifdef MOZ_DEBUG
+DIRS            += tools/layout-debug
 endif
-TOOL_DIRS	+= reftests/fonts reftests/fonts/mplus
 endif
 
 include $(topsrcdir)/config/rules.mk

@@ -42,10 +42,14 @@
 #include "nsNetUtil.h"
 #include "nsIImageToPixbuf.h"
 #include "nsIStringBundle.h"
+#include "nsIObserverService.h"
 
-#include <gdk-pixbuf/gdk-pixbuf.h>
-#include <libnotify/notify.h>
 #include <gdk/gdk.h>
+
+// Compatibility macro for <libnotify-0.7
+#ifndef NOTIFY_CHECK_VERSION
+#define NOTIFY_CHECK_VERSION(x,y,z) 0
+#endif
 
 static PRBool gHasActions = PR_FALSE;
 
@@ -65,21 +69,24 @@ static void notify_closed_marshal(GClosure* closure,
 {
   NS_ABORT_IF_FALSE(n_param_values >= 1, "No object in params");
 
-  gpointer notification = g_value_peek_pointer(param_values);
-  g_object_unref(notification);
-
   nsAlertsIconListener* alert =
     static_cast<nsAlertsIconListener*>(closure->data);
   alert->SendClosed();
   NS_RELEASE(alert);
 }
 
-NS_IMPL_ISUPPORTS2(nsAlertsIconListener, imgIContainerObserver, imgIDecoderObserver)
+NS_IMPL_ISUPPORTS3(nsAlertsIconListener, imgIContainerObserver, imgIDecoderObserver, nsIObserver)
 
 nsAlertsIconListener::nsAlertsIconListener()
-: mLoadedFrame(PR_FALSE)
+: mLoadedFrame(PR_FALSE),
+  mHasQuit(PR_FALSE),
+  mNotification(NULL)
 {
   MOZ_COUNT_CTOR(nsAlertsIconListener);
+
+  nsCOMPtr<nsIObserverService> obsServ =
+      do_GetService("@mozilla.org/observer-service;1");
+  obsServ->AddObserver(this, "quit-application", PR_FALSE);
 }
 
 nsAlertsIconListener::~nsAlertsIconListener()
@@ -88,6 +95,12 @@ nsAlertsIconListener::~nsAlertsIconListener()
 
   if (mIconRequest)
     mIconRequest->CancelAndForgetObserver(NS_BINDING_ABORTED);
+
+  if (!mHasQuit) {
+    nsCOMPtr<nsIObserverService> obsServ =
+        do_GetService("@mozilla.org/observer-service;1");
+    obsServ->RemoveObserver(this, "quit-application");
+  }
 }
 
 NS_IMETHODIMP
@@ -145,7 +158,7 @@ nsAlertsIconListener::OnStopDecode(imgIRequest* aRequest,
 
 NS_IMETHODIMP
 nsAlertsIconListener::FrameChanged(imgIContainer* aContainer,
-                                   nsIntRect* aDirtyRect)
+                                   const nsIntRect* aDirtyRect)
 {
   return NS_OK;
 }
@@ -166,6 +179,12 @@ nsAlertsIconListener::OnStopRequest(imgIRequest* aRequest,
     mIconRequest->Cancel(NS_BINDING_ABORTED);
     mIconRequest = nsnull;
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAlertsIconListener::OnDiscard(imgIRequest *aRequest)
+{
   return NS_OK;
 }
 
@@ -202,21 +221,27 @@ nsAlertsIconListener::OnStopFrame(imgIRequest* aRequest,
 nsresult
 nsAlertsIconListener::ShowAlert(GdkPixbuf* aPixbuf)
 {
-  NotifyNotification* notify = notify_notification_new(mAlertTitle.get(),
-                                                       mAlertText.get(),
-                                                       NULL, NULL);
-  if (!notify)
+  mNotification = notify_notification_new(mAlertTitle.get(),
+                                          mAlertText.get(),
+                                          NULL
+// >=libnotify-0.7.0 has no support for attaching to widgets
+#if !NOTIFY_CHECK_VERSION(0,7,0)
+                                          , NULL
+#endif
+                                          );
+
+  if (!mNotification)
     return NS_ERROR_OUT_OF_MEMORY;
 
   if (aPixbuf)
-    notify_notification_set_icon_from_pixbuf(notify, aPixbuf);
+    notify_notification_set_icon_from_pixbuf(mNotification, aPixbuf);
 
   NS_ADDREF(this);
   if (mAlertHasAction) {
     // What we put as the label doesn't matter here, if the action
     // string is "default" then that makes the entire bubble clickable
     // rather than creating a button.
-    notify_notification_add_action(notify, "default", "Activate",
+    notify_notification_add_action(mNotification, "default", "Activate",
                                    notify_action_cb, this, NULL);
   }
 
@@ -226,8 +251,8 @@ nsAlertsIconListener::ShowAlert(GdkPixbuf* aPixbuf)
   // with a floating reference, which gets sunk by g_signal_connect_closure().
   GClosure* closure = g_closure_new_simple(sizeof(GClosure), this);
   g_closure_set_marshal(closure, notify_closed_marshal);
-  g_signal_connect_closure(notify, "closed", closure, FALSE);
-  gboolean result = notify_notification_show(notify, NULL);
+  mClosureHandler = g_signal_connect_closure(mNotification, "closed", closure, FALSE);
+  gboolean result = notify_notification_show(mNotification, NULL);
 
   return result ? NS_OK : NS_ERROR_FAILURE;
 }
@@ -252,7 +277,7 @@ nsAlertsIconListener::StartRequest(const nsAString & aImageUrl)
 
   return il->LoadImage(imageUri, nsnull, nsnull, nsnull, this,
                        nsnull, nsIRequest::LOAD_NORMAL, nsnull, nsnull,
-                       getter_AddRefs(mIconRequest));
+                       nsnull, getter_AddRefs(mIconRequest));
 }
 
 void
@@ -265,8 +290,27 @@ nsAlertsIconListener::SendCallback()
 void
 nsAlertsIconListener::SendClosed()
 {
+  if (mNotification) {
+    g_object_unref(mNotification);
+    mNotification = NULL;
+  }
   if (mAlertListener)
     mAlertListener->Observe(NULL, "alertfinished", mAlertCookie.get());
+}
+
+NS_IMETHODIMP
+nsAlertsIconListener::Observe(nsISupports *aSubject, const char *aTopic,
+                              const PRUnichar *aData) {
+  // We need to close any open notifications upon application exit, otherwise
+  // we will leak since libnotify holds a ref for us.
+  if (!nsCRT::strcmp(aTopic, "quit-application") && mNotification) {
+    g_signal_handler_disconnect(mNotification, mClosureHandler);
+    g_object_unref(mNotification);
+    mNotification = NULL;
+    mHasQuit = PR_TRUE;
+    Release(); // equivalent to NS_RELEASE(this)
+  }
+  return NS_OK;
 }
 
 nsresult
@@ -320,9 +364,15 @@ nsAlertsIconListener::InitAlertAsync(const nsAString & aImageUrl,
   if (!gHasActions && aAlertTextClickable)
     return NS_ERROR_FAILURE; // No good, fallback to XUL
 
-  mAlertTitle = NS_ConvertUTF16toUTF8(aAlertTitle);
-  mAlertText = NS_ConvertUTF16toUTF8(aAlertText);
+  // Workaround for a libnotify bug - blank titles aren't dealt with
+  // properly so we use a space
+  if (aAlertTitle.IsEmpty()) {
+    mAlertTitle = NS_LITERAL_CSTRING(" ");
+  } else {
+    mAlertTitle = NS_ConvertUTF16toUTF8(aAlertTitle);
+  }
 
+  mAlertText = NS_ConvertUTF16toUTF8(aAlertText);
   mAlertHasAction = aAlertTextClickable;
 
   mAlertListener = aAlertListener;

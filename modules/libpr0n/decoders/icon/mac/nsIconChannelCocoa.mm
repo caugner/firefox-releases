@@ -193,11 +193,11 @@ nsresult nsIconChannel::ExtractIconInfoFromUrl(nsIFile ** aLocalFile, PRUint32 *
   iconURI->GetContentType(aContentType);
   iconURI->GetFileExtension(aFileExtension);
   
-  nsCOMPtr<nsIURI> fileURI;
-  rv = iconURI->GetIconFile(getter_AddRefs(fileURI));
-  if (NS_FAILED(rv) || !fileURI) return NS_OK;
+  nsCOMPtr<nsIURL> url;
+  rv = iconURI->GetIconURL(getter_AddRefs(url));
+  if (NS_FAILED(rv) || !url) return NS_OK;
 
-  nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(fileURI, &rv);
+  nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(url, &rv);
   if (NS_FAILED(rv) || !fileURL) return NS_OK;
 
   nsCOMPtr<nsIFile> file;
@@ -274,7 +274,11 @@ nsresult nsIconChannel::MakeInputStream(nsIInputStream** _retval, PRBool nonBloc
     NSString* fileExtension = [NSString stringWithUTF8String:PromiseFlatCString(fileExt).get()];
     iconImage = [[NSWorkspace sharedWorkspace] iconForFileType:fileExtension];
   }
-  
+
+  // If we still don't have an icon, get the generic document icon.
+  if (!iconImage)
+    iconImage = [[NSWorkspace sharedWorkspace] iconForFileType:NSFileTypeUnknown];
+
   if (!iconImage)
     return NS_ERROR_FAILURE;
   

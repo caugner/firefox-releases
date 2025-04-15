@@ -415,7 +415,12 @@ OpenFile(const nsAFlatString &name, PRIntn osflags, PRIntn mode,
     }
 
     if (osflags & nsILocalFile::DELETE_ON_CLOSE) {
+#ifdef WINCE
+        NS_ASSERTION(!(osflags & nsILocalFile::DELETE_ON_CLOSE), "DELETE_ON_CLOSE is not supported on wince");
+        return NS_ERROR_NOT_AVAILABLE;
+#else
       flag6 |= FILE_FLAG_DELETE_ON_CLOSE;
+#endif
     }
 
     HANDLE file = ::CreateFileW(name.get(), access,
@@ -677,14 +682,6 @@ class nsDirEnumerator : public nsISimpleEnumerator,
                 if (NS_FAILED(rv))
                     return rv;
 
-                // make sure the thing exists.  If it does, try the next one.
-                PRBool exists;
-                rv = file->Exists(&exists);
-                if (NS_FAILED(rv) || !exists)
-                {
-                    return HasMoreElements(result);
-                }
-
                 mNext = do_QueryInterface(file);
             }
             *result = mNext != nsnull;
@@ -759,7 +756,7 @@ nsLocalFile::nsLocalFile()
 {
 }
 
-NS_METHOD
+nsresult
 nsLocalFile::nsLocalFileConstructor(nsISupports* outer, const nsIID& aIID, void* *aInstancePtr)
 {
     NS_ENSURE_ARG_POINTER(aInstancePtr);
@@ -1097,7 +1094,6 @@ nsLocalFile::AppendInternal(const nsAFlatString &node, PRBool multipleComponents
         || node.EqualsASCII(".."))                              // can't be ..
         return NS_ERROR_FILE_UNRECOGNIZED_PATH;
 
-#ifndef WINCE  // who cares?
     if (multipleComponents)
     {
         // can't contain .. as a path component. Ensure that the valid components
@@ -1124,7 +1120,6 @@ nsLocalFile::AppendInternal(const nsAFlatString &node, PRBool multipleComponents
     // single components can't contain '\'
     else if (node.FindChar(L'\\') != kNotFound)
         return NS_ERROR_FILE_UNRECOGNIZED_PATH;
-#endif
 
     MakeDirty();
     
@@ -1139,7 +1134,6 @@ nsLocalFile::AppendInternal(const nsAFlatString &node, PRBool multipleComponents
 NS_IMETHODIMP
 nsLocalFile::Normalize()
 {
-#ifndef WINCE
     // XXX See bug 187957 comment 18 for possible problems with this implementation.
     
     if (mWorkingPath.IsEmpty())
@@ -1187,13 +1181,17 @@ nsLocalFile::Normalize()
          * manages to eject the drive between our call to _getdrives() and
          * our *calls* to _wgetdcwd.
          */
+#ifdef WINCE
+        // no concept of a cwd on wince, let alone a cwd per drive
+        pcwd = L"\\";
+#else
         if (!((1 << (drive - 1)) & _getdrives()))
             return NS_ERROR_FILE_INVALID_PATH;
         if (!_wgetdcwd(drive, pcwd, MAX_PATH))
             pcwd = _wgetdcwd(drive, 0, 0);
         if (!pcwd)
             return NS_ERROR_OUT_OF_MEMORY;
-
+#endif
         nsAutoString currentDir(pcwd);
         if (pcwd != cwd)
             free(pcwd);
@@ -1291,9 +1289,6 @@ nsLocalFile::Normalize()
     } 
 
     MakeDirty();
-#else // WINCE
-    // WINCE FIX
-#endif 
     return NS_OK;
 }
 
@@ -1467,10 +1462,23 @@ nsLocalFile::CopySingleFile(nsIFile *sourceFile, nsIFile *destParent,
         copyOK = ::CopyFileW(filePath.get(), destPath.get(), PR_TRUE);
     else {
 #ifndef WINCE
-        copyOK = ::MoveFileExW(filePath.get(), destPath.get(),
-                               MOVEFILE_REPLACE_EXISTING |
-                               MOVEFILE_COPY_ALLOWED |
-                               MOVEFILE_WRITE_THROUGH);
+        DWORD status;
+        if (FileEncryptionStatusW(filePath.get(), &status)
+            && status == FILE_IS_ENCRYPTED)
+        {
+            copyOK = CopyFileExW(filePath.get(), destPath.get(), NULL, NULL, NULL,
+                                 COPY_FILE_ALLOW_DECRYPTED_DESTINATION);
+
+            if (copyOK)
+                DeleteFileW(filePath.get());
+        }
+        else
+        {
+            copyOK = ::MoveFileExW(filePath.get(), destPath.get(),
+                                   MOVEFILE_REPLACE_EXISTING |
+                                   MOVEFILE_COPY_ALLOWED |
+                                   MOVEFILE_WRITE_THROUGH);
+        }
 #else
         DeleteFile(destPath.get());
         copyOK = :: MoveFileW(filePath.get(), destPath.get());
@@ -1540,7 +1548,7 @@ nsLocalFile::CopyMove(nsIFile *aParentDir, const nsAString &newName, PRBool foll
     {
         PRBool isDir;
         newParentDir->IsDirectory(&isDir);
-        if (isDir == PR_FALSE)
+        if (!isDir)
         {
             if (followSymlinks)
             {
@@ -1960,12 +1968,14 @@ nsLocalFile::SetLastModifiedTimeOfLink(PRInt64 aLastModifiedTime)
 nsresult
 nsLocalFile::SetModDate(PRInt64 aLastModifiedTime, const PRUnichar *filePath)
 {
+    // The FILE_FLAG_BACKUP_SEMANTICS is required in order to change the
+    // modification time for directories.
     HANDLE file = ::CreateFileW(filePath,          // pointer to name of the file
                                 GENERIC_WRITE,     // access (write) mode
                                 0,                 // share mode
                                 NULL,              // pointer to security attributes
                                 OPEN_EXISTING,     // how to create
-                                0,                 // file attributes
+                                FILE_FLAG_BACKUP_SEMANTICS,  // file attributes
                                 NULL);
 
     if (file == INVALID_HANDLE_VALUE)
@@ -1973,12 +1983,12 @@ nsLocalFile::SetModDate(PRInt64 aLastModifiedTime, const PRUnichar *filePath)
         return ConvertWinError(GetLastError());
     }
 
-    FILETIME lft, ft;
+    FILETIME ft;
     SYSTEMTIME st;
     PRExplodedTime pret;
 
     // PR_ExplodeTime expects usecs...
-    PR_ExplodeTime(aLastModifiedTime * PR_USEC_PER_MSEC, PR_LocalTimeParameters, &pret);
+    PR_ExplodeTime(aLastModifiedTime * PR_USEC_PER_MSEC, PR_GMTParameters, &pret);
     st.wYear            = pret.tm_year;
     st.wMonth           = pret.tm_month + 1; // Convert start offset -- Win32: Jan=1; NSPR: Jan=0
     st.wDayOfWeek       = pret.tm_wday;
@@ -1990,8 +2000,7 @@ nsLocalFile::SetModDate(PRInt64 aLastModifiedTime, const PRUnichar *filePath)
 
     nsresult rv = NS_OK;
     // if at least one of these fails...
-    if (!(SystemTimeToFileTime(&st, &lft) != 0 &&
-          LocalFileTimeToFileTime(&lft, &ft) != 0 &&
+    if (!(SystemTimeToFileTime(&st, &ft) != 0 &&
           SetFileTime(file, NULL, &ft, &ft) != 0))
     {
       rv = ConvertWinError(GetLastError());
@@ -2193,7 +2202,6 @@ nsLocalFile::GetDiskSpaceAvailable(PRInt64 *aDiskSpaceAvailable)
     // Check we are correctly initialized.
     CHECK_mWorkingPath();
 
-#ifndef WINCE
     NS_ENSURE_ARG(aDiskSpaceAvailable);
 
     ResolveAndStat();
@@ -2205,8 +2213,6 @@ nsLocalFile::GetDiskSpaceAvailable(PRInt64 *aDiskSpaceAvailable)
         *aDiskSpaceAvailable = liFreeBytesAvailableToCaller.QuadPart;
         return NS_OK;
     }
-#endif
-    // WINCE FIX
     *aDiskSpaceAvailable = 0;
     return NS_OK;
 }
@@ -2741,7 +2747,6 @@ nsLocalFile::SetFileAttributesWin(PRUint32 aAttribs)
 NS_IMETHODIMP
 nsLocalFile::Reveal()
 {
-#ifndef WINCE
     // make sure mResolvedPath is set
     nsresult rv = ResolveAndStat();
     if (NS_FAILED(rv) && rv != NS_ERROR_FILE_NOT_FOUND)
@@ -2754,8 +2759,11 @@ nsLocalFile::Reveal()
     nsAutoString explorerPath;
     rv = winDir->GetPath(explorerPath);  
     NS_ENSURE_SUCCESS(rv, rv);
+#ifndef WINCE
     explorerPath.Append(L"\\explorer.exe");
-    
+#else
+    explorerPath.Append(L"\\fexplorer.exe");
+#endif
     // Always open a new window for files because Win2K doesn't appear to select
     // the file if a window showing that folder was already open. If the resolved 
     // path is a directory then instead of opening the parent and selecting it, 
@@ -2766,15 +2774,25 @@ nsLocalFile::Reveal()
     explorerParams.Append(L'\"');
     explorerParams.Append(mResolvedPath);
     explorerParams.Append(L'\"');
-    
+#ifdef WINCE
+    SHELLEXECUTEINFO seinfo;
+    memset(&seinfo, 0, sizeof(seinfo));
+    seinfo.cbSize = sizeof(SHELLEXECUTEINFO);
+    seinfo.fMask  = NULL;
+    seinfo.hwnd   = NULL;
+    seinfo.lpVerb =  L"open";
+    seinfo.lpFile = explorerPath.get();
+    seinfo.lpParameters =  explorerParams.get();
+    seinfo.lpDirectory  = NULL;
+    seinfo.nShow  = SW_SHOWNORMAL;
+    if (!ShellExecuteEx(&seinfo))
+        return NS_ERROR_FAILURE;
+#else    
     if (::ShellExecuteW(NULL, L"open", explorerPath.get(), explorerParams.get(),
                         NULL, SW_SHOWNORMAL) <= (HINSTANCE) 32)
         return NS_ERROR_FAILURE;
-    
+#endif    
     return NS_OK;
-#else
-    return NS_ERROR_NOT_AVAILABLE;
-#endif
 }
 #ifdef WINCE 
 #ifndef UNICODE
@@ -3040,7 +3058,7 @@ nsLocalFile::EnsureShortPath()
     WCHAR thisshort[MAX_PATH];
     DWORD thisr = ::GetShortPathNameW(mWorkingPath.get(), thisshort,
                                       sizeof(thisshort));
-    // If an error occured (thisr == 0) thisshort is uninitialized memory!
+    // If an error occurred (thisr == 0) thisshort is uninitialized memory!
     if (thisr != 0 && thisr < sizeof(thisshort))
         mShortWorkingPath.Assign(thisshort);
     else

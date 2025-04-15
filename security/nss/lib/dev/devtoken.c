@@ -35,12 +35,10 @@
  * ***** END LICENSE BLOCK ***** */
 
 #ifdef DEBUG
-static const char CVS_ID[] = "@(#) $RCSfile: devtoken.c,v $ $Revision: 1.51 $ $Date: 2008/09/30 04:09:02 $";
+static const char CVS_ID[] = "@(#) $RCSfile: devtoken.c,v $ $Revision: 1.54 $ $Date: 2010/04/03 18:27:30 $";
 #endif /* DEBUG */
 
-#ifndef NSSCKEPV_H
-#include "nssckepv.h"
-#endif /* NSSCKEPV_H */
+#include "pkcs11.h"
 
 #ifndef DEVM_H
 #include "devm.h"
@@ -67,7 +65,7 @@ nssToken_Destroy (
 )
 {
     if (tok) {
-	if (PR_AtomicDecrement(&tok->base.refCount) == 0) {
+	if (PR_ATOMIC_DECREMENT(&tok->base.refCount) == 0) {
 	    PZ_DestroyLock(tok->base.lock);
 	    nssTokenObjectCache_Destroy(tok->cache);
 	    /* The token holds the first/last reference to the slot.
@@ -101,7 +99,7 @@ nssToken_AddRef (
   NSSToken *tok
 )
 {
-    PR_AtomicIncrement(&tok->base.refCount);
+    PR_ATOMIC_INCREMENT(&tok->base.refCount);
     return tok;
 }
 
@@ -431,6 +429,13 @@ find_objects_by_template (
     CK_OBJECT_CLASS objclass = (CK_OBJECT_CLASS)-1;
     nssCryptokiObject **objects = NULL;
     PRUint32 i;
+
+    if (!token) {
+    	PORT_SetError(SEC_ERROR_NO_TOKEN);
+	if (statusOpt) 
+	    *statusOpt = PR_FAILURE;
+	return NULL;
+    }
     for (i=0; i<otsize; i++) {
 	if (obj_template[i].type == CKA_CLASS) {
 	    objclass = *(CK_OBJECT_CLASS *)obj_template[i].pValue;
@@ -491,6 +496,10 @@ nssToken_ImportCertificate (
     nssTokenSearchType searchType;
     nssCryptokiObject *rvObject = NULL;
 
+    if (!tok) {
+    	PORT_SetError(SEC_ERROR_NO_TOKEN);
+	return NULL;
+    }
     if (certType == NSSCertificateType_PKIX) {
 	cert_type = CKC_X_509;
     } else {
@@ -842,6 +851,13 @@ nssToken_FindCertificateByIssuerAndSerialNumber (
     nssCryptokiObject **objects;
     nssCryptokiObject *rvObject = NULL;
     NSS_CK_TEMPLATE_START(cert_template, attr, ctsize);
+
+    if (!token) {
+    	PORT_SetError(SEC_ERROR_NO_TOKEN);
+	if (statusOpt) 
+	    *statusOpt = PR_FAILURE;
+	return NULL;
+    }
     /* Set the search to token/session only if provided */
     if (searchType == nssTokenSearchType_SessionOnly) {
 	NSS_CK_SET_ATTRIBUTE_ITEM(attr, CKA_TOKEN, &g_ck_false);

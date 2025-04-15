@@ -13,7 +13,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Mozilla Corporation.
+ * The Initial Developer of the Original Code is Mozilla Foundation.
  * Portions created by the Initial Developer are Copyright (C) 2007
  * the Initial Developer. All Rights Reserved.
  *
@@ -40,6 +40,7 @@ const Cc = Components.classes;
 const Ci = Components.interfaces;
 
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+Components.utils.import("resource://gre/modules/Services.jsm");
 
 function LoginManager() {
     this.init();
@@ -47,32 +48,21 @@ function LoginManager() {
 
 LoginManager.prototype = {
 
-    classDescription: "LoginManager",
-    contractID: "@mozilla.org/login-manager;1",
     classID: Components.ID("{cb9e0de8-3598-4ed7-857b-827f011ad5d8}"),
     QueryInterface : XPCOMUtils.generateQI([Ci.nsILoginManager,
-                                            Ci.nsISupportsWeakReference]),
+                                            Ci.nsISupportsWeakReference,
+                                            Ci.nsIInterfaceRequestor]),
+    getInterface : function(aIID) {
+      if (aIID.equals(Ci.mozIStorageConnection) && this._storage) {
+        let ir = this._storage.QueryInterface(Ci.nsIInterfaceRequestor);
+        return ir.getInterface(aIID);
+      }
+
+      throw Cr.NS_ERROR_NO_INTERFACE;
+    },
 
 
     /* ---------- private memebers ---------- */
-
-
-    __logService : null, // Console logging service, used for debugging.
-    get _logService() {
-        if (!this.__logService)
-            this.__logService = Cc["@mozilla.org/consoleservice;1"].
-                                getService(Ci.nsIConsoleService);
-        return this.__logService;
-    },
-
-
-    __ioService: null, // IO service for string -> nsIURI conversion
-    get _ioService() {
-        if (!this.__ioService)
-            this.__ioService = Cc["@mozilla.org/network/io-service;1"].
-                               getService(Ci.nsIIOService);
-        return this.__ioService;
-    },
 
 
     __formFillService : null, // FormFillController, for username autocompleting
@@ -82,15 +72,6 @@ LoginManager.prototype = {
                             Cc["@mozilla.org/satchel/form-fill-controller;1"].
                             getService(Ci.nsIFormFillController);
         return this.__formFillService;
-    },
-
-
-    __observerService : null, // Observer Service, for notifications
-    get _observerService() {
-        if (!this.__observerService)
-            this.__observerService = Cc["@mozilla.org/observer-service;1"].
-                                     getService(Ci.nsIObserverService);
-        return this.__observerService;
     },
 
 
@@ -173,8 +154,7 @@ LoginManager.prototype = {
         this._observer._pwmgr            = this;
 
         // Preferences. Add observer so we get notified of changes.
-        this._prefBranch = Cc["@mozilla.org/preferences-service;1"].
-                           getService(Ci.nsIPrefService).getBranch("signon.");
+        this._prefBranch = Services.prefs.getBranch("signon.");
         this._prefBranch.QueryInterface(Ci.nsIPrefBranch2);
         this._prefBranch.addObserver("", this._observer, false);
 
@@ -190,16 +170,14 @@ LoginManager.prototype = {
 
 
         // Form submit observer checks forms for new logins and pw changes.
-        this._observerService.addObserver(this._observer, "earlyformsubmit", false);
-        this._observerService.addObserver(this._observer, "xpcom-shutdown", false);
+        Services.obs.addObserver(this._observer, "earlyformsubmit", false);
+        Services.obs.addObserver(this._observer, "xpcom-shutdown", false);
 
         // WebProgressListener for getting notification of new doc loads.
         var progress = Cc["@mozilla.org/docloaderservice;1"].
                        getService(Ci.nsIWebProgress);
         progress.addProgressListener(this._webProgressListener,
                                      Ci.nsIWebProgress.NOTIFY_STATE_DOCUMENT);
-
-
     },
 
 
@@ -212,7 +190,7 @@ LoginManager.prototype = {
         if (!this._debug)
             return;
         dump("Login Manager: " + message + "\n");
-        this._logService.logStringMessage("Login Manager: " + message);
+        Services.console.logStringMessage("Login Manager: " + message);
     },
 
 
@@ -376,13 +354,10 @@ LoginManager.prototype = {
                     var [usernameField, passwordField, ignored] =
                         this._pwmgr._getFormFields(acForm, false);
                     if (usernameField == acInputField && passwordField) {
-                        let oldValue = passwordField.value;
-                        // Clobber any existing password.
-                        passwordField.value = "";
-                        let [didFillForm, foundLogins] =
-                            this._pwmgr._fillForm(acForm, true, true, null);
-                        if (!didFillForm)
-                            passwordField.value = oldValue;
+                        // This shouldn't trigger a master password prompt,
+                        // because we don't attach to the input until after we
+                        // successfully obtain logins for the form.
+                        this._pwmgr._fillForm(acForm, true, true, true, null);
                     } else {
                         this._pwmgr.log("Oops, form changed before AC invoked");
                     }
@@ -553,6 +528,14 @@ LoginManager.prototype = {
 
 
     /*
+     * uiBusy
+     */
+    get uiBusy() {
+        return this._storage.uiBusy;
+    },
+
+
+    /*
      * getLoginSavingEnabled
      *
      * Check to see if user has disabled saving logins for the host.
@@ -596,7 +579,7 @@ LoginManager.prototype = {
         // aElement is nsIDOMHTMLInputElement
 
         if (!this._remember)
-            return false;
+            return null;
 
         this.log("AutoCompleteSearch invoked. Search is: " + aSearchString);
 
@@ -631,6 +614,9 @@ LoginManager.prototype = {
             var origin = this._getPasswordOrigin(doc.documentURI);
             var actionOrigin = this._getActionOrigin(aElement.form);
 
+            // This shouldn't trigger a master password prompt, because we
+            // don't attach to the input until after we successfully obtain
+            // logins for the form.
             var logins = this.findLogins({}, origin, actionOrigin, null);
             var matchingLogins = [];
 
@@ -734,8 +720,16 @@ LoginManager.prototype = {
         // username. We might not find a username field if the user is
         // already logged in to the site. 
         for (var i = pwFields[0].index - 1; i >= 0; i--) {
-            if (form.elements[i].type == "text") {
-                usernameField = form.elements[i];
+            var element = form.elements[i];
+            var fieldType = (element.hasAttribute("type") ?
+                             element.getAttribute("type").toLowerCase() :
+                             element.type);
+            if (fieldType == "text"  ||
+                fieldType == "email" ||
+                fieldType == "url"   ||
+                fieldType == "tel"   ||
+                fieldType == "number") {
+                usernameField = element;
                 break;
             }
         }
@@ -861,6 +855,7 @@ LoginManager.prototype = {
         // Check for autocomplete=off attribute. We don't use it to prevent
         // autofilling (for existing logins), but won't save logins when it's
         // present.
+        // XXX spin out a bug that we don't update timeLastUsed in this case?
         if (this._isAutocompleteDisabled(form) ||
             this._isAutocompleteDisabled(usernameField) ||
             this._isAutocompleteDisabled(newPasswordField) ||
@@ -946,6 +941,13 @@ LoginManager.prototype = {
                 this.log("...passwords differ, prompting to change.");
                 prompter = getPrompter(win);
                 prompter.promptToChangePassword(existingLogin, formLogin);
+            } else {
+                // Update the lastUsed timestamp.
+                var propBag = Cc["@mozilla.org/hash-property-bag;1"].
+                              createInstance(Ci.nsIWritablePropertyBag);
+                propBag.setProperty("timeLastUsed", Date.now());
+                propBag.setProperty("timesUsedIncrement", 1);
+                this.modifyLogin(existingLogin, propBag);
             }
 
             return;
@@ -966,7 +968,7 @@ LoginManager.prototype = {
     _getPasswordOrigin : function (uriString, allowJS) {
         var realm = "";
         try {
-            var uri = this._ioService.newURI(uriString, null, null);
+            var uri = Services.io.newURI(uriString, null, null);
 
             if (allowJS && uri.scheme == "javascript")
                 return "javascript:"
@@ -977,7 +979,7 @@ LoginManager.prototype = {
             // it's not the default. (We never want "http://foo.com:80")
             var port = uri.port;
             if (port != -1) {
-                var handler = this._ioService.getProtocolHandler(uri.scheme);
+                var handler = Services.io.getProtocolHandler(uri.scheme);
                 if (port != handler.defaultPort)
                     realm += ":" + port;
             }
@@ -995,7 +997,7 @@ LoginManager.prototype = {
     _getActionOrigin : function (form) {
         var uriString = form.action;
 
-        // A blank or mission action submits to where it came from.
+        // A blank or missing action submits to where it came from.
         if (uriString == "")
             uriString = form.baseURI; // ala bug 297761
 
@@ -1020,6 +1022,37 @@ LoginManager.prototype = {
         if (!this.countLogins(formOrigin, "", null))
             return;
 
+        // If we're currently displaying a master password prompt, defer
+        // processing this document until the user handles the prompt.
+        if (this.uiBusy) {
+            this.log("deferring fillDoc for " + doc.documentURI);
+            let self = this;
+            let observer = {
+                QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver, Ci.nsISupportsWeakReference]),
+
+                observe: function (subject, topic, data) {
+                    self.log("Got deferred fillDoc notification: " + topic);
+                    // Only run observer once.
+                    Services.obs.removeObserver(this, "passwordmgr-crypto-login");
+                    Services.obs.removeObserver(this, "passwordmgr-crypto-loginCanceled");
+                    if (topic == "passwordmgr-crypto-loginCanceled")
+                        return;
+                    self._fillDocument(doc);
+                },
+                handleEvent : function (event) {
+                    // Not expected to be called
+                }
+            };
+            // Trickyness follows: We want an observer, but don't want it to
+            // cause leaks. So add the observer with a weak reference, and use
+            // a dummy event listener (a strong reference) to keep it alive
+            // until the document is destroyed.
+            Services.obs.addObserver(observer, "passwordmgr-crypto-login", true);
+            Services.obs.addObserver(observer, "passwordmgr-crypto-loginCanceled", true);
+            doc.addEventListener("mozCleverClosureHack", observer, false);
+            return;
+        }
+
         this.log("fillDocument processing " + forms.length +
                  " forms on " + doc.documentURI);
 
@@ -1039,7 +1072,7 @@ LoginManager.prototype = {
                 previousActionOrigin = actionOrigin;
             }
             this.log("_fillDocument processing form[" + i + "]");
-            foundLogins = this._fillForm(form, autofillForm, false, foundLogins)[1];
+            foundLogins = this._fillForm(form, autofillForm, false, false, foundLogins)[1];
         } // foreach form
     },
 
@@ -1056,7 +1089,8 @@ LoginManager.prototype = {
      * autocomplete=off attributes, and foundLogins is an array of nsILoginInfo
      * for optimization
      */
-    _fillForm : function (form, autofillForm, ignoreAutocomplete, foundLogins) {
+    _fillForm : function (form, autofillForm, ignoreAutocomplete,
+                          clobberPassword, foundLogins) {
         // Heuristically determine what the user/pass fields are
         // We do this before checking to see if logins are stored,
         // so that the user isn't prompted for a master password
@@ -1127,7 +1161,7 @@ LoginManager.prototype = {
             this._attachToInput(usernameField);
 
         // Don't clobber an existing password.
-        if (passwordField.value) {
+        if (passwordField.value && !clobberPassword) {
             didntFillReason = "existingPassword";
             this._notifyFoundLogins(didntFillReason, usernameField,
                                     passwordField, foundLogins, null);
@@ -1197,13 +1231,13 @@ LoginManager.prototype = {
             // For when autofillForm is false, but we still have the information
             // to fill a form, we notify observers.
             didntFillReason = "noAutofillForms";
-            this._observerService.notifyObservers(form, "passwordmgr-found-form", didntFillReason);
+            Services.obs.notifyObservers(form, "passwordmgr-found-form", didntFillReason);
             this.log("autofillForms=false but form can be filled; notified observers");
         } else if (selectedLogin && isFormDisabled) {
             // For when autocomplete is off, but we still have the information
             // to fill a form, we notify observers.
             didntFillReason = "autocompleteOff";
-            this._observerService.notifyObservers(form, "passwordmgr-found-form", didntFillReason);
+            Services.obs.notifyObservers(form, "passwordmgr-found-form", didntFillReason);
             this.log("autocomplete=off but form can be filled; notified observers");
         }
 
@@ -1264,9 +1298,7 @@ LoginManager.prototype = {
         formInfo.setProperty("foundLogins", foundLogins.concat());
         formInfo.setPropertyAsInterface("selectedLogin", selectedLogin);
 
-        this._observerService.notifyObservers(formInfo,
-                                              "passwordmgr-found-logins",
-                                              null);
+        Services.obs.notifyObservers(formInfo, "passwordmgr-found-logins", null);
     },
 
     /*
@@ -1276,7 +1308,7 @@ LoginManager.prototype = {
      */
     fillForm : function (form) {
         this.log("fillForm processing form[id=" + form.id + "]");
-        return this._fillForm(form, true, true, null)[0];
+        return this._fillForm(form, true, true, false, null)[0];
     },
 
 
@@ -1352,6 +1384,10 @@ UserAutoCompleteResult.prototype = {
         return this.logins[index].username;
     },
 
+    getLabelAt: function(index) {
+        return this.getValueAt(index);
+    },
+
     getCommentAt : function (index) {
         return "";
     },
@@ -1382,7 +1418,4 @@ UserAutoCompleteResult.prototype = {
     }
 };
 
-var component = [LoginManager];
-function NSGetModule (compMgr, fileSpec) {
-    return XPCOMUtils.generateModule(component);
-}
+var NSGetFactory = XPCOMUtils.generateNSGetFactory([LoginManager]);

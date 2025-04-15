@@ -57,23 +57,27 @@ class nsHTMLContentSerializer : public nsXHTMLContentSerializer {
   nsHTMLContentSerializer();
   virtual ~nsHTMLContentSerializer();
 
-  NS_IMETHOD AppendElementStart(nsIDOMElement *aElement,
-                                nsIDOMElement *aOriginalElement,
+  NS_IMETHOD AppendElementStart(nsIContent *aElement,
+                                nsIContent *aOriginalElement,
                                 nsAString& aStr);
   
-  NS_IMETHOD AppendElementEnd(nsIDOMElement *aElement,
+  NS_IMETHOD AppendElementEnd(nsIContent *aElement,
                               nsAString& aStr);
 
-  NS_IMETHOD AppendDocumentStart(nsIDOMDocument *aDocument,
+  NS_IMETHOD AppendDocumentStart(nsIDocument *aDocument,
                                  nsAString& aStr);
  protected:
 
-  virtual void SerializeAttributes(nsIContent* aContent,
-                           nsIDOMElement *aOriginalElement,
-                           nsAString& aTagPrefix,
-                           const nsAString& aTagNamespaceURI,
-                           nsIAtom* aTagName,
-                           nsAString& aStr);
+  virtual void SerializeHTMLAttributes(nsIContent* aContent,
+                                       nsIContent *aOriginalElement,
+                                       nsAString& aTagPrefix,
+                                       const nsAString& aTagNamespaceURI,
+                                       nsIAtom* aTagName,
+                                       nsAString& aStr);
+
+  virtual void AppendAndTranslateEntities(const nsAString& aStr,
+                                          nsAString& aOutputStr);
+
 };
 
 nsresult

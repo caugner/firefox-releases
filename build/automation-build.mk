@@ -1,28 +1,8 @@
+include $(MOZILLA_DIR)/build/binary-location.mk
 
-ifeq ($(USE_SHORT_LIBNAME), 1)
-PROGRAM = $(MOZ_APP_NAME)$(BIN_SUFFIX)
-else
-PROGRAM = $(MOZ_APP_NAME)-bin$(BIN_SUFFIX)
-endif
-
-TARGET_DIST = $(TARGET_DEPTH)/dist
-
-ifeq ($(MOZ_BUILD_APP),camino)
-browser_path = \"$(TARGET_DIST)/Camino.app/Contents/MacOS/Camino\"
-else
-ifeq ($(OS_ARCH),Darwin)
-ifdef MOZ_DEBUG
-browser_path = \"$(TARGET_DIST)/$(MOZ_APP_DISPLAYNAME)Debug.app/Contents/MacOS/$(PROGRAM)\"
-else
-browser_path = \"$(TARGET_DIST)/$(MOZ_APP_DISPLAYNAME).app/Contents/MacOS/$(PROGRAM)\"
-endif
-else
-browser_path = \"$(TARGET_DIST)/bin/$(PROGRAM)\"
-endif
-endif
+browser_path := \"$(browser_path)\"
 
 _PROFILE_DIR = $(TARGET_DEPTH)/_profile/pgo
-_SYMBOLS_PATH = $(TARGET_DIST)/crashreporter-symbols
 
 ABSOLUTE_TOPSRCDIR = $(call core_abspath,$(MOZILLA_DIR))
 _CERTS_SRC_DIR = $(ABSOLUTE_TOPSRCDIR)/build/pgo/certs
@@ -33,8 +13,7 @@ AUTOMATION_PPARGS = 	\
 			-DBIN_SUFFIX=\"$(BIN_SUFFIX)\" \
 			-DPROFILE_DIR=\"$(_PROFILE_DIR)\" \
 			-DCERTS_SRC_DIR=\"$(_CERTS_SRC_DIR)\" \
-			-DSYMBOLS_PATH=\"$(_SYMBOLS_PATH)\" \
-			-DPERL=\"$(PERL)\" \
+			-DPERL="\"$(PERL)\"" \
 			$(NULL)
 
 ifeq ($(OS_ARCH),Darwin)
@@ -71,11 +50,14 @@ else
 AUTOMATION_PPARGS += -DIS_DEBUG_BUILD=0
 endif
 
-$(CURDIR)/automationutils.py: $(MOZILLA_DIR)/build/automationutils.py
-	$(INSTALL) $< .
+ifdef MOZ_CRASHREPORTER
+AUTOMATION_PPARGS += -DCRASHREPORTER=1
+else
+AUTOMATION_PPARGS += -DCRASHREPORTER=0
+endif
 
-automation.py: $(MOZILLA_DIR)/build/automation.py.in $(MOZILLA_DIR)/build/automation-build.mk $(CURDIR)/automationutils.py
+automation.py: $(MOZILLA_DIR)/build/automation.py.in $(MOZILLA_DIR)/build/automation-build.mk
 	$(PYTHON) $(MOZILLA_DIR)/config/Preprocessor.py \
 	$(AUTOMATION_PPARGS) $(DEFINES) $(ACDEFINES) $< > $@
 
-GARBAGE += automation.py $(CURDIR)/automationutils.py
+GARBAGE += automation.py automation.pyc

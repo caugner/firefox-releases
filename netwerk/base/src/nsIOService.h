@@ -57,15 +57,14 @@
 #include "nsIContentSniffer.h"
 #include "nsCategoryCache.h"
 #include "nsINetworkLinkService.h"
+#include "nsAsyncRedirectVerifyHelper.h"
 
 #define NS_N(x) (sizeof(x)/sizeof(*x))
 
-#ifdef NECKO_SMALL_BUFFERS
-#define NS_NECKO_BUFFER_CACHE_COUNT (10)  // Max holdings: 10 * 2k = 20k
-#else
-#define NS_NECKO_BUFFER_CACHE_COUNT (24)  // Max holdings: 24 * 4k = 96k
-#endif
-#define NS_NECKO_15_MINS (15 * 60)
+// We don't want to expose this observer topic.
+// Intended internal use only for remoting offline/inline events.
+// See Bug 552829
+#define NS_IPC_IOSERVICE_SET_OFFLINE_TOPIC "ipc:network:set-offline"
 
 static const char gScheme[][sizeof("resource")] =
     {"chrome", "file", "http", "jar", "resource"};
@@ -97,8 +96,9 @@ public:
 
     // Called by channels before a redirect happens. This notifies the global
     // redirect observers.
-    nsresult OnChannelRedirect(nsIChannel* oldChan, nsIChannel* newChan,
-                               PRUint32 flags);
+    nsresult AsyncOnChannelRedirect(nsIChannel* oldChan, nsIChannel* newChan,
+                                    PRUint32 flags,
+                                    nsAsyncRedirectVerifyHelper *helper);
 
     // Gets the array of registered content sniffers
     const nsCOMArray<nsIContentSniffer>& GetContentSniffers() {
@@ -107,6 +107,10 @@ public:
 
     PRBool IsOffline() { return mOffline; }
     PRBool IsLinkUp();
+
+    PRBool IsComingOnline() const {
+      return mOffline && mSettingOffline && !mSetOfflineValue;
+    }
 
 private:
     // These shouldn't be called directly:
@@ -128,6 +132,8 @@ private:
     NS_HIDDEN_(void) PrefsChanged(nsIPrefBranch *prefs, const char *pref = nsnull);
     NS_HIDDEN_(void) GetPrefBranch(nsIPrefBranch2 **);
     NS_HIDDEN_(void) ParsePortList(nsIPrefBranch *prefBranch, const char *pref, PRBool remove);
+
+    nsresult InitializeSocketTransportService();
 
 private:
     PRPackedBool                         mOffline;
@@ -159,6 +165,8 @@ public:
     // Necko buffer cache. Used for all default buffer sizes that necko
     // allocates.
     static nsIMemory *gBufferCache;
+    static PRUint32   gDefaultSegmentSize;
+    static PRUint32   gDefaultSegmentCount;
 };
 
 /**

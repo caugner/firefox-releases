@@ -15,7 +15,8 @@
  * The Original Code is Places code.
  *
  * The Initial Developer of the Original Code is
- * Mozilla Corporation.
+ * the Mozilla Foundation.
+ *
  * Portions created by the Initial Developer are Copyright (C) 2009
  * the Initial Developer. All Rights Reserved.
  *
@@ -60,7 +61,8 @@ namespace places {
  *
  * In SQL, you'd use it in the WHERE clause like so:
  * WHERE AUTOCOMPLETE_MATCH(aSearchString, aURL, aTitle, aTags, aVisitCount,
- *                          aTyped)
+ *                          aTyped, aBookmark, aOpenPageCount, aMatchBehavior,
+ *                          aSearchBehavior)
  *
  * @param aSearchString
  *        The string to compare against.
@@ -76,6 +78,9 @@ namespace places {
  *        Indicates if aURL is a typed URL or not.  Treated as a boolean.
  * @param aBookmark
  *        Indicates if aURL is a bookmark or not.  Treated as a boolean.
+ * @param aOpenPageCount
+ *        The number of times aURL has been registered as being open.  (See
+ *        mozIPlacesAutoComplete::registerOpenPage.)
  * @param aMatchBehavior
  *        The match behavior to use for this search.
  * @param aSearchBehavior
@@ -106,17 +111,18 @@ private:
   static const PRUint32 kArgIndexVisitCount = 4;
   static const PRUint32 kArgIndexTyped = 5;
   static const PRUint32 kArgIndexBookmark = 6;
-  static const PRUint32 kArgIndexMatchBehavior = 7;
-  static const PRUint32 kArgIndexSearchBehavior = 8;
-  static const PRUint32 kArgIndexLength = 9;
+  static const PRUint32 kArgIndexOpenPageCount = 7;
+  static const PRUint32 kArgIndexMatchBehavior = 8;
+  static const PRUint32 kArgIndexSearchBehavior = 9;
+  static const PRUint32 kArgIndexLength = 10;
 
   /**
    * Typedefs
    */
-  typedef bool (*searchFunctionPtr)(const nsDependentSubstring &aToken,
-                                    const nsAString &aSourceString);
+  typedef bool (*searchFunctionPtr)(const nsDependentCSubstring &aToken,
+                                    const nsACString &aSourceString);
 
-  typedef nsAString::const_char_iterator const_wchar_iterator;
+  typedef nsACString::const_char_iterator const_char_iterator;
 
   /**
    * Obtains the search function to match on.
@@ -129,6 +135,18 @@ private:
   static searchFunctionPtr getSearchFunction(PRInt32 aBehavior);
 
   /**
+   * Tests if aSourceString starts with aToken.
+   *
+   * @param aToken
+   *        The string to search for.
+   * @param aSourceString
+   *        The string to search.
+   * @return true if found, false otherwise.
+   */
+  static bool findBeginning(const nsDependentCSubstring &aToken,
+                            const nsACString &aSourceString);
+
+  /**
    * Searches aSourceString for aToken anywhere in the string in a case-
    * insensitive way.
    *
@@ -138,20 +156,8 @@ private:
    *        The string to search.
    * @return true if found, false otherwise.
    */
-  static bool findAnywhere(const nsDependentSubstring &aToken,
-                           const nsAString &aSourceString);
-
-  /**
-   * Tests if aSourceString starts with aToken.
-   *
-   * @param aToken
-   *        The string to search for.
-   * @param aSourceString
-   *        The string to search.
-   * @return true if found, false otherwise.
-   */
-  static bool findBeginning(const nsDependentSubstring &aToken,
-                            const nsAString &aSourceString);
+  static bool findAnywhere(const nsDependentCSubstring &aToken,
+                           const nsACString &aSourceString);
 
   /**
    * Tests if aToken is found on a word boundary in aSourceString.
@@ -162,33 +168,9 @@ private:
    *        The string to search.
    * @return true if found, false otherwise.
    */
-  static bool findOnBoundary(const nsDependentSubstring &aToken,
-                             const nsAString &aSourceString);
+  static bool findOnBoundary(const nsDependentCSubstring &aToken,
+                             const nsACString &aSourceString);
 
-  /**
-   * Obtains an iterator to the next word boundary as defined by isWordBoundary.
-   *
-   * @param aStart
-   *        An iterator pointing to the start of the string.
-   * @param aEnd
-   *        An iterator pointing to the end of the string.
-   * @return an iterator pointing to the next word boundary.
-   */
-  static const_wchar_iterator nextWordBoundary(const_wchar_iterator aStart,
-                                               const_wchar_iterator aEnd);
-  /**
-   * Determines if aChar is a word boundary.  A 'word boundary' is anything that
-   * is not used to build up a word from a string of characters.  We are very
-   * conservative here because anything that we do not list will be treated as a
-   * word boundary.  This means searching for that not-actually-a-word-boundary
-   * character can still be matched in the middle of a word.
-   *
-   * @param aChar
-   *        The Unicode character to check against.
-   * @return true if the character is considered a word boundary, false
-   *          otherwise.
-   */
-  static inline bool isWordBoundary(const PRUnichar &aChar);
 
   /**
    * Fixes a URI's spec such that it is ready to be searched.  This includes
@@ -200,7 +182,65 @@ private:
    * @param _fixedSpec
    *        An out parameter that is the fixed up string.
    */
-  static void fixupURISpec(const nsCString &aURISpec, nsString &_fixedSpec);
+  static void fixupURISpec(const nsCString &aURISpec, nsCString &_fixedSpec);
+};
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+//// Frecency Calculation Function
+
+/**
+ * This function is used to calculate frecency for a page.
+ *
+ * In SQL, you'd use it in when setting frecency like:
+ * SET frecency = CALCULATE_FRECENCY(place_id).
+ * Optional parameters must be passed in if the page is not yet in the database,
+ * otherwise they will be fetched from it automatically.
+ *
+ * @param pageId
+ *        The id of the page.  Pass -1 if the page is being added right now.
+ * @param [optional] typed
+ *        Whether the page has been typed in.  Default is false.
+ * @param [optional] fullVisitCount
+ *        Count of all the visits (All types).  Default is 0.
+ * @param [optional] isBookmarked
+ *        Whether the page is bookmarked. Default is false.
+ */
+class CalculateFrecencyFunction : public mozIStorageFunction
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_MOZISTORAGEFUNCTION
+
+  /**
+   * Registers the function with the specified database connection.
+   *
+   * @param aDBConn
+   *        The database connection to register with.
+   */
+  static nsresult create(mozIStorageConnection *aDBConn);
+};
+
+/**
+ * SQL function to generate a GUID for a place or bookmark item.  This is just
+ * a wrapper around GenerateGUID in Helpers.h.
+ *
+ * @return a guid for the item.
+ */
+class GenerateGUIDFunction : public mozIStorageFunction
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_MOZISTORAGEFUNCTION
+
+  /**
+   * Registers the function with the specified database connection.
+   *
+   * @param aDBConn
+   *        The database connection to register with.
+   */
+  static nsresult create(mozIStorageConnection *aDBConn);
 };
 
 } // namespace places

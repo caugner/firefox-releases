@@ -58,10 +58,10 @@ RCINCLUDE = xulrunner.rc
 
 ifndef MOZ_NATIVE_ZLIB
 CPPSRCS += dlldeps-zlib.cpp
-DEFINES += -DZLIB_INTERNAL
 endif
 
 LOCAL_INCLUDES += -I$(topsrcdir)/widget/src/windows
+LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/base
 endif
 
 ifneq (,$(filter WINNT OS2,$(OS_ARCH)))
@@ -79,7 +79,6 @@ CPPSRCS += \
 
 ifndef MOZ_NATIVE_ZLIB
 CPPSRCS += dlldeps-zlib.cpp
-DEFINES += -DZLIB_INTERNAL
 endif
 
 ifdef MOZ_ENABLE_LIBXUL
@@ -88,35 +87,60 @@ RCFLAGS += -i $(topsrcdir)/widget/src/os2
 endif
 
 LOCAL_INCLUDES += -I$(topsrcdir)/widget/src/os2
+LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/base
 endif
 
 # dependent libraries
+ifdef MOZ_IPC
+STATIC_LIBS += \
+  jsipc_s \
+  domipc_s \
+  domplugins_s \
+  mozipc_s \
+  mozipdlgen_s \
+  ipcshell_s \
+  gfxipc_s \
+  $(NULL)
+
+ifdef MOZ_IPDL_TESTS
+STATIC_LIBS += ipdlunittest_s
+endif
+
+ifeq (Linux,$(OS_ARCH))
+ifneq (Android,$(OS_TARGET))
+OS_LIBS += -lrt
+endif
+endif
+ifeq (WINNT,$(OS_ARCH))
+OS_LIBS += dbghelp.lib
+endif
+endif
+
 STATIC_LIBS += \
 	xpcom_core \
 	ucvutil_s \
 	gkgfx \
 	$(NULL)
 
-#ifndef MOZ_EMBEDDING_LEVEL_DEFAULT
+ifdef MOZ_IPC
+STATIC_LIBS += chromium_s
+endif
+
 ifndef WINCE
-ifdef MOZ_XPINSTALL
 STATIC_LIBS += \
 	mozreg_s \
 	$(NULL)
 endif
-endif
-#endif
 
 # component libraries
 COMPONENT_LIBS += \
-	xpconnect \
 	necko \
 	uconv \
 	i18n \
 	chardet \
 	jar$(VERSION_NUMBER) \
+        startupcache \
 	pref \
-	caps \
 	htmlpars \
 	imglib2 \
 	gklayout \
@@ -125,17 +149,15 @@ COMPONENT_LIBS += \
 	webbrwsr \
 	nsappshell \
 	txmgr \
-	chrome \
 	commandlines \
 	toolkitcomps \
 	pipboot \
 	pipnss \
+	appcomps \
 	$(NULL)
 
-ifdef MOZ_XMLEXTRAS
-COMPONENT_LIBS += \
-	xmlextras \
-	$(NULL)
+ifdef MOZ_IPC
+COMPONENT_LIBS +=  jetpack_s
 endif
 
 ifdef BUILD_CTYPES
@@ -144,18 +166,12 @@ COMPONENT_LIBS += \
 	$(NULL)
 endif
 
+COMPONENT_LIBS += jsperf
+
 ifdef MOZ_PLUGINS
 DEFINES += -DMOZ_PLUGINS
 COMPONENT_LIBS += \
 	gkplugin \
-	$(NULL)
-endif
-
-ifdef MOZ_XPFE_COMPONENTS
-DEFINES += -DMOZ_XPFE_COMPONENTS
-COMPONENT_LIBS += \
-	mozfind \
-	appcomps \
 	$(NULL)
 endif
 
@@ -187,17 +203,6 @@ COMPONENT_LIBS += \
 	$(NULL)
 endif
 
-ifdef MOZ_PERF_METRICS
-EXTRA_DSO_LIBS  += mozutil_s
-endif
-
-ifdef MOZ_XPINSTALL
-DEFINES += -DMOZ_XPINSTALL
-COMPONENT_LIBS += \
-	xpinstall \
-	$(NULL)
-endif
-
 ifdef MOZ_JSDEBUGGER
 DEFINES += -DMOZ_JSDEBUGGER
 COMPONENT_LIBS += \
@@ -209,13 +214,6 @@ ifdef MOZ_PREF_EXTENSIONS
 DEFINES += -DMOZ_PREF_EXTENSIONS
 COMPONENT_LIBS += \
 	autoconfig \
-	$(NULL)
-endif
-
-ifdef MOZ_WEBSERVICES
-DEFINES += -DMOZ_WEBSERVICES
-COMPONENT_LIBS += \
-	websrvcs \
 	$(NULL)
 endif
 
@@ -243,21 +241,14 @@ endif
 ifdef MOZ_RDF
 COMPONENT_LIBS += \
 	rdf \
-	$(NULL)
-ifdef MOZ_XPFE_COMPONENTS
-COMPONENT_LIBS += \
 	windowds \
-	intlapp \
 	$(NULL)
-endif
 endif
 
-ifeq (,$(filter qt beos os2 mac photon cocoa windows,$(MOZ_WIDGET_TOOLKIT)))
+ifeq (,$(filter android qt beos os2 cocoa windows,$(MOZ_WIDGET_TOOLKIT)))
 ifdef MOZ_XUL
-ifdef MOZ_XPFE_COMPONENTS
 COMPONENT_LIBS += fileview
 DEFINES += -DMOZ_FILEVIEW
-endif
 endif
 endif
 
@@ -272,13 +263,13 @@ STATIC_LIBS += morkreader_s
 COMPONENT_LIBS += \
 	places \
 	$(NULL)
-else
+endif
+
 ifdef MOZ_MORK
 ifdef MOZ_XUL
 COMPONENT_LIBS += \
 	mork \
 	$(NULL)
-endif
 endif
 endif
 
@@ -288,10 +279,6 @@ COMPONENT_LIBS += \
 	satchel \
 	pippki \
 	$(NULL)
-endif
-
-ifdef MOZ_MATHML
-COMPONENT_LIBS += ucvmath
 endif
 
 ifdef MOZ_ENABLE_GTK2
@@ -307,19 +294,20 @@ STATIC_LIBS += gtkxtbin
 endif
 endif
 
-ifdef MOZ_ENABLE_POSTSCRIPT
-DEFINES += -DMOZ_ENABLE_POSTSCRIPT
-STATIC_LIBS += gfxpsshar
-endif
-
-ifneq (,$(filter icon,$(MOZ_IMG_DECODERS)))
-ifndef MOZ_ENABLE_GTK2
+# Platform-specific icon channel stuff - supported mostly-everywhere
+ifneq (,$(filter beos windows os2 mac cocoa gtk2 qt,$(MOZ_WIDGET_TOOLKIT)))
 DEFINES += -DICON_DECODER
 COMPONENT_LIBS += imgicon
 endif
+
+ifeq ($(MOZ_WIDGET_TOOLKIT),android)
+COMPONENT_LIBS += widget_android
 endif
 
-STATIC_LIBS += thebes
+STATIC_LIBS += thebes ycbcr
+
+STATIC_LIBS += angle
+
 COMPONENT_LIBS += gkgfxthebes
 
 ifeq (windows,$(MOZ_WIDGET_TOOLKIT))
@@ -331,20 +319,11 @@ endif
 ifeq (os2,$(MOZ_WIDGET_TOOLKIT))
 COMPONENT_LIBS += wdgtos2
 endif
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 COMPONENT_LIBS += widget_mac
 endif
 ifeq (qt,$(MOZ_WIDGET_TOOLKIT))
 COMPONENT_LIBS += widget_qt
-endif
-
-ifdef MOZ_ENABLE_PHOTON
-COMPONENT_LIBS += widget_photon
-endif
-
-ifdef MOZ_OJI
-STATIC_LIBS += jsj
-COMPONENT_LIBS += oji
 endif
 
 ifdef ACCESSIBILITY
@@ -365,17 +344,63 @@ DEFINES += -DMOZ_ZIPWRITER
 COMPONENT_LIBS += zipwriter
 endif
 
-ifneq (,$(filter layout-debug,$(MOZ_EXTENSIONS)))
+COMPONENT_LIBS += services-crypto
+
+ifdef MOZ_DEBUG
+ifdef ENABLE_TESTS
 COMPONENT_LIBS += gkdebug
 endif
-
-ifdef GC_LEAK_DETECTOR
-EXTRA_DSO_LIBS += boehm
 endif
 
-ifdef MOZ_ENABLE_CANVAS3D
+ifdef MOZ_APP_COMPONENT_LIBS
+COMPONENT_LIBS += $(MOZ_APP_COMPONENT_LIBS)
+endif
+
 ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
-EXTRA_DSO_LDOPTS += -framework OpenGL
+OS_LIBS += -framework OpenGL -lcups
+endif
+
+EXTRA_DSO_LDOPTS += \
+	$(LIBS_DIR) \
+	$(JPEG_LIBS) \
+	$(PNG_LIBS) \
+	$(QCMS_LIBS) \
+	$(MOZ_JS_LIBS) \
+	$(NSS_LIBS) \
+	$(MOZ_CAIRO_LIBS) \
+	$(MOZ_HARFBUZZ_LIBS) \
+	$(MOZ_OTS_LIBS) \
+	$(MOZ_APP_EXTRA_LIBS) \
+	$(NULL)
+
+ifdef MOZ_NATIVE_ZLIB
+EXTRA_DSO_LDOPTS += $(ZLIB_LIBS)
+else
+EXTRA_DSO_LDOPTS += $(MOZ_ZLIB_LIBS)
+endif
+
+ifdef MOZ_NATIVE_HUNSPELL
+EXTRA_DSO_LDOPTS += $(MOZ_HUNSPELL_LIBS)
+endif
+
+ifdef MOZ_NATIVE_LIBEVENT
+EXTRA_DSO_LDOPTS += $(MOZ_LIBEVENT_LIBS)
+endif
+
+ifdef MOZ_NATIVE_LIBVPX
+EXTRA_DSO_LDOPTS += $(MOZ_LIBVPX_LIBS)
+endif
+
+ifdef MOZ_SYDNEYAUDIO
+ifeq ($(OS_ARCH),Linux)
+EXTRA_DSO_LDOPTS += $(MOZ_ALSA_LIBS)
 endif
 endif
 
+ifdef HAVE_CLOCK_MONOTONIC
+EXTRA_DSO_LDOPTS += $(REALTIME_LIBS)
+endif
+
+ifeq (android,$(MOZ_WIDGET_TOOLKIT))
+OS_LIBS += -lGLESv2
+endif

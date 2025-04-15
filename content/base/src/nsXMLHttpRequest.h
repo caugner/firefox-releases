@@ -51,6 +51,7 @@
 #include "jsapi.h"
 #include "nsIScriptContext.h"
 #include "nsIChannelEventSink.h"
+#include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIHttpHeaderVisitor.h"
 #include "nsIProgressEventSink.h"
@@ -67,9 +68,10 @@
 #include "nsITimer.h"
 #include "nsIPrivateDOMEvent.h"
 #include "nsDOMProgressEvent.h"
-#include "nsDOMEventTargetHelper.h"
+#include "nsDOMEventTargetWrapperCache.h"
 
 class nsILoadGroup;
+class AsyncVerifyRedirectCallbackForwarder;
 
 class nsAccessControlLRUCache
 {
@@ -137,56 +139,17 @@ private:
   PRCList mList;
 };
 
-class nsXHREventTarget : public nsDOMEventTargetHelper,
-                         public nsIXMLHttpRequestEventTarget,
-                         public nsWrapperCache
+class nsXHREventTarget : public nsDOMEventTargetWrapperCache,
+                         public nsIXMLHttpRequestEventTarget
 {
 public:
-  virtual ~nsXHREventTarget();
+  virtual ~nsXHREventTarget() {}
   NS_DECL_ISUPPORTS_INHERITED
-
-  class NS_CYCLE_COLLECTION_INNERCLASS
-    : public NS_CYCLE_COLLECTION_CLASSNAME(nsDOMEventTargetHelper)
-  {
-    NS_IMETHOD RootAndUnlinkJSObjects(void *p);
-    NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_BODY(nsXHREventTarget,
-                                                  nsDOMEventTargetHelper)
-    NS_IMETHOD_(void) Trace(void *p, TraceCallback cb, void *closure);
-  };
-  NS_CYCLE_COLLECTION_PARTICIPANT_INSTANCE
-
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsXHREventTarget,
+                                           nsDOMEventTargetWrapperCache)
   NS_DECL_NSIXMLHTTPREQUESTEVENTTARGET
   NS_FORWARD_NSIDOMEVENTTARGET(nsDOMEventTargetHelper::)
   NS_FORWARD_NSIDOMNSEVENTTARGET(nsDOMEventTargetHelper::)
-
-  void GetParentObject(nsIScriptGlobalObject **aParentObject)
-  {
-    if (mOwner) {
-      CallQueryInterface(mOwner, aParentObject);
-    }
-    else {
-      *aParentObject = nsnull;
-    }
-  }
-
-  static nsXHREventTarget* FromSupports(nsISupports* aSupports)
-  {
-    nsPIDOMEventTarget* target =
-      static_cast<nsPIDOMEventTarget*>(aSupports);
-#ifdef DEBUG
-    {
-      nsCOMPtr<nsPIDOMEventTarget> target_qi =
-        do_QueryInterface(aSupports);
-
-      // If this assertion fires the QI implementation for the object in
-      // question doesn't use the nsPIDOMEventTarget pointer as the
-      // nsISupports pointer. That must be fixed, or we'll crash...
-      NS_ASSERTION(target_qi == target, "Uh, fix QI!");
-    }
-#endif
-
-    return static_cast<nsXHREventTarget*>(target);
-  }
 
 protected:
   nsRefPtr<nsDOMEventListenerWrapper> mOnLoadListener;
@@ -379,6 +342,9 @@ protected:
 
   void StartProgressEventTimer();
 
+  friend class AsyncVerifyRedirectCallbackForwarder;
+  void OnRedirectVerifyCallback(nsresult result);
+
   nsCOMPtr<nsISupports> mContext;
   nsCOMPtr<nsIPrincipal> mPrincipal;
   nsCOMPtr<nsIChannel> mChannel;
@@ -405,7 +371,15 @@ protected:
     nsCString mHeaders;
   };
 
+  // The bytes of our response body
   nsCString mResponseBody;
+
+  // The Unicode version of our response body.  This is just a cache; if the
+  // string is not void, we have a cached value.  This works because we only
+  // allow looking at this value once state is INTERACTIVE, and at that
+  // point our charset can only change due to more data coming in, which
+  // will cause us to clear the cached value anyway.
+  nsString mResponseBodyUnicode;
 
   nsCString mOverrideMimeType;
 
@@ -444,6 +418,9 @@ protected:
   nsCOMPtr<nsITimer> mProgressNotifier;
 
   PRPackedBool mFirstStartRequestSeen;
+  
+  nsCOMPtr<nsIAsyncVerifyRedirectCallback> mRedirectCallback;
+  nsCOMPtr<nsIChannel> mNewRedirectChannel;
 };
 
 // helper class to expose a progress DOM Event
@@ -485,6 +462,15 @@ public:
   NS_IMETHOD SetTrusted(PRBool aTrusted)
   {
     return mInner->SetTrusted(aTrusted);
+  }
+  virtual void Serialize(IPC::Message* aMsg,
+                         PRBool aSerializeInterfaceType)
+  {
+    mInner->Serialize(aMsg, aSerializeInterfaceType);
+  }
+  virtual PRBool Deserialize(const IPC::Message* aMsg, void** aIter)
+  {
+    return mInner->Deserialize(aMsg, aIter);
   }
 
 protected:

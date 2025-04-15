@@ -57,7 +57,6 @@
 #include "nsIHelperAppLauncherDialog.h"
 
 #include "nsIMIMEInfo.h"
-#include "nsMIMEInfoImpl.h"
 #include "nsIMIMEService.h"
 #include "nsIStreamListener.h"
 #include "nsIFile.h"
@@ -238,13 +237,6 @@ protected:
 };
 
 /**
- * We need to read the data out of the incoming stream into a buffer which we
- * can then use to write the data into the output stream representing the
- * temp file.
- */
-#define DATA_BUFFER_SIZE (4096*2) 
-
-/**
  * An external app handler is just a small little class that presents itself as
  * a nsIStreamListener. It saves the incoming data into a temp file. The handler
  * is bound to an application when it is created. When it receives an
@@ -359,7 +351,8 @@ protected:
    */
   nsCOMPtr<nsIFile> mFinalFileDestination;
 
-  char mDataBuffer[DATA_BUFFER_SIZE];
+  PRUint32 mBufferSize;
+  char    *mDataBuffer;
 
   /**
    * Creates the temporary file for the download and an output stream for it.

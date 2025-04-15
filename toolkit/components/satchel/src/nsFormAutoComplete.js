@@ -13,7 +13,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Mozilla Corporation.
+ * The Initial Developer of the Original Code is Mozilla Foundation.
  * Portions created by the Initial Developer are Copyright (C) 2009
  * the Initial Developer. All Rights Reserved.
  *
@@ -40,24 +40,15 @@ const Ci = Components.interfaces;
 const Cr = Components.results;
 
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+Components.utils.import("resource://gre/modules/Services.jsm");
 
 function FormAutoComplete() {
     this.init();
 }
 
 FormAutoComplete.prototype = {
-    classDescription: "FormAutoComplete",
-    contractID: "@mozilla.org/satchel/form-autocomplete;1",
-    classID: Components.ID("{c11c21b2-71c9-4f87-a0f8-5e13f50495fd}"),
-    QueryInterface : XPCOMUtils.generateQI([Ci.nsIFormAutoComplete, Ci.nsISupportsWeakReference]),
-
-    __logService : null, // Console logging service, used for debugging.
-    get _logService() {
-        if (!this.__logService)
-            this.__logService = Cc["@mozilla.org/consoleservice;1"].
-                                getService(Ci.nsIConsoleService);
-        return this.__logService;
-    },
+    classID          : Components.ID("{c11c21b2-71c9-4f87-a0f8-5e13f50495fd}"),
+    QueryInterface   : XPCOMUtils.generateQI([Ci.nsIFormAutoComplete, Ci.nsISupportsWeakReference]),
 
     __formHistory : null,
     get _formHistory() {
@@ -67,17 +58,9 @@ FormAutoComplete.prototype = {
         return this.__formHistory;
     },
 
-    __observerService : null, // Observer Service, for notifications
-    get _observerService() {
-        if (!this.__observerService)
-            this.__observerService = Cc["@mozilla.org/observer-service;1"].
-                                     getService(Ci.nsIObserverService);
-        return this.__observerService;
-    },
-
     _prefBranch         : null,
-    _debug              : false, // mirrors browser.formfill.debug
-    _enabled            : true,  // mirrors browser.formfill.enable preference
+    _debug              : true, // mirrors browser.formfill.debug
+    _enabled            : true, // mirrors browser.formfill.enable preference
     _agedWeight         : 2,
     _bucketSize         : 1,
     _maxTimeGroupings   : 25,
@@ -88,23 +71,22 @@ FormAutoComplete.prototype = {
 
     init : function() {
         // Preferences. Add observer so we get notified of changes.
-        this._prefBranch = Cc["@mozilla.org/preferences-service;1"].
-                           getService(Ci.nsIPrefService).getBranch("browser.formfill.");
+        this._prefBranch = Services.prefs.getBranch("browser.formfill.");
         this._prefBranch.QueryInterface(Ci.nsIPrefBranch2);
         this._prefBranch.addObserver("", this.observer, false);
         this.observer._self = this;
 
-        this._debug   = this._prefBranch.getBoolPref("debug");
-        this._enabled = this._prefBranch.getBoolPref("enable");
-        this._agedWeight = this._prefBranch.getIntPref("agedWeight");
-        this._bucketSize = this._prefBranch.getIntPref("bucketSize");
+        this._debug            = this._prefBranch.getBoolPref("debug");
+        this._enabled          = this._prefBranch.getBoolPref("enable");
+        this._agedWeight       = this._prefBranch.getIntPref("agedWeight");
+        this._bucketSize       = this._prefBranch.getIntPref("bucketSize");
         this._maxTimeGroupings = this._prefBranch.getIntPref("maxTimeGroupings");
         this._timeGroupingSize = this._prefBranch.getIntPref("timeGroupingSize") * 1000 * 1000;
-        this._expireDays = this._getFormExpiryDays();
+        this._expireDays       = this._prefBranch.getIntPref("expire_days");
 
         this._dbStmts = [];
 
-        this._observerService.addObserver(this.observer, "xpcom-shutdown", false);
+        Services.obs.addObserver(this.observer, "xpcom-shutdown", false);
     },
 
     observer : {
@@ -149,6 +131,7 @@ FormAutoComplete.prototype = {
                 }
             } else if (topic == "xpcom-shutdown") {
                 self._dbStmts = null;
+                self.__formHistory = null;
             }
         }
     },
@@ -164,7 +147,7 @@ FormAutoComplete.prototype = {
         if (!this._debug)
             return;
         dump("FormAutoComplete: " + message + "\n");
-        this._logService.logStringMessage("FormAutoComplete: " + message);
+        Services.console.logStringMessage("FormAutoComplete: " + message);
     },
 
 
@@ -317,7 +300,7 @@ FormAutoComplete.prototype = {
                 // length is zero or one
             }
 
-            while (stmt.step()) {
+            while (stmt.executeStep()) {
                 let entry = {
                     text:           stmt.row.value,
                     textLowerCase:  stmt.row.value.toLowerCase(),
@@ -355,15 +338,6 @@ FormAutoComplete.prototype = {
                 stmtparams[i] = params[i];
         }
         return stmt;
-    },
-
-    _getFormExpiryDays : function () {
-        let prefsBranch = Cc["@mozilla.org/preferences-service;1"].
-                          getService(Ci.nsIPrefBranch);
-        if (prefsBranch.prefHasUserValue("browser.formfill.expire_days"))
-            return prefsBranch.getIntPref("browser.formfill.expire_days");
-        else
-            return prefsBranch.getIntPref("browser.history_expire_days");
     },
 
     /*
@@ -447,6 +421,10 @@ FormAutoCompleteResult.prototype = {
         return this.entries[index].text;
     },
 
+    getLabelAt: function(index) {
+        return getValueAt(index);
+    },
+
     getCommentAt : function (index) {
         this._checkIndexBounds(index);
         return "";
@@ -473,6 +451,4 @@ FormAutoCompleteResult.prototype = {
 };
 
 let component = [FormAutoComplete];
-function NSGetModule (compMgr, fileSpec) {
-    return XPCOMUtils.generateModule(component);
-}
+var NSGetFactory = XPCOMUtils.generateNSGetFactory(component);

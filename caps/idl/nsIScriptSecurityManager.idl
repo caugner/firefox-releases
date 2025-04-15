@@ -41,7 +41,7 @@
 interface nsIURI;
 interface nsIChannel;
 
-[scriptable, uuid(f8e350b9-9f31-451a-8c8f-d10fea26b780)]
+[scriptable, uuid(50eda256-4dd2-4c7c-baed-96983910af9f)]
 interface nsIScriptSecurityManager : nsIXPCSecurityManager
 {
     ///////////////// Security Checks //////////////////
@@ -51,16 +51,8 @@ interface nsIScriptSecurityManager : nsIXPCSecurityManager
     [noscript] void checkPropertyAccess(in JSContextPtr aJSContext,
                                         in JSObjectPtr aJSObject,
                                         in string aClassName,
-                                        in JSVal aProperty,
+                                        in jsid aProperty,
                                         in PRUint32 aAction);
-
-    /**
-     * Checks whether the running script is allowed to connect to aTargetURI
-     */
-    [noscript] void checkConnect(in JSContextPtr aJSContext,
-                                 in nsIURI aTargetURI,
-                                 in string aClassName,
-                                 in string aProperty);
 
     /**
      * Check that the script currently running in context "cx" can load "uri".
@@ -192,7 +184,7 @@ interface nsIScriptSecurityManager : nsIXPCSecurityManager
     /**
      * Return the all-powerful system principal.
      */
-    [noscript] nsIPrincipal getSystemPrincipal();
+    nsIPrincipal getSystemPrincipal();
 
     /**
      * Return a principal with the specified certificate fingerprint, subject
@@ -319,16 +311,12 @@ interface nsIScriptSecurityManager : nsIXPCSecurityManager
     [noscript,notxpcom] nsIPrincipal getCxSubjectPrincipal(in JSContextPtr cx);
     [noscript,notxpcom] nsIPrincipal getCxSubjectPrincipalAndFrame(in JSContextPtr cx,
                                                                    out JSStackFramePtr fp);
-};
 
-[scriptable, uuid(8229DD23-47C5-4601-A80B-0166D595A21E)]
-interface nsIScriptSecurityManager_1_9_2 : nsIScriptSecurityManager
-{
     /**
      * If no scripted code is running "above" (or called from) fp, then
      * instead of looking at cx->globalObject, we will return |principal|.
      * This function only affects |cx|. If someone pushes another context onto
-     * the context stack, then it supercedes this call.
+     * the context stack, then it supersedes this call.
      * NOTE: If |fp| is non-null popContextPrincipal must be called before fp
      * has finished executing.
      *

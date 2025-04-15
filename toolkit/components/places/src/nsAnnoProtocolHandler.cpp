@@ -63,6 +63,8 @@
 #include "mozIStorageRow.h"
 #include "mozIStorageError.h"
 #include "nsIPipe.h"
+#include "Helpers.h"
+using namespace mozilla::places;
 
 ////////////////////////////////////////////////////////////////////////////////
 //// Global Functions
@@ -97,11 +99,11 @@ namespace {
  * pass that along to our output stream in HandleCompletion.  If anything
  * happens at that point, the world must be against us, so we return nothing.
  */
-class faviconAsyncLoader : public mozIStorageStatementCallback
+class faviconAsyncLoader : public AsyncStatementCallback
                          , public nsIRequestObserver
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_ISUPPORTS_INHERITED
 
   faviconAsyncLoader(nsIChannel *aChannel, nsIOutputStream *aOutputStream) :
       mChannel(aChannel)
@@ -168,27 +170,6 @@ public:
     return NS_OK;
   }
 
-  NS_IMETHOD HandleError(mozIStorageError *aError)
-  {
-#ifdef DEBUG
-    PRInt32 result;
-    nsresult rv = aError->GetResult(&result);
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsCAutoString message;
-    rv = aError->GetMessage(message);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsCAutoString warnMsg;
-    warnMsg.Append("An error occurred while trying to get a favicon: ");
-    warnMsg.Append(result);
-    warnMsg.Append(" ");
-    warnMsg.Append(message);
-    NS_WARNING(warnMsg.get());
-#endif
-
-    return NS_OK;
-  }
-
   NS_IMETHOD HandleCompletion(PRUint16 aReason)
   {
     if (!mReturnDefaultIcon)
@@ -238,9 +219,9 @@ private:
   bool mReturnDefaultIcon;
 };
 
-NS_IMPL_ISUPPORTS2(
+NS_IMPL_ISUPPORTS_INHERITED1(
   faviconAsyncLoader,
-  mozIStorageStatementCallback,
+  AsyncStatementCallback,
   nsIRequestObserver
 )
 

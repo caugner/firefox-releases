@@ -23,6 +23,7 @@
  *  Darin Fisher <darin@meer.net>
  *  Ben Turner <mozilla@songbirdnest.com>
  *  Robert Strong <robert.bugzilla@gmail.com>
+ *  Josh Aas <josh@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -44,19 +45,18 @@
 #include "nsXULAppAPI.h"
 #include "nsAppRunner.h"
 #include "nsILocalFile.h"
-#include "nsISimpleEnumerator.h"
-#include "nsIDirectoryEnumerator.h"
 #include "nsCOMPtr.h"
-#include "nsCOMArray.h"
 #include "nsString.h"
 #include "nsPrintfCString.h"
 #include "prproces.h"
 #include "prlog.h"
+#include "prenv.h"
 #include "nsVersionComparator.h"
 
 #ifdef XP_MACOSX
 #include "nsILocalFileMac.h"
 #include "nsCommandLineServiceMac.h"
+#include "MacLaunchHelper.h"
 #endif
 
 #if defined(XP_WIN)
@@ -81,7 +81,7 @@
 // Windows.
 //
 // On platforms where we are not calling execv, we may need to make the
-// udpaterfail executable wait for the calling process to exit.  Otherwise, the
+// updater executable wait for the calling process to exit.  Otherwise, the
 // updater may have trouble modifying our executable image (because it might
 // still be in use).  This is accomplished by passing our PID to the updater so
 // that it can wait for us to exit.  This is not perfect as there is a race
@@ -138,88 +138,33 @@ GetCurrentWorkingDir(char *buf, size_t size)
 }
 
 #if defined(XP_MACOSX)
-
 // This is a copy of OS X's XRE_GetBinaryPath from nsAppRunner.cpp with the
 // gBinaryPath check removed so that the updater can reload the stub executable
 // instead of xulrunner-bin. See bug 349737.
 static nsresult
 GetXULRunnerStubPath(const char* argv0, nsILocalFile* *aResult)
 {
-  nsresult rv;
-  nsCOMPtr<nsILocalFile> lf;
-
-  NS_NewNativeLocalFile(EmptyCString(), PR_TRUE, getter_AddRefs(lf));
-  nsCOMPtr<nsILocalFileMac> lfm (do_QueryInterface(lf));
-  if (!lfm)
-    return NS_ERROR_FAILURE;
-
   // Works even if we're not bundled.
-  CFBundleRef appBundle = CFBundleGetMainBundle();
+  CFBundleRef appBundle = ::CFBundleGetMainBundle();
   if (!appBundle)
     return NS_ERROR_FAILURE;
 
-  CFURLRef bundleURL = CFBundleCopyExecutableURL(appBundle);
+  CFURLRef bundleURL = ::CFBundleCopyExecutableURL(appBundle);
   if (!bundleURL)
     return NS_ERROR_FAILURE;
 
-  FSRef fileRef;
-  if (!CFURLGetFSRef(bundleURL, &fileRef)) {
-    CFRelease(bundleURL);
-    return NS_ERROR_FAILURE;
-  }
+  nsCOMPtr<nsILocalFileMac> lfm;
+  nsresult rv = NS_NewLocalFileWithCFURL(bundleURL, PR_TRUE, getter_AddRefs(lfm));
 
-  rv = lfm->InitWithFSRef(&fileRef);
-  CFRelease(bundleURL);
+  ::CFRelease(bundleURL);
 
   if (NS_FAILED(rv))
     return rv;
 
-  NS_ADDREF(*aResult = lf);
+  NS_ADDREF(*aResult = static_cast<nsILocalFile*>(lfm.get()));
   return NS_OK;
 }
 #endif /* XP_MACOSX */
-
-static int
-ScanDirComparator(nsIFile *a, nsIFile *b, void *unused)
-{
-  // lexically compare the leaf names of these two files
-  nsCAutoString a_name, b_name;
-  a->GetNativeLeafName(a_name);
-  b->GetNativeLeafName(b_name);
-  return Compare(a_name, b_name);
-}
-
-static nsresult
-ScanDir(nsIFile *dir, nsCOMArray<nsIFile> *result)
-{
-  nsresult rv;
-
-  nsCOMPtr<nsISimpleEnumerator> simpEnum;
-  rv = dir->GetDirectoryEntries(getter_AddRefs(simpEnum));
-  if (NS_FAILED(rv))
-    return rv;
-
-  nsCOMPtr<nsIDirectoryEnumerator> dirEnum = do_QueryInterface(simpEnum, &rv);
-  if (NS_FAILED(rv))
-    return rv;
-
-  nsCOMPtr<nsIFile> file;
-  for (;;) {
-    rv = dirEnum->GetNextFile(getter_AddRefs(file));
-    if (NS_FAILED(rv))
-      return rv;
-
-    // enumeration complete when null file is returned
-    if (!file)
-      break;
-
-    if (!result->AppendObject(file))
-      return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  result->Sort(ScanDirComparator, nsnull);
-  return NS_OK;
-}
 
 static PRBool
 GetFile(nsIFile *dir, const nsCSubstring &name, nsCOMPtr<nsILocalFile> &result)
@@ -248,17 +193,16 @@ GetStatusFile(nsIFile *dir, nsCOMPtr<nsILocalFile> &result)
 static PRBool
 IsPending(nsILocalFile *statusFile)
 {
-  nsresult rv;
-
-  FILE *fp;
-  rv = statusFile->OpenANSIFileDesc("r", &fp);
+  PRFileDesc *fd = nsnull;
+  nsresult rv = statusFile->OpenNSPRFileDesc(PR_RDONLY, 0660, &fd);
   if (NS_FAILED(rv))
     return PR_FALSE;
 
   char buf[32];
-  char *result = fgets(buf, sizeof(buf), fp);
-  fclose(fp);
-  if (!result)
+  const PRInt32 n = PR_Read(fd, buf, sizeof(buf));
+  PR_Close(fd);
+
+  if (n < 0)
     return PR_FALSE;
   
   const char kPending[] = "pending";
@@ -266,15 +210,17 @@ IsPending(nsILocalFile *statusFile)
 }
 
 static PRBool
-SetStatus(nsILocalFile *statusFile, const char *status)
+SetStatusApplying(nsILocalFile *statusFile)
 {
-  FILE *fp;
-  nsresult rv = statusFile->OpenANSIFileDesc("w", &fp);
+  PRFileDesc *fd = nsnull;
+  nsresult rv = statusFile->OpenNSPRFileDesc(PR_WRONLY, 0660, &fd);
   if (NS_FAILED(rv))
     return PR_FALSE;
 
-  fprintf(fp, "%s\n", status);
-  fclose(fp);
+  static const char kApplying[] = "Applying\n";
+  PR_Write(fd, kApplying, sizeof(kApplying) - 1);
+  PR_Close(fd);
+
   return PR_TRUE;
 }
 
@@ -289,23 +235,21 @@ GetVersionFile(nsIFile *dir, nsCOMPtr<nsILocalFile> &result)
 static PRBool
 IsOlderVersion(nsILocalFile *versionFile, const char *&appVersion)
 {
-  nsresult rv;
-
-  FILE *fp;
-  rv = versionFile->OpenANSIFileDesc("r", &fp);
+  PRFileDesc *fd = nsnull;
+  nsresult rv = versionFile->OpenNSPRFileDesc(PR_RDONLY, 0660, &fd);
   if (NS_FAILED(rv))
     return PR_TRUE;
 
   char buf[32];
-  char *result = fgets(buf, sizeof(buf), fp);
-  fclose(fp);
-  if (!result)
-    return PR_TRUE;
+  const PRInt32 n = PR_Read(fd, buf, sizeof(buf));
+  PR_Close(fd);
 
-  // Trim off any trailing newline
-  int len = strlen(result);
-  if (len > 0 && result[len - 1] == '\n')
-    result[len - 1] = '\0';
+  if (n < 0)
+    return PR_FALSE;
+
+  // Trim off the trailing newline
+  if (buf[n - 1] == '\n')
+    buf[n - 1] = '\0';
 
   // If the update xml doesn't provide the application version the file will
   // contain the string "null" and it is assumed that the update is not older.
@@ -313,7 +257,7 @@ IsOlderVersion(nsILocalFile *versionFile, const char *&appVersion)
   if (strncmp(buf, kNull, sizeof(kNull) - 1) == 0)
     return PR_FALSE;
 
-  if (NS_CompareVersions(appVersion, result) > 0)
+  if (NS_CompareVersions(appVersion, buf) > 0)
     return PR_TRUE;
 
   return PR_FALSE;
@@ -458,8 +402,10 @@ ApplyUpdate(nsIFile *greDir, nsIFile *updateDir, nsILocalFile *statusFile,
     rv = parentDir2->GetNativePath(applyToDir);
   }
 #elif defined(XP_WIN)
-  nsAutoString applyToDir;
-  rv = appDir->GetPath(applyToDir);
+  nsAutoString applyToDirW;
+  rv = appDir->GetPath(applyToDirW);
+
+  NS_ConvertUTF16toUTF8 applyToDir(applyToDirW);
 #else
   nsCAutoString applyToDir;
   rv = appDir->GetNativePath(applyToDir);
@@ -486,7 +432,7 @@ ApplyUpdate(nsIFile *greDir, nsIFile *updateDir, nsILocalFile *statusFile,
   if (NS_FAILED(rv))
     return;
 
-  if (!SetStatus(statusFile, "applying")) {
+  if (!SetStatusApplying(statusFile)) {
     LOG(("failed setting status to 'applying'\n"));
     return;
   }
@@ -500,57 +446,48 @@ ApplyUpdate(nsIFile *greDir, nsIFile *updateDir, nsILocalFile *statusFile,
   pid.AppendInt((PRInt32) getpid());
 #endif
 
-  int argc = appArgc + 4;
+  int argc = appArgc + 5;
   char **argv = new char*[argc + 1];
   if (!argv)
     return;
   argv[0] = (char*) updaterPath.get();
   argv[1] = (char*) updateDirPath.get();
-  argv[2] = (char*) pid.get();
+  argv[2] = (char*) applyToDir.get();
+  argv[3] = (char*) pid.get();
   if (appArgc) {
-    argv[3] = workingDirPath;
-    argv[4] = (char*) appFilePath.get();
+    argv[4] = workingDirPath;
+    argv[5] = (char*) appFilePath.get();
     for (int i = 1; i < appArgc; ++i)
-      argv[4 + i] = appArgv[i];
-    argv[4 + appArgc] = nsnull;
+      argv[5 + i] = appArgv[i];
+    argc = 5 + appArgc;
+    argv[argc] = NULL;
   } else {
-    argv[3] = nsnull;
-    argc = 3;
+    argc = 4;
+    argv[4] = NULL;
+  }
+
+  if (gSafeMode) {
+    PR_SetEnv("MOZ_SAFE_MODE_RESTART=1");
   }
 
   LOG(("spawning updater process [%s]\n", updaterPath.get()));
 
 #if defined(USE_EXECV)
-  chdir(applyToDir.get());
   execv(updaterPath.get(), argv);
 #elif defined(XP_WIN)
-  _wchdir(applyToDir.get());
-
-  if (!WinLaunchChild(updaterPathW.get(), appArgc + 4, argv))
+  if (!WinLaunchChild(updaterPathW.get(), argc, argv))
     return;
   _exit(0);
-#else
-  PRStatus status;
-  PRProcessAttr *attr;
-  
-  attr = PR_NewProcessAttr();
-  if (!attr)
-    goto end;
-
-  status = PR_ProcessAttrSetCurrentDirectory(attr, applyToDir.get());
-  if (status != PR_SUCCESS)
-    goto end;
-
-#ifdef XP_MACOSX
-  SetupMacCommandLine(argc, argv);
-#endif
-
-  PR_CreateProcessDetached(updaterPath.get(), argv, nsnull, attr);
+#elif defined(XP_MACOSX)
+  CommandLineServiceMac::SetupMacCommandLine(argc, argv, PR_TRUE);
+  // LaunchChildMac uses posix_spawnp and prefers the current
+  // architecture when launching. It doesn't require a
+  // null-terminated string but it doesn't matter if we pass one.
+  LaunchChildMac(argc, argv);
   exit(0);
-
-end:
-  PR_DestroyProcessAttr(attr); 
-  delete[] argv;
+#else
+  PR_CreateProcessDetached(updaterPath.get(), argv, NULL, NULL);
+  exit(0);
 #endif
 }
 
@@ -564,38 +501,26 @@ ProcessUpdates(nsIFile *greDir, nsIFile *appDir, nsIFile *updRootDir,
   rv = updRootDir->Clone(getter_AddRefs(updatesDir));
   if (NS_FAILED(rv))
     return rv;
+
   rv = updatesDir->AppendNative(NS_LITERAL_CSTRING("updates"));
   if (NS_FAILED(rv))
     return rv;
 
-  PRBool exists;
-  rv = updatesDir->Exists(&exists);
-  if (NS_FAILED(rv) || !exists)
-    return rv;
-
-  nsCOMArray<nsIFile> dirEntries;
-  rv = ScanDir(updatesDir, &dirEntries);
+  rv = updatesDir->AppendNative(NS_LITERAL_CSTRING("0"));
   if (NS_FAILED(rv))
     return rv;
-  if (dirEntries.Count() == 0)
-    return NS_OK;
 
-  // look for the first update subdirectory with a status of pending
-  for (int i = 0; i < dirEntries.Count(); ++i) {
-    nsCOMPtr<nsILocalFile> statusFile;
-    if (GetStatusFile(dirEntries[i], statusFile) && IsPending(statusFile)) {
-      nsCOMPtr<nsILocalFile> versionFile;
-      // Remove the update if the update application version file doesn't exist
-      // or if the update's application version is less than the current
-      // application version.
-      if (!GetVersionFile(dirEntries[i], versionFile) ||
-          IsOlderVersion(versionFile, appVersion)) {
-        dirEntries[i]->Remove(PR_TRUE);
-        continue;
-      }
-
-      ApplyUpdate(greDir, dirEntries[i], statusFile, appDir, argc, argv);
-      break;
+  nsCOMPtr<nsILocalFile> statusFile;
+  if (GetStatusFile(updatesDir, statusFile) && IsPending(statusFile)) {
+    nsCOMPtr<nsILocalFile> versionFile;
+    // Remove the update if the update application version file doesn't exist
+    // or if the update's application version is less than the current
+    // application version.
+    if (!GetVersionFile(updatesDir, versionFile) ||
+        IsOlderVersion(versionFile, appVersion)) {
+      updatesDir->Remove(PR_TRUE);
+    } else {
+      ApplyUpdate(greDir, updatesDir, statusFile, appDir, argc, argv);
     }
   }
 

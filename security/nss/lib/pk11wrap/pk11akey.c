@@ -1154,6 +1154,11 @@ PK11_GenerateKeyPairWithOpFlags(PK11SlotInfo *slot,CK_MECHANISM_TYPE type,
 	return NULL;
     }
 
+    if (!param) {
+        PORT_SetError( SEC_ERROR_INVALID_ARGS );
+        return NULL;
+    }
+
     /*
      * The opFlags and opFlagMask parameters allow us to control the
      * settings of the key usage attributes (CKA_ENCRYPT and friends).
@@ -1894,25 +1899,7 @@ PK11_ExportEncryptedPrivateKeyInfo(
 SECItem*
 PK11_DEREncodePublicKey(SECKEYPublicKey *pubk)
 {
-    CERTSubjectPublicKeyInfo *spki=NULL;
-    SECItem *spkiDER = NULL;
-
-    if( pubk == NULL ) {
-        return NULL;
-    }
-
-    /* get the subjectpublickeyinfo */
-    spki = SECKEY_CreateSubjectPublicKeyInfo(pubk);
-    if( spki == NULL ) {
-        goto finish;
-    }
-
-    /* DER-encode the subjectpublickeyinfo */
-    spkiDER = SEC_ASN1EncodeItem(NULL /*arena*/, NULL/*dest*/, spki,
-                    CERT_SubjectPublicKeyInfoTemplate);
-
-finish:
-    return spkiDER;
+    return SECKEY_EncodeDERSubjectPublicKeyInfo(pubk);
 }
 
 char *

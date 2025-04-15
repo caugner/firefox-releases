@@ -80,8 +80,6 @@ endif
 endif
 endif
 
-SQLITE=-lsqlite3
-
 ifdef NSS_DISABLE_DBM
 DBMLIB = $(NULL)
 else
@@ -90,25 +88,26 @@ endif
 
 ifdef USE_STATIC_LIBS
 
-# can't do this in manifest.mn because OS_ARCH isn't defined there.
-ifeq (,$(filter-out WINNT WINCE,$(OS_ARCH))) 
-
 DEFINES += -DNSS_USE_STATIC_LIBS
 # $(PROGRAM) has explicit dependencies on $(EXTRA_LIBS)
 CRYPTOLIB=$(SOFTOKEN_LIB_DIR)/$(LIB_PREFIX)freebl.$(LIB_SUFFIX)
 
 PKIXLIB = \
-	$(DIST)/lib/$(LIB_PREFIX)pkixcertsel.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixchecker.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixparams.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixresults.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)pkixtop.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)pkixutil.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixcrlsel.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixstore.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixpki.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)pkixsystem.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixmodule.$(LIB_SUFFIX)
+	$(DIST)/lib/$(LIB_PREFIX)pkixcrlsel.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)pkixmodule.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)pkixstore.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)pkixparams.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)pkixchecker.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)pkixpki.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)pkixtop.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)pkixresults.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)pkixcertsel.$(LIB_SUFFIX)
+
+# can't do this in manifest.mn because OS_ARCH isn't defined there.
+ifeq (,$(filter-out WINNT WINCE,$(OS_ARCH))) 
 
 EXTRA_LIBS += \
 	$(DIST)/lib/$(LIB_PREFIX)smime.$(LIB_SUFFIX) \
@@ -129,7 +128,7 @@ EXTRA_LIBS += \
 	$(DIST)/lib/$(LIB_PREFIX)nssb.$(LIB_SUFFIX) \
 	$(PKIXLIB) \
 	$(DBMLIB) \
-	$(DIST)/lib/$(LIB_PREFIX)sqlite3.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)$(SQLITE_LIB_NAME).$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)nssutil3.$(LIB_SUFFIX) \
 	$(NSPR_LIB_DIR)/$(NSPR31_LIB_PREFIX)plc4.$(LIB_SUFFIX) \
 	$(NSPR_LIB_DIR)/$(NSPR31_LIB_PREFIX)plds4.$(LIB_SUFFIX) \
@@ -142,23 +141,6 @@ EXTRA_LIBS += \
 	winmm.lib \
 	$(NULL)
 else
-
-# $(PROGRAM) has explicit dependencies on $(EXTRA_LIBS)
-CRYPTOLIB=$(SOFTOKEN_LIB_DIR)/$(LIB_PREFIX)freebl.$(LIB_SUFFIX)
-
-PKIXLIB = \
-	$(DIST)/lib/$(LIB_PREFIX)pkixtop.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixutil.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixsystem.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixcrlsel.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixmodule.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixstore.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixparams.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixchecker.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixpki.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixtop.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixresults.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)pkixcertsel.$(LIB_SUFFIX)
 
 EXTRA_LIBS += \
 	$(DIST)/lib/$(LIB_PREFIX)smime.$(LIB_SUFFIX) \
@@ -195,7 +177,7 @@ endif
 # $(EXTRA_SHARED_LIBS) come before $(OS_LIBS), except on AIX.
 EXTRA_SHARED_LIBS += \
 	-L$(DIST)/lib \
-	$(SQLITE) \
+	-l$(SQLITE_LIB_NAME) \
 	-L$(NSSUTIL_LIB_DIR) \
 	-lnssutil3 \
 	-L$(NSPR_LIB_DIR) \
@@ -266,6 +248,4 @@ ifndef USE_SYSTEM_ZLIB
 ZLIB_LIBS = $(DIST)/lib/$(LIB_PREFIX)zlib.$(LIB_SUFFIX)
 endif
 
-JAR_LIBS = $(DIST)/lib/$(LIB_PREFIX)jar.$(LIB_SUFFIX) \
-	$(ZLIB_LIBS) \
-	$(NULL)
+JAR_LIBS = $(DIST)/lib/$(LIB_PREFIX)jar.$(LIB_SUFFIX)

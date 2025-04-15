@@ -85,6 +85,8 @@ async-signal safe.
 #   else
 #       define SA_LITTLE_ENDIAN 1
 #   endif
+#elif defined(AIX)
+#	define SA_BIG_ENDIAN 1
 #else
 #    error "Cannot determine byte order!"
 #endif
@@ -447,6 +449,10 @@ int sa_stream_pause(sa_stream_t *s);
 
 /** Block until all audio has been played */
 int sa_stream_drain(sa_stream_t *s);
+
+/** Returns the minimum number of bytes which must be written before any
+    audio is played by the hardware. */
+int sa_stream_get_min_write(sa_stream_t *s, size_t *samples);
 
 /** Return a human readable error */
 const char *sa_strerror(int code);

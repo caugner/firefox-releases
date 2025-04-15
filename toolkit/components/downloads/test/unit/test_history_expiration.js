@@ -46,6 +46,9 @@ function run_test()
   if (!("@mozilla.org/browser/nav-history-service;1" in Cc))
     return;
 
+  // Ensure places is enabled.
+  Services.prefs.setBoolPref("places.history.enabled", true);
+
   let dm = Cc["@mozilla.org/download-manager;1"].
            getService(Ci.nsIDownloadManager);
   let db = dm.DBConnection;
@@ -119,11 +122,11 @@ function run_test()
   obs.addObserver(testObs, kRemoveTopic, false);
 
   // Set expiration stuff to 0 to make the download expire
-  let prefs = Cc["@mozilla.org/preferences-service;1"].
-              getService(Ci.nsIPrefBranch);
-  prefs.setIntPref("browser.history_expire_sites", 0);
-  prefs.setIntPref("browser.history_expire_days_min", 0);
-  prefs.setIntPref("browser.history_expire_days", 0);
+  Services.prefs.setIntPref("places.history.expiration.max_pages", 0);
+
+  // Force a history expiration.
+  let expire = Cc["@mozilla.org/places/expiration;1"].getService(Ci.nsIObserver);
+  expire.observe(null, "places-debug-start-expiration", null);
 
   // Expiration happens on a timeout, about 3.5s after we set the pref
   do_test_pending();

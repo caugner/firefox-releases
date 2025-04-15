@@ -46,20 +46,11 @@ MODULE		= plugin
 GRE_MODULE	= 1
 
 EXPORTS		= \
-		nsplugindefs.h \
 		nsPluginLogging.h \
 		nsPluginError.h \
-		nsDefaultPlugin.h \
 		nsPluginNativeWindow.h \
 		nsPluginsCID.h \
 		$(NULL)
-
-ifdef MOZ_OJI
-EXPORTS		+= \
-		nsplugin.h \
-		nsIPluginInstanceInternal.h \
-		$(NULL)
-endif
 
 SDK_HEADERS	 = \
 		npapi.h \
@@ -82,26 +73,6 @@ XPIDLSRCS 	= \
 		nsIPluginHost.idl \
 		nsIPluginDocument.idl \
 		$(NULL)
-
-ifdef MOZ_OJI
-XPIDLSRCS	+= \
-		nsIPluginOld.idl \
-		nsIPluginHostOld.idl \
-		nsIFileUtilities.idl \
-		nsICookieStorage.idl \
-		nsIPluginManager.idl \
-		nsIPluginManager2.idl \
-		nsIPluginInstanceOld.idl \
-		nsIScriptablePlugin.idl \
-		nsIPluginInstancePeer.idl \
-		nsIPluginInstancePeer2.idl \
-		nsIWindowlessPlugInstPeer.idl \
-		nsPIPluginInstancePeer.idl \
-		nsIPluginTagInfoOld.idl \
-		nsIPluginTagInfo2.idl \
-		nsIJVMAuthTools.idl \
-		$(NULL)
-endif
 
 # Just build headers if we don't want plugins support
 ifndef MOZ_PLUGINS

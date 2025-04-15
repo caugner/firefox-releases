@@ -45,7 +45,19 @@
 
 #define DEFAULT_SPELL_CHECKER "@mozilla.org/spellchecker/engine;1"
 
-NS_IMPL_ISUPPORTS1(mozSpellChecker, nsISpellChecker)
+NS_IMPL_CYCLE_COLLECTING_ADDREF(mozSpellChecker)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(mozSpellChecker)
+
+NS_INTERFACE_MAP_BEGIN(mozSpellChecker)
+  NS_INTERFACE_MAP_ENTRY(nsISpellChecker)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsISpellChecker)
+  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(mozSpellChecker)
+NS_INTERFACE_MAP_END
+
+NS_IMPL_CYCLE_COLLECTION_3(mozSpellChecker,
+                           mConverter,
+                           mTsDoc,
+                           mPersonalDictionary)
 
 mozSpellChecker::mozSpellChecker()
 {
@@ -89,7 +101,7 @@ mozSpellChecker::NextMisspelledWord(nsAString &aWord, nsTArray<nsString> *aSugge
   if(!aSuggestions||!mConverter)
     return NS_ERROR_NULL_POINTER;
 
-  PRUint32 selOffset;
+  PRInt32 selOffset;
   PRInt32 begin,end;
   nsresult result;
   result = SetupDoc(&selOffset);
@@ -158,9 +170,7 @@ mozSpellChecker::CheckWord(const nsAString &aWord, PRBool *aIsMisspelled, nsTArr
       if (count)
         NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(count, words);
     }
-    if(aIsMisspelled){
-      *aIsMisspelled = PR_TRUE;
-    }
+    *aIsMisspelled = PR_TRUE;
   }
   return NS_OK;
 }
@@ -174,7 +184,7 @@ mozSpellChecker::Replace(const nsAString &aOldWord, const nsAString &aNewWord, P
   nsAutoString newWord(aNewWord); // sigh
 
   if(aAllOccurrences){
-    PRUint32 selOffset;
+    PRInt32 selOffset;
     PRInt32 startBlock,currentBlock,currOffset;
     PRInt32 begin,end;
     PRBool done;
@@ -202,9 +212,10 @@ mozSpellChecker::Replace(const nsAString &aOldWord, const nsAString &aNewWord, P
             if (aOldWord.Equals(Substring(str, begin, end-begin))) {
               // if we are before the current selection point but in the same block
               // move the selection point forwards
-              if((currentBlock == startBlock)&&(begin < (PRInt32) selOffset)){
-                selOffset += (aNewWord.Length() - aOldWord.Length());
-                if(selOffset < 0) selOffset=0;
+              if((currentBlock == startBlock)&&(begin < selOffset)){
+                selOffset +=
+                  PRInt32(aNewWord.Length()) - PRInt32(aOldWord.Length());
+                if(selOffset < begin) selOffset=begin;
               }
               mTsDoc->SetSelection(begin, end-begin);
               mTsDoc->InsertText(&newWord);
@@ -388,7 +399,7 @@ mozSpellChecker::SetCurrentDictionary(const nsAString &aDictionary)
 }
 
 nsresult
-mozSpellChecker::SetupDoc(PRUint32 *outBlockOffset)
+mozSpellChecker::SetupDoc(PRInt32 *outBlockOffset)
 {
   nsresult  rv;
 
@@ -472,7 +483,6 @@ mozSpellChecker::InitSpellCheckDictionaryMap()
 {
   nsresult rv;
   PRBool hasMoreEngines;
-  PRInt32 i;
   nsTArray<nsCString> contractIds;
 
   nsCOMPtr<nsICategoryManager> catMgr = do_GetService(NS_CATEGORYMANAGER_CONTRACTID);
@@ -508,7 +518,7 @@ mozSpellChecker::InitSpellCheckDictionaryMap()
   // Retrieve dictionaries from all available spellcheckers and
   // fill mDictionariesMap hash (only the first dictionary with the
   // each name is used).
-  for (i=0;i < PRInt32(contractIds.Length());i++){
+  for (PRUint32 i=0;i < contractIds.Length();i++){
     PRUint32 count,k;
     PRUnichar **words;
 

@@ -68,14 +68,13 @@ spawn(void (*run)(void*), void* arg)
     do {                                        \
         passed(__FUNCTION__);                   \
         return NS_OK;                           \
-    } while (0);
-
+    } while (0)
 
 #define FAIL(why)                               \
     do {                                        \
-        fail(why);                              \
+        fail("%s | %s - %s", __FILE__, __FUNCTION__, why); \
         return NS_ERROR_FAILURE;                \
-    } while (0);
+    } while (0)
 
 //-----------------------------------------------------------------------------
 
@@ -180,6 +179,7 @@ public:
             NS_ASSERTION(0 <= rv, PR_ErrorToName(PR_GetError()));
 
             if (0 == rv) {      // timeout
+                fputs("(timed out!)\n", stderr);
                 Finish(PR_FALSE); // abnormal
                 return;
             }
@@ -208,20 +208,23 @@ public:
                     else
                         mStderr += buf;
                 }
+                else if (isStdout) {
+                    stdoutOpen = PR_FALSE;
+                }
                 else {
-                    if (isStdout) {
-                        stdoutOpen = PR_FALSE;
-                        PR_Close(mStdoutfd);
-                    }
-                    else {
-                        stderrOpen = PR_FALSE;
-                        PR_Close(mStderrfd);
-                    }
+                    stderrOpen = PR_FALSE;
                 }
             }
 
             now = PR_IntervalNow();
         }
+
+        if (stdoutOpen)
+            fputs("(stdout still open!)\n", stderr);
+        if (stderrOpen)
+            fputs("(stderr still open!)\n", stderr);
+        if (now > deadline)
+            fputs("(timed out!)\n", stderr);
 
         Finish(!stdoutOpen && !stderrOpen && now <= deadline);
     }
@@ -230,8 +233,6 @@ private:
     void Finish(PRBool normalExit) {
         if (!normalExit) {
             PR_KillProcess(mProc);
-            PR_Close(mStdoutfd);
-            PR_Close(mStderrfd);
             mExitCode = -1;
             PRInt32 dummy;
             PR_WaitProcess(mProc, &dummy);
@@ -239,6 +240,9 @@ private:
         else {
             PR_WaitProcess(mProc, &mExitCode); // this had better not block ...
         }
+
+        PR_Close(mStdoutfd);
+        PR_Close(mStderrfd);
     }
 
     PRProcess* mProc;
@@ -253,7 +257,7 @@ bool
 CheckForDeadlock(const char* test, const char* const* findTokens)
 {
     Subprocess proc(test);
-    proc.RunToCompletion(1000);
+    proc.RunToCompletion(5000);
 
     if (0 == proc.mExitCode)
         return false;
@@ -521,7 +525,7 @@ ContentionNoDeadlock()
 {
     const char * func = __func__;
     Subprocess proc(func);
-    proc.RunToCompletion(10000);
+    proc.RunToCompletion(60000);
     if (0 != proc.mExitCode) {
         printf("(expected 0 == return code, got %d)\n", proc.mExitCode);
         puts("(output)\n----------------------------------\n");
@@ -568,7 +572,7 @@ main(int argc, char** argv)
         FAIL("unknown child test");
     }
 
-    ScopedXPCOM xpcom("Deadlock detector correctness");
+    ScopedXPCOM xpcom("XPCOM deadlock detector correctness (" __FILE__ ")");
     if (xpcom.failed())
         return 1;
 

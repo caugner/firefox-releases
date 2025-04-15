@@ -38,7 +38,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsClipboard.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
 #include "nsCOMPtr.h"
@@ -47,10 +46,9 @@
 #include "prmem.h"
 #include "nsIObserverService.h"
 #include "nsIServiceManager.h"
-
 #include "nsOS2Uni.h"
-
-#include <unidef.h>     // for UniStrlen
+#include "nsClipboard.h"
+#include "mozilla/Services.h"
 
 inline ULONG RegisterClipboardFormat(PCSZ pcszFormat)
 {
@@ -78,7 +76,7 @@ nsClipboard::nsClipboard() : nsBaseClipboard()
   // Register for a shutdown notification so that we can flush data
   // to the OS clipboard.
   nsCOMPtr<nsIObserverService> observerService =
-    do_GetService("@mozilla.org/observer-service;1");
+    mozilla::services::GetObserverService();
   if (observerService)
     observerService->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, PR_FALSE);
 }

@@ -86,8 +86,7 @@ nsresult NS_NewXHTMLContentSerializer(nsIContentSerializer** aSerializer)
 }
 
 nsXHTMLContentSerializer::nsXHTMLContentSerializer()
-  : mInBody(0),
-    mIsHTMLSerializer(PR_FALSE)
+  : mIsHTMLSerializer(PR_FALSE)
 {
 }
 
@@ -104,11 +103,8 @@ nsXHTMLContentSerializer::Init(PRUint32 aFlags, PRUint32 aWrapColumn,
   // The previous version of the HTML serializer did implicit wrapping
   // when there is no flags, so we keep wrapping in order to keep
   // compatibility with the existing calling code
-  // XXXLJ perhaps we should remove these two default settings later ?
+  // XXXLJ perhaps should we remove this default settings later ?
   if (aFlags & nsIDocumentEncoder::OutputFormatted ) {
-      aFlags = aFlags | nsIDocumentEncoder::OutputWrap;
-  }
-  else if (!(aFlags & nsIDocumentEncoder::OutputRaw)) {
       aFlags = aFlags | nsIDocumentEncoder::OutputWrap;
   }
 
@@ -158,7 +154,7 @@ nsXHTMLContentSerializer::HasLongLines(const nsString& text, PRInt32& aLastNewli
 }
 
 NS_IMETHODIMP
-nsXHTMLContentSerializer::AppendText(nsIDOMText* aText,
+nsXHTMLContentSerializer::AppendText(nsIContent* aText,
                                      PRInt32 aStartOffset,
                                      PRInt32 aEndOffset,
                                      nsAString& aStr)
@@ -185,7 +181,9 @@ nsXHTMLContentSerializer::AppendText(nsIDOMText* aText,
     PRInt32 lastNewlineOffset = kNotFound;
     if (HasLongLines(data, lastNewlineOffset)) {
       // We have long lines, rewrap
+      mDoWrap = PR_TRUE;
       AppendToStringWrapped(data, aStr);
+      mDoWrap = PR_FALSE;
     }
     else {
       AppendToStringConvertLF(data, aStr);
@@ -261,7 +259,7 @@ nsXHTMLContentSerializer::EscapeURI(nsIContent* aContent, const nsAString& aURI,
 
 void
 nsXHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
-                                              nsIDOMElement *aOriginalElement,
+                                              nsIContent *aOriginalElement,
                                               nsAString& aTagPrefix,
                                               const nsAString& aTagNamespaceURI,
                                               nsIAtom* aTagName,
@@ -271,7 +269,7 @@ nsXHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
 {
   nsresult rv;
   PRUint32 index, count;
-  nsAutoString nameStr, prefixStr, uriStr, valueStr;
+  nsAutoString prefixStr, uriStr, valueStr;
   nsAutoString xmlnsStr;
   xmlnsStr.AssignLiteral(kXMLNS);
 
@@ -307,9 +305,8 @@ nsXHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
     else if (aTagName == nsGkAtoms::li) {
       mIsFirstChildOfOL = IsFirstChildOfOL(aOriginalElement);
       if (mIsFirstChildOfOL) {
-        nsCOMPtr<nsIDOMElement> element (do_QueryInterface(aContent));
         // If OL is parent of this LI, serialize attributes in different manner.
-        SerializeLIValueAttribute(element, aStr);
+        SerializeLIValueAttribute(aContent, aStr);
       }
     }
   }
@@ -346,10 +343,9 @@ nsXHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
     nsIAtom* attrPrefix = name->GetPrefix();
 
     // Filter out any attribute starting with [-|_]moz
-    const char* sharedName;
-    attrName->GetUTF8String(&sharedName);
-    if ((('_' == *sharedName) || ('-' == *sharedName)) &&
-        !nsCRT::strncmp(sharedName+1, kMozStr, PRUint32(sizeof(kMozStr)-1))) {
+    nsDependentAtomString attrNameStr(attrName);
+    if (StringBeginsWith(attrNameStr, NS_LITERAL_STRING("_moz")) ||
+        StringBeginsWith(attrNameStr, NS_LITERAL_STRING("-moz"))) {
       continue;
     }
 
@@ -368,14 +364,7 @@ nsXHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
 
     aContent->GetAttr(namespaceID, attrName, valueStr);
 
-    attrName->ToString(nameStr);
-
-    // XXX Hack to get around the fact that MathML can add
-    //     attributes starting with '-', which makes them
-    //     invalid XML. see Bug 475518
-    if (!nameStr.IsEmpty() && nameStr.First() == '-')
-      continue;
-
+    nsDependentAtomString nameStr(attrName);
     PRBool isJS = PR_FALSE;
 
     if (kNameSpaceID_XHTML == contentNamespaceID) {
@@ -454,7 +443,7 @@ nsXHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
 
 
 void 
-nsXHTMLContentSerializer::AppendEndOfElementStart(nsIDOMElement *aOriginalElement,
+nsXHTMLContentSerializer::AppendEndOfElementStart(nsIContent *aOriginalElement,
                                                   nsIAtom * aName,
                                                   PRInt32 aNamespaceID,
                                                   nsAString& aStr)
@@ -469,18 +458,27 @@ nsXHTMLContentSerializer::AppendEndOfElementStart(nsIDOMElement *aOriginalElemen
     return;
   }
 
-  nsIParserService* parserService = nsContentUtils::GetParserService();
+  nsIContent* content = aOriginalElement;
 
-  if (parserService) {
-    PRBool isContainer;
-    parserService->IsContainer(parserService->HTMLAtomTagToId(aName),
-                             isContainer);
-    if (!isContainer) {
-      // for backward compatibility with HTML 4 user agents
-      // only non-container HTML elements can be closed immediatly,
-      // and a space is added before />
-      AppendToString(NS_LITERAL_STRING(" />"), aStr);
-      return;
+  // for non empty elements, even if they are not a container, we always
+  // serialize their content, because the XHTML element could contain non XHTML
+  // nodes useful in some context, like in an XSLT stylesheet
+  if (HasNoChildren(content)) {
+
+    nsIParserService* parserService = nsContentUtils::GetParserService();
+  
+    if (parserService) {
+      PRBool isContainer;
+      parserService->
+        IsContainer(parserService->HTMLCaseSensitiveAtomTagToId(aName),
+                    isContainer);
+      if (!isContainer) {
+        // for backward compatibility with HTML 4 user agents
+        // only non-container HTML elements can be closed immediatly,
+        // and a space is added before />
+        AppendToString(NS_LITERAL_STRING(" />"), aStr);
+        return;
+      }
     }
   }
   AppendToString(kGreaterThan, aStr);
@@ -488,7 +486,7 @@ nsXHTMLContentSerializer::AppendEndOfElementStart(nsIDOMElement *aOriginalElemen
 
 void
 nsXHTMLContentSerializer::AfterElementStart(nsIContent * aContent,
-                                            nsIDOMElement *aOriginalElement,
+                                            nsIContent *aOriginalElement,
                                             nsAString& aStr)
 {
   nsIAtom *name = aContent->Tag();
@@ -503,7 +501,7 @@ nsXHTMLContentSerializer::AfterElementStart(nsIContent * aContent,
     PRUint32 i, childCount = aContent->GetChildCount();
     for (i = 0; i < childCount; ++i) {
       nsIContent* child = aContent->GetChildAt(i);
-      if (child->IsNodeOfType(nsINode::eHTML) &&
+      if (child->IsHTML() &&
           child->Tag() == nsGkAtoms::meta &&
           child->HasAttr(kNameSpaceID_None, nsGkAtoms::content)) {
         nsAutoString header;
@@ -551,7 +549,7 @@ nsXHTMLContentSerializer::AfterElementEnd(nsIContent * aContent,
 
 
 NS_IMETHODIMP
-nsXHTMLContentSerializer::AppendDocumentStart(nsIDOMDocument *aDocument,
+nsXHTMLContentSerializer::AppendDocumentStart(nsIDocument *aDocument,
                                               nsAString& aStr)
 {
   if (!mBodyOnly)
@@ -613,17 +611,20 @@ nsXHTMLContentSerializer::CheckElementEnd(nsIContent * aContent,
       }
     }
 
-    nsIParserService* parserService = nsContentUtils::GetParserService();
+    if (HasNoChildren(aContent)) {
+      nsIParserService* parserService = nsContentUtils::GetParserService();
 
-    if (parserService) {
-      PRBool isContainer;
+      if (parserService) {
+        PRBool isContainer;
 
-      parserService->IsContainer(parserService->HTMLAtomTagToId(name),
-                                 isContainer);
-      if (!isContainer) {
-        // non-container HTML elements are already closed,
-        // see AppendEndOfElementStart
-        return PR_FALSE;
+        parserService->
+          IsContainer(parserService->HTMLCaseSensitiveAtomTagToId(name),
+                      isContainer);
+        if (!isContainer) {
+          // non-container HTML elements are already closed,
+          // see AppendEndOfElementStart
+          return PR_FALSE;
+        }
       }
     }
     // for backward compatibility with old HTML user agents,
@@ -637,62 +638,6 @@ nsXHTMLContentSerializer::CheckElementEnd(nsIContent * aContent,
 }
 
 void
-nsXHTMLContentSerializer::AppendToString(const PRUnichar* aStr,
-                                         PRInt32 aLength,
-                                         nsAString& aOutputStr)
-{
-  if (mBodyOnly && !mInBody) {
-    return;
-  }
-  nsXMLContentSerializer::AppendToString(aStr, aLength, aOutputStr);
-}
-
-void 
-nsXHTMLContentSerializer::AppendToString(const PRUnichar aChar,
-                                         nsAString& aOutputStr)
-{
-  if (mBodyOnly && !mInBody) {
-    return;
-  }
-  nsXMLContentSerializer::AppendToString(aChar, aOutputStr);
-}
-
-void
-nsXHTMLContentSerializer::AppendToString(const nsAString& aStr,
-                                         nsAString& aOutputStr)
-{
-  if (mBodyOnly && !mInBody) {
-    return;
-  }
-  nsXMLContentSerializer::AppendToString(aStr, aOutputStr);
-}
-
-
-static const PRUint16 kValNBSP = 160;
-static const char kEntityNBSP[] = "nbsp";
-
-static const PRUint16 kGTVal = 62;
-static const char* kEntities[] = {
-  "", "", "", "", "", "", "", "", "", "",
-  "", "", "", "", "", "", "", "", "", "",
-  "", "", "", "", "", "", "", "", "", "",
-  "", "", "", "", "", "", "", "", "amp", "",
-  "", "", "", "", "", "", "", "", "", "",
-  "", "", "", "", "", "", "", "", "", "",
-  "lt", "", "gt"
-};
-
-static const char* kAttrEntities[] = {
-  "", "", "", "", "", "", "", "", "", "",
-  "", "", "", "", "", "", "", "", "", "",
-  "", "", "", "", "", "", "", "", "", "",
-  "", "", "", "", "quot", "", "", "", "amp", "",
-  "", "", "", "", "", "", "", "", "", "",
-  "", "", "", "", "", "", "", "", "", "",
-  "lt", "", "gt"
-};
-
-void
 nsXHTMLContentSerializer::AppendAndTranslateEntities(const nsAString& aStr,
                                                      nsAString& aOutputStr)
 {
@@ -704,105 +649,8 @@ nsXHTMLContentSerializer::AppendAndTranslateEntities(const nsAString& aStr,
     aOutputStr.Append(aStr);
     return;
   }
-
-  if (mFlags & (nsIDocumentEncoder::OutputEncodeBasicEntities  |
-                nsIDocumentEncoder::OutputEncodeLatin1Entities |
-                nsIDocumentEncoder::OutputEncodeHTMLEntities   |
-                nsIDocumentEncoder::OutputEncodeW3CEntities)) {
-    nsIParserService* parserService = nsContentUtils::GetParserService();
-
-    if (!parserService) {
-      NS_ERROR("Can't get parser service");
-      return;
-    }
-
-    nsReadingIterator<PRUnichar> done_reading;
-    aStr.EndReading(done_reading);
-
-    // for each chunk of |aString|...
-    PRUint32 advanceLength = 0;
-    nsReadingIterator<PRUnichar> iter;
-
-    const char **entityTable = mInAttribute ? kAttrEntities : kEntities;
-
-    for (aStr.BeginReading(iter);
-          iter != done_reading;
-          iter.advance(PRInt32(advanceLength))) {
-      PRUint32 fragmentLength = iter.size_forward();
-      PRUint32 lengthReplaced = 0; // the number of UTF-16 codepoints
-                                    //  replaced by a particular entity
-      const PRUnichar* c = iter.get();
-      const PRUnichar* fragmentStart = c;
-      const PRUnichar* fragmentEnd = c + fragmentLength;
-      const char* entityText = nsnull;
-      nsCAutoString entityReplacement;
-      char* fullEntityText = nsnull;
-
-      advanceLength = 0;
-      // for each character in this chunk, check if it
-      // needs to be replaced
-      for (; c < fragmentEnd; c++, advanceLength++) {
-        PRUnichar val = *c;
-        if (val == kValNBSP) {
-          entityText = kEntityNBSP;
-          break;
-        }
-        else if ((val <= kGTVal) && (entityTable[val][0] != 0)) {
-          entityText = entityTable[val];
-          break;
-        } else if (val > 127 &&
-                  ((val < 256 &&
-                    mFlags & nsIDocumentEncoder::OutputEncodeLatin1Entities) ||
-                    mFlags & nsIDocumentEncoder::OutputEncodeHTMLEntities)) {
-          parserService->HTMLConvertUnicodeToEntity(val, entityReplacement);
-
-          if (!entityReplacement.IsEmpty()) {
-            entityText = entityReplacement.get();
-            break;
-          }
-        }
-        else if (val > 127 &&
-                  mFlags & nsIDocumentEncoder::OutputEncodeW3CEntities &&
-                  mEntityConverter) {
-          if (NS_IS_HIGH_SURROGATE(val) &&
-              c + 1 < fragmentEnd &&
-              NS_IS_LOW_SURROGATE(*(c + 1))) {
-            PRUint32 valUTF32 = SURROGATE_TO_UCS4(val, *(++c));
-            if (NS_SUCCEEDED(mEntityConverter->ConvertUTF32ToEntity(valUTF32,
-                              nsIEntityConverter::entityW3C, &fullEntityText))) {
-              lengthReplaced = 2;
-              break;
-            }
-            else {
-              advanceLength++;
-            }
-          }
-          else if (NS_SUCCEEDED(mEntityConverter->ConvertToEntity(val,
-                                nsIEntityConverter::entityW3C, 
-                                &fullEntityText))) {
-            lengthReplaced = 1;
-            break;
-          }
-        }
-      }
-
-      aOutputStr.Append(fragmentStart, advanceLength);
-      if (entityText) {
-        aOutputStr.Append(PRUnichar('&'));
-        AppendASCIItoUTF16(entityText, aOutputStr);
-        aOutputStr.Append(PRUnichar(';'));
-        advanceLength++;
-      }
-      // if it comes from nsIEntityConverter, it already has '&' and ';'
-      else if (fullEntityText) {
-        AppendASCIItoUTF16(fullEntityText, aOutputStr);
-        nsMemory::Free(fullEntityText);
-        advanceLength += lengthReplaced;
-      }
-    }
-  } else {
-    nsXMLContentSerializer::AppendAndTranslateEntities(aStr, aOutputStr);
-  }
+ 
+  nsXMLContentSerializer::AppendAndTranslateEntities(aStr, aOutputStr);
 }
 
 PRBool
@@ -905,37 +753,6 @@ nsXHTMLContentSerializer::IsShorthandAttr(const nsIAtom* aAttrName,
   return PR_FALSE;
 }
 
-void
-nsXHTMLContentSerializer::AppendToStringConvertLF(const nsAString& aStr,
-                                                  nsAString& aOutputStr)
-{
-  if (mBodyOnly && !mInBody) {
-    return;
-  }
-  nsXMLContentSerializer::AppendToStringConvertLF(aStr, aOutputStr);
-}
-
-void
-nsXHTMLContentSerializer::AppendToStringFormatedWrapped(const nsASingleFragmentString& aStr,
-                                                        nsAString& aOutputStr)
-{
-  if (mBodyOnly && !mInBody) {
-    return;
-  }
-  nsXMLContentSerializer::AppendToStringFormatedWrapped(aStr, aOutputStr);
-}
-
-void
-nsXHTMLContentSerializer::AppendToStringWrapped(const nsASingleFragmentString& aStr,
-                                                nsAString& aOutputStr)
-{
-  if (mBodyOnly && !mInBody) {
-    return;
-  }
-  nsXMLContentSerializer::AppendToStringWrapped(aStr, aOutputStr);
-}
-
-
 PRBool
 nsXHTMLContentSerializer::LineBreakBeforeOpen(PRInt32 aNamespaceID, nsIAtom* aName)
 {
@@ -959,7 +776,8 @@ nsXHTMLContentSerializer::LineBreakBeforeOpen(PRInt32 aNamespaceID, nsIAtom* aNa
 
     if (parserService) {
       PRBool res;
-      parserService->IsBlock(parserService->HTMLAtomTagToId(aName), res);
+      parserService->
+        IsBlock(parserService->HTMLCaseSensitiveAtomTagToId(aName), res);
       return res;
     }
   }
@@ -1052,7 +870,8 @@ nsXHTMLContentSerializer::LineBreakAfterClose(PRInt32 aNamespaceID, nsIAtom* aNa
 
     if (parserService) {
       PRBool res;
-      parserService->IsBlock(parserService->HTMLAtomTagToId(aName), res);
+      parserService->
+        IsBlock(parserService->HTMLCaseSensitiveAtomTagToId(aName), res);
       return res;
     }
   }
@@ -1100,7 +919,7 @@ nsXHTMLContentSerializer::MaybeLeaveFromPreContent(nsIContent* aNode)
 }
 
 void 
-nsXHTMLContentSerializer::SerializeLIValueAttribute(nsIDOMElement* aElement,
+nsXHTMLContentSerializer::SerializeLIValueAttribute(nsIContent* aElement,
                                                     nsAString& aStr)
 {
   // We are copying and we are at the "first" LI node of OL in selected range.
@@ -1171,7 +990,7 @@ nsXHTMLContentSerializer::SerializeLIValueAttribute(nsIDOMElement* aElement,
 }
 
 PRBool
-nsXHTMLContentSerializer::IsFirstChildOfOL(nsIDOMElement* aElement)
+nsXHTMLContentSerializer::IsFirstChildOfOL(nsIContent* aElement)
 {
   nsCOMPtr<nsIDOMNode> node = do_QueryInterface(aElement);
   nsAutoString parentName;
@@ -1195,4 +1014,23 @@ nsXHTMLContentSerializer::IsFirstChildOfOL(nsIDOMElement* aElement)
   }
   else
     return PR_FALSE;
+}
+
+PRBool
+nsXHTMLContentSerializer::HasNoChildren(nsIContent * aContent) {
+
+  PRUint32 i, childCount = aContent->GetChildCount();
+
+  for (i = 0; i < childCount; ++i) {
+
+    nsIContent* child = aContent->GetChildAt(i);
+
+    if (!child->IsNodeOfType(nsINode::eTEXT))
+      return PR_FALSE;
+
+    if (child->TextLength())
+      return PR_FALSE;
+  }
+
+  return PR_TRUE;
 }

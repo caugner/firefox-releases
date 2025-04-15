@@ -16,7 +16,12 @@ window.addEventListener("message", function(e) {
   var res = {
     didFail: false,
     events: [],
-    progressEvents: 0
+    progressEvents: 0,
+    status: 0,
+    responseText: "",
+    statusText: "",
+    responseXML: null,
+    sendThrew: false
   };
   
   var xhr = new XMLHttpRequest();
@@ -43,21 +48,27 @@ window.addEventListener("message", function(e) {
       }, false);
     }
   }
-  xhr.onload = function () {
+  xhr.onload = xhr.onerror = function (event) {
+    if (event.type == "error") {
+      res.didFail = true;
+    }
     res.status = xhr.status;
+    try {
+      res.statusText = xhr.statusText;
+    } catch (e) {
+      delete(res.statusText);
+    }
     res.responseXML = xhr.responseXML ?
       (new XMLSerializer()).serializeToString(xhr.responseXML) :
       null;
     res.responseText = xhr.responseText;
-    post(e, res);
-  };
-  xhr.onerror = function () {
-    res.didFail = true;
-    res.status = xhr.status;
-    res.responseXML = xhr.responseXML ?
-      (new XMLSerializer()).serializeToString(xhr.responseXML) :
-      null;
-    res.responseText = xhr.responseText;
+
+    res.responseHeaders = {};
+    for (responseHeader in req.responseHeaders) {
+      res.responseHeaders[responseHeader] =
+        xhr.getResponseHeader(responseHeader);
+    }
+
     post(e, res);
   }
 
@@ -67,19 +78,33 @@ window.addEventListener("message", function(e) {
     sendData = req.body;
 
   res.events.push("opening");
-  xhr.open(req.method, req.url, true);
+  // Allow passign in falsy usernames/passwords so we can test them
+  try {
+    xhr.open(req.method, req.url, true,
+             ("username" in req) ? req.username : "",
+             ("password" in req) ? req.password : "aa");
+  } catch (ex) {
+    res.didFail = true;
+    post(e, res);
+  }
 
   for (header in req.headers) {
     xhr.setRequestHeader(header, req.headers[header]);
   }
 
   res.events.push("sending");
-  xhr.send(sendData);
+  try {
+    xhr.send(sendData);
+  } catch (ex) {
+    res.didFail = true;
+    res.sendThrew = true;
+    post(e, res);
+  }
 
 }, false);
 
 function post(e, res) {
-  e.source.postMessage(res.toSource(), "http://localhost:8888");
+  e.source.postMessage(res.toSource(), "http://mochi.test:8888");
 }
 
 </script>

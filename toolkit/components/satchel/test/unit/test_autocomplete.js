@@ -40,9 +40,11 @@ var fh;
 var fac;
 var prefs;
 
+const DEFAULT_EXPIRE_DAYS = 180;
+
 function countAllEntries() {
     let stmt = fh.DBConnection.createStatement("SELECT COUNT(*) as numEntries FROM moz_formhistory");
-    do_check_true(stmt.step());
+    do_check_true(stmt.executeStep());
     let numEntries = stmt.row.numEntries;
     stmt.finalize();
     return numEntries;
@@ -59,7 +61,7 @@ function getFormExpiryDays () {
     if (prefs.prefHasUserValue("browser.formfill.expire_days"))
         return prefs.getIntPref("browser.formfill.expire_days");
     else
-        return prefs.getIntPref("browser.history_expire_days");
+        return DEFAULT_EXPIRE_DAYS;
 }
 
 function run_test() {
@@ -203,7 +205,7 @@ function run_test() {
               "'field3', " +
               "'old but not senior', " +
               "100, " +
-              (agedDate + 1000000) + ", " +
+              (agedDate + 60 * 1000 * 1000) + ", " +
               now +
           ");");
         fh.DBConnection.executeSimpleSQL(
@@ -213,7 +215,7 @@ function run_test() {
               "'field3', " +
               "'senior citizen', " +
               "100, " +
-              agedDate + ", " +
+              (agedDate - 60 * 1000 * 1000) + ", " +
               now +
           ");");
 

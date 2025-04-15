@@ -38,50 +38,12 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-// Get bookmark service
-try {
-  var bmsvc = Cc["@mozilla.org/browser/nav-bookmarks-service;1"].getService(Ci.nsINavBookmarksService);
-} catch(ex) {
-  do_throw("Could not get nav-bookmarks-service\n");
-}
-
-// Get livemark service
-try {
-  var lmsvc = Cc["@mozilla.org/browser/livemark-service;2"].getService(Ci.nsILivemarkService);
-} catch(ex) {
-  do_throw("Could not get livemark-service\n");
-} 
-
-// Get microsummary service
-try {
-  var mss = Cc["@mozilla.org/microsummary/service;1"].getService(Ci.nsIMicrosummaryService);
-} catch(ex) {
-  do_throw("Could not get microsummary-service\n");
-} 
-
-// Get Places Transaction Manager Service
-try {
-  var ptSvc = Cc["@mozilla.org/browser/placesTransactionsService;1"].
-              getService(Ci.nsIPlacesTransactionsService);
-} catch(ex) {
-  do_throw("Could not get Places Transactions Service\n");
-}
-
-// Get tagging service
-try {
-  var tagssvc = Cc["@mozilla.org/browser/tagging-service;1"].
-                getService(Ci.nsITaggingService);
-} catch(ex) {
-  do_throw("Could not get tagging service\n");
-}
-
-// Get annotations service
-try {
-  var annosvc = Cc["@mozilla.org/browser/annotation-service;1"].
-                getService(Ci.nsIAnnotationService);
-} catch(ex) {
-  do_throw("Could not get annotations service\n");
-}
+var bmsvc = PlacesUtils.bookmarks;
+var lmsvc = PlacesUtils.livemarks;
+var mss = PlacesUtils.microsummaries;
+var ptSvc = PlacesUIUtils.ptm;
+var tagssvc = PlacesUtils.tagging;
+var annosvc = PlacesUtils.annotations;
 
 // create and add bookmarks observer
 var observer = {
@@ -91,7 +53,7 @@ var observer = {
   onEndUpdateBatch: function() {
     this._endUpdateBatch = true;
   },
-  onItemAdded: function(id, folder, index, itemType) {
+  onItemAdded: function(id, folder, index, itemType, uri) {
     this._itemAddedId = id;
     this._itemAddedParent = folder;
     this._itemAddedIndex = index;
@@ -143,9 +105,8 @@ function run_test() {
   var root = bmsvc.bookmarksMenuFolder;
 
   //Test creating a folder with a description
-  const DESCRIPTION_ANNO = "bookmarkProperties/description";
   const TEST_DESCRIPTION = "this is my test description";
-  var annos = [{ name: DESCRIPTION_ANNO,
+  var annos = [{ name: PlacesUIUtils.DESCRIPTION_ANNO,
                  type: annosvc.TYPE_STRING,
                 flags: 0,
                 value: TEST_DESCRIPTION,
@@ -165,7 +126,7 @@ function run_test() {
   do_check_eq(observer._itemAddedParent, root);
   do_check_eq(observer._itemAddedId, folderId);
   do_check_eq(TEST_DESCRIPTION, 
-              annosvc.getItemAnnotation(folderId, DESCRIPTION_ANNO));
+              annosvc.getItemAnnotation(folderId, PlacesUIUtils.DESCRIPTION_ANNO));
 
   txn1.undoTransaction();
   do_check_eq(observer._itemRemovedId, folderId);
@@ -184,7 +145,7 @@ function run_test() {
   // Create to Root
   var txn2 = ptSvc.createItem(uri("http://www.example.com"), root, bmStartIndex, "Testing1");
   ptSvc.doTransaction(txn2); // Also testing doTransaction
-  var b = (bmsvc.getBookmarkIdsForURI(uri("http://www.example.com"), {}))[0];
+  var b = (bmsvc.getBookmarkIdsForURI(uri("http://www.example.com")))[0];
   do_check_eq(observer._itemAddedId, b);
   do_check_eq(observer._itemAddedIndex, bmStartIndex);
   do_check_true(bmsvc.isBookmarked(uri("http://www.example.com")));
@@ -194,7 +155,7 @@ function run_test() {
   do_check_false(bmsvc.isBookmarked(uri("http://www.example.com")));
   txn2.redoTransaction();
   do_check_true(bmsvc.isBookmarked(uri("http://www.example.com")));
-  var newId = (bmsvc.getBookmarkIdsForURI(uri("http://www.example.com"), {}))[0];
+  var newId = (bmsvc.getBookmarkIdsForURI(uri("http://www.example.com")))[0];
   do_check_eq(observer._itemAddedIndex, bmStartIndex);
   do_check_eq(observer._itemAddedParent, root);
   do_check_eq(observer._itemAddedId, newId);
@@ -211,7 +172,7 @@ function run_test() {
 
   var txn2b = ptSvc.createItem(uri("http://www.example2.com"), fldrId, bmStartIndex, "Testing1b");
   ptSvc.doTransaction(txn2b);
-  var b2 = (bmsvc.getBookmarkIdsForURI(uri("http://www.example2.com"), {}))[0];
+  var b2 = (bmsvc.getBookmarkIdsForURI(uri("http://www.example2.com")))[0];
   do_check_eq(observer._itemAddedId, b2);
   do_check_eq(observer._itemAddedIndex, bmStartIndex);
   do_check_true(bmsvc.isBookmarked(uri("http://www.example2.com")));
@@ -219,7 +180,7 @@ function run_test() {
   do_check_eq(observer._itemRemovedId, b2);
   do_check_eq(observer._itemRemovedIndex, bmStartIndex);
   txn2b.redoTransaction();
-  newId = (bmsvc.getBookmarkIdsForURI(uri("http://www.example2.com"), {}))[0];
+  newId = (bmsvc.getBookmarkIdsForURI(uri("http://www.example2.com")))[0];
   do_check_eq(observer._itemAddedIndex, bmStartIndex);
   do_check_eq(observer._itemAddedParent, fldrId);
   do_check_eq(observer._itemAddedId, newId);
@@ -232,7 +193,7 @@ function run_test() {
   ptSvc.doTransaction(ptSvc.createItem(uri("http://www.example3.com"), root, -1, "Testing2"));
   ptSvc.doTransaction(ptSvc.createItem(uri("http://www.example3.com"), root, -1, "Testing3"));
   ptSvc.doTransaction(ptSvc.createItem(uri("http://www.example3.com"), fldrId, -1, "Testing4"));
-  var bkmkIds = bmsvc.getBookmarkIdsForURI(uri("http://www.example3.com"), {});
+  var bkmkIds = bmsvc.getBookmarkIdsForURI(uri("http://www.example3.com"));
   bkmkIds.sort();
   var bkmk1Id = bkmkIds[0];
   var bkmk2Id = bkmkIds[1];
@@ -315,27 +276,54 @@ function run_test() {
   do_check_eq(observer._itemAddedParent, root);
   do_check_eq(observer._itemAddedIndex, 3);
 
-  // Test removing an item with a keyword
+  // Test removing an item with a keyword and a tag.
+  // Notice in this case the tag persists since other bookmarks have same uri.
   bmsvc.setKeywordForBookmark(bkmk2Id, "test_keyword");
+  tagssvc.tagURI(uri("http://www.example3.com"), ["test-tag"]);
   var txn5 = ptSvc.removeItem(bkmk2Id);
   txn5.doTransaction();
   do_check_eq(observer._itemRemovedId, bkmk2Id);
   do_check_eq(observer._itemRemovedFolder, root);
   do_check_eq(observer._itemRemovedIndex, 2);
   do_check_eq(bmsvc.getKeywordForBookmark(bkmk2Id), null);
+  do_check_eq(tagssvc.getTagsForURI(uri("http://www.example3.com"))[0], "test-tag");
   txn5.undoTransaction();
   var newbkmk2Id = observer._itemAddedId;
   do_check_eq(observer._itemAddedParent, root);
   do_check_eq(observer._itemAddedIndex, 2);
   do_check_eq(bmsvc.getKeywordForBookmark(newbkmk2Id), "test_keyword");
+  do_check_eq(tagssvc.getTagsForURI(uri("http://www.example3.com"))[0], "test-tag");
   txn5.redoTransaction();
   do_check_eq(observer._itemRemovedId, newbkmk2Id);
   do_check_eq(observer._itemRemovedFolder, root);
   do_check_eq(observer._itemRemovedIndex, 2);
   do_check_eq(bmsvc.getKeywordForBookmark(newbkmk2Id), null);
+  do_check_eq(tagssvc.getTagsForURI(uri("http://www.example3.com"))[0], "test-tag");
   txn5.undoTransaction();
   do_check_eq(observer._itemAddedParent, root);
   do_check_eq(observer._itemAddedIndex, 2);
+  do_check_eq(tagssvc.getTagsForURI(uri("http://www.example3.com"))[0], "test-tag");
+  tagssvc.untagURI(uri("http://www.example3.com"), ["test-tag"]);
+
+  {
+    // Test removing an item with a tag (last bookmark for a uri).
+    let testURI = uri("http://www.taggedbm.com/");
+    ptSvc.doTransaction(
+      ptSvc.createItem(testURI, fldrId, bmStartIndex, "TaggedBm")
+    );
+    tagssvc.tagURI(testURI, ["test-tag"]);
+    let itemId = observer._itemAddedId;
+    txn = ptSvc.removeItem(itemId);
+    txn.doTransaction();
+    do_check_true(tagssvc.getTagsForURI(testURI).length == 0);
+    txn.undoTransaction();
+    do_check_eq(tagssvc.getTagsForURI(testURI)[0], "test-tag");
+    txn.redoTransaction();
+    do_check_true(tagssvc.getTagsForURI(testURI).length == 0);
+    txn.undoTransaction();
+    do_check_eq(tagssvc.getTagsForURI(testURI)[0], "test-tag");
+    txn.redoTransaction();
+  }
 
   // Test creating a separator
   var txn6 = ptSvc.createSeparator(root, 1);
@@ -415,11 +403,11 @@ function run_test() {
   do_check_eq(observer._itemChangedProperty, "uri");
   do_check_eq(observer._itemChangedValue, "http://www.example3.com/");
   
-  // Test edit item description
+  // Test edit description transaction.
   var txn10 = ptSvc.editItemDescription(bkmk1Id, "Description1");
   txn10.doTransaction();
   do_check_eq(observer._itemChangedId, bkmk1Id);
-  do_check_eq(observer._itemChangedProperty, "bookmarkProperties/description");
+  do_check_eq(observer._itemChangedProperty, PlacesUIUtils.DESCRIPTION_ANNO);
 
   // Testing edit keyword
   var txn11 = ptSvc.editBookmarkKeyword(bkmk1Id, "kw1");
@@ -510,16 +498,15 @@ function run_test() {
   do_check_false(lmsvc.isLivemark(lvmkId));
   do_check_eq(observer._itemRemovedId, lvmkId);
 
-  // Test setLoadInSidebar
-  const LOAD_IN_SIDEBAR_ANNO = "bookmarkProperties/loadInSidebar";
+  // Test LoadInSidebar transaction.
   var txn16 = ptSvc.setLoadInSidebar(bkmk1Id, true);
   txn16.doTransaction();
   do_check_eq(observer._itemChangedId, bkmk1Id);
-  do_check_eq(observer._itemChangedProperty, LOAD_IN_SIDEBAR_ANNO);
+  do_check_eq(observer._itemChangedProperty, PlacesUIUtils.LOAD_IN_SIDEBAR_ANNO);
   do_check_eq(observer._itemChanged_isAnnotationProperty, true);
   txn16.undoTransaction();
   do_check_eq(observer._itemChangedId, bkmk1Id);
-  do_check_eq(observer._itemChangedProperty, LOAD_IN_SIDEBAR_ANNO);
+  do_check_eq(observer._itemChangedProperty, PlacesUIUtils.LOAD_IN_SIDEBAR_ANNO);
   do_check_eq(observer._itemChanged_isAnnotationProperty, true);
 
   // Test generic item annotation
@@ -548,6 +535,10 @@ function run_test() {
                       flags: 0,
                       value: 123,
                       expires: Ci.nsIAnnotationService.EXPIRE_NEVER };
+  var hs = Cc["@mozilla.org/browser/nav-history-service;1"].
+           getService(Ci.nsINavHistoryService);
+  hs.addVisit(uri("http://www.mozilla.org/"), Date.now() * 1000, null,
+              hs.TRANSITION_TYPED, false, 0);
   var genPageAnnoTxn = ptSvc.setPageAnnotation(uri("http://www.mozilla.org/"), pageAnnoObj);
   genPageAnnoTxn.doTransaction();
   do_check_true(annosvc.pageHasAnnotation(uri("http://www.mozilla.org/"), "testAnno/testInt"));
@@ -563,7 +554,7 @@ function run_test() {
   ptSvc.doTransaction(ptSvc.createItem(uri("http://www.sortingtest.com"), srtFldId, -1, "c"));
   ptSvc.doTransaction(ptSvc.createItem(uri("http://www.sortingtest.com"), srtFldId, -1, "b"));   
   ptSvc.doTransaction(ptSvc.createItem(uri("http://www.sortingtest.com"), srtFldId, -1, "a"));
-  var b = bmsvc.getBookmarkIdsForURI(uri("http://www.sortingtest.com"), {});
+  var b = bmsvc.getBookmarkIdsForURI(uri("http://www.sortingtest.com"));
   b.sort();
   var b1 = b[0];
   var b2 = b[1];
@@ -595,7 +586,7 @@ function run_test() {
   ptSvc.doTransaction(
   ptSvc.createItem(uri("http://dietrich.ganx4.com/mozilla/test-microsummary-content.php"),
                    root, -1, "micro test", null, null, null));
-  var bId = (bmsvc.getBookmarkIdsForURI(uri("http://dietrich.ganx4.com/mozilla/test-microsummary-content.php"),{}))[0];
+  var bId = (bmsvc.getBookmarkIdsForURI(uri("http://dietrich.ganx4.com/mozilla/test-microsummary-content.php")))[0];
   do_check_true(!mss.hasMicrosummary(bId));
   var txn18 = ptSvc.editBookmarkMicrosummary(bId, tmpMs);
   txn18.doTransaction();
@@ -611,7 +602,7 @@ function run_test() {
   var postDataURI = uri("http://foo.com");
   ptSvc.doTransaction(
     ptSvc.createItem(postDataURI, root, -1, "postdata test", null, null, null));
-  var postDataId = (bmsvc.getBookmarkIdsForURI(postDataURI,{}))[0];
+  var postDataId = (bmsvc.getBookmarkIdsForURI(postDataURI))[0];
   var postDataTxn = ptSvc.editBookmarkPostData(postDataId, postData);
   postDataTxn.doTransaction();
   do_check_true(annosvc.itemHasAnnotation(postDataId, POST_DATA_ANNO))
@@ -641,18 +632,18 @@ function run_test() {
   var tagURI = uri("http://foo.tld");
   var tagTxn = ptSvc.tagURI(tagURI, ["foo", "bar"]);
   tagTxn.doTransaction();
-  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI, { })), uneval(["bar","foo"]));
+  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI)), uneval(["bar","foo"]));
   tagTxn.undoTransaction();
-  do_check_true(tagssvc.getTagsForURI(tagURI, { }).length == 0);
+  do_check_eq(tagssvc.getTagsForURI(tagURI).length, 0);
   tagTxn.redoTransaction();
-  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI, { })), uneval(["bar","foo"]));
+  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI)), uneval(["bar","foo"]));
   var untagTxn = ptSvc.untagURI(tagURI, ["bar"]);
   untagTxn.doTransaction();
-  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI, { })), uneval(["foo"]));
+  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI)), uneval(["foo"]));
   untagTxn.undoTransaction();
-  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI, { })), uneval(["bar","foo"]));
+  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI)), uneval(["bar","foo"]));
   untagTxn.redoTransaction();
-  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI, { })), uneval(["foo"]));
+  do_check_eq(uneval(tagssvc.getTagsForURI(tagURI)), uneval(["foo"]));
 
   // Test aggregate removeItem transaction
   var bkmk1Id = bmsvc.insertBookmark(root, uri("http://www.mozilla.org/"), 0, "Mozilla");
@@ -751,7 +742,7 @@ function run_test() {
                                        childTxns);
   try {
     ptSvc.doTransaction(itemWChildTxn); // Also testing doTransaction
-    var itemId = (bmsvc.getBookmarkIdsForURI(uri("http://www.example.com"), {}))[0];
+    var itemId = (bmsvc.getBookmarkIdsForURI(uri("http://www.example.com")))[0];
     do_check_eq(observer._itemAddedId, itemId);
     do_check_eq(newDateAdded, bmsvc.getItemDateAdded(itemId));
     do_check_eq(observer._itemChangedProperty, "testAnno/testInt");
@@ -763,7 +754,7 @@ function run_test() {
     do_check_eq(observer._itemRemovedId, itemId);
     itemWChildTxn.redoTransaction();
     do_check_true(bmsvc.isBookmarked(uri("http://www.example.com")));
-    var newId = (bmsvc.getBookmarkIdsForURI(uri("http://www.example.com"), {}))[0];
+    var newId = (bmsvc.getBookmarkIdsForURI(uri("http://www.example.com")))[0];
     do_check_eq(newDateAdded, bmsvc.getItemDateAdded(newId));
     do_check_eq(observer._itemAddedId, newId);
     do_check_eq(observer._itemChangedProperty, "testAnno/testInt");
@@ -782,14 +773,14 @@ function run_test() {
   var folderWChildItemTxn = ptSvc.createFolder("Folder", root, bmStartIndex, null, [childItemTxn]);
   try {
     ptSvc.doTransaction(folderWChildItemTxn);
-    var childItemId = (bmsvc.getBookmarkIdsForURI(uri("http://www.childItem.com"), {}))[0];
+    var childItemId = (bmsvc.getBookmarkIdsForURI(uri("http://www.childItem.com")))[0];
     do_check_eq(observer._itemAddedId, childItemId);
     do_check_eq(observer._itemAddedIndex, 0);
     do_check_true(bmsvc.isBookmarked(uri("http://www.childItem.com")));
     folderWChildItemTxn.undoTransaction();
     do_check_false(bmsvc.isBookmarked(uri("http://www.childItem.com")));
     folderWChildItemTxn.redoTransaction();
-    newchildItemId = (bmsvc.getBookmarkIdsForURI(uri("http://www.childItem.com"), {}))[0];
+    var newchildItemId = (bmsvc.getBookmarkIdsForURI(uri("http://www.childItem.com")))[0];
     do_check_eq(observer._itemAddedIndex, 0);
     do_check_eq(observer._itemAddedId, newchildItemId);
     do_check_true(bmsvc.isBookmarked(uri("http://www.childItem.com")));

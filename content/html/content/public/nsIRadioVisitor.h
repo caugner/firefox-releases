@@ -41,6 +41,7 @@
 
 #include "nsISupports.h"
 class nsIFormControl;
+class nsIDocument;
 
 // IID for the nsIRadioControl interface
 #define NS_IRADIOVISITOR_IID \
@@ -96,5 +97,19 @@ nsresult
 NS_GetRadioGetCheckedChangedVisitor(PRBool* aCheckedChanged,
                                     nsIFormControl* aExcludeElement,
                                     nsIRadioVisitor** aVisitor);
+
+/**
+ * This visitor will update the validity states of all radio in the group and
+ * call ContentStatesChanged if needed.
+ *
+ * @param aExcludeElement an element to exclude (for optimization purpose), can be null
+ * @param aDocument       the document owning the group
+ * @param aNotify         whether we should call ContentStatesChanged
+ * @return the visitor
+ */
+nsIRadioVisitor*
+NS_SetRadioValueMissingState(nsIFormControl* aExcludeElement,
+                             nsIDocument* aDocument,
+                             bool aValidity, bool aNotify);
 
 #endif // nsIRadioVisitor_h___

@@ -51,6 +51,13 @@ var gMainPane = {
     // set up the "use current page" label-changing listener
     this._updateUseCurrentButton();
     window.addEventListener("focus", this._updateUseCurrentButton, false);
+
+    this.updateBrowserStartupLastSession();
+
+    // Notify observers that the UI is now ready
+    Components.classes["@mozilla.org/observer-service;1"]
+              .getService(Components.interfaces.nsIObserverService)
+              .notifyObservers(window, "main-pane-loaded", null);
   },
 
   // HOME PAGE
@@ -73,6 +80,35 @@ var gMainPane = {
    *   selected and doesn't change the UI for this preference, the deprecated
    *   option is preserved.
    */
+
+  syncFromHomePref: function ()
+  {
+    let homePref = document.getElementById("browser.startup.homepage");
+
+    // If the pref is set to about:home, set the value to "" to show the
+    // placeholder text (about:home title).
+    if (homePref.value.toLowerCase() == "about:home")
+      return "";
+
+    // If the pref is actually "", show about:blank.  The actual home page
+    // loading code treats them the same, and we don't want the placeholder text
+    // to be shown.
+    if (homePref.value == "")
+      return "about:blank";
+
+    // Otherwise, show the actual pref value.
+    return undefined;
+  },
+
+  syncToHomePref: function (value)
+  {
+    // If the value is "", use about:home.
+    if (value == "")
+      return "about:home";
+
+    // Otherwise, use the actual textbox value.
+    return undefined;
+  },
 
   /**
    * Sets the home page to the current displayed page (or frontmost tab, if the
@@ -378,8 +414,7 @@ var gMainPane = {
    */
   _getDownloadsFolder: function (aFolder)
   {
-    switch(aFolder)
-    {
+    switch (aFolder) {
       case "Desktop":
         var fileLoc = Components.classes["@mozilla.org/file/directory_service;1"]
                                     .getService(Components.interfaces.nsIProperties);
@@ -440,7 +475,7 @@ var gMainPane = {
   getFolderListPref: function ()
   {
     var folderListPref = document.getElementById("browser.download.folderList");
-    switch(folderListPref.value) {
+    switch (folderListPref.value) {
       case 0: // Desktop
       case 1: // Downloads
         return folderListPref.value;
@@ -462,18 +497,27 @@ var gMainPane = {
    */
   showAddonsMgr: function ()
   {
-    const EMTYPE = "Extension:Manager";
-    var wm = Components.classes["@mozilla.org/appshell/window-mediator;1"]
-                       .getService(Components.interfaces.nsIWindowMediator);
-    var theEM = wm.getMostRecentWindow(EMTYPE);
-    if (theEM) {
-      theEM.focus();
-      theEM.showView("extensions");
-      return;
-    }
+    openUILinkIn("about:addons", "window");
+  },
 
-    const EMURL = "chrome://mozapps/content/extensions/extensions.xul";
-    const EMFEATURES = "chrome,menubar,extra-chrome,toolbar,dialog=no,resizable";
-    window.openDialog(EMURL, "", EMFEATURES, "extensions");
+  /**
+   * Hide/show the "Show my windows and tabs from last time" option based
+   * on the value of the browser.privatebrowsing.autostart pref.
+   */
+  updateBrowserStartupLastSession: function()
+  {
+    let pbAutoStartPref = document.getElementById("browser.privatebrowsing.autostart");
+    let startupPref = document.getElementById("browser.startup.page");
+    let menu = document.getElementById("browserStartupPage");
+    let option = document.getElementById("browserStartupLastSession");
+    if (pbAutoStartPref.value) {
+      option.setAttribute("disabled", "true");
+      if (option.selected) {
+        menu.selectedItem = document.getElementById("browserStartupHomePage");
+      }
+    } else {
+      option.removeAttribute("disabled");
+      startupPref.updateElements(); // select the correct index in the startup menulist
+    }
   }
 };

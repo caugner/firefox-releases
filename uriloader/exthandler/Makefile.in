@@ -60,7 +60,11 @@ else
 ifeq ($(MOZ_WIDGET_TOOLKIT),beos)
 OSDIR		= beos
 else
+ifeq ($(MOZ_WIDGET_TOOLKIT),android)
+OSDIR		= android
+else
 OSDIR		= unix
+endif
 endif
 endif
 endif
@@ -71,30 +75,9 @@ VPATH		:= $(srcdir) $(srcdir)/$(OSDIR)
 MODULE = exthandler
 LIBRARY_NAME    = exthandler_s
 LIBXUL_LIBRARY  = 1
-REQUIRES	= xpcom \
-		  string \
-		  unicharutil \
-		  mimetype \
-		  uriloader \
-		  necko \
-		  webshell \
-		  plugin \
-		  pref \
-		  intl \
-		  uconv \
-		  docshell \
-		  windowwatcher \
-		  embed_base \
-		  dom \
-		  $(NULL)
 
-ifdef MOZ_PHOENIX
-REQUIRES	+= toolkitcomps
-endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
-REQUIRES		+= windowwatcher \
-	             $(NULL)
 
 CMMSRCS	= nsOSHelperAppService.mm \
 			nsMIMEInfoMac.mm \
@@ -106,9 +89,27 @@ endif
 
 LOCAL_INCLUDES = -I$(srcdir)
 
+ifdef MOZ_IPC
+LOCAL_INCLUDES += -I$(topsrcdir)/dom/base \
+            -I$(topsrcdir)/dom/ipc \
+            -I$(topsrcdir)/content/base/src \
+            -I$(topsrcdir)/content/events/src \
+            -I$(topsrcdir)/netwerk/base/src \
+            -I$(topsrcdir)/netwerk/protocol/http
+endif
+
 ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
 OSHELPER	+= nsGNOMERegistry.cpp
 OSHELPER  += nsMIMEInfoUnix.cpp
+endif
+
+ifeq ($(MOZ_WIDGET_TOOLKIT),android)
+OSHELPER += nsMIMEInfoAndroid.cpp
+OSHELPER += nsAndroidHandlerApp.cpp
+OSHELPER += nsExternalSharingAppService.cpp
+EXPORTS += nsExternalSharingAppService.h
+OSHELPER += nsExternalURLHandlerService.cpp
+EXPORTS += nsExternalURLHandlerService.h
 endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),qt)
@@ -127,12 +128,18 @@ endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),os2)
 OSHELPER  += nsMIMEInfoOS2.cpp
-REQUIRES  += widget
 endif
 
-EXPORTS = \
+EXPORTS_NAMESPACES = mozilla/dom
+
+EXPORTS_mozilla/dom = \
+    ExternalHelperAppParent.h \
+    ExternalHelperAppChild.h
+
+EXPORTS += \
 		$(OSDIR)/nsOSHelperAppService.h \
-			$(NULL)
+		nsExternalHelperAppService.h \
+		$(NULL)
 
 XPIDLSRCS = \
 	nsCExternalHandlerService.idl	\
@@ -141,6 +148,8 @@ XPIDLSRCS = \
 	nsIHelperAppLauncherDialog.idl \
 	nsIContentDispatchChooser.idl \
 	nsIHandlerService.idl	\
+	nsIExternalSharingAppService.idl \
+	nsIExternalURLHandlerService.idl \
 	$(NULL)
 
 CPPSRCS	= \
@@ -151,17 +160,38 @@ CPPSRCS	= \
 	$(OSHELPER) \
 	$(NULL)
 
-ifdef MOZ_ENABLE_DBUS
-CPPSRCS += nsDBusHandlerApp.cpp
-LOCAL_INCLUDES   += $(TK_CFLAGS) $(MOZ_DBUS_GLIB_CFLAGS)
-EXTRA_DSO_LDOPTS += $(MOZ_DBUS_GLIB_LIBS)
+ifdef MOZ_IPC
+CPPSRCS += \
+    ExternalHelperAppChild.cpp \
+    ExternalHelperAppParent.cpp
 endif
 
-ifdef MOZ_PLATFORM_HILDON
+ifdef MOZ_ENABLE_DBUS
+CPPSRCS += nsDBusHandlerApp.cpp
+LOCAL_INCLUDES   += $(TK_CFLAGS) $(MOZ_DBUS_CFLAGS)
+EXTRA_DSO_LDOPTS += $(MOZ_DBUS_LIBS)
+endif
+
+ifdef MOZ_ENABLE_MEEGOTOUCHSHARE
+OSHELPER  += nsMeegoExternalSharingAppService.cpp
+LOCAL_INCLUDES   += $(MOZ_PLATFORM_MAEMO_CFLAGS)
+EXTRA_DSO_LDOPTS += $(MOZ_PLATFORM_MAEMO_LIBS)
+EXPORTS += nsExternalSharingAppService.h
+endif
+
+ifeq ($(MOZ_PLATFORM_MAEMO),5)
 ifdef MOZ_ENABLE_GNOMEVFS
 LOCAL_INCLUDES   += $(MOZ_GNOMEVFS_CFLAGS)
 EXTRA_DSO_LDOPTS += $(MOZ_GNOMEVFS_LIBS)
 endif
+ifdef MOZ_ENABLE_GIO
+LOCAL_INCLUDES   += $(MOZ_GIO_CFLAGS)
+EXTRA_DSO_LDOPTS += $(MOZ_GIO_LIBS)
+endif
+endif
+
+ifdef MOZ_ENABLE_CONTENTACTION
+CPPSRCS += nsContentHandlerApp.cpp
 endif
 
 ifeq ($(OS_ARCH),WINNT WINCE)
@@ -172,16 +202,20 @@ endif
 
 EXTRA_COMPONENTS = \
   nsHandlerService.js \
+  nsHandlerService.manifest \
   nsWebHandlerApp.js \
+  nsWebHandlerApp.manifest \
   $(NULL)
 
 # we don't want the shared lib, but we want to force the creation of a static lib.
 FORCE_STATIC_LIB = 1
 SRCS_IN_OBJDIR	= 1
+include $(topsrcdir)/config/config.mk
+include $(topsrcdir)/ipc/chromium/chromium-config.mk
 include $(topsrcdir)/config/rules.mk
 
-ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
-CXXFLAGS += $(TK_CFLAGS)
+ifneq (,$(filter qt gtk2, $(MOZ_WIDGET_TOOLKIT)))
+CXXFLAGS += $(TK_CFLAGS) $(MOZ_DBUS_GLIB_CFLAGS)
 endif
 
 # the use of multiple VPATH dirs is broken in cygwin make

@@ -143,7 +143,7 @@ public:
   virtual void ReflowCallbackCanceled();
 
   // nsICSSPseudoComparator
-  NS_IMETHOD PseudoMatches(nsIAtom* aTag, nsCSSSelector* aSelector, PRBool* aResult);
+  virtual PRBool PseudoMatches(nsCSSSelector* aSelector);
 
   // nsIScrollbarMediator
   NS_IMETHOD PositionChanged(nsIScrollbarFrame* aScrollbar, PRInt32 aOldIndex, PRInt32& aNewIndex);
@@ -154,7 +154,7 @@ public:
   NS_IMETHOD Init(nsIContent*     aContent,
                   nsIFrame*       aParent,
                   nsIFrame*       aPrevInFlow);
-  virtual void Destroy();
+  virtual void DestroyFrom(nsIFrame* aDestructRoot);
 
   NS_IMETHOD GetCursor(const nsPoint& aPoint,
                        nsIFrame::Cursor& aCursor);
@@ -178,7 +178,7 @@ public:
     nsIScrollbarFrame*   mHScrollbar;
     nsCOMPtr<nsIContent> mHScrollbarContent;
     nsIFrame*            mColumnsFrame;
-    nsIScrollableView*   mColumnsScrollableView;
+    nsIScrollableFrame*  mColumnsScrollFrame;
   };
 
   void PaintTreeBody(nsIRenderingContext& aRenderingContext,
@@ -383,9 +383,8 @@ protected:
   nsresult ScrollHorzInternal(const ScrollParts& aParts, PRInt32 aPosition);
   nsresult EnsureRowIsVisibleInternal(const ScrollParts& aParts, PRInt32 aRow);
   
-  // Convert client pixels into twips in our coordinate space.
-  void AdjustClientCoordsToBoxCoordSpace(PRInt32 aX, PRInt32 aY,
-                                         nscoord* aResultX, nscoord* aResultY);
+  // Convert client pixels into appunits in our coordinate space.
+  nsPoint AdjustClientCoordsToBoxCoordSpace(PRInt32 aX, PRInt32 aY);
 
   // Convert a border style into line style.
   nsLineStyle ConvertBorderStyleToLineStyle(PRUint8 aBorderStyle);
@@ -428,6 +427,8 @@ protected:
       InvalidateRow(aRow + aOrientation);
   }
 
+public:
+  static
   already_AddRefed<nsTreeColumn> GetColumnImpl(nsITreeColumn* aUnknownCol) {
     if (!aUnknownCol)
       return nsnull;
@@ -436,6 +437,8 @@ protected:
     aUnknownCol->QueryInterface(NS_GET_IID(nsTreeColumn), (void**)&col);
     return col;
   }
+
+protected:
 
   // Create a new timer. This method is used to delay various actions like
   // opening/closing folders or tree scrolling.

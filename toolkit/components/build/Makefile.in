@@ -50,44 +50,12 @@ IS_COMPONENT = 1
 MODULE_NAME = nsToolkitCompsModule
 LIBXUL_LIBRARY = 1
 
-ifneq (,$(filter $(MOZ_WIDGET_TOOLKIT),windows gtk2))
+ifneq (,$(filter $(MOZ_WIDGET_TOOLKIT),windows gtk2 qt android))
 ALERTS_SERVICE=1
 DEFINES += -DALERTS_SERVICE
 endif
 
-REQUIRES = 	\
-		xpcom \
-		string \
-		widget \
-		layout \
-		dom \
-		intl \
-		docshell \
-		appcomps \
-		downloads \
-		fastfind \
-		mimetype \
-		webbrowserpersist \
-		necko \
-		uriloader \
-		xulapp \
-		embed_base \
-		content \
-		find \
-		gfx \
-		thebes \
-		locale \
-		unicharutil \
-		xuldoc \
-		feeds \
-		storage \
-		pipnss \
-		places \
-		$(NULL)
 
-ifdef ALERTS_SERVICE
-REQUIRES	+= alerts
-endif
 
 EXPORTS = nsToolkitCompsCID.h
 
@@ -97,10 +65,13 @@ include $(topsrcdir)/config/config.mk
 
 LOCAL_INCLUDES = \
 	-I$(srcdir)/../downloads/src \
+	-I$(srcdir)/../feeds/src \
+	-I$(srcdir)/../find/src \
+	-I$(srcdir)/../intl \
 	-I$(srcdir)/../startup/src \
+	-I$(srcdir)/../statusfilter \
 	-I$(srcdir)/../typeaheadfind/src \
 	-I$(srcdir)/../url-classifier/src \
-	-I$(srcdir)/../feeds/src \
 	$(NULL)
 
 ifdef ALERTS_SERVICE
@@ -109,8 +80,17 @@ LOCAL_INCLUDES += \
 	$(NULL)
 endif
 
+ifeq (Android,$(OS_TARGET))
+LOCAL_INCLUDES += \
+	-I$(srcdir)/../webapps \
+	$(NULL)
+endif
+
 SHARED_LIBRARY_LIBS = \
+	../find/src/$(LIB_PREFIX)mozfind_s.$(LIB_SUFFIX) \
+	../typeaheadfind/src/$(LIB_PREFIX)fastfind_s.$(LIB_SUFFIX) \
 	../startup/src/$(LIB_PREFIX)appstartup_s.$(LIB_SUFFIX) \
+	../statusfilter/$(LIB_PREFIX)mozbrwsr_s.$(LIB_SUFFIX) \
 	$(NULL)
 
 ifndef MOZ_DISABLE_PARENTAL_CONTROLS
@@ -119,12 +99,14 @@ SHARED_LIBRARY_LIBS += ../parentalcontrols/src/$(LIB_PREFIX)parentalcontrols_s.$
 LOCAL_INCLUDES += \
 	-I$(srcdir)/../parentalcontrols/src \
 	$(NULL)
-REQUIRES += parentalcontrols
 endif
 endif
 
 ifdef MOZ_RDF
-SHARED_LIBRARY_LIBS += ../downloads/src/$(LIB_PREFIX)download_s.$(LIB_SUFFIX)
+SHARED_LIBRARY_LIBS += \
+  ../downloads/src/$(LIB_PREFIX)download_s.$(LIB_SUFFIX) \
+  ../intl/$(LIB_PREFIX)intl_s.$(LIB_SUFFIX) \
+  $(NULL)
 endif
 
 ifdef ALERTS_SERVICE
@@ -138,14 +120,16 @@ endif
 ifdef MOZ_URL_CLASSIFIER
 SHARED_LIBRARY_LIBS += ../url-classifier/src/$(LIB_PREFIX)urlclassifier_s.$(LIB_SUFFIX)
 EXTRA_DSO_LDOPTS += $(ZLIB_LIBS)
-REQUIRES += url-classifier
 endif
 
 ifdef MOZ_FEEDS
 SHARED_LIBRARY_LIBS += ../feeds/src/$(LIB_PREFIX)feed_s.$(LIB_SUFFIX)
 endif
 
-SHARED_LIBRARY_LIBS += ../typeaheadfind/src/$(LIB_PREFIX)fastfind_s.$(LIB_SUFFIX)
+ifeq (Android,$(OS_TARGET))
+SHARED_LIBRARY_LIBS += ../webapps/$(LIB_PREFIX)webapps_s.$(LIB_SUFFIX)
+endif
+
 EXTRA_DSO_LIBS = gkgfx
 
 EXTRA_DSO_LDOPTS += \
@@ -156,7 +140,7 @@ EXTRA_DSO_LDOPTS += \
 	$(MOZ_JS_LIBS) \
 	$(NULL)
 
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 EXTRA_DSO_LDOPTS += $(TK_LIBS)
 endif
 

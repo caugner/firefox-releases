@@ -51,6 +51,7 @@ menulist {
   margin: 2px 4px;
   color: -moz-DialogText;
   font: menu;
+  text-shadow: none;
 }
 
 .menulist-label-box {
@@ -140,7 +141,7 @@ html|*.menulist-editable-input {
 
 .menulist-compact > .menulist-label-box > .menulist-label {
   margin: 0 3px !important;
-  text-align: right;
+  text-align: end;
 }  
 
 .menulist-compact > .menulist-label-box > .menulist-icon {

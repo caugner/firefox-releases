@@ -70,7 +70,7 @@
 
 #ifdef _WIN32
 # include <windows.h>
-#else
+#elif !defined(__OS2__)
 # include <unistd.h>
 # include <sys/mman.h>
 # ifndef MAP_ANON
@@ -127,6 +127,38 @@ GetDesiredRegionSize()
   SYSTEM_INFO sinfo;
   GetSystemInfo(&sinfo);
   return sinfo.dwAllocationGranularity;
+}
+
+#define RESERVE_FAILED 0
+
+#elif defined(__OS2__)
+static void *
+ReserveRegion(PRUword region, PRUword size)
+{
+  // OS/2 doesn't support allocation at an arbitrary address,
+  // so return an address that is known to be invalid.
+  return (void*)0xFFFD0000;
+}
+
+static void
+ReleaseRegion(void *region, PRUword size)
+{
+  return;
+}
+
+static bool
+ProbeRegion(PRUword region, PRUword size)
+{
+  // There's no reliable way to probe an address in the system
+  // arena other than by touching it and seeing if a trap occurs.
+  return false;
+}
+
+static PRUword
+GetDesiredRegionSize()
+{
+  // Page size is fixed at 4k.
+  return 0x1000;
 }
 
 #define RESERVE_FAILED 0
@@ -357,13 +389,27 @@ struct nsPresArena::State {
   }
 };
 
+PRUint32
+nsPresArena::Size()
+{
+  PLArena *arena = &mState->mPool.first;
+  PRUint32 result = 0;
+
+  while (arena) {
+    result += arena->limit - arena->base;
+    arena = arena->next;
+  }
+
+  return result;
+}
+
 #else
 // Stub implementation that forwards everything to malloc and does not
 // poison.
 
 struct nsPresArena::State
 {
-  void* Allocate(PRUnit32 /* unused */, size_t aSize)
+  void* Allocate(PRUint32 /* unused */, size_t aSize)
   {
     return PR_Malloc(aSize);
   }
@@ -373,6 +419,12 @@ struct nsPresArena::State
     PR_Free(aPtr);
   }
 };
+
+PRUint32
+nsPresArena::Size()
+{
+  return 0;
+}
 
 #endif // DEBUG_TRACEMALLOC_PRESARENA
 

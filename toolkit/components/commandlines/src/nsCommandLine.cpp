@@ -40,6 +40,7 @@
 #include "nsICategoryManager.h"
 #include "nsICommandLineHandler.h"
 #include "nsICommandLineValidator.h"
+#include "nsIConsoleService.h"
 #include "nsIClassInfoImpl.h"
 #include "nsIDOMWindow.h"
 #include "nsIFile.h"
@@ -47,16 +48,17 @@
 #include "nsIStringEnumerator.h"
 
 #include "nsCOMPtr.h"
-#include "nsIGenericFactory.h"
+#include "mozilla/ModuleUtils.h"
 #include "nsISupportsImpl.h"
 #include "nsNativeCharsetUtils.h"
 #include "nsNetUtil.h"
 #include "nsUnicharUtils.h"
 #include "nsTArray.h"
+#include "nsTextFormatter.h"
 #include "nsXPCOMCID.h"
 #include "plstr.h"
 
-#ifdef XP_MACOSX
+#ifdef MOZ_WIDGET_COCOA
 #include <CoreFoundation/CoreFoundation.h>
 #include "nsILocalFileMac.h"
 #elif defined(XP_WIN)
@@ -74,6 +76,9 @@
 #ifdef DEBUG_bsmedberg
 #define DEBUG_COMMANDLINE
 #endif
+
+#define NS_COMMANDLINE_CID \
+  { 0x23bcc750, 0xdc20, 0x460b, { 0xb2, 0xd4, 0x74, 0xd8, 0xf5, 0x8d, 0x36, 0x15 } }
 
 class nsCommandLine : public nsICommandLineRunner
 {
@@ -114,6 +119,7 @@ nsCommandLine::nsCommandLine() :
 }
 
 
+NS_IMPL_CLASSINFO(nsCommandLine, NULL, 0, NS_COMMANDLINE_CID)
 NS_IMPL_ISUPPORTS2_CI(nsCommandLine,
                       nsICommandLine,
                       nsICommandLineRunner)
@@ -129,7 +135,7 @@ NS_IMETHODIMP
 nsCommandLine::GetArgument(PRInt32 aIndex, nsAString& aResult)
 {
   NS_ENSURE_ARG_MIN(aIndex, 0);
-  NS_ENSURE_ARG_MAX(aIndex, mArgs.Length());
+  NS_ENSURE_ARG_MAX(PRUint32(aIndex), mArgs.Length());
 
   aResult = mArgs[aIndex];
   return NS_OK;
@@ -165,7 +171,7 @@ NS_IMETHODIMP
 nsCommandLine::RemoveArguments(PRInt32 aStart, PRInt32 aEnd)
 {
   NS_ENSURE_ARG_MIN(aStart, 0);
-  NS_ENSURE_ARG_MAX(aEnd + 1, mArgs.Length());
+  NS_ENSURE_ARG_MAX(PRUint32(aEnd) + 1, mArgs.Length());
 
   for (PRInt32 i = aEnd; i >= aStart; --i) {
     mArgs.RemoveElementAt(i);
@@ -281,7 +287,7 @@ nsCommandLine::ResolveFile(const nsAString& aArgument, nsIFile* *aResult)
 
   nsresult rv;
 
-#if defined(XP_MACOSX)
+#if defined(MOZ_WIDGET_COCOA)
   nsCOMPtr<nsILocalFileMac> lfm (do_QueryInterface(mWorkingDir));
   NS_ENSURE_TRUE(lfm, NS_ERROR_NO_INTERFACE);
 
@@ -567,6 +573,21 @@ nsCommandLine::Init(PRInt32 argc, char** argv, nsIFile* aWorkingDir,
   return NS_OK;
 }
 
+static void
+LogConsoleMessage(const PRUnichar* fmt, ...)
+{
+  va_list args;
+  va_start(args, fmt);
+  PRUnichar* msg = nsTextFormatter::vsmprintf(fmt, args);
+  va_end(args);
+
+  nsCOMPtr<nsIConsoleService> cs = do_GetService("@mozilla.org/consoleservice;1");
+  if (cs)
+    cs->LogStringMessage(msg);
+
+  NS_Free(msg);
+}
+
 nsresult
 nsCommandLine::EnumerateHandlers(EnumerateHandlersCallback aCallback, void *aClosure)
 {
@@ -589,16 +610,19 @@ nsCommandLine::EnumerateHandlers(EnumerateHandlersCallback aCallback, void *aClo
   while (NS_SUCCEEDED(strenum->HasMore(&hasMore)) && hasMore) {
     strenum->GetNext(entry);
 
-    nsXPIDLCString contractID;
+    nsCString contractID;
     rv = catman->GetCategoryEntry("command-line-handler",
 				  entry.get(),
 				  getter_Copies(contractID));
-    if (!contractID)
+    if (NS_FAILED(rv))
       continue;
 
     nsCOMPtr<nsICommandLineHandler> clh(do_GetService(contractID.get()));
-    if (!clh)
+    if (!clh) {
+      LogConsoleMessage(NS_LITERAL_STRING("Contract ID '%s' was registered as a command line handler for entry '%s', but could not be created.").get(),
+                        contractID.get(), entry.get());
       continue;
+    }
 
     rv = (aCallback)(clh, this, aClosure);
     if (rv == NS_ERROR_ABORT)
@@ -708,22 +732,23 @@ nsCommandLine::GetHelpText(nsACString& aResult)
 }
 
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsCommandLine)
-NS_DECL_CLASSINFO(nsCommandLine)
 
-static const nsModuleComponentInfo components[] =
-{
-  { "nsCommandLine",
-    { 0x23bcc750, 0xdc20, 0x460b, { 0xb2, 0xd4, 0x74, 0xd8, 0xf5, 0x8d, 0x36, 0x15 } },
-    "@mozilla.org/toolkit/command-line;1",
-    nsCommandLineConstructor,
-    nsnull,
-    nsnull,
-    nsnull,
-    NS_CI_INTERFACE_GETTER_NAME(nsCommandLine),
-    nsnull,
-    &NS_CLASSINFO_NAME(nsCommandLine),
-    0
-  }
+NS_DEFINE_NAMED_CID(NS_COMMANDLINE_CID);
+
+static const mozilla::Module::CIDEntry kCommandLineCIDs[] = {
+  { &kNS_COMMANDLINE_CID, false, NULL, nsCommandLineConstructor },
+  { NULL }
 };
 
-NS_IMPL_NSGETMODULE(CommandLineModule, components)
+static const mozilla::Module::ContractIDEntry kCommandLineContracts[] = {
+  { "@mozilla.org/toolkit/command-line;1", &kNS_COMMANDLINE_CID },
+  { NULL }
+};
+
+static const mozilla::Module kCommandLineModule = {
+  mozilla::Module::kVersion,
+  kCommandLineCIDs,
+  kCommandLineContracts
+};
+
+NSMODULE_DEFN(CommandLineModule) = &kCommandLineModule;

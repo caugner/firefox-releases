@@ -44,49 +44,13 @@ VPATH		= @srcdir@
 include $(DEPTH)/config/autoconf.mk
 
 MODULE		= docshell
-ifneq (,$(filter WINNT WINCE,$(OS_ARCH)))
-XPIDL_MODULE	= docshell_base
-endif
 LIBRARY_NAME	= basedocshell_s
 GRE_MODULE	= 1
 LIBXUL_LIBRARY	= 1
 
-REQUIRES	= xpcom \
-		  string \
-		  caps \
-		  necko \
-		  gfx \
-		  thebes \
-		  layout \
-		  content \
-		  dom \
-		  js \
-		  uriloader \
-		  exthandler \
-		  htmlparser \
-		  view \
-		  pref \
-		  locale \
-		  webbrwsr \
-		  xpconnect \
-		  widget \
-		  shistory \
-		  intl \
-		  plugin \
-		  webshell \
-		  chardet \
-		  uconv \
-		  xuldoc \
-		  find \
-		  nkcache \
-		  composer \
-		  commandhandler \
-		  editor \
-		  windowwatcher \
-		  imglib2 \
-		  jar \
-		  prefetch \
-		  $(NULL)
+ifdef MOZ_TOOLKIT_SEARCH
+DEFINES += -DMOZ_TOOLKIT_SEARCH
+endif
 
 SDK_XPIDLSRCS = \
 		nsIGlobalHistory.idl \
@@ -113,13 +77,17 @@ XPIDLSRCS	= \
 		nsIURIFixup.idl			\
 		nsIEditorDocShell.idl		\
 		nsIWebPageDescriptor.idl	\
-		nsIURIClassifier.idl		\
-		nsIChannelClassifier.idl	\
 		nsIDownloadHistory.idl          \
 		nsILoadContext.idl              \
 		$(NULL)
 
 EXPORTS		= nsDocShellLoadTypes.h
+
+EXPORTS_NAMESPACES = mozilla
+
+EXPORTS_mozilla = \
+  IHistory.h \
+  $(NULL)
 
 CPPSRCS		= \
 		nsDocShell.cpp		\
@@ -129,8 +97,6 @@ CPPSRCS		= \
 		nsDocShellEnumerator.cpp  \
 		nsDSURIContentListener.cpp		\
 		nsDefaultURIFixup.cpp		\
-		nsGlobalHistoryAdapter.cpp \
-		nsGlobalHistory2Adapter.cpp \
 		nsWebNavigationInfo.cpp \
 		nsAboutRedirector.cpp \
 		nsDownloadHistory.cpp \
@@ -142,4 +108,6 @@ FORCE_STATIC_LIB = 1
 
 include $(topsrcdir)/config/rules.mk
 
-LOCAL_INCLUDES += -I$(srcdir)/../shistory/src
+LOCAL_INCLUDES += -I$(srcdir)/../shistory/src \
+		-I$(srcdir)/../../layout/base \
+		$(NULL)

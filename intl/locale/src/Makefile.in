@@ -46,14 +46,8 @@ MODULE		= locale
 LIBRARY_NAME	= nslocale_s
 LIBXUL_LIBRARY  = 1
 
-REQUIRES	= xpcom \
-		  string \
-		  uconv \
-		  unicharutil \
-		  intl \
-		  $(NULL)
 
-ifneq (,$(filter mac os2 windows, $(MOZ_WIDGET_TOOLKIT)))
+ifneq (,$(filter os2 windows, $(MOZ_WIDGET_TOOLKIT)))
 DIRS		= $(MOZ_WIDGET_TOOLKIT)
 else
 ifeq ($(MOZ_WIDGET_TOOLKIT), cocoa)
@@ -61,6 +55,10 @@ DIRS		= mac
 else
 DIRS		= unix
 endif
+endif
+
+ifeq ($(MOZ_WIDGET_TOOLKIT), qt)
+OS_INCLUDES	+= $(MOZ_QT_CFLAGS)
 endif
 
 CPPSRCS		= \

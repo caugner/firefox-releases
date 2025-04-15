@@ -76,6 +76,10 @@
 #endif
 #endif
 
+#ifdef XP_MACOSX
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 #define DOWNLOAD_MANAGER_BUNDLE "chrome://mozapps/locale/downloads/downloads.properties"
 #define DOWNLOAD_MANAGER_ALERT_ICON "chrome://mozapps/skin/downloads/downloadIcon.png"
 #define PREF_BDM_SHOWALERTONCOMPLETE "browser.download.manager.showAlertOnComplete"
@@ -796,7 +800,7 @@ nsDownloadManager::InitDB()
       break;
 
     default:
-      NS_ASSERTION(0, "Unexpected value encountered for nsDownloadManager::mDBType");
+      NS_ERROR("Unexpected value encountered for nsDownloadManager::mDBType");
       break;
   }
   NS_ENSURE_SUCCESS(rv, rv);
@@ -833,15 +837,16 @@ nsDownloadManager::Init()
     }
   }
 
-  nsresult rv;
-  mObserverService = do_GetService("@mozilla.org/observer-service;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  mObserverService = mozilla::services::GetObserverService();
+  if (!mObserverService)
+    return NS_ERROR_FAILURE;
 
   nsCOMPtr<nsIStringBundleService> bundleService =
-    do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+    mozilla::services::GetStringBundleService();
+  if (!bundleService)
+    return NS_ERROR_FAILURE;
 
-  rv = InitDB();
+  nsresult rv = InitDB();
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = bundleService->CreateBundle(DOWNLOAD_MANAGER_BUNDLE,
@@ -887,14 +892,15 @@ nsDownloadManager::Init()
   // These observers will be cleaned up automatically at app shutdown.  We do
   // not bother explicitly breaking the observers because we are a singleton
   // that lives for the duration of the app.
-  mObserverService->AddObserver(this, "quit-application", PR_FALSE);
-  mObserverService->AddObserver(this, "quit-application-requested", PR_FALSE);
-  mObserverService->AddObserver(this, "offline-requested", PR_FALSE);
-  mObserverService->AddObserver(this, "sleep_notification", PR_FALSE);
-  mObserverService->AddObserver(this, "wake_notification", PR_FALSE);
-  mObserverService->AddObserver(this, NS_IOSERVICE_GOING_OFFLINE_TOPIC, PR_FALSE);
-  mObserverService->AddObserver(this, NS_IOSERVICE_OFFLINE_STATUS_TOPIC, PR_FALSE);
-  mObserverService->AddObserver(this, NS_PRIVATE_BROWSING_SWITCH_TOPIC, PR_FALSE);
+  (void)mObserverService->AddObserver(this, "quit-application", PR_FALSE);
+  (void)mObserverService->AddObserver(this, "quit-application-requested", PR_FALSE);
+  (void)mObserverService->AddObserver(this, "offline-requested", PR_FALSE);
+  (void)mObserverService->AddObserver(this, "sleep_notification", PR_FALSE);
+  (void)mObserverService->AddObserver(this, "wake_notification", PR_FALSE);
+  (void)mObserverService->AddObserver(this, NS_IOSERVICE_GOING_OFFLINE_TOPIC, PR_FALSE);
+  (void)mObserverService->AddObserver(this, NS_IOSERVICE_OFFLINE_STATUS_TOPIC, PR_FALSE);
+  (void)mObserverService->AddObserver(this, NS_PRIVATE_BROWSING_REQUEST_TOPIC, PR_FALSE);
+  (void)mObserverService->AddObserver(this, NS_PRIVATE_BROWSING_SWITCH_TOPIC, PR_FALSE);
 
   if (history)
     (void)history->AddObserver(this, PR_FALSE);
@@ -1095,6 +1101,10 @@ nsDownloadManager::GetActiveDownloads(nsISimpleEnumerator **aResult)
   return NS_NewArrayEnumerator(aResult, mCurrentDownloads);
 }
 
+/**
+ * For platforms where helper apps use the downloads directory (i.e. mobile),
+ * this should be kept in sync with nsExternalHelperAppService.cpp
+ */
 NS_IMETHODIMP
 nsDownloadManager::GetDefaultDownloadsDirectory(nsILocalFile **aResult)
 {
@@ -1161,7 +1171,7 @@ nsDownloadManager::GetDefaultDownloadsDirectory(nsILocalFile **aResult)
     }
   }
 #elif defined(XP_UNIX)
-#if defined(NS_OSSO)
+#if defined(MOZ_PLATFORM_MAEMO)
     // As maemo does not follow the XDG "standard" (as usually desktop
     // Linux distros do) neither has a working $HOME/Desktop folder
     // for us to fallback into, "$HOME/MyDocs/.documents/" is the folder
@@ -1170,6 +1180,18 @@ nsDownloadManager::GetDefaultDownloadsDirectory(nsILocalFile **aResult)
     rv = dirService->Get(NS_UNIX_XDG_DOCUMENTS_DIR,
                          NS_GET_IID(nsILocalFile),
                          getter_AddRefs(downloadDir));
+#elif defined(ANDROID)
+    // Android doesn't have a $HOME directory, and by default we only have
+    // write access to /data/data/org.mozilla.{$APP} and /sdcard
+    char* downloadDirPath = getenv("DOWNLOADS_DIRECTORY");
+    if (downloadDirPath) {
+      rv = NS_NewNativeLocalFile(nsDependentCString(downloadDirPath),
+                                 PR_TRUE, getter_AddRefs(downloadDir));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    else {
+      rv = NS_ERROR_FAILURE;
+    }
 #else
   rv = dirService->Get(NS_UNIX_DEFAULT_DOWNLOAD_DIR,
                        NS_GET_IID(nsILocalFile),
@@ -1376,12 +1398,25 @@ nsDownloadManager::AddDownload(DownloadType aDownloadType,
 
 #ifdef DOWNLOAD_SCANNER
   if (mScanner) {
-    AVCheckPolicyState res = mScanner->CheckPolicy(aSource, aTarget);
-    if (res == AVPOLICY_BLOCKED) {
-      // This download will get deleted during a call to IAE's Save,
-      // so go ahead and mark it as blocked and avoid the download.
-      (void)CancelDownload(id);
-      startState = nsIDownloadManager::DOWNLOAD_BLOCKED_POLICY;
+    PRBool scan = PR_TRUE;
+    nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
+    if (prefs) {
+      (void)prefs->GetBoolPref(PREF_BDM_SCANWHENDONE, &scan);
+    }
+    // We currently apply local security policy to downloads when we scan
+    // via windows all-in-one download security api. The CheckPolicy call
+    // below is a pre-emptive part of that process. So tie applying security
+    // zone policy settings when downloads are intiated to the same pref
+    // that triggers applying security zone policy settings after a download
+    // completes. (bug 504804)
+    if (scan) {
+      AVCheckPolicyState res = mScanner->CheckPolicy(aSource, aTarget);
+      if (res == AVPOLICY_BLOCKED) {
+        // This download will get deleted during a call to IAE's Save,
+        // so go ahead and mark it as blocked and avoid the download.
+        (void)CancelDownload(id);
+        startState = nsIDownloadManager::DOWNLOAD_BLOCKED_POLICY;
+      }
     }
   }
 #endif
@@ -1477,6 +1512,15 @@ nsDownloadManager::CancelDownload(PRUint32 aID)
     dl->mTempFile->Exists(&exists);
     if (exists)
       dl->mTempFile->Remove(PR_FALSE);
+  }
+
+  nsCOMPtr<nsILocalFile> file;
+  if (NS_SUCCEEDED(dl->GetTargetFile(getter_AddRefs(file))))
+  {
+    PRBool exists;
+    file->Exists(&exists);
+    if (exists)
+      file->Remove(PR_FALSE);
   }
 
   nsresult rv = dl->SetState(nsIDownloadManager::DOWNLOAD_CANCELED);
@@ -1851,14 +1895,10 @@ nsDownloadManager::OnPageChanged(nsIURI *aURI, PRUint32 aWhat,
 }
 
 NS_IMETHODIMP
-nsDownloadManager::OnPageExpired(nsIURI *aURI, PRTime aVisitTime,
-                                 PRBool aWholeEntry)
+nsDownloadManager::OnDeleteVisits(nsIURI *aURI, PRTime aVisitTime)
 {
-  // Don't bother removing downloads if there are still recent visits
-  if (!aWholeEntry)
-    return NS_OK;
-
-  return RemoveDownloadsForURI(aURI);
+  // Don't bother removing downloads until the page is removed.
+  return NS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1967,9 +2007,9 @@ nsDownloadManager::Observe(nsISupports *aSubject,
         this, resumeOnWakeDelay, nsITimer::TYPE_ONE_SHOT);
     }
   }
-  else if (strcmp(aTopic, NS_PRIVATE_BROWSING_REQUEST_TOPIC) == 0 &&
-           currDownloadCount) {
-    if (NS_LITERAL_STRING(NS_PRIVATE_BROWSING_ENTER).Equals(aData)) {
+  else if (strcmp(aTopic, NS_PRIVATE_BROWSING_REQUEST_TOPIC) == 0) {
+    if (NS_LITERAL_STRING(NS_PRIVATE_BROWSING_ENTER).Equals(aData) &&
+        currDownloadCount) {
       nsCOMPtr<nsISupportsPRBool> cancelDownloads =
         do_QueryInterface(aSubject, &rv);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -1979,11 +2019,12 @@ nsDownloadManager::Observe(nsISupports *aSubject,
                              NS_LITERAL_STRING("enterPrivateBrowsingCancelDownloadsAlertMsg").get(),
                              NS_LITERAL_STRING("dontEnterPrivateBrowsingButton").get());
     }
-    else if (NS_LITERAL_STRING(NS_PRIVATE_BROWSING_LEAVE).Equals(aData)) {
+    else if (NS_LITERAL_STRING(NS_PRIVATE_BROWSING_LEAVE).Equals(aData) &&
+             mCurrentDownloads.Count()) {
       nsCOMPtr<nsISupportsPRBool> cancelDownloads =
         do_QueryInterface(aSubject, &rv);
       NS_ENSURE_SUCCESS(rv, rv);
-      ConfirmCancelDownloads(currDownloadCount, cancelDownloads,
+      ConfirmCancelDownloads(mCurrentDownloads.Count(), cancelDownloads,
                              NS_LITERAL_STRING("leavePrivateBrowsingCancelDownloadsAlertTitle").get(),
                              NS_LITERAL_STRING("leavePrivateBrowsingCancelDownloadsAlertMsgMultiple").get(),
                              NS_LITERAL_STRING("leavePrivateBrowsingCancelDownloadsAlertMsg").get(),
@@ -2197,7 +2238,8 @@ nsDownload::SetState(DownloadState aState)
             }
         }
       }
-#if defined(XP_WIN) && !defined(WINCE)
+
+#if (defined(XP_WIN) && !defined(WINCE)) || defined(XP_MACOSX)
       nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(mTarget);
       nsCOMPtr<nsIFile> file;
       nsAutoString path;
@@ -2207,6 +2249,7 @@ nsDownload::SetState(DownloadState aState)
           file &&
           NS_SUCCEEDED(file->GetPath(path))) {
 
+#ifdef XP_WIN
         // On windows, add the download to the system's "recent documents"
         // list, with a pref to disable.
         {
@@ -2214,11 +2257,25 @@ nsDownload::SetState(DownloadState aState)
           if (pref)
             pref->GetBoolPref(PREF_BDM_ADDTORECENTDOCS, &addToRecentDocs);
 
-          if (addToRecentDocs)
+          if (addToRecentDocs &&
+              !nsDownloadManager::gDownloadManagerService->mInPrivateBrowsing) {
             ::SHAddToRecentDocs(SHARD_PATHW, path.get());
+          }
         }
+#endif
+#ifdef XP_MACOSX
+        // On OS X, make the downloads stack bounce.
+        CFStringRef observedObject = ::CFStringCreateWithCString(kCFAllocatorDefault,
+                                                 NS_ConvertUTF16toUTF8(path).get(),
+                                                 kCFStringEncodingUTF8);
+        CFNotificationCenterRef center = ::CFNotificationCenterGetDistributedCenter();
+        ::CFNotificationCenterPostNotification(center, CFSTR("com.apple.DownloadFileFinished"),
+                                               observedObject, NULL, TRUE);
+        ::CFRelease(observedObject);
+#endif
       }
 
+#ifdef XP_WIN
       // Adjust file attributes so that by default, new files are indexed
       // by desktop search services. Skip off those that land in the temp
       // folder.
@@ -2234,6 +2291,7 @@ nsDownload::SetState(DownloadState aState)
       nsCOMPtr<nsILocalFileWin> localFileWin(do_QueryInterface(file));
       if (!isTemp && localFileWin)
         (void)localFileWin->SetFileAttributesWin(nsILocalFileWin::WFA_SEARCH_INDEXED);
+#endif
 
 #endif
       // Now remove the download if the user's retention policy is "Remove when Done"
@@ -2722,12 +2780,6 @@ nsDownload::OpenWithApplication()
   // First move the temporary file to the target location
   nsCOMPtr<nsILocalFile> target;
   nsresult rv = GetTargetFile(getter_AddRefs(target));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Make sure the suggested name is unique since in this case we don't
-  // have a file name that was guaranteed to be unique by going through
-  // the File Save dialog
-  rv = target->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Move the temporary file to the target location

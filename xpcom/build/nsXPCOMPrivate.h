@@ -62,7 +62,6 @@ class nsIComponentLoader;
 
 // PUBLIC
 typedef nsresult   (* InitFunc)(nsIServiceManager* *result, nsIFile* binDirectory, nsIDirectoryServiceProvider* appFileLocationProvider);
-typedef nsresult   (* Init3Func)(nsIServiceManager* *result, nsIFile* binDirectory, nsIDirectoryServiceProvider* appFileLocationProvider, nsStaticModuleInfo const *staticComponents, PRUint32 componentCount);
 typedef nsresult   (* ShutdownFunc)(nsIServiceManager* servMgr);
 typedef nsresult   (* GetServiceManagerFunc)(nsIServiceManager* *result);
 typedef nsresult   (* GetComponentManagerFunc)(nsIComponentManager* *result);
@@ -175,7 +174,7 @@ typedef struct XPCOMFunctions{
     CStringContainerInit2Func cstringContainerInit2;
     StringGetMutableDataFunc stringGetMutableData;
     CStringGetMutableDataFunc cstringGetMutableData;
-    Init3Func init3;
+    void* init3; // obsolete
 
     // Added for Mozilla 1.9
     DebugBreakFunc debugBreakFunc;
@@ -223,6 +222,11 @@ namespace mozilla {
  */
 nsresult
 ShutdownXPCOM(nsIServiceManager* servMgr);
+
+/**
+ * C++ namespaced version of NS_LogTerm.
+ */
+void LogTerm();
 
 } // namespace mozilla
 
@@ -305,5 +309,18 @@ ShutdownXPCOM(nsIServiceManager* servMgr);
 #define MAXPATHLEN 1024
 #endif
 #endif
+
+extern PRBool gXPCOMShuttingDown;
+
+namespace mozilla {
+namespace services {
+
+/** 
+ * Clears service cache, sets gXPCOMShuttingDown
+ */
+void Shutdown();
+
+} // namespace services
+} // namespace mozilla
 
 #endif

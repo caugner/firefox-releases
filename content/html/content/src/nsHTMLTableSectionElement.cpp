@@ -41,7 +41,6 @@
 #include "nsGkAtoms.h"
 #include "nsHTMLParts.h"
 #include "nsStyleConsts.h"
-#include "nsPresContext.h"
 #include "nsContentList.h"
 #include "nsRuleData.h"
 #include "nsDOMError.h"
@@ -53,7 +52,7 @@ class nsHTMLTableSectionElement : public nsGenericHTMLElement,
                                   public nsIDOMHTMLTableSectionElement
 {
 public:
-  nsHTMLTableSectionElement(nsINodeInfo *aNodeInfo);
+  nsHTMLTableSectionElement(already_AddRefed<nsINodeInfo> aNodeInfo);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -82,6 +81,7 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_NO_UNLINK(nsHTMLTableSectionElement,
                                                      nsGenericHTMLElement)
 
+  virtual nsXPCClassInfo* GetClassInfo();
 protected:
   nsRefPtr<nsContentList> mRows;
 };
@@ -90,7 +90,7 @@ protected:
 NS_IMPL_NS_NEW_HTML_ELEMENT(TableSection)
 
 
-nsHTMLTableSectionElement::nsHTMLTableSectionElement(nsINodeInfo *aNodeInfo)
+nsHTMLTableSectionElement::nsHTMLTableSectionElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo)
 {
 }
@@ -105,6 +105,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_ADDREF_INHERITED(nsHTMLTableSectionElement, nsGenericElement) 
 NS_IMPL_RELEASE_INHERITED(nsHTMLTableSectionElement, nsGenericElement) 
 
+
+DOMCI_NODE_DATA(HTMLTableSectionElement, nsHTMLTableSectionElement)
 
 // QueryInterface implementation for nsHTMLTableSectionElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(nsHTMLTableSectionElement)
@@ -131,8 +133,9 @@ nsHTMLTableSectionElement::GetRows(nsIDOMHTMLCollection** aValue)
 
   if (!mRows) {
     mRows = new nsContentList(this,
-                              nsGkAtoms::tr,
                               mNodeInfo->NamespaceID(),
+                              nsGkAtoms::tr,
+                              nsGkAtoms::tr,
                               PR_FALSE);
 
     NS_ENSURE_TRUE(mRows, NS_ERROR_OUT_OF_MEMORY);
@@ -170,8 +173,8 @@ nsHTMLTableSectionElement::InsertRow(PRInt32 aIndex,
   nsContentUtils::NameChanged(mNodeInfo, nsGkAtoms::tr,
                               getter_AddRefs(nodeInfo));
 
-  nsCOMPtr<nsIContent> rowContent = NS_NewHTMLTableRowElement(nodeInfo);
-  if (!nodeInfo) {
+  nsCOMPtr<nsIContent> rowContent = NS_NewHTMLTableRowElement(nodeInfo.forget());
+  if (!rowContent) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
@@ -249,13 +252,13 @@ nsHTMLTableSectionElement::ParseAttribute(PRInt32 aNamespaceID,
       return aResult.ParseIntWithBounds(aValue, 0);
     }
     if (aAttribute == nsGkAtoms::height) {
-      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+      return aResult.ParseSpecialIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::align) {
       return ParseTableCellHAlignValue(aValue, aResult);
     }
     if (aAttribute == nsGkAtoms::bgcolor) {
-      return aResult.ParseColor(aValue, GetOwnerDoc());
+      return aResult.ParseColor(aValue);
     }
     if (aAttribute == nsGkAtoms::valign) {
       return ParseTableVAlignValue(aValue, aResult);

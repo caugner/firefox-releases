@@ -65,6 +65,8 @@
 #include "nsCSSFrameConstructor.h"
 #include "nsIReflowCallback.h"
 
+using namespace mozilla;
+
 //
 // nsMathMLContainerFrame implementation
 //
@@ -122,8 +124,8 @@ nsMathMLContainerFrame::ReflowError(nsIRenderingContext& aRenderingContext,
 
 class nsDisplayMathMLError : public nsDisplayItem {
 public:
-  nsDisplayMathMLError(nsIFrame* aFrame)
-    : nsDisplayItem(aFrame) {
+  nsDisplayMathMLError(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
+    : nsDisplayItem(aBuilder, aFrame) {
     MOZ_COUNT_CTOR(nsDisplayMathMLError);
   }
 #ifdef NS_BUILD_REFCNT_LOGGING
@@ -134,7 +136,7 @@ public:
 
   virtual void Paint(nsDisplayListBuilder* aBuilder,
                      nsIRenderingContext* aCtx);
-  NS_DISPLAY_DECL_NAME("MathMLError")
+  NS_DISPLAY_DECL_NAME("MathMLError", TYPE_MATHML_ERROR)
 };
 
 void nsDisplayMathMLError::Paint(nsDisplayListBuilder* aBuilder,
@@ -143,7 +145,7 @@ void nsDisplayMathMLError::Paint(nsDisplayListBuilder* aBuilder,
   // Set color and font ...
   nsLayoutUtils::SetFontFromStyle(aCtx, mFrame->GetStyleContext());
 
-  nsPoint pt = aBuilder->ToReferenceFrame(mFrame);
+  nsPoint pt = ToReferenceFrame();
   aCtx->SetColor(NS_RGB(255,0,0));
   aCtx->FillRect(nsRect(pt, mFrame->GetSize()));
   aCtx->SetColor(NS_RGB(255,255,255));
@@ -172,11 +174,12 @@ IsForeignChild(const nsIFrame* aFrame)
 }
 
 static void
-DeleteHTMLReflowMetrics(void *aObject, nsIAtom *aPropertyName,
-                        void *aPropertyValue, void *aData)
+DestroyHTMLReflowMetrics(void *aPropertyValue)
 {
   delete static_cast<nsHTMLReflowMetrics*>(aPropertyValue);
 }
+
+NS_DECLARE_FRAME_PROPERTY(HTMLReflowMetricsProperty, DestroyHTMLReflowMetrics)
 
 /* static */ void
 nsMathMLContainerFrame::SaveReflowAndBoundingMetricsFor(nsIFrame*                  aFrame,
@@ -185,8 +188,7 @@ nsMathMLContainerFrame::SaveReflowAndBoundingMetricsFor(nsIFrame*               
 {
   nsHTMLReflowMetrics *metrics = new nsHTMLReflowMetrics(aReflowMetrics);
   metrics->mBoundingMetrics = aBoundingMetrics;
-  aFrame->SetProperty(nsGkAtoms::HTMLReflowMetricsProperty, metrics,
-                      DeleteHTMLReflowMetrics);
+  aFrame->Properties().Set(HTMLReflowMetricsProperty(), metrics);
 }
 
 // helper method to facilitate getting the reflow and bounding metrics
@@ -199,7 +201,7 @@ nsMathMLContainerFrame::GetReflowAndBoundingMetricsFor(nsIFrame*            aFra
   NS_PRECONDITION(aFrame, "null arg");
 
   nsHTMLReflowMetrics *metrics = static_cast<nsHTMLReflowMetrics*>
-    (aFrame->GetProperty(nsGkAtoms::HTMLReflowMetricsProperty));
+    (aFrame->Properties().Get(HTMLReflowMetricsProperty()));
 
   // IMPORTANT: This function is only meant to be called in Place() methods
   // where it is assumed that SaveReflowAndBoundingMetricsFor has recorded the
@@ -227,8 +229,9 @@ void
 nsMathMLContainerFrame::ClearSavedChildMetrics()
 {
   nsIFrame* childFrame = mFrames.FirstChild();
+  FramePropertyTable* props = PresContext()->PropertyTable();
   while (childFrame) {
-    childFrame->DeleteProperty(nsGkAtoms::HTMLReflowMetricsProperty);
+    props->Delete(childFrame, HTMLReflowMetricsProperty());
     childFrame = childFrame->GetNextSibling();
   }
 }
@@ -669,7 +672,8 @@ nsMathMLContainerFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     if (!IsVisibleForPainting(aBuilder))
       return NS_OK;
 
-    return aLists.Content()->AppendNewToTop(new (aBuilder) nsDisplayMathMLError(this));
+    return aLists.Content()->AppendNewToTop(
+        new (aBuilder) nsDisplayMathMLError(aBuilder, this));
   }
 
   nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
@@ -761,8 +765,10 @@ nsMathMLContainerFrame::ReLayoutChildren(nsIFrame* aParentFrame)
   if (!parent)
     return NS_OK;
 
-  return frame->PresContext()->PresShell()->
+  frame->PresContext()->PresShell()->
     FrameNeedsReflow(frame, nsIPresShell::eStyleChange, NS_FRAME_IS_DIRTY);
+
+  return NS_OK;
 }
 
 // There are precise rules governing children of a MathML frame,
@@ -839,9 +845,10 @@ nsMathMLContainerFrame::AttributeChanged(PRInt32         aNameSpaceID,
   // XXX Since they are numerous MathML attributes that affect layout, and
   // we can't check all of them here, play safe by requesting a reflow.
   // XXXldb This should only do work for attributes that cause changes!
-  return PresContext()->PresShell()->
-           FrameNeedsReflow(this, nsIPresShell::eStyleChange,
-                            NS_FRAME_IS_DIRTY);
+  PresContext()->PresShell()->
+    FrameNeedsReflow(this, nsIPresShell::eStyleChange, NS_FRAME_IS_DIRTY);
+
+  return NS_OK;
 }
 
 void
@@ -849,12 +856,15 @@ nsMathMLContainerFrame::GatherAndStoreOverflow(nsHTMLReflowMetrics* aMetrics)
 {
   // nsIFrame::FinishAndStoreOverflow likes the overflow area to include the
   // frame rectangle.
-  nsRect frameRect(0, 0, aMetrics->width, aMetrics->height);
+  aMetrics->SetOverflowAreasToDesiredBounds();
 
   // Text-shadow overflows.
   if (PresContext()->CompatibilityMode() != eCompatibility_NavQuirks) {
+    nsRect frameRect(0, 0, aMetrics->width, aMetrics->height);
     nsRect shadowRect = nsLayoutUtils::GetTextShadowRectsUnion(frameRect, this);
-    frameRect.UnionRect(frameRect, shadowRect);
+    // shadows contribute only to visual overflow
+    nsRect& visOverflow = aMetrics->VisualOverflow();
+    visOverflow.UnionRect(visOverflow, shadowRect);
   }
 
   // All non-child-frame content such as nsMathMLChars (and most child-frame
@@ -864,7 +874,9 @@ nsMathMLContainerFrame::GatherAndStoreOverflow(nsHTMLReflowMetrics* aMetrics)
                      mBoundingMetrics.rightBearing - mBoundingMetrics.leftBearing,
                      mBoundingMetrics.ascent + mBoundingMetrics.descent);
 
-  aMetrics->mOverflowArea.UnionRect(frameRect, boundingBox);
+  // REVIEW: Maybe this should contribute only to visual overflow
+  // and not scrollable?
+  aMetrics->mOverflowAreas.UnionAllWith(boundingBox);
 
   // mBoundingMetrics does not necessarily include content of <mpadded>
   // elements whose mBoundingMetrics may not be representative of the true
@@ -872,7 +884,7 @@ nsMathMLContainerFrame::GatherAndStoreOverflow(nsHTMLReflowMetrics* aMetrics)
   // make such to include child overflow areas.
   nsIFrame* childFrame = mFrames.FirstChild();
   while (childFrame) {
-    ConsiderChildOverflow(aMetrics->mOverflowArea, childFrame);
+    ConsiderChildOverflow(aMetrics->mOverflowAreas, childFrame);
     childFrame = childFrame->GetNextSibling();
   }
 
@@ -1342,11 +1354,11 @@ static ForceReflow gForceReflow;
 void
 nsMathMLContainerFrame::SetIncrementScriptLevel(PRInt32 aChildIndex, PRBool aIncrement)
 {
-  nsIFrame* child = nsFrameList(GetFirstChild(nsnull)).FrameAt(aChildIndex);
+  nsIFrame* child = GetChildList(nsnull).FrameAt(aChildIndex);
   if (!child)
     return;
   nsIContent* content = child->GetContent();
-  if (!content->IsNodeOfType(nsINode::eMATHML))
+  if (!content->IsMathML())
     return;
   nsMathMLElement* element = static_cast<nsMathMLElement*>(content);
 

@@ -58,7 +58,8 @@
 /* If we have a working stdint.h, then jsinttypes.h has already
    defined the standard integer types.  Otherwise, define the standard
    names in terms of the 'JS' types.  */
-#if ! defined(JS_HAVE_STDINT_H)
+#if ! defined(JS_HAVE_STDINT_H) && \
+    ! defined(JS_SYS_TYPES_H_DEFINES_EXACT_SIZE_TYPES)
 
 typedef JSInt8  int8_t;
 typedef JSInt16 int16_t;
@@ -69,6 +70,9 @@ typedef JSUint8  uint8_t;
 typedef JSUint16 uint16_t;
 typedef JSUint32 uint32_t;
 typedef JSUint64 uint64_t;
+
+/* Suppress other, conflicting attempts to define stdint-bits. */
+#define _STDINT_H
 
 /* If JS_STDDEF_H_HAS_INTPTR_T or JS_CRTDEFS_H_HAS_INTPTR_T are
    defined, then jsinttypes.h included the given header, which
@@ -100,6 +104,10 @@ typedef JSUintPtr uintptr_t;
  * we would require compiler assistance, and at the moment we don't need
  * preprocessor-correctness.
  */
+#ifdef _MSC_VER
+#undef SIZE_MAX
+#endif
+
 #define INTPTR_MAX  ((intptr_t) (UINTPTR_MAX >> 1))
 #define INTPTR_MIN  (intptr_t(uintptr_t(INTPTR_MAX) + uintptr_t(1)))
 #define UINTPTR_MAX ((uintptr_t) -1)

@@ -37,15 +37,17 @@
 
 #include "nsISupports.idl"
 
+interface nsIFrame;
 interface nsIObjectFrame;
 interface nsIPluginInstance;
+interface nsIPluginTag;
 interface nsIDOMElement;
 interface nsIDOMClientRect;
 
 /**
  * This interface represents a content node that loads objects.
  */
-[scriptable, uuid(90ab443e-3e99-405e-88c9-9c42adaa3217)]
+[scriptable, uuid(9558649a-7255-4b00-afb4-1171e9cdcead)]
 interface nsIObjectLoadingContent : nsISupports
 {
   const unsigned long TYPE_LOADING  = 0;
@@ -80,7 +82,6 @@ interface nsIObjectLoadingContent : nsISupports
    */
   [noscript] readonly attribute nsIPluginInstance pluginInstance;
 
-
   /**
    * Makes sure that a frame for this object exists, and that the plugin is
    * instantiated. This method does nothing if the type is not #TYPE_PLUGIN.
@@ -107,14 +108,7 @@ interface nsIObjectLoadingContent : nsISupports
    * because nsIObjectFrame is unscriptable.
    */
   [noscript] void hasNewFrame(in nsIObjectFrame aFrame);
-};
 
-/**
- * This interface extends the nsIObjectLoadingContent for the 1.9.2 branch
- */
-[scriptable, uuid(f91247a2-fb8b-42d3-a9b6-8f1f49685c43)]
-interface nsIObjectLoadingContent_MOZILLA_1_9_2_BRANCH : nsISupports
-{
   /**
    * Tells the object to paint directly in this location ignoring any
    * positioning information that may have been provided otherwise
@@ -122,4 +116,17 @@ interface nsIObjectLoadingContent_MOZILLA_1_9_2_BRANCH : nsISupports
   void setAbsoluteScreenPosition(in nsIDOMElement element,
                                  in nsIDOMClientRect position,
                                  in nsIDOMClientRect clip);
+
+  /**
+   * If this object is in going to be printed, this method
+   * returns the nsIObjectFrame object which should be used when
+   * printing the plugin. The returned nsIFrame is in the original document,
+   * not in the static clone.
+   */
+  [noscript] nsIFrame getPrintFrame();
+
+  [noscript] void pluginCrashed(in nsIPluginTag pluginTag,
+                                in AString pluginDumpID,
+                                in AString browserDumpID,
+                                in boolean submittedCrashReport);
 };

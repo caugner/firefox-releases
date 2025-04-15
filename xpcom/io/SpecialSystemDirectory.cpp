@@ -291,6 +291,9 @@ GetUnixHomeDir(nsILocalFile** aFile)
                                      PR_TRUE,
                                      aFile);
     }
+#elif defined(ANDROID)
+    // XXX no home dir on android; maybe we should return the sdcard if present?
+    return NS_ERROR_FAILURE;
 #else
     return NS_NewNativeLocalFile(nsDependentCString(PR_GetEnv("HOME")),
                                  PR_TRUE, aFile);
@@ -490,7 +493,7 @@ GetUnixXDGUserDirectory(SystemDirectories aSystemDirectory,
 
         rv = file->AppendNative(NS_LITERAL_CSTRING("Desktop"));
     }
-#if defined(NS_OSSO)
+#if defined(MOZ_PLATFORM_MAEMO)
     // "MYDOCSDIR" is exported to point to "/home/user/MyDocs" in maemo.
     else if (Unix_XDG_Documents == aSystemDirectory) {
 
@@ -505,12 +508,11 @@ GetUnixXDGUserDirectory(SystemDirectories aSystemDirectory,
 
         rv = file->AppendNative(NS_LITERAL_CSTRING(".documents"));
     }
-#else
+#endif
     else {
       // no fallback for the other XDG dirs
       rv = NS_ERROR_FAILURE;
     }
-#endif
 
     if (NS_FAILED(rv))
         return rv;

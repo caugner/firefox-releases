@@ -49,7 +49,6 @@ let (ios = Cc["@mozilla.org/network/io-service;1"]
   ios.offline = false;
 }
 
-const SERVER_PORT = 8888;
 var server; // for use in the shutdown handler, if necessary
 
 //
@@ -150,15 +149,51 @@ function runServer()
 {
   serverBasePath = __LOCATION__.parent;
   server = createMochitestServer(serverBasePath);
-  server.start(SERVER_PORT);
+
+  //verify server address
+  //if a.b.c.d or 'localhost'
+  if (typeof(_SERVER_ADDR) != "undefined") {
+    if (_SERVER_ADDR == "localhost") {
+      gServerAddress = _SERVER_ADDR;      
+    } else {
+      var quads = _SERVER_ADDR.split('.');
+      if (quads.length == 4) {
+        var invalid = false;
+        for (var i=0; i < 4; i++) {
+          if (quads[i] < 0 || quads[i] > 255)
+            invalid = true;
+        }
+        if (!invalid)
+          gServerAddress = _SERVER_ADDR;
+        else
+          throw "invalid _SERVER_ADDR, please specify a valid IP Address";
+      }
+    }
+  } else {
+    throw "please defined _SERVER_ADDR (as an ip address) before running server.js";
+  }
+
+  if (typeof(_SERVER_PORT) != "undefined") {
+    if (parseInt(_SERVER_PORT) > 0 && parseInt(_SERVER_PORT) < 65536)
+      SERVER_PORT = _SERVER_PORT;
+  } else {
+    throw "please define _SERVER_PORT (as a port number) before running server.js";
+  }
+
+  server._start(SERVER_PORT, gServerAddress);
 
   // touch a file in the profile directory to indicate we're alive
   var foStream = Cc["@mozilla.org/network/file-output-stream;1"]
                    .createInstance(Ci.nsIFileOutputStream);
   var serverAlive = Cc["@mozilla.org/file/local;1"]
                       .createInstance(Ci.nsILocalFile);
-  serverAlive.initWithFile(serverBasePath);
-  serverAlive.append("mochitesttestingprofile");
+
+  if (typeof(_PROFILE_PATH) == "undefined") {
+    serverAlive.initWithFile(serverBasePath);
+    serverAlive.append("mochitesttestingprofile");
+  } else {
+    serverAlive.initWithPath(_PROFILE_PATH);
+  }
 
   // If we're running outside of the test harness, there might
   // not be a test profile directory present
@@ -198,12 +233,29 @@ function createMochitestServer(serverBasePath)
 
   server.registerDirectory("/", serverBasePath);
   server.registerPathHandler("/server/shutdown", serverShutdown);
+  server.registerPathHandler("/server/debug", serverDebug);
   server.registerContentType("sjs", "sjs"); // .sjs == CGI-like functionality
   server.registerContentType("jar", "application/x-jar");
   server.registerContentType("ogg", "application/ogg");
   server.registerContentType("ogv", "video/ogg");
   server.registerContentType("oga", "audio/ogg");
+  server.registerContentType("dat", "text/plain; charset=utf-8");
   server.setIndexHandler(defaultDirHandler);
+
+  var serverRoot =
+    {
+      getFile: function getFile(path)
+      {
+        var file = serverBasePath.clone().QueryInterface(Ci.nsILocalFile);
+        path.split("/").forEach(function(p) {
+          file.appendRelativePath(p);
+        });
+        return file;
+      },
+      QueryInterface: function(aIID) { return this; }
+    };
+
+  server.setObjectState("SERVER_ROOT", serverRoot);
 
   processLocations(server);
 
@@ -297,6 +349,39 @@ function serverShutdown(metadata, response)
   server.stop(serverStopped);
 }
 
+// /server/debug?[012]
+function serverDebug(metadata, response)
+{
+  response.setStatusLine(metadata.httpVersion, 400, "Bad debugging level");
+  if (metadata.queryString.length !== 1)
+    return;
+
+  var mode;
+  if (metadata.queryString === "0") {
+    // do this now so it gets logged with the old mode
+    dumpn("Server debug logs disabled.");
+    DEBUG = false;
+    DEBUG_TIMESTAMP = false;
+    mode = "disabled";
+  } else if (metadata.queryString === "1") {
+    DEBUG = true;
+    DEBUG_TIMESTAMP = false;
+    mode = "enabled";
+  } else if (metadata.queryString === "2") {
+    DEBUG = true;
+    DEBUG_TIMESTAMP = true;
+    mode = "enabled, with timestamps";
+  } else {
+    return;
+  }
+
+  response.setStatusLine(metadata.httpVersion, 200, "OK");
+  response.setHeader("Content-type", "text/plain", false);
+  var body = "Server debug logs " + mode + ".";
+  response.bodyOutputStream.write(body, body.length);
+  dumpn(body);
+}
+
 //
 // DIRECTORY LISTINGS
 //
@@ -374,7 +459,12 @@ function isTest(filename, pattern)
   if (pattern)
     return pattern.test(filename);
 
-  return filename.indexOf("test_") > -1 &&
+  // File name is a URL style path to a test file, make sure that we check for
+  // tests that start with test_.
+  testPattern = /^test_/;
+  pathPieces = filename.split('/');
+    
+  return testPattern.test(pathPieces[pathPieces.length - 1]) &&
          filename.indexOf(".js") == -1 &&
          filename.indexOf(".css") == -1 &&
          !/\^headers\^$/.test(filename);
@@ -462,7 +552,7 @@ function linksToTableRows(links, recursionLevel)
 }
 
 function arrayOfTestFiles(linkArray, fileArray, testPattern) {
-  for (var [link, value] in linkArray) {
+  for (var [link, value] in Iterator(linkArray)) {
     if (value instanceof Object) {
       arrayOfTestFiles(value, fileArray, testPattern);
     } else if (isTest(link, testPattern)) {

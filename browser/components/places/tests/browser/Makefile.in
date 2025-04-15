@@ -44,6 +44,7 @@ include $(DEPTH)/config/autoconf.mk
 include $(topsrcdir)/config/rules.mk
 
 _BROWSER_TEST_FILES = \
+	head.js \
 	browser_0_library_left_pane_migration.js \
 	browser_library_left_pane_fixnames.js \
 	browser_425884.js \
@@ -56,14 +57,22 @@ _BROWSER_TEST_FILES = \
 	browser_library_search.js \
 	browser_history_sidebar_search.js \
 	browser_bookmarksProperties.js \
-	browser_forgetthissite_single.js \
+	$(warning browser_forgetthissite_single.js temporarily disabled because of very frequent oranges, see bug 551540) \
 	browser_library_left_pane_commands.js \
 	browser_drag_bookmarks_on_toolbar.js \
 	browser_library_middleclick.js \
 	browser_library_views_liveupdate.js \
 	browser_views_liveupdate.js \
 	browser_sidebarpanels_click.js \
+	sidebarpanels_click_test_page.html \
 	browser_library_infoBox.js \
+	browser_markPageAsFollowedLink.js \
+	framedPage.html \
+	frameLeft.html \
+	frameRight.html \
+	browser_toolbar_migration.js \
+	browser_library_batch_delete.js \
+	browser_555547.js \
 	$(NULL)
 
 libs:: $(_BROWSER_TEST_FILES)

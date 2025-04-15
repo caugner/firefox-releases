@@ -52,13 +52,25 @@ public:
 
   static void AddRefAtoms();
 
-  static PRBool IsPseudoClass(nsIAtom *aAtom);
   static PRBool HasStringArg(nsIAtom* aAtom);
   static PRBool HasNthPairArg(nsIAtom* aAtom);
+  static PRBool HasSelectorListArg(nsIAtom* aAtom);
 
 #define CSS_PSEUDO_CLASS(_name, _value) static nsICSSPseudoClass* _name;
 #include "nsCSSPseudoClassList.h"
 #undef CSS_PSEUDO_CLASS
+
+  enum Type {
+#define CSS_PSEUDO_CLASS(_name, _value) \
+    ePseudoClass_##_name,
+#include "nsCSSPseudoClassList.h"
+#undef CSS_PSEUDO_CLASS
+    ePseudoClass_Count,
+    ePseudoClass_NotPseudoClass /* This value MUST be last!  SelectorMatches
+                                   depends on it. */
+  };
+
+  static Type GetPseudoType(nsIAtom* aAtom);
 };
 
 #endif /* nsCSSPseudoClasses_h___ */

@@ -34,6 +34,8 @@
 #include "nptest_platform.h"
 #include <CoreServices/CoreServices.h>
 
+using namespace std;
+
 bool
 pluginSupportsWindowMode()
 {
@@ -50,14 +52,40 @@ NPError
 pluginInstanceInit(InstanceData* instanceData)
 {
   NPP npp = instanceData->npp;
-  // select the right drawing model if necessary
+
   NPBool supportsCoreGraphics = false;
-  if (NPN_GetValue(npp, NPNVsupportsCoreGraphicsBool, &supportsCoreGraphics) == NPERR_NO_ERROR && supportsCoreGraphics) {
+  if ((NPN_GetValue(npp, NPNVsupportsCoreGraphicsBool, &supportsCoreGraphics) == NPERR_NO_ERROR) &&
+      supportsCoreGraphics) {
     NPN_SetValue(npp, NPPVpluginDrawingModel, (void*)NPDrawingModelCoreGraphics);
   } else {
     printf("CoreGraphics drawing model not supported, can't create a plugin instance.\n");
     return NPERR_INCOMPATIBLE_VERSION_ERROR;
   }
+
+#ifndef NP_NO_CARBON
+  // The test plugin will test using Carbon NPAPI if it is available. This
+  // is simply because we want to test Gecko's Carbon NPAPI support. You can
+  // override this behavior with an environment variable.
+  if (!getenv("TEST_COCOA_NPAPI")) {
+    NPBool supportsCarbonEvents = false;
+    if ((NPN_GetValue(npp, NPNVsupportsCarbonBool, &supportsCarbonEvents) == NPERR_NO_ERROR) &&
+        supportsCarbonEvents) {
+      instanceData->eventModel = NPEventModelCarbon;
+      return NPERR_NO_ERROR;
+    }
+  }
+#endif
+
+  NPBool supportsCocoaEvents = false;
+  if ((NPN_GetValue(npp, NPNVsupportsCocoaBool, &supportsCocoaEvents) == NPERR_NO_ERROR) &&
+      supportsCocoaEvents) {
+    NPN_SetValue(npp, NPPVpluginEventModel, (void*)NPEventModelCocoa);
+    instanceData->eventModel = NPEventModelCocoa;
+  } else {
+    printf("Cocoa event model not supported, can't create a plugin instance.\n");
+    return NPERR_INCOMPATIBLE_VERSION_ERROR;
+  }
+
   return NPERR_NO_ERROR;
 }
 
@@ -106,10 +134,12 @@ GetColorsFromRGBA(PRUint32 rgba, float* r, float* g, float* b, float* a)
 }
 
 static void
-pluginDraw(InstanceData* instanceData)
+pluginDraw(InstanceData* instanceData, NPCocoaEvent* event)
 {
   if (!instanceData)
     return;
+
+  notifyDidPaint(instanceData);
 
   NPP npp = instanceData->npp;
   if (!npp)
@@ -120,7 +150,17 @@ pluginDraw(InstanceData* instanceData)
     return;
 
   NPWindow window = instanceData->window;
-  CGContextRef cgContext = ((NP_CGContext*)(window.window))->context;
+
+  CGContextRef cgContext = NULL;
+#ifndef NP_NO_CARBON
+  if (instanceData->eventModel == NPEventModelCocoa) {
+    cgContext = event->data.draw.context;
+  } else {
+    cgContext = ((NP_CGContext*)(window.window))->context;
+  }
+#else
+  cgContext = event->data.draw.context;
+#endif
 
   float windowWidth = window.width;
   float windowHeight = window.height;
@@ -146,66 +186,37 @@ pluginDraw(InstanceData* instanceData)
     CGContextSetLineWidth(cgContext, 6.0);
     CGContextStrokePath(cgContext);
 
-    // draw the UA string using ATSUI
-    CGContextSetGrayFillColor(cgContext, 0.0, 1.0);
-    ATSUStyle atsuStyle;
-    ATSUCreateStyle(&atsuStyle);
-    CFIndex stringLength = CFStringGetLength(uaCFString);
-    UniChar* unicharBuffer = (UniChar*)malloc((stringLength + 1) * sizeof(UniChar));
-    CFStringGetCharacters(uaCFString, CFRangeMake(0, stringLength), unicharBuffer);
-    UniCharCount runLengths = kATSUToTextEnd;
-    ATSUTextLayout atsuLayout;
-    ATSUCreateTextLayoutWithTextPtr(unicharBuffer,
-                                    kATSUFromTextBeginning,
-                                    kATSUToTextEnd,
-                                    stringLength,
-                                    1,
-                                    &runLengths,
-                                    &atsuStyle,
-                                    &atsuLayout);
-    ATSUAttributeTag contextTag = kATSUCGContextTag;
-    ByteCount byteSize = sizeof(CGContextRef);
-    ATSUAttributeValuePtr contextATSUPtr = &cgContext;
-    ATSUSetLayoutControls(atsuLayout, 1, &contextTag, &byteSize, &contextATSUPtr);
-    ATSUTextMeasurement lineAscent, lineDescent;
-    ATSUGetLineControl(atsuLayout,
-                       kATSUFromTextBeginning,
-                       kATSULineAscentTag,
-                       sizeof(ATSUTextMeasurement),
-                       &lineAscent,
-                       &byteSize);
-    ATSUGetLineControl(atsuLayout,
-                       kATSUFromTextBeginning,
-                       kATSULineDescentTag,
-                       sizeof(ATSUTextMeasurement),
-                       &lineDescent,
-                       &byteSize);
-    float lineHeight = FixedToFloat(lineAscent) + FixedToFloat(lineDescent);
-    ItemCount softBreakCount;
-    ATSUBatchBreakLines(atsuLayout,
-                        kATSUFromTextBeginning,
-                        stringLength,
-                        FloatToFixed(windowWidth - 10.0),
-                        &softBreakCount);
-    ATSUGetSoftLineBreaks(atsuLayout,
-                          kATSUFromTextBeginning,
-                          kATSUToTextEnd,
-                          0, NULL, &softBreakCount);
-    UniCharArrayOffset* softBreaks = (UniCharArrayOffset*)malloc(softBreakCount * sizeof(UniCharArrayOffset));
-    ATSUGetSoftLineBreaks(atsuLayout,
-                          kATSUFromTextBeginning,
-                          kATSUToTextEnd,
-                          softBreakCount, softBreaks, &softBreakCount);
-    UniCharArrayOffset currentDrawOffset = kATSUFromTextBeginning;
-    unsigned int i = 0;
-    while (i < softBreakCount) {
-      ATSUDrawText(atsuLayout, currentDrawOffset, softBreaks[i], FloatToFixed(5.0), FloatToFixed(windowHeight - 5.0 - (lineHeight * (i + 1.0))));
-      currentDrawOffset = softBreaks[i];
-      i++;
+    // draw the UA string using Core Text
+    CGContextSetTextMatrix(cgContext, CGAffineTransformIdentity);
+
+    // Initialize a rectangular path.
+    CGMutablePathRef path = CGPathCreateMutable();
+    CGRect bounds = CGRectMake(10.0, 10.0, PR_MAX(0.0, windowWidth - 20.0),
+                               PR_MAX(0.0, windowHeight - 20.0));
+    CGPathAddRect(path, NULL, bounds);
+
+    // Initialize an attributed string.
+    CFMutableAttributedStringRef attrString = CFAttributedStringCreateMutable(kCFAllocatorDefault, 0);
+    CFAttributedStringReplaceString(attrString, CFRangeMake(0, 0), uaCFString);
+
+    // Create a color and add it as an attribute to the string.
+    CGColorSpaceRef rgbColorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat components[] = { 0.0, 0.0, 0.0, 1.0 };
+    CGColorRef red = CGColorCreate(rgbColorSpace, components);    
+    CGColorSpaceRelease(rgbColorSpace);
+    CFAttributedStringSetAttribute(attrString, CFRangeMake(0, 50), kCTForegroundColorAttributeName, red);
+
+    // Create the framesetter with the attributed string.
+    CTFramesetterRef framesetter = CTFramesetterCreateWithAttributedString(attrString);
+    CFRelease(attrString);
+
+    // Create the frame and draw it into the graphics context
+    CTFrameRef frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(0, 0), path, NULL);
+    CFRelease(framesetter);
+    if (frame) {
+      CTFrameDraw(frame, cgContext);
+      CFRelease(frame);
     }
-    ATSUDrawText(atsuLayout, currentDrawOffset, kATSUToTextEnd, FloatToFixed(5.0), FloatToFixed(windowHeight - 5.0 - (lineHeight * (i + 1.0))));
-    free(unicharBuffer);
-    free(softBreaks);
 
     // restore the cgcontext gstate
     CGContextRestoreGState(cgContext);
@@ -232,31 +243,71 @@ pluginDraw(InstanceData* instanceData)
     break;
   }
   }
-
-  ++instanceData->paintCount;
 }
 
 int16_t
 pluginHandleEvent(InstanceData* instanceData, void* event)
 {
-  EventRecord* carbonEvent = (EventRecord*)event;
-  if (!carbonEvent)
-    return 0;
+#ifndef NP_NO_CARBON
+  if (instanceData->eventModel == NPEventModelCarbon) {
+    EventRecord* carbonEvent = (EventRecord*)event;
+    if (!carbonEvent)
+      return kNPEventNotHandled;
 
-  NPWindow* w = &instanceData->window;
-  switch (carbonEvent->what) {
-  case updateEvt:
-    pluginDraw(instanceData);
-    return 1;
-  case mouseDown:
-  case mouseUp:
-  case osEvt:
-    instanceData->lastMouseX = carbonEvent->where.h - w->x;
-    instanceData->lastMouseY = carbonEvent->where.v - w->y;
-    return 1;
-  default:
-    return 0;
+    NPWindow* w = &instanceData->window;
+    switch (carbonEvent->what) {
+      case updateEvt:
+        pluginDraw(instanceData, NULL);
+        break;
+      case mouseDown:
+      case mouseUp:
+      case osEvt:
+      {
+        Rect globalBounds = {0};
+        WindowRef nativeWindow = static_cast<WindowRef>(static_cast<NP_CGContext*>(w->window)->window);
+        if (nativeWindow)
+          ::GetWindowBounds(nativeWindow, kWindowStructureRgn, &globalBounds);
+        instanceData->lastMouseX = carbonEvent->where.h - w->x - globalBounds.left;
+        instanceData->lastMouseY = carbonEvent->where.v - w->y - globalBounds.top;
+        break;
+      }
+      default:
+        return kNPEventNotHandled;
+    }
+
+    return kNPEventHandled;
   }
+#endif
+
+  NPCocoaEvent* cocoaEvent = (NPCocoaEvent*)event;
+  if (!cocoaEvent)
+    return kNPEventNotHandled;
+
+  switch (cocoaEvent->type) {
+    case NPCocoaEventDrawRect:
+      pluginDraw(instanceData, cocoaEvent);
+      break;
+    case NPCocoaEventMouseDown:
+    case NPCocoaEventMouseUp:
+    case NPCocoaEventMouseMoved:
+      instanceData->lastMouseX = (int32_t)cocoaEvent->data.mouse.pluginX;
+      instanceData->lastMouseY = (int32_t)cocoaEvent->data.mouse.pluginY;
+      break;
+    case NPCocoaEventWindowFocusChanged:
+      instanceData->topLevelWindowActivationState = cocoaEvent->data.focus.hasFocus ?
+        ACTIVATION_STATE_ACTIVATED : ACTIVATION_STATE_DEACTIVATED;
+      instanceData->topLevelWindowActivationEventCount = instanceData->topLevelWindowActivationEventCount + 1;
+      break;
+    case NPCocoaEventFocusChanged:
+      instanceData->focusState = cocoaEvent->data.focus.hasFocus ?
+      ACTIVATION_STATE_ACTIVATED : ACTIVATION_STATE_DEACTIVATED;
+      instanceData->focusEventCount = instanceData->focusEventCount + 1;
+      break;
+    default:
+      return kNPEventNotHandled;
+  }
+
+  return kNPEventHandled;
 }
 
 int32_t pluginGetEdge(InstanceData* instanceData, RectEdge edge)

@@ -49,18 +49,8 @@ IS_COMPONENT	= 1
 MODULE_NAME	= nsUConvModule
 GRE_MODULE	= 1
 LIBXUL_LIBRARY = 1
-ifneq ($(OS_ARCH),WINNT)
 # To avoid conflict with OS/2 system uconv.dll
 SHORT_LIBNAME  = mozuconv
-endif
-
-REQUIRES	= xpcom \
-		  string \
-		  intl \
-		  locale \
-		  unicharutil \
-		  necko \
-		  $(NULL)
 
 CPPSRCS		= \
 		nsUConvModule.cpp \
@@ -68,17 +58,15 @@ CPPSRCS		= \
 		nsConverterInputStream.cpp \
 		nsConverterOutputStream.cpp \
 		nsTextToSubURI.cpp \
-		nsGREResProperties.cpp \
 		nsCharsetConverterManager.cpp \
 		nsUTF8ConverterService.cpp \
 		nsUTF8ToUnicode.cpp \
 		nsUnicodeToUTF8.cpp \
 		nsScriptableUConv.cpp \
+		nsUConvPropertySearch.cpp \
 		$(NULL)
 
-ifdef MOZ_USE_NATIVE_UCONV
-REQUIRES	+= ucnative
-else
+ifndef MOZ_USE_NATIVE_UCONV
 CPPSRCS         += \
 		nsISO88591ToUnicode.cpp \
 		nsCP1252ToUnicode.cpp \
@@ -87,35 +75,37 @@ CPPSRCS         += \
 		nsUnicodeToCP1252.cpp \
 		nsUnicodeToMacRoman.cpp \
 		$(NULL)
-
 endif
 
-EXPORT_RESOURCE	= \
-		charsetalias.properties \
-		charsetData.properties \
-		$(NULL)
+# Are we targeting x86-32 or x86-64?  If so, we want to include the SSE2
+# version of nsUTF8ToUnicodeSSE2.cpp.
+ifneq (,$(INTEL_ARCHITECTURE))
+CPPSRCS			+= nsUTF8ToUnicodeSSE2.cpp
+
+# nsUTF8ToUnicodeSSE2.cpp uses SSE2 intrinsics, so we need to pass -msse2 if
+# we're using gcc. (See bug 585538 comment 12.)
+ifdef GNU_CC
+nsUTF8ToUnicodeSSE2.$(OBJ_SUFFIX): CXXFLAGS+=-msse2
+endif
+
+ifdef SOLARIS_SUNPRO_CXX
+nsUTF8ToUnicodeSSE2.$(OBJ_SUFFIX): OS_CXXFLAGS += -xarch=sse2 -xO4
+endif
+endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),os2)
 CPPSRCS			+= nsOS2Charset.cpp
-EXPORT_RESOURCE		+= os2charset.properties
 else
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 CPPSRCS			+= nsWinCharset.cpp
-EXPORT_RESOURCE		+= wincharset.properties
 else
-ifneq (,$(filter cocoa mac, $(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 CPPSRCS			+= nsMacCharset.cpp
-EXPORT_RESOURCE		+= maccharset.properties
 else
 ifeq ($(OS_ARCH),BeOS)
 CPPSRCS			+= nsBeOSCharset.cpp
 else
 CPPSRCS			+= nsUNIXCharset.cpp
-EXPORT_RESOURCE		+= unixcharset.properties
-# add platform charset remapping properties files here if necessary
-# (see unixcharset.sample.properties for an example file)
-# eg: if we needed a charset remap for OSARCH=Linux then add the following line:
-#EXPORT_RESOURCE		+= unixcharset.Linux.properties
 endif
 endif
 endif
@@ -130,7 +120,7 @@ EXTRA_DSO_LDOPTS = \
 
 LOCAL_INCLUDES	= -I$(srcdir)/../util
 
-ifneq (,$(filter cocoa mac, $(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 EXTRA_DSO_LDOPTS += $(TK_LIBS)
 endif
 
@@ -170,9 +160,35 @@ ifeq ($(OS_ARCH), Linux)
 DEFINES         += -D_XOPEN_SOURCE=500
 endif
 
-libs:: $(EXPORT_RESOURCE)
-	$(INSTALL) $^ $(DIST)/bin/res
+nsCharsetAliasImp.$(OBJ_SUFFIX): charsetalias.properties.h
 
-install:: $(EXPORT_RESOURCE)
-	$(SYSINSTALL) $(IFLAGS1) $^ $(DESTDIR)$(mozappdir)/res 
+nsMacCharset.$(OBJ_SUFFIX): maccharset.properties.h
 
+nsOS2Charset.$(OBJ_SUFFIX): os2charset.properties.h
+
+nsWinCharset.$(OBJ_SUFFIX): wincharset.properties.h
+
+nsUNIXCharset.$(OBJ_SUFFIX): unixcharset.properties.h
+
+charsetalias.properties.h: props2arrays.py charsetalias.properties
+	$(PYTHON) $^ $@
+
+maccharset.properties.h: props2arrays.py maccharset.properties
+	$(PYTHON) $^ $@
+
+os2charset.properties.h: props2arrays.py os2charset.properties
+	$(PYTHON) $^ $@
+
+wincharset.properties.h: props2arrays.py wincharset.properties
+	$(PYTHON) $^ $@
+
+unixcharset.properties.h: props2arrays.py unixcharset.properties
+	$(PYTHON) $^ $@
+
+GARBAGE += \
+	charsetalias.properties.h \
+	maccharset.properties.h \
+	os2charset.properties.h \
+	unixcharset.properties.h \
+	wincharset.properties.h \
+	$(NULL)

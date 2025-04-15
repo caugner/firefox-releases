@@ -1,15 +1,15 @@
 // load our utility script
 var scriptLoader = Components.classes["@mozilla.org/moz/jssubscript-loader;1"]
                              .getService(Components.interfaces.mozIJSSubScriptLoader);
-scriptLoader.loadSubScript("chrome://mochikit/content/browser/toolkit/crashreporter/test/browser/aboutcrashes_utils.js", this);
+
+var rootDir = getRootDirectory(gTestPath);
+scriptLoader.loadSubScript(rootDir + "aboutcrashes_utils.js", this);
 
 function cleanup_and_finish() {
   try {
     cleanup_fake_appdir();
   } catch(ex) {}
-  let prefs = Components.classes["@mozilla.org/preferences-service;1"]
-    .getService(Components.interfaces.nsIPrefService);
-  prefs.clearUserPref("breakpad.reportURL");
+  Services.prefs.clearUserPref("breakpad.reportURL");
   gBrowser.removeTab(gBrowser.selectedTab);
   finish();
 }
@@ -89,6 +89,12 @@ function check_submit_pending(tab, crashes) {
                   });
     }
   }
+  function csp_fail() {
+    browser.removeEventListener("CrashSubmitFailed", csp_fail, true);
+    ok(false, "failed to submit crash report!");
+    cleanup_and_finish();
+  }
+  browser.addEventListener("CrashSubmitFailed", csp_fail, true);
   browser.addEventListener("load", csp_onload, true);
   function csp_pageshow() {
     browser.removeEventListener("pageshow", csp_pageshow, true);
@@ -120,19 +126,19 @@ function test() {
   crD.append("Crash Reports");
   let crashes = add_fake_crashes(crD, 1);
   // we don't need much data here, it's not going to a real Socorro
-  crashes.push(addPendingCrashreport(crD, {'ServerURL': 'http://example.com/browser/toolkit/crashreporter/test/browser/crashreport.sjs',
-                                           'ProductName': 'Test App',
-                                           // test that we don't truncate
-                                           // at = (bug 512853)
-                                           'Foo': 'ABC=XYZ'
-                                          }));
+  crashes.push(addPendingCrashreport(crD,
+                                     crashes[crashes.length - 1].date + 60000,
+                                     {'ServerURL': 'http://example.com/browser/toolkit/crashreporter/test/browser/crashreport.sjs',
+                                      'ProductName': 'Test App',
+                                      // test that we don't truncate
+                                      // at = (bug 512853)
+                                      'Foo': 'ABC=XYZ'
+                                     }));
   crashes.sort(function(a,b) b.date - a.date);
 
   // set this pref so we can link to our test server
-  let prefs = Components.classes["@mozilla.org/preferences-service;1"]
-    .getService(Components.interfaces.nsIPrefService);
-
-  prefs.setCharPref("breakpad.reportURL", "http://example.com/browser/toolkit/crashreporter/test/browser/crashreport.sjs?id=");
+  Services.prefs.setCharPref("breakpad.reportURL",
+                             "http://example.com/browser/toolkit/crashreporter/test/browser/crashreport.sjs?id=");
 
   let tab = gBrowser.selectedTab = gBrowser.addTab("about:blank");
   let browser = gBrowser.getBrowserForTab(tab);

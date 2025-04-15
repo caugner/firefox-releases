@@ -46,10 +46,12 @@ MODULE		= jpeg
 LIBRARY_NAME	= mozjpeg
 
 ifeq ($(OS_ARCH),WINNT)
-LIBRARY_NAME	= jpeg$(MOZ_BITS)$(VERSION_NUMBER)
+LIBRARY_NAME	= jpeg32$(VERSION_NUMBER)
+ifneq ($(OS_TEST),x86_64)
 # FIXME: bug 413019
 ifndef GNU_CC
 OS_COMPILE_CFLAGS += -GL-
+endif
 endif
 endif
 
@@ -99,8 +101,6 @@ EXPORTS		= \
 		$(NULL)
 
 # These files enable support for writing JPEGs
-# (on certain platforms, or if JPEG image encoder support is required)
-ifneq (,$(filter os2 windows,$(MOZ_WIDGET_TOOLKIT))$(filter jpeg,$(MOZ_IMG_ENCODERS)))
 CSRCS		+= \
 		jcapimin.c \
 		jcparam.c \
@@ -117,8 +117,6 @@ CSRCS		+= \
 		jcdctmgr.c \
 		jcprepct.c \
 		$(NULL)
-
-endif
 
 # need static lib for some of the libimg componentry to link properly
 FORCE_STATIC_LIB = 1

@@ -161,6 +161,8 @@ static PRBool bypassPKCS11    = PR_FALSE;
 static PRBool disableLocking  = PR_FALSE;
 static PRBool ignoreErrors    = PR_FALSE;
 static PRBool enableSessionTickets = PR_FALSE;
+static PRBool enableCompression    = PR_FALSE;
+static PRBool enableFalseStart     = PR_FALSE;
 
 PRIntervalTime maxInterval    = PR_INTERVAL_NO_TIMEOUT;
 
@@ -179,8 +181,8 @@ Usage(const char *progName)
     fprintf(stderr, 
     	"Usage: %s [-n nickname] [-p port] [-d dbdir] [-c connections]\n"
  	"          [-23BDNTovqs] [-f filename] [-N | -P percentage]\n"
-	"          [-w dbpasswd] [-C cipher(s)] [-t threads] hostname\n"
-        "          [-W pwfile]\n"
+	"          [-w dbpasswd] [-C cipher(s)] [-t threads] [-W pwfile]\n"
+        "          [-a sniHostName] hostname\n"
 	" where -v means verbose\n"
         "       -o flag is interpreted as follows:\n"
         "          1 -o   means override the result of server certificate validation.\n"
@@ -195,7 +197,9 @@ Usage(const char *progName)
         "       -T means disable TLS\n"
         "       -U means enable throttling up threads\n"
 	"       -B bypasses the PKCS11 layer for SSL encryption and MACing\n"
-	"       -u enable TLS Session Ticket extension\n",
+	"       -u enable TLS Session Ticket extension\n"
+	"       -z enable compression\n"
+	"       -g enable false start\n",
 	progName);
     exit(1);
 }
@@ -227,8 +231,8 @@ errExit(char * funcString)
 void
 disableAllSSLCiphers(void)
 {
-    const PRUint16 *cipherSuites = SSL_ImplementedCiphers;
-    int             i            = SSL_NumImplementedCiphers;
+    const PRUint16 *cipherSuites = SSL_GetImplementedCiphers();
+    int             i            = SSL_GetNumImplementedCiphers();
     SECStatus       rv;
 
     /* disable all the SSL3 cipher suites */
@@ -264,7 +268,7 @@ mySSLAuthCertificate(void *arg, PRFileDesc *fd, PRBool checkSig,
     /* invoke the "default" AuthCert handler. */
     rv = SSL_AuthCertificate(arg, fd, checkSig, isServer);
 
-    PR_AtomicIncrement(&certsTested);
+    PR_ATOMIC_INCREMENT(&certsTested);
     if (rv == SECSuccess) {
 	fputs("strsclnt: -- SSL: Server Certificate Validated.\n", stderr);
     }
@@ -312,9 +316,11 @@ printSecurityInfo(PRFileDesc *fd)
 	       suite.effectiveKeyBits, suite.symCipherName, 
 	       suite.macBits, suite.macAlgorithmName);
 	    FPRINTF(stderr, 
-	    "strsclnt: Server Auth: %d-bit %s, Key Exchange: %d-bit %s\n",
+	    "strsclnt: Server Auth: %d-bit %s, Key Exchange: %d-bit %s\n"
+	    "          Compression: %s\n",
 	       channel.authKeyBits, suite.authAlgorithmName,
-	       channel.keaKeyBits,  suite.keaTypeName);
+	       channel.keaKeyBits,  suite.keaTypeName,
+	       channel.compressionMethodName);
     	}
     }
 
@@ -728,7 +734,7 @@ PRInt32 lastFullHandshakePeerID;
 void
 myHandshakeCallback(PRFileDesc *socket, void *arg) 
 {
-    PR_AtomicSet(&lastFullHandshakePeerID, (PRInt32) arg);
+    PR_ATOMIC_SET(&lastFullHandshakePeerID, (PRInt32) arg);
 }
 
 #endif
@@ -834,7 +840,7 @@ retry:
         static PRInt32 sockPeerID = 0; /* atomically incremented */
         PRInt32 thisPeerID;
 #endif
-        PRInt32 savid = PR_AtomicIncrement(&globalconid);
+        PRInt32 savid = PR_ATOMIC_INCREMENT(&globalconid);
         PRInt32 conid = 1 + (savid - 1) % 100;
         /* don't change peer ID on the very first handshake, which is always
            a full, so the session gets stored into the client cache */
@@ -845,7 +851,7 @@ retry:
 #ifdef USE_SOCK_PEER_ID
         {
             /* force a full handshake by changing the socket peer ID */
-            thisPeerID = PR_AtomicIncrement(&sockPeerID);
+            thisPeerID = PR_ATOMIC_INCREMENT(&sockPeerID);
         } else {
             /* reuse previous sockPeerID for restart handhsake */
             thisPeerID = lastFullHandshakePeerID;
@@ -865,7 +871,7 @@ retry:
 	goto done;
     }
 
-    PR_AtomicIncrement(&numConnected);
+    PR_ATOMIC_INCREMENT(&numConnected);
 
     if (bigBuf.data != NULL) {
 	result = handle_fdx_connection( ssl_sock, tid);
@@ -873,7 +879,7 @@ retry:
 	result = handle_connection( ssl_sock, tid);
     }
 
-    PR_AtomicDecrement(&numConnected);
+    PR_ATOMIC_DECREMENT(&numConnected);
 
 done:
     if (ssl_sock) {
@@ -1074,7 +1080,8 @@ client_main(
     unsigned short      port, 
     int                 connections,
     cert_and_key* Cert_And_Key,
-    const char *	hostName)
+    const char *	hostName,
+    const char *	sniHostName)
 {
     PRFileDesc *model_sock	= NULL;
     int         i;
@@ -1233,6 +1240,18 @@ client_main(
 	    errExit("SSL_OptionSet SSL_ENABLE_SESSION_TICKETS");
     }
 
+    if (enableCompression) {
+	rv = SSL_OptionSet(model_sock, SSL_ENABLE_DEFLATE, PR_TRUE);
+	if (rv != SECSuccess)
+	    errExit("SSL_OptionSet SSL_ENABLE_DEFLATE");
+    }
+
+    if (enableFalseStart) {
+	rv = SSL_OptionSet(model_sock, SSL_ENABLE_FALSE_START, PR_TRUE);
+	if (rv != SECSuccess)
+	    errExit("SSL_OptionSet SSL_ENABLE_FALSE_START");
+    }
+
     SSL_SetURL(model_sock, hostName);
 
     SSL_AuthCertificateHook(model_sock, mySSLAuthCertificate, 
@@ -1241,6 +1260,9 @@ client_main(
 
     SSL_GetClientAuthDataHook(model_sock, StressClient_GetClientAuthData, (void*)Cert_And_Key);
 
+    if (sniHostName) {
+        SSL_SetURL(model_sock, sniHostName);
+    }
     /* I'm not going to set the HandshakeCallback function. */
 
     /* end of ssl configuration. */
@@ -1326,8 +1348,9 @@ main(int argc, char **argv)
     SECStatus            rv;
     PLOptState *         optstate;
     PLOptStatus          status;
-    cert_and_key Cert_And_Key;
-    secuPWData  pwdata          = { PW_NONE, 0 };
+    cert_and_key         Cert_And_Key;
+    secuPWData           pwdata  = { PW_NONE, 0 };
+    char *               sniHostName = NULL;
 
     /* Call the NSPR initialization routines */
     PR_Init( PR_SYSTEM_THREAD, PR_PRIORITY_NORMAL, 1);
@@ -1338,7 +1361,8 @@ main(int argc, char **argv)
     progName = progName ? progName + 1 : tmp;
  
 
-    optstate = PL_CreateOptState(argc, argv, "23BC:DNP:TUW:c:d:f:in:op:qst:uvw:");
+    optstate = PL_CreateOptState(argc, argv,
+                                 "23BC:DNP:TUW:a:c:d:f:gin:op:qst:uvw:z");
     while ((status = PL_GetNextOpt(optstate)) == PL_OPT_OK) {
 	switch(optstate->option) {
 
@@ -1360,11 +1384,15 @@ main(int argc, char **argv)
             
 	case 'U': ThrottleUp = PR_TRUE; break;
 
+	case 'a': sniHostName = PL_strdup(optstate->value); break;
+
 	case 'c': connections = PORT_Atoi(optstate->value); break;
 
 	case 'd': dir = optstate->value; break;
 
 	case 'f': fileName = optstate->value; break;
+
+	case 'g': enableFalseStart = PR_TRUE; break;
 
 	case 'i': ignoreErrors = PR_TRUE; break;
 
@@ -1397,6 +1425,8 @@ main(int argc, char **argv)
             pwdata.source = PW_FROMFILE;
             pwdata.data = PL_strdup(optstate->value);
             break;
+
+	case 'z': enableCompression = PR_TRUE; break;
 
 	case 0:   /* positional parameter */
 	    if (hostName) {
@@ -1464,7 +1494,8 @@ main(int argc, char **argv)
 
     }
 
-    client_main(port, connections, &Cert_And_Key, hostName);
+    client_main(port, connections, &Cert_And_Key, hostName,
+                sniHostName);
 
     /* clean up */
     if (Cert_And_Key.cert) {
@@ -1481,6 +1512,9 @@ main(int argc, char **argv)
     }
     if (Cert_And_Key.nickname) {
         PL_strfree(Cert_And_Key.nickname);
+    }
+    if (sniHostName) {
+        PL_strfree(sniHostName);
     }
 
     PL_strfree(hostName);

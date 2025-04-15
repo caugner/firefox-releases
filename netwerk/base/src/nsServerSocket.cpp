@@ -56,9 +56,12 @@ typedef void (nsServerSocket:: *nsServerSocketFunc)(void);
 static nsresult
 PostEvent(nsServerSocket *s, nsServerSocketFunc func)
 {
-  nsCOMPtr<nsIRunnable> ev = new nsRunnableMethod<nsServerSocket>(s, func);
+  nsCOMPtr<nsIRunnable> ev = NS_NewRunnableMethod(s, func);
   if (!ev)
     return NS_ERROR_OUT_OF_MEMORY;
+
+  if (!gSocketTransportService)
+    return NS_ERROR_FAILURE;
 
   return gSocketTransportService->Dispatch(ev, NS_DISPATCH_NORMAL);
 }
@@ -76,12 +79,12 @@ nsServerSocket::nsServerSocket()
   // constructed yet.  the STS constructor sets gSocketTransportService.
   if (!gSocketTransportService)
   {
+    // This call can fail if we're offline, for example.
     nsCOMPtr<nsISocketTransportService> sts =
         do_GetService(kSocketTransportServiceCID);
-    NS_ASSERTION(sts, "no socket transport service");
   }
   // make sure the STS sticks around as long as we do
-  NS_ADDREF(gSocketTransportService);
+  NS_IF_ADDREF(gSocketTransportService);
 }
 
 nsServerSocket::~nsServerSocket()
@@ -93,13 +96,13 @@ nsServerSocket::~nsServerSocket()
 
   // release our reference to the STS
   nsSocketTransportService *serv = gSocketTransportService;
-  NS_RELEASE(serv);
+  NS_IF_RELEASE(serv);
 }
 
 void
 nsServerSocket::OnMsgClose()
 {
-  LOG(("nsServerSocket::OnMsgClose [this=%p]\n", this));
+  SOCKET_LOG(("nsServerSocket::OnMsgClose [this=%p]\n", this));
 
   if (NS_FAILED(mCondition))
     return;
@@ -116,7 +119,7 @@ nsServerSocket::OnMsgClose()
 void
 nsServerSocket::OnMsgAttach()
 {
-  LOG(("nsServerSocket::OnMsgAttach [this=%p]\n", this));
+  SOCKET_LOG(("nsServerSocket::OnMsgAttach [this=%p]\n", this));
 
   if (NS_FAILED(mCondition))
     return;
@@ -136,6 +139,9 @@ nsServerSocket::TryAttach()
 {
   nsresult rv;
 
+  if (!gSocketTransportService)
+    return NS_ERROR_FAILURE;
+
   //
   // find out if it is going to be ok to attach another socket to the STS.
   // if not then we have to wait for the STS to tell us that it is ok.
@@ -151,7 +157,7 @@ nsServerSocket::TryAttach()
   if (!gSocketTransportService->CanAttachSocket())
   {
     nsCOMPtr<nsIRunnable> event =
-        NS_NEW_RUNNABLE_METHOD(nsServerSocket, this, OnMsgAttach);
+      NS_NewRunnableMethod(this, &nsServerSocket::OnMsgAttach);
     if (!event)
       return NS_ERROR_OUT_OF_MEMORY;
 

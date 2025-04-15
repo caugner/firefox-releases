@@ -22,6 +22,7 @@
  * Contributor(s):
  *   Scott MacGregor <mscott@netscape.com>
  *   Jens Bannmann <jens.b@web.de>
+ *   Alex Pakhotin <alexp@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -37,7 +38,18 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#ifdef MOZ_IPC
+#include "mozilla/dom/ContentChild.h"
+#include "nsXULAppAPI.h"
+using mozilla::dom::ContentChild;
+#endif
+
 #include "nsAlertsService.h"
+
+#ifdef ANDROID
+#include "AndroidBridge.h"
+#else
+
 #include "nsISupportsArray.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
@@ -53,13 +65,9 @@ static NS_DEFINE_CID(kLookAndFeelCID, NS_LOOKANDFEEL_CID);
 
 #define ALERT_CHROME_URL "chrome://global/content/alerts/alert.xul"
 
-NS_IMPL_THREADSAFE_ADDREF(nsAlertsService)
-NS_IMPL_THREADSAFE_RELEASE(nsAlertsService)
+#endif // !ANDROID
 
-NS_INTERFACE_MAP_BEGIN(nsAlertsService)
-   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIAlertsService)
-   NS_INTERFACE_MAP_ENTRY(nsIAlertsService)
-NS_INTERFACE_MAP_END_THREADSAFE
+NS_IMPL_THREADSAFE_ISUPPORTS2(nsAlertsService, nsIAlertsService, nsIAlertsProgressListener)
 
 nsAlertsService::nsAlertsService()
 {
@@ -74,6 +82,28 @@ NS_IMETHODIMP nsAlertsService::ShowAlertNotification(const nsAString & aImageUrl
                                                      nsIObserver * aAlertListener,
                                                      const nsAString & aAlertName)
 {
+#ifdef MOZ_IPC
+  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+    ContentChild* cpc = ContentChild::GetSingleton();
+
+    if (aAlertListener)
+      cpc->AddRemoteAlertObserver(nsDependentString(aAlertCookie), aAlertListener);
+
+    cpc->SendShowAlertNotification(nsAutoString(aImageUrl),
+                                   nsAutoString(aAlertTitle),
+                                   nsAutoString(aAlertText),
+                                   aAlertTextClickable,
+                                   nsAutoString(aAlertCookie),
+                                   nsAutoString(aAlertName));
+    return NS_OK;
+  }
+#endif
+
+#ifdef ANDROID
+  mozilla::AndroidBridge::Bridge()->ShowAlertNotification(aImageUrl, aAlertTitle, aAlertText, aAlertCookie,
+                                                          aAlertListener, aAlertName);
+  return NS_OK;
+#else
   // Check if there is an optional service that handles system-level notifications
   nsCOMPtr<nsIAlertsService> sysAlerts(do_GetService(NS_SYSTEMALERTSERVICE_CONTRACTID));
   nsresult rv;
@@ -156,4 +186,28 @@ NS_IMETHODIMP nsAlertsService::ShowAlertNotification(const nsAString & aImageUrl
                  "chrome,dialog=yes,titlebar=no,popup=yes", argsArray,
                  getter_AddRefs(newWindow));
   return rv;
+#endif // !ANDROID
+}
+
+NS_IMETHODIMP nsAlertsService::OnProgress(const nsAString & aAlertName,
+                                          PRInt64 aProgress,
+                                          PRInt64 aProgressMax,
+                                          const nsAString & aAlertText)
+{
+#ifdef ANDROID
+  mozilla::AndroidBridge::Bridge()->AlertsProgressListener_OnProgress(aAlertName, aProgress, aProgressMax, aAlertText);
+  return NS_OK;
+#else
+  return NS_ERROR_NOT_IMPLEMENTED;
+#endif // !ANDROID
+}
+
+NS_IMETHODIMP nsAlertsService::OnCancel(const nsAString & aAlertName)
+{
+#ifdef ANDROID
+  mozilla::AndroidBridge::Bridge()->AlertsProgressListener_OnCancel(aAlertName);
+  return NS_OK;
+#else
+  return NS_ERROR_NOT_IMPLEMENTED;
+#endif // !ANDROID
 }

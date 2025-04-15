@@ -55,6 +55,7 @@ class nsIProfileUnlocker;
 #endif
 
 #if defined (XP_UNIX)
+#include <signal.h>
 #include "prclist.h"
 #endif
 
@@ -81,7 +82,13 @@ public:
      * @throws NS_ERROR_FILE_ACCESS_DENIED if the profile is locked.
      */
     nsresult                Lock(nsILocalFile* aProfileDir, nsIProfileUnlocker* *aUnlocker);
-    nsresult                Unlock();
+
+    /**
+     * Unlock a profile directory.  If you're unlocking the directory because
+     * the application is in the process of shutting down because of a fatal
+     * signal, set aFatalSignal to PR_TRUE.
+     */
+    nsresult                Unlock(PRBool aFatalSignal = PR_FALSE);
         
 private:
     PRPackedBool            mHaveLock;
@@ -91,8 +98,22 @@ private:
 #elif defined (XP_OS2)
     LHANDLE                 mLockFileHandle;
 #elif defined (XP_UNIX)
-    static void             RemovePidLockFiles();
-    static void             FatalSignalHandler(int signo);
+
+    static void             RemovePidLockFilesExiting()
+    {
+      // We can't implement this function with a default parameter on
+      // RemovePidLockFiles(aFatalSignal) since we register
+      //    atexit(RemovePidLockFilesExiting).
+
+      RemovePidLockFiles(PR_FALSE);
+    }
+
+    static void             RemovePidLockFiles(PRBool aFatalSignal);
+    static void             FatalSignalHandler(int signo
+#ifdef SA_SIGINFO
+                                               , siginfo_t *info, void *context
+#endif
+                                               );
     static PRCList          mPidLockList;
 
     nsresult                LockWithFcntl(const nsACString& lockFilePath);

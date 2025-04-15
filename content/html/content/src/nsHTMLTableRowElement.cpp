@@ -45,7 +45,6 @@
 #include "nsContentList.h"
 #include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
-#include "nsPresContext.h"
 #include "nsHTMLParts.h"
 #include "nsRuleData.h"
 
@@ -53,7 +52,7 @@ class nsHTMLTableRowElement : public nsGenericHTMLElement,
                               public nsIDOMHTMLTableRowElement
 {
 public:
-  nsHTMLTableRowElement(nsINodeInfo *aNodeInfo);
+  nsHTMLTableRowElement(already_AddRefed<nsINodeInfo> aNodeInfo);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -79,6 +78,8 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
+  virtual nsXPCClassInfo* GetClassInfo();
+
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_NO_UNLINK(nsHTMLTableRowElement,
                                                      nsGenericHTMLElement)
 
@@ -92,7 +93,7 @@ protected:
 NS_IMPL_NS_NEW_HTML_ELEMENT(TableRow)
 
 
-nsHTMLTableRowElement::nsHTMLTableRowElement(nsINodeInfo *aNodeInfo)
+nsHTMLTableRowElement::nsHTMLTableRowElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo)
 {
 }
@@ -107,6 +108,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_ADDREF_INHERITED(nsHTMLTableRowElement, nsGenericElement) 
 NS_IMPL_RELEASE_INHERITED(nsHTMLTableRowElement, nsGenericElement) 
 
+
+DOMCI_NODE_DATA(HTMLTableRowElement, nsHTMLTableRowElement)
 
 // QueryInterface implementation for nsHTMLTableRowElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(nsHTMLTableRowElement)
@@ -237,7 +240,7 @@ IsCell(nsIContent *aContent, PRInt32 aNamespaceID,
   nsIAtom* tag = aContent->Tag();
 
   return ((tag == nsGkAtoms::td || tag == nsGkAtoms::th) &&
-          aContent->IsNodeOfType(nsINode::eHTML));
+          aContent->IsHTML());
 }
 
 NS_IMETHODIMP
@@ -299,7 +302,7 @@ nsHTMLTableRowElement::InsertCell(PRInt32 aIndex, nsIDOMHTMLElement** aValue)
   nsContentUtils::NameChanged(mNodeInfo, nsGkAtoms::td,
                               getter_AddRefs(nodeInfo));
 
-  nsCOMPtr<nsIContent> cellContent = NS_NewHTMLTableCellElement(nodeInfo);
+  nsCOMPtr<nsIContent> cellContent = NS_NewHTMLTableCellElement(nodeInfo.forget());
   if (!cellContent) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -380,16 +383,16 @@ nsHTMLTableRowElement::ParseAttribute(PRInt32 aNamespaceID,
       return aResult.ParseIntWithBounds(aValue, 0);
     }
     if (aAttribute == nsGkAtoms::height) {
-      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+      return aResult.ParseSpecialIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::width) {
-      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+      return aResult.ParseSpecialIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::align) {
       return ParseTableCellHAlignValue(aValue, aResult);
     }
     if (aAttribute == nsGkAtoms::bgcolor) {
-      return aResult.ParseColor(aValue, GetOwnerDoc());
+      return aResult.ParseColor(aValue);
     }
     if (aAttribute == nsGkAtoms::valign) {
       return ParseTableVAlignValue(aValue, aResult);
@@ -458,3 +461,4 @@ nsHTMLTableRowElement::GetAttributeMappingFunction() const
 {
   return &MapAttributesIntoRule;
 }
+

@@ -23,6 +23,7 @@
  *
  * Contributor(s):
  *   Rob Arnold <tellrob@gmail.com>
+ *   Jim Mathies <jmathies@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -69,26 +70,64 @@ namespace mozilla {
 namespace widget {
 
 namespace {
-/* Helper method to create a canvas rendering context backed by the given surface
+
+// Shared by all TaskbarPreviews to avoid the expensive creation process.
+// Manually refcounted (see gInstCount) by the ctor and dtor of TaskbarPreview.
+// This is done because static constructors aren't allowed for perf reasons.
+nsIDOMCanvasRenderingContext2D* gCtx = NULL;
+// Used in tracking the number of previews. Used in freeing
+// the static 2d rendering context on shutdown.
+PRUint32 gInstCount = 0;
+
+/* Helper method to lazily create a canvas rendering context and associate a given
+ * surface with it.
  *
  * @param shell The docShell used by the canvas context for text settings and other
  *              misc things.
  * @param surface The gfxSurface backing the context
  * @param width The width of the given surface
  * @param height The height of the given surface
- * @param aCtx Out-param - a canvas context backed by the given surface
  */
 nsresult
-CreateRenderingContext(nsIDocShell *shell, gfxASurface *surface, PRUint32 width, PRUint32 height, nsICanvasRenderingContextInternal **aCtx) {
+GetRenderingContext(nsIDocShell *shell, gfxASurface *surface,
+                    PRUint32 width, PRUint32 height) {
   nsresult rv;
-  nsCOMPtr<nsICanvasRenderingContextInternal> ctx(do_CreateInstance(
-    "@mozilla.org/content/canvas-rendering-context;1?id=2d", &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = ctx->InitializeWithSurface(shell, surface, width, height);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIDOMCanvasRenderingContext2D> ctx = gCtx;
 
-  NS_ADDREF(*aCtx = ctx);
-  return NS_OK;
+  if (!ctx) {
+    // create the canvas rendering context
+    ctx = do_CreateInstance("@mozilla.org/content/canvas-rendering-context;1?id=2d", &rv);
+    if (NS_FAILED(rv)) {
+      NS_WARNING("Could not create nsICanvasRenderingContextInternal for tab previews!");
+      return rv;
+    }
+    NS_ADDREF(ctx);
+    gCtx = ctx;
+  }
+
+  nsCOMPtr<nsICanvasRenderingContextInternal> ctxI = do_QueryInterface(ctx, &rv);
+  if (NS_FAILED(rv))
+    return rv;
+
+  // Set the surface we'll use to render.
+  return ctxI->InitializeWithSurface(shell, surface, width, height);
+}
+
+/* Helper method for freeing surface resources associated with the rendering context.
+ */
+void
+ResetRenderingContext() {
+  if (!gCtx)
+    return;
+
+  nsresult rv;
+  nsCOMPtr<nsICanvasRenderingContextInternal> ctxI = do_QueryInterface(gCtx, &rv);
+  if (NS_FAILED(rv))
+    return;
+  if (NS_FAILED(ctxI->Reset())) {
+    NS_RELEASE(gCtx);
+    gCtx = nsnull;
+  }
 }
 
 }
@@ -103,6 +142,8 @@ TaskbarPreview::TaskbarPreview(ITaskbarList4 *aTaskbar, nsITaskbarPreviewControl
   // TaskbarPreview may outlive the WinTaskbar that created it
   ::CoInitialize(NULL);
 
+  gInstCount++;
+
   WindowHook &hook = GetWindowHook();
   hook.AddMonitor(WM_DESTROY, MainWindowHook, this);
 }
@@ -112,12 +153,14 @@ TaskbarPreview::~TaskbarPreview() {
   if (sActivePreview == this)
     sActivePreview = nsnull;
 
-  // Here we remove the hook since this preview is dying before the nsWindow
-  if (mWnd)
-    DetachFromNSWindow(PR_TRUE);
+  // Our subclass should have invoked DetachFromNSWindow already.
+  NS_ASSERTION(!mWnd, "TaskbarPreview::DetachFromNSWindow was not called before destruction");
 
   // Make sure to release before potentially uninitializing COM
   mTaskbar = NULL;
+
+  if (--gInstCount == 0)
+    NS_IF_RELEASE(gCtx);
 
   ::CoUninitialize();
 }
@@ -144,7 +187,6 @@ TaskbarPreview::GetTooltip(nsAString &aTooltip) {
 
 NS_IMETHODIMP
 TaskbarPreview::SetTooltip(const nsAString &aTooltip) {
-  return NS_OK;
   mTooltip = aTooltip;
   return CanMakeTaskbarCalls() ? UpdateTooltip() : NS_OK;
 }
@@ -153,6 +195,13 @@ NS_IMETHODIMP
 TaskbarPreview::SetVisible(PRBool visible) {
   if (mVisible == visible) return NS_OK;
   mVisible = visible;
+
+  // If the nsWindow has already been destroyed but the caller is still trying
+  // to use it then just pretend that everything succeeded.  The caller doesn't
+  // actually have a way to detect this since it's the same case as when we
+  // CanMakeTaskbarCalls returns false.
+  if (!mWnd)
+    return NS_OK;
 
   return visible ? Enable() : Disable();
 }
@@ -234,11 +283,9 @@ TaskbarPreview::Disable() {
 }
 
 void
-TaskbarPreview::DetachFromNSWindow(PRBool windowIsAlive) {
-  if (windowIsAlive) {
-    WindowHook &hook = GetWindowHook();
-    hook.RemoveMonitor(WM_DESTROY, MainWindowHook, this);
-  }
+TaskbarPreview::DetachFromNSWindow() {
+  WindowHook &hook = GetWindowHook();
+  hook.RemoveMonitor(WM_DESTROY, MainWindowHook, this);
   mWnd = NULL;
 }
 
@@ -289,10 +336,20 @@ TaskbarPreview::WndProc(UINT nMsg, WPARAM wParam, LPARAM lParam) {
 
 PRBool
 TaskbarPreview::CanMakeTaskbarCalls() {
-  nsWindow *window = nsWindow::GetNSWindowPtr(mWnd);
-  NS_ASSERTION(window, "Cannot use taskbar previews in an embedded context!");
-
-  return mVisible && window->HasTaskbarIconBeenCreated();
+  // If the nsWindow has already been destroyed and we know it but our caller
+  // clearly doesn't so we can't make any calls.
+  if (!mWnd)
+    return PR_FALSE;
+  // Certain functions like SetTabOrder seem to require a visible window. During
+  // window close, the window seems to be hidden before being destroyed.
+  if (!::IsWindowVisible(mWnd))
+    return PR_FALSE;
+  if (mVisible) {
+    nsWindow *window = nsWindow::GetNSWindowPtr(mWnd);
+    NS_ASSERTION(window, "Could not get nsWindow from HWND");
+    return window->HasTaskbarIconBeenCreated();
+  }
+  return PR_FALSE;
 }
 
 WindowHook&
@@ -338,19 +395,15 @@ TaskbarPreview::DrawBitmap(PRUint32 width, PRUint32 height, PRBool isPreview) {
   if (!shell)
     return;
 
-  nsCOMPtr<nsICanvasRenderingContextInternal> ctxI;
-  rv = CreateRenderingContext(shell, surface, width, height, getter_AddRefs(ctxI));
-
-  nsCOMPtr<nsIDOMCanvasRenderingContext2D> ctx = do_QueryInterface(ctxI);
+  rv = GetRenderingContext(shell, surface, width, height);
+  if (NS_FAILED(rv))
+    return;
 
   PRBool drawFrame = PR_FALSE;
-  if (NS_SUCCEEDED(rv) && ctx) {
-    if (isPreview)
-      rv = mController->DrawPreview(ctx, &drawFrame);
-    else
-      rv = mController->DrawThumbnail(ctx, width, height, &drawFrame);
-
-  }
+  if (isPreview)
+    rv = mController->DrawPreview(gCtx, &drawFrame);
+  else
+    rv = mController->DrawThumbnail(gCtx, width, height, &drawFrame);
 
   if (NS_FAILED(rv))
     return;
@@ -364,6 +417,8 @@ TaskbarPreview::DrawBitmap(PRUint32 width, PRUint32 height, PRBool isPreview) {
     nsUXThemeData::dwmSetIconicLivePreviewBitmapPtr(PreviewWindow(), hBitmap, &pptClient, flags);
   else
     nsUXThemeData::dwmSetIconicThumbnailPtr(PreviewWindow(), hBitmap, flags);
+
+  ResetRenderingContext();
 }
 
 /* static */
@@ -379,9 +434,8 @@ TaskbarPreview::MainWindowHook(void *aContext,
   TaskbarPreview *preview = reinterpret_cast<TaskbarPreview*>(aContext);
   if (nMsg == WM_DESTROY) {
     // nsWindow is being destroyed
-    // Don't remove the hook since it is currently in dispatch
-    // and the window is being destroyed
-    preview->DetachFromNSWindow(PR_FALSE);
+    // We can't really do anything at this point including removing hooks
+    preview->mWnd = NULL;
   } else {
     nsWindow *window = nsWindow::GetNSWindowPtr(preview->mWnd);
     NS_ASSERTION(window, "Cannot use taskbar previews in an embedded context!");

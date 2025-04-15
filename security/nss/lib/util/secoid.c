@@ -42,6 +42,26 @@
 #include "prenv.h"
 #include "plhash.h"
 #include "nssrwlk.h"
+#include "nssutil.h"
+
+/* Library identity and versioning */
+
+#if defined(DEBUG)
+#define _DEBUG_STRING " (debug)"
+#else
+#define _DEBUG_STRING ""
+#endif
+
+/*
+ * Version information for the 'ident' and 'what commands
+ *
+ * NOTE: the first component of the concatenated rcsid string
+ * must not end in a '$' to prevent rcs keyword substitution.
+ */
+const char __nss_util_rcsid[] = "$Header: NSS " NSSUTIL_VERSION _DEBUG_STRING
+        "  " __DATE__ " " __TIME__ " $";
+const char __nss_util_sccsid[] = "@(#)NSS " NSSUTIL_VERSION _DEBUG_STRING
+        "  " __DATE__ " " __TIME__;
 
 /* MISSI Mosaic Object ID space */
 #define USGOV                   0x60, 0x86, 0x48, 0x01, 0x65
@@ -214,9 +234,14 @@ CONST_OID pkcs1MD2WithRSAEncryption[]  		= { PKCS1, 0x02 };
 CONST_OID pkcs1MD4WithRSAEncryption[]  		= { PKCS1, 0x03 };
 CONST_OID pkcs1MD5WithRSAEncryption[]  		= { PKCS1, 0x04 };
 CONST_OID pkcs1SHA1WithRSAEncryption[] 		= { PKCS1, 0x05 };
+CONST_OID pkcs1RSAOAEPEncryption[]		= { PKCS1, 0x07 };
+CONST_OID pkcs1MGF1[]				= { PKCS1, 0x08 };
+CONST_OID pkcs1PSpecified[]			= { PKCS1, 0x09 };
+CONST_OID pkcs1RSAPSSSignature[]		= { PKCS1, 10 };
 CONST_OID pkcs1SHA256WithRSAEncryption[] 	= { PKCS1, 11 };
 CONST_OID pkcs1SHA384WithRSAEncryption[] 	= { PKCS1, 12 };
 CONST_OID pkcs1SHA512WithRSAEncryption[] 	= { PKCS1, 13 };
+CONST_OID pkcs1SHA224WithRSAEncryption[] 	= { PKCS1, 14 };
 
 CONST_OID pkcs5PbeWithMD2AndDEScbc[]  		= { PKCS5, 0x01 };
 CONST_OID pkcs5PbeWithMD5AndDEScbc[]  		= { PKCS5, 0x03 };
@@ -797,7 +822,7 @@ const static SECOidData oids[SEC_OID_TOTAL] = {
 	CKM_INVALID_MECHANISM, UNSUPPORTED_CERT_EXTENSION ),
     OD( nsExtSSLServerName, SEC_OID_NS_CERT_EXT_SSL_SERVER_NAME,
 	"Certificate SSL Server Name", 
-	CKM_INVALID_MECHANISM, SUPPORTED_CERT_EXTENSION ),
+	CKM_INVALID_MECHANISM, UNSUPPORTED_CERT_EXTENSION ),
     OD( nsExtComment, SEC_OID_NS_CERT_EXT_COMMENT,
 	"Certificate Comment", 
 	CKM_INVALID_MECHANISM, SUPPORTED_CERT_EXTENSION ),
@@ -1590,7 +1615,27 @@ const static SECOidData oids[SEC_OID_TOTAL] = {
 
     OD( x509CertificatePoliciesAnyPolicy, SEC_OID_X509_ANY_POLICY,
  	"Certificate Policies AnyPolicy",
-        CKM_INVALID_MECHANISM, UNSUPPORTED_CERT_EXTENSION ),
+        CKM_INVALID_MECHANISM, INVALID_CERT_EXTENSION ),
+
+    OD( pkcs1RSAOAEPEncryption, SEC_OID_PKCS1_RSA_OAEP_ENCRYPTION,
+	"PKCS #1 RSA-OAEP Encryption", CKM_RSA_PKCS_OAEP,
+	INVALID_CERT_EXTENSION ),
+
+    OD( pkcs1MGF1, SEC_OID_PKCS1_MGF1,
+	"PKCS #1 MGF1 Mask Generation Function", CKM_INVALID_MECHANISM,
+	INVALID_CERT_EXTENSION ),
+
+    OD( pkcs1PSpecified, SEC_OID_PKCS1_PSPECIFIED,
+	"PKCS #1 RSA-OAEP Explicitly Specified Encoding Parameters",
+	CKM_INVALID_MECHANISM, INVALID_CERT_EXTENSION ),
+
+    OD( pkcs1RSAPSSSignature, SEC_OID_PKCS1_RSA_PSS_SIGNATURE,
+	"PKCS #1 RSA-PSS Signature", CKM_RSA_PKCS_PSS,
+	INVALID_CERT_EXTENSION ),
+
+    OD( pkcs1SHA224WithRSAEncryption, SEC_OID_PKCS1_SHA224_WITH_RSA_ENCRYPTION,
+	"PKCS #1 SHA-224 With RSA Encryption", CKM_SHA224_RSA_PKCS,
+	INVALID_CERT_EXTENSION ),
 };
 
 /* PRIVATE EXTENDED SECOID Table
@@ -1861,6 +1906,9 @@ SECOID_Init(void)
     const SECOidData *oid;
     int i;
     char * envVal;
+    volatile char c; /* force a reference that won't get optimized away */
+
+    c = __nss_util_rcsid[0] + __nss_util_sccsid[0];
 
     if (oidhash) {
 	return SECSuccess; /* already initialized */

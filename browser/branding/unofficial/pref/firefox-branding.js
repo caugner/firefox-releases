@@ -1,5 +1,6 @@
 pref("startup.homepage_override_url","http://www.mozilla.org/projects/%APP%/%VERSION%/whatsnew/");
 pref("startup.homepage_welcome_url","http://www.mozilla.org/projects/%APP%/%VERSION%/firstrun/");
+pref("browser.panorama.welcome_url", "http://www.mozilla.com/firefox/panorama/");
 // The time interval between checks for a new version (in seconds)
 // nightly=8 hours, official=24 hours
 pref("app.update.interval", 28800);
@@ -13,8 +14,9 @@ pref("app.update.url.manual", "http://www.mozilla.org/products/%APP%/");
 // supplied in the "An update is available" page of the update wizard. 
 pref("app.update.url.details", "http://www.mozilla.org/projects/%APP%/");
 
-// Release notes URL
+// Release notes and vendor URLs
 pref("app.releaseNotesURL", "http://www.mozilla.org/projects/%APP%/%VERSION%/releasenotes/");
+pref("app.vendorURL", "http://www.mozilla.org/projects/%APP%/");
 
 // Search codes belong only in builds with official branding
 pref("browser.search.param.yahoo-fr", "");

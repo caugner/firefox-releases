@@ -44,31 +44,13 @@ include $(DEPTH)/config/autoconf.mk
 
 MODULE = gfx
 LIBRARY_NAME = gkgfxthebes
-ifneq ($(OS_ARCH),WINNT)
 SHORT_LIBNAME = gkgfxthb
-endif
 EXPORT_LIBRARY = 1
 IS_COMPONENT = 1
 MODULE_NAME = nsGfxModule
 GRE_MODULE = 1
 LIBXUL_LIBRARY = 1
 
-REQUIRES =  xpcom \
-            string \
-            thebes \
-            widget \
-            locale \
-            view \
-            pref \
-            unicharutil \
-            imglib2 \
-            $(ZLIB_REQUIRES) \
-            qcms \
-            $(NULL)
-
-ifeq (,$(filter windows,$(MOZ_WIDGET_TOOLKIT)))
-REQUIRES += uconv
-endif
 
 CPPSRCS		= \
 		nsThebesDeviceContext.cpp \
@@ -95,12 +77,9 @@ ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 CPPSRCS		+= nsSystemFontsWin.cpp \
 		   $(NULL)
 
-REQUIRES	+= \
-		cairo \
-		qcms \
-		$(NULL)
-
+ifndef WINCE
 _OS_LIBS	= usp10
+endif
 OS_LIBS		+= $(call EXPAND_LIBNAME,$(_OS_LIBS))
 
 endif
@@ -118,6 +97,10 @@ ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
 CMMSRCS		= nsSystemFontsMac.mm
 endif
 
+ifeq ($(MOZ_WIDGET_TOOLKIT),android)
+CPPSRCS		+= nsSystemFontsAndroid.cpp
+endif
+
 EXPORTS         += nsIThebesFontMetrics.h
 
 LOCAL_INCLUDES	= \
@@ -129,7 +112,6 @@ LOCAL_INCLUDES	= \
 EXTRA_DSO_LDOPTS += \
 		$(LIBS_DIR) \
 		$(EXTRA_DSO_LIBS) \
-		$(DEPTH)/modules/libutil/src/$(LIB_PREFIX)mozutil_s.$(LIB_SUFFIX) \
 		$(MOZ_COMPONENT_LIBS) \
 		$(MOZ_UNICHARUTIL_LIBS) \
 		$(MOZ_JS_LIBS) \

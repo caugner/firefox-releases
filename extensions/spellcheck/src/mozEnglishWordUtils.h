@@ -43,16 +43,17 @@
 #include "nsIUnicodeEncoder.h"
 #include "nsIUnicodeDecoder.h"
 #include "nsString.h"
-#include "nsICaseConversion.h"
 #include "nsIUGenCategory.h"
 
 #include "mozITXTToHTMLConv.h" 
+#include "nsCycleCollectionParticipant.h"
 
 class mozEnglishWordUtils : public mozISpellI18NUtil
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_MOZISPELLI18NUTIL
+  NS_DECL_CYCLE_COLLECTION_CLASS(mozEnglishWordUtils)
 
   mozEnglishWordUtils();
   virtual ~mozEnglishWordUtils();
@@ -67,7 +68,6 @@ protected:
 
   nsString mLanguage;
   nsString mCharset;
-  nsCOMPtr<nsICaseConversion> mCaseConv;
   nsCOMPtr<nsIUGenCategory>   mCategories;
   nsCOMPtr<mozITXTToHTMLConv> mURLDetector; // used to detect urls so the spell checker can skip them.
 };

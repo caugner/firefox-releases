@@ -24,6 +24,7 @@
  *   Dietrich Ayala <dietrich@mozilla.com>
  *   Marco Bonardo <mak77@bonardo.net>
  *   Asaf Romano <mano@mozilla.com>
+ *   Drew Willcoxon <adw@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -40,27 +41,26 @@
  * ***** END LICENSE BLOCK ***** */
 
 /**
- * Using Places services on quit-application or later is not reliable, so make
- * sure to do shutdown work on quit-application-granted, or history
+ * Using Places services after quit-application is not reliable, so make
+ * sure to do any shutdown work on quit-application, or history
  * synchronization could fail, losing latest changes.
  */
- 
-#include "nsISupports.idl"
-#include "nsIArray.idl"
-#include "nsIURI.idl"
-#include "nsIVariant.idl"
 
+#include "nsISupports.idl"
+
+interface nsIArray;
+interface nsIURI;
+interface nsIVariant;
 interface nsIFile;
+
 interface nsINavHistoryContainerResultNode;
 interface nsINavHistoryQueryResultNode;
 interface nsINavHistoryQuery;
 interface nsINavHistoryQueryOptions;
 interface nsINavHistoryResult;
 interface nsINavHistoryBatchCallback;
-interface nsITreeColumn;
-interface nsIWritablePropertyBag;
 
-[scriptable, uuid(464ae28f-3a9c-4483-afb2-bb0fb0ddb893)]
+[scriptable, uuid(081452e5-be5c-4038-a5ea-f1f34cb6fd81)]
 interface nsINavHistoryResultNode : nsISupports
 {
   /**
@@ -145,13 +145,6 @@ interface nsINavHistoryResultNode : nsISupports
    * set to -1.
    */
   readonly attribute long indentLevel;
-
-  /**
-   * You can use this to associate temporary information with the result node.
-   * This property bag is associated with the result node and is not persisted
-   * in any way.
-   */
-  readonly attribute nsIWritablePropertyBag propertyBag;
 
   /**
    * When this item is in a bookmark folder (parent is of type folder), this is
@@ -239,7 +232,7 @@ interface nsINavHistoryFullVisitResultNode : nsINavHistoryVisitResultNode
  * Bookmark folders and places queries will be QueryResultNodes which extends
  * these items.
  */
-[scriptable, uuid(f9c8e1c1-e701-44ad-893c-8504c3956929)]
+[scriptable, uuid(55829318-0f6c-4503-8739-84231f3a6793)]
 interface nsINavHistoryContainerResultNode : nsINavHistoryResultNode
 {
 
@@ -254,6 +247,16 @@ interface nsINavHistoryContainerResultNode : nsINavHistoryResultNode
    * as needed.
    */
   attribute boolean containerOpen;
+
+  /**
+   * Indicates whether the container is closed, loading, or opened.  Loading
+   * implies that the container has been opened asynchronously and has not yet
+   * fully opened.
+   */
+  readonly attribute unsigned short state;
+  const unsigned short STATE_CLOSED = 0;
+  const unsigned short STATE_LOADING = 1;
+  const unsigned short STATE_OPENED = 2;
 
   /**
    * This indicates whether this node "may" have children, and can be used
@@ -275,6 +278,41 @@ interface nsINavHistoryContainerResultNode : nsINavHistoryResultNode
    */
   readonly attribute unsigned long childCount;
   nsINavHistoryResultNode getChild(in unsigned long aIndex);
+
+  /**
+   * Get the index of a direct child in this container.
+   *
+   * @param aNode
+   *        a result node.
+   *
+   * @return aNode's index in this container.
+   * @throws NS_ERROR_NOT_AVAILABLE if containerOpen is false.
+   * @throws NS_ERROR_INVALID_ARG if aNode isn't a direct child of this
+   * container.
+   */
+  unsigned long getChildIndex(in nsINavHistoryResultNode aNode);
+
+  /**
+   * Look for a node in the container by some of its details.  Does not search
+   * closed containers.
+   *
+   * @param aURI
+   *        the node's uri attribute value
+   * @param aTime
+   *        the node's time attribute value.
+   * @param aItemId
+   *        the node's itemId attribute value.
+   * @param aRecursive
+   *        whether or not to search recursively.
+   *
+   * @throws NS_ERROR_NOT_AVAILABLE if this container is closed.
+   * @return a result node that matches the given details if any, null
+   *         otherwise.
+   */
+  nsINavHistoryResultNode findNodeByDetails(in AUTF8String aURIString,
+                                            in PRTime aTime,
+                                            in long long aItemId,
+                                            in boolean aRecursive);
 
   /**
    * Returns false if this node's list of children can be modified
@@ -400,7 +438,7 @@ interface nsINavHistoryQueryResultNode : nsINavHistoryContainerResultNode
    * Get the queries which build this node's children.
    * Only valid for RESULT_TYPE_QUERY nodes.
    */
-  void getQueries(out unsigned long queryCount,
+  void getQueries([optional] out unsigned long queryCount,
                   [retval,array,size_is(queryCount)] out nsINavHistoryQuery queries);
 
   /**
@@ -420,12 +458,10 @@ interface nsINavHistoryQueryResultNode : nsINavHistoryContainerResultNode
 /**
  * Allows clients to observe what is happening to a result as it updates itself
  * according to history and bookmark system events. Register this observer on a
- * result using registerView
- *
- * @see nsINavHistoryResult for where this fits in
+ * result using nsINavHistoryResult::addObserver.
  */
-[scriptable, uuid(af4ac418-a687-4775-8ffa-97c160196432)]
-interface nsINavHistoryResultViewer : nsISupports
+[scriptable, uuid(9ea86387-6a30-4ee2-b70d-26fbb718902f)]
+interface nsINavHistoryResultObserver : nsISupports
 {
   /**
    * Called when 'aItem' is inserted into 'aParent' at index 'aNewIndex'.
@@ -584,6 +620,9 @@ interface nsINavHistoryResultViewer : nsISupports
   /**
    * Called after a container node went from closed to opened.
    *
+   * @note  This method is DEPRECATED.  In the future only containerStateChanged
+   *        will notify when a container is opened.
+   *
    * @param aContainerNode
    *        the container node which was opened
    */
@@ -594,10 +633,27 @@ interface nsINavHistoryResultViewer : nsISupports
    * called for the topmost container that is closing, and implies that any
    * child containers have closed as well.
    *
+   * @note  This method is DEPRECATED.  In the future only containerStateChanged
+   *        will notify when a container is closed.
+   *
    * @param aContainerNode
    *        the container node which was closed
    */
   void containerClosed(in nsINavHistoryContainerResultNode aContainerNode);
+
+  /**
+   * Called after a container changes state.
+   *
+   * @param aContainerNode
+   *        The container that has changed state.
+   * @param aOldState
+   *        The state that aContainerNode has transitioned out of.
+   * @param aNewState
+   *        The state that aContainerNode has transitioned into.
+   */
+  void containerStateChanged(in nsINavHistoryContainerResultNode aContainerNode,
+                             in unsigned long aOldState,
+                             in unsigned long aNewState);
 
   /**
    * Called when something significant has happened within the container. The
@@ -623,9 +679,18 @@ interface nsINavHistoryResultViewer : nsISupports
   void sortingChanged(in unsigned short sortingMode);
 
   /**
-   * Called by the result when this object is set using
-   * nsINavHistoryResult.viewer. This will be set to NULL when the result
-   * is being deallocated. This should not be set by other code.
+   * This is called to indicate that a batch operation is about to start or end.
+   * The observer could want to disable some events or updates during batches,
+   * since multiple operations are packed in a short time.
+   * For example treeviews could temporarily suppress select notifications.
+   *
+   * @param aToggleMode
+   *        true if a batch is starting, false if it's ending.
+   */
+  void batching(in boolean aToggleMode);
+
+  /**
+   * Called by the result when this observer is added.
    */
   attribute nsINavHistoryResult result;
 };
@@ -642,8 +707,8 @@ interface nsINavHistoryResultViewer : nsISupports
  * object, attach it to a result, never attach it to a tree, and forget about
  * it, it will leak!
  */
-[scriptable, uuid(fa77e4e9-9fc8-45d2-9507-0fe4f0602505)]
-interface nsINavHistoryResultTreeViewer : nsINavHistoryResultViewer
+[scriptable, uuid(f8b518c0-1faf-11df-8a39-0800200c9a66)]
+interface nsINavHistoryResultTreeViewer : nsINavHistoryResultObserver
 {
   /**
    * This allows you to get at the real node for a given row index. This is
@@ -670,23 +735,8 @@ interface nsINavHistoryResultTreeViewer : nsINavHistoryResultViewer
 
 /**
  * The result of a history/bookmark query.
- *
- * Use the "root" element to access the children of this query.
- *
- * The basic design of the system is a model-view-controller. This result object
- * represents the model where the data is stored. External components
- * provide the view and controller which define how the data looks and how
- * interaction happens.
- *   [RESULT]----->[viewer]----->[controller]
- *             |
- *             +-- nsINavHistoryResultViewer
- *
- * The result indicates to the view when something changes through the
- * nsINavHistoryResultViewer interface. The viewer is set through
- * the nsINavHistoryResult.viewer property.
  */
-
-[scriptable, uuid(d1562f6f-8d5a-4042-8524-72f747a51b18)]
+[scriptable, uuid(c2229ce3-2159-4001-859c-7013c52f7619)]
 interface nsINavHistoryResult : nsISupports
 {
   /**
@@ -704,13 +754,37 @@ interface nsINavHistoryResult : nsISupports
   attribute AUTF8String sortingAnnotation;
 
   /**
-   * The viewer for this result (see comment for the class for how these
-   * objects are related). This may be null, in which case you can still
-   * manually walk the tree using the root node. When this is non-null, you
-   * can access the flattened list of items (flatItemCount, nodeForFlatIndex,
-   * flatIndexForNode).
+   * Whether or not notifications on result changes are suppressed.
+   * Initially set to false.
+   *
+   * Use this to avoid flickering and to improve performance when you
+   * do temporary changes to the result structure (e.g. when searching for a
+   * node recursively).
    */
-  attribute nsINavHistoryResultViewer viewer;
+  attribute boolean suppressNotifications;
+
+  /**
+   * Adds an observer for changes done in the result.
+   *
+   * @param aObserver
+   *        a result observer.
+   * @param aOwnsWeak
+   *        If false, the result will keep an owning reference to the observer,
+   *        which must be removed using removeObserver.
+   *        If true, the result will keep a weak reference to the observer, which
+   *        must implement nsISupportsWeakReference.
+   *
+   * @see nsINavHistoryResultObserver
+   */
+  void addObserver(in nsINavHistoryResultObserver aObserver, in boolean aOwnsWeak);
+
+  /**
+   * Removes an observer that was added by addObserver.
+   *
+   * @param aObserver
+   *        a result observer that was added by addObserver.
+   */
+  void removeObserver(in nsINavHistoryResultObserver aObserver);
 
   /**
    * This is the root of the results. Remember that you need to open all
@@ -734,7 +808,7 @@ interface nsINavHistoryResult : nsISupports
  * DANGER! If you are in the middle of a batch transaction, there may be a
  * database transaction active. You can still access the DB, but be careful.
  */
-[scriptable, uuid(14065711-8a91-4d96-ba32-59512f5401b6)]
+[scriptable, uuid(0a5ce210-c803-11de-8a39-0800200c9a66)]
 interface nsINavHistoryObserver : nsISupports
 {
   /**
@@ -822,18 +896,20 @@ interface nsINavHistoryObserver : nsISupports
   void onPageChanged(in nsIURI aURI, in unsigned long aWhat, in AString aValue);
 
   /**
-   * Called when a history entry expires. You will receive notifications that
-   * a specific visit has expired with the time of that visit. When the last
-   * visit for a history entry expires, the history entry itself is deleted
-   * and aWholeEntry is set. (If your observer only cares about URLs and not
-   * specific visits, it needs only to listen for aWholeEntry notifications).
+   * Called when some visits of an history entry are expired.
    *
-   * It is possible for a history entry to be deleted that has no visits if
-   * something is out of sync or after a bookmark is deleted that has no
-   * visits (thus freeing the history entry). In these cases, aVisitTime will
-   * be 0.
+   * @param aURI
+   *        The page whose visits have been expired.
+   * @param aVisitTime
+   *        The largest visit time in microseconds that has been expired.  We
+   *        guarantee that we don't have any visit older than this date.
+   *
+   * @note: when all visits for a page are expired and also the full page entry
+   *        is expired, you will only get an onDeleteURI notification.  If a
+   *        page entry is removed, then you can be sure that we don't have
+   *        anymore visits for it.
    */
-  void onPageExpired(in nsIURI aURI, in PRTime aVisitTime, in boolean aWholeEntry);
+  void onDeleteVisits(in nsIURI aURI, in PRTime aVisitTime);
 };
 
 
@@ -847,7 +923,7 @@ interface nsINavHistoryObserver : nsISupports
  * can be non-negligible.
  */
 
-[scriptable, uuid(6f5668f0-da8e-4069-a0de-6680e5cd8570)]
+[scriptable, uuid(dc87ae79-22f1-4dcf-975b-852b01d210cb)]
 interface nsINavHistoryQuery : nsISupports
 {
   /**
@@ -903,6 +979,27 @@ interface nsINavHistoryQuery : nsISupports
   attribute long maxVisits;
 
   /**
+   * When the set of transitions is nonempty, results are limited to pages which
+   * have at least one visit for each of the transition types.
+   * @note: For searching on more than one transition this can be very slow.
+   *
+   * Limit results to the specified list of transition types.
+   */
+  void setTransitions([const,array, size_is(count)] in unsigned long transitions,
+                      in unsigned long count);
+
+  /**
+   * Get the transitions set for this query.
+   */
+  void getTransitions([optional] out unsigned long count,
+                      [retval,array,size_is(count)] out unsigned long transitions);
+
+  /**
+   * Get the count of the set query transitions.
+   */
+  readonly attribute unsigned long transitionCount;
+
+  /**
    * When set, returns only bookmarked items, when unset, returns anything. Setting this
    * is equivalent to listing all bookmark folders in the 'folders' parameter.
    */
@@ -943,9 +1040,9 @@ interface nsINavHistoryQuery : nsISupports
   readonly attribute boolean hasUri;
 
   /**
-   * Test for existance or non-existance of a given annotation. We don't
+   * Test for existence or non-existence of a given annotation. We don't
    * currently support >1 annotation name per query. If 'annotationIsNot' is
-   * true, we test for the non-existance of the specified annotation.
+   * true, we test for the non-existence of the specified annotation.
    *
    * Testing for not annotation will do the same thing as a normal query and
    * remove everything that doesn't have that annotation. Asking for things
@@ -981,7 +1078,7 @@ interface nsINavHistoryQuery : nsISupports
   /**
    * Limit results to items that are in all of the given folders.
    */
-  void getFolders(out unsigned long count,
+  void getFolders([optional] out unsigned long count,
                   [retval,array,size_is(count)] out long long folders);
   readonly attribute unsigned long folderCount;
 
@@ -1002,7 +1099,7 @@ interface nsINavHistoryQuery : nsISupports
 /**
  * This object represents the global options for executing a query.
  */
-[scriptable, uuid(b3d5de06-f8ef-4433-84c2-b8b237403b2a)]
+[scriptable, uuid(2d8ff86b-f8c2-451c-8a1a-1ff0749a074e)]
 interface nsINavHistoryQueryOptions : nsISupports
 {
   /**
@@ -1203,12 +1300,6 @@ interface nsINavHistoryQueryOptions : nsISupports
   attribute unsigned short redirectsMode;
 
   /**
-   * Separate/group history items based on session information.  Only
-   * matters when sorting by date.
-   */
-  attribute boolean showSessions;
-
-  /**
    * This is the maximum number of results that you want. The query is exeucted,
    * the results are sorted, and then the top 'maxResults' results are taken
    * and returned. Set to 0 (the default) to get all results.
@@ -1232,6 +1323,16 @@ interface nsINavHistoryQueryOptions : nsISupports
    * honored by query nodes. It is silently ignored for simple folder queries.
    */
   attribute unsigned short queryType;
+
+  /**
+   * When this is true, the root container node generated by these options and
+   * its descendant containers will be opened asynchronously if they support it.
+   * This is false by default.
+   *
+   * @note Currently only bookmark folder containers support being opened
+   *       asynchronously.
+   */
+  attribute boolean asyncEnabled;
 
   /**
    * Creates a new options item with the same parameters of this one.
@@ -1275,8 +1376,8 @@ interface nsINavHistoryService : nsISupports
   /**
    * This transition type is set when some inner content is loaded. This is
    * true of all images on a page, and the contents of the iframe. It is also
-   * true of any content in a frame, regardless if whether or not the user
-   * clicked something to get there.
+   * true of any content in a frame if the user did not explicitly follow
+   * a link to get there.
    */
   const unsigned long TRANSITION_EMBED = 4;
 
@@ -1294,6 +1395,12 @@ interface nsINavHistoryService : nsISupports
    * Set when the transition is a download.
    */
   const unsigned long TRANSITION_DOWNLOAD = 7;
+
+  /**
+   * This transition type means the user followed a link and got a visit in
+   * a frame.
+   */
+  const unsigned long TRANSITION_FRAMED_LINK = 8;
 
   /**
    * Set when database is coherent
@@ -1347,7 +1454,7 @@ interface nsINavHistoryService : nsISupports
    *
    * @param aURI
    *        URI to retrieve character-set for
-   * @returns character-set, empty string if not found
+   * @return character-set, empty string if not found
    */
   AString getCharsetForURI(in nsIURI aURI);
 
@@ -1390,8 +1497,9 @@ interface nsINavHistoryService : nsISupports
    *                         unhidden by visiting it with a non-redirect).
    * @param aSessionID       The session ID that this page belongs to. Use 0 for
    *                         no session.
-   * @returns The ID of the created visit. This will be 0 if the URI is not
-   *          valid for adding to history (canAddURI = false).
+   * @return The ID of the created visit. This will be 0 if the URI cannot
+   *         be added to history (canAddURI = false) or the visit is session
+   *         persistent (TRANSITION_EMBED).
    */
   long long addVisit(in nsIURI aURI, in PRTime aTime,
                      in nsIURI aReferringURI, in long aTransitionType,
@@ -1473,7 +1581,7 @@ interface nsINavHistoryService : nsISupports
 
   /** 
    * True if history is disabled. currently, 
-   * history is disabled if the browser.history_expire_days pref is 0
+   * history is disabled if the places.history.enabled pref is false.
    */
   readonly attribute boolean historyDisabled;
 

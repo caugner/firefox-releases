@@ -36,7 +36,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-Components.utils.import("resource://gre/modules/utils.js");
 var tests = [];
 
 
@@ -57,7 +56,7 @@ function run_test() {
 
   // remove the folder using removeItem
   PlacesUtils.bookmarks.removeItem(folderId);
-  do_check_eq(PlacesUtils.bookmarks.getBookmarkIdsForURI(bookmarkURI, {}).length, 0);
+  do_check_eq(PlacesUtils.bookmarks.getBookmarkIdsForURI(bookmarkURI).length, 0);
   do_check_false(PlacesUtils.bookmarks.isBookmarked(bookmarkURI));
   do_check_eq(PlacesUtils.bookmarks.getItemIndex(bookmarkId), -1);
 }

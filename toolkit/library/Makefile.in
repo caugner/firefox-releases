@@ -63,12 +63,6 @@ LIBRARY_NAME=XUL
 MAKE_FRAMEWORK=1
 endif
 
-REQUIRES = \
-	xpcom \
-	string \
-	$(ZLIB_REQUIRES) \
-	xulapp \
-	$(NULL)
 
 ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_)
 CPPSRCS += dlldeps-xul.cpp
@@ -133,10 +127,6 @@ EXTRA_DEPS += \
 	$(topsrcdir)/intl/unicharutil/util/objs.mk \
 	$(NULL)
 
-REQUIRES += \
-	uconv \
-	unicharutil \
-	$(NULL)
 
 CPPSRCS += \
 	$(INTL_UNICHARUTIL_UTIL_LCPPSRCS) \
@@ -148,17 +138,14 @@ GARBAGE	+= \
 	dlldeps-javaxpcom.cpp \
 	$(NULL)
 
-LOCAL_INCLUDES += -I$(topsrcdir)/intl/unicharutil/util
+LOCAL_INCLUDES += -I$(topsrcdir)/intl/unicharutil/util \
+  -I$(topsrcdir)/intl/unicharutil/src
 
 ifdef MOZ_RDF
 EXTRA_DEPS += \
 	$(topsrcdir)/rdf/util/src/objs.mk \
 	$(NULL)
 
-REQUIRES += \
-	rdf \
-	rdfutil \
-	$(NULL)
 
 CPPSRCS += \
 	$(RDF_UTIL_SRC_LCPPSRCS) \
@@ -176,16 +163,9 @@ else
 SDK_LIBRARY = $(SHARED_LIBRARY)
 endif
 
-include $(topsrcdir)/config/rules.mk
-
-export:: $(RDF_UTIL_SRC_CPPSRCS) $(INTL_UNICHARUTIL_UTIL_CPPSRCS)
-	$(INSTALL) $^ .
-
 EXTRA_DSO_LDOPTS += $(LIBS_DIR) $(EXTRA_DSO_LIBS)
 
-ifdef MOZ_ENABLE_LIBXUL
-include $(srcdir)/libxul-rules.mk
-else
+ifndef MOZ_ENABLE_LIBXUL
 EXTRA_DSO_LDOPTS += \
 	$(MOZ_COMPONENT_LIBS) \
 	$(MOZ_JS_LIBS) \
@@ -194,11 +174,11 @@ endif
 
 DEFINES += -DIMPL_XREAPI
 
-EXTRA_DSO_LDOPTS += $(NSPR_LIBS)
+EXTRA_DSO_LDOPTS += $(NSPR_LIBS) $(MOZALLOC_LIB)
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
 CXXFLAGS	+= $(TK_CFLAGS)
-EXTRA_DSO_LDOPTS += \
+OS_LIBS += \
 	-framework SystemConfiguration \
 	-framework QuickTime \
 	-framework IOKit \
@@ -218,20 +198,16 @@ EXTRA_DSO_LDOPTS += \
 endif
 endif
 
-ifdef MOZ_PLATFORM_HILDON
-EXTRA_DSO_LDOPTS += $(LIBHILDONMIME_LIBS) $(LIBHILDONFM_LIBS)
+ifdef MOZ_PLATFORM_MAEMO
+EXTRA_DSO_LDOPTS += $(MOZ_PLATFORM_MAEMO_LIBS)
 endif 
 
 ifdef MOZ_ENABLE_LIBCONIC
 EXTRA_DSO_LDOPTS += $(LIBCONIC_LIBS)
 endif
 
-ifdef NS_OSSO
-EXTRA_DSO_LDOPTS += $(LIBOSSO_LIBS)
-endif
-
 ifdef MOZ_ENABLE_DBUS
-EXTRA_DSO_LDOPTS += $(MOZ_DBUS_GLIB_LIBS)
+EXTRA_DSO_LDOPTS += $(MOZ_DBUS_LIBS) $(MOZ_DBUS_GLIB_LIBS)
 endif
 
 ifeq (gtk2,$(MOZ_WIDGET_TOOLKIT))
@@ -241,15 +217,21 @@ endif
 
 ifeq (qt,$(MOZ_WIDGET_TOOLKIT))
 EXTRA_DSO_LDOPTS += $(XLDFLAGS) $(XLIBS) $(XT_LIBS) $(MOZ_QT_LIBS) -lgthread-2.0
-EXTRA_DSO_LDOPTS += $(FT2_LIBS)
+EXTRA_DSO_LDOPTS += $(FT2_LIBS) $(MOZ_PANGO_LIBS)
 endif
 
 ifdef MOZ_TREE_FREETYPE
+ifndef MOZ_TREE_CAIRO
 EXTRA_DSO_LDOPTS += $(FT2_LIBS)
+endif
 endif
 
 ifdef MOZ_ENABLE_STARTUP_NOTIFICATION
 EXTRA_DSO_LDOPTS += $(MOZ_STARTUP_NOTIFICATION_LIBS)
+endif
+
+ifdef MOZ_ENABLE_LIBPROXY
+EXTRA_DSO_LDOPTS += $(MOZ_LIBPROXY_LIBS)
 endif
 
 ifeq ($(OS_ARCH),BeOS)
@@ -257,33 +239,45 @@ EXTRA_DSO_LDOPTS += -lbe -ltracker
 endif
 
 ifeq ($(OS_ARCH),SunOS)
-EXTRA_DSO_LDOPTS += -lelf -ldemangle -lCstd
+ifdef GNU_CC
+EXTRA_DSO_LDOPTS += -lelf
+else
+EXTRA_DSO_LDOPTS += -lelf -ldemangle
+endif
 endif
 
 ifeq ($(OS_ARCH),WINNT)
-EXTRA_DSO_LDOPTS += $(call EXPAND_LIBNAME,shell32 ole32 uuid version winspool comdlg32 imm32 winmm wsock32 msimg32)
+OS_LIBS += $(call EXPAND_LIBNAME,shell32 ole32 uuid version winspool comdlg32 imm32 winmm wsock32 msimg32 shlwapi psapi ws2_32)
 ifneq (,$(MOZ_DEBUG)$(NS_TRACE_MALLOC))
-EXTRA_DSO_LDOPTS += $(call EXPAND_LIBNAME,imagehlp)
+OS_LIBS += $(call EXPAND_LIBNAME,imagehlp)
 endif
 endif # WINNT
 ifeq ($(OS_ARCH),WINCE)
-EXTRA_DSO_LDOPTS += $(call EXPAND_LIBNAME, aygshell uuid ole32 oleaut32 Ws2 ddraw)
-EXTRA_DSO_LDOPTS += $(call EXPAND_LIBNAME, ceosutil libcmt comsuppw)
+OS_LIBS += $(call EXPAND_LIBNAME, aygshell uuid ole32 oleaut32 Ws2 ddraw)
+OS_LIBS += $(call EXPAND_LIBNAME, ceosutil libcmt comsuppw)
 ifdef WINCE_WINDOWS_MOBILE
-EXTRA_DSO_LDOPTS += $(call EXPAND_LIBNAME, cellcore)
+OS_LIBS += $(call EXPAND_LIBNAME, cellcore)
 endif
 ifdef HAS_OGLES
-EXTRA_DSO_LDOPTS += $(call EXPAND_LIBNAME, libGLESv2 libEGL)
+OS_LIBS += $(call EXPAND_LIBNAME, libGLESv2 libEGL)
 endif
 endif
-
 
 ifdef MOZ_JPROF
 EXTRA_DSO_LDOPTS += -ljprof
 endif
 
 ifdef MOZ_ENABLE_QT
-EXTRA_DSO_LDOPTS += $(MOZ_QT_LDFLAGS)
+EXTRA_DSO_LDOPTS += $(MOZ_QT_LDFLAGS) $(XEXT_LIBS)
+endif
+
+include $(topsrcdir)/config/rules.mk
+
+export:: $(RDF_UTIL_SRC_CPPSRCS) $(INTL_UNICHARUTIL_UTIL_CPPSRCS)
+	$(INSTALL) $^ .
+
+ifdef MOZ_ENABLE_LIBXUL
+include $(srcdir)/libxul-rules.mk
 endif
 
 ifdef MOZ_JAVAXPCOM
@@ -291,6 +285,8 @@ dlldeps-javaxpcom.cpp: $(topsrcdir)/extensions/java/xpcom/src/dlldeps-javaxpcom.
 	$(INSTALL) $^ .
 endif
 
-ifneq (,$(filter layout-debug,$(MOZ_EXTENSIONS)))
-DEFINES += -DMOZ_ENABLE_EXTENSION_LAYOUT_DEBUG
+ifdef MOZ_DEBUG
+ifdef ENABLE_TESTS
+DEFINES += -DENABLE_LAYOUTDEBUG
+endif
 endif

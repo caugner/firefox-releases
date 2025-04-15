@@ -47,21 +47,19 @@ MODULE		= necko
 LIBRARY_NAME	= neckobase_s
 LIBXUL_LIBRARY  = 1
 
-REQUIRES	= xpcom \
-		  string \
-		  mimetype \
-		  uconv \
-		  locale \
-		  pref \
-		  $(NULL)
+ifdef MOZ_IPC
+	EXPORTS = nsURLHelper.h
+endif
 
 CPPSRCS		= \
 		nsTransportUtils.cpp \
 		nsAsyncStreamCopier.cpp \
+		nsAsyncRedirectVerifyHelper.cpp \
 		nsAuthInformationHolder.cpp \
 		nsBaseChannel.cpp \
 		nsBaseContentStream.cpp \
 		nsBufferedStreams.cpp \
+		nsChannelClassifier.cpp \
 		nsDirectoryIndexStream.cpp \
 		nsDownloader.cpp \
 		nsFileStreams.cpp \
@@ -96,14 +94,13 @@ CPPSRCS		= \
 		nsDNSPrefetch.cpp \
 		$(NULL)
 
+ifdef MOZ_IPC
+	CPPSRCS += RedirectChannelRegistrar.cpp
+endif
+
 ifeq ($(MOZ_WIDGET_TOOLKIT),os2)
 	CPPSRCS += nsURLHelperOS2.cpp
 else
-ifdef MOZ_ENABLE_LIBCONIC
-	CPPSRCS += nsAutodialMaemo.cpp
-	CPPSRCS += nsNativeConnectionHelper.cpp
-	LOCAL_INCLUDES += -I$(srcdir)/../../system/maemo
-endif
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 	CPPSRCS += nsURLHelperWin.cpp
 	CPPSRCS += nsNativeConnectionHelper.cpp
@@ -113,7 +110,7 @@ else
 	CPPSRCS += nsAutodialWinCE.cpp
 endif
 else
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 	CPPSRCS += nsURLHelperOSX.cpp
 else
 	CPPSRCS += nsURLHelperUnix.cpp
@@ -121,8 +118,21 @@ endif
 endif
 endif
 
+ifdef MOZ_PLATFORM_MAEMO
+	CPPSRCS += nsNativeConnectionHelper.cpp
+ifdef MOZ_ENABLE_LIBCONIC
+	CPPSRCS += nsAutodialMaemo.cpp
+	LOCAL_INCLUDES += -I$(srcdir)/../../system/maemo
+endif
+ifdef MOZ_ENABLE_QTNETWORK
+	CPPSRCS += nsAutodialQt.cpp
+	LOCAL_INCLUDES += -I$(srcdir)/../../system/qt
+endif
+endif
+
 EXTRA_COMPONENTS = \
 		$(srcdir)/nsProxyAutoConfig.js \
+		$(srcdir)/nsProxyAutoConfig.manifest \
 		$(NULL)
 
 EXTRA_JS_MODULES = \
@@ -133,6 +143,8 @@ EXTRA_JS_MODULES = \
 # static lib.
 FORCE_STATIC_LIB = 1
 
+include $(topsrcdir)/config/config.mk
+include $(topsrcdir)/ipc/chromium/chromium-config.mk
 include $(topsrcdir)/config/rules.mk
 
 DEFINES += -DIMPL_NS_NET

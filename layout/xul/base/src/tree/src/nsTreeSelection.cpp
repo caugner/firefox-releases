@@ -46,8 +46,6 @@
 #include "nsString.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMClassInfo.h"
-#include "nsIPresShell.h"
-#include "nsPresContext.h"
 #include "nsIContent.h"
 #include "nsIDocument.h"
 #include "nsGUIEvent.h"
@@ -214,18 +212,40 @@ struct nsTreeRange
     return total;
   }
 
+  static void CollectRanges(nsTreeRange* aRange, nsTArray<PRInt32>& aRanges)
+  {
+    nsTreeRange* cur = aRange;
+    while (cur) {
+      aRanges.AppendElement(cur->mMin);
+      aRanges.AppendElement(cur->mMax);
+      cur = cur->mNext;
+    }
+  }
+  
+  static void InvalidateRanges(nsITreeBoxObject* aTree,
+                               nsTArray<PRInt32>& aRanges)
+  {
+    if (aTree) {
+      nsCOMPtr<nsITreeBoxObject> tree = aTree;
+      for (PRUint32 i = 0; i < aRanges.Length(); i += 2) {
+        aTree->InvalidateRange(aRanges[i], aRanges[i + 1]);
+      }
+    }
+  }
+
   void Invalidate() {
-    if (mSelection->mTree)
-      mSelection->mTree->InvalidateRange(mMin, mMax);
-    if (mNext)
-      mNext->Invalidate();
+    nsTArray<PRInt32> ranges;
+    CollectRanges(this, ranges);
+    InvalidateRanges(mSelection->mTree, ranges);
+    
   }
 
   void RemoveAllBut(PRInt32 aIndex) {
     if (aIndex >= mMin && aIndex <= mMax) {
 
       // Invalidate everything in this list.
-      mSelection->mFirstRange->Invalidate();
+      nsTArray<PRInt32> ranges;
+      CollectRanges(mSelection->mFirstRange, ranges);
 
       mMin = aIndex;
       mMax = aIndex;
@@ -241,6 +261,7 @@ struct nsTreeRange
         delete mSelection->mFirstRange;
         mSelection->mFirstRange = this;
       }
+      InvalidateRanges(mSelection->mTree, ranges);
     }
     else if (mNext)
       mNext->RemoveAllBut(aIndex);
@@ -272,15 +293,20 @@ nsTreeSelection::~nsTreeSelection()
     mSelectTimer->Cancel();
 }
 
+NS_IMPL_CYCLE_COLLECTION_2(nsTreeSelection, mTree, mCurrentColumn)
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF(nsTreeSelection)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(nsTreeSelection)
+
+DOMCI_DATA(TreeSelection, nsTreeSelection)
+
 // QueryInterface implementation for nsBoxObject
-NS_INTERFACE_MAP_BEGIN(nsTreeSelection)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsTreeSelection)
   NS_INTERFACE_MAP_ENTRY(nsITreeSelection)
+  NS_INTERFACE_MAP_ENTRY(nsINativeTreeSelection)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(TreeSelection)
 NS_INTERFACE_MAP_END
-
-NS_IMPL_ADDREF(nsTreeSelection)
-NS_IMPL_RELEASE(nsTreeSelection)
 
 NS_IMETHODIMP nsTreeSelection::GetTree(nsITreeBoxObject * *aTree)
 {
@@ -295,9 +321,10 @@ NS_IMETHODIMP nsTreeSelection::SetTree(nsITreeBoxObject * aTree)
     mSelectTimer = nsnull;
   }
 
-  // Make sure aTree really implements nsITreeBoxObject!
-  mTree = do_QueryInterface(aTree);
-  NS_ENSURE_STATE(mTree || !aTree);
+  // Make sure aTree really implements nsITreeBoxObject and nsIBoxObject!
+  nsCOMPtr<nsIBoxObject> bo = do_QueryInterface(aTree);
+  mTree = do_QueryInterface(bo);
+  NS_ENSURE_STATE(mTree == aTree);
   return NS_OK;
 }
 
@@ -307,7 +334,6 @@ NS_IMETHODIMP nsTreeSelection::GetSingle(PRBool* aSingle)
     return NS_ERROR_NULL_POINTER;
 
   nsCOMPtr<nsIBoxObject> boxObject = do_QueryInterface(mTree);
-  NS_ENSURE_STATE(boxObject);
 
   nsCOMPtr<nsIDOMElement> element;
   boxObject->GetElement(getter_AddRefs(element));
@@ -450,6 +476,7 @@ NS_IMETHODIMP nsTreeSelection::RangedSelect(PRInt32 aStartIndex, PRInt32 aEndInd
     if (mFirstRange) {
         mFirstRange->Invalidate();
         delete mFirstRange;
+        mFirstRange = nsnull;
     }
   }
 
@@ -658,7 +685,7 @@ NS_IMETHODIMP nsTreeSelection::SetCurrentIndex(PRInt32 aIndex)
 
   nsRefPtr<nsPLDOMEvent> event =
     new nsPLDOMEvent(treeDOMNode, NS_LITERAL_STRING("DOMMenuItemActive"),
-                     PR_FALSE);
+                     PR_TRUE, PR_FALSE);
   if (!event)
     return NS_ERROR_OUT_OF_MEMORY;
 
@@ -701,7 +728,12 @@ NS_IMETHODIMP nsTreeSelection::SetCurrentColumn(nsITreeColumn* aCurrentColumn)
 
 #define ADD_NEW_RANGE(macro_range, macro_selection, macro_start, macro_end) \
   { \
-    nsTreeRange* macro_new_range = new nsTreeRange(macro_selection, (macro_start), (macro_end)); \
+    PRInt32 start = macro_start; \
+    PRInt32 end = macro_end; \
+    if (start > end) { \
+      end = start; \
+    } \
+    nsTreeRange* macro_new_range = new nsTreeRange(macro_selection, start, end); \
     if (macro_range) \
       macro_range->Insert(macro_new_range); \
     else \
@@ -739,27 +771,27 @@ nsTreeSelection::AdjustSelection(PRInt32 aIndex, PRInt32 aCount)
   // no selection, so nothing to do.
   if (!mFirstRange) return NS_OK;
 
-  nsTreeRange* newRange = nsnull;
-
   PRBool selChanged = PR_FALSE;
+  nsTreeRange* oldFirstRange = mFirstRange;
   nsTreeRange* curr = mFirstRange;
+  mFirstRange = nsnull;
   while (curr) {
     if (aCount > 0) {
       // inserting
       if (aIndex > curr->mMax) {
         // adjustment happens after the range, so no change
-        ADD_NEW_RANGE(newRange, this, curr->mMin, curr->mMax);
+        ADD_NEW_RANGE(mFirstRange, this, curr->mMin, curr->mMax);
       }
       else if (aIndex <= curr->mMin) {  
         // adjustment happens before the start of the range, so shift down
-        ADD_NEW_RANGE(newRange, this, curr->mMin + aCount, curr->mMax + aCount);
+        ADD_NEW_RANGE(mFirstRange, this, curr->mMin + aCount, curr->mMax + aCount);
         selChanged = PR_TRUE;
       }
       else {
         // adjustment happen inside the range.
         // break apart the range and create two ranges
-        ADD_NEW_RANGE(newRange, this, curr->mMin, aIndex - 1);
-        ADD_NEW_RANGE(newRange, this, aIndex + aCount, curr->mMax + aCount);
+        ADD_NEW_RANGE(mFirstRange, this, curr->mMin, aIndex - 1);
+        ADD_NEW_RANGE(mFirstRange, this, aIndex + aCount, curr->mMax + aCount);
         selChanged = PR_TRUE;
       }
     }
@@ -767,7 +799,7 @@ nsTreeSelection::AdjustSelection(PRInt32 aIndex, PRInt32 aCount)
       // deleting
       if (aIndex > curr->mMax) {
         // adjustment happens after the range, so no change
-        ADD_NEW_RANGE(newRange, this, curr->mMin, curr->mMax);
+        ADD_NEW_RANGE(mFirstRange, this, curr->mMin, curr->mMax);
       }
       else {
         // remember, aCount is negative
@@ -776,31 +808,30 @@ nsTreeSelection::AdjustSelection(PRInt32 aIndex, PRInt32 aCount)
         if (aIndex <= curr->mMin) {
           if (lastIndexOfAdjustment < curr->mMin) {
             // adjustment happens before the start of the range, so shift up
-            ADD_NEW_RANGE(newRange, this, curr->mMin + aCount, curr->mMax + aCount);
+            ADD_NEW_RANGE(mFirstRange, this, curr->mMin + aCount, curr->mMax + aCount);
           }
           else if (lastIndexOfAdjustment >= curr->mMax) {
             // adjustment contains the range.  remove the range by not adding it to the newRange
           }
           else {
             // adjustment starts before the range, and ends in the middle of it, so trim the range
-            ADD_NEW_RANGE(newRange, this, aIndex, curr->mMax + aCount)
+            ADD_NEW_RANGE(mFirstRange, this, aIndex, curr->mMax + aCount)
           }
         }
         else if (lastIndexOfAdjustment >= curr->mMax) {
          // adjustment starts in the middle of the current range, and contains the end of the range, so trim the range
-         ADD_NEW_RANGE(newRange, this, curr->mMin, aIndex - 1)
+         ADD_NEW_RANGE(mFirstRange, this, curr->mMin, aIndex - 1)
         }
         else {
           // range contains the adjustment, so shorten the range
-          ADD_NEW_RANGE(newRange, this, curr->mMin, curr->mMax + aCount)
+          ADD_NEW_RANGE(mFirstRange, this, curr->mMin, curr->mMax + aCount)
         }
       }
     }
     curr = curr->mNext;
   }
 
-  delete mFirstRange;
-  mFirstRange = newRange;
+  delete oldFirstRange;
 
   // Fire the select event
   if (selChanged)
@@ -843,7 +874,7 @@ nsTreeSelection::FireOnSelectHandler()
   NS_ENSURE_STATE(node);
 
   nsRefPtr<nsPLDOMEvent> event =
-    new nsPLDOMEvent(node, NS_LITERAL_STRING("select"), PR_FALSE);
+    new nsPLDOMEvent(node, NS_LITERAL_STRING("select"), PR_TRUE, PR_FALSE);
   event->RunDOMEventWhenSafe();
   return NS_OK;
 }

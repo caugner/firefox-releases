@@ -11,6 +11,9 @@ include reftest-sanity/reftest.list
 # images (if libpr0n is busted, could result in weird failures in other tests)
 include ../../modules/libpr0n/test/reftest/reftest.list
 
+# relative and absolute positioning
+include abs-pos/reftest.list
+
 # backgrounds/
 include backgrounds/reftest.list
 
@@ -22,6 +25,9 @@ include border-image/reftest.list
 
 # border-radius/
 include border-radius/reftest.list
+
+# box-ordinal/
+include box-ordinal/reftest.list
 
 # box-properties/
 include box-properties/reftest.list
@@ -35,11 +41,23 @@ include bugs/reftest.list
 # canvas 2D
 include canvas/reftest.list
 
-# css @import tests
-include css-import/reftest.list
+# css calc() tests
+include css-calc/reftest.list
 
 # css character encoding tests
 include css-charset/reftest.list
+
+# css default pseudo class tests
+include css-default/reftest.list
+
+# css :disable tests
+include css-disabled/reftest.list
+
+# css :enable tests
+include css-enabled/reftest.list
+
+# css @import tests
+include css-import/reftest.list
 
 # css gradients
 include css-gradients/reftest.list
@@ -50,8 +68,44 @@ include css-mediaqueries/reftest.list
 # css namespaces
 include css-namespace/reftest.list
 
+# css parsing
+include css-parsing/reftest.list
+
+# css placeholder
+include css-placeholder/reftest.list
+
+# css required
+include css-required/reftest.list
+
+# css optional
+include css-optional/reftest.list
+
+# css valid
+include css-valid/reftest.list
+
+# css invalid
+include css-invalid/reftest.list
+
+# css-submit-invalid
+include css-submit-invalid/reftest.list
+
+# css transitions
+include css-transitions/reftest.list
+
+# css :-moz-ui-invalid
+include css-ui-invalid/reftest.list
+
+# css :-moz-ui-valid
+include css-ui-valid/reftest.list
+
 # css values and units
 include css-valuesandunits/reftest.list
+
+# Reftests in css-visited are run using
+# layout/style/test/test_visited_reftests instead of using the reftest
+# harness.
+
+include cssom/reftest.list
 
 # columns/
 include columns/reftest.list
@@ -61,6 +115,15 @@ include ../../content/test/reftest/reftest.list
 
 # counters/
 include counters/reftest.list
+
+# datalist
+include datalist/reftest.list
+
+# dom/
+include dom/reftest.list
+
+# editor/
+include editor/reftest.list
 
 # generated-content/
 include generated-content/reftest.list
@@ -77,11 +140,17 @@ include floats/reftest.list
 # font-face
 include font-face/reftest.list
 
+# font features (opentype)
+include font-features/reftest.list
+
 # font matching
 include font-matching/reftest.list
 
 # forms
 include forms/reftest.list
+
+# gfx
+include ../../gfx/tests/reftest/reftest.list
 
 # block-inside-inline splits
 include ib-split/reftest.list
@@ -89,11 +158,20 @@ include ib-split/reftest.list
 # image/
 include image/reftest.list
 
+# image-element/
+include image-element/reftest.list
+
+# image-rect/
+include image-rect/reftest.list
+
 # image-region/
 include image-region/reftest.list
 
 # inline borders and padding
 include inline-borderpadding/reftest.list
+
+# layers/
+include layers/reftest.list
 
 # line-breaking/
 include line-breaking/reftest.list
@@ -110,11 +188,17 @@ include marquee/reftest.list
 # native-theme/
 include native-theme/reftest.list
 
+# netwerk/
+include ../../netwerk/test/reftest/reftest.list
+
 # object/
 include object/reftest.list
 
 # ogg-video/
 include ogg-video/reftest.list
+
+# parser/
+include ../../parser/htmlparser/tests/reftest/reftest.list
 
 # percent-overflow-sizing/
 include percent-overflow-sizing/reftest.list
@@ -129,14 +213,17 @@ include ../../modules/plugin/test/reftest/reftest.list
 include printing/reftest.list
 include pagination/reftest.list
 
+# scrolling
+include scrolling/reftest.list
+
 # selection
 include selection/reftest.list
 
 # svg/
 include svg/reftest.list
 
-# svg-integration/
-include svg-integration/reftest.list
+# tab-size/
+include tab-size/reftest.list
 
 # table-anonymous-boxes/
 include table-anonymous-boxes/reftest.list
@@ -173,6 +260,9 @@ include text-transform/reftest.list
 
 # -moz-transform/
 include transform/reftest.list
+
+# unicode/ (verify that we don't do expend effort doing unicode-aware case checks)
+include unicode/reftest.list
 
 # widget/
 include ../../widget/reftests/reftest.list

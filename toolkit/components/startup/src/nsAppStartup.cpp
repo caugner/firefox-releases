@@ -24,6 +24,8 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *   Robert O'Callahan <roc+moz@cs.cmu.edu>
  *   Benjamin Smedberg <bsmedberg@covad.net>
+ *   Daniel Brooks <db48x@db48x.net>
+ *   Taras Glek <tglek@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -42,6 +44,7 @@
 #include "nsAppStartup.h"
 
 #include "nsIAppShellService.h"
+#include "nsPIDOMWindow.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsILocalFile.h"
@@ -67,9 +70,36 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsWidgetsCID.h"
 #include "nsAppShellCID.h"
-#include "nsXPFEComponentsCID.h"
+#include "mozilla/Services.h"
+#include "mozilla/FunctionTimer.h"
+#include "nsIXPConnect.h"
+#include "jsapi.h"
+#include "jsdate.h"
+#include "prenv.h"
+
+#if defined(XP_WIN)
+#include <windows.h>
+// windows.h can go to hell 
+#undef GetStartupInfo
+#elif defined(XP_UNIX)
+#include <unistd.h>
+#include <sys/syscall.h>
+#endif
+
+#ifdef XP_MACOSX
+#include <sys/sysctl.h>
+#endif
 
 static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
+#ifdef MOZ_ENABLE_LIBXUL
+extern PRTime gXRE_mainTimestamp;
+extern PRTime gFirstPaintTimestamp;
+#endif
+// mfinklesessionstore-browser-state-restored might be a better choice than the one below
+static PRTime gRestoredTimestamp = 0;       // Timestamp of sessionstore-windows-restored
+static PRTime gProcessCreationTimestamp = 0;// Timestamp of sessionstore-windows-restored
+
+PRUint32 gRestartMode = 0;
 
 class nsAppExitEvent : public nsRunnable {
 private:
@@ -105,17 +135,24 @@ nsAppStartup::nsAppStartup() :
 nsresult
 nsAppStartup::Init()
 {
+  NS_TIME_FUNCTION;
   nsresult rv;
 
   // Create widget application shell
   mAppShell = do_GetService(kAppShellCID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIObserverService> os
-    (do_GetService("@mozilla.org/observer-service;1", &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
+  NS_TIME_FUNCTION_MARK("Got AppShell service");
+
+  nsCOMPtr<nsIObserverService> os =
+    mozilla::services::GetObserverService();
+  if (!os)
+    return NS_ERROR_FAILURE;
+
+  NS_TIME_FUNCTION_MARK("Got Observer service");
 
   os->AddObserver(this, "quit-application-forced", PR_TRUE);
+  os->AddObserver(this, "sessionstore-windows-restored", PR_TRUE);
   os->AddObserver(this, "profile-change-teardown", PR_TRUE);
   os->AddObserver(this, "xul-window-registered", PR_TRUE);
   os->AddObserver(this, "xul-window-destroyed", PR_TRUE);
@@ -128,9 +165,10 @@ nsAppStartup::Init()
 // nsAppStartup->nsISupports
 //
 
-NS_IMPL_THREADSAFE_ISUPPORTS6(nsAppStartup,
+NS_IMPL_THREADSAFE_ISUPPORTS7(nsAppStartup,
                               nsIAppStartup,
                               nsIAppStartup2,
+                              nsIAppStartup_MOZILLA_2_0,
                               nsIWindowCreator,
                               nsIWindowCreator2,
                               nsIObserver,
@@ -231,14 +269,39 @@ nsAppStartup::Quit(PRUint32 aMode)
 #endif
   }
 
-  mShuttingDown = PR_TRUE;
-  if (!mRestart) 
-      mRestart = (aMode & eRestart) != 0;
-
   nsCOMPtr<nsIObserverService> obsService;
   if (ferocity == eAttemptQuit || ferocity == eForceQuit) {
 
-    obsService = do_GetService("@mozilla.org/observer-service;1");
+    nsCOMPtr<nsISimpleEnumerator> windowEnumerator;
+    nsCOMPtr<nsIWindowMediator> mediator (do_GetService(NS_WINDOWMEDIATOR_CONTRACTID));
+    if (mediator) {
+      mediator->GetEnumerator(nsnull, getter_AddRefs(windowEnumerator));
+      if (windowEnumerator) {
+        PRBool more;
+        while (windowEnumerator->HasMoreElements(&more), more) {
+          nsCOMPtr<nsISupports> window;
+          windowEnumerator->GetNext(getter_AddRefs(window));
+          nsCOMPtr<nsPIDOMWindow> domWindow(do_QueryInterface(window));
+          if (domWindow) {
+            if (!domWindow->CanClose())
+              return NS_OK;
+          }
+        }
+      }
+    }
+
+    mShuttingDown = PR_TRUE;
+    if (!mRestart) {
+      mRestart = (aMode & eRestart) != 0;
+      gRestartMode = (aMode & 0xF0);
+    }
+
+    if (mRestart) {
+      // Firefox-restarts reuse the process. Process start-time isn't a useful indicator of startup time
+      PR_SetEnv(PR_smprintf("MOZ_APP_RESTART=%lld", (PRInt64) PR_Now() / PR_USEC_PER_MSEC));
+    }
+
+    obsService = mozilla::services::GetObserverService();
 
     if (!mAttemptingQuit) {
       mAttemptingQuit = PR_TRUE;
@@ -256,12 +319,8 @@ nsAppStartup::Quit(PRUint32 aMode)
        opens a new window. Ugh. I know. */
     CloseAllWindows();
 
-    nsCOMPtr<nsIWindowMediator> mediator
-      (do_GetService(NS_WINDOWMEDIATOR_CONTRACTID));
     if (mediator) {
       if (ferocity == eAttemptQuit) {
-        nsCOMPtr<nsISimpleEnumerator> windowEnumerator;
-
         ferocity = eForceQuit; // assume success
 
         /* Were we able to immediately close all windows? if not, eAttemptQuit
@@ -351,10 +410,10 @@ nsAppStartup::CloseAllWindows()
     if (NS_FAILED(windowEnumerator->GetNext(getter_AddRefs(isupports))))
       break;
 
-    nsCOMPtr<nsIDOMWindowInternal> window = do_QueryInterface(isupports);
-    NS_ASSERTION(window, "not an nsIDOMWindowInternal");
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(isupports);
+    NS_ASSERTION(window, "not an nsPIDOMWindow");
     if (window)
-      window->Close();
+      window->ForceClose();
   }
 }
 
@@ -485,9 +544,167 @@ nsAppStartup::Observe(nsISupports *aSubject,
     EnterLastWindowClosingSurvivalArea();
   } else if (!strcmp(aTopic, "xul-window-destroyed")) {
     ExitLastWindowClosingSurvivalArea();
+  } else if (!strcmp(aTopic, "sessionstore-windows-restored")) {
+    gRestoredTimestamp = PR_Now();
   } else {
     NS_ERROR("Unexpected observer topic.");
   }
 
+  return NS_OK;
+}
+
+#if defined(LINUX) || defined(ANDROID)
+static PRUint64 
+JiffiesSinceBoot(const char *file)
+{
+  char stat[512];
+  FILE *f = fopen(file, "r");
+  if (!f)
+    return 0;
+  int n = fread(&stat, 1, sizeof(stat) - 1, f);
+  fclose(f);
+  if (n <= 0)
+    return 0;
+  stat[n] = 0;
+  
+  long long unsigned starttime = 0; // instead of PRUint64 to keep GCC quiet
+  
+  char *s = strrchr(stat, ')');
+  if (!s)
+    return 0;
+  sscanf(s + 2,
+         "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u "
+         "%*u %*u %*u %*u %*u %*d %*d %*d %*d %llu",
+         &starttime);
+  if (!starttime)
+    return 0;
+  return starttime;
+}
+
+static void
+ThreadedCalculateProcessCreationTimestamp(void *aClosure)
+{
+  PRTime now = PR_Now();
+  gProcessCreationTimestamp = 0;
+  long hz = sysconf(_SC_CLK_TCK);
+  if (!hz)
+    return;
+
+  char thread_stat[40];
+  sprintf(thread_stat, "/proc/self/task/%d/stat", (pid_t) syscall(__NR_gettid));
+  
+  PRTime interval = (JiffiesSinceBoot(thread_stat) - JiffiesSinceBoot("/proc/self/stat")) * PR_USEC_PER_SEC / hz;;
+  gProcessCreationTimestamp = now - interval;
+}
+
+static PRTime
+CalculateProcessCreationTimestamp()
+{
+ PRThread *thread = PR_CreateThread(PR_USER_THREAD,
+                                    ThreadedCalculateProcessCreationTimestamp,
+                                    NULL,
+                                    PR_PRIORITY_NORMAL,
+                                    PR_LOCAL_THREAD,
+                                    PR_JOINABLE_THREAD,
+                                    0);
+
+  PR_JoinThread(thread);
+  return gProcessCreationTimestamp;
+}
+#elif defined(XP_WIN)
+static PRTime
+CalculateProcessCreationTimestamp()
+{
+  FILETIME start, foo, bar, baz;
+  bool success = GetProcessTimes(GetCurrentProcess(), &start, &foo, &bar, &baz);
+  if (!success)
+    return 0;
+  // copied from NSPR _PR_FileTimeToPRTime
+  PRUint64 timestamp = 0;
+  CopyMemory(&timestamp, &start, sizeof(PRTime));
+#ifdef __GNUC__
+  timestamp = (timestamp - 116444736000000000LL) / 10LL;
+#else
+  timestamp = (timestamp - 116444736000000000i64) / 10i64;
+#endif    
+  return timestamp;
+}
+#elif defined(XP_MACOSX)
+static PRTime
+CalculateProcessCreationTimestamp()
+{
+  int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+  size_t buffer_size;
+  if (sysctl(mib, 4, NULL, &buffer_size, NULL, 0))
+    return 0;
+
+  struct kinfo_proc *proc = (kinfo_proc*) malloc(buffer_size);  
+  if (sysctl(mib, 4, proc, &buffer_size, NULL, 0)) {
+    free(proc);
+    return 0;
+  }
+  PRTime starttime = static_cast<PRTime>(proc->kp_proc.p_un.__p_starttime.tv_sec) * PR_USEC_PER_SEC;
+  starttime += proc->kp_proc.p_un.__p_starttime.tv_usec;
+  free(proc);
+  return starttime;
+}
+#else
+static PRTime
+CalculateProcessCreationTimestamp()
+{
+  return 0;
+}
+#endif
+ 
+static void
+MaybeDefineProperty(JSContext *cx, JSObject *obj, const char *name, PRTime timestamp)
+{
+  if (!timestamp)
+    return;
+  JSObject *date = js_NewDateObjectMsec(cx, timestamp/PR_USEC_PER_MSEC);
+  JS_DefineProperty(cx, obj, name, OBJECT_TO_JSVAL(date), NULL, NULL, JSPROP_ENUMERATE);     
+}
+
+NS_IMETHODIMP
+nsAppStartup::GetStartupInfo()
+{
+  nsAXPCNativeCallContext *ncc = nsnull;
+  nsresult rv;
+  nsCOMPtr<nsIXPConnect> xpConnect = do_GetService(nsIXPConnect::GetCID(), &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = xpConnect->GetCurrentNativeCallContext(&ncc);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!ncc)
+    return NS_ERROR_FAILURE;
+
+  jsval *retvalPtr;
+  ncc->GetRetValPtr(&retvalPtr);
+
+  *retvalPtr = JSVAL_NULL;
+  ncc->SetReturnValueWasSet(PR_TRUE);
+
+  JSContext *cx = nsnull;
+  rv = ncc->GetJSContext(&cx);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  JSObject *obj = JS_NewObject(cx, NULL, NULL, NULL);
+  *retvalPtr = OBJECT_TO_JSVAL(obj);
+  ncc->SetReturnValueWasSet(PR_TRUE);
+
+  char *moz_app_restart = PR_GetEnv("MOZ_APP_RESTART");
+  if (moz_app_restart) {
+    gProcessCreationTimestamp = nsCRT::atoll(moz_app_restart) * PR_USEC_PER_MSEC;
+  } else if (!gProcessCreationTimestamp) {
+    gProcessCreationTimestamp = CalculateProcessCreationTimestamp();
+  }
+
+  MaybeDefineProperty(cx, obj, "process", gProcessCreationTimestamp);
+#ifdef MOZ_ENABLE_LIBXUL
+  MaybeDefineProperty(cx, obj, "main", gXRE_mainTimestamp);
+  MaybeDefineProperty(cx, obj, "firstPaint", gFirstPaintTimestamp);
+#endif
+  MaybeDefineProperty(cx, obj, "sessionRestored", gRestoredTimestamp);
   return NS_OK;
 }

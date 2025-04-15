@@ -406,14 +406,74 @@ static struct nsMyTrustedEVInfo myTrustedEVInfos[] = {
     nsnull
   },
   {
+    // CN=GlobalSign,O=GlobalSign,OU=GlobalSign Root CA - R3
+    "1.3.6.1.4.1.4146.1.1",
+    "GlobalSign EV OID",
+    SEC_OID_UNKNOWN,
+    "D6:9B:56:11:48:F0:1C:77:C5:45:78:C1:09:26:DF:5B:85:69:76:AD",
+    "MEwxIDAeBgNVBAsTF0dsb2JhbFNpZ24gUm9vdCBDQSAtIFIzMRMwEQYDVQQKEwpH"
+    "bG9iYWxTaWduMRMwEQYDVQQDEwpHbG9iYWxTaWdu",
+    "BAAAAAABIVhTCKI=",
+    nsnull
+  },
+  {
     // CN=Buypass Class 3 CA 1,O=Buypass AS-983163327,C=NO
     "2.16.578.1.26.1.3.3",
-    "Buypass Class 3 CA 1", // for real entries use a string like "Sample INVALID EV OID"
+    "Buypass Class 3 CA 1",
     SEC_OID_UNKNOWN,
     "61:57:3A:11:DF:0E:D8:7E:D5:92:65:22:EA:D0:56:D7:44:B3:23:71",
     "MEsxCzAJBgNVBAYTAk5PMR0wGwYDVQQKDBRCdXlwYXNzIEFTLTk4MzE2MzMyNzEd"
     "MBsGA1UEAwwUQnV5cGFzcyBDbGFzcyAzIENBIDE=",
     "Ag==",
+    nsnull
+  },
+  {
+    // CN=Class 2 Primary CA,O=Certplus,C=FR
+    "1.3.6.1.4.1.22234.2.5.2.3.1",
+    "Certplus EV OID",
+    SEC_OID_UNKNOWN,
+    "74:20:74:41:72:9C:DD:92:EC:79:31:D8:23:10:8D:C2:81:92:E2:BB",
+    "MD0xCzAJBgNVBAYTAkZSMREwDwYDVQQKEwhDZXJ0cGx1czEbMBkGA1UEAxMSQ2xh"
+    "c3MgMiBQcmltYXJ5IENB",
+    "AIW9S/PY2uNp9pTXX8OlRCM=",
+    nsnull
+  },
+  {
+    // CN=Chambers of Commerce Root - 2008,O=AC Camerfirma S.A.,serialNumber=A82743287,L=Madrid (see current address at www.camerfirma.com/address),C=EU
+    "1.3.6.1.4.1.17326.10.14.2.1.2",
+    "Camerfirma EV OID a",
+    SEC_OID_UNKNOWN,
+    "78:6A:74:AC:76:AB:14:7F:9C:6A:30:50:BA:9E:A8:7E:FE:9A:CE:3C",
+    "MIGuMQswCQYDVQQGEwJFVTFDMEEGA1UEBxM6TWFkcmlkIChzZWUgY3VycmVudCBh"
+    "ZGRyZXNzIGF0IHd3dy5jYW1lcmZpcm1hLmNvbS9hZGRyZXNzKTESMBAGA1UEBRMJ"
+    "QTgyNzQzMjg3MRswGQYDVQQKExJBQyBDYW1lcmZpcm1hIFMuQS4xKTAnBgNVBAMT"
+    "IENoYW1iZXJzIG9mIENvbW1lcmNlIFJvb3QgLSAyMDA4",
+    "AKPaQn6ksa7a",
+    nsnull
+  },
+  {
+    // CN=Global Chambersign Root - 2008,O=AC Camerfirma S.A.,serialNumber=A82743287,L=Madrid (see current address at www.camerfirma.com/address),C=EU
+    "1.3.6.1.4.1.17326.10.8.12.1.2",
+    "Camerfirma EV OID b",
+    SEC_OID_UNKNOWN,
+    "4A:BD:EE:EC:95:0D:35:9C:89:AE:C7:52:A1:2C:5B:29:F6:D6:AA:0C",
+    "MIGsMQswCQYDVQQGEwJFVTFDMEEGA1UEBxM6TWFkcmlkIChzZWUgY3VycmVudCBh"
+    "ZGRyZXNzIGF0IHd3dy5jYW1lcmZpcm1hLmNvbS9hZGRyZXNzKTESMBAGA1UEBRMJ"
+    "QTgyNzQzMjg3MRswGQYDVQQKExJBQyBDYW1lcmZpcm1hIFMuQS4xJzAlBgNVBAMT"
+    "Hkdsb2JhbCBDaGFtYmVyc2lnbiBSb290IC0gMjAwOA==",
+    "AMnN0+nVfSPO",
+    nsnull
+  },
+  {
+    // CN=TC TrustCenter Universal CA III,OU=TC TrustCenter Universal CA,O=TC TrustCenter GmbH,C=DE
+    "1.2.276.0.44.1.1.1.4",
+    "TC TrustCenter EV OID",
+    SEC_OID_UNKNOWN,
+    "96:56:CD:7B:57:96:98:95:D0:E1:41:46:68:06:FB:B8:C6:11:06:87",
+    "MHsxCzAJBgNVBAYTAkRFMRwwGgYDVQQKExNUQyBUcnVzdENlbnRlciBHbWJIMSQw"
+    "IgYDVQQLExtUQyBUcnVzdENlbnRlciBVbml2ZXJzYWwgQ0ExKDAmBgNVBAMTH1RD"
+    "IFRydXN0Q2VudGVyIFVuaXZlcnNhbCBDQSBJSUk=",
+    "YyUAAQACFI0zFQLkbPQ=",
     nsnull
   },
   {
@@ -630,6 +690,9 @@ loadTestEVInfos()
     temp_ev->cert = CERT_FindCertByIssuerAndSN(nsnull, &ias);
     NS_ASSERTION(temp_ev->cert, "Could not find EV root in NSS storage");
 
+    SECITEM_FreeItem(&ias.derIssuer, PR_FALSE);
+    SECITEM_FreeItem(&ias.serialNumber, PR_FALSE);
+
     if (!temp_ev->cert)
       return;
 
@@ -830,9 +893,13 @@ nsNSSComponent::IdentityInfoInit()
     NS_ASSERTION(rv==SECSuccess, "error converting ascii to binary.");
     rv = ATOB_ConvertAsciiToItem(&ias.serialNumber, const_cast<char*>(entry.serial_base64));
     NS_ASSERTION(rv==SECSuccess, "error converting ascii to binary.");
+    ias.serialNumber.type = siUnsignedInteger;
 
     entry.cert = CERT_FindCertByIssuerAndSN(nsnull, &ias);
     NS_ASSERTION(entry.cert, "Could not find EV root in NSS storage");
+
+    SECITEM_FreeItem(&ias.derIssuer, PR_FALSE);
+    SECITEM_FreeItem(&ias.serialNumber, PR_FALSE);
 
     if (!entry.cert)
       continue;
@@ -905,7 +972,7 @@ static SECStatus getFirstEVPolicy(CERTCertificate *cert, SECOidTag &outOidTag)
       while (*policyInfos != NULL) {
         policyInfo = *policyInfos++;
 
-        SECOidTag oid_tag = SECOID_FindOIDTag(&policyInfo->policyID);
+        SECOidTag oid_tag = policyInfo->oid;
         if (oid_tag != SEC_OID_UNKNOWN && isEVPolicy(oid_tag)) {
           // in our list of OIDs accepted for EV
           outOidTag = oid_tag;
@@ -1017,6 +1084,7 @@ nsNSSCertificate::hasValidEVOidTag(SECOidTag &resultOidTag, PRBool &validEV)
     | CERT_REV_M_ALLOW_NETWORK_FETCHING
     | CERT_REV_M_ALLOW_IMPLICIT_DEFAULT_SOURCE
     | CERT_REV_M_REQUIRE_INFO_ON_MISSING_SOURCE
+    | CERT_REV_M_IGNORE_MISSING_FRESH_INFO
     | CERT_REV_M_STOP_TESTING_ON_FRESH_INFO;
 
   PRUint64 revMethodIndependentFlags = 

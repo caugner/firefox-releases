@@ -63,20 +63,24 @@ const kIsLinux = navigator.platform.indexOf("Linux") == 0;
  *   5: font-family: mplus-1p-regular.ttf; font-size: 52px;
  */
 var gFontMetrics = [];
+
 if (kIsWin) {
-  gFontMetrics = [
-    { emHeight: 16, ascent: 13, offset: -2, lineHeight: 1, descentLimit:  3 },
-    { emHeight: 16, ascent: 17, offset: -2, lineHeight: 1, descentLimit:  5 },
-    { emHeight: 32, ascent: 26, offset: -4, lineHeight: 1, descentLimit:  6 },
-    { emHeight: 32, ascent: 34, offset: -4, lineHeight: 2, descentLimit: 10 },
-    { emHeight: 52, ascent: 42, offset: -7, lineHeight: 1, descentLimit: 10 },
-    { emHeight: 52, ascent: 56, offset: -7, lineHeight: 3, descentLimit: 17 }
-  ];
+  netscape.security.PrivilegeManager.enablePrivilege("UniversalXPConnect");
+  if (Components.classes["@mozilla.org/gfx/info;1"].getService(Components.interfaces.nsIGfxInfo).DWriteEnabled) {
+    todo(false, "This test is not supported on Windows when DirectWrite is enabled.");
+  } else {
+    gFontMetrics = [
+      { emHeight: 16, ascent: 13, offset: -2, lineHeight: 1, descentLimit:  3 },
+      { emHeight: 16, ascent: 17, offset: -2, lineHeight: 1, descentLimit:  5 },
+      { emHeight: 32, ascent: 26, offset: -4, lineHeight: 1, descentLimit:  6 },
+      { emHeight: 32, ascent: 34, offset: -4, lineHeight: 2, descentLimit: 10 },
+      { emHeight: 52, ascent: 42, offset: -7, lineHeight: 1, descentLimit: 10 },
+      { emHeight: 52, ascent: 56, offset: -7, lineHeight: 3, descentLimit: 17 }
+    ];
+  }
 }
-
 /*
-
-if (kIsMac) {
+else if (kIsMac) {
   // XXX mnakano: I got following metrics on my Mac (both 10.4 and 10.5).
   // However, on tinderbox machines, they are different values.  I'm not sure
   // the reason.
@@ -89,8 +93,7 @@ if (kIsMac) {
     { ascent: 56, offset: -6.500000, lineHeight: 2.600159 }
   ];
 }
-
-if (kIsLinux) {
+else if (kIsLinux) {
   // XXX mnakano: I got following metrics on my Ubuntu 8.10.  However, on
   // tinderbox machines, they are different.  Probably, the values depend on
   // the version of FreeType and Pango.  I bet we cannot test this on Linux
@@ -104,8 +107,10 @@ if (kIsLinux) {
     { ascent: 56, offset: -3.300781, lineHeight: 2.600002 }
   ];
 }
-
 */
+else {
+  todo(false, "This test is not supported on this platform.");
+}
 
 const kUnderlineStyles = [
   { color: "rgb(100%,  0%,  0%)", isIMESelection: false },
@@ -383,10 +388,7 @@ function doTest(aStyle, aSize)
 
 function onLoad()
 {
-  SimpleTest.waitForExplicitFinish();
-
   if (gFontMetrics.length == 0) {
-    todo(false, "test_selection_underline doesn't support this platform");
     SimpleTest.finish();
     return;
   }
@@ -431,6 +433,8 @@ function cleanup()
       prefs.clearUserPref(gPrefs[i].name);
   }
 }
+
+SimpleTest.waitForExplicitFinish();
 
 </script>
 

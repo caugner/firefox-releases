@@ -50,6 +50,7 @@
 #include "nsGkAtoms.h"
 #include "nsINodeInfo.h"
 #include "nsNodeInfoManager.h"
+#include "nsNullPrincipal.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsDOMError.h"
 #include "nsIConsoleService.h"
@@ -62,6 +63,8 @@
 #include "nsHashKeys.h"
 #include "nsTArray.h"
 #include "nsCycleCollectionParticipant.h"
+
+using namespace mozilla::dom;
 
 class nsXMLFragmentContentSink : public nsXMLContentSink,
                                  public nsIFragmentContentSink
@@ -117,7 +120,7 @@ protected:
   virtual nsresult CreateElement(const PRUnichar** aAtts, PRUint32 aAttsCount,
                                  nsINodeInfo* aNodeInfo, PRUint32 aLineNumber,
                                  nsIContent** aResult, PRBool* aAppendContent,
-                                 PRBool aFromParser);
+                                 mozilla::dom::FromParser aFromParser);
   virtual nsresult CloseElement(nsIContent* aContent);
 
   virtual void MaybeStartLayout(PRBool aIgnorePendingSheets);
@@ -259,14 +262,14 @@ nsresult
 nsXMLFragmentContentSink::CreateElement(const PRUnichar** aAtts, PRUint32 aAttsCount,
                                         nsINodeInfo* aNodeInfo, PRUint32 aLineNumber,
                                         nsIContent** aResult, PRBool* aAppendContent,
-                                        PRBool aFromParser)
+                                        FromParser /*aFromParser*/)
 {
   // Claim to not be coming from parser, since we don't do any of the
   // fancy CloseElement stuff.
   nsresult rv = nsXMLContentSink::CreateElement(aAtts, aAttsCount,
                                                 aNodeInfo, aLineNumber,
                                                 aResult, aAppendContent,
-                                                PR_FALSE);
+                                                NOT_FROM_PARSER);
 
   // When we aren't grabbing all of the content we, never open a doc
   // element, we run into trouble on the first element, so we don't append,
@@ -486,7 +489,7 @@ nsXMLFragmentContentSink::IgnoreFirstContainer()
 class nsXHTMLParanoidFragmentSink : public nsXMLFragmentContentSink
 {
 public:
-  nsXHTMLParanoidFragmentSink();
+  nsXHTMLParanoidFragmentSink(PRBool aAllContent = PR_FALSE);
 
   static nsresult Init();
   static void Cleanup();
@@ -517,6 +520,9 @@ public:
                                  PRUint32 aLength);
 protected:
   PRUint32 mSkipLevel; // used when we descend into <style> or <script>
+
+  nsCOMPtr<nsIPrincipal> mNullPrincipal;
+
   // Use nsTHashTable as a hash set for our whitelists
   static nsTHashtable<nsISupportsHashKey>* sAllowedTags;
   static nsTHashtable<nsISupportsHashKey>* sAllowedAttributes;
@@ -525,8 +531,8 @@ protected:
 nsTHashtable<nsISupportsHashKey>* nsXHTMLParanoidFragmentSink::sAllowedTags;
 nsTHashtable<nsISupportsHashKey>* nsXHTMLParanoidFragmentSink::sAllowedAttributes;
 
-nsXHTMLParanoidFragmentSink::nsXHTMLParanoidFragmentSink():
-  nsXMLFragmentContentSink(PR_FALSE), mSkipLevel(0)
+nsXHTMLParanoidFragmentSink::nsXHTMLParanoidFragmentSink(PRBool aAllContent):
+  nsXMLFragmentContentSink(aAllContent), mSkipLevel(0)
 {
 }
 
@@ -596,6 +602,20 @@ NS_NewXHTMLParanoidFragmentSink(nsIFragmentContentSink** aResult)
   return NS_OK;
 }
 
+nsresult
+NS_NewXHTMLParanoidFragmentSink2(nsIFragmentContentSink** aResult)
+{
+  nsXHTMLParanoidFragmentSink* it = new nsXHTMLParanoidFragmentSink(PR_TRUE);
+  if (!it) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  nsresult rv = nsXHTMLParanoidFragmentSink::Init();
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ADDREF(*aResult = it);
+  
+  return NS_OK;
+}
+
 void
 NS_XHTMLParanoidFragmentSinkShutdown()
 {
@@ -609,7 +629,7 @@ nsresult
 nsXHTMLParanoidFragmentSink::AddAttributes(const PRUnichar** aAtts,
                                            nsIContent* aContent)
 {
-  nsresult rv;
+  nsresult rv = NS_OK;
 
   // use this to check for safe URIs in the few attributes that allow them
   nsIScriptSecurityManager* secMan = nsContentUtils::GetSecurityManager();
@@ -624,6 +644,12 @@ nsXHTMLParanoidFragmentSink::AddAttributes(const PRUnichar** aAtts,
   PRInt32 nameSpaceID;
   nsCOMPtr<nsIAtom> prefix, localName;
   nsCOMPtr<nsINodeInfo> nodeInfo;
+
+  if (!mNullPrincipal) {
+      mNullPrincipal = do_CreateInstance(NS_NULLPRINCIPAL_CONTRACTID, &rv);
+      NS_ENSURE_SUCCESS(rv, rv);
+  }
+
   while (*aAtts) {
     nsContentUtils::SplitExpatName(aAtts[0], getter_AddRefs(prefix),
                                    getter_AddRefs(localName), &nameSpaceID);
@@ -639,8 +665,7 @@ nsXHTMLParanoidFragmentSink::AddAttributes(const PRUnichar** aAtts,
       rv = NS_NewURI(getter_AddRefs(attrURI), nsDependentString(aAtts[1]),
                      nsnull, baseURI);
       if (NS_SUCCEEDED(rv)) {
-        rv = secMan->CheckLoadURIWithPrincipal(mTargetDocument->NodePrincipal(),
-                                               attrURI, flags);
+        rv = secMan->CheckLoadURIWithPrincipal(mNullPrincipal, attrURI, flags);
       }
     }
 

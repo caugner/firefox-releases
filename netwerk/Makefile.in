@@ -56,6 +56,19 @@ DIRS		= \
 		system \
         $(NULL)
 
+ifdef MOZ_IPC
+DIRS 		+= \
+	        ipc  \
+	        $(NULL)
+else
+# Non-IPC builds need NeckoCommon.h
+EXPORTS_NAMESPACES = mozilla/net
+
+EXPORTS_mozilla/net = \
+  ipc/NeckoCommon.h       \
+  $(NULL)
+endif
+
 ifdef NECKO_WIFI
 DIRS 		+= wifi
 endif

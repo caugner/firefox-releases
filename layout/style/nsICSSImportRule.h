@@ -37,19 +37,18 @@
 
 /* internal interface for CSS @import rules */
 
-#ifndef nsICSSImportRule_h___
-#define nsICSSImportRule_h___
+#ifndef nsICSSImportRule_h
+#define nsICSSImportRule_h
 
 #include "nsICSSRule.h"
-#include "nsString.h"
 
-class nsIAtom;
-class nsIURI;
 class nsMediaList;
+class nsString;
 
-// IID for the nsICSSImportRule interface {33824a60-1a09-11d3-805a-006008159b5a}
-#define NS_ICSS_IMPORT_RULE_IID     \
-{0x33824a60, 0x1a09, 0x11d3, {0x80, 0x5a, 0x00, 0x60, 0x08, 0x15, 0x9b, 0x5a}}
+#define NS_ICSS_IMPORT_RULE_IID \
+{ 0x07bd9b80, 0x721e, 0x4566, \
+  { 0xb7, 0x90, 0xed, 0x25, 0x10, 0xed, 0x99, 0xde } }
+
 
 class nsICSSImportRule : public nsICSSRule {
 public:
@@ -61,7 +60,7 @@ public:
   NS_IMETHOD SetMedia(const nsString& aMedia) = 0;
   NS_IMETHOD GetMedia(nsString& aMedia) const = 0;
 
-  NS_IMETHOD SetSheet(nsICSSStyleSheet*) = 0;
+  NS_IMETHOD SetSheet(nsCSSStyleSheet*) = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsICSSImportRule, NS_ICSS_IMPORT_RULE_IID)
@@ -70,4 +69,4 @@ nsresult
 NS_NewCSSImportRule(nsICSSImportRule** aInstancePtrResult, 
                     const nsString& aURLSpec, nsMediaList* aMedia);
 
-#endif /* nsICSSImportRule_h___ */
+#endif /* nsICSSImportRule_h */

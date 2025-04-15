@@ -37,18 +37,17 @@
 
 /* internal interface for CSS @namespace rules */
 
-#ifndef nsICSSNameSpaceRule_h___
-#define nsICSSNameSpaceRule_h___
+#ifndef nsICSSNameSpaceRule_h
+#define nsICSSNameSpaceRule_h
 
 #include "nsICSSRule.h"
-//#include "nsString.h"
 
 class nsIAtom;
-class nsIURI;
 
-// IID for the nsICSSNameSpaceRule interface {2469c930-1a09-11d3-805a-006008159b5a}
-#define NS_ICSS_NAMESPACE_RULE_IID     \
-{0x2469c930, 0x1a09, 0x11d3, {0x80, 0x5a, 0x00, 0x60, 0x08, 0x15, 0x9b, 0x5a}}
+#define NS_ICSS_NAMESPACE_RULE_IID \
+{ 0x9be32bb3, 0x5729, 0x4853, \
+  { 0x87, 0x29, 0x9b, 0x46, 0x69, 0xad, 0x82, 0x1b } }
+
 
 class nsICSSNameSpaceRule : public nsICSSRule {
 public:
@@ -67,4 +66,4 @@ nsresult
 NS_NewCSSNameSpaceRule(nsICSSNameSpaceRule** aInstancePtrResult, 
                        nsIAtom* aPrefix, const nsString& aURLSpec);
 
-#endif /* nsICSSNameSpaceRule_h___ */
+#endif /* nsICSSNameSpaceRule_h */

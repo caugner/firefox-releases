@@ -23,3 +23,10 @@ bug495794_closeAudio.patch fixes a crash when destroying the sa_stream_t after
 a failed attempt to open the stream.
 
 bug495558_alsa_endian.patch adds support for big endian ALSA platforms.
+
+sydney_aix.patch: Bug 499266 - add support for AIX 5.x
+
+bug562488_oss_destroy_crash.patch: Fix crash in OSS backend when destroying stream.
+
+bug564734-win32-drain.patch: Ensure we can drain audio stream when there's less
+than one block's worth of data left to be written. Also ensure that data is played.

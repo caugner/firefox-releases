@@ -27,13 +27,13 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <cassert>
+#include "common/linux/http_upload.h"
+
+#include <assert.h>
 #include <dlfcn.h>
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <curl/types.h>
-
-#include "common/linux/http_upload.h"
 
 namespace {
 
@@ -62,6 +62,7 @@ bool HTTPUpload::SendRequest(const string &url,
                              const string &file_part_name,
                              const string &proxy,
                              const string &proxy_user_pwd,
+                             const string &ca_certificate_file,
                              string *response_body,
                              string *error_description) {
   if (!CheckParameters(parameters))
@@ -106,6 +107,9 @@ bool HTTPUpload::SendRequest(const string &url,
     (*curl_easy_setopt)(curl, CURLOPT_PROXY, proxy.c_str());
   if (!proxy_user_pwd.empty())
     (*curl_easy_setopt)(curl, CURLOPT_PROXYUSERPWD, proxy_user_pwd.c_str());
+
+  if (!ca_certificate_file.empty())
+    (*curl_easy_setopt)(curl, CURLOPT_CAINFO, ca_certificate_file.c_str());
 
   struct curl_httppost *formpost = NULL;
   struct curl_httppost *lastptr = NULL;

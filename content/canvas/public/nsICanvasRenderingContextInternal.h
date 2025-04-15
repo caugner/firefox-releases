@@ -39,25 +39,39 @@
 #define nsICanvasRenderingContextInternal_h___
 
 #include "nsISupports.h"
-#include "nsICanvasElement.h"
 #include "nsIInputStream.h"
 #include "nsIDocShell.h"
 #include "gfxPattern.h"
 
-// {ed741c16-4039-469b-91da-dca742c51a9f}
+// {EC90F32E-7848-4819-A1E3-02E64C682A72}
 #define NS_ICANVASRENDERINGCONTEXTINTERNAL_IID \
-  { 0xed741c16, 0x4039, 0x469b, { 0x91, 0xda, 0xdc, 0xa7, 0x42, 0xc5, 0x1a, 0x9f } }
+{ 0xec90f32e, 0x7848, 0x4819, { 0xa1, 0xe3, 0x2, 0xe6, 0x4c, 0x68, 0x2a, 0x72 } }
 
+class nsHTMLCanvasElement;
 class gfxContext;
 class gfxASurface;
+class nsIPropertyBag;
+
+namespace mozilla {
+namespace layers {
+class CanvasLayer;
+class LayerManager;
+}
+namespace ipc {
+class Shmem;
+}
+}
 
 class nsICanvasRenderingContextInternal : public nsISupports {
 public:
+  typedef mozilla::layers::CanvasLayer CanvasLayer;
+  typedef mozilla::layers::LayerManager LayerManager;
+
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICANVASRENDERINGCONTEXTINTERNAL_IID)
 
   // This method should NOT hold a ref to aParentCanvas; it will be called
   // with nsnull when the element is going away.
-  NS_IMETHOD SetCanvasElement(nsICanvasElement* aParentCanvas) = 0;
+  NS_IMETHOD SetCanvasElement(nsHTMLCanvasElement* aParentCanvas) = 0;
 
   // Sets the dimensions of the canvas, in pixels.  Called
   // whenever the size of the element changes.
@@ -87,6 +101,34 @@ public:
   // dst alpha is always 1.0.  If this is never called, the context
   // defaults to false (not opaque).
   NS_IMETHOD SetIsOpaque(PRBool isOpaque) = 0;
+
+  // Invalidate this context and release any held resources, in preperation
+  // for possibly reinitializing with SetDimensions/InitializeWithSurface.
+  NS_IMETHOD Reset() = 0;
+
+  // Return the CanvasLayer for this context, creating
+  // one for the given layer manager if not available.
+  virtual already_AddRefed<CanvasLayer> GetCanvasLayer(CanvasLayer *aOldLayer,
+                                                       LayerManager *aManager) = 0;
+
+  virtual void MarkContextClean() = 0;
+
+  // Redraw the dirty rectangle of this canvas.
+  NS_IMETHOD Redraw(const gfxRect &dirty) = 0;
+
+  // Passes a generic nsIPropertyBag options argument, along with the
+  // previous one, if any.  Optional.
+  NS_IMETHOD SetContextOptions(nsIPropertyBag *aNewOptions) { return NS_OK; }
+
+  //
+  // shmem support
+  //
+
+  // If this context can be set to use Mozilla's Shmem segments as its backing
+  // store, this will set it to that state. Note that if you have drawn
+  // anything into this canvas before changing the shmem state, it will be
+  // lost.
+  NS_IMETHOD SetIsIPC(PRBool isIPC) = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsICanvasRenderingContextInternal,

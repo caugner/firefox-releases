@@ -45,7 +45,7 @@
 #    2. cd mozilla
 #    3. create your .mozconfig file with
 #       ac_add_options --enable-application=browser
-#    4. gmake -f client.mk 
+#    4. gmake -f client.mk
 #
 # Other targets (gmake -f client.mk [targets...]),
 #    build
@@ -69,8 +69,7 @@
 #
 #######################################################################
 # Defines
-#
-CVS = cvs
+
 comma := ,
 
 CWD := $(CURDIR)
@@ -84,9 +83,11 @@ endif
 
 ifndef TOPSRCDIR
 ifeq (,$(wildcard client.mk))
-$(error Must run from the client.mk directory, or specify TOPSRCDIR)
+TOPSRCDIR := $(patsubst %/,%,$(dir $(MAKEFILE_LIST)))
+MOZ_OBJDIR = .
+else
+TOPSRCDIR := $(CWD)
 endif
-TOPSRCDIR = $(CWD)
 endif
 
 # try to find autoconf 2.13 - discard errors from 'which'
@@ -105,7 +106,6 @@ endif
 PERL ?= perl
 PYTHON ?= python
 
-RUN_AUTOCONF_LOCALLY = 1
 CONFIG_GUESS_SCRIPT := $(wildcard $(TOPSRCDIR)/build/autoconf/config.guess)
 ifdef CONFIG_GUESS_SCRIPT
   CONFIG_GUESS = $(shell $(CONFIG_GUESS_SCRIPT))
@@ -140,11 +140,12 @@ run_for_side_effects := \
 
 include $(TOPSRCDIR)/.mozconfig.mk
 
+ifndef MOZ_OBJDIR
+  MOZ_OBJDIR = obj-$(CONFIG_GUESS)
+endif
+
 ifdef MOZ_BUILD_PROJECTS
 
-ifndef MOZ_OBJDIR
-  $(error When MOZ_BUILD_PROJECTS is set, you must set MOZ_OBJDIR)
-endif
 ifdef MOZ_CURRENT_PROJECT
   OBJDIR = $(MOZ_OBJDIR)/$(MOZ_CURRENT_PROJECT)
   MOZ_MAKE = $(MAKE) $(MOZ_MAKE_FLAGS) -C $(OBJDIR)
@@ -156,13 +157,8 @@ endif
 
 else # MOZ_BUILD_PROJECTS
 
-ifdef MOZ_OBJDIR
-  OBJDIR = $(MOZ_OBJDIR)
-  MOZ_MAKE = $(MAKE) $(MOZ_MAKE_FLAGS) -C $(OBJDIR)
-else
-  OBJDIR := $(TOPSRCDIR)
-  MOZ_MAKE := $(MAKE) $(MOZ_MAKE_FLAGS)
-endif
+OBJDIR = $(MOZ_OBJDIR)
+MOZ_MAKE = $(MAKE) $(MOZ_MAKE_FLAGS) -C $(OBJDIR)
 
 endif # MOZ_BUILD_PROJECTS
 
@@ -172,7 +168,6 @@ CONFIGURES += $(TOPSRCDIR)/js/src/configure
 
 #######################################################################
 # Rules
-# 
 
 # The default rule is build
 build::
@@ -213,6 +208,7 @@ endif
 
 profiledbuild::
 	$(MAKE) -f $(TOPSRCDIR)/client.mk build MOZ_PROFILE_GENERATE=1
+	$(MAKE) -C $(PGO_OBJDIR) package
 	OBJDIR=${PGO_OBJDIR} $(PROFILE_GEN_SCRIPT)
 	$(MAKE) -f $(TOPSRCDIR)/client.mk maybe_clobber_profiledbuild
 	$(MAKE) -f $(TOPSRCDIR)/client.mk build MOZ_PROFILE_USE=1
@@ -273,7 +269,6 @@ else
 CONFIG_STATUS = $(wildcard $(OBJDIR)/config.status)
 CONFIG_CACHE  = $(wildcard $(OBJDIR)/config.cache)
 
-ifdef RUN_AUTOCONF_LOCALLY
 EXTRA_CONFIG_DEPS := \
 	$(TOPSRCDIR)/aclocal.m4 \
 	$(wildcard $(TOPSRCDIR)/build/autoconf/*.m4) \
@@ -283,7 +278,6 @@ EXTRA_CONFIG_DEPS := \
 $(CONFIGURES): %: %.in $(EXTRA_CONFIG_DEPS)
 	@echo Generating $@ using autoconf
 	cd $(@D); $(AUTOCONF)
-endif
 
 CONFIG_STATUS_DEPS := \
 	$(wildcard $(CONFIGURES)) \
@@ -291,8 +285,7 @@ CONFIG_STATUS_DEPS := \
 	$(TOPSRCDIR)/.mozconfig.mk \
 	$(wildcard $(TOPSRCDIR)/nsprpub/configure) \
 	$(wildcard $(TOPSRCDIR)/config/milestone.txt) \
-	$(wildcard $(TOPSRCDIR)/config/chrome-versions.sh) \
-  $(wildcard $(addsuffix confvars.sh,$(wildcard $(TOPSRCDIR)/*/))) \
+	$(wildcard $(addsuffix confvars.sh,$(wildcard $(TOPSRCDIR)/*/))) \
 	$(NULL)
 
 # configure uses the program name to determine @srcdir@. Calling it without
@@ -301,10 +294,6 @@ CONFIG_STATUS_DEPS := \
 ifeq ($(TOPSRCDIR),$(OBJDIR))
   CONFIGURE = ./configure
 else
-  CONFIGURE = $(TOPSRCDIR)/configure
-endif
-
-ifdef MOZ_TOOLS
   CONFIGURE = $(TOPSRCDIR)/configure
 endif
 
@@ -418,4 +407,4 @@ echo-variable-%:
 # in parallel.
 .NOTPARALLEL:
 
-.PHONY: checkout real_checkout depend build profiledbuild maybe_clobber_profiledbuild export libs alldep install clean realclean distclean cleansrcdir pull_all build_all clobber clobber_all pull_and_build_all everything configure preflight_all preflight postflight postflight_all
+.PHONY: checkout real_checkout depend build profiledbuild maybe_clobber_profiledbuild export libs alldep install clean realclean distclean cleansrcdir pull_all build_all clobber clobber_all pull_and_build_all everything configure preflight_all preflight postflight postflight_all upload sdk

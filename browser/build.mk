@@ -47,13 +47,24 @@ endif
 
 tier_app_dirs += $(MOZ_BRANDING_DIRECTORY)
 
+tier_app_dirs += toolkit/components/console/hudservice
+
+ifdef MOZ_SERVICES_SYNC
+tier_app_dirs += services
+endif
+
 tier_app_dirs += browser
+# Never add other tier_app_dirs after browser. They won't get packaged
+# properly on mac.
 
 installer:
 	@$(MAKE) -C browser/installer installer
 
 package:
 	@$(MAKE) -C browser/installer
+
+package-compare:
+	@$(MAKE) -C browser/installer package-compare
 
 install::
 	@$(MAKE) -C browser/installer install

@@ -42,8 +42,11 @@ VPATH     = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
+DEFINES += -DMOZ_NO_MOZALLOC
+
 EXTRA_PP_COMPONENTS = \
     FastStartup.js \
+    FastStartup.manifest \
     $(NULL)
 
 ifdef _MSC_VER

@@ -72,9 +72,6 @@
   <![CDATA[
 
     function runTest() {
-      const Cc = Components.classes;
-      const Ci = Components.interfaces;
-
       var bs = Cc["@mozilla.org/browser/nav-bookmarks-service;1"].
                getService(Ci.nsINavBookmarksService);
       var ts = Cc["@mozilla.org/browser/tagging-service;1"].
@@ -85,7 +82,7 @@
         return ios.newURI(spec, null, null);
       }
 
-      var testURI = uri("http://www.mozilla.org/");
+      var testURI = uri("http://www.example.com/");
       var testTag = "foo";
       var testTagUpper = "Foo";
 
@@ -104,14 +101,14 @@
       gEditItemOverlay.onTagsFieldBlur();
 
       // test that the tag has been added in the backend
-      is(ts.getTagsForURI(testURI, {})[0], testTag, "tags match");
+      is(ts.getTagsForURI(testURI)[0], testTag, "tags match");
 
       // change the tag
       document.getElementById("editBMPanel_tagsField").value = testTagUpper;
       gEditItemOverlay.onTagsFieldBlur();
 
       // test that the tag has been added in the backend
-      is(ts.getTagsForURI(testURI, {})[0], testTagUpper, "tags match");
+      is(ts.getTagsForURI(testURI)[0], testTagUpper, "tags match");
 
       // Cleanup.
       ts.untagURI(testURI, [testTag]);

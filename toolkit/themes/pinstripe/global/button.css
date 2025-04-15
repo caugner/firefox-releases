@@ -37,13 +37,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-/* ===== button.css =====================================================
-  == Styles used by the XUL button element.
-  ======================================================================= */
-
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
-
-/* :::::::::: button :::::::::: */
 
 button {
   -moz-appearance: button;
@@ -52,6 +46,7 @@ button {
   margin: 5px 6px 3px;
   min-width: 79px;
   color: ButtonText;
+  text-shadow: none;
 }
 
 .button-text {
@@ -78,8 +73,6 @@ button[disabled="true"] {
 /* ::::: menu/menu-button buttons ::::: */
 
 button[type="menu-button"] {
-  -moz-box-align: center;
-  -moz-box-pack: center;
   margin: 0;
   border: none;
 }
@@ -87,7 +80,7 @@ button[type="menu-button"] {
 .button-menu-dropmarker,
 .button-menubutton-dropmarker {
   -moz-appearance: none !important;
-  border: none !important;
+  border: none;
   background-color: transparent !important;
   margin: 1px;
 }
@@ -101,4 +94,41 @@ button[type="menu-button"] {
 button.plain {
   margin: 0 !important;
   padding: 0 !important;
+}
+
+/* ::::: help button ::::: */
+
+button[dlgtype="help"] {
+  min-width: 1px;
+  padding: 0;
+  -moz-appearance: none;
+  -moz-box-align: start;
+  height: 24px;
+  width: 24px;
+  margin: 3px 4px;
+}
+
+button[dlgtype="help"][disabled] {
+  opacity: 0.5;
+}
+
+button[dlgtype="help"]:-moz-focusring {
+  outline: 2px solid -moz-mac-focusring;
+  outline-offset: -2px;
+  -moz-outline-radius: 10000px;
+}
+
+button[dlgtype="help"] > .button-box > .button-icon {
+  list-style-image: url("chrome://global/skin/icons/question-mark.png");
+  -moz-image-region: rect(0 24px 24px 0);
+  padding: 0;
+  margin: 0;
+}
+
+button[dlgtype="help"]:active > .button-box > .button-icon {
+  -moz-image-region: rect(0 48px 24px 24px);
+}
+
+button[dlgtype="help"] > .button-box > .button-text {
+  display: none;
 }

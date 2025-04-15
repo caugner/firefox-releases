@@ -53,9 +53,8 @@
 #include "plstr.h"
 #include "prenv.h"
 #include "nsDebug.h"
-
-#if defined(XP_MACOSX)
-#include <ucontext.h>
+#ifdef MOZ_IPC
+#  include "nsXULAppAPI.h"
 #endif
 
 #if defined(LINUX)
@@ -68,6 +67,7 @@
 
 #if defined(SOLARIS)
 #include <sys/resource.h>
+#include <ucontext.h>
 #endif
 
 #ifdef XP_BEOS
@@ -76,50 +76,24 @@
 #include "nsCOMPtr.h"
 #include "nsIServiceManager.h"
 #include "nsIAppStartup.h"
-#include "nsXPFEComponentsCID.h"
-#endif
-
-#ifdef MOZ_WIDGET_PHOTON
-#include <photon/PhProto.h>
+#include "nsToolkitCompsCID.h"
 #endif
 
 static char _progname[1024] = "huh?";
 static unsigned int _gdb_sleep_duration = 300;
+
+#ifdef MOZ_IPC
+// NB: keep me up to date with the same variable in
+// ipc/chromium/chrome/common/ipc_channel_posix.cc
+static const int kClientChannelFd = 3;
+#endif
 
 #if defined(LINUX) && defined(DEBUG) && \
       (defined(__i386) || defined(__x86_64) || defined(PPC))
 #define CRAWL_STACK_ON_SIGSEGV
 #endif
 
-#ifdef MOZ_WIDGET_PHOTON
-void abnormal_exit_handler(int signum)
-{
-  /* Free any shared memory that has been allocated */
-  PgShmemCleanup();
-
-#if defined(DEBUG)
-  if (    (signum == SIGSEGV)
-       || (signum == SIGILL)
-       || (signum == SIGABRT)
-       || (signum == SIGFPE)
-     )
-  {
-    printf("prog = %s\npid = %d\nsignal = %s\n", 
-           _progname, getpid(), strsignal(signum));
-
-    printf("Sleeping for %d seconds.\n",_gdb_sleep_duration);
-    printf("Type 'gdb %s %d' to attach your debugger to this thread.\n",
-           _progname, getpid());
-
-    sleep(_gdb_sleep_duration);
-
-    printf("Done sleeping...\n");
-  }
-#endif
-
-  _exit(1);
-}
-#elif defined(CRAWL_STACK_ON_SIGSEGV)
+#if defined(CRAWL_STACK_ON_SIGSEGV)
 
 #include <unistd.h>
 #include "nsISupportsUtils.h"
@@ -134,7 +108,7 @@ static void PrintStackFrame(void *aPC, void *aClosure)
 
   NS_DescribeCodeAddress(aPC, &details);
   NS_FormatCodeAddressDetails(aPC, &details, buf, sizeof(buf));
-  fprintf(stdout, buf);
+  fputs(buf, stdout);
 }
 
 }
@@ -161,6 +135,17 @@ ah_crap_handler(int signum)
 
   _exit(signum);
 }
+
+#ifdef MOZ_IPC
+void
+child_ah_crap_handler(int signum)
+{
+  if (!getenv("MOZ_DONT_UNBLOCK_PARENT_ON_CHILD_CRASH"))
+    close(kClientChannelFd);
+  ah_crap_handler(signum);
+}
+#endif
+
 #endif // CRAWL_STACK_ON_SIGSEGV
 
 #ifdef XP_BEOS
@@ -213,21 +198,27 @@ my_glib_log_func(const gchar *log_domain, GLogLevelFlags log_level,
 
 #endif
 
+#ifdef SA_SIGINFO
 static void fpehandler(int signum, siginfo_t *si, void *context)
 {
+  /* Integer divide by zero or integer overflow. */
+  /* Note: FPE_INTOVF is ignored on Intel, PowerPC and SPARC systems. */
+  if (si->si_code == FPE_INTDIV || si->si_code == FPE_INTOVF) {
+    NS_DebugBreak(NS_DEBUG_ABORT, "Divide by zero", nsnull, __FILE__, __LINE__);
+  }
+
 #ifdef XP_MACOSX
   ucontext_t *uc = (ucontext_t *)context;
 
-// Not available with 10.4 SDK? See bug 533035
-#if 0
-  _STRUCT_FP_CONTROL *ctrl = &uc->uc_mcontext->fs.fpu_fcw;
-  ctrl->invalid = ctrl->denorm = ctrl->zdiv = ctrl->ovrfl = ctrl->undfl = ctrl->precis = 1;
+#if defined(__i386__) || defined(__amd64__)
+  _STRUCT_FP_CONTROL *ctrl = &uc->uc_mcontext->__fs.__fpu_fcw;
+  ctrl->__invalid = ctrl->__denorm = ctrl->__zdiv = ctrl->__ovrfl = ctrl->__undfl = ctrl->__precis = 1;
 
-  _STRUCT_FP_STATUS *status = &uc->uc_mcontext->fs.fpu_fsw;
-  status->invalid = status->denorm = status->zdiv = status->ovrfl = status->undfl =
-    status->precis = status->stkflt = status->errsumm = 0;
+  _STRUCT_FP_STATUS *status = &uc->uc_mcontext->__fs.__fpu_fsw;
+  status->__invalid = status->__denorm = status->__zdiv = status->__ovrfl = status->__undfl =
+    status->__precis = status->__stkflt = status->__errsumm = 0;
 
-  __uint32_t *mxcsr = &uc->uc_mcontext->fs.fpu_mxcsr;
+  __uint32_t *mxcsr = &uc->uc_mcontext->__fs.__fpu_mxcsr;
   *mxcsr |= SSE_EXCEPTION_MASK; /* disable all SSE exceptions */
   *mxcsr &= ~SSE_STATUS_FLAGS; /* clear all pending SSE exceptions */
 #endif
@@ -258,7 +249,34 @@ static void fpehandler(int signum, siginfo_t *si, void *context)
   *mxcsr &= ~SSE_STATUS_FLAGS; /* clear all pending SSE exceptions */
 #endif
 #endif
+#ifdef SOLARIS
+  ucontext_t *uc = (ucontext_t *)context;
+
+#if defined(__i386)
+  uint32_t *cw = &uc->uc_mcontext.fpregs.fp_reg_set.fpchip_state.state[0];
+  *cw |= FPU_EXCEPTION_MASK;
+
+  uint32_t *sw = &uc->uc_mcontext.fpregs.fp_reg_set.fpchip_state.state[1];
+  *sw &= ~FPU_STATUS_FLAGS;
+
+  /* address of the instruction that caused the exception */
+  uint32_t *ip = &uc->uc_mcontext.fpregs.fp_reg_set.fpchip_state.state[3];
+  uc->uc_mcontext.gregs[REG_PC] = *ip;
+#endif
+#if defined(__amd64__)
+  uint16_t *cw = &uc->uc_mcontext.fpregs.fp_reg_set.fpchip_state.cw;
+  *cw |= FPU_EXCEPTION_MASK;
+
+  uint16_t *sw = &uc->uc_mcontext.fpregs.fp_reg_set.fpchip_state.sw;
+  *sw &= ~FPU_STATUS_FLAGS;
+
+  uint32_t *mxcsr = &uc->uc_mcontext.fpregs.fp_reg_set.fpchip_state.mxcsr;
+  *mxcsr |= SSE_EXCEPTION_MASK; /* disable all SSE exceptions */
+  *mxcsr &= ~SSE_STATUS_FLAGS; /* clear all pending SSE exceptions */
+#endif
+#endif
 }
+#endif
 
 void InstallSignalHandlers(const char *ProgramName)
 {
@@ -273,27 +291,28 @@ void InstallSignalHandlers(const char *ProgramName)
     }
   }
 
-#if defined(MOZ_WIDGET_PHOTON)
- /* Neutrino need this to free shared memory in case of a crash */
-  signal(SIGTERM, abnormal_exit_handler);
-  signal(SIGQUIT, abnormal_exit_handler);
-  signal(SIGINT,  abnormal_exit_handler);
-  signal(SIGHUP,  abnormal_exit_handler);
-  signal(SIGSEGV, abnormal_exit_handler);
-  signal(SIGILL,  abnormal_exit_handler);
-  signal(SIGABRT, abnormal_exit_handler);
-
-#elif defined(CRAWL_STACK_ON_SIGSEGV)
-  signal(SIGSEGV, ah_crap_handler);
-  signal(SIGILL, ah_crap_handler);
-  signal(SIGABRT, ah_crap_handler);
+#if defined(CRAWL_STACK_ON_SIGSEGV)
+  if (!getenv("XRE_NO_WINDOWS_CRASH_DIALOG")) {
+    void (*crap_handler)(int) =
+#ifdef MOZ_IPC
+      GeckoProcessType_Default != XRE_GetProcessType() ?
+          child_ah_crap_handler :
+#endif
+          ah_crap_handler;
+    signal(SIGSEGV, crap_handler);
+    signal(SIGILL, crap_handler);
+    signal(SIGABRT, crap_handler);
+  }
 #endif // CRAWL_STACK_ON_SIGSEGV
 
+#ifdef SA_SIGINFO
   /* Install a handler for floating point exceptions and disable them if they occur. */
   struct sigaction sa, osa;
   sa.sa_flags = SA_ONSTACK | SA_RESTART | SA_SIGINFO;
   sa.sa_sigaction = fpehandler;
+  sigemptyset(&sa.sa_mask);
   sigaction(SIGFPE, &sa, &osa);
+#endif
 
 #if defined(DEBUG) && defined(LINUX)
   const char *memLimit = PR_GetEnv("MOZ_MEM_LIMIT");
@@ -368,8 +387,13 @@ void InstallSignalHandlers(const char *ProgramName)
 
 #if defined(_M_IX86) || defined(_M_X64)
 
+#ifdef _M_X64
+#define X87CW(ctx) (ctx)->FltSave.ControlWord
+#define X87SW(ctx) (ctx)->FltSave.StatusWord
+#else
 #define X87CW(ctx) (ctx)->FloatSave.ControlWord
 #define X87SW(ctx) (ctx)->FloatSave.StatusWord
+#endif
 
 /*
  * SSE traps raise these exception codes, which are defined in internal NT headers
@@ -377,6 +401,8 @@ void InstallSignalHandlers(const char *ProgramName)
  */
 #define STATUS_FLOAT_MULTIPLE_FAULTS 0xC00002B4
 #define STATUS_FLOAT_MULTIPLE_TRAPS  0xC00002B5
+
+static LPTOP_LEVEL_EXCEPTION_FILTER gFPEPreviousFilter;
 
 LONG __stdcall FpeHandler(PEXCEPTION_POINTERS pe)
 {
@@ -405,12 +431,16 @@ LONG __stdcall FpeHandler(PEXCEPTION_POINTERS pe)
 #endif
       return EXCEPTION_CONTINUE_EXECUTION;
   }
-  return EXCEPTION_CONTINUE_SEARCH;
+  LONG action = EXCEPTION_CONTINUE_SEARCH;
+  if (gFPEPreviousFilter)
+    action = gFPEPreviousFilter(pe);
+
+  return action;
 }
 
 void InstallSignalHandlers(const char *ProgramName)
 {
-  SetUnhandledExceptionFilter(FpeHandler);
+  gFPEPreviousFilter = SetUnhandledExceptionFilter(FpeHandler);
 }
 
 #else
@@ -420,6 +450,9 @@ void InstallSignalHandlers(const char *ProgramName)
 }
 
 #endif
+
+#elif defined(XP_OS2)
+/* OS/2's FPE handler is implemented in NSPR */
 
 #else
 #error No signal handling implementation for this platform.

@@ -42,10 +42,11 @@ function $(n) {
     return document.getElementById(n);
 }
 
-function makeTableCell(s, c) {
+function makeTableCell(content, c) {
     var td = document.createElement("td");
-    var text = document.createTextNode(s);
-    td.appendChild(text);
+    if (typeof content == "string")
+      content = document.createTextNode(content);
+    td.appendChild(content);
     if (c)
         td.setAttribute("class", c);
 
@@ -69,7 +70,7 @@ function makeTableRow() {
         if (typeof(arg) == "string") {
             row.appendChild(makeTableCell(arg));
         } else if (arg.__proto__ == Array.prototype) {
-            row.appendChild(makeAbbrNode(arg[0], arg[1]));
+            row.appendChild(makeTableCell(makeAbbrNode(arg[0], arg[1])));
         } else {
             row.appendChild(arg);
         }
@@ -138,6 +139,7 @@ function updateMemoryStatus()
         mo.removeChild(mo.lastChild);
 
     var otherCount = 0;
+
     for each (var rep in gMemReporters) {
         var row = makeTableRow([rep.path, rep.description],
                                makeTableCell(formatNumber(rep.memoryUsed), "memValue"));
@@ -153,8 +155,10 @@ function updateMemoryStatus()
     }
 }
 
-function doLoad()
+function updateMemoryReporters()
 {
+    gMemReporters = [];
+
     var mgr = Components
         .classes["@mozilla.org/memory-reporter-manager;1"]
         .getService(Components.interfaces.nsIMemoryReporterManager);
@@ -164,7 +168,30 @@ function doLoad()
         var mr = e.getNext().QueryInterface(Components.interfaces.nsIMemoryReporter);
         gMemReporters[mr.path] = mr;
     }
+}
 
+function ChildMemoryListener(subject, topic, data) {
+  updateMemoryReporters();
+  updateMemoryStatus();
+}
+
+
+function doLoad()
+{
+    var os = Components.classes["@mozilla.org/observer-service;1"].
+        getService(Components.interfaces.nsIObserverService);
+    os.notifyObservers(null, "child-memory-reporter-request", null);
+
+    os.addObserver(ChildMemoryListener, "child-memory-reporter-update", false);
+
+    updateMemoryReporters();
     updateMemoryStatus();
 }
 
+function doUnload()
+{
+    var os = Components.classes["@mozilla.org/observer-service;1"].
+        getService(Components.interfaces.nsIObserverService);
+    os.removeObserver(ChildMemoryListener, "child-memory-reporter-update");
+    
+}

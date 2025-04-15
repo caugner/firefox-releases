@@ -91,6 +91,29 @@ static DllBlockInfo sWindowsDllBlocklist[] = {
   // of this DLL cause crashes
   {"googledesktopnetwork3.dll", UNVERSIONED},
 
+  // rdolib.dll - Suspected malware
+  {"rdolib.dll", MAKE_VERSION(6,0,88,4)},
+
+  // fgjk4wvb.dll - Suspected malware
+  {"fgjk4wvb.dll", MAKE_VERSION(8,8,8,8)},
+  
+  // radhslib.dll - Naomi internet filter - unmaintained since 2006
+  {"radhslib.dll", UNVERSIONED},
+
+  // Music download filter for vkontakte.ru - old instances
+  // of this DLL cause crashes
+  {"vksaver.dll", MAKE_VERSION(2,2,2,0)},
+
+  // Topcrash in Firefox 4.0b1
+  {"rlxf.dll", MAKE_VERSION(1,2,323,1)},
+
+  // psicon.dll - Topcrashes in Thunderbird, and some crashes in Firefox
+  // Adobe photoshop library, now redundant in later installations
+  {"psicon.dll", ALL_VERSIONS},
+
+  // Topcrash in Firefox 4 betas (bug 618899)
+  {"accelerator.dll", MAKE_VERSION(3,2,1,6)},
+  
   // leave these two in always for tests
   { "mozdllblockingtest.dll", ALL_VERSIONS },
   { "mozdllblockingtest_versioned.dll", 0x0000000400000000ULL },

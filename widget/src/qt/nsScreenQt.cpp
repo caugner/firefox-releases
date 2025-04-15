@@ -37,13 +37,14 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsScreenQt.h"
-
 #include <qcolor.h>
 #include <qcolormap.h>
 #include <qrect.h>
 #include <qdesktopwidget.h>
 #include <qapplication.h>
+
+#include "nsScreenQt.h"
+#include "nsXULAppAPI.h"
 
 nsScreenQt::nsScreenQt(int aScreen)
     : mScreen(aScreen)
@@ -66,6 +67,7 @@ nsScreenQt::GetRect(PRInt32 *outLeft,PRInt32 *outTop,
                     PRInt32 *outWidth,PRInt32 *outHeight)
 {
     QRect r = QApplication::desktop()->screenGeometry(mScreen);
+
     *outTop = r.x();
     *outLeft = r.y();
     *outWidth = r.width();

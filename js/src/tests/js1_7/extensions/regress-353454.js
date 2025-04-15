@@ -35,7 +35,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-var gTestfile = 'regress-353454.js';
 //-----------------------------------------------------------------------------
 var BUGNUMBER = 353454;
 var summary = 'Do not assert with regexp iterator';
@@ -55,7 +54,7 @@ function test()
  
   try
   {
-    expect = 'TypeError: y.__iterator__ returned a primitive value';
+    expect = 'TypeError: trap __iterator__ for y returned a primitive value';
     var obj = {a: 5}; obj.__iterator__ = /x/g; for(x in y = let (z) obj) { }
     expect = 'No Error';
   }

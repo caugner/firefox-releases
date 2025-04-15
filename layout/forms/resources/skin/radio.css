@@ -44,7 +44,7 @@
 
 /* ..... disabled state ..... */
 
-input[type="radio"][disabled="true"] {
+input[type="radio"]:disabled {
   background-color: -moz-Dialog;
 }
 
@@ -57,7 +57,7 @@ input[type="radio"] {
   border-right: 1px solid ThreeDHighlight;
   border-bottom: 1px solid ThreeDHighlight;
   border-left: 1px solid ThreeDShadow;
-  -moz-border-radius: 50%;
+  border-radius: 50%;
   width: 12px;
   height: 12px;
   background-color: -moz-Field;
@@ -68,7 +68,7 @@ xul|*.input-radio-check-box2 {
   border-right: 1px solid ThreeDLightShadow;
   border-bottom: 1px solid ThreeDLightShadow;
   border-left: 1px solid ThreeDDarkShadow;
-  -moz-border-radius: 50%;
+  border-radius: 50%;
   padding: 2px;
   width: 4px;
   height: 4px;
@@ -89,6 +89,6 @@ input[type="radio"]:checked > xul|*.input-radio-check-box2 {
   list-style-image: url("chrome://forms/skin/radio-check.gif");
 }
 
-input[type="radio"][disabled="true"]:checked {
+input[type="radio"]:disabled:checked {
   list-style-image: url("chrome://forms/skin/radio-check-dis.gif") !important
 }

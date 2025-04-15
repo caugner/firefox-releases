@@ -1,10 +1,14 @@
 af
+ak
 ar
 as
+ast
 be
 bg
 bn-BD
 bn-IN
+br
+bs
 ca
 cs
 cy
@@ -12,6 +16,7 @@ da
 de
 el
 en-GB
+en-ZA
 eo
 es-AR
 es-CL
@@ -24,12 +29,14 @@ fi
 fr
 fy-NL
 ga-IE
+gd
 gl
 gu-IN
 he
 hi-IN
 hr
 hu
+hy-AM
 id
 is
 it
@@ -37,11 +44,14 @@ ja
 ja-JP-mac
 ka
 kk
+km
 kn
 ko
 ku
+lg
 lt
 lv
+mai
 mk
 ml
 mn
@@ -49,6 +59,7 @@ mr
 nb-NO
 nl
 nn-NO
+nso
 oc
 or
 pa-IN
@@ -61,6 +72,7 @@ ru
 si
 sk
 sl
+son
 sq
 sr
 sv-SE
@@ -73,3 +85,4 @@ uk
 vi
 zh-CN
 zh-TW
+zu

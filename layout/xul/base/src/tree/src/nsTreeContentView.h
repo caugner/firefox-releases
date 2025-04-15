@@ -61,7 +61,9 @@ class nsTreeContentView : public nsINativeTreeView,
 
     ~nsTreeContentView(void);
 
-    NS_DECL_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsTreeContentView,
+                                             nsINativeTreeView)
 
     NS_DECL_NSITREEVIEW
     // nsINativeTreeView: Untrusted code can use us
@@ -70,15 +72,14 @@ class nsTreeContentView : public nsINativeTreeView,
     NS_DECL_NSITREECONTENTVIEW
 
     // nsIDocumentObserver
-    virtual void ContentStatesChanged(nsIDocument* aDocument,
-                                      nsIContent* aContent1,
-                                      nsIContent* aContent2,
-                                      PRInt32 aStateMask);
+    NS_DECL_NSIDOCUMENTOBSERVER_CONTENTSTATESCHANGED
     NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTECHANGED
     NS_DECL_NSIMUTATIONOBSERVER_CONTENTAPPENDED
     NS_DECL_NSIMUTATIONOBSERVER_CONTENTINSERTED
     NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
     NS_DECL_NSIMUTATIONOBSERVER_NODEWILLBEDESTROYED
+
+    static PRBool CanTrustTreeSelection(nsISupports* aValue);
 
   protected:
     // Recursive methods which deal with serializing of nested content.

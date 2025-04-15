@@ -97,11 +97,12 @@
 
 enum EnsureNSSOperator
 {
-  nssLoading = 0,
+  nssLoadingComponent = 0,
   nssInitSucceeded = 1,
   nssInitFailed = 2,
   nssShutdown = 3,
-  nssEnsure = 4
+  nssEnsure = 100,
+  nssEnsureOnChromeOnly = 101
 };
 
 extern PRBool EnsureNSSInitialized(EnsureNSSOperator op);
@@ -238,8 +239,7 @@ class nsNSSComponent : public nsISignatureVerifier,
                        public nsINSSComponent,
                        public nsIObserver,
                        public nsSupportsWeakReference,
-                       public nsITimerCallback,
-                       public nsINSSErrorsService
+                       public nsITimerCallback
 {
 public:
   NS_DEFINE_STATIC_CID_ACCESSOR( NS_NSSCOMPONENT_CID )
@@ -252,7 +252,6 @@ public:
   NS_DECL_NSIENTROPYCOLLECTOR
   NS_DECL_NSIOBSERVER
   NS_DECL_NSITIMERCALLBACK
-  NS_DECL_NSINSSERRORSSERVICE
 
   NS_METHOD Init();
 
@@ -379,6 +378,15 @@ public:
   static nsresult getErrorMessageFromCode(PRInt32 err,
                                           nsINSSComponent *component,
                                           nsString &returnedMessage);
+};
+
+class nsPSMInitPanic
+{
+private:
+  static PRBool isPanic;
+public:
+  static void SetPanic() {isPanic = PR_TRUE;}
+  static PRBool GetPanic() {return isPanic;}
 };
 
 #endif // _nsNSSComponent_h_

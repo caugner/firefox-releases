@@ -53,6 +53,7 @@
 #include "nsIDOMKeyListener.h"
 #include "nsWeakReference.h"
 #include "mozISpellI18NUtil.h"
+#include "nsCycleCollectionParticipant.h"
 
 class nsIDOMDocumentRange;
 class nsIDOMMouseEventListener;
@@ -218,9 +219,10 @@ private:
 
 public:
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_NSIEDITACTIONLISTENER
   NS_DECL_NSIINLINESPELLCHECKER
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(mozInlineSpellChecker, nsIDOMKeyListener)
 
   // returns true if it looks likely that we can enable real-time spell checking
   static PRBool CanEnableInlineSpellChecking();
@@ -277,7 +279,7 @@ public:
                         mozInlineSpellStatus* aStatus,
                         PRBool* aDoneChecking);
 
-  // helper routine to determine if a point is inside of a the passed in selection.
+  // helper routine to determine if a point is inside of the passed in selection.
   nsresult IsPointInSelection(nsISelection *aSelection,
                               nsIDOMNode *aNode,
                               PRInt32 aOffset,

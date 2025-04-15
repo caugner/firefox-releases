@@ -35,15 +35,20 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include <stdlib.h>
+#include <stdarg.h>
+
 #include "prmem.h"
+#include "prprf.h"
 
 #include "nsIServiceManager.h"
 
+#include "nsIConsoleService.h"
 #include "nsIDOMDocument.h"
 #include "nsIDocument.h"
 #include "nsIDOMCanvasRenderingContext2D.h"
 #include "nsICanvasRenderingContextInternal.h"
-#include "nsICanvasElement.h"
+#include "nsHTMLCanvasElement.h"
 #include "nsIPrincipal.h"
 #include "nsINode.h"
 
@@ -56,7 +61,7 @@
 using namespace mozilla;
 
 void
-CanvasUtils::DoDrawImageSecurityCheck(nsICanvasElement *aCanvasElement,
+CanvasUtils::DoDrawImageSecurityCheck(nsHTMLCanvasElement *aCanvasElement,
                                       nsIPrincipal *aPrincipal,
                                       PRBool forceWriteOnly)
 {
@@ -78,7 +83,7 @@ CanvasUtils::DoDrawImageSecurityCheck(nsICanvasElement *aCanvasElement,
     if (aPrincipal == nsnull)
         return;
 
-    nsCOMPtr<nsINode> elem = do_QueryInterface(aCanvasElement);
+    nsCOMPtr<nsINode> elem = do_QueryInterface(static_cast<nsIDOMHTMLCanvasElement*>(aCanvasElement));
     if (elem) { // XXXbz How could this actually be null?
         PRBool subsumes;
         nsresult rv =
@@ -91,4 +96,32 @@ CanvasUtils::DoDrawImageSecurityCheck(nsICanvasElement *aCanvasElement,
     }
 
     aCanvasElement->SetWriteOnly();
+}
+
+void
+CanvasUtils::LogMessage (const nsCString& errorString)
+{
+    nsCOMPtr<nsIConsoleService> console(do_GetService(NS_CONSOLESERVICE_CONTRACTID));
+    if (!console)
+        return;
+
+    console->LogStringMessage(NS_ConvertUTF8toUTF16(errorString).get());
+    fprintf(stderr, "%s\n", errorString.get());
+}
+
+void
+CanvasUtils::LogMessagef (const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    char buf[256];
+
+    nsCOMPtr<nsIConsoleService> console(do_GetService(NS_CONSOLESERVICE_CONTRACTID));
+    if (console) {
+        PR_vsnprintf(buf, 256, fmt, ap);
+        console->LogStringMessage(NS_ConvertUTF8toUTF16(nsDependentCString(buf)).get());
+        fprintf(stderr, "%s\n", buf);
+    }
+
+    va_end(ap);
 }

@@ -35,12 +35,10 @@
  * ***** END LICENSE BLOCK ***** */
 
 #ifdef DEBUG
-static const char CVS_ID[] = "@(#) $RCSfile: devslot.c,v $ $Revision: 1.25 $ $Date: 2008/11/20 04:53:44 $";
+static const char CVS_ID[] = "@(#) $RCSfile: devslot.c,v $ $Revision: 1.27 $ $Date: 2010/04/03 18:27:30 $";
 #endif /* DEBUG */
 
-#ifndef NSSCKEPV_H
-#include "nssckepv.h"
-#endif /* NSSCKEPV_H */
+#include "pkcs11.h"
 
 #ifndef DEVM_H
 #include "devm.h"
@@ -72,7 +70,7 @@ nssSlot_Destroy (
 )
 {
     if (slot) {
-	if (PR_AtomicDecrement(&slot->base.refCount) == 0) {
+	if (PR_ATOMIC_DECREMENT(&slot->base.refCount) == 0) {
 	    PZ_DestroyLock(slot->base.lock);
 	    return nssArena_Destroy(slot->base.arena);
 	}
@@ -109,7 +107,7 @@ nssSlot_AddRef (
   NSSSlot *slot
 )
 {
-    PR_AtomicIncrement(&slot->base.refCount);
+    PR_ATOMIC_INCREMENT(&slot->base.refCount);
     return slot;
 }
 

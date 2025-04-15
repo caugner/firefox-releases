@@ -179,7 +179,10 @@ SECMOD_AddModuleToList(SECMODModule *newModule)
 SECStatus
 SECMOD_AddModuleToDBOnlyList(SECMODModule *newModule)
 {
-    if (defaultDBModule == NULL) {
+    if (defaultDBModule && SECMOD_GetDefaultModDBFlag(newModule)) {
+	SECMOD_DestroyModule(defaultDBModule);
+	defaultDBModule = SECMOD_ReferenceModule(newModule);
+    } else if (defaultDBModule == NULL) {
 	defaultDBModule = SECMOD_ReferenceModule(newModule);
     }
     return secmod_AddModuleToList(&modulesDB,newModule);
@@ -269,6 +272,34 @@ SECMOD_FindModuleByID(SECMODModuleID id)
     SECMOD_GetReadLock(moduleLock);
     for(mlp = modules; mlp != NULL; mlp = mlp->next) {
 	if (id == mlp->module->moduleID) {
+	    module = mlp->module;
+	    SECMOD_ReferenceModule(module);
+	    break;
+	}
+    }
+    SECMOD_ReleaseReadLock(moduleLock);
+    if (module == NULL) {
+	PORT_SetError(SEC_ERROR_NO_MODULE);
+    }
+    return module;
+}
+
+/*
+ * find the function pointer.
+ */
+SECMODModule *
+secmod_FindModuleByFuncPtr(void *funcPtr) 
+{
+    SECMODModuleList *mlp;
+    SECMODModule *module = NULL;
+
+    SECMOD_GetReadLock(moduleLock);
+    for(mlp = modules; mlp != NULL; mlp = mlp->next) {
+	/* paranoia, shouldn't ever happen */
+	if (!mlp->module) {
+	    continue;
+	}
+	if (funcPtr == mlp->module->functionList) {
 	    module = mlp->module;
 	    SECMOD_ReferenceModule(module);
 	    break;
@@ -505,7 +536,7 @@ SECMOD_AddModule(SECMODModule *newModule)
         /* module already exists. */
     }
 
-    rv = SECMOD_LoadPKCS11Module(newModule);
+    rv = secmod_LoadPKCS11Module(newModule, NULL);
     if (rv != SECSuccess) {
 	return rv;
     }
@@ -1199,7 +1230,7 @@ SECMOD_CancelWait(SECMODModule *mod)
 	 * we intend to use it again */
 	if (CKR_OK == crv) {
             PRBool alreadyLoaded;
-	    secmod_ModuleInit(mod, &alreadyLoaded);
+	    secmod_ModuleInit(mod, NULL, &alreadyLoaded);
 	} else {
 	    /* Finalized failed for some reason,  notify the application
 	     * so maybe it has a prayer of recovering... */
@@ -1273,58 +1304,6 @@ secmod_UserDBOp(PK11SlotInfo *slot, CK_OBJECT_CLASS objClass,
 	return SECFailure;
     }
     return SECMOD_UpdateSlotList(slot->module);
-}
-
-/*
- * add escapes to protect quote characters...
- */
-static char *
-nss_addEscape(const char *string, char quote)
-{
-    char *newString = 0;
-    int escapes = 0, size = 0;
-    const char *src;
-    char *dest;
-
-    for (src=string; *src ; src++) {
-        if ((*src == quote) || (*src == '\\')) escapes++;
-        size++;
-    }
-
-    newString = PORT_ZAlloc(escapes+size+1);
-    if (newString == NULL) {
-        return NULL;
-    }
-
-    for (src=string, dest=newString; *src; src++,dest++) {
-        if ((*src == '\\') || (*src == quote)) {
-            *dest++ = '\\';
-        }
-        *dest = *src;
-    }
-
-    return newString;
-}
-
-static char *
-nss_doubleEscape(const char *string)
-{
-    char *round1 = NULL;
-    char *retValue = NULL;
-    if (string == NULL) {
-        goto done;
-    }
-    round1 = nss_addEscape(string,'>');
-    if (round1) {
-        retValue = nss_addEscape(round1,']');
-        PORT_Free(round1);
-    }
-
-done:
-    if (retValue == NULL) {
-        retValue = PORT_Strdup("");
-    }
-    return retValue;
 }
 
 /*
@@ -1409,7 +1388,7 @@ SECMOD_OpenNewSlot(SECMODModule *mod, const char *moduleSpec)
     }
 
     /* we've found the slot, now build the moduleSpec */
-    escSpec = nss_doubleEscape(moduleSpec);
+    escSpec = secmod_DoubleEscape(moduleSpec, '>', ']');
     if (escSpec == NULL) {
 	PK11_FreeSlot(slot);
 	return NULL;
@@ -1461,7 +1440,7 @@ SECMOD_OpenNewSlot(SECMODModule *mod, const char *moduleSpec)
  *         CK_TOKEN_INFO structure with an internationalize string (UTF8). 
  *         This value will be truncated at 32 bytes (no NULL, partial UTF8 
  *         characters dropped). You should specify a user friendly name here
- *         as this is the value the token will be refered to in most 
+ *         as this is the value the token will be referred to in most 
  *         application UI's. You should make sure tokenDescription is unique.
  *   slotDescription - The slotDescription value for this token returned 
  *         in the CK_SLOT_INFO structure with an internationalize string 
@@ -1524,4 +1503,83 @@ SECMOD_CloseUserDB(PK11SlotInfo *slot)
     rv = secmod_UserDBOp(slot, CKO_NETSCAPE_DELSLOT, sendSpec);
     PR_smprintf_free(sendSpec);
     return rv;
+}
+
+/*
+ * Restart PKCS #11 modules after a fork(). See secmod.h for more information.
+ */
+SECStatus
+SECMOD_RestartModules(PRBool force)
+{
+    SECMODModuleList *mlp;
+    SECStatus rrv = SECSuccess;
+    int lastError = 0;
+
+    if (!moduleLock) {
+    	PORT_SetError(SEC_ERROR_NOT_INITIALIZED);
+	return SECFailure;
+    }
+
+    /* Only need to restart the PKCS #11 modules that were initialized */
+    SECMOD_GetReadLock(moduleLock);
+    for (mlp = modules; mlp != NULL; mlp = mlp->next) {
+	SECMODModule *mod = mlp->module;
+	CK_ULONG count;
+	SECStatus rv;
+	int i;
+
+	/* If the module needs to be reset, do so */
+	if (force  || (PK11_GETTAB(mod)->
+			C_GetSlotList(CK_FALSE, NULL, &count) != CKR_OK)) {
+            PRBool alreadyLoaded;
+	    /* first call Finalize. This is not required by PKCS #11, but some
+             * older modules require it, and it doesn't hurt (compliant modules
+             * will return CKR_NOT_INITIALIZED */
+	    (void) PK11_GETTAB(mod)->C_Finalize(NULL);
+	    /* now initialize the module, this function reinitializes
+	     * a module in place, preserving existing slots (even if they
+	     * no longer exist) */
+	    rv = secmod_ModuleInit(mod, NULL, &alreadyLoaded);
+	    if (rv != SECSuccess) {
+		/* save the last error code */
+		lastError = PORT_GetError();
+		rrv = rv;
+		/* couldn't reinit the module, disable all its slots */
+		for (i=0; i < mod->slotCount; i++) {
+		    mod->slots[i]->disabled = PR_TRUE;
+		    mod->slots[i]->reason = PK11_DIS_COULD_NOT_INIT_TOKEN;
+		}
+		continue;
+	    }
+	    for (i=0; i < mod->slotCount; i++) {
+		/* get new token sessions, bump the series up so that
+		 * we refresh other old sessions. This will tell much of
+		 * NSS to flush cached handles it may hold as well */
+		rv = PK11_InitToken(mod->slots[i],PR_TRUE);
+		/* PK11_InitToken could fail if the slot isn't present.
+		 * If it is present, though, something is wrong and we should
+		 * disable the slot and let the caller know. */
+		if (rv != SECSuccess && PK11_IsPresent(mod->slots[i])) {
+		    /* save the last error code */
+		    lastError = PORT_GetError();
+		    rrv = rv;
+		    /* disable the token */
+		    mod->slots[i]->disabled = PR_TRUE;
+		    mod->slots[i]->reason = PK11_DIS_COULD_NOT_INIT_TOKEN;
+		}
+	    }
+	}
+    }
+    SECMOD_ReleaseReadLock(moduleLock);
+
+    /*
+     * on multiple failures, we are only returning the lastError. The caller
+     * can determine which slots are bad by calling PK11_IsDisabled().
+     */
+    if (rrv != SECSuccess) {
+	/* restore the last error code */
+	PORT_SetError(lastError);
+    }
+
+    return rrv;
 }

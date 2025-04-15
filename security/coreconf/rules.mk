@@ -410,7 +410,8 @@ PWD := $(shell pwd)
 endif
 endif
 
-core_abspath = $(if $(findstring :,$(1)),$(1),$(if $(filter /%,$(1)),$(1),$(PWD)/$(1)))
+# The quotes allow absolute paths to contain spaces.
+core_abspath = "$(if $(findstring :,$(1)),$(1),$(if $(filter /%,$(1)),$(1),$(PWD)/$(1)))"
 
 $(OBJDIR)/$(PROG_PREFIX)%$(OBJ_SUFFIX): %.c
 	@$(MAKE_OBJDIR)
@@ -921,7 +922,7 @@ $(MKDEPENDENCIES)::
 	@$(MAKE_OBJDIR)
 	touch $(MKDEPENDENCIES) 
 	chmod u+w $(MKDEPENDENCIES) 
-#on NT, the preceeding touch command creates a read-only file !?!?!
+#on NT, the preceding touch command creates a read-only file !?!?!
 #which is why we have to explicitly chmod it.
 	$(MKDEPEND) -p$(OBJDIR_NAME)/ -o'$(OBJ_SUFFIX)' -f$(MKDEPENDENCIES) \
 $(NOMD_CFLAGS) $(YOPT) $(CSRCS) $(CPPSRCS) $(ASFILES)

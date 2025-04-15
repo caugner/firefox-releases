@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=2 sw=2 et tw=79: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -60,6 +61,8 @@ nsMimeTypeArray::~nsMimeTypeArray()
   Clear();
 }
 
+
+DOMCI_DATA(MimeTypeArray, nsMimeTypeArray)
 
 // QueryInterface implementation for nsMimeTypeArray
 NS_INTERFACE_MAP_BEGIN(nsMimeTypeArray)
@@ -225,6 +228,10 @@ nsresult nsMimeTypeArray::GetMimeTypes()
   NS_PRECONDITION(!mInited && mPluginMimeTypeCount==0,
                       "already initialized");
 
+  if (!mNavigator) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   nsIDOMPluginArray* pluginArray = nsnull;
   nsresult rv = mNavigator->GetPlugins(&pluginArray);
   if (rv == NS_OK) {
@@ -283,6 +290,8 @@ nsMimeType::~nsMimeType()
 }
 
 
+DOMCI_DATA(MimeType, nsMimeType)
+
 // QueryInterface implementation for nsMimeType
 NS_INTERFACE_MAP_BEGIN(nsMimeType)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
@@ -307,14 +316,7 @@ nsMimeType::GetEnabledPlugin(nsIDOMPlugin** aEnabledPlugin)
   nsAutoString type;
   GetType(type);
 
-  PRBool disabled = PR_FALSE;
-
-  if (type.Length() == 1 && type.First() == '*') {
-    // Check if the default plugin is disabled.
-    disabled = nsContentUtils::GetBoolPref("plugin.default_plugin_disabled");
-  }
-
-  *aEnabledPlugin = disabled ? nsnull : mPlugin;
+  *aEnabledPlugin = mPlugin;
 
   NS_IF_ADDREF(*aEnabledPlugin);
 

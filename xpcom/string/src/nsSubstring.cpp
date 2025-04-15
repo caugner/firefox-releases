@@ -51,6 +51,8 @@
 #include "nsDependentString.h"
 #include "nsMemory.h"
 #include "pratom.h"
+#include "prprf.h"
+#include "nsStaticAtom.h"
 
 // ---------------------------------------------------------------------------
 
@@ -199,6 +201,9 @@ nsStringBuffer*
 nsStringBuffer::Alloc(size_t size)
   {
     NS_ASSERTION(size != 0, "zero capacity allocation not allowed");
+    NS_ASSERTION(sizeof(nsStringBuffer) + size <= size_t(PRUint32(-1)) &&
+                 sizeof(nsStringBuffer) + size > size,
+                 "mStorageSize will truncate");
 
     nsStringBuffer *hdr =
         (nsStringBuffer *) malloc(sizeof(nsStringBuffer) + size);
@@ -219,12 +224,15 @@ nsStringBuffer::Realloc(nsStringBuffer* hdr, size_t size)
     STRING_STAT_INCREMENT(Realloc);
 
     NS_ASSERTION(size != 0, "zero capacity allocation not allowed");
+    NS_ASSERTION(sizeof(nsStringBuffer) + size <= size_t(PRUint32(-1)) &&
+                 sizeof(nsStringBuffer) + size > size,
+                 "mStorageSize will truncate");
 
     // no point in trying to save ourselves if we hit this assertion
     NS_ASSERTION(!hdr->IsReadonly(), "|Realloc| attempted on readonly string");
 
     // Treat this as a release and addref for refcounting purposes, since we
-    // just asserted that the refcound is 1.  If we don't do that, refcount
+    // just asserted that the refcount is 1.  If we don't do that, refcount
     // logging will claim we've leaked all sorts of stuff.
     NS_LOG_RELEASE(hdr, 0, "nsStringBuffer");
     
@@ -262,7 +270,8 @@ nsStringBuffer::FromString(const nsACString& str)
   }
 
 void
-nsStringBuffer::ToString(PRUint32 len, nsAString &str)
+nsStringBuffer::ToString(PRUint32 len, nsAString &str,
+                         PRBool aMoveOwnership)
   {
     PRUnichar* data = static_cast<PRUnichar*>(Data());
 
@@ -273,12 +282,15 @@ nsStringBuffer::ToString(PRUint32 len, nsAString &str)
     PRUint32 flags = accessor->flags();
     flags = (flags & 0xFFFF0000) | nsSubstring::F_SHARED | nsSubstring::F_TERMINATED;
 
-    AddRef();
+    if (!aMoveOwnership) {
+      AddRef();
+    }
     accessor->set(data, len, flags);
   }
 
 void
-nsStringBuffer::ToString(PRUint32 len, nsACString &str)
+nsStringBuffer::ToString(PRUint32 len, nsACString &str,
+                         PRBool aMoveOwnership)
   {
     char* data = static_cast<char*>(Data());
 
@@ -289,7 +301,9 @@ nsStringBuffer::ToString(PRUint32 len, nsACString &str)
     PRUint32 flags = accessor->flags();
     flags = (flags & 0xFFFF0000) | nsCSubstring::F_SHARED | nsCSubstring::F_TERMINATED;
 
-    AddRef();
+    if (!aMoveOwnership) {
+      AddRef();
+    }
     accessor->set(data, len, flags);
   }
 

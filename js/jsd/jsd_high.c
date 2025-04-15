@@ -70,7 +70,7 @@ void JSD_ASSERT_VALID_CONTEXT(JSDContext* jsdc)
 #endif
 
 static JSClass global_class = {
-    "JSDGlobal", 0,
+    "JSDGlobal", JSCLASS_GLOBAL_FLAGS,
     JS_PropertyStub,  JS_PropertyStub,  JS_PropertyStub,  JS_PropertyStub,
     JS_EnumerateStub, JS_ResolveStub,   JS_ConvertStub,   JS_FinalizeStub,
     JSCLASS_NO_OPTIONAL_MEMBERS
@@ -86,9 +86,11 @@ _validateUserCallbacks(JSD_UserCallbacks* callbacks)
 static JSDContext*
 _newJSDContext(JSRuntime*         jsrt, 
                JSD_UserCallbacks* callbacks, 
-               void*              user)
+               void*              user,
+               JSObject*          scopeobj)
 {
     JSDContext* jsdc = NULL;
+    JSCrossCompartmentCall *call = NULL;
 
     if( ! jsrt )
         return NULL;
@@ -137,12 +139,20 @@ _newJSDContext(JSRuntime*         jsrt,
 
     JS_BeginRequest(jsdc->dumbContext);
 
-    jsdc->glob = JS_NewObject(jsdc->dumbContext, &global_class, NULL, NULL);
+    jsdc->glob = JS_NewCompartmentAndGlobalObject(jsdc->dumbContext, &global_class, NULL);
+
     if( ! jsdc->glob )
+        goto label_newJSDContext_failure;
+
+    call = JS_EnterCrossCompartmentCall(jsdc->dumbContext, jsdc->glob);
+    if( ! call )
         goto label_newJSDContext_failure;
 
     if( ! JS_InitStandardClasses(jsdc->dumbContext, jsdc->glob) )
         goto label_newJSDContext_failure;
+
+    if( call )
+        JS_LeaveCrossCompartmentCall(call);
 
     JS_EndRequest(jsdc->dumbContext);
 
@@ -194,12 +204,13 @@ _destroyJSDContext(JSDContext* jsdc)
 JSDContext*
 jsd_DebuggerOnForUser(JSRuntime*         jsrt, 
                       JSD_UserCallbacks* callbacks, 
-                      void*              user)
+                      void*              user,
+                      JSObject*          scopeobj)
 {
     JSDContext* jsdc;
     JSContext* iter = NULL;
 
-    jsdc = _newJSDContext(jsrt, callbacks, user);
+    jsdc = _newJSDContext(jsrt, callbacks, user, scopeobj);
     if( ! jsdc )
         return NULL;
 
@@ -213,9 +224,6 @@ jsd_DebuggerOnForUser(JSRuntime*         jsrt,
     JS_SetNewScriptHookProc(jsdc->jsrt, jsd_NewScriptHookProc, jsdc);
     JS_SetDestroyScriptHookProc(jsdc->jsrt, jsd_DestroyScriptHookProc, jsdc);
     jsd_DebuggerUnpause(jsdc);
-    if (!(jsdc->flags & JSD_DISABLE_OBJECT_TRACE)) {
-        JS_SetObjectHook(jsdc->jsrt, jsd_ObjectHook, jsdc);
-    }
 #ifdef LIVEWIRE
     LWDBG_SetNewScriptHookProc(jsd_NewScriptHookProc, jsdc);
 #endif
@@ -229,7 +237,7 @@ jsd_DebuggerOn(void)
 {
     JS_ASSERT(_jsrt);
     JS_ASSERT(_validateUserCallbacks(&_callbacks));
-    return jsd_DebuggerOnForUser(_jsrt, &_callbacks, _user);
+    return jsd_DebuggerOnForUser(_jsrt, &_callbacks, _user, NULL);
 }
 
 void
@@ -239,9 +247,6 @@ jsd_DebuggerOff(JSDContext* jsdc)
     /* clear hooks here */
     JS_SetNewScriptHookProc(jsdc->jsrt, NULL, NULL);
     JS_SetDestroyScriptHookProc(jsdc->jsrt, NULL, NULL);
-    /* Have to unset these too, since jsd_DebuggerPause only unsets
-       them conditionally */
-    JS_SetObjectHook(jsdc->jsrt, NULL, NULL);
 #ifdef LIVEWIRE
     LWDBG_SetNewScriptHookProc(NULL,NULL);
 #endif
@@ -262,9 +267,7 @@ void
 jsd_DebuggerPause(JSDContext* jsdc, JSBool forceAllHooksOff)
 {
     JS_SetDebuggerHandler(jsdc->jsrt, NULL, NULL);
-    if (forceAllHooksOff ||
-        (!(jsdc->flags & JSD_COLLECT_PROFILE_DATA) &&
-         (jsdc->flags & JSD_DISABLE_OBJECT_TRACE))) {
+    if (forceAllHooksOff || !(jsdc->flags & JSD_COLLECT_PROFILE_DATA)) {
         JS_SetExecuteHook(jsdc->jsrt, NULL, NULL);
         JS_SetCallHook(jsdc->jsrt, NULL, NULL);
     }

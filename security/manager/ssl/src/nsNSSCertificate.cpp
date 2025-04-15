@@ -74,6 +74,10 @@
 #include "nsIObjectInputStream.h"
 #include "nsIProgrammingLanguage.h"
 
+#ifdef MOZ_IPC
+#include "nsXULAppAPI.h"
+#endif
+
 #include "nspr.h"
 extern "C" {
 #include "pk11func.h"
@@ -119,11 +123,33 @@ NS_IMPL_THREADSAFE_ISUPPORTS7(nsNSSCertificate, nsIX509Cert,
                                                 nsISerializable,
                                                 nsIClassInfo)
 
+/* static */
+nsNSSCertificate*
+nsNSSCertificate::Create(CERTCertificate *cert)
+{
+#ifdef MOZ_IPC
+  if (GeckoProcessType_Default != XRE_GetProcessType()) {
+    NS_ERROR("Trying to initialize nsNSSCertificate in a non-chrome process!");
+    return nsnull;
+  }
+#endif
+  if (cert)
+    return new nsNSSCertificate(cert);
+  else
+    return new nsNSSCertificate();
+}
+
 nsNSSCertificate*
 nsNSSCertificate::ConstructFromDER(char *certDER, int derLen)
 {
-  nsNSSCertificate* newObject = new nsNSSCertificate();
-  if (!newObject->InitFromDER(certDER, derLen)) {
+#ifdef MOZ_IPC
+  // On non-chrome process prevent instantiation
+  if (GeckoProcessType_Default != XRE_GetProcessType())
+    return nsnull;
+#endif
+
+  nsNSSCertificate* newObject = nsNSSCertificate::Create();
+  if (newObject && !newObject->InitFromDER(certDER, derLen)) {
     delete newObject;
     newObject = nsnull;
   }
@@ -161,6 +187,11 @@ nsNSSCertificate::nsNSSCertificate(CERTCertificate *cert) :
                                            mCertType(CERT_TYPE_NOT_YET_INITIALIZED),
                                            mCachedEVStatus(ev_status_unknown)
 {
+#if defined(MOZ_IPC) && defined(DEBUG)
+  if (GeckoProcessType_Default != XRE_GetProcessType())
+    NS_ERROR("Trying to initialize nsNSSCertificate in a non-chrome process!");
+#endif
+
   nsNSSShutDownPreventionLock locker;
   if (isAlreadyShutDown())
     return;
@@ -175,6 +206,10 @@ nsNSSCertificate::nsNSSCertificate() :
   mCertType(CERT_TYPE_NOT_YET_INITIALIZED),
   mCachedEVStatus(ev_status_unknown)
 {
+#ifdef MOZ_IPC
+  if (GeckoProcessType_Default != XRE_GetProcessType())
+    NS_ERROR("Trying to initialize nsNSSCertificate in a non-chrome process!");
+#endif
 }
 
 nsNSSCertificate::~nsNSSCertificate()
@@ -596,7 +631,7 @@ nsNSSCertificate::GetWindowTitle(char * *aWindowTitle)
       }
     }
   } else {
-    NS_ASSERTION(0,"Somehow got nsnull for mCertificate in nsNSSCertificate.");
+    NS_ERROR("Somehow got nsnull for mCertificate in nsNSSCertificate.");
     *aWindowTitle = nsnull;
   }
   return NS_OK;
@@ -824,9 +859,11 @@ nsNSSCertificate::GetIssuer(nsIX509Cert * *aIssuer)
   CERTCertificate *issuer;
   issuer = CERT_FindCertIssuer(mCert, PR_Now(), certUsageSSLClient);
   if (issuer) {
-    nsCOMPtr<nsIX509Cert> cert = new nsNSSCertificate(issuer);
-    *aIssuer = cert;
-    NS_ADDREF(*aIssuer);
+    nsCOMPtr<nsIX509Cert> cert = nsNSSCertificate::Create(issuer);
+    if (cert) {
+      *aIssuer = cert;
+      NS_ADDREF(*aIssuer);
+    }
     CERT_DestroyCertificate(issuer);
   }
   return NS_OK;
@@ -881,7 +918,7 @@ nsNSSCertificate::GetChain(nsIArray **_rvChain)
        !CERT_LIST_END(node, nssChain);
        node = CERT_LIST_NEXT(node)) {
     PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("adding %s to chain\n", node->cert->nickname));
-    nsCOMPtr<nsIX509Cert> cert = new nsNSSCertificate(node->cert);
+    nsCOMPtr<nsIX509Cert> cert = nsNSSCertificate::Create(node->cert);
     array->AppendElement(cert, PR_FALSE);
   }
   *_rvChain = array;
@@ -1641,12 +1678,12 @@ nsNSSCertList::AddCert(nsIX509Cert *aCert)
 
   cert = nssCert->GetCert();
   if (cert == nsnull) {
-    NS_ASSERTION(0,"Somehow got nsnull for mCertificate in nsNSSCertificate.");
+    NS_ERROR("Somehow got nsnull for mCertificate in nsNSSCertificate.");
     return NS_ERROR_FAILURE;
   }
 
   if (mCertList == nsnull) {
-    NS_ASSERTION(0,"Somehow got nsnull for mCertList in nsNSSCertList.");
+    NS_ERROR("Somehow got nsnull for mCertList in nsNSSCertList.");
     return NS_ERROR_FAILURE;
   }
   CERT_AddCertToListTail(mCertList,cert);
@@ -1664,12 +1701,12 @@ nsNSSCertList::DeleteCert(nsIX509Cert *aCert)
   CERTCertListNode *node;
 
   if (cert == nsnull) {
-    NS_ASSERTION(0,"Somehow got nsnull for mCertificate in nsNSSCertificate.");
+    NS_ERROR("Somehow got nsnull for mCertificate in nsNSSCertificate.");
     return NS_ERROR_FAILURE;
   }
 
   if (mCertList == nsnull) {
-    NS_ASSERTION(0,"Somehow got nsnull for mCertList in nsNSSCertList.");
+    NS_ERROR("Somehow got nsnull for mCertList in nsNSSCertList.");
     return NS_ERROR_FAILURE;
   }
 
@@ -1760,7 +1797,7 @@ nsNSSCertListEnumerator::GetNext(nsISupports **_retval)
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsIX509Cert> nssCert = new nsNSSCertificate(node->cert);
+  nsCOMPtr<nsIX509Cert> nssCert = nsNSSCertificate::Create(node->cert);
   if (!nssCert) { 
     return NS_ERROR_OUT_OF_MEMORY;
   }

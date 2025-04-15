@@ -15,14 +15,15 @@
 
     <content sizetopopup="pref">
       <xul:hbox class="autocomplete-textbox-container" flex="1" align="center">
-        <children includes="image|deck|stack">
+        <children includes="image|deck|stack|box">
           <xul:image class="autocomplete-icon" allowevents="true"/>
         </children>
 
         <xul:hbox class="textbox-input-box" flex="1" xbl:inherits="context,tooltiptext=inputtooltiptext">
+          <children/>
           <html:input anonid="input" class="autocomplete-textbox textbox-input"
                       flex="1" allowevents="true"
-                      xbl:inherits="tooltiptext=inputtooltiptext,onfocus,onblur,value,type,maxlength,disabled,size,readonly,userAction"/>
+                      xbl:inherits="tooltiptext=inputtooltiptext,onfocus,onblur,value,type,maxlength,disabled,size,readonly,placeholder,tabindex,accesskey,mozactionhint,userAction"/>
         </xul:hbox>
         <children includes="hbox"/>
       </xul:hbox>
@@ -1466,7 +1467,7 @@
       <stylesheet src="chrome://global/skin/autocomplete.css"/>
     </resources>
 
-    <content>
+    <content ignorekeys="true" level="top">
       <xul:tree anonid="tree" class="autocomplete-tree plain" flex="1">
         <xul:treecols anonid="treecols">
           <xul:treecol class="autocomplete-treecol" id="treecolAutoCompleteValue" flex="2"/>
@@ -1481,6 +1482,11 @@
         if (this.textbox && this.textbox.view)
           this.initialize();
       ]]></constructor>
+
+      <destructor><![CDATA[
+        if (this.view)
+          this.tree.view = null;
+      ]]></destructor>
 
       <field name="textbox">
         document.getBindingParent(this);
@@ -1744,7 +1750,7 @@
       <method name="showPopup">
         <body><![CDATA[
           var textbox = document.getBindingParent(this);
-          var kids = textbox.getElementsByTagName("menupopup");
+          var kids = textbox.getElementsByClassName("autocomplete-history-popup");
           if (kids.item(0) && textbox.getAttribute("open") != "true") { // Open history popup
             kids[0].showPopup(textbox, -1, -1, "popup", "bottomleft", "topleft");
             textbox.setAttribute("open", "true");

@@ -32,19 +32,88 @@
 // See file_id.h for documentation
 //
 
-#include <cassert>
-#include <cstdio>
+#include "common/linux/file_id.h"
+
+#include <arpa/inet.h>
+#include <assert.h>
 #include <elf.h>
 #include <fcntl.h>
+#if defined(__ANDROID__)
+#include "client/linux/android_link.h"
+#else
 #include <link.h>
-#include <sys/mman.h>
+#endif
+#include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
-#include "common/linux/file_id.h"
-#include "common/md5.h"
+#include <algorithm>
+
+#include "common/linux/linux_libc_support.h"
+#include "common/linux/linux_syscall_support.h"
 
 namespace google_breakpad {
+
+FileID::FileID(const char* path) {
+  strncpy(path_, path, sizeof(path_));
+}
+
+struct ElfClass32 {
+  typedef Elf32_Ehdr Ehdr;
+  typedef Elf32_Shdr Shdr;
+  static const int kClass = ELFCLASS32;
+};
+
+struct ElfClass64 {
+  typedef Elf64_Ehdr Ehdr;
+  typedef Elf64_Shdr Shdr;
+  static const int kClass = ELFCLASS64;
+};
+
+// These three functions are also used inside the crashed process, so be safe
+// and use the syscall/libc wrappers instead of direct syscalls or libc.
+template<typename ElfClass>
+static void FindElfClassTextSection(const char *elf_base,
+                                    const void **text_start,
+                                    int *text_size) {
+  typedef typename ElfClass::Ehdr Ehdr;
+  typedef typename ElfClass::Shdr Shdr;
+
+  assert(elf_base);
+  assert(text_start);
+  assert(text_size);
+
+  assert(my_strncmp(elf_base, ELFMAG, SELFMAG) == 0);
+
+  const char* text_section_name = ".text";
+  int name_len = my_strlen(text_section_name);
+
+  const Ehdr* elf_header = reinterpret_cast<const Ehdr*>(elf_base);
+  assert(elf_header->e_ident[EI_CLASS] == ElfClass::kClass);
+
+  const Shdr* sections =
+      reinterpret_cast<const Shdr*>(elf_base + elf_header->e_shoff);
+  const Shdr* string_section = sections + elf_header->e_shstrndx;
+
+  const Shdr* text_section = NULL;
+  for (int i = 0; i < elf_header->e_shnum; ++i) {
+    if (sections[i].sh_type == SHT_PROGBITS) {
+      const char* section_name = (char*)(elf_base +
+                                         string_section->sh_offset +
+                                         sections[i].sh_name);
+      if (!my_strncmp(section_name, text_section_name, name_len)) {
+        text_section = &sections[i];
+        break;
+      }
+    }
+  }
+  if (text_section != NULL && text_section->sh_size > 0) {
+    *text_start = elf_base + text_section->sh_offset;
+    *text_size = text_section->sh_size;
+  }
+}
 
 static bool FindElfTextSection(const void *elf_mapped_base,
                                const void **text_start,
@@ -53,83 +122,85 @@ static bool FindElfTextSection(const void *elf_mapped_base,
   assert(text_start);
   assert(text_size);
 
-  const unsigned char *elf_base =
-    static_cast<const unsigned char *>(elf_mapped_base);
-  const ElfW(Ehdr) *elf_header =
-    reinterpret_cast<const ElfW(Ehdr) *>(elf_base);
-  if (memcmp(elf_header, ELFMAG, SELFMAG) != 0)
+  const char* elf_base =
+    static_cast<const char*>(elf_mapped_base);
+  const ElfW(Ehdr)* elf_header =
+    reinterpret_cast<const ElfW(Ehdr)*>(elf_base);
+  if (my_strncmp(elf_base, ELFMAG, SELFMAG) != 0)
     return false;
-  *text_start = NULL;
-  *text_size = 0;
-  const ElfW(Shdr) *sections =
-    reinterpret_cast<const ElfW(Shdr) *>(elf_base + elf_header->e_shoff);
-  const char *text_section_name = ".text";
-  int name_len = strlen(text_section_name);
-  const ElfW(Shdr) *string_section = sections + elf_header->e_shstrndx;
-  const ElfW(Shdr) *text_section = NULL;
-  for (int i = 0; i < elf_header->e_shnum; ++i) {
-    if (sections[i].sh_type == SHT_PROGBITS) {
-      const char *section_name = (char*)(elf_base +
-                                         string_section->sh_offset +
-                                         sections[i].sh_name);
-      if (!strncmp(section_name, text_section_name, name_len)) {
-        text_section = &sections[i];
-        break;
-      }
-    }
+
+  if (elf_header->e_ident[EI_CLASS] == ELFCLASS32) {
+    FindElfClassTextSection<ElfClass32>(elf_base, text_start, text_size);
+  } else if (elf_header->e_ident[EI_CLASS] == ELFCLASS64) {
+    FindElfClassTextSection<ElfClass64>(elf_base, text_start, text_size);
+  } else {
+    return false;
   }
-  if (text_section != NULL && text_section->sh_size > 0) {
-    int text_section_size = text_section->sh_size;
-    *text_start = elf_base + text_section->sh_offset;
-    *text_size = text_section_size;
-  }
+
   return true;
 }
 
-FileID::FileID(const char *path) {
-  strncpy(path_, path, sizeof(path_));
+// static
+bool FileID::ElfFileIdentifierFromMappedFile(void* base,
+                                             uint8_t identifier[kMDGUIDSize])
+{
+  const void* text_section = NULL;
+  int text_size = 0;
+  bool success = false;
+  if (FindElfTextSection(base, &text_section, &text_size) && (text_size > 0)) {
+    my_memset(identifier, 0, kMDGUIDSize);
+    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(text_section);
+    const uint8_t* ptr_end = ptr + std::min(text_size, 4096);
+    while (ptr < ptr_end) {
+      for (unsigned i = 0; i < kMDGUIDSize; i++)
+        identifier[i] ^= ptr[i];
+      ptr += kMDGUIDSize;
+    }
+    success = true;
+  }
+  return success;
 }
 
-bool FileID::ElfFileIdentifier(unsigned char identifier[16]) {
+bool FileID::ElfFileIdentifier(uint8_t identifier[kMDGUIDSize]) {
   int fd = open(path_, O_RDONLY);
   if (fd < 0)
     return false;
   struct stat st;
-  if (fstat(fd, &st) != 0 && st.st_size <= 0) {
+  if (fstat(fd, &st) != 0) {
     close(fd);
     return false;
   }
-  void *base = mmap(NULL, st.st_size,
+  void* base = mmap(NULL, st.st_size,
                     PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-  if (!base) {
-    close(fd);
-    return false;
-  }
-  bool success = false;
-  const void *text_section = NULL;
-  int text_size = 0;
-  if (FindElfTextSection(base, &text_section, &text_size) && (text_size > 0)) {
-    struct MD5Context md5;
-    MD5Init(&md5);
-    MD5Update(&md5,
-              static_cast<const unsigned char*>(text_section),
-              text_size);
-    MD5Final(identifier, &md5);
-    success = true;
-  }
-
   close(fd);
+  if (base == MAP_FAILED)
+    return false;
+
+  bool success = ElfFileIdentifierFromMappedFile(base, identifier);
   munmap(base, st.st_size);
   return success;
 }
 
 // static
-void FileID::ConvertIdentifierToString(const unsigned char identifier[16],
-                                       char *buffer, int buffer_length) {
+void FileID::ConvertIdentifierToString(const uint8_t identifier[kMDGUIDSize],
+                                       char* buffer, int buffer_length) {
+  uint8_t identifier_swapped[kMDGUIDSize];
+
+  // Endian-ness swap to match dump processor expectation.
+  memcpy(identifier_swapped, identifier, kMDGUIDSize);
+  uint32_t* data1 = reinterpret_cast<uint32_t*>(identifier_swapped);
+  *data1 = htonl(*data1);
+  uint16_t* data2 = reinterpret_cast<uint16_t*>(identifier_swapped + 4);
+  *data2 = htons(*data2);
+  uint16_t* data3 = reinterpret_cast<uint16_t*>(identifier_swapped + 6);
+  *data3 = htons(*data3);
+
   int buffer_idx = 0;
-  for (int idx = 0; (buffer_idx < buffer_length) && (idx < 16); ++idx) {
-    int hi = (identifier[idx] >> 4) & 0x0F;
-    int lo = (identifier[idx]) & 0x0F;
+  for (unsigned int idx = 0;
+       (buffer_idx < buffer_length) && (idx < kMDGUIDSize);
+       ++idx) {
+    int hi = (identifier_swapped[idx] >> 4) & 0x0F;
+    int lo = (identifier_swapped[idx]) & 0x0F;
 
     if (idx == 4 || idx == 6 || idx == 8 || idx == 10)
       buffer[buffer_idx++] = '-';

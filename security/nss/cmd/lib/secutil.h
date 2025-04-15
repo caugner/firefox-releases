@@ -320,7 +320,6 @@ extern SECKEYLowPublicKey *SECU_ConvHighToLow(SECKEYPublicKey *pubHighKey);
 extern char *SECU_GetModulePassword(PK11SlotInfo *slot, PRBool retry, void *arg);
 
 extern SECStatus DER_PrettyPrint(FILE *out, SECItem *it, PRBool raw);
-extern void SEC_Init(void);
 
 extern char *SECU_SECModDBName(void);
 
@@ -454,6 +453,12 @@ void printflags(char *trusts, unsigned int flags);
 extern int ffs(unsigned int i);
 #endif
 
+/* Finds certificate by searching it in the DB or by examinig file
+ * in the local directory. */
+CERTCertificate*
+SECU_FindCertByNicknameOrFilename(CERTCertDBHandle *handle,
+                                  char *name, PRBool ascii,
+                                  void *pwarg);
 #include "secerr.h"
 #include "sslerr.h"
 

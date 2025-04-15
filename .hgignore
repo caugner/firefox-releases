@@ -2,17 +2,17 @@
 
 # Filenames that should be ignored wherever they appear
 ~$
-\.pyc$
-(^|/)TAGS$
+\.py(c|o)$
+(?i)(^|/)TAGS$
+(^|/)ID$
 (^|/)\.DS_Store$
 
 # User files that may appear at the root
 ^\.mozconfig
-^mozconfig
+^mozconfig$
 ^configure$
 ^config\.cache$
 ^config\.log$
-^ID$
 
 # Empty marker file that's generated when we check out NSS
 ^security/manager/\.nss\.checkout$
@@ -27,6 +27,8 @@ _OPT\.OBJ/
 # SpiderMonkey configury
 ^js/src/configure$
 ^js/src/autom4te.cache$
+# SpiderMonkey test result logs
+^js/src/tests/results-.*\.(html|txt)$
 
 # Java HTML5 parser classes
-^parser/html/java/.*\.class$
+^parser/html/java/(html|java)parser/

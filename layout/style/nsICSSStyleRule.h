@@ -49,13 +49,19 @@
 #include "nsICSSRule.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
-#include "nsCSSProps.h"
 #include "nsCSSValue.h"
-#include "nsIAtom.h"
+#include "nsCSSPseudoElements.h"
+#include "nsCSSPseudoClasses.h"
 
 class nsIAtom;
-class nsCSSDeclaration;
-class nsICSSStyleSheet;
+class nsCSSStyleSheet;
+struct nsCSSSelectorList;
+
+namespace mozilla {
+namespace css {
+class Declaration;
+}
+}
 
 struct nsAtomList {
 public:
@@ -78,9 +84,13 @@ private:
 
 struct nsPseudoClassList {
 public:
-  nsPseudoClassList(nsIAtom* aAtom);
-  nsPseudoClassList(nsIAtom* aAtom, const PRUnichar *aString);
-  nsPseudoClassList(nsIAtom* aAtom, const PRInt32 *aIntPair);
+  nsPseudoClassList(nsIAtom* aAtom, nsCSSPseudoClasses::Type aType);
+  nsPseudoClassList(nsIAtom* aAtom, nsCSSPseudoClasses::Type aType,
+                    const PRUnichar *aString);
+  nsPseudoClassList(nsIAtom* aAtom, nsCSSPseudoClasses::Type aType,
+                    const PRInt32 *aIntPair);
+  nsPseudoClassList(nsIAtom* aAtom, nsCSSPseudoClasses::Type aType,
+                    nsCSSSelectorList *aSelectorList /* takes ownership */);
   ~nsPseudoClassList(void);
 
   /** Do a deep clone.  Should be used only on the first in the linked list. */
@@ -90,15 +100,19 @@ public:
   union {
     // For a given value of mAtom, we have either:
     //   a. no value, which means mMemory is always null
-    //      (if neither of the conditions for (b) or (c) is true)
+    //      (if none of the conditions for (b), (c), or (d) is true)
     //   b. a string value, which means mString/mMemory is non-null
     //      (if nsCSSPseudoClasses::HasStringArg(mAtom))
     //   c. an integer pair value, which means mNumbers/mMemory is non-null
     //      (if nsCSSPseudoClasses::HasNthPairArg(mAtom))
-    void*           mMemory; // both pointer types use NS_Alloc/NS_Free
+    //   d. a selector list, which means mSelectors is non-null
+    //      (if nsCSSPseudoClasses::HasSelectorListArg(mAtom))
+    void*           mMemory; // mString and mNumbers use NS_Alloc/NS_Free
     PRUnichar*      mString;
     PRInt32*        mNumbers;
+    nsCSSSelectorList* mSelectors;
   } u;
+  nsCSSPseudoClasses::Type mType;
   nsPseudoClassList* mNext;
 private: 
   nsPseudoClassList* Clone(PRBool aDeep) const;
@@ -121,7 +135,8 @@ public:
   nsAttrSelector(PRInt32 aNameSpace, const nsString& aAttr);
   nsAttrSelector(PRInt32 aNameSpace, const nsString& aAttr, PRUint8 aFunction, 
                  const nsString& aValue, PRBool aCaseSensitive);
-  nsAttrSelector(PRInt32 aNameSpace, nsIAtom* aAttr, PRUint8 aFunction, 
+  nsAttrSelector(PRInt32 aNameSpace, nsIAtom* aLowercaseAttr, 
+                 nsIAtom* aCasedAttr, PRUint8 aFunction, 
                  const nsString& aValue, PRBool aCaseSensitive);
   ~nsAttrSelector(void);
 
@@ -130,10 +145,12 @@ public:
 
   nsString        mValue;
   nsAttrSelector* mNext;
-  nsCOMPtr<nsIAtom> mAttr;
+  nsCOMPtr<nsIAtom> mLowercaseAttr;
+  nsCOMPtr<nsIAtom> mCasedAttr;
   PRInt32         mNameSpace;
   PRUint8         mFunction;
-  PRPackedBool    mCaseSensitive;
+  PRPackedBool    mCaseSensitive; // If we are in an HTML document,
+                                  // is the value case sensitive?
 private: 
   nsAttrSelector* Clone(PRBool aDeep) const;
 
@@ -152,12 +169,17 @@ public:
 
   void Reset(void);
   void SetNameSpace(PRInt32 aNameSpace);
-  void SetTag(const nsString& aTag, PRBool aCaseSensitive);
+  void SetTag(const nsString& aTag);
   void AddID(const nsString& aID);
   void AddClass(const nsString& aClass);
-  void AddPseudoClass(nsIAtom* aPseudoClass);
-  void AddPseudoClass(nsIAtom* aPseudoClass, const PRUnichar* aString);
-  void AddPseudoClass(nsIAtom* aPseudoClass, const PRInt32* aIntPair);
+  void AddPseudoClass(nsIAtom* aPseudoClass, nsCSSPseudoClasses::Type aType);
+  void AddPseudoClass(nsIAtom* aPseudoClass, nsCSSPseudoClasses::Type aType,
+                      const PRUnichar* aString);
+  void AddPseudoClass(nsIAtom* aPseudoClass, nsCSSPseudoClasses::Type aType,
+                      const PRInt32* aIntPair);
+  // takes ownership of aSelectorList
+  void AddPseudoClass(nsIAtom* aPseudoClass, nsCSSPseudoClasses::Type aType,
+                      nsCSSSelectorList* aSelectorList);
   void AddAttribute(PRInt32 aNameSpace, const nsString& aAttr);
   void AddAttribute(PRInt32 aNameSpace, const nsString& aAttr, PRUint8 aFunc, 
                     const nsString& aValue, PRBool aCaseSensitive);
@@ -174,7 +196,7 @@ public:
   // Calculate the specificity of this selector (not including its mNext!).
   PRInt32 CalcWeight() const;
 
-  void ToString(nsAString& aString, nsICSSStyleSheet* aSheet,
+  void ToString(nsAString& aString, nsCSSStyleSheet* aSheet,
                 PRBool aAppend = PR_FALSE) const;
 
 private:
@@ -182,9 +204,9 @@ private:
   nsCSSSelector* Clone(PRBool aDeepNext, PRBool aDeepNegations) const;
 
   void AppendToStringWithoutCombinators(nsAString& aString,
-                                        nsICSSStyleSheet* aSheet) const;
+                                        nsCSSStyleSheet* aSheet) const;
   void AppendToStringWithoutCombinatorsOrNegations(nsAString& aString,
-                                                   nsICSSStyleSheet* aSheet,
+                                                   nsCSSStyleSheet* aSheet,
                                                    PRBool aIsNegated)
                                                         const;
   // Returns true if this selector can have a namespace specified (which
@@ -196,6 +218,15 @@ private:
   PRInt32 CalcWeightWithoutNegations() const;
 
 public:
+  // Get and set the selector's pseudo type
+  nsCSSPseudoElements::Type PseudoType() const {
+    return static_cast<nsCSSPseudoElements::Type>(mPseudoType);
+  }
+  void SetPseudoType(nsCSSPseudoElements::Type aType) {
+    NS_ASSERTION(aType > PR_INT16_MIN && aType < PR_INT16_MAX, "Out of bounds");
+    mPseudoType = static_cast<PRInt16>(aType);
+  }
+
   // For case-sensitive documents, mLowercaseTag is the same as mCasedTag,
   // but in case-insensitive documents (HTML) mLowercaseTag is lowercase.
   // Also, for pseudo-elements mCasedTag will be null but mLowercaseTag
@@ -211,7 +242,9 @@ public:
   nsCSSSelector*  mNext;
   PRInt32         mNameSpace;
   PRUnichar       mOperator;
-private: 
+private:
+  // PRInt16 to make sure it packs well with mOperator
+  PRInt16        mPseudoType;
   // These are not supported and are not implemented! 
   nsCSSSelector(const nsCSSSelector& aCopy);
   nsCSSSelector& operator=(const nsCSSSelector& aCopy); 
@@ -228,18 +261,20 @@ struct nsCSSSelectorList {
   ~nsCSSSelectorList(void);
 
   /**
-   * Push the selector pointed to by |aSelector| on to the beginning of
-   * |mSelectors|, setting its |mNext| to the current value of |mSelectors|.
-   * This nulls out aSelector.
-   *
+   * Create a new selector and push it onto the beginning of |mSelectors|,
+   * setting its |mNext| to the current value of |mSelectors|.  If there is an
+   * earlier selector, set its |mOperator| to |aOperator|; else |aOperator|
+   * must be PRUnichar(0).
+   * Returns the new selector.
+   * The list owns the new selector.
    * The caller is responsible for updating |mWeight|.
    */
-  void AddSelector(nsAutoPtr<nsCSSSelector>& aSelector);
+  nsCSSSelector* AddSelector(PRUnichar aOperator);
 
   /**
    * Should be used only on the first in the list
    */
-  void ToString(nsAString& aResult, nsICSSStyleSheet* aSheet);
+  void ToString(nsAString& aResult, nsCSSStyleSheet* aSheet);
 
   /**
    * Do a deep clone.  Should be used only on the first in the list.
@@ -257,9 +292,10 @@ private:
   nsCSSSelectorList& operator=(const nsCSSSelectorList& aCopy); 
 };
 
-// IID for the nsICSSStyleRule interface {00803ccc-66e8-4ec8-a037-45e901bb5304}
-#define NS_ICSS_STYLE_RULE_IID     \
-{0x00803ccc, 0x66e8, 0x4ec8, {0xa0, 0x37, 0x45, 0xe9, 0x01, 0xbb, 0x53, 0x04}}
+// 97eb9881-55fb-462c-be1a-b6309d42f8d0
+#define NS_ICSS_STYLE_RULE_IID \
+{ 0x97eb9881, 0x55fb, 0x462c, \
+  { 0xbe, 0x1a, 0xb6, 0x30, 0x9d, 0x42, 0xf8, 0xd0 } }
 
 class nsICSSStyleRule : public nsICSSRule {
 public:
@@ -271,26 +307,31 @@ public:
   virtual PRUint32 GetLineNumber(void) const = 0;
   virtual void SetLineNumber(PRUint32 aLineNumber) = 0;
 
-  virtual nsCSSDeclaration* GetDeclaration(void) const = 0;
+  virtual mozilla::css::Declaration* GetDeclaration(void) const = 0;
 
   /**
-   * Return a new |nsIStyleRule| instance that replaces the current one,
-   * due to a change in the |nsCSSDeclaration|.  Due to the
-   * |nsIStyleRule| contract of immutability, this must be called if the
-   * declaration is modified.
+   * Return a new |nsIStyleRule| instance that replaces the current
+   * one, with |aDecl| replacing the previous declaration. Due to the
+   * |nsIStyleRule| contract of immutability, this must be called if
+   * the declaration is modified.
    *
    * |DeclarationChanged| handles replacing the object in the container
    * sheet or group rule if |aHandleContainer| is true.
    */
   virtual already_AddRefed<nsICSSStyleRule>
-    DeclarationChanged(PRBool aHandleContainer) = 0;
+  DeclarationChanged(mozilla::css::Declaration* aDecl,
+                     PRBool aHandleContainer) = 0;
 
-  virtual already_AddRefed<nsIStyleRule> GetImportantRule(void) = 0;
+  /**
+   * The rule processor must call this method before calling
+   * nsRuleWalker::Forward on this rule during rule matching.
+   */
+  virtual void RuleMatched() = 0;
 
   // hooks for DOM rule
   virtual nsresult GetCssText(nsAString& aCssText) = 0;
   virtual nsresult SetCssText(const nsAString& aCssText) = 0;
-  virtual nsresult GetParentStyleSheet(nsICSSStyleSheet** aSheet) = 0;
+  virtual nsresult GetParentStyleSheet(nsCSSStyleSheet** aSheet) = 0;
   virtual nsresult GetParentRule(nsICSSGroupRule** aParentRule) = 0;
   virtual nsresult GetSelectorText(nsAString& aSelectorText) = 0;
   virtual nsresult SetSelectorText(const nsAString& aSelectorText) = 0;
@@ -298,9 +339,8 @@ public:
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsICSSStyleRule, NS_ICSS_STYLE_RULE_IID)
 
-nsresult
-NS_NewCSSStyleRule(nsICSSStyleRule** aInstancePtrResult,
-                   nsCSSSelectorList* aSelector,
-                   nsCSSDeclaration* aDeclaration);
+already_AddRefed<nsICSSStyleRule>
+NS_NewCSSStyleRule(nsCSSSelectorList* aSelector,
+                   mozilla::css::Declaration* aDeclaration);
 
 #endif /* nsICSSStyleRule_h___ */

@@ -65,7 +65,21 @@ nsFilteredContentIterator::~nsFilteredContentIterator()
 }
 
 //------------------------------------------------------------
-NS_IMPL_ISUPPORTS1(nsFilteredContentIterator, nsIContentIterator)
+NS_IMPL_CYCLE_COLLECTING_ADDREF(nsFilteredContentIterator)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(nsFilteredContentIterator)
+
+NS_INTERFACE_MAP_BEGIN(nsFilteredContentIterator)
+  NS_INTERFACE_MAP_ENTRY(nsIContentIterator)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIContentIterator)
+  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(nsFilteredContentIterator)
+NS_INTERFACE_MAP_END
+
+NS_IMPL_CYCLE_COLLECTION_5(nsFilteredContentIterator,
+                           mCurrentIterator,
+                           mIterator,
+                           mPreIterator,
+                           mFilter,
+                           mRange)
 
 //------------------------------------------------------------
 nsresult
@@ -240,16 +254,14 @@ ContentIsInTraversalRange(nsIContent *aContent,   PRBool aIsPreMode,
                           nsIDOMNode *aStartNode, PRInt32 aStartOffset,
                           nsIDOMNode *aEndNode,   PRInt32 aEndOffset)
 {
-  if (!aStartNode || !aEndNode || !aContent)
-    return PR_FALSE;
+  NS_ENSURE_TRUE(aStartNode && aEndNode && aContent, PR_FALSE);
 
   nsCOMPtr<nsIDOMNode> parentNode;
   PRInt32 indx = 0;
 
   ContentToParentOffset(aContent, getter_AddRefs(parentNode), &indx);
 
-  if (!parentNode)
-    return PR_FALSE;
+  NS_ENSURE_TRUE(parentNode, PR_FALSE);
 
   if (!aIsPreMode)
     ++indx;
@@ -257,10 +269,10 @@ ContentIsInTraversalRange(nsIContent *aContent,   PRBool aIsPreMode,
   PRInt32 startRes;
   PRInt32 endRes;
   nsresult rv = nsTextServicesDocument::ComparePoints(aStartNode, aStartOffset, parentNode, indx, &startRes);
-  if (NS_FAILED(rv)) return PR_FALSE;
+  NS_ENSURE_SUCCESS(rv, PR_FALSE);
 
   rv = nsTextServicesDocument::ComparePoints(aEndNode,   aEndOffset,   parentNode, indx,  &endRes);
-  if (NS_FAILED(rv)) return PR_FALSE;
+  NS_ENSURE_SUCCESS(rv, PR_FALSE);
 
   return (startRes <= 0) && (endRes >= 0);
 }
@@ -270,8 +282,7 @@ ContentIsInTraversalRange(nsIDOMNSRange *aRange, nsIDOMNode* aNextNode, PRBool a
 {
   nsCOMPtr<nsIContent>  content(do_QueryInterface(aNextNode));
   nsCOMPtr<nsIDOMRange> range(do_QueryInterface(aRange));
-  if (!content || !range)
-    return PR_FALSE;
+  NS_ENSURE_TRUE(content && range, PR_FALSE);
 
 
 

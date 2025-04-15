@@ -53,18 +53,38 @@
 #include "nsICommandLineRunner.h"
 #include "nsIWindowMediator.h"
 #include "nsIDOMWindowInternal.h"
+#include "nsPIDOMWindow.h"
+#include "nsIDocShell.h"
+#include "nsIBaseWindow.h"
+#include "nsIWidget.h"
+#include "nsIWritablePropertyBag2.h"
+#include "nsIPrefService.h"
+#include "mozilla/Services.h"
 
 #include <stdlib.h>
 #include <glib.h>
 #include <glib-object.h>
 #include <gtk/gtk.h>
 
-#ifdef NS_OSSO
+#ifdef MOZ_X11
+#include <gdk/gdkx.h>
+#include <X11/Xatom.h>
+#endif
+
+#if (MOZ_PLATFORM_MAEMO == 5)
 struct DBusMessage;  /* libosso.h references internals of dbus */
 
 #include <dbus/dbus.h>
 #include <dbus/dbus-protocol.h>
 #include <libosso.h>
+
+// These come from <mce/dbus-names.h> (maemo sdk 5+)
+#define MCE_SERVICE "com.nokia.mce"
+#define MCE_REQUEST_IF "com.nokia.mce.request"
+#define MCE_REQUEST_PATH "/com/nokia/mce/request"
+#define MCE_SIGNAL_IF "com.nokia.mce.signal"
+#define MCE_DEVICE_ORIENTATION_SIG "sig_device_orientation_ind"
+#define MCE_MATCH_RULE "type='signal',interface='" MCE_SIGNAL_IF "',member='" MCE_DEVICE_ORIENTATION_SIG "'"
 #endif
 
 #define MIN_GTK_MAJOR_VERSION 2
@@ -97,49 +117,20 @@ typedef enum {
 typedef GnomeProgram * (*_gnome_program_init_fn)(const char *, const char *,
                                                  const GnomeModuleInfo *, int,
                                                  char **, const char *, ...);
+typedef GnomeProgram * (*_gnome_program_get_fn)(void);
 typedef const GnomeModuleInfo * (*_libgnomeui_module_info_get_fn)();
 typedef GnomeClient * (*_gnome_master_client_fn)(void);
-typedef void (*GnomeInteractFunction)(GnomeClient *, gint, GnomeDialogType,
-                                      gpointer);
-typedef void (*_gnome_client_request_interaction_fn)(GnomeClient *,
-                                                     GnomeDialogType,
-                                                     GnomeInteractFunction,
-                                                     gpointer);
-typedef void (*_gnome_interaction_key_return_fn)(gint, gboolean);
 typedef void (*_gnome_client_set_restart_command_fn)(GnomeClient*, gint, gchar*[]);
 
-static _gnome_client_request_interaction_fn gnome_client_request_interaction;
-static _gnome_interaction_key_return_fn gnome_interaction_key_return;
 static _gnome_client_set_restart_command_fn gnome_client_set_restart_command;
-
-void interact_cb(GnomeClient *client, gint key,
-                 GnomeDialogType type, gpointer data)
-{
-  nsCOMPtr<nsIObserverService> obsServ =
-    do_GetService("@mozilla.org/observer-service;1");
-  nsCOMPtr<nsISupportsPRBool> cancelQuit =
-    do_CreateInstance(NS_SUPPORTS_PRBOOL_CONTRACTID);
-
-  cancelQuit->SetData(PR_FALSE);
-
-  obsServ->NotifyObservers(cancelQuit, "quit-application-requested", nsnull);
-
-  PRBool abortQuit;
-  cancelQuit->GetData(&abortQuit);
-
-  gnome_interaction_key_return(key, abortQuit);
-}
 
 gboolean save_yourself_cb(GnomeClient *client, gint phase,
                           GnomeSaveStyle style, gboolean shutdown,
                           GnomeInteractStyle interact, gboolean fast,
                           gpointer user_data)
 {
-  if (!shutdown)
-    return TRUE;
-
   nsCOMPtr<nsIObserverService> obsServ =
-    do_GetService("@mozilla.org/observer-service;1");
+    mozilla::services::GetObserverService();
 
   nsCOMPtr<nsISupportsPRBool> didSaveSession =
     do_CreateInstance(NS_SUPPORTS_PRBOOL_CONTRACTID);
@@ -147,50 +138,24 @@ gboolean save_yourself_cb(GnomeClient *client, gint phase,
   if (!obsServ || !didSaveSession)
     return TRUE; // OOM
 
+  // Notify observers to save the session state
   didSaveSession->SetData(PR_FALSE);
   obsServ->NotifyObservers(didSaveSession, "session-save", nsnull);
 
   PRBool status;
   didSaveSession->GetData(&status);
 
-  // Didn't save, or no way of saving. So signal for quit-application.
-  if (!status) {
-    if (interact == GNOME_INTERACT_ANY)
-      gnome_client_request_interaction(client, GNOME_DIALOG_NORMAL,
-                                       interact_cb, nsnull);
-    return TRUE;
-  }
-  
-  // Is there a request to suppress default binary launcher? 
-  char* argv1 = getenv("MOZ_APP_LAUNCHER");
+  // If there was no session saved and the save_yourself request is
+  // caused by upcoming shutdown we like to prepare for it
+  if (!status && shutdown) {
+    nsCOMPtr<nsISupportsPRBool> cancelQuit =
+      do_CreateInstance(NS_SUPPORTS_PRBOOL_CONTRACTID);
 
-  if(!argv1) {
-    // Tell GNOME the command for restarting us so that we can be part of XSMP session restore
-    NS_ASSERTION(gDirServiceProvider, "gDirServiceProvider is NULL! This shouldn't happen!");
-    nsCOMPtr<nsIFile> executablePath;
-    nsresult rv;
+    cancelQuit->SetData(PR_FALSE);
+    obsServ->NotifyObservers(cancelQuit, "quit-application-requested", nsnull);
 
-    PRBool dummy;
-    rv = gDirServiceProvider->GetFile(XRE_EXECUTABLE_FILE, &dummy, getter_AddRefs(executablePath));
-
-    if (NS_SUCCEEDED(rv)) {
-      nsCAutoString path;
-
-      // Strip off the -bin suffix to get the shell script we should run; this is what Breakpad does
-      nsCAutoString leafName;
-      rv = executablePath->GetNativeLeafName(leafName);
-      if (NS_SUCCEEDED(rv) && StringEndsWith(leafName, NS_LITERAL_CSTRING("-bin"))) {
-        leafName.SetLength(leafName.Length() - strlen("-bin"));
-        executablePath->SetNativeLeafName(leafName);
-      }
-  
-      executablePath->GetNativePath(path);
-      argv1 = (char*)(path.get());
-    }
-  }
-
-  if(argv1) {
-    gnome_client_set_restart_command(client, 1, &argv1);
+    PRBool abortQuit;
+    cancelQuit->GetData(&abortQuit);
   }
 
   return TRUE;
@@ -210,9 +175,10 @@ class nsNativeAppSupportUnix : public nsNativeAppSupportBase
 public:
   NS_IMETHOD Start(PRBool* aRetVal);
   NS_IMETHOD Stop(PRBool *aResult);
+  NS_IMETHOD Enable();
 
 private:
-#ifdef NS_OSSO
+#if (MOZ_PLATFORM_MAEMO == 5)
   osso_context_t *m_osso_context;    
   /* A note about why we need to have m_hw_state:
      the osso hardware callback does not tell us what changed, just
@@ -223,18 +189,128 @@ private:
 #endif
 };
 
-#ifdef NS_OSSO
+#if (MOZ_PLATFORM_MAEMO == 5)
+static nsresult
+GetMostRecentWindow(const PRUnichar* aType, nsIDOMWindowInternal** aWindow)
+{
+  nsCOMPtr<nsIWindowMediator> wm = do_GetService("@mozilla.org/appshell/window-mediator;1");
+  if (wm)
+    return wm->GetMostRecentWindow(aType, aWindow);
+  return NS_ERROR_FAILURE;
+}
+
+static GtkWidget*
+WidgetForDOMWindow(nsISupports *aWindow)
+{
+  nsCOMPtr<nsPIDOMWindow> domWindow(do_QueryInterface(aWindow));
+  if (!domWindow)
+    return NULL;
+
+  nsCOMPtr<nsIBaseWindow> baseWindow = do_QueryInterface(domWindow->GetDocShell());
+  if (!baseWindow)
+    return NULL;
+
+  nsCOMPtr<nsIWidget> widget;
+  baseWindow->GetMainWidget(getter_AddRefs(widget));
+  if (!widget)
+    return NULL;
+
+  return (GtkWidget*)(widget->GetNativeData(NS_NATIVE_SHELLWIDGET));
+}
+
+static void
+OssoSetWindowOrientation(PRBool aPortrait)
+{
+  // If we locked the screen, ignore any orientation changes
+  PRBool lockScreen = PR_FALSE;
+  nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
+  if (prefs)
+    prefs->GetBoolPref("toolkit.screen.lock", &lockScreen);
+
+  if (lockScreen)
+    return;
+
+  // Tell Hildon desktop to force our window to be either portrait or landscape,
+  // depending on the current rotation
+  // NOTE: We only update the most recent top-level window so this is only
+  //       suitable for apps with only one window.
+  nsCOMPtr<nsIDOMWindowInternal> window;
+  GetMostRecentWindow(EmptyString().get(), getter_AddRefs(window));
+  GtkWidget* widget = WidgetForDOMWindow(window);
+  if (widget && widget->window) {
+    GdkWindow *gdk = widget->window;
+    GdkAtom request = gdk_atom_intern("_HILDON_PORTRAIT_MODE_REQUEST", FALSE);
+
+    if (aPortrait) {
+      gulong portrait_set = 1;
+      gdk_property_change(gdk, request, gdk_x11_xatom_to_atom(XA_CARDINAL),
+                          32, GDK_PROP_MODE_REPLACE, (const guchar *) &portrait_set, 1);
+    }
+    else {
+      gdk_property_delete(gdk, request);
+    }
+  }
+
+  // Update the system info property
+  nsCOMPtr<nsIWritablePropertyBag2> info = do_GetService("@mozilla.org/system-info;1");
+  if (info) {
+    info->SetPropertyAsAString(NS_LITERAL_STRING("screen-orientation"),
+                               aPortrait ? NS_LITERAL_STRING("portrait") : NS_LITERAL_STRING("landscape"));
+  }
+}
+
+static PRBool OssoIsScreenOn(osso_context_t* ctx)
+{
+  osso_return_t rv;
+  osso_rpc_t ret;
+  PRBool result = PR_FALSE;
+
+  rv = osso_rpc_run_system(ctx, MCE_SERVICE, MCE_REQUEST_PATH, MCE_REQUEST_IF,
+                           "get_display_status", &ret, DBUS_TYPE_INVALID);
+  if (rv == OSSO_OK) {
+      if (strcmp(ret.value.s, "on") == 0)
+          result = PR_TRUE;
+
+      osso_rpc_free_val(&ret);
+  }
+  return result;
+}
+
+static void OssoRequestAccelerometer(osso_context_t *ctx, PRBool aEnabled)
+{
+  osso_return_t rv;
+  osso_rpc_t ret;
+
+  rv = osso_rpc_run_system(ctx, 
+                           MCE_SERVICE,
+                           MCE_REQUEST_PATH, MCE_REQUEST_IF,
+                           aEnabled ? "req_accelerometer_enable" : "req_accelerometer_disable",
+                           aEnabled ? &ret : NULL,
+                           DBUS_TYPE_INVALID);
+
+  // Orientation might changed while the accelerometer was off, so let's update
+  // the window's orientation
+  if (rv == OSSO_OK && aEnabled) {    
+      OssoSetWindowOrientation(strcmp(ret.value.s, "portrait") == 0);
+      osso_rpc_free_val(&ret);
+  }
+}
 
 static void OssoDisplayCallback(osso_display_state_t state, gpointer data)
 {
-  nsCOMPtr<nsIObserverService> os = do_GetService("@mozilla.org/observer-service;1");
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
   if (!os)
       return;
- 
-  if (state == OSSO_DISPLAY_ON)
+
+  osso_context_t* context = (osso_context_t*) data;
+
+  if (state == OSSO_DISPLAY_ON) {
       os->NotifyObservers(nsnull, "system-display-on", nsnull);
-  else
+      OssoRequestAccelerometer(context, PR_TRUE);
+  } else {
       os->NotifyObservers(nsnull, "system-display-dimmed-or-off", nsnull);
+      OssoRequestAccelerometer(context, PR_FALSE);
+  }
 }
 
 static void OssoHardwareCallback(osso_hw_state_t *state, gpointer data)
@@ -251,16 +327,14 @@ static void OssoHardwareCallback(osso_hw_state_t *state, gpointer data)
     return;
   }
 
-  if (state->memory_low_ind) {
-      if (! ourState->memory_low_ind) {
-      nsCOMPtr<nsIObserverService> os = do_GetService("@mozilla.org/observer-service;1");
-      if (os)
-        os->NotifyObservers(nsnull, "memory-pressure", NS_LITERAL_STRING("low-memory").get());
-    }
+  if (state->memory_low_ind && !ourState->memory_low_ind) {
+    nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+    if (os)
+      os->NotifyObservers(nsnull, "memory-pressure", NS_LITERAL_STRING("low-memory").get());
   }
   
   if (state->system_inactivity_ind != ourState->system_inactivity_ind) {
-      nsCOMPtr<nsIObserverService> os = do_GetService("@mozilla.org/observer-service;1");
+      nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
       if (!os)
         return;
  
@@ -281,13 +355,11 @@ OssoDbusCallback(const gchar *interface, const gchar *method,
 
   // The "top_application" method just wants us to focus the top-most window.
   if (!strcmp("top_application", method)) {
-    nsCOMPtr<nsIWindowMediator> wm = do_GetService("@mozilla.org/appshell/window-mediator;1");
-
     nsCOMPtr<nsIDOMWindowInternal> window;
-    wm->GetMostRecentWindow(NS_LITERAL_STRING("").get(), getter_AddRefs(window));
-    if (window) {
+    GetMostRecentWindow(NS_LITERAL_STRING("").get(), getter_AddRefs(window));
+    if (window)
       window->Focus();
-    }
+
     return OSSO_OK;
   }
 
@@ -340,6 +412,21 @@ OssoDbusCallback(const gchar *interface, const gchar *method,
   return OSSO_OK;
 }
 
+static DBusHandlerResult
+OssoModeControlCallback(DBusConnection *con, DBusMessage *msg, gpointer data)
+{
+  if (dbus_message_is_signal(msg, MCE_SIGNAL_IF, MCE_DEVICE_ORIENTATION_SIG)) {
+    DBusMessageIter iter;
+    if (dbus_message_iter_init(msg, &iter)) {
+      const gchar *mode = NULL;
+      dbus_message_iter_get_basic(&iter, &mode);
+
+      OssoSetWindowOrientation(strcmp(mode, "portrait") == 0);
+    }
+  }
+  return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+
 #endif
 
 NS_IMETHODIMP
@@ -364,7 +451,7 @@ nsNativeAppSupportUnix::Start(PRBool *aRetVal)
     exit(0);
   }
 
-#ifdef NS_OSSO
+#if (MOZ_PLATFORM_MAEMO == 5)
   /* zero state out. */
   memset(&m_hw_state, 0, sizeof(osso_hw_state_t));
 
@@ -378,7 +465,7 @@ nsNativeAppSupportUnix::Start(PRBool *aRetVal)
      system will happily kill your process.
   */
   nsCAutoString applicationName;
-  if(gAppData->vendor) {
+  if (gAppData->vendor) {
       applicationName.Append(gAppData->vendor);
       applicationName.Append(".");
   }
@@ -396,8 +483,13 @@ nsNativeAppSupportUnix::Start(PRBool *aRetVal)
   }
 
   osso_hw_set_event_cb(m_osso_context, nsnull, OssoHardwareCallback, &m_hw_state);
-  osso_hw_set_display_event_cb(m_osso_context, OssoDisplayCallback, nsnull);
+  osso_hw_set_display_event_cb(m_osso_context, OssoDisplayCallback, m_osso_context);
   osso_rpc_set_default_cb_f(m_osso_context, OssoDbusCallback, nsnull);
+
+  // Setup an MCE callback to monitor orientation
+  DBusConnection *connnection = (DBusConnection*)osso_get_sys_dbus_connection(m_osso_context);
+  dbus_bus_add_match(connnection, MCE_MATCH_RULE, nsnull);
+  dbus_connection_add_filter(connnection, OssoModeControlCallback, nsnull, nsnull);
 #endif
 
   *aRetVal = PR_TRUE;
@@ -416,8 +508,10 @@ nsNativeAppSupportUnix::Start(PRBool *aRetVal)
 
   _gnome_program_init_fn gnome_program_init =
     (_gnome_program_init_fn)PR_FindFunctionSymbol(gnomeLib, "gnome_program_init");
-  _libgnomeui_module_info_get_fn libgnomeui_module_info_get = (_libgnomeui_module_info_get_fn)PR_FindFunctionSymbol(gnomeuiLib, "libgnomeui_module_info_get");
-  if (!gnome_program_init || !libgnomeui_module_info_get) {
+  _gnome_program_get_fn gnome_program_get =
+    (_gnome_program_get_fn)PR_FindFunctionSymbol(gnomeLib, "gnome_program_get"); 
+ _libgnomeui_module_info_get_fn libgnomeui_module_info_get = (_libgnomeui_module_info_get_fn)PR_FindFunctionSymbol(gnomeuiLib, "libgnomeui_module_info_get");
+  if (!gnome_program_init || !gnome_program_get || !libgnomeui_module_info_get) {
     PR_UnloadLibrary(gnomeuiLib);
     PR_UnloadLibrary(gnomeLib);
     return NS_OK;
@@ -435,7 +529,9 @@ nsNativeAppSupportUnix::Start(PRBool *aRetVal)
 #endif
 
 #ifdef MOZ_X11
-  gnome_program_init("Gecko", "1.0", libgnomeui_module_info_get(), gArgc, gArgv, NULL);
+  if (!gnome_program_get()) {
+    gnome_program_init("Gecko", "1.0", libgnomeui_module_info_get(), gArgc, gArgv, NULL);
+  }
 #endif /* MOZ_X11 */
 
 #ifdef ACCESSIBILITY
@@ -451,10 +547,6 @@ nsNativeAppSupportUnix::Start(PRBool *aRetVal)
   // crashes will occur if these libraries are unloaded.
 
 #ifdef MOZ_X11
-  gnome_client_request_interaction = (_gnome_client_request_interaction_fn)
-    PR_FindFunctionSymbol(gnomeuiLib, "gnome_client_request_interaction");
-  gnome_interaction_key_return = (_gnome_interaction_key_return_fn)
-    PR_FindFunctionSymbol(gnomeuiLib, "gnome_interaction_key_return");
   gnome_client_set_restart_command = (_gnome_client_set_restart_command_fn)
     PR_FindFunctionSymbol(gnomeuiLib, "gnome_client_set_restart_command");
 
@@ -464,6 +556,39 @@ nsNativeAppSupportUnix::Start(PRBool *aRetVal)
   GnomeClient *client = gnome_master_client();
   g_signal_connect(client, "save-yourself", G_CALLBACK(save_yourself_cb), NULL);
   g_signal_connect(client, "die", G_CALLBACK(die_cb), NULL);
+
+  // Set the correct/requested restart command in any case.
+
+  // Is there a request to suppress default binary launcher?
+  nsCAutoString path;
+  char* argv1 = getenv("MOZ_APP_LAUNCHER");
+
+  if(!argv1) {
+    // Tell the desktop the command for restarting us so that we can be part of XSMP session restore
+    NS_ASSERTION(gDirServiceProvider, "gDirServiceProvider is NULL! This shouldn't happen!");
+    nsCOMPtr<nsIFile> executablePath;
+    nsresult rv;
+
+    PRBool dummy;
+    rv = gDirServiceProvider->GetFile(XRE_EXECUTABLE_FILE, &dummy, getter_AddRefs(executablePath));
+
+    if (NS_SUCCEEDED(rv)) {
+      // Strip off the -bin suffix to get the shell script we should run; this is what Breakpad does
+      nsCAutoString leafName;
+      rv = executablePath->GetNativeLeafName(leafName);
+      if (NS_SUCCEEDED(rv) && StringEndsWith(leafName, NS_LITERAL_CSTRING("-bin"))) {
+        leafName.SetLength(leafName.Length() - strlen("-bin"));
+        executablePath->SetNativeLeafName(leafName);
+      }
+
+      executablePath->GetNativePath(path);
+      argv1 = (char*)(path.get());
+    }
+  }
+
+  if (argv1) {
+    gnome_client_set_restart_command(client, 1, &argv1);
+  }
 #endif /* MOZ_X11 */
 
   return NS_OK;
@@ -475,13 +600,31 @@ nsNativeAppSupportUnix::Stop(PRBool *aResult)
   NS_ENSURE_ARG(aResult);
   *aResult = PR_TRUE;
 
-#ifdef NS_OSSO
+#if (MOZ_PLATFORM_MAEMO == 5)
   if (m_osso_context) {
+    // Disable the accelerometer when closing
+    OssoRequestAccelerometer(m_osso_context, PR_FALSE);
+
+    // Remove the MCE callback filter
+    DBusConnection *connnection = (DBusConnection*)osso_get_sys_dbus_connection(m_osso_context);
+    dbus_connection_remove_filter(connnection, OssoModeControlCallback, nsnull);
+
     osso_hw_unset_event_cb(m_osso_context, nsnull);
     osso_rpc_unset_default_cb_f(m_osso_context, OssoDbusCallback, nsnull);
     osso_deinitialize(m_osso_context);
     m_osso_context = nsnull;
   }
+#endif
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNativeAppSupportUnix::Enable()
+{
+#if (MOZ_PLATFORM_MAEMO == 5)
+  // Enable the accelerometer for orientation support
+  if (OssoIsScreenOn(m_osso_context))
+      OssoRequestAccelerometer(m_osso_context, PR_TRUE);
 #endif
   return NS_OK;
 }

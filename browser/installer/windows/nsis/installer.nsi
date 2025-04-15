@@ -35,9 +35,10 @@
 # ***** END LICENSE BLOCK *****
 
 # Required Plugins:
-# AppAssocReg http://nsis.sourceforge.net/Application_Association_Registration_plug-in
-# ShellLink   http://nsis.sourceforge.net/ShellLink_plug-in
-# UAC         http://nsis.sourceforge.net/UAC_plug-in
+# AppAssocReg   http://nsis.sourceforge.net/Application_Association_Registration_plug-in
+# ApplicationID http://nsis.sourceforge.net/ApplicationID_plug-in
+# ShellLink     http://nsis.sourceforge.net/ShellLink_plug-in
+# UAC           http://nsis.sourceforge.net/UAC_plug-in
 
 ; Set verbosity to 3 (e.g. no script) to lessen the noise in the build logs
 !verbose 3
@@ -53,20 +54,20 @@ RequestExecutionLevel user
 !addplugindir ./
 
 Var TmpVal
-Var StartMenuDir
 Var InstallType
 Var AddStartMenuSC
 Var AddQuickLaunchSC
 Var AddDesktopSC
 Var PageName
 
+; By defining NO_STARTMENU_DIR an installer that doesn't provide an option for
+; an application's Start Menu PROGRAMS directory and doesn't define the
+; StartMenuDir variable can use the common InstallOnInitCommon macro.
+!define NO_STARTMENU_DIR
+
 ; On Vista and above attempt to elevate Standard Users in addition to users that
 ; are a member of the Administrators group.
 !define NONADMIN_ELEVATE
-
-; Don't use the PreDirectoryCommon macro's code for finding a pre-existing
-; installation directory.
-!define NO_INSTDIR_PREDIRCOMMON
 
 !define AbortSurveyURL "http://www.kampyle.com/feedback_form/ff-feedback-form.php?site_code=8166124&form_id=12116&url="
 
@@ -91,7 +92,6 @@ Var PageName
 !include defines.nsi
 !include common.nsh
 !include locales.nsi
-!include version.nsh
 
 VIAddVersionKey "FileDescription" "${BrandShortName} Installer"
 VIAddVersionKey "OriginalFilename" "setup.exe"
@@ -99,25 +99,27 @@ VIAddVersionKey "OriginalFilename" "setup.exe"
 ; Must be inserted before other macros that use logging
 !insertmacro _LoggingCommon
 
-; Most commonly used macros for managing shortcuts
-!insertmacro _LoggingShortcutsCommon
-
 !insertmacro AddDDEHandlerValues
-!insertmacro CanWriteToInstallDir
 !insertmacro ChangeMUIHeaderImage
 !insertmacro CheckForFilesInUse
 !insertmacro CleanUpdatesDir
 !insertmacro CopyFilesFromDir
 !insertmacro CreateRegKey
-!insertmacro FindSMProgramsDir
 !insertmacro GetPathFromString
 !insertmacro GetParent
 !insertmacro IsHandlerForInstallDir
+!insertmacro IsPinnedToTaskBar
+!insertmacro LogDesktopShortcut
+!insertmacro LogQuickLaunchShortcut
+!insertmacro LogStartMenuShortcut
 !insertmacro ManualCloseAppPrompt
+!insertmacro PinnedToStartMenuLnkCount
 !insertmacro RegCleanAppHandler
 !insertmacro RegCleanMain
 !insertmacro RegCleanUninstall
+!insertmacro SetAppLSPCategories
 !insertmacro SetBrandNameVars
+!insertmacro UpdateShortcutAppModelIDs
 !insertmacro UnloadUAC
 !insertmacro WriteRegStr2
 !insertmacro WriteRegDWORD2
@@ -130,13 +132,17 @@ VIAddVersionKey "OriginalFilename" "setup.exe"
 !insertmacro InstallOnInitCommon
 !insertmacro InstallStartCleanupCommon
 !insertmacro LeaveDirectoryCommon
+!insertmacro LeaveOptionsCommon
 !insertmacro OnEndCommon
 !insertmacro PreDirectoryCommon
 
 Name "${BrandFullName}"
 OutFile "setup.exe"
-InstallDirRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${BrandFullNameInternal} (${AppVersion})" "InstallLocation"
-InstallDir "$PROGRAMFILES\${BrandFullName}\"
+!ifdef HAVE_64BIT_OS
+  InstallDir "$PROGRAMFILES64\${BrandFullName}\"
+!else
+  InstallDir "$PROGRAMFILES32\${BrandFullName}\"
+!endif
 ShowInstDetails nevershow
 
 ################################################################################
@@ -176,12 +182,6 @@ Page custom preOptions leaveOptions
 
 ; Custom Shortcuts Page
 Page custom preShortcuts leaveShortcuts
-
-; Start Menu Folder Page Configuration
-!define MUI_PAGE_CUSTOMFUNCTION_PRE preStartMenu
-!define MUI_PAGE_CUSTOMFUNCTION_LEAVE leaveStartMenu
-!define MUI_STARTMENUPAGE_NODISABLE
-!insertmacro MUI_PAGE_STARTMENU Application $StartMenuDir
 
 ; Custom Summary Page
 Page custom preSummary leaveSummary
@@ -227,6 +227,8 @@ Section "-InstallStartCleanup"
   ; Remove the updates directory for Vista and above
   ${CleanUpdatesDir} "Mozilla\Firefox"
 
+  ${RemoveDeprecatedFiles}
+
   ${InstallStartCleanupCommon}
 SectionEnd
 
@@ -238,7 +240,7 @@ Section "-Application" APP_IDX
   SetDetailsPrint none
 
   ${LogHeader} "Installing Main Files"
-  ${CopyFilesFromDir} "$EXEDIR\nonlocalized" "$INSTDIR" \
+  ${CopyFilesFromDir} "$EXEDIR\core" "$INSTDIR" \
                       "$(ERROR_CREATE_DIRECTORY_PREFIX)" \
                       "$(ERROR_CREATE_DIRECTORY_SUFFIX)"
 
@@ -249,7 +251,7 @@ Section "-Application" APP_IDX
   ; registered. bug 338878
   ${LogHeader} "DLL Registration"
   ClearErrors
-  RegDLL "$INSTDIR\AccessibleMarshal.dll"
+  ${RegisterDLL} "$INSTDIR\AccessibleMarshal.dll"
   ${If} ${Errors}
     ${LogMsg} "** ERROR Registering: $INSTDIR\AccessibleMarshal.dll **"
   ${Else}
@@ -263,47 +265,15 @@ Section "-Application" APP_IDX
   ; parent directories will be removed.
   ${LogUninstall} "File: \components\compreg.dat"
   ${LogUninstall} "File: \components\xpti.dat"
-  ${LogUninstall} "File: \.autoreg"
   ${LogUninstall} "File: \active-update.xml"
   ${LogUninstall} "File: \install.log"
   ${LogUninstall} "File: \install_status.log"
   ${LogUninstall} "File: \install_wizard.log"
   ${LogUninstall} "File: \updates.xml"
 
-  SetDetailsPrint both
-  DetailPrint $(STATUS_INSTALL_LANG)
-  SetDetailsPrint none
-
-  ${LogHeader} "Installing Localized Files"
-  ${CopyFilesFromDir} "$EXEDIR\localized" "$INSTDIR" \
-                      "$(ERROR_CREATE_DIRECTORY_PREFIX)" \
-                      "$(ERROR_CREATE_DIRECTORY_SUFFIX)"
-
-  ${LogHeader} "Adding Additional Files"
-  ; Check if QuickTime is installed and copy the nsIQTScriptablePlugin.xpt from
-  ; its plugins directory into the app's components directory.
-  ClearErrors
-  ReadRegStr $R0 HKLM "Software\Apple Computer, Inc.\QuickTime" "InstallDir"
-  ${Unless} ${Errors}
-    ${GetLongPath} "$R0" $R0
-    ${Unless} "$R0" == ""
-      ClearErrors
-      GetFullPathName $R0 "$R0\Plugins\nsIQTScriptablePlugin.xpt"
-      ${Unless} ${Errors}
-        ${LogHeader} "Copying QuickTime Scriptable Component"
-        CopyFiles /SILENT "$R0" "$INSTDIR\components"
-        ${If} ${Errors}
-          ${LogMsg} "** ERROR Installing File: $INSTDIR\components\nsIQTScriptablePlugin.xpt **"
-        ${Else}
-          ${LogMsg} "Installed File: $INSTDIR\components\nsIQTScriptablePlugin.xpt"
-          ${LogUninstall} "File: \components\nsIQTScriptablePlugin.xpt"
-        ${EndIf}
-      ${EndUnless}
-    ${EndUnless}
-  ${EndUnless}
   ClearErrors
 
-  ; Default for creating Start Menu folder and shortcuts
+  ; Default for creating Start Menu shortcut
   ; (1 = create, 0 = don't create)
   ${If} $AddStartMenuSC == ""
     StrCpy $AddStartMenuSC "1"
@@ -311,7 +281,12 @@ Section "-Application" APP_IDX
 
   ; Default for creating Quick Launch shortcut (1 = create, 0 = don't create)
   ${If} $AddQuickLaunchSC == ""
-    StrCpy $AddQuickLaunchSC "1"
+    ; Don't install the quick launch shortcut on Windows 7
+    ${If} ${AtLeastWin7}
+      StrCpy $AddQuickLaunchSC "0"
+    ${Else}
+      StrCpy $AddQuickLaunchSC "1"
+    ${EndIf}
   ${EndIf}
 
   ; Default for creating Desktop shortcut (1 = create, 0 = don't create)
@@ -378,15 +353,14 @@ Section "-Application" APP_IDX
   ${If} $TmpVal == "HKLM"
     ; Set the Start Menu Internet and Vista Registered App HKLM registry keys.
     ${SetStartMenuInternet}
-
     ${FixShellIconHandler}
 
-    ; If we are writing to HKLM and create the quick launch and the desktop
+    ; If we are writing to HKLM and create either the desktop or start menu
     ; shortcuts set IconsVisible to 1 otherwise to 0.
     ${StrFilter} "${FileMainEXE}" "+" "" "" $R9
     StrCpy $0 "Software\Clients\StartMenuInternet\$R9\InstallInfo"
-    ${If} $AddQuickLaunchSC == 1
-    ${OrIf} $AddDesktopSC == 1
+    ${If} $AddDesktopSC == 1
+    ${OrIf} $AddStartMenuSC == 1
       WriteRegDWORD HKLM "$0" "IconsVisible" 1
     ${Else}
       WriteRegDWORD HKLM "$0" "IconsVisible" 0
@@ -401,61 +375,104 @@ Section "-Application" APP_IDX
 
   StrCpy $0 "Software\Microsoft\MediaPlayer\ShimInclusionList\$R9"
   ${CreateRegKey} "$TmpVal" "$0" 0
+  StrCpy $0 "Software\Microsoft\MediaPlayer\ShimInclusionList\plugin-container.exe"
+  ${CreateRegKey} "$TmpVal" "$0" 0
+
+  ${If} $TmpVal == "HKLM"
+    ; Set the permitted LSP Categories for WinVista and above
+    ${SetAppLSPCategories} ${LSP_CATEGORIES}
+  ${EndIf}
 
   ; Create shortcuts
   ${LogHeader} "Adding Shortcuts"
 
-  !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
+  ; Remove the start menu shortcuts and directory if the SMPROGRAMS section
+  ; exists in the shortcuts_log.ini and the SMPROGRAMS. The installer's shortcut
+  ; creation code will create the shortcut in the root of the Start Menu
+  ; Programs directory.
+  ${RemoveStartMenuDir}
 
-  ; Always add the relative path to the application's Start Menu directory and
-  ; the application's shortcuts to the shortcuts log ini file. The
-  ; DeleteShortcuts macro will do the right thing on uninstall if they don't
-  ; exist.
-  ${LogSMProgramsDirRelPath} "$StartMenuDir"
-  ${LogSMProgramsShortcut} "${BrandFullName}.lnk"
-  ${LogSMProgramsShortcut} "${BrandFullName} ($(SAFE_MODE)).lnk"
+  ; Always add the application's shortcuts to the shortcuts log ini file. The
+  ; DeleteShortcuts macro will do the right thing on uninstall if the
+  ; shortcuts don't exist.
+  ${LogStartMenuShortcut} "${BrandFullName}.lnk"
   ${LogQuickLaunchShortcut} "${BrandFullName}.lnk"
   ${LogDesktopShortcut} "${BrandFullName}.lnk"
+
+  ; Best effort to update the Win7 taskbar and start menu shortcut app model
+  ; id's. The possible contexts are current user / system and the user that
+  ; elevated the installer.
+  Call FixShortcutAppModelIDs
+  ; If the current context is all also perform Win7 taskbar and start menu link
+  ; maintenance for the current user context.
+  ${If} $TmpVal == "HKLM"
+    SetShellVarContext current  ; Set SHCTX to HKCU
+    Call FixShortcutAppModelIDs
+    SetShellVarContext all  ; Set SHCTX to HKLM
+  ${EndIf}
+
+  ; If running elevated also perform Win7 taskbar and start menu link
+  ; maintenance for the unelevated user context in case that is different than
+  ; the current user.
+  ClearErrors
+  ${GetParameters} $0
+  ${GetOptions} "$0" "/UAC:" $0
+  ${Unless} ${Errors}
+    GetFunctionAddress $0 FixShortcutAppModelIDs
+    UAC::ExecCodeSegment $0
+  ${EndIf}
 
   ; UAC only allows elevating to an Admin account so there is no need to add
   ; the Start Menu or Desktop shortcuts from the original unelevated process
   ; since this will either add it for the user if unelevated or All Users if
   ; elevated.
   ${If} $AddStartMenuSC == 1
-    ${Unless} ${FileExists} "$SMPROGRAMS\$StartMenuDir"
-      CreateDirectory "$SMPROGRAMS\$StartMenuDir"
-      ${LogMsg} "Added Start Menu Directory: $SMPROGRAMS\$StartMenuDir"
-    ${EndUnless}
-    CreateShortCut "$SMPROGRAMS\$StartMenuDir\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}" "" "$INSTDIR\${FileMainEXE}" 0
-    ${LogMsg} "Added Shortcut: $SMPROGRAMS\$StartMenuDir\${BrandFullName}.lnk"
-    CreateShortCut "$SMPROGRAMS\$StartMenuDir\${BrandFullName} ($(SAFE_MODE)).lnk" "$INSTDIR\${FileMainEXE}" "-safe-mode" "$INSTDIR\${FileMainEXE}" 0
-    ${LogMsg} "Added Shortcut: $SMPROGRAMS\$StartMenuDir\${BrandFullName} ($(SAFE_MODE)).lnk"
+    CreateShortCut "$SMPROGRAMS\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}"
+    ${If} ${FileExists} "$SMPROGRAMS\${BrandFullName}.lnk"
+      ShellLink::SetShortCutWorkingDirectory "$SMPROGRAMS\${BrandFullName}.lnk" \
+                                           "$INSTDIR"
+      ${If} ${AtLeastWin7}
+        ApplicationID::Set "$SMPROGRAMS\${BrandFullName}.lnk" "${AppUserModelID}"
+      ${EndIf}
+      ${LogMsg} "Added Shortcut: $SMPROGRAMS\${BrandFullName}.lnk"
+    ${Else}
+      ${LogMsg} "** ERROR Adding Shortcut: $SMPROGRAMS\${BrandFullName}.lnk"
+    ${EndIf}
   ${EndIf}
 
-  !insertmacro MUI_STARTMENU_WRITE_END
-
   ${If} $AddDesktopSC == 1
-    CreateShortCut "$DESKTOP\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}" "" "$INSTDIR\${FileMainEXE}" 0
-    ${LogMsg} "Added Shortcut: $DESKTOP\${BrandFullName}.lnk"
+    CreateShortCut "$DESKTOP\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}"
+    ${If} ${FileExists} "$DESKTOP\${BrandFullName}.lnk"
+      ShellLink::SetShortCutWorkingDirectory "$DESKTOP\${BrandFullName}.lnk" \
+                                             "$INSTDIR"
+      ${If} ${AtLeastWin7}
+        ApplicationID::Set "$DESKTOP\${BrandFullName}.lnk" "${AppUserModelID}"
+      ${EndIf}
+      ${LogMsg} "Added Shortcut: $DESKTOP\${BrandFullName}.lnk"
+    ${Else}
+      ${LogMsg} "** ERROR Adding Shortcut: $DESKTOP\${BrandFullName}.lnk"
+    ${EndIf}
   ${EndIf}
 
   ; If elevated the Quick Launch shortcut must be added from the unelevated
   ; original process.
   ${If} $AddQuickLaunchSC == 1
-    ClearErrors
-    ${GetParameters} $0
-    ${GetOptions} "$0" "/UAC:" $0
-    ${If} ${Errors}
-      Call AddQuickLaunchShortcut
-      ${LogMsg} "Added Shortcut: $QUICKLAUNCH\${BrandFullName}.lnk"
-    ${Else}
-      ; It is not possible to add a log entry from the unelevated process so
-      ; add the log entry without the path since there is no simple way to know
-      ; the correct full path.
-      ${LogMsg} "Added Quick Launch Shortcut: ${BrandFullName}.lnk"
-      GetFunctionAddress $0 AddQuickLaunchShortcut
-      UAC::ExecCodeSegment $0
-    ${EndIf}
+    ${Unless} ${AtLeastWin7}
+      ClearErrors
+      ${GetParameters} $0
+      ${GetOptions} "$0" "/UAC:" $0
+      ${If} ${Errors}
+        Call AddQuickLaunchShortcut
+        ${LogMsg} "Added Shortcut: $QUICKLAUNCH\${BrandFullName}.lnk"
+      ${Else}
+        ; It is not possible to add a log entry from the unelevated process so
+        ; add the log entry without the path since there is no simple way to
+        ; know the correct full path.
+        ${LogMsg} "Added Quick Launch Shortcut: ${BrandFullName}.lnk"
+        GetFunctionAddress $0 AddQuickLaunchShortcut
+        UAC::ExecCodeSegment $0
+      ${EndIf}
+    ${EndUnless}
   ${EndIf}
 SectionEnd
 
@@ -481,10 +498,14 @@ Section "-InstallEndCleanup"
     ${EndIf}
   ${EndUnless}
 
-  ${LogHeader} "Updating Uninstall Log With Previous Uninstall Log"
+  ; Adds a pinned Task Bar shortcut (see MigrateTaskBarShortcut for details).
+  ${MigrateTaskBarShortcut}
+
+  ${GetShortcutsLogPath} $0
+  WriteIniStr "$0" "TASKBAR" "Migrated" "true"
 
   ; Refresh desktop icons
-  System::Call "shell32::SHChangeNotify(i, i, i, i) v (0x08000000, 0, 0, 0)"
+  System::Call "shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)"
 
   ${InstallEndCleanupCommon}
 
@@ -524,8 +545,8 @@ SectionEnd
 Function CustomAbort
   ${If} "${AB_CD}" == "en-US"
   ${AndIf} "$PageName" != ""
-  ${AndIf} ${FileExists} "$EXEDIR\nonlocalized\distribution\distribution.ini"
-    ReadINIStr $0 "$EXEDIR\nonlocalized\distribution\distribution.ini" "Global" "about"
+  ${AndIf} ${FileExists} "$EXEDIR\core\distribution\distribution.ini"
+    ReadINIStr $0 "$EXEDIR\core\distribution\distribution.ini" "Global" "about"
     ClearErrors
     ${WordFind} "$0" "Funnelcake" "E#" $1
     ${Unless} ${Errors}
@@ -542,8 +563,6 @@ Function CustomAbort
           GetFunctionAddress $0 AbortSurveyDirectory
       ${ElseIf} "$PageName" == "Shortcuts"
           GetFunctionAddress $0 AbortSurveyShortcuts
-      ${ElseIf} "$PageName" == "StartMenu"
-          GetFunctionAddress $0 AbortSurveyStartMenu
       ${ElseIf} "$PageName" == "Summary"
           GetFunctionAddress $0 AbortSurveySummary
       ${EndIf}
@@ -555,7 +574,7 @@ Function CustomAbort
       ${Else}
         UAC::ExecCodeSegment $0
       ${EndIf}
-      
+
       CustomAbort_finish:
       Return
     ${EndUnless}
@@ -583,19 +602,19 @@ Function AbortSurveyShortcuts
   ExecShell "open" "${AbortSurveyURL}step4"
 FunctionEnd
 
-Function AbortSurveyStartMenu
-  ExecShell "open" "${AbortSurveyURL}step5"
-FunctionEnd
-
 Function AbortSurveySummary
-  ExecShell "open" "${AbortSurveyURL}step6"
+  ExecShell "open" "${AbortSurveyURL}step5"
 FunctionEnd
 
 ################################################################################
 # Helper Functions
 
 Function AddQuickLaunchShortcut
-  CreateShortCut "$QUICKLAUNCH\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}" "" "$INSTDIR\${FileMainEXE}" 0
+  CreateShortCut "$QUICKLAUNCH\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}"
+  ${If} ${FileExists} "$QUICKLAUNCH\${BrandFullName}.lnk"
+    ShellLink::SetShortCutWorkingDirectory "$QUICKLAUNCH\${BrandFullName}.lnk" \
+                                           "$INSTDIR"
+  ${EndIf}
 FunctionEnd
 
 Function CheckExistingInstall
@@ -614,6 +633,14 @@ Function CheckExistingInstall
   Quit
 
   ${If} ${FileExists} "$INSTDIR\${FileMainEXE}"
+    ; Disable the next, cancel, and back buttons
+    GetDlgItem $0 $HWNDPARENT 1 ; Next button
+    EnableWindow $0 0
+    GetDlgItem $0 $HWNDPARENT 2 ; Cancel button
+    EnableWindow $0 0
+    GetDlgItem $0 $HWNDPARENT 3 ; Back button
+    EnableWindow $0 0
+
     Banner::show /NOUNLOAD "$(BANNER_CHECK_EXISTING)"
 
     ${If} "$TmpVal" == "FoundMessageWindow"
@@ -627,6 +654,14 @@ Function CheckExistingInstall
     ${CheckForFilesInUse} $TmpVal
 
     Banner::destroy
+
+    ; Enable the next, cancel, and back buttons
+    GetDlgItem $0 $HWNDPARENT 1 ; Next button
+    EnableWindow $0 1
+    GetDlgItem $0 $HWNDPARENT 2 ; Cancel button
+    EnableWindow $0 1
+    GetDlgItem $0 $HWNDPARENT 3 ; Back button
+    EnableWindow $0 1
 
     ${If} "$TmpVal" == "true"
       StrCpy $TmpVal "FoundMessageWindow"
@@ -683,18 +718,18 @@ BrandingText " "
 
 Function preWelcome
   StrCpy $PageName "Welcome"
-  ${If} ${FileExists} "$EXEDIR\localized\distribution\modern-wizard.bmp"
+  ${If} ${FileExists} "$EXEDIR\core\distribution\modern-wizard.bmp"
     Delete "$PLUGINSDIR\modern-wizard.bmp"
-    CopyFiles /SILENT "$EXEDIR\localized\distribution\modern-wizard.bmp" "$PLUGINSDIR\modern-wizard.bmp"
+    CopyFiles /SILENT "$EXEDIR\core\distribution\modern-wizard.bmp" "$PLUGINSDIR\modern-wizard.bmp"
   ${EndIf}
 FunctionEnd
 
 Function preOptions
   StrCpy $PageName "Options"
-  ${If} ${FileExists} "$EXEDIR\localized\distribution\modern-header.bmp"
+  ${If} ${FileExists} "$EXEDIR\core\distribution\modern-header.bmp"
   ${AndIf} $hHeaderBitmap == ""
     Delete "$PLUGINSDIR\modern-header.bmp"
-    CopyFiles /SILENT "$EXEDIR\localized\distribution\modern-header.bmp" "$PLUGINSDIR\modern-header.bmp"
+    CopyFiles /SILENT "$EXEDIR\core\distribution\modern-header.bmp" "$PLUGINSDIR\modern-header.bmp"
     ${ChangeMUIHeaderImage} "$PLUGINSDIR\modern-header.bmp"
   ${EndIf}
   !insertmacro MUI_HEADER_TEXT "$(OPTIONS_PAGE_TITLE)" "$(OPTIONS_PAGE_SUBTITLE)"
@@ -713,37 +748,10 @@ Function leaveOptions
   StrCmp $R0 "1" +1 +2
   StrCpy $InstallType ${INSTALLTYPE_CUSTOM}
 
-!ifndef NO_INSTDIR_FROM_REG
-  SetShellVarContext all      ; Set SHCTX to HKLM
-  ${GetSingleInstallPath} "Software\Mozilla\${BrandFullNameInternal}" $R9
+  ${LeaveOptionsCommon}
 
-  StrCmp "$R9" "false" +1 fix_install_dir
-
-  SetShellVarContext current  ; Set SHCTX to HKCU
-  ${GetSingleInstallPath} "Software\Mozilla\${BrandFullNameInternal}" $R9
-
-  fix_install_dir:
-  StrCmp "$R9" "false" +2 +1
-  StrCpy $INSTDIR "$R9"
-!endif
-
-  ; If the user doesn't have write access to the installation directory set
-  ; the installation directory to a subdirectory of the All Users application
-  ; directory and if the user can't write to that location set the installation
-  ; directory to a subdirectory of the users local application directory
-  ; (e.g. non-roaming).
-  ${CanWriteToInstallDir} $R8
-  ${If} "$R8" == "false"
-    SetShellVarContext all      ; Set SHCTX to All Users
-    StrCpy $INSTDIR "$APPDATA\${BrandFullName}\"
-    ${If} ${FileExists} "$INSTDIR"
-      ; Always display the long path if the path already exists.
-      ${GetLongPath} "$INSTDIR" $INSTDIR
-    ${EndIf}
-    ${CanWriteToInstallDir} $R8
-    ${If} "$R8" == "false"
-      StrCpy $INSTDIR "$LOCALAPPDATA\${BrandFullName}\"
-    ${EndIf}
+  ${If} $InstallType == ${INSTALLTYPE_BASIC}
+    Call CheckExistingInstall
   ${EndIf}
 FunctionEnd
 
@@ -753,10 +761,10 @@ Function preDirectory
 FunctionEnd
 
 Function leaveDirectory
-  ${LeaveDirectoryCommon} "$(WARN_DISK_SPACE)" "$(WARN_WRITE_ACCESS)"
-  ${If} $InstallType != ${INSTALLTYPE_CUSTOM}
+  ${If} $InstallType == ${INSTALLTYPE_BASIC}
     Call CheckExistingInstall
   ${EndIf}
+  ${LeaveDirectoryCommon} "$(WARN_DISK_SPACE)" "$(WARN_WRITE_ACCESS)"
 FunctionEnd
 
 Function preShortcuts
@@ -773,44 +781,11 @@ Function leaveShortcuts
   ${EndIf}
   ${MUI_INSTALLOPTIONS_READ} $AddDesktopSC "shortcuts.ini" "Field 2" "State"
   ${MUI_INSTALLOPTIONS_READ} $AddStartMenuSC "shortcuts.ini" "Field 3" "State"
-  ${MUI_INSTALLOPTIONS_READ} $AddQuickLaunchSC "shortcuts.ini" "Field 4" "State"
-FunctionEnd
+  ; Don't install the quick launch shortcut on Windows 7
+  ${Unless} ${AtLeastWin7}
+    ${MUI_INSTALLOPTIONS_READ} $AddQuickLaunchSC "shortcuts.ini" "Field 4" "State"
+  ${EndUnless}
 
-Function preStartMenu
-  StrCpy $PageName "StartMenu"
-  ; With the Unicode installer the path to the application's Start Menu
-  ; directory relative to the Start Menu's Programs directory is written to the
-  ; shortcuts log ini file and is used to set the default Start Menu directory.
-  ${GetSMProgramsDirRelPath} $0
-  ${If} "$0" != ""
-    StrCpy $StartMenuDir "$0"
-  ${Else}
-    ; Prior to the Unicode installer the path to the application's Start Menu
-    ; directory relative to the Start Menu's Programs directory was written to
-    ; the registry and use this value to set the default Start Menu directory.
-    ClearErrors
-    ReadRegStr $0 HKLM "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})\Main" "Start Menu Folder"
-    ${If} ${Errors}
-      ; Use the FindSMProgramsDir macro to find a previously used path to the
-      ; application's Start Menu directory relative to the Start Menu's Programs
-      ; directory in the uninstall log and use this value to set the default
-      ; Start Menu directory.
-      ${FindSMProgramsDir} $0
-      ${If} "$0" != ""
-        StrCpy $StartMenuDir "$0"
-      ${EndIf}
-    ${Else}
-      StrCpy $StartMenuDir "$0"
-    ${EndUnless}
-  ${EndIf}
-
-  ${CheckCustomCommon}
-  ${If} $AddStartMenuSC != 1
-    Abort
-  ${EndIf}
-FunctionEnd
-
-Function leaveStartMenu
   ${If} $InstallType == ${INSTALLTYPE_CUSTOM}
     Call CheckExistingInstall
   ${EndIf}
@@ -864,9 +839,14 @@ Function preSummary
   WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
   ${Unless} ${Errors}
     DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
-    ; Check if Firefox is already the handler for http. This is set on all
-    ; versions of Windows.
+    ; Check if Firefox is the http handler for this user.
+    SetShellVarContext current ; Set SHCTX to the current user
     ${IsHandlerForInstallDir} "http" $R9
+    ${If} $TmpVal == "HKLM"
+      SetShellVarContext all ; Set SHCTX to all users
+    ${EndIf}
+    ; If Firefox isn't the http handler for this user show the option to set
+    ; Firefox as the default browser.
     ${If} "$R9" != "true"
       WriteINIStr "$PLUGINSDIR\summary.ini" "Settings" NumFields "4"
       WriteINIStr "$PLUGINSDIR\summary.ini" "Field 4" Type   "checkbox"
@@ -940,7 +920,7 @@ FunctionEnd
 Function .onInit
   StrCpy $PageName ""
   StrCpy $LANGUAGE 0
-  ${SetBrandNameVars} "$EXEDIR\localized\distribution\setup.ini"
+  ${SetBrandNameVars} "$EXEDIR\core\distribution\setup.ini"
 
   ${InstallOnInitCommon} "$(WARN_MIN_SUPPORTED_OS_MSG)"
 
@@ -989,7 +969,12 @@ Function .onInit
   WriteINIStr "$PLUGINSDIR\options.ini" "Field 5" Bottom "87"
 
   ; Setup the shortcuts.ini file for the Custom Shortcuts Page
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Settings" NumFields "4"
+  ; Don't offer to install the quick launch shortcut on Windows 7
+  ${If} ${AtLeastWin7}
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Settings" NumFields "3"
+  ${Else}
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Settings" NumFields "4"
+  ${EndIf}
 
   WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 1" Type   "label"
   WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 1" Text   "$(CREATE_ICONS_DESC)"
@@ -1015,19 +1000,20 @@ Function .onInit
   WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Bottom "50"
   WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" State  "1"
 
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Type   "checkbox"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Text   "$(ICONS_QUICKLAUNCH)"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Left   "15"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Right  "-1"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Top    "60"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Bottom "70"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" State  "1"
+  ; Don't offer to install the quick launch shortcut on Windows 7
+  ${Unless} ${AtLeastWin7}
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Type   "checkbox"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Text   "$(ICONS_QUICKLAUNCH)"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Left   "15"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Right  "-1"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Top    "60"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" Bottom "70"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 4" State  "1"
+  ${EndUnless}
 
-  ; There must always be nonlocalized and localized directories.
-  ${GetSize} "$EXEDIR\nonlocalized\" "/S=0K" $R5 $R7 $R8
-  ${GetSize} "$EXEDIR\localized\" "/S=0K" $R6 $R7 $R8
-  IntOp $R8 $R5 + $R6
-  SectionSetSize ${APP_IDX} $R8
+  ; There must always be a core directory.
+  ${GetSize} "$EXEDIR\core\" "/S=0K" $R5 $R7 $R8
+  SectionSetSize ${APP_IDX} $R5
 
   ; Initialize $hHeaderBitmap to prevent redundant changing of the bitmap if
   ; the user clicks the back button

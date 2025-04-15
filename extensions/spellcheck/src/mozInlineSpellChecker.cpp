@@ -522,10 +522,18 @@ NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
 NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMKeyListener)
 NS_INTERFACE_MAP_ENTRY(nsIDOMKeyListener)
 NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsIDOMEventListener, nsIDOMKeyListener)
+NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(mozInlineSpellChecker)
 NS_INTERFACE_MAP_END
 
-NS_IMPL_ADDREF(mozInlineSpellChecker)
-NS_IMPL_RELEASE(mozInlineSpellChecker)
+NS_IMPL_CYCLE_COLLECTING_ADDREF(mozInlineSpellChecker)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(mozInlineSpellChecker)
+
+NS_IMPL_CYCLE_COLLECTION_5(mozInlineSpellChecker,
+                           mSpellCheck,
+                           mTextServicesDocument,
+                           mTreeWalker,
+                           mConverter,
+                           mCurrentSelectionAnchorNode)
 
 mozInlineSpellChecker::SpellCheckingState
   mozInlineSpellChecker::gCanEnableSpellChecking =
@@ -1152,7 +1160,7 @@ mozInlineSpellChecker::SkipSpellCheckForNode(nsIEditor* aEditor,
   else {
     // XXX Do we really want this for all read-write content?
     nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
-    *checkSpelling = !!(content->IntrinsicState() & NS_EVENT_STATE_MOZ_READWRITE);
+    *checkSpelling = content->IntrinsicState().HasState(NS_EVENT_STATE_MOZ_READWRITE);
   }
 
   return NS_OK;
@@ -1184,7 +1192,7 @@ mozInlineSpellChecker::ScheduleSpellCheck(const mozInlineSpellStatus& aStatus)
 //
 //    FIXME-PERFORMANCE: This takes as long as it takes and is not resumable.
 //    Typically, checking this small amount of text is relatively fast, but
-//    for large numbers of words, a lag may be noticable.
+//    for large numbers of words, a lag may be noticeable.
 
 nsresult
 mozInlineSpellChecker::DoSpellCheckSelection(mozInlineSpellWordUtil& aWordUtil,
@@ -1665,7 +1673,7 @@ mozInlineSpellChecker::HandleNavigationEvent(nsIDOMEvent* aEvent,
 
   // If we already handled the navigation event and there is no possibility
   // anything has changed since then, we don't have to do anything. This
-  // optimization makes a noticable difference when you hold down a navigation
+  // optimization makes a noticeable difference when you hold down a navigation
   // key like Page Down.
   if (! mNeedsCheckAfterNavigation)
     return NS_OK;

@@ -1,6 +1,5 @@
 url-prefix ../../jsreftest.html?test=js1_7/decompilation/
 skip script regress-346642-01.js # obsolete test
-script regress-348904.js
 script regress-349493.js
 script regress-349499.js
 skip script regress-349602.js # obsolete test
@@ -45,8 +44,6 @@ script regress-374713.js
 script regress-375794.js
 script regress-379925.js
 script regress-380506.js
-script regress-381101.js
-script regress-381108.js
 script regress-410571.js
 script regress-410649.js
-script regress-429252.js
+skip script regress-429252.js

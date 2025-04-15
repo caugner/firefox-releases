@@ -1,4 +1,4 @@
-<html xmlns="http://www.w3.org/1999/xhtml" manifest="http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/fallback.cacheManifest">
+<html xmlns="http://www.w3.org/1999/xhtml" manifest="http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/fallback.cacheManifest">
 <head>
 <title>Fallback entry test</title>
 
@@ -17,16 +17,13 @@
  * in the application cache.
  */
 
-var gManifestUpdated = false;
 var gStep = 1;
 var gChildLoad = false;
 var gTopWindow = null;
-var gCompleteTimeout = null;
 
 function manifestUpdated()
 {
-  gManifestUpdated = true;
-  fallbackFrame.location = "http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/non-existing.html";
+  fallbackFrame.location = "http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/non-existing.html";
   // Invokes load of fallback.html
 }
 
@@ -38,11 +35,10 @@ function onFallbackLoad(fallbackIdentification)
       OfflineTest.ok(!gChildLoad, "offline child not load before cache update");
       gChildLoad = true;
       // no break
-
     case 101:
       OfflineTest.is(fallbackIdentification, 1, "fallback for namespace1/ in step " + gStep);
 
-      fallbackFrame.location = "http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub-non-existing.html";
+      fallbackFrame.location = "http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub-non-existing.html";
       // Invokes load of fallback.html
       break;
 
@@ -50,7 +46,7 @@ function onFallbackLoad(fallbackIdentification)
     case 102:
       OfflineTest.is(fallbackIdentification, 1, "fallback for namespace1/, sub namespace in name of the frame in step " + gStep);
 
-      fallbackFrame.location = "http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub/non-existing.html";
+      fallbackFrame.location = "http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub/non-existing.html";
       // Invokes load of fallback2.html
       break;
 
@@ -58,7 +54,7 @@ function onFallbackLoad(fallbackIdentification)
     case 103:
       OfflineTest.is(fallbackIdentification, 2, "fallback for namespace1/sub/ in step " + gStep);
 
-      fallbackFrame.location = "HTTP://LOCALHOST:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub/non-existing.html";
+      fallbackFrame.location = "HTTP://MOCHI.TEST:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub/non-existing.html";
       // Invokes load of fallback2.html
       break;
 
@@ -68,13 +64,8 @@ function onFallbackLoad(fallbackIdentification)
 
       // Try opening a non-existing page as a top level document. It must
       // fall to fallbackTop.html that identifies it self as '100'.
-      gCompleteTimeout = window.setTimeout(function() {
-        OfflineTest.ok(false, "Fallback page displayed for top level document");
-        finalize();
-      }, 3000);
-
-      gTopWindow = window.open("http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace2/non-existing.html");
       // Invokes load of fallbackTop.html
+      gTopWindow = window.open("http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace2/non-existing.html");
 
       break;
 
@@ -82,23 +73,22 @@ function onFallbackLoad(fallbackIdentification)
       // Try all over again. This checks there are no entries for non-existing
       // pages created/leaked. That would prevent fallback load.
       gStep = 100;
-      fallbackFrame.location = "http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/non-existing.html";
+
+      fallbackFrame.location = "http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/non-existing.html";
       // Invokes load of fallback1.html, again, from the start
       // no break
-
     case 105:
       OfflineTest.is(fallbackIdentification, 100, "fallback for namespace2/, invoked by a top level document " + gStep);
 
       gTopWindow.close();
       gTopWindow = null;
-      window.clearTimeout(gCompleteTimeout);
-      gCompleteTimeout = null;
 
       break;
   }
 
   if (gStep == 105) {
     finalize();
+    return;
   }
 
   ++gStep;
@@ -108,10 +98,10 @@ function finalize()
 {
   netscape.security.PrivilegeManager.enablePrivilege("UniversalXPConnect");
 
-  OfflineTest.checkCache("http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub-non-existing.html", false);
-  OfflineTest.checkCache("http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub/non-existing.html", false);
-  OfflineTest.checkCache("http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/non-existing.html", false);
-  OfflineTest.checkCache("http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace2/non-existing.html", false);
+  OfflineTest.checkCache("http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub-non-existing.html", false);
+  OfflineTest.checkCache("http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/sub/non-existing.html", false);
+  OfflineTest.checkCache("http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/non-existing.html", false);
+  OfflineTest.checkCache("http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace2/non-existing.html", false);
 
   OfflineTest.teardown();
   OfflineTest.finish();
@@ -130,6 +120,6 @@ if (OfflineTest.setup()) {
 </head>
 
 <body>
-<iframe name="fallbackFrame" src="http://localhost:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/non-existing.html"></iframe>
+<iframe name="fallbackFrame" src="http://mochi.test:8888/tests/dom/tests/mochitest/ajax/offline/namespace1/non-existing.html"></iframe>
 </body>
 </html>

@@ -52,50 +52,24 @@ GRE_MODULE	= 1
 LIBRARY_NAME	= gkbase_s
 LIBXUL_LIBRARY	= 1
 
-REQUIRES	= xpcom \
-		  string \
-		  dom \
-		  content \
-		  xuldoc \
-		  gfx \
-		  widget \
-		  view \
-		  necko \
-		  docshell \
-		  webshell \
-		  webbrwsr \
-		  uriloader \
-		  js \
-		  xpconnect \
-		  plugin \
-		  locale \
-		  pref \
-		  imglib2 \
-		  unicharutil \
-		  htmlparser \
-		  util \
-		  windowwatcher \
-		  shistory \
-		  caps \
-		  thebes \
-		  qcms \
-		  $(NULL)
 
-ifdef ACCESSIBILITY
-REQUIRES	+= accessibility
-endif
 
 XPIDLSRCS	= \
 		nsIStyleSheetService.idl	\
 		$(NULL)
 
+EXPORTS_NAMESPACES = mozilla
+
 EXPORTS		= \
+		FrameLayerBuilder.h \
+		FramePropertyTable.h \
 		nsBidi.h \
 		nsBidiPresUtils.h \
 		nsCaret.h \
 		nsCSSFrameConstructor.h \
 		nsChangeHint.h \
 		nsCompatibility.h \
+		nsDisplayItemTypes.h \
 		nsDisplayList.h \
 		nsFrameManager.h \
 		nsFrameManagerBase.h \
@@ -112,11 +86,19 @@ EXPORTS		= \
 		nsLayoutUtils.h \
 		nsPresContext.h \
 		nsPresState.h \
+		nsRefreshDriver.h \
 		nsStyleChangeList.h \
 		nsStyleConsts.h \
 		$(NULL)
 
+EXPORTS_mozilla = \
+  PaintTracker.h \
+  $(NULL)
+
 CPPSRCS		= \
+		FrameLayerBuilder.cpp \
+		FramePropertyTable.cpp \
+		RestyleTracker.cpp \
 		nsCSSColorUtils.cpp \
 		nsCSSFrameConstructor.cpp \
 		nsCSSRendering.cpp \
@@ -136,10 +118,11 @@ CPPSRCS		= \
 		nsPresArena.cpp \
 		nsPresContext.cpp \
 		nsPresShell.cpp \
-		nsPresState.cpp \
 		nsQuoteList.cpp \
+		nsRefreshDriver.cpp \
 		nsStyleChangeList.cpp \
 		nsStyleSheetService.cpp \
+		PaintTracker.cpp \
 		$(NULL)
 
 ifndef MOZ_XUL
@@ -165,6 +148,10 @@ FORCE_STATIC_LIB = 1
 
 include $(topsrcdir)/config/rules.mk
 
+ifdef MOZ_IPC
+include $(topsrcdir)/ipc/chromium/chromium-config.mk
+endif
+
 LOCAL_INCLUDES += \
 		-I$(srcdir) \
 		-I$(srcdir)/../style \
@@ -179,6 +166,7 @@ LOCAL_INCLUDES += \
 		-I$(srcdir)/../../content/xbl/src \
 		-I$(srcdir)/../../view/src \
 		-I$(srcdir)/../../dom/base \
+		-I$(srcdir)/../../content/html/content/src \
 		-I$(srcdir)/../../content/svg/content/src \
 		$(NULL)
 
@@ -190,11 +178,6 @@ endif
 ifdef MOZ_SVG
 LOCAL_INCLUDES += \
         -I$(srcdir)/../svg/base/src
-endif
-
-ifdef MOZ_MEDIA
-LOCAL_INCLUDES += \
-        -I$(srcdir)/../../content/html/content/src
 endif
 
 CXXFLAGS += $(MOZ_CAIRO_CFLAGS)

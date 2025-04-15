@@ -40,19 +40,19 @@
  * rules, such as @media rules
  */
 
-#ifndef nsICSSGroupRule_h___
-#define nsICSSGroupRule_h___
+#ifndef nsICSSGroupRule_h
+#define nsICSSGroupRule_h
 
 #include "nsICSSRule.h"
 #include "nsCOMArray.h"
 
-class nsIAtom;
 class nsPresContext;
 class nsMediaQueryResultCacheKey;
 
-// IID for the nsICSSGroupRule interface {67b8492e-6d8d-43a5-8037-71eb269f24fe}
-#define NS_ICSS_GROUP_RULE_IID     \
-{0x67b8492e, 0x6d8d, 0x43a5, {0x80, 0x37, 0x71, 0xeb, 0x26, 0x9f, 0x24, 0xfe}}
+#define NS_ICSS_GROUP_RULE_IID \
+{ 0xf1e3d96b, 0xe381, 0x4533, \
+  { 0xa6, 0x5e, 0xa5, 0x31, 0xba, 0xca, 0x93, 0x62 } }
+
 
 class nsICSSGroupRule : public nsICSSRule {
 public:
@@ -83,4 +83,4 @@ public:
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsICSSGroupRule, NS_ICSS_GROUP_RULE_IID)
 
-#endif /* nsICSSGroupRule_h___ */
+#endif /* nsICSSGroupRule_h */

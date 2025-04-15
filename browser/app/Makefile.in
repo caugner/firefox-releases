@@ -59,8 +59,6 @@ DEFINES += -DAB_CD=$(AB_CD)
 
 APP_VERSION = $(shell cat $(srcdir)/../config/version.txt)
 DEFINES += -DAPP_VERSION="$(APP_VERSION)"
-APP_UA_NAME = $(shell echo $(MOZ_APP_DISPLAYNAME) | sed -e's/[^A-Za-z]//g')
-DEFINES += -DAPP_UA_NAME="$(APP_UA_NAME)"
 
 DIST_FILES = application.ini
 
@@ -69,9 +67,9 @@ GRE_BUILDID = $(shell $(PYTHON) $(topsrcdir)/config/printconfigsetting.py $(LIBX
 
 DEFINES += -DGRE_MILESTONE=$(GRE_MILESTONE) -DGRE_BUILDID=$(GRE_BUILDID)
 
-SOURCE_STAMP := $(shell cd $(topsrcdir) ; hg identify 2>/dev/null | cut -f1 -d' ')
-ifdef SOURCE_STAMP
-DEFINES += -DMOZ_SOURCE_STAMP="$(SOURCE_STAMP)"
+MOZ_SOURCE_STAMP ?= $(shell hg -R $(topsrcdir) parent --template="{node|short}\n" 2>/dev/null)
+ifdef MOZ_SOURCE_STAMP
+DEFINES += -DMOZ_SOURCE_STAMP="$(MOZ_SOURCE_STAMP)"
 endif
 
 SOURCE_REPO := $(shell hg -R $(topsrcdir) showconfig paths.default 2>/dev/null | sed -e "s/^ssh:/http:/")
@@ -86,20 +84,16 @@ include $(topsrcdir)/config/rules.mk
 else
 # Build a binary bootstrapping with XRE_main
 
-ifeq ($(USE_SHORT_LIBNAME), 1)
+ifneq (,$(filter OS2 WINCE WINNT,$(OS_ARCH)))
 PROGRAM = $(MOZ_APP_NAME)$(BIN_SUFFIX)
 else
 PROGRAM = $(MOZ_APP_NAME)-bin$(BIN_SUFFIX)
 endif
 
-REQUIRES = \
-	xpcom \
-	string \
-	$(NULL)
-
 CPPSRCS = nsBrowserApp.cpp
 
 LOCAL_INCLUDES += -I$(topsrcdir)/toolkit/xre
+LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/base
 
 ifdef BUILD_STATIC_LIBS
 ifdef _MSC_VER
@@ -109,14 +103,14 @@ STATIC_COMPONENTS_LINKER_PATH = -L$(DEPTH)/staticlib
 endif
 LIBS += $(DEPTH)/toolkit/xre/$(LIB_PREFIX)xulapp_s.$(LIB_SUFFIX)
 else
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 LIBS += $(DIST)/bin/XUL
 else
 EXTRA_DSO_LIBS += xul
 endif
 endif
 
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 TK_LIBS := $(TK_LIBS)
 endif
 
@@ -182,7 +176,6 @@ EXTRA_DEPS	+= \
 DEFINES		+= $(STATIC_DEFINES)
 CPPSRCS		+= $(STATIC_CPPSRCS)
 EXTRA_DSO_LIBS	+= $(STATIC_EXTRA_DSO_LIBS)
-REQUIRES	+= $(STATIC_REQUIRES)
 EXTRA_LIBS	+= $(STATIC_EXTRA_LIBS)
 endif
 
@@ -217,7 +210,7 @@ ifeq ($(OS_ARCH),OS2)
 RESFILE=splashos2.res
 RCFLAGS += -DMOZ_PHOENIX
 ifdef BUILD_STATIC_LIBS
-RCFLAGS += -DMOZ_STATIC_BUILD -i $(DIST)/include/widget
+RCFLAGS += -DMOZ_STATIC_BUILD -i $(DIST)/include
 endif
 ifdef DEBUG
 RCFLAGS += -DDEBUG
@@ -226,12 +219,6 @@ RCFLAGS += -DFIREFOX_ICO=\"$(DIST)/branding/firefox-os2.ico\" -DDOCUMENT_ICO=\"$
 endif
 
 include $(topsrcdir)/config/rules.mk
-
-DEFINES += -DFIREFOX_ICO=\"$(DIST)/branding/firefox.ico\" -DDOCUMENT_ICO=\"$(DIST)/branding/document.ico\"
-
-ifdef MOZILLA_OFFICIAL
-DEFINES += -DMOZILLA_OFFICIAL
-endif
 
 ifdef BUILD_STATIC_LIBS
 include $(topsrcdir)/config/static-rules.mk
@@ -256,6 +243,10 @@ ifeq ($(OS_ARCH),WINNT)
 #
 ifndef GNU_CC
 LDFLAGS += /HEAP:0x40000
+ifeq ($(OS_TEST),x86_64)
+# set stack to 2MB on x64 build.  See bug 582910
+LDFLAGS += -STACK:2097152
+endif
 endif
 endif
 
@@ -281,6 +272,12 @@ endif
 
 endif # LIBXUL_SDK
 
+DEFINES += -DFIREFOX_ICO=\"$(DIST)/branding/firefox.ico\" -DDOCUMENT_ICO=\"$(DIST)/branding/document.ico\"
+
+ifdef MOZILLA_OFFICIAL
+DEFINES += -DMOZILLA_OFFICIAL
+endif
+
 ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
 libs::
 	$(INSTALL) $(IFLAGS1) $(DIST)/branding/mozicon128.png $(DIST)/bin/icons
@@ -304,22 +301,21 @@ libs::
 endif
 endif
 
-libs::
-	touch $(DIST)/bin/.autoreg
-
 libs:: $(srcdir)/profile/prefs.js
 	$(INSTALL) $(IFLAGS1) $^ $(DIST)/bin/defaults/profile
 
 libs:: $(srcdir)/blocklist.xml
 	$(INSTALL) $(IFLAGS1) $^ $(DIST)/bin
 
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 
 APP_NAME = $(MOZ_APP_DISPLAYNAME)
 
 ifdef MOZ_DEBUG
 APP_NAME := $(APP_NAME)Debug
 endif
+
+LOWER_APP_NAME = $(shell echo $(APP_NAME) | tr '[A-Z]' '[a-z]')
 
 AB_CD = $(MOZ_UI_LOCALE)
 
@@ -339,8 +335,8 @@ libs repackage:: $(PROGRAM) application.ini
 	rsync -a --exclude CVS --exclude "*.in" $(srcdir)/macbuild/Contents $(DIST)/$(APP_NAME).app --exclude English.lproj
 	mkdir -p $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj
 	rsync -a --exclude CVS --exclude "*.in" $(srcdir)/macbuild/Contents/Resources/English.lproj/ $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj
-	sed -e "s/%APP_VERSION%/$(APP_VERSION)/" -e "s/%APP_NAME%/$(APP_NAME)/" $(srcdir)/macbuild/Contents/Info.plist.in > $(DIST)/$(APP_NAME).app/Contents/Info.plist
-	sed -e "s/%APP_VERSION%/$(APP_VERSION)/" -e "s/%APP_NAME%/$(APP_NAME)/" $(srcdir)/macbuild/Contents/Resources/English.lproj/InfoPlist.strings.in | iconv -f UTF-8 -t UTF-16 > $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj/InfoPlist.strings
+	sed -e "s/%APP_VERSION%/$(APP_VERSION)/" -e "s/%APP_NAME%/$(APP_NAME)/" -e "s/%LOWER_APP_NAME%/$(LOWER_APP_NAME)/" $(srcdir)/macbuild/Contents/Info.plist.in > $(DIST)/$(APP_NAME).app/Contents/Info.plist
+	sed -e "s/%APP_NAME%/$(APP_NAME)/" $(srcdir)/macbuild/Contents/Resources/English.lproj/InfoPlist.strings.in | iconv -f UTF-8 -t UTF-16 > $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj/InfoPlist.strings
 	rsync -a $(DIST)/bin/ $(DIST)/$(APP_NAME).app/Contents/$(APPFILES)
 	$(RM) $(DIST)/$(APP_NAME).app/Contents/$(APPFILES)/mangle $(DIST)/$(APP_NAME).app/Contents/$(APPFILES)/shlibsign
 ifdef LIBXUL_SDK
@@ -361,13 +357,6 @@ ifdef LIBXUL_SDK
 libs::
 	cp $(LIBXUL_DIST)/bin/$(XULRUNNER_STUB_NAME)$(BIN_SUFFIX) $(DIST)/bin/firefox$(BIN_SUFFIX)
 endif
-endif
-
-libs::
-ifeq ($(OS_ARCH),WINNT)
-	$(PERL) -pe 's/(?<!\r)\n/\r\n/g;' < $(topsrcdir)/LICENSE > $(DIST)/bin/LICENSE
-else
-	$(INSTALL) $(IFLAGS1) $(topsrcdir)/LICENSE $(DIST)/bin
 endif
 
 ifdef LIBXUL_SDK

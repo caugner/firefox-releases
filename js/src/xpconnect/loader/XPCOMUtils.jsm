@@ -54,14 +54,26 @@
  *  }
  *  MyComponent.prototype = {
  *    // properties required for XPCOM registration:
- *    classDescription: "unique text description",
  *    classID:          Components.ID("{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}"),
- *    contractID:       "@example.com/xxx;1",
  *
  *    // [optional] custom factory (an object implementing nsIFactory). If not
  *    // provided, the default factory is used, which returns
  *    // |(new MyComponent()).QueryInterface(iid)| in its createInstance().
  *    _xpcom_factory: { ... },
+ *
+ *    // QueryInterface implementation, e.g. using the generateQI helper
+ *    QueryInterface: XPCOMUtils.generateQI(
+ *      [Components.interfaces.nsIObserver,
+ *       Components.interfaces.nsIMyInterface,
+ *       "nsIFoo",
+ *       "nsIBar" ]),
+ *
+ *    // The following properties were used prior to Mozilla 2, but are no
+ *    // longer supported. They may still be included for compatibility with
+ *    // prior versions of XPCOMUtils. In Mozilla 2, this information is
+ *    // included in the .manifest file which registers this JS component.
+ *    classDescription: "unique text description",
+ *    contractID:       "@example.com/xxx;1",
  *
  *    // [optional] an array of categories to register this component in.
  *    _xpcom_categories: [{
@@ -77,15 +89,13 @@
  *      // optional, defaults to false. When set to true, and only if 'value'
  *      // is not specified, the concatenation of the string "service," and the
  *      // object's contractID is passed as aValue parameter of addCategoryEntry.
- *      service: true
+ *      service: true,
+ *      // optional, it can be an array of applications' IDs in the form:
+ *      // [ "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}", ... ]
+ *      // If defined the component will be registered in this category only for
+ *      // the provided applications.
+ *      apps: [...]
  *    }],
- *
- *    // QueryInterface implementation, e.g. using the generateQI helper
- *    QueryInterface: XPCOMUtils.generateQI(
- *      [Components.interfaces.nsIObserver,
- *       Components.interfaces.nsIMyInterface,
- *       "nsIFoo",
- *       "nsIBar" ]),
  *
  *    // ...component implementation...
  *  };
@@ -94,11 +104,8 @@
  * created in step 1):
  *  var components = [MyComponent];
  *
- * 3. Define the NSGetModule entry point:
- *  function NSGetModule(compMgr, fileSpec) {
- *    // components is the array created in step 2.
- *    return XPCOMUtils.generateModule(components);
- *  }
+ * 3. Define the NSGetFactory entry point:
+ *  const NSGetFactory = XPCOMUtils.generateNSGetFactory(components);
  */
 
 
@@ -115,118 +122,40 @@ var XPCOMUtils = {
    * that object, it checks if the given iid is listed in the |interfaces|
    * param, and if it is, returns |this| (the object it was called on).
    */
-  generateQI: function(interfaces) {
+  generateQI: function XPCU_generateQI(interfaces) {
     /* Note that Ci[Ci.x] == Ci.x for all x */
     return makeQI([Ci[i].name for each (i in interfaces) if (Ci[i])]);
   },
 
   /**
-   * Generate the NSGetModule function (along with the module definition).
-   * See the parameters to generateModule.
+   * Generate a NSGetFactory function given an array of components.
    */
-  generateNSGetModule: function(componentsArray, postRegister, preUnregister) {
-    return function NSGetModule(compMgr, fileSpec) {
-      return XPCOMUtils.generateModule(componentsArray,
-                                       postRegister,
-                                       preUnregister);
+  generateNSGetFactory: function XPCU_generateNSGetFactory(componentsArray) {
+    let classes = {};
+    for each (let component in componentsArray) {
+        if (!(component.prototype.classID instanceof Components.ID))
+          throw Error("In generateNSGetFactory, classID missing or incorrect for component " + component);
+
+        classes[component.prototype.classID] = this._getFactory(component);
+    }
+    return function NSGetFactory(cid) {
+      let cidstring = cid.toString();
+      if (cidstring in classes)
+        return classes[cidstring];
+      throw Cr.NS_ERROR_FACTORY_NOT_REGISTERED;
     }
   },
 
-  /**
-   * Generate a module implementation.
-   *
-   * @param componentsArray  Array of component constructors. See the comment
-   *                         at the top of this file for details.
-   * @param postRegister  optional post-registration function with
-   *                      signature 'postRegister(nsIComponentManager,
-   *                                              nsIFile, componentsArray)'
-   * @param preUnregister optional pre-unregistration function with
-   *                      signature 'preUnregister(nsIComponentManager,
-   *                                               nsIFile, componentsArray)'
-   */
-  generateModule: function(componentsArray, postRegister, preUnregister) {
-    let classes = [];
-    for each (let component in componentsArray) {
-      classes.push({
-        cid:          component.prototype.classID,
-        className:    component.prototype.classDescription,
-        contractID:   component.prototype.contractID,
-        factory:      this._getFactory(component),
-        categories:   component.prototype._xpcom_categories
-      });
+  get _appID() {
+    try {
+      let appInfo = Cc["@mozilla.org/xre/app-info;1"].
+                    getService(Ci.nsIXULAppInfo);
+      delete this._appID;
+      return this._appID = appInfo.ID;
     }
-
-    return { // nsIModule impl.
-      getClassObject: function(compMgr, cid, iid) {
-        // We only support nsIFactory queries, not nsIClassInfo
-        if (!iid.equals(Ci.nsIFactory))
-          throw Cr.NS_ERROR_NOT_IMPLEMENTED;
-
-        for each (let classDesc in classes) {
-          if (classDesc.cid.equals(cid))
-            return classDesc.factory;
-        }
-
-        throw Cr.NS_ERROR_FACTORY_NOT_REGISTERED;
-      },
-
-      registerSelf: function(compMgr, fileSpec, location, type) {
-        var componentCount = 0;
-        debug("*** registering " + fileSpec.leafName + ": [ ");
-        compMgr.QueryInterface(Ci.nsIComponentRegistrar);
-
-        for each (let classDesc in classes) {
-          debug((componentCount++ ? ", " : "") + classDesc.className);
-          compMgr.registerFactoryLocation(classDesc.cid,
-                                          classDesc.className,
-                                          classDesc.contractID,
-                                          fileSpec,
-                                          location,
-                                          type);
-          if (classDesc.categories) {
-            let catMan = XPCOMUtils.categoryManager;
-            for each (let cat in classDesc.categories) {
-              let defaultValue = (cat.service ? "service," : "") +
-                                 classDesc.contractID;
-              catMan.addCategoryEntry(cat.category,
-                                      cat.entry || classDesc.className,
-                                      cat.value || defaultValue,
-                                      true, true);
-            }
-          }
-        }
-
-        if (postRegister)
-          postRegister(compMgr, fileSpec, componentsArray);
-        debug(" ]\n");
-      },
-
-      unregisterSelf: function(compMgr, fileSpec, location) {
-        var componentCount = 0;
-        debug("*** unregistering " + fileSpec.leafName + ": [ ");
-        compMgr.QueryInterface(Ci.nsIComponentRegistrar);
-        if (preUnregister)
-          preUnregister(compMgr, fileSpec, componentsArray);
-
-        for each (let classDesc in classes) {
-          debug((componentCount++ ? ", " : "") + classDesc.className);
-          if (classDesc.categories) {
-            let catMan = XPCOMUtils.categoryManager;
-            for each (let cat in classDesc.categories) {
-              catMan.deleteCategoryEntry(cat.category,
-                                         cat.entry || classDesc.className,
-                                         true);
-            }
-          }
-          compMgr.unregisterFactoryLocation(classDesc.cid, fileSpec);
-        }
-        debug(" ]\n");
-      },
-
-      canUnload: function(compMgr) {
-        return true;
-      }
-    };
+    catch(ex) {
+      return undefined;
+    }
   },
 
   /**
@@ -279,9 +208,31 @@ var XPCOMUtils = {
   },
 
   /**
+   * Helper which iterates over a nsISimpleEnumerator.
+   * @param e The nsISimpleEnumerator to iterate over.
+   * @param i The expected interface for each element.
+   */
+  IterSimpleEnumerator: function XPCU_IterSimpleEnumerator(e, i)
+  {
+    while (e.hasMoreElements())
+      yield e.getNext().QueryInterface(i);
+  },
+
+  /**
+   * Helper which iterates over a string enumerator.
+   * @param e The string enumerator (nsIUTF8StringEnumerator or
+   *          nsIStringEnumerator) over which to iterate.
+   */
+  IterStringEnumerator: function XPCU_IterStringEnumerator(e)
+  {
+    while (e.hasMore())
+      yield e.getNext();
+  },
+
+  /**
    * Returns an nsIFactory for |component|.
    */
-  _getFactory: function(component) {
+  _getFactory: function XPCOMUtils__getFactory(component) {
     var factory = component.prototype._xpcom_factory;
     if (!factory) {
       factory = {
@@ -311,3 +262,4 @@ function makeQI(interfaceNames) {
     throw Cr.NS_ERROR_NO_INTERFACE;
   };
 }
+

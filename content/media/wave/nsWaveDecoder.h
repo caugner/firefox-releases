@@ -1,7 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim:set ts=2 sw=2 sts=2 et cindent: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: ML 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Mozilla Public License Version
  * 1.1 (the "License"); you may not use this file except in compliance with
@@ -121,7 +121,7 @@
 
   In addition, the following methods cause state transitions:
 
-  Shutdown(), Play(), Pause(), Seek(float)
+  Shutdown(), Play(), Pause(), Seek(double)
 
   The decoder implementation is currently limited to Linear PCM encoded
   audio data with one or two channels of 8- or 16-bit samples at sample
@@ -134,6 +134,7 @@
  */
 
 class nsWaveStateMachine;
+class nsTimeRanges;
 
 class nsWaveDecoder : public nsMediaDecoder
 {
@@ -154,13 +155,13 @@ class nsWaveDecoder : public nsMediaDecoder
   virtual already_AddRefed<nsIPrincipal> GetCurrentPrincipal();
 
   // Return the current playback position in the media in seconds.
-  virtual float GetCurrentTime();
+  virtual double GetCurrentTime();
 
   // Return the total playback length of the media in seconds.
-  virtual float GetDuration();
+  virtual double GetDuration();
 
   // Set the audio playback volume; must be in range [0.0, 1.0].
-  virtual void SetVolume(float aVolume);
+  virtual void SetVolume(double aVolume);
 
   virtual nsresult Play();
   virtual void Pause();
@@ -168,7 +169,7 @@ class nsWaveDecoder : public nsMediaDecoder
   // Set the current time of the media to aTime.  This may cause mStream to
   // create a new channel to fetch data from the appropriate position in the
   // stream.
-  virtual nsresult Seek(float aTime);
+  virtual nsresult Seek(double aTime);
 
   // Report whether the decoder is currently seeking.
   virtual PRBool IsSeeking() const;
@@ -179,7 +180,8 @@ class nsWaveDecoder : public nsMediaDecoder
   // Start downloading the media at the specified URI.  The media's metadata
   // will be parsed and made available as the load progresses.
   virtual nsresult Load(nsMediaStream* aStream,
-                        nsIStreamListener** aStreamListener);
+                        nsIStreamListener** aStreamListener,
+                        nsMediaDecoder* aCloneDonor);
 
   // Called by mStream (and possibly the nsChannelToPipeListener used
   // internally by mStream) when the stream has completed loading.
@@ -219,7 +221,13 @@ class nsWaveDecoder : public nsMediaDecoder
   // Resume any media downloads that have been suspended. Called by the
   // media element when it is restored from the bfcache. Call on the
   // main thread only.
-  virtual void Resume();
+  virtual void Resume(PRBool aForceBuffering);
+
+  // Calls mElement->UpdateReadyStateForData, telling it which state we have
+  // entered.  Main thread only.
+  void NextFrameUnavailableBuffering();
+  void NextFrameAvailable();
+  void NextFrameUnavailable();
 
   // Change the element's ready state as necessary. Main thread only.
   void UpdateReadyStateForData();
@@ -230,6 +238,13 @@ class nsWaveDecoder : public nsMediaDecoder
   // Called asynchronously to shut down the decoder
   void Stop();
 
+  // Constructs the time ranges representing what segments of the media
+  // are buffered and playable.
+  virtual nsresult GetBuffered(nsTimeRanges* aBuffered);
+
+  virtual void NotifyDataArrived(const char* aBuffer, PRUint32 aLength, PRUint32 aOffset) {}
+
+  void NotifyDataExhausted() {}
 private:
   // Notifies the element that seeking has started.
   void SeekingStarted();
@@ -247,11 +262,12 @@ private:
   // Notifies the element that decoding has failed.
   void DecodeError();
 
-  void RegisterShutdownObserver();
-  void UnregisterShutdownObserver();
+  // Ensures that state machine thread is running, starting a new one
+  // if necessary.
+  nsresult StartStateMachineThread();
 
   // Volume that the audio backend will be initialized with.
-  float mInitialVolume;
+  double mInitialVolume;
 
   // Thread that handles audio playback, including data download.
   nsCOMPtr<nsIThread> mPlaybackThread;
@@ -268,12 +284,12 @@ private:
   // seconds. This is updated every time a block of audio is passed to the
   // backend (unless an prior update is still pending).  It is read and
   // written from the main thread only.
-  float mCurrentTime;
+  double mCurrentTime;
 
   // Copy of the duration and ended state when the state machine was
   // disposed.  Used to respond to duration and ended queries with sensible
   // values after the state machine has been destroyed.
-  float mEndedDuration;
+  double mEndedDuration;
   PRPackedBool mEnded;
 
   // True if the media resource is seekable.

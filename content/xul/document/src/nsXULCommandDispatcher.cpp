@@ -44,14 +44,12 @@
  */
 
 #include "nsIContent.h"
-#include "nsIFocusController.h"
 #include "nsFocusManager.h"
 #include "nsIControllers.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMXULDocument.h"
 #include "nsIDOMHTMLDocument.h"
 #include "nsIDOMElement.h"
-#include "nsIDOMNSHTMLInputElement.h"
 #include "nsIDOMNSHTMLTextAreaElement.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIDOMXULElement.h"
@@ -60,6 +58,7 @@
 #include "nsIPresShell.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsPIDOMWindow.h"
+#include "nsPIWindowRoot.h"
 #include "nsRDFCID.h"
 #include "nsXULCommandDispatcher.h"
 #include "prlog.h"
@@ -70,7 +69,6 @@
 #include "nsCRT.h"
 #include "nsDOMError.h"
 #include "nsEventDispatcher.h"
-#include "nsPresShellIterator.h"
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gLog;
@@ -96,11 +94,14 @@ nsXULCommandDispatcher::~nsXULCommandDispatcher()
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULCommandDispatcher)
 
 // QueryInterface implementation for nsXULCommandDispatcher
+
+DOMCI_DATA(XULCommandDispatcher, nsXULCommandDispatcher)
+
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsXULCommandDispatcher)
     NS_INTERFACE_MAP_ENTRY(nsIDOMXULCommandDispatcher)
     NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
     NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMXULCommandDispatcher)
-    NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(XULCommandDispatcher)
+    NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(XULCommandDispatcher)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsXULCommandDispatcher)
@@ -130,15 +131,17 @@ nsXULCommandDispatcher::Disconnect()
   mDocument = nsnull;
 }
 
-nsIFocusController*
-nsXULCommandDispatcher::GetFocusController()
+already_AddRefed<nsPIWindowRoot>
+nsXULCommandDispatcher::GetWindowRoot()
 {
-  if (!mDocument) {
-    return nsnull;
+  if (mDocument) {
+    nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mDocument->GetScriptGlobalObject()));
+    if (window) {
+      return window->GetTopWindowRoot();
+    }
   }
 
-  nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(mDocument->GetScriptGlobalObject()));
-  return win ? win->GetRootFocusController() : nsnull;
+  return nsnull;
 }
 
 nsIContent*
@@ -288,9 +291,7 @@ nsXULCommandDispatcher::AddCommandUpdater(nsIDOMElement* aElement,
   if (! aElement)
     return NS_ERROR_NULL_POINTER;
 
-  nsCOMPtr<nsIDOMNode> doc(do_QueryInterface(mDocument));
-
-  nsresult rv = nsContentUtils::CheckSameOrigin(doc, aElement);
+  nsresult rv = nsContentUtils::CheckSameOrigin(mDocument, aElement);
 
   if (NS_FAILED(rv)) {
     return rv;
@@ -394,9 +395,6 @@ nsXULCommandDispatcher::RemoveCommandUpdater(nsIDOMElement* aElement)
 NS_IMETHODIMP
 nsXULCommandDispatcher::UpdateCommands(const nsAString& aEventName)
 {
-  nsIFocusController* fc = GetFocusController();
-  NS_ENSURE_TRUE(fc, NS_ERROR_FAILURE);
-
   nsAutoString id;
   nsCOMPtr<nsIDOMElement> element;
   GetFocusedElement(getter_AddRefs(element));
@@ -405,6 +403,8 @@ nsXULCommandDispatcher::UpdateCommands(const nsAString& aEventName)
     NS_ASSERTION(NS_SUCCEEDED(rv), "unable to get element's id");
     if (NS_FAILED(rv)) return rv;
   }
+
+  nsCOMArray<nsIContent> updaters;
 
   for (Updater* updater = mUpdaters; updater != nsnull; updater = updater->mNext) {
     // Skip any nodes that don't match our 'events' or 'targets'
@@ -420,6 +420,12 @@ nsXULCommandDispatcher::UpdateCommands(const nsAString& aEventName)
     if (! content)
       return NS_ERROR_UNEXPECTED;
 
+    updaters.AppendObject(content);
+  }
+
+  for (PRUint32 u = 0; u < updaters.Count(); u++) {
+    nsIContent* content = updaters[u];
+
     nsCOMPtr<nsIDocument> document = content->GetDocument();
 
     NS_ASSERTION(document != nsnull, "element has no document");
@@ -432,17 +438,15 @@ nsXULCommandDispatcher::UpdateCommands(const nsAString& aEventName)
       CopyUTF16toUTF8(aEventName, aeventnameC);
       PR_LOG(gLog, PR_LOG_NOTICE,
              ("xulcmd[%p] update %p event=%s",
-              this, updater->mElement.get(),
+              this, content,
               aeventnameC.get()));
     }
 #endif
 
-    nsPresShellIterator iter(document);
-    nsCOMPtr<nsIPresShell> shell;
-    while ((shell = iter.GetNextShell())) {
-
+    nsCOMPtr<nsIPresShell> shell = document->GetShell();
+    if (shell) {
       // Retrieve the context in which our DOM event will fire.
-      nsCOMPtr<nsPresContext> context = shell->GetPresContext();
+      nsRefPtr<nsPresContext> context = shell->GetPresContext();
 
       // Handle the DOM event
       nsEventStatus status = nsEventStatus_eIgnore;
@@ -486,19 +490,19 @@ nsXULCommandDispatcher::Matches(const nsString& aList,
 NS_IMETHODIMP
 nsXULCommandDispatcher::GetControllers(nsIControllers** aResult)
 {
-  nsIFocusController* fc = GetFocusController();
-  NS_ENSURE_TRUE(fc, NS_ERROR_FAILURE);
+  nsCOMPtr<nsPIWindowRoot> root = GetWindowRoot();
+  NS_ENSURE_TRUE(root, NS_ERROR_FAILURE);
 
-  return fc->GetControllers(mDocument->GetWindow(), aResult);
+  return root->GetControllers(aResult);
 }
 
 NS_IMETHODIMP
 nsXULCommandDispatcher::GetControllerForCommand(const char *aCommand, nsIController** _retval)
 {
-  nsIFocusController* fc = GetFocusController();
-  NS_ENSURE_TRUE(fc, NS_ERROR_FAILURE);
+  nsCOMPtr<nsPIWindowRoot> root = GetWindowRoot();
+  NS_ENSURE_TRUE(root, NS_ERROR_FAILURE);
 
-  return fc->GetControllerForCommand(mDocument->GetWindow(), aCommand, _retval);
+  return root->GetControllerForCommand(aCommand, _retval);
 }
 
 NS_IMETHODIMP

@@ -43,6 +43,13 @@
 
 #include "pkix_pl_pk11certstore.h"
 
+/*
+ * PKIX_DEFAULT_MAX_RESPONSE_LENGTH (64 * 1024) is too small for downloading
+ * CRLs.  We observed CRLs of sizes 338759 and 439035 in practice.  So we
+ * need to use a higher max response length for CRLs.
+ */
+#define PKIX_DEFAULT_MAX_CRL_RESPONSE_LENGTH (512 * 1024)
+
 /* --Private-Pk11CertStore-Functions---------------------------------- */
 
 /*
@@ -842,7 +849,7 @@ DownloadCrl(pkix_pl_CrlDp *dp, PKIX_PL_CRL **crl,
             location[uri->len] = 0;
             if (CERT_ParseURL(location, &hostname,
                               &port, &path) != SECSuccess) {
-                PORT_SetError(SEC_ERROR_BAD_INFO_ACCESS_LOCATION);
+                PORT_SetError(SEC_ERROR_BAD_CRL_DP_URL);
                 savedError = PKIX_URLPARSINGFAILED;
                 break;
             }
@@ -852,7 +859,7 @@ DownloadCrl(pkix_pl_CrlDp *dp, PKIX_PL_CRL **crl,
 
             if ((*hcv1->createSessionFcn)(hostname, port, 
                                           &pServerSession) != SECSuccess) {
-                PORT_SetError(SEC_ERROR_BAD_INFO_ACCESS_LOCATION);
+                PORT_SetError(SEC_ERROR_BAD_CRL_DP_URL);
                 savedError = PKIX_URLPARSINGFAILED;
                 break;
             }
@@ -871,6 +878,8 @@ DownloadCrl(pkix_pl_CrlDp *dp, PKIX_PL_CRL **crl,
 
             myHttpResponseDataLen =
                 ((PKIX_PL_NssContext*)plContext)->maxResponseLength;
+            if (myHttpResponseDataLen < PKIX_DEFAULT_MAX_CRL_RESPONSE_LENGTH)
+                myHttpResponseDataLen = PKIX_DEFAULT_MAX_CRL_RESPONSE_LENGTH;
 
             /* We use a non-zero timeout, which means:
                - the client will use blocking I/O

@@ -7,21 +7,12 @@ include $(DEPTH)/config/autoconf.mk
 
 MODULE = url-classifier
 LIBRARY_NAME = urlclassifier_s
+SUPPRESS_FAKELIB = 1 # The urlclassifier test chokes on fakelibs
 XPIDL_MODULE = url-classifier
 LIBXUL_LIBRARY = 1
 FORCE_STATIC_LIB = 1
 
 
-REQUIRES = docshell \
-           necko \
-           storage \
-           string \
-           uriloader \
-           xpcom \
-           pipnss \
-           sqlite3 \
-           $(ZLIB_REQUIRES) \
-           $(NULL)
 
 CPPSRCS = \
           nsUrlClassifierDBService.cpp \
@@ -35,6 +26,7 @@ LOCAL_INCLUDES = \
                  $(SQLITE_CFLAGS) \
                  $(NULL)
 
+EXTRA_COMPONENTS = nsURLClassifier.manifest
 
 # Same as JS components that are run through the pre-processor.
 EXTRA_PP_COMPONENTS = nsUrlClassifierLib.js \

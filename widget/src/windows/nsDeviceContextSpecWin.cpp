@@ -62,6 +62,7 @@
 #include "nsIFileStreams.h"
 #include "nsIWindowWatcher.h"
 #include "nsIDOMWindow.h"
+#include "mozilla/Services.h"
 
 // For NS_CopyNativeToUnicode
 #include "nsNativeCharsetUtils.h"
@@ -95,10 +96,10 @@ public:
   void FreeGlobalPrinters();
 
   PRBool       PrintersAreAllocated() { return mPrinters != nsnull; }
-  LPTSTR       GetItemFromList(PRInt32 aInx) { return mPrinters?mPrinters->ElementAt(aInx):nsnull; }
+  LPWSTR       GetItemFromList(PRInt32 aInx) { return mPrinters?mPrinters->ElementAt(aInx):nsnull; }
   nsresult     EnumeratePrinterList();
-  void         GetDefaultPrinterName(LPTSTR& aDefaultPrinterName);
-  PRInt32      GetNumPrinters() { return mPrinters?mPrinters->Length():0; }
+  void         GetDefaultPrinterName(nsString& aDefaultPrinterName);
+  PRUint32     GetNumPrinters() { return mPrinters?mPrinters->Length():0; }
 
 protected:
   GlobalPrinters() {}
@@ -106,12 +107,12 @@ protected:
   void     ReallocatePrinters();
 
   static GlobalPrinters    mGlobalPrinters;
-  static nsTArray<LPTSTR>* mPrinters;
+  static nsTArray<LPWSTR>* mPrinters;
 };
 //---------------
 // static members
 GlobalPrinters    GlobalPrinters::mGlobalPrinters;
-nsTArray<LPTSTR>* GlobalPrinters::mPrinters = nsnull;
+nsTArray<LPWSTR>* GlobalPrinters::mPrinters = nsnull;
 
 
 //******************************************************
@@ -208,14 +209,9 @@ nsDeviceContextSpecWin::~nsDeviceContextSpecWin()
 // helper
 static PRUnichar * GetDefaultPrinterNameFromGlobalPrinters()
 {
-  PRUnichar * printerName;
-  LPTSTR lpPrtName;
-  GlobalPrinters::GetInstance()->GetDefaultPrinterName(lpPrtName);
-  nsAutoString str;
-  NS_CopyNativeToUnicode(nsDependentCString((char *)lpPrtName), str);
-  printerName = ToNewUnicode(str);
-  free(lpPrtName);
-  return printerName;
+  nsAutoString printerName;
+  GlobalPrinters::GetInstance()->GetDefaultPrinterName(printerName);
+  return ToNewUnicode(printerName);
 }
 
 //----------------------------------------------------------------
@@ -230,21 +226,22 @@ EnumerateNativePrinters(DWORD aWhichPrinters, LPWSTR aPrinterName, PRBool& aIsFo
   LPPRINTER_INFO_2W  lpInfo        = NULL;
 
   // Get buffer size
-  if (::EnumPrinters ( aWhichPrinters, NULL, 2, NULL, 0, &dwSizeNeeded, &dwNumItems )) {
+  if (::EnumPrintersW(aWhichPrinters, NULL, 2, NULL, 0, &dwSizeNeeded,
+                      &dwNumItems)) {
     return NS_ERROR_FAILURE;
   }
 
   // allocate memory
-  lpInfo = (LPPRINTER_INFO_2W)HeapAlloc ( GetProcessHeap (), HEAP_ZERO_MEMORY, dwSizeNeeded );
-  if ( lpInfo == NULL ) {
+  lpInfo = (LPPRINTER_INFO_2W) malloc(dwSizeNeeded);
+  if (!lpInfo) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  if (::EnumPrinters ( PRINTER_ENUM_LOCAL, NULL, 2, (LPBYTE)lpInfo, dwSizeNeeded, &dwSizeNeeded, &dwNumItems) == 0 ) {
-    ::HeapFree(GetProcessHeap (), 0, lpInfo);
+  if (::EnumPrintersW(PRINTER_ENUM_LOCAL, NULL, 2, (LPBYTE)lpInfo,
+                      dwSizeNeeded, &dwSizeNeeded, &dwNumItems) == 0) {
+    free(lpInfo);
     return NS_OK;
   }
-
 
   for (DWORD i = 0; i < dwNumItems; i++ ) {
     if (wcscmp(lpInfo[i].pPrinterName, aPrinterName) == 0) {
@@ -254,7 +251,7 @@ EnumerateNativePrinters(DWORD aWhichPrinters, LPWSTR aPrinterName, PRBool& aIsFo
     }
   }
 
-  ::HeapFree(GetProcessHeap (), 0, lpInfo);
+  free(lpInfo);
 #endif
   return NS_OK;
 }
@@ -293,8 +290,10 @@ GetFileNameForPrintSettings(nsIPrintSettings* aPS)
   nsCOMPtr<nsIFilePicker> filePicker = do_CreateInstance("@mozilla.org/filepicker;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIStringBundleService> bundleService = do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIStringBundleService> bundleService =
+    mozilla::services::GetStringBundleService();
+  if (!bundleService)
+    return NS_ERROR_FAILURE;
   nsCOMPtr<nsIStringBundle> bundle;
   rv = bundleService->CreateBundle(NS_ERROR_GFX_PRINTER_BUNDLE_URL, getter_AddRefs(bundle));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -464,12 +463,11 @@ NS_IMETHODIMP nsDeviceContextSpecWin::Init(nsIWidget* aWidget,
     PR_PL(("***** nsDeviceContextSpecWin::Init - aPrintSettingswas NULL!\n"));
   }
 
-  LPDEVMODEW pDevMode  = NULL;
-  HGLOBAL   hDevNames = NULL;
-
   // Get the Print Name to be used
-  PRUnichar * printerName;
-  mPrintSettings->GetPrinterName(&printerName);
+  PRUnichar * printerName = nsnull;
+  if (mPrintSettings) {
+    mPrintSettings->GetPrinterName(&printerName);
+  }
 
   // If there is no name then use the default printer
   if (!printerName || (printerName && !*printerName)) {
@@ -512,8 +510,10 @@ NS_IMETHODIMP nsDeviceContextSpecWin::GetSurfaceForPrinter(gfxASurface **surface
 
   nsRefPtr<gfxASurface> newSurface;
 
-  PRInt16 outputFormat;
-  mPrintSettings->GetOutputFormat(&outputFormat);
+  PRInt16 outputFormat = 0;
+  if (mPrintSettings) {
+    mPrintSettings->GetOutputFormat(&outputFormat);
+  }
 
   if (outputFormat == nsIPrintSettings::kOutputFormatPDF) {
     nsXPIDLString filename;
@@ -538,6 +538,7 @@ NS_IMETHODIMP nsDeviceContextSpecWin::GetSurfaceForPrinter(gfxASurface **surface
     newSurface = new gfxPDFSurface(stream, gfxSize(width, height));
   } else {
     if (mDevMode) {
+      NS_WARN_IF_FALSE(mDriverName, "No driver!");
       HDC dc = ::CreateDCW(mDriverName, mDeviceName, NULL, mDevMode);
 
       // have this surface take over ownership of this DC
@@ -600,7 +601,6 @@ MapPaperSizeToNativeEnum(LPDEVMODEW aDevMode,
   BOOL doingPaperWidth  = aDevMode->dmFields & DM_PAPERWIDTH;
 #endif
 
-  PRBool foundEnum = PR_FALSE;
   for (PRInt32 i=0;i<kNumPaperSizes;i++) {
     if (kPaperSizes[i].mWidth == aW && kPaperSizes[i].mHeight == aH) {
       aDevMode->dmPaperSize = kPaperSizes[i].mPaperSize;
@@ -675,29 +675,7 @@ SetupDevModeFromSettings(LPDEVMODEW aDevMode, nsIPrintSettings* aPrintSettings)
 
 }
 
-#if defined(DEBUG_rods) || defined(DEBUG_dcone)
-static void DisplayLastError()
-{
-  LPVOID lpMsgBuf;
-  DWORD errCode = GetLastError();
-
-  FormatMessage( 
-      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
-      NULL,
-      GetLastError(),
-      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
-      (LPTSTR) &lpMsgBuf,
-      0,
-      NULL 
-  );
-
-  // Display the string.
-  MessageBox( NULL, (const char *)lpMsgBuf, "GetLastError", MB_OK|MB_ICONINFORMATION );
-}
-#define DISPLAY_LAST_ERROR DisplayLastError();
-#else
 #define DISPLAY_LAST_ERROR 
-#endif
 
 //----------------------------------------------------------------------------------
 // Setup the object's data member with the selected printer's data
@@ -811,7 +789,7 @@ nsDeviceContextSpecWin::SetPrintSettingsFromDevMode(nsIPrintSettings* aPrintSett
 
   if (doingOrientation) {
     PRInt32 orientation  = aDevMode->dmOrientation == DMORIENT_PORTRAIT?
-      nsIPrintSettings::kPortraitOrientation:nsIPrintSettings::kLandscapeOrientation;
+      PRInt32(nsIPrintSettings::kPortraitOrientation):nsIPrintSettings::kLandscapeOrientation;
     aPrintSettings->SetOrientation(orientation);
   }
 
@@ -835,7 +813,8 @@ nsDeviceContextSpecWin::SetPrintSettingsFromDevMode(nsIPrintSettings* aPrintSett
     aPrintSettings->SetPaperData(aDevMode->dmPaperSize);
     for (PRInt32 i=0;i<kNumPaperSizes;i++) {
       if (kPaperSizes[i].mPaperSize == aDevMode->dmPaperSize) {
-        aPrintSettings->SetPaperSizeUnit(kPaperSizes[i].mIsInches?nsIPrintSettings::kPaperSizeInches:nsIPrintSettings::kPaperSizeMillimeters);
+        aPrintSettings->SetPaperSizeUnit(kPaperSizes[i].mIsInches
+          ?PRInt16(nsIPrintSettings::kPaperSizeInches):nsIPrintSettings::kPaperSizeMillimeters);
         break;
       }
     }
@@ -847,7 +826,8 @@ nsDeviceContextSpecWin::SetPrintSettingsFromDevMode(nsIPrintSettings* aPrintSett
         aPrintSettings->SetPaperSizeType(nsIPrintSettings::kPaperSizeDefined);
         aPrintSettings->SetPaperWidth(kPaperSizes[i].mWidth);
         aPrintSettings->SetPaperHeight(kPaperSizes[i].mHeight);
-        aPrintSettings->SetPaperSizeUnit(kPaperSizes[i].mIsInches?nsIPrintSettings::kPaperSizeInches:nsIPrintSettings::kPaperSizeMillimeters);
+        aPrintSettings->SetPaperSizeUnit(kPaperSizes[i].mIsInches
+          ?PRInt16(nsIPrintSettings::kPaperSizeInches):nsIPrintSettings::kPaperSizeMillimeters);
         found = PR_TRUE;
         break;
       }
@@ -938,21 +918,15 @@ nsPrinterEnumeratorWin::GetPrinterNameList(nsIStringEnumerator **aPrinterNameLis
     return rv;
   }
 
-  PRInt32 numPrinters = GlobalPrinters::GetInstance()->GetNumPrinters();
+  PRUint32 numPrinters = GlobalPrinters::GetInstance()->GetNumPrinters();
   nsTArray<nsString> *printers = new nsTArray<nsString>(numPrinters);
   if (!printers)
     return NS_ERROR_OUT_OF_MEMORY;
 
-  PRInt32 printerInx = 0;
+  PRUint32 printerInx = 0;
   while( printerInx < numPrinters ) {
-    LPTSTR name = GlobalPrinters::GetInstance()->GetItemFromList(printerInx++);
-#ifdef UNICODE
-    nsDependentString newName(name);
-#else
-    nsAutoString newName; 
-    NS_CopyNativeToUnicode(nsDependentCString(name), newName);
-#endif
-    printers->AppendElement(newName);
+    LPWSTR name = GlobalPrinters::GetInstance()->GetItemFromList(printerInx++);
+    printers->AppendElement(nsDependentString(name));
   }
 
   return NS_NewAdoptingStringEnumerator(aPrinterNameList, printers);
@@ -978,7 +952,7 @@ GlobalPrinters::ReallocatePrinters()
   if (PrintersAreAllocated()) {
     FreeGlobalPrinters();
   }
-  mPrinters = new nsTArray<LPTSTR>();
+  mPrinters = new nsTArray<LPWSTR>();
   NS_ASSERTION(mPrinters, "Printers Array is NULL!");
 }
 
@@ -987,7 +961,7 @@ void
 GlobalPrinters::FreeGlobalPrinters()
 {
   if (mPrinters != nsnull) {
-    for (int i=0;i<mPrinters->Length();i++) {
+    for (PRUint32 i=0;i<mPrinters->Length();i++) {
       free(mPrinters->ElementAt(i));
     }
     delete mPrinters;
@@ -1004,16 +978,18 @@ GlobalPrinters::EnumerateNativePrinters()
   PR_PL(("-----------------------\n"));
   PR_PL(("EnumerateNativePrinters\n"));
 
-  TCHAR szDefaultPrinterName[1024];    
-  DWORD status = GetProfileString("devices", 0, ",", szDefaultPrinterName, sizeof(szDefaultPrinterName)/sizeof(TCHAR));
+  WCHAR szDefaultPrinterName[1024];    
+  DWORD status = GetProfileStringW(L"devices", 0, L",",
+                                   szDefaultPrinterName,
+                                   NS_ARRAY_LENGTH(szDefaultPrinterName));
   if (status > 0) {
     DWORD count = 0;
-    LPTSTR sPtr   = (LPTSTR)szDefaultPrinterName;
-    LPTSTR ePtr   = (LPTSTR)(szDefaultPrinterName+(status*sizeof(TCHAR)));
-    LPTSTR prvPtr = sPtr;
+    LPWSTR sPtr   = szDefaultPrinterName;
+    LPWSTR ePtr   = szDefaultPrinterName + status;
+    LPWSTR prvPtr = sPtr;
     while (sPtr < ePtr) {
-      if (*sPtr == NULL) {
-        LPTSTR name = _tcsdup(prvPtr);
+      if (*sPtr == 0) {
+        LPWSTR name = wcsdup(prvPtr);
         mPrinters->AppendElement(name);
         PR_PL(("Printer Name:    %s\n", prvPtr));
         prvPtr = sPtr+1;
@@ -1031,28 +1007,30 @@ GlobalPrinters::EnumerateNativePrinters()
 //------------------------------------------------------------------
 // Uses the GetProfileString to get the default printer from the registry
 void 
-GlobalPrinters::GetDefaultPrinterName(LPTSTR& aDefaultPrinterName)
+GlobalPrinters::GetDefaultPrinterName(nsString& aDefaultPrinterName)
 {
 #ifndef WINCE
-  aDefaultPrinterName = nsnull;
-  TCHAR szDefaultPrinterName[1024];    
-  DWORD status = GetProfileString("windows", "device", 0, szDefaultPrinterName, sizeof(szDefaultPrinterName)/sizeof(TCHAR));
+  aDefaultPrinterName.Truncate();
+  WCHAR szDefaultPrinterName[1024];    
+  DWORD status = GetProfileStringW(L"windows", L"device", 0,
+                                   szDefaultPrinterName,
+                                   NS_ARRAY_LENGTH(szDefaultPrinterName));
   if (status > 0) {
-    TCHAR comma = (TCHAR)',';
-    LPTSTR sPtr = (LPTSTR)szDefaultPrinterName;
-    while (*sPtr != comma && *sPtr != NULL) 
+    WCHAR comma = ',';
+    LPWSTR sPtr = szDefaultPrinterName;
+    while (*sPtr != comma && *sPtr != 0) 
       sPtr++;
     if (*sPtr == comma) {
-      *sPtr = NULL;
+      *sPtr = 0;
     }
-    aDefaultPrinterName = _tcsdup(szDefaultPrinterName);
+    aDefaultPrinterName = szDefaultPrinterName;
   } else {
-    aDefaultPrinterName = _tcsdup("");
+    aDefaultPrinterName = EmptyString();
   }
 
-  PR_PL(("DEFAULT PRINTER [%s]\n", aDefaultPrinterName));
+  PR_PL(("DEFAULT PRINTER [%s]\n", aDefaultPrinterName.get()));
 #else
-  aDefaultPrinterName = TEXT("UNKNOWN");
+  aDefaultPrinterName = NS_LITERAL_STRING("UNKNOWN");
 #endif
 }
 
@@ -1072,23 +1050,22 @@ GlobalPrinters::EnumeratePrinterList()
   if (NS_FAILED(rv)) return rv;
 
   // get the name of the default printer
-  LPTSTR defPrinterName;
+  nsAutoString defPrinterName;
   GetDefaultPrinterName(defPrinterName);
 
   // put the default printer at the beginning of list
-  if (defPrinterName != nsnull) {
-    for (PRInt32 i=0;i<mPrinters->Length();i++) {
-      LPTSTR name = mPrinters->ElementAt(i);
-      if (!_tcscmp(name, defPrinterName)) {
+  if (!defPrinterName.IsEmpty()) {
+    for (PRUint32 i=0;i<mPrinters->Length();i++) {
+      LPWSTR name = mPrinters->ElementAt(i);
+      if (defPrinterName.Equals(name)) {
         if (i > 0) {
-          LPTSTR ptr = mPrinters->ElementAt(0);
+          LPWSTR ptr = mPrinters->ElementAt(0);
           mPrinters->ElementAt(0) = name;
           mPrinters->ElementAt(i) = ptr;
         }
         break;
       }
     }
-    free(defPrinterName);
   }
 
   // make sure we at least tried to get the printers

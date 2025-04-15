@@ -51,7 +51,7 @@ class nsHTMLTableCellElement : public nsGenericHTMLElement,
                                public nsIDOMHTMLTableCellElement
 {
 public:
-  nsHTMLTableCellElement(nsINodeInfo *aNodeInfo);
+  nsHTMLTableCellElement(already_AddRefed<nsINodeInfo> aNodeInfo);
   virtual ~nsHTMLTableCellElement();
 
   // nsISupports
@@ -79,6 +79,7 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
+  virtual nsXPCClassInfo* GetClassInfo();
 protected:
   // This does not return a nsresult since all we care about is if we
   // found the row element that this cell is in or not.
@@ -90,7 +91,7 @@ protected:
 NS_IMPL_NS_NEW_HTML_ELEMENT(TableCell)
 
 
-nsHTMLTableCellElement::nsHTMLTableCellElement(nsINodeInfo *aNodeInfo)
+nsHTMLTableCellElement::nsHTMLTableCellElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo)
 {
 }
@@ -103,6 +104,8 @@ nsHTMLTableCellElement::~nsHTMLTableCellElement()
 NS_IMPL_ADDREF_INHERITED(nsHTMLTableCellElement, nsGenericElement) 
 NS_IMPL_RELEASE_INHERITED(nsHTMLTableCellElement, nsGenericElement) 
 
+
+DOMCI_NODE_DATA(HTMLTableCellElement, nsHTMLTableCellElement)
 
 // QueryInterface implementation for nsHTMLTableCellElement
 NS_INTERFACE_TABLE_HEAD(nsHTMLTableCellElement)
@@ -140,7 +143,7 @@ nsHTMLTableCellElement::GetTable()
   if (parent) {  // GetParent() should be a row
     nsIContent* section = parent->GetParent();
     if (section) {
-      if (section->IsNodeOfType(eHTML) &&
+      if (section->IsHTML() &&
           section->NodeInfo()->Equals(nsGkAtoms::table)) {
         // XHTML, without a row group
         result = section;
@@ -302,19 +305,19 @@ nsHTMLTableCellElement::ParseAttribute(PRInt32 aNamespaceID,
       return res;
     }
     if (aAttribute == nsGkAtoms::height) {
-      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+      return aResult.ParseSpecialIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::width) {
-      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+      return aResult.ParseSpecialIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::align) {
       return ParseTableCellHAlignValue(aValue, aResult);
     }
     if (aAttribute == nsGkAtoms::bgcolor) {
-      return aResult.ParseColor(aValue, GetOwnerDoc());
+      return aResult.ParseColor(aValue);
     }
     if (aAttribute == nsGkAtoms::scope) {
-      return aResult.ParseEnumValue(aValue, kCellScopeTable);
+      return aResult.ParseEnumValue(aValue, kCellScopeTable, PR_FALSE);
     }
     if (aAttribute == nsGkAtoms::valign) {
       return ParseTableVAlignValue(aValue, aResult);

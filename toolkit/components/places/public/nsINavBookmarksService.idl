@@ -41,23 +41,15 @@
 
 #include "nsISupports.idl"
 
-%{C++
-#include "nsTArray.h"
-#include "prtypes.h"
-%}
-
 interface nsIFile;
 interface nsIURI;
 interface nsITransaction;
 interface nsINavHistoryBatchCallback;
 
-[ptr] native PRInt64Array(nsTArray<PRInt64>);
-
 /**
  * Observer for bookmark changes.
  */
-
-[scriptable, uuid(1f7e9032-b2c0-4561-b35b-94ba3f8344e2)]
+[scriptable, uuid(76f892d9-31ea-4061-b38c-6b40fad57e9d)]
 interface nsINavBookmarkObserver : nsISupports
 {
   /**
@@ -87,9 +79,13 @@ interface nsINavBookmarkObserver : nsISupports
    * @param aItemType
    *        The type of the item that was added (one of the TYPE_* constants
    *        defined above).
+   * @param aURI
+   *        The URI of the item that was added when aItemType is TYPE_BOOKMARK,
+   *        null otherwise.
    */
   void onItemAdded(in long long aItemId, in long long aParentId,
-                   in long aIndex, in unsigned short aItemType);
+                   in long aIndex, in unsigned short aItemType,
+                   in nsIURI aURI);
 
   /**
    * Notify this observer that an item is about to be removed.  Called before
@@ -201,7 +197,7 @@ interface nsINavBookmarkObserver : nsISupports
  * folders.  A URI in history can be contained in one or more such folders.
  */
 
-[scriptable, uuid(3b6ff5c5-0ab4-4aab-b1be-d569763a6ce0)]
+[scriptable, uuid(573f99bd-988c-4253-836f-4ce009d33ac6)]
 interface nsINavBookmarksService : nsISupports
 {
   /**
@@ -296,11 +292,6 @@ interface nsINavBookmarksService : nsISupports
                                    in AString aContractId, in long aIndex);
 
   /**
-   * DEPRECATED and removed in Firefox 3.7. Use removeItem instead.
-   */
-  void removeFolder(in long long aFolder);
-
-  /**
    * Gets an undo-able transaction for removing a folder from the bookmarks
    * tree. 
    *  @param aItemId
@@ -342,11 +333,6 @@ interface nsINavBookmarksService : nsISupports
   void moveItem(in long long aItemId, in long long aNewParentId, in long aIndex);
 
   /**
-   * DEPRECATED and removed in Firefox 3.7.
-   */
-  long long getChildFolder(in long long aFolder, in AString aSubFolder);
-
-  /**
    * Inserts a bookmark separator into the given folder at the given index.
    * The separator can be removed using removeChildAt().
    *  @param aParentId
@@ -356,11 +342,6 @@ interface nsINavBookmarksService : nsISupports
    *  @return The ID of the new separator.
    */
   long long insertSeparator(in long long aParentId, in long aIndex);
-
-  /**
-   * DEPRECATED and removed in Firefox 3.7. Use removeItem instead.
-   */
-  void removeChildAt(in long long aFolder, in long aIndex);
 
   /**
    * Get the itemId given the containing folder and the index.
@@ -382,7 +363,7 @@ interface nsINavBookmarksService : nsISupports
    *           The ID of the item to get the GUID for
    *  @return The GUID string.
    */
-  AString getItemGUID(in long long aItemId);
+  [deprecated] AString getItemGUID(in long long aItemId);
 
   /**
    * Set a globally unique identifier.  This can be useful when a sync
@@ -393,7 +374,7 @@ interface nsINavBookmarksService : nsISupports
    *  @param   aGUID
    *           The GUID string
    */
-  void setItemGUID(in long long aItemId, in AString aGUID);
+  [deprecated] void setItemGUID(in long long aItemId, in AString aGUID);
 
   /**
    * Get the ID of the item with the given GUID.
@@ -401,7 +382,7 @@ interface nsINavBookmarksService : nsISupports
    *          The GUID string of the item to search for
    * @return The item ID, or -1 if not found.
    */
-  long long getItemIdForGUID(in AString aGUID);
+  [deprecated] long long getItemIdForGUID(in AString aGUID);
 
   /**
    * Set the title for an item.
@@ -521,6 +502,9 @@ interface nsINavBookmarksService : nsISupports
    * in this case "mozilla.org".
    *
    * If there is no bookmarked page found, it will return NULL.
+   *
+   * @note The function will only return bookmarks in the first 3 levels of
+   *       redirection (1 -> 2 -> 3 -> aURI).
    */
   nsIURI getBookmarkedURIFor(in nsIURI aURI);
 
@@ -539,16 +523,8 @@ interface nsINavBookmarksService : nsISupports
   /**
    * Returns the list of bookmark ids that contain the given URI.
    */
-  void getBookmarkIdsForURI(in nsIURI aURI, out unsigned long count,
+  void getBookmarkIdsForURI(in nsIURI aURI, [optional] out unsigned long count,
                             [array, retval, size_is(count)] out long long bookmarks);
-
-  /**
-   * TArray version of getBookmarksIdForURI for ease of use in C++ code.
-   * Pass in a reference to a TArray; it will get cleared and filled with
-   * the resulting list of folder IDs.
-   */
-  [noscript] void getBookmarkIdsForURITArray(in nsIURI aURI,
-                                           in PRInt64Array aResult);
 
   /**
    * Associates the given keyword with the given bookmark.

@@ -63,6 +63,7 @@
 #include "nsInt64.h"
 #include "nsNodeUtils.h"
 #include "nsIContent.h"
+#include "mozilla/dom/Element.h"
 
 #include "nsGenericHTMLElement.h"
 
@@ -123,6 +124,8 @@
 #include "nsContentCreatorFunctions.h"
 #include "mozAutoDocUpdate.h"
 
+using namespace mozilla::dom;
+
 #ifdef NS_DEBUG
 static PRLogModuleInfo* gSinkLogModuleInfo;
 
@@ -135,21 +138,26 @@ static PRLogModuleInfo* gSinkLogModuleInfo;
 
 //----------------------------------------------------------------------
 
-typedef nsGenericHTMLElement* (*contentCreatorCallback)(nsINodeInfo*, PRBool aFromParser);
+typedef nsGenericHTMLElement*
+  (*contentCreatorCallback)(already_AddRefed<nsINodeInfo>,
+                            FromParser aFromParser);
 
 nsGenericHTMLElement*
-NS_NewHTMLNOTUSEDElement(nsINodeInfo *aNodeInfo, PRBool aFromParser)
+NS_NewHTMLNOTUSEDElement(already_AddRefed<nsINodeInfo> aNodeInfo,
+                         FromParser aFromParser)
 {
   NS_NOTREACHED("The element ctor should never be called");
   return nsnull;
 }
 
 #define HTML_TAG(_tag, _classname) NS_NewHTML##_classname##Element,
+#define HTML_HTMLELEMENT_TAG(_tag) NS_NewHTMLElement,
 #define HTML_OTHER(_tag) NS_NewHTMLNOTUSEDElement,
 static const contentCreatorCallback sContentCreatorCallbacks[] = {
   NS_NewHTMLUnknownElement,
 #include "nsHTMLTagList.h"
 #undef HTML_TAG
+#undef HTML_HTMLELEMENT_TAG
 #undef HTML_OTHER
   NS_NewHTMLUnknownElement
 };
@@ -179,6 +187,7 @@ public:
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(HTMLContentSink, nsContentSink)
 
   // nsIContentSink
   NS_IMETHOD WillParse(void);
@@ -232,15 +241,15 @@ protected:
                      void* aThis);
 #endif
 
-  nsIHTMLDocument* mHTMLDocument;
+  nsCOMPtr<nsIHTMLDocument> mHTMLDocument;
 
   // The maximum length of a text run
   PRInt32 mMaxTextRun;
 
-  nsGenericHTMLElement* mRoot;
-  nsGenericHTMLElement* mBody;
+  nsRefPtr<nsGenericHTMLElement> mRoot;
+  nsRefPtr<nsGenericHTMLElement> mBody;
   nsRefPtr<nsGenericHTMLElement> mFrameset;
-  nsGenericHTMLElement* mHead;
+  nsRefPtr<nsGenericHTMLElement> mHead;
 
   nsRefPtr<nsGenericHTMLElement> mCurrentForm;
 
@@ -248,9 +257,6 @@ protected:
   SinkContext* mCurrentContext;
   SinkContext* mHeadContext;
   PRInt32 mNumOpenIFRAMES;
-
-  nsCOMPtr<nsIURI> mBaseHref;
-  nsCOMPtr<nsIAtom> mBaseTarget;
 
   // depth of containment within <noembed>, <noframes> etc
   PRInt32 mInsideNoXXXTag;
@@ -276,14 +282,6 @@ protected:
 
   void StartLayout(PRBool aIgnorePendingSheets);
 
-  /**
-   * AddBaseTagInfo adds the "current" base URI and target to the content node
-   * in the form of bogo-attributes.  This MUST be called before attributes are
-   * added to the content node, since the way URI attributes are treated may
-   * depend on the value of the base URI
-   */
-  void AddBaseTagInfo(nsIContent* aContent);
-
   // Routines for tags that require special handling
   nsresult CloseHTML();
   nsresult OpenFrameset(const nsIParserNode& aNode);
@@ -292,7 +290,6 @@ protected:
   nsresult CloseBody();
   nsresult OpenForm(const nsIParserNode& aNode);
   nsresult CloseForm();
-  void ProcessBASEElement(nsGenericHTMLElement* aElement);
   nsresult ProcessLINKTag(const nsIParserNode& aNode);
 
   // Routines for tags that require special handling when we reach their end
@@ -425,7 +422,6 @@ HTMLContentSink::AddAttributes(const nsIParserNode& aNode,
     return NS_OK;
   }
 
-  nsCAutoString k;
   nsHTMLTag nodeType = nsHTMLTag(aNode.GetNodeType());
 
   // The attributes are on the parser node in the order they came in in the
@@ -454,15 +450,12 @@ HTMLContentSink::AddAttributes(const nsIParserNode& aNode,
     step = -1;
   }
   
+  nsAutoString key;
   for (; i != limit; i += step) {
     // Get lower-cased key
-    const nsAString& key = aNode.GetKeyAt(i);
-    // Copy up-front to avoid shared-buffer overhead (and convert to UTF-8
-    // at the same time since that's what the atom table uses).
-    CopyUTF16toUTF8(key, k);
-    ToLowerCase(k);
+    nsContentUtils::ASCIIToLower(aNode.GetKeyAt(i), key);
 
-    nsCOMPtr<nsIAtom> keyAtom = do_GetAtom(k);
+    nsCOMPtr<nsIAtom> keyAtom = do_GetAtom(key);
 
     if (aCheckIfPresent && aContent->HasAttr(kNameSpaceID_None, keyAtom)) {
       continue;
@@ -509,7 +502,6 @@ MaybeSetForm(nsGenericHTMLElement* aContent, nsHTMLTag aNodeType,
     case eHTMLTag_button:
     case eHTMLTag_fieldset:
     case eHTMLTag_label:
-    case eHTMLTag_legend:
     case eHTMLTag_object:
     case eHTMLTag_input:
     case eHTMLTag_select:
@@ -541,10 +533,9 @@ HTMLContentSink::CreateContentObject(const nsIParserNode& aNode,
   nsCOMPtr<nsINodeInfo> nodeInfo;
 
   if (aNodeType == eHTMLTag_userdefined) {
-    NS_ConvertUTF16toUTF8 tmp(aNode.GetText());
-    ToLowerCase(tmp);
-
-    nsCOMPtr<nsIAtom> name = do_GetAtom(tmp);
+    nsAutoString lower;
+    nsContentUtils::ASCIIToLower(aNode.GetText(), lower);
+    nsCOMPtr<nsIAtom> name = do_GetAtom(lower);
     nodeInfo = mNodeInfoManager->GetNodeInfo(name, nsnull, kNameSpaceID_XHTML);
   }
   else if (mNodeInfoCache[aNodeType]) {
@@ -565,33 +556,35 @@ HTMLContentSink::CreateContentObject(const nsIParserNode& aNode,
   NS_ENSURE_TRUE(nodeInfo, nsnull);
 
   // Make the content object
-  return CreateHTMLElement(aNodeType, nodeInfo, PR_TRUE);
+  return CreateHTMLElement(aNodeType, nodeInfo.forget(), FROM_PARSER_NETWORK);
 }
 
 nsresult
-NS_NewHTMLElement(nsIContent** aResult, nsINodeInfo *aNodeInfo,
-                  PRBool aFromParser)
+NS_NewHTMLElement(nsIContent** aResult, already_AddRefed<nsINodeInfo> aNodeInfo,
+                  FromParser aFromParser)
 {
   *aResult = nsnull;
+
+  nsCOMPtr<nsINodeInfo> nodeInfo = aNodeInfo;
 
   nsIParserService* parserService = nsContentUtils::GetParserService();
   if (!parserService)
     return NS_ERROR_OUT_OF_MEMORY;
 
-  nsIAtom *name = aNodeInfo->NameAtom();
+  nsIAtom *name = nodeInfo->NameAtom();
 
-  NS_ASSERTION(aNodeInfo->NamespaceEquals(kNameSpaceID_XHTML), 
+  NS_ASSERTION(nodeInfo->NamespaceEquals(kNameSpaceID_XHTML), 
                "Trying to HTML elements that don't have the XHTML namespace");
   
   *aResult = CreateHTMLElement(parserService->
                                  HTMLCaseSensitiveAtomTagToId(name),
-                               aNodeInfo, aFromParser).get();
+                               nodeInfo.forget(), aFromParser).get();
   return *aResult ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
 already_AddRefed<nsGenericHTMLElement>
-CreateHTMLElement(PRUint32 aNodeType, nsINodeInfo *aNodeInfo,
-                  PRBool aFromParser)
+CreateHTMLElement(PRUint32 aNodeType, already_AddRefed<nsINodeInfo> aNodeInfo,
+                  FromParser aFromParser)
 {
   NS_ASSERTION(aNodeType <= NS_HTML_TAG_MAX ||
                aNodeType == eHTMLTag_userdefined,
@@ -791,39 +784,6 @@ SinkContext::OpenContainer(const nsIParserNode& aNode)
 
     ssle->SetEnableUpdates(PR_FALSE);
   }
-
-  // Make sure to add base tag info, if needed, before setting any other
-  // attributes -- what URI attrs do will depend on the base URI.  Only do this
-  // for elements that have useful URI attributes.
-  // See bug 18478 and bug 30617 for why we need to do this.
-  switch (nodeType) {
-    // Containers with "href="
-    case eHTMLTag_a:
-    case eHTMLTag_map:
-
-    // Containers with "src="
-    case eHTMLTag_script:
-    
-    // Containers with "action="
-    case eHTMLTag_form:
-
-    // Containers with "data="
-    case eHTMLTag_object:
-
-    // Containers with "background="
-    case eHTMLTag_table:
-    case eHTMLTag_thead:
-    case eHTMLTag_tbody:
-    case eHTMLTag_tfoot:
-    case eHTMLTag_tr:
-    case eHTMLTag_td:
-    case eHTMLTag_th:
-      mSink->AddBaseTagInfo(content);
-
-      break;
-    default:
-      break;    
-  }
   
   rv = mSink->AddAttributes(aNode, content);
   MaybeSetForm(content, nodeType, mSink);
@@ -942,13 +902,10 @@ SinkContext::CloseContainer(const nsHTMLTag aTag, PRBool aMalformed)
 #ifdef NS_DEBUG
       {
         // Tracing code
-        const char *tagStr;
-        mStack[mStackPos].mContent->Tag()->GetUTF8String(&tagStr);
-
         SINK_TRACE(gSinkLogModuleInfo, SINK_TRACE_REFLOW,
                    ("SinkContext::CloseContainer: reflow on notifyImmediate "
                     "tag=%s newIndex=%d stackPos=%d",
-                    tagStr,
+                    nsAtomCString(mStack[mStackPos].mContent->Tag()).get(),
                     mStack[mStackPos].mNumFlushed, mStackPos));
       }
 #endif
@@ -1053,28 +1010,8 @@ SinkContext::AddLeaf(const nsIParserNode& aNode)
         mSink->CreateContentObject(aNode, nodeType);
       NS_ENSURE_TRUE(content, NS_ERROR_OUT_OF_MEMORY);
 
-      // Make sure to add base tag info, if needed, before setting any other
-      // attributes -- what URI attrs do will depend on the base URI.  Only do
-      // this for elements that have useful URI attributes.
-      // See bug 18478 and bug 30617 for why we need to do this.
-      switch (nodeType) {
-      case eHTMLTag_area:
-      case eHTMLTag_meta:
-      case eHTMLTag_img:
-      case eHTMLTag_frame:
-      case eHTMLTag_input:
-      case eHTMLTag_embed:
-        mSink->AddBaseTagInfo(content);
-        break;
-
-      // <form> can end up as a leaf if it's misnested with table elements
-      case eHTMLTag_form:
-        mSink->AddBaseTagInfo(content);
+      if (nodeType == eHTMLTag_form) {
         mSink->mCurrentForm = content;
-
-        break;
-      default:
-        break;
       }
 
       rv = mSink->AddAttributes(aNode, content);
@@ -1088,12 +1025,6 @@ SinkContext::AddLeaf(const nsIParserNode& aNode)
 
       // Additional processing needed once the element is in the tree
       switch (nodeType) {
-      case eHTMLTag_base:
-        if (!mSink->mInsideNoXXXTag) {
-          mSink->ProcessBASEElement(content);
-        }
-        break;
-
       case eHTMLTag_meta:
         // XXX It's just not sufficient to check if the parent is head. Also
         // check for the preference.
@@ -1353,12 +1284,10 @@ SinkContext::FlushTags()
 #ifdef NS_DEBUG
         {
           // Tracing code
-          const char* tagStr;
-          mStack[stackPos].mContent->Tag()->GetUTF8String(&tagStr);
-
           SINK_TRACE(gSinkLogModuleInfo, SINK_TRACE_REFLOW,
                      ("SinkContext::FlushTags: tag=%s from newindex=%d at "
-                      "stackPos=%d", tagStr,
+                      "stackPos=%d",
+                      nsAtomCString(mStack[stackPos].mContent->Tag()).get(),
                       mStack[stackPos].mNumFlushed, stackPos));
         }
 #endif
@@ -1535,12 +1464,6 @@ HTMLContentSink::HTMLContentSink()
 
 HTMLContentSink::~HTMLContentSink()
 {
-  NS_IF_RELEASE(mHead);
-  NS_IF_RELEASE(mBody);
-  NS_IF_RELEASE(mRoot);
-
-  NS_IF_RELEASE(mHTMLDocument);
-
   if (mNotificationTimer) {
     mNotificationTimer->Cancel();
   }
@@ -1578,18 +1501,45 @@ HTMLContentSink::~HTMLContentSink()
   }
 }
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLContentSink)
+
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLContentSink, nsContentSink)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mHTMLDocument)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRoot)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mBody)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mFrameset)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mHead)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCurrentForm)
+  for (PRUint32 i = 0; i < NS_ARRAY_LENGTH(tmp->mNodeInfoCache); ++i) {
+    NS_IF_RELEASE(tmp->mNodeInfoCache[i]);
+  }
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLContentSink,
+                                                  nsContentSink)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mHTMLDocument)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mRoot)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mBody)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFrameset)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mHead)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCurrentForm)
+  for (PRUint32 i = 0; i < NS_ARRAY_LENGTH(tmp->mNodeInfoCache); ++i) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mNodeInfoCache[i]");
+    cb.NoteXPCOMChild(tmp->mNodeInfoCache[i]);
+  }
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLContentSink)
+  NS_INTERFACE_TABLE_BEGIN
+    NS_INTERFACE_TABLE_ENTRY(HTMLContentSink, nsIContentSink)
+    NS_INTERFACE_TABLE_ENTRY(HTMLContentSink, nsIHTMLContentSink)
 #if DEBUG
-NS_IMPL_ISUPPORTS_INHERITED3(HTMLContentSink,
-                             nsContentSink,
-                             nsIContentSink,
-                             nsIHTMLContentSink,
-                             nsIDebugDumpContent)
-#else
-NS_IMPL_ISUPPORTS_INHERITED2(HTMLContentSink,
-                             nsContentSink,
-                             nsIContentSink,
-                             nsIHTMLContentSink)
+    NS_INTERFACE_TABLE_ENTRY(HTMLContentSink, nsIDebugDumpContent)
 #endif
+  NS_INTERFACE_TABLE_END
+NS_INTERFACE_TABLE_TAIL_INHERITING(nsContentSink)
+
+NS_IMPL_ADDREF_INHERITED(HTMLContentSink, nsContentSink)
+NS_IMPL_RELEASE_INHERITED(HTMLContentSink, nsContentSink)
 
 static PRBool
 IsScriptEnabled(nsIDocument *aDoc, nsIDocShell *aContainer)
@@ -1627,23 +1577,15 @@ HTMLContentSink::Init(nsIDocument* aDoc,
                       nsIChannel* aChannel)
 {
   NS_ENSURE_TRUE(aContainer, NS_ERROR_NULL_POINTER);
-
-
-  MOZ_TIMER_DEBUGLOG(("Reset and start: nsHTMLContentSink::Init(), this=%p\n",
-                      this));
-  MOZ_TIMER_RESET(mWatch);
-  MOZ_TIMER_START(mWatch);
-
+  
   nsresult rv = nsContentSink::Init(aDoc, aURI, aContainer, aChannel);
   if (NS_FAILED(rv)) {
-    MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::Init()\n"));
-    MOZ_TIMER_STOP(mWatch);
     return rv;
   }
 
   aDoc->AddObserver(this);
   mIsDocumentObserver = PR_TRUE;
-  CallQueryInterface(aDoc, &mHTMLDocument);
+  mHTMLDocument = do_QueryInterface(aDoc);
 
   mObservers = nsnull;
   nsIParserService* service = nsContentUtils::GetParserService();
@@ -1681,40 +1623,25 @@ HTMLContentSink::Init(nsIDocument* aDoc,
   NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   // Make root part
-  nsIContent *doc_root = mDocument->GetRootContent();
-
-  if (doc_root) {
-    // If the document already has a root we'll use it. This will
-    // happen when we do document.open()/.write()/.close()...
-
-    NS_ADDREF(mRoot = static_cast<nsGenericHTMLElement*>(doc_root));
-  } else {
-    mRoot = NS_NewHTMLHtmlElement(nodeInfo);
-    if (!mRoot) {
-      MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::Init()\n"));
-      MOZ_TIMER_STOP(mWatch);
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-    NS_ADDREF(mRoot);
-
-    NS_ASSERTION(mDocument->GetChildCount() == 0,
-                 "Document should have no kids here!");
-    rv = mDocument->AppendChildTo(mRoot, PR_FALSE);
-    NS_ENSURE_SUCCESS(rv, rv);
+  mRoot = NS_NewHTMLHtmlElement(nodeInfo.forget());
+  if (!mRoot) {
+    return NS_ERROR_OUT_OF_MEMORY;
   }
+
+  NS_ASSERTION(mDocument->GetChildCount() == 0,
+               "Document should have no kids here!");
+  rv = mDocument->AppendChildTo(mRoot, PR_FALSE);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Make head part
   nodeInfo = mNodeInfoManager->GetNodeInfo(nsGkAtoms::head,
                                            nsnull, kNameSpaceID_XHTML);
   NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
-  mHead = NS_NewHTMLHeadElement(nodeInfo);
+  mHead = NS_NewHTMLHeadElement(nodeInfo.forget());
   if (NS_FAILED(rv)) {
-    MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::Init()\n"));
-    MOZ_TIMER_STOP(mWatch);
     return NS_ERROR_OUT_OF_MEMORY;
   }
-  NS_ADDREF(mHead);
 
   mRoot->AppendChildTo(mHead, PR_FALSE);
 
@@ -1730,10 +1657,6 @@ HTMLContentSink::Init(nsIDocument* aDoc,
              ("HTMLContentSink::Init: this=%p url='%s'",
               this, spec.get()));
 #endif
-
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::Init()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return NS_OK;
 }
 
@@ -1772,15 +1695,6 @@ HTMLContentSink::WillBuildModel(nsDTDMode aDTDMode)
 NS_IMETHODIMP
 HTMLContentSink::DidBuildModel(PRBool aTerminated)
 {
-  // NRA Dump stopwatch stop info here
-#ifdef MOZ_PERF_METRICS
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::DidBuildModel(), this=%p\n",
-                      this));
-  MOZ_TIMER_STOP(mWatch);
-  MOZ_TIMER_LOG(("Content creation time (this=%p): ", this));
-  MOZ_TIMER_PRINT(mWatch);
-#endif
-
   DidBuildModelImpl(aTerminated);
 
   // Reflow the last batch of content
@@ -1846,21 +1760,16 @@ HTMLContentSink::IsFormOnStack()
 NS_IMETHODIMP
 HTMLContentSink::BeginContext(PRInt32 aPosition)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::BeginContext()\n"));
-  MOZ_TIMER_START(mWatch);
   NS_PRECONDITION(aPosition > -1, "out of bounds");
 
   // Create new context
   SinkContext* sc = new SinkContext(this);
   if (!sc) {
-    MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::BeginContext()\n"));
-    MOZ_TIMER_STOP(mWatch);
-
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
   if (!mCurrentContext) {
-    NS_ERROR("Non-existing context");
+    NS_ERROR("Nonexistent context");
 
     return NS_ERROR_FAILURE;
   }
@@ -1894,19 +1803,13 @@ HTMLContentSink::BeginContext(PRInt32 aPosition)
 
   mContextStack.AppendElement(mCurrentContext);
   mCurrentContext = sc;
-
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::BeginContext()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return NS_OK;
 }
 
 NS_IMETHODIMP
 HTMLContentSink::EndContext(PRInt32 aPosition)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::EndContext()\n"));
-  MOZ_TIMER_START(mWatch);
-  NS_PRECONDITION(mCurrentContext && aPosition > -1, "non-existing context");
+  NS_PRECONDITION(mCurrentContext && aPosition > -1, "nonexistent context");
 
   PRUint32 n = mContextStack.Length() - 1;
   SinkContext* sc = mContextStack.ElementAt(n);
@@ -1952,18 +1855,12 @@ HTMLContentSink::EndContext(PRInt32 aPosition)
 
   mCurrentContext = sc;
   mContextStack.RemoveElementAt(n);
-
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::EndContext()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return NS_OK;
 }
 
 nsresult
 HTMLContentSink::CloseHTML()
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::CloseHTML()\n"));
-  MOZ_TIMER_START(mWatch);
   SINK_TRACE_NODE(SINK_TRACE_CALLS,
                  "HTMLContentSink::CloseHTML", 
                  eHTMLTag_html, 0, this);
@@ -1985,32 +1882,19 @@ HTMLContentSink::CloseHTML()
     mHeadContext = nsnull;
   }
 
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::CloseHTML()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return NS_OK;
 }
 
 nsresult
 HTMLContentSink::OpenHead()
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::OpenHead()\n"));
-  MOZ_TIMER_START(mWatch);
-
   nsresult rv = OpenHeadContext();
-
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::OpenHead()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return rv;
 }
 
 nsresult
 HTMLContentSink::OpenBody(const nsIParserNode& aNode)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::OpenBody()\n"));
-  MOZ_TIMER_START(mWatch);
-
   SINK_TRACE_NODE(SINK_TRACE_CALLS,
                   "HTMLContentSink::OpenBody", 
                   eHTMLTag_body,
@@ -2022,28 +1906,16 @@ HTMLContentSink::OpenBody(const nsIParserNode& aNode)
   // Add attributes, if any, to the current BODY node
   if (mBody) {
     AddAttributes(aNode, mBody, PR_TRUE, PR_TRUE);
-
-    MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::OpenBody()\n"));
-    MOZ_TIMER_STOP(mWatch);
-
     return NS_OK;
   }
 
   nsresult rv = mCurrentContext->OpenContainer(aNode);
 
   if (NS_FAILED(rv)) {
-    MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::OpenBody()\n"));
-    MOZ_TIMER_STOP(mWatch);
-
     return rv;
   }
 
   mBody = mCurrentContext->mStack[mCurrentContext->mStackPos - 1].mContent;
-
-  NS_ADDREF(mBody);
-
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::OpenBody()\n"));
-  MOZ_TIMER_STOP(mWatch);
 
   if (mCurrentContext->mStackPos > 1) {
     PRInt32 parentIndex    = mCurrentContext->mStackPos - 2;
@@ -2081,8 +1953,6 @@ HTMLContentSink::OpenBody(const nsIParserNode& aNode)
 nsresult
 HTMLContentSink::CloseBody()
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::CloseBody()\n"));
-  MOZ_TIMER_START(mWatch);
   SINK_TRACE_NODE(SINK_TRACE_CALLS,
                   "HTMLContentSink::CloseBody", 
                   eHTMLTag_body,
@@ -2092,9 +1962,6 @@ HTMLContentSink::CloseBody()
   PRBool didFlush;
   nsresult rv = mCurrentContext->FlushTextAndRelease(&didFlush);
   if (NS_FAILED(rv)) {
-    MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::CloseBody()\n"));
-    MOZ_TIMER_STOP(mWatch);
-
     return rv;
   }
 
@@ -2105,18 +1972,12 @@ HTMLContentSink::CloseBody()
   mCurrentContext->FlushTags();
   mCurrentContext->CloseContainer(eHTMLTag_body, PR_FALSE);
 
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::CloseBody()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return NS_OK;
 }
 
 nsresult
 HTMLContentSink::OpenForm(const nsIParserNode& aNode)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::OpenForm()\n"));
-  MOZ_TIMER_START(mWatch);
-
   nsresult result = NS_OK;
 
   mCurrentContext->FlushTextAndRelease();
@@ -2147,18 +2008,12 @@ HTMLContentSink::OpenForm(const nsIParserNode& aNode)
     result = mCurrentContext->OpenContainer(aNode);
   }
 
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::OpenForm()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return result;
 }
 
 nsresult
 HTMLContentSink::CloseForm()
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::CloseForm()\n"));
-  MOZ_TIMER_START(mWatch);
-
   nsresult result = NS_OK;
 
   SINK_TRACE_NODE(SINK_TRACE_CALLS,
@@ -2177,17 +2032,12 @@ HTMLContentSink::CloseForm()
     mCurrentForm = nsnull;
   }
 
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::CloseForm()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return result;
 }
 
 nsresult
 HTMLContentSink::OpenFrameset(const nsIParserNode& aNode)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::OpenFrameset()\n"));
-  MOZ_TIMER_START(mWatch);
   SINK_TRACE_NODE(SINK_TRACE_CALLS,
                   "HTMLContentSink::OpenFrameset", 
                   eHTMLTag_frameset,
@@ -2200,9 +2050,6 @@ HTMLContentSink::OpenFrameset(const nsIParserNode& aNode)
   nsGenericHTMLElement* oldFrameset = mFrameset;
   nsresult rv = mCurrentContext->OpenContainer(aNode);
   PRBool isFirstFrameset = NS_SUCCEEDED(rv) && mFrameset != oldFrameset;
-
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::OpenFrameset()\n"));
-  MOZ_TIMER_STOP(mWatch);
 
   if (isFirstFrameset && mCurrentContext->mStackPos > 1) {
     NS_ASSERTION(mFrameset, "Must have frameset!");
@@ -2241,8 +2088,6 @@ HTMLContentSink::OpenFrameset(const nsIParserNode& aNode)
 nsresult
 HTMLContentSink::CloseFrameset()
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::CloseFrameset()\n"));
-  MOZ_TIMER_START(mWatch);
   SINK_TRACE_NODE(SINK_TRACE_CALLS,
                    "HTMLContentSink::CloseFrameset", 
                    eHTMLTag_frameset,
@@ -2258,9 +2103,6 @@ HTMLContentSink::CloseFrameset()
     PRBool didFlush;
     rv = sc->FlushTextAndRelease(&didFlush);
     if (NS_FAILED(rv)) {
-      MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::CloseFrameset()\n"));
-      MOZ_TIMER_STOP(mWatch);
-
       return rv;
     }
 
@@ -2272,9 +2114,6 @@ HTMLContentSink::CloseFrameset()
   }
 
   rv = sc->CloseContainer(eHTMLTag_frameset, PR_FALSE);    
-
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::CloseFrameset()\n"));
-  MOZ_TIMER_STOP(mWatch);
 
   if (done && mFramesEnabled) {
     StartLayout(PR_FALSE);
@@ -2302,9 +2141,6 @@ HTMLContentSink::IsEnabled(PRInt32 aTag, PRBool* aReturn)
 NS_IMETHODIMP
 HTMLContentSink::OpenContainer(const nsIParserNode& aNode)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::OpenContainer()\n"));
-  MOZ_TIMER_START(mWatch);
-
   nsresult rv = NS_OK;
 
   switch (aNode.GetNodeType()) {
@@ -2340,18 +2176,12 @@ HTMLContentSink::OpenContainer(const nsIParserNode& aNode)
       break;
   }
 
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::OpenContainer()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return rv;
 }
 
 NS_IMETHODIMP
 HTMLContentSink::CloseContainer(const eHTMLTags aTag)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::CloseContainer()\n"));
-  MOZ_TIMER_START(mWatch);
-
   nsresult rv = NS_OK;
 
   switch (aTag) {
@@ -2375,9 +2205,6 @@ HTMLContentSink::CloseContainer(const eHTMLTags aTag)
       break;
   }
 
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::CloseContainer()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return rv;
 }
 
@@ -2390,9 +2217,6 @@ HTMLContentSink::CloseMalformedContainer(const eHTMLTags aTag)
 NS_IMETHODIMP
 HTMLContentSink::AddLeaf(const nsIParserNode& aNode)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::AddLeaf()\n"));
-  MOZ_TIMER_START(mWatch);
-
   nsresult rv;
 
   nsHTMLTag nodeType = nsHTMLTag(aNode.GetNodeType());
@@ -2408,9 +2232,6 @@ HTMLContentSink::AddLeaf(const nsIParserNode& aNode)
     break;
   }
 
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::AddLeaf()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return rv;
 }
 
@@ -2423,13 +2244,7 @@ HTMLContentSink::AddLeaf(const nsIParserNode& aNode)
 nsresult
 HTMLContentSink::AddComment(const nsIParserNode& aNode)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::AddComment()\n"));
-  MOZ_TIMER_START(mWatch);
-
   nsresult rv = mCurrentContext->AddComment(aNode);
-
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::AddComment()\n"));
-  MOZ_TIMER_STOP(mWatch);
 
   return rv;
 }
@@ -2444,11 +2259,7 @@ nsresult
 HTMLContentSink::AddProcessingInstruction(const nsIParserNode& aNode)
 {
   nsresult result = NS_OK;
-
-  MOZ_TIMER_START(mWatch);
   // Implementation of AddProcessingInstruction() should start here
-
-  MOZ_TIMER_STOP(mWatch);
 
   return result;
 }
@@ -2461,9 +2272,6 @@ HTMLContentSink::AddProcessingInstruction(const nsIParserNode& aNode)
 NS_IMETHODIMP
 HTMLContentSink::AddDocTypeDecl(const nsIParserNode& aNode)
 {
-  MOZ_TIMER_DEBUGLOG(("Start: nsHTMLContentSink::AddDocTypeDecl()\n"));
-  MOZ_TIMER_START(mWatch);
-
   nsAutoString docTypeStr(aNode.GetText());
   nsresult rv = NS_OK;
 
@@ -2684,9 +2492,6 @@ HTMLContentSink::AddDocTypeDecl(const nsIParserNode& aNode)
     }
   }
 
-  MOZ_TIMER_DEBUGLOG(("Stop: nsHTMLContentSink::AddDocTypeDecl()\n"));
-  MOZ_TIMER_STOP(mWatch);
-
   return rv;
 }
 
@@ -2753,28 +2558,6 @@ HTMLContentSink::StartLayout(PRBool aIgnorePendingSheets)
   nsContentSink::StartLayout(aIgnorePendingSheets);
 }
 
-void
-HTMLContentSink::AddBaseTagInfo(nsIContent* aContent)
-{
-  nsresult rv;
-  if (mBaseHref) {
-    rv = aContent->SetProperty(nsGkAtoms::htmlBaseHref, mBaseHref,
-                               nsPropertyTable::SupportsDtorFunc, PR_TRUE);
-    if (NS_SUCCEEDED(rv)) {
-      // circumvent nsDerivedSafe
-      NS_ADDREF(static_cast<nsIURI*>(mBaseHref));
-    }
-  }
-  if (mBaseTarget) {
-    rv = aContent->SetProperty(nsGkAtoms::htmlBaseTarget, mBaseTarget,
-                               nsPropertyTable::SupportsDtorFunc, PR_TRUE);
-    if (NS_SUCCEEDED(rv)) {
-      // circumvent nsDerivedSafe
-      NS_ADDREF(static_cast<nsIAtom*>(mBaseTarget));
-    }
-  }
-}
-
 nsresult
 HTMLContentSink::OpenHeadContext()
 {
@@ -2826,56 +2609,6 @@ HTMLContentSink::CloseHeadContext()
   }
 }
 
-void
-HTMLContentSink::ProcessBASEElement(nsGenericHTMLElement* aElement)
-{
-  // href attribute
-  nsAutoString attrValue;
-  if (aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::href, attrValue)) {
-    //-- Make sure this page is allowed to load this URI
-    nsresult rv;
-    nsCOMPtr<nsIURI> baseHrefURI;
-    rv = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(baseHrefURI),
-                                                   attrValue, mDocument,
-                                                   nsnull);
-    if (NS_FAILED(rv))
-      return;
-
-    // Setting "BASE URI" from the last BASE tag appearing in HEAD.
-    if (!mBody) {
-      // The document checks if it is legal to set this base. Failing here is
-      // ok, we just won't set a new base.
-      rv = mDocument->SetBaseURI(baseHrefURI);
-      if (NS_SUCCEEDED(rv)) {
-        mDocumentBaseURI = mDocument->GetBaseURI();
-      }
-    } else {
-      // NAV compatibility quirk
-
-      nsIScriptSecurityManager *securityManager =
-        nsContentUtils::GetSecurityManager();
-
-      rv = securityManager->
-        CheckLoadURIWithPrincipal(mDocument->NodePrincipal(), baseHrefURI,
-                                  nsIScriptSecurityManager::STANDARD);
-      if (NS_SUCCEEDED(rv)) {
-        mBaseHref = baseHrefURI;
-      }
-    }
-  }
-
-  // target attribute
-  if (aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::target, attrValue)) {
-    if (!mBody) {
-      // still in real HEAD
-      mDocument->SetBaseTarget(attrValue);
-    } else {
-      // NAV compatibility quirk
-      mBaseTarget = do_GetAtom(attrValue);
-    }
-  }
-}
-
 nsresult
 HTMLContentSink::ProcessLINKTag(const nsIParserNode& aNode)
 {
@@ -2887,7 +2620,8 @@ HTMLContentSink::ProcessLINKTag(const nsIParserNode& aNode)
     nsCOMPtr<nsINodeInfo> nodeInfo;
     nodeInfo = mNodeInfoManager->GetNodeInfo(nsGkAtoms::link, nsnull, kNameSpaceID_XHTML);
 
-    result = NS_NewHTMLElement(getter_AddRefs(element), nodeInfo, PR_FALSE);
+    result = NS_NewHTMLElement(getter_AddRefs(element), nodeInfo.forget(),
+                               NOT_FROM_PARSER);
     NS_ENSURE_SUCCESS(result, result);
 
     nsCOMPtr<nsIStyleSheetLinkingElement> ssle(do_QueryInterface(element));
@@ -2904,7 +2638,6 @@ HTMLContentSink::ProcessLINKTag(const nsIParserNode& aNode)
 
     // Add in the attributes and add the style content object to the
     // head container.
-    AddBaseTagInfo(element);
     result = AddAttributes(aNode, element);
     if (NS_FAILED(result)) {
       return result;
@@ -2972,10 +2705,6 @@ HTMLContentSink::NotifyInsert(nsIContent* aContent,
 
   mInNotification++;
 
-  MOZ_TIMER_DEBUGLOG(("Save and stop: nsHTMLContentSink::NotifyInsert()\n"));
-  MOZ_TIMER_SAVE(mWatch)
-  MOZ_TIMER_STOP(mWatch);
-
   {
     // Scope so we call EndUpdate before we decrease mInNotification
     MOZ_AUTO_DOC_UPDATE(mDocument, UPDATE_CONTENT_MODEL, !mBeganUpdate);
@@ -2983,9 +2712,6 @@ HTMLContentSink::NotifyInsert(nsIContent* aContent,
                                  aChildContent, aIndexInContainer);
     mLastNotificationTime = PR_Now();
   }
-
-  MOZ_TIMER_DEBUGLOG(("Restore: nsHTMLContentSink::NotifyInsert()\n"));
-  MOZ_TIMER_RESTORE(mWatch);
 
   mInNotification--;
 }
@@ -3256,7 +2982,7 @@ HTMLContentSink::DumpContentModel()
   FILE* out = ::fopen("rtest_html.txt", "a");
   if (out) {
     if (mDocument) {
-      nsIContent* root = mDocument->GetRootContent();
+      Element* root = mDocument->GetRootElement();
       if (root) {
         if (mDocumentURI) {
           nsCAutoString buf;

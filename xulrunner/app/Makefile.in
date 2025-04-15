@@ -54,14 +54,10 @@ GARBAGE += $(addprefix $(DIST)/bin/defaults/pref/,xulrunner.js)
 
 DEFINES += -DAB_CD=$(AB_CD)
 
-ifeq ($(USE_SHORT_LIBNAME), 1)
-PROGRAM = xulrunner$(BIN_SUFFIX)
-else
-ifeq ($(OS_ARCH), BeOS)
+ifneq (,$(filter BeOS OS2 WINCE WINNT,$(OS_ARCH)))
 PROGRAM = xulrunner$(BIN_SUFFIX)
 else
 PROGRAM = xulrunner-bin$(BIN_SUFFIX)
-endif
 endif
 
 DEFINES += -DXULRUNNER_PROGNAME=\"xulrunner\"
@@ -74,13 +70,6 @@ ifdef TARGET_XPCOM_ABI
 DEFINES += -DTARGET_XPCOM_ABI=\"$(TARGET_XPCOM_ABI)\"
 endif
 
-REQUIRES = \
-        xpcom \
-        string \
-        appshell \
-        xulapp \
-        xulrunner \
-	$(NULL)
 
 CPPSRCS = nsXULRunnerApp.cpp
 
@@ -101,9 +90,10 @@ endif
 LOCAL_INCLUDES += \
         -I$(topsrcdir)/toolkit/xre \
         -I$(topsrcdir)/toolkit/profile/src \
+        -I$(topsrcdir)/xpcom/base \
         $(NULL)
 
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 TK_LIBS := -framework Cocoa $(TK_LIBS)
 endif
 
@@ -207,6 +197,10 @@ ifeq ($(OS_ARCH),WINNT)
 #
 ifndef GNU_CC
 LDFLAGS += /HEAP:0x40000
+ifeq ($(OS_TEST),x86_64)
+# set stack to 2MB on x64 build.  See bug 582910
+LDFLAGS += -STACK:2097152
+endif
 endif
 endif
 
@@ -272,10 +266,7 @@ ifeq ($(OS_ARCH),OS2)
 	cp $(srcdir)/xulrunner-os2.ico   $(DIST)/branding/xulrunner.ico
 endif
 
-libs::
-	touch $(DIST)/bin/.autoreg
-
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 
 FRAMEWORK_NAME = XUL
 FRAMEWORK_VERSION = $(MOZILLA_VERSION)

@@ -47,6 +47,8 @@
 #include "nsAutoPtr.h"
 #include "nsStyleSet.h"
 #include "nsFrameManager.h"
+#include "nsPlaceholderFrame.h"
+#include "nsCSSFrameConstructor.h"
 
 nsIFrame*
 NS_NewFirstLetterFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
@@ -106,7 +108,7 @@ nsFirstLetterFrame::SetInitialChildList(nsIAtom*     aListName,
 
   for (nsFrameList::Enumerator e(aChildList); !e.AtEnd(); e.Next()) {
     NS_ASSERTION(e.get()->GetParent() == this, "Unexpected parent");
-    frameManager->ReParentStyleContext(e.get());
+    frameManager->ReparentStyleContext(e.get());
   }
 
   mFrames.SetFrames(aChildList);
@@ -227,7 +229,7 @@ nsFirstLetterFrame::Reflow(nsPresContext*          aPresContext,
     PRBool        pushedFrame;
 
     ll->SetInFirstLetter(
-      mStyleContext->GetPseudoType() == nsCSSPseudoElements::firstLetter);
+      mStyleContext->GetPseudo() == nsCSSPseudoElements::firstLetter);
     ll->BeginSpan(this, &aReflowState, bp.left, availSize.width);
     ll->ReflowFrame(kid, aReflowStatus, &aMetrics, pushedFrame);
     ll->EndSpan(this);
@@ -247,9 +249,8 @@ nsFirstLetterFrame::Reflow(nsPresContext*          aPresContext,
   // Ensure that the overflow rect contains the child textframe's overflow rect.
   // Note that if this is floating, the overline/underline drawable area is in
   // the overflow rect of the child textframe.
-  aMetrics.mOverflowArea.UnionRect(aMetrics.mOverflowArea,
-                           nsRect(0, 0, aMetrics.width, aMetrics.height));
-  ConsiderChildOverflow(aMetrics.mOverflowArea, kid);
+  aMetrics.UnionOverflowAreasWithDesiredBounds();
+  ConsiderChildOverflow(aMetrics.mOverflowAreas, kid);
 
   // Create a continuation or remove existing continuations based on
   // the reflow completion status.
@@ -267,23 +268,25 @@ nsFirstLetterFrame::Reflow(nsPresContext*          aPresContext,
   else {
     // Create a continuation for the child frame if it doesn't already
     // have one.
-    nsIFrame* nextInFlow;
-    rv = CreateNextInFlow(aPresContext, this, kid, nextInFlow);
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
-
-    // And then push it to our overflow list
-    if (nextInFlow) {
-      kid->SetNextSibling(nsnull);
-      SetOverflowFrames(aPresContext, nextInFlow);
-    }
-    else {
-      nsIFrame* nextSib = kid->GetNextSibling();
-      if (nextSib) {
-        kid->SetNextSibling(nsnull);
-        SetOverflowFrames(aPresContext, nextSib);
+    if (!GetStyleDisplay()->IsFloating()) {
+      nsIFrame* nextInFlow;
+      rv = CreateNextInFlow(aPresContext, kid, nextInFlow);
+      if (NS_FAILED(rv)) {
+        return rv;
       }
+
+      // And then push it to our overflow list
+      const nsFrameList& overflow = mFrames.RemoveFramesAfter(kid);
+      if (overflow.NotEmpty()) {
+        SetOverflowFrames(aPresContext, overflow);
+      }
+    } else if (!kid->GetNextInFlow()) {
+      // For floating first letter frames (if a continuation wasn't already
+      // created for us) we need to put the continuation with the rest of the
+      // text that the first letter frame was made out of.
+      nsIFrame* continuation;
+      rv = CreateContinuationForFloatingParent(aPresContext, kid,
+                                               &continuation, PR_TRUE);
     }
   }
 
@@ -298,6 +301,54 @@ nsFirstLetterFrame::CanContinueTextRun() const
 {
   // We can continue a text run through a first-letter frame.
   return PR_TRUE;
+}
+
+nsresult
+nsFirstLetterFrame::CreateContinuationForFloatingParent(nsPresContext* aPresContext,
+                                                        nsIFrame* aChild,
+                                                        nsIFrame** aContinuation,
+                                                        PRBool aIsFluid)
+{
+  NS_ASSERTION(GetStyleDisplay()->IsFloating(),
+               "can only call this on floating first letter frames");
+  NS_PRECONDITION(aContinuation, "bad args");
+
+  *aContinuation = nsnull;
+  nsresult rv = NS_OK;
+
+  nsIPresShell* presShell = aPresContext->PresShell();
+  nsPlaceholderFrame* placeholderFrame =
+    presShell->FrameManager()->GetPlaceholderFrameFor(this);
+  nsIFrame* parent = placeholderFrame->GetParent();
+
+  nsIFrame* continuation;
+  rv = presShell->FrameConstructor()->
+    CreateContinuingFrame(aPresContext, aChild, parent, &continuation, aIsFluid);
+  if (NS_FAILED(rv) || !continuation) {
+    return rv;
+  }
+
+  // The continuation will have gotten the first letter style from it's
+  // prev continuation, so we need to repair the style context so it
+  // doesn't have the first letter styling.
+  nsStyleContext* parentSC = this->GetStyleContext()->GetParent();
+  if (parentSC) {
+    nsRefPtr<nsStyleContext> newSC;
+    newSC = presShell->StyleSet()->ResolveStyleForNonElement(parentSC);
+    if (newSC) {
+      continuation->SetStyleContext(newSC);
+    }
+  }
+
+  //XXX Bidi may not be involved but we have to use the list name
+  // nsGkAtoms::nextBidi because this is just like creating a continuation
+  // except we have to insert it in a different place and we don't want a
+  // reflow command to try to be issued.
+  nsFrameList temp(continuation, continuation);
+  rv = parent->InsertFrames(nsGkAtoms::nextBidi, placeholderFrame, temp);
+
+  *aContinuation = continuation;
+  return rv;
 }
 
 void
@@ -343,4 +394,10 @@ nsFirstLetterFrame::DrainOverflowFrames(nsPresContext* aPresContext)
       }
     }
   }
+}
+
+nscoord
+nsFirstLetterFrame::GetBaseline() const
+{
+  return mBaseline;
 }

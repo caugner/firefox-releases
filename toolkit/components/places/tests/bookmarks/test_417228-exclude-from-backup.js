@@ -37,8 +37,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-Components.utils.import("resource://gre/modules/utils.js");
-
 const EXCLUDE_FROM_BACKUP_ANNO = "places/excludeFromBackup";
 // Menu, Toolbar, Unsorted, Tags
 const PLACES_ROOTS_COUNT  = 4;
@@ -145,7 +143,7 @@ function run_test() {
   do_check_eq(typeof PlacesUtils, "object");
 
   // make json file
-  var jsonFile = dirSvc.get("ProfD", Ci.nsILocalFile);
+  var jsonFile = Services.dirsvc.get("ProfD", Ci.nsILocalFile);
   jsonFile.append("bookmarks.json");
   if (jsonFile.exists())
     jsonFile.remove(false);
@@ -157,7 +155,7 @@ function run_test() {
   test.populate();
 
   try {
-    PlacesUtils.backupBookmarksToFile(jsonFile);
+    PlacesUtils.backups.saveBookmarksToJSONFile(jsonFile);
   } catch(ex) {
     do_throw("couldn't export to file: " + ex);
   }

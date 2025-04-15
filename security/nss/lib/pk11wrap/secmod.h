@@ -95,6 +95,18 @@ SECStatus SECMOD_UnloadUserModule(SECMODModule *mod);
 
 SECMODModule * SECMOD_CreateModule(const char *lib, const char *name,
 					const char *param, const char *nss);
+/*
+ * After a fork(), PKCS #11 says we need to call C_Initialize again in
+ * the child before we can use the module. This function causes this 
+ * reinitialization.
+ * NOTE: Any outstanding handles will become invalid, which means your
+ * keys and contexts will fail, but new ones can be created.
+ *
+ * Setting 'force' to true means to do the reinitialization even if the 
+ * PKCS #11 module does not seem to need it. This allows software modules 
+ * which ignore fork to preserve their keys across the fork().
+ */
+SECStatus SECMOD_RestartModules(PRBool force);
 
 
 /* Module Management */
@@ -150,6 +162,10 @@ extern PK11SlotInfo *SECMOD_FindSlot(SECMODModule *module,const char *name);
 /* Funtion reports true if at least one of the modules */
 /* of modType has been installed */
 PRBool SECMOD_IsModulePresent( unsigned long int pubCipherEnableFlags );
+
+/* accessors */
+PRBool SECMOD_GetSkipFirstFlag(SECMODModule *mod);
+PRBool SECMOD_GetDefaultModDBFlag(SECMODModule *mod);
 
 /* Functions used to convert between internal & public representation
  * of Mechanism Flags and Cipher Enable Flags */

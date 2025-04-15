@@ -38,7 +38,7 @@
 
 #include "nsIFileView.h"
 #include "nsITreeView.h"
-#include "nsIGenericFactory.h"
+#include "mozilla/ModuleUtils.h"
 #include "nsITreeSelection.h"
 #include "nsITreeColumns.h"
 #include "nsITreeBoxObject.h"
@@ -167,6 +167,11 @@ NS_IMETHODIMP nsFileResult::GetValueAt(PRInt32 index, nsAString & aValue)
   return NS_OK;
 }
 
+NS_IMETHODIMP nsFileResult::GetLabelAt(PRInt32 index, nsAString & aValue)
+{
+  return GetValueAt(index, aValue);
+}
+
 NS_IMETHODIMP nsFileResult::GetCommentAt(PRInt32 index, nsAString & aComment)
 {
   aComment.Truncate();
@@ -263,17 +268,28 @@ protected:
 // Factory constructor
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsFileComplete)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsFileView, Init)
+NS_DEFINE_NAMED_CID(NS_FILECOMPLETE_CID);
+NS_DEFINE_NAMED_CID(NS_FILEVIEW_CID);
 
-static const nsModuleComponentInfo components[] =
-{
-  { "nsFileComplete", NS_FILECOMPLETE_CID,
-    NS_FILECOMPLETE_CONTRACTID, nsFileCompleteConstructor },
-  { "nsFileView", NS_FILEVIEW_CID,
-    NS_FILEVIEW_CONTRACTID, nsFileViewConstructor }
+static const mozilla::Module::CIDEntry kFileViewCIDs[] = {
+  { &kNS_FILECOMPLETE_CID, false, NULL, nsFileCompleteConstructor },
+  { &kNS_FILEVIEW_CID, false, NULL, nsFileViewConstructor },
+  { NULL }
 };
 
-NS_IMPL_NSGETMODULE(nsFileViewModule, components)
+static const mozilla::Module::ContractIDEntry kFileViewContracts[] = {
+  { NS_FILECOMPLETE_CONTRACTID, &kNS_FILECOMPLETE_CID },
+  { NS_FILEVIEW_CONTRACTID, &kNS_FILEVIEW_CID },
+  { NULL }
+};
 
+static const mozilla::Module kFileViewModule = {
+  mozilla::Module::kVersion,
+  kFileViewCIDs,
+  kFileViewContracts
+};
+
+NSMODULE_DEFN(nsFileViewModule) = &kFileViewModule;
 
 nsFileView::nsFileView() :
   mSortType(-1),

@@ -13,7 +13,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Mozilla Corporation.
+ * The Initial Developer of the Original Code is Mozilla Foundation.
  * Portions created by the Initial Developer are Copyright (C) 2007
  * the Initial Developer. All Rights Reserved.
  *
@@ -44,7 +44,7 @@ interface nsIDOMHTMLInputElement;
 interface nsIDOMHTMLFormElement;
 interface nsIPropertyBag;
 
-[scriptable, uuid(30534ff7-fb95-45c5-8336-5448638f2aa1)]
+[scriptable, uuid(1f02142f-7e3f-4d02-b3e0-495c5f83ad7d)]
 
 interface nsILoginManager : nsISupports {
 
@@ -88,6 +88,9 @@ interface nsILoginManager : nsISupports {
      * If newLoginData is a nsIPropertyBag, only the specified properties
      * will be changed. The nsILoginMetaInfo properties of oldLogin can be
      * changed in this manner.
+     *
+     * If the propertybag contains an item named "timesUsedIncrement", the
+     * login's timesUsed property will be incremented by the item's value.
      */
     void modifyLogin(in nsILoginInfo oldLogin, in nsISupports newLoginData);
 
@@ -109,16 +112,15 @@ interface nsILoginManager : nsISupports {
      *
      * @param count
      *        The number of elements in the array. JS callers can simply use
-     *        the array's .length property, and supply an dummy object for
-     *        this out param. For example: |getAllLogins({})|
+     *        the array's .length property and omit this param.
      * @param logins
      *        An array of nsILoginInfo objects. 
      *
      * NOTE: This can be called from JS as:
-     *       var logins = pwmgr.getAllLogins({});
+     *       var logins = pwmgr.getAllLogins();
      *       (|logins| is an array).
      */
-    void getAllLogins(out unsigned long count,
+    void getAllLogins([optional] out unsigned long count,
                       [retval, array, size_is(count)] out nsILoginInfo logins);
 
     
@@ -127,16 +129,15 @@ interface nsILoginManager : nsISupports {
      *
      * @param count
      *        The number of elements in the array. JS callers can simply use
-     *        the array's .length property, and supply an dummy object for
-     *        this out param. For example: |getAllDisabledHosts({})|
+     *        the array's .length property and omit this param.
      * @param hostnames
      *        An array of hostname strings, in origin URL format without a
      *        pathname. For example: "https://www.site.com".
      *
      * NOTE: This can be called from JS as:
-     *       var logins = pwmgr.getDisabledAllLogins({});
+     *       var logins = pwmgr.getDisabledAllLogins();
      */
-    void getAllDisabledHosts(out unsigned long count,
+    void getAllDisabledHosts([optional] out unsigned long count,
                       [retval, array, size_is(count)] out wstring hostnames);
 
 
@@ -176,14 +177,18 @@ interface nsILoginManager : nsISupports {
      * @param aHostname
      *        The hostname to restrict searches to, in URL format. For
      *        example: "http://www.site.com".
+     *        To find logins for a given nsIURI, you would typically pass in
+     *        its prePath.
      * @param aActionURL
      *        For form logins, this argument should be the URL to which the
      *        form will be submitted. For protocol logins, specify null.
+     *        An empty string ("") will match any value (except null).
      * @param aHttpRealm
      *        For protocol logins, this argument should be the HTTP Realm
      *        for which the login applies. This is obtained from the
      *        WWW-Authenticate header. See RFC2617. For form logins,
      *        specify null.
+     *        An empty string ("") will match any value (except null).
      * @param logins
      *        An array of nsILoginInfo objects. 
      *
@@ -262,6 +267,11 @@ interface nsILoginManager : nsISupports {
      */
     void searchLogins(out unsigned long count, in nsIPropertyBag matchData,
                       [retval, array, size_is(count)] out nsILoginInfo logins);
+
+   /**
+    * True when a master password prompt is being displayed.
+    */
+    readonly attribute boolean uiBusy;
 };
 
 %{C++

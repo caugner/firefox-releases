@@ -14,7 +14,7 @@
  *
  * The Original Code is Places.
  *
- * The Initial Developer of the Original Code is Mozilla Corporation.
+ * The Initial Developer of the Original Code is Mozilla Foundation.
  * Portions created by the Initial Developer are Copyright (C) 2009
  * the Initial Developer. All Rights Reserved.
  *
@@ -39,7 +39,7 @@
 // Call a method on each observer in a category cache, then call the same
 // method on the observer array.
 
-#define ENUMERATE_OBSERVERS(canFire, cache, array, type, method)               \
+#define NOTIFY_OBSERVERS(canFire, cache, array, type, method)                  \
   PR_BEGIN_MACRO                                                               \
   if (canFire) {                                                               \
     const nsCOMArray<type> &entries = cache.GetEntries();                      \
