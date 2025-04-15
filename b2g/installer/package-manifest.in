@@ -129,7 +129,6 @@
 #ifdef ACCESSIBILITY
 #ifdef XP_WIN32
 @BINPATH@/AccessibleMarshal.dll
-@BINPATH@/components/accessibility-msaa.xpt
 #endif
 @BINPATH@/components/accessibility.xpt
 #endif
@@ -157,10 +156,12 @@
 @BINPATH@/components/dom.xpt
 @BINPATH@/components/dom_activities.xpt
 @BINPATH@/components/dom_apps.xpt
+@BINPATH@/components/dom_audiochannel.xpt
 @BINPATH@/components/dom_base.xpt
 @BINPATH@/components/dom_system.xpt
 #ifdef MOZ_B2G_RIL
 @BINPATH@/components/dom_telephony.xpt
+@BINPATH@/components/dom_voicemail.xpt
 @BINPATH@/components/dom_wifi.xpt
 @BINPATH@/components/dom_system_gonk.xpt
 @BINPATH@/components/dom_icc.xpt
@@ -201,6 +202,7 @@
 @BINPATH@/components/dom_settings.xpt
 @BINPATH@/components/dom_permissionsettings.xpt
 @BINPATH@/components/dom_sidebar.xpt
+@BINPATH@/components/dom_mobilemessage.xpt
 @BINPATH@/components/dom_sms.xpt
 @BINPATH@/components/dom_storage.xpt
 @BINPATH@/components/dom_stylesheets.xpt
@@ -284,6 +286,9 @@
 @BINPATH@/components/services-crypto.xpt
 #endif
 @BINPATH@/components/services-crypto-component.xpt
+#ifdef MOZ_CAPTIVEDETECT
+@BINPATH@/components/captivedetect.xpt
+#endif
 @BINPATH@/components/shellservice.xpt
 @BINPATH@/components/shistory.xpt
 @BINPATH@/components/spellchecker.xpt
@@ -455,8 +460,8 @@
 @BINPATH@/components/MmsService.manifest
 @BINPATH@/components/MmsService.js
 @BINPATH@/components/RILContentHelper.js
-@BINPATH@/components/SmsDatabaseService.manifest
-@BINPATH@/components/SmsDatabaseService.js
+@BINPATH@/components/MobileMessageDatabaseService.manifest
+@BINPATH@/components/MobileMessageDatabaseService.js
 @BINPATH@/components/WifiWorker.js
 @BINPATH@/components/WifiWorker.manifest
 @BINPATH@/components/DOMWifiManager.js
@@ -489,6 +494,10 @@
 #ifdef MOZ_SERVICES_HEALTHREPORT
 @BINPATH@/components/HealthReportComponents.manifest
 @BINPATH@/components/HealthReportService.js
+#endif
+#ifdef MOZ_CAPTIVEDETECT
+@BINPATH@/components/CaptivePortalDetectComponents.manifest
+@BINPATH@/components/captivedetect.js
 #endif
 @BINPATH@/components/TelemetryPing.js
 @BINPATH@/components/TelemetryPing.manifest
@@ -732,6 +741,7 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/MailtoProtocolHandler.js
 @BINPATH@/components/SmsProtocolHandler.js
 @BINPATH@/components/TelProtocolHandler.js
+@BINPATH@/components/B2GAboutRedirector.js
 
 #ifdef XP_MACOSX
 @BINPATH@/@DLL_PREFIX@plugin_child_interpose@DLL_SUFFIX@

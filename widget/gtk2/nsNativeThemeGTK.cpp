@@ -29,6 +29,7 @@
 #include "gfxContext.h"
 #include "gfxPlatformGtk.h"
 #include "gfxGdkNativeRenderer.h"
+#include <algorithm>
 
 NS_IMPL_ISUPPORTS_INHERITED2(nsNativeThemeGTK, nsNativeTheme, nsITheme,
                                                               nsIObserver)
@@ -130,7 +131,7 @@ static GtkTextDirection GetTextDirection(nsIFrame* aFrame)
   if (!aFrame)
     return GTK_TEXT_DIR_NONE;
 
-  switch (aFrame->GetStyleVisibility()->mDirection) {
+  switch (aFrame->StyleVisibility()->mDirection) {
     case NS_STYLE_DIRECTION_RTL:
       return GTK_TEXT_DIR_RTL;
     case NS_STYLE_DIRECTION_LTR:
@@ -148,8 +149,8 @@ nsNativeThemeGTK::GetTabMarginPixels(nsIFrame* aFrame)
     IsBottomTab(aFrame) ? aFrame->GetUsedMargin().top
     : aFrame->GetUsedMargin().bottom;
 
-  return NS_MIN<gint>(MOZ_GTK_TAB_MARGIN_MASK,
-                NS_MAX(0,
+  return std::min<gint>(MOZ_GTK_TAB_MARGIN_MASK,
+                std::max(0,
                        aFrame->PresContext()->AppUnitsToDevPixels(-margin)));
 }
 
@@ -533,7 +534,7 @@ nsNativeThemeGTK::GetGtkWidgetAndState(uint8_t aWidgetType, nsIFrame* aFrame,
       nsEventStates eventStates = GetContentState(stateFrame, aWidgetType);
 
       aGtkWidgetType = IsIndeterminateProgress(stateFrame, eventStates)
-                         ? (stateFrame->GetStyleDisplay()->mOrient == NS_STYLE_ORIENT_VERTICAL)
+                         ? (stateFrame->StyleDisplay()->mOrient == NS_STYLE_ORIENT_VERTICAL)
                            ? MOZ_GTK_PROGRESS_CHUNK_VERTICAL_INDETERMINATE
                            : MOZ_GTK_PROGRESS_CHUNK_INDETERMINATE
                          : MOZ_GTK_PROGRESS_CHUNK;
@@ -1079,11 +1080,11 @@ nsNativeThemeGTK::GetMinimumWidgetSize(nsRenderingContext* aContext,
 
         if (aWidgetType == NS_THEME_SCROLLBAR_THUMB_VERTICAL) {
           aResult->width = metrics.slider_width;
-          aResult->height = NS_MIN(NSAppUnitsToIntPixels(rect.height, p2a),
+          aResult->height = std::min(NSAppUnitsToIntPixels(rect.height, p2a),
                                    metrics.min_slider_size);
         } else {
           aResult->height = metrics.slider_width;
-          aResult->width = NS_MIN(NSAppUnitsToIntPixels(rect.width, p2a),
+          aResult->width = std::min(NSAppUnitsToIntPixels(rect.width, p2a),
                                   metrics.min_slider_size);
         }
 

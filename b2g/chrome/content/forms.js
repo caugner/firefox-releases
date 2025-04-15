@@ -188,7 +188,6 @@ let FormAssistant = {
     addMessageListener("Forms:Select:Choice", this);
     addMessageListener("Forms:Input:Value", this);
     addMessageListener("Forms:Select:Blur", this);
-    Services.obs.addObserver(this, "xpcom-shutdown", false);
   },
 
   ignoredInputTypes: new Set([
@@ -238,12 +237,20 @@ let FormAssistant = {
 
     switch (evt.type) {
       case "focus":
-        if (target && isContentEditable(target)) {
+        if (!target) {
+          break;
+        }
+
+        if (target instanceof HTMLDocument || target == content) {
+          break;
+        }
+
+        if (isContentEditable(target)) {
           this.showKeyboard(this.getTopLevelEditable(target));
           break;
         }
 
-        if (target && this.isFocusableElement(target))
+        if (this.isFocusableElement(target))
           this.showKeyboard(target);
         break;
 
@@ -343,12 +350,6 @@ let FormAssistant = {
         break;
       }
     }
-  },
-
-  observe: function fa_observe(subject, topic, data) {
-    Services.obs.removeObserver(this, "xpcom-shutdown");
-    removeMessageListener("Forms:Select:Choice", this);
-    removeMessageListener("Forms:Input:Value", this);
   },
 
   showKeyboard: function fa_showKeyboard(target) {
@@ -455,17 +456,16 @@ function getJSON(element) {
     value = element.textContent;
   }
 
-  // Until the input type=date/datetime/time have been implemented
+  // Until the input type=date/datetime/range have been implemented
   // let's return their real type even if the platform returns 'text'
-  // Related to Bug 777279 - Implement <input type=time>
   let attributeType = element.getAttribute("type") || "";
 
   if (attributeType) {
     var typeLowerCase = attributeType.toLowerCase(); 
     switch (typeLowerCase) {
-      case "time":
       case "datetime":
       case "datetime-local":
+      case "range":
         type = typeLowerCase;
         break;
     }

@@ -50,6 +50,7 @@
 #include "nsIContentViewer.h"
 #include "nsIMarkupDocumentViewer.h"
 #include "nsClientRect.h"
+#include <algorithm>
 
 #if defined(MOZ_X11) && defined(MOZ_WIDGET_GTK)
 #include <gdk/gdk.h>
@@ -559,11 +560,12 @@ nsDOMWindowUtils::SendMouseEvent(const nsAString& aType,
                                  int32_t aModifiers,
                                  bool aIgnoreRootScrollFrame,
                                  float aPressure,
-                                 unsigned short aInputSourceArg)
+                                 unsigned short aInputSourceArg,
+                                 bool *aPreventDefault)
 {
   return SendMouseEventCommon(aType, aX, aY, aButton, aClickCount, aModifiers,
                               aIgnoreRootScrollFrame, aPressure,
-                              aInputSourceArg, false);
+                              aInputSourceArg, false, aPreventDefault);
 }
 
 NS_IMETHODIMP
@@ -580,7 +582,7 @@ nsDOMWindowUtils::SendMouseEventToWindow(const nsAString& aType,
   SAMPLE_LABEL("nsDOMWindowUtils", "SendMouseEventToWindow");
   return SendMouseEventCommon(aType, aX, aY, aButton, aClickCount, aModifiers,
                               aIgnoreRootScrollFrame, aPressure,
-                              aInputSourceArg, true);
+                              aInputSourceArg, true, nullptr);
 }
 
 static nsIntPoint
@@ -603,7 +605,8 @@ nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
                                        bool aIgnoreRootScrollFrame,
                                        float aPressure,
                                        unsigned short aInputSourceArg,
-                                       bool aToWindow)
+                                       bool aToWindow,
+                                       bool *aPreventDefault)
 {
   if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
@@ -630,7 +633,9 @@ nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
   else if (aType.EqualsLiteral("contextmenu")) {
     msg = NS_CONTEXTMENU;
     contextMenuKey = (aButton == 0);
-  } else
+  } else if (aType.EqualsLiteral("MozMouseHittest"))
+    msg = NS_MOUSE_MOZHITTEST;
+  else
     return NS_ERROR_FAILURE;
 
   if (aInputSourceArg == nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN) {
@@ -671,7 +676,10 @@ nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
     status = nsEventStatus_eIgnore;
     return presShell->HandleEvent(view->GetFrame(), &event, false, &status);
   }
-  return widget->DispatchEvent(&event, status);
+  nsresult rv = widget->DispatchEvent(&event, status);
+  *aPreventDefault = (status == nsEventStatus_eConsumeNoDefault);
+
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -1311,10 +1319,10 @@ nsDOMWindowUtils::CompareCanvases(nsIDOMHTMLCanvasElement *aCanvas1,
 
           different++;
 
-          dc = NS_MAX((uint32_t)abs(p1[0] - p2[0]), dc);
-          dc = NS_MAX((uint32_t)abs(p1[1] - p2[1]), dc);
-          dc = NS_MAX((uint32_t)abs(p1[2] - p2[2]), dc);
-          dc = NS_MAX((uint32_t)abs(p1[3] - p2[3]), dc);
+          dc = std::max((uint32_t)abs(p1[0] - p2[0]), dc);
+          dc = std::max((uint32_t)abs(p1[1] - p2[1]), dc);
+          dc = std::max((uint32_t)abs(p1[2] - p2[2]), dc);
+          dc = std::max((uint32_t)abs(p1[3] - p2[3]), dc);
         }
 
         p1 += 4;
@@ -1427,6 +1435,37 @@ nsDOMWindowUtils::GetScrollXY(bool aFlushLayout, int32_t* aScrollX, int32_t* aSc
 
   *aScrollX = nsPresContext::AppUnitsToIntCSSPixels(scrollPos.x);
   *aScrollY = nsPresContext::AppUnitsToIntCSSPixels(scrollPos.y);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetScrollbarWidth(bool aFlushLayout, int32_t* aResult)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  *aResult = 0;
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
+
+  nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
+  NS_ENSURE_STATE(doc);
+
+  if (aFlushLayout) {
+    doc->FlushPendingNotifications(Flush_Layout);
+  }
+
+  nsIPresShell* presShell = doc->GetShell();
+  NS_ENSURE_TRUE(presShell, NS_ERROR_NOT_AVAILABLE);
+
+  nsIScrollableFrame* scrollFrame = presShell->GetRootScrollFrameAsScrollable();
+  NS_ENSURE_TRUE(scrollFrame, NS_OK);
+
+  nsMargin sizes = scrollFrame->GetActualScrollbarSizes();
+  *aResult = nsPresContext::AppUnitsToIntCSSPixels(sizes.LeftRight());
 
   return NS_OK;
 }
@@ -2139,11 +2178,13 @@ nsDOMWindowUtils::GetLayerManagerType(nsAString& aType)
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::StartFrameTimeRecording()
+nsDOMWindowUtils::StartFrameTimeRecording(uint32_t *startIndex)
 {
   if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
   }
+
+  NS_ENSURE_ARG_POINTER(startIndex);
 
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget)
@@ -2153,13 +2194,16 @@ nsDOMWindowUtils::StartFrameTimeRecording()
   if (!mgr)
     return NS_ERROR_FAILURE;
 
-  mgr->StartFrameTimeRecording();
+  *startIndex = mgr->StartFrameTimeRecording();
 
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::StopFrameTimeRecording(float** paintTimes, uint32_t *frameCount, float **frameIntervals)
+nsDOMWindowUtils::StopFrameTimeRecording(uint32_t   startIndex,
+                                         float    **paintTimes,
+                                         uint32_t  *frameCount,
+                                         float    **frameIntervals)
 {
   if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
@@ -2179,31 +2223,21 @@ nsDOMWindowUtils::StopFrameTimeRecording(float** paintTimes, uint32_t *frameCoun
 
   nsTArray<float> tmpFrameIntervals;
   nsTArray<float> tmpPaintTimes;
-  mgr->StopFrameTimeRecording(tmpFrameIntervals, tmpPaintTimes);
-
-  *frameIntervals = nullptr;
-  *paintTimes = nullptr;
+  mgr->StopFrameTimeRecording(startIndex, tmpFrameIntervals, tmpPaintTimes);
   *frameCount = tmpFrameIntervals.Length();
 
-  if (*frameCount != 0) {
-    *frameIntervals = (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
-    if (!*frameIntervals)
-      return NS_ERROR_OUT_OF_MEMORY;
+  *frameIntervals = (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
+  *paintTimes =     (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
 
-    *paintTimes = (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
-    if (!*paintTimes)
-      return NS_ERROR_OUT_OF_MEMORY;
-
-    /* copy over the frame intervals and paint times into the arrays we just allocated */
-    for (uint32_t i = 0; i < *frameCount; i++) {
-      (*frameIntervals)[i] = tmpFrameIntervals[i];
-#ifndef ANDROID
-      (*paintTimes)[i] = tmpPaintTimes[i];
+  /* copy over the frame intervals and paint times into the arrays we just allocated */
+  for (uint32_t i = 0; i < *frameCount; i++) {
+    (*frameIntervals)[i] = tmpFrameIntervals[i];
+#ifndef MOZ_WIDGET_GONK
+    (*paintTimes)[i] = tmpPaintTimes[i];
 #else
-      // Waiting for bug 785597 to work on android.
-      (*paintTimes)[i] = 0;
+    // Waiting for bug 830475 to work on B2G.
+    (*paintTimes)[i] = 0;
 #endif
-    }
   }
 
   return NS_OK;

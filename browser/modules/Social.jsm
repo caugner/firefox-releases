@@ -16,6 +16,22 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "SocialService",
   "resource://gre/modules/SocialService.jsm");
 
+// Add a pref observer for the enabled state
+function prefObserver(subject, topic, data) {
+  let enable = Services.prefs.getBoolPref("social.enabled");
+  if (enable && !Social.provider) {
+    Social.provider = Social.defaultProvider;
+  } else if (!enable && Social.provider) {
+    Social.provider = null;
+  }
+}
+
+Services.prefs.addObserver("social.enabled", prefObserver, false);
+Services.obs.addObserver(function xpcomShutdown() {
+  Services.obs.removeObserver(xpcomShutdown, "xpcom-shutdown");
+  Services.prefs.removeObserver("social.enabled", prefObserver);
+}, "xpcom-shutdown", false);
+
 this.Social = {
   lastEventReceived: 0,
   providers: null,
@@ -45,14 +61,11 @@ this.Social = {
     this._setProvider(val, true);
   },
 
-  // Sets the current provider and enables and activates it. Also disables the
+  // Sets the current provider and enables it. Also disables the
   // previously set provider, and optionally notifies observers of the change.
   _setProvider: function (provider, notify) {
     if (this._provider == provider)
       return;
-
-    if (provider && !provider.active)
-      throw new Error("Social.provider cannot be set to an inactive provider.");
 
     // Disable the previous provider, if any, since we want only one provider to
     // be enabled at once.
@@ -62,11 +75,13 @@ this.Social = {
     this._provider = provider;
 
     if (this._provider) {
-      if (this.enabled)
-        this._provider.enabled = true;
+      this._provider.enabled = true;
       this._currentProviderPref = this._provider.origin;
-    } else {
-      Services.prefs.clearUserPref("social.provider.current");
+    }
+    let enabled = !!provider;
+    if (enabled != SocialService.enabled) {
+      SocialService.enabled = enabled;
+      Services.prefs.setBoolPref("social.enabled", enabled);
     }
 
     if (notify) {
@@ -75,20 +90,19 @@ this.Social = {
     }
   },
 
+  get defaultProvider() {
+    if (this.providers.length == 0)
+      return null;
+    let provider = this._getProviderFromOrigin(this._currentProviderPref);
+    return provider || this.providers[0];
+  },
+
   init: function Social_init(callback) {
     this._disabledForSafeMode = Services.appinfo.inSafeMode && this.enabled;
 
     if (this.providers) {
       schedule(callback);
       return;
-    }
-
-    if (!this._addedObservers) {
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-      Services.obs.addObserver(this, "private-browsing", false);
-#endif
-      Services.obs.addObserver(this, "social:pref-changed", false);
-      this._addedObservers = true;
     }
 
     // Retrieve the current set of providers, and set the current provider.
@@ -102,8 +116,10 @@ this.Social = {
     // Register an observer for changes to the provider list
     SocialService.registerProviderListener(function providerListener(topic, data) {
       // An engine change caused by adding/removing a provider should notify
-      if (topic == "provider-added" || topic == "provider-removed")
+      if (topic == "provider-added" || topic == "provider-removed") {
         this._updateProviderCache(data, true);
+        Services.obs.notifyObservers(null, "social:providers-changed", null);
+      }
     }.bind(this));
   },
 
@@ -111,60 +127,25 @@ this.Social = {
   _updateProviderCache: function (providers, notifyProviderChange) {
     this.providers = providers;
 
-    // Set our current provider
-    let currentProviderPref = this._currentProviderPref;
-    let currentProvider;
-    if (this._currentProviderPref) {
-      currentProvider = this._getProviderFromOrigin(this._currentProviderPref);
-    } else {
-      // Migrate data from previous single-provider builds where we used
-      // social.active to indicate that the first available provider should be
-      // used.
-      try {
-        let active = Services.prefs.getBoolPref("social.active");
-        if (active) {
-          currentProvider = providers[0];
-          currentProvider.active = true;
-        }
-      } catch(ex) {}
-    }
-    this._setProvider(currentProvider, notifyProviderChange);
-  },
-
-  observe: function(aSubject, aTopic, aData) {
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-    if (aTopic == "private-browsing") {
-      if (aData == "enter") {
-        this._enabledBeforePrivateBrowsing = this.enabled;
-        this.enabled = false;
-      } else if (aData == "exit") {
-        // if the user has explicitly re-enabled social in PB mode, then upon
-        // leaving we want to tear the world down then reenable to prevent
-        // information leaks during this transition.
-        // The next 2 lines rely on the fact that setting this.enabled to
-        // its current value doesn't actually do anything...
-        this.enabled = false;
-        this.enabled = this._enabledBeforePrivateBrowsing;
-      }
-    } else
-#endif
-    if (aTopic == "social:pref-changed") {
-      // Make sure our provider's enabled state matches the overall state of the
-      // social components.
-      if (this.provider)
-        this.provider.enabled = this.enabled;
-    }
+    // If social is currently disabled there's nothing else to do.
+    if (!SocialService.enabled)
+      return;
+    // Otherwise set the provider.
+    this._setProvider(this.defaultProvider, notifyProviderChange);
   },
 
   set enabled(val) {
-    SocialService.enabled = val;
+    // Setting .enabled is just a shortcut for setting the provider to either
+    // the default provider or null...
+    if (val) {
+      if (!this.provider)
+        this.provider = this.defaultProvider;
+    } else {
+      this.provider = null;
+    }
   },
   get enabled() {
-    return SocialService.enabled;
-  },
-
-  get active() {
-    return this.provider && this.providers.some(function (p) p.active);
+    return this.provider != null;
   },
 
   toggle: function Social_toggle() {
@@ -200,32 +181,34 @@ this.Social = {
   },
 
   // Activation functionality
-  activateFromOrigin: function (origin) {
-    let provider = this._getProviderFromOrigin(origin);
-    if (provider) {
-      // No need to activate again if we're already active
-      if (provider == this.provider && provider.active)
-        return null;
-
-      provider.active = true;
-      this.provider = provider;
-      Social.enabled = true;
-    }
-    return provider;
+  activateFromOrigin: function (origin, callback) {
+    // For now only "builtin" providers can be activated.  It's OK if the
+    // provider has already been activated - we still get called back with it.
+    SocialService.addBuiltinProvider(origin, function(provider) {
+      if (provider) {
+        // No need to activate again if we're already active
+        if (provider == this.provider)
+          return;
+        this.provider = provider;
+      }
+      if (callback)
+        callback(provider);
+    }.bind(this));
   },
 
   deactivateFromOrigin: function (origin, oldOrigin) {
+    // if we have the old provider, always set that before trying removal
     let provider = this._getProviderFromOrigin(origin);
-    if (provider && provider == this.provider) {
-      this.provider.active = false;
-      // Set the provider to the previously-selected provider (in case of undo),
-      // or to the first available provider otherwise.
-      this.provider = this._getProviderFromOrigin(oldOrigin);
-      if (!this.provider)
-        this.provider = this.providers.filter(function (p) p.active)[0];
-      if (!this.provider) // Still no provider found, disable
-        this.enabled = false;
-    }
+    let oldProvider = this._getProviderFromOrigin(oldOrigin);
+    if (!oldProvider && this.providers.length)
+      oldProvider = this.providers[0];
+    this.provider = oldProvider;
+    if (provider)
+      SocialService.removeProvider(origin);
+  },
+
+  canActivateOrigin: function (origin) {
+    return SocialService.canActivateOrigin(origin);
   },
 
   // Sharing functionality
@@ -283,9 +266,81 @@ this.Social = {
     port.close();
   },
 
-  _sharedUrls: {}
+  _sharedUrls: {},
+
+  setErrorListener: function(iframe, errorHandler) {
+    if (iframe.socialErrorListener)
+      return iframe.socialErrorListener;
+    return new SocialErrorListener(iframe, errorHandler);
+  }
 };
 
 function schedule(callback) {
   Services.tm.mainThread.dispatch(callback, Ci.nsIThread.DISPATCH_NORMAL);
 }
+
+
+// Error handling class used to listen for network errors in the social frames
+// and replace them with a social-specific error page
+function SocialErrorListener(iframe, errorHandler) {
+  this.setErrorMessage = errorHandler;
+  this.iframe = iframe;
+  iframe.socialErrorListener = this;
+  iframe.docShell.QueryInterface(Ci.nsIInterfaceRequestor)
+                                   .getInterface(Ci.nsIWebProgress)
+                                   .addProgressListener(this,
+                                                        Ci.nsIWebProgress.NOTIFY_STATE_REQUEST |
+                                                        Ci.nsIWebProgress.NOTIFY_LOCATION);
+}
+
+SocialErrorListener.prototype = {
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIWebProgressListener,
+                                         Ci.nsISupportsWeakReference,
+                                         Ci.nsISupports]),
+
+  remove: function() {
+    this.iframe.docShell.QueryInterface(Ci.nsIInterfaceRequestor)
+                                     .getInterface(Ci.nsIWebProgress)
+                                     .removeProgressListener(this);
+    delete this.iframe.socialErrorListener;
+  },
+
+  onStateChange: function SPL_onStateChange(aWebProgress, aRequest, aState, aStatus) {
+    let failure = false;
+    if ((aState & Ci.nsIWebProgressListener.STATE_STOP)) {
+      if (aRequest instanceof Ci.nsIHttpChannel) {
+        try {
+          // Change the frame to an error page on 4xx (client errors)
+          // and 5xx (server errors)
+          failure = aRequest.responseStatus >= 400 &&
+                    aRequest.responseStatus < 600;
+        } catch (e) {}
+      }
+    }
+
+    // Calling cancel() will raise some OnStateChange notifications by itself,
+    // so avoid doing that more than once
+    if (failure && aStatus != Components.results.NS_BINDING_ABORTED) {
+      aRequest.cancel(Components.results.NS_BINDING_ABORTED);
+      Social.provider.errorState = "content-error";
+      this.setErrorMessage(aWebProgress.QueryInterface(Ci.nsIDocShell)
+                              .chromeEventHandler);
+    }
+  },
+
+  onLocationChange: function SPL_onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {
+    let failure = aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE;
+    if (failure && Social.provider.errorState != "frameworker-error") {
+      aRequest.cancel(Components.results.NS_BINDING_ABORTED);
+      Social.provider.errorState = "content-error";
+      schedule(function() {
+        this.setErrorMessage(aWebProgress.QueryInterface(Ci.nsIDocShell)
+                              .chromeEventHandler);
+      }.bind(this));
+    }
+  },
+
+  onProgressChange: function SPL_onProgressChange() {},
+  onStatusChange: function SPL_onStatusChange() {},
+  onSecurityChange: function SPL_onSecurityChange() {},
+};

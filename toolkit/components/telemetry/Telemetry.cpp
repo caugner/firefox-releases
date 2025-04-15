@@ -5,6 +5,12 @@
 
 #include <algorithm>
 
+#ifdef XP_MACOSX
+#include <fstream>
+#endif
+
+#include <prio.h>
+
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Likely.h"
@@ -13,16 +19,21 @@
 #include "base/pickle.h"
 #include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
+#include "nsCOMArray.h"
 #include "nsCOMPtr.h"
+#include "nsXPCOMPrivate.h"
 #include "mozilla/ModuleUtils.h"
 #include "nsIXPConnect.h"
 #include "mozilla/Services.h"
 #include "jsapi.h"
 #include "jsfriendapi.h"
+#include "js/GCAPI.h"
 #include "nsStringGlue.h"
 #include "nsITelemetry.h"
 #include "nsIFile.h"
+#include "nsIFileStreams.h"
 #include "nsIMemoryReporter.h"
+#include "nsISeekableStream.h"
 #include "Telemetry.h" 
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
@@ -30,6 +41,7 @@
 #include "nsXULAppAPI.h"
 #include "nsThreadUtils.h"
 #include "nsNetCID.h"
+#include "nsNetUtil.h"
 #include "plstr.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "mozilla/ProcessedStack.h"
@@ -132,7 +144,7 @@ CombinedStacks::AddStack(const Telemetry::ProcessedStack& aStack) {
   CombinedStacks::Stack& adjustedStack = mStacks.back();
 
   size_t stackSize = aStack.GetStackSize();
-  for (int i = 0; i < stackSize; ++i) {
+  for (size_t i = 0; i < stackSize; ++i) {
     const Telemetry::ProcessedStack::Frame& frame = aStack.GetFrame(i);
     uint16_t modIndex;
     if (frame.mModIndex == std::numeric_limits<uint16_t>::max()) {
@@ -303,6 +315,7 @@ private:
   static bool AddonReflector(AddonEntryType *entry, JSContext *cx, JSObject *obj);
   static bool CreateHistogramForAddon(const nsACString &name,
                                       AddonHistogramInfo &info);
+  void ReadLateWritesStacks();
   AddonMapType mAddonMap;
 
   // This is used for speedy string->Telemetry::ID conversions
@@ -321,9 +334,11 @@ private:
   Mutex mHangReportsMutex;
   nsIMemoryReporter *mMemoryReporter;
 
+  CombinedStacks mLateWritesStacks; // This is collected out of the main thread.
   bool mCachedTelemetryData;
   uint32_t mLastShutdownTime;
-  std::vector<nsCOMPtr<nsIFetchTelemetryDataCallback> > mCallbacks;
+  uint32_t mFailedLockCount;
+  nsCOMArray<nsIFetchTelemetryDataCallback> mCallbacks;
   friend class nsFetchTelemetryData;
 };
 
@@ -719,32 +734,94 @@ ReadLastShutdownDuration(const char *filename) {
   return shutdownTime;
 }
 
+const int32_t kMaxFailedProfileLockFileSize = 10;
+
+bool
+GetFailedLockCount(nsIInputStream* inStream, uint32_t aCount,
+                   unsigned int& result)
+{
+  nsAutoCString bufStr;
+  nsresult rv;
+  rv = NS_ReadInputStreamToString(inStream, bufStr, aCount);
+  NS_ENSURE_SUCCESS(rv, false);
+  result = bufStr.ToInteger(&rv);
+  return NS_SUCCEEDED(rv) && result > 0;
+}
+
+nsresult
+GetFailedProfileLockFile(nsIFile* *aFile, nsIFile* aProfileDir = nullptr)
+{
+  nsresult rv;
+  if (aProfileDir) {
+    rv = aProfileDir->Clone(aFile);
+  } else {
+    rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, aFile);
+  }
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  (*aFile)->AppendNative(NS_LITERAL_CSTRING("Telemetry.FailedProfileLocks.txt"));
+  return NS_OK;
+}
+
 class nsFetchTelemetryData : public nsRunnable
 {
 public:
-  nsFetchTelemetryData(const char *aFilename) :
-    mFilename(aFilename), mTelemetry(TelemetryImpl::sTelemetry) {
+  nsFetchTelemetryData(const char* aShutdownTimeFilename,
+                       nsIFile* aFailedProfileLockFile)
+    : mShutdownTimeFilename(aShutdownTimeFilename),
+      mFailedProfileLockFile(aFailedProfileLockFile),
+      mTelemetry(TelemetryImpl::sTelemetry)
+  {
   }
 
 private:
-  const char *mFilename;
+  const char* mShutdownTimeFilename;
+  nsCOMPtr<nsIFile> mFailedProfileLockFile;
   nsCOMPtr<TelemetryImpl> mTelemetry;
 
 public:
   void MainThread() {
     mTelemetry->mCachedTelemetryData = true;
-    for (unsigned int i = 0, n = mTelemetry->mCallbacks.size(); i < n; ++i) {
+    for (unsigned int i = 0, n = mTelemetry->mCallbacks.Count(); i < n; ++i) {
       mTelemetry->mCallbacks[i]->Complete();
     }
-    mTelemetry->mCallbacks.clear();
+    mTelemetry->mCallbacks.Clear();
   }
 
   NS_IMETHOD Run() {
-    mTelemetry->mLastShutdownTime = ReadLastShutdownDuration(mFilename);
+    LoadFailedLockCount(mTelemetry->mFailedLockCount);
+    mTelemetry->mLastShutdownTime = 
+      ReadLastShutdownDuration(mShutdownTimeFilename);
+    mTelemetry->ReadLateWritesStacks();
     nsCOMPtr<nsIRunnable> e =
       NS_NewRunnableMethod(this, &nsFetchTelemetryData::MainThread);
     NS_ENSURE_STATE(e);
     NS_DispatchToMainThread(e, NS_DISPATCH_NORMAL);
+    return NS_OK;
+  }
+
+private:
+  nsresult
+  LoadFailedLockCount(uint32_t& failedLockCount)
+  {
+    failedLockCount = 0;
+    int64_t fileSize = 0;
+    nsresult rv = mFailedProfileLockFile->GetFileSize(&fileSize);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+    NS_ENSURE_TRUE(fileSize <= kMaxFailedProfileLockFileSize,
+                   NS_ERROR_UNEXPECTED);
+    nsCOMPtr<nsIInputStream> inStream;
+    rv = NS_NewLocalFileInputStream(getter_AddRefs(inStream),
+                                    mFailedProfileLockFile,
+                                    PR_RDONLY);
+    NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(GetFailedLockCount(inStream, fileSize, failedLockCount),
+                   NS_ERROR_UNEXPECTED);
+    inStream->Close();
+
+    mFailedProfileLockFile->Remove(false);
     return NS_OK;
   }
 };
@@ -794,6 +871,21 @@ TelemetryImpl::GetLastShutdownDuration(uint32_t *aResult)
 }
 
 NS_IMETHODIMP
+TelemetryImpl::GetFailedProfileLockCount(uint32_t* aResult)
+{
+  // The user must call AsyncFetchTelemetryData first. We return zero instead of
+  // reporting a failure so that the rest of telemetry can uniformly handle
+  // the read not being available yet.
+  if (!mCachedTelemetryData) {
+    *aResult = 0;
+    return NS_OK;
+  }
+
+  *aResult = mFailedLockCount;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 TelemetryImpl::AsyncFetchTelemetryData(nsIFetchTelemetryDataCallback *aCallback)
 {
   // We have finished reading the data already, just call the callback.
@@ -803,8 +895,8 @@ TelemetryImpl::AsyncFetchTelemetryData(nsIFetchTelemetryDataCallback *aCallback)
   }
 
   // We already have a read request running, just remember the callback.
-  if (!mCallbacks.empty()) {
-    mCallbacks.push_back(aCallback);
+  if (mCallbacks.Count() != 0) {
+    mCallbacks.AppendObject(aCallback);
     return NS_OK;
   }
 
@@ -828,15 +920,24 @@ TelemetryImpl::AsyncFetchTelemetryData(nsIFetchTelemetryDataCallback *aCallback)
   }
 
   // We have to get the filename from the main thread.
-  const char *filename = GetShutdownTimeFileName();
-  if (!filename) {
+  const char *shutdownTimeFilename = GetShutdownTimeFileName();
+  if (!shutdownTimeFilename) {
     mCachedTelemetryData = true;
     aCallback->Complete();
     return NS_OK;
   }
 
-  mCallbacks.push_back(aCallback);
-  nsCOMPtr<nsIRunnable> event = new nsFetchTelemetryData(filename);
+  nsCOMPtr<nsIFile> failedProfileLockFile;
+  nsresult rv = GetFailedProfileLockFile(getter_AddRefs(failedProfileLockFile));
+  if (NS_FAILED(rv)) {
+    mCachedTelemetryData = true;
+    aCallback->Complete();
+    return NS_OK;
+  }
+
+  mCallbacks.AppendObject(aCallback);
+  nsCOMPtr<nsIRunnable> event = new nsFetchTelemetryData(shutdownTimeFilename,
+                                                         failedProfileLockFile);
 
   targetThread->Dispatch(event, NS_DISPATCH_NORMAL);
   return NS_OK;
@@ -848,14 +949,15 @@ mCanRecord(XRE_GetProcessType() == GeckoProcessType_Default),
 mHashMutex("Telemetry::mHashMutex"),
 mHangReportsMutex("Telemetry::mHangReportsMutex"),
 mCachedTelemetryData(false),
-mLastShutdownTime(0)
+mLastShutdownTime(0),
+mFailedLockCount(0)
 {
   // A whitelist to prevent Telemetry reporting on Addon & Thunderbird DBs
   const char *trackedDBs[] = {
-    "addons.sqlite", "content-prefs.sqlite",
-    "cookies.sqlite", "downloads.sqlite", "extensions.sqlite",
-    "formhistory.sqlite", "index.sqlite", "permissions.sqlite", "places.sqlite",
-    "search.sqlite", "signons.sqlite", "urlclassifier3.sqlite",
+    "addons.sqlite", "content-prefs.sqlite", "cookies.sqlite",
+    "downloads.sqlite", "extensions.sqlite", "formhistory.sqlite",
+    "index.sqlite", "healthreport.sqlite", "permissions.sqlite",
+    "places.sqlite", "search.sqlite", "signons.sqlite", "urlclassifier3.sqlite",
     "webappsstore.sqlite"
   };
 
@@ -1458,28 +1560,12 @@ CreateJSStackObject(JSContext *cx, const CombinedStacks &stacks) {
       return nullptr;
     }
 
-    // "PDB Age" identifier
-    val = INT_TO_JSVAL(module.mPdbAge);
-    if (!JS_SetElement(cx, moduleInfoArray, index++, &val)) {
+    // Module breakpad identifier
+    JSString *id = JS_NewStringCopyZ(cx, module.mBreakpadId.c_str());
+    if (!id) {
       return nullptr;
     }
-
-    // "PDB Signature" GUID
-    str = JS_NewStringCopyZ(cx, module.mPdbSignature.c_str());
-    if (!str) {
-      return nullptr;
-    }
-    val = STRING_TO_JSVAL(str);
-    if (!JS_SetElement(cx, moduleInfoArray, index++, &val)) {
-      return nullptr;
-    }
-
-    // Name of associated PDB file
-    str = JS_NewStringCopyZ(cx, module.mPdbName.c_str());
-    if (!str) {
-      return nullptr;
-    }
-    val = STRING_TO_JSVAL(str);
+    val = STRING_TO_JSVAL(id);
     if (!JS_SetElement(cx, moduleInfoArray, index++, &val)) {
       return nullptr;
     }
@@ -1535,6 +1621,173 @@ CreateJSStackObject(JSContext *cx, const CombinedStacks &stacks) {
   }
 
   return ret;
+}
+
+static bool
+IsValidBreakpadId(const std::string &breakpadId) {
+  if (breakpadId.size() < 33) {
+    return false;
+  }
+  for (unsigned i = 0, n = breakpadId.size(); i < n; ++i) {
+    char c = breakpadId[i];
+    if ((c < '0' || c > '9') && (c < 'A' || c > 'F')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Read a stack from the given file name. In case of any error, aStack is
+// unchanged.
+static void
+ReadStack(const char *aFileName, Telemetry::ProcessedStack &aStack)
+{
+#ifdef XP_MACOSX
+  std::ifstream file(aFileName);
+
+  size_t numModules;
+  file >> numModules;
+  if (file.fail()) {
+    return;
+  }
+
+  char newline = file.get();
+  if (file.fail() || newline != '\n') {
+    return;
+  }
+
+  Telemetry::ProcessedStack stack;
+  for (size_t i = 0; i < numModules; ++i) {
+    std::string breakpadId;
+    file >> breakpadId;
+    if (file.fail() || !IsValidBreakpadId(breakpadId)) {
+      return;
+    }
+
+    char space = file.get();
+    if (file.fail() || space != ' ') {
+      return;
+    }
+
+    std::string moduleName;
+    getline(file, moduleName);
+    if (file.fail() || moduleName[0] == ' ') {
+      return;
+    }
+
+    Telemetry::ProcessedStack::Module module = {
+      moduleName,
+      breakpadId
+    };
+    stack.AddModule(module);
+  }
+
+  size_t numFrames;
+  file >> numFrames;
+  if (file.fail()) {
+    return;
+  }
+
+  newline = file.get();
+  if (file.fail() || newline != '\n') {
+    return;
+  }
+
+  for (size_t i = 0; i < numFrames; ++i) {
+    uint16_t index;
+    file >> index;
+    uintptr_t offset;
+    file >> std::hex >> offset >> std::dec;
+    if (file.fail()) {
+      return;
+    }
+
+    Telemetry::ProcessedStack::Frame frame = {
+      offset,
+      index
+    };
+    stack.AddFrame(frame);
+  }
+
+  aStack = stack;
+#endif
+}
+
+void
+TelemetryImpl::ReadLateWritesStacks()
+{
+  nsCOMPtr<nsIFile> profileDir;
+  nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,
+                                       getter_AddRefs(profileDir));
+  if (!profileDir || NS_FAILED(rv)) {
+    return;
+  }
+
+  nsAutoCString nativePath;
+  rv = profileDir->GetNativePath(nativePath);
+  if (NS_FAILED(rv)) {
+    return;
+  }
+
+  const char *name = nativePath.get();
+  PRDir *dir = PR_OpenDir(name);
+  if (!dir) {
+    return;
+  }
+
+  PRDirEntry *ent;
+  const char *prefix = "Telemetry.LateWriteFinal-";
+  unsigned int prefixLen = strlen(prefix);
+  while ((ent = PR_ReadDir(dir, PR_SKIP_NONE))) {
+    if (strncmp(prefix, ent->name, prefixLen) != 0) {
+      continue;
+    }
+
+    nsAutoCString stackNativePath = nativePath;
+    stackNativePath += XPCOM_FILE_PATH_SEPARATOR;
+    stackNativePath += nsDependentCString(ent->name);
+
+    Telemetry::ProcessedStack stack;
+    ReadStack(stackNativePath.get(), stack);
+    if (stack.GetStackSize() != 0) {
+      mLateWritesStacks.AddStack(stack);
+    }
+    // Delete the file so that we don't report it again on the next run.
+    PR_Delete(stackNativePath.get());
+  }
+  PR_CloseDir(dir);
+}
+
+NS_IMETHODIMP
+TelemetryImpl::GetLateWrites(JSContext *cx, jsval *ret)
+{
+  // The user must call AsyncReadTelemetryData first. We return an empty list
+  // instead of reporting a failure so that the rest of telemetry can uniformly
+  // handle the read not being available yet.
+
+  // FIXME: we allocate the js object again and again in the getter. We should
+  // figure out a way to cache it. In order to do that we have to call
+  // JS_AddNamedObjectRoot. A natural place to do so is in the TelemetryImpl
+  // constructor, but it is not clear how to get a JSContext in there.
+  // Another option would be to call it in here when we first call
+  // CreateJSStackObject, but we would still need to figure out where to call
+  // JS_RemoveObjectRoot. Would it be ok to never call JS_RemoveObjectRoot
+  // and just set the pointer to nullptr is the telemetry destructor?
+
+  JSObject *report;
+  if (!mCachedTelemetryData) {
+    CombinedStacks empty;
+    report = CreateJSStackObject(cx, empty);
+  } else {
+    report = CreateJSStackObject(cx, mLateWritesStacks);
+  }
+
+  if (report == nullptr) {
+    return NS_ERROR_FAILURE;
+  }
+
+  *ret = OBJECT_TO_JSVAL(report);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1840,6 +2093,16 @@ const Module kTelemetryModule = {
 namespace mozilla {
 void
 RecordShutdownStartTimeStamp() {
+#ifdef DEBUG
+  // FIXME: this function should only be called once, since it should be called
+  // at the earliest point we *know* we are shutting down. Unfortunately
+  // this assert has been firing. Given that if we are called multiple times
+  // we just keep the last timestamp, the assert is commented for now.
+  static bool recorded = false;
+  //  MOZ_ASSERT(!recorded);
+  recorded = true;
+#endif
+
   if (!Telemetry::CanRecord())
     return;
 
@@ -1987,9 +2250,7 @@ void ProcessedStack::Clear() {
 
 bool ProcessedStack::Module::operator==(const Module& aOther) const {
   return  mName == aOther.mName &&
-    mPdbAge == aOther.mPdbAge &&
-    mPdbSignature == aOther.mPdbSignature &&
-    mPdbName == aOther.mPdbName;
+    mBreakpadId == aOther.mBreakpadId;
 }
 
 struct StackFrame
@@ -2090,28 +2351,76 @@ GetStackAndModules(const std::vector<uintptr_t>& aPCs)
 #ifdef MOZ_ENABLE_PROFILER_SPS
   for (unsigned i = 0, n = rawModules.GetSize(); i != n; ++i) {
     const SharedLibrary &info = rawModules.GetEntry(i);
+    const std::string &name = info.GetName();
+    std::string basename = name;
+#ifdef XP_MACOSX
+    // FIXME: We want to use just the basename as the libname, but the
+    // current profiler addon needs the full path name, so we compute the
+    // basename in here.
+    size_t pos = name.rfind('/');
+    if (pos != std::string::npos) {
+      basename = name.substr(pos + 1);
+    }
+#endif
     ProcessedStack::Module module = {
-      info.GetName(),
-#ifdef XP_WIN
-      info.GetPdbAge(),
-      "", // mPdbSignature
-      info.GetPdbName(),
-#else
-      0, // mPdbAge
-      "", // mPdbSignature
-      "" // mPdbName
-#endif
+      basename,
+      info.GetBreakpadId()
     };
-#ifdef XP_WIN
-    char guidString[NSID_LENGTH] = { 0 };
-    info.GetPdbSignature().ToProvidedString(guidString);
-    module.mPdbSignature = guidString;
-#endif
     Ret.AddModule(module);
   }
 #endif
 
   return Ret;
+}
+
+void
+WriteFailedProfileLock(nsIFile* aProfileDir)
+{
+  nsCOMPtr<nsIFile> file;
+  nsresult rv = GetFailedProfileLockFile(getter_AddRefs(file), aProfileDir);
+  NS_ENSURE_SUCCESS_VOID(rv);
+  int64_t fileSize = 0;
+  rv = file->GetFileSize(&fileSize);
+  // It's expected that the file might not exist yet
+  if (NS_FAILED(rv) && rv != NS_ERROR_FILE_NOT_FOUND) {
+    return;
+  }
+  nsCOMPtr<nsIFileStream> fileStream;
+  rv = NS_NewLocalFileStream(getter_AddRefs(fileStream), file,
+                             PR_RDWR | PR_CREATE_FILE, 0640);
+  NS_ENSURE_SUCCESS_VOID(rv);
+  NS_ENSURE_TRUE_VOID(fileSize <= kMaxFailedProfileLockFileSize);
+  unsigned int failedLockCount = 0;
+  if (fileSize > 0) {
+    nsCOMPtr<nsIInputStream> inStream = do_QueryInterface(fileStream);
+    NS_ENSURE_TRUE_VOID(inStream);
+    if (!GetFailedLockCount(inStream, fileSize, failedLockCount)) {
+      failedLockCount = 0;
+    }
+  }
+  ++failedLockCount;
+  nsAutoCString bufStr;
+  bufStr.AppendInt(static_cast<int>(failedLockCount));
+  nsCOMPtr<nsISeekableStream> seekStream = do_QueryInterface(fileStream);
+  NS_ENSURE_TRUE_VOID(seekStream);
+  // If we read in an existing failed lock count, we need to reset the file ptr
+  if (fileSize > 0) {
+    rv = seekStream->Seek(nsISeekableStream::NS_SEEK_SET, 0);
+    NS_ENSURE_SUCCESS_VOID(rv);
+  }
+  nsCOMPtr<nsIOutputStream> outStream = do_QueryInterface(fileStream);
+  uint32_t bytesLeft = bufStr.Length();
+  const char* bytes = bufStr.get();
+  do {
+    uint32_t written = 0;
+    rv = outStream->Write(bytes, bytesLeft, &written);
+    if (NS_FAILED(rv)) {
+      break;
+    }
+    bytes += written;
+    bytesLeft -= written;
+  } while (bytesLeft > 0);
+  seekStream->SetEOF();
 }
 
 } // namespace Telemetry

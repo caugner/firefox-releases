@@ -8,6 +8,7 @@
 #endif
 
 #include "nsSocketTransport2.h"
+#include "base/compiler_specific.h"
 #include "nsAtomicRefcnt.h"
 #include "nsIOService.h"
 #include "nsStreamUtils.h"
@@ -33,6 +34,7 @@
 #include "nsIPipe.h"
 #include "nsIProgrammingLanguage.h"
 #include "nsIClassInfoImpl.h"
+#include <algorithm>
 
 #if defined(XP_WIN) || defined(MOZ_PLATFORM_MAEMO)
 #include "nsNativeConnectionHelper.h"
@@ -695,8 +697,8 @@ nsSocketTransport::nsSocketTransport()
     , mFD(nullptr)
     , mFDref(0)
     , mFDconnected(false)
-    , mInput(this)
-    , mOutput(this)
+    , ALLOW_THIS_IN_INITIALIZER_LIST(mInput(this))
+    , ALLOW_THIS_IN_INITIALIZER_LIST(mOutput(this))
     , mQoSBits(0x00)
 {
     SOCKET_LOG(("creating nsSocketTransport @%x\n", this));
@@ -925,6 +927,12 @@ nsSocketTransport::ResolveHost()
         dnsFlags = nsIDNSService::RESOLVE_BYPASS_CACHE;
     if (mConnectionFlags & nsSocketTransport::DISABLE_IPV6)
         dnsFlags |= nsIDNSService::RESOLVE_DISABLE_IPV6;
+    if (mConnectionFlags & nsSocketTransport::DISABLE_IPV4)
+        dnsFlags |= nsIDNSService::RESOLVE_DISABLE_IPV4;
+
+    NS_ASSERTION(!(dnsFlags & nsIDNSService::RESOLVE_DISABLE_IPV6) ||
+                 !(dnsFlags & nsIDNSService::RESOLVE_DISABLE_IPV4),
+                 "Setting both RESOLVE_DISABLE_IPV6 and RESOLVE_DISABLE_IPV4");
 
     SendStatus(NS_NET_STATUS_RESOLVING_HOST);
     rv = dns->AsyncResolve(SocketHost(), dnsFlags, this, nullptr,
@@ -1266,12 +1274,12 @@ nsSocketTransport::RecoverFromError()
 
     bool tryAgain = false;
 
-    if (mConnectionFlags & DISABLE_IPV6 &&
+    if (mConnectionFlags & (DISABLE_IPV6 | DISABLE_IPV4) &&
         mCondition == NS_ERROR_UNKNOWN_HOST &&
         mState == STATE_RESOLVING &&
         !mProxyTransparentResolvesHost) {
         SOCKET_LOG(("  trying lookup again with both ipv4/ipv6 enabled\n"));
-        mConnectionFlags &= ~DISABLE_IPV6;
+        mConnectionFlags &= ~(DISABLE_IPV6 | DISABLE_IPV4);
         tryAgain = true;
     }
 
@@ -1284,14 +1292,15 @@ nsSocketTransport::RecoverFromError()
             SOCKET_LOG(("  trying again with next ip address\n"));
             tryAgain = true;
         }
-        else if (mConnectionFlags & DISABLE_IPV6) {
+        else if (mConnectionFlags & (DISABLE_IPV6 | DISABLE_IPV4)) {
             // Drop state to closed.  This will trigger new round of DNS
             // resolving bellow.
-            // XXX Here should idealy be set now non-existing flag DISABLE_IPV4
-            SOCKET_LOG(("  failed to connect all ipv4 hosts,"
+            // XXX Could be optimized to only switch the flags to save duplicate
+            // connection attempts.
+            SOCKET_LOG(("  failed to connect all ipv4-only or ipv6-only hosts,"
                         " trying lookup/connect again with both ipv4/ipv6\n"));
             mState = STATE_CLOSED;
-            mConnectionFlags &= ~DISABLE_IPV6;
+            mConnectionFlags &= ~(DISABLE_IPV6 | DISABLE_IPV4);
             tryAgain = true;
         }
     }
@@ -1997,7 +2006,7 @@ nsSocketTransport::SetTimeout(uint32_t type, uint32_t value)
 {
     NS_ENSURE_ARG_MAX(type, nsISocketTransport::TIMEOUT_READ_WRITE);
     // truncate overly large timeout values.
-    mTimeouts[type] = (uint16_t) NS_MIN<uint32_t>(value, UINT16_MAX);
+    mTimeouts[type] = (uint16_t) std::min<uint32_t>(value, UINT16_MAX);
     PostEvent(MSG_TIMEOUT_CHANGED);
     return NS_OK;
 }
@@ -2236,7 +2245,7 @@ DumpBytesToFile(const char *path, const char *header, const char *buf, int32_t n
     while (n) {
         p = (const unsigned char *) buf;
 
-        int32_t i, row_max = NS_MIN(16, n);
+        int32_t i, row_max = std::min(16, n);
 
         for (i = 0; i < row_max; ++i)
             fprintf(fp, "%02x  ", *p++);

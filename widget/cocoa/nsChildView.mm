@@ -653,6 +653,48 @@ nsChildView::ReparentNativeWidget(nsIWidget* aNewParent)
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
+void
+nsChildView::WillPaint()
+{
+  if (!mView || ![mView isKindOfClass:[ChildView class]])
+    return;
+  NSWindow* win = [mView window];
+  if (!win || ![win isKindOfClass:[ToolbarWindow class]])
+    return;
+  if (![(ToolbarWindow*)win drawsContentsIntoWindowFrame])
+    return;
+
+  NSRect titlebarRect = [(ToolbarWindow*)win titlebarRect];
+  gfxSize titlebarSize(titlebarRect.size.width, titlebarRect.size.height);
+  if (!mTitlebarSurf || mTitlebarSize != titlebarSize) {
+    mTitlebarSize = titlebarSize;
+    mTitlebarSurf = new gfxQuartzSurface(titlebarSize, gfxASurface::ImageFormatARGB32);
+  }
+  NSRect flippedTitlebarRect = { NSZeroPoint, titlebarRect.size };
+  CGContextRef context = mTitlebarSurf->GetCGContext();
+
+  CGContextSaveGState(context);
+  [(ChildView*)mView drawRect:flippedTitlebarRect inTitlebarContext:context];
+  CGContextRestoreGState(context);
+}
+
+void
+nsChildView::CompositeTitlebar(const gfxSize& aSize, CGContextRef aContext)
+{
+  NS_ASSERTION(mTitlebarSurf, "Must have titlebar surface");
+  if (!mTitlebarSurf) {
+    return;
+  }
+
+  CGImageRef image = CGBitmapContextCreateImage(mTitlebarSurf->GetCGContext());
+
+  CGContextDrawImage(aContext, 
+                     CGRectMake(0, 0, mTitlebarSize.width, mTitlebarSize.height), 
+                     image);
+
+  CGImageRelease(image);
+}
+
 void nsChildView::ResetParent()
 {
   if (!mOnDestroyCalled) {
@@ -751,6 +793,13 @@ NS_IMETHODIMP nsChildView::GetClientBounds(nsIntRect &aRect)
     MOZ_ASSERT(mWindowType != eWindowType_plugin, "plugin widgets should have parents");
     aRect.MoveTo(WidgetToScreenOffset());
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsChildView::GetScreenBounds(nsIntRect &aRect)
+{
+  GetBounds(aRect);
+  aRect.MoveTo(WidgetToScreenOffset());
   return NS_OK;
 }
 
@@ -1469,7 +1518,7 @@ void nsChildView::WillPaintWindow()
 
   nsIWidgetListener* listener = widget->GetWidgetListener();
   if (listener) {
-    listener->WillPaintWindow(widget, false);
+    listener->WillPaintWindow(widget);
   }
 }
 
@@ -1484,11 +1533,17 @@ bool nsChildView::PaintWindow(nsIntRegion aRegion, bool aIsAlternate)
   bool returnValue = false;
   bool oldDispatchPaint = mIsDispatchPaint;
   mIsDispatchPaint = true;
-  uint32_t flags = nsIWidgetListener::SENT_WILL_PAINT;
+  uint32_t flags = 0;
   if (aIsAlternate) {
     flags |= nsIWidgetListener::PAINT_IS_ALTERNATE; 
   }
   returnValue = listener->PaintWindow(widget, aRegion, flags);
+
+  listener = widget->GetWidgetListener();
+  if (listener) {
+    listener->DidPaintWindow();
+  }
+
   mIsDispatchPaint = oldDispatchPaint;
   return returnValue;
 }
@@ -1961,6 +2016,20 @@ NSEvent* gLastDragMouseDownEvent = nil;
   }
 }
 
++ (void)registerViewForDraggedTypes:(NSView*)aView
+{
+  [aView registerForDraggedTypes:[NSArray arrayWithObjects:NSFilenamesPboardType,
+                                                           NSStringPboardType,
+                                                           NSHTMLPboardType,
+                                                           NSURLPboardType,
+                                                           NSFilesPromisePboardType,
+                                                           kWildcardPboardType,
+                                                           kCorePboardType_url,
+                                                           kCorePboardType_urld,
+                                                           kCorePboardType_urln,
+                                                           nil]];
+}
+
 // initWithFrame:geckoChild:
 - (id)initWithFrame:(NSRect)inFrame geckoChild:(nsChildView*)inChild
 {
@@ -2008,17 +2077,8 @@ NSEvent* gLastDragMouseDownEvent = nil;
   }
   
   // register for things we'll take from other applications
-  PR_LOG(sCocoaLog, PR_LOG_ALWAYS, ("ChildView initWithFrame: registering drag types\n"));
-  [self registerForDraggedTypes:[NSArray arrayWithObjects:NSFilenamesPboardType,
-                                                          NSStringPboardType,
-                                                          NSHTMLPboardType,
-                                                          NSURLPboardType,
-                                                          NSFilesPromisePboardType,
-                                                          kWildcardPboardType,
-                                                          kCorePboardType_url,
-                                                          kCorePboardType_urld,
-                                                          kCorePboardType_urln,
-                                                          nil]];
+  [ChildView registerViewForDraggedTypes:self];
+
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(windowBecameMain:)
                                                name:NSWindowDidBecomeMainNotification
@@ -2388,7 +2448,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
 - (BOOL)mouseDownCanMoveWindow
 {
-  return NO;
+  return [[self window] isMovableByWindowBackground];
 }
 
 - (void)lockFocus
@@ -2433,6 +2493,14 @@ NSEvent* gLastDragMouseDownEvent = nil;
     // but we can't tell the difference here except by retrieving
     // the backing scale factor and comparing to the old value
     mGeckoChild->BackingScaleFactorChanged();
+  }
+}
+
+- (void)drawTitlebar:(NSRect)aRect inTitlebarContext:(CGContextRef)aContext
+{
+  if (mGeckoChild) {
+    gfxSize size(aRect.size.width, aRect.size.height);
+    mGeckoChild->CompositeTitlebar(size, aContext);
   }
 }
 
@@ -2489,7 +2557,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
   const NSRect *rects;
   NSInteger count, i;
   [[NSView focusView] getRectsBeingDrawn:&rects count:&count];
-  if (count < MAX_RECTS_IN_REGION) {
+  if (count < MAX_RECTS_IN_REGION && !aIsAlternate) {
     for (i = 0; i < count; ++i) {
       // Add the rect to the region.
       NSRect r = [self convertRect:rects[i] fromView:[NSView focusView]];
@@ -3346,6 +3414,25 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   nsEventStatus status; // ignored
   mGeckoChild->DispatchEvent(&event, status);
+}
+
+- (void)updateWindowDraggableStateOnMouseMove:(NSEvent*)theEvent
+{
+  if (!theEvent || !mGeckoChild) {
+    return;
+  }
+
+  nsCocoaWindow* windowWidget = mGeckoChild->GetXULWindowWidget();
+  if (!windowWidget) {
+    return;
+  }
+
+  // We assume later on that sending a hit test event won't cause widget destruction.
+  nsMouseEvent hitTestEvent(true, NS_MOUSE_MOZHITTEST, mGeckoChild, nsMouseEvent::eReal);
+  [self convertCocoaMouseEvent:theEvent toGeckoEvent:&hitTestEvent];
+  bool result = mGeckoChild->DispatchWindowEvent(hitTestEvent);
+
+  [windowWidget->GetCocoaWindow() setMovableByWindowBackground:result];
 }
 
 - (void)handleMouseMoved:(NSEvent*)theEvent
@@ -4871,6 +4958,11 @@ ChildViewMouseTracker::ViewForEvent(NSEvent* aEvent)
 
   NSPoint windowEventLocation = nsCocoaUtils::EventLocationForWindow(aEvent, window);
   NSView* view = [[[window contentView] superview] hitTest:windowEventLocation];
+
+  while([view conformsToProtocol:@protocol(EventRedirection)]) {
+    view = [(id<EventRedirection>)view targetView];
+  }
+
   if (![view isKindOfClass:[ChildView class]])
     return nil;
 
@@ -4969,7 +5061,7 @@ ChildViewMouseTracker::WindowAcceptsEvent(NSWindow* aWindow, NSEvent* aEvent,
   NSWindow *ourWindow = [self window];
   NSView *contentView = [ourWindow contentView];
   if ([ourWindow isKindOfClass:[ToolbarWindow class]] && (self == contentView))
-    return NO;
+    return [ourWindow isMovableByWindowBackground];
   return [self nsChildView_NSView_mouseDownCanMoveWindow];
 }
 

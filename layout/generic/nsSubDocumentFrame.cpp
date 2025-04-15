@@ -204,7 +204,7 @@ nsSubDocumentFrame::ShowViewer()
     nsRefPtr<nsFrameLoader> frameloader = FrameLoader();
     if (frameloader) {
       nsIntSize margin = GetMarginAttributes();
-      const nsStyleDisplay* disp = GetStyleDisplay();
+      const nsStyleDisplay* disp = StyleDisplay();
       nsWeakFrame weakThis(this);
       mCallingShow = true;
       bool didCreateDoc =
@@ -221,12 +221,6 @@ nsSubDocumentFrame::ShowViewer()
   }
 }
 
-int
-nsSubDocumentFrame::GetSkipSides() const
-{
-  return 0;
-}
-
 nsIFrame*
 nsSubDocumentFrame::GetSubdocumentRootFrame()
 {
@@ -236,10 +230,44 @@ nsSubDocumentFrame::GetSubdocumentRootFrame()
   return subdocView ? subdocView->GetFrame() : nullptr;
 }
 
+nsIntSize
+nsSubDocumentFrame::GetSubdocumentSize()
+{
+  if (GetStateBits() & NS_FRAME_FIRST_REFLOW) {
+    nsRefPtr<nsFrameLoader> frameloader = FrameLoader();
+    if (frameloader) {
+      nsCOMPtr<nsIDocument> oldContainerDoc;
+      nsView* detachedViews =
+        frameloader->GetDetachedSubdocView(getter_AddRefs(oldContainerDoc));
+      if (detachedViews) {
+        nsSize size = detachedViews->GetBounds().Size();
+        nsPresContext* presContext = detachedViews->GetFrame()->PresContext();
+        return nsIntSize(presContext->AppUnitsToDevPixels(size.width),
+                         presContext->AppUnitsToDevPixels(size.height));
+      }
+    }
+    // Pick some default size for now.  Using 10x10 because that's what the
+    // code used to do.
+    return nsIntSize(10, 10);
+  } else {
+    nsSize docSizeAppUnits;
+    nsPresContext* presContext = PresContext();
+    nsCOMPtr<nsIDOMHTMLFrameElement> frameElem =
+      do_QueryInterface(GetContent());
+    if (frameElem) {
+      docSizeAppUnits = GetSize();
+    } else {
+      docSizeAppUnits = GetContentRect().Size();
+    }
+    return nsIntSize(presContext->AppUnitsToDevPixels(docSizeAppUnits.width),
+                     presContext->AppUnitsToDevPixels(docSizeAppUnits.height));
+  }
+}
+
 bool
 nsSubDocumentFrame::PassPointerEventsToChildren()
 {
-  if (GetStyleVisibility()->mPointerEvents != NS_STYLE_POINTER_EVENTS_NONE) {
+  if (StyleVisibility()->mPointerEvents != NS_STYLE_POINTER_EVENTS_NONE) {
     return true;
   }
   // Limit use of mozpasspointerevents to documents with embedded:apps/chrome
@@ -266,36 +294,36 @@ nsSubDocumentFrame::PassPointerEventsToChildren()
   return false;
 }
 
-NS_IMETHODIMP
+void
 nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                      const nsRect&           aDirtyRect,
                                      const nsDisplayListSet& aLists)
 {
   if (!IsVisibleForPainting(aBuilder))
-    return NS_OK;
+    return;
 
   // If mozpasspointerevents is set, then we should allow subdocument content
   // to handle events even if we're pointer-events:none.
   if (aBuilder->IsForEventDelivery() && !PassPointerEventsToChildren())
-    return NS_OK;
+    return;
 
-  nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   if (!mInnerView)
-    return NS_OK;
+    return;
 
   nsFrameLoader* frameLoader = FrameLoader();
   if (frameLoader) {
     RenderFrameParent* rfp = frameLoader->GetCurrentRemoteFrame();
     if (rfp) {
-      return rfp->BuildDisplayList(aBuilder, this, aDirtyRect, aLists);
+      rfp->BuildDisplayList(aBuilder, this, aDirtyRect, aLists);
+      return;
     }
   }
 
   nsView* subdocView = mInnerView->GetFirstChild();
   if (!subdocView)
-    return NS_OK;
+    return;
 
   nsCOMPtr<nsIPresShell> presShell = nullptr;
 
@@ -326,14 +354,14 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     if (!presShell) {
       // If we don't have a frame we use this roundabout way to get the pres shell.
       if (!mFrameLoader)
-        return NS_OK;
+        return;
       nsCOMPtr<nsIDocShell> docShell;
       mFrameLoader->GetDocShell(getter_AddRefs(docShell));
       if (!docShell)
-        return NS_OK;
+        return;
       presShell = docShell->GetPresShell();
       if (!presShell)
-        return NS_OK;
+        return;
     }
   }
 
@@ -365,8 +393,8 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     mInnerView->GetBounds() + aBuilder->ToReferenceFrame(this);
 
   if (subdocRootFrame) {
-    rv = subdocRootFrame->
-           BuildDisplayListForStackingContext(aBuilder, dirty, &childItems);
+    subdocRootFrame->
+      BuildDisplayListForStackingContext(aBuilder, dirty, &childItems);
   }
 
   if (!aBuilder->IsForEventDelivery()) {
@@ -385,17 +413,17 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     // background behind the page, not the canvas color. The canvas color gets
     // painted on the page itself.
     if (nsLayoutUtils::NeedsPrintPreviewBackground(presContext)) {
-      rv = presShell->AddPrintPreviewBackgroundItem(
-             *aBuilder, childItems, subdocRootFrame ? subdocRootFrame : this,
-             bounds);
+      presShell->AddPrintPreviewBackgroundItem(
+        *aBuilder, childItems, subdocRootFrame ? subdocRootFrame : this,
+        bounds);
     } else {
       // Add the canvas background color to the bottom of the list. This
       // happens after we've built the list so that AddCanvasBackgroundColorItem
       // can monkey with the contents if necessary.
       uint32_t flags = nsIPresShell::FORCE_DRAW;
-      rv = presShell->AddCanvasBackgroundColorItem(
-             *aBuilder, childItems, subdocRootFrame ? subdocRootFrame : this,
-             bounds, NS_RGBA(0,0,0,0), flags);
+      presShell->AddCanvasBackgroundColorItem(
+        *aBuilder, childItems, subdocRootFrame ? subdocRootFrame : this,
+        bounds, NS_RGBA(0,0,0,0), flags);
     }
   }
 
@@ -445,8 +473,6 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
   // delete childItems in case of OOM
   childItems.DeleteAll();
-
-  return rv;
 }
 
 nscoord

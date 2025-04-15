@@ -41,7 +41,7 @@ interface nsIDOMClientRect;
 interface nsIURI;
 interface nsIDOMEventTarget;
 
-[scriptable, uuid(7cd26372-d2e2-463a-bce3-3f02d4b23fa8)]
+[scriptable, uuid(16b3bdcc-75d4-11e2-8a20-aaff78957a39)]
 interface nsIDOMWindowUtils : nsISupports {
 
   /**
@@ -213,7 +213,8 @@ interface nsIDOMWindowUtils : nsISupports {
   const long MODIFIER_OS         = 0x0400;
 
   /** Synthesize a mouse event. The event types supported are:
-   *    mousedown, mouseup, mousemove, mouseover, mouseout, contextmenu
+   *    mousedown, mouseup, mousemove, mouseover, mouseout, contextmenu,
+   *    MozMouseHitTest
    *
    * Events are sent in coordinates offset by aX and aY from the window.
    *
@@ -244,16 +245,18 @@ interface nsIDOMWindowUtils : nsISupports {
    * @param aPressure touch input pressure: 0.0 -> 1.0
    * @param aInputSourceArg input source, see nsIDOMMouseEvent for values,
    *        defaults to mouse input.
+   *
+   * returns true if the page called prevent default on this event
    */
-  void sendMouseEvent(in AString aType,
-                      in float aX,
-                      in float aY,
-                      in long aButton,
-                      in long aClickCount,
-                      in long aModifiers,
-                      [optional] in boolean aIgnoreRootScrollFrame,
-                      [optional] in float aPressure,
-                      [optional] in unsigned short aInputSourceArg);
+  boolean sendMouseEvent(in AString aType,
+                         in float aX,
+                         in float aY,
+                         in long aButton,
+                         in long aClickCount,
+                         in long aModifiers,
+                         [optional] in boolean aIgnoreRootScrollFrame,
+                         [optional] in float aPressure,
+                         [optional] in unsigned short aInputSourceArg);
 
   /** Synthesize a touch event. The event types supported are:
    *    touchstart, touchend, touchmove, and touchcancel
@@ -643,6 +646,13 @@ interface nsIDOMWindowUtils : nsISupports {
    * @see nsIDOMWindow::scrollX/Y
    */
   void getScrollXY(in boolean aFlushLayout, out long aScrollX, out long aScrollY);
+
+  /**
+   * Returns the scrollbar width of the window's scroll frame.
+   *
+   * @param aFlushLayout flushes layout if true. Otherwise, no flush occurs.
+   */
+  long getScrollbarWidth(in boolean aFlushLayout);
 
   /**
    * Returns the bounds of the window's currently loaded document. This will
@@ -1053,10 +1063,33 @@ interface nsIDOMWindowUtils : nsISupports {
    */
   readonly attribute AString layerManagerType;
 
-  void startFrameTimeRecording();
-  void stopFrameTimeRecording([optional, array, size_is(frameCount)] out float paintTimes,
+  /**
+   * Record (and return) frame-intervals and paint-times for frames which were presented
+   *   between calling StartFrameTimeRecording and StopFrameTimeRecording.
+   *
+   * - Uses a cyclic buffer and serves concurrent consumers, so if Stop is called too late
+   *     (elements were overwritten since Start), result is considered invalid and hence empty.
+   * - Buffer is capable of holding 10 seconds @ 60fps (or more if frames were less frequent).
+   *     Can be changed (up to 1 hour) via pref: toolkit.framesRecording.bufferSize.
+   * - Note: the first frame-interval may be longer than expected because last frame
+   *     might have been presented some time before calling StartFrameTimeRecording.
+   */
+
+  /**
+   * Returns a handle which represents current recording start position.
+   */
+   void startFrameTimeRecording([retval] out unsigned long startIndex);
+
+  /**
+   * Returns number of recorded frames since startIndex was issued,
+   *   and allocates+populates 2 arraye with the recorded data.
+   * - Allocation is infallible. Should be released even if size is 0.
+   */
+   void stopFrameTimeRecording(in unsigned long startIndex,
+                              [optional, array, size_is(frameCount)] out float paintTimes,
                               [optional] out unsigned long frameCount,
                               [retval, array, size_is(frameCount)] out float frameIntervals);
+
   /**
    * Signals that we're begining to tab switch. This is used by painting code to
    * determine total tab switch time.

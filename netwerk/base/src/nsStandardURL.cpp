@@ -24,6 +24,7 @@
 #include "nsIProgrammingLanguage.h"
 #include "nsVoidArray.h"
 #include "mozilla/ipc/URIUtils.h"
+#include <algorithm>
 
 using namespace mozilla::ipc;
 
@@ -1049,7 +1050,7 @@ nsStandardURL::GetAsciiSpec(nsACString &result)
     }
 
     // try to guess the capacity required for result...
-    result.SetCapacity(mSpec.Length() + NS_MIN<uint32_t>(32, mSpec.Length()/10));
+    result.SetCapacity(mSpec.Length() + std::min<uint32_t>(32, mSpec.Length()/10));
 
     result = Substring(mSpec, 0, mScheme.mLen + 3);
 
@@ -1529,7 +1530,7 @@ nsStandardURL::SetPort(int32_t port)
 
         // need to remove the port number from the URL spec
         uint32_t start = mHost.mPos + mHost.mLen;
-        uint32_t lengthToCut = mPath.mPos - start;
+        int32_t lengthToCut = mPath.mPos - start;
         mSpec.Cut(start, lengthToCut);
         mAuthority.mLen -= lengthToCut;
         ShiftFromPath(-lengthToCut);
@@ -2747,19 +2748,11 @@ nsStandardURL::Read(nsIObjectInputStream *stream)
     bool isMutable;
     rv = stream->ReadBoolean(&isMutable);
     if (NS_FAILED(rv)) return rv;
-    if (isMutable != true && isMutable != false) {
-        NS_WARNING("Unexpected boolean value");
-        return NS_ERROR_UNEXPECTED;
-    }
     mMutable = isMutable;
 
     bool supportsFileURL;
     rv = stream->ReadBoolean(&supportsFileURL);
     if (NS_FAILED(rv)) return rv;
-    if (supportsFileURL != true && supportsFileURL != false) {
-        NS_WARNING("Unexpected boolean value");
-        return NS_ERROR_UNEXPECTED;
-    }
     mSupportsFileURL = supportsFileURL;
 
     uint32_t hostEncoding;

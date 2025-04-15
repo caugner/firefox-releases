@@ -127,18 +127,31 @@ Prompt.prototype = {
     if (aCheckMsg)
       aInputs.push({ type: "checkbox", label: PromptUtils.cleanUpLabel(aCheckMsg), checked: aCheckState.value });
 
-    if (this._domWin)
+    let callerWin;
+    if (this._domWin) {
       PromptUtils.fireDialogEvent(this._domWin, "DOMWillOpenModalDialog");
+      let winUtils = this._domWin.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+      callerWin = winUtils.enterModalStateWithWindow();
+    }
 
     let msg = { type: "Prompt:Show" };
     if (aTitle) msg.title = aTitle;
     if (aText) msg.text = aText;
     msg.buttons = aButtons || [
-      { label: PromptUtils.getLocaleString("OK") },
-      { label: PromptUtils.getLocaleString("Cancel") }
+      PromptUtils.getLocaleString("OK"),
+      PromptUtils.getLocaleString("Cancel")
     ];
     msg.inputs = aInputs;
-    return PromptUtils.sendMessageToJava(msg);
+
+    let retval = PromptUtils.sendMessageToJava(msg);
+
+    if (this._domWin) {
+      let winUtils = this._domWin.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+      winUtils.leaveModalStateWithWindow(callerWin);
+      PromptUtils.fireDialogEvent(this._domWin, "DOMModalDialogClosed");
+    }
+
+    return retval;
   },
 
   /*
@@ -181,17 +194,17 @@ Prompt.prototype = {
   /* ----------  nsIPrompt  ---------- */
 
   alert: function alert(aTitle, aText) {
-    this.commonPrompt(aTitle, aText, [{ label: PromptUtils.getLocaleString("OK") }], "", {value: false}, []);
+    this.commonPrompt(aTitle, aText, [ PromptUtils.getLocaleString("OK") ], "", { value: false }, []);
   },
 
   alertCheck: function alertCheck(aTitle, aText, aCheckMsg, aCheckState) {
-    let data = this.commonPrompt(aTitle, aText, [{ label: PromptUtils.getLocaleString("OK") }], aCheckMsg, aCheckState, []);
+    let data = this.commonPrompt(aTitle, aText, [ PromptUtils.getLocaleString("OK") ], aCheckMsg, aCheckState, []);
     if (aCheckMsg)
       aCheckState.value = data.checkbox == "true";
   },
 
   confirm: function confirm(aTitle, aText) {
-    let data = this.commonPrompt(aTitle, aText, null, "", {value: false}, []);
+    let data = this.commonPrompt(aTitle, aText, null, "", { value: false }, []);
     return (data.button == 0);
   },
 
@@ -237,7 +250,7 @@ Prompt.prototype = {
       }
 
       if (bTitle)
-        buttons.push({label:bTitle});
+        buttons.push(bTitle);
 
       aButtonFlags >>= 8;
     }
@@ -289,11 +302,8 @@ Prompt.prototype = {
   },
 
   select: function select(aTitle, aText, aCount, aSelectList, aOutSelection) {
-    let data = this.commonPrompt(aTitle, aText, [
-      { label: PromptUtils.getLocaleString("OK") }
-    ], "", {value: false}, [
-      { type: "menulist",  values: aSelectList },
-    ]);
+    let data = this.commonPrompt(aTitle, aText, [ PromptUtils.getLocaleString("OK") ], "",
+                                { value: false }, [{ type: "menulist",  values: aSelectList }]);
 
     let ok = data.button == 0;
     if (ok)
@@ -750,7 +760,7 @@ let PromptUtils = {
   },
 
   sendMessageToJava: function(aMsg) {
-    let data = Cc["@mozilla.org/android/bridge;1"].getService(Ci.nsIAndroidBridge).handleGeckoMessage(JSON.stringify({ gecko: aMsg }));
+    let data = Cc["@mozilla.org/android/bridge;1"].getService(Ci.nsIAndroidBridge).handleGeckoMessage(JSON.stringify(aMsg));
     return JSON.parse(data);
   },
 

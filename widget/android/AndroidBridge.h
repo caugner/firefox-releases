@@ -17,7 +17,6 @@
 #include "nsIObserver.h"
 #include "nsThreadUtils.h"
 
-#include "AndroidLayerViewWrapper.h"
 #include "AndroidJavaWrappers.h"
 
 #include "nsIMutableArray.h"
@@ -54,6 +53,8 @@ extern jclass GetGeckoAppShellClass();
 namespace base {
 class Thread;
 } // end namespace base
+
+typedef void* EGLSurface;
 
 namespace mozilla {
 
@@ -164,7 +165,7 @@ public:
 
     bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution, bool aDrawingCritical, gfx::Rect& aViewport, float& aScaleX, float& aScaleY);
 
-    void AcknowledgeEventSync();
+    void AcknowledgeEvent();
 
     void EnableLocation(bool aEnable);
     void EnableLocationHighAccuracy(bool aEnable);
@@ -261,7 +262,7 @@ public:
     void *CallEglCreateWindowSurface(void *dpy, void *config, AndroidGeckoSurfaceView& surfaceView);
 
     // Switch Java to composite with the Gecko Compositor thread
-    void RegisterCompositor(JNIEnv* env = NULL, bool resetting = false);
+    void RegisterCompositor(JNIEnv* env = NULL);
     EGLSurface ProvideEGLSurface();
 
     bool GetStaticStringField(const char *classID, const char *field, nsAString &result, JNIEnv* env = nullptr);
@@ -311,6 +312,7 @@ public:
 
     void CheckURIVisited(const nsAString& uri);
     void MarkURIVisited(const nsAString& uri);
+    void SetURITitle(const nsAString& uri, const nsAString& title);
 
     bool InitCamera(const nsCString& contentType, uint32_t camera, uint32_t *width, uint32_t *height, uint32_t *fps);
 
@@ -327,7 +329,7 @@ public:
     void CreateMessageList(const dom::sms::SmsFilterData& aFilter, bool aReverse, nsISmsRequest* aRequest);
     void GetNextMessageInList(int32_t aListId, nsISmsRequest* aRequest);
     void ClearMessageList(int32_t aListId);
-    already_AddRefed<nsISmsRequest> DequeueSmsRequest(int32_t aRequestId);
+    already_AddRefed<nsISmsRequest> DequeueSmsRequest(uint32_t aRequestId);
 
     bool IsTablet();
 
@@ -406,13 +408,13 @@ protected:
 
     int mAPIVersion;
 
-    int32_t QueueSmsRequest(nsISmsRequest* aRequest);
+    bool QueueSmsRequest(nsISmsRequest* aRequest, uint32_t* aRequestIdOut);
 
     // other things
     jmethodID jNotifyIME;
     jmethodID jNotifyIMEEnabled;
     jmethodID jNotifyIMEChange;
-    jmethodID jAcknowledgeEventSync;
+    jmethodID jAcknowledgeEvent;
     jmethodID jEnableLocation;
     jmethodID jEnableLocationHighAccuracy;
     jmethodID jEnableSensor;
@@ -465,6 +467,7 @@ protected:
     jmethodID jHandleGeckoMessage;
     jmethodID jCheckUriVisited;
     jmethodID jMarkUriVisited;
+    jmethodID jSetUriTitle;
     jmethodID jAddPluginView;
     jmethodID jRemovePluginView;
     jmethodID jCreateSurface;
@@ -514,7 +517,9 @@ protected:
     jclass jEGL10Class;
 
     jclass jLayerView;
-    jmethodID jRegisterCompositorMethod;
+    jmethodID jProvideEGLSurfaceMethod;
+    jfieldID jEGLSurfacePointerField;
+    jobject mGLControllerObj;
 
     // some convinient types to have around
     jclass jStringClass;
@@ -664,6 +669,5 @@ private:
 
 protected:
 };
-
 
 #endif /* AndroidBridge_h__ */

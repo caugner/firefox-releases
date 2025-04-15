@@ -19,7 +19,7 @@ export JAVA_HOME=/tools/jdk6
 export MOZILLA_OFFICIAL=1
 export MOZ_TELEMETRY_REPORTING=1
 
-ac_add_options --with-branding=mobile/android/branding/official
+ac_add_options --with-branding=mobile/android/branding/beta
 
 # Treat warnings as errors in directories with FAIL_ON_WARNINGS.
 ac_add_options --enable-warnings-as-errors
@@ -30,3 +30,5 @@ ac_add_options --with-ccache=/usr/bin/ccache
 # This will overwrite the default of stripping everything and keep the symbol table.
 # This is useful for profiling with eideticker. See bug 788680
 STRIP_FLAGS="--strip-debug"
+
+. "$topsrcdir/mobile/android/config/mozconfigs/common.override"

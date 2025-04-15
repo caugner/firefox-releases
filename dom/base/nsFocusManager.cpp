@@ -25,8 +25,6 @@
 #include "nsIDOMRange.h"
 #include "nsIHTMLDocument.h"
 #include "nsIDocShell.h"
-#include "nsIEditorDocShell.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsLayoutUtils.h"
 #include "nsIPresShell.h"
@@ -54,6 +52,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Preferences.h"
+#include <algorithm>
 
 #ifdef MOZ_XUL
 #include "nsIDOMXULTextboxElement.h"
@@ -606,17 +605,14 @@ nsFocusManager::MoveCaretToFocus(nsIDOMWindow* aWindow)
   if (dsti) {
     dsti->GetItemType(&itemType);
     if (itemType != nsIDocShellTreeItem::typeChrome) {
-      // don't move the caret for editable documents
-      nsCOMPtr<nsIEditorDocShell> editorDocShell(do_QueryInterface(dsti));
-      if (editorDocShell) {
-        bool isEditable;
-        editorDocShell->GetEditable(&isEditable);
-        if (isEditable)
-          return NS_OK;
-      }
-
       nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(dsti);
       NS_ENSURE_TRUE(docShell, NS_ERROR_FAILURE);
+
+      // don't move the caret for editable documents
+      bool isEditable;
+      docShell->GetEditable(&isEditable);
+      if (isEditable)
+        return NS_OK;
 
       nsCOMPtr<nsIPresShell> presShell = docShell->GetPresShell();
       NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
@@ -1114,9 +1110,8 @@ nsFocusManager::SetFocusInner(nsIContent* aNewContent, int32_t aFlags,
     if (beingDestroyed)
       return;
 
-    nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(docShell);
     nsCOMPtr<nsIDocShellTreeItem> parentDsti;
-    dsti->GetParent(getter_AddRefs(parentDsti));
+    docShell->GetParent(getter_AddRefs(parentDsti));
     docShell = do_QueryInterface(parentDsti);
   }
 
@@ -1323,7 +1318,7 @@ nsFocusManager::GetCommonAncestor(nsPIDOMWindow* aWindow1,
   uint32_t pos2 = parents2.Length();
   nsIDocShellTreeItem* parent = nullptr;
   uint32_t len;
-  for (len = NS_MIN(pos1, pos2); len > 0; --len) {
+  for (len = std::min(pos1, pos2); len > 0; --len) {
     nsIDocShellTreeItem* child1 = parents1.ElementAt(--pos1);
     nsIDocShellTreeItem* child2 = parents2.ElementAt(--pos2);
     if (child1 != child2) {
@@ -1465,7 +1460,7 @@ nsFocusManager::CheckIfFocusable(nsIContent* aContent, uint32_t aFlags)
   // offscreen browsers can still be focused.
   nsIDocument* subdoc = doc->GetSubDocumentFor(aContent);
   if (subdoc && IsWindowVisible(subdoc->GetWindow())) {
-    const nsStyleUserInterface* ui = frame->GetStyleUserInterface();
+    const nsStyleUserInterface* ui = frame->StyleUserInterface();
     int32_t tabIndex = (ui->mUserFocus == NS_STYLE_USER_FOCUS_IGNORE ||
                         ui->mUserFocus == NS_STYLE_USER_FOCUS_NONE) ? -1 : 0;
     return aContent->IsFocusable(&tabIndex, aFlags & FLAG_BYMOUSE) ? aContent : nullptr;
@@ -2031,22 +2026,19 @@ nsFocusManager::UpdateCaret(bool aMoveCaretToFocus,
   // contentEditable document and the node to focus is contentEditable,
   // return, so that we don't mess with caret visibility.
   bool isEditable = false;
-  nsCOMPtr<nsIEditorDocShell> editorDocShell(do_QueryInterface(dsti));
-  if (editorDocShell) {
-    editorDocShell->GetEditable(&isEditable);
+  focusedDocShell->GetEditable(&isEditable);
 
-    if (isEditable) {
-      nsCOMPtr<nsIHTMLDocument> doc =
-        do_QueryInterface(presShell->GetDocument());
+  if (isEditable) {
+    nsCOMPtr<nsIHTMLDocument> doc =
+      do_QueryInterface(presShell->GetDocument());
 
-      bool isContentEditableDoc =
-        doc && doc->GetEditingState() == nsIHTMLDocument::eContentEditable;
+    bool isContentEditableDoc =
+      doc && doc->GetEditingState() == nsIHTMLDocument::eContentEditable;
 
-      bool isFocusEditable =
-        aContent && aContent->HasFlag(NODE_IS_EDITABLE);
-      if (!isContentEditableDoc || isFocusEditable)
-        return;
-    }
+    bool isFocusEditable =
+      aContent && aContent->HasFlag(NODE_IS_EDITABLE);
+    if (!isContentEditableDoc || isFocusEditable)
+      return;
   }
 
   if (!isEditable && aMoveCaretToFocus)
@@ -2448,8 +2440,7 @@ nsFocusManager::DetermineElementToMoveFocus(nsPIDOMWindow* aWindow,
     else {
       // Otherwise, for content shells, start from the location of the caret.
       int32_t itemType;
-      nsCOMPtr<nsIDocShellTreeItem> shellItem = do_QueryInterface(docShell);
-      shellItem->GetItemType(&itemType);
+      docShell->GetItemType(&itemType);
       if (itemType != nsIDocShellTreeItem::typeChrome) {
         nsCOMPtr<nsIContent> endSelectionContent;
         GetSelectionLocation(doc, presShell,
@@ -2552,10 +2543,8 @@ nsFocusManager::DetermineElementToMoveFocus(nsPIDOMWindow* aWindow,
 
     // reached the beginning or end of the document. Traverse up to the parent
     // document and try again.
-    nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(docShell);
-
     nsCOMPtr<nsIDocShellTreeItem> docShellParent;
-    dsti->GetParent(getter_AddRefs(docShellParent));
+    docShell->GetParent(getter_AddRefs(docShellParent));
     if (docShellParent) {
       // move up to the parent shell and try again from there.
 
@@ -2968,8 +2957,8 @@ nsFocusManager::GetRootForFocus(nsPIDOMWindow* aWindow,
   }
   else  {
     int32_t itemType;
-    nsCOMPtr<nsIDocShellTreeItem> shellItem = do_QueryInterface(aWindow->GetDocShell());
-    shellItem->GetItemType(&itemType);
+    nsCOMPtr<nsIDocShell> docShell = aWindow->GetDocShell();
+    docShell->GetItemType(&itemType);
 
     if (itemType == nsIDocShellTreeItem::typeChrome)
       return nullptr;
@@ -3144,12 +3133,12 @@ nsFocusManager::GetNextTabbableDocument(nsIContent* aStartContent, bool aForward
   // If currentPopup is set, then the starting content is in a panel.
   nsIFrame* currentPopup = nullptr;
   nsCOMPtr<nsIDocument> doc;
-  nsCOMPtr<nsIDocShellTreeItem> startItem;
+  nsCOMPtr<nsIDocShell> startDocShell;
 
   if (aStartContent) {
     doc = aStartContent->GetCurrentDoc();
     if (doc) {
-      startItem = do_QueryInterface(doc->GetWindow()->GetDocShell());
+      startDocShell = doc->GetWindow()->GetDocShell();
     }
 
     // Check if the starting content is inside a panel. Document navigation
@@ -3164,25 +3153,25 @@ nsFocusManager::GetNextTabbableDocument(nsIContent* aStartContent, bool aForward
     }
   }
   else if (mFocusedWindow) {
-    startItem = do_QueryInterface(mFocusedWindow->GetDocShell());
+    startDocShell = mFocusedWindow->GetDocShell();
     doc = mFocusedWindow->GetExtantDoc();
   }
   else {
     nsCOMPtr<nsIWebNavigation> webnav = do_GetInterface(mActiveWindow);
-    startItem = do_QueryInterface(webnav);
+    startDocShell = do_QueryInterface(webnav);
 
     if (mActiveWindow) {
       doc = mActiveWindow->GetExtantDoc();
     }
   }
 
-  if (!startItem)
+  if (!startDocShell)
     return nullptr;
 
   // perform a depth first search (preorder) of the docshell tree
   // looking for an HTML Frame or a chrome document
   nsIContent* content = aStartContent;
-  nsCOMPtr<nsIDocShellTreeItem> curItem = startItem;
+  nsCOMPtr<nsIDocShellTreeItem> curItem = startDocShell.get();
   nsCOMPtr<nsIDocShellTreeItem> nextItem;
   do {
     // If moving forward, check for a panel in the starting document. If one
@@ -3215,7 +3204,7 @@ nsFocusManager::GetNextTabbableDocument(nsIContent* aStartContent, bool aForward
         GetNextDocShell(curItem, getter_AddRefs(nextItem));
         if (!nextItem) {
           // wrap around to the beginning, which is the top of the tree
-          startItem->GetRootTreeItem(getter_AddRefs(nextItem));
+          startDocShell->GetRootTreeItem(getter_AddRefs(nextItem));
         }
       }
       else {
@@ -3223,7 +3212,7 @@ nsFocusManager::GetNextTabbableDocument(nsIContent* aStartContent, bool aForward
         if (!nextItem) {
           // wrap around to the end, which is the last item in the tree
           nsCOMPtr<nsIDocShellTreeItem> rootItem;
-          startItem->GetRootTreeItem(getter_AddRefs(rootItem));
+          startDocShell->GetRootTreeItem(getter_AddRefs(rootItem));
           GetLastDocShell(rootItem, getter_AddRefs(nextItem));
         }
 

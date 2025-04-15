@@ -490,7 +490,7 @@ nsEventDispatcher::Dispatch(nsISupports* aTarget,
   if (aEvent->mFlags.mRetargetToNonNativeAnonymous) {
     nsCOMPtr<nsIContent> content = do_QueryInterface(target);
     if (content && content->IsInNativeAnonymousSubtree()) {
-      nsCOMPtr<nsPIDOMEventTarget> newTarget =
+      nsCOMPtr<nsIDOMEventTarget> newTarget =
         do_QueryInterface(content->FindFirstNonChromeOnlyAccessContent());
       NS_ENSURE_STATE(newTarget);
 
@@ -905,7 +905,7 @@ nsEventDispatcher::CreateEvent(nsPresContext* aPresContext,
   if (aEventType.LowerCaseEqualsLiteral("customevent"))
     return NS_NewDOMCustomEvent(aDOMEvent, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("mozsmsevent"))
-    return NS_NewDOMSmsEvent(aDOMEvent, aPresContext, nullptr);
+    return NS_NewDOMMozSmsEvent(aDOMEvent, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("storageevent")) {
     return NS_NewDOMStorageEvent(aDOMEvent, aPresContext, nullptr);
   }

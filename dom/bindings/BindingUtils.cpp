@@ -17,6 +17,7 @@
 #include "WrapperFactory.h"
 #include "xpcprivate.h"
 #include "XPCQuickStubs.h"
+#include "XPCWrapper.h"
 #include "XrayWrapper.h"
 
 namespace mozilla {
@@ -343,23 +344,9 @@ DefineWebIDLBindingPropertiesOnXPCProto(JSContext* cx, JSObject* proto, const Na
     return false;
   }
 
-  if (properties->attributes) {
-    Prefable<JSPropertySpec>* props = properties->attributes;
-    MOZ_ASSERT(props);
-    MOZ_ASSERT(props->specs);
-    do {
-      // Define if enabled
-      if (props->enabled) {
-        for (JSPropertySpec* ps = props->specs; ps->name; ++ps) {
-          if (ps->name[0] == 'o' && ps->name[1] == 'n') {
-            continue;
-          }
-          if (!js::DefineProperty(cx, proto, *ps)) {
-            return false;
-          }
-        }
-      }
-    } while ((++props)->specs);
+  if (properties->attributes &&
+      !DefinePrefable(cx, proto, properties->attributes)) {
+    return false;
   }
 
   return true;
@@ -588,9 +575,9 @@ QueryInterface(JSContext* cx, unsigned argc, JS::Value* vp)
     return Throw<true>(cx, NS_ERROR_XPC_BAD_CONVERT_JS);
   }
 
-  nsIJSIID* iid;
+  nsIJSID* iid;
   xpc_qsSelfRef iidRef;
-  if (NS_FAILED(xpc_qsUnwrapArg<nsIJSIID>(cx, argv[0], &iid, &iidRef.ptr,
+  if (NS_FAILED(xpc_qsUnwrapArg<nsIJSID>(cx, argv[0], &iid, &iidRef.ptr,
                                           &argv[0]))) {
     return Throw<true>(cx, NS_ERROR_XPC_BAD_CONVERT_JS);
   }
@@ -1273,14 +1260,19 @@ NativeToString(JSContext* cx, JSObject* wrapper, JSObject* obj, const char* pre,
     } else {
       if (IsDOMProxy(obj)) {
         str = js::GetProxyHandler(obj)->obj_toString(cx, obj);
-      } else if (IsDOMClass(JS_GetClass(obj)) ||
-                 IsDOMIfaceAndProtoClass(JS_GetClass(obj))) {
-        str = ConcatJSString(cx, "[object ",
-                             JS_NewStringCopyZ(cx, JS_GetClass(obj)->name),
-                                               "]");
       } else {
-        MOZ_ASSERT(JS_IsNativeFunction(obj, Constructor));
-        str = JS_DecompileFunction(cx, JS_GetObjectFunction(obj), 0);
+        js::Class* clasp = js::GetObjectClass(obj);
+        if (IsDOMClass(clasp)) {
+          str = ConcatJSString(cx, "[object ",
+                               JS_NewStringCopyZ(cx, clasp->name), "]");
+        } else if (IsDOMIfaceAndProtoClass(clasp)) {
+          const DOMIfaceAndProtoJSClass* ifaceAndProtoJSClass =
+            DOMIfaceAndProtoJSClass::FromJSClass(clasp);
+          str = JS_NewStringCopyZ(cx, ifaceAndProtoJSClass->mToString);
+        } else {
+          MOZ_ASSERT(JS_IsNativeFunction(obj, Constructor));
+          str = JS_DecompileFunction(cx, JS_GetObjectFunction(obj), 0);
+        }
       }
       str = ConcatJSString(cx, pre, str, post);
     }
@@ -1450,6 +1442,113 @@ ReparentWrapper(JSContext* aCx, JSObject* aObj)
   }
 
   return NS_OK;
+}
+
+template<bool mainThread>
+inline JSObject*
+GetGlobalObject(JSContext* aCx, JSObject* aObject,
+                Maybe<JSAutoCompartment>& aAutoCompartment)
+{
+  if (js::IsWrapper(aObject)) {
+    aObject = XPCWrapper::Unwrap(aCx, aObject, false);
+    if (!aObject) {
+      Throw<mainThread>(aCx, NS_ERROR_XPC_SECURITY_MANAGER_VETO);
+      return nullptr;
+    }
+    aAutoCompartment.construct(aCx, aObject);
+  }
+
+  return JS_GetGlobalForObject(aCx, aObject);
+}
+
+GlobalObject::GlobalObject(JSContext* aCx, JSObject* aObject)
+  : mGlobalJSObject(aCx)
+{
+  Maybe<JSAutoCompartment> ac;
+  mGlobalJSObject = GetGlobalObject<true>(aCx, aObject, ac);
+  if (!mGlobalJSObject) {
+    return;
+  }
+
+  JS::Value val;
+  val.setObject(*mGlobalJSObject);
+
+  // Switch this to UnwrapDOMObjectToISupports once our global objects are
+  // using new bindings.
+  nsresult rv = xpc_qsUnwrapArg<nsISupports>(aCx, val, &mGlobalObject,
+                                             static_cast<nsISupports**>(getter_AddRefs(mGlobalObjectRef)),
+                                             &val);
+  if (NS_FAILED(rv)) {
+    mGlobalObject = nullptr;
+    Throw<true>(aCx, NS_ERROR_XPC_BAD_CONVERT_JS);
+  }
+}
+
+WorkerGlobalObject::WorkerGlobalObject(JSContext* aCx, JSObject* aObject)
+  : mGlobalJSObject(aCx),
+    mCx(aCx)
+{
+  Maybe<JSAutoCompartment> ac;
+  mGlobalJSObject = GetGlobalObject<false>(aCx, aObject, ac);
+}
+
+JSBool
+InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSObject* instance,
+                     JSBool* bp)
+{
+  const DOMIfaceAndProtoJSClass* clasp =
+    DOMIfaceAndProtoJSClass::FromJSClass(js::GetObjectClass(obj));
+
+  const DOMClass* domClass = GetDOMClass(js::UnwrapObject(instance));
+
+  MOZ_ASSERT(!domClass || clasp->mPrototypeID != prototypes::id::_ID_Count,
+             "Why do we have a hasInstance hook if we don't have a prototype "
+             "ID?");
+
+  if (domClass &&
+      domClass->mInterfaceChain[clasp->mDepth] == clasp->mPrototypeID) {
+    *bp = true;
+    return true;
+  }
+
+  jsval protov;
+  DebugOnly<bool> ok = JS_GetProperty(cx, obj, "prototype", &protov);
+  MOZ_ASSERT(ok, "Someone messed with our prototype property?");
+
+  JSObject *interfacePrototype = &protov.toObject();
+  MOZ_ASSERT(IsDOMIfaceAndProtoClass(js::GetObjectClass(interfacePrototype)),
+             "Someone messed with our prototype property?");
+
+  JSObject* proto;
+  if (!JS_GetPrototype(cx, instance, &proto)) {
+    return false;
+  }
+
+  while (proto) {
+    if (proto == interfacePrototype) {
+      *bp = true;
+      return true;
+    }
+
+    if (!JS_GetPrototype(cx, proto, &proto)) {
+      return false;
+    }
+  }
+
+  *bp = false;
+  return true;
+}
+
+JSBool
+InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSMutableHandleValue vp,
+                     JSBool* bp)
+{
+  if (!vp.isObject()) {
+    *bp = false;
+    return true;
+  }
+
+  return InterfaceHasInstance(cx, obj, &vp.toObject(), bp);
 }
 
 } // namespace dom

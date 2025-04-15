@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/SVGAnimationElement.h"
-#include "nsSVGSVGElement.h"
+#include "mozilla/dom/SVGSVGElement.h"
 #include "nsSMILTimeContainer.h"
 #include "nsSMILAnimationController.h"
 #include "nsSMILAnimationFunction.h"
@@ -22,12 +22,10 @@ NS_IMPL_RELEASE_INHERITED(SVGAnimationElement, SVGAnimationElementBase)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(SVGAnimationElement)
   NS_INTERFACE_MAP_ENTRY(nsISMILAnimationElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMElementTimeControl)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMSVGTests)
+  NS_INTERFACE_MAP_ENTRY(DOMSVGTests)
 NS_INTERFACE_MAP_END_INHERITING(SVGAnimationElementBase)
 
 // Cycle collection magic -- based on nsSVGUseElement
-NS_IMPL_CYCLE_COLLECTION_CLASS(SVGAnimationElement)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(SVGAnimationElement,
                                                 SVGAnimationElementBase)
   tmp->mHrefTarget.Unlink();
@@ -167,22 +165,6 @@ SVGAnimationElement::TimedElement()
   return mTimedElement;
 }
 
-//----------------------------------------------------------------------
-// nsIDOMSVGAnimationElement methods
-
-/* readonly attribute SVGElement targetElement; */
-NS_IMETHODIMP
-SVGAnimationElement::GetTargetElement(nsIDOMSVGElement** aTarget)
-{
-  // We'll just call the other GetTargetElement method, and QI to the right type
-  nsSVGElement* target = GetTargetElement();
-
-  nsCOMPtr<nsIDOMSVGElement> targetSVG = do_QueryInterface(target);
-  targetSVG.forget(aTarget);
-
-  return NS_OK;
-}
-
 nsSVGElement*
 SVGAnimationElement::GetTargetElement()
 {
@@ -192,15 +174,6 @@ SVGAnimationElement::GetTargetElement()
   nsIContent* target = GetTargetElementContent();
 
   return (target && target->IsSVG()) ? static_cast<nsSVGElement*>(target) : nullptr;
-}
-
-/* float getStartTime() raises( DOMException ); */
-NS_IMETHODIMP
-SVGAnimationElement::GetStartTime(float* retval)
-{
-  ErrorResult rv;
-  *retval = GetStartTime(rv);
-  return rv.ErrorCode();
 }
 
 float
@@ -217,14 +190,6 @@ SVGAnimationElement::GetStartTime(ErrorResult& rv)
   return float(double(startTime.GetMillis()) / PR_MSEC_PER_SEC);
 }
 
-/* float getCurrentTime(); */
-NS_IMETHODIMP
-SVGAnimationElement::GetCurrentTime(float* retval)
-{
-  *retval = GetCurrentTime();
-  return NS_OK;
-}
-
 float
 SVGAnimationElement::GetCurrentTime()
 {
@@ -236,15 +201,6 @@ SVGAnimationElement::GetCurrentTime()
   }
 
   return 0.0f;
-}
-
-/* float getSimpleDuration() raises( DOMException ); */
-NS_IMETHODIMP
-SVGAnimationElement::GetSimpleDuration(float* retval)
-{
-  ErrorResult rv;
-  *retval = GetSimpleDuration(rv);
-  return rv.ErrorCode();
 }
 
 float
@@ -436,14 +392,15 @@ SVGAnimationElement::ActivateByHyperlink()
     if (timeContainer) {
       timeContainer->SetCurrentTime(seekTime.GetMillis());
       AnimationNeedsResample();
-      // As with nsSVGSVGElement::SetCurrentTime, we need to trigger
+      // As with SVGSVGElement::SetCurrentTime, we need to trigger
       // a synchronous sample now.
       FlushAnimations();
     }
     // else, silently fail. We mustn't be part of an SVG document fragment that
     // is attached to the document tree so there's nothing we can do here
   } else {
-    BeginElement();
+    ErrorResult rv;
+    BeginElement(rv);
   }
 }
 
@@ -453,32 +410,13 @@ SVGAnimationElement::ActivateByHyperlink()
 nsSMILTimeContainer*
 SVGAnimationElement::GetTimeContainer()
 {
-  nsSVGSVGElement *element = SVGContentUtils::GetOuterSVGElement(this);
+  SVGSVGElement *element = SVGContentUtils::GetOuterSVGElement(this);
 
   if (element) {
     return element->GetTimedDocumentRoot();
   }
 
   return nullptr;
-}
-
-// nsIDOMElementTimeControl
-/* void beginElement (); */
-NS_IMETHODIMP
-SVGAnimationElement::BeginElement(void)
-{
-  return BeginElementAt(0.f);
-}
-
-/* void beginElementAt (in float offset); */
-NS_IMETHODIMP
-SVGAnimationElement::BeginElementAt(float offset)
-{
-  NS_ENSURE_FINITE(offset, NS_ERROR_ILLEGAL_VALUE);
-
-  ErrorResult rv;
-  BeginElementAt(offset, rv);
-  return rv.ErrorCode();
 }
 
 void
@@ -497,24 +435,6 @@ SVGAnimationElement::BeginElementAt(float offset, ErrorResult& rv)
   // Force synchronous sample so that events resulting from this call arrive in
   // the expected order and we get an up-to-date paint.
   FlushAnimations();
-}
-
-/* void endElement (); */
-NS_IMETHODIMP
-SVGAnimationElement::EndElement(void)
-{
-  return EndElementAt(0.f);
-}
-
-/* void endElementAt (in float offset); */
-NS_IMETHODIMP
-SVGAnimationElement::EndElementAt(float offset)
-{
-  NS_ENSURE_FINITE(offset, NS_ERROR_ILLEGAL_VALUE);
-
-  ErrorResult rv;
-  EndElementAt(offset, rv);
-  return rv.ErrorCode();
 }
 
 void

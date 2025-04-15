@@ -14,20 +14,27 @@
 
 "use strict";
 
+#ifndef MERGED_COMPARTMENT
+
 this.EXPORTED_SYMBOLS = [
   "AddonsProvider",
   "AppInfoProvider",
   "CrashDirectoryService",
   "CrashesProvider",
+  "PlacesProvider",
+  "SearchesProvider",
   "SessionsProvider",
   "SysInfoProvider",
 ];
 
 const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
-Cu.import("resource://gre/modules/commonjs/promise/core.js");
-Cu.import("resource://gre/modules/osfile.jsm");
 Cu.import("resource://gre/modules/Metrics.jsm");
+
+#endif
+
+Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
+Cu.import("resource://gre/modules/osfile.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -38,6 +45,21 @@ XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
                                   "resource://gre/modules/AddonManager.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "UpdateChannel",
                                   "resource://gre/modules/UpdateChannel.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PlacesDBUtils",
+                                  "resource://gre/modules/PlacesDBUtils.jsm");
+
+
+const LAST_TEXT_FIELD = {type: Metrics.Storage.FIELD_LAST_TEXT};
+const DAILY_DISCRETE_NUMERIC_FIELD = {type: Metrics.Storage.FIELD_DAILY_DISCRETE_NUMERIC};
+const DAILY_LAST_NUMERIC_FIELD = {type: Metrics.Storage.FIELD_DAILY_LAST_NUMERIC};
+const DAILY_COUNTER_FIELD = {type: Metrics.Storage.FIELD_DAILY_COUNTER};
+
+// Preprocess to use the correct telemetry pref.
+#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
+const TELEMETRY_PREF = "toolkit.telemetry.enabledPreRelease";
+#else
+const TELEMETRY_PREF = "toolkit.telemetry.enabled";
+#endif
 
 /**
  * Represents basic application state.
@@ -53,55 +75,85 @@ AppInfoMeasurement.prototype = Object.freeze({
   __proto__: Metrics.Measurement.prototype,
 
   name: "appinfo",
-  version: 1,
+  version: 2,
 
-  LAST_TEXT_FIELDS: [
-    "vendor",
-    "name",
-    "id",
-    "version",
-    "appBuildID",
-    "platformVersion",
-    "platformBuildID",
-    "os",
-    "xpcomabi",
-    "updateChannel",
-    "distributionID",
-    "distributionVersion",
-    "hotfixVersion",
-    "locale",
-  ],
-
-  configureStorage: function () {
-    let self = this;
-    return Task.spawn(function configureStorage() {
-      for (let field of self.LAST_TEXT_FIELDS) {
-        yield self.registerStorageField(field, self.storage.FIELD_LAST_TEXT);
-      }
-
-      yield self.registerStorageField("isDefaultBrowser",
-                                      self.storage.FIELD_DAILY_LAST_NUMERIC);
-    });
+  fields: {
+    vendor: LAST_TEXT_FIELD,
+    name: LAST_TEXT_FIELD,
+    id: LAST_TEXT_FIELD,
+    version: LAST_TEXT_FIELD,
+    appBuildID: LAST_TEXT_FIELD,
+    platformVersion: LAST_TEXT_FIELD,
+    platformBuildID: LAST_TEXT_FIELD,
+    os: LAST_TEXT_FIELD,
+    xpcomabi: LAST_TEXT_FIELD,
+    updateChannel: LAST_TEXT_FIELD,
+    distributionID: LAST_TEXT_FIELD,
+    distributionVersion: LAST_TEXT_FIELD,
+    hotfixVersion: LAST_TEXT_FIELD,
+    locale: LAST_TEXT_FIELD,
+    isDefaultBrowser: {type: Metrics.Storage.FIELD_DAILY_LAST_NUMERIC},
+    isTelemetryEnabled: {type: Metrics.Storage.FIELD_DAILY_LAST_NUMERIC},
+    isBlocklistEnabled: {type: Metrics.Storage.FIELD_DAILY_LAST_NUMERIC},
   },
 });
 
 
-function AppVersionMeasurement() {
+/**
+ * Legacy version of app info before Telemetry was added.
+ *
+ * The "last" fields have all been removed. We only report the longitudinal
+ * field.
+ */
+function AppInfoMeasurement1() {
   Metrics.Measurement.call(this);
 }
 
-AppVersionMeasurement.prototype = Object.freeze({
+AppInfoMeasurement1.prototype = Object.freeze({
+  __proto__: Metrics.Measurement.prototype,
+
+  name: "appinfo",
+  version: 1,
+
+  fields: {
+    isDefaultBrowser: {type: Metrics.Storage.FIELD_DAILY_LAST_NUMERIC},
+  },
+});
+
+
+function AppVersionMeasurement1() {
+  Metrics.Measurement.call(this);
+}
+
+AppVersionMeasurement1.prototype = Object.freeze({
   __proto__: Metrics.Measurement.prototype,
 
   name: "versions",
   version: 1,
 
-  configureStorage: function () {
-    return this.registerStorageField("version",
-                                     this.storage.FIELD_DAILY_DISCRETE_TEXT);
+  fields: {
+    version: {type: Metrics.Storage.FIELD_DAILY_DISCRETE_TEXT},
   },
 });
 
+// Version 2 added the build ID.
+function AppVersionMeasurement2() {
+  Metrics.Measurement.call(this);
+}
+
+AppVersionMeasurement2.prototype = Object.freeze({
+  __proto__: Metrics.Measurement.prototype,
+
+  name: "versions",
+  version: 2,
+
+  fields: {
+    appVersion: {type: Metrics.Storage.FIELD_DAILY_DISCRETE_TEXT},
+    platformVersion: {type: Metrics.Storage.FIELD_DAILY_DISCRETE_TEXT},
+    appBuildID: {type: Metrics.Storage.FIELD_DAILY_DISCRETE_TEXT},
+    platformBuildID: {type: Metrics.Storage.FIELD_DAILY_DISCRETE_TEXT},
+  },
+});
 
 
 this.AppInfoProvider = function AppInfoProvider() {
@@ -114,7 +166,14 @@ AppInfoProvider.prototype = Object.freeze({
 
   name: "org.mozilla.appInfo",
 
-  measurementTypes: [AppInfoMeasurement, AppVersionMeasurement],
+  measurementTypes: [
+    AppInfoMeasurement,
+    AppInfoMeasurement1,
+    AppVersionMeasurement1,
+    AppVersionMeasurement2
+  ],
+
+  pullOnly: true,
 
   appInfoFields: {
     // From nsIXULAppInfo.
@@ -136,6 +195,13 @@ AppInfoProvider.prototype = Object.freeze({
   },
 
   _onInit: function () {
+    let recordEmptyAppInfo = function () {
+      this._setCurrentAppVersion("");
+      this._setCurrentPlatformVersion("");
+      this._setCurrentAppBuildID("");
+      return this._setCurrentPlatformBuildID("");
+    }.bind(this);
+
     // Services.appInfo should always be defined for any reasonably behaving
     // Gecko app. If it isn't, we insert a empty string sentinel value.
     let ai;
@@ -144,37 +210,77 @@ AppInfoProvider.prototype = Object.freeze({
     } catch (ex) {
       this._log.error("Could not obtain Services.appinfo: " +
                      CommonUtils.exceptionStr(ex));
-      yield this._setCurrentVersion("");
+      yield recordEmptyAppInfo();
       return;
     }
 
     if (!ai) {
       this._log.error("Services.appinfo is unavailable.");
-      yield this._setCurrentVersion("");
+      yield recordEmptyAppInfo();
       return;
     }
 
-    let currentVersion = ai.version;
-    let lastVersion = yield this.getState("lastVersion");
+    let currentAppVersion = ai.version;
+    let currentPlatformVersion = ai.platformVersion;
+    let currentAppBuildID = ai.appBuildID;
+    let currentPlatformBuildID = ai.platformBuildID;
 
-    if (currentVersion == lastVersion) {
-      return;
+    // State's name doesn't contain "app" for historical compatibility.
+    let lastAppVersion = yield this.getState("lastVersion");
+    let lastPlatformVersion = yield this.getState("lastPlatformVersion");
+    let lastAppBuildID = yield this.getState("lastAppBuildID");
+    let lastPlatformBuildID = yield this.getState("lastPlatformBuildID");
+
+    if (currentAppVersion != lastAppVersion) {
+      yield this._setCurrentAppVersion(currentAppVersion);
     }
 
-    yield this._setCurrentVersion(currentVersion);
+    if (currentPlatformVersion != lastPlatformVersion) {
+      yield this._setCurrentPlatformVersion(currentPlatformVersion);
+    }
+
+    if (currentAppBuildID != lastAppBuildID) {
+      yield this._setCurrentAppBuildID(currentAppBuildID);
+    }
+
+    if (currentPlatformBuildID != lastPlatformBuildID) {
+      yield this._setCurrentPlatformBuildID(currentPlatformBuildID);
+    }
   },
 
-  _setCurrentVersion: function (version) {
+  _setCurrentAppVersion: function (version) {
     this._log.info("Recording new application version: " + version);
-    let m = this.getMeasurement("versions", 1);
-    m.addDailyDiscreteText("version", version);
+    let m = this.getMeasurement("versions", 2);
+    m.addDailyDiscreteText("appVersion", version);
+
+    // "app" not encoded in key for historical compatibility.
     return this.setState("lastVersion", version);
   },
 
+  _setCurrentPlatformVersion: function (version) {
+    this._log.info("Recording new platform version: " + version);
+    let m = this.getMeasurement("versions", 2);
+    m.addDailyDiscreteText("platformVersion", version);
+    return this.setState("lastPlatformVersion", version);
+  },
+
+  _setCurrentAppBuildID: function (build) {
+    this._log.info("Recording new application build ID: " + build);
+    let m = this.getMeasurement("versions", 2);
+    m.addDailyDiscreteText("appBuildID", build);
+    return this.setState("lastAppBuildID", build);
+  },
+
+  _setCurrentPlatformBuildID: function (build) {
+    this._log.info("Recording new platform build ID: " + build);
+    let m = this.getMeasurement("versions", 2);
+    m.addDailyDiscreteText("platformBuildID", build);
+    return this.setState("lastPlatformBuildID", build);
+  },
+
+
   collectConstantData: function () {
-    return this.enqueueStorageOperation(function collect() {
-      return Task.spawn(this._populateConstants.bind(this));
-    }.bind(this));
+    return this.storage.enqueueTransaction(this._populateConstants.bind(this));
   },
 
   _populateConstants: function () {
@@ -225,7 +331,21 @@ AppInfoProvider.prototype = Object.freeze({
     }
 
     // FUTURE this should be retrieved periodically or at upload time.
+    yield this._recordIsTelemetryEnabled(m);
+    yield this._recordIsBlocklistEnabled(m);
     yield this._recordDefaultBrowser(m);
+  },
+
+  _recordIsTelemetryEnabled: function (m) {
+    let enabled = TELEMETRY_PREF && this._prefs.get(TELEMETRY_PREF, false);
+    this._log.debug("Recording telemetry enabled (" + TELEMETRY_PREF + "): " + enabled);
+    yield m.setDailyLastNumeric("isTelemetryEnabled", enabled ? 1 : 0);
+  },
+
+  _recordIsBlocklistEnabled: function (m) {
+    let enabled = this._prefs.get("extensions.blocklist.enabled", false);
+    this._log.debug("Recording blocklist enabled: " + enabled);
+    yield m.setDailyLastNumeric("isBlocklistEnabled", enabled ? 1 : 0);
   },
 
   _recordDefaultBrowser: function (m) {
@@ -265,17 +385,15 @@ SysInfoMeasurement.prototype = Object.freeze({
   name: "sysinfo",
   version: 1,
 
-  configureStorage: function () {
-    return Task.spawn(function configureStorage() {
-      yield this.registerStorageField("cpuCount", this.storage.FIELD_LAST_NUMERIC);
-      yield this.registerStorageField("memoryMB", this.storage.FIELD_LAST_NUMERIC);
-      yield this.registerStorageField("manufacturer", this.storage.FIELD_LAST_TEXT);
-      yield this.registerStorageField("device", this.storage.FIELD_LAST_TEXT);
-      yield this.registerStorageField("hardware", this.storage.FIELD_LAST_TEXT);
-      yield this.registerStorageField("name", this.storage.FIELD_LAST_TEXT);
-      yield this.registerStorageField("version", this.storage.FIELD_LAST_TEXT);
-      yield this.registerStorageField("architecture", this.storage.FIELD_LAST_TEXT);
-    }.bind(this));
+  fields: {
+    cpuCount: {type: Metrics.Storage.FIELD_LAST_NUMERIC},
+    memoryMB: {type: Metrics.Storage.FIELD_LAST_NUMERIC},
+    manufacturer: LAST_TEXT_FIELD,
+    device: LAST_TEXT_FIELD,
+    hardware: LAST_TEXT_FIELD,
+    name: LAST_TEXT_FIELD,
+    version: LAST_TEXT_FIELD,
+    architecture: LAST_TEXT_FIELD,
   },
 });
 
@@ -291,6 +409,8 @@ SysInfoProvider.prototype = Object.freeze({
 
   measurementTypes: [SysInfoMeasurement],
 
+  pullOnly: true,
+
   sysInfoFields: {
     cpucount: "cpuCount",
     memsize: "memoryMB",
@@ -303,9 +423,7 @@ SysInfoProvider.prototype = Object.freeze({
   },
 
   collectConstantData: function () {
-    return this.enqueueStorageOperation(function collection() {
-      return Task.spawn(this._populateConstants.bind(this));
-    }.bind(this));
+    return this.storage.enqueueTransaction(this._populateConstants.bind(this));
   },
 
   _populateConstants: function () {
@@ -366,11 +484,10 @@ CurrentSessionMeasurement.prototype = Object.freeze({
   __proto__: Metrics.Measurement.prototype,
 
   name: "current",
-  version: 2,
+  version: 3,
 
-  configureStorage: function () {
-    return Promise.resolve();
-  },
+  // Storage is in preferences.
+  fields: {},
 
   /**
    * All data is stored in prefs, so we have a custom implementation.
@@ -387,14 +504,14 @@ CurrentSessionMeasurement.prototype = Object.freeze({
     fields.set("firstPaint", [now, sessions.firstPaint]);
     fields.set("sessionRestored", [now, sessions.sessionRestored]);
 
-    return Promise.resolve({
+    return CommonUtils.laterTickResolvingPromise({
       days: new Metrics.DailyValues(),
       singular: fields,
     });
   },
 
   _serializeJSONSingular: function (data) {
-    let result = {};
+    let result = {"_v": this.version};
 
     for (let [field, value] of data) {
       result[field] = value[1];
@@ -415,29 +532,21 @@ PreviousSessionsMeasurement.prototype = Object.freeze({
   __proto__: Metrics.Measurement.prototype,
 
   name: "previous",
-  version: 2,
+  version: 3,
 
-  DAILY_DISCRETE_NUMERIC_FIELDS: [
+  fields: {
     // Milliseconds of sessions that were properly shut down.
-    "cleanActiveTicks",
-    "cleanTotalTime",
+    cleanActiveTicks: DAILY_DISCRETE_NUMERIC_FIELD,
+    cleanTotalTime: DAILY_DISCRETE_NUMERIC_FIELD,
 
     // Milliseconds of sessions that were not properly shut down.
-    "abortedActiveTicks",
-    "abortedTotalTime",
+    abortedActiveTicks: DAILY_DISCRETE_NUMERIC_FIELD,
+    abortedTotalTime: DAILY_DISCRETE_NUMERIC_FIELD,
 
     // Startup times in milliseconds.
-    "main",
-    "firstPaint",
-    "sessionRestored",
-  ],
-
-  configureStorage: function () {
-    return Task.spawn(function configureStorage() {
-      for (let field of this.DAILY_DISCRETE_NUMERIC_FIELDS) {
-        yield this.registerStorageField(field, this.storage.FIELD_DAILY_DISCRETE_NUMERIC);
-      }
-    }.bind(this));
+    main: DAILY_DISCRETE_NUMERIC_FIELD,
+    firstPaint: DAILY_DISCRETE_NUMERIC_FIELD,
+    sessionRestored: DAILY_DISCRETE_NUMERIC_FIELD,
   },
 });
 
@@ -472,8 +581,10 @@ SessionsProvider.prototype = Object.freeze({
 
   measurementTypes: [CurrentSessionMeasurement, PreviousSessionsMeasurement],
 
+  pullOnly: true,
+
   collectConstantData: function () {
-    let previous = this.getMeasurement("previous", 2);
+    let previous = this.getMeasurement("previous", 3);
 
     return this.storage.enqueueTransaction(this._recordAndPruneSessions.bind(this));
   },
@@ -484,9 +595,28 @@ SessionsProvider.prototype = Object.freeze({
     let sessions = recorder.getPreviousSessions();
     this._log.debug("Found " + Object.keys(sessions).length + " previous sessions.");
 
-    let daily = this.getMeasurement("previous", 2);
+    let daily = this.getMeasurement("previous", 3);
 
-    for each (let session in sessions) {
+    // Please note the coupling here between the session recorder and our state.
+    // If the pruned index or the current index of the session recorder is ever
+    // deleted or reset to 0, our stored state of a later index would mean that
+    // new sessions would never be captured by this provider until the session
+    // recorder index catches up to our last session ID. This should not happen
+    // under normal circumstances, so we don't worry too much about it. We
+    // should, however, consider this as part of implementing bug 841561.
+    let lastRecordedSession = yield this.getState("lastSession");
+    if (lastRecordedSession === null) {
+      lastRecordedSession = -1;
+    }
+    this._log.debug("The last recorded session was #" + lastRecordedSession);
+
+    for (let [index, session] in Iterator(sessions)) {
+      if (index < lastRecordedSession) {
+        this._log.warn("Already recorded session " + index + ". Did the last " +
+                       "session crash or have an issue saving the prefs file?");
+        continue;
+      }
+
       let type = session.clean ? "clean" : "aborted";
       let date = session.startDate;
       yield daily.addDailyDiscreteNumeric(type + "ActiveTicks", session.activeTicks, date);
@@ -495,8 +625,11 @@ SessionsProvider.prototype = Object.freeze({
       for (let field of ["main", "firstPaint", "sessionRestored"]) {
         yield daily.addDailyDiscreteNumeric(field, session[field], date);
       }
+
+      lastRecordedSession = index;
     }
 
+    yield this.setState("lastSession", "" + lastRecordedSession);
     recorder.pruneOldSessions(new Date());
   },
 });
@@ -524,8 +657,8 @@ ActiveAddonsMeasurement.prototype = Object.freeze({
   name: "active",
   version: 1,
 
-  configureStorage: function () {
-    return this.registerStorageField("addons", this.storage.FIELD_LAST_TEXT);
+  fields: {
+    addons: LAST_TEXT_FIELD,
   },
 
   _serializeJSONSingular: function (data) {
@@ -535,7 +668,9 @@ ActiveAddonsMeasurement.prototype = Object.freeze({
     }
 
     // Exceptions are caught in the caller.
-    return JSON.parse(data.get("addons")[1]);
+    let result = JSON.parse(data.get("addons")[1]);
+    result._v = this.version;
+    return result;
   },
 });
 
@@ -550,13 +685,11 @@ AddonCountsMeasurement.prototype = Object.freeze({
   name: "counts",
   version: 1,
 
-  configureStorage: function () {
-    return Task.spawn(function registerFields() {
-      yield this.registerStorageField("theme", this.storage.FIELD_DAILY_LAST_NUMERIC);
-      yield this.registerStorageField("lwtheme", this.storage.FIELD_DAILY_LAST_NUMERIC);
-      yield this.registerStorageField("plugin", this.storage.FIELD_DAILY_LAST_NUMERIC);
-      yield this.registerStorageField("extension", this.storage.FIELD_DAILY_LAST_NUMERIC);
-    }.bind(this));
+  fields: {
+    theme: DAILY_LAST_NUMERIC_FIELD,
+    lwtheme: DAILY_LAST_NUMERIC_FIELD,
+    plugin: DAILY_LAST_NUMERIC_FIELD,
+    extension: DAILY_LAST_NUMERIC_FIELD,
   },
 });
 
@@ -606,14 +739,14 @@ AddonsProvider.prototype = Object.freeze({
     this._listener = listener;
     AddonManager.addAddonListener(this._listener);
 
-    return Promise.resolve();
+    return CommonUtils.laterTickResolvingPromise();
   },
 
   onShutdown: function () {
     AddonManager.removeAddonListener(this._listener);
     this._listener = null;
 
-    return Promise.resolve();
+    return CommonUtils.laterTickResolvingPromise();
   },
 
   collectConstantData: function () {
@@ -722,9 +855,9 @@ DailyCrashesMeasurement.prototype = Object.freeze({
   name: "crashes",
   version: 1,
 
-  configureStorage: function () {
-    this.registerStorageField("pending", this.storage.FIELD_DAILY_COUNTER);
-    this.registerStorageField("submitted", this.storage.FIELD_DAILY_COUNTER);
+  fields: {
+    pending: DAILY_COUNTER_FIELD,
+    submitted: DAILY_COUNTER_FIELD,
   },
 });
 
@@ -739,8 +872,10 @@ CrashesProvider.prototype = Object.freeze({
 
   measurementTypes: [DailyCrashesMeasurement],
 
+  pullOnly: true,
+
   collectConstantData: function () {
-    return Task.spawn(this._populateCrashCounts.bind(this));
+    return this.storage.enqueueTransaction(this._populateCrashCounts.bind(this));
   },
 
   _populateCrashCounts: function () {
@@ -869,6 +1004,351 @@ CrashDirectoryService.prototype = Object.freeze({
       } finally {
         iterator.close();
       }
+    });
+  },
+});
+
+
+/**
+ * Holds basic statistics about the Places database.
+ */
+function PlacesMeasurement() {
+  Metrics.Measurement.call(this);
+}
+
+PlacesMeasurement.prototype = Object.freeze({
+  __proto__: Metrics.Measurement.prototype,
+
+  name: "places",
+  version: 1,
+
+  fields: {
+    pages: DAILY_LAST_NUMERIC_FIELD,
+    bookmarks: DAILY_LAST_NUMERIC_FIELD,
+  },
+});
+
+
+/**
+ * Collects information about Places.
+ */
+this.PlacesProvider = function () {
+  Metrics.Provider.call(this);
+};
+
+PlacesProvider.prototype = Object.freeze({
+  __proto__: Metrics.Provider.prototype,
+
+  name: "org.mozilla.places",
+
+  measurementTypes: [PlacesMeasurement],
+
+  collectDailyData: function () {
+    return this.storage.enqueueTransaction(this._collectData.bind(this));
+  },
+
+  _collectData: function () {
+    let now = new Date();
+    let data = yield this._getDailyValues();
+
+    let m = this.getMeasurement("places", 1);
+
+    yield m.setDailyLastNumeric("pages", data.PLACES_PAGES_COUNT);
+    yield m.setDailyLastNumeric("bookmarks", data.PLACES_BOOKMARKS_COUNT);
+  },
+
+  _getDailyValues: function () {
+    let deferred = Promise.defer();
+
+    PlacesDBUtils.telemetry(null, function onResult(data) {
+      deferred.resolve(data);
+    });
+
+    return deferred.promise;
+  },
+});
+
+function SearchCountMeasurement1() {
+  Metrics.Measurement.call(this);
+}
+
+SearchCountMeasurement1.prototype = Object.freeze({
+  __proto__: Metrics.Measurement.prototype,
+
+  name: "counts",
+  version: 1,
+
+  // We only record searches for search engines that have partner agreements
+  // with Mozilla.
+  fields: {
+    "amazon.com.abouthome": DAILY_COUNTER_FIELD,
+    "amazon.com.contextmenu": DAILY_COUNTER_FIELD,
+    "amazon.com.searchbar": DAILY_COUNTER_FIELD,
+    "amazon.com.urlbar": DAILY_COUNTER_FIELD,
+    "bing.abouthome": DAILY_COUNTER_FIELD,
+    "bing.contextmenu": DAILY_COUNTER_FIELD,
+    "bing.searchbar": DAILY_COUNTER_FIELD,
+    "bing.urlbar": DAILY_COUNTER_FIELD,
+    "google.abouthome": DAILY_COUNTER_FIELD,
+    "google.contextmenu": DAILY_COUNTER_FIELD,
+    "google.searchbar": DAILY_COUNTER_FIELD,
+    "google.urlbar": DAILY_COUNTER_FIELD,
+    "yahoo.abouthome": DAILY_COUNTER_FIELD,
+    "yahoo.contextmenu": DAILY_COUNTER_FIELD,
+    "yahoo.searchbar": DAILY_COUNTER_FIELD,
+    "yahoo.urlbar": DAILY_COUNTER_FIELD,
+    "other.abouthome": DAILY_COUNTER_FIELD,
+    "other.contextmenu": DAILY_COUNTER_FIELD,
+    "other.searchbar": DAILY_COUNTER_FIELD,
+    "other.urlbar": DAILY_COUNTER_FIELD,
+  },
+});
+
+/**
+ * Records search counts per day per engine and where search initiated.
+ *
+ * We want to record granular details for individual locale-specific search
+ * providers, but only if they're Mozilla partners. In order to do this, we
+ * track the nsISearchEngine identifier, which denotes shipped search engines,
+ * and intersect those with our partner list.
+ *
+ * We don't use the search engine name directly, because it is shared across
+ * locales; e.g., eBay-de and eBay both share the name "eBay".
+ */
+function SearchCountMeasurement2() {
+  this._fieldSpecs = null;
+  this._interestingEngines = null;   // Name -> ID. ("Amazon.com" -> "amazondotcom")
+
+  Metrics.Measurement.call(this);
+}
+
+SearchCountMeasurement2.prototype = Object.freeze({
+  __proto__: Metrics.Measurement.prototype,
+
+  name: "counts",
+  version: 2,
+
+  /**
+   * Default implementation; can be overridden by test helpers.
+   */
+  getDefaultEngines: function () {
+    return Services.search.getDefaultEngines();
+  },
+
+  _initialize: function () {
+    // Don't create all of these for every profile.
+    // There are 61 partner engines, translating to 244 fields.
+    // Instead, compute only those that are possible -- those for whom the
+    // provider is one of the default search engines.
+    // This set can grow over time, and change as users run different localized
+    // Firefox instances.
+    this._fieldSpecs = {};
+    this._interestingEngines = {};
+
+    for (let source of this.SOURCES) {
+      this._fieldSpecs["other." + source] = DAILY_COUNTER_FIELD;
+    }
+
+    let engines = this.getDefaultEngines();
+    for (let engine of engines) {
+      let id = engine.identifier;
+      if (!id || (this.PROVIDERS.indexOf(id) == -1)) {
+        continue;
+      }
+
+      this._interestingEngines[engine.name] = id;
+      let fieldPrefix = id + ".";
+      for (let source of this.SOURCES) {
+        this._fieldSpecs[fieldPrefix + source] = DAILY_COUNTER_FIELD;
+      }
+    }
+  },
+
+  // Our fields are dynamic, so we compute them into _fieldSpecs by looking at
+  // the current set of interesting engines.
+  get fields() {
+    if (!this._fieldSpecs) {
+      this._initialize();
+    }
+    return this._fieldSpecs;
+  },
+
+  get interestingEngines() {
+    if (!this._fieldSpecs) {
+      this._initialize();
+    }
+    return this._interestingEngines;
+  },
+
+  /**
+   * Override the default behavior: serializers should include every counter
+   * field from the DB, even if we don't currently have it registered.
+   *
+   * Do this so we don't have to register several hundred fields to match
+   * various Firefox locales.
+   *
+   * We use the "provider.type" syntax as a rudimentary check for validity.
+   *
+   * We trust that measurement versioning is sufficient to exclude old provider
+   * data.
+   */
+  shouldIncludeField: function (name) {
+    return name.indexOf(".") != -1;
+  },
+
+  /**
+   * The measurement type mechanism doesn't introspect the DB. Override it
+   * so that we can assume all unknown fields are counters.
+   */
+  fieldType: function (name) {
+    if (name in this.fields) {
+      return this.fields[name].type;
+    }
+
+    // Default to a counter.
+    return Metrics.Storage.FIELD_DAILY_COUNTER;
+  },
+
+  // You can compute the total list of fields by unifying the entire l10n repo
+  // set with the list of partners:
+  //
+  //   sort -u */*/searchplugins/list.txt | tr -d '^M' | uniq | grep -f partners.txt
+  //
+  // where partners.txt contains
+  //
+  //   amazon
+  //   aol
+  //   bing
+  //   eBay
+  //   google
+  //   mailru
+  //   mercadolibre
+  //   seznam
+  //   twitter
+  //   yahoo
+  //   yandex
+  //
+  // Please update this list as the set of partners changes.
+  //
+  PROVIDERS: [
+    "amazon-co-uk",
+    "amazon-de",
+    "amazon-en-GB",
+    "amazon-france",
+    "amazon-it",
+    "amazon-jp",
+    "amazondotcn",
+    "amazondotcom",
+    "amazondotcom-de",
+
+    "aol-en-GB",
+    "aol-web-search",
+
+    "bing",
+
+    "eBay",
+    "eBay-de",
+    "eBay-en-GB",
+    "eBay-es",
+    "eBay-fi",
+    "eBay-france",
+    "eBay-hu",
+    "eBay-in",
+    "eBay-it",
+
+    "google",
+    "google-jp",
+    "google-ku",
+    "google-maps-zh-TW",
+
+    "mailru",
+
+    "mercadolibre-ar",
+    "mercadolibre-cl",
+    "mercadolibre-mx",
+
+    "seznam-cz",
+
+    "twitter",
+    "twitter-de",
+    "twitter-ja",
+
+    "yahoo",
+    "yahoo-NO",
+    "yahoo-answer-zh-TW",
+    "yahoo-ar",
+    "yahoo-bid-zh-TW",
+    "yahoo-br",
+    "yahoo-ch",
+    "yahoo-cl",
+    "yahoo-de",
+    "yahoo-en-GB",
+    "yahoo-es",
+    "yahoo-fi",
+    "yahoo-france",
+    "yahoo-fy-NL",
+    "yahoo-id",
+    "yahoo-in",
+    "yahoo-it",
+    "yahoo-jp",
+    "yahoo-jp-auctions",
+    "yahoo-mx",
+    "yahoo-sv-SE",
+    "yahoo-zh-TW",
+
+    "yandex",
+    "yandex-ru",
+    "yandex-slovari",
+    "yandex-tr",
+    "yandex.by",
+    "yandex.ru-be",
+  ],
+
+  SOURCES: [
+    "abouthome",
+    "contextmenu",
+    "searchbar",
+    "urlbar",
+  ],
+});
+
+this.SearchesProvider = function () {
+  Metrics.Provider.call(this);
+};
+
+this.SearchesProvider.prototype = Object.freeze({
+  __proto__: Metrics.Provider.prototype,
+
+  name: "org.mozilla.searches",
+  measurementTypes: [
+    SearchCountMeasurement1,
+    SearchCountMeasurement2,
+  ],
+
+  /**
+   * Record that a search occurred.
+   *
+   * @param engine
+   *        (string) The search engine used. If the search engine is unknown,
+   *        the search will be attributed to "other".
+   * @param source
+   *        (string) Where the search was initiated from. Must be one of the
+   *        SearchCountMeasurement2.SOURCES values.
+   *
+   * @return Promise<>
+   *         The promise is resolved when the storage operation completes.
+   */
+  recordSearch: function (engine, source) {
+    let m = this.getMeasurement("counts", 2);
+
+    if (m.SOURCES.indexOf(source) == -1) {
+      throw new Error("Unknown source for search: " + source);
+    }
+
+    let id = m.interestingEngines[engine] || "other";
+    let field = id + "." + source;
+    return this.enqueueStorageOperation(function recordSearch() {
+      return m.incrementDailyCounter(field);
     });
   },
 });

@@ -13,6 +13,7 @@
 #include "nsWindow.h"
 #include "WinUtils.h"
 #include "KeyboardLayout.h"
+#include <algorithm>
 
 using namespace mozilla::widget;
 
@@ -40,7 +41,6 @@ static UINT sWM_MSIME_MOUSE = 0; // mouse message for MSIME 98/2000
 #define IMEMOUSE_WUP        0x10    // wheel up
 #define IMEMOUSE_WDOWN      0x20    // wheel down
 
-bool nsIMM32Handler::sIsStatusChanged = false;
 bool nsIMM32Handler::sIsIME = true;
 bool nsIMM32Handler::sIsIMEOpening = false;
 
@@ -703,29 +703,6 @@ nsIMM32Handler::OnIMENotify(nsWindow* aWindow,
   }
 #endif // PR_LOGGING
 
-  if (::GetKeyState(NS_VK_ALT) >= 0) {
-    return false;
-  }
-
-  // XXXmnakano Following code was added by bug 28852 (Key combo to trun ON/OFF
-  // Japanese IME incorrectly activates "File" menu).  If one or more keypress
-  // events come between Alt keydown event and Alt keyup event, XUL menubar
-  // isn't activated by the Alt keyup event.  Therefore, this code sends dummy
-  // keypress event to Gecko.  But this is ugly, and this fires incorrect DOM
-  // keypress event.  So, we should find another way for the bug.
-
-  // add hacky code here
-  mozilla::widget::ModifierKeyState modKeyState(false, false, true);
-  mozilla::widget::NativeKey nativeKey; // Dummy is okay for this usage.
-  nsKeyEvent keyEvent(true, NS_KEY_PRESS, aWindow);
-  keyEvent.keyCode = 192;
-  aWindow->InitKeyEvent(keyEvent, nativeKey, modKeyState);
-  aWindow->DispatchKeyEvent(keyEvent, nullptr);
-  sIsStatusChanged = sIsStatusChanged || (wParam == IMN_SETOPENSTATUS);
-  PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
-    ("IMM32: OnIMENotify, sIsStatusChanged=%s\n",
-     sIsStatusChanged ? "TRUE" : "FALSE"));
-
   // not implement yet
   return false;
 }
@@ -1211,7 +1188,7 @@ nsIMM32Handler::HandleComposition(nsWindow* aWindow,
         uint32_t maxlen = compANSIStr.Length();
         mClauseArray[0] = 0; // first value must be 0
         for (int32_t i = 1; i < clauseArrayLength; i++) {
-          uint32_t len = NS_MIN(mClauseArray[i], maxlen);
+          uint32_t len = std::min(mClauseArray[i], maxlen);
           mClauseArray[i] = ::MultiByteToWideChar(GetKeyboardCodePage(), 
                                                   MB_PRECOMPOSED,
                                                   (LPCSTR)compANSIStr.get(),
@@ -1222,7 +1199,7 @@ nsIMM32Handler::HandleComposition(nsWindow* aWindow,
   }
   // compClauseArrayLength may be negative. I.e., ImmGetCompositionStringW
   // may return an error code.
-  mClauseArray.SetLength(NS_MAX<long>(0, clauseArrayLength));
+  mClauseArray.SetLength(std::max<long>(0, clauseArrayLength));
 
   PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
     ("IMM32: HandleComposition, GCS_COMPCLAUSE, mClauseLength=%ld\n",
@@ -1248,7 +1225,7 @@ nsIMM32Handler::HandleComposition(nsWindow* aWindow,
 
   // attrStrLen may be negative. I.e., ImmGetCompositionStringW may return an
   // error code.
-  mAttributeArray.SetLength(NS_MAX<long>(0, attrArrayLength));
+  mAttributeArray.SetLength(std::max<long>(0, attrArrayLength));
 
   PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
     ("IMM32: HandleComposition, GCS_COMPATTR, mAttributeLength=%ld\n",
@@ -1884,7 +1861,7 @@ nsIMM32Handler::GetCharacterRectOfSelectedTextAt(nsWindow* aWindow,
     useCaretRect = false;
     if (mCursorPosition != NO_IME_CARET) {
       uint32_t cursorPosition =
-        NS_MIN<uint32_t>(mCursorPosition, mCompositionString.Length());
+        std::min<uint32_t>(mCursorPosition, mCompositionString.Length());
       offset -= cursorPosition;
       NS_ASSERTION(offset >= 0, "offset is negative!");
     }

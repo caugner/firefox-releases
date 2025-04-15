@@ -9,12 +9,12 @@
 #include "mozilla/ModuleUtils.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsCURILoader.h"
+#include "nsCycleCollectionParticipant.h"
 #include "nsNetUtil.h"
 #include "nsIURL.h"
 #include "nsIURI.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeOwner.h"
-#include "nsIEditorDocShell.h"
 #include "nsISimpleEnumerator.h"
 #include "nsPIDOMWindow.h"
 #include "nsIPrefBranch.h"
@@ -53,15 +53,20 @@
 
 #include "nsTypeAheadFind.h"
 
-NS_INTERFACE_MAP_BEGIN(nsTypeAheadFind)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsTypeAheadFind)
   NS_INTERFACE_MAP_ENTRY(nsITypeAheadFind)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsITypeAheadFind)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
   NS_INTERFACE_MAP_ENTRY(nsIObserver)
 NS_INTERFACE_MAP_END
 
-NS_IMPL_ADDREF(nsTypeAheadFind)
-NS_IMPL_RELEASE(nsTypeAheadFind)
+NS_IMPL_CYCLE_COLLECTING_ADDREF(nsTypeAheadFind)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(nsTypeAheadFind)
+
+NS_IMPL_CYCLE_COLLECTION_9(nsTypeAheadFind, mFoundLink, mFoundEditable,
+                           mCurrentWindow, mStartFindRange, mSearchRange,
+                           mStartPointRange, mEndPointRange, mSoundInterface,
+                           mFind)
 
 static NS_DEFINE_CID(kFrameTraversalCID, NS_FRAMETRAVERSAL_CID);
 
@@ -1093,7 +1098,7 @@ nsTypeAheadFind::IsRangeVisible(nsIPresShell *aPresShell,
   if (!frame)    
     return false;  // No frame! Not visible then.
 
-  if (!frame->GetStyleVisibility()->IsVisible())
+  if (!frame->StyleVisibility()->IsVisible())
     return false;
 
   // Detect if we are _inside_ a text control, or something else with its own

@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -30,11 +31,11 @@
 #include "nsITimer.h"
 #include "nsIDOMProgressEvent.h"
 #include "nsDOMEventTargetHelper.h"
-#include "nsContentUtils.h"
 #include "nsDOMFile.h"
 #include "nsDOMBlobBuilder.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptObjectPrincipal.h"
+#include "nsISizeOfEventTarget.h"
 
 #include "mozilla/Assertions.h"
 #include "mozilla/dom/BindingUtils.h"
@@ -124,7 +125,8 @@ class nsXMLHttpRequest : public nsXHREventTarget,
                          public nsIInterfaceRequestor,
                          public nsSupportsWeakReference,
                          public nsIJSNativeInitializer,
-                         public nsITimerCallback
+                         public nsITimerCallback,
+                         public nsISizeOfEventTarget
 {
   friend class nsXHRParseEndListener;
   friend class nsXMLHttpRequestXPCOMifier;
@@ -145,13 +147,14 @@ public:
 
   // The WebIDL constructors.
   static already_AddRefed<nsXMLHttpRequest>
-  Constructor(JSContext* aCx,
-              nsISupports* aGlobal,
+  Constructor(const mozilla::dom::GlobalObject& aGlobal,
+              JSContext* aCx,
               const mozilla::dom::MozXMLHttpRequestParameters& aParams,
               ErrorResult& aRv)
   {
-    nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal);
-    nsCOMPtr<nsIScriptObjectPrincipal> principal = do_QueryInterface(aGlobal);
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.Get());
+    nsCOMPtr<nsIScriptObjectPrincipal> principal =
+      do_QueryInterface(aGlobal.Get());
     if (!window || ! principal) {
       aRv.Throw(NS_ERROR_FAILURE);
       return NULL;
@@ -164,8 +167,8 @@ public:
   }
 
   static already_AddRefed<nsXMLHttpRequest>
-  Constructor(JSContext* aCx,
-              nsISupports* aGlobal,
+  Constructor(const mozilla::dom::GlobalObject& aGlobal,
+              JSContext* aCx,
               const nsAString& ignored,
               ErrorResult& aRv)
   {
@@ -176,7 +179,7 @@ public:
       return nullptr;
     }
 
-    return Constructor(aCx, aGlobal, params, aRv);
+    return Constructor(aGlobal, aCx, params, aRv);
   }
 
   void Construct(nsIPrincipal* aPrincipal,
@@ -228,6 +231,10 @@ public:
   // nsIJSNativeInitializer
   NS_IMETHOD Initialize(nsISupports* aOwner, JSContext* cx, JSObject* obj,
                        uint32_t argc, jsval* argv);
+
+  // nsISizeOfEventTarget
+  virtual size_t
+    SizeOfEventTargetIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
 
   NS_FORWARD_NSIDOMEVENTTARGET(nsXHREventTarget::)
 
@@ -417,6 +424,7 @@ public:
     }
   }
   void GetAllResponseHeaders(nsString& aResponseHeaders);
+  bool IsSafeHeader(const nsACString& aHeaderName, nsIHttpChannel* aHttpChannel);
   void OverrideMimeType(const nsAString& aMimeType)
   {
     // XXX Should we do some validation here?
@@ -490,6 +498,7 @@ public:
   void RootJSResultObjects();
 
   virtual void DisconnectFromOwner();
+
 protected:
   friend class nsMultipartProxyListener;
 
@@ -552,11 +561,14 @@ protected:
   public:
     NS_DECL_ISUPPORTS
     NS_DECL_NSIHTTPHEADERVISITOR
-    nsHeaderVisitor() { }
+    nsHeaderVisitor(nsXMLHttpRequest* aXMLHttpRequest, nsIHttpChannel* aHttpChannel)
+      : mXHR(aXMLHttpRequest), mHttpChannel(aHttpChannel) {}
     virtual ~nsHeaderVisitor() {}
     const nsACString &Headers() { return mHeaders; }
   private:
     nsCString mHeaders;
+    nsXMLHttpRequest* mXHR;
+    nsCOMPtr<nsIHttpChannel> mHttpChannel;
   };
 
   // The bytes of our response body. Only used for DEFAULT, ARRAYBUFFER and
@@ -569,7 +581,7 @@ protected:
   // accessed.
   // Only used for DEFAULT and TEXT responseTypes.
   nsString mResponseText;
-  
+
   // For DEFAULT responseType we use this to keep track of how far we've
   // lazily decoded from mResponseBody to mResponseText
   uint32_t mResponseBodyDecodedPos;
@@ -690,6 +702,8 @@ protected:
     nsCString value;
   };
   nsTArray<RequestHeader> mModifiedRequestHeaders;
+
+  nsTHashtable<nsCStringHashKey> mAlreadySetHeaders;
 
   // Helper object to manage our XPCOM scriptability bits
   nsXMLHttpRequestXPCOMifier* mXPCOMifier;

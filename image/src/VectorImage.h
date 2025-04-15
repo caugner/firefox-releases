@@ -37,10 +37,9 @@ public:
   virtual ~VectorImage();
 
   // Methods inherited from Image
-  nsresult Init(imgDecoderObserver* aObserver,
-                const char* aMimeType,
+  nsresult Init(const char* aMimeType,
                 uint32_t aFlags);
-  virtual void GetCurrentFrameRect(nsIntRect& aRect) MOZ_OVERRIDE;
+  virtual nsIntRect FrameRect(uint32_t aWhichFrame) MOZ_OVERRIDE;
 
   virtual size_t HeapSizeOfSourceWithComputedFallback(nsMallocSizeOfFun aMallocSizeOf) const;
   virtual size_t HeapSizeOfDecodedWithComputedFallback(nsMallocSizeOfFun aMallocSizeOf) const;
@@ -68,7 +67,6 @@ protected:
   virtual bool     ShouldAnimate();
 
 private:
-  WeakPtr<imgDecoderObserver>        mObserver;
   nsRefPtr<SVGDocumentWrapper>       mSVGDocumentWrapper;
   nsRefPtr<SVGRootRenderingObserver> mRenderingObserver;
 

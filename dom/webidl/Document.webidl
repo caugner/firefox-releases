@@ -31,7 +31,7 @@ enum VisibilityState { "hidden", "visible" };
 /* http://dom.spec.whatwg.org/#interface-document */
 [Constructor]
 interface Document : Node {
-  [Throws, Constant]
+  [Throws]
   readonly attribute DOMImplementation implementation;
   readonly attribute DOMString URL;
   readonly attribute DOMString documentURI;
@@ -90,12 +90,10 @@ interface Document : Node {
   [Creator, Throws]
   Attr createAttributeNS(DOMString? namespace, DOMString name);
   readonly attribute DOMString? inputEncoding;
-/*
 };
 
-http://www.whatwg.org/specs/web-apps/current-work/#the-document-object
+// http://www.whatwg.org/specs/web-apps/current-work/#the-document-object
 partial interface Document {
-*/
   [PutForwards=href, Unforgeable] readonly attribute Location? location;
   //(HTML only)         attribute DOMString domain;
   readonly attribute DOMString referrer;
@@ -144,124 +142,12 @@ partial interface Document {
   //(HTML only)DOMString queryCommandValue(DOMString commandId);
   //(Not implemented)readonly attribute HTMLCollection commands;
 
-  // event handler IDL attributes
-           [SetterThrows]
-           attribute EventHandler onabort;
-           [SetterThrows]
-           attribute EventHandler onblur;
-  //(Not implemented)         attribute EventHandler oncancel;
-           [SetterThrows]
-           attribute EventHandler oncanplay;
-           [SetterThrows]
-           attribute EventHandler oncanplaythrough;
-           [SetterThrows]
-           attribute EventHandler onchange;
-           [SetterThrows]
-           attribute EventHandler onclick;
-  //(Not implemented)         attribute EventHandler onclose;
-           [SetterThrows]
-           attribute EventHandler oncontextmenu;
-  //(Not implemented)         attribute EventHandler oncuechange;
-           [SetterThrows]
-           attribute EventHandler ondblclick;
-           [SetterThrows]
-           attribute EventHandler ondrag;
-           [SetterThrows]
-           attribute EventHandler ondragend;
-           [SetterThrows]
-           attribute EventHandler ondragenter;
-           [SetterThrows]
-           attribute EventHandler ondragleave;
-           [SetterThrows]
-           attribute EventHandler ondragover;
-           [SetterThrows]
-           attribute EventHandler ondragstart;
-           [SetterThrows]
-           attribute EventHandler ondrop;
-           [SetterThrows]
-           attribute EventHandler ondurationchange;
-           [SetterThrows]
-           attribute EventHandler onemptied;
-           [SetterThrows]
-           attribute EventHandler onended;
-           [SetterThrows]
-           attribute EventHandler onerror;
-           [SetterThrows]
-           attribute EventHandler onfocus;
-           [SetterThrows]
-           attribute EventHandler oninput;
-           [SetterThrows]
-           attribute EventHandler oninvalid;
-           [SetterThrows]
-           attribute EventHandler onkeydown;
-           [SetterThrows]
-           attribute EventHandler onkeypress;
-           [SetterThrows]
-           attribute EventHandler onkeyup;
-           [SetterThrows]
-           attribute EventHandler onload;
-           [SetterThrows]
-           attribute EventHandler onloadeddata;
-           [SetterThrows]
-           attribute EventHandler onloadedmetadata;
-           [SetterThrows]
-           attribute EventHandler onloadstart;
-           [SetterThrows]
-           attribute EventHandler onmousedown;
-           [SetterThrows]
-           attribute EventHandler onmousemove;
-           [SetterThrows]
-           attribute EventHandler onmouseout;
-           [SetterThrows]
-           attribute EventHandler onmouseover;
-           [SetterThrows]
-           attribute EventHandler onmouseup;
-  //(Not implemented)         attribute EventHandler onmousewheel;
-           [SetterThrows]
-           attribute EventHandler onpause;
-           [SetterThrows]
-           attribute EventHandler onplay;
-           [SetterThrows]
-           attribute EventHandler onplaying;
-           [SetterThrows]
-           attribute EventHandler onprogress;
-           [SetterThrows]
-           attribute EventHandler onratechange;
-           [SetterThrows]
-           attribute EventHandler onreset;
-           [SetterThrows]
-           attribute EventHandler onscroll;
-           [SetterThrows]
-           attribute EventHandler onseeked;
-           [SetterThrows]
-           attribute EventHandler onseeking;
-           [SetterThrows]
-           attribute EventHandler onselect;
-           [SetterThrows]
-           attribute EventHandler onshow;
-           [SetterThrows]
-           attribute EventHandler onstalled;
-           [SetterThrows]
-           attribute EventHandler onsubmit;
-           [SetterThrows]
-           attribute EventHandler onsuspend;
-           [SetterThrows]
-           attribute EventHandler ontimeupdate;
-           [SetterThrows]
-           attribute EventHandler onvolumechange;
-           [SetterThrows]
-           attribute EventHandler onwaiting;
-
   // special event handler IDL attributes that only apply to Document objects
   [LenientThis, SetterThrows] attribute EventHandler onreadystatechange;
 
   // Gecko extensions?
   [LenientThis, SetterThrows] attribute EventHandler onmouseenter;
   [LenientThis, SetterThrows] attribute EventHandler onmouseleave;
-  [SetterThrows] attribute EventHandler onmozfullscreenchange;
-  [SetterThrows] attribute EventHandler onmozfullscreenerror;
-  [SetterThrows] attribute EventHandler onmozpointerlockchange;
-  [SetterThrows] attribute EventHandler onmozpointerlockerror;
   [SetterThrows] attribute EventHandler onwheel;
   [SetterThrows] attribute EventHandler oncopy;
   [SetterThrows] attribute EventHandler oncut;
@@ -318,12 +204,10 @@ partial interface Document {
   void mozSetImageElement(DOMString aImageElementId,
                           Element? aImageElement);
 
-/*
 };
 
-http://dvcs.w3.org/hg/fullscreen/raw-file/tip/Overview.html#api
+// http://dvcs.w3.org/hg/fullscreen/raw-file/tip/Overview.html#api
 partial interface Document {
-*/
   // Note: Per spec the 'S' in these two is lowercase, but the "Moz"
   // versions hve it uppercase.
   readonly attribute boolean mozFullScreenEnabled;
@@ -335,30 +219,24 @@ partial interface Document {
   // Gecko-specific fullscreen bits
   readonly attribute boolean mozFullScreen;
   void mozCancelFullScreen();
-/*
 };
 
-http://dvcs.w3.org/hg/pointerlock/raw-file/default/index.html#extensions-to-the-document-interface
+// http://dvcs.w3.org/hg/pointerlock/raw-file/default/index.html#extensions-to-the-document-interface
 partial interface Document {
-*/
     readonly attribute Element? mozPointerLockElement;
     void mozExitPointerLock ();
-/*
 };
 
-http://dvcs.w3.org/hg/webperf/raw-file/tip/specs/PageVisibility/Overview.html#sec-document-interface
+// http://dvcs.w3.org/hg/webperf/raw-file/tip/specs/PageVisibility/Overview.html#sec-document-interface
 partial interface Document {
-*/
   readonly attribute boolean hidden;
   readonly attribute boolean mozHidden;
   readonly attribute VisibilityState visibilityState;
   readonly attribute VisibilityState mozVisibilityState;
-/*
 };
 
-http://dev.w3.org/csswg/cssom/#extensions-to-the-document-interface
+// http://dev.w3.org/csswg/cssom/#extensions-to-the-document-interface
 partial interface Document {
-*/
     [Constant]
     readonly attribute StyleSheetList styleSheets;
     attribute DOMString? selectedStyleSheetSet;
@@ -367,28 +245,23 @@ partial interface Document {
     [Constant]
     readonly attribute DOMStringList styleSheetSets;
     void enableStyleSheetsForSet (DOMString? name);
-/*
 };
 
-http://dev.w3.org/csswg/cssom-view/#extensions-to-the-document-interface
+// http://dev.w3.org/csswg/cssom-view/#extensions-to-the-document-interface
 partial interface Document {
-*/
     Element? elementFromPoint (float x, float y);
-    //(Not implemented)CaretPosition? caretPositionFromPoint (float x, float y);
-/*
+
+    CaretPosition? caretPositionFromPoint (float x, float y);
 };
 
-http://dvcs.w3.org/hg/undomanager/raw-file/tip/undomanager.html
+// http://dvcs.w3.org/hg/undomanager/raw-file/tip/undomanager.html
 partial interface Document {
-*/
     [Pref="dom.undo_manager.enabled"]
     readonly attribute UndoManager? undoManager;
-/*
 };
 
-http://dev.w3.org/2006/webapi/selectors-api2/#interface-definitions
+// http://dev.w3.org/2006/webapi/selectors-api2/#interface-definitions
 partial interface Document {
-*/
   [Throws]
   Element?  querySelector(DOMString selectors);
   [Throws]
@@ -396,20 +269,15 @@ partial interface Document {
 
   //(Not implemented)Element?  find(DOMString selectors, optional (Element or sequence<Node>)? refNodes);
   //(Not implemented)NodeList  findAll(DOMString selectors, optional (Element or sequence<Node>)? refNodes);
-/*};
+};
 
-  Mozilla extensions of various sorts
-*/
-
+//  Mozilla extensions of various sorts
+partial interface Document {
   // nsIDOMDocumentXBL.  Wish we could make these [ChromeOnly], but
   // that would likely break bindings running with the page principal.
   NodeList? getAnonymousNodes(Element elt);
   Element? getAnonymousElementByAttribute(Element elt, DOMString attrName,
                                           DOMString attrValue);
-  [Throws]
-  void addBinding(Element elt, DOMString bindingURL);
-  [Throws]
-  void removeBinding(Element elt, DOMString bindingURL);
   Element? getBindingParent(Node node);
   [Throws]
   void loadBindingDocument(DOMString documentURL);
@@ -466,3 +334,5 @@ partial interface Document {
 };
 
 Document implements XPathEvaluator;
+Document implements GlobalEventHandlers;
+Document implements NodeEventHandlers;

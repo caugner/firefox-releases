@@ -19,7 +19,7 @@
 #include "nsDOMAttributeMap.h"
 #include "nsIAtom.h"
 #include "nsINodeInfo.h"
-#include "nsIDocument.h"
+#include "nsIDocumentInlines.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMDocument.h"
 #include "nsIContentIterator.h"
@@ -88,7 +88,6 @@
 #include "nsGenericHTMLElement.h"
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
-#include "nsIEditorDocShell.h"
 #include "nsEventDispatcher.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsIControllers.h"
@@ -227,9 +226,9 @@ nsIContent::GetEditingHost()
   }
 
   nsIContent* content = this;
-  for (dom::Element* parent = GetElementParent();
+  for (dom::Element* parent = GetParentElement();
        parent && parent->HasFlag(NODE_IS_EDITABLE);
-       parent = content->GetElementParent()) {
+       parent = content->GetParentElement()) {
     content = parent;
   }
   return content->AsElement();
@@ -843,6 +842,43 @@ nsIContent::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
   return NS_OK;
 }
 
+bool
+nsIContent::GetAttr(int32_t aNameSpaceID, nsIAtom* aName,
+                    nsAString& aResult) const
+{
+  if (IsElement()) {
+    return AsElement()->GetAttr(aNameSpaceID, aName, aResult);
+  }
+  aResult.Truncate();
+  return false;
+}
+
+bool
+nsIContent::HasAttr(int32_t aNameSpaceID, nsIAtom* aName) const
+{
+  return IsElement() && AsElement()->HasAttr(aNameSpaceID, aName);
+}
+
+bool
+nsIContent::AttrValueIs(int32_t aNameSpaceID,
+                        nsIAtom* aName,
+                        const nsAString& aValue,
+                        nsCaseTreatment aCaseSensitive) const
+{
+  return IsElement() &&
+    AsElement()->AttrValueIs(aNameSpaceID, aName, aValue, aCaseSensitive);
+}
+
+bool
+nsIContent::AttrValueIs(int32_t aNameSpaceID,
+                        nsIAtom* aName,
+                        nsIAtom* aValue,
+                        nsCaseTreatment aCaseSensitive) const
+{
+  return IsElement() &&
+    AsElement()->AttrValueIs(aNameSpaceID, aName, aValue, aCaseSensitive);
+}
+
 const nsAttrValue*
 FragmentOrElement::DoGetClasses() const
 {
@@ -962,8 +998,6 @@ FragmentOrElement::FireNodeInserted(nsIDocument* aDoc,
 //----------------------------------------------------------------------
 
 // nsISupports implementation
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(FragmentOrElement)
 
 #define SUBTREE_UNBINDINGS_PER_RUNNABLE 500
 
@@ -1666,6 +1700,7 @@ NS_INTERFACE_MAP_BEGIN(FragmentOrElement)
   NS_INTERFACE_MAP_ENTRY(nsIContent)
   NS_INTERFACE_MAP_ENTRY(nsINode)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventTarget)
+  NS_INTERFACE_MAP_ENTRY(mozilla::dom::EventTarget)
   NS_INTERFACE_MAP_ENTRY_TEAROFF(nsISupportsWeakReference,
                                  new nsNodeSupportsWeakRefTearoff(this))
   NS_INTERFACE_MAP_ENTRY_TEAROFF(nsIDOMNodeSelector,

@@ -14,16 +14,10 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.entity.BufferedHttpEntity;
 
 import android.content.ContentResolver;
-import android.content.ContentValues;
 import android.content.Context;
-import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
-import android.database.sqlite.SQLiteQueryBuilder;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.Drawable;
 import android.net.http.AndroidHttpClient;
 import android.os.AsyncTask;
 import android.support.v4.util.LruCache;
@@ -249,8 +243,7 @@ public class Favicons {
         // Runs in background thread
         private Bitmap downloadFavicon(URL faviconUrl) {
             if (mFaviconUrl.startsWith("jar:jar:")) {
-                BitmapDrawable d = GeckoJarReader.getBitmapDrawable(mContext.getResources(), mFaviconUrl);
-                return d.getBitmap();
+                return GeckoJarReader.getBitmap(mContext.getResources(), mFaviconUrl);
             }
 
             URI uri;

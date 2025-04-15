@@ -71,11 +71,6 @@ endif
 # Don't use STL wrappers when compiling Google code.
 STL_FLAGS =
 
-# Work around the fact that Google codebases don't compile cleanly
-# with -pedantic.
-OS_CFLAGS := $(filter-out -pedantic,$(OS_CFLAGS))
-OS_CXXFLAGS := $(filter-out -pedantic,$(OS_CXXFLAGS))
-
 # Skip Mozilla-specific include locations.
 # Specific GYP files can add them back by adding
 # $(DIST)/include to their includes.
@@ -377,7 +372,7 @@ class MakefileGenerator(object):
     WriteMakefile(output_file, data, build_file, depth, top,
                   # we set srcdir up one directory, since the subdir
                   # doesn't actually exist in the source directory
-                  swapslashes(os.path.join(top, self.relative_srcdir, os.path.split(rel_path)[0])),
+                  swapslashes(os.path.normpath(os.path.join(top, self.relative_srcdir, os.path.split(rel_path)[0]))),
                   self.relative_srcdir,
                   self.common_mk_path)
     return True

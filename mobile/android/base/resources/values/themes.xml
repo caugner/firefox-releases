@@ -5,7 +5,7 @@
 
 <resources>
 
-    <style name="Gecko" parent="@android:style/Theme">
+    <style name="Gecko" parent="@android:style/Theme.Light">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowContentOverlay">@null</item>
     </style>
@@ -37,7 +37,7 @@
     </style>
 
     <style name="Gecko.App">
-        <item name="android:windowBackground">@drawable/abouthome_bg_repeat</item>
+        <item name="android:windowBackground">@color/background_normal</item>
     </style>
 
     <style name="Gecko.Light.AwesomeBar"/>

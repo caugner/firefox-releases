@@ -1050,7 +1050,7 @@ private:
       mIsText(false), mIsGeneratedContent(false),
       mIsRootPopupgroup(false), mIsAllInline(false), mIsBlock(false),
       mHasInlineEnds(false), mIsPopup(false),
-      mIsLineParticipant(false)
+      mIsLineParticipant(false), mIsForSVGAElement(false)
     {}
     ~FrameConstructionItem() {
       if (mIsGeneratedContent) {
@@ -1128,6 +1128,8 @@ private:
     bool mIsPopup;
     // Whether this item should be treated as a line participant
     bool mIsLineParticipant;
+    // Whether this item is for an SVG <a> element
+    bool mIsForSVGAElement;
 
     // Child frame construction items.
     FrameConstructionItemList mChildItems;
@@ -1277,6 +1279,10 @@ private:
 #define ITEM_ALLOW_PAGE_BREAK 0x2
   /* The item is a generated content item. */
 #define ITEM_IS_GENERATED_CONTENT 0x4
+  /* The item is within an SVG text block frame. */
+#define ITEM_IS_WITHIN_SVG_TEXT 0x8
+  /* The item allows items to be created for SVG <textPath> children. */
+#define ITEM_ALLOWS_TEXT_PATH_CHILD 0x10
   // The guts of AddFrameConstructionItems
   // aParentFrame might be null.  If it is, that means it was an
   // inline frame.
@@ -1386,6 +1392,8 @@ private:
                                                   nsIAtom* aTag,
                                                   int32_t aNameSpaceID,
                                                   nsIFrame* aParentFrame,
+                                                  bool aIsWithinSVGText,
+                                                  bool aAllowsTextPathChild,
                                                   nsStyleContext* aStyleContext);
 
   /* Not static because it does PropagateScrollToViewport.  If this
@@ -1471,9 +1479,9 @@ public:
     FIXED_POS
   };
   nsIFrame* GetAbsoluteContainingBlock(nsIFrame* aFrame, ContainingBlockType aType);
-private:
   nsIFrame* GetFloatContainingBlock(nsIFrame* aFrame);
 
+private:
   nsIContent* PropagateScrollToViewport();
 
   // Build a scroll frame: 
@@ -1639,7 +1647,9 @@ private:
    * FrameConstructionItems and set its mIsAllInline flag appropriately.
    */
   void BuildInlineChildItems(nsFrameConstructorState& aState,
-                             FrameConstructionItem& aParentItem);
+                             FrameConstructionItem& aParentItem,
+                             bool aItemIsWithinSVGText,
+                             bool aItemAllowsTextPathChild);
 
   // Determine whether we need to wipe out what we just did and start over
   // because we're doing something like adding block kids to an inline frame

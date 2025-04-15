@@ -65,8 +65,6 @@ private:
   NS_DECL_NSINAVBOOKMARKOBSERVER                                        \
   NS_IMETHOD OnTitleChanged(nsIURI* aURI, const nsAString& aPageTitle,  \
                             const nsACString& aGUID);                   \
-  NS_IMETHOD OnBeforeDeleteURI(nsIURI *aURI, const nsACString& aGUID,   \
-                               uint16_t aReason);                       \
   NS_IMETHOD OnDeleteURI(nsIURI *aURI, const nsACString& aGUID,         \
                          uint16_t aReason);                             \
   NS_IMETHOD OnClearHistory();                                          \
@@ -303,8 +301,7 @@ public:
   }
   static bool IsTypeURI(uint32_t type) {
     return (type == nsINavHistoryResultNode::RESULT_TYPE_URI ||
-            type == nsINavHistoryResultNode::RESULT_TYPE_VISIT ||
-            type == nsINavHistoryResultNode::RESULT_TYPE_FULL_VISIT);
+            type == nsINavHistoryResultNode::RESULT_TYPE_VISIT);
   }
   bool IsURI() {
     uint32_t type;
@@ -312,8 +309,7 @@ public:
     return IsTypeURI(type);
   }
   static bool IsTypeVisit(uint32_t type) {
-    return (type == nsINavHistoryResultNode::RESULT_TYPE_VISIT ||
-            type == nsINavHistoryResultNode::RESULT_TYPE_FULL_VISIT);
+    return type == nsINavHistoryResultNode::RESULT_TYPE_VISIT;
   }
   bool IsVisit() {
     uint32_t type;
@@ -384,7 +380,7 @@ public:
   bool mHidden;
 
   // Transition type used when this node represents a single visit.
-  int32_t mTransitionType;
+  uint32_t mTransitionType;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsNavHistoryResultNode, NS_NAVHISTORYRESULTNODE_IID)
@@ -413,39 +409,6 @@ public:
 public:
 
   int64_t mSessionId;
-};
-
-
-// nsNavHistoryFullVisitResultNode
-
-#define NS_IMPLEMENT_FULLVISITRESULT \
-  NS_IMPLEMENT_VISITRESULT \
-  NS_IMETHOD GetVisitId(int64_t *aVisitId) \
-    { *aVisitId = mVisitId; return NS_OK; } \
-  NS_IMETHOD GetReferringVisitId(int64_t *aReferringVisitId) \
-    { *aReferringVisitId = mReferringVisitId; return NS_OK; } \
-  NS_IMETHOD GetTransitionType(int32_t *aTransitionType) \
-    { *aTransitionType = mTransitionType; return NS_OK; }
-
-class nsNavHistoryFullVisitResultNode : public nsNavHistoryVisitResultNode,
-                                        public nsINavHistoryFullVisitResultNode
-{
-public:
-  nsNavHistoryFullVisitResultNode(
-    const nsACString& aURI, const nsACString& aTitle, uint32_t aAccessCount,
-    PRTime aTime, const nsACString& aIconURI, int64_t aSession,
-    int64_t aVisitId, int64_t aReferringVisitId, int32_t aTransitionType);
-
-  NS_DECL_ISUPPORTS_INHERITED
-  NS_FORWARD_COMMON_RESULTNODE_TO_BASE
-  NS_IMETHOD GetType(uint32_t* type)
-    { *type = nsNavHistoryResultNode::RESULT_TYPE_FULL_VISIT; return NS_OK; }
-  NS_IMPLEMENT_FULLVISITRESULT
-
-public:
-  int64_t mVisitId;
-  int64_t mReferringVisitId;
-  int32_t mTransitionType;
 };
 
 
@@ -633,8 +596,6 @@ public:
   }
   nsNavHistoryResultNode* FindChildURI(const nsACString& aSpec,
                                        uint32_t* aNodeIndex);
-  nsNavHistoryContainerResultNode* FindChildContainerByName(const nsACString& aTitle,
-                                                            uint32_t* aNodeIndex);
   // returns the index of the given node, -1 if not found
   int32_t FindChild(nsNavHistoryResultNode* aNode)
     { return mChildren.IndexOf(aNode); }
@@ -645,18 +606,18 @@ public:
                              bool aIsTemporary = false,
                              bool aIgnoreDuplicates = false);
   bool EnsureItemPosition(uint32_t aIndex);
-  void MergeResults(nsCOMArray<nsNavHistoryResultNode>* aNodes);
-  nsresult ReplaceChildURIAt(uint32_t aIndex, nsNavHistoryResultNode* aNode);
+
   nsresult RemoveChildAt(int32_t aIndex, bool aIsTemporary = false);
 
   void RecursiveFindURIs(bool aOnlyOne,
                          nsNavHistoryContainerResultNode* aContainer,
                          const nsCString& aSpec,
                          nsCOMArray<nsNavHistoryResultNode>* aMatches);
-  nsresult UpdateURIs(bool aRecursive, bool aOnlyOne, bool aUpdateSort,
-                      const nsCString& aSpec,
-                      nsresult (*aCallback)(nsNavHistoryResultNode*,void*, nsNavHistoryResult*),
-                      void* aClosure);
+  bool UpdateURIs(bool aRecursive, bool aOnlyOne, bool aUpdateSort,
+                  const nsCString& aSpec,
+                  nsresult (*aCallback)(nsNavHistoryResultNode*, const void*,
+                                        const nsNavHistoryResult*),
+                  const void* aClosure);
   nsresult ChangeTitles(nsIURI* aURI, const nsACString& aNewTitle,
                         bool aRecursive, bool aOnlyOne);
 

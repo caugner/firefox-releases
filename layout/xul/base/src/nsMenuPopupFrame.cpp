@@ -49,6 +49,7 @@
 #include "nsDisplayList.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
+#include <algorithm>
 
 using namespace mozilla;
 
@@ -315,11 +316,11 @@ nsMenuPopupFrame::CreateWidgetForView(nsView* aView)
 uint8_t
 nsMenuPopupFrame::GetShadowStyle()
 {
-  uint8_t shadow = GetStyleUIReset()->mWindowShadow;
+  uint8_t shadow = StyleUIReset()->mWindowShadow;
   if (shadow != NS_STYLE_WINDOW_SHADOW_DEFAULT)
     return shadow;
 
-  switch (GetStyleDisplay()->mAppearance) {
+  switch (StyleDisplay()->mAppearance) {
     case NS_THEME_TOOLTIP:
       return NS_STYLE_WINDOW_SHADOW_TOOLTIP;
     case NS_THEME_MENUPOPUP:
@@ -917,7 +918,7 @@ nsMenuPopupFrame::AdjustPositionForAnchorAlign(nsRect& anchorRect,
   // popup, move the popup up by the height. In addition, account for the
   // margins of the popup on the edge on which it is aligned.
   nsMargin margin(0, 0, 0, 0);
-  GetStyleMargin()->GetMargin(margin);
+  StyleMargin()->GetMargin(margin);
   switch (popupAlign) {
     case POPUPALIGNMENT_TOPRIGHT:
       pnt.MoveBy(-mRect.width - margin.right, margin.top);
@@ -1070,7 +1071,7 @@ nsMenuPopupFrame::FlipOrResize(nscoord& aScreenPoint, nscoord aSize,
   if (popupSize <= 0 || aSize < popupSize) {
     popupSize = aSize;
   }
-  return NS_MIN(popupSize, aScreenEnd - aScreenPoint);
+  return std::min(popupSize, aScreenEnd - aScreenPoint);
 }
 
 nsresult
@@ -1142,7 +1143,7 @@ nsMenuPopupFrame::SetPopupPosition(nsIFrame* aAnchorFrame, bool aIsMove)
   FlipStyle hFlip = FlipStyle_None, vFlip = FlipStyle_None;
 
   nsMargin margin(0, 0, 0, 0);
-  GetStyleMargin()->GetMargin(margin);
+  StyleMargin()->GetMargin(margin);
 
   // the screen rectangle of the root frame, in dev pixels.
   nsRect rootScreenRect = rootFrame->GetScreenRectInAppUnits();
@@ -1327,8 +1328,8 @@ nsMenuPopupFrame::GetConstraintRect(const nsRect& aAnchorRect,
     // anchor is located.
     nsRect rect = mInContentShell ? aRootScreenRect : aAnchorRect;
     // nsIScreenManager::ScreenForRect wants the coordinates in CSS pixels
-    int32_t width = NS_MAX(1, nsPresContext::AppUnitsToIntCSSPixels(rect.width));
-    int32_t height = NS_MAX(1, nsPresContext::AppUnitsToIntCSSPixels(rect.height));
+    int32_t width = std::max(1, nsPresContext::AppUnitsToIntCSSPixels(rect.width));
+    int32_t height = std::max(1, nsPresContext::AppUnitsToIntCSSPixels(rect.height));
     sm->ScreenForRect(nsPresContext::AppUnitsToIntCSSPixels(rect.x),
                       nsPresContext::AppUnitsToIntCSSPixels(rect.y),
                       width, height, getter_AddRefs(screen));
@@ -1746,17 +1747,17 @@ nsMenuPopupFrame::AttachedDismissalListener()
   mConsumeRollupEvent = nsIPopupBoxObject::ROLLUP_DEFAULT;
 }
 
-nsresult
+void
 nsMenuPopupFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                    const nsRect&           aDirtyRect,
                                    const nsDisplayListSet& aLists)
 {
   // don't pass events to drag popups
   if (aBuilder->IsForEventDelivery() && mIsDragPopup) {
-    return NS_OK;
+    return;
   }
 
-  return nsBoxFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
+  nsBoxFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
 }
 
 // helpers /////////////////////////////////////////////////////////////
@@ -1847,7 +1848,7 @@ nsMenuPopupFrame::MoveTo(int32_t aLeft, int32_t aTop, bool aUpdateAttrs)
   // using (-1, -1) as coordinates. Subtract off the margin as it will be
   // added to the position when SetPopupPosition is called.
   nsMargin margin(0, 0, 0, 0);
-  GetStyleMargin()->GetMargin(margin);
+  StyleMargin()->GetMargin(margin);
 
   // Workaround for bug 788189.  See also bug 708278 comment #25 and following.
   if (mAdjustOffsetForContextMenu) {

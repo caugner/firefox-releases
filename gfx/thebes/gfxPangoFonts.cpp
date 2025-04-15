@@ -175,8 +175,6 @@ public:
     // GetFontTable() here
     virtual nsString RealFaceName();
 
-    virtual nsString FamilyName();
-
     // This is needed to make gfxFontEntry::HasCharacter(aCh) work.
     virtual bool TestCharacterMap(uint32_t aCh)
     {
@@ -232,20 +230,6 @@ gfxFcFontEntry::RealFaceName()
     }
     // fall back to gfxFontEntry implementation (only works for sfnt fonts)
     return gfxFontEntry::RealFaceName();
-}
-
-nsString
-gfxFcFontEntry::FamilyName()
-{
-    FcChar8 *name;
-    if (!mPatterns.IsEmpty()) {
-        if (FcPatternGetString(mPatterns[0],
-                               FC_FAMILY, 0, &name) == FcResultMatch) {
-            return NS_ConvertUTF8toUTF16((const char*)name);
-        }
-    }
-    // fall back to gfxFontEntry implementation (only works for sfnt fonts)
-    return gfxFontEntry::FamilyName();
 }
 
 #ifdef MOZ_GRAPHITE
@@ -345,6 +329,12 @@ public:
         // mPatterns is an nsAutoTArray with 1 space always available, so the
         // AppendElement always succeeds.
         mPatterns[0] = aFontPattern;
+
+        FcChar8 *name;
+        if (FcPatternGetString(aFontPattern,
+                               FC_FAMILY, 0, &name) == FcResultMatch) {
+            mFamilyName = NS_ConvertUTF8toUTF16((const char*)name);
+        }
     }
 
     ~gfxSystemFcFontEntry()
@@ -791,16 +781,6 @@ public:
             MakePangoFont();
         }
         return mPangoFont;
-    }
-
-    nsString GetFamilyName() {
-        PangoFontDescription *desc = pango_font_describe(GetPangoFont());
-        const char *name = pango_font_description_get_family(desc);
-        if (name) {
-            return NS_ConvertUTF8toUTF16(name);
-        } else {
-            return GetFontEntry()->FamilyName();
-        }
     }
 
 protected:
@@ -1985,22 +1965,6 @@ gfxPangoFontGroup::GetFontAt(int32_t i)
     return GetBaseFont();
 }
 
-nsString
-gfxPangoFontGroup::GetFamilyNameAt(int32_t i)
-{
-    gfxFcFont* font = static_cast<gfxFcFont*>(GetFontAt(i));
-
-    if (font->GetFontEntry()->IsUserFont()) {
-        gfxFontFamily* family =
-            GetUserFontSet()->FindFamilyFor(font->GetFontEntry());
-        if (family) { // should never fail, but just in case...
-            return family->Name();
-        }
-    }
-
-    return font->GetFamilyName();
-}
-
 void
 gfxPangoFontGroup::UpdateFontList()
 {
@@ -2192,12 +2156,16 @@ gfxPangoFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
 
 // Sanity-check: spot-check a few constants to confirm that Thebes and
 // Pango script codes really do match
-PR_STATIC_ASSERT(MOZ_SCRIPT_COMMON    == PANGO_SCRIPT_COMMON);
-PR_STATIC_ASSERT(MOZ_SCRIPT_INHERITED == PANGO_SCRIPT_INHERITED);
-PR_STATIC_ASSERT(MOZ_SCRIPT_ARABIC    == PANGO_SCRIPT_ARABIC);
-PR_STATIC_ASSERT(MOZ_SCRIPT_LATIN     == PANGO_SCRIPT_LATIN);
-PR_STATIC_ASSERT(MOZ_SCRIPT_UNKNOWN   == PANGO_SCRIPT_UNKNOWN);
-PR_STATIC_ASSERT(MOZ_SCRIPT_NKO       == PANGO_SCRIPT_NKO);
+#define CHECK_SCRIPT_CODE(script) \
+    PR_STATIC_ASSERT(int32_t(MOZ_SCRIPT_##script) == \
+                     int32_t(PANGO_SCRIPT_##script))
+
+CHECK_SCRIPT_CODE(COMMON);
+CHECK_SCRIPT_CODE(INHERITED);
+CHECK_SCRIPT_CODE(ARABIC);
+CHECK_SCRIPT_CODE(LATIN);
+CHECK_SCRIPT_CODE(UNKNOWN);
+CHECK_SCRIPT_CODE(NKO);
 
 /**
  ** gfxFcFont

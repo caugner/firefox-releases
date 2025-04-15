@@ -79,21 +79,25 @@ public:
     void AddFontEntry(gfxFontEntry *aFontEntry) {
         nsRefPtr<gfxFontEntry> fe = aFontEntry;
         mAvailableFonts.AppendElement(fe);
+        aFontEntry->mFamilyName = Name();
         ResetCharacterMap();
     }
 
     void ReplaceFontEntry(gfxFontEntry *aOldFontEntry,
                           gfxFontEntry *aNewFontEntry) {
         uint32_t numFonts = mAvailableFonts.Length();
-        for (uint32_t i = 0; i < numFonts; i++) {
+        uint32_t i;
+        for (i = 0; i < numFonts; i++) {
             gfxFontEntry *fe = mAvailableFonts[i];
             if (fe == aOldFontEntry) {
                 // note that this may delete aOldFontEntry, if there's no
                 // other reference to it except from its family
+                aNewFontEntry->mFamilyName = Name();
                 mAvailableFonts[i] = aNewFontEntry;
                 break;
             }
         }
+        NS_ASSERTION(i < numFonts, "font entry not found in family!");
         ResetCharacterMap();
     }
 
@@ -303,6 +307,7 @@ public:
                 return mozilla::HashGeneric(principalHash,
                                             nsURIHashKey::HashKey(aKey->mURI),
                                             HashFeatures(aKey->mFontEntry->mFeatureSettings),
+                                            mozilla::HashString(aKey->mFontEntry->mFamilyName),
                                             ((uint32_t)aKey->mFontEntry->mItalic |
                                              (aKey->mFontEntry->mWeight << 1) |
                                              (aKey->mFontEntry->mStretch << 10) ) ^

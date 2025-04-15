@@ -159,7 +159,6 @@ nsXULPrototypeDocument::~nsXULPrototypeDocument()
     }
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULPrototypeDocument)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXULPrototypeDocument)
     tmp->mPrototypeWaiters.Clear();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
@@ -479,10 +478,7 @@ nsXULPrototypeDocument::Write(nsIObjectOutputStream* aStream)
         NS_ENSURE_TRUE(nodeInfo, NS_ERROR_FAILURE);
 
         nsAutoString namespaceURI;
-        tmp = nodeInfo->GetNamespaceURI(namespaceURI);
-        if (NS_FAILED(tmp)) {
-          rv = tmp;
-        }
+        nodeInfo->GetNamespaceURI(namespaceURI);
         tmp = aStream->WriteWStringZ(namespaceURI.get());
         if (NS_FAILED(tmp)) {
           rv = tmp;
@@ -723,7 +719,6 @@ nsXULPDGlobalObject::~nsXULPDGlobalObject()
 {
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULPDGlobalObject)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_0(nsXULPDGlobalObject)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsXULPDGlobalObject)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mContext)

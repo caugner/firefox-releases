@@ -38,6 +38,7 @@
     locale/browser/devtools/webConsole.dtd            (%chrome/browser/devtools/webConsole.dtd)
     locale/browser/devtools/sourceeditor.properties   (%chrome/browser/devtools/sourceeditor.properties)
     locale/browser/devtools/sourceeditor.dtd          (%chrome/browser/devtools/sourceeditor.dtd)
+    locale/browser/devtools/profiler.dtd              (%chrome/browser/devtools/profiler.dtd)
     locale/browser/devtools/profiler.properties       (%chrome/browser/devtools/profiler.properties)
     locale/browser/devtools/layoutview.dtd            (%chrome/browser/devtools/layoutview.dtd)
     locale/browser/devtools/responsiveUI.properties   (%chrome/browser/devtools/responsiveUI.properties)
@@ -129,7 +130,7 @@
     locale/pdfviewer/viewer.properties             (%pdfviewer/viewer.properties)
     locale/pdfviewer/chrome.properties             (%pdfviewer/chrome.properties)
 #ifdef MOZ_WEBAPP_RUNTIME
-../webapprt/chrome/@AB_CD@.jar:
+../../webapprt/chrome/@AB_CD@.jar:
 % locale webapprt @AB_CD@ %locale/webapprt/
     locale/webapprt/webapp.dtd                     (%webapprt/webapp.dtd)
     locale/webapprt/webapp.properties              (%webapprt/webapp.properties)

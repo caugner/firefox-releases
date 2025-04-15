@@ -256,6 +256,11 @@ pref("browser.search.jarURIs", "chrome://browser/locale/searchplugins/");
 // tell the search service that we don't really expose the "current engine"
 pref("browser.search.noCurrentEngine", true);
 
+#ifdef MOZ_OFFICIAL_BRANDING
+// {moz:official} expands to "official"
+pref("browser.search.official", true);
+#endif
+
 // enable xul error pages
 pref("browser.xul.error_pages.enabled", true);
 
@@ -540,6 +545,7 @@ pref("services.sync.prefs.sync.lightweightThemes.usedThemes", true);
 pref("services.sync.prefs.sync.network.cookie.cookieBehavior", true);
 pref("services.sync.prefs.sync.permissions.default.image", true);
 pref("services.sync.prefs.sync.privacy.donottrackheader.enabled", true);
+pref("services.sync.prefs.sync.privacy.donottrackheader.value", true);
 pref("services.sync.prefs.sync.signon.rememberSignons", true);
 #endif
 

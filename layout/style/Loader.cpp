@@ -18,6 +18,7 @@
 
 #include "mozilla/Util.h"
 
+#include "mozilla/dom/Element.h"
 #include "mozilla/css/Loader.h"
 #include "nsIRunnable.h"
 #include "nsIUnicharStreamLoader.h"
@@ -69,6 +70,8 @@
 
 #include "mozilla/dom/EncodingUtils.h"
 using mozilla::dom::EncodingUtils;
+
+using namespace mozilla::dom;
 
 /**
  * OVERALL ARCHITECTURE
@@ -669,9 +672,8 @@ SheetLoadData::OnDetermineCharset(nsIUnicharStreamLoader* aLoader,
   if (nsContentUtils::CheckForBOM((const unsigned char*)aSegment.BeginReading(),
                                   aSegment.Length(),
                                   aCharset)) {
-    // aCharset is now either "UTF-16" or "UTF-8".
-    // The UTF-16 decoder will re-sniff and swallow the BOM.
-    // The UTF-8 decoder will swallow the BOM.
+    // aCharset is now either "UTF-16BE", "UTF-16BE" or "UTF-8"
+    // which will swallow the BOM.
     mCharset.Assign(aCharset);
 #ifdef PR_LOGGING
     LOG(("  Setting from BOM to: %s", PromiseFlatCString(aCharset).get()));
@@ -1136,7 +1138,7 @@ Loader::CreateSheet(nsIURI* aURI,
       // Then alternate sheets
       if (!sheet) {
         aSheetState = eSheetPending;
-        SheetLoadData* loadData = nullptr;
+        loadData = nullptr;
         mPendingDatas.Get(&key, &loadData);
         if (loadData) {
           sheet = loadData->mSheet;
@@ -1206,6 +1208,7 @@ Loader::PrepareSheet(nsCSSStyleSheet* aSheet,
                      const nsSubstring& aTitle,
                      const nsSubstring& aMediaString,
                      nsMediaList* aMediaList,
+                     Element* aScopeElement,
                      bool isAlternate)
 {
   NS_PRECONDITION(aSheet, "Must have a sheet!");
@@ -1232,6 +1235,7 @@ Loader::PrepareSheet(nsCSSStyleSheet* aSheet,
 
   aSheet->SetTitle(aTitle);
   aSheet->SetEnabled(! isAlternate);
+  aSheet->SetScopeElement(aScopeElement);
   return NS_OK;
 }
 
@@ -1794,6 +1798,7 @@ Loader::LoadInlineStyle(nsIContent* aElement,
                         uint32_t aLineNumber,
                         const nsAString& aTitle,
                         const nsAString& aMedia,
+                        Element* aScopeElement,
                         nsICSSLoaderObserver* aObserver,
                         bool* aCompleted,
                         bool* aIsAlternate)
@@ -1826,7 +1831,8 @@ Loader::LoadInlineStyle(nsIContent* aElement,
 
   LOG(("  Sheet is alternate: %d", *aIsAlternate));
 
-  rv = PrepareSheet(sheet, aTitle, aMedia, nullptr, *aIsAlternate);
+  rv = PrepareSheet(sheet, aTitle, aMedia, nullptr, aScopeElement,
+                    *aIsAlternate);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = InsertSheetInDoc(sheet, aElement, mDocument);
@@ -1899,7 +1905,7 @@ Loader::LoadStyleLink(nsIContent* aElement,
 
   LOG(("  Sheet is alternate: %d", *aIsAlternate));
 
-  rv = PrepareSheet(sheet, aTitle, aMedia, nullptr, *aIsAlternate);
+  rv = PrepareSheet(sheet, aTitle, aMedia, nullptr, nullptr, *aIsAlternate);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = InsertSheetInDoc(sheet, aElement, mDocument);
@@ -2057,7 +2063,7 @@ Loader::LoadChildSheet(nsCSSStyleSheet* aParentSheet,
                    false, empty, state, &isAlternate, getter_AddRefs(sheet));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = PrepareSheet(sheet, empty, empty, aMedia, isAlternate);
+  rv = PrepareSheet(sheet, empty, empty, aMedia, nullptr, isAlternate);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = InsertChildSheet(sheet, aParentSheet, aParentRule);
@@ -2168,7 +2174,7 @@ Loader::InternalLoadNonDocumentSheet(nsIURI* aURL,
                    empty, state, &isAlternate, getter_AddRefs(sheet));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = PrepareSheet(sheet, empty, empty, nullptr, isAlternate);
+  rv = PrepareSheet(sheet, empty, empty, nullptr, nullptr, isAlternate);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (state == eSheetComplete) {

@@ -30,6 +30,7 @@
 #include "mozilla/StandardInteger.h"
 
 #include <stdlib.h>
+#include <algorithm>
 
 class nsIPresShell;
 class nsIContent;
@@ -300,13 +301,12 @@ public:
   /**
    * Display the caret if needed.
    */
-  nsresult DisplayCaret(nsIFrame* aFrame, const nsRect& aDirtyRect,
-      nsDisplayList* aList) {
+  void DisplayCaret(nsIFrame* aFrame, const nsRect& aDirtyRect,
+                    nsDisplayList* aList) {
     nsIFrame* frame = GetCaretFrame();
-    if (aFrame != frame) {
-      return NS_OK;
+    if (aFrame == frame) {
+      frame->DisplayCaret(this, aDirtyRect, aList);
     }
-    return frame->DisplayCaret(this, aDirtyRect, aList);
   }
   /**
    * Get the frame that the caret is supposed to draw in.
@@ -1055,6 +1055,8 @@ public:
    * For debugging and stuff
    */
   virtual const char* Name() = 0;
+
+  virtual void WriteDebugInfo(FILE *aOutput) {}
 #endif
 
   nsDisplayItem* GetAbove() { return mAbove; }
@@ -1188,22 +1190,20 @@ public:
    * Append a new item to the top of the list. If the item is null we return
    * NS_ERROR_OUT_OF_MEMORY. The intended usage is AppendNewToTop(new ...);
    */
-  nsresult AppendNewToTop(nsDisplayItem* aItem) {
-    if (!aItem)
-      return NS_ERROR_OUT_OF_MEMORY;
-    AppendToTop(aItem);
-    return NS_OK;
+  void AppendNewToTop(nsDisplayItem* aItem) {
+    if (aItem) {
+      AppendToTop(aItem);
+    }
   }
   
   /**
    * Append a new item to the bottom of the list. If the item is null we return
    * NS_ERROR_OUT_OF_MEMORY. The intended usage is AppendNewToBottom(new ...);
    */
-  nsresult AppendNewToBottom(nsDisplayItem* aItem) {
-    if (!aItem)
-      return NS_ERROR_OUT_OF_MEMORY;
-    AppendToBottom(aItem);
-    return NS_OK;
+  void AppendNewToBottom(nsDisplayItem* aItem) {
+    if (aItem) {
+      AppendToBottom(aItem);
+    }
   }
   
   /**
@@ -1389,7 +1389,8 @@ public:
     PAINT_USE_WIDGET_LAYERS = 0x01,
     PAINT_FLUSH_LAYERS = 0x02,
     PAINT_EXISTING_TRANSACTION = 0x04,
-    PAINT_NO_COMPOSITE = 0x08
+    PAINT_NO_COMPOSITE = 0x08,
+    PAINT_NO_CLEAR_INVALIDATIONS = 0x10
   };
   void PaintRoot(nsDisplayListBuilder* aBuilder, nsRenderingContext* aCtx,
                  uint32_t aFlags) const;
@@ -1675,10 +1676,8 @@ protected:
   PR_BEGIN_MACRO                                                              \
     if (!aBuilder->IsBackgroundOnly() && !aBuilder->IsForEventDelivery() &&   \
         PresContext()->PresShell()->IsPaintingFrameCounts()) {                \
-      nsresult _rv =                                                          \
         aLists.Outlines()->AppendNewToTop(                                    \
             new (aBuilder) nsDisplayReflowCount(aBuilder, this, _name));      \
-      NS_ENSURE_SUCCESS(_rv, _rv);                                            \
     }                                                                         \
   PR_END_MACRO
 
@@ -1686,10 +1685,8 @@ protected:
   PR_BEGIN_MACRO                                                              \
     if (!aBuilder->IsBackgroundOnly() && !aBuilder->IsForEventDelivery() &&   \
         PresContext()->PresShell()->IsPaintingFrameCounts()) {                \
-      nsresult _rv =                                                          \
         aLists.Outlines()->AppendNewToTop(                                    \
              new (aBuilder) nsDisplayReflowCount(aBuilder, this, _name, _color)); \
-      NS_ENSURE_SUCCESS(_rv, _rv);                                            \
     }                                                                         \
   PR_END_MACRO
 
@@ -1697,11 +1694,11 @@ protected:
   Macro to be used for classes that don't actually implement BuildDisplayList
  */
 #define DECL_DO_GLOBAL_REFLOW_COUNT_DSP(_class, _super)                   \
-  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,           \
-                              const nsRect&           aDirtyRect,         \
-                              const nsDisplayListSet& aLists) {           \
+  void BuildDisplayList(nsDisplayListBuilder*   aBuilder,                 \
+                        const nsRect&           aDirtyRect,               \
+                        const nsDisplayListSet& aLists) {                 \
     DO_GLOBAL_REFLOW_COUNT_DSP(#_class);                                  \
-    return _super::BuildDisplayList(aBuilder, aDirtyRect, aLists);        \
+    _super::BuildDisplayList(aBuilder, aDirtyRect, aLists);               \
   }
 
 #else // MOZ_REFLOW_PERF_DSP && MOZ_REFLOW_PERF
@@ -1903,6 +1900,10 @@ public:
 
   static nsRegion GetInsideClipRegion(nsDisplayItem* aItem, nsPresContext* aPresContext, uint8_t aClip,
                                       const nsRect& aRect, bool* aSnap);
+
+#ifdef MOZ_DUMP_PAINTING
+  virtual void WriteDebugInfo(FILE *aOutput);
+#endif
 protected:
   typedef class mozilla::layers::ImageContainer ImageContainer;
   typedef class mozilla::layers::ImageLayer ImageLayer;
@@ -1959,6 +1960,14 @@ public:
   }
 
   NS_DISPLAY_DECL_NAME("BackgroundColor", TYPE_BACKGROUND_COLOR)
+#ifdef MOZ_DUMP_PAINTING
+  virtual void WriteDebugInfo(FILE *aOutput) {
+    fprintf(aOutput, "(rgba %d,%d,%d,%d)", 
+            NS_GET_R(mColor), NS_GET_G(mColor),
+            NS_GET_B(mColor), NS_GET_A(mColor));
+
+  }
+#endif
 
 protected:
   const nsStyleBackground* mBackgroundStyle;
@@ -2286,6 +2295,11 @@ public:
     // We don't need to compute an invalidation region since we have LayerTreeInvalidation
   }
   NS_DISPLAY_DECL_NAME("Opacity", TYPE_OPACITY)
+#ifdef MOZ_DUMP_PAINTING
+  virtual void WriteDebugInfo(FILE *aOutput) {
+    fprintf(aOutput, "(opacity %f)", mFrame->StyleDisplay()->mOpacity);
+  }
+#endif
 
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder);
 };
@@ -2911,12 +2925,12 @@ public:
       nsRect r = aItem.GetUnderlyingFrame()->GetScrollableOverflowRect() +
                  aItem.ToReferenceFrame();
       mX = aLeftEdge > 0 ? r.x + aLeftEdge : nscoord_MIN;
-      mXMost = aRightEdge > 0 ? NS_MAX(r.XMost() - aRightEdge, mX) : nscoord_MAX;
+      mXMost = aRightEdge > 0 ? std::max(r.XMost() - aRightEdge, mX) : nscoord_MAX;
     }
     void Intersect(nscoord* aX, nscoord* aWidth) const {
       nscoord xmost1 = *aX + *aWidth;
-      *aX = NS_MAX(*aX, mX);
-      *aWidth = NS_MAX(NS_MIN(xmost1, mXMost) - *aX, 0);
+      *aX = std::max(*aX, mX);
+      *aWidth = std::max(std::min(xmost1, mXMost) - *aX, 0);
     }
     nscoord mX;
     nscoord mXMost;

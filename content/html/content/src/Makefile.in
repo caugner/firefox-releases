@@ -31,20 +31,40 @@ EXPORTS_NAMESPACES = mozilla/dom
 
 EXPORTS_mozilla/dom = \
 		HTMLAnchorElement.h \
+		HTMLAreaElement.h \
 		HTMLBodyElement.h \
+		HTMLBRElement.h \
+		HTMLButtonElement.h \
 		HTMLDataListElement.h \
 		HTMLDivElement.h \
+		HTMLFieldSetElement.h \
 		HTMLFontElement.h \
+		HTMLFrameElement.h \
 		HTMLFrameSetElement.h \
 		HTMLHeadingElement.h \
+		HTMLHRElement.h \
 		HTMLImageElement.h \
 		HTMLLabelElement.h \
+		HTMLLegendElement.h \
 		HTMLLIElement.h \
+		HTMLLinkElement.h \
+		HTMLMapElement.h \
+		HTMLMenuElement.h \
+		HTMLMenuItemElement.h \
+		HTMLMetaElement.h \
+		HTMLMeterElement.h \
+		HTMLModElement.h \
+		HTMLOptionElement.h \
+		HTMLOptGroupElement.h \
+		HTMLOutputElement.h \
 		HTMLParagraphElement.h \
 		HTMLPreElement.h \
+		HTMLProgressElement.h \
 		HTMLScriptElement.h \
+		HTMLSharedElement.h \
 		HTMLSharedListElement.h \
 		HTMLSpanElement.h \
+		HTMLStyleElement.h \
 		HTMLTableCaptionElement.h \
 		HTMLTableCellElement.h \
 		HTMLTableColElement.h \
@@ -54,6 +74,7 @@ EXPORTS_mozilla/dom = \
 		HTMLTitleElement.h \
 		HTMLUnknownElement.h \
 		UndoManager.h \
+		ValidityState.h \
 		$(NULL)
 
 CPPSRCS		= \
@@ -66,47 +87,47 @@ CPPSRCS		= \
 		nsTextEditorState.cpp \
 		HTMLElement.cpp \
 		HTMLAnchorElement.cpp \
-		nsHTMLAreaElement.cpp \
-		nsHTMLBRElement.cpp \
+		HTMLAreaElement.cpp \
+		HTMLBRElement.cpp \
 		HTMLBodyElement.cpp \
-		nsHTMLButtonElement.cpp \
+		HTMLButtonElement.cpp \
 		HTMLCanvasElement.cpp \
 		HTMLDataListElement.cpp \
 		HTMLDivElement.cpp \
-		nsHTMLFieldSetElement.cpp \
+		HTMLFieldSetElement.cpp \
 		HTMLFontElement.cpp \
 		nsHTMLFormElement.cpp \
-		nsHTMLFrameElement.cpp \
+		HTMLFrameElement.cpp \
 		HTMLFrameSetElement.cpp \
-		nsHTMLHRElement.cpp \
+		HTMLHRElement.cpp \
 		HTMLHeadingElement.cpp \
 		nsHTMLIFrameElement.cpp \
 		HTMLImageElement.cpp \
 		nsHTMLInputElement.cpp \
 		HTMLLIElement.cpp \
 		HTMLLabelElement.cpp \
-		nsHTMLLegendElement.cpp \
-		nsHTMLLinkElement.cpp \
-		nsHTMLMapElement.cpp \
-		nsHTMLMenuElement.cpp \
-		nsHTMLMenuItemElement.cpp \
-		nsHTMLMetaElement.cpp \
-		nsHTMLMeterElement.cpp \
-		nsHTMLModElement.cpp \
-		nsHTMLObjectElement.cpp \
+		HTMLLegendElement.cpp \
+		HTMLLinkElement.cpp \
+		HTMLMapElement.cpp \
+		HTMLMenuElement.cpp \
+		HTMLMenuItemElement.cpp \
+		HTMLMetaElement.cpp \
+		HTMLMeterElement.cpp \
+		HTMLModElement.cpp \
+		HTMLObjectElement.cpp \
 		nsHTMLSharedObjectElement.cpp \
-		nsHTMLOptionElement.cpp \
-		nsHTMLOptGroupElement.cpp \
-		nsHTMLOutputElement.cpp \
+		HTMLOptionElement.cpp \
+		HTMLOptGroupElement.cpp \
+		HTMLOutputElement.cpp \
 		HTMLParagraphElement.cpp \
 		HTMLPreElement.cpp \
-		nsHTMLProgressElement.cpp \
+		HTMLProgressElement.cpp \
 		HTMLScriptElement.cpp \
 		nsHTMLSelectElement.cpp \
-		nsHTMLSharedElement.cpp \
-		HTMLSpanElement.cpp \
+		HTMLSharedElement.cpp \
 		HTMLSharedListElement.cpp \
-		nsHTMLStyleElement.cpp \
+		HTMLSpanElement.cpp \
+		HTMLStyleElement.cpp \
 		HTMLTableElement.cpp \
 		HTMLTableCaptionElement.cpp \
 		HTMLTableCellElement.cpp \
@@ -116,7 +137,7 @@ CPPSRCS		= \
 		nsHTMLTextAreaElement.cpp \
 		HTMLTitleElement.cpp \
 		HTMLUnknownElement.cpp \
-		nsDOMValidityState.cpp \
+		ValidityState.cpp \
 		nsIConstraintValidation.cpp \
 		nsRadioVisitor.cpp \
 		nsDOMStringMap.cpp \
@@ -124,12 +145,17 @@ CPPSRCS		= \
 		$(NULL)
 
 ifdef MOZ_MEDIA
+EXPORTS_mozilla/dom += \
+		HTMLSourceElement.h \
+		MediaError.h \
+		$(NULL)
+
 CPPSRCS		+= \
 		nsHTMLAudioElement.cpp \
 		nsHTMLMediaElement.cpp \
-		nsMediaError.cpp \
+		MediaError.cpp \
 		nsMediaFragmentURIParser.cpp \
-		nsHTMLSourceElement.cpp \
+		HTMLSourceElement.cpp \
 		nsTimeRanges.cpp \
 		nsHTMLVideoElement.cpp \
 		$(NULL)

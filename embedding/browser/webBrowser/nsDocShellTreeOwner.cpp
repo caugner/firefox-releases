@@ -33,7 +33,7 @@
 #include "nsIDOMElement.h"
 #include "Link.h"
 #include "mozilla/dom/Element.h"
-#include "nsIDOMSVGTitleElement.h"
+#include "mozilla/dom/SVGTitleElement.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsIFormControl.h"
@@ -214,17 +214,16 @@ nsDocShellTreeOwner::FindItemWithName(const PRUnichar* aName,
   // see bug 217886 for details
   // XXXbz what if our browser isn't targetable?  We need to handle that somehow.
   if(name.LowerCaseEqualsLiteral("_content") || name.EqualsLiteral("_main")) {
-    *aFoundItem = mWebBrowser->mDocShellAsItem;
+    *aFoundItem = mWebBrowser->mDocShell;
     NS_IF_ADDREF(*aFoundItem);
     return NS_OK;
   }
 
-  if (!SameCOMIdentity(aRequestor, mWebBrowser->mDocShellAsItem)) {
+  if (!SameCOMIdentity(aRequestor, mWebBrowser->mDocShell)) {
     // This isn't a request coming up from our kid, so check with said kid
     nsISupports* thisSupports = static_cast<nsIDocShellTreeOwner*>(this);
-    rv =
-      mWebBrowser->mDocShellAsItem->FindItemWithName(aName, thisSupports,
-                                                     aOriginalRequestor, aFoundItem);
+    rv = mWebBrowser->mDocShell->FindItemWithName(aName, thisSupports,
+                                                  aOriginalRequestor, aFoundItem);
     if (NS_FAILED(rv) || *aFoundItem) {
       return rv;
     }
@@ -234,7 +233,7 @@ nsDocShellTreeOwner::FindItemWithName(const PRUnichar* aName,
   if(mTreeOwner) {
     nsCOMPtr<nsIDocShellTreeOwner> reqAsTreeOwner(do_QueryInterface(aRequestor));
     if (mTreeOwner != reqAsTreeOwner)
-      return mTreeOwner->FindItemWithName(aName, mWebBrowser->mDocShellAsItem,
+      return mTreeOwner->FindItemWithName(aName, mWebBrowser->mDocShell,
                                           aOriginalRequestor, aFoundItem);
     return NS_OK;
   }
@@ -355,7 +354,7 @@ nsDocShellTreeOwner::GetPrimaryContentShell(nsIDocShellTreeItem** aShell)
    if(mTreeOwner)
        return mTreeOwner->GetPrimaryContentShell(aShell);
 
-   *aShell = (mPrimaryContentShell ? mPrimaryContentShell : mWebBrowser->mDocShellAsItem.get());
+   *aShell = (mPrimaryContentShell ? mPrimaryContentShell : mWebBrowser->mDocShell);
    NS_IF_ADDREF(*aShell);
 
    return NS_OK;
@@ -372,7 +371,7 @@ nsDocShellTreeOwner::SizeShellTo(nsIDocShellTreeItem* aShellItem,
    if(mTreeOwner)
       return mTreeOwner->SizeShellTo(aShellItem, aCX, aCY);
 
-   if(aShellItem == mWebBrowser->mDocShellAsItem)
+   if(aShellItem == mWebBrowser->mDocShell)
       return webBrowserChrome->SizeBrowserTo(aCX, aCY);
 
    nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(aShellItem));
@@ -1028,8 +1027,10 @@ DefaultTooltipTextProvider::GetNodeText(nsIDOMNode *aNode, PRUnichar **aText,
 {
   NS_ENSURE_ARG_POINTER(aNode);
   NS_ENSURE_ARG_POINTER(aText);
-    
+
   nsString outText;
+
+  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
 
   bool lookingForSVGTitle = true;
   bool found = false;
@@ -1087,16 +1088,12 @@ DefaultTooltipTextProvider::GetNodeText(nsIDOMNode *aNode, PRUnichar **aText,
                 lookingForSVGTitle = UseSVGTitle(currElement);
               }
               if (lookingForSVGTitle) {
-                nsCOMPtr<nsIDOMNodeList>childNodes;
-                aNode->GetChildNodes(getter_AddRefs(childNodes));
-                uint32_t childNodeCount;
-                childNodes->GetLength(&childNodeCount);
+                nsINodeList* childNodes = node->ChildNodes();
+                uint32_t childNodeCount = childNodes->Length();
                 for (uint32_t i = 0; i < childNodeCount; i++) {
-                  nsCOMPtr<nsIDOMNode>childNode;
-                  childNodes->Item(i, getter_AddRefs(childNode));
-                  nsCOMPtr<nsIDOMSVGTitleElement> titleElement(do_QueryInterface(childNode));
-                  if (titleElement) {
-                    titleElement->GetTextContent(outText);
+                  nsIContent* child = childNodes->Item(i);
+                  if (child->IsSVG(nsGkAtoms::title)) {
+                    static_cast<dom::SVGTitleElement*>(child)->GetTextContent(outText);
                     if ( outText.Length() )
                       found = true;
                     break;
@@ -1108,7 +1105,7 @@ DefaultTooltipTextProvider::GetNodeText(nsIDOMNode *aNode, PRUnichar **aText,
         }
       }
     }
-    
+
     // not found here, walk up to the parent and keep trying
     if ( !found ) {
       nsCOMPtr<nsIDOMNode> temp ( current );

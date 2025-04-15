@@ -275,6 +275,12 @@ class MochiRemote(Mochitest):
             print "ERROR: unable to find utility path for %s, please specify with --utility-path" % (os.name)
             sys.exit(1)
 
+        xpcshell_path = os.path.join(options.utilityPath, xpcshell)
+        if localAutomation.elf_arm(xpcshell_path):
+            self.error('xpcshell at %s is an ARM binary; please use '
+                       'the --utility-path argument to specify the path '
+                       'to a desktop version.' % xpcshell)
+
         options.profilePath = tempfile.mkdtemp()
         self.server = MochitestServer(localAutomation, options)
         self.server.start()
@@ -364,13 +370,15 @@ class MochiRemote(Mochitest):
 
         restart = re.compile('0 INFO SimpleTest START.*')
         reend = re.compile('([0-9]+) INFO TEST-START . Shutdown.*')
+        refail = re.compile('([0-9]+) INFO TEST-UNEXPECTED-FAIL.*')
         start_found = False
         end_found = False
+        fail_found = False
         for line in data:
             if reend.match(line):
                 end_found = True
                 start_found = False
-                return
+                break
 
             if start_found and not end_found:
                 # Append the line without the number to increment
@@ -378,6 +386,15 @@ class MochiRemote(Mochitest):
 
             if restart.match(line):
                 start_found = True
+            if refail.match(line):
+                fail_found = True
+        result = 0
+        if fail_found:
+            result = 1
+        if not end_found:
+            print "ERROR: missing end of test marker (process crashed?)"
+            result = 1
+        return result
 
     def printLog(self):
         passed = 0
@@ -548,11 +565,12 @@ def main():
                 result = mochitest.runTests(options)
                 if result != 0:
                     print "ERROR: runTests() exited with code %s" % result
+                log_result = mochitest.addLogData()
+                if result != 0 or log_result != 0:
                     mochitest.printDeviceInfo()
                 # Ensure earlier failures aren't overwritten by success on this run
                 if retVal is None or retVal == 0:
                     retVal = result
-                mochitest.addLogData()
             except:
                 print "Automation Error: Exception caught while running tests"
                 traceback.print_exc()

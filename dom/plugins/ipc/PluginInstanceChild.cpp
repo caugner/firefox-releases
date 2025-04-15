@@ -2446,8 +2446,10 @@ PluginInstanceChild::NPN_NewStream(NPMIMEType aMIMEType, const char* aWindow,
     PluginStreamChild* ps = new PluginStreamChild();
 
     NPError result;
-    CallPPluginStreamConstructor(ps, nsDependentCString(aMIMEType),
-                                 NullableString(aWindow), &result);
+    if (!CallPPluginStreamConstructor(ps, nsDependentCString(aMIMEType),
+                                      NullableString(aWindow), &result)) {
+        NS_RUNTIMEABORT("PluginStream constructor failed");
+    }
     if (NPERR_NO_ERROR != result) {
         *aStream = NULL;
         PPluginStreamChild::Call__delete__(ps, NPERR_GENERIC_ERROR, true);
@@ -2710,18 +2712,16 @@ PluginInstanceChild::RecvAsyncSetWindow(const gfxSurfaceType& aSurfaceType,
         mCurrentAsyncSetWindowTask = nullptr;
     }
 
-    if (mPendingPluginCall) {
-        // We shouldn't process this now. Run it later.
-        mCurrentAsyncSetWindowTask =
-            NewRunnableMethod<PluginInstanceChild,
-                              void (PluginInstanceChild::*)(const gfxSurfaceType&, const NPRemoteWindow&, bool),
-                              gfxSurfaceType, NPRemoteWindow, bool>
-                (this, &PluginInstanceChild::DoAsyncSetWindow,
-                 aSurfaceType, aWindow, true);
-        MessageLoop::current()->PostTask(FROM_HERE, mCurrentAsyncSetWindowTask);
-    } else {
-        DoAsyncSetWindow(aSurfaceType, aWindow, false);
-    }
+    // We shouldn't process this now because it may be received within a nested
+    // RPC call, and both Flash and Java don't expect to receive setwindow calls
+    // at arbitrary times.
+    mCurrentAsyncSetWindowTask =
+        NewRunnableMethod<PluginInstanceChild,
+                          void (PluginInstanceChild::*)(const gfxSurfaceType&, const NPRemoteWindow&, bool),
+                          gfxSurfaceType, NPRemoteWindow, bool>
+        (this, &PluginInstanceChild::DoAsyncSetWindow,
+         aSurfaceType, aWindow, true);
+    MessageLoop::current()->PostTask(FROM_HERE, mCurrentAsyncSetWindowTask);
 
     return true;
 }
@@ -3333,7 +3333,7 @@ PluginInstanceChild::PaintRectToSurface(const nsIntRect& aRect,
     if (mIsTransparent && !CanPaintOnBackground()) {
        // Clear surface content for transparent rendering
        nsRefPtr<gfxContext> ctx = new gfxContext(renderSurface);
-       ctx->SetColor(aColor);
+       ctx->SetDeviceColor(aColor);
        ctx->SetOperator(gfxContext::OPERATOR_SOURCE);
        ctx->Rectangle(GfxFromNsRect(plPaintRect));
        ctx->Fill();

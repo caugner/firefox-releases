@@ -150,6 +150,7 @@ function MarionetteDriverActor(aConnection)
   this.curBrowser = null; // points to current browser
   this.context = "content";
   this.scriptTimeout = null;
+  this.pageTimeout = null;
   this.timer = null;
   this.marionetteLog = new MarionetteLogObj();
   this.marionettePerf = new MarionettePerfData();
@@ -159,6 +160,7 @@ function MarionetteDriverActor(aConnection)
   this.importedScripts = FileUtils.getFile('TmpD', ['marionettescriptchrome']);
   this.currentRemoteFrame = null; // a member of remoteFrames
   this.testName = null;
+  this.mozBrowserClose = null;
 
   //register all message listeners
   this.addMessageManagerListeners(this.messageManager);
@@ -258,17 +260,23 @@ MarionetteDriverActor.prototype = {
    *        Used to distinguish the asynchronous responses.
    */
   sendToClient: function MDA_sendToClient(msg, command_id) {
-    logger.info("sendToClient: " + JSON.stringify(msg) + ", " + command_id + ", " + this.command_id);
+    logger.info("sendToClient: " + JSON.stringify(msg) + ", " + command_id +
+                ", " + this.command_id);
     if (!command_id) {
       logger.warn("got a response with no command_id");
+      return;
     }
-    else if (this.command_id &&
-        this.command_id != command_id) {
+    else if (this.command_id && command_id != -1 &&
+             this.command_id != command_id) {
+      // a command_id of -1 is used for emulator callbacks
       logger.warn("ignoring out-of-sync response");
       return;
     }
     this.conn.send(msg);
-    if (command_id != null) {
+    if (command_id != -1) {
+      // Don't unset this.command_id if this message is to process an
+      // emulator callback, since another response for this command_id is
+      // expected, after the containing call to execute_async_script finishes.
       this.command_id = null;
     }
   },
@@ -326,7 +334,7 @@ MarionetteDriverActor.prototype = {
     let type = null;
     if (this.curFrame == null) {
       if (this.curBrowser == null) {
-        if (appName != "B2G" && this.context == "content") {
+        if (this.context == "content") {
           type = 'navigator:browser';
         }
         return Services.wm.getMostRecentWindow(type);
@@ -469,6 +477,7 @@ MarionetteDriverActor.prototype = {
    */
   newSession: function MDA_newSession() {
     this.command_id = this.getCommandId();
+    this.newSessionCommandId = this.command_id;
 
     this.scriptTimeout = 10000;
 
@@ -619,12 +628,12 @@ MarionetteDriverActor.prototype = {
    * @return Sandbox
    *        Returns the sandbox
    */
-  createExecuteSandbox: function MDA_createExecuteSandbox(aWindow, marionette, args, specialPowers) {
+  createExecuteSandbox: function MDA_createExecuteSandbox(aWindow, marionette, args, specialPowers, command_id) {
     try {
       args = this.curBrowser.elementManager.convertWrappedArguments(args, aWindow);
     }
     catch(e) {
-      this.sendError(e.message, e.code, e.stack);
+      this.sendError(e.message, e.code, e.stack, command_id);
       return;
     }
 
@@ -673,10 +682,10 @@ MarionetteDriverActor.prototype = {
    *        True if the script is asynchronous
    */
   executeScriptInSandbox: function MDA_executeScriptInSandbox(sandbox, script,
-     directInject, async, command_id) {
+     directInject, async, command_id, timeout) {
 
     if (directInject && async &&
-        (this.scriptTimeout == null || this.scriptTimeout == 0)) {
+        (timeout == null || timeout == 0)) {
       this.sendError("Please set a timeout", 21, null, command_id);
       return;
     }
@@ -715,6 +724,7 @@ MarionetteDriverActor.prototype = {
    *        function body
    */
   execute: function MDA_execute(aRequest, directInject) {
+    let timeout = aRequest.scriptTimeout ? aRequest.scriptTimeout : this.scriptTimeout;
     let command_id = this.command_id = this.getCommandId();
     this.logRequest("execute", aRequest);
     if (aRequest.newSandbox == undefined) {
@@ -726,19 +736,21 @@ MarionetteDriverActor.prototype = {
       this.sendAsync("executeScript", {value: aRequest.value,
                                        args: aRequest.args,
                                        newSandbox: aRequest.newSandbox,
-                                       timeout: this.scriptTimeout,
-                                       command_id: command_id});
+                                       timeout: timeout,
+                                       command_id: command_id,
+                                       specialPowers: aRequest.specialPowers});
       return;
     }
 
     let curWindow = this.getCurrentWindow();
     let marionette = new Marionette(this, curWindow, "chrome",
                                     this.marionetteLog, this.marionettePerf,
-                                    this.scriptTimeout, this.testName);
+                                    timeout, this.testName);
     let _chromeSandbox = this.createExecuteSandbox(curWindow,
                                                    marionette,
                                                    aRequest.args,
-                                                   aRequest.specialPowers);
+                                                   aRequest.specialPowers,
+                                                   command_id);
     if (!_chromeSandbox)
       return;
 
@@ -758,7 +770,7 @@ MarionetteDriverActor.prototype = {
                      "func.apply(null, __marionetteParams);";
       }
       this.executeScriptInSandbox(_chromeSandbox, script, directInject,
-                                  false, command_id);
+                                  false, command_id, timeout);
     }
     catch (e) {
       this.sendError(e.name + ': ' + e.message, 17, e.stack, command_id);
@@ -792,6 +804,7 @@ MarionetteDriverActor.prototype = {
    *        'timeout' member will be used as the script timeout if it is given
    */
   executeJSScript: function MDA_executeJSScript(aRequest) {
+    let timeout = aRequest.scriptTimeout ? aRequest.scriptTimeout : this.scriptTimeout;
     let command_id = this.command_id = this.getCommandId();
     //all pure JS scripts will need to call Marionette.finish() to complete the test.
     if (aRequest.newSandbox == undefined) {
@@ -812,8 +825,9 @@ MarionetteDriverActor.prototype = {
                                           args: aRequest.args,
                                           newSandbox: aRequest.newSandbox,
                                           async: aRequest.async,
-                                          timeout: this.scriptTimeout,
-                                          command_id: command_id });
+                                          timeout: timeout,
+                                          command_id: command_id,
+                                          specialPowers: aRequest.specialPowers });
    }
   },
 
@@ -833,7 +847,9 @@ MarionetteDriverActor.prototype = {
    *        function body
    */
   executeWithCallback: function MDA_executeWithCallback(aRequest, directInject) {
+    let timeout = aRequest.scriptTimeout ? aRequest.scriptTimeout : this.scriptTimeout;
     let command_id = this.command_id = this.getCommandId();
+    this.logRequest("executeWithCallback", aRequest);
     if (aRequest.newSandbox == undefined) {
       //if client does not send a value in newSandbox, 
       //then they expect the same behaviour as webdriver
@@ -845,17 +861,19 @@ MarionetteDriverActor.prototype = {
                                             args: aRequest.args,
                                             id: this.command_id,
                                             newSandbox: aRequest.newSandbox,
-                                            timeout: this.scriptTimeout,
-                                            command_id: command_id});
+                                            timeout: timeout,
+                                            command_id: command_id,
+                                            specialPowers: aRequest.specialPowers});
       return;
     }
 
     let curWindow = this.getCurrentWindow();
     let original_onerror = curWindow.onerror;
     let that = this;
+    that.timeout = timeout;
     let marionette = new Marionette(this, curWindow, "chrome",
                                     this.marionetteLog, this.marionettePerf,
-                                    this.scriptTimeout, this.testName);
+                                    timeout, this.testName);
     marionette.command_id = this.command_id;
 
     function chromeAsyncReturnFunc(value, status) {
@@ -896,7 +914,11 @@ MarionetteDriverActor.prototype = {
       chromeAsyncReturnFunc(marionette.generate_results(), 0);
     }
 
-    let _chromeSandbox = this.createExecuteSandbox(curWindow, marionette, aRequest.args, aRequest.specialPowers);
+    let _chromeSandbox = this.createExecuteSandbox(curWindow,
+                                                   marionette,
+                                                   aRequest.args,
+                                                   aRequest.specialPowers,
+                                                   command_id);
     if (!_chromeSandbox)
       return;
 
@@ -906,7 +928,7 @@ MarionetteDriverActor.prototype = {
       if (this.timer != null) {
         this.timer.initWithCallback(function() {
           chromeAsyncReturnFunc("timed out", 28);
-        }, that.scriptTimeout, Ci.nsITimer.TYPE_ONESHOT);
+        }, that.timeout, Ci.nsITimer.TYPE_ONESHOT);
       }
 
       _chromeSandbox.returnFunc = chromeAsyncReturnFunc;
@@ -924,7 +946,7 @@ MarionetteDriverActor.prototype = {
       }
 
       this.executeScriptInSandbox(_chromeSandbox, script, directInject,
-                                  true, command_id);
+                                  true, command_id, timeout);
     } catch (e) {
       chromeAsyncReturnFunc(e.name + ": " + e.message, 17);
     }
@@ -940,19 +962,32 @@ MarionetteDriverActor.prototype = {
     let command_id = this.command_id = this.getCommandId();
     if (this.context != "chrome") {
       aRequest.command_id = command_id;
+      aRequest.pageTimeout = this.pageTimeout;
       this.sendAsync("goUrl", aRequest);
       return;
     }
 
     this.getCurrentWindow().location.href = aRequest.value;
     let checkTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+    let start = new Date().getTime();
+    let end = null;
     function checkLoad() { 
-      if (curWindow.document.readyState == "complete") { 
-        sendOk(command_id);
+      end = new Date().getTime();
+      let elapse = end - start;
+      if (this.pageTimeout == null || elapse <= this.pageTimeout){
+        if (curWindow.document.readyState == "complete") { 
+          sendOk(command_id);
+          return;
+        }
+        else{ 
+          checkTimer.initWithCallback(checkLoad, 100, Ci.nsITimer.TYPE_ONE_SHOT);
+        }
+      }
+      else{
+        sendError("Error loading page", 13, null, command_id);
         return;
-      } 
-      checkTimer.initWithCallback(checkLoad, 100, Ci.nsITimer.TYPE_ONE_SHOT);
-    }
+      }
+    }//end
     checkTimer.initWithCallback(checkLoad, 100, Ci.nsITimer.TYPE_ONE_SHOT);
   },
 
@@ -1207,6 +1242,117 @@ MarionetteDriverActor.prototype = {
   },
 
   /**
+   * Set timeout for page loading, searching and scripts
+   *
+   * @param object aRequest
+   *        'type' hold the type of timeout
+   *        'ms' holds the timeout in milliseconds
+   */
+  timeouts: function MDA_timeouts(aRequest){
+    /*setTimeout*/
+    this.command_id = this.getCommandId();
+    let timeout_type = aRequest.timeoutType;
+    let timeout = parseInt(aRequest.ms);
+    if (isNaN(timeout)) {
+      this.sendError("Not a Number", 500, null, this.command_id);
+    }
+    else {
+      if (timeout_type == "implicit") {
+        aRequest.value = aRequest.ms;
+        this.setSearchTimeout(aRequest);
+      }
+      else if (timeout_type == "script") {
+        aRequest.value = aRequest.ms;
+        this.setScriptTimeout(aRequest);
+      }
+      else {
+        this.pageTimeout = timeout;
+        this.sendOk(this.command_id);
+      }
+    }
+  },
+
+  /**
+   * Single Tap
+   *
+   * @param object aRequest
+            'element' represents the ID of the element to single tap on
+   */
+  singleTap: function MDA_singleTap(aRequest) {
+    this.command_id = this.getCommandId();
+    let serId = aRequest.element;
+    let x = aRequest.x;
+    let y = aRequest.y;
+    if (this.context == "chrome") {
+      this.sendError("Not in Chrome", 500, null, this.command_id);
+    }
+    else {
+      this.sendAsync("singleTap", {value: serId,
+                                   corx: x,
+                                   cory: y,
+                                   command_id: this.command_id});
+    }
+  },
+
+  /**
+   * Double Tap
+   *
+   * @param object aRequest
+   *        'element' represents the ID of the element to double tap on
+   */
+  doubleTap: function MDA_doubleTap(aRequest) {
+    this.command_id = this.getCommandId();
+    let serId = aRequest.element;
+    let x = aRequest.x;
+    let y = aRequest.y;
+    if (this.context == "chrome") {
+      this.sendError("Not in Chrome", 500, null, this.command_id);
+    }
+    else {
+      this.sendAsync("doubleTap", {value: serId,
+                                   corx: x,
+                                   cory: y,
+                                   command_id: this.command_id});
+    }
+  },
+
+  /**
+   * Start touch
+   *
+   * @param object aRequest
+   *        'element' represents the ID of the element to touch
+   */
+  press: function MDA_press(aRequest) {
+    this.command_id = this.getCommandId();
+    let element = aRequest.element;
+    let x = aRequest.x;
+    let y = aRequest.y;
+    this.sendAsync("press", {value: element,
+                             corx: x,
+                             cory: y,
+                             command_id: this.command_id});
+  },
+
+  /**
+   * End touch
+   *
+   * @param object aRequest
+   *        'element' represents the ID of the element to end the touch
+   */
+  release: function MDA_release(aRequest) {
+    this.command_id = this.getCommandId();
+    let element = aRequest.element;
+    let touchId = aRequest.touchId;
+    let x = aRequest.x;
+    let y = aRequest.y;
+    this.sendAsync("release", {value: element,
+                               touchId: touchId,
+                               corx: x,
+                               cory: y,
+                               command_id: this.command_id});
+  },
+
+  /**
    * Find an element using the indicated search strategy.
    *
    * @param object aRequest
@@ -1276,8 +1422,16 @@ MarionetteDriverActor.prototype = {
   },
 
   /**
+   * Return the active element on the page
+   */
+  getActiveElement: function MDA_getActiveElement(){
+    let command_id = this.command_id = this.getCommandId();
+    this.sendAsync("getActiveElement", {command_id: command_id});
+  },
+
+  /**
    * Send click event to element
-   * 
+   *
    * @param object aRequest
    *        'element' member holds the reference id to
    *        the element that will be clicked
@@ -1297,6 +1451,18 @@ MarionetteDriverActor.prototype = {
       }
     }
     else {
+      // We need to protect against the click causing an OOP frame to close. 
+      // This fires the mozbrowserclose event when it closes so we need to 
+      // listen for it and then just send an error back. The person making the
+      // call should be aware something isnt right and handle accordingly
+      let curWindow = this.getCurrentWindow();
+      let self = this;
+      this.mozBrowserClose = function() { 
+        curWindow.removeEventListener('mozbrowserclose', self.mozBrowserClose, true);
+        self.switchToGlobalMessageManager();
+        self.sendError("The frame closed during the click, recovering to allow further communications", 500, null, command_id);
+      };
+      curWindow.addEventListener('mozbrowserclose', this.mozBrowserClose, true);
       this.sendAsync("clickElement", {element: aRequest.element,
                                       command_id: command_id});
     }
@@ -1716,7 +1882,7 @@ MarionetteDriverActor.prototype = {
       }
       this._emu_cbs[this._emu_cb_id] = callback;
     }
-    this.sendToClient({emulator_cmd: cmd, id: this._emu_cb_id});
+    this.sendToClient({emulator_cmd: cmd, id: this._emu_cb_id}, -1);
     this._emu_cb_id += 1;
   },
 
@@ -1739,7 +1905,7 @@ MarionetteDriverActor.prototype = {
       cb(message.result);
     }
     catch(e) {
-      this.sendError(e.message, e.code, e.stack);
+      this.sendError(e.message, e.code, e.stack, -1);
       return;
     }
   },
@@ -1776,7 +1942,8 @@ MarionetteDriverActor.prototype = {
    */
   screenShot: function MDA_saveScreenshot(aRequest) {
     this.sendAsync("screenShot", {element: aRequest.element,
-                                  highlights: aRequest.highlights});
+                                  highlights: aRequest.highlights,
+                                  command_id: this.getCommandId()});
   },
 
   /**
@@ -1792,11 +1959,14 @@ MarionetteDriverActor.prototype = {
    * Receives all messages from content messageManager
    */
   receiveMessage: function MDA_receiveMessage(message) {
+    // We need to just check if we need to remove the mozbrowserclose listener
+    if (this.mozBrowserClose !== null){
+      let curWindow = this.getCurrentWindow();
+      curWindow.removeEventListener('mozbrowserclose', this.mozBrowserClose, true);
+      this.mozBrowserClose = null;
+    }
+
     switch (message.name) {
-      case "DOMContentLoaded":
-        this.sendOk();
-        this.messageManager.removeMessageListener("DOMContentLoaded", this, true);
-        break;
       case "Marionette:done":
         this.sendResponse(message.json.value, message.json.command_id);
         break;
@@ -1820,7 +1990,7 @@ MarionetteDriverActor.prototype = {
         }
         break;
       case "Marionette:runEmulatorCmd":
-        this.sendToClient(message.json);
+        this.sendToClient(message.json, -1);
         break;
       case "Marionette:switchToFrame":
         // Switch to a remote frame.
@@ -1900,21 +2070,13 @@ MarionetteDriverActor.prototype = {
         if (nullPrevious && (this.curBrowser.curFrameId != null)) {
           this.sendAsync("newSession", {B2G: (appName == "B2G")});
           if (this.curBrowser.newSession) {
-            this.sendResponse(reg.id);
+            this.sendResponse(reg.id, this.newSessionCommandId);
+            this.newSessionCommandId = null;
           }
         }
         return reg;
     }
-  },
-  /**
-   * for non-e10s eventListening
-   */
-  handleEvent: function MDA_handleEvent(evt) {
-    if (evt.type == "DOMContentLoaded") {
-      this.sendOk();
-      this.curBrowser.browser.removeEventListener("DOMContentLoaded", this, false);
-    }
-  },
+  }
 };
 
 MarionetteDriverActor.prototype.requestTypes = {
@@ -1928,6 +2090,11 @@ MarionetteDriverActor.prototype.requestTypes = {
   "setContext": MarionetteDriverActor.prototype.setContext,
   "executeScript": MarionetteDriverActor.prototype.execute,
   "setScriptTimeout": MarionetteDriverActor.prototype.setScriptTimeout,
+  "timeouts": MarionetteDriverActor.prototype.timeouts,
+  "singleTap": MarionetteDriverActor.prototype.singleTap,
+  "doubleTap": MarionetteDriverActor.prototype.doubleTap,
+  "press": MarionetteDriverActor.prototype.press,
+  "release": MarionetteDriverActor.prototype.release,
   "executeAsyncScript": MarionetteDriverActor.prototype.executeWithCallback,
   "executeJSScript": MarionetteDriverActor.prototype.executeJSScript,
   "setSearchTimeout": MarionetteDriverActor.prototype.setSearchTimeout,
@@ -1965,7 +2132,8 @@ MarionetteDriverActor.prototype.requestTypes = {
   "addCookie": MarionetteDriverActor.prototype.addCookie,
   "getAllCookies": MarionetteDriverActor.prototype.getAllCookies,
   "deleteAllCookies": MarionetteDriverActor.prototype.deleteAllCookies,
-  "deleteCookie": MarionetteDriverActor.prototype.deleteCookie
+  "deleteCookie": MarionetteDriverActor.prototype.deleteCookie,
+  "getActiveElement": MarionetteDriverActor.prototype.getActiveElement
 };
 
 /**

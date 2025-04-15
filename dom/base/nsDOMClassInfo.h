@@ -29,6 +29,11 @@ class nsIForm;
 class nsIHTMLDocument;
 class nsNPAPIPluginInstance;
 
+class nsIDOMCrypto;
+#ifndef MOZ_DISABLE_CRYPTOLEGACY
+class nsIDOMCRMFObject;
+#endif
+
 struct nsDOMClassInfoData;
 
 typedef nsIClassInfo* (*nsDOMClassInfoConstructorFnc)
@@ -347,10 +352,6 @@ public:
                                               JSMutableHandleObject objp);
   static JSBool GlobalScopePolluterGetProperty(JSContext *cx, JSHandleObject obj,
                                                JSHandleId id, JSMutableHandleValue vp);
-  static JSBool SecurityCheckOnAddDelProp(JSContext *cx, JSHandleObject obj, JSHandleId id,
-                                          JSMutableHandleValue vp);
-  static JSBool SecurityCheckOnSetProp(JSContext *cx, JSHandleObject obj, JSHandleId id,
-                                       JSBool strict, JSMutableHandleValue vp);
   static JSBool InvalidateGlobalScopePolluter(JSContext *cx, JSObject *obj);
   static nsresult InstallGlobalScopePolluter(JSContext *cx, JSObject *obj,
                                              nsIHTMLDocument *doc);

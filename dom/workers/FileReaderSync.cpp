@@ -31,6 +31,7 @@
 USING_WORKERS_NAMESPACE
 using namespace mozilla;
 using mozilla::dom::Optional;
+using mozilla::dom::WorkerGlobalObject;
 
 NS_IMPL_ADDREF_INHERITED(FileReaderSync, DOMBindingBase)
 NS_IMPL_RELEASE_INHERITED(FileReaderSync, DOMBindingBase)
@@ -57,12 +58,11 @@ FileReaderSync::_finalize(JSFreeOp* aFop)
 
 // static
 FileReaderSync*
-FileReaderSync::Constructor(JSContext* aCx, JSObject* aGlobal,
-                            ErrorResult& aRv)
+FileReaderSync::Constructor(const WorkerGlobalObject& aGlobal, ErrorResult& aRv)
 {
-  nsRefPtr<FileReaderSync> frs = new FileReaderSync(aCx);
+  nsRefPtr<FileReaderSync> frs = new FileReaderSync(aGlobal.GetContext());
 
-  if (!Wrap(aCx, aGlobal, frs)) {
+  if (!Wrap(aGlobal.GetContext(), aGlobal.Get(), frs)) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }
@@ -343,21 +343,9 @@ FileReaderSync::GuessCharset(nsIInputStream *aStream, nsACString &aCharset)
                        sizeof(sniffBuf), &numRead);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    if (numRead >= 4 &&
-        sniffBuf[0] == 0x00 &&
-        sniffBuf[1] == 0x00 &&
-        sniffBuf[2] == 0xfe &&
-        sniffBuf[3] == 0xff) {
-      mCharset = "UTF-32BE";
-    } else if (numRead >= 4 &&
-               sniffBuf[0] == 0xff &&
-               sniffBuf[1] == 0xfe &&
-               sniffBuf[2] == 0x00 &&
-               sniffBuf[3] == 0x00) {
-      mCharset = "UTF-32LE";
-    } else if (numRead >= 2 &&
-               sniffBuf[0] == 0xfe &&
-               sniffBuf[1] == 0xff) {
+    if (numRead >= 2 &&
+        sniffBuf[0] == 0xfe &&
+        sniffBuf[1] == 0xff) {
       mCharset = "UTF-16BE";
     } else if (numRead >= 2 &&
                sniffBuf[0] == 0xff &&

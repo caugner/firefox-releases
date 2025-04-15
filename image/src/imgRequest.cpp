@@ -17,7 +17,9 @@
 
 #include "imgLoader.h"
 #include "imgRequestProxy.h"
+#include "imgStatusTracker.h"
 #include "ImageFactory.h"
+#include "Image.h"
 
 #include "imgILoader.h"
 
@@ -31,6 +33,7 @@
 #include "nsIHttpChannel.h"
 #include "nsIApplicationCache.h"
 #include "nsIApplicationCacheChannel.h"
+#include "nsMimeTypes.h"
 
 #include "nsIComponentManager.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -726,7 +729,7 @@ imgRequest::OnDataAvailable(nsIRequest *aRequest, nsISupports *ctxt,
     // type and decoder.
     // We always reinitialize for SVGs, because they have no way of
     // reinitializing themselves.
-    if (mContentType != newType || newType.Equals(SVG_MIMETYPE)) {
+    if (mContentType != newType || newType.EqualsLiteral(IMAGE_SVG_XML)) {
       mContentType = newType;
 
       // If we've resniffed our MIME type and it changed, we need to create a

@@ -13,7 +13,6 @@
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsILinkHandler.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsIDocShell.h"
 #include "nsIContentViewer.h"
 #include "nsPIDOMWindow.h"
@@ -314,8 +313,6 @@ nsPresContext::~nsPresContext()
                                   "layout.css.devPixelsPerPx",
                                   this);
 }
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsPresContext)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsPresContext)
    NS_INTERFACE_MAP_ENTRY(nsISupports)
@@ -951,7 +948,14 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
         nsCOMPtr<nsIDocShellTreeItem> parentItem;
         ourItem->GetSameTypeParent(getter_AddRefs(parentItem));
         if (parentItem) {
-          mRefreshDriver = parent->GetShell()->GetPresContext()->RefreshDriver();
+          Element* containingElement =
+            parent->FindContentForSubDocument(mDocument);
+          if (!containingElement->IsXUL() ||
+              !containingElement->
+                HasAttr(kNameSpaceID_None,
+                        nsGkAtoms::forceOwnRefreshDriver)) {
+            mRefreshDriver = parent->GetShell()->GetPresContext()->RefreshDriver();
+          }
         }
       }
     }
@@ -1893,7 +1897,7 @@ nsPresContext::InvalidateIsChromeCacheExternal()
 nsPresContext::HasAuthorSpecifiedRules(nsIFrame *aFrame, uint32_t ruleTypeMask) const
 {
   return
-    nsRuleNode::HasAuthorSpecifiedRules(aFrame->GetStyleContext(),
+    nsRuleNode::HasAuthorSpecifiedRules(aFrame->StyleContext(),
                                         ruleTypeMask,
                                         UseDocumentColors());
 }
@@ -2352,9 +2356,11 @@ enum InterruptMode {
 // "random" (except on Windows) or "counter".  If neither is used, the mode is
 // ModeEvent.
 static InterruptMode sInterruptMode = ModeEvent;
+#ifndef XP_WIN
 // Used for the "random" mode.  Controlled by the GECKO_REFLOW_INTERRUPT_SEED
 // env var.
 static uint32_t sInterruptSeed = 1;
+#endif
 // Used for the "counter" mode.  This is the number of unskipped interrupt
 // checks that have to happen before we interrupt.  Controlled by the
 // GECKO_REFLOW_INTERRUPT_FREQUENCY env var.

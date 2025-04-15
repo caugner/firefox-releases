@@ -54,21 +54,18 @@ public:
   /**
    * Creates a new image container.
    *
-   * @param aObserver Observer to send decoder and animation notifications to.
    * @param aMimeType The mimetype of the image.
    * @param aFlags Initialization flags of the INIT_FLAG_* variety.
    */
-  virtual nsresult Init(imgDecoderObserver* aObserver,
-                        const char* aMimeType,
+  virtual nsresult Init(const char* aMimeType,
                         uint32_t aFlags) = 0;
 
   virtual imgStatusTracker& GetStatusTracker() = 0;
 
   /**
-   * The rectangle defining the location and size of the currently displayed
-   * frame.
+   * The rectangle defining the location and size of the given frame.
    */
-  virtual void GetCurrentFrameRect(nsIntRect& aRect) = 0;
+  virtual nsIntRect FrameRect(uint32_t aWhichFrame) = 0;
 
   /**
    * The size, in bytes, occupied by the significant data portions of the image.

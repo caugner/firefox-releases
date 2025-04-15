@@ -103,9 +103,8 @@ function testActivateAddSameTypePart2() {
   ok(popupNotification, "testActivateAddSameTypePart2: should have a click-to-play notification");
 
   // we have to actually show the panel to get the bindings to instantiate
-  popupNotification.options.dismissed = false;
   popupNotification.options.eventCallback = testActivateAddSameTypePart3;
-  PopupNotifications._showPanel([popupNotification], popupNotification.anchorElement);
+  popupNotification.reshow();
 }
 
 function testActivateAddSameTypePart3() {
@@ -182,9 +181,8 @@ function testActivateAddDifferentTypePart2() {
   ok(popupNotification, "testActivateAddDifferentTypePart2: should have a click-to-play notification");
 
   // we have to actually show the panel to get the bindings to instantiate
-  popupNotification.options.dismissed = false;
   popupNotification.options.eventCallback = testActivateAddDifferentTypePart3;
-  PopupNotifications._showPanel([popupNotification], popupNotification.anchorElement);
+  popupNotification.reshow();
 }
 
 function testActivateAddDifferentTypePart3() {

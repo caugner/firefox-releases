@@ -18,7 +18,7 @@
 #include "nsDOMAttributeMap.h"
 #include "nsIAtom.h"
 #include "nsINodeInfo.h"
-#include "nsIDocument.h"
+#include "nsIDocumentInlines.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMDocument.h"
 #include "nsIContentIterator.h"
@@ -89,7 +89,6 @@
 #include "nsGenericHTMLElement.h"
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
-#include "nsIEditorDocShell.h"
 #include "nsEventDispatcher.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsIControllers.h"
@@ -334,7 +333,7 @@ Element::GetBindingURL(nsIDocument *aDocument, css::URLValue **aResult)
                                                                   nullptr);
   NS_ENSURE_TRUE(sc, false);
 
-  *aResult = sc->GetStyleDisplay()->mBinding;
+  *aResult = sc->StyleDisplay()->mBinding;
 
   return true;
 }
@@ -404,8 +403,7 @@ Element::WrapObject(JSContext *aCx, JSObject *aScope,
   }
 
   nsRefPtr<nsXBLBinding> binding;
-  xblService->LoadBindings(this, uri, principal, false, getter_AddRefs(binding),
-                           &dummy);
+  xblService->LoadBindings(this, uri, principal, getter_AddRefs(binding), &dummy);
   
   if (binding) {
     if (nsContentUtils::IsSafeToRunScript()) {
@@ -464,7 +462,7 @@ Element::GetClassList()
 }
 
 void
-Element::GetClassList(nsIDOMDOMTokenList** aClassList)
+Element::GetClassList(nsISupports** aClassList)
 {
   NS_IF_ADDREF(*aClassList = GetClassList());
 }
@@ -513,20 +511,6 @@ Element::GetOffsetRect(nsRect& aRect)
   aRect.height = nsPresContext::AppUnitsToIntCSSPixels(rcFrame.height);
 
   return nullptr;
-}
-
-nsIntSize
-Element::GetPaddingRectSize()
-{
-  nsIFrame* frame = GetStyledFrame();
-  if (!frame) {
-    return nsIntSize(0, 0);
-  }
-
-  NS_ASSERTION(frame->GetParent(), "Styled frame has no parent");
-  nsRect rcFrame = nsLayoutUtils::GetAllInFlowPaddingRectsUnion(frame, frame->GetParent());
-  return nsIntSize(nsPresContext::AppUnitsToIntCSSPixels(rcFrame.width),
-                   nsPresContext::AppUnitsToIntCSSPixels(rcFrame.height));
 }
 
 nsIScrollableFrame*
@@ -598,6 +582,28 @@ Element::ScrollIntoView(bool aTop)
                                    nsIPresShell::SCROLL_OVERFLOW_HIDDEN);
 }
 
+static nsSize GetScrollRectSizeForOverflowVisibleFrame(nsIFrame* aFrame)
+{
+  if (!aFrame) {
+    return nsSize(0,0);
+  }
+
+  nsRect paddingRect = aFrame->GetPaddingRectRelativeToSelf();
+  nsOverflowAreas overflowAreas(paddingRect, paddingRect);
+  // Add the scrollable overflow areas of children (if any) to the paddingRect.
+  // It's important to start with the paddingRect, otherwise if there are no
+  // children the overflow rect will be 0,0,0,0 which will force the point 0,0
+  // to be included in the final rect.
+  nsLayoutUtils::UnionChildOverflow(aFrame, overflowAreas);
+  // Make sure that an empty padding-rect's edges are included, by adding
+  // the padding-rect in again with UnionEdges.
+  nsRect overflowRect =
+    overflowAreas.ScrollableOverflow().UnionEdges(paddingRect);
+  return nsLayoutUtils::GetScrolledRect(aFrame,
+      overflowRect, paddingRect.Size(),
+      aFrame->StyleVisibility()->mDirection).Size();
+}
+
 int32_t
 Element::ScrollHeight()
 {
@@ -605,11 +611,13 @@ Element::ScrollHeight()
     return 0;
 
   nsIScrollableFrame* sf = GetScrollFrame();
-  if (!sf) {
-    return GetPaddingRectSize().height;
+  nscoord height;
+  if (sf) {
+    height = sf->GetScrollRange().height + sf->GetScrollPortRect().height;
+  } else {
+    height = GetScrollRectSizeForOverflowVisibleFrame(GetStyledFrame()).height;
   }
 
-  nscoord height = sf->GetScrollRange().height + sf->GetScrollPortRect().height;
   return nsPresContext::AppUnitsToIntCSSPixels(height);
 }
 
@@ -620,11 +628,13 @@ Element::ScrollWidth()
     return 0;
 
   nsIScrollableFrame* sf = GetScrollFrame();
-  if (!sf) {
-    return GetPaddingRectSize().width;
+  nscoord width;
+  if (sf) {
+    width = sf->GetScrollRange().width + sf->GetScrollPortRect().width;
+  } else {
+    width = GetScrollRectSizeForOverflowVisibleFrame(GetStyledFrame()).width;
   }
 
-  nscoord width = sf->GetScrollRange().width + sf->GetScrollPortRect().width;
   return nsPresContext::AppUnitsToIntCSSPixels(width);
 }
 
@@ -639,7 +649,7 @@ Element::GetClientAreaRect()
   }
 
   if (styledFrame &&
-      (styledFrame->GetStyleDisplay()->mDisplay != NS_STYLE_DISPLAY_INLINE ||
+      (styledFrame->StyleDisplay()->mDisplay != NS_STYLE_DISPLAY_INLINE ||
        styledFrame->IsFrameOfType(nsIFrame::eReplaced))) {
     // Special case code to make client area work even when there isn't
     // a scroll view, see bug 180552, bug 227567.
@@ -695,7 +705,7 @@ Element::GetClientRects(ErrorResult& aError)
 
 
 void
-Element::GetAttribute(const nsAString& aName, nsString& aReturn)
+Element::GetAttribute(const nsAString& aName, DOMString& aReturn)
 {
   const nsAttrValue* val =
     mAttrsAndChildren.GetAttr(aName,
@@ -707,9 +717,9 @@ Element::GetAttribute(const nsAString& aName, nsString& aReturn)
     if (IsXUL()) {
       // XXX should be SetDOMStringToNull(aReturn);
       // See bug 232598
-      aReturn.Truncate();
+      // aReturn is already empty
     } else {
-      SetDOMStringToNull(aReturn);
+      aReturn.SetNull();
     }
   }
 }
@@ -1155,6 +1165,9 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                NODE_NEEDS_FRAME | NODE_DESCENDANTS_NEED_FRAMES |
                // And the restyle bits
                ELEMENT_ALL_RESTYLE_FLAGS);
+
+    // Propagate scoped style sheet tracking bit.
+    SetIsElementInStyleScope(mParent->IsElementInStyleScope());
   } else {
     // If we're not in the doc, update our subtree pointer.
     SetSubtreeRootPointer(aParent->SubtreeRoot());
@@ -1164,7 +1177,7 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   //  because it has to happen after updating the parent pointer, but before
   //  recursively binding the kids.
   if (IsHTML()) {
-    RecomputeDirectionality(this, false);
+    SetDirOnBind(this, aParent);
   }
 
   // If NODE_FORCE_XBL_BINDINGS was set we might have anonymous children
@@ -1356,7 +1369,7 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
   //  because it has to happen after unsetting the parent pointer, but before
   //  recursively unbinding the kids.
   if (IsHTML()) {
-    RecomputeDirectionality(this, false);
+    ResetDir(this);
   }
 
   if (aDeep) {
@@ -1722,6 +1735,23 @@ Element::MaybeCheckSameAttrVal(int32_t aNamespaceID,
   return false;
 }
 
+bool
+Element::OnlyNotifySameValueSet(int32_t aNamespaceID, nsIAtom* aName,
+                                nsIAtom* aPrefix,
+                                const nsAttrValueOrString& aValue,
+                                bool aNotify, nsAttrValue& aOldValue,
+                                uint8_t* aModType, bool* aHasListeners)
+{
+  if (!MaybeCheckSameAttrVal(aNamespaceID, aName, aPrefix, aValue, aNotify,
+                             aOldValue, aModType, aHasListeners)) {
+    return false;
+  }
+
+  nsAutoScriptBlocker scriptBlocker;
+  nsNodeUtils::AttributeSetToCurrentValue(this, aNamespaceID, aName);
+  return true;
+}
+
 nsresult
 Element::SetAttr(int32_t aNamespaceID, nsIAtom* aName,
                  nsIAtom* aPrefix, const nsAString& aValue,
@@ -1831,7 +1861,15 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
     aValueForAfterSetAttr.SetTo(aParsedValue);
   }
 
+  bool hadValidDir = false;
+  bool hadDirAuto = false;
+
   if (aNamespaceID == kNameSpaceID_None) {
+    if (aName == nsGkAtoms::dir) {
+      hadValidDir = HasValidDir() || IsHTML(nsGkAtoms::bdi);
+      hadDirAuto = HasDirAuto(); // already takes bdi into account
+    }
+
     // XXXbz Perhaps we should push up the attribute mapping function
     // stuff to Element?
     if (!IsAttributeMapped(aName) ||
@@ -1867,6 +1905,11 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
   if (aCallAfterSetAttr) {
     rv = AfterSetAttr(aNamespaceID, aName, &aValueForAfterSetAttr, aNotify);
     NS_ENSURE_SUCCESS(rv, rv);
+
+    if (aNamespaceID == kNameSpaceID_None && aName == nsGkAtoms::dir) {
+      OnSetDirAttr(this, &aValueForAfterSetAttr,
+                   hadValidDir, hadDirAuto, aNotify);
+    }
   }
 
   if (aFireMutation) {
@@ -1945,60 +1988,10 @@ bool
 Element::GetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                  nsAString& aResult) const
 {
-  NS_ASSERTION(nullptr != aName, "must have attribute name");
-  NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown,
-               "must have a real namespace ID!");
-
-  const nsAttrValue* val = mAttrsAndChildren.GetAttr(aName, aNameSpaceID);
-  if (!val) {
-    // Since we are returning a success code we'd better do
-    // something about the out parameters (someone may have
-    // given us a non-empty string).
-    aResult.Truncate();
-    
-    return false;
-  }
-
-  val->ToString(aResult);
-
-  return true;
-}
-
-bool
-Element::HasAttr(int32_t aNameSpaceID, nsIAtom* aName) const
-{
-  NS_ASSERTION(nullptr != aName, "must have attribute name");
-  NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown,
-               "must have a real namespace ID!");
-
-  return mAttrsAndChildren.IndexOfAttr(aName, aNameSpaceID) >= 0;
-}
-
-bool
-Element::AttrValueIs(int32_t aNameSpaceID,
-                     nsIAtom* aName,
-                     const nsAString& aValue,
-                     nsCaseTreatment aCaseSensitive) const
-{
-  NS_ASSERTION(aName, "Must have attr name");
-  NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown, "Must have namespace");
-
-  const nsAttrValue* val = mAttrsAndChildren.GetAttr(aName, aNameSpaceID);
-  return val && val->Equals(aValue, aCaseSensitive);
-}
-
-bool
-Element::AttrValueIs(int32_t aNameSpaceID,
-                     nsIAtom* aName,
-                     nsIAtom* aValue,
-                     nsCaseTreatment aCaseSensitive) const
-{
-  NS_ASSERTION(aName, "Must have attr name");
-  NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown, "Must have namespace");
-  NS_ASSERTION(aValue, "Null value atom");
-
-  const nsAttrValue* val = mAttrsAndChildren.GetAttr(aName, aNameSpaceID);
-  return val && val->Equals(aValue, aCaseSensitive);
+  DOMString str;
+  bool haveAttr = GetAttr(aNameSpaceID, aName, str);
+  str.ToString(aResult);
+  return haveAttr;
 }
 
 int32_t
@@ -2069,6 +2062,14 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
   // react to unexpected attribute changes.
   nsMutationGuard::DidMutate();
 
+  bool hadValidDir = false;
+  bool hadDirAuto = false;
+
+  if (aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::dir) {
+    hadValidDir = HasValidDir() || IsHTML(nsGkAtoms::bdi);
+    hadDirAuto = HasDirAuto(); // already takes bdi into account
+  }
+
   nsAttrValue oldValue;
   rv = mAttrsAndChildren.RemoveAttrAt(index, oldValue);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2090,6 +2091,10 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
 
   rv = AfterSetAttr(aNameSpaceID, aName, nullptr, aNotify);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  if (aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::dir) {
+    OnSetDirAttr(this, nullptr, hadValidDir, hadDirAuto, aNotify);
+  }
 
   if (hasMutationListeners) {
     nsCOMPtr<nsIDOMEventTarget> node = do_QueryObject(this);
@@ -3574,4 +3579,14 @@ Element::GetEditorInternal()
 {
   nsCOMPtr<nsITextControlElement> textCtrl = do_QueryInterface(this);
   return textCtrl ? textCtrl->GetTextEditor() : nullptr;
+}
+
+nsresult
+Element::SetBoolAttr(nsIAtom* aAttr, bool aValue)
+{
+  if (aValue) {
+    return SetAttr(kNameSpaceID_None, aAttr, EmptyString(), true);
+  }
+
+  return UnsetAttr(kNameSpaceID_None, aAttr, true);
 }

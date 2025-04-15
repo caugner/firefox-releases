@@ -22,6 +22,7 @@
 #include "nsHTMLCanvasFrame.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "nsICanvasRenderingContextInternal.h"
+#include <algorithm>
 
 // DateTime Includes
 #include "nsDateTimeFormatCID.h"
@@ -105,7 +106,7 @@ nsSimplePageSequenceFrame::nsSimplePageSequenceFrame(nsStyleContext* aContext) :
   mPageData = new nsSharedPageData();
   mPageData->mHeadFootFont =
     new nsFont(*PresContext()->GetDefaultFont(kGenericFont_serif,
-                                              aContext->GetStyleFont()->mLanguage));
+                                              aContext->StyleFont()->mLanguage));
   mPageData->mHeadFootFont->size = nsPresContext::CSSPointsToAppUnits(10);
 
   nsresult rv;
@@ -138,9 +139,9 @@ nsSimplePageSequenceFrame::SetDesiredSize(nsHTMLReflowMetrics& aDesiredSize,
     // can act as a background in print preview but also handle overflow
     // in child page frames correctly.
     // Use availableWidth so we don't cause a needless horizontal scrollbar.
-    aDesiredSize.width = NS_MAX(aReflowState.availableWidth,
+    aDesiredSize.width = std::max(aReflowState.availableWidth,
                                 nscoord(aWidth * PresContext()->GetPrintPreviewScale()));
-    aDesiredSize.height = NS_MAX(aReflowState.ComputedHeight(),
+    aDesiredSize.height = std::max(aReflowState.ComputedHeight(),
                                  nscoord(aHeight * PresContext()->GetPrintPreviewScale()));
 }
 
@@ -254,7 +255,7 @@ nsSimplePageSequenceFrame::Reflow(nsPresContext*          aPresContext,
     y += kidSize.height;
     y += pageCSSMargin.bottom;
 
-    maxXMost = NS_MAX(maxXMost, x + kidSize.width + pageCSSMargin.right);
+    maxXMost = std::max(maxXMost, x + kidSize.width + pageCSSMargin.right);
 
     // Is the page complete?
     nsIFrame* kidNextInFlow = kidFrame->GetNextInFlow();
@@ -802,29 +803,25 @@ ComputePageSequenceTransform(nsIFrame* aFrame, float aAppUnitsPerPixel)
   return gfx3DMatrix::ScalingMatrix(scale, scale, 1);
 }
 
-NS_IMETHODIMP
+void
 nsSimplePageSequenceFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                             const nsRect&           aDirtyRect,
                                             const nsDisplayListSet& aLists)
 {
-  nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   nsDisplayList content;
   nsIFrame* child = GetFirstPrincipalChild();
   while (child) {
-    rv = child->BuildDisplayListForStackingContext(aBuilder,
+    child->BuildDisplayListForStackingContext(aBuilder,
         child->GetVisualOverflowRectRelativeToSelf(), &content);
-    NS_ENSURE_SUCCESS(rv, rv);
     child = child->GetNextSibling();
   }
 
-  rv = content.AppendNewToTop(new (aBuilder)
+  content.AppendNewToTop(new (aBuilder)
       nsDisplayTransform(aBuilder, this, &content, ::ComputePageSequenceTransform));
-  NS_ENSURE_SUCCESS(rv, rv);
 
   aLists.Content()->AppendToTop(&content);
-  return NS_OK;
 }
 
 nsIAtom*

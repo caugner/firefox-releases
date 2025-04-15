@@ -12,11 +12,6 @@ if (this.Components) {
 (function(exports) {
   "use strict";
 
-  // A simple flag used to control debugging messages.
-  // FIXME: Once this library has been battle-tested, this flag will
-  // either be removed or replaced with a pref.
-  const DEBUG = false;
-
    try {
      importScripts("resource://gre/modules/osfile.jsm");
 
@@ -33,54 +28,43 @@ if (this.Components) {
       */
      self.onmessage = function onmessage(msg) {
        let data = msg.data;
-       if (DEBUG) {
-         LOG("Received message", JSON.stringify(data));
-       }
+       LOG("Received message", data);
        let id = data.id;
        let result;
        let exn;
        try {
          let method = data.fun;
-         if (DEBUG) {
-           LOG("Calling method", method);
-         }
+         LOG("Calling method", method);
          result = Agent[method].apply(Agent, data.args);
-         if (DEBUG) {
-           LOG("Method", method, "succeeded");
-         }
+         LOG("Method", method, "succeeded");
        } catch (ex) {
          exn = ex;
-         if (DEBUG) {
-           LOG("Error while calling agent method", exn, exn.stack);
-         }
+         LOG("Error while calling agent method", exn, exn.stack);
        }
        // Now, post a reply, possibly as an uncaught error.
        // We post this message from outside the |try ... catch| block
        // to avoid capturing errors that take place during |postMessage| and
        // built-in serialization.
        if (!exn) {
-         if (DEBUG) {
-           LOG("Sending positive reply", JSON.stringify(result), "id is", id);
+         LOG("Sending positive reply", result, "id is", id);
+         if (result instanceof Transfer) {
+           // Take advantage of zero-copy transfers
+           self.postMessage({ok: result.data, id: id}, result.transfers);
+         } else {
+           self.postMessage({ok: result, id:id});
          }
-         self.postMessage({ok: result, id:id});
        } else if (exn == StopIteration) {
          // StopIteration cannot be serialized automatically
-         if (DEBUG) {
-           LOG("Sending back StopIteration");
-         }
+         LOG("Sending back StopIteration");
          self.postMessage({StopIteration: true, id: id});
        } else if (exn instanceof exports.OS.File.Error) {
-         if (DEBUG) {
-           LOG("Sending back OS.File error", exn, "id is", id);
-         }
+         LOG("Sending back OS.File error", exn, "id is", id);
          // Instances of OS.File.Error know how to serialize themselves
          // (deserialization ensures that we end up with OS-specific
          // instances of |OS.File.Error|)
          self.postMessage({fail: exports.OS.File.Error.toMsg(exn), id:id});
        } else {
-         if (DEBUG) {
-           LOG("Sending back regular error", exn, exn.stack, "id is", id);
-         }
+         LOG("Sending back regular error", exn, exn.stack, "id is", id);
          // Other exceptions do not, and should be propagated through DOM's
          // built-in mechanism for uncaught errors, although this mechanism
          // may lose interesting information.
@@ -143,6 +127,7 @@ if (this.Components) {
       *
       * @param {*} id A unique identifier, as used by |OpenFiles|.
       * @param {Function} f A function to call.
+      * @param {boolean} ignoreAbsent If |true|, the error is ignored. Otherwise, the error causes an exception.
       * @return The return value of |f()|
       *
       * This function attempts to get the file matching |id|. If
@@ -158,10 +143,13 @@ if (this.Components) {
      };
 
      let OpenedDirectoryIterators = new ResourceTracker();
-     let withDir = function withDir(fd, f) {
+     let withDir = function withDir(fd, f, ignoreAbsent) {
        let file = OpenedDirectoryIterators.get(fd);
        if (file == null) {
-         throw new Error("Could not find Directory");
+         if (!ignoreAbsent) {
+           throw new Error("Could not find Directory");
+         }
+         return;
        }
        if (!(file instanceof File.DirectoryIterator)) {
          throw new Error("file is not a directory iterator " + file.__proto__.toSource());
@@ -174,6 +162,21 @@ if (this.Components) {
      let File = exports.OS.File;
 
      /**
+      * A constructor used to transfer data to the caller
+      * without copy.
+      *
+      * @param {*} data The data to return to the caller.
+      * @param {Array} transfers An array of Transferable
+      * values that should be moved instead of being copied.
+      *
+      * @constructor
+      */
+     let Transfer = function Transfer(data, transfers) {
+       this.data = data;
+       this.transfers = transfers;
+     };
+
+     /**
       * The agent.
       *
       * It is in charge of performing method-specific deserialization
@@ -181,6 +184,15 @@ if (this.Components) {
       * back the results.
       */
      let Agent = {
+       // Update worker's OS.Shared.DEBUG flag message from controller.
+       SET_DEBUG: function SET_DEBUG (aDEBUG) {
+         exports.OS.Shared.DEBUG = aDEBUG;
+       },
+       // Return worker's current OS.Shared.DEBUG value to controller.
+       // Note: This is used for testing purposes.
+       GET_DEBUG: function GET_DEBUG () {
+         return exports.OS.Shared.DEBUG;
+       },
        // Functions of OS.File
        stat: function stat(path) {
          return exports.OS.File.Info.toMsg(
@@ -214,7 +226,8 @@ if (this.Components) {
          return OpenedFiles.add(file);
        },
        read: function read(path, bytes) {
-         return File.read(Type.path.fromMsg(path), bytes);
+         let data = File.read(Type.path.fromMsg(path), bytes);
+         return new Transfer({buffer: data.buffer, byteOffset: data.byteOffset, byteLength: data.byteLength}, [data.buffer]);
        },
        exists: function exists(path) {
          return File.exists(Type.path.fromMsg(path));
@@ -248,6 +261,14 @@ if (this.Components) {
            function do_stat() {
              return exports.OS.File.Info.toMsg(this.stat());
            });
+       },
+       File_prototype_read: function read(fd, nbytes, options) {
+         return withFile(fd,
+           function do_read() {
+             let data = this.read(nbytes, options);
+             return new Transfer({buffer: data.buffer, byteOffset: data.byteOffset, byteLength: data.byteLength}, [data.buffer]);
+           }
+         );
        },
        File_prototype_readTo: function readTo(fd, buffer, options) {
          return withFile(fd,
@@ -287,7 +308,7 @@ if (this.Components) {
                }
                throw x;
              }
-           });
+           }, false);
        },
        DirectoryIterator_prototype_nextBatch: function nextBatch(dir, size) {
          return withDir(dir,
@@ -300,14 +321,14 @@ if (this.Components) {
                throw x;
              }
              return result.map(File.DirectoryIterator.Entry.toMsg);
-           });
+           }, false);
        },
        DirectoryIterator_prototype_close: function close(dir) {
          return withDir(dir,
            function do_close() {
              this.close();
              OpenedDirectoryIterators.remove(dir);
-           });
+           }, true);// ignore error to support double-closing |DirectoryIterator|
        }
      };
   } catch(ex) {

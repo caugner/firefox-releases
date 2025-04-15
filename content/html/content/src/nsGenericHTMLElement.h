@@ -13,8 +13,8 @@
 #include "nsGkAtoms.h"
 #include "nsContentCreatorFunctions.h"
 #include "mozilla/ErrorResult.h"
-#include "nsContentUtils.h"
 #include "nsIDOMHTMLMenuElement.h"
+#include "mozilla/dom/ValidityState.h"
 
 class nsIDOMAttr;
 class nsIDOMEventListener;
@@ -23,7 +23,6 @@ class nsIFrame;
 class nsIStyleRule;
 class nsChildContentList;
 class nsDOMCSSDeclaration;
-class nsHTMLMenuElement;
 class nsIDOMCSSStyleDeclaration;
 class nsIURI;
 class nsIFormControlFrame;
@@ -37,11 +36,11 @@ class nsHTMLFormElement;
 class nsIDOMHTMLMenuElement;
 class nsIDOMHTMLCollection;
 class nsDOMSettableTokenList;
-class nsIDOMDOMStringMap;
 
 namespace mozilla {
 namespace dom{
 class HTMLPropertiesCollection;
+class HTMLMenuElement;
 }
 }
 
@@ -198,11 +197,11 @@ public:
   void SetContentEditable(const nsAString& aContentEditable,
                           mozilla::ErrorResult& aError)
   {
-    if (nsContentUtils::EqualsLiteralIgnoreASCIICase(aContentEditable, "inherit")) {
+    if (aContentEditable.LowerCaseEqualsLiteral("inherit")) {
       UnsetHTMLAttr(nsGkAtoms::contenteditable, aError);
-    } else if (nsContentUtils::EqualsLiteralIgnoreASCIICase(aContentEditable, "true")) {
+    } else if (aContentEditable.LowerCaseEqualsLiteral("true")) {
       SetHTMLAttr(nsGkAtoms::contenteditable, NS_LITERAL_STRING("true"), aError);
-    } else if (nsContentUtils::EqualsLiteralIgnoreASCIICase(aContentEditable, "false")) {
+    } else if (aContentEditable.LowerCaseEqualsLiteral("false")) {
       SetHTMLAttr(nsGkAtoms::contenteditable, NS_LITERAL_STRING("false"), aError);
     } else {
       aError.Throw(NS_ERROR_DOM_SYNTAX_ERR);
@@ -221,7 +220,7 @@ public:
     }
     return false;
   }
-  nsHTMLMenuElement* GetContextMenu() const;
+  mozilla::dom::HTMLMenuElement* GetContextMenu() const;
   bool Spellcheck();
   void SetSpellcheck(bool aSpellcheck, mozilla::ErrorResult& aError)
   {
@@ -230,16 +229,12 @@ public:
                             : NS_LITERAL_STRING("false"),
                 aError);
   }
-  nsICSSDeclaration* GetStyle(mozilla::ErrorResult& aError)
-  {
-    nsresult rv;
-    nsICSSDeclaration* style = nsMappedAttributeElement::GetStyle(&rv);
-    if (NS_FAILED(rv)) {
-      aError.Throw(rv);
-    }
-    return style;
-  }
 
+  /**
+   * Determine whether an attribute is an event (onclick, etc.)
+   * @param aName the attribute
+   * @return whether the name is an event handler name
+   */
   virtual bool IsEventAttributeName(nsIAtom* aName) MOZ_OVERRIDE;
 
 #define EVENT(name_, id_, type_, struct_) /* nothing; handled by nsINode */
@@ -363,8 +358,8 @@ public:
    * in aIsFocusable.
    */
   virtual bool IsHTMLFocusable(bool aWithMouse,
-                                 bool *aIsFocusable,
-                                 int32_t *aTabIndex);
+                               bool *aIsFocusable,
+                               int32_t *aTabIndex);
   virtual void PerformAccesskey(bool aKeyCausesActivation,
                                 bool aIsTrustedEvent);
 
@@ -773,13 +768,6 @@ private:
   void RegUnRegAccessKey(bool aDoReg);
 
 protected:
-  /**
-   * Determine whether an attribute is an event (onclick, etc.)
-   * @param aName the attribute
-   * @return whether the name is an event handler name
-   */
-  bool IsEventName(nsIAtom* aName);
-
   virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
                                 const nsAttrValue* aValue, bool aNotify);
 
@@ -789,6 +777,10 @@ protected:
   virtual const nsAttrName* InternalGetExistingAttrNameFromQName(const nsAString& aStr) const;
 
   void GetHTMLAttr(nsIAtom* aName, nsAString& aResult) const
+  {
+    GetAttr(kNameSpaceID_None, aName, aResult);
+  }
+  void GetHTMLAttr(nsIAtom* aName, mozilla::dom::DOMString& aResult) const
   {
     GetAttr(kNameSpaceID_None, aName, aResult);
   }
@@ -846,29 +838,6 @@ protected:
    * @param aResult  result value [out]
    */
   NS_HIDDEN_(nsresult) SetAttrHelper(nsIAtom* aAttr, const nsAString& aValue);
-
-  /**
-   * Helper method for NS_IMPL_BOOL_ATTR macro.
-   * Gets value of boolean attribute. Only works for attributes in null
-   * namespace.
-   *
-   * @param aAttr    name of attribute.
-   * @param aValue   Boolean value of attribute.
-   */
-  NS_HIDDEN_(bool) GetBoolAttr(nsIAtom* aAttr) const
-  {
-    return HasAttr(kNameSpaceID_None, aAttr);
-  }
-
-  /**
-   * Helper method for NS_IMPL_BOOL_ATTR macro.
-   * Sets value of boolean attribute by removing attribute or setting it to
-   * the empty string. Only works for attributes in null namespace.
-   *
-   * @param aAttr    name of attribute.
-   * @param aValue   Boolean value of attribute.
-   */
-  NS_HIDDEN_(nsresult) SetBoolAttr(nsIAtom* aAttr, bool aValue);
 
   /**
    * Helper method for NS_IMPL_INT_ATTR macro.
@@ -951,6 +920,22 @@ protected:
                                nsAString& aResult) const;
 
   /**
+   * Helper method for NS_IMPL_ENUM_ATTR_DEFAULT_MISSING_INVALID_VALUES.
+   * Gets the enum value string of an attribute and using the default missing
+   * value if the attribute is missing or the default invalid value if the
+   * string is an invalid enum value.
+   *
+   * @param aType            the name of the attribute.
+   * @param aDefaultMissing  the default value if the attribute is missing.
+   * @param aDefaultInvalid  the default value if the attribute is invalid.
+   * @param aResult          string corresponding to the value [out].
+   */
+  NS_HIDDEN_(void) GetEnumAttr(nsIAtom* aAttr,
+                               const char* aDefaultMissing,
+                               const char* aDefaultInvalid,
+                               nsAString& aResult) const;
+
+  /**
    * Locates the nsIEditor associated with this node.  In general this is
    * equivalent to GetEditorInternal(), but for designmode or contenteditable,
    * this may need to get an editor that's not actually on this element's
@@ -1027,7 +1012,11 @@ private:
   void ChangeEditableState(int32_t aChange);
 };
 
-class nsHTMLFieldSetElement;
+namespace mozilla {
+namespace dom {
+class HTMLFieldSetElement;
+}
+}
 
 #define FORM_ELEMENT_FLAG_BIT(n_) NODE_FLAG_BIT(ELEMENT_TYPE_SPECIFIC_BITS_OFFSET + (n_))
 
@@ -1210,7 +1199,7 @@ protected:
   nsHTMLFormElement* mForm;
 
   /* This is a pointer to our closest fieldset parent if any */
-  nsHTMLFieldSetElement* mFieldSet;
+  mozilla::dom::HTMLFieldSetElement* mFieldSet;
 };
 
 //----------------------------------------------------------------------
@@ -1232,24 +1221,6 @@ protected:
   _class::Set##_method(const nsAString& aValue)                              \
   {                                                                          \
     return SetAttrHelper(nsGkAtoms::_atom, aValue);                          \
-  }
-
-/**
- * A macro to implement the getter and setter for a given boolean
- * valued content property. The method uses the generic GetAttr and
- * SetAttr methods.
- */
-#define NS_IMPL_BOOL_ATTR(_class, _method, _atom)                     \
-  NS_IMETHODIMP                                                       \
-  _class::Get##_method(bool* aValue)                                \
-  {                                                                   \
-    *aValue = GetBoolAttr(nsGkAtoms::_atom);                          \
-    return NS_OK;                                                     \
-  }                                                                   \
-  NS_IMETHODIMP                                                       \
-  _class::Set##_method(bool aValue)                                 \
-  {                                                                   \
-    return SetBoolAttr(nsGkAtoms::_atom, aValue);                   \
   }
 
 /**
@@ -1413,6 +1384,25 @@ protected:
   _class::Set##_method(const nsAString& aValue)                           \
   {                                                                       \
     return SetAttrHelper(nsGkAtoms::_atom, aValue);                       \
+  }
+
+/**
+ * A macro to implement the getter and setter for a given content
+ * property that needs to set an enumerated string that has different
+ * default values for missing and invalid values. The method uses a
+ * specific GetEnumAttr and the generic SetAttrHelper methods.
+ */
+#define NS_IMPL_ENUM_ATTR_DEFAULT_MISSING_INVALID_VALUES(_class, _method, _atom, _defaultMissing, _defaultInvalid) \
+  NS_IMETHODIMP                                                                                   \
+  _class::Get##_method(nsAString& aValue)                                                         \
+  {                                                                                               \
+    GetEnumAttr(nsGkAtoms::_atom, _defaultMissing, _defaultInvalid, aValue);                      \
+    return NS_OK;                                                                                 \
+  }                                                                                               \
+  NS_IMETHODIMP                                                                                   \
+  _class::Set##_method(const nsAString& aValue)                                                   \
+  {                                                                                               \
+    return SetAttrHelper(nsGkAtoms::_atom, aValue);                                               \
   }
 
 /**
@@ -1908,6 +1898,7 @@ NS_NewHTMLElement(already_AddRefed<nsINodeInfo> aNodeInfo,
                   mozilla::dom::FromParser aFromParser = mozilla::dom::NOT_FROM_PARSER);
 
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Shared)
+NS_DECLARE_NS_NEW_HTML_ELEMENT(SharedList)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(SharedObject)
 
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Anchor)
@@ -1922,7 +1913,6 @@ NS_DECLARE_NS_NEW_HTML_ELEMENT(Canvas)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Mod)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(DataList)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Div)
-NS_DECLARE_NS_NEW_HTML_ELEMENT(DList)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(FieldSet)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Font)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Form)
@@ -1945,7 +1935,6 @@ NS_DECLARE_NS_NEW_HTML_ELEMENT(MenuItem)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Meta)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Meter)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Object)
-NS_DECLARE_NS_NEW_HTML_ELEMENT(OList)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(OptGroup)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Option)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Output)
@@ -1970,7 +1959,6 @@ NS_DECLARE_NS_NEW_HTML_ELEMENT(TextArea)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Tfoot)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Thead)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Title)
-NS_DECLARE_NS_NEW_HTML_ELEMENT(UList)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Unknown)
 #if defined(MOZ_MEDIA)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Video)

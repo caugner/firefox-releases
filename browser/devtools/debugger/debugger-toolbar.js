@@ -193,7 +193,7 @@ OptionsView.prototype = {
     this._showVariablesOnlyEnumItem = document.getElementById("show-vars-only-enum");
     this._showVariablesFilterBoxItem = document.getElementById("show-vars-filter-box");
 
-    this._pauseOnExceptionsItem.setAttribute("checked", "false");
+    this._pauseOnExceptionsItem.setAttribute("checked", Prefs.pauseOnExceptions);
     this._showPanesOnStartupItem.setAttribute("checked", Prefs.panesVisibleOnStartup);
     this._showVariablesOnlyEnumItem.setAttribute("checked", Prefs.variablesOnlyEnumVisible);
     this._showVariablesFilterBoxItem.setAttribute("checked", Prefs.variablesSearchboxVisible);
@@ -225,7 +225,7 @@ OptionsView.prototype = {
    * Listener handling the 'pause on exceptions' menuitem command.
    */
   _togglePauseOnExceptions: function DVO__togglePauseOnExceptions() {
-    DebuggerController.activeThread.pauseOnExceptions(
+    DebuggerController.activeThread.pauseOnExceptions(Prefs.pauseOnExceptions =
       this._pauseOnExceptionsItem.getAttribute("checked") == "true");
   },
 
@@ -1016,6 +1016,14 @@ FilterView.prototype = {
     DebuggerView.Variables.performSearch("");
     this._doSearch(SEARCH_VARIABLE_FLAG);
     this._searchboxPanel.hidePopup();
+  },
+
+  /**
+   * Called when the variables focus key sequence was pressed.
+   */
+  _doVariablesFocus: function DVG__doVariablesFocus() {
+    DebuggerView.showPanesSoon();
+    DebuggerView.Variables.focusFirstVisibleNode();
   },
 
   _searchbox: null,

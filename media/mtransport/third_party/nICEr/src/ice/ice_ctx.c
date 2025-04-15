@@ -94,7 +94,7 @@ int nr_ice_fetch_stun_servers(int ct, nr_ice_stun_server **out)
           ABORT(r);
         port = 3478;
       }
-      if(r=nr_ip4_port_to_transport_addr(ntohl(addr_int), port, IPPROTO_UDP, 
+      if(r=nr_ip4_port_to_transport_addr(ntohl(addr_int), port, IPPROTO_UDP,
         &servers[i].addr))
         ABORT(r);
       servers[i].index=i;
@@ -109,6 +109,50 @@ int nr_ice_fetch_stun_servers(int ct, nr_ice_stun_server **out)
   abort:
     RFREE(addr);
     if (_status) RFREE(servers);
+    return(_status);
+  }
+
+int nr_ice_ctx_set_stun_servers(nr_ice_ctx *ctx,nr_ice_stun_server *servers,int ct)
+  {
+    int _status;
+
+    if(ctx->stun_servers){
+      RFREE(ctx->stun_servers);
+      ctx->stun_server_ct=0;
+    }
+
+    if (ct) {
+      if(!(ctx->stun_servers=RCALLOC(sizeof(nr_ice_stun_server)*ct)))
+        ABORT(R_NO_MEMORY);
+
+      memcpy(ctx->stun_servers,servers,sizeof(nr_ice_stun_server)*ct);
+      ctx->stun_server_ct = ct;
+    }
+
+    _status=0;
+ abort:
+    return(_status);
+  }
+
+int nr_ice_ctx_set_turn_servers(nr_ice_ctx *ctx,nr_ice_turn_server *servers,int ct)
+  {
+    int _status;
+
+    if(ctx->turn_servers){
+      RFREE(ctx->turn_servers);
+      ctx->turn_server_ct=0;
+    }
+
+    if(ct) {
+      if(!(ctx->turn_servers=RCALLOC(sizeof(nr_ice_turn_server)*ct)))
+        ABORT(R_NO_MEMORY);
+
+      memcpy(ctx->turn_servers,servers,sizeof(nr_ice_turn_server)*ct);
+      ctx->turn_server_ct = ct;
+    }
+
+    _status=0;
+ abort:
     return(_status);
   }
 
@@ -143,7 +187,7 @@ int nr_ice_fetch_turn_servers(int ct, nr_ice_turn_server **out)
           ABORT(r);
         port = 3478;
       }
-      if(r=nr_ip4_port_to_transport_addr(ntohl(addr_int), port, IPPROTO_UDP, 
+      if(r=nr_ip4_port_to_transport_addr(ntohl(addr_int), port, IPPROTO_UDP,
         &servers[i].turn_server.addr))
         ABORT(r);
 
@@ -164,7 +208,7 @@ int nr_ice_fetch_turn_servers(int ct, nr_ice_turn_server **out)
           ABORT(r);
       }
       else {
-        servers[i].password=RCALLOC(sizeof(*servers[i].password)); 
+        servers[i].password=RCALLOC(sizeof(*servers[i].password));
         if(!servers[i].password)
           ABORT(R_NO_MEMORY);
         servers[i].password->data = data.data;
@@ -214,7 +258,7 @@ int nr_ice_ctx_create(char *label, UINT4 flags, nr_ice_ctx **ctxp)
       ABORT(r);
     if(!(ctx->pwd=r_strdup(buf)))
       ABORT(r);
-    
+
     /* Get the STUN servers */
     if(r=NR_reg_get_child_count(NR_ICE_REG_STUN_SRV_PRFX,
       (unsigned int *)&ctx->stun_server_ct)||ctx->stun_server_ct==0) {
@@ -228,10 +272,12 @@ int nr_ice_ctx_create(char *label, UINT4 flags, nr_ice_ctx **ctxp)
       ctx->stun_server_ct=255;
     }
 
-    if(r=nr_ice_fetch_stun_servers(ctx->stun_server_ct,&ctx->stun_servers)){
-      r_log(LOG_ICE,LOG_ERR,"Couldn't load STUN servers from registry");
-      ctx->turn_server_ct=0;
-      ABORT(r);
+    if(ctx->stun_server_ct>0){
+      if(r=nr_ice_fetch_stun_servers(ctx->stun_server_ct,&ctx->stun_servers)){
+        r_log(LOG_ICE,LOG_ERR,"Couldn't load STUN servers from registry");
+        ctx->stun_server_ct=0;
+        ABORT(r);
+      }
     }
 
 #ifdef USE_TURN
@@ -252,10 +298,12 @@ int nr_ice_ctx_create(char *label, UINT4 flags, nr_ice_ctx **ctxp)
     }
 
 #ifdef USE_TURN
-    if(r=nr_ice_fetch_turn_servers(ctx->turn_server_ct,&ctx->turn_servers)){
-      ctx->turn_server_ct=0;
-      r_log(LOG_ICE,LOG_ERR,"Couldn't load TURN servers from registry");
-      ABORT(r);
+    if(ctx->turn_server_ct>0){
+      if(r=nr_ice_fetch_turn_servers(ctx->turn_server_ct,&ctx->turn_servers)){
+        ctx->turn_server_ct=0;
+        r_log(LOG_ICE,LOG_ERR,"Couldn't load TURN servers from registry");
+        ABORT(r);
+      }
     }
 #endif /* USE_TURN */
 
@@ -295,7 +343,7 @@ static void nr_ice_ctx_destroy_cb(NR_SOCKET s, int how, void *cb_arg)
         r_data_destroy(&ctx->turn_servers[i].password);
     }
     RFREE(ctx->turn_servers);
-    
+
     f1=STAILQ_FIRST(&ctx->foundations);
     while(f1){
       f2=STAILQ_NEXT(f1,entry);
@@ -323,10 +371,12 @@ int nr_ice_ctx_destroy(nr_ice_ctx **ctxp)
     if(!ctxp || !*ctxp)
       return(0);
 
+    (*ctxp)->done_cb=0;
+
     NR_ASYNC_SCHEDULE(nr_ice_ctx_destroy_cb,*ctxp);
 
     *ctxp=0;
-    
+
     return(0);
   }
 
@@ -342,7 +392,12 @@ void nr_ice_initialize_finished_cb(NR_SOCKET s, int h, void *cb_arg)
     if(ctx->uninitialized_candidates==0){
       r_log(LOG_ICE,LOG_DEBUG,"ICE(%s): All candidates initialized",ctx->label);
       ctx->state=NR_ICE_STATE_INITIALIZED;
-      ctx->done_cb(0,0,ctx->cb_arg);
+      if (ctx->done_cb) {
+        ctx->done_cb(0,0,ctx->cb_arg);
+      }
+      else {
+        r_log(LOG_ICE,LOG_DEBUG,"ICE(%s): No done_cb. We were probably destroyed.",ctx->label);
+      }
     }
     else {
       r_log(LOG_ICE,LOG_DEBUG,"ICE(%s): Waiting for %d candidates to be initialized",ctx->label, ctx->uninitialized_candidates);
@@ -369,14 +424,14 @@ int nr_ice_initialize(nr_ice_ctx *ctx, NR_async_cb done_cb, void *cb_arg)
     while(stream){
       if(r=nr_ice_media_stream_initialize(ctx,stream))
         ABORT(r);
-      
+
       stream=STAILQ_NEXT(stream,entry);
     }
 
     if(ctx->uninitialized_candidates)
       ABORT(R_WOULDBLOCK);
-    
-    
+
+
     _status=0;
   abort:
     return(_status);
@@ -388,7 +443,7 @@ int nr_ice_add_media_stream(nr_ice_ctx *ctx,char *label,int components, nr_ice_m
 
     if(r=nr_ice_media_stream_create(ctx,label,components,streamp))
       ABORT(r);
-    
+
     STAILQ_INSERT_TAIL(&ctx->streams,*streamp,entry);
 
     _status=0;
@@ -404,7 +459,7 @@ int nr_ice_get_global_attributes(nr_ice_ctx *ctx,char ***attrsp, int *attrctp)
 
     if(!(attrs=RCALLOC(sizeof(char *)*2)))
       ABORT(R_NO_MEMORY);
-    
+
     if(!(tmp=RMALLOC(100)))
       ABORT(R_NO_MEMORY);
     snprintf(tmp,100,"ice-ufrag:%s",ctx->ufrag);
@@ -420,6 +475,13 @@ int nr_ice_get_global_attributes(nr_ice_ctx *ctx,char ***attrsp, int *attrctp)
 
     _status=0;
   abort:
+    if (_status){
+      if (attrs){
+        RFREE(attrs[0]);
+        RFREE(attrs[1]);
+      }
+      RFREE(attrs);
+    }
     return(_status);
   }
 
@@ -438,7 +500,7 @@ static int nr_ice_random_string(char *str, int len)
 
     if(r=nr_crypto_random_bytes(bytes,needed))
       ABORT(r);
-    
+
     if(r=nr_bin2hex(bytes,needed,(unsigned char *)str))
       ABORT(r);
 
@@ -448,9 +510,9 @@ static int nr_ice_random_string(char *str, int len)
   }
 
 /* This is incredibly annoying: we now have a datagram but we don't
-   know which peer it's from, and we need to be able to tell the 
+   know which peer it's from, and we need to be able to tell the
    API user. So, offer it to each peer and if one bites, assume
-   the others don't want it 
+   the others don't want it
 */
 int nr_ice_ctx_deliver_packet(nr_ice_ctx *ctx, nr_ice_component *comp, nr_transport_addr *source_addr, UCHAR *data, int len)
   {
@@ -468,7 +530,7 @@ int nr_ice_ctx_deliver_packet(nr_ice_ctx *ctx, nr_ice_component *comp, nr_transp
 
     if(!pctx)
       r_log(LOG_ICE,LOG_INFO,"ICE(%s): Packet received from %s which doesn't match any known peer",ctx->label,source_addr->as_string);
-    
+
     return(0);
   }
 
@@ -497,6 +559,9 @@ int nr_ice_ctx_remember_id(nr_ice_ctx *ctx, nr_stun_message *msg)
         ABORT(R_NO_MEMORY);
 
     assert(sizeof(xid->id) == sizeof(msg->header.id));
+#if __STDC_VERSION__ >= 201112L
+    _Static_assert(sizeof(xid->id) == sizeof(msg->header.id),"Message ID Size Mismatch");
+#endif
     memcpy(xid->id, &msg->header.id, sizeof(xid->id));
 
     STAILQ_INSERT_TAIL(&ctx->ids,xid,entry);
@@ -507,7 +572,7 @@ int nr_ice_ctx_remember_id(nr_ice_ctx *ctx, nr_stun_message *msg)
 }
 
 
-/* Clean up some of the resources (mostly file descriptors) used 
+/* Clean up some of the resources (mostly file descriptors) used
    by candidates we didn't choose. Note that this still leaves
    a fair amount of non-system stuff floating around. This gets
    cleaned up when you destroy the ICE ctx */
@@ -516,20 +581,20 @@ int nr_ice_ctx_finalize(nr_ice_ctx *ctx, nr_ice_peer_ctx *pctx)
     nr_ice_media_stream *lstr,*rstr;
 
     r_log(LOG_ICE,LOG_DEBUG,"Finalizing ICE ctx %s, peer=%s",ctx->label,pctx->label);
-    /* 
-       First find the peer stream, if any 
+    /*
+       First find the peer stream, if any
     */
     lstr=STAILQ_FIRST(&ctx->streams);
     while(lstr){
       rstr=STAILQ_FIRST(&pctx->peer_streams);
-      
+
       while(rstr){
         if(rstr->local_stream==lstr)
           break;
 
         rstr=STAILQ_NEXT(rstr,entry);
       }
-      
+
       nr_ice_media_stream_finalize(lstr,rstr);
 
       lstr=STAILQ_NEXT(lstr,entry);

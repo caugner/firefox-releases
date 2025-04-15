@@ -12,6 +12,7 @@
 #include "SMILEnumType.h"
 #include "nsAttrValueInlines.h"
 #include "mozilla/dom/SVGAnimatedPreserveAspectRatioBinding.h"
+#include "nsContentUtils.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -54,7 +55,7 @@ GetAlignForString(const nsAString &aAlignString)
 {
   for (uint32_t i = 0 ; i < ArrayLength(sAlignStrings) ; i++) {
     if (aAlignString.EqualsASCII(sAlignStrings[i])) {
-      return (i + SVG_PRESERVEASPECTRATIO_NONE);
+      return (i + SVG_ALIGN_MIN_VALID);
     }
   }
 
@@ -65,12 +66,11 @@ static void
 GetAlignString(nsAString& aAlignString, uint16_t aAlign)
 {
   NS_ASSERTION(
-    aAlign >= SVG_PRESERVEASPECTRATIO_NONE &&
-    aAlign <= SVG_PRESERVEASPECTRATIO_XMAXYMAX,
+    aAlign >= SVG_ALIGN_MIN_VALID && aAlign <= SVG_ALIGN_MAX_VALID,
     "Unknown align");
 
   aAlignString.AssignASCII(
-    sAlignStrings[aAlign - SVG_PRESERVEASPECTRATIO_NONE]);
+    sAlignStrings[aAlign - SVG_ALIGN_MIN_VALID]);
 }
 
 static uint16_t
@@ -78,7 +78,7 @@ GetMeetOrSliceForString(const nsAString &aMeetOrSlice)
 {
   for (uint32_t i = 0 ; i < ArrayLength(sMeetOrSliceStrings) ; i++) {
     if (aMeetOrSlice.EqualsASCII(sMeetOrSliceStrings[i])) {
-      return (i + SVG_MEETORSLICE_MEET);
+      return (i + SVG_MEETORSLICE_MIN_VALID);
     }
   }
 
@@ -89,12 +89,12 @@ static void
 GetMeetOrSliceString(nsAString& aMeetOrSliceString, uint16_t aMeetOrSlice)
 {
   NS_ASSERTION(
-    aMeetOrSlice >= SVG_MEETORSLICE_MEET &&
-    aMeetOrSlice <= SVG_MEETORSLICE_SLICE,
+    aMeetOrSlice >= SVG_MEETORSLICE_MIN_VALID &&
+    aMeetOrSlice <= SVG_MEETORSLICE_MAX_VALID,
     "Unknown meetOrSlice");
 
   aMeetOrSliceString.AssignASCII(
-    sMeetOrSliceStrings[aMeetOrSlice - SVG_MEETORSLICE_MEET]);
+    sMeetOrSliceStrings[aMeetOrSlice - SVG_MEETORSLICE_MIN_VALID]);
 }
 
 already_AddRefed<DOMSVGPreserveAspectRatio>
@@ -226,7 +226,7 @@ SVGAnimatedPreserveAspectRatio::GetBaseValueString(
   GetAlignString(tmpString, mBaseVal.mAlign);
   aValueAsString.Append(tmpString);
 
-  if (mBaseVal.mAlign != SVG_PRESERVEASPECTRATIO_NONE) {
+  if (mBaseVal.mAlign != uint8_t(SVG_PRESERVEASPECTRATIO_NONE)) {
 
     aValueAsString.AppendLiteral(" ");
     GetMeetOrSliceString(tmpString, mBaseVal.mMeetOrSlice);

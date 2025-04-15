@@ -31,6 +31,7 @@
 #include "ImageContainer.h"
 #include "ImageLayers.h"
 #include "nsContentList.h"
+#include <algorithm>
 
 using namespace mozilla;
 using namespace mozilla::layers;
@@ -145,7 +146,7 @@ CorrectForAspectRatio(const gfxRect& aRect, const nsIntSize& aRatio)
                "Nothing to draw");
   // Choose scale factor that scales aRatio to just fit into aRect
   gfxFloat scale =
-    NS_MIN(aRect.Width()/aRatio.width, aRect.Height()/aRatio.height);
+    std::min(aRect.Width()/aRatio.width, aRect.Height()/aRatio.height);
   gfxSize scaledRatio(scale*aRatio.width, scale*aRatio.height);
   gfxPoint topLeft((aRect.Width() - scaledRatio.width)/2,
                    (aRect.Height() - scaledRatio.height)/2);
@@ -270,7 +271,7 @@ nsVideoFrame::Reflow(nsPresContext*           aPresContext,
 
       if (ShouldDisplayPoster() && posterHeight && posterWidth) {
         gfxFloat scale =
-          NS_MIN(static_cast<float>(computedArea.width)/nsPresContext::CSSPixelsToAppUnits(static_cast<float>(posterWidth)),
+          std::min(static_cast<float>(computedArea.width)/nsPresContext::CSSPixelsToAppUnits(static_cast<float>(posterWidth)),
                  static_cast<float>(computedArea.height)/nsPresContext::CSSPixelsToAppUnits(static_cast<float>(posterHeight)));
         gfxSize scaledRatio = gfxSize(scale*posterWidth, scale*posterHeight);
         scaledPosterSize.width = nsPresContext::CSSPixelsToAppUnits(static_cast<float>(scaledRatio.width));
@@ -364,25 +365,23 @@ public:
   }
 };
 
-NS_IMETHODIMP
+void
 nsVideoFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                const nsRect&           aDirtyRect,
                                const nsDisplayListSet& aLists)
 {
   if (!IsVisibleForPainting(aBuilder))
-    return NS_OK;
+    return;
 
   DO_GLOBAL_REFLOW_COUNT_DSP("nsVideoFrame");
 
-  nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   nsDisplayList replacedContent;
 
   if (HasVideoElement() && !ShouldDisplayPoster()) {
-    rv = replacedContent.AppendNewToTop(
+    replacedContent.AppendNewToTop(
       new (aBuilder) nsDisplayVideo(aBuilder, this));
-    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // Add child frames to display list. We expect up to two children, an image
@@ -391,21 +390,17 @@ nsVideoFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
        child;
        child = child->GetNextSibling()) {
     if (child->GetType() == nsGkAtoms::imageFrame && ShouldDisplayPoster()) {
-      rv = child->BuildDisplayListForStackingContext(aBuilder,
-                                                     aDirtyRect - child->GetOffsetTo(this),
-                                                     &replacedContent);
-      NS_ENSURE_SUCCESS(rv,rv);
+      child->BuildDisplayListForStackingContext(aBuilder,
+                                                aDirtyRect - child->GetOffsetTo(this),
+                                                &replacedContent);
     } else if (child->GetType() == nsGkAtoms::boxFrame) {
-      rv = child->BuildDisplayListForStackingContext(aBuilder,
-                                                     aDirtyRect - child->GetOffsetTo(this),
-                                                     &replacedContent);
-      NS_ENSURE_SUCCESS(rv,rv);
+      child->BuildDisplayListForStackingContext(aBuilder,
+                                                aDirtyRect - child->GetOffsetTo(this),
+                                                &replacedContent);
     }
   }
 
   WrapReplacedContentForBorderRadius(aBuilder, &replacedContent, aLists);
-
-  return NS_OK;
 }
 
 nsIAtom*

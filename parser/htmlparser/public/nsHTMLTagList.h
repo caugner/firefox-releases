@@ -7,17 +7,17 @@
 
 /******
 
-  This file contains the list of all HTML tags 
-  See nsHTMLTags.h for access to the enum values for tags
+  This file contains the list of all HTML tags.
+  See nsHTMLTags.h for access to the enum values for tags.
 
   It is designed to be used as inline input to nsHTMLTags.cpp and
   nsHTMLContentSink *only* through the magic of C preprocessing.
 
   All entries must be enclosed in the macro HTML_TAG which will have cruel
-  and unusual things done to it
+  and unusual things done to it.
 
   It is recommended (but not strictly necessary) to keep all entries
-  in alphabetical order
+  in alphabetical order.
 
   The first argument to HTML_TAG is both the enum identifier of the
   property and the string value. The second argument is the "creator"
@@ -70,7 +70,7 @@ HTML_TAG(del, Mod)
 HTML_HTMLELEMENT_TAG(dfn)
 HTML_TAG(dir, Shared)
 HTML_TAG(div, Div)
-HTML_TAG(dl, DList)
+HTML_TAG(dl, SharedList)
 HTML_HTMLELEMENT_TAG(dt)
 HTML_HTMLELEMENT_TAG(em)
 HTML_TAG(embed, SharedObject)
@@ -106,6 +106,7 @@ HTML_TAG(legend, Legend)
 HTML_TAG(li, LI)
 HTML_TAG(link, Link)
 HTML_HTMLELEMENT_TAG(listing)
+HTML_HTMLELEMENT_TAG(main)
 HTML_TAG(map, Map)
 HTML_HTMLELEMENT_TAG(mark)
 HTML_TAG(marquee, Div)
@@ -120,7 +121,7 @@ HTML_HTMLELEMENT_TAG(noembed)
 HTML_HTMLELEMENT_TAG(noframes)
 HTML_HTMLELEMENT_TAG(noscript)
 HTML_TAG(object, Object)
-HTML_TAG(ol, OList)
+HTML_TAG(ol, SharedList)
 HTML_TAG(optgroup, OptGroup)
 HTML_TAG(option, Option)
 HTML_TAG(output, Output)
@@ -156,7 +157,7 @@ HTML_TAG(title, Title)
 HTML_TAG(tr, TableRow)
 HTML_HTMLELEMENT_TAG(tt)
 HTML_HTMLELEMENT_TAG(u)
-HTML_TAG(ul, UList)
+HTML_TAG(ul, SharedList)
 HTML_HTMLELEMENT_TAG(var)
 #if defined(MOZ_MEDIA)
 HTML_TAG(video, Video)

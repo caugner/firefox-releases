@@ -3,6 +3,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "VideoConduit.h"
+#include "AudioConduit.h"
 #include "video_engine/include/vie_errors.h"
 #include "CSFLog.h"
 
@@ -72,6 +73,7 @@ WebrtcVideoConduit::~WebrtcVideoConduit()
   {
     mPtrViEBase->StopSend(mChannel);
     mPtrViEBase->StopReceive(mChannel);
+    SyncTo(nullptr);
     mPtrViEBase->DeleteChannel(mChannel);
     mPtrViEBase->Release();
   }
@@ -223,6 +225,7 @@ MediaConduitErrorCode WebrtcVideoConduit::Init()
     return kMediaConduitKeyFrameRequestError;
   }
   // Enable lossless transport
+  // XXX Note: We may want to disable this or limit it
   if (mPtrRTP->SetNACKStatus(mChannel, true) != 0)
   {
     CSFLogError(logTag,  "%s NACKStatus Failed %d ", __FUNCTION__,
@@ -233,6 +236,22 @@ MediaConduitErrorCode WebrtcVideoConduit::Init()
   return kMediaConduitNoError;
 }
 
+void
+WebrtcVideoConduit::SyncTo(WebrtcAudioConduit *aConduit)
+{
+  CSFLogDebug(logTag, "%s Synced to %p", __FUNCTION__, aConduit);
+
+  if (aConduit) {
+    mPtrViEBase->SetVoiceEngine(aConduit->GetVoiceEngine());
+    mPtrViEBase->ConnectAudioChannel(mChannel, aConduit->GetChannel());
+    // NOTE: this means the VideoConduit will keep the AudioConduit alive!
+    mSyncedTo = aConduit;
+  } else if (mSyncedTo) {
+    mPtrViEBase->DisconnectAudioChannel(mChannel);
+    mPtrViEBase->SetVoiceEngine(nullptr);
+    mSyncedTo = nullptr;
+  }
+}
 
 MediaConduitErrorCode
 WebrtcVideoConduit::AttachRenderer(mozilla::RefPtr<VideoRenderer> aVideoRenderer)
@@ -563,7 +582,7 @@ WebrtcVideoConduit::ReceivedRTCPPacket(const void *data, int len)
   CSFLogError(logTag, " %s Channel %d, Len %d ", __FUNCTION__, mChannel, len);
 
   //Media Engine should be receiving already
-  if(mEngineReceiving)
+  if(mEngineTransmitting)
   {
     //let the engine know of RTCP packet to decode.
     if(mPtrViENetwork->ReceivedRTCPPacket(mChannel,data,len) == -1)
@@ -591,7 +610,7 @@ int WebrtcVideoConduit::SendPacket(int channel, const void* data, int len)
   if(mTransport && (mTransport->SendRtpPacket(data, len) == NS_OK))
   {
     CSFLogDebug(logTag, "%s Sent RTP Packet ", __FUNCTION__);
-    return 0;
+    return len;
   } else {
     CSFLogError(logTag, "%s  Failed", __FUNCTION__);
     return -1;
@@ -602,10 +621,12 @@ int WebrtcVideoConduit::SendRTCPPacket(int channel, const void* data, int len)
 {
   CSFLogError(logTag,  "%s : channel %d , len %d ", __FUNCTION__, channel,len);
 
-  if(mTransport && (mTransport->SendRtcpPacket(data, len) == NS_OK))
+  // can't enable this assertion, because we do.  Suppress it
+  // NS_ASSERTION(mEngineReceiving,"We shouldn't send RTCP on the receiver side");
+  if(mEngineReceiving && mTransport && (mTransport->SendRtcpPacket(data, len) == NS_OK))
    {
       CSFLogDebug(logTag, "%s Sent RTCP Packet ", __FUNCTION__);
-      return 0;
+      return len;
    } else {
       CSFLogError(logTag, "%s Failed", __FUNCTION__);
       return -1;
@@ -659,7 +680,7 @@ WebrtcVideoConduit::CodecConfigToWebRTCCodec(const VideoCodecConfig* codecInfo,
   cinst.plType  = codecInfo->mType;
   cinst.width   = codecInfo->mWidth;
   cinst.height  = codecInfo->mHeight;
-  cinst.minBitrate = 50;
+  cinst.minBitrate = 200;
   cinst.startBitrate = 300;
   cinst.maxBitrate = 2000;
 }

@@ -42,6 +42,7 @@ PARALLEL_DIRS += \
   startup \
   statusfilter \
   telemetry \
+  thumbnails \
   typeaheadfind \
   urlformatter \
   viewconfig \
@@ -62,6 +63,10 @@ ifdef MOZ_HELP_VIEWER
 PARALLEL_DIRS += help
 endif
 
+ifdef MOZ_JSDOWNLOADS
+PARALLEL_DIRS += jsdownloads
+endif
+
 ifdef NS_PRINTING
 PARALLEL_DIRS += printing
 endif
@@ -79,6 +84,10 @@ endif
 
 ifdef MOZ_URL_CLASSIFIER
 PARALLEL_DIRS += url-classifier
+endif
+
+ifdef MOZ_CAPTIVEDETECT
+PARALLEL_DIRS += captivedetect
 endif
 
 DIRS += \

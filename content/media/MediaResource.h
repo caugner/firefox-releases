@@ -47,6 +47,12 @@ class MediaChannelStatistics {
 public:
   MediaChannelStatistics() { Reset(); }
 
+  MediaChannelStatistics(MediaChannelStatistics * aCopyFrom)
+  {
+    MOZ_ASSERT(aCopyFrom);
+    *this = *aCopyFrom;
+  }
+
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaChannelStatistics)
 
   void Reset() {
@@ -187,6 +193,9 @@ inline MediaByteRange::MediaByteRange(TimestampedMediaByteRange& aByteRange)
 class MediaResource
 {
 public:
+
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaResource)
+
   virtual ~MediaResource() {}
 
   // The following can be called on the main thread only:
@@ -317,6 +326,10 @@ public:
   virtual nsresult ReadFromCache(char* aBuffer,
                                  int64_t aOffset,
                                  uint32_t aCount) = 0;
+  // Returns true if the resource can be seeked to unbuffered ranges, i.e.
+  // for an HTTP network stream this returns true if HTTP1.1 Byte Range
+  // requests are supported by the connection/server.
+  virtual bool IsTransportSeekable() = 0;
 
   /**
    * Create a resource, reading data from the channel. Call on main thread only.
@@ -342,12 +355,6 @@ public:
   }
 
   /**
-   * Cancels current byte range requests previously opened via
-   * OpenByteRange.
-   */
-  virtual void CancelByteRangeOpen() { }
-
-  /**
    * Fills aRanges with MediaByteRanges representing the data which is cached
    * in the media cache. Stream should be pinned during call and while
    * aRanges is being used.
@@ -360,6 +367,11 @@ public:
 
   // Notify that the last data byte range was loaded.
   virtual void NotifyLastByteRange() { }
+
+  // Returns the content type of the resource. This is copied from the
+  // nsIChannel when the MediaResource is created. Safe to call from
+  // any thread.
+  virtual const nsACString& GetContentType() const = 0;
 };
 
 class BaseMediaResource : public MediaResource {
@@ -368,17 +380,27 @@ public:
   virtual void MoveLoadsToBackground();
 
 protected:
-  BaseMediaResource(MediaDecoder* aDecoder, nsIChannel* aChannel, nsIURI* aURI) :
+  BaseMediaResource(MediaDecoder* aDecoder,
+                    nsIChannel* aChannel,
+                    nsIURI* aURI,
+                    const nsACString& aContentType) :
     mDecoder(aDecoder),
     mChannel(aChannel),
     mURI(aURI),
+    mContentType(aContentType),
     mLoadInBackground(false)
   {
     MOZ_COUNT_CTOR(BaseMediaResource);
+    NS_ASSERTION(!mContentType.IsEmpty(), "Must know content type");
   }
   virtual ~BaseMediaResource()
   {
     MOZ_COUNT_DTOR(BaseMediaResource);
+  }
+
+  virtual const nsACString& GetContentType() const MOZ_OVERRIDE
+  {
+    return mContentType;
   }
 
   // Set the request's load flags to aFlags.  If the request is part of a
@@ -399,6 +421,11 @@ protected:
   // main thread only.
   nsCOMPtr<nsIURI> mURI;
 
+  // Content-Type of the channel. This is copied from the nsIChannel when the
+  // MediaResource is created. This is constant, so accessing from any thread
+  // is safe.
+  const nsAutoCString mContentType;
+
   // True if MoveLoadsToBackground() has been called, i.e. the load event
   // has been fired, and all channel loads will be in the background.
   bool mLoadInBackground;
@@ -415,7 +442,10 @@ protected:
 class ChannelMediaResource : public BaseMediaResource
 {
 public:
-  ChannelMediaResource(MediaDecoder* aDecoder, nsIChannel* aChannel, nsIURI* aURI);
+  ChannelMediaResource(MediaDecoder* aDecoder,
+                       nsIChannel* aChannel,
+                       nsIURI* aURI,
+                       const nsACString& aContentType);
   ~ChannelMediaResource();
 
   // These are called on the main thread by MediaCache. These must
@@ -455,7 +485,6 @@ public:
   virtual nsresult Open(nsIStreamListener** aStreamListener);
   virtual nsresult OpenByteRange(nsIStreamListener** aStreamListener,
                                  MediaByteRange const & aByteRange);
-  virtual void     CancelByteRangeOpen();
   virtual nsresult Close();
   virtual void     Suspend(bool aCloseImmediately);
   virtual void     Resume();
@@ -495,6 +524,7 @@ public:
   virtual bool    IsDataCachedToEndOfResource(int64_t aOffset);
   virtual bool    IsSuspendedByCache(MediaResource** aActiveResource);
   virtual bool    IsSuspended();
+  virtual bool    IsTransportSeekable() MOZ_OVERRIDE;
 
   class Listener MOZ_FINAL : public nsIStreamListener,
                              public nsIInterfaceRequestor,
@@ -599,6 +629,10 @@ protected:
 
   // Set to false once first byte range request has been made.
   bool mByteRangeFirstOpen;
+
+  // True if the stream can seek into unbuffered ranged, i.e. if the
+  // connection supports byte range requests.
+  bool mIsTransportSeekable;
 
   // For byte range requests, set to the offset requested in |Seek|.
   // Used in |CacheClientSeek| to find the originally requested byte range.

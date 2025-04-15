@@ -11,6 +11,7 @@ import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.GeckoAsyncTask;
+import org.mozilla.gecko.util.GeckoBackgroundThread;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.StringUtils;
 
@@ -23,7 +24,6 @@ import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Message;
@@ -45,17 +45,13 @@ import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
 import android.widget.AdapterView;
 import android.widget.FilterQueryProvider;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.SimpleCursorAdapter;
-import android.widget.TabHost.TabContentFactory;
 import android.widget.TextView;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -143,19 +139,25 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
     }
 
     public void destroy() {
-        AwesomeBarCursorAdapter adapter = getCursorAdapter();
         unregisterEventListener("SearchEngines:Data");
-        if (adapter == null) {
-            return;
-        }
-
-        Cursor cursor = adapter.getCursor();
-        if (cursor != null)
-            cursor.close();
 
         mHandler.removeMessages(MESSAGE_UPDATE_FAVICONS);
         mHandler.removeMessages(MESSAGE_LOAD_FAVICONS);
         mHandler = null;
+
+        // Can't use getters for adapter or listview. They will create them if null.
+        if (mCursorAdapter != null && mListView != null) {
+            mListView.setAdapter(null);
+            final Cursor cursor = mCursorAdapter.getCursor();
+            // Gingerbread locks the DB when closing a cursor, so do it in the
+            // background.
+            GeckoBackgroundThread.getHandler().post(new Runnable() {
+                public void run() {
+                    if (cursor != null && !cursor.isClosed())
+                        cursor.close();
+                }
+            });
+        }
     }
 
     public void filter(String searchTerm) {
@@ -465,7 +467,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
                         // first suggestion item) and the search matches a URL
                         // pattern, go to that URL. Otherwise, do a search for
                         // the term.
-                        if (v != viewHolder.userEnteredView && !StringUtils.isSearchQuery(suggestion)) {
+                        if (v != viewHolder.userEnteredView && !StringUtils.isSearchQuery(suggestion, false)) {
                             listener.onUrlOpen(suggestion, null);
                         } else {
                             listener.onSearch(engine.name, suggestion);
@@ -826,15 +828,16 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
         if (urls.size() == 0)
             return;
 
-        (new GeckoAsyncTask<Void, Void, Cursor>(GeckoApp.mAppContext, GeckoAppShell.getHandler()) {
+        (new GeckoAsyncTask<Void, Void, Void>(GeckoApp.mAppContext, GeckoAppShell.getHandler()) {
             @Override
-            public Cursor doInBackground(Void... params) {
-                return BrowserDB.getFaviconsForUrls(getContentResolver(), urls);
+            public Void doInBackground(Void... params) {
+                Cursor cursor = BrowserDB.getFaviconsForUrls(getContentResolver(), urls);
+                storeFaviconsInMemCache(cursor);
+                return null;
             }
 
             @Override
-            public void onPostExecute(Cursor c) {
-                storeFaviconsInMemCache(c);
+            public void onPostExecute(Void result) {
                 postUpdateFavicons();
             }
         }).execute();

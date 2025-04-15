@@ -22,7 +22,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-                                  "resource://gre/modules/commonjs/promise/core.js");
+                                  "resource://gre/modules/commonjs/sdk/core/promise.js");
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
 
@@ -52,19 +52,6 @@ const TEST_256_CHARS = new Array(257).join("-");
 const DESIRED_LENGTH = REQUEST_SUSPEND_AT * 2;
 const TEST_DATA_LONG = new Array(1 + DESIRED_LENGTH / 256).join(TEST_256_CHARS);
 do_check_eq(TEST_DATA_LONG.length, DESIRED_LENGTH);
-
-/**
- * This function will be uplifted to the testing framework.
- *
- * @see toolkit/components/places/test/unit/head_common.js
- */
-function add_task(aTaskFn) {
-  function wrapperFn() {
-    Task.spawn(aTaskFn)
-        .then(run_next_test, do_report_unexpected_exception);
-  }
-  eval("add_test(function " + aTaskFn.name + "() wrapperFn());");
-}
 
 /**
  * Returns a reference to a temporary file.  If the file is then created, it

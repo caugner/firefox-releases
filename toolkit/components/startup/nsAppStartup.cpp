@@ -309,9 +309,6 @@ nsAppStartup::Quit(uint32_t aMode)
   if (mShuttingDown)
     return NS_OK;
 
-  SAMPLE_MARKER("Shutdown start");
-  mozilla::RecordShutdownStartTimeStamp();
-
   // If we're considering quitting, we will only do so if:
   if (ferocity == eConsiderQuit) {
 #ifdef XP_MACOSX
@@ -340,7 +337,6 @@ nsAppStartup::Quit(uint32_t aMode)
       appShell->GetApplicationProvidedHiddenWindow(&usefulHiddenWindow);
       nsCOMPtr<nsIXULWindow> hiddenWindow;
       appShell->GetHiddenWindow(getter_AddRefs(hiddenWindow));
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
       // If the remaining windows are useful, we won't quit:
       nsCOMPtr<nsIXULWindow> hiddenPrivateWindow;
       if (hasHiddenPrivateWindow) {
@@ -350,11 +346,6 @@ nsAppStartup::Quit(uint32_t aMode)
       } else if (!hiddenWindow || usefulHiddenWindow) {
         return NS_OK;
       }
-#else
-      // If the one window is useful, we won't quit:
-      if (!hiddenWindow || usefulHiddenWindow)
-        return NS_OK;
-#endif
 
       ferocity = eAttemptQuit;
     }
@@ -382,6 +373,8 @@ nsAppStartup::Quit(uint32_t aMode)
       }
     }
 
+    SAMPLE_MARKER("Shutdown start");
+    mozilla::RecordShutdownStartTimeStamp();
     mShuttingDown = true;
     if (!mRestart) {
       mRestart = (aMode & eRestart) != 0;

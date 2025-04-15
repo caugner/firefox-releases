@@ -12,6 +12,7 @@
 #include "nsStaticAtom.h"
 #include "nsUnicharUtils.h"
 #include "mozilla/HashFunctions.h"
+#include <algorithm>
 
 using namespace mozilla;
 
@@ -160,6 +161,8 @@ static const PRUnichar sHTMLTagUnicodeName_link[] =
   {'l', 'i', 'n', 'k', '\0'};
 static const PRUnichar sHTMLTagUnicodeName_listing[] =
   {'l', 'i', 's', 't', 'i', 'n', 'g', '\0'};
+static const PRUnichar sHTMLTagUnicodeName_main[] =
+  {'m', 'a', 'i', 'n', '\0'};
 static const PRUnichar sHTMLTagUnicodeName_map[] =
   {'m', 'a', 'p', '\0'};
 static const PRUnichar sHTMLTagUnicodeName_mark[] =
@@ -395,7 +398,7 @@ nsHTMLTags::AddRefTable(void)
       uint32_t maxTagNameLength = 0;
       for (i = 0; i < NS_HTML_TAG_MAX; ++i) {
         uint32_t len = NS_strlen(sTagUnicodeTable[i]);
-        maxTagNameLength = NS_MAX(len, maxTagNameLength);        
+        maxTagNameLength = std::max(len, maxTagNameLength);        
       }
       NS_ASSERTION(maxTagNameLength == NS_HTMLTAG_NAME_MAX_LENGTH,
                    "NS_HTMLTAG_NAME_MAX_LENGTH not set correctly!");

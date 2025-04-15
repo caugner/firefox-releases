@@ -234,7 +234,8 @@ GonkCameraHardware* GonkCameraHardware::sHw         = nullptr;
 uint32_t            GonkCameraHardware::sHwHandle   = 0;
 
 void
-GonkCameraHardware::ReleaseHandle(uint32_t aHwHandle)
+GonkCameraHardware::ReleaseHandle(uint32_t aHwHandle,
+                                  bool aUnregisterTarget = false)
 {
   GonkCameraHardware* hw = GetHardware(aHwHandle);
   DOM_CAMERA_LOGI("%s: aHwHandle = %d, hw = %p (sHwHandle = %d)\n", __func__, aHwHandle, (void*)hw, sHwHandle);
@@ -253,6 +254,9 @@ GonkCameraHardware::ReleaseHandle(uint32_t aHwHandle)
     window->abandon();
   }
   DOM_CAMERA_LOGT("%s: after: sHwHandle = %d\n", __func__, sHwHandle);
+  if (aUnregisterTarget) {
+    hw->mTarget = nullptr;
+  }
   delete hw;     // destroy the camera hardware instance
 }
 
@@ -361,10 +365,7 @@ GonkCameraHardware::PullParameters(uint32_t aHwHandle, CameraParameters& aParams
 int
 GonkCameraHardware::StartPreview()
 {
-  if (mWindow.get()) {
-    GonkNativeWindow* window = static_cast<GonkNativeWindow*>(mWindow.get());
-    window->abandon();
-  } else {
+  if (!mWindow.get()) {
     mWindow = new GonkNativeWindow(this);
     mHardware->setPreviewWindow(mWindow);
   }

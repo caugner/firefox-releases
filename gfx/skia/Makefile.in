@@ -154,6 +154,7 @@ CPPSRCS = \
 	SkAAClip.cpp \
 	SkAdvancedTypefaceMetrics.cpp \
 	SkAlphaRuns.cpp \
+	SkAnnotation.cpp \
 	SkBBoxRecord.cpp \
 	SkBBoxHierarchyRecord.cpp \
 	SkBase64.cpp \
@@ -376,9 +377,6 @@ CPPSRCS += \
 	SkFontHost_sandbox_none.cpp \
 	SkTime_win.cpp \
 	$(NULL)
-ifdef _MSC_VER
-HAVE_COMPILER_FLAG_MSSSE3=1
-endif
 endif
 
 ifneq (,$(INTEL_ARCHITECTURE))
@@ -420,11 +418,6 @@ SkBlitRow_opts_SSE2.$(OBJ_SUFFIX): CXXFLAGS+=-msse2
 SkBlitRect_opts_SSE2.$(OBJ_SUFFIX): CXXFLAGS+=-msse2
 SkUtils_opts_SSE2.$(OBJ_SUFFIX): CXXFLAGS+=-msse2
 endif
-endif
-
-ifdef GNU_CC
-CXXFLAGS := $(filter-out -pedantic,$(CXXFLAGS))
-CFLAGS := $(filter-out -pedantic,$(CFLAGS))
 endif
 
 ifeq ($(CPU_ARCH)_$(GNU_CC),arm_1)

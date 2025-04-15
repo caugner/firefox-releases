@@ -68,9 +68,9 @@ public:
    */
   NS_IMETHOD SetHasFocus(bool aHasFocus);
 
-  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                              const nsRect&           aDirtyRect,
-                              const nsDisplayListSet& aLists) MOZ_OVERRIDE;
+  virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                                const nsRect&           aDirtyRect,
+                                const nsDisplayListSet& aLists) MOZ_OVERRIDE;
 
   void PaintFocus(nsRenderingContext& aRenderingContext, nsPoint aPt);
 
@@ -109,8 +109,6 @@ public:
   nsRect CanvasArea() const;
 
 protected:
-  virtual int GetSkipSides() const;
-
   // Data members
   bool                      mDoPaintFocus;
   bool                      mAddedScrollPositionListener;

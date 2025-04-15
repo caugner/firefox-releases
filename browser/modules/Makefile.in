@@ -18,19 +18,17 @@ EXTRA_JS_MODULES = \
 	BrowserNewTabPreloader.jsm \
 	openLocationLastURL.jsm \
 	NetworkPrioritizer.jsm \
-	NewTabUtils.jsm \
 	offlineAppCache.jsm \
 	SignInToWebsite.jsm \
-	TelemetryTimestamps.jsm \
 	webappsUI.jsm \
 	webrtcUI.jsm \
 	KeywordURLResetPrompter.jsm \
+	Social.jsm \
 	SharedFrame.jsm \
 	$(NULL)
 
 EXTRA_PP_JS_MODULES = \
 	RecentWindow.jsm \
-	Social.jsm \
 	$(NULL)
 
 

@@ -21,13 +21,12 @@
 #if defined(DEBUG) || defined(FORCE_ALOG)
 #define ALOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Gecko" , ## args)
 #else
-#define ALOG(args...)
+#define ALOG(args...) ((void)0)
 #endif
 #endif
 
 class nsIAndroidDisplayport;
 class nsIAndroidViewport;
-
 
 namespace mozilla {
 
@@ -629,15 +628,11 @@ class AndroidGeckoEvent : public WrappedJavaObject
 public:
     static void InitGeckoEventClass(JNIEnv *jEnv);
 
-    AndroidGeckoEvent() { }
     AndroidGeckoEvent(int aType) {
         Init(aType);
     }
     AndroidGeckoEvent(int aType, int aAction) {
         Init(aType, aAction);
-    }
-    AndroidGeckoEvent(int x1, int y1, int x2, int y2) {
-        Init(x1, y1, x2, y2);
     }
     AndroidGeckoEvent(int aType, const nsIntRect &aRect) {
         Init(aType, aRect);
@@ -652,12 +647,12 @@ public:
     void Init(JNIEnv *jenv, jobject jobj);
     void Init(int aType);
     void Init(int aType, int aAction);
-    void Init(int x1, int y1, int x2, int y2);
     void Init(int aType, const nsIntRect &aRect);
     void Init(AndroidGeckoEvent *aResizeEvent);
 
     int Action() { return mAction; }
     int Type() { return mType; }
+    bool AckNeeded() { return mAckNeeded; }
     int64_t Time() { return mTime; }
     const nsTArray<nsIntPoint>& Points() { return mPoints; }
     const nsTArray<int>& PointIndicies() { return mPointIndicies; }
@@ -700,6 +695,7 @@ public:
 protected:
     int mAction;
     int mType;
+    bool mAckNeeded;
     int64_t mTime;
     nsTArray<nsIntPoint> mPoints;
     nsTArray<nsIntPoint> mPointRadii;
@@ -744,6 +740,7 @@ protected:
     static jclass jGeckoEventClass;
     static jfieldID jActionField;
     static jfieldID jTypeField;
+    static jfieldID jAckNeededField;
     static jfieldID jTimeField;
     static jfieldID jPoints;
     static jfieldID jPointIndicies;
@@ -790,7 +787,6 @@ public:
         KEY_EVENT = 1,
         MOTION_EVENT = 2,
         SENSOR_EVENT = 3,
-        UNUSED1_EVENT = 4,
         LOCATION_EVENT = 5,
         IME_EVENT = 6,
         DRAW = 7,
@@ -799,19 +795,17 @@ public:
         ACTIVITY_PAUSING = 10,
         ACTIVITY_SHUTDOWN = 11,
         LOAD_URI = 12,
-        SURFACE_CREATED = 13,
-        SURFACE_DESTROYED = 14,
-        GECKO_EVENT_SYNC = 15,
-        FORCED_RESIZE = 16,
+        SURFACE_CREATED = 13,   // used by XUL fennec only
+        SURFACE_DESTROYED = 14, // used by XUL fennec only
+        NOOP = 15,
+        FORCED_RESIZE = 16, // used internally in nsAppShell/nsWindow
         ACTIVITY_START = 17,
         BROADCAST = 19,
         VIEWPORT = 20,
         VISITED = 21,
         NETWORK_CHANGED = 22,
-        UNUSED3_EVENT = 23,
         ACTIVITY_RESUMING = 24,
         THUMBNAIL = 25,
-        UNUSED2_EVENT = 26,
         SCREENORIENTATION_CHANGED = 27,
         COMPOSITOR_PAUSE = 28,
         COMPOSITOR_RESUME = 29,

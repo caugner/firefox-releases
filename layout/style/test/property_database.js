@@ -1370,8 +1370,8 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "transparent", "rgba(255, 127, 15, 0)", "hsla(240, 97%, 50%, 0.0)", "rgba(0, 0, 0, 0)", "rgba(255,255,255,-3.7)" ],
-		other_values: [ "green", "rgb(255, 0, 128)", "#fc2", "#96ed2a", "black", "rgba(255,255,0,3)" ],
-		invalid_values: [ "#0", "#00", "#0000", "#00000", "#0000000", "#00000000", "#000000000", "rgb(255.0,0.387,3489)" ],
+		other_values: [ "green", "rgb(255, 0, 128)", "#fc2", "#96ed2a", "black", "rgba(255,255,0,3)", "hsl(240, 50%, 50%)", "rgb(50%, 50%, 50%)", "-moz-default-background-color" ],
+		invalid_values: [ "#0", "#00", "#0000", "#00000", "#0000000", "#00000000", "#000000000", "rgb(100, 100.0, 100)" ],
 		quirks_values: { "000000": "#000000", "96ed2a": "#96ed2a" },
 	},
 	"background-image": {
@@ -1926,10 +1926,10 @@ var gCSSProperties = {
 			"left 20%",
 			"right 20%"
 		],
-		invalid_values: [ "center 10px center 4px", "center 10px center", 
-		                  "top 20%", "bottom 20%", "50% left", "top 50%", 
-		                  "50% bottom 10%", "right 10% 50%", "left right", 
-		                  "top bottom", "left 10% right", 
+		invalid_values: [ "center 10px center 4px", "center 10px center",
+		                  "top 20%", "bottom 20%", "50% left", "top 50%",
+		                  "50% bottom 10%", "right 10% 50%", "left right",
+		                  "top bottom", "left 10% right",
 		                  "top 20px bottom 20px", "left left", "20 20" ]
 	},
 	"background-repeat": {
@@ -1947,11 +1947,11 @@ var gCSSProperties = {
 			"no-repeat no-repeat",
 			"repeat repeat, repeat repeat",
 		],
-		invalid_values: [ "repeat repeat repeat", 
+		invalid_values: [ "repeat repeat repeat",
 		                  "repeat-x repeat-y",
-		                  "repeat repeat-x", 
+		                  "repeat repeat-x",
 		                  "repeat repeat-y",
-		                  "repeat-x repeat", 
+		                  "repeat-x repeat",
 		                  "repeat-y repeat" ]
 	},
 	"background-size": {
@@ -2288,7 +2288,7 @@ var gCSSProperties = {
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
 		/* XXX should test currentColor, but may or may not be initial */
-		initial_values: [ "black", "#000" ],
+		initial_values: [ "black", "#000", "-moz-default-color" ],
 		other_values: [ "green", "#f3c", "#fed292", "rgba(45,300,12,2)", "transparent", "-moz-nativehyperlinktext", "rgba(255,128,0,0.5)" ],
 		invalid_values: [ "#f", "#ff", "#ffff", "#fffff", "#fffffff", "#ffffffff", "#fffffffff" ],
 		quirks_values: { "000000": "#000000", "96ed2a": "#96ed2a", "fff": "#ffffff", "ffffff": "#ffffff", },
@@ -2381,7 +2381,12 @@ var gCSSProperties = {
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "font-style", "font-variant", "font-weight", "font-size", "line-height", "font-family", "font-stretch", "font-size-adjust", "-moz-font-feature-settings", "-moz-font-language-override" ],
 		initial_values: [ (gInitialFontFamilyIsSansSerif ? "medium sans-serif" : "medium serif") ],
-		other_values: [ "large serif", "9px fantasy", "bold italic small-caps 24px/1.4 Times New Roman, serif", "caption", "icon", "menu", "message-box", "small-caption", "status-bar" ],
+		other_values: [ "large serif", "9px fantasy", "bold italic small-caps 24px/1.4 Times New Roman, serif",
+		  // system fonts
+		  "caption", "icon", "menu", "message-box", "small-caption", "status-bar",
+		  // Gecko-specific system fonts
+		  "-moz-window", "-moz-document", "-moz-desktop", "-moz-info", "-moz-dialog", "-moz-button", "-moz-pull-down-menu", "-moz-list", "-moz-field", "-moz-workspace",
+		],
 		invalid_values: [ "9 fantasy" ]
 	},
 	"font-family": {
@@ -2389,7 +2394,7 @@ var gCSSProperties = {
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ (gInitialFontFamilyIsSansSerif ? "sans-serif" : "serif") ],
-		other_values: [ (gInitialFontFamilyIsSansSerif ? "serif" : "sans-serif"), "Times New Roman, serif", "'Times New Roman', serif", "cursive", "fantasy", "\\\"Times New Roman", "\"Times New Roman\"", "Times, \\\"Times New Roman", "Times, \"Times New Roman\"" ],
+		other_values: [ (gInitialFontFamilyIsSansSerif ? "serif" : "sans-serif"), "Times New Roman, serif", "'Times New Roman', serif", "cursive", "fantasy", "\\\"Times New Roman", "\"Times New Roman\"", "Times, \\\"Times New Roman", "Times, \"Times New Roman\"", "-no-such-font-installed" ],
 		invalid_values: [ "\"Times New\" Roman", "\"Times New Roman\n", "Times, \"Times New Roman\n" ]
 	},
 	"-moz-font-feature-settings": {
@@ -2405,7 +2410,7 @@ var gCSSProperties = {
 			'"liga"        ,"smcp" 0         , "blah"'
 		],
 		invalid_values: [
-			'liga', 'liga 1', 'liga normal', '"liga" normal', 'normal liga', 
+			'liga', 'liga 1', 'liga normal', '"liga" normal', 'normal liga',
 			'normal "liga"', 'normal, "liga"', '"liga=1"', "'foobar' on",
 			'"blahblah" 0', '"liga" 3.14', '"liga" 1 3.14', '"liga" 1 normal',
 			'"liga" 1 off', '"liga" on off', '"liga" , 0 "smcp"', '"liga" "smcp"'
@@ -2428,7 +2433,7 @@ var gCSSProperties = {
 			"calc(1rem)",
 			"calc(0.75rem + 200% - 125% + 0.25rem - 75%)"
 		],
-		other_values: [ "large", "2em", "50%", "xx-small", "36pt", "8px",
+		other_values: [ "large", "2em", "50%", "xx-small", "36pt", "8px", "larger", "smaller",
 			"0px",
 			"0%",
 			"calc(2em)",
@@ -2454,7 +2459,7 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "normal" ],
 		other_values: [ "ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "semi-expanded", "expanded", "extra-expanded", "ultra-expanded" ],
-		invalid_values: []
+		invalid_values: [ "narrower", "wider" ]
 	},
 	"font-style": {
 		domProp: "fontStyle",
@@ -2782,9 +2787,9 @@ var gCSSProperties = {
 		domProp: "MozOrient",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "horizontal" ],
-		other_values: [ "vertical" ],
-		invalid_values: [ "auto", "none" ]
+		initial_values: [ "auto" ],
+		other_values: [ "horizontal", "vertical" ],
+		invalid_values: [ "none" ]
 	},
 	"orphans": {
 		domProp: "orphans",
@@ -2861,7 +2866,7 @@ var gCSSProperties = {
 		prerequisites: { "display": "block" },
 		subproperties: [ "overflow-x", "overflow-y" ],
 		initial_values: [ "visible" ],
-		other_values: [ "auto", "scroll", "hidden" ],
+		other_values: [ "auto", "scroll", "hidden", "-moz-hidden-unscrollable", "-moz-scrollbars-none" ],
 		invalid_values: []
 	},
 	"overflow-x": {
@@ -2870,7 +2875,7 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		prerequisites: { "display": "block", "overflow-y": "visible" },
 		initial_values: [ "visible" ],
-		other_values: [ "auto", "scroll", "hidden" ],
+		other_values: [ "auto", "scroll", "hidden", "-moz-hidden-unscrollable" ],
 		invalid_values: []
 	},
 	"overflow-y": {
@@ -2879,7 +2884,7 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		prerequisites: { "display": "block", "overflow-x": "visible" },
 		initial_values: [ "visible" ],
-		other_values: [ "auto", "scroll", "hidden" ],
+		other_values: [ "auto", "scroll", "hidden", "-moz-hidden-unscrollable" ],
 		invalid_values: []
 	},
 	"padding": {
@@ -3192,8 +3197,8 @@ var gCSSProperties = {
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "transition-property", "transition-duration", "transition-timing-function", "transition-delay" ],
 		initial_values: [ "all 0s ease 0s", "all", "0s", "0s 0s", "ease" ],
-		other_values: [ "width 1s linear 2s", "width 1s 2s linear", "width linear 1s 2s", "linear width 1s 2s", "linear 1s width 2s", "linear 1s 2s width", "1s width linear 2s", "1s width 2s linear", "1s 2s width linear", "1s linear width 2s", "1s linear 2s width", "1s 2s linear width", "width linear 1s", "width 1s linear", "linear width 1s", "linear 1s width", "1s width linear", "1s linear width", "1s 2s width", "1s width 2s", "width 1s 2s", "1s 2s linear", "1s linear 2s", "linear 1s 2s", "width 1s", "1s width", "linear 1s", "1s linear", "1s 2s", "2s 1s", "width", "linear", "1s", "height", "2s", "ease-in-out", "2s ease-in", "opacity linear", "ease-out 2s", "2s color, 1s width, 500ms height linear, 1s opacity 4s cubic-bezier(0.0, 0.1, 1.0, 1.0)", "1s \\32width linear 2s", "1s -width linear 2s", "1s -\\32width linear 2s", "1s \\32 0width linear 2s", "1s -\\32 0width linear 2s", "1s \\2width linear 2s", "1s -\\2width linear 2s" ],
-		invalid_values: [ "2s, 1s width", "1s width, 2s", "2s all, 1s width", "1s width, 2s all", "1s width, 2s none", "2s none, 1s width", "2s inherit", "inherit 2s", "2s width, 1s inherit", "2s inherit, 1s width", "2s initial", "2s all, 1s width", "2s width, 1s all" ]
+		other_values: [ "width 1s linear 2s", "width 1s 2s linear", "width linear 1s 2s", "linear width 1s 2s", "linear 1s width 2s", "linear 1s 2s width", "1s width linear 2s", "1s width 2s linear", "1s 2s width linear", "1s linear width 2s", "1s linear 2s width", "1s 2s linear width", "width linear 1s", "width 1s linear", "linear width 1s", "linear 1s width", "1s width linear", "1s linear width", "1s 2s width", "1s width 2s", "width 1s 2s", "1s 2s linear", "1s linear 2s", "linear 1s 2s", "width 1s", "1s width", "linear 1s", "1s linear", "1s 2s", "2s 1s", "width", "linear", "1s", "height", "2s", "ease-in-out", "2s ease-in", "opacity linear", "ease-out 2s", "2s color, 1s width, 500ms height linear, 1s opacity 4s cubic-bezier(0.0, 0.1, 1.0, 1.0)", "1s \\32width linear 2s", "1s -width linear 2s", "1s -\\32width linear 2s", "1s \\32 0width linear 2s", "1s -\\32 0width linear 2s", "1s \\2width linear 2s", "1s -\\2width linear 2s", "2s, 1s width", "1s width, 2s", "2s all, 1s width", "1s width, 2s all", "2s all, 1s width", "2s width, 1s all" ],
+		invalid_values: [ "1s width, 2s none", "2s none, 1s width", "2s inherit", "inherit 2s", "2s width, 1s inherit", "2s inherit, 1s width", "2s initial" ]
 	},
 	"transition-delay": {
 		domProp: "transitionDelay",
@@ -3216,8 +3221,8 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "all" ],
-		other_values: [ "none", "left", "top", "color", "width, height, opacity", "foobar", "auto", "\\32width", "-width", "-\\32width", "\\32 0width", "-\\32 0width", "\\2width", "-\\2width" ],
-		invalid_values: [ "none, none", "all, all", "color, none", "none, color", "all, color", "color, all", "inherit, color", "color, inherit", "initial, color", "color, initial", "none, color", "color, none", "all, color", "color, all" ]
+		other_values: [ "none", "left", "top", "color", "width, height, opacity", "foobar", "auto", "\\32width", "-width", "-\\32width", "\\32 0width", "-\\32 0width", "\\2width", "-\\2width", "all, all", "all, color", "color, all" ],
+		invalid_values: [ "none, none", "color, none", "none, color", "inherit, color", "color, inherit", "initial, color", "color, initial", "none, color", "color, none" ]
 	},
 	"transition-timing-function": {
 		domProp: "transitionTimingFunction",
@@ -3240,7 +3245,7 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "baseline" ],
-		other_values: [ "sub", "super", "top", "text-top", "middle", "bottom", "text-bottom", "15%", "3px", "0.2em", "-5px", "-3%",
+		other_values: [ "sub", "super", "top", "text-top", "middle", "bottom", "text-bottom", "-moz-middle-with-baseline", "15%", "3px", "0.2em", "-5px", "-3%",
 			"calc(2px)",
 			"calc(-2px)",
 			"calc(50%)",
@@ -3891,8 +3896,8 @@ var gCSSProperties = {
 		alias_for: "transition",
 		subproperties: [ "transition-property", "transition-duration", "transition-timing-function", "transition-delay" ],
 		initial_values: [ "all 0s ease 0s", "all", "0s", "0s 0s", "ease" ],
-		other_values: [ "width 1s linear 2s", "width 1s 2s linear", "width linear 1s 2s", "linear width 1s 2s", "linear 1s width 2s", "linear 1s 2s width", "1s width linear 2s", "1s width 2s linear", "1s 2s width linear", "1s linear width 2s", "1s linear 2s width", "1s 2s linear width", "width linear 1s", "width 1s linear", "linear width 1s", "linear 1s width", "1s width linear", "1s linear width", "1s 2s width", "1s width 2s", "width 1s 2s", "1s 2s linear", "1s linear 2s", "linear 1s 2s", "width 1s", "1s width", "linear 1s", "1s linear", "1s 2s", "2s 1s", "width", "linear", "1s", "height", "2s", "ease-in-out", "2s ease-in", "opacity linear", "ease-out 2s", "2s color, 1s width, 500ms height linear, 1s opacity 4s cubic-bezier(0.0, 0.1, 1.0, 1.0)", "1s \\32width linear 2s", "1s -width linear 2s", "1s -\\32width linear 2s", "1s \\32 0width linear 2s", "1s -\\32 0width linear 2s", "1s \\2width linear 2s", "1s -\\2width linear 2s" ],
-		invalid_values: [ "2s, 1s width", "1s width, 2s", "2s all, 1s width", "1s width, 2s all", "1s width, 2s none", "2s none, 1s width", "2s inherit", "inherit 2s", "2s width, 1s inherit", "2s inherit, 1s width", "2s initial", "2s all, 1s width", "2s width, 1s all" ]
+		other_values: [ "width 1s linear 2s", "width 1s 2s linear", "width linear 1s 2s", "linear width 1s 2s", "linear 1s width 2s", "linear 1s 2s width", "1s width linear 2s", "1s width 2s linear", "1s 2s width linear", "1s linear width 2s", "1s linear 2s width", "1s 2s linear width", "width linear 1s", "width 1s linear", "linear width 1s", "linear 1s width", "1s width linear", "1s linear width", "1s 2s width", "1s width 2s", "width 1s 2s", "1s 2s linear", "1s linear 2s", "linear 1s 2s", "width 1s", "1s width", "linear 1s", "1s linear", "1s 2s", "2s 1s", "width", "linear", "1s", "height", "2s", "ease-in-out", "2s ease-in", "opacity linear", "ease-out 2s", "2s color, 1s width, 500ms height linear, 1s opacity 4s cubic-bezier(0.0, 0.1, 1.0, 1.0)", "1s \\32width linear 2s", "1s -width linear 2s", "1s -\\32width linear 2s", "1s \\32 0width linear 2s", "1s -\\32 0width linear 2s", "1s \\2width linear 2s", "1s -\\2width linear 2s", "2s, 1s width", "1s width, 2s", "2s all, 1s width", "1s width, 2s all", "2s all, 1s width", "2s width, 1s all" ],
+		invalid_values: [ "1s width, 2s none", "2s none, 1s width", "2s inherit", "inherit 2s", "2s width, 1s inherit", "2s inherit, 1s width", "2s initial" ]
 	},
 	"-moz-transition-delay": {
 		domProp: "MozTransitionDelay",
@@ -3921,8 +3926,8 @@ var gCSSProperties = {
 		alias_for: "transition-property",
 		subproperties: [ "transition-property" ],
 		initial_values: [ "all" ],
-		other_values: [ "none", "left", "top", "color", "width, height, opacity", "foobar", "auto", "\\32width", "-width", "-\\32width", "\\32 0width", "-\\32 0width", "\\2width", "-\\2width" ],
-		invalid_values: [ "none, none", "all, all", "color, none", "none, color", "all, color", "color, all", "inherit, color", "color, inherit", "initial, color", "color, initial", "none, color", "color, none", "all, color", "color, all" ]
+		other_values: [ "none", "left", "top", "color", "width, height, opacity", "foobar", "auto", "\\32width", "-width", "-\\32width", "\\32 0width", "-\\32 0width", "\\2width", "-\\2width", "all, all", "all, color", "color, all" ],
+		invalid_values: [ "none, none", "color, none", "none, color", "inherit, color", "color, inherit", "initial, color", "color, initial", "none, color", "color, none" ]
 	},
 	"-moz-transition-timing-function": {
 		domProp: "MozTransitionTimingFunction",
@@ -4245,4 +4250,15 @@ if (SpecialPowers.getBoolPref("layout.css.masking.enabled")) {
 		other_values: [ "alpha" ],
 		invalid_values: []
 	};
+}
+
+if (SpecialPowers.getBoolPref("svg.paint-order.enabled")) {
+  gCSSProperties["paint-order"] = {
+    domProp: "paintOrder",
+    inherited: true,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "normal" ],
+    other_values: [ "fill", "fill stroke", "fill stroke markers", "stroke markers fill" ],
+    invalid_values: [ "fill stroke markers fill", "fill normal" ]
+  };
 }

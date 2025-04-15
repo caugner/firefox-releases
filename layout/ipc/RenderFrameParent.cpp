@@ -600,8 +600,11 @@ RenderFrameParent::RenderFrameParent(nsFrameLoader* aFrameLoader,
   *aId = 0;
 
   nsRefPtr<LayerManager> lm = GetFrom(mFrameLoader);
-  *aBackendType = lm->GetBackendType();
-  *aMaxTextureSize = lm->GetMaxTextureSize();
+  // Perhaps the document containing this frame currently has no presentation?
+  if (lm) {
+    *aBackendType = lm->GetBackendType();
+    *aMaxTextureSize = lm->GetMaxTextureSize();
+  }
 
   if (CompositorParent::CompositorLoop()) {
     // Our remote frame will push layers updates to the compositor,
@@ -725,6 +728,7 @@ RenderFrameParent::BuildLayer(nsDisplayListBuilder* aBuilder,
     ClearContainer(mContainer);
     mContainer->SetPreScale(1.0f, 1.0f);
     mContainer->SetPostScale(1.0f, 1.0f);
+    mContainer->SetInheritedScale(1.0f, 1.0f);
   }
 
   ContainerLayer* shadowRoot = GetRootLayer();
@@ -798,6 +802,7 @@ RenderFrameParent::ActorDestroy(ActorDestroyReason why)
       // Stop our content controller from requesting repaints of our
       // content.
       mContentController->ClearRenderFrame();
+      mPanZoomController->Destroy();
     }
   }
 
@@ -930,7 +935,7 @@ RenderFrameParent::GetRootLayer() const
   return shadowLayers ? shadowLayers->GetRoot() : nullptr;
 }
 
-NS_IMETHODIMP
+void
 RenderFrameParent::BuildDisplayList(nsDisplayListBuilder* aBuilder,
                                     nsSubDocumentFrame* aFrame,
                                     const nsRect& aDirtyRect,
@@ -954,7 +959,7 @@ RenderFrameParent::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   nsPoint offset = aBuilder->ToReferenceFrame(aFrame);
   nsRect bounds = aFrame->EnsureInnerView()->GetBounds() + offset;
 
-  return aLists.Content()->AppendNewToTop(
+  aLists.Content()->AppendNewToTop(
     new (aBuilder) nsDisplayClip(aBuilder, aFrame, &shadowTree,
                                  bounds));
 }

@@ -19,6 +19,7 @@
 #include "nsIObserverService.h"
 #include "nsCURILoader.h"
 #include "nsIDocShell.h"
+#include "nsIDocShellTreeItem.h"
 #include "nsIDocument.h"
 #include "nsIPrincipal.h"
 #include "nsIDOMElement.h"
@@ -285,8 +286,55 @@ nsSecureBrowserUIImpl::MapInternalToExternalState(uint32_t* aState, lockIconStat
 
   if (ev && (*aState & STATE_IS_SECURE))
     *aState |= nsIWebProgressListener::STATE_IDENTITY_EV_TOPLEVEL;
-  
+
+  nsCOMPtr<nsIDocShell> docShell = do_QueryReferent(mDocShell);
+  if (!docShell)
+    return NS_OK;
+
+  int32_t docShellType;
+  // For content docShell's, the mixed content security state is set on the root docShell.
+  if (NS_SUCCEEDED(docShell->GetItemType(&docShellType)) && docShellType == nsIDocShellTreeItem::typeContent) {
+    nsCOMPtr<nsIDocShellTreeItem> docShellTreeItem(do_QueryInterface(docShell));
+    nsCOMPtr<nsIDocShellTreeItem> sameTypeRoot;
+    docShellTreeItem->GetSameTypeRootTreeItem(getter_AddRefs(sameTypeRoot));
+    NS_ASSERTION(sameTypeRoot, "No document shell root tree item from document shell tree item!");
+    docShell = do_QueryInterface(sameTypeRoot);
+    if (!docShell)
+      return NS_OK;
+  }
+
+  // Has a Mixed Content Load initiated in nsMixedContentBlocker?
+  // If so, the state should be broken; overriding the previous state
+  // set by the lock parameter.
+  if (docShell->GetHasMixedActiveContentLoaded() &&
+      docShell->GetHasMixedDisplayContentLoaded()) {
+      *aState = STATE_IS_BROKEN |
+                nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT |
+                nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT;
+  } else if (docShell->GetHasMixedActiveContentLoaded()) {
+      *aState = STATE_IS_BROKEN |
+                nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT;
+  } else if (docShell->GetHasMixedDisplayContentLoaded()) {
+      *aState = STATE_IS_BROKEN |
+                nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT;
+  }
+
+  // Has Mixed Content Been Blocked in nsMixedContentBlocker?
+  if (docShell->GetHasMixedActiveContentBlocked())
+    *aState |= nsIWebProgressListener::STATE_BLOCKED_MIXED_ACTIVE_CONTENT;
+
+  if (docShell->GetHasMixedDisplayContentBlocked())
+    *aState |= nsIWebProgressListener::STATE_BLOCKED_MIXED_DISPLAY_CONTENT;
+
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSecureBrowserUIImpl::SetDocShell(nsIDocShell *aDocShell)
+{
+  nsresult rv;
+  mDocShell = do_GetWeakReference(aDocShell, &rv);
+  return rv;
 }
 
 NS_IMETHODIMP

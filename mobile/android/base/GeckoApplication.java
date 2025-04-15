@@ -5,8 +5,9 @@
 package org.mozilla.gecko;
 
 import android.app.Application;
-
-import java.util.ArrayList;
+import org.mozilla.gecko.db.BrowserContract;
+import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.util.GeckoBackgroundThread;
 
 public class GeckoApplication extends Application {
 
@@ -32,6 +33,7 @@ public class GeckoApplication extends Application {
         GeckoBatteryManager.getInstance().start();
         GeckoNetworkManager.getInstance().init(getApplicationContext());
         MemoryMonitor.getInstance().init(getApplicationContext());
+
         mInited = true;
     }
 
@@ -47,6 +49,13 @@ public class GeckoApplication extends Application {
             // re-creation. 
             GeckoAppShell.sendEventToGecko(GeckoEvent.createPauseEvent(true));
             mPausedGecko = true;
+
+            GeckoBackgroundThread.getHandler().post(new Runnable() {
+                public void run() {
+                    BrowserDB.expireHistory(getContentResolver(),
+                                            BrowserContract.ExpirePriority.NORMAL);
+                }
+            });
         }
         GeckoConnectivityReceiver.getInstance().stop();
         GeckoNetworkManager.getInstance().stop();

@@ -17,7 +17,7 @@
 #include "nsGkAtoms.h"
 #include "nsINameSpaceManager.h"
 #include "nsContentList.h"
-#include "nsIDocument.h"
+#include "nsIDocumentInlines.h"
 #include "nsFontMetrics.h"
 #include "nsIDocumentObserver.h"
 #include "nsBoxLayoutState.h"
@@ -53,6 +53,7 @@
 #include "ScrollbarActivity.h"
 #include "nsRefreshDriver.h"
 #include "nsContentList.h"
+#include <algorithm>
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -143,12 +144,6 @@ nsSplittableType
 nsHTMLScrollFrame::GetSplittableType() const
 {
   return NS_FRAME_NOT_SPLITTABLE;
-}
-
-int
-nsHTMLScrollFrame::GetSkipSides() const
-{
-  return 0;
 }
 
 nsIAtom*
@@ -305,13 +300,13 @@ nsHTMLScrollFrame::TryLayout(ScrollReflowState* aState,
   // XXXldb Can we depend more on ComputeSize here?
   nsSize desiredInsideBorderSize;
   desiredInsideBorderSize.width = vScrollbarDesiredWidth +
-    NS_MAX(aKidMetrics->width, hScrollbarMinWidth);
+    std::max(aKidMetrics->width, hScrollbarMinWidth);
   desiredInsideBorderSize.height = hScrollbarDesiredHeight +
-    NS_MAX(aKidMetrics->height, vScrollbarMinHeight);
+    std::max(aKidMetrics->height, vScrollbarMinHeight);
   aState->mInsideBorderSize =
     ComputeInsideBorderSize(aState, desiredInsideBorderSize);
-  nsSize scrollPortSize = nsSize(NS_MAX(0, aState->mInsideBorderSize.width - vScrollbarDesiredWidth),
-                                 NS_MAX(0, aState->mInsideBorderSize.height - hScrollbarDesiredHeight));
+  nsSize scrollPortSize = nsSize(std::max(0, aState->mInsideBorderSize.width - vScrollbarDesiredWidth),
+                                 std::max(0, aState->mInsideBorderSize.height - hScrollbarDesiredHeight));
 
   if (!aForce) {
     nsRect scrolledRect =
@@ -375,7 +370,7 @@ nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowState* aState,
                                        nsHTMLReflowMetrics* aMetrics,
                                        bool aFirstPass)
 {
-  // these could be NS_UNCONSTRAINEDSIZE ... NS_MIN arithmetic should
+  // these could be NS_UNCONSTRAINEDSIZE ... std::min arithmetic should
   // be OK
   nscoord paddingLR = aState->mReflowState.mComputedPadding.LeftRight();
 
@@ -394,17 +389,17 @@ nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowState* aState,
     GetScrollbarMetrics(aState->mBoxState, mInner.mHScrollbarBox,
                         nullptr, &hScrollbarPrefSize, false);
     if (computedHeight != NS_UNCONSTRAINEDSIZE)
-      computedHeight = NS_MAX(0, computedHeight - hScrollbarPrefSize.height);
-    computedMinHeight = NS_MAX(0, computedMinHeight - hScrollbarPrefSize.height);
+      computedHeight = std::max(0, computedHeight - hScrollbarPrefSize.height);
+    computedMinHeight = std::max(0, computedMinHeight - hScrollbarPrefSize.height);
     if (computedMaxHeight != NS_UNCONSTRAINEDSIZE)
-      computedMaxHeight = NS_MAX(0, computedMaxHeight - hScrollbarPrefSize.height);
+      computedMaxHeight = std::max(0, computedMaxHeight - hScrollbarPrefSize.height);
   }
 
   if (aAssumeVScroll) {
     nsSize vScrollbarPrefSize;
     GetScrollbarMetrics(aState->mBoxState, mInner.mVScrollbarBox,
                         nullptr, &vScrollbarPrefSize, true);
-    availWidth = NS_MAX(0, availWidth - vScrollbarPrefSize.width);
+    availWidth = std::max(0, availWidth - vScrollbarPrefSize.width);
   }
 
   nsPresContext* presContext = PresContext();
@@ -989,12 +984,6 @@ nsXULScrollFrame::GetPadding(nsMargin& aMargin)
    return NS_OK;
 }
 
-int
-nsXULScrollFrame::GetSkipSides() const
-{
-  return 0;
-}
-
 nsIAtom*
 nsXULScrollFrame::GetType() const
 {
@@ -1316,7 +1305,7 @@ nsGfxScrollFrameInner::AsyncScroll::InitDuration(nsIAtom *aOrigin) {
                                          kDefaultDurationToIntervalRatio * 100) / 100.0;
 
     // Duration should be at least as long as the intervals -> ratio is at least 1
-    mIntervalRatio = NS_MAX(1.0, mIntervalRatio);
+    mIntervalRatio = std::max(1.0, mIntervalRatio);
 
     if (mIsFirstIteration) {
       // Starting a new scroll (i.e. not when extending an existing scroll animation),
@@ -2001,13 +1990,12 @@ protected:
   nsIFrame* mScrolledFrame;
 };
 
-nsresult
+void
 nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                         const nsRect&           aDirtyRect,
                                         const nsDisplayListSet& aLists)
 {
-  nsresult rv = mOuter->DisplayBorderBackgroundOutline(aBuilder, aLists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  mOuter->DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   if (aBuilder->IsPaintingToWindow()) {
     mScrollPosAtLastPaint = GetScrollPosition();
@@ -2027,8 +2015,9 @@ nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     // Don't clip the scrolled child, and don't paint scrollbars/scrollcorner.
     // The scrolled frame shouldn't have its own background/border, so we
     // can just pass aLists directly.
-    return mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame,
-                                            aDirtyRect, aLists);
+    mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame,
+                                     aDirtyRect, aLists);
+    return;
   }
 
   // We put scrollbars in their own layers when this is the root scroll
@@ -2073,8 +2062,7 @@ nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   }
 
   nsDisplayListCollection set;
-  rv = mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame, dirtyRect, set);
-  NS_ENSURE_SUCCESS(rv, rv);
+  mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame, dirtyRect, set);
 
   // Since making new layers is expensive, only use nsDisplayScrollLayer
   // if the area is scrollable and we're the content process.
@@ -2112,9 +2100,8 @@ nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // to end up on our BorderBackground list.
   // If we are the viewport scrollframe, then clip all our descendants (to ensure
   // that fixed-pos elements get clipped by us).
-  rv = mOuter->OverflowClip(aBuilder, set, aLists, clip, radii,
-                            true, mIsRoot);
-  NS_ENSURE_SUCCESS(rv, rv);
+  mOuter->OverflowClip(aBuilder, set, aLists, clip, radii,
+                       true, mIsRoot);
 
   if (ShouldBuildLayer()) {
     // ScrollLayerWrapper must always be created because it initializes the
@@ -2139,8 +2126,6 @@ nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // Now display overlay scrollbars and the resizer, if we have one.
   AppendScrollPartsTo(aBuilder, aDirtyRect, aLists, createLayersForScrollbars,
                       true);
-
-  return NS_OK;
 }
 
 static void HandleScrollPref(nsIScrollable *aScrollable, int32_t aOrientation,
@@ -2171,7 +2156,7 @@ nsGfxScrollFrameInner::GetScrollbarStylesFromFrame() const
   }
 
   if (!mIsRoot) {
-    const nsStyleDisplay* disp = mOuter->GetStyleDisplay();
+    const nsStyleDisplay* disp = mOuter->StyleDisplay();
     return ScrollbarStyles(disp->mOverflowX, disp->mOverflowY);
   }
 
@@ -2350,45 +2335,84 @@ nsGfxScrollFrameInner::GetLineScrollAmount() const
   }
   uint32_t appUnitsPerDevPixel = mOuter->PresContext()->AppUnitsPerDevPixel();
   nscoord minScrollAmountInAppUnits =
-    NS_MAX(1, sMinLineScrollAmountInPixels) * appUnitsPerDevPixel;
+    std::max(1, sMinLineScrollAmountInPixels) * appUnitsPerDevPixel;
   nscoord horizontalAmount = fm ? fm->AveCharWidth() : 0;
   nscoord verticalAmount = fm ? fm->MaxHeight() : 0;
-  return nsSize(NS_MAX(horizontalAmount, minScrollAmountInAppUnits),
-                NS_MAX(verticalAmount, minScrollAmountInAppUnits));
+  return nsSize(std::max(horizontalAmount, minScrollAmountInAppUnits),
+                std::max(verticalAmount, minScrollAmountInAppUnits));
 }
 
 /**
  * Compute the scrollport size excluding any fixed-pos headers and
  * footers. A header or footer is an box that spans that entire width
  * of the viewport and touches the top (or bottom, respectively) of the
- * viewport. Headers and footers that cover more than a quarter of the
- * the viewport are ignored since they probably aren't true headers and
- * footers and we don't want to restrict scrolling too much in such cases.
- * This is a bit conservative --- some pages use elements as headers or
- * footers that don't span the entire width of the viewport --- but it
- * should be a good start.
+ * viewport. We also want to consider fixed elements that stack or overlap
+ * to effectively create a larger header or footer. Headers and footers that
+ * cover more than a third of the the viewport are ignored since they
+ * probably aren't true headers and footers and we don't want to restrict
+ * scrolling too much in such cases. This is a bit conservative --- some
+ * pages use elements as headers or footers that don't span the entire width
+ * of the viewport --- but it should be a good start.
  */
+struct TopAndBottom
+{
+  TopAndBottom(nscoord aTop, nscoord aBottom) : top(aTop), bottom(aBottom) {}
+
+  nscoord top, bottom;
+};
+struct TopComparator
+{
+  bool Equals(const TopAndBottom& A, const TopAndBottom& B) const {
+    return A.top == B.top;
+  }
+  bool LessThan(const TopAndBottom& A, const TopAndBottom& B) const {
+    return A.top < B.top;
+  }
+};
+struct ReverseBottomComparator
+{
+  bool Equals(const TopAndBottom& A, const TopAndBottom& B) const {
+    return A.bottom == B.bottom;
+  }
+  bool LessThan(const TopAndBottom& A, const TopAndBottom& B) const {
+    return A.bottom > B.bottom;
+  }
+};
 static nsSize
 GetScrollPortSizeExcludingHeadersAndFooters(nsIFrame* aViewportFrame,
                                             const nsRect& aScrollPort)
 {
+  nsTArray<TopAndBottom> list;
   nsFrameList fixedFrames = aViewportFrame->GetChildList(nsIFrame::kFixedList);
-  nscoord headerBottom = 0;
-  nscoord footerTop = aScrollPort.height;
   for (nsFrameList::Enumerator iterator(fixedFrames); !iterator.AtEnd();
        iterator.Next()) {
     nsIFrame* f = iterator.get();
     nsRect r = f->GetRect().Intersect(aScrollPort);
     if (r.x == 0 && r.width == aScrollPort.width &&
         r.height <= aScrollPort.height/3) {
-      if (r.y == 0) {
-        headerBottom = NS_MAX(headerBottom, r.height);
-      }
-      if (r.YMost() == aScrollPort.height) {
-        footerTop = NS_MIN(footerTop, r.y);
-      }
+      list.AppendElement(TopAndBottom(r.y, r.YMost()));
     }
   }
+
+  list.Sort(TopComparator());
+  nscoord headerBottom = 0;
+  for (uint32_t i = 0; i < list.Length(); ++i) {
+    if (list[i].top <= headerBottom) {
+      headerBottom = std::max(headerBottom, list[i].bottom);
+    }
+  }
+
+  list.Sort(ReverseBottomComparator());
+  nscoord footerTop = aScrollPort.height;
+  for (uint32_t i = 0; i < list.Length(); ++i) {
+    if (list[i].bottom >= footerTop) {
+      footerTop = std::min(footerTop, list[i].top);
+    }
+  }
+
+  headerBottom = std::min(aScrollPort.height/3, headerBottom);
+  footerTop = std::max(aScrollPort.height - aScrollPort.height/3, footerTop);
+
   return nsSize(aScrollPort.width, footerTop - headerBottom);
 }
 
@@ -2410,9 +2434,9 @@ nsGfxScrollFrameInner::GetPageScrollAmount() const
   // 10% of the size or 2 lines.
   return nsSize(
     effectiveScrollPortSize.width -
-      NS_MIN(effectiveScrollPortSize.width/10, 2*lineScrollAmount.width),
+      std::min(effectiveScrollPortSize.width/10, 2*lineScrollAmount.width),
     effectiveScrollPortSize.height -
-      NS_MIN(effectiveScrollPortSize.height/10, 2*lineScrollAmount.height));
+      std::min(effectiveScrollPortSize.height/10, 2*lineScrollAmount.height));
 }
 
   /**
@@ -2548,7 +2572,7 @@ nsGfxScrollFrameInner::ReloadChildFrames()
       } else if (content->Tag() == nsGkAtoms::resizer) {
         NS_ASSERTION(!mResizerBox, "Found multiple resizers");
         mResizerBox = frame;
-      } else {
+      } else if (content->Tag() == nsGkAtoms::scrollcorner) {
         // probably a scrollcorner
         NS_ASSERTION(!mScrollCornerBox, "Found multiple scrollcorners");
         mScrollCornerBox = frame;
@@ -2579,7 +2603,7 @@ nsGfxScrollFrameInner::CreateAnonymousContent(
   }
 
   // Check if the frame is resizable.
-  int8_t resizeStyle = mOuter->GetStyleDisplay()->mResize;
+  int8_t resizeStyle = mOuter->StyleDisplay()->mResize;
   bool isResizable = resizeStyle != NS_STYLE_RESIZE_NONE;
 
   nsIScrollableFrame *scrollable = do_QueryFrame(mOuter);
@@ -3013,8 +3037,8 @@ nsXULScrollFrame::LayoutScrollArea(nsBoxLayoutState& aState,
   if (childRect.width < mInner.mScrollPort.width ||
       childRect.height < mInner.mScrollPort.height)
   {
-    childRect.width = NS_MAX(childRect.width, mInner.mScrollPort.width);
-    childRect.height = NS_MAX(childRect.height, mInner.mScrollPort.height);
+    childRect.width = std::max(childRect.width, mInner.mScrollPort.width);
+    childRect.height = std::max(childRect.height, mInner.mScrollPort.height);
 
     // remove overflow areas when we update the bounds,
     // because we've already accounted for it
@@ -3081,7 +3105,7 @@ nsGfxScrollFrameInner::IsLTR() const
     }
   }
 
-  return frame->GetStyleVisibility()->mDirection != NS_STYLE_DIRECTION_RTL;
+  return frame->StyleVisibility()->mDirection != NS_STYLE_DIRECTION_RTL;
 }
 
 bool
@@ -3401,7 +3425,7 @@ nsGfxScrollFrameInner::ReflowFinished()
       nscoord pageincrement = nscoord(mScrollPort.height - increment);
       nscoord pageincrementMin = nscoord(float(mScrollPort.height) * 0.8);
       FinishReflowForScrollbar(vScroll, minY, maxY, scrollPos.y,
-                               NS_MAX(pageincrement, pageincrementMin),
+                               std::max(pageincrement, pageincrementMin),
                                increment);
     }
     if (hScroll) {
@@ -3493,9 +3517,9 @@ nsGfxScrollFrameInner::AdjustScrollbarRectForResizer(
     return;
 
   if (aVertical)
-    aRect.height = NS_MAX(0, resizerRect.y - aRect.y);
+    aRect.height = std::max(0, resizerRect.y - aRect.y);
   else
-    aRect.width = NS_MAX(0, resizerRect.x - aRect.x);
+    aRect.width = std::max(0, resizerRect.x - aRect.x);
 }
 
 void
@@ -3656,7 +3680,7 @@ ReduceRadii(nscoord aXBorder, nscoord aYBorder,
     return;
 
   // For any corner where we reduce the radii, preserve the corner's shape.
-  double ratio = NS_MAX(double(aXBorder) / aXRadius,
+  double ratio = std::max(double(aXBorder) / aXRadius,
                         double(aYBorder) / aYRadius);
   aXRadius *= ratio;
   aYRadius *= ratio;
@@ -3727,28 +3751,9 @@ nsRect
 nsGfxScrollFrameInner::GetScrolledRectInternal(const nsRect& aScrolledFrameOverflowArea,
                                                const nsSize& aScrollPortSize) const
 {
-  nscoord x1 = aScrolledFrameOverflowArea.x,
-          x2 = aScrolledFrameOverflowArea.XMost(),
-          y1 = aScrolledFrameOverflowArea.y,
-          y2 = aScrolledFrameOverflowArea.YMost();
-  if (y1 < 0)
-    y1 = 0;
-  if (IsLTR()) {
-    if (x1 < 0)
-      x1 = 0;
-  } else {
-    if (x2 > aScrollPortSize.width)
-      x2 = aScrollPortSize.width;
-    // When the scrolled frame chooses a size larger than its available width (because
-    // its padding alone is larger than the available width), we need to keep the
-    // start-edge of the scroll frame anchored to the start-edge of the scrollport. 
-    // When the scrolled frame is RTL, this means moving it in our left-based
-    // coordinate system, so we need to compensate for its extra width here by
-    // effectively repositioning the frame.
-    nscoord extraWidth = NS_MAX(0, mScrolledFrame->GetSize().width - aScrollPortSize.width);
-    x2 += extraWidth;
-  }
-  return nsRect(x1, y1, x2 - x1, y2 - y1);
+  return nsLayoutUtils::GetScrolledRect(mScrolledFrame,
+      aScrolledFrameOverflowArea, aScrollPortSize,
+      IsLTR() ? NS_STYLE_DIRECTION_LTR : NS_STYLE_DIRECTION_RTL);
 }
 
 nsMargin

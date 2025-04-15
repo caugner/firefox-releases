@@ -18,7 +18,6 @@
 #include "nsIMutableArray.h"
 #include "nsICommandManager.h"
 #include "nsIDocShell.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsIDocument.h"
 #include "nsIDOMAttr.h"
 #include "nsIDOMCharacterData.h"
@@ -104,8 +103,6 @@ DocAccessible::~DocAccessible()
 ////////////////////////////////////////////////////////////////////////////////
 // nsISupports
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(DocAccessible)
-
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(DocAccessible, Accessible)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentNode)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNotificationController)
@@ -187,14 +184,13 @@ DocAccessible::Name(nsString& aName)
 role
 DocAccessible::NativeRole()
 {
-  nsCOMPtr<nsIDocShellTreeItem> docShellTreeItem =
-    nsCoreUtils::GetDocShellTreeItemFor(mDocumentNode);
-  if (docShellTreeItem) {
+  nsCOMPtr<nsIDocShell> docShell = nsCoreUtils::GetDocShellFor(mDocumentNode);
+  if (docShell) {
     nsCOMPtr<nsIDocShellTreeItem> sameTypeRoot;
-    docShellTreeItem->GetSameTypeRootTreeItem(getter_AddRefs(sameTypeRoot));
+    docShell->GetSameTypeRootTreeItem(getter_AddRefs(sameTypeRoot));
     int32_t itemType;
-    docShellTreeItem->GetItemType(&itemType);
-    if (sameTypeRoot == docShellTreeItem) {
+    docShell->GetItemType(&itemType);
+    if (sameTypeRoot == docShell) {
       // Root of content or chrome tree
       if (itemType == nsIDocShellTreeItem::typeChrome)
         return roles::CHROME_WINDOW;

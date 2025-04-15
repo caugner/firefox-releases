@@ -13,6 +13,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/Preferences.h"
 #include "prprf.h"
+#include <algorithm>
 
 #ifdef DEBUG
 // defined by the socket transport service while active
@@ -477,8 +478,8 @@ SpdySession3::ResetDownstreamState()
   mInputFrameDataStream = nullptr;
 }
 
-void
-SpdySession3::EnsureBuffer(nsAutoArrayPtr<char> &buf,
+template<typename T> void
+SpdySession3::EnsureBuffer(nsAutoArrayPtr<T> &buf,
                           uint32_t newSize,
                           uint32_t preserve,
                           uint32_t &objSize)
@@ -491,11 +492,25 @@ SpdySession3::EnsureBuffer(nsAutoArrayPtr<char> &buf,
   // boundary.
 
   objSize = (newSize + 2048 + 4095) & ~4095;
-  
-  nsAutoArrayPtr<char> tmp(new char[objSize]);
+
+  MOZ_STATIC_ASSERT(sizeof(T) == 1, "sizeof(T) must be 1");
+  nsAutoArrayPtr<T> tmp(new T[objSize]);
   memcpy(tmp, buf, preserve);
   buf = tmp;
 }
+
+// Instantiate supported templates explicitly.
+template void
+SpdySession3::EnsureBuffer(nsAutoArrayPtr<char> &buf,
+                           uint32_t newSize,
+                           uint32_t preserve,
+                           uint32_t &objSize);
+
+template void
+SpdySession3::EnsureBuffer(nsAutoArrayPtr<uint8_t> &buf,
+                           uint32_t newSize,
+                           uint32_t preserve,
+                           uint32_t &objSize);
 
 void
 SpdySession3::zlibInit()
@@ -643,22 +658,52 @@ SpdySession3::GenerateSettings()
   NS_ABORT_IF_FALSE(PR_GetCurrentThread() == gSocketThread, "wrong thread");
   LOG3(("SpdySession3::GenerateSettings %p\n", this));
 
-  static const uint32_t dataLen = 12;
-  EnsureBuffer(mOutputQueueBuffer, mOutputQueueUsed + 8 + dataLen,
+  static const uint32_t maxDataLen = 4 + 3 * 8; // sized for 3 settings
+  EnsureBuffer(mOutputQueueBuffer, mOutputQueueUsed + 8 + maxDataLen,
                mOutputQueueUsed, mOutputQueueSize);
   char *packet = mOutputQueueBuffer.get() + mOutputQueueUsed;
-  mOutputQueueUsed += 8 + dataLen;
 
-  memset(packet, 0, 8 + dataLen);
+  memset(packet, 0, 8 + maxDataLen);
   packet[0] = kFlag_Control;
   packet[1] = kVersion;
   packet[3] = CONTROL_TYPE_SETTINGS;
-  packet[7] = dataLen;
+
+  uint8_t numberOfEntries = 0;
+
+  // entries need to be listed in order by ID
+  // 1st entry is bytes 12 to 19
+  // 2nd entry is bytes 20 to 27
+  // 3rd entry is bytes 28 to 35
+
+  // announcing that we accept 0 incoming streams is done to
+  // disable server push until that is implemented.
+  packet[15 + 8 * numberOfEntries] = SETTINGS_TYPE_MAX_CONCURRENT;
+  // The value portion of the setting pair is already initialized to 0
+  numberOfEntries++;
+
+  nsRefPtr<nsHttpConnectionInfo> ci;
+  uint32_t cwnd = 0;
+  GetConnectionInfo(getter_AddRefs(ci));
+  if (ci)
+    cwnd = gHttpHandler->ConnMgr()->GetSpdyCWNDSetting(ci);
+  if (cwnd) {
+    packet[12 + 8 * numberOfEntries] = PERSISTED_VALUE;
+    packet[15 + 8 * numberOfEntries] = SETTINGS_TYPE_CWND;
+    LOG(("SpdySession3::GenerateSettings %p sending CWND %u\n", this, cwnd));
+    cwnd = PR_htonl(cwnd);
+    memcpy(packet + 16 + 8 * numberOfEntries, &cwnd, 4);
+    numberOfEntries++;
+  }
   
-  packet[11] = 1;                                 /* 1 setting */
-  packet[15] = SETTINGS_TYPE_INITIAL_WINDOW;
+  packet[15 + 8 * numberOfEntries] = SETTINGS_TYPE_INITIAL_WINDOW;
   uint32_t rwin = PR_htonl(kInitialRwin);
-  memcpy(packet + 16, &rwin, 4);
+  memcpy(packet + 16 + 8 * numberOfEntries, &rwin, 4);
+  numberOfEntries++;
+
+  uint32_t dataLen = 4 + 8 * numberOfEntries;
+  mOutputQueueUsed += 8 + dataLen;
+  packet[7] = dataLen;
+  packet[11] = numberOfEntries;
 
   LogIO(this, nullptr, "Generate Settings", packet, 8 + dataLen);
   FlushOutputQueue();
@@ -1111,11 +1156,18 @@ SpdySession3::HandleSettings(SpdySession3 *self)
       self->mMaxConcurrent = value;
       Telemetry::Accumulate(Telemetry::SPDY_SETTINGS_MAX_STREAMS, value);
       break;
-      
-    case SETTINGS_TYPE_CWND:
+
+    case SETTINGS_TYPE_CWND: 
+      if (flags & PERSIST_VALUE)
+      {
+        nsRefPtr<nsHttpConnectionInfo> ci;
+        self->GetConnectionInfo(getter_AddRefs(ci));
+        if (ci)
+          gHttpHandler->ConnMgr()->ReportSpdyCWNDSetting(ci, value);
+      }
       Telemetry::Accumulate(Telemetry::SPDY_SETTINGS_CWND, value);
       break;
-      
+
     case SETTINGS_TYPE_DOWNLOAD_RETRANS_RATE:
       Telemetry::Accumulate(Telemetry::SPDY_SETTINGS_RETRANS, value);
       break;
@@ -1726,7 +1778,7 @@ SpdySession3::WriteSegments(nsAHttpSegmentWriter *writer,
 
   if (mDownstreamState == DISCARDING_DATA_FRAME) {
     char trash[4096];
-    uint32_t count = NS_MIN(4096U, mInputFrameDataSize - mInputFrameDataRead);
+    uint32_t count = std::min(4096U, mInputFrameDataSize - mInputFrameDataRead);
 
     if (!count) {
       ResetDownstreamState();
@@ -2031,7 +2083,7 @@ SpdySession3::OnWriteSegment(char *buf,
       return NS_BASE_STREAM_CLOSED;
     }
     
-    count = NS_MIN(count, mInputFrameDataSize - mInputFrameDataRead);
+    count = std::min(count, mInputFrameDataSize - mInputFrameDataRead);
     rv = NetworkRead(mSegmentWriter, buf, count, countWritten);
     if (NS_FAILED(rv))
       return rv;
@@ -2057,7 +2109,7 @@ SpdySession3::OnWriteSegment(char *buf,
       return NS_BASE_STREAM_CLOSED;
     }
       
-    count = NS_MIN(count,
+    count = std::min(count,
                    mFlatHTTPResponseHeaders.Length() -
                    mFlatHTTPResponseHeadersOut);
     memcpy(buf,

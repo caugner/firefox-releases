@@ -9,7 +9,6 @@ import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.sync.setup.SyncAccounts;
 
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import android.accounts.Account;
@@ -17,8 +16,8 @@ import android.accounts.AccountManager;
 import android.accounts.OnAccountsUpdateListener;
 import android.content.ContentResolver;
 import android.content.Intent;
+import android.database.ContentObserver;
 import android.net.Uri;
-import android.os.SystemClock;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -65,6 +64,7 @@ public class Tabs implements GeckoEventListener {
     private volatile boolean mInitialTabsAdded;
 
     private GeckoApp mActivity;
+    private ContentObserver mContentObserver;
 
     private Tabs() {
         registerEventListener("SessionHistory:New");
@@ -102,6 +102,10 @@ public class Tabs implements GeckoEventListener {
 
         // The listener will run on the background thread (see 2nd argument).
         mAccountManager.addOnAccountsUpdatedListener(mAccountListener, GeckoAppShell.getHandler(), false);
+
+        if (mContentObserver != null) {
+            BrowserDB.registerBookmarkObserver(getContentResolver(), mContentObserver);
+        }
     }
 
     // Ideally, this would remove the reference to the activity once it's
@@ -109,6 +113,10 @@ public class Tabs implements GeckoEventListener {
     // requires us to keep it around (see
     // https://bugzilla.mozilla.org/show_bug.cgi?id=844407).
     public synchronized void detachFromActivity(GeckoApp activity) {
+        if (mContentObserver != null) {
+            BrowserDB.unregisterContentObserver(getContentResolver(), mContentObserver);
+        }
+
         if (mAccountListener != null) {
             mAccountManager.removeOnAccountsUpdatedListener(mAccountListener);
             mAccountListener = null;
@@ -138,10 +146,25 @@ public class Tabs implements GeckoEventListener {
         return count;
     }
 
+    // Must be synchronized to avoid racing on mContentObserver.
+    private void lazyRegisterBookmarkObserver() {
+        if (mContentObserver == null) {
+            mContentObserver = new ContentObserver(null) {
+                public void onChange(boolean selfChange) {
+                    for (Tab tab : mOrder) {
+                        tab.updateBookmark();
+                    }
+                }
+            };
+            BrowserDB.registerBookmarkObserver(getContentResolver(), mContentObserver);
+        }
+    }
+
     private Tab addTab(int id, String url, boolean external, int parentId, String title, boolean isPrivate) {
         final Tab tab = isPrivate ? new PrivateTab(id, url, external, parentId, title) :
                                     new Tab(id, url, external, parentId, title);
         synchronized (this) {
+            lazyRegisterBookmarkObserver();
             mTabs.put(id, tab);
             mOrder.add(tab);
         }
@@ -176,15 +199,7 @@ public class Tabs implements GeckoEventListener {
         }
 
         mSelectedTab = tab;
-        mActivity.runOnUiThread(new Runnable() { 
-            @Override
-            public synchronized void run() {
-                getActivity().hideFormAssistPopup();
-                if (isSelectedTab(tab)) {
-                    notifyListeners(tab, TabEvents.SELECTED);
-                }
-            }
-        });
+        notifyListeners(tab, TabEvents.SELECTED);
 
         if (oldTab != null) {
             notifyListeners(oldTab, TabEvents.UNSELECTED);

@@ -35,6 +35,7 @@ EXPORTS_mozilla/net = \
   $(NULL)
 
 CPPSRCS =               \
+  NeckoCommon.cpp       \
   NeckoChild.cpp        \
   NeckoParent.cpp       \
   ChannelEventQueue.cpp \
@@ -45,6 +46,7 @@ CPPSRCS =               \
 LOCAL_INCLUDES +=                  \
   -I$(srcdir)/../protocol/http \
   -I$(srcdir)/../base/src          \
+  -I$(topsrcdir)/modules/libjar    \
   $(NULL)
 
 include $(topsrcdir)/config/config.mk

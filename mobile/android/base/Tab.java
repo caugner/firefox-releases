@@ -5,31 +5,25 @@
 
 package org.mozilla.gecko;
 
-import org.mozilla.gecko.db.BrowserDB;
-import org.mozilla.gecko.gfx.Layer;
-import org.mozilla.gecko.util.GeckoAsyncTask;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.gfx.Layer;
 
 import android.content.ContentResolver;
-import android.database.ContentObserver;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-import android.net.Uri;
 import android.os.Build;
-import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class Tab {
     private static final String LOGTAG = "GeckoTab";
@@ -58,13 +52,12 @@ public class Tab {
     private ZoomConstraints mZoomConstraints;
     private ArrayList<View> mPluginViews;
     private HashMap<Object, Layer> mPluginLayers;
-    private ContentResolver mContentResolver;
-    private ContentObserver mContentObserver;
     private int mBackgroundColor = Color.WHITE;
     private int mState;
     private Bitmap mThumbnailBitmap;
     private boolean mDesktopMode;
     private boolean mEnteringReaderMode;
+    private static final int MAX_HISTORY_LIST_SIZE = 50;
 
     public static final int STATE_DELAYED = 0;
     public static final int STATE_LOADING = 1;
@@ -96,17 +89,13 @@ public class Tab {
         mPluginViews = new ArrayList<View>();
         mPluginLayers = new HashMap<Object, Layer>();
         mState = GeckoApp.shouldShowProgress(url) ? STATE_SUCCESS : STATE_LOADING;
-        mContentResolver = Tabs.getInstance().getContentResolver();
-        mContentObserver = new ContentObserver(null) {
-            public void onChange(boolean selfChange) {
-                updateBookmark();
-            }
-        };
-        BrowserDB.registerBookmarkObserver(mContentResolver, mContentObserver);
+    }
+
+    private ContentResolver getContentResolver() {
+        return Tabs.getInstance().getContentResolver();
     }
 
     public void onDestroy() {
-        BrowserDB.unregisterContentObserver(mContentResolver, mContentObserver);
         Tabs.getInstance().notifyListeners(this, Tabs.TabEvents.CLOSED);
     }
 
@@ -255,27 +244,7 @@ public class Tab {
             return;
 
         mTitle = (title == null ? "" : title);
-
-        if (mUrl != null)
-            updateHistory(mUrl, mTitle);
-
         Tabs.getInstance().notifyListeners(this, Tabs.TabEvents.TITLE);
-    }
-
-    protected void addHistory(final String uri) {
-        GeckoAppShell.getHandler().post(new Runnable() {
-            public void run() {
-                GlobalHistory.getInstance().add(uri);
-            }
-        });
-    }
-
-    protected void updateHistory(final String uri, final String title) {
-        GeckoAppShell.getHandler().post(new Runnable() {
-            public void run() {
-                GlobalHistory.getInstance().update(uri, title);
-            }
-        });
     }
 
     public void setState(int state) {
@@ -349,7 +318,7 @@ public class Tab {
         Tabs.getInstance().notifyListeners(this, Tabs.TabEvents.MENU_UPDATED);
     }
 
-    private void updateBookmark() {
+    void updateBookmark() {
         GeckoAppShell.getHandler().post(new Runnable() {
             public void run() {
                 final String url = getURL();
@@ -357,8 +326,8 @@ public class Tab {
                     return;
 
                 if (url.equals(getURL())) {
-                    mBookmark = BrowserDB.isBookmark(mContentResolver, url);
-                    mReadingListItem = BrowserDB.isReadingListItem(mContentResolver, url);
+                    mBookmark = BrowserDB.isBookmark(getContentResolver(), url);
+                    mReadingListItem = BrowserDB.isReadingListItem(getContentResolver(), url);
                 }
 
                 Tabs.getInstance().notifyListeners(Tab.this, Tabs.TabEvents.MENU_UPDATED);
@@ -373,7 +342,7 @@ public class Tab {
                 if (url == null)
                     return;
 
-                BrowserDB.addBookmark(mContentResolver, mTitle, url);
+                BrowserDB.addBookmark(getContentResolver(), mTitle, url);
             }
         });
     }
@@ -385,7 +354,7 @@ public class Tab {
                 if (url == null)
                     return;
 
-                BrowserDB.removeBookmarksWithURL(mContentResolver, url);
+                BrowserDB.removeBookmarksWithURL(getContentResolver(), url);
             }
         });
     }
@@ -425,6 +394,53 @@ public class Tab {
             return false;
 
         GeckoEvent e = GeckoEvent.createBroadcastEvent("Session:Back", "");
+        GeckoAppShell.sendEventToGecko(e);
+        return true;
+    }
+
+    public boolean showBackHistory() {
+        if (!canDoBack())
+            return false;
+        return this.showHistory(Math.max(mHistoryIndex - MAX_HISTORY_LIST_SIZE, 0), mHistoryIndex, mHistoryIndex);
+    }
+
+    public boolean showForwardHistory() {
+        if (!canDoForward())
+            return false;
+        return this.showHistory(mHistoryIndex, Math.min(mHistorySize - 1, mHistoryIndex + MAX_HISTORY_LIST_SIZE), mHistoryIndex);
+    }
+
+    public boolean showAllHistory() {
+        if (!canDoForward() && !canDoBack())
+            return false;
+
+        int min = mHistoryIndex - MAX_HISTORY_LIST_SIZE / 2;
+        int max = mHistoryIndex + MAX_HISTORY_LIST_SIZE / 2;
+        if (min < 0) {
+            max -= min;
+        }
+        if (max > mHistorySize - 1) {
+            min -= max - (mHistorySize - 1);
+            max = mHistorySize - 1;
+        }
+        min = Math.max(min, 0);
+
+        return this.showHistory(min, max, mHistoryIndex);
+    }
+
+    /**
+     * This method will show the history starting on fromIndex until toIndex of the history.
+     */
+    public boolean showHistory(int fromIndex, int toIndex, int selIndex) {
+        JSONObject json = new JSONObject();
+        try {
+            json.put("fromIndex", fromIndex);
+            json.put("toIndex", toIndex);
+            json.put("selIndex", selIndex);
+        } catch (JSONException e) {
+            Log.e(LOGTAG, "JSON error", e);
+        }
+        GeckoEvent e = GeckoEvent.createBroadcastEvent("Session:ShowHistory", json.toString());
         GeckoAppShell.sendEventToGecko(e);
         return true;
     }
@@ -486,7 +502,7 @@ public class Tab {
 
             // If we weren't at the last history entry, mHistoryIndex may have become too small
             if (mHistoryIndex < -1)
-                 mHistoryIndex = -1;
+                mHistoryIndex = -1;
         }
     }
 
@@ -519,7 +535,7 @@ public class Tab {
             if (url == null)
                 return;
 
-            BrowserDB.updateThumbnailForUrl(mContentResolver, url, mThumbnail);
+            BrowserDB.updateThumbnailForUrl(getContentResolver(), url, mThumbnail);
         } catch (Exception e) {
             // ignore
         }

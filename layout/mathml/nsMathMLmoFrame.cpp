@@ -12,6 +12,7 @@
 #include "nsContentUtils.h"
 
 #include "nsMathMLmoFrame.h"
+#include <algorithm>
 
 //
 // <mo> -- operator, fence, or separator - implementation
@@ -79,21 +80,18 @@ nsMathMLmoFrame::UseMathMLChar()
     NS_MATHML_OPERATOR_IS_INVISIBLE(mFlags);
 }
 
-NS_IMETHODIMP
+void
 nsMathMLmoFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                   const nsRect&           aDirtyRect,
                                   const nsDisplayListSet& aLists)
 {
-  nsresult rv = NS_OK;
   bool useMathMLChar = UseMathMLChar();
 
   if (!useMathMLChar) {
     // let the base class do everything
-    rv = nsMathMLTokenFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsMathMLTokenFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
   } else {
-    rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
-    NS_ENSURE_SUCCESS(rv, rv);
+    DisplayBorderBackgroundOutline(aBuilder, aLists);
     
     // make our char selected if our inner child text frame is selected
     bool isSelected = false;
@@ -105,15 +103,13 @@ nsMathMLmoFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       selectedRect.Inflate(nsPresContext::CSSPixelsToAppUnits(1));
       isSelected = true;
     }
-    rv = mMathMLChar.Display(aBuilder, this, aLists, 0, isSelected ? &selectedRect : nullptr);
-    NS_ENSURE_SUCCESS(rv, rv);
+    mMathMLChar.Display(aBuilder, this, aLists, 0, isSelected ? &selectedRect : nullptr);
   
 #if defined(DEBUG) && defined(SHOW_BOUNDING_BOX)
     // for visual debug
-    rv = DisplayBoundingMetrics(aBuilder, this, mReference, mBoundingMetrics, aLists);
+    DisplayBoundingMetrics(aBuilder, this, mReference, mBoundingMetrics, aLists);
 #endif
   }
-  return rv;
 }
 
 // get the text that we enclose and setup our nsMathMLChar
@@ -372,7 +368,7 @@ nsMathMLmoFrame::ProcessOperatorData()
       // tuning if we don't want too much extra space when we are a script.
       // (with its fonts, TeX sets lspace=0 & rspace=0 as soon as scriptlevel>0.
       // Our fonts can be anything, so...)
-      if (GetStyleFont()->mScriptLevel > 0) {
+      if (StyleFont()->mScriptLevel > 0) {
         if (NS_MATHML_OPERATOR_EMBELLISH_IS_ISOLATED(mFlags)) {
           // could be an isolated accent or script, e.g., x^{+}, just zero out
           mEmbellishData.leadingSpace = 0;
@@ -664,13 +660,13 @@ nsMathMLmoFrame::Stretch(nsRenderingContext& aRenderingContext,
 
       if (isVertical && NS_MATHML_OPERATOR_IS_SYMMETRIC(mFlags)) {
         // we need to center about the axis
-        nscoord delta = NS_MAX(container.ascent - axisHeight,
+        nscoord delta = std::max(container.ascent - axisHeight,
                                container.descent + axisHeight);
         container.ascent = delta + axisHeight;
         container.descent = delta - axisHeight;
 
         // get ready in case we encounter user-desired min-max size
-        delta = NS_MAX(initialSize.ascent - axisHeight,
+        delta = std::max(initialSize.ascent - axisHeight,
                        initialSize.descent + axisHeight);
         initialSize.ascent = delta + axisHeight;
         initialSize.descent = delta - axisHeight;
@@ -686,21 +682,21 @@ nsMathMLmoFrame::Stretch(nsRenderingContext& aRenderingContext,
           // try to maintain the aspect ratio of the char
           float aspect = mMaxSize / float(initialSize.ascent + initialSize.descent);
           container.ascent =
-            NS_MIN(container.ascent, nscoord(initialSize.ascent * aspect));
+            std::min(container.ascent, nscoord(initialSize.ascent * aspect));
           container.descent =
-            NS_MIN(container.descent, nscoord(initialSize.descent * aspect));
+            std::min(container.descent, nscoord(initialSize.descent * aspect));
           // below we use a type cast instead of a conversion to avoid a VC++ bug
           // see http://support.microsoft.com/support/kb/articles/Q115/7/05.ASP
           container.width =
-            NS_MIN(container.width, (nscoord)mMaxSize);
+            std::min(container.width, (nscoord)mMaxSize);
         }
         else { // multiplicative value
           container.ascent =
-            NS_MIN(container.ascent, nscoord(initialSize.ascent * mMaxSize));
+            std::min(container.ascent, nscoord(initialSize.ascent * mMaxSize));
           container.descent =
-            NS_MIN(container.descent, nscoord(initialSize.descent * mMaxSize));
+            std::min(container.descent, nscoord(initialSize.descent * mMaxSize));
           container.width =
-            NS_MIN(container.width, nscoord(initialSize.width * mMaxSize));
+            std::min(container.width, nscoord(initialSize.width * mMaxSize));
         }
 
         if (isVertical && !NS_MATHML_OPERATOR_IS_SYMMETRIC(mFlags)) {
@@ -727,19 +723,19 @@ nsMathMLmoFrame::Stretch(nsRenderingContext& aRenderingContext,
           // try to maintain the aspect ratio of the char
           float aspect = mMinSize / float(initialSize.ascent + initialSize.descent);
           container.ascent =
-            NS_MAX(container.ascent, nscoord(initialSize.ascent * aspect));
+            std::max(container.ascent, nscoord(initialSize.ascent * aspect));
           container.descent =
-            NS_MAX(container.descent, nscoord(initialSize.descent * aspect));
+            std::max(container.descent, nscoord(initialSize.descent * aspect));
           container.width =
-            NS_MAX(container.width, (nscoord)mMinSize);
+            std::max(container.width, (nscoord)mMinSize);
         }
         else { // multiplicative value
           container.ascent =
-            NS_MAX(container.ascent, nscoord(initialSize.ascent * mMinSize));
+            std::max(container.ascent, nscoord(initialSize.ascent * mMinSize));
           container.descent =
-            NS_MAX(container.descent, nscoord(initialSize.descent * mMinSize));
+            std::max(container.descent, nscoord(initialSize.descent * mMinSize));
           container.width =
-            NS_MAX(container.width, nscoord(initialSize.width * mMinSize));
+            std::max(container.width, nscoord(initialSize.width * mMinSize));
         }
 
         if (isVertical && !NS_MATHML_OPERATOR_IS_SYMMETRIC(mFlags)) {
@@ -845,9 +841,9 @@ nsMathMLmoFrame::Stretch(nsRenderingContext& aRenderingContext,
   else if (useMathMLChar) {
     nscoord ascent = fm->MaxAscent();
     nscoord descent = fm->MaxDescent();
-    aDesiredStretchSize.ascent = NS_MAX(mBoundingMetrics.ascent + leading, ascent);
+    aDesiredStretchSize.ascent = std::max(mBoundingMetrics.ascent + leading, ascent);
     aDesiredStretchSize.height = aDesiredStretchSize.ascent +
-                                 NS_MAX(mBoundingMetrics.descent + leading, descent);
+                                 std::max(mBoundingMetrics.descent + leading, descent);
   }
   aDesiredStretchSize.width = mBoundingMetrics.width;
   aDesiredStretchSize.mBoundingMetrics = mBoundingMetrics;

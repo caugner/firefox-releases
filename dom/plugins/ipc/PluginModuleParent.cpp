@@ -533,7 +533,8 @@ PluginModuleParent::EvaluateHangUIState(const bool aReset)
 bool
 PluginModuleParent::GetPluginName(nsAString& aPluginName)
 {
-    nsPluginHost* host = nsPluginHost::GetInst();
+    nsRefPtr<nsPluginHost> host = 
+        dont_AddRef<nsPluginHost>(nsPluginHost::GetInst());
     if (!host) {
         return false;
     }
@@ -562,7 +563,9 @@ PluginModuleParent::LaunchHangUI()
         delete mHangUIParent;
         mHangUIParent = nullptr;
     }
-    mHangUIParent = new PluginHangUIParent(this);
+    mHangUIParent = new PluginHangUIParent(this, 
+            Preferences::GetInt(kHangUITimeoutPref, 0),
+            Preferences::GetInt(kChildTimeoutPref, 0));
     nsAutoString pluginName;
     if (!GetPluginName(pluginName)) {
         return false;
@@ -983,7 +986,9 @@ PluginModuleParent::RecvBackUpXResources(const FileDescriptor& aXSocketFd)
     NS_ABORT_IF_FALSE(0 > mPluginXSocketFdDup.get(),
                       "Already backed up X resources??");
     mPluginXSocketFdDup.forget();
-    mPluginXSocketFdDup.reset(aXSocketFd.PlatformHandle());
+    if (aXSocketFd.IsValid()) {
+      mPluginXSocketFdDup.reset(aXSocketFd.PlatformHandle());
+    }
 #endif
     return true;
 }

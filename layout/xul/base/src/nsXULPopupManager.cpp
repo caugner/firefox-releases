@@ -24,7 +24,6 @@
 #include "nsIComponentManager.h"
 #include "nsITimer.h"
 #include "nsFocusManager.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsIDocShell.h"
 #include "nsPIDOMWindow.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -224,6 +223,14 @@ bool nsXULPopupManager::ShouldRollupOnMouseWheelEvent()
 
   nsIContent* content = item->Frame()->GetContent();
   if (!content)
+    return false;
+
+  if (content->AttrValueIs(kNameSpaceID_None, nsGkAtoms::rolluponmousewheel,
+                           nsGkAtoms::_true, eCaseMatters))
+    return true;
+
+  if (content->AttrValueIs(kNameSpaceID_None, nsGkAtoms::rolluponmousewheel,
+                           nsGkAtoms::_false, eCaseMatters))
     return false;
 
   nsAutoString value;

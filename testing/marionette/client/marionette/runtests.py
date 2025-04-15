@@ -13,10 +13,11 @@ import socket
 import sys
 import time
 import platform
+import moznetwork
 import xml.dom.minidom as dom
 
 from manifestparser import TestManifest
-from mozhttpd import iface, MozHttpd
+from mozhttpd import MozHttpd
 
 from marionette import Marionette
 from marionette_test import MarionetteJSTestCase, MarionetteTestCase
@@ -185,8 +186,7 @@ class MarionetteTestRunner(object):
                  es_server=None, rest_server=None, logger=None,
                  testgroup="marionette", noWindow=False, logcat_dir=None,
                  xml_output=None, repeat=0, perf=False, perfserv=None,
-                 gecko_path=None, testvars=None, tree=None, load_early=False,
-                 device=None):
+                 gecko_path=None, testvars=None, tree=None, device=None):
         self.address = address
         self.emulator = emulator
         self.emulatorBinary = emulatorBinary
@@ -214,7 +214,6 @@ class MarionetteTestRunner(object):
         self.gecko_path = gecko_path
         self.testvars = {}
         self.tree = tree
-        self.load_early = load_early
         self.device = device
 
         if testvars:
@@ -252,7 +251,7 @@ class MarionetteTestRunner(object):
         self.perfrequest = None
 
     def start_httpd(self):
-        host = iface.get_lan_ip()
+        host = moznetwork.get_ip()
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.bind(("",0))
         port = s.getsockname()[1]
@@ -299,8 +298,7 @@ class MarionetteTestRunner(object):
                                          baseurl=self.baseurl,
                                          noWindow=self.noWindow,
                                          logcat_dir=self.logcat_dir,
-                                         gecko_path=self.gecko_path,
-                                         load_early=self.load_early)
+                                         gecko_path=self.gecko_path)
         else:
             raise Exception("must specify binary, address or emulator")
 
@@ -368,8 +366,9 @@ class MarionetteTestRunner(object):
                 print e
 
         if self.xml_output:
-            if not os.path.exists(os.path.dirname(self.xml_output)):
-                os.makedirs(os.path.dirname(self.xml_output))
+            xml_dir = os.path.dirname(os.path.abspath(self.xml_output))
+            if not os.path.exists(xml_dir):
+                os.makedirs(xml_dir)
             with open(self.xml_output, 'w') as f:
                 f.write(self.generate_xml(self.results))
 
@@ -637,11 +636,10 @@ def parse_options():
     parser.add_option('--tree', dest='tree', action='store',
                       default='b2g',
                       help='the tree that the revsion parameter refers to')
-    parser.add_option('--load-early', dest='load_early', action='store_true',
-                      default=False,
-                      help='on an emulator, causes Marionette to load earlier '
-                      'in the startup process than it otherwise would; needed '
-                      'for testing WebAPIs')
+    parser.add_option('--symbols-path', dest='symbols_path', action='store',
+                      default=None,
+                      help='absolute path to directory containing breakpad '
+                      'symbols, or the URL of a zip file containing symbols')
 
     options, tests = parser.parse_args()
 
@@ -652,11 +650,6 @@ def parse_options():
     if not options.emulator and not options.address and not options.bin:
         parser.print_usage()
         print "must specify --binary, --emulator or --address"
-        parser.exit()
-
-    if options.load_early and not options.emulator:
-        parser.print_usage()
-        print "must specify --load-early on when using --emulator"
         parser.exit()
 
     # default to storing logcat output for emulator runs
@@ -700,7 +693,6 @@ def startTestRunner(runner_class, options, tests):
                           perfserv=options.perfserv,
                           gecko_path=options.gecko_path,
                           testvars=options.testvars,
-                          load_early=options.load_early,
                           device=options.device)
     runner.run_tests(tests, testtype=options.type)
     return runner

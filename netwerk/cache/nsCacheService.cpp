@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* vim: set sw=4 ts=8 et tw=80 : */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set ts=8 sts=4 et sw=4 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -21,7 +21,6 @@
 #include "nsDiskCacheDevice.h"
 #include "nsDiskCacheDeviceSQL.h"
 
-#include "nsIMemoryReporter.h"
 #include "nsIObserverService.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
@@ -40,6 +39,7 @@
 
 
 #include "mozilla/net/NeckoCommon.h"
+#include <algorithm>
 
 using namespace mozilla;
 
@@ -371,7 +371,7 @@ nsCacheProfilePrefObserver::Remove()
 void
 nsCacheProfilePrefObserver::SetDiskCacheCapacity(int32_t capacity)
 {
-    mDiskCacheCapacity = NS_MAX(0, capacity);
+    mDiskCacheCapacity = std::max(0, capacity);
 }
 
 
@@ -439,7 +439,7 @@ nsCacheProfilePrefObserver::Observe(nsISupports *     subject,
             rv = branch->GetIntPref(DISK_CACHE_CAPACITY_PREF, &capacity);
             if (NS_FAILED(rv))  
                 return rv;
-            mDiskCacheCapacity = NS_MAX(0, capacity);
+            mDiskCacheCapacity = std::max(0, capacity);
             nsCacheService::SetDiskCacheCapacity(mDiskCacheCapacity);
        
         // Update the cache capacity when smart sizing is turned on/off 
@@ -457,7 +457,7 @@ nsCacheProfilePrefObserver::Observe(nsISupports *     subject,
                 rv = branch->GetIntPref(DISK_CACHE_CAPACITY_PREF, &newCapacity);
                 if (NS_FAILED(rv)) 
                     return rv;
-                mDiskCacheCapacity = NS_MAX(0, newCapacity);
+                mDiskCacheCapacity = std::max(0, newCapacity);
                 nsCacheService::SetDiskCacheCapacity(mDiskCacheCapacity);
             }
         } else if (!strcmp(DISK_CACHE_USE_OLD_MAX_SMART_SIZE_PREF, data.get())) {
@@ -472,7 +472,7 @@ nsCacheProfilePrefObserver::Observe(nsISupports *     subject,
             if (NS_FAILED(rv)) 
                 return rv;
 
-            mDiskCacheMaxEntrySize = NS_MAX(-1, newMaxSize);
+            mDiskCacheMaxEntrySize = std::max(-1, newMaxSize);
             nsCacheService::SetDiskCacheMaxEntrySize(mDiskCacheMaxEntrySize);
           
 #if 0            
@@ -497,7 +497,7 @@ nsCacheProfilePrefObserver::Observe(nsISupports *     subject,
             int32_t capacity = 0;
             rv = branch->GetIntPref(OFFLINE_CACHE_CAPACITY_PREF, &capacity);
             if (NS_FAILED(rv))  return rv;
-            mOfflineCacheCapacity = NS_MAX(0, capacity);
+            mOfflineCacheCapacity = std::max(0, capacity);
             nsCacheService::SetOfflineCacheCapacity(mOfflineCacheCapacity);
 #if 0
         } else if (!strcmp(OFFLINE_CACHE_DIR_PREF, data.get())) {
@@ -529,14 +529,14 @@ nsCacheProfilePrefObserver::Observe(nsISupports *     subject,
             if (NS_FAILED(rv)) 
                 return rv;
             
-            mMemoryCacheMaxEntrySize = NS_MAX(-1, newMaxSize);
+            mMemoryCacheMaxEntrySize = std::max(-1, newMaxSize);
             nsCacheService::SetMemoryCacheMaxEntrySize(mMemoryCacheMaxEntrySize);
         } else if (!strcmp(CACHE_COMPRESSION_LEVEL_PREF, data.get())) {
             mCacheCompressionLevel = CACHE_COMPRESSION_LEVEL;
             (void)branch->GetIntPref(CACHE_COMPRESSION_LEVEL_PREF,
                                      &mCacheCompressionLevel);
-            mCacheCompressionLevel = NS_MAX(0, mCacheCompressionLevel);
-            mCacheCompressionLevel = NS_MIN(9, mCacheCompressionLevel);
+            mCacheCompressionLevel = std::max(0, mCacheCompressionLevel);
+            mCacheCompressionLevel = std::min(9, mCacheCompressionLevel);
         } else if (!strcmp(SANITIZE_ON_SHUTDOWN_PREF, data.get())) {
             rv = branch->GetBoolPref(SANITIZE_ON_SHUTDOWN_PREF,
                                      &mSanitizeOnShutdown);
@@ -575,17 +575,17 @@ SmartCacheSize(const uint32_t availKB, bool shouldUseOldMaxSmartSize)
 
     // .5% of space above 25 GB
     if (avail10MBs > 2500) {
-        sz10MBs += (avail10MBs - 2500)*.005;
+        sz10MBs += static_cast<uint32_t>((avail10MBs - 2500)*.005);
         avail10MBs = 2500;
     }
     // 1% of space between 7GB -> 25 GB
     if (avail10MBs > 700) {
-        sz10MBs += (avail10MBs - 700)*.01;
+        sz10MBs += static_cast<uint32_t>((avail10MBs - 700)*.01);
         avail10MBs = 700;
     }
     // 5% of space between 500 MB -> 7 GB
     if (avail10MBs > 50) {
-        sz10MBs += (avail10MBs - 50)*.05;
+        sz10MBs += static_cast<uint32_t>((avail10MBs - 50)*.05);
         avail10MBs = 50;
     }
 
@@ -595,13 +595,13 @@ SmartCacheSize(const uint32_t availKB, bool shouldUseOldMaxSmartSize)
     // percentage of available space and a smaller minimum.
 
     // 20% of space up to 500 MB (10 MB min)
-    sz10MBs += NS_MAX<uint32_t>(1, avail10MBs * .2);
+    sz10MBs += std::max<uint32_t>(1, static_cast<uint32_t>(avail10MBs * .2));
 #else
     // 40% of space up to 500 MB (50 MB min)
-    sz10MBs += NS_MAX<uint32_t>(5, avail10MBs * .4);
+    sz10MBs += std::max<uint32_t>(5, static_cast<uint32_t>(avail10MBs * .4));
 #endif
 
-    return NS_MIN<uint32_t>(maxSize, sz10MBs * 10 * 1024);
+    return std::min<uint32_t>(maxSize, sz10MBs * 10 * 1024);
 }
 
  /* Computes our best guess for the default size of the user's disk cache, 
@@ -634,7 +634,8 @@ nsCacheProfilePrefObserver::GetSmartCacheSize(const nsAString& cachePath,
     if (NS_FAILED(rv))
         return DEFAULT_CACHE_SIZE;
 
-    return SmartCacheSize((bytesAvailable / 1024) + currentSize,
+    return SmartCacheSize(static_cast<uint32_t>((bytesAvailable / 1024) +
+                                                currentSize),
                           shouldUseOldMaxSmartSize);
 }
 
@@ -689,11 +690,11 @@ nsCacheProfilePrefObserver::ReadPrefs(nsIPrefBranch* branch)
 
     mDiskCacheCapacity = DISK_CACHE_CAPACITY;
     (void)branch->GetIntPref(DISK_CACHE_CAPACITY_PREF, &mDiskCacheCapacity);
-    mDiskCacheCapacity = NS_MAX(0, mDiskCacheCapacity);
+    mDiskCacheCapacity = std::max(0, mDiskCacheCapacity);
 
     (void) branch->GetIntPref(DISK_CACHE_MAX_ENTRY_SIZE_PREF,
                               &mDiskCacheMaxEntrySize);
-    mDiskCacheMaxEntrySize = NS_MAX(-1, mDiskCacheMaxEntrySize);
+    mDiskCacheMaxEntrySize = std::max(-1, mDiskCacheMaxEntrySize);
     
     (void) branch->GetComplexValue(DISK_CACHE_DIR_PREF,     // ignore error
                                    NS_GET_IID(nsIFile),
@@ -718,17 +719,8 @@ nsCacheProfilePrefObserver::ReadPrefs(nsIPrefBranch* branch)
             if (!directory)
                 directory = profDir;
             else if (profDir) {
-                bool same;
-                if (NS_SUCCEEDED(profDir->Equals(directory, &same)) && !same) {
-                    // We no longer store the cache directory in the main
-                    // profile directory, so we should cleanup the old one.
-                    rv = profDir->AppendNative(NS_LITERAL_CSTRING("Cache"));
-                    if (NS_SUCCEEDED(rv)) {
-                        bool exists;
-                        if (NS_SUCCEEDED(profDir->Exists(&exists)) && exists)
-                            nsDeleteDir::DeleteDir(profDir, false);
-                    }
-                }
+                nsCacheService::MoveOrRemoveDiskCache(profDir, directory, 
+                                                      "Cache");
             }
         }
         // use file cache in build tree only if asked, to avoid cache dir litter
@@ -773,7 +765,7 @@ nsCacheProfilePrefObserver::ReadPrefs(nsIPrefBranch* branch)
     mOfflineCacheCapacity = OFFLINE_CACHE_CAPACITY;
     (void)branch->GetIntPref(OFFLINE_CACHE_CAPACITY_PREF,
                              &mOfflineCacheCapacity);
-    mOfflineCacheCapacity = NS_MAX(0, mOfflineCacheCapacity);
+    mOfflineCacheCapacity = std::max(0, mOfflineCacheCapacity);
 
     (void) branch->GetComplexValue(OFFLINE_CACHE_DIR_PREF,     // ignore error
                                    NS_GET_IID(nsIFile),
@@ -794,6 +786,10 @@ nsCacheProfilePrefObserver::ReadPrefs(nsIPrefBranch* branch)
                                    getter_AddRefs(directory));
             if (!directory)
                 directory = profDir;
+            else if (profDir) {
+                nsCacheService::MoveOrRemoveDiskCache(profDir, directory, 
+                                                      "OfflineCache");
+            }
         }
 #if DEBUG
         if (!directory) {
@@ -815,14 +811,14 @@ nsCacheProfilePrefObserver::ReadPrefs(nsIPrefBranch* branch)
 
     (void) branch->GetIntPref(MEMORY_CACHE_MAX_ENTRY_SIZE_PREF,
                               &mMemoryCacheMaxEntrySize);
-    mMemoryCacheMaxEntrySize = NS_MAX(-1, mMemoryCacheMaxEntrySize);
+    mMemoryCacheMaxEntrySize = std::max(-1, mMemoryCacheMaxEntrySize);
 
     // read cache compression level pref
     mCacheCompressionLevel = CACHE_COMPRESSION_LEVEL;
     (void)branch->GetIntPref(CACHE_COMPRESSION_LEVEL_PREF,
                              &mCacheCompressionLevel);
-    mCacheCompressionLevel = NS_MAX(0, mCacheCompressionLevel);
-    mCacheCompressionLevel = NS_MIN(9, mCacheCompressionLevel);
+    mCacheCompressionLevel = std::max(0, mCacheCompressionLevel);
+    mCacheCompressionLevel = std::min(9, mCacheCompressionLevel);
 
     // read cache shutdown sanitization prefs
     (void) branch->GetBoolPref(SANITIZE_ON_SHUTDOWN_PREF,
@@ -1071,26 +1067,6 @@ private:
  *****************************************************************************/
 nsCacheService *   nsCacheService::gService = nullptr;
 
-static nsCOMPtr<nsIMemoryReporter> MemoryCacheReporter = nullptr;
-
-NS_THREADSAFE_MEMORY_REPORTER_IMPLEMENT(NetworkMemoryCache,
-    "explicit/network/memory-cache",
-    KIND_HEAP,
-    UNITS_BYTES,
-    nsCacheService::MemoryDeviceSize,
-    "Memory used by the network memory cache.")
-
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(NetworkDiskCacheMallocSizeOf)
-
-static nsCOMPtr<nsIMemoryReporter> DiskCacheReporter = nullptr;
-
-NS_THREADSAFE_MEMORY_REPORTER_IMPLEMENT(NetworkDiskCache,
-    "explicit/network/disk-cache",
-    KIND_HEAP,
-    UNITS_BYTES,
-    nsCacheService::DiskDeviceHeapSize,
-    "Memory used by the network disk cache.")
-
 NS_IMPL_THREADSAFE_ISUPPORTS1(nsCacheService, nsICacheService)
 
 nsCacheService::nsCacheService()
@@ -1244,14 +1220,6 @@ nsCacheService::Shutdown()
         // obtain the disk cache directory in case we need to sanitize it
         parentDir = mObserver->DiskCacheParentDirectory();
         shouldSanitize = mObserver->SanitizeAtShutdown();
-        
-        // unregister memory reporters, before deleting the devices, just
-        // to be safe
-        NS_UnregisterMemoryReporter(MemoryCacheReporter);
-        MemoryCacheReporter = nullptr;
-
-        NS_UnregisterMemoryReporter(DiskCacheReporter);
-        DiskCacheReporter = nullptr;
 
         // deallocate memory and disk caches
         delete mMemoryDevice;
@@ -1566,7 +1534,7 @@ nsCacheService::CreateDiskDevice()
     mDiskDevice->SetCacheParentDirectory(mObserver->DiskCacheParentDirectory());
     mDiskDevice->SetCapacity(mObserver->DiskCacheCapacity());
     mDiskDevice->SetMaxEntrySize(mObserver->DiskCacheMaxEntrySize());
-    
+
     nsresult rv = mDiskDevice->Init();
     if (NS_FAILED(rv)) {
 #if DEBUG
@@ -1575,7 +1543,7 @@ nsCacheService::CreateDiskDevice()
                static_cast<uint32_t>(rv));
         printf("###    - disabling disk cache for this session.\n");
         printf("###\n");
-#endif        
+#endif
         mEnableDiskDevice = false;
         delete mDiskDevice;
         mDiskDevice = nullptr;
@@ -1604,9 +1572,6 @@ nsCacheService::CreateDiskDevice()
     }
     // Ignore state of the timer and return success since the purpose of the
     // method (create the disk-device) has been fulfilled
-
-    DiskCacheReporter = new NS_MEMORY_REPORTER_NAME(NetworkDiskCache);
-    NS_RegisterMemoryReporter(DiskCacheReporter);
 
     return NS_OK;
 }
@@ -1772,10 +1737,6 @@ nsCacheService::CreateMemoryDevice()
         delete mMemoryDevice;
         mMemoryDevice = nullptr;
     }
-
-    MemoryCacheReporter =
-        new NS_MEMORY_REPORTER_NAME(NetworkMemoryCache);
-    NS_RegisterMemoryReporter(MemoryCacheReporter);
 
     return rv;
 }
@@ -2272,21 +2233,6 @@ nsCacheService::EnsureEntryHasDevice(nsCacheEntry * entry)
     if (device) 
         entry->SetCacheDevice(device);
     return device;
-}
-
-int64_t
-nsCacheService::MemoryDeviceSize()
-{
-    nsMemoryCacheDevice *memoryDevice = GlobalInstance()->mMemoryDevice;
-    return memoryDevice ? memoryDevice->TotalSize() : 0;
-}
-
-int64_t
-nsCacheService::DiskDeviceHeapSize()
-{
-    nsCacheServiceAutoLock lock(LOCK_TELEM(NSCACHESERVICE_DISKDEVICEHEAPSIZE));
-    nsDiskCacheDevice *diskDevice = GlobalInstance()->mDiskDevice;
-    return (int64_t)(diskDevice ? diskDevice->SizeOfIncludingThis(NetworkDiskCacheMallocSizeOf) : 0);
 }
 
 nsresult
@@ -3055,6 +3001,57 @@ nsCacheService::SetDiskSmartSize_Locked()
     }
 
     return NS_OK;
+}
+
+void
+nsCacheService::MoveOrRemoveDiskCache(nsIFile *aOldCacheDir, 
+                                      nsIFile *aNewCacheDir,
+                                      const char *aCacheSubdir)
+{
+    bool same;
+    if (NS_FAILED(aOldCacheDir->Equals(aNewCacheDir, &same)) || same)
+        return;
+
+    nsCOMPtr<nsIFile> aOldCacheSubdir;
+    aOldCacheDir->Clone(getter_AddRefs(aOldCacheSubdir));
+
+    nsresult rv = aOldCacheSubdir->AppendNative(
+        nsDependentCString(aCacheSubdir));
+    if (NS_FAILED(rv))
+        return;
+
+    bool exists;
+    if (NS_FAILED(aOldCacheSubdir->Exists(&exists)) || !exists)
+        return;
+
+    nsCOMPtr<nsIFile> aNewCacheSubdir;
+    aNewCacheDir->Clone(getter_AddRefs(aNewCacheSubdir));
+
+    rv = aNewCacheSubdir->AppendNative(nsDependentCString(aCacheSubdir));
+    if (NS_FAILED(rv))
+        return;
+    
+    nsAutoCString newPath;
+    rv = aNewCacheSubdir->GetNativePath(newPath);
+    if (NS_FAILED(rv))
+        return;
+        
+    if (NS_SUCCEEDED(aNewCacheSubdir->Exists(&exists)) && !exists) {
+        // New cache directory does not exist, try to move the old one here
+        // rename needs an empty target directory
+        rv = aNewCacheSubdir->Create(nsIFile::DIRECTORY_TYPE, 0777); 
+        if (NS_SUCCEEDED(rv)) {
+            nsAutoCString oldPath;
+            rv = aOldCacheSubdir->GetNativePath(oldPath);
+            if (NS_FAILED(rv))
+                return;
+            if(rename(oldPath.get(), newPath.get()) == 0)
+                return;
+        }
+    }
+    
+    // Delay delete by 1 minute to avoid IO thrash on startup.
+    nsDeleteDir::DeleteDir(aOldCacheSubdir, false, 60000);
 }
 
 static bool

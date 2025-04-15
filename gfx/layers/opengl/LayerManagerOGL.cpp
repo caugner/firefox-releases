@@ -6,6 +6,7 @@
 #include "LayerManagerOGL.h"
 
 #include "mozilla/layers/PLayers.h"
+#include <algorithm>
 
 /* This must occur *after* layers/PLayers.h to avoid typedefs conflicts. */
 #include "mozilla/Util.h"
@@ -176,7 +177,7 @@ private:
       const TimeStamp& frame = mFrames[i];
       if (!frame.IsNull() && frame > beginningOfWindow) {
         ++numFramesDrawnInWindow;
-        earliestFrameInWindow = NS_MIN(earliestFrameInWindow, frame);
+        earliestFrameInWindow = std::min(earliestFrameInWindow, frame);
       }
     }
     double realWindowSecs = (aNow - earliestFrameInWindow).ToSeconds();
@@ -520,6 +521,9 @@ LayerManagerOGL::Initialize(nsRefPtr<GLContext> aContext, bool force)
 
   // initialise a common shader to check that we can actually compile a shader
   if (!mPrograms[gl::RGBALayerProgramType].mVariations[MaskNone]->Initialize()) {
+#ifdef MOZ_WIDGET_ANDROID
+    NS_RUNTIMEABORT("Shader initialization failed");
+#endif
     return false;
   }
 
@@ -590,6 +594,9 @@ LayerManagerOGL::Initialize(nsRefPtr<GLContext> aContext, bool force)
 
     if (mFBOTextureTarget == LOCAL_GL_NONE) {
       /* Unable to find a texture target that works with FBOs and NPOT textures */
+#ifdef MOZ_WIDGET_ANDROID
+      NS_RUNTIMEABORT("No texture target");
+#endif
       return false;
     }
   } else {
@@ -607,6 +614,9 @@ LayerManagerOGL::Initialize(nsRefPtr<GLContext> aContext, bool force)
      * texture2DRect).
      */
     if (!mGLContext->IsExtensionSupported(gl::GLContext::ARB_texture_rectangle))
+#ifdef MOZ_WIDGET_ANDROID
+      NS_RUNTIMEABORT("No texture rectangle");
+#endif
       return false;
   }
 

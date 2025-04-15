@@ -91,12 +91,6 @@ var Downloads = {
     }
 
     var notifier = Cc["@mozilla.org/alerts-service;1"].getService(Ci.nsIAlertsService);
-
-    if (aDownload.isPrivate) {
-      // temporary workaround for private downloads being stuck in the
-      // notification bar (bug 823285)
-      aTitle = "download";
-    }
     notifier.showAlertNotification(aIcon, aTitle, aMessage, true, "", observer,
                                    aDownload.target.spec.replace("file:", "download:"));
   },

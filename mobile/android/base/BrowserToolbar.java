@@ -8,6 +8,7 @@ package org.mozilla.gecko;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.AnimationDrawable;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.StateListDrawable;
 import android.graphics.Rect;
@@ -27,7 +28,6 @@ import android.view.Window;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
-import android.view.animation.DecelerateInterpolator;
 import android.view.animation.TranslateAnimation;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
@@ -36,7 +36,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.RelativeLayout.LayoutParams;
-import android.widget.TextView;
 import android.widget.ViewSwitcher;
 
 import java.util.ArrayList;
@@ -224,12 +223,22 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 Tabs.getInstance().getSelectedTab().doBack();
             }
         });
+        mBack.setOnLongClickListener(new Button.OnLongClickListener() {
+            public boolean onLongClick(View view) {
+                return Tabs.getInstance().getSelectedTab().showBackHistory();
+            }
+        });
 
         mForward = (ImageButton) mLayout.findViewById(R.id.forward);
         mForward.setEnabled(false); // initialize the forward button to not be enabled
         mForward.setOnClickListener(new Button.OnClickListener() {
             public void onClick(View view) {
                 Tabs.getInstance().getSelectedTab().doForward();
+            }
+        });
+        mForward.setOnLongClickListener(new Button.OnLongClickListener() {
+            public boolean onLongClick(View view) {
+                return Tabs.getInstance().getSelectedTab().showForwardHistory();
             }
         });
 
@@ -960,8 +969,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
 
         String url = tab.getURL();
 
-        // Only set shadow to visible when not on about screens.
-        visible &= !(url == null || url.startsWith("about:"));
+        // Only set shadow to visible when not on about screens except about:blank.
+        visible &= !(url == null || (url.startsWith("about:") && 
+                     !url.equals("about:blank")));
 
         if ((mShadow.getVisibility() == View.VISIBLE) != visible) {
             mShadow.setVisibility(visible ? View.VISIBLE : View.GONE);
@@ -1196,10 +1206,8 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         }
     }
 
-    public void destroy() {
-        // The action-items views are reused on rotation.
-        // Remove them from their parent, so they can be re-attached to new parent.
-        mActionItemBar.removeAllViews();
+    public void onDestroy() {
+        Tabs.unregisterOnTabsChangedListener(this);
     }
 
     public boolean openOptionsMenu() {
@@ -1251,7 +1259,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 return;
 
             StateListDrawable stateList = new StateListDrawable();
-            stateList.addState(new int[] { R.attr.state_private }, mActivity.getResources().getDrawable(R.drawable.address_bar_bg_private));
+            stateList.addState(new int[] { R.attr.state_private }, new ColorDrawable(mActivity.getResources().getColor(R.color.background_private)));
             stateList.addState(new int[] {}, drawable);
 
             int[] padding =  new int[] { getPaddingLeft(),

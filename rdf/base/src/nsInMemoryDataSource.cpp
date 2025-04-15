@@ -946,7 +946,6 @@ InMemoryDataSource::DeleteForwardArcsEntry(PLDHashTable* aTable, PLDHashEntryHdr
 
 ////////////////////////////////////////////////////////////////////////
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(InMemoryDataSource)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(InMemoryDataSource)
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mObservers)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
@@ -1759,8 +1758,6 @@ InMemoryDataSource::ResourceEnumerator(PLDHashTable* aTable,
 NS_IMETHODIMP
 InMemoryDataSource::GetAllResources(nsISimpleEnumerator** aResult)
 {
-    nsresult rv;
-
     nsCOMArray<nsIRDFNode> nodes;
     if (!nodes.SetCapacity(mForwardArcs.entryCount)) {
       return NS_ERROR_OUT_OF_MEMORY;

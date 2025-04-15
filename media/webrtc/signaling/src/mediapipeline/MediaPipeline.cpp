@@ -17,6 +17,7 @@
 #include "Layers.h"
 #include "ImageTypes.h"
 #include "ImageContainer.h"
+#include "VideoUtils.h"
 #endif
 
 #include "logging.h"
@@ -42,7 +43,7 @@ using namespace mozilla;
 
 
 // Logging context
-MOZ_MTLOG_MODULE("mediapipeline");
+MOZ_MTLOG_MODULE("mediapipeline")
 
 namespace mozilla {
 
@@ -476,11 +477,17 @@ void MediaPipeline::PacketReceived(TransportLayer *layer,
 }
 
 nsresult MediaPipelineTransmit::Init() {
+  char track_id_string[11];
   ASSERT_ON_THREAD(main_thread_);
+
+  // We can replace this when we are allowed to do streams or std::to_string
+  PR_snprintf(track_id_string, sizeof(track_id_string), "%d", track_id_);
 
   description_ = pc_ + "| ";
   description_ += conduit_->type() == MediaSessionConduit::AUDIO ?
-      "Transmit audio" : "Transmit video";
+      "Transmit audio[" : "Transmit video[";
+  description_ += track_id_string;
+  description_ += "]";
 
   // TODO(ekr@rtfm.com): Check for errors
   MOZ_MTLOG(PR_LOG_DEBUG, "Attaching pipeline to stream "
@@ -667,7 +674,7 @@ void MediaPipelineTransmit::PipelineListener::ProcessAudioChunk(
   nsAutoArrayPtr<int16_t> samples(new int16_t[chunk.mDuration]);
 
   if (chunk.mBuffer) {
-    switch(chunk.mBufferFormat) {
+    switch (chunk.mBufferFormat) {
       case AUDIO_FORMAT_FLOAT32:
         MOZ_MTLOG(PR_LOG_ERROR, "Can't process audio except in 16-bit PCM yet");
         MOZ_ASSERT(PR_FALSE);
@@ -675,8 +682,7 @@ void MediaPipelineTransmit::PipelineListener::ProcessAudioChunk(
         break;
       case AUDIO_FORMAT_S16:
         {
-          const short* buf = static_cast<const short *>(chunk.mBuffer->Data()) +
-            chunk.mOffset;
+          const short* buf = static_cast<const short *>(chunk.mChannelData[0]);
           ConvertAudioSamplesWithScale(buf, samples, chunk.mDuration, chunk.mVolume);
         }
         break;
@@ -811,14 +817,33 @@ void MediaPipelineTransmit::PipelineListener::ProcessVideoChunk(
 #endif
 
 nsresult MediaPipelineReceiveAudio::Init() {
+  char track_id_string[11];
   ASSERT_ON_THREAD(main_thread_);
   MOZ_MTLOG(PR_LOG_DEBUG, __FUNCTION__);
 
-  description_ = pc_ + "| Receive audio";
+  // We can replace this when we are allowed to do streams or std::to_string
+  PR_snprintf(track_id_string, sizeof(track_id_string), "%d", track_id_);
+
+  description_ = pc_ + "| Receive audio[";
+  description_ += track_id_string;
+  description_ += "]";
 
   stream_->AddListener(listener_);
 
   return MediaPipelineReceive::Init();
+}
+
+
+MediaPipelineReceiveAudio::PipelineListener::PipelineListener(
+    SourceMediaStream * source, TrackID track_id,
+    const RefPtr<MediaSessionConduit>& conduit)
+    : source_(source),
+      track_id_(track_id),
+      conduit_(conduit),
+      played_(0) {
+  mozilla::AudioSegment *segment = new mozilla::AudioSegment();
+  source_->AddTrack(track_id_, 16000, 0, segment);
+  source_->AdvanceKnownTracksTime(STREAM_TIME_MAX);
 }
 
 void MediaPipelineReceiveAudio::PipelineListener::
@@ -833,11 +858,12 @@ NotifyPull(MediaStreamGraph* graph, StreamTime desired_time) {
   while (MillisecondsToMediaTime(played_) < desired_time) {
     // TODO(ekr@rtfm.com): Is there a way to avoid mallocating here?
     nsRefPtr<SharedBuffer> samples = SharedBuffer::Create(1000);
+    int16_t *samples_data = static_cast<int16_t *>(samples->Data());
     int samples_length;
 
     MediaConduitErrorCode err =
         static_cast<AudioSessionConduit*>(conduit_.get())->GetAudioFrame(
-            static_cast<int16_t *>(samples->Data()),
+            samples_data,
             16000,  // Sampling rate fixed at 16 kHz for now
             0,  // TODO(ekr@rtfm.com): better estimate of capture delay
             samples_length);
@@ -848,22 +874,29 @@ NotifyPull(MediaStreamGraph* graph, StreamTime desired_time) {
     MOZ_MTLOG(PR_LOG_DEBUG, "Audio conduit returned buffer of length " << samples_length);
 
     AudioSegment segment;
-    segment.Init(1);
-    segment.AppendFrames(samples.forget(), samples_length,
-                         0, samples_length, AUDIO_FORMAT_S16);
+    nsAutoTArray<const int16_t*,1> channels;
+    channels.AppendElement(samples_data);
+    segment.AppendFrames(samples.forget(), channels, samples_length);
 
-    source_->AppendToTrack(1,  // TODO(ekr@rtfm.com): Track ID
-                           &segment);
+    source_->AppendToTrack(track_id_, &segment);
 
     played_ += 10;
   }
 }
 
 nsresult MediaPipelineReceiveVideo::Init() {
+  char track_id_string[11];
   ASSERT_ON_THREAD(main_thread_);
   MOZ_MTLOG(PR_LOG_DEBUG, __FUNCTION__);
 
-  description_ = pc_ + "| Receive video";
+  // We can replace this when we are allowed to do streams or std::to_string
+  PR_snprintf(track_id_string, sizeof(track_id_string), "%d", track_id_);
+
+  description_ = pc_ + "| Receive video[";
+  description_ += track_id_string;
+  description_ += "]";
+
+  stream_->AddListener(listener_);
 
   static_cast<VideoSessionConduit *>(conduit_.get())->
       AttachRenderer(renderer_);
@@ -871,28 +904,32 @@ nsresult MediaPipelineReceiveVideo::Init() {
   return MediaPipelineReceive::Init();
 }
 
-MediaPipelineReceiveVideo::PipelineRenderer::PipelineRenderer(
-    MediaPipelineReceiveVideo *pipeline) :
-    pipeline_(pipeline),
-    width_(640), height_(480) {
-
+MediaPipelineReceiveVideo::PipelineListener::PipelineListener(
+  SourceMediaStream* source, TrackID track_id)
+    : source_(source),
+      track_id_(track_id),
+      played_(0),
+      width_(640),
+      height_(480),
+#ifdef MOZILLA_INTERNAL_API
+      image_container_(),
+      image_(),
+#endif
+      monitor_("Video PipelineListener") {
 #ifdef MOZILLA_INTERNAL_API
   image_container_ = layers::LayerManager::CreateImageContainer();
-  SourceMediaStream *source =
-      pipeline_->stream_->AsSourceStream();
-  source->AddTrack(1 /* Track ID */, 30, 0, new VideoSegment());
-  source->AdvanceKnownTracksTime(STREAM_TIME_MAX);
+  source_->AddTrack(track_id_, USECS_PER_S, 0, new VideoSegment());
+  source_->AdvanceKnownTracksTime(STREAM_TIME_MAX);
 #endif
 }
 
-void MediaPipelineReceiveVideo::PipelineRenderer::RenderVideoFrame(
+void MediaPipelineReceiveVideo::PipelineListener::RenderVideoFrame(
     const unsigned char* buffer,
     unsigned int buffer_size,
     uint32_t time_stamp,
     int64_t render_time) {
 #ifdef MOZILLA_INTERNAL_API
-  SourceMediaStream *source =
-      pipeline_->stream_->AsSourceStream();
+  ReentrantMonitorAutoEnter enter(monitor_);
 
   // Create a video frame and append it to the track.
   ImageFormat format = PLANAR_YCBCR;
@@ -918,12 +955,30 @@ void MediaPipelineReceiveVideo::PipelineRenderer::RenderVideoFrame(
 
   videoImage->SetData(data);
 
-  VideoSegment segment;
-  char buf[32];
-  PR_snprintf(buf, 32, "%p", source);
+  image_ = image.forget();
+#endif
+}
 
-  segment.AppendFrame(image.forget(), 1, gfxIntSize(width_, height_));
-  source->AppendToTrack(1, &(segment));
+void MediaPipelineReceiveVideo::PipelineListener::
+NotifyPull(MediaStreamGraph* graph, StreamTime desired_time) {
+  ReentrantMonitorAutoEnter enter(monitor_);
+
+#ifdef MOZILLA_INTERNAL_API
+  nsRefPtr<layers::Image> image = image_;
+  TrackTicks target = TimeToTicksRoundUp(USECS_PER_S, desired_time);
+  TrackTicks delta = target - played_;
+
+  // Don't append if we've already provided a frame that supposedly
+  // goes past the current aDesiredTime Doing so means a negative
+  // delta and thus messes up handling of the graph
+  if (delta > 0) {
+    VideoSegment segment;
+    segment.AppendFrame(image ? image.forget() : nullptr, delta,
+                        gfxIntSize(width_, height_));
+    source_->AppendToTrack(track_id_, &(segment));
+
+    played_ = target;
+  }
 #endif
 }
 

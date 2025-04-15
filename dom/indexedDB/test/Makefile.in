@@ -99,6 +99,7 @@ MOCHITEST_FILES = \
   test_third_party.html \
   test_traffic_jam.html \
   test_transaction_abort.html \
+  test_transaction_abort_hang.html \
   test_transaction_lifetimes.html \
   test_transaction_lifetimes_nested.html \
   test_transaction_ordering.html \
@@ -130,6 +131,7 @@ MOCHITEST_BROWSER_FILES = \
   browser_permissionsPrompt.html \
   browser_permissionsPromptAllow.js \
   browser_permissionsPromptDeny.js \
+  browser_perwindow_privateBrowsing.js \
   browser_quotaPrompt.html \
   browser_quotaPromptAllow.js \
   browser_quotaPromptDeny.js \
@@ -142,16 +144,6 @@ MOCHITEST_BROWSER_FILES = \
   bug839193.xul \
   head.js \
   $(NULL)
-
-ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
-MOCHITEST_BROWSER_FILES += \
-  browser_perwindow_privateBrowsing.js \
-  $(NULL)
-else
-MOCHITEST_BROWSER_FILES += \
-  browser_privateBrowsing.js \
-  $(NULL)
-endif
 
 endif
 

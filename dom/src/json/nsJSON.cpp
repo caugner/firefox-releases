@@ -21,6 +21,7 @@
 #include "nsCRTGlue.h"
 #include "nsAutoPtr.h"
 #include "nsIScriptSecurityManager.h"
+#include <algorithm>
 
 static const char kXPConnectServiceCID[] = "@mozilla.org/js/xpc/XPConnect;1";
 
@@ -238,9 +239,9 @@ nsJSON::EncodeInternal(JSContext* cx, const JS::Value& aValue, nsJSONWriter* wri
     return NS_OK;
 
   // Backward compatibility:
-  // function/xml shall not pass, just "plain" objects and arrays
+  // function shall not pass, just "plain" objects and arrays
   JSType type = JS_TypeOfValue(cx, val);
-  if (type == JSTYPE_FUNCTION || type == JSTYPE_XML)
+  if (type == JSTYPE_FUNCTION)
     return NS_ERROR_INVALID_ARG;
 
   // We're good now; try to stringify
@@ -606,7 +607,7 @@ nsJSONListener::OnDataAvailable(nsIRequest *aRequest, nsISupports *aContext,
   while (bytesRemaining) {
     unsigned int bytesRead;
     rv = aStream->Read(buffer,
-                       NS_MIN((unsigned long)sizeof(buffer), bytesRemaining),
+                       std::min((unsigned long)sizeof(buffer), bytesRemaining),
                        &bytesRead);
     NS_ENSURE_SUCCESS(rv, rv);
     rv = ProcessBytes(buffer, bytesRead);

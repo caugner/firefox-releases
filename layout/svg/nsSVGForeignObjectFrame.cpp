@@ -10,7 +10,6 @@
 #include "gfxContext.h"
 #include "gfxMatrix.h"
 #include "nsGkAtoms.h"
-#include "nsIDOMSVGForeignObjectElem.h"
 #include "nsINameSpaceManager.h"
 #include "nsLayoutUtils.h"
 #include "nsRegion.h"
@@ -58,10 +57,8 @@ nsSVGForeignObjectFrame::Init(nsIContent* aContent,
                               nsIFrame*   aParent,
                               nsIFrame*   aPrevInFlow)
 {
-#ifdef DEBUG
-  nsCOMPtr<nsIDOMSVGForeignObjectElement> foreignObject = do_QueryInterface(aContent);
-  NS_ASSERTION(foreignObject, "Content is not an SVG foreignObject!");
-#endif
+  NS_ASSERTION(aContent->IsSVG(nsGkAtoms::foreignObject),
+               "Content is not an SVG foreignObject!");
 
   nsresult rv = nsSVGForeignObjectFrameBase::Init(aContent, aParent, aPrevInFlow);
   AddStateBits(aParent->GetStateBits() &
@@ -171,15 +168,15 @@ nsSVGForeignObjectFrame::Reflow(nsPresContext*           aPresContext,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsSVGForeignObjectFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                           const nsRect&           aDirtyRect,
                                           const nsDisplayListSet& aLists)
 {
   if (!static_cast<const nsSVGElement*>(mContent)->HasValidDimensions()) {
-    return NS_OK;
+    return;
   }
-  return BuildDisplayListForNonBlockChildren(aBuilder, aDirtyRect, aLists);
+  BuildDisplayListForNonBlockChildren(aBuilder, aDirtyRect, aLists);
 }
 
 bool
@@ -197,7 +194,9 @@ nsSVGForeignObjectFrame::IsSVGTransformed(gfxMatrix *aOwnTransform,
   }
 
   nsSVGElement *content = static_cast<nsSVGElement*>(mContent);
-  if (content->GetAnimatedTransformList()) {
+  SVGAnimatedTransformList* transformList =
+    content->GetAnimatedTransformList();
+  if (transformList && transformList->HasTransform()) {
     if (aOwnTransform) {
       *aOwnTransform = content->PrependLocalTransformsTo(gfxMatrix(),
                                   nsSVGElement::eUserSpaceToParent);
@@ -205,22 +204,6 @@ nsSVGForeignObjectFrame::IsSVGTransformed(gfxMatrix *aOwnTransform,
     foundTransform = true;
   }
   return foundTransform;
-}
-
-
-/**
- * Returns the app unit canvas bounds of a userspace rect.
- *
- * @param aToCanvas Transform from userspace to canvas device space.
- */
-static nsRect
-ToCanvasBounds(const gfxRect &aUserspaceRect,
-               const gfxMatrix &aToCanvas,
-               const nsPresContext *presContext)
-{
-  return nsLayoutUtils::RoundGfxRectToAppRect(
-                          aToCanvas.TransformBounds(aUserspaceRect),
-                          presContext->AppUnitsPerDevPixel());
 }
 
 NS_IMETHODIMP
@@ -279,7 +262,7 @@ nsSVGForeignObjectFrame::PaintSVG(nsRenderingContext *aContext,
 
   gfx->Save();
 
-  if (GetStyleDisplay()->IsScrollableOverflow()) {
+  if (StyleDisplay()->IsScrollableOverflow()) {
     float x, y, width, height;
     static_cast<nsSVGElement*>(mContent)->
       GetAnimatedLengthValues(&x, &y, &width, &height, nullptr);
@@ -363,8 +346,9 @@ nsSVGForeignObjectFrame::GetCoveredRegion()
   if (w < 0.0f) w = 0.0f;
   if (h < 0.0f) h = 0.0f;
   // GetCanvasTM includes the x,y translation
-  return ToCanvasBounds(gfxRect(0.0, 0.0, w, h), GetCanvasTM(FOR_OUTERSVG_TM),
-                        PresContext());
+  return nsSVGUtils::ToCanvasBounds(gfxRect(0.0, 0.0, w, h),
+                                    GetCanvasTM(FOR_OUTERSVG_TM),
+                                    PresContext());
 }
 
 void
@@ -610,7 +594,7 @@ nsSVGForeignObjectFrame::GetInvalidRegion()
   if (kid->HasInvalidFrameInSubtree()) {
     gfxRect r(mRect.x, mRect.y, mRect.width, mRect.height);
     r.Scale(1.0 / nsPresContext::AppUnitsPerCSSPixel());
-    nsRect rect = ToCanvasBounds(r, GetCanvasTM(FOR_PAINTING), PresContext());
+    nsRect rect = nsSVGUtils::ToCanvasBounds(r, GetCanvasTM(FOR_PAINTING), PresContext());
     rect = nsSVGUtils::GetPostFilterVisualOverflowRect(this, rect);
     return rect;
   }

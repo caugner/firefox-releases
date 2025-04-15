@@ -28,6 +28,7 @@
 #include "nsEventDispatcher.h"
 #include "nsCOMArray.h"
 #include "nsNodeUtils.h"
+#include "mozilla/dom/DirectionalityUtils.h"
 #include "nsBindingManager.h"
 #include "nsCCUncollectableMarker.h"
 #include "mozAutoDocUpdate.h"
@@ -60,8 +61,6 @@ nsGenericDOMDataNode::~nsGenericDOMDataNode()
     NS_RELEASE(mParent);
   }
 }
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsGenericDOMDataNode)
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsGenericDOMDataNode)
   nsINode::Trace(tmp, aCallback, aClosure);
@@ -101,6 +100,7 @@ NS_INTERFACE_MAP_BEGIN(nsGenericDOMDataNode)
   NS_INTERFACE_MAP_ENTRY(nsIContent)
   NS_INTERFACE_MAP_ENTRY(nsINode)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventTarget)
+  NS_INTERFACE_MAP_ENTRY(mozilla::dom::EventTarget)
   NS_INTERFACE_MAP_ENTRY_TEAROFF(nsISupportsWeakReference,
                                  new nsNodeSupportsWeakRefTearoff(this))
   NS_INTERFACE_MAP_ENTRY_TEAROFF(nsIDOMXPathNSResolver,
@@ -287,6 +287,10 @@ nsGenericDOMDataNode::SetTextInternal(uint32_t aOffset, uint32_t aCount,
       aDetails
     };
     nsNodeUtils::CharacterDataWillChange(this, &info);
+  }
+
+  if (NodeType() == nsIDOMNode::TEXT_NODE) {
+    SetDirectionFromChangedTextNode(this, aOffset, aBuffer, aLength, aNotify);
   }
 
   if (aOffset == 0 && endOffset == textLength) {
@@ -571,21 +575,6 @@ nsGenericDOMDataNode::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttr,
                                 bool aNotify)
 {
   return NS_OK;
-}
-
-bool
-nsGenericDOMDataNode::GetAttr(int32_t aNameSpaceID, nsIAtom *aAttr,
-                              nsAString& aResult) const
-{
-  aResult.Truncate();
-
-  return false;
-}
-
-bool
-nsGenericDOMDataNode::HasAttr(int32_t aNameSpaceID, nsIAtom *aAttribute) const
-{
-  return false;
 }
 
 const nsAttrName*

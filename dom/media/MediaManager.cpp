@@ -12,6 +12,8 @@
 #include "nsIPopupWindowManager.h"
 #include "nsISupportsArray.h"
 #include "nsIDocShell.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 
 // For PR_snprintf
 #include "prprf.h"
@@ -29,6 +31,10 @@
 #endif
 
 namespace mozilla {
+
+#ifdef LOG
+#undef LOG
+#endif
 
 #ifdef PR_LOGGING
 PRLogModuleInfo*
@@ -145,7 +151,7 @@ public:
   DeviceSuccessCallbackRunnable(
     already_AddRefed<nsIGetUserMediaDevicesSuccessCallback> aSuccess,
     already_AddRefed<nsIDOMGetUserMediaErrorCallback> aError,
-    const nsTArray<nsCOMPtr<nsIMediaDevice> >& aDevices)
+    nsTArray<nsCOMPtr<nsIMediaDevice> >* aDevices)
     : mSuccess(aSuccess)
     , mError(aError)
     , mDevices(aDevices) {}
@@ -161,7 +167,7 @@ public:
     nsCOMPtr<nsIWritableVariant> devices =
       do_CreateInstance("@mozilla.org/variant;1");
 
-    int32_t len = mDevices.Length();
+    int32_t len = mDevices->Length();
     if (len == 0) {
       // XXX
       // We should in the future return an empty array, and dynamically add
@@ -173,12 +179,12 @@ public:
 
     nsTArray<nsIMediaDevice*> tmp(len);
     for (int32_t i = 0; i < len; i++) {
-      tmp.AppendElement(mDevices.ElementAt(i));
+      tmp.AppendElement(mDevices->ElementAt(i));
     }
 
     devices->SetAsArray(nsIDataType::VTYPE_INTERFACE,
                         &NS_GET_IID(nsIMediaDevice),
-                        mDevices.Length(),
+                        mDevices->Length(),
                         const_cast<void*>(
                           static_cast<const void*>(tmp.Elements())
                         ));
@@ -190,7 +196,7 @@ public:
 private:
   already_AddRefed<nsIGetUserMediaDevicesSuccessCallback> mSuccess;
   already_AddRefed<nsIDOMGetUserMediaErrorCallback> mError;
-  nsTArray<nsCOMPtr<nsIMediaDevice> > mDevices;
+  nsAutoPtr<nsTArray<nsCOMPtr<nsIMediaDevice> > > mDevices;
 };
 
 // Handle removing GetUserMediaCallbackMediaStreamListener from main thread
@@ -252,14 +258,14 @@ MediaDevice::GetSource()
  * A subclass that we only use to stash internal pointers to MediaStreamGraph objects
  * that need to be cleaned up.
  */
-class nsDOMUserMediaStream : public nsDOMLocalMediaStream
+class nsDOMUserMediaStream : public DOMLocalMediaStream
 {
 public:
   static already_AddRefed<nsDOMUserMediaStream>
-  CreateTrackUnionStream(uint32_t aHintContents)
+  CreateTrackUnionStream(nsIDOMWindow* aWindow, uint32_t aHintContents)
   {
     nsRefPtr<nsDOMUserMediaStream> stream = new nsDOMUserMediaStream();
-    stream->InitTrackUnionStream(aHintContents);
+    stream->InitTrackUnionStream(aWindow, aHintContents);
     return stream.forget();
   }
 
@@ -275,12 +281,11 @@ public:
     }
   }
 
-  NS_IMETHODIMP Stop()
+  virtual void Stop()
   {
     if (mSourceStream) {
       mSourceStream->EndAllTrackAndFinish();
     }
-    return NS_OK;
   }
 
   // The actual MediaStream is a TrackUnionStream. But these resources need to be
@@ -327,21 +332,23 @@ public:
   Run()
   {
     NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
+    nsPIDOMWindow *window = static_cast<nsPIDOMWindow*>
+      (nsGlobalWindow::GetInnerWindowWithId(mWindowID));
 
     // We're on main-thread, and the windowlist can only
     // be invalidated from the main-thread (see OnNavigation)
     StreamListeners* listeners = mManager->GetWindowListeners(mWindowID);
-    if (!listeners) {
+    if (!listeners || !window || !window->GetExtantDoc()) {
       // This window is no longer live.  mListener has already been removed
       return NS_OK;
     }
 
     // Create a media stream.
-    uint32_t hints = (mAudioSource ? nsDOMMediaStream::HINT_CONTENTS_AUDIO : 0);
-    hints |= (mVideoSource ? nsDOMMediaStream::HINT_CONTENTS_VIDEO : 0);
+    uint32_t hints = (mAudioSource ? DOMMediaStream::HINT_CONTENTS_AUDIO : 0);
+    hints |= (mVideoSource ? DOMMediaStream::HINT_CONTENTS_VIDEO : 0);
 
     nsRefPtr<nsDOMUserMediaStream> trackunion =
-      nsDOMUserMediaStream::CreateTrackUnionStream(hints);
+      nsDOMUserMediaStream::CreateTrackUnionStream(window, hints);
     if (!trackunion) {
       nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
       LOG(("Returning error for getUserMedia() - no stream"));
@@ -359,11 +366,7 @@ public:
     trackunion->mSourceStream = stream;
     trackunion->mPort = port.forget();
 
-    nsPIDOMWindow *window = static_cast<nsPIDOMWindow*>
-      (nsGlobalWindow::GetInnerWindowWithId(mWindowID));
-    if (window && window->GetExtantDoc()) {
-      trackunion->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
-    }
+    trackunion->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
 
     // The listener was added at the begining in an inactive state.
     // Activate our listener. We'll call Start() on the source when get a callback
@@ -378,6 +381,33 @@ public:
       new MediaOperationRunnable(MEDIA_START, mListener,
                                  mAudioSource, mVideoSource, false));
     mediaThread->Dispatch(runnable, NS_DISPATCH_NORMAL);
+
+#ifdef MOZ_WEBRTC
+    // Right now these configs are only of use if webrtc is available
+    nsresult rv;
+    nsCOMPtr<nsIPrefService> prefs = do_GetService("@mozilla.org/preferences-service;1", &rv);
+    if (NS_SUCCEEDED(rv)) {
+      nsCOMPtr<nsIPrefBranch> branch = do_QueryInterface(prefs);
+
+      if (branch) {
+        int32_t aec = (int32_t) webrtc::kEcUnchanged;
+        int32_t agc = (int32_t) webrtc::kAgcUnchanged;
+        int32_t noise = (int32_t) webrtc::kNsUnchanged;
+        bool aec_on = false, agc_on = false, noise_on = false;
+
+        branch->GetBoolPref("media.peerconnection.aec_enabled", &aec_on);
+        branch->GetIntPref("media.peerconnection.aec", &aec);
+        branch->GetBoolPref("media.peerconnection.agc_enabled", &agc_on);
+        branch->GetIntPref("media.peerconnection.agc", &agc);
+        branch->GetBoolPref("media.peerconnection.noise_enabled", &noise_on);
+        branch->GetIntPref("media.peerconnection.noise", &noise);
+
+        mListener->AudioConfig(aec_on, (uint32_t) aec,
+                               agc_on, (uint32_t) agc,
+                               noise_on, (uint32_t) noise);
+      }
+    }
+#endif
 
     // We're in the main thread, so no worries here either.
     nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> success(mSuccess);
@@ -776,7 +806,7 @@ public:
     }
 
     NS_DispatchToMainThread(new DeviceSuccessCallbackRunnable(
-      mSuccess, mError, *devices
+      mSuccess, mError, devices // give ownership of the nsTArray to the runnable
     ));
     return NS_OK;
   }
@@ -960,9 +990,9 @@ MediaManager::GetUserMedia(bool aPrivileged, nsPIDOMWindow* aWindow,
   if (picture) {
     // ShowFilePickerForMimeType() must run on the Main Thread! (on Android)
     NS_DispatchToMainThread(gUMRunnable);
+    return NS_OK;
   }
-  // XXX No support for Audio or Video in Android yet
-#else
+#endif
   // XXX No full support for picture in Desktop yet (needs proper UI)
   if (aPrivileged || fake) {
     mMediaThread->Dispatch(gUMRunnable, NS_DISPATCH_NORMAL);
@@ -1004,7 +1034,6 @@ MediaManager::GetUserMedia(bool aPrivileged, nsPIDOMWindow* aWindow,
     nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
     obs->NotifyObservers(aParams, "getUserMedia:request", data.get());
   }
-#endif
 
   return NS_OK;
 }

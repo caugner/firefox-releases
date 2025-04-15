@@ -55,6 +55,7 @@
 #include "nsFrameList.h"
 #include "nsListControlFrame.h"
 #include "nsHTMLInputElement.h"
+#include "SVGElementFactory.h"
 #include "nsSVGUtils.h"
 #include "nsMathMLAtoms.h"
 #include "nsMathMLOperators.h"
@@ -85,6 +86,11 @@
 
 #ifdef MOZ_SYDNEYAUDIO
 #include "AudioStream.h"
+#endif
+
+#ifdef MOZ_WIDGET_GONK
+#include "nsVolumeService.h"
+using namespace mozilla::system;
 #endif
 
 #include "nsError.h"
@@ -256,11 +262,12 @@ nsLayoutStatics::Initialize()
 
   nsWindowMemoryReporter::Init();
 
+  SVGElementFactory::Init();
   nsSVGUtils::Init();
 
   InitProcessPriorityManager();
 
-  nsPermissionManager::AppUninstallObserverInit();
+  nsPermissionManager::AppClearDataObserverInit();
   nsCookieService::AppClearDataObserverInit();
   nsApplicationCacheService::AppClearDataObserverInit();
 
@@ -313,6 +320,7 @@ nsLayoutStatics::Shutdown()
   nsSprocketLayout::Shutdown();
 #endif
 
+  SVGElementFactory::Shutdown();
   nsMathMLOperators::ReleaseTable();
 
   nsFloatManager::Shutdown();
@@ -347,6 +355,10 @@ nsLayoutStatics::Shutdown()
 
 #ifdef MOZ_WMF
   WMFDecoder::UnloadDLLs();
+#endif
+
+#ifdef MOZ_WIDGET_GONK
+  nsVolumeService::Shutdown();
 #endif
 
   nsCORSListenerProxy::Shutdown();

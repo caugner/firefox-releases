@@ -16,7 +16,7 @@
 
     <style name="GeckoList.ListItem">
         <item name="android:minHeight">?android:attr/listPreferredItemHeight</item>
-        <item name="android:textAppearance">?android:attr/textAppearanceLargeInverse</item>
+        <item name="android:textAppearance">?android:attr/textAppearance</item>
         <item name="android:gravity">center_vertical</item>
         <item name="android:paddingLeft">12dip</item>
         <item name="android:paddingRight">7dip</item>
@@ -279,5 +279,11 @@
         <item name="android:textSize">12sp</item>
         <item name="android:textColor">@color/abouthome_section_subtitle</item>
     </style>
+
+    <style name="GeckoDialogTitle">
+        <item name="android:textAppearance">@android:style/TextAppearance.DialogWindowTitle</item>
+    </style>
+
+    <style name="GeckoDialogTitle.SubTitle" />
 
 </resources>

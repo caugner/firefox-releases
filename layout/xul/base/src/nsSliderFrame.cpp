@@ -38,6 +38,7 @@
 #include "nsDisplayList.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
+#include <algorithm>
 
 using namespace mozilla;
 
@@ -289,7 +290,7 @@ nsSliderFrame::AttributeChanged(int32_t aNameSpaceID,
   return rv;
 }
 
-NS_IMETHODIMP
+void
 nsSliderFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                 const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists)
@@ -297,14 +298,15 @@ nsSliderFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   if (aBuilder->IsForEventDelivery() && isDraggingThumb()) {
     // This is EVIL, we shouldn't be messing with event delivery just to get
     // thumb mouse drag events to arrive at the slider!
-    return aLists.Outlines()->AppendNewToTop(new (aBuilder)
-        nsDisplayEventReceiver(aBuilder, this));
+    aLists.Outlines()->AppendNewToTop(new (aBuilder)
+      nsDisplayEventReceiver(aBuilder, this));
+    return;
   }
   
-  return nsBoxFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
+  nsBoxFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
 }
 
-NS_IMETHODIMP
+void
 nsSliderFrame::BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
                                            const nsRect&           aDirtyRect,
                                            const nsDisplayListSet& aLists)
@@ -322,10 +324,10 @@ nsSliderFrame::BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
     GetClientRect(crect);
 
     if (crect.width < thumbRect.width || crect.height < thumbRect.height)
-      return NS_OK;
+      return;
   }
   
-  return nsBoxFrame::BuildDisplayListForChildren(aBuilder, aDirtyRect, aLists);
+  nsBoxFrame::BuildDisplayListForChildren(aBuilder, aDirtyRect, aLists);
 }
 
 NS_IMETHODIMP
@@ -372,7 +374,7 @@ nsSliderFrame::DoLayout(nsBoxLayoutState& aState)
   int32_t maxPos = GetMaxPosition(scrollbar);
   int32_t pageIncrement = GetPageIncrement(scrollbar);
 
-  maxPos = NS_MAX(minPos, maxPos);
+  maxPos = std::max(minPos, maxPos);
   curPos = clamped(curPos, minPos, maxPos);
 
   nscoord& availableLength = IsHorizontal() ? clientRect.width : clientRect.height;
@@ -380,7 +382,7 @@ nsSliderFrame::DoLayout(nsBoxLayoutState& aState)
 
   if ((pageIncrement + maxPos - minPos) > 0 && thumbBox->GetFlex(aState) > 0) {
     float ratio = float(pageIncrement) / float(maxPos - minPos + pageIncrement);
-    thumbLength = NS_MAX(thumbLength, NSToCoordRound(availableLength * ratio));
+    thumbLength = std::max(thumbLength, NSToCoordRound(availableLength * ratio));
   }
 
   // Round the thumb's length to device pixels.
@@ -666,7 +668,7 @@ nsSliderFrame::CurrentPositionChanged(nsPresContext* aPresContext,
   int32_t minPos = GetMinPosition(scrollbar);
   int32_t maxPos = GetMaxPosition(scrollbar);
 
-  maxPos = NS_MAX(minPos, maxPos);
+  maxPos = std::max(minPos, maxPos);
   curPos = clamped(curPos, minPos, maxPos);
 
   // get the thumb's rect

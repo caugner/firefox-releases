@@ -20,7 +20,6 @@
 #include "nsIPresShell.h"
 #include "nsDOMEvent.h"
 #include "nsGkAtoms.h"
-#include "nsIEditorDocShell.h"
 #include "nsIFormControl.h"
 #include "nsIComboboxControlFrame.h"
 #include "nsIScrollableFrame.h"
@@ -33,10 +32,9 @@
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
 #include "nsIEnumerator.h"
-#include "nsIDocShellTreeItem.h"
-#include "nsIDocShellTreeNode.h"
 #include "nsIWebNavigation.h"
 #include "nsIContentViewer.h"
+#include <algorithm>
 #ifdef MOZ_XUL
 #include "nsXULPopupManager.h"
 #endif
@@ -65,7 +63,6 @@
 #include "nsCaret.h"
 
 #include "nsSubDocumentFrame.h"
-#include "nsIFrameTraversal.h"
 #include "nsLayoutCID.h"
 #include "nsLayoutUtils.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -115,8 +112,6 @@ using namespace mozilla::dom;
 #define NS_USER_INTERACTION_INTERVAL 5000 // ms
 
 static const nsIntPoint kInvalidRefPoint = nsIntPoint(-1,-1);
-
-static NS_DEFINE_CID(kFrameTraversalCID, NS_FRAMETRAVERSAL_CID);
 
 static bool sLeftClickOnly = true;
 static bool sKeyCausesActivation = true;
@@ -875,8 +870,6 @@ nsEventStateManager::Observe(nsISupports *aSubject,
 
   return NS_OK;
 }
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsEventStateManager)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsEventStateManager)
    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIObserver)
@@ -1803,9 +1796,10 @@ nsEventStateManager::KillClickHoldTimer()
 void
 nsEventStateManager::sClickHoldCallback(nsITimer *aTimer, void* aESM)
 {
-  nsEventStateManager* self = static_cast<nsEventStateManager*>(aESM);
-  if (self)
+  nsRefPtr<nsEventStateManager> self = static_cast<nsEventStateManager*>(aESM);
+  if (self) {
     self->FireContextClick();
+  }
 
   // NOTE: |aTimer| and |self->mAutoHideTimer| are invalid after calling ClosePopup();
 
@@ -1849,7 +1843,9 @@ nsEventStateManager::FireContextClick()
   // when we're through because no one else is doing anything more with this
   // event and it will get reset on the very next event to the correct frame).
   mCurrentTarget = mPresContext->GetPrimaryFrameFor(mGestureDownContent);
-  if (mCurrentTarget) {
+  // make sure the widget sticks around
+  nsCOMPtr<nsIWidget> targetWidget;
+  if (mCurrentTarget && (targetWidget = mCurrentTarget->GetNearestWidget())) {
     NS_ASSERTION(mPresContext == mCurrentTarget->PresContext(),
                  "a prescontext returned a primary frame that didn't belong to it?");
 
@@ -1883,20 +1879,8 @@ nsEventStateManager::FireContextClick()
       nsCOMPtr<nsIFormControl> formCtrl(do_QueryInterface(mGestureDownContent));
 
       if (formCtrl) {
-        // of all form controls, only ones dealing with text are
-        // allowed to have context menus
-        int32_t type = formCtrl->GetType();
-
-        allowedToDispatch = (type == NS_FORM_INPUT_TEXT ||
-                             type == NS_FORM_INPUT_EMAIL ||
-                             type == NS_FORM_INPUT_SEARCH ||
-                             type == NS_FORM_INPUT_TEL ||
-                             type == NS_FORM_INPUT_URL ||
-                             type == NS_FORM_INPUT_PASSWORD ||
-                             type == NS_FORM_INPUT_FILE ||
-                             type == NS_FORM_INPUT_NUMBER ||
-                             type == NS_FORM_INPUT_DATE ||
-                             type == NS_FORM_TEXTAREA);
+        allowedToDispatch = formCtrl->IsTextControl(false) ||
+                            formCtrl->GetType() == NS_FORM_INPUT_FILE;
       }
       else if (tag == nsGkAtoms::applet ||
                tag == nsGkAtoms::embed  ||
@@ -1906,8 +1890,6 @@ nsEventStateManager::FireContextClick()
     }
 
     if (allowedToDispatch) {
-      // make sure the widget sticks around
-      nsCOMPtr<nsIWidget> targetWidget(mCurrentTarget->GetNearestWidget());
       // init the event while mCurrentTarget is still good
       nsMouseEvent event(true, NS_CONTEXTMENU,
                          targetWidget,
@@ -2502,7 +2484,7 @@ GetParentFrameToScroll(nsIFrame* aFrame)
   if (!aFrame)
     return nullptr;
 
-  if (aFrame->GetStyleDisplay()->mPosition == NS_STYLE_POSITION_FIXED &&
+  if (aFrame->StyleDisplay()->mPosition == NS_STYLE_POSITION_FIXED &&
       nsLayoutUtils::IsReallyFixedPos(aFrame))
     return aFrame->PresContext()->GetPresShell()->GetRootScrollFrame();
 
@@ -3148,7 +3130,7 @@ nsEventStateManager::PostHandleEvent(nsPresContext* aPresContext,
         bool suppressBlur = false;
         if (mCurrentTarget) {
           mCurrentTarget->GetContentForEvent(aEvent, getter_AddRefs(newFocus));
-          const nsStyleUserInterface* ui = mCurrentTarget->GetStyleUserInterface();
+          const nsStyleUserInterface* ui = mCurrentTarget->StyleUserInterface();
           suppressBlur = (ui->mUserFocus == NS_STYLE_USER_FOCUS_IGNORE);
           activeContent = mCurrentTarget->GetContent();
         }
@@ -3183,7 +3165,7 @@ nsEventStateManager::PostHandleEvent(nsPresContext* aPresContext,
         while (currFrame) {
           // If the mousedown happened inside a popup, don't
           // try to set focus on one of its containing elements
-          const nsStyleDisplay* display = currFrame->GetStyleDisplay();
+          const nsStyleDisplay* display = currFrame->StyleDisplay();
           if (display->mDisplay == NS_STYLE_DISPLAY_POPUP) {
             newFocus = nullptr;
             break;
@@ -3846,7 +3828,7 @@ nsEventStateManager::SetCursor(int32_t aCursor, imgIContainer* aContainer,
       aContainer->GetWidth(&imgWidth);
       aContainer->GetHeight(&imgHeight);
 
-      // XXX NS_MAX(NS_lround(x), 0)?
+      // XXX std::max(NS_lround(x), 0)?
       hotspotX = aHotspotX > 0.0f
                    ? uint32_t(aHotspotX + 0.5f) : uint32_t(0);
       if (hotspotX >= uint32_t(imgWidth))
@@ -3900,6 +3882,18 @@ public:
 
   nsCOMPtr<nsIContent> mTarget;
 };
+
+/*static*/ bool
+nsEventStateManager::IsHandlingUserInput()
+{
+  if (sUserInputEventDepth <= 0) {
+    return false;
+  }
+
+  TimeDuration timeout = nsContentUtils::HandlingUserInputTimeout();
+  return timeout <= TimeDuration(0) ||
+         (TimeStamp::Now() - sHandlingInputStart) <= timeout;
+}
 
 nsIFrame*
 nsEventStateManager::DispatchMouseEvent(nsGUIEvent* aEvent, uint32_t aMessage,
@@ -4565,7 +4559,9 @@ nsEventStateManager::CheckForAndDispatchClick(nsPresContext* aPresContext,
     nsCOMPtr<nsIPresShell> presShell = mPresContext->GetPresShell();
     if (presShell) {
       nsCOMPtr<nsIContent> mouseContent = GetEventTargetContent(aEvent);
-
+      if (!mouseContent && !mCurrentTarget) {
+        return NS_OK;
+      }
       ret = presShell->HandleEventWithTarget(&event, mCurrentTarget,
                                              mouseContent, aStatus);
       if (NS_SUCCEEDED(ret) && aEvent->clickCount == 2) {
@@ -4807,7 +4803,7 @@ nsEventStateManager::SetContentState(nsIContent *aContent, nsEventStates aState)
     // XXX Is this even what we want?
     if (mCurrentTarget)
     {
-      const nsStyleUserInterface* ui = mCurrentTarget->GetStyleUserInterface();
+      const nsStyleUserInterface* ui = mCurrentTarget->StyleUserInterface();
       if (ui->mUserInput == NS_STYLE_USER_INPUT_NONE)
         return false;
     }

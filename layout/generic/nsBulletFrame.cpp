@@ -28,6 +28,7 @@
 
 #include "nsIServiceManager.h"
 #include "nsIComponentManager.h"
+#include <algorithm>
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
@@ -87,7 +88,7 @@ nsBulletFrame::IsEmpty()
 bool
 nsBulletFrame::IsSelfEmpty() 
 {
-  return GetStyleList()->mListStyleType == NS_STYLE_LIST_STYLE_NONE;
+  return StyleList()->mListStyleType == NS_STYLE_LIST_STYLE_NONE;
 }
 
 /* virtual */ void
@@ -95,7 +96,7 @@ nsBulletFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
 {
   nsFrame::DidSetStyleContext(aOldStyleContext);
 
-  imgRequestProxy *newRequest = GetStyleList()->GetListStyleImage();
+  imgRequestProxy *newRequest = StyleList()->GetListStyleImage();
 
   if (newRequest) {
 
@@ -156,7 +157,7 @@ nsBulletFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
         bool hadBullet = oldStyleList->GetListStyleImage() ||
             oldStyleList->mListStyleType != NS_STYLE_LIST_STYLE_NONE;
 
-        const nsStyleList* newStyleList = GetStyleList();
+        const nsStyleList* newStyleList = StyleList();
         bool hasBullet = newStyleList->GetListStyleImage() ||
             newStyleList->mListStyleType != NS_STYLE_LIST_STYLE_NONE;
 
@@ -243,25 +244,25 @@ void nsDisplayBullet::Paint(nsDisplayListBuilder* aBuilder,
     PaintBullet(*aCtx, ToReferenceFrame(), mVisibleRect);
 }
 
-NS_IMETHODIMP
+void
 nsBulletFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                 const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists)
 {
   if (!IsVisibleForPainting(aBuilder))
-    return NS_OK;
+    return;
 
   DO_GLOBAL_REFLOW_COUNT_DSP("nsBulletFrame");
   
-  return aLists.Content()->AppendNewToTop(
-      new (aBuilder) nsDisplayBullet(aBuilder, this));
+  aLists.Content()->AppendNewToTop(
+    new (aBuilder) nsDisplayBullet(aBuilder, this));
 }
 
 void
 nsBulletFrame::PaintBullet(nsRenderingContext& aRenderingContext, nsPoint aPt,
                            const nsRect& aDirtyRect)
 {
-  const nsStyleList* myList = GetStyleList();
+  const nsStyleList* myList = StyleList();
   uint8_t listStyleType = myList->mListStyleType;
 
   if (myList->GetListStyleImage() && mImageRequest) {
@@ -1267,7 +1268,7 @@ bool
 nsBulletFrame::GetListItemText(const nsStyleList& aListStyle,
                                nsString& result)
 {
-  const nsStyleVisibility* vis = GetStyleVisibility();
+  const nsStyleVisibility* vis = StyleVisibility();
 
   NS_ASSERTION(aListStyle.mListStyleType != NS_STYLE_LIST_STYLE_NONE &&
                aListStyle.mListStyleType != NS_STYLE_LIST_STYLE_DISC &&
@@ -1305,7 +1306,7 @@ nsBulletFrame::GetDesiredSize(nsPresContext*  aCX,
   // Reset our padding.  If we need it, we'll set it below.
   mPadding.SizeTo(0, 0, 0, 0);
   
-  const nsStyleList* myList = GetStyleList();
+  const nsStyleList* myList = StyleList();
   nscoord ascent;
 
   RemoveStateBits(BULLET_FRAME_IMAGE_LOADING);
@@ -1349,7 +1350,7 @@ nsBulletFrame::GetDesiredSize(nsPresContext*  aCX,
     case NS_STYLE_LIST_STYLE_CIRCLE:
     case NS_STYLE_LIST_STYLE_SQUARE:
       ascent = fm->MaxAscent();
-      bulletSize = NS_MAX(nsPresContext::CSSPixelsToAppUnits(MIN_BULLET_SIZE),
+      bulletSize = std::max(nsPresContext::CSSPixelsToAppUnits(MIN_BULLET_SIZE),
                           NSToCoordRound(0.8f * (float(ascent) / 2.0f)));
       mPadding.bottom = NSToCoordRound(float(ascent) / 8.0f);
       aMetrics.width = mPadding.right + bulletSize;
@@ -1602,7 +1603,7 @@ nsBulletFrame::GetBaseline() const
     nsRefPtr<nsFontMetrics> fm;
     nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm),
                                           GetFontSizeInflation());
-    const nsStyleList* myList = GetStyleList();
+    const nsStyleList* myList = StyleList();
     switch (myList->mListStyleType) {
       case NS_STYLE_LIST_STYLE_NONE:
         break;
@@ -1612,7 +1613,7 @@ nsBulletFrame::GetBaseline() const
       case NS_STYLE_LIST_STYLE_SQUARE:
         ascent = fm->MaxAscent();
         bottomPadding = NSToCoordRound(float(ascent) / 8.0f);
-        ascent = NS_MAX(nsPresContext::CSSPixelsToAppUnits(MIN_BULLET_SIZE),
+        ascent = std::max(nsPresContext::CSSPixelsToAppUnits(MIN_BULLET_SIZE),
                         NSToCoordRound(0.8f * (float(ascent) / 2.0f)));
         ascent += bottomPadding;
         break;

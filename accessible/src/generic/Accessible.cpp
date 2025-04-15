@@ -22,6 +22,8 @@
 #include "RootAccessible.h"
 #include "States.h"
 #include "StyleInfo.h"
+#include "TableAccessible.h"
+#include "TableCellAccessible.h"
 #include "TreeWalker.h"
 
 #include "nsContentUtils.h"
@@ -618,7 +620,7 @@ Accessible::VisibilityState()
 
   // Walk the parent frame chain to see if there's invisible parent or the frame
   // is in background tab.
-  if (!frame->GetStyleVisibility()->IsVisible())
+  if (!frame->StyleVisibility()->IsVisible())
     return states::INVISIBLE;
 
   nsIFrame* curFrame = frame;
@@ -658,7 +660,7 @@ Accessible::VisibilityState()
 
     if (!parentFrame) {
       parentFrame = nsLayoutUtils::GetCrossDocParentFrame(curFrame);
-      if (parentFrame && !parentFrame->GetStyleVisibility()->IsVisible())
+      if (parentFrame && !parentFrame->StyleVisibility()->IsVisible())
         return states::INVISIBLE;
     }
 
@@ -715,7 +717,7 @@ Accessible::NativeState()
     // XXX we should look at layout for non XUL box frames, but need to decide
     // how that interacts with ARIA.
     if (HasOwnContent() && mContent->IsXUL() && frame->IsBoxFrame()) {
-      const nsStyleXUL* xulStyle = frame->GetStyleXUL();
+      const nsStyleXUL* xulStyle = frame->StyleXUL();
       if (xulStyle && frame->IsBoxFrame()) {
         // In XUL all boxes are either vertical or horizontal
         if (xulStyle->mBoxOrient == NS_STYLE_BOX_ORIENT_VERTICAL)
@@ -1535,7 +1537,7 @@ Accessible::State()
   if (!frame)
     return state;
 
-  const nsStyleDisplay* display = frame->GetStyleDisplay();
+  const nsStyleDisplay* display = frame->StyleDisplay();
   if (display && display->mOpacity == 1.0f &&
       !(state & states::INVISIBLE)) {
     state |= states::OPAQUE1;
@@ -1597,6 +1599,22 @@ Accessible::ApplyARIAState(uint64_t* aState) const
   if (aria::MapToState(mRoleMapEntry->attributeMap1, element, aState) &&
       aria::MapToState(mRoleMapEntry->attributeMap2, element, aState))
     aria::MapToState(mRoleMapEntry->attributeMap3, element, aState);
+
+  // ARIA gridcell inherits editable/readonly states from the grid until it's
+  // overridden.
+  if (mRoleMapEntry->Is(nsGkAtoms::gridcell) &&
+      !(*aState & (states::READONLY | states::EDITABLE))) {
+    const TableCellAccessible* cell = AsTableCell();
+    if (cell) {
+      TableAccessible* table = cell->Table();
+      if (table) {
+        Accessible* grid = table->AsAccessible();
+        uint64_t gridState = 0;
+        grid->ApplyARIAState(&gridState);
+        *aState |= (gridState & (states::READONLY | states::EDITABLE));
+      }
+    }
+  }
 }
 
 NS_IMETHODIMP
@@ -1652,7 +1670,7 @@ Accessible::Value(nsString& aValue)
     }
 
     if (option)
-      nsTextEquivUtils::GetNameFromSubtree(option, aValue);
+      nsTextEquivUtils::GetTextEquivFromSubtree(option, aValue);
   }
 }
 
@@ -3080,7 +3098,7 @@ Accessible::GetFirstAvailableAccessible(nsINode *aStartNode) const
   nsCOMPtr<nsIDOMTreeWalker> walker;
   domDoc->CreateTreeWalker(rootNode,
                            nsIDOMNodeFilter::SHOW_ELEMENT | nsIDOMNodeFilter::SHOW_TEXT,
-                           nullptr, false, getter_AddRefs(walker));
+                           nullptr, 1, getter_AddRefs(walker));
   NS_ENSURE_TRUE(walker, nullptr);
 
   walker->SetCurrentNode(currentNode);

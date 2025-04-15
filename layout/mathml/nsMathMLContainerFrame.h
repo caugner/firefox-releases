@@ -82,8 +82,6 @@ public:
               ~(nsIFrame::eMathML | nsIFrame::eExcludesIgnorableWhitespace));
   }
 
-  virtual int GetSkipSides() const { return 0; }
-
   NS_IMETHOD
   AppendFrames(ChildListID     aListID,
                nsFrameList&    aFrameList);
@@ -132,9 +130,9 @@ public:
     return nsContainerFrame::DidReflow(aPresContext, aReflowState, aStatus);
   }
 
-  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                              const nsRect&           aDirtyRect,
-                              const nsDisplayListSet& aLists) MOZ_OVERRIDE;
+  virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                                const nsRect&           aDirtyRect,
+                                const nsDisplayListSet& aLists) MOZ_OVERRIDE;
 
   virtual bool UpdateOverflow();
 
@@ -267,7 +265,7 @@ public:
   nsresult
   ReportErrorToConsole(const char*       aErrorMsgId,
                        const PRUnichar** aParams = nullptr,
-                       PRUint32          aParamCount = 0);
+                       uint32_t          aParamCount = 0);
 
   // helper method to reflow a child frame. We are inline frames, and we don't
   // know our positions until reflow is finished. That's why we ask the

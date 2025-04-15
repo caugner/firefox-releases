@@ -30,6 +30,7 @@
 #include "gfxContext.h"
 #include "gfxQuartzSurface.h"
 #include "gfxQuartzNativeDrawing.h"
+#include <algorithm>
 
 #define DRAW_IN_FRAME_DEBUG 0
 #define SCROLLBARS_VISUAL_DEBUG 0
@@ -214,7 +215,7 @@ static BOOL IsToolbarStyleContainer(nsIFrame* aFrame)
       content->Tag() == nsGkAtoms::statusbar)
     return YES;
 
-  switch (aFrame->GetStyleDisplay()->mAppearance) {
+  switch (aFrame->StyleDisplay()->mAppearance) {
     case NS_THEME_TOOLBAR:
     case NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR:
     case NS_THEME_STATUSBAR:
@@ -465,7 +466,7 @@ GetBackingScaleFactorForRendering(CGContextRef cgContext)
 {
   CGAffineTransform ctm = CGContextGetUserSpaceToDeviceSpaceTransform(cgContext);
   CGRect transformedUserSpacePixel = CGRectApplyAffineTransform(CGRectMake(0, 0, 1, 1), ctm);
-  float maxScale = NS_MAX(fabs(transformedUserSpacePixel.size.width),
+  float maxScale = std::max(fabs(transformedUserSpacePixel.size.width),
                           fabs(transformedUserSpacePixel.size.height));
   return maxScale > 1.0 ? 2 : 1;  
 }
@@ -750,7 +751,7 @@ static float VerticalAlignFactor(nsIFrame *aFrame)
   if (!aFrame)
     return 0.5f; // default: center
 
-  const nsStyleCoord& va = aFrame->GetStyleTextReset()->mVerticalAlign;
+  const nsStyleCoord& va = aFrame->StyleTextReset()->mVerticalAlign;
   uint8_t intval = (va.GetUnit() == eStyleUnit_Enumerated)
                      ? va.GetIntValue()
                      : NS_STYLE_VERTICAL_ALIGN_MIDDLE;
@@ -836,7 +837,7 @@ nsNativeThemeCocoa::DrawCheckboxOrRadio(CGContextRef cgContext, bool inCheckbox,
   [cell setControlTint:(FrameIsInActiveWindow(aFrame) ? [NSColor currentControlTint] : NSClearControlTint)];
 
   // Ensure that the control is square.
-  float length = NS_MIN(inBoxRect.size.width, inBoxRect.size.height);
+  float length = std::min(inBoxRect.size.width, inBoxRect.size.height);
   HIRect drawRect = CGRectMake(inBoxRect.origin.x + (int)((inBoxRect.size.width - length) / 2.0f),
                                inBoxRect.origin.y + (int)((inBoxRect.size.height - length) / 2.0f),
                                length, length);
@@ -1405,7 +1406,7 @@ nsNativeThemeCocoa::DrawMeter(CGContextRef cgContext, const HIRect& inBoxRect,
   double high;
   double optimum;
 
-  // NOTE: if we were allowed to static_cast to nsHTMLMeterElement we would be
+  // NOTE: if we were allowed to static_cast to HTMLMeterElement we would be
   // able to use nicer getters...
   meterElement->GetValue(&value);
   meterElement->GetMin(&min);
@@ -1692,7 +1693,7 @@ nsNativeThemeCocoa::GetScrollbarDrawInfo(HIThemeTrackDrawInfo& aTdi, nsIFrame *a
 
   bool isHorizontal = aFrame->GetContent()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::orient, 
                                                           nsGkAtoms::horizontal, eCaseMatters);
-  bool isSmall = aFrame->GetStyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL;
+  bool isSmall = aFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL;
 
   aTdi.version = 0;
   aTdi.kind = isSmall ? kThemeSmallScrollBar : kThemeMediumScrollBar;
@@ -2185,7 +2186,7 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
         NS_WARNING("Unable to animate progressbar!");
       }
       DrawProgress(cgContext, macRect, IsIndeterminateProgress(aFrame, eventState),
-                   aFrame->GetStyleDisplay()->mOrient != NS_STYLE_ORIENT_VERTICAL,
+                   aFrame->StyleDisplay()->mOrient != NS_STYLE_ORIENT_VERTICAL,
 		   GetProgressValue(aFrame), GetProgressMaxValue(aFrame), aFrame);
       break;
 
@@ -2468,7 +2469,7 @@ nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aContext,
 
           nsIFrame *scrollbarFrame = GetParentScrollbarFrame(aFrame);
           if (!scrollbarFrame) return NS_ERROR_FAILURE;
-          bool isSmall = (scrollbarFrame->GetStyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL);
+          bool isSmall = (scrollbarFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL);
 
           // There isn't a metric for this, so just hardcode a best guess at the value.
           // This value is even less exact due to the fact that the endcap is partially concave.
@@ -2692,7 +2693,7 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsRenderingContext* aContext,
       if (!scrollbarFrame)
         return NS_ERROR_FAILURE;
 
-      bool isSmall = (scrollbarFrame->GetStyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL);
+      bool isSmall = (scrollbarFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL);
       bool isHorizontal = (aWidgetType == NS_THEME_SCROLLBAR_THUMB_HORIZONTAL);
       int32_t& minSize = isHorizontal ? aResult->width : aResult->height;
       minSize = isSmall ? kSmallScrollbarThumbMinSize : kRegularScrollbarThumbMinSize;
@@ -2711,7 +2712,7 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsRenderingContext* aContext,
       nsIFrame *scrollbarFrame = GetParentScrollbarFrame(aFrame);
       if (!scrollbarFrame) return NS_ERROR_FAILURE;
 
-      int32_t themeMetric = (scrollbarFrame->GetStyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL) ?
+      int32_t themeMetric = (scrollbarFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL) ?
                             kThemeMetricSmallScrollBarWidth :
                             kThemeMetricScrollBarWidth;
       SInt32 scrollbarWidth = 0;
@@ -2730,7 +2731,7 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsRenderingContext* aContext,
       if (!scrollbarFrame) return NS_ERROR_FAILURE;
 
       // Since there is no NS_THEME_SCROLLBAR_BUTTON_UP_SMALL we need to ask the parent what appearance style it has.
-      int32_t themeMetric = (scrollbarFrame->GetStyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL) ?
+      int32_t themeMetric = (scrollbarFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL) ?
                             kThemeMetricSmallScrollBarWidth :
                             kThemeMetricScrollBarWidth;
       SInt32 scrollbarWidth = 0;
@@ -3027,5 +3028,5 @@ nsNativeThemeCocoa::GetProgressMaxValue(nsIFrame* aFrame)
     }
   }
 
-  return (double)NS_MAX(CheckIntAttr(aFrame, nsGkAtoms::max, 100), 1);
+  return (double)std::max(CheckIntAttr(aFrame, nsGkAtoms::max, 100), 1);
 }

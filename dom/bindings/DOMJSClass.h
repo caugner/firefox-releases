@@ -204,6 +204,13 @@ struct DOMIfaceAndProtoJSClass
 
   const NativePropertyHooks* mNativeHooks;
 
+  // The value to return for toString() on this interface or interface prototype
+  // object.
+  const char* mToString;
+
+  const prototypes::ID mPrototypeID;
+  const uint32_t mDepth;
+
   static const DOMIfaceAndProtoJSClass* FromJSClass(const JSClass* base) {
     MOZ_ASSERT(base->flags & JSCLASS_IS_DOMIFACEANDPROTOJSCLASS);
     return reinterpret_cast<const DOMIfaceAndProtoJSClass*>(base);

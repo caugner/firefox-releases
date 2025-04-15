@@ -139,11 +139,15 @@ struct AnimationSegment {
 // Transforms need extra information to correctly convert the list of transform
 // functions to a gfx3DMatrix that can be applied directly to the layer.
 struct TransformData {
+  // the origin of the frame being transformed in app units
   nsPoint origin;
+  // the -moz-transform-origin property for the transform in css pixels
   gfxPoint3D mozOrigin;
+  // the -moz-perspective-origin property for the transform in css pixels
   gfxPoint3D perspectiveOrigin;
   nsRect bounds;
   nscoord perspective;
+  int32_t appUnitsPerDevPixel;
 };
 
 union AnimationData {
@@ -152,6 +156,9 @@ union AnimationData {
 };
 
 struct Animation {
+  // Unlike in nsAnimationManager, this start time is at the end of the
+  // delay.  If the delay is changed dynamically, the layer's data will
+  // be updated.
   TimeStamp startTime;
   TimeDuration duration;
   // For each frame, the interpolation point is computed based on the
@@ -190,6 +197,8 @@ struct ContainerLayerAttributes {
   FrameMetrics metrics;
   float preXScale;
   float preYScale;
+  float inheritedXScale;
+  float inheritedYScale;
 };
 struct ColorLayerAttributes     { Color color; };
 struct CanvasLayerAttributes    { GraphicsFilterType filter; };

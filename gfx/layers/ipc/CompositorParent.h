@@ -36,7 +36,7 @@ class LayerManager;
 
 // Represents (affine) transforms that are calculated from a content view.
 struct ViewTransform {
-  ViewTransform(nsIntPoint aTranslation = nsIntPoint(0, 0),
+  ViewTransform(gfxPoint aTranslation = gfxPoint(),
                 gfxSize aScale = gfxSize(1, 1))
     : mTranslation(aTranslation)
     , mScale(aScale)
@@ -49,7 +49,7 @@ struct ViewTransform {
       gfx3DMatrix::Translation(mTranslation.x, mTranslation.y, 0);
   }
 
-  nsIntPoint mTranslation;
+  gfxPoint mTranslation;
   gfxSize mScale;
 };
 
@@ -75,6 +75,14 @@ public:
   virtual void ShadowLayersUpdated(ShadowLayersParent* aLayerTree,
                                    const TargetConfig& aTargetConfig,
                                    bool isFirstPaint) MOZ_OVERRIDE;
+  /**
+   * This forces the is-first-paint flag to true. This is intended to
+   * be called by the widget code when it loses its viewport information
+   * (or for whatever reason wants to refresh the viewport information).
+   * The information refresh happens because the compositor will call
+   * SetFirstPaintViewport on the next frame of composition.
+   */
+  void ForceIsFirstPaint() { mIsFirstPaint = true; }
   void Destroy();
 
   LayerManager* GetLayerManager() { return mLayerManager; }
@@ -85,7 +93,11 @@ public:
   // Can be called from any thread
   void ScheduleRenderOnCompositorThread();
   void SchedulePauseOnCompositorThread();
-  void ScheduleResumeOnCompositorThread(int width, int height);
+  /**
+   * Returns true if a surface was obtained and the resume succeeded; false
+   * otherwise.
+   */
+  bool ScheduleResumeOnCompositorThread(int width, int height);
 
   virtual void ScheduleComposition();
   void NotifyShadowTreeTransaction();
@@ -185,6 +197,7 @@ private:
   // Sample transforms for layer trees.  Return true to request
   // another animation frame.
   bool TransformShadowTree(TimeStamp aCurrentFrame);
+  void TransformScrollableLayer(Layer* aLayer, const gfx3DMatrix& aRootTransform);
   // Return true if an AsyncPanZoomController content transform was
   // applied for |aLayer|.  *aWantNextFrame is set to true if the
   // controller wants another animation frame.
@@ -271,7 +284,6 @@ private:
   float mYScale;
   nsIntPoint mScrollOffset;
   nsIntRect mContentRect;
-  nsIntSize mWidgetSize;
 
   // When this flag is set, the next composition will be the first for a
   // particular document (i.e. the document displayed on the screen will change).

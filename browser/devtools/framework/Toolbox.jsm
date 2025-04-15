@@ -8,7 +8,7 @@ const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/commonjs/promise/core.js");
+Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Cu.import("resource:///modules/devtools/EventEmitter.jsm");
 Cu.import("resource:///modules/devtools/gDevTools.jsm");
 
@@ -248,11 +248,6 @@ Toolbox.prototype = {
       let domReady = function() {
         iframe.removeEventListener("DOMContentLoaded", domReady, true);
 
-        let vbox = this.doc.getElementById("toolbox-panel-" + this._currentToolId);
-        if (vbox) {
-          this.doc.commandDispatcher.advanceFocusIntoSubtree(vbox);
-        }
-
         this.isReady = true;
 
         let closeButton = this.doc.getElementById("toolbox-close");
@@ -428,6 +423,10 @@ Toolbox.prototype = {
    *        The id of the tool to switch to
    */
   selectTool: function TBOX_selectTool(id) {
+    if (this._currentToolId == id) {
+      return;
+    }
+
     let deferred = Promise.defer();
 
     if (!this.isReady) {
@@ -458,12 +457,15 @@ Toolbox.prototype = {
 
     let definition = gDevTools.getToolDefinitionMap().get(id);
 
+    this._currentToolId = id;
+
     let iframe = this.doc.getElementById("toolbox-panel-iframe-" + id);
     if (!iframe) {
       iframe = this.doc.createElement("iframe");
       iframe.className = "toolbox-panel-iframe";
       iframe.id = "toolbox-panel-iframe-" + id;
       iframe.setAttribute("flex", 1);
+      iframe.setAttribute("forceOwnRefreshDriver", "");
 
       let vbox = this.doc.getElementById("toolbox-panel-" + id);
       vbox.appendChild(iframe);
@@ -497,8 +499,6 @@ Toolbox.prototype = {
 
     Services.prefs.setCharPref(this._prefs.LAST_TOOL, id);
 
-    this._currentToolId = id;
-
     return deferred.promise;
   },
 
@@ -511,6 +511,10 @@ Toolbox.prototype = {
 
   /**
    * Create a host object based on the given host type.
+   *
+   * Warning: some hosts require that the toolbox target provides a reference to
+   * the attached tab. Not all Targets have a tab property - make sure you correctly
+   * mix and match hosts and targets.
    *
    * @param {string} hostType
    *        The host type of the new host object

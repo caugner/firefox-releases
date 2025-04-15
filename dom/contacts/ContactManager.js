@@ -134,6 +134,24 @@ ContactTelField.prototype = {
   QueryInterface : XPCOMUtils.generateQI([nsIDOMContactTelField])
 }
 
+//ContactFindSortOptions
+
+const CONTACTFINDSORTOPTIONS_CONTRACTID = "@mozilla.org/contactFindSortOptions;1"
+const CONTACTFINDSORTOPTIONS_CID        = Components.ID("{cb008c06-3bf8-495c-8865-f9ca1673a1e1}");
+const nsIDOMContactFindSortOptions      = Ci.nsIDOMContactFindSortOptions;
+
+function ContactFindSortOptions () { }
+
+ContactFindSortOptions.prototype = {
+  classID: CONTACTFINDSORTOPTIONS_CID,
+  classInfo: XPCOMUtils.generateCI({classID: CONTACTFINDSORTOPTIONS_CID,
+                                    contractID: CONTACTFINDSORTOPTIONS_CONTRACTID,
+                                    classDescription: "ContactFindSortOptions",
+                                    interfaces: [nsIDOMContactFindSortOptions],
+                                    flags: nsIClassInfo.DOM_OBJECT}),
+  QueryInterface: XPCOMUtils.generateQI([nsIDOMContactFindSortOptions])
+};
+
 //ContactFindOptions
 
 const CONTACTFINDOPTIONS_CONTRACTID = "@mozilla.org/contactFindOptions;1";
@@ -148,10 +166,12 @@ ContactFindOptions.prototype = {
   classInfo : XPCOMUtils.generateCI({classID: CONTACTFINDOPTIONS_CID,
                                      contractID: CONTACTFINDOPTIONS_CONTRACTID,
                                      classDescription: "ContactFindOptions",
-                                     interfaces: [nsIDOMContactFindOptions],
+                                     interfaces: [nsIDOMContactFindSortOptions,
+                                                  nsIDOMContactFindOptions],
                                      flags: nsIClassInfo.DOM_OBJECT}),
-              
-  QueryInterface : XPCOMUtils.generateQI([nsIDOMContactFindOptions])
+
+  QueryInterface : XPCOMUtils.generateQI([nsIDOMContactFindSortOptions,
+                                          nsIDOMContactFindOptions])
 }
 
 //Contact
@@ -160,9 +180,7 @@ const CONTACT_CONTRACTID = "@mozilla.org/contact;1";
 const CONTACT_CID        = Components.ID("{da0f7040-388b-11e1-b86c-0800200c9a66}");
 const nsIDOMContact      = Components.interfaces.nsIDOMContact;
 
-function Contact() {
-  if (DEBUG) debug("Contact constr: ");
-};
+function Contact() { };
 
 Contact.prototype = {
   __exposedProps__: {
@@ -194,10 +212,10 @@ Contact.prototype = {
 
   init: function init(aProp) {
     // Accept non-array strings for DOMString[] properties and convert them.
-    function _create(aField) {   
+    function _create(aField) {
       if (Array.isArray(aField)) {
         for (let i = 0; i < aField.length; i++) {
-          if (typeof aField[i] !== "string")
+          if (typeof aField[i] != "string")
             aField[i] = String(aField[i]);
         }
         return aField;
@@ -319,7 +337,7 @@ Contact.prototype = {
 // ContactManager
 
 const CONTACTMANAGER_CONTRACTID = "@mozilla.org/contactManager;1";
-const CONTACTMANAGER_CID        = Components.ID("{d88af7e0-a45f-11e1-b3dd-0800200c9a66}");
+const CONTACTMANAGER_CID        = Components.ID("{1d70322b-f11b-4f19-9586-7bf291f212aa}");
 const nsIDOMContactManager      = Components.interfaces.nsIDOMContactManager;
 
 function ContactManager()
@@ -331,9 +349,14 @@ ContactManager.prototype = {
   __proto__: DOMRequestIpcHelper.prototype,
   _oncontactchange: null,
 
+  _cursorData: {},
+
   set oncontactchange(aCallback) {
     if (DEBUG) debug("set oncontactchange");
     let allowCallback = function() {
+      if (!this._oncontactchange) {
+        cpmm.sendAsyncMessage("Contacts:RegisterForMessages");
+      }
       this._oncontactchange = aCallback;
     }.bind(this);
     let cancelCallback = function() {
@@ -352,19 +375,23 @@ ContactManager.prototype = {
     aNewContact.updated = aRecord.updated;
   },
 
-  _convertContactsArray: function(aContacts) {
-    let contacts = new Array();
+  _convertContact: function CM_convertContact(aContact) {
+    let newContact = new Contact();
+    newContact.init(aContact.properties);
+    this._setMetaData(newContact, aContact);
+    return newContact;
+  },
+
+  _convertContacts: function(aContacts) {
+    let contacts = [];
     for (let i in aContacts) {
-      let newContact = new Contact();
-      newContact.init(aContacts[i].properties);
-      this._setMetaData(newContact, aContacts[i]);
-      contacts.push(newContact);
+      contacts.push(this._convertContact(aContacts[i]));
     }
     return contacts;
   },
 
   receiveMessage: function(aMessage) {
-    if (DEBUG) debug("Contactmanager::receiveMessage: " + aMessage.name);
+    if (DEBUG) debug("receiveMessage: " + aMessage.name);
     let msg = aMessage.json;
     let contacts = msg.contacts;
 
@@ -373,10 +400,19 @@ ContactManager.prototype = {
       case "Contacts:Find:Return:OK":
         req = this.getRequest(msg.requestID);
         if (req) {
-          let result = this._convertContactsArray(contacts);
+          let result = this._convertContacts(contacts);
           Services.DOMRequest.fireSuccess(req.request, result);
         } else {
           if (DEBUG) debug("no request stored!" + msg.requestID);
+        }
+        break;
+      case "Contacts:GetAll:Next":
+        let cursor = this._cursorData[msg.cursorId];
+        let contact = msg.contact ? this._convertContact(msg.contact) : null;
+        if (contact == null) {
+          Services.DOMRequest.fireDone(cursor);
+        } else {
+          Services.DOMRequest.fireSuccess(cursor, contact);
         }
         break;
       case "Contacts:GetSimContacts:Return:OK":
@@ -384,7 +420,13 @@ ContactManager.prototype = {
         if (req) {
           let result = contacts.map(function(c) {
             let contact = new Contact();
-            contact.init( { name: [c.alphaId], tel: [ { value: c.number } ] } );
+            let prop = {name: [c.alphaId], tel: [ { value: c.number } ]};
+
+            if (c.email) {
+              prop.email = [{value: c.email}];
+            }
+
+            contact.init(prop);
             return contact;
           });
           if (DEBUG) debug("result: " + JSON.stringify(result));
@@ -399,15 +441,6 @@ ContactManager.prototype = {
         req = this.getRequest(msg.requestID);
         if (req)
           Services.DOMRequest.fireSuccess(req.request, null);
-
-        // Fire oncontactchange event
-        if (this._oncontactchange) {
-          let event = new this._window.MozContactChangeEvent("contactchanged", {
-            contactID: msg.contactID,
-            reason: req.reason
-          });
-          this._oncontactchange.handleEvent(event);
-        }
         break;
       case "Contacts:Find:Return:KO":
       case "Contact:Save:Return:KO":
@@ -431,7 +464,18 @@ ContactManager.prototype = {
           req.cancel();
         }
         break;
-      default: 
+      case "Contact:Changed":
+        // Fire oncontactchange event
+        if (DEBUG) debug("Contacts:ContactChanged: " + msg.contactID + ", " + msg.reason);
+        if (this._oncontactchange) {
+          let event = new this._window.MozContactChangeEvent("contactchanged", {
+            contactID: msg.contactID,
+            reason: msg.reason
+          });
+          this._oncontactchange.handleEvent(event);
+        }
+        break;
+      default:
         if (DEBUG) debug("Wrong message: " + aMessage.name);
     }
     this.removeRequest(msg.requestID);
@@ -456,7 +500,7 @@ ContactManager.prototype = {
       default:
         access = "unknown";
       }
-      
+
     let requestID = this.getRequestId({
       request: aRequest,
       allow: function() {
@@ -536,14 +580,41 @@ ContactManager.prototype = {
 
   find: function(aOptions) {
     if (DEBUG) debug("find! " + JSON.stringify(aOptions));
-    let request;
-    request = this.createRequest();
+    let request = this.createRequest();
     let options = { findOptions: aOptions };
     let allowCallback = function() {
       cpmm.sendAsyncMessage("Contacts:Find", {requestID: this.getRequestId({request: request, reason: "find"}), options: options});
     }.bind(this)
     this.askPermission("find", request, allowCallback);
     return request;
+  },
+
+  createCursor: function CM_createCursor(aRequest) {
+    let id = this._getRandomId();
+    let cursor = Services.DOMRequest.createCursor(this._window, function() {
+      this.handleContinue(id);
+    }.bind(this));
+    if (DEBUG) debug("saved cursor id: " + id);
+    this._cursorData[id] = cursor;
+    return [id, cursor];
+  },
+
+  getAll: function CM_getAll(aOptions) {
+    if (DEBUG) debug("getAll: " + JSON.stringify(aOptions));
+    let [cursorId, cursor] = this.createCursor();
+    let allowCallback = function() {
+      cpmm.sendAsyncMessage("Contacts:GetAll", {
+        cursorId: cursorId, findOptions: aOptions});
+    }.bind(this);
+    this.askPermission("find", cursor, allowCallback);
+    return cursor;
+  },
+
+  handleContinue: function CM_handleContinue(aCursorId) {
+    if (DEBUG) debug("handleContinue: " + aCursorId);
+    cpmm.sendAsyncMessage("Contacts:GetAll:Continue", {
+      cursorId: aCursorId
+    });
   },
 
   remove: function removeContact(aRecord) {
@@ -599,7 +670,9 @@ ContactManager.prototype = {
                               "Contact:Remove:Return:OK", "Contact:Remove:Return:KO",
                               "Contacts:GetSimContacts:Return:OK",
                               "Contacts:GetSimContacts:Return:KO",
-                              "PermissionPromptHelper:AskPermission:OK"]);
+                              "Contact:Changed",
+                              "PermissionPromptHelper:AskPermission:OK",
+                              "Contacts:GetAll:Next"]);
   },
 
   // Called from DOMRequestIpcHelper
@@ -620,4 +693,4 @@ ContactManager.prototype = {
 }
 
 this.NSGetFactory = XPCOMUtils.generateNSGetFactory(
-                       [Contact, ContactManager, ContactProperties, ContactAddress, ContactField, ContactTelField, ContactFindOptions])
+                       [Contact, ContactManager, ContactProperties, ContactAddress, ContactField, ContactTelField, ContactFindSortOptions, ContactFindOptions])

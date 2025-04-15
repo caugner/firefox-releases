@@ -10,7 +10,7 @@
 #include "nsSVGElement.h"
 #include "nsError.h"
 #include "nsContentUtils.h" // NS_ENSURE_FINITE
-#include "DOMSVGMatrix.h"
+#include "mozilla/dom/SVGMatrix.h"
 #include "mozilla/dom/SVGPointBinding.h"
 
 // See the architecture comment in DOMSVGPointList.h.

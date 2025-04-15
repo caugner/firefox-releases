@@ -2,8 +2,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import datetime
 import socket
 import sys
+import time
 import traceback
 
 from client import MarionetteClient
@@ -47,6 +49,18 @@ class HTMLElement(object):
 
     def click(self):
         return self.marionette._send_message('clickElement', 'ok', element=self.id)
+
+    def single_tap(self, x=None, y=None):
+        return self.marionette._send_message('singleTap', 'ok', element=self.id, x=x, y=y)
+
+    def double_tap(self, x=None, y=None):
+        return self.marionette._send_message('doubleTap', 'ok', element=self.id, x=x, y=y)
+
+    def press(self, x=None, y=None):
+        return self.marionette._send_message('press', 'value', element=self.id, x=x, y=y)
+
+    def release(self, touch_id, x=None, y=None):
+        return self.marionette._send_message('release', 'ok', element=self.id, touchId=touch_id, x=x, y=y)
 
     @property
     def text(self):
@@ -95,12 +109,15 @@ class Marionette(object):
 
     CONTEXT_CHROME = 'chrome'
     CONTEXT_CONTENT = 'content'
+    TIMEOUT_SEARCH = 'implicit'
+    TIMEOUT_SCRIPT = 'script'
+    TIMEOUT_PAGE = 'page load'
 
     def __init__(self, host='localhost', port=2828, bin=None, profile=None,
                  emulator=None, sdcard=None, emulatorBinary=None,
                  emulatorImg=None, emulator_res='480x800', gecko_path=None,
                  connectToRunningEmulator=False, homedir=None, baseurl=None,
-                 noWindow=False, logcat_dir=None, busybox=None, load_early=False):
+                 noWindow=False, logcat_dir=None, busybox=None):
         self.host = host
         self.port = self.local_port = port
         self.bin = bin
@@ -124,7 +141,7 @@ class Marionette(object):
             self.instance = GeckoInstance(host=self.host, port=self.port,
                                           bin=self.bin, profile=self.profile)
             self.instance.start()
-            assert(self.instance.wait_for_port())
+            assert(self.wait_for_port())
 
         if emulator:
             self.emulator = Emulator(homedir=homedir,
@@ -149,10 +166,9 @@ class Marionette(object):
         self.client = MarionetteClient(self.host, self.port)
 
         if emulator:
-            self.emulator.setup(self, gecko_path=gecko_path,
-                                load_early=load_early)
-            if busybox:
-                self.emulator.install_busybox(busybox)
+            self.emulator.setup(self,
+                                gecko_path=gecko_path,
+                                busybox=busybox)
 
     def __del__(self):
         if self.emulator:
@@ -193,6 +209,22 @@ class Marionette(object):
             # Exit without a normal exception to prevent mozharness from
             # flagging the error.
             sys.exit()
+
+    def wait_for_port(self, timeout=3000):
+        starttime = datetime.datetime.now()
+        while datetime.datetime.now() - starttime < datetime.timedelta(seconds=timeout):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect((self.host, self.port))
+                data = sock.recv(16)
+                sock.close()
+                if '"from"' in data:
+                    time.sleep(5)
+                    return True
+            except socket.error:
+                pass
+            time.sleep(1)
+        return False
 
     def _send_message(self, command, response_key, **kwargs):
         if not self.session and command not in ('newSession', 'getStatus'):
@@ -387,6 +419,11 @@ class Marionette(object):
         response = self._send_message('goUrl', 'ok', value=url)
         return response
 
+    def timeouts(self, timeout_type, ms):
+        assert(timeout_type == self.TIMEOUT_SEARCH or timeout_type == self.TIMEOUT_SCRIPT or timeout_type == self.TIMEOUT_PAGE)
+        response = self._send_message('timeouts', 'ok', timeoutType=timeout_type, ms=ms)
+        return response
+
     def go_back(self):
         response = self._send_message('goBack', 'ok')
         return response
@@ -433,7 +470,7 @@ class Marionette(object):
 
         return unwrapped
 
-    def execute_js_script(self, script, script_args=None, async=True, new_sandbox=True, special_powers=False):
+    def execute_js_script(self, script, script_args=None, async=True, new_sandbox=True, special_powers=False, script_timeout=None):
         if script_args is None:
             script_args = []
         args = self.wrapArguments(script_args)
@@ -443,10 +480,11 @@ class Marionette(object):
                                       args=args,
                                       async=async,
                                       newSandbox=new_sandbox,
-                                      specialPowers=special_powers)
+                                      specialPowers=special_powers, 
+                                      scriptTimeout=script_timeout)
         return self.unwrapValue(response)
 
-    def execute_script(self, script, script_args=None, new_sandbox=True, special_powers=False):
+    def execute_script(self, script, script_args=None, new_sandbox=True, special_powers=False, script_timeout=None):
         if script_args is None:
             script_args = []
         args = self.wrapArguments(script_args)
@@ -455,10 +493,11 @@ class Marionette(object):
                                       value=script,
                                       args=args,
                                       newSandbox=new_sandbox,
-                                      specialPowers=special_powers)
+                                      specialPowers=special_powers,
+                                      scriptTimeout=script_timeout)
         return self.unwrapValue(response)
 
-    def execute_async_script(self, script, script_args=None, new_sandbox=True, special_powers=False):
+    def execute_async_script(self, script, script_args=None, new_sandbox=True, special_powers=False, script_timeout=None):
         if script_args is None:
             script_args = []
         args = self.wrapArguments(script_args)
@@ -467,7 +506,8 @@ class Marionette(object):
                                       value=script,
                                       args=args,
                                       newSandbox=new_sandbox,
-                                      specialPowers=special_powers)
+                                      specialPowers=special_powers,
+                                      scriptTimeout=script_timeout)
         return self.unwrapValue(response)
 
     def find_element(self, method, target, id=None):
@@ -488,6 +528,10 @@ class Marionette(object):
         for x in response:
             elements.append(HTMLElement(self, x))
         return elements
+
+    def get_active_element(self):
+        response = self._send_message('getActiveElement', 'value')
+        return HTMLElement(self, response)
 
     def log(self, msg, level=None):
         return self._send_message('log', 'ok', value=msg, level=level)

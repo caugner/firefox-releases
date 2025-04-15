@@ -17,6 +17,7 @@
 #include "nss.h"
 #include "ssl.h"
 
+#include "mozilla/Scoped.h"
 #include "nsThreadUtils.h"
 #include "nsXPCOM.h"
 
@@ -58,6 +59,12 @@ class IceTestPeer : public sigslot::has_slots<> {
     ice_ctx_->SignalCompleted.connect(this, &IceTestPeer::IceCompleted);
   }
 
+  ~IceTestPeer() {
+    test_utils->sts_target()->Dispatch(WrapRunnable(this,
+                                                    &IceTestPeer::Shutdown),
+        NS_DISPATCH_SYNC);
+  }
+
   void AddStream(int components) {
     char name[100];
     snprintf(name, sizeof(name), "%s:stream%d", name_.c_str(), (int)streams_.size());
@@ -74,6 +81,12 @@ class IceTestPeer : public sigslot::has_slots<> {
 
   void Gather() {
     nsresult res;
+
+    std::vector<NrIceStunServer> stun_servers;
+    ScopedDeletePtr<NrIceStunServer> server(NrIceStunServer::Create(
+        std::string((char *)"216.93.246.14"), 3478));
+    stun_servers.push_back(*server);
+    ASSERT_TRUE(NS_SUCCEEDED(ice_ctx_->SetStunServers(stun_servers)));
 
     test_utils->sts_target()->Dispatch(
         WrapRunnableRet(ice_ctx_, &NrIceCtx::StartGathering, &res),
@@ -166,7 +179,13 @@ class IceTestPeer : public sigslot::has_slots<> {
   }
 
   void Close() {
-    ice_ctx_->destroy_peer_ctx();
+    test_utils->sts_target()->Dispatch(
+      WrapRunnable(ice_ctx_, &NrIceCtx::destroy_peer_ctx),
+      NS_DISPATCH_SYNC);
+  }
+
+  void Shutdown() {
+    ice_ctx_ = nullptr;
   }
 
   void StartChecks() {
@@ -306,8 +325,12 @@ class IceTest : public ::testing::Test {
 
   void SendReceive() {
     //    p1_->Send(2);
-    p1_->SendPacket(0, 1, reinterpret_cast<const unsigned char *>("TEST"), 4);
-    ASSERT_EQ(1, p1_->sent());
+    test_utils->sts_target()->Dispatch(
+        WrapRunnable(p1_.get(),
+                     &IceTestPeer::SendPacket, 0, 1,
+                     reinterpret_cast<const unsigned char *>("TEST"), 4),
+        NS_DISPATCH_SYNC);
+    ASSERT_EQ(1u, p1_->sent());
     ASSERT_TRUE_WAIT(p2_->received() == 1, 1000);
   }
 

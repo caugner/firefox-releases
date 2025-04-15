@@ -24,7 +24,7 @@
 
 struct gfxMatrix;
 struct JSContext;
-struct JSObject;
+class JSObject;
 class mozIApplication;
 class nsFrameLoader;
 class nsIDOMElement;
@@ -276,9 +276,12 @@ protected:
     // The number of event series we're currently capturing.
     int32_t mEventCaptureDepth;
 
+    nsRect mRect;
     nsIntSize mDimensions;
+    ScreenOrientation mOrientation;
     float mDPI;
     bool mShown;
+    bool mUpdatedDimensions;
 
 private:
     already_AddRefed<nsFrameLoader> GetFrameLoader() const;
@@ -295,9 +298,14 @@ private:
     // dispatch to content.
     void MaybeForwardEventToRenderFrame(const nsInputEvent& aEvent,
                                         nsInputEvent* aOutEvent);
+    // When true, we've initiated normal shutdown and notified our
+    // managing PContent.
+    bool mMarkedDestroying;
     // When true, the TabParent is invalid and we should not send IPC messages
     // anymore.
     bool mIsDestroyed;
+    // Whether we have already sent a FileDescriptor for the app package.
+    bool mAppPackageFileDescriptorSent;
 };
 
 } // namespace dom

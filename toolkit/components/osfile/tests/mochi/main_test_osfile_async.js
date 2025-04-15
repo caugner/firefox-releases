@@ -1,7 +1,7 @@
 "use strict";
 
 Components.utils.import("resource://gre/modules/osfile.jsm");
-Components.utils.import("resource://gre/modules/commonjs/promise/core.js");
+Components.utils.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Components.utils.import("resource://gre/modules/Task.jsm");
 
 // The following are used to compare against a well-tested reference
@@ -131,6 +131,8 @@ let test = maketest("Main", function main(test) {
     yield test_path();
     yield test_open();
     yield test_stat();
+    yield test_debug();
+    yield test_info_features_detect();
     yield test_read_write();
     yield test_read_write_all();
     yield test_position();
@@ -138,6 +140,7 @@ let test = maketest("Main", function main(test) {
     yield test_mkdir();
     yield test_iter();
     yield test_exists();
+    yield test_debug_test();
     info("Test is over");
     SimpleTest.finish();
   });
@@ -243,6 +246,29 @@ let test_stat = maketest("stat", function stat(test) {
     test.ok(stat2, "stat 2 is not empty");
     for (let key in stat2) {
       test.is("" + stat1[key], "" + stat2[key], "Stat field " + key + "is the same");
+    }
+  });
+});
+
+/**
+ * Test feature detection using OS.File.Info.prototype on main thread
+ */
+let test_info_features_detect = maketest("features_detect", function features_detect(test) {
+  return Task.spawn(function() {
+    if (OS.Constants.Win) {
+      // see if winBirthDate is defined
+      if ("winBirthDate" in OS.File.Info.prototype) {
+        test.ok(true, "winBirthDate is defined");
+      } else {
+        test.fail("winBirthDate not defined though we are under Windows");
+      }
+    } else if (OS.Constants.libc) {
+      // see if unixGroup is defined
+      if ("unixGroup" in OS.File.Info.prototype) {
+        test.ok(true, "unixGroup is defined");
+      } else {
+        test.fail("unixGroup is not defined though we are under Unix");
+      }
     }
   });
 });
@@ -534,6 +560,12 @@ let test_iter = maketest("iter", function iter(test) {
     yield iterator.close();
     test.info("Closed iterator");
 
+    test.info("Double closing DirectoryIterator");
+    iterator = new OS.File.DirectoryIterator(currentDir);
+    yield iterator.close();
+    yield iterator.close(); //double closing |DirectoryIterator|
+    test.ok(true, "|DirectoryIterator| was closed twice successfully");
+
     let allFiles2 = [];
     let i = 0;
     iterator = new OS.File.DirectoryIterator(currentDir);
@@ -597,5 +629,66 @@ let test_exists = maketest("exists", function exists(test) {
     test.ok(fileExists, "file exists");
     fileExists = yield OS.File.exists(EXISTING_FILE + ".tmp");
     test.ok(!fileExists, "file does not exists");
+  });
+});
+
+/**
+ * Test changes to OS.Shared.DEBUG flag.
+ */
+let test_debug = maketest("debug", function debug(test) {
+  return Task.spawn(function() {
+    function testSetDebugPref (pref) {
+      try {
+        Services.prefs.setBoolPref("toolkit.osfile.log", pref);
+      } catch (x) {
+        test.fail("Setting OS.Shared.DEBUG to " + pref +
+          " should not cause error.");
+      } finally {
+        test.is(OS.Shared.DEBUG, pref, "OS.Shared.DEBUG is set correctly.");
+      }
+    }
+    testSetDebugPref(true);
+    let workerDEBUG = yield OS.File.GET_DEBUG();
+    test.is(workerDEBUG, true, "Worker's DEBUG is set.");
+    testSetDebugPref(false);
+    workerDEBUG = yield OS.File.GET_DEBUG();
+    test.is(workerDEBUG, false, "Worker's DEBUG is unset.");
+  });
+});
+
+/**
+ * Test logging in the main thread with set OS.Shared.DEBUG and
+ * OS.Shared.TEST flags.
+ */
+let test_debug_test = maketest("debug_test", function debug_test(test) {
+  return Task.spawn(function () {
+    // Create a console listener.
+    let consoleListener = {
+      observe: function (aMessage) {
+        // Ignore unexpected messages.
+        if (!(aMessage instanceof Components.interfaces.nsIConsoleMessage)) {
+          return;
+        }
+        if (aMessage.message.indexOf("TEST OS") < 0) {
+          return;
+        }
+        test.ok(true, "DEBUG TEST messages are logged correctly.")
+      }
+    };
+    // Set/Unset OS.Shared.DEBUG, OS.Shared.TEST and the console listener.
+    function toggleDebugTest (pref) {
+      OS.Shared.DEBUG = pref;
+      OS.Shared.TEST = pref;
+      Services.console[pref ? "registerListener" : "unregisterListener"](
+        consoleListener);
+    }
+    // Save original DEBUG value.
+    let originalPref = OS.Shared.DEBUG;
+    toggleDebugTest(true);
+    // Execution of OS.File.exist method will trigger OS.File.LOG several times.
+    let fileExists = yield OS.File.exists(EXISTING_FILE);
+    toggleDebugTest(false);
+    // Restore DEBUG to its original.
+    OS.Shared.DEBUG = originalPref;
   });
 });

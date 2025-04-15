@@ -11,14 +11,15 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "Constants.h"
-#include "SmsEvent.h"
-#include "nsIDOMSmsMessage.h"
+#include "nsIDOMMozSmsEvent.h"
+#include "nsIDOMMozSmsMessage.h"
 #include "SmsRequest.h"
 #include "nsJSUtils.h"
 #include "nsContentUtils.h"
-#include "nsISmsDatabaseService.h"
+#include "nsIMobileMessageDatabaseService.h"
 #include "nsIXPConnect.h"
 #include "nsIPermissionManager.h"
+#include "GeneratedEvents.h"
 
 #define RECEIVED_EVENT_NAME         NS_LITERAL_STRING("received")
 #define SENDING_EVENT_NAME          NS_LITERAL_STRING("sending")
@@ -33,9 +34,7 @@ namespace mozilla {
 namespace dom {
 namespace sms {
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_0(SmsManager, nsDOMEventTargetHelper)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(SmsManager)
+NS_INTERFACE_MAP_BEGIN(SmsManager)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozSmsManager)
   NS_INTERFACE_MAP_ENTRY(nsIObserver)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(MozSmsManager)
@@ -190,27 +189,44 @@ SmsManager::Send(const jsval& aNumber, const nsAString& aMessage, jsval* aReturn
     return Send(cx, global, aNumber.toString(), aMessage, aReturn);
   }
 
-  // Must be an array then.
+  // Must be an object then.
+  if (!aNumber.isObject()) {
+    return NS_ERROR_FAILURE;
+  }
+
   JSObject& numbers = aNumber.toObject();
-
   uint32_t size;
-  JS_ALWAYS_TRUE(JS_GetArrayLength(cx, &numbers, &size));
+  if (!JS_GetArrayLength(cx, &numbers, &size)) {
+    return NS_ERROR_FAILURE;
+  }
 
-  jsval* requests = new jsval[size];
+  JS::AutoValueVector requests(cx);
+  if (!requests.resize(size)) {
+    return NS_ERROR_FAILURE;
+  }
 
-  for (uint32_t i=0; i<size; ++i) {
+  JSString *str;
+  for (uint32_t i = 0; i < size; ++i) {
     jsval number;
     if (!JS_GetElement(cx, &numbers, i, &number)) {
       return NS_ERROR_INVALID_ARG;
     }
 
-    nsresult rv = Send(cx, global, number.toString(), aMessage, &requests[i]);
+    str = JS_ValueToString(cx, number);
+    if (!str) {
+      return NS_ERROR_FAILURE;
+    }
+
+    nsresult rv = Send(cx, global, str, aMessage, &requests[i]);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  aReturn->setObjectOrNull(JS_NewArrayObject(cx, size, requests));
-  NS_ENSURE_TRUE(aReturn->isObject(), NS_ERROR_FAILURE);
+  JSObject* obj = JS_NewArrayObject(cx, requests.length(), requests.begin());
+  if (!obj) {
+    return NS_ERROR_FAILURE;
+  }
 
+  aReturn->setObject(*obj);
   return NS_OK;
 }
 
@@ -218,11 +234,11 @@ NS_IMETHODIMP
 SmsManager::GetMessageMoz(int32_t aId, nsIDOMMozSmsRequest** aRequest)
 {
   nsCOMPtr<nsIDOMMozSmsRequest> req = SmsRequest::Create(this);
-  nsCOMPtr<nsISmsDatabaseService> smsDBService =
-    do_GetService(SMS_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsDBService, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(mobileMessageDBService, NS_ERROR_FAILURE);
   nsCOMPtr<nsISmsRequest> forwarder = new SmsRequestForwarder(static_cast<SmsRequest*>(req.get()));
-  smsDBService->GetMessageMoz(aId, forwarder);
+  mobileMessageDBService->GetMessageMoz(aId, forwarder);
   req.forget(aRequest);
   return NS_OK;
 }
@@ -231,12 +247,12 @@ nsresult
 SmsManager::Delete(int32_t aId, nsIDOMMozSmsRequest** aRequest)
 {
   nsCOMPtr<nsIDOMMozSmsRequest> req = SmsRequest::Create(this);
-  nsCOMPtr<nsISmsDatabaseService> smsDBService =
-    do_GetService(SMS_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsDBService, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(mobileMessageDBService, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsISmsRequest> forwarder = new SmsRequestForwarder(static_cast<SmsRequest*>(req.get()));
-  smsDBService->DeleteMessage(aId, forwarder);
+  mobileMessageDBService->DeleteMessage(aId, forwarder);
   req.forget(aRequest);
   return NS_OK;
 }
@@ -277,11 +293,11 @@ SmsManager::GetMessages(nsIDOMMozSmsFilter* aFilter, bool aReverse,
   }
 
   nsCOMPtr<nsIDOMMozSmsRequest> req = SmsRequest::Create(this);
-  nsCOMPtr<nsISmsDatabaseService> smsDBService =
-    do_GetService(SMS_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsDBService, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(mobileMessageDBService, NS_ERROR_FAILURE);
   nsCOMPtr<nsISmsRequest> forwarder = new SmsRequestForwarder(static_cast<SmsRequest*>(req.get()));
-  smsDBService->CreateMessageList(filter, aReverse, forwarder);
+  mobileMessageDBService->CreateMessageList(filter, aReverse, forwarder);
   req.forget(aRequest);
   return NS_OK;
 }
@@ -291,12 +307,12 @@ SmsManager::MarkMessageRead(int32_t aId, bool aValue,
                             nsIDOMMozSmsRequest** aRequest)
 {
   nsCOMPtr<nsIDOMMozSmsRequest> req = SmsRequest::Create(this);
-  nsCOMPtr<nsISmsDatabaseService> smsDBService =
-    do_GetService(SMS_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsDBService, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(mobileMessageDBService, NS_ERROR_FAILURE);
   nsCOMPtr<nsISmsRequest> forwarder =
     new SmsRequestForwarder(static_cast<SmsRequest*>(req.get()));
-  smsDBService->MarkMessageRead(aId, aValue, forwarder);
+  mobileMessageDBService->MarkMessageRead(aId, aValue, forwarder);
   req.forget(aRequest);
   return NS_OK;
 }
@@ -305,12 +321,12 @@ NS_IMETHODIMP
 SmsManager::GetThreadList(nsIDOMMozSmsRequest** aRequest)
 {
   nsCOMPtr<nsIDOMMozSmsRequest> req = SmsRequest::Create(this);
-  nsCOMPtr<nsISmsDatabaseService> smsDBService =
-    do_GetService(SMS_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsDBService, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(mobileMessageDBService, NS_ERROR_FAILURE);
   nsCOMPtr<nsISmsRequest> forwarder =
     new SmsRequestForwarder(static_cast<SmsRequest*>(req.get()));
-  smsDBService->GetThreadList(forwarder);
+  mobileMessageDBService->GetThreadList(forwarder);
   req.forget(aRequest);
   return NS_OK;
 }
@@ -318,9 +334,13 @@ SmsManager::GetThreadList(nsIDOMMozSmsRequest** aRequest)
 nsresult
 SmsManager::DispatchTrustedSmsEventToSelf(const nsAString& aEventName, nsIDOMMozSmsMessage* aMessage)
 {
-  nsRefPtr<nsDOMEvent> event = new SmsEvent(nullptr, nullptr);
-  nsresult rv = static_cast<SmsEvent*>(event.get())->Init(aEventName, false,
-                                                          false, aMessage);
+  nsCOMPtr<nsIDOMEvent> event;
+  NS_NewDOMMozSmsEvent(getter_AddRefs(event), nullptr, nullptr);
+  NS_ASSERTION(event, "This should never fail!");
+
+  nsCOMPtr<nsIDOMMozSmsEvent> se = do_QueryInterface(event);
+  MOZ_ASSERT(se);
+  nsresult rv = se->InitMozSmsEvent(aEventName, false, false, aMessage);
   NS_ENSURE_SUCCESS(rv, rv);
 
   return DispatchTrustedEvent(event);

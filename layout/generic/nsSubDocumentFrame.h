@@ -66,9 +66,9 @@ public:
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus) MOZ_OVERRIDE;
 
-  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                              const nsRect&           aDirtyRect,
-                              const nsDisplayListSet& aLists) MOZ_OVERRIDE;
+  virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                                const nsRect&           aDirtyRect,
+                                const nsDisplayListSet& aLists) MOZ_OVERRIDE;
 
   NS_IMETHOD AttributeChanged(int32_t aNameSpaceID,
                               nsIAtom* aAttribute,
@@ -89,6 +89,7 @@ public:
   void EndSwapDocShells(nsIFrame* aOther);
   nsView* EnsureInnerView();
   nsIFrame* GetSubdocumentRootFrame();
+  nsIntSize GetSubdocumentSize();
 
   // nsIReflowCallback
   virtual bool ReflowFinished() MOZ_OVERRIDE;
@@ -118,8 +119,6 @@ protected:
 
   virtual nscoord GetIntrinsicWidth() MOZ_OVERRIDE;
   virtual nscoord GetIntrinsicHeight() MOZ_OVERRIDE;
-
-  virtual int GetSkipSides() const;
 
   // Show our document viewer. The document viewer is hidden via a script
   // runner, so that we can save and restore the presentation if we're

@@ -288,6 +288,12 @@ public:
   Layer* GetPrimaryScrollableLayer();
 
   /**
+   * Returns a list of all descendant layers for which 
+   * GetFrameMetrics().IsScrollable() is true.
+   */
+  void GetScrollableLayers(nsTArray<Layer*>& aArray);
+
+  /**
    * CONSTRUCTION PHASE ONLY
    * Called when a managee has mutated.
    * Subclasses overriding this method must first call their
@@ -483,9 +489,32 @@ public:
    */
   void LogSelf(const char* aPrefix="");
 
-  void StartFrameTimeRecording();
+  /**
+   * Record (and return) frame-intervals and paint-times for frames which were presented
+   *   between calling StartFrameTimeRecording and StopFrameTimeRecording.
+   *
+   * - Uses a cyclic buffer and serves concurrent consumers, so if Stop is called too late
+   *     (elements were overwritten since Start), result is considered invalid and hence empty.
+   * - Buffer is capable of holding 10 seconds @ 60fps (or more if frames were less frequent).
+   *     Can be changed (up to 1 hour) via pref: toolkit.framesRecording.bufferSize.
+   * - Note: the first frame-interval may be longer than expected because last frame
+   *     might have been presented some time before calling StartFrameTimeRecording.
+   */
+
+  /**
+   * Returns a handle which represents current recording start position.
+   */
+  uint32_t StartFrameTimeRecording();
+
+  /**
+   *  Clears, then populates 2 arraye with the recorded frames timing data.
+   *  The arrays will be empty if data was overwritten since aStartIndex was obtained.
+   */
+  void StopFrameTimeRecording(uint32_t         aStartIndex,
+                              nsTArray<float>& aFrameIntervals,
+                              nsTArray<float>& aPaintTimes);
+
   void SetPaintStartTime(TimeStamp& aTime);
-  void StopFrameTimeRecording(nsTArray<float>& aFrameTimes, nsTArray<float>& aProcessingTimes);
 
   void PostPresent();
 
@@ -495,7 +524,11 @@ public:
   static PRLogModuleInfo* GetLog() { return sLog; }
 
   bool IsCompositingCheap(LayersBackend aBackend)
-  { return LAYERS_BASIC != aBackend; }
+  {
+    // LAYERS_NONE is an error state, but in that case we should try to
+    // avoid loading the compositor!
+    return LAYERS_BASIC != aBackend && LAYERS_NONE != aBackend;
+  }
 
   virtual bool IsCompositingCheap() { return true; }
 
@@ -516,10 +549,25 @@ protected:
   uint64_t mId;
   bool mInTransaction;
 private:
-  TimeStamp mLastFrameTime;
-  TimeStamp mPaintStartTime;
-  nsTArray<float> mFrameIntervals;
-  nsTArray<float> mPaintTimes;
+  struct FramesTimingRecording
+  {
+    // Stores state and data for frame intervals and paint times recording.
+    // see LayerManager::StartFrameTimeRecording() at Layers.cpp for more details.
+    FramesTimingRecording()
+      : mIsPaused(true)
+      , mNextIndex(0)
+    {}
+    bool mIsPaused;
+    uint32_t mNextIndex;
+    TimeStamp mLastFrameTime;
+    TimeStamp mPaintStartTime;
+    nsTArray<float> mIntervals;
+    nsTArray<float> mPaints;
+    uint32_t mLatestStartIndex;
+    uint32_t mCurrentRunStartIndex;
+  };
+  FramesTimingRecording mRecording;
+
   TimeStamp mTabSwitchStart;
 };
 
@@ -776,6 +824,7 @@ public:
 
   // Call AddAnimation to add a new animation to this layer from layout code.
   // Caller must add segments to the returned animation.
+  // aStart represents the time at the *end* of the delay.
   Animation* AddAnimation(mozilla::TimeStamp aStart, mozilla::TimeDuration aDuration,
                           float aIterations, int aDirection,
                           nsCSSProperty aProperty, const AnimationData& aData);
@@ -812,6 +861,8 @@ public:
   gfxPoint GetFixedPositionAnchor() { return mAnchor; }
   Layer* GetMaskLayer() { return mMaskLayer; }
 
+  // Note that all lengths in animation data are either in CSS pixels or app
+  // units and must be converted to device pixels by the compositor.
   AnimationArray& GetAnimations() { return mAnimations; }
   InfallibleTArray<AnimData>& GetAnimationData() { return mAnimationData; }
 
@@ -1314,8 +1365,20 @@ public:
     if (mPreXScale == aXScale && mPreYScale == aYScale) {
       return;
     }
+
     mPreXScale = aXScale;
     mPreYScale = aYScale;
+    Mutated();
+  }
+
+  void SetInheritedScale(float aXScale, float aYScale)
+  { 
+    if (mInheritedXScale == aXScale && mInheritedYScale == aYScale) {
+      return;
+    }
+
+    mInheritedXScale = aXScale;
+    mInheritedYScale = aYScale;
     Mutated();
   }
 
@@ -1332,6 +1395,8 @@ public:
   const FrameMetrics& GetFrameMetrics() { return mFrameMetrics; }
   float GetPreXScale() { return mPreXScale; }
   float GetPreYScale() { return mPreYScale; }
+  float GetInheritedXScale() { return mInheritedXScale; }
+  float GetInheritedYScale() { return mInheritedYScale; }
 
   MOZ_LAYER_DECL_NAME("ContainerLayer", TYPE_CONTAINER)
 
@@ -1384,6 +1449,8 @@ protected:
       mLastChild(nullptr),
       mPreXScale(1.0f),
       mPreYScale(1.0f),
+      mInheritedXScale(1.0f),
+      mInheritedYScale(1.0f),
       mUseIntermediateSurface(false),
       mSupportsComponentAlphaChildren(false),
       mMayHaveReadbackChild(false)
@@ -1409,6 +1476,10 @@ protected:
   FrameMetrics mFrameMetrics;
   float mPreXScale;
   float mPreYScale;
+  // The resolution scale inherited from the parent layer. This will already
+  // be part of mTransform.
+  float mInheritedXScale;
+  float mInheritedYScale;
   bool mUseIntermediateSurface;
   bool mSupportsComponentAlphaChildren;
   bool mMayHaveReadbackChild;

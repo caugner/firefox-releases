@@ -99,13 +99,20 @@ protected:
     virtual int setBuffersTimestamp(int64_t timestamp);
     virtual int setUsage(uint32_t reqUsage);
 
-    // freeBufferLocked frees the resources (both GraphicBuffer and EGLImage)
-    // for the given slot.
-    void freeBufferLocked(int index);
-
     // freeAllBuffersLocked frees the resources (both GraphicBuffer and
-    // EGLImage) for all slots.
-    void freeAllBuffersLocked();
+    // EGLImage) for all slots by removing them from the slots and appending
+    // then to the freeList.  This must be called with mMutex locked.
+    void freeAllBuffersLocked(nsTArray<SurfaceDescriptor>& freeList);
+
+    // releaseBufferFreeListUnlocked releases the resources in the freeList;
+    // this must be called with mMutex unlocked.
+    void releaseBufferFreeListUnlocked(nsTArray<SurfaceDescriptor>& freeList);
+
+    // clearRenderingStateBuffersLocked clear the resources in RENDERING state;
+    // But do not destroy the gralloc buffer. It is still in the video stream
+    // awaiting rendering.
+    // this must be called with mMutex locked.
+    void clearRenderingStateBuffersLocked();
 
 private:
     void init();
@@ -194,6 +201,13 @@ private:
 
     // mDequeueCondition condition used for dequeueBuffer in synchronous mode
     mutable Condition mDequeueCondition;
+
+    // mAbandoned indicates that the GonkNativeWindow will no longer be used to
+    // consume buffers pushed to it.
+    // It is initialized to false, and set to true in the abandon method.  A
+    // GonkNativeWindow that has been abandoned will return the NO_INIT error
+    // from all control methods capable of returning an error.
+    bool mAbandoned;
 
     // mTimestamp is the timestamp that will be used for the next buffer queue
     // operation. It defaults to NATIVE_WINDOW_TIMESTAMP_AUTO, which means that

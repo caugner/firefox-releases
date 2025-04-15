@@ -138,6 +138,21 @@ interface nsIRILContactCallback : nsISupports
                            in jsval contacts);
 };
 
+[scriptable, function, uuid(ab954d56-12a1-4c6b-8753-14ad5664111d)]
+interface nsIRILContactUpdateCallback : nsISupports
+{
+  /**
+   * Called when an ICC contact is updated.
+   *
+   * @param errorMsg
+   *        Error message from RIL.
+   * @param contactType
+   *        Type of the contact, i.e. ADN.
+   */
+  void onUpdated(in DOMString errorMsg,
+                 in DOMString contactType);
+};
+
 [scriptable, uuid(c5e31c2c-a6a1-44c3-a30e-7fdfb4dc1750)]
 interface nsIRILCellBroadcastCallback : nsISupports
 {
@@ -225,45 +240,6 @@ interface nsIRILContentHelper : nsIMobileConnectionProvider
   readonly attribute DOMString voicemailDisplayName;
 };
 
-[scriptable, uuid(4efdb1d4-1e49-4f5d-a656-44e6180062a7)]
-interface nsIICCRecords : nsISupports
-{
-  /**
-   * Mobile Subscriber ISDN Number
-   */
-  readonly attribute DOMString msisdn;
-
-  /**
-   * Administrative Data
-   */
-  readonly attribute jsval ad;
-
-  /**
-   * International Mobile Subscriber Identity
-   */
-  readonly attribute DOMString imsi;
-
-  /**
-   * Mobile Country Code
-   */
-  readonly attribute unsigned short mcc;
-
-  /**
-   * Mobile Network Code
-   */
-  readonly attribute unsigned short mnc;
-
-  /**
-   * Abbreviated dialling numbers
-   */
-  readonly attribute jsval adn;
-
-  /**
-   * Fixed Dialling Numbers
-   */
-  readonly attribute jsval fdn;
-};
-
 [scriptable, uuid(c0c5cb9f-6372-4b5a-b74c-baacc2da5e4f)]
 interface nsIVoicemailInfo : nsISupports
 {
@@ -272,21 +248,23 @@ interface nsIVoicemailInfo : nsISupports
   readonly attribute DOMString displayName;
 };
 
-[scriptable, uuid(e6dc89f2-0d4e-46fc-902c-cfeeaee15e40)]
+[scriptable, uuid(a09c42c3-1063-42f6-8022-268c6a0fe5e8)]
 interface nsIRilContext : nsISupports
 {
   readonly attribute DOMString radioState;
 
   readonly attribute DOMString cardState;
 
-  readonly attribute nsIICCRecords icc;
+  readonly attribute DOMString imsi;
+
+  readonly attribute nsIDOMMozMobileICCInfo iccInfo;
 
   readonly attribute nsIDOMMozMobileConnectionInfo voice;
 
   readonly attribute nsIDOMMozMobileConnectionInfo data;
 };
 
-[scriptable, uuid(8526675d-2be7-4289-9d97-71e30c712010)]
+[scriptable, uuid(385345ee-f78c-4be4-abd2-07d3dae4e208)]
 interface nsIRadioInterfaceLayer : nsISupports
 {
   const unsigned short CALL_STATE_UNKNOWN = 0;
@@ -330,6 +308,8 @@ interface nsIRadioInterfaceLayer : nsISupports
   void registerDataCallCallback(in nsIRILDataCallback callback);
   void unregisterDataCallCallback(in nsIRILDataCallback callback);
 
+  void updateRILNetworkInterface();
+
   /**
    * SMS-related functionality.
    */
@@ -353,4 +333,23 @@ interface nsIRadioInterfaceLayer : nsISupports
    */
   void getICCContacts(in DOMString contactType,
                       in nsIRILContactCallback callback);
+
+  /**
+   * Update ICC Contact.
+   *
+   * This function allows two operations: update the existing contact or
+   *                                      insert a new contact.
+   * If the contact has 'recordId' property, the corresponding record will be
+   * updated. If not, the contact will be inserted.
+   *
+   * @param contactType One of the values below.
+   *                    "ADN" (Abbreviated Dialling Numbers)
+   * @param contact     The contact will be updated.
+   *                    If has 'recordId' property, updates corresponding record.
+   *                    If not, finds a free record and updates it.
+   * @param callback    A nsIRILContactUpdateCallback object.
+   */
+  void updateICCContact(in DOMString contactType,
+                        in jsval contact,
+                        in nsIRILContactUpdateCallback callback);
 };

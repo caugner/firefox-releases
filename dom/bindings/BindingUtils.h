@@ -23,6 +23,7 @@
 #include "nsWrapperCacheInlines.h"
 #include "mozilla/Likely.h"
 #include "mozilla/dom/BindingDeclarations.h"
+#include "mozilla/dom/CallbackObject.h"
 
 // nsGlobalWindow implements nsWrapperCache, but doesn't always use it. Don't
 // try to use it without fixing that first.
@@ -102,14 +103,6 @@ UnwrapDOMObject(JSObject* obj)
              "Don't pass non-DOM objects to this function");
 
   JS::Value val = js::GetReservedSlot(obj, DOM_OBJECT_SLOT);
-  // XXXbz/khuey worker code tries to unwrap interface objects (which have
-  // nothing here).  That needs to stop.
-  // XXX We don't null-check UnwrapObject's result; aren't we going to crash
-  // anyway?
-  if (val.isUndefined()) {
-    return NULL;
-  }
-  
   return static_cast<T*>(val.toPrivate());
 }
 
@@ -702,13 +695,36 @@ HandleNewBindingWrappingFailure(JSContext* cx, JSObject* scope, T* value,
                                                   nullptr, true);
 }
 
-// Helper for smart pointers (nsAutoPtr/nsRefPtr/nsCOMPtr).
-template <template <typename> class SmartPtr, class T>
-MOZ_ALWAYS_INLINE bool
-HandleNewBindingWrappingFailure(JSContext* cx, JSObject* scope,
-                                const SmartPtr<T>& value, JS::Value* vp)
+// Helper for calling HandleNewBindingWrappingFailure with smart pointers
+// (nsAutoPtr/nsRefPtr/nsCOMPtr) or references.
+HAS_MEMBER(get)
+
+template <class T, bool isSmartPtr=HasgetMember<T>::Value>
+struct HandleNewBindingWrappingFailureHelper
 {
-  return HandleNewBindingWrappingFailure(cx, scope, value.get(), vp);
+  static inline bool Wrap(JSContext* cx, JSObject* scope, const T& value,
+                          JS::Value* vp)
+  {
+    return HandleNewBindingWrappingFailure(cx, scope, value.get(), vp);
+  }
+};
+
+template <class T>
+struct HandleNewBindingWrappingFailureHelper<T, false>
+{
+  static inline bool Wrap(JSContext* cx, JSObject* scope, T& value,
+                          JS::Value* vp)
+  {
+    return HandleNewBindingWrappingFailure(cx, scope, &value, vp);
+  }
+};
+
+template<class T>
+inline bool
+HandleNewBindingWrappingFailure(JSContext* cx, JSObject* scope, T& value,
+                                JS::Value* vp)
+{
+  return HandleNewBindingWrappingFailureHelper<T>::Wrap(cx, scope, value, vp);
 }
 
 template<bool Fatal>
@@ -1097,18 +1113,36 @@ struct GetParentObject<T, false>
   }
 };
 
+MOZ_ALWAYS_INLINE
+JSObject* GetJSObjectFromCallback(CallbackObject* callback)
+{
+  return callback->Callback();
+}
+
+MOZ_ALWAYS_INLINE
+JSObject* GetJSObjectFromCallback(void* noncallback)
+{
+  return nullptr;
+}
+
 template<typename T>
 static inline JSObject*
 WrapCallThisObject(JSContext* cx, JSObject* scope, const T& p)
 {
-  // WrapNativeParent is a bit of a Swiss army knife that will
-  // wrap anything for us.
-  JSObject* obj = WrapNativeParent(cx, scope, p);
+  // Callbacks are nsISupports, so WrapNativeParent will just happily wrap them
+  // up as an nsISupports XPCWrappedNative... which is not at all what we want.
+  // So we need to special-case them.
+  JSObject* obj = GetJSObjectFromCallback(p);
   if (!obj) {
-    return nullptr;
+    // WrapNativeParent is a bit of a Swiss army knife that will
+    // wrap anything for us.
+    obj = WrapNativeParent(cx, scope, p);
+    if (!obj) {
+      return nullptr;
+    }
   }
 
-  // But it won't necessarily put things in the compartment of cx.
+  // But all that won't necessarily put things in the compartment of cx.
   if (!JS_WrapObject(cx, &obj)) {
     return nullptr;
   }
@@ -1118,8 +1152,6 @@ WrapCallThisObject(JSContext* cx, JSObject* scope, const T& p)
 
 // Helper for calling WrapNewBindingObject with smart pointers
 // (nsAutoPtr/nsRefPtr/nsCOMPtr) or references.
-HAS_MEMBER(get)
-
 template <class T, bool isSmartPtr=HasgetMember<T>::Value>
 struct WrapNewBindingObjectHelper
 {
@@ -1146,6 +1178,41 @@ WrapNewBindingObject(JSContext* cx, JSObject* scope, T& value,
                      JS::Value* vp)
 {
   return WrapNewBindingObjectHelper<T>::Wrap(cx, scope, value, vp);
+}
+
+template <class T>
+inline JSObject*
+GetCallbackFromCallbackObject(T* aObj)
+{
+  return aObj->Callback();
+}
+
+// Helper for getting the callback JSObject* of a smart ptr around a
+// CallbackObject or a reference to a CallbackObject or something like
+// that.
+template <class T, bool isSmartPtr=HasgetMember<T>::Value>
+struct GetCallbackFromCallbackObjectHelper
+{
+  static inline JSObject* Get(const T& aObj)
+  {
+    return GetCallbackFromCallbackObject(aObj.get());
+  }
+};
+
+template <class T>
+struct GetCallbackFromCallbackObjectHelper<T, false>
+{
+  static inline JSObject* Get(T& aObj)
+  {
+    return GetCallbackFromCallbackObject(&aObj);
+  }
+};
+
+template<class T>
+inline JSObject*
+GetCallbackFromCallbackObject(T& aObj)
+{
+  return GetCallbackFromCallbackObjectHelper<T>::Get(aObj);
 }
 
 static inline bool
@@ -1359,6 +1426,8 @@ struct FakeDependentString {
     mFlags |= nsDependentString::F_VOIDED;
   }
 
+  // If this ever changes, change the corresponding code in the
+  // Optional<nsAString> specialization as well.
   const nsAString* ToAStringPtr() const {
     return reinterpret_cast<const nsDependentString*>(this);
   }
@@ -1450,97 +1519,6 @@ ConvertJSValueToString(JSContext* cx, const JS::Value& v, JS::Value* pval,
   result.SetData(chars, len);
   return true;
 }
-
-// Class for representing optional arguments.
-template<typename T>
-class Optional {
-public:
-  Optional() {}
-
-  bool WasPassed() const {
-    return !mImpl.empty();
-  }
-
-  void Construct() {
-    mImpl.construct();
-  }
-
-  template <class T1>
-  void Construct(const T1 &t1) {
-    mImpl.construct(t1);
-  }
-
-  template <class T1, class T2>
-  void Construct(const T1 &t1, const T2 &t2) {
-    mImpl.construct(t1, t2);
-  }
-
-  const T& Value() const {
-    return mImpl.ref();
-  }
-
-  T& Value() {
-    return mImpl.ref();
-  }
-
-  // If we ever decide to add conversion operators for optional arrays
-  // like the ones Nullable has, we'll need to ensure that Maybe<> has
-  // the boolean before the actual data.
-
-private:
-  // Forbid copy-construction and assignment
-  Optional(const Optional& other) MOZ_DELETE;
-  const Optional &operator=(const Optional &other) MOZ_DELETE;
-  
-  Maybe<T> mImpl;
-};
-
-// Specialization for strings.
-template<>
-class Optional<nsAString> {
-public:
-  Optional() : mPassed(false) {}
-
-  bool WasPassed() const {
-    return mPassed;
-  }
-
-  void operator=(const nsAString* str) {
-    MOZ_ASSERT(str);
-    mStr = str;
-    mPassed = true;
-  }
-
-  void operator=(const FakeDependentString* str) {
-    MOZ_ASSERT(str);
-    mStr = str->ToAStringPtr();
-    mPassed = true;
-  }
-
-  const nsAString& Value() const {
-    MOZ_ASSERT(WasPassed());
-    return *mStr;
-  }
-
-private:
-  // Forbid copy-construction and assignment
-  Optional(const Optional& other) MOZ_DELETE;
-  const Optional &operator=(const Optional &other) MOZ_DELETE;
-  
-  bool mPassed;
-  const nsAString* mStr;
-};
-
-// Class for representing sequences in arguments.  We use an auto array that can
-// hold 16 elements, to avoid having to allocate in common cases.  This needs to
-// be fallible because web content controls the length of the array, and can
-// easily try to create very large lengths.
-template<typename T>
-class Sequence : public AutoFallibleTArray<T, 16>
-{
-public:
-  Sequence() : AutoFallibleTArray<T, 16>() {}
-};
 
 // Class for holding the type of members of a union. The union type has an enum
 // to keep track of which of its UnionMembers has been constructed.
@@ -1697,6 +1675,18 @@ NativeToString(JSContext* cx, JSObject* wrapper, JSObject* obj, const char* pre,
 
 nsresult
 ReparentWrapper(JSContext* aCx, JSObject* aObj);
+
+/**
+ * Used to implement the hasInstance hook of an interface object.
+ *
+ * instance should not be a security wrapper.
+ */
+JSBool
+InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSObject* instance,
+                     JSBool* bp);
+JSBool
+InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSMutableHandleValue vp,
+                     JSBool* bp);
 
 } // namespace dom
 } // namespace mozilla

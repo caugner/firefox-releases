@@ -12,7 +12,6 @@ NavHistoryObserver.prototype = {
   onEndUpdateBatch: function() { },
   onVisit: function() { },
   onTitleChanged: function() { },
-  onBeforeDeleteURI: function() { },
   onDeleteURI: function() { },
   onClearHistory: function() { },
   onPageChanged: function() { },
@@ -95,18 +94,6 @@ add_task(function test_onVisit() {
   yield promiseNotify;
 });
 
-add_task(function test_onBeforeDeleteURI() {
-  let promiseNotify = onNotify(function onBeforeDeleteURI(aURI, aGUID,
-                                                          aReason) {
-    do_check_true(aURI.equals(testuri));
-    do_check_guid_for_uri(aURI, aGUID);
-    do_check_eq(aReason, Ci.nsINavHistoryObserver.REASON_DELETED);
-  });
-  let [testuri] = yield task_add_visit();
-  PlacesUtils.bhistory.removePage(testuri);
-  yield promiseNotify;
-});
-
 add_task(function test_onDeleteURI() {
   let promiseNotify = onNotify(function onDeleteURI(aURI, aGUID, aReason) {
     do_check_true(aURI.equals(testuri));
@@ -150,7 +137,10 @@ add_task(function test_onTitleChanged() {
 
   let [testuri] = yield task_add_visit();
   let title = "test-title";
-  PlacesUtils.history.setPageTitle(testuri, title);
+  yield promiseAddVisits({
+    uri: testuri,
+    title: title
+  });
   yield promiseNotify;
 });
 

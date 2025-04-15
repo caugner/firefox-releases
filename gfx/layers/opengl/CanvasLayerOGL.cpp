@@ -83,15 +83,7 @@ MakeIOSurfaceTexture(void* aCGIOSurfaceContext, mozilla::gl::GLContext* aGL)
 
   return ioSurfaceTexture;
 }
-
-#else
-static GLuint
-MakeIOSurfaceTexture(void* aCGIOSurfaceContext, mozilla::gl::GLContext* aGL)
-{
-  NS_RUNTIMEABORT("Not implemented");
-  return 0;
-}
-#endif
+#endif // XP_MACOSX
 
 void
 CanvasLayerOGL::Destroy()
@@ -124,7 +116,7 @@ CanvasLayerOGL::Initialize(const Data& aData)
     return;
   } else if (aData.mDrawTarget) {
     mDrawTarget = aData.mDrawTarget;
-    mCanvasSurface = gfxPlatform::GetPlatform()->GetThebesSurfaceForDrawTarget(mDrawTarget);
+    mCanvasSurface = gfxPlatform::GetPlatform()->CreateThebesSurfaceAliasForDrawTarget_hack(mDrawTarget);
     mNeedsYFlip = false;
   } else if (aData.mSurface) {
     mCanvasSurface = aData.mSurface;

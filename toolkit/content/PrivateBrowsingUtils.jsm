@@ -27,18 +27,13 @@ this.PrivateBrowsingUtils = {
   },
 
   get permanentPrivateBrowsing() {
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
-    return gTemporaryAutoStartMode ||
-           Services.prefs.getBoolPref(kAutoStartPref, false);
-#else
     try {
-      return Cc["@mozilla.org/privatebrowsing;1"].
-             getService(Ci.nsIPrivateBrowsingService).
-             autoStarted;
+      return gTemporaryAutoStartMode ||
+             Services.prefs.getBoolPref(kAutoStartPref);
     } catch (e) {
-      return false; // PB not supported
+      // The pref does not exist
+      return false;
     }
-#endif
   },
 
   // These should only be used from internal code

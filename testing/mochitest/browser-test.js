@@ -19,7 +19,9 @@ function testOnLoad() {
   window.removeEventListener("load", testOnLoad, false);
 
   gConfig = readConfig();
-  if (gConfig.testRoot == "browser" || gConfig.testRoot == "webapprtChrome") {
+  if (gConfig.testRoot == "browser" ||
+      gConfig.testRoot == "metro" ||
+      gConfig.testRoot == "webapprtChrome") {
     // Make sure to launch the test harness for the first opened window only
     var prefs = Services.prefs;
     if (prefs.prefHasUserValue("testing.browserTestHarness.running"))
@@ -254,6 +256,13 @@ Tester.prototype = {
       }
 
       Object.keys(window).forEach(function (prop) {
+        if (parseInt(prop) == prop) {
+          // This is a string which when parsed as an integer and then
+          // stringified gives the original string.  As in, this is in fact a
+          // string representation of an integer, so an index into
+          // window.frames.  Skip those.
+          return;
+        }
         if (this._globalProperties.indexOf(prop) == -1) {
           this._globalProperties.push(prop);
           if (this._globalPropertyWhitelist.indexOf(prop) == -1)

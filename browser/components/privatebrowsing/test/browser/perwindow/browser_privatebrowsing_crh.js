@@ -23,7 +23,7 @@ function test() {
   };
 
   let windowsToClose = [];
-  let testURI = "about:blank";
+  let testURI = "http://mochi.test:8888/";
 
   function testOnWindow(aIsPrivate, aCallback) {
     whenNewWindowLoaded({private: aIsPrivate}, function(aWin) {
@@ -42,17 +42,17 @@ function test() {
   };
 
   registerCleanupFunction(function() {
-    windowsToClose.forEach(function(win) {
-      win.close();
+    windowsToClose.forEach(function(aWin) {
+      aWin.close();
     });
   });
 
-  testOnWindow(true, function(win) {
+  testOnWindow(true, function(aWin) {
     info("Test on private window");
-    checkDisableOption(true, win, function() {
-      testOnWindow(false, function(win) {
+    checkDisableOption(true, aWin, function() {
+      testOnWindow(false, function(aPrivWin) {
         info("Test on public window");
-        checkDisableOption(false, win, finish);
+        checkDisableOption(false, aPrivWin, finish);
       });
     });
   });

@@ -16,12 +16,12 @@
 #include "mozilla/dom/TabParent.h"
 #include "mozilla/dom/network/TCPSocketParent.h"
 #include "mozilla/ipc/URIUtils.h"
-#include "mozilla/Preferences.h"
 #include "mozilla/LoadContext.h"
 #include "nsPrintfCString.h"
 #include "nsHTMLDNSPrefetch.h"
 #include "nsIAppsService.h"
 #include "nsEscape.h"
+#include "RemoteOpenFileParent.h"
 
 using mozilla::dom::TabParent;
 using mozilla::net::PTCPSocketParent;
@@ -31,15 +31,10 @@ using IPC::SerializedLoadContext;
 namespace mozilla {
 namespace net {
 
-static bool gDisableIPCSecurity = false;
-static const char kPrefDisableIPCSecurity[] = "network.disable.ipc.security";
-
 // C++ file contents
 NeckoParent::NeckoParent()
 {
-  Preferences::AddBoolVarCache(&gDisableIPCSecurity, kPrefDisableIPCSecurity);
-
-  if (!gDisableIPCSecurity) {
+  if (UsingNeckoIPCSecurity()) {
     // cache values for core/packaged apps basepaths
     nsAutoString corePath, webPath;
     nsCOMPtr<nsIAppsService> appsService = do_GetService(APPS_SERVICE_CONTRACTID);
@@ -76,7 +71,7 @@ NeckoParent::GetValidatedAppInfo(const SerializedLoadContext& aSerialized,
                                  uint32_t* aAppId,
                                  bool* aInBrowserElement)
 {
-  if (!gDisableIPCSecurity) {
+  if (UsingNeckoIPCSecurity()) {
     if (!aBrowser) {
       return "missing required PBrowser argument";
     }
@@ -102,7 +97,7 @@ NeckoParent::GetValidatedAppInfo(const SerializedLoadContext& aSerialized,
       if (tabParent->HasOwnApp()) {
         return "TabParent reports NECKO_NO_APP_ID but also is an app";
       }
-      if (!gDisableIPCSecurity && tabParent->IsBrowserElement()) {
+      if (UsingNeckoIPCSecurity() && tabParent->IsBrowserElement()) {
         // <iframe mozbrowser> which doesn't have an <iframe mozapp> above it.
         // This is not supported now, and we'll need to do a code audit to make
         // sure we can handle it (i.e don't short-circuit using separate
@@ -113,8 +108,8 @@ NeckoParent::GetValidatedAppInfo(const SerializedLoadContext& aSerialized,
   } else {
     // Only trust appId/inBrowser from child-side loadcontext if we're in
     // testing mode: allows xpcshell tests to masquerade as apps
-    MOZ_ASSERT(gDisableIPCSecurity);
-    if (!gDisableIPCSecurity) {
+    MOZ_ASSERT(!UsingNeckoIPCSecurity());
+    if (UsingNeckoIPCSecurity()) {
       return "internal error";
     }
     if (aSerialized.IsNotNull()) {
@@ -145,7 +140,7 @@ NeckoParent::CreateChannelLoadContext(PBrowserParent* aBrowser,
     topFrameElement = tabParent->GetOwnerElement();
   }
 
-  // if gDisableIPCSecurity, we may not have a LoadContext to set. This is
+  // if !UsingNeckoIPCSecurity(), we may not have a LoadContext to set. This is
   // the common case for most xpcshell tests.
   if (aSerialized.IsNotNull()) {
     aResult = new LoadContext(aSerialized, topFrameElement, appId, inBrowser);
@@ -274,6 +269,11 @@ NeckoParent::AllocPTCPSocket(const nsString& aHost,
                              const nsString& aBinaryType,
                              PBrowserParent* aBrowser)
 {
+  if (UsingNeckoIPCSecurity() && !aBrowser) {
+    printf_stderr("NeckoParent::AllocPTCPSocket: FATAL error: no browser present \
+                   KILLING CHILD PROCESS\n");
+    return nullptr;
+  }
   TCPSocketParent* p = new TCPSocketParent();
   p->AddRef();
   return p;
@@ -310,7 +310,7 @@ NeckoParent::AllocPRemoteOpenFile(const URIParams& aURI,
   }
 
   // security checks
-  if (!gDisableIPCSecurity) {
+  if (UsingNeckoIPCSecurity()) {
     if (!aBrowser) {
       printf_stderr("NeckoParent::AllocPRemoteOpenFile: "
                     "FATAL error: missing TabParent: KILLING CHILD PROCESS\n");
@@ -370,8 +370,8 @@ NeckoParent::AllocPRemoteOpenFile(const URIParams& aURI,
       if (PL_strnstr(requestedPath.BeginReading(), "/../",
                      requestedPath.Length())) {
         printf_stderr("NeckoParent::AllocPRemoteOpenFile: "
-                      "FATAL error: requested file URI contains '/../' "
-                      "KILLING CHILD PROCESS\n");
+                      "FATAL error: requested file URI '%s' contains '/../' "
+                      "KILLING CHILD PROCESS\n", requestedPath.get());
         return nullptr;
       }
     } else {
@@ -391,8 +391,10 @@ NeckoParent::AllocPRemoteOpenFile(const URIParams& aURI,
                                 NS_LossyConvertUTF16toASCII(uuid).get());
       if (!requestedPath.Equals(mustMatch)) {
         printf_stderr("NeckoParent::AllocPRemoteOpenFile: "
-                      "FATAL error: requesting file other than application.zip: "
-                      "KILLING CHILD PROCESS\n");
+                      "FATAL error: app without webapps-manage permission is "
+                      "requesting file '%s' but is only allowed to open its "
+                      "own application.zip: KILLING CHILD PROCESS\n",
+                      requestedPath.get());
         return nullptr;
       }
     }
@@ -400,6 +402,14 @@ NeckoParent::AllocPRemoteOpenFile(const URIParams& aURI,
 
   RemoteOpenFileParent* parent = new RemoteOpenFileParent(fileURL);
   return parent;
+}
+
+bool
+NeckoParent::RecvPRemoteOpenFileConstructor(PRemoteOpenFileParent* aActor,
+                                            const URIParams& aFileURI,
+                                            PBrowserParent* aBrowser)
+{
+  return static_cast<RemoteOpenFileParent*>(aActor)->OpenSendCloseDelete();
 }
 
 bool
@@ -427,4 +437,3 @@ NeckoParent::RecvCancelHTMLDNSPrefetch(const nsString& hostname,
 }
 
 }} // mozilla::net
-

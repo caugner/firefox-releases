@@ -37,9 +37,6 @@ const OBSERVING = [
   "browser-lastwindow-close-granted",
   "quit-application", "browser:purge-session-history",
   "browser:purge-domain-data"
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-  ,"private-browsing", "private-browsing-change-granted"
-#endif
 ];
 
 // XUL Window properties to (re)store
@@ -79,11 +76,11 @@ Cu.import("resource://gre/modules/Services.jsm", this);
 Cu.import("resource://gre/modules/XPCOMUtils.jsm", this);
 // debug.js adds NS_ASSERT. cf. bug 669196
 Cu.import("resource://gre/modules/debug.js", this);
-Cu.import("resource:///modules/TelemetryTimestamps.jsm", this);
+Cu.import("resource://gre/modules/TelemetryTimestamps.jsm", this);
 Cu.import("resource://gre/modules/TelemetryStopwatch.jsm", this);
 Cu.import("resource://gre/modules/osfile.jsm", this);
 Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm", this);
-Cu.import("resource://gre/modules/commonjs/promise/core.js", this);
+Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", this);
 
 XPCOMUtils.defineLazyServiceGetter(this, "gSessionStartup",
   "@mozilla.org/browser/sessionstartup;1", "nsISessionStartup");
@@ -110,6 +107,10 @@ function debug(aMsg) {
 }
 
 this.SessionStore = {
+  get promiseInitialized() {
+    return SessionStoreInternal.promiseInitialized.promise;
+  },
+
   get canRestoreLastSession() {
     return SessionStoreInternal.canRestoreLastSession;
   },
@@ -269,11 +270,6 @@ let SessionStoreInternal = {
   // counts the number of crashes since the last clean start
   _recentCrashes: 0,
 
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-  // whether we are in private browsing mode
-  _inPrivateBrowsing: false,
-#endif
-
   // whether the last window was closed and should be restored
   _restoreLastWindow: false,
 
@@ -317,14 +313,16 @@ let SessionStoreInternal = {
   // "sessionstore.resume_from_crash" is true.
   _resume_session_once_on_shutdown: null,
 
+  /**
+   * A promise fulfilled once initialization is complete.
+   */
+  get promiseInitialized() {
+    return this._promiseInitialization;
+  },
+
   /* ........ Public Getters .............. */
   get canRestoreLastSession() {
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
     return this._lastSessionState;
-#else
-    // Always disallow restoring the previous session when in private browsing
-    return this._lastSessionState && !this._inPrivateBrowsing;
-#endif
   },
 
   set canRestoreLastSession(val) {
@@ -347,12 +345,6 @@ let SessionStoreInternal = {
     OBSERVING.forEach(function(aTopic) {
       Services.obs.addObserver(this, aTopic, true);
     }, this);
-
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-    var pbs = Cc["@mozilla.org/privatebrowsing;1"].
-              getService(Ci.nsIPrivateBrowsingService);
-    this._inPrivateBrowsing = pbs.privateBrowsingEnabled;
-#endif
 
     this._initPrefs();
 
@@ -614,14 +606,6 @@ let SessionStoreInternal = {
       case "timer-callback": // timer call back for delayed saving
         this.onTimerCallback();
         break;
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-      case "private-browsing":
-        this.onPrivateBrowsing(aSubject, aData);
-        break;
-      case "private-browsing-change-granted":
-        this.onPrivateBrowsingChangeGranted(aData);
-        break;
-#endif
     }
   },
 
@@ -704,10 +688,8 @@ let SessionStoreInternal = {
     this._internalWindows[aWindow.__SSi] = { hosts: {} }
 
     let isPrivateWindow = false;
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
     if (PrivateBrowsingUtils.isWindowPrivate(aWindow))
       this._windows[aWindow.__SSi].isPrivate = isPrivateWindow = true;
-#endif
     if (!this._isWindowLoaded(aWindow))
       this._windows[aWindow.__SSi]._restoring = true;
     if (!aWindow.toolbar.visible)
@@ -756,7 +738,6 @@ let SessionStoreInternal = {
       let followUp = this._statesToRestore[aWindow.__SS_restoreID].windows.length == 1;
       this.restoreWindow(aWindow, this._statesToRestore[aWindow.__SS_restoreID], true, followUp);
     }
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
     // The user opened another, non-private window after starting up with
     // a single private one. Let's restore the session we actually wanted to
     // restore at startup.
@@ -769,16 +750,9 @@ let SessionStoreInternal = {
       this.restoreWindow(aWindow, this._deferredInitialState, true);
       this._deferredInitialState = null;
     }
-#endif
     else if (this._restoreLastWindow && aWindow.toolbar.visible &&
-             this._closedWindows.length
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
-             && !isPrivateWindow
-#else
-             && !this._inPrivateBrowsing
-#endif
-             ) {
-      
+             this._closedWindows.length && !isPrivateWindow) {
+
       // default to the most-recently closed window
       // don't use popup windows
       let closedWindowState = null;
@@ -936,16 +910,10 @@ let SessionStoreInternal = {
       winData._shouldRestore = true;
 #endif
 
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
       // Save the window if it has multiple tabs or a single saveable tab and
       // it's not private.
       if (!winData.isPrivate && (winData.tabs.length > 1 ||
           (winData.tabs.length == 1 && this._shouldSaveTabState(winData.tabs[0])))) {
-#else
-      // save the window if it has multiple tabs or a single saveable tab
-      if (winData.tabs.length > 1 ||
-          (winData.tabs.length == 1 && this._shouldSaveTabState(winData.tabs[0]))) {
-#endif
         // we don't want to save the busy state
         delete winData.busy;
 
@@ -1212,65 +1180,6 @@ let SessionStoreInternal = {
     this._saveTimer = null;
     this.saveState();
   },
-
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-  /**
-   * On private browsing
-   * @param aSubject
-   *        Window reference
-   * @param aData
-   *        String whether to enter or exit private browsing
-   */
-  onPrivateBrowsing: function ssi_onPrivateBrowsing(aSubject, aData) {
-    switch (aData) {
-      case "enter":
-        this._inPrivateBrowsing = true;
-        break;
-      case "exit":
-        aSubject.QueryInterface(Ci.nsISupportsPRBool);
-        let quitting = aSubject.data;
-        if (quitting) {
-          // save the backed up state with session set to stopped,
-          // otherwise resuming next time would look like a crash.
-          // Whether we restore the session upon resume will be determined by the
-          // usual startup prefs, so we will have the same behavior regardless of
-          // whether the browser was closed while in normal or private browsing mode.
-          if ("_stateBackup" in this) {
-            var oState = this._stateBackup;
-            oState.session = { state: STATE_STOPPED_STR };
-
-            this._saveStateObject(oState);
-          }
-        }
-        else
-          this._inPrivateBrowsing = false;
-        delete this._stateBackup;
-        break;
-    }
-
-    this._clearRestoringWindows();
-  },
-
-  /**
-   * On private browsing change granted
-   * @param aData
-   *        String whether to enter or exit private browsing
-   */
-  onPrivateBrowsingChangeGranted: function ssi_onPrivateBrowsingChangeGranted(aData) {
-    if (aData == "enter") {
-      this.saveState(true);
-      // We stringify & parse the current state so that we have have an object
-      // that won't change. _getCurrentState returns an object with references
-      // to objects that can change (specifically this._windows[x]).
-      this._stateBackup = JSON.parse(this._toJSONString(this._getCurrentState(true)));
-    }
-    // Make sure _tabsToRestore is cleared. It will be repopulated when
-    // entering/exiting private browsing (by calls to setBrowserState).
-    this._resetRestoringState();
-
-    this._clearRestoringWindows();
-  },
-#endif
 
   /**
    * set up listeners for a new tab
@@ -1571,7 +1480,9 @@ let SessionStoreInternal = {
     let newTab = aTab == aWindow.gBrowser.selectedTab ?
       aWindow.gBrowser.addTab(null, {relatedToCurrent: true, ownerTab: aTab}) :
       aWindow.gBrowser.addTab();
-    this.restoreHistoryPrecursor(aWindow, [newTab], [tabState], 0, 0, 0);
+
+    this.restoreHistoryPrecursor(aWindow, [newTab], [tabState], 0, 0, 0,
+                                 true /* Load this tab right away. */);
 
     return newTab;
   },
@@ -1793,13 +1704,6 @@ let SessionStoreInternal = {
     let lastWindow = this._getMostRecentBrowserWindow();
     let canUseLastWindow = lastWindow &&
                            !lastWindow.__SS_lastSessionWindowID;
-    let lastSessionFocusedWindow = null;
-    this.windowToFocus = lastWindow;
-
-    // move the last focused window to the start of the array so that we
-    // minimize window movement (see bug 669272)
-    lastSessionState.windows.unshift(
-      lastSessionState.windows.splice(lastSessionState.selectedWindow - 1, 1)[0]);
 
     // Restore into windows or open new ones as needed.
     for (let i = 0; i < lastSessionState.windows.length; i++) {
@@ -1837,18 +1741,9 @@ let SessionStoreInternal = {
         //        weirdness but we will still merge other extData.
         //        Bug 588217 should make this go away by merging the group data.
         this.restoreWindow(windowToUse, { windows: [winState] }, canOverwriteTabs, true);
-        if (i == 0)
-          lastSessionFocusedWindow = windowToUse;
-
-        // if we overwrote the tabs for our last focused window, we should
-        // give focus to the window that had it in the previous session
-        if (canOverwriteTabs && windowToUse == lastWindow)
-          this.windowToFocus = lastSessionFocusedWindow;
       }
       else {
-        let win = this._openWindowWithState({ windows: [winState] });
-        if (i == 0)
-          lastSessionFocusedWindow = win;
+        this._openWindowWithState({ windows: [winState] });
       }
     }
 
@@ -2771,17 +2666,17 @@ let SessionStoreInternal = {
     var winData;
     if (!root.selectedWindow || root.selectedWindow > root.windows.length) {
       root.selectedWindow = 0;
-    } else {
-      // put the selected window at the beginning of the array to ensure that
-      // it gets restored first
-      root.windows.unshift(root.windows.splice(root.selectedWindow - 1, 1)[0]);
     }
+
     // open new windows for all further window entries of a multi-window session
     // (unless they don't contain any tab data)
     for (var w = 1; w < root.windows.length; w++) {
       winData = root.windows[w];
       if (winData && winData.tabs && winData.tabs[0]) {
         var window = this._openWindowWithState({ windows: [winData] });
+        if (w == root.selectedWindow - 1) {
+          this.windowToFocus = window;
+        }
       }
     }
     winData = root.windows[0];
@@ -3007,9 +2902,13 @@ let SessionStoreInternal = {
    *        Index of the next tab to check readyness for
    * @param aCount
    *        Counter for number of times delaying b/c browser or history aren't ready
+   * @param aRestoreImmediately
+   *        Flag to indicate whether the given set of tabs aTabs should be
+   *        restored/loaded immediately even if restore_on_demand = true
    */
   restoreHistoryPrecursor:
-    function ssi_restoreHistoryPrecursor(aWindow, aTabs, aTabData, aSelectTab, aIx, aCount) {
+    function ssi_restoreHistoryPrecursor(aWindow, aTabs, aTabData, aSelectTab,
+                                         aIx, aCount, aRestoreImmediately = false) {
     var tabbrowser = aWindow.gBrowser;
 
     // make sure that all browsers and their histories are available
@@ -3023,7 +2922,8 @@ let SessionStoreInternal = {
       catch (ex) { // in case browser or history aren't ready yet
         if (aCount < 10) {
           var restoreHistoryFunc = function(self) {
-            self.restoreHistoryPrecursor(aWindow, aTabs, aTabData, aSelectTab, aIx, aCount + 1);
+            self.restoreHistoryPrecursor(aWindow, aTabs, aTabData, aSelectTab,
+                                         aIx, aCount + 1, aRestoreImmediately);
           }
           aWindow.setTimeout(restoreHistoryFunc, 100, this);
           return;
@@ -3122,7 +3022,8 @@ let SessionStoreInternal = {
     // identifiers.
     var idMap = { used: {} };
     var docIdentMap = {};
-    this.restoreHistory(aWindow, aTabs, aTabData, idMap, docIdentMap);
+    this.restoreHistory(aWindow, aTabs, aTabData, idMap, docIdentMap,
+                        aRestoreImmediately);
   },
 
   /**
@@ -3135,9 +3036,13 @@ let SessionStoreInternal = {
    *        Array of tab data
    * @param aIdMap
    *        Hash for ensuring unique frame IDs
+   * @param aRestoreImmediately
+   *        Flag to indicate whether the given set of tabs aTabs should be
+   *        restored/loaded immediately even if restore_on_demand = true
    */
   restoreHistory:
-    function ssi_restoreHistory(aWindow, aTabs, aTabData, aIdMap, aDocIdentMap) {
+    function ssi_restoreHistory(aWindow, aTabs, aTabData, aIdMap, aDocIdentMap,
+                                aRestoreImmediately) {
     var _this = this;
     // if the tab got removed before being completely restored, then skip it
     while (aTabs.length > 0 && !(this._canRestoreTabHistory(aTabs[0]))) {
@@ -3204,12 +3109,13 @@ let SessionStoreInternal = {
 
     // Restore the history in the next tab
     aWindow.setTimeout(function(){
-      _this.restoreHistory(aWindow, aTabs, aTabData, aIdMap, aDocIdentMap);
+      _this.restoreHistory(aWindow, aTabs, aTabData, aIdMap, aDocIdentMap,
+                           aRestoreImmediately);
     }, 0);
 
     // This could cause us to ignore MAX_CONCURRENT_TAB_RESTORES a bit, but
     // it ensures each window will have its selected tab loaded.
-    if (aWindow.gBrowser.selectedBrowser == browser) {
+    if (aRestoreImmediately || aWindow.gBrowser.selectedBrowser == browser) {
       this.restoreTab(tab);
     }
     else {
@@ -3708,11 +3614,7 @@ let SessionStoreInternal = {
       this._dirtyWindows[aWindow.__SSi] = true;
     }
 
-    if (!this._saveTimer
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-        && !this._inPrivateBrowsing
-#endif
-       ) {
+    if (!this._saveTimer) {
       // interval until the next disk operation is allowed
       var minimalDelay = this._lastSaveTime + this._interval - Date.now();
 
@@ -3734,25 +3636,20 @@ let SessionStoreInternal = {
    *        Bool update all windows
    */
   saveState: function ssi_saveState(aUpdateAll) {
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-    // if we're in private browsing mode, do nothing
-    if (this._inPrivateBrowsing)
-      return;
-#endif
-
     // If crash recovery is disabled, we only want to resume with pinned tabs
     // if we crash.
     let pinnedOnly = this._loadState == STATE_RUNNING && !this._resume_from_crash;
 
     TelemetryStopwatch.start("FX_SESSION_RESTORE_COLLECT_DATA_MS");
+    TelemetryStopwatch.start("FX_SESSION_RESTORE_COLLECT_DATA_LONGEST_OP_MS");
 
     var oState = this._getCurrentState(aUpdateAll, pinnedOnly);
     if (!oState) {
       TelemetryStopwatch.cancel("FX_SESSION_RESTORE_COLLECT_DATA_MS");
+      TelemetryStopwatch.cancel("FX_SESSION_RESTORE_COLLECT_DATA_LONGEST_OP_MS");
       return;
     }
 
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
     // Forget about private windows.
     for (let i = oState.windows.length - 1; i >= 0; i--) {
       if (oState.windows[i].isPrivate) {
@@ -3763,20 +3660,21 @@ let SessionStoreInternal = {
       }
     }
 
+#ifndef XP_MACOSX
     // Don't save invalid states.
-    // Looks like we currently have private windows, only.
+    // Looks we currently have private windows, only.
     if (oState.windows.length == 0) {
       TelemetryStopwatch.cancel("FX_SESSION_RESTORE_COLLECT_DATA_MS");
       TelemetryStopwatch.cancel("FX_SESSION_RESTORE_COLLECT_DATA_LONGEST_OP_MS");
       return;
     }
+#endif
 
     for (let i = oState._closedWindows.length - 1; i >= 0; i--) {
       if (oState._closedWindows[i].isPrivate) {
         oState._closedWindows.splice(i, 1);
       }
     }
-#endif
 
 #ifndef XP_MACOSX
     // We want to restore closed windows that are marked with _shouldRestore.
@@ -3813,6 +3711,7 @@ let SessionStoreInternal = {
       oState.lastSessionState = this._lastSessionState;
 
     TelemetryStopwatch.finish("FX_SESSION_RESTORE_COLLECT_DATA_MS");
+    TelemetryStopwatch.finish("FX_SESSION_RESTORE_COLLECT_DATA_LONGEST_OP_MS");
 
     this._saveStateObject(oState);
   },
@@ -3822,8 +3721,10 @@ let SessionStoreInternal = {
    */
   _saveStateObject: function ssi_saveStateObject(aStateObj) {
     TelemetryStopwatch.start("FX_SESSION_RESTORE_SERIALIZE_DATA_MS");
+    TelemetryStopwatch.start("FX_SESSION_RESTORE_SERIALIZE_DATA_LONGEST_OP_MS");
     let data = this._toJSONString(aStateObj);
     TelemetryStopwatch.finish("FX_SESSION_RESTORE_SERIALIZE_DATA_MS");
+    TelemetryStopwatch.finish("FX_SESSION_RESTORE_SERIALIZE_DATA_LONGEST_OP_MS");
 
     let stateString = this._createSupportsString(data);
     Services.obs.notifyObservers(stateString, "sessionstore-state-write", "");
@@ -3939,11 +3840,9 @@ let SessionStoreInternal = {
         features += "," + aFeature + "=" + winState[aFeature];
     });
 
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
     if (winState.isPrivate) {
       features += ",private";
     }
-#endif
 
     var window =
       Services.ww.openWindow(null, this._prefBranch.getCharPref("chromeURL"),

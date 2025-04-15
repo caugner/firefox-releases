@@ -27,9 +27,7 @@ let LOG = OS.Shared.LOG.bind(OS.Shared, "Controller");
 let isTypedArray = OS.Shared.isTypedArray;
 
 // A simple flag used to control debugging messages.
-// FIXME: Once this library has been battle-tested, this flag will
-// either be removed or replaced with a preference.
-const DEBUG = false;
+let DEBUG = OS.Shared.DEBUG;
 
 // The constructor for file errors.
 let OSError;
@@ -47,7 +45,7 @@ if (OS.Constants.Win) {
 let Type = OS.Shared.Type;
 
 // The library of promises.
-Components.utils.import("resource://gre/modules/commonjs/promise/core.js", this);
+Components.utils.import("resource://gre/modules/commonjs/sdk/core/promise.js", this);
 
 // The implementation of communications
 Components.utils.import("resource://gre/modules/osfile/_PromiseWorker.jsm", this);
@@ -91,8 +89,7 @@ const noOptions = {};
 
 
 let worker = new PromiseWorker(
-  "resource://gre/modules/osfile/osfile_async_worker.js",
-  DEBUG?LOG:null);
+  "resource://gre/modules/osfile/osfile_async_worker.js", LOG);
 let Scheduler = {
   post: function post(...args) {
     let promise = worker.post.apply(worker, args);
@@ -109,6 +106,24 @@ let Scheduler = {
     );
   }
 };
+
+// Update worker's DEBUG flag if it's true.
+if (DEBUG === true) {
+  Scheduler.post("SET_DEBUG", [DEBUG]);
+}
+
+// Define a new getter and setter for OS.Shared.DEBUG to be able to watch
+// for changes to it and update worker's DEBUG accordingly.
+Object.defineProperty(OS.Shared, "DEBUG", {
+    configurable: true,
+    get: function () {
+        return DEBUG;
+    },
+    set: function (newVal) {
+        Scheduler.post("SET_DEBUG", [newVal]);
+        DEBUG = newVal;
+    }
+});
 
 /**
  * Representation of a file, with asynchronous methods.
@@ -240,37 +255,13 @@ File.prototype = {
    * @resolves {Uint8Array} An array containing the bytes read.
    */
   read: function read(nbytes) {
-    // FIXME: Once bug 720949 has landed, we might be able to simplify
-    // the implementation of |readAll|
-    let self = this;
-    let promise;
-    if (nbytes != null) {
-      promise = Promise.resolve(nbytes);
-    } else {
-      promise = this.stat();
-      promise = promise.then(function withStat(stat) {
-        return stat.size;
+    let promise = Scheduler.post("File_prototype_read",
+      [this._fdmsg,
+       nbytes]);
+    return promise.then(
+      function onSuccess(data) {
+        return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
       });
-    }
-    let array;
-    let size;
-    promise = promise.then(
-      function withSize(aSize) {
-        size = aSize;
-        array = new Uint8Array(size);
-        return self.readTo(array);
-      }
-    );
-    promise = promise.then(
-      function afterReadTo(bytes) {
-        if (bytes == size) {
-          return array;
-        } else {
-          return array.subarray(0, bytes);
-        }
-      }
-    );
-    return promise;
   },
 
   /**
@@ -475,8 +466,12 @@ File.makeDir = function makeDir(path, options) {
  * read from the file.
  */
 File.read = function read(path, bytes) {
-  return Scheduler.post("read",
+  let promise = Scheduler.post("read",
     [Type.path.toMsg(path), bytes], path);
+  return promise.then(
+    function onSuccess(data) {
+      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    });
 };
 
 /**
@@ -498,6 +493,14 @@ File.exists = function exists(path) {
  * until the contents are fully written, the destination file is
  * not modified.
  *
+ * By default, files are flushed for additional safety, i.e. to lower
+ * the risks of losing data in case the device is suddenly removed or
+ * in case of sudden shutdown. This additional safety is important
+ * for user-critical data (e.g. preferences, application data, etc.)
+ * but comes at a performance cost. For non-critical data (e.g. cache,
+ * thumbnails, etc.), you may wish to deactivate flushing by passing
+ * option |flush: false|.
+ *
  * Important note: In the current implementation, option |tmpPath|
  * is required. This requirement should disappear as part of bug 793660.
  *
@@ -510,6 +513,13 @@ File.exists = function exists(path) {
  * - {string} tmpPath The path at which to write the temporary file.
  * - {bool} noOverwrite - If set, this function will fail if a file already
  * exists at |path|. The |tmpPath| is not overwritten if |path| exist.
+ * - {bool} flush - If set to |false|, the function will not flush the
+ * file. This improves performance considerably, but the resulting
+ * behavior is slightly less safe: if the system shuts down improperly
+ * (typically due to a kernel freeze or a power failure) or if the
+ * device is disconnected or removed before the buffer is flushed, the
+ * file may be corrupted.
+ *
  *
  * @return {promise}
  * @resolves {number} The number of bytes actually written.
@@ -543,8 +553,24 @@ File.writeAtomic = function writeAtomic(path, buffer, options) {
 File.Info = function Info(value) {
   return value;
 };
+if (OS.Constants.Win) {
+  File.Info.prototype = Object.create(OS.Shared.Win.AbstractInfo.prototype);
+} else if (OS.Constants.libc) {
+  File.Info.prototype = Object.create(OS.Shared.Unix.AbstractInfo.prototype);
+} else {
+  throw new Error("I am neither under Windows nor under a Posix system");
+}
+
 File.Info.fromMsg = function fromMsg(value) {
   return new File.Info(value);
+};
+
+/**
+ * Get worker's current DEBUG flag.
+ * Note: This is used for testing purposes.
+ */
+File.GET_DEBUG = function GET_DEBUG() {
+  return Scheduler.post("GET_DEBUG");
 };
 
 /**
@@ -710,6 +736,14 @@ DirectoryIterator.prototype = {
 DirectoryIterator.Entry = function Entry(value) {
   return value;
 };
+if (OS.Constants.Win) {
+  DirectoryIterator.Entry.prototype = Object.create(OS.Shared.Win.AbstractEntry.prototype);
+} else if (OS.Constants.libc) {
+  DirectoryIterator.Entry.prototype = Object.create(OS.Shared.Unix.AbstractEntry.prototype);
+} else {
+  throw new Error("I am neither under Windows nor under a Posix system");
+}
+
 DirectoryIterator.Entry.fromMsg = function fromMsg(value) {
   return new DirectoryIterator.Entry(value);
 };

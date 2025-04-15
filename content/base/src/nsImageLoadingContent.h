@@ -17,15 +17,19 @@
 #include "imgIOnloadBlocker.h"
 #include "mozilla/CORSMode.h"
 #include "nsCOMPtr.h"
-#include "nsContentUtils.h" // NS_CONTENT_DELETE_LIST_MEMBER
 #include "nsEventStates.h"
 #include "nsIImageLoadingContent.h"
 #include "nsIRequest.h"
+#include "mozilla/ErrorResult.h"
+#include "nsAutoPtr.h"
 
 class nsIURI;
 class nsIDocument;
 class imgILoader;
 class nsIIOService;
+class nsPresContext;
+class nsIContent;
+class imgRequestProxy;
 
 class nsImageLoadingContent : public nsIImageLoadingContent,
                               public imgIOnloadBlocker
@@ -186,17 +190,8 @@ private:
    * Struct used to manage the image observers.
    */
   struct ImageObserver {
-    ImageObserver(imgINotificationObserver* aObserver) :
-      mObserver(aObserver),
-      mNext(nullptr)
-    {
-      MOZ_COUNT_CTOR(ImageObserver);
-    }
-    ~ImageObserver()
-    {
-      MOZ_COUNT_DTOR(ImageObserver);
-      NS_CONTENT_DELETE_LIST_MEMBER(ImageObserver, this, mNext);
-    }
+    ImageObserver(imgINotificationObserver* aObserver);
+    ~ImageObserver();
 
     nsCOMPtr<imgINotificationObserver> mObserver;
     ImageObserver* mNext;
@@ -342,13 +337,12 @@ protected:
   uint32_t mPendingRequestFlags;
 
   enum {
-    // Set if the request needs 
+    // Set if the request needs ResetAnimation called on it.
     REQUEST_NEEDS_ANIMATION_RESET = 0x00000001U,
-    // Set if the request should be tracked.  This is true if the request is
-    // not tracked iff this node is not in the document.
-    REQUEST_SHOULD_BE_TRACKED = 0x00000002U,
     // Set if the request is blocking onload.
-    REQUEST_BLOCKS_ONLOAD = 0x00000004U
+    REQUEST_BLOCKS_ONLOAD = 0x00000002U,
+    // Set if the request is currently tracked with the document.
+    REQUEST_IS_TRACKED = 0x00000004U
   };
 
   // If the image was blocked or if there was an error loading, it's nice to

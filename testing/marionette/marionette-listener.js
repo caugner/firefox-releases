@@ -16,7 +16,8 @@ loader.loadSubScript("chrome://marionette/content/marionette-log-obj.js");
 loader.loadSubScript("chrome://marionette/content/marionette-perf.js");
 Cu.import("chrome://marionette/content/marionette-elements.js");
 Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");  
+Cu.import("resource://gre/modules/NetUtil.jsm");
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 let utils = {};
 utils.window = content;
 // Load Event/ChromeUtils for use with JS scripts:
@@ -46,6 +47,9 @@ let importedScripts = null;
 // createExecuteContentSandbox().
 let sandbox;
 
+// the unload handler
+let onunload;
+
 // Flag to indicate whether an async script is currently running or not.
 let asyncTestRunning = false;
 let asyncTestCommandId;
@@ -53,7 +57,13 @@ let asyncTestTimeoutId;
 let originalOnError;
 //timer for doc changes
 let checkTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-
+// Send move events about this often
+let EVENT_INTERVAL = 30; // milliseconds
+// The current array of all pending touches
+let touches = [];
+// For assigning unique ids to all touches
+let nextTouchId = 1000;
+let touchIds = [];
 /**
  * Called when listener is first started up. 
  * The listener sends its unique window ID and its current URI to the actor.
@@ -92,6 +102,10 @@ function startListeners() {
   addMessageListenerId("Marionette:executeScript", executeScript);
   addMessageListenerId("Marionette:executeAsyncScript", executeAsyncScript);
   addMessageListenerId("Marionette:executeJSScript", executeJSScript);
+  addMessageListenerId("Marionette:singleTap", singleTap);
+  addMessageListenerId("Marionette:doubleTap", doubleTap);
+  addMessageListenerId("Marionette:press", press);
+  addMessageListenerId("Marionette:release", release);
   addMessageListenerId("Marionette:setSearchTimeout", setSearchTimeout);
   addMessageListenerId("Marionette:goUrl", goUrl);
   addMessageListenerId("Marionette:getUrl", getUrl);
@@ -102,6 +116,7 @@ function startListeners() {
   addMessageListenerId("Marionette:refresh", refresh);
   addMessageListenerId("Marionette:findElementContent", findElementContent);
   addMessageListenerId("Marionette:findElementsContent", findElementsContent);
+  addMessageListenerId("Marionette:getActiveElement", getActiveElement);
   addMessageListenerId("Marionette:clickElement", clickElement);
   addMessageListenerId("Marionette:getElementAttribute", getElementAttribute);
   addMessageListenerId("Marionette:getElementText", getElementText);
@@ -178,6 +193,10 @@ function deleteSession(msg) {
   removeMessageListenerId("Marionette:executeScript", executeScript);
   removeMessageListenerId("Marionette:executeAsyncScript", executeAsyncScript);
   removeMessageListenerId("Marionette:executeJSScript", executeJSScript);
+  removeMessageListenerId("Marionette:singleTap", singleTap);
+  removeMessageListenerId("Marionette:doubleTap", doubleTap);
+  removeMessageListenerId("Marionette:press", press);
+  removeMessageListenerId("Marionette:release", release);
   removeMessageListenerId("Marionette:setSearchTimeout", setSearchTimeout);
   removeMessageListenerId("Marionette:goUrl", goUrl);
   removeMessageListenerId("Marionette:getTitle", getTitle);
@@ -188,6 +207,7 @@ function deleteSession(msg) {
   removeMessageListenerId("Marionette:refresh", refresh);
   removeMessageListenerId("Marionette:findElementContent", findElementContent);
   removeMessageListenerId("Marionette:findElementsContent", findElementsContent);
+  removeMessageListenerId("Marionette:getActiveElement", getActiveElement);
   removeMessageListenerId("Marionette:clickElement", clickElement);
   removeMessageListenerId("Marionette:getElementAttribute", getElementAttribute);
   removeMessageListenerId("Marionette:getElementTagName", getElementTagName);
@@ -215,6 +235,8 @@ function deleteSession(msg) {
   // reset frame to the top-most frame
   curWindow = content;
   curWindow.focus();
+  touches = [];
+  touchIds = [];
 }
 
 /*
@@ -268,13 +290,6 @@ function resetValues() {
   curWindow = content;
 }
 
-/**
- * send error when we detect an unload event during async scripts
- */
-function errUnload() {
-  sendError("unload was called", 17, null);
-}
-
 /*
  * Marionette Methods
  */
@@ -283,12 +298,11 @@ function errUnload() {
  * Returns a content sandbox that can be used by the execute_foo functions.
  */
 function createExecuteContentSandbox(aWindow, timeout) {
-  let sandbox = new Cu.Sandbox(aWindow);
+  let sandbox = new Cu.Sandbox(aWindow, {sandboxPrototype: aWindow});
   sandbox.global = sandbox;
   sandbox.window = aWindow;
   sandbox.document = sandbox.window.document;
   sandbox.navigator = sandbox.window.navigator;
-  sandbox.__proto__ = sandbox.window;
   sandbox.testUtils = utils;
 
   let marionette = new Marionette(this, aWindow, "content",
@@ -304,10 +318,12 @@ function createExecuteContentSandbox(aWindow, timeout) {
     }
   });
 
-  sandbox.SpecialPowers = new SpecialPowers(aWindow);
+  XPCOMUtils.defineLazyGetter(sandbox, 'SpecialPowers', function() {
+    return new SpecialPowers(aWindow);
+  });
 
   sandbox.asyncComplete = function sandbox_asyncComplete(value, status) {
-    curWindow.removeEventListener("unload", errUnload, false);
+    curWindow.removeEventListener("unload", onunload, false);
 
     /* clear all timeouts potentially generated by the script*/
     for (let i = 0; i <= asyncTestTimeoutId; i++) {
@@ -357,13 +373,14 @@ function createExecuteContentSandbox(aWindow, timeout) {
  * or directly (for 'mochitest' like JS Marionette tests)
  */
 function executeScript(msg, directInject) {
-  let asyncTestCommandId = msg.json.command_id;
+  asyncTestCommandId = msg.json.command_id;
   let script = msg.json.value;
 
   if (msg.json.newSandbox || !sandbox) {
-    sandbox = createExecuteContentSandbox(curWindow, msg.json.timeout);
+    sandbox = createExecuteContentSandbox(curWindow,
+                                          msg.json.timeout);
     if (!sandbox) {
-      sendError("Could not create sandbox!", asyncTestCommandId);
+      sendError("Could not create sandbox!", 500, null, asyncTestCommandId);
       return;
     }
   }
@@ -458,14 +475,19 @@ function executeJSScript(msg) {
  * method is called, or if it times out.
  */
 function executeWithCallback(msg, useFinish) {
-  curWindow.addEventListener("unload", errUnload, false);
   let script = msg.json.value;
-  let asyncTestCommandId = msg.json.command_id;
+  asyncTestCommandId = msg.json.command_id;
+
+  onunload = function() {
+    sendError("unload was called", 17, null, asyncTestCommandId);
+  };
+  curWindow.addEventListener("unload", onunload, false);
 
   if (msg.json.newSandbox || !sandbox) {
-    sandbox = createExecuteContentSandbox(curWindow, msg.json.timeout);
+    sandbox = createExecuteContentSandbox(curWindow,
+                                          msg.json.timeout);
     if (!sandbox) {
-      sendError("Could not create sandbox!");
+      sendError("Could not create sandbox!", 17, null, asyncTestCommandId);
       return;
     }
   }
@@ -477,12 +499,12 @@ function executeWithCallback(msg, useFinish) {
   // http://code.google.com/p/selenium/source/browse/trunk/javascript/firefox-driver/js/evaluate.js.
   // We'll stay compatible with the Selenium code.
   asyncTestTimeoutId = curWindow.setTimeout(function() {
-    sandbox.asyncComplete('timed out', 28);
+    sandbox.asyncComplete('timed out', 28, null, asyncTestCommandId);
   }, msg.json.timeout);
 
   originalOnError = curWindow.onerror;
   curWindow.onerror = function errHandler(errMsg, url, line) {
-    sandbox.asyncComplete(errMsg, 17);
+    sandbox.asyncComplete(errMsg, 17, null, asyncTestCommandId);
     curWindow.onerror = originalOnError;
   };
 
@@ -520,7 +542,348 @@ function executeWithCallback(msg, useFinish) {
     Cu.evalInSandbox(scriptSrc, sandbox, "1.8");
   } catch (e) {
     // 17 = JavascriptException
-    sandbox.asyncComplete(e.name + ': ' + e.message, 17);
+    sandbox.asyncComplete(e.name + ': ' + e.message, 17,
+                          e.stack, asyncTestCommandId);
+  }
+}
+
+/**
+ * This function creates a touch event given a touch type and a touch
+ */
+function emitTouchEvent(type, touch) {
+  var target = touch.target;
+  var doc = target.ownerDocument;
+  var win = doc.defaultView;
+  // Using domWindowUtils
+  var domWindowUtils = curWindow.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIDOMWindowUtils);
+  domWindowUtils.sendTouchEvent(type, [touch.identifier], [touch.screenX], [touch.screenY], [touch.radiusX], [touch.radiusY], [touch.rotationAngle], [touch.force], 1, 0);
+}
+
+/**
+ * This function creates a touch and emit touch events
+ * @param 'xt' and 'yt' are two-element array [from, to] and then is a callback that will be invoked after touchend event is sent
+ */
+function touch(target, duration, xt, yt, then) {
+  var doc = target.ownerDocument;
+  var win = doc.defaultView;
+  var touchId = nextTouchId++;
+  var x = xt;
+  if (typeof xt !== 'function') {
+    x = function(t) { return xt[0] + t / duration * (xt[1] - xt[0]); };
+  }
+  var y = yt;
+  if (typeof yt !== 'function') {
+    y = function(t) { return yt[0] + t / duration * (yt[1] - yt[0]); };
+  }
+  // viewport coordinates
+  var clientX = Math.round(x(0)), clientY = Math.round(y(0));
+  // document coordinates
+  var pageX = clientX + win.pageXOffset,
+      pageY = clientY + win.pageYOffset;
+  // screen coordinates
+  var screenX = clientX + win.mozInnerScreenX,
+      screenY = clientY + win.mozInnerScreenY;
+  // Remember the coordinates
+  var lastX = clientX, lastY = clientY;
+  // Create the touch object
+  var touch = doc.createTouch(win, target, touchId,
+                              pageX, pageY,
+                              screenX, screenY,
+                              clientX, clientY);
+  // Add this new touch to the list of touches
+  touches.push(touch);
+  // Send the start event
+  emitTouchEvent('touchstart', touch);
+  var startTime = Date.now();
+  checkTimer.initWithCallback(nextEvent, EVENT_INTERVAL, Ci.nsITimer.TYPE_ONE_SHOT);
+  function nextEvent() {
+  // Figure out if this is the last of the touchmove events
+    var time = Date.now();
+    var dt = time - startTime;
+    var last = dt + EVENT_INTERVAL / 2 > duration;
+    // Find our touch object in the touches[] array.
+    // Note that its index may have changed since we pushed it
+    var touchIndex = touches.indexOf(touch);
+    // If this is the last move event, make sure we move all the way
+    if (last)
+       dt = duration;
+    // New coordinates of the touch
+    clientX = Math.round(x(dt));
+    clientY = Math.round(y(dt));
+    // If we've moved, send a move event
+    if (clientX !== lastX || clientY !== lastY) { // If we moved
+      lastX = clientX;
+      lastY = clientY;
+      pageX = clientX + win.pageXOffset;
+      pageY = clientY + win.pageYOffset;
+      screenX = clientX + win.mozInnerScreenX;
+      screenY = clientY + win.mozInnerScreenY;
+      // Since we moved, we've got to create a new Touch object
+      // with the new coordinates
+      touch = doc.createTouch(win, target, touchId,
+                              pageX, pageY,
+                              screenX, screenY,
+                              clientX, clientY);
+      // Replace the old touch object with the new one
+      touches[touchIndex] = touch;
+      // And send the touchmove event
+      emitTouchEvent('touchmove', touch);
+    }
+    // If that was the last move, send the touchend event
+    // and call the callback 
+    if (last) {
+      touches.splice(touchIndex, 1);
+      emitTouchEvent('touchend', touch);
+      if (then)
+        checkTimer.initWithCallback(then, 0, Ci.nsITimer.TYPE_ONE_SHOT);
+    }
+    // Otherwise, schedule the next event
+    else {
+      checkTimer.initWithCallback(nextEvent, EVENT_INTERVAL, Ci.nsITimer.TYPE_ONE_SHOT);
+    }
+  }
+}
+
+/**
+ * This function generates the coordinates of the element
+ * @param 'x0', 'y0', 'x1', and 'y1' are the relative to the viewport.
+ *        If they are not specified, then the center of the target is used.
+ */
+function coordinates(target, x0, y0, x1, y1) {
+  var coords = {};
+  var box = target.getBoundingClientRect();
+  var tx0 = typeof x0;
+  var ty0 = typeof y0;
+  var tx1 = typeof x1;
+  var ty1 = typeof y1; 
+  function percent(s, x) {
+    s = s.trim();
+    var f = parseFloat(s);
+    if (s[s.length - 1] === '%')
+      f = f * x / 100;
+      return f;
+  }
+  function relative(s, x) {
+    var factor;
+    if (s[0] === '+')
+      factor = 1;
+    else
+      factor = -1;
+      return factor * percent(s.substring(1), x);
+  }
+  if (tx0 === 'number')
+    coords.x0 = box.left + x0;
+  else if (tx0 === 'string')
+    coords.x0 = box.left + percent(x0, box.width);
+  //check tx1 point
+  if (tx1 === 'number')
+    coords.x1 = box.left + x1;
+  else if (tx1 === 'string') {
+    x1 = x1.trim();
+    if (x1[0] === '+' || x1[0] === '-')
+      coords.x1 = coords.x0 + relative(x1, box.width);
+    else
+      coords.x1 = box.left + percent(x1, box.width);
+  }
+  // check ty0
+  if (ty0 === 'number')
+    coords.y0 = box.top + y0;
+  else if (ty0 === 'string')
+    coords.y0 = box.top + percent(y0, box.height);
+  //check ty1
+  if (ty1 === 'number')
+    coords.y1 = box.top + y1;
+  else if (ty1 === 'string') {
+    y1 = y1.trim();
+    if (y1[0] === '+' || y1[0] === '-')
+      coords.y1 = coords.y0 + relative(y1, box.height);
+    else
+      coords.y1 = box.top + percent(y1, box.height);
+  }
+  return coords;
+}
+
+/**
+ * This function returns if the element is in viewport 
+ */
+function elementInViewport(el) {
+  var top = el.offsetTop;
+  var left = el.offsetLeft;
+  var width = el.offsetWidth;
+  var height = el.offsetHeight;
+  while(el.offsetParent) {
+    el = el.offsetParent;
+    top += el.offsetTop;
+    left += el.offsetLeft;
+  }
+  return (top >= curWindow.pageYOffset &&
+          left >= curWindow.pageXOffset &&
+          (top + height) <= (curWindow.pageYOffset + curWindow.innerHeight) &&
+          (left + width) <= (curWindow.pageXOffset + curWindow.innerWidth)
+         );
+}
+
+/**
+ * This function throws the visibility of the element error
+ */
+function checkVisible(el, command_id) {
+    //check if the element is visible
+    let visible = utils.isElementDisplayed(el);
+    if (!visible) {
+      return false;
+    }
+    //check if scroll function exist. If so, call it.
+    if (el.scrollIntoView) {
+      el.scrollIntoView(true);
+    }
+    var scroll = elementInViewport(el);
+    if (!scroll){
+      return false;
+    }
+    return true;
+}
+
+/**
+ * Function that perform a single tap
+ */
+function singleTap(msg) {
+  let command_id = msg.json.command_id;
+  let el;
+  try {
+    el = elementManager.getKnownElement(msg.json.value, curWindow);
+    let x = msg.json.corx;
+    let y = msg.json.cory;
+    if (!checkVisible(el, command_id)) {
+      sendError("Element is not currently visible and may not be manipulated", 11, null, command_id);
+      return;
+    }
+    if (x == null) {
+      x = '50%';
+    }
+    if (y == null) {
+      y = '50%';
+    }
+    let c = coordinates(el, x, y);
+    touch(el, 3000, [c.x0, c.x0], [c.y0, c.y0], null);
+    sendOk(msg.json.command_id);
+  }
+  catch (e) {
+    sendError(e.message, e.code, e.stack, msg.json.command_id);
+  }
+}
+
+/**
+ * Function that performs a double tap
+ */
+function doubleTap(msg) {
+  let command_id = msg.json.command_id;
+  let el;
+  try {
+    el = elementManager.getKnownElement(msg.json.value, curWindow);
+    let x = msg.json.corx;
+    let y = msg.json.cory;
+    if (!checkVisible(el, command_id)) {
+      sendError("Element is not currently visible and may not be manipulated", 11, null, command_id);
+      return;
+    }
+    if (x == null){
+      x = '50%';
+    }
+    if (y == null){
+      y = '50%';
+    }
+    let c = coordinates(el, x, y);
+    touch(el, 25, [c.x0, c.x0], [c.y0, c.y0], function() {
+      // When the first tap is done, start a timer for interval ms
+      checkTimer.initWithCallback(function() {
+          //After interval ms, send the second tap
+          touch(el, 25, [c.x0, c.x0], [c.y0, c.y0], null);
+      }, 50, Ci.nsITimer.TYPE_ONE_SHOT);
+    });
+    sendOk(msg.json.command_id);
+  }
+  catch (e) {
+    sendError(e.message, e.code, e.stack, msg.json.command_id);
+  }
+}
+
+/**
+ * Function to create a touch based on the element
+ */
+function createATouch(el, corx, cory, id) {
+  var doc = el.ownerDocument;
+  var win = doc.defaultView;
+  if (corx == null) {
+    corx = '50%';
+  }
+  if (cory == null){
+    cory = '50%';
+  }
+  var c = coordinates(el, corx, cory);
+  var clientX = Math.round(c.x0),
+      clientY = Math.round(c.y0);
+  var pageX = clientX + win.pageXOffset,
+      pageY = clientY + win.pageYOffset;
+  var screenX = clientX + win.mozInnerScreenX,
+      screenY = clientY + win.mozInnerScreenY;
+  var atouch = doc.createTouch(win, el, id, pageX, pageY, screenX, screenY, clientX, clientY);
+  return atouch;
+}
+
+/**
+ * Function to start a touch event
+ */
+function press(msg) {
+  let command_id = msg.json.command_id;
+  let el;
+  try {
+    el = elementManager.getKnownElement(msg.json.value, curWindow);
+    let corx = msg.json.corx;
+    let cory = msg.json.cory;
+    if (!checkVisible(el, command_id)) {
+      sendError("Element is not currently visible and may not be manipulated", 11, null, command_id);
+      return;
+    }
+    var touchId = nextTouchId++;
+    var touch = createATouch(el, corx, cory, touchId);
+    emitTouchEvent('touchstart', touch);
+    touchIds.push(touchId);
+    sendResponse({value: touch.identifier}, command_id);
+  }
+  catch (e) {
+    sendError(e.message, e.code, e.stack, msg.json.command_id);
+  }
+}
+
+/**
+ * Function to end a touch event
+ */
+function release(msg) {
+  let command_id = msg.json.command_id;
+  let el;
+  try {
+    let id = msg.json.touchId;
+    let currentIndex = touchIds.indexOf(id);
+    if (currentIndex != -1) {
+      el = elementManager.getKnownElement(msg.json.value, curWindow);
+      let corx = msg.json.corx;
+      let cory = msg.json.cory;
+      if (!checkVisible(el, command_id)) {
+        sendError("Element is not currently visible and may not be manipulated", 11, null, command_id);
+        return;
+      }
+      var touch = createATouch(el, corx, cory, id);
+      emitTouchEvent('touchend', touch);
+      touchIds.splice(currentIndex, 1);
+      sendOk(msg.json.command_id);
+    }
+    else {
+      sendError("Element has not be pressed: InvalidElementCoordinates", 29, null, command_id);
+      return;
+    }
+  }
+  catch (e) {
+    sendError(e.message, e.code, e.stack, msg.json.command_id);
   }
 }
 
@@ -544,23 +907,32 @@ function setSearchTimeout(msg) {
  */
 function goUrl(msg) {
   let command_id = msg.json.command_id;
-  addEventListener("DOMContentLoaded", function onDOMContentLoaded(event) {
-    // Prevent DOMContentLoaded events from frames from invoking this code,
-    // unless the event is coming from the frame associated with the current
-    // window (i.e., someone has used switch_to_frame).
-    if (!event.originalTarget.defaultView.frameElement || 
-        event.originalTarget.defaultView.frameElement == curWindow.frameElement) {
+  // Prevent DOMContentLoaded events from frames from invoking this code,
+  // unless the event is coming from the frame associated with the current
+  // window (i.e., someone has used switch_to_frame).
+  let onDOMContentLoaded = function onDOMContentLoaded(event){
+    if (msg.json.pageTimeout != null){
+      checkTimer.cancel();
+    }
+    if (!event.originalTarget.defaultView.frameElement ||
+      event.originalTarget.defaultView.frameElement == curWindow.frameElement) {
       removeEventListener("DOMContentLoaded", onDOMContentLoaded, false);
-
       let errorRegex = /about:.+(error)|(blocked)\?/;
       if (curWindow.document.readyState == "interactive" && errorRegex.exec(curWindow.document.baseURI)) {
         sendError("Error loading page", 13, null, command_id);
         return;
       }
-
       sendOk(command_id);
     }
-  }, false);
+  };
+  function timerFunc(){
+    sendError("Error loading page", 13, null, command_id);
+    removeEventListener("DOMContentLoaded", onDOMContentLoaded, false);
+  }
+  if (msg.json.pageTimeout != null){
+    checkTimer.initWithCallback(timerFunc, msg.json.pageTimeout, Ci.nsITimer.TYPE_ONE_SHOT);
+  }
+  addEventListener("DOMContentLoaded", onDOMContentLoaded, false);
   curWindow.location = msg.json.value;
 }
 
@@ -644,6 +1016,16 @@ function findElementsContent(msg) {
   catch (e) {
     sendError(e.message, e.code, e.stack, command_id);
   }
+}
+
+/**
+ * Find and return the active element on the page
+ */
+function getActiveElement(msg) {
+  let command_id = msg.json.command_id;
+  var element = curWindow.document.activeElement;
+  var id = elementManager.addToKnownElements(element);
+  sendResponse({value: id}, command_id);
 }
 
 /**
@@ -852,11 +1234,22 @@ function switchToFrame(msg) {
     checkTimer.initWithCallback(checkLoad, 100, Ci.nsITimer.TYPE_ONE_SHOT);
   }
   let foundFrame = null;
-  let frames = curWindow.document.getElementsByTagName("iframe");
-  //Until Bug 761935 lands, we won't have multiple nested OOP iframes. We will only have one.
-  //parWindow will refer to the iframe above the nested OOP frame.
-  let parWindow = curWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                     .getInterface(Ci.nsIDOMWindowUtils).outerWindowID;
+  let frames = []; //curWindow.document.getElementsByTagName("iframe");
+  let parWindow = null; //curWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+  // Check of the curWindow reference is dead
+  try {
+    frames = curWindow.document.getElementsByTagName("iframe");
+    //Until Bug 761935 lands, we won't have multiple nested OOP iframes. We will only have one.
+    //parWindow will refer to the iframe above the nested OOP frame.
+    parWindow = curWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                      .getInterface(Ci.nsIDOMWindowUtils).outerWindowID;
+  } catch (e) {
+    // We probably have a dead compartment so accessing it is going to make Firefox
+    // very upset. Let's now try redirect everything to the top frame even if the 
+    // user has given us a frame since search doesnt look up.
+    msg.json.value = null;
+    msg.json.element = null;
+  }
   if ((msg.json.value == null) && (msg.json.element == null)) {
     curWindow = content;
     if(msg.json.focus == true) {
@@ -867,9 +1260,16 @@ function switchToFrame(msg) {
   }
   if (msg.json.element != undefined) {
     if (elementManager.seenItems[msg.json.element] != undefined) {
-      let wantedFrame = elementManager.getKnownElement(msg.json.element, curWindow); //HTMLIFrameElement
+      let wantedFrame;
+      try {
+        wantedFrame = elementManager.getKnownElement(msg.json.element, curWindow); //HTMLIFrameElement
+      }
+      catch(e) {
+        sendError(e.message, e.code, e.stack, command_id);
+      }
       for (let i = 0; i < frames.length; i++) {
-        if (frames[i] == wantedFrame) {
+        // use XPCNativeWrapper to compare elements; see bug 834266
+        if (XPCNativeWrapper(frames[i]) == XPCNativeWrapper(wantedFrame)) {
           curWindow = frames[i]; 
           foundFrame = i;
         }
@@ -1094,7 +1494,7 @@ function emulatorCmdResult(msg) {
     cb(message.result);
   }
   catch(e) {
-    sendError(e.message, e.code, e.stack);
+    sendError(e.message, e.code, e.stack, -1);
     return;
   }
 }
@@ -1129,7 +1529,7 @@ function screenShot(msg) {
       node = elementManager.getKnownElement(msg.json.element, curWindow)
     }
     catch (e) {
-      sendResponse(e.message, e.code, e.stack);
+      sendResponse(e.message, e.code, e.stack, msg.json.command_id);
       return;
     }
   }
@@ -1198,7 +1598,7 @@ function screenShot(msg) {
 
   // Return the Base64 String back to the client bindings and they can manage
   // saving the file to disk if it is required
-  sendResponse({value:canvas.toDataURL("image/png","")});
+  sendResponse({value:canvas.toDataURL("image/png","")}, msg.json.command_id);
 }
 
 //call register self when we get loaded

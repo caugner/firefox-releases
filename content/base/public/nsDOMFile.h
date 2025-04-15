@@ -394,9 +394,20 @@ protected:
       : mData(aMemoryBuffer)
       , mLength(aLength)
     {
+      if (!sDataOwners) {
+        sDataOwners = new mozilla::LinkedList<DataOwner>();
+        EnsureMemoryReporterRegistered();
+      }
+      sDataOwners->insertBack(this);
     }
 
     ~DataOwner() {
+      remove();
+      if (sDataOwners->isEmpty()) {
+        // Free the linked list if it's empty.
+        sDataOwners = nullptr;
+      }
+
       moz_free(mData);
     }
 

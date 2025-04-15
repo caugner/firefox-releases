@@ -8,18 +8,14 @@ package org.mozilla.gecko;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.GeckoEventListener;
 
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import android.app.Application;
-import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.LayerDrawable;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Shader;
@@ -35,7 +31,6 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.net.URLConnection;
 import java.util.List;
 import java.util.ArrayList;
 
@@ -308,65 +303,45 @@ public class LightweightTheme implements GeckoEventListener {
     }
 
     /**
-     * Converts the cropped bitmap to a LightweightThemeDrawable, with the required texture.
-     * The texture can either be an actual texture to be repeated or a bitmap-drawable that 
-     * specifies how to repeat it.
-     *
-     * @param view The view for which a background drawable is required.
-     * @param textureId The resource id of the texture.
-     * @return Either the cropped bitmap as a Drawable or null.
-     */
-    public LightweightThemeDrawable getTextureDrawable(View view, int textureId) {
-        return getTextureDrawable(view, textureId, false);
-    }
-
-    /**
-     * Converts the cropped bitmap to a LightweightThemeDrawable, with the required texture.
-     * The texture can either be an actual texture to be repeated or a bitmap-drawable that 
-     * specifies how to repeat it. The dominant color can be drawn over the texture, if specified.
-     *
-     * @param view The view for which a background drawable is required.
-     * @param textureId The resource id of the texture.
-     * @param needsColor A layer of dominant color is needed or not.
-     * @return Either the cropped bitmap as a Drawable or null.
-     */
-    public LightweightThemeDrawable getTextureDrawable(View view, int textureId, boolean needsColor) {
-        Bitmap bitmap = getCroppedBitmap(view);
-        if (bitmap == null)
-            return null;
-
-        LightweightThemeDrawable drawable = new LightweightThemeDrawable(view.getContext().getResources(), bitmap);
-        drawable.setTexture(textureId);
-
-        if (needsColor)
-            drawable.setColor(mColor & 0x22FFFFFF);
-
-        return drawable;
-    }
-
-    /**
      * Converts the cropped bitmap to a LightweightThemeDrawable, placing it over the dominant color.
      *
      * @param view The view for which a background drawable is required.
      * @return Either the cropped bitmap as a Drawable or null.
      */
      public LightweightThemeDrawable getColorDrawable(View view) {
-         return getColorDrawable(view, mColor);
+         return getColorDrawable(view, mColor, false);
      }
 
     /**
      * Converts the cropped bitmap to a LightweightThemeDrawable, placing it over the required color.
      *
      * @param view The view for which a background drawable is required.
+     * @param color The color over which the drawable should be drawn.
      * @return Either the cropped bitmap as a Drawable or null.
      */
     public LightweightThemeDrawable getColorDrawable(View view, int color) {
+        return getColorDrawable(view, color, false);
+    }
+
+    /**
+     * Converts the cropped bitmap to a LightweightThemeDrawable, placing it over the required color.
+     *
+     * @param view The view for which a background drawable is required.
+     * @param color The color over which the drawable should be drawn.
+     * @param needsDominantColor A layer of dominant color is needed or not.
+     * @return Either the cropped bitmap as a Drawable or null.
+     */
+    public LightweightThemeDrawable getColorDrawable(View view, int color, boolean needsDominantColor) {
         Bitmap bitmap = getCroppedBitmap(view);
         if (bitmap == null)
             return null;
 
         LightweightThemeDrawable drawable = new LightweightThemeDrawable(view.getContext().getResources(), bitmap);
-        drawable.setColor(color);
+        if (needsDominantColor)
+            drawable.setColorWithFilter(color, (mColor & 0x22FFFFFF));
+        else
+            drawable.setColor(color);
+
         return drawable;
     }
 }

@@ -8,7 +8,7 @@
 #include "nsSVGLength2.h"
 #include "prdtoa.h"
 #include "nsTextFormatter.h"
-#include "nsSVGSVGElement.h"
+#include "mozilla/dom/SVGSVGElement.h"
 #include "nsIFrame.h"
 #include "nsSVGIntegrationUtils.h"
 #include "nsSVGAttrTearoffTable.h"
@@ -16,23 +16,20 @@
 #include "nsSMILValue.h"
 #include "nsSMILFloatType.h"
 #include "nsAttrValueInlines.h"
+#include "mozilla/dom/SVGAnimatedLength.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 NS_SVG_VAL_IMPL_CYCLE_COLLECTION(nsSVGLength2::DOMBaseVal, mSVGElement)
 
 NS_SVG_VAL_IMPL_CYCLE_COLLECTION(nsSVGLength2::DOMAnimVal, mSVGElement)
-
-NS_SVG_VAL_IMPL_CYCLE_COLLECTION(nsSVGLength2::DOMAnimatedLength, mSVGElement)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsSVGLength2::DOMBaseVal)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsSVGLength2::DOMBaseVal)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsSVGLength2::DOMAnimVal)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsSVGLength2::DOMAnimVal)
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(nsSVGLength2::DOMAnimatedLength)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(nsSVGLength2::DOMAnimatedLength)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsSVGLength2::DOMBaseVal)
   NS_INTERFACE_MAP_ENTRY(nsIDOMSVGLength)
@@ -44,14 +41,6 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsSVGLength2::DOMAnimVal)
   NS_INTERFACE_MAP_ENTRY(nsIDOMSVGLength)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGLength)
-NS_INTERFACE_MAP_END
-
-DOMCI_DATA(SVGAnimatedLength, nsSVGLength2::DOMAnimatedLength)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsSVGLength2::DOMAnimatedLength)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMSVGAnimatedLength)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGAnimatedLength)
 NS_INTERFACE_MAP_END
 
 static nsIAtom** const unitMap[] =
@@ -69,7 +58,7 @@ static nsIAtom** const unitMap[] =
   &nsGkAtoms::pc
 };
 
-static nsSVGAttrTearoffTable<nsSVGLength2, nsSVGLength2::DOMAnimatedLength>
+static nsSVGAttrTearoffTable<nsSVGLength2, SVGAnimatedLength>
   sSVGAnimatedLengthTearoffTable;
 static nsSVGAttrTearoffTable<nsSVGLength2, nsSVGLength2::DOMBaseVal>
   sBaseSVGLengthTearoffTable;
@@ -169,7 +158,7 @@ FixAxisLength(float aLength)
 }
 
 float
-nsSVGLength2::GetAxisLength(nsSVGSVGElement *aCtx) const
+nsSVGLength2::GetAxisLength(SVGSVGElement *aCtx) const
 {
   if (!aCtx)
     return 1;
@@ -219,7 +208,7 @@ nsSVGLength2::GetUnitScaleFactor(nsSVGElement *aSVGElement,
 }
 
 float
-nsSVGLength2::GetUnitScaleFactor(nsSVGSVGElement *aCtx, uint8_t aUnitType) const
+nsSVGLength2::GetUnitScaleFactor(SVGSVGElement *aCtx, uint8_t aUnitType) const
 {
   switch (aUnitType) {
   case nsIDOMSVGLength::SVG_LENGTHTYPE_NUMBER:
@@ -490,20 +479,20 @@ nsSVGLength2::ToDOMAnimatedLength(nsIDOMSVGAnimatedLength **aResult,
   return NS_OK;
 }
 
-already_AddRefed<nsIDOMSVGAnimatedLength>
+already_AddRefed<SVGAnimatedLength>
 nsSVGLength2::ToDOMAnimatedLength(nsSVGElement* aSVGElement)
 {
-  nsRefPtr<DOMAnimatedLength> domAnimatedLength =
+  nsRefPtr<SVGAnimatedLength> svgAnimatedLength =
     sSVGAnimatedLengthTearoffTable.GetTearoff(this);
-  if (!domAnimatedLength) {
-    domAnimatedLength = new DOMAnimatedLength(this, aSVGElement);
-    sSVGAnimatedLengthTearoffTable.AddTearoff(this, domAnimatedLength);
+  if (!svgAnimatedLength) {
+    svgAnimatedLength = new SVGAnimatedLength(this, aSVGElement);
+    sSVGAnimatedLengthTearoffTable.AddTearoff(this, svgAnimatedLength);
   }
 
-  return domAnimatedLength.forget();
+  return svgAnimatedLength.forget();
 }
 
-nsSVGLength2::DOMAnimatedLength::~DOMAnimatedLength()
+SVGAnimatedLength::~SVGAnimatedLength()
 {
   sSVGAnimatedLengthTearoffTable.RemoveTearoff(mVal);
 }

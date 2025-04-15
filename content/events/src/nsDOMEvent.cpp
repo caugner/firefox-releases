@@ -101,8 +101,6 @@ nsDOMEvent::~nsDOMEvent()
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMEvent)
-
 DOMCI_DATA(Event, nsDOMEvent)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDOMEvent)
@@ -311,7 +309,7 @@ nsresult
 nsDOMEvent::InitFromCtor(const nsAString& aType,
                          JSContext* aCx, jsval* aVal)
 {
-  mozilla::dom::EventInit d;
+  mozilla::idl::EventInit d;
   nsresult rv = d.Init(aCx, aVal);
   NS_ENSURE_SUCCESS(rv, rv);
   return InitEvent(aType, d.bubbles, d.cancelable);

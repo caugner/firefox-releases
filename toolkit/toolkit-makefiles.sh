@@ -449,6 +449,7 @@ MAKEFILES_embedding="
 "
 
 MAKEFILES_xulapp="
+  addon-sdk/Makefile
   toolkit/Makefile
   toolkit/library/Makefile
   toolkit/crashreporter/client/Makefile
@@ -458,6 +459,7 @@ MAKEFILES_xulapp="
   toolkit/components/apppicker/Makefile
   toolkit/components/Makefile
   toolkit/components/build/Makefile
+  toolkit/components/captivedetect/Makefile
   toolkit/components/commandlines/Makefile
   toolkit/components/console/Makefile
   toolkit/components/contentprefs/Makefile
@@ -480,6 +482,7 @@ MAKEFILES_xulapp="
   toolkit/components/startup/public/Makefile
   toolkit/components/statusfilter/Makefile
   toolkit/components/telemetry/Makefile
+  toolkit/components/thumbnails/Makefile
   toolkit/components/typeaheadfind/Makefile
   toolkit/components/urlformatter/Makefile
   toolkit/components/viewconfig/Makefile
@@ -554,6 +557,7 @@ MAKEFILES_profiler="
 MAKEFILES_snappy="
   other-licenses/snappy/Makefile
 "
+
 
 add_makefiles "
   $MAKEFILES_dom
@@ -719,6 +723,7 @@ fi
 
 if [ "$ENABLE_TESTS" ]; then
   add_makefiles "
+    addon-sdk/test/Makefile
     caps/tests/mochitest/Makefile
     chrome/test/Makefile
     content/base/test/Makefile
@@ -761,13 +766,16 @@ if [ "$ENABLE_TESTS" ]; then
     dom/imptests/editing/selecttest/Makefile
     dom/imptests/failures/editing/conformancetest/Makefile
     dom/imptests/failures/editing/selecttest/Makefile
-    dom/imptests/failures/html/tests/submission/Opera/microdata/Makefile
+    dom/imptests/failures/html/old-tests/submission/Opera/microdata/Makefile
     dom/imptests/failures/webapps/DOMCore/tests/approved/Makefile
     dom/imptests/failures/webapps/DOMCore/tests/submissions/Opera/Makefile
     dom/imptests/failures/webapps/WebStorage/tests/submissions/Infraware/Makefile
     dom/imptests/failures/webapps/WebStorage/tests/submissions/Ms2ger/Makefile
-    dom/imptests/html/tests/submission/Mozilla/Makefile
-    dom/imptests/html/tests/submission/Opera/microdata/Makefile
+    dom/imptests/html/html/semantics/scripting-1/the-script-element/Makefile
+    dom/imptests/html/html/webappapis/scripting/events/Makefile
+    dom/imptests/html/html/webappapis/scripting/processing-model-2/Makefile
+    dom/imptests/html/html/browsers/browsing-the-web/read-media/Makefile
+    dom/imptests/html/old-tests/submission/Opera/microdata/Makefile
     dom/imptests/webapps/DOMCore/tests/approved/Makefile
     dom/imptests/webapps/DOMCore/tests/submissions/Opera/Makefile
     dom/imptests/webapps/WebStorage/tests/submissions/Infraware/Makefile
@@ -920,6 +928,7 @@ if [ "$ENABLE_TESTS" ]; then
     testing/xpcshell/example/Makefile
     toolkit/components/aboutmemory/tests/Makefile
     toolkit/components/alerts/test/Makefile
+    toolkit/components/captivedetect/test/Makefile
     toolkit/components/commandlines/test/Makefile
     toolkit/components/contentprefs/tests/Makefile
     toolkit/components/downloads/test/Makefile
@@ -937,6 +946,7 @@ if [ "$ENABLE_TESTS" ]; then
     toolkit/components/social/test/Makefile
     toolkit/components/social/test/browser/Makefile
     toolkit/components/telemetry/tests/Makefile
+    toolkit/components/thumbnails/test/Makefile
     toolkit/components/urlformatter/tests/Makefile
     toolkit/components/viewsource/test/Makefile
     toolkit/components/viewsource/test/browser/Makefile
@@ -1205,6 +1215,7 @@ fi
 if [ "$MOZ_B2G_RIL" ]; then
   add_makefiles "
     dom/telephony/Makefile
+    dom/voicemail/Makefile
     dom/wifi/Makefile
     ipc/ril/Makefile
   "
@@ -1459,9 +1470,8 @@ if [ "$MOZ_XUL" ]; then
     content/xul/templates/Makefile
     content/xul/templates/public/Makefile
     content/xul/templates/src/Makefile
-    layout/xul/base/src/grid/Makefile
-    layout/xul/base/src/tree/public/Makefile
-    layout/xul/base/src/tree/src/Makefile
+    layout/xul/grid/Makefile
+    layout/xul/tree/Makefile
     toolkit/components/autocomplete/Makefile
     toolkit/components/satchel/Makefile
   "

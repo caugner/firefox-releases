@@ -7,7 +7,6 @@
 #define mozilla_dom_SVGLineElement_h
 
 #include "nsSVGPathGeometryElement.h"
-#include "nsIDOMSVGLineElement.h"
 #include "nsSVGLength2.h"
 
 nsresult NS_NewSVGLineElement(nsIContent **aResult,
@@ -19,7 +18,7 @@ namespace dom {
 typedef nsSVGPathGeometryElement SVGLineElementBase;
 
 class SVGLineElement MOZ_FINAL : public SVGLineElementBase,
-                                 public nsIDOMSVGLineElement
+                                 public nsIDOMSVGElement
 {
 protected:
   SVGLineElement(already_AddRefed<nsINodeInfo> aNodeInfo);
@@ -30,7 +29,6 @@ protected:
 public:
   // interfaces:
   NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_NSIDOMSVGLINEELEMENT
 
   // xxx I wish we could use virtual inheritance
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
@@ -47,15 +45,13 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // WebIDL
-  already_AddRefed<nsIDOMSVGAnimatedLength> X1();
-  already_AddRefed<nsIDOMSVGAnimatedLength> Y1();
-  already_AddRefed<nsIDOMSVGAnimatedLength> X2();
-  already_AddRefed<nsIDOMSVGAnimatedLength> Y2();
+  already_AddRefed<SVGAnimatedLength> X1();
+  already_AddRefed<SVGAnimatedLength> Y1();
+  already_AddRefed<SVGAnimatedLength> X2();
+  already_AddRefed<SVGAnimatedLength> Y2();
 
 protected:
 

@@ -20,6 +20,7 @@
 #include "nsIDOMSVGDocument.h"
 #include "nsIScriptError.h"
 #include "nsIWidget.h"
+#include "nsContentUtils.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -206,7 +207,6 @@ nsHTMLSharedObjectElement::DoneAddingChildren(bool aHaveNotified)
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLSharedObjectElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsHTMLSharedObjectElement,
                                                   nsGenericHTMLElement)
   nsObjectLoadingContent::Traverse(tmp, cb);

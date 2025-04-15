@@ -21,7 +21,9 @@ class nsSVGElement;
 
 namespace mozilla {
 
-class DOMSVGMatrix;
+namespace dom {
+class SVGMatrix;
+}
 
 /**
  * Class DOMSVGPoint
@@ -89,7 +91,7 @@ public:
   virtual void SetX(float aX, ErrorResult& rv);
   virtual float Y();
   virtual void SetY(float aY, ErrorResult& rv);
-  virtual already_AddRefed<nsISVGPoint> MatrixTransform(DOMSVGMatrix& matrix);
+  virtual already_AddRefed<nsISVGPoint> MatrixTransform(dom::SVGMatrix& matrix);
   nsISupports* GetParentObject() MOZ_OVERRIDE {
     return mList;
   }

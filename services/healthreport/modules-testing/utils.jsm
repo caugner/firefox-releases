@@ -15,12 +15,12 @@ this.EXPORTED_SYMBOLS = [
 
 const {classes: Cc, interfaces: Ci, results: Cr, utils: Cu} = Components;
 
-Cu.import("resource://gre/modules/commonjs/promise/core.js");
+Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/osfile.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/services-common/utils.js");
-Cu.import("resource://gre/modules/services/healthreport/healthreporter.jsm");
+Cu.import("resource://gre/modules/HealthReport.jsm");
 
 
 let APP_INFO = {
@@ -220,8 +220,8 @@ this.InspectedHealthReporter = function (branch, policy) {
   HealthReporter.call(this, branch, policy);
 
   this.onStorageCreated = null;
-  this.onCollectorInitialized = null;
-  this.collectorShutdownCount = 0;
+  this.onProviderManagerInitialized = null;
+  this.providerManagerShutdownCount = 0;
   this.storageCloseCount = 0;
 }
 
@@ -236,18 +236,28 @@ InspectedHealthReporter.prototype = {
     return HealthReporter.prototype._onStorageCreated.call(this, storage);
   },
 
-  _onCollectorInitialized: function () {
-    if (this.onCollectorInitialized) {
-      this.onCollectorInitialized();
+  _initializeProviderManager: function () {
+    for (let result of HealthReporter.prototype._initializeProviderManager.call(this)) {
+      yield result;
     }
 
-    return HealthReporter.prototype._onCollectorInitialized.call(this);
+    if (this.onInitializeProviderManagerFinished) {
+      this.onInitializeProviderManagerFinished();
+    }
   },
 
-  _onCollectorShutdown: function () {
-    this.collectorShutdownCount++;
+  _onProviderManagerInitialized: function () {
+    if (this.onProviderManagerInitialized) {
+      this.onProviderManagerInitialized();
+    }
 
-    return HealthReporter.prototype._onCollectorShutdown.call(this);
+    return HealthReporter.prototype._onProviderManagerInitialized.call(this);
+  },
+
+  _onProviderManagerShutdown: function () {
+    this.providerManagerShutdownCount++;
+
+    return HealthReporter.prototype._onProviderManagerShutdown.call(this);
   },
 
   _onStorageClose: function () {

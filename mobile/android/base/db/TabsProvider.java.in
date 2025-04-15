@@ -198,6 +198,7 @@ public class TabsProvider extends ContentProvider {
             // commands in parallel using multiple connections.
             if (Build.VERSION.SDK_INT >= 11) {
                 db.enableWriteAheadLogging();
+                db.setLockingEnabled(false);
             } else {
                 // Pre-Honeycomb, we can do some lesser optimizations.
                 Cursor cursor = null;
@@ -645,6 +646,9 @@ public class TabsProvider extends ContentProvider {
         } finally {
             db.endTransaction();
         }
+
+        if (successes > 0)
+            mContext.getContentResolver().notifyChange(uri, null);
 
         return successes;
     }

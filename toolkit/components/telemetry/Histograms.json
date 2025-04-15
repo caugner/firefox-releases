@@ -85,7 +85,7 @@
   },
   "GC_REASON_2": {
     "kind": "enumerated",
-    "n_values": "js::gcreason::NUM_TELEMETRY_REASONS",
+    "n_values": "JS::gcreason::NUM_TELEMETRY_REASONS",
     "description": "Reason (enum value) for initiating a GC"
   },
   "GC_IS_COMPARTMENTAL": {
@@ -178,8 +178,8 @@
   "MEMORY_RESIDENT": {
     "kind": "exponential",
     "low": "32 * 1024",
-    "high": "1024 * 1024",
-    "n_buckets": 50,
+    "high": "16 * 1024 * 1024",
+    "n_buckets": 200,
     "extended_statistics_ok": true,
     "description": "Resident memory size (KB)"
   },
@@ -208,8 +208,8 @@
   "MEMORY_JS_GC_HEAP": {
     "kind": "exponential",
     "low": 1024,
-    "high": "512 * 1024",
-    "n_buckets": 50,
+    "high": "16 * 1024 * 1024",
+    "n_buckets": 200,
     "extended_statistics_ok": true,
     "description": "Memory used by the garbage-collected JavaScript heap (KB)"
   },
@@ -232,8 +232,8 @@
   "MEMORY_HEAP_ALLOCATED": {
     "kind": "exponential",
     "low": 1024,
-    "high": "1024 * 1024",
-    "n_buckets": 50,
+    "high": "16 * 1024 * 1024",
+    "n_buckets": 200,
     "extended_statistics_ok": true,
     "description": "Heap memory allocated (KB)"
   },
@@ -254,15 +254,15 @@
   "MEMORY_EXPLICIT": {
     "kind": "exponential",
     "low": 1024,
-    "high": "1024 * 1024",
-    "n_buckets": 50,
+    "high": "16 * 1024 * 1024",
+    "n_buckets": 200,
     "extended_statistics_ok": true,
     "description": "Explicit memory allocations (KB)"
   },
   "GHOST_WINDOWS": {
     "kind": "exponential",
     "high": "128",
-    "n_buckets": 8,
+    "n_buckets": 32,
     "extended_statistics_ok": true,
     "description": "Number of ghost windows"
   },
@@ -270,24 +270,24 @@
     "kind": "exponential",
     "high": "1024",
     "n_buckets": 10,
-    "description": "Time(ms) to purge MADV_FREE'd heap pages.",
     "extended_statistics_ok": true,
+    "description": "Time(ms) to purge MADV_FREE'd heap pages.",
     "cpp_guard": "XP_MACOSX"
   },
   "LOW_MEMORY_EVENTS_VIRTUAL": {
     "kind": "exponential",
     "high": "1024",
     "n_buckets": 21,
-    "description": "Number of low-virtual-memory events fired since last ping",
     "extended_statistics_ok": true,
+    "description": "Number of low-virtual-memory events fired since last ping",
     "cpp_guard": "XP_WIN"
   },
   "LOW_MEMORY_EVENTS_PHYSICAL": {
     "kind": "exponential",
     "high": "1024",
     "n_buckets": 21,
-    "description": "Number of low-physical-memory events fired since last ping",
     "extended_statistics_ok": true,
+    "description": "Number of low-physical-memory events fired since last ping",
     "cpp_guard": "XP_WIN"
   },
   "LOW_MEMORY_EVENTS_COMMIT_SPACE": {
@@ -1569,6 +1569,18 @@
     "kind": "boolean",
     "description": "Whether the user has requested not to see the Plugin Hang UI again"
   },
+  "PLUGIN_HANG_UI_RESPONSE_TIME": {
+    "kind": "exponential",
+    "high": "60000",
+    "n_buckets": 20,
+    "description": "Time spent in Plugin Hang UI (ms)"
+  },
+  "PLUGIN_HANG_TIME": {
+    "kind": "exponential",
+    "high": "60000",
+    "n_buckets": 20,
+    "description": "Value of dom.ipc.plugins.hangUITimeoutSecs plus time spent in Plugin Hang UI (ms)"
+  },
   "PLUGIN_SHUTDOWN_MS": {
     "kind": "exponential",
     "high": "5000",
@@ -1885,19 +1897,19 @@
     "extended_statistics_ok": true,
     "description": "Total Time spent (ms) during disk cache revalidation"
   },
-  "NETWORK_DISK_CACHE_OUTPUT_STREAM_CLOSE": {
+  "NETWORK_DISK_CACHE_STREAMIO_CLOSE": {
     "kind": "exponential",
     "high": "10000",
     "n_buckets": 10,
     "extended_statistics_ok": true,
-    "description": "Time spent in nsDiskCacheOutputStream::Close() on non-main thread (ms)"
+    "description": "Time spent in nsDiskCacheStreamIO::Close() on non-main thread (ms)"
   },
-  "NETWORK_DISK_CACHE_OUTPUT_STREAM_CLOSE_MAIN_THREAD": {
+  "NETWORK_DISK_CACHE_STREAMIO_CLOSE_MAIN_THREAD": {
     "kind": "exponential",
     "high": "10000",
     "n_buckets": 10,
     "extended_statistics_ok": true,
-    "description": "Time spent in nsDiskCacheOutputStream::Close() on the main thread (ms)"
+    "description": "Time spent in nsDiskCacheStreamIO::Close() on the main thread (ms)"
   },
   "IDLE_NOTIFY_BACK_MS": {
     "kind": "exponential",
@@ -2226,6 +2238,45 @@
     "n_buckets": 10,
     "description": "Firefox: Time taken by the tab closing animation in milliseconds"
   },
+  "FX_TAB_ANIM_OPEN_PREVIEW_FRAME_INTERVAL_MS": {
+    "kind": "exponential",
+    "low" : 7,
+    "high": "500",
+    "n_buckets": 50,
+    "description": "Average frame interval during tab open animation of about:newtab (preview=on), when other tabs are unaffected"
+  },
+  "FX_TAB_ANIM_OPEN_PREVIEW_FRAME_PAINT_MS": {
+    "kind": "exponential",
+    "high": "500",
+    "n_buckets": 30,
+    "description": "Average paint duration during tab open animation of about:newtab (preview=on), when other tabs are unaffected"
+  },
+  "FX_TAB_ANIM_OPEN_FRAME_INTERVAL_MS": {
+    "kind": "exponential",
+    "low" : 7,
+    "high": "500",
+    "n_buckets": 50,
+    "description": "Average frame interval during tab open animation of about:newtab (preview=off), when other tabs are unaffected"
+  },
+  "FX_TAB_ANIM_OPEN_FRAME_PAINT_MS": {
+    "kind": "exponential",
+    "high": "500",
+    "n_buckets": 30,
+    "description": "Average paint duration during tab open animation of about:newtab (preview=off), when other tabs are unaffected"
+  },
+  "FX_TAB_ANIM_ANY_FRAME_INTERVAL_MS": {
+    "kind": "exponential",
+    "low" : 7,
+    "high": "500",
+    "n_buckets": 50,
+    "description": "Average frame interval during any tab open/close animation (excluding tabstrip scroll)"
+  },
+  "FX_TAB_ANIM_ANY_FRAME_PAINT_MS": {
+    "kind": "exponential",
+    "high": "500",
+    "n_buckets": 30,
+    "description": "Average paint duration during any tab open/close animation (excluding tabstrip scroll)"
+  },
   "FX_TAB_SWITCH_UPDATE_MS": {
     "kind": "exponential",
     "high": "1000",
@@ -2266,15 +2317,15 @@
     "kind": "exponential",
     "low": 50,
     "high": "5000",
-    "extended_statistics_ok": true,
     "n_buckets": 10,
+    "extended_statistics_ok": true,
     "description": "Firefox: Time to initialize the bookmarks toolbar view (ms)"
   },
   "FX_NEW_WINDOW_MS": {
     "kind": "exponential",
     "high": "10000",
-    "extended_statistics_ok": true,
     "n_buckets": 20,
+    "extended_statistics_ok": true,
     "description": "Firefox: Time taken to open a new browser window (ms)"
   },
   "FX_PAGE_LOAD_MS": {
@@ -2317,12 +2368,26 @@
     "extended_statistics_ok": true,
     "description": "Session restore: Time to collect all window and tab data (ms)"
   },
+  "FX_SESSION_RESTORE_COLLECT_DATA_LONGEST_OP_MS": {
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "Session restore: Duration of the longest uninterruptible operation while collecting all window and tab data (ms)"
+  },
   "FX_SESSION_RESTORE_SERIALIZE_DATA_MS": {
     "kind": "exponential",
     "high": "1000",
     "n_buckets": 10,
     "extended_statistics_ok": true,
     "description": "Session restore: Time to JSON serialize session data (ms)"
+  },
+  "FX_SESSION_RESTORE_SERIALIZE_DATA_LONGEST_OP_MS": {
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "Session restore: Duration of the longest uninterruptible operation while serializing session data (ms)"
   },
   "FX_SESSION_RESTORE_READ_FILE_MS": {
     "kind": "exponential",
@@ -2390,30 +2455,6 @@
   "MULTIPART_XHR_RESPONSE": {
     "kind": "boolean",
     "description": "XMLHttpRequest response was of type multipart/x-mixed-replace."
-  },
-  "PRIVATE_BROWSING_TRANSITION_ENTER_PREPARATION_MS": {
-    "kind": "exponential",
-    "high": "3000",
-    "n_buckets": 10,
-    "description": "Time spent on private browsing enter transition, excluding session restore (ms)"
-  },
-  "PRIVATE_BROWSING_TRANSITION_ENTER_TOTAL_MS": {
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 50,
-    "description": "Time spent on private browsing enter transition, including session restore (ms)"
-  },
-  "PRIVATE_BROWSING_TRANSITION_EXIT_PREPARATION_MS": {
-    "kind": "exponential",
-    "high": "3000",
-    "n_buckets": 10,
-    "description": "Time spent on private browsing exit transition, excluding session restore (ms)"
-  },
-  "PRIVATE_BROWSING_TRANSITION_EXIT_TOTAL_MS": {
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 50,
-    "description": "Time spent on private browsing exit transition, including session restore (ms)"
   },
   "DOM_TIMERS_FIRED_PER_NATIVE_TIMEOUT": {
     "kind": "exponential",
@@ -2709,6 +2750,20 @@
     "n_values": 100,
     "description": "Security UI Telemetry"
   },
+  "SEARCH_SERVICE_INIT_MS": {
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": 15,
+    "extended_statistics_ok": true,
+    "description": "Time (ms) it takes to initialize the search service"
+  },
+  "SEARCH_SERVICE_BUILD_CACHE_MS": {
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": 15,
+    "extended_statistics_ok": true,
+    "description": "Time (ms) it takes to build the cache of the search service"
+  },
   "SOCIAL_ENABLED_ON_SESSION": {
     "kind": "flag",
     "description": "Social has been enabled at least once on the current session"
@@ -2783,5 +2838,101 @@
     "n_buckets": 50,
     "extended_statistics_ok": true,
     "description": "Time spent on an initially failed cert  verification in classic mode (ms)"
+  },
+  "HEALTHREPORT_DB_OPEN_FIRSTRUN_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "description": "Time (ms) spent to open Firefox Health Report's database the first time, including schema setup."
+  },
+  "HEALTHREPORT_DB_OPEN_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "description": "Time (ms) spent to open Firefox Health Report's database."
+  },
+  "HEALTHREPORT_INIT_FIRSTRUN_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "description": "Time (ms) spent to initialize Firefox Health Report the first time, including provider and collector initialization."
+  },
+  "HEALTHREPORT_INIT_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "extended_statistics_ok": true,
+    "description": "Time (ms) spent to initialize Firefox Health Report service."
+  },
+  "HEALTHREPORT_SHUTDOWN_DELAY_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "extended_statistics_ok": true,
+    "description": "Time (ms) that Firefox Health Report delays application shutdown by."
+  },
+  "HEALTHREPORT_GENERATE_JSON_PAYLOAD_MS": {
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Time (ms) it takes to obtain and format a Health Report JSON payload."
+  },
+  "HEALTHREPORT_JSON_PAYLOAD_SERIALIZE_MS": {
+    "kind": "exponential",
+    "high": "5000",
+    "n_buckets": 10,
+    "description": "Time (ms) it takes to JSON.stringify() the FHR JSON payload."
+  },
+  "HEALTHREPORT_PAYLOAD_UNCOMPRESSED_BYTES": {
+    "kind": "linear",
+    "high": "2000000",
+    "n_buckets": 202,
+    "description": "Size (in bytes) of the raw Health Report payload."
+  },
+  "HEALTHREPORT_UPLOAD_MS": {
+    "kind": "exponential",
+    "high": "60000",
+    "n_buckets": 20,
+    "extended_statistics_ok": true,
+    "description": "Time (ms) it takes to upload the Health Report payload."
+  },
+  "HEALTHREPORT_SAVE_LAST_PAYLOAD_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "Time (ms) it takes to persist the last submitted Health Report payload to disk."
+  },
+  "HEALTHREPORT_COLLECT_CONSTANT_DATA_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "description": "Time (ms) it takes FHR to collect constant data."
+  },
+  "HEALTHREPORT_COLLECT_DAILY_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "description": "Time (ms) it takes FHR to collect daily data."
+  },
+  "HEALTHREPORT_SHUTDOWN_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "description": "Time (ms) it takes FHR to shut down."
+  },
+  "HEALTHREPORT_POST_COLLECT_CHECKPOINT_MS": {
+    "kind": "exponential",
+    "high": "20000",
+    "n_buckets": 15,
+    "description": "Time (ms) for a WAL checkpoint after collecting all measurements."
+  },
+  "POPUP_NOTIFICATION_MAINACTION_TRIGGERED_MS": {
+    "kind": "linear",
+    "low": 25,
+    "high": "80 * 25",
+    "n_buckets": "80 + 1",
+    "description": "The time (in milliseconds) after showing a PopupNotification that the mainAction was first triggered"
   }
 }

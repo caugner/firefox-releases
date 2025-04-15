@@ -109,6 +109,11 @@ nsFontFaceLoader::LoadTimerCallback(nsITimer *aTimer, void *aClosure)
 {
   nsFontFaceLoader *loader = static_cast<nsFontFaceLoader*>(aClosure);
 
+  if (!loader->mFontSet) {
+    // We've been canceled
+    return;
+  }
+
   gfxProxyFontEntry *pe = loader->mFontEntry.get();
   bool updateUserFontSet = true;
 
@@ -143,10 +148,10 @@ nsFontFaceLoader::LoadTimerCallback(nsITimer *aTimer, void *aClosure)
   // font will be used in the meantime, and tell the context to refresh.
   if (updateUserFontSet) {
     pe->mLoadingState = gfxProxyFontEntry::LOADING_SLOWLY;
+    gfxUserFontSet *fontSet = loader->mFontSet;
     nsPresContext *ctx = loader->mFontSet->GetPresContext();
-    NS_ASSERTION(ctx, "fontSet doesn't have a presContext?");
-    gfxUserFontSet *fontSet;
-    if (ctx && (fontSet = ctx->GetUserFontSet()) != nullptr) {
+    NS_ASSERTION(ctx, "userfontset doesn't have a presContext?");
+    if (ctx) {
       fontSet->IncrementGeneration();
       ctx->UserFontSetUpdated();
       LOG(("fontdownloader (%p) timeout reflow\n", loader));
@@ -188,12 +193,6 @@ nsFontFaceLoader::OnStreamComplete(nsIStreamLoader* aLoader,
   NS_ASSERTION(ctx && !ctx->PresShell()->IsDestroying(),
                "We should have been canceled already");
 
-  // whether an error occurred or not, notify the user font set of the completion
-  gfxUserFontSet *userFontSet = ctx->GetUserFontSet();
-  if (!userFontSet) {
-    return aStatus;
-  }
-
   if (NS_SUCCEEDED(aStatus)) {
     // for HTTP requests, check whether the request _actually_ succeeded;
     // the "request status" in aStatus does not necessarily indicate this,
@@ -219,10 +218,8 @@ nsFontFaceLoader::OnStreamComplete(nsIStreamLoader* aLoader,
   // This is called even in the case of a failed download (HTTP 404, etc),
   // as there may still be data to be freed (e.g. an error page),
   // and we need the fontSet to initiate loading the next source.
-  bool fontUpdate = userFontSet->OnLoadComplete(mFontFamily,
-                                                mFontEntry,
-                                                aString, aStringLen,
-                                                aStatus);
+  bool fontUpdate = mFontSet->OnLoadComplete(mFontFamily, mFontEntry, aString,
+                                             aStringLen, aStatus);
 
   // when new font loaded, need to reflow
   if (fontUpdate) {
@@ -230,6 +227,13 @@ nsFontFaceLoader::OnStreamComplete(nsIStreamLoader* aLoader,
     // asynchronous, reflows will coalesce.
     ctx->UserFontSetUpdated();
     LOG(("fontdownloader (%p) reflow\n", this));
+  }
+
+  // done with font set
+  mFontSet = nullptr;
+  if (mLoadTimer) {
+    mLoadTimer->Cancel();
+    mLoadTimer = nullptr;
   }
 
   return NS_SUCCESS_ADOPTED_DATA;
@@ -731,8 +735,8 @@ nsUserFontSet::LogMessage(gfxMixedFontFamily *aFamily,
     weightKeyword = weightKeywordBuf;
   }
 
-  nsPrintfCString
-    msg("downloadable font: %s "
+  nsPrintfCString message
+       ("downloadable font: %s "
         "(font-family: \"%s\" style:%s weight:%s stretch:%s src index:%d)",
         aMessage,
         familyName.get(),
@@ -743,27 +747,27 @@ nsUserFontSet::LogMessage(gfxMixedFontFamily *aFamily,
         aProxy->mSrcIndex);
 
   if (NS_FAILED(aStatus)) {
-    msg.Append(": ");
+    message.Append(": ");
     switch (aStatus) {
     case NS_ERROR_DOM_BAD_URI:
-      msg.Append("bad URI or cross-site access not allowed");
+      message.Append("bad URI or cross-site access not allowed");
       break;
     case NS_ERROR_CONTENT_BLOCKED:
-      msg.Append("content blocked");
+      message.Append("content blocked");
       break;
     default:
-      msg.Append("status=");
-      msg.AppendInt(static_cast<uint32_t>(aStatus));
+      message.Append("status=");
+      message.AppendInt(static_cast<uint32_t>(aStatus));
       break;
     }
   }
-  msg.Append("\nsource: ");
-  msg.Append(fontURI);
+  message.Append("\nsource: ");
+  message.Append(fontURI);
 
 #ifdef PR_LOGGING
   if (PR_LOG_TEST(GetUserFontsLog(), PR_LOG_DEBUG)) {
     PR_LOG(GetUserFontsLog(), PR_LOG_DEBUG,
-           ("userfonts (%p) %s", this, msg.get()));
+           ("userfonts (%p) %s", this, message.get()));
   }
 #endif
 
@@ -787,7 +791,7 @@ nsUserFontSet::LogMessage(gfxMixedFontFamily *aFamily,
   NS_ENSURE_SUCCESS(rv, rv);
 
   uint64_t innerWindowID = GetPresContext()->Document()->InnerWindowID();
-  rv = scriptError->InitWithWindowID(NS_ConvertUTF8toUTF16(msg),
+  rv = scriptError->InitWithWindowID(NS_ConvertUTF8toUTF16(message),
                                      href,         // file
                                      text,         // src line
                                      0, 0,         // line & column number

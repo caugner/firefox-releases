@@ -34,6 +34,7 @@ class nsDOMNavigationTiming;
 class nsEventStates;
 class nsFrameLoader;
 class nsHTMLCSSStyleSheet;
+class nsHTMLDocument;
 class nsHTMLStyleSheet;
 class nsIAtom;
 class nsIBFCacheEntry;
@@ -73,6 +74,8 @@ class nsStyleSet;
 class nsTextNode;
 class nsWindowSizes;
 class nsSmallVoidArray;
+class nsDOMCaretPosition;
+class nsViewportInfo;
 
 namespace mozilla {
 class ErrorResult;
@@ -89,6 +92,8 @@ class DocumentFragment;
 class DocumentType;
 class DOMImplementation;
 class Element;
+class GlobalObject;
+class HTMLBodyElement;
 class Link;
 class ProcessingInstruction;
 class UndoManager;
@@ -97,8 +102,8 @@ template<typename> class Sequence;
 } // namespace mozilla
 
 #define NS_IDOCUMENT_IID \
-{ 0xff03d72f, 0x87cd, 0x4d11, \
- { 0x81, 0x8d, 0xa8, 0xb4, 0xf5, 0x98, 0x1a, 0x10 } }
+{ 0x4e6f7d97, 0x091e, 0x4eda, \
+  { 0xb7, 0xd6, 0xfe, 0xb0, 0xb8, 0x01, 0x2a, 0x93 } }
 
 // Flag for AddStyleSheet().
 #define NS_STYLESHEET_FROM_CATALOG                (1 << 0)
@@ -441,6 +446,53 @@ public:
     mHasMixedActiveContentLoaded = aHasMixedActiveContentLoaded;
   }
 
+  /**
+   * Get mixed active content blocked flag for this document.
+   */
+  bool GetHasMixedActiveContentBlocked()
+  {
+    return mHasMixedActiveContentBlocked;
+  }
+
+  /**
+   * Set the mixed active content blocked flag for this document.
+   */
+  void SetHasMixedActiveContentBlocked(bool aHasMixedActiveContentBlocked)
+  {
+    mHasMixedActiveContentBlocked = aHasMixedActiveContentBlocked;
+  }
+
+  /**
+   * Get the has mixed display content loaded flag for this document.
+   */
+  bool GetHasMixedDisplayContentLoaded()
+  {
+    return mHasMixedDisplayContentLoaded;
+  }
+
+  /**
+   * Set the has mixed display content loaded flag for this document.
+   */
+  void SetHasMixedDisplayContentLoaded(bool aHasMixedDisplayContentLoaded)
+  {
+    mHasMixedDisplayContentLoaded = aHasMixedDisplayContentLoaded;
+  }
+
+  /**
+   * Get mixed display content blocked flag for this document.
+   */
+  bool GetHasMixedDisplayContentBlocked()
+  {
+    return mHasMixedDisplayContentBlocked;
+  }
+
+  /**
+   * Set the mixed display content blocked flag for this document.
+   */
+  void SetHasMixedDisplayContentBlocked(bool aHasMixedDisplayContentBlocked)
+  {
+    mHasMixedDisplayContentBlocked = aHasMixedDisplayContentBlocked;
+  }
 
   /**
    * Get the sandbox flags for this document.
@@ -562,6 +614,16 @@ public:
    */
   Element* GetRootElement() const;
 
+  virtual nsViewportInfo GetViewportInfo(uint32_t aDisplayWidth,
+                                         uint32_t aDisplayHeight) = 0;
+
+  /**
+   * True iff this doc will ignore manual character encoding overrides.
+   */
+  virtual bool WillIgnoreCharsetOverride() {
+    return true;
+  }
+
 protected:
   virtual Element *GetRootElementInternal() const = 0;
 
@@ -574,9 +636,7 @@ public:
   Element* GetHtmlChildElement(nsIAtom* aTag);
   // Get the canonical <body> element, or return null if there isn't one (e.g.
   // if the root isn't <html> or if the <body> isn't there)
-  Element* GetBodyElement() {
-    return GetHtmlChildElement(nsGkAtoms::body);
-  }
+  mozilla::dom::HTMLBodyElement* GetBodyElement();
   // Get the canonical <head> element, or return null if there isn't one (e.g.
   // if the root isn't <html> or if the <head> isn't there)
   Element* GetHeadElement() {
@@ -1790,8 +1850,9 @@ public:
   {
     return GetScopeObject();
   }
-  static already_AddRefed<nsIDocument> Constructor(nsISupports* aGlobal,
-                                                   mozilla::ErrorResult& rv);
+  static already_AddRefed<nsIDocument>
+    Constructor(const mozilla::dom::GlobalObject& aGlobal,
+                mozilla::ErrorResult& rv);
   virtual mozilla::dom::DOMImplementation*
     GetImplementation(mozilla::ErrorResult& rv) = 0;
   void GetURL(nsString& retval) const;
@@ -1917,15 +1978,24 @@ public:
   virtual nsIDOMDOMStringList* StyleSheetSets() = 0;
   virtual void EnableStyleSheetsForSet(const nsAString& aSheetSet) = 0;
   Element* ElementFromPoint(float aX, float aY);
+
+  /**
+   * Retrieve the location of the caret position (DOM node and character
+   * offset within that node), given a point.
+   *
+   * @param aX Horizontal point at which to determine the caret position, in
+   *           page coordinates.
+   * @param aY Vertical point at which to determine the caret position, in
+   *           page coordinates.
+   */
+  already_AddRefed<nsDOMCaretPosition>
+    CaretPositionFromPoint(float aX, float aY);
+
   // QuerySelector and QuerySelectorAll already defined on nsINode
   nsINodeList* GetAnonymousNodes(Element& aElement);
   Element* GetAnonymousElementByAttribute(Element& aElement,
                                           const nsAString& aAttrName,
                                           const nsAString& aAttrValue);
-  void AddBinding(Element& aElement, const nsAString& aURI,
-                  mozilla::ErrorResult& rv);
-  void RemoveBinding(Element& aElement, const nsAString& aURI,
-                     mozilla::ErrorResult& rv);
   Element* GetBindingParent(nsINode& aNode);
   void LoadBindingDocument(const nsAString& aURI, mozilla::ErrorResult& rv);
   already_AddRefed<nsIDOMXPathExpression>
@@ -1951,6 +2021,8 @@ public:
                     const mozilla::dom::Sequence<nsRefPtr<nsIDOMTouch> >& aTouches);
   already_AddRefed<nsIDOMTouchList>
     CreateTouchList(const mozilla::dom::Sequence<nsRefPtr<nsIDOMTouch> >& aTouches);
+
+  nsHTMLDocument* AsHTMLDocument();
 
 private:
   uint64_t mWarnedAbout;
@@ -2140,6 +2212,15 @@ protected:
 
   // True if a document has loaded Mixed Active Script (see nsMixedContentBlocker.cpp)
   bool mHasMixedActiveContentLoaded;
+
+  // True if a document has blocked Mixed Active Script (see nsMixedContentBlocker.cpp)
+  bool mHasMixedActiveContentBlocked;
+
+  // True if a document has loaded Mixed Display/Passive Content (see nsMixedContentBlocker.cpp)
+  bool mHasMixedDisplayContentLoaded;
+
+  // True if a document has blocked Mixed Display/Passive Content (see nsMixedContentBlocker.cpp)
+  bool mHasMixedDisplayContentBlocked;
 
   // True if DisallowBFCaching has been called on this document.
   bool mBFCacheDisallowed;

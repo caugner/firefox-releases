@@ -4,21 +4,19 @@
 
 Components.utils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
 
-function nsContextMenu(aXulMenu, aBrowser, aIsShift) {
+function nsContextMenu(aXulMenu, aIsShift) {
   this.shouldDisplay = true;
-  this.initMenu(aBrowser, aXulMenu, aIsShift);
+  this.initMenu(aXulMenu, aIsShift);
 }
 
 // Prototype for nsContextMenu "class."
 nsContextMenu.prototype = {
-  initMenu: function CM_initMenu(aBrowser, aXulMenu, aIsShift) {
+  initMenu: function CM_initMenu(aXulMenu, aIsShift) {
     // Get contextual info.
     this.setTarget(document.popupNode, document.popupRangeParent,
                    document.popupRangeOffset);
     if (!this.shouldDisplay)
       return;
-
-    this.browser = aBrowser;
 
     this.hasPageMenu = false;
     if (!aIsShift) {
@@ -57,6 +55,7 @@ nsContextMenu.prototype = {
     this.initClipboardItems();
     this.initMediaPlayerItems();
     this.initLeaveDOMFullScreenItems();
+    this.initClickToPlayItems();
   },
 
   initPageMenuSeparator: function CM_initPageMenuSeparator() {
@@ -138,13 +137,9 @@ nsContextMenu.prototype = {
     }
 
     var shouldShow = this.onSaveableLink || isMailtoInternal || this.onPlainTextLink;
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
     var isWindowPrivate = PrivateBrowsingUtils.isWindowPrivate(window);
     this.showItem("context-openlink", shouldShow && !isWindowPrivate);
     this.showItem("context-openlinkprivate", shouldShow);
-#else
-    this.showItem("context-openlink", shouldShow);
-#endif
     this.showItem("context-openlinkintab", shouldShow);
     this.showItem("context-openlinkincurrent", this.onPlainTextLink);
     this.showItem("context-sep-open", shouldShow);
@@ -153,13 +148,20 @@ nsContextMenu.prototype = {
   initNavigationItems: function CM_initNavigationItems() {
     var shouldShow = !(this.isContentSelected || this.onLink || this.onImage ||
                        this.onCanvas || this.onVideo || this.onAudio ||
-                       this.onTextInput);
+                       this.onTextInput || this.onSocial);
     this.showItem("context-back", shouldShow);
     this.showItem("context-forward", shouldShow);
-    var shouldShowReload = XULBrowserWindow.stopCommand.getAttribute("disabled") == "true";
-    this.showItem("context-reload", shouldShow && shouldShowReload);
-    this.showItem("context-stop", shouldShow && !shouldShowReload);
-    this.showItem("context-sep-stop", shouldShow);
+
+    let stopped = XULBrowserWindow.stopCommand.getAttribute("disabled") == "true";
+
+    let stopReloadItem = "";
+    if (shouldShow || this.onSocial) {
+      stopReloadItem = (stopped || this.onSocial) ? "reload" : "stop";
+    }
+
+    this.showItem("context-reload", stopReloadItem == "reload");
+    this.showItem("context-stop", stopReloadItem == "stop");
+    this.showItem("context-sep-stop", !!stopReloadItem);
 
     // XXX: Stop is determined in browser.js; the canStop broadcaster is broken
     //this.setItemAttrFromNode( "context-stop", "disabled", "canStop" );
@@ -210,7 +212,7 @@ nsContextMenu.prototype = {
                        this.onImage || this.onCanvas ||
                        this.onVideo || this.onAudio ||
                        this.onLink || this.onTextInput);
-    var showInspect = gPrefService.getBoolPref("devtools.inspector.enabled");
+    var showInspect = !this.onSocial && gPrefService.getBoolPref("devtools.inspector.enabled");
     this.showItem("context-viewsource", shouldShow);
     this.showItem("context-viewinfo", shouldShow);
     this.showItem("inspect-separator", showInspect);
@@ -267,8 +269,9 @@ nsContextMenu.prototype = {
     // Use "Bookmark This Link" if on a link.
     this.showItem("context-bookmarkpage",
                   !(this.isContentSelected || this.onTextInput || this.onLink ||
-                    this.onImage || this.onVideo || this.onAudio));
-    this.showItem("context-bookmarklink", (this.onLink && !this.onMailtoLink) || this.onPlainTextLink);
+                    this.onImage || this.onVideo || this.onAudio || this.onSocial));
+    this.showItem("context-bookmarklink", (this.onLink && !this.onMailtoLink &&
+                                           !this.onSocial) || this.onPlainTextLink);
     this.showItem("context-searchselect", isTextSelected);
     this.showItem("context-keywordfield",
                   this.onTextInput && this.onKeywordField);
@@ -392,7 +395,7 @@ nsContextMenu.prototype = {
     this.showItem("context-media-showcontrols", onMedia && !this.target.controls);
     this.showItem("context-media-hidecontrols", onMedia && this.target.controls);
     this.showItem("context-video-fullscreen", this.onVideo && this.target.ownerDocument.mozFullScreenElement == null);
-    var statsShowing = this.onVideo && this.target.wrappedJSObject.mozMediaStatisticsShowing;
+    var statsShowing = this.onVideo && XPCNativeWrapper.unwrap(this.target).mozMediaStatisticsShowing;
     this.showItem("context-video-showstats", this.onVideo && this.target.controls && !statsShowing);
     this.showItem("context-video-hidestats", this.onVideo && this.target.controls && statsShowing);
 
@@ -415,6 +418,12 @@ nsContextMenu.prototype = {
       }
     }
     this.showItem("context-media-sep-commands",  onMedia);
+  },
+
+  initClickToPlayItems: function() {
+    this.showItem("context-ctp-play", this.onCTPPlugin);
+    this.showItem("context-ctp-hide", this.onCTPPlugin);
+    this.showItem("context-sep-ctp", this.onCTPPlugin);
   },
 
   inspectNode: function CM_inspectNode() {
@@ -462,9 +471,17 @@ nsContextMenu.prototype = {
     this.bgImageURL        = "";
     this.onEditableArea    = false;
     this.isDesignMode      = false;
+    this.onCTPPlugin       = false;
 
     // Remember the node that was clicked.
     this.target = aNode;
+
+    this.browser = this.target.ownerDocument.defaultView
+                                .QueryInterface(Ci.nsIInterfaceRequestor)
+                                .getInterface(Ci.nsIWebNavigation)
+                                .QueryInterface(Ci.nsIDocShell)
+                                .chromeEventHandler;
+    this.onSocial = !!this.browser.getAttribute("origin");
 
     // Check if we are in a synthetic document (stand alone image, video, etc.).
     this.inSyntheticDoc =  this.target.ownerDocument.mozSyntheticDocument;
@@ -538,6 +555,12 @@ nsContextMenu.prototype = {
                                               computedURL);
           }
         }
+      }
+      else if ((this.target instanceof HTMLEmbedElement ||
+                this.target instanceof HTMLObjectElement ||
+                this.target instanceof HTMLAppletElement) &&
+               this.target.mozMatchesSelector(":-moz-handler-clicktoplay")) {
+        this.onCTPPlugin = true;
       }
     }
 
@@ -747,6 +770,18 @@ nsContextMenu.prototype = {
     var referrer = doc.referrer;
     openUILinkIn(frameURL, "current", { disallowInheritPrincipal: true,
                                         referrerURI: referrer ? makeURI(referrer) : null });
+  },
+
+  reload: function(event) {
+    if (this.onSocial) {
+      // full reload of social provider
+      Social.enabled = false;
+      Services.tm.mainThread.dispatch(function() {
+        Social.enabled = true;
+      }, Components.interfaces.nsIThread.DISPATCH_NORMAL);
+    } else {
+      BrowserReloadOrDuplicate(event);
+    }
   },
 
   // View Partial Source
@@ -1109,6 +1144,14 @@ nsContextMenu.prototype = {
     MailIntegration.sendMessage(this.mediaURL, "");
   },
 
+  playPlugin: function() {
+    gPluginHandler.activateSinglePlugin(this.target.ownerDocument.defaultView.top, this.target);
+  },
+
+  hidePlugin: function() {
+    gPluginHandler.hideClickToPlayOverlay(this.target);
+  },
+
   // Generate email address and put it on clipboard.
   copyEmail: function() {
     // Copy the comma-separated list of email addresses only.
@@ -1449,14 +1492,10 @@ nsContextMenu.prototype = {
       case "showcontrols":
         media.setAttribute("controls", "true");
         break;
-      case "showstats":
-        var event = document.createEvent("CustomEvent");
-        event.initCustomEvent("media-showStatistics", false, true, true);
-        media.dispatchEvent(event);
-        break;
       case "hidestats":
-        var event = document.createEvent("CustomEvent");
-        event.initCustomEvent("media-showStatistics", false, true, false);
+      case "showstats":
+        var event = media.ownerDocument.createEvent("CustomEvent");
+        event.initCustomEvent("media-showStatistics", false, true, command == "showstats");
         media.dispatchEvent(event);
         break;
     }

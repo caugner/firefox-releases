@@ -34,8 +34,8 @@ XPCSHELL_TESTS += unit_ipc
 endif
 
 
-# Split files arbitrarily in two groups to not run into too-long command lines
-# which break on Windows (see bug 563151)
+# Split files arbitrarily in three groups to not run into too-long command lines
+# which break on Windows (see bug 563151 and bug 831989)
 MOCHITEST_FILES_A = \
 		responseIdentical.sjs \
 		test_bug5141.html \
@@ -364,18 +364,33 @@ MOCHITEST_FILES_B = \
 		file_CSP.sjs \
 		file_CSP_main.html \
 		file_CSP_main.html^headers^ \
+		file_CSP_main_spec_compliant.html \
+		file_CSP_main_spec_compliant.html^headers^ \
 		file_CSP_main.js \
+		file_CSP_main_spec_compliant.js \
 		test_CSP_frameancestors.html \
 		file_CSP_frameancestors.sjs \
 		file_CSP_frameancestors_main.html \
 		file_CSP_frameancestors_main.js \
+		file_CSP_frameancestors_spec_compliant.sjs \
+		file_CSP_frameancestors_main_spec_compliant.html \
+		file_CSP_frameancestors_main_spec_compliant.js \
 		test_CSP_inlinescript.html \
 		file_CSP_inlinescript_main.html \
 		file_CSP_inlinescript_main.html^headers^ \
+		file_CSP_inlinescript_main_spec_compliant.html \
+		file_CSP_inlinescript_main_spec_compliant.html^headers^ \
+		file_CSP_inlinescript_main_spec_compliant_allowed.html \
+		file_CSP_inlinescript_main_spec_compliant_allowed.html^headers^ \
 		test_CSP_evalscript.html \
 		file_CSP_evalscript_main.html \
 		file_CSP_evalscript_main.html^headers^ \
 		file_CSP_evalscript_main.js \
+		file_CSP_evalscript_main_allowed.js \
+		file_CSP_evalscript_main_spec_compliant.html \
+	 	file_CSP_evalscript_main_spec_compliant.html^headers^ \
+		file_CSP_evalscript_main_spec_compliant_allowed.html \
+		file_CSP_evalscript_main_spec_compliant_allowed.html^headers^ \
 		file_csp_bug768029.html \
 		file_csp_bug768029.sjs \
 		file_csp_bug773891.html \
@@ -482,8 +497,6 @@ MOCHITEST_FILES_B = \
 		eventsource_redirect_to.resource^headers^ \
 		badContentType.eventsource \
 		badContentType.eventsource^headers^ \
-		badEventFieldName.eventsource \
-		badEventFieldName.eventsource^headers^ \
 		badHTTPResponseCode.eventsource \
 		badHTTPResponseCode.eventsource^headers^ \
 		badMessageEvent.eventsource \
@@ -495,6 +508,9 @@ MOCHITEST_FILES_B = \
 		accesscontrol.resource^headers^ \
 		invalid_accesscontrol.resource \
 		invalid_accesscontrol.resource^headers^ \
+		$(NULL)
+
+MOCHITEST_FILES_C= \
 		test_xhr_progressevents.html \
 		progressserver.sjs \
 		somedatas.resource \
@@ -506,8 +522,8 @@ MOCHITEST_FILES_B = \
 		file_html_in_xhr3.html \
 		file_html_in_xhr.sjs \
 		test_bug647518.html \
-		test_bug654352.html \
-                Ahem.ttf \
+		test_caretPositionFromPoint.html \
+		Ahem.ttf \
 		test_bug664916.html \
 		test_bug666604.html \
 		test_bug675121.html \
@@ -540,9 +556,6 @@ MOCHITEST_FILES_B = \
 		test_bug708620.html \
 		file_bug708620.html \
 		file_bug708620-2.html \
-		test_XHR_timeout.html \
-		test_XHR_timeout.js \
-		file_XHR_timeout.sjs \
 		test_bug717511.html \
 		file_bug717511.html \
 		file_bug717511.html^headers^ \
@@ -594,21 +607,34 @@ MOCHITEST_FILES_B = \
 		test_mixed_content_blocker.html \
 		file_mixed_content_main.html \
 		file_mixed_content_server.sjs \
-    test_mixed_content_blocker_bug803225.html \
-    file_mixed_content_main_bug803225.html \
-    file_mixed_content_main_bug803225_websocket_wsh.py \
-    bug803225_test_mailto.html \
+		test_mixed_content_blocker_bug803225.html \
+		file_mixed_content_main_bug803225.html \
+		file_mixed_content_main_bug803225_websocket_wsh.py \
+		bug803225_test_mailto.html \
+		test_mixed_content_blocker_frameNavigation.html \
+		file_mixed_content_frameNavigation.html \
+		file_mixed_content_frameNavigation_innermost.html \
+		file_mixed_content_frameNavigation_grandchild.html \
+		file_mixed_content_frameNavigation_secure.html \
+		file_mixed_content_frameNavigation_secure_grandchild.html \
 		test_bug789856.html \
 		file_bug804395.jar \
 		test_bug804395.html \
 		test_bug809003.html \
 		test_bug810494.html \
+		test_bug819051.html \
+		bug819051.sjs \
 		test_textnode_split_in_selection.html \
 		test_textnode_normalize_in_selection.html \
 		test_xhr_send_readystate.html \
 		test_bug813919.html \
 		test_bug814576.html \
 		test_xhr_withCredentials.html \
+		test_bothCSPheaders.html \
+		file_bothCSPheaders.html \
+		file_bothCSPheaders.html^headers^ \
+		badMessageEvent2.eventsource \
+		badMessageEvent2.eventsource^headers^ \
 		$(NULL)
 
 # OOP tests don't work on Windows (bug 763081) or native-fennec
@@ -626,14 +652,15 @@ MOCHITEST_CHROME_FILES =	\
 		test_bug357450.js \
 		$(NULL)
 
-MOCHITEST_FILES_PARTS = $(foreach s,A B,MOCHITEST_FILES_$(s))
-
 # This test fails on the Mac for some reason
 ifneq (,$(filter gtk2 windows,$(MOZ_WIDGET_TOOLKIT)))
-MOCHITEST_FILES_C = 	test_copyimage.html \
+MOCHITEST_FILES_C += \
+		test_copyimage.html \
 		$(NULL)
-MOCHITEST_FILES_PARTS += MOCHITEST_FILES_C
 endif
+
+MOCHITEST_FILES_PARTS = $(foreach s,A B C,MOCHITEST_FILES_$(s))
+
 
 # Disabled for now. Mochitest isn't reliable enough for these.
 # test_bug444546.html \
@@ -642,6 +669,11 @@ endif
 # Disabled due to making the harness time out
 #		test_bug503473.html \
 #		file_bug503473-frame.sjs \
+
+# Disabled for frequent failures (bug 841505, bug 842344, etc)
+#		test_XHR_timeout.html \
+#		test_XHR_timeout.js \
+#		file_XHR_timeout.sjs \
 
 MOCHITEST_BROWSER_FILES = \
 		browser_bug593387.js \

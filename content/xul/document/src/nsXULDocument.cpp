@@ -81,7 +81,6 @@
 #include "nsEventDispatcher.h"
 #include "nsIObserverService.h"
 #include "nsNodeUtils.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIXULWindow.h"
 #include "nsXULPopupManager.h"
@@ -280,8 +279,6 @@ NS_NewXULDocument(nsIXULDocument** result)
 //
 // nsISupports interface
 //
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULDocument)
 
 static PLDHashOperator
 TraverseTemplateBuilders(nsISupports* aKey, nsIXULTemplateBuilder* aData,
@@ -3543,7 +3540,7 @@ nsXULDocument::ExecuteScript(nsIScriptContext * aContext, JSScript* aScriptObjec
 
     // Execute the precompiled script with the given version
     JSObject* global = mScriptGlobalObject->GetGlobalJSObject();
-    return aContext->ExecuteScript(aScriptObject, global, nullptr, nullptr);
+    return aContext->ExecuteScript(aScriptObject, global);
 }
 
 nsresult

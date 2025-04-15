@@ -224,10 +224,6 @@ static const uint32_t FRAMEBUFFER_LENGTH_PER_CHANNEL = 1024;
 static const uint32_t FRAMEBUFFER_LENGTH_MIN = 512;
 static const uint32_t FRAMEBUFFER_LENGTH_MAX = 16384;
 
-static inline bool IsCurrentThread(nsIThread* aThread) {
-  return NS_GetCurrentThread() == aThread;
-}
-
 // GetCurrentTime is defined in winbase.h as zero argument macro forwarding to
 // GetTickCount() and conflicts with MediaDecoder::GetCurrentTime implementation.
 #ifdef GetCurrentTime
@@ -239,7 +235,6 @@ class MediaDecoder : public nsIObserver,
 {
 public:
   typedef mozilla::layers::Image Image;
-  class DecodedStreamMainThreadListener;
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIOBSERVER
@@ -326,11 +321,6 @@ public:
   // called.
   virtual nsresult Play();
 
-  // Called by the element when the playback rate has been changed.
-  // Adjust the speed of the playback, optionally with pitch correction,
-  // when this is called.
-  virtual nsresult PlaybackRateChanged();
-
   // Pause video playback.
   virtual void Pause();
   // Adjust the speed of the playback, optionally with pitch correction,
@@ -349,7 +339,7 @@ public:
   // replaying after the input as ended. In the latter case, the new source is
   // not connected to streams created by captureStreamUntilEnded.
 
-  struct DecodedStreamData {
+  struct DecodedStreamData MOZ_FINAL : public MainThreadMediaStreamListener {
     DecodedStreamData(MediaDecoder* aDecoder,
                       int64_t aInitialTime, SourceMediaStream* aStream);
     ~DecodedStreamData();
@@ -367,6 +357,7 @@ public:
     // Therefore video packets starting at or after this time need to be copied
     // to the output stream.
     int64_t mNextVideoTime; // microseconds
+    MediaDecoder* mDecoder;
     // The last video image sent to the stream. Useful if we need to replicate
     // the image.
     nsRefPtr<Image> mLastVideoImage;
@@ -381,12 +372,11 @@ public:
     // The decoder is responsible for calling Destroy() on this stream.
     // Can be read from any thread.
     const nsRefPtr<SourceMediaStream> mStream;
-    // A listener object that receives notifications when mStream's
-    // main-thread-visible state changes. Used on the main thread only.
-    const nsRefPtr<DecodedStreamMainThreadListener> mMainThreadListener;
     // True when we've explicitly blocked this stream because we're
     // not in PLAY_STATE_PLAYING. Used on the main thread only.
     bool mHaveBlockedForPlayState;
+
+    virtual void NotifyMainThreadStateChanged() MOZ_OVERRIDE;
   };
   struct OutputStreamData {
     void Init(ProcessedMediaStream* aStream, bool aFinishWhenEnded)
@@ -430,16 +420,6 @@ public:
     GetReentrantMonitor().AssertCurrentThreadIn();
     return mDecodedStream;
   }
-  class DecodedStreamMainThreadListener : public MainThreadMediaStreamListener {
-  public:
-    DecodedStreamMainThreadListener(MediaDecoder* aDecoder)
-      : mDecoder(aDecoder) {}
-    virtual void NotifyMainThreadStateChanged()
-    {
-      mDecoder->NotifyDecodedStreamMainThreadStateChanged();
-    }
-    MediaDecoder* mDecoder;
-  };
 
   // Add an output stream. All decoder output will be sent to the stream.
   // The stream is initially blocked. The decoder is responsible for unblocking
@@ -507,7 +487,7 @@ public:
   // from a content header. Must be called from the main thread only.
   virtual void SetDuration(double aDuration);
 
-  void SetMediaDuration(int64_t aDuration) MOZ_FINAL MOZ_OVERRIDE;
+  void SetMediaDuration(int64_t aDuration) MOZ_OVERRIDE;
 
   // Set a flag indicating whether seeking is supported
   virtual void SetMediaSeekable(bool aMediaSeekable) MOZ_OVERRIDE;
@@ -616,11 +596,11 @@ public:
   // Stop updating the bytes downloaded for progress notifications. Called
   // when seeking to prevent wild changes to the progress notification.
   // Must be called with the decoder monitor held.
-  void StopProgressUpdates();
+  virtual void StopProgressUpdates();
 
   // Allow updating the bytes downloaded for progress notifications. Must
   // be called with the decoder monitor held.
-  void StartProgressUpdates();
+  virtual void StartProgressUpdates();
 
   // Something has changed that could affect the computed playback rate,
   // so recompute it. The monitor must be held.
@@ -663,6 +643,7 @@ public:
                      int aChannels,
                      int aRate,
                      bool aHasAudio,
+                     bool aHasVideo,
                      MetadataTags* aTags);
 
   /******
@@ -681,11 +662,15 @@ public:
 
   // Called when the metadata from the media file has been loaded by the
   // state machine. Call on the main thread only.
-  void MetadataLoaded(int aChannels, int aRate, bool aHasAudio, MetadataTags* aTags);
+  void MetadataLoaded(int aChannels, int aRate, bool aHasAudio, bool aHasVideo, MetadataTags* aTags);
 
   // Called when the first frame has been loaded.
   // Call on the main thread only.
   void FirstFrameLoaded();
+
+  // Returns true if the resource has been loaded. Must be in monitor.
+  // Call from any thread.
+  virtual bool IsDataCachedToEndOfResource();
 
   // Called when the video has completed playing.
   // Call on the main thread only.
@@ -950,7 +935,7 @@ public:
   nsCOMPtr<MediaDecoderStateMachine> mDecoderStateMachine;
 
   // Media data resource.
-  nsAutoPtr<MediaResource> mResource;
+  nsRefPtr<MediaResource> mResource;
 
   // |ReentrantMonitor| for detecting when the video play state changes. A call
   // to |Wait| on this monitor will block the thread until the next state
@@ -1016,7 +1001,7 @@ public:
   // True when we have fully loaded the resource and reported that
   // to the element (i.e. reached NETWORK_LOADED state).
   // Accessed on the main thread only.
-  bool mResourceLoaded;
+  bool mCalledResourceLoaded;
 
   // True when seeking or otherwise moving the play position around in
   // such a manner that progress event data is inaccurate. This is set

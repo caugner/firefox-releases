@@ -414,7 +414,7 @@ CustomElf::LoadSegment(const Phdr *pt_load) const
      * (p_vaddr == 0). But subsequent segments may not be 16k aligned
      * and fail to mmap. In such case, try to mmap again at the p_align
      * boundary instead of page boundary. */
-    debug("%s: Failed to mmap, retrying");
+    debug("%s: Failed to mmap, retrying", GetPath());
     align = pt_load->p_align;
   } while (1);
 
@@ -566,7 +566,7 @@ CustomElf::InitDyn(const Phdr *pt_dyn)
         break;
       case DT_FLAGS:
         {
-           Word flags = dyn->d_un.d_val;
+           Addr flags = dyn->d_un.d_val;
            /* Treat as a DT_TEXTREL tag */
            if (flags & DF_TEXTREL) {
              log("%s: Text relocations are not supported", GetPath());
@@ -588,6 +588,8 @@ CustomElf::InitDyn(const Phdr *pt_dyn)
                           * libraries. They are not supported anyways. */
       case UNSUPPORTED_RELOC(COUNT): /* This should error out, but it doesn't
                                       * really matter. */
+      case DT_FLAGS_1: /* Additional linker-internal flags that we don't care about. See
+                        * DF_1_* values in src/include/elf/common.h in binutils. */
       case DT_VERSYM: /* DT_VER* entries are used for symbol versioning, which */
       case DT_VERDEF: /* this linker doesn't support yet. */
       case DT_VERDEFNUM:

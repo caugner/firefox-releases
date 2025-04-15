@@ -6,12 +6,12 @@
 #if !defined(MediaOmxReader_h_)
 #define MediaOmxReader_h_
 
-#include "base/basictypes.h"
 #include "MediaResource.h"
 #include "MediaDecoderReader.h"
-#include "OmxDecoder.h"
 
-#include "MPAPI.h"
+namespace android {
+class OmxDecoder;
+}
 
 namespace mozilla {
 
@@ -20,7 +20,7 @@ class AbstractMediaDecoder;
 class MediaOmxReader : public MediaDecoderReader
 {
   nsCString mType;
-  android::OmxDecoder *mOmxDecoder;
+  android::sp<android::OmxDecoder> mOmxDecoder;
   bool mHasVideo;
   bool mHasAudio;
   nsIntRect mPicture;

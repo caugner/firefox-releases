@@ -6,7 +6,13 @@ ifdef LIBXUL_SDK
 $(error toolkit-tiers.mk is not compatible with --enable-libxul-sdk=)
 endif
 
-include $(topsrcdir)/config/nspr/build.mk
+TIERS += nspr
+
+ifndef MOZ_NATIVE_NSPR
+tier_nspr_staticdirs += nsprpub
+tier_nspr_dirs += config/nspr
+endif
+
 include $(topsrcdir)/config/js/build.mk
 
 TIERS += platform
@@ -24,6 +30,16 @@ tier_platform_staticdirs += modules/freetype2
 endif
 
 tier_platform_dirs += xpcom
+
+ifndef MOZ_NATIVE_SQLITE
+tier_platform_dirs += db/sqlite3/src
+endif
+
+ifdef MOZ_PSM
+tier_platform_dirs += \
+  security/build \
+  $(NULL)
+endif
 
 tier_platform_dirs += \
 		modules/libpref \
@@ -127,12 +143,6 @@ ifdef MOZ_SYDNEYAUDIO
 tier_platform_dirs += \
 		media/libsydneyaudio \
 		$(NULL)
-endif
-
-ifdef MOZ_PSM
-tier_platform_dirs += \
-  security/build \
-  $(NULL)
 endif
 
 ifdef MOZ_WEBRTC
@@ -307,6 +317,8 @@ tier_platform_dirs    += toolkit/system/dbus
 endif
 endif
 
+tier_platform_dirs += addon-sdk
+
 ifdef MOZ_MAPINFO
 tier_platform_dirs	+= tools/codesighs
 endif
@@ -321,6 +333,7 @@ tier_platform_dirs += testing/xpcshell
 tier_platform_dirs += testing/tools/screenshot
 tier_platform_dirs += testing/peptest
 tier_platform_dirs += testing/mozbase
+tier_platform_dirs += testing/modules
 ifdef MOZ_WEBRTC
 tier_platform_dirs += media/webrtc/signaling/test
 tier_platform_dirs += media/mtransport/test

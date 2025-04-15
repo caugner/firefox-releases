@@ -12,7 +12,6 @@ import org.json.JSONObject;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.PointF;
-import android.graphics.Rect;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.MotionEvent;
@@ -46,7 +45,7 @@ class TextSelectionHandle extends ImageView implements View.OnTouchListener {
 
     private GeckoApp mActivity;
 
-    TextSelectionHandle(Context context, AttributeSet attrs) {
+    public TextSelectionHandle(Context context, AttributeSet attrs) {
         super(context, attrs);
         setOnTouchListener(this);
         mActivity = (GeckoApp) context;

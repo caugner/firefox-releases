@@ -14,7 +14,6 @@
 #include "nsIURI.h"
 #include "nsNetUtil.h"
 #include "nsIDocShell.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsIStyleSheetLinkingElement.h"
 #include "nsIDOMComment.h"
 #include "nsIDOMCDATASection.h"
@@ -136,8 +135,6 @@ NS_INTERFACE_MAP_END_INHERITING(nsContentSink)
 
 NS_IMPL_ADDREF_INHERITED(nsXMLContentSink, nsContentSink)
 NS_IMPL_RELEASE_INHERITED(nsXMLContentSink, nsContentSink)
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsXMLContentSink)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsXMLContentSink,
                                                   nsContentSink)

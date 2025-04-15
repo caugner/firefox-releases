@@ -15,7 +15,7 @@ default-preferences pref(layout.css.flexbox.enabled,true)
 fails == flexbox-align-self-baseline-horiz-2.xhtml  flexbox-align-self-baseline-horiz-2-ref.xhtml # bug 793456, and possibly others
 # This one fails on windows R (but not Ru, strangely). On Windows R, the
 # single-line <label> flex item has a different background size in test vs. ref
-random-if(winWidget) == flexbox-align-self-baseline-horiz-3.xhtml  flexbox-align-self-baseline-horiz-3-ref.xhtml # XXXdholbert investigate
+fuzzy-if(B2G,10,3) random-if(winWidget) == flexbox-align-self-baseline-horiz-3.xhtml  flexbox-align-self-baseline-horiz-3-ref.xhtml # XXXdholbert investigate
 # XXXdholbert This test needs the flexbox pref to be enabled _at startup time_
 # (when we parse ua.css) in order to pass -- so it'll fail (only in release
 # builds) until we enable the flexbox pref in those builds in bug 841876:

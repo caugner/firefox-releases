@@ -1288,8 +1288,6 @@ HTMLContentSink::~HTMLContentSink()
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLContentSink)
-
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLContentSink, nsContentSink)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mHTMLDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mRoot)
@@ -2071,12 +2069,10 @@ HTMLContentSink::SetDocumentCharset(nsACString& aCharset)
       // it but if we get a null pointer, that's perfectly legal for
       // parent and parentContentViewer
 
-      nsCOMPtr<nsIDocShellTreeItem> docShellAsItem =
-        do_QueryInterface(mDocShell);
-      NS_ENSURE_TRUE(docShellAsItem, NS_ERROR_FAILURE);
+      NS_ENSURE_TRUE(mDocShell, NS_ERROR_FAILURE);
 
       nsCOMPtr<nsIDocShellTreeItem> parentAsItem;
-      docShellAsItem->GetSameTypeParent(getter_AddRefs(parentAsItem));
+      mDocShell->GetSameTypeParent(getter_AddRefs(parentAsItem));
 
       nsCOMPtr<nsIDocShell> parent(do_QueryInterface(parentAsItem));
       if (parent) {

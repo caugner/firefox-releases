@@ -46,6 +46,7 @@
 #include "nsIPresShell.h"
 
 #include "nsBoxLayoutState.h"
+#include <algorithm>
 //for keylistener for "return" check
 #include "nsIDOMEventTarget.h"
 #include "nsIDocument.h" //observe documents to send onchangenotifications
@@ -71,8 +72,8 @@
 #include "nsPresState.h"
 #include "nsContentList.h"
 #include "nsAttrValueInlines.h"
-
 #include "mozilla/Selection.h"
+#include "nsContentUtils.h"
 
 #define DEFAULT_COLUMN_WIDTH 20
 
@@ -186,7 +187,7 @@ nsTextControlFrame::CalcIntrinsicSize(nsRenderingContext* aRenderingContext,
   aRenderingContext->SetFont(fontMet);
 
   lineHeight =
-    nsHTMLReflowState::CalcLineHeight(GetStyleContext(), NS_AUTOHEIGHT,
+    nsHTMLReflowState::CalcLineHeight(StyleContext(), NS_AUTOHEIGHT,
                                       aFontSizeInflation);
   charWidth = fontMet->AveCharWidth();
   charMaxAdvance = fontMet->MaxAdvance();
@@ -200,7 +201,7 @@ nsTextControlFrame::CalcIntrinsicSize(nsRenderingContext* aRenderingContext,
   // this if charMaxAdvance != charWidth; if they are equal, this is almost
   // certainly a fixed-width font.
   if (charWidth != charMaxAdvance) {
-    nscoord internalPadding = NS_MAX(0, charMaxAdvance -
+    nscoord internalPadding = std::max(0, charMaxAdvance -
                                         nsPresContext::CSSPixelsToAppUnits(4));
     nscoord t = nsPresContext::CSSPixelsToAppUnits(1); 
    // Round to a multiple of t
@@ -224,7 +225,7 @@ nsTextControlFrame::CalcIntrinsicSize(nsRenderingContext* aRenderingContext,
     // using percentage padding anyway.
     nsMargin childPadding;
     nsIFrame* firstChild = GetFirstPrincipalChild();
-    if (firstChild && firstChild->GetStylePadding()->GetPadding(childPadding)) {
+    if (firstChild && firstChild->StylePadding()->GetPadding(childPadding)) {
       aIntrinsicSize.width += childPadding.LeftRight();
     } else {
       NS_ERROR("Percentage padding on value div?");
@@ -233,7 +234,7 @@ nsTextControlFrame::CalcIntrinsicSize(nsRenderingContext* aRenderingContext,
 
   // Increment width with cols * letter-spacing.
   {
-    const nsStyleCoord& lsCoord = GetStyleText()->mLetterSpacing;
+    const nsStyleCoord& lsCoord = StyleText()->mLetterSpacing;
     if (eStyleUnit_Coord == lsCoord.GetUnit()) {
       nscoord letterSpacing = lsCoord.GetCoordValue();
       if (letterSpacing != 0) {
@@ -387,7 +388,7 @@ nsTextControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
 
     nsRefPtr<nsStyleContext> placeholderStyleContext =
       PresContext()->StyleSet()->ResolvePseudoElementStyle(
-          mContent->AsElement(), pseudoType, GetStyleContext());
+          mContent->AsElement(), pseudoType, StyleContext());
 
     if (!aElements.AppendElement(ContentInfo(placeholderNode,
                                  placeholderStyleContext))) {
@@ -488,7 +489,7 @@ nsTextControlFrame::ComputeAutoSize(nsRenderingContext *aRenderingContext,
   }
 #ifdef DEBUG
   // Note: Ancestor ComputeAutoSize only computes a width if we're auto-width
-  else if (GetStylePosition()->mWidth.GetUnit() == eStyleUnit_Auto) {
+  else if (StylePosition()->mWidth.GetUnit() == eStyleUnit_Auto) {
     nsSize ancestorAutoSize =
       nsContainerFrame::ComputeAutoSize(aRenderingContext,
                                         aCBSize, aAvailableWidth,
@@ -527,7 +528,7 @@ nsTextControlFrame::Reflow(nsPresContext*   aPresContext,
   nscoord lineHeight = aReflowState.ComputedHeight();
   float inflation = nsLayoutUtils::FontSizeInflationFor(this);
   if (!IsSingleLineTextControl()) {
-    lineHeight = nsHTMLReflowState::CalcLineHeight(GetStyleContext(), 
+    lineHeight = nsHTMLReflowState::CalcLineHeight(StyleContext(), 
                                                   NS_AUTOHEIGHT, inflation);
   }
   nsRefPtr<nsFontMetrics> fontMet;
@@ -567,8 +568,8 @@ nsTextControlFrame::ReflowTextControlChild(nsIFrame*                aKid,
   // compute available size and frame offsets for child
   nsSize availSize(aReflowState.ComputedWidth(), 
                    aReflowState.ComputedHeight());
-  availSize.width = NS_MAX(availSize.width, 0);
-  availSize.height = NS_MAX(availSize.height, 0);
+  availSize.width = std::max(availSize.width, 0);
+  availSize.height = std::max(availSize.height, 0);
   
   nsHTMLReflowState kidReflowState(aPresContext, aReflowState, 
                                    aKid, availSize);
@@ -577,13 +578,13 @@ nsTextControlFrame::ReflowTextControlChild(nsIFrame*                aKid,
   nscoord width = availSize.width;
   width -= kidReflowState.mComputedMargin.LeftRight() +
               kidReflowState.mComputedBorderPadding.LeftRight();
-  width = NS_MAX(width, 0);
+  width = std::max(width, 0);
   kidReflowState.SetComputedWidth(width);
 
   nscoord height = availSize.height;
   height -= kidReflowState.mComputedMargin.TopBottom() +
               kidReflowState.mComputedBorderPadding.TopBottom();
-  height = NS_MAX(height, 0);       
+  height = std::max(height, 0);       
   kidReflowState.SetComputedHeight(height); 
 
   // compute the offsets
@@ -1036,7 +1037,7 @@ nsTextControlFrame::OffsetToDOMPoint(int32_t aOffset,
     } else {
       // Otherwise, set the selection on the textnode itself.
       NS_IF_ADDREF(*aResult = firstNode);
-      *aPosition = NS_MIN(aOffset, int32_t(textLength));
+      *aPosition = std::min(aOffset, int32_t(textLength));
     }
   } else {
     NS_IF_ADDREF(*aResult = rootNode);
@@ -1458,7 +1459,7 @@ nsTextControlFrame::PeekOffset(nsPeekOffsetStruct *aPos)
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP
+void
 nsTextControlFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                      const nsRect&           aDirtyRect,
                                      const nsDisplayListSet& aLists)
@@ -1474,8 +1475,7 @@ nsTextControlFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   nsCOMPtr<nsITextControlElement> txtCtrl = do_QueryInterface(GetContent());
   NS_ASSERTION(txtCtrl, "Content not a text control element!");
 
-  nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   nsIFrame* kid = mFrames.FirstChild();
   // Redirect all lists to the Content list so that nothing can escape, ie
@@ -1489,11 +1489,36 @@ nsTextControlFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     // placeholder has to be visible.
     if (kid->GetContent() != txtCtrl->GetPlaceholderNode() ||
         txtCtrl->GetPlaceholderVisibility()) {
-      nsresult rv = BuildDisplayListForChild(aBuilder, kid, aDirtyRect, set, 0);
-      NS_ENSURE_SUCCESS(rv, rv);
+      BuildDisplayListForChild(aBuilder, kid, aDirtyRect, set, 0);
     }
     kid = kid->GetNextSibling();
   }
+}
 
+NS_IMETHODIMP
+nsTextControlFrame::EditorInitializer::Run()
+{
+  if (!mFrame) {
+    return NS_OK;
+  }
+
+  // Need to block script to avoid bug 669767.
+  nsAutoScriptBlocker scriptBlocker;
+
+  nsCOMPtr<nsIPresShell> shell =
+    mFrame->PresContext()->GetPresShell();
+  bool observes = shell->ObservesNativeAnonMutationsForPrint();
+  shell->ObserveNativeAnonMutationsForPrint(true);
+  // This can cause the frame to be destroyed (and call Revoke()).
+  mFrame->EnsureEditorInitialized();
+  shell->ObserveNativeAnonMutationsForPrint(observes);
+
+  // The frame can *still* be destroyed even though we have a scriptblocker,
+  // bug 682684.
+  if (!mFrame) {
+    return NS_ERROR_FAILURE;
+  }
+
+  mFrame->FinishedInitializer();
   return NS_OK;
 }

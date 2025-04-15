@@ -7,7 +7,6 @@
 #define mozilla_dom_SVGRectElement_h
 
 #include "nsSVGPathGeometryElement.h"
-#include "nsIDOMSVGRectElement.h"
 #include "nsSVGLength2.h"
 
 nsresult NS_NewSVGRectElement(nsIContent **aResult,
@@ -19,7 +18,7 @@ namespace mozilla {
 namespace dom {
 
 class SVGRectElement MOZ_FINAL : public SVGRectElementBase,
-                                 public nsIDOMSVGRectElement
+                                 public nsIDOMSVGElement
 {
 protected:
   SVGRectElement(already_AddRefed<nsINodeInfo> aNodeInfo);
@@ -30,7 +29,6 @@ protected:
 public:
   // interfaces:
   NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_NSIDOMSVGRECTELEMENT
 
   // xxx I wish we could use virtual inheritance
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
@@ -45,17 +43,15 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // WebIDL
-  already_AddRefed<nsIDOMSVGAnimatedLength> X();
-  already_AddRefed<nsIDOMSVGAnimatedLength> Y();
-  already_AddRefed<nsIDOMSVGAnimatedLength> Height();
-  already_AddRefed<nsIDOMSVGAnimatedLength> Width();
-  already_AddRefed<nsIDOMSVGAnimatedLength> Rx();
-  already_AddRefed<nsIDOMSVGAnimatedLength> Ry();
+  already_AddRefed<SVGAnimatedLength> X();
+  already_AddRefed<SVGAnimatedLength> Y();
+  already_AddRefed<SVGAnimatedLength> Height();
+  already_AddRefed<SVGAnimatedLength> Width();
+  already_AddRefed<SVGAnimatedLength> Rx();
+  already_AddRefed<SVGAnimatedLength> Ry();
 
 protected:
 

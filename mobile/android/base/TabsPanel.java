@@ -13,7 +13,6 @@ import android.content.res.TypedArray;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.LayerDrawable;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -170,7 +169,8 @@ public class TabsPanel extends LinearLayout
     
     @Override
     public void onLightweightThemeChanged() {
-        LightweightThemeDrawable drawable = mActivity.getLightweightTheme().getTextureDrawable(this, R.drawable.tabs_tray_bg_repeat, true);
+        int background = mActivity.getResources().getColor(R.color.background_tabs_light);
+        LightweightThemeDrawable drawable = mActivity.getLightweightTheme().getColorDrawable(this, background, true);
         if (drawable == null)
             return;
 
@@ -180,7 +180,7 @@ public class TabsPanel extends LinearLayout
 
     @Override
     public void onLightweightThemeReset() {
-        setBackgroundResource(R.drawable.tabs_tray_bg_repeat);
+        setBackgroundColor(getContext().getResources().getColor(R.color.background_tabs_light));
     }
 
     @Override
@@ -238,7 +238,8 @@ public class TabsPanel extends LinearLayout
     
         @Override
         public void onLightweightThemeChanged() {
-            LightweightThemeDrawable drawable = mActivity.getLightweightTheme().getTextureDrawable(this, R.drawable.tabs_tray_dark_bg_repeat);
+            int background = mActivity.getResources().getColor(R.color.background_tabs_dark);
+            LightweightThemeDrawable drawable = mActivity.getLightweightTheme().getColorDrawable(this, background);
             if (drawable == null)
                 return;
 
@@ -248,7 +249,7 @@ public class TabsPanel extends LinearLayout
 
         @Override
         public void onLightweightThemeReset() {
-            setBackgroundResource(R.drawable.tabs_tray_dark_bg_repeat);
+            setBackgroundColor(getContext().getResources().getColor(R.color.background_tabs_dark));
         }
 
         @Override
@@ -269,9 +270,7 @@ public class TabsPanel extends LinearLayout
         mCurrentPanel = panel;
 
         int index = panel.ordinal();
-        setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         mTabWidget.setCurrentTab(index);
-        setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
 
         if (index == 0) {
             mPanel = mPanelNormal;

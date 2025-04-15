@@ -19,6 +19,9 @@ public:
     : nsGenericHTMLElement(aNodeInfo)
   {
     SetIsDOMBinding();
+    if (NodeInfo()->Equals(nsGkAtoms::bdi)) {
+      SetHasDirAuto();
+    }
   }
 
   // nsISupports

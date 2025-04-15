@@ -59,6 +59,7 @@
 #include "nsEventListenerManager.h"
 
 #include "nsRuleData.h"
+#include <algorithm>
 
 // input type=radio
 #include "nsIRadioGroupContainer.h"
@@ -81,6 +82,7 @@
 #include "mozAutoDocUpdate.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsContentUtils.h"
+#include "mozilla/dom/DirectionalityUtils.h"
 #include "nsRadioVisitor.h"
 
 #include "mozilla/LookAndFeel.h"
@@ -128,16 +130,18 @@ static const nsAttrValue::EnumTable kInputTypeTable[] = {
   { "number", NS_FORM_INPUT_NUMBER },
   { "password", NS_FORM_INPUT_PASSWORD },
   { "radio", NS_FORM_INPUT_RADIO },
+  { "range", NS_FORM_INPUT_RANGE },
   { "search", NS_FORM_INPUT_SEARCH },
   { "submit", NS_FORM_INPUT_SUBMIT },
   { "tel", NS_FORM_INPUT_TEL },
   { "text", NS_FORM_INPUT_TEXT },
+  { "time", NS_FORM_INPUT_TIME },
   { "url", NS_FORM_INPUT_URL },
   { 0 }
 };
 
 // Default type is 'text'.
-static const nsAttrValue::EnumTable* kInputDefaultType = &kInputTypeTable[14];
+static const nsAttrValue::EnumTable* kInputDefaultType = &kInputTypeTable[15];
 
 static const uint8_t NS_INPUT_AUTOCOMPLETE_OFF     = 0;
 static const uint8_t NS_INPUT_AUTOCOMPLETE_ON      = 1;
@@ -176,8 +180,11 @@ static const nsAttrValue::EnumTable kInputInputmodeTable[] = {
 static const nsAttrValue::EnumTable* kInputDefaultInputmode = &kInputInputmodeTable[0];
 
 const double nsHTMLInputElement::kStepScaleFactorDate = 86400000;
-const double nsHTMLInputElement::kStepScaleFactorNumber = 1;
+const double nsHTMLInputElement::kStepScaleFactorNumberRange = 1;
+const double nsHTMLInputElement::kStepScaleFactorTime = 1000;
 const double nsHTMLInputElement::kDefaultStepBase = 0;
+const double nsHTMLInputElement::kDefaultStep = 1;
+const double nsHTMLInputElement::kDefaultStepTime = 60;
 const double nsHTMLInputElement::kStepAny = 0;
 
 #define NS_INPUT_ELEMENT_STATE_IID                 \
@@ -320,7 +327,7 @@ nsHTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
 }
 
 NS_IMPL_ISUPPORTS1(nsHTMLInputElement::nsFilePickerShownCallback,
-                   nsIFilePickerShownCallback);
+                   nsIFilePickerShownCallback)
 
 nsHTMLInputElement::AsyncClickHandler::AsyncClickHandler(nsHTMLInputElement* aInput)
   : mInput(aInput)
@@ -577,6 +584,7 @@ nsHTMLInputElement::nsHTMLInputElement(already_AddRefed<nsINodeInfo> aNodeInfo,
   , mCanShowInvalidUI(true)
   , mHasRange(false)
 {
+  // We are in a type=text so we now we currenty need a nsTextEditorState.
   mInputData.mState = new nsTextEditorState(this);
 
   if (!gUploadLastDir)
@@ -621,8 +629,8 @@ nsHTMLInputElement::GetEditorState() const
     return nullptr;
   }
 
-  NS_ASSERTION(mInputData.mState,
-    "Single line text controls need to have a state associated with them");
+  MOZ_ASSERT(mInputData.mState, "Single line text controls need to have a state"
+                                " associated with them");
 
   return mInputData.mState;
 }
@@ -630,9 +638,9 @@ nsHTMLInputElement::GetEditorState() const
 
 // nsISupports
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLInputElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsHTMLInputElement,
                                                   nsGenericHTMLFormElement)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mValidity)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mControllers)
   if (tmp->IsSingleLineTextControl(false)) {
     tmp->mInputData.mState->Traverse(cb);
@@ -643,6 +651,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsHTMLInputElement,
                                                   nsGenericHTMLFormElement)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mValidity)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mControllers)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFiles)
   if (tmp->mFileList) {
@@ -702,6 +711,8 @@ nsHTMLInputElement::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const
     case NS_FORM_INPUT_URL:
     case NS_FORM_INPUT_NUMBER:
     case NS_FORM_INPUT_DATE:
+    case NS_FORM_INPUT_TIME:
+    case NS_FORM_INPUT_RANGE:
       if (mValueChanged) {
         // We don't have our default value anymore.  Set our value on
         // the clone.
@@ -768,6 +779,10 @@ nsHTMLInputElement::BeforeSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
       }
     } else if (aNotify && aName == nsGkAtoms::disabled) {
       mDisabledChanged = true;
+    } else if (aName == nsGkAtoms::dir &&
+               AttrValueIs(kNameSpaceID_None, nsGkAtoms::dir,
+                           nsGkAtoms::_auto, eIgnoreCase)) {
+      SetDirectionIfAuto(false, aNotify);
     }
   }
 
@@ -868,12 +883,49 @@ nsHTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
     } else if (aName == nsGkAtoms::max) {
       UpdateHasRange();
       UpdateRangeOverflowValidityState();
+      if (mType == NS_FORM_INPUT_RANGE) {
+        // The value may need to change when @max changes since the value may
+        // have been invalid and can now change to a valid value, or vice
+        // versa. For example, consider:
+        // <input type=range value=-1 max=1 step=3>. The valid range is 0 to 1
+        // while the nearest valid steps are -1 and 2 (the max value having
+        // prevented there being a valid step in range). Changing @max to/from
+        // 1 and a number greater than on equal to 3 should change whether we
+        // have a step mismatch or not.
+        // The value may also need to change between a value that results in
+        // a step mismatch and a value that results in overflow. For example,
+        // if @max in the example above were to change from 1 to -1.
+        nsAutoString value;
+        GetValue(value);
+        SetValueInternal(value, false, false);
+        MOZ_ASSERT(!GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
+                   "HTML5 spec does not allow this");
+      }
     } else if (aName == nsGkAtoms::min) {
       UpdateHasRange();
       UpdateRangeUnderflowValidityState();
       UpdateStepMismatchValidityState();
+      if (mType == NS_FORM_INPUT_RANGE) {
+        // See @max comment
+        nsAutoString value;
+        GetValue(value);
+        SetValueInternal(value, false, false);
+        MOZ_ASSERT(!GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
+                   "HTML5 spec does not allow this");
+      }
     } else if (aName == nsGkAtoms::step) {
       UpdateStepMismatchValidityState();
+      if (mType == NS_FORM_INPUT_RANGE) {
+        // See @max comment
+        nsAutoString value;
+        GetValue(value);
+        SetValueInternal(value, false, false);
+        MOZ_ASSERT(!GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
+                   "HTML5 spec does not allow this");
+      }
+    } else if (aName == nsGkAtoms::dir &&
+               aValue && aValue->Equals(nsGkAtoms::_auto, eIgnoreCase)) {
+      SetDirectionIfAuto(true, aNotify);
     }
 
     UpdateState(aNotify);
@@ -904,10 +956,10 @@ NS_IMPL_BOOL_ATTR(nsHTMLInputElement, Disabled, disabled)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, Max, max)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, Min, min)
 NS_IMPL_ACTION_ATTR(nsHTMLInputElement, FormAction, formaction)
-NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLInputElement, FormEnctype, formenctype,
-                                kFormDefaultEnctype->tag)
-NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLInputElement, FormMethod, formmethod,
-                                kFormDefaultMethod->tag)
+NS_IMPL_ENUM_ATTR_DEFAULT_MISSING_INVALID_VALUES(nsHTMLInputElement, FormEnctype, formenctype,
+                                                 "", kFormDefaultEnctype->tag)
+NS_IMPL_ENUM_ATTR_DEFAULT_MISSING_INVALID_VALUES(nsHTMLInputElement, FormMethod, formmethod,
+                                                 "", kFormDefaultMethod->tag)
 NS_IMPL_BOOL_ATTR(nsHTMLInputElement, FormNoValidate, formnovalidate)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, FormTarget, formtarget)
 NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLInputElement, Inputmode, inputmode,
@@ -995,8 +1047,8 @@ nsHTMLInputElement::GetValue(nsAString& aValue)
 {
   nsresult rv = GetValueInternal(aValue);
 
-  // Don't return non-sanitized value for number inputs.
-  if (mType == NS_FORM_INPUT_NUMBER) {
+  // Don't return non-sanitized value for types that are experimental on mobile.
+  if (IsExperimentalMobileType(mType)) {
     SanitizeValue(aValue);
   }
 
@@ -1008,7 +1060,11 @@ nsHTMLInputElement::GetValueInternal(nsAString& aValue) const
 {
   switch (GetValueMode()) {
     case VALUE_MODE_VALUE:
-      mInputData.mState->GetValue(aValue, true);
+      if (IsSingleLineTextControl(false)) {
+        mInputData.mState->GetValue(aValue, true);
+      } else {
+        aValue.Assign(mInputData.mValue);
+      }
       return NS_OK;
 
     case VALUE_MODE_FILENAME:
@@ -1058,12 +1114,16 @@ bool
 nsHTMLInputElement::ConvertStringToNumber(nsAString& aValue,
                                           double& aResultValue) const
 {
+  MOZ_ASSERT(DoesValueAsNumberApply(),
+             "ConvertStringToNumber only applies if .valueAsNumber applies");
+
   switch (mType) {
     case NS_FORM_INPUT_NUMBER:
+    case NS_FORM_INPUT_RANGE:
       {
         nsresult ec;
         aResultValue = PromiseFlatString(aValue).ToDouble(&ec);
-        if (NS_FAILED(ec)) {
+        if (NS_FAILED(ec) || !MOZ_DOUBLE_IS_FINITE(aResultValue)) {
           return false;
         }
 
@@ -1075,7 +1135,7 @@ nsHTMLInputElement::ConvertStringToNumber(nsAString& aValue,
         JSAutoRequest ar(ctx);
 
         uint32_t year, month, day;
-        if (!GetValueAsDate(aValue, year, month, day)) {
+        if (!GetValueAsDate(aValue, &year, &month, &day)) {
           return false;
         }
 
@@ -1088,7 +1148,7 @@ nsHTMLInputElement::ConvertStringToNumber(nsAString& aValue,
         jsval rval;
         jsval fullYear[3];
         fullYear[0].setInt32(year);
-        fullYear[1].setInt32(month-1);
+        fullYear[1].setInt32(month - 1);
         fullYear[2].setInt32(day);
         if (!JS::Call(ctx, date, "setUTCFullYear", 3, fullYear, &rval)) {
           JS_ClearPendingException(ctx);
@@ -1108,6 +1168,14 @@ nsHTMLInputElement::ConvertStringToNumber(nsAString& aValue,
         aResultValue = timestamp.toNumber();
         return true;
       }
+    case NS_FORM_INPUT_TIME:
+      uint32_t milliseconds;
+      if (!ParseTime(aValue, &milliseconds)) {
+        return false;
+      }
+
+      aResultValue = static_cast<double>(milliseconds);
+      return true;
     default:
       return false;
   }
@@ -1216,8 +1284,8 @@ bool
 nsHTMLInputElement::ConvertNumberToString(double aValue,
                                           nsAString& aResultString) const
 {
-  MOZ_ASSERT(mType == NS_FORM_INPUT_DATE || mType == NS_FORM_INPUT_NUMBER,
-             "ConvertNumberToString is only implemented for type='{number,date}'");
+  MOZ_ASSERT(DoesValueAsNumberApply(),
+             "ConvertNumberToString is only implemented for types implementing .valueAsNumber");
   MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(aValue) && !MOZ_DOUBLE_IS_INFINITE(aValue),
              "aValue must be a valid non-Infinite number.");
 
@@ -1225,6 +1293,7 @@ nsHTMLInputElement::ConvertNumberToString(double aValue,
 
   switch (mType) {
     case NS_FORM_INPUT_NUMBER:
+    case NS_FORM_INPUT_RANGE:
       aResultString.AppendFloat(aValue);
       return true;
     case NS_FORM_INPUT_DATE:
@@ -1259,7 +1328,37 @@ nsHTMLInputElement::ConvertNumberToString(double aValue,
         aResultString.AppendPrintf("%04.0f-%02.0f-%02.0f", year.toNumber(),
                                    month.toNumber() + 1, day.toNumber());
 
-	return true;
+        return true;
+      }
+    case NS_FORM_INPUT_TIME:
+      {
+        // Per spec, we need to truncate |aValue| and we should only represent
+        // times inside a day [00:00, 24:00[, which means that we should do a
+        // modulo on |aValue| using the number of milliseconds in a day (86400000).
+        uint32_t value = NS_floorModulo(floor(aValue), 86400000);
+
+        uint16_t milliseconds = value % 1000;
+        value /= 1000;
+
+        uint8_t seconds = value % 60;
+        value /= 60;
+
+        uint8_t minutes = value % 60;
+        value /= 60;
+
+        uint8_t hours = value;
+
+        if (milliseconds != 0) {
+          aResultString.AppendPrintf("%02d:%02d:%02d.%03d",
+                                     hours, minutes, seconds, milliseconds);
+        } else if (seconds != 0) {
+          aResultString.AppendPrintf("%02d:%02d:%02d",
+                                     hours, minutes, seconds);
+        } else {
+          aResultString.AppendPrintf("%02d:%02d", hours, minutes);
+        }
+
+        return true;
       }
     default:
       MOZ_NOT_REACHED();
@@ -1270,45 +1369,73 @@ nsHTMLInputElement::ConvertNumberToString(double aValue,
 NS_IMETHODIMP
 nsHTMLInputElement::GetValueAsDate(JSContext* aCtx, jsval* aDate)
 {
-  if (mType != NS_FORM_INPUT_DATE) {
+  if (mType != NS_FORM_INPUT_DATE && mType != NS_FORM_INPUT_TIME) {
     aDate->setNull();
     return NS_OK;
   }
 
-  uint32_t year, month, day;
-  nsAutoString value;
-  GetValueInternal(value);
-  if (!GetValueAsDate(value, year, month, day)) {
-    aDate->setNull();
-    return NS_OK;
+  switch (mType) {
+    case NS_FORM_INPUT_DATE:
+    {
+      uint32_t year, month, day;
+      nsAutoString value;
+      GetValueInternal(value);
+      if (!GetValueAsDate(value, &year, &month, &day)) {
+        aDate->setNull();
+        return NS_OK;
+      }
+
+      JSObject* date = JS_NewDateObjectMsec(aCtx, 0);
+      if (!date) {
+        JS_ClearPendingException(aCtx);
+        aDate->setNull();
+        return NS_OK;
+      }
+
+      jsval rval;
+      jsval fullYear[3];
+      fullYear[0].setInt32(year);
+      fullYear[1].setInt32(month - 1);
+      fullYear[2].setInt32(day);
+      if(!JS::Call(aCtx, date, "setUTCFullYear", 3, fullYear, &rval)) {
+        JS_ClearPendingException(aCtx);
+        aDate->setNull();
+        return NS_OK;
+      }
+
+      aDate->setObjectOrNull(date);
+      return NS_OK;
+    }
+    case NS_FORM_INPUT_TIME:
+    {
+      uint32_t millisecond;
+      nsAutoString value;
+      GetValueInternal(value);
+      if (!ParseTime(value, &millisecond)) {
+        aDate->setNull();
+        return NS_OK;
+      }
+
+      JSObject* date = JS_NewDateObjectMsec(aCtx, millisecond);
+      if (!date) {
+        JS_ClearPendingException(aCtx);
+        aDate->setNull();
+        return NS_OK;
+      }
+
+      aDate->setObjectOrNull(date);
+      return NS_OK;
+    }
   }
 
-  JSObject* date = JS_NewDateObjectMsec(aCtx, 0);
-  if (!date) {
-    JS_ClearPendingException(aCtx);
-    aDate->setNull();
-    return NS_OK;
-  }
-
-  jsval rval;
-  jsval fullYear[3];
-  fullYear[0].setInt32(year);
-  fullYear[1].setInt32(month-1);
-  fullYear[2].setInt32(day);
-  if(!JS::Call(aCtx, date, "setUTCFullYear", 3, fullYear, &rval)) {
-    JS_ClearPendingException(aCtx);
-    aDate->setNull();
-    return NS_OK;
-  }
-
-  aDate->setObjectOrNull(date);
-  return NS_OK;
+  MOZ_NOT_REACHED();
+  return NS_ERROR_UNEXPECTED;
 }
 
 NS_IMETHODIMP
 nsHTMLInputElement::SetValueAsDate(JSContext* aCtx, const jsval& aDate)
 {
-  if (mType != NS_FORM_INPUT_DATE) {
+  if (mType != NS_FORM_INPUT_DATE && mType != NS_FORM_INPUT_TIME) {
     return NS_ERROR_DOM_INVALID_STATE_ERR;
   }
 
@@ -1362,58 +1489,74 @@ nsHTMLInputElement::SetValueAsNumber(double aValueAsNumber)
 }
 
 double
-nsHTMLInputElement::GetMinAsDouble() const
+nsHTMLInputElement::GetMinimum() const
 {
-  // Should only be used for <input type='number'/'date'> for the moment.
-  MOZ_ASSERT(mType == NS_FORM_INPUT_NUMBER || mType == NS_FORM_INPUT_DATE);
+  MOZ_ASSERT(DoesValueAsNumberApply(),
+             "GetMinAsDouble() should only be used for types that allow .valueAsNumber");
+
+  // Only type=range has a default minimum
+  double defaultMinimum =
+    mType == NS_FORM_INPUT_RANGE ? 0.0 : MOZ_DOUBLE_NaN();
 
   if (!HasAttr(kNameSpaceID_None, nsGkAtoms::min)) {
-    return MOZ_DOUBLE_NaN();
+    return defaultMinimum;
   }
 
   nsAutoString minStr;
   GetAttr(kNameSpaceID_None, nsGkAtoms::min, minStr);
 
   double min;
-  return ConvertStringToNumber(minStr, min) ? min : MOZ_DOUBLE_NaN();
+  return ConvertStringToNumber(minStr, min) ? min : defaultMinimum;
 }
 
 double
-nsHTMLInputElement::GetMaxAsDouble() const
+nsHTMLInputElement::GetMaximum() const
 {
-  // Should only be used for <input type='number'/'date'> for the moment.
-  MOZ_ASSERT(mType == NS_FORM_INPUT_NUMBER || mType == NS_FORM_INPUT_DATE);
+  MOZ_ASSERT(DoesValueAsNumberApply(),
+             "GetMaxAsDouble() should only be used for types that allow .valueAsNumber");
+
+  // Only type=range has a default maximum
+  double defaultMaximum =
+    mType == NS_FORM_INPUT_RANGE ? 100.0 : MOZ_DOUBLE_NaN();
 
   if (!HasAttr(kNameSpaceID_None, nsGkAtoms::max)) {
-    return MOZ_DOUBLE_NaN();
+    return defaultMaximum;
   }
 
   nsAutoString maxStr;
   GetAttr(kNameSpaceID_None, nsGkAtoms::max, maxStr);
 
   double max;
-  return ConvertStringToNumber(maxStr, max) ? max : MOZ_DOUBLE_NaN();
+  return ConvertStringToNumber(maxStr, max) ? max : defaultMaximum;
 }
 
 double
 nsHTMLInputElement::GetStepBase() const
 {
-  double stepBase = GetMinAsDouble();
+  MOZ_ASSERT(mType == NS_FORM_INPUT_NUMBER ||
+             mType == NS_FORM_INPUT_DATE ||
+             mType == NS_FORM_INPUT_TIME ||
+             mType == NS_FORM_INPUT_RANGE,
+             "Check that kDefaultStepBase is correct for this new type");
 
-  // If @min is not a double, we should use defaultValue.
-  if (MOZ_DOUBLE_IS_NaN(stepBase)) {
-    nsAutoString stringValue;
-    GetAttr(kNameSpaceID_None, nsGkAtoms::value, stringValue);
+  double stepBase;
 
-    nsresult ec;
-    stepBase = stringValue.ToDouble(&ec);
-
-    if (NS_FAILED(ec)) {
-      stepBase = MOZ_DOUBLE_NaN();
-    }
+  // Do NOT use GetMinimum here - the spec says to use "the min content
+  // attribute", not "the minimum".
+  nsAutoString minStr;
+  if (GetAttr(kNameSpaceID_None, nsGkAtoms::min, minStr) &&
+      ConvertStringToNumber(minStr, stepBase)) {
+    return stepBase;
   }
 
-  return MOZ_DOUBLE_IS_NaN(stepBase) ? kDefaultStepBase : stepBase;
+  // If @min is not a double, we should use @value.
+  nsAutoString valueStr;
+  if (GetAttr(kNameSpaceID_None, nsGkAtoms::value, valueStr) &&
+      ConvertStringToNumber(valueStr, stepBase)) {
+    return stepBase;
+  }
+
+  return kDefaultStepBase;
 }
 
 nsresult
@@ -1433,25 +1576,25 @@ nsHTMLInputElement::ApplyStep(int32_t aStep)
     return NS_OK;
   }
 
-  double min = GetMinAsDouble();
+  double minimum = GetMinimum();
 
-  double max = GetMaxAsDouble();
-  if (!MOZ_DOUBLE_IS_NaN(max)) {
+  double maximum = GetMaximum();
+  if (!MOZ_DOUBLE_IS_NaN(maximum)) {
     // "max - (max - stepBase) % step" is the nearest valid value to max.
-    max = max - NS_floorModulo(max - GetStepBase(), step);
+    maximum = maximum - NS_floorModulo(maximum - GetStepBase(), step);
   }
 
   // Cases where we are clearly going in the wrong way.
   // We don't use ValidityState because we can be higher than the maximal
   // allowed value and still not suffer from range overflow in the case of
   // of the value specified in @max isn't in the step.
-  if ((value <= min && aStep < 0) ||
-      (value >= max && aStep > 0)) {
+  if ((value <= minimum && aStep < 0) ||
+      (value >= maximum && aStep > 0)) {
     return NS_OK;
   }
 
   if (GetValidityState(VALIDITY_STATE_STEP_MISMATCH) &&
-      value != min && value != max) {
+      value != minimum && value != maximum) {
     if (aStep > 0) {
       value -= NS_floorModulo(value - GetStepBase(), step);
     } else if (aStep < 0) {
@@ -1477,23 +1620,23 @@ nsHTMLInputElement::ApplyStep(int32_t aStep)
     }
   }
 
-  // When stepUp() is called and the value is below min, we should clamp on
-  // min unless stepUp() moves us higher than min.
+  // When stepUp() is called and the value is below minimum, we should clamp on
+  // minimum unless stepUp() moves us higher than minimum.
   if (GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW) && aStep > 0 &&
-      value <= min) {
-    MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(min)); // min can't be NaN if we are here!
-    value = min;
-  // Same goes for stepDown() and max.
+      value <= minimum) {
+    MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(minimum), "Can't be NaN if we are here");
+    value = minimum;
+  // Same goes for stepDown() and maximum.
   } else if (GetValidityState(VALIDITY_STATE_RANGE_OVERFLOW) && aStep < 0 &&
-             value >= max) {
-    MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(max)); // max can't be NaN if we are here!
-    value = max;
+             value >= maximum) {
+    MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(maximum), "Can't be NaN if we are here");
+    value = maximum;
   // If we go down, we want to clamp on min.
-  } else if (aStep < 0 && min == min) {
-    value = NS_MAX(value, min);
+  } else if (aStep < 0 && minimum == minimum) {
+    value = std::max(value, minimum);
   // If we go up, we want to clamp on max.
-  } else if (aStep > 0 && max == max) {
-    value = NS_MIN(value, max);
+  } else if (aStep > 0 && maximum == maximum) {
+    value = std::min(value, maximum);
   }
 
   SetValue(value);
@@ -1584,7 +1727,7 @@ NS_IMETHODIMP
 nsHTMLInputElement::MozIsTextField(bool aExcludePassword, bool* aResult)
 {
   // TODO: temporary until bug 635240 and 773205 are fixed.
-  if (mType == NS_FORM_INPUT_NUMBER || mType == NS_FORM_INPUT_DATE) {
+  if (IsExperimentalMobileType(mType)) {
     *aResult = false;
     return NS_OK;
   }
@@ -1862,7 +2005,15 @@ nsHTMLInputElement::SetValueInternal(const nsAString& aValue,
         SetValueChanged(true);
       }
 
-      mInputData.mState->SetValue(value, aUserInput, aSetValueChanged);
+      if (IsSingleLineTextControl(false)) {
+        mInputData.mState->SetValue(value, aUserInput, aSetValueChanged);
+      } else {
+        mInputData.mValue = ToNewUnicode(value);
+        if (aSetValueChanged) {
+          SetValueChanged(true);
+        }
+        OnValueChanged(!mParserCreating);
+      }
 
       return NS_OK;
     }
@@ -2386,8 +2537,10 @@ nsHTMLInputElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
 
   // Fire onchange (if necessary), before we do the blur, bug 357684.
   if (aVisitor.mEvent->message == NS_BLUR_CONTENT) {
-    // In number inputs we can't allow the user to set an invalid value.
-    if (mType == NS_FORM_INPUT_NUMBER) {
+    // Experimental mobile types rely on the system UI to prevent users to not
+    // set invalid values but we have to be extra-careful. Especially if the
+    // option has been enabled on desktop.
+    if (IsExperimentalMobileType(mType)) {
       nsAutoString aValue;
       GetValueInternal(aValue);
       SetValueInternal(aValue, false, false);
@@ -2676,9 +2829,8 @@ nsHTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
               (keyEvent->keyCode == NS_VK_RETURN ||
                keyEvent->keyCode == NS_VK_ENTER) &&
                (IsSingleLineTextControl(false, mType) ||
-                mType == NS_FORM_INPUT_NUMBER ||
-                mType == NS_FORM_INPUT_DATE)) {
-            FireChangeEventIfNeeded();   
+                IsExperimentalMobileType(mType))) {
+            FireChangeEventIfNeeded();
             rv = MaybeSubmitForm(aVisitor.mPresContext);
             NS_ENSURE_SUCCESS(rv, rv);
           }
@@ -2820,6 +2972,9 @@ nsHTMLInputElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     AddedToRadioGroup();
   }
 
+  // Set direction based on value if dir=auto
+  SetDirectionIfAuto(HasDirAuto(), false);
+
   // An element can't suffer from value missing if it is not in a document.
   // We have to check if we suffer from that as we are now in a document.
   UpdateValueMissingValidityState();
@@ -2864,69 +3019,67 @@ void
 nsHTMLInputElement::HandleTypeChange(uint8_t aNewType)
 {
   ValueModeType aOldValueMode = GetValueMode();
+  uint8_t oldType = mType;
   nsAutoString aOldValue;
 
-  if (aOldValueMode == VALUE_MODE_VALUE && !mParserCreating) {
+  if (aOldValueMode == VALUE_MODE_VALUE) {
     GetValue(aOldValue);
   }
 
-  // Only single line text inputs have a text editor state.
-  bool isNewTypeSingleLine = IsSingleLineTextControl(false, aNewType);
-  bool isCurrentTypeSingleLine = IsSingleLineTextControl(false, mType);
-
-  if (isNewTypeSingleLine && !isCurrentTypeSingleLine) {
-    FreeData();
-    mInputData.mState = new nsTextEditorState(this);
-  } else if (isCurrentTypeSingleLine && !isNewTypeSingleLine) {
-    FreeData();
-  }
-
+  // We already have a copy of the value, lets free it and changes the type.
+  FreeData();
   mType = aNewType;
 
-  if (!mParserCreating) {
-    /**
-     * The following code is trying to reproduce the algorithm described here:
-     * http://www.whatwg.org/specs/web-apps/current-work/complete.html#input-type-change
-     */
-    switch (GetValueMode()) {
-      case VALUE_MODE_DEFAULT:
-      case VALUE_MODE_DEFAULT_ON:
-        // If the previous value mode was value, we need to set the value content
-        // attribute to the previous value.
-        // There is no value sanitizing algorithm for elements in this mode.
-        if (aOldValueMode == VALUE_MODE_VALUE && !aOldValue.IsEmpty()) {
-          SetAttr(kNameSpaceID_None, nsGkAtoms::value, aOldValue, true);
+  if (IsSingleLineTextControl()) {
+    mInputData.mState = new nsTextEditorState(this);
+  }
+
+  /**
+   * The following code is trying to reproduce the algorithm described here:
+   * http://www.whatwg.org/specs/web-apps/current-work/complete.html#input-type-change
+   */
+  switch (GetValueMode()) {
+    case VALUE_MODE_DEFAULT:
+    case VALUE_MODE_DEFAULT_ON:
+      // If the previous value mode was value, we need to set the value content
+      // attribute to the previous value.
+      // There is no value sanitizing algorithm for elements in this mode.
+      if (aOldValueMode == VALUE_MODE_VALUE && !aOldValue.IsEmpty()) {
+        SetAttr(kNameSpaceID_None, nsGkAtoms::value, aOldValue, true);
+      }
+      break;
+    case VALUE_MODE_VALUE:
+      // If the previous value mode wasn't value, we have to set the value to
+      // the value content attribute.
+      // SetValueInternal is going to sanitize the value.
+      {
+        nsAutoString value;
+        if (aOldValueMode != VALUE_MODE_VALUE) {
+          GetAttr(kNameSpaceID_None, nsGkAtoms::value, value);
+        } else {
+          value = aOldValue;
         }
-        break;
-      case VALUE_MODE_VALUE:
-        // If the previous value mode wasn't value, we have to set the value to
-        // the value content attribute.
-        // SetValueInternal is going to sanitize the value.
-        {
-          nsAutoString value;
-          if (aOldValueMode != VALUE_MODE_VALUE) {
-            GetAttr(kNameSpaceID_None, nsGkAtoms::value, value);
-          } else {
-            // We get the current value so we can sanitize it.
-            GetValue(value);
-          }
-          SetValueInternal(value, false, false);
-        }
-        break;
-      case VALUE_MODE_FILENAME:
-      default:
-        // We don't care about the value.
-        // There is no value sanitizing algorithm for elements in this mode.
-        break;
-    }
-    
-    //Updating mFocusedValue in consequence.
-    if (isNewTypeSingleLine && !isCurrentTypeSingleLine) {
-      GetValueInternal(mFocusedValue);
-    }
-    else if (!isNewTypeSingleLine && isCurrentTypeSingleLine) {
-      mFocusedValue.Truncate();
-    } 
+        SetValueInternal(value, false, false);
+      }
+      break;
+    case VALUE_MODE_FILENAME:
+    default:
+      // We don't care about the value.
+      // There is no value sanitizing algorithm for elements in this mode.
+      break;
+  }
+
+  // Updating mFocusedValue in consequence:
+  // If the new type is a single line text control but the previous wasn't, we
+  // should set mFocusedValue to the current value.
+  // Otherwise, if the new type isn't a text control but the previous was, we
+  // should clear out mFocusedValue.
+  if (IsSingleLineTextControl(mType, false) &&
+      !IsSingleLineTextControl(oldType, false)) {
+    GetValueInternal(mFocusedValue);
+  } else if (!IsSingleLineTextControl(mType, false) &&
+             IsSingleLineTextControl(oldType, false)) {
+    mFocusedValue.Truncate();
   }
 
   UpdateHasRange();
@@ -2962,9 +3115,76 @@ nsHTMLInputElement::SanitizeValue(nsAString& aValue)
     case NS_FORM_INPUT_NUMBER:
       {
         nsresult ec;
-        PromiseFlatString(aValue).ToDouble(&ec);
-        if (NS_FAILED(ec)) {
+        double val = PromiseFlatString(aValue).ToDouble(&ec);
+        if (NS_FAILED(ec) || !MOZ_DOUBLE_IS_FINITE(val)) {
           aValue.Truncate();
+        }
+      }
+      break;
+    case NS_FORM_INPUT_RANGE:
+      {
+        double minimum = GetMinimum();
+        double maximum = GetMaximum();
+        MOZ_ASSERT(MOZ_DOUBLE_IS_FINITE(minimum) &&
+                   MOZ_DOUBLE_IS_FINITE(maximum),
+                   "type=range should have a default maximum/minimum");
+
+        // We use this to avoid modifying the string unnecessarily, since that
+        // may introduce rounding. This is set to true only if the value we
+        // parse out from aValue needs to be sanitized.
+        bool needSanitization = false;
+
+        double value;
+        bool ok = ConvertStringToNumber(aValue, value);
+        if (!ok) {
+          needSanitization = true;
+          // Set value to midway between minimum and maximum.
+          value = maximum <= minimum ? minimum : minimum + (maximum - minimum)/2.0;
+        } else if (value < minimum || maximum < minimum) {
+          needSanitization = true;
+          value = minimum;
+        } else if (value > maximum) {
+          needSanitization = true;
+          value = maximum;
+        }
+
+        double step = GetStep();
+        if (step != kStepAny) {
+          double stepBase = GetStepBase();
+          // There could be rounding issues below when dealing with fractional
+          // numbers, but let's ignore that until ECMAScript supplies us with a
+          // decimal number type.
+          double deltaToStep = NS_floorModulo(value - stepBase, step);
+          if (deltaToStep != 0) {
+            // "suffering from a step mismatch"
+            // Round the element's value to the nearest number for which the
+            // element would not suffer from a step mismatch, and which is
+            // greater than or equal to the minimum, and, if the maximum is not
+            // less than the minimum, which is less than or equal to the
+            // maximum, if there is a number that matches these constraints:
+            MOZ_ASSERT(deltaToStep > 0, "stepBelow/stepAbove will be wrong");
+            double stepBelow = value - deltaToStep;
+            double stepAbove = value - deltaToStep + step;
+            double halfStep = step / 2;
+            bool stepAboveIsClosest = (stepAbove - value) <= halfStep;
+            bool stepAboveInRange = stepAbove >= minimum &&
+                                    stepAbove <= maximum;
+            bool stepBelowInRange = stepBelow >= minimum &&
+                                    stepBelow <= maximum;
+
+            if ((stepAboveIsClosest || !stepBelowInRange) && stepAboveInRange) {
+              needSanitization = true;
+              value = stepAbove;
+            } else if ((!stepAboveIsClosest || !stepAboveInRange) && stepBelowInRange) {
+              needSanitization = true;
+              value = stepBelow;
+            }
+          }
+        }
+
+        if (needSanitization) {
+          aValue.Truncate();
+          aValue.AppendFloat(value);
         }
       }
       break;
@@ -2975,116 +3195,70 @@ nsHTMLInputElement::SanitizeValue(nsAString& aValue)
         }
       }
       break;
+    case NS_FORM_INPUT_TIME:
+      {
+        if (!aValue.IsEmpty() && !IsValidTime(aValue)) {
+          aValue.Truncate();
+        }
+      }
+      break;
   }
 }
 
 bool
-nsHTMLInputElement::IsValidDate(nsAString& aValue) const
+nsHTMLInputElement::IsValidDate(const nsAString& aValue) const
 {
   uint32_t year, month, day;
-  return GetValueAsDate(aValue, year, month, day);
+  return GetValueAsDate(aValue, &year, &month, &day);
 }
 
 bool
-nsHTMLInputElement::GetValueAsDate(nsAString& aValue,
-                                   uint32_t& aYear,
-                                   uint32_t& aMonth,
-                                   uint32_t& aDay) const
+nsHTMLInputElement::GetValueAsDate(const nsAString& aValue,
+                                   uint32_t* aYear,
+                                   uint32_t* aMonth,
+                                   uint32_t* aDay) const
 {
 
 /*
- * Parse the year, month, day values out a date string formatted as 'yyy-mm-dd'.
+ * Parse the year, month, day values out a date string formatted as 'yyyy-mm-dd'.
  * -The year must be 4 or more digits long, and year > 0
  * -The month must be exactly 2 digits long, and 01 <= month <= 12
  * -The day must be exactly 2 digit long, and 01 <= day <= maxday
  *  Where maxday is the number of days in the month 'month' and year 'year'
  */
 
-  if (aValue.IsEmpty()) {
+  if (aValue.Length() < 10) {
     return false;
   }
 
-  int32_t fieldMaxSize = 0;
-  int32_t fieldMinSize = 4;
-  enum {
-    YEAR, MONTH, DAY, NONE
-  } field;
-  int32_t fieldSize = 0;
-  nsresult ec;
+  uint32_t endOfYearOffset = 0;
+  for (; NS_IsAsciiDigit(aValue[endOfYearOffset]); ++endOfYearOffset);
 
-  field = YEAR;
-  for (uint32_t offset = 0; offset < aValue.Length(); ++offset) {
-    // Test if the fied size is superior to its maximum size.
-    if (fieldMaxSize && fieldSize > fieldMaxSize) {
-      return false;
-    }
-
-    // Illegal char.
-    if (aValue[offset] != '-' && !NS_IsAsciiDigit(aValue[offset])) {
-      return false;
-    }
-
-    // There are more characters in this field.
-    if (aValue[offset] != '-' && offset != aValue.Length()-1) {
-      fieldSize++;
-      continue;
-    }
-
-    // Parse the field.
-    if (fieldSize < fieldMinSize) {
-      return false;
-    }
-
-    switch(field) {
-      case YEAR:
-        aYear = PromiseFlatString(StringHead(aValue, offset)).ToInteger(&ec);
-        NS_ENSURE_SUCCESS(ec, false);
-
-        if (aYear <= 0) {
-          return false;
-        }
-
-        // The field after year is month, which have a fixed size of 2 char.
-        field = MONTH;
-        fieldMaxSize = 2;
-        fieldMinSize = 2;
-        break;
-      case MONTH:
-        aMonth = PromiseFlatString(Substring(aValue,
-                                            offset-fieldSize,
-                                            offset)).ToInteger(&ec);
-        NS_ENSURE_SUCCESS(ec, false);
-
-        if (aMonth < 1 || aMonth > 12) {
-          return false;
-        }
-
-        // The next field is the last one, we won't parse a '-',
-        // so the field size will be one char smaller.
-        field = DAY;
-        fieldMinSize = 1;
-        fieldMaxSize = 1;
-        break;
-      case DAY:
-        aDay = PromiseFlatString(Substring(aValue,
-                                          offset-fieldSize,
-                                          offset + 1)).ToInteger(&ec);
-        NS_ENSURE_SUCCESS(ec, false);
-
-        if (aDay <  1 || aDay > NumberOfDaysInMonth(aMonth, aYear)) {
-          return false;
-        }
-
-        field = NONE;
-        break;
-      default:
-        return false;
-    }
-
-    fieldSize = 0;
+  // The year must be at least 4 digits long.
+  if (aValue[endOfYearOffset] != '-' || endOfYearOffset < 4) {
+    return false;
   }
 
-  return field == NONE;
+  // Now, we know where is the next '-' and what should be the size of the
+  // string.
+  if (aValue[endOfYearOffset + 3] != '-' ||
+      aValue.Length() != 10 + (endOfYearOffset - 4)) {
+    return false;
+  }
+
+  nsresult ec;
+  *aYear = PromiseFlatString(StringHead(aValue, endOfYearOffset)).ToInteger(&ec);
+  if (NS_FAILED(ec) || *aYear == 0) {
+    return false;
+  }
+
+  if (!DigitSubStringToNumber(aValue, endOfYearOffset + 1, 2, aMonth) ||
+      *aMonth < 1 || *aMonth > 12) {
+    return false;
+  }
+
+  return DigitSubStringToNumber(aValue, endOfYearOffset + 4, 2, aDay) &&
+         *aDay > 0 && *aDay <= NumberOfDaysInMonth(*aMonth, *aYear);
 }
 
 uint32_t
@@ -3113,6 +3287,111 @@ nsHTMLInputElement::NumberOfDaysInMonth(uint32_t aMonth, uint32_t aYear) const
   return (aYear % 400 == 0 || (aYear % 100 != 0 && aYear % 4 == 0))
           ? 29 : 28;
 }
+
+/* static */ bool
+nsHTMLInputElement::DigitSubStringToNumber(const nsAString& aStr,
+                                           uint32_t aStart, uint32_t aLen,
+                                           uint32_t* aRetVal)
+{
+  MOZ_ASSERT(aStr.Length() > (aStart + aLen - 1));
+
+  for (uint32_t offset = 0; offset < aLen; ++offset) {
+    if (!NS_IsAsciiDigit(aStr[aStart + offset])) {
+      return false;
+    }
+  }
+
+  nsresult ec;
+  *aRetVal = static_cast<uint32_t>(PromiseFlatString(Substring(aStr, aStart, aLen)).ToInteger(&ec));
+
+  return NS_SUCCEEDED(ec);
+}
+
+bool
+nsHTMLInputElement::IsValidTime(const nsAString& aValue) const
+{
+  return ParseTime(aValue, nullptr);
+}
+
+/* static */ bool
+nsHTMLInputElement::ParseTime(const nsAString& aValue, uint32_t* aResult)
+{
+  /* The string must have the following parts:
+   * - HOURS: two digits, value being in [0, 23];
+   * - Colon (:);
+   * - MINUTES: two digits, value being in [0, 59];
+   * - Optional:
+   *   - Colon (:);
+   *   - SECONDS: two digits, value being in [0, 59];
+   *   - Optional:
+   *     - DOT (.);
+   *     - FRACTIONAL SECONDS: one to three digits, no value range.
+   */
+
+  // The following format is the shorter one allowed: "HH:MM".
+  if (aValue.Length() < 5) {
+    return false;
+  }
+
+  uint32_t hours;
+  if (!DigitSubStringToNumber(aValue, 0, 2, &hours) || hours > 23) {
+    return false;
+  }
+
+  // Hours/minutes separator.
+  if (aValue[2] != ':') {
+    return false;
+  }
+
+  uint32_t minutes;
+  if (!DigitSubStringToNumber(aValue, 3, 2, &minutes) || minutes > 59) {
+    return false;
+  }
+
+  if (aValue.Length() == 5) {
+    if (aResult) {
+      *aResult = ((hours * 60) + minutes) * 60000;
+    }
+    return true;
+  }
+
+  // The following format is the next shorter one: "HH:MM:SS".
+  if (aValue.Length() < 8 || aValue[5] != ':') {
+    return false;
+  }
+
+  uint32_t seconds;
+  if (!DigitSubStringToNumber(aValue, 6, 2, &seconds) || seconds > 59) {
+    return false;
+  }
+
+  if (aValue.Length() == 8) {
+    if (aResult) {
+      *aResult = (((hours * 60) + minutes) * 60 + seconds) * 1000;
+    }
+    return true;
+  }
+
+  // The string must follow this format now: "HH:MM:SS.{s,ss,sss}".
+  // There can be 1 to 3 digits for the fractions of seconds.
+  if (aValue.Length() == 9 || aValue.Length() > 12 || aValue[8] != '.') {
+    return false;
+  }
+
+  uint32_t fractionsSeconds;
+  if (!DigitSubStringToNumber(aValue, 9, aValue.Length() - 9, &fractionsSeconds)) {
+    return false;
+  }
+
+  if (aResult) {
+    *aResult = (((hours * 60) + minutes) * 60 + seconds) * 1000 +
+               // NOTE: there is 10.0 instead of 10 and static_cast<int> because
+               // some old [and stupid] compilers can't just do the right thing.
+               fractionsSeconds * pow(10.0, static_cast<int>(3 - (aValue.Length() - 9)));
+  }
+
+  return true;
+}
  
 bool
 nsHTMLInputElement::ParseAttribute(int32_t aNamespaceID,
@@ -3128,9 +3407,15 @@ nsHTMLInputElement::ParseAttribute(int32_t aNamespaceID,
       bool success = aResult.ParseEnumValue(aValue, kInputTypeTable, false);
       if (success) {
         newType = aResult.GetEnumValue();
-        if ((newType == NS_FORM_INPUT_NUMBER ||
-             newType == NS_FORM_INPUT_DATE) && 
-            !Preferences::GetBool("dom.experimental_forms", false)) {
+        if ((IsExperimentalMobileType(newType) &&
+             !Preferences::GetBool("dom.experimental_forms", false)) ||
+            (newType == NS_FORM_INPUT_RANGE &&
+             !Preferences::GetBool("dom.experimental_forms_range", false))) {
+          newType = kInputDefaultType->value;
+          aResult.SetTo(newType, &aValue);
+        }
+        if (newType == NS_FORM_INPUT_FILE &&
+            Preferences::GetBool("dom.disable_input_file", false)) {
           newType = kInputDefaultType->value;
           aResult.SetTo(newType, &aValue);
         }
@@ -3579,6 +3864,21 @@ nsHTMLInputElement::SetDefaultValueAsValue()
   return SetValueInternal(resetVal, false, false);
 }
 
+void
+nsHTMLInputElement::SetDirectionIfAuto(bool aAuto, bool aNotify)
+{
+  if (aAuto) {
+    SetHasDirAuto();
+    if (IsSingleLineTextControl(true)) {
+      nsAutoString value;
+      GetValue(value);
+      SetDirectionalityFromValue(this, value, aNotify);
+    }
+  } else {
+    ClearHasDirAuto();
+  }
+}
+
 NS_IMETHODIMP
 nsHTMLInputElement::Reset()
 {
@@ -3741,6 +4041,8 @@ nsHTMLInputElement::SaveState()
     case NS_FORM_INPUT_HIDDEN:
     case NS_FORM_INPUT_NUMBER:
     case NS_FORM_INPUT_DATE:
+    case NS_FORM_INPUT_TIME:
+    case NS_FORM_INPUT_RANGE:
       {
         if (mValueChanged) {
           inputState = new nsHTMLInputElementState();
@@ -3926,6 +4228,8 @@ nsHTMLInputElement::RestoreState(nsPresState* aState)
       case NS_FORM_INPUT_HIDDEN:
       case NS_FORM_INPUT_NUMBER:
       case NS_FORM_INPUT_DATE:
+      case NS_FORM_INPUT_TIME:
+      case NS_FORM_INPUT_RANGE:
         {
           SetValueInternal(inputState->GetValue(), false, true);
           break;
@@ -4150,7 +4454,9 @@ nsHTMLInputElement::GetValueMode() const
     case NS_FORM_INPUT_EMAIL:
     case NS_FORM_INPUT_URL:
     case NS_FORM_INPUT_NUMBER:
+    case NS_FORM_INPUT_RANGE:
     case NS_FORM_INPUT_DATE:
+    case NS_FORM_INPUT_TIME:
       return VALUE_MODE_VALUE;
     default:
       NS_NOTYETIMPLEMENTED("Unexpected input type in GetValueMode()");
@@ -4183,9 +4489,9 @@ nsHTMLInputElement::DoesReadOnlyApply() const
     case NS_FORM_INPUT_RADIO:
     case NS_FORM_INPUT_FILE:
     case NS_FORM_INPUT_CHECKBOX:
+    case NS_FORM_INPUT_RANGE:
     // TODO:
     // case NS_FORM_INPUT_COLOR:
-    // case NS_FORM_INPUT_RANGE:
       return false;
 #ifdef DEBUG
     case NS_FORM_INPUT_TEXT:
@@ -4196,6 +4502,7 @@ nsHTMLInputElement::DoesReadOnlyApply() const
     case NS_FORM_INPUT_URL:
     case NS_FORM_INPUT_NUMBER:
     case NS_FORM_INPUT_DATE:
+    case NS_FORM_INPUT_TIME:
       return true;
     default:
       NS_NOTYETIMPLEMENTED("Unexpected input type in DoesReadOnlyApply()");
@@ -4217,9 +4524,9 @@ nsHTMLInputElement::DoesRequiredApply() const
     case NS_FORM_INPUT_IMAGE:
     case NS_FORM_INPUT_RESET:
     case NS_FORM_INPUT_SUBMIT:
+    case NS_FORM_INPUT_RANGE:
     // TODO:
     // case NS_FORM_INPUT_COLOR:
-    // case NS_FORM_INPUT_RANGE:
       return false;
 #ifdef DEBUG
     case NS_FORM_INPUT_RADIO:
@@ -4233,6 +4540,7 @@ nsHTMLInputElement::DoesRequiredApply() const
     case NS_FORM_INPUT_URL:
     case NS_FORM_INPUT_NUMBER:
     case NS_FORM_INPUT_DATE:
+    case NS_FORM_INPUT_TIME:
       return true;
     default:
       NS_NOTYETIMPLEMENTED("Unexpected input type in DoesRequiredApply()");
@@ -4247,7 +4555,8 @@ nsHTMLInputElement::DoesRequiredApply() const
 bool
 nsHTMLInputElement::PlaceholderApplies() const
 {
-  if (mType == NS_FORM_INPUT_DATE) {
+  if (mType == NS_FORM_INPUT_DATE ||
+      mType == NS_FORM_INPUT_TIME) {
     return false;
   }
 
@@ -4257,8 +4566,8 @@ nsHTMLInputElement::PlaceholderApplies() const
 bool
 nsHTMLInputElement::DoesPatternApply() const
 {
-  // TODO: temporary until bug 635240 is fixed.
-  if (mType == NS_FORM_INPUT_NUMBER || mType == NS_FORM_INPUT_DATE) {
+  // TODO: temporary until bug 635240 and bug 773205 are fixed.
+  if (IsExperimentalMobileType(mType)) {
     return false;
   }
 
@@ -4272,8 +4581,9 @@ nsHTMLInputElement::DoesMinMaxApply() const
   {
     case NS_FORM_INPUT_NUMBER:
     case NS_FORM_INPUT_DATE:
+    case NS_FORM_INPUT_TIME:
+    case NS_FORM_INPUT_RANGE:
     // TODO:
-    // case NS_FORM_INPUT_RANGE:
     // All date/time types.
       return true;
 #ifdef DEBUG
@@ -4305,27 +4615,24 @@ nsHTMLInputElement::DoesMinMaxApply() const
 double
 nsHTMLInputElement::GetStep() const
 {
-  MOZ_ASSERT(mType == NS_FORM_INPUT_NUMBER || mType == NS_FORM_INPUT_DATE,
-             "We can't be there if type!=number or date!");
+  MOZ_ASSERT(DoesStepApply(), "GetStep() can only be called if @step applies");
 
-  // NOTE: should be defaultStep, which is 1 for type=number and date.
-  double step = 1;
+  if (!HasAttr(kNameSpaceID_None, nsGkAtoms::step)) {
+    return GetDefaultStep() * GetStepScaleFactor();
+  }
 
-  if (HasAttr(kNameSpaceID_None, nsGkAtoms::step)) {
-    nsAutoString stepStr;
-    GetAttr(kNameSpaceID_None, nsGkAtoms::step, stepStr);
+  nsAutoString stepStr;
+  GetAttr(kNameSpaceID_None, nsGkAtoms::step, stepStr);
 
-    if (stepStr.LowerCaseEqualsLiteral("any")) {
-      // The element can't suffer from step mismatch if there is no step.
-      return kStepAny;
-    }
+  if (stepStr.LowerCaseEqualsLiteral("any")) {
+    // The element can't suffer from step mismatch if there is no step.
+    return kStepAny;
+  }
 
-    nsresult ec;
-    step = stepStr.ToDouble(&ec);
-    if (NS_FAILED(ec) || step <= 0) {
-      // NOTE: we should use defaultStep, which is 1 for type=number and date.
-      step = 1;
-    }
+  nsresult ec;
+  double step = stepStr.ToDouble(&ec);
+  if (NS_FAILED(ec) || !MOZ_DOUBLE_IS_FINITE(step) || step <= 0) {
+    step = GetDefaultStep();
   }
 
   // TODO: This multiplication can lead to inexact results, we should use a
@@ -4470,8 +4777,8 @@ nsHTMLInputElement::IsRangeOverflow() const
     return false;
   }
 
-  double max = GetMaxAsDouble();
-  if (MOZ_DOUBLE_IS_NaN(max)) {
+  double maximum = GetMaximum();
+  if (MOZ_DOUBLE_IS_NaN(maximum)) {
     return false;
   }
 
@@ -4480,7 +4787,7 @@ nsHTMLInputElement::IsRangeOverflow() const
     return false;
   }
 
-  return value > max;
+  return value > maximum;
 }
 
 bool
@@ -4490,8 +4797,8 @@ nsHTMLInputElement::IsRangeUnderflow() const
     return false;
   }
 
-  double min = GetMinAsDouble();
-  if (MOZ_DOUBLE_IS_NaN(min)) {
+  double minimum = GetMinimum();
+  if (MOZ_DOUBLE_IS_NaN(minimum)) {
     return false;
   }
 
@@ -4500,7 +4807,7 @@ nsHTMLInputElement::IsRangeUnderflow() const
     return false;
   }
 
-  return value < min;
+  return value < minimum;
 }
 
 bool
@@ -4753,13 +5060,14 @@ nsHTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
       nsXPIDLString message;
 
       nsAutoString maxStr;
-      if (mType == NS_FORM_INPUT_NUMBER) {
+      if (mType == NS_FORM_INPUT_NUMBER ||
+          mType == NS_FORM_INPUT_RANGE) {
         //We want to show the value as parsed when it's a number
-        double max = GetMaxAsDouble();
-        MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(max));
+        double maximum = GetMaximum();
+        MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(maximum));
 
-        maxStr.AppendFloat(max);
-      } else if (mType == NS_FORM_INPUT_DATE) {
+        maxStr.AppendFloat(maximum);
+      } else if (mType == NS_FORM_INPUT_DATE || mType == NS_FORM_INPUT_TIME) {
         GetAttr(kNameSpaceID_None, nsGkAtoms::max, maxStr);
       } else {
         NS_NOTREACHED("Unexpected input type");
@@ -4777,12 +5085,13 @@ nsHTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
       nsXPIDLString message;
 
       nsAutoString minStr;
-      if (mType == NS_FORM_INPUT_NUMBER) {
-        double min = GetMinAsDouble();
-        MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(min));
+      if (mType == NS_FORM_INPUT_NUMBER ||
+          mType == NS_FORM_INPUT_RANGE) {
+        double minimum = GetMinimum();
+        MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(minimum));
 
-        minStr.AppendFloat(min);
-      } else if (mType == NS_FORM_INPUT_DATE) {
+        minStr.AppendFloat(minimum);
+      } else if (mType == NS_FORM_INPUT_DATE || mType == NS_FORM_INPUT_TIME) {
         GetAttr(kNameSpaceID_None, nsGkAtoms::min, minStr);
       } else {
         NS_NOTREACHED("Unexpected input type");
@@ -4820,24 +5129,31 @@ nsHTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
       double valueLow = value - NS_floorModulo(value - stepBase, step);
       double valueHigh = value + step - NS_floorModulo(value - stepBase, step);
 
-      double max = GetMaxAsDouble();
+      double maximum = GetMaximum();
 
-      if (MOZ_DOUBLE_IS_NaN(max) || valueHigh <= max) {
+      if (MOZ_DOUBLE_IS_NaN(maximum) || valueHigh <= maximum) {
         nsAutoString valueLowStr, valueHighStr;
         ConvertNumberToString(valueLow, valueLowStr);
         ConvertNumberToString(valueHigh, valueHighStr);
 
-        const PRUnichar* params[] = { valueLowStr.get(), valueHighStr.get() };
-        rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
-                                                   "FormValidationStepMismatch",
-                                                   params, message);
+        if (valueLowStr.Equals(valueHighStr)) {
+          const PRUnichar* params[] = { valueLowStr.get() };
+          rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
+                                                     "FormValidationStepMismatchOneValue",
+                                                     params, message);
+        } else {
+          const PRUnichar* params[] = { valueLowStr.get(), valueHighStr.get() };
+          rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
+                                                     "FormValidationStepMismatch",
+                                                     params, message);
+        }
       } else {
         nsAutoString valueLowStr;
         ConvertNumberToString(valueLow, valueLowStr);
 
         const PRUnichar* params[] = { valueLowStr.get() };
         rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
-                                                   "FormValidationStepMismatchWithoutMax",
+                                                   "FormValidationStepMismatchOneValue",
                                                    params, message);
       }
 
@@ -5034,6 +5350,10 @@ NS_IMETHODIMP_(void)
 nsHTMLInputElement::OnValueChanged(bool aNotify)
 {
   UpdateAllValidityStates(aNotify);
+
+  if (HasDirAuto()) {
+    SetDirectionIfAuto(true, aNotify);
+  }
 }
 
 NS_IMETHODIMP_(bool)
@@ -5255,7 +5575,28 @@ nsHTMLInputElement::GetStepScaleFactor() const
     case NS_FORM_INPUT_DATE:
       return kStepScaleFactorDate;
     case NS_FORM_INPUT_NUMBER:
-      return kStepScaleFactorNumber;
+    case NS_FORM_INPUT_RANGE:
+      return kStepScaleFactorNumberRange;
+    case NS_FORM_INPUT_TIME:
+      return kStepScaleFactorTime;
+    default:
+      MOZ_NOT_REACHED();
+      return MOZ_DOUBLE_NaN();
+  }
+}
+
+double
+nsHTMLInputElement::GetDefaultStep() const
+{
+  MOZ_ASSERT(DoesStepApply());
+
+  switch (mType) {
+    case NS_FORM_INPUT_DATE:
+    case NS_FORM_INPUT_NUMBER:
+    case NS_FORM_INPUT_RANGE:
+      return kDefaultStep;
+    case NS_FORM_INPUT_TIME:
+      return kDefaultStepTime;
     default:
       MOZ_NOT_REACHED();
       return MOZ_DOUBLE_NaN();
@@ -5282,22 +5623,25 @@ nsHTMLInputElement::UpdateValidityUIBits(bool aIsFocused)
 void
 nsHTMLInputElement::UpdateHasRange()
 {
+  /*
+   * There is a range if min/max applies for the type and if the element
+   * currently have a valid min or max.
+   */
+
   mHasRange = false;
 
-  if (mType != NS_FORM_INPUT_NUMBER && mType != NS_FORM_INPUT_DATE) {
+  if (!DoesMinMaxApply()) {
     return;
   }
 
-  // <input type=number> has a range if min or max is a valid double.
-
-  double min = GetMinAsDouble();
-  if (!MOZ_DOUBLE_IS_NaN(min)) {
+  double minimum = GetMinimum();
+  if (!MOZ_DOUBLE_IS_NaN(minimum)) {
     mHasRange = true;
     return;
   }
 
-  double max = GetMaxAsDouble();
-  if (!MOZ_DOUBLE_IS_NaN(max)) {
+  double maximum = GetMaximum();
+  if (!MOZ_DOUBLE_IS_NaN(maximum)) {
     mHasRange = true;
     return;
   }

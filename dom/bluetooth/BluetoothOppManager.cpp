@@ -161,8 +161,24 @@ private:
   uint32_t mAvailablePacketSize;
 };
 
+class CloseSocketTask : public Task
+{
+public:
+  void Run() MOZ_OVERRIDE
+  {
+    if (!sInstance) {
+      NS_WARNING("BluetoothOppManager no longer exists, cannot close socket!");
+      return;
+    }
+
+    if (sInstance->GetConnectionStatus() ==
+          SocketConnectionStatus::SOCKET_CONNECTED) {
+      sInstance->CloseSocket();
+    }
+  }
+};
+
 BluetoothOppManager::BluetoothOppManager() : mConnected(false)
-                                           , mConnectionId(1)
                                            , mRemoteObexVersion(0)
                                            , mRemoteConnectionFlags(0)
                                            , mRemoteMaxPacketLength(0)
@@ -604,6 +620,28 @@ BluetoothOppManager::ExtractBlobHeaders()
   return true;
 }
 
+bool
+BluetoothOppManager::IsReservedChar(PRUnichar c)
+{
+  return (c < 0x0020 ||
+          c == PRUnichar('?') || c == PRUnichar('|') || c == PRUnichar('<') ||
+          c == PRUnichar('>') || c == PRUnichar('"') || c == PRUnichar(':') ||
+          c == PRUnichar('/') || c == PRUnichar('*') || c == PRUnichar('\\'));
+}
+
+void
+BluetoothOppManager::ValidateFileName()
+{
+  int length = sFileName.Length();
+
+  for (int i = 0; i < length; ++i) {
+    // Replace reserved char of fat file system with '_'
+    if (IsReservedChar(sFileName.CharAt(i))) {
+      sFileName.Replace(i, 1, PRUnichar('_'));
+    }
+  }
+}
+
 void
 BluetoothOppManager::ServerDataHandler(UnixSocketRawData* aMessage)
 {
@@ -690,6 +728,7 @@ BluetoothOppManager::ServerDataHandler(UnixSocketRawData* aMessage)
                  mReceivedDataBufferOffset,
                  &pktHeaders);
     ExtractPacketHeaders(pktHeaders);
+    ValidateFileName();
 
     mReceivedDataBufferOffset = 0;
 
@@ -788,8 +827,10 @@ BluetoothOppManager::ClientDataHandler(UnixSocketRawData* aMessage)
   } else if (mLastCommand == ObexRequestCode::Disconnect) {
     AfterOppDisconnected();
     // Most devices will directly terminate connection after receiving
-    // Disconnect request.
-    // CloseSocket();
+    // Disconnect request, so we make a delay here. If the socket hasn't been
+    // disconnected, we will close it.
+    MessageLoop::current()->
+      PostDelayedTask(FROM_HERE, new CloseSocketTask(), 1000);
   } else if (mLastCommand == ObexRequestCode::Connect) {
     MOZ_ASSERT(!sFileName.IsEmpty());
     MOZ_ASSERT(mBlob);
@@ -852,7 +893,7 @@ BluetoothOppManager::ClientDataHandler(UnixSocketRawData* aMessage)
 
 // Virtual function of class SocketConsumer
 void
-BluetoothOppManager::ReceiveSocketData(UnixSocketRawData* aMessage)
+BluetoothOppManager::ReceiveSocketData(nsAutoPtr<UnixSocketRawData>& aMessage)
 {
   if (mLastCommand) {
     ClientDataHandler(aMessage);
@@ -878,7 +919,6 @@ BluetoothOppManager::SendConnectRequest()
   req[5] = BluetoothOppManager::MAX_PACKET_LENGTH >> 8;
   req[6] = (uint8_t)BluetoothOppManager::MAX_PACKET_LENGTH;
 
-  index += AppendHeaderConnectionId(&req[index], mConnectionId);
   SetObexPacketInfo(req, ObexRequestCode::Connect, index);
   mLastCommand = ObexRequestCode::Connect;
 
@@ -906,7 +946,6 @@ BluetoothOppManager::SendPutHeaderRequest(const nsAString& aFileName,
   fileName[len * 2 + 1] = 0x00;
 
   int index = 3;
-  index += AppendHeaderConnectionId(&req[index], mConnectionId);
   index += AppendHeaderName(&req[index], (char*)fileName, (len + 1) * 2);
   index += AppendHeaderLength(&req[index], aFileSize);
 
@@ -1008,6 +1047,12 @@ BluetoothOppManager::SendAbortRequest()
   UnixSocketRawData* s = new UnixSocketRawData(index);
   memcpy(s->mData, req, s->mSize);
   SendSocketData(s);
+}
+
+bool
+BluetoothOppManager::IsTransferring()
+{
+  return (mConnected && !mSendTransferCompleteFlag);
 }
 
 void
@@ -1279,7 +1324,7 @@ BluetoothOppManager::OnDisconnect()
 
         nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
         if (obs) {
-          obs->NotifyObservers(mDsFile, "file-watcher-update", data.get());
+          obs->NotifyObservers(mDsFile, "file-watcher-notify", data.get());
         }
       }
     }

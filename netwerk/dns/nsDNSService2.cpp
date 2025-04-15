@@ -26,6 +26,7 @@
 #include "plstr.h"
 #include "nsIOService.h"
 #include "nsCharSeparatedTokenizer.h"
+#include "nsNetAddr.h"
 
 #include "mozilla/Attributes.h"
 
@@ -81,7 +82,9 @@ nsDNSRecord::GetCanonicalName(nsACString &result)
     {
         MutexAutoLock lock(mHostRecord->addr_info_lock);
         if (mHostRecord->addr_info)
-            cname = mHostRecord->addr_info->mHostName;
+            cname = mHostRecord->addr_info->mCanonicalName ?
+                mHostRecord->addr_info->mCanonicalName :
+                mHostRecord->addr_info->mHostName;
         else
             cname = mHostRecord->host;
         result.Assign(cname);
@@ -155,6 +158,18 @@ nsDNSRecord::GetNextAddr(uint16_t port, NetAddr *addr)
     else if (addr->raw.family == AF_INET6) {
         addr->inet6.port = port;
     }
+
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDNSRecord::GetScriptableNextAddr(uint16_t port, nsINetAddr * *result)
+{
+    NetAddr addr;
+    nsresult rv = GetNextAddr(port, &addr);
+    if (NS_FAILED(rv)) return rv;
+
+    NS_ADDREF(*result = new nsNetAddr(&addr));
 
     return NS_OK;
 }
@@ -836,6 +851,9 @@ nsDNSService::GetAFForLookup(const nsACString &host, uint32_t flags)
             domain = end + 1;
         } while (*end);
     }
+
+    if ((af != PR_AF_INET) && (flags & RESOLVE_DISABLE_IPV4))
+        af = PR_AF_INET6;
 
     return af;
 }

@@ -6,9 +6,8 @@
 #include "mozilla/dom/SVGCircleElement.h"
 #include "nsGkAtoms.h"
 #include "gfxContext.h"
+#include "mozilla/dom/SVGAnimatedLength.h"
 #include "mozilla/dom/SVGCircleElementBinding.h"
-
-DOMCI_NODE_DATA(SVGCircleElement, mozilla::dom::SVGCircleElement)
 
 NS_IMPL_NS_NEW_NAMESPACED_SVG_ELEMENT(Circle)
 
@@ -31,15 +30,9 @@ nsSVGElement::LengthInfo SVGCircleElement::sLengthInfo[3] =
 //----------------------------------------------------------------------
 // nsISupports methods
 
-NS_IMPL_ADDREF_INHERITED(SVGCircleElement,SVGCircleElementBase)
-NS_IMPL_RELEASE_INHERITED(SVGCircleElement,SVGCircleElementBase)
-
-NS_INTERFACE_TABLE_HEAD(SVGCircleElement)
-  NS_NODE_INTERFACE_TABLE4(SVGCircleElement, nsIDOMNode, nsIDOMElement,
-                           nsIDOMSVGElement,
-                           nsIDOMSVGCircleElement)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGCircleElement)
-NS_INTERFACE_MAP_END_INHERITING(SVGCircleElementBase)
+NS_IMPL_ISUPPORTS_INHERITED3(SVGCircleElement, SVGCircleElementBase,
+                             nsIDOMNode, nsIDOMElement,
+                             nsIDOMSVGElement)
 
 //----------------------------------------------------------------------
 // Implementation
@@ -56,42 +49,20 @@ SVGCircleElement::SVGCircleElement(already_AddRefed<nsINodeInfo> aNodeInfo)
 NS_IMPL_ELEMENT_CLONE_WITH_INIT(SVGCircleElement)
 
 //----------------------------------------------------------------------
-// nsIDOMSVGCircleElement methods
 
-/* readonly attribute nsIDOMSVGAnimatedLength cx; */
-NS_IMETHODIMP SVGCircleElement::GetCx(nsIDOMSVGAnimatedLength * *aCx)
-{
-  *aCx = Cx().get();
-  return NS_OK;
-}
-
-already_AddRefed<nsIDOMSVGAnimatedLength>
+already_AddRefed<SVGAnimatedLength>
 SVGCircleElement::Cx()
 {
   return mLengthAttributes[ATTR_CX].ToDOMAnimatedLength(this);
 }
 
-/* readonly attribute nsIDOMSVGAnimatedLength cy; */
-NS_IMETHODIMP SVGCircleElement::GetCy(nsIDOMSVGAnimatedLength * *aCy)
-{
-  *aCy = Cy().get();
-  return NS_OK;
-}
-
-already_AddRefed<nsIDOMSVGAnimatedLength>
+already_AddRefed<SVGAnimatedLength>
 SVGCircleElement::Cy()
 {
   return mLengthAttributes[ATTR_CY].ToDOMAnimatedLength(this);
 }
 
-/* readonly attribute nsIDOMSVGAnimatedLength r; */
-NS_IMETHODIMP SVGCircleElement::GetR(nsIDOMSVGAnimatedLength * *aR)
-{
-  *aR = R().get();
-  return NS_OK;
-}
-
-already_AddRefed<nsIDOMSVGAnimatedLength>
+already_AddRefed<SVGAnimatedLength>
 SVGCircleElement::R()
 {
   return mLengthAttributes[ATTR_R].ToDOMAnimatedLength(this);

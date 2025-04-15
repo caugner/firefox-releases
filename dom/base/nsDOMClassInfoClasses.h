@@ -20,8 +20,6 @@ DOMCI_CLASS(DOMConstructor)
 DOMCI_CLASS(XMLDocument)
 DOMCI_CLASS(DocumentType)
 DOMCI_CLASS(DOMException)
-DOMCI_CLASS(DOMTokenList)
-DOMCI_CLASS(DOMSettableTokenList)
 DOMCI_CLASS(DocumentFragment)
 DOMCI_CLASS(Element)
 DOMCI_CLASS(Attr)
@@ -151,9 +149,11 @@ DOMCI_CLASS(TreeContentView)
 #endif
 
 // Crypto classes
-DOMCI_CLASS(Crypto)
+#ifndef MOZ_DISABLE_CRYPTOLEGACY
 DOMCI_CLASS(CRMFObject)
-  
+#endif
+DOMCI_CLASS(Crypto)
+
 // DOM Traversal classes
 DOMCI_CLASS(TreeWalker)
 
@@ -165,10 +165,10 @@ DOMCI_CLASS(ChromeWindow)
 
 // ContentList object used for various live NodeLists
 DOMCI_CLASS(ContentList)
-  
+
 // Processing-instruction with target "xml-stylesheet"
 DOMCI_CLASS(XMLStylesheetProcessingInstruction)
-  
+
 DOMCI_CLASS(ImageDocument)
 
 #ifdef MOZ_XUL
@@ -193,19 +193,7 @@ DOMCI_CLASS(BeforeUnloadEvent)
 DOMCI_CLASS(SVGDocument)
 
 // SVG element classes
-DOMCI_CLASS(SVGAElement)
-DOMCI_CLASS(SVGAltGlyphElement)
-DOMCI_CLASS(SVGAnimateElement)
-DOMCI_CLASS(SVGAnimateTransformElement)
-DOMCI_CLASS(SVGAnimateMotionElement)
-DOMCI_CLASS(SVGMpathElement)
-DOMCI_CLASS(SVGSetElement)
 DOMCI_CLASS(TimeEvent)
-DOMCI_CLASS(SVGCircleElement)
-DOMCI_CLASS(SVGClipPathElement)
-DOMCI_CLASS(SVGDefsElement)
-DOMCI_CLASS(SVGDescElement)
-DOMCI_CLASS(SVGEllipseElement)
 DOMCI_CLASS(SVGFEBlendElement)
 DOMCI_CLASS(SVGFEColorMatrixElement)
 DOMCI_CLASS(SVGFEComponentTransferElement)
@@ -230,33 +218,7 @@ DOMCI_CLASS(SVGFESpecularLightingElement)
 DOMCI_CLASS(SVGFESpotLightElement)
 DOMCI_CLASS(SVGFETileElement)
 DOMCI_CLASS(SVGFETurbulenceElement)
-DOMCI_CLASS(SVGFilterElement)
-DOMCI_CLASS(SVGGElement)
-DOMCI_CLASS(SVGImageElement)
-DOMCI_CLASS(SVGLinearGradientElement)
-DOMCI_CLASS(SVGLineElement)
-DOMCI_CLASS(SVGMarkerElement)
-DOMCI_CLASS(SVGMaskElement)
-DOMCI_CLASS(SVGMetadataElement)
-DOMCI_CLASS(SVGPathElement)
-DOMCI_CLASS(SVGPatternElement)
-DOMCI_CLASS(SVGPolygonElement)
-DOMCI_CLASS(SVGPolylineElement)
-DOMCI_CLASS(SVGRadialGradientElement)
-DOMCI_CLASS(SVGRectElement)
-DOMCI_CLASS(SVGScriptElement)
-DOMCI_CLASS(SVGStopElement)
-DOMCI_CLASS(SVGStyleElement)
-DOMCI_CLASS(SVGSVGElement)
-DOMCI_CLASS(SVGSwitchElement)
-DOMCI_CLASS(SVGSymbolElement)
-DOMCI_CLASS(SVGTextElement)
-DOMCI_CLASS(SVGTextPathElement)
-DOMCI_CLASS(SVGTitleElement)
-DOMCI_CLASS(SVGTSpanElement)
 DOMCI_CLASS(SVGUnknownElement)
-DOMCI_CLASS(SVGUseElement)
-DOMCI_CLASS(SVGViewElement)
 
 // other SVG classes
 DOMCI_CLASS(SVGAnimatedEnumeration)
@@ -279,9 +241,6 @@ DOMCI_CLASS(CanvasPattern)
 DOMCI_CLASS(TextMetrics)
 DOMCI_CLASS(MozCanvasPrintState)
 
-// SmartCard Events
-DOMCI_CLASS(SmartCardEvent)
-
 // WindowUtils
 DOMCI_CLASS(WindowUtils)
 
@@ -303,8 +262,6 @@ DOMCI_CLASS(XMLHttpProgressEvent)
 
 DOMCI_CLASS(ClientRect)
 DOMCI_CLASS(ClientRectList)
-
-DOMCI_CLASS(SVGForeignObjectElement)
 
 DOMCI_CLASS(XULCommandEvent)
 DOMCI_CLASS(CommandEvent)
@@ -329,7 +286,6 @@ DOMCI_CLASS(MessageEvent)
 
 DOMCI_CLASS(DeviceStorage)
 DOMCI_CLASS(DeviceStorageCursor)
-DOMCI_CLASS(DeviceStorageStat)
 
 // Geolocation
 DOMCI_CLASS(GeoGeolocation)
@@ -337,14 +293,11 @@ DOMCI_CLASS(GeoPosition)
 DOMCI_CLASS(GeoPositionCoords)
 DOMCI_CLASS(GeoPositionError)
 
-DOMCI_CLASS(BatteryManager)
-
 DOMCI_CLASS(MozPowerManager)
 DOMCI_CLASS(MozWakeLock)
 
 DOMCI_CLASS(MozSmsManager)
 DOMCI_CLASS(MozSmsMessage)
-DOMCI_CLASS(MozSmsEvent)
 DOMCI_CLASS(MozSmsRequest)
 DOMCI_CLASS(MozSmsFilter)
 DOMCI_CLASS(MozSmsCursor)
@@ -356,10 +309,6 @@ DOMCI_CLASS(MozMobileConnection)
 DOMCI_CLASS(MozCellBroadcast)
 #endif
 
-DOMCI_CLASS(USSDReceivedEvent)
-
-DOMCI_CLASS(DataErrorEvent)
-
 // @font-face in CSS
 DOMCI_CLASS(CSSFontFaceRule)
 
@@ -370,10 +319,6 @@ DOMCI_CLASS(HTMLSourceElement)
 DOMCI_CLASS(MediaError)
 DOMCI_CLASS(HTMLAudioElement)
 DOMCI_CLASS(TimeRanges)
-
-// Media streams
-DOMCI_CLASS(MediaStream)
-DOMCI_CLASS(LocalMediaStream)
 #endif
 
 // DOM Traversal NodeIterator class
@@ -433,9 +378,7 @@ DOMCI_CLASS(MediaQueryList)
 #ifdef MOZ_B2G_RIL
 DOMCI_CLASS(Telephony)
 DOMCI_CLASS(TelephonyCall)
-DOMCI_CLASS(CallEvent)
 DOMCI_CLASS(MozVoicemail)
-DOMCI_CLASS(MozVoicemailEvent)
 DOMCI_CLASS(MozIccManager)
 DOMCI_CLASS(MozStkCommandEvent)
 #endif
@@ -448,7 +391,6 @@ DOMCI_CLASS(FMRadio)
 DOMCI_CLASS(BluetoothManager)
 DOMCI_CLASS(BluetoothAdapter)
 DOMCI_CLASS(BluetoothDevice)
-DOMCI_CLASS(BluetoothPropertyEvent)
 #endif
 
 DOMCI_CLASS(CameraManager)
@@ -457,6 +399,7 @@ DOMCI_CLASS(CameraCapabilities)
 
 DOMCI_CLASS(DOMError)
 DOMCI_CLASS(DOMRequest)
+DOMCI_CLASS(DOMCursor)
 DOMCI_CLASS(OpenWindowEventDetail)
 DOMCI_CLASS(AsyncScrollEventDetail)
 
@@ -474,8 +417,5 @@ DOMCI_CLASS(MozTimeManager)
 
 #ifdef MOZ_WEBRTC
 DOMCI_CLASS(DataChannel)
-#endif
-
-#ifdef MOZ_AUDIO_CHANNEL_MANAGER
-DOMCI_CLASS(AudioChannelManager)
+DOMCI_CLASS(RTCPeerConnection)
 #endif

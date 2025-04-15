@@ -12,19 +12,19 @@ namespace mozilla {
 namespace dom {
 
 class TextEncoder MOZ_FINAL
-  : public nsISupports, public nsWrapperCache, public TextEncoderBase
+  : public nsWrapperCache, public TextEncoderBase
 {
 public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(TextEncoder)
+  NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(TextEncoder)
+  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(TextEncoder)
 
   // The WebIDL constructor.
   static already_AddRefed<TextEncoder>
-  Constructor(nsISupports* aGlobal,
+  Constructor(const GlobalObject& aGlobal,
               const nsAString& aEncoding,
               ErrorResult& aRv)
   {
-    nsRefPtr<TextEncoder> txtEncoder = new TextEncoder(aGlobal);
+    nsRefPtr<TextEncoder> txtEncoder = new TextEncoder(aGlobal.Get());
     txtEncoder->Init(aEncoding, aRv);
     if (aRv.Failed()) {
       return nullptr;

@@ -16,7 +16,7 @@ Cu.import("resource://gre/modules/PluralForm.jsm");
 Cu.import("resource:///modules/devtools/StyleEditor.jsm");
 Cu.import("resource:///modules/devtools/StyleEditorUtil.jsm");
 Cu.import("resource:///modules/devtools/SplitView.jsm");
-Cu.import("resource://gre/modules/commonjs/promise/core.js");
+Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 
 const STYLE_EDITOR_TEMPLATE = "stylesheet";
 

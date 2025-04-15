@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "TextOverflow.h"
+#include <algorithm>
 
 // Please maintain alphabetical order below
 #include "nsBlockFrame.h"
@@ -82,10 +83,10 @@ IsHorizontalOverflowVisible(nsIFrame* aFrame)
                   "expected a block frame");
 
   nsIFrame* f = aFrame;
-  while (f && f->GetStyleContext()->GetPseudo()) {
+  while (f && f->StyleContext()->GetPseudo()) {
     f = f->GetParent();
   }
-  return !f || f->GetStyleDisplay()->mOverflowX == NS_STYLE_OVERFLOW_VISIBLE;
+  return !f || f->StyleDisplay()->mOverflowX == NS_STYLE_OVERFLOW_VISIBLE;
 }
 
 static nsDisplayItem*
@@ -120,13 +121,13 @@ InflateLeft(nsRect* aRect, nscoord aDelta)
 {
   nscoord xmost = aRect->XMost();
   aRect->x -= aDelta;
-  aRect->width = NS_MAX(xmost - aRect->x, 0);
+  aRect->width = std::max(xmost - aRect->x, 0);
 }
 
 static void
 InflateRight(nsRect* aRect, nscoord aDelta)
 {
-  aRect->width = NS_MAX(aRect->width + aDelta, 0);
+  aRect->width = std::max(aRect->width + aDelta, 0);
 }
 
 static bool
@@ -229,12 +230,12 @@ TextOverflow::Init(nsDisplayListBuilder*   aBuilder,
   mBlock = aBlockFrame;
   mContentArea = aBlockFrame->GetContentRectRelativeToSelf();
   mScrollableFrame = nsLayoutUtils::GetScrollableFrameFor(aBlockFrame);
-  uint8_t direction = aBlockFrame->GetStyleVisibility()->mDirection;
+  uint8_t direction = aBlockFrame->StyleVisibility()->mDirection;
   mBlockIsRTL = direction == NS_STYLE_DIRECTION_RTL;
   mAdjustForPixelSnapping = false;
 #ifdef MOZ_XUL
   if (!mScrollableFrame) {
-    nsIAtom* pseudoType = aBlockFrame->GetStyleContext()->GetPseudo();
+    nsIAtom* pseudoType = aBlockFrame->StyleContext()->GetPseudo();
     if (pseudoType == nsCSSAnonBoxes::mozXULAnonymousBlock) {
       mScrollableFrame =
         nsLayoutUtils::GetScrollableFrameFor(aBlockFrame->GetParent());
@@ -259,7 +260,7 @@ TextOverflow::Init(nsDisplayListBuilder*   aBuilder,
     nsIFrame* scrollFrame = do_QueryFrame(mScrollableFrame);
     scrollFrame->AddStateBits(NS_SCROLLFRAME_INVALIDATE_CONTENTS_ON_SCROLL);
   }
-  const nsStyleTextReset* style = aBlockFrame->GetStyleTextReset();
+  const nsStyleTextReset* style = aBlockFrame->StyleTextReset();
   mLeft.Init(style->mTextOverflow.GetLeft(direction));
   mRight.Init(style->mTextOverflow.GetRight(direction));
   // The left/right marker string is setup in ExamineLineFrames when a line
@@ -293,7 +294,7 @@ TextOverflow::ExamineFrameSubtree(nsIFrame*       aFrame,
     return;
   }
   const bool isAtomic = IsAtomicElement(aFrame, frameType);
-  if (aFrame->GetStyleVisibility()->IsVisible()) {
+  if (aFrame->StyleVisibility()->IsVisible()) {
     nsRect childRect = aFrame->GetScrollableOverflowRect() +
                        aFrame->GetOffsetTo(mBlock);
     bool overflowLeft = childRect.x < aContentArea.x;
@@ -339,9 +340,9 @@ TextOverflow::AnalyzeMarkerEdges(nsIFrame*       aFrame,
 {
   nsRect borderRect(aFrame->GetOffsetTo(mBlock), aFrame->GetSize());
   nscoord leftOverlap =
-    NS_MAX(aInsideMarkersArea.x - borderRect.x, 0);
+    std::max(aInsideMarkersArea.x - borderRect.x, 0);
   nscoord rightOverlap =
-    NS_MAX(borderRect.XMost() - aInsideMarkersArea.XMost(), 0);
+    std::max(borderRect.XMost() - aInsideMarkersArea.XMost(), 0);
   bool insideLeftEdge = aInsideMarkersArea.x <= borderRect.XMost();
   bool insideRightEdge = borderRect.x <= aInsideMarkersArea.XMost();
 
@@ -650,7 +651,7 @@ TextOverflow::PruneDisplayListContents(nsDisplayList*        aList,
 TextOverflow::CanHaveTextOverflow(nsDisplayListBuilder* aBuilder,
                                   nsIFrame*             aBlockFrame)
 {
-  const nsStyleTextReset* style = aBlockFrame->GetStyleTextReset();
+  const nsStyleTextReset* style = aBlockFrame->StyleTextReset();
   // Nothing to do for text-overflow:clip or if 'overflow-x:visible'
   // or if we're just building items for event processing.
   if ((style->mTextOverflow.mLeft.mType == NS_STYLE_TEXT_OVERFLOW_CLIP &&

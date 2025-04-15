@@ -8,6 +8,7 @@
 #include "nsIServiceManager.h"
 #include "nsIConsoleService.h"
 #include "nsIScriptError.h"
+#include "sampler.h"
 
 namespace mozilla {
 namespace image {
@@ -67,6 +68,8 @@ Decoder::InitSharedDecoder()
 void
 Decoder::Write(const char* aBuffer, uint32_t aCount)
 {
+  SAMPLE_LABEL("ImageDecoder", "Write");
+
   // We're strict about decoder errors
   NS_ABORT_IF_FALSE(!HasDecoderError(),
                     "Not allowed to make more decoder calls after error!");
@@ -102,7 +105,7 @@ Decoder::Finish(RasterImage::eShutdownIntent aShutdownIntent)
 
     if (consoleService && errorObject && !HasDecoderError()) {
       nsAutoString msg(NS_LITERAL_STRING("Image corrupt or truncated: ") +
-                       NS_ConvertASCIItoUTF16(mImage.GetURIString()));
+                       NS_ConvertUTF8toUTF16(mImage.GetURIString()));
 
       if (NS_SUCCEEDED(errorObject->InitWithWindowID(
                          msg,
@@ -115,7 +118,7 @@ Decoder::Finish(RasterImage::eShutdownIntent aShutdownIntent)
     }
 
     bool usable = true;
-    if (aShutdownIntent != RasterImage::eShutdownIntent_Interrupted && !HasDecoderError()) {
+    if (aShutdownIntent != RasterImage::eShutdownIntent_NotNeeded && !HasDecoderError()) {
       // If we only have a data error, we're usable if we have at least one frame.
       if (mImage.GetNumFrames() == 0) {
         usable = false;

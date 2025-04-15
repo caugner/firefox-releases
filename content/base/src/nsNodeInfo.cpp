@@ -28,6 +28,7 @@
 #include "prprf.h"
 #include "nsIDocument.h"
 #include "nsGkAtoms.h"
+#include "nsCCUncollectableMarker.h"
 
 using namespace mozilla;
 
@@ -148,7 +149,6 @@ nsNodeInfo::nsNodeInfo(nsIAtom *aName, nsIAtom *aPrefix, int32_t aNamespaceID,
 
 // nsISupports
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsNodeInfo)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_0(nsNodeInfo)
 
 static const char* kNSURIs[] = {
@@ -186,6 +186,19 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsNodeInfo)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mOwnerManager)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsNodeInfo)
+  return nsCCUncollectableMarker::sGeneration && tmp->CanSkip();
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_BEGIN(nsNodeInfo)
+  return nsCCUncollectableMarker::sGeneration && tmp->CanSkip();
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsNodeInfo)
+  return nsCCUncollectableMarker::sGeneration && tmp->CanSkip();
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
+
+
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsNodeInfo)
 NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_DESTROY(nsNodeInfo, LastRelease())
 NS_INTERFACE_TABLE_HEAD(nsNodeInfo)
@@ -195,19 +208,20 @@ NS_INTERFACE_MAP_END
 
 // nsINodeInfo
 
-nsresult
+void
 nsNodeInfo::GetNamespaceURI(nsAString& aNameSpaceURI) const
 {
-  nsresult rv = NS_OK;
-
   if (mInner.mNamespaceID > 0) {
-    rv = nsContentUtils::NameSpaceManager()->GetNameSpaceURI(mInner.mNamespaceID,
-                                                             aNameSpaceURI);
+    nsresult rv =
+      nsContentUtils::NameSpaceManager()->GetNameSpaceURI(mInner.mNamespaceID,
+                                                          aNameSpaceURI);
+    // How can we possibly end up with a bogus namespace ID here?
+    if (NS_FAILED(rv)) {
+      MOZ_CRASH();
+    }
   } else {
     SetDOMStringToNull(aNameSpaceURI);
   }
-
-  return rv;
 }
 
 
@@ -242,4 +256,11 @@ nsNodeInfo::LastRelease()
 
   NS_ASSERTION(sNodeInfoPool, "No NodeInfoPool when deleting NodeInfo!!!");
   sNodeInfoPool->Free(this, sizeof(nsNodeInfo));
+}
+
+bool
+nsNodeInfo::CanSkip()
+{
+  return mDocument &&
+    nsCCUncollectableMarker::InGeneration(mDocument->GetMarkedCCGeneration());
 }

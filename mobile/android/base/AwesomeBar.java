@@ -8,6 +8,7 @@ package org.mozilla.gecko;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.util.GeckoAsyncTask;
+import org.mozilla.gecko.util.GeckoBackgroundThread;
 import org.mozilla.gecko.util.StringUtils;
 
 import android.app.Activity;
@@ -315,7 +316,9 @@ public class AwesomeBar extends GeckoActivity {
         int imageResource = R.drawable.ic_awesomebar_go;
         String contentDescription = getString(R.string.go);
         int imeAction = EditorInfo.IME_ACTION_GO;
-        if (StringUtils.isSearchQuery(text)) {
+
+        int actionBits = mText.getImeOptions() & EditorInfo.IME_MASK_ACTION;
+        if (StringUtils.isSearchQuery(text, actionBits == EditorInfo.IME_ACTION_SEARCH)) {
             imageResource = R.drawable.ic_awesomebar_search;
             contentDescription = getString(R.string.search);
             imeAction = EditorInfo.IME_ACTION_SEARCH;
@@ -327,12 +330,12 @@ public class AwesomeBar extends GeckoActivity {
         if (imm == null) {
             return;
         }
-        int actionBits = mText.getImeOptions() & EditorInfo.IME_MASK_ACTION;
         if (actionBits != imeAction) {
             int optionBits = mText.getImeOptions() & ~EditorInfo.IME_MASK_ACTION;
             mText.setImeOptions(optionBits | imeAction);
 
-            mDelayRestartInput = InputMethods.shouldDelayAwesomebarUpdate(mText.getContext());
+            mDelayRestartInput = (imeAction == EditorInfo.IME_ACTION_GO) &&
+                                 (InputMethods.shouldDelayAwesomebarUpdate(mText.getContext()));
             if (!mDelayRestartInput) {
                 imm.restartInput(mText);
             }
@@ -372,25 +375,32 @@ public class AwesomeBar extends GeckoActivity {
         finishWithResult(resultIntent);
     }
 
-    private void openUserEnteredAndFinish(String url) {
-        int index = url.indexOf(' ');
-        String keywordUrl = null;
-        String keywordSearch = null;
+    private void openUserEnteredAndFinish(final String url) {
+        final int index = url.indexOf(' ');
 
-        if (index == -1) {
-            keywordUrl = BrowserDB.getUrlForKeyword(getContentResolver(), url);
-            keywordSearch = "";
+        // Check for a keyword if the URL looks like a search query
+        if (StringUtils.isSearchQuery(url, true)) {
+            GeckoBackgroundThread.getHandler().post(new Runnable() {
+                public void run() {
+                    String keywordUrl = null;
+                    String keywordSearch = "";
+                    if (index == -1) {
+                        keywordUrl = BrowserDB.getUrlForKeyword(getContentResolver(), url);
+                    } else {
+                        keywordUrl = BrowserDB.getUrlForKeyword(getContentResolver(), url.substring(0, index));
+                        keywordSearch = url.substring(index + 1);
+                    }
+                    if (keywordUrl == null) {
+                        openUrlAndFinish(url, "", true);
+                    } else {
+                        String search = URLEncoder.encode(keywordSearch);
+                        openUrlAndFinish(keywordUrl.replace("%s", search), "", true);
+                    }
+                }
+            });
         } else {
-            keywordUrl = BrowserDB.getUrlForKeyword(getContentResolver(), url.substring(0, index));
-            keywordSearch = url.substring(index + 1);
+            openUrlAndFinish(url, "", true);
         }
-
-        if (keywordUrl != null) {
-            String search = URLEncoder.encode(keywordSearch);
-            url = keywordUrl.replace("%s", search);
-        }
-
-        openUrlAndFinish(url, "", true);
     }
 
     private void openSearchAndFinish(String url, String engine) {
@@ -449,8 +459,13 @@ public class AwesomeBar extends GeckoActivity {
     @Override
     public void onResume() {
         super.onResume();
-        if (mText != null && mText.getText() != null)
+        if (mText != null && mText.getText() != null) {
             updateGoButton(mText.getText().toString());
+            if (mDelayRestartInput) {
+                // call updateGoButton again to force a restartInput call
+                updateGoButton(mText.getText().toString());
+            }
+        }
 
         // Invlidate the cached value that keeps track of whether or
         // not desktop bookmarks exist

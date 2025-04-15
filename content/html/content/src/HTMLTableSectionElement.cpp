@@ -11,6 +11,7 @@
 #include "nsRuleData.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/HTMLTableSectionElementBinding.h"
+#include "nsContentUtils.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(TableSection)
 DOMCI_NODE_DATA(HTMLTableSectionElement, mozilla::dom::HTMLTableSectionElement)
@@ -27,7 +28,6 @@ HTMLTableSectionElement::WrapNode(JSContext *aCx, JSObject *aScope,
   return HTMLTableSectionElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLTableSectionElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLTableSectionElement,
                                                   nsGenericHTMLElement)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRows)

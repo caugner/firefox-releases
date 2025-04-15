@@ -8,17 +8,17 @@
 #include "gfxMatrix.h"
 #include "gfxPlatform.h"
 #include "imgIContainer.h"
-#include "nsIDOMSVGImageElement.h"
 #include "nsIImageLoadingContent.h"
 #include "nsLayoutUtils.h"
 #include "nsRenderingContext.h"
 #include "imgINotificationObserver.h"
 #include "nsSVGEffects.h"
 #include "nsSVGPathGeometryFrame.h"
-#include "nsSVGSVGElement.h"
+#include "mozilla/dom/SVGSVGElement.h"
 #include "nsSVGUtils.h"
 #include "SVGContentUtils.h"
 #include "mozilla/dom/SVGImageElement.h"
+#include "nsContentUtils.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -133,14 +133,12 @@ nsSVGImageFrame::Init(nsIContent* aContent,
                       nsIFrame* aParent,
                       nsIFrame* aPrevInFlow)
 {
-#ifdef DEBUG
-  nsCOMPtr<nsIDOMSVGImageElement> image = do_QueryInterface(aContent);
-  NS_ASSERTION(image, "Content is not an SVG image!");
-#endif
+  NS_ASSERTION(aContent->IsSVG(nsGkAtoms::image),
+               "Content is not an SVG image!");
 
   nsresult rv = nsSVGImageFrameBase::Init(aContent, aParent, aPrevInFlow);
   if (NS_FAILED(rv)) return rv;
-  
+
   mListener = new nsSVGImageListener(this);
   if (!mListener) return NS_ERROR_OUT_OF_MEMORY;
   nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(mContent);
@@ -287,7 +285,7 @@ nsSVGImageFrame::PaintSVG(nsRenderingContext *aContext,
 {
   nsresult rv = NS_OK;
 
-  if (!GetStyleVisibility()->IsVisible())
+  if (!StyleVisibility()->IsVisible())
     return NS_OK;
 
   float x, y, width, height;
@@ -311,7 +309,7 @@ nsSVGImageFrame::PaintSVG(nsRenderingContext *aContext,
     gfxContext* ctx = aContext->ThebesContext();
     gfxContextAutoSaveRestore autoRestorer(ctx);
 
-    if (GetStyleDisplay()->IsScrollableOverflow()) {
+    if (StyleDisplay()->IsScrollableOverflow()) {
       gfxRect clipRect = nsSVGUtils::GetClipRectForFrame(this, x, y,
                                                          width, height);
       nsSVGUtils::SetClipRect(ctx, GetCanvasTM(FOR_PAINTING), clipRect);
@@ -326,7 +324,7 @@ nsSVGImageFrame::PaintSVG(nsRenderingContext *aContext,
     // image into the current canvas is just the group opacity.
     float opacity = 1.0f;
     if (nsSVGUtils::CanOptimizeOpacity(this)) {
-      opacity = GetStyleDisplay()->mOpacity;
+      opacity = StyleDisplay()->mOpacity;
     }
 
     if (opacity != 1.0f) {
@@ -361,8 +359,8 @@ nsSVGImageFrame::PaintSVG(nsRenderingContext *aContext,
       }
 
       // Grab root node (w/ sanity-check to make sure it exists & is <svg>)
-      nsSVGSVGElement* rootSVGElem =
-        static_cast<nsSVGSVGElement*>(imgRootFrame->GetContent());
+      SVGSVGElement* rootSVGElem =
+        static_cast<SVGSVGElement*>(imgRootFrame->GetContent());
       if (!rootSVGElem || !rootSVGElem->IsSVG(nsGkAtoms::svg)) {
         NS_ABORT_IF_FALSE(false, "missing or non-<svg> root node!!");
         return NS_OK;
@@ -418,7 +416,7 @@ nsSVGImageFrame::GetFrameForPoint(const nsPoint &aPoint)
   // doesn't necessarily map to our <image> element's [x,y,width,height].  So,
   // we have to look up the native image size & our image transform in order
   // to filter out points that fall outside that area.
-  if (GetStyleDisplay()->IsScrollableOverflow() && mImageContainer) {
+  if (StyleDisplay()->IsScrollableOverflow() && mImageContainer) {
     if (mImageContainer->GetType() == imgIContainer::TYPE_RASTER) {
       int32_t nativeWidth, nativeHeight;
       if (NS_FAILED(mImageContainer->GetWidth(&nativeWidth)) ||
@@ -529,12 +527,12 @@ nsSVGImageFrame::GetHitTestFlags()
 {
   uint16_t flags = 0;
 
-  switch(GetStyleVisibility()->mPointerEvents) {
+  switch(StyleVisibility()->mPointerEvents) {
     case NS_STYLE_POINTER_EVENTS_NONE:
       break;
     case NS_STYLE_POINTER_EVENTS_VISIBLEPAINTED:
     case NS_STYLE_POINTER_EVENTS_AUTO:
-      if (GetStyleVisibility()->IsVisible()) {
+      if (StyleVisibility()->IsVisible()) {
         /* XXX: should check pixel transparency */
         flags |= SVG_HIT_TEST_FILL;
       }
@@ -542,7 +540,7 @@ nsSVGImageFrame::GetHitTestFlags()
     case NS_STYLE_POINTER_EVENTS_VISIBLEFILL:
     case NS_STYLE_POINTER_EVENTS_VISIBLESTROKE:
     case NS_STYLE_POINTER_EVENTS_VISIBLE:
-      if (GetStyleVisibility()->IsVisible()) {
+      if (StyleVisibility()->IsVisible()) {
         flags |= SVG_HIT_TEST_FILL;
       }
       break;

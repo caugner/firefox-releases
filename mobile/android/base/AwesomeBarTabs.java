@@ -6,8 +6,8 @@
 package org.mozilla.gecko;
 
 import android.content.Context;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.StateListDrawable;
-import android.net.Uri;
 import android.support.v4.view.ViewPager;
 import android.support.v4.view.PagerAdapter;
 import android.util.AttributeSet;
@@ -372,7 +372,7 @@ public class AwesomeBarTabs extends TabHost
             drawable.setAlpha(255, 0);
 
             StateListDrawable stateList = new StateListDrawable();
-            stateList.addState(new int[] { R.attr.state_private }, mActivity.getResources().getDrawable(R.drawable.abouthome_bg_pb_repeat));
+            stateList.addState(new int[] { R.attr.state_private }, new ColorDrawable(mActivity.getResources().getColor(R.color.background_normal)));
             stateList.addState(new int[] {}, drawable);
 
             int[] padding =  new int[] { getPaddingLeft(),
@@ -391,7 +391,7 @@ public class AwesomeBarTabs extends TabHost
                                          getPaddingRight(),
                                          getPaddingBottom()
                                        };
-            setBackgroundResource(R.drawable.awesomebar_tabs_bg);
+            setBackgroundResource(R.drawable.address_bar_bg);
             setPadding(padding[0], padding[1], padding[2], padding[3]);
         }
 

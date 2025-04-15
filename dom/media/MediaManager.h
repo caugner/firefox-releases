@@ -3,7 +3,9 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "MediaEngine.h"
+#include "mozilla/dom/ContentChild.h"
 #include "mozilla/Services.h"
+#include "mozilla/unused.h"
 #include "nsIMediaManager.h"
 
 #include "nsHashKeys.h"
@@ -14,9 +16,14 @@
 
 #include "nsPIDOMWindow.h"
 #include "nsIDOMNavigatorUserMedia.h"
+#include "nsXULAppAPI.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/StaticPtr.h"
 #include "prlog.h"
+
+#ifdef MOZ_WEBRTC
+#include "mtransport/runnable_utils.h"
+#endif
 
 namespace mozilla {
 
@@ -100,6 +107,23 @@ public:
   void Invalidate();
 
   void
+  AudioConfig(bool aEchoOn, uint32_t aEcho,
+              bool aAgcOn, uint32_t aAGC,
+              bool aNoiseOn, uint32_t aNoise)
+  {
+    if (mAudioSource) {
+#ifdef MOZ_WEBRTC
+      // Right now these configs are only of use if webrtc is available
+      RUN_ON_THREAD(mMediaThread,
+                    WrapRunnable(nsRefPtr<MediaEngineSource>(mAudioSource), // threadsafe
+                                 &MediaEngineSource::Config,
+                                 aEchoOn, aEcho, aAgcOn, aAGC, aNoiseOn, aNoise),
+                    NS_DISPATCH_NORMAL);
+#endif
+    }
+  }
+
+  void
   Remove()
   {
     NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
@@ -109,7 +133,10 @@ public:
     if (mStream && !mRemoved) {
       MM_LOG(("Listener removed on purpose, mFinished = %d", (int) mFinished));
       mRemoved = true; // RemoveListener is async, avoid races
-      mStream->RemoveListener(this);
+      // If it's destroyed, don't call - listener will be removed and we'll be notified!
+      if (!mStream->IsDestroyed()) {
+        mStream->RemoveListener(this);
+      }
     }
   }
 
@@ -356,10 +383,13 @@ public:
 
       NS_ASSERTION(NS_IsMainThread(), "Only create MediaManager on main thread");
       nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
-      obs->AddObserver(sSingleton, "xpcom-shutdown", false);
-      obs->AddObserver(sSingleton, "getUserMedia:response:allow", false);
-      obs->AddObserver(sSingleton, "getUserMedia:response:deny", false);
-      obs->AddObserver(sSingleton, "getUserMedia:revoke", false);
+      if (obs) {
+        obs->AddObserver(sSingleton, "xpcom-shutdown", false);
+        obs->AddObserver(sSingleton, "getUserMedia:response:allow", false);
+        obs->AddObserver(sSingleton, "getUserMedia:response:deny", false);
+        obs->AddObserver(sSingleton, "getUserMedia:revoke", false);
+      }
+      // else MediaManager won't work properly and will leak (see bug 837874)
     }
     return sSingleton;
   }

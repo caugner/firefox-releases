@@ -22,7 +22,6 @@
 #include "nsCOMPtr.h"
 #include "nsIAccessible.h"
 #include "nsIAccessibleEvent.h"
-#include "nsIWinAccessNode.h"
 #include "nsIDOMElement.h"
 #include "nsIContent.h"
 #include "nsAccessNode.h"
@@ -47,8 +46,6 @@
 namespace mozilla {
 namespace a11y {
 
-class AccTextChangeEvent;
-
 #ifdef __GNUC__
 // Inheriting from both XPCOM and MSCOM interfaces causes a lot of warnings
 // about virtual functions being hidden by each other. This is done by
@@ -57,12 +54,10 @@ class AccTextChangeEvent;
 #endif
 
 class nsAccessNodeWrap : public nsAccessNode,
-                         public nsIWinAccessNode,
                          public IServiceProvider
 {
   public:
     NS_DECL_ISUPPORTS_INHERITED
-    NS_DECL_NSIWINACCESSNODE
 
 public: // construction, destruction
   nsAccessNodeWrap(nsIContent* aContent, DocAccessible* aDoc);
@@ -83,15 +78,6 @@ public: // construction, destruction
                                      WPARAM WParam, LPARAM lParam);
 
   static nsRefPtrHashtable<nsPtrHashKey<void>, DocAccessible> sHWNDCache;
-
-protected:
-
-  /**
-   * It is used in HyperTextAccessibleWrap for IA2::newText/oldText
-   * implementation.
-   */
-  static AccTextChangeEvent* gTextEvent;
-  friend void PlatformShutdown();
 };
 
 } // namespace a11y

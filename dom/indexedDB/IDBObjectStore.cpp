@@ -2193,8 +2193,6 @@ IDBObjectStore::IndexInternal(const nsAString& aName,
   return NS_OK;
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(IDBObjectStore)
-
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(IDBObjectStore)
   NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mCachedKeyPath)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
@@ -2553,7 +2551,7 @@ IDBObjectStore::CreateIndex(const nsAString& aName,
 #endif
 
   nsresult rv;
-  mozilla::dom::IDBIndexParameters params;
+  mozilla::idl::IDBIndexParameters params;
 
   // Get optional arguments.
   if (!JSVAL_IS_VOID(aOptions) && !JSVAL_IS_NULL(aOptions)) {
@@ -3007,8 +3005,9 @@ AddHelper::PackArgumentsForParentProcess(ObjectStoreRequestParams& aParams)
 
       BlobChild* actor =
         contentChild->GetOrCreateActorForBlob(file.mFile);
-      NS_ASSERTION(actor, "This should never fail without aborting!");
-
+      if (!actor) {
+        return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
+      }
       blobsChild.AppendElement(actor);
     }
   }
@@ -3961,13 +3960,12 @@ GetAllHelper::GetSuccessResult(JSContext* aCx,
 {
   NS_ASSERTION(mCloneReadInfos.Length() <= mLimit, "Too many results!");
 
-  nsresult rv = ConvertCloneReadInfosToArray(aCx, mCloneReadInfos, aVal);
+  nsresult rv = ConvertToArrayAndCleanup(aCx, mCloneReadInfos, aVal);
 
-  for (uint32_t index = 0; index < mCloneReadInfos.Length(); index++) {
-    mCloneReadInfos[index].mCloneBuffer.clear();
-  }
-
+  NS_ASSERTION(mCloneReadInfos.IsEmpty(),
+               "Should have cleared in ConvertToArrayAndCleanup");
   NS_ENSURE_SUCCESS(rv, rv);
+
   return NS_OK;
 }
 

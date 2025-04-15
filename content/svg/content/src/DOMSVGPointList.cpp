@@ -12,6 +12,7 @@
 #include "nsSVGAttrTearoffTable.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/SVGPointListBinding.h"
+#include <algorithm>
 
 // See the comment in this file's header.
 
@@ -38,7 +39,6 @@ namespace mozilla {
 static nsSVGAttrTearoffTable<void, DOMSVGPointList>
   sSVGPointListTearoffTable;
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(DOMSVGPointList)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(DOMSVGPointList)
   // No unlinking of mElement, we'd need to null out the value pointer (the
   // object it points to is held by the element) and null-check it everywhere.
@@ -247,7 +247,7 @@ DOMSVGPointList::InsertItemBefore(nsISVGPoint& aNewItem, uint32_t aIndex,
     return nullptr;
   }
 
-  aIndex = NS_MIN(aIndex, LengthNoFlush());
+  aIndex = std::min(aIndex, LengthNoFlush());
   if (aIndex >= nsISVGPoint::MaxListIndex()) {
     aError.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
     return nullptr;

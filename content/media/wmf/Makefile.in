@@ -16,6 +16,8 @@ LIBXUL_LIBRARY 	= 1
 
 EXPORTS		+= \
 		WMFDecoder.h \
+		WMFReader.h \
+		WMF.h \
 		$(NULL)
 
 CPPSRCS		= \
@@ -23,7 +25,12 @@ CPPSRCS		= \
 		WMFDecoder.cpp \
 		WMFReader.cpp \
 		WMFUtils.cpp \
+		WMFSourceReaderCallback.cpp \
 		$(NULL)
+
+ifeq ($(OS_ARCH),WINNT)
+OS_CXXFLAGS += -DNOMINMAX
+endif
 
 FORCE_STATIC_LIB = 1
 

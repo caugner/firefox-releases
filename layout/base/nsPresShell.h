@@ -33,7 +33,7 @@
 #include "nsPresArena.h"
 #include "nsFrameSelection.h"
 #include "nsGUIEvent.h"
-#include "nsContentUtils.h"
+#include "nsContentUtils.h" // For AddScriptBlocker().
 #include "nsRefreshDriver.h"
 #include "mozilla/Attributes.h"
 
@@ -74,11 +74,12 @@ public:
                                    nsStyleSet* aStyleSet,
                                    nsCompatibility aCompatMode);
   virtual NS_HIDDEN_(void) Destroy();
+  virtual NS_HIDDEN_(void) MakeZombie();
 
   virtual NS_HIDDEN_(nsresult) SetPreferenceStyleRules(bool aForceReflow);
 
   NS_IMETHOD GetSelection(SelectionType aType, nsISelection** aSelection);
-  virtual nsISelection* GetCurrentSelection(SelectionType aType);
+  virtual mozilla::Selection* GetCurrentSelection(SelectionType aType);
 
   NS_IMETHOD SetDisplaySelection(int16_t aToggle);
   NS_IMETHOD GetDisplaySelection(int16_t *aToggle);
@@ -196,8 +197,8 @@ public:
                                                         nsIDOMEvent* aEvent,
                                                         nsEventStatus* aStatus);
   virtual bool ShouldIgnoreInvalidation();
-  virtual void WillPaint(bool aWillSendDidPaint);
-  virtual void WillPaintWindow(bool aWillSendDidPaint);
+  virtual void WillPaint();
+  virtual void WillPaintWindow();
   virtual void DidPaintWindow();
   virtual void ScheduleViewManagerFlush();
   virtual void DispatchSynthMouseMove(nsGUIEvent *aEvent, bool aFlushOnHoverChange);
@@ -291,17 +292,17 @@ public:
 
   virtual void UpdateCanvasBackground();
 
-  virtual nsresult AddCanvasBackgroundColorItem(nsDisplayListBuilder& aBuilder,
-                                                nsDisplayList& aList,
-                                                nsIFrame* aFrame,
-                                                const nsRect& aBounds,
-                                                nscolor aBackstopColor,
-                                                uint32_t aFlags);
+  virtual void AddCanvasBackgroundColorItem(nsDisplayListBuilder& aBuilder,
+                                            nsDisplayList& aList,
+                                            nsIFrame* aFrame,
+                                            const nsRect& aBounds,
+                                            nscolor aBackstopColor,
+                                            uint32_t aFlags);
 
-  virtual nsresult AddPrintPreviewBackgroundItem(nsDisplayListBuilder& aBuilder,
-                                                 nsDisplayList& aList,
-                                                 nsIFrame* aFrame,
-                                                 const nsRect& aBounds);
+  virtual void AddPrintPreviewBackgroundItem(nsDisplayListBuilder& aBuilder,
+                                             nsDisplayList& aList,
+                                             nsIFrame* aFrame,
+                                             const nsRect& aBounds);
 
   virtual nscolor ComputeBackstopColor(nsView* aDisplayRoot);
 
@@ -439,6 +440,8 @@ protected:
   bool mInVerifyReflow;
   void ShowEventTargetDebug();
 #endif
+
+  void RecordStyleSheetChange(nsIStyleSheet* aStyleSheet);
 
     /**
     * methods that manage rules that are used to implement the associated preferences

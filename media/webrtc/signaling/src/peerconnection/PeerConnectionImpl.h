@@ -12,6 +12,8 @@
 
 #include "prlock.h"
 #include "mozilla/RefPtr.h"
+#include "nsWeakPtr.h"
+#include "nsIWeakReferenceUtils.h" // for the definition of nsWeakPtr
 #include "IPeerConnection.h"
 #include "nsComponentManagerUtils.h"
 #include "nsPIDOMWindow.h"
@@ -32,6 +34,7 @@
 #include "VideoUtils.h"
 #include "ImageLayers.h"
 #include "VideoSegment.h"
+#include "nsNSSShutDown.h"
 #else
 namespace mozilla {
   class DataChannel;
@@ -44,13 +47,15 @@ namespace sipcc {
 
 class PeerConnectionWrapper;
 
-struct ConstraintInfo {
+struct ConstraintInfo
+{
   std::string  value;
   bool         mandatory;
 };
 typedef std::map<std::string, ConstraintInfo> constraints_map;
 
-class MediaConstraints {
+class MediaConstraints
+{
 public:
   void setBooleanConstraint(const std::string& constraint, bool enabled, bool mandatory);
 
@@ -58,6 +63,24 @@ public:
 
 private:
   constraints_map  mConstraints;
+};
+
+class IceConfiguration
+{
+public:
+  bool addServer(const std::string& addr, uint16_t port)
+  {
+    NrIceStunServer* server(NrIceStunServer::Create(addr, port));
+    if (!server) {
+      return false;
+    }
+    addServer(*server);
+    return true;
+  }
+  void addServer(const NrIceStunServer& server) { mServers.push_back (server); }
+  const std::vector<NrIceStunServer>& getServers() const { return mServers; }
+private:
+  std::vector<NrIceStunServer> mServers;
 };
 
 class PeerConnectionWrapper;
@@ -76,8 +99,10 @@ class PeerConnectionWrapper;
 class PeerConnectionImpl MOZ_FINAL : public IPeerConnection,
 #ifdef MOZILLA_INTERNAL_API
                                      public mozilla::DataChannelConnection::DataConnectionListener,
+                                     public nsNSSShutDownObject,
 #endif
-                                     public sigslot::has_slots<> {
+                                     public sigslot::has_slots<>
+{
 public:
   PeerConnectionImpl();
   ~PeerConnectionImpl();
@@ -115,17 +140,19 @@ public:
   NS_DECL_IPEERCONNECTION
 
   static PeerConnectionImpl* CreatePeerConnection();
+  static nsresult ConvertRTCConfiguration(const JS::Value& aSrc,
+    IceConfiguration *aDst, JSContext* aCx);
   static nsresult ConvertConstraints(
     const JS::Value& aConstraints, MediaConstraints* aObj, JSContext* aCx);
-  static nsresult MakeMediaStream(uint32_t aHint, nsIDOMMediaStream** aStream);
+  static nsresult MakeMediaStream(nsIDOMWindow* aWindow,
+                                  uint32_t aHint, nsIDOMMediaStream** aStream);
 
   Role GetRole() const {
     PC_AUTO_ENTER_API_CALL_NO_CHECK();
     return mRole;
   }
 
-  nsresult CreateRemoteSourceStreamInfo(uint32_t aHint,
-    nsRefPtr<RemoteSourceStreamInfo>* aInfo);
+  nsresult CreateRemoteSourceStreamInfo(nsRefPtr<RemoteSourceStreamInfo>* aInfo);
 
   // Implementation of the only observer we need
   virtual void onCallEvent(
@@ -182,6 +209,14 @@ public:
     return mWindow;
   }
 
+  // Initialize PeerConnection from an IceConfiguration object.
+  nsresult Initialize(IPeerConnectionObserver* aObserver,
+                      nsIDOMWindow* aWindow,
+                      const IceConfiguration& aConfiguration,
+                      nsIThread* aThread) {
+    return Initialize(aObserver, aWindow, &aConfiguration, nullptr, aThread, nullptr);
+  }
+
   // Validate constraints and construct a MediaConstraints object
   // from a JS::Value.
   NS_IMETHODIMP CreateOffer(MediaConstraints& aConstraints);
@@ -190,7 +225,12 @@ public:
 private:
   PeerConnectionImpl(const PeerConnectionImpl&rhs);
   PeerConnectionImpl& operator=(PeerConnectionImpl);
-
+  nsresult Initialize(IPeerConnectionObserver* aObserver,
+                      nsIDOMWindow* aWindow,
+                      const IceConfiguration* aConfiguration,
+                      const JS::Value* aRTCConfiguration,
+                      nsIThread* aThread,
+                      JSContext* aCx);
   NS_IMETHODIMP CreateOfferInt(MediaConstraints& constraints);
   NS_IMETHODIMP CreateAnswerInt(MediaConstraints& constraints);
 
@@ -212,12 +252,16 @@ private:
     return true;
   }
 
+#ifdef MOZILLA_INTERNAL_API
+  void virtualDestroyNSSReference() MOZ_FINAL;
+#endif
+
   // Shut down media. Called on any thread.
   void ShutdownMedia(bool isSynchronous);
 
   // ICE callbacks run on the right thread.
-  nsresult IceGatheringCompleted_m(NrIceCtx *aCtx);
-  nsresult IceCompleted_m(NrIceCtx *aCtx);
+  nsresult IceGatheringCompleted_m();
+  nsresult IceCompleted_m();
 
   // The role we are adopting
   Role mRole;
@@ -230,7 +274,9 @@ private:
   IceState mIceState;
 
   nsCOMPtr<nsIThread> mThread;
-  nsCOMPtr<IPeerConnectionObserver> mPCObserver;
+  // Weak pointer to IPeerConnectionObserver
+  // This is only safe to use on the main thread
+  nsWeakPtr mPCObserver;
   nsCOMPtr<nsPIDOMWindow> mWindow;
 
   // The SDP sent in from JS - here for debugging.
@@ -268,7 +314,8 @@ public:
 };
 
 // This is what is returned when you acquire on a handle
-class PeerConnectionWrapper {
+class PeerConnectionWrapper
+{
  public:
   PeerConnectionWrapper(const std::string& handle);
 

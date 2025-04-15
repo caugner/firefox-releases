@@ -61,7 +61,7 @@ typedef struct nr_ice_turn_server_ {
 
 typedef struct nr_ice_foundation_ {
   int index;
-  
+
   nr_transport_addr addr;
   int type;
   nr_ice_stun_server *stun_server;
@@ -103,7 +103,7 @@ struct nr_ice_ctx_ {
 #define NR_ICE_STATE_INITIALIZING     2
 #define NR_ICE_STATE_INITIALIZED      3
   char *label;
-  
+
   char *ufrag;
   char *pwd;
 
@@ -115,11 +115,11 @@ struct nr_ice_ctx_ {
   int turn_server_ct;
 
   nr_ice_foundation_head foundations;
-  
+
   nr_ice_media_stream_head streams;           /* Media streams */
   int stream_ct;
   nr_ice_socket_head sockets;                 /* The sockets we're using */
-  int uninitialized_candidates;  
+  int uninitialized_candidates;
 
   UINT4 gather_rto;
   UINT4 stun_delay;
@@ -147,6 +147,8 @@ int nr_ice_ctx_deliver_packet(nr_ice_ctx *ctx, nr_ice_component *comp, nr_transp
 int nr_ice_ctx_is_known_id(nr_ice_ctx *ctx, UCHAR id[12]);
 int nr_ice_ctx_remember_id(nr_ice_ctx *ctx, nr_stun_message *msg);
 int nr_ice_ctx_finalize(nr_ice_ctx *ctx, nr_ice_peer_ctx *pctx);
+int nr_ice_ctx_set_stun_servers(nr_ice_ctx *ctx,nr_ice_stun_server *servers, int ct);
+int nr_ice_ctx_set_turn_servers(nr_ice_ctx *ctx,nr_ice_turn_server *servers, int ct);
 
 extern int LOG_ICE;
 

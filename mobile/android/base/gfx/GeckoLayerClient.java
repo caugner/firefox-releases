@@ -12,13 +12,8 @@ import org.mozilla.gecko.GeckoApp;
 import org.mozilla.gecko.Tab;
 import org.mozilla.gecko.Tabs;
 import org.mozilla.gecko.ZoomConstraints;
-import org.mozilla.gecko.ui.PanZoomController;
-import org.mozilla.gecko.ui.PanZoomTarget;
 import org.mozilla.gecko.util.EventDispatcher;
 import org.mozilla.gecko.util.FloatUtils;
-
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import android.content.Context;
 import android.graphics.PointF;
@@ -26,9 +21,6 @@ import android.graphics.RectF;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
-
-import java.util.HashMap;
-import java.util.Map;
 
 public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
 {
@@ -75,9 +67,6 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
     private boolean mLastProgressiveUpdateWasLowPrecision;
     private boolean mProgressiveUpdateWasInDanger;
 
-    /* This is written by the compositor thread and read by the UI thread. */
-    private volatile boolean mCompositorCreated;
-
     private boolean mForceRedraw;
 
     /* The current viewport metrics.
@@ -115,15 +104,16 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
         mProgressiveUpdateDisplayPort = new DisplayPortMetrics();
         mLastProgressiveUpdateWasLowPrecision = false;
         mProgressiveUpdateWasInDanger = false;
-        mCompositorCreated = false;
 
         mForceRedraw = true;
         DisplayMetrics displayMetrics = context.getResources().getDisplayMetrics();
-        mViewportMetrics = new ImmutableViewportMetrics(displayMetrics);
+        mViewportMetrics = new ImmutableViewportMetrics(displayMetrics)
+                           .setViewportSize(view.getWidth(), view.getHeight());
         mZoomConstraints = new ZoomConstraints(false);
 
-        mPanZoomController = new PanZoomController(this, eventDispatcher);
+        mPanZoomController = PanZoomController.Factory.create(this, view, eventDispatcher);
         mView = view;
+        mView.setListener(this);
     }
 
     /** Attaches to root layer so that Gecko appears. */
@@ -133,10 +123,20 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
         mRootLayer = new VirtualLayer(new IntSize(mView.getWidth(), mView.getHeight()));
         mLayerRenderer = mView.getRenderer();
 
-        mView.setListener(this);
         sendResizeEventIfNecessary(true);
 
         DisplayPortCalculator.initPrefs();
+
+        // Gecko being ready is one of the two conditions (along with having an available
+        // surface) that cause us to create the compositor. So here, now that we know gecko
+        // is ready, call createCompositor() to see if we can actually do the creation.
+        // This needs to run on the UI thread so that the surface validity can't change on
+        // us while we're in the middle of creating the compositor.
+        mView.post(new Runnable() {
+            public void run() {
+                mView.getGLController().createCompositor();
+            }
+        });
     }
 
     public void destroy() {
@@ -477,9 +477,9 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
             // At this point, we have just switched to displaying a different document than we
             // we previously displaying. This means we need to abort any panning/zooming animations
             // that are in progress and send an updated display port request to browser.js as soon
-            // as possible. We accomplish this by passing true to abortPanZoomAnimation, which
-            // sends the request after aborting the animation. The display port request is actually
-            // a full viewport update, which is fine because if browser.js has somehow moved to
+            // as possible. The call to PanZoomController.abortAnimation accomplishes this by calling the
+            // forceRedraw function, which sends the viewport to gecko. The display port request is
+            // actually a full viewport update, which is fine because if browser.js has somehow moved to
             // be out of sync with this first-paint viewport, then we force them back in sync.
             abortPanZoomAnimation();
 
@@ -588,50 +588,26 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
 
     /** Implementation of LayerView.Listener */
     public void renderRequested() {
-        GeckoAppShell.scheduleComposite();
-    }
-
-    /** Implementation of LayerView.Listener */
-    public void compositionPauseRequested() {
-        // We need to coordinate with Gecko when pausing composition, to ensure
-        // that Gecko never executes a draw event while the compositor is paused.
-        // This is sent synchronously to make sure that we don't attempt to use
-        // any outstanding Surfaces after we call this (such as from a
-        // surfaceDestroyed notification), and to make sure that any in-flight
-        // Gecko draw events have been processed.  When this returns, composition is
-        // definitely paused -- it'll synchronize with the Gecko event loop, which
-        // in turn will synchronize with the compositor thread.
-        if (mCompositorCreated) {
-            GeckoAppShell.sendEventToGeckoSync(GeckoEvent.createCompositorPauseEvent());
+        try {
+            GeckoAppShell.scheduleComposite();
+        } catch (UnsupportedOperationException uoe) {
+            // In some very rare cases this gets called before libxul is loaded,
+            // so catch and ignore the exception that will throw. See bug 837821
+            Log.d(LOGTAG, "Dropping renderRequested call before libxul load.");
         }
     }
 
     /** Implementation of LayerView.Listener */
-    public void compositionResumeRequested(int width, int height) {
-        // Asking Gecko to resume the compositor takes too long (see
-        // https://bugzilla.mozilla.org/show_bug.cgi?id=735230#c23), so we
-        // resume the compositor directly. We still need to inform Gecko about
-        // the compositor resuming, so that Gecko knows that it can now draw.
-        if (mCompositorCreated) {
-            GeckoAppShell.scheduleResumeComposition(width, height);
-            GeckoAppShell.sendEventToGecko(GeckoEvent.createCompositorResumeEvent());
-        }
+    public void sizeChanged(int width, int height) {
+        // We need to make sure a draw happens synchronously at this point,
+        // but resizing the surface before the SurfaceView has resized will
+        // cause a visible jump.
+        mView.getGLController().resumeCompositor(mWindowSize.width, mWindowSize.height);
     }
 
     /** Implementation of LayerView.Listener */
     public void surfaceChanged(int width, int height) {
         setViewportSize(width, height);
-
-        // We need to make this call even when the compositor isn't currently
-        // paused (e.g. during an orientation change), to make the compositor
-        // aware of the changed surface.
-        compositionResumeRequested(width, height);
-        renderRequested();
-    }
-
-    /** Implementation of LayerView.Listener */
-    public void compositorCreated() {
-        mCompositorCreated = true;
     }
 
     /** Implementation of PanZoomTarget */
@@ -690,7 +666,7 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
     }
 
     /** Implementation of PanZoomTarget */
-    public void setForceRedraw() {
+    public void forceRedraw() {
         mForceRedraw = true;
         if (mGeckoIsReady) {
             geometryChanged();

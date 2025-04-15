@@ -6,7 +6,6 @@
 #ifndef mozilla_dom_SVGAltGlyphElement_h
 #define mozilla_dom_SVGAltGlyphElement_h
 
-#include "nsIDOMSVGAltGlyphElement.h"
 #include "nsIDOMSVGURIReference.h"
 #include "mozilla/dom/SVGTextPositioningElement.h"
 #include "nsSVGString.h"
@@ -19,8 +18,8 @@ namespace dom {
 
 typedef SVGTextPositioningElement SVGAltGlyphElementBase;
 
-class SVGAltGlyphElement MOZ_FINAL : public SVGAltGlyphElementBase, // = nsIDOMSVGTextPositioningElement
-                                     public nsIDOMSVGAltGlyphElement,
+class SVGAltGlyphElement MOZ_FINAL : public SVGAltGlyphElementBase,
+                                     public nsIDOMSVGElement,
                                      public nsIDOMSVGURIReference
 {
 protected:
@@ -33,7 +32,6 @@ public:
   // interfaces:
 
   NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_NSIDOMSVGALTGLYPHELEMENT
   NS_DECL_NSIDOMSVGURIREFERENCE
 
   // xxx If xpcom allowed virtual inheritance we wouldn't need to
@@ -41,20 +39,20 @@ public:
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
   NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
   NS_FORWARD_NSIDOMSVGELEMENT(SVGAltGlyphElementBase::)
-  NS_FORWARD_NSIDOMSVGTEXTCONTENTELEMENT(SVGAltGlyphElementBase::)
-  NS_FORWARD_NSIDOMSVGTEXTPOSITIONINGELEMENT(SVGAltGlyphElementBase::)
 
   // nsIContent interface
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // WebIDL
   already_AddRefed<nsIDOMSVGAnimatedString> Href();
+  void GetGlyphRef(nsAString & aGlyphRef);
+  void SetGlyphRef(const nsAString & aGlyphRef, ErrorResult& rv);
+  void GetFormat(nsAString & aFormat);
+  void SetFormat(const nsAString & aFormat, ErrorResult& rv);
 
 protected:
 

@@ -82,18 +82,9 @@ public:
     * @param aProperty      [IN] an atom containing a HTML tag name
     * @param aAttribute     [IN] a string containing the name of a HTML
     *                            attribute carried by the element above
-    * @param aValue         [IN] an optional string containing the attribute's
-    *                            HTML value -- this matters for <font size>,
-    *                            since size=7 has no CSS equivalent.  Make sure
-    *                            you pass the HTML value (e.g. "4"), not the
-    *                            CSS value (e.g. "large").
     */
-  bool IsCSSEditableProperty(nsIContent* aNode, nsIAtom* aProperty,
-                             const nsAString* aAttribute,
-                             const nsAString* aValue = nullptr);
-  bool IsCSSEditableProperty(nsIDOMNode* aNode, nsIAtom* aProperty,
-                             const nsAString* aAttribute,
-                             const nsAString* aValue = nullptr);
+  bool IsCSSEditableProperty(nsIContent* aNode, nsIAtom* aProperty, const nsAString* aAttribute);
+  bool IsCSSEditableProperty(nsIDOMNode* aNode, nsIAtom* aProperty, const nsAString* aAttribute);
 
   /** adds/remove a CSS declaration to the STYLE atrribute carried by a given element
     *
@@ -291,9 +282,18 @@ public:
     * @param aCssDecl        [OUT] the CSS declaration corresponding to the style attr
     * @param aLength         [OUT] the number of declarations in aCssDecl
     */
-  nsresult GetInlineStyles(nsIDOMElement * aElement, nsIDOMCSSStyleDeclaration ** aCssDecl,
-                           uint32_t * aLength);
+  nsresult GetInlineStyles(mozilla::dom::Element* aElement,
+                           nsIDOMCSSStyleDeclaration** aCssDecl,
+                           uint32_t* aLength);
+  nsresult GetInlineStyles(nsIDOMElement* aElement,
+                           nsIDOMCSSStyleDeclaration** aCssDecl,
+                           uint32_t* aLength);
+private:
+  nsresult GetInlineStyles(nsISupports* aElement,
+                           nsIDOMCSSStyleDeclaration** aCssDecl,
+                           uint32_t* aLength);
 
+public:
   /** returns aNode itself if it is an element node, or the first ancestors being an element
     * node if aNode is not one itself
     *

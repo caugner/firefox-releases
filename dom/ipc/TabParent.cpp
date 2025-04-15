@@ -30,6 +30,7 @@
 #include "nsFocusManager.h"
 #include "nsFrameLoader.h"
 #include "nsIContent.h"
+#include "nsIDocShell.h"
 #include "nsIDOMApplicationRegistry.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMEvent.h"
@@ -50,8 +51,10 @@
 #include "nsSerializationHelper.h"
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
+#include "private/pprio.h"
 #include "StructuredCloneUtils.h"
 #include "TabChild.h"
+#include <algorithm>
 
 using namespace mozilla::dom;
 using namespace mozilla::ipc;
@@ -64,6 +67,116 @@ using namespace mozilla::dom::indexedDB;
 // The flags passed by the webProgress notifications are 16 bits shifted
 // from the ones registered by webProgressListeners.
 #define NOTIFY_FLAG_SHIFT 16
+
+class OpenFileAndSendFDRunnable : public nsRunnable
+{
+    const nsString mPath;
+    nsRefPtr<TabParent> mTabParent;
+    nsCOMPtr<nsIEventTarget> mEventTarget;
+    PRFileDesc* mFD;
+
+public:
+    OpenFileAndSendFDRunnable(const nsAString& aPath, TabParent* aTabParent)
+      : mPath(aPath), mTabParent(aTabParent), mFD(nullptr)
+    {
+        MOZ_ASSERT(NS_IsMainThread());
+        MOZ_ASSERT(!aPath.IsEmpty());
+        MOZ_ASSERT(aTabParent);
+    }
+
+    void Dispatch()
+    {
+        MOZ_ASSERT(NS_IsMainThread());
+
+        mEventTarget = do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID);
+        NS_ENSURE_TRUE_VOID(mEventTarget);
+
+        nsresult rv = mEventTarget->Dispatch(this, NS_DISPATCH_NORMAL);
+        NS_ENSURE_SUCCESS_VOID(rv);
+    }
+
+private:
+    ~OpenFileAndSendFDRunnable()
+    {
+        MOZ_ASSERT(!mFD);
+    }
+
+    // This shouldn't be called directly except by the event loop. Use Dispatch
+    // to start the sequence.
+    NS_IMETHOD Run()
+    {
+        if (NS_IsMainThread()) {
+            SendResponse();
+        } else if (mFD) {
+            CloseFile();
+        } else {
+            OpenFile();
+        }
+
+        return NS_OK;
+    }
+
+    void SendResponse()
+    {
+        MOZ_ASSERT(NS_IsMainThread());
+        MOZ_ASSERT(mTabParent);
+        MOZ_ASSERT(mEventTarget);
+        MOZ_ASSERT(mFD);
+
+        nsRefPtr<TabParent> tabParent;
+        mTabParent.swap(tabParent);
+
+        FileDescriptor::PlatformHandleType handle =
+            FileDescriptor::PlatformHandleType(PR_FileDesc2NativeHandle(mFD));
+
+        mozilla::unused << tabParent->SendCacheFileDescriptor(mPath, handle);
+
+        nsCOMPtr<nsIEventTarget> eventTarget;
+        mEventTarget.swap(eventTarget);
+
+        if (NS_FAILED(eventTarget->Dispatch(this, NS_DISPATCH_NORMAL))) {
+            NS_WARNING("Failed to dispatch to stream transport service!");
+
+            // It's probably safer to take the main thread IO hit here rather
+            // than leak a file descriptor.
+            CloseFile();
+        }
+    }
+
+    void OpenFile()
+    {
+        MOZ_ASSERT(!NS_IsMainThread());
+        MOZ_ASSERT(!mFD);
+
+        nsCOMPtr<nsIFile> file;
+        nsresult rv = NS_NewLocalFile(mPath, false, getter_AddRefs(file));
+        NS_ENSURE_SUCCESS_VOID(rv);
+
+        PRFileDesc* fd;
+        rv = file->OpenNSPRFileDesc(PR_RDONLY, 0, &fd);
+        NS_ENSURE_SUCCESS_VOID(rv);
+
+        mFD = fd;
+
+        if (NS_FAILED(NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL))) {
+            NS_WARNING("Failed to dispatch to main thread!");
+
+            CloseFile();
+        }
+    }
+
+    void CloseFile()
+    {
+        // It's possible for this to happen on the main thread if the dispatch
+        // to the stream service fails after we've already opened the file so
+        // we can't assert the thread we're running on.
+
+        MOZ_ASSERT(mFD);
+
+        PR_Close(mFD);
+        mFD = nullptr;
+    }
+};
 
 namespace mozilla {
 namespace dom {
@@ -84,10 +197,15 @@ TabParent::TabParent(const TabContext& aContext)
   , mIMECompositionStart(0)
   , mIMESeqno(0)
   , mEventCaptureDepth(0)
+  , mRect(0, 0, 0, 0)
   , mDimensions(0, 0)
+  , mOrientation(0)
   , mDPI(0)
   , mShown(false)
+  , mUpdatedDimensions(false)
+  , mMarkedDestroying(false)
   , mIsDestroyed(false)
+  , mAppPackageFileDescriptorSent(false)
 {
 }
 
@@ -124,13 +242,17 @@ TabParent::Destroy()
     frame->Destroy();
   }
   mIsDestroyed = true;
+
+  ContentParent* cp = static_cast<ContentParent*>(Manager());
+  cp->NotifyTabDestroying(this);
+  mMarkedDestroying = true;
 }
 
 bool
 TabParent::Recv__delete__()
 {
   ContentParent* cp = static_cast<ContentParent*>(Manager());
-  cp->NotifyTabDestroyed(this);
+  cp->NotifyTabDestroyed(this, mMarkedDestroying);
   return true;
 }
 
@@ -221,23 +343,66 @@ TabParent::AnswerCreateWindow(PBrowserParent** retval)
 void
 TabParent::LoadURL(nsIURI* aURI)
 {
+    MOZ_ASSERT(aURI);
+
     if (mIsDestroyed) {
-      return;
-    }
-    if (!mShown) {
-      nsAutoCString spec;
-      if (aURI) {
-        aURI->GetSpec(spec);
-      }
-      NS_WARNING(nsPrintfCString("TabParent::LoadURL(%s) called before "
-                                 "Show(). Ignoring LoadURL.\n", spec.get()).get());
-      return;
+        return;
     }
 
     nsCString spec;
     aURI->GetSpec(spec);
 
+    if (!mShown) {
+        NS_WARNING(nsPrintfCString("TabParent::LoadURL(%s) called before "
+                                   "Show(). Ignoring LoadURL.\n",
+                                   spec.get()).get());
+        return;
+    }
+
     unused << SendLoadURL(spec);
+
+    // If this app is a packaged app then we can speed startup by sending over
+    // the file descriptor for the "application.zip" file that it will
+    // invariably request. Only do this once.
+    if (!mAppPackageFileDescriptorSent) {
+        mAppPackageFileDescriptorSent = true;
+
+        nsCOMPtr<mozIApplication> app = GetOwnOrContainingApp();
+        if (app) {
+            nsString manifestURL;
+            nsresult rv = app->GetManifestURL(manifestURL);
+            NS_ENSURE_SUCCESS_VOID(rv);
+
+            if (StringBeginsWith(manifestURL, NS_LITERAL_STRING("app:"))) {
+                nsString basePath;
+                rv = app->GetBasePath(basePath);
+                NS_ENSURE_SUCCESS_VOID(rv);
+
+                nsString appId;
+                rv = app->GetId(appId);
+                NS_ENSURE_SUCCESS_VOID(rv);
+
+                nsCOMPtr<nsIFile> packageFile;
+                rv = NS_NewLocalFile(basePath, false,
+                                     getter_AddRefs(packageFile));
+                NS_ENSURE_SUCCESS_VOID(rv);
+
+                rv = packageFile->Append(appId);
+                NS_ENSURE_SUCCESS_VOID(rv);
+
+                rv = packageFile->Append(NS_LITERAL_STRING("application.zip"));
+                NS_ENSURE_SUCCESS_VOID(rv);
+
+                nsString path;
+                rv = packageFile->GetPath(path);
+                NS_ENSURE_SUCCESS_VOID(rv);
+
+                nsRefPtr<OpenFileAndSendFDRunnable> openFileRunnable =
+                    new OpenFileAndSendFDRunnable(path, this);
+                openFileRunnable->Dispatch();
+            }
+        }
+    }
 }
 
 void
@@ -259,12 +424,20 @@ TabParent::UpdateDimensions(const nsRect& rect, const nsIntSize& size)
   }
   hal::ScreenConfiguration config;
   hal::GetCurrentScreenConfiguration(&config);
+  ScreenOrientation orientation = config.orientation();
 
-  unused << SendUpdateDimensions(rect, size, config.orientation());
-  if (RenderFrameParent* rfp = GetRenderFrame()) {
-    rfp->NotifyDimensionsChanged(size.width, size.height);
+  if (!mUpdatedDimensions || mOrientation != orientation ||
+      mDimensions != size || !mRect.IsEqualEdges(rect)) {
+    mUpdatedDimensions = true;
+    mRect = rect;
+    mDimensions = size;
+    mOrientation = orientation;
+
+    unused << SendUpdateDimensions(mRect, mDimensions, mOrientation);
+    if (RenderFrameParent* rfp = GetRenderFrame()) {
+      rfp->NotifyDimensionsChanged(mDimensions.width, mDimensions.height);
+    }
   }
-  mDimensions = size;
 }
 
 void
@@ -324,6 +497,14 @@ TabParent::GetState(uint32_t *aState)
   NS_ENSURE_ARG(aState);
   NS_WARNING("SecurityState not valid here");
   *aState = 0;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TabParent::SetDocShell(nsIDocShell *aDocShell)
+{
+  NS_ENSURE_ARG(aDocShell);
+  NS_WARNING("No mDocShell member in TabParent so there is no docShell to set");
   return NS_OK;
 }
 
@@ -503,22 +684,7 @@ TabParent::RecvSyncMessage(const nsString& aMessage,
                            const ClonedMessageData& aData,
                            InfallibleTArray<nsString>* aJSONRetVal)
 {
-  const SerializedStructuredCloneBuffer& buffer = aData.data();
-  const InfallibleTArray<PBlobParent*>& blobParents = aData.blobsParent();
-  StructuredCloneData cloneData;
-  cloneData.mData = buffer.data;
-  cloneData.mDataLength = buffer.dataLength;
-  if (!blobParents.IsEmpty()) {
-    uint32_t length = blobParents.Length();
-    cloneData.mClosure.mBlobs.SetCapacity(length);
-    for (uint32_t i = 0; i < length; ++i) {
-      BlobParent* blobParent = static_cast<BlobParent*>(blobParents[i]);
-      MOZ_ASSERT(blobParent);
-      nsCOMPtr<nsIDOMBlob> blob = blobParent->GetBlob();
-      MOZ_ASSERT(blob);
-      cloneData.mClosure.mBlobs.AppendElement(blob);
-    }
-  }
+  StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
   return ReceiveMessage(aMessage, true, &cloneData, aJSONRetVal);
 }
 
@@ -526,24 +692,7 @@ bool
 TabParent::RecvAsyncMessage(const nsString& aMessage,
                                   const ClonedMessageData& aData)
 {
-    const SerializedStructuredCloneBuffer& buffer = aData.data();
-  const InfallibleTArray<PBlobParent*>& blobParents = aData.blobsParent();
-
-    StructuredCloneData cloneData;
-    cloneData.mData = buffer.data;
-    cloneData.mDataLength = buffer.dataLength;
-
-  if (!blobParents.IsEmpty()) {
-    uint32_t length = blobParents.Length();
-      cloneData.mClosure.mBlobs.SetCapacity(length);
-    for (uint32_t i = 0; i < length; ++i) {
-      BlobParent* blobParent = static_cast<BlobParent*>(blobParents[i]);
-      MOZ_ASSERT(blobParent);
-      nsCOMPtr<nsIDOMBlob> blob = blobParent->GetBlob();
-        MOZ_ASSERT(blob);
-        cloneData.mClosure.mBlobs.AppendElement(blob);
-      }
-    }
+  StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
   return ReceiveMessage(aMessage, false, &cloneData, nullptr);
 }
 
@@ -655,7 +804,7 @@ TabParent::HandleQueryContentEvent(nsQueryContentEvent& aEvent)
   {
   case NS_QUERY_SELECTED_TEXT:
     {
-      aEvent.mReply.mOffset = NS_MIN(mIMESelectionAnchor, mIMESelectionFocus);
+      aEvent.mReply.mOffset = std::min(mIMESelectionAnchor, mIMESelectionFocus);
       if (mIMESelectionAnchor == mIMESelectionFocus) {
         aEvent.mReply.mString.Truncate(0);
       } else {
@@ -704,7 +853,7 @@ TabParent::SendCompositionEvent(nsCompositionEvent& event)
     return false;
   }
   mIMEComposing = event.message != NS_COMPOSITION_END;
-  mIMECompositionStart = NS_MIN(mIMESelectionAnchor, mIMESelectionFocus);
+  mIMECompositionStart = std::min(mIMESelectionAnchor, mIMESelectionFocus);
   if (mIMECompositionEnding)
     return true;
   event.seqno = ++mIMESeqno;
@@ -732,7 +881,7 @@ TabParent::SendTextEvent(nsTextEvent& event)
   // We must be able to simulate the selection because
   // we might not receive selection updates in time
   if (!mIMEComposing) {
-    mIMECompositionStart = NS_MIN(mIMESelectionAnchor, mIMESelectionFocus);
+    mIMECompositionStart = std::min(mIMESelectionAnchor, mIMESelectionFocus);
   }
   mIMESelectionAnchor = mIMESelectionFocus =
       mIMECompositionStart + event.theText.Length();

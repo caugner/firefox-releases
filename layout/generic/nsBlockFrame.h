@@ -149,14 +149,14 @@ public:
                           nsIFrame*       aOldFrame);
   virtual const nsFrameList& GetChildList(ChildListID aListID) const;
   virtual void GetChildLists(nsTArray<ChildList>* aLists) const;
-  virtual nscoord GetBaseline() const;
-  virtual nscoord GetCaretBaseline() const;
+  virtual nscoord GetBaseline() const MOZ_OVERRIDE;
+  virtual nscoord GetCaretBaseline() const MOZ_OVERRIDE;
   virtual void DestroyFrom(nsIFrame* aDestructRoot);
   virtual nsSplittableType GetSplittableType() const;
   virtual bool IsFloatContainingBlock() const;
-  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                              const nsRect&           aDirtyRect,
-                              const nsDisplayListSet& aLists);
+  virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                                const nsRect&           aDirtyRect,
+                                const nsDisplayListSet& aLists) MOZ_OVERRIDE;
   virtual nsIAtom* GetType() const;
   virtual bool IsFrameOfType(uint32_t aFlags) const
   {
@@ -164,6 +164,9 @@ public:
              ~(nsIFrame::eCanContainOverflowContainers |
                nsIFrame::eBlockFrame));
   }
+
+  virtual void InvalidateFrame(uint32_t aDisplayItemKey = 0);
+  virtual void InvalidateFrameWithRect(const nsRect& aRect, uint32_t aDisplayItemKey = 0);
 
 #ifdef DEBUG
   NS_IMETHOD List(FILE* out, int32_t aIndent, uint32_t aFlags = 0) const;
@@ -399,7 +402,7 @@ protected:
   void SlideLine(nsBlockReflowState& aState,
                  nsLineBox* aLine, nscoord aDY);
 
-  virtual int GetSkipSides() const;
+  virtual int GetSkipSides() const MOZ_OVERRIDE;
 
   virtual void ComputeFinalSize(const nsHTMLReflowState& aReflowState,
                                 nsBlockReflowState&      aState,
@@ -784,7 +787,9 @@ protected:
     return 0 != (GetStateBits() & NS_BLOCK_HAS_PUSHED_FLOATS);
   }
 
-  // Get the pushed floats list
+  // Get the pushed floats list, which is used for *temporary* storage
+  // of floats during reflow, between when we decide they don't fit in
+  // this block until our next continuation takes them.
   nsFrameList* GetPushedFloats() const;
   // Get the pushed floats list, or if there is not currently one,
   // make a new empty one.

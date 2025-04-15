@@ -565,7 +565,6 @@ GroupRule::~GroupRule()
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(GroupRule)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(GroupRule)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(GroupRule)
 
@@ -663,7 +662,7 @@ GroupRule::EnumerateRulesForwards(RuleEnumFunc aFunc, void * aData) const
 }
 
 /*
- * The next two methods (DeleteStyleRuleAt and InsertStyleRulesAt)
+ * The next two methods (DeleteStyleRuleAt and InsertStyleRuleAt)
  * should never be called unless you have first called WillDirty() on
  * the parents stylesheet.  After they are called, DidDirty() needs to
  * be called on the sheet
@@ -680,12 +679,11 @@ GroupRule::DeleteStyleRuleAt(uint32_t aIndex)
 }
 
 nsresult
-GroupRule::InsertStyleRulesAt(uint32_t aIndex,
-                              nsCOMArray<Rule>& aRules)
+GroupRule::InsertStyleRuleAt(uint32_t aIndex, Rule* aRule)
 {
-  aRules.EnumerateForwards(SetStyleSheetReference, GetStyleSheet());
-  aRules.EnumerateForwards(SetParentRuleReference, this);
-  if (! mRules.InsertObjectsAt(aRules, aIndex)) {
+  aRule->SetStyleSheet(GetStyleSheet());
+  aRule->SetParentRule(this);
+  if (! mRules.InsertObjectAt(aRule, aIndex)) {
     return NS_ERROR_FAILURE;
   }
   return NS_OK;
@@ -1768,8 +1766,6 @@ nsCSSFontFaceRule::Clone() const
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsCSSFontFaceRule)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsCSSFontFaceRule)
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsCSSFontFaceRule)
-
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsCSSFontFaceRule)
   // Trace the wrapper for our declaration.  This just expands out
   // NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER which we can't use
@@ -2013,13 +2009,24 @@ nsCSSKeyframeRule::Clone() const
   return clone.forget();
 }
 
-NS_IMPL_ADDREF(nsCSSKeyframeRule)
-NS_IMPL_RELEASE(nsCSSKeyframeRule)
+NS_IMPL_CYCLE_COLLECTING_ADDREF(nsCSSKeyframeRule)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(nsCSSKeyframeRule)
+
+
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsCSSKeyframeRule)
+  if (tmp->mDOMDeclaration) {
+    tmp->mDOMDeclaration->DropReference();
+    ImplCycleCollectionUnlink(tmp->mDOMDeclaration);
+  }
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsCSSKeyframeRule)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMDeclaration)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 DOMCI_DATA(MozCSSKeyframeRule, nsCSSKeyframeRule)
 
 // QueryInterface implementation for nsCSSKeyframeRule
-NS_INTERFACE_MAP_BEGIN(nsCSSKeyframeRule)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsCSSKeyframeRule)
   NS_INTERFACE_MAP_ENTRY(nsIStyleRule)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozCSSKeyframeRule)
   NS_INTERFACE_MAP_ENTRY(nsIDOMCSSRule)
@@ -2308,7 +2315,7 @@ nsCSSKeyframesRule::GetCssRules(nsIDOMCSSRuleList* *aRuleList)
 }
 
 NS_IMETHODIMP
-nsCSSKeyframesRule::InsertRule(const nsAString& aRule)
+nsCSSKeyframesRule::AppendRule(const nsAString& aRule)
 {
   // The spec is confusing, and I think we should just append the rule,
   // which also turns out to match WebKit:

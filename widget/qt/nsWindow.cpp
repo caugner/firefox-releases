@@ -27,6 +27,7 @@
 #include <QtCore/QDebug>
 #include <QtCore/QEvent>
 #include <QtCore/QVariant>
+#include <algorithm>
 #if (QT_VERSION >= QT_VERSION_CHECK(4, 6, 0))
 #include <QPinchGesture>
 #include <QGestureRecognizer>
@@ -293,8 +294,8 @@ UpdateOffScreenBuffers(int aDepth, QSize aSize, QWidget* aWidget = nullptr)
             return true;
     }
 
-    gBufferMaxSize.width = NS_MAX(gBufferMaxSize.width, size.width);
-    gBufferMaxSize.height = NS_MAX(gBufferMaxSize.height, size.height);
+    gBufferMaxSize.width = std::max(gBufferMaxSize.width, size.width);
+    gBufferMaxSize.height = std::max(gBufferMaxSize.height, size.height);
 
     // Check if system depth has related gfxImage format
     gfxASurface::gfxImageFormat format =
@@ -1033,7 +1034,7 @@ nsWindow::DoPaint(QPainter* aPainter, const QStyleOptionGraphicsItem* aOption, Q
     // Call WillPaintWindow to allow scripts etc. to run before we paint
     {
         if (mWidgetListener)
-            mWidgetListener->WillPaintWindow(this, true);
+            mWidgetListener->WillPaintWindow(this);
     }
 
     if (!mWidget)
@@ -1076,7 +1077,7 @@ nsWindow::DoPaint(QPainter* aPainter, const QStyleOptionGraphicsItem* aOption, Q
 #endif //MOZ_ENABLE_QTMOBILITY
 
         if (mWidgetListener)
-          painted = mWidgetListener->PaintWindow(this, region, nsIWidgetListener::SENT_WILL_PAINT | nsIWidgetListener::WILL_SEND_DID_PAINT);
+          painted = mWidgetListener->PaintWindow(this, region, 0);
         aPainter->endNativePainting();
         if (mWidgetListener)
           mWidgetListener->DidPaintWindow();
@@ -1134,7 +1135,7 @@ nsWindow::DoPaint(QPainter* aPainter, const QStyleOptionGraphicsItem* aOption, Q
             setupLayerManager(this, ctx, mozilla::layers::BUFFER_NONE);
         if (mWidgetListener) {
           nsIntRegion region(rect);
-          painted = mWidgetListener->PaintWindow(this, region, nsIWidgetListener::SENT_WILL_PAINT | nsIWidgetListener::WILL_SEND_DID_PAINT);
+          painted = mWidgetListener->PaintWindow(this, region, 0);
         }
     }
 

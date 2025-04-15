@@ -19,6 +19,7 @@
 #include "nsTransform2D.h"
 
 #include "gfxContext.h"
+#include <algorithm>
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -199,7 +200,7 @@ nsHTMLCanvasFrame::Reflow(nsPresContext*           aPresContext,
   if (GetPrevInFlow()) {
     nscoord y = GetContinuationOffset(&aMetrics.width);
     aMetrics.height -= y + mBorderPadding.top;
-    aMetrics.height = NS_MAX(0, aMetrics.height);
+    aMetrics.height = std::max(0, aMetrics.height);
   }
 
   aMetrics.SetOverflowAreasToDesiredBounds();
@@ -277,30 +278,25 @@ nsHTMLCanvasFrame::BuildLayer(nsDisplayListBuilder* aBuilder,
   return layer.forget();
 }
 
-NS_IMETHODIMP
+void
 nsHTMLCanvasFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                     const nsRect&           aDirtyRect,
                                     const nsDisplayListSet& aLists)
 {
   if (!IsVisibleForPainting(aBuilder))
-    return NS_OK;
+    return;
 
-  nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   nsDisplayList replacedContent;
 
-  rv = replacedContent.AppendNewToTop(
-      new (aBuilder) nsDisplayCanvas(aBuilder, this));
-  NS_ENSURE_SUCCESS(rv, rv);
+  replacedContent.AppendNewToTop(
+    new (aBuilder) nsDisplayCanvas(aBuilder, this));
 
-  rv = DisplaySelectionOverlay(aBuilder, &replacedContent,
-                               nsISelectionDisplay::DISPLAY_IMAGES);
-  NS_ENSURE_SUCCESS(rv, rv);
+  DisplaySelectionOverlay(aBuilder, &replacedContent,
+                          nsISelectionDisplay::DISPLAY_IMAGES);
 
   WrapReplacedContentForBorderRadius(aBuilder, &replacedContent, aLists);
-
-  return NS_OK;
 }
 
 nsIAtom*
@@ -328,7 +324,7 @@ nsHTMLCanvasFrame::GetContinuationOffset(nscoord* aWidth) const
       offset += rect.height;
     }
     offset -= mBorderPadding.top;
-    offset = NS_MAX(0, offset);
+    offset = std::max(0, offset);
   }
   return offset;
 }

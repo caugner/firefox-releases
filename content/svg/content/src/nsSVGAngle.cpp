@@ -9,7 +9,7 @@
 #include "prdtoa.h"
 #include "nsTextFormatter.h"
 #include "nsSVGAttrTearoffTable.h"
-#include "nsSVGMarkerElement.h"
+#include "mozilla/dom/SVGMarkerElement.h"
 #include "nsMathUtils.h"
 #include "nsContentUtils.h" // NS_ENSURE_FINITE
 #include "nsSMILValue.h"
@@ -217,8 +217,8 @@ nsSVGAngle::NewValueSpecifiedUnits(uint16_t unitType,
   return NS_OK;
 }
 
-nsresult
-nsSVGAngle::ToDOMBaseVal(SVGAngle **aResult, nsSVGElement *aSVGElement)
+already_AddRefed<SVGAngle>
+nsSVGAngle::ToDOMBaseVal(nsSVGElement *aSVGElement)
 {
   nsRefPtr<SVGAngle> domBaseVal =
     sBaseSVGAngleTearoffTable.GetTearoff(this);
@@ -227,12 +227,11 @@ nsSVGAngle::ToDOMBaseVal(SVGAngle **aResult, nsSVGElement *aSVGElement)
     sBaseSVGAngleTearoffTable.AddTearoff(this, domBaseVal);
   }
 
-  domBaseVal.forget(aResult);
-  return NS_OK;
+  return domBaseVal.forget();
 }
 
-nsresult
-nsSVGAngle::ToDOMAnimVal(SVGAngle **aResult, nsSVGElement *aSVGElement)
+already_AddRefed<SVGAngle>
+nsSVGAngle::ToDOMAnimVal(nsSVGElement *aSVGElement)
 {
   nsRefPtr<SVGAngle> domAnimVal =
     sAnimSVGAngleTearoffTable.GetTearoff(this);
@@ -241,8 +240,7 @@ nsSVGAngle::ToDOMAnimVal(SVGAngle **aResult, nsSVGElement *aSVGElement)
     sAnimSVGAngleTearoffTable.AddTearoff(this, domAnimVal);
   }
 
-  domAnimVal.forget(aResult);
-  return NS_OK;
+  return domAnimVal.forget();
 }
 
 SVGAngle::~SVGAngle()
@@ -342,9 +340,8 @@ nsSVGAngle::SetAnimValue(float aValue, uint8_t aUnit, nsSVGElement *aSVGElement)
   aSVGElement->DidAnimateAngle(mAttrEnum);
 }
 
-nsresult
-nsSVGAngle::ToDOMAnimatedAngle(nsISupports **aResult,
-                               nsSVGElement *aSVGElement)
+already_AddRefed<SVGAnimatedAngle>
+nsSVGAngle::ToDOMAnimatedAngle(nsSVGElement *aSVGElement)
 {
   nsRefPtr<SVGAnimatedAngle> domAnimatedAngle =
     sSVGAnimatedAngleTearoffTable.GetTearoff(this);
@@ -353,8 +350,7 @@ nsSVGAngle::ToDOMAnimatedAngle(nsISupports **aResult,
     sSVGAnimatedAngleTearoffTable.AddTearoff(this, domAnimatedAngle);
   }
 
-  domAnimatedAngle.forget(aResult);
-  return NS_OK;
+  return domAnimatedAngle.forget();
 }
 
 SVGAnimatedAngle::~SVGAnimatedAngle()
@@ -366,7 +362,7 @@ nsISMILAttr*
 nsSVGAngle::ToSMILAttr(nsSVGElement *aSVGElement)
 {
   if (aSVGElement->NodeInfo()->Equals(nsGkAtoms::marker, kNameSpaceID_SVG)) {
-    nsSVGMarkerElement *marker = static_cast<nsSVGMarkerElement*>(aSVGElement);
+    SVGMarkerElement *marker = static_cast<SVGMarkerElement*>(aSVGElement);
     return new SMILOrient(marker->GetOrientType(), this, aSVGElement);
   }
   // SMILOrient would not be useful for general angle attributes (also,
@@ -383,7 +379,7 @@ nsSVGAngle::SMILOrient::ValueFromString(const nsAString& aStr,
 {
   nsSMILValue val(&SVGOrientSMILType::sSingleton);
   if (aStr.EqualsLiteral("auto")) {
-    val.mU.mOrient.mOrientType = nsIDOMSVGMarkerElement::SVG_MARKER_ORIENT_AUTO;
+    val.mU.mOrient.mOrientType = SVG_MARKER_ORIENT_AUTO;
   } else {
     float value;
     uint16_t unitType;
@@ -393,7 +389,7 @@ nsSVGAngle::SMILOrient::ValueFromString(const nsAString& aStr,
     }
     val.mU.mOrient.mAngle = value;
     val.mU.mOrient.mUnit = unitType;
-    val.mU.mOrient.mOrientType = nsIDOMSVGMarkerElement::SVG_MARKER_ORIENT_ANGLE;
+    val.mU.mOrient.mOrientType = SVG_MARKER_ORIENT_ANGLE;
   }
   aValue.Swap(val);
   aPreventCachingOfSandwich = false;
@@ -431,7 +427,7 @@ nsSVGAngle::SMILOrient::SetAnimValue(const nsSMILValue& aValue)
 
   if (aValue.mType == &SVGOrientSMILType::sSingleton) {
     mOrientType->SetAnimValue(aValue.mU.mOrient.mOrientType);
-    if (aValue.mU.mOrient.mOrientType == nsIDOMSVGMarkerElement::SVG_MARKER_ORIENT_AUTO) {
+    if (aValue.mU.mOrient.mOrientType == SVG_MARKER_ORIENT_AUTO) {
       mAngle->SetAnimValue(0.0f, SVG_ANGLETYPE_UNSPECIFIED, mSVGElement);
     } else {
       mAngle->SetAnimValue(aValue.mU.mOrient.mAngle, aValue.mU.mOrient.mUnit, mSVGElement);

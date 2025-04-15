@@ -45,7 +45,7 @@ public:
 
   virtual nsDOMStorageType StorageType() = 0;
 
-  virtual bool IsStoragePrivate() = 0;
+  virtual bool IsPrivate() = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsPIDOMStorage, NS_PIDOMSTORAGE_IID)

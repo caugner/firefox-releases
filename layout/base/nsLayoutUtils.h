@@ -38,6 +38,7 @@ class nsIImageLoadingContent;
 #include "FrameMetrics.h"
 
 #include <limits>
+#include <algorithm>
 
 class nsBlockFrame;
 class gfxDrawable;
@@ -374,6 +375,17 @@ public:
   static nsIScrollableFrame* GetNearestScrollableFrame(nsIFrame* aFrame);
 
   /**
+   * GetScrolledRect returns the range of allowable scroll offsets
+   * for aScrolledFrame, assuming the scrollable overflow area is
+   * aScrolledFrameOverflowArea and the scrollport size is aScrollPortSize.
+   * aDirection is either NS_STYLE_DIRECTION_LTR or NS_STYLE_DIRECTION_RTL.
+   */
+  static nsRect GetScrolledRect(nsIFrame* aScrolledFrame,
+                                const nsRect& aScrolledFrameOverflowArea,
+                                const nsSize& aScrollPortSize,
+                                uint8_t aDirection);
+
+  /**
    * HasPseudoStyle returns true if aContent (whose primary style
    * context is aStyleContext) has the aPseudoElement pseudo-style
    * attached to it; returns false otherwise.
@@ -461,7 +473,7 @@ public:
   static nsIFrame* GetPopupFrameForEventCoordinates(nsPresContext* aPresContext,
                                                     const nsEvent* aEvent);
 
-/**
+  /**
    * Translate from widget coordinates to the view's coordinates
    * @param aPresContext the PresContext for the view
    * @param aWidget the widget
@@ -576,7 +588,18 @@ public:
    * @return aPoint, expressed in aFrame's canonical coordinate space.
    */
   static nsPoint TransformRootPointToFrame(nsIFrame* aFrame,
-                                           const nsPoint &aPt);
+                                           const nsPoint &aPoint)
+  {
+    return TransformAncestorPointToFrame(aFrame, aPoint, nullptr);
+  }
+
+  /**
+   * Transform aPoint relative to aAncestor down to the coordinate system of
+   * aFrame.
+   */
+  static nsPoint TransformAncestorPointToFrame(nsIFrame* aFrame,
+                                               const nsPoint& aPoint,
+                                               nsIFrame* aAncestor);
 
   /**
    * Helper function that, given a rectangle and a matrix, returns the smallest
@@ -643,7 +666,8 @@ public:
     PAINT_ALL_CONTINUATIONS = 0x40,
     PAINT_TO_WINDOW = 0x80,
     PAINT_EXISTING_TRANSACTION = 0x100,
-    PAINT_NO_COMPOSITE = 0x200
+    PAINT_NO_COMPOSITE = 0x200,
+    PAINT_NO_CLEAR_INVALIDATIONS = 0x400
   };
 
   /**
@@ -967,7 +991,7 @@ public:
     nscoord result =
       nsRuleNode::ComputeCoordPercentCalc(aCoord, aContainingBlockHeight);
     // Clamp calc(), and the subtraction for box-sizing.
-    return NS_MAX(0, result - aContentEdgeToBoxSizingBoxEdge);
+    return std::max(0, result - aContentEdgeToBoxSizingBoxEdge);
   }
 
   static bool IsAutoHeight(const nsStyleCoord &aCoord, nscoord aCBHeight)
@@ -1962,7 +1986,7 @@ nsLayoutUtils::PointIsCloserToRect(PointType aPoint, const RectType& aRect,
   if (fromLeft >= 0 && fromRight <= 0) {
     xDistance = 0;
   } else {
-    xDistance = NS_MIN(abs(fromLeft), abs(fromRight));
+    xDistance = std::min(abs(fromLeft), abs(fromRight));
   }
 
   if (xDistance <= aClosestXDistance) {
@@ -1977,7 +2001,7 @@ nsLayoutUtils::PointIsCloserToRect(PointType aPoint, const RectType& aRect,
     if (fromTop >= 0 && fromBottom <= 0) {
       yDistance = 0;
     } else {
-      yDistance = NS_MIN(abs(fromTop), abs(fromBottom));
+      yDistance = std::min(abs(fromTop), abs(fromBottom));
     }
 
     if (yDistance < aClosestYDistance) {

@@ -35,12 +35,14 @@
     <dimen name="menu_popup_arrow_width">40dip</dimen>
     <dimen name="menu_popup_offset">8dp</dimen>
     <dimen name="menu_popup_width">256dp</dimen>
-    <dimen name="nav_button_border_width">1dp</dimen>
+    <dimen name="nav_button_border_width">0.75dp</dimen>
     <dimen name="prompt_service_group_padding_size">32dp</dimen>
     <dimen name="prompt_service_icon_size">72dp</dimen>
     <dimen name="prompt_service_icon_text_padding">10dp</dimen>
+    <dimen name="prompt_service_inputs_padding">16dp</dimen>
     <dimen name="prompt_service_left_right_text_with_icon_padding">10dp</dimen>
     <dimen name="prompt_service_top_bottom_text_with_icon_padding">8dp</dimen>
+    <dimen name="prompt_service_min_list_item_height">48dp</dimen>
     <dimen name="remote_tab_child_row_height">64dp</dimen>
     <dimen name="remote_tab_group_row_height">26dp</dimen>
     <dimen name="popup_width">400dp</dimen>

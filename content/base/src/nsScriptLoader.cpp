@@ -22,6 +22,7 @@
 #include "nsIScriptRuntime.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIPrincipal.h"
+#include "nsJSPrincipals.h"
 #include "nsContentPolicyUtils.h"
 #include "nsIHttpChannel.h"
 #include "nsIHttpChannelInternal.h"
@@ -397,20 +398,6 @@ ParseTypeAttribute(const nsAString& aType, JSVersion* aVersion)
     return false;
   }
 
-  nsAutoString value;
-  rv = parser.GetParameter("e4x", value);
-  if (NS_SUCCEEDED(rv)) {
-    if (value.Length() == 1 && value[0] == '1') {
-      // This happens in about 2 web pages. Enable E4X no matter what JS
-      // version number was selected.  We do this by turning on the "moar
-      // XML" version bit.  This is OK even if version has
-      // JSVERSION_UNKNOWN (-1).
-      *aVersion = js::VersionSetMoarXML(*aVersion, true);
-    }
-  } else if (rv != NS_ERROR_INVALID_ARG) {
-    return false;
-  }
-
   return true;
 }
 
@@ -471,14 +458,7 @@ nsScriptLoader::ProcessScriptElement(nsIScriptElement *aElement)
       nsAutoString language;
       scriptContent->GetAttr(kNameSpaceID_None, nsGkAtoms::language, language);
       if (!language.IsEmpty()) {
-        // IE, Opera, etc. do not respect language version, so neither should
-        // we at this late date in the browser wars saga.  Note that this change
-        // affects HTML but not XUL or SVG (but note also that XUL has its own
-        // code to check nsContentUtils::IsJavaScriptLanguage -- that's probably
-        // a separate bug, one we may not be able to fix short of XUL2).  See
-        // bug 255895 (https://bugzilla.mozilla.org/show_bug.cgi?id=255895).
-        uint32_t dummy;
-        if (!nsContentUtils::IsJavaScriptLanguage(language, &dummy)) {
+        if (!nsContentUtils::IsJavaScriptLanguage(language)) {
           return false;
         }
       }
@@ -855,13 +835,17 @@ nsScriptLoader::EvaluateScript(nsScriptLoadRequest* aRequest,
   nsAutoCString url;
   nsContentUtils::GetWrapperSafeScriptFilename(mDocument, aRequest->mURI, url);
 
-  bool isUndefined;
-  rv = context->EvaluateString(aScript, globalObject->GetGlobalJSObject(),
-                               mDocument->NodePrincipal(),
-                               aRequest->mOriginPrincipal,
-                               url.get(), aRequest->mLineNo,
-                               JSVersion(aRequest->mJSVersion), nullptr,
-                               &isUndefined);
+  JSVersion version = JSVersion(aRequest->mJSVersion);
+  if (version != JSVERSION_UNKNOWN) {
+    JS::CompileOptions options(context->GetNativeContext());
+    options.setFileAndLine(url.get(), aRequest->mLineNo)
+           .setVersion(JSVersion(aRequest->mJSVersion));
+    if (aRequest->mOriginPrincipal) {
+      options.setOriginPrincipals(nsJSPrincipals::get(aRequest->mOriginPrincipal));
+    }
+    rv = context->EvaluateString(aScript, *globalObject->GetGlobalJSObject(),
+                                 options, /* aCoerceToString = */ false, nullptr);
+  }
 
   // Put the old script back in case it wants to do anything else.
   mCurrentScript = oldCurrent;
@@ -994,14 +978,14 @@ DetectByteOrderMark(const unsigned char* aBytes, int32_t aLen, nsCString& oChars
     if (0xFF == aBytes[1]) {
       // FE FF
       // UTF-16, big-endian
-      oCharset.Assign("UTF-16");
+      oCharset.Assign("UTF-16BE");
     }
     break;
   case 0xFF:
     if (0xFE == aBytes[1]) {
       // FF FE
       // UTF-16, little-endian
-      oCharset.Assign("UTF-16");
+      oCharset.Assign("UTF-16LE");
     }
     break;
   }

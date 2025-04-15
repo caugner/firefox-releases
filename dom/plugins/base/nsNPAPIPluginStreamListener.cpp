@@ -17,6 +17,7 @@
 #include "nsPluginStreamListenerPeer.h"
 
 #include "mozilla/StandardInteger.h"
+#include <algorithm>
 
 nsNPAPIStreamWrapper::nsNPAPIStreamWrapper(nsIOutputStream *outputStream,
                                            nsNPAPIPluginStreamListener *streamListener)
@@ -464,12 +465,12 @@ nsNPAPIPluginStreamListener::OnDataAvailable(nsPluginStreamListenerPeer* streamP
     uint32_t contentLength;
     streamPeer->GetLength(&contentLength);
     
-    mStreamBufferSize = NS_MAX(length, contentLength);
+    mStreamBufferSize = std::max(length, contentLength);
     
     // Limit the size of the initial buffer to MAX_PLUGIN_NECKO_BUFFER
     // (16k). This buffer will grow if needed, as in the case where
     // we're getting data faster than the plugin can process it.
-    mStreamBufferSize = NS_MIN(mStreamBufferSize,
+    mStreamBufferSize = std::min(mStreamBufferSize,
                                uint32_t(MAX_PLUGIN_NECKO_BUFFER));
     
     mStreamBuffer = (char*) PR_Malloc(mStreamBufferSize);
@@ -525,7 +526,7 @@ nsNPAPIPluginStreamListener::OnDataAvailable(nsPluginStreamListenerPeer* streamP
       }
       
       uint32_t bytesToRead =
-      NS_MIN(length, mStreamBufferSize - mStreamBufferByteCount);
+      std::min(length, mStreamBufferSize - mStreamBufferByteCount);
       
       uint32_t amountRead = 0;
       rv = input->Read(mStreamBuffer + mStreamBufferByteCount, bytesToRead,
@@ -605,7 +606,7 @@ nsNPAPIPluginStreamListener::OnDataAvailable(nsPluginStreamListenerPeer* streamP
           break;
         }
         
-        numtowrite = NS_MIN(numtowrite, mStreamBufferByteCount);
+        numtowrite = std::min(numtowrite, mStreamBufferByteCount);
       } else {
         // if WriteReady is not supported by the plugin, just write
         // the whole buffer
@@ -634,7 +635,7 @@ nsNPAPIPluginStreamListener::OnDataAvailable(nsPluginStreamListenerPeer* streamP
         NS_ASSERTION(writeCount <= mStreamBufferByteCount,
                      "Plugin read past the end of the available data!");
         
-        writeCount = NS_MIN(writeCount, mStreamBufferByteCount);
+        writeCount = std::min(writeCount, mStreamBufferByteCount);
         mStreamBufferByteCount -= writeCount;
         
         streamPosition += writeCount;

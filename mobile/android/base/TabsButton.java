@@ -11,16 +11,12 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.PorterDuffXfermode;
 import android.graphics.PorterDuff.Mode;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.LayerDrawable;
 import android.graphics.drawable.LevelListDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.util.AttributeSet;
-import android.view.Gravity;
-import android.view.View;
 
 public class TabsButton extends ShapedButton { 
     private Paint mPaint;
@@ -164,8 +160,10 @@ public class TabsButton extends ShapedButton {
     // The drawable is constructed as per @drawable/tabs_button.
     @Override
     public void onLightweightThemeChanged() {
-        LightweightThemeDrawable lightWeight1 = mActivity.getLightweightTheme().getTextureDrawable(this, R.drawable.tabs_tray_bg_repeat);
-        LightweightThemeDrawable lightWeight2 = mActivity.getLightweightTheme().getTextureDrawable(this, R.drawable.tabs_tray_dark_bg_repeat);
+        int background1 = mActivity.getResources().getColor(R.color.background_tabs_light);
+        LightweightThemeDrawable lightWeight1 = mActivity.getLightweightTheme().getColorDrawable(this, background1);
+        int background2 = mActivity.getResources().getColor(R.color.background_tabs_dark);
+        LightweightThemeDrawable lightWeight2 = mActivity.getLightweightTheme().getColorDrawable(this, background2);
         if (lightWeight1 == null || lightWeight2 == null)
             return;
 
@@ -175,12 +173,12 @@ public class TabsButton extends ShapedButton {
         Resources resources = this.getContext().getResources();
         StateListDrawable stateList1 = new StateListDrawable();
         stateList1.addState(new int[] { android.R.attr.state_pressed }, resources.getDrawable(R.drawable.highlight));
-        stateList1.addState(new int[] { R.attr.state_private }, resources.getDrawable(R.drawable.tabs_tray_bg_repeat));
+        stateList1.addState(new int[] { R.attr.state_private }, new ColorDrawable(resources.getColor(R.color.background_tabs_light)));
         stateList1.addState(new int[] {}, lightWeight1);
 
         StateListDrawable stateList2 = new StateListDrawable();
         stateList2.addState(new int[] { android.R.attr.state_pressed }, resources.getDrawable(R.drawable.highlight));
-        stateList2.addState(new int[] { R.attr.state_private }, resources.getDrawable(R.drawable.tabs_tray_bg_repeat));
+        stateList2.addState(new int[] { R.attr.state_private }, new ColorDrawable(resources.getColor(R.color.background_tabs_dark)));
         stateList2.addState(new int[] {}, lightWeight2);
 
         LevelListDrawable levelList = new LevelListDrawable();

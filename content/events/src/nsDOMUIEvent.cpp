@@ -75,8 +75,6 @@ nsDOMUIEvent::nsDOMUIEvent(nsPresContext* aPresContext, nsGUIEvent* aEvent)
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMUIEvent)
-
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsDOMUIEvent, nsDOMEvent)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mView)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
@@ -174,7 +172,7 @@ nsresult
 nsDOMUIEvent::InitFromCtor(const nsAString& aType,
                            JSContext* aCx, jsval* aVal)
 {
-  mozilla::dom::UIEventInit d;
+  mozilla::idl::UIEventInit d;
   nsresult rv = d.Init(aCx, aVal);
   NS_ENSURE_SUCCESS(rv, rv);
   return InitUIEvent(aType, d.bubbles, d.cancelable, d.view, d.detail);

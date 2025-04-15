@@ -34,9 +34,12 @@ namespace {
 class nsPluginHangUITelemetry : public nsRunnable
 {
 public:
-  nsPluginHangUITelemetry(int aResponseCode, int aDontAskCode)
+  nsPluginHangUITelemetry(int aResponseCode, int aDontAskCode,
+                          uint32_t aResponseTimeMs, uint32_t aTimeoutMs)
     : mResponseCode(aResponseCode),
-      mDontAskCode(aDontAskCode)
+      mDontAskCode(aDontAskCode),
+      mResponseTimeMs(aResponseTimeMs),
+      mTimeoutMs(aTimeoutMs)
   {
   }
 
@@ -45,24 +48,32 @@ public:
   {
     mozilla::Telemetry::Accumulate(
               mozilla::Telemetry::PLUGIN_HANG_UI_USER_RESPONSE, mResponseCode);
-    mozilla::Telemetry::Accumulate(mozilla::Telemetry::PLUGIN_HANG_UI_DONT_ASK,
-                                   mDontAskCode);
+    mozilla::Telemetry::Accumulate(
+              mozilla::Telemetry::PLUGIN_HANG_UI_DONT_ASK, mDontAskCode);
+    mozilla::Telemetry::Accumulate(
+              mozilla::Telemetry::PLUGIN_HANG_UI_RESPONSE_TIME, mResponseTimeMs);
+    mozilla::Telemetry::Accumulate(
+              mozilla::Telemetry::PLUGIN_HANG_TIME, mTimeoutMs + mResponseTimeMs);
     return NS_OK;
   }
 
 private:
   int mResponseCode;
   int mDontAskCode;
+  uint32_t mResponseTimeMs;
+  uint32_t mTimeoutMs;
 };
 } // anonymous namespace
 
 namespace mozilla {
 namespace plugins {
 
-const DWORD PluginHangUIParent::kTimeout = 30000U;
-
-PluginHangUIParent::PluginHangUIParent(PluginModuleParent* aModule)
+PluginHangUIParent::PluginHangUIParent(PluginModuleParent* aModule,
+                                       const int32_t aHangUITimeoutPref,
+                                       const int32_t aChildTimeoutPref)
   : mModule(aModule),
+    mTimeoutPrefMs(static_cast<uint32_t>(aHangUITimeoutPref) * 1000U),
+    mIPCTimeoutMs(static_cast<uint32_t>(aChildTimeoutPref) * 1000U),
     mMainThreadMessageLoop(MessageLoop::current()),
     mIsShowing(false),
     mLastUserResponse(0),
@@ -118,7 +129,7 @@ PluginHangUIParent::Init(const nsString& aPluginName)
   }
 
   nsresult rv;
-  rv = mMiniShm.Init(this, ::IsDebuggerPresent() ? INFINITE : kTimeout);
+  rv = mMiniShm.Init(this, ::IsDebuggerPresent() ? INFINITE : mIPCTimeoutMs);
   NS_ENSURE_SUCCESS(rv, false);
   nsCOMPtr<nsIProperties>
     directoryService(do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID));
@@ -179,7 +190,7 @@ PluginHangUIParent::Init(const nsString& aPluginName)
     return false;
   }
   nsAutoString procHandleStr;
-  procHandleStr.AppendPrintf("%p", procHandle);
+  procHandleStr.AppendPrintf("%p", procHandle.Get());
   commandLine.AppendLooseValue(procHandleStr.get());
 
   // On Win7+, pass the application user model to the child, so it can
@@ -198,6 +209,10 @@ PluginHangUIParent::Init(const nsString& aPluginName)
   } else {
     commandLine.AppendLooseValue(L"-");
   }
+
+  nsAutoString ipcTimeoutStr;
+  ipcTimeoutStr.AppendInt(mIPCTimeoutMs);
+  commandLine.AppendLooseValue(ipcTimeoutStr.get());
 
   std::wstring ipcCookie;
   rv = mMiniShm.GetCookie(ipcCookie);
@@ -234,7 +249,7 @@ PluginHangUIParent::Init(const nsString& aPluginName)
                                   INFINITE,
                                   WT_EXECUTEDEFAULT | WT_EXECUTEONLYONCE);
     ::WaitForSingleObject(mShowEvent, ::IsDebuggerPresent() ? INFINITE
-                                                            : kTimeout);
+                                                            : mIPCTimeoutMs);
     // Setting this to true even if we time out on mShowEvent. This timeout 
     // typically occurs when the machine is thrashing so badly that 
     // plugin-hang-ui.exe is taking a while to start. If we didn't set 
@@ -258,7 +273,6 @@ VOID CALLBACK PluginHangUIParent::SOnHangUIProcessExit(PVOID aContext,
     // If plugin-hang-ui.exe was unexpectedly terminated, we need to re-enable.
     ::EnableWindow(object->mMainWindowHandle, TRUE);
   }
-  object->mMiniShm.CleanUp();
 }
 
 bool
@@ -286,6 +300,10 @@ PluginHangUIParent::SendCancel()
 bool
 PluginHangUIParent::RecvUserResponse(const unsigned int& aResponse)
 {
+  if (!mIsShowing && !(aResponse & HANGUI_USER_RESPONSE_CANCEL)) {
+    // Don't process a user response if a cancellation is already pending
+    return true;
+  }
   mLastUserResponse = aResponse;
   mResponseTicks = GetTickCount();
   mIsShowing = false;
@@ -304,7 +322,9 @@ PluginHangUIParent::RecvUserResponse(const unsigned int& aResponse)
   }
   int dontAskCode = (aResponse & HANGUI_USER_RESPONSE_DONT_SHOW_AGAIN) ? 1 : 0;
   nsCOMPtr<nsIRunnable> workItem = new nsPluginHangUITelemetry(responseCode,
-                                                               dontAskCode);
+                                                               dontAskCode,
+                                                               LastShowDurationMs(),
+                                                               mTimeoutPrefMs);
   NS_DispatchToMainThread(workItem, NS_DISPATCH_NORMAL);
   return true;
 }
@@ -348,6 +368,12 @@ PluginHangUIParent::OnMiniShmEvent(MiniShmBase *aMiniShmObj)
   NS_ASSERTION(NS_SUCCEEDED(rv),
                "Couldn't obtain read pointer OnMiniShmEvent");
   if (NS_SUCCEEDED(rv)) {
+    // The child process has returned a response so we shouldn't worry about 
+    // its state anymore.
+    if (::UnregisterWaitEx(mRegWait, NULL)) {
+      mRegWait = NULL;
+    }
+
     RecvUserResponse(response->mResponseBits);
   }
 }

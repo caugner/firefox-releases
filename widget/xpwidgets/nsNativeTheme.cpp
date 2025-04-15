@@ -22,6 +22,7 @@
 #include "nsMeterFrame.h"
 #include "nsMenuFrame.h"
 #include "mozilla/dom/Element.h"
+#include <algorithm>
 
 nsNativeTheme::nsNativeTheme()
 : mAnimatedContentTimeout(UINT32_MAX)
@@ -36,9 +37,9 @@ nsNativeTheme::GetPresShell(nsIFrame* aFrame)
   if (!aFrame)
     return nullptr;
 
-  // this is a workaround for the egcs 1.1.2 not inliningg
-  // aFrame->GetPresContext(), which causes an undefined symbol
-  nsPresContext *context = aFrame->GetStyleContext()->GetRuleNode()->GetPresContext();
+  // this is a workaround for the egcs 1.1.2 not inlining
+  // aFrame->PresContext(), which causes an undefined symbol
+  nsPresContext *context = aFrame->StyleContext()->RuleNode()->PresContext();
   return context ? context->GetPresShell() : nullptr;
 }
 
@@ -231,7 +232,7 @@ nsNativeTheme::IsWidgetStyled(nsPresContext* aPresContext, nsIFrame* aFrame,
       parentFrame = parentFrame->GetParent();
       if (parentFrame) {
         return IsWidgetStyled(aPresContext, parentFrame,
-                              parentFrame->GetStyleDisplay()->mAppearance);
+                              parentFrame->StyleDisplay()->mAppearance);
       }
     }
   }
@@ -299,7 +300,7 @@ nsNativeTheme::IsDisabled(nsIFrame* aFrame, nsEventStates aEventStates)
 bool
 nsNativeTheme::IsFrameRTL(nsIFrame* aFrame)
 {
-  return aFrame && aFrame->GetStyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL;
+  return aFrame && aFrame->StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL;
 }
 
 // scrollbar button:
@@ -460,14 +461,14 @@ bool
 nsNativeTheme::IsVerticalProgress(nsIFrame* aFrame)
 {
   return aFrame &&
-         aFrame->GetStyleDisplay()->mOrient == NS_STYLE_ORIENT_VERTICAL;
+         aFrame->StyleDisplay()->mOrient == NS_STYLE_ORIENT_VERTICAL;
 }
 
 bool
 nsNativeTheme::IsVerticalMeter(nsIFrame* aFrame)
 {
   NS_PRECONDITION(aFrame, "You have to pass a non-null aFrame");
-  return aFrame->GetStyleDisplay()->mOrient == NS_STYLE_ORIENT_VERTICAL;
+  return aFrame->StyleDisplay()->mOrient == NS_STYLE_ORIENT_VERTICAL;
 }
 
 // menupopup:
@@ -525,7 +526,7 @@ nsNativeTheme::QueueAnimatedContentForRefresh(nsIContent* aContent,
                "aMinimumFrameRate must be less than 1000!");
 
   uint32_t timeout = 1000 / aMinimumFrameRate;
-  timeout = NS_MIN(mAnimatedContentTimeout, timeout);
+  timeout = std::min(mAnimatedContentTimeout, timeout);
 
   if (!mAnimatedContentTimer) {
     mAnimatedContentTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
@@ -590,7 +591,7 @@ nsNativeTheme::GetAdjacentSiblingFrameWithSameAppearance(nsIFrame* aFrame,
 
   // Check same appearance and adjacency.
   if (!sibling ||
-      sibling->GetStyleDisplay()->mAppearance != aFrame->GetStyleDisplay()->mAppearance ||
+      sibling->StyleDisplay()->mAppearance != aFrame->StyleDisplay()->mAppearance ||
       (sibling->GetRect().XMost() != aFrame->GetRect().x &&
        aFrame->GetRect().XMost() != sibling->GetRect().x))
     return nullptr;

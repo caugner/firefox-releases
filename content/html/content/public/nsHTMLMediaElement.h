@@ -19,7 +19,7 @@
 #include "AudioStream.h"
 #include "VideoFrameContainer.h"
 #include "mozilla/CORSMode.h"
-#include "nsDOMMediaStream.h"
+#include "DOMMediaStream.h"
 #include "mozilla/Mutex.h"
 #include "nsTimeRanges.h"
 #include "nsIDOMWakeLock.h"
@@ -54,6 +54,7 @@ public:
   typedef mozilla::MetadataTags MetadataTags;
   typedef mozilla::AudioStream AudioStream;
   typedef mozilla::MediaDecoder MediaDecoder;
+  typedef mozilla::DOMMediaStream DOMMediaStream;
 
   mozilla::CORSMode GetCORSMode() {
     return mCORSMode;
@@ -108,6 +109,10 @@ public:
                               bool aNullParent = true);
   virtual void DoneCreatingElement();
 
+  virtual bool IsHTMLFocusable(bool aWithMouse, bool *aIsFocusable,
+                               int32_t *aTabIndex);
+  virtual int32_t TabIndexDefault();
+
   /**
    * Call this to reevaluate whether we should start/stop due to our owner
    * document being active, inactive, visible or hidden.
@@ -120,6 +125,7 @@ public:
   virtual void MetadataLoaded(int aChannels,
                               int aRate,
                               bool aHasAudio,
+                              bool aHasVideo,
                               const MetadataTags* aTags) MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the video decoder object, on the main thread,
@@ -219,10 +225,11 @@ public:
   // Return true if we can activate autoplay assuming enough data has arrived.
   bool CanActivateAutoplay();
 
-  // Notify that enough data has arrived to start autoplaying.
+  // Notify that state has changed that might cause an autoplay element to
+  // start playing.
   // If the element is 'autoplay' and is ready to play back (not paused,
   // autoplay pref enabled, etc), it should start playing back.
-  virtual void NotifyAutoplayDataReady() MOZ_FINAL MOZ_OVERRIDE;
+  void CheckAutoplayDataReady();
 
   // Check if the media element had crossorigin set when loading started
   bool ShouldCheckAllowOrigin();
@@ -250,11 +257,6 @@ public:
   // Returns the CanPlayStatus indicating if we can handle the
   // full MIME type including the optional codecs parameter.
   static mozilla::CanPlayStatus GetCanPlay(const nsAString& aType);
-
-  /**
-   * Get the mime type for this element.
-   */
-  void GetMimeType(nsCString& aMimeType);
 
   /**
    * Called when a child source element is added to this media element. This
@@ -363,7 +365,7 @@ protected:
   /**
    * Initialize the media element for playback of aStream
    */
-  void SetupSrcMediaStreamPlayback(nsDOMMediaStream* aStream);
+  void SetupSrcMediaStreamPlayback(DOMMediaStream* aStream);
   /**
    * Stop playback on mSrcStream.
    */
@@ -376,7 +378,7 @@ protected:
    * When aFinishWhenEnded is false, ending playback does not finish the stream.
    * The stream will never finish.
    */
-  already_AddRefed<nsDOMMediaStream> CaptureStreamInternal(bool aFinishWhenEnded);
+  already_AddRefed<DOMMediaStream> CaptureStreamInternal(bool aFinishWhenEnded);
 
   /**
    * Create a decoder for the given aMIMEType. Returns null if we
@@ -474,6 +476,12 @@ protected:
    * to be run on the main thread's event loop.
    */
   void QueueSelectResourceTask();
+
+  /**
+   * When loading a new source on an existing media element, make sure to reset
+   * everything that is accessible using the media element API.
+   */
+  void ResetState();
 
   /**
    * The resource-fetch algorithm step of the load algorithm.
@@ -628,17 +636,17 @@ protected:
 
   // Holds a reference to the DOM wrapper for the MediaStream that has been
   // set in the src attribute.
-  nsRefPtr<nsDOMMediaStream> mSrcAttrStream;
+  nsRefPtr<DOMMediaStream> mSrcAttrStream;
 
   // Holds a reference to the DOM wrapper for the MediaStream that we're
   // actually playing.
   // At most one of mDecoder and mSrcStream can be non-null.
-  nsRefPtr<nsDOMMediaStream> mSrcStream;
+  nsRefPtr<DOMMediaStream> mSrcStream;
 
   // Holds references to the DOM wrappers for the MediaStreams that we're
   // writing to.
   struct OutputMediaStream {
-    nsRefPtr<nsDOMMediaStream> mStream;
+    nsRefPtr<DOMMediaStream> mStream;
     bool mFinishWhenEnded;
   };
   nsTArray<OutputMediaStream> mOutputStreams;
@@ -886,13 +894,6 @@ protected:
 
   // True if the media's channel's download has been suspended.
   bool mDownloadSuspendedByCache;
-
-  // The Content-Type for this media. When we are sniffing for the Content-Type,
-  // and we are recreating a channel after the initial load, we need that
-  // information to give it as a hint to the channel for it to bypass the
-  // sniffing phase, that would fail because sniffing only works when applied to
-  // the first bytes of the stream.
-  nsCString mMimeType;
 
   // Audio Channel Type.
   mozilla::dom::AudioChannelType mAudioChannelType;

@@ -16,13 +16,14 @@
 #include "nsIScriptError.h"
 #include "nsLayoutUtils.h"
 #include "SVGAnimationElement.h"
-#include "nsSVGSVGElement.h"
+#include "mozilla/dom/SVGSVGElement.h"
 #include "SVGAnimatedPreserveAspectRatio.h"
+#include "nsContentUtils.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
 
-nsSVGSVGElement*
+SVGSVGElement*
 SVGContentUtils::GetOuterSVGElement(nsSVGElement *aSVGElement)
 {
   nsIContent *element = nullptr;
@@ -35,7 +36,7 @@ SVGContentUtils::GetOuterSVGElement(nsSVGElement *aSVGElement)
   }
 
   if (element && element->Tag() == nsGkAtoms::svg) {
-    return static_cast<nsSVGSVGElement*>(element);
+    return static_cast<SVGSVGElement*>(element);
   }
   return nullptr;
 }
@@ -71,7 +72,7 @@ float
 SVGContentUtils::GetFontSize(nsIFrame *aFrame)
 {
   NS_ABORT_IF_FALSE(aFrame, "NULL frame in GetFontSize");
-  return GetFontSize(aFrame->GetStyleContext());
+  return GetFontSize(aFrame->StyleContext());
 }
 
 float
@@ -82,7 +83,7 @@ SVGContentUtils::GetFontSize(nsStyleContext *aStyleContext)
   nsPresContext *presContext = aStyleContext->PresContext();
   NS_ABORT_IF_FALSE(presContext, "NULL pres context in GetFontSize");
 
-  nscoord fontSize = aStyleContext->GetStyleFont()->mSize;
+  nscoord fontSize = aStyleContext->StyleFont()->mSize;
   return nsPresContext::AppUnitsToFloatCSSPixels(fontSize) / 
          presContext->TextZoom();
 }
@@ -109,7 +110,7 @@ float
 SVGContentUtils::GetFontXHeight(nsIFrame *aFrame)
 {
   NS_ABORT_IF_FALSE(aFrame, "NULL frame in GetFontXHeight");
-  return GetFontXHeight(aFrame->GetStyleContext());
+  return GetFontXHeight(aFrame->StyleContext());
 }
 
 float

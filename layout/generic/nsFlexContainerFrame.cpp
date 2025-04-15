@@ -14,6 +14,7 @@
 #include "nsPresContext.h"
 #include "nsStyleContext.h"
 #include "prlog.h"
+#include <algorithm>
 
 using namespace mozilla::css;
 
@@ -114,7 +115,7 @@ GetReverseAxis(AxisOrientationType aAxis)
 static inline const nsStyleCoord&
 GetSizePropertyForAxis(const nsIFrame* aFrame, AxisOrientationType aAxis)
 {
-  const nsStylePosition* stylePos = aFrame->GetStylePosition();
+  const nsStylePosition* stylePos = aFrame->StylePosition();
 
   return IsAxisHorizontal(aAxis) ?
     stylePos->mWidth :
@@ -476,7 +477,7 @@ GetContentForComparison(const nsIFrame* aFrame)
   MOZ_ASSERT(aFrame->IsFlexItem(), "only intended for flex items");
 
   while (true) {
-    nsIAtom* pseudoTag = aFrame->GetStyleContext()->GetPseudo();
+    nsIAtom* pseudoTag = aFrame->StyleContext()->GetPseudo();
 
     // If aFrame isn't an anonymous container, then it'll do.
     if (!pseudoTag ||                                 // No pseudotag.
@@ -517,8 +518,8 @@ IsOrderLEQWithDOMFallback(nsIFrame* aFrame1,
     return true;
   }
 
-  int32_t order1 = aFrame1->GetStylePosition()->mOrder;
-  int32_t order2 = aFrame2->GetStylePosition()->mOrder;
+  int32_t order1 = aFrame1->StylePosition()->mOrder;
+  int32_t order2 = aFrame2->StylePosition()->mOrder;
 
   if (order1 != order2) {
     return order1 < order2;
@@ -550,8 +551,8 @@ bool
 IsOrderLEQ(nsIFrame* aFrame1,
            nsIFrame* aFrame2)
 {
-  int32_t order1 = aFrame1->GetStylePosition()->mOrder;
-  int32_t order2 = aFrame2->GetStylePosition()->mOrder;
+  int32_t order1 = aFrame1->StylePosition()->mOrder;
+  int32_t order2 = aFrame2->StylePosition()->mOrder;
 
   return order1 <= order2;
 }
@@ -580,7 +581,7 @@ nsFlexContainerFrame::AppendFlexItemForChild(
 
   // FLEX GROW & SHRINK WEIGHTS
   // --------------------------
-  const nsStylePosition* stylePos = aChildFrame->GetStylePosition();
+  const nsStylePosition* stylePos = aChildFrame->StylePosition();
   float flexGrow   = stylePos->mFlexGrow;
   float flexShrink = stylePos->mFlexShrink;
 
@@ -610,7 +611,7 @@ nsFlexContainerFrame::AppendFlexItemForChild(
     bool isMainSizeAuto = (NS_UNCONSTRAINEDSIZE == flexBaseSize);
     bool isMainMinSizeAuto =
       (eStyleUnit_Auto ==
-       aChildFrame->GetStylePosition()->mMinHeight.GetUnit());
+       aChildFrame->StylePosition()->mMinHeight.GetUnit());
 
     needToMeasureMaxContentHeight = isMainSizeAuto || isMainMinSizeAuto;
 
@@ -663,14 +664,14 @@ nsFlexContainerFrame::AppendFlexItemForChild(
       // the effective computed value of the "height" property.
       nscoord childDesiredHeight = childDesiredSize.height -
         childRS.mComputedBorderPadding.TopBottom();
-      childDesiredHeight = NS_MAX(0, childDesiredHeight);
+      childDesiredHeight = std::max(0, childDesiredHeight);
 
       if (isMainSizeAuto) {
         flexBaseSize = childDesiredHeight;
       }
       if (isMainMinSizeAuto) {
         mainMinSize = childDesiredHeight;
-        mainMaxSize = NS_MAX(mainMaxSize, mainMinSize);
+        mainMaxSize = std::max(mainMaxSize, mainMinSize);
       }
     }
   }
@@ -690,7 +691,7 @@ nsFlexContainerFrame::AppendFlexItemForChild(
   // main & cross size imposed by our widget (which we can't go below), or
   // (more severe) our widget might have only a single valid size.
   bool isFixedSizeWidget = false;
-  const nsStyleDisplay* disp = aChildFrame->GetStyleDisplay();
+  const nsStyleDisplay* disp = aChildFrame->StyleDisplay();
   if (aChildFrame->IsThemed(disp)) {
     nsIntSize widgetMinSize(0, 0);
     bool canOverride = true;
@@ -722,11 +723,11 @@ nsFlexContainerFrame::AppendFlexItemForChild(
     } else {
       // Variable-size widget: ensure our min/max sizes are at least as large
       // as the widget's mandated minimum size, so we don't flex below that.
-      mainMinSize = NS_MAX(mainMinSize, widgetMainMinSize);
-      mainMaxSize = NS_MAX(mainMaxSize, widgetMainMinSize);
+      mainMinSize = std::max(mainMinSize, widgetMainMinSize);
+      mainMaxSize = std::max(mainMaxSize, widgetMainMinSize);
 
-      crossMinSize = NS_MAX(crossMinSize, widgetCrossMinSize);
-      crossMaxSize = NS_MAX(crossMaxSize, widgetCrossMinSize);
+      crossMinSize = std::max(crossMinSize, widgetCrossMinSize);
+      crossMaxSize = std::max(crossMaxSize, widgetCrossMinSize);
     }
   }
 
@@ -783,7 +784,7 @@ FlexItem::FlexItem(nsIFrame* aChildFrame,
     mHadMaxViolation(false),
     mHadMeasuringReflow(false),
     mIsStretched(false),
-    mAlignSelf(aChildFrame->GetStylePosition()->mAlignSelf)
+    mAlignSelf(aChildFrame->StylePosition()->mAlignSelf)
 {
   MOZ_ASSERT(aChildFrame, "expecting a non-null child frame");
 
@@ -791,7 +792,7 @@ FlexItem::FlexItem(nsIFrame* aChildFrame,
   // (We'll resolve them later; until then, we want to treat them as 0-sized.)
 #ifdef DEBUG
   {
-    const nsStyleSides& styleMargin = mFrame->GetStyleMargin()->mMargin;
+    const nsStyleSides& styleMargin = mFrame->StyleMargin()->mMargin;
     NS_FOR_CSS_SIDES(side) {
       if (styleMargin.GetUnit(side) == eStyleUnit_Auto) {
         MOZ_ASSERT(GetMarginComponentForSide(side) == 0,
@@ -804,7 +805,7 @@ FlexItem::FlexItem(nsIFrame* aChildFrame,
   // Resolve "align-self: auto" to parent's "align-items" value.
   if (mAlignSelf == NS_STYLE_ALIGN_SELF_AUTO) {
     mAlignSelf =
-      mFrame->GetStyleContext()->GetParent()->GetStylePosition()->mAlignItems;
+      mFrame->StyleContext()->GetParent()->StylePosition()->mAlignItems;
   }
 
   // If the flex item's inline axis is the same as the cross axis, then
@@ -827,7 +828,7 @@ uint32_t
 FlexItem::GetNumAutoMarginsInAxis(AxisOrientationType aAxis) const
 {
   uint32_t numAutoMargins = 0;
-  const nsStyleSides& styleMargin = mFrame->GetStyleMargin()->mMargin;
+  const nsStyleSides& styleMargin = mFrame->StyleMargin()->mMargin;
   for (uint32_t i = 0; i < eNumAxisEdges; i++) {
     Side side = kAxisOrientationToSidesMap[aAxis][i];
     if (styleMargin.GetUnit(side) == eStyleUnit_Auto) {
@@ -1065,14 +1066,14 @@ GetDisplayFlagsForFlexItem(nsIFrame* aFrame)
 {
   MOZ_ASSERT(aFrame->IsFlexItem(), "Should only be called on flex items");
 
-  const nsStylePosition* pos = aFrame->GetStylePosition();
+  const nsStylePosition* pos = aFrame->StylePosition();
   if (pos->mZIndex.GetUnit() == eStyleUnit_Integer) {
     return nsIFrame::DISPLAY_CHILD_FORCE_STACKING_CONTEXT;
   }
   return 0;
 }
 
-NS_IMETHODIMP
+void
 nsFlexContainerFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                        const nsRect&           aDirtyRect,
                                        const nsDisplayListSet& aLists)
@@ -1080,19 +1081,15 @@ nsFlexContainerFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   MOZ_ASSERT(nsLayoutUtils::IsFrameListSorted<IsOrderLEQWithDOMFallback>(mFrames),
              "Frame list should've been sorted in reflow");
 
-  nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   // Our children are all block-level, so their borders/backgrounds all go on
   // the BlockBorderBackgrounds list.
   nsDisplayListSet childLists(aLists, aLists.BlockBorderBackgrounds());
   for (nsFrameList::Enumerator e(mFrames); !e.AtEnd(); e.Next()) {
-    rv = BuildDisplayListForChild(aBuilder, e.get(), aDirtyRect, childLists,
-                                  GetDisplayFlagsForFlexItem(e.get()));
-    NS_ENSURE_SUCCESS(rv, rv);
+    BuildDisplayListForChild(aBuilder, e.get(), aDirtyRect, childLists,
+                             GetDisplayFlagsForFlexItem(e.get()));
   }
-
-  return NS_OK;
 }
 
 #ifdef DEBUG
@@ -1126,7 +1123,7 @@ nsFlexContainerFrame::SanityCheckAnonymousFlexItems() const
     MOZ_ASSERT(!FrameWantsToBeInAnonymousFlexItem(child),
                "frame wants to be inside an anonymous flex item, "
                "but it isn't");
-    if (child->GetStyleContext()->GetPseudo() ==
+    if (child->StyleContext()->GetPseudo() ==
         nsCSSAnonBoxes::anonymousFlexItem) {
       MOZ_ASSERT(!prevChildWasAnonFlexItem,
                  "two anon flex items in a row (shouldn't happen)");
@@ -1443,7 +1440,7 @@ MainAxisPositionTracker::
     }
   }
 
-  mJustifyContent = aFlexContainerFrame->GetStylePosition()->mJustifyContent;
+  mJustifyContent = aFlexContainerFrame->StylePosition()->mJustifyContent;
   // If packing space is negative, 'justify' behaves like 'start', and
   // 'distribute' behaves like 'center'.  In those cases, it's simplest to
   // just pretend we have a different 'justify-content' value and share code.
@@ -1515,7 +1512,7 @@ void
 MainAxisPositionTracker::ResolveAutoMarginsInMainAxis(FlexItem& aItem)
 {
   if (mNumAutoMarginsInMainAxis) {
-    const nsStyleSides& styleMargin = aItem.Frame()->GetStyleMargin()->mMargin;
+    const nsStyleSides& styleMargin = aItem.Frame()->StyleMargin()->mMargin;
     for (uint32_t i = 0; i < eNumAxisEdges; i++) {
       Side side = kAxisOrientationToSidesMap[mAxis][i];
       if (styleMargin.GetUnit(side) == eStyleUnit_Auto) {
@@ -1639,12 +1636,12 @@ SingleLineCrossAxisPositionTracker::
       // Now, update our "largest" values for these (across all the flex items
       // in this flex line), so we can use them in computing mLineCrossSize
       // below:
-      mCrossStartToFurthestBaseline = NS_MAX(mCrossStartToFurthestBaseline,
+      mCrossStartToFurthestBaseline = std::max(mCrossStartToFurthestBaseline,
                                              crossStartToBaseline);
-      crossEndToFurthestBaseline = NS_MAX(crossEndToFurthestBaseline,
+      crossEndToFurthestBaseline = std::max(crossEndToFurthestBaseline,
                                           crossEndToBaseline);
     } else {
-      largestOuterCrossSize = NS_MAX(largestOuterCrossSize, curOuterCrossSize);
+      largestOuterCrossSize = std::max(largestOuterCrossSize, curOuterCrossSize);
     }
   }
 
@@ -1653,7 +1650,7 @@ SingleLineCrossAxisPositionTracker::
   //      all baseline-aligned items with no cross-axis auto margins...
   // and
   //  (b) largest cross-size of all other children.
-  mLineCrossSize = NS_MAX(mCrossStartToFurthestBaseline +
+  mLineCrossSize = std::max(mCrossStartToFurthestBaseline +
                           crossEndToFurthestBaseline,
                           largestOuterCrossSize);
 }
@@ -1720,7 +1717,7 @@ SingleLineCrossAxisPositionTracker::
 
   // OK, we have at least one auto margin and we have some available space.
   // Give each auto margin a share of the space.
-  const nsStyleSides& styleMargin = aItem.Frame()->GetStyleMargin()->mMargin;
+  const nsStyleSides& styleMargin = aItem.Frame()->StyleMargin()->mMargin;
   for (uint32_t i = 0; i < eNumAxisEdges; i++) {
     Side side = kAxisOrientationToSidesMap[mAxis][i];
     if (styleMargin.GetUnit(side) == eStyleUnit_Auto) {
@@ -1790,9 +1787,9 @@ SingleLineCrossAxisPositionTracker::
 FlexboxAxisTracker::FlexboxAxisTracker(nsFlexContainerFrame* aFlexContainerFrame)
 {
   uint32_t flexDirection =
-    aFlexContainerFrame->GetStylePosition()->mFlexDirection;
+    aFlexContainerFrame->StylePosition()->mFlexDirection;
   uint32_t cssDirection =
-    aFlexContainerFrame->GetStyleVisibility()->mDirection;
+    aFlexContainerFrame->StyleVisibility()->mDirection;
 
   MOZ_ASSERT(cssDirection == NS_STYLE_DIRECTION_LTR ||
              cssDirection == NS_STYLE_DIRECTION_RTL,
@@ -2067,11 +2064,15 @@ nsFlexContainerFrame::Reflow(nsPresContext*           aPresContext,
   PR_LOG(GetFlexContainerLog(), PR_LOG_DEBUG,
          ("Reflow() for nsFlexContainerFrame %p\n", this));
 
+  if (IsFrameTreeTooDeep(aReflowState, aDesiredSize, aStatus)) {
+    return NS_OK;
+  }
+
   // We (and our children) can only depend on our ancestor's height if we have
   // a percent-height.  (There are actually other cases, too -- e.g. if our
   // parent is itself a vertical flex container and we're flexible -- but we'll
   // let our ancestors handle those sorts of cases.)
-  if (GetStylePosition()->mHeight.HasPercent()) {
+  if (StylePosition()->mHeight.HasPercent()) {
     AddStateBits(NS_FRAME_CONTAINS_RELATIVE_HEIGHT);
   }
 
@@ -2326,7 +2327,7 @@ nsFlexContainerFrame::Reflow(nsPresContext*           aPresContext,
                  "should be complete");
 
       // Apply CSS relative positioning
-      const nsStyleDisplay* styleDisp = curItem.Frame()->GetStyleDisplay();
+      const nsStyleDisplay* styleDisp = curItem.Frame()->StyleDisplay();
       if (NS_STYLE_POSITION_RELATIVE == styleDisp->mPosition) {
         physicalPosn.x += childReflowState.mComputedOffsets.left;
         physicalPosn.y += childReflowState.mComputedOffsets.top;
@@ -2378,7 +2379,7 @@ nsFlexContainerFrame::GetMinWidth(nsRenderingContext* aRenderingContext)
     if (IsAxisHorizontal(axisTracker.GetMainAxis())) {
       minWidth += childMinWidth;
     } else {
-      minWidth = NS_MAX(minWidth, childMinWidth);
+      minWidth = std::max(minWidth, childMinWidth);
     }
   }
   return minWidth;
@@ -2402,7 +2403,7 @@ nsFlexContainerFrame::GetPrefWidth(nsRenderingContext* aRenderingContext)
     if (IsAxisHorizontal(axisTracker.GetMainAxis())) {
       prefWidth += childPrefWidth;
     } else {
-      prefWidth = NS_MAX(prefWidth, childPrefWidth);
+      prefWidth = std::max(prefWidth, childPrefWidth);
     }
   }
   return prefWidth;

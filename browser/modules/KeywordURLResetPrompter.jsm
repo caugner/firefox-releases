@@ -14,7 +14,7 @@ const KEYWORD_PROMPT_REV = 1;
 
 let KeywordURLResetPrompter = {
   get shouldPrompt() {
-    // XXX Disable the feature for now given some issues with partner addons (bug 838864)
+    // XXX Disable this feature given that we're going to be removing this pref in future versions (see bug 838864)
     return false;
 
     let keywordURLUserSet = Services.prefs.prefHasUserValue("keyword.URL");

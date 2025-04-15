@@ -8,9 +8,11 @@
 #include <stdarg.h>
 #include "mozilla/ThreadLocal.h"
 #include "nscore.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Util.h"
 #include "nsAlgorithm.h"
+#include <algorithm>
 
 
 /* QT has a #define for the word "slots" and jsfriendapi.h has a struct with
@@ -64,6 +66,9 @@ extern bool stack_key_initialized;
 #define SAMPLE_LABEL(name_space, info) mozilla::SamplerStackFrameRAII SAMPLER_APPEND_LINE_NUMBER(sampler_raii)(name_space "::" info, __LINE__)
 #define SAMPLE_LABEL_PRINTF(name_space, info, ...) mozilla::SamplerStackFramePrintfRAII SAMPLER_APPEND_LINE_NUMBER(sampler_raii)(name_space "::" info, __LINE__, __VA_ARGS__)
 #define SAMPLE_MARKER(info) mozilla_sampler_add_marker(info)
+#define SAMPLE_MAIN_THREAD_LABEL(name_space, info)  MOZ_ASSERT(NS_IsMainThread(), "This can only be called on the main thread"); mozilla::SamplerStackFrameRAII SAMPLER_APPEND_LINE_NUMBER(sampler_raii)(name_space "::" info, __LINE__)
+#define SAMPLE_MAIN_THREAD_LABEL_PRINTF(name_space, info, ...)  MOZ_ASSERT(NS_IsMainThread(), "This can only be called on the main thread"); mozilla::SamplerStackFramePrintfRAII SAMPLER_APPEND_LINE_NUMBER(sampler_raii)(name_space "::" info, __LINE__, __VA_ARGS__)
+#define SAMPLE_MAIN_THREAD_MARKER(info)  MOZ_ASSERT(NS_IsMainThread(), "This can only be called on the main thread"); mozilla_sampler_add_marker(info)
 
 #define SAMPLER_PRINT_LOCATION() mozilla_sampler_print_location()
 
@@ -178,8 +183,13 @@ JSObject *mozilla_sampler_get_profile_data(JSContext *aCx);
 const char** mozilla_sampler_get_features();
 void mozilla_sampler_init();
 void mozilla_sampler_shutdown();
-
 void mozilla_sampler_print_location();
+// Lock the profiler. When locked the profiler is (1) stopped,
+// (2) profile data is cleared, (3) profiler-locked is fired.
+// This is used to lock down the profiler during private browsing
+void mozilla_sampler_lock();
+// Unlock the profiler, leaving it stopped and fires profiler-unlocked.
+void mozilla_sampler_unlock();
 
 namespace mozilla {
 
@@ -247,7 +257,7 @@ public:
     return !((uintptr_t)stackAddress() & 0x1);
   }
 
-  void setStackAddressCopy(void *sp, bool copy) volatile {
+  void setStackAddressCopy(void *sparg, bool copy) volatile {
     // Tagged pointer. Less significant bit used to track if mLabel needs a
     // copy. Note that we don't need the last bit of the stack address for
     // proper ordering. This is optimized for encoding within the JS engine's
@@ -255,10 +265,10 @@ public:
     // Last bit 1 = Don't copy, Last bit 0 = Copy.
     if (copy) {
       setStackAddress(reinterpret_cast<void*>(
-                        reinterpret_cast<uintptr_t>(sp) & ~0x1));
+                        reinterpret_cast<uintptr_t>(sparg) & ~0x1));
     } else {
       setStackAddress(reinterpret_cast<void*>(
-                        reinterpret_cast<uintptr_t>(sp) | 0x1));
+                        reinterpret_cast<uintptr_t>(sparg) | 0x1));
     }
   }
 };
@@ -357,11 +367,16 @@ public:
   }
   uint32_t stackSize() const
   {
-    return NS_MIN<uint32_t>(mStackPointer, mozilla::ArrayLength(mStack));
+    return std::min<uint32_t>(mStackPointer, mozilla::ArrayLength(mStack));
   }
 
   void sampleRuntime(JSRuntime *runtime) {
     mRuntime = runtime;
+    if (!runtime) {
+      // JS shut down
+      return;
+    }
+
     JS_STATIC_ASSERT(sizeof(mStack[0]) == sizeof(js::ProfileEntry));
     js::SetRuntimeProfilingStack(runtime,
                                  (js::ProfileEntry*) mStack,

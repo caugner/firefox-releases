@@ -44,6 +44,7 @@ public:
      , mExpireType(aExpireType)
      , mExpireTime(aExpireTime)
      , mNonSessionPermission(aPermission)
+     , mNonSessionExpireType(aExpireType)
     {}
 
     int64_t  mID;
@@ -52,6 +53,7 @@ public:
     uint32_t mExpireType;
     int64_t  mExpireTime;
     uint32_t mNonSessionPermission;
+    uint32_t mNonSessionExpireType;
   };
 
   /**
@@ -88,7 +90,7 @@ public:
       return mozilla::HashString(str);
     }
 
-    NS_INLINE_DECL_THREADSAFE_REFCOUNTING(PermissionKey);
+    NS_INLINE_DECL_THREADSAFE_REFCOUNTING(PermissionKey)
 
     nsCString mHost;
     uint32_t  mAppId;
@@ -200,7 +202,7 @@ public:
    * That way, we can prevent have nsPermissionManager created at startup just
    * to be able to clear data when an application is uninstalled.
    */
-  static void AppUninstallObserverInit();
+  static void AppClearDataObserverInit();
 
 private:
   int32_t GetTypeIndex(const char *aTypeString,
@@ -215,7 +217,8 @@ private:
   nsresult CommonTestPermission(nsIPrincipal* aPrincipal,
                                 const char *aType,
                                 uint32_t   *aPermission,
-                                bool        aExactHostMatch);
+                                bool        aExactHostMatch,
+                                bool        aIncludingSession);
 
   nsresult InitDB(bool aRemoveFile);
   nsresult CreateTable();
@@ -253,16 +256,20 @@ private:
 
   /**
    * This struct has to be passed as an argument to GetPermissionsForApp.
-   * |appId| has to be defined.
+   * |appId| and |browserOnly| have to be defined.
    * |permissions| will be filed with permissions that are related to the app.
+   * If |browserOnly| is true, only permissions related to a browserElement will
+   * be in |permissions|.
    */
   struct GetPermissionsForAppStruct {
     uint32_t                  appId;
+    bool                      browserOnly;
     nsCOMArray<nsIPermission> permissions;
 
     GetPermissionsForAppStruct() MOZ_DELETE;
-    GetPermissionsForAppStruct(uint32_t aAppId)
+    GetPermissionsForAppStruct(uint32_t aAppId, bool aBrowserOnly)
       : appId(aAppId)
+      , browserOnly(aBrowserOnly)
     {}
   };
 

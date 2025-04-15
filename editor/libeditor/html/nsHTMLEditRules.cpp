@@ -38,7 +38,6 @@
 #include "nsIDOMNode.h"
 #include "nsIDOMRange.h"
 #include "nsIDOMText.h"
-#include "nsIEnumerator.h"
 #include "nsIHTMLAbsPosEditor.h"
 #include "nsIHTMLDocument.h"
 #include "nsINode.h"
@@ -57,6 +56,7 @@
 #include "nsWSRunObject.h"
 #include <cstdlib> // for std::abs(int/long)
 #include <cmath> // for std::abs(float/double)
+#include <algorithm>
 
 class nsISupports;
 class nsRulesInfo;
@@ -510,8 +510,7 @@ nsHTMLEditRules::AfterEditInner(EditAction action,
       mHTMLEditor->mTypeInState->UpdateSelState(selection);
       res = ReapplyCachedStyles();
       NS_ENSURE_SUCCESS(res, res);
-      res = ClearCachedStyles();
-      NS_ENSURE_SUCCESS(res, res);
+      ClearCachedStyles();
     }    
   }
 
@@ -686,7 +685,7 @@ nsHTMLEditRules::GetListState(bool *aMixed, bool *aOL, bool *aUL, bool *aDL)
     } else if (curElement->IsHTML(nsGkAtoms::ol)) {
       *aOL = true;
     } else if (curElement->IsHTML(nsGkAtoms::li)) {
-      if (dom::Element* parent = curElement->GetElementParent()) {
+      if (dom::Element* parent = curElement->GetParentElement()) {
         if (parent->IsHTML(nsGkAtoms::ul)) {
           *aUL = true;
         } else if (parent->IsHTML(nsGkAtoms::ol)) {
@@ -1240,8 +1239,7 @@ nsHTMLEditRules::WillInsert(nsISelection *aSelection, bool *aCancel)
   // For most actions we want to clear the cached styles, but there are
   // exceptions
   if (!IsStyleCachePreservingAction(mTheAction)) {
-    res = ClearCachedStyles();
-    NS_ENSURE_SUCCESS(res, res);
+    ClearCachedStyles();
   }
 
   return NS_OK;
@@ -1931,7 +1929,7 @@ nsHTMLEditRules::WillDeleteSelection(Selection* aSelection,
       res = nsWSRunObject::PrepareToDeleteRange(mHTMLEditor, address_of(visNode), &so, address_of(visNode), &eo);
       NS_ENSURE_SUCCESS(res, res);
       nsCOMPtr<nsIDOMCharacterData> nodeAsText(do_QueryInterface(visNode));
-      res = mHTMLEditor->DeleteText(nodeAsText, NS_MIN(so, eo), std::abs(eo - so));
+      res = mHTMLEditor->DeleteText(nodeAsText, std::min(so, eo), std::abs(eo - so));
       *aHandled = true;
       NS_ENSURE_SUCCESS(res, res);    
       res = InsertBRIfNeeded(aSelection);
@@ -2307,22 +2305,13 @@ nsHTMLEditRules::WillDeleteSelection(Selection* aSelection,
         
         // else blocks not same type, or not siblings.  Delete everything except
         // table elements.
-        nsCOMPtr<nsIEnumerator> enumerator;
-        res = aSelection->GetEnumerator(getter_AddRefs(enumerator));
-        NS_ENSURE_SUCCESS(res, res);
-        NS_ENSURE_TRUE(enumerator, NS_ERROR_UNEXPECTED);
-
         join = true;
 
-        for (enumerator->First(); NS_OK!=enumerator->IsDone(); enumerator->Next())
-        {
-          nsCOMPtr<nsISupports> currentItem;
-          res = enumerator->CurrentItem(getter_AddRefs(currentItem));
-          NS_ENSURE_SUCCESS(res, res);
-          NS_ENSURE_TRUE(currentItem, NS_ERROR_UNEXPECTED);
+        uint32_t rangeCount = aSelection->GetRangeCount();
+        for (uint32_t rangeIdx = 0; rangeIdx < rangeCount; ++rangeIdx) {
+          nsRefPtr<nsRange> range = aSelection->GetRangeAt(rangeIdx);
 
           // build a list of nodes in the range
-          nsCOMPtr<nsIDOMRange> range( do_QueryInterface(currentItem) );
           nsCOMArray<nsIDOMNode> arrayOfNodes;
           nsTrivialFunctor functor;
           nsDOMSubtreeIterator iter;
@@ -5777,25 +5766,15 @@ nsHTMLEditRules::GetListActionNodes(nsCOMArray<nsIDOMNode> &outArrayOfNodes,
   nsCOMPtr<nsISelection>selection;
   res = mHTMLEditor->GetSelection(getter_AddRefs(selection));
   NS_ENSURE_SUCCESS(res, res);
-  nsCOMPtr<nsISelectionPrivate> selPriv(do_QueryInterface(selection));
-  NS_ENSURE_TRUE(selPriv, NS_ERROR_FAILURE);
+  Selection* sel = static_cast<Selection*>(selection.get());
+  NS_ENSURE_TRUE(sel, NS_ERROR_FAILURE);
   // added this in so that ui code can ask to change an entire list, even if selection
   // is only in part of it.  used by list item dialog.
   if (aEntireList)
   {       
-    nsCOMPtr<nsIEnumerator> enumerator;
-    res = selPriv->GetEnumerator(getter_AddRefs(enumerator));
-    NS_ENSURE_SUCCESS(res, res);
-    NS_ENSURE_TRUE(enumerator, NS_ERROR_UNEXPECTED);
-
-    for (enumerator->First(); NS_OK!=enumerator->IsDone(); enumerator->Next())
-    {
-      nsCOMPtr<nsISupports> currentItem;
-      res = enumerator->CurrentItem(getter_AddRefs(currentItem));
-      NS_ENSURE_SUCCESS(res, res);
-      NS_ENSURE_TRUE(currentItem, NS_ERROR_UNEXPECTED);
-
-      nsCOMPtr<nsIDOMRange> range( do_QueryInterface(currentItem) );
+    uint32_t rangeCount = sel->GetRangeCount();
+    for (uint32_t rangeIdx = 0; rangeIdx < rangeCount; ++rangeIdx) {
+      nsRefPtr<nsRange> range = sel->GetRangeAt(rangeIdx);
       nsCOMPtr<nsIDOMNode> commonParent, parent, tmp;
       range->GetCommonAncestorContainer(getter_AddRefs(commonParent));
       if (commonParent)
@@ -6315,6 +6294,9 @@ nsHTMLEditRules::ReturnInHeader(nsISelection *aSelection,
     NS_ENSURE_SUCCESS(res, res);
     if (!sibling || !nsTextEditUtils::IsBreak(sibling))
     {
+      ClearCachedStyles();
+      mHTMLEditor->mTypeInState->ClearAllProps();
+
       // create a paragraph
       NS_NAMED_LITERAL_STRING(pType, "p");
       nsCOMPtr<nsIDOMNode> pNode;
@@ -6560,7 +6542,7 @@ nsHTMLEditRules::ReturnInListItem(nsISelection *aSelection,
       // otherwise kill this listitem
       res = mHTMLEditor->DeleteNode(aListItem);
       NS_ENSURE_SUCCESS(res, res);
-      
+
       // time to insert a paragraph
       NS_NAMED_LITERAL_STRING(pType, "p");
       nsCOMPtr<nsIDOMNode> pNode;
@@ -7240,18 +7222,14 @@ nsHTMLEditRules::ReapplyCachedStyles()
 }
 
 
-nsresult
+void
 nsHTMLEditRules::ClearCachedStyles()
 {
   // clear the mPresent bits in mCachedStyles array
-  
-  int32_t j;
-  for (j=0; j<SIZE_STYLE_TABLE; j++)
-  {
+  for (uint32_t j = 0; j < SIZE_STYLE_TABLE; j++) {
     mCachedStyles[j].mPresent = false;
-    mCachedStyles[j].value.Truncate(0);
+    mCachedStyles[j].value.Truncate();
   }
-  return NS_OK;
 }
 
 
@@ -7799,21 +7777,11 @@ nsHTMLEditRules::SelectionEndpointInNode(nsINode* aNode, bool* aResult)
   nsCOMPtr<nsISelection>selection;
   nsresult res = mHTMLEditor->GetSelection(getter_AddRefs(selection));
   NS_ENSURE_SUCCESS(res, res);
-  nsCOMPtr<nsISelectionPrivate>selPriv(do_QueryInterface(selection));
   
-  nsCOMPtr<nsIEnumerator> enumerator;
-  res = selPriv->GetEnumerator(getter_AddRefs(enumerator));
-  NS_ENSURE_SUCCESS(res, res);
-  NS_ENSURE_TRUE(enumerator, NS_ERROR_UNEXPECTED);
-
-  for (enumerator->First(); NS_OK!=enumerator->IsDone(); enumerator->Next())
-  {
-    nsCOMPtr<nsISupports> currentItem;
-    res = enumerator->CurrentItem(getter_AddRefs(currentItem));
-    NS_ENSURE_SUCCESS(res, res);
-    NS_ENSURE_TRUE(currentItem, NS_ERROR_UNEXPECTED);
-
-    nsCOMPtr<nsIDOMRange> range( do_QueryInterface(currentItem) );
+  Selection* sel = static_cast<Selection*>(selection.get());
+  uint32_t rangeCount = sel->GetRangeCount();
+  for (uint32_t rangeIdx = 0; rangeIdx < rangeCount; ++rangeIdx) {
+    nsRefPtr<nsRange> range = sel->GetRangeAt(rangeIdx);
     nsCOMPtr<nsIDOMNode> startParent, endParent;
     range->GetStartContainer(getter_AddRefs(startParent));
     if (startParent)

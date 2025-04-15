@@ -97,6 +97,12 @@ public:
     NUM_STATUS_CODES = 3   // reserved by chromium but undocumented
   };
 
+  enum settingsFlags
+  {
+    PERSIST_VALUE = 1,
+    PERSISTED_VALUE = 2
+  };
+
   enum
   {
     SETTINGS_TYPE_UPLOAD_BW = 1, // kb/s
@@ -105,7 +111,7 @@ public:
     SETTINGS_TYPE_MAX_CONCURRENT = 4, // streams
     SETTINGS_TYPE_CWND = 5, // packets
     SETTINGS_TYPE_DOWNLOAD_RETRANS_RATE = 6, // percentage
-    SETTINGS_TYPE_INITIAL_WINDOW = 7,  // bytes
+    SETTINGS_TYPE_INITIAL_WINDOW = 7,  // bytes for flow control
     SETTINGS_CLIENT_CERTIFICATE_VECTOR_SIZE = 8
   };
 
@@ -148,7 +154,8 @@ public:
   static nsresult HandleHeaders(SpdySession3 *);
   static nsresult HandleWindowUpdate(SpdySession3 *);
 
-  static void EnsureBuffer(nsAutoArrayPtr<char> &,
+  template<typename T>
+  static void EnsureBuffer(nsAutoArrayPtr<T> &,
                            uint32_t, uint32_t, uint32_t &);
 
   // For writing the SPDY data stream to LOG4

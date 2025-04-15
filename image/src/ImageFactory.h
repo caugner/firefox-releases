@@ -4,18 +4,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsIURI.h"
-#include "nsIRequest.h"
+#ifndef MOZILLA_IMAGELIB_IMAGEFACTORY_H_
+#define MOZILLA_IMAGELIB_IMAGEFACTORY_H_
 
-#include "imgIContainer.h"
-#include "imgStatusTracker.h"
-
-#include "Image.h"
+class nsIRequest;
+class nsIURI;
+class imgStatusTracker;
 
 namespace mozilla {
 namespace image {
 
-extern const char* SVG_MIMETYPE;
+class Image;
 
 class ImageFactory
 {
@@ -67,3 +66,5 @@ private:
 
 } // namespace image
 } // namespace mozilla
+
+#endif // MOZILLA_IMAGELIB_IMAGEFACTORY_H_

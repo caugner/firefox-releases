@@ -33,13 +33,6 @@ function attemptTearDown() {
   });
 }
 
-function getProfileInternals() {
-  let win = gPanel.activeProfile.iframe.contentWindow;
-  let doc = win.document;
-
-  return [win, doc];
-}
-
 function testUI() {
   ok(gPanel, "Profiler panel exists");
   ok(gPanel.activeProfile, "Active profile exists");
@@ -82,7 +75,11 @@ function onParsed() {
     }
 
     ok(sample.length > 0, "We have some items displayed");
-    is(sample[0].innerHTML, "100.0%", "First percentage is 100%");
+    if (navigator.platform.contains("Win")) {
+      todo(false, "First percentage is 100%: Disabled on Windows for intermittent failures, see bug 822287.");
+    } else {
+      is(sample[0].innerHTML, "100.0%", "First percentage is 100%");
+    }
     attemptTearDown();
   }
 

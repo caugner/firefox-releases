@@ -7,6 +7,7 @@
 #define GLCONTEXT_H_
 
 #include <stdio.h>
+#include <algorithm>
 #if defined(XP_UNIX)
 #include <stdint.h>
 #endif
@@ -26,6 +27,7 @@
 #include "gfx3DMatrix.h"
 #include "nsISupportsImpl.h"
 #include "prlink.h"
+#include "plstr.h"
 
 #include "nsDataHashtable.h"
 #include "nsHashKeys.h"
@@ -1378,7 +1380,7 @@ public:
                 }
 
                 for (int i = 0; extList[i]; ++i) {
-                    if (strcmp(cur, extList[i]) == 0) {
+                    if (PL_strcasecmp(cur, extList[i]) == 0) {
                         if (verbose)
                             printf_stderr("Found extension %s\n", cur);
                         extensions[i] = 1;
@@ -1585,8 +1587,8 @@ protected:
                             TextureImage::Flags aFlags = TextureImage::NoFlags);
 
     bool IsOffscreenSizeAllowed(const gfxIntSize& aSize) const {
-        int32_t biggerDimension = NS_MAX(aSize.width, aSize.height);
-        int32_t maxAllowed = NS_MIN(mMaxRenderbufferSize, mMaxTextureSize);
+        int32_t biggerDimension = std::max(aSize.width, aSize.height);
+        int32_t maxAllowed = std::min(mMaxRenderbufferSize, mMaxTextureSize);
         return biggerDimension <= maxAllowed;
     }
 

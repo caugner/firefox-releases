@@ -118,9 +118,8 @@ class nsIInputStream;
  * it's not allocated until the second frame is added.
  *
  * @note
- * mAnimationMode, mLoopCount and mObserver are not in the mAnim structure
- * because the first two have public setters and the observer we only get
- * in Init().
+ * mAnimationMode and mLoopCount are not in the mAnim structure because
+ * they have public setters.
  */
 
 class ScaleRequest;
@@ -157,10 +156,9 @@ public:
   virtual nsresult StopAnimation();
 
   // Methods inherited from Image
-  nsresult Init(imgDecoderObserver* aObserver,
-                const char* aMimeType,
+  nsresult Init(const char* aMimeType,
                 uint32_t aFlags);
-  virtual void  GetCurrentFrameRect(nsIntRect& aRect) MOZ_OVERRIDE;
+  virtual nsIntRect FrameRect(uint32_t aWhichFrame) MOZ_OVERRIDE;
 
   // Raster-specific methods
   static NS_METHOD WriteToRasterImage(nsIInputStream* aIn, void* aClosure,
@@ -290,7 +288,13 @@ public:
     kDisposeRestorePrevious // Restore the previous (composited) frame
   };
 
-  const char* GetURIString() { return mURIString.get();}
+  nsCString GetURIString() {
+    nsCString spec;
+    if (GetURI()) {
+      GetURI()->GetSpec(spec);
+    }
+    return spec;
+  }
 
   // Called from module startup. Sets up RasterImage to be used.
   static void Initialize();
@@ -315,7 +319,7 @@ public:
   // Decoder shutdown
   enum eShutdownIntent {
     eShutdownIntent_Done        = 0,
-    eShutdownIntent_Interrupted = 1,
+    eShutdownIntent_NotNeeded   = 1,
     eShutdownIntent_Error       = 2,
     eShutdownIntent_AllCount    = 3
   };
@@ -638,8 +642,6 @@ private: // data
   //! # loops remaining before animation stops (-1 no stop)
   int32_t                    mLoopCount;
   
-  mozilla::WeakPtr<imgDecoderObserver> mObserver;
-
   // Discard members
   uint32_t                   mLockCount;
   DiscardTracker::Node       mDiscardTrackerNode;
@@ -647,7 +649,6 @@ private: // data
   // Source data members
   FallibleTArray<char>       mSourceData;
   nsCString                  mSourceDataMimeType;
-  nsCString                  mURIString;
 
   friend class DiscardTracker;
 

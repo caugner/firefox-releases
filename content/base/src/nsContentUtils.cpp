@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 sw=2 et tw=78: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -41,7 +41,6 @@
 #include "nsPIDOMWindow.h"
 #include "nsIJSContextStack.h"
 #include "nsIDocShell.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsParserCIID.h"
 #include "nsIParser.h"
 #include "nsIFragmentContentSink.h"
@@ -123,6 +122,7 @@
 #include "nsILoadContext.h"
 #include "nsTextFragment.h"
 #include "mozilla/Selection.h"
+#include <algorithm>
 
 #ifdef IBMBIDI
 #include "nsIBidiKeyboard.h"
@@ -159,7 +159,6 @@
 #include "nsICharsetDetectionObserver.h"
 #include "nsIPlatformCharset.h"
 #include "nsIEditor.h"
-#include "nsIEditorDocShell.h"
 #include "mozilla/Attributes.h"
 #include "nsIParserService.h"
 #include "nsIDOMScriptObjectFactory.h"
@@ -247,25 +246,29 @@ static NS_DEFINE_CID(kParserServiceCID, NS_PARSERSERVICE_CID);
 static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
 
 static PLDHashTable sEventListenerManagersHash;
-static nsCOMPtr<nsIMemoryReporter> sEventListenerManagersHashReporter;
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(EventListenerManagersHashMallocSizeOf)
-
-static int64_t GetEventListenerManagersHash()
+class DOMEventListenerManagersHashReporter MOZ_FINAL : public MemoryReporterBase
 {
-  // We don't measure the |nsEventListenerManager| objects pointed to by the
-  // entries because those references are non-owning.
-  return PL_DHashTableSizeOfExcludingThis(&sEventListenerManagersHash,
-                                          nullptr,
-                                          EventListenerManagersHashMallocSizeOf);
-}
+public:
+  DOMEventListenerManagersHashReporter()
+    : MemoryReporterBase(
+        "explicit/dom/event-listener-managers-hash",
+        KIND_HEAP,
+        UNITS_BYTES,
+        "Memory used by the event listener manager's hash table.")
+  {}
 
-NS_MEMORY_REPORTER_IMPLEMENT(EventListenerManagersHash,
-  "explicit/dom/event-listener-managers-hash",
-  KIND_HEAP,
-  UNITS_BYTES,
-  GetEventListenerManagersHash,
-  "Memory used by the event listener manager's hash table.")
+private:
+  int64_t Amount()
+  {
+    // We don't measure the |nsEventListenerManager| objects pointed to by the
+    // entries because those references are non-owning.
+    return sEventListenerManagersHash.ops
+         ? PL_DHashTableSizeOfExcludingThis(&sEventListenerManagersHash,
+                                            nullptr, MallocSizeOf)
+         : 0;
+  }
+};
 
 class EventListenerManagerMapEntry : public PLDHashEntryHdr
 {
@@ -403,9 +406,7 @@ nsContentUtils::Init()
       return NS_ERROR_OUT_OF_MEMORY;
     }
 
-    sEventListenerManagersHashReporter =
-      new NS_MEMORY_REPORTER_NAME(EventListenerManagersHash);
-    (void)::NS_RegisterMemoryReporter(sEventListenerManagersHashReporter);
+    NS_RegisterMemoryReporter(new DOMEventListenerManagersHashReporter);
   }
 
   sBlockedScriptRunners = new nsTArray< nsCOMPtr<nsIRunnable> >;
@@ -797,33 +798,17 @@ nsContentUtils::GetPseudoAttributeValue(const nsString& aSource, nsIAtom *aName,
 }
 
 bool
-nsContentUtils::IsJavaScriptLanguage(const nsString& aName, uint32_t *aFlags)
+nsContentUtils::IsJavaScriptLanguage(const nsString& aName)
 {
-  JSVersion version = JSVERSION_UNKNOWN;
-
-  if (aName.LowerCaseEqualsLiteral("javascript") ||
-      aName.LowerCaseEqualsLiteral("livescript") ||
-      aName.LowerCaseEqualsLiteral("mocha") ||
-      aName.LowerCaseEqualsLiteral("javascript1.0") ||
-      aName.LowerCaseEqualsLiteral("javascript1.1") ||
-      aName.LowerCaseEqualsLiteral("javascript1.2") ||
-      aName.LowerCaseEqualsLiteral("javascript1.3") ||
-      aName.LowerCaseEqualsLiteral("javascript1.4") ||
-      aName.LowerCaseEqualsLiteral("javascript1.5")) {
-    version = JSVERSION_DEFAULT;
-  } else if (aName.LowerCaseEqualsLiteral("javascript1.6")) {
-    version = JSVERSION_1_6;
-  } else if (aName.LowerCaseEqualsLiteral("javascript1.7")) {
-    version = JSVERSION_1_7;
-  } else if (aName.LowerCaseEqualsLiteral("javascript1.8")) {
-    version = JSVERSION_1_8;
-  }
-
-  if (version == JSVERSION_UNKNOWN) {
-    return false;
-  }
-  *aFlags = version;
-  return true;
+  return aName.LowerCaseEqualsLiteral("javascript") ||
+         aName.LowerCaseEqualsLiteral("livescript") ||
+         aName.LowerCaseEqualsLiteral("mocha") ||
+         aName.LowerCaseEqualsLiteral("javascript1.0") ||
+         aName.LowerCaseEqualsLiteral("javascript1.1") ||
+         aName.LowerCaseEqualsLiteral("javascript1.2") ||
+         aName.LowerCaseEqualsLiteral("javascript1.3") ||
+         aName.LowerCaseEqualsLiteral("javascript1.4") ||
+         aName.LowerCaseEqualsLiteral("javascript1.5");
 }
 
 JSVersion
@@ -1487,9 +1472,6 @@ nsContentUtils::Shutdown()
     if (sEventListenerManagersHash.entryCount == 0) {
       PL_DHashTableFinish(&sEventListenerManagersHash);
       sEventListenerManagersHash.ops = nullptr;
-
-      (void)::NS_UnregisterMemoryReporter(sEventListenerManagersHashReporter);
-      sEventListenerManagersHashReporter = nullptr;
     }
   }
 
@@ -1768,7 +1750,16 @@ nsContentUtils::IsCallerXBL()
 {
     JSScript *script;
     JSContext *cx = GetCurrentJSContext();
-    if (!cx || !JS_DescribeScriptedCaller(cx, &script, nullptr) || !script)
+    if (!cx)
+        return false;
+
+    // New Hotness.
+    JSCompartment *c = js::GetContextCompartment(cx);
+    if (xpc::AllowXBLScope(c))
+        return xpc::IsXBLScope(c);
+
+    // XBL scopes are behind a pref, so check the XBL bit as well.
+    if (!JS_DescribeScriptedCaller(cx, &script, nullptr) || !script)
         return false;
     return JS_GetScriptUserBit(script);
 }
@@ -1779,6 +1770,35 @@ nsContentUtils::IsImageSrcSetDisabled()
 {
   return Preferences::GetBool("dom.disable_image_src_set") &&
          !IsCallerChrome();
+}
+
+// static
+bool
+nsContentUtils::LookupBindingMember(JSContext* aCx, nsIContent *aContent,
+                                    JS::HandleId aId, JSPropertyDescriptor* aDesc)
+{
+  nsXBLBinding* binding = aContent->OwnerDoc()->BindingManager()
+                                  ->GetBinding(aContent);
+  if (!binding)
+    return true;
+  return binding->LookupMember(aCx, aId, aDesc);
+}
+
+// static
+bool
+nsContentUtils::IsBindingField(JSContext* aCx, nsIContent* aContent,
+                               JS::HandleId aId)
+{
+  nsXBLBinding* binding = aContent->OwnerDoc()->BindingManager()
+                                  ->GetBinding(aContent);
+  if (!binding)
+    return false;
+
+  if (!JSID_IS_STRING(aId))
+    return false;
+  nsDependentJSString name(aId);
+
+  return binding->HasField(name);
 }
 
 // static
@@ -1929,7 +1949,7 @@ nsContentUtils::GetCommonAncestor(nsINode* aNode1,
   uint32_t pos2 = parents2.Length();
   nsINode* parent = nullptr;
   uint32_t len;
-  for (len = NS_MIN(pos1, pos2); len > 0; --len) {
+  for (len = std::min(pos1, pos2); len > 0; --len) {
     nsINode* child1 = parents1.ElementAt(--pos1);
     nsINode* child2 = parents2.ElementAt(--pos2);
     if (child1 != child2) {
@@ -1980,7 +2000,7 @@ nsContentUtils::ComparePoints(nsINode* aParent1, int32_t aOffset1,
   // Find where the parent chains differ
   nsINode* parent = parents1.ElementAt(pos1);
   uint32_t len;
-  for (len = NS_MIN(pos1, pos2); len > 0; --len) {
+  for (len = std::min(pos1, pos2); len > 0; --len) {
     nsINode* child1 = parents1.ElementAt(--pos1);
     nsINode* child2 = parents2.ElementAt(--pos2);
     if (child1 != child2) {
@@ -2328,6 +2348,17 @@ nsContentUtils::GetSubjectPrincipal()
     sSecurityManager->GetSystemPrincipal(getter_AddRefs(subject));
 
   return subject;
+}
+
+// static
+nsIPrincipal*
+nsContentUtils::GetObjectPrincipal(JSObject* aObj)
+{
+  // This is duplicated from nsScriptSecurityManager. We don't call through there
+  // because the API unnecessarily requires a JSContext for historical reasons.
+  JSCompartment *compartment = js::GetObjectCompartment(aObj);
+  JSPrincipals *principals = JS_GetCompartmentPrincipals(compartment);
+  return nsJSPrincipals::get(principals);
 }
 
 // static
@@ -3076,6 +3107,8 @@ nsCxPusher::DoPush(JSContext* cx)
   mPushedSomething = true;
 #ifdef DEBUG
   mPushedContext = cx;
+  if (cx)
+    mCompartmentDepthOnEntry = js::GetEnterCompartmentDepth(cx);
 #endif
   return true;
 }
@@ -3099,6 +3132,14 @@ nsCxPusher::Pop()
 
     return;
   }
+
+  // When we push a context, we may save the frame chain and pretend like we
+  // haven't entered any compartment. This gets restored on Pop(), but we can
+  // run into trouble if a Push/Pop are interleaved with a
+  // JSAutoEnterCompartment. Make sure the compartment depth right before we
+  // pop is the same as it was right after we pushed.
+  MOZ_ASSERT_IF(mPushedContext, mCompartmentDepthOnEntry ==
+                                js::GetEnterCompartmentDepth(mPushedContext));
 
   JSContext *unused;
   stack->Pop(&unused);
@@ -3624,7 +3665,7 @@ nsContentUtils::ConvertStringFromCharset(const nsACString& aCharset,
 /* static */
 bool
 nsContentUtils::CheckForBOM(const unsigned char* aBuffer, uint32_t aLength,
-                            nsACString& aCharset, bool *bigEndian)
+                            nsACString& aCharset)
 {
   bool found = true;
   aCharset.Truncate();
@@ -3636,15 +3677,11 @@ nsContentUtils::CheckForBOM(const unsigned char* aBuffer, uint32_t aLength,
   }
   else if (aLength >= 2 &&
            aBuffer[0] == 0xFE && aBuffer[1] == 0xFF) {
-    aCharset = "UTF-16";
-    if (bigEndian)
-      *bigEndian = true;
+    aCharset = "UTF-16BE";
   }
   else if (aLength >= 2 &&
            aBuffer[0] == 0xFF && aBuffer[1] == 0xFE) {
-    aCharset = "UTF-16";
-    if (bigEndian)
-      *bigEndian = false;
+    aCharset = "UTF-16LE";
   } else {
     found = false;
   }
@@ -3702,16 +3739,7 @@ nsContentUtils::GuessCharset(const char *aData, uint32_t aDataLen,
       (aDataLen >= sizeof(sniffBuf) ? sizeof(sniffBuf) : aDataLen);
     memcpy(sniffBuf, aData, numRead);
 
-    bool bigEndian;
-    if (CheckForBOM(sniffBuf, numRead, aCharset, &bigEndian) &&
-        aCharset.EqualsLiteral("UTF-16")) {
-      if (bigEndian) {
-        aCharset.AppendLiteral("BE");
-      }
-      else {
-        aCharset.AppendLiteral("LE");
-      }
-    }
+    CheckForBOM(sniffBuf, numRead, aCharset);
   }
 
   if (aCharset.IsEmpty()) {
@@ -4715,7 +4743,7 @@ nsContentUtils::GetLocalizedEllipsis()
   static PRUnichar sBuf[4] = { 0, 0, 0, 0 };
   if (!sBuf[0]) {
     nsAdoptingString tmp = Preferences::GetLocalizedString("intl.ellipsis");
-    uint32_t len = NS_MIN(uint32_t(tmp.Length()),
+    uint32_t len = std::min(uint32_t(tmp.Length()),
                           uint32_t(ArrayLength(sBuf) - 1));
     CopyUnicodeTo(tmp, 0, sBuf, len);
     if (!sBuf[0])
@@ -4939,10 +4967,15 @@ nsContentUtils::AddScriptBlocker()
   ++sScriptBlockerCount;
 }
 
+#ifdef DEBUG
+static bool sRemovingScriptBlockers = false;
+#endif
+
 /* static */
 void
 nsContentUtils::RemoveScriptBlocker()
 {
+  MOZ_ASSERT(!sRemovingScriptBlockers);
   NS_ASSERTION(sScriptBlockerCount != 0, "Negative script blockers");
   --sScriptBlockerCount;
   if (sScriptBlockerCount) {
@@ -4958,14 +4991,23 @@ nsContentUtils::RemoveScriptBlocker()
                "bad sRunnersCountAtFirstBlocker");
 
   while (firstBlocker < lastBlocker) {
-    nsCOMPtr<nsIRunnable> runnable = (*sBlockedScriptRunners)[firstBlocker];
+    nsCOMPtr<nsIRunnable> runnable;
+    runnable.swap((*sBlockedScriptRunners)[firstBlocker]);
     ++firstBlocker;
 
+    // Calling the runnable can reenter us
     runnable->Run();
+    // So can dropping the reference to the runnable
+    runnable = nullptr;
+
     NS_ASSERTION(sRunnersCountAtFirstBlocker == 0,
                  "Bad count");
     NS_ASSERTION(!sScriptBlockerCount, "This is really bad");
   }
+#ifdef DEBUG
+  AutoRestore<bool> removingScriptBlockers(sRemovingScriptBlockers);
+  sRemovingScriptBlockers = true;
+#endif
   sBlockedScriptRunners->RemoveElementsAt(originalFirstBlocker, blockersCount);
 }
 
@@ -5053,164 +5095,7 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
                                 uint32_t aDisplayWidth,
                                 uint32_t aDisplayHeight)
 {
-  nsAutoString viewport;
-  aDocument->GetHeaderData(nsGkAtoms::viewport, viewport);
-  if (viewport.IsEmpty()) {
-    // If the docType specifies that we are on a site optimized for mobile,
-    // then we want to return specially crafted defaults for the viewport info.
-    nsCOMPtr<nsIDOMDocument> domDoc(do_QueryInterface(aDocument));
-    nsCOMPtr<nsIDOMDocumentType> docType;
-    nsresult rv = domDoc->GetDoctype(getter_AddRefs(docType));
-    if (NS_SUCCEEDED(rv) && docType) {
-      nsAutoString docId;
-      rv = docType->GetPublicId(docId);
-      if (NS_SUCCEEDED(rv)) {
-        if ((docId.Find("WAP") != -1) ||
-            (docId.Find("Mobile") != -1) ||
-            (docId.Find("WML") != -1))
-        {
-          nsViewportInfo ret(aDisplayWidth, aDisplayHeight);
-          return ret;
-        }
-      }
-    }
-
-    nsAutoString handheldFriendly;
-    aDocument->GetHeaderData(nsGkAtoms::handheldFriendly, handheldFriendly);
-    if (handheldFriendly.EqualsLiteral("true")) {
-      nsViewportInfo ret(aDisplayWidth, aDisplayHeight);
-      return ret;
-    }
-  }
-
-  nsAutoString minScaleStr;
-  aDocument->GetHeaderData(nsGkAtoms::viewport_minimum_scale, minScaleStr);
-
-  nsresult errorCode;
-  float scaleMinFloat = minScaleStr.ToFloat(&errorCode);
-
-  if (NS_FAILED(errorCode)) {
-    scaleMinFloat = kViewportMinScale;
-  }
-
-  scaleMinFloat = NS_MIN((double)scaleMinFloat, kViewportMaxScale);
-  scaleMinFloat = NS_MAX((double)scaleMinFloat, kViewportMinScale);
-
-  nsAutoString maxScaleStr;
-  aDocument->GetHeaderData(nsGkAtoms::viewport_maximum_scale, maxScaleStr);
-
-  // We define a special error code variable for the scale and max scale,
-  // because they are used later (see the width calculations).
-  nsresult scaleMaxErrorCode;
-  float scaleMaxFloat = maxScaleStr.ToFloat(&scaleMaxErrorCode);
-
-  if (NS_FAILED(scaleMaxErrorCode)) {
-    scaleMaxFloat = kViewportMaxScale;
-  }
-
-  scaleMaxFloat = NS_MIN((double)scaleMaxFloat, kViewportMaxScale);
-  scaleMaxFloat = NS_MAX((double)scaleMaxFloat, kViewportMinScale);
-
-  nsAutoString scaleStr;
-  aDocument->GetHeaderData(nsGkAtoms::viewport_initial_scale, scaleStr);
-
-  nsresult scaleErrorCode;
-  float scaleFloat = scaleStr.ToFloat(&scaleErrorCode);
-
-  nsAutoString widthStr, heightStr;
-
-  aDocument->GetHeaderData(nsGkAtoms::viewport_height, heightStr);
-  aDocument->GetHeaderData(nsGkAtoms::viewport_width, widthStr);
-
-  bool autoSize = false;
-
-  if (widthStr.EqualsLiteral("device-width")) {
-    autoSize = true;
-  }
-
-  if (widthStr.IsEmpty() &&
-     (heightStr.EqualsLiteral("device-height") ||
-          scaleFloat == 1.0))
-  {
-    autoSize = true;
-  }
-
-  // Now convert the scale into device pixels per CSS pixel.
-  nsIWidget *widget = WidgetForDocument(aDocument);
-  double pixelRatio = widget ? GetDevicePixelsPerMetaViewportPixel(widget) : 1.0;
-  scaleFloat *= pixelRatio;
-  scaleMinFloat *= pixelRatio;
-  scaleMaxFloat *= pixelRatio;
-
-  uint32_t width, height;
-  if (autoSize) {
-    // aDisplayWidth and aDisplayHeight are in device pixels; convert them to
-    // CSS pixels for the viewport size.
-    width = aDisplayWidth / pixelRatio;
-    height = aDisplayHeight / pixelRatio;
-  } else {
-    nsresult widthErrorCode, heightErrorCode;
-    width = widthStr.ToInteger(&widthErrorCode);
-    height = heightStr.ToInteger(&heightErrorCode);
-
-    // If width or height has not been set to a valid number by this point,
-    // fall back to a default value.
-    bool validWidth = (!widthStr.IsEmpty() && NS_SUCCEEDED(widthErrorCode) && width > 0);
-    bool validHeight = (!heightStr.IsEmpty() && NS_SUCCEEDED(heightErrorCode) && height > 0);
-
-    if (!validWidth) {
-      if (validHeight && aDisplayWidth > 0 && aDisplayHeight > 0) {
-        width = uint32_t((height * aDisplayWidth) / aDisplayHeight);
-      } else {
-        width = Preferences::GetInt("browser.viewport.desktopWidth",
-                                    kViewportDefaultScreenWidth);
-      }
-    }
-
-    if (!validHeight) {
-      if (aDisplayWidth > 0 && aDisplayHeight > 0) {
-        height = uint32_t((width * aDisplayHeight) / aDisplayWidth);
-      } else {
-        height = width;
-      }
-    }
-  }
-
-  width = NS_MIN(width, kViewportMaxWidth);
-  width = NS_MAX(width, kViewportMinWidth);
-
-  // Also recalculate the default zoom, if it wasn't specified in the metadata,
-  // and the width is specified.
-  if (scaleStr.IsEmpty() && !widthStr.IsEmpty()) {
-    scaleFloat = NS_MAX(scaleFloat, float(aDisplayWidth) / float(width));
-  }
-
-  height = NS_MIN(height, kViewportMaxHeight);
-  height = NS_MAX(height, kViewportMinHeight);
-
-  // We need to perform a conversion, but only if the initial or maximum
-  // scale were set explicitly by the user.
-  if (!scaleStr.IsEmpty() && NS_SUCCEEDED(scaleErrorCode)) {
-    width = NS_MAX(width, (uint32_t)(aDisplayWidth / scaleFloat));
-    height = NS_MAX(height, (uint32_t)(aDisplayHeight / scaleFloat));
-  } else if (!maxScaleStr.IsEmpty() && NS_SUCCEEDED(scaleMaxErrorCode)) {
-    width = NS_MAX(width, (uint32_t)(aDisplayWidth / scaleMaxFloat));
-    height = NS_MAX(height, (uint32_t)(aDisplayHeight / scaleMaxFloat));
-  }
-
-  bool allowZoom = true;
-  nsAutoString userScalable;
-  aDocument->GetHeaderData(nsGkAtoms::viewport_user_scalable, userScalable);
-
-  if ((userScalable.EqualsLiteral("0")) ||
-      (userScalable.EqualsLiteral("no")) ||
-      (userScalable.EqualsLiteral("false"))) {
-    allowZoom = false;
-  }
-
-  nsViewportInfo ret(scaleFloat, scaleMinFloat, scaleMaxFloat, width, height,
-                     autoSize, allowZoom);
-  return ret;
+  return aDocument->GetViewportInfo(aDisplayWidth, aDisplayHeight);
 }
 
 /* static */
@@ -5675,44 +5560,6 @@ nsContentUtils::EqualsIgnoreASCIICase(const nsAString& aStr1,
     }
   }
 
-  return true;
-}
-
-/* static */
-bool
-nsContentUtils::EqualsLiteralIgnoreASCIICase(const nsAString& aStr1,
-                                             const char* aStr2,
-                                             const uint32_t len)
-{
-  if (aStr1.Length() != len) {
-    return false;
-  }
-  
-  const PRUnichar* str1 = aStr1.BeginReading();
-  const char*      str2 = aStr2;
-  const PRUnichar* end = str1 + len;
-  
-  while (str1 < end) {
-    PRUnichar c1 = *str1++;
-    PRUnichar c2 = *str2++;
-
-    // First check if any bits other than the 0x0020 differs
-    if ((c1 ^ c2) & 0xffdf) {
-      return false;
-    }
-    
-    // We know they can only differ in the 0x0020 bit.
-    // Likely the two chars are the same, so check that first
-    if (c1 != c2) {
-      // They do differ, but since it's only in the 0x0020 bit, check if it's
-      // the same ascii char, but just differing in case
-      PRUnichar c1Upper = c1 & 0xffdf;
-      if (!('A' <= c1Upper && c1Upper <= 'Z')) {
-        return false;
-      }
-    }
-  }
-  
   return true;
 }
 
@@ -6278,15 +6125,15 @@ nsContentUtils::CheckCCWrapperTraversal(void* aScriptObjectHolder,
   DebugWrapperTraversalCallback callback(wrapper);
 
   aTracer->Traverse(aScriptObjectHolder, callback);
-  NS_ASSERTION(callback.mFound,
-               "Cycle collection participant didn't traverse to preserved "
-               "wrapper! This will probably crash.");
+  MOZ_ASSERT(callback.mFound,
+             "Cycle collection participant didn't traverse to preserved "
+             "wrapper! This will probably crash.");
 
   callback.mFound = false;
   aTracer->Trace(aScriptObjectHolder, DebugWrapperTraceCallback, &callback);
-  NS_ASSERTION(callback.mFound,
-               "Cycle collection participant didn't trace preserved wrapper! "
-               "This will probably crash.");
+  MOZ_ASSERT(callback.mFound,
+             "Cycle collection participant didn't trace preserved wrapper! "
+             "This will probably crash.");
 }
 #endif
 
@@ -6534,8 +6381,28 @@ nsContentUtils::FindInternalContentViewer(const char* aType,
   }
 #endif
 
+#ifdef MOZ_WIDGET_GONK
+  if (DecoderTraits::IsOmxSupportedType(nsDependentCString(aType))) {
+    docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
+    if (docFactory && aLoaderType) {
+      *aLoaderType = TYPE_CONTENT;
+    }
+    return docFactory.forget();
+  }
+#endif
+
 #ifdef MOZ_WEBM
   if (DecoderTraits::IsWebMType(nsDependentCString(aType))) {
+    docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
+    if (docFactory && aLoaderType) {
+      *aLoaderType = TYPE_CONTENT;
+    }
+    return docFactory.forget();
+  }
+#endif
+
+#ifdef MOZ_DASH
+  if (DecoderTraits::IsDASHMPDType(nsDependentCString(aType))) {
     docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
     if (docFactory && aLoaderType) {
       *aLoaderType = TYPE_CONTENT;
@@ -6929,22 +6796,22 @@ nsContentUtils::GetSelectionInTextControl(Selection* aSelection,
   }
 
   // Make sure aOutStartOffset <= aOutEndOffset.
-  aOutStartOffset = NS_MIN(anchorOffset, focusOffset);
-  aOutEndOffset = NS_MAX(anchorOffset, focusOffset);
+  aOutStartOffset = std::min(anchorOffset, focusOffset);
+  aOutEndOffset = std::max(anchorOffset, focusOffset);
 }
 
 nsIEditor*
 nsContentUtils::GetHTMLEditor(nsPresContext* aPresContext)
 {
   nsCOMPtr<nsISupports> container = aPresContext->GetContainer();
-  nsCOMPtr<nsIEditorDocShell> editorDocShell(do_QueryInterface(container));
+  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
   bool isEditable;
-  if (!editorDocShell ||
-      NS_FAILED(editorDocShell->GetEditable(&isEditable)) || !isEditable)
+  if (!docShell ||
+      NS_FAILED(docShell->GetEditable(&isEditable)) || !isEditable)
     return nullptr;
 
   nsCOMPtr<nsIEditor> editor;
-  editorDocShell->GetEditor(getter_AddRefs(editor));
+  docShell->GetEditor(getter_AddRefs(editor));
   return editor;
 }
 

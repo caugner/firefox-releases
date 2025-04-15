@@ -159,7 +159,6 @@ MOCHITEST_FILES = \
 		test_bug567938-4.html \
 		test_bug569955.html \
 		test_bug573969.html \
-		test_bug585508.html \
 		test_bug561640.html \
 		test_bug566064.html \
 		test_bug582412-1.html \
@@ -257,7 +256,15 @@ MOCHITEST_FILES = \
 		file_fullscreen-rollback.html \
 		file_fullscreen-svg-element.html \
 		test_li_attributes_reflection.html \
+		test_link_attributes_reflection.html \
 		test_ol_attributes_reflection.html \
+		test_dl_attributes_reflection.html \
+		test_ul_attributes_reflection.html \
+		test_param_attributes_reflection.html \
+		test_base_attributes_reflection.html \
+		test_dir_attributes_reflection.html \
+		test_q_attributes_reflection.html \
+		test_html_attributes_reflection.html \
 		test_bug651956.html \
 		test_bug694503.html \
 		test_object_plugin_nav.html \
@@ -267,12 +274,12 @@ MOCHITEST_FILES = \
 		test_input_file_picker.html \
 		test_bug763626.html \
 		test_bug780993.html \
-		test_bug786564.html \
 		test_bug797113.html \
 		test_bug787134.html \
 		test_bug803677.html \
 		test_bug827126.html \
 		test_bug827426.html \
+		test_bug839913.html \
 		test_bug841466.html \
 		test_iframe_sandbox_inheritance.html \
 		file_iframe_sandbox_a_if1.html \
@@ -338,7 +345,11 @@ MOCHITEST_FILES = \
 		test_htmlcollection.html \
 		test_formelements.html \
 		test_rowscollection.html \
+		test_map_attributes_reflection.html \
+		test_meta_attributes_reflection.html \
+		test_mod_attributes_reflection.html \
 		test_mozaudiochannel.html \
+		test_style_attributes_reflection.html \
 		$(NULL)
 
 

@@ -27,11 +27,18 @@ XPCOMUtils.defineLazyModuleGetter(this, "CmdCommands",
 XPCOMUtils.defineLazyModuleGetter(this, "PageErrorListener",
                                   "resource://gre/modules/devtools/WebConsoleUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
+                                  "resource://gre/modules/PluralForm.jsm");
+
 XPCOMUtils.defineLazyGetter(this, "prefBranch", function() {
   let prefService = Components.classes["@mozilla.org/preferences-service;1"]
           .getService(Components.interfaces.nsIPrefService);
   return prefService.getBranch(null)
           .QueryInterface(Components.interfaces.nsIPrefBranch2);
+});
+
+XPCOMUtils.defineLazyGetter(this, "toolboxStrings", function () {
+  return Services.strings.createBundle("chrome://browser/locale/devtools/toolbox.properties");
 });
 
 /**
@@ -163,9 +170,12 @@ this.DeveloperToolbar = function DeveloperToolbar(aChromeWindow, aToolbarElement
   this._pendingShowCallback = undefined;
   this._pendingHide = false;
   this._errorsCount = {};
+  this._warningsCount = {};
   this._errorListeners = {};
   this._errorCounterButton = this._doc
                              .getElementById("developer-toolbar-toolbox-button");
+  this._errorCounterButton._defaultTooltipText =
+    this._errorCounterButton.getAttribute("tooltiptext");
 
   try {
     CmdCommands.refreshAutoCommands(aChromeWindow);
@@ -397,6 +407,7 @@ DeveloperToolbar.prototype._initErrorsCount = function DT__initErrorsCount(aTab)
 
   this._errorListeners[tabId] = listener;
   this._errorsCount[tabId] = 0;
+  this._warningsCount[tabId] = 0;
 
   let messages = listener.getCachedMessages();
   messages.forEach(this._onPageError.bind(this, tabId));
@@ -415,7 +426,7 @@ DeveloperToolbar.prototype._initErrorsCount = function DT__initErrorsCount(aTab)
 DeveloperToolbar.prototype._stopErrorsCount = function DT__stopErrorsCount(aTab)
 {
   let tabId = aTab.linkedPanel;
-  if (!(tabId in this._errorsCount)) {
+  if (!(tabId in this._errorsCount) || !(tabId in this._warningsCount)) {
     this._updateErrorsCount();
     return;
   }
@@ -423,6 +434,7 @@ DeveloperToolbar.prototype._stopErrorsCount = function DT__stopErrorsCount(aTab)
   this._errorListeners[tabId].destroy();
   delete this._errorListeners[tabId];
   delete this._errorsCount[tabId];
+  delete this._warningsCount[tabId];
 
   this._updateErrorsCount();
 };
@@ -550,13 +562,15 @@ DeveloperToolbar.prototype._onPageError =
 function DT__onPageError(aTabId, aPageError)
 {
   if (aPageError.category == "CSS Parser" ||
-      aPageError.category == "CSS Loader" ||
-      (aPageError.flags & aPageError.warningFlag) ||
-      (aPageError.flags & aPageError.strictFlag)) {
-    return; // just a CSS or JS warning
+      aPageError.category == "CSS Loader") {
+    return;
   }
-
-  this._errorsCount[aTabId]++;
+  if ((aPageError.flags & aPageError.warningFlag) ||
+      (aPageError.flags & aPageError.strictFlag)) {
+    this._warningsCount[aTabId]++;
+  } else {
+    this._errorsCount[aTabId]++;
+  }
   this._updateErrorsCount(aTabId);
 };
 
@@ -579,8 +593,9 @@ function DT__onPageBeforeUnload(aEvent)
   Array.prototype.some.call(tabs, function(aTab) {
     if (aTab.linkedBrowser.contentWindow === window) {
       let tabId = aTab.linkedPanel;
-      if (tabId in this._errorsCount) {
+      if (tabId in this._errorsCount || tabId in this._warningsCount) {
         this._errorsCount[tabId] = 0;
+        this._warningsCount[tabId] = 0;
         this._updateErrorsCount(tabId);
       }
       return true;
@@ -607,11 +622,26 @@ function DT__updateErrorsCount(aChangedTabId)
   }
 
   let errors = this._errorsCount[tabId];
-
+  let warnings = this._warningsCount[tabId];
+  let btn = this._errorCounterButton;
   if (errors) {
-    this._errorCounterButton.setAttribute("error-count", errors);
+    let errorsText = toolboxStrings
+                     .GetStringFromName("toolboxToggleButton.errors");
+    errorsText = PluralForm.get(errors, errorsText).replace("#1", errors);
+
+    let warningsText = toolboxStrings
+                       .GetStringFromName("toolboxToggleButton.warnings");
+    warningsText = PluralForm.get(warnings, warningsText).replace("#1", warnings);
+
+    let tooltiptext = toolboxStrings
+                      .formatStringFromName("toolboxToggleButton.tooltip",
+                                            [errorsText, warningsText], 2);
+
+    btn.setAttribute("error-count", errors);
+    btn.setAttribute("tooltiptext", tooltiptext);
   } else {
-    this._errorCounterButton.removeAttribute("error-count");
+    btn.removeAttribute("error-count");
+    btn.setAttribute("tooltiptext", btn._defaultTooltipText);
   }
 };
 
@@ -625,8 +655,9 @@ DeveloperToolbar.prototype.resetErrorsCount =
 function DT_resetErrorsCount(aTab)
 {
   let tabId = aTab.linkedPanel;
-  if (tabId in this._errorsCount) {
+  if (tabId in this._errorsCount || tabId in this._warningsCount) {
     this._errorsCount[tabId] = 0;
+    this._warningsCount[tabId] = 0;
     this._updateErrorsCount(tabId);
   }
 };

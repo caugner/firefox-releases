@@ -9,11 +9,9 @@
 // Keep others in (case-insensitive) order:
 #include "nsGkAtoms.h"
 #include "nsIDOMSVGRect.h"
-#include "nsIDOMSVGTextElement.h"
 #include "nsISVGGlyphFragmentNode.h"
 #include "nsSVGGlyphFrame.h"
 #include "nsSVGIntegrationUtils.h"
-#include "nsSVGPathElement.h"
 #include "nsSVGTextPathFrame.h"
 #include "nsSVGUtils.h"
 #include "SVGGraphicsElement.h"
@@ -40,8 +38,8 @@ nsSVGTextFrame::Init(nsIContent* aContent,
                      nsIFrame* aParent,
                      nsIFrame* aPrevInFlow)
 {
-  nsCOMPtr<nsIDOMSVGTextElement> text = do_QueryInterface(aContent);
-  NS_ASSERTION(text, "Content is not an SVG text");
+  NS_ASSERTION(aContent->IsSVG(nsGkAtoms::text),
+               "Content is not an SVG text");
 
   return nsSVGTextFrameBase::Init(aContent, aParent, aPrevInFlow);
 }
@@ -78,13 +76,13 @@ nsSVGTextFrame::GetType() const
   return nsGkAtoms::svgTextFrame;
 }
 
-NS_IMETHODIMP
+void
 nsSVGTextFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                  const nsRect&           aDirtyRect,
                                  const nsDisplayListSet& aLists)
 {
   UpdateGlyphPositioning(true);
-  return nsSVGTextFrameBase::BuildDisplayList(aBuilder, aDirtyRect, aLists);
+  nsSVGTextFrameBase::BuildDisplayList(aBuilder, aDirtyRect, aLists);
 }
 
 //----------------------------------------------------------------------
@@ -442,7 +440,7 @@ nsSVGTextFrame::UpdateGlyphPositioning(bool aForceGlobalTransform)
      * See also XXXsmontagu comments in nsSVGGlyphFrame::EnsureTextRun
      */
 #if 0
-    if (GetStyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL) {
+    if (StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL) {
       if (anchor == NS_STYLE_TEXT_ANCHOR_END) {
         anchor = NS_STYLE_TEXT_ANCHOR_START;
       } else if (anchor == NS_STYLE_TEXT_ANCHOR_START) {

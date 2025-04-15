@@ -33,6 +33,7 @@
 #include "prlog.h"
 
 #include "mozilla/Likely.h"
+#include <algorithm>
 
 MOZ_STATIC_ASSERT((((1 << nsStyleStructID_Length) - 1) &
                    ~(NS_STYLE_INHERIT_MASK)) == 0,
@@ -322,7 +323,7 @@ void nsStylePadding::RecalcData()
     NS_FOR_CSS_SIDES(side) {
       // Clamp negative calc() to 0.
       mCachedPadding.Side(side) =
-        NS_MAX(CalcCoord(mPadding.Get(side), nullptr, 0), 0);
+        std::max(CalcCoord(mPadding.Get(side), nullptr, 0), 0);
     }
     mHasCachedPadding = true;
   }
@@ -623,7 +624,7 @@ nsStyleOutline::RecalcData(nsPresContext* aContext)
   } else if (IsFixedUnit(mOutlineWidth, true)) {
     // Clamp negative calc() to 0.
     mCachedOutlineWidth =
-      NS_MAX(CalcCoord(mOutlineWidth, aContext->GetBorderWidthTable(), 3), 0);
+      std::max(CalcCoord(mOutlineWidth, aContext->GetBorderWidthTable(), 3), 0);
     mCachedOutlineWidth =
       NS_ROUND_BORDER_TO_PIXELS(mCachedOutlineWidth, mTwipsPerPixel);
     mHasCachedOutline = true;
@@ -811,6 +812,7 @@ nsStyleSVG::nsStyleSVG()
     mColorInterpolationFilters = NS_STYLE_COLOR_INTERPOLATION_LINEARRGB;
     mFillRule                = NS_STYLE_FILL_RULE_NONZERO;
     mImageRendering          = NS_STYLE_IMAGE_RENDERING_AUTO;
+    mPaintOrder              = NS_STYLE_PAINT_ORDER_NORMAL;
     mShapeRendering          = NS_STYLE_SHAPE_RENDERING_AUTO;
     mStrokeLinecap           = NS_STYLE_STROKE_LINECAP_BUTT;
     mStrokeLinejoin          = NS_STYLE_STROKE_LINEJOIN_MITER;
@@ -864,6 +866,7 @@ nsStyleSVG::nsStyleSVG(const nsStyleSVG& aSource)
   mColorInterpolationFilters = aSource.mColorInterpolationFilters;
   mFillRule = aSource.mFillRule;
   mImageRendering = aSource.mImageRendering;
+  mPaintOrder = aSource.mPaintOrder;
   mShapeRendering = aSource.mShapeRendering;
   mStrokeLinecap = aSource.mStrokeLinecap;
   mStrokeLinejoin = aSource.mStrokeLinejoin;
@@ -928,6 +931,7 @@ nsChangeHint nsStyleSVG::CalcDifference(const nsStyleSVG& aOther) const
        mColorInterpolationFilters != aOther.mColorInterpolationFilters ||
        mFillRule              != aOther.mFillRule              ||
        mImageRendering        != aOther.mImageRendering        ||
+       mPaintOrder            != aOther.mPaintOrder            ||
        mShapeRendering        != aOther.mShapeRendering        ||
        mStrokeDasharrayLength != aOther.mStrokeDasharrayLength ||
        mStrokeLinecap         != aOther.mStrokeLinecap         ||
@@ -1003,8 +1007,7 @@ nsChangeHint nsStyleSVGReset::CalcDifference(const nsStyleSVGReset& aOther) cons
     NS_UpdateHint(hint, nsChangeHint_AllReflowHints);
     NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
   } else if (mDominantBaseline != aOther.mDominantBaseline) {
-    NS_UpdateHint(hint, nsChangeHint_NeedReflow);
-    NS_UpdateHint(hint, nsChangeHint_NeedDirtyReflow);
+    NS_UpdateHint(hint, NS_STYLE_HINT_REFLOW);
   } else if (mStopColor     != aOther.mStopColor     ||
              mFloodColor    != aOther.mFloodColor    ||
              mLightingColor != aOther.mLightingColor ||
@@ -1205,7 +1208,6 @@ nsStyleTable::nsStyleTable()
   MOZ_COUNT_CTOR(nsStyleTable);
   // values not inherited
   mLayoutStrategy = NS_STYLE_TABLE_LAYOUT_AUTO;
-  mCols  = NS_STYLE_TABLE_COLS_NONE;
   mFrame = NS_STYLE_TABLE_FRAME_NONE;
   mRules = NS_STYLE_TABLE_RULES_NONE;
   mSpan = 1;
@@ -1228,7 +1230,7 @@ nsChangeHint nsStyleTable::CalcDifference(const nsStyleTable& aOther) const
   if (mRules != aOther.mRules || mSpan != aOther.mSpan ||
       mLayoutStrategy != aOther.mLayoutStrategy)
     return NS_STYLE_HINT_FRAMECHANGE;
-  if (mFrame != aOther.mFrame || mCols != aOther.mCols)
+  if (mFrame != aOther.mFrame)
     return NS_STYLE_HINT_REFLOW;
   return NS_STYLE_HINT_NONE;
 }
@@ -1370,25 +1372,6 @@ nsStyleGradient::HasCalc()
   }
   return mBgPosX.IsCalcUnit() || mBgPosY.IsCalcUnit() || mAngle.IsCalcUnit() ||
          mRadiusX.IsCalcUnit() || mRadiusX.IsCalcUnit();
-}
-
-uint32_t
-nsStyleGradient::Hash(PLDHashNumber aHash)
-{
-  aHash = mozilla::AddToHash(aHash, mShape);
-  aHash = mozilla::AddToHash(aHash, mSize);
-  aHash = mozilla::AddToHash(aHash, mRepeating);
-  aHash = mozilla::AddToHash(aHash, mLegacySyntax);
-  aHash = mBgPosX.HashValue(aHash);
-  aHash = mBgPosY.HashValue(aHash);
-  aHash = mAngle.HashValue(aHash);
-  aHash = mRadiusX.HashValue(aHash);
-  aHash = mRadiusY.HashValue(aHash);
-  for (uint32_t i = 0; i < mStops.Length(); i++) {
-    aHash = mStops[i].mLocation.HashValue(aHash);
-    aHash = mozilla::AddToHash(aHash, mStops[i].mColor);
-  }
-  return aHash;
 }
 
 // --------------------
@@ -1575,7 +1558,7 @@ ConvertToPixelCoord(const nsStyleCoord& aCoord, int32_t aPercentScale)
       return 0;
   }
   NS_ABORT_IF_FALSE(pixelValue >= 0, "we ensured non-negative while parsing");
-  pixelValue = NS_MIN(pixelValue, double(INT32_MAX)); // avoid overflow
+  pixelValue = std::min(pixelValue, double(INT32_MAX)); // avoid overflow
   return NS_lround(pixelValue);
 }
 
@@ -1638,10 +1621,8 @@ nsStyleImage::IsOpaque() const
   mImage->GetImage(getter_AddRefs(imageContainer));
   NS_ABORT_IF_FALSE(imageContainer, "IsComplete() said image container is ready");
 
-  // Check if the crop region of the current image frame is opaque
-  bool isOpaque;
-  if (NS_SUCCEEDED(imageContainer->GetCurrentFrameIsOpaque(&isOpaque)) &&
-      isOpaque) {
+  // Check if the crop region of the current image frame is opaque.
+  if (imageContainer->FrameIsOpaque(imgIContainer::FRAME_CURRENT)) {
     if (!mCropRect)
       return true;
 
@@ -1744,13 +1725,13 @@ nsStyleBackground::nsStyleBackground(const nsStyleBackground& aSource)
   uint32_t count = mLayers.Length();
   if (count != aSource.mLayers.Length()) {
     NS_WARNING("truncating counts due to out-of-memory");
-    mAttachmentCount = NS_MAX(mAttachmentCount, count);
-    mClipCount = NS_MAX(mClipCount, count);
-    mOriginCount = NS_MAX(mOriginCount, count);
-    mRepeatCount = NS_MAX(mRepeatCount, count);
-    mPositionCount = NS_MAX(mPositionCount, count);
-    mImageCount = NS_MAX(mImageCount, count);
-    mSizeCount = NS_MAX(mSizeCount, count);
+    mAttachmentCount = std::max(mAttachmentCount, count);
+    mClipCount = std::max(mClipCount, count);
+    mOriginCount = std::max(mOriginCount, count);
+    mRepeatCount = std::max(mRepeatCount, count);
+    mPositionCount = std::max(mPositionCount, count);
+    mImageCount = std::max(mImageCount, count);
+    mSizeCount = std::max(mSizeCount, count);
   }
 }
 
@@ -2109,7 +2090,7 @@ nsStyleDisplay::nsStyleDisplay()
   mChildPerspective.SetCoordValue(0);
   mBackfaceVisibility = NS_STYLE_BACKFACE_VISIBILITY_VISIBLE;
   mTransformStyle = NS_STYLE_TRANSFORM_STYLE_FLAT;
-  mOrient = NS_STYLE_ORIENT_HORIZONTAL;
+  mOrient = NS_STYLE_ORIENT_AUTO;
 
   mTransitions.AppendElement();
   NS_ABORT_IF_FALSE(mTransitions.Length() == 1,

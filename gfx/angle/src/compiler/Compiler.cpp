@@ -125,6 +125,8 @@ bool TCompiler::Init(const ShBuiltInResources& resources)
         return false;
     InitExtensionBehavior(resources, extensionBehavior);
 
+    hashFunction = resources.HashFunction;
+
     return true;
 }
 
@@ -198,7 +200,8 @@ bool TCompiler::compile(const char* const shaderStrings[],
         // Call mapLongVariableNames() before collectAttribsUniforms() so in
         // collectAttribsUniforms() we already have the mapped symbol names and
         // we could composite mapped and original variable names.
-        if (success && (compileOptions & SH_MAP_LONG_VARIABLE_NAMES))
+        // Also, if we hash all the names, then no need to do this for long names.
+        if (success && (compileOptions & SH_MAP_LONG_VARIABLE_NAMES) && hashFunction == NULL)
             mapLongVariableNames(root);
 
         if (success && (compileOptions & SH_ATTRIBUTES_UNIFORMS)) {
@@ -248,6 +251,8 @@ void TCompiler::clearResults()
     uniforms.clear();
 
     builtInFunctionEmulator.Cleanup();
+
+    nameMap.clear();
 }
 
 bool TCompiler::detectRecursion(TIntermNode* root)
@@ -323,7 +328,7 @@ bool TCompiler::enforceVertexShaderTimingRestrictions(TIntermNode* root)
 
 void TCompiler::collectAttribsUniforms(TIntermNode* root)
 {
-    CollectAttribsUniforms collect(attribs, uniforms);
+    CollectAttribsUniforms collect(attribs, uniforms, hashFunction);
     root->traverse(&collect);
 }
 

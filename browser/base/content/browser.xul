@@ -184,7 +184,7 @@
            align="start"
            role="alert">
       <hbox flex="1">
-        <image src="chrome://browser/content/social-icon.png" class="popup-notification-icon"/>
+        <image id="social-activation-icon" class="popup-notification-icon"/>
         <vbox flex="1">
           <description id="social-activation-message" class="popup-notification-description"/>
           <spacer flex="1"/>
@@ -265,7 +265,6 @@
            class="social-panel"
            type="arrow"
            hidden="true"
-           consumeoutsideclicks="true"
            noautofocus="true"/>
     <panel id="social-flyout-panel"
            class="social-panel"
@@ -274,6 +273,8 @@
            side="right"
            type="arrow"
            hidden="true"
+           rolluponmousewheel="true"
+           consumeoutsideclicks="false"
            noautofocus="true"
            position="topcenter topright"/>
 
@@ -312,7 +313,7 @@
     <menupopup id="contentAreaContextMenu" pagemenu="start"
                onpopupshowing="if (event.target != this)
                                  return true;
-                               gContextMenu = new nsContextMenu(this, gBrowser, event.shiftKey);
+                               gContextMenu = new nsContextMenu(this, event.shiftKey);
                                if (gContextMenu.shouldDisplay)
                                  updateEditUIVisibility();
                                return gContextMenu.shouldDisplay;"
@@ -394,29 +395,6 @@
       </hbox>
     </panel>
 
-    <panel id="allTabs-panel" hidden="true" norestorefocus="true" ignorekeys="true"
-           onmouseover="allTabs._updateTabCloseButton(event);">
-      <hbox id="allTabs-meta" align="center">
-        <spacer flex="1"/>
-        <textbox id="allTabs-filter"
-                 tooltiptext="&allTabs.filter.emptyText;"
-                 type="search"
-                 oncommand="allTabs.filter();"/>
-        <spacer flex="1"/>
-        <toolbarbutton class="KUI-panel-closebutton"
-                       oncommand="allTabs.close()"
-                       tooltiptext="&closeCmd.label;"/>
-      </hbox>
-      <stack id="allTabs-stack">
-        <vbox id="allTabs-container"><hbox/></vbox>
-        <toolbarbutton id="allTabs-tab-close-button"
-                       class="tabs-closebutton"
-                       oncommand="allTabs.closeTab(event);"
-                       tooltiptext="&closeCmd.label;"
-                       style="visibility:hidden"/>
-      </stack>
-    </panel>
-
     <!-- Bookmarks and history tooltip -->
     <tooltip id="bhTooltip"/>
 
@@ -471,11 +449,23 @@
         <label id="geolocation-learnmore-link" class="text-link"/>
       </popupnotificationcontent>
     </popupnotification>
+
+    <popupnotification id="mixed-content-blocked-notification" hidden="true">
+      <popupnotificationcontent orient="vertical" align="start">
+        <separator/>
+        <description id="mixed-content-blocked-moreinfo">&mixedContentBlocked.moreinfo;</description>
+        <separator/>
+        <label id="mixed-content-blocked-helplink" class="text-link"
+               value="&mixedContentBlocked.helplink;"/>
+      </popupnotificationcontent>
+    </popupnotification>
+
   </popupset>
 
 #ifdef CAN_DRAW_IN_TITLEBAR
 <vbox id="titlebar">
   <hbox id="titlebar-content">
+#ifdef MENUBAR_CAN_AUTOHIDE
     <hbox id="appmenu-button-container">
       <button id="appmenu-button"
               type="menu"
@@ -484,6 +474,7 @@
 #include browser-appmenu.inc
       </button>
     </hbox>
+#endif
     <spacer id="titlebar-spacer" flex="1"/>
     <hbox id="titlebar-buttonbox-container" align="start">
       <hbox id="titlebar-buttonbox">
@@ -557,7 +548,7 @@
       <toolbaritem id="urlbar-container" align="center" flex="400" persist="width" combined="true"
                    title="&locationItem.title;" class="chromeclass-location" removable="true">
         <textbox id="urlbar" flex="1"
-                 placeholder="&urlbar.placeholder;"
+                 placeholder="&urlbar.placeholder2;"
                  type="autocomplete"
                  autocompletesearch="urlinline history"
                  autocompletesearchparam="enable-actions"
@@ -585,6 +576,7 @@
             <image id="webapps-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="plugins-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="blocked-plugins-notification-icon" class="notification-anchor-icon" role="button"/>
+            <image id="mixed-content-blocked-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="webRTC-shareDevices-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="webRTC-sharingDevices-notification-icon" class="notification-anchor-icon" role="button"/>
           </box>
@@ -1105,7 +1097,9 @@
           persist="width">
       <browser id="social-sidebar-browser"
                type="content"
+               context="contentAreaContextMenu"
                disableglobalhistory="true"
+               tooltip="aHTMLTooltip"
                flex="1"
                style="min-width: 14em; width: 18em; max-width: 36em;"/>
     </vbox>
@@ -1134,6 +1128,7 @@
   </hbox>
 
   <vbox id="browser-bottombox" layer="true">
+    <notificationbox id="global-notificationbox"/>
     <toolbar id="developer-toolbar"
              class="devtools-toolbar"
              hidden="true">
