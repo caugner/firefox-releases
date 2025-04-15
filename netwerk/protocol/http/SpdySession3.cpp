@@ -421,6 +421,11 @@ SpdySession3::NetworkRead(nsAHttpSegmentWriter *writer, char *buf,
 {
   NS_ABORT_IF_FALSE(PR_GetCurrentThread() == gSocketThread, "wrong thread");
 
+  if (!count) {
+    *countWritten = 0;
+    return NS_OK;
+  }
+
   nsresult rv = writer->OnWriteSegment(buf, count, countWritten);
   if (NS_SUCCEEDED(rv) && *countWritten > 0)
     mLastReadEpoch = PR_IntervalNow();
@@ -1233,7 +1238,7 @@ SpdySession3::HandleGoAway(SpdySession3 *self)
   NS_ABORT_IF_FALSE(self->mFrameControlType == CONTROL_TYPE_GOAWAY,
                     "wrong control type");
 
-  if (self->mInputFrameDataSize != 4) {
+  if (self->mInputFrameDataSize != 8) {
     LOG3(("SpdySession3::HandleGoAway %p GOAWAY had wrong amount of data %d",
           self, self->mInputFrameDataSize));
     return NS_ERROR_ILLEGAL_VALUE;
@@ -1244,8 +1249,10 @@ SpdySession3::HandleGoAway(SpdySession3 *self)
     PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[2]);
   self->mCleanShutdown = true;
   
-  LOG3(("SpdySession3::HandleGoAway %p GOAWAY Last-Good-ID 0x%X.",
-        self, self->mGoAwayID));
+  LOG3(("SpdySession3::HandleGoAway %p GOAWAY Last-Good-ID 0x%X status 0x%X\n",
+        self, self->mGoAwayID, 
+        PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[3])));
+
   self->ResumeRecv();
   self->ResetDownstreamState();
   return NS_OK;
@@ -1379,6 +1386,7 @@ SpdySession3::HandleWindowUpdate(SpdySession3 *self)
   }
 
   self->ResetDownstreamState();
+  self->ResumeRecv();
   return NS_OK;
 }
 
@@ -1460,12 +1468,6 @@ SpdySession3::ReadSegments(nsAHttpSegmentReader *reader,
 
   LOG3(("SpdySession3::ReadSegments %p", this));
 
-  NS_ABORT_IF_FALSE(!mSegmentReader || !reader || (mSegmentReader == reader),
-                    "Inconsistent Write Function Callback");
-
-  if (reader)
-    mSegmentReader = reader;
-
   SpdyStream3 *stream = static_cast<SpdyStream3 *>(mReadyForWrite.PopFront());
   if (!stream) {
     LOG3(("SpdySession3 %p could not identify a stream to write; suspending.",
@@ -1486,6 +1488,10 @@ SpdySession3::ReadSegments(nsAHttpSegmentReader *reader,
   // of that. But we might still have old data buffered that would be good
   // to flush.
   FlushOutputQueue();
+
+  // Allow new server reads - that might be data or control information
+  // (e.g. window updates or http replies) that are responses to these writes
+  ResumeRecv();
 
   if (stream->RequestBlockedOnRead()) {
     
@@ -1530,9 +1536,6 @@ SpdySession3::ReadSegments(nsAHttpSegmentReader *reader,
   LOG3(("SpdySession3::ReadSegments %p stream=%p stream send complete",
         this, stream));
   
-  /* we now want to recv data */
-  ResumeRecv();
-
   // call readsegments again if there are other streams ready
   // to go in this session
   SetWriteCallbacks();

@@ -78,6 +78,7 @@ public class AboutHomeContent extends ScrollView
     private BrowserApp mActivity;
     private Cursor mCursor;
     UriLoadCallback mUriLoadCallback = null;
+    VoidCallback mLoadCompleteCallback = null;
     private LayoutInflater mInflater;
 
     private AccountManager mAccountManager;
@@ -93,10 +94,13 @@ public class AboutHomeContent extends ScrollView
     protected AboutHomeSection mRemoteTabs;
 
     private View.OnClickListener mRemoteTabClickListener;
-    private OnInterceptTouchListener mOnInterceptTouchListener;
 
     public interface UriLoadCallback {
         public void callback(String uriSpec);
+    }
+
+    public interface VoidCallback {
+        public void callback();
     }
 
     public AboutHomeContent(Context context) {
@@ -270,6 +274,12 @@ public class AboutHomeContent extends ScrollView
                 // Free the old Cursor in the right thread now.
                 if (oldCursor != null && !oldCursor.isClosed())
                     oldCursor.close();
+
+                // Even if AboutHome isn't necessarily entirely loaded if we
+                // get here, for phones this is the part the user initially sees,
+                // so it's the one we will care about for now.
+                if (mLoadCompleteCallback != null)
+                    mLoadCompleteCallback.callback();
             }
         });
     }
@@ -296,6 +306,10 @@ public class AboutHomeContent extends ScrollView
         mUriLoadCallback = uriLoadCallback;
     }
 
+    public void setLoadCompleteCallback(VoidCallback callback) {
+        mLoadCompleteCallback = callback;
+    }
+
     public void onActivityContentChanged() {
         update(EnumSet.of(UpdateFlags.TOP_SITES));
     }
@@ -316,24 +330,6 @@ public class AboutHomeContent extends ScrollView
         inflate();
         mTopSitesGrid.setAdapter(mTopSitesAdapter); // mTopSitesGrid is a new instance (from loadTopSites()).
         update(AboutHomeContent.UpdateFlags.ALL); // Refresh all elements.
-    }
-
-    @Override
-    public boolean onInterceptTouchEvent(MotionEvent event) {
-        if (mOnInterceptTouchListener != null && mOnInterceptTouchListener.onInterceptTouchEvent(this, event))
-            return true;
-        return super.onInterceptTouchEvent(event);
-    }
-
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        if (mOnInterceptTouchListener != null && mOnInterceptTouchListener.onTouch(this, event))
-            return true;
-        return super.onTouchEvent(event);
-    }
-
-    public void setOnInterceptTouchListener(OnInterceptTouchListener listener) {
-        mOnInterceptTouchListener = listener;
     }
 
     private String readFromZipFile(String filename) {

@@ -10,7 +10,7 @@
 #define ALLOW_LATE_NSHTTP_H_INCLUDE 1
 #include "base/basictypes.h"
 
-#include "IPC/IPCMessageUtils.h"
+#include "ipc/IPCMessageUtils.h"
 #include "nsHttp.h"
 #include "nsHttpHeaderArray.h"
 #include "nsHttpResponseHead.h"
@@ -66,13 +66,13 @@ struct ParamTraits<nsHttpAtom>
   {
     // aParam.get() cannot be null.
     NS_ASSERTION(aParam.get(), "null nsHTTPAtom value");
-    nsCAutoString value(aParam.get());
+    nsAutoCString value(aParam.get());
     WriteParam(aMsg, value);
   }
 
   static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
   {
-    nsCAutoString value;
+    nsAutoCString value;
     if (!ReadParam(aMsg, aIter, &value))
       return false;
 

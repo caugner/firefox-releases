@@ -248,13 +248,13 @@ nsFindContentIterator::Reset()
   // see if the start node is an anonymous text node inside a text control
   nsCOMPtr<nsIContent> startContent(do_QueryInterface(mStartNode));
   if (startContent) {
-    mStartOuterContent = startContent->FindFirstNonNativeAnonymous();
+    mStartOuterContent = startContent->FindFirstNonChromeOnlyAccessContent();
   }
 
   // see if the end node is an anonymous text node inside a text control
   nsCOMPtr<nsIContent> endContent(do_QueryInterface(mEndNode));
   if (endContent) {
-    mEndOuterContent = endContent->FindFirstNonNativeAnonymous();
+    mEndOuterContent = endContent->FindFirstNonChromeOnlyAccessContent();
   }
 
   // Note: OK to just set up the outer iterator here; if our range has a native
@@ -1008,7 +1008,7 @@ nsFind::Find(const PRUnichar *aPatText, nsIDOMRange* aSearchRange,
         t1b = frag->Get1b();
         t2b = nullptr;
 #ifdef DEBUG_FIND
-        nsCAutoString str1(t1b, fragLen);
+        nsAutoCString str1(t1b, fragLen);
         printf("1 byte, '%s'\n", str1.get());
 #endif
       }

@@ -37,7 +37,7 @@ void
 nsHttpResponseHead::SetContentLength(int64_t len)
 {
     mContentLength = len;
-    if (!LL_GE_ZERO(len)) // < 0
+    if (len < 0)
         mHeaders.ClearHeader(nsHttp::Content_Length);
     else
         mHeaders.SetHeader(nsHttp::Content_Length, nsPrintfCString("%lld", len));
@@ -290,7 +290,7 @@ nsHttpResponseHead::ComputeFreshnessLifetime(uint32_t *result) const
     }
 
     // These responses can be cached indefinitely.
-    if ((mStatus == 300) || (mStatus == 301)) {
+    if ((mStatus == 300) || nsHttp::IsPermanentRedirect(mStatus)) {
         *result = uint32_t(-1);
         return NS_OK;
     }
@@ -463,7 +463,7 @@ nsHttpResponseHead::Reset()
 
     mVersion = NS_HTTP_VERSION_1_1;
     mStatus = 200;
-    mContentLength = LL_MAXUINT;
+    mContentLength = UINT64_MAX;
     mCacheControlNoStore = false;
     mCacheControlNoCache = false;
     mPragmaNoCache = false;
@@ -535,7 +535,7 @@ nsHttpResponseHead::GetExpiresValue(uint32_t *result) const
         return NS_OK;
     }
 
-    if (LL_CMP(time, <, LL_Zero()))
+    if (time < LL_Zero())
         *result = 0;
     else
         *result = PRTimeToSeconds(time); 
@@ -560,7 +560,7 @@ nsHttpResponseHead::TotalEntitySize() const
 
     int64_t size;
     if (!nsHttp::ParseInt64(slash, &size))
-        size = LL_MAXUINT;
+        size = UINT64_MAX;
     return size;
 }
 

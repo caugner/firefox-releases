@@ -25,11 +25,12 @@ fuzzy(1,800000) == linear-flipped-1.html linear-flipped-1-ref.html
 == linear-position-1a.html linear-position-1-ref.html
 == linear-repeat-1a.html linear-repeat-1-ref.html
 fails-if(d2d) == linear-repeat-1b.html linear-repeat-1-ref.html # bug 582236
-fails-if(d2d) == linear-repeat-1c.html linear-repeat-1-ref.html # bug 582236
+== linear-repeat-1c.html linear-repeat-1-ref.html
 fails-if(d2d) == linear-repeat-1d.html linear-repeat-1-ref.html # bug 582236
 == linear-repeat-1e.html linear-repeat-1-ref.html
 fails-if(d2d) == linear-repeat-1f.html linear-repeat-1-ref.html # bug 582236
 fails-if(d2d) == linear-repeat-1g.html linear-repeat-1-ref.html # bug 582236
+== linear-rotated-1.html linear-rotated-1-ref.html
 == linear-size-1a.html linear-size-1-ref.html
 == linear-stops-1a.html linear-stops-1-ref.html
 == linear-stops-1b.html linear-stops-1-ref.html
@@ -84,20 +85,20 @@ fuzzy-if(Android,17,13314) == radial-shape-farthest-side-1c.html radial-shape-fa
 == radial-zero-length-1h.html radial-zero-length-1-ref.html
 == radial-zero-length-1i.html radial-zero-length-1-ref.html
 == radial-zero-length-1j.html radial-zero-length-1-ref.html
-fails-if(d2d) == repeating-linear-1a.html repeating-linear-1-ref.html
-fails-if(d2d) == repeating-linear-1b.html repeating-linear-1-ref.html
+== repeating-linear-1a.html repeating-linear-1-ref.html
+== repeating-linear-1b.html repeating-linear-1-ref.html
 == repeating-linear-2a.html repeating-linear-2-ref.html
-== repeating-radial-1a.html repeating-radial-1-ref.html
+fuzzy-if(d2d,124,2612) == repeating-radial-1a.html repeating-radial-1-ref.html
 == repeating-radial-1b.html repeating-radial-1-ref.html
-== repeating-radial-1c.html repeating-radial-1-ref.html
+fuzzy-if(d2d,124,2612) == repeating-radial-1c.html repeating-radial-1-ref.html
 == repeating-radial-1d.html repeating-radial-1-ref.html
-== repeating-radial-1e.html repeating-radial-1-ref.html
+fuzzy-if(d2d,124,2612) == repeating-radial-1e.html repeating-radial-1-ref.html
 == repeating-radial-1f.html repeating-radial-1-ref.html
 == repeating-radial-2a.html repeating-radial-2-ref.html
 == repeating-radial-2b.html repeating-radial-2-ref.html
 == twostops-1a.html twostops-1-ref.html
 == twostops-1b.html twostops-1-ref.html
-fails-if(OSX==10.5||OSX==10.6) == twostops-1c.html twostops-1-ref.html # bug 524173
+fails-if(OSX==10.6) == twostops-1c.html twostops-1-ref.html # bug 524173
 == twostops-1d.html twostops-1-ref.html
 == twostops-1e.html twostops-1-ref.html
 == twostops-1f.html twostops-1-ref.html
@@ -120,10 +121,10 @@ fuzzy-if(!contentSameGfxBackendAsCanvas,1,19999) fails-if(Android) == aja-linear
 fuzzy-if(!contentSameGfxBackendAsCanvas,2,20000) fails-if(Android) == aja-linear-4a.html aja-linear-4-ref.html
 fuzzy-if(!contentSameGfxBackendAsCanvas,2,20000) fails-if(Android) == aja-linear-4b.html aja-linear-4-ref.html
 fuzzy-if(!contentSameGfxBackendAsCanvas,2,20000) fails-if(Android) == aja-linear-5a.html aja-linear-5-ref.html
-fuzzy-if(!contentSameGfxBackendAsCanvas,2,16477) fails-if(Android) fails-if(OSX==10.5) == aja-linear-6a.html aja-linear-6-ref.html # bug 526708
+fuzzy-if(!contentSameGfxBackendAsCanvas,2,16477) fails-if(Android) == aja-linear-6a.html aja-linear-6-ref.html # bug 526708
 fails == aja-linear-6b.html aja-linear-6-ref.html # bug 522607
 == height-dependence-1.html height-dependence-1-ref.html
-fails-if(cocoaWidget) == height-dependence-2.html height-dependence-2-ref.html # bug 535007
+== height-dependence-2.html height-dependence-2-ref.html
 == height-dependence-3.html height-dependence-3-ref.html
 
 fails-if(d2d) == linear-onestopposition-1.html linear-onestopposition-1-ref.html # bug 638664

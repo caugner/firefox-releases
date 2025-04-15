@@ -90,6 +90,9 @@ gfxPlatformGtk::gfxPlatformGtk()
     gCodepointsWithNoFonts = new gfxSparseBitSet();
     UpdateFontList();
 #endif
+    uint32_t canvasMask = (1 << BACKEND_CAIRO) | (1 << BACKEND_SKIA);
+    uint32_t contentMask = (1 << BACKEND_CAIRO);
+    InitBackendPrefs(canvasMask, contentMask);
 }
 
 gfxPlatformGtk::~gfxPlatformGtk()
@@ -142,14 +145,7 @@ gfxPlatformGtk::CreateOffscreenSurface(const gfxIntSize& size,
     // we should try to match
     GdkScreen *gdkScreen = gdk_screen_get_default();
     if (gdkScreen) {
-        if (!UseXRender()) {
-            // We're not going to use XRender, so we don't need to
-            // search for a render format
-            newSurface = new gfxImageSurface(size, imageFormat);
-            // The gfxImageSurface ctor zeroes this for us, no need to
-            // waste time clearing again
-            needsClear = false;
-        } else {
+        if (UseXRender()) {
             Screen *screen = gdk_x11_screen_get_xscreen(gdkScreen);
             XRenderPictFormat* xrenderFormat =
                 gfxXlibSurface::FindRenderFormat(DisplayOfScreen(screen),
@@ -158,6 +154,13 @@ gfxPlatformGtk::CreateOffscreenSurface(const gfxIntSize& size,
             if (xrenderFormat) {
                 newSurface = gfxXlibSurface::Create(screen, xrenderFormat, size);
             }
+        } else {
+            // We're not going to use XRender, so we don't need to
+            // search for a render format
+            newSurface = new gfxImageSurface(size, imageFormat);
+            // The gfxImageSurface ctor zeroes this for us, no need to
+            // waste time clearing again
+            needsClear = false;
         }
     }
 #endif
@@ -368,7 +371,7 @@ gfxPlatformGtk::ResolveFontName(const nsAString& aFontName,
         return NS_OK;
     }
 
-    nsCAutoString utf8Name = NS_ConvertUTF16toUTF8(aFontName);
+    nsAutoCString utf8Name = NS_ConvertUTF16toUTF8(aFontName);
 
     FcPattern *npat = FcPatternCreate();
     FcPatternAddString(npat, FC_FAMILY, (FcChar8*)utf8Name.get());
@@ -726,7 +729,7 @@ gfxPlatformGtk::GetGdkDrawable(gfxASurface *target)
 }
 #endif
 
-RefPtr<ScaledFont>
+TemporaryRef<ScaledFont>
 gfxPlatformGtk::GetScaledFontForFont(DrawTarget* aTarget, gfxFont *aFont)
 {
     NativeFont nativeFont;

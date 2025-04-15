@@ -8,6 +8,7 @@
 #ifndef nsPresContext_h___
 #define nsPresContext_h___
 
+#include "mozilla/Attributes.h"
 #include "nsISupports.h"
 #include "nsColor.h"
 #include "nsCoord.h"
@@ -31,6 +32,7 @@
 #include "nsIWidget.h"
 #include "mozilla/TimeStamp.h"
 #include "prclist.h"
+#include "Layers.h"
 
 #ifdef IBMBIDI
 class nsBidiPresUtils;
@@ -110,6 +112,17 @@ public:
 
   nsTArray<Request> mRequests;
 };
+
+/**
+ * Layer UserData for ContainerLayers that want to be notified
+ * of local invalidations of them and their descendant layers.
+ * Pass a callback to ComputeDifferences to have these called.
+ */
+class ContainerLayerPresContext : public mozilla::layers::LayerUserData {
+public:
+  nsPresContext* mPresContext;
+};
+extern uint8_t gNotifySubDocInvalidationData;
 
 /* Used by nsPresContext::HasAuthorSpecifiedRules */
 #define NS_AUTHOR_SPECIFIED_BACKGROUND      (1 << 0)
@@ -710,6 +723,13 @@ public:
   NS_HIDDEN_(void) ThemeChanged();
 
   /*
+   * Notify the pres context that the resolution of the user interface has
+   * changed. This happens if a window is moved between HiDPI and non-HiDPI
+   * displays, so that the ratio of points to device pixels changes.
+   */
+  NS_HIDDEN_(void) UIResolutionChanged();
+
+  /*
    * Notify the pres context that a system color has changed
    */
   NS_HIDDEN_(void) SysColorChanged();
@@ -792,15 +812,21 @@ public:
   // Returns true on success and false on failure (not safe).
   bool EnsureSafeToHandOutCSSRules();
 
+  void NotifyInvalidation(uint32_t aFlags);
   void NotifyInvalidation(const nsRect& aRect, uint32_t aFlags);
+  // aRect is in device pixels
+  void NotifyInvalidation(const nsIntRect& aRect, uint32_t aFlags);
   void NotifyDidPaintForSubtree();
   void FireDOMPaintEvent();
 
-  bool IsDOMPaintEventPending() {
-    return !mInvalidateRequests.mRequests.IsEmpty();
-  }
+  // Callback for catching invalidations in ContainerLayers
+  // Passed to LayerProperties::ComputeDifference
+  static void NotifySubDocInvalidation(mozilla::layers::ContainerLayer* aContainer,
+                                       const nsIntRegion& aRegion);
+  bool IsDOMPaintEventPending();
   void ClearMozAfterPaintEvents() {
     mInvalidateRequests.mRequests.Clear();
+    mAllInvalidated = false;
   }
 
   bool IsProcessingRestyles() const {
@@ -888,20 +914,38 @@ public:
     PropertyTable()->DeleteAllFor(aFrame);
   }
 
-  bool MayHaveFixedBackgroundFrames() { return mMayHaveFixedBackgroundFrames; }
-  void SetHasFixedBackgroundFrame() { mMayHaveFixedBackgroundFrames = true; }
-
   virtual size_t SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
   virtual size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const {
     return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
   }
 
   bool IsRootContentDocument();
+  bool IsCrossProcessRootContentDocument();
+
+  bool IsGlyph() const {
+    return mIsGlyph;
+  }
+
+  void SetIsGlyph(bool aValue) {
+    mIsGlyph = aValue;
+  }
+
+  bool UsesRootEMUnits() const {
+    return mUsesRootEMUnits;
+  }
+
+  void SetUsesRootEMUnits(bool aValue) {
+    mUsesRootEMUnits = aValue;
+  }
 
 protected:
   friend class nsRunnableMethod<nsPresContext>;
   NS_HIDDEN_(void) ThemeChangedInternal();
   NS_HIDDEN_(void) SysColorChangedInternal();
+  NS_HIDDEN_(void) UIResolutionChangedInternal();
+
+  static NS_HIDDEN_(bool)
+  UIResolutionChangedSubdocumentCallback(nsIDocument* aDocument, void* aData);
 
   NS_HIDDEN_(void) SetImgAnimations(nsIContent *aParent, uint16_t aMode);
   NS_HIDDEN_(void) SetSMILAnimations(nsIDocument *aDoc, uint16_t aNewMode,
@@ -993,11 +1037,21 @@ protected:
 public:
   void DoChangeCharSet(const nsCString& aCharSet);
 
+  /**
+   * Checks for MozAfterPaint listeners on the document
+   */
+  bool MayHavePaintEventListener();
+
+  /**
+   * Checks for MozAfterPaint listeners on the document and 
+   * any subdocuments, except for subdocuments that are non-top-level
+   * content documents.
+   */
+  bool MayHavePaintEventListenerInSubDocument();
+
 protected:
   void InvalidateThebesLayers();
   void AppUnitsPerDevPixelChanged();
-
-  bool MayHavePaintEventListener();
 
   void HandleRebuildUserFontSet() {
     mPostedFlushUserFontSet = false;
@@ -1127,9 +1181,16 @@ protected:
   unsigned              mPrefScrollbarSide : 2;
   unsigned              mPendingSysColorChanged : 1;
   unsigned              mPendingThemeChanged : 1;
+  unsigned              mPendingUIResolutionChanged : 1;
   unsigned              mPendingMediaFeatureValuesChanged : 1;
   unsigned              mPrefChangePendingNeedsReflow : 1;
-  unsigned              mMayHaveFixedBackgroundFrames : 1;
+  unsigned              mAllInvalidated : 1;
+
+  // Are we currently drawing an SVG glyph?
+  unsigned              mIsGlyph : 1;
+
+  // Does the associated document use root-em (rem) units?
+  unsigned              mUsesRootEMUnits : 1;
 
   // Is the current mUserFontSet valid?
   unsigned              mUserFontSetDirty : 1;
@@ -1223,38 +1284,31 @@ public:
    */
   void UnregisterPluginForGeometryUpdates(nsIContent* aPlugin);
 
+  bool NeedToComputePluginGeometryUpdates()
+  {
+    return mRegisteredPlugins.Count() > 0;
+  }
   /**
-   * Iterate through all plugins that are registered for geometry updates
-   * and update their position and clip region to match the current frame
-   * tree.
+   * Compute geometry updates for each plugin given that aList is the display
+   * list for aFrame. The updates are not yet applied;
+   * ApplyPluginGeometryUpdates is responsible for that. In the meantime they
+   * are stored on each nsObjectFrame.
+   * This needs to be called even when aFrame is a popup, since although
+   * windowed plugins aren't allowed in popups, windowless plugins are
+   * and ComputePluginGeometryUpdates needs to be called for them.
    */
-  void UpdatePluginGeometry();
+  void ComputePluginGeometryUpdates(nsIFrame* aFrame,
+                                    nsDisplayListBuilder* aBuilder,
+                                    nsDisplayList* aList);
 
   /**
-   * Iterate through all plugins that are registered for geometry updates
-   * and compute their position and clip region according to the
-   * current frame tree. Only frames at or under aChangedRoot can have
-   * changed their geometry. The computed positions and clip regions are
-   * appended to aConfigurations.
+   * Apply the stored plugin geometry updates. This should normally be called
+   * in DidPaint so the plugins are moved/clipped immediately after we've
+   * updated our window, so they look in sync with our window.
    */
-  void GetPluginGeometryUpdates(nsIFrame* aChangedRoot,
-                                nsTArray<nsIWidget::Configuration>* aConfigurations);
+  void ApplyPluginGeometryUpdates();
 
-  /**
-   * When all geometry updates have been applied, call this function
-   * in case the nsObjectFrames have work to do after the widgets
-   * have been updated.
-   */
-  void DidApplyPluginGeometryUpdates();
-
-  virtual bool IsRoot() { return true; }
-
-  /**
-   * Call this after reflow and scrolling to ensure that the geometry
-   * of any windowed plugins is updated. aFrame is the root of the
-   * frame subtree whose geometry has changed.
-   */
-  void RequestUpdatePluginGeometry();
+  virtual bool IsRoot() MOZ_OVERRIDE { return true; }
 
   /**
    * Increment DOM-modification generation counter to indicate that
@@ -1286,6 +1340,15 @@ public:
   virtual size_t SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const MOZ_OVERRIDE;
 
 protected:
+  /**
+   * Start a timer to ensure we eventually run ApplyPluginGeometryUpdates.
+   */
+  void InitApplyPluginGeometryTimer();
+  /**
+   * Cancel the timer that ensures we eventually run ApplyPluginGeometryUpdates.
+   */
+  void CancelApplyPluginGeometryTimer();
+
   class RunWillPaintObservers : public nsRunnable {
   public:
     RunWillPaintObservers(nsRootPresContext* aPresContext) : mPresContext(aPresContext) {}
@@ -1301,24 +1364,13 @@ protected:
   };
 
   friend class nsPresContext;
-  void CancelUpdatePluginGeometryTimer()
-  {
-    if (mUpdatePluginGeometryTimer) {
-      mUpdatePluginGeometryTimer->Cancel();
-      mUpdatePluginGeometryTimer = nullptr;
-    }
-  }
 
   nsCOMPtr<nsITimer> mNotifyDidPaintTimer;
-  nsCOMPtr<nsITimer> mUpdatePluginGeometryTimer;
+  nsCOMPtr<nsITimer> mApplyPluginGeometryTimer;
   nsTHashtable<nsRefPtrHashKey<nsIContent> > mRegisteredPlugins;
-  // if mNeedsToUpdatePluginGeometry is set, then this is the frame to
-  // use as the root of the subtree to search for plugin updates, or
-  // null to use the root frame of this prescontext
   nsTArray<nsCOMPtr<nsIRunnable> > mWillPaintObservers;
   nsRevocableEventPtr<RunWillPaintObservers> mWillPaintFallbackEvent;
   uint32_t mDOMGeneration;
-  bool mNeedsToUpdatePluginGeometry;
 };
 
 #ifdef MOZ_REFLOW_PERF

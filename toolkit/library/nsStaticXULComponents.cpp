@@ -164,6 +164,18 @@
 #define PROFILER_MODULE
 #endif
 
+#if defined(MOZ_WEBRTC)
+#define PEERCONNECTION_MODULE MODULE(peerconnection)
+#else
+#define PEERCONNECTION_MODULE
+#endif
+
+#if defined(MOZ_GIO_COMPONENT)
+#define GIO_MODULE MODULE(nsGIOModule)
+#else
+#define GIO_MODULE
+#endif
+
 #define XUL_MODULES                          \
     MODULE(nsUConvModule)                    \
     MODULE(nsI18nModule)                     \
@@ -180,6 +192,7 @@
     MODULE(nsWindowDataSourceModule)         \
     MODULE(nsParserModule)                   \
     MODULE(nsImageLib2Module)                \
+    MODULE(nsMediaSnifferModule)             \
     MODULE(nsGfxModule)                      \
     PROFILER_MODULE                          \
     WIDGET_MODULES                           \
@@ -220,6 +233,8 @@
     MODULE(nsTelemetryModule)                \
     MODULE(jsinspector)                      \
     MODULE(jsdebugger)                       \
+    PEERCONNECTION_MODULE                    \
+    GIO_MODULE                               \
     /* end of list */
 
 #define MODULE(_name) \

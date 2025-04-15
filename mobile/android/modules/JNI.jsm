@@ -2,19 +2,19 @@
  *
  * Example Usage:
  *   let jni = new JNI();
- *   cls = jni.findClass("org.mozilla.gecko.GeckoAppShell");
+ *   cls = jni.findClass("org/mozilla/gecko/GeckoAppShell");
  *   method = jni.getStaticMethodID(cls, "getPreferredIconSize", "(I)I");
  *
  *   let val = jni.callStaticIntMethod(cls, method, 3);
  *   // close the jni library when you are done
  *   jni.close();
  */
-let EXPORTED_SYMBOLS = ["JNI"];
+this.EXPORTED_SYMBOLS = ["JNI"];
 
 Components.utils.import("resource://gre/modules/ctypes.jsm")
 Components.utils.import("resource://gre/modules/Services.jsm")
 
-function JNI() { }
+this.JNI = function JNI() { }
 
 JNI.prototype = {
   get lib() {

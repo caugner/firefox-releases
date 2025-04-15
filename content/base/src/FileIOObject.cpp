@@ -34,20 +34,20 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(FileIOObject)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(FileIOObject,
                                                   nsDOMEventTargetHelper)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mProgressNotifier)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(abort)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(error)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(progress)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mError)
+  // Can't traverse mChannel because it's a multithreaded object.
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(FileIOObject,
                                                 nsDOMEventTargetHelper)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mProgressNotifier)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(abort)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(error)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(progress)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mError)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mChannel)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+ 
+NS_IMPL_EVENT_HANDLER(FileIOObject, abort);
+NS_IMPL_EVENT_HANDLER(FileIOObject, error);
+NS_IMPL_EVENT_HANDLER(FileIOObject, progress);
 
 FileIOObject::FileIOObject()
   : mProgressEventWasDelayed(false),
@@ -165,7 +165,7 @@ NS_IMETHODIMP
 FileIOObject::OnDataAvailable(nsIRequest *aRequest,
                               nsISupports *aContext,
                               nsIInputStream *aInputStream,
-                              uint32_t aOffset,
+                              uint64_t aOffset,
                               uint32_t aCount)
 {
   nsresult rv;

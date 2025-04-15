@@ -179,7 +179,9 @@ public:
 
   /**
    * Returns true if this element has a base/anim value for its "viewBox"
-   * attribute that defines a viewBox rectangle with finite values.
+   * attribute that defines a viewBox rectangle with finite values, or
+   * if there is a view element overriding this element's viewBox and it
+   * has a valid viewBox.
    *
    * Note that this does not check whether we need to synthesize a viewBox,
    * so you must call ShouldSynthesizeViewBox() if you need to check that too.
@@ -187,9 +189,7 @@ public:
    * Note also that this method does not pay attention to whether the width or
    * height values of the viewBox rect are positive!
    */
-  bool HasViewBox() const {
-    return mViewBox.IsExplicitlySet();
-  }
+  bool HasViewBox() const;
 
   /**
    * Returns true if we should synthesize a viewBox for ourselves (that is, if
@@ -210,6 +210,8 @@ public:
     return mHasChildrenOnlyTransform;
   }
 
+  void UpdateHasChildrenOnlyTransform();
+
   enum ChildrenOnlyTransformChangedFlags {
     eDuringReflow = 1
   };
@@ -224,7 +226,7 @@ public:
    * GetAttributeChangeHint is because we need to act on non-attribute (e.g.
    * currentScale) changes in addition to attribute (e.g. viewBox) changes.
    */
-  void ChildrenOnlyTransformChanged(PRUint32 aFlags = 0);
+  void ChildrenOnlyTransformChanged(uint32_t aFlags = 0);
 
   // This services any pending notifications for the transform on on this root
   // <svg> node needing to be recalculated.  (Only applicable in
@@ -232,6 +234,12 @@ public:
   virtual void FlushImageTransformInvalidation();
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
+
+  // Returns true IFF our attributes are currently overridden by a <view>
+  // element and that element's ID matches the passed-in string.
+  bool IsOverriddenBy(const nsAString &aViewID) const {
+    return mCurrentViewID && mCurrentViewID->Equals(aViewID);
+  }
 
   svgFloatSize GetViewportSize() const {
     return svgFloatSize(mViewportWidth, mViewportHeight);
@@ -256,6 +264,8 @@ private:
   virtual void UnbindFromTree(bool aDeep, bool aNullParent);
 
   // implementation helpers:
+
+  nsSVGViewElement* GetCurrentViewElement() const;
 
   // Methods for <image> elements to override my "PreserveAspectRatio" value.
   // These are private so that only our friends (nsSVGImageFrame in
@@ -343,7 +353,7 @@ private:
   nsSVGViewBox                   mViewBox;
   SVGAnimatedPreserveAspectRatio mPreserveAspectRatio;
 
-  nsSVGSVGElement               *mCoordCtx;
+  nsAutoPtr<nsString>            mCurrentViewID;
 
   // The size of the rectangular SVG viewport into which we render. This is
   // not (necessarily) the same as the content area. See:

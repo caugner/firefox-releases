@@ -8,7 +8,7 @@
 #define TILEDLAYERBUFFER_TILE_SIZE 256
 
 // Debug defines
-#ifdef MOZ_JAVA_COMPOSITOR
+#ifdef MOZ_ANDROID_OMTC
   // This needs to go away as we enabled tiled
   // layers everywhere.
   #define FORCE_BASICTILEDTHEBESLAYER
@@ -165,7 +165,7 @@ public:
 
 // Normal integer division truncates towards zero,
 // we instead want to floor to hangle negative numbers.
-static int floor_div(int a, int b)
+static inline int floor_div(int a, int b)
 {
   int rem = a % b;
   int div = a/b;
@@ -365,7 +365,10 @@ TiledLayerBuffer<Derived, Tile>::Update(const nsIntRegion& aNewValidRegion,
       int tileX = floor_div(x - newBufferOrigin.x, GetTileLength());
       int tileY = floor_div(y - newBufferOrigin.y, GetTileLength());
       int index = tileX * mRetainedHeight + tileY;
-      NS_ABORT_IF_FALSE(index >= 0 && index < newRetainedTiles.Length(), "index out of range");
+      NS_ABORT_IF_FALSE(index >= 0 &&
+                        static_cast<unsigned>(index) < newRetainedTiles.Length(),
+                        "index out of range");
+
       Tile newTile = newRetainedTiles[index];
       while (IsPlaceholder(newTile) && oldRetainedTiles.Length() > 0) {
         AsDerived().SwapTiles(newTile, oldRetainedTiles[oldRetainedTiles.Length()-1]);

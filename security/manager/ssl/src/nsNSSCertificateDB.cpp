@@ -4,6 +4,7 @@
 
 #include "nsNSSComponent.h"
 #include "nsNSSCertificateDB.h"
+#include "mozilla/Base64.h"
 #include "nsCOMPtr.h"
 #include "nsNSSCertificate.h"
 #include "nsNSSHelper.h"
@@ -39,6 +40,8 @@ extern "C" {
 #include "ssl.h"
 #include "ocsp.h"
 #include "plbase64.h"
+
+using namespace mozilla;
 
 #ifdef PR_LOGGING
 extern PRLogModuleInfo* gPIPNSSLog;
@@ -190,7 +193,7 @@ cleanup:
   return rv;
 }
 
-SECStatus PR_CALLBACK
+SECStatus
 collect_certs(void *arg, SECItem **certs, int numcerts)
 {
   CERTDERCerts *collectArgs;
@@ -887,7 +890,7 @@ nsNSSCertificateDB::ImportUserCertificate(uint8_t *data, uint32_t length, nsIInt
   
   nsNSSShutDownPreventionLock locker;
   PK11SlotInfo *slot;
-  nsCAutoString nickname;
+  nsAutoCString nickname;
   nsresult rv = NS_ERROR_FAILURE;
   int numCACerts;
   SECItem *CACerts;
@@ -1209,7 +1212,7 @@ nsNSSCertificateDB::ExportPKCS12File(nsISupports     *aToken,
 }
 
 
-static SECStatus PR_CALLBACK 
+static SECStatus 
 GetOCSPResponders (CERTCertificate *aCert,
                    SECItem         *aDBKey,
                    void            *aArg)
@@ -1586,7 +1589,7 @@ nsNSSCertificateDB::get_default_nickname(CERTCertificate *cert,
   if (NS_FAILED(rv))
     return;
 
-  nsCAutoString username;
+  nsAutoCString username;
   char *temp_un = CERT_GetCommonName(&cert->subject);
   if (temp_un) {
     username = temp_un;
@@ -1594,7 +1597,7 @@ nsNSSCertificateDB::get_default_nickname(CERTCertificate *cert,
     temp_un = nullptr;
   }
 
-  nsCAutoString caname;
+  nsAutoCString caname;
   char *temp_ca = CERT_GetOrgName(&cert->issuer);
   if (temp_ca) {
     caname = temp_ca;
@@ -1606,7 +1609,7 @@ nsNSSCertificateDB::get_default_nickname(CERTCertificate *cert,
   nssComponent->GetPIPNSSBundleString("nick_template", tmpNickFmt);
   NS_ConvertUTF16toUTF8 nickFmt(tmpNickFmt);
 
-  nsCAutoString baseName;
+  nsAutoCString baseName;
   char *temp_nn = PR_smprintf(nickFmt.get(), username.get(), caname.get());
   if (!temp_nn) {
     return;
@@ -1742,6 +1745,16 @@ NS_IMETHODIMP nsNSSCertificateDB::AddCertFromBase64(const char *aBase64, const c
 
 
   return (srv == SECSuccess) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+nsNSSCertificateDB::AddCert(const nsACString & aCertDER, const char *aTrust,
+                            const char *aName)
+{
+  nsCString base64;
+  nsresult rv = Base64Encode(aCertDER, base64);
+  NS_ENSURE_SUCCESS(rv, rv);
+  return AddCertFromBase64(base64.get(), aTrust, aName);
 }
 
 NS_IMETHODIMP 

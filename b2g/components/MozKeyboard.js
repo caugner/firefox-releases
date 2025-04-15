@@ -4,18 +4,15 @@
 
 "use strict";
 
-const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
-const kFormsFrameScript = "chrome://browser/content/forms.js";
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/ObjectWrapper.jsm");
 
-const messageManager = Cc["@mozilla.org/globalmessagemanager;1"]
-                         .getService(Ci.nsIMessageBroadcaster);
-
+XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
+  "@mozilla.org/childprocessmessagemanager;1", "nsIMessageSender");
 
 // -----------------------------------------------------------------------
 // MozKeyboard
@@ -39,24 +36,20 @@ MozKeyboard.prototype = {
   }),
 
   init: function mozKeyboardInit(win) {
-    messageManager.loadFrameScript(kFormsFrameScript, true);
-    messageManager.addMessageListener("Forms:Input", this);
-
     Services.obs.addObserver(this, "inner-window-destroyed", false);
-    Services.obs.addObserver(this, 'in-process-browser-frame-shown', false);
-    Services.obs.addObserver(this, 'remote-browser-frame-shown', false);
+    cpmm.addMessageListener('Keyboard:FocusChange', this);
 
     this._window = win;
     this._utils = win.QueryInterface(Ci.nsIInterfaceRequestor)
                      .getInterface(Ci.nsIDOMWindowUtils);
     this.innerWindowID = this._utils.currentInnerWindowID;
-
     this._focusHandler = null;
   },
 
   uninit: function mozKeyboardUninit() {
     Services.obs.removeObserver(this, "inner-window-destroyed");
-    messageManager.removeMessageListener("Forms:Input", this);
+    cpmm.removeMessageListener('Keyboard:FocusChange', this);
+
     this._window = null;
     this._utils = null;
     this._focusHandler = null;
@@ -70,21 +63,25 @@ MozKeyboard.prototype = {
   },
 
   setSelectedOption: function mozKeyboardSetSelectedOption(index) {
-    messageManager.broadcastAsyncMessage("Forms:Select:Choice", {
-      "index": index
+    cpmm.sendAsyncMessage('Keyboard:SetSelectedOption', {
+      'index': index
     });
   },
 
   setValue: function mozKeyboardSetValue(value) {
-    messageManager.broadcastAsyncMessage("Forms:Input:Value", {
-      "value": value
+    cpmm.sendAsyncMessage('Keyboard:SetValue', {
+      'value': value
     });
   },
 
   setSelectedOptions: function mozKeyboardSetSelectedOptions(indexes) {
-    messageManager.broadcastAsyncMessage("Forms:Select:Choice", {
-      "indexes": indexes || []
+    cpmm.sendAsyncMessage('Keyboard:SetSelectedOptions', {
+      'indexes': indexes
     });
+  },
+
+  removeFocus: function mozKeyboardRemoveFocus() {
+    cpmm.sendAsyncMessage('Keyboard:RemoveFocus', {});
   },
 
   set onfocuschange(val) {
@@ -110,29 +107,11 @@ MozKeyboard.prototype = {
   },
 
   observe: function mozKeyboardObserve(subject, topic, data) {
-    switch (topic) {
-    case "inner-window-destroyed": {
-      let wId = subject.QueryInterface(Ci.nsISupportsPRUint64).data;
-      if (wId == this.innerWindowID) {
-        this.uninit();
-      }
-      break;
-    }
-    case 'remote-browser-frame-shown':
-    case 'in-process-browser-frame-shown': {
-      let frameLoader = subject.QueryInterface(Ci.nsIFrameLoader);
-      let mm = frameLoader.messageManager;
-      mm.addMessageListener("Forms:Input", this);
-      try {
-        mm.loadFrameScript(kFormsFrameScript, true);
-      } catch (e) {
-        dump('Error loading ' + kFormsFrameScript + ' as frame script: ' + e + '\n');
-      }
-      break;
-    }
-    }
+    let wId = subject.QueryInterface(Ci.nsISupportsPRUint64).data;
+    if (wId == this.innerWindowID)
+      this.uninit();
   }
 };
 
-const NSGetFactory = XPCOMUtils.generateNSGetFactory([MozKeyboard]);
+this.NSGetFactory = XPCOMUtils.generateNSGetFactory([MozKeyboard]);
 

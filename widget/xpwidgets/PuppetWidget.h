@@ -52,6 +52,8 @@ public:
                     nsDeviceContext*  aContext,
                     nsWidgetInitData* aInitData = nullptr);
 
+  void InitIMEState();
+
   virtual already_AddRefed<nsIWidget>
   CreateChild(const nsIntRect  &aRect,
               nsDeviceContext  *aContext,
@@ -131,13 +133,20 @@ public:
   // nsBaseWidget methods we override
   //
 
-//NS_IMETHOD              CaptureMouse(bool aCapture);
+  // Documents loaded in child processes are always subdocuments of
+  // other docs in an ancestor process.  To ensure that the
+  // backgrounds of those documents are painted like those of
+  // same-process subdocuments, we force the widget here to be
+  // transparent, which in turn will cause layout to use a transparent
+  // backstop background color.
+  virtual nsTransparencyMode GetTransparencyMode() MOZ_OVERRIDE
+  { return eTransparencyTransparent; }
+
   virtual LayerManager*
   GetLayerManager(PLayersChild* aShadowManager = nullptr,
                   LayersBackend aBackendHint = mozilla::layers::LAYERS_NONE,
                   LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
                   bool* aAllowRetaining = nullptr);
-//  virtual nsDeviceContext* GetDeviceContext();
   virtual gfxASurface*      GetThebesSurface();
 
   NS_IMETHOD ResetInputState();
@@ -162,6 +171,10 @@ public:
   // proper widget there. TODO: Handle DPI changes that happen
   // later on.
   virtual float GetDPI();
+
+  virtual bool NeedsPaint() MOZ_OVERRIDE;
+
+  virtual TabChild* GetOwningTabChild() MOZ_OVERRIDE { return mTabChild; }
 
 private:
   nsresult Paint();
@@ -206,6 +219,7 @@ private:
   // Note that if seqno overflows (~50 days at 1 ms increment rate),
   // events will be discarded until new focus/blur occurs
   uint32_t mIMELastBlurSeqno;
+  bool mNeedIMEStateInit;
 
   // The DPI of the screen corresponding to this widget
   float mDPI;

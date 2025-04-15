@@ -54,6 +54,7 @@
 #include "mozilla/dom/DirectionalityUtils.h"
 #include "nsDocument.h"
 #include "nsAttrValueOrString.h"
+#include "nsAttrValueInlines.h"
 #ifdef MOZ_XUL
 #include "nsXULElement.h"
 #endif /* MOZ_XUL */
@@ -101,7 +102,6 @@
 #include "nsRuleProcessorData.h"
 #include "nsAsyncDOMEvent.h"
 #include "nsTextNode.h"
-#include "dombindings.h"
 
 #ifdef MOZ_XUL
 #include "nsIXULDocument.h"
@@ -1160,8 +1160,11 @@ nsGenericElement::HasAttribute(const nsAString& aName, bool* aReturn)
 {
   NS_ENSURE_ARG_POINTER(aReturn);
 
-  const nsAttrName* name = InternalGetExistingAttrNameFromQName(aName);
-  *aReturn = (name != nullptr);
+  const nsAttrValue* val =
+    mAttrsAndChildren.GetAttr(aName,
+                              IsHTML() && IsInHTMLDocument() ?
+                                eIgnoreCase : eCaseMatters);
+  *aReturn = (val != nullptr);
 
   return NS_OK;
 }
@@ -1297,8 +1300,13 @@ nsGenericElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                (aParent && aParent->IsInNativeAnonymousSubtree()),
                "Trying to re-bind content from native anonymous subtree to "
                "non-native anonymous parent!");
-  if (aParent && aParent->IsInNativeAnonymousSubtree()) {
-    SetFlags(NODE_IS_IN_ANONYMOUS_SUBTREE);
+  if (aParent) {
+    if (aParent->IsInNativeAnonymousSubtree()) {
+      SetFlags(NODE_IS_IN_ANONYMOUS_SUBTREE);
+    }
+    if (aParent->HasFlag(NODE_CHROME_ONLY_ACCESS)) {
+      SetFlags(NODE_CHROME_ONLY_ACCESS);
+    }
   }
 
   bool hadForceXBL = HasFlag(NODE_FORCE_XBL_BINDINGS);
@@ -1687,6 +1695,20 @@ nsGenericElement::GetExistingAttrNameFromQName(const nsAString& aStr) const
   return nodeInfo;
 }
 
+NS_IMETHODIMP
+nsGenericElement::GetAttributes(nsIDOMNamedNodeMap** aAttributes)
+{
+  nsDOMSlots *slots = DOMSlots();
+
+  if (!slots->mAttributeMap) {
+    slots->mAttributeMap = new nsDOMAttributeMap(this);
+  }
+
+  NS_ADDREF(*aAttributes = slots->mAttributeMap);
+
+  return NS_OK;
+}
+
 // static
 bool
 nsGenericElement::ShouldBlur(nsIContent *aContent)
@@ -1809,9 +1831,9 @@ nsGenericElement::LeaveLink(nsPresContext* aPresContext)
 }
 
 nsresult
-nsGenericElement::AddScriptEventListener(nsIAtom* aEventName,
-                                         const nsAString& aValue,
-                                         bool aDefer)
+nsGenericElement::SetEventHandler(nsIAtom* aEventName,
+                                  const nsAString& aValue,
+                                  bool aDefer)
 {
   nsIDocument *ownerDoc = OwnerDoc();
   if (ownerDoc->IsLoadedAsData()) {
@@ -1829,8 +1851,9 @@ nsGenericElement::AddScriptEventListener(nsIAtom* aEventName,
   }
 
   defer = defer && aDefer; // only defer if everyone agrees...
-  manager->AddScriptEventListener(aEventName, aValue, nsIProgrammingLanguage::JAVASCRIPT,
-                                  defer, !nsContentUtils::IsChromeDoc(ownerDoc));
+  manager->SetEventHandler(aEventName, aValue,
+                           nsIProgrammingLanguage::JAVASCRIPT,
+                           defer, !nsContentUtils::IsChromeDoc(ownerDoc));
   return NS_OK;
 }
 

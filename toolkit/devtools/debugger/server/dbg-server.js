@@ -15,12 +15,16 @@ const Cc = Components.classes;
 const CC = Components.Constructor;
 const Cu = Components.utils;
 const Cr = Components.results;
+const DBG_STRINGS_URI = "chrome://global/locale/devtools/debugger.properties";
 
 Cu.import("resource://gre/modules/Services.jsm");
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 let wantLogging = Services.prefs.getBoolPref("devtools.debugger.log");
 
 Cu.import("resource://gre/modules/jsdebugger.jsm");
 addDebuggerToGlobal(this);
+
+Cu.import("resource://gre/modules/devtools/_Promise.jsm");
 
 function dumpn(str) {
   if (wantLogging) {
@@ -59,7 +63,49 @@ var DebuggerServer = {
   _listener: null,
   _transportInitialized: false,
   xpcInspector: null,
+  // Number of currently open TCP connections.
+  _socketConnections: 0,
+  // Map of global actor names to actor constructors provided by extensions.
+  globalActorFactories: null,
+  // Map of tab actor names to actor constructors provided by extensions.
+  tabActorFactories: null,
+
+  LONG_STRING_LENGTH: 10000,
+  LONG_STRING_INITIAL_LENGTH: 1000,
+
+  /**
+   * A handler function that prompts the user to accept or decline the incoming
+   * connection.
+   */
   _allowConnection: null,
+
+  /**
+   * Prompt the user to accept or decline the incoming connection. This is the
+   * default implementation that products embedding the debugger server may
+   * choose to override.
+   *
+   * @return true if the connection should be permitted, false otherwise
+   */
+  _defaultAllowConnection: function DH__defaultAllowConnection() {
+    let title = L10N.getStr("remoteIncomingPromptTitle");
+    let msg = L10N.getStr("remoteIncomingPromptMessage");
+    let disableButton = L10N.getStr("remoteIncomingPromptDisable");
+    let prompt = Services.prompt;
+    let flags = prompt.BUTTON_POS_0 * prompt.BUTTON_TITLE_OK +
+                prompt.BUTTON_POS_1 * prompt.BUTTON_TITLE_CANCEL +
+                prompt.BUTTON_POS_2 * prompt.BUTTON_TITLE_IS_STRING +
+                prompt.BUTTON_POS_1_DEFAULT;
+    let result = prompt.confirmEx(null, title, msg, flags, null, null,
+                                  disableButton, null, { value: false });
+    if (result == 0) {
+      return true;
+    }
+    if (result == 2) {
+      DebuggerServer.closeListener(true);
+      Services.prefs.setBoolPref("devtools.debugger.remote-enabled", false);
+    }
+    return false;
+  },
 
   /**
    * Initialize the debugger server.
@@ -76,6 +122,9 @@ var DebuggerServer = {
     this.xpcInspector = Cc["@mozilla.org/jsinspector;1"].getService(Ci.nsIJSInspector);
     this.initTransport(aAllowConnectionCallback);
     this.addActors("chrome://global/content/devtools/dbg-script-actors.js");
+
+    this.globalActorFactories = {};
+    this.tabActorFactories = {};
   },
 
   /**
@@ -94,10 +143,30 @@ var DebuggerServer = {
     this._connections = {};
     this._nextConnID = 0;
     this._transportInitialized = true;
-    this._allowConnection = aAllowConnectionCallback;
+    this._allowConnection = aAllowConnectionCallback ?
+                            aAllowConnectionCallback :
+                            this._defaultAllowConnection;
   },
 
-  get initialized() { return !!this.xpcInspector; },
+  get initialized() { return !!this.globalActorFactories; },
+
+  /**
+   * Performs cleanup tasks before shutting down the debugger server, if no
+   * connections are currently open. Such tasks include clearing any actor
+   * constructors added at runtime. This method should be called whenever a
+   * debugger server is no longer useful, to avoid memory leaks. After this
+   * method returns, the debugger server must be initialized again before use.
+   */
+  destroy: function DH_destroy() {
+    if (Object.keys(this._connections).length == 0) {
+      this.closeListener();
+      delete this.globalActorFactories;
+      delete this.tabActorFactories;
+      delete this._allowConnection;
+      this._transportInitialized = false;
+      dumpn("Debugger server is shut down.");
+    }
+  },
 
   /**
    * Load a subscript into the debugging global.
@@ -116,6 +185,11 @@ var DebuggerServer = {
    */
   addBrowserActors: function DH_addBrowserActors() {
     this.addActors("chrome://global/content/devtools/dbg-browser-actors.js");
+    this.addActors("chrome://global/content/devtools/dbg-webconsole-actors.js");
+    this.addTabActor(this.WebConsoleActor, "consoleActor");
+    this.addGlobalActor(this.WebConsoleActor, "consoleActor");
+    if ("nsIProfiler" in Ci)
+      this.addActors("chrome://global/content/devtools/dbg-profiler-actors.js");
   },
 
   /**
@@ -130,8 +204,9 @@ var DebuggerServer = {
     }
     this._checkInit();
 
+    // Return early if the server is already listening.
     if (this._listener) {
-      throw "Debugging listener already open.";
+      return true;
     }
 
     let localOnly = false;
@@ -148,29 +223,38 @@ var DebuggerServer = {
       dumpn("Could not start debugging listener on port " + aPort + ": " + e);
       throw Cr.NS_ERROR_NOT_AVAILABLE;
     }
+    this._socketConnections++;
 
     return true;
   },
 
   /**
    * Close a previously-opened TCP listener.
+   *
+   * @param aForce boolean [optional]
+   *        If set to true, then the socket will be closed, regardless of the
+   *        number of open connections.
    */
-  closeListener: function DH_closeListener() {
-    this._checkInit();
-
-    if (!this._listener) {
+  closeListener: function DH_closeListener(aForce) {
+    if (!this._listener || this._socketConnections == 0) {
       return false;
     }
 
-    this._listener.close();
-    this._listener = null;
+    // Only close the listener when the last connection is closed, or if the
+    // aForce flag is passed.
+    if (--this._socketConnections == 0 || aForce) {
+      this._listener.close();
+      this._listener = null;
+      this._socketConnections = 0;
+    }
 
     return true;
   },
 
   /**
-   * Creates a new connection to the local debugger speaking over an
-   * nsIPipe.
+   * Creates a new connection to the local debugger speaking over a fake
+   * transport. This connection results in straightforward calls to the onPacket
+   * handlers of each side.
    *
    * @returns a client-side DebuggerTransport for communicating with
    *          the newly-created connection.
@@ -178,22 +262,21 @@ var DebuggerServer = {
   connectPipe: function DH_connectPipe() {
     this._checkInit();
 
-    let toServer = Cc["@mozilla.org/pipe;1"].createInstance(Ci.nsIPipe);
-    toServer.init(true, true, 0, 0, null);
-    let toClient = Cc["@mozilla.org/pipe;1"].createInstance(Ci.nsIPipe);
-    toClient.init(true, true, 0, 0, null);
-
-    let serverTransport = new DebuggerTransport(toServer.inputStream,
-                                                toClient.outputStream);
+    let serverTransport = new LocalDebuggerTransport;
+    let clientTransport = new LocalDebuggerTransport(serverTransport);
+    serverTransport.other = clientTransport;
     this._onConnection(serverTransport);
 
-    return new DebuggerTransport(toClient.inputStream, toServer.outputStream);
+    return clientTransport;
   },
 
 
   // nsIServerSocketListener implementation
 
   onSocketAccepted: function DH_onSocketAccepted(aSocket, aTransport) {
+    if (!this._allowConnection()) {
+      return;
+    }
     dumpn("New debugging connection on " + aTransport.host + ":" + aTransport.port);
 
     try {
@@ -206,7 +289,9 @@ var DebuggerServer = {
     }
   },
 
-  onStopListening: function DH_onStopListening() { },
+  onStopListening: function DS_onStopListening(aSocket, status) {
+    dumpn("onStopListening, status: " + status);
+  },
 
   /**
    * Raises an exception if the server has not been properly initialized.
@@ -226,9 +311,6 @@ var DebuggerServer = {
    * after connectPipe() or after an incoming socket connection.
    */
   _onConnection: function DH_onConnection(aTransport) {
-    if (!this._allowConnection()) {
-      return;
-    }
     let connID = "conn" + this._nextConnID++ + '.';
     let conn = new DebuggerServerConnection(connID, aTransport);
     this._connections[connID] = conn;
@@ -275,7 +357,11 @@ ActorPool.prototype = {
   addActor: function AP_addActor(aActor) {
     aActor.conn = this.conn;
     if (!aActor.actorID) {
-      aActor.actorID = this.conn.allocID(aActor.actorPrefix || undefined);
+      let prefix = aActor.actorPrefix;
+      if (typeof aActor == "function") {
+        prefix = aActor.prototype.actorPrefix;
+      }
+      aActor.actorID = this.conn.allocID(prefix || undefined);
     }
 
     if (aActor.registeredPool) {
@@ -295,6 +381,13 @@ ActorPool.prototype = {
 
   has: function AP_has(aActorID) {
     return aActorID in this._actors;
+  },
+
+  /**
+   * Returns true if the pool is empty.
+   */
+  isEmpty: function AP_isEmpty() {
+    return Object.keys(this._actors).length == 0;
   },
 
   /**
@@ -434,6 +527,28 @@ DebuggerServerConnection.prototype = {
       return;
     }
 
+    // Dyamically-loaded actors have to be created lazily.
+    if (typeof actor == "function") {
+      let instance;
+      try {
+        instance = new actor();
+      } catch (e) {
+        Cu.reportError(e);
+        this.transport.send({
+          error: "unknownError",
+          message: ("error occurred while creating actor '" + actor.name +
+                    "': " + safeErrorString(e))
+        });
+      }
+      instance.parentID = actor.parentID;
+      // We want the newly-constructed actor to completely replace the factory
+      // actor. Reusing the existing actor ID will make sure ActorPool.addActor
+      // does the right thing.
+      instance.actorID = actor.actorID;
+      actor.registeredPool.addActor(instance);
+      actor = instance;
+    }
+
     var ret = null;
 
     // Dispatch the request to the actor.
@@ -484,3 +599,23 @@ DebuggerServerConnection.prototype = {
     DebuggerServer._connectionClosed(this);
   }
 };
+
+/**
+ * Localization convenience methods.
+ */
+let L10N = {
+
+  /**
+   * L10N shortcut function.
+   *
+   * @param string aName
+   * @return string
+   */
+  getStr: function L10N_getStr(aName) {
+    return this.stringBundle.GetStringFromName(aName);
+  }
+};
+
+XPCOMUtils.defineLazyGetter(L10N, "stringBundle", function() {
+  return Services.strings.createBundle(DBG_STRINGS_URI);
+});

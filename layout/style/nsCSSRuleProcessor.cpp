@@ -42,6 +42,7 @@
 #include "nsStyleUtil.h"
 #include "nsQuickSort.h"
 #include "nsAttrValue.h"
+#include "nsAttrValueInlines.h"
 #include "nsAttrName.h"
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
@@ -1906,27 +1907,6 @@ static bool SelectorMatches(Element* aElement,
         if (!nthChildGenericMatches(aElement, aTreeMatchContext, pseudoClass,
                                     true, true)) {
           return false;
-        }
-        break;
-
-      case nsCSSPseudoClasses::ePseudoClass_mozHasHandlerRef:
-        {
-          nsIContent *child = nullptr;
-          int32_t index = -1;
-
-          do {
-            child = aElement->GetChildAt(++index);
-            if (child && child->IsHTML() &&
-                child->Tag() == nsGkAtoms::param &&
-                child->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name,
-                                   NS_LITERAL_STRING("pluginurl"),
-                                   eIgnoreCase)) {
-              break;
-            }
-          } while (child);
-          if (!child) {
-            return false;
-          }
         }
         break;
 

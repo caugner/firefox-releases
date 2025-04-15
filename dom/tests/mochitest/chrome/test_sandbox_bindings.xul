@@ -26,7 +26,7 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=741267
       var sandbox = Components.utils.Sandbox(win, { sandboxPrototype: win });
       try {
         var nl = Components.utils.evalInSandbox("NodeList", sandbox);
-        is(nl, "[object NodeList]", "'NodeList' in a sandbox should return the NodeList interface prototype object");
+        is(nl, String(NodeList), "'NodeList' in a sandbox should return the NodeList interface prototype object");
       } catch (e) {
         ok(false, "'NodeList' shouldn't throw in a sandbox");
       }
@@ -67,6 +67,17 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=741267
           is(data.data[i], data2.data[i], "Data at " + i + " should match");
       } catch (e) {
         ok(false, "Imagedata manipulation via an Xray shouldn't throw " + e);
+      }
+
+      // And now tests that don't use a window-associated sandbox
+      sandbox = Components.utils.Sandbox(win.document.nodePrincipal,
+                                         { sandboxPrototype: win });
+      try {
+        var ws = Components.utils.evalInSandbox('var ws = new WebSocket("ws://example.org"); ws', sandbox);
+        // Test that we actually got a WebSocket object, probably
+        ok("bufferedAmount" in ws, "What is this object?");
+      } catch (e) {
+        ok(false, "Should be able to create a WebSocket in a sandbox " + e);
       }
       SimpleTest.finish();
     }

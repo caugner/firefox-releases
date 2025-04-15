@@ -220,6 +220,14 @@ IDBTransaction::OnRequestFinished()
 }
 
 void
+IDBTransaction::OnRequestDisconnected()
+{
+  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  NS_ASSERTION(mPendingRequests, "Mismatched calls!");
+  --mPendingRequests;
+}
+
+void
 IDBTransaction::RemoveObjectStore(const nsAString& aName)
 {
   NS_ASSERTION(mMode == IDBTransaction::VERSION_CHANGE,
@@ -329,12 +337,12 @@ IDBTransaction::RollbackSavepoint()
   nsCOMPtr<mozIStorageStatement> stmt = GetCachedStatement(NS_LITERAL_CSTRING(
     "ROLLBACK TO SAVEPOINT " SAVEPOINT_NAME
   ));
-  NS_ENSURE_TRUE(stmt,);
+  NS_ENSURE_TRUE_VOID(stmt);
 
   mozStorageStatementScoper scoper(stmt);
 
   nsresult rv = stmt->Execute();
-  NS_ENSURE_SUCCESS(rv,);
+  NS_ENSURE_SUCCESS_VOID(rv);
 }
 
 nsresult
@@ -591,9 +599,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(IDBTransaction,
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mDatabase,
                                                        nsIDOMEventTarget)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mError);
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(error)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(complete)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(abort)
 
   for (uint32_t i = 0; i < tmp->mCreatedObjectStores.Length(); i++) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mCreatedObjectStores[i]");
@@ -610,9 +615,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(IDBTransaction, IDBWrapperCache)
   // Don't unlink mDatabase!
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mError);
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(error)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(complete)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(abort)
 
   tmp->mCreatedObjectStores.Clear();
   tmp->mDeletedObjectStores.Clear();
@@ -630,9 +632,9 @@ NS_IMPL_RELEASE_INHERITED(IDBTransaction, IDBWrapperCache)
 
 DOMCI_DATA(IDBTransaction, IDBTransaction)
 
-NS_IMPL_EVENT_HANDLER(IDBTransaction, error);
-NS_IMPL_EVENT_HANDLER(IDBTransaction, complete);
-NS_IMPL_EVENT_HANDLER(IDBTransaction, abort);
+NS_IMPL_EVENT_HANDLER(IDBTransaction, error)
+NS_IMPL_EVENT_HANDLER(IDBTransaction, complete)
+NS_IMPL_EVENT_HANDLER(IDBTransaction, abort)
 
 NS_IMETHODIMP
 IDBTransaction::GetDb(nsIIDBDatabase** aDB)
@@ -1071,14 +1073,14 @@ UpdateRefcountFunction::DidCommit()
   mFileInfoEntries.EnumerateRead(FileInfoUpdateCallback, nullptr);
 
   nsresult rv = RemoveJournals(mJournalsToRemoveAfterCommit);
-  NS_ENSURE_SUCCESS(rv,);
+  NS_ENSURE_SUCCESS_VOID(rv);
 }
 
 void
 UpdateRefcountFunction::DidAbort()
 {
   nsresult rv = RemoveJournals(mJournalsToRemoveAfterAbort);
-  NS_ENSURE_SUCCESS(rv,);
+  NS_ENSURE_SUCCESS_VOID(rv);
 }
 
 nsresult

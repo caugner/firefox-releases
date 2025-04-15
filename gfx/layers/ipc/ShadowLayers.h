@@ -226,11 +226,6 @@ public:
   bool EndTransaction(InfallibleTArray<EditReply>* aReplies);
 
   /**
-   * Composite ShadowLayerManager's layer tree into aTarget.
-   */
-  bool ShadowDrawToTarget(gfxContext* aTarget);
-
-  /**
    * Set an actor through which layer updates will be pushed.
    */
   void SetShadowManager(PLayersChild* aShadowManager)
@@ -319,6 +314,8 @@ public:
   virtual int32_t GetMaxTextureSize() const { return mMaxTextureSize; }
   void SetMaxTextureSize(int32_t aMaxTextureSize) { mMaxTextureSize = aMaxTextureSize; }
 
+  static void PlatformSyncBeforeUpdate();
+
 protected:
   ShadowLayerForwarder();
 
@@ -378,8 +375,6 @@ private:
   PlatformCloseDescriptor(const SurfaceDescriptor& aDescriptor);
 
   bool PlatformDestroySharedSurface(SurfaceDescriptor* aSurface);
-
-  static void PlatformSyncBeforeUpdate();
 
   Transaction* mTxn;
   int32_t mMaxTextureSize;

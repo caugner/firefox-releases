@@ -26,6 +26,7 @@
 #include "nsIEventTarget.h"
 #include "nsILoadContext.h"
 #include "nsNetUtil.h"
+#include "PrivateBrowsingChannel.h"
 
 extern PRLogModuleInfo * gWyciwygLog;
 
@@ -33,7 +34,8 @@ extern PRLogModuleInfo * gWyciwygLog;
 
 class nsWyciwygChannel: public nsIWyciwygChannel,
                         public nsIStreamListener,
-                        public nsICacheListener
+                        public nsICacheListener,
+                        public mozilla::net::PrivateBrowsingChannel<nsWyciwygChannel>
 {
 public:
     NS_DECL_ISUPPORTS
@@ -67,6 +69,8 @@ protected:
 
     void NotifyListener();
     bool IsOnCacheIOThread();
+
+    friend class mozilla::net::PrivateBrowsingChannel<nsWyciwygChannel>;
 
     nsresult                            mStatus;
     bool                                mIsPending;

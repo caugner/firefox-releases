@@ -6,7 +6,7 @@
 
 "use strict";
 
-var EXPORTED_SYMBOLS = [
+this.EXPORTED_SYMBOLS = [
   "DownloadsCommon",
 ];
 
@@ -87,7 +87,7 @@ XPCOMUtils.defineLazyGetter(this, "DownloadsLocalFileCtor", function () {
  * This object is exposed directly to the consumers of this JavaScript module,
  * and provides shared methods for all the instances of the user interface.
  */
-const DownloadsCommon = {
+this.DownloadsCommon = {
   /**
    * Returns an object whose keys are the string names from the downloads string
    * bundle, and whose values are either the translated strings or functions
@@ -864,7 +864,7 @@ DownloadsDataItem.prototype = {
     // The download database may contain targets stored as file URLs or native
     // paths.  This can still be true for previously stored items, even if new
     // items are stored using their file URL.  See also bug 239948 comment 12.
-    if (/^file:/.test(this.file)) {
+    if (this.file.startsWith("file:")) {
       // Assume the file URL we obtained from the downloads database or from the
       // "spec" property of the target has the UTF-8 charset.
       let fileUrl = NetUtil.newURI(this.file).QueryInterface(Ci.nsIFileURL);

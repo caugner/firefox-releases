@@ -21,6 +21,7 @@ public:
     : mFontFace(aFont)
     , ScaledFontBase(aSize)
   {}
+  ScaledFontDWrite(uint8_t *aData, uint32_t aSize, uint32_t aIndex, Float aGlyphSize);
 
   virtual FontType GetType() const { return FONT_DWRITE; }
 
@@ -28,6 +29,10 @@ public:
   virtual void CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder);
 
   void CopyGlyphsToSink(const GlyphBuffer &aBuffer, ID2D1GeometrySink *aSink);
+
+  virtual bool GetFontFileData(FontFileDataOutput aDataCallback, void *aBaton);
+
+  virtual AntialiasMode GetDefaultAAMode();
 
 #ifdef USE_SKIA
   virtual SkTypeface* GetSkTypeface()

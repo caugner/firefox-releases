@@ -8,6 +8,7 @@
 #include "nsCOMPtr.h"
 #include "nsFrameSetFrame.h"
 #include "nsGenericHTMLElement.h"
+#include "nsAttrValueInlines.h"
 #include "nsLeafFrame.h"
 #include "nsContainerFrame.h"
 #include "nsPresContext.h"
@@ -292,7 +293,7 @@ nsHTMLFramesetFrame::Init(nsIContent*      aContent,
     return NS_ERROR_OUT_OF_MEMORY; 
 
   // Ensure we can't overflow numCells
-  PR_STATIC_ASSERT(NS_MAX_FRAMESET_SPEC_COUNT < PR_INT32_MAX / NS_MAX_FRAMESET_SPEC_COUNT);
+  PR_STATIC_ASSERT(NS_MAX_FRAMESET_SPEC_COUNT < INT32_MAX / NS_MAX_FRAMESET_SPEC_COUNT);
   int32_t numCells = mNumRows*mNumCols;
 
   PR_STATIC_ASSERT(NS_MAX_FRAMESET_SPEC_COUNT < UINT_MAX / sizeof(nsHTMLFramesetBorderFrame*));
@@ -1320,7 +1321,7 @@ nsHTMLFramesetFrame::RecalculateBorderResize()
     return;
   }
 
-  PR_STATIC_ASSERT(NS_MAX_FRAMESET_SPEC_COUNT < PR_INT32_MAX / NS_MAX_FRAMESET_SPEC_COUNT);
+  PR_STATIC_ASSERT(NS_MAX_FRAMESET_SPEC_COUNT < INT32_MAX / NS_MAX_FRAMESET_SPEC_COUNT);
   int32_t numCells = mNumRows * mNumCols; // max number of cells
   PR_STATIC_ASSERT(NS_MAX_FRAMESET_SPEC_COUNT
                    < UINT_MAX / sizeof(int32_t) / NS_MAX_FRAMESET_SPEC_COUNT); 

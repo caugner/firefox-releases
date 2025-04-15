@@ -85,6 +85,7 @@
 #include "nsChangeHint.h"
 #include "nsDeckFrame.h"
 #include "nsTableFrame.h"
+#include "nsSubDocumentFrame.h"
 
 #include "gfxContext.h"
 #include "nsRenderingContext.h"
@@ -97,6 +98,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/css/ImageLoader.h"
+#include "mozilla/gfx/Tools.h"
 
 using namespace mozilla;
 using namespace mozilla::layers;
@@ -253,15 +255,6 @@ void
 nsIFrame::MarkAsAbsoluteContainingBlock() {
   AddStateBits(NS_FRAME_HAS_ABSPOS_CHILDREN);
   Properties().Set(AbsoluteContainingBlockProperty(), new nsAbsoluteContainingBlock(GetAbsoluteListID()));
-}
-
-void
-nsIFrame::ClearDisplayItemCache()
-{
-  if (GetStateBits() & NS_FRAME_HAS_CACHED_BACKGROUND) {
-    Properties().Delete(CachedBackgroundImage());
-    RemoveStateBits(NS_FRAME_HAS_CACHED_BACKGROUND);
-  }
 }
 
 bool
@@ -455,6 +448,7 @@ IsFontSizeInflationContainer(nsIFrame* aFrame,
                    (aFrame->GetParent()->GetContent() == content) ||
                    (content && (content->IsHTML(nsGkAtoms::option) ||
                                 content->IsHTML(nsGkAtoms::optgroup) ||
+                                content->IsHTML(nsGkAtoms::select) ||
                                 content->IsInNativeAnonymousSubtree()))) &&
                   !(aFrame->IsBoxFrame() && aFrame->GetParent()->IsBoxFrame());
   NS_ASSERTION(!aFrame->IsFrameOfType(nsIFrame::eLineParticipant) ||
@@ -503,7 +497,8 @@ nsFrame::Init(nsIContent*      aContent,
     // Make bits that are currently off (see constructor) the same:
     mState |= state & (NS_FRAME_INDEPENDENT_SELECTION |
                        NS_FRAME_GENERATED_CONTENT |
-                       NS_FRAME_IS_SVG_TEXT);
+                       NS_FRAME_IS_SVG_TEXT |
+                       NS_FRAME_IN_POPUP);
   }
   const nsStyleDisplay *disp = GetStyleDisplay();
   if (disp->HasTransform()) {
@@ -841,8 +836,8 @@ const nsIFrame::ChildListID nsIFrame::kNoReflowPrincipalList;
 nsIFrame::GetUsedMargin() const
 {
   nsMargin margin(0, 0, 0, 0);
-  if ((mState & NS_FRAME_FIRST_REFLOW) &&
-      !(mState & NS_FRAME_IN_REFLOW) ||
+  if (((mState & NS_FRAME_FIRST_REFLOW) &&
+       !(mState & NS_FRAME_IN_REFLOW)) ||
       (mState & NS_FRAME_IS_SVG_TEXT))
     return margin;
 
@@ -864,8 +859,8 @@ nsIFrame::GetUsedMargin() const
 nsIFrame::GetUsedBorder() const
 {
   nsMargin border(0, 0, 0, 0);
-  if ((mState & NS_FRAME_FIRST_REFLOW) &&
-      !(mState & NS_FRAME_IN_REFLOW) ||
+  if (((mState & NS_FRAME_FIRST_REFLOW) &&
+       !(mState & NS_FRAME_IN_REFLOW)) ||
       (mState & NS_FRAME_IS_SVG_TEXT))
     return border;
 
@@ -900,8 +895,8 @@ nsIFrame::GetUsedBorder() const
 nsIFrame::GetUsedPadding() const
 {
   nsMargin padding(0, 0, 0, 0);
-  if ((mState & NS_FRAME_FIRST_REFLOW) &&
-      !(mState & NS_FRAME_IN_REFLOW) ||
+  if (((mState & NS_FRAME_FIRST_REFLOW) &&
+       !(mState & NS_FRAME_IN_REFLOW)) ||
       (mState & NS_FRAME_IS_SVG_TEXT))
     return padding;
 
@@ -976,7 +971,8 @@ nsIFrame::IsTransformed() const
            IsSVGTransformed() ||
            (mContent &&
             nsLayoutUtils::HasAnimationsForCompositor(mContent,
-                                                      eCSSProperty_transform))));
+                                                      eCSSProperty_transform) &&
+            mContent->GetPrimaryFrame() == this)));
 }
 
 bool
@@ -984,7 +980,8 @@ nsIFrame::HasOpacity() const
 {
   return GetStyleDisplay()->mOpacity < 1.0f || (mContent &&
            nsLayoutUtils::HasAnimationsForCompositor(mContent,
-                                                     eCSSProperty_opacity));
+                                                     eCSSProperty_opacity) &&
+           mContent->GetPrimaryFrame() == this);
 }
 
 bool
@@ -1265,6 +1262,23 @@ nsFrame::GetChildLists(nsTArray<ChildList>* aLists) const
   }
 }
 
+void
+nsIFrame::GetCrossDocChildLists(nsTArray<ChildList>* aLists)
+{
+  nsSubDocumentFrame* subdocumentFrame = do_QueryFrame(this);
+  if (subdocumentFrame) {
+    // Descend into the subdocument
+    nsIFrame* root = subdocumentFrame->GetSubdocumentRootFrame();
+    if (root) {
+      aLists->AppendElement(nsIFrame::ChildList(
+        nsFrameList(root, nsLayoutUtils::GetLastSibling(root)),
+        nsIFrame::kPrincipalList));
+    }
+  }
+
+  GetChildLists(aLists);
+}
+
 static nsIFrame*
 GetActiveSelectionFrame(nsPresContext* aPresContext, nsIFrame* aFrame)
 {
@@ -1454,18 +1468,20 @@ nsresult
 nsFrame::DisplayBackgroundUnconditional(nsDisplayListBuilder*   aBuilder,
                                         const nsDisplayListSet& aLists,
                                         bool                    aForceBackground,
-                                        nsDisplayBackground**   aBackground)
+                                        nsDisplayBackgroundImage**   aBackground)
 {
+  *aBackground = nullptr;
+
   // Here we don't try to detect background propagation. Frames that might
   // receive a propagated background should just set aForceBackground to
   // true.
   if (aBuilder->IsForEventDelivery() || aForceBackground ||
       !GetStyleBackground()->IsTransparent() || GetStyleDisplay()->mAppearance) {
-    nsDisplayBackground* bg = new (aBuilder) nsDisplayBackground(aBuilder, this);
-    *aBackground = bg;
-    return aLists.BorderBackground()->AppendNewToTop(bg);
+    return nsDisplayBackgroundImage::AppendBackgroundItemsToTop(aBuilder, this,
+                                                           aLists.BorderBackground(),
+                                                           aBackground);
   }
-  *aBackground = nullptr;
+
   return NS_OK;
 }
 
@@ -1487,7 +1503,7 @@ nsFrame::DisplayBorderBackgroundOutline(nsDisplayListBuilder*   aBuilder,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  nsDisplayBackground* bg;
+  nsDisplayBackgroundImage* bg;
   nsresult rv =
     DisplayBackgroundUnconditional(aBuilder, aLists, aForceBackground, &bg);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1755,8 +1771,8 @@ WrapPreserve3DListInternal(nsIFrame* aFrame, nsDisplayListBuilder *aBuilder, nsD
             newList.AppendToTop(new (aBuilder) nsDisplayTransform(aBuilder, aFrame, &temp, aIndex++));
           }
           nsDisplayWrapList *list = static_cast<nsDisplayWrapList*>(item);
-          rv = WrapPreserve3DListInternal(aFrame, aBuilder, list->GetList(), aIndex);
-          newList.AppendToTop(list->GetList());
+          rv = WrapPreserve3DListInternal(aFrame, aBuilder, list->GetChildren(), aIndex);
+          newList.AppendToTop(list->GetChildren());
           list->~nsDisplayWrapList();
           break;
         }
@@ -1765,7 +1781,10 @@ WrapPreserve3DListInternal(nsIFrame* aFrame, nsDisplayListBuilder *aBuilder, nsD
             newList.AppendToTop(new (aBuilder) nsDisplayTransform(aBuilder, aFrame, &temp, aIndex++));
           }
           nsDisplayOpacity *opacity = static_cast<nsDisplayOpacity*>(item);
-          rv = WrapPreserve3DListInternal(aFrame, aBuilder, opacity->GetList(), aIndex);
+          // Call GetChildren, not GetSameCoordinateSystemChildren, because
+          // the preserve-3d children of 'opacity' are temporarily not in the
+          // same coordinate system as the opacity --- until this wrapping is done.
+          rv = WrapPreserve3DListInternal(aFrame, aBuilder, opacity->GetChildren(), aIndex);
           opacity->UpdateBounds(aBuilder);
           newList.AppendToTop(item);
           break;
@@ -1813,8 +1832,11 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   nsRect clipPropClip;
   const nsStyleDisplay* disp = GetStyleDisplay();
   // We can stop right away if this is a zero-opacity stacking context and
-  // we're painting, and we're not animating opacity.
+  // we're painting, and we're not animating opacity. Don't do this
+  // if we're going to compute plugin geometry, since opacity-0 plugins
+  // need to have display items built for them.
   if (disp->mOpacity == 0.0 && aBuilder->IsForPainting() &&
+      !aBuilder->WillComputePluginGeometry() &&
       !nsLayoutUtils::HasAnimationsForCompositor(mContent,
                                                  eCSSProperty_opacity)) {
     return NS_OK;
@@ -2791,22 +2813,70 @@ nsFrame::HandlePress(nsPresContext* aPresContext,
   return rv;
 }
 
+/*
+ * SelectByTypeAtPoint
+ *
+ * Search for selectable content at point and attempt to select
+ * based on the start and end selection behaviours.
+ *
+ * @param aPresContext Presentation context
+ * @param aPoint Point at which selection will occur. Coordinates
+ * should be relaitve to this frame.
+ * @param aBeginAmountType, aEndAmountType Selection behavior, see
+ * nsIFrame for definitions.
+ * @param aSelectFlags Selection flags defined in nsFame.h.
+ * @return success or failure at finding suitable content to select.
+ */
+nsresult
+nsFrame::SelectByTypeAtPoint(nsPresContext* aPresContext,
+                             const nsPoint& aPoint,
+                             nsSelectionAmount aBeginAmountType,
+                             nsSelectionAmount aEndAmountType,
+                             uint32_t aSelectFlags)
+{
+  NS_ENSURE_ARG_POINTER(aPresContext);
+
+  // No point in selecting if selection is turned off
+  if (DisplaySelection(aPresContext) == nsISelectionController::SELECTION_OFF)
+    return NS_OK;
+
+  ContentOffsets offsets = GetContentOffsetsFromPoint(aPoint, SKIP_HIDDEN);
+  if (!offsets.content)
+    return NS_ERROR_FAILURE;
+
+  nsIFrame* theFrame;
+  int32_t offset;
+  const nsFrameSelection* frameSelection =
+    PresContext()->GetPresShell()->ConstFrameSelection();
+  theFrame = frameSelection->
+    GetFrameForNodeOffset(offsets.content, offsets.offset,
+                          nsFrameSelection::HINT(offsets.associateWithNext),
+                          &offset);
+  if (!theFrame)
+    return NS_ERROR_FAILURE;
+
+  nsFrame* frame = static_cast<nsFrame*>(theFrame);
+  return frame->PeekBackwardAndForward(aBeginAmountType, aEndAmountType,
+                                       offsets.offset, aPresContext,
+                                       aBeginAmountType != eSelectWord,
+                                       aSelectFlags);
+}
+
 /**
   * Multiple Mouse Press -- line or paragraph selection -- for the frame.
   * Wouldn't it be nice if this didn't have to be hardwired into Frame code?
  */
 NS_IMETHODIMP
-nsFrame::HandleMultiplePress(nsPresContext* aPresContext, 
+nsFrame::HandleMultiplePress(nsPresContext* aPresContext,
                              nsGUIEvent*    aEvent,
                              nsEventStatus* aEventStatus,
                              bool           aControlHeld)
 {
+  NS_ENSURE_ARG_POINTER(aEvent);
   NS_ENSURE_ARG_POINTER(aEventStatus);
-  if (nsEventStatus_eConsumeNoDefault == *aEventStatus) {
-    return NS_OK;
-  }
 
-  if (DisplaySelection(aPresContext) == nsISelectionController::SELECTION_OFF) {
+  if (nsEventStatus_eConsumeNoDefault == *aEventStatus ||
+      DisplaySelection(aPresContext) == nsISelectionController::SELECTION_OFF) {
     return NS_OK;
   }
 
@@ -2834,37 +2904,18 @@ nsFrame::HandleMultiplePress(nsPresContext* aPresContext,
     return NS_OK;
   }
 
-  nsPoint pt = nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, this);
-  ContentOffsets offsets = GetContentOffsetsFromPoint(pt, SKIP_HIDDEN);
-  if (!offsets.content) return NS_ERROR_FAILURE;
-
-  nsIFrame* theFrame;
-  int32_t offset;
-  // Maybe make this a static helper?
-  const nsFrameSelection* frameSelection =
-    PresContext()->GetPresShell()->ConstFrameSelection();
-  theFrame = frameSelection->
-    GetFrameForNodeOffset(offsets.content, offsets.offset,
-                          nsFrameSelection::HINT(offsets.associateWithNext),
-                          &offset);
-  if (!theFrame)
-    return NS_ERROR_FAILURE;
-
-  nsFrame* frame = static_cast<nsFrame*>(theFrame);
-
-  return frame->PeekBackwardAndForward(beginAmount, endAmount,
-                                       offsets.offset, aPresContext,
-                                       beginAmount != eSelectWord,
-                                       aControlHeld);
+  nsPoint relPoint = nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, this);
+  return SelectByTypeAtPoint(aPresContext, relPoint, beginAmount, endAmount,
+                             (aControlHeld ? SELECT_ACCUMULATE : 0));
 }
 
-NS_IMETHODIMP
+nsresult
 nsFrame::PeekBackwardAndForward(nsSelectionAmount aAmountBack,
                                 nsSelectionAmount aAmountForward,
                                 int32_t aStartPos,
                                 nsPresContext* aPresContext,
                                 bool aJumpLines,
-                                bool aMultipleSelection)
+                                uint32_t aSelectFlags)
 {
   nsIFrame* baseFrame = this;
   int32_t baseOffset = aStartPos;
@@ -2918,7 +2969,7 @@ nsFrame::PeekBackwardAndForward(nsSelectionAmount aAmountBack,
 
   rv = frameSelection->HandleClick(startpos.mResultContent,
                                    startpos.mContentOffset, startpos.mContentOffset,
-                                   false, aMultipleSelection,
+                                   false, (aSelectFlags & SELECT_ACCUMULATE),
                                    nsFrameSelection::HINTRIGHT);
   if (NS_FAILED(rv))
     return rv;
@@ -3365,9 +3416,8 @@ static FrameTarget GetSelectionClosestFrameForBlock(nsIFrame* aFrame,
   nsBlockFrame::line_iterator end = bf->end_lines();
   if (firstLine == end) {
     nsIContent *blockContent = aFrame->GetContent();
-    if (blockContent && blockContent->IsEditable()) {
-      // If the frame is ediable empty block, we should return it with empty
-      // flag.
+    if (blockContent) {
+      // Return with empty flag true.
       return FrameTarget(aFrame, false, false, true);
     }
     return FrameTarget::Null();
@@ -3886,16 +3936,47 @@ nsFrame::ComputeSize(nsRenderingContext *aRenderingContext,
   }
   nscoord boxSizingToMarginEdgeWidth =
     aMargin.width + aBorder.width + aPadding.width - boxSizingAdjust.width;
+  const nsStyleCoord* widthStyleCoord = &(stylePos->mWidth);
+  const nsStyleCoord* heightStyleCoord = &(stylePos->mHeight);
+
+  bool isFlexItem = IsFlexItem();
+  bool isHorizontalFlexItem = false;
+ 
+#ifdef MOZ_FLEXBOX
+  if (isFlexItem) {
+    // Flex items use their "flex-basis" property in place of their main-size
+    // property (e.g. "width") for sizing purposes, *unless* they have
+    // "flex-basis:auto", in which case they use their main-size property after
+    // all.
+    uint32_t flexDirection = mParent->GetStylePosition()->mFlexDirection;
+    isHorizontalFlexItem =
+      flexDirection == NS_STYLE_FLEX_DIRECTION_ROW ||
+      flexDirection == NS_STYLE_FLEX_DIRECTION_ROW_REVERSE;
+
+    if (stylePos->mFlexBasis.GetUnit() != eStyleUnit_Auto) {
+      if (isHorizontalFlexItem) {
+        widthStyleCoord = &(stylePos->mFlexBasis);
+      } else {
+        heightStyleCoord = &(stylePos->mFlexBasis);
+      }
+    }
+  }
+#endif // MOZ_FLEXBOX
+
   // Compute width
 
-  if (stylePos->mWidth.GetUnit() != eStyleUnit_Auto) {
+  if (widthStyleCoord->GetUnit() != eStyleUnit_Auto) {
     result.width =
       nsLayoutUtils::ComputeWidthValue(aRenderingContext, this,
         aCBSize.width, boxSizingAdjust.width, boxSizingToMarginEdgeWidth,
-        stylePos->mWidth);
+        *widthStyleCoord);
   }
 
-  if (stylePos->mMaxWidth.GetUnit() != eStyleUnit_None) {
+  // Flex items ignore their min & max sizing properties in their
+  // flex container's main-axis.  (Those properties get applied later in
+  // the flexbox algorithm.)
+  if (stylePos->mMaxWidth.GetUnit() != eStyleUnit_None &&
+      !(isFlexItem && isHorizontalFlexItem)) {
     nscoord maxWidth =
       nsLayoutUtils::ComputeWidthValue(aRenderingContext, this,
         aCBSize.width, boxSizingAdjust.width, boxSizingToMarginEdgeWidth,
@@ -3903,22 +3984,38 @@ nsFrame::ComputeSize(nsRenderingContext *aRenderingContext,
     result.width = NS_MIN(maxWidth, result.width);
   }
 
-  nscoord minWidth =
-    nsLayoutUtils::ComputeWidthValue(aRenderingContext, this,
-      aCBSize.width, boxSizingAdjust.width, boxSizingToMarginEdgeWidth,
-      stylePos->mMinWidth);
+  nscoord minWidth;
+  if (stylePos->mMinWidth.GetUnit() != eStyleUnit_Auto &&
+      !(isFlexItem && isHorizontalFlexItem)) {
+    minWidth =
+      nsLayoutUtils::ComputeWidthValue(aRenderingContext, this,
+        aCBSize.width, boxSizingAdjust.width, boxSizingToMarginEdgeWidth,
+        stylePos->mMinWidth);
+  } else {
+    // Treat "min-width: auto" as 0.
+    // NOTE: Technically, "auto" is supposed to behave like "min-content" on
+    // flex items. However, we don't need to worry about that here, because
+    // flex items' min-sizes are intentionally ignored until the flex
+    // container explicitly considers them during space distribution.
+    minWidth = 0;
+  }
   result.width = NS_MAX(minWidth, result.width);
 
   // Compute height
-  if (!nsLayoutUtils::IsAutoHeight(stylePos->mHeight, aCBSize.height)) {
+  // (but not if we're auto-height or if we recieved the "eUseAutoHeight"
+  // flag -- then, we'll just stick with the height that we already calculated
+  // in the initial ComputeAutoSize() call.)
+  if (!nsLayoutUtils::IsAutoHeight(*heightStyleCoord, aCBSize.height) &&
+      !(aFlags & nsIFrame::eUseAutoHeight)) {
     result.height =
       nsLayoutUtils::ComputeHeightValue(aCBSize.height, 
                                         boxSizingAdjust.height,
-                                        stylePos->mHeight);
+                                        *heightStyleCoord);
   }
 
   if (result.height != NS_UNCONSTRAINEDSIZE) {
-    if (!nsLayoutUtils::IsAutoHeight(stylePos->mMaxHeight, aCBSize.height)) {
+    if (!nsLayoutUtils::IsAutoHeight(stylePos->mMaxHeight, aCBSize.height) &&
+        !(isFlexItem && !isHorizontalFlexItem)) {
       nscoord maxHeight =
         nsLayoutUtils::ComputeHeightValue(aCBSize.height, 
                                           boxSizingAdjust.height,
@@ -3926,7 +4023,8 @@ nsFrame::ComputeSize(nsRenderingContext *aRenderingContext,
       result.height = NS_MIN(maxHeight, result.height);
     }
 
-    if (!nsLayoutUtils::IsAutoHeight(stylePos->mMinHeight, aCBSize.height)) {
+    if (!nsLayoutUtils::IsAutoHeight(stylePos->mMinHeight, aCBSize.height) &&
+        !(isFlexItem && !isHorizontalFlexItem)) {
       nscoord minHeight =
         nsLayoutUtils::ComputeHeightValue(aCBSize.height, 
                                           boxSizingAdjust.height, 
@@ -4056,6 +4154,8 @@ nsFrame::DidReflow(nsPresContext*           aPresContext,
 {
   NS_FRAME_TRACE_MSG(NS_FRAME_TRACE_CALLS,
                      ("nsFrame::DidReflow: aStatus=%d", aStatus));
+
+  nsSVGEffects::InvalidateDirectRenderingObservers(this, nsSVGEffects::INVALIDATE_REFLOW);
 
   if (NS_FRAME_REFLOW_FINISHED == aStatus) {
     mState &= ~(NS_FRAME_IN_REFLOW | NS_FRAME_FIRST_REFLOW | NS_FRAME_IS_DIRTY |
@@ -4491,46 +4591,6 @@ nsIFrame::IsLeaf() const
   return true;
 }
 
-Layer*
-nsIFrame::InvalidateLayer(const nsRect& aDamageRect, uint32_t aDisplayItemKey)
-{
-  NS_ASSERTION(aDisplayItemKey > 0, "Need a key");
-
-  Layer* layer = FrameLayerBuilder::GetDedicatedLayer(this, aDisplayItemKey);
-  if (!layer) {
-    Invalidate(aDamageRect);
-    return nullptr;
-  }
-
-  uint32_t flags = INVALIDATE_NO_THEBES_LAYERS;
-  if (aDisplayItemKey == nsDisplayItem::TYPE_VIDEO ||
-      aDisplayItemKey == nsDisplayItem::TYPE_PLUGIN ||
-      aDisplayItemKey == nsDisplayItem::TYPE_CANVAS) {
-    flags |= INVALIDATE_NO_UPDATE_LAYER_TREE;
-  }
-
-  InvalidateWithFlags(aDamageRect, flags);
-  return layer;
-}
-
-void
-nsIFrame::InvalidateTransformLayer()
-{
-  NS_ASSERTION(mParent, "How can a viewport frame have a transform?");
-
-  bool hasLayer =
-      FrameLayerBuilder::GetDedicatedLayer(this, nsDisplayItem::TYPE_TRANSFORM) != nullptr;
-  // Invalidate post-transform area in the parent. We have to invalidate
-  // in the parent because our transform style may have changed from what was
-  // used to paint this frame.
-  // It's OK to bypass the SVG effects processing and other processing
-  // performed if we called this->InvalidateWithFlags, because those effects
-  // are performed before applying transforms.
-  mParent->InvalidateInternal(GetVisualOverflowRect() + GetPosition(),
-                              0, 0, this,
-                              hasLayer ? INVALIDATE_NO_THEBES_LAYERS : 0);
-}
-
 class LayerActivity {
 public:
   LayerActivity(nsIFrame* aFrame) : mFrame(aFrame), mChangeHint(nsChangeHint(0)) {}
@@ -4583,8 +4643,19 @@ LayerActivityTracker::NotifyExpired(LayerActivity* aObject)
 
   nsIFrame* f = aObject->mFrame;
   aObject->mFrame = nullptr;
+
+  // if there are hints other than transform/opacity, invalidate, since we don't know what else to do.
+  if (aObject->mChangeHint & ~(nsChangeHint_UpdateOpacityLayer|nsChangeHint_UpdateTransformLayer)) {
+    f->InvalidateFrameSubtree();
+  } else {
+    if (aObject->mChangeHint & nsChangeHint_UpdateOpacityLayer) {
+      f->InvalidateFrameSubtree(nsDisplayItem::TYPE_OPACITY);
+    } 
+    if (aObject->mChangeHint & nsChangeHint_UpdateTransformLayer) {
+      f->InvalidateFrameSubtree(nsDisplayItem::TYPE_TRANSFORM);
+    }
+  } 
   f->Properties().Delete(LayerActivityProperty());
-  f->InvalidateFrameSubtree();
 }
 
 void
@@ -4627,159 +4698,8 @@ nsFrame::ShutdownLayerActivityTimer()
   gLayerActivityTracker = nullptr;
 }
 
-void
-nsIFrame::InvalidateWithFlags(const nsRect& aDamageRect, uint32_t aFlags)
-{
-  if (aDamageRect.IsEmpty()) {
-    return;
-  }
-
-  // Don't allow invalidates to do anything when
-  // painting is suppressed.
-  nsIPresShell *shell = PresContext()->GetPresShell();
-  if (shell) {
-    if (shell->IsPaintingSuppressed())
-      return;
-  }
-
-  InvalidateInternal(aDamageRect, 0, 0, nullptr, aFlags);
-}
-
-static void InvalidateAncestorOfOutOfFlow(nsIFrame* aFrame)
-{
-  nsIFrame* placeholder =
-    aFrame->PresContext()->FrameManager()->GetPlaceholderFrameFor(aFrame);
-  if (!placeholder)
-    return;
-  // If there's an ancestor of the placeholder that isn't an ancestor of
-  // aFrame, and that ancestor has a container layer, we need to
-  // invalidate the ThebesLayer children of that container layer since
-  // they will contain the rendering of aFrame! This is rare, so
-  // just be aggressive and invalidate everything in the ThebesLayers.
-  // We can't optimize this using the geometry of f since the area of aFrame
-  // is not necessarily included in the overflow area of f (since f isn't
-  // an ancestor of aFrame).
-  for (nsIFrame* f = placeholder; f && f != aFrame->GetParent(); f = f->GetParent()) {
-    if (f->GetStateBits() & NS_FRAME_HAS_CONTAINER_LAYER) {
-      FrameLayerBuilder::InvalidateThebesLayersInSubtreeWithUntrustedFrameGeometry(f);
-      return;
-    }
-  }
-}
-
-/**
- * Helper function that funnels an InvalidateInternal request up to the
- * parent.  This function is used so that if MOZ_SVG is not defined, we still
- * have unified control paths in the InvalidateInternal chain.
- *
- * @param aDamageRect The rect to invalidate.
- * @param aX The x offset from the origin of this frame to the rectangle.
- * @param aY The y offset from the origin of this frame to the rectangle.
- * @param aImmediate Whether to redraw immediately.
- * @return None, though this funnels the request up to the parent frame.
- */
-void
-nsIFrame::InvalidateInternalAfterResize(const nsRect& aDamageRect, nscoord aX,
-                                        nscoord aY, uint32_t aFlags)
-{
-  if (aDamageRect.IsEmpty()) {
-    return;
-  }
-
-  /* If we're a transformed frame, then we need to apply our transform to the
-   * damage rectangle so that the redraw correctly redraws the transformed
-   * region.  We're moved over aX and aY from our origin, but since this aX
-   * and aY is contained within our border, we need to scoot back by -aX and
-   * -aY to get back to the origin of the transform.
-   *
-   * There's one more problem, though, and that's that we don't know what
-   * coordinate space this rectangle is in.  Sometimes it's in the local
-   * coordinate space for the frame, and sometimes its in the transformed
-   * coordinate space.  If we get it wrong, we'll display incorrectly.  Until I
-   * find a better fix for this problem, we'll invalidate the union of the two
-   * rectangles (original rectangle and transformed rectangle).  At least one of
-   * these will be correct.
-   *
-   * When we are preserving-3d, we can have arbitrary hierarchies of preserved 3d
-   * children. The computed transform on these children is relative to the root
-   * transform object in the hierarchy, not necessarily their direct ancestor.
-   * In this case we transform by the child's transform, and mark the rectangle
-   * as being transformed until it is passed up to the root of the hierarchy.
-   *
-   * See bug #452496 for more details.
-   */
-
-  // Check the transformed flags and remove it
-  bool rectIsTransformed = (aFlags & INVALIDATE_ALREADY_TRANSFORMED);
-  if (!Preserves3D()) {
-    // We only want to remove the flag if we aren't preserving 3d. Otherwise
-    // the rect will already have been transformed into the root preserve-3d
-    // frame coordinate space, and we should continue passing it up without
-    // further transforms.
-    aFlags &= ~INVALIDATE_ALREADY_TRANSFORMED;
-  }
-
-  if (mState & NS_FRAME_OUT_OF_FLOW) {
-    InvalidateAncestorOfOutOfFlow(this);
-  }
-
-  if ((mState & NS_FRAME_HAS_CONTAINER_LAYER) &&
-      !(aFlags & INVALIDATE_NO_THEBES_LAYERS)) {
-    // XXX need to set INVALIDATE_NO_THEBES_LAYERS for certain kinds of
-    // invalidation, e.g. video update, 'opacity' change
-    FrameLayerBuilder::InvalidateThebesLayerContents(this,
-        aDamageRect + nsPoint(aX, aY));
-    // Don't need to invalidate any more Thebes layers
-    aFlags |= INVALIDATE_NO_THEBES_LAYERS;
-    if (aFlags & INVALIDATE_ONLY_THEBES_LAYERS) {
-      return;
-    }
-  }
-  if (IsTransformed() && !rectIsTransformed) {
-    nsRect newDamageRect = nsDisplayTransform::TransformRectOut
-                             (aDamageRect, this, nsPoint(-aX, -aY));
-    if (!(GetStateBits() & NS_FRAME_SVG_LAYOUT)) {
-      newDamageRect.UnionRect(newDamageRect, aDamageRect);
-    }
-
-    // If we are preserving 3d, then our computed transform includes that of any
-    // ancestor frames that also preserve 3d. Mark the rectangle as already being
-    // transformed into the parent's coordinate space.
-    if (Preserves3D()) {
-      aFlags |= INVALIDATE_ALREADY_TRANSFORMED;
-    }
-
-    GetParent()->
-      InvalidateInternal(newDamageRect, aX + mRect.x, aY + mRect.y, this,
-                         aFlags);
-  }
-  else 
-    GetParent()->
-      InvalidateInternal(aDamageRect, aX + mRect.x, aY + mRect.y, this, aFlags);
-}
-
-void
-nsIFrame::InvalidateInternal(const nsRect& aDamageRect, nscoord aX, nscoord aY,
-                             nsIFrame* aForChild, uint32_t aFlags)
-{
-  ClearDisplayItemCache();
-  nsSVGEffects::InvalidateDirectRenderingObservers(this);
-  if (nsSVGIntegrationUtils::UsingEffectsForFrame(this)) {
-    nsRect r = nsSVGIntegrationUtils::AdjustInvalidAreaForSVGEffects(this,
-            aDamageRect + nsPoint(aX, aY));
-    /* Rectangle is now in our own local space, so aX and aY are effectively
-     * zero.  Thus we'll pretend that the entire time this was in our own
-     * local coordinate space and do any remaining processing.
-     */
-    InvalidateInternalAfterResize(r, 0, 0, aFlags);
-    return;
-  }
-  
-  InvalidateInternalAfterResize(aDamageRect, aX, aY, aFlags);
-}
-
 gfx3DMatrix
-nsIFrame::GetTransformMatrix(nsIFrame* aStopAtAncestor,
+nsIFrame::GetTransformMatrix(const nsIFrame* aStopAtAncestor,
                              nsIFrame** aOutAncestor)
 {
   NS_PRECONDITION(aOutAncestor, "Need a place to put the ancestor!");
@@ -4845,63 +4765,242 @@ nsIFrame::GetTransformMatrix(nsIFrame* aStopAtAncestor,
      0.0f);
 }
 
-void
-nsIFrame::InvalidateRectDifference(const nsRect& aR1, const nsRect& aR2)
+static void InvalidateFrameInternal(nsIFrame *aFrame, bool aHasDisplayItem = true)
 {
-  nsRect sizeHStrip, sizeVStrip;
-  nsLayoutUtils::GetRectDifferenceStrips(aR1, aR2, &sizeHStrip, &sizeVStrip);
-  Invalidate(sizeVStrip);
-  Invalidate(sizeHStrip);
+  if (aHasDisplayItem) {
+    aFrame->AddStateBits(NS_FRAME_NEEDS_PAINT);
+  }
+  nsSVGEffects::InvalidateDirectRenderingObservers(aFrame);
+  nsIFrame *parent = nsLayoutUtils::GetCrossDocParentFrame(aFrame);
+  bool needsSchedulePaint = false;
+  while (parent && !parent->HasAnyStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT)) {
+    if (aHasDisplayItem) {
+      parent->AddStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT);
+    }
+    nsSVGEffects::InvalidateDirectRenderingObservers(parent);
+
+    // If we're inside a popup, then we need to make sure that we
+    // call schedule paint so that the NS_FRAME_UPDATE_LAYER_TREE
+    // flag gets added to the popup display root frame.
+    if (nsLayoutUtils::IsPopup(parent)) {
+      needsSchedulePaint = true;
+      break;
+    }
+    parent = nsLayoutUtils::GetCrossDocParentFrame(parent);
+  }
+  if (!aHasDisplayItem) {
+    return;
+  }
+  if (!parent || needsSchedulePaint) {
+    aFrame->SchedulePaint();
+  }
+  if (aFrame->HasAnyStateBits(NS_FRAME_HAS_INVALID_RECT)) {
+    aFrame->Properties().Delete(nsIFrame::InvalidationRect());
+    aFrame->RemoveStateBits(NS_FRAME_HAS_INVALID_RECT);
+  }
+  if (aFrame->HasAnyStateBits(NS_FRAME_HAS_CACHED_BACKGROUND)) {
+    aFrame->Properties().Delete(nsIFrame::CachedBackgroundImage());
+    aFrame->RemoveStateBits(NS_FRAME_HAS_CACHED_BACKGROUND);
+  }
 }
 
 void
-nsIFrame::InvalidateFrameSubtree()
+nsIFrame::InvalidateFrameSubtree(uint32_t aDisplayItemKey)
 {
-  Invalidate(GetVisualOverflowRectRelativeToSelf());
-  FrameLayerBuilder::InvalidateThebesLayersInSubtree(this);
+  bool hasDisplayItem = 
+    !aDisplayItemKey || FrameLayerBuilder::HasRetainedDataFor(this, aDisplayItemKey);
+  InvalidateFrame(aDisplayItemKey);
+
+  if (HasAnyStateBits(NS_FRAME_ALL_DESCENDANTS_NEED_PAINT) || !hasDisplayItem) {
+    return;
+  }
+
+  AddStateBits(NS_FRAME_ALL_DESCENDANTS_NEED_PAINT);
+  
+  nsAutoTArray<nsIFrame::ChildList,4> childListArray;
+  GetCrossDocChildLists(&childListArray);
+
+  nsIFrame::ChildListArrayIterator lists(childListArray);
+  for (; !lists.IsDone(); lists.Next()) {
+    nsFrameList::Enumerator childFrames(lists.CurrentList());
+    for (; !childFrames.AtEnd(); childFrames.Next()) {
+      childFrames.get()->InvalidateFrameSubtree();
+    }
+  }
 }
 
 void
-nsIFrame::InvalidateOverflowRect()
+nsIFrame::ClearInvalidationStateBits()
 {
-  Invalidate(GetVisualOverflowRectRelativeToSelf());
-}
+  if (HasAnyStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT)) {
+    nsAutoTArray<nsIFrame::ChildList,4> childListArray;
+    GetCrossDocChildLists(&childListArray);
 
-NS_DECLARE_FRAME_PROPERTY(DeferInvalidatesProperty, nsIFrame::DestroyRegion)
-
-void
-nsIFrame::InvalidateRoot(const nsRect& aDamageRect, uint32_t aFlags)
-{
-  NS_ASSERTION(nsLayoutUtils::GetDisplayRootFrame(this) == this,
-               "Can only call this on display roots");
-
-  if ((mState & NS_FRAME_HAS_CONTAINER_LAYER) &&
-      !(aFlags & INVALIDATE_NO_THEBES_LAYERS)) {
-    FrameLayerBuilder::InvalidateThebesLayerContents(this, aDamageRect);
-    if (aFlags & INVALIDATE_ONLY_THEBES_LAYERS) {
-      return;
+    nsIFrame::ChildListArrayIterator lists(childListArray);
+    for (; !lists.IsDone(); lists.Next()) {
+      nsFrameList::Enumerator childFrames(lists.CurrentList());
+      for (; !childFrames.AtEnd(); childFrames.Next()) {
+        childFrames.get()->ClearInvalidationStateBits();
+      }
     }
   }
 
-  nsRect rect = aDamageRect;
-  nsRegion* excludeRegion = static_cast<nsRegion*>
-    (Properties().Get(DeferInvalidatesProperty()));
-  if (excludeRegion && (aFlags & INVALIDATE_EXCLUDE_CURRENT_PAINT)) {
-    nsRegion r;
-    r.Sub(rect, *excludeRegion);
-    if (r.IsEmpty())
-      return;
-    rect = r.GetBounds();
-  }
-
-  if (!(aFlags & INVALIDATE_NO_UPDATE_LAYER_TREE)) {
-    AddStateBits(NS_FRAME_UPDATE_LAYER_TREE);
-  }
-
-  nsIView* view = GetView();
-  NS_ASSERTION(view, "This can only be called on frames with views");
-  view->GetViewManager()->InvalidateViewNoSuppression(view, rect);
+  RemoveStateBits(NS_FRAME_NEEDS_PAINT | 
+                  NS_FRAME_DESCENDANT_NEEDS_PAINT | 
+                  NS_FRAME_ALL_DESCENDANTS_NEED_PAINT);
 }
+
+void
+nsIFrame::InvalidateFrame(uint32_t aDisplayItemKey)
+{
+  bool hasDisplayItem = 
+    !aDisplayItemKey || FrameLayerBuilder::HasRetainedDataFor(this, aDisplayItemKey);
+  InvalidateFrameInternal(this, hasDisplayItem);
+}
+
+void
+nsIFrame::InvalidateFrameWithRect(const nsRect& aRect, uint32_t aDisplayItemKey)
+{
+  bool hasDisplayItem = 
+    !aDisplayItemKey || FrameLayerBuilder::HasRetainedDataFor(this, aDisplayItemKey);
+  bool alreadyInvalid = false;
+  if (!HasAnyStateBits(NS_FRAME_NEEDS_PAINT)) {
+    InvalidateFrameInternal(this, hasDisplayItem);
+  } else {
+    alreadyInvalid = true;
+  } 
+
+  if (!hasDisplayItem) {
+    return;
+  }
+
+  nsRect *rect = static_cast<nsRect*>(Properties().Get(InvalidationRect()));
+  if (!rect) {
+    if (alreadyInvalid) {
+      return;
+    }
+    rect = new nsRect();
+    Properties().Set(InvalidationRect(), rect);
+    AddStateBits(NS_FRAME_HAS_INVALID_RECT);
+  }
+
+  *rect = rect->Union(aRect);
+}
+
+/*static*/ uint8_t nsIFrame::sLayerIsPrerenderedDataKey;
+
+bool
+nsIFrame::TryUpdateTransformOnly()
+{
+  Layer* layer = FrameLayerBuilder::GetDedicatedLayer(
+    this, nsDisplayItem::TYPE_TRANSFORM);
+  if (!layer || !layer->HasUserData(LayerIsPrerenderedDataKey())) {
+    // If this layer isn't prerendered or we clip composites to our OS
+    // window, then we can't correctly optimize to an empty
+    // transaction in general.
+    return false;
+  }
+
+  gfx3DMatrix transform3d;
+  if (!nsLayoutUtils::GetLayerTransformForFrame(this, &transform3d)) {
+    // We're not able to compute a layer transform that we know would
+    // be used at the next layers transaction, so we can't only update
+    // the transform and will need to schedule an invalidating paint.
+    return false;
+  }
+  gfxMatrix transform, previousTransform;
+  // FIXME/bug 796690 and 796705: in general, changes to 3D
+  // transforms, or transform changes to properties other than
+  // translation, may lead us to choose a different rendering
+  // resolution for our layer.  So if the transform is 3D or has a
+  // non-translation change, bail and schedule an invalidating paint.
+  // (We can often do better than this, for example for scale-down
+  // changes.)
+ static const gfx::Float kError = 0.0001;
+  if (!transform3d.Is2D(&transform) ||
+      !layer->GetTransform().Is2D(&previousTransform) ||
+      !gfx::FuzzyEqual(transform.xx, previousTransform.xx, kError) ||
+      !gfx::FuzzyEqual(transform.yy, previousTransform.yy, kError) ||
+      !gfx::FuzzyEqual(transform.xy, previousTransform.xy, kError) ||
+      !gfx::FuzzyEqual(transform.yx, previousTransform.yx, kError)) {
+    return false;
+  }
+  layer->SetBaseTransformForNextTransaction(transform3d);
+  return true;
+}
+
+bool 
+nsIFrame::IsInvalid(nsRect& aRect)
+{
+  if (!HasAnyStateBits(NS_FRAME_NEEDS_PAINT)) {
+    return false;
+  }
+  
+  if (HasAnyStateBits(NS_FRAME_HAS_INVALID_RECT)) {
+    nsRect *rect = static_cast<nsRect*>(Properties().Get(InvalidationRect()));
+    NS_ASSERTION(rect, "Must have an invalid rect if NS_FRAME_HAS_INVALID_RECT is set!");
+    aRect = *rect;
+  } else {
+    aRect.SetEmpty();
+  }
+  return true;
+}
+
+void
+nsIFrame::SchedulePaint(uint32_t aFlags)
+{
+  nsIFrame *displayRoot = nsLayoutUtils::GetDisplayRootFrame(this);
+  nsPresContext *pres = displayRoot->PresContext()->GetRootPresContext();
+
+  // No need to schedule a paint for an external document since they aren't
+  // painted directly.
+  if (!pres || (pres->Document() && pres->Document()->GetDisplayDocument())) {
+    return;
+  }
+  
+  pres->PresShell()->ScheduleViewManagerFlush();
+  if (!(aFlags & PAINT_COMPOSITE_ONLY)) {
+    displayRoot->AddStateBits(NS_FRAME_UPDATE_LAYER_TREE);
+  }
+  nsIPresShell* shell = PresContext()->PresShell();
+  if (shell) {
+    shell->AddInvalidateHiddenPresShellObserver(pres->RefreshDriver());
+  }
+}
+
+Layer*
+nsIFrame::InvalidateLayer(uint32_t aDisplayItemKey, const nsIntRect* aDamageRect)
+{
+  NS_ASSERTION(aDisplayItemKey > 0, "Need a key");
+
+  Layer* layer = FrameLayerBuilder::GetDedicatedLayer(this, aDisplayItemKey);
+  if (aDamageRect && aDamageRect->IsEmpty()) {
+    return layer;
+  }
+
+  if (!layer) {
+    // Plugins can transition from not rendering anything to rendering,
+    // and still only call this. So always invalidate, with specifying
+    // the display item type just in case.
+    if (aDisplayItemKey == nsDisplayItem::TYPE_PLUGIN) {
+      InvalidateFrame();
+    } else {
+      InvalidateFrame(aDisplayItemKey);
+    }
+    return nullptr;
+  }
+
+  if (aDamageRect) {
+    layer->AddInvalidRect(*aDamageRect);
+  } else {
+    layer->SetInvalidRectToVisibleRegion();
+  }
+
+  SchedulePaint(PAINT_COMPOSITE_ONLY);
+  return layer;
+}
+
+NS_DECLARE_FRAME_PROPERTY(DeferInvalidatesProperty, nsIFrame::DestroyRegion)
 
 void
 nsIFrame::BeginDeferringInvalidatesForDisplayRoot(const nsRegion& aExcludeRegion)
@@ -5154,107 +5253,6 @@ nsFrame::UpdateOverflow()
   return false;
 }
 
-void
-nsFrame::CheckInvalidateSizeChange(nsHTMLReflowMetrics& aNewDesiredSize)
-{
-  nsIFrame::CheckInvalidateSizeChange(mRect, GetVisualOverflowRect(),
-      nsSize(aNewDesiredSize.width, aNewDesiredSize.height));
-}
-
-static void
-InvalidateRectForFrameSizeChange(nsIFrame* aFrame, const nsRect& aRect)
-{
-  nsStyleContext *bgSC;
-  if (!nsCSSRendering::FindBackground(aFrame->PresContext(), aFrame, &bgSC)) {
-    nsIFrame* rootFrame =
-      aFrame->PresContext()->PresShell()->FrameManager()->GetRootFrame();
-    rootFrame->Invalidate(nsRect(nsPoint(0, 0), rootFrame->GetSize()));
-  }
-
-  aFrame->Invalidate(aRect);
-}
-
-void
-nsIFrame::CheckInvalidateSizeChange(const nsRect& aOldRect,
-                                    const nsRect& aOldVisualOverflowRect,
-                                    const nsSize& aNewDesiredSize)
-{
-  if (aNewDesiredSize == aOldRect.Size())
-    return;
-
-  // Below, we invalidate the old frame area (or, in the case of
-  // outline, combined area) if the outline, border or background
-  // settings indicate that something other than the difference
-  // between the old and new areas needs to be painted. We are
-  // assuming that the difference between the old and new areas will
-  // be invalidated by some other means. That also means invalidating
-  // the old frame area is the same as invalidating the new frame area
-  // (since in either case the UNION of old and new areas will be
-  // invalidated)
-
-  // We use InvalidateRectForFrameSizeChange throughout this method, even
-  // though root-invalidation is technically only needed in the case where
-  // layer.RenderingMightDependOnFrameSize().  This allows us to simplify the
-  // code somewhat and return immediately after invalidation in the earlier
-  // cases.
-
-  // Invalidate the entire old frame+outline if the frame has an outline
-  bool anyOutlineOrEffects;
-  nsRect r = ComputeOutlineAndEffectsRect(this, &anyOutlineOrEffects,
-                                          aOldVisualOverflowRect,
-                                          aNewDesiredSize,
-                                          false);
-  if (anyOutlineOrEffects) {
-    r.UnionRect(aOldVisualOverflowRect, r);
-    InvalidateRectForFrameSizeChange(this, r);
-    return;
-  }
-
-  // Invalidate the old frame border box if the frame has borders. Those
-  // borders may be moving.
-  const nsStyleBorder* border = GetStyleBorder();
-  NS_FOR_CSS_SIDES(side) {
-    if (border->GetComputedBorderWidth(side) != 0) {
-      if ((side == NS_SIDE_LEFT || side == NS_SIDE_TOP) &&
-          !nsLayoutUtils::HasNonZeroCornerOnSide(border->mBorderRadius, side) &&
-          !border->GetBorderImage() &&
-          border->GetBorderStyle(side) == NS_STYLE_BORDER_STYLE_SOLID) {
-        // We also need to be sure that the bottom-left or top-right
-        // corner is simple. For example, if the bottom or right border
-        // has a different color, we would need to invalidate the corner
-        // area. But that's OK because if there is a right or bottom border,
-        // we'll invalidate the entire border-box here anyway.
-        continue;
-      }
-      InvalidateRectForFrameSizeChange(this, nsRect(0, 0, aOldRect.width, aOldRect.height));
-      return;
-    }
-  }
-
-  const nsStyleBackground *bg = GetStyleBackground();
-  if (!bg->IsTransparent()) {
-    // Invalidate the old frame background if the frame has a background
-    // whose position depends on the size of the frame
-    NS_FOR_VISIBLE_BACKGROUND_LAYERS_BACK_TO_FRONT(i, bg) {
-      const nsStyleBackground::Layer &layer = bg->mLayers[i];
-      if (layer.RenderingMightDependOnFrameSize()) {
-        InvalidateRectForFrameSizeChange(this, nsRect(0, 0, aOldRect.width, aOldRect.height));
-        return;
-      }
-    }
-
-    // Invalidate the old frame background if the frame has a background
-    // that is being clipped by border-radius, since the old or new area
-    // clipped off by the radius is not necessarily in the area that has
-    // already been invalidated (even if only the top-left corner has a
-    // border radius).
-    if (nsLayoutUtils::HasNonZeroCorner(border->mBorderRadius)) {
-      InvalidateRectForFrameSizeChange(this, nsRect(0, 0, aOldRect.width, aOldRect.height));
-      return;
-    }
-  }
-}
-
 // Define the MAX_FRAME_DEPTH to be the ContentSink's MAX_REFLOW_DEPTH plus
 // 4 for the frames above the document's frames: 
 //  the Viewport, GFXScroll, ScrollPort, and Canvas
@@ -5360,7 +5358,7 @@ DebugListFrameTree(nsIFrame* aFrame)
 
 // Debugging
 NS_IMETHODIMP
-nsFrame::List(FILE* out, int32_t aIndent) const
+nsFrame::List(FILE* out, int32_t aIndent, uint32_t aFlags) const
 {
   IndentBy(out, aIndent);
   ListTag(out);
@@ -5593,13 +5591,13 @@ NS_IMETHODIMP
 nsFrame::DumpRegressionData(nsPresContext* aPresContext, FILE* out, int32_t aIndent)
 {
   IndentBy(out, aIndent);
-  fprintf(out, "<frame va=\"%ld\" type=\"", PRUptrdiff(this));
+  fprintf(out, "<frame va=\"%p\" type=\"", (void*)this);
   nsAutoString name;
   GetFrameName(name);
   XMLQuote(name);
   fputs(NS_LossyConvertUTF16toASCII(name).get(), out);
-  fprintf(out, "\" state=\"%016llx\" parent=\"%ld\">\n",
-          (unsigned long long)GetDebugStateBits(), PRUptrdiff(mParent));
+  fprintf(out, "\" state=\"%016llx\" parent=\"%p\">\n",
+          (unsigned long long)GetDebugStateBits(), (void*)mParent);
 
   aIndent++;
   DumpBaseRegressionData(aPresContext, out, aIndent);
@@ -5616,12 +5614,12 @@ nsFrame::DumpBaseRegressionData(nsPresContext* aPresContext, FILE* out, int32_t 
 {
   if (GetNextSibling()) {
     IndentBy(out, aIndent);
-    fprintf(out, "<next-sibling va=\"%ld\"/>\n", PRUptrdiff(GetNextSibling()));
+    fprintf(out, "<next-sibling va=\"%p\"/>\n", (void*)GetNextSibling());
   }
 
   if (HasView()) {
     IndentBy(out, aIndent);
-    fprintf(out, "<view va=\"%ld\">\n", PRUptrdiff(GetView()));
+    fprintf(out, "<view va=\"%p\">\n", (void*)GetView());
     aIndent++;
     // XXX add in code to dump out view state too...
     aIndent--;
@@ -7001,7 +6999,7 @@ nsIFrame::FinishAndStoreOverflow(nsOverflowAreas& aOverflowAreas,
       // If there is no outline or other effects now, then we don't have
       // to do anything here since removing those styles can't require
       // repainting of areas that weren't in the old overflow area.
-      Invalidate(aOverflowAreas.VisualOverflow());
+      InvalidateFrame();
     } else if (hasClipPropClip || didHaveClipPropClip) {
       // If we are (or were) clipped by the 'clip' property, and our
       // overflow area changes, it might be because the clipping changed.
@@ -7009,32 +7007,13 @@ nsIFrame::FinishAndStoreOverflow(nsOverflowAreas& aOverflowAreas,
       // repaint the old overflow area, so if the overflow area has
       // changed (in particular, if it grows), we have to repaint the
       // new area here.
-      Invalidate(aOverflowAreas.VisualOverflow());
+      InvalidateFrame();
     }
   }
-  // XXXSDL For SVG the invalidation happens in ReflowSVG for now, so we
-  // don't currently invalidate SVG here:
-  if (anyOverflowChanged && hasTransform &&
-      !(GetStateBits() & NS_FRAME_SVG_LAYOUT)) {
-    // When there's a transform, changes to that style might require
-    // repainting of the old and new overflow areas in the widget.
-    // Repainting of the frame itself will not be required if there's
-    // a retained layer, so we can call InvalidateLayer here
-    // which will avoid repainting ThebesLayers if possible.
-    // nsCSSFrameConstructor::DoApplyRenderingChangeToTree repaints
-    // the old overflow area in the widget in response to
-    // nsChangeHint_UpdateTransformLayer. But since the new overflow
-    // area is not known at that time, we have to handle it here.
-    // If the overflow area hasn't changed, then it doesn't matter that
-    // we didn't reach here since repainting the old overflow area was enough.
-    // If there is no transform now, then the container layer for
-    // the transform will go away and the frame contents will change
-    // ThebesLayers, forcing it to be invalidated, so it doesn't matter
-    // that we didn't reach here.
-    InvalidateLayer(aOverflowAreas.VisualOverflow(),
-                    nsDisplayItem::TYPE_TRANSFORM);
-  }
 
+  if (anyOverflowChanged) {
+    nsSVGEffects::InvalidateDirectRenderingObservers(this);
+  }
   return anyOverflowChanged;
 }
 
@@ -7567,11 +7546,8 @@ nsFrame::RefreshSizeCache(nsBoxLayoutState& aState)
     if (!DoesNeedRecalc(metrics->mBlockPrefSize))
       return NS_OK;
 
-    // get the old rect.
-    nsRect oldRect = GetRect();
-
     // the rect we plan to size to.
-    nsRect rect(oldRect);
+    nsRect rect = GetRect();
 
     nsMargin bp(0,0,0,0);
     GetBorderAndPadding(bp);
@@ -7592,15 +7568,6 @@ nsFrame::RefreshSizeCache(nsBoxLayoutState& aState)
     rv = BoxReflow(aState, presContext, desiredSize, rendContext,
                    rect.x, rect.y,
                    metrics->mBlockPrefSize.width, NS_UNCONSTRAINEDSIZE);
-
-    nsRect newRect = GetRect();
-
-    // make sure we draw any size change
-    if (oldRect.width != newRect.width || oldRect.height != newRect.height) {
-      newRect.x = 0;
-      newRect.y = 0;
-      Redraw(aState, &newRect);
-    }
 
     metrics->mBlockMinSize.height = 0;
     // ok we need the max ascent of the items on the line. So to do this
@@ -8118,6 +8085,55 @@ nsFrame::BoxMetrics() const
   return metrics;
 }
 
+/**
+ * Adds the NS_FRAME_IN_POPUP state bit to the current frame,
+ * and all descendant frames (including cross-doc ones).
+ */
+static void
+AddInPopupStateBitToDescendants(nsIFrame* aFrame)
+{
+  aFrame->AddStateBits(NS_FRAME_IN_POPUP);
+
+  nsAutoTArray<nsIFrame::ChildList,4> childListArray;
+  aFrame->GetCrossDocChildLists(&childListArray);
+
+  nsIFrame::ChildListArrayIterator lists(childListArray);
+  for (; !lists.IsDone(); lists.Next()) {
+    nsFrameList::Enumerator childFrames(lists.CurrentList());
+    for (; !childFrames.AtEnd(); childFrames.Next()) {
+      AddInPopupStateBitToDescendants(childFrames.get());
+    }
+  }
+}
+
+/**
+ * Removes the NS_FRAME_IN_POPUP state bit from the current
+ * frames and all descendant frames (including cross-doc ones),
+ * unless the frame is a popup itself.
+ */
+static void
+RemoveInPopupStateBitFromDescendants(nsIFrame* aFrame)
+{
+  if (!aFrame->HasAnyStateBits(NS_FRAME_IN_POPUP) ||
+      aFrame->GetType() == nsGkAtoms::listControlFrame ||
+      aFrame->GetType() == nsGkAtoms::menuPopupFrame) {
+    return;
+  }
+
+  aFrame->RemoveStateBits(NS_FRAME_IN_POPUP);
+
+  nsAutoTArray<nsIFrame::ChildList,4> childListArray;
+  aFrame->GetCrossDocChildLists(&childListArray);
+
+  nsIFrame::ChildListArrayIterator lists(childListArray);
+  for (; !lists.IsDone(); lists.Next()) {
+    nsFrameList::Enumerator childFrames(lists.CurrentList());
+    for (; !childFrames.AtEnd(); childFrames.Next()) {
+      RemoveInPopupStateBitFromDescendants(childFrames.get());
+    }
+  }
+}
+
 void
 nsFrame::SetParent(nsIFrame* aParent)
 {
@@ -8136,13 +8152,26 @@ nsFrame::SetParent(nsIFrame* aParent)
       f->AddStateBits(NS_FRAME_HAS_CHILD_WITH_VIEW);
     }
   }
-
-  if (GetStateBits() & NS_FRAME_HAS_CONTAINER_LAYER_DESCENDANT) {
+  
+  if (HasInvalidFrameInSubtree()) {
     for (nsIFrame* f = aParent;
-         f && !(f->GetStateBits() & NS_FRAME_HAS_CONTAINER_LAYER_DESCENDANT);
+         f && !f->HasAnyStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT);
          f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
-      f->AddStateBits(NS_FRAME_HAS_CONTAINER_LAYER_DESCENDANT);
+      f->AddStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT);
     }
+  }
+
+  if (aParent->HasAnyStateBits(NS_FRAME_IN_POPUP)) {
+    AddInPopupStateBitToDescendants(this);
+  } else {
+    RemoveInPopupStateBitFromDescendants(this);
+  }
+  
+  // If our new parent only has invalid children, then we just invalidate
+  // ourselves too. This is probably faster than clearing the flag all
+  // the way up the frame tree.
+  if (aParent->HasAnyStateBits(NS_FRAME_ALL_DESCENDANTS_NEED_PAINT)) {
+    InvalidateFrame();
   }
 }
 

@@ -20,10 +20,10 @@
 #include "libcameraservice/CameraHardwareInterface.h"
 #include "binder/IMemory.h"
 #include "mozilla/ReentrantMonitor.h"
+#include "GonkCameraListener.h"
+#include <utils/threads.h>
 
 #include "GonkCameraControl.h"
-
-#define DOM_CAMERA_LOG_LEVEL  3
 #include "CameraCommon.h"
 
 #include "GonkNativeWindow.h"
@@ -44,35 +44,51 @@ class GonkCameraHardware : GonkNativeWindowNewFrameCallback
 protected:
   GonkCameraHardware(GonkCamera* aTarget, uint32_t aCamera);
   ~GonkCameraHardware();
-  void init();
+  void Init();
 
-  static void                   DataCallback(int32_t aMsgType, const sp<IMemory> &aDataPtr, camera_frame_metadata_t* aMetadata, void* aUser);
-  static void                   NotifyCallback(int32_t aMsgType, int32_t ext1, int32_t ext2, void* aUser);
+  static void     DataCallback(int32_t aMsgType, const sp<IMemory> &aDataPtr, camera_frame_metadata_t* aMetadata, void* aUser);
+  static void     NotifyCallback(int32_t aMsgType, int32_t ext1, int32_t ext2, void* aUser);
+  static void     DataCallbackTimestamp(nsecs_t aTimestamp, int32_t aMsgType, const sp<IMemory>& aDataPtr, void* aUser);
 
 public:
-  virtual void OnNewFrame() MOZ_OVERRIDE;
+  virtual void    OnNewFrame() MOZ_OVERRIDE;
 
-  static void                   ReleaseHandle(uint32_t aHwHandle);
-  static uint32_t               GetHandle(GonkCamera* aTarget, uint32_t aCamera);
-  static uint32_t               GetFps(uint32_t aHwHandle);
-  static void                   GetPreviewSize(uint32_t aHwHandle, uint32_t* aWidth, uint32_t* aHeight);
-  static void                   SetPreviewSize(uint32_t aHwHandle, uint32_t aWidth, uint32_t aHeight);
-  static int                    AutoFocus(uint32_t aHwHandle);
-  static void                   CancelAutoFocus(uint32_t aHwHandle);
-  static int                    TakePicture(uint32_t aHwHandle);
-  static void                   CancelTakePicture(uint32_t aHwHandle);
-  static int                    StartPreview(uint32_t aHwHandle);
-  static void                   StopPreview(uint32_t aHwHandle);
-  static int                    PushParameters(uint32_t aHwHandle, const CameraParameters& aParams);
-  static void                   PullParameters(uint32_t aHwHandle, CameraParameters& aParams);
+  static void     ReleaseHandle(uint32_t aHwHandle);
+  static uint32_t GetHandle(GonkCamera* aTarget, uint32_t aCamera);
 
+  /**
+   * The physical orientation of the camera sensor: 0, 90, 180, or 270.
+   *
+   * For example, suppose a device has a naturally tall screen. The
+   * back-facing camera sensor is mounted in landscape. You are looking at
+   * the screen. If the top side of the camera sensor is aligned with the
+   * right edge of the screen in natural orientation, the value should be
+   * 90. If the top side of a front-facing camera sensor is aligned with the
+   * right of the screen, the value should be 270.
+   *
+   * RAW_SENSOR_ORIENTATION is the uncorrected orientation returned directly
+   * by get_camera_info(); OFFSET_SENSOR_ORIENTATION is the offset adjusted
+   * orientation.
+   */
   enum {
-    PREVIEW_FORMAT_UNKNOWN,
-    PREVIEW_FORMAT_YUV420P,
-    PREVIEW_FORMAT_YUV420SP
+    RAW_SENSOR_ORIENTATION,
+    OFFSET_SENSOR_ORIENTATION
   };
-  // GetPreviewFormat() MUST be called only after StartPreview().
-  static uint32_t               GetPreviewFormat(uint32_t aHwHandle);
+  static int      GetSensorOrientation(uint32_t aHwHandle, uint32_t aType = OFFSET_SENSOR_ORIENTATION);
+
+  static int      AutoFocus(uint32_t aHwHandle);
+  static void     CancelAutoFocus(uint32_t aHwHandle);
+  static int      TakePicture(uint32_t aHwHandle);
+  static void     CancelTakePicture(uint32_t aHwHandle);
+  static int      StartPreview(uint32_t aHwHandle);
+  static void     StopPreview(uint32_t aHwHandle);
+  static int      PushParameters(uint32_t aHwHandle, const CameraParameters& aParams);
+  static void     PullParameters(uint32_t aHwHandle, CameraParameters& aParams);
+  static int      StartRecording(uint32_t aHwHandle);
+  static int      StopRecording(uint32_t aHwHandle);
+  static int      SetListener(uint32_t aHwHandle, const sp<GonkCameraListener>& aListener);
+  static void     ReleaseRecordingFrame(uint32_t aHwHandle, const sp<IMemory>& aFrame);
+  static int      StoreMetaDataInBuffers(uint32_t aHwHandle, bool aEnabled);
 
 protected:
   static GonkCameraHardware*    sHw;
@@ -91,15 +107,10 @@ protected:
     return nullptr;
   }
 
-  // Instance wrappers to make member function access easier.
-  void SetPreviewSize(uint32_t aWidth, uint32_t aHeight);
+  // Instance wrapper to make member function access easier.
   int StartPreview();
 
   uint32_t                      mCamera;
-  uint32_t                      mWidth;
-  uint32_t                      mHeight;
-  uint32_t                      mFps;
-  uint32_t                      mPreviewFormat;
   bool                          mClosing;
   mozilla::ReentrantMonitor     mMonitor;
   uint32_t                      mNumFrames;
@@ -107,12 +118,14 @@ protected:
   GonkCamera*                   mTarget;
   camera_module_t*              mModule;
   sp<ANativeWindow>             mWindow;
-  CameraParameters              mParams;
 #if GIHM_TIMING_OVERALL
   struct timespec               mStart;
   struct timespec               mAutoFocusStart;
 #endif
+  sp<GonkCameraListener>        mListener;
   bool                          mInitialized;
+  int                           mRawSensorOrientation;
+  int                           mSensorOrientation;
 
   bool IsInitialized()
   {

@@ -19,8 +19,7 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_listtabs.js \
 	browser_dbg_tabactor-01.js \
 	browser_dbg_tabactor-02.js \
-	browser_dbg_contextactor-01.js \
-	browser_dbg_contextactor-02.js \
+	browser_dbg_globalactor-01.js \
 	testactors.js \
 	browser_dbg_nav-01.js \
 	browser_dbg_propertyview-01.js \
@@ -55,6 +54,8 @@ MOCHITEST_BROWSER_TESTS = \
 	browser_dbg_scripts-searching-05.js \
 	browser_dbg_scripts-searching-06.js \
 	browser_dbg_scripts-searching-07.js \
+	browser_dbg_scripts-searching-08.js \
+	browser_dbg_scripts-searching-popup.js \
 	browser_dbg_pause-resume.js \
 	browser_dbg_update-editor-mode.js \
 	$(warning browser_dbg_select-line.js temporarily disabled due to oranges, see bug 726609) \

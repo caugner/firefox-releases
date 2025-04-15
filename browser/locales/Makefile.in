@@ -67,6 +67,10 @@ UNINSTALLER_PACKAGE_HOOK = $(RM) -r $(STAGEDIST)/uninstall; \
     cp ../installer/windows/l10ngen/helper.exe $(STAGEDIST)/uninstall; \
     $(RM) $(_ABS_DIST)/l10n-stage/setup.exe; \
     cp ../installer/windows/l10ngen/setup.exe $(_ABS_DIST)/l10n-stage; \
+    $(NSINSTALL) -D "$(_ABS_DIST)/$(PKG_INST_PATH)"; \
+    $(RM) "$(_ABS_DIST)/$(PKG_INST_PATH)$(PKG_STUB_BASENAME).exe"; \
+    cp ../installer/windows/l10ngen/stub.exe "$(_ABS_DIST)/$(PKG_INST_PATH)$(PKG_STUB_BASENAME).exe"; \
+    chmod 0755 "$(_ABS_DIST)/$(PKG_INST_PATH)$(PKG_STUB_BASENAME).exe"; \
     $(NULL)
 endif
 
@@ -198,17 +202,19 @@ installers-%: clobber-% langpack-% repackage-win32-installer-% repackage-zip-%
 	@echo "repackaging done"
 
 ifdef MOZ_UPDATER
-libs:: $(call MERGE_FILE,updater/updater.ini)
+# Note that we want updater.ini to be in the top directory, not the browser/
+# subdirectory, because that's where the updater is installed and runs.
+libs:: $(call MERGE_FILE,updater/updater.ini) $(call mkdir_deps,$(DIST)/bin)
 ifeq ($(OS_ARCH),WINNT)
 	cat $< $(srcdir)/../installer/windows/nsis/updater_append.ini | \
 	  sed -e "s/^InfoText=/Info=/" -e "s/^TitleText=/Title=/" | \
 	  sed -e "s/%MOZ_APP_DISPLAYNAME%/$(MOZ_APP_DISPLAYNAME)/" > \
-	  $(FINAL_TARGET)/updater.ini
+	  $(DIST)/bin/updater.ini
 else
 	cat $< | \
 	  sed -e "s/^InfoText=/Info=/" -e "s/^TitleText=/Title=/" | \
 	  sed -e "s/%MOZ_APP_DISPLAYNAME%/$(MOZ_APP_DISPLAYNAME)/" > \
-	  $(FINAL_TARGET)/updater.ini
+	  $(DIST)/bin/updater.ini
 endif
 endif
 
@@ -234,8 +240,11 @@ endif
 
 # test target, depends on make package
 # try to repack x-test, with just toolkit/defines.inc being there
+l10n-check:: INNER_UNMAKE_PACKAGE=true
 l10n-check::
 	$(RM) -rf x-test
 	$(NSINSTALL) -D x-test/toolkit
 	echo "#define MOZ_LANG_TITLE Just testing" > x-test/toolkit/defines.inc
 	$(MAKE) installers-x-test L10NBASEDIR="$(PWD)" LOCALE_MERGEDIR="$(PWD)/mergedir"
+	cd $(DIST)/l10n-stage && $(UNMAKE_PACKAGE)
+	cd $(DIST)/l10n-stage && test $$(cat $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/update.locale) = x-test

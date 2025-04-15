@@ -96,10 +96,10 @@
 #include "nsIScrollableFrame.h"
 #include "nsXBLInsertionPoint.h"
 #include "mozilla/css/StyleRule.h" /* For nsCSSSelectorList */
-#include "nsCSSRuleProcessor.h"
 #include "nsRuleProcessorData.h"
 #include "nsAsyncDOMEvent.h"
 #include "nsTextNode.h"
+#include "mozilla/dom/NodeListBinding.h"
 #include "dombindings.h"
 
 #ifdef MOZ_XUL
@@ -111,7 +111,6 @@
 
 #include "mozAutoDocUpdate.h"
 
-#include "nsCSSParser.h"
 #include "prprf.h"
 #include "nsDOMMutationObserver.h"
 #include "nsSVGFeatures.h"
@@ -136,12 +135,12 @@ bool nsIContent::sTabFocusModelAppliesToXUL = false;
 uint32_t nsMutationGuard::sMutationCount = 0;
 
 nsIContent*
-nsIContent::FindFirstNonNativeAnonymous() const
+nsIContent::FindFirstNonChromeOnlyAccessContent() const
 {
   // This handles also nested native anonymous content.
   for (const nsIContent *content = this; content;
        content = content->GetBindingParent()) {
-    if (!content->IsInNativeAnonymousSubtree()) {
+    if (!content->ChromeOnlyAccess()) {
       // Oops, this function signature allows casting const to
       // non-const.  (Then again, so does GetChildAt(0)->GetParent().)
       return const_cast<nsIContent*>(content);
@@ -391,7 +390,13 @@ JSObject*
 nsChildContentList::WrapObject(JSContext *cx, JSObject *scope,
                                bool *triedToWrap)
 {
-  return mozilla::dom::oldproxybindings::NodeList::create(cx, scope, this, triedToWrap);
+  JSObject* obj = NodeListBinding::Wrap(cx, scope, this, triedToWrap);
+  if (obj || *triedToWrap) {
+    return obj;
+  }
+
+  *triedToWrap = true;
+  return oldproxybindings::NodeList::create(cx, scope, this);
 }
 
 NS_IMETHODIMP
@@ -477,10 +482,9 @@ NS_IMPL_ISUPPORTS1(nsNodeWeakReference,
 nsNodeWeakReference::~nsNodeWeakReference()
 {
   if (mNode) {
-    NS_ASSERTION(mNode->GetSlots() &&
-                 mNode->GetSlots()->mWeakReference == this,
+    NS_ASSERTION(mNode->Slots()->mWeakReference == this,
                  "Weak reference has wrong value");
-    mNode->GetSlots()->mWeakReference = nullptr;
+    mNode->Slots()->mWeakReference = nullptr;
   }
 }
 
@@ -504,9 +508,7 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(nsNodeSupportsWeakRefTearoff)
 NS_IMETHODIMP
 nsNodeSupportsWeakRefTearoff::GetWeakReference(nsIWeakReference** aInstancePtr)
 {
-  nsINode::nsSlots* slots = mNode->GetSlots();
-  NS_ENSURE_TRUE(slots, NS_ERROR_OUT_OF_MEMORY);
-
+  nsINode::nsSlots* slots = mNode->Slots();
   if (!slots->mWeakReference) {
     slots->mWeakReference = new nsNodeWeakReference(mNode);
     NS_ENSURE_TRUE(slots->mWeakReference, NS_ERROR_OUT_OF_MEMORY);
@@ -515,33 +517,6 @@ nsNodeSupportsWeakRefTearoff::GetWeakReference(nsIWeakReference** aInstancePtr)
   NS_ADDREF(*aInstancePtr = slots->mWeakReference);
 
   return NS_OK;
-}
-
-//----------------------------------------------------------------------
-
-NS_IMPL_CYCLE_COLLECTION_1(nsNodeSelectorTearoff, mNode)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsNodeSelectorTearoff)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMNodeSelector)
-NS_INTERFACE_MAP_END_AGGREGATED(mNode)
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(nsNodeSelectorTearoff)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(nsNodeSelectorTearoff)
-
-NS_IMETHODIMP
-nsNodeSelectorTearoff::QuerySelector(const nsAString& aSelector,
-                                     nsIDOMElement **aReturn)
-{
-  nsresult rv;
-  nsIContent* result = FragmentOrElement::doQuerySelector(mNode, aSelector, &rv);
-  return result ? CallQueryInterface(result, aReturn) : rv;
-}
-
-NS_IMETHODIMP
-nsNodeSelectorTearoff::QuerySelectorAll(const nsAString& aSelector,
-                                        nsIDOMNodeList **aReturn)
-{
-  return FragmentOrElement::doQuerySelectorAll(mNode, aSelector, aReturn);
 }
 
 //----------------------------------------------------------------------
@@ -625,6 +600,30 @@ FragmentOrElement::nsDOMSlots::Unlink(bool aIsXUL)
     mClassList->DropReference();
     mClassList = nullptr;
   }
+}
+
+size_t
+FragmentOrElement::nsDOMSlots::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+{
+  size_t n = aMallocSizeOf(this);
+
+  if (mAttributeMap) {
+    n += mAttributeMap->SizeOfIncludingThis(aMallocSizeOf);
+  }
+
+  // Measurement of the following members may be added later if DMD finds it is
+  // worthwhile:
+  // - Superclass members (nsINode::nsSlots)
+  // - mStyle
+  // - mDataSet
+  // - mSMILOverrideStyle
+  // - mSMILOverrideStyleRule
+  // - mChildrenList
+  // - mClassList
+
+  // The following members are not measured:
+  // - mBindingParent / mControllers: because they're   non-owning
+  return n;
 }
 
 FragmentOrElement::FragmentOrElement(already_AddRefed<nsINodeInfo> aNodeInfo)
@@ -776,19 +775,7 @@ FragmentOrElement::HasAttributes(bool* aReturn)
 NS_IMETHODIMP
 FragmentOrElement::GetAttributes(nsIDOMNamedNodeMap** aAttributes)
 {
-  if (!IsElement()) {
-    *aAttributes = nullptr;
-    return NS_OK;
-  }
-
-  nsDOMSlots *slots = DOMSlots();
-
-  if (!slots->mAttributeMap) {
-    slots->mAttributeMap = new nsDOMAttributeMap(this->AsElement());
-  }
-
-  NS_ADDREF(*aAttributes = slots->mAttributeMap);
-
+  *aAttributes = nullptr;
   return NS_OK;
 }
 
@@ -864,12 +851,12 @@ FragmentOrElement::GetChildren(uint32_t aFilter)
 }
 
 static nsIContent*
-FindNativeAnonymousSubtreeOwner(nsIContent* aContent)
+FindChromeAccessOnlySubtreeOwner(nsIContent* aContent)
 {
-  if (aContent->IsInNativeAnonymousSubtree()) {
-    bool isNativeAnon = false;
-    while (aContent && !isNativeAnon) {
-      isNativeAnon = aContent->IsRootOfNativeAnonymousSubtree();
+  if (aContent->ChromeOnlyAccess()) {
+    bool chromeAccessOnly = false;
+    while (aContent && !chromeAccessOnly) {
+      chromeAccessOnly = aContent->IsRootOfChromeAccessOnlySubtree();
       aContent = aContent->GetParent();
     }
   }
@@ -884,15 +871,15 @@ nsIContent::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
   aVisitor.mMayHaveListenerManager = HasListenerManager();
 
   // Don't propagate mouseover and mouseout events when mouse is moving
-  // inside native anonymous content.
-  bool isAnonForEvents = IsRootOfNativeAnonymousSubtree();
+  // inside chrome access only content.
+  bool isAnonForEvents = IsRootOfChromeAccessOnlySubtree();
   if ((aVisitor.mEvent->message == NS_MOUSE_ENTER_SYNTH ||
        aVisitor.mEvent->message == NS_MOUSE_EXIT_SYNTH) &&
       // Check if we should stop event propagation when event has just been
       // dispatched or when we're about to propagate from
-      // native anonymous subtree.
+      // chrome access only subtree.
       ((this == aVisitor.mEvent->originalTarget &&
-        !IsInNativeAnonymousSubtree()) || isAnonForEvents)) {
+        !ChromeOnlyAccess()) || isAnonForEvents)) {
      nsCOMPtr<nsIContent> relatedTarget =
        do_QueryInterface(static_cast<nsMouseEvent*>
                                     (aVisitor.mEvent)->relatedTarget);
@@ -907,19 +894,19 @@ nsIContent::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
       if (isAnonForEvents || aVisitor.mRelatedTargetIsInAnon ||
           (aVisitor.mEvent->originalTarget == this &&
            (aVisitor.mRelatedTargetIsInAnon =
-            relatedTarget->IsInNativeAnonymousSubtree()))) {
-        nsIContent* anonOwner = FindNativeAnonymousSubtreeOwner(this);
+            relatedTarget->ChromeOnlyAccess()))) {
+        nsIContent* anonOwner = FindChromeAccessOnlySubtreeOwner(this);
         if (anonOwner) {
           nsIContent* anonOwnerRelated =
-            FindNativeAnonymousSubtreeOwner(relatedTarget);
+            FindChromeAccessOnlySubtreeOwner(relatedTarget);
           if (anonOwnerRelated) {
             // Note, anonOwnerRelated may still be inside some other
             // native anonymous subtree. The case where anonOwner is still
             // inside native anonymous subtree will be handled when event
             // propagates up in the DOM tree.
             while (anonOwner != anonOwnerRelated &&
-                   anonOwnerRelated->IsInNativeAnonymousSubtree()) {
-              anonOwnerRelated = FindNativeAnonymousSubtreeOwner(anonOwnerRelated);
+                   anonOwnerRelated->ChromeOnlyAccess()) {
+              anonOwnerRelated = FindChromeAccessOnlySubtreeOwner(anonOwnerRelated);
             }
             if (anonOwner == anonOwnerRelated) {
 #ifdef DEBUG_smaug
@@ -940,13 +927,14 @@ nsIContent::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
                      NS_ConvertUTF16toUTF8(ct).get(),
                      isAnonForEvents
                        ? "(is native anonymous)"
-                       : (IsInNativeAnonymousSubtree()
+                       : (ChromeOnlyAccess()
                            ? "(is in native anonymous subtree)" : ""),
                      NS_ConvertUTF16toUTF8(rt).get(),
-                     relatedTarget->IsInNativeAnonymousSubtree()
+                     relatedTarget->ChromeOnlyAccess()
                        ? "(is in native anonymous subtree)" : "",
-                     (originalTarget && relatedTarget->FindFirstNonNativeAnonymous() ==
-                       originalTarget->FindFirstNonNativeAnonymous())
+                     (originalTarget &&
+                      relatedTarget->FindFirstNonChromeOnlyAccessContent() ==
+                        originalTarget->FindFirstNonChromeOnlyAccessContent())
                        ? "" : "Wrong event propagation!?!\n");
 #endif
               aVisitor.mParentTarget = nullptr;
@@ -1726,7 +1714,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(FragmentOrElement)
     char name[512];
     uint32_t nsid = tmp->GetNameSpaceID();
     nsAtomCString localName(tmp->NodeInfo()->NameAtom());
-    nsCAutoString uri;
+    nsAutoCString uri;
     if (tmp->OwnerDoc()->GetDocumentURI()) {
       tmp->OwnerDoc()->GetDocumentURI()->GetSpec(uri);
     }
@@ -1757,8 +1745,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(FragmentOrElement)
                 NS_ConvertUTF16toUTF8(id).get(),
                 NS_ConvertUTF16toUTF8(classes).get(),
                 uri.get());
-    cb.DescribeRefCountedNode(tmp->mRefCnt.get(), sizeof(FragmentOrElement),
-                              name);
+    cb.DescribeRefCountedNode(tmp->mRefCnt.get(), name);
   }
   else {
     NS_IMPL_CYCLE_COLLECTION_DESCRIBE(FragmentOrElement, tmp->mRefCnt.get())
@@ -1946,7 +1933,7 @@ FragmentOrElement::GetChildArray(uint32_t* aChildCount) const
 }
 
 int32_t
-FragmentOrElement::IndexOf(nsINode* aPossibleChild) const
+FragmentOrElement::IndexOf(const nsINode* aPossibleChild) const
 {
   return mAttrsAndChildren.IndexOfChild(aPossibleChild);
 }
@@ -1977,167 +1964,17 @@ FragmentOrElement::FireNodeRemovedForChildren()
   }
 }
 
-// NOTE: The aPresContext pointer is NOT addrefed.
-// *aSelectorList might be null even if NS_OK is returned; this
-// happens when all the selectors were pseudo-element selectors.
-static nsresult
-ParseSelectorList(nsINode* aNode,
-                  const nsAString& aSelectorString,
-                  nsCSSSelectorList** aSelectorList)
-{
-  NS_ENSURE_ARG(aNode);
-
-  nsIDocument* doc = aNode->OwnerDoc();
-  nsCSSParser parser(doc->CSSLoader());
-
-  nsCSSSelectorList* selectorList;
-  nsresult rv = parser.ParseSelectorString(aSelectorString,
-                                           doc->GetDocumentURI(),
-                                           0, // XXXbz get the line number!
-                                           &selectorList);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Filter out pseudo-element selectors from selectorList
-  nsCSSSelectorList** slot = &selectorList;
-  do {
-    nsCSSSelectorList* cur = *slot;
-    if (cur->mSelectors->IsPseudoElement()) {
-      *slot = cur->mNext;
-      cur->mNext = nullptr;
-      delete cur;
-    } else {
-      slot = &cur->mNext;
-    }
-  } while (*slot);
-  *aSelectorList = selectorList;
-
-  return NS_OK;
-}
-
-// Actually find elements matching aSelectorList (which must not be
-// null) and which are descendants of aRoot and put them in aList.  If
-// onlyFirstMatch, then stop once the first one is found.
-template<bool onlyFirstMatch, class T>
-inline static nsresult FindMatchingElements(nsINode* aRoot,
-                                            const nsAString& aSelector,
-                                            T &aList)
-{
-  nsAutoPtr<nsCSSSelectorList> selectorList;
-  nsresult rv = ParseSelectorList(aRoot, aSelector,
-                                  getter_Transfers(selectorList));
-  NS_ENSURE_SUCCESS(rv, rv);
-  NS_ENSURE_TRUE(selectorList, NS_OK);
-
-  NS_ASSERTION(selectorList->mSelectors,
-               "How can we not have any selectors?");
-
-  nsIDocument* doc = aRoot->OwnerDoc();  
-  TreeMatchContext matchingContext(false, nsRuleWalker::eRelevantLinkUnvisited,
-                                   doc, TreeMatchContext::eNeverMatchVisited);
-  doc->FlushPendingLinkUpdates();
-
-  // Fast-path selectors involving IDs.  We can only do this if aRoot
-  // is in the document and the document is not in quirks mode, since
-  // ID selectors are case-insensitive in quirks mode.  Also, only do
-  // this if selectorList only has one selector, because otherwise
-  // ordering the elements correctly is a pain.
-  NS_ASSERTION(aRoot->IsElement() || aRoot->IsNodeOfType(nsINode::eDOCUMENT) ||
-               !aRoot->IsInDoc(),
-               "The optimization below to check ContentIsDescendantOf only for "
-               "elements depends on aRoot being either an element or a "
-               "document if it's in the document.");
-  if (aRoot->IsInDoc() &&
-      doc->GetCompatibilityMode() != eCompatibility_NavQuirks &&
-      !selectorList->mNext &&
-      selectorList->mSelectors->mIDList) {
-    nsIAtom* id = selectorList->mSelectors->mIDList->mAtom;
-    const nsSmallVoidArray* elements =
-      doc->GetAllElementsForId(nsDependentAtomString(id));
-
-    // XXXbz: Should we fall back to the tree walk if aRoot is not the
-    // document and |elements| is long, for some value of "long"?
-    if (elements) {
-      for (int32_t i = 0; i < elements->Count(); ++i) {
-        Element *element = static_cast<Element*>(elements->ElementAt(i));
-        if (!aRoot->IsElement() ||
-            (element != aRoot &&
-             nsContentUtils::ContentIsDescendantOf(element, aRoot))) {
-          // We have an element with the right id and it's a strict descendant
-          // of aRoot.  Make sure it really matches the selector.
-          if (nsCSSRuleProcessor::SelectorListMatches(element, matchingContext,
-                                                      selectorList)) {
-            aList.AppendElement(element);
-            if (onlyFirstMatch) {
-              return NS_OK;
-            }
-          }
-        }
-      }
-    }
-
-    // No elements with this id, or none of them are our descendants,
-    // or none of them match.  We're done here.
-    return NS_OK;
-  }
-
-  for (nsIContent* cur = aRoot->GetFirstChild();
-       cur;
-       cur = cur->GetNextNode(aRoot)) {
-    if (cur->IsElement() &&
-        nsCSSRuleProcessor::SelectorListMatches(cur->AsElement(),
-                                                matchingContext,
-                                                selectorList)) {
-      aList.AppendElement(cur->AsElement());
-      if (onlyFirstMatch) {
-        return NS_OK;
-      }
-    }
-  }
-
-  return NS_OK;
-}
-
-struct ElementHolder {
-  ElementHolder() : mElement(nullptr) {}
-  void AppendElement(Element* aElement) {
-    NS_ABORT_IF_FALSE(!mElement, "Should only get one element");
-    mElement = aElement;
-  }
-  Element* mElement;
-};
-
-/* static */
-nsIContent*
-FragmentOrElement::doQuerySelector(nsINode* aRoot, const nsAString& aSelector,
-                                  nsresult *aResult)
-{
-  NS_PRECONDITION(aResult, "Null out param?");
-
-  ElementHolder holder;
-  *aResult = FindMatchingElements<true>(aRoot, aSelector, holder);
-
-  return holder.mElement;
-}
-
-/* static */
-nsresult
-FragmentOrElement::doQuerySelectorAll(nsINode* aRoot,
-                                     const nsAString& aSelector,
-                                     nsIDOMNodeList **aReturn)
-{
-  NS_PRECONDITION(aReturn, "Null out param?");
-
-  nsSimpleContentList* contentList = new nsSimpleContentList(aRoot);
-  NS_ENSURE_TRUE(contentList, NS_ERROR_OUT_OF_MEMORY);
-  NS_ADDREF(*aReturn = contentList);
-  
-  return FindMatchingElements<false>(aRoot, aSelector, *contentList);
-}
-
-
 size_t
 FragmentOrElement::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const
 {
-  return nsIContent::SizeOfExcludingThis(aMallocSizeOf) +
-         mAttrsAndChildren.SizeOfExcludingThis(aMallocSizeOf);
+  size_t n = 0;
+  n += nsIContent::SizeOfExcludingThis(aMallocSizeOf);
+  n += mAttrsAndChildren.SizeOfExcludingThis(aMallocSizeOf);
+
+  nsDOMSlots* slots = GetExistingDOMSlots();
+  if (slots) {
+    n += slots->SizeOfIncludingThis(aMallocSizeOf);
+  }
+
+  return n;
 }

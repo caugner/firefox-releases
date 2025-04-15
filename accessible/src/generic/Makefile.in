@@ -25,6 +25,7 @@ CPPSRCS = \
   ImageAccessible.cpp \
   OuterDocAccessible.cpp \
   RootAccessible.cpp \
+  TableCellAccessible.cpp \
   TextLeafAccessible.cpp \
   $(NULL)
 
@@ -72,4 +73,8 @@ LOCAL_INCLUDES += \
   $(NULL)
 endif
 endif
+endif
+
+ifneq ($(A11Y_LOG),0)
+  DEFINES += -DA11Y_LOG
 endif

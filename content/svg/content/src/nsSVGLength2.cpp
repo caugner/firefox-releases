@@ -15,6 +15,7 @@
 #include "nsContentUtils.h" // NS_ENSURE_FINITE
 #include "nsSMILValue.h"
 #include "nsSMILFloatType.h"
+#include "nsAttrValueInlines.h"
 
 using namespace mozilla;
 
@@ -183,10 +184,14 @@ nsSVGLength2::GetAxisLength(nsIFrame *aNonSVGFrame) const
     nsSVGIntegrationUtils::GetSVGCoordContextForNonSVGFrame(aNonSVGFrame);
   float length;
   switch (mCtxType) {
-  case nsSVGUtils::X: length = size.width; break;
-  case nsSVGUtils::Y: length = size.height; break;
-  case nsSVGUtils::XY:
-    length = nsSVGUtils::ComputeNormalizedHypotenuse(size.width, size.height);
+  case SVGContentUtils::X:
+    length = size.width;
+    break;
+  case SVGContentUtils::Y:
+    length = size.height;
+    break;
+  case SVGContentUtils::XY:
+    length = SVGContentUtils::ComputeNormalizedHypotenuse(size.width, size.height);
     break;
   default:
     NS_NOTREACHED("Unknown axis type");

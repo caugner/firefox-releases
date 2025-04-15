@@ -7,9 +7,10 @@
 #include "nsIDOMEventTarget.idl"
 
 interface nsIDOMDOMRequest;
+interface nsIDOMBlob;
 interface nsIDOMBluetoothDevice;
 
-[scriptable, builtinclass, uuid(db6b4dd6-64f1-415d-ac51-ae0fa0fe05ed)]
+[scriptable, builtinclass, uuid(6a4a9415-cda3-4a19-b79e-05d9bc2c2700)]
 interface nsIDOMBluetoothAdapter : nsIDOMEventTarget
 {
   readonly attribute DOMString address;
@@ -36,21 +37,39 @@ interface nsIDOMBluetoothAdapter : nsIDOMEventTarget
   nsIDOMDOMRequest pair(in nsIDOMBluetoothDevice aDevice);
   nsIDOMDOMRequest unpair(in nsIDOMBluetoothDevice aDevice);
   nsIDOMDOMRequest getPairedDevices();
-  void setPinCode(in DOMString aDeviceAddress, in DOMString aPinCode);
-  void setPasskey(in DOMString aDeviceAddress, in unsigned long aPasskey);
-  void setPairingConfirmation(in DOMString aDeviceAddress, in bool aConfirmation);
-  void setAuthorization(in DOMString aDeviceAddress, in bool aAllow);
+  nsIDOMDOMRequest setPinCode(in DOMString aDeviceAddress, in DOMString aPinCode);
+  nsIDOMDOMRequest setPasskey(in DOMString aDeviceAddress, in unsigned long aPasskey);
+  nsIDOMDOMRequest setPairingConfirmation(in DOMString aDeviceAddress, in bool aConfirmation);
+  nsIDOMDOMRequest setAuthorization(in DOMString aDeviceAddress, in bool aAllow);
+
+  /** 
+   * Connect/Disconnect to a specific service of a target remote device. 
+   * To check the value of service UUIDs, please check "Bluetooth Assigned 
+   * Numbers" / "Service Discovery Protocol" for more information.
+   *  
+   * @param aDeviceAddress Remote device address
+   * @param aProfile 2-octets service UUID
+   */
+  nsIDOMDOMRequest connect(in DOMString aDeviceAddress, in unsigned short aProfile);
+  nsIDOMDOMRequest disconnect(in unsigned short aProfile);
+
+  // One device can only send one file at a time
+  nsIDOMDOMRequest sendFile(in DOMString aDeviceAddress, in nsIDOMBlob aBlob);
+  nsIDOMDOMRequest stopSendingFile(in DOMString aDeviceAddress);
+  nsIDOMDOMRequest confirmReceivingFile(in DOMString aDeviceAddress, in bool aConfirmation);
 
   // Fired when discoverying and any device is discovered.
-  attribute nsIDOMEventListener ondevicefound;
+  [implicit_jscontext] attribute jsval ondevicefound;
   // Fired when any device is out of discoverable range.
-  attribute nsIDOMEventListener ondevicedisappeared;
+  [implicit_jscontext] attribute jsval ondevicedisappeared;
+  // Fired when any device is created.
+  [implicit_jscontext] attribute jsval ondevicecreated;
   // Fired when a property of the adapter is changed
-  attribute nsIDOMEventListener onpropertychanged;
+  [implicit_jscontext] attribute jsval onpropertychanged;
   // Pairing related events
-  attribute nsIDOMEventListener onrequestconfirmation;
-  attribute nsIDOMEventListener onrequestpincode;
-  attribute nsIDOMEventListener onrequestpasskey;
-  attribute nsIDOMEventListener onauthorize;
-  attribute nsIDOMEventListener oncancel;
+  [implicit_jscontext] attribute jsval onrequestconfirmation;
+  [implicit_jscontext] attribute jsval onrequestpincode;
+  [implicit_jscontext] attribute jsval onrequestpasskey;
+  [implicit_jscontext] attribute jsval onauthorize;
+  [implicit_jscontext] attribute jsval oncancel;
 };

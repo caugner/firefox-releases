@@ -41,6 +41,7 @@
   page-break-after: inherit;
   vertical-align: inherit; /* needed for inline-table */
   line-height: inherit; /* needed for vertical-align on inline-table */
+  -moz-align-self: inherit; /* needed for "align-self: auto" to work on table */
   /* Bug 722777 */
   -moz-transform: inherit;
   -moz-transform-origin: inherit;
@@ -235,6 +236,7 @@
   max-width: none !important;
   min-height: 0 !important;
   max-height: none !important;
+  -moz-box-sizing: border-box !important; 
 }
 
 /* If there is a full-screen element that is not the root then

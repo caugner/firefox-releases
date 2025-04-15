@@ -14,7 +14,6 @@
 #include "nsISupportsPrimitives.h"
 #include "punycode.h"
 
-#include "mozilla/FunctionTimer.h"
 
 //-----------------------------------------------------------------------------
 // RFC 1034 - 3.1. Name space specifications and terminology
@@ -47,8 +46,6 @@ NS_IMPL_THREADSAFE_ISUPPORTS3(nsIDNService,
 
 nsresult nsIDNService::Init()
 {
-  NS_TIME_FUNCTION;
-
   nsCOMPtr<nsIPrefService> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
   if (prefs)
     prefs->GetBranch(NS_NET_PREF_IDNWHITELIST, getter_AddRefs(mIDNWhitelistPrefBranch));
@@ -145,7 +142,7 @@ nsresult nsIDNService::UTF8toACE(const nsACString & input, nsACString & ace, boo
   uint32_t len, offset;
   len = 0;
   offset = 0;
-  nsCAutoString encodedBuf;
+  nsAutoCString encodedBuf;
 
   nsAString::const_iterator start, end;
   ustr.BeginReading(start); 
@@ -201,7 +198,7 @@ nsresult nsIDNService::ACEtoUTF8(const nsACString & input, nsACString & _retval,
   }
   
   uint32_t len = 0, offset = 0;
-  nsCAutoString decodedBuf;
+  nsAutoCString decodedBuf;
 
   nsACString::const_iterator start, end;
   input.BeginReading(start); 
@@ -316,7 +313,7 @@ NS_IMETHODIMP nsIDNService::ConvertToDisplayIDN(const nsACString & input, bool *
 
     if (isACE && !mShowPunycode && isInWhitelist(_retval)) {
       // ACEtoUTF8() can't fail, but might return the original ACE string
-      nsCAutoString temp(_retval);
+      nsAutoCString temp(_retval);
       ACEtoUTF8(temp, _retval, false);
       *_isASCII = IsASCII(_retval);
     } else {
@@ -641,7 +638,7 @@ nsresult nsIDNService::decodeACE(const nsACString& in, nsACString& out,
   CopyUTF16toUTF8(utf16, out);
 
   // Validation: encode back to ACE and compare the strings
-  nsCAutoString ace;
+  nsAutoCString ace;
   nsresult rv = UTF8toACE(out, ace, allowUnassigned);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -654,7 +651,7 @@ nsresult nsIDNService::decodeACE(const nsACString& in, nsACString& out,
 bool nsIDNService::isInWhitelist(const nsACString &host)
 {
   if (mIDNWhitelistPrefBranch) {
-    nsCAutoString tld(host);
+    nsAutoCString tld(host);
     // make sure the host is ACE for lookup and check that there are no
     // unassigned codepoints
     if (!IsASCII(tld) && NS_FAILED(UTF8toACE(tld, tld, false))) {

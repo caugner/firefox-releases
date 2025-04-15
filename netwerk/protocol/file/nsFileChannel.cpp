@@ -247,7 +247,7 @@ nsFileChannel::nsFileChannel(nsIURI *uri)
   // can point to different resources right after the first resource is loaded.
   nsCOMPtr<nsIFile> file;
   nsCOMPtr <nsIURI> targetURI;
-  nsCAutoString fileTarget;
+  nsAutoCString fileTarget;
   nsCOMPtr<nsIFile> resolvedFile;
   bool symLink;
   nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(uri);
@@ -363,7 +363,7 @@ nsFileChannel::OpenContentStream(bool async, nsIInputStream **result,
     if (!HasContentTypeHint())
       SetContentType(NS_LITERAL_CSTRING(APPLICATION_OCTET_STREAM));
   } else {
-    nsCAutoString contentType;
+    nsAutoCString contentType;
     rv = MakeFileInputStream(file, stream, contentType);
     if (NS_FAILED(rv))
       return rv;
@@ -414,7 +414,7 @@ nsFileChannel::GetFile(nsIFile **file)
 NS_IMETHODIMP
 nsFileChannel::SetUploadStream(nsIInputStream *stream,
                                const nsACString &contentType,
-                               int32_t contentLength)
+                               int64_t contentLength)
 {
   NS_ENSURE_TRUE(!IsPending(), NS_ERROR_IN_PROGRESS);
 
@@ -426,7 +426,7 @@ nsFileChannel::SetUploadStream(nsIInputStream *stream,
       nsresult rv = mUploadStream->Available(&avail);
       if (NS_FAILED(rv))
         return rv;
-      if (avail < PR_INT64_MAX)
+      if (avail < INT64_MAX)
         mUploadLength = avail;
     }
   } else {

@@ -7,7 +7,6 @@
 #include "nsMenuPopupFrame.h"
 #include "nsGkAtoms.h"
 #include "nsIContent.h"
-#include "prtypes.h"
 #include "nsIAtom.h"
 #include "nsPresContext.h"
 #include "nsStyleContext.h"
@@ -170,6 +169,8 @@ nsMenuPopupFrame::Init(nsIContent*      aContent,
     }
   }
 
+  AddStateBits(NS_FRAME_IN_POPUP);
+
   return rv;
 }
 
@@ -270,6 +271,7 @@ nsMenuPopupFrame::CreateWidgetForView(nsIView* aView)
   nsIAtom *tag = nullptr;
   if (parentContent)
     tag = parentContent->Tag();
+  widgetData.mSupportTranslucency = mode == eTransparencyTransparent;
   widgetData.mDropShadow = !(viewHasTransparentContent || tag == nsGkAtoms::menulist);
   widgetData.mPopupLevel = PopupLevel(widgetData.mNoAutoHide);
 
@@ -820,14 +822,6 @@ nsMenuPopupFrame::HidePopup(bool aDeselectMenu, nsPopupState aNewState)
 }
 
 void
-nsMenuPopupFrame::InvalidateInternal(const nsRect& aDamageRect,
-                                     nscoord aX, nscoord aY, nsIFrame* aForChild,
-                                     uint32_t aFlags)
-{
-  InvalidateRoot(aDamageRect + nsPoint(aX, aY), aFlags);
-}
-
-void
 nsMenuPopupFrame::GetLayoutFlags(uint32_t& aFlags)
 {
   aFlags = NS_FRAME_NO_SIZE_VIEW | NS_FRAME_NO_MOVE_VIEW | NS_FRAME_NO_VISIBILITY;
@@ -1332,10 +1326,11 @@ nsMenuPopupFrame::GetConstraintRect(const nsRect& aAnchorRect,
     // so we should use the same screen. Otherwise, use the screen where the
     // anchor is located.
     nsRect rect = mInContentShell ? aRootScreenRect : aAnchorRect;
-    int32_t width = rect.width > 0 ? presContext->AppUnitsToDevPixels(rect.width) : 1;
-    int32_t height = rect.height > 0 ? presContext->AppUnitsToDevPixels(rect.height) : 1;
-    sm->ScreenForRect(presContext->AppUnitsToDevPixels(rect.x),
-                      presContext->AppUnitsToDevPixels(rect.y),
+    // nsIScreenManager::ScreenForRect wants the coordinates in CSS pixels
+    int32_t width = NS_MAX(1, nsPresContext::AppUnitsToIntCSSPixels(rect.width));
+    int32_t height = NS_MAX(1, nsPresContext::AppUnitsToIntCSSPixels(rect.height));
+    sm->ScreenForRect(nsPresContext::AppUnitsToIntCSSPixels(rect.x),
+                      nsPresContext::AppUnitsToIntCSSPixels(rect.y),
                       width, height, getter_AddRefs(screen));
     if (screen) {
       // get the total screen area if the popup is allowed to overlap it.
@@ -1915,7 +1910,7 @@ nsMenuPopupFrame::CreatePopupView()
   // Create a view
   nsIView* parentView = viewManager->GetRootView();
   nsViewVisibility visibility = nsViewVisibility_kHide;
-  int32_t zIndex = PR_INT32_MAX;
+  int32_t zIndex = INT32_MAX;
   bool    autoZIndex = false;
 
   NS_ASSERTION(parentView, "no parent view");

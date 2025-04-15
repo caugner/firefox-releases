@@ -21,11 +21,13 @@ https://bugzilla.mozilla.org/show_bug.cgi?id={674720}
 
 "use strict";
 
-var comp = SpecialPowers.wrap(Components);
+var comp = SpecialPowers.wrap(SpecialPowers.Components);
 comp.utils.import("resource://gre/modules/ContactService.jsm");
 comp.utils.import("resource://gre/modules/PermissionPromptHelper.jsm");
 SpecialPowers.setBoolPref("dom.mozContacts.enabled", true);
-SpecialPowers.addPermission("contacts", true, document);
+SpecialPowers.addPermission("contacts-write", true, document);
+SpecialPowers.addPermission("contacts-read", true, document);
+SpecialPowers.addPermission("contacts-create", true, document);
 
 // For Sorting
 var c1 = {
@@ -92,7 +94,7 @@ var properties2 = {
   honorificSuffix: "dummyHonorificSuffix",
   additionalName: "dummyadditionalName",
   nickname: "dummyNickname",
-  tel: [{type: ["test"], value: "123456789", carrier: "myCarrier"},{type: ["home", "custom"], value: "234567890"}],
+  tel: [{type: ["test"], value: "7932012345", carrier: "myCarrier"},{type: ["home", "custom"], value: "7932012346"}],
   email: [{type: ["test"], value: "a@b.c"}, {value: "b@c.d"}],
   adr: [adr1, adr2],
   impp: [{type: ["aim"], value:"im1"}, {value: "im2"}],
@@ -225,7 +227,7 @@ function checkContacts(contact1, contact2) {
 var req;
 var index = 0;
 
-var mozContacts = window.navigator.mozContacts
+var mozContacts = window.navigator.mozContacts;
 
 var steps = [
   function () {
@@ -473,7 +475,7 @@ var steps = [
     ok(true, "Retrieving by substring tel1");
     var options = {filterBy: ["tel"],
                    filterOp: "contains",
-                   filterValue: properties1.tel[1].value.substring(1,5)};
+                   filterValue: properties1.tel[1].value.substring(0,5)};
     req = mozContacts.find(options);
     req.onsuccess = function () {
       ok(req.result.length == 1, "Found exactly 1 contact.");
@@ -488,7 +490,7 @@ var steps = [
     ok(true, "Retrieving by substring tel2");
     var options = {filterBy: ["tel"],
                    filterOp: "contains",
-                   filterValue: "7654"};
+                   filterValue: "9876"};
     req = mozContacts.find(options);
     req.onsuccess = function () {
       ok(req.result.length == 1, "Found exactly 1 contact.");
@@ -503,7 +505,7 @@ var steps = [
     ok(true, "Retrieving by substring tel3");
     var options = {filterBy: ["tel"],
                    filterOp: "contains",
-                   filterValue: "876-5432"};
+                   filterValue: "98765432"};
     req = mozContacts.find(options);
     req.onsuccess = function () {
       ok(req.result.length == 1, "Found exactly 1 contact.");

@@ -4,7 +4,7 @@
 
 "use strict";
 
-let EXPORTED_SYMBOLS = ["PageThumbs", "PageThumbsStorage", "PageThumbsCache"];
+this.EXPORTED_SYMBOLS = ["PageThumbs", "PageThumbsStorage"];
 
 const Cu = Components.utils;
 const Cc = Components.classes;
@@ -59,7 +59,7 @@ XPCOMUtils.defineLazyGetter(this, "gUnicodeConverter", function () {
  * Singleton providing functionality for capturing web page thumbnails and for
  * accessing them if already cached.
  */
-let PageThumbs = {
+this.PageThumbs = {
   _initialized: false,
 
   /**
@@ -224,7 +224,7 @@ let PageThumbs = {
     let sh = aWindow.innerHeight;
 
     let {width: thumbnailWidth, height: thumbnailHeight} = aCanvas;
-    let scale = Math.max(thumbnailWidth / sw, thumbnailHeight / sh);
+    let scale = Math.min(Math.max(thumbnailWidth / sw, thumbnailHeight / sh), 1);
     let scaledWidth = sw * scale;
     let scaledHeight = sh * scale;
 
@@ -278,7 +278,7 @@ let PageThumbs = {
   },
 };
 
-let PageThumbsStorage = {
+this.PageThumbsStorage = {
   getDirectory: function Storage_getDirectory(aCreate = true) {
     return FileUtils.getDir("ProfLD", [THUMBNAIL_DIRECTORY], aCreate);
   },
@@ -445,27 +445,13 @@ let PageThumbsExpiration = {
     }
   },
 
-  expireThumbnails: function Expiration_expireThumbnails(aURLsToKeep) {
-    let keep = {};
-
-    // Transform all these URLs into file names.
-    for (let url of aURLsToKeep) {
-      keep[PageThumbsStorage.getLeafNameForURL(url)] = true;
-    }
-
-    let numFilesRemoved = 0;
-    let dir = PageThumbsStorage.getDirectory().path;
-    let msg = {type: "getFilesInDirectory", path: dir};
-
-    PageThumbsWorker.postMessage(msg, function (aData) {
-      let files = [file for (file of aData.result) if (!(file in keep))];
-      let maxFilesToRemove = Math.max(EXPIRATION_MIN_CHUNK_SIZE,
-                                      Math.round(files.length / 2));
-
-      let fileNames = files.slice(0, maxFilesToRemove);
-      let filePaths = [dir + "/" + fileName for (fileName of fileNames)];
-      PageThumbsWorker.postMessage({type: "removeFiles", paths: filePaths});
-    });
+  expireThumbnails: function Expiration_expireThumbnails(aURLsToKeep, aCallback) {
+    PageThumbsWorker.postMessage({
+      type: "expireFilesInDirectory",
+      minChunkSize: EXPIRATION_MIN_CHUNK_SIZE,
+      path: PageThumbsStorage.getDirectory().path,
+      filesToKeep: [PageThumbsStorage.getLeafNameForURL(url) for (url of aURLsToKeep)]
+    }, aCallback);
   }
 };
 
@@ -533,63 +519,3 @@ let PageThumbsHistoryObserver = {
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsINavHistoryObserver])
 };
-
-/**
- * A singleton handling the storage of page thumbnails.
- */
-let PageThumbsCache = {
-  /**
-   * Calls the given callback with a cache entry opened for reading.
-   * @param aKey The key identifying the desired cache entry.
-   * @param aCallback The callback that is called when the cache entry is ready.
-   */
-  getReadEntry: function Cache_getReadEntry(aKey, aCallback) {
-    // Try to open the desired cache entry.
-    this._openCacheEntry(aKey, Ci.nsICache.ACCESS_READ, aCallback);
-  },
-
-  /**
-   * Opens the cache entry identified by the given key.
-   * @param aKey The key identifying the desired cache entry.
-   * @param aAccess The desired access mode (see nsICache.ACCESS_* constants).
-   * @param aCallback The function to be called when the cache entry was opened.
-   */
-  _openCacheEntry: function Cache_openCacheEntry(aKey, aAccess, aCallback) {
-    function onCacheEntryAvailable(aEntry, aAccessGranted, aStatus) {
-      let validAccess = aAccess == aAccessGranted;
-      let validStatus = Components.isSuccessCode(aStatus);
-
-      // Check if a valid entry was passed and if the
-      // access we requested was actually granted.
-      if (aEntry && !(validAccess && validStatus)) {
-        aEntry.close();
-        aEntry = null;
-      }
-
-      aCallback(aEntry);
-    }
-
-    let listener = this._createCacheListener(onCacheEntryAvailable);
-    this._cacheSession.asyncOpenCacheEntry(aKey, aAccess, listener);
-  },
-
-  /**
-   * Returns a cache listener implementing the nsICacheListener interface.
-   * @param aCallback The callback to be called when the cache entry is available.
-   * @return The new cache listener.
-   */
-  _createCacheListener: function Cache_createCacheListener(aCallback) {
-    return {
-      onCacheEntryAvailable: aCallback,
-      QueryInterface: XPCOMUtils.generateQI([Ci.nsICacheListener])
-    };
-  }
-};
-
-/**
- * Define a lazy getter for the cache session.
- */
-XPCOMUtils.defineLazyGetter(PageThumbsCache, "_cacheSession", function () {
-  return Services.cache.createSession(PageThumbs.scheme,
-                                     Ci.nsICache.STORE_ON_DISK, true);
-});

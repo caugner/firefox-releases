@@ -484,6 +484,7 @@ nsHTMLEditor::SetFlags(uint32_t aFlags)
 NS_IMETHODIMP
 nsHTMLEditor::InitRules()
 {
+  MOZ_ASSERT(!mRules);
   // instantiate the rules for the html editor
   mRules = new nsHTMLEditRules();
   return mRules->Init(static_cast<nsPlaintextEditor*>(this));
@@ -3467,7 +3468,7 @@ nsHTMLEditor::StyleSheetLoaded(nsCSSStyleSheet* aSheet, bool aWasAlternate,
     if (NS_SUCCEEDED(rv))
     {
       // Get the URI, then url spec from the sheet
-      nsCAutoString spec;
+      nsAutoCString spec;
       rv = aSheet->GetSheetURI()->GetSpec(spec);
 
       if (NS_SUCCEEDED(rv))

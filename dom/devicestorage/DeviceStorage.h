@@ -11,6 +11,40 @@
 #include "nsIObserver.h"
 #include "nsDOMEventTargetHelper.h"
 
+class nsIInputStream;
+
+class DeviceStorageFile MOZ_FINAL
+  : public nsISupports {
+public:
+  nsCOMPtr<nsIFile> mFile;
+  nsString mPath;
+  nsString mStorageType;
+  bool mEditable;
+
+  DeviceStorageFile(const nsAString& aStorageType, nsIFile* aFile, const nsAString& aPath);
+  DeviceStorageFile(const nsAString& aStorageType, nsIFile* aFile);
+  void SetPath(const nsAString& aPath);
+  void SetEditable(bool aEditable);
+
+  NS_DECL_ISUPPORTS
+
+  // we want to make sure that the names of file can't reach
+  // outside of the type of storage the user asked for.
+  bool IsSafePath();
+
+  nsresult Remove();
+  nsresult Write(nsIInputStream* aInputStream);
+  nsresult Write(InfallibleTArray<uint8_t>& bits);
+  void CollectFiles(nsTArray<nsRefPtr<DeviceStorageFile> > &aFiles, PRTime aSince = 0);
+  void collectFilesInternal(nsTArray<nsRefPtr<DeviceStorageFile> > &aFiles, PRTime aSince, nsAString& aRootPath);
+
+  static void DirectoryDiskUsage(nsIFile* aFile, uint64_t* aSoFar, const nsAString& aStorageType);
+
+private:
+  void NormalizeFilePath();
+  void AppendRelativePath();
+};
+
 class nsDOMDeviceStorage MOZ_FINAL
   : public nsIDOMDeviceStorage
   , public nsDOMEventTargetHelper
@@ -23,13 +57,12 @@ public:
   NS_DECL_NSIOBSERVER
   NS_DECL_NSIDOMEVENTTARGET
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsDOMDeviceStorage, nsDOMEventTargetHelper)
-  NS_DECL_EVENT_HANDLER(change)
 
   nsDOMDeviceStorage();
 
   nsresult Init(nsPIDOMWindow* aWindow, const nsAString &aType);
 
-  void SetRootFileForType(const nsAString& aType);
+  void SetRootDirectoryForType(const nsAString& aType);
 
   static void CreateDeviceStoragesFor(nsPIDOMWindow* aWin,
                                       const nsAString &aType,
@@ -47,19 +80,19 @@ private:
   nsresult EnumerateInternal(const JS::Value & aName,
                              const JS::Value & aOptions,
                              JSContext* aCx,
-                             uint8_t aArgc, 
-                             bool aEditable, 
+                             uint8_t aArgc,
+                             bool aEditable,
                              nsIDOMDeviceStorageCursor** aRetval);
 
-  int32_t mStorageType;
-  nsCOMPtr<nsIFile> mFile;
+  nsString mStorageType;
+  nsCOMPtr<nsIFile> mRootDirectory;
 
   nsCOMPtr<nsIPrincipal> mPrincipal;
 
   bool mIsWatchingFile;
   bool mAllowedToWatchFile;
 
-  nsresult Notify(const char* aReason, nsIFile* aFile);
+  nsresult Notify(const char* aReason, class DeviceStorageFile* aFile);
 
   friend class WatchFileEvent;
   friend class DeviceStorageRequest;

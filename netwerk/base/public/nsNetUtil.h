@@ -76,6 +76,10 @@
 #include "nsIMIMEHeaderParam.h"
 #include "nsILoadContext.h"
 #include "mozilla/Services.h"
+#include "nsIPrivateBrowsingChannel.h"
+#include "mozIApplicationClearPrivateDataParams.h"
+
+#include <limits>
 
 #ifdef MOZILLA_INTERNAL_API
 
@@ -300,7 +304,7 @@ NS_MakeAbsoluteURI(char        **result,
                    nsIIOService *unused = nullptr)
 {
     nsresult rv;
-    nsCAutoString resultBuf;
+    nsAutoCString resultBuf;
     rv = NS_MakeAbsoluteURI(resultBuf, nsDependentCString(spec), baseURI);
     if (NS_SUCCEEDED(rv)) {
         *result = ToNewCString(resultBuf);
@@ -323,7 +327,7 @@ NS_MakeAbsoluteURI(nsAString       &result,
         rv = NS_OK;
     }
     else {
-        nsCAutoString resultBuf;
+        nsAutoCString resultBuf;
         if (spec.IsEmpty())
             rv = baseURI->GetSpec(resultBuf);
         else
@@ -394,7 +398,7 @@ NS_GetRealPort(nsIURI* aURI,
     // Otherwise, we have to get the default port from the protocol handler
 
     // Need the scheme first
-    nsCAutoString scheme;
+    nsAutoCString scheme;
     rv = aURI->GetScheme(scheme);
     if (NS_FAILED(rv))
         return -1;
@@ -709,7 +713,7 @@ NS_CheckPortSafety(nsIURI *uri) {
     nsresult rv = uri->GetPort(&port);
     if (NS_FAILED(rv) || port == -1)  // port undefined or default-valued
         return NS_OK;
-    nsCAutoString scheme;
+    nsAutoCString scheme;
     uri->GetScheme(scheme);
     return NS_CheckPortSafety(port, scheme.get());
 }
@@ -725,7 +729,7 @@ NS_NewProxyInfo(const nsACString &type,
     nsCOMPtr<nsIProtocolProxyService> pps =
             do_GetService(NS_PROTOCOLPROXYSERVICE_CONTRACTID, &rv);
     if (NS_SUCCEEDED(rv))
-        rv = pps->NewProxyInfo(type, host, port, flags, PR_UINT32_MAX, nullptr,
+        rv = pps->NewProxyInfo(type, host, port, flags, UINT32_MAX, nullptr,
                                result);
     return rv; 
 }
@@ -850,40 +854,6 @@ NS_GetReferrerFromChannel(nsIChannel *channel,
     }
     return rv;
 }
-
-#ifdef MOZILLA_INTERNAL_API
-inline nsresult
-NS_ExamineForProxy(const char    *scheme,
-                   const char    *host,
-                   int32_t        port, 
-                   nsIProxyInfo **proxyInfo)
-{
-    nsresult rv;
-    nsCOMPtr<nsIProtocolProxyService> pps =
-            do_GetService(NS_PROTOCOLPROXYSERVICE_CONTRACTID, &rv);
-    if (NS_SUCCEEDED(rv)) {
-        nsCAutoString spec(scheme);
-        spec.Append("://");
-        spec.Append(host);
-        spec.Append(':');
-        spec.AppendInt(port);
-        // XXXXX - Under no circumstances whatsoever should any code which
-        // wants a uri do this. I do this here because I do not, in fact,
-        // actually want a uri (the dummy uris created here may not be 
-        // syntactically valid for the specific protocol), and all we need
-        // is something which has a valid scheme, hostname, and a string
-        // to pass to PAC if needed - bbaetz
-        nsCOMPtr<nsIURI> uri =
-                do_CreateInstance(NS_STANDARDURL_CONTRACTID, &rv);
-        if (NS_SUCCEEDED(rv)) {
-            rv = uri->SetSpec(spec);
-            if (NS_SUCCEEDED(rv))
-                rv = pps->Resolve(uri, 0, proxyInfo);
-        }
-    }
-    return rv;
-}
-#endif
 
 inline nsresult
 NS_ParseContentType(const nsACString &rawContentType,
@@ -1325,10 +1295,23 @@ NS_QueryNotificationCallbacks(nsIInterfaceRequestor  *callbacks,
 inline bool
 NS_UsePrivateBrowsing(nsIChannel *channel)
 {
+    bool isPrivate = false;
+    bool isOverriden = false;
+    nsCOMPtr<nsIPrivateBrowsingChannel> pbChannel = do_QueryInterface(channel);
+    if (pbChannel &&
+        NS_SUCCEEDED(pbChannel->IsPrivateModeOverriden(&isPrivate, &isOverriden)) &&
+        isOverriden) {
+        return isPrivate;
+    }
     nsCOMPtr<nsILoadContext> loadContext;
     NS_QueryNotificationCallbacks(channel, loadContext);
     return loadContext && loadContext->UsePrivateBrowsing();
 }
+
+// Constants duplicated from nsIScriptSecurityManager so we avoid having necko
+// know about script security manager.
+#define NECKO_NO_APP_ID 0
+#define NECKO_UNKNOWN_APP_ID UINT32_MAX
 
 /**
  * Gets AppId and isInBrowserElement from channel's nsILoadContext.
@@ -1350,6 +1333,43 @@ NS_GetAppInfo(nsIChannel *aChannel, uint32_t *aAppID, bool *aIsInBrowserElement)
     NS_ENSURE_SUCCESS(rv, false);
 
     return true;
+}
+
+/**
+ *  Gets appId and browserOnly parameters from the TOPIC_WEB_APP_CLEAR_DATA
+ *  nsIObserverService notification.  Used when clearing user data or
+ *  uninstalling web apps.
+ */
+inline nsresult
+NS_GetAppInfoFromClearDataNotification(nsISupports *aSubject,
+                                       uint32_t *aAppID, bool* aBrowserOnly)
+{
+    nsresult rv;
+
+    nsCOMPtr<mozIApplicationClearPrivateDataParams>
+        clearParams(do_QueryInterface(aSubject));
+    MOZ_ASSERT(clearParams);
+    if (!clearParams) {
+        return NS_ERROR_UNEXPECTED;
+    }
+
+    uint32_t appId;
+    rv = clearParams->GetAppId(&appId);
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
+    MOZ_ASSERT(appId != NECKO_UNKNOWN_APP_ID);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (appId == NECKO_UNKNOWN_APP_ID) {
+        return NS_ERROR_UNEXPECTED;
+    }
+
+    bool browserOnly = false;
+    rv = clearParams->GetBrowserOnly(&browserOnly);
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    *aAppID = appId;
+    *aBrowserOnly = browserOnly;
+    return NS_OK;
 }
 
 /**
@@ -1664,7 +1684,7 @@ NS_SecurityHashURI(nsIURI* aURI)
 {
     nsCOMPtr<nsIURI> baseURI = NS_GetInnermostURI(aURI);
 
-    nsCAutoString scheme;
+    nsAutoCString scheme;
     uint32_t schemeHash = 0;
     if (NS_SUCCEEDED(baseURI->GetScheme(scheme)))
         schemeHash = mozilla::HashString(scheme);
@@ -1677,14 +1697,17 @@ NS_SecurityHashURI(nsIURI* aURI)
         scheme.EqualsLiteral("mailbox") ||
         scheme.EqualsLiteral("news"))
     {
-        nsCAutoString spec;
-        uint32_t specHash = baseURI->GetSpec(spec);
-        if (NS_SUCCEEDED(specHash))
+        nsAutoCString spec;
+        uint32_t specHash;
+        nsresult res = baseURI->GetSpec(spec);
+        if (NS_SUCCEEDED(res))
             specHash = mozilla::HashString(spec);
+        else
+            specHash = static_cast<uint32_t>(res);
         return specHash;
     }
 
-    nsCAutoString host;
+    nsAutoCString host;
     uint32_t hostHash = 0;
     if (NS_SUCCEEDED(baseURI->GetAsciiHost(host)))
         hostHash = mozilla::HashString(host);
@@ -1731,7 +1754,7 @@ NS_SecurityCompareURIs(nsIURI* aSourceURI,
         return false;
 
     // Compare schemes
-    nsCAutoString targetScheme;
+    nsAutoCString targetScheme;
     bool sameScheme = false;
     if (NS_FAILED( targetBaseURI->GetScheme(targetScheme) ) ||
         NS_FAILED( sourceBaseURI->SchemeIs(targetScheme.get(), &sameScheme) ) ||
@@ -1775,16 +1798,16 @@ NS_SecurityCompareURIs(nsIURI* aSourceURI,
     {
         // Each message is a distinct trust domain; use the
         // whole spec for comparison
-        nsCAutoString targetSpec;
-        nsCAutoString sourceSpec;
+        nsAutoCString targetSpec;
+        nsAutoCString sourceSpec;
         return ( NS_SUCCEEDED( targetBaseURI->GetSpec(targetSpec) ) &&
                  NS_SUCCEEDED( sourceBaseURI->GetSpec(sourceSpec) ) &&
                  targetSpec.Equals(sourceSpec) );
     }
 
     // Compare hosts
-    nsCAutoString targetHost;
-    nsCAutoString sourceHost;
+    nsAutoCString targetHost;
+    nsAutoCString sourceHost;
     if (NS_FAILED( targetBaseURI->GetAsciiHost(targetHost) ) ||
         NS_FAILED( sourceBaseURI->GetAsciiHost(sourceHost) ))
     {
@@ -1980,7 +2003,7 @@ NS_GetContentDispositionFromHeader(const nsACString& aHeader, nsIChannel *aChan 
   if (NS_FAILED(rv))
     return nsIChannel::DISPOSITION_ATTACHMENT;
 
-  nsCAutoString fallbackCharset;
+  nsAutoCString fallbackCharset;
   if (aChan) {
     nsCOMPtr<nsIURI> uri;
     aChan->GetURI(getter_AddRefs(uri));
@@ -2023,7 +2046,7 @@ NS_GetFilenameFromDisposition(nsAString& aFilename,
 
   nsCOMPtr<nsIURL> url = do_QueryInterface(aURI);
 
-  nsCAutoString fallbackCharset;
+  nsAutoCString fallbackCharset;
   if (url)
     url->GetOriginCharset(fallbackCharset);
   // Get the value of 'filename' parameter
@@ -2073,7 +2096,7 @@ NS_IsAboutBlank(nsIURI *uri)
         return false;
     }
 
-    nsCAutoString str;
+    nsAutoCString str;
     uri->GetSpec(str);
     return str.EqualsLiteral("about:blank");
 }

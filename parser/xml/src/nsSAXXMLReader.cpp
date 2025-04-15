@@ -516,12 +516,12 @@ nsSAXXMLReader::ParseFromStream(nsIInputStream *aStream,
     if (! available)
       break; // blocking input stream has none available when done
 
-    if (available > PR_UINT32_MAX)
-      available = PR_UINT32_MAX;
+    if (available > UINT32_MAX)
+      available = UINT32_MAX;
 
     rv = mListener->OnDataAvailable(parserChannel, nullptr,
                                     aStream,
-                                    (uint32_t)NS_MIN(offset, (uint64_t)PR_UINT32_MAX),
+                                    offset,
                                     (uint32_t)available);
     if (NS_SUCCEEDED(rv))
       offset += available;
@@ -576,7 +576,7 @@ nsSAXXMLReader::OnStopRequest(nsIRequest *aRequest, nsISupports *aContext,
 
 NS_IMETHODIMP
 nsSAXXMLReader::OnDataAvailable(nsIRequest *aRequest, nsISupports *aContext,
-                                nsIInputStream *aInputStream, uint32_t offset,
+                                nsIInputStream *aInputStream, uint64_t offset,
                                 uint32_t count)
 {
   NS_ENSURE_TRUE(mIsAsyncParse, NS_ERROR_FAILURE);
@@ -597,7 +597,7 @@ nsSAXXMLReader::InitParser(nsIRequestObserver *aObserver, nsIChannel *aChannel)
   parser->SetContentSink(this);
 
   int32_t charsetSource = kCharsetFromDocTypeDefault;
-  nsCAutoString charset(NS_LITERAL_CSTRING("UTF-8"));
+  nsAutoCString charset(NS_LITERAL_CSTRING("UTF-8"));
   TryChannelCharset(aChannel, charsetSource, charset);
   parser->SetDocumentCharset(charset, charsetSource);
 
@@ -619,10 +619,10 @@ nsSAXXMLReader::TryChannelCharset(nsIChannel *aChannel,
     return true;
   
   if (aChannel) {
-    nsCAutoString charsetVal;
+    nsAutoCString charsetVal;
     nsresult rv = aChannel->GetContentCharset(charsetVal);
     if (NS_SUCCEEDED(rv)) {
-      nsCAutoString preferred;
+      nsAutoCString preferred;
       if (NS_FAILED(nsCharsetAlias::GetPreferred(charsetVal, preferred)))
         return false;
 

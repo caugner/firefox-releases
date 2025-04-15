@@ -20,6 +20,7 @@ namespace layers {
 
 class CairoImage;
 class PlanarYCbCrImage;
+class ShmemYCbCrImage;
 
 /**
  * This class wraps a GL texture. It includes a GLContext reference
@@ -172,6 +173,7 @@ public:
   virtual bool LoadAsTexture(GLuint aTextureUnit, gfxIntSize* aSize);
 
   virtual Layer* GetLayer();
+  virtual LayerRenderState GetRenderState() MOZ_OVERRIDE;
 
   virtual void RenderLayer(int aPreviousFrameBuffer,
                            const nsIntPoint& aOffset);
@@ -180,7 +182,12 @@ public:
 
 private:
   bool Init(const SharedImage& aFront);
+  // Will be replaced by UploadSharedYCbCrToTexture after the layers 
+  // refactoring. 
   void UploadSharedYUVToTexture(const YUVImage& yuv);
+
+  void UploadSharedYCbCrToTexture(ShmemYCbCrImage& aImage,
+                                  nsIntRect aPictureRect);
 
 
   nsRefPtr<TextureImage> mTexImage;

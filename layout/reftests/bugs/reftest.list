@@ -20,7 +20,7 @@
 == 10036-1.html 10036-1-ref.html
 skip-if(!cocoaWidget) HTTP(..) == 10209-1.html 10209-ref.html # Bug 667079
 HTTP(..) == 10209-2.html 10209-ref.html
-asserts(4) skip-if(!cocoaWidget) HTTP(..) == 10209-3.html 10209-3-ref.html # Assertions: bug 666606, skip because of bug 667079
+asserts(2) skip-if(!cocoaWidget) HTTP(..) == 10209-3.html 10209-3-ref.html # Assertions: bug 666606, skip because of bug 667079
 == 18217-basic-1.html 18217-basic-1-ref.html
 == 18217-basic-2a.html 18217-basic-2-ref.html
 == 18217-basic-2b.html 18217-basic-2-ref.html
@@ -851,7 +851,7 @@ fails-if(winWidget) fails-if(cocoaWidget) random-if(!cocoaWidget&&!winWidget) !=
 == 402629-1.html 402629-1-ref.html
 == 402629-2.html 402629-2-ref.html
 == 402629-3.html 402629-3-ref.html
-#== 402807-1.html 402807-1-ref.html # Fails on Mac (qm-xserve01)
+== 402807-1.html 402807-1-ref.html
 == 402940-1.html 402940-1-ref.html
 == 402940-1b.html 402940-1-ref.html
 != 402940-2.html 402940-2-notref.html
@@ -1167,7 +1167,7 @@ random == 445004-1.html 445004-1-ref.html # bug 472268
 == 446100-1f.html about:blank
 == 446100-1g.html about:blank
 == 446100-1h.html about:blank
-# == 448193.html 448193-ref.html  # Fails due to 2 small single-pixel differences
+fuzzy(127,2) == 448193.html 448193-ref.html
 # == 448987.html 448987-ref.html  # Disabled for now - it needs privileges
 != 449149-1a.html about:blank
 != 449149-1b.html about:blank
@@ -1316,7 +1316,7 @@ fails-if(Android) random-if(winWidget) fails-if(gtk2Widget) == 481948-3.html 481
 == 482398-1.html 482398-1-ref.html
 random-if(d2d) == 482592-1a.xhtml 482592-1-ref.html # bug 586771
 random-if(d2d) == 482592-1b.xhtml 482592-1-ref.html # bug 586771
-== 482659-1a.html 482659-1-ref.html
+random-if(winWidget) == 482659-1a.html 482659-1-ref.html
 == 482659-1b.html 482659-1-ref.html
 == 482659-1c.html 482659-1-ref.html
 == 482659-1d.html 482659-1-ref.html
@@ -1568,13 +1568,13 @@ fails-if(Android) random-if(layersGPUAccelerated) fails-if(/^Windows\x20NT\x205\
 == 582037-1b.html 582037-1-ref.html
 == 582037-2a.html 582037-2-ref.html
 == 582037-2b.html 582037-2-ref.html
-asserts(0-11) == 582146-1.html about:blank
+asserts(0-12) == 582146-1.html about:blank
 == 582476-1.svg 582476-1-ref.svg
 == 584400-dash-length.svg 584400-dash-length-ref.svg
 == 584699-1.html 584699-1-ref.html
 == 585598-2.xhtml 585598-2-ref.xhtml
 == 586400-1.html 586400-1-ref.html
-fuzzy-if(d2d,52,1051) fails-if(Android) fails-if(cocoaWidget) == 586683-1.html 586683-1-ref.html
+fuzzy-if(d2d,52,1051) fails-if(Android) fuzzy-if(OSX==10.8,129,1068) == 586683-1.html 586683-1-ref.html
 == 589615-1a.xhtml 589615-1-ref.html
 == 589615-1b.html 589615-1-ref.html
 == 589672-1.html 589672-1-ref.html
@@ -1630,7 +1630,7 @@ HTTP(..) == 621253-2-externalFilter.html 621253-2-ref.html
 fails-if(Android) HTTP(..) == 619511-1.html 619511-1-ref.html
 random-if(winWidget) fuzzy-if(OSX==10.8,19,17) == 621918-1.svg 621918-1-ref.svg # 1-pixel diacritic positioning discrepancy in rotated text (may depend on platform fonts)
 random-if(winWidget) HTTP(..) == 621918-2.svg 621918-2-ref.svg # same 1px issue as above, and HTTP(..) for filters.svg, used to mask antialiasing issues where glyphs touch
-== 622585-1.html 622585-1-ref.html
+fuzzy-if(d2d,5,1) == 622585-1.html 622585-1-ref.html # bug 789402
 fails-if(Android) == 625409-1.html 625409-1-ref.html
 == 627393-1.html about:blank
 == 630835-1.html about:blank
@@ -1720,3 +1720,7 @@ fuzzy-if(true,17,5859) == 759036-2.html 759036-2-ref.html
 == 776265-2c.html 776265-2-ref.html
 == 776265-2d.html 776265-2-ref.html
 == 787947-1.html 787947-1-ref.html
+== 796847-1.svg 796847-1-ref.svg
+fuzzy(40,800) == 797797-1.html 797797-1-ref.html # 'opacity:N' and rgba(,,,N) text don't match precisely
+fuzzy(40,800) == 797797-2.html 797797-2-ref.html # 'opacity:N' and rgba(,,,N) text don't match precisely
+== 818276-1.html 818276-1-ref.html

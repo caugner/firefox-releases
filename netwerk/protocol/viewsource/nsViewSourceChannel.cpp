@@ -40,7 +40,7 @@ nsViewSourceChannel::Init(nsIURI* uri)
 {
     mOriginalURI = uri;
 
-    nsCAutoString path;
+    nsAutoCString path;
     nsresult rv = uri->GetPath(path);
     if (NS_FAILED(rv))
       return rv;
@@ -48,7 +48,7 @@ nsViewSourceChannel::Init(nsIURI* uri)
     nsCOMPtr<nsIIOService> pService(do_GetIOService(&rv));
     if (NS_FAILED(rv)) return rv;
 
-    nsCAutoString scheme;
+    nsAutoCString scheme;
     rv = pService->ExtractScheme(path, scheme);
     if (NS_FAILED(rv))
       return rv;
@@ -158,12 +158,12 @@ nsViewSourceChannel::GetURI(nsIURI* *aURI)
       return NS_ERROR_UNEXPECTED;
     }
 
-    nsCAutoString spec;
+    nsAutoCString spec;
     uri->GetSpec(spec);
 
     /* XXX Gross hack -- NS_NewURI goes into an infinite loop on
        non-flat specs.  See bug 136980 */
-    return NS_NewURI(aURI, nsCAutoString(NS_LITERAL_CSTRING("view-source:")+spec), nullptr);
+    return NS_NewURI(aURI, nsAutoCString(NS_LITERAL_CSTRING("view-source:")+spec), nullptr);
 }
 
 NS_IMETHODIMP
@@ -274,7 +274,7 @@ nsViewSourceChannel::GetContentType(nsACString &aContentType)
     {
         // Get the current content type
         nsresult rv;
-        nsCAutoString contentType;
+        nsAutoCString contentType;
         rv = mChannel->GetContentType(contentType);
         if (NS_FAILED(rv)) return rv;
 
@@ -348,11 +348,27 @@ nsViewSourceChannel::GetContentDisposition(uint32_t *aContentDisposition)
 }
 
 NS_IMETHODIMP
+nsViewSourceChannel::SetContentDisposition(uint32_t aContentDisposition)
+{
+    NS_ENSURE_TRUE(mChannel, NS_ERROR_FAILURE);
+
+    return mChannel->SetContentDisposition(aContentDisposition);
+}
+
+NS_IMETHODIMP
 nsViewSourceChannel::GetContentDispositionFilename(nsAString &aContentDispositionFilename)
 {
     NS_ENSURE_TRUE(mChannel, NS_ERROR_FAILURE);
 
     return mChannel->GetContentDispositionFilename(aContentDispositionFilename);
+}
+
+NS_IMETHODIMP
+nsViewSourceChannel::SetContentDispositionFilename(const nsAString &aContentDispositionFilename)
+{
+    NS_ENSURE_TRUE(mChannel, NS_ERROR_FAILURE);
+
+    return mChannel->SetContentDispositionFilename(aContentDispositionFilename);
 }
 
 NS_IMETHODIMP
@@ -497,8 +513,9 @@ nsViewSourceChannel::OnStopRequest(nsIRequest *aRequest, nsISupports* aContext,
 // nsIStreamListener methods
 NS_IMETHODIMP
 nsViewSourceChannel::OnDataAvailable(nsIRequest *aRequest, nsISupports* aContext,
-                               nsIInputStream *aInputStream, uint32_t aSourceOffset,
-                               uint32_t aLength) 
+                                     nsIInputStream *aInputStream,
+                                     uint64_t aSourceOffset,
+                                     uint32_t aLength) 
 {
     NS_ENSURE_TRUE(mListener, NS_ERROR_FAILURE);
     return mListener->OnDataAvailable(static_cast<nsIViewSourceChannel*>
@@ -651,7 +668,7 @@ nsViewSourceChannel::VisitResponseHeaders(nsIHttpHeaderVisitor *aVisitor)
         return NS_ERROR_NULL_POINTER;
 
     NS_NAMED_LITERAL_CSTRING(contentTypeStr, "Content-Type");
-    nsCAutoString contentType;
+    nsAutoCString contentType;
     nsresult rv =
         mHttpChannel->GetResponseHeader(contentTypeStr, contentType);
     if (NS_SUCCEEDED(rv))

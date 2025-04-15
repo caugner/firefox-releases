@@ -58,9 +58,9 @@
 // Emulate string comparison (used for sorting) for PRTime and int.
 inline int32_t ComparePRTime(PRTime a, PRTime b)
 {
-  if (LL_CMP(a, <, b))
+  if (a < b)
     return -1;
-  else if (LL_CMP(a, >, b))
+  else if (a > b)
     return 1;
   return 0;
 }
@@ -691,10 +691,10 @@ nsNavHistoryContainerResultNode::ReverseUpdateStats(int32_t aAccessCountChange)
 
     if ((sortingByVisitCount && aAccessCountChange != 0) ||
         (sortingByTime && timeChanged)) {
-      uint32_t ourIndex = mParent->FindChild(this);
+      int32_t ourIndex = mParent->FindChild(this);
       NS_ASSERTION(ourIndex >= 0, "Could not find self in parent");
       if (ourIndex >= 0)
-        EnsureItemPosition(ourIndex);
+        EnsureItemPosition(static_cast<uint32_t>(ourIndex));
     }
 
     nsresult rv = mParent->ReverseUpdateStats(aAccessCountChange);
@@ -1094,7 +1094,7 @@ int32_t nsNavHistoryContainerResultNode::SortComparison_KeywordGreater(
 int32_t nsNavHistoryContainerResultNode::SortComparison_AnnotationLess(
     nsNavHistoryResultNode* a, nsNavHistoryResultNode* b, void* closure)
 {
-  nsCAutoString annoName(static_cast<char*>(closure));
+  nsAutoCString annoName(static_cast<char*>(closure));
   NS_ENSURE_TRUE(!annoName.IsEmpty(), 0);
 
   bool a_itemAnno = false;
@@ -1105,7 +1105,7 @@ int32_t nsNavHistoryContainerResultNode::SortComparison_AnnotationLess(
   if (a->mItemId != -1) {
     a_itemAnno = true;
   } else {
-    nsCAutoString spec;
+    nsAutoCString spec;
     if (NS_SUCCEEDED(a->GetUri(spec)))
       NS_NewURI(getter_AddRefs(a_uri), spec);
     NS_ENSURE_TRUE(a_uri, 0);
@@ -1114,7 +1114,7 @@ int32_t nsNavHistoryContainerResultNode::SortComparison_AnnotationLess(
   if (b->mItemId != -1) {
     b_itemAnno = true;
   } else {
-    nsCAutoString spec;
+    nsAutoCString spec;
     if (NS_SUCCEEDED(b->GetUri(spec)))
       NS_NewURI(getter_AddRefs(b_uri), spec);
     NS_ENSURE_TRUE(b_uri, 0);
@@ -1436,7 +1436,7 @@ nsNavHistoryContainerResultNode::InsertSortedChild(
       container->FillStats();
     }
 
-    nsCAutoString sortingAnnotation;
+    nsAutoCString sortingAnnotation;
     GetSortingAnnotation(sortingAnnotation);
     bool itemExists;
     uint32_t position = FindInsertionPoint(aNode, comparator, 
@@ -1467,7 +1467,7 @@ nsNavHistoryContainerResultNode::EnsureItemPosition(uint32_t aIndex) {
   if (!comparator)
     return false;
 
-  nsCAutoString sortAnno;
+  nsAutoCString sortAnno;
   GetSortingAnnotation(sortAnno);
   if (!DoesChildNeedResorting(aIndex, comparator, sortAnno.get()))
     return false;
@@ -1782,7 +1782,7 @@ nsNavHistoryContainerResultNode::ChangeTitles(nsIURI* aURI,
                                               bool aOnlyOne)
 {
   // uri string
-  nsCAutoString uriString;
+  nsAutoCString uriString;
   nsresult rv = aURI->GetSpec(uriString);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -2299,7 +2299,7 @@ nsNavHistoryQueryResultNode::FillChildren()
     // then have proper visit counts and dates.
     SortComparator comparator = GetSortingComparator(GetSortType());
     if (comparator) {
-      nsCAutoString sortingAnnotation;
+      nsAutoCString sortingAnnotation;
       GetSortingAnnotation(sortingAnnotation);
       // Usually containers queries results comes already sorted from the
       // database, but some locales could have special rules to sort by title.
@@ -2561,7 +2561,7 @@ nsNavHistoryQueryResultNode::OnVisit(nsIURI* aURI, int64_t aVisitId,
       if (!hasDomain)
         return NS_OK;
 
-      nsCAutoString host;
+      nsAutoCString host;
       if (NS_FAILED(aURI->GetAsciiHost(host)))
         return NS_OK;
 
@@ -2687,7 +2687,7 @@ nsNavHistoryQueryResultNode::OnTitleChanged(nsIURI* aURI,
   if (mHasSearchTerms) {
     // Find all matching URI nodes.
     nsCOMArray<nsNavHistoryResultNode> matches;
-    nsCAutoString spec;
+    nsAutoCString spec;
     nsresult rv = aURI->GetSpec(spec);
     NS_ENSURE_SUCCESS(rv, rv);
     RecursiveFindURIs(onlyOneEntry, this, spec, &matches);
@@ -2769,7 +2769,7 @@ nsNavHistoryQueryResultNode::OnDeleteURI(nsIURI* aURI,
                          nsINavHistoryQueryOptions::RESULTS_AS_URI ||
                          mOptions->ResultType() ==
                          nsINavHistoryQueryOptions::RESULTS_AS_TAG_CONTENTS);
-  nsCAutoString spec;
+  nsAutoCString spec;
   nsresult rv = aURI->GetSpec(spec);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -2825,7 +2825,7 @@ nsNavHistoryQueryResultNode::OnPageChanged(nsIURI* aURI,
                                            const nsAString& aNewValue,
                                            const nsACString& aGUID)
 {
-  nsCAutoString spec;
+  nsAutoCString spec;
   nsresult rv = aURI->GetSpec(spec);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -2872,7 +2872,7 @@ nsNavHistoryQueryResultNode::NotifyIfTagsChanged(nsIURI* aURI)
 {
   nsNavHistoryResult* result = GetResult();
   NS_ENSURE_STATE(result);
-  nsCAutoString spec;
+  nsAutoCString spec;
   nsresult rv = aURI->GetSpec(spec);
   NS_ENSURE_SUCCESS(rv, rv);
   bool onlyOneEntry = (mOptions->ResultType() ==
@@ -3361,7 +3361,7 @@ nsNavHistoryFolderResultNode::OnChildrenFilled()
     // then have proper visit counts and dates.
     SortComparator comparator = GetSortingComparator(GetSortType());
     if (comparator) {
-      nsCAutoString sortingAnnotation;
+      nsAutoCString sortingAnnotation;
       GetSortingAnnotation(sortingAnnotation);
       RecursiveSort(sortingAnnotation.get(), comparator);
     }
@@ -3691,7 +3691,7 @@ nsNavHistoryFolderResultNode::OnItemAdded(int64_t aItemId,
   bool isQuery = false;
   if (aItemType == nsINavBookmarksService::TYPE_BOOKMARK) {
     NS_ASSERTION(aURI, "Got a null URI when we are a bookmark?!");
-    nsCAutoString itemURISpec;
+    nsAutoCString itemURISpec;
     rv = aURI->GetSpec(itemURISpec);
     NS_ENSURE_SUCCESS(rv, rv);
     isQuery = IsQueryURI(itemURISpec);
@@ -3701,7 +3701,7 @@ nsNavHistoryFolderResultNode::OnItemAdded(int64_t aItemId,
       !isQuery && excludeItems) {
     // don't update items when we aren't displaying them, but we still need
     // to adjust bookmark indices to account for the insertion
-    ReindexRange(aIndex, PR_INT32_MAX, 1);
+    ReindexRange(aIndex, INT32_MAX, 1);
     return NS_OK;
   }
 
@@ -3709,7 +3709,7 @@ nsNavHistoryFolderResultNode::OnItemAdded(int64_t aItemId,
     return NS_OK; // folder was completely refreshed for us
 
   // adjust indices to account for insertion
-  ReindexRange(aIndex, PR_INT32_MAX, 1);
+  ReindexRange(aIndex, INT32_MAX, 1);
 
   nsRefPtr<nsNavHistoryResultNode> node;
   if (aItemType == nsINavBookmarksService::TYPE_BOOKMARK) {
@@ -3793,7 +3793,7 @@ nsNavHistoryFolderResultNode::OnItemRemoved(int64_t aItemId,
   if ((node->IsURI() || node->IsSeparator()) && excludeItems) {
     // don't update items when we aren't displaying them, but we do need to
     // adjust everybody's bookmark indices to account for the removal
-    ReindexRange(aIndex, PR_INT32_MAX, -1);
+    ReindexRange(aIndex, INT32_MAX, -1);
     return NS_OK;
   }
 
@@ -3801,7 +3801,7 @@ nsNavHistoryFolderResultNode::OnItemRemoved(int64_t aItemId,
     return NS_OK; // we are completely refreshed
 
   // shift all following indices down
-  ReindexRange(aIndex + 1, PR_INT32_MAX, -1);
+  ReindexRange(aIndex + 1, INT32_MAX, -1);
 
   return RemoveChildAt(index);
 }
@@ -4015,8 +4015,8 @@ nsNavHistoryFolderResultNode::OnItemMoved(int64_t aItemId,
     // an add because that will lose your tree state.
 
     // adjust bookmark indices
-    ReindexRange(aOldIndex + 1, PR_INT32_MAX, -1);
-    ReindexRange(aNewIndex, PR_INT32_MAX, 1);
+    ReindexRange(aOldIndex + 1, INT32_MAX, -1);
+    ReindexRange(aNewIndex, INT32_MAX, 1);
 
     uint32_t index;
     nsNavHistoryResultNode* node = FindChildById(aItemId, &index);
@@ -4029,13 +4029,12 @@ nsNavHistoryFolderResultNode::OnItemMoved(int64_t aItemId,
     node->mBookmarkIndex = aNewIndex;
 
     // adjust position
-    if (index >= 0)
-      EnsureItemPosition(index);
+    EnsureItemPosition(index);
     return NS_OK;
   } else {
     // moving between two different folders, just do a remove and an add
     nsCOMPtr<nsIURI> itemURI;
-    nsCAutoString itemTitle;
+    nsAutoCString itemTitle;
     if (aItemType == nsINavBookmarksService::TYPE_BOOKMARK) {
       nsNavBookmarks* bookmarks = nsNavBookmarks::GetBookmarksService();
       NS_ENSURE_TRUE(bookmarks, NS_ERROR_OUT_OF_MEMORY);
@@ -4746,12 +4745,12 @@ nsNavHistoryResult::OnVisit(nsIURI* aURI, int64_t aVisitId, PRTime aTime,
       nsCOMPtr<nsINavHistoryResultNode> firstChild;
       rv = mRootNode->GetChild(0, getter_AddRefs(firstChild));
       NS_ENSURE_SUCCESS(rv, rv);
-      nsCAutoString title;
+      nsAutoCString title;
       rv = firstChild->GetTitle(title);
       NS_ENSURE_SUCCESS(rv, rv);
       nsNavHistory* history = nsNavHistory::GetHistoryService();
       NS_ENSURE_TRUE(history, NS_OK);
-      nsCAutoString todayLabel;
+      nsAutoCString todayLabel;
       history->GetStringFromName(
         NS_LITERAL_STRING("finduri-AgeInDays-is-0").get(), todayLabel);
       todayIsMissing = !todayLabel.Equals(title);

@@ -30,7 +30,6 @@
 # include "nsXULAppAPI.h"
 #endif
 
-#include "mozilla/FunctionTimer.h"
 #if defined(NS_FUNCTION_TIMER) && defined(_MSC_VER)
 #include "nsTimerImpl.h"
 #include "nsStackWalk.h"
@@ -47,6 +46,8 @@ static PRLogModuleInfo *sLog = PR_NewLogModule("nsThread");
 #define LOG(args) PR_LOG(sLog, PR_LOG_DEBUG, args)
 
 NS_DECL_CI_INTERFACE_GETTER(nsThread)
+
+nsIThreadObserver* nsThread::sMainThreadObserver = nullptr;
 
 namespace mozilla {
 
@@ -581,6 +582,12 @@ nsThread::ProcessNextEvent(bool mayWait, bool *result)
     }
   }
 
+  bool notifyMainThreadObserver =
+    (MAIN_THREAD == mIsMainThread) && sMainThreadObserver;
+  if (notifyMainThreadObserver) 
+   sMainThreadObserver->OnProcessNextEvent(this, mayWait && !ShuttingDown(),
+                                           mRunningEvent);
+
   nsCOMPtr<nsIThreadObserver> obs = mObserver;
   if (obs)
     obs->OnProcessNextEvent(this, mayWait && !ShuttingDown(), mRunningEvent);
@@ -604,17 +611,6 @@ nsThread::ProcessNextEvent(bool mayWait, bool *result)
     nsCOMPtr<nsIRunnable> event;
     mEvents.GetEvent(mayWait && !ShuttingDown(), getter_AddRefs(event));
 
-#ifdef NS_FUNCTION_TIMER
-    char message[1024] = {'\0'};
-    if (MAIN_THREAD == mIsMainThread) {
-        mozilla::FunctionTimer::ft_snprintf(message, sizeof(message), 
-                                            "@ Main Thread Event %p", (void*)event.get());
-    }
-    // If message is empty, it means that we're not on the main thread, and
-    // FunctionTimer won't time this function.
-    NS_TIME_FUNCTION_MIN_FMT(5.0, message);
-#endif
-
     *result = (event.get() != nullptr);
 
     if (event) {
@@ -635,6 +631,9 @@ nsThread::ProcessNextEvent(bool mayWait, bool *result)
 
   if (obs)
     obs->AfterProcessNextEvent(this, mRunningEvent);
+
+  if (notifyMainThreadObserver && sMainThreadObserver)
+    sMainThreadObserver->AfterProcessNextEvent(this, mRunningEvent);
 
   return rv;
 }
@@ -741,6 +740,21 @@ nsThread::RemoveObserver(nsIThreadObserver *observer)
     NS_WARNING("Removing an observer that was never added!");
   }
 
+  return NS_OK;
+}
+
+nsresult
+nsThread::SetMainThreadObserver(nsIThreadObserver* aObserver)
+{
+  if (aObserver && nsThread::sMainThreadObserver) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  nsThread::sMainThreadObserver = aObserver;
   return NS_OK;
 }
 

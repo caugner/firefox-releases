@@ -38,6 +38,7 @@
 #include "nsIEnumerator.h"
 #include "xptiprivate.h"
 #include "nsIConsoleService.h"
+#include "nsIMemoryReporter.h"
 #include "nsIObserverService.h"
 #include "nsISimpleEnumerator.h"
 #include "nsIStringEnumerator.h"
@@ -57,7 +58,6 @@
 #include "private/pprthred.h"
 #include "nsTArray.h"
 #include "prio.h"
-#include "mozilla/FunctionTimer.h"
 #include "ManifestParser.h"
 #include "mozilla/Services.h"
 
@@ -129,20 +129,6 @@ NS_DEFINE_CID(kEmptyCID, NS_EMPTY_IID);
 NS_DEFINE_CID(kCategoryManagerCID, NS_CATEGORYMANAGER_CID);
 
 #define UID_STRING_LENGTH 39
-
-#ifdef NS_FUNCTION_TIMER
-#define COMPMGR_TIME_FUNCTION_CID(cid)                                          \
-  char cid_buf__[NSID_LENGTH] = { '\0' };                                      \
-  cid.ToProvidedString(cid_buf__);                                             \
-  NS_TIME_FUNCTION_MIN_FMT(5, "%s (line %d) (cid: %s)", MOZ_FUNCTION_NAME, \
-                           __LINE__, cid_buf__)
-#define COMPMGR_TIME_FUNCTION_CONTRACTID(cid)                                  \
-  NS_TIME_FUNCTION_MIN_FMT(5, "%s (line %d) (contractid: %s)", MOZ_FUNCTION_NAME, \
-                           __LINE__, (cid))
-#else
-#define COMPMGR_TIME_FUNCTION_CID(cid) do {} while (0)
-#define COMPMGR_TIME_FUNCTION_CONTRACTID(cid) do {} while (0)
-#endif
 
 nsresult
 nsGetServiceFromCategory::operator()(const nsIID& aIID, void** aInstancePtr) const
@@ -246,6 +232,24 @@ CloneAndAppend(nsIFile* aBase, const nsACString& append)
 // nsComponentManagerImpl
 ////////////////////////////////////////////////////////////////////////////////
 
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(ComponentManagerMallocSizeOf,
+                                     "component-manager")
+
+static int64_t
+GetComponentManagerSize()
+{
+  MOZ_ASSERT(nsComponentManagerImpl::gComponentManager);
+  return nsComponentManagerImpl::gComponentManager->SizeOfIncludingThis(
+           ComponentManagerMallocSizeOf);
+}
+
+NS_MEMORY_REPORTER_IMPLEMENT(ComponentManager,
+    "explicit/xpcom/component-manager",
+    KIND_HEAP,
+    nsIMemoryReporter::UNITS_BYTES,
+    GetComponentManagerSize,
+    "Memory used for the XPCOM component manager.")
+
 nsresult
 nsComponentManagerImpl::Create(nsISupports* aOuter, REFNSIID aIID, void** aResult)
 {
@@ -294,8 +298,6 @@ nsComponentManagerImpl::InitializeModuleLocations()
 
 nsresult nsComponentManagerImpl::Init()
 {
-    NS_TIME_FUNCTION;
-
     PR_ASSERT(NOT_INITIALIZED == mStatus);
 
     if (nsComponentManagerLog == nullptr)
@@ -304,7 +306,6 @@ nsresult nsComponentManagerImpl::Init()
     }
 
     // Initialize our arena
-    NS_TIME_FUNCTION_MARK("Next: init component manager arena");
     PL_INIT_ARENA_POOL(&mArena, "ComponentManagerArena", NS_CM_BLOCK_SIZE);
 
     mFactories.Init(CONTRACTID_HASHTABLE_INITIAL_SIZE);
@@ -337,7 +338,6 @@ nsresult nsComponentManagerImpl::Init()
     PR_LOG(nsComponentManagerLog, PR_LOG_DEBUG,
            ("nsComponentManager: Initialized."));
 
-    NS_TIME_FUNCTION_MARK("Next: init native module loader");
     nsresult rv = mNativeModuleLoader.Init();
     if (NS_FAILED(rv))
         return rv;
@@ -365,6 +365,15 @@ nsresult nsComponentManagerImpl::Init()
     RereadChromeManifests(false);
 
     nsCategoryManager::GetSingleton()->SuppressNotifications(false);
+
+    mReporter = new NS_MEMORY_REPORTER_NAME(ComponentManager);
+    (void)::NS_RegisterMemoryReporter(mReporter);
+
+    // Unfortunately, we can't register the nsCategoryManager memory reporter
+    // in its constructor (which is triggered by the GetSingleton() call
+    // above) because the memory reporter manager isn't initialized at that
+    // point.  So we wait until now.
+    nsCategoryManager::GetSingleton()->InitMemoryReporter();
 
     mStatus = NORMAL;
 
@@ -720,8 +729,6 @@ nsComponentManagerImpl::KnownModule::Description() const
 
 nsresult nsComponentManagerImpl::Shutdown(void)
 {
-    NS_TIME_FUNCTION;
-
     PR_ASSERT(NORMAL == mStatus);
 
     mStatus = SHUTDOWN_IN_PROGRESS;
@@ -729,14 +736,15 @@ nsresult nsComponentManagerImpl::Shutdown(void)
     // Shutdown the component manager
     PR_LOG(nsComponentManagerLog, PR_LOG_DEBUG, ("nsComponentManager: Beginning Shutdown."));
 
+    (void)::NS_UnregisterMemoryReporter(mReporter);
+    mReporter = nullptr;
+
     // Release all cached factories
     mContractIDs.Clear();
     mFactories.Clear(); // XXX release the objects, don't just clear
     mLoaderMap.Clear();
     mKnownModules.Clear();
     mKnownStaticModules.Clear();
-
-    mLoaderData.Clear();
 
     delete sStaticModules;
     delete sModuleLocations;
@@ -898,8 +906,6 @@ nsComponentManagerImpl::CreateInstance(const nsCID &aClass,
                                        const nsIID &aIID,
                                        void **aResult)
 {
-    COMPMGR_TIME_FUNCTION_CID(aClass);
-
     // test this first, since there's no point in creating a component during
     // shutdown -- whether it's available or not would depend on the order it
     // occurs in the list
@@ -930,7 +936,7 @@ nsComponentManagerImpl::CreateInstance(const nsCID &aClass,
     if (entry->mServiceObject) {
         nsXPIDLCString cid;
         cid.Adopt(aClass.ToString());
-        nsCAutoString message;
+        nsAutoCString message;
         message = NS_LITERAL_CSTRING("You are calling CreateInstance \"") +
                   cid + NS_LITERAL_CSTRING("\" when a service for this CID already exists!");
         NS_ERROR(message.get());
@@ -982,8 +988,6 @@ nsComponentManagerImpl::CreateInstanceByContractID(const char *aContractID,
                                                    const nsIID &aIID,
                                                    void **aResult)
 {
-    COMPMGR_TIME_FUNCTION_CONTRACTID(aContractID);
-
     NS_ENSURE_ARG_POINTER(aContractID);
 
     // test this first, since there's no point in creating a component during
@@ -1013,7 +1017,7 @@ nsComponentManagerImpl::CreateInstanceByContractID(const char *aContractID,
 
 #ifdef SHOW_CI_ON_EXISTING_SERVICE
     if (entry->mServiceObject) {
-        nsCAutoString message;
+        nsAutoCString message;
         message =
           NS_LITERAL_CSTRING("You are calling CreateInstance \"") +
           nsDependentCString(aContractID) +
@@ -1182,9 +1186,6 @@ nsComponentManagerImpl::GetService(const nsCID& aClass,
         return supports->QueryInterface(aIID, result);
     }
 
-    // We only care about time when we create the service.
-    COMPMGR_TIME_FUNCTION_CID(aClass);
-
     PRThread* currentPRThread = PR_GetCurrentThread();
     NS_ASSERTION(currentPRThread, "This should never be null!");
 
@@ -1265,8 +1266,6 @@ nsComponentManagerImpl::IsServiceInstantiated(const nsCID & aClass,
                                               const nsIID& aIID,
                                               bool *result)
 {
-    COMPMGR_TIME_FUNCTION_CID(aClass);
-
     // Now we want to get the service if we already got it. If not, we don't want
     // to create an instance of it. mmh!
 
@@ -1306,8 +1305,6 @@ NS_IMETHODIMP nsComponentManagerImpl::IsServiceInstantiatedByContractID(const ch
                                                                         const nsIID& aIID,
                                                                         bool *result)
 {
-    COMPMGR_TIME_FUNCTION_CONTRACTID(aContractID);
-
     // Now we want to get the service if we already got it. If not, we don't want
     // to create an instance of it. mmh!
 
@@ -1376,9 +1373,6 @@ nsComponentManagerImpl::GetServiceByContractID(const char* aContractID,
         mon.Exit();
         return serviceObject->QueryInterface(aIID, result);
     }
-
-    // We only care about time when we create the service.
-    COMPMGR_TIME_FUNCTION_CONTRACTID(aContractID);
 
     PRThread* currentPRThread = PR_GetCurrentThread();
     NS_ASSERTION(currentPRThread, "This should never be null!");
@@ -1600,8 +1594,6 @@ EnumerateCIDHelper(const nsID& id, nsFactoryEntry* entry, void* closure)
 NS_IMETHODIMP
 nsComponentManagerImpl::EnumerateCIDs(nsISimpleEnumerator **aEnumerator)
 {
-    NS_TIME_FUNCTION;
-
     nsCOMArray<nsISupports> array;
     mFactories.EnumerateRead(EnumerateCIDHelper, &array);
 
@@ -1619,8 +1611,6 @@ EnumerateContractsHelper(const nsACString& contract, nsFactoryEntry* entry, void
 NS_IMETHODIMP
 nsComponentManagerImpl::EnumerateContractIDs(nsISimpleEnumerator **aEnumerator)
 {
-    NS_TIME_FUNCTION;
-
     nsTArray<nsCString>* array = new nsTArray<nsCString>;
     mContractIDs.EnumerateRead(EnumerateContractsHelper, array);
 
@@ -1655,6 +1645,64 @@ nsComponentManagerImpl::ContractIDToCID(const char *aContractID,
     }
     *_retval = NULL;
     return NS_ERROR_FACTORY_NOT_REGISTERED;
+}
+
+static size_t
+SizeOfFactoriesEntryExcludingThis(nsIDHashKey::KeyType aKey,
+                                  nsFactoryEntry* const &aData,
+                                  nsMallocSizeOfFun aMallocSizeOf,
+                                  void* aUserArg)
+{
+    return aData->SizeOfIncludingThis(aMallocSizeOf);
+}
+
+static size_t
+SizeOfContractIDsEntryExcludingThis(nsCStringHashKey::KeyType aKey,
+                                    nsFactoryEntry* const &aData,
+                                    nsMallocSizeOfFun aMallocSizeOf,
+                                    void* aUserArg)
+{
+    // We don't measure the nsFactoryEntry data because its owned by mFactories
+    // (which measures them in SizeOfFactoriesEntryExcludingThis).
+    return aKey.SizeOfExcludingThisMustBeUnshared(aMallocSizeOf);
+}
+
+size_t
+nsComponentManagerImpl::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+{
+    size_t n = aMallocSizeOf(this);
+    n += mLoaderMap.SizeOfExcludingThis(nullptr, aMallocSizeOf);
+    n += mFactories.SizeOfExcludingThis(SizeOfFactoriesEntryExcludingThis, aMallocSizeOf);
+    n += mContractIDs.SizeOfExcludingThis(SizeOfContractIDsEntryExcludingThis, aMallocSizeOf);
+
+    n += sStaticModules->SizeOfIncludingThis(aMallocSizeOf);
+    n += sModuleLocations->SizeOfIncludingThis(aMallocSizeOf);
+
+    n += mKnownStaticModules.SizeOfExcludingThis(aMallocSizeOf);
+    n += mKnownModules.SizeOfExcludingThis(nullptr, aMallocSizeOf);
+
+    // The first PLArena is within the PLArenaPool, i.e. within |this|, so we
+    // don't measure it.  Subsequent PLArenas are by themselves and must be
+    // measured.
+    const PLArena *arena = mArena.first.next;
+    while (arena) {
+        n += aMallocSizeOf(arena);
+        arena = arena->next;
+    }
+
+    n += mPendingServices.SizeOfExcludingThis(aMallocSizeOf);
+
+    // Measurement of the following members may be added later if DMD finds it is
+    // worthwhile:
+    // - mLoaderMap's keys and values
+    // - mMon
+    // - sStaticModules' entries
+    // - sModuleLocations' entries
+    // - mNativeModuleLoader
+    // - mKnownStaticModules' entries?
+    // - mKnownModules' keys and values?
+
+    return n;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1718,6 +1766,21 @@ nsFactoryEntry::GetFactory()
     nsIFactory* factory = mFactory.get();
     NS_ADDREF(factory);
     return factory;
+}
+
+size_t
+nsFactoryEntry::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+{
+    size_t n = aMallocSizeOf(this);
+
+    // Measurement of the following members may be added later if DMD finds it is
+    // worthwhile:
+    // - mCIDEntry;
+    // - mModule;
+    // - mFactory;
+    // - mServiceObject;
+
+    return n;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

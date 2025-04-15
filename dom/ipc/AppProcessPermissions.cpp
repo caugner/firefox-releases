@@ -19,7 +19,7 @@ using namespace mozilla::services;
 namespace mozilla {
 
 bool
-AppProcessHasPermission(PBrowserParent* aActor, const char* aPermission)
+AssertAppProcessPermission(PBrowserParent* aActor, const char* aPermission)
 {
   if (!aActor) {
     NS_WARNING("Testing permissions for null actor");
@@ -27,29 +27,33 @@ AppProcessHasPermission(PBrowserParent* aActor, const char* aPermission)
   }
 
   TabParent* tab = static_cast<TabParent*>(aActor);
-  nsCOMPtr<mozIApplication> app = tab->GetApp();
+  nsCOMPtr<mozIApplication> app = tab->GetOwnOrContainingApp();
+  bool hasPermission = false;
+
   // isBrowser frames inherit their app descriptor to identify their
   // data storage, but they don't inherit the permissions associated
   // with that descriptor.
-  if (!app || tab->IsBrowserElement()) {
-    return false;
+  if (app && !tab->IsBrowserElement()) {
+    if (!NS_SUCCEEDED(app->HasPermission(aPermission, &hasPermission))) {
+      hasPermission = false;
+    }
   }
 
-  bool hasPermission = false;
-  if (!NS_SUCCEEDED(app->HasPermission(aPermission, &hasPermission)) ||
-      !hasPermission) {
-    printf_stderr("Security problem: App process does not have `%s' permission.  It will be killed.", aPermission);
+  if (!hasPermission) {
+    printf_stderr("Security problem: Content process does not have `%s' permission.  It will be killed.\n", aPermission);
+    ContentParent* process = static_cast<ContentParent*>(aActor->Manager());
+    process->KillHard();
   }
   return hasPermission;
 }
 
 bool
-AppProcessHasPermission(PContentParent* aActor, const char* aPermission)
+AssertAppProcessPermission(PContentParent* aActor, const char* aPermission)
 {
   const InfallibleTArray<PBrowserParent*>& browsers =
     aActor->ManagedPBrowserParent();
   for (uint32_t i = 0; i < browsers.Length(); ++i) {
-    if (AppProcessHasPermission(browsers[i], aPermission)) {
+    if (AssertAppProcessPermission(browsers[i], aPermission)) {
       return true;
     }
   }
@@ -57,9 +61,9 @@ AppProcessHasPermission(PContentParent* aActor, const char* aPermission)
 }
 
 bool
-AppProcessHasPermission(PHalParent* aActor, const char* aPermission)
+AssertAppProcessPermission(PHalParent* aActor, const char* aPermission)
 {
-  return AppProcessHasPermission(aActor->Manager(), aPermission);
+  return AssertAppProcessPermission(aActor->Manager(), aPermission);
 }
 
 } // namespace mozilla

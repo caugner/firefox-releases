@@ -89,18 +89,20 @@ Link::LinkState() const
       return nsEventStates();
     }
 
+    // Assume that we are not visited until we are told otherwise.
+    self->mLinkState = eLinkState_Unvisited;
+
     // We have a good href, so register with History.
-    nsresult rv = mHistory->RegisterVisitedCallback(hrefURI, self);
-    if (NS_SUCCEEDED(rv)) {
-      self->mRegistered = true;
+    if (mHistory) {
+      nsresult rv = mHistory->RegisterVisitedCallback(hrefURI, self);
+      if (NS_SUCCEEDED(rv)) {
+        self->mRegistered = true;
 
-      // Assume that we are not visited until we are told otherwise.
-      self->mLinkState = eLinkState_Unvisited;
-
-      // And make sure we are in the document's link map.
-      nsIDocument *doc = element->GetCurrentDoc();
-      if (doc) {
-        doc->AddStyleRelevantLink(self);
+        // And make sure we are in the document's link map.
+        nsIDocument *doc = element->GetCurrentDoc();
+        if (doc) {
+          doc->AddStyleRelevantLink(self);
+        }
       }
     }
   }
@@ -286,7 +288,7 @@ Link::GetProtocol(nsAString &_protocol)
     _protocol.AssignLiteral("http");
   }
   else {
-    nsCAutoString scheme;
+    nsAutoCString scheme;
     (void)uri->GetScheme(scheme);
     CopyASCIItoUTF16(scheme, _protocol);
   }
@@ -305,7 +307,7 @@ Link::GetHost(nsAString &_host)
     return NS_OK;
   }
 
-  nsCAutoString hostport;
+  nsAutoCString hostport;
   nsresult rv = uri->GetHostPort(hostport);
   if (NS_SUCCEEDED(rv)) {
     CopyUTF8toUTF16(hostport, _host);
@@ -324,7 +326,7 @@ Link::GetHostname(nsAString &_hostname)
     return NS_OK;
   }
 
-  nsCAutoString host;
+  nsAutoCString host;
   nsresult rv = uri->GetHost(host);
   // Note that failure to get the host from the URI is not necessarily a bad
   // thing.  Some URIs do not have a host.
@@ -347,7 +349,7 @@ Link::GetPathname(nsAString &_pathname)
     return NS_OK;
   }
 
-  nsCAutoString file;
+  nsAutoCString file;
   nsresult rv = url->GetFilePath(file);
   NS_ENSURE_SUCCESS(rv, rv);
   CopyUTF8toUTF16(file, _pathname);
@@ -367,7 +369,7 @@ Link::GetSearch(nsAString &_search)
     return NS_OK;
   }
 
-  nsCAutoString search;
+  nsAutoCString search;
   nsresult rv = url->GetQuery(search);
   if (NS_SUCCEEDED(rv) && !search.IsEmpty()) {
     CopyUTF8toUTF16(NS_LITERAL_CSTRING("?") + search, _search);
@@ -410,7 +412,7 @@ Link::GetHash(nsAString &_hash)
     return NS_OK;
   }
 
-  nsCAutoString ref;
+  nsAutoCString ref;
   nsresult rv = uri->GetRef(ref);
   if (NS_SUCCEEDED(rv) && !ref.IsEmpty()) {
     NS_UnescapeURL(ref); // XXX may result in random non-ASCII bytes!
@@ -468,10 +470,12 @@ Link::UnregisterFromHistory()
   NS_ASSERTION(mCachedURI, "mRegistered is true, but we have no cached URI?!");
 
   // And tell History to stop tracking us.
-  nsresult rv = mHistory->UnregisterVisitedCallback(mCachedURI, this);
-  NS_ASSERTION(NS_SUCCEEDED(rv), "This should only fail if we misuse the API!");
-  if (NS_SUCCEEDED(rv)) {
-    mRegistered = false;
+  if (mHistory) {
+    nsresult rv = mHistory->UnregisterVisitedCallback(mCachedURI, this);
+    NS_ASSERTION(NS_SUCCEEDED(rv), "This should only fail if we misuse the API!");
+    if (NS_SUCCEEDED(rv)) {
+      mRegistered = false;
+    }
   }
 }
 
@@ -492,7 +496,7 @@ Link::SetHrefAttribute(nsIURI *aURI)
 {
   NS_ASSERTION(aURI, "Null URI is illegal!");
 
-  nsCAutoString href;
+  nsAutoCString href;
   (void)aURI->GetSpec(href);
   (void)mElement->SetAttr(kNameSpaceID_None, nsGkAtoms::href,
                           NS_ConvertUTF8toUTF16(href), true);

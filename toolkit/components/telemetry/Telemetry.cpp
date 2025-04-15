@@ -17,6 +17,7 @@
 #include "nsStringGlue.h"
 #include "nsITelemetry.h"
 #include "nsIFile.h"
+#include "nsIMemoryReporter.h"
 #include "Telemetry.h" 
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
@@ -107,6 +108,8 @@ public:
                                Telemetry::ProcessedStack &aStack);
 #endif
   static nsresult GetHistogramEnumId(const char *name, Telemetry::ID *id);
+  static int64_t GetTelemetryMemoryUsed();
+  size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf);
   struct Stat {
     uint32_t hitCount;
     uint32_t totalTime;
@@ -122,6 +125,17 @@ public:
   };
 
 private:
+  // We don't need to poke inside any of our hashtables for more
+  // information, so we just have One Function To Size Them All.
+  template<typename EntryType>
+  struct impl {
+    static size_t SizeOfEntryExcludingThis(EntryType *,
+                                           nsMallocSizeOfFun,
+                                           void *) {
+      return 0;
+    };
+  };
+
   static nsCString SanitizeSQL(const nsACString& sql);
 
   enum SanitizedState { Sanitized, Unsanitized };
@@ -178,25 +192,88 @@ private:
   Mutex mHashMutex;
   nsTArray<HangReport> mHangReports;
   Mutex mHangReportsMutex;
+  nsIMemoryReporter *mMemoryReporter;
 };
 
 TelemetryImpl*  TelemetryImpl::sTelemetry = NULL;
+
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(TelemetryMallocSizeOf, "telemetry")
+
+size_t
+TelemetryImpl::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+{
+  size_t n = 0;
+  n += aMallocSizeOf(this);
+  // Ignore the hashtables in mAddonMap; they are not significant.
+  n += mAddonMap.SizeOfExcludingThis(impl<AddonEntryType>::SizeOfEntryExcludingThis,
+                                     aMallocSizeOf);
+  n += mHistogramMap.SizeOfExcludingThis(impl<CharPtrEntryType>::SizeOfEntryExcludingThis,
+                                         aMallocSizeOf);
+  n += mPrivateSQL.SizeOfExcludingThis(impl<SlowSQLEntryType>::SizeOfEntryExcludingThis,
+                                       aMallocSizeOf);
+  n += mSanitizedSQL.SizeOfExcludingThis(impl<SlowSQLEntryType>::SizeOfEntryExcludingThis,
+                                         aMallocSizeOf);
+  n += mTrackedDBs.SizeOfExcludingThis(impl<nsCStringHashKey>::SizeOfEntryExcludingThis,
+                                       aMallocSizeOf);
+  n += mHangReports.SizeOfExcludingThis(aMallocSizeOf);
+  return n;
+}
+
+int64_t
+TelemetryImpl::GetTelemetryMemoryUsed()
+{
+  int64_t n = 0;
+  if (sTelemetry) {
+    n += sTelemetry->SizeOfIncludingThis(TelemetryMallocSizeOf);
+  }
+
+  StatisticsRecorder::Histograms hs;
+  StatisticsRecorder::GetHistograms(&hs);
+
+  for (HistogramIterator it = hs.begin(); it != hs.end(); ++it) {
+    Histogram *h = *it;
+    n += h->SizeOfIncludingThis(TelemetryMallocSizeOf);
+  }
+  return n;
+}
+
+NS_MEMORY_REPORTER_IMPLEMENT(Telemetry,
+  "explicit/telemetry",
+  KIND_HEAP,
+  UNITS_BYTES,
+  TelemetryImpl::GetTelemetryMemoryUsed,
+  "Memory used by the telemetry system.")
 
 // A initializer to initialize histogram collection
 StatisticsRecorder gStatisticsRecorder;
 
 // Hardcoded probes
 struct TelemetryHistogram {
-  const char *id;
   uint32_t min;
   uint32_t max;
   uint32_t bucketCount;
   uint32_t histogramType;
-  const char *comment;
+  uint16_t id_offset;
+  uint16_t comment_offset;
+
+  const char *id() const;
+  const char *comment() const;
 };
 
 #include "TelemetryHistogramData.inc"
 bool gCorruptHistograms[Telemetry::HistogramCount];
+
+const char *
+TelemetryHistogram::id() const
+{
+  return &gHistogramStringTable[this->id_offset];
+}
+
+const char *
+TelemetryHistogram::comment() const
+{
+  return &gHistogramStringTable[this->comment_offset];
+}
 
 bool
 TelemetryHistogramType(Histogram *h, uint32_t *result)
@@ -268,9 +345,23 @@ GetHistogramByEnumId(Telemetry::ID id, Histogram **ret)
   }
 
   const TelemetryHistogram &p = gHistograms[id];
-  nsresult rv = HistogramGet(p.id, p.min, p.max, p.bucketCount, p.histogramType, &h);
+  nsresult rv = HistogramGet(p.id(), p.min, p.max, p.bucketCount, p.histogramType, &h);
   if (NS_FAILED(rv))
     return rv;
+
+#ifdef DEBUG
+  // Check that the C++ Histogram code computes the same ranges as the
+  // Python histogram code.
+  const struct bounds &b = gBucketLowerBoundIndex[id];
+  if (b.length != 0) {
+    MOZ_ASSERT(size_t(b.length) == h->bucket_count(),
+               "C++/Python bucket # mismatch");
+    for (int i = 0; i < b.length; ++i) {
+      MOZ_ASSERT(gBucketLowerBounds[b.offset + i] == h->ranges(i),
+                 "C++/Python bucket mismatch");
+    }
+  }
+#endif
 
   *ret = knownHistograms[id] = h;
   return NS_OK;
@@ -465,7 +556,7 @@ mHangReportsMutex("Telemetry::mHangReportsMutex")
 {
   // A whitelist to prevent Telemetry reporting on Addon & Thunderbird DBs
   const char *trackedDBs[] = {
-    "addons.sqlite", "chromeappsstore.sqlite", "content-prefs.sqlite",
+    "addons.sqlite", "content-prefs.sqlite",
     "cookies.sqlite", "downloads.sqlite", "extensions.sqlite",
     "formhistory.sqlite", "index.sqlite", "permissions.sqlite", "places.sqlite",
     "search.sqlite", "signons.sqlite", "urlclassifier3.sqlite",
@@ -480,9 +571,13 @@ mHangReportsMutex("Telemetry::mHangReportsMutex")
   // Mark immutable to prevent asserts on simultaneous access from multiple threads
   mTrackedDBs.MarkImmutable();
 #endif
+  mMemoryReporter = new NS_MEMORY_REPORTER_NAME(Telemetry);
+  NS_RegisterMemoryReporter(mMemoryReporter);
 }
 
 TelemetryImpl::~TelemetryImpl() {
+  NS_UnregisterMemoryReporter(mMemoryReporter);
+  mMemoryReporter = nullptr;
 }
 
 NS_IMETHODIMP
@@ -571,7 +666,7 @@ TelemetryImpl::GetHistogramEnumId(const char *name, Telemetry::ID *id)
   TelemetryImpl::HistogramMapType *map = &sTelemetry->mHistogramMap;
   if (!map->Count()) {
     for (uint32_t i = 0; i < Telemetry::HistogramCount; i++) {
-      CharPtrEntryType *entry = map->PutEntry(gHistograms[i].id);
+      CharPtrEntryType *entry = map->PutEntry(gHistograms[i].id());
       if (NS_UNLIKELY(!entry)) {
         map->Clear();
         return NS_ERROR_OUT_OF_MEMORY;
@@ -763,7 +858,7 @@ TelemetryImpl::GetAddonHistogram(const nsACString &id, const nsACString &name,
 
   AddonHistogramInfo &info = histogramEntry->mData;
   if (!info.h) {
-    nsCAutoString actualName;
+    nsAutoCString actualName;
     AddonHistogramName(id, name, actualName);
     if (!CreateHistogramForAddon(actualName, info)) {
       return NS_ERROR_FAILURE;
@@ -1030,7 +1125,7 @@ TelemetryImpl::GetChromeHangs(JSContext *cx, jsval *ret)
 
     const uint32_t pcCount = stack.GetStackSize();
     for (size_t pcIndex = 0; pcIndex < pcCount; ++pcIndex) {
-      nsCAutoString pcString;
+      nsAutoCString pcString;
       const Telemetry::ProcessedStack::Frame &Frame = stack.GetFrame(pcIndex);
       pcString.AppendPrintf("0x%p", Frame.mOffset);
       JSString *str = JS_NewStringCopyZ(cx, pcString.get());
@@ -1071,7 +1166,7 @@ TelemetryImpl::GetChromeHangs(JSContext *cx, jsval *ret)
       }
 
       // Start address
-      nsCAutoString addressString;
+      nsAutoCString addressString;
       addressString.AppendPrintf("0x%p", module.mStart);
       JSString *str = JS_NewStringCopyZ(cx, addressString.get());
       if (!str) {
@@ -1139,10 +1234,10 @@ TelemetryImpl::GetRegisteredHistograms(JSContext *cx, jsval *ret)
   JS::AutoObjectRooter root(cx, info);
 
   for (size_t i = 0; i < count; ++i) {
-    JSString *comment = JS_InternString(cx, gHistograms[i].comment);
+    JSString *comment = JS_InternString(cx, gHistograms[i].comment());
     
     if (!(comment
-          && JS_DefineProperty(cx, info, gHistograms[i].id,
+          && JS_DefineProperty(cx, info, gHistograms[i].id(),
                                STRING_TO_JSVAL(comment), NULL, NULL,
                                JSPROP_ENUMERATE))) {
       return NS_ERROR_FAILURE;
@@ -1366,20 +1461,19 @@ TelemetryImpl::RecordSlowStatement(const nsACString &sql,
                                    const nsACString &dbName,
                                    uint32_t delay)
 {
-  MOZ_ASSERT(sTelemetry);
-  if (!sTelemetry->mCanRecord)
+  if (!sTelemetry || !sTelemetry->mCanRecord)
     return;
 
-  nsCAutoString fullSQL(sql);
+  nsAutoCString fullSQL(sql);
   fullSQL.AppendPrintf(" /* %s */", dbName.BeginReading());
 
   bool isFirefoxDB = sTelemetry->mTrackedDBs.Contains(dbName);
   if (isFirefoxDB) {
-    nsCAutoString sanitizedSQL(SanitizeSQL(fullSQL));
+    nsAutoCString sanitizedSQL(SanitizeSQL(fullSQL));
     StoreSlowSQL(sanitizedSQL, delay, Sanitized);
   } else {
     // Report aggregate DB-level statistics for addon DBs
-    nsCAutoString aggregate;
+    nsAutoCString aggregate;
     aggregate.AppendPrintf("Untracked SQL for %s", dbName.BeginReading());
     StoreSlowSQL(aggregate, delay, Sanitized);
   }
@@ -1392,10 +1486,8 @@ void
 TelemetryImpl::RecordChromeHang(uint32_t duration,
                                 Telemetry::ProcessedStack &aStack)
 {
-  MOZ_ASSERT(sTelemetry);
-  if (!sTelemetry->mCanRecord) {
+  if (!sTelemetry || !sTelemetry->mCanRecord)
     return;
-  }
 
   MutexAutoLock hangReportMutex(sTelemetry->mHangReportsMutex);
 
@@ -1403,8 +1495,7 @@ TelemetryImpl::RecordChromeHang(uint32_t duration,
   if (sTelemetry->mHangReports.Length()) {
     Telemetry::ProcessedStack &firstStack =
       sTelemetry->mHangReports[0].mStack;
-    const uint32_t moduleCount = aStack.GetNumModules();
-    for (size_t i = 0; i < moduleCount; ++i) {
+    for (size_t i = 0; i < aStack.GetNumModules(); ++i) {
       const Telemetry::ProcessedStack::Module &module = aStack.GetModule(i);
       if (firstStack.HasModule(module)) {
         aStack.RemoveModule(i);

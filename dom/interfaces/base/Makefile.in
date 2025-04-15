@@ -57,6 +57,14 @@ XPIDLSRCS =					\
 	nsIIdleObserver.idl			\
 	$(NULL)
 
+ifdef MOZ_B2G
+XPIDLSRCS += \
+  nsIDOMWindowB2G.idl \
+  $(NULL)
+endif
+
 include $(topsrcdir)/config/rules.mk
 
-XPIDL_FLAGS += -I$(topsrcdir)/dom/interfaces/events/
+XPIDL_FLAGS += \
+  -I$(topsrcdir)/dom/interfaces/events \
+  $(NULL)

@@ -147,6 +147,18 @@
 #define	MOZ_MEMORY_NARENAS_DEFAULT_ONE
 
 /*
+ * Pass this set of options to jemalloc as its default. It does not override
+ * the options passed via the MALLOC_OPTIONS environment variable but is
+ * applied in addition to them.
+ */
+#ifdef MOZ_B2G
+    /* Reduce the amount of unused dirty pages to 1MiB on B2G */
+#   define MOZ_MALLOC_OPTIONS "ff"
+#else
+#   define MOZ_MALLOC_OPTIONS ""
+#endif
+
+/*
  * MALLOC_STATS enables statistics calculation, and is required for
  * jemalloc_stats().
  */
@@ -1277,7 +1289,7 @@ static chunk_stats_t	stats_chunks;
 /*
  * Runtime configuration options.
  */
-const char	*_malloc_options;
+const char	*_malloc_options = MOZ_MALLOC_OPTIONS;
 
 #ifndef MALLOC_PRODUCTION
 static bool	opt_abort = true;
@@ -1385,7 +1397,7 @@ static void arena_chunk_init(arena_t *arena, arena_chunk_t *chunk);
 static void	arena_chunk_dealloc(arena_t *arena, arena_chunk_t *chunk);
 static arena_run_t *arena_run_alloc(arena_t *arena, arena_bin_t *bin,
     size_t size, bool large, bool zero);
-static void	arena_purge(arena_t *arena);
+static void	arena_purge(arena_t *arena, bool all);
 static void	arena_run_dalloc(arena_t *arena, arena_run_t *run, bool dirty);
 static void	arena_run_trim_head(arena_t *arena, arena_chunk_t *chunk,
     arena_run_t *run, size_t oldsize, size_t newsize);
@@ -1551,11 +1563,21 @@ void	(*_malloc_message)(const char *p1, const char *p2, const char *p3,
 #endif
 
 #include <mozilla/Assertions.h>
+#include <mozilla/Attributes.h>
+
+/* RELEASE_ASSERT calls jemalloc_crash() instead of calling MOZ_CRASH()
+ * directly because we want crashing to add a frame to the stack.  This makes
+ * it easier to find the failing assertion in crash stacks. */
+MOZ_NEVER_INLINE static void
+jemalloc_crash()
+{
+	MOZ_CRASH();
+}
 
 #if defined(MOZ_JEMALLOC_HARD_ASSERTS)
 #  define RELEASE_ASSERT(assertion) do {	\
 	if (!(assertion)) {			\
-		MOZ_CRASH();			\
+		jemalloc_crash();		\
 	}					\
 } while (0)
 #else
@@ -3584,10 +3606,12 @@ arena_run_alloc(arena_t *arena, arena_bin_t *bin, size_t size, bool large,
 }
 
 static void
-arena_purge(arena_t *arena)
+arena_purge(arena_t *arena, bool all)
 {
 	arena_chunk_t *chunk;
 	size_t i, npages;
+	/* If all is set purge all dirty pages. */
+	size_t dirty_max = all ? 1 : opt_dirty_max;
 #ifdef MALLOC_DEBUG
 	size_t ndirty = 0;
 	rb_foreach_begin(arena_chunk_t, link_dirty, &arena->chunks_dirty,
@@ -3596,7 +3620,7 @@ arena_purge(arena_t *arena)
 	} rb_foreach_end(arena_chunk_t, link_dirty, &arena->chunks_dirty, chunk)
 	assert(ndirty == arena->ndirty);
 #endif
-	RELEASE_ASSERT(arena->ndirty > opt_dirty_max);
+	RELEASE_ASSERT(all || (arena->ndirty > opt_dirty_max));
 
 #ifdef MALLOC_STATS
 	arena->stats.npurge++;
@@ -3608,7 +3632,7 @@ arena_purge(arena_t *arena)
 	 * number of system calls, even if a chunk has only been partially
 	 * purged.
 	 */
-	while (arena->ndirty > (opt_dirty_max >> 1)) {
+	while (arena->ndirty > (dirty_max >> 1)) {
 #ifdef MALLOC_DOUBLE_PURGE
 		bool madvised = false;
 #endif
@@ -3665,7 +3689,7 @@ arena_purge(arena_t *arena)
 				arena->stats.nmadvise++;
 				arena->stats.purged += npages;
 #endif
-				if (arena->ndirty <= (opt_dirty_max >> 1))
+				if (arena->ndirty <= (dirty_max >> 1))
 					break;
 			}
 		}
@@ -3790,7 +3814,7 @@ arena_run_dalloc(arena_t *arena, arena_run_t *run, bool dirty)
 
 	/* Enforce opt_dirty_max. */
 	if (arena->ndirty > opt_dirty_max)
-		arena_purge(arena);
+		arena_purge(arena, false);
 }
 
 static void
@@ -6843,6 +6867,21 @@ _msize(const void *ptr)
 	return malloc_usable_size(ptr);
 }
 #endif
+
+void
+jemalloc_free_dirty_pages(void)
+{
+	size_t i;
+	for (i = 0; i < narenas; i++) {
+		arena_t *arena = arenas[i];
+
+		if (arena != NULL) {
+			malloc_spin_lock(&arena->lock);
+			arena_purge(arena, true);
+			malloc_spin_unlock(&arena->lock);
+		}
+	}
+}
 
 /*
  * End non-standard functions.

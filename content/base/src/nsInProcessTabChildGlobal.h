@@ -24,7 +24,8 @@ class nsInProcessTabChildGlobal : public nsDOMEventTargetHelper,
                                   public nsFrameScriptExecutor,
                                   public nsIInProcessContentFrameMessageManager,
                                   public nsIScriptObjectPrincipal,
-                                  public nsIScriptContextPrincipal
+                                  public nsIScriptContextPrincipal,
+                                  public mozilla::dom::ipc::MessageManagerCallback
 {
 public:
   nsInProcessTabChildGlobal(nsIDocShell* aShell, nsIContent* aOwner,
@@ -58,6 +59,15 @@ public:
                   nsAString& aBinaryData);
 
   NS_DECL_NSIINPROCESSCONTENTFRAMEMESSAGEMANAGER
+
+  /**
+   * MessageManagerCallback methods that we override.
+   */
+  virtual bool DoSendSyncMessage(const nsAString& aMessage,
+                                 const mozilla::dom::StructuredCloneData& aData,
+                                 InfallibleTArray<nsString>* aJSONRetVal);
+  virtual bool DoSendAsyncMessage(const nsAString& aMessage,
+                                  const mozilla::dom::StructuredCloneData& aData);
 
   virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor);
   NS_IMETHOD AddEventListener(const nsAString& aType,
@@ -112,9 +122,10 @@ protected:
   bool mLoadingScript;
   bool mDelayedDisconnect;
 
-  // Is this the message manager for an in-process <iframe mozbrowser>?  This
-  // affects where events get sent, so it affects PreHandleEvent.
-  bool mIsBrowserFrame;
+  // Is this the message manager for an in-process <iframe mozbrowser> or
+  // <iframe mozapp>?  This affects where events get sent, so it affects
+  // PreHandleEvent.
+  bool mIsBrowserOrAppFrame;
 public:
   nsIContent* mOwner;
   nsFrameMessageManager* mChromeMessageManager;

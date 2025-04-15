@@ -23,6 +23,7 @@ endif
 LIBRARY_NAME     = dom_sms_s
 LIBXUL_LIBRARY   = 1
 FORCE_STATIC_LIB = 1
+FAIL_ON_WARNINGS := 1
 
 include $(topsrcdir)/dom/dom-config.mk
 
@@ -35,7 +36,6 @@ EXPORTS_mozilla/dom/sms = \
   Constants.h \
   Types.h \
   SmsMessage.h \
-  SmsRequestManager.h \
   SmsRequest.h \
   $(NULL)
 
@@ -50,7 +50,6 @@ CPPSRCS = \
   Constants.cpp \
   SmsChild.cpp \
   SmsRequest.cpp \
-  SmsRequestManager.cpp \
   SmsFilter.cpp \
   SmsCursor.cpp \
   $(NULL)

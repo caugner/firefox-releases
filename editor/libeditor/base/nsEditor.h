@@ -24,7 +24,6 @@
 #include "nsString.h"                   // for nsCString
 #include "nsWeakReference.h"            // for nsSupportsWeakReference
 #include "nscore.h"                     // for nsresult, nsAString, etc
-#include "prtypes.h"                    // for int32_t, uint32_t, int8_t, etc
 
 class AddStyleSheetTxn;
 class ChangeAttributeTxn;
@@ -54,7 +53,6 @@ class nsIDOMRange;
 class nsIDocument;
 class nsIDocumentStateListener;
 class nsIEditActionListener;
-class nsIEditorObserver;
 class nsIInlineSpellChecker;
 class nsINode;
 class nsIPresShell;
@@ -855,7 +853,7 @@ protected:
 
   // various listeners
   nsCOMArray<nsIEditActionListener> mActionListeners;  // listens to all low level actions on the doc
-  nsCOMArray<nsIEditorObserver> mEditorObservers;  // just notify once per high level change
+  EditActionListener* mEditActionListener;  // just notify once per high level change
   nsCOMArray<nsIDocumentStateListener> mDocStateListeners;// listen to overall doc state (dirty or not, just created, etc)
 
   nsSelectionState  mSavedSel;           // cached selection for nsAutoSelectionReset

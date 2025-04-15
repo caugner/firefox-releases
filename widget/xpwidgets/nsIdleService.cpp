@@ -318,10 +318,10 @@ nsIdleService::GetInstance()
   return instance.forget();
 }
 
-nsIdleService::nsIdleService() : mCurrentlySetToTimeoutAtInPR(0),
+nsIdleService::nsIdleService() : mCurrentlySetToTimeoutAt(TimeStamp()),
                                  mAnyObserverIdle(false),
-                                 mDeltaToNextIdleSwitchInS(PR_UINT32_MAX),
-                                 mLastUserInteractionInPR(PR_Now())
+                                 mDeltaToNextIdleSwitchInS(UINT32_MAX),
+                                 mLastUserInteraction(TimeStamp::Now())
 {
 #ifdef PR_LOGGING
   if (sLog == NULL)
@@ -360,7 +360,7 @@ nsIdleService::AddIdleObserver(nsIObserver* aObserver, uint32_t aIdleTimeInS)
   NS_ENSURE_ARG_POINTER(aObserver);
   // We don't accept idle time at 0, and we can't handle idle time that are too
   // high either - no more than ~136 years.
-  NS_ENSURE_ARG_RANGE(aIdleTimeInS, 1, (PR_UINT32_MAX / 10) - 1);
+  NS_ENSURE_ARG_RANGE(aIdleTimeInS, 1, (UINT32_MAX / 10) - 1);
 
   // Put the time + observer in a struct we can keep:
   IdleListener listener(aObserver, aIdleTimeInS);
@@ -443,7 +443,8 @@ nsIdleService::ResetIdleTimeOut(uint32_t idleDeltaInMS)
           idleDeltaInMS));
 
   // Store the time
-  mLastUserInteractionInPR = PR_Now() - (idleDeltaInMS * PR_USEC_PER_MSEC);
+  mLastUserInteraction = TimeStamp::Now() -
+                         TimeDuration::FromMilliseconds(idleDeltaInMS);
 
   // If no one is idle, then we are done, any existing timers can keep running.
   if (!mAnyObserverIdle) {
@@ -455,7 +456,7 @@ nsIdleService::ResetIdleTimeOut(uint32_t idleDeltaInMS)
   // Mark all idle services as non-idle, and calculate the next idle timeout.
   Telemetry::AutoTimer<Telemetry::IDLE_NOTIFY_BACK_MS> timer;
   nsCOMArray<nsIObserver> notifyList;
-  mDeltaToNextIdleSwitchInS = PR_UINT32_MAX;
+  mDeltaToNextIdleSwitchInS = UINT32_MAX;
 
   // Loop through all listeners, and find any that have detected idle.
   for (uint32_t i = 0; i < mArrayListeners.Length(); i++) {
@@ -468,7 +469,7 @@ nsIdleService::ResetIdleTimeOut(uint32_t idleDeltaInMS)
     }
 
     // Check if the listener is the next one to timeout.
-    mDeltaToNextIdleSwitchInS = PR_MIN(mDeltaToNextIdleSwitchInS,
+    mDeltaToNextIdleSwitchInS = NS_MIN(mDeltaToNextIdleSwitchInS,
                                        curListener.reqIdleTime);
   }
 
@@ -530,8 +531,8 @@ nsIdleService::GetIdleTime(uint32_t* idleTime)
           polledIdleTimeMS, polledIdleTimeIsValid));
   
   // timeSinceReset is in milliseconds.
-  uint32_t timeSinceResetInMS = (PR_Now() - mLastUserInteractionInPR) /
-                                PR_USEC_PER_MSEC;
+  TimeDuration timeSinceReset = TimeStamp::Now() - mLastUserInteraction;
+  uint32_t timeSinceResetInMS = timeSinceReset.ToMilliseconds();
 
   PR_LOG(sLog, PR_LOG_DEBUG,
          ("idleService: Get idle time: time since reset %u msec",
@@ -580,8 +581,11 @@ void
 nsIdleService::IdleTimerCallback(void)
 {
   // Remember that we no longer have a timer running.
-  mCurrentlySetToTimeoutAtInPR = 0;
+  mCurrentlySetToTimeoutAt = TimeStamp();
 
+  // Find the last detected idle time.
+  uint32_t lastIdleTimeInMS = static_cast<uint32_t>((TimeStamp::Now() -
+                              mLastUserInteraction).ToMilliseconds());
   // Get the current idle time.
   uint32_t currentIdleTimeInMS;
 
@@ -606,10 +610,8 @@ nsIdleService::IdleTimerCallback(void)
 
   // Check if we have had some user interaction we didn't handle previously
   // we do the calculation in ms to lessen the chance for rounding errors to
-  // trigger wrong results, it is also very important that we call PR_Now AFTER
-  // the call to GetIdleTime().
-  if (((PR_Now() - mLastUserInteractionInPR) / PR_USEC_PER_MSEC) >
-      currentIdleTimeInMS)
+  // trigger wrong results.
+  if (lastIdleTimeInMS > currentIdleTimeInMS)
   {
     // We had user activity, so handle that part first (to ensure the listeners
     // don't risk getting an non-idle after they get a new idle indication.
@@ -632,7 +634,7 @@ nsIdleService::IdleTimerCallback(void)
   Telemetry::AutoTimer<Telemetry::IDLE_NOTIFY_IDLE_MS> timer;
 
   // We need to initialise the time to the next idle switch.
-  mDeltaToNextIdleSwitchInS = PR_UINT32_MAX;
+  mDeltaToNextIdleSwitchInS = UINT32_MAX;
 
   // Create list of observers that should be notified.
   nsCOMArray<nsIObserver> notifyList;
@@ -653,7 +655,7 @@ nsIdleService::IdleTimerCallback(void)
         mAnyObserverIdle = true;
       } else {
         // Listeners that are not timed out yet are candidates for timing out.
-        mDeltaToNextIdleSwitchInS = PR_MIN(mDeltaToNextIdleSwitchInS,
+        mDeltaToNextIdleSwitchInS = NS_MIN(mDeltaToNextIdleSwitchInS,
                                            curListener.reqIdleTime);
       }
     }
@@ -693,15 +695,16 @@ nsIdleService::IdleTimerCallback(void)
 }
 
 void
-nsIdleService::SetTimerExpiryIfBefore(PRTime aNextTimeoutInPR)
+nsIdleService::SetTimerExpiryIfBefore(TimeStamp aNextTimeout)
 {
+  TimeDuration nextTimeoutDuration = aNextTimeout - TimeStamp::Now();
   PR_LOG(sLog, PR_LOG_DEBUG,
-         ("idleService: SetTimerExpiryIfBefore: next timeout %lld usec",
-          aNextTimeoutInPR));
+         ("idleService: SetTimerExpiryIfBefore: next timeout %0.f msec from now",
+          nextTimeoutDuration.ToMilliseconds()));
 #ifdef ANDROID
   __android_log_print(ANDROID_LOG_INFO, "IdleService",
-                      "SetTimerExpiryIfBefore: next timeout %lld usec",
-                      aNextTimeoutInPR);
+                      "SetTimerExpiryIfBefore: next timeout %0.f msec from now",
+                      nextTimeoutDuration.ToMilliseconds());
 #endif
 
   // Bail if we don't have a timer service.
@@ -711,41 +714,37 @@ nsIdleService::SetTimerExpiryIfBefore(PRTime aNextTimeoutInPR)
 
   // If the new timeout is before the old one or we don't have a timer running,
   // then restart the timer.
-  if (mCurrentlySetToTimeoutAtInPR > aNextTimeoutInPR ||
-      !mCurrentlySetToTimeoutAtInPR) {
+  if (mCurrentlySetToTimeoutAt.IsNull() ||
+      mCurrentlySetToTimeoutAt > aNextTimeout) {
 
-#if defined(PR_LOGGING) || defined(ANDROID)
-    PRTime oldTimeout = mCurrentlySetToTimeoutAtInPR;
-#endif
-
-    mCurrentlySetToTimeoutAtInPR = aNextTimeoutInPR ;
+    mCurrentlySetToTimeoutAt = aNextTimeout;
 
     // Stop the current timer (it's ok to try'n stop it, even it isn't running).
     mTimer->Cancel();
 
     // Check that the timeout is actually in the future, otherwise make it so.
-    PRTime currentTimeInPR = PR_Now();
-    if (currentTimeInPR > mCurrentlySetToTimeoutAtInPR) {
-      mCurrentlySetToTimeoutAtInPR = currentTimeInPR;
+    TimeStamp currentTime = TimeStamp::Now();
+    if (currentTime > mCurrentlySetToTimeoutAt) {
+      mCurrentlySetToTimeoutAt = currentTime;
     }
 
     // Add 10 ms to ensure we don't undershoot, and never get a "0" timer.
-    mCurrentlySetToTimeoutAtInPR += 10 * PR_USEC_PER_MSEC;
+    mCurrentlySetToTimeoutAt += TimeDuration::FromMilliseconds(10);
 
+    TimeDuration deltaTime = mCurrentlySetToTimeoutAt - currentTime;
     PR_LOG(sLog, PR_LOG_DEBUG,
-           ("idleService: reset timer expiry from %lld usec to %lld usec",
-            oldTimeout, mCurrentlySetToTimeoutAtInPR));
+           ("idleService: IdleService reset timer expiry to %0.f msec from now",
+            deltaTime.ToMilliseconds()));
 #ifdef ANDROID
-  __android_log_print(ANDROID_LOG_INFO, "IdleService",
-                      "reset timer expiry from %lld usec to %lld usec",
-                      oldTimeout, mCurrentlySetToTimeoutAtInPR);
+    __android_log_print(ANDROID_LOG_INFO, "IdleService",
+                        "reset timer expiry to %0.f msec from now",
+                        deltaTime.ToMilliseconds());
 #endif
 
     // Start the timer
     mTimer->InitWithFuncCallback(StaticIdleTimerCallback,
                                  this,
-                                 (mCurrentlySetToTimeoutAtInPR -
-                                  currentTimeInPR) / PR_USEC_PER_MSEC,
+                                 deltaTime.ToMilliseconds(),
                                  nsITimer::TYPE_ONE_SHOT);
 
   }
@@ -756,7 +755,7 @@ void
 nsIdleService::ReconfigureTimer(void)
 {
   // Check if either someone is idle, or someone will become idle.
-  if (!mAnyObserverIdle && PR_UINT32_MAX == mDeltaToNextIdleSwitchInS) {
+  if (!mAnyObserverIdle && UINT32_MAX == mDeltaToNextIdleSwitchInS) {
     // If not, just let any existing timers run to completion
     // And bail out.
     PR_LOG(sLog, PR_LOG_DEBUG,
@@ -772,28 +771,26 @@ nsIdleService::ReconfigureTimer(void)
 
   // We need to store the current time, so we don't get artifacts from the time
   // ticking while we are processing.
-  PRTime curTimeInPR = PR_Now();
+  TimeStamp curTime = TimeStamp::Now();
 
-  PRTime nextTimeoutAtInPR = mLastUserInteractionInPR +
-                             (((PRTime)mDeltaToNextIdleSwitchInS) *
-                              PR_USEC_PER_SEC);
+  TimeStamp nextTimeoutAt = mLastUserInteraction +
+                            TimeDuration::FromSeconds(mDeltaToNextIdleSwitchInS);
 
+  TimeDuration nextTimeoutDuration = nextTimeoutAt - curTime;
   PR_LOG(sLog, PR_LOG_DEBUG,
-         ("idleService: next timeout %lld usec (%u msec from now)",
-          nextTimeoutAtInPR,
-          (uint32_t)((nextTimeoutAtInPR - curTimeInPR) / PR_USEC_PER_MSEC)));
+         ("idleService: next timeout %0.f msec from now",
+          nextTimeoutDuration.ToMilliseconds()));
 #ifdef ANDROID
   __android_log_print(ANDROID_LOG_INFO, "IdleService",
-                      "next timeout %lld usec (%lld msec from now)",
-                      nextTimeoutAtInPR,
-                      ((nextTimeoutAtInPR - curTimeInPR) / PR_USEC_PER_MSEC));
+                      "next timeout %0.f msec from now",
+                      nextTimeoutDuration.ToMilliseconds());
 #endif
   // Check if we should correct the timeout time because we should poll before.
   if (mAnyObserverIdle && UsePollMode()) {
-    PRTime pollTimeout = curTimeInPR +
-                         MIN_IDLE_POLL_INTERVAL_MSEC * PR_USEC_PER_MSEC;
+    TimeStamp pollTimeout =
+        curTime + TimeDuration::FromMilliseconds(MIN_IDLE_POLL_INTERVAL_MSEC);
 
-    if (nextTimeoutAtInPR > pollTimeout) {
+    if (nextTimeoutAt > pollTimeout) {
       PR_LOG(sLog, PR_LOG_DEBUG,
            ("idleService: idle observers, reducing timeout to %u msec from now",
             MIN_IDLE_POLL_INTERVAL_MSEC));
@@ -802,10 +799,10 @@ nsIdleService::ReconfigureTimer(void)
                           "idle observers, reducing timeout to %u msec from now",
                           MIN_IDLE_POLL_INTERVAL_MSEC);
 #endif
-      nextTimeoutAtInPR = pollTimeout;
+      nextTimeoutAt = pollTimeout;
     }
   }
 
-  SetTimerExpiryIfBefore(nextTimeoutAtInPR);
+  SetTimerExpiryIfBefore(nextTimeoutAt);
 }
 

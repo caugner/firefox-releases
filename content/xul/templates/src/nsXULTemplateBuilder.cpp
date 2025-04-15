@@ -1227,7 +1227,7 @@ nsXULTemplateBuilder::LoadDataSources(nsIDocument* aDocument,
         NS_ENSURE_TRUE(mQueryProcessor, NS_ERROR_OUT_OF_MEMORY);
     }
     else {
-        nsCAutoString cid(NS_QUERY_PROCESSOR_CONTRACTID_PREFIX);
+        nsAutoCString cid(NS_QUERY_PROCESSOR_CONTRACTID_PREFIX);
         AppendUTF16toUTF8(querytype, cid);
         mQueryProcessor = do_CreateInstance(cid.get(), &rv);
 
@@ -1830,7 +1830,7 @@ nsXULTemplateBuilder::CompileTemplate(nsIContent* aTemplate,
         nsINodeInfo *ni = rulenode->NodeInfo();
 
         // don't allow more queries than can be supported
-        if (*aPriority == PR_INT16_MAX)
+        if (*aPriority == INT16_MAX)
             return NS_ERROR_FAILURE;
 
         // XXXndeakin queryset isn't a good name for this tag since it only

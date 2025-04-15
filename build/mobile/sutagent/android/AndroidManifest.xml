@@ -17,8 +17,7 @@
         </activity>
         <receiver android:name=".SUTStartupIntentReceiver">
             <intent-filter>
-                 <action android:value="android.intent.action.BOOT_COMPLETED" android:name="android.intent.action.BOOT_COMPLETED"/>
-                 <category android:value="android.intent.category.HOME" android:name="android.intent.category.HOME"/>
+                 <action android:name="android.intent.action.MEDIA_MOUNTED"></action>
             </intent-filter>
         </receiver>
         <service android:name=".service.ASMozStub">
@@ -34,6 +33,7 @@
 <uses-permission android:name="android.permission.INTERNET"></uses-permission>
 <uses-permission android:name="android.permission.REBOOT"></uses-permission>
 <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"></uses-permission>
+<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"></uses-permission>
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"></uses-permission>
 <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"></uses-permission>
 <uses-permission android:name="android.permission.RESTART_PACKAGES"></uses-permission>

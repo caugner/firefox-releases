@@ -12,28 +12,7 @@
 #include "nsDOMJSUtils.h"
 #include "prprf.h"
 #include "nsGlobalWindow.h"
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMEventListenerWrapper)
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDOMEventListenerWrapper)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMEventListener)
-NS_INTERFACE_MAP_END_AGGREGATED(mListener)
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(nsDOMEventListenerWrapper)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(nsDOMEventListenerWrapper)
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDOMEventListenerWrapper)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mListener)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDOMEventListenerWrapper)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mListener)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMETHODIMP
-nsDOMEventListenerWrapper::HandleEvent(nsIDOMEvent* aEvent)
-{
-  return mListener->HandleEvent(aEvent);
-}
+#include "nsDOMEvent.h"
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMEventTargetHelper)
 
@@ -50,8 +29,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDOMEventTargetHelper)
     }
     PR_snprintf(name, sizeof(name), "nsDOMEventTargetHelper %s",
                 NS_ConvertUTF16toUTF8(uri).get());
-    cb.DescribeRefCountedNode(tmp->mRefCnt.get(), sizeof(nsDOMEventTargetHelper),
-                              name);
+    cb.DescribeRefCountedNode(tmp->mRefCnt.get(), name);
   } else {
     NS_IMPL_CYCLE_COLLECTION_DESCRIBE(nsDOMEventTargetHelper, tmp->mRefCnt.get())
   }
@@ -65,6 +43,23 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDOMEventTargetHelper)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mListenerManager)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsDOMEventTargetHelper)
+  if (tmp->IsBlack()) {
+    if (tmp->mListenerManager) {
+      tmp->mListenerManager->UnmarkGrayJSListeners();
+    }
+    return true;
+  }
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_BEGIN(nsDOMEventTargetHelper)
+  return tmp->IsBlackAndDoesNotNeedTracing(tmp);
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsDOMEventTargetHelper)
+  return tmp->IsBlack();
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDOMEventTargetHelper)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
@@ -211,35 +206,53 @@ nsDOMEventTargetHelper::DispatchEvent(nsIDOMEvent* aEvent, bool* aRetVal)
 }
 
 nsresult
-nsDOMEventTargetHelper::RemoveAddEventListener(const nsAString& aType,
-                                               nsRefPtr<nsDOMEventListenerWrapper>& aCurrent,
-                                               nsIDOMEventListener* aNew)
+nsDOMEventTargetHelper::DispatchTrustedEvent(const nsAString& aEventName)
 {
-  if (aCurrent) {
-    RemoveEventListener(aType, aCurrent, false);
-    aCurrent = nullptr;
-  }
-  if (aNew) {
-    aCurrent = new nsDOMEventListenerWrapper(aNew);
-    NS_ENSURE_TRUE(aCurrent, NS_ERROR_OUT_OF_MEMORY);
-    nsIDOMEventTarget::AddEventListener(aType, aCurrent, false);
-  }
-  return NS_OK;
+  nsRefPtr<nsDOMEvent> event = new nsDOMEvent(nullptr, nullptr);
+  nsresult rv = event->InitEvent(aEventName, false, false);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return DispatchTrustedEvent(event);
 }
 
 nsresult
-nsDOMEventTargetHelper::GetInnerEventListener(nsRefPtr<nsDOMEventListenerWrapper>& aWrapper,
-                                              nsIDOMEventListener** aListener)
+nsDOMEventTargetHelper::DispatchTrustedEvent(nsIDOMEvent* event)
 {
-  NS_ENSURE_ARG_POINTER(aListener);
-  if (aWrapper) {
-    NS_IF_ADDREF(*aListener = aWrapper->GetInner());
-  } else {
-    *aListener = nullptr;
-  }
-  return NS_OK;
+  nsresult rv = event->SetTrusted(true);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  bool dummy;
+  return DispatchEvent(event, &dummy);
 }
 
+nsresult
+nsDOMEventTargetHelper::SetEventHandler(nsIAtom* aType,
+                                        JSContext* aCx,
+                                        const JS::Value& aValue)
+{
+  nsEventListenerManager* elm = GetListenerManager(true);
+
+  JSObject* obj = GetWrapper();
+  if (!obj) {
+    return NS_OK;
+  }
+  
+  return elm->SetEventHandlerToJsval(aType, aCx, obj, aValue,
+                                     HasOrHasHadOwner());
+}
+
+void
+nsDOMEventTargetHelper::GetEventHandler(nsIAtom* aType,
+                                        JSContext* aCx,
+                                        JS::Value* aValue)
+{
+  *aValue = JSVAL_NULL;
+
+  nsEventListenerManager* elm = GetListenerManager(false);
+  if (elm) {
+    elm->GetEventHandler(aType, aValue);
+  }
+}
 
 nsresult
 nsDOMEventTargetHelper::PreHandleEvent(nsEventChainPreVisitor& aVisitor)

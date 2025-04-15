@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -132,8 +133,7 @@ int ChannelNameToClientFD(const std::string& channel_id) {
 }
 
 //------------------------------------------------------------------------------
-sockaddr_un sizecheck;
-const size_t kMaxPipeNameLength = sizeof(sizecheck.sun_path);
+const size_t kMaxPipeNameLength = sizeof(sockaddr_un::sun_path);
 
 // Creates a Fifo with the specified name ready to listen on.
 bool CreateServerFifo(const std::string& pipe_name, int* server_listen_fd) {
@@ -363,6 +363,16 @@ bool Channel::ChannelImpl::EnqueueHelloMessage() {
   return true;
 }
 
+static void
+ClearAndShrink(std::string& s, size_t capacity)
+{
+  // This swap trick is the closest thing C++ has to a guaranteed way to
+  // shrink the capacity of a string.
+  std::string tmp;
+  tmp.reserve(capacity);
+  s.swap(tmp);
+}
+
 bool Channel::ChannelImpl::Connect() {
   if (mode_ == MODE_SERVER && uses_fifo_) {
     if (server_listen_pipe_ == -1) {
@@ -489,7 +499,7 @@ bool Channel::ChannelImpl::ProcessIncomingMessages() {
     } else {
       if (input_overflow_buf_.size() >
          static_cast<size_t>(kMaximumMessageSize - bytes_read)) {
-        input_overflow_buf_.clear();
+        ClearAndShrink(input_overflow_buf_, Channel::kReadBufferSize);
         LOG(ERROR) << "IPC message is too big";
         return false;
       }
@@ -573,7 +583,7 @@ bool Channel::ChannelImpl::ProcessIncomingMessages() {
       }
     }
     if (end == p) {
-      input_overflow_buf_.clear();
+      ClearAndShrink(input_overflow_buf_, Channel::kReadBufferSize);
     } else if (!overflowp) {
       // p is from input_buf_
       input_overflow_buf_.assign(p, end - p);

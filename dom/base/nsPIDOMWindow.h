@@ -48,8 +48,8 @@ class nsIArray;
 class nsPIWindowRoot;
 
 #define NS_PIDOMWINDOW_IID \
-{ 0x0c5763c6, 0x5e87, 0x4f6f, \
-  { 0xa2, 0xef, 0xcf, 0x4d, 0xeb, 0xd1, 0xbc, 0xc3 } }
+{ 0x54fd92bd, 0xda33, 0x4451, \
+  { 0x8f, 0xb5, 0x11, 0x20, 0x5c, 0x03, 0xce, 0xaa } }
 
 class nsPIDOMWindow : public nsIDOMWindowInternal
 {
@@ -291,7 +291,7 @@ public:
 
   // Returns an object containing the window's state.  This also suspends
   // all running timeouts in the window.
-  virtual nsresult SaveWindowState(nsISupports **aState) = 0;
+  virtual already_AddRefed<nsISupports> SaveWindowState() = 0;
 
   // Restore the window state from aState.
   virtual nsresult RestoreWindowState(nsISupports *aState) = 0;
@@ -570,6 +570,23 @@ public:
    * Tell this window that it should remove itself from sensor change notifications.
    */
   virtual void DisableDeviceSensor(uint32_t aType) = 0;
+
+  virtual void EnableTimeChangeNotifications() = 0;
+  virtual void DisableTimeChangeNotifications() = 0;
+
+#ifdef MOZ_B2G
+  /**
+   * Tell the window that it should start to listen to the network event of the
+   * given aType.
+   */
+  virtual void EnableNetworkEvent(uint32_t aType) = 0;
+
+  /**
+   * Tell the window that it should stop to listen to the network event of the
+   * given aType.
+   */
+  virtual void DisableNetworkEvent(uint32_t aType) = 0;
+#endif // MOZ_B2G
 
   /**
    * Set a arguments for this window. This will be set on the window

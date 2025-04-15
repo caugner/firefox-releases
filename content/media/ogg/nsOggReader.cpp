@@ -20,6 +20,12 @@ extern "C" {
 
 using namespace mozilla;
 
+// On B2G estimate the buffered ranges rather than calculating them explicitly.
+// This prevents us doing I/O on the main thread, which is prohibited in B2G.
+#ifdef MOZ_WIDGET_GONK
+#define OGG_ESTIMATE_BUFFERED 1
+#endif
+
 // Un-comment to enable logging of seek bisections.
 //#define SEEK_LOGGING
 
@@ -152,32 +158,6 @@ void nsOggReader::BuildSerialList(nsTArray<uint32_t>& aTracks)
       aTracks.AppendElement(mOpusState->mSerial);
     }
   }
-}
-
-static
-nsHTMLMediaElement::MetadataTags* TagsFromVorbisComment(vorbis_comment *vc)
-{
-  nsHTMLMediaElement::MetadataTags* tags;
-  int i;
-
-  tags = new nsHTMLMediaElement::MetadataTags;
-  tags->Init();
-  for (i = 0; i < vc->comments; i++) {
-    char *comment = vc->user_comments[i];
-    char *div = (char*)memchr(comment, '=', vc->comment_lengths[i]);
-    if (!div) {
-      LOG(PR_LOG_DEBUG, ("Invalid vorbis comment: no separator"));
-      continue;
-    }
-    // This should be ASCII.
-    nsCString key = nsCString(comment, div-comment);
-    uint32_t value_length = vc->comment_lengths[i] - (div-comment);
-    // This should be utf-8.
-    nsCString value = nsCString(div + 1, value_length);
-    tags->Put(key, value);
-  }
-
-  return tags;
 }
 
 nsresult nsOggReader::ReadMetadata(nsVideoInfo* aInfo,
@@ -316,7 +296,7 @@ nsresult nsOggReader::ReadMetadata(nsVideoInfo* aInfo,
     memcpy(&mVorbisInfo, &mVorbisState->mInfo, sizeof(mVorbisInfo));
     mVorbisInfo.codec_setup = NULL;
     mVorbisSerial = mVorbisState->mSerial;
-    *aTags = TagsFromVorbisComment(&mVorbisState->mComment);
+    *aTags = mVorbisState->GetTags();
   } else {
     memset(&mVorbisInfo, 0, sizeof(mVorbisInfo));
   }
@@ -327,6 +307,8 @@ nsresult nsOggReader::ReadMetadata(nsVideoInfo* aInfo,
     mInfo.mAudioChannels = mOpusState->mChannels > 2 ? 2 : mOpusState->mChannels;
     mOpusSerial = mOpusState->mSerial;
     mOpusPreSkip = mOpusState->mPreSkip;
+
+    *aTags = mOpusState->GetTags();
   }
 #endif
   if (mSkeletonState) {
@@ -428,14 +410,17 @@ nsresult nsOggReader::DecodeVorbis(ogg_packet* aPacket) {
 nsresult nsOggReader::DecodeOpus(ogg_packet* aPacket) {
   NS_ASSERTION(aPacket->granulepos != -1, "Must know opus granulepos!");
 
-  // Maximum value is 63*2880.
+  // Maximum value is 63*2880, so there's no chance of overflow.
   int32_t frames_number = opus_packet_get_nb_frames(aPacket->packet,
                                                     aPacket->bytes);
+  if (frames_number <= 0)
+    return NS_ERROR_FAILURE; // Invalid packet header.
   int32_t samples = opus_packet_get_samples_per_frame(aPacket->packet,
                                                       (opus_int32) mOpusState->mRate);
   int32_t frames = frames_number*samples;
 
-  if (frames <= 0)
+  // A valid Opus packet must be between 2.5 and 120 ms long.
+  if (frames < 120 || frames > 5760)
     return NS_ERROR_FAILURE;
   uint32_t channels = mOpusState->mChannels;
   nsAutoArrayPtr<AudioDataValue> buffer(new AudioDataValue[frames * channels]);
@@ -892,7 +877,7 @@ int64_t nsOggReader::RangeEndTime(int64_t aStartOffset,
         readHead = NS_MAX(aStartOffset, readStartOffset);
       }
 
-      int64_t limit = NS_MIN(static_cast<int64_t>(PR_UINT32_MAX),
+      int64_t limit = NS_MIN(static_cast<int64_t>(UINT32_MAX),
                              aEndOffset - readHead);
       limit = NS_MAX(static_cast<int64_t>(0), limit);
       limit = NS_MIN(limit, static_cast<int64_t>(step));
@@ -1310,7 +1295,7 @@ PageSync(MediaResource* aResource,
       // Read from the file into the buffer
       int64_t bytesToRead = NS_MIN(static_cast<int64_t>(PAGE_STEP),
                                    aEndOffset - readHead);
-      NS_ASSERTION(bytesToRead <= PR_UINT32_MAX, "bytesToRead range check");
+      NS_ASSERTION(bytesToRead <= UINT32_MAX, "bytesToRead range check");
       if (bytesToRead <= 0) {
         return PAGE_SYNC_END_OF_RANGE;
       }
@@ -1384,7 +1369,7 @@ nsresult nsOggReader::SeekBisection(int64_t aTarget,
   DebugOnly<ogg_int64_t> previousGuess = -1;
   int backsteps = 0;
   const int maxBackStep = 10;
-  NS_ASSERTION(static_cast<uint64_t>(PAGE_STEP) * pow(2.0, maxBackStep) < PR_INT32_MAX,
+  NS_ASSERTION(static_cast<uint64_t>(PAGE_STEP) * pow(2.0, maxBackStep) < INT32_MAX,
                "Backstep calculation must not overflow");
 
   // Seek via bisection search. Loop until we find the offset where the page
@@ -1620,6 +1605,17 @@ nsresult nsOggReader::SeekBisection(int64_t aTarget,
 
 nsresult nsOggReader::GetBuffered(nsTimeRanges* aBuffered, int64_t aStartTime)
 {
+#ifdef OGG_ESTIMATE_BUFFERED
+  MediaResource* stream = mDecoder->GetResource();
+  int64_t durationUs = 0;
+  {
+    ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+    durationUs = mDecoder->GetStateMachine()->GetDuration();
+  }
+  GetEstimatedBufferedTimeRanges(stream, durationUs, aBuffered);
+  
+  return NS_OK;
+#else
   // HasAudio and HasVideo are not used here as they take a lock and cause
   // a deadlock. Accessing mInfo doesn't require a lock - it doesn't change
   // after metadata is read.
@@ -1720,6 +1716,7 @@ nsresult nsOggReader::GetBuffered(nsTimeRanges* aBuffered, int64_t aStartTime)
   }
 
   return NS_OK;
+#endif
 }
 
 bool nsOggReader::IsKnownStream(uint32_t aSerial)

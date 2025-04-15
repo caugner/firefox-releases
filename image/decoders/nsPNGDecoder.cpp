@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsPNGDecoder.h"
 #include "ImageLogging.h"
+#include "nsPNGDecoder.h"
 
 #include "nsMemory.h"
 #include "nsRect.h"
@@ -631,7 +631,7 @@ nsPNGDecoder::info_callback(png_structp png_ptr, png_infop info_ptr)
   }
 
   if (interlace_type == PNG_INTERLACE_ADAM7) {
-    if (height < PR_INT32_MAX / (width * channels))
+    if (height < INT32_MAX / (width * channels))
       decoder->interlacebuf = (uint8_t *)moz_malloc(channels * width * height);
     if (!decoder->interlacebuf) {
       longjmp(png_jmpbuf(decoder->mPNG), 5); // NS_ERROR_OUT_OF_MEMORY
@@ -727,7 +727,7 @@ nsPNGDecoder::row_callback(png_structp png_ptr, png_bytep new_row,
 
         // copy as bytes until source pointer is 32-bit-aligned
         for (; (NS_PTR_TO_UINT32(line) & 0x3) && idx; --idx) {
-          *cptr32++ = GFX_PACKED_PIXEL(0xFF, line[0], line[1], line[2]);
+          *cptr32++ = gfxPackedPixel(0xFF, line[0], line[1], line[2]);
           line += 3;
         }
 
@@ -742,7 +742,7 @@ nsPNGDecoder::row_callback(png_structp png_ptr, png_bytep new_row,
         // copy remaining pixel(s)
         while (idx--) {
           // 32-bit read of final pixel will exceed buffer, so read bytes
-          *cptr32++ = GFX_PACKED_PIXEL(0xFF, line[0], line[1], line[2]);
+          *cptr32++ = gfxPackedPixel(0xFF, line[0], line[1], line[2]);
           line += 3;
         }
       }
@@ -751,14 +751,14 @@ nsPNGDecoder::row_callback(png_structp png_ptr, png_bytep new_row,
       {
         if (!decoder->mDisablePremultipliedAlpha) {
           for (uint32_t x=width; x>0; --x) {
-            *cptr32++ = GFX_PACKED_PIXEL(line[3], line[0], line[1], line[2]);
+            *cptr32++ = gfxPackedPixel(line[3], line[0], line[1], line[2]);
             if (line[3] != 0xff)
               rowHasNoAlpha = false;
             line += 4;
           }
         } else {
           for (uint32_t x=width; x>0; --x) {
-            *cptr32++ = GFX_PACKED_PIXEL_NO_PREMULTIPLY(line[3], line[0], line[1], line[2]);
+            *cptr32++ = gfxPackedPixelNoPreMultiply(line[3], line[0], line[1], line[2]);
             if (line[3] != 0xff)
               rowHasNoAlpha = false;
             line += 4;

@@ -9,6 +9,8 @@ include protocol PNecko;
 include InputStreamParams;
 include URIParams;
 
+include protocol PBlob; //FIXME: bug #792908
+
 include "SerializedLoadContext.h";
 
 using IPC::SerializedLoadContext;
@@ -38,7 +40,7 @@ parent:
 child:
   OnStartRequest(int32_t aContentLength, nsCString aContentType,
                  PRTime aLastModified, nsCString aEntityID, URIParams aURI);
-  OnDataAvailable(nsCString data, uint32_t offset, uint32_t count);
+  OnDataAvailable(nsCString data, uint64_t offset, uint32_t count);
   OnStopRequest(nsresult statusCode);
   FailedAsyncOpen(nsresult statusCode);
   DeleteSelf();

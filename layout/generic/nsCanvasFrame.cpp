@@ -156,12 +156,6 @@ nsCanvasFrame::RemoveFrame(ChildListID     aListID,
   if (aOldFrame != mFrames.FirstChild())
     return NS_ERROR_FAILURE;
 
-  // It's our one and only child frame
-  // Damage the area occupied by the deleted frame
-  // The child of the canvas probably can't have an outline, but why bother
-  // thinking about that?
-  Invalidate(aOldFrame->GetVisualOverflowRect() + aOldFrame->GetPosition());
-
   // Remove the frame and destroy it
   mFrames.DestroyFrame(aOldFrame);
 
@@ -202,7 +196,7 @@ nsDisplayCanvasBackground::Paint(nsDisplayListBuilder* aBuilder,
   nsCanvasFrame* frame = static_cast<nsCanvasFrame*>(mFrame);
   nsPoint offset = ToReferenceFrame();
   nsRect bgClipRect = frame->CanvasArea() + offset;
-  if (NS_GET_A(mExtraBackgroundColor) > 0) {
+  if (mIsBottommostLayer && NS_GET_A(mExtraBackgroundColor) > 0) {
     aCtx->SetColor(mExtraBackgroundColor);
     aCtx->FillRect(bgClipRect);
   }
@@ -213,18 +207,25 @@ nsDisplayCanvasBackground::Paint(nsDisplayListBuilder* aBuilder,
   nsRefPtr<gfxContext> dest = aCtx->ThebesContext();
   nsRefPtr<gfxASurface> surf;
   nsRefPtr<gfxContext> ctx;
+  gfxRect destRect;
 #ifndef MOZ_GFX_OPTIMIZE_MOBILE
-  if (IsSingleFixedPositionImage(aBuilder, bgClipRect) && aBuilder->IsPaintingToWindow() && !aBuilder->IsCompositingCheap()) {
+  if (IsSingleFixedPositionImage(aBuilder, bgClipRect, &destRect) &&
+      aBuilder->IsPaintingToWindow() && !aBuilder->IsCompositingCheap() &&
+      !dest->CurrentMatrix().HasNonIntegerTranslation()) {
+    // Snap image rectangle to nearest pixel boundaries. This is the right way
+    // to snap for this context, because we checked HasNonIntegerTranslation above.
+    destRect.Round();
     surf = static_cast<gfxASurface*>(GetUnderlyingFrame()->Properties().Get(nsIFrame::CachedBackgroundImage()));
     nsRefPtr<gfxASurface> destSurf = dest->CurrentSurface();
     if (surf && surf->GetType() == destSurf->GetType()) {
-      BlitSurface(dest, mDestRect, surf);
+      BlitSurface(dest, destRect, surf);
       return;
     }
-    surf = destSurf->CreateSimilarSurface(gfxASurface::CONTENT_COLOR_ALPHA, gfxIntSize(ceil(mDestRect.width), ceil(mDestRect.height)));
+    surf = destSurf->CreateSimilarSurface(gfxASurface::CONTENT_COLOR_ALPHA,
+        gfxIntSize(destRect.width, destRect.height));
     if (surf) {
       ctx = new gfxContext(surf);
-      ctx->Translate(-gfxPoint(mDestRect.x, mDestRect.y));
+      ctx->Translate(-gfxPoint(destRect.x, destRect.y));
       context.Init(aCtx->DeviceContext(), ctx);
     }
   }
@@ -234,9 +235,9 @@ nsDisplayCanvasBackground::Paint(nsDisplayListBuilder* aBuilder,
                                   surf ? bounds : mVisibleRect,
                                   nsRect(offset, mFrame->GetSize()),
                                   aBuilder->GetBackgroundPaintFlags(),
-                                  &bgClipRect);
+                                  &bgClipRect, mLayer);
   if (surf) {
-    BlitSurface(dest, mDestRect, surf);
+    BlitSurface(dest, destRect, surf);
 
     GetUnderlyingFrame()->Properties().Set(nsIFrame::CachedBackgroundImage(), surf.forget().get());
     GetUnderlyingFrame()->AddStateBits(NS_FRAME_HAS_CACHED_BACKGROUND);
@@ -295,10 +296,21 @@ nsCanvasFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // We don't have any border or outline, and our background draws over
   // the overflow area, so just add nsDisplayCanvasBackground instead of
   // calling DisplayBorderBackgroundOutline.
-  if (IsVisibleForPainting(aBuilder)) { 
-    rv = aLists.BorderBackground()->AppendNewToTop(new (aBuilder)
-           nsDisplayCanvasBackground(aBuilder, this));
-    NS_ENSURE_SUCCESS(rv, rv);
+  if (IsVisibleForPainting(aBuilder)) {
+    nsStyleContext* bgSC;
+    const nsStyleBackground* bg = nullptr;
+    bool isThemed = IsThemed();
+    if (!isThemed &&
+        nsCSSRendering::FindBackground(PresContext(), this, &bgSC)) {
+      bg = bgSC->GetStyleBackground();
+    }
+    // Create separate items for each background layer.
+    NS_FOR_VISIBLE_BACKGROUND_LAYERS_BACK_TO_FRONT(i, bg) {
+      rv = aLists.BorderBackground()->AppendNewToTop(
+          new (aBuilder) nsDisplayCanvasBackground(aBuilder, this, i,
+                                                   isThemed, bg));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
   }
 
   nsIFrame* kid;
@@ -391,9 +403,9 @@ nsCanvasFrame::GetPrefWidth(nsRenderingContext *aRenderingContext)
 
 NS_IMETHODIMP
 nsCanvasFrame::Reflow(nsPresContext*           aPresContext,
-                    nsHTMLReflowMetrics&     aDesiredSize,
-                    const nsHTMLReflowState& aReflowState,
-                    nsReflowStatus&          aStatus)
+                      nsHTMLReflowMetrics&     aDesiredSize,
+                      const nsHTMLReflowState& aReflowState,
+                      nsReflowStatus&          aStatus)
 {
   DO_GLOBAL_REFLOW_COUNT("nsCanvasFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
@@ -498,15 +510,7 @@ nsCanvasFrame::Reflow(nsPresContext*           aPresContext,
       // could also include overflow to our top and left (out of the viewport)
       // which doesn't need to be painted.
       nsIFrame* viewport = PresContext()->GetPresShell()->GetRootFrame();
-      viewport->Invalidate(nsRect(nsPoint(0, 0), viewport->GetSize()));
-    } else {
-      nsRect newKidRect = kidFrame->GetRect();
-      if (newKidRect.TopLeft() == oldKidRect.TopLeft()) {
-        InvalidateRectDifference(oldKidRect, kidFrame->GetRect());
-      } else {
-        Invalidate(oldKidRect);
-        Invalidate(newKidRect);
-      }
+      viewport->InvalidateFrame();
     }
     
     // Return our desired size. Normally it's what we're told, but
@@ -523,39 +527,6 @@ nsCanvasFrame::Reflow(nsPresContext*           aPresContext,
     aDesiredSize.SetOverflowAreasToDesiredBounds();
     aDesiredSize.mOverflowAreas.UnionWith(
       kidDesiredSize.mOverflowAreas + kidPt);
-
-    // Handle invalidating fixed-attachment backgrounds propagated to the
-    // canvas when the canvas size (and therefore the background positioning
-    // area's size) changes.  Such backgrounds are not invalidated in the
-    // normal manner because the size of the original frame for that background
-    // may not have changed.
-    //
-    // This isn't the right fix for this issue, taken more generally.  In
-    // particular, this doesn't handle fixed-attachment backgrounds that are *not*
-    // propagated.  If a layer with the characteristics tested for below exists
-    // in a non-propagated background, we should invalidate the "corresponding"
-    // frame (which subsumes this special case if defined broadly).  For now,
-    // however, this addresses the most common case.  Given that this behavior has
-    // long been broken (non-zero percent background-size may be a new instance,
-    // but non-zero percent background-position is longstanding), we defer a
-    // fully correct fix until later.
-    if (nsSize(aDesiredSize.width, aDesiredSize.height) != GetSize()) {
-      nsIFrame* rootElementFrame =
-        aPresContext->PresShell()->FrameConstructor()->GetRootElementStyleFrame();
-      nsStyleContext* bgSC =
-        nsCSSRendering::FindCanvasBackground(this, rootElementFrame);
-      const nsStyleBackground* bg = bgSC->GetStyleBackground();
-      if (!bg->IsTransparent()) {
-        NS_FOR_VISIBLE_BACKGROUND_LAYERS_BACK_TO_FRONT(i, bg) {
-          const nsStyleBackground::Layer& layer = bg->mLayers[i];
-          if (layer.mAttachment == NS_STYLE_BG_ATTACHMENT_FIXED &&
-              layer.RenderingMightDependOnFrameSize()) {
-            Invalidate(nsRect(nsPoint(0, 0), GetSize()));
-            break;
-          }
-        }
-      }
-    }
   }
 
   if (prevCanvasFrame) {

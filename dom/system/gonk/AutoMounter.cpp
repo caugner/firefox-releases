@@ -22,6 +22,7 @@
 #include "base/message_loop.h"
 #include "mozilla/FileUtils.h"
 #include "mozilla/Hal.h"
+#include "mozilla/StaticPtr.h"
 #include "nsAutoPtr.h"
 #include "nsMemory.h"
 #include "nsString.h"
@@ -253,6 +254,21 @@ public:
       // AUTOMOUNTER_DISABLE_WHEN_UNPLUGGED implies "enabled until unplugged"
       aMode = AUTOMOUNTER_DISABLE;
     }
+
+    if ((aMode == AUTOMOUNTER_DISABLE) &&
+        (mMode == AUTOMOUNTER_ENABLE) && IsUsbCablePluggedIn()) {
+      // On many devices (esp non-Samsung), we can't force the disable, so we
+      // need to defer until the USB cable is actually unplugged.
+      // See bug 777043.
+      //
+      // Otherwise our attempt to disable it will fail, and we'll wind up in a bad
+      // state where the AutoMounter thinks that Sharing has been turned off, but
+      // the files are actually still being Shared because the attempt to unshare
+      // failed.
+      LOG("Attempting to disable UMS. Deferring until USB cable is unplugged.");
+      aMode = AUTOMOUNTER_DISABLE_WHEN_UNPLUGGED;
+    }
+
     if (aMode != mMode) {
       LOG("Changing mode from '%s' to '%s'", ModeStr(mMode), ModeStr(aMode));
       mMode = aMode;
@@ -270,7 +286,7 @@ private:
   VolumeArray                     mAutoVolume;
 };
 
-static RefPtr<AutoMounter> sAutoMounter;
+static StaticRefPtr<AutoMounter> sAutoMounter;
 
 /***************************************************************************/
 
@@ -509,8 +525,8 @@ public:
   }
 };
 
-static RefPtr<UsbCableObserver> sUsbCableObserver;
-static RefPtr<AutoMounterSetting> sAutoMounterSetting;
+static StaticRefPtr<UsbCableObserver> sUsbCableObserver;
+static StaticRefPtr<AutoMounterSetting> sAutoMounterSetting;
 
 void
 InitAutoMounter()

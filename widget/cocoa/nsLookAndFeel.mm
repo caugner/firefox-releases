@@ -32,6 +32,8 @@ static nscolor GetColorFromNSColor(NSColor* aColor)
 nsresult
 nsLookAndFeel::NativeGetColor(ColorID aID, nscolor &aColor)
 {
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+
   nsresult res = NS_OK;
   
   switch (aID) {
@@ -272,6 +274,8 @@ nsLookAndFeel::NativeGetColor(ColorID aID, nscolor &aColor)
     }
   
   return res;
+
+  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
 nsresult
@@ -448,14 +452,17 @@ static void GetStringForNSString(const NSString *aSrc, nsAString& aDest)
 
 bool
 nsLookAndFeel::GetFontImpl(FontID aID, nsString &aFontName,
-                           gfxFontStyle &aFontStyle)
+                           gfxFontStyle &aFontStyle,
+                           float aDevPixPerCSSPixel)
 {
+    NS_OBJC_BEGIN_TRY_ABORT_BLOCK_RETURN;
+
     // hack for now
     if (aID == eFont_Window || aID == eFont_Document) {
         aFontStyle.style      = NS_FONT_STYLE_NORMAL;
         aFontStyle.weight     = NS_FONT_WEIGHT_NORMAL;
         aFontStyle.stretch    = NS_FONT_STRETCH_NORMAL;
-        aFontStyle.size       = 14;
+        aFontStyle.size       = 14 * aDevPixPerCSSPixel;
         aFontStyle.systemFont = true;
 
         aFontName.AssignLiteral("sans-serif");
@@ -552,9 +559,12 @@ nsLookAndFeel::GetFontImpl(FontID aID, nsString &aFontName,
         (traits & NSFontExpandedTrait) ?
             NS_FONT_STRETCH_EXPANDED : (traits & NSFontCondensedTrait) ?
                 NS_FONT_STRETCH_CONDENSED : NS_FONT_STRETCH_NORMAL;
-    aFontStyle.size = [font pointSize];
+    // convert size from css pixels to device pixels
+    aFontStyle.size = [font pointSize] * aDevPixPerCSSPixel;
     aFontStyle.systemFont = true;
 
     GetStringForNSString([font familyName], aFontName);
     return true;
+
+    NS_OBJC_END_TRY_ABORT_BLOCK_RETURN(false);
 }

@@ -84,7 +84,7 @@ public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIATOM
 
-  enum { REFCNT_PERMANENT_SENTINEL = PR_UINT32_MAX };
+  enum { REFCNT_PERMANENT_SENTINEL = UINT32_MAX };
 
   virtual bool IsPermanent();
 
@@ -251,7 +251,7 @@ DumpAtomLeaks(PLDHashTable *table, PLDHashEntryHdr *he,
   AtomImpl* atom = entry->mAtom;
   if (!atom->IsPermanent()) {
     ++*static_cast<uint32_t*>(arg);
-    nsCAutoString str;
+    nsAutoCString str;
     atom->ToUTF8String(str);
     fputs(str.get(), stdout);
     fputs("\n", stdout);
@@ -473,7 +473,7 @@ NS_SizeOfAtomTablesIncludingThis(nsMallocSizeOfFun aMallocSizeOf) {
     n += gStaticAtomTable->SizeOfIncludingThis(SizeOfStaticAtomTableEntryExcludingThis,
                                                aMallocSizeOf);
   }
-  return 0;
+  return n;
 }
 
 #define ATOM_HASHTABLE_INITIAL_SIZE  4096

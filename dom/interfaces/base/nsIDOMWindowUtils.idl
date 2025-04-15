@@ -38,8 +38,9 @@ interface nsIDOMFile;
 interface nsIFile;
 interface nsIDOMTouch;
 interface nsIDOMClientRect;
+interface nsIURI;
 
-[scriptable, uuid(9f599acb-75e5-4f5f-97aa-f93165da2259)]
+[scriptable, uuid(ed36f965-173c-4101-a615-63b44f51ed90 )]
 interface nsIDOMWindowUtils : nsISupports {
 
   /**
@@ -101,6 +102,16 @@ interface nsIDOMWindowUtils : nsISupports {
    * privileges.
    */
   void setCSSViewport(in float aWidthPx, in float aHeightPx);
+
+  /**
+   * Information retrieved from the <meta name="viewport"> tag.
+   * See nsContentUtils::GetViewportInfo for more information.
+   */
+  void getViewportInfo(in uint32_t aDisplayWidth, in uint32_t aDisplayHeight,
+                       out double aDefaultZoom, out boolean aAllowZoom,
+                       out double aMinZoom, out double aMaxZoom,
+                       out uint32_t aWidth, out uint32_t aHeight,
+                       out boolean aAutoSize);
 
   /**
    * For any scrollable element, this allows you to override the
@@ -317,6 +328,14 @@ interface nsIDOMWindowUtils : nsISupports {
    const unsigned long WHEEL_EVENT_CAUSED_BY_PIXEL_ONLY_DEVICE = 0x0001;
    const unsigned long WHEEL_EVENT_CAUSED_BY_MOMENTUM          = 0x0002;
    const unsigned long WHEEL_EVENT_CUSTOMIZED_BY_USER_PREFS    = 0x0004;
+   // If any of the following flags is specified this method will throw an
+   // exception in case the relevant overflowDelta has an unexpected value.
+   const unsigned long WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_X_ZERO      = 0x0010;
+   const unsigned long WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_X_POSITIVE  = 0x0020;
+   const unsigned long WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_X_NEGATIVE  = 0x0040;
+   const unsigned long WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_Y_ZERO      = 0x0100;
+   const unsigned long WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_Y_POSITIVE  = 0x0200;
+   const unsigned long WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_Y_NEGATIVE  = 0x0400;
    void sendWheelEvent(in float aX,
                        in float aY,
                        in double aDeltaX,
@@ -679,6 +698,14 @@ interface nsIDOMWindowUtils : nsISupports {
   readonly attribute float screenPixelsPerCSSPixel;
 
   /**
+   * Get the current zoom factor.
+   * This is _approximately_ the same as nsIMarkupDocumentViewer.fullZoom,
+   * but takes into account Gecko's quantization of the zoom factor, which is
+   * implemented by adjusting the (integer) number of appUnits per devPixel.
+   */
+  readonly attribute float fullZoom;
+
+  /**
    * Dispatches aEvent via the nsIPresShell object of the window's document.
    * The event is dispatched to aTarget, which should be an object
    * which implements nsIContent interface (#element, #text, etc).
@@ -913,6 +940,33 @@ interface nsIDOMWindowUtils : nsISupports {
                                 in unsigned long aLength,
                                 in boolean aReverse);
 
+  /* Selection behaviors - mirror nsIFrame's nsSelectionAmount constants */
+  const unsigned long SELECT_CHARACTER   = 0;
+  const unsigned long SELECT_CLUSTER     = 1;
+  const unsigned long SELECT_WORD        = 2;
+  const unsigned long SELECT_LINE        = 3;
+  const unsigned long SELECT_BEGINLINE   = 4;
+  const unsigned long SELECT_ENDLINE     = 5;
+  const unsigned long SELECT_PARAGRAPH   = 6;
+  const unsigned long SELECT_WORDNOSPACE = 7;
+
+  /**
+   * Select content at a client point based on a selection behavior if the
+   * underlying content is selectable. Selection will accumulate with any
+   * existing selection, callers should clear selection prior if needed.
+   * May fire selection changed events. Calls nsFrame's SelectByTypeAtPoint.
+   *
+   * @param aX, aY The selection point in client coordinates.
+   * @param aSelectType The selection behavior requested.
+   * @return True if a selection occured, false otherwise.
+   * @throw NS_ERROR_DOM_SECURITY_ERR, NS_ERROR_UNEXPECTED for utils
+   * issues, and NS_ERROR_INVALID_ARG for coordinates that are outside
+   * this window.
+   */
+  boolean selectAtPoint(in float aX,
+                        in float aY,
+                        in unsigned long aSelectBehavior);
+
   /**
    * Perform the equivalent of:
    *   window.getComputedStyle(aElement, aPseudoElement).
@@ -987,13 +1041,6 @@ interface nsIDOMWindowUtils : nsISupports {
   void resumeTimeouts();
 
   /**
-   * Set the network status to online from the Offline mode error page.
-   *
-   * The caller of this method must be about:neterror.
-   */
-  void goOnline();
-
-  /**
    * What type of layer manager the widget associated with this window is
    * using. "Basic" is unaccelerated; other types are accelerated. Throws an
    * error if there is no widget associated with this window.
@@ -1003,6 +1050,12 @@ interface nsIDOMWindowUtils : nsISupports {
   void startFrameTimeRecording();
   void stopFrameTimeRecording([optional] out unsigned long frameCount,
                               [retval, array, size_is(frameCount)] out float frameTime);
+  /**
+   * Signals that we're begining to tab switch. This is used by painting code to
+   * determine total tab switch time.
+   */
+  void beginTabSwitch();
+
   /**
    * The DPI of the display
    */
@@ -1201,6 +1254,35 @@ interface nsIDOMWindowUtils : nsISupports {
    * dialogs (e.g. window.alert()).
    */
   void preventFurtherDialogs();
+
+  const unsigned long AGENT_SHEET = 0;
+  const unsigned long USER_SHEET = 1;
+  /**
+   * Synchronously loads a style sheet from |sheetURI| and adds it to the list
+   * of additional style sheets of the document.
+   *
+   * These additional style sheets are very much like user/agent sheets loaded 
+   * with loadAndRegisterSheet. The only difference is that they are applied only
+   * on the document owned by this window.
+   *
+   * Sheets added via this API take effect immediately on the document.
+   */
+  void loadSheet(in nsIURI sheetURI,
+                           in unsigned long type);
+
+  /**
+   * Remove the document style sheet at |sheetURI| from the list of additional 
+   * style sheets of the document.  The removal takes effect immediately.
+   */
+  void removeSheet(in nsIURI sheetURI,
+                                in unsigned long type);
+
+  /**
+   * Returns true if a user input is being handled.
+   *
+   * This calls nsEventStateManager::IsHandlingUserInput().
+   */
+  readonly attribute boolean isHandlingUserInput;
 
   /**
    * After calling the method, the window for which this DOMWindowUtils

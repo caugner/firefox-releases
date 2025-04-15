@@ -59,6 +59,9 @@
 #include "nsMathMLAtoms.h"
 #include "nsMathMLOperators.h"
 #include "Navigator.h"
+#include "nsDOMStorageBaseDB.h"
+
+#include "AudioChannelService.h"
 
 #ifdef MOZ_XUL
 #include "nsXULPopupManager.h"
@@ -98,12 +101,17 @@
 #include "nsWindowMemoryReporter.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ipc/ProcessPriorityManager.h"
+#include "nsPermissionManager.h"
+#include "nsCookieService.h"
+#include "nsApplicationCacheService.h"
+#include "mozilla/dom/time/DateCacheCleaner.h"
 
 extern void NS_ShutdownChainItemPool();
 
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::dom::ipc;
+using namespace mozilla::dom::time;
 
 nsrefcnt nsLayoutStatics::sLayoutStaticRefcnt = 0;
 
@@ -252,6 +260,14 @@ nsLayoutStatics::Initialize()
 
   InitProcessPriorityManager();
 
+  nsPermissionManager::AppUninstallObserverInit();
+  nsCookieService::AppClearDataObserverInit();
+  nsApplicationCacheService::AppClearDataObserverInit();
+
+  nsDOMStorageBaseDB::Init();
+
+  InitializeDateCacheCleaner();
+
   return NS_OK;
 }
 
@@ -349,6 +365,8 @@ nsLayoutStatics::Shutdown()
   nsHyphenationManager::Shutdown();
   nsEditorSpellCheck::ShutDown();
   nsDOMMutationObserver::Shutdown();
+
+  AudioChannelService::Shutdown();
 
   ContentParent::ShutDown();
 }

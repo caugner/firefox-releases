@@ -10,6 +10,7 @@ const AUS_Cc = Components.classes;
 const AUS_Ci = Components.interfaces;
 const AUS_Cr = Components.results;
 const AUS_Cu = Components.utils;
+const AUS_Cm = Components.manager;
 
 const PREF_APP_UPDATE_AUTO                = "app.update.auto";
 const PREF_APP_UPDATE_STAGE_ENABLED       = "app.update.staging.enabled";
@@ -31,6 +32,8 @@ const PREF_APP_UPDATE_SILENT              = "app.update.silent";
 const PREF_APP_UPDATE_URL                 = "app.update.url";
 const PREF_APP_UPDATE_URL_DETAILS         = "app.update.url.details";
 const PREF_APP_UPDATE_URL_OVERRIDE        = "app.update.url.override";
+const PREF_APP_UPDATE_SOCKET_ERRORS       = "app.update.socket.maxErrors";
+const PREF_APP_UPDATE_RETRY_TIMEOUT       = "app.update.socket.retryTimeout";
 
 const PREF_APP_UPDATE_CERT_INVALID_ATTR_NAME = PREF_APP_UPDATE_CERTS_BRANCH +
                                                "1.invalidName";
@@ -93,7 +96,8 @@ XPCOMUtils.defineLazyGetter(this, "gAUS", function test_gAUS() {
   return AUS_Cc["@mozilla.org/updates/update-service;1"].
          getService(AUS_Ci.nsIApplicationUpdateService).
          QueryInterface(AUS_Ci.nsITimerCallback).
-         QueryInterface(AUS_Ci.nsIObserver);
+         QueryInterface(AUS_Ci.nsIObserver).
+         QueryInterface(AUS_Ci.nsIUpdateCheckListener);
 });
 
 XPCOMUtils.defineLazyServiceGetter(this, "gUpdateManager",
@@ -443,12 +447,26 @@ function cleanUpdatesDir(aDir) {
         }
         cleanUpdatesDir(entry);
         entry.permissions = PERMS_DIRECTORY;
-        entry.remove(true);
+        try {
+          entry.remove(true);
+        }
+        catch (e) {
+          dump("Unable to remove directory\npath: " + entry.path +
+               "\nException: " + e + "\n");
+          throw(e);
+        }
       }
     }
     else {
       entry.permissions = PERMS_FILE;
-      entry.remove(false);
+      try {
+        entry.remove(false);
+      }
+      catch (e) {
+        dump("Unable to remove file\npath: " + entry.path + "\nException: " +
+             e + "\n");
+        throw(e);
+      }
     }
   }
 }

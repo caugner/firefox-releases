@@ -36,12 +36,14 @@ typedef int GLsizei;
 namespace mozilla {
 namespace layers {
 
+class Composer2D;
 class LayerOGL;
 class ShadowThebesLayer;
 class ShadowContainerLayer;
 class ShadowImageLayer;
 class ShadowCanvasLayer;
 class ShadowColorLayer;
+struct FPSState;
 
 /**
  * This is the LayerManager used for OpenGL 2.1 and OpenGL ES 2.0.
@@ -57,8 +59,6 @@ public:
   LayerManagerOGL(nsIWidget *aWidget, int aSurfaceWidth = -1, int aSurfaceHeight = -1,
                   bool aIsRenderingToEGLSurface = false);
   virtual ~LayerManagerOGL();
-
-  void CleanupResources();
 
   void Destroy();
 
@@ -145,6 +145,8 @@ public:
 
   virtual already_AddRefed<gfxASurface>
     CreateOptimalMaskSurface(const gfxIntSize &aSize);
+
+  virtual void ClearCachedResources(Layer* aSubtree = nullptr) MOZ_OVERRIDE;
 
   /**
    * Helper methods.
@@ -354,6 +356,14 @@ public:
   bool CompositingDisabled() { return mCompositingDisabled; }
   void SetCompositingDisabled(bool aCompositingDisabled) { mCompositingDisabled = aCompositingDisabled; }
 
+  /**
+   * Creates a DrawTarget which is optimized for inter-operating with this
+   * layermanager.
+   */
+  virtual TemporaryRef<mozilla::gfx::DrawTarget>
+    CreateDrawTarget(const mozilla::gfx::IntSize &aSize,
+                     mozilla::gfx::SurfaceFormat aFormat);
+
 private:
   /** Widget associated with this layer manager */
   nsIWidget *mWidget;
@@ -368,6 +378,9 @@ private:
   nsRefPtr<gfxContext> mTarget;
 
   nsRefPtr<GLContext> mGLContext;
+
+  /** Our more efficient but less powerful alter ego, if one is available. */
+  nsRefPtr<Composer2D> mComposer2D;
 
   already_AddRefed<mozilla::gl::GLContext> CreateContext();
 
@@ -438,34 +451,41 @@ private:
   DrawThebesLayerCallback mThebesLayerCallback;
   void *mThebesLayerCallbackData;
   gfxMatrix mWorldMatrix;
-
-  struct FPSState
-  {
-      GLuint texture;
-      int fps;
-      bool initialized;
-      int fcount;
-      TimeStamp last;
-
-      int contentFps;
-      int contentFCount;
-      TimeStamp contentLast;
-
-      FPSState()
-        : texture(0)
-        , fps(0)
-        , initialized(false)
-        , fcount(0)
-        , contentFps(0)
-        , contentFCount(0)
-      {
-        contentLast = last = TimeStamp::Now();
-      }
-      void DrawFPS(GLContext*, ShaderProgramOGL*);
-      void NotifyShadowTreeTransaction();
-  } mFPS;
+  nsAutoPtr<FPSState> mFPS;
+#ifdef DEBUG
+  // NB: only interesting when this is a purely compositing layer
+  // manager.  True after possibly onscreen layers have had their
+  // cached resources cleared outside of a transaction, and before the
+  // next forwarded transaction that re-validates their buffers.
+  bool mMaybeInvalidTree;
+#endif
 
   static bool sDrawFPS;
+  static bool sFrameCounter;
+};
+
+enum LayerRenderStateFlags {
+  LAYER_RENDER_STATE_Y_FLIPPED = 1 << 0,
+  LAYER_RENDER_STATE_BUFFER_ROTATION = 1 << 1
+};
+
+struct LayerRenderState {
+  LayerRenderState() : mSurface(nullptr), mFlags(0)
+  {}
+
+  LayerRenderState(SurfaceDescriptor* aSurface, uint32_t aFlags = 0)
+    : mSurface(aSurface)
+    , mFlags(aFlags)
+  {}
+
+  bool YFlipped() const
+  { return mFlags & LAYER_RENDER_STATE_Y_FLIPPED; }
+
+  bool BufferRotated() const
+  { return mFlags & LAYER_RENDER_STATE_BUFFER_ROTATION; }
+
+  SurfaceDescriptor* mSurface;
+  uint32_t mFlags;
 };
 
 /**
@@ -490,6 +510,8 @@ public:
   virtual void Destroy() = 0;
 
   virtual Layer* GetLayer() = 0;
+
+  virtual LayerRenderState GetRenderState() { return LayerRenderState(); }
 
   virtual void RenderLayer(int aPreviousFrameBuffer,
                            const nsIntPoint& aOffset) = 0;

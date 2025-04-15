@@ -46,13 +46,13 @@ include $(topsrcdir)/config/rules.mk
 
 _BROWSER_FILES = \
 		browser_responsiveui.js \
+		browser_responsiveuiaddcustompreset.js \
 		browser_responsiveruleview.js \
 		browser_responsive_cmd.js \
 		browser_responsivecomputedview.js \
 		head.js \
 		helpers.js \
 		$(NULL)
-
 
 libs::	$(_BROWSER_FILES)
 	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)

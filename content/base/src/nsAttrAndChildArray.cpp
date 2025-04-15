@@ -214,7 +214,7 @@ nsAttrAndChildArray::TakeChildAt(uint32_t aPos)
 }
 
 int32_t
-nsAttrAndChildArray::IndexOfChild(nsINode* aPossibleChild) const
+nsAttrAndChildArray::IndexOfChild(const nsINode* aPossibleChild) const
 {
   if (!mImpl) {
     return -1;
@@ -564,8 +564,7 @@ nsAttrAndChildArray::SetAndTakeMappedAttr(nsIAtom* aLocalName,
   nsRefPtr<nsMappedAttributes> mapped =
     GetModifiableMapped(aContent, aSheet, willAdd);
 
-  nsresult rv = mapped->SetAndTakeAttr(aLocalName, aValue);
-  NS_ENSURE_SUCCESS(rv, rv);
+  mapped->SetAndTakeAttr(aLocalName, aValue);
 
   return MakeMappedUnique(mapped);
 }

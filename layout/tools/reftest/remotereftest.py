@@ -329,25 +329,31 @@ user_pref("capability.principal.codebase.p2.id", "http://%s:%s");
         # Close the file
         fhandle.close()
 
-        if (self._devicemanager.pushDir(profileDir, options.remoteProfile) == None):
-            raise devicemanager.FileError("Failed to copy profiledir to device")
+        try:
+            self._devicemanager.pushDir(profileDir, options.remoteProfile)
+        except devicemanager.DMError:
+            print "Automation Error: Failed to copy profiledir to device"
+            raise
 
     def copyExtraFilesToProfile(self, options, profileDir):
         RefTest.copyExtraFilesToProfile(self, options, profileDir)
-        if (self._devicemanager.pushDir(profileDir, options.remoteProfile) == None):
-            raise devicemanager.FileError("Failed to copy extra files to device")
+        try:
+            self._devicemanager.pushDir(profileDir, options.remoteProfile)
+        except devicemanager.DMError:
+            print "Automation Error: Failed to copy extra files to device"
+            raise
 
     def getManifestPath(self, path):
         return path
 
     def cleanup(self, profileDir):
         # Pull results back from device
-        if (self.remoteLogFile):
-            try:
-                self._devicemanager.getFile(self.remoteLogFile, self.localLogName)
-            except:
-                print "ERROR: We were not able to retrieve the info from %s" % self.remoteLogFile
-                sys.exit(5)
+        if self.remoteLogFile and \
+                self._devicemanager.fileExists(self.remoteLogFile):
+            self._devicemanager.getFile(self.remoteLogFile, self.localLogName)
+        else:
+            print "WARNING: Unable to retrieve log file (%s) from remote " \
+                "device" % self.remoteLogFile
         self._devicemanager.removeDir(self.remoteProfile)
         self._devicemanager.removeDir(self.remoteTestRoot)
         RefTest.cleanup(self, profileDir)

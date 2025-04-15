@@ -12,6 +12,7 @@
 #include "jsapi.h"
 #include "mozilla/dom/PBrowserParent.h"
 #include "mozilla/dom/PContentDialogParent.h"
+#include "mozilla/dom/TabContext.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "nsCOMPtr.h"
 #include "nsIAuthPromptProvider.h"
@@ -50,11 +51,13 @@ class TabParent : public PBrowserParent
                 , public nsITabParent 
                 , public nsIAuthPromptProvider
                 , public nsISecureBrowserUI
+                , public TabContext
 {
     typedef mozilla::dom::ClonedMessageData ClonedMessageData;
+    typedef mozilla::layout::ScrollingBehavior ScrollingBehavior;
 
 public:
-    TabParent(mozIApplication* aApp, bool aIsBrowserElement);
+    TabParent(const TabContext& aContext);
     virtual ~TabParent();
     nsIDOMElement* GetOwnerElement() { return mFrameElement; }
     void SetOwnerElement(nsIDOMElement* aElement);
@@ -62,14 +65,40 @@ public:
     void SetBrowserDOMWindow(nsIBrowserDOMWindow* aBrowserDOMWindow) {
         mBrowserDOMWindow = aBrowserDOMWindow;
     }
- 
-    mozIApplication* GetApp() { return mApp; }
-    bool IsBrowserElement() { return mIsBrowserElement; }
+
+    /**
+     * Return the TabParent that has decided it wants to capture an
+     * event series for fast-path dispatch to its subprocess, if one
+     * has.
+     *
+     * DOM event dispatch and widget are free to ignore capture
+     * requests from TabParents; the end result wrt remote content is
+     * (must be) always the same, albeit usually slower without
+     * subprocess capturing.  This allows frontends/widget backends to
+     * "opt in" to faster cross-process dispatch.
+     */
+    static TabParent* GetEventCapturer();
+    /**
+     * If this is the current event capturer, give this a chance to
+     * capture the event.  If it was captured, return true, false
+     * otherwise.  Un-captured events should follow normal DOM
+     * dispatch; captured events should result in no further
+     * processing from the caller of TryCapture().
+     *
+     * It's an error to call TryCapture() if this isn't the event
+     * capturer.
+     */
+    bool TryCapture(const nsGUIEvent& aEvent);
 
     void Destroy();
 
     virtual bool RecvMoveFocus(const bool& aForward);
     virtual bool RecvEvent(const RemoteDOMEvent& aEvent);
+    virtual bool RecvPRenderFrameConstructor(PRenderFrameParent* actor,
+                                             ScrollingBehavior* scrolling,
+                                             LayersBackend* backend,
+                                             int32_t* maxTextureSize,
+                                             uint64_t* layersId);
     virtual bool RecvBrowserFrameOpenWindow(PBrowserParent* aOpener,
                                             const nsString& aURL,
                                             const nsString& aName,
@@ -107,6 +136,9 @@ public:
     virtual bool RecvGetDPI(float* aValue);
     virtual bool RecvGetWidgetNativeData(WindowsHandle* aValue);
     virtual bool RecvZoomToRect(const gfxRect& aRect);
+    virtual bool RecvUpdateZoomConstraints(const bool& aAllowZoom,
+                                           const float& aMinZoom,
+                                           const float& aMaxZoom);
     virtual bool RecvContentReceivedTouch(const bool& aPreventDefault);
     virtual PContentDialogParent* AllocPContentDialog(const uint32_t& aType,
                                                       const nsCString& aName,
@@ -128,14 +160,10 @@ public:
     void UpdateDimensions(const nsRect& rect, const nsIntSize& size);
     void UpdateFrame(const layers::FrameMetrics& aFrameMetrics);
     void HandleDoubleTap(const nsIntPoint& aPoint);
+    void HandleSingleTap(const nsIntPoint& aPoint);
+    void HandleLongTap(const nsIntPoint& aPoint);
     void Activate();
     void Deactivate();
-
-    /**
-     * Is this object active?  That is, was Activate() called more recently than
-     * Deactivate()?
-     */
-    bool Active();
 
     void SendMouseEvent(const nsAString& aType, float aX, float aY,
                         int32_t aButton, int32_t aClickCount,
@@ -156,13 +184,14 @@ public:
     virtual bool DeallocPDocumentRenderer(PDocumentRendererParent* actor);
 
     virtual PContentPermissionRequestParent*
-    AllocPContentPermissionRequest(const nsCString& aType, const IPC::Principal& aPrincipal);
+    AllocPContentPermissionRequest(const nsCString& aType, const nsCString& aAccess, const IPC::Principal& aPrincipal);
     virtual bool DeallocPContentPermissionRequest(PContentPermissionRequestParent* actor);
 
     virtual POfflineCacheUpdateParent* AllocPOfflineCacheUpdate(
             const URIParams& aManifestURI,
             const URIParams& aDocumentURI,
-            const nsCString& aClientID,
+            const bool& isInBrowserElement,
+            const uint32_t& appId,
             const bool& stickDocument);
     virtual bool DeallocPOfflineCacheUpdate(POfflineCacheUpdateParent* actor);
 
@@ -232,7 +261,6 @@ protected:
                                                   uint64_t* aLayersId) MOZ_OVERRIDE;
     virtual bool DeallocPRenderFrame(PRenderFrameParent* aFrame) MOZ_OVERRIDE;
 
-    nsCOMPtr<mozIApplication> mApp;
     // IME
     static TabParent *mIMETabParent;
     nsString mIMECacheText;
@@ -246,9 +274,11 @@ protected:
     uint32_t mIMECompositionStart;
     uint32_t mIMESeqno;
 
+    // The number of event series we're currently capturing.
+    int32_t mEventCaptureDepth;
+
+    nsIntSize mDimensions;
     float mDPI;
-    bool mActive;
-    bool mIsBrowserElement;
     bool mShown;
 
 private:
@@ -256,9 +286,7 @@ private:
     already_AddRefed<nsIWidget> GetWidget() const;
     layout::RenderFrameParent* GetRenderFrame();
     void TryCacheDPI();
-    // Return true iff this TabParent was created for a mozbrowser
-    // frame.
-    bool IsForMozBrowser();
+
     // When true, we create a pan/zoom controller for our frame and
     // notify it of input events targeting us.
     bool UseAsyncPanZoom();
@@ -268,6 +296,9 @@ private:
     // dispatch to content.
     void MaybeForwardEventToRenderFrame(const nsInputEvent& aEvent,
                                         nsInputEvent* aOutEvent);
+    // When true, the TabParent is invalid and we should not send IPC messages
+    // anymore.
+    bool mIsDestroyed;
 };
 
 } // namespace dom

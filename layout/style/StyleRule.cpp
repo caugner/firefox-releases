@@ -309,7 +309,7 @@ nsCSSSelector::nsCSSSelector(void)
     mPseudoType(nsCSSPseudoElements::ePseudo_NotPseudoElement)
 {
   MOZ_COUNT_CTOR(nsCSSSelector);
-  MOZ_STATIC_ASSERT(nsCSSPseudoElements::ePseudo_MAX < PR_INT16_MAX,
+  MOZ_STATIC_ASSERT(nsCSSPseudoElements::ePseudo_MAX < INT16_MAX,
                     "nsCSSPseudoElements::Type values overflow mPseudoType");
 }
 
@@ -1394,7 +1394,7 @@ StyleRule::Clone() const
 /* virtual */ nsIDOMCSSRule*
 StyleRule::GetDOMRule()
 {
-  if (!mSheet) {
+  if (!GetStyleSheet()) {
     // inline style rules aren't supposed to have a DOM rule object, only
     // a declaration.
     return nullptr;
@@ -1424,14 +1424,15 @@ StyleRule::DeclarationChanged(Declaration* aDecl,
   NS_ADDREF(clone); // for return
 
   if (aHandleContainer) {
+    nsCSSStyleSheet* sheet = GetStyleSheet();
     if (mParentRule) {
-      if (mSheet) {
-        mSheet->ReplaceRuleInGroup(mParentRule, this, clone);
+      if (sheet) {
+        sheet->ReplaceRuleInGroup(mParentRule, this, clone);
       } else {
         mParentRule->ReplaceStyleRule(this, clone);
       }
-    } else if (mSheet) {
-      mSheet->ReplaceStyleRule(this, clone);
+    } else if (sheet) {
+      sheet->ReplaceStyleRule(this, clone);
     }
   }
 
@@ -1455,7 +1456,7 @@ StyleRule::List(FILE* out, int32_t aIndent) const
 
   nsAutoString buffer;
   if (mSelector)
-    mSelector->ToString(buffer, mSheet);
+    mSelector->ToString(buffer, GetStyleSheet());
 
   buffer.AppendLiteral(" ");
   fputs(NS_LossyConvertUTF16toASCII(buffer).get(), out);
@@ -1473,7 +1474,7 @@ void
 StyleRule::GetCssText(nsAString& aCssText)
 {
   if (mSelector) {
-    mSelector->ToString(aCssText, mSheet);
+    mSelector->ToString(aCssText, GetStyleSheet());
     aCssText.Append(PRUnichar(' '));
   }
   aCssText.Append(PRUnichar('{'));
@@ -1498,7 +1499,7 @@ void
 StyleRule::GetSelectorText(nsAString& aSelectorText)
 {
   if (mSelector)
-    mSelector->ToString(aSelectorText, mSheet);
+    mSelector->ToString(aSelectorText, GetStyleSheet());
   else
     aSelectorText.Truncate();
 }

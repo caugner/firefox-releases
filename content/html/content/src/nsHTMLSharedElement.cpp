@@ -12,6 +12,7 @@
 #include "nsIDOMHTMLHeadElement.h"
 #include "nsIDOMHTMLHtmlElement.h"
 #include "nsGenericHTMLElement.h"
+#include "nsAttrValueInlines.h"
 
 #include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
@@ -216,7 +217,7 @@ nsHTMLSharedElement::GetHref(nsAString& aValue)
     return NS_OK;
   }
   
-  nsCAutoString spec;
+  nsAutoCString spec;
   uri->GetSpec(spec);
   CopyUTF8toUTF16(spec, aValue);
 

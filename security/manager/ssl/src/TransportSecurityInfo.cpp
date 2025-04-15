@@ -875,20 +875,19 @@ AppendErrorTextMismatch(const nsString &host,
     }
   }
   else if (nameCount == 1) {
-    nsString formattedString;
+    const PRUnichar *params[1];
+    params[0] = allNames.get();
     
-    if (wantsHtml) {
-      const PRUnichar *params[1];
-      params[0] = allNames.get();
-      rv = component->PIPBundleFormatStringFromName("certErrorMismatchSingle2",
-                                                    params, 1, 
-                                                    formattedString);
-    }
-    else {
-      formattedString.Append(NS_LITERAL_STRING("The certificate is only valid for "));
-      formattedString.Append(allNames.get());
-    }
-        
+    const char *stringID;
+    if (wantsHtml)
+      stringID = "certErrorMismatchSingle2";
+    else
+      stringID = "certErrorMismatchSinglePlain";
+
+    nsString formattedString;
+    rv = component->PIPBundleFormatStringFromName(stringID, 
+                                                  params, 1, 
+                                                  formattedString);
     if (NS_SUCCEEDED(rv)) {
       returnedMessage.Append(formattedString);
       returnedMessage.Append(NS_LITERAL_STRING("\n"));
@@ -931,7 +930,7 @@ GetDateBoundary(nsIX509Cert* ix509,
     return;
 
   PRTime now = PR_Now();
-  if (LL_CMP(now, >, notAfter)) {
+  if (now > notAfter) {
     timeToUse = notAfter;
   } else {
     timeToUse = notBefore;
@@ -1099,7 +1098,7 @@ RememberCertErrorsTable::RememberCertErrorsTable()
 }
 
 static nsresult
-GetHostPortKey(TransportSecurityInfo* infoObject, nsCAutoString &result)
+GetHostPortKey(TransportSecurityInfo* infoObject, nsAutoCString &result)
 {
   nsresult rv;
 
@@ -1127,7 +1126,7 @@ RememberCertErrorsTable::RememberCertHasError(TransportSecurityInfo* infoObject,
 {
   nsresult rv;
 
-  nsCAutoString hostPortKey;
+  nsAutoCString hostPortKey;
   rv = GetHostPortKey(infoObject, hostPortKey);
   if (NS_FAILED(rv))
     return;
@@ -1165,7 +1164,7 @@ RememberCertErrorsTable::LookupCertErrorBits(TransportSecurityInfo* infoObject,
 
   nsresult rv;
 
-  nsCAutoString hostPortKey;
+  nsAutoCString hostPortKey;
   rv = GetHostPortKey(infoObject, hostPortKey);
   if (NS_FAILED(rv))
     return;

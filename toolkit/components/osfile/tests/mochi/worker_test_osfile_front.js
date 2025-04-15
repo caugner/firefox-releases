@@ -9,6 +9,15 @@ function send(message) {
   self.postMessage(message);
 }
 
+function should_throw(f) {
+  try {
+    f();
+  } catch (x) {
+    return x;
+  }
+  return null;
+}
+
 self.onmessage = function onmessage_start(msg) {
   self.onmessage = function onmessage_ignored(msg) {
     log("ignored message " + JSON.stringify(msg.data));
@@ -19,8 +28,8 @@ self.onmessage = function onmessage_start(msg) {
     test_offsetby();
     test_open_existing_file();
     test_open_non_existing_file();
+    test_flush_open_file();
     test_copy_existing_file();
-    test_read_write_file();
     test_readall_writeall_file();
     test_position();
     test_move_file();
@@ -53,7 +62,7 @@ function isnot(a, b, description) {
 
 function test_init() {
   ok(true, "Starting test_init");
-  importScripts("resource:///modules/osfile.jsm");
+  importScripts("resource://gre/modules/osfile.jsm");
 }
 
 
@@ -161,6 +170,20 @@ function test_open_non_existing_file()
 }
 
 /**
+ * Test that to ensure that |foo.flush()| does not
+ * cause an error, where |foo| is an open file.
+ */
+function test_flush_open_file()
+{
+  ok(true, "Starting test_flush_open_file");
+  let tmp = "test_flush.tmp";
+  let file = OS.File.open(tmp, {create: true, write: true});
+  file.flush();
+  file.close();
+  OS.File.remove(tmp);
+}
+
+/**
  * Utility function for comparing two files (or a prefix of two files).
  *
  * This function returns nothing but fails of both files (or prefixes)
@@ -178,81 +201,27 @@ function compare_files(test, sourcePath, destPath, prefix)
   let source = OS.File.open(sourcePath);
   let dest = OS.File.open(destPath);
   ok(true, "Files are open");
-  let array1 = new (ctypes.ArrayType(ctypes.char, 4096))();
-  let array2 = new (ctypes.ArrayType(ctypes.char, 4096))();
-  ok(true, "Arrays are created");
-  let pos = 0;
-  while (true) {
-    ok(true, "Position: "+pos);
-    let chunkSize;
+  let sourceResult, destResult;
+  try {
     if (prefix != undefined) {
-      chunkSize = Math.min(4096, prefix - pos);
+      sourceResult = source.read(prefix);
+      destResult = dest.read(prefix);
     } else {
-      chunkSize = 4096;
+      sourceResult = source.read();
+      destResult = dest.read();
     }
-    let bytes_read1 = source.read(array1, chunkSize);
-    let bytes_read2 = dest.read(array2, chunkSize);
-    is (bytes_read1 > 0, bytes_read2 > 0,
-       test + ": Both files contain data or neither does " +
-        bytes_read1 + ", " + bytes_read2);
-    if ((bytes_read1 > 0) != (bytes_read2 > 0)) {
-      break;
-    }
-    if (bytes_read1 == 0) {
-      break;
-    }
-    let bytes;
-    if (bytes_read1 != bytes_read2) {
-      // This would be surprising, but theoretically possible with a
-      // remote file system, I believe.
-      bytes = Math.min(bytes_read1, bytes_read2);
-      pos += bytes;
-      source.setPosition(pos, OS.File.POS_START);
-      dest.setPosition(pos, OS.File.POS_START);
-    } else {
-      bytes = bytes_read1;
-      pos += bytes;
-    }
-    for (let i = 0; i < bytes; ++i) {
-      if (array1[i] != array2[i]) {
-        ok(false, test + ": Files do not match at position " + i
-           + " (" + array1[i] + "/ " + array2[i] + ")");
+    is(sourceResult.length, destResult.length, test + ": Both files have the same size");
+    for (let i = 0; i < sourceResult.length; ++i) {
+      if (sourceResult[i] != destResult[i]) {
+        is(sourceResult[i] != destResult[i], test + ": Comparing char " + i);
+        break;
       }
     }
+  } finally {
+    source.close();
+    dest.close();
   }
-  source.close();
-  dest.close();
   ok(true, test + ": Comparison complete");
-}
-
-/**
- * Test basic read/write through an ArrayBuffer
- */
-function test_read_write_file()
-{
-  let src_file_name = "chrome/toolkit/components/osfile/tests/mochi/worker_test_osfile_unix.js";
-  let tmp_file_name = "test_osfile_front.tmp";
-  ok(true, "Starting test_read_write_file");
-
-  let source = OS.File.open(src_file_name);
-  let dest = OS.File.open(tmp_file_name, {write: true, trunc:true});
-
-  let buf = new ArrayBuffer(4096);
-  for (let bytesAvailable = source.read(buf, 4096);
-         bytesAvailable != 0;
-         bytesAvailable = source.read(buf, 4096)) {
-    let bytesWritten = dest.write(buf, bytesAvailable);
-    if (bytesWritten != bytesAvailable) {
-      is(bytesWritten, bytesAvailable, "test_read_write_file: writing all bytes");
-    }
-  }
-
-  ok(true, "test_read_write_file: copy complete");
-  source.close();
-  dest.close();
-
-  compare_files("test_read_write_file", src_file_name, tmp_file_name);
-  OS.File.remove(tmp_file_name);
 }
 
 function test_readall_writeall_file()
@@ -261,17 +230,17 @@ function test_readall_writeall_file()
   let tmp_file_name = "test_osfile_front.tmp";
   ok(true, "Starting test_readall_writeall_file");
 
-  // readTo, ArrayBuffer
+  // read, ArrayBuffer
 
   let source = OS.File.open(src_file_name);
   let dest = OS.File.open(tmp_file_name, {write: true, trunc:true});
   let size = source.stat().size;
 
-  let buf = new ArrayBuffer(size);
-  let readResult = source.readTo(buf, size);
+  let buf = new Uint8Array(size);
+  let readResult = source.readTo(buf);
   is(readResult, size, "test_readall_writeall_file: read the right number of bytes");
 
-  dest.writeFrom(buf, size);
+  dest.write(buf);
 
   ok(true, "test_readall_writeall_file: copy complete (manual allocation)");
   source.close();
@@ -280,16 +249,16 @@ function test_readall_writeall_file()
   compare_files("test_readall_writeall_file (manual allocation)", src_file_name, tmp_file_name);
   OS.File.remove(tmp_file_name);
 
-  // readTo, C buffer
+  // read, C buffer
 
   source = OS.File.open(src_file_name);
   dest = OS.File.open(tmp_file_name, {write: true, trunc:true});
   buf = new ArrayBuffer(size);
   let ptr = OS.Shared.Type.voidptr_t.implementation(buf);
-  readResult = source.readTo(ptr, size);
+  readResult = source.readTo(ptr, {bytes: size});
   is(readResult, size, "test_readall_writeall_file: read the right number of bytes (C buffer)");
 
-  dest.writeFrom(ptr, readResult, {bytes: size});
+  dest.write(ptr, {bytes: size});
 
   ok(true, "test_readall_writeall_file: copy complete (C buffer)");
   source.close();
@@ -298,17 +267,29 @@ function test_readall_writeall_file()
   compare_files("test_readall_writeall_file (C buffer)", src_file_name, tmp_file_name);
   OS.File.remove(tmp_file_name);
 
+  // read/write, C buffer, missing |bytes| option
+  source = OS.File.open(src_file_name);
+  dest = OS.File.open(tmp_file_name, {write: true, trunc:true});
+  let exn = should_throw(function() { source.readTo(ptr); });
+  ok(exn != null && exn instanceof TypeError, "test_readall_writeall_file: read with C pointer and without bytes fails with the correct error");
+  exn = should_throw(function() { dest.write(ptr); });
+  ok(exn != null && exn instanceof TypeError, "test_readall_writeall_file: write with C pointer and without bytes fails with the correct error");
+
+  source.close();
+  dest.close();
+
   // readTo, ArrayBuffer + offset
   let OFFSET = 12;
   let LEFT = size - OFFSET;
   buf = new ArrayBuffer(size);
+  let offset_view = new Uint8Array(buf, OFFSET);
   source = OS.File.open(src_file_name);
   dest = OS.File.open(tmp_file_name, {write: true, trunc:true});
 
-  readResult = source.readTo(buf, LEFT, {offset: OFFSET});
+  readResult = source.readTo(offset_view);
   is(readResult, LEFT, "test_readall_writeall_file: read the right number of bytes (with offset)");
 
-  dest.writeFrom(buf, LEFT, {offset: OFFSET});
+  dest.write(offset_view);
   is(dest.stat().size, LEFT, "test_readall_writeall_file: wrote the right number of bytes (with offset)");
 
   ok(true, "test_readall_writeall_file: copy complete (with offset)");
@@ -318,35 +299,15 @@ function test_readall_writeall_file()
   compare_files("test_readall_writeall_file (with offset)", src_file_name, tmp_file_name, LEFT);
   OS.File.remove(tmp_file_name);
 
-  // readTo, C buffer + offset
-  buf = new ArrayBuffer(size);
-  ptr = OS.Shared.Type.voidptr_t.implementation(buf);
-
+  // read
+  buf = new Uint8Array(size);
   source = OS.File.open(src_file_name);
   dest = OS.File.open(tmp_file_name, {write: true, trunc:true});
 
-  readResult = source.readTo(ptr, LEFT, {offset: OFFSET});
-  is(readResult, LEFT, "test_readall_writeall_file: read the right number of bytes (with offset)");
+  readResult = source.read();
+  is(readResult.length, size, "test_readall_writeall_file: read the right number of bytes (auto allocation)");
 
-  dest.writeFrom(ptr, LEFT, {offset: OFFSET});
-  is(dest.stat().size, LEFT, "test_readall_writeall_file: wrote the right number of bytes (with offset)");
-
-  ok(true, "test_readall_writeall_file: copy complete (with offset)");
-  source.close();
-  dest.close();
-
-  compare_files("test_readall_writeall_file (with offset)", src_file_name, tmp_file_name, LEFT);
-  OS.File.remove(tmp_file_name);
-
-  // readAll
-  buf = new ArrayBuffer(size);
-  source = OS.File.open(src_file_name);
-  dest = OS.File.open(tmp_file_name, {write: true, trunc:true});
-
-  readResult = source.readAll();
-  is(readResult.bytes, size, "test_readall_writeall_file: read the right number of bytes (auto allocation)");
-
-  dest.write(readResult.buffer, readResult.bytes);
+  dest.write(readResult);
 
   ok(true, "test_readall_writeall_file: copy complete (auto allocation)");
   source.close();
@@ -355,7 +316,56 @@ function test_readall_writeall_file()
   compare_files("test_readall_writeall_file (auto allocation)", src_file_name, tmp_file_name);
   OS.File.remove(tmp_file_name);
 
+  // File.readAll
+  readResult = OS.File.read(src_file_name);
+  is(readResult.length, size, "test_readall_writeall_file: read the right number of bytes (OS.File.readAll)");
+ 
+  // File.writeAtomic on top of nothing
+  OS.File.writeAtomic(tmp_file_name, readResult,
+    {tmpPath: tmp_file_name + ".tmp"});
+  try {
+    let stat = OS.File.stat(tmp_file_name);
+    ok(true, "readAll + writeAtomic created a file");
+    is(stat.size, size, "readAll + writeAtomic created a file of the right size");
+  } catch (x) {
+    ok(false, "readAll + writeAtomic somehow failed");
+    if(x.becauseNoSuchFile) {
+      ok(false, "readAll + writeAtomic did not create file");
+    }
+  }
+  compare_files("test_readall_writeall_file (OS.File.readAll + writeAtomic)",
+                src_file_name, tmp_file_name);
+  exn = null;
+  try {
+    let stat = OS.File.stat(tmp_file_name + ".tmp");
+  } catch (x) {
+    exn = x;
+  }
+  ok(!!exn, "readAll + writeAtomic cleaned up after itself");
 
+
+  // File.writeAtomic on top of existing file
+  // Remove content and set arbitrary size, to avoid potential false negatives
+  dest = OS.File.open(tmp_file_name, {write: true, trunc:true});
+  dest.setPosition(1234);
+  dest.close();
+
+  OS.File.writeAtomic(tmp_file_name, readResult,
+    {tmpPath: tmp_file_name + ".tmp"});
+  compare_files("test_readall_writeall_file (OS.File.readAll + writeAtomic 2)",
+                src_file_name, tmp_file_name);
+
+  // Ensure that File.writeAtomic fails if no temporary file name is provided
+  // (FIXME: Remove this test as part of bug 793660)
+
+  exn = null;
+  try {
+    OS.File.writeAtomic(tmp_file_name, readResult.buffer,
+      {bytes: readResult.length});
+  } catch (x) {
+    exn = x;
+  }
+  ok(!!exn && exn instanceof TypeError, "wrietAtomic fails if tmpPath is not provided");
 }
 
 /**
@@ -370,6 +380,27 @@ function test_copy_existing_file()
 
   ok(true, "test_copy_existing: Copy complete");
   compare_files("test_copy_existing", src_file_name, tmp_file_name);
+
+  // Create a bogus file with arbitrary content, then attempt to overwrite
+  // it with |copy|.
+  let dest = OS.File.open(tmp_file_name, {trunc: true});
+  let buf = new Uint8Array(50);
+  dest.write(buf);
+  dest.close();
+
+  OS.File.copy(src_file_name, tmp_file_name);
+
+  compare_files("test_copy_existing 2", src_file_name, tmp_file_name);
+
+  // Attempt to overwrite with noOverwrite
+  let exn;
+  try {
+    OS.File.copy(src_file_name, tmp_file_name, {noOverwrite: true});
+  } catch(x) {
+    exn = x;
+  }
+  ok(!!exn, "test_copy_existing: noOverwrite prevents overwriting existing files");
+
 
   ok(true, "test_copy_existing: Cleaning up");
   OS.File.remove(tmp_file_name);
@@ -469,6 +500,63 @@ function test_iter_dir()
 
   ok(true, "test_iter_dir: Cleaning up");
   iterator.close();
+
+  // Testing nextBatch()
+  iterator = new OS.File.DirectoryIterator(parent);
+  let allentries = [x for(x in iterator)];
+  iterator.close();
+
+  ok(allentries.length >= 14, "test_iter_dir: Meta-check: the test directory should contain at least 14 items");
+
+  iterator = new OS.File.DirectoryIterator(parent);
+  let firstten = iterator.nextBatch(10);
+  is(firstten.length, 10, "test_iter_dir: nextBatch(10) returns 10 items");
+  for (let i = 0; i < firstten.length; ++i) {
+    is(allentries[i].path, firstten[i].path, "test_iter_dir: Checking that batch returns the correct entries");
+  }
+  let nextthree = iterator.nextBatch(3);
+  is(nextthree.length, 3, "test_iter_dir: nextBatch(3) returns 3 items");
+  for (let i = 0; i < nextthree.length; ++i) {
+    is(allentries[i + firstten.length].path, nextthree[i].path, "test_iter_dir: Checking that batch 2 returns the correct entries");
+  }
+  let everythingelse = iterator.nextBatch();
+  ok(everythingelse.length >= 1, "test_iter_dir: nextBatch() returns at least one item");
+  for (let i = 0; i < everythingelse.length; ++i) {
+    is(allentries[i + firstten.length + nextthree.length].path, everythingelse[i].path, "test_iter_dir: Checking that batch 3 returns the correct entries");
+  }
+  is(iterator.nextBatch().length, 0, "test_iter_dir: Once there is nothing left, nextBatch returns an empty array");
+  iterator.close();
+
+  iterator = new OS.File.DirectoryIterator(parent);
+  iterator.close();
+  is(iterator.nextBatch().length, 0, "test_iter_dir: nextBatch on closed iterator returns an empty array");
+
+  iterator = new OS.File.DirectoryIterator(parent);
+  let allentries2 = iterator.nextBatch();
+  is(allentries.length, allentries2.length, "test_iter_dir: Checking that getBatch(null) returns the right number of entries");
+  for (let i = 0; i < allentries.length; ++i) {
+    is(allentries[i].path, allentries2[i].path, "test_iter_dir: Checking that getBatch(null) returns everything in the right order");
+  }
+  iterator.close();
+
+  // Test forEach
+  iterator = new OS.File.DirectoryIterator(parent);
+  let index = 0;
+  iterator.forEach(
+    function cb(entry, aIndex, aIterator) {
+      is(index, aIndex, "test_iter_dir: Checking that forEach index is correct");
+      ok(iterator == aIterator, "test_iter_dir: Checking that right iterator is passed");
+      if (index < 10) {
+        is(allentries[index].path, entry.path, "test_iter_dir: Checking that forEach entry is correct");
+      } else if (index == 10) {
+        iterator.close();
+      } else {
+        ok(false, "test_iter_dir: Checking that forEach can be stopped early");
+      }
+      ++index;
+  });
+  iterator.close();
+
   ok(true, "test_iter_dir: Complete");
 }
 
@@ -490,6 +578,12 @@ function test_position() {
 
   file.setPosition(ARBITRARY_POSITION, OS.File.POS_START);
   is(file.getPosition(), ARBITRARY_POSITION, "test_position: Setting position from start");
+
+  file.setPosition(0, OS.File.POS_START);
+  is(file.getPosition(), 0, "test_position: Setting position from start back to 0");
+
+  file.setPosition(ARBITRARY_POSITION);
+  is(file.getPosition(), ARBITRARY_POSITION, "test_position: Setting position without argument");
 
   file.setPosition(-ARBITRARY_POSITION, OS.File.POS_END);
   is(file.getPosition(), size - ARBITRARY_POSITION, "test_position: Setting position from end");
@@ -521,7 +615,7 @@ function test_info() {
 
   let file = OS.File.open(filename, {trunc: true});
   let buf = new ArrayBuffer(size);
-  file.write(buf, size);
+  file._write(buf, size);
   file.close();
 
   // Test OS.File.stat on new file

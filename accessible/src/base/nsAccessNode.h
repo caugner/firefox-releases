@@ -21,7 +21,6 @@ class nsIContent;
 
 namespace mozilla {
 namespace a11y {
-class ApplicationAccessible;
 class RootAccessible;
 }
 }
@@ -40,13 +39,6 @@ public:
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS(nsAccessNode)
-
-  static void ShutdownXPAccessibility();
-
-  /**
-   * Return an application accessible.
-   */
-  static mozilla::a11y::ApplicationAccessible* GetApplicationAccessible();
 
   /**
    * Return the document accessible for this access node.
@@ -97,15 +89,6 @@ public:
   void* UniqueID() { return static_cast<void*>(this); }
 
   /**
-   * Return true if the accessible is primary accessible for the given DOM node.
-   *
-   * Accessible hierarchy may be complex for single DOM node, in this case
-   * these accessibles share the same DOM node. The primary accessible "owns"
-   * that DOM node in terms it gets stored in the accessible to node map.
-   */
-  virtual bool IsPrimaryForNode() const;
-
-  /**
    * Interface methods on nsIAccessible shared with ISimpleDOM.
    */
   void Language(nsAString& aLocale);
@@ -120,8 +103,6 @@ private:
   nsAccessNode() MOZ_DELETE;
   nsAccessNode(const nsAccessNode&) MOZ_DELETE;
   nsAccessNode& operator =(const nsAccessNode&) MOZ_DELETE;
-  
-  static mozilla::a11y::ApplicationAccessible* gApplicationAccessible;
 };
 
 #endif

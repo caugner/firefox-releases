@@ -23,7 +23,6 @@ class nsHTMLVideoElement;
 class nsIImageLoadingContent;
 class nsHTMLImageElement;
 
-#include "prtypes.h"
 #include "nsChangeHint.h"
 #include "nsStyleContext.h"
 #include "nsAutoPtr.h"
@@ -295,8 +294,8 @@ public:
    * Just like IsProperAncestorFrameCrossDoc, except that it returns true when
    * aFrame == aAncestorFrame.
    */
-  static bool IsAncestorFrameCrossDoc(nsIFrame* aAncestorFrame, nsIFrame* aFrame,
-                                        nsIFrame* aCommonAncestor = nullptr);
+  static bool IsAncestorFrameCrossDoc(const nsIFrame* aAncestorFrame, const nsIFrame* aFrame,
+                                        const nsIFrame* aCommonAncestor = nullptr);
 
   /**
    * Finds the nearest ancestor frame that is the root of an "actively
@@ -306,7 +305,7 @@ public:
    * scrolled together, so we'll place them in the same ThebesLayer.
    */
   static nsIFrame* GetActiveScrolledRootFor(nsIFrame* aFrame,
-                                            nsIFrame* aStopAtAncestor);
+                                            const nsIFrame* aStopAtAncestor);
 
   static nsIFrame* GetActiveScrolledRootFor(nsDisplayItem* aItem,
                                             nsDisplayListBuilder* aBuilder,
@@ -317,13 +316,13 @@ public:
    * and its topmost content document ancestor has a root scroll frame with
    * a displayport set, and aActiveScrolledRoot is scrolled by that scrollframe.
    */
-  static bool IsScrolledByRootContentDocumentDisplayportScrolling(nsIFrame* aActiveScrolledRoot,
+  static bool IsScrolledByRootContentDocumentDisplayportScrolling(const nsIFrame* aActiveScrolledRoot,
                                                                   nsDisplayListBuilder* aBuilder);
 
   /**
     * GetScrollableFrameFor returns the scrollable frame for a scrolled frame
     */
-  static nsIScrollableFrame* GetScrollableFrameFor(nsIFrame *aScrolledFrame);
+  static nsIScrollableFrame* GetScrollableFrameFor(const nsIFrame *aScrolledFrame);
 
   /**
    * GetNearestScrollableFrameForDirection locates the first ancestor of
@@ -417,6 +416,20 @@ public:
                                                nsIFrame* aFrame);
 
   /**
+   * Get the coordinates of a given point relative to a widget and a
+   * given frame.
+   * @param aWidget the event src widget
+   * @param aPoint the point to get the coordinates relative to
+   * @param aFrame the frame to make coordinates relative to
+   * @return the point, or (NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE) if
+   * for some reason the coordinates for the mouse are not known (e.g.,
+   * the event is not a GUI event).
+   */
+  static nsPoint GetEventCoordinatesRelativeTo(nsIWidget* aWidget,
+                                               const nsIntPoint aPoint,
+                                               nsIFrame* aFrame);
+
+  /**
    * Get the popup frame of a given native mouse event.
    * @param aPresContext only check popups within aPresContext or a descendant
    * @param aEvent  the event.
@@ -505,7 +518,7 @@ public:
    */
   static nsRect TransformAncestorRectToFrame(nsIFrame* aFrame,
                                              const nsRect& aRect,
-                                             nsIFrame* aAncestor);
+                                             const nsIFrame* aAncestor);
 
   /**
    * Transform aRect relative to aFrame up to the coordinate system of
@@ -513,14 +526,23 @@ public:
    */
   static nsRect TransformFrameRectToAncestor(nsIFrame* aFrame,
                                              const nsRect& aRect,
-                                             nsIFrame* aAncestor);
+                                             const nsIFrame* aAncestor);
 
 
   /**
    * Gets the transform for aFrame relative to aAncestor. Pass null for aAncestor
    * to go up to the root frame.
    */
-  static gfx3DMatrix GetTransformToAncestor(nsIFrame *aFrame, nsIFrame *aAncestor);
+  static gfx3DMatrix GetTransformToAncestor(nsIFrame *aFrame, const nsIFrame *aAncestor);
+
+  /**
+   * Return true if a "layer transform" could be computed for aFrame,
+   * and optionally return the computed transform.  The returned
+   * transform is what would be set on the layer currently if a layers
+   * transaction were opened at the time this helper is called.
+   */
+  static bool GetLayerTransformForFrame(nsIFrame* aFrame,
+                                        gfx3DMatrix* aTransform);
 
   /**
    * Given a point in the global coordinate space, returns that point expressed
@@ -1480,7 +1502,7 @@ public:
   /**
    * Adds all font faces used within the specified range of text in aFrame,
    * and optionally its continuations, to the list in aFontFaceList.
-   * Pass 0 and PR_INT32_MAX for aStartOffset and aEndOffset to specify the
+   * Pass 0 and INT32_MAX for aStartOffset and aEndOffset to specify the
    * entire text is to be considered.
    */
   static nsresult GetFontFacesForText(nsIFrame* aFrame,
@@ -1613,6 +1635,14 @@ public:
     return sFontSizeInflationLineThreshold;
   }
 
+  static bool FontSizeInflationForceEnabled() {
+    return sFontSizeInflationForceEnabled;
+  }
+
+  static bool FontSizeInflationDisabledInMasterProcess() {
+    return sFontSizeInflationDisabledInMasterProcess;
+  }
+
   /**
    * See comment above "font.size.inflation.mappingIntercept" in
    * modules/libpref/src/init/all.js .
@@ -1730,6 +1760,8 @@ private:
   static uint32_t sFontSizeInflationMinTwips;
   static uint32_t sFontSizeInflationLineThreshold;
   static int32_t sFontSizeInflationMappingIntercept;
+  static bool sFontSizeInflationForceEnabled;
+  static bool sFontSizeInflationDisabledInMasterProcess;
 };
 
 template<typename PointType, typename RectType, typename CoordType>

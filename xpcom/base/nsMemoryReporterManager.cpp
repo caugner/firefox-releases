@@ -6,12 +6,27 @@
 #include "nsAtomTable.h"
 #include "nsAutoPtr.h"
 #include "nsCOMPtr.h"
+#include "nsDirectoryServiceUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsMemoryReporterManager.h"
 #include "nsArrayEnumerator.h"
 #include "nsISimpleEnumerator.h"
+#include "nsIFile.h"
+#include "nsIFileStreams.h"
+#include "nsPrintfCString.h"
+#include "nsThreadUtils.h"
+#include "nsIObserverService.h"
+#include "nsThread.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Services.h"
+#include "mozilla/StaticPtr.h"
+#include "mozilla/ClearOnShutdown.h"
+#include "mozilla/MemoryInfoDumper.h"
+
+#ifndef XP_WIN
+#include <unistd.h>
+#endif
 
 using namespace mozilla;
 
@@ -20,7 +35,7 @@ using namespace mozilla;
 #  include "jemalloc.h"
 #endif  // MOZ_MEMORY
 
-#if defined(XP_LINUX) || defined(XP_MACOSX) || defined(SOLARIS)
+#ifdef XP_UNIX
 
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -81,6 +96,81 @@ static nsresult GetVsize(int64_t *n)
 static nsresult GetResident(int64_t *n)
 {
     return GetProcSelfStatmField(1, n);
+}
+
+#elif defined(__DragonFly__) || defined(__FreeBSD__) \
+    || defined(__NetBSD__) || defined(__OpenBSD__)
+
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#if defined(__DragonFly__) || defined(__FreeBSD__)
+#include <sys/user.h>
+#endif
+
+#include <unistd.h>
+
+#if defined(__NetBSD__)
+#undef KERN_PROC
+#define KERN_PROC KERN_PROC2
+#define KINFO_PROC struct kinfo_proc2
+#else
+#define KINFO_PROC struct kinfo_proc
+#endif
+
+#if defined(__DragonFly__)
+#define KP_SIZE(kp) (kp.kp_vm_map_size)
+#define KP_RSS(kp) (kp.kp_vm_rssize * getpagesize())
+#elif defined(__FreeBSD__)
+#define KP_SIZE(kp) (kp.ki_size)
+#define KP_RSS(kp) (kp.ki_rssize * getpagesize())
+#elif defined(__NetBSD__)
+#define KP_SIZE(kp) (kp.p_vm_msize * getpagesize())
+#define KP_RSS(kp) (kp.p_vm_rssize * getpagesize())
+#elif defined(__OpenBSD__)
+#define KP_SIZE(kp) ((kp.p_vm_dsize + kp.p_vm_ssize                     \
+                      + kp.p_vm_tsize) * getpagesize())
+#define KP_RSS(kp) (kp.p_vm_rssize * getpagesize())
+#endif
+
+static nsresult GetKinfoProcSelf(KINFO_PROC *proc)
+{
+    int mib[] = {
+        CTL_KERN,
+        KERN_PROC,
+        KERN_PROC_PID,
+        getpid(),
+#if defined(__NetBSD__) || defined(__OpenBSD__)
+        sizeof(KINFO_PROC),
+        1,
+#endif
+    };
+    u_int miblen = sizeof(mib) / sizeof(mib[0]);
+    size_t size = sizeof(KINFO_PROC);
+    if (sysctl(mib, miblen, proc, &size, NULL, 0))
+        return NS_ERROR_FAILURE;
+
+    return NS_OK;
+}
+
+#define HAVE_VSIZE_AND_RESIDENT_REPORTERS 1
+static nsresult GetVsize(int64_t *n)
+{
+    KINFO_PROC proc;
+    nsresult rv = GetKinfoProcSelf(&proc);
+    if (NS_SUCCEEDED(rv))
+        *n = KP_SIZE(proc);
+
+    return rv;
+}
+
+static nsresult GetResident(int64_t *n)
+{
+    KINFO_PROC proc;
+    nsresult rv = GetKinfoProcSelf(&proc);
+    if (NS_SUCCEEDED(rv))
+        *n = KP_RSS(proc);
+
+    return rv;
 }
 
 #elif defined(SOLARIS)
@@ -296,7 +386,7 @@ NS_FALLIBLE_MEMORY_REPORTER_IMPLEMENT(PageFaultsSoft,
     KIND_OTHER,
     UNITS_COUNT_CUMULATIVE,
     GetSoftPageFaults,
-    "The number of soft page faults (also known as \"minor page faults\") that "
+    "The number of soft page faults (also known as 'minor page faults') that "
     "have occurred since the process started.  A soft page fault occurs when the "
     "process tries to access a page which is present in physical memory but is "
     "not mapped into the process's address space.  For instance, a process might "
@@ -311,7 +401,7 @@ NS_FALLIBLE_MEMORY_REPORTER_IMPLEMENT(PageFaultsHard,
     KIND_OTHER,
     UNITS_COUNT_CUMULATIVE,
     GetHardPageFaults,
-    "The number of hard page faults (also known as \"major page faults\") that "
+    "The number of hard page faults (also known as 'major page faults') that "
     "have occurred since the process started.  A hard page fault occurs when a "
     "process tries to access a page which is not present in physical memory. "
     "The operating system must access the disk in order to fulfill a hard page "
@@ -583,6 +673,10 @@ nsMemoryReporterManager::Init()
 
     REGISTER(AtomTable);
 
+#if defined(XP_LINUX)
+    MemoryInfoDumper::Initialize();
+#endif
+
     return NS_OK;
 }
 
@@ -688,13 +782,13 @@ struct MemoryReport {
 #ifdef DEBUG
 // This is just a wrapper for int64_t that implements nsISupports, so it can be
 // passed to nsIMemoryMultiReporter::CollectReports.
-class PRInt64Wrapper MOZ_FINAL : public nsISupports {
+class Int64Wrapper MOZ_FINAL : public nsISupports {
 public:
     NS_DECL_ISUPPORTS
-    PRInt64Wrapper() : mValue(0) { }
+    Int64Wrapper() : mValue(0) { }
     int64_t mValue;
 };
-NS_IMPL_ISUPPORTS0(PRInt64Wrapper)
+NS_IMPL_ISUPPORTS0(Int64Wrapper)
 
 class ExplicitNonHeapCountingCallback MOZ_FINAL : public nsIMemoryMultiReporterCallback
 {
@@ -710,8 +804,8 @@ public:
             PromiseFlatCString(aPath).Find("explicit") == 0 &&
             aAmount != int64_t(-1))
         {
-            PRInt64Wrapper *wrappedPRInt64 =
-                static_cast<PRInt64Wrapper *>(aWrappedExplicitNonHeap);
+            Int64Wrapper *wrappedPRInt64 =
+                static_cast<Int64Wrapper *>(aWrappedExplicitNonHeap);
             wrappedPRInt64->mValue += aAmount;
         }
         return NS_OK;
@@ -797,8 +891,8 @@ nsMemoryReporterManager::GetExplicit(int64_t *aExplicit)
 #ifdef DEBUG
     nsRefPtr<ExplicitNonHeapCountingCallback> cb =
       new ExplicitNonHeapCountingCallback();
-    nsRefPtr<PRInt64Wrapper> wrappedExplicitNonHeapMultiSize2 =
-      new PRInt64Wrapper();
+    nsRefPtr<Int64Wrapper> wrappedExplicitNonHeapMultiSize2 =
+      new Int64Wrapper();
     nsCOMPtr<nsISimpleEnumerator> e3;
     EnumerateMultiReporters(getter_AddRefs(e3));
     while (NS_SUCCEEDED(e3->HasMoreElements(&more)) && more) {
@@ -812,12 +906,10 @@ nsMemoryReporterManager::GetExplicit(int64_t *aExplicit)
     // NS_ASSERTION but they occasionally don't match due to races (bug
     // 728990).
     if (explicitNonHeapMultiSize != explicitNonHeapMultiSize2) {
-        char *msg = PR_smprintf("The two measurements of 'explicit' memory "
-                                "usage don't match (%lld vs %lld)",
-                                explicitNonHeapMultiSize,
-                                explicitNonHeapMultiSize2);
-        NS_WARNING(msg);
-        PR_smprintf_free(msg);
+        NS_WARNING(nsPrintfCString("The two measurements of 'explicit' memory "
+                                   "usage don't match (%lld vs %lld)",
+                                   explicitNonHeapMultiSize,
+                                   explicitNonHeapMultiSize2).get());
     }
 #endif  // DEBUG
 
@@ -837,6 +929,68 @@ nsMemoryReporterManager::GetHasMozMallocUsableSize(bool *aHas)
     free(p);
     *aHas = !!(usable > 0);
     return NS_OK;
+}
+
+namespace {
+
+/**
+ * This runnable lets us implement nsIMemoryReporterManager::MinimizeMemoryUsage().
+ * We fire a heap-minimize notification, spin the event loop, and repeat this
+ * process a few times.
+ *
+ * When this sequence finishes, we invoke the callback function passed to the
+ * runnable's constructor.
+ */
+class MinimizeMemoryUsageRunnable : public nsRunnable
+{
+public:
+  MinimizeMemoryUsageRunnable(nsIRunnable* aCallback)
+    : mCallback(aCallback)
+    , mRemainingIters(sNumIters)
+  {}
+
+  NS_IMETHOD Run()
+  {
+    nsCOMPtr<nsIObserverService> os = services::GetObserverService();
+    if (!os) {
+      return NS_ERROR_FAILURE;
+    }
+
+    if (mRemainingIters == 0) {
+      os->NotifyObservers(nullptr, "after-minimize-memory-usage",
+                          NS_LITERAL_STRING("MinimizeMemoryUsageRunnable").get());
+      if (mCallback) {
+        mCallback->Run();
+      }
+      return NS_OK;
+    }
+
+    os->NotifyObservers(nullptr, "memory-pressure",
+                        NS_LITERAL_STRING("heap-minimize").get());
+    mRemainingIters--;
+    NS_DispatchToMainThread(this);
+
+    return NS_OK;
+  }
+
+private:
+  // Send sNumIters heap-minimize notifications, spinning the event
+  // loop after each notification (see bug 610166 comment 12 for an
+  // explanation), because one notification doesn't cut it.
+  static const uint32_t sNumIters = 3;
+
+  nsCOMPtr<nsIRunnable> mCallback;
+  uint32_t mRemainingIters;
+};
+
+} // anonymous namespace
+
+NS_IMETHODIMP
+nsMemoryReporterManager::MinimizeMemoryUsage(nsIRunnable* aCallback)
+{
+  nsRefPtr<MinimizeMemoryUsageRunnable> runnable =
+    new MinimizeMemoryUsageRunnable(aCallback);
+  return NS_DispatchToMainThread(runnable);
 }
 
 NS_IMPL_ISUPPORTS1(nsMemoryReporter, nsIMemoryReporter)

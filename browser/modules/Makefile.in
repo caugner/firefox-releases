@@ -14,6 +14,7 @@ include $(topsrcdir)/config/config.mk
 TEST_DIRS += test
 
 EXTRA_JS_MODULES = \
+	AboutHomeUtils.jsm \
 	BrowserNewTabPreloader.jsm \
 	openLocationLastURL.jsm \
 	NetworkPrioritizer.jsm \
@@ -23,6 +24,8 @@ EXTRA_JS_MODULES = \
 	TelemetryTimestamps.jsm \
 	Social.jsm \
 	webappsUI.jsm \
+	webrtcUI.jsm \
+	SharedFrame.jsm \
 	$(NULL)
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)

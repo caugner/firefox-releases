@@ -12,8 +12,6 @@ struct JSObject;
 struct JSContext;
 class XPCWrappedNativeScope;
 
-typedef PRUptrdiff PtrBits;
-
 namespace mozilla {
 namespace dom {
 namespace workers {
@@ -159,6 +157,12 @@ public:
    */
   bool IsBlack();
 
+  /**
+   * Returns true if the object has a black wrapper,
+   * and all the GC things it is keeping alive are black too.
+   */
+  bool IsBlackAndDoesNotNeedTracing(nsISupports* aThis);
+
   // Only meant to be called by code that preserves a wrapper.
   void SetPreservingWrapper(bool aPreserve)
   {
@@ -177,7 +181,7 @@ private:
   }
   void SetWrapperBits(void *aWrapper)
   {
-    mWrapperPtrBits = reinterpret_cast<PtrBits>(aWrapper) |
+    mWrapperPtrBits = reinterpret_cast<uintptr_t>(aWrapper) |
                       (mWrapperPtrBits & WRAPPER_IS_DOM_BINDING);
   }
 
@@ -202,7 +206,7 @@ private:
 
   enum { kWrapperBitMask = (WRAPPER_BIT_PRESERVED | WRAPPER_IS_DOM_BINDING) };
 
-  PtrBits mWrapperPtrBits;
+  uintptr_t mWrapperPtrBits;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsWrapperCache, NS_WRAPPERCACHE_IID)

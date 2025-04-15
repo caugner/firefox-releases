@@ -36,6 +36,7 @@ MOCHITEST_FILES = \
 		test_bug412567.html \
 		test_bug422132.html \
 		test_bug426082.html \
+		bug426082.html \
 		test_bug427537.html \
 		test_bug432698.html \
 		test_bug443985.html \
@@ -52,7 +53,6 @@ MOCHITEST_FILES = \
 		window_bug493251.html \
 		test_bug502818.html \
 		test_bug508479.html \
-		test_bug508906.html \
 		test_bug517851.html \
 		test_bug534833.html \
 		test_bug545268.html \
@@ -72,6 +72,7 @@ MOCHITEST_FILES = \
 		test_bug648573.html \
 		test_bug615597.html \
 		test_bug656379-1.html \
+		bug656379-1.html \
 		test_bug656379-2.html \
 		test_bug656954.html \
 		test_bug659071.html \
@@ -97,14 +98,8 @@ MOCHITEST_FILES = \
 		test_bug603008.html \
 		test_bug716822.html \
 		test_bug742376.html \
-		$(NULL)
-
-#bug 585630
-ifneq (mobile,$(MOZ_BUILD_APP))
-MOCHITEST_FILES += \
 		test_dragstart.html \
 		$(NULL)
-endif
 
 MOCHITEST_CHROME_FILES = \
 		test_bug336682_2.xul \

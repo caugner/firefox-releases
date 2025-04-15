@@ -6,6 +6,7 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.util.GeckoAsyncTask;
 
 import android.app.Activity;
@@ -416,28 +417,20 @@ public class AwesomeBar extends GeckoActivity {
              imm.showSoftInput(mText, InputMethodManager.SHOW_IMPLICIT);
              return true;
         } else {
-            int selStart = -1;
-            int selEnd = -1;
-            if (mText.hasSelection()) {
-                selStart = mText.getSelectionStart();
-                selEnd = mText.getSelectionEnd();
-            }
+            int prevSelStart = mText.getSelectionStart();
+            int prevSelEnd = mText.getSelectionEnd();
 
-            if (selStart >= 0) {
-                // Restore the selection, which gets lost due to the focus switch
-                mText.setSelection(selStart, selEnd);
-            }
-
-            // Manually dispatch the key event to the AwesomeBar before restoring (default) input
-            // focus. dispatchKeyEvent() will update AwesomeBar's cursor position.
+            // Manually dispatch the key event to the AwesomeBar. If selection changed as
+            // a result of the key event, then give focus back to mText
             mText.dispatchKeyEvent(event);
-            int newCursorPos = mText.getSelectionEnd();
 
-            // requestFocusFromTouch() will select all AwesomeBar text, so we must restore cursor
-            // position so subsequent typing does not overwrite all text.
-            mText.requestFocusFromTouch();
-            mText.setSelection(newCursorPos);
-
+            int curSelStart = mText.getSelectionStart();
+            int curSelEnd = mText.getSelectionEnd();
+            if (prevSelStart != curSelStart || prevSelEnd != curSelEnd) {
+                mText.requestFocusFromTouch();
+                // Restore the selection, which gets lost due to the focus switch
+                mText.setSelection(curSelStart, curSelEnd);
+            }
             return true;
         }
     }
@@ -476,13 +469,19 @@ public class AwesomeBar extends GeckoActivity {
         public byte[] favicon;
         public String title;
         public String keyword;
+        public int display;
 
         public ContextMenuSubject(int id, String url, byte[] favicon, String title, String keyword) {
+            this(id, url, favicon, title, keyword, Combined.DISPLAY_NORMAL);
+        }
+
+        public ContextMenuSubject(int id, String url, byte[] favicon, String title, String keyword, int display) {
             this.id = id;
             this.url = url;
             this.favicon = favicon;
             this.title = title;
             this.keyword = keyword;
+            this.display = display;
         }
     };
 
@@ -514,6 +513,15 @@ public class AwesomeBar extends GeckoActivity {
 
                 GeckoApp.mAppContext.loadUrl(url, AwesomeBar.Target.NEW_TAB);
                 Toast.makeText(this, R.string.new_tab_opened, Toast.LENGTH_SHORT).show();
+                break;
+            }
+            case R.id.open_in_reader: {
+                if (url == null) {
+                    Log.e(LOGTAG, "Can't open in reader mode because URL is null");
+                    break;
+                }
+
+                openUrlAndFinish(ReaderModeUtils.getAboutReaderForUrl(url, true));
                 break;
             }
             case R.id.edit_bookmark: {

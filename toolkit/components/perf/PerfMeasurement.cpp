@@ -7,6 +7,8 @@
 #include "jsperf.h"
 #include "mozilla/ModuleUtils.h"
 #include "nsMemory.h"
+#include "mozilla/Preferences.h"
+#include "mozJSComponentLoader.h"
 
 #define JSPERF_CONTRACTID \
   "@mozilla.org/jsperf;1"
@@ -42,6 +44,11 @@ SealObjectAndPrototype(JSContext* cx, JSObject* parent, const char* name)
   jsval prop;
   if (!JS_GetProperty(cx, parent, name, &prop))
     return false;
+
+  if (prop.isUndefined()) {
+    // Pretend we sealed the object.
+    return true;
+  }
 
   JSObject* obj = JSVAL_TO_OBJECT(prop);
   if (!JS_GetProperty(cx, obj, "prototype", &prop))
@@ -79,11 +86,14 @@ Module::Call(nsIXPConnectWrappedNative* wrapper,
              jsval* vp,
              bool* _retval)
 {
-  JSObject* global = JS_GetGlobalForScopeChain(cx);
-  if (!global)
-    return NS_ERROR_NOT_AVAILABLE;
+  bool reusingGlobal = Preferences::GetBool("jsloader.reuseGlobal");
+  JSObject* targetObj = nullptr;
 
-  *_retval = InitAndSealPerfMeasurementClass(cx, global);
+  mozJSComponentLoader* loader = mozJSComponentLoader::Get();
+  nsresult rv = loader->FindTargetObject(cx, &targetObj);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *_retval = InitAndSealPerfMeasurementClass(cx, targetObj);
   return NS_OK;
 }
 

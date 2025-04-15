@@ -7,9 +7,9 @@
 // Helper function to clear the image cache of content images
 function clearImageCache()
 {
-  netscape.security.PrivilegeManager.enablePrivilege("UniversalXPConnect");
-  var imageCache = Components.classes["@mozilla.org/image/cache;1"]
-                             .getService(Components.interfaces.imgICache);
+  var tools = SpecialPowers.Cc["@mozilla.org/image/tools;1"]
+                             .getService(SpecialPowers.Ci.imgITools);
+  var imageCache = tools.getImgCacheForDocument(window.document);
   imageCache.clearCache(false); // true=chrome, false=content
 }
 
@@ -17,7 +17,7 @@ function clearImageCache()
 function isFrameDecoded(id)
 {
   return (getImageStatus(id) &
-          Components.interfaces.imgIRequest.STATUS_FRAME_COMPLETE)
+          SpecialPowers.Ci.imgIRequest.STATUS_FRAME_COMPLETE)
          ? true : false;
 }
 
@@ -25,7 +25,7 @@ function isFrameDecoded(id)
 function isImageLoaded(id)
 {
   return (getImageStatus(id) &
-          Components.interfaces.imgIRequest.STATUS_LOAD_COMPLETE)
+          SpecialPowers.Ci.imgIRequest.STATUS_LOAD_COMPLETE)
          ? true : false;
 }
 
@@ -39,10 +39,10 @@ function getImageStatus(id)
   var img = document.getElementById(id);
 
   // QI the image to nsImageLoadingContent
-  img.QueryInterface(Components.interfaces.nsIImageLoadingContent);
+  img.QueryInterface(SpecialPowers.Ci.nsIImageLoadingContent);
 
   // Get the request
-  var request = img.getRequest(Components.interfaces
+  var request = img.getRequest(SpecialPowers.Ci
                                          .nsIImageLoadingContent
                                          .CURRENT_REQUEST);
 

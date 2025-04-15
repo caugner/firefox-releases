@@ -64,7 +64,7 @@ static void PrintReqURL(imgIRequest* req) {
     return;
   }
 
-  nsCAutoString spec;
+  nsAutoCString spec;
   uri->GetSpec(spec);
   printf("spec='%s'\n", spec.get());
 }
@@ -88,7 +88,7 @@ nsImageLoadingContent::nsImageLoadingContent()
     mCurrentRequestRegistered(false),
     mPendingRequestRegistered(false)
 {
-  if (!nsContentUtils::GetImgLoader()) {
+  if (!nsContentUtils::GetImgLoaderForChannel(nullptr)) {
     mLoadingEnabled = false;
   }
 }
@@ -256,7 +256,7 @@ nsImageLoadingContent::OnStopDecode(imgIRequest* aRequest,
   // decoding, so we can't wait for them to finish. See bug 512435.
   //
   // (*) IsPaintingSuppressed returns false if we haven't gotten the initial
-  // reflow yet, so we have to test !DidInitialReflow || IsPaintingSuppressed.
+  // reflow yet, so we have to test !DidInitialize || IsPaintingSuppressed.
   // It's possible for painting to be suppressed for reasons other than the
   // initial paint delay (for example, being in the bfcache), but we probably
   // aren't loading images in those situations.
@@ -266,7 +266,7 @@ nsImageLoadingContent::OnStopDecode(imgIRequest* aRequest,
   nsIDocument* doc = GetOurOwnerDoc();
   nsIPresShell* shell = doc ? doc->GetShell() : nullptr;
   if (shell && shell->IsVisible() &&
-      (!shell->DidInitialReflow() || shell->IsPaintingSuppressed())) {
+      (!shell->DidInitialize() || shell->IsPaintingSuppressed())) {
 
     mCurrentRequest->RequestDecode();
   }
@@ -334,7 +334,7 @@ nsImageLoadingContent::SetLoadingEnabled(bool aLoadingEnabled)
 {
   NS_ENSURE_TRUE(nsContentUtils::IsCallerChrome(), NS_ERROR_NOT_AVAILABLE);
 
-  if (nsContentUtils::GetImgLoader()) {
+  if (nsContentUtils::GetImgLoaderForChannel(nullptr)) {
     mLoadingEnabled = aLoadingEnabled;
   }
   return NS_OK;
@@ -518,7 +518,7 @@ nsImageLoadingContent::LoadImageWithChannel(nsIChannel* aChannel,
 {
   NS_ENSURE_TRUE(nsContentUtils::IsCallerChrome(), NS_ERROR_NOT_AVAILABLE);
 
-  if (!nsContentUtils::GetImgLoader()) {
+  if (!nsContentUtils::GetImgLoaderForChannel(aChannel)) {
     return NS_ERROR_NULL_POINTER;
   }
 
@@ -537,7 +537,7 @@ nsImageLoadingContent::LoadImageWithChannel(nsIChannel* aChannel,
 
   // Do the load.
   nsCOMPtr<imgIRequest>& req = PrepareNextRequest();
-  nsresult rv = nsContentUtils::GetImgLoader()->
+  nsresult rv = nsContentUtils::GetImgLoaderForChannel(aChannel)->
     LoadImageWithChannel(aChannel, this, doc, aListener,
                          getter_AddRefs(req));
   if (NS_SUCCEEDED(rv)) {

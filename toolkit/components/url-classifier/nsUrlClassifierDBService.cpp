@@ -70,7 +70,7 @@ PRLogModuleInfo *gUrlClassifierDbServiceLog = nullptr;
 
 #define GETHASH_TABLES_PREF     "urlclassifier.gethashtables"
 
-#define CONFIRM_AGE_PREF        "urlclassifier.confirm-age"
+#define CONFIRM_AGE_PREF        "urlclassifier.max-complete-age"
 #define CONFIRM_AGE_DEFAULT_SEC (45 * 60)
 
 class nsUrlClassifierDBServiceWorker;
@@ -405,7 +405,7 @@ nsUrlClassifierDBServiceWorker::GetTables(nsIUrlClassifierCallback* c)
 
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCAutoString response;
+  nsAutoCString response;
   mClassifier->TableRequest(response);
   c->HandleEvent(response);
 
@@ -864,7 +864,7 @@ nsUrlClassifierLookupCallback::LookupComplete(nsTArray<LookupResult>* results)
       nsCOMPtr<nsIUrlClassifierHashCompleter> completer;
       if (mDBService->GetCompleter(result.mTableName,
                                    getter_AddRefs(completer))) {
-        nsCAutoString partialHash;
+        nsAutoCString partialHash;
         partialHash.Assign(reinterpret_cast<char*>(&result.hash.prefix),
                            PREFIX_SIZE);
 
@@ -1000,7 +1000,7 @@ nsUrlClassifierLookupCallback::HandleResults()
     mDBService->CacheCompletions(mCacheResults.forget());
   }
 
-  nsCAutoString tableStr;
+  nsAutoCString tableStr;
   for (uint32_t i = 0; i < tables.Length(); i++) {
     if (i != 0)
       tableStr.Append(',');
@@ -1268,7 +1268,7 @@ nsUrlClassifierDBService::LookupURI(nsIPrincipal* aPrincipal,
   uri = NS_GetInnermostURI(uri);
   NS_ENSURE_TRUE(uri, NS_ERROR_FAILURE);
 
-  nsCAutoString key;
+  nsAutoCString key;
   // Canonicalize the url
   nsCOMPtr<nsIUrlClassifierUtils> utilsService =
     do_GetService(NS_URLCLASSIFIERUTILS_CONTRACTID);

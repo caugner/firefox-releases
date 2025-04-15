@@ -3,19 +3,25 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import datetime
+from errors import *
+from mozdevice import devicemanagerADB, DMError
 from mozprocess import ProcessHandlerMixin
-import multiprocessing
 import os
 import re
 import platform
 import shutil
 import socket
 import subprocess
+import sys
 from telnetlib import Telnet
 import tempfile
 import time
+import traceback
 
 from emulator_battery import EmulatorBattery
+from emulator_geo import EmulatorGeo
+from emulator_screen import EmulatorScreen
+
 
 class LogcatProc(ProcessHandlerMixin):
     """Process handler for logcat which saves all output to a logfile.
@@ -36,22 +42,29 @@ class Emulator(object):
 
     deviceRe = re.compile(r"^emulator-(\d+)(\s*)(.*)$")
 
-    def __init__(self, homedir=None, noWindow=False, logcat_dir=None, arch="x86",
-                 emulatorBinary=None, res='480x800', userdata=None):
+    def __init__(self, homedir=None, noWindow=False, logcat_dir=None,
+                 arch="x86", emulatorBinary=None, res='480x800', sdcard=None,
+                 userdata=None):
         self.port = None
+        self.dm = None
         self._emulator_launched = False
         self.proc = None
         self.marionette_port = None
         self.telnet = None
+        self._tmp_sdcard = None
         self._tmp_userdata = None
         self._adb_started = False
+        self.remote_user_js = '/data/local/user.js'
         self.logcat_dir = logcat_dir
         self.logcat_proc = None
         self.arch = arch
         self.binary = emulatorBinary
         self.res = res
         self.battery = EmulatorBattery(self)
+        self.geo = EmulatorGeo(self)
+        self.screen = EmulatorScreen(self)
         self.homedir = homedir
+        self.sdcard = sdcard
         self.noWindow = noWindow
         if self.homedir is not None:
             self.homedir = os.path.expanduser(homedir)
@@ -65,7 +78,7 @@ class Emulator(object):
             raise Exception('Must define B2G_HOME or pass the homedir parameter')
         self._check_file(self.homedir)
 
-        oldstyle_homedir = os.path.join(self.homedir, 'glue','gonk-ics')
+        oldstyle_homedir = os.path.join(self.homedir, 'glue', 'gonk-ics')
         if os.access(oldstyle_homedir, os.F_OK):
             self.homedir = oldstyle_homedir
 
@@ -77,7 +90,7 @@ class Emulator(object):
         if platform.system() == "Darwin":
             host_dir = "darwin-x86"
 
-        host_bin_dir = os.path.join("out","host", host_dir, "bin")
+        host_bin_dir = os.path.join("out", "host", host_dir, "bin")
 
         if self.arch == "x86":
             binary = os.path.join(host_bin_dir, "emulator-x86")
@@ -91,6 +104,9 @@ class Emulator(object):
             self.tail_args = ["-cpu", "cortex-a8"]
 
         self._check_for_adb()
+        if(self.sdcard):
+            self.mksdcard = os.path.join(self.homedir, host_bin_dir, "mksdcard")
+            self.create_sdcard(self.sdcard)
 
         if not self.binary:
             self.binary = os.path.join(self.homedir, binary)
@@ -120,10 +136,12 @@ class Emulator(object):
 
     @property
     def args(self):
-        qemuArgs =  [ self.binary,
-                      '-kernel', self.kernelImg,
-                      '-sysdir', self.sysDir,
-                      '-data', self.dataImg ]
+        qemuArgs = [self.binary,
+                    '-kernel', self.kernelImg,
+                    '-sysdir', self.sysDir,
+                    '-data', self.dataImg]
+        if self._tmp_sdcard:
+            qemuArgs.extend(['-sdcard', self._tmp_sdcard])
         if self.noWindow:
             qemuArgs.append('-no-window')
         qemuArgs.extend(['-memory', '512',
@@ -141,6 +159,30 @@ class Emulator(object):
         else:
             return self.port is not None
 
+    def check_for_crash(self):
+        """
+        Checks if the emulator has crashed or not.  Always returns False if
+        we've connected to an already-running emulator, since we can't track
+        the emulator's pid in that case.  Otherwise, returns True iff
+        self.proc is not None (meaning the emulator hasn't been explicitly
+        closed), and self.proc.poll() is also not None (meaning the emulator
+        process has terminated).
+        """
+        if (self._emulator_launched and self.proc is not None
+                                    and self.proc.poll() is not None):
+            return True
+        return False
+
+    def create_sdcard(self, sdcard):
+        self._tmp_sdcard = tempfile.mktemp(prefix='sdcard')
+        sdargs = [self.mksdcard, "-l", "mySdCard", sdcard, self._tmp_sdcard]
+        sd = subprocess.Popen(sdargs, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        retcode = sd.wait()
+        if retcode:
+            raise Exception('unable to create sdcard : exit code %d: %s'
+                            % (retcode, sd.stdout.read()))
+        return None
+
     def _check_for_adb(self):
         host_dir = "linux-x86"
         if platform.system() == "Darwin":
@@ -149,12 +191,13 @@ class Emulator(object):
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT)
         if adb.wait() == 0:
-            self.adb = adb.stdout.read().strip() # remove trailing newline
+            self.adb = adb.stdout.read().strip()  # remove trailing newline
             return
-        adb_paths = [os.path.join(self.homedir,'glue','gonk','out','host',
-                      host_dir ,'bin','adb'),os.path.join(self.homedir, 'out',
-                      'host', host_dir,'bin', 'adb'),os.path.join(self.homedir,
-                      'bin','adb')]
+        adb_paths = [os.path.join(self.homedir, 'glue', 'gonk', 'out', 'host',
+                                  host_dir, 'bin', 'adb'),
+                     os.path.join(self.homedir, 'out', 'host', host_dir,
+                                  'bin', 'adb'),
+                     os.path.join(self.homedir, 'bin', 'adb')]
         for option in adb_paths:
             if os.path.exists(option):
                 self.adb = option
@@ -163,10 +206,13 @@ class Emulator(object):
 
     def _run_adb(self, args):
         args.insert(0, self.adb)
+        if self.port:
+            args.insert(1, '-s')
+            args.insert(2, 'emulator-%d' % self.port)
         adb = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         retcode = adb.wait()
         if retcode:
-            raise Exception('adb terminated with exit code %d: %s' 
+            raise Exception('adb terminated with exit code %d: %s'
                             % (retcode, adb.stdout.read()))
         return adb.stdout.read()
 
@@ -181,7 +227,7 @@ class Emulator(object):
             if line.startswith('OK'):
                 return output
             elif line.startswith('KO:'):
-                raise Exception ('bad telnet response: %s' % line)
+                raise Exception('bad telnet response: %s' % line)
 
     def _run_telnet(self, command):
         if not self.telnet:
@@ -202,8 +248,11 @@ class Emulator(object):
             if self._tmp_userdata:
                 os.remove(self._tmp_userdata)
                 self._tmp_userdata = None
+            if self._tmp_sdcard:
+                os.remove(self._tmp_sdcard)
+                self._tmp_sdcard = None
             return retcode
-        if self.logcat_proc:
+        if self.logcat_proc and self.logcat_proc.proc.poll() is None:
             self.logcat_proc.kill()
         return 0
 
@@ -236,6 +285,33 @@ class Emulator(object):
         else:
             self._adb_started = False
 
+    def wait_for_system_message(self, marionette):
+        marionette.start_session()
+        marionette.set_context(marionette.CONTEXT_CHROME)
+        marionette.set_script_timeout(45000)
+        # Telephony API's won't be available immediately upon emulator
+        # boot; we have to wait for the syste-message-listener-ready
+        # message before we'll be able to use them successfully.  See
+        # bug 792647.
+        print 'waiting for system-message-listener-ready...'
+        try:
+            marionette.execute_async_script("""
+waitFor(
+    function() { marionetteScriptFinished(true); },
+    function() { return isSystemMessageListenerReady(); }
+);
+            """)
+        except ScriptTimeoutException:
+            print 'timed out'
+            # We silently ignore the timeout if it occurs, since
+            # isSystemMessageListenerReady() isn't available on
+            # older emulators.  45s *should* be enough of a delay
+            # to allow telephony API's to work.
+            pass
+        print 'done'
+        marionette.set_context(marionette.CONTEXT_CONTENT)
+        marionette.delete_session()
+
     def connect(self):
         self._check_for_adb()
         self.start_adb()
@@ -249,14 +325,25 @@ class Emulator(object):
             online, offline = self._get_adb_devices()
         self.port = int(list(online)[0])
 
+        self.dm = devicemanagerADB.DeviceManagerADB(adbPath=self.adb,
+                                                    deviceSerial='emulator-%d' % self.port)
+
+    def add_prefs_to_profile(self, prefs=None):
+        if not prefs:
+            prefs = ['user_pref("marionette.loadearly", true);']
+        local_user_js = tempfile.mktemp(prefix='localuserjs')
+        self.dm.getFile(self.remote_user_js, local_user_js)
+        with open(local_user_js, 'a') as f:
+            f.write('%s\n' % '\n'.join(prefs))
+        self.dm.pushFile(local_user_js, self.remote_user_js)
+
     def start(self):
         self._check_for_b2g()
         self.start_adb()
 
         qemu_args = self.args[:]
         if self.copy_userdata:
-            # Make a copy of the userdata.img for this instance of the emulator
-            # to use.
+            # Make a copy of the userdata.img for this instance of the emulator to use.
             self._tmp_userdata = tempfile.mktemp(prefix='marionette')
             shutil.copyfile(self.dataImg, self._tmp_userdata)
             qemu_args[qemu_args.index('-data') + 1] = self._tmp_userdata
@@ -277,19 +364,105 @@ class Emulator(object):
         self.port = int(list(online - original_online)[0])
         self._emulator_launched = True
 
+        self.dm = devicemanagerADB.DeviceManagerADB(adbPath=self.adb,
+                                                    deviceSerial='emulator-%d' % self.port)
+
+        # bug 802877
+        time.sleep(10)
+        self.geo.set_default_location()
+        self.screen.initialize()
+
         if self.logcat_dir:
             self.save_logcat()
 
         # setup DNS fix for networking
-        self._run_adb(['-s', 'emulator-%d' % self.port,
-                       'shell', 'setprop', 'net.dns1', '10.0.2.3'])
+        self._run_adb(['shell', 'setprop', 'net.dns1', '10.0.2.3'])
 
-    def _save_logcat_proc(self, filename, cmd):
-        self.logcat_proc = LogcatProc(filename, cmd)
-        self.logcat_proc.run()
-        self.logcat_proc.processOutput()
-        self.logcat_proc.waitForFinish()
-        self.logcat_proc = None
+    def setup(self, marionette, gecko_path=None, load_early=False):
+        if gecko_path:
+            if load_early:
+                # Inject prefs into the profile now, since we have to restart
+                # B2G after installing a new gecko anyway.
+                self.add_prefs_to_profile()
+            self.install_gecko(gecko_path, marionette)
+        elif load_early:
+            self.add_prefs_to_profile()
+            self.restart_b2g()
+
+        if load_early:
+            # If we're loading early, we have to wait for the
+            # system-message-listener-ready event again after restarting B2G.
+            # If we're not loading early, we skip this because Marionette
+            # doesn't load until after this event has fired.
+            self.wait_for_system_message(marionette)
+
+    def restart_b2g(self):
+        print 'restarting B2G'
+        self.dm.shellCheckOutput(['stop', 'b2g'])
+        time.sleep(10)
+        self.dm.shellCheckOutput(['start', 'b2g'])
+
+        if not self.wait_for_port():
+            raise TimeoutException("Timeout waiting for marionette on port '%s'" % self.marionette_port)
+
+    def install_gecko(self, gecko_path, marionette):
+        """
+        Install gecko into the emulator using adb push.  Restart b2g after the
+        installation.
+        """
+        # See bug 800102.  We use this particular method of installing
+        # gecko in order to avoid an adb bug in which adb will sometimes
+        # hang indefinitely while copying large files to the system
+        # partition.
+        push_attempts = 10
+
+        print 'installing gecko binaries...'
+
+        # see bug 809437 for the path that lead to this madness
+        try:
+            # need to remount so we can write to /system/b2g
+            self._run_adb(['remount'])
+            for root, dirs, files in os.walk(gecko_path):
+                for filename in files:
+                    rel_path = os.path.relpath(os.path.join(root, filename), gecko_path)
+                    system_b2g_file = os.path.join('/system/b2g', rel_path)
+                    for retry in range(1, push_attempts + 1):
+                        print 'pushing', system_b2g_file, '(attempt %s of %s)' % (retry, push_attempts)
+                        try:
+                            self.dm.pushFile(os.path.join(root, filename), system_b2g_file)
+                            break
+                        except DMError:
+                            if retry == push_attempts:
+                                raise
+
+            self.restart_b2g()
+
+        except (DMError, MarionetteException):
+            # Bug 812395 - raise a single exception type for these so we can
+            # explicitly catch them elsewhere.
+
+            # print exception, but hide from mozharness error detection
+            exc = traceback.format_exc()
+            exc = exc.replace('Traceback', '_traceback')
+            print exc
+
+            raise InstallGeckoError("unable to restart B2G after installing gecko")
+
+    def install_busybox(self, busybox):
+        self._run_adb(['remount'])
+
+        push_attempts = 10
+        remote_file = "/system/bin/busybox"
+        for retry in range(1, push_attempts+1):
+            print 'pushing', remote_file, '(attempt %s of %s)' % (retry, push_attempts)
+            try:
+                self.dm.pushFile(busybox, remote_file)
+                break
+            except DMError:
+                if retry == push_attempts:
+                    raise
+        self._run_adb(['shell', 'cd /system/bin; chmod 555 busybox; for x in `./busybox --list`; do ln -s ./busybox $x; done'])
+        self.dm._verifyZip()
 
     def rotate_log(self, srclog, index=1):
         """ Rotate a logfile, by recursively rotating logs further in the sequence,
@@ -311,12 +484,8 @@ class Emulator(object):
             self.rotate_log(filename)
         cmd = [self.adb, '-s', 'emulator-%d' % self.port, 'logcat']
 
-        # We do this in a separate process because we call mozprocess's
-        # waitForFinish method to process logcat's output, and this method
-        # blocks.
-        proc = multiprocessing.Process(target=self._save_logcat_proc, args=(filename, cmd))
-        proc.daemon = True
-        proc.start()
+        self.logcat_proc = LogcatProc(filename, cmd)
+        self.logcat_proc.run()
 
     def setup_port_forwarding(self, remote_port):
         """ Set up TCP port forwarding to the specified port on the device,
@@ -329,8 +498,7 @@ class Emulator(object):
         local_port = s.getsockname()[1]
         s.close()
 
-        output = self._run_adb(['-s', 'emulator-%d' % self.port, 
-                                'forward',
+        output = self._run_adb(['forward',
                                 'tcp:%d' % local_port,
                                 'tcp:%d' % remote_port])
 
@@ -354,4 +522,3 @@ class Emulator(object):
                 print traceback.format_exc()
             time.sleep(1)
         return False
-

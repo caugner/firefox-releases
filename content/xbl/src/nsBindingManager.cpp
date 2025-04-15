@@ -16,7 +16,6 @@
 #include "nsIContent.h"
 #include "nsIDOMElement.h"
 #include "nsIDocument.h"
-#include "mozilla/FunctionTimer.h"
 #include "nsContentUtils.h"
 #include "nsIPresShell.h"
 #include "nsIXMLContentSink.h"
@@ -44,6 +43,7 @@
 #include "nsBindingManager.h"
 
 #include "nsThreadUtils.h"
+#include "mozilla/dom/NodeListBinding.h"
 #include "dombindings.h"
 
 // ==================================================================
@@ -80,8 +80,14 @@ public:
   virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
                                bool *triedToWrap)
   {
-    return mozilla::dom::oldproxybindings::NodeList::create(cx, scope, this,
-                                                   triedToWrap);
+    JSObject* obj = mozilla::dom::NodeListBinding::Wrap(cx, scope, this,
+                                                        triedToWrap);
+    if (obj || *triedToWrap) {
+      return obj;
+    }
+
+    *triedToWrap = true;
+    return mozilla::dom::oldproxybindings::NodeList::create(cx, scope, this);
   }
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ANONYMOUS_CONTENT_LIST_IID)
@@ -996,8 +1002,6 @@ nsBindingManager::ProcessAttachedQueue(uint32_t aSkipSize)
   if (mProcessingAttachedStack || mAttachedStack.Length() <= aSkipSize)
     return;
 
-  NS_TIME_FUNCTION;
-
   mProcessingAttachedStack = true;
 
   // Excute constructors. Do this from high index to low
@@ -1123,7 +1127,7 @@ MarkForDeath(nsISupports *aKey, nsXBLBinding *aBinding, void* aClosure)
   if (aBinding->MarkedForDeath())
     return PL_DHASH_NEXT; // Already marked for death.
 
-  nsCAutoString path;
+  nsAutoCString path;
   aBinding->PrototypeBinding()->DocURI()->GetPath(path);
 
   if (!strncmp(path.get(), "/skin", 5))

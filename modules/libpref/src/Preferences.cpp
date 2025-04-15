@@ -42,6 +42,7 @@
 
 #include "nsTArray.h"
 #include "nsRefPtrHashtable.h"
+#include "nsIMemoryReporter.h"
 
 namespace mozilla {
 
@@ -158,6 +159,56 @@ static nsTArray<nsAutoPtr<CacheData> >* gCacheData = nullptr;
 static nsRefPtrHashtable<ValueObserverHashKey,
                          ValueObserver>* gObserverTable = nullptr;
 
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(PreferencesMallocSizeOf, "preferences")
+
+static size_t
+SizeOfObserverEntryExcludingThis(ValueObserverHashKey* aKey,
+                                 const nsRefPtr<ValueObserver>& aData,
+                                 nsMallocSizeOfFun aMallocSizeOf,
+                                 void*)
+{
+  size_t n = 0;
+  n += aKey->mPrefName.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+  n += aData->mClosures.SizeOfExcludingThis(aMallocSizeOf);
+  return n;
+}
+
+// static
+int64_t
+Preferences::GetPreferencesMemoryUsed()
+{
+  size_t n = 0;
+  n += PreferencesMallocSizeOf(sPreferences);
+  if (gHashTable.ops) {
+    // pref keys are allocated in a private arena, which we count elsewhere.
+    // pref stringvals are allocated out of the same private arena.
+    n += PL_DHashTableSizeOfExcludingThis(&gHashTable, nullptr,
+                                          PreferencesMallocSizeOf);
+  }
+  if (gCacheData) {
+    n += gCacheData->SizeOfIncludingThis(PreferencesMallocSizeOf);
+    for (uint32_t i = 0, count = gCacheData->Length(); i < count; ++i) {
+      n += PreferencesMallocSizeOf((*gCacheData)[i]);
+    }
+  }
+  if (gObserverTable) {
+    n += PreferencesMallocSizeOf(gObserverTable);
+    n += gObserverTable->SizeOfExcludingThis(SizeOfObserverEntryExcludingThis,
+                                             PreferencesMallocSizeOf);
+  }
+  // We don't measure sRootBranch and sDefaultRootBranch here because
+  // DMD indicates they are not significant.
+  n += pref_SizeOfPrivateData(PreferencesMallocSizeOf);
+  return n;
+}
+
+NS_MEMORY_REPORTER_IMPLEMENT(Preferences,
+  "explicit/preferences",
+  KIND_HEAP,
+  UNITS_BYTES,
+  Preferences::GetPreferencesMemoryUsed,
+  "Memory used by the preferences system.")
+
 // static
 Preferences*
 Preferences::GetInstanceForService()
@@ -187,6 +238,9 @@ Preferences::GetInstanceForService()
 
   gObserverTable = new nsRefPtrHashtable<ValueObserverHashKey, ValueObserver>();
   gObserverTable->Init();
+
+  nsCOMPtr<nsIMemoryReporter> reporter(new NS_MEMORY_REPORTER_NAME(Preferences));
+  NS_RegisterMemoryReporter(reporter);
 
   NS_ADDREF(sPreferences);
   return sPreferences;
@@ -440,7 +494,7 @@ ReadExtensionPrefs(nsIFile *aFile)
 
   bool more;
   while (NS_SUCCEEDED(rv = files->HasMore(&more)) && more) {
-    nsCAutoString entry;
+    nsAutoCString entry;
     rv = files->GetNext(entry);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -754,7 +808,7 @@ static nsresult openPrefFile(nsIFile* aFile)
   rv = inStr->Available(&fileSize64);
   if (NS_FAILED(rv))
     return rv;
-  NS_ENSURE_TRUE(fileSize64 <= PR_UINT32_MAX, NS_ERROR_FILE_TOO_BIG);
+  NS_ENSURE_TRUE(fileSize64 <= UINT32_MAX, NS_ERROR_FILE_TOO_BIG);
 
   uint32_t fileSize = (uint32_t)fileSize64;
   nsAutoArrayPtr<char> fileBuffer(new char[fileSize]);
@@ -788,7 +842,7 @@ static nsresult openPrefFile(nsIFile* aFile)
 static int
 pref_CompareFileNames(nsIFile* aFile1, nsIFile* aFile2, void* /*unused*/)
 {
-  nsCAutoString filename1, filename2;
+  nsAutoCString filename1, filename2;
   aFile1->GetNativeLeafName(filename1);
   aFile2->GetNativeLeafName(filename2);
 
@@ -826,7 +880,7 @@ pref_LoadPrefsInDir(nsIFile* aDir, char const *const *aSpecialFiles, uint32_t aS
   nsCOMPtr<nsIFile> prefFile;
 
   while (hasMoreElements && NS_SUCCEEDED(rv)) {
-    nsCAutoString leafName;
+    nsAutoCString leafName;
 
     rv = dirIterator->GetNext(getter_AddRefs(prefFile));
     if (NS_FAILED(rv)) {
@@ -919,7 +973,7 @@ static nsresult pref_LoadPrefsInDirList(const char *listId)
     if (!path)
       continue;
 
-    nsCAutoString leaf;
+    nsAutoCString leaf;
     path->GetNativeLeafName(leaf);
 
     // Do we care if a file provided by this process fails to load?
@@ -1111,6 +1165,21 @@ Preferences::GetInt(const char* aPref, int32_t* aResult)
 }
 
 // static
+nsresult
+Preferences::GetFloat(const char* aPref, float* aResult)
+{
+  NS_PRECONDITION(aResult, "aResult must not be NULL");
+  NS_ENSURE_TRUE(InitStaticMembers(), NS_ERROR_NOT_AVAILABLE);
+  nsAutoCString result;
+  nsresult rv = PREF_CopyCharPref(aPref, getter_Copies(result), false);
+  if (NS_SUCCEEDED(rv)) {
+    *aResult = result.ToFloat(&rv);
+  }
+
+  return rv;
+}
+
+// static
 nsAdoptingCString
 Preferences::GetCString(const char* aPref)
 {
@@ -1134,7 +1203,7 @@ Preferences::GetCString(const char* aPref, nsACString* aResult)
 {
   NS_PRECONDITION(aResult, "aResult must not be NULL");
   NS_ENSURE_TRUE(InitStaticMembers(), NS_ERROR_NOT_AVAILABLE);
-  nsCAutoString result;
+  nsAutoCString result;
   nsresult rv = PREF_CopyCharPref(aPref, getter_Copies(result), false);
   if (NS_SUCCEEDED(rv)) {
     *aResult = result;
@@ -1148,7 +1217,7 @@ Preferences::GetString(const char* aPref, nsAString* aResult)
 {
   NS_PRECONDITION(aResult, "aResult must not be NULL");
   NS_ENSURE_TRUE(InitStaticMembers(), NS_ERROR_NOT_AVAILABLE);
-  nsCAutoString result;
+  nsAutoCString result;
   nsresult rv = PREF_CopyCharPref(aPref, getter_Copies(result), false);
   if (NS_SUCCEEDED(rv)) {
     CopyUTF8toUTF16(result, *aResult);
@@ -1516,7 +1585,7 @@ Preferences::GetDefaultCString(const char* aPref, nsACString* aResult)
 {
   NS_PRECONDITION(aResult, "aResult must not be NULL");
   NS_ENSURE_TRUE(InitStaticMembers(), NS_ERROR_NOT_AVAILABLE);
-  nsCAutoString result;
+  nsAutoCString result;
   nsresult rv = PREF_CopyCharPref(aPref, getter_Copies(result), true);
   if (NS_SUCCEEDED(rv)) {
     *aResult = result;
@@ -1530,7 +1599,7 @@ Preferences::GetDefaultString(const char* aPref, nsAString* aResult)
 {
   NS_PRECONDITION(aResult, "aResult must not be NULL");
   NS_ENSURE_TRUE(InitStaticMembers(), NS_ERROR_NOT_AVAILABLE);
-  nsCAutoString result;
+  nsAutoCString result;
   nsresult rv = PREF_CopyCharPref(aPref, getter_Copies(result), true);
   if (NS_SUCCEEDED(rv)) {
     CopyUTF8toUTF16(result, *aResult);

@@ -9,7 +9,7 @@
 
 #include "LayerManagerOGL.h"
 #include "gfxASurface.h"
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)
 #include "GLXLibrary.h"
 #include "mozilla/X11Util.h"
 #endif
@@ -27,10 +27,11 @@ public:
   CanvasLayerOGL(LayerManagerOGL *aManager)
     : CanvasLayer(aManager, NULL),
       LayerOGL(aManager),
+      mLayerProgram(gl::RGBALayerProgramType),
       mTexture(0),
       mTextureTarget(LOCAL_GL_TEXTURE_2D),
       mDelayedUpdates(false)
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)
       ,mPixmap(0)
 #endif
   { 
@@ -64,7 +65,7 @@ protected:
   bool mGLBufferIsPremultiplied;
   bool mNeedsYFlip;
   bool mForceReadback;
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)
   GLXPixmap mPixmap;
 #endif
 
@@ -125,6 +126,7 @@ public:
   // LayerOGL impl
   void Destroy();
   Layer* GetLayer();
+  virtual LayerRenderState GetRenderState() MOZ_OVERRIDE;
   virtual void RenderLayer(int aPreviousFrameBuffer,
                            const nsIntPoint& aOffset);
   virtual void CleanupResources();

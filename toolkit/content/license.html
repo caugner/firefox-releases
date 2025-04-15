@@ -55,6 +55,7 @@
     </p>
     
     <ul>
+      <li><a href="about:license#ACE">ACE License</a></li>
       <li><a href="about:license#android">Android Open Source License</a></li>
       <li><a href="about:license#angle">ANGLE License</a></li>
       <li><a href="about:license#apache">Apache License 2.0</a></li>
@@ -93,11 +94,14 @@
       <li><a href="about:license#hunspell-lt">Lithuanian Spellchecking Dictionary License</a></li>
       <li><a href="about:license#maattachedwindow">MAAttachedWindow License</a></li>
       <li><a href="about:license#msstdint">msstdint License</a></li>
+      <li><a href="about:license#nicer">nICEr License</a></li>
+      <li><a href="about:license#nrappkit">nrappkit License</a></li>
       <li><a href="about:license#openvision">OpenVision License</a></li>
       <li><a href="about:license#praton">praton License</a></li>
       <li><a href="about:license#qcms">qcms License</a></li>
       <li><a href="about:license#xdg">Red Hat xdg_user_dir_lookup License</a></li>
       <li><a href="about:license#hunspell-ru">Russian Spellchecking Dictionary License</a></li>
+      <li><a href="about:license#sctp">SCTP Licenses</a></li>
       <li><a href="about:license#skia">Skia License</a></li>
       <li><a href="about:license#snappy">Snappy License</a></li>
       <li><a href="about:license#sparkle">Sparkle License</a></li>
@@ -567,6 +571,29 @@
     defined by the Mozilla Public License, v. 2.0.</p>
   </blockquote>
 
+
+    <hr>
+
+    <h1><a id="ACE"></a>ACE License</h1>
+
+    <p>This license applies to the file
+    <span class="path">media/webrtc/trunk/src/system_wrappers/source/condition_variable_win.cc</span>.</p>
+
+<pre>
+ACE(TM), TAO(TM), CIAO(TM), DAnCE(TM), and CoSMIC(TM)
+(henceforth referred to as "DOC software") are copyrighted by
+Douglas C. Schmidt and his research group at Washington University,
+University of California, Irvine, and Vanderbilt University,
+Copyright (c) 1993-2009, all rights reserved.
+Since DOC software is open-source, freely available software,
+you are free to use, modify, copy, and distribute--perpetually and
+irrevocably--the DOC software source code and object code produced
+from the source, as well as copy and distribute modified versions of
+this software. You must, however, include this copyright statement
+along with any code built using DOC software that you release. No
+copyright statement needs to be provided if you just ship binary
+executables of your software products.
+</pre>
 
 
     <hr>
@@ -1919,9 +1946,11 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     <h1><a id="libjingle"></a>libjingle License</h1>
 
-    <p>This license applies to certain files in the directory
-    <span class="path">media/webrtc/trunk/third_party/libjingle</span>.
-    </p>
+    <p>This license applies to the following files:</p>
+    <ul>
+      <li class="path">media/mtransport/sigslot.h</li>
+      <li class="path">media/mtransport/test/gtest_utils.h</li>
+    </ul>
 
 <pre>
 Copyright (c) 2004--2005, Google Inc.
@@ -2221,6 +2250,51 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
     <hr>
 
+    <h1><a id="nicer"></a>nICEr License</h1>
+
+    <p>This license applies to certain files in the directory
+    <span class="path">media/mtransport/third_party/nICEr</span>.</p>
+
+<pre>
+   Copyright (C) 2007, Adobe Systems Inc.
+   Copyright (C) 2007-2008, Network Resonance, Inc.
+
+Each source file bears an individual copyright notice.
+
+The following license applies to this distribution as a whole.
+
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+* Neither the name of Adobe Systems, Network Resonance nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+</pre>
+
+
+    <hr>
+
     <h1><a id="openvision"></a>OpenVision License</h1>
 
     <p>This license applies to the file
@@ -2248,6 +2322,157 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 </pre>
 
+
+    <hr>
+
+    <h1><a id="nrappkit"></a>nrappkit License</h1>
+
+    <p>This license applies to certain files in the directory
+    <span class="path">media/mtransport/third_party/nrappkit</span>.</p>
+
+<pre>
+Copyright (C) 2001-2007, Network Resonance, Inc.
+All Rights Reserved
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. Neither the name of Network Resonance, Inc. nor the name of any
+   contributors to this software may be used to endorse or promote 
+   products derived from this software without specific prior written
+   permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS''
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE 
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+</pre>
+
+    <p>This license applies to certain files in the directory
+    <span class="path">media/mtransport/third_party/nrappkit</span>.</p>
+
+<pre>
+Copyright (C) 1999-2003 RTFM, Inc.
+All Rights Reserved
+
+This package is a SSLv3/TLS protocol analyzer written by Eric Rescorla
+<ekr@rtfm.com> and licensed by RTFM, Inc.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. All advertising materials mentioning features or use of this software
+   must display the following acknowledgement:
+
+   This product includes software developed by Eric Rescorla for
+   RTFM, Inc.
+
+4. Neither the name of RTFM, Inc. nor the name of Eric Rescorla may be
+   used to endorse or promote products derived from this
+   software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE ERIC RESCORLA AND RTFM ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+oDAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+</pre>
+
+   <p>Note that RTFM, Inc. has waived clause (3) above as of June 20, 2012
+   for files appearing in this distribution. This waiver applies only to
+   files included in this distribution. it does not apply to any other
+   part of ssldump not included in this distribution.</p>
+
+    <p>This license applies to 
+The following license applies to each copy of the file 
+  <span class="path">sys/queue.h</span>
+  in <span class="path">media/mtransport/third_party/nrappkit/</span>.</p>
+
+<pre>
+Copyright (c) 1991, 1993
+	The Regents of the University of California.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+4. Neither the name of the University nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+</pre>
+
+
+    <p>This license applies to 
+  The following license applies to the file:
+  <span class="path">media/mtransport/third_party/nrappkit/src/util/util.c</span>.</p>
+
+<pre>
+Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+</pre>
+  
 
     <hr>
 
@@ -2423,6 +2648,76 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 </pre>
 
+    <hr>
+
+    <h1><a id="skia"></a>SCTP Licenses</h1>
+
+    <p>These licenses apply to certain files in the directory
+    <span class="path">netwerk/sctp/src/</span>.</p>
+
+<pre>
+Copyright (c) 2009-2010 Brad Penoff
+Copyright (c) 2009-2010 Humaira Kamal
+Copyright (c) 2011-2012 Irene Ruengeler
+Copyright (c) 2010-2012, by Michael Tuexen. All rights reserved.
+Copyright (c) 2010-2012, by Randall Stewart. All rights reserved.
+Copyright (c) 2010-2012, by Robin Seggelmann. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+Copyright (c) 2001-2008, by Cisco Systems, Inc. All rights reserved.
+Copyright (c) 2008-2012, by Randall Stewart. All rights reserved.
+Copyright (c) 2008-2012, by Michael Tuexen. All rights reserved.
+Copyright (c) 2008-2012, by Brad Penoff. All rights reserved.
+Copyright (c) 1980, 1982, 1986, 1987, 1988, 1990, 1993
+  The Regents of the University of California.
+Copyright (c) 2005 Robert N. M. Watson All rights reserved.
+Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+a) Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+b) Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in
+   the documentation and/or other materials provided with the distribution.
+c) Neither the name of Cisco Systems, Inc, the name of the university,
+   the WIDE project, nor the names of its contributors may be used to 
+   endorse or promote products derived from this software without specific
+   prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+THE POSSIBILITY OF SUCH DAMAGE.
+</pre>
+    
     <hr>
 
     <h1><a id="skia"></a>Skia License</h1>
@@ -2633,6 +2928,7 @@ authorization from SunSoft Inc.
       <li class="path">db/mork/src/morkQuickSort.cpp</li>
       <li class="path">xpcom/glue/nsQuickSort.cpp</li>
       <li class="path">nsprpub/pr/src/misc/praton.c</li>
+      <li class="path">media/mtransport/third_party/nICEr/src/stun/addrs.c</li>
     </ul>
     
 <pre>

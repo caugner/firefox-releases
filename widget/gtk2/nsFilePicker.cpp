@@ -157,10 +157,10 @@ UpdateFilePreviewWidget(GtkFileChooser *file_chooser,
   gtk_file_chooser_set_preview_widget_active(file_chooser, TRUE);
 }
 
-static nsCAutoString
+static nsAutoCString
 MakeCaseInsensitiveShellGlob(const char* aPattern) {
   // aPattern is UTF8
-  nsCAutoString result;
+  nsAutoCString result;
   unsigned int len = strlen(aPattern);
 
   for (unsigned int i = 0; i < len; i++) {
@@ -272,7 +272,7 @@ nsFilePicker::AppendFilter(const nsAString& aTitle, const nsAString& aFilter)
     return NS_OK;
   }
 
-  nsCAutoString filter, name;
+  nsAutoCString filter, name;
   CopyUTF16toUTF8(aFilter, filter);
   CopyUTF16toUTF8(aTitle, name);
 
@@ -433,8 +433,9 @@ nsFilePicker::Open(nsIFilePickerShownCallback *aCallback)
   gtk_window_set_modal(window, TRUE);
   if (parent_widget) {
     gtk_window_set_destroy_with_parent(window, TRUE);
-    if (parent_widget->group) {
-      gtk_window_group_add_window(parent_widget->group, window);
+    GtkWindowGroup *parentGroup = gtk_window_get_group(parent_widget);
+    if (parentGroup) {
+      gtk_window_group_add_window(parentGroup, window);
     }
   }
 
@@ -461,11 +462,11 @@ nsFilePicker::Open(nsIFilePickerShownCallback *aCallback)
       // Try to select the intended file. Even if it doesn't exist, GTK still switches
       // directories.
       defaultPath->AppendNative(defaultName);
-      nsCAutoString path;
+      nsAutoCString path;
       defaultPath->GetNativePath(path);
       gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(file_chooser), path.get());
     } else {
-      nsCAutoString directory;
+      nsAutoCString directory;
       defaultPath->GetNativePath(directory);
       gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(file_chooser),
                                           directory.get());
@@ -486,7 +487,7 @@ nsFilePicker::Open(nsIFilePickerShownCallback *aCallback)
 
     GtkFileFilter *filter = gtk_file_filter_new();
     for (int j = 0; patterns[j] != NULL; ++j) {
-      nsCAutoString caseInsensitiveFilter = MakeCaseInsensitiveShellGlob(g_strstrip(patterns[j]));
+      nsAutoCString caseInsensitiveFilter = MakeCaseInsensitiveShellGlob(g_strstrip(patterns[j]));
       gtk_file_filter_add_pattern(filter, caseInsensitiveFilter.get());
     }
 

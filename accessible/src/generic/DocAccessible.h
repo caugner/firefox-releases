@@ -33,6 +33,14 @@ class nsAccessiblePivot;
 
 const uint32_t kDefaultCacheSize = 256;
 
+namespace mozilla {
+namespace a11y {
+
+class RelatedAccIterator;
+
+} // namespace a11y
+} // namespace mozilla
+
 class DocAccessible : public HyperTextAccessibleWrap,
                       public nsIAccessibleDocument,
                       public nsIDocumentObserver,
@@ -89,7 +97,7 @@ public:
 
   virtual void SetRoleMapEntry(nsRoleMapEntry* aRoleMapEntry);
 
-#ifdef DEBUG
+#ifdef A11Y_LOG
   virtual nsresult HandleAccEvent(AccEvent* aEvent);
 #endif
 
@@ -567,7 +575,7 @@ protected:
   typedef nsTArray<nsAutoPtr<AttrRelProvider> > AttrRelProviderArray;
   nsClassHashtable<nsStringHashKey, AttrRelProviderArray> mDependentIDsHash;
 
-  friend class RelatedAccIterator;
+  friend class mozilla::a11y::RelatedAccIterator;
 
   /**
    * Used for our caching algorithm. We store the list of nodes that should be

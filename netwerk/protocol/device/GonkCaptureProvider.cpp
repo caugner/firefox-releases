@@ -311,7 +311,7 @@ GonkCameraInputStream::Init(nsACString& aContentType, nsCaptureParams* aParams)
   params.getSupportedPreviewSizes(previewSizes);
 
   // find the available preview size closest to the requested size.
-  uint32_t minSizeDelta = PR_UINT32_MAX;
+  uint32_t minSizeDelta = UINT32_MAX;
   uint32_t bestWidth = mWidth;
   uint32_t bestHeight = mHeight;
   for (uint32_t i = 0; i < previewSizes.size(); i++) {
@@ -537,7 +537,7 @@ NS_IMETHODIMP GonkCameraInputStream::AsyncWait(nsIInputStreamCallback *aCallback
 }
 
 
-NS_IMETHODIMP GonkCameraInputStream::CloseWithStatus(uint32_t status)
+NS_IMETHODIMP GonkCameraInputStream::CloseWithStatus(nsresult status)
 {
   GonkCameraInputStream::doClose();
   return NS_OK;

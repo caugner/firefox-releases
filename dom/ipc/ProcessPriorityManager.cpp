@@ -165,23 +165,23 @@ ProcessPriorityManager::OnContentDocumentGlobalCreated(
   // Get the inner window (the topic of content-document-global-created is
   // the /outer/ window!).
   nsCOMPtr<nsPIDOMWindow> outerWindow = do_QueryInterface(aOuterWindow);
-  NS_ENSURE_TRUE(outerWindow, );
+  NS_ENSURE_TRUE_VOID(outerWindow);
   nsCOMPtr<nsPIDOMWindow> innerWindow = outerWindow->GetCurrentInnerWindow();
-  NS_ENSURE_TRUE(innerWindow, );
+  NS_ENSURE_TRUE_VOID(innerWindow);
 
   // We're only interested in top-level windows.
   nsCOMPtr<nsIDOMWindow> parentOuterWindow;
   innerWindow->GetScriptableParent(getter_AddRefs(parentOuterWindow));
-  NS_ENSURE_TRUE(parentOuterWindow, );
+  NS_ENSURE_TRUE_VOID(parentOuterWindow);
   if (parentOuterWindow != outerWindow) {
     return;
   }
 
   nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(innerWindow);
-  NS_ENSURE_TRUE(target, );
+  NS_ENSURE_TRUE_VOID(target);
 
   nsWeakPtr weakWin = do_GetWeakReference(innerWindow);
-  NS_ENSURE_TRUE(weakWin, );
+  NS_ENSURE_TRUE_VOID(weakWin);
 
   if (mWindows.Contains(weakWin)) {
     return;
@@ -298,6 +298,13 @@ ProcessPriorityManager::OnGracePeriodTimerFired()
 
   mGracePeriodTimer = nullptr;
   hal::SetProcessPriority(getpid(), PROCESS_PRIORITY_BACKGROUND);
+
+  // We're in the background; dump as much memory as we can.
+  nsCOMPtr<nsIMemoryReporterManager> mgr =
+    do_GetService("@mozilla.org/memory-reporter-manager;1");
+  if (mgr) {
+    mgr->MinimizeMemoryUsage(/* callback = */ nullptr);
+  }
 }
 
 } // anonymous namespace

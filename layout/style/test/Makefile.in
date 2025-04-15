@@ -186,13 +186,19 @@ MOCHITEST_FILES =	test_acid3_test46.html \
 		test_load_events_on_stylesheets.html \
 		test_bug721136.html \
 		test_bug732153.html \
+		test_bug732209.html \
+		bug732209-css.sjs \
 		$(NULL)
 
 ifdef MOZ_FLEXBOX
 MOCHITEST_FILES +=	\
+		file_flexbox_align_self_auto.html \
 		test_flexbox_align_self_auto.html \
+		file_flexbox_flex_grow_and_shrink.html \
 		test_flexbox_flex_grow_and_shrink.html \
+		file_flexbox_flex_shorthand.html \
 		test_flexbox_flex_shorthand.html \
+		file_flexbox_layout.html \
 		test_flexbox_layout.html \
 		flexbox_layout_testcases.js \
 		$(NULL)
@@ -207,13 +213,11 @@ _VISITED_REFTEST_FILES = \
 		$(topsrcdir)/layout/reftests/svg/as-image/svg-image-visited-2-helper.svg \
 		$(NULL)
 
-ifneq (mobile,$(MOZ_BUILD_APP))
 MOCHITEST_BROWSER_FILES = \
 		browser_bug453896.js \
 		bug453896_iframe.html \
 		media_queries_iframe.html \
 		$(NULL)
-endif
 
 include $(topsrcdir)/config/rules.mk
 

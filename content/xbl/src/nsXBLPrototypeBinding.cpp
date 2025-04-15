@@ -274,6 +274,7 @@ nsXBLPrototypeBinding::nsXBLPrototypeBinding()
   mInheritStyle(true), 
   mCheckedBaseProto(false),
   mKeyHandlersRegistered(false),
+  mChromeOnlyContent(false),
   mResources(nullptr),
   mAttributeTable(nullptr),
   mInsertionPointTable(nullptr),
@@ -442,6 +443,11 @@ nsXBLPrototypeBinding::SetBindingElement(nsIContent* aElement)
   if (mBinding->AttrValueIs(kNameSpaceID_None, nsGkAtoms::inheritstyle,
                             nsGkAtoms::_false, eCaseMatters))
     mInheritStyle = false;
+
+  mChromeOnlyContent = IsChrome() &&
+                       mBinding->AttrValueIs(kNameSpaceID_None,
+                                             nsGkAtoms::chromeOnlyContent,
+                                             nsGkAtoms::_true, eCaseMatters);
 }
 
 bool
@@ -1456,7 +1462,7 @@ public:
   }
 
   nsXBLDocumentInfo* mDocInfo;
-  nsCAutoString mID;
+  nsAutoCString mID;
 };
 
 nsresult
@@ -1466,16 +1472,18 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
                             uint8_t aFlags)
 {
   mInheritStyle = (aFlags & XBLBinding_Serialize_InheritStyle) ? true : false;
+  mChromeOnlyContent =
+    (aFlags & XBLBinding_Serialize_ChromeOnlyContent) ? true : false;
 
   // nsXBLContentSink::ConstructBinding doesn't create a binding with an empty
   // id, so we don't here either.
-  nsCAutoString id;
+  nsAutoCString id;
   nsresult rv = aStream->ReadCString(id);
 
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_TRUE(!id.IsEmpty(), NS_ERROR_FAILURE);
 
-  nsCAutoString baseBindingURI;
+  nsAutoCString baseBindingURI;
   rv = aStream->ReadCString(baseBindingURI);
   NS_ENSURE_SUCCESS(rv, rv);
   mCheckedBaseProto = true;
@@ -1545,7 +1553,7 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
 
   XBLPrototypeSetupCleanup cleanup(aDocInfo, id);  
 
-  nsCAutoString className;
+  nsAutoCString className;
   rv = aStream->ReadCString(className);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1676,16 +1684,20 @@ nsXBLPrototypeBinding::Write(nsIObjectOutputStream* aStream)
     flags |= XBLBinding_Serialize_IsFirstBinding;
   }
 
+  if (mChromeOnlyContent) {
+    flags |= XBLBinding_Serialize_ChromeOnlyContent;
+  }
+
   nsresult rv = aStream->Write8(flags);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCAutoString id;
+  nsAutoCString id;
   mBindingURI->GetRef(id);
   rv = aStream->WriteStringZ(id.get());
   NS_ENSURE_SUCCESS(rv, rv);
 
   // write out the extends and display attribute values
-  nsCAutoString extends;
+  nsAutoCString extends;
   ResolveBaseBinding();
   if (mBaseBindingURI)
     mBaseBindingURI->GetSpec(extends);

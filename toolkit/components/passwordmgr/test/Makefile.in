@@ -11,11 +11,9 @@ relativesrcdir = @relativesrcdir@
 
 include $(topsrcdir)/config/config.mk
 
-ifneq (mobile,$(MOZ_BUILD_APP))
 DIRS = \
     browser \
     $(NULL)
-endif
 
 # Module name for xpcshell tests.
 MODULE = test_passwordmgr
@@ -51,6 +49,7 @@ MOCHITEST_FILES = \
     test_maxforms_2.html \
     test_maxforms_3.html \
     test_notifications.html \
+    test_notifications_popup.html \
     test_privbrowsing.html \
     test_prompt_async.html \
     test_xhr.html \
@@ -76,6 +75,8 @@ MOCHITEST_FILES = \
     subtst_notifications_8.html \
     subtst_notifications_9.html \
     subtst_notifications_10.html \
+    subtst_notifications_11.html \
+    subtst_notifications_11_popup.html \
     subtst_prompt_async.html \
     $(NULL)
 

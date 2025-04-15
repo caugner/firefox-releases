@@ -14,16 +14,20 @@
 
 #include "nsThreadUtils.h"
 #include "nsICryptoHash.h"
-#include "nsIFaviconService.h" 
+#ifdef MOZ_PLACES
+#include "nsIFaviconService.h"
+#endif
 #include "nsIDownloader.h"
+#include "nsIURI.h"
 
+#include "mozilla/Attributes.h"
 
 class nsWindow;
 
 namespace mozilla {
 namespace widget {
 
-class myDownloadObserver: public nsIDownloadObserver
+class myDownloadObserver MOZ_FINAL : public nsIDownloadObserver
 {
 public:
   NS_DECL_ISUPPORTS
@@ -216,7 +220,8 @@ private:
   static bool VistaCreateItemFromParsingNameInit();
 };
 
-class AsyncFaviconDataReady : public nsIFaviconDataCallback
+#ifdef MOZ_PLACES
+class AsyncFaviconDataReady MOZ_FINAL : public nsIFaviconDataCallback
 {
 public:
   NS_DECL_ISUPPORTS
@@ -231,6 +236,7 @@ private:
   nsCOMPtr<nsIThread> mIOThread;
   const bool mURLShortcut;
 };
+#endif
 
 /**
   * Asynchronously tries add the list to the build
@@ -252,7 +258,7 @@ public:
 
 private:
   nsAutoString mIconPath;
-  nsCAutoString mMimeTypeOfInputData;
+  nsAutoCString mMimeTypeOfInputData;
   nsAutoArrayPtr<uint8_t> mBuffer;
   uint32_t mBufferLength;
 };

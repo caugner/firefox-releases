@@ -237,7 +237,7 @@ nsChromeRegistryChrome::IsLocaleRTL(const nsACString& package, bool *aResult)
 {
   *aResult = false;
 
-  nsCAutoString locale;
+  nsAutoCString locale;
   GetSelectedLocale(package, locale);
   if (locale.Length() < 2)
     return NS_OK;
@@ -245,7 +245,7 @@ nsChromeRegistryChrome::IsLocaleRTL(const nsACString& package, bool *aResult)
   // first check the intl.uidirection.<locale> preference, and if that is not
   // set, check the same preference but with just the first two characters of
   // the locale. If that isn't set, default to left-to-right.
-  nsCAutoString prefString = NS_LITERAL_CSTRING("intl.uidirection.") + locale;
+  nsAutoCString prefString = NS_LITERAL_CSTRING("intl.uidirection.") + locale;
   nsCOMPtr<nsIPrefBranch> prefBranch (do_GetService(NS_PREFSERVICE_CONTRACTID));
   if (!prefBranch)
     return NS_OK;
@@ -255,7 +255,7 @@ nsChromeRegistryChrome::IsLocaleRTL(const nsACString& package, bool *aResult)
   if (dir.IsEmpty()) {
     int32_t hyphen = prefString.FindChar('-');
     if (hyphen >= 1) {
-      nsCAutoString shortPref(Substring(prefString, 0, hyphen));
+      nsAutoCString shortPref(Substring(prefString, 0, hyphen));
       prefBranch->GetCharPref(shortPref.get(), getter_Copies(dir));
     }
   }
@@ -291,7 +291,7 @@ nsChromeRegistryChrome::SelectLocaleFromPref(nsIPrefBranch* prefs)
 
   if (NS_SUCCEEDED(rv) && matchOSLocale) {
     // compute lang and region code only when needed!
-    nsCAutoString uiLocale;
+    nsAutoCString uiLocale;
     rv = getUILangCountry(uiLocale);
     if (NS_SUCCEEDED(rv))
       mSelectedLocale = uiLocale;
@@ -449,11 +449,11 @@ nsChromeRegistryChrome::SendRegisteredChrome(
   PL_DHashTableEnumerate(&mPackagesHash, CollectPackages, &args);
 
   nsCOMPtr<nsIIOService> io (do_GetIOService());
-  NS_ENSURE_TRUE(io, );
+  NS_ENSURE_TRUE_VOID(io);
 
   nsCOMPtr<nsIProtocolHandler> ph;
   nsresult rv = io->GetProtocolHandler("resource", getter_AddRefs(ph));
-  NS_ENSURE_SUCCESS(rv, );
+  NS_ENSURE_SUCCESS_VOID(rv);
 
   //FIXME: Some substitutions are set up lazily and might not exist yet
   nsCOMPtr<nsIResProtocolHandler> irph (do_QueryInterface(ph));
@@ -464,7 +464,7 @@ nsChromeRegistryChrome::SendRegisteredChrome(
 
   bool success = aParent->SendRegisterChrome(packages, resources, overrides,
                                              mSelectedLocale);
-  NS_ENSURE_TRUE(success, );
+  NS_ENSURE_TRUE_VOID(success);
 }
 
 PLDHashOperator

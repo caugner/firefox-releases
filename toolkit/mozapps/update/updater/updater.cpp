@@ -80,6 +80,10 @@ void LaunchMacPostProcess(const char* aAppExe);
 #define USE_EXECV
 #endif
 
+#if defined(MOZ_WIDGET_GONK)
+# include "automounter_gonk.h"
+#endif
+
 #ifdef XP_WIN
 #include "updatehelper.h"
 
@@ -268,6 +272,7 @@ static bool gSucceeded = false;
 static bool sBackgroundUpdate = false;
 static bool sReplaceRequest = false;
 static bool sUsingService = false;
+static bool sIsOSUpdate = false;
 
 #ifdef XP_WIN
 // The current working directory specified in the command line.
@@ -2019,6 +2024,7 @@ WaitForServiceFinishThread(void *param)
 }
 #endif
 
+#ifdef MOZ_VERIFY_MAR_SIGNATURE
 /**
  * This function reads in the ACCEPTED_MAR_CHANNEL_IDS from update-settings.ini
  *
@@ -2041,6 +2047,7 @@ ReadMARChannelIDs(const NS_tchar *path, MARChannelStringTable *results)
 
   return result;
 }
+#endif
 
 static void
 UpdateThreadFunc(void *param)
@@ -2088,7 +2095,7 @@ UpdateThreadFunc(void *param)
     }
 #endif
 
-    if (rv == OK && sBackgroundUpdate) {
+    if (rv == OK && sBackgroundUpdate && !sIsOSUpdate) {
       rv = CopyInstallDirToDestDir();
     }
 
@@ -2124,7 +2131,8 @@ UpdateThreadFunc(void *param)
 
       ensure_remove_recursive(stageDir);
       WriteStatusFile(sUsingService ? "pending-service" : "pending");
-      putenv("MOZ_PROCESS_UPDATES="); // We need to use -process-updates again in the tests
+      char processUpdates[] = "MOZ_PROCESS_UPDATES=";
+      putenv(processUpdates); // We need to use -process-updates again in the tests
       reportRealResults = false; // pretend success
     }
   }
@@ -2251,6 +2259,11 @@ int NS_main(int argc, NS_tchar **argv)
       // with an updated version applied in the background.
       sReplaceRequest = true;
     }
+  }
+
+  if (getenv("MOZ_OS_UPDATE")) {
+    sIsOSUpdate = true;
+    putenv(const_cast<char*>("MOZ_OS_UPDATE="));
   }
 
   if (sReplaceRequest) {
@@ -2634,6 +2647,25 @@ int NS_main(int argc, NS_tchar **argv)
   }
 #endif
 
+#if defined(MOZ_WIDGET_GONK)
+  // In gonk, the master b2g process sets its umask to 0027 because
+  // there's no reason for it to ever create world-readable files.
+  // The updater binary, however, needs to do this, and it inherits
+  // the master process's cautious umask.  So we drop down a bit here.
+  umask(0022);
+
+  // Remount the /system partition as read-write for gonk. The destructor will
+  // remount /system as read-only. We add an extra level of scope here to avoid
+  // calling LogFinish() before the GonkAutoMounter destructor has a chance
+  // to be called
+  {
+    GonkAutoMounter mounter;
+    if (mounter.GetAccess() != MountAccess::ReadWrite) {
+      WriteStatusFile(FILESYSTEM_MOUNT_READWRITE_ERROR);
+      return 1;
+    }
+#endif
+
   if (sBackgroundUpdate) {
     // For background updates, we want to blow away the old installation
     // directory and create it from scratch.
@@ -2875,6 +2907,10 @@ int NS_main(int argc, NS_tchar **argv)
   }
 #endif /* XP_WIN */
 
+#if defined(MOZ_WIDGET_GONK)
+  } // end the extra level of scope for the GonkAutoMounter
+#endif
+
   LogFinish();
 
   if (argc > callbackIndex) {
@@ -2905,6 +2941,7 @@ int NS_main(int argc, NS_tchar **argv)
       LaunchMacPostProcess(argv[callbackIndex]);
     }
 #endif /* XP_MACOSX */
+
     LaunchCallbackApp(argv[4], 
                       argc - callbackIndex, 
                       argv + callbackIndex, 
@@ -3357,6 +3394,10 @@ GetManifestContents(const NS_tchar *manifest)
 
 int AddPreCompleteActions(ActionList *list)
 {
+  if (sIsOSUpdate) {
+    return OK;
+  }
+
   NS_tchar *rb = GetManifestContents(NS_T("precomplete"));
   if (rb == NULL) {
     LOG(("AddPreCompleteActions: error getting contents of precomplete " \

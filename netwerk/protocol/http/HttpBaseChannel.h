@@ -30,6 +30,7 @@
 #include "nsILoadContext.h"
 #include "mozilla/net/NeckoCommon.h"
 #include "nsThreadUtils.h"
+#include "PrivateBrowsingChannel.h"
 
 namespace mozilla {
 namespace net {
@@ -50,6 +51,7 @@ class HttpBaseChannel : public nsHashPropertyBag
                       , public nsISupportsPriority
                       , public nsIResumableChannel
                       , public nsITraceableChannel
+                      , public PrivateBrowsingChannel<HttpBaseChannel>
 {
 public:
   NS_DECL_ISUPPORTS_INHERITED
@@ -60,7 +62,9 @@ public:
   HttpBaseChannel();
   virtual ~HttpBaseChannel();
 
-  virtual nsresult Init(nsIURI *aURI, uint8_t aCaps, nsProxyInfo *aProxyInfo);
+  virtual nsresult Init(nsIURI *aURI, uint8_t aCaps, nsProxyInfo *aProxyInfo,
+                        uint32_t aProxyResolveFlags,
+                        nsIURI *aProxyURI);
 
   // nsIRequest
   NS_IMETHOD GetName(nsACString& aName);
@@ -84,7 +88,9 @@ public:
   NS_IMETHOD GetContentCharset(nsACString& aContentCharset);
   NS_IMETHOD SetContentCharset(const nsACString& aContentCharset);
   NS_IMETHOD GetContentDisposition(uint32_t *aContentDisposition);
+  NS_IMETHOD SetContentDisposition(uint32_t aContentDisposition);
   NS_IMETHOD GetContentDispositionFilename(nsAString& aContentDispositionFilename);
+  NS_IMETHOD SetContentDispositionFilename(const nsAString& aContentDispositionFilename);
   NS_IMETHOD GetContentDispositionHeader(nsACString& aContentDispositionHeader);
   NS_IMETHOD GetContentLength(int32_t *aContentLength);
   NS_IMETHOD SetContentLength(int32_t aContentLength);
@@ -183,14 +189,14 @@ public:
 
 public: /* Necko internal use only... */
 
-  bool ShouldRewriteRedirectToGET(uint32_t httpStatus, nsHttpAtom method);
-  bool IsSafeMethod(nsHttpAtom method);
-
 protected:
 
   // Handle notifying listener, removing from loadgroup if request failed.
   void     DoNotifyListener();
   virtual void DoNotifyListenerCleanup() = 0;
+
+  // drop reference to listener, its callbacks, and the progress sink
+  void ReleaseListeners();
 
   nsresult ApplyContentConversions();
 
@@ -208,6 +214,8 @@ protected:
                                   getter_AddRefs(aResult));
   }
 
+  friend class PrivateBrowsingChannel<HttpBaseChannel>;
+
   nsCOMPtr<nsIURI>                  mURI;
   nsCOMPtr<nsIURI>                  mOriginalURI;
   nsCOMPtr<nsIURI>                  mDocumentURI;
@@ -224,6 +232,7 @@ protected:
   nsCOMPtr<nsIInputStream>          mUploadStream;
   nsAutoPtr<nsHttpResponseHead>     mResponseHead;
   nsRefPtr<nsHttpConnectionInfo>    mConnectionInfo;
+  nsCOMPtr<nsIProxyInfo>            mProxyInfo;
 
   nsCString                         mSpec; // ASCII encoded URL spec
   nsCString                         mContentTypeHint;
@@ -263,12 +272,17 @@ protected:
   // True if timing collection is enabled
   uint32_t                          mTimingEnabled              : 1;
   uint32_t                          mAllowSpdy                  : 1;
-  uint32_t                          mPrivateBrowsing            : 1;
 
   // Current suspension depth for this channel object
   uint32_t                          mSuspendCount;
 
   nsAutoPtr<nsTArray<nsCString> >   mRedirectedCachekeys;
+
+  uint32_t                          mProxyResolveFlags;
+  nsCOMPtr<nsIURI>                  mProxyURI;
+
+  uint32_t                          mContentDispositionHint;
+  nsAutoPtr<nsString>               mContentDispositionFilename;
 };
 
 // Share some code while working around C++'s absurd inability to handle casting

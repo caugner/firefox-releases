@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifdef MOZ_WIDGET_QT
+#include <unistd.h> // for _exit()
 #include <QtCore/QTimer>
 #include "nsQAppInstance.h"
 #include "NestedLoopTimer.h"
@@ -168,15 +169,23 @@ PluginModuleChild::Init(const std::string& aPluginFilename,
 
     // Maemo flash can render with any provided rectangle and so does not
     // require this quirk.
-#if defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)
+#if (defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)) || defined(OS_MACOSX)
     nsPluginInfo info = nsPluginInfo();
     if (NS_FAILED(pluginFile.GetPluginInfo(info, &mLibrary)))
         return false;
 
+#if defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)
     NS_NAMED_LITERAL_CSTRING(flash10Head, "Shockwave Flash 10.");
     if (StringBeginsWith(nsDependentCString(info.fDescription), flash10Head)) {
         AddQuirk(QUIRK_FLASH_EXPOSE_COORD_TRANSLATION);
     }
+#else // defined(OS_MACOSX)
+    mozilla::plugins::PluginUtilsOSX::SetProcessName(info.fName);
+    NS_NAMED_LITERAL_CSTRING(flashHead, "Shockwave Flash");
+    if (StringBeginsWith(nsDependentCString(info.fDescription), flashHead)) {
+        AddQuirk(QUIRK_FLASH_AVOID_CGMODE_CRASHES);
+    }
+#endif
 
     if (!mLibrary)
 #endif
@@ -196,7 +205,7 @@ PluginModuleChild::Init(const std::string& aPluginFilename,
 
     // TODO: use PluginPRLibrary here
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_BSD)
     mShutdownFunc =
         (NP_PLUGINSHUTDOWN) PR_FindFunctionSymbol(mLibrary, "NP_Shutdown");
 
@@ -221,13 +230,6 @@ PluginModuleChild::Init(const std::string& aPluginFilename,
 
 #  error Please copy the initialization code from nsNPAPIPlugin.cpp
 
-#endif
-
-#ifdef XP_MACOSX
-    nsPluginInfo info = nsPluginInfo();
-    if (pluginFile.GetPluginInfo(info, &mLibrary) == NS_OK) {
-        mozilla::plugins::PluginUtilsOSX::SetProcessName(info.fName);
-    }
 #endif
 
     return true;
@@ -1827,7 +1829,7 @@ PluginModuleChild::AnswerNP_GetEntryPoints(NPError* _retval)
     PLUGIN_LOG_DEBUG_METHOD;
     AssertPluginThread();
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_BSD)
     return true;
 #elif defined(OS_WIN) || defined(OS_MACOSX)
     *_retval = mGetEntryPointsFunc(&mFunctions);
@@ -1856,7 +1858,7 @@ PluginModuleChild::AnswerNP_Initialize(const uint32_t& aFlags, NPError* _retval)
     SendBackUpXResources(FileDescriptor(xSocketFd));
 #endif
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_BSD)
     *_retval = mInitializeFunc(&sBrowserFuncs, &mFunctions);
     return true;
 #elif defined(OS_WIN) || defined(OS_MACOSX)
@@ -2295,7 +2297,7 @@ PluginModuleChild::NPN_IntFromIdentifier(NPIdentifier aIdentifier)
     if (!static_cast<PluginIdentifierChild*>(aIdentifier)->IsString()) {
       return static_cast<PluginIdentifierChildInt*>(aIdentifier)->ToInt();
     }
-    return PR_INT32_MIN;
+    return INT32_MIN;
 }
 
 #ifdef OS_WIN

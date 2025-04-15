@@ -30,10 +30,11 @@
 #include "DOMBindingInlines.h"
 #include "mozilla/Attributes.h"
 
+using namespace mozilla;
+
 USING_WORKERS_NAMESPACE
 
 using mozilla::dom::workers::exceptions::ThrowDOMExceptionForNSResult;
-using mozilla::ErrorResult;
 
 // XXX Need to figure this out...
 #define UNCATCHABLE_EXCEPTION NS_ERROR_OUT_OF_MEMORY
@@ -90,6 +91,10 @@ public:
   WorkerPrivate* mWorkerPrivate;
   XMLHttpRequest* mXMLHttpRequestPrivate;
 
+  // XHR Params:
+  bool mMozAnon;
+  bool mMozSystem;
+
   // Only touched on the main thread.
   nsRefPtr<nsXMLHttpRequest> mXHR;
   nsCOMPtr<nsIXMLHttpRequestUpload> mXHRUpload;
@@ -121,15 +126,16 @@ public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDOMEVENTLISTENER
 
-  Proxy(XMLHttpRequest* aXHRPrivate)
+  Proxy(XMLHttpRequest* aXHRPrivate, bool aMozAnon, bool aMozSystem)
   : mWorkerPrivate(nullptr), mXMLHttpRequestPrivate(aXHRPrivate),
+    mMozAnon(aMozAnon), mMozSystem(aMozSystem),
     mInnerEventStreamId(0), mInnerChannelId(0), mOutstandingSendCount(0),
     mOuterEventStreamId(0), mOuterChannelId(0), mLastLoaded(0), mLastTotal(0),
     mLastUploadLoaded(0), mLastUploadTotal(0), mIsSyncXHR(false),
     mLastLengthComputable(false), mLastUploadLengthComputable(false),
     mSeenLoadStart(false), mSeenUploadLoadStart(false),
-    mSyncQueueKey(PR_UINT32_MAX),
-    mSyncEventResponseSyncQueueKey(PR_UINT32_MAX),
+    mSyncQueueKey(UINT32_MAX),
+    mSyncEventResponseSyncQueueKey(UINT32_MAX),
     mUploadEventListenersAttached(false), mMainThreadSeenLoadStart(false),
     mInOpen(false)
   { }
@@ -157,6 +163,8 @@ public:
         mXHR = nullptr;
         return false;
       }
+
+      mXHR->SetParameters(mMozAnon, mMozSystem);
 
       if (NS_FAILED(mXHR->GetUpload(getter_AddRefs(mXHRUpload)))) {
         mXHR = nullptr;
@@ -193,7 +201,7 @@ public:
   GetSyncQueueKey()
   {
     AssertIsOnMainThread();
-    return mSyncEventResponseSyncQueueKey == PR_UINT32_MAX ?
+    return mSyncEventResponseSyncQueueKey == UINT32_MAX ?
            mSyncQueueKey :
            mSyncEventResponseSyncQueueKey;
   }
@@ -203,8 +211,8 @@ public:
   {
     AssertIsOnMainThread();
 
-    return mSyncQueueKey == PR_UINT32_MAX &&
-           mSyncEventResponseSyncQueueKey == PR_UINT32_MAX;
+    return mSyncQueueKey == UINT32_MAX &&
+           mSyncEventResponseSyncQueueKey == UINT32_MAX;
   }
 };
 
@@ -422,7 +430,7 @@ class LoadStartDetectionRunnable MOZ_FINAL : public nsIRunnable,
         return true;
       }
 
-      if (mSyncQueueKey != PR_UINT32_MAX) {
+      if (mSyncQueueKey != UINT32_MAX) {
         aWorkerPrivate->StopSyncLoop(mSyncQueueKey, true);
       }
 
@@ -606,7 +614,7 @@ public:
 
     xhr->GetStatusText(mStatusText);
 
-    mReadyState = xhr->GetReadyState();
+    mReadyState = xhr->ReadyState();
 
     return true;
   }
@@ -1191,7 +1199,7 @@ public:
     NS_ASSERTION(!mProxy->mWorkerPrivate, "Should be null!");
     mProxy->mWorkerPrivate = mWorkerPrivate;
 
-    NS_ASSERTION(mProxy->mSyncQueueKey == PR_UINT32_MAX, "Should be unset!");
+    NS_ASSERTION(mProxy->mSyncQueueKey == UINT32_MAX, "Should be unset!");
     mProxy->mSyncQueueKey = mSyncQueueKey;
 
     if (mHasUploadListeners) {
@@ -1434,7 +1442,7 @@ XMLHttpRequest::XMLHttpRequest(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
   mWorkerPrivate(aWorkerPrivate),
   mResponseType(XMLHttpRequestResponseTypeValues::Text), mTimeout(0),
   mJSObjectRooted(false), mMultipart(false), mBackgroundRequest(false),
-  mWithCredentials(false), mCanceled(false)
+  mWithCredentials(false), mCanceled(false), mMozAnon(false), mMozSystem(false)
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
 }
@@ -1479,7 +1487,10 @@ XMLHttpRequest::Constructor(JSContext* aCx,
     return NULL;
   }
 
-  // TODO: process aParams. See bug 761227
+  if (workerPrivate->XHRParamsAllowed()) {
+    xhr->mMozAnon = aParams.mozAnon;
+    xhr->mMozSystem = aParams.mozSystem;
+  }
 
   xhr->mJSObject = xhr->GetJSObject();
   return xhr;
@@ -1682,7 +1693,7 @@ XMLHttpRequest::SendInternal(const nsAString& aStringBody,
 
   AutoUnpinXHR autoUnpin(this);
 
-  uint32_t syncQueueKey = PR_UINT32_MAX;
+  uint32_t syncQueueKey = UINT32_MAX;
   if (mProxy->mIsSyncXHR) {
     syncQueueKey = mWorkerPrivate->CreateNewSyncLoop();
   }
@@ -1744,7 +1755,7 @@ XMLHttpRequest::Open(const nsAString& aMethod, const nsAString& aUrl,
     }
   }
   else {
-    mProxy = new Proxy(this);
+    mProxy = new Proxy(this, mMozAnon, mMozSystem);
   }
 
   mProxy->mOuterEventStreamId++;

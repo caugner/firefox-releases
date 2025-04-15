@@ -53,15 +53,14 @@ InsertTransactionSorted(nsTArray<nsHttpTransaction*> &pendingQ, nsHttpTransactio
 //-----------------------------------------------------------------------------
 
 nsHttpConnectionMgr::nsHttpConnectionMgr()
-    : mRef(0)
-    , mReentrantMonitor("nsHttpConnectionMgr.mReentrantMonitor")
+    : mReentrantMonitor("nsHttpConnectionMgr.mReentrantMonitor")
     , mMaxConns(0)
     , mMaxPersistConnsPerHost(0)
     , mMaxPersistConnsPerProxy(0)
     , mIsShuttingDown(false)
     , mNumActiveConns(0)
     , mNumIdleConns(0)
-    , mTimeOfNextWakeUp(LL_MAXUINT)
+    , mTimeOfNextWakeUp(UINT64_MAX)
     , mTimeoutTickArmed(false)
 {
     LOG(("Creating nsHttpConnectionMgr @%x\n", this));
@@ -78,19 +77,13 @@ nsHttpConnectionMgr::~nsHttpConnectionMgr()
 }
 
 nsresult
-nsHttpConnectionMgr::EnsureSocketThreadTargetIfOnline()
+nsHttpConnectionMgr::EnsureSocketThreadTarget()
 {
     nsresult rv;
     nsCOMPtr<nsIEventTarget> sts;
     nsCOMPtr<nsIIOService> ioService = do_GetIOService(&rv);
-    if (NS_SUCCEEDED(rv)) {
-        bool offline = true;
-        ioService->GetOffline(&offline);
-
-        if (!offline) {
-            sts = do_GetService(NS_SOCKETTRANSPORTSERVICE_CONTRACTID, &rv);
-        }
-    }
+    if (NS_SUCCEEDED(rv))
+        sts = do_GetService(NS_SOCKETTRANSPORTSERVICE_CONTRACTID, &rv);
 
     ReentrantMonitorAutoEnter mon(mReentrantMonitor);
 
@@ -126,7 +119,7 @@ nsHttpConnectionMgr::Init(uint16_t maxConns,
         mIsShuttingDown = false;
     }
 
-    return EnsureSocketThreadTargetIfOnline();
+    return EnsureSocketThreadTarget();
 }
 
 nsresult
@@ -167,11 +160,7 @@ nsHttpConnectionMgr::Shutdown()
 nsresult
 nsHttpConnectionMgr::PostEvent(nsConnEventHandler handler, int32_t iparam, void *vparam)
 {
-    // This object doesn't get reinitialized if the offline state changes, so our
-    // socket thread target might be uninitialized if we were offline when this
-    // object was being initialized, and we go online later on.  This call takes
-    // care of initializing the socket thread target if that's the case.
-    EnsureSocketThreadTargetIfOnline();
+    EnsureSocketThreadTarget();
 
     ReentrantMonitorAutoEnter mon(mReentrantMonitor);
 
@@ -216,7 +205,7 @@ nsHttpConnectionMgr::ConditionallyStopPruneDeadConnectionsTimer()
     LOG(("nsHttpConnectionMgr::StopPruneDeadConnectionsTimer\n"));
 
     // Reset mTimeOfNextWakeUp so that we can find a new shortest value.
-    mTimeOfNextWakeUp = LL_MAXUINT;
+    mTimeOfNextWakeUp = UINT64_MAX;
     if (mTimer) {
         mTimer->Cancel();
         mTimer = NULL;
@@ -344,11 +333,7 @@ nsHttpConnectionMgr::SpeculativeConnect(nsHttpConnectionInfo *ci,
 nsresult
 nsHttpConnectionMgr::GetSocketThreadTarget(nsIEventTarget **target)
 {
-    // This object doesn't get reinitialized if the offline state changes, so our
-    // socket thread target might be uninitialized if we were offline when this
-    // object was being initialized, and we go online later on.  This call takes
-    // care of initializing the socket thread target if that's the case.
-    EnsureSocketThreadTargetIfOnline();
+    EnsureSocketThreadTarget();
 
     ReentrantMonitorAutoEnter mon(mReentrantMonitor);
     NS_IF_ADDREF(*target = mSocketThreadTarget);
@@ -397,7 +382,8 @@ nsresult
 nsHttpConnectionMgr::UpdateParam(nsParamName name, uint16_t value)
 {
     uint32_t param = (uint32_t(name) << 16) | uint32_t(value);
-    return PostEvent(&nsHttpConnectionMgr::OnMsgUpdateParam, 0, (void *) param);
+    return PostEvent(&nsHttpConnectionMgr::OnMsgUpdateParam, 0,
+                     (void *)(uintptr_t) param);
 }
 
 nsresult
@@ -664,7 +650,7 @@ nsHttpConnectionMgr::GetSpdyPreferredEnt(nsConnectionEntry *aOriginalEntry)
 
     nsCOMPtr<nsISupports> securityInfo;
     nsCOMPtr<nsISSLSocketControl> sslSocketControl;
-    nsCAutoString negotiatedNPN;
+    nsAutoCString negotiatedNPN;
     
     activeSpdy->GetSecurityInfo(getter_AddRefs(securityInfo));
     if (!securityInfo) {
@@ -777,7 +763,7 @@ nsHttpConnectionMgr::PruneDeadConnectionsCB(const nsACString &key,
 
     // Find out how long it will take for next idle connection to not be reusable
     // anymore.
-    uint32_t timeToNextExpire = PR_UINT32_MAX;
+    uint32_t timeToNextExpire = UINT32_MAX;
     int32_t count = ent->mIdleConns.Length();
     if (count > 0) {
         for (int32_t i=count-1; i>=0; --i) {
@@ -812,7 +798,7 @@ nsHttpConnectionMgr::PruneDeadConnectionsCB(const nsACString &key,
     
     // If time to next expire found is shorter than time to next wake-up, we need to
     // change the time for next wake-up.
-    if (timeToNextExpire != PR_UINT32_MAX) {
+    if (timeToNextExpire != UINT32_MAX) {
         uint32_t now = NowInSeconds();
         uint64_t timeOfNextExpire = now + timeToNextExpire;
         // If pruning of dead connections is not already scheduled to happen
@@ -959,7 +945,7 @@ nsHttpConnectionMgr::ProcessPendingQForEntry(nsConnectionEntry *ent)
         if (dispatchedSuccessfully)
             return true;
 
-        NS_ABORT_IF_FALSE(count == ((int32_t) ent->mPendingQ.Length()),
+        NS_ABORT_IF_FALSE(count == ent->mPendingQ.Length(),
                           "something mutated pending queue from "
                           "GetConnection()");
     }
@@ -1045,7 +1031,7 @@ nsHttpConnectionMgr::ReportFailedToProcess(nsIURI *uri)
 {
     NS_ABORT_IF_FALSE(uri, "precondition");
 
-    nsCAutoString host;
+    nsAutoCString host;
     int32_t port = -1;
     bool usingSSL = false;
     bool isHttp = false;
@@ -1062,15 +1048,27 @@ nsHttpConnectionMgr::ReportFailedToProcess(nsIURI *uri)
     if (NS_FAILED(rv) || !isHttp || host.IsEmpty())
         return;
 
-    // report the event for both the anonymous and non-anonymous
-    // versions of this host
+    // report the event for all the permutations of anonymous and
+    // private versions of this host
     nsRefPtr<nsHttpConnectionInfo> ci =
         new nsHttpConnectionInfo(host, port, nullptr, usingSSL);
     ci->SetAnonymous(false);
+    ci->SetPrivate(false);
     PipelineFeedbackInfo(ci, RedCorruptedContent, nullptr, 0);
 
-    ci = new nsHttpConnectionInfo(host, port, nullptr, usingSSL);
+    ci = ci->Clone();
+    ci->SetAnonymous(false);
+    ci->SetPrivate(true);
+    PipelineFeedbackInfo(ci, RedCorruptedContent, nullptr, 0);
+
+    ci = ci->Clone();
     ci->SetAnonymous(true);
+    ci->SetPrivate(false);
+    PipelineFeedbackInfo(ci, RedCorruptedContent, nullptr, 0);
+
+    ci = ci->Clone();
+    ci->SetAnonymous(true);
+    ci->SetPrivate(true);
     PipelineFeedbackInfo(ci, RedCorruptedContent, nullptr, 0);
 }
 
@@ -1295,7 +1293,7 @@ nsHttpConnectionMgr::AddToShortestPipeline(nsConnectionEntry *ent,
     // keeping the pipelines to a modest depth during that period limits
     // the damage if something is going to go wrong.
 
-    maxdepth = PR_MIN(maxdepth, depthLimit);
+    maxdepth = NS_MIN<uint32_t>(maxdepth, depthLimit);
 
     if (maxdepth < 2)
         return false;
@@ -1345,6 +1343,18 @@ nsHttpConnectionMgr::AddToShortestPipeline(nsConnectionEntry *ent,
 
     if ((ent->PipelineState() == PS_YELLOW) && (trans->PipelinePosition() > 1))
         ent->SetYellowConnection(bestConn);
+
+    if (!trans->GetPendingTime().IsNull()) {
+        if (trans->UsesPipelining())
+            AccumulateTimeDelta(
+                Telemetry::TRANSACTION_WAIT_TIME_HTTP_PIPELINES,
+                trans->GetPendingTime(), mozilla::TimeStamp::Now());
+        else
+            AccumulateTimeDelta(
+                Telemetry::TRANSACTION_WAIT_TIME_HTTP,
+                trans->GetPendingTime(), mozilla::TimeStamp::Now());
+        trans->SetPendingTime(false);
+    }
     return true;
 }
 
@@ -1531,6 +1541,7 @@ nsHttpConnectionMgr::DispatchTransaction(nsConnectionEntry *ent,
 {
     uint8_t caps = trans->Caps();
     int32_t priority = trans->Priority();
+    nsresult rv;
 
     LOG(("nsHttpConnectionMgr::DispatchTransaction "
          "[ci=%s trans=%x caps=%x conn=%x priority=%d]\n",
@@ -1541,8 +1552,13 @@ nsHttpConnectionMgr::DispatchTransaction(nsConnectionEntry *ent,
              "Connection host = %s\n",
              trans->ConnectionInfo()->Host(),
              conn->ConnectionInfo()->Host()));
-        nsresult rv = conn->Activate(trans, caps, priority);
+        rv = conn->Activate(trans, caps, priority);
         NS_ABORT_IF_FALSE(NS_SUCCEEDED(rv), "SPDY Cannot Fail Dispatch");
+        if (NS_SUCCEEDED(rv) && !trans->GetPendingTime().IsNull()) {
+            AccumulateTimeDelta(Telemetry::TRANSACTION_WAIT_TIME_SPDY,
+                trans->GetPendingTime(), mozilla::TimeStamp::Now());
+            trans->SetPendingTime(false);
+        }
         return rv;
     }
 
@@ -1554,7 +1570,17 @@ nsHttpConnectionMgr::DispatchTransaction(nsConnectionEntry *ent,
     else
         conn->Classify(trans->Classification());
 
-    return DispatchAbstractTransaction(ent, trans, caps, conn, priority);
+    rv = DispatchAbstractTransaction(ent, trans, caps, conn, priority);
+    if (NS_SUCCEEDED(rv) && !trans->GetPendingTime().IsNull()) {
+        if (trans->UsesPipelining())
+            AccumulateTimeDelta(Telemetry::TRANSACTION_WAIT_TIME_HTTP_PIPELINES,
+                trans->GetPendingTime(), mozilla::TimeStamp::Now());
+        else
+            AccumulateTimeDelta(Telemetry::TRANSACTION_WAIT_TIME_HTTP,
+                trans->GetPendingTime(), mozilla::TimeStamp::Now());
+        trans->SetPendingTime(false);
+    }
+    return rv;
 }
 
 
@@ -1659,6 +1685,8 @@ nsHttpConnectionMgr::ProcessNewTransaction(nsHttpTransaction *trans)
         return NS_OK;
     }
 
+    trans->SetPendingTime();
+
     nsresult rv = NS_OK;
     nsHttpConnectionInfo *ci = trans->ConnectionInfo();
     NS_ASSERTION(ci, "no connection info");
@@ -1675,11 +1703,6 @@ nsHttpConnectionMgr::ProcessNewTransaction(nsHttpTransaction *trans)
 
         ent = preferredEntry;
     }
-
-    // If we are doing a force reload then close out any existing conns
-    // to this host so that changes in DNS, LBs, etc.. are reflected
-    if (trans->Caps() & NS_HTTP_CLEAR_KEEPALIVES)
-        ClosePersistentConnections(ent);
 
     // Check if the transaction already has a sticky reference to a connection.
     // If so, then we can just use it directly by transferring its reference
@@ -1975,7 +1998,7 @@ nsHttpConnectionMgr::OnMsgPruneDeadConnections(int32_t, void *)
     LOG(("nsHttpConnectionMgr::OnMsgPruneDeadConnections\n"));
 
     // Reset mTimeOfNextWakeUp so that we can find a new shortest value.
-    mTimeOfNextWakeUp = LL_MAXUINT;
+    mTimeOfNextWakeUp = UINT64_MAX;
 
     // check canreuse() for all idle connections plus any active connections on
     // connection entries that are using spdy.
@@ -2972,8 +2995,10 @@ nsConnectionEntry::OnPipelineFeedbackInfo(
             NS_ABORT_IF_FALSE(0, "Unknown Bad/Red Pipeline Feedback Event");
         }
         
-        mPipeliningPenalty = PR_MIN(mPipeliningPenalty, 25000);
-        mPipeliningClassPenalty[classification] = PR_MIN(mPipeliningClassPenalty[classification], 25000);
+        const int16_t kPenalty = 25000;
+        mPipeliningPenalty = NS_MIN(mPipeliningPenalty, kPenalty);
+        mPipeliningClassPenalty[classification] =
+          NS_MIN(mPipeliningClassPenalty[classification], kPenalty);
             
         LOG(("Assessing red penalty to %s class %d for event %d. "
              "Penalty now %d, throttle[%d] = %d\n", mConnInfo->Host(),
@@ -2984,8 +3009,8 @@ nsConnectionEntry::OnPipelineFeedbackInfo(
         // hand out credits for neutral and good events such as
         // "headers look ok" events
 
-        mPipeliningPenalty = PR_MAX(mPipeliningPenalty - 1, 0);
-        mPipeliningClassPenalty[classification] = PR_MAX(mPipeliningClassPenalty[classification] - 1, 0);
+        mPipeliningPenalty = NS_MAX(mPipeliningPenalty - 1, 0);
+        mPipeliningClassPenalty[classification] = NS_MAX(mPipeliningClassPenalty[classification] - 1, 0);
     }
 
     if (mPipelineState == PS_RED && !mPipeliningPenalty)
@@ -3046,13 +3071,13 @@ nsHttpConnectionMgr::nsConnectionEntry::CreditPenalty()
     bool failed = false;
     if (creditsEarned > 0) {
         mPipeliningPenalty = 
-            PR_MAX(int32_t(mPipeliningPenalty - creditsEarned), 0);
+            NS_MAX(int32_t(mPipeliningPenalty - creditsEarned), 0);
         if (mPipeliningPenalty > 0)
             failed = true;
         
         for (int32_t i = 0; i < nsAHttpTransaction::CLASS_MAX; ++i) {
             mPipeliningClassPenalty[i]  =
-                PR_MAX(int32_t(mPipeliningClassPenalty[i] - creditsEarned), 0);
+                NS_MAX(int32_t(mPipeliningClassPenalty[i] - creditsEarned), 0);
             failed = failed || (mPipeliningClassPenalty[i] > 0);
         }
 

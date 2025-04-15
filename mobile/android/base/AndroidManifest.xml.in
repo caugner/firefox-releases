@@ -18,7 +18,8 @@
     <uses-sdk android:minSdkVersion="8"
               android:targetSdkVersion="14"/>
 
-#include ../sync/manifests/SyncAndroidManifest_permissions.xml.in
+#include ../services/manifests/AnnouncementsAndroidManifest_permissions.xml.in
+#include ../services/manifests/SyncAndroidManifest_permissions.xml.in
 
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
@@ -113,6 +114,13 @@
                 <data android:scheme="https" />
             </intent-filter>
 
+            <intent-filter>
+                <action android:name="android.intent.action.SEARCH" />
+            </intent-filter>
+
+            <meta-data android:name="android.app.searchable"
+                       android:resource="@xml/searchable" />
+
             <!-- For debugging -->
             <intent-filter>
                 <action android:name="org.mozilla.gecko.DEBUG" />
@@ -163,7 +171,8 @@
           </intent-filter>
         </activity>
 
-#include ../sync/manifests/SyncAndroidManifest_activities.xml.in
+#include ../services/manifests/AnnouncementsAndroidManifest_activities.xml.in
+#include ../services/manifests/SyncAndroidManifest_activities.xml.in
 
 #if MOZ_CRASHREPORTER
   <activity android:name="CrashReporter"
@@ -201,7 +210,12 @@
 
         <provider android:name="@ANDROID_PACKAGE_NAME@.db.BrowserProvider"
                   android:authorities="@ANDROID_PACKAGE_NAME@.db.browser"
-                  android:permission="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
+                  android:permission="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER">
+
+            <path-permission android:pathPrefix="/search_suggest_query"
+                             android:readPermission="android.permission.GLOBAL_SEARCH" />
+
+        </provider>
 
         <!--
           Ensure that passwords provider runs in its own process. (Bug 718760.)
@@ -230,7 +244,8 @@
         </service>
 
 
-#include ../sync/manifests/SyncAndroidManifest_services.xml.in
+#include ../services/manifests/AnnouncementsAndroidManifest_services.xml.in
+#include ../services/manifests/SyncAndroidManifest_services.xml.in
     </application>
 
     <permission android:name="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"

@@ -1,3 +1,5 @@
+. "$topsrcdir/b2g/config/mozconfigs/common"
+
 # for pgo
 mk_add_options PROFILE_GEN_SCRIPT='$(PYTHON) $(MOZ_OBJDIR)/_profile/pgo/profileserver.py'
 
@@ -8,6 +10,9 @@ ac_add_options --enable-signmar
 
 # Nightlies only since this has a cost in performance
 ac_add_options --enable-js-diagnostics
+
+# IonMonkey disabled in bug 789373
+ac_add_options --disable-ion
 
 # Needed to enable breakpad in application.ini
 export MOZILLA_OFFICIAL=1
@@ -27,3 +32,7 @@ ac_add_options --enable-application=b2g
 ENABLE_MARIONETTE=1
 
 export CXXFLAGS=-DMOZ_ENABLE_JS_DUMP
+
+GAIADIR=$topsrcdir/gaia
+
+. "$topsrcdir/b2g/config/mozconfigs/common.override"

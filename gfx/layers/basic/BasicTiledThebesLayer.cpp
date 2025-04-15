@@ -28,7 +28,7 @@ static void DrawDebugOverlay(gfxImageSurface* imgSurf, int x, int y)
 
   // Draw text using cairo toy text API
   cairo_t* cr = c.GetCairo();
-  cairo_set_font_size(cr, 10);
+  cairo_set_font_size(cr, 25);
   cairo_text_extents_t extents;
   cairo_text_extents(cr, ss.str().c_str(), &extents);
 
@@ -36,16 +36,16 @@ static void DrawDebugOverlay(gfxImageSurface* imgSurf, int x, int y)
 
   c.NewPath();
   c.SetDeviceColor(gfxRGBA(0.0, 0.0, 0.0, 1.0));
-  c.Rectangle(gfxRect(gfxPoint(2,2),gfxSize(textWidth, 15)));
+  c.Rectangle(gfxRect(gfxPoint(2,2),gfxSize(textWidth, 30)));
   c.Fill();
 
   c.NewPath();
   c.SetDeviceColor(gfxRGBA(1.0, 0.0, 0.0, 1.0));
-  c.Rectangle(gfxRect(gfxPoint(2,2),gfxSize(textWidth, 15)));
+  c.Rectangle(gfxRect(gfxPoint(2,2),gfxSize(textWidth, 30)));
   c.Stroke();
 
   c.NewPath();
-  cairo_move_to(cr, 4, 13);
+  cairo_move_to(cr, 4, 28);
   cairo_show_text(cr, ss.str().c_str());
 
 }
@@ -54,6 +54,13 @@ static void DrawDebugOverlay(gfxImageSurface* imgSurf, int x, int y)
 
 namespace mozilla {
 namespace layers {
+
+bool
+BasicTiledLayerBuffer::HasFormatChanged(BasicTiledThebesLayer* aThebesLayer) const
+{
+  return aThebesLayer->CanUseOpaqueSurface() != mLastPaintOpaque;
+}
+
 
 gfxASurface::gfxImageFormat
 BasicTiledLayerBuffer::GetFormat() const
@@ -79,7 +86,22 @@ BasicTiledLayerBuffer::PaintThebes(BasicTiledThebesLayer* aLayer,
 #ifdef GFX_TILEDLAYER_PREF_WARNINGS
   long start = PR_IntervalNow();
 #endif
-  if (UseSinglePaintBuffer()) {
+
+  // If this region is empty XMost() - 1 will give us a negative value.
+  NS_ASSERTION(!aPaintRegion.GetBounds().IsEmpty(), "Empty paint region\n");
+
+  bool useSinglePaintBuffer = UseSinglePaintBuffer();
+  if (useSinglePaintBuffer) {
+    // Check if the paint only spans a single tile. If that's
+    // the case there's no point in using a single paint buffer.
+    nsIntRect paintBounds = aPaintRegion.GetBounds();
+    useSinglePaintBuffer = GetTileStart(paintBounds.x) !=
+                           GetTileStart(paintBounds.XMost() - 1) ||
+                           GetTileStart(paintBounds.y) !=
+                           GetTileStart(paintBounds.YMost() - 1);
+  }
+
+  if (useSinglePaintBuffer) {
     const nsIntRect bounds = aPaintRegion.GetBounds();
     {
       SAMPLE_LABEL("BasicTiledLayerBuffer", "PaintThebesSingleBufferAlloc");
@@ -125,6 +147,7 @@ BasicTiledLayerBuffer::PaintThebes(BasicTiledThebesLayer* aLayer,
   }
 #endif
 
+  mLastPaintOpaque = mThebesLayer->CanUseOpaqueSurface();
   mThebesLayer = nullptr;
   mCallback = nullptr;
   mCallbackData = nullptr;
@@ -136,7 +159,7 @@ BasicTiledLayerBuffer::ValidateTileInternal(BasicTiledLayerTile aTile,
                                             const nsIntPoint& aTileOrigin,
                                             const nsIntRect& aDirtyRect)
 {
-  if (aTile == GetPlaceholderTile()) {
+  if (aTile == GetPlaceholderTile() || aTile.mSurface->Format() != GetFormat()) {
     gfxImageSurface* tmpTile = new gfxImageSurface(gfxIntSize(GetTileLength(), GetTileLength()),
                                                    GetFormat(), !mThebesLayer->CanUseOpaqueSurface());
     aTile = BasicTiledLayerTile(tmpTile);
@@ -153,8 +176,8 @@ BasicTiledLayerBuffer::ValidateTileInternal(BasicTiledLayerTile aTile,
 
   // Bug 742100, this gfxContext really should live on the stack.
   nsRefPtr<gfxContext> ctxt = new gfxContext(writableSurface);
-  ctxt->SetOperator(gfxContext::OPERATOR_SOURCE);
   if (mSinglePaintBuffer) {
+    ctxt->SetOperator(gfxContext::OPERATOR_SOURCE);
     ctxt->NewPath();
     ctxt->SetSource(mSinglePaintBuffer.get(),
                     gfxPoint(mSinglePaintBufferOffset.x - aDirtyRect.x + drawRect.x,
@@ -165,7 +188,7 @@ BasicTiledLayerBuffer::ValidateTileInternal(BasicTiledLayerTile aTile,
     ctxt->NewPath();
     ctxt->Translate(gfxPoint(-aTileOrigin.x, -aTileOrigin.y));
     nsIntPoint a = aTileOrigin;
-    mCallback(mThebesLayer, ctxt, nsIntRegion(nsIntRect(a, nsIntSize(GetTileLength(), GetTileLength()))), aDirtyRect, mCallbackData);
+    mCallback(mThebesLayer, ctxt, nsIntRegion(nsIntRect(a, nsIntSize(GetTileLength(), GetTileLength()))), nsIntRegion(), mCallbackData);
   }
 
 #ifdef GFX_TILEDLAYER_DEBUG_OVERLAY
@@ -223,26 +246,89 @@ BasicTiledThebesLayer::PaintThebes(gfxContext* aContext,
     return;
   }
 
+  if (mTiledBuffer.HasFormatChanged(this)) {
+    mValidRegion = nsIntRegion();
+  }
+
   nsIntRegion regionToPaint = mVisibleRegion;
   regionToPaint.Sub(regionToPaint, mValidRegion);
   if (regionToPaint.IsEmpty())
     return;
 
-  if (gfxPlatform::UseProgressiveTilePainting()) {
-    nsIntRegionRectIterator it(regionToPaint);
-    const nsIntRect* rect = it.Next();
-    if (!rect)
-      return;
+  gfxSize resolution(1, 1);
+  for (ContainerLayer* parent = GetParent(); parent; parent = parent->GetParent()) {
+    const FrameMetrics& metrics = parent->GetFrameMetrics();
+    resolution.width *= metrics.mResolution.width;
+    resolution.height *= metrics.mResolution.height;
+  }
 
-    // Currently we start painting from the first rect of the invalid
-    // region and convert that into a tile.
-    // TODO: Use a smart tile prioritization such as:
-    //         (1) Paint tiles that have no content first
-    //         (2) Then paint tiles that have stale content
-    //         (3) Order tiles using they position from relevant
-    //             user interaction events.
-    int paintTileStartX = mTiledBuffer.RoundDownToTileEdge(rect->x);
-    int paintTileStartY = mTiledBuffer.RoundDownToTileEdge(rect->y);
+  // Calculate the scroll offset since the last transaction. Progressive tile
+  // painting is only used when scrolling.
+  gfx::Point scrollOffset(0, 0);
+  Layer* primaryScrollable = BasicManager()->GetPrimaryScrollableLayer();
+  if (primaryScrollable) {
+    const FrameMetrics& metrics = primaryScrollable->AsContainerLayer()->GetFrameMetrics();
+    scrollOffset = metrics.mScrollOffset;
+  }
+  int32_t scrollDiffX = scrollOffset.x - mLastScrollOffset.x;
+  int32_t scrollDiffY = scrollOffset.y - mLastScrollOffset.y;
+
+  // Only draw progressively when we're panning and the resolution is unchanged.
+  if (gfxPlatform::UseProgressiveTilePainting() &&
+      mTiledBuffer.GetResolution() == resolution &&
+      (scrollDiffX != 0 || scrollDiffY != 0)) {
+    // Paint tiles that have no content before tiles that only have stale content.
+    nsIntRegion staleRegion = mTiledBuffer.GetValidRegion();
+    staleRegion.And(staleRegion, regionToPaint);
+    bool hasNewContent = !staleRegion.Contains(regionToPaint);
+    if (!staleRegion.IsEmpty() && hasNewContent) {
+      regionToPaint.Sub(regionToPaint, staleRegion);
+    }
+
+    // Find out if we should just abort this paint, usually due to there being
+    // an incoming, more relevant paint.
+    if (BasicManager()->ShouldAbortProgressiveUpdate(hasNewContent)) {
+      return;
+    }
+
+    // The following code decides what order to draw tiles in, based on the
+    // current scroll direction of the primary scrollable layer.
+    // XXX While this code is of a reasonable size currently, it is likely
+    //     we'll want to add more comprehensive methods of deciding what
+    //     tiles to draw. This is a good candidate for splitting out into a
+    //     separate function.
+
+    // First, decide whether to iterate on the region from the beginning or end
+    // of the rect list. This relies on the specific behaviour of nsRegion when
+    // subtracting rects. If we're moving more in the X direction, we draw
+    // tiles by column, otherwise by row.
+    nsIntRegionRectIterator it(regionToPaint);
+    const nsIntRect* rect;
+    if ((NS_ABS(scrollDiffY) > NS_ABS(scrollDiffX) && scrollDiffY >= 0)) {
+      rect = it.Next();
+    } else {
+      const nsIntRect* lastRect;
+      while ((lastRect = it.Next())) {
+        rect = lastRect;
+      }
+    }
+
+    // Second, decide what direction to start drawing rects from by checking
+    // the scroll offset difference of the primary scrollable layer. If we're
+    // scrolling to the right, make sure to start from the left, downwards
+    // start from the top, etc.
+    int paintTileStartX, paintTileStartY;
+    if (scrollOffset.x >= mLastScrollOffset.x) {
+      paintTileStartX = mTiledBuffer.RoundDownToTileEdge(rect->x);
+    } else {
+      paintTileStartX = mTiledBuffer.RoundDownToTileEdge(rect->XMost() - 1);
+    }
+
+    if (scrollOffset.y >= mLastScrollOffset.y) {
+      paintTileStartY = mTiledBuffer.RoundDownToTileEdge(rect->y);
+    } else {
+      paintTileStartY = mTiledBuffer.RoundDownToTileEdge(rect->YMost() - 1);
+    }
 
     nsIntRegion maxPaint(
       nsIntRect(paintTileStartX, paintTileStartY,
@@ -253,37 +339,22 @@ BasicTiledThebesLayer::PaintThebes(gfxContext* aContext,
       // therefore update what we want to paint and ask for a new paint transaction.
       regionToPaint.And(regionToPaint, maxPaint);
       BasicManager()->SetRepeatTransaction();
-    }
 
-    // We want to continue to retain invalidated tiles that we're about to paint soon
-    // to prevent them from disapearing while doing progressive paint. However we only
-    // want to this if they were painted at the same resolution.
-    gfxSize resolution(1, 1);
-    for (ContainerLayer* parent = GetParent(); parent; parent = parent->GetParent()) {
-      const FrameMetrics& metrics = parent->GetFrameMetrics();
-      resolution.width *= metrics.mResolution.width;
-      resolution.height *= metrics.mResolution.height;
-    }
-
-    nsIntRegion regionToRetain(mTiledBuffer.GetValidRegion());
-    if (false && mTiledBuffer.GetResolution() == resolution) {
-      // Retain stale tiles but keep them marked as invalid in mValidRegion
-      // so that they will be eventually repainted.
-      regionToRetain.And(regionToRetain, mVisibleRegion);
-      regionToRetain.Or(regionToRetain, regionToPaint);
+      // Make sure that tiles that fall outside of the visible region are discarded.
+      mValidRegion.And(mValidRegion, mVisibleRegion);
     } else {
-      regionToRetain = mValidRegion;
-      regionToRetain.Or(regionToRetain, regionToPaint);
-      mTiledBuffer.SetResolution(resolution);
+      // The transaction is completed, store the last scroll offset.
+      mLastScrollOffset = scrollOffset;
     }
 
-    // Paint and keep track of what we refreshed
-    mTiledBuffer.PaintThebes(this, regionToRetain, regionToPaint, aCallback, aCallbackData);
+    // Keep track of what we're about to refresh.
     mValidRegion.Or(mValidRegion, regionToPaint);
   } else {
-    mTiledBuffer.PaintThebes(this, mVisibleRegion, regionToPaint, aCallback, aCallbackData);
+    mTiledBuffer.SetResolution(resolution);
     mValidRegion = mVisibleRegion;
   }
+
+  mTiledBuffer.PaintThebes(this, mValidRegion, regionToPaint, aCallback, aCallbackData);
 
   mTiledBuffer.ReadLock();
   if (aMaskLayer) {

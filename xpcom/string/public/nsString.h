@@ -21,6 +21,9 @@
 #include "nsReadableUtils.h"
 #endif
 
+// For PRUnichar
+#include "prtypes.h"
+
 #include NEW_H
 
   // enable support for the obsolete string API if not explicitly disabled
@@ -55,7 +58,7 @@ PR_STATIC_ASSERT(sizeof(nsCString::char_type) == 1);
   /**
    * A helper class that converts a UTF-16 string to ASCII in a lossy manner
    */
-class NS_LossyConvertUTF16toASCII : public nsCAutoString
+class NS_LossyConvertUTF16toASCII : public nsAutoCString
   {
     public:
       explicit
@@ -110,7 +113,7 @@ class NS_ConvertASCIItoUTF16 : public nsAutoString
   /**
    * A helper class that converts a UTF-16 string to UTF-8
    */
-class NS_ConvertUTF16toUTF8 : public nsCAutoString
+class NS_ConvertUTF16toUTF8 : public nsAutoCString
   {
     public:
       explicit

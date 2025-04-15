@@ -20,6 +20,7 @@ BEGIN_BLUETOOTH_NAMESPACE
 class BluetoothNamedValue;
 class BluetoothValue;
 class BluetoothSignal;
+class BluetoothSocket;
 
 class BluetoothDevice : public nsDOMEventTargetHelper
                       , public nsIDOMBluetoothDevice
@@ -64,19 +65,19 @@ private:
   void Root();
   
   JSObject* mJsUuids;
+  JSObject* mJsServices;
 
   nsString mAdapterPath;
   nsString mAddress;
   nsString mName;
+  nsString mIcon;
   uint32_t mClass;
   bool mConnected;
   bool mPaired;
   bool mIsRooted;
   nsTArray<nsString> mUuids;
+  nsTArray<nsString> mServices;
 
-  NS_DECL_EVENT_HANDLER(propertychanged)
-  NS_DECL_EVENT_HANDLER(connected)
-  NS_DECL_EVENT_HANDLER(disconnected)
 };
 
 END_BLUETOOTH_NAMESPACE

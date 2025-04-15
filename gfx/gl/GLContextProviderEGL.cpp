@@ -19,6 +19,7 @@
 #define GET_NATIVE_WINDOW(aWidget) (EGLNativeWindowType)static_cast<QWidget*>(aWidget->GetNativeData(NS_NATIVE_SHELLWIDGET))->winId()
 #elif defined(MOZ_WIDGET_GONK)
 #define GET_NATIVE_WINDOW(aWidget) ((EGLNativeWindowType)aWidget->GetNativeData(NS_NATIVE_WINDOW))
+#include "HwcComposer2D.h"
 #endif
 
 #if defined(MOZ_X11)
@@ -145,7 +146,7 @@ static GLLibraryEGL sEGLLibrary;
     (_array).AppendElement(_k);                 \
 } while (0)
 
-#ifndef MOZ_JAVA_COMPOSITOR
+#ifndef MOZ_ANDROID_OMTC
 static EGLSurface
 CreateSurfaceForWindow(nsIWidget *aWidget, EGLConfig config);
 #endif
@@ -268,6 +269,17 @@ public:
 #ifdef DEBUG
         printf_stderr("Initializing context %p surface %p on display %p\n", mContext, mSurface, EGL_DISPLAY());
 #endif
+#ifdef MOZ_WIDGET_GONK
+        if (!aIsOffscreen) {
+            mHwc = HwcComposer2D::GetInstance();
+            MOZ_ASSERT(!mHwc->Initialized());
+
+            if (mHwc->Init(EGL_DISPLAY(), mSurface)) {
+                NS_WARNING("HWComposer initialization failed!");
+                mHwc = nullptr;
+            }
+        }
+#endif
     }
 
     ~GLContextEGL()
@@ -336,7 +348,7 @@ public:
         bool ok = InitWithPrefix("gl", true);
 
         PR_STATIC_ASSERT(sizeof(GLint) >= sizeof(int32_t));
-        mMaxTextureImageSize = PR_INT32_MAX;
+        mMaxTextureImageSize = INT32_MAX;
 
         mShareWithEGLImage = sEGLLibrary.HasKHRImageBase() &&
                              sEGLLibrary.HasKHRImageTexture2D() &&
@@ -424,8 +436,8 @@ public:
                                                   EGL_NO_CONTEXT,
                                                   EGL_NATIVE_BUFFER_ANDROID,
                                                   buffer, attrs);
-        fEGLImageTargetTexture2D(LOCAL_GL_TEXTURE_EXTERNAL, image);
         fBindTexture(LOCAL_GL_TEXTURE_EXTERNAL, texture);
+        fEGLImageTargetTexture2D(LOCAL_GL_TEXTURE_EXTERNAL, image);
         sEGLLibrary.fDestroyImage(EGL_DISPLAY(), image);
         return true;
 #else
@@ -523,7 +535,7 @@ public:
         sEGLLibrary.fMakeCurrent(EGL_DISPLAY(), EGL_NO_SURFACE, EGL_NO_SURFACE,
                                  EGL_NO_CONTEXT);
         if (!mSurface) {
-#ifdef MOZ_JAVA_COMPOSITOR
+#ifdef MOZ_ANDROID_OMTC
             mSurface = mozilla::AndroidBridge::Bridge()->ProvideEGLSurface();
 #else
             EGLConfig config;
@@ -567,7 +579,13 @@ public:
     bool SwapBuffers()
     {
         if (mSurface && !mPlatformContext) {
-            return sEGLLibrary.fSwapBuffers(EGL_DISPLAY(), mSurface);
+#ifdef MOZ_WIDGET_GONK
+            if (mHwc)
+                return !mHwc->swapBuffers((hwc_display_t)EGL_DISPLAY(),
+                                          (hwc_surface_t)mSurface);
+            else
+#endif
+                return sEGLLibrary.fSwapBuffers(EGL_DISPLAY(), mSurface);
         } else {
             return false;
         }
@@ -679,6 +697,9 @@ protected:
     bool mIsDoubleBuffered;
     bool mCanBindToTexture;
     bool mShareWithEGLImage;
+#ifdef MOZ_WIDGET_GONK
+    nsRefPtr<HwcComposer2D> mHwc;
+#endif
 
     // A dummy texture ID that can be used when we need a texture object whose
     // images we're going to define with EGLImageTargetTexture2D.
@@ -1645,7 +1666,7 @@ public:
                                      GraphicBuffer::USAGE_SW_WRITE_OFTEN,
                                      &vaddr) != OK) {
                 LOG("Could not lock GraphicBuffer");
-                return false;
+                return nullptr;
             }
 
             nsRefPtr<gfxImageSurface> surface =
@@ -2103,9 +2124,9 @@ CreateConfig(EGLConfig* aConfig)
     }
 }
 
-// When MOZ_JAVA_COMPOSITOR is defined,
+// When MOZ_ANDROID_OMTC is defined,
 // use mozilla::AndroidBridge::Bridge()->ProvideEGLSurface() instead.
-#ifndef MOZ_JAVA_COMPOSITOR
+#ifndef MOZ_ANDROID_OMTC
 static EGLSurface
 CreateSurfaceForWindow(nsIWidget *aWidget, EGLConfig config)
 {
@@ -2197,7 +2218,7 @@ GLContextProviderEGL::CreateForWindow(nsIWidget *aWidget)
         return nullptr;
     }
 
-#ifdef MOZ_JAVA_COMPOSITOR
+#ifdef MOZ_ANDROID_OMTC
     mozilla::AndroidBridge::Bridge()->RegisterCompositor();
     EGLSurface surface = mozilla::AndroidBridge::Bridge()->ProvideEGLSurface();
 #else
@@ -2627,7 +2648,8 @@ GLContextProviderEGL::GetGlobalContext(const ContextFlags)
 {
 // Don't want a global context on Android as 1) share groups across 2 threads fail on many Tegra drivers (bug 759225)
 // and 2) some mobile devices have a very strict limit on global number of GL contexts (bug 754257)
-#ifdef MOZ_JAVA_COMPOSITOR
+// and 3) each EGL context eats 750k on B2G (bug 813783)
+#ifdef ANDROID
     return nullptr;
 #endif
 

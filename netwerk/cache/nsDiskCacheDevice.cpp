@@ -44,7 +44,6 @@
 #include "nsCOMArray.h"
 #include "nsISimpleEnumerator.h"
 
-#include "mozilla/FunctionTimer.h"
 #include "nsThreadUtils.h"
 #include "mozilla/Telemetry.h"
 
@@ -386,8 +385,6 @@ nsDiskCacheDevice::~nsDiskCacheDevice()
 nsresult
 nsDiskCacheDevice::Init()
 {
-    NS_TIME_FUNCTION;
-
     nsresult rv;
 
     if (Initialized()) {
@@ -987,7 +984,7 @@ nsDiskCacheDevice::OpenDiskCache()
     if (exists) {
         // Try opening cache map file.
         nsDiskCache::CorruptCacheInfo corruptInfo;
-        rv = mCacheMap.Open(mCacheDirectory, &corruptInfo);
+        rv = mCacheMap.Open(mCacheDirectory, &corruptInfo, true);
 
         if (NS_SUCCEEDED(rv)) {
             Telemetry::Accumulate(Telemetry::DISK_CACHE_CORRUPT_DETAILS,
@@ -1017,7 +1014,7 @@ nsDiskCacheDevice::OpenDiskCache()
     
         // reopen the cache map     
         nsDiskCache::CorruptCacheInfo corruptInfo;
-        rv = mCacheMap.Open(mCacheDirectory, &corruptInfo);
+        rv = mCacheMap.Open(mCacheDirectory, &corruptInfo, false);
         if (NS_FAILED(rv))
             return rv;
     }

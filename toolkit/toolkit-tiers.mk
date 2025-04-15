@@ -134,6 +134,9 @@ endif
 ifdef MOZ_WEBRTC
 tier_platform_dirs += \
   media/webrtc \
+  media/mtransport/third_party \
+  media/mtransport/build \
+  media/mtransport/standalone \
   $(NULL)
 endif
 
@@ -159,6 +162,10 @@ endif
 
 ifndef MOZ_NATIVE_PNG
 tier_platform_dirs += media/libpng
+endif
+
+ifdef ENABLE_TESTS
+tier_platform_dirs += testing/specialpowers
 endif
 
 tier_platform_dirs	+= \
@@ -240,6 +247,10 @@ tier_platform_dirs += js/ductwork/debugger
 
 tier_platform_dirs += other-licenses/snappy
 
+ifdef MOZ_GIO_COMPONENT
+tier_platform_dirs += extensions/gio
+endif
+
 ifdef APP_LIBXUL_STATICDIRS
 # Applications can cheat and ask for code to be
 # built before libxul so libxul can be linked against it.
@@ -284,4 +295,9 @@ tier_platform_dirs += testing/xpcshell
 tier_platform_dirs += testing/tools/screenshot
 tier_platform_dirs += testing/peptest
 tier_platform_dirs += testing/mozbase
+ifdef MOZ_WEBRTC
+#disabled
+#tier_platform_dirs += media/webrtc/signaling/test
+#tier_platform_dirs += media/mtransport/test
+endif
 endif

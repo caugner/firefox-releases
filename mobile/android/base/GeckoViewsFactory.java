@@ -40,24 +40,38 @@ public final class GeckoViewsFactory implements LayoutInflater.Factory {
 
             if (TextUtils.equals(viewName, "AboutHomePromoBox"))
                 return new AboutHomePromoBox(context, attrs);
+            else if (TextUtils.equals(viewName, "AboutHomeContent"))
+                return new AboutHomeContent(context, attrs);
+            else if (TextUtils.equals(viewName, "AboutHomeContent$TopSitesGridView"))
+                return new AboutHomeContent.TopSitesGridView(context, attrs);
             else if (TextUtils.equals(viewName, "AboutHomeSection"))
                 return new AboutHomeSection(context, attrs);
             else if (TextUtils.equals(viewName, "AwesomeBarTabs"))
                 return new AwesomeBarTabs(context, attrs);
+            else if (TextUtils.equals(viewName, "BrowserToolbarBackground"))
+                return new BrowserToolbarBackground(context, attrs);
             else if (TextUtils.equals(viewName, "FormAssistPopup"))
                 return new FormAssistPopup(context, attrs);
+            else if (TextUtils.equals(viewName, "GeckoApp$MainLayout"))
+                return new GeckoApp.MainLayout(context, attrs);
             else if (TextUtils.equals(viewName, "LinkTextView"))
                 return new LinkTextView(context, attrs);
             else if (TextUtils.equals(viewName, "FindInPageBar"))
                 return new FindInPageBar(context, attrs);
+            else if (TextUtils.equals(viewName, "MenuButton"))
+                return new MenuButton(context, attrs);
+            else if (TextUtils.equals(viewName, "TabsButton"))
+                return new TabsButton(context, attrs);
             else if (TextUtils.equals(viewName, "TabsPanel"))
                 return new TabsPanel(context, attrs);
+            else if (TextUtils.equals(viewName, "TabsPanelButton"))
+                return new TabsPanelButton(context, attrs);
             else if (TextUtils.equals(viewName, "TextSelectionHandle"))
                 return new TextSelectionHandle(context, attrs);
             else if (TextUtils.equals(viewName, "gfx.LayerView"))
                 return new LayerView(context, attrs);
             else
-                Log.e(LOGTAG, "Error: unknown custom view: " + viewName);
+                Log.d(LOGTAG, "Warning: unknown custom view: " + viewName);
         }
 
         return null;

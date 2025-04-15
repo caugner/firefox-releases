@@ -3,6 +3,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+Components.utils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+
 var ContentAreaUtils = {
   get ioService() {
     delete this.ioService;
@@ -91,10 +93,11 @@ function isContentFrame(aFocusedWindow)
 // - A linked document using Alt-click Save Link As...
 //
 function saveURL(aURL, aFileName, aFilePickerTitleKey, aShouldBypassCache,
-                 aSkipPrompt, aReferrer)
+                 aSkipPrompt, aReferrer, aSourceDocument)
 {
   internalSave(aURL, null, aFileName, null, null, aShouldBypassCache,
-               aFilePickerTitleKey, null, aReferrer, aSkipPrompt, null);
+               aFilePickerTitleKey, null, aReferrer, aSourceDocument,
+               aSkipPrompt, null);
 }
 
 // Just like saveURL, but will get some info off the image before
@@ -105,14 +108,15 @@ const imgICache = Components.interfaces.imgICache;
 const nsISupportsCString = Components.interfaces.nsISupportsCString;
 
 function saveImageURL(aURL, aFileName, aFilePickerTitleKey, aShouldBypassCache,
-                      aSkipPrompt, aReferrer)
+                      aSkipPrompt, aReferrer, aDoc)
 {
   var contentType = null;
   var contentDisposition = null;
   if (!aShouldBypassCache) {
     try {
-      var imageCache = Components.classes["@mozilla.org/image/cache;1"]
-                                 .getService(imgICache);
+      var imageCache = Components.classes["@mozilla.org/image/tools;1"]
+                                 .getService(Components.interfaces.imgITools)
+                                 .getImgCacheForDocument(aDoc);
       var props =
         imageCache.findEntryProperties(makeURI(aURL, getCharsetforSave(null)));
       if (props) {
@@ -126,7 +130,7 @@ function saveImageURL(aURL, aFileName, aFilePickerTitleKey, aShouldBypassCache,
   }
   internalSave(aURL, null, aFileName, contentDisposition, contentType,
                aShouldBypassCache, aFilePickerTitleKey, null, aReferrer,
-               aSkipPrompt, null);
+               aDoc, aSkipPrompt, null);
 }
 
 function saveDocument(aDocument, aSkipPrompt)
@@ -160,7 +164,7 @@ function saveDocument(aDocument, aSkipPrompt)
   internalSave(aDocument.location.href, aDocument, null, contentDisposition,
                aDocument.contentType, false, null, null,
                aDocument.referrer ? makeURI(aDocument.referrer) : null,
-               aSkipPrompt, cacheKey);
+               aDocument, aSkipPrompt, cacheKey);
 }
 
 function DownloadListener(win, transfer) {
@@ -256,6 +260,8 @@ const kSaveAsType_Text     = 2; // Save document, converting to plain text.
  * @param aReferrer
  *        the referrer URI object (not URL string) to use, or null
  *        if no referrer should be sent.
+ * @param aInitiatingDocument
+ *        The document from which the save was initiated.
  * @param aSkipPrompt [optional]
  *        If set to true, we will attempt to save the file to the
  *        default downloads folder without prompting.
@@ -265,7 +271,8 @@ const kSaveAsType_Text     = 2; // Save document, converting to plain text.
  */
 function internalSave(aURL, aDocument, aDefaultFileName, aContentDisposition,
                       aContentType, aShouldBypassCache, aFilePickerTitleKey,
-                      aChosenData, aReferrer, aSkipPrompt, aCacheKey)
+                      aChosenData, aReferrer, aInitiatingDocument, aSkipPrompt,
+                      aCacheKey)
 {
   if (aSkipPrompt == undefined)
     aSkipPrompt = false;
@@ -332,7 +339,8 @@ function internalSave(aURL, aDocument, aDefaultFileName, aContentDisposition,
     targetFile        : file,
     sourceCacheKey    : aCacheKey,
     sourcePostData    : aDocument ? getPostData(aDocument) : null,
-    bypassCache       : aShouldBypassCache
+    bypassCache       : aShouldBypassCache,
+    initiatingWindow  : aInitiatingDocument.defaultView
   };
 
   // Start the actual save process
@@ -366,6 +374,8 @@ function internalSave(aURL, aDocument, aDefaultFileName, aContentDisposition,
  *        "text/plain" is meaningful.
  * @param persistArgs.bypassCache
  *        If true, the document will always be refetched from the server
+ * @param persistArgs.initiatingWindow
+ *        The window from which the save operation was initiated.
  */
 function internalPersist(persistArgs)
 {
@@ -386,10 +396,12 @@ function internalPersist(persistArgs)
   // Find the URI associated with the target file
   var targetFileURL = makeFileURI(persistArgs.targetFile);
 
+  var isPrivate = PrivateBrowsingUtils.isWindowPrivate(persistArgs.initiatingWindow);
+
   // Create download and initiate it (below)
   var tr = Components.classes["@mozilla.org/transfer;1"].createInstance(Components.interfaces.nsITransfer);
   tr.init(persistArgs.sourceURI,
-          targetFileURL, "", null, null, null, persist);
+          targetFileURL, "", null, null, null, persist, isPrivate);
   persist.progressListener = new DownloadListener(window, tr);
 
   if (persistArgs.sourceDocument) {
@@ -421,9 +433,13 @@ function internalPersist(persistArgs)
     persist.saveDocument(persistArgs.sourceDocument, targetFileURL, filesFolder,
                          persistArgs.targetContentType, encodingFlags, kWrapColumn);
   } else {
+    let privacyContext = persistArgs.initiatingWindow
+                                    .QueryInterface(Components.interfaces.nsIInterfaceRequestor)
+                                    .getInterface(Components.interfaces.nsIWebNavigation)
+                                    .QueryInterface(Components.interfaces.nsILoadContext);
     persist.saveURI(persistArgs.sourceURI,
                     persistArgs.sourceCacheKey, persistArgs.sourceReferrer, persistArgs.sourcePostData, null,
-                    targetFileURL);
+                    targetFileURL, privacyContext);
   }
 }
 
@@ -846,10 +862,27 @@ function getDefaultFileName(aDefaultFileName, aURI, aDocument,
       return fileName;
   }
 
+  let docTitle;
+  if (aDocument) {
+    // If the document looks like HTML or XML, try to use its original title.
+    docTitle = validateFileName(aDocument.title).trim();
+    if (docTitle) {
+      let contentType = aDocument.contentType;
+      if (contentType == "application/xhtml+xml" ||
+          contentType == "application/xml" ||
+          contentType == "image/svg+xml" ||
+          contentType == "text/html" ||
+          contentType == "text/xml") {
+        // 2) Use the document title
+        return docTitle;
+      }
+    }
+  }
+
   try {
     var url = aURI.QueryInterface(Components.interfaces.nsIURL);
     if (url.fileName != "") {
-      // 2) Use the actual file name, if present
+      // 3) Use the actual file name, if present
       var textToSubURI = Components.classes["@mozilla.org/intl/texttosuburi;1"]
                                    .getService(Components.interfaces.nsITextToSubURI);
       return validateFileName(textToSubURI.unEscapeURIForUI(url.originCharset || "UTF-8", url.fileName));
@@ -858,37 +891,33 @@ function getDefaultFileName(aDefaultFileName, aURI, aDocument,
     // This is something like a data: and so forth URI... no filename here.
   }
 
-  if (aDocument) {
-    var docTitle = validateFileName(aDocument.title).replace(/^\s+|\s+$/g, "");
-    if (docTitle) {
-      // 3) Use the document title
-      return docTitle;
-    }
-  }
+  if (docTitle)
+    // 4) Use the document title
+    return docTitle;
 
   if (aDefaultFileName)
-    // 4) Use the caller-provided name, if any
+    // 5) Use the caller-provided name, if any
     return validateFileName(aDefaultFileName);
 
-  // 5) If this is a directory, use the last directory name
+  // 6) If this is a directory, use the last directory name
   var path = aURI.path.match(/\/([^\/]+)\/$/);
   if (path && path.length > 1)
     return validateFileName(path[1]);
 
   try {
     if (aURI.host)
-      // 6) Use the host.
+      // 7) Use the host.
       return aURI.host;
   } catch (e) {
     // Some files have no information at all, like Javascript generated pages
   }
   try {
-    // 7) Use the default file name
+    // 8) Use the default file name
     return ContentAreaUtils.stringBundle.GetStringFromName("DefaultSaveFileName");
   } catch (e) {
     //in case localized string cannot be found
   }
-  // 8) If all else fails, use "index"
+  // 9) If all else fails, use "index"
   return "index";
 }
 

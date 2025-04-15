@@ -75,6 +75,7 @@
 #define AUDIO_OGG                           "audio/ogg"
 #define AUDIO_WAV                           "audio/x-wav"
 #define AUDIO_WEBM                          "audio/webm"
+#define AUDIO_MP3                           "audio/mpeg"
 
 #define BINARY_OCTET_STREAM                 "binary/octet-stream"
 
@@ -134,7 +135,11 @@
 #define VIDEO_RAW                           "video/x-raw-yuv"
 #define VIDEO_OGG                           "video/ogg"
 #define VIDEO_WEBM                          "video/webm"
+#define VIDEO_3GPP                          "video/3gpp"
 #define APPLICATION_OGG                     "application/ogg"
+#ifdef MOZ_DASH
+#define APPLICATION_DASH                    "application/dash+xml"
+#endif
 
 /* x-uuencode-apple-single. QuickMail made me do this. */
 #define UUENCODE_APPLE_SINGLE               "x-uuencode-apple-single"

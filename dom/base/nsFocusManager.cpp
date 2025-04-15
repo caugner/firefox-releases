@@ -24,7 +24,6 @@
 #include "nsIDOMDocument.h"
 #include "nsIDOMRange.h"
 #include "nsIHTMLDocument.h"
-#include "nsGenericHTMLElement.h"
 #include "nsIDocShell.h"
 #include "nsIEditorDocShell.h"
 #include "nsIDocShellTreeItem.h"
@@ -82,7 +81,7 @@ PRLogModuleInfo* gFocusNavigationLog;
 
 #define LOGTAG(log, format, content)                            \
   {                                                             \
-    nsCAutoString tag(NS_LITERAL_CSTRING("(none)"));            \
+    nsAutoCString tag(NS_LITERAL_CSTRING("(none)"));            \
     if (content) {                                              \
       content->Tag()->ToUTF8String(tag);                        \
     }                                                           \
@@ -488,7 +487,7 @@ nsFocusManager::MoveFocus(nsIDOMWindow* aWindow, nsIDOMElement* aStartElement,
   if (PR_LOG_TEST(gFocusLog, PR_LOG_DEBUG) && mFocusedWindow) {
     nsIDocument* doc = mFocusedWindow->GetExtantDoc();
     if (doc && doc->GetDocumentURI()) {
-      nsCAutoString spec;
+      nsAutoCString spec;
       doc->GetDocumentURI()->GetSpec(spec);
       LOGFOCUS((" Focused Window: %p %s", mFocusedWindow.get(), spec.get()));
     }
@@ -652,7 +651,7 @@ nsFocusManager::WindowRaised(nsIDOMWindow* aWindow)
 #ifdef PR_LOGGING
   if (PR_LOG_TEST(gFocusLog, PR_LOG_DEBUG)) {
     LOGFOCUS(("Window %p Raised [Currently: %p %p]", aWindow, mActiveWindow.get(), mFocusedWindow.get()));
-    nsCAutoString spec;
+    nsAutoCString spec;
     nsIDocument* doc = window->GetExtantDoc();
     if (doc && doc->GetDocumentURI()) {
       doc->GetDocumentURI()->GetSpec(spec);
@@ -750,7 +749,7 @@ nsFocusManager::WindowLowered(nsIDOMWindow* aWindow)
 #ifdef PR_LOGGING
   if (PR_LOG_TEST(gFocusLog, PR_LOG_DEBUG)) {
     LOGFOCUS(("Window %p Lowered [Currently: %p %p]", aWindow, mActiveWindow.get(), mFocusedWindow.get()));
-    nsCAutoString spec;
+    nsAutoCString spec;
     nsIDocument* doc = window->GetExtantDoc();
     if (doc && doc->GetDocumentURI()) {
       doc->GetDocumentURI()->GetSpec(spec);
@@ -858,7 +857,7 @@ nsFocusManager::WindowShown(nsIDOMWindow* aWindow, bool aNeedsFocus)
 #ifdef PR_LOGGING
   if (PR_LOG_TEST(gFocusLog, PR_LOG_DEBUG)) {
     LOGFOCUS(("Window %p Shown [Currently: %p %p]", window.get(), mActiveWindow.get(), mFocusedWindow.get()));
-    nsCAutoString spec;
+    nsAutoCString spec;
     nsIDocument* doc = window->GetExtantDoc();
     if (doc && doc->GetDocumentURI()) {
       doc->GetDocumentURI()->GetSpec(spec);
@@ -910,7 +909,7 @@ nsFocusManager::WindowHidden(nsIDOMWindow* aWindow)
 #ifdef PR_LOGGING
   if (PR_LOG_TEST(gFocusLog, PR_LOG_DEBUG)) {
     LOGFOCUS(("Window %p Hidden [Currently: %p %p]", window.get(), mActiveWindow.get(), mFocusedWindow.get()));
-    nsCAutoString spec;
+    nsAutoCString spec;
     nsIDocument* doc = window->GetExtantDoc();
     if (doc && doc->GetDocumentURI()) {
       doc->GetDocumentURI()->GetSpec(spec);

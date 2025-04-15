@@ -23,7 +23,7 @@ using namespace mozilla;
 
 gfxXlibSurface::gfxXlibSurface(Display *dpy, Drawable drawable, Visual *visual)
     : mPixmapTaken(false), mDisplay(dpy), mDrawable(drawable)
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if !defined(MOZ_PLATFORM_MAEMO)
     , mGLXPixmap(None)
 #endif
 {
@@ -34,7 +34,7 @@ gfxXlibSurface::gfxXlibSurface(Display *dpy, Drawable drawable, Visual *visual)
 
 gfxXlibSurface::gfxXlibSurface(Display *dpy, Drawable drawable, Visual *visual, const gfxIntSize& size)
     : mPixmapTaken(false), mDisplay(dpy), mDrawable(drawable), mSize(size)
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if !defined(MOZ_PLATFORM_MAEMO)
     , mGLXPixmap(None)
 #endif
 {
@@ -49,7 +49,7 @@ gfxXlibSurface::gfxXlibSurface(Screen *screen, Drawable drawable, XRenderPictFor
                                const gfxIntSize& size)
     : mPixmapTaken(false), mDisplay(DisplayOfScreen(screen)),
       mDrawable(drawable), mSize(size)
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if !defined(MOZ_PLATFORM_MAEMO)
       , mGLXPixmap(None)
 #endif
 {
@@ -67,7 +67,7 @@ gfxXlibSurface::gfxXlibSurface(cairo_surface_t *csurf)
     : mPixmapTaken(false),
       mSize(cairo_xlib_surface_get_width(csurf),
             cairo_xlib_surface_get_height(csurf))
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if !defined(MOZ_PLATFORM_MAEMO)
       , mGLXPixmap(None)
 #endif
 {
@@ -82,9 +82,9 @@ gfxXlibSurface::gfxXlibSurface(cairo_surface_t *csurf)
 
 gfxXlibSurface::~gfxXlibSurface()
 {
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if !defined(MOZ_PLATFORM_MAEMO)
     if (mGLXPixmap) {
-        gl::sGLXLibrary.DestroyPixmap(mGLXPixmap);
+        gl::sDefGLXLib.DestroyPixmap(mGLXPixmap);
     }
 #endif
     // gfxASurface's destructor calls RecordMemoryFreed().
@@ -506,12 +506,12 @@ gfxXlibSurface::XRenderFormat()
     return cairo_xlib_surface_get_xrender_format(CairoSurface());
 }
 
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if !defined(MOZ_PLATFORM_MAEMO)
 GLXPixmap
 gfxXlibSurface::GetGLXPixmap()
 {
     if (!mGLXPixmap) {
-        mGLXPixmap = gl::sGLXLibrary.CreatePixmap(this);
+        mGLXPixmap = gl::sDefGLXLib.CreatePixmap(this);
     }
     return mGLXPixmap;
 }

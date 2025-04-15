@@ -51,7 +51,7 @@ XPCOMUtils.defineLazyGetter(this, "CertUtils", function() {
 });
 
 
-var EXPORTED_SYMBOLS = [ "AddonManager", "AddonManagerPrivate" ];
+this.EXPORTED_SYMBOLS = [ "AddonManager", "AddonManagerPrivate" ];
 
 const CATEGORY_PROVIDER_MODULE = "addon-provider-module";
 
@@ -2013,7 +2013,7 @@ var AddonManagerInternal = {
  * AddonManagerInternal for documentation however note that these methods are
  * subject to change at any time.
  */
-var AddonManagerPrivate = {
+this.AddonManagerPrivate = {
   startup: function AMP_startup() {
     AddonManagerInternal.startup();
   },
@@ -2072,7 +2072,7 @@ var AddonManagerPrivate = {
  * This is the public API that UI and developers should be calling. All methods
  * just forward to AddonManagerInternal.
  */
-var AddonManager = {
+this.AddonManager = {
   // Constants for the AddonInstall.state property
   // The install is available for download.
   STATE_AVAILABLE: 0,
@@ -2199,6 +2199,12 @@ var AddonManager = {
   OPTIONS_TYPE_INLINE: 2,
   // Options will be displayed in a new tab, if possible
   OPTIONS_TYPE_TAB: 3,
+
+  // Constants for displayed or hidden options notifications
+  // Options notification will be displayed
+  OPTIONS_NOTIFICATION_DISPLAYED: "addon-options-displayed",
+  // Options notification will be hidden
+  OPTIONS_NOTIFICATION_HIDDEN: "addon-options-hidden",
 
   // Constants for getStartupChanges, addStartupChange and removeStartupChange
   // Add-ons that were detected as installed during startup. Doesn't include

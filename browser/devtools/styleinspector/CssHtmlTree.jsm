@@ -18,7 +18,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource:///modules/devtools/CssLogic.jsm");
 Cu.import("resource:///modules/devtools/Templater.jsm");
 
-var EXPORTED_SYMBOLS = ["CssHtmlTree", "PropertyView"];
+this.EXPORTED_SYMBOLS = ["CssHtmlTree", "PropertyView"];
 
 /**
  * Helper for long-running processes that should yield occasionally to
@@ -116,7 +116,7 @@ UpdateProcess.prototype = {
  * @params {StyleInspector} aStyleInspector The owner of this CssHtmlTree
  * @constructor
  */
-function CssHtmlTree(aStyleInspector)
+this.CssHtmlTree = function CssHtmlTree(aStyleInspector)
 {
   this.styleWin = aStyleInspector.iframe;
   this.styleInspector = aStyleInspector;
@@ -562,7 +562,7 @@ CssHtmlTree.prototype = {
 
     // Tidy up block headings by moving CSS property names and their values onto
     // the same line and inserting a colon between them.
-    text = text.replace(/(.+)\r?\n\s+/g, "$1: ");
+    text = text.replace(/\t(.+)\t\t(.+)/g, "$1: $2");
 
     // Remove any MDN link titles
     text = text.replace(CssHtmlTree.HELP_LINK_TITLE, "");
@@ -719,7 +719,7 @@ CssHtmlTree.prototype = {
  * @param {string} aName the CSS property name for which this PropertyView
  * instance will render the rules.
  */
-function PropertyView(aTree, aName)
+this.PropertyView = function PropertyView(aTree, aName)
 {
   this.tree = aTree;
   this.name = aName;
@@ -866,9 +866,9 @@ PropertyView.prototype = {
     this.element = doc.createElementNS(HTML_NS, "tr");
     this.element.setAttribute("class", this.propertyHeaderClassName);
 
-    this.propertyHeader = doc.createElementNS(HTML_NS, "td");
-    this.element.appendChild(this.propertyHeader);
-    this.propertyHeader.setAttribute("class", "property-header");
+    this.expanderContainer = doc.createElementNS(HTML_NS, "td");
+    this.element.appendChild(this.expanderContainer);
+    this.expanderContainer.setAttribute("class", "expander-container");
 
     this.matchedExpander = doc.createElementNS(HTML_NS, "div");
     this.matchedExpander.setAttribute("class", "match expander");
@@ -885,10 +885,10 @@ PropertyView.prototype = {
         this.matchedExpanderClick(aEvent);
       }
     }.bind(this), false);
-    this.propertyHeader.appendChild(this.matchedExpander);
+    this.expanderContainer.appendChild(this.matchedExpander);
 
-    this.nameNode = doc.createElementNS(HTML_NS, "div");
-    this.propertyHeader.appendChild(this.nameNode);
+    this.nameNode = doc.createElementNS(HTML_NS, "td");
+    this.element.appendChild(this.nameNode);
     this.nameNode.setAttribute("class", "property-name");
     this.nameNode.textContent = this.name;
     this.nameNode.addEventListener("click", function(aEvent) {

@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let EXPORTED_SYMBOLS = ["WebappsInstaller"];
+this.EXPORTED_SYMBOLS = ["WebappsInstaller"];
 
 const Cc = Components.classes;
 const Ci = Components.interfaces;
@@ -13,7 +13,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 
-let WebappsInstaller = {
+this.WebappsInstaller = {
   /**
    * Creates a native installation of the web app in the OS
    *
@@ -804,13 +804,13 @@ LinuxNativeApp.prototype = {
     let factory = Cc["@mozilla.org/xpcom/ini-processor-factory;1"]
                     .getService(Ci.nsIINIParserFactory);
 
-    let browserBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
+    let webappsBundle = Services.strings.createBundle("chrome://global/locale/webapps.properties");
 
     // ${InstallDir}/webapp.ini
     let writer = factory.createINIParser(this.webappINI).QueryInterface(Ci.nsIINIParserWriter);
     writer.setString("Webapp", "Name", this.appName);
     writer.setString("Webapp", "Profile", this.uniqueName);
-    writer.setString("Webapp", "UninstallMsg", browserBundle.formatStringFromName("webapps.uninstall.notification", [this.appName], 1));
+    writer.setString("Webapp", "UninstallMsg", webappsBundle.formatStringFromName("uninstall.notification", [this.appName], 1));
     writer.setString("WebappRT", "InstallDir", this.runtimeFolder.path);
     writer.writeFile();
 
@@ -830,7 +830,7 @@ LinuxNativeApp.prototype = {
       writer.setString("Desktop Entry", "Categories", categories);
 
     writer.setString("Desktop Entry", "Actions", "Uninstall;");
-    writer.setString("Desktop Action Uninstall", "Name", browserBundle.GetStringFromName("webapps.uninstall.label"));
+    writer.setString("Desktop Action Uninstall", "Name", webappsBundle.GetStringFromName("uninstall.label"));
     writer.setString("Desktop Action Uninstall", "Exec", this.webapprt.path + " -remove");
 
     writer.writeFile();

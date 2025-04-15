@@ -88,8 +88,8 @@ def call(cline, env, cwd, loc, cb, context, echo, justprint=False):
         if msys:
             if len(cline) > 3 and cline[1] == ':' and cline[2] == '/':
                 cline = '/' + cline[0] + cline[2:]
-            cline = [shell, "-c", cline]
-        context.call(cline, shell=not msys, env=env, cwd=cwd, cb=cb, echo=echo,
+        cline = [shell, "-c", cline]
+        context.call(cline, shell=False, env=env, cwd=cwd, cb=cb, echo=echo,
                      justprint=justprint)
         return
 
@@ -197,15 +197,24 @@ def load_module_recursive(module, path):
     passing a custom path to search for modules.
     """
     bits = module.split('.')
+    oldsyspath = sys.path
     for i, bit in enumerate(bits):
         dotname = '.'.join(bits[:i+1])
         try:
           f, path, desc = imp.find_module(bit, path)
+          # Add the directory the module was found in to sys.path
+          if path != '':
+              abspath = os.path.abspath(path)
+              if not os.path.isdir(abspath):
+                  abspath = os.path.dirname(path)
+              sys.path = [abspath] + sys.path
           m = imp.load_module(dotname, f, path, desc)
           if f is None:
               path = m.__path__
         except ImportError:
             return
+        finally:
+            sys.path = oldsyspath
 
 class PythonJob(Job):
     """
@@ -255,8 +264,8 @@ class PythonJob(Job):
                 pass # sys.exit(0) is not a failure
             else:
                 print >>sys.stderr, e
-                print >>sys.stderr, traceback.print_exc()
-                return (e.code if isinstance(e.code, int) else 1)
+                traceback.print_exc()
+                return -127
         finally:
             os.environ.clear()
             os.environ.update(oldenv)

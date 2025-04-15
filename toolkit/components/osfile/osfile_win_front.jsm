@@ -99,7 +99,7 @@
      /**
       * Read some bytes from a file.
       *
-      * @param {ArrayBuffer} buffer A buffer for holding the data
+      * @param {C pointer} buffer A buffer for holding the data
       * once it is read.
       * @param {number} nbytes The number of bytes to read. It must not
       * exceed the size of |buffer| in bytes but it may exceed the number
@@ -111,7 +111,7 @@
       * the end of the file has been reached.
       * @throws {OS.File.Error} In case of I/O error.
       */
-     File.prototype.read = function read(buffer, nbytes, options) {
+     File.prototype._read = function _read(buffer, nbytes, options) {
        // |gBytesReadPtr| is a pointer to |gBytesRead|.
        throw_on_zero("read",
          WinFile.ReadFile(this.fd, buffer, nbytes, gBytesReadPtr, null)
@@ -122,7 +122,7 @@
      /**
       * Write some bytes to a file.
       *
-      * @param {ArrayBuffer} buffer A buffer holding the data that must be
+      * @param {C pointer} buffer A buffer holding the data that must be
       * written.
       * @param {number} nbytes The number of bytes to write. It must not
       * exceed the size of |buffer| in bytes.
@@ -132,7 +132,7 @@
       * @return {number} The number of bytes effectively written.
       * @throws {OS.File.Error} In case of I/O error.
       */
-     File.prototype.write = function write(buffer, nbytes, options) {
+     File.prototype._write = function _write(buffer, nbytes, options) {
        // |gBytesWrittenPtr| is a pointer to |gBytesWritten|.
        throw_on_zero("write",
          WinFile.WriteFile(this.fd, buffer, nbytes, gBytesWrittenPtr, null)
@@ -180,6 +180,16 @@
        throw_on_zero("stat",
          WinFile.GetFileInformationByHandle(this.fd, gFileInfoPtr));
        return new File.Info(gFileInfo);
+     };
+
+     /**
+      * Flushes the file's buffers and causes all buffered data
+      * to be written.
+      *
+      * @throws {OS.File.Error} In case of I/O error.
+      */
+     File.prototype.flush = function flush() {
+       throw_on_zero("flush", WinFile.FlushFileBuffers(this.fd));
      };
 
      // Constant used to normalize options.
@@ -399,6 +409,9 @@
       * @option {bool} noOverwrite - If set, this function will fail if
       * a file already exists at |destPath|. Otherwise, if this file exists,
       * it will be erased silently.
+      * @option {bool} noCopy - If set, this function will fail if the
+      * operation is more sophisticated than a simple renaming, i.e. if
+      * |sourcePath| and |destPath| are not situated on the same drive.
       *
       * @throws {OS.File.Error} In case of any error.
       *
@@ -412,11 +425,12 @@
       */
      File.move = function move(sourcePath, destPath, options) {
        options = options || noOptions;
-       let flags;
-       if (options.noOverwrite) {
+       let flags = 0;
+       if (!options.noCopy) {
          flags = Const.MOVEFILE_COPY_ALLOWED;
-       } else {
-         flags = Const.MOVEFILE_COPY_ALLOWED | Const.MOVEFILE_REPLACE_EXISTING;
+       }
+       if (!options.noOverwrite) {
+         flags = flags | Const.MOVEFILE_REPLACE_EXISTING;
        }
        throw_on_zero("move",
          WinFile.MoveFileEx(sourcePath, destPath, flags)
@@ -470,6 +484,7 @@
       * @constructor
       */
      File.DirectoryIterator = function DirectoryIterator(path, options) {
+       exports.OS.Shared.AbstractFile.AbstractIterator.call(this);
        if (options && options.winPattern) {
          this._pattern = path + "\\" + options.winPattern;
        } else {
@@ -478,18 +493,22 @@
        this._handle = null;
        this._path = path;
        this._started = false;
+       this._closed = false;
      };
-     File.DirectoryIterator.prototype = {
-       __iterator__: function __iterator__() {
-         return this;
-       },
+     File.DirectoryIterator.prototype = Object.create(exports.OS.Shared.AbstractFile.AbstractIterator.prototype);
 
        /**
         * Fetch the next entry in the directory.
         *
         * @return null If we have reached the end of the directory.
         */
-       _next: function _next() {
+     File.DirectoryIterator.prototype._next = function _next() {
+        // Bailout if the iterator is closed. Note that this may
+        // happen even before it is fully initialized.
+        if (this._closed) {
+          return null;
+        }
+
          // Iterator is not fully initialized yet. Finish
          // initialization.
          if (!this._started) {
@@ -505,11 +524,6 @@
               }
             }
             return gFindData;
-         }
-
-         // We have closed this iterator already.
-         if (!this._handle) {
-           return null;
          }
 
          if (WinFile.FindNextFile(this._handle, gFindDataPtr)) {
@@ -534,7 +548,7 @@
         * @throws {StopIteration} Once all files in the directory have been
         * encountered.
         */
-       next: function next() {
+     File.DirectoryIterator.prototype.next = function next() {
          // FIXME: If we start supporting "\\?\"-prefixed paths, do not forget
          // that "." and ".." are absolutely normal file names if _path starts
          // with such prefix
@@ -546,15 +560,22 @@
            return new File.DirectoryIterator.Entry(entry, this._path);
          }
          throw StopIteration;
-       },
-       close: function close() {
-         if (!this._handle) {
-           return;
-         }
-         WinFile.FindClose(this._handle);
+     };
+
+     File.DirectoryIterator.prototype.close = function close() {
+       if (this._closed) {
+         return;
+       }
+       this._closed = true;
+       if (this._handle) {
+         // We might not have a handle if the iterator is closed
+         // before being used.
+         throw_on_zero("FindClose",
+           WinFile.FindClose(this._handle));
          this._handle = null;
        }
      };
+
      File.DirectoryIterator.Entry = function Entry(win_entry, parent) {
        // Copy the relevant part of |win_entry| to ensure that
        // our data is not overwritten prematurely.
@@ -799,6 +820,9 @@
        winFlags: OS.Constants.Win.FILE_FLAG_BACKUP_SEMANTICS,
        winDisposition: OS.Constants.Win.OPEN_EXISTING
      };
+
+     File.read = exports.OS.Shared.AbstractFile.read;
+     File.writeAtomic = exports.OS.Shared.AbstractFile.writeAtomic;
 
      /**
       * Get/set the current directory.

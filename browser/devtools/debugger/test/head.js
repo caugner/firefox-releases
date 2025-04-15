@@ -6,9 +6,9 @@ const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
 let tempScope = {};
-Cu.import("resource:///modules/devtools/dbg-server.jsm", tempScope);
-Cu.import("resource:///modules/devtools/dbg-client.jsm", tempScope);
-Cu.import("resource:///modules/Services.jsm", tempScope);
+Cu.import("resource://gre/modules/devtools/dbg-server.jsm", tempScope);
+Cu.import("resource://gre/modules/devtools/dbg-client.jsm", tempScope);
+Cu.import("resource://gre/modules/Services.jsm", tempScope);
 let DebuggerServer = tempScope.DebuggerServer;
 let DebuggerTransport = tempScope.DebuggerTransport;
 let DebuggerClient = tempScope.DebuggerClient;
@@ -24,6 +24,9 @@ let gEnableRemote = Services.prefs.getBoolPref("devtools.debugger.remote-enabled
 Services.prefs.setBoolPref("devtools.debugger.remote-enabled", true);
 registerCleanupFunction(function() {
   Services.prefs.setBoolPref("devtools.debugger.remote-enabled", gEnableRemote);
+
+  // Properly shut down the server to avoid memory leaks.
+  DebuggerServer.destroy();
 });
 
 if (!DebuggerServer.initialized) {

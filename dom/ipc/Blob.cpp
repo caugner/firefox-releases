@@ -17,6 +17,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Monitor.h"
 #include "mozilla/unused.h"
+#include "mozilla/Util.h"
 #include "mozilla/ipc/InputStreamUtils.h"
 #include "nsDOMFile.h"
 #include "nsThreadUtils.h"
@@ -24,28 +25,72 @@
 #include "ContentChild.h"
 #include "ContentParent.h"
 
+#define PRIVATE_REMOTE_INPUT_STREAM_IID \
+  {0x30c7699f, 0x51d2, 0x48c8, {0xad, 0x56, 0xc0, 0x16, 0xd7, 0x6f, 0x71, 0x27}}
+
 using namespace mozilla::dom;
 using namespace mozilla::dom::ipc;
 using namespace mozilla::ipc;
 
 namespace {
 
+class NS_NO_VTABLE IPrivateRemoteInputStream : public nsISupports
+{
+public:
+  NS_DECLARE_STATIC_IID_ACCESSOR(PRIVATE_REMOTE_INPUT_STREAM_IID)
+
+  // This will return the underlying stream.
+  virtual nsIInputStream*
+  BlockAndGetInternalStream() = 0;
+};
+
+NS_DEFINE_STATIC_IID_ACCESSOR(IPrivateRemoteInputStream,
+                              PRIVATE_REMOTE_INPUT_STREAM_IID)
+
 class RemoteInputStream : public nsIInputStream,
-                          public nsISeekableStream
+                          public nsISeekableStream,
+                          public nsIIPCSerializableInputStream,
+                          public IPrivateRemoteInputStream
 {
   mozilla::Monitor mMonitor;
   nsCOMPtr<nsIDOMBlob> mSourceBlob;
   nsCOMPtr<nsIInputStream> mStream;
   nsCOMPtr<nsISeekableStream> mSeekableStream;
+  ActorFlavorEnum mOrigin;
 
 public:
   NS_DECL_ISUPPORTS
 
-  RemoteInputStream(nsIDOMBlob* aSourceBlob)
-  : mMonitor("RemoteInputStream.mMonitor"), mSourceBlob(aSourceBlob)
+  RemoteInputStream(nsIDOMBlob* aSourceBlob, ActorFlavorEnum aOrigin)
+  : mMonitor("RemoteInputStream.mMonitor"), mSourceBlob(aSourceBlob),
+    mOrigin(aOrigin)
   {
     MOZ_ASSERT(NS_IsMainThread());
     MOZ_ASSERT(aSourceBlob);
+  }
+
+  void
+  Serialize(InputStreamParams& aParams)
+  {
+    nsCOMPtr<nsIRemoteBlob> remote = do_QueryInterface(mSourceBlob);
+    MOZ_ASSERT(remote);
+
+    if (mOrigin == Parent) {
+      aParams = RemoteInputStreamParams(
+        static_cast<PBlobParent*>(remote->GetPBlob()), nullptr);
+    } else {
+      aParams = RemoteInputStreamParams(
+        nullptr, static_cast<PBlobChild*>(remote->GetPBlob()));
+    }
+  }
+
+  bool
+  Deserialize(const InputStreamParams& aParams)
+  {
+    // See InputStreamUtils.cpp to see how deserialization of a
+    // RemoteInputStream is special-cased.
+    MOZ_NOT_REACHED("RemoteInputStream should never be deserialized");
+    return false;
   }
 
   void
@@ -156,6 +201,14 @@ public:
   NS_IMETHOD
   Tell(int64_t* aResult)
   {
+    // We can cheat here and assume that we're going to start at 0 if we don't
+    // yet have our stream. Though, really, this should abort since most input
+    // streams could block here.
+    if (NS_IsMainThread() && !mStream) {
+      *aResult = 0;
+      return NS_OK;
+    }
+
     nsresult rv = BlockAndWaitForStream();
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -187,6 +240,17 @@ public:
     return NS_OK;
   }
 
+  virtual nsIInputStream*
+  BlockAndGetInternalStream()
+  {
+    MOZ_ASSERT(!NS_IsMainThread());
+
+    nsresult rv = BlockAndWaitForStream();
+    NS_ENSURE_SUCCESS(rv, nullptr);
+
+    return mStream;
+  }
+
 private:
   virtual ~RemoteInputStream()
   { }
@@ -194,10 +258,28 @@ private:
   void
   ReallyBlockAndWaitForStream()
   {
-    mozilla::MonitorAutoLock lock(mMonitor);
-    while (!mStream) {
-      mMonitor.Wait();
+    mozilla::DebugOnly<bool> waited;
+
+    {
+      mozilla::MonitorAutoLock lock(mMonitor);
+
+      waited = !mStream;
+
+      while (!mStream) {
+        mMonitor.Wait();
+      }
     }
+
+    MOZ_ASSERT(mStream);
+
+#ifdef DEBUG
+    if (waited && mSeekableStream) {
+      int64_t position;
+      MOZ_ASSERT(NS_SUCCEEDED(mSeekableStream->Tell(&position)),
+                 "Failed to determine initial stream position!");
+      MOZ_ASSERT(!position, "Stream not starting at 0!");
+    }
+#endif
   }
 
   nsresult
@@ -209,6 +291,7 @@ private:
     }
 
     ReallyBlockAndWaitForStream();
+
     return NS_OK;
   }
 
@@ -234,8 +317,10 @@ NS_IMPL_THREADSAFE_RELEASE(RemoteInputStream)
 
 NS_INTERFACE_MAP_BEGIN(RemoteInputStream)
   NS_INTERFACE_MAP_ENTRY(nsIInputStream)
+  NS_INTERFACE_MAP_ENTRY(nsIIPCSerializableInputStream)
   NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsISeekableStream, IsSeekableStream())
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIInputStream)
+  NS_INTERFACE_MAP_ENTRY(IPrivateRemoteInputStream)
 NS_INTERFACE_MAP_END
 
 template <ActorFlavorEnum ActorFlavor>
@@ -333,6 +418,216 @@ namespace mozilla {
 namespace dom {
 namespace ipc {
 
+// Each instance of this class will be dispatched to the network stream thread
+// pool to run the first time where it will open the file input stream. It will
+// then dispatch itself back to the main thread to send the child process its
+// response (assuming that the child has not crashed). The runnable will then
+// dispatch itself to the thread pool again in order to close the file input
+// stream.
+class BlobTraits<Parent>::BaseType::OpenStreamRunnable : public nsRunnable
+{
+  friend class nsRevocableEventPtr<OpenStreamRunnable>;
+
+  typedef BlobTraits<Parent> TraitsType;
+  typedef TraitsType::BaseType BlobActorType;
+  typedef TraitsType::StreamType BlobStreamProtocolType;
+
+  // Only safe to access these pointers if mRevoked is false!
+  BlobActorType* mBlobActor;
+  BlobStreamProtocolType* mStreamActor;
+
+  nsCOMPtr<nsIInputStream> mStream;
+  nsCOMPtr<nsIIPCSerializableInputStream> mSerializable;
+  nsCOMPtr<nsIEventTarget> mTarget;
+
+  bool mRevoked;
+  bool mClosing;
+
+public:
+  OpenStreamRunnable(BlobActorType* aBlobActor,
+                     BlobStreamProtocolType* aStreamActor,
+                     nsIInputStream* aStream,
+                     nsIIPCSerializableInputStream* aSerializable,
+                     nsIEventTarget* aTarget)
+  : mBlobActor(aBlobActor), mStreamActor(aStreamActor), mStream(aStream),
+    mSerializable(aSerializable), mTarget(aTarget), mRevoked(false),
+    mClosing(false)
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+    MOZ_ASSERT(aBlobActor);
+    MOZ_ASSERT(aStreamActor);
+    MOZ_ASSERT(aStream);
+    // aSerializable may be null.
+    MOZ_ASSERT(aTarget);
+  }
+
+  NS_IMETHOD
+  Run()
+  {
+    if (NS_IsMainThread()) {
+      return SendResponse();
+    }
+
+    if (!mClosing) {
+      return OpenStream();
+    }
+
+    return CloseStream();
+  }
+
+  nsresult
+  Dispatch()
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+    MOZ_ASSERT(mTarget);
+
+    nsresult rv = mTarget->Dispatch(this, NS_DISPATCH_NORMAL);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return NS_OK;
+  }
+
+private:
+  void
+  Revoke()
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+#ifdef DEBUG
+    mBlobActor = nullptr;
+    mStreamActor = nullptr;
+#endif
+    mRevoked = true;
+  }
+
+  nsresult
+  OpenStream()
+  {
+    MOZ_ASSERT(!NS_IsMainThread());
+    MOZ_ASSERT(mStream);
+
+    if (!mSerializable) {
+      nsCOMPtr<IPrivateRemoteInputStream> remoteStream =
+        do_QueryInterface(mStream);
+      MOZ_ASSERT(remoteStream, "Must QI to IPrivateRemoteInputStream here!");
+
+      nsCOMPtr<nsIInputStream> realStream =
+        remoteStream->BlockAndGetInternalStream();
+      NS_ENSURE_TRUE(realStream, NS_ERROR_FAILURE);
+
+      mSerializable = do_QueryInterface(realStream);
+      if (!mSerializable) {
+        MOZ_ASSERT(false, "Must be serializable!");
+        return NS_ERROR_FAILURE;
+      }
+
+      mStream.swap(realStream);
+    }
+
+    // To force the stream open we call Available(). We don't actually care
+    // how much data is available.
+    uint64_t available;
+    if (NS_FAILED(mStream->Available(&available))) {
+      NS_WARNING("Available failed on this stream!");
+    }
+
+    nsresult rv = NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return NS_OK;
+  }
+
+  nsresult
+  CloseStream()
+  {
+    MOZ_ASSERT(!NS_IsMainThread());
+    MOZ_ASSERT(mStream);
+
+    // Going to always release here.
+    nsCOMPtr<nsIInputStream> stream;
+    mStream.swap(stream);
+
+    nsresult rv = stream->Close();
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return NS_OK;
+  }
+
+  nsresult
+  SendResponse()
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+
+    MOZ_ASSERT(mStream);
+    MOZ_ASSERT(mSerializable);
+    MOZ_ASSERT(mTarget);
+    MOZ_ASSERT(!mClosing);
+
+    nsCOMPtr<nsIIPCSerializableInputStream> serializable;
+    mSerializable.swap(serializable);
+
+    if (mRevoked) {
+      MOZ_ASSERT(!mBlobActor);
+      MOZ_ASSERT(!mStreamActor);
+    }
+    else {
+      MOZ_ASSERT(mBlobActor);
+      MOZ_ASSERT(mStreamActor);
+
+      InputStreamParams params;
+      serializable->Serialize(params);
+
+      MOZ_ASSERT(params.type() != InputStreamParams::T__None);
+
+      unused << mStreamActor->Send__delete__(mStreamActor, params);
+
+      mBlobActor->NoteRunnableCompleted(this);
+
+#ifdef DEBUG
+      mBlobActor = nullptr;
+      mStreamActor = nullptr;
+#endif
+    }
+
+    mClosing = true;
+
+    nsCOMPtr<nsIEventTarget> target;
+    mTarget.swap(target);
+
+    nsresult rv = target->Dispatch(this, NS_DISPATCH_NORMAL);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return NS_OK;
+  }
+};
+
+BlobTraits<Parent>::BaseType::BaseType()
+{
+}
+
+BlobTraits<Parent>::BaseType::~BaseType()
+{
+}
+
+void
+BlobTraits<Parent>::BaseType::NoteRunnableCompleted(
+                    BlobTraits<Parent>::BaseType::OpenStreamRunnable* aRunnable)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  for (uint32_t index = 0; index < mOpenStreamRunnables.Length(); index++) {
+    nsRevocableEventPtr<BaseType::OpenStreamRunnable>& runnable =
+      mOpenStreamRunnables[index];
+
+    if (runnable.get() == aRunnable) {
+      runnable.Forget();
+      mOpenStreamRunnables.RemoveElementAt(index);
+      return;
+    }
+  }
+
+  MOZ_NOT_REACHED("Runnable not in our array!");
+}
+
 template <ActorFlavorEnum ActorFlavor>
 class RemoteBlob : public nsDOMFile,
                    public nsIRemoteBlob
@@ -421,7 +716,8 @@ private:
       MOZ_ASSERT(!mInputStream);
       MOZ_ASSERT(!mDone);
 
-      nsRefPtr<RemoteInputStream> stream = new RemoteInputStream(mSourceBlob);
+      nsRefPtr<RemoteInputStream> stream = new RemoteInputStream(mSourceBlob,
+                                                                 ActorFlavor);
 
       StreamActorType* streamActor = new StreamActorType(stream);
       if (mActor->SendPBlobStreamConstructor(streamActor)) {
@@ -556,6 +852,13 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   RemoteBlob(const nsAString& aName, const nsAString& aContentType,
+             uint64_t aLength, uint64_t aModDate)
+  : nsDOMFile(aName, aContentType, aLength, aModDate), mActor(nullptr)
+  {
+    mImmutable = true;
+  }
+
+  RemoteBlob(const nsAString& aName, const nsAString& aContentType,
              uint64_t aLength)
   : nsDOMFile(aName, aContentType, aLength), mActor(nullptr)
   {
@@ -569,7 +872,8 @@ public:
   }
 
   RemoteBlob()
-  : nsDOMFile(EmptyString(), EmptyString(), UINT64_MAX), mActor(nullptr)
+  : nsDOMFile(EmptyString(), EmptyString(), UINT64_MAX, UINT64_MAX)
+  , mActor(nullptr)
   {
     mImmutable = true;
   }
@@ -622,6 +926,21 @@ public:
   {
     return static_cast<typename ActorType::ProtocolType*>(mActor);
   }
+
+  NS_IMETHOD
+  GetLastModifiedDate(JSContext* cx, JS::Value* aLastModifiedDate)
+  {
+    if (IsDateUnknown()) {
+      aLastModifiedDate->setNull();
+    } else {
+      JSObject* date = JS_NewDateObjectMsec(cx, mLastModificationDate);
+      if (!date) {
+        return NS_ERROR_OUT_OF_MEMORY;
+      }
+      aLastModifiedDate->setObject(*date);
+    }
+    return NS_OK;
+  }
 };
 
 template <ActorFlavorEnum ActorFlavor>
@@ -657,7 +976,7 @@ Blob<ActorFlavor>::Blob(const BlobConstructorParams& aParams)
         aParams.get_FileBlobConstructorParams();
       remoteBlob =
         new RemoteBlobType(params.name(), params.contentType(),
-                           params.length());
+                           params.length(), params.modDate());
       mBlobIsFile = true;
       break;
     }
@@ -741,16 +1060,20 @@ template <ActorFlavorEnum ActorFlavor>
 bool
 Blob<ActorFlavor>::SetMysteryBlobInfo(const nsString& aName,
                                       const nsString& aContentType,
-                                      uint64_t aLength)
+                                      uint64_t aLength,
+                                      uint64_t aLastModifiedDate)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(mBlob);
   MOZ_ASSERT(mRemoteBlob);
   MOZ_ASSERT(aLength);
+  MOZ_ASSERT(aLastModifiedDate != UINT64_MAX);
 
-  ToConcreteBlob(mBlob)->SetLazyData(aName, aContentType, aLength);
+  ToConcreteBlob(mBlob)->SetLazyData(aName, aContentType,
+                                     aLength, aLastModifiedDate);
 
-  FileBlobConstructorParams params(aName, aContentType, aLength);
+  FileBlobConstructorParams params(aName, aContentType,
+                                   aLength, aLastModifiedDate);
   return ProtocolType::SendResolveMystery(params);
 }
 
@@ -767,7 +1090,8 @@ Blob<ActorFlavor>::SetMysteryBlobInfo(const nsString& aContentType,
   nsString voidString;
   voidString.SetIsVoid(true);
 
-  ToConcreteBlob(mBlob)->SetLazyData(voidString, aContentType, aLength);
+  ToConcreteBlob(mBlob)->SetLazyData(voidString, aContentType,
+                                     aLength, UINT64_MAX);
 
   NormalBlobConstructorParams params(aContentType, aLength);
   return ProtocolType::SendResolveMystery(params);
@@ -861,14 +1185,16 @@ Blob<ActorFlavor>::RecvResolveMystery(const ResolveMysteryParams& aParams)
         aParams.get_NormalBlobConstructorParams();
       nsString voidString;
       voidString.SetIsVoid(true);
-      blob->SetLazyData(voidString, params.contentType(), params.length());
+      blob->SetLazyData(voidString, params.contentType(),
+                        params.length(), UINT64_MAX);
       break;
     }
 
     case ResolveMysteryParams::TFileBlobConstructorParams: {
       const FileBlobConstructorParams& params =
         aParams.get_FileBlobConstructorParams();
-      blob->SetLazyData(params.name(), params.contentType(), params.length());
+      blob->SetLazyData(params.name(), params.contentType(),
+                        params.length(), params.modDate());
       break;
     }
 
@@ -891,11 +1217,30 @@ Blob<Parent>::RecvPBlobStreamConstructor(StreamType* aActor)
   nsresult rv = mBlob->GetInternalStream(getter_AddRefs(stream));
   NS_ENSURE_SUCCESS(rv, false);
 
-  nsCOMPtr<nsIIPCSerializableInputStream> serializable =
-    do_QueryInterface(stream);
-  if (!serializable) {
-    MOZ_ASSERT(false, "Must be serializable!");
-    return false;
+  nsCOMPtr<nsIIPCSerializableInputStream> serializableStream;
+
+  nsCOMPtr<nsIRemoteBlob> remoteBlob = do_QueryInterface(mBlob);
+  if (remoteBlob) {
+    // Sanity check that the remote blob returned a remote stream.
+    nsCOMPtr<IPrivateRemoteInputStream> remoteStream =
+      do_QueryInterface(stream);
+    if (!remoteStream) {
+      MOZ_ASSERT(false, "Remote blob didn't return a remote stream!");
+      return false;
+    }
+  }
+
+  // If the underlying blob is not a remote blob or it is a remote blob
+  // representing this actor then we can use the internal stream that it
+  // provides. Otherwise we need to be on a background thread before we can
+  // get to the real stream.
+  if (!remoteBlob ||
+      static_cast<ProtocolType*>(remoteBlob->GetPBlob()) == this) {
+    serializableStream = do_QueryInterface(stream);
+    if (!serializableStream) {
+      MOZ_ASSERT(false, "Must be serializable!");
+      return false;
+    }
   }
 
   nsCOMPtr<nsIEventTarget> target =
@@ -903,10 +1248,10 @@ Blob<Parent>::RecvPBlobStreamConstructor(StreamType* aActor)
   NS_ENSURE_TRUE(target, false);
 
   nsRefPtr<BaseType::OpenStreamRunnable> runnable =
-    new BaseType::OpenStreamRunnable(this, aActor, stream, serializable,
-                                      target);
+    new BaseType::OpenStreamRunnable(this, aActor, stream, serializableStream,
+                                     target);
 
-  rv = target->Dispatch(runnable, NS_DISPATCH_NORMAL);
+  rv = runnable->Dispatch();
   NS_ENSURE_SUCCESS(rv, false);
 
   nsRevocableEventPtr<BaseType::OpenStreamRunnable>* arrayMember =
@@ -968,128 +1313,6 @@ NS_IMPL_RELEASE_INHERITED(RemoteBlob<ActorFlavor>, nsDOMFile)
 template <ActorFlavorEnum ActorFlavor>
 NS_IMPL_QUERY_INTERFACE_INHERITED1(RemoteBlob<ActorFlavor>, nsDOMFile,
                                                             nsIRemoteBlob)
-
-void
-BlobTraits<Parent>::BaseType::NoteRunnableCompleted(
-                    BlobTraits<Parent>::BaseType::OpenStreamRunnable* aRunnable)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-
-  for (uint32_t index = 0; index < mOpenStreamRunnables.Length(); index++) {
-    nsRevocableEventPtr<BaseType::OpenStreamRunnable>& runnable =
-      mOpenStreamRunnables[index];
-
-    if (runnable.get() == aRunnable) {
-      runnable.Forget();
-      mOpenStreamRunnables.RemoveElementAt(index);
-      return;
-    }
-  }
-
-  MOZ_NOT_REACHED("Runnable not in our array!");
-}
-
-BlobTraits<Parent>::BaseType::
-OpenStreamRunnable::OpenStreamRunnable(
-                                   BlobTraits<Parent>::BaseType* aOwner,
-                                   BlobTraits<Parent>::StreamType* aActor,
-                                   nsIInputStream* aStream,
-                                   nsIIPCSerializableInputStream* aSerializable,
-                                   nsIEventTarget* aTarget)
-: mOwner(aOwner), mActor(aActor), mStream(aStream),
-  mSerializable(aSerializable), mTarget(aTarget), mRevoked(false),
-  mClosing(false)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(aOwner);
-  MOZ_ASSERT(aActor);
-  MOZ_ASSERT(aStream);
-  MOZ_ASSERT(aSerializable);
-  MOZ_ASSERT(aTarget);
-}
-
-NS_IMETHODIMP
-BlobTraits<Parent>::BaseType::OpenStreamRunnable::Run()
-{
-  MOZ_ASSERT(mStream);
-
-  nsresult rv;
-
-  if (NS_IsMainThread()) {
-    MOZ_ASSERT(mTarget);
-    MOZ_ASSERT(!mClosing);
-
-    if (mRevoked) {
-      MOZ_ASSERT(!mOwner);
-      MOZ_ASSERT(!mActor);
-    }
-    else {
-      MOZ_ASSERT(mOwner);
-      MOZ_ASSERT(mActor);
-
-      nsCOMPtr<nsIIPCSerializableInputStream> serializable;
-      mSerializable.swap(serializable);
-
-      InputStreamParams params;
-      serializable->Serialize(params);
-
-      MOZ_ASSERT(params.type() != InputStreamParams::T__None);
-
-      unused << mActor->Send__delete__(mActor, params);
-
-      mOwner->NoteRunnableCompleted(this);
-
-#ifdef DEBUG
-      mOwner = nullptr;
-      mActor = nullptr;
-#endif
-    }
-
-    mClosing = true;
-
-    nsCOMPtr<nsIEventTarget> target;
-    mTarget.swap(target);
-
-    rv = target->Dispatch(this, NS_DISPATCH_NORMAL);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return NS_OK;
-  }
-
-  if (!mClosing) {
-    // To force the stream open we call Available(). We don't actually care how
-    // much data is available.
-    uint64_t available;
-    if (NS_FAILED(mStream->Available(&available))) {
-      NS_WARNING("Available failed on this stream!");
-    }
-
-    rv = NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return NS_OK;
-  }
-
-  // Going to always release here.
-  nsCOMPtr<nsIInputStream> stream;
-  mStream.swap(stream);
-
-  rv = stream->Close();
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return NS_OK;
-}
-
-#ifdef DEBUG
-void
-BlobTraits<Parent>::BaseType::OpenStreamRunnable::Revoke()
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  mOwner = nullptr;
-  mActor = nullptr;
-  mRevoked = true;
-}
-#endif
 
 // Explicit instantiation of both classes.
 template class Blob<Parent>;

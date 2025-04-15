@@ -30,13 +30,13 @@
 #include "nsIDOMXPathNSResolver.h"
 #include "nsPresContext.h"
 #include "nsIDOMDOMStringMap.h"
-#include "nsContentList.h"
 #include "nsDOMClassInfoID.h" // DOMCI_DATA
 #include "nsIDOMTouchEvent.h"
 #include "nsIInlineEventHandlers.h"
 #include "mozilla/CORSMode.h"
 #include "mozilla/Attributes.h"
 #include "nsContentUtils.h"
+#include "nsINodeList.h"
 #include "nsISMILAttr.h"
 
 class nsIDOMAttr;
@@ -56,8 +56,6 @@ class nsContentList;
 class nsDOMTokenList;
 class ContentUnbinder;
 struct nsRect;
-
-typedef PRUptrdiff PtrBits;
 
 /**
  * A generic base class for DOM elements, implementing many nsIContent,
@@ -81,6 +79,9 @@ public:
   {
     return SetAttr(aNameSpaceID, aName, nullptr, aValue, aNotify);
   }
+
+  NS_IMETHOD GetAttributes(nsIDOMNamedNodeMap** aAttributes);
+
   /**
    * Helper for SetAttr/SetParsedAttr. This method will return true if aNotify
    * is true or there are mutation listeners that must be triggered, the
@@ -210,9 +211,9 @@ public:
    * @param aValue the JS to attach
    * @param aDefer indicates if deferred execution is allowed
    */
-  nsresult AddScriptEventListener(nsIAtom* aEventName,
-                                  const nsAString& aValue,
-                                  bool aDefer = true);
+  nsresult SetEventHandler(nsIAtom* aEventName,
+                           const nsAString& aValue,
+                           bool aDefer = true);
 
   /**
    * Do whatever needs to be done when the mouse leaves a link

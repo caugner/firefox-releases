@@ -141,6 +141,9 @@ skip-if(Android||B2G) include first-letter/reftest.list
 # first-line/
 include first-line/reftest.list
 
+# flexbox (display: flex, display: inline-flex)
+include flexbox/reftest.list
+
 # floats/
 include floats/reftest.list
 
@@ -255,6 +258,8 @@ include table-bordercollapse/reftest.list
 
 # table-dom/
 include table-dom/reftest.list
+
+include table-overflow/reftest.list
 
 # table-width/
 include table-width/reftest.list

@@ -1205,7 +1205,7 @@ nsIMM32Handler::HandleComposition(nsWindow* aWindow,
     if (useA_API) {
       // Convert each values of sIMECompClauseArray. The values mean offset of
       // the clauses in ANSI string. But we need the values in Unicode string.
-      nsCAutoString compANSIStr;
+      nsAutoCString compANSIStr;
       if (ConvertToANSIString(mCompositionString, GetKeyboardCodePage(),
                               compANSIStr)) {
         uint32_t maxlen = compANSIStr.Length();
@@ -1482,7 +1482,7 @@ nsIMM32Handler::HandleDocumentFeed(nsWindow* aWindow,
 
   // XXX nsString::Find and nsString::RFind take int32_t for offset, so,
   //     we cannot support this message when the current offset is larger than
-  //     PR_INT32_MAX.
+  //     INT32_MAX.
   if (targetOffset < 0 || targetLength < 0 ||
       targetOffset + targetLength < 0) {
     PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
@@ -1492,7 +1492,7 @@ nsIMM32Handler::HandleDocumentFeed(nsWindow* aWindow,
 
   // Get all contents of the focused editor.
   nsQueryContentEvent textContent(true, NS_QUERY_TEXT_CONTENT, aWindow);
-  textContent.InitForQueryTextContent(0, PR_UINT32_MAX);
+  textContent.InitForQueryTextContent(0, UINT32_MAX);
   aWindow->InitEvent(textContent, &point);
   aWindow->DispatchWindowEvent(&textContent);
   if (!textContent.mSucceeded) {

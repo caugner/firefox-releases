@@ -606,7 +606,7 @@ nsWindow::SetSizeMode(int32_t aMode)
 // set to visible if one of their ancestors is invisible)
 static void find_first_visible_parent(QGraphicsItem* aItem, QGraphicsItem*& aVisibleItem)
 {
-    NS_ENSURE_TRUE(aItem, );
+    NS_ENSURE_TRUE_VOID(aItem);
 
     aVisibleItem = nullptr;
     QGraphicsItem* parItem = nullptr;
@@ -817,7 +817,7 @@ nsWindow::SetIcon(const nsAString& aIconSpec)
         return NS_OK;
 
     nsCOMPtr<nsIFile> iconFile;
-    nsCAutoString path;
+    nsAutoCString path;
     nsTArray<nsCString> iconList;
 
     // Look for icons with the following suffixes appended to the base name.
@@ -929,7 +929,7 @@ check_for_rollup(double aMouseX, double aMouseY,
             // if we're dealing with menus, we probably have submenus and
             // we don't want to rollup if the clickis in a parent menu of
             // the current submenu
-            uint32_t popupsToRollup = PR_UINT32_MAX;
+            uint32_t popupsToRollup = UINT32_MAX;
             if (gRollupListener) {
                 nsAutoTArray<nsIWidget*, 5> widgetChain;
                 uint32_t sameTypeCount = gRollupListener->GetSubmenuWidgetChain(&widgetChain);
@@ -2330,7 +2330,7 @@ nsWindow::NativeResize(int32_t aWidth, int32_t aHeight, bool    aRepaint)
 
     if (mIsTopLevel) {
         QGraphicsView *widget = qobject_cast<QGraphicsView*>(GetViewWidget());
-        NS_ENSURE_TRUE(widget,);
+        NS_ENSURE_TRUE_VOID(widget);
         // map from in-scene widget to scene, from scene to view.
         QRect r = widget->mapFromScene(mWidget->mapToScene(QRect(0, 0, aWidth, aHeight))).boundingRect();
         // going from QPolygon to QRect includes the points, adding one to width and height
@@ -2358,7 +2358,7 @@ nsWindow::NativeResize(int32_t aX, int32_t aY,
 
     if (mIsTopLevel) {
         QGraphicsView *widget = qobject_cast<QGraphicsView*>(GetViewWidget());
-        NS_ENSURE_TRUE(widget,);
+        NS_ENSURE_TRUE_VOID(widget);
         // map from in-scene widget to scene, from scene to view.
         QRect r = widget->mapFromScene(mWidget->mapToScene(QRect(aX, aY, aWidth, aHeight))).boundingRect();
         // going from QPolygon to QRect includes the points, adding one to width and height
@@ -2861,7 +2861,7 @@ nsWindow::DispatchEvent(nsGUIEvent *aEvent, nsEventStatus &aStatus)
 {
 #ifdef DEBUG
     debug_DumpEvent(stdout, aEvent->widget, aEvent,
-                    nsCAutoString("something"), 0);
+                    nsAutoCString("something"), 0);
 #endif
 
     aStatus = nsEventStatus_eIgnore;
@@ -3166,7 +3166,7 @@ NS_IMETHODIMP_(void)
 nsWindow::SetInputContext(const InputContext& aContext,
                           const InputContextAction& aAction)
 {
-    NS_ENSURE_TRUE(mWidget, );
+    NS_ENSURE_TRUE_VOID(mWidget);
 
     // SetSoftwareKeyboardState uses mInputContext,
     // so, before calling that, record aContext in mInputContext.

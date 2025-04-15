@@ -222,6 +222,8 @@ Section "-Application" APP_IDX
   DetailPrint $(STATUS_INSTALL_APP)
   SetDetailsPrint none
 
+  RmDir /r /REBOOTOK "$INSTDIR\${TO_BE_DELETED}"
+
   ${LogHeader} "Installing Main Files"
   ${CopyFilesFromDir} "$EXEDIR\core" "$INSTDIR" \
                       "$(ERROR_CREATE_DIRECTORY_PREFIX)" \
@@ -547,10 +549,9 @@ Section "-InstallEndCleanup"
         UAC::ExecCodeSegment $0
       ${EndIf}
     ${EndIf}
+    ; Adds a pinned Task Bar shortcut (see MigrateTaskBarShortcut for details).
+    ${MigrateTaskBarShortcut}
   ${EndUnless}
-
-  ; Adds a pinned Task Bar shortcut (see MigrateTaskBarShortcut for details).
-  ${MigrateTaskBarShortcut}
 
   ${GetShortcutsLogPath} $0
   WriteIniStr "$0" "TASKBAR" "Migrated" "true"

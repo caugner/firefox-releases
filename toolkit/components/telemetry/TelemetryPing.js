@@ -11,8 +11,10 @@ const Cu = Components.utils;
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
+#ifndef MOZ_WIDGET_GONK
 Cu.import("resource://gre/modules/LightweightThemeManager.jsm");
-Cu.import("resource://gre/modules/ctypes.jsm"); 
+#endif
+Cu.import("resource://gre/modules/ctypes.jsm");
 
 // When modifying the payload in incompatible ways, please bump this version number
 const PAYLOAD_VERSION = 1;
@@ -84,6 +86,8 @@ XPCOMUtils.defineLazyServiceGetter(this, "Telemetry",
 XPCOMUtils.defineLazyServiceGetter(this, "idleService",
                                    "@mozilla.org/widget/idleservice;1",
                                    "nsIIdleService");
+XPCOMUtils.defineLazyModuleGetter(this, "UpdateChannel",
+                                  "resource://gre/modules/UpdateChannel.jsm");
 
 function generateUUID() {
   let str = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator).generateUUID().toString();
@@ -146,42 +150,6 @@ function getSimpleMeasurements() {
 }
 
 /**
- * Read the update channel from defaults only.  We do this to ensure that
- * the channel is tightly coupled with the application and does not apply
- * to other installations of the application that may use the same profile.
- */
-function getUpdateChannel() {
-  var channel = "default";
-  var prefName;
-  var prefValue;
-
-  var defaults = Services.prefs.getDefaultBranch(null);
-  try {
-    channel = defaults.getCharPref("app.update.channel");
-  } catch (e) {
-    // use default when pref not found
-  }
-
-  try {
-    var partners = Services.prefs.getChildList("app.partner.");
-    if (partners.length) {
-      channel += "-cck";
-      partners.sort();
-
-      for each (prefName in partners) {
-        prefValue = Services.prefs.getCharPref(prefName);
-        channel += "-" + prefValue;
-      }
-    }
-  }
-  catch (e) {
-    Cu.reportError(e);
-  }
-
-  return channel;
-}
-
-/**
  * Read current process I/O counters.
  */            
 let processInfo = {
@@ -237,6 +205,7 @@ TelemetryPing.prototype = {
   // duplicate submissions.
   _uuid: generateUUID(),
   // Regex that matches histograms we care about during startup.
+  // Keep this in sync with gen-histogram-bucket-ranges.py.
   _startupHistogramRegex: /SQLITE|HTTP|SPDY|CACHE|DNS/,
   _slowSQLStartup: {},
   _prevSession: null,
@@ -361,7 +330,7 @@ TelemetryPing.prototype = {
       appVersion: ai.version,
       appName: ai.name,
       appBuildID: ai.appBuildID,
-      appUpdateChannel: getUpdateChannel(),
+      appUpdateChannel: UpdateChannel.get(),
       platformBuildID: ai.platformBuildID,
       locale: getLocale()
     };
@@ -411,9 +380,11 @@ TelemetryPing.prototype = {
       }
     }
 
+#ifndef MOZ_WIDGET_GONK
     let theme = LightweightThemeManager.currentTheme;
     if (theme)
       ret.persona = theme.id;
+#endif
 
     if (this._addons)
       ret.addons = this._addons;
@@ -755,7 +726,9 @@ TelemetryPing.prototype = {
     return ping.checksum == checksumNow;
   },
 
-  addToPendingPings: function addToPendingPings(stream) {
+  addToPendingPings: function addToPendingPings(file, stream) {
+    let success = false;
+
     try {
       let string = NetUtil.readInputStreamToString(stream, stream.available(), { charset: "UTF-8" });
       stream.close();
@@ -770,9 +743,14 @@ TelemetryPing.prototype = {
           this._pingLoadsCompleted == this._pingsLoaded) {
         Services.obs.notifyObservers(null, "telemetry-test-load-complete", null);
       }
+      success = true;
     } catch (e) {
       // An error reading the file, or an error parsing the contents.
+      stream.close();           // close is idempotent.
+      file.remove(true);
     }
+    let success_histogram = Telemetry.getHistogramById("READ_SAVED_PING_SUCCESS");
+    success_histogram.add(success);
   },
 
   loadHistograms: function loadHistograms(file, sync) {
@@ -788,7 +766,7 @@ TelemetryPing.prototype = {
       let stream = Cc["@mozilla.org/network/file-input-stream;1"]
                    .createInstance(Ci.nsIFileInputStream);
       stream.init(file, -1, -1, 0);
-      this.addToPendingPings(stream);
+      this.addToPendingPings(file, stream);
     } else {
       let channel = NetUtil.newChannel(file);
       channel.contentType = "application/json"
@@ -797,7 +775,7 @@ TelemetryPing.prototype = {
         if (!Components.isSuccessCode(result)) {
           return;
         }
-        this.addToPendingPings(stream);
+        this.addToPendingPings(file, stream);
       }).bind(this));
     }
   },
@@ -882,18 +860,11 @@ TelemetryPing.prototype = {
     let profileDirectory = Services.dirsvc.get("ProfD", Ci.nsILocalFile);
     let directory = profileDirectory.clone();
     directory.append("saved-telemetry-pings");
-    if (directory.exists()) {
-      if (directory.isDirectory()) {
-        // We used to wrongly create the directory with mode 0600.
-        // Fix that.
-        directory.permissions = RWX_OWNER;
-        return directory;
-      } else {
-        directory.remove(true);
-      }
+    try {
+      directory.create(Ci.nsIFile.DIRECTORY_TYPE, RWX_OWNER);
+    } catch (e) {
+      // Already exists, just ignore this.
     }
-
-    directory.create(Ci.nsIFile.DIRECTORY_TYPE, RWX_OWNER);
     return directory;
   },
 
@@ -1044,7 +1015,9 @@ TelemetryPing.prototype = {
       }
       break;
     case "quit-application-granted":
-      this.savePendingPings();
+      if (Telemetry.canSend) {
+        this.savePendingPings();
+      }
       break;
     }
   },
@@ -1053,4 +1026,4 @@ TelemetryPing.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver]),
 };
 
-let NSGetFactory = XPCOMUtils.generateNSGetFactory([TelemetryPing]);
+this.NSGetFactory = XPCOMUtils.generateNSGetFactory([TelemetryPing]);

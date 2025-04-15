@@ -48,9 +48,8 @@ NS_IMPL_ISUPPORTS1(nsSecurityNameSet, nsIScriptExternalNameSet)
 static JSBool
 netscape_security_enablePrivilege(JSContext *cx, unsigned argc, jsval *vp)
 {
-    xpc::EnableUniversalXPConnect(cx);
     Telemetry::Accumulate(Telemetry::ENABLE_PRIVILEGE_EVER_CALLED, true);
-    return JS_TRUE;
+    return xpc::EnableUniversalXPConnect(cx);
 }
 
 static JSFunctionSpec PrivilegeManager_static_methods[] = {
@@ -75,8 +74,12 @@ nsSecurityNameSet::InitializeNameSet(nsIScriptContext* aScriptContext)
     JSObject *obj = global;
     JSObject *proto;
     JSAutoRequest ar(cx);
-    while ((proto = JS_GetPrototype(obj)) != nullptr)
+    for (;;) {
+        MOZ_ALWAYS_TRUE(JS_GetPrototype(cx, obj, &proto));
+        if (!proto)
+            break;
         obj = proto;
+    }
     JSClass *objectClass = JS_GetClass(obj);
 
     JS::Value v;

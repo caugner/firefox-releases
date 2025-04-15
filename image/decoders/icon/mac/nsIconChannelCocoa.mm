@@ -109,7 +109,7 @@ NS_IMETHODIMP nsIconChannel::OnStopRequest(nsIRequest* aRequest, nsISupports* aC
 NS_IMETHODIMP nsIconChannel::OnDataAvailable(nsIRequest* aRequest,
                                              nsISupports* aContext,
                                              nsIInputStream* aStream,
-                                             uint32_t aOffset,
+                                             uint64_t aOffset,
                                              uint32_t aCount)
 {
   if (mListener)
@@ -204,7 +204,7 @@ nsresult nsIconChannel::MakeInputStream(nsIInputStream** _retval, bool nonBlocki
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
   nsXPIDLCString contentType;
-  nsCAutoString fileExt;
+  nsAutoCString fileExt;
   nsCOMPtr<nsIFile> fileloc; // file we want an icon for
   uint32_t desiredImageSize;
   nsresult rv = ExtractIconInfoFromUrl(getter_AddRefs(fileloc), &desiredImageSize, contentType, fileExt);
@@ -368,7 +368,19 @@ nsIconChannel::GetContentDisposition(uint32_t *aContentDisposition)
 }
 
 NS_IMETHODIMP
+nsIconChannel::SetContentDisposition(uint32_t aContentDisposition)
+{
+  return NS_ERROR_NOT_AVAILABLE;
+}
+
+NS_IMETHODIMP
 nsIconChannel::GetContentDispositionFilename(nsAString &aContentDispositionFilename)
+{
+  return NS_ERROR_NOT_AVAILABLE;
+}
+
+NS_IMETHODIMP
+nsIconChannel::SetContentDispositionFilename(const nsAString &aContentDispositionFilename)
 {
   return NS_ERROR_NOT_AVAILABLE;
 }

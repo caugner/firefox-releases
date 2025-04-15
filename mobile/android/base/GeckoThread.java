@@ -75,7 +75,7 @@ public class GeckoThread extends Thread {
         args = (args != null ? args : "") + profile;
 
         // and then fire us up
-        Log.i(LOGTAG, "RunGecko - URI = " + mUri + " args = " + args);
+        Log.i(LOGTAG, "RunGecko - args = " + args);
         GeckoAppShell.runGecko(app.getApplication().getPackageResourcePath(),
                                args,
                                mUri,

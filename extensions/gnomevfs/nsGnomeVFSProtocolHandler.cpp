@@ -157,7 +157,7 @@ ProxiedAuthCallback(gconstpointer in,
     //     that we originally gave to it.  In spite of the likelihood of
     //     false hits, this check is probably still valuable.
     //
-    nsCAutoString spec;
+    nsAutoCString spec;
     uri->GetSpec(spec);
     int uriLen = strlen(authIn->uri);
     if (!StringHead(spec, uriLen).Equals(nsDependentCString(authIn->uri, uriLen)))
@@ -168,7 +168,7 @@ ProxiedAuthCallback(gconstpointer in,
   }
 #endif
 
-  nsCAutoString scheme, hostPort;
+  nsAutoCString scheme, hostPort;
   uri->GetScheme(scheme);
   uri->GetHostPort(hostPort);
 
@@ -319,7 +319,7 @@ class nsGnomeVFSInputStream MOZ_FINAL : public nsIInputStream
       : mSpec(uriSpec)
       , mChannel(nullptr)
       , mHandle(nullptr)
-      , mBytesRemaining(PR_UINT64_MAX)
+      , mBytesRemaining(UINT64_MAX)
       , mStatus(NS_OK)
       , mDirList(nullptr)
       , mDirListPtr(nullptr)
@@ -433,9 +433,9 @@ nsGnomeVFSInputStream::DoOpen()
 
       // Update the content length attribute on the channel.  We do this
       // synchronously without proxying.  This hack is not as bad as it looks!
-      if (mBytesRemaining != PR_UINT64_MAX) {
+      if (mBytesRemaining != UINT64_MAX) {
         // XXX 64-bit
-        mChannel->SetContentLength(NS_MAX((int32_t)mBytesRemaining, PR_INT32_MAX));
+        mChannel->SetContentLength(NS_MAX((int32_t)mBytesRemaining, INT32_MAX));
       }
     }
     else
@@ -901,7 +901,7 @@ nsGnomeVFSProtocolHandler::NewChannel(nsIURI *aURI, nsIChannel **aResult)
   NS_ENSURE_ARG_POINTER(aURI);
   nsresult rv;
 
-  nsCAutoString spec;
+  nsAutoCString spec;
   rv = aURI->GetSpec(spec);
   if (NS_FAILED(rv))
     return rv;

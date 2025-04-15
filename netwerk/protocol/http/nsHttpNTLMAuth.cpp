@@ -92,7 +92,7 @@ MatchesBaseURI(const nsCSubstring &matchScheme,
 static bool
 IsNonFqdn(nsIURI *uri)
 {
-    nsCAutoString host;
+    nsAutoCString host;
     PRNetAddr addr;
 
     if (NS_FAILED(uri->GetAsciiHost(host)))
@@ -110,7 +110,7 @@ TestPref(nsIURI *uri, const char *pref)
     if (!prefs)
         return false;
 
-    nsCAutoString scheme, host;
+    nsAutoCString scheme, host;
     int32_t port;
 
     if (NS_FAILED(uri->GetScheme(scheme)))
@@ -355,7 +355,7 @@ nsHttpNTLMAuth::GenerateCredentials(nsIHttpAuthenticableChannel *authChannel,
         rv = authChannel->GetURI(getter_AddRefs(uri));
         if (NS_FAILED(rv))
             return rv;
-        nsCAutoString serviceName, host;
+        nsAutoCString serviceName, host;
         rv = uri->GetAsciiHost(host);
         if (NS_FAILED(rv))
             return rv;

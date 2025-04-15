@@ -13,6 +13,7 @@ MODULE          = dom
 XPIDL_MODULE    = dom_system
 LIBRARY_NAME    = domsystem_s
 LIBXUL_LIBRARY  = 1
+FAIL_ON_WARNINGS := 1
 
 ifneq (,$(filter qt gtk2,$(MOZ_WIDGET_TOOLKIT)))
 DIRS = unix
@@ -59,6 +60,13 @@ EXTRA_COMPONENTS = \
   $(NULL)
 endif
 
+ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
+EXTRA_COMPONENTS = \
+  NetworkGeolocationProvider.js \
+  NetworkGeolocationProvider.manifest \
+  $(NULL)
+endif
+
 EXPORTS_NAMESPACES = mozilla
 
 EXPORTS     = \
@@ -70,7 +78,10 @@ EXPORTS_mozilla = \
   $(NULL)
 
 # We fire the nsDOMDeviceAcceleration
-LOCAL_INCLUDES += -I$(topsrcdir)/content/events/src
+LOCAL_INCLUDES += \
+  -I$(topsrcdir)/content/events/src \
+  -I$(topsrcdir)/js/xpconnect/loader \
+  $(NULL)
 
 ifdef ENABLE_TESTS
 DIRS += tests

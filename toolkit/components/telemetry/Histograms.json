@@ -407,10 +407,21 @@
     "description": "System font fallback, first call (ms)"
   },
   "SYSTEM_FONT_FALLBACK_SCRIPT": {
-    "kind": "linear",
-    "high": "110",
-    "n_buckets": 111,
+    "kind": "enumerated",
+    "n_values": 110,
     "description": "System font fallback script"
+  },
+  "GRADIENT_DURATION": {
+    "kind": "exponential",
+    "high":"50000000",
+    "n_buckets":20,
+    "description": "Gradient generation time (us)"
+  },
+  "GRADIENT_RETENTION_TIME": {
+    "kind": "linear",
+    "high": "10000",
+    "n_buckets":20,
+    "description": "Maximum retention time for the gradient cache. (ms)"
   },
   "STARTUP_CACHE_AGE_HOURS": {
     "kind": "exponential",
@@ -530,9 +541,8 @@
     "description": "HTTP: Requests per page (count)"
   },
   "HTTP_REQUEST_PER_PAGE_FROM_CACHE": {
-    "kind": "linear",
-    "high": "101",
-    "n_buckets": 102,
+    "kind": "enumerated",
+    "n_values": 101,
     "description": "HTTP: Requests serviced from cache (%)"
   },
   "HTTP_REQUEST_PER_CONN": {
@@ -825,6 +835,18 @@
     "kind": "boolean",
     "description": "Stores 1 if the cache would be clean with the disk cache corruption plan of Bug 105843"
   },
+  "DISK_CACHE_REVALIDATION_SAFE": {
+    "kind": "boolean",
+    "description": "Stores 1 if the cache clean file was revalidated, or 0 if a non empty doom list prevented revalidation"
+  },
+  "DISK_CACHE_INVALIDATION_SUCCESS": {
+    "kind": "boolean",
+    "description": "Stores 1 if writing '0' to the cache clean file succeeded, and 0 if it failed."
+  },
+  "DISK_CACHE_REVALIDATION_SUCCESS": {
+    "kind": "boolean",
+    "description": "Stores 1 if writing '1' to the cache clean file succeeded, and 0 if it failed."
+  },
   "HTTP_CACHE_DISPOSITION_2": {
     "kind": "enumerated",
     "n_values": 5,
@@ -868,6 +890,24 @@
     "high": "10000",
     "n_buckets": 50,
     "description": "Time to search offline cache (ms)"
+  },
+  "TRANSACTION_WAIT_TIME_HTTP": {
+    "kind": "exponential",
+    "high": "5000",
+    "n_buckets": 100,
+    "description": "Time from submission to dispatch of HTTP transaction (ms)"
+  },
+  "TRANSACTION_WAIT_TIME_HTTP_PIPELINES": {
+    "kind": "exponential",
+    "high": "5000",
+    "n_buckets": 100,
+    "description": "Time from submission to dispatch of HTTP with pipelines transaction (ms)"
+  },
+  "TRANSACTION_WAIT_TIME_SPDY": {
+    "kind": "exponential",
+    "high": "5000",
+    "n_buckets": 100,
+    "description": "Time from submission to dispatch of SPDY transaction (ms)"
   },
   "HTTP_DISK_CACHE_OVERHEAD": {
     "kind": "exponential",
@@ -1266,6 +1306,12 @@
     "high": "10 * 1000",
     "n_buckets": 50,
     "description": "Time spent waiting on the cache service lock (ms) on the main thread in NSDISKCACHEMAP_REVALIDATION"
+  },
+  "CACHE_SERVICE_LOCK_WAIT_MAINTHREAD_NSASYNCDOOMEVENT_RUN": {
+    "kind": "exponential",
+    "high": "10 * 1000",
+    "n_buckets": 50,
+    "description": "Time spent waiting on the cache service lock (ms) on the main thread in NSASYNCDOOMEVENT_RUN"
   },
   "DNS_LOOKUP_METHOD2": {
     "kind": "enumerated",
@@ -1820,9 +1866,8 @@
     "description": "PLACES: Time to calculate frecency of a page (ms)"
   },
   "UPDATER_STATUS_CODES": {
-    "kind": "linear",
-    "high": "50",
-    "n_buckets": 51,
+    "kind": "enumerated",
+    "n_values": 50,
     "description": "Updater: the status of the latest update performed"
   },
   "UPDATER_UPDATES_ENABLED": {
@@ -1838,9 +1883,8 @@
     "description": "Updater: Whether or not the MozillaMaintenance service is enabled"
   },
   "UPDATER_SERVICE_ERRORS": {
-    "kind": "linear",
-    "high": "30",
-    "n_buckets": 31,
+    "kind": "enumerated",
+    "n_values": 30,
     "description": "Updater: The number of MozillaMaintenance service errors that have occurred"
   },
   "UPDATER_SERVICE_INSTALLED": {
@@ -1889,6 +1933,18 @@
     "n_buckets": 10,
     "description": "Firefox: Time taken by the tab closing animation in milliseconds"
   },
+  "FX_TAB_SWITCH_UPDATE_MS": {
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": 20,
+    "description": "Firefox: Time in ms spent updating UI in response to a tab switch"
+  },
+  "FX_TAB_SWITCH_TOTAL_MS": {
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": 20,
+    "description": "Firefox: Time in ms till a tab switch is complete including the first paint"
+  },
   "FX_KEYWORD_URL_USERSET": {
     "kind": "boolean",
     "description": "Firefox: keyword.URL has a user-set value"
@@ -1917,6 +1973,12 @@
     "high": "10000",
     "n_buckets": 20,
     "description": "Firefox: Time taken to open a new browser window (ms)"
+  },
+  "FX_PAGE_LOAD_MS": {
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": 20,
+    "description": "Firefox: Time taken to load a page (ms)"
   },
   "FX_THUMBNAILS_CAPTURE_TIME_MS": {
     "kind": "exponential",
@@ -2135,9 +2197,8 @@
     "description": "New tab page is enabled."
   },
   "NEWTAB_PAGE_PINNED_SITES_COUNT": {
-    "kind": "exponential",
-    "high": "9",
-    "n_buckets": 10,
+    "kind": "enumerated",
+    "n_values": 9,
     "description": "Number of pinned sites on the new tab page."
   },
   "NEWTAB_PAGE_BLOCKED_SITES_COUNT": {
@@ -2192,6 +2253,44 @@
     "description": "Number of history entries in the original XUL places database",
     "cpp_guard": "ANDROID"
   },
+  "FENNEC_AWESOMEBAR_ALLPAGES_EMPTY_TIME": {
+    "kind": "exponential",
+    "low": 10,
+    "high": "20000",
+    "n_buckets": 20,
+    "description": "Fennec: Time for the Awesomebar Top Sites query to return with no filter set (ms)",
+    "cpp_guard": "ANDROID"
+  },
+  "FENNEC_STARTUP_TIME_JAVAUI": {
+    "kind": "exponential",
+    "low": 100,
+    "high": "5000",
+    "n_buckets": 20,
+    "description": "Time for the Java UI to load (ms)",
+    "cpp_guard": "ANDROID"
+  },
+  "FENNEC_STARTUP_TIME_ABOUTHOME": {
+    "kind": "exponential",
+    "low": 100,
+    "high": "10000",
+    "n_buckets": 20,
+    "description": "Time for the about:home page to be displayed (ms)",
+    "cpp_guard": "ANDROID"
+  },
+  "FENNEC_STARTUP_TIME_GECKOREADY": {
+    "kind": "exponential",
+    "low": 500,
+    "high": "20000",
+    "n_buckets": 20,
+    "description": "Time for the Gecko:Ready message to arrive (ms)",
+    "cpp_guard": "ANDROID"
+  },
+  "FENNEC_STARTUP_GECKOAPP_ACTION": {
+    "kind": "enumerated",
+    "n_values": 4,
+    "description": "The way the GeckoApp was launched. (Normal, URL, Prefetch, Redirector)",
+    "cpp_guard": "ANDROID"
+  },
   "OUT_OF_MEMORY_KILLED": {
     "kind": "flag",
     "description": "Killed due to an OOM condition",
@@ -2213,5 +2312,18 @@
   "ENABLE_PRIVILEGE_EVER_CALLED": {
     "kind": "flag",
     "description": "Whether enablePrivilege has ever been called during the current session"
+  },
+  "READ_SAVED_PING_SUCCESS": {
+    "kind": "boolean",
+    "description": "Successfully reading a saved ping file"
+  },
+  "TOUCH_ENABLED_DEVICE": {
+    "kind": "boolean",
+    "description": "The device supports touch input",
+    "cpp_guard": "XP_WIN"
+  },
+  "COMPONENTS_OBJECT_ACCESSED_BY_CONTENT": {
+    "kind": "flag",
+    "description": "Whether content ever accesed the Components object in this session"
   }
 }

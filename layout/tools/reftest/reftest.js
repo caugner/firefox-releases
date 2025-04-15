@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #if BOOTSTRAP
-var EXPORTED_SYMBOLS = ["OnRefTestLoad"];
+this.EXPORTED_SYMBOLS = ["OnRefTestLoad"];
 #endif
 
 
@@ -202,7 +202,7 @@ function IDForEventTarget(event)
     }
 }
 
-function OnRefTestLoad(win)
+this.OnRefTestLoad = function OnRefTestLoad(win)
 {
     gCrashDumpDir = CC[NS_DIRECTORY_SERVICE_CONTRACTID]
                     .getService(CI.nsIProperties)
@@ -277,6 +277,10 @@ function InitAndStartRefTests()
     } catch(e) {
         gDumpLog("REFTEST TEST-UNEXPECTED-FAIL | | EXCEPTION: " + e + "\n");
     }
+
+    try {
+      prefs.setBoolPref("android.widget_paints_background", false);
+    } catch (e) {}
 
     /* set the gLoadTimeout */
     try {
@@ -440,6 +444,25 @@ function StartTests()
         ReadTopManifest(uri);
         BuildUseCounts();
 
+        // We need to filter the tests which will be skipped during this test run, so when we chunk,
+        // we have a more even distribution
+        var tURL = new Array();
+        for (var i = 0; i < gURLs.length; ++i) {
+            if (gURLs[i].expected == EXPECTED_DEATH)
+                continue;
+
+            if (gURLs[i].needsFocus && !Focus())
+                continue;
+
+            if (gURLs[i].slow && !gRunSlowTests)
+                continue;
+
+            tURL.push(gURLs[i]);
+        }
+
+        gDumpLog("REFTEST INFO | Discovered " + gURLs.length + " tests, after filtering SKIP tests, we have " + tURL.length + "\n");
+        gURLs = tURL;
+
         if (gTotalChunks > 0 && gThisChunk > 0) {
             var testsPerChunk = gURLs.length / gTotalChunks;
             var start = Math.round((gThisChunk-1) * testsPerChunk);
@@ -498,8 +521,8 @@ function BuildConditionSandbox(aURL) {
     } catch(e) {
         sandbox.xulRuntime.XPCOMABI = "";
     }
- 
-    
+
+
 #if REFTEST_B2G
     // XXX nsIGfxInfo isn't available in B2G
     sandbox.d2d = false;
@@ -627,6 +650,10 @@ function BuildConditionSandbox(aURL) {
     // crash the content process
     sandbox.browserIsRemote = gBrowserIsRemote;
     sandbox.bug685516 = sandbox.browserIsRemote && sandbox.Android;
+
+    // Distinguish the Fennecs:
+    sandbox.xulFennec    = sandbox.Android &&  sandbox.browserIsRemote;
+    sandbox.nativeFennec = sandbox.Android && !sandbox.browserIsRemote;
 
     if (!gDumpedConditionSandbox) {
         dump("REFTEST INFO | Dumping JSON representation of sandbox \n");

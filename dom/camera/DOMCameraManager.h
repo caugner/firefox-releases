@@ -10,32 +10,63 @@
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsIThread.h"
+#include "nsIObserver.h"
 #include "nsThreadUtils.h"
+#include "nsHashKeys.h"
+#include "nsWeakReference.h"
+#include "nsClassHashtable.h"
 #include "nsIDOMCameraManager.h"
+#include "nsCycleCollectionParticipant.h"
 #include "mozilla/Attributes.h"
 
-class nsDOMCameraManager MOZ_FINAL : public nsIDOMCameraManager
+class nsPIDOMWindow;
+
+namespace mozilla {
+class nsDOMCameraControl;
+}
+
+typedef nsTArray<nsRefPtr<mozilla::nsDOMCameraControl> > CameraControls;
+typedef nsClassHashtable<nsUint64HashKey, CameraControls> WindowTable;
+
+class nsDOMCameraManager MOZ_FINAL
+  : public nsIDOMCameraManager
+  , public nsIObserver
+  , public nsSupportsWeakReference
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsDOMCameraManager, nsIObserver)
   NS_DECL_NSIDOMCAMERAMANAGER
+  NS_DECL_NSIOBSERVER
 
-  static already_AddRefed<nsDOMCameraManager> Create(uint64_t aWindowId);
+  static already_AddRefed<nsDOMCameraManager>
+    CheckPermissionAndCreateInstance(nsPIDOMWindow* aWindow);
+  static bool IsWindowStillActive(uint64_t aWindowId);
 
+  void Register(mozilla::nsDOMCameraControl* aDOMCameraControl);
   void OnNavigation(uint64_t aWindowId);
+
+protected:
+  void XpComShutdown();
+  void Shutdown(uint64_t aWindowId);
+  ~nsDOMCameraManager();
 
 private:
   nsDOMCameraManager();
   nsDOMCameraManager(uint64_t aWindowId);
   nsDOMCameraManager(const nsDOMCameraManager&) MOZ_DELETE;
   nsDOMCameraManager& operator=(const nsDOMCameraManager&) MOZ_DELETE;
-  ~nsDOMCameraManager();
 
 protected:
   uint64_t mWindowId;
   nsCOMPtr<nsIThread> mCameraThread;
+  /**
+   * 'mActiveWindows' is only ever accessed while in the main thread,
+   * so it is not otherwise protected.
+   */
+  static WindowTable sActiveWindows;
+  static bool sActiveWindowsInitialized;
 };
-
 
 class GetCameraTask : public nsRunnable
 {
@@ -54,30 +85,6 @@ protected:
   nsCOMPtr<nsICameraGetCameraCallback> mOnSuccessCb;
   nsCOMPtr<nsICameraErrorCallback> mOnErrorCb;
   nsCOMPtr<nsIThread> mCameraThread;
-};
-
-class GetCameraResult : public nsRunnable
-{
-public:
-  GetCameraResult(nsICameraControl* aCameraControl, nsICameraGetCameraCallback* onSuccess)
-    : mCameraControl(aCameraControl)
-    , mOnSuccessCb(onSuccess)
-  { }
-
-  NS_IMETHOD Run()
-  {
-    MOZ_ASSERT(NS_IsMainThread());
-
-    // TODO: window management stuff
-    if (mOnSuccessCb) {
-      mOnSuccessCb->HandleEvent(mCameraControl);
-    }
-    return NS_OK;
-  }
-
-protected:
-  nsCOMPtr<nsICameraControl> mCameraControl;
-  nsCOMPtr<nsICameraGetCameraCallback> mOnSuccessCb;
 };
 
 #endif // DOM_CAMERA_DOMCAMERAMANAGER_H

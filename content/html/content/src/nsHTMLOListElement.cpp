@@ -10,6 +10,7 @@
 #include "nsIDOMHTMLUListElement.h"
 #include "nsIDOMEventTarget.h"
 #include "nsGenericHTMLElement.h"
+#include "nsAttrValueInlines.h"
 #include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsMappedAttributes.h"
@@ -125,6 +126,7 @@ NS_IMPL_ELEMENT_CLONE(nsHTMLSharedListElement)
 NS_IMPL_BOOL_ATTR(nsHTMLSharedListElement, Compact, compact)
 NS_IMPL_INT_ATTR_DEFAULT_VALUE(nsHTMLSharedListElement, Start, start, 1)
 NS_IMPL_STRING_ATTR(nsHTMLSharedListElement, Type, type)
+NS_IMPL_BOOL_ATTR(nsHTMLSharedListElement, Reversed, reversed)
 
 // Shared with nsHTMLSharedElement.cpp
 nsAttrValue::EnumTable kListTypeTable[] = {

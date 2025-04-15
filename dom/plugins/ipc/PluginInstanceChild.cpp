@@ -103,6 +103,9 @@ struct RunnableMethodTraits<PluginInstanceChild>
 
 PluginInstanceChild::PluginInstanceChild(const NPPluginFuncs* aPluginIface)
     : mPluginIface(aPluginIface)
+#if defined(XP_MACOSX)
+    , mContentsScaleFactor(1.0)
+#endif
     , mDrawingModel(kDefaultDrawingModel)
     , mCurrentAsyncSurface(0)
     , mAsyncInvalidateMutex("PluginInstanceChild::mAsyncInvalidateMutex")
@@ -287,14 +290,6 @@ PluginInstanceChild::NPN_GetValue(NPNVariable aVar,
 
     switch(aVar) {
 
-    case NPNVSupportsWindowless:
-#if defined(OS_LINUX) || defined(MOZ_X11) || defined(OS_WIN)
-        *((NPBool*)aValue) = true;
-#else
-        *((NPBool*)aValue) = false;
-#endif
-        return NPERR_NO_ERROR;
-
 #if (MOZ_PLATFORM_MAEMO == 5) || (MOZ_PLATFORM_MAEMO == 6)
     case NPNVSupportsWindowlessLocal: {
 #ifdef MOZ_WIDGET_QT
@@ -308,10 +303,6 @@ PluginInstanceChild::NPN_GetValue(NPNVariable aVar,
     }
 #endif
 #if defined(MOZ_X11)
-    case NPNVSupportsXEmbedBool:
-        *((NPBool*)aValue) = true;
-        return NPERR_NO_ERROR;
-
     case NPNVToolkit:
         *((NPNToolkitType*)aValue) = NPNVGtk2;
         return NPERR_NO_ERROR;
@@ -329,26 +320,6 @@ PluginInstanceChild::NPN_GetValue(NPNVariable aVar,
     case NPNVToolkit:
         return NPERR_GENERIC_ERROR;
 #endif
-    case NPNVjavascriptEnabledBool: {
-        bool v = false;
-        NPError result;
-        if (!CallNPN_GetValue_NPNVjavascriptEnabledBool(&v, &result)) {
-            return NPERR_GENERIC_ERROR;
-        }
-        *static_cast<NPBool*>(aValue) = v;
-        return result;
-    }
-
-    case NPNVisOfflineBool: {
-        bool v = false;
-        NPError result;
-        if (!CallNPN_GetValue_NPNVisOfflineBool(&v, &result)) {
-            return NPERR_GENERIC_ERROR;
-        }
-        *static_cast<NPBool*>(aValue) = v;
-        return result;
-    }
-
     case NPNVprivateModeBool: {
         bool v = false;
         NPError result;
@@ -465,8 +436,22 @@ PluginInstanceChild::NPN_GetValue(NPNVariable aVar,
         *((NPBool*)aValue) = false;
         return NPERR_NO_ERROR;
     }
+
+    case NPNVcontentsScaleFactor: {
+        *static_cast<double*>(aValue) = mContentsScaleFactor;
+        return NPERR_NO_ERROR;
+    }
 #endif /* NP_NO_QUICKDRAW */
 #endif /* XP_MACOSX */
+
+#ifdef DEBUG
+    case NPNVjavascriptEnabledBool:
+    case NPNVasdEnabledBool:
+    case NPNVisOfflineBool:
+    case NPNVSupportsXEmbedBool:
+    case NPNVSupportsWindowless:
+        NS_NOTREACHED("NPNVariable should be handled in PluginModuleChild.");
+#endif
 
     default:
         PR_LOG(gPluginLog, PR_LOG_WARNING,
@@ -549,7 +534,7 @@ PluginInstanceChild::NPN_SetValue(NPPVariable aVar, void* aValue)
 
     case NPPVpluginDrawingModel: {
         NPError rv;
-        int drawingModel = (int16) (intptr_t) aValue;
+        int drawingModel = (int16_t) (intptr_t) aValue;
 
         if (!PluginModuleChild::current()->AsyncDrawingAllowed() &&
             IsDrawingModelAsync(drawingModel)) {
@@ -586,7 +571,7 @@ PluginInstanceChild::NPN_SetValue(NPPVariable aVar, void* aValue)
 #ifdef XP_MACOSX
     case NPPVpluginEventModel: {
         NPError rv;
-        int eventModel = (int16) (intptr_t) aValue;
+        int eventModel = (int16_t) (intptr_t) aValue;
 
         if (!CallNPN_SetValue_NPPVpluginEventModel(eventModel, &rv))
             return NPERR_GENERIC_ERROR;
@@ -756,6 +741,12 @@ PluginInstanceChild::AnswerNPP_HandleEvent(const NPRemoteEvent& event,
 #ifdef XP_MACOSX
     // Mac OS X does not define an NPEvent structure. It defines more specific types.
     NPCocoaEvent evcopy = event.event;
+    // event.contentsScaleFactor <= 0 is a signal we shouldn't use it,
+    // for example when AnswerNPP_HandleEvent() is called from elsewhere
+    // in the child process (not via rpc code from the parent process).
+    if (event.contentsScaleFactor > 0) {
+      mContentsScaleFactor = event.contentsScaleFactor;
+    }
 
     // Make sure we reset mCurrentEvent in case of an exception
     AutoRestore<const NPCocoaEvent*> savePreviousEvent(mCurrentEvent);
@@ -841,8 +832,10 @@ PluginInstanceChild::AnswerNPP_HandleEvent_Shmem(const NPRemoteEvent& event,
     PaintTracker pt;
 
     NPCocoaEvent evcopy = event.event;
+    mContentsScaleFactor = event.contentsScaleFactor;
 
     if (evcopy.type == NPCocoaEventDrawRect) {
+        int scaleFactor = ceil(mContentsScaleFactor);
         if (!mShColorSpace) {
             mShColorSpace = CreateSystemColorSpace();
             if (!mShColorSpace) {
@@ -855,8 +848,9 @@ PluginInstanceChild::AnswerNPP_HandleEvent_Shmem(const NPRemoteEvent& event,
         if (!mShContext) {
             void* cgContextByte = mem.get<char>();
             mShContext = ::CGBitmapContextCreate(cgContextByte, 
-                              mWindow.width, mWindow.height, 8, 
-                              mWindow.width * 4, mShColorSpace, 
+                              mWindow.width * scaleFactor,
+                              mWindow.height * scaleFactor, 8, 
+                              mWindow.width * 4 * scaleFactor, mShColorSpace, 
                               kCGImageAlphaPremultipliedFirst |
                               kCGBitmapByteOrder32Host);
     
@@ -923,6 +917,8 @@ PluginInstanceChild::CGDraw(CGContextRef ref, nsIntRect aUpdateRect) {
   drawEvent.data.draw.context = ref;
 
   NPRemoteEvent remoteDrawEvent = {drawEvent};
+  // Signal to AnswerNPP_HandleEvent() not to use this value
+  remoteDrawEvent.contentsScaleFactor = -1.0;
 
   int16_t handled;
   AnswerNPP_HandleEvent(remoteDrawEvent, &handled);
@@ -940,7 +936,9 @@ PluginInstanceChild::AnswerNPP_HandleEvent_IOSurface(const NPRemoteEvent& event,
     PaintTracker pt;
 
     NPCocoaEvent evcopy = event.event;
-    RefPtr<MacIOSurface> surf = MacIOSurface::LookupSurface(surfaceid);
+    mContentsScaleFactor = event.contentsScaleFactor;
+    RefPtr<MacIOSurface> surf = MacIOSurface::LookupSurface(surfaceid,
+                                                            mContentsScaleFactor);
     if (!surf) {
         NS_ERROR("Invalid IOSurface.");
         *handled = false;
@@ -967,6 +965,7 @@ PluginInstanceChild::AnswerNPP_HandleEvent_IOSurface(const NPRemoteEvent& event,
             }
 
             mCARenderer->SetupRenderer(caLayer, mWindow.width, mWindow.height,
+                            mContentsScaleFactor,
                             GetQuirks() & PluginModuleChild::QUIRK_ALLOW_OFFLINE_RENDERER ?
                             ALLOW_OFFLINE_RENDERER : DISALLOW_OFFLINE_RENDERER);
 
@@ -981,7 +980,8 @@ PluginInstanceChild::AnswerNPP_HandleEvent_IOSurface(const NPRemoteEvent& event,
         return false;
     } 
 
-    mCARenderer->Render(mWindow.width, mWindow.height, nullptr);
+    mCARenderer->Render(mWindow.width, mWindow.height,
+                        mContentsScaleFactor, nullptr);
 
     return true;
 
@@ -1009,6 +1009,24 @@ PluginInstanceChild::RecvWindowPosChanged(const NPRemoteEvent& event)
     return AnswerNPP_HandleEvent(event, &dontcare);
 #else
     NS_RUNTIMEABORT("WindowPosChanged is a windows-only message");
+    return false;
+#endif
+}
+
+bool
+PluginInstanceChild::RecvContentsScaleFactorChanged(const double& aContentsScaleFactor)
+{
+#ifdef XP_MACOSX
+    mContentsScaleFactor = aContentsScaleFactor;
+    if (mShContext) {
+        // Release the shared context so that it is reallocated
+        // with the new size. 
+        ::CGContextRelease(mShContext);
+        mShContext = nullptr;
+    }
+    return true;
+#else
+    NS_RUNTIMEABORT("ContentsScaleFactorChanged is an OSX-only message");
     return false;
 #endif
 }
@@ -1207,6 +1225,7 @@ PluginInstanceChild::AnswerNPP_SetWindow(const NPRemoteWindow& aWindow)
     mWindow.height = aWindow.height;
     mWindow.clipRect = aWindow.clipRect;
     mWindow.type = aWindow.type;
+    mContentsScaleFactor = aWindow.contentsScaleFactor;
 
     if (mShContext) {
         // Release the shared context so that it is reallocated
@@ -2791,6 +2810,9 @@ PluginInstanceChild::DoAsyncSetWindow(const gfxSurfaceType& aSurfaceType,
     mWindow.height = aWindow.height;
     mWindow.clipRect = aWindow.clipRect;
     mWindow.type = aWindow.type;
+#ifdef XP_MACOSX
+    mContentsScaleFactor = aWindow.contentsScaleFactor;
+#endif
 
     if (GetQuirks() & PluginModuleChild::QUIRK_SILVERLIGHT_DEFAULT_TRANSPARENT)
         mIsTransparent = true;
@@ -3024,7 +3046,10 @@ PluginInstanceChild::EnsureCurrentBuffer(void)
         void *caLayer = nullptr;
         if (mDrawingModel == NPDrawingModelCoreGraphics) {
             if (!mCGLayer) {
-                caLayer = mozilla::plugins::PluginUtilsOSX::GetCGLayer(CallCGDraw, this);
+                bool avoidCGCrashes = !nsCocoaFeatures::OnMountainLionOrLater() &&
+                  (GetQuirks() & PluginModuleChild::QUIRK_FLASH_AVOID_CGMODE_CRASHES);
+                caLayer = mozilla::plugins::PluginUtilsOSX::GetCGLayer(CallCGDraw, this,
+                                                                       avoidCGCrashes);
 
                 if (!caLayer) {
                     PLUGIN_LOG_DEBUG(("GetCGLayer failed."));
@@ -3047,13 +3072,14 @@ PluginInstanceChild::EnsureCurrentBuffer(void)
 
     if (mDoubleBufferCARenderer.HasFrontSurface() &&
         (mDoubleBufferCARenderer.GetFrontSurfaceWidth() != mWindow.width ||
-         mDoubleBufferCARenderer.GetFrontSurfaceHeight() != mWindow.height) ) {
+         mDoubleBufferCARenderer.GetFrontSurfaceHeight() != mWindow.height ||
+         mDoubleBufferCARenderer.GetContentsScaleFactor() != mContentsScaleFactor)) {
         mDoubleBufferCARenderer.ClearFrontSurface();
     }
 
     if (!mDoubleBufferCARenderer.HasFrontSurface()) {
         bool allocSurface = mDoubleBufferCARenderer.InitFrontSurface(
-                                mWindow.width, mWindow.height,
+                                mWindow.width, mWindow.height, mContentsScaleFactor,
                                 GetQuirks() & PluginModuleChild::QUIRK_ALLOW_OFFLINE_RENDERER ?
                                 ALLOW_OFFLINE_RENDERER : DISALLOW_OFFLINE_RENDERER);
         if (!allocSurface) {
@@ -3503,7 +3529,8 @@ PluginInstanceChild::ShowPluginFrame()
         NPRect r = { (uint16_t)rect.y, (uint16_t)rect.x,
                      (uint16_t)rect.YMost(), (uint16_t)rect.XMost() };
         SurfaceDescriptor currSurf;
-        currSurf = IOSurfaceDescriptor(mDoubleBufferCARenderer.GetFrontSurfaceID());
+        currSurf = IOSurfaceDescriptor(mDoubleBufferCARenderer.GetFrontSurfaceID(),
+                                       mDoubleBufferCARenderer.GetContentsScaleFactor());
 
         mHasPainted = true;
 
@@ -3951,7 +3978,9 @@ PluginInstanceChild::SwapSurfaces()
         (mDoubleBufferCARenderer.GetFrontSurfaceWidth() != 
             mDoubleBufferCARenderer.GetBackSurfaceWidth() ||
         mDoubleBufferCARenderer.GetFrontSurfaceHeight() != 
-            mDoubleBufferCARenderer.GetBackSurfaceHeight())) {
+            mDoubleBufferCARenderer.GetBackSurfaceHeight() ||
+        mDoubleBufferCARenderer.GetFrontSurfaceContentsScaleFactor() != 
+            mDoubleBufferCARenderer.GetBackSurfaceContentsScaleFactor())) {
 
         mDoubleBufferCARenderer.ClearFrontSurface();
     }

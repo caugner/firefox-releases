@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let EXPORTED_SYMBOLS = ["SessionStore"];
+this.EXPORTED_SYMBOLS = ["SessionStore"];
 
 const Cu = Components.utils;
 const Cc = Components.classes;
@@ -99,7 +99,7 @@ function debug(aMsg) {
   Services.console.logStringMessage(aMsg);
 }
 
-let SessionStore = {
+this.SessionStore = {
   get canRestoreLastSession() {
     return SessionStoreInternal.canRestoreLastSession;
   },
@@ -3035,7 +3035,7 @@ let SessionStoreInternal = {
   },
 
   /**
-   * Restory history for a window
+   * Restore history for a window
    * @param aWindow
    *        Window reference
    * @param aTabs
@@ -3577,8 +3577,8 @@ let SessionStoreInternal = {
     }
     // since resizing/moving a window brings it to the foreground,
     // we might want to re-focus the last focused window
-    if (this.windowToFocus && this.windowToFocus.content) {
-      this.windowToFocus.content.focus();
+    if (this.windowToFocus) {
+      this.windowToFocus.focus();
     }
   },
 
@@ -3649,8 +3649,10 @@ let SessionStoreInternal = {
     TelemetryStopwatch.start("FX_SESSION_RESTORE_COLLECT_DATA_MS");
 
     var oState = this._getCurrentState(aUpdateAll, pinnedOnly);
-    if (!oState)
+    if (!oState) {
+      TelemetryStopwatch.cancel("FX_SESSION_RESTORE_COLLECT_DATA_MS");
       return;
+    }
 
 #ifndef XP_MACOSX
     // We want to restore closed windows that are marked with _shouldRestore.
@@ -3865,16 +3867,17 @@ let SessionStoreInternal = {
                      aState.windows.every(function (win)
                        win.tabs.every(function (tab) tab.pinned));
 
+    let hasFirstArgument = aWindow.arguments && aWindow.arguments[0];
     if (!pinnedOnly) {
       let defaultArgs = Cc["@mozilla.org/browser/clh;1"].
                         getService(Ci.nsIBrowserHandler).defaultArgs;
       if (aWindow.arguments &&
           aWindow.arguments[0] &&
           aWindow.arguments[0] == defaultArgs)
-        aWindow.arguments[0] = null;
+        hasFirstArgument = false;
     }
 
-    return !aWindow.arguments || !aWindow.arguments[0];
+    return !hasFirstArgument;
   },
 
   /**
@@ -4423,7 +4426,8 @@ let SessionStoreInternal = {
    *        String data
    */
   _writeFile: function ssi_writeFile(aFile, aData) {
-    TelemetryStopwatch.start("FX_SESSION_RESTORE_WRITE_FILE_MS");
+    let refObj = {};
+    TelemetryStopwatch.start("FX_SESSION_RESTORE_WRITE_FILE_MS", refObj);
     // Initialize the file output stream.
     var ostream = Cc["@mozilla.org/network/safe-file-output-stream;1"].
                   createInstance(Ci.nsIFileOutputStream);
@@ -4439,7 +4443,7 @@ let SessionStoreInternal = {
     var self = this;
     NetUtil.asyncCopy(istream, ostream, function(rc) {
       if (Components.isSuccessCode(rc)) {
-        TelemetryStopwatch.finish("FX_SESSION_RESTORE_WRITE_FILE_MS");
+        TelemetryStopwatch.finish("FX_SESSION_RESTORE_WRITE_FILE_MS", refObj);
         Services.obs.notifyObservers(null,
                                      "sessionstore-state-write-complete",
                                      "");

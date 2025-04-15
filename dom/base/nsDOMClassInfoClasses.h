@@ -322,6 +322,7 @@ DOMCI_CLASS(CanvasGradient)
 DOMCI_CLASS(CanvasPattern)
 DOMCI_CLASS(TextMetrics)
 DOMCI_CLASS(ImageData)
+DOMCI_CLASS(MozCanvasPrintState)
 
 // SmartCard Events
 DOMCI_CLASS(SmartCardEvent)
@@ -370,7 +371,6 @@ DOMCI_CLASS(FileReader)
 DOMCI_CLASS(ArchiveReader)
 DOMCI_CLASS(ArchiveRequest)
 DOMCI_CLASS(MozURLProperty)
-DOMCI_CLASS(MozBlobBuilder)
 
 DOMCI_CLASS(DOMStringMap)
 
@@ -407,9 +407,14 @@ DOMCI_CLASS(MozSmsFilter)
 DOMCI_CLASS(MozSmsCursor)
 
 DOMCI_CLASS(MozConnection)
+#ifdef MOZ_B2G_RIL
 DOMCI_CLASS(MozMobileConnection)
+DOMCI_CLASS(MozCellBroadcast)
+#endif
 
 DOMCI_CLASS(USSDReceivedEvent)
+
+DOMCI_CLASS(DataErrorEvent)
 
 // @font-face in CSS
 DOMCI_CLASS(CSSFontFaceRule)
@@ -427,8 +432,6 @@ DOMCI_CLASS(TimeRanges)
 DOMCI_CLASS(MediaStream)
 #endif
 
-DOMCI_CLASS(ProgressEvent)
-
 DOMCI_CLASS(XMLHttpRequestUpload)
 
 // DOM Traversal NodeIterator class
@@ -442,27 +445,10 @@ DOMCI_CLASS(NotifyAudioAvailableEvent)
 
 DOMCI_CLASS(SimpleGestureEvent)
 
-DOMCI_CLASS(MozTouchEvent)
-
 DOMCI_CLASS(MathMLElement)
 
 // WebGL
-DOMCI_CLASS(WebGLRenderingContext)
-DOMCI_CLASS(WebGLBuffer)
-DOMCI_CLASS(WebGLTexture)
-DOMCI_CLASS(WebGLProgram)
-DOMCI_CLASS(WebGLShader)
-DOMCI_CLASS(WebGLFramebuffer)
-DOMCI_CLASS(WebGLRenderbuffer)
-DOMCI_CLASS(WebGLUniformLocation)
-DOMCI_CLASS(WebGLShaderPrecisionFormat)
 DOMCI_CLASS(WebGLActiveInfo)
-DOMCI_CLASS(WebGLExtension)
-DOMCI_CLASS(WebGLExtensionStandardDerivatives)
-DOMCI_CLASS(WebGLExtensionTextureFilterAnisotropic)
-DOMCI_CLASS(WebGLExtensionLoseContext)
-DOMCI_CLASS(WebGLExtensionCompressedTextureS3TC)
-DOMCI_CLASS(WebGLExtensionDepthTexture)
 
 DOMCI_CLASS(PaintRequest)
 DOMCI_CLASS(PaintRequestList)
@@ -482,9 +468,6 @@ DOMCI_CLASS(FormData)
 
 DOMCI_CLASS(DesktopNotification)
 DOMCI_CLASS(DesktopNotificationCenter)
-
-// WebSocket
-DOMCI_CLASS(WebSocket)
 
 DOMCI_CLASS(IDBFactory)
 DOMCI_CLASS(IDBFileHandle)
@@ -519,6 +502,12 @@ DOMCI_CLASS(TelephonyCall)
 DOMCI_CLASS(CallEvent)
 DOMCI_CLASS(MozVoicemail)
 DOMCI_CLASS(MozVoicemailEvent)
+DOMCI_CLASS(MozIccManager)
+DOMCI_CLASS(MozStkCommandEvent)
+#endif
+
+#ifdef MOZ_B2G_FM
+DOMCI_CLASS(FMRadio)
 #endif
 
 #ifdef MOZ_B2G_BT
@@ -541,3 +530,15 @@ DOMCI_CLASS(FileRequest)
 DOMCI_CLASS(LockedFile)
 
 DOMCI_CLASS(MozActivity)
+
+#ifdef MOZ_TIME_MANAGER
+DOMCI_CLASS(MozTimeManager)
+#endif
+
+#ifdef MOZ_WEBRTC
+DOMCI_CLASS(DataChannel)
+#endif
+
+#ifdef MOZ_AUDIO_CHANNEL_MANAGER
+DOMCI_CLASS(AudioChannelManager)
+#endif

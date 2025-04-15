@@ -22,7 +22,6 @@
 #include "nsIIOService.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
-#include "nsIPrivateBrowsingService.h"
 #include "nsIStreamConverterService.h"
 #include "nsICacheSession.h"
 #include "nsICookieService.h"
@@ -59,9 +58,9 @@ public:
     virtual ~nsHttpHandler();
 
     nsresult Init();
-    nsresult AddStandardRequestHeaders(nsHttpHeaderArray *,
-                                       uint8_t capabilities,
-                                       bool useProxy);
+    nsresult AddStandardRequestHeaders(nsHttpHeaderArray *);
+    nsresult AddConnectionHeader(nsHttpHeaderArray *,
+                                 uint8_t capabilities);
     bool     IsAcceptableEncoding(const char *encoding);
 
     const nsAFlatCString &UserAgent();
@@ -80,6 +79,7 @@ public:
     uint8_t        GetQoSBits()              { return mQoSBits; }
     uint16_t       GetIdleSynTimeout()       { return mIdleSynTimeout; }
     bool           FastFallbackToIPv4()      { return mFastFallbackToIPv4; }
+    bool           ProxyPipelining()         { return mProxyPipelining; }
     uint32_t       MaxSocketCount();
     bool           EnforceAssocReq()         { return mEnforceAssocReq; }
 
@@ -164,9 +164,6 @@ public:
         return mConnMgr->SpeculativeConnect(ci, callbacks, target);
     }
 
-    // for anything that wants to know if we're in private browsing mode.
-    bool InPrivateBrowsingMode();
-
     //
     // The HTTP handler caches pointers to specific XPCOM services, and
     // provides the following helper routines for accessing those services:
@@ -178,6 +175,12 @@ public:
 
     // callable from socket thread only
     uint32_t Get32BitsOfPseudoRandom();
+
+    // Called by the channel synchronously during asyncOpen
+    void OnOpeningRequest(nsIHttpChannel *chan)
+    {
+        NotifyObservers(chan, NS_HTTP_ON_OPENING_REQUEST_TOPIC);
+    }
 
     // Called by the channel before writing a request
     void OnModifyRequest(nsIHttpChannel *chan)
@@ -239,6 +242,9 @@ public:
 
     mozilla::net::SpdyInformation *SpdyInfo() { return &mSpdyInfo; }
 
+    // returns true in between Init and Shutdown states
+    bool Active() { return mHandlerActive; }
+
 private:
 
     //
@@ -256,6 +262,7 @@ private:
 
     void     NotifyObservers(nsIHttpChannel *chan, const char *event);
 
+    static void TimerCallback(nsITimer * aTimer, void * aClosure);
 private:
 
     // cached services
@@ -279,11 +286,10 @@ private:
     uint8_t  mHttpVersion;
     uint8_t  mProxyHttpVersion;
     uint8_t  mCapabilities;
-    uint8_t  mProxyCapabilities;
     uint8_t  mReferrerLevel;
 
     bool mFastFallbackToIPv4;
-
+    bool mProxyPipelining;
     PRIntervalTime mIdleTimeout;
     PRIntervalTime mSpdyTimeout;
 
@@ -291,6 +297,7 @@ private:
     uint16_t mMaxRequestDelay;
     uint16_t mIdleSynTimeout;
 
+    bool     mPipeliningEnabled;
     uint16_t mMaxConnections;
     uint8_t  mMaxPersistentConnectionsPerServer;
     uint8_t  mMaxPersistentConnectionsPerProxy;
@@ -301,6 +308,7 @@ private:
     bool     mPipelineRescheduleOnTimeout;
     PRIntervalTime mPipelineRescheduleTimeout;
     PRIntervalTime mPipelineReadTimeout;
+    nsCOMPtr<nsITimer> mPipelineTestTimer;
 
     uint8_t  mRedirectionLimit;
 
@@ -314,13 +322,6 @@ private:
 
     bool mPipeliningOverSSL;
     bool mEnforceAssocReq;
-
-    // cached value of whether or not the browser is in private browsing mode.
-    enum {
-        PRIVATE_BROWSING_OFF = false,
-        PRIVATE_BROWSING_ON = true,
-        PRIVATE_BROWSING_UNKNOWN = 2
-    } mInPrivateBrowsingMode;
 
     nsCString mAccept;
     nsCString mAcceptLanguages;
@@ -368,6 +369,9 @@ private:
 
     // The value of network.allow-experiments
     bool           mAllowExperiments;
+
+    // true in between init and shutdown states
+    bool           mHandlerActive;
 
     // Try to use SPDY features instead of HTTP/1.1 over SSL
     mozilla::net::SpdyInformation mSpdyInfo;

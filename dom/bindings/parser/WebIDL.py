@@ -164,7 +164,7 @@ class IDLObject(object):
     def addExtendedAttributes(self, attrs):
         assert False # Override me!
 
-    def handleExtendedAttribute(self, attr, value):
+    def handleExtendedAttribute(self, attr):
         assert False # Override me!
 
 class IDLScope(IDLObject):
@@ -327,13 +327,14 @@ class IDLObjectWithIdentifier(IDLObject):
         """
         assert isinstance(self, IDLArgument) or isinstance(self, IDLAttribute)
         unhandledAttrs = list()
-        for attrAndValue in attrs:
-            if len(attrAndValue) != 2:
-                unhandledAttrs.append(attrAndValue)
+        for attr in attrs:
+            if not attr.hasValue():
+                unhandledAttrs.append(attr)
                 continue
 
-            (attr, value) = attrAndValue
-            if attr == "TreatNullAs":
+            identifier = attr.identifier()
+            value = attr.value()
+            if identifier == "TreatNullAs":
                 if not self.type.isString() or self.type.nullable():
                     raise WebIDLError("[TreatNullAs] is only allowed on "
                                       "arguments or attributes whose type is "
@@ -344,9 +345,10 @@ class IDLObjectWithIdentifier(IDLObject):
                                       "dictionary members", [self.location])
                 if value != 'EmptyString':
                     raise WebIDLError("[TreatNullAs] must take the identifier "
-                                      "EmptyString", [self.location])
+                                      "'EmptyString', not '%s'" % value,
+                                      [self.location])
                 self.treatNullAs = value
-            elif attr == "TreatUndefinedAs":
+            elif identifier == "TreatUndefinedAs":
                 if not self.type.isString():
                     raise WebIDLError("[TreatUndefinedAs] is only allowed on "
                                       "arguments or attributes whose type is "
@@ -371,7 +373,7 @@ class IDLObjectWithIdentifier(IDLObject):
                                       "Missing", [self.location])
                 self.treatUndefinedAs = value
             else:
-                unhandledAttrs.append(attrAndValue)
+                unhandledAttrs.append(attr)
 
         return unhandledAttrs
 
@@ -650,14 +652,17 @@ class IDLInterface(IDLObjectWithScope):
     def addExtendedAttributes(self, attrs):
         self._extendedAttrDict = {}
         for attr in attrs:
-            attrlist = list(attr)
-            identifier = attrlist.pop(0)
+            identifier = attr.identifier()
 
             # Special cased attrs
             if identifier == "TreatNonCallableAsNull":
                 raise WebIDLError("TreatNonCallableAsNull cannot be specified on interfaces",
-                                  [self.location])
+                                  [attr.location, self.location])
             elif identifier == "NoInterfaceObject":
+                if not attr.noArguments():
+                    raise WebIDLError("[NoInterfaceObject] must take no arguments",
+                                      [attr.location])
+
                 if self.ctor():
                     raise WebIDLError("Constructor and NoInterfaceObject are incompatible",
                                       [self.location])
@@ -668,7 +673,7 @@ class IDLInterface(IDLObjectWithScope):
                     raise WebIDLError("Constructor and NoInterfaceObject are incompatible",
                                       [self.location])
 
-                args = attrlist[0] if len(attrlist) else []
+                args = attr.args() if attr.hasArgs() else []
 
                 retType = IDLWrapperType(self.location, self)
                 
@@ -676,11 +681,16 @@ class IDLInterface(IDLObjectWithScope):
                                                      allowForbidden=True)
 
                 method = IDLMethod(self.location, identifier, retType, args)
-                # Constructors are always Creators and never have any
-                # other extended attributes.
-                method.addExtendedAttributes(["Creator"])
+                # Constructors are always Creators and are always
+                # assumed to be able to throw (since there's no way to
+                # indicate otherwise) and never have any other
+                # extended attributes.
+                method.addExtendedAttributes(
+                    [IDLExtendedAttribute(self.location, ("Creator",)),
+                     IDLExtendedAttribute(self.location, ("Throws",))])
                 method.resolve(self)
 
+            attrlist = attr.listValue()
             self._extendedAttrDict[identifier] = attrlist if len(attrlist) else True
 
     def addImplementedInterface(self, implementedInterface):
@@ -735,6 +745,9 @@ class IDLInterface(IDLObjectWithScope):
             if loopPoint:
                 return loopPoint
         return None
+
+    def getExtendedAttribute(self, name):
+        return self._extendedAttrDict.get(name, None)
 
 class IDLDictionary(IDLObjectWithScope):
     def __init__(self, location, parentScope, name, parent, members):
@@ -935,7 +948,7 @@ class IDLType(IDLObject):
         return False
 
     def isAny(self):
-        return self.tag() == IDLType.Tags.any
+        return self.tag() == IDLType.Tags.any and not self.isSequence()
 
     def isDate(self):
         return self.tag() == IDLType.Tags.date
@@ -994,6 +1007,10 @@ class IDLUnresolvedType(IDLType):
 
         assert obj
         if obj.isType():
+            # obj itself might not be complete; deal with that.
+            assert obj != self
+            if not obj.isComplete():
+                obj = obj.complete(scope)
             return obj
 
         name = self.name.resolve(scope, None)
@@ -1006,7 +1023,6 @@ class IDLUnresolvedType(IDLType):
 class IDLNullableType(IDLType):
     def __init__(self, location, innerType):
         assert not innerType.isVoid()
-        assert not innerType.nullable()
         assert not innerType == BuiltinTypes[IDLBuiltinType.Types.any]
 
         IDLType.__init__(self, location, innerType.name)
@@ -1085,6 +1101,10 @@ class IDLNullableType(IDLType):
 
     def complete(self, scope):
         self.inner = self.inner.complete(scope)
+        if self.inner.nullable():
+            raise WebIDLError("The inner type of a nullable type must not be "
+                              "a nullable type",
+                              [self.location, self.inner.location])
         if self.inner.isUnion():
             if self.inner.hasNullableType:
                 raise WebIDLError("The inner type of a nullable type must not "
@@ -1402,9 +1422,26 @@ class IDLTypedefType(IDLType, IDLObjectWithIdentifier):
     def isNonCallbackInterface(self):
         return self.inner.isNonCallbackInterface()
 
-    def resolve(self, parentScope):
-        assert isinstance(parentScope, IDLScope)
-        IDLObjectWithIdentifier.resolve(self, parentScope)
+    def isComplete(self):
+        return False
+
+    def complete(self, parentScope):
+        if not self.inner.isComplete():
+            self.inner = self.inner.complete(parentScope)
+        assert self.inner.isComplete()
+        return self.inner
+
+    def finish(self, parentScope):
+        # Maybe the IDLObjectWithIdentifier for the typedef should be
+        # a separate thing from the type?  If that happens, we can
+        # remove some hackery around avoiding isInterface() in
+        # Configuration.py.
+        self.complete(parentScope)
+
+    def validate(self):
+        pass
+
+    # Do we need a resolveType impl?  I don't think it's particularly useful....
 
     def tag(self):
         return self.inner.tag()
@@ -1857,12 +1894,11 @@ class IDLInterfaceMember(IDLObjectWithIdentifier):
 
     def addExtendedAttributes(self, attrs):
         for attr in attrs:
-            attrlist = list(attr)
-            identifier = attrlist.pop(0)
-            self.handleExtendedAttribute(identifier, attrlist)
-            self._extendedAttrDict[identifier] = attrlist if len(attrlist) else True
+            self.handleExtendedAttribute(attr)
+            attrlist = attr.listValue()
+            self._extendedAttrDict[attr.identifier()] = attrlist if len(attrlist) else True
 
-    def handleExtendedAttribute(self, name, list):
+    def handleExtendedAttribute(self, attr):
         pass
 
     def getExtendedAttribute(self, name):
@@ -1878,24 +1914,35 @@ class IDLConst(IDLInterfaceMember):
             raise WebIDLError("A constant cannot be of a dictionary type",
                               [self.location])
         self.type = type
-
-        # The value might not match the type
-        coercedValue = value.coerceToType(self.type, location)
-        assert coercedValue
-
-        self.value = coercedValue
+        self.value = value
 
     def __str__(self):
         return "'%s' const '%s'" % (self.type, self.identifier)
 
     def finish(self, scope):
-        assert self.type.isComplete()
+        if not self.type.isComplete():
+            type = self.type.complete(scope)
+            if not type.isPrimitive() and not type.isString():
+                locations = [self.type.location, type.location]
+                try:
+                    locations.append(type.inner.location)
+                except:
+                    pass
+                raise WebIDLError("Incorrect type for constant", locations)
+            self.type = type
+
+        # The value might not match the type
+        coercedValue = self.value.coerceToType(self.type, self.location)
+        assert coercedValue
+
+        self.value = coercedValue
 
     def validate(self):
         pass
 
 class IDLAttribute(IDLInterfaceMember):
-    def __init__(self, location, identifier, type, readonly, inherit):
+    def __init__(self, location, identifier, type, readonly, inherit,
+                 static=False):
         IDLInterfaceMember.__init__(self, location, identifier,
                                     IDLInterfaceMember.Tags.Attr)
 
@@ -1903,10 +1950,15 @@ class IDLAttribute(IDLInterfaceMember):
         self.type = type
         self.readonly = readonly
         self.inherit = inherit
+        self.static = static
+        self.lenientThis = False
 
         if readonly and inherit:
             raise WebIDLError("An attribute cannot be both 'readonly' and 'inherit'",
                               [self.location])
+
+    def isStatic(self):
+        return self.static
 
     def __str__(self):
         return "'%s' attribute '%s'" % (self.type, self.identifier)
@@ -1916,6 +1968,7 @@ class IDLAttribute(IDLInterfaceMember):
             t = self.type.complete(scope)
 
             assert not isinstance(t, IDLUnresolvedType)
+            assert not isinstance(t, IDLTypedefType)
             assert not isinstance(t.name, IDLUnresolvedIdentifier)
             self.type = t
 
@@ -1943,14 +1996,23 @@ class IDLAttribute(IDLInterfaceMember):
     def validate(self):
         pass
 
-    def handleExtendedAttribute(self, name, list):
-        if name == "TreatNonCallableAsNull":
+    def handleExtendedAttribute(self, attr):
+        identifier = attr.identifier()
+        if identifier == "TreatNonCallableAsNull":
             self.type.markTreatNonCallableAsNull();
-        if name == "SetterInfallible" and self.readonly:
+        elif identifier == "SetterInfallible" and self.readonly:
             raise WebIDLError("Readonly attributes must not be flagged as "
                               "[SetterInfallible]",
                               [self.location])
-        IDLInterfaceMember.handleExtendedAttribute(self, name, list)
+        elif identifier == "LenientThis":
+            if not attr.noArguments():
+                raise WebIDLError("[LenientThis] must take no arguments",
+                                  [attr.location])
+            if self.isStatic():
+                raise WebIDLError("[LenientThis] is only allowed on non-static "
+                                  "attributes", [attr.location, self.location])
+            self.lenientThis = True
+        IDLInterfaceMember.handleExtendedAttribute(self, attr)
 
     def resolve(self, parentScope):
         assert isinstance(parentScope, IDLScope)
@@ -1960,6 +2022,9 @@ class IDLAttribute(IDLInterfaceMember):
     def addExtendedAttributes(self, attrs):
         attrs = self.checkForStringHandlingExtendedAttributes(attrs)
         IDLInterfaceMember.addExtendedAttributes(self, attrs)
+
+    def hasLenientThis(self):
+        return self.lenientThis
 
 class IDLArgument(IDLObjectWithIdentifier):
     def __init__(self, location, identifier, type, optional=False, defaultValue=None, variadic=False, dictionaryMember=False):
@@ -1973,6 +2038,8 @@ class IDLArgument(IDLObjectWithIdentifier):
         self.variadic = variadic
         self.dictionaryMember = dictionaryMember
         self._isComplete = False
+        self.enforceRange = False
+        self.clamp = False
 
         assert not variadic or optional
 
@@ -1981,9 +2048,27 @@ class IDLArgument(IDLObjectWithIdentifier):
             attrs,
             isDictionaryMember=self.dictionaryMember,
             isOptional=self.optional)
-        if len(attrs) != 0:
-            raise WebIDLError("Unhandled extended attribute on an argument",
-                              [self.location])
+        for attribute in attrs:
+            identifier = attribute.identifier()
+            if identifier == "Clamp":
+                if not attribute.noArguments():
+                    raise WebIDLError("[Clamp] must take no arguments",
+                                      [attribute.location])
+                if self.enforceRange:
+                    raise WebIDLError("[EnforceRange] and [Clamp] are mutually exclusive",
+                                      [self.location]);
+                self.clamp = True
+            elif identifier == "EnforceRange":
+                if not attribute.noArguments():
+                    raise WebIDLError("[EnforceRange] must take no arguments",
+                                      [attribute.location])
+                if self.clamp:
+                    raise WebIDLError("[EnforceRange] and [Clamp] are mutually exclusive",
+                                      [self.location]);
+                self.enforceRange = True
+            else:
+                raise WebIDLError("Unhandled extended attribute on an argument",
+                                  [attribute.location])
 
     def isComplete(self):
         return self._isComplete
@@ -1997,6 +2082,7 @@ class IDLArgument(IDLObjectWithIdentifier):
         if not self.type.isComplete():
             type = self.type.complete(scope)
             assert not isinstance(type, IDLUnresolvedType)
+            assert not isinstance(type, IDLTypedefType)
             assert not isinstance(type.name, IDLUnresolvedIdentifier)
             self.type = type
 
@@ -2042,6 +2128,7 @@ class IDLCallbackType(IDLType, IDLObjectWithScope):
             type = returnType.complete(scope)
 
             assert not isinstance(type, IDLUnresolvedType)
+            assert not isinstance(type, IDLTypedefType)
             assert not isinstance(type.name, IDLUnresolvedIdentifier)
             self._returnType = type
 
@@ -2052,6 +2139,7 @@ class IDLCallbackType(IDLType, IDLObjectWithScope):
             type = argument.type.complete(scope)
 
             assert not isinstance(type, IDLUnresolvedType)
+            assert not isinstance(type, IDLTypedefType)
             assert not isinstance(type.name, IDLUnresolvedIdentifier)
             argument.type = type
 
@@ -2303,6 +2391,7 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
             type = returnType.complete(scope)
 
             assert not isinstance(type, IDLUnresolvedType)
+            assert not isinstance(type, IDLTypedefType)
             assert not isinstance(type.name, IDLUnresolvedIdentifier)
             overload.returnType = type
 
@@ -2367,16 +2456,17 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
                           "distinguishable" % (argc, self.identifier.name),
                           locations)
 
-    def handleExtendedAttribute(self, name, list):
-        if name == "GetterInfallible":
+    def handleExtendedAttribute(self, attr):
+        identifier = attr.identifier()
+        if identifier == "GetterInfallible":
             raise WebIDLError("Methods must not be flagged as "
                               "[GetterInfallible]",
-                              [self.location])
-        if name == "SetterInfallible":
+                              [attr.location, self.location])
+        if identifier == "SetterInfallible":
             raise WebIDLError("Methods must not be flagged as "
                               "[SetterInfallible]",
-                              [self.location])
-        IDLInterfaceMember.handleExtendedAttribute(self, name, list)
+                              [attr.location, self.location])
+        IDLInterfaceMember.handleExtendedAttribute(self, attr)
 
 class IDLImplementsStatement(IDLObject):
     def __init__(self, location, implementor, implementee):
@@ -2415,6 +2505,42 @@ class IDLImplementsStatement(IDLObject):
 
     def addExtendedAttributes(self, attrs):
         assert len(attrs) == 0
+
+class IDLExtendedAttribute(IDLObject):
+    """
+    A class to represent IDL extended attributes so we can give them locations
+    """
+    def __init__(self, location, tuple):
+        IDLObject.__init__(self, location)
+        self._tuple = tuple
+
+    def identifier(self):
+        return self._tuple[0]
+
+    def noArguments(self):
+        return len(self._tuple) == 1
+
+    def hasValue(self):
+        return len(self._tuple) == 2 and isinstance(self._tuple[1], str)
+
+    def value(self):
+        assert(self.hasValue())
+        return self._tuple[1]
+
+    def hasArgs(self):
+        return (len(self._tuple) == 2 and isinstance(self._tuple[1], list) or
+                len(self._tuple) == 3)
+
+    def args(self):
+        assert(self.hasArgs())
+        # Our args are our last element
+        return self._tuple[-1]
+
+    def listValue(self):
+        """
+        Backdoor for storing random data in _extendedAttrDict
+        """
+        return list(self._tuple)[1:]
 
 # Parser
 
@@ -3221,7 +3347,7 @@ class Parser(Tokenizer):
                               | ExtendedAttributeIdent
                               | ExtendedAttributeNamedArgList
         """
-        p[0] = p[1]
+        p[0] = IDLExtendedAttribute(self.getLocation(p, 1), p[1])
 
     def p_ExtendedAttributeEmpty(self, p):
         """
@@ -3425,6 +3551,17 @@ class Parser(Tokenizer):
             ConstType : PrimitiveOrStringType Null
         """
         type = BuiltinTypes[p[1]]
+        if p[2]:
+            type = IDLNullableType(self.getLocation(p, 1), type)
+        p[0] = type
+
+    def p_ConstTypeIdentifier(self, p):
+        """
+            ConstType : IDENTIFIER Null
+        """
+        identifier = IDLUnresolvedIdentifier(self.getLocation(p, 1), p[1])
+
+        type = IDLUnresolvedType(self.getLocation(p, 1), identifier)
         if p[2]:
             type = IDLNullableType(self.getLocation(p, 1), type)
         p[0] = type

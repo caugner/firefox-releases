@@ -7,6 +7,7 @@ DEPTH		= @DEPTH@
 topsrcdir	= @top_srcdir@
 srcdir		= @srcdir@
 VPATH		= @srcdir@
+FAIL_ON_WARNINGS := 1
 
 include $(DEPTH)/config/autoconf.mk
 
@@ -57,6 +58,7 @@ XPIDLSRCS	= \
                 nsINetworkLinkService.idl \
 		nsIPermission.idl \
 		nsIPermissionManager.idl \
+		nsIPrivateBrowsingChannel.idl \
 		nsIPrivateBrowsingService.idl \
 		nsIProgressEventSink.idl \
 		nsIPrompt.idl \
@@ -65,7 +67,6 @@ XPIDLSRCS	= \
 		nsIProtocolProxyFilter.idl \
 		nsIProtocolProxyCallback.idl \
 		nsIProxiedProtocolHandler.idl \
-		nsIProxyAutoConfig.idl \
 		nsIProxyInfo.idl \
 		nsITransport.idl \
 		nsISocketTransport.idl \

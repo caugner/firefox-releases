@@ -23,4 +23,11 @@ EXTRA_PP_JS_MODULES += \
   Webapps.jsm \
   $(NULL)
 
+EXTRA_JS_MODULES += \
+  AppsServiceChild.jsm \
+  AppsUtils.jsm \
+  OfflineCacheInstaller.jsm \
+  PermissionsInstaller.jsm \
+  $(NULL)
+
 include $(topsrcdir)/config/rules.mk

@@ -18,11 +18,12 @@
 #include "nsPermission.h"
 #include "nsHashKeys.h"
 #include "nsAutoPtr.h"
+#include "nsCOMArray.h"
 
 class nsIPermission;
 class nsIIDNService;
 class mozIStorageConnection;
-class mozIStorageStatement;
+class mozIStorageAsyncStatement;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -76,7 +77,7 @@ public:
     }
 
     PLDHashNumber GetHashCode() const {
-      nsCAutoString str;
+      nsAutoCString str;
       str.Assign(mHost);
       str.AppendInt(mAppId);
       str.AppendInt(static_cast<int32_t>(mIsInBrowserElement));
@@ -190,6 +191,14 @@ public:
                        NotifyOperationType aNotifyOperation,
                        DBOperationType aDBOperation);
 
+  /**
+   * Initialize the "webapp-uninstall" observing.
+   * Will create a nsPermissionManager instance if needed.
+   * That way, we can prevent have nsPermissionManager created at startup just
+   * to be able to clear data when an application is uninstalled.
+   */
+  static void AppUninstallObserverInit();
+
 private:
   int32_t GetTypeIndex(const char *aTypeString,
                        bool        aAdd);
@@ -226,24 +235,46 @@ private:
   nsresult RemoveAllInternal(bool aNotifyObservers);
   nsresult RemoveAllFromMemory();
   nsresult NormalizeToACE(nsCString &aHost);
-  static void UpdateDB(OperationType         aOp,
-                       mozIStorageStatement* aStmt,
-                       int64_t               aID,
-                       const nsACString     &aHost,
-                       const nsACString     &aType,
-                       uint32_t              aPermission,
-                       uint32_t              aExpireType,
-                       int64_t               aExpireTime,
-                       uint32_t              aAppId,
-                       bool                  aIsInBrowserElement);
+  static void UpdateDB(OperationType aOp,
+                       mozIStorageAsyncStatement* aStmt,
+                       int64_t aID,
+                       const nsACString& aHost,
+                       const nsACString& aType,
+                       uint32_t aPermission,
+                       uint32_t aExpireType,
+                       int64_t aExpireTime,
+                       uint32_t aAppId,
+                       bool aIsInBrowserElement);
+
+  /**
+   * This struct has to be passed as an argument to GetPermissionsForApp.
+   * |appId| has to be defined.
+   * |permissions| will be filed with permissions that are related to the app.
+   */
+  struct GetPermissionsForAppStruct {
+    uint32_t                  appId;
+    nsCOMArray<nsIPermission> permissions;
+
+    GetPermissionsForAppStruct() MOZ_DELETE;
+    GetPermissionsForAppStruct(uint32_t aAppId)
+      : appId(aAppId)
+    {}
+  };
+
+  /**
+   * This method will return the list of all permissions that are related to a
+   * specific app.
+   * @param arg has to be an instance of GetPermissionsForAppStruct.
+   */
+  static PLDHashOperator GetPermissionsForApp(nsPermissionManager::PermissionHashKey* entry, void* arg);
 
   nsCOMPtr<nsIObserverService> mObserverService;
   nsCOMPtr<nsIIDNService>      mIDNService;
 
   nsCOMPtr<mozIStorageConnection> mDBConn;
-  nsCOMPtr<mozIStorageStatement> mStmtInsert;
-  nsCOMPtr<mozIStorageStatement> mStmtDelete;
-  nsCOMPtr<mozIStorageStatement> mStmtUpdate;
+  nsCOMPtr<mozIStorageAsyncStatement> mStmtInsert;
+  nsCOMPtr<mozIStorageAsyncStatement> mStmtDelete;
+  nsCOMPtr<mozIStorageAsyncStatement> mStmtUpdate;
 
   nsTHashtable<PermissionHashKey> mPermissionTable;
   // a unique, monotonically increasing id used to identify each database entry

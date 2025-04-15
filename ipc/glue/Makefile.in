@@ -17,9 +17,9 @@ FORCE_STATIC_LIB = 1
 LIBXUL_LIBRARY = 1
 EXPORT_LIBRARY = 1
 
-EXPORTS_NAMESPACES = IPC mozilla/ipc
+EXPORTS_NAMESPACES = ipc mozilla/ipc
 
-EXPORTS_IPC = IPCMessageUtils.h
+EXPORTS_ipc = IPCMessageUtils.h
 
 EXPORTS_mozilla/ipc = \
   AsyncChannel.h \
@@ -34,7 +34,6 @@ EXPORTS_mozilla/ipc = \
   RPCChannel.h \
   SharedMemory.h \
   SharedMemoryBasic.h \
-  SharedMemoryBasic_chromium.h \
   SharedMemorySysV.h \
   Shmem.h \
   SyncChannel.h \
@@ -105,6 +104,12 @@ endif #}
 ifeq ($(OS_TARGET),Android)
 CPPSRCS += SharedMemoryBasic_android.cpp
 endif #}
+
+ifeq ($(OS_ARCH),Linux)
+CPPSRCS += ProcessUtils_linux.cpp
+else
+CPPSRCS += ProcessUtils_none.cpp
+endif
 
 include $(topsrcdir)/ipc/app/defs.mk
 DEFINES += -DMOZ_CHILD_PROCESS_NAME=\"$(MOZ_CHILD_PROCESS_NAME)\"

@@ -8,12 +8,14 @@
 
 #include "mozIThirdPartyUtil.h"
 #include "nsIClassInfo.h"
+#include "nsIContentSecurityPolicy.h"
 #include "nsIConsoleService.h"
 #include "nsIDOMFile.h"
 #include "nsIDocument.h"
 #include "nsIDocShell.h"
 #include "nsIJSContextStack.h"
 #include "nsIMemoryReporter.h"
+#include "nsIPermissionManager.h"
 #include "nsIScriptError.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptSecurityManager.h"
@@ -1073,9 +1075,9 @@ public:
     NS_WARN_IF_FALSE(scriptError, "Failed to create script error!");
 
     if (scriptError) {
-      if (NS_FAILED(scriptError->InitWithWindowID(aMessage.get(),
-                                                  aFilename.get(),
-                                                  aLine.get(), aLineNumber,
+      if (NS_FAILED(scriptError->InitWithWindowID(aMessage,
+                                                  aFilename,
+                                                  aLine, aLineNumber,
                                                   aColumnNumber, aFlags,
                                                   "Web Worker",
                                                   aInnerWindowId))) {
@@ -1552,15 +1554,16 @@ public:
 
     if (!mWorkerPrivate) {
 #ifdef DEBUG
-      nsCAutoString message("Unable to report memory for ");
+      nsAutoCString message("Unable to report memory for ");
       message += NS_LITERAL_CSTRING("Worker (") + mAddressString +
                  NS_LITERAL_CSTRING(")! It is either using ctypes or is in "
                                     "the process of being destroyed");
       NS_WARNING(message.get());
 #endif
+      *static_cast<int64_t*>(aData) = 0;
       return NS_OK;
     }
-    
+
     if (!mWorkerPrivate->BlockAndCollectRuntimeStats(aIsQuick, aData)) {
       return NS_ERROR_FAILURE;
     }
@@ -1893,7 +1896,8 @@ WorkerPrivateParent<Derived>::WorkerPrivateParent(
                                      nsCOMPtr<nsIScriptContext>& aScriptContext,
                                      nsCOMPtr<nsIURI>& aBaseURI,
                                      nsCOMPtr<nsIPrincipal>& aPrincipal,
-                                     nsCOMPtr<nsIDocument>& aDocument)
+                                     nsCOMPtr<nsIContentSecurityPolicy>& aCSP,
+                                     bool aEvalAllowed)
 : EventTarget(aParent ? aCx : NULL), mMutex("WorkerPrivateParent Mutex"),
   mCondVar(mMutex, "WorkerPrivateParent CondVar"),
   mJSObject(aObject), mParent(aParent), mParentJSContext(aParentJSContext),
@@ -1901,7 +1905,7 @@ WorkerPrivateParent<Derived>::WorkerPrivateParent(
   mParentStatus(Pending), mJSContextOptions(0), mJSRuntimeHeapSize(0),
   mGCZeal(0), mJSObjectRooted(false), mParentSuspended(false),
   mIsChromeWorker(aIsChromeWorker), mPrincipalIsSystem(false),
-  mMainThreadObjectsForgotten(false)
+  mMainThreadObjectsForgotten(false), mEvalAllowed(aEvalAllowed)
 {
   MOZ_COUNT_CTOR(mozilla::dom::workers::WorkerPrivateParent);
 
@@ -1914,7 +1918,7 @@ WorkerPrivateParent<Derived>::WorkerPrivateParent(
   mScriptNotify = do_QueryInterface(mScriptContext);
   mBaseURI.swap(aBaseURI);
   mPrincipal.swap(aPrincipal);
-  mDocument.swap(aDocument);
+  mCSP.swap(aCSP);
 
   if (aParent) {
     aParent->AssertIsOnWorkerThread();
@@ -2221,14 +2225,15 @@ WorkerPrivateParent<Derived>::ForgetMainThreadObjects(
   SwapToISupportsArray(mBaseURI, aDoomed);
   SwapToISupportsArray(mScriptURI, aDoomed);
   SwapToISupportsArray(mPrincipal, aDoomed);
-  SwapToISupportsArray(mDocument, aDoomed);
+  SwapToISupportsArray(mCSP, aDoomed);
 
   mMainThreadObjectsForgotten = true;
 }
 
 template <class Derived>
 bool
-WorkerPrivateParent<Derived>::PostMessage(JSContext* aCx, jsval aMessage)
+WorkerPrivateParent<Derived>::PostMessage(JSContext* aCx, jsval aMessage,
+                                          jsval aTransferable)
 {
   AssertIsOnParentThread();
 
@@ -2262,7 +2267,7 @@ WorkerPrivateParent<Derived>::PostMessage(JSContext* aCx, jsval aMessage)
   nsTArray<nsCOMPtr<nsISupports> > clonedObjects;
 
   JSAutoStructuredCloneBuffer buffer;
-  if (!buffer.write(aCx, aMessage, callbacks, &clonedObjects)) {
+  if (!buffer.write(aCx, aMessage, aTransferable, callbacks, &clonedObjects)) {
     return false;
   }
 
@@ -2278,7 +2283,8 @@ uint64_t
 WorkerPrivateParent<Derived>::GetInnerWindowId()
 {
   AssertIsOnMainThread();
-  return mDocument ? mDocument->InnerWindowID() : 0;
+  NS_ASSERTION(!mWindow || mWindow->IsInnerWindow(), "Outer window?");
+  return mWindow ? mWindow->WindowID() : 0;
 }
 
 template <class Derived>
@@ -2404,7 +2410,7 @@ WorkerPrivateParent<Derived>::SetBaseURI(nsIURI* aBaseURI)
   if (NS_SUCCEEDED(aBaseURI->GetPort(&port)) && port != -1) {
     mLocationInfo.mPort.AppendInt(port);
 
-    nsCAutoString host(mLocationInfo.mHostname);
+    nsAutoCString host(mLocationInfo.mHostname);
     host.AppendLiteral(":");
     host.Append(mLocationInfo.mPort);
 
@@ -2455,15 +2461,18 @@ WorkerPrivate::WorkerPrivate(JSContext* aCx, JSObject* aObject,
                              nsCOMPtr<nsIScriptContext>& aParentScriptContext,
                              nsCOMPtr<nsIURI>& aBaseURI,
                              nsCOMPtr<nsIPrincipal>& aPrincipal,
-                             nsCOMPtr<nsIDocument>& aDocument)
+                             nsCOMPtr<nsIContentSecurityPolicy>& aCSP,
+                             bool aEvalAllowed,
+                             bool aXHRParamsAllowed)
 : WorkerPrivateParent<WorkerPrivate>(aCx, aObject, aParent, aParentJSContext,
                                      aScriptURL, aIsChromeWorker, aDomain,
                                      aWindow, aParentScriptContext, aBaseURI,
-                                     aPrincipal, aDocument),
+                                     aPrincipal, aCSP, aEvalAllowed),
   mJSContext(nullptr), mErrorHandlerRecursionCount(0), mNextTimeoutId(1),
   mStatus(Pending), mSuspended(false), mTimerRunning(false),
   mRunningExpiredTimeouts(false), mCloseHandlerStarted(false),
-  mCloseHandlerFinished(false), mMemoryReporterRunning(false)
+  mCloseHandlerFinished(false), mMemoryReporterRunning(false),
+  mXHRParamsAllowed(aXHRParamsAllowed)
 {
   MOZ_COUNT_CTOR(mozilla::dom::workers::WorkerPrivate);
 }
@@ -2484,8 +2493,13 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
   nsCOMPtr<nsIScriptContext> scriptContext;
   nsCOMPtr<nsIDocument> document;
   nsCOMPtr<nsPIDOMWindow> window;
+  nsCOMPtr<nsIContentSecurityPolicy> csp;
+
+  bool evalAllowed = true;
 
   JSContext* parentContext;
+
+  bool xhrParamsAllowed = false;
 
   if (aParent) {
     aParent->AssertIsOnWorkerThread();
@@ -2502,11 +2516,7 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
     nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
     NS_ASSERTION(ssm, "This should never be null!");
 
-    bool isChrome;
-    if (NS_FAILED(ssm->IsCapabilityEnabled("UniversalXPConnect", &isChrome))) {
-      NS_WARNING("IsCapabilityEnabled failed!");
-      isChrome = false;
-    }
+    bool isChrome = nsContentUtils::IsCallerChrome();
 
     // First check to make sure the caller has permission to make a
     // ChromeWorker if they called the ChromeWorker constructor.
@@ -2609,6 +2619,8 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
           }
         }
       }
+
+      xhrParamsAllowed = CheckXHRParamsAllowed(window);
     }
     else {
       // Not a window
@@ -2626,12 +2638,23 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
           return nullptr;
         }
       }
+
+      xhrParamsAllowed = true;
     }
 
     NS_ASSERTION(principal, "Must have a principal now!");
 
     if (!isChrome && domain.IsEmpty()) {
       NS_ERROR("Must be chrome or have an domain!");
+      return nullptr;
+    }
+
+    if (!GetContentSecurityPolicy(aCx, getter_AddRefs(csp))) {
+      return nullptr;
+    }
+
+    if (csp && NS_FAILED(csp->GetAllowsEval(&evalAllowed))) {
+      NS_ERROR("CSP: failed to get allowsEval");
       return nullptr;
     }
   }
@@ -2648,7 +2671,7 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
   nsRefPtr<WorkerPrivate> worker =
     new WorkerPrivate(aCx, aObj, aParent, parentContext, scriptURL,
                       aIsChromeWorker, domain, window, scriptContext, baseURI,
-                      principal, document);
+                      principal, csp, evalAllowed, xhrParamsAllowed);
 
   worker->SetIsDOMBinding();
   worker->SetWrapper(aObj);
@@ -2993,6 +3016,36 @@ WorkerPrivate::ProcessAllControlRunnables()
 }
 
 bool
+WorkerPrivate::CheckXHRParamsAllowed(nsPIDOMWindow* aWindow)
+{
+  AssertIsOnMainThread();
+  NS_ASSERTION(aWindow, "Wrong cannot be null");
+
+  if (!aWindow->GetDocShell()) {
+    return false;
+  }
+
+  nsCOMPtr<nsIDocument> doc = do_QueryInterface(aWindow->GetExtantDocument());
+  if (!doc) {
+    return false;
+  }
+
+  nsCOMPtr<nsIPermissionManager> permMgr = do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
+  if (!permMgr) {
+    return false;
+  }
+
+  uint32_t permission;
+  nsresult rv = permMgr->TestPermissionFromPrincipal(doc->NodePrincipal(),
+                                                     "systemXHR", &permission);
+  if (NS_FAILED(rv) || permission != nsIPermissionManager::ALLOW_ACTION) {
+    return false;
+  }
+
+  return true;
+}
+
+bool
 WorkerPrivate::Dispatch(WorkerRunnable* aEvent, EventQueue* aQueue)
 {
   nsRefPtr<WorkerRunnable> event(aEvent);
@@ -3077,11 +3130,11 @@ uint32_t
 WorkerPrivate::RemainingRunTimeMS() const
 {
   if (mKillTime.IsNull()) {
-    return PR_UINT32_MAX;
+    return UINT32_MAX;
   }
   TimeDuration runtime = mKillTime - TimeStamp::Now();
   double ms = runtime > TimeDuration(0) ? runtime.ToMilliseconds() : 0;
-  return ms > double(PR_UINT32_MAX) ? PR_UINT32_MAX : uint32_t(ms);
+  return ms > double(UINT32_MAX) ? UINT32_MAX : uint32_t(ms);
 }
 
 bool
@@ -3282,7 +3335,7 @@ WorkerPrivate::CreateNewSyncLoop()
 {
   AssertIsOnWorkerThread();
 
-  NS_ASSERTION(mSyncQueues.Length() < PR_UINT32_MAX,
+  NS_ASSERTION(mSyncQueues.Length() < UINT32_MAX,
                "Should have bailed by now!");
 
   mSyncQueues.AppendElement(new SyncQueue());
@@ -3367,7 +3420,8 @@ WorkerPrivate::StopSyncLoop(uint32_t aSyncLoopKey, bool aSyncResult)
 }
 
 bool
-WorkerPrivate::PostMessageToParent(JSContext* aCx, jsval aMessage)
+WorkerPrivate::PostMessageToParent(JSContext* aCx, jsval aMessage,
+                                   jsval aTransferable)
 {
   AssertIsOnWorkerThread();
 
@@ -3379,7 +3433,7 @@ WorkerPrivate::PostMessageToParent(JSContext* aCx, jsval aMessage)
   nsTArray<nsCOMPtr<nsISupports> > clonedObjects;
 
   JSAutoStructuredCloneBuffer buffer;
-  if (!buffer.write(aCx, aMessage, callbacks, &clonedObjects)) {
+  if (!buffer.write(aCx, aMessage, aTransferable, callbacks, &clonedObjects)) {
     return false;
   }
 
@@ -3427,36 +3481,42 @@ WorkerPrivate::NotifyInternal(JSContext* aCx, Status aStatus)
   // Let all our features know the new status.
   NotifyFeatures(aCx, aStatus);
 
-  // There's nothing to do here if we never succeeded in running the worker
-  // script or if the close handler has already run.
-  if (!JS_GetGlobalObject(aCx) || mCloseHandlerFinished) {
+  // If this is the first time our status has changed then we need to clear the
+  // main event queue.
+  if (previousStatus == Running) {
+    MutexAutoLock lock(mMutex);
+    ClearQueue(&mQueue);
+  }
+
+  // If we've run the close handler, we don't need to do anything else.
+  if (mCloseHandlerFinished) {
     return true;
   }
 
-  // If this is the first time our status has changed then we need to clear the
-  // main event queue. We also need to schedule the close handler unless we're
-  // being shut down.
-  if (previousStatus == Running) {
+  // If the worker script never ran, or failed to compile, we don't need to do
+  // anything else, except pretend that we ran the close handler.
+  if (!JS_GetGlobalObject(aCx)) {
+    mCloseHandlerStarted = true;
+    mCloseHandlerFinished = true;
+    return true;
+  }
+
+  // If this is the first time our status has changed we also need to schedule
+  // the close handler unless we're being shut down.
+  if (previousStatus == Running && aStatus != Killing) {
     NS_ASSERTION(!mCloseHandlerStarted && !mCloseHandlerFinished,
                  "This is impossible!");
 
-    {
-      MutexAutoLock lock(mMutex);
-      ClearQueue(&mQueue);
+    nsRefPtr<CloseEventRunnable> closeRunnable = new CloseEventRunnable(this);
+
+    MutexAutoLock lock(mMutex);
+
+    if (!mQueue.Push(closeRunnable)) {
+      NS_WARNING("Failed to push closeRunnable!");
+      return false;
     }
 
-    if (aStatus != Killing) {
-      nsRefPtr<CloseEventRunnable> closeRunnable = new CloseEventRunnable(this);
-
-      MutexAutoLock lock(mMutex);
-
-      if (!mQueue.Push(closeRunnable)) {
-        NS_WARNING("Failed to push closeRunnable!");
-        return false;
-      }
-
-      closeRunnable.forget();
-    }
+    closeRunnable.forget();
   }
 
   if (aStatus == Closing) {
@@ -3619,7 +3679,7 @@ WorkerPrivate::SetTimeout(JSContext* aCx, unsigned aArgc, jsval* aVp,
   newInfo->mIsInterval = aIsInterval;
   newInfo->mId = timerId;
 
-  if (NS_UNLIKELY(timerId == PR_UINT32_MAX)) {
+  if (NS_UNLIKELY(timerId == UINT32_MAX)) {
     NS_WARNING("Timeout ids overflowed!");
     mNextTimeoutId = 1;
   }
@@ -3760,7 +3820,7 @@ WorkerPrivate::RunExpiredTimeouts(JSContext* aCx)
   bool retval = true;
 
   AutoPtrComparator<TimeoutInfo> comparator = GetAutoPtrComparator(mTimeouts);
-  JS::RootedObject global(aCx, JS_GetGlobalObject(aCx));
+  js::RootedObject global(aCx, JS_GetGlobalObject(aCx));
   JSPrincipals* principal = GetWorkerPrincipal();
 
   // We want to make sure to run *something*, even if the timer fired a little
@@ -3883,7 +3943,7 @@ WorkerPrivate::RescheduleTimeoutTimer(JSContext* aCx)
 
   double delta =
     (mTimeouts[0]->mTargetTime - TimeStamp::Now()).ToMilliseconds();
-  uint32_t delay = delta > 0 ? NS_MIN(delta, double(PR_UINT32_MAX)) : 0;
+  uint32_t delay = delta > 0 ? NS_MIN(delta, double(UINT32_MAX)) : 0;
 
   nsresult rv = mTimer->InitWithFuncCallback(DummyCallback, nullptr, delay,
                                              nsITimer::TYPE_ONE_SHOT);
@@ -4012,6 +4072,34 @@ WorkerPrivate::GetCrossThreadDispatcher()
     mCrossThreadDispatcher = new WorkerCrossThreadDispatcher(this);
   }
   return mCrossThreadDispatcher;
+}
+
+bool
+WorkerPrivate::GetContentSecurityPolicy(JSContext* aCx,
+                                        nsIContentSecurityPolicy** aCSP)
+{
+  AssertIsOnMainThread();
+
+  // Get the security manager
+  nsCOMPtr<nsIScriptSecurityManager> ssm = nsContentUtils::GetSecurityManager();
+
+  if (!ssm) {
+    NS_ERROR("Failed to get security manager service");
+    return false;
+  }
+
+  nsCOMPtr<nsIPrincipal> subjectPrincipal = ssm->GetCxSubjectPrincipal(aCx);
+  NS_ASSERTION(subjectPrincipal, "Failed to get subjectPrincipal");
+
+  nsCOMPtr<nsIContentSecurityPolicy> csp;
+  nsresult rv = subjectPrincipal->GetCsp(getter_AddRefs(csp));
+  if (NS_FAILED(rv)) {
+    NS_ERROR("CSP: Failed to get CSP from principal.");
+    return false;
+  }
+
+  csp.forget(aCSP);
+  return true;
 }
 
 BEGIN_WORKERS_NAMESPACE

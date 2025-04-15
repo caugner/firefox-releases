@@ -25,6 +25,10 @@
 #endif
 #endif
 
+class nsIAndroidDisplayport;
+class nsIAndroidViewport;
+
+
 namespace mozilla {
 
 class AndroidGeckoLayerClient;
@@ -144,6 +148,38 @@ protected:
     static jfieldID jTopField;
 };
 
+class AndroidRectF : public WrappedJavaObject
+{
+public:
+    static void InitRectFClass(JNIEnv *jEnv);
+
+    AndroidRectF() { }
+    AndroidRectF(JNIEnv *jenv, jobject jobj) {
+        Init(jenv, jobj);
+    }
+
+    void Init(JNIEnv *jenv, jobject jobj);
+
+    float Bottom() { return mBottom; }
+    float Left() { return mLeft; }
+    float Right() { return mRight; }
+    float Top() { return mTop; }
+    float Width() { return mRight - mLeft; }
+    float Height() { return mBottom - mTop; }
+
+protected:
+    float mBottom;
+    float mLeft;
+    float mRight;
+    float mTop;
+
+    static jclass jRectClass;
+    static jfieldID jBottomField;
+    static jfieldID jLeftField;
+    static jfieldID jRightField;
+    static jfieldID jTopField;
+};
+
 class AndroidViewTransform : public WrappedJavaObject {
 public:
     static void InitViewTransformClass(JNIEnv *jEnv);
@@ -197,9 +233,11 @@ public:
     void SetPageRect(const gfx::Rect& aCssPageRect);
     void SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
                           nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY);
+    bool ShouldAbortProgressiveUpdate(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution);
     bool CreateFrame(AutoLocalJNIFrame *jniFrame, AndroidLayerRendererFrame& aFrame);
     bool ActivateProgram(AutoLocalJNIFrame *jniFrame);
     bool DeactivateProgram(AutoLocalJNIFrame *jniFrame);
+    void GetDisplayPort(AutoLocalJNIFrame *jniFrame, bool aPageSizeUpdate, bool aIsBrowserContentDisplayed, int32_t tabId, nsIAndroidViewport* metrics, nsIAndroidDisplayport** displayPort);
 
 protected:
     static jclass jGeckoLayerClientClass;
@@ -209,6 +247,15 @@ protected:
     static jmethodID jCreateFrameMethod;
     static jmethodID jActivateProgramMethod;
     static jmethodID jDeactivateProgramMethod;
+    static jmethodID jGetDisplayPort;
+    static jmethodID jShouldAbortProgressiveUpdate;
+
+public:
+    static jclass jViewportClass;
+    static jclass jDisplayportClass;
+    static jmethodID jViewportCtor;
+    static jfieldID jDisplayportPosition;
+    static jfieldID jDisplayportResolution;
 };
 
 class AndroidGeckoSurfaceView : public WrappedJavaObject
@@ -510,6 +557,9 @@ public:
         ACTION_HOVER_MOVE = 7,
         ACTION_HOVER_ENTER = 9,
         ACTION_HOVER_EXIT = 10,
+        ACTION_MAGNIFY_START = 11,
+        ACTION_MAGNIFY = 12,
+        ACTION_MAGNIFY_END = 13,
         ACTION_POINTER_ID_MASK = 0xff00,
         ACTION_POINTER_ID_SHIFT = 8,
         EDGE_TOP = 0x00000001,
@@ -584,6 +634,7 @@ public:
     nsAString& CharactersExtra() { return mCharactersExtra; }
     int KeyCode() { return mKeyCode; }
     int MetaState() { return mMetaState; }
+    int DomKeyLocation() { return mDomKeyLocation; }
     bool IsAltPressed() const { return (mMetaState & AndroidKeyEvent::META_ALT_MASK) != 0; }
     bool IsShiftPressed() const { return (mMetaState & AndroidKeyEvent::META_SHIFT_MASK) != 0; }
     int Flags() { return mFlags; }
@@ -613,6 +664,7 @@ protected:
     nsTArray<float> mPressures;
     nsIntRect mRect;
     int mFlags, mMetaState;
+    int mDomKeyLocation;
     int mKeyCode, mUnicodeChar;
     int mRepeatCount;
     int mOffset, mCount;
@@ -663,6 +715,7 @@ protected:
     static jfieldID jCharactersExtraField;
     static jfieldID jKeyCodeField;
     static jfieldID jMetaStateField;
+    static jfieldID jDomKeyLocationField;
     static jfieldID jFlagsField;
     static jfieldID jOffsetField;
     static jfieldID jCountField;
@@ -713,6 +766,7 @@ public:
         COMPOSITOR_PAUSE = 28,
         COMPOSITOR_RESUME = 29,
         PAINT_LISTEN_START_EVENT = 30,
+        NATIVE_GESTURE_EVENT = 31,
         dummy_java_enum_list_end
     };
 

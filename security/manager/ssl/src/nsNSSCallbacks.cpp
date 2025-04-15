@@ -73,9 +73,7 @@ nsHTTPDownloadEvent::Run()
   ios->NewChannel(mRequestSession->mURL, nullptr, nullptr, getter_AddRefs(chan));
   NS_ENSURE_STATE(chan);
 
-  // Disabled because it breaks authentication with a proxy, when such proxy
-  // had been setup, and brings blue UI for EV certs.
-  // chan->SetLoadFlags(nsIRequest::LOAD_ANONYMOUS);
+  chan->SetLoadFlags(nsIRequest::LOAD_ANONYMOUS);
 
   // Create a loadgroup for this new channel.  This way if the channel
   // is redirected, we'll have a way to cancel the resulting channel.
@@ -773,7 +771,7 @@ void PK11PasswordPromptRunnable::RunOnTargetThread()
   }
 }
 
-char* PR_CALLBACK
+char*
 PK11PasswordPrompt(PK11SlotInfo* slot, PRBool retry, void* arg)
 {
   nsRefPtr<PK11PasswordPromptRunnable> runnable = 
@@ -783,7 +781,7 @@ PK11PasswordPrompt(PK11SlotInfo* slot, PRBool retry, void* arg)
   return runnable->mResult;
 }
 
-void PR_CALLBACK HandshakeCallback(PRFileDesc* fd, void* client_data) {
+void HandshakeCallback(PRFileDesc* fd, void* client_data) {
   nsNSSShutDownPreventionLock locker;
   int32_t sslStatus;
   char* signer = nullptr;
@@ -1028,7 +1026,7 @@ static CERT_StringFromCertFcn oldOCSPAIAInfoCallback = nullptr;
  *
  * The result needs to be freed (PORT_Free) when no longer in use.
  */
-char* PR_CALLBACK MyAlternateOCSPAIAInfoCallback(CERTCertificate *cert) {
+char* MyAlternateOCSPAIAInfoCallback(CERTCertificate *cert) {
   if (cert && !cert->isRoot) {
     unsigned int i;
     for (i=0; i < numResponders; i++) {

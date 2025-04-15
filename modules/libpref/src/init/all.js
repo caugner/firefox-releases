@@ -62,10 +62,6 @@ pref("browser.cache.offline.enable",           true);
 // offline cache capacity in kilobytes
 pref("browser.cache.offline.capacity",         512000);
 
-// offline apps should be limited to this much data in global storage
-// (in kilobytes)
-pref("offline-apps.quota.max",        204800);
-
 // the user should be warned if offline app disk usage exceeds this amount
 // (in kilobytes)
 pref("offline-apps.quota.warn",        51200);
@@ -169,19 +165,39 @@ pref("media.wave.enabled", true);
 #ifdef MOZ_WEBM
 pref("media.webm.enabled", true);
 #endif
+#ifdef MOZ_DASH
+pref("media.dash.enabled", true);
+#endif
 #ifdef MOZ_GSTREAMER
 pref("media.h264.enabled", true);
 #endif
 #ifdef MOZ_WEBRTC
 pref("media.navigator.enabled", false);
+pref("media.peerconnection.enabled", false);
+pref("media.navigator.permission.disabled", false);
 #else
 #ifdef ANDROID
 pref("media.navigator.enabled", true);
 #endif
 #endif
 
+// Whether to enable Web Audio support
+pref("media.webaudio.enabled", false);
+
 // Whether to autostart a media element with an |autoplay| attribute
 pref("media.autoplay.enabled", true);
+
+// The default number of decoded video frames that are enqueued in
+// nsBuiltinDecoderReader's mVideoQueue.
+pref("media.video-queue.default-size", 10);
+
+#ifdef XP_MACOSX
+// Whether to run in native HiDPI mode on machines with "Retina"/HiDPI display;
+//   <= 0 : hidpi mode disabled, display will just use pixel-based upscaling
+//   == 1 : hidpi supported if all screens share the same backingScaleFactor
+//   >= 2 : hidpi supported even with mixed backingScaleFactors (somewhat broken)
+pref("gfx.hidpi.enabled", 2);
+#endif
 
 // 0 = Off, 1 = Full, 2 = Tagged Images Only. 
 // See eCMSMode in gfx/thebes/gfxPlatform.h
@@ -235,24 +251,23 @@ pref("gfx.font_rendering.directwrite.enabled", false);
 pref("gfx.font_rendering.directwrite.use_gdi_table_loading", true);
 #endif
 
-#ifdef XP_WIN
+pref("gfx.font_rendering.opentype_svg.enabled", false);
+
 pref("gfx.canvas.azure.enabled", true);
+#ifdef XP_WIN
 // comma separated list of backends to use in order of preference
 // e.g., pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
 pref("gfx.canvas.azure.backends", "direct2d,cairo");
+pref("gfx.content.azure.backends", "direct2d");
 pref("gfx.content.azure.enabled", true);
 #else
 #ifdef XP_MACOSX
-pref("gfx.canvas.azure.enabled", true);
 pref("gfx.canvas.azure.backends", "cg");
+// Accelerated cg canvas where available (10.7+)
+pref("gfx.canvas.azure.accelerated", false);
 #else
-#ifdef ANDROID
-pref("gfx.canvas.azure.enabled", true);
 pref("gfx.canvas.azure.backends", "cairo");
-#else
-pref("gfx.canvas.azure.enabled", false);
-pref("gfx.canvas.azure.backends", "cairo");
-#endif
+pref("gfx.content.azure.backends", "cairo");
 #endif
 #endif
 
@@ -349,6 +364,7 @@ pref("toolkit.telemetry.infoURL", "http://www.mozilla.com/legal/privacy/firefox.
 pref("toolkit.telemetry.debugSlowSql", false);
 
 // Identity module
+pref("toolkit.identity.enabled", false);
 pref("toolkit.identity.debug", false);
 
 // Disable remote debugging protocol logging
@@ -703,6 +719,7 @@ pref("javascript.options.strict.debug",     true);
 pref("javascript.options.relimit",          true);
 pref("javascript.options.methodjit.content", true);
 pref("javascript.options.methodjit.chrome",  true);
+pref("javascript.options.ion.content",      true);
 pref("javascript.options.pccounts.content", false);
 pref("javascript.options.pccounts.chrome",  false);
 pref("javascript.options.methodjit_always", false);
@@ -732,6 +749,7 @@ pref("javascript.options.mem.gc_high_frequency_heap_growth_min", 150);
 pref("javascript.options.mem.gc_low_frequency_heap_growth", 150);
 pref("javascript.options.mem.gc_dynamic_heap_growth", true);
 pref("javascript.options.mem.gc_dynamic_mark_slice", true);
+pref("javascript.options.mem.gc_allocation_threshold_mb", 30);
 
 pref("javascript.options.mem.analysis_purge_mb", 100);
 
@@ -828,7 +846,7 @@ pref("network.http.max-persistent-connections-per-server", 6);
 // If connecting via a proxy, then a
 // new connection will only be attempted if the number of active persistent
 // connections to the proxy is less then max-persistent-connections-per-proxy.
-pref("network.http.max-persistent-connections-per-proxy", 8);
+pref("network.http.max-persistent-connections-per-proxy", 32);
 
 // amount of time (in seconds) to suspend pending requests, before spawning a
 // new connection, once the limit on the number of persistent connections per
@@ -854,6 +872,7 @@ pref("network.http.accept-encoding", "gzip, deflate");
 
 pref("network.http.pipelining"      , false);
 pref("network.http.pipelining.ssl"  , false); // disable pipelining over SSL
+pref("network.http.pipelining.abtest", false);
 pref("network.http.proxy.pipelining", false);
 
 // Max number of requests in the pipeline
@@ -1125,6 +1144,14 @@ pref("network.dns.ipv4OnlyDomains", "");
 // This preference can be used to turn off IPv6 name lookups. See bug 68796.
 pref("network.dns.disableIPv6", false);
 
+// The grace period allows the DNS cache to use expired entries, while kicking off
+// a revalidation in the background. In seconds, but rounded to minutes in gecko.
+// Default to 30 days. (basically forever)
+pref("network.dnsCacheExpirationGracePeriod", 2592000);
+
+// This preference can be used to turn off DNS prefetch.
+pref("network.dns.disablePrefetch", false);
+
 // This preference controls whether or not URLs with UTF-8 characters are
 // escaped.  Set this preference to TRUE for strict RFC2396 conformance.
 pref("network.standard-url.escape-utf8", true);
@@ -1343,6 +1370,10 @@ pref("security.dialog_enable_delay", 2000);
 
 pref("security.csp.enable", true);
 pref("security.csp.debug", false);
+
+// Mixed content blocking
+pref("security.mixed_content.block_active_content", false);
+pref("security.mixed_content.block_display_content", false);
 
 // Modifier key prefs: default to Windows settings,
 // menu access key = alt, accelerator key = control.
@@ -1581,12 +1612,13 @@ pref("layout.css.dpi", -1);
 // automatically based on user settings for the platform (e.g., "UI scale factor"
 // on Mac). A positive value is used as-is. This effectively controls the size
 // of a CSS "px". This is only used for windows on the screen, not for printing.
-// XXX the default value here should be 0, but before we can set it to 0,
-// we have to get this feature working on all platforms.
-pref("layout.css.devPixelsPerPx", "1.0");
+pref("layout.css.devPixelsPerPx", "-1.0");
 
 // Is support for the the @supports rule enabled?
 pref("layout.css.supports-rule.enabled", false);
+
+// Is support for CSS Flexbox enabled?
+pref("layout.css.flexbox.enabled", false);
 
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
@@ -1752,6 +1784,27 @@ pref("font.size.inflation.emPerLine", 0);
  */
 pref("font.size.inflation.minTwips", 0);
 /*
+ * In products with multi-mode pan-and-zoom and non-pan-and-zoom UIs,
+ * this pref forces font inflation to always be enabled in all modes.
+ * That is, any heuristics used to detect pan-and-zoom
+ * vs. non-pan-and-zoom modes are disabled and all content is treated
+ * as pan-and-zoom mode wrt font inflation.
+ *
+ * This pref has no effect if font inflation is not enabled through
+ * either of the prefs above.  It has no meaning in single-mode UIs.
+ */
+pref("font.size.inflation.forceEnabled", false);
+/*
+ * In products with multi-mode pan-and-zoom and non-pan-and-zoom UIs,
+ * this pref disables font inflation in master-process contexts where
+ * existing heuristics can't be used determine enabled-ness.
+ *
+ * This pref has no effect if font inflation is not enabled through
+ * either of the prefs above.  The "forceEnabled" pref above overrides
+ * this pref.
+ */
+pref("font.size.inflation.disabledInMasterProcess", false);
+/*
  * Since the goal of font size inflation is to avoid having to
  * repeatedly scroll side to side to read a block of text, and there are
  * a number of page layouts where a relatively small chunk of text is
@@ -1796,6 +1849,29 @@ pref("font.size.inflation.lineThreshold", 400);
  * large enough. This means that when s=0, i is always equal to m.
  */
 pref("font.size.inflation.mappingIntercept", 1);
+
+/*
+ * When enabled, the touch.radius and mouse.radius prefs allow events to be dispatched
+ * to nearby elements that are sensitive to the event. See PositionedEventTargeting.cpp.
+ * The 'mm' prefs define a rectangle around the nominal event target point within which
+ * we will search for suitable elements. 'visitedWeight' is a percentage weight;
+ * a value > 100 makes a visited link be treated as further away from the event target
+ * than it really is, while a value < 100 makes a visited link be treated as closer
+ * to the event target than it really is.
+ */
+pref("ui.touch.radius.enabled", false);
+pref("ui.touch.radius.leftmm", 8);
+pref("ui.touch.radius.topmm", 12);
+pref("ui.touch.radius.rightmm", 8);
+pref("ui.touch.radius.bottommm", 4);
+pref("ui.touch.radius.visitedWeight", 120);
+
+pref("ui.mouse.radius.enabled", false);
+pref("ui.mouse.radius.leftmm", 8);
+pref("ui.mouse.radius.topmm", 12);
+pref("ui.mouse.radius.rightmm", 8);
+pref("ui.mouse.radius.bottommm", 4);
+pref("ui.mouse.radius.visitedWeight", 120);
 
 #ifdef XP_WIN
 
@@ -2255,6 +2331,10 @@ pref("ui.window_class_override", "");
 // and 1 is on.  Set this to 1 if three-finger swipe gestures do not cause
 // page back/forward actions, or if pinch-to-zoom does not work.
 pref("ui.elantech_gesture_hacks.enabled", -1);
+
+// Disable auto-configuration of devPixelsPerPx until we're ready to turn
+// it on.
+pref("layout.css.devPixelsPerPx", "1.0");
 
 # WINNT
 #endif
@@ -3484,7 +3564,20 @@ pref("zoom.minPercent", 30);
 pref("zoom.maxPercent", 300);
 pref("toolkit.zoomManager.zoomValues", ".3,.5,.67,.8,.9,1,1.1,1.2,1.33,1.5,1.7,2,2.4,3");
 
-// Image cache prefs
+/**
+ * Specify whether or not the browser should generate a reflow event on zoom.
+ * For a pan-and-zoom ui on mobile, it is sometimes desirable for a zoom event
+ * to limit the max line box width of text in order to enable easier reading
+ * of large amounts of text.
+ *
+ * If enabled, this will limit the max line box width of all text on a page to
+ * the viewport width (also generating a reflow), after a zoom event occurs.
+ *
+ * By default, this is not enabled.
+ */
+pref("browser.zoom.reflowOnZoom", false);
+
+// Image-related prefs
 // The maximum size, in bytes, of the decoded images we cache
 pref("image.cache.size", 5242880);
 // A weight, from 0-1000, to place on time when comparing to size.
@@ -3493,6 +3586,18 @@ pref("image.cache.timeweight", 500);
 
 // The default Accept header sent for images loaded over HTTP(S)
 pref("image.http.accept", "image/png,image/*;q=0.8,*/*;q=0.5");
+
+// Whether we do high-quality image downscaling. OS X natively supports
+// high-quality image scaling.
+#ifdef XP_MACOSX
+pref("image.high_quality_downscaling.enabled", false);
+#else
+pref("image.high_quality_downscaling.enabled", false);
+#endif
+
+// The minimum percent downscaling we'll use high-quality downscaling on,
+// interpreted as a floating-point number / 1000.
+pref("image.high_quality_downscaling.min_factor", 1000);
 
 //
 // Image memory management prefs
@@ -3529,8 +3634,6 @@ pref("image.mem.max_decoded_image_kb", 51200);
 pref("webgl.force-enabled", false);
 pref("webgl.disabled", false);
 pref("webgl.shader_validator", true);
-pref("webgl.force_osmesa", false);
-pref("webgl.osmesalib", "");
 pref("webgl.prefer-native-gl", false);
 pref("webgl.min_capability_mode", false);
 pref("webgl.disable-extensions", false);
@@ -3539,6 +3642,7 @@ pref("webgl.msaa-force", false);
 pref("webgl.prefer-16bpp", false);
 pref("webgl.default-no-alpha", false);
 pref("webgl.force-layers-readback", false);
+pref("webgl.lose-context-on-heap-minimize", false);
 
 // Stagefright prefs
 pref("stagefright.force-enabled", false);
@@ -3569,6 +3673,9 @@ pref("layers.acceleration.draw-fps", false);
 pref("layers.offmainthreadcomposition.animate-opacity", false);
 pref("layers.offmainthreadcomposition.animate-transform", false);
 pref("layers.offmainthreadcomposition.log-animations", false);
+
+// Whether to (try) to use a Composer2D if available on this platform.
+pref("layers.composer2d.enabled", false);
 
 #ifdef MOZ_X11
 #ifdef MOZ_WIDGET_GTK2
@@ -3655,6 +3762,9 @@ pref("dom.battery.enabled", true);
 
 // WebSMS
 pref("dom.sms.enabled", false);
+// Enable Latin characters replacement with corresponding ones in GSM SMS
+// 7-bit default alphabet.
+pref("dom.sms.strict7BitEncoding", false);
 
 // WebContacts
 pref("dom.mozContacts.enabled", false);
@@ -3662,8 +3772,18 @@ pref("dom.mozContacts.enabled", false);
 // WebAlarms
 pref("dom.mozAlarms.enabled", false);
 
+// WebNetworkStats
+pref("dom.mozNetworkStats.enabled", false);
+
 // WebSettings
 pref("dom.mozSettings.enabled", false);
+pref("dom.mozPermissionSettings.enabled", false);
+
+// W3C touch events
+// 0 - disabled, 1 - enabled, 2 - autodetect (win)
+#ifdef XP_WIN
+pref("dom.w3c_touch_events.enabled", 2);
+#endif
 
 // enable JS dump() function.
 pref("browser.dom.window.dump.enabled", false);
@@ -3701,8 +3821,34 @@ pref("memory.low_memory_notification_interval_ms", 10000);
 // window to be collected via the GC/CC.
 pref("memory.ghost_window_timeout_seconds", 60);
 
+// Disable freeing dirty pages when minimizing memory.
+pref("memory.free_dirty_pages", false);
+
 pref("social.enabled", false);
 
 // Disable idle observer fuzz, because only privileged content can access idle
 // observers (bug 780507).
 pref("dom.idle-observers-api.fuzz_time.disabled", true);
+
+// Setting that to true grant elevated privileges to apps that ask
+// for them in their manifest.
+pref("dom.mozApps.dev_mode", false);
+
+// Lowest localId for apps.
+pref("dom.mozApps.maxLocalId", 1000);
+
+// Minimum delay in milliseconds between network activity notifications (0 means
+// no notifications). The delay is the same for both download and upload, though
+// they are handled separately. This pref is only read once at startup:
+// a restart is required to enable a new value.
+pref("network.activity.blipIntervalMilliseconds", 0);
+
+// If true, reuse the same global for everything loaded by the component loader
+// (JS components, JSMs, etc).  This saves memory, but makes it possible for
+// the scripts to interfere with each other.  A restart is required for this
+// to take effect.
+pref("jsloader.reuseGlobal", false);
+
+// When we're asked to take a screenshot, don't wait more than 2000ms for the
+// event loop to become idle before actually taking the screenshot.
+pref("dom.browserElement.maxScreenshotDelayMS", 2000);

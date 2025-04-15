@@ -8,6 +8,7 @@
 #include "nsHTMLIFrameElement.h"
 #include "nsIDOMSVGDocument.h"
 #include "nsMappedAttributes.h"
+#include "nsAttrValueInlines.h"
 #include "nsError.h"
 #include "nsRuleData.h"
 #include "nsStyleConsts.h"
@@ -54,7 +55,7 @@ NS_IMPL_STRING_ATTR(nsHTMLIFrameElement, Name, name)
 NS_IMPL_STRING_ATTR(nsHTMLIFrameElement, Scrolling, scrolling)
 NS_IMPL_URI_ATTR(nsHTMLIFrameElement, Src, src)
 NS_IMPL_STRING_ATTR(nsHTMLIFrameElement, Width, width)
-NS_IMPL_BOOL_ATTR(nsHTMLIFrameElement, MozAllowFullScreen, mozallowfullscreen)
+NS_IMPL_BOOL_ATTR(nsHTMLIFrameElement, Allowfullscreen, allowfullscreen)
 NS_IMPL_STRING_ATTR(nsHTMLIFrameElement, Sandbox, sandbox)
 
 void

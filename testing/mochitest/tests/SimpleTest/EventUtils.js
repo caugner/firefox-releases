@@ -15,6 +15,14 @@
  *  When adding methods to this file, please add a performance test for it.
  */
 
+// This file is used both in privileged and unprivileged contexts, so we have to
+// be careful about our access to Components.interfaces. We also want to avoid
+// naming collisions with anything that might be defined in the scope that imports
+// this script.
+window.__defineGetter__('_EU_Ci', function() {
+  return 'Components' in window ? Components.interfaces : SpecialPowers.Ci;
+});
+
 /**
  * Send a mouse event to the node aTarget (aTarget can be an id, or an
  * actual node) . The "event" passed in to aEvent is just a JavaScript
@@ -116,7 +124,7 @@ function sendKey(aKey, aWindow) {
  */
 function _parseModifiers(aEvent)
 {
-  const nsIDOMWindowUtils = Components.interfaces.nsIDOMWindowUtils;
+  const nsIDOMWindowUtils = _EU_Ci.nsIDOMWindowUtils;
   var mval = 0;
   if (aEvent.shiftKey) {
     mval |= nsIDOMWindowUtils.MODIFIER_SHIFT;
@@ -257,9 +265,12 @@ function synthesizeTouchAtCenter(aTarget, aEvent, aWindow)
  * aEvent is an object which may contain the properties:
  *   shiftKey, ctrlKey, altKey, metaKey, accessKey, deltaX, deltaY, deltaZ,
  *   deltaMode, lineOrPageDeltaX, lineOrPageDeltaY, isMomentum, isPixelOnlyDevice,
- *   isCustomizedByPrefs
+ *   isCustomizedByPrefs, expectedOverflowDeltaX, expectedOverflowDeltaY
  *
  * deltaMode must be defined, others are ok even if undefined.
+ *
+ * expectedOverflowDeltaX and expectedOverflowDeltaY take integer value.  The
+ * value is just checked as 0 or positive or negative.
  *
  * aWindow is optional, and defaults to the current window object.
  */
@@ -282,8 +293,38 @@ function synthesizeWheel(aTarget, aOffsetX, aOffsetY, aEvent, aWindow)
   if (aEvent.isCustomizedByPrefs) {
     options |= utils.WHEEL_EVENT_CUSTOMIZED_BY_USER_PREFS;
   }
+  if (typeof aEvent.expectedOverflowDeltaX !== "undefined") {
+    if (aEvent.expectedOverflowDeltaX === 0) {
+      options |= utils.WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_X_ZERO;
+    } else if (aEvent.expectedOverflowDeltaX > 0) {
+      options |= utils.WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_X_POSITIVE;
+    } else {
+      options |= utils.WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_X_NEGATIVE;
+    }
+  }
+  if (typeof aEvent.expectedOverflowDeltaY !== "undefined") {
+    if (aEvent.expectedOverflowDeltaY === 0) {
+      options |= utils.WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_Y_ZERO;
+    } else if (aEvent.expectedOverflowDeltaY > 0) {
+      options |= utils.WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_Y_POSITIVE;
+    } else {
+      options |= utils.WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_Y_NEGATIVE;
+    }
+  }
   var isPixelOnlyDevice =
     aEvent.isPixelOnlyDevice && aEvent.deltaMode == WheelEvent.DOM_DELTA_PIXEL;
+
+  // Avoid the JS warnings "reference to undefined property"
+  if (!aEvent.deltaX) {
+    aEvent.deltaX = 0;
+  }
+  if (!aEvent.deltaY) {
+    aEvent.deltaY = 0;
+  }
+  if (!aEvent.deltaZ) {
+    aEvent.deltaZ = 0;
+  }
+
   var lineOrPageDeltaX =
     aEvent.lineOrPageDeltaX != null ? aEvent.lineOrPageDeltaX :
                   aEvent.deltaX > 0 ? Math.floor(aEvent.deltaX) :
@@ -292,11 +333,10 @@ function synthesizeWheel(aTarget, aOffsetX, aOffsetY, aEvent, aWindow)
     aEvent.lineOrPageDeltaY != null ? aEvent.lineOrPageDeltaY :
                   aEvent.deltaY > 0 ? Math.floor(aEvent.deltaY) :
                                       Math.ceil(aEvent.deltaY);
+
   var rect = aTarget.getBoundingClientRect();
   utils.sendWheelEvent(rect.left + aOffsetX, rect.top + aOffsetY,
-                       aEvent.deltaX ? aEvent.deltaX : 0.0,
-                       aEvent.deltaY ? aEvent.deltaY : 0.0,
-                       aEvent.deltaZ ? aEvent.deltaZ : 0.0,
+                       aEvent.deltaX, aEvent.deltaY, aEvent.deltaZ,
                        aEvent.deltaMode, modifiers,
                        lineOrPageDeltaX, lineOrPageDeltaY, options);
 }
@@ -306,7 +346,7 @@ function _computeKeyCodeFromChar(aChar)
   if (aChar.length != 1) {
     return 0;
   }
-  const nsIDOMKeyEvent = Components.interfaces.nsIDOMKeyEvent;
+  const nsIDOMKeyEvent = _EU_Ci.nsIDOMKeyEvent;
   if (aChar >= 'a' && aChar <= 'z') {
     return nsIDOMKeyEvent.DOM_VK_A + aChar.charCodeAt(0) - 'a'.charCodeAt(0);
   }
@@ -603,8 +643,8 @@ function _getDOMWindowUtils(aWindow)
   }
 
   //TODO: this is assuming we are in chrome space
-  return aWindow.QueryInterface(Components.interfaces.nsIInterfaceRequestor).
-                               getInterface(Components.interfaces.nsIDOMWindowUtils);
+  return aWindow.QueryInterface(_EU_Ci.nsIInterfaceRequestor).
+                               getInterface(_EU_Ci.nsIDOMWindowUtils);
 }
 
 // Must be synchronized with nsIDOMWindowUtils.

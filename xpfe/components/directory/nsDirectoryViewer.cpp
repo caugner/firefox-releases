@@ -278,7 +278,7 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
     nsCOMPtr<nsIURI> uri;
     channel->GetURI(getter_AddRefs(uri));
       
-    nsCAutoString entryuriC;
+    nsAutoCString entryuriC;
     uri->GetSpec(entryuriC);
 
     nsCOMPtr<nsIRDFResource> entry;
@@ -348,7 +348,7 @@ NS_IMETHODIMP
 nsHTTPIndex::OnDataAvailable(nsIRequest *request,
                              nsISupports* aContext,
                              nsIInputStream* aStream,
-                             uint32_t aSourceOffset,
+                             uint64_t aSourceOffset,
                              uint32_t aCount)
 {
   // If mDirectory isn't set, then we should just bail. Either an
@@ -379,7 +379,7 @@ nsHTTPIndex::OnIndexAvailable(nsIRequest* aRequest, nsISupports *aContext,
   }
 
   // we found the filename; construct a resource for its entry
-  nsCAutoString entryuriC(baseStr);
+  nsAutoCString entryuriC(baseStr);
 
   nsXPIDLCString filename;
   nsresult rv = aIndex->GetLocation(getter_Copies(filename));
@@ -434,8 +434,8 @@ nsHTTPIndex::OnIndexAvailable(nsIRequest* aRequest, nsISupports *aContext,
       int64_t size;
       rv = aIndex->GetSize(&size);
       if (NS_FAILED(rv)) return rv;
-      int64_t minus1 = LL_MAXUINT;
-      if (LL_NE(size, minus1)) {
+      int64_t minus1 = UINT64_MAX;
+      if (size != minus1) {
         int32_t intSize;
         LL_L2I(intSize, size);
         // XXX RDF should support 64 bit integers (bug 240160)

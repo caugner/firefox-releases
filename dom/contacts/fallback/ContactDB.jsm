@@ -4,7 +4,7 @@
 
 "use strict";
 
-const EXPORTED_SYMBOLS = ['ContactDB'];
+this.EXPORTED_SYMBOLS = ['ContactDB'];
 
 const DEBUG = false;
 function debug(s) { dump("-*- ContactDB component: " + s + "\n"); }
@@ -15,12 +15,13 @@ const Ci = Components.interfaces;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/IndexedDBHelper.jsm");
+Cu.import("resource://gre/modules/PhoneNumberUtils.jsm");
 
 const DB_NAME = "contacts";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_NAME = "contacts";
 
-function ContactDB(aGlobal) {
+this.ContactDB = function ContactDB(aGlobal) {
   if (DEBUG) debug("Constructor");
   this._global = aGlobal;
 }
@@ -110,11 +111,13 @@ ContactDB.prototype = {
         objectStore.openCursor().onsuccess = function(event) {
           let cursor = event.target.result;
           if (cursor) {
-            if (DEBUG) debug("upgrade email1: " + JSON.stringify(cursor.value));
-            cursor.value.properties.email =
-              cursor.value.properties.email.map(function(address) { return { address: address }; });
-            cursor.update(cursor.value);
-            if (DEBUG) debug("upgrade email2: " + JSON.stringify(cursor.value));
+            if (cursor.value.properties.email) {
+              if (DEBUG) debug("upgrade email1: " + JSON.stringify(cursor.value));
+              cursor.value.properties.email =
+                cursor.value.properties.email.map(function(address) { return { address: address }; });
+              cursor.update(cursor.value);
+              if (DEBUG) debug("upgrade email2: " + JSON.stringify(cursor.value));
+            }
             cursor.continue();
           }
         };
@@ -132,11 +135,13 @@ ContactDB.prototype = {
         objectStore.openCursor().onsuccess = function(event) {
           let cursor = event.target.result;
           if (cursor) {
-            if (DEBUG) debug("upgrade impp1: " + JSON.stringify(cursor.value));
-            cursor.value.properties.impp =
-              cursor.value.properties.impp.map(function(value) { return { value: value }; });
-            cursor.update(cursor.value);
-            if (DEBUG) debug("upgrade impp2: " + JSON.stringify(cursor.value));
+            if (cursor.value.properties.impp) {
+              if (DEBUG) debug("upgrade impp1: " + JSON.stringify(cursor.value));
+              cursor.value.properties.impp =
+                cursor.value.properties.impp.map(function(value) { return { value: value }; });
+              cursor.update(cursor.value);
+              if (DEBUG) debug("upgrade impp2: " + JSON.stringify(cursor.value));
+            }
             cursor.continue();
           }
         };
@@ -144,11 +149,46 @@ ContactDB.prototype = {
         objectStore.openCursor().onsuccess = function(event) {
           let cursor = event.target.result;
           if (cursor) {
-            if (DEBUG) debug("upgrade url1: " + JSON.stringify(cursor.value));
-            cursor.value.properties.url =
-              cursor.value.properties.url.map(function(value) { return { value: value }; });
-            cursor.update(cursor.value);
-            if (DEBUG) debug("upgrade impp2: " + JSON.stringify(cursor.value));
+            if (cursor.value.properties.url) {
+              if (DEBUG) debug("upgrade url1: " + JSON.stringify(cursor.value));
+              cursor.value.properties.url =
+                cursor.value.properties.url.map(function(value) { return { value: value }; });
+              cursor.update(cursor.value);
+              if (DEBUG) debug("upgrade impp2: " + JSON.stringify(cursor.value));
+            }
+            cursor.continue();
+          }
+        };
+      } else if (currVersion == 4) {
+        if (DEBUG) debug("Add international phone numbers upgrade");
+        if (!objectStore) {
+          objectStore = aTransaction.objectStore(STORE_NAME);
+        }
+
+        objectStore.openCursor().onsuccess = function(event) {
+          let cursor = event.target.result;
+          if (cursor) {
+            if (cursor.value.properties.tel) {
+              if (DEBUG) debug("upgrade : " + JSON.stringify(cursor.value));
+              cursor.value.properties.tel.forEach(
+                function(duple) {
+                  let parsedNumber = PhoneNumberUtils.parse(duple.value.toString());
+                  if (parsedNumber) {
+                    debug("InternationalFormat: " + parsedNumber.internationalFormat);
+                    debug("InternationalNumber: " + parsedNumber.internationalNumber);
+                    debug("NationalNumber: " + parsedNumber.nationalNumber);
+                    debug("NationalFormat: " + parsedNumber.nationalFormat);
+                    if (duple.value.toString() !== parsedNumber.internationalNumber) {
+                      cursor.value.search.tel.push(parsedNumber.internationalNumber);
+                    }
+                  } else {
+                    dump("Warning: No international number found for " + duple.value + "\n");
+                  }
+                }
+              )
+              cursor.update(cursor.value);
+            }
+            if (DEBUG) debug("upgrade2 : " + JSON.stringify(cursor.value));
             cursor.continue();
           }
         };
@@ -211,19 +251,41 @@ ContactDB.prototype = {
 
               // Chop off the first characters
               let number = aContact.properties[field][i].value;
+              let search = {};
               if (number) {
                 for (let i = 0; i < number.length; i++) {
-                  contact.search[field].push(number.substring(i, number.length));
+                  search[number.substring(i, number.length)] = 1;
                 }
                 // Store +1-234-567 as ["1234567", "234567"...]
                 let digits = number.match(/\d/g);
                 if (digits && number.length != digits.length) {
                   digits = digits.join('');
                   for(let i = 0; i < digits.length; i++) {
-                    contact.search[field].push(digits.substring(i, digits.length));
+                    search[digits.substring(i, digits.length)] = 1;
                   }
                 }
-              if (DEBUG) debug("lookup: " + JSON.stringify(contact.search[field]));
+                if (DEBUG) debug("lookup: " + JSON.stringify(contact.search[field]));
+                let parsedNumber = PhoneNumberUtils.parse(number.toString());
+                if (parsedNumber) {
+                  debug("InternationalFormat: " + parsedNumber.internationalFormat);
+                  debug("InternationalNumber: " + parsedNumber.internationalNumber);
+                  debug("NationalNumber: " + parsedNumber.nationalNumber);
+                  debug("NationalFormat: " + parsedNumber.nationalFormat);
+                  if (number.toString() !== parsedNumber.internationalNumber) {
+                    let digits = parsedNumber.internationalNumber.match(/\d/g);
+                    if (digits) {
+                      digits = digits.join('');
+                      for(let i = 0; i < digits.length; i++) {
+                        search[digits.substring(i, digits.length)] = 1;
+                      }
+                    }
+                  }
+                } else {
+                  dump("Warning: No international number found for " + number + "\n");
+                }
+              }
+              for (let num in search) {
+                contact.search[field].push(num);
               }
             } else if (field == "email") {
               let address = aContact.properties[field][i].value;
@@ -387,6 +449,12 @@ ContactDB.prototype = {
         let tmp = typeof options.filterValue == "string"
                   ? options.filterValue.toLowerCase()
                   : options.filterValue.toString().toLowerCase();
+        if (key === 'tel') {
+          let digits = tmp.match(/\d/g);
+          if (digits) {
+            tmp = digits.join('');
+          }
+        }
         let range = this._global.IDBKeyRange.bound(tmp, tmp + "\uFFFF");
         let index = store.index(key + "LowerCase");
         request = index.mozGetAll(range, limit);

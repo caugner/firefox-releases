@@ -22,7 +22,6 @@
 #include "nsIEditorIMESupport.h"
 #include "nsIPhonetic.h"
 #include "nsTextFragment.h"
-#include "nsIEditorObserver.h"
 #include "nsEditProperty.h"
 #include "nsIDOMHTMLTextAreaElement.h"
 #include "nsINameSpaceManager.h"
@@ -70,8 +69,9 @@
 #include "nsFocusManager.h"
 #include "nsTextEditRules.h"
 #include "nsPresState.h"
+#include "nsContentList.h"
+#include "nsAttrValueInlines.h"
 
-#include "mozilla/FunctionTimer.h"
 #include "mozilla/Selection.h"
 
 #define DEFAULT_COLUMN_WIDTH 20
@@ -291,8 +291,6 @@ nsTextControlFrame::EnsureEditorInitialized()
   // If so, just return early.
   if (mUseEditor)
     return NS_OK;
-
-  NS_TIME_FUNCTION;
 
   nsIDocument* doc = mContent->GetCurrentDoc();
   NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
@@ -546,9 +544,6 @@ nsTextControlFrame::Reflow(nsPresContext*   aPresContext,
     ReflowTextControlChild(kid, aPresContext, aReflowState, aStatus, aDesiredSize);
     kid = kid->GetNextSibling();
   }
-
-  // If we're resizing, we might need to invalidate our border areas and such
-  CheckInvalidateSizeChange(aDesiredSize);
 
   // take into account css properties that affect overflow handling
   FinishAndStoreOverflow(&aDesiredSize);

@@ -46,12 +46,13 @@ public:
         virtual void OnChannelError() = 0;
         virtual Result OnMessageReceived(const Message& aMessage) = 0;
         virtual void OnProcessingError(Result aError) = 0;
+        virtual int32_t GetProtocolTypeId() = 0;
         virtual bool OnReplyTimeout() = 0;
         virtual Result OnMessageReceived(const Message& aMessage,
                                          Message*& aReply) = 0;
         virtual Result OnCallReceived(const Message& aMessage,
                                       Message*& aReply) = 0;
-        virtual void OnChannelConnected(int32 peer_pid) {};
+        virtual void OnChannelConnected(int32_t peer_pid) {}
 
         virtual void OnEnteredCxxStack()
         {
@@ -123,7 +124,7 @@ public:
         return !mCxxStackFrames.empty();
     }
 
-    virtual bool OnSpecialMessage(uint16 id, const Message& msg) MOZ_OVERRIDE;
+    virtual bool OnSpecialMessage(uint16_t id, const Message& msg) MOZ_OVERRIDE;
 
 
     /**
@@ -224,7 +225,7 @@ private:
             return mMsg->is_rpc() && OUT_MESSAGE == mDirection;
         }
 
-        void Describe(int32* id, const char** dir, const char** sems,
+        void Describe(int32_t* id, const char** dir, const char** sems,
                       const char** name) const
         {
             *id = mMsg->routing_id();
@@ -294,8 +295,8 @@ private:
                     const char* type="rpc", bool reply=false) const;
 
     // This method is only safe to call on the worker thread, or in a
-    // debugger with all threads paused.  |outfile| defaults to stdout.
-    void DumpRPCStack(FILE* outfile=NULL, const char* const pfx="") const;
+    // debugger with all threads paused.
+    void DumpRPCStack(const char* const pfx="") const;
 
     // 
     // Queue of all incoming messages, except for replies to sync

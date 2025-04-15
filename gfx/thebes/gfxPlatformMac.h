@@ -38,7 +38,7 @@ public:
     already_AddRefed<gfxASurface> OptimizeImage(gfxImageSurface *aSurface,
                                                 gfxASurface::gfxImageFormat format);
     
-    mozilla::RefPtr<mozilla::gfx::ScaledFont>
+    mozilla::TemporaryRef<mozilla::gfx::ScaledFont>
       GetScaledFontForFont(mozilla::gfx::DrawTarget* aTarget, gfxFont *aFont);
 
     nsresult ResolveFontName(const nsAString& aFontName,
@@ -82,6 +82,9 @@ public:
 
     virtual already_AddRefed<gfxASurface>
     GetThebesSurfaceForDrawTarget(mozilla::gfx::DrawTarget *aTarget);
+
+    virtual already_AddRefed<gfxASurface>
+    CreateThebesSurfaceAliasForDrawTarget_hack(mozilla::gfx::DrawTarget *aTarget);
 private:
     virtual qcms_profile* GetPlatformCMSOutputProfile();
     

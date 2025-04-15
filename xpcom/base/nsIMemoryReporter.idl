@@ -6,6 +6,7 @@
 #include "nsISupports.idl"
 
 interface nsISimpleEnumerator;
+interface nsIRunnable;
 
 /*
  * Memory reporters measure Firefox's memory usage.  They are mainly used to
@@ -225,7 +226,7 @@ interface nsIMemoryMultiReporter : nsISupports
   readonly attribute int64_t explicitNonHeap;
 };
 
-[scriptable, uuid(4527b1d8-a81f-4af3-9623-80e4120392c7)]
+[scriptable, builtinclass, uuid(8b670411-ea2a-44c2-a36b-529db0670821)]
 interface nsIMemoryReporterManager : nsISupports
 {
   /*
@@ -290,7 +291,14 @@ interface nsIMemoryReporterManager : nsISupports
   /*
    * This attribute indicates if moz_malloc_usable_size() works.
    */
-  readonly attribute boolean hasMozMallocUsableSize;
+  [infallible] readonly attribute boolean hasMozMallocUsableSize;
+
+  /*
+   * Run a series of GC/CC's in an attempt to minimize the application's memory
+   * usage.  When we're finished, we invoke the given runnable if it's not
+   * null.
+   */
+  void minimizeMemoryUsage(in nsIRunnable callback);
 };
 
 %{C++

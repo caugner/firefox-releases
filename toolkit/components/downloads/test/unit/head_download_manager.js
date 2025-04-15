@@ -82,6 +82,7 @@ var gDownloadCount = 0;
  *                              sourceURI: the download source URI
  *                              downloadName: the display name of the download
  *                              runBeforeStart: a function to run before starting the download
+ *                              isPrivate: whether the download is private or not
  */
 function addDownload(aParams)
 {
@@ -110,10 +111,11 @@ function addDownload(aParams)
   // it is part of the active downloads the moment addDownload is called
   gDownloadCount++;
 
+  let dm = downloadUtils.downloadManager;
   var dl = dm.addDownload(Ci.nsIDownloadManager.DOWNLOAD_TYPE_DOWNLOAD,
                           createURI(aParams.sourceURI),
                           createURI(aParams.targetFile), aParams.downloadName, null,
-                          Math.round(Date.now() * 1000), null, persist);
+                          Math.round(Date.now() * 1000), null, persist, aParams.isPrivate);
 
   // This will throw if it isn't found, and that would mean test failure, so no
   // try catch block
@@ -122,7 +124,8 @@ function addDownload(aParams)
   aParams.runBeforeStart.call(undefined, dl);
 
   persist.progressListener = dl.QueryInterface(Ci.nsIWebProgressListener);
-  persist.saveURI(dl.source, null, null, null, null, dl.targetFile);
+  persist.savePrivacyAwareURI(dl.source, null, null, null, null, dl.targetFile,
+                              aParams.isPrivate);
 
   return dl;
 }

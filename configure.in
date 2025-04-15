@@ -1,3 +1,4 @@
+
 dnl -*- Mode: Autoconf; tab-width: 4; indent-tabs-mode: nil; -*-
 dnl vi: set tabstop=4 shiftwidth=4 expandtab syntax=m4:
 dnl This Source Code Form is subject to the terms of the Mozilla Public
@@ -53,7 +54,7 @@ _SUBDIR_CONFIG_ARGS="$ac_configure_args"
 dnl Set the version number of the libs included with mozilla
 dnl ========================================================
 MOZJPEG=62
-MOZPNG=10511
+MOZPNG=10513
 NSPR_VERSION=4
 NSS_VERSION=3
 
@@ -61,7 +62,8 @@ dnl Set the minimum version of toolkit libs used by mozilla
 dnl ========================================================
 GLIB_VERSION=1.2.0
 PERL_VERSION=5.006
-PYTHON_VERSION=2.5
+PYTHON_VERSION_MAJOR=2
+PYTHON_VERSION_MINOR=5
 CAIRO_VERSION=1.10
 PANGO_VERSION=1.14.0
 GTK2_VERSION=2.10.0
@@ -73,7 +75,7 @@ GCONF_VERSION=1.2.1
 GIO_VERSION=2.18
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.7.13
+SQLITE_VERSION=3.7.14.1
 
 MSMANIFEST_TOOL=
 
@@ -152,6 +154,11 @@ if test -z "$PERL" -o "$PERL" = ":"; then
     AC_MSG_ERROR([perl not found in \$PATH])
 fi
 
+AC_SUBST(GAIADIR)
+if test -n "$GAIADIR" ; then
+    AC_DEFINE(PACKAGE_GAIA)
+fi
+
 MOZ_ARG_WITH_STRING(gonk,
 [  --with-gonk=DIR
                location of gonk dir],
@@ -178,8 +185,9 @@ if test -n "$gonkdir" ; then
     AR="$gonk_toolchain_prefix"ar
     RANLIB="$gonk_toolchain_prefix"ranlib
     STRIP="$gonk_toolchain_prefix"strip
+    OBJCOPY="$gonk_toolchain_prefix"objcopy
 
-    STLPORT_CPPFLAGS="-I$gonkdir/ndk/sources/cxx-stl/stlport/stlport/"
+    STLPORT_CPPFLAGS="-I$gonkdir/ndk/sources/cxx-stl/stlport/stlport/ -I$gonkdir/external/stlport/stlport/"
     STLPORT_LIBS="-lstlport"
 
     case "$target_cpu" in
@@ -191,7 +199,7 @@ if test -n "$gonkdir" ; then
         ;;
     esac
 
-    CPPFLAGS="-DANDROID -isystem $gonkdir/bionic/libc/$ARCH_DIR/include -isystem $gonkdir/bionic/libc/include/ -isystem $gonkdir/bionic/libc/kernel/common -isystem $gonkdir/bionic/libc/kernel/$ARCH_DIR -isystem $gonkdir/bionic/libm/include -I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/hardware/libhardware/include -I$gonkdir/hardware/libhardware_legacy/include -I$gonkdir/system -I$gonkdir/system/core/include -isystem $gonkdir/bionic -I$gonkdir/frameworks/base/include -I$gonkdir/external/dbus $CPPFLAGS -I$gonkdir/frameworks/base/services/sensorservice -I$gonkdir/frameworks/base/services/camera"
+    CPPFLAGS="-DANDROID -isystem $gonkdir/bionic/libc/$ARCH_DIR/include -isystem $gonkdir/bionic/libc/include/ -isystem $gonkdir/bionic/libc/kernel/common -isystem $gonkdir/bionic/libc/kernel/$ARCH_DIR -isystem $gonkdir/bionic/libm/include -I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/hardware/libhardware/include -I$gonkdir/hardware/libhardware_legacy/include -I$gonkdir/system -I$gonkdir/system/core/include -isystem $gonkdir/bionic -I$gonkdir/frameworks/base/include -I$gonkdir/external/dbus -I$gonkdir/external/bluetooth/bluez/lib $CPPFLAGS -I$gonkdir/frameworks/base/services/sensorservice -I$gonkdir/frameworks/base/services/camera -I$gonkdir/system/media/wilhelm/include -I$gonkdir/frameworks/base/include/media/stagefright -I$gonkdir/frameworks/base/include/media/stagefright/openmax -I$gonkdir/frameworks/base/media/libstagefright/rtsp -I$gonkdir/frameworks/base/media/libstagefright/include -I$gonkdir/dalvik/libnativehelper/include/nativehelper"
     CFLAGS="-mandroid -fno-short-enums -fno-exceptions $CFLAGS"
     CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions -Wno-psabi $CXXFLAGS $STLPORT_CPPFLAGS"
     dnl Add -llog by default, since we use it all over the place.
@@ -749,9 +757,6 @@ if test -n "$_WIN32_MSVC"; then
     AC_DEFINE(HAVE_IO_H)
     AC_DEFINE(HAVE_SETBUF)
     AC_DEFINE(HAVE_ISATTY)
-    if test $_MSC_VER -ge 1600; then
-        AC_DEFINE(HAVE_NULLPTR)
-    fi
 fi
 
 fi # COMPILE_ENVIRONMENT
@@ -828,7 +833,6 @@ MOZ_PATH_PROGS(ZIP, zip)
 if test -z "$ZIP" -o "$ZIP" = ":"; then
     AC_MSG_ERROR([zip not found in \$PATH])
 fi
-MOZ_PATH_PROG(MOZ_NATIVE_MAKEDEPEND, makedepend)
 MOZ_PATH_PROG(XARGS, xargs)
 if test -z "$XARGS" -o "$XARGS" = ":"; then
     AC_MSG_ERROR([xargs not found in \$PATH .])
@@ -1398,15 +1402,15 @@ if test "$GNU_CC"; then
                   LDFLAGS=$_SAVE_LDFLAGS)
 
     # Check for -mssse3 on $CC
-    AC_MSG_CHECKING([for -mssse3 option to $CC])
-    HAVE_COMPILER_FLAG_MSSSE3=
+    AC_MSG_CHECKING([if toolchain supports -mssse3 option])
+    HAVE_TOOLCHAIN_SUPPORT_MSSSE3=
     _SAVE_CFLAGS=$CFLAGS
     CFLAGS="$CFLAGS -mssse3"
-    AC_TRY_COMPILE(,,AC_MSG_RESULT([yes])
-                     [HAVE_COMPILER_FLAG_MSSSE3=1],
+    AC_TRY_COMPILE([asm ("pmaddubsw %xmm2,%xmm3");],,AC_MSG_RESULT([yes])
+                     [HAVE_TOOLCHAIN_SUPPORT_MSSSE3=1],
                      AC_MSG_RESULT([no]))
     CFLAGS=$_SAVE_CFLAGS
-    AC_SUBST(HAVE_COMPILER_FLAG_MSSSE3)
+    AC_SUBST(HAVE_TOOLCHAIN_SUPPORT_MSSSE3)
 
     # Turn on GNU-specific warnings:
     # -Wall - turn on a lot of warnings
@@ -1483,11 +1487,13 @@ if test "$GNU_CXX"; then
     # -Werror=return-type - catches missing returns, zero false positives
     # -Wtype-limits - catches overflow bugs, few false positives
     # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
+    # -Werror=conversion-null - catches conversions between NULL and non-pointer types
     #
     _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wall -Wpointer-arith -Woverloaded-virtual"
     MOZ_CXX_SUPPORTS_WARNING(-W, error=return-type, ac_cxx_has_werror_return_type)
     MOZ_CXX_SUPPORTS_WARNING(-W, type-limits, ac_cxx_has_wtype_limits)
     MOZ_CXX_SUPPORTS_WARNING(-W, empty-body, ac_cxx_has_wempty_body)
+    MOZ_CXX_SUPPORTS_WARNING(-W, error=conversion-null, ac_cxx_has_werror_conversion_null)
 
     # Turn off the following warnings that -Wall/-pedantic turn on:
     # -Wno-ctor-dtor-privacy - ???
@@ -1610,6 +1616,50 @@ MOZ_ARG_ENABLE_BOOL(profiling,
 # For profiling builds keep the symbol information
 if test "$MOZ_PROFILING" -a -z "$STRIP_FLAGS"; then
     STRIP_FLAGS="--strip-debug"
+fi
+
+dnl ========================================================
+dnl = Use incremental GC
+dnl ========================================================
+JSGC_INCREMENTAL=1
+MOZ_ARG_DISABLE_BOOL(gcincremental,
+[  --disable-gcincremental Disable incremental GC],
+    JSGC_INCREMENTAL= )
+if test -n "$JSGC_INCREMENTAL"; then
+    AC_DEFINE(JSGC_INCREMENTAL)
+fi
+
+dnl ========================================================
+dnl = Use generational GC
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(gcgenerational,
+[  --enable-gcgenerational Enable generational GC],
+    JSGC_GENERATIONAL=1,
+    JSGC_GENERATIONAL= )
+if test -n "$JSGC_GENERATIONAL"; then
+    AC_DEFINE(JSGC_GENERATIONAL)
+fi
+
+dnl ========================================================
+dnl = Perform moving GC stack rooting analysis
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(root-analysis,
+[  --enable-root-analysis  Enable moving GC stack root analysis],
+    JSGC_ROOT_ANALYSIS=1,
+    JSGC_ROOT_ANALYSIS= )
+if test -n "$JSGC_ROOT_ANALYSIS"; then
+    AC_DEFINE(JSGC_ROOT_ANALYSIS)
+fi
+
+dnl ========================================================
+dnl = Use exact stack rooting for GC
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(exact-rooting,
+[  --enable-exact-rooting  Enable use of exact stack roots for GC],
+    JSGC_USE_EXACT_ROOTING=1,
+    JSGC_USE_EXACT_ROOTING= )
+if test -n "$JSGC_USE_EXACT_ROOTING"; then
+    AC_DEFINE(JSGC_USE_EXACT_ROOTING)
 fi
 
 dnl ========================================================
@@ -1791,13 +1841,20 @@ case "$host" in
 esac
 
 dnl We require version 2.5 or newer of Python to build.
-AC_MSG_CHECKING([for Python version >= $PYTHON_VERSION but not 3.x])
-changequote(,)
-$PYTHON -c "import sys; sys.exit(sys.version[:3] < sys.argv[1] or sys.version[:2] != '2.')" $PYTHON_VERSION
-_python_res=$?
+AC_MSG_CHECKING([for Python version >= $PYTHON_VERSION_MAJOR.$PYTHON_VERSION_MINOR but not 3.x])
+
+changequote(:)
+read python_version_major python_version_minor python_version_micro <<EOF
+`$PYTHON -c 'import sys; print sys.version_info[0], sys.version_info[1], sys.version_info[2]'`
+EOF
 changequote([,])
-if test "$_python_res" != 0; then
-    AC_MSG_ERROR([Python $PYTHON_VERSION or higher (but not Python 3.x) is required.])
+
+if test $python_version_major -ne $PYTHON_VERSION_MAJOR; then
+    AC_MSG_ERROR([Cannot build on Python $python_version_major.])
+else
+    if test $python_version_minor -lt $PYTHON_VERSION_MINOR; then
+        AC_MSG_ERROR([Cannot build on Python $python_version_major.$python_version_minor. You need at least $PYTHON_VERSION_MAJOR.$PYTHON_VERSION_MINOR.])
+    fi
 fi
 AC_MSG_RESULT([yes])
 
@@ -2000,7 +2057,6 @@ ia64*-hpux*)
        MKCSHLIB='$(LD) $(DSO_LDOPTS) -o $@'
     fi
     MOZ_FIX_LINK_PATHS=
-    MOZ_NATIVE_MAKEDEPEND=
     AC_DEFINE(NSCAP_DISABLE_DEBUG_PTR_TYPES)
     AC_DEFINE(_LARGEFILE64_SOURCE)
     ;;
@@ -2030,6 +2086,7 @@ ia64*-hpux*)
         _PLATFORM_DEFAULT_TOOLKIT=cairo-gonk
         MOZ_B2G_RIL=1
         MOZ_B2G_BT=1
+        MOZ_B2G_FM=1
     else
         _PLATFORM_DEFAULT_TOOLKIT=cairo-android
         MOZ_LINKER=1
@@ -2089,7 +2146,6 @@ ia64*-hpux*)
     MC=mc.exe
     # certain versions of cygwin's makedepend barf on the
     # #include <string> vs -I./dist/include/string issue so don't use it
-    MOZ_NATIVE_MAKEDEPEND=
     if test -n "$GNU_CC"; then
         CC="$CC -mwindows"
         CXX="$CXX -mwindows"
@@ -2110,6 +2166,11 @@ ia64*-hpux*)
         DLL_PREFIX=
         IMPORT_LIB_SUFFIX=dll.a
         GCC_VERSION=`$CC -v 2>&1 | awk '/^gcc version/ { print $3 }'`
+
+        # We use mix of both POSIX and Win32 printf format across the tree, so format
+        # warnings are useless on mingw.
+        MOZ_C_SUPPORTS_WARNING(-Wno-, format, ac_c_has_wno_format)
+        MOZ_CXX_SUPPORTS_WARNING(-Wno-, format, ac_cxx_has_wno_format)
     else
         TARGET_COMPILER_ABI=msvc
         HOST_CC='$(CC)'
@@ -2144,7 +2205,13 @@ ia64*-hpux*)
         _DEFINES_CXXFLAGS='-FI $(DEPTH)/dist/include/mozilla-config.h -DMOZILLA_CLIENT'
         CFLAGS="$CFLAGS -W3 -Gy -Fd\$(COMPILE_PDBFILE)"
         CXXFLAGS="$CXXFLAGS -W3 -Gy -Fd\$(COMPILE_PDBFILE)"
-        CXXFLAGS="$CXXFLAGS -wd4800" # disable warning "forcing value to bool"
+        # MSVC warning C4345 warns of newly conformant behavior as of VS2003.
+        # MSVC warning C4351 warns of newly conformant behavior as of VS2005.
+        # MSVC warning C4800 warns when a value is implicitly cast to bool,
+        # because this also forces narrowing to a single byte, which can be a
+        # perf hit.  But this matters so little in practice (and often we want
+        # that behavior) that it's better to turn it off.
+        CXXFLAGS="$CXXFLAGS -wd4345 -wd4351 -wd4800"
         # make 'foo == bar;' error out
         CFLAGS="$CFLAGS -we4553"
         CXXFLAGS="$CXXFLAGS -we4553"
@@ -2158,24 +2225,22 @@ ia64*-hpux*)
         XPCOM_FROZEN_LDOPTS='$(LIBXUL_DIST)/lib/xpcom.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
         LIBXUL_LIBS='$(LIBXUL_DIST)/lib/xpcom.lib $(LIBXUL_DIST)/lib/xul.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
         MOZ_COMPONENT_NSPR_LIBS='$(NSPR_LIBS)'
-        if test $_MSC_VER -ge 1400; then
-            LDFLAGS="$LDFLAGS -LARGEADDRESSAWARE -NXCOMPAT"
-            dnl For profile-guided optimization
-            PROFILE_GEN_CFLAGS="-GL"
-            PROFILE_GEN_LDFLAGS="-LTCG:PGINSTRUMENT"
-            dnl XXX: PGO builds can fail with warnings treated as errors,
-            dnl specifically "no profile data available" appears to be
-            dnl treated as an error sometimes. This might be a consequence
-            dnl of using WARNINGS_AS_ERRORS in some modules, combined
-            dnl with the linker doing most of the work in the whole-program
-            dnl optimization/PGO case. I think it's probably a compiler bug,
-            dnl but we work around it here.
-            PROFILE_USE_CFLAGS="-GL -wd4624 -wd4952"
-            dnl XXX: should be -LTCG:PGOPTIMIZE, but that fails on libxul.
-            dnl Probably also a compiler bug, but what can you do?
-            PROFILE_USE_LDFLAGS="-LTCG:PGUPDATE"
-            LDFLAGS="$LDFLAGS -DYNAMICBASE"
-        fi
+        LDFLAGS="$LDFLAGS -LARGEADDRESSAWARE -NXCOMPAT"
+        dnl For profile-guided optimization
+        PROFILE_GEN_CFLAGS="-GL"
+        PROFILE_GEN_LDFLAGS="-LTCG:PGINSTRUMENT"
+        dnl XXX: PGO builds can fail with warnings treated as errors,
+        dnl specifically "no profile data available" appears to be
+        dnl treated as an error sometimes. This might be a consequence
+        dnl of using WARNINGS_AS_ERRORS in some modules, combined
+        dnl with the linker doing most of the work in the whole-program
+        dnl optimization/PGO case. I think it's probably a compiler bug,
+        dnl but we work around it here.
+        PROFILE_USE_CFLAGS="-GL -wd4624 -wd4952"
+        dnl XXX: should be -LTCG:PGOPTIMIZE, but that fails on libxul.
+        dnl Probably also a compiler bug, but what can you do?
+        PROFILE_USE_LDFLAGS="-LTCG:PGUPDATE"
+        LDFLAGS="$LDFLAGS -DYNAMICBASE"
     fi
     AC_DEFINE(HAVE_SNPRINTF)
     AC_DEFINE(_WINDOWS)
@@ -2233,19 +2298,16 @@ ia64*-hpux*)
             AC_MSG_ERROR([You are targeting i386 but using the 64-bit compiler.])
         fi
 
-        if test $_MSC_VER -ge 1400; then
-            LDFLAGS="$LDFLAGS -SAFESEH"
-        fi
-
         if test -n "$GNU_CC"; then
             CFLAGS="$CFLAGS -mstackrealign -fno-keep-inline-dllexport"
             CXXFLAGS="$CXXFLAGS -mstackrealign -fno-keep-inline-dllexport"
+            LDFLAGS="$LDFLAGS -Wl,--enable-stdcall-fixup"
         else
             AC_DEFINE(HAVE_STDCALL)
             DSO_LDOPTS="$DSO_LDOPTS -MACHINE:X86"
+            LDFLAGS="$LDFLAGS -SAFESEH"
         fi
 
-        MOZ_CHECK_HEADERS(mmintrin.h)
     	AC_DEFINE(_X86_)
 	;;
     x86_64-*)
@@ -2370,7 +2432,6 @@ ia64*-hpux*)
 *-solaris*)
     AC_DEFINE(SOLARIS)
     TARGET_NSPR_MDCPUCFG='\"md/_solaris.cfg\"'
-    MOZ_NATIVE_MAKEDEPEND=
     MOZ_FIX_LINK_PATHS=
     # $ORIGIN/.. is for shared libraries under components/ to locate shared
     # libraries one level up (e.g. libnspr4.so)
@@ -2759,21 +2820,6 @@ dnl Note that we assume that mac & win32 have short wchar (see nscore.h)
     fi
 fi
 
-dnl Check for nullptr (bug 626472)
-AC_LANG_CPLUSPLUS
-AC_MSG_CHECKING(for nullptr)
-AC_CACHE_VAL(ac_cv_nullptr,
- [AC_TRY_COMPILE([],
-                 [int* foo = nullptr;],
-                 [ac_cv_nullptr=true],
-                 [ac_cv_nullptr=false])])
-if test "$ac_cv_nullptr" = true ; then
-  AC_DEFINE(HAVE_NULLPTR)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
-
 AC_LANG_C
 
 dnl Check for .hidden assembler directive and visibility attribute.
@@ -2899,6 +2945,8 @@ AC_SUBST(WRAP_SYSTEM_INCLUDES)
 AC_SUBST(VISIBILITY_FLAGS)
 
 MOZ_GCC_PR49911
+MOZ_GCC_PR39608
+MOZ_LLVM_PR8927
 
 dnl Check for __force_align_arg_pointer__ for SSE2 on gcc
 dnl ========================================================
@@ -2936,12 +2984,60 @@ MOZ_CHECK_HEADERS(sys/statvfs.h sys/statfs.h sys/vfs.h sys/mount.h)
 
 dnl Quota support
 MOZ_CHECK_HEADERS(sys/quota.h sys/sysmacros.h)
-MOZ_CHECK_HEADERS(linux/quota.h)
+MOZ_CHECK_HEADERS([linux/quota.h],,,[#include <sys/socket.h>])
 
-dnl Try for MMX support
-dnl NB - later gcc versions require -mmmx for this header to be successfully
-dnl included (or another option which implies it, such as -march=pentium-mmx)
-MOZ_CHECK_HEADERS(mmintrin.h)
+dnl SCTP support - needs various network include headers
+MOZ_CHECK_HEADERS([linux/if_addr.h linux/rtnetlink.h],,,[#include <sys/socket.h>])
+
+MOZ_CHECK_HEADERS(sys/types.h netinet/in.h byteswap.h)
+
+dnl Check for sin_len and sin6_len - used by SCTP; only appears in Mac/*BSD generally
+AC_CACHE_CHECK(for sockaddr_in.sin_len,
+                   ac_cv_sockaddr_in_sin_len,
+                   [AC_TRY_COMPILE([#ifdef HAVE_SYS_TYPES_H
+                                    #include <sys/types.h>
+                                    #endif
+                                    #include <netinet/in.h>
+                                    struct sockaddr_in x;
+                                    void *foo = (void*) &x.sin_len;],
+                                   [],
+                                   [ac_cv_sockaddr_in_sin_len=true],
+                                   [ac_cv_sockaddr_in_sin_len=false])])
+if test "$ac_cv_sockaddr_in_sin_len" = true ; then
+  AC_DEFINE(HAVE_SIN_LEN)
+dnl HAVE_CONN_LEN must be the same as HAVE_SIN_LEN (and HAVE_SIN6_LEN too)
+  AC_DEFINE(HAVE_SCONN_LEN)
+fi
+
+AC_CACHE_CHECK(for sockaddr_in6.sin6_len,
+               ac_cv_sockaddr_in6_sin6_len,
+               [AC_TRY_COMPILE([#ifdef HAVE_SYS_TYPES_H
+                                #include <sys/types.h>
+                                #endif
+                                #include <netinet/in.h>
+                                struct sockaddr_in6 x;
+                                void *foo = (void*) &x.sin6_len;],
+                               [],
+                               [ac_cv_sockaddr_in6_sin6_len=true],
+                               [ac_cv_sockaddr_in6_sin6_len=false])])
+if test "$ac_cv_sockaddr_in6_sin6_len" = true ; then
+  AC_DEFINE(HAVE_SIN6_LEN)
+fi
+
+AC_CACHE_CHECK(for sockaddr.sa_len,
+               ac_cv_sockaddr_sa_len,
+               [AC_TRY_COMPILE([#ifdef HAVE_SYS_TYPES_H
+                                #include <sys/types.h>
+                                #endif
+                                #include <sys/socket.h>
+                                struct sockaddr x;
+                                void *foo = (void*) &x.sa_len;],
+                               [],
+                               [ac_cv_sockaddr_sa_len=true],
+                               [ac_cv_sockaddr_sa_len=false])])
+if test "$ac_cv_sockaddr_sa_len" = true ; then
+  AC_DEFINE(HAVE_SA_LEN)
+fi
 
 dnl Check whether the compiler supports the new-style C++ standard
 dnl library headers (i.e. <new>) or needs the old "new.h"
@@ -3219,7 +3315,8 @@ dnl Checks for library functions.
 dnl ========================================================
 AC_PROG_GCC_TRADITIONAL
 AC_FUNC_MEMCMP
-AC_CHECK_FUNCS(random strerror lchown fchmod snprintf statvfs memmove rint stat64 lstat64 truncate64 statvfs64 setbuf isatty)
+AC_CHECK_FUNCS(random strerror lchown fchmod snprintf memmove rint stat64 lstat64 truncate64 setbuf isatty)
+AC_CHECK_FUNCS(statvfs64 statvfs statfs64 statfs)
 AC_CHECK_FUNCS(flockfile getpagesize)
 AC_CHECK_FUNCS(localtime_r strtok_r)
 
@@ -3821,7 +3918,7 @@ MOZ_ARG_WITH_BOOL(system-nspr,
     _USE_SYSTEM_NSPR=1 )
 
 if test -n "$_USE_SYSTEM_NSPR"; then
-    AM_PATH_NSPR(4.9.2, [MOZ_NATIVE_NSPR=1], [AC_MSG_ERROR([your don't have NSPR installed or your version is too old])])
+    AM_PATH_NSPR(4.9.3, [MOZ_NATIVE_NSPR=1], [AC_MSG_ERROR([your don't have NSPR installed or your version is too old])])
 fi
 
 if test -n "$MOZ_NATIVE_NSPR"; then
@@ -3857,19 +3954,21 @@ fi
 dnl system libevent Support
 dnl ========================================================
 MOZ_ARG_WITH_STRING(system-libevent,
-[  --with-system-libevent=[PFX]
+[  --with-system-libevent[=PFX]
                           Use system libevent [installed at prefix PFX]],
     LIBEVENT_DIR=$withval)
 
 _SAVE_CFLAGS=$CFLAGS
 _SAVE_LDFLAGS=$LDFLAGS
 _SAVE_LIBS=$LIBS
+if test "$LIBEVENT_DIR" = yes; then
+    PKG_CHECK_MODULES(MOZ_LIBEVENT, libevent,
+        MOZ_NATIVE_LIBEVENT=1,
+        LIBEVENT_DIR=/usr)
+fi
 if test -z "$LIBEVENT_DIR" -o "$LIBEVENT_DIR" = no; then
     MOZ_NATIVE_LIBEVENT=
-else
-    if test "${LIBEVENT_DIR}" = "yes"; then
-        LIBEVENT_DIR=/usr
-    fi
+elif test -z "$MOZ_NATIVE_LIBEVENT"; then
     CFLAGS="-I${LIBEVENT_DIR}/include $CFLAGS"
     LDFLAGS="-L${LIBEVENT_DIR}/lib $LDFLAGS"
     MOZ_CHECK_HEADER(event.h,
@@ -3879,16 +3978,16 @@ else
         AC_MSG_ERROR([--with-system-libevent requested but event.h not found]))
     AC_CHECK_LIB(event, event_init,
                  [MOZ_NATIVE_LIBEVENT=1
-                  MOZ_LIBEVENT_INCLUDES="${LIBEVENT_DIR}/include"
+                  MOZ_LIBEVENT_CFLAGS="-I${LIBEVENT_DIR}/include"
                   MOZ_LIBEVENT_LIBS="-L${LIBEVENT_DIR}/lib -levent"],
-                 [MOZ_NATIVE_LIBEVENT= MOZ_LIBEVENT_INCLUDES= MOZ_LIBEVENT_LIBS=])
+                 [MOZ_NATIVE_LIBEVENT= MOZ_LIBEVENT_CFLAGS= MOZ_LIBEVENT_LIBS=])
 fi
 CFLAGS=$_SAVE_CFLAGS
 LDFLAGS=$_SAVE_LDFLAGS
 LIBS=$_SAVE_LIBS
 
 AC_SUBST(MOZ_NATIVE_LIBEVENT)
-AC_SUBST(MOZ_LIBEVENT_INCLUDES)
+AC_SUBST(MOZ_LIBEVENT_CFLAGS)
 AC_SUBST(MOZ_LIBEVENT_LIBS)
 
 dnl ========================================================
@@ -3901,7 +4000,7 @@ MOZ_ARG_WITH_BOOL(system-nss,
     _USE_SYSTEM_NSS=1 )
 
 if test -n "$_USE_SYSTEM_NSS"; then
-    AM_PATH_NSS(3.13.2, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
+    AM_PATH_NSS(3.14.1, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
 fi
 
 if test -n "$MOZ_NATIVE_NSS"; then
@@ -3936,11 +4035,7 @@ AC_CHECK_PROGS(YASM, yasm, "")
 
 if test -n "$YASM"; then
   dnl Pull out yasm's version string
-  changequote(,)
-  _YASM_VER_FILTER='s|.* \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*|\1|p'
-  changequote([,])
-
-  YASM_VERSION=`yasm --version | sed -ne "$_YASM_VER_FILTER"`
+  YASM_VERSION=`yasm --version | $AWK '/^yasm/ { print $2 }'`
   _YASM_MAJOR_VERSION=`echo ${YASM_VERSION} | $AWK -F\. '{ print $1 }'`
   _YASM_MINOR_VERSION=`echo ${YASM_VERSION} | $AWK -F\. '{ print $2 }'`
   _YASM_RELEASE=`      echo ${YASM_VERSION} | $AWK -F\. '{ print $3 }'`
@@ -3974,7 +4069,11 @@ if test "$MOZ_NATIVE_JPEG" = 1; then
                      #include <jpeglib.h> ],
                    [ #if JPEG_LIB_VERSION < $MOZJPEG
                      #error "Insufficient JPEG library version ($MOZJPEG required)."
-                     #endif ],
+                     #endif
+                     #ifndef JCS_EXTENSIONS
+                     #error "libjpeg-turbo JCS_EXTENSIONS required"
+                     #endif
+                     ],
                    MOZ_NATIVE_JPEG=1,
                    AC_MSG_ERROR([Insufficient JPEG library version for --with-system-jpeg]))
 fi
@@ -4131,7 +4230,7 @@ ENABLE_SYSTEM_EXTENSION_DIRS=1
 MOZ_BRANDING_DIRECTORY=
 MOZ_OFFICIAL_BRANDING=
 MOZ_FEEDS=1
-MOZ_FLEXBOX=
+MOZ_FLEXBOX=1
 MOZ_WEBAPP_RUNTIME=
 MOZ_JSDEBUGGER=1
 MOZ_AUTH_EXTENSION=1
@@ -4144,12 +4243,17 @@ MOZ_VORBIS=
 MOZ_TREMOR=
 MOZ_WAVE=1
 MOZ_SAMPLE_TYPE_FLOAT32=
-MOZ_SAMPLE_TYPE_S16LE=
+MOZ_SAMPLE_TYPE_S16=
 MOZ_MEDIA=
 MOZ_OPUS=1
 MOZ_WEBM=1
+MOZ_DASH=
 MOZ_WEBRTC=1
+MOZ_PEERCONNECTION=
+MOZ_SRTP=
 MOZ_WEBRTC_SIGNALING=
+MOZ_WEBRTC_IN_LIBXUL=
+MOZ_SCTP=
 MOZ_MEDIA_PLUGINS=
 MOZ_MEDIA_NAVIGATOR=
 MOZ_OMX_PLUGIN=
@@ -4178,7 +4282,7 @@ MOZ_REFLOW_PERF=
 MOZ_SAFE_BROWSING=
 MOZ_HELP_VIEWER=
 MOZ_SPELLCHECK=1
-MOZ_JAVA_COMPOSITOR=
+MOZ_ANDROID_OMTC=
 MOZ_ONLY_TOUCH_EVENTS=
 MOZ_TOOLKIT_SEARCH=1
 MOZ_UI_LOCALE=en-US
@@ -4202,6 +4306,9 @@ MOZ_WEBSMS_BACKEND=
 MOZ_GRAPHITE=1
 ACCESSIBILITY=1
 MOZ_SYS_MSG=
+MOZ_TIME_MANAGER=
+MOZ_PAY=
+MOZ_AUDIO_CHANNEL_MANAGER=
 
 case "$target_os" in
     mingw*)
@@ -4217,7 +4324,11 @@ case "${target}" in
         fi
 
         NSS_DISABLE_DBM=1
-        NECKO_WIFI=
+        if test -z "$gonkdir"; then
+          NECKO_WIFI=
+        else
+          NECKO_WIFI=1
+        fi
         MOZ_THEME_FASTSTRIPE=1
         MOZ_TREE_FREETYPE=1
         MOZ_MEMORY=1
@@ -4317,11 +4428,15 @@ browser)
 xulrunner)
   AC_DEFINE(MOZ_XULRUNNER)
   ;;
+b2g)
+  AC_DEFINE(MOZ_B2G)
+  ;;
 esac
 
 AC_SUBST(MOZ_BUILD_APP)
 AC_SUBST(MOZ_PHOENIX)
 AC_SUBST(MOZ_XULRUNNER)
+AC_SUBST(MOZ_B2G)
 
 AC_DEFINE_UNQUOTED(MOZ_BUILD_APP,$MOZ_BUILD_APP)
 
@@ -4807,21 +4922,21 @@ dnl ========================================================
 
 if test "$MOZ_X11"
 then
-    dnl build the gnomevfs extension by default only when the
+    dnl build the GIO extension by default only when the
     dnl GTK2 toolkit is in use.
     if test "$MOZ_ENABLE_GTK2"
     then
-        MOZ_ENABLE_GNOMEVFS=1
+        MOZ_ENABLE_GIO=1
         MOZ_ENABLE_GCONF=1
     fi
 
     dnl ========================================================
     dnl = GnomeVFS support module
     dnl ========================================================
-    MOZ_ARG_DISABLE_BOOL(gnomevfs,
-    [  --disable-gnomevfs      Disable GnomeVFS support ],
-        MOZ_ENABLE_GNOMEVFS=,
-        MOZ_ENABLE_GNOMEVFS=force)
+    MOZ_ARG_ENABLE_BOOL(gnomevfs,
+    [  --enable-gnomevfs       Enable GnomeVFS support (default: disabled)],
+        MOZ_ENABLE_GNOMEVFS=force,
+        MOZ_ENABLE_GNOMEVFS=)
 
     if test "$MOZ_ENABLE_GNOMEVFS"
     then
@@ -4836,12 +4951,6 @@ then
             fi
             MOZ_ENABLE_GNOMEVFS=
         ])
-    else
-        if test `echo "$MOZ_EXTENSIONS" | grep -c gnomevfs` -ne 0; then
-            PKG_CHECK_MODULES(MOZ_GNOMEVFS, gnome-vfs-2.0 >= $GNOMEVFS_VERSION gnome-vfs-module-2.0 >= $GNOMEVFS_VERSION,[
-              MOZ_GNOMEVFS_LIBS=`echo $MOZ_GNOMEVFS_LIBS | sed 's/-llinc\>//'`
-            ])
-        fi
     fi
 
     AC_SUBST(MOZ_ENABLE_GNOMEVFS)
@@ -4851,10 +4960,10 @@ then
     dnl ========================================================
     dnl = GIO support module
     dnl ========================================================
-    MOZ_ARG_ENABLE_BOOL(gio,
-    [  --enable-gio            Enable GIO support (default: disabled)],
-        MOZ_ENABLE_GIO=force,
-        MOZ_ENABLE_GIO=)
+    MOZ_ARG_DISABLE_BOOL(gio,
+    [  --disable-gio           Disable GIO support],
+        MOZ_ENABLE_GIO=,
+        MOZ_ENABLE_GIO=force)
 
     if test "$MOZ_ENABLE_GIO" -a "$MOZ_ENABLE_GTK2"
     then
@@ -4947,18 +5056,15 @@ dnl ========================================================
 
 if test "$MOZ_ENABLE_GTK2"
 then
-    MOZ_ENABLE_GNOMEUI=1
-
-    MOZ_ARG_DISABLE_BOOL(gnomeui,
-    [  --disable-gnomeui       Disable libgnomeui support (default: auto, optional at runtime) ],
-        MOZ_ENABLE_GNOMEUI=,
-        MOZ_ENABLE_GNOMEUI=force)
+    MOZ_ARG_ENABLE_BOOL(gnomeui,
+    [  --enable-gnomeui        Enable libgnomeui instead of GIO & GTK for icon theme support ],
+        MOZ_ENABLE_GNOMEUI=force,
+        MOZ_ENABLE_GNOMEUI=)
 
     if test "$MOZ_ENABLE_GNOMEUI"
     then
         PKG_CHECK_MODULES(MOZ_GNOMEUI, libgnomeui-2.0 >= $GNOMEUI_VERSION,
         [
-            MOZ_GNOMEUI_LIBS=`echo $MOZ_GNOMEUI_LIBS | sed 's/-llinc\>//'`
             MOZ_ENABLE_GNOMEUI=1
         ],[
             if test "$MOZ_ENABLE_GNOMEUI" = "force"
@@ -4976,7 +5082,6 @@ fi
 
 AC_SUBST(MOZ_ENABLE_GNOMEUI)
 AC_SUBST(MOZ_GNOMEUI_CFLAGS)
-AC_SUBST(MOZ_GNOMEUI_LIBS)
 
 dnl ========================================================
 dnl = dbus support
@@ -5008,17 +5113,19 @@ dnl ========================================================
 dnl = Enable Android History instead of Places
 dnl ========================================================
 if test -n "$MOZ_ANDROID_HISTORY"; then
-     dnl Do this if defined in confvars.sh
-     AC_DEFINE(MOZ_ANDROID_HISTORY)
+    if test -z "$MOZ_PLACES"; then
+        AC_DEFINE(MOZ_ANDROID_HISTORY)
+    else
+        AC_MSG_ERROR([Cannot use MOZ_ANDROID_HISTORY alongside MOZ_PLACES.])
+    fi
 fi
 
-
 dnl ========================================================
-dnl = Build with the Android Java compositor
+dnl = Build with the Android compositor
 dnl ========================================================
-if test -n "$MOZ_JAVA_COMPOSITOR"; then
+if test -n "$MOZ_ANDROID_OMTC"; then
      dnl Do this if defined in confvars.sh
-     AC_DEFINE(MOZ_JAVA_COMPOSITOR)
+     AC_DEFINE(MOZ_ANDROID_OMTC)
 fi
 
 dnl ========================================================
@@ -5154,15 +5261,33 @@ if test -n "$MOZ_WEBRTC"; then
     MOZ_VP8=1
     MOZ_VP8_ENCODER=1
     MOZ_VP8_ERROR_CONCEALMENT=1
+dnl enable once Signaling lands
+    MOZ_WEBRTC_SIGNALING=1
+    AC_DEFINE(MOZ_WEBRTC_SIGNALING)
+    if test "${OS_TARGET}" = "WINNT"; then
+        MOZ_WEBRTC_IN_LIBXUL=1
+    fi
+dnl enable once PeerConnection lands
+    MOZ_PEERCONNECTION=1
+    AC_DEFINE(MOZ_PEERCONNECTION)
+    MOZ_SCTP=1
+    MOZ_SRTP=1
+    AC_DEFINE(MOZ_SCTP)
+    AC_DEFINE(MOZ_SRTP)
 fi
 
 AC_SUBST(MOZ_WEBRTC)
+AC_SUBST(MOZ_WEBRTC_SIGNALING)
+AC_SUBST(MOZ_PEERCONNECTION)
+AC_SUBST(MOZ_WEBRTC_IN_LIBXUL)
+AC_SUBST(MOZ_SCTP)
+AC_SUBST(MOZ_SRTP)
 
 case "$target_cpu" in
 arm*)
-    MOZ_SAMPLE_TYPE_S16LE=1
-    AC_DEFINE(MOZ_SAMPLE_TYPE_S16LE)
-    AC_SUBST(MOZ_SAMPLE_TYPE_S16LE)
+    MOZ_SAMPLE_TYPE_S16=1
+    AC_DEFINE(MOZ_SAMPLE_TYPE_S16)
+    AC_SUBST(MOZ_SAMPLE_TYPE_S16)
 ;;
 *)
     MOZ_SAMPLE_TYPE_FLOAT32=1
@@ -5241,6 +5366,24 @@ MOZ_ARG_DISABLE_BOOL(webm,
 if test -n "$MOZ_WEBM"; then
     AC_DEFINE(MOZ_WEBM)
     MOZ_VP8=1
+fi;
+
+dnl ========================================================
+dnl = Enable DASH-WebM support
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(dash,
+[  --enable-dash          Enable support for DASH-WebM],
+    MOZ_DASH=1,
+    MOZ_DASH=)
+
+if test -n "$MOZ_DASH"; then
+    if test -n "$MOZ_WEBM"; then
+        AC_DEFINE(MOZ_DASH)
+    else
+        dnl Fail if WebM is not enabled as well as DASH.
+        AC_MSG_ERROR([WebM is currently disabled and must be enabled for DASH
+                     to work.])
+    fi
 fi;
 
 dnl ========================================================
@@ -5356,30 +5499,6 @@ if test -n "$MOZ_VP8" -a -z "$MOZ_NATIVE_LIBVPX"; then
 
     dnl See if we have assembly on this platform.
     case "$OS_ARCH:$CPU_ARCH" in
-    Linux:x86)
-      VPX_ASFLAGS="-f elf32 -rnasm -pnasm"
-      VPX_X86_ASM=1
-    ;;
-    Linux:x86_64)
-      VPX_ASFLAGS="-f elf64 -rnasm -pnasm -DPIC"
-      VPX_X86_ASM=1
-    ;;
-    SunOS:x86)
-      VPX_ASFLAGS="-f elf32 -rnasm -pnasm"
-      VPX_X86_ASM=1
-    ;;
-    SunOS:x86_64)
-      VPX_ASFLAGS="-f elf64 -rnasm -pnasm -DPIC"
-      VPX_X86_ASM=1
-    ;;
-    OpenBSD:x86)
-      VPX_ASFLAGS="-f elf32 -rnasm -pnasm"
-      VPX_X86_ASM=1
-    ;;
-    OpenBSD:x86_64)
-      VPX_ASFLAGS="-f elf64 -rnasm -pnasm -DPIC"
-      VPX_X86_ASM=1
-    ;;
     Darwin:x86)
       VPX_ASFLAGS="-f macho32 -rnasm -pnasm -DPIC"
       VPX_X86_ASM=1
@@ -5415,6 +5534,19 @@ if test -n "$MOZ_VP8" -a -z "$MOZ_NATIVE_LIBVPX"; then
         VPX_ASM_SUFFIX="$ASM_SUFFIX"
         VPX_ARM_ASM=1
       fi
+    ;;
+    *:x86)
+      if $CC -E -dM -</dev/null | grep -q __ELF__; then
+        VPX_ASFLAGS="-f elf32 -rnasm -pnasm"
+        VPX_X86_ASM=1
+      fi
+    ;;
+    *:x86_64)
+      if $CC -E -dM -</dev/null | grep -q __ELF__; then
+        VPX_ASFLAGS="-f elf64 -rnasm -pnasm -DPIC"
+        VPX_X86_ASM=1
+      fi
+    ;;
     esac
 
     if test -n "$COMPILE_ENVIRONMENT" -a -n "$VPX_X86_ASM" -a -z "$VPX_AS"; then
@@ -5470,6 +5602,9 @@ fi
 if test -n "$MOZ_CUBEB"; then
     case "$target" in
     *-android*|*-linuxandroid*)
+        if test -n "$gonkdir"; then
+            AC_DEFINE(MOZ_CUBEB)
+        fi
         dnl No Android implementation of libcubeb yet.
         ;;
     *-linux*)
@@ -5705,7 +5840,7 @@ if test -n "$MOZ_WEBGL_DISABLED"; then
   MOZ_ANGLE_RENDERER=
 fi
 
-if test -n "$MOZ_ANGLE_RENDERER"; then
+if test -n "$MOZ_ANGLE_RENDERER" -a -z "$CROSS_COMPILE"; then
   # Get the SDK path from the registry.
   # First try to get the June 2010 SDK
   MOZ_DIRECTX_SDK_REG_KEY=`reg query 'HKLM\Software\Microsoft\DirectX' //s | grep 'Microsoft DirectX SDK (June 2010)' | head -n 1`
@@ -5832,22 +5967,6 @@ if test -n "$MOZ_LIBJPEG_TURBO"; then
 
   dnl Do we support libjpeg-turbo on this platform?
   case "$OS_ARCH:$OS_TEST" in
-  Linux:x86|Linux:i?86)
-    LIBJPEG_TURBO_ASFLAGS="-f elf32 -rnasm -pnasm -DPIC -DELF"
-    LIBJPEG_TURBO_X86_ASM=1
-  ;;
-  Linux:x86_64)
-    LIBJPEG_TURBO_ASFLAGS="-f elf64 -rnasm -pnasm -D__x86_64__ -DPIC -DELF"
-    LIBJPEG_TURBO_X64_ASM=1
-  ;;
-  SunOS:i?86)
-    LIBJPEG_TURBO_ASFLAGS="-f elf32 -rnasm -pnasm -DPIC -DELF"
-    LIBJPEG_TURBO_X86_ASM=1
-  ;;
-  SunOS:x86_64)
-    LIBJPEG_TURBO_ASFLAGS="-f elf64 -rnasm -pnasm -D__x86_64__ -DPIC -DELF"
-    LIBJPEG_TURBO_X64_ASM=1
-  ;;
   Darwin:i?86)
     LIBJPEG_TURBO_ASFLAGS="-f macho32 -rnasm -pnasm -DPIC -DMACHO"
     LIBJPEG_TURBO_X86_ASM=1
@@ -5867,6 +5986,18 @@ if test -n "$MOZ_LIBJPEG_TURBO"; then
   *:arm*)
     LIBJPEG_TURBO_ASFLAGS="-march=armv7-a -mfpu=neon"
     LIBJPEG_TURBO_ARM_ASM=1
+  ;;
+  *:x86|*:i?86)
+    if $CC -E -dM -</dev/null | grep -q __ELF__; then
+      LIBJPEG_TURBO_ASFLAGS="-f elf32 -rnasm -pnasm -DPIC -DELF"
+      LIBJPEG_TURBO_X86_ASM=1
+    fi
+  ;;
+  *:x86_64)
+    if $CC -E -dM -</dev/null | grep -q __ELF__; then
+      LIBJPEG_TURBO_ASFLAGS="-f elf64 -rnasm -pnasm -D__x86_64__ -DPIC -DELF"
+      LIBJPEG_TURBO_X64_ASM=1
+    fi
   ;;
   esac
 
@@ -5937,10 +6068,10 @@ MOZ_ARG_ENABLE_STRING(extensions,
 done],
     MOZ_EXTENSIONS="$MOZ_EXTENSIONS_DEFAULT")
 
-if test -z "$MOZ_ENABLE_GNOMEVFS" -a -z "$MOZ_GNOMEVFS_LIBS" -a `echo "$MOZ_EXTENSIONS" | grep -c gnomevfs` -ne 0; then
+if test -z "$MOZ_ENABLE_GNOMEVFS" -a `echo "$MOZ_EXTENSIONS" | grep -c gnomevfs` -ne 0; then
     # Suppress warning on non-X11 platforms
     if test -n "$MOZ_X11"; then
-        AC_MSG_WARN([Cannot build gnomevfs without required libraries. Removing gnomevfs from MOZ_EXTENSIONS.])
+        AC_MSG_WARN([Removing gnomevfs from MOZ_EXTENSIONS due to no --enable-gnomevfs.])
     fi
     MOZ_EXTENSIONS=`echo $MOZ_EXTENSIONS | sed -e 's|gnomevfs||'`
 fi
@@ -5953,7 +6084,7 @@ fi
 if test -z "$MOZ_ENABLE_GIO" -a `echo "$MOZ_EXTENSIONS" | grep -c gio` -ne 0; then
     # Suppress warning on non-X11 platforms
     if test -n "$MOZ_X11"; then
-        AC_MSG_WARN([Cannot build gio without required libraries. Removing gio from MOZ_EXTENSIONS.])
+        AC_MSG_WARN([Removing gio from MOZ_EXTENSIONS due to --disable-gio.])
     fi
     MOZ_EXTENSIONS=`echo $MOZ_EXTENSIONS | sed -e 's|gio||'`
 fi
@@ -5962,6 +6093,12 @@ dnl Do not build gio with libxul based apps
 if test -n "$LIBXUL_SDK_DIR" -a `echo "$MOZ_EXTENSIONS" | grep -c gio` -ne 0; then
     MOZ_EXTENSIONS=`echo $MOZ_EXTENSIONS | sed -e 's|gio||'`
 fi
+
+if test `echo "$MOZ_EXTENSIONS" | grep -c gio` -ne 0; then
+    MOZ_GIO_COMPONENT=1
+    MOZ_EXTENSIONS=`echo $MOZ_EXTENSIONS | sed -e 's|gio||'`
+fi
+AC_SUBST(MOZ_GIO_COMPONENT)
 
 if test -z "$MOZ_JSDEBUGGER" -a `echo "$MOZ_EXTENSIONS" | grep -c venkman` -ne 0; then
     AC_MSG_WARN([Cannot build venkman without JavaScript debug library. Removing venkman from MOZ_EXTENSIONS.])
@@ -7011,7 +7148,10 @@ if test "$OS_TARGET" = Android; then
         WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=dlopen,--wrap=dlclose,--wrap=dlerror,--wrap=dlsym,--wrap=dladdr"
     fi
     WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=getaddrinfo,--wrap=freeaddrinfo,--wrap=gai_strerror"
-    WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=fork,--wrap=pthread_atfork,--wrap=raise,--wrap=PR_GetEnv,--wrap=PR_SetEnv"
+    WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl--wrap=PR_GetEnv,--wrap=PR_SetEnv"
+    if test -z "$gonkdir"; then
+        WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=fork,--wrap=pthread_atfork,--wrap=raise"
+    fi
 fi
 
 dnl ========================================================
@@ -7031,6 +7171,8 @@ if test -n "$_WRAP_MALLOC"; then
         dnl Wrap operator new and operator delete on Android.
         if test "$OS_TARGET" = "Android"; then
             WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=_Znwj,--wrap=_Znaj,--wrap=_ZdlPv,--wrap=_ZdaPv"
+            dnl Wrap the nothrow variants too.
+            WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=_ZnwjRKSt9nothrow_t,--wrap=_ZnajRKSt9nothrow_t,--wrap=_ZdlPvRKSt9nothrow_t,--wrap=_ZdaPvRKSt9nothrow_t"
         fi
     else
         AC_MSG_ERROR([--enable-wrap-malloc is not supported for non-GNU toolchains])
@@ -7228,7 +7370,7 @@ MOZ_ARG_ENABLE_BOOL(stdcxx-compat,
 AC_SUBST(STDCXX_COMPAT)
 
 if test -n "$STDCXX_COMPAT"; then
-   eval $(CXX="$CXX" MACOS_SDK_DIR="$MACOS_SDK_DIR" $PYTHON $_topsrcdir/build/autoconf/libstdcxx.py)
+   eval $(CXX="$CXX" $PYTHON $_topsrcdir/build/autoconf/libstdcxx.py)
    AC_SUBST(MOZ_LIBSTDCXX_TARGET_VERSION)
    AC_SUBST(MOZ_LIBSTDCXX_HOST_VERSION)
 fi
@@ -7239,19 +7381,6 @@ dnl = Profiling and Instrumenting
 dnl =
 dnl ========================================================
 MOZ_ARG_HEADER(Profiling and Instrumenting)
-
-dnl ========================================================
-dnl = Enable NS_FUNCTION_TIMER, which provides Function
-dnl = timing for identifying code bottlenecks
-dnl = NS_FUNCTION_TIMER is off by default.
-dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(functiontimer,
-[  --enable-functiontimer  Enable NS_FUNCTION_TIMER ],
-    NS_FUNCTION_TIMER=1,
-    NS_FUNCTION_TIMER= )
-if test -n "$NS_FUNCTION_TIMER"; then
-    AC_DEFINE(NS_FUNCTION_TIMER)
-fi
 
 dnl ========================================================
 dnl = Enable runtime visual profiling logger
@@ -7303,6 +7432,14 @@ fi
 AC_SUBST(MOZ_B2G_RIL)
 
 dnl ========================================================
+dnl = Enable Radio FM for B2G (Gonk usually)
+dnl ========================================================
+if test -n "$MOZ_B2G_FM"; then
+    AC_DEFINE(MOZ_B2G_FM)
+fi
+AC_SUBST(MOZ_B2G_FM)
+
+dnl ========================================================
 dnl = Enable Bluetooth Interface for B2G (Gonk usually)
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(b2g-bt,
@@ -7323,6 +7460,14 @@ fi
 AC_SUBST(MOZ_SYS_MSG)
 
 dnl ========================================================
+dnl = Enable Support for Time Manager API
+dnl ========================================================
+if test -n "$MOZ_TIME_MANAGER"; then
+    AC_DEFINE(MOZ_TIME_MANAGER)
+fi
+AC_SUBST(MOZ_TIME_MANAGER)
+
+dnl ========================================================
 dnl = Enable Camera Interface for B2G (Gonk usually)
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(b2g-camera,
@@ -7333,6 +7478,22 @@ if test -n "$MOZ_B2G_CAMERA"; then
    AC_DEFINE(MOZ_B2G_CAMERA)
 fi
 AC_SUBST(MOZ_B2G_CAMERA)
+
+dnl ========================================================
+dnl = Enable Support for Payment API
+dnl ========================================================
+if test -n "$MOZ_PAY"; then
+    AC_DEFINE(MOZ_PAY)
+fi
+AC_SUBST(MOZ_PAY)
+
+dnl ========================================================
+dnl = Enable Support for AudioChannelManager API
+dnl ========================================================
+if test -n "$MOZ_AUDIO_CHANNEL_MANAGER"; then
+    AC_DEFINE(MOZ_AUDIO_CHANNEL_MANAGER)
+fi
+AC_SUBST(MOZ_AUDIO_CHANNEL_MANAGER)
 
 dnl ========================================================
 dnl = Support for demangling undefined symbols
@@ -7635,41 +7796,12 @@ dnl =
 dnl ========================================================
 MOZ_ARG_HEADER(Build dependencies)
 
-dnl ========================================================
-dnl = Do not auto generate dependency info
-dnl ========================================================
-MOZ_AUTO_DEPS=1
-MOZ_ARG_DISABLE_BOOL(auto-deps,
-[  --disable-auto-deps     Do not automatically generate dependency info],
-    MOZ_AUTO_DEPS=,
-    MOZ_AUTO_DEPS=1)
-
-if test -n "$MOZ_AUTO_DEPS"; then
-dnl ========================================================
-dnl = Use mkdepend instead of $CC -MD for dependency generation
-dnl ========================================================
-_cpp_md_flag=
-MOZ_ARG_DISABLE_BOOL(md,
-[  --disable-md            Do not use compiler-based dependencies ],
-  [_cpp_md_flag=],
-  [_cpp_md_flag=1],
-  [dnl Default is to turn on -MD if using GNU-compatible compilers
-   if test "$GNU_CC" -a "$GNU_CXX"; then
-     _cpp_md_flag=1
-   fi
-  dnl Default is to use -xM if using Sun Studio on Solaris
-   if test "$SOLARIS_SUNPRO_CC"; then
-     _cpp_md_flag=1
-   fi])
-if test "$_cpp_md_flag"; then
-  COMPILER_DEPEND=1
+if test "$GNU_CC" -a "$GNU_CXX"; then
   _DEPEND_CFLAGS='$(filter-out %/.pp,-MD -MF $(MDDEPDIR)/$(@F).pp)'
-  dnl Sun Studio on Solaris use -xM instead of -MD, see config/rules.mk
-  if test "$SOLARIS_SUNPRO_CC"; then
-    _DEPEND_CFLAGS=
-  fi
+dnl Sun Studio on Solaris use -xM instead of -MD, see config/rules.mk
+elif test "$SOLARIS_SUNPRO_CC"; then
+  _DEPEND_CFLAGS=
 else
-  COMPILER_DEPEND=
   dnl Don't override this for MSVC
   if test -z "$_WIN32_MSVC"; then
     _USE_CPP_INCLUDE_FLAG=
@@ -7685,14 +7817,8 @@ else
     fi
     AC_SUBST(CL_INCLUDES_PREFIX)
     rm -f dummy-hello.c
-    COMPILER_DEPEND=1
   fi
 fi
-fi # MOZ_AUTO_DEPS
-MDDEPDIR='.deps'
-AC_SUBST(MOZ_AUTO_DEPS)
-AC_SUBST(COMPILER_DEPEND)
-AC_SUBST(MDDEPDIR)
 
 dnl ========================================================
 dnl =
@@ -8107,14 +8233,6 @@ if test "$NECKO_WIFI" -a \
   AC_MSG_ERROR([Necko WiFi scanning not supported on your platform, use --disable-necko-wifi])
 fi
 
-if test -z "$SKIP_LIBRARY_CHECKS" -a "$NECKO_WIFI" -a "$OS_ARCH" = "Linux"
-then
-  MOZ_CHECK_HEADER([iwlib.h])
-  if test "$ac_cv_header_iwlib_h" != "yes"; then
-    AC_MSG_ERROR([Can't find header iwlib.h for Necko WiFi scanning (might be in package libiw-dev (Ubuntu) or wireless-tools-devel (Fedora) or libiw-devel (openSUSE)); use --disable-necko-wifi to disable])
-  fi
-fi
-
 if test "$NECKO_WIFI"; then
   AC_DEFINE(NECKO_WIFI)
   _NON_GLOBAL_ACDEFINES="$_NON_GLOBAL_ACDEFINES NECKO_WIFI"
@@ -8155,6 +8273,30 @@ dnl Build Apps in the Cloud (AITC) if required
 AC_SUBST(MOZ_SERVICES_AITC)
 if test -n "$MOZ_SERVICES_AITC"; then
   AC_DEFINE(MOZ_SERVICES_AITC)
+fi
+
+dnl Build Common JS modules provided by services.
+AC_SUBST(MOZ_SERVICES_COMMON)
+if test -n "$MOZ_SERVICES_COMMON"; then
+  AC_DEFINE(MOZ_SERVICES_COMMON)
+fi
+
+dnl Build Services crypto component (used by Sync)
+AC_SUBST(MOZ_SERVICES_CRYPTO)
+if test -n "$MOZ_SERVICES_CRYPTO"; then
+  AC_DEFINE(MOZ_SERVICES_CRYPTO)
+fi
+
+dnl Build Firefox Health Reporter Service
+AC_SUBST(MOZ_SERVICES_HEALTHREPORT)
+if test -n "$MOZ_SERVICES_HEALTHREPORT"; then
+  AC_DEFINE(MOZ_SERVICES_HEALTHREPORT)
+fi
+
+dnl Build Services metrics component
+AC_SUBST(MOZ_SERVICES_METRICS)
+if test -n "$MOZ_SERVICES_METRICS"; then
+  AC_DEFINE(MOZ_SERVICES_METRICS)
 fi
 
 dnl Build Notifications if required
@@ -8250,11 +8392,12 @@ AC_SUBST(IBMBIDI)
 AC_SUBST(MOZ_UNIVERSALCHARDET)
 AC_SUBST(ACCESSIBILITY)
 AC_SUBST(MOZ_SPELLCHECK)
-AC_SUBST(MOZ_JAVA_COMPOSITOR)
+AC_SUBST(MOZ_ANDROID_OMTC)
 AC_SUBST(MOZ_ONLY_TOUCH_EVENTS)
 AC_SUBST(MOZ_CRASHREPORTER)
 AC_SUBST(MOZ_CRASHREPORTER_INJECTOR)
 AC_SUBST(MOZ_MAINTENANCE_SERVICE)
+AC_SUBST(MOZ_STUB_INSTALLER)
 AC_SUBST(MOZ_VERIFY_MAR_SIGNATURE)
 AC_SUBST(MOZ_ENABLE_SIGNMAR)
 AC_SUBST(MOZ_UPDATER)
@@ -8368,6 +8511,9 @@ else
   MOZ_APP_MAXVERSION=$MOZ_APP_VERSION
 fi
 
+MOZ_B2G_VERSION=${MOZ_B2G_VERSION:-"1.0.0"}
+AC_DEFINE_UNQUOTED(MOZ_B2G_VERSION,"$MOZ_B2G_VERSION")
+
 AC_SUBST(MOZ_APP_NAME)
 AC_SUBST(MOZ_APP_DISPLAYNAME)
 AC_SUBST(MOZ_APP_BASENAME)
@@ -8389,6 +8535,8 @@ AC_SUBST(MOZ_UA_OS_AGNOSTIC)
 if test -n "$MOZ_UA_OS_AGNOSTIC"; then
   AC_DEFINE(MOZ_UA_OS_AGNOSTIC)
 fi
+AC_DEFINE_UNQUOTED(MOZ_UA_BUILDID, "$MOZ_UA_BUILDID")
+AC_SUBST(MOZ_UA_BUILDID)
 
 # We can't use the static application.ini data when building against
 # a libxul SDK.
@@ -8431,7 +8579,6 @@ COMPILE_CXXFLAGS=`echo \
 	$_DEPEND_CFLAGS \
     $COMPILE_CXXFLAGS`
 
-AC_SUBST(MOZ_NATIVE_MAKEDEPEND)
 AC_SUBST(SYSTEM_LIBXUL)
 AC_SUBST(MOZ_NATIVE_JPEG)
 AC_SUBST(MOZ_NATIVE_PNG)
@@ -8536,6 +8683,7 @@ AC_SUBST(MOZ_VORBIS)
 AC_SUBST(MOZ_TREMOR)
 AC_SUBST(MOZ_OPUS)
 AC_SUBST(MOZ_WEBM)
+AC_SUBST(MOZ_DASH)
 AC_SUBST(MOZ_MEDIA_PLUGINS)
 AC_SUBST(MOZ_OMX_PLUGIN)
 AC_SUBST(MOZ_VP8_ERROR_CONCEALMENT)
@@ -8659,17 +8807,21 @@ HAVE_CPP_CHAR16_T
 HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR
 HAVE_CPP_PARTIAL_SPECIALIZATION
 HAVE_CPP_TROUBLE_COMPARING_TO_ZERO
-HAVE_STATVFS
-HAVE_STATVFS64
 NEED_CPP_UNUSED_IMPLEMENTATIONS
 NEW_H
 HAVE_GETPAGESIZE
 HAVE_ICONV
 HAVE_ICONV_WITH_CONST_INPUT
 HAVE_MBRTOWC
-HAVE_SYS_MOUNT_H
-HAVE_SYS_VFS_H
 HAVE_WCRTOMB
+HAVE_STATVFS64
+HAVE_STATVFS
+HAVE_STATFS64
+HAVE_STATFS
+HAVE_SYS_STATVFS_H
+HAVE_SYS_STATFS_H
+HAVE_SYS_VFS_H
+HAVE_SYS_MOUNT_H
 "
 
 AC_CONFIG_HEADER(
@@ -8710,9 +8862,29 @@ esac
 
 AC_SUBST(PYTHON)
 
-# Populate the virtualenv
+dnl Populate the virtualenv
+
+dnl We always use the version Python was compiled with to ensure that compiled
+dnl extensions work properly. This works around a bug in Python. See also
+dnl http://bugs.python.org/issue9516 and bug 659881.
+dnl
+dnl Please note that this assumes nothing built during virtualenv population is
+dnl shipped as part of a release package. If it does ship, binaries built here
+dnl may not be compatible with the minimum supported OS X version.
+osx_deployment_target_system=
+
+if test $python_version_major -ne 2; then
+    AC_MSG_ERROR([Assertion failed: building with Python 2.])
+fi
+
+dnl sysconfig is only present on Python 2.7 and above.
+if test $python_version_minor -ge 7; then
+    osx_deployment_target_system=`$PYTHON -c 'import sysconfig; print sysconfig.get_config_var("MACOSX_DEPLOYMENT_TARGET")'`
+fi
+
 AC_MSG_RESULT([Populating Python virtualenv])
-MACOSX_DEPLOYMENT_TARGET= LDFLAGS="${HOST_LDFLAGS}" \
+MACOSX_DEPLOYMENT_TARGET=$osx_deployment_target_system \
+  LDFLAGS="${HOST_LDFLAGS}" \
   CC="${HOST_CC}" CXX="${HOST_CXX}" \
   CFLAGS="${HOST_CFLAGS}" CXXFLAGS="${HOST_CXXFLAGS}" \
   $PYTHON $_topsrcdir/build/virtualenv/populate_virtualenv.py \
@@ -8741,7 +8913,9 @@ fi
 if test -n "$MOZ_WEBRTC"; then
    AC_MSG_RESULT("generating WebRTC Makefiles...")
 
-   GYP_WEBRTC_OPTIONS="--format=mozmake -D build_with_mozilla=1 -D enable_protobuf=0 -D include_internal_video_render=0 ${EXTRA_GYP_DEFINES} --depth=${srcdir}/media/webrtc/trunk --toplevel-dir=${srcdir} -G OBJDIR=${_objdir}"
+   WEBRTC_CONFIG="-D build_with_mozilla=1 --include ${srcdir}/media/webrtc/webrtc_config.gypi -D FORCED_INCLUDE_FILE=${srcdir}/media/webrtc/webrtc_config.gypi"
+
+   GYP_WEBRTC_OPTIONS="--format=mozmake ${WEBRTC_CONFIG} ${EXTRA_GYP_DEFINES} --depth=${srcdir}/media/webrtc/trunk --toplevel-dir=${srcdir} -G OBJDIR=${_objdir}"
 
    $PYTHON ${srcdir}/media/webrtc/trunk/build/gyp_chromium \
      $GYP_WEBRTC_OPTIONS \
@@ -8756,10 +8930,21 @@ if test -n "$MOZ_WEBRTC"; then
      AC_MSG_RESULT("generating WebRTC/Signaling Makefiles...")
      $PYTHON ${srcdir}/media/webrtc/trunk/build/gyp_chromium \
        $GYP_WEBRTC_OPTIONS \
+       -D build_for_test=0 \
        --generator-output=${_objdir}/media/webrtc/signaling \
        ${srcdir}/media/webrtc/signaling/signaling.gyp
      if test "$?" != 0; then
         AC_MSG_ERROR([failed to generate WebRTC/Signaling Makefiles])
+     fi
+
+     AC_MSG_RESULT("generating WebRTC/SignalingTest Makefiles...")
+     $PYTHON ${srcdir}/media/webrtc/trunk/build/gyp_chromium --format=mozmake \
+       $GYP_WEBRTC_OPTIONS \
+       -D build_for_test=1 \
+       --generator-output=${_objdir}/media/webrtc/signalingtest \
+       ${srcdir}/media/webrtc/signaling/signaling.gyp
+     if test "$?" != 0; then
+       AC_MSG_ERROR([failed to generate WebRTC/SignalingTest Makefiles])
      fi
    fi
 
@@ -8772,12 +8957,34 @@ if test -n "$MOZ_WEBRTC"; then
    if test "$?" != 0; then
       AC_MSG_ERROR([failed to generate gtest Makefiles])
    fi
+
+   AC_MSG_RESULT("generating nrappkit Makefiles...")
+   $PYTHON ${srcdir}/media/webrtc/trunk/build/gyp_chromium --format=mozmake \
+     $GYP_WEBRTC_OPTIONS \
+     --generator-output=${_objdir}/media/mtransport/third_party/nrappkit \
+     ${srcdir}/media/mtransport/third_party/nrappkit/nrappkit.gyp
+   if test "$?" != 0; then
+      AC_MSG_ERROR([failed to generate nrappkit Makefiles])
+   fi
+
+   AC_MSG_RESULT("generating nICEr Makefiles...")
+   $PYTHON ${srcdir}/media/webrtc/trunk/build/gyp_chromium --format=mozmake \
+     $GYP_WEBRTC_OPTIONS \
+     --generator-output=${_objdir}/media/mtransport/third_party/nICEr \
+     ${srcdir}/media/mtransport/third_party/nICEr/nicer.gyp
+   if test "$?" != 0; then
+      AC_MSG_ERROR([failed to generate nICEr Makefiles])
+   fi
 fi
 
 # Generate a JSON config file for unittest harnesses etc to read
 # build configuration details from in a standardized way.
-OS_TARGET=${OS_TARGET} TARGET_CPU=${TARGET_CPU} MOZ_DEBUG=${MOZ_DEBUG} \
-MOZ_WIDGET_TOOLKIT=${MOZ_WIDGET_TOOLKIT} UNIVERSAL_BINARY=${UNIVERSAL_BINARY} \
+OS_TARGET=${OS_TARGET} \
+TARGET_CPU=${TARGET_CPU} \
+MOZ_DEBUG=${MOZ_DEBUG} \
+MOZ_WIDGET_TOOLKIT=${MOZ_WIDGET_TOOLKIT} \
+UNIVERSAL_BINARY=${UNIVERSAL_BINARY} \
+MOZ_CRASHREPORTER=${MOZ_CRASHREPORTER} \
   $PYTHON ${_topsrcdir}/config/writemozinfo.py ./mozinfo.json.tmp
 if cmp -s ./mozinfo.json.tmp ./mozinfo.json; then
   rm ./mozinfo.json.tmp

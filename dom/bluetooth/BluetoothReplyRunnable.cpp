@@ -5,9 +5,9 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "base/basictypes.h"
-#include "BluetoothTypes.h"
 #include "BluetoothReplyRunnable.h"
 #include "nsIDOMDOMRequest.h"
+#include "mozilla/dom/bluetooth/BluetoothTypes.h"
 
 USING_BLUETOOTH_NAMESPACE
 
@@ -43,8 +43,8 @@ BluetoothReplyRunnable::FireReply(const jsval& aVal)
   
   
   return mReply->type() == BluetoothReply::TBluetoothReplySuccess ?
-    rs->FireSuccess(mDOMRequest, aVal) :
-    rs->FireError(mDOMRequest, mReply->get_BluetoothReplyError().error());
+    rs->FireSuccessAsync(mDOMRequest, aVal) :
+    rs->FireErrorAsync(mDOMRequest, mReply->get_BluetoothReplyError().error());
 }
 
 nsresult
@@ -58,17 +58,17 @@ BluetoothReplyRunnable::FireErrorString()
     return NS_ERROR_FAILURE;
   }
   
-  return rs->FireError(mDOMRequest, mErrorString);
+  return rs->FireErrorAsync(mDOMRequest, mErrorString);
 }
 
 NS_IMETHODIMP
 BluetoothReplyRunnable::Run()
 {
   MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mDOMRequest);
+  MOZ_ASSERT(mReply);
 
   nsresult rv;
-
-  MOZ_ASSERT(mDOMRequest);
 
   if (mReply->type() != BluetoothReply::TBluetoothReplySuccess) {
     rv = FireReply(JSVAL_VOID);
@@ -86,9 +86,9 @@ BluetoothReplyRunnable::Run()
   }
 
   ReleaseMembers();
-  if (mDOMRequest) {
-    NS_WARNING("mDOMRequest still alive! Deriving class should call BluetoothReplyRunnable::ReleaseMembers()!");
-  }
+  MOZ_ASSERT(!mDOMRequest,
+             "mDOMRequest still alive! Deriving class should call "
+             "BluetoothReplyRunnable::ReleaseMembers()!");
 
   return rv;
 }

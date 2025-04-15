@@ -121,6 +121,8 @@
 #include "nsIXPConnect.h"
 #include "nsIJSRuntimeService.h"
 #include "nsIMemoryReporter.h"
+#include "nsIFile.h"
+#include "nsDirectoryServiceDefs.h"
 #include "xpcpublic.h"
 #include "nsXPCOMPrivate.h"
 #include "sampler.h"
@@ -467,7 +469,6 @@ private:
 
 public:
 #ifdef DEBUG_CC
-    size_t mBytes;
     char *mName;
 #endif
 
@@ -479,8 +480,7 @@ public:
           mRefCount(0),
           mFirstChild()
 #ifdef DEBUG_CC
-        , mBytes(0),
-          mName(nullptr)
+        , mName(nullptr)
 #endif
     {
         MOZ_ASSERT(aParticipant);
@@ -747,8 +747,6 @@ public:
     Block mFirstBlock;
     nsPurpleBufferEntry *mFreeList;
 
-    // For objects compiled against Gecko 1.9 and 1.9.1.
-    PointerSet mCompatObjects;
 #ifdef DEBUG_CC
     PointerSet mNormalObjects; // duplicates our blocks
     nsCycleCollectorStats &mStats;
@@ -762,14 +760,12 @@ public:
     {
         InitBlocks();
         mNormalObjects.Init();
-        mCompatObjects.Init();
     }
 #else
     nsPurpleBuffer(nsCycleCollectorParams &params) 
         : mParams(params)
     {
         InitBlocks();
-        mCompatObjects.Init();
     }
 #endif
 
@@ -844,7 +840,8 @@ public:
 
     // RemoveSkippable removes entries from the purple buffer if
     // nsPurpleBufferEntry::mObject is null or if the object's
-    // nsXPCOMCycleCollectionParticipant::CanSkip() returns true.
+    // nsXPCOMCycleCollectionParticipant::CanSkip() returns true or
+    // if nsPurpleBufferEntry::mNotPurple is true.
     // If removeChildlessNodes is true, then any nodes in the purple buffer
     // that will have no children in the cycle collector graph will also be
     // removed. CanSkip() may be run on these children.
@@ -853,7 +850,7 @@ public:
 #ifdef DEBUG_CC
     bool Exists(void *p) const
     {
-        return mNormalObjects.GetEntry(p) || mCompatObjects.GetEntry(p);
+        return mNormalObjects.GetEntry(p);
     }
 #endif
 
@@ -889,10 +886,7 @@ public:
 
         e->mObject = p;
         e->mParticipant = cp;
-
-#ifdef DEBUG_CC
-        mNormalObjects.PutEntry(p);
-#endif
+        e->mNotPurple = false;
 
         // Caller is responsible for filling in result's mRefCnt.
         return e;
@@ -913,18 +907,6 @@ public:
         --mCount;
     }
 
-    bool PutCompatObject(nsISupports *p)
-    {
-        ++mCount;
-        return !!mCompatObjects.PutEntry(p);
-    }
-
-    void RemoveCompatObject(nsISupports *p)
-    {
-        --mCount;
-        mCompatObjects.RemoveEntry(p);
-    }
-
     uint32_t Count() const
     {
         return mCount;
@@ -940,30 +922,6 @@ public:
 static bool
 AddPurpleRoot(GCGraphBuilder &builder, void *root, nsCycleCollectionParticipant *cp);
 
-struct CallbackClosure
-{
-    CallbackClosure(nsPurpleBuffer *aPurpleBuffer, GCGraphBuilder &aBuilder)
-        : mPurpleBuffer(aPurpleBuffer),
-          mBuilder(aBuilder)
-    {
-    }
-    nsPurpleBuffer *mPurpleBuffer;
-    GCGraphBuilder &mBuilder;
-};
-
-static PLDHashOperator
-selectionCallback(nsPtrHashKey<const void>* key, void* userArg)
-{
-    CallbackClosure *closure = static_cast<CallbackClosure*>(userArg);
-    if (AddPurpleRoot(closure->mBuilder,
-                      static_cast<nsISupports *>(
-                        const_cast<void*>(key->GetKey())),
-                      nullptr))
-        return PL_DHASH_REMOVE;
-
-    return PL_DHASH_NEXT;
-}
-
 void
 nsPurpleBuffer::SelectPointers(GCGraphBuilder &aBuilder)
 {
@@ -975,24 +933,16 @@ nsPurpleBuffer::SelectPointers(GCGraphBuilder &aBuilder)
                               *eEnd = ArrayEnd(b->mEntries);
             e != eEnd; ++e) {
             if (!(uintptr_t(e->mObject) & uintptr_t(1))) {
-                if (e->mObject) {
+                if (e->mObject && !e->mNotPurple) {
                     ++realCount;
                 }
             }
         }
     }
 
-    NS_ABORT_IF_FALSE(mCompatObjects.Count() + mNormalObjects.Count() ==
-                          realCount,
+    NS_ABORT_IF_FALSE(mNormalObjects.Count() == realCount,
                       "count out of sync");
 #endif
-
-    if (mCompatObjects.Count()) {
-        mCount -= mCompatObjects.Count();
-        CallbackClosure closure(this, aBuilder);
-        mCompatObjects.EnumerateEntries(selectionCallback, &closure);
-        mCount += mCompatObjects.Count(); // in case of allocation failure
-    }
 
     // Walk through all the blocks.
     for (Block *b = &mFirstBlock; b; b = b->mNext) {
@@ -1002,8 +952,14 @@ nsPurpleBuffer::SelectPointers(GCGraphBuilder &aBuilder)
             if (!(uintptr_t(e->mObject) & uintptr_t(1))) {
                 // This is a real entry (rather than something on the
                 // free list).
-                if (!e->mObject || AddPurpleRoot(aBuilder, e->mObject,
-                                                 e->mParticipant)) {
+                if (e->mObject && e->mNotPurple) {
+                    void* o = e->mObject;
+                    nsCycleCollectionParticipant* cp = e->mParticipant;
+                    CanonicalizeParticipant(&o, &cp);
+                    cp->UnmarkIfPurple(o);
+                    Remove(e);
+                } else if (!e->mObject || AddPurpleRoot(aBuilder, e->mObject,
+                                                        e->mParticipant)) {
                     Remove(e);
                 }
             }
@@ -1065,10 +1021,6 @@ struct nsCycleCollector
     nsCycleCollector();
     ~nsCycleCollector();
 
-    // The first pair of Suspect and Forget functions are only used by
-    // old XPCOM binary components.
-    bool Suspect(nsISupports *n);
-    bool Forget(nsISupports *n);
     nsPurpleBufferEntry* Suspect2(void *n, nsCycleCollectionParticipant *cp);
     bool Forget2(nsPurpleBufferEntry *e);
 
@@ -1103,6 +1055,7 @@ struct nsCycleCollector
     FILE *mPtrLog;
     PointerSet mExpectedGarbage;
 
+    bool LogPurpleAddition(void* aObject, nsCycleCollectionParticipant *cp);
     void LogPurpleRemoval(void* aObject);
 
     void ShouldBeFreed(nsISupports *n);
@@ -1343,6 +1296,18 @@ public:
         return NS_OK;
     }
 
+    NS_IMETHOD GetFilenameIdentifier(nsAString& aIdentifier)
+    {
+        aIdentifier = mFilenameIdentifier;
+        return NS_OK;
+    }
+
+    NS_IMETHOD SetFilenameIdentifier(const nsAString& aIdentifier)
+    {
+        mFilenameIdentifier = aIdentifier;
+        return NS_OK;
+    }
+
     NS_IMETHOD Begin()
     {
         mCurrentAddress.AssignLiteral("0x");
@@ -1351,48 +1316,52 @@ public:
         if (mDisableLog) {
             return NS_OK;
         }
-        char basename[MAXPATHLEN] = {'\0'};
-        char ccname[MAXPATHLEN] = {'\0'};
-#ifdef XP_WIN
-        // On Windows, tmpnam returns useless stuff, such as "\\s164.".
-        // Therefore we need to call the APIs directly.
-        GetTempPathA(mozilla::ArrayLength(basename), basename);
-#else
-        tmpnam(basename);
-        char *lastSlash = strrchr(basename, XPCOM_FILE_PATH_SEPARATOR[0]);
-        if (lastSlash) {
-            *lastSlash = '\0';
-        }
-#endif
 
-        ++gLogCounter;
+        // Initially create the log in a file starting with
+        // "incomplete-gc-edges".  We'll move the file and strip off the
+        // "incomplete-" once the dump completes.  (We do this because we don't
+        // want scripts which poll the filesystem looking for gc/cc dumps to
+        // grab a file before we're finished writing to it.)
+        nsCOMPtr<nsIFile> gcLogFile = CreateTempFile("incomplete-gc-edges");
+        NS_ENSURE_STATE(gcLogFile);
 
         // Dump the JS heap.
-        char gcname[MAXPATHLEN] = {'\0'};
-        sprintf(gcname, "%s%sgc-edges-%d.%d.log", basename,
-                XPCOM_FILE_PATH_SEPARATOR,
-                gLogCounter, base::GetCurrentProcId());
+        FILE* gcLogANSIFile = nullptr;
+        gcLogFile->OpenANSIFileDesc("w", &gcLogANSIFile);
+        NS_ENSURE_STATE(gcLogANSIFile);
+        xpc::DumpJSHeap(gcLogANSIFile);
+        fclose(gcLogANSIFile);
 
-        FILE* gcDumpFile = fopen(gcname, "w");
-        if (!gcDumpFile)
-            return NS_ERROR_FAILURE;
-        xpc::DumpJSHeap(gcDumpFile);
-        fclose(gcDumpFile);
+        // Strip off "incomplete-".
+        nsCOMPtr<nsIFile> gcLogFileFinalDestination =
+            CreateTempFile("gc-edges");
+        NS_ENSURE_STATE(gcLogFileFinalDestination);
 
-        // Open a file for dumping the CC graph.
-        sprintf(ccname, "%s%scc-edges-%d.%d.log", basename,
-                XPCOM_FILE_PATH_SEPARATOR,
-                gLogCounter, base::GetCurrentProcId());
-        mStream = fopen(ccname, "w");
-        if (!mStream)
-            return NS_ERROR_FAILURE;
+        nsAutoString gcLogFileFinalDestinationName;
+        gcLogFileFinalDestination->GetLeafName(gcLogFileFinalDestinationName);
+        NS_ENSURE_STATE(!gcLogFileFinalDestinationName.IsEmpty());
 
+        gcLogFile->MoveTo(/* directory */ nullptr, gcLogFileFinalDestinationName);
+
+        // Log to the error console.
         nsCOMPtr<nsIConsoleService> cs =
             do_GetService(NS_CONSOLESERVICE_CONTRACTID);
         if (cs) {
-            cs->LogStringMessage(NS_ConvertUTF8toUTF16(ccname).get());
-            cs->LogStringMessage(NS_ConvertUTF8toUTF16(gcname).get());
+            nsAutoString gcLogPath;
+            gcLogFileFinalDestination->GetPath(gcLogPath);
+
+            nsString msg = NS_LITERAL_STRING("Garbage Collector log dumped to ") +
+                           gcLogPath;
+            cs->LogStringMessage(msg.get());
         }
+
+        // Open a file for dumping the CC graph.  We again prefix with
+        // "incomplete-".
+        mOutFile = CreateTempFile("incomplete-cc-edges");
+        NS_ENSURE_STATE(mOutFile);
+        MOZ_ASSERT(!mStream);
+        mOutFile->OpenANSIFileDesc("w", &mStream);
+        NS_ENSURE_STATE(mStream);
 
         return NS_OK;
     }
@@ -1486,12 +1455,39 @@ public:
     NS_IMETHOD End()
     {
         if (!mDisableLog) {
+            MOZ_ASSERT(mStream);
+            MOZ_ASSERT(mOutFile);
+
             fclose(mStream);
             mStream = nullptr;
+
+            // Strip off "incomplete-" from the log file's name.
+            nsCOMPtr<nsIFile> logFileFinalDestination =
+                CreateTempFile("cc-edges");
+            NS_ENSURE_STATE(logFileFinalDestination);
+
+            nsAutoString logFileFinalDestinationName;
+            logFileFinalDestination->GetLeafName(logFileFinalDestinationName);
+            NS_ENSURE_STATE(!logFileFinalDestinationName.IsEmpty());
+
+            mOutFile->MoveTo(/* directory = */ nullptr,
+                             logFileFinalDestinationName);
+            mOutFile = nullptr;
+
+            // Log to the error console.
+            nsCOMPtr<nsIConsoleService> cs =
+                do_GetService(NS_CONSOLESERVICE_CONTRACTID);
+            if (cs) {
+                nsAutoString ccLogPath;
+                logFileFinalDestination->GetPath(ccLogPath);
+
+                nsString msg = NS_LITERAL_STRING("Cycle Collector log dumped to ") +
+                               ccLogPath;
+                cs->LogStringMessage(msg.get());
+            }
         }
         return NS_OK;
     }
-
     NS_IMETHOD ProcessNext(nsICycleCollectorHandler* aHandler,
                            bool* aCanContinue)
     {
@@ -1536,19 +1532,55 @@ public:
         return NS_OK;
     }
 private:
+    /**
+     * Create a new file named something like aPrefix.$PID.$IDENTIFIER.log in
+     * $MOZ_CC_LOG_DIRECTORY or in the system's temp directory.  No existing
+     * file will be overwritten; if aPrefix.$PID.$IDENTIFIER.log exists, we'll
+     * try a file named something like aPrefix.$PID.$IDENTIFIER-1.log, and so
+     * on.
+     */
+    already_AddRefed<nsIFile>
+    CreateTempFile(const char* aPrefix)
+    {
+        nsPrintfCString filename("%s.%d%s%s.log",
+            aPrefix,
+            base::GetCurrentProcId(),
+            mFilenameIdentifier.IsEmpty() ? "" : ".",
+            NS_ConvertUTF16toUTF8(mFilenameIdentifier).get());
+
+        // Get the log directory either from $MOZ_CC_LOG_DIRECTORY or from our
+        // platform's temp directory.
+        nsCOMPtr<nsIFile> logFile;
+        if (char* env = PR_GetEnv("MOZ_CC_LOG_DIRECTORY")) {
+            NS_NewNativeLocalFile(nsCString(env), /* followLinks = */ true,
+                                  getter_AddRefs(logFile));
+        } else {
+            // Ask NSPR to point us to the temp directory.
+            NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(logFile));
+        }
+        NS_ENSURE_TRUE(logFile, nullptr);
+
+        nsresult rv = logFile->AppendNative(filename);
+        NS_ENSURE_SUCCESS(rv, nullptr);
+
+        rv = logFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
+        NS_ENSURE_SUCCESS(rv, nullptr);
+
+        return logFile.forget();
+    }
+
     FILE *mStream;
+    nsCOMPtr<nsIFile> mOutFile;
     bool mWantAllTraces;
     bool mDisableLog;
     bool mWantAfterProcessing;
+    nsString mFilenameIdentifier;
     nsCString mCurrentAddress; 
     nsTArray<CCGraphDescriber> mDescribers;
     uint32_t mNextIndex;
-    static uint32_t gLogCounter;
 };
 
 NS_IMPL_ISUPPORTS1(nsCycleCollectorLogger, nsICycleCollectorListener)
-
-uint32_t nsCycleCollectorLogger::gLogCounter = 0;
 
 nsresult
 nsCycleCollectorLoggerConstructor(nsISupports* aOuter,
@@ -1622,13 +1654,10 @@ public:
     void SetLastChild();
 
 private:
-    void DescribeNode(uint32_t refCount,
-                      size_t objSz,
-                      const char *objName)
+    void DescribeNode(uint32_t refCount, const char *objName)
     {
         mCurrPi->mRefCount = refCount;
 #ifdef DEBUG_CC
-        mCurrPi->mBytes = objSz;
         mCurrPi->mName = PL_strdup(objName);
         sCollector->mStats.mVisitedNode++;
 #endif
@@ -1636,10 +1665,9 @@ private:
 
 public:
     // nsCycleCollectionTraversalCallback methods.
-    NS_IMETHOD_(void) DescribeRefCountedNode(nsrefcnt refCount, size_t objSz,
+    NS_IMETHOD_(void) DescribeRefCountedNode(nsrefcnt refCount,
                                              const char *objName);
-    NS_IMETHOD_(void) DescribeGCedNode(bool isMarked, size_t objSz,
-                                       const char *objName);
+    NS_IMETHOD_(void) DescribeGCedNode(bool isMarked, const char *objName);
 
     NS_IMETHOD_(void) NoteXPCOMRoot(nsISupports *root);
     NS_IMETHOD_(void) NoteJSRoot(void *root);
@@ -1826,12 +1854,11 @@ GCGraphBuilder::NoteNativeRoot(void *root, nsCycleCollectionParticipant *partici
 }
 
 NS_IMETHODIMP_(void)
-GCGraphBuilder::DescribeRefCountedNode(nsrefcnt refCount, size_t objSz,
-                                       const char *objName)
+GCGraphBuilder::DescribeRefCountedNode(nsrefcnt refCount, const char *objName)
 {
     if (refCount == 0)
         Fault("zero refcount", mCurrPi);
-    if (refCount == PR_UINT32_MAX)
+    if (refCount == UINT32_MAX)
         Fault("overflowing refcount", mCurrPi);
     sCollector->mVisitedRefCounted++;
 
@@ -1840,14 +1867,13 @@ GCGraphBuilder::DescribeRefCountedNode(nsrefcnt refCount, size_t objSz,
                                         objName);
     }
 
-    DescribeNode(refCount, objSz, objName);
+    DescribeNode(refCount, objName);
 }
 
 NS_IMETHODIMP_(void)
-GCGraphBuilder::DescribeGCedNode(bool isMarked, size_t objSz,
-                                 const char *objName)
+GCGraphBuilder::DescribeGCedNode(bool isMarked, const char *objName)
 {
-    uint32_t refCount = isMarked ? PR_UINT32_MAX : 0;
+    uint32_t refCount = isMarked ? UINT32_MAX : 0;
     sCollector->mVisitedGCed++;
 
     if (mListener) {
@@ -1855,7 +1881,7 @@ GCGraphBuilder::DescribeGCedNode(bool isMarked, size_t objSz,
                                   objName);
     }
 
-    DescribeNode(refCount, objSz, objName);
+    DescribeNode(refCount, objName);
 }
 
 NS_IMETHODIMP_(void)
@@ -1989,10 +2015,8 @@ public:
     NS_IMETHOD_(void) NoteJSChild(void *child);
 
     NS_IMETHOD_(void) DescribeRefCountedNode(nsrefcnt refcount,
-                                             size_t objsz,
                                              const char *objname) {}
     NS_IMETHOD_(void) DescribeGCedNode(bool ismarked,
-                                       size_t objsz,
                                        const char *objname) {}
     NS_IMETHOD_(void) NoteXPCOMRoot(nsISupports *root) {}
     NS_IMETHOD_(void) NoteJSRoot(void *root) {}
@@ -2057,7 +2081,7 @@ nsPurpleBuffer::RemoveSkippable(bool removeChildlessNodes)
                     void *o = e->mObject;
                     nsCycleCollectionParticipant *cp = e->mParticipant;
                     CanonicalizeParticipant(&o, &cp);
-                    if (!cp->CanSkip(o, false) &&
+                    if (!e->mNotPurple && !cp->CanSkip(o, false) &&
                         (!removeChildlessNodes || MayHaveChild(o, cp))) {
                         continue;
                     }
@@ -2436,14 +2460,13 @@ public:
         return mSuppressThisNode;
     }
 
-    NS_IMETHOD_(void) DescribeRefCountedNode(nsrefcnt refCount, size_t objSz,
+    NS_IMETHOD_(void) DescribeRefCountedNode(nsrefcnt refCount,
                                              const char *objName)
     {
         mSuppressThisNode = (PL_strstr(sSuppressionList, objName) != nullptr);
     }
 
-    NS_IMETHOD_(void) DescribeGCedNode(bool isMarked, size_t objSz,
-                                       const char *objName)
+    NS_IMETHOD_(void) DescribeGCedNode(bool isMarked, const char *objName)
     {
         mSuppressThisNode = (PL_strstr(sSuppressionList, objName) != nullptr);
     }
@@ -2488,70 +2511,6 @@ nsCycleCollector_isScanSafe(void *s, nsCycleCollectionParticipant *cp)
 }
 #endif
 
-bool
-nsCycleCollector::Suspect(nsISupports *n)
-{
-    AbortIfOffMainThreadIfCheckFast();
-
-    // Re-entering ::Suspect during collection used to be a fault, but
-    // we are canonicalizing nsISupports pointers using QI, so we will
-    // see some spurious refcount traffic here. 
-
-    if (mScanInProgress)
-        return false;
-
-    NS_ASSERTION(nsCycleCollector_isScanSafe(n, nullptr),
-                 "suspected a non-scansafe pointer");
-
-    if (mParams.mDoNothing)
-        return false;
-
-#ifdef DEBUG_CC
-    mStats.mSuspectNode++;
-
-    if (nsCycleCollector_shouldSuppress(n))
-        return false;
-
-    if (mParams.mLogPointers) {
-        if (!mPtrLog)
-            mPtrLog = fopen("pointer_log", "w");
-        fprintf(mPtrLog, "S %p\n", static_cast<void*>(n));
-    }
-#endif
-
-    return mPurpleBuf.PutCompatObject(n);
-}
-
-
-bool
-nsCycleCollector::Forget(nsISupports *n)
-{
-    AbortIfOffMainThreadIfCheckFast();
-
-    // Re-entering ::Forget during collection used to be a fault, but
-    // we are canonicalizing nsISupports pointers using QI, so we will
-    // see some spurious refcount traffic here. 
-
-    if (mScanInProgress)
-        return false;
-
-    if (mParams.mDoNothing)
-        return true; // it's as good as forgotten
-
-#ifdef DEBUG_CC
-    mStats.mForgetNode++;
-
-    if (mParams.mLogPointers) {
-        if (!mPtrLog)
-            mPtrLog = fopen("pointer_log", "w");
-        fprintf(mPtrLog, "F %p\n", static_cast<void*>(n));
-    }
-#endif
-
-    mPurpleBuf.RemoveCompatObject(n);
-    return true;
-}
-
 nsPurpleBufferEntry*
 nsCycleCollector::Suspect2(void *n, nsCycleCollectionParticipant *cp)
 {
@@ -2571,16 +2530,8 @@ nsCycleCollector::Suspect2(void *n, nsCycleCollectionParticipant *cp)
         return nullptr;
 
 #ifdef DEBUG_CC
-    mStats.mSuspectNode++;
-
-    if (!cp && nsCycleCollector_shouldSuppress(static_cast<nsISupports *>(n)))
+    if (!LogPurpleAddition(n, cp))
         return nullptr;
-
-    if (mParams.mLogPointers) {
-        if (!mPtrLog)
-            mPtrLog = fopen("pointer_log", "w");
-        fprintf(mPtrLog, "S %p\n", static_cast<void*>(n));
-    }
 #endif
 
     // Caller is responsible for filling in result's mRefCnt.
@@ -2609,6 +2560,42 @@ nsCycleCollector::Forget2(nsPurpleBufferEntry *e)
 }
 
 #ifdef DEBUG_CC
+void
+nsCycleCollector_logPurpleAddition(void* aObject,
+                                   nsCycleCollectionParticipant *cp)
+{
+    if (sCollector) {
+        sCollector->LogPurpleAddition(aObject, cp);
+    }
+}
+
+bool
+nsCycleCollector::LogPurpleAddition(void* aObject,
+                                    nsCycleCollectionParticipant *cp)
+{
+
+    if (mScanInProgress)
+        return false;
+
+    if (mParams.mDoNothing)
+        return false;
+
+    mStats.mSuspectNode++;
+
+    if (!cp &&
+        nsCycleCollector_shouldSuppress(static_cast<nsISupports *>(aObject)))
+        return false;
+
+    if (mParams.mLogPointers) {
+        if (!mPtrLog)
+            mPtrLog = fopen("pointer_log", "w");
+        fprintf(mPtrLog, "S %p\n", static_cast<void*>(aObject));
+    }
+
+    mPurpleBuf.mNormalObjects.PutEntry(aObject);
+    return true;
+}
+
 void
 nsCycleCollector_logPurpleRemoval(void* aObject)
 {
@@ -2829,7 +2816,7 @@ nsCycleCollector::BeginCollection(bool aMergeCompartments,
             while (!etor.IsDone()) {
                 PtrInfo *pi = etor.GetNext();
                 if (pi->mColor == black &&
-                    pi->mRefCount > 0 && pi->mRefCount < PR_UINT32_MAX &&
+                    pi->mRefCount > 0 && pi->mRefCount < UINT32_MAX &&
                     pi->mInternalRefs != pi->mRefCount) {
                     aListener->DescribeRoot((uint64_t)pi->mPointer,
                                             pi->mInternalRefs);
@@ -3007,21 +2994,6 @@ nsCycleCollector_forgetJSRuntime()
 {
     if (sCollector)
         sCollector->ForgetJSRuntime();
-}
-
-
-bool
-NS_CycleCollectorSuspect(nsISupports *n)
-{
-    if (sCollector)
-        return sCollector->Suspect(n);
-    return false;
-}
-
-bool
-NS_CycleCollectorForget(nsISupports *n)
-{
-    return sCollector ? sCollector->Forget(n) : true;
 }
 
 nsPurpleBufferEntry*

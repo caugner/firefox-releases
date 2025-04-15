@@ -183,7 +183,9 @@ public:
     return static_cast<nsCSSPseudoElements::Type>(mPseudoType);
   }
   void SetPseudoType(nsCSSPseudoElements::Type aType) {
-    NS_ASSERTION(aType > PR_INT16_MIN && aType < PR_INT16_MAX, "Out of bounds");
+    NS_ASSERTION(static_cast<int32_t>(aType) >= INT16_MIN &&
+                 static_cast<int32_t>(aType) <= INT16_MAX,
+                 "Out of bounds - this will overflow mPseudoType");
     mPseudoType = static_cast<int16_t>(aType);
   }
 
@@ -277,7 +279,7 @@ public:
   // nsIStyleRule interface
   virtual void MapRuleInfoInto(nsRuleData* aRuleData);
 #ifdef DEBUG
-  virtual void List(FILE* out = stdout, int32_t aIndent = 0) const;
+  virtual void List(FILE* out = stdout, int32_t aIndent = 0) const MOZ_OVERRIDE;
 #endif
 
 protected:

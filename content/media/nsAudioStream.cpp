@@ -32,6 +32,7 @@ extern "C" {
 #endif
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 #if defined(XP_MACOSX)
 #define SA_PER_STREAM_VOLUME 1
@@ -60,7 +61,8 @@ class nsNativeAudioStream : public nsAudioStream
   ~nsNativeAudioStream();
   nsNativeAudioStream();
 
-  nsresult Init(int32_t aNumChannels, int32_t aRate);
+  nsresult Init(int32_t aNumChannels, int32_t aRate,
+                const AudioChannelType aAudioChannelType);
   void Shutdown();
   nsresult Write(const void* aBuf, uint32_t aFrames);
   uint32_t Available();
@@ -95,7 +97,8 @@ class nsRemotedAudioStream : public nsAudioStream
   nsRemotedAudioStream();
   ~nsRemotedAudioStream();
 
-  nsresult Init(int32_t aNumChannels, int32_t aRate);
+  nsresult Init(int32_t aNumChannels, int32_t aRate,
+                const AudioChannelType aAudioChannelType);
   void Shutdown();
   nsresult Write(const void* aBuf, uint32_t aFrames);
   uint32_t Available();
@@ -298,7 +301,11 @@ static int PrefChanged(const char* aPref, void* aClosure)
       gVolumeScale = NS_MAX<double>(0, PR_strtod(utf8.get(), nullptr));
     }
   } else if (strcmp(aPref, PREF_USE_CUBEB) == 0) {
+#ifdef MOZ_WIDGET_GONK
+    bool value = Preferences::GetBool(aPref, false);
+#else
     bool value = Preferences::GetBool(aPref, true);
+#endif
     mozilla::MutexAutoLock lock(*gAudioPrefsLock);
     gUseCubeb = value;
   } else if (strcmp(aPref, PREF_CUBEB_LATENCY) == 0) {
@@ -345,6 +352,36 @@ static uint32_t GetCubebLatency()
 }
 #endif
 
+static sa_stream_type_t ConvertChannelToSAType(AudioChannelType aType)
+{
+  switch(aType) {
+    case AUDIO_CHANNEL_NORMAL:
+      return SA_STREAM_TYPE_SYSTEM;
+      break;
+    case AUDIO_CHANNEL_CONTENT:
+      return SA_STREAM_TYPE_MUSIC;
+      break;
+    case AUDIO_CHANNEL_NOTIFICATION:
+      return SA_STREAM_TYPE_NOTIFICATION;
+      break;
+    case AUDIO_CHANNEL_ALARM:
+      return SA_STREAM_TYPE_ALARM;
+      break;
+    case AUDIO_CHANNEL_TELEPHONY:
+      return SA_STREAM_TYPE_VOICE_CALL;
+      break;
+    case AUDIO_CHANNEL_RINGER:
+      return SA_STREAM_TYPE_RING;
+      break;
+    case AUDIO_CHANNEL_PUBLICNOTIFICATION:
+      return SA_STREAM_TYPE_ENFORCED_AUDIBLE;
+      break;
+    default:
+      NS_ERROR("The value of AudioChannelType is invalid");
+      return SA_STREAM_TYPE_MAX;
+      break;
+  }
+}
 void nsAudioStream::InitLibrary()
 {
 #ifdef PR_LOGGING
@@ -422,7 +459,8 @@ nsNativeAudioStream::~nsNativeAudioStream()
 
 NS_IMPL_THREADSAFE_ISUPPORTS0(nsNativeAudioStream)
 
-nsresult nsNativeAudioStream::Init(int32_t aNumChannels, int32_t aRate)
+nsresult nsNativeAudioStream::Init(int32_t aNumChannels, int32_t aRate,
+                                   const AudioChannelType aAudioChannelType)
 {
   mRate = aRate;
   mChannels = aNumChannels;
@@ -437,6 +475,15 @@ nsresult nsNativeAudioStream::Init(int32_t aNumChannels, int32_t aRate)
     mAudioHandle = nullptr;
     mInError = true;
     PR_LOG(gAudioStreamLog, PR_LOG_ERROR, ("nsNativeAudioStream: sa_stream_create_pcm error"));
+    return NS_ERROR_FAILURE;
+  }
+
+  int saError = sa_stream_set_stream_type(static_cast<sa_stream_t*>(mAudioHandle),
+                       ConvertChannelToSAType(aAudioChannelType));
+  if (saError != SA_SUCCESS && saError != SA_ERROR_NOT_SUPPORTED) {
+    mAudioHandle = nullptr;
+    mInError = true;
+    PR_LOG(gAudioStreamLog, PR_LOG_ERROR, ("nsNativeAudioStream: sa_stream_set_stream_type error"));
     return NS_ERROR_FAILURE;
   }
 
@@ -474,15 +521,11 @@ nsresult nsNativeAudioStream::Write(const void* aBuf, uint32_t aFrames)
 
   if (s_data) {
     double scaled_volume = GetVolumeScale() * mVolume;
-#ifdef MOZ_SAMPLE_TYPE_S16LE
+#ifdef MOZ_SAMPLE_TYPE_S16
     const short* buf = static_cast<const short*>(aBuf);
     int32_t volume = int32_t((1 << 16) * scaled_volume);
     for (uint32_t i = 0; i < samples; ++i) {
-      short s = buf[i];
-#if defined(IS_BIG_ENDIAN)
-      s = ((s & 0x00ff) << 8) | ((s & 0xff00) >> 8);
-#endif
-      s_data[i] = short((int32_t(s) * volume) >> 16);
+      s_data[i] = short((int32_t(buf[i]) * volume) >> 16);
     }
 #else /* MOZ_SAMPLE_TYPE_FLOAT32 */
     const SampleType* buf = static_cast<const SampleType*>(aBuf);
@@ -609,7 +652,7 @@ int32_t nsNativeAudioStream::GetMinWriteSize()
                                   &size);
   if (r == SA_ERROR_NOT_SUPPORTED)
     return 1;
-  else if (r != SA_SUCCESS || size > PR_INT32_MAX)
+  else if (r != SA_SUCCESS || size > INT32_MAX)
     return -1;
 
   return static_cast<int32_t>(size / mChannels / sizeof(short));
@@ -631,7 +674,7 @@ NS_IMPL_THREADSAFE_ISUPPORTS0(nsRemotedAudioStream)
 
 nsresult
 nsRemotedAudioStream::Init(int32_t aNumChannels,
-                           int32_t aRate)
+                           int32_t aRate, AudioChannelType aAudioChannelType)
 {
   mRate = aRate;
   mChannels = aNumChannels;
@@ -834,7 +877,8 @@ class nsBufferedAudioStream : public nsAudioStream
   nsBufferedAudioStream();
   ~nsBufferedAudioStream();
 
-  nsresult Init(int32_t aNumChannels, int32_t aRate);
+  nsresult Init(int32_t aNumChannels, int32_t aRate,
+                const AudioChannelType aAudioChannelType);
   void Shutdown();
   nsresult Write(const void* aBuf, uint32_t aFrames);
   uint32_t Available();
@@ -936,7 +980,8 @@ nsBufferedAudioStream::~nsBufferedAudioStream()
 NS_IMPL_THREADSAFE_ISUPPORTS0(nsBufferedAudioStream)
 
 nsresult
-nsBufferedAudioStream::Init(int32_t aNumChannels, int32_t aRate)
+nsBufferedAudioStream::Init(int32_t aNumChannels, int32_t aRate,
+                            const AudioChannelType aAudioChannelType)
 {
   cubeb* cubebContext = GetCubebContext();
 
@@ -951,7 +996,7 @@ nsBufferedAudioStream::Init(int32_t aNumChannels, int32_t aRate)
   cubeb_stream_params params;
   params.rate = aRate;
   params.channels = aNumChannels;
-#ifdef MOZ_SAMPLE_TYPE_S16LE
+#ifdef MOZ_SAMPLE_TYPE_S16
   params.format =  CUBEB_SAMPLE_S16NE;
   mBytesPerFrame = sizeof(int16_t) * aNumChannels;
 #else /* MOZ_SAMPLE_TYPE_FLOAT32 */
@@ -1152,7 +1197,7 @@ nsBufferedAudioStream::GetPositionInFramesUnlocked()
   if (position >= mLostFrames) {
     adjustedPosition = position - mLostFrames;
   }
-  return NS_MIN<uint64_t>(adjustedPosition, PR_INT64_MAX);
+  return NS_MIN<uint64_t>(adjustedPosition, INT64_MAX);
 }
 
 bool
@@ -1189,7 +1234,7 @@ nsBufferedAudioStream::DataCallback(void* aBuffer, long aFrames)
         output += input_size[i];
       } else {
         // Adjust volume as each sample is copied out.
-#ifdef MOZ_SAMPLE_TYPE_S16LE
+#ifdef MOZ_SAMPLE_TYPE_S16
         int32_t volume = int32_t(1 << 16) * scaled_volume;
 
         const short* src = static_cast<const short*>(input[i]);

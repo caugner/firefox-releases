@@ -146,9 +146,8 @@ protected:
   nsresult ProcessHTTPHeaders(nsIChannel* aChannel);
   nsresult ProcessHeaderData(nsIAtom* aHeader, const nsAString& aValue,
                              nsIContent* aContent = nullptr);
-  nsresult ProcessLinkHeader(nsIContent* aElement,
-                             const nsAString& aLinkData);
-  nsresult ProcessLink(nsIContent* aElement, const nsSubstring& aAnchor,
+  nsresult ProcessLinkHeader(const nsAString& aLinkData);
+  nsresult ProcessLink(const nsSubstring& aAnchor,
                        const nsSubstring& aHref, const nsSubstring& aRel,
                        const nsSubstring& aTitle, const nsSubstring& aType,
                        const nsSubstring& aMedia);
@@ -160,7 +159,7 @@ protected:
                                     const nsSubstring& aType,
                                     const nsSubstring& aMedia);
 
-  void PrefetchHref(const nsAString &aHref, nsIContent *aSource,
+  void PrefetchHref(const nsAString &aHref, nsINode *aSource,
                     bool aExplicit);
 
   // aHref can either be the usual URI format or of the form "//www.hostname.com"

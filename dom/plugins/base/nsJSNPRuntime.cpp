@@ -23,7 +23,7 @@
 #include "nsIDOMElement.h"
 #include "prmem.h"
 #include "nsIContent.h"
-#include "nsIPluginInstanceOwner.h"
+#include "nsPluginInstanceOwner.h"
 #include "mozilla/HashFunctions.h"
 
 #define NPRUNTIME_JSCLASS_NAME "NPObject JS wrapper class"
@@ -322,8 +322,7 @@ GetJSContext(NPP npp)
   nsNPAPIPluginInstance *inst = (nsNPAPIPluginInstance *)npp->ndata;
   NS_ENSURE_TRUE(inst, nullptr);
 
-  nsCOMPtr<nsIPluginInstanceOwner> owner;
-  inst->GetOwner(getter_AddRefs(owner));
+  nsRefPtr<nsPluginInstanceOwner> owner = inst->GetOwner();
   NS_ENSURE_TRUE(owner, nullptr);
 
   nsCOMPtr<nsIDocument> doc;
@@ -1142,7 +1141,9 @@ GetNPObjectWrapper(JSContext *cx, JSObject *obj, bool wrapResult = true)
       }
       return obj;
     }
-    obj = ::JS_GetPrototype(obj);
+    if (!::JS_GetPrototype(cx, obj, &obj)) {
+      return NULL;
+    }
   }
   return NULL;
 }
@@ -2058,12 +2059,20 @@ nsJSNPRuntime::OnPluginDestroy(NPP npp)
   // be only one, but remove all instances found in case the page put
   // more than one of the plugin's scriptable objects on the prototype
   // chain).
-  while (obj && (proto = ::JS_GetPrototype(obj))) {
+  while (obj) {
+    if (!::JS_GetPrototype(cx, obj, &proto)) {
+      return;
+    }
+    if (!proto) {
+      break;
+    }
     // Unwrap while checking the jsclass - if the prototype is a wrapper for
     // an NP object, that counts too.
     if (JS_GetClass(js::UnwrapObject(proto)) == &sNPObjectJSWrapperClass) {
       // We found an NPObject on the proto chain, get its prototype...
-      proto = ::JS_GetPrototype(proto);
+      if (!::JS_GetPrototype(cx, proto, &proto)) {
+        return;
+      }
 
       // ... and pull it out of the chain.
       ::JS_SetPrototype(cx, obj, proto);

@@ -31,7 +31,6 @@
 #include "nsNodeInfoManager.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsEventListenerManager.h"
-#include "nsSVGUtils.h"
 #include "nsSVGLength2.h"
 #include "nsSVGNumber2.h"
 #include "nsSVGNumberPair.h"
@@ -47,6 +46,7 @@
 #include "SVGAnimatedPointList.h"
 #include "SVGAnimatedPathSegList.h"
 #include "SVGAnimatedTransformList.h"
+#include "SVGContentUtils.h"
 #include "DOMSVGTests.h"
 #include "nsIDOMSVGUnitTypes.h"
 #include "nsSVGRect.h"
@@ -251,8 +251,8 @@ nsSVGElement::AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
   if (IsEventName(aName) && aValue) {
     NS_ABORT_IF_FALSE(aValue->Type() == nsAttrValue::eString,
       "Expected string value for script body");
-    nsresult rv = AddScriptEventListener(GetEventNameForAttr(aName),
-                                         aValue->GetStringValue());
+    nsresult rv = SetEventHandler(GetEventNameForAttr(aName),
+                                  aValue->GetStringValue());
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -606,7 +606,7 @@ nsSVGElement::UnsetAttrInternal(int32_t aNamespaceID, nsIAtom* aName,
       nsEventListenerManager* manager = GetListenerManager(false);
       if (manager) {
         nsIAtom* eventName = GetEventNameForAttr(aName);
-        manager->RemoveScriptEventListener(eventName);
+        manager->RemoveEventHandler(eventName);
       }
       return;
     }
@@ -1058,7 +1058,7 @@ nsSVGElement::GetOwnerSVGElement(nsIDOMSVGSVGElement * *aOwnerSVGElement)
 NS_IMETHODIMP
 nsSVGElement::GetViewportElement(nsIDOMSVGElement * *aViewportElement)
 {
-  *aViewportElement = nsSVGUtils::GetNearestViewportElement(this).get();
+  *aViewportElement = SVGContentUtils::GetNearestViewportElement(this).get();
   return NS_OK;
 }
 
@@ -2419,9 +2419,9 @@ nsSVGElement::ReportAttributeParseFailure(nsIDocument* aDocument,
   const nsAFlatString& attributeValue = PromiseFlatString(aValue);
   const PRUnichar *strings[] = { aAttribute->GetUTF16String(),
                                  attributeValue.get() };
-  return nsSVGUtils::ReportToConsole(aDocument,
-                                     "AttributeParseWarning",
-                                     strings, ArrayLength(strings));
+  return SVGContentUtils::ReportToConsole(aDocument,
+                                          "AttributeParseWarning",
+                                          strings, ArrayLength(strings));
 }
 
 void
@@ -2443,7 +2443,7 @@ nsSVGElement::RecompileScriptEventListeners()
 
     nsAutoString value;
     GetAttr(kNameSpaceID_None, attr, value);
-    AddScriptEventListener(GetEventNameForAttr(attr), value, true);
+    SetEventHandler(GetEventNameForAttr(attr), value, true);
   }
 }
 

@@ -8,6 +8,7 @@
 
 #include "RuntimeService.h"
 
+#include "nsIContentSecurityPolicy.h"
 #include "nsIDOMChromeWindow.h"
 #include "nsIEffectiveTLDService.h"
 #include "nsIObserverService.h"
@@ -19,6 +20,7 @@
 #include "nsITimer.h"
 #include "nsPIDOMWindow.h"
 
+#include "jsdbgapi.h"
 #include "mozilla/dom/EventTargetBinding.h"
 #include "mozilla/Preferences.h"
 #include "nsContentUtils.h"
@@ -53,14 +55,8 @@ using mozilla::Preferences;
 // consistency.
 #define WORKER_STACK_SIZE 256 * sizeof(size_t) * 1024
 
-// The stack limit the JS engine will check. 
-#ifdef MOZ_ASAN
-// For ASan, we need more stack space, so we use all that is available
-#define WORKER_CONTEXT_NATIVE_STACK_LIMIT WORKER_STACK_SIZE
-#else
 // Half the size of the actual C stack, to be safe.
 #define WORKER_CONTEXT_NATIVE_STACK_LIMIT 128 * sizeof(size_t) * 1024
-#endif
 
 // The maximum number of threads to use for workers, overridable via pref.
 #define MAX_WORKERS_PER_DOMAIN 10
@@ -153,6 +149,7 @@ enum {
   PREF_allow_xml,
   PREF_jit_hardening,
   PREF_mem_max,
+  PREF_ion,
 
 #ifdef JS_GC_ZEAL
   PREF_gczeal,
@@ -172,7 +169,8 @@ const char* gPrefsToWatch[] = {
   JS_OPTIONS_DOT_STR "typeinference",
   JS_OPTIONS_DOT_STR "allow_xml",
   JS_OPTIONS_DOT_STR "jit_hardening",
-  JS_OPTIONS_DOT_STR "mem.max"
+  JS_OPTIONS_DOT_STR "mem.max",
+  JS_OPTIONS_DOT_STR "ion.content"
 
 #ifdef JS_GC_ZEAL
   , PREF_WORKERS_GCZEAL
@@ -220,6 +218,9 @@ PrefCallback(const char* aPrefName, void* aClosure)
     if (Preferences::GetBool(gPrefsToWatch[PREF_typeinference])) {
       newOptions |= JSOPTION_TYPE_INFERENCE;
     }
+    if (Preferences::GetBool(gPrefsToWatch[PREF_ion])) {
+      newOptions |= JSOPTION_ION;
+    }
     if (Preferences::GetBool(gPrefsToWatch[PREF_allow_xml])) {
       newOptions |= JSOPTION_ALLOW_XML;
     }
@@ -251,6 +252,129 @@ OperationCallback(JSContext* aCx)
   return worker->OperationCallback(aCx);
 }
 
+class LogViolationDetailsRunnable : public nsRunnable
+{
+  WorkerPrivate* mWorkerPrivate;
+  nsString mFileName;
+  uint32_t mLineNum;
+  uint32_t mSyncQueueKey;
+
+private:
+  class LogViolationDetailsResponseRunnable : public WorkerSyncRunnable
+  {
+    uint32_t mSyncQueueKey;
+
+  public:
+    LogViolationDetailsResponseRunnable(WorkerPrivate* aWorkerPrivate,
+                                        uint32_t aSyncQueueKey)
+    : WorkerSyncRunnable(aWorkerPrivate, aSyncQueueKey, false),
+      mSyncQueueKey(aSyncQueueKey)
+    {
+      NS_ASSERTION(aWorkerPrivate, "Don't hand me a null WorkerPrivate!");
+    }
+
+    bool
+    WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
+    {
+      aWorkerPrivate->StopSyncLoop(mSyncQueueKey, true);
+      return true;
+    }
+
+    bool
+    PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
+    {
+      AssertIsOnMainThread();
+      return true;
+    }
+
+    void
+    PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
+                 bool aDispatchResult)
+    {
+      AssertIsOnMainThread();
+    }
+  };
+
+public:
+  LogViolationDetailsRunnable(WorkerPrivate* aWorker,
+                              const nsString& aFileName,
+                              uint32_t aLineNum)
+  : mWorkerPrivate(aWorker),
+    mFileName(aFileName),
+    mLineNum(aLineNum),
+    mSyncQueueKey(0)
+  {
+    NS_ASSERTION(aWorker, "WorkerPrivate cannot be null");
+  }
+
+  bool
+  Dispatch(JSContext* aCx)
+  {
+    mSyncQueueKey = mWorkerPrivate->CreateNewSyncLoop();
+
+    if (NS_FAILED(NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL))) {
+      JS_ReportError(aCx, "Failed to dispatch to main thread!");
+      return false;
+    }
+
+    return mWorkerPrivate->RunSyncLoop(aCx, mSyncQueueKey);
+  }
+
+  NS_IMETHOD
+  Run()
+  {
+    AssertIsOnMainThread();
+
+    nsIContentSecurityPolicy* csp = mWorkerPrivate->GetCSP();
+    if (csp) {
+      NS_NAMED_LITERAL_STRING(scriptSample,
+         "Call to eval() or related function blocked by CSP.");
+      csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_EVAL,
+                                mFileName, scriptSample, mLineNum);
+    }
+
+    nsRefPtr<LogViolationDetailsResponseRunnable> response =
+        new LogViolationDetailsResponseRunnable(mWorkerPrivate, mSyncQueueKey);
+    if (!response->Dispatch(nullptr)) {
+      NS_WARNING("Failed to dispatch response!");
+    }
+
+    return NS_OK;
+  }
+};
+
+JSBool
+ContentSecurityPolicyAllows(JSContext* aCx)
+{
+  WorkerPrivate* worker = GetWorkerPrivateFromContext(aCx);
+  worker->AssertIsOnWorkerThread();
+
+  if (worker->IsEvalAllowed()) {
+    return true;
+  }
+
+  nsString fileName;
+  uint32_t lineNum = 0;
+
+  JSScript* script;
+  const char* file;
+  if (JS_DescribeScriptedCaller(aCx, &script, &lineNum) &&
+      (file = JS_GetScriptFilename(aCx, script))) {
+    fileName.AssignASCII(file);
+  } else {
+    JS_ReportPendingException(aCx);
+  }
+
+  nsRefPtr<LogViolationDetailsRunnable> runnable =
+      new LogViolationDetailsRunnable(worker, fileName, lineNum);
+
+  if (!runnable->Dispatch(aCx)) {
+    JS_ReportPendingException(aCx);
+  }
+
+  return false;
+}
+
 JSContext*
 CreateJSContextForWorker(WorkerPrivate* aWorkerPrivate)
 {
@@ -270,6 +394,19 @@ CreateJSContextForWorker(WorkerPrivate* aWorkerPrivate)
                     aWorkerPrivate->GetJSRuntimeHeapSize());
 
   JS_SetNativeStackQuota(runtime, WORKER_CONTEXT_NATIVE_STACK_LIMIT);
+
+  // Security policy:
+  static JSSecurityCallbacks securityCallbacks = {
+    NULL,
+    ContentSecurityPolicyAllows
+  };
+  JS_SetSecurityCallbacks(runtime, &securityCallbacks);
+
+  // DOM helpers:
+  static js::DOMCallbacks DOMCallbacks = {
+    InstanceClassHasProtoAtDepth
+  };
+  SetDOMCallbacks(runtime, &DOMCallbacks);
 
   JSContext* workerCx = JS_NewContext(runtime, 0);
   if (!workerCx) {
@@ -400,16 +537,7 @@ ResolveWorkerClasses(JSContext* aCx, JSHandleObject aObj, JSHandleId aId, unsign
 
   for (uint32_t i = 0; i < ID_COUNT; i++) {
     if (gStringIDs[i] == aId) {
-      nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
-      NS_ASSERTION(ssm, "This should never be null!");
-
-      bool enabled;
-      if (NS_FAILED(ssm->IsCapabilityEnabled("UniversalXPConnect", &enabled))) {
-        NS_WARNING("IsCapabilityEnabled failed!");
-        isChrome = false;
-      }
-
-      isChrome = !!enabled;
+      isChrome = nsContentUtils::IsCallerChrome();
 
       // Don't resolve if this is ChromeWorker and we're not chrome. Otherwise
       // always resolve.

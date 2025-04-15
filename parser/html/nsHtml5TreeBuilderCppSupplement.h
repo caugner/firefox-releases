@@ -105,8 +105,12 @@ nsHtml5TreeBuilder::createElement(int32_t aNamespace, nsIAtom* aName, nsHtml5Htm
             nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_HREF);
             if (url) {
               nsString* charset = aAttributes->getValue(nsHtml5AttributeName::ATTR_CHARSET);
-              mSpeculativeLoadQueue.AppendElement()->InitStyle(*url,
-                                                    (charset) ? *charset : EmptyString());
+              nsString* crossOrigin =
+                aAttributes->getValue(nsHtml5AttributeName::ATTR_CROSSORIGIN);
+              mSpeculativeLoadQueue.AppendElement()->
+                InitStyle(*url,
+                          (charset) ? *charset : EmptyString(),
+                          (crossOrigin) ? *crossOrigin : NullString());
             }
           }
         } else if (nsHtml5Atoms::video == aName) {
@@ -162,7 +166,11 @@ nsHtml5TreeBuilder::createElement(int32_t aNamespace, nsIAtom* aName, nsHtml5Htm
 
           nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_XLINK_HREF);
           if (url) {
-            mSpeculativeLoadQueue.AppendElement()->InitStyle(*url, EmptyString());
+            nsString* crossOrigin =
+              aAttributes->getValue(nsHtml5AttributeName::ATTR_CROSSORIGIN);
+            mSpeculativeLoadQueue.AppendElement()->
+              InitStyle(*url, EmptyString(),
+                        (crossOrigin) ? *crossOrigin : NullString());
           }
         }        
         break;
@@ -697,8 +705,8 @@ nsHtml5TreeBuilder::StartPlainTextViewSource(const nsAutoString& aTitle)
 
   // XUL will add the "Source of: " prefix.
   uint32_t length = aTitle.Length();
-  if (length > PR_INT32_MAX) {
-    length = PR_INT32_MAX;
+  if (length > INT32_MAX) {
+    length = INT32_MAX;
   }
   characters(aTitle.get(), 0, (int32_t)length);
   endTag(nsHtml5ElementName::ELT_TITLE);

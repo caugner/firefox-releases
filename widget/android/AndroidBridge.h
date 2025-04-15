@@ -26,7 +26,10 @@
 #include "gfxRect.h"
 
 #include "nsIAndroidBridge.h"
+#include "nsISmsRequest.h"
 
+#include "mozilla/StaticPtr.h"
+ 
 // Some debug #defines
 // #define DEBUG_ANDROID_EVENTS
 // #define DEBUG_ANDROID_WIDGET
@@ -154,6 +157,9 @@ public:
     static void NotifyIMEChange(const PRUnichar *aText, uint32_t aTextLen, int aStart, int aEnd, int aNewEnd);
 
     nsresult TakeScreenshot(nsIDOMWindow *window, int32_t srcX, int32_t srcY, int32_t srcW, int32_t srcH, int32_t dstY, int32_t dstX, int32_t dstW, int32_t dstH, int32_t bufW, int32_t bufH, int32_t tabId, int32_t token, jobject buffer);
+    nsresult GetDisplayPort(bool aPageSizeUpdate, bool aIsBrowserContentDisplayed, int32_t tabId, nsIAndroidViewport* metrics, nsIAndroidDisplayport** displayPort);
+
+    bool ShouldAbortProgressiveUpdate(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution);
 
     static void NotifyPaintedRect(float top, float left, float bottom, float right);
 
@@ -252,8 +258,6 @@ public:
 
     bool GetShowPasswordSetting();
 
-    void FireAndWaitForTracerEvent();
-
     /* See GLHelpers.java as to why this is needed */
     void *CallEglCreateWindowSurface(void *dpy, void *config, AndroidGeckoSurfaceView& surfaceView);
 
@@ -279,10 +283,6 @@ public:
     void *LockBitmap(jobject bitmap);
 
     void UnlockBitmap(jobject bitmap);
-
-    void PostToJavaThread(JNIEnv *aEnv, nsIRunnable* aRunnable, bool aMainThread = false);
-
-    void ExecuteNextRunnable(JNIEnv *aEnv);
 
     bool UnlockProfile();
 
@@ -322,13 +322,14 @@ public:
     void GetCurrentBatteryInformation(hal::BatteryInformation* aBatteryInfo);
 
     uint16_t GetNumberOfMessagesForText(const nsAString& aText);
-    void SendMessage(const nsAString& aNumber, const nsAString& aText, int32_t aRequestId, uint64_t aProcessId);
+    void SendMessage(const nsAString& aNumber, const nsAString& aText, nsISmsRequest* aRequest);
     int32_t SaveSentMessage(const nsAString& aRecipient, const nsAString& aBody, uint64_t aDate);
-    void GetMessage(int32_t aMessageId, int32_t aRequestId, uint64_t aProcessId);
-    void DeleteMessage(int32_t aMessageId, int32_t aRequestId, uint64_t aProcessId);
-    void CreateMessageList(const dom::sms::SmsFilterData& aFilter, bool aReverse, int32_t aRequestId, uint64_t aProcessId);
-    void GetNextMessageInList(int32_t aListId, int32_t aRequestId, uint64_t aProcessId);
+    void GetMessage(int32_t aMessageId, nsISmsRequest* aRequest);
+    void DeleteMessage(int32_t aMessageId, nsISmsRequest* aRequest);
+    void CreateMessageList(const dom::sms::SmsFilterData& aFilter, bool aReverse, nsISmsRequest* aRequest);
+    void GetNextMessageInList(int32_t aListId, nsISmsRequest* aRequest);
     void ClearMessageList(int32_t aListId);
+    already_AddRefed<nsISmsRequest> DequeueSmsRequest(int32_t aRequestId);
 
     bool IsTablet();
 
@@ -354,7 +355,7 @@ public:
     void LockScreenOrientation(uint32_t aOrientation);
     void UnlockScreenOrientation();
 
-    void PumpMessageLoop();
+    bool PumpMessageLoop();
 
     void NotifyWakeLockChanged(const nsAString& topic, const nsAString& state);
 
@@ -369,6 +370,7 @@ public:
 
 protected:
     static AndroidBridge *sBridge;
+    static StaticAutoPtr<nsTArray<nsCOMPtr<nsISmsRequest> > > sSmsRequests;
 
     // the global JavaVM
     JavaVM *mJavaVM;
@@ -400,13 +402,12 @@ protected:
 
     int mAPIVersion;
 
-    nsCOMArray<nsIRunnable> mRunnableQueue;
+    int32_t QueueSmsRequest(nsISmsRequest* aRequest);
 
     // other things
     jmethodID jNotifyIME;
     jmethodID jNotifyIMEEnabled;
     jmethodID jNotifyIMEChange;
-    jmethodID jNotifyScreenShot;
     jmethodID jAcknowledgeEventSync;
     jmethodID jEnableLocation;
     jmethodID jEnableLocationHighAccuracy;
@@ -449,7 +450,6 @@ protected:
     jmethodID jScanMedia;
     jmethodID jGetSystemColors;
     jmethodID jGetIconForExtension;
-    jmethodID jFireAndWaitForTracerEvent;
     jmethodID jCreateShortcut;
     jmethodID jGetShowPasswordSetting;
     jmethodID jPostToJavaThread;
@@ -468,8 +468,6 @@ protected:
     jmethodID jShowSurface;
     jmethodID jHideSurface;
     jmethodID jDestroySurface;
-
-    jmethodID jNotifyPaintedRect;
 
     jmethodID jNumberOfMessages;
     jmethodID jSendMessage;
@@ -493,6 +491,10 @@ protected:
     jmethodID jNotifyWakeLockChanged;
     jmethodID jRegisterSurfaceTextureFrameListener;
     jmethodID jUnregisterSurfaceTextureFrameListener;
+
+    jclass jScreenshotHandlerClass;
+    jmethodID jNotifyScreenShot;
+    jmethodID jNotifyPaintedRect;
 
     // for GfxInfo (gfx feature detection and blacklisting)
     jmethodID jGetGfxInfoData;

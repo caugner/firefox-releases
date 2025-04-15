@@ -8,12 +8,12 @@
 #include "nsSVGAngle.h"
 #include "prdtoa.h"
 #include "nsTextFormatter.h"
-#include "nsSVGUtils.h"
 #include "nsSVGMarkerElement.h"
 #include "nsMathUtils.h"
 #include "nsContentUtils.h" // NS_ENSURE_FINITE
 #include "nsSMILValue.h"
 #include "SVGOrientSMILType.h"
+#include "nsAttrValueInlines.h"
 #include "mozilla/Attributes.h"
 
 using namespace mozilla;

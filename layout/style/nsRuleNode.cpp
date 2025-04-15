@@ -253,18 +253,28 @@ static nscoord CalcLengthWith(const nsCSSValue& aValue,
   if (aValue.IsPixelLengthUnit()) {
     return aValue.GetPixelLength();
   }
-  // Common code for all units other than pixel-based units and fixed-length
-  // units:
-  aCanStoreInRuleTree = false;
-  const nsStyleFont *styleFont =
-    aStyleFont ? aStyleFont : aStyleContext->GetStyleFont();
-  if (aFontSize == -1) {
-    // XXX Should this be styleFont->mSize instead to avoid taking minfontsize
-    // prefs into account?
-    aFontSize = styleFont->mFont.size;
+  if (aValue.IsCalcUnit()) {
+    // For properties for which lengths are the *only* units accepted in
+    // calc(), we can handle calc() here and just compute a final
+    // result.  We ensure that we don't get to this code for other
+    // properties by not calling CalcLength in those cases:  SetCoord
+    // only calls CalcLength for a calc when it is appropriate to do so.
+    CalcLengthCalcOps ops(aFontSize, aStyleFont,
+                          aStyleContext, aPresContext,
+                          aUseProvidedRootEmSize, aUseUserFontSet,
+                          aCanStoreInRuleTree);
+    return css::ComputeCalc(aValue, ops);
   }
   switch (aValue.GetUnit()) {
+    // While we could deal with 'rem' units correctly by simply not
+    // caching any data that uses them in the rule tree, it's valuable
+    // to store them in the rule tree (for faster dynamic changes of
+    // other things).  And since the font size of the root element
+    // changes rarely, we instead handle dynamic changes to the root
+    // element's font size by rebuilding all style data in
+    // nsCSSFrameConstructor::RestyleElement.
     case eCSSUnit_RootEM: {
+      aPresContext->SetUsesRootEMUnits(true);
       nscoord rootFontSize;
 
       if (aUseProvidedRootEmSize) {
@@ -279,12 +289,15 @@ static nscoord CalcLengthWith(const nsCSSValue& aValue,
         // nsRuleNode::SetFont makes the same assumption!), so we should
         // use GetStyleFont on this context to get the root element's
         // font size.
+        const nsStyleFont *styleFont =
+          aStyleFont ? aStyleFont : aStyleContext->GetStyleFont();
         rootFontSize = styleFont->mFont.size;
       } else {
         // This is not the root element or we are calculating something other
         // than font size, so rem is relative to the root element's font size.
         nsRefPtr<nsStyleContext> rootStyle;
-        const nsStyleFont *rootStyleFont = styleFont;
+        const nsStyleFont *rootStyleFont =
+          aStyleFont ? aStyleFont : aStyleContext->GetStyleFont();
         Element* docElement = aPresContext->Document()->GetRootElement();
 
         if (docElement) {
@@ -300,6 +313,22 @@ static nscoord CalcLengthWith(const nsCSSValue& aValue,
 
       return ScaleCoord(aValue, float(rootFontSize));
     }
+    default:
+      // Fall through to the code for units that can't be stored in the
+      // rule tree because they depend on font data.
+      break;
+  }
+  // Common code for units that depend on the element's font data and
+  // thus can't be stored in the rule tree:
+  aCanStoreInRuleTree = false;
+  const nsStyleFont *styleFont =
+    aStyleFont ? aStyleFont : aStyleContext->GetStyleFont();
+  if (aFontSize == -1) {
+    // XXX Should this be styleFont->mSize instead to avoid taking minfontsize
+    // prefs into account?
+    aFontSize = styleFont->mFont.size;
+  }
+  switch (aValue.GetUnit()) {
     case eCSSUnit_EM: {
       return ScaleCoord(aValue, float(aFontSize));
       // XXX scale against font metrics height instead?
@@ -319,23 +348,6 @@ static nscoord CalcLengthWith(const nsCSSValue& aValue,
 
       return ScaleCoord(aValue, ceil(aPresContext->AppUnitsPerDevPixel() *
                                      zeroWidth));
-    }
-    // For properties for which lengths are the *only* units accepted in
-    // calc(), we can handle calc() here and just compute a final
-    // result.  We ensure that we don't get to this code for other
-    // properties by not calling CalcLength in those cases:  SetCoord
-    // only calls CalcLength for a calc when it is appropriate to do so.
-    case eCSSUnit_Calc:
-    case eCSSUnit_Calc_Plus:
-    case eCSSUnit_Calc_Minus:
-    case eCSSUnit_Calc_Times_L:
-    case eCSSUnit_Calc_Times_R:
-    case eCSSUnit_Calc_Divided: {
-      CalcLengthCalcOps ops(aFontSize, aStyleFont,
-                            aStyleContext, aPresContext,
-                            aUseProvidedRootEmSize, aUseUserFontSet,
-                            aCanStoreInRuleTree);
-      return css::ComputeCalc(aValue, ops);
     }
     default:
       NS_NOTREACHED("unexpected unit");
@@ -913,7 +925,7 @@ static void SetGradient(const nsCSSValue& aValue, nsPresContext* aPresContext,
     const nsCSSValueGradientStop &valueStop = gradient->mStops[i];
 
     if (!SetCoord(valueStop.mLocation, stop.mLocation,
-                  nsStyleCoord(), SETCOORD_LPO,
+                  nsStyleCoord(), SETCOORD_LPO | SETCOORD_STORE_CALC,
                   aContext, aPresContext, aCanStoreInRuleTree)) {
       NS_NOTREACHED("unexpected unit for gradient stop location");
     }
@@ -1268,7 +1280,7 @@ nsRuleNode::~nsRuleNode()
 {
   MOZ_COUNT_DTOR(nsRuleNode);
   if (mStyleData.mResetData || mStyleData.mInheritedData)
-    mStyleData.Destroy(0, mPresContext);
+    mStyleData.Destroy(mDependentBits, mPresContext);
   NS_IF_RELEASE(mRule);
 }
 
@@ -1325,6 +1337,30 @@ nsRuleNode::Transition(nsIStyleRule* aRule, uint8_t aLevel,
   return next;
 }
 
+void nsRuleNode::SetUsedDirectly()
+{
+  mDependentBits |= NS_RULE_NODE_USED_DIRECTLY;
+
+  // Maintain the invariant that any rule node that is used directly has
+  // all structs that live in the rule tree cached (which
+  // nsRuleNode::GetStyleData depends on for speed).
+  if (mDependentBits & NS_STYLE_INHERIT_MASK) {
+    for (nsStyleStructID sid = nsStyleStructID(0); sid < nsStyleStructID_Length;
+         sid = nsStyleStructID(sid + 1)) {
+      uint32_t bit = nsCachedStyleData::GetBitForSID(sid);
+      if (mDependentBits & bit) {
+        nsRuleNode *source = mParent;
+        while ((source->mDependentBits & bit) && !source->IsUsedDirectly()) {
+          source = source->mParent;
+        }
+        void *data = source->mStyleData.GetStyleData(sid);
+        NS_ASSERTION(data, "unexpected null struct");
+        mStyleData.SetStyleData(sid, mPresContext, data);
+      }
+    }
+  }
+}
+
 void
 nsRuleNode::ConvertChildrenToHash()
 {
@@ -1359,20 +1395,28 @@ nsRuleNode::PropagateNoneBit(uint32_t aBit, nsRuleNode* aHighestNode)
 }
 
 inline void
-nsRuleNode::PropagateDependentBit(uint32_t aBit, nsRuleNode* aHighestNode)
+nsRuleNode::PropagateDependentBit(nsStyleStructID aSID, nsRuleNode* aHighestNode,
+                                  void* aStruct)
 {
+  NS_ASSERTION(aStruct, "expected struct");
+
+  uint32_t bit = nsCachedStyleData::GetBitForSID(aSID);
   for (nsRuleNode* curr = this; curr != aHighestNode; curr = curr->mParent) {
-    if (curr->mDependentBits & aBit) {
+    if (curr->mDependentBits & bit) {
 #ifdef DEBUG
       while (curr != aHighestNode) {
-        NS_ASSERTION(curr->mDependentBits & aBit, "bit not set");
+        NS_ASSERTION(curr->mDependentBits & bit, "bit not set");
         curr = curr->mParent;
       }
 #endif
       break;
     }
 
-    curr->mDependentBits |= aBit;
+    curr->mDependentBits |= bit;
+
+    if (curr->IsUsedDirectly()) {
+      curr->mStyleData.SetStyleData(aSID, mPresContext, aStruct);
+    }
   }
 }
 
@@ -1417,7 +1461,7 @@ CheckFontCallback(const nsRuleData* aRuleData,
   // and 'narrower' values of 'font-stretch' depend on the parent.
   const nsCSSValue& size = *aRuleData->ValueForFontSize();
   const nsCSSValue& weight = *aRuleData->ValueForFontWeight();
-  if (size.IsRelativeLengthUnit() ||
+  if ((size.IsRelativeLengthUnit() && size.GetUnit() != eCSSUnit_RootEM) ||
       size.GetUnit() == eCSSUnit_Percent ||
       (size.GetUnit() == eCSSUnit_Enumerated &&
        (size.GetIntValue() == NS_STYLE_FONT_SIZE_SMALLER ||
@@ -1841,7 +1885,10 @@ nsRuleNode::WalkRuleTree(const nsStyleStructID aSID,
 
     // If the dependent bit is set on a rule node for this struct, that
     // means its rule won't have any information to add, so skip it.
-    while (ruleNode->mDependentBits & bit) {
+    // NOTE: If we exit the loop because of the !IsUsedDirectly() check,
+    // then we're guaranteed to break immediately afterwards due to a
+    // non-null startStruct.
+    while ((ruleNode->mDependentBits & bit) && !ruleNode->IsUsedDirectly()) {
       NS_ASSERTION(ruleNode->mStyleData.GetStyleData(aSID) == nullptr,
                    "dependent bit with cached data makes no sense");
       // Climb up to the next rule in the tree (a less specific rule).
@@ -1917,7 +1964,7 @@ nsRuleNode::WalkRuleTree(const nsStyleStructID aSID,
     // node in the tree to the node that specified the data that tells nodes on that
     // branch that they never need to examine their rules for this particular struct type
     // ever again.
-    PropagateDependentBit(bit, ruleNode);
+    PropagateDependentBit(aSID, ruleNode, startStruct);
     return startStruct;
   }
   // FIXME Do we need to check for mPostResolveCallback?
@@ -2377,7 +2424,7 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
     aHighestNode->mStyleData.mInheritedData->                                 \
       mStyleStructs[eStyleStruct_##type_] = data_;                            \
     /* Propagate the bit down. */                                             \
-    PropagateDependentBit(NS_STYLE_INHERIT_BIT(type_), aHighestNode);         \
+    PropagateDependentBit(eStyleStruct_##type_, aHighestNode, data_);         \
     /* Tell the style context that it doesn't own the data */                 \
     aContext->                                                                \
       AddStyleBit(nsCachedStyleData::GetBitForSID(eStyleStruct_##type_));     \
@@ -2421,7 +2468,7 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
     aHighestNode->mStyleData.mResetData->                                     \
       mStyleStructs[eStyleStruct_##type_] = data_;                            \
     /* Propagate the bit down. */                                             \
-    PropagateDependentBit(NS_STYLE_INHERIT_BIT(type_), aHighestNode);         \
+    PropagateDependentBit(eStyleStruct_##type_, aHighestNode, data_);         \
   }                                                                           \
                                                                               \
   return data_;
@@ -2981,7 +3028,10 @@ nsRuleNode::SetFont(nsPresContext* aPresContext, nsStyleContext* aContext,
     gfxFontStyle fontStyle;
     LookAndFeel::FontID fontID =
       (LookAndFeel::FontID)systemFontValue->GetIntValue();
-    if (LookAndFeel::GetFont(fontID, systemFont.name, fontStyle)) {
+    float devPerCSS =
+      (float)nsPresContext::AppUnitsPerCSSPixel() /
+      aPresContext->DeviceContext()->UnscaledAppUnitsPerDevPixel();
+    if (LookAndFeel::GetFont(fontID, systemFont.name, fontStyle, devPerCSS)) {
       systemFont.style = fontStyle.style;
       systemFont.systemFont = fontStyle.systemFont;
       systemFont.variant = NS_FONT_VARIANT_NORMAL;
@@ -6433,15 +6483,6 @@ nsRuleNode::ComputePositionData(void* aStartStruct,
            SETCOORD_LPOH | SETCOORD_INITIAL_NONE | SETCOORD_STORE_CALC,
            aContext, mPresContext, canStoreInRuleTree);
 
-
-  // Handle 'auto' values for min-width / min-height
-  if (pos->mMinWidth.GetUnit() == eStyleUnit_Auto) {
-    pos->mMinWidth.SetCoordValue(0);
-  }
-  if (pos->mMinHeight.GetUnit() == eStyleUnit_Auto) {
-    pos->mMinHeight.SetCoordValue(0);
-  }
-
   // box-sizing: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForBoxSizing(),
               pos->mBoxSizing, canStoreInRuleTree,
@@ -7134,12 +7175,27 @@ SetSVGPaint(const nsCSSValue& aValue, const nsStyleSVGPaint& parentPaint,
     aResult.mPaint.mColor = color;
   } else if (aValue.GetUnit() == eCSSUnit_Pair) {
     const nsCSSValuePair& pair = aValue.GetPairValue();
-    NS_ABORT_IF_FALSE(pair.mXValue.GetUnit() == eCSSUnit_URL,
-                      "malformed paint server value");
 
-    aResult.SetType(eStyleSVGPaintType_Server);
-    aResult.mPaint.mPaintServer = pair.mXValue.GetURLValue();
-    NS_IF_ADDREF(aResult.mPaint.mPaintServer);
+    if (pair.mXValue.GetUnit() == eCSSUnit_URL) {
+      aResult.SetType(eStyleSVGPaintType_Server);
+      aResult.mPaint.mPaintServer = pair.mXValue.GetURLValue();
+      NS_IF_ADDREF(aResult.mPaint.mPaintServer);
+    } else if (pair.mXValue.GetUnit() == eCSSUnit_Enumerated) {
+
+      switch (pair.mXValue.GetIntValue()) {
+      case NS_COLOR_OBJECTFILL:
+        aResult.SetType(eStyleSVGPaintType_ObjectFill);
+        break;
+      case NS_COLOR_OBJECTSTROKE:
+        aResult.SetType(eStyleSVGPaintType_ObjectStroke);
+        break;
+      default:
+        NS_NOTREACHED("unknown keyword as paint server value");
+      }
+
+    } else {
+      NS_NOTREACHED("malformed paint server value");
+    }
 
     if (pair.mYValue.GetUnit() == eCSSUnit_None) {
       aResult.mFallbackColor = NS_RGBA(0, 0, 0, 0);
@@ -7153,6 +7209,48 @@ SetSVGPaint(const nsCSSValue& aValue, const nsStyleSVGPaint& parentPaint,
     NS_ABORT_IF_FALSE(aValue.GetUnit() == eCSSUnit_Null,
                       "malformed paint server value");
   }
+}
+
+static void
+SetSVGOpacity(const nsCSSValue& aValue,
+              float& aOpacityField, nsStyleSVGOpacitySource& aOpacityTypeField,
+              bool& aCanStoreInRuleTree,
+              float aParentOpacity, nsStyleSVGOpacitySource aParentOpacityType)
+{
+  if (eCSSUnit_Enumerated == aValue.GetUnit()) {
+    switch (aValue.GetIntValue()) {
+    case NS_STYLE_OBJECT_FILL_OPACITY:
+      aOpacityTypeField = eStyleSVGOpacitySource_ObjectFillOpacity;
+      break;
+    case NS_STYLE_OBJECT_STROKE_OPACITY:
+      aOpacityTypeField = eStyleSVGOpacitySource_ObjectStrokeOpacity;
+      break;
+    default:
+      NS_NOTREACHED("SetSVGOpacity: Unknown keyword");
+    }
+    // Fall back on fully opaque
+    aOpacityField = 1.0f;
+  } else if (eCSSUnit_Inherit == aValue.GetUnit()) {
+    aCanStoreInRuleTree = false;
+    aOpacityField = aParentOpacity;
+    aOpacityTypeField = aParentOpacityType;
+  } else if (eCSSUnit_Null != aValue.GetUnit()) {
+    SetFactor(aValue, aOpacityField, aCanStoreInRuleTree,
+              aParentOpacity, 1.0f, SETFCT_OPACITY);
+    aOpacityTypeField = eStyleSVGOpacitySource_Normal;
+  }
+}
+
+template <typename FieldT, typename T>
+static bool
+SetTextObjectValue(const nsCSSValue& aValue, FieldT& aField, T aFallbackValue)
+{
+  if (aValue.GetUnit() != eCSSUnit_Enumerated ||
+      aValue.GetIntValue() != NS_STYLE_STROKE_PROP_OBJECTVALUE) {
+    return false;
+  }
+  aField = aFallbackValue;
+  return true;
 }
 
 const void*
@@ -7188,10 +7286,12 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
               parentSVG->mFill, mPresContext, aContext,
               svg->mFill, eStyleSVGPaintType_Color, canStoreInRuleTree);
 
-  // fill-opacity: factor, inherit, initial
-  SetFactor(*aRuleData->ValueForFillOpacity(),
-            svg->mFillOpacity, canStoreInRuleTree,
-            parentSVG->mFillOpacity, 1.0f, SETFCT_OPACITY);
+  // fill-opacity: factor, inherit, initial, objectFillOpacity, objectStrokeOpacity
+  nsStyleSVGOpacitySource objectFillOpacity = svg->mFillOpacitySource;
+  SetSVGOpacity(*aRuleData->ValueForFillOpacity(),
+                svg->mFillOpacity, objectFillOpacity, canStoreInRuleTree,
+                parentSVG->mFillOpacity, parentSVG->mFillOpacitySource);
+  svg->mFillOpacitySource = objectFillOpacity;
 
   // fill-rule: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForFillRule(),
@@ -7252,7 +7352,7 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
               parentSVG->mStroke, mPresContext, aContext,
               svg->mStroke, eStyleSVGPaintType_None, canStoreInRuleTree);
 
-  // stroke-dasharray: <dasharray>, none, inherit
+  // stroke-dasharray: <dasharray>, none, inherit, -moz-objectValue
   const nsCSSValue* strokeDasharrayValue = aRuleData->ValueForStrokeDasharray();
   switch (strokeDasharrayValue->GetUnit()) {
   case eCSSUnit_Null:
@@ -7260,6 +7360,7 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
 
   case eCSSUnit_Inherit:
     canStoreInRuleTree = false;
+    svg->mStrokeDasharrayFromObject = parentSVG->mStrokeDasharrayFromObject;
     // only do the copy if weren't already set up by the copy constructor
     // FIXME Bug 389408: This is broken when aStartStruct is non-null!
     if (!svg->mStrokeDasharray) {
@@ -7276,8 +7377,19 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
     }
     break;
 
+  case eCSSUnit_Enumerated:
+    NS_ABORT_IF_FALSE(strokeDasharrayValue->GetIntValue() ==
+                            NS_STYLE_STROKE_PROP_OBJECTVALUE,
+                      "Unknown keyword for stroke-dasharray");
+    svg->mStrokeDasharrayFromObject = true;
+    delete [] svg->mStrokeDasharray;
+    svg->mStrokeDasharray = nullptr;
+    svg->mStrokeDasharrayLength = 0;
+    break;
+
   case eCSSUnit_Initial:
   case eCSSUnit_None:
+    svg->mStrokeDasharrayFromObject = false;
     delete [] svg->mStrokeDasharray;
     svg->mStrokeDasharray = nullptr;
     svg->mStrokeDasharrayLength = 0;
@@ -7285,6 +7397,7 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
 
   case eCSSUnit_List:
   case eCSSUnit_ListDep: {
+    svg->mStrokeDasharrayFromObject = false;
     delete [] svg->mStrokeDasharray;
     svg->mStrokeDasharray = nullptr;
     svg->mStrokeDasharrayLength = 0;
@@ -7317,10 +7430,19 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
   }
 
   // stroke-dashoffset: <dashoffset>, inherit
-  SetCoord(*aRuleData->ValueForStrokeDashoffset(),
-           svg->mStrokeDashoffset, parentSVG->mStrokeDashoffset,
-           SETCOORD_LPH | SETCOORD_FACTOR | SETCOORD_INITIAL_ZERO,
-           aContext, mPresContext, canStoreInRuleTree);
+  const nsCSSValue *strokeDashoffsetValue =
+    aRuleData->ValueForStrokeDashoffset();
+  svg->mStrokeDashoffsetFromObject =
+    strokeDashoffsetValue->GetUnit() == eCSSUnit_Enumerated &&
+    strokeDashoffsetValue->GetIntValue() == NS_STYLE_STROKE_PROP_OBJECTVALUE;
+  if (svg->mStrokeDashoffsetFromObject) {
+    svg->mStrokeDashoffset.SetIntValue(0, eStyleUnit_Integer);
+  } else {
+    SetCoord(*aRuleData->ValueForStrokeDashoffset(),
+             svg->mStrokeDashoffset, parentSVG->mStrokeDashoffset,
+             SETCOORD_LPH | SETCOORD_FACTOR | SETCOORD_INITIAL_ZERO,
+             aContext, mPresContext, canStoreInRuleTree);
+  }
 
   // stroke-linecap: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForStrokeLinecap(),
@@ -7341,15 +7463,30 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
             parentSVG->mStrokeMiterlimit, 4.0f);
 
   // stroke-opacity:
-  SetFactor(*aRuleData->ValueForStrokeOpacity(),
-            svg->mStrokeOpacity, canStoreInRuleTree,
-            parentSVG->mStrokeOpacity, 1.0f, SETFCT_OPACITY);
+  nsStyleSVGOpacitySource objectStrokeOpacity = svg->mStrokeOpacitySource;
+  SetSVGOpacity(*aRuleData->ValueForStrokeOpacity(),
+                svg->mStrokeOpacity, objectStrokeOpacity, canStoreInRuleTree,
+                parentSVG->mStrokeOpacity, parentSVG->mStrokeOpacitySource);
+  svg->mStrokeOpacitySource = objectStrokeOpacity;
 
   // stroke-width:
   const nsCSSValue* strokeWidthValue = aRuleData->ValueForStrokeWidth();
-  if (eCSSUnit_Initial == strokeWidthValue->GetUnit()) {
+  switch (strokeWidthValue->GetUnit()) {
+  case eCSSUnit_Enumerated:
+    NS_ABORT_IF_FALSE(strokeWidthValue->GetIntValue() ==
+                        NS_STYLE_STROKE_PROP_OBJECTVALUE,
+                      "Unrecognized keyword for stroke-width");
+    svg->mStrokeWidthFromObject = true;
     svg->mStrokeWidth.SetCoordValue(nsPresContext::CSSPixelsToAppUnits(1));
-  } else {
+    break;
+
+  case eCSSUnit_Initial:
+    svg->mStrokeWidthFromObject = false;
+    svg->mStrokeWidth.SetCoordValue(nsPresContext::CSSPixelsToAppUnits(1));
+    break;
+
+  default:
+    svg->mStrokeWidthFromObject = false;
     SetCoord(*strokeWidthValue,
              svg->mStrokeWidth, parentSVG->mStrokeWidth,
              SETCOORD_LPH | SETCOORD_FACTOR,
@@ -7472,65 +7609,17 @@ nsRuleNode::ComputeSVGResetData(void* aStartStruct,
   COMPUTE_END_RESET(SVGReset, svgReset)
 }
 
-inline const void*
-nsRuleNode::GetParentData(const nsStyleStructID aSID)
-{
-  NS_PRECONDITION(mDependentBits & nsCachedStyleData::GetBitForSID(aSID),
-                  "should be called when node depends on parent data");
-  NS_ASSERTION(mStyleData.GetStyleData(aSID) == nullptr,
-               "both struct and dependent bits present");
-  // Walk up the rule tree from this rule node (towards less specific
-  // rules).
-  uint32_t bit = nsCachedStyleData::GetBitForSID(aSID);
-  nsRuleNode *ruleNode = mParent;
-  while (ruleNode->mDependentBits & bit) {
-    NS_ASSERTION(ruleNode->mStyleData.GetStyleData(aSID) == nullptr,
-                 "both struct and dependent bits present");
-    ruleNode = ruleNode->mParent;
-  }
-
-  return ruleNode->mStyleData.GetStyleData(aSID);
-}
-
-#define STYLE_STRUCT(name_, checkdata_cb_, ctor_args_)                      \
-inline const nsStyle##name_ *                                               \
-nsRuleNode::GetParent##name_()                                              \
-{                                                                           \
-  NS_PRECONDITION(mDependentBits &                                          \
-                  nsCachedStyleData::GetBitForSID(eStyleStruct_##name_),    \
-                  "should be called when node depends on parent data");     \
-  NS_ASSERTION(mStyleData.GetStyle##name_() == nullptr,                      \
-               "both struct and dependent bits present");                   \
-  /* Walk up the rule tree from this rule node (towards less specific */    \
-  /* rules). */                                                             \
-  uint32_t bit = nsCachedStyleData::GetBitForSID(eStyleStruct_##name_);     \
-  nsRuleNode *ruleNode = mParent;                                           \
-  while (ruleNode->mDependentBits & bit) {                                  \
-    NS_ASSERTION(ruleNode->mStyleData.GetStyle##name_() == nullptr,          \
-                 "both struct and dependent bits present");                 \
-    ruleNode = ruleNode->mParent;                                           \
-  }                                                                         \
-                                                                            \
-  return ruleNode->mStyleData.GetStyle##name_();                            \
-}
-#include "nsStyleStructList.h"
-#undef STYLE_STRUCT
-
 const void*
 nsRuleNode::GetStyleData(nsStyleStructID aSID,
                          nsStyleContext* aContext,
                          bool aComputeData)
 {
-  const void *data;
-  if (mDependentBits & nsCachedStyleData::GetBitForSID(aSID)) {
-    // We depend on an ancestor for this struct since the cached struct
-    // it has is also appropriate for this rule node.  Just go up the
-    // rule tree and return the first cached struct we find.
-    data = GetParentData(aSID);
-    NS_ASSERTION(data, "dependent bits set but no cached struct present");
-    return data;
-  }
+  NS_ASSERTION(IsUsedDirectly(),
+               "if we ever call this on rule nodes that aren't used "
+               "directly, we should adjust handling of mDependentBits "
+               "in some way.");
 
+  const void *data;
   data = mStyleData.GetStyleData(aSID);
   if (NS_LIKELY(data != nullptr))
     return data; // We have a fully specified struct. Just return it.
@@ -7561,14 +7650,12 @@ nsRuleNode::GetStyleData(nsStyleStructID aSID,
 const nsStyle##name_*                                                         \
 nsRuleNode::GetStyle##name_(nsStyleContext* aContext, bool aComputeData)    \
 {                                                                             \
-  const nsStyle##name_ *data;                                                 \
-  if (mDependentBits &                                                        \
-      nsCachedStyleData::GetBitForSID(eStyleStruct_##name_)) {                \
-    data = GetParent##name_();                                                \
-    NS_ASSERTION(data, "dependent bits set but no cached struct present");    \
-    return data;                                                              \
-  }                                                                           \
+  NS_ASSERTION(IsUsedDirectly(),                                              \
+               "if we ever call this on rule nodes that aren't used "         \
+               "directly, we should adjust handling of mDependentBits "       \
+               "in some way.");                                               \
                                                                               \
+  const nsStyle##name_ *data;                                                 \
   data = mStyleData.GetStyle##name_();                                        \
   if (NS_LIKELY(data != nullptr))                                              \
     return data;                                                              \

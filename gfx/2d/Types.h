@@ -6,24 +6,8 @@
 #ifndef MOZILLA_GFX_TYPES_H_
 #define MOZILLA_GFX_TYPES_H_
 
-/**
- * Use C++11 nullptr if available; otherwise use a C++ typesafe template; and
- * for C, fall back to longs.  See bugs 547964 and 626472.
- * Copy and paste job from nscore.h, see bug 781943
- */
-#if defined(MOZ_GFX) && !defined(HAVE_NULLPTR)
-#ifndef __cplusplus
-# define nullptr ((void*)0)
-#elif defined(__GNUC__)
-# define nullptr __null
-#elif defined(_WIN64)
-# define nullptr 0LL
-#else
-# define nullptr 0L
-#endif
-#endif /* defined(MOZ_GFX) && !defined(HAVE_NULLPTR) */
-
 #include "mozilla/StandardInteger.h"
+#include "mozilla/NullPtr.h"
 
 #include <stddef.h>
 
@@ -42,7 +26,8 @@ enum SurfaceType
   SURFACE_COREGRAPHICS_IMAGE, /* Surface wrapping a CoreGraphics Image */
   SURFACE_COREGRAPHICS_CGCONTEXT, /* Surface wrapping a CG context */
   SURFACE_SKIA, /* Surface wrapping a Skia bitmap */
-  SURFACE_DUAL_DT /* Snapshot of a dual drawtarget */
+  SURFACE_DUAL_DT, /* Snapshot of a dual drawtarget */
+  SURFACE_RECORDING /* Surface used for recording */
 };
 
 enum SurfaceFormat
@@ -60,7 +45,8 @@ enum BackendType
   BACKEND_COREGRAPHICS,
   BACKEND_COREGRAPHICS_ACCELERATED,
   BACKEND_CAIRO,
-  BACKEND_SKIA
+  BACKEND_SKIA,
+  BACKEND_RECORDING
 };
 
 enum FontType
@@ -101,7 +87,7 @@ enum FontStyle
 enum CompositionOp { OP_OVER, OP_ADD, OP_ATOP, OP_OUT, OP_IN, OP_SOURCE, OP_DEST_IN, OP_DEST_OUT, OP_DEST_OVER, OP_DEST_ATOP, OP_XOR, OP_COUNT };
 enum ExtendMode { EXTEND_CLAMP, EXTEND_REPEAT, EXTEND_REFLECT };
 enum FillRule { FILL_WINDING, FILL_EVEN_ODD };
-enum AntialiasMode { AA_NONE, AA_GRAY, AA_SUBPIXEL };
+enum AntialiasMode { AA_NONE, AA_GRAY, AA_SUBPIXEL, AA_DEFAULT };
 enum Snapping { SNAP_NONE, SNAP_ALIGNED };
 enum Filter { FILTER_LINEAR, FILTER_POINT };
 enum PatternType { PATTERN_COLOR, PATTERN_SURFACE, PATTERN_LINEAR_GRADIENT, PATTERN_RADIAL_GRADIENT };
@@ -149,7 +135,7 @@ struct GradientStop
 }
 }
 
-#ifdef XP_WIN
+#if defined(XP_WIN) && defined(MOZ_GFX)
 #ifdef GFX2D_INTERNAL
 #define GFX2D_API __declspec(dllexport)
 #else

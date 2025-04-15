@@ -5,13 +5,16 @@
 DOM_SRCDIRS = \
   dom/base \
   dom/battery \
+  dom/encoding \
   dom/file \
   dom/power \
   dom/media \
   dom/network/src \
   dom/settings \
+  dom/phonenumberutils \
   dom/sms/src \
   dom/contacts \
+  dom/permission \
   dom/alarm \
   dom/src/events \
   dom/src/storage \
@@ -19,12 +22,14 @@ DOM_SRCDIRS = \
   dom/src/geolocation \
   dom/src/notification \
   dom/workers \
+  dom/time \
   content/xbl/src \
   content/xul/document/src \
   content/events/src \
   content/base/src \
   content/html/content/src \
   content/html/document/src \
+  content/media/webaudio \
   content/svg/content/src \
   layout/generic \
   layout/style \
@@ -38,6 +43,13 @@ DOM_SRCDIRS += \
   dom/system/gonk \
   dom/telephony \
   dom/wifi \
+  dom/icc/src \
+  $(NULL)
+endif
+
+ifdef MOZ_B2G_FM
+DOM_SRCDIRS += \
+  dom/fm \
   $(NULL)
 endif
 

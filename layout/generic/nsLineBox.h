@@ -142,7 +142,7 @@ protected:
 //----------------------------------------------------------------------
 
 #define LINE_MAX_BREAK_TYPE  ((1 << 4) - 1)
-#define LINE_MAX_CHILD_COUNT PR_INT32_MAX
+#define LINE_MAX_CHILD_COUNT INT32_MAX
 
 #if NS_STYLE_CLEAR_LAST_VALUE > 15
 need to rearrange the mBits bitfield;
@@ -501,7 +501,7 @@ public:
 #ifdef DEBUG
   char* StateToString(char* aBuf, int32_t aBufSize) const;
 
-  void List(FILE* out, int32_t aIndent) const;
+  void List(FILE* out, int32_t aIndent, uint32_t aFlags = 0) const;
   nsIFrame* LastChild() const;
 #endif
 

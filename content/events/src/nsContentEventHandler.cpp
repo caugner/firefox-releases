@@ -181,7 +181,7 @@ static uint32_t CountNewlinesInXPLength(nsIContent* aContent,
     return 0;
   // For automated tests, we should abort on debug build.
   NS_ABORT_IF_FALSE(
-    (aXPLength == PR_UINT32_MAX || aXPLength <= text->GetLength()),
+    (aXPLength == UINT32_MAX || aXPLength <= text->GetLength()),
     "aXPLength is out-of-bounds");
   const uint32_t length = NS_MIN(aXPLength, text->GetLength());
   uint32_t newlines = 0;
@@ -204,7 +204,7 @@ static uint32_t CountNewlinesInNativeLength(nsIContent* aContent,
   }
   // For automated tests, we should abort on debug build.
   NS_ABORT_IF_FALSE(
-    (aNativeLength == PR_UINT32_MAX || aNativeLength <= text->GetLength() * 2),
+    (aNativeLength == UINT32_MAX || aNativeLength <= text->GetLength() * 2),
     "aNativeLength is unexpected value");
   const uint32_t xpLength = text->GetLength();
   uint32_t newlines = 0;
@@ -222,7 +222,7 @@ static uint32_t CountNewlinesInNativeLength(nsIContent* aContent,
 }
 #endif
 
-static uint32_t GetNativeTextLength(nsIContent* aContent, uint32_t aMaxLength = PR_UINT32_MAX)
+static uint32_t GetNativeTextLength(nsIContent* aContent, uint32_t aMaxLength = UINT32_MAX)
 {
   if (aContent->IsNodeOfType(nsINode::eTEXT)) {
     uint32_t textLengthDifference =
@@ -375,7 +375,7 @@ nsContentEventHandler::SetRangeFromFlatTextOffset(
 
   uint32_t nativeOffset = 0;
   uint32_t nativeEndOffset = aNativeOffset + aNativeLength;
-  nsCOMPtr<nsIContent> content;
+  bool startSet = false;
   for (; !iter->IsDone(); iter->Next()) {
     nsINode* node = iter->GetCurrentNode();
     if (!node)
@@ -405,6 +405,7 @@ nsContentEventHandler::SetRangeFromFlatTextOffset(
 
       rv = aRange->SetStart(domNode, int32_t(xpOffset));
       NS_ENSURE_SUCCESS(rv, rv);
+      startSet = true;
       if (aNativeLength == 0) {
         // Ensure that the end offset and the start offset are same.
         rv = aRange->SetEnd(domNode, int32_t(xpOffset));
@@ -446,8 +447,9 @@ nsContentEventHandler::SetRangeFromFlatTextOffset(
 
   nsCOMPtr<nsIDOMNode> domNode(do_QueryInterface(mRootContent));
   NS_ASSERTION(domNode, "lastContent doesn't have nsIDOMNode!");
-  if (!content) {
-    rv = aRange->SetStart(domNode, 0);
+  if (!startSet) {
+    MOZ_ASSERT(!mRootContent->IsNodeOfType(nsINode::eTEXT));
+    rv = aRange->SetStart(domNode, int32_t(mRootContent->GetChildCount()));
     NS_ENSURE_SUCCESS(rv, rv);
   }
   rv = aRange->SetEnd(domNode, int32_t(mRootContent->GetChildCount()));

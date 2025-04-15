@@ -6,7 +6,6 @@
 #ifndef _nsXULAppAPI_h__
 #define _nsXULAppAPI_h__
 
-#include "prtypes.h"
 #include "nsID.h"
 #include "xrecore.h"
 #include "nsXPCOM.h"
@@ -123,6 +122,13 @@
  * Callers should fallback to appDir.
  */
 #define XRE_UPDATE_ROOT_DIR "UpdRootD"
+
+/**
+ * A directory service key which provides the directory where an OS update is
+*  applied.
+ * At present this is supported only in Gonk.
+ */
+#define XRE_OS_UPDATE_APPLY_TO_DIR "OSUpdApplyToD"
 
 /**
  * Platform flag values for XRE_main.

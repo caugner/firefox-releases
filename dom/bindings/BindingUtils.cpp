@@ -11,6 +11,7 @@
 #include "AccessCheck.h"
 #include "WrapperFactory.h"
 #include "xpcprivate.h"
+#include "nsContentUtils.h"
 #include "XPCQuickStubs.h"
 
 namespace mozilla {
@@ -490,7 +491,7 @@ XrayResolveProperty(JSContext* cx, JSObject* wrapper, jsid id,
             desc->obj = wrapper;
             desc->setter = nullptr;
             desc->getter = nullptr;
-            return true;
+           return true;
           }
         }
       }
@@ -666,7 +667,10 @@ bool
 GetPropertyOnPrototype(JSContext* cx, JSObject* proxy, jsid id, bool* found,
                        JS::Value* vp)
 {
-  JSObject* proto = js::GetObjectProto(proxy);
+  JSObject* proto;
+  if (!js::GetObjectProto(cx, proxy, &proto)) {
+    return false;
+  }
   if (!proto) {
     *found = false;
     return true;
@@ -699,6 +703,49 @@ HasPropertyOnPrototype(JSContext* cx, JSObject* proxy, DOMProxyHandler* handler,
   bool found;
   // We ignore an error from GetPropertyOnPrototype.
   return !GetPropertyOnPrototype(cx, proxy, id, &found, NULL) || found;
+}
+
+JSObject*
+GetXrayExpandoChain(JSObject* obj)
+{
+  MOZ_ASSERT(IsDOMObject(obj));
+  JS::Value v = IsDOMProxy(obj) ? js::GetProxyExtra(obj, JSPROXYSLOT_XRAY_EXPANDO)
+                                : js::GetReservedSlot(obj, DOM_XRAY_EXPANDO_SLOT);
+  return v.isUndefined() ? nullptr : &v.toObject();
+}
+
+void
+SetXrayExpandoChain(JSObject* obj, JSObject* chain)
+{
+  MOZ_ASSERT(IsDOMObject(obj));
+  JS::Value v = chain ? JS::ObjectValue(*chain) : JSVAL_VOID;
+  if (IsDOMProxy(obj)) {
+    js::SetProxyExtra(obj, JSPROXYSLOT_XRAY_EXPANDO, v);
+  } else {
+    js::SetReservedSlot(obj, DOM_XRAY_EXPANDO_SLOT, v);
+  }
+}
+
+JSContext*
+MainThreadDictionaryBase::ParseJSON(const nsAString& aJSON,
+                                    mozilla::Maybe<JSAutoRequest>& aAr,
+                                    mozilla::Maybe<JSAutoCompartment>& aAc,
+                                    JS::Value& aVal)
+{
+  JSContext* cx = nsContentUtils::ThreadJSContextStack()->GetSafeJSContext();
+  NS_ENSURE_TRUE(cx, nullptr);
+  JSObject* global = JS_GetGlobalObject(cx);
+  aAr.construct(cx);
+  aAc.construct(cx, global);
+  if (aJSON.IsEmpty()) {
+    return cx;
+  }
+  if (!JS_ParseJSON(cx,
+                    static_cast<const jschar*>(PromiseFlatString(aJSON).get()),
+                    aJSON.Length(), &aVal)) {
+    return nullptr;
+  }
+  return cx;
 }
 
 } // namespace dom

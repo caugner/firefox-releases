@@ -186,7 +186,7 @@ void
 LogInvalidCertError(TransportSecurityInfo *socketInfo, 
                     const nsACString &host, 
                     const nsACString &hostWithPort,
-                    PRInt32 port,
+                    int32_t port,
                     PRErrorCode errorCode,
                     ::mozilla::psm::SSLErrorMessageType errorMessageType,
                     nsIX509Cert* ix509)
@@ -795,7 +795,7 @@ BlockServerCertChangeForSpdy(nsNSSSocketInfo *infoObject,
   }
 
   // Filter out sockets that did not neogtiate SPDY via NPN
-  nsCAutoString negotiatedNPN;
+  nsAutoCString negotiatedNPN;
   nsresult rv = infoObject->GetNegotiatedNPN(negotiatedNPN);
   NS_ASSERTION(NS_SUCCEEDED(rv),
                "GetNegotiatedNPN() failed during renegotiation");

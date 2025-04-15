@@ -286,11 +286,13 @@ private:
     }
 
     jsval message;
-    if (!JS_ConvertArguments(aCx, aArgc, JS_ARGV(aCx, aVp), "v", &message)) {
+    jsval transferable = JSVAL_VOID;
+    if (!JS_ConvertArguments(aCx, aArgc, JS_ARGV(aCx, aVp), "v/v",
+                             &message, &transferable)) {
       return false;
     }
 
-    return worker->PostMessage(aCx, message);
+    return worker->PostMessage(aCx, message, transferable);
   }
 };
 
@@ -302,7 +304,7 @@ MOZ_STATIC_ASSERT(prototypes::MaxProtoChainLength == 3,
 DOMJSClass Worker::sClass = {
   {
     "Worker",
-    JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(1) |
+    JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(2) |
     JSCLASS_IMPLEMENTS_BARRIERS,
     JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize,
@@ -313,8 +315,7 @@ DOMJSClass Worker::sClass = {
       prototypes::id::_ID_Count },
     false,
     &sNativePropertyHooks
-  },
-  -1
+  }
 };
 
 JSPropertySpec Worker::sProperties[] = {
@@ -428,7 +429,7 @@ MOZ_STATIC_ASSERT(prototypes::MaxProtoChainLength == 3,
 // sNativePropertyHooks then sNativePropertyHooks should be removed too.
 DOMJSClass ChromeWorker::sClass = {
   { "ChromeWorker",
-    JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(1) |
+    JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(2) |
     JSCLASS_IMPLEMENTS_BARRIERS,
     JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize,
@@ -439,8 +440,7 @@ DOMJSClass ChromeWorker::sClass = {
       prototypes::id::_ID_Count },
     false,
     &sNativePropertyHooks
-  },
-  -1
+  }
 };
 
 WorkerPrivate*

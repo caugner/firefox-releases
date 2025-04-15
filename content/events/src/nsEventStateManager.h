@@ -136,7 +136,7 @@ public:
   /**
    * Get accesskey registered on the given element or 0 if there is none.
    *
-   * @param  aContent  the given element
+   * @param  aContent  the given element (must not be null)
    * @return           registered accesskey
    */
   uint32_t GetRegisteredAccessKey(nsIContent* aContent);
@@ -203,6 +203,9 @@ public:
   static void SetFullScreenState(mozilla::dom::Element* aElement, bool aIsFullScreen);
 
   static bool IsRemoteTarget(nsIContent* aTarget);
+
+  static void MapEventCoordinatesForChildProcess(nsFrameLoader* aFrameLoader,
+                                                 nsEvent* aEvent);
 
   // Holds the point in screen coords that a mouse event was dispatched to,
   // before we went into pointer lock mode. This is constantly updated while
@@ -468,15 +471,41 @@ protected:
    *
    * @param aTargetFrame        The event target of the wheel event.
    * @param aEvent              The handling mouse wheel event.
-   * @param aForDefaultAction   Whether this uses wheel transaction or not.
-   *                            If true, returns the latest scrolled frame if
-   *                            there is it.  Otherwise, the nearest ancestor
-   *                            scrollable frame from aTargetFrame.
+   * @param aOptions            The options for finding the scroll target.
+   *                            Callers should use COMPUTE_*.
    * @return                    The scrollable frame which should be scrolled.
    */
+  // These flags are used in ComputeScrollTarget(). Callers should use
+  // COMPUTE_*.
+  enum
+  {
+    PREFER_MOUSE_WHEEL_TRANSACTION               = 1,
+    PREFER_ACTUAL_SCROLLABLE_TARGET_ALONG_X_AXIS = 2,
+    PREFER_ACTUAL_SCROLLABLE_TARGET_ALONG_Y_AXIS = 4,
+    START_FROM_PARENT                            = 8
+  };
+  enum ComputeScrollTargetOptions
+  {
+    // At computing scroll target for legacy mouse events, we should return
+    // first scrollable element even when it's not scrollable to the direction.
+    COMPUTE_LEGACY_MOUSE_SCROLL_EVENT_TARGET     = 0,
+    // Default action prefers the scrolled element immediately before if it's
+    // still under the mouse cursor.  Otherwise, it prefers the nearest
+    // scrollable ancestor which will be scrolled actually.
+    COMPUTE_DEFAULT_ACTION_TARGET                =
+      (PREFER_MOUSE_WHEEL_TRANSACTION |
+       PREFER_ACTUAL_SCROLLABLE_TARGET_ALONG_X_AXIS |
+       PREFER_ACTUAL_SCROLLABLE_TARGET_ALONG_Y_AXIS),
+    // Look for the nearest scrollable ancestor which can be scrollable with
+    // aEvent.
+    COMPUTE_SCROLLABLE_ANCESTOR_ALONG_X_AXIS     =
+      (PREFER_ACTUAL_SCROLLABLE_TARGET_ALONG_X_AXIS | START_FROM_PARENT),
+    COMPUTE_SCROLLABLE_ANCESTOR_ALONG_Y_AXIS     =
+      (PREFER_ACTUAL_SCROLLABLE_TARGET_ALONG_Y_AXIS | START_FROM_PARENT)
+  };
   nsIScrollableFrame* ComputeScrollTarget(nsIFrame* aTargetFrame,
                                           mozilla::widget::WheelEvent* aEvent,
-                                          bool aForDefaultAction);
+                                          ComputeScrollTargetOptions aOptions);
 
   /**
    * GetScrollAmount() returns the scroll amount in app uints of one line or
@@ -529,7 +558,7 @@ protected:
       sInstance = nullptr;
     }
 
-    bool IsInTransaction() { return mHandlingDeltaMode != PR_UINT32_MAX; }
+    bool IsInTransaction() { return mHandlingDeltaMode != UINT32_MAX; }
 
     /**
      * InitLineOrPageDelta() stores pixel delta values of WheelEvents which are
@@ -556,7 +585,7 @@ protected:
   private:
     DeltaAccumulator() :
       mX(0.0), mY(0.0), mPendingScrollAmountX(0.0), mPendingScrollAmountY(0.0),
-      mHandlingDeltaMode(PR_UINT32_MAX), mHandlingPixelOnlyDevice(false)
+      mHandlingDeltaMode(UINT32_MAX), mHandlingPixelOnlyDevice(false)
     {
     }
 
@@ -667,6 +696,13 @@ private:
   // device pixels) when mouse was locked, used to restore mouse position
   // after unlocking.
   nsIntPoint  mPreLockPoint;
+
+  // Stores the refPoint of the last synthetic mouse move we dispatched
+  // to re-center the mouse when we were pointer locked. If this is (-1,-1) it
+  // means we've not recently dispatched a centering event. We use this to
+  // detect when we receive the synth event, so we can cancel and not send it
+  // to content.
+  static nsIntPoint sSynthCenteringPoint;
 
   nsWeakFrame mCurrentTarget;
   nsCOMPtr<nsIContent> mCurrentTargetContent;

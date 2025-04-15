@@ -54,8 +54,8 @@ nsScreenGtk :: GetAvailRect(int32_t *outLeft, int32_t *outTop, int32_t *outWidth
 NS_IMETHODIMP 
 nsScreenGtk :: GetPixelDepth(int32_t *aPixelDepth)
 {
-  GdkVisual * rgb_visual = gdk_rgb_get_visual();
-  *aPixelDepth = rgb_visual->depth;
+  GdkVisual * visual = gdk_screen_get_system_visual(gdk_screen_get_default());
+  *aPixelDepth = gdk_visual_get_depth(visual);
 
   return NS_OK;
 

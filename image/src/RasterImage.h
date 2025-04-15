@@ -17,6 +17,7 @@
 #ifndef mozilla_imagelib_RasterImage_h_
 #define mozilla_imagelib_RasterImage_h_
 
+#include "mozilla/Mutex.h"
 #include "Image.h"
 #include "nsCOMArray.h"
 #include "nsCOMPtr.h"
@@ -32,6 +33,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/WeakPtr.h"
 #ifdef DEBUG
   #include "imgIContainerDebug.h"
 #endif
@@ -127,6 +129,7 @@ namespace mozilla {
 namespace layers {
 class LayerManager;
 class ImageContainer;
+class Image;
 }
 namespace image {
 
@@ -134,7 +137,7 @@ class Decoder;
 
 class RasterImage : public Image
                   , public nsIProperties
-                  , public nsSupportsWeakReference
+                  , public SupportsWeakPtr<RasterImage>
 #ifdef DEBUG
                   , public imgIContainerDebug
 #endif
@@ -269,7 +272,7 @@ public:
   nsresult SourceDataComplete();
 
   /* Called for multipart images when there's a new source image to add. */
-  nsresult NewSourceData(const char *aMimeType);
+  nsresult NewSourceData();
 
   /**
    * A hint of the number of bytes of source data that the image contains. If
@@ -306,6 +309,9 @@ public:
   };
 
   const char* GetURIString() { return mURIString.get();}
+
+  // Called from module startup. Sets up RasterImage to be used.
+  static void Initialize();
 
 private:
   struct Anim
@@ -466,6 +472,109 @@ private:
     bool mPendingInEventLoop;
   };
 
+  struct ScaleRequest : public LinkedListElement<ScaleRequest>
+  {
+    ScaleRequest(RasterImage* aImage)
+      : image(aImage)
+      , srcFrame(nullptr)
+      , dstFrame(nullptr)
+      , scale(0, 0)
+      , done(false)
+      , stopped(false)
+      , srcDataLocked(false)
+    {};
+
+    bool LockSourceData()
+    {
+      if (!srcDataLocked) {
+        bool success = true;
+        success = success && NS_SUCCEEDED(image->LockImage());
+        success = success && NS_SUCCEEDED(srcFrame->LockImageData());
+        srcDataLocked = success;
+      }
+      return srcDataLocked;
+    }
+
+    bool UnlockSourceData()
+    {
+      bool success = true;
+      if (srcDataLocked) {
+        success = success && NS_SUCCEEDED(image->UnlockImage());
+        success = success && NS_SUCCEEDED(srcFrame->UnlockImageData());
+
+        // If unlocking fails, there's nothing we can do to make it work, so we
+        // claim that we're not locked regardless.
+        srcDataLocked = false;
+      }
+      return success;
+    }
+
+    static void Stop(RasterImage* aImg);
+
+    RasterImage* const image;
+    imgFrame *srcFrame;
+    nsAutoPtr<imgFrame> dstFrame;
+    gfxSize scale;
+    bool done;
+    bool stopped;
+    bool srcDataLocked;
+  };
+
+  class ScaleWorker : public nsRunnable
+  {
+  public:
+    static ScaleWorker* Singleton();
+
+    NS_IMETHOD Run();
+
+  /* statics */
+    static nsRefPtr<ScaleWorker> sSingleton;
+
+  private: /* methods */
+    ScaleWorker()
+      : mRequestsMutex("RasterImage.ScaleWorker.mRequestsMutex")
+      , mInitialized(false)
+    {};
+
+    // Note: you MUST call RequestScale with the ScaleWorker mutex held.
+    void RequestScale(RasterImage* aImg);
+
+  private: /* members */
+
+    friend class RasterImage;
+    LinkedList<ScaleRequest> mScaleRequests;
+    Mutex mRequestsMutex;
+    bool mInitialized;
+  };
+
+  class DrawWorker : public nsRunnable
+  {
+  public:
+    static DrawWorker* Singleton();
+
+    NS_IMETHOD Run();
+
+  /* statics */
+    static nsRefPtr<DrawWorker> sSingleton;
+
+  private: /* methods */
+    DrawWorker() {};
+
+    void RequestDraw(RasterImage* aImg);
+
+  private: /* members */
+
+    friend class RasterImage;
+    LinkedList<ScaleRequest> mDrawRequests;
+  };
+
+  void DrawWithPreDownscaleIfNeeded(imgFrame *aFrame,
+                                    gfxContext *aContext,
+                                    gfxPattern::GraphicsFilter aFilter,
+                                    const gfxMatrix &aUserSpaceToImageSpace,
+                                    const gfxRect &aFill,
+                                    const nsIntRect &aSubimage);
+
   /**
    * Advances the animation. Typically, this will advance a single frame, but it
    * may advance multiple frames. This may happen if we have infrequently
@@ -574,6 +683,12 @@ private:
 
   bool ApplyDecodeFlags(uint32_t aNewFlags);
 
+  already_AddRefed<layers::Image> GetCurrentImage();
+  void UpdateImageContainer();
+
+  void SetInUpdateImageContainer(bool aInUpdate) { mInUpdateImageContainer = aInUpdate; }
+  bool IsInUpdateImageContainer() { return mInUpdateImageContainer; }
+
 private: // data
 
   nsIntSize                  mSize;
@@ -654,6 +769,8 @@ private: // data
   // Whether we're calling Decoder::Finish() from ShutdownDecoder.
   bool                       mFinishing:1;
 
+  bool                       mInUpdateImageContainer:1;
+
   // Decoding
   nsresult WantDecodedFrames();
   nsresult SyncDecode();
@@ -662,6 +779,9 @@ private: // data
   nsresult DecodeSomeData(uint32_t aMaxBytes);
   bool     IsDecodeFinished();
   TimeStamp mDrawStartTime;
+
+  inline bool CanScale(gfxPattern::GraphicsFilter aFilter, gfxSize aScale);
+  ScaleRequest mScaleRequest;
 
   // Decoder shutdown
   enum eShutdownIntent {
@@ -692,18 +812,17 @@ protected:
 class imgDecodeRequestor : public nsRunnable
 {
   public:
-    imgDecodeRequestor(imgIContainer *aContainer) {
-      mContainer = do_GetWeakReference(aContainer);
+    imgDecodeRequestor(RasterImage &aContainer) {
+      mContainer = aContainer.asWeakPtr();
     }
     NS_IMETHOD Run() {
-      nsCOMPtr<imgIContainer> con = do_QueryReferent(mContainer);
-      if (con)
-        con->RequestDecode();
+      if (mContainer)
+        mContainer->RequestDecode();
       return NS_OK;
     }
 
   private:
-    nsWeakPtr mContainer;
+    WeakPtr<RasterImage> mContainer;
 };
 
 } // namespace image

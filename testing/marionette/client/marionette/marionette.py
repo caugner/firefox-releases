@@ -3,12 +3,16 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import socket
+import sys
+import traceback
 
 from client import MarionetteClient
+from application_cache import ApplicationCache
 from keys import Keys
 from errors import *
 from emulator import Emulator
 from geckoinstance import GeckoInstance
+
 
 class HTMLElement(object):
 
@@ -75,8 +79,16 @@ class HTMLElement(object):
         return self.marionette._send_message('isElementDisplayed', 'value', element=self.id)
 
     @property
+    def size(self):
+        return self.marionette._send_message('getElementSize', 'value', element=self.id)
+
+    @property
     def tag_name(self):
         return self.marionette._send_message('getElementTagName', 'value', element=self.id)
+
+    @property
+    def location(self):
+        return self.marionette._send_message('getElementPosition', 'value', element=self.id)
 
 
 class Marionette(object):
@@ -85,9 +97,10 @@ class Marionette(object):
     CONTEXT_CONTENT = 'content'
 
     def __init__(self, host='localhost', port=2828, bin=None, profile=None,
-                 emulator=None, emulatorBinary=None, emulatorImg=None,
-                 emulator_res='480x800', connectToRunningEmulator=False,
-                 homedir=None, baseurl=None, noWindow=False, logcat_dir=None):
+                 emulator=None, sdcard=None, emulatorBinary=None,
+                 emulatorImg=None, emulator_res='480x800', gecko_path=None,
+                 connectToRunningEmulator=False, homedir=None, baseurl=None,
+                 noWindow=False, logcat_dir=None, busybox=None, load_early=False):
         self.host = host
         self.port = self.local_port = port
         self.bin = bin
@@ -101,17 +114,20 @@ class Marionette(object):
         self.baseurl = baseurl
         self.noWindow = noWindow
         self.logcat_dir = logcat_dir
+        self._test_name = None
 
         if bin:
             self.instance = GeckoInstance(host=self.host, port=self.port,
                                           bin=self.bin, profile=self.profile)
             self.instance.start()
             assert(self.instance.wait_for_port())
+
         if emulator:
             self.emulator = Emulator(homedir=homedir,
                                      noWindow=self.noWindow,
                                      logcat_dir=self.logcat_dir,
                                      arch=emulator,
+                                     sdcard=sdcard,
                                      emulatorBinary=emulatorBinary,
                                      userdata=emulatorImg,
                                      res=emulator_res)
@@ -120,20 +136,47 @@ class Marionette(object):
             assert(self.emulator.wait_for_port())
 
         if connectToRunningEmulator:
-            self.emulator = Emulator(homedir=homedir, logcat_dir=self.logcat_dir)
+            self.emulator = Emulator(homedir=homedir,
+                                     logcat_dir=self.logcat_dir)
             self.emulator.connect()
             self.port = self.emulator.setup_port_forwarding(self.port)
             assert(self.emulator.wait_for_port())
 
         self.client = MarionetteClient(self.host, self.port)
 
+        if emulator:
+            self.emulator.setup(self, gecko_path=gecko_path,
+                                load_early=load_early)
+            if busybox:
+                self.emulator.install_busybox(busybox)
+
     def __del__(self):
         if self.emulator:
             self.emulator.close()
-        if self.bin:
+        if self.instance:
             self.instance.close()
         for qemu in self.extra_emulators:
             qemu.emulator.close()
+
+    @classmethod
+    def getMarionetteOrExit(cls, *args, **kwargs):
+        try:
+            m = cls(*args, **kwargs)
+            return m
+        except InstallGeckoError:
+            # Bug 812395 - the process of installing gecko into the emulator
+            # and then restarting B2G tickles some bug in the emulator/b2g
+            # that intermittently causes B2G to fail to restart.  To work
+            # around this in TBPL runs, we will fail gracefully from this
+            # error so that the mozharness script can try the run again.
+
+            # This string will get caught by mozharness and will cause it
+            # to retry the tests.
+            print "Error installing gecko!"
+
+            # Exit without a normal exception to prevent mozharness from
+            # flagging the error.
+            sys.exit()
 
     def _send_message(self, command, response_key, **kwargs):
         if not self.session and command not in ('newSession', 'getStatus'):
@@ -225,6 +268,22 @@ class Marionette(object):
                 raise MarionetteException(message=message, status=status, stacktrace=stacktrace)
         raise MarionetteException(message=response, status=500)
 
+    def check_for_crash(self):
+        returncode = None
+        name = None
+        if self.emulator:
+            if self.emulator.check_for_crash():
+                returncode = self.emulator.proc.returncode
+                name = 'emulator'
+        elif self.instance:
+            # In the future, a check for crashed Firefox processes
+            # should be here.
+            pass
+        if returncode is not None:
+            print ('TEST-UNEXPECTED-FAIL - PROCESS CRASH - %s has terminated with exit code %d' %
+                (name, returncode))
+        return returncode is not None
+
     def absolute_url(self, relative_url):
         return "%s%s" % (self.baseurl, relative_url)
 
@@ -236,6 +295,15 @@ class Marionette(object):
         self.session = self._send_message('newSession', 'value')
         self.b2g = 'b2g' in self.session
         return self.session
+
+    @property
+    def test_name(self):
+        return self._test_name
+
+    @test_name.setter
+    def test_name(self, test_name):
+        if self._send_message('setTestName', 'ok', value=test_name):
+            self._test_name = test_name
 
     def delete_session(self):
         response = self._send_message('deleteSession', 'ok')
@@ -261,7 +329,7 @@ class Marionette(object):
     def current_window_handle(self):
         self.window = self._send_message('getWindow', 'value')
         return self.window
-    
+
     @property
     def title(self):
         response = self._send_message('getTitle', 'value') 
@@ -353,7 +421,7 @@ class Marionette(object):
 
         return unwrapped
 
-    def execute_js_script(self, script, script_args=None, timeout=True, new_sandbox=True, special_powers=False):
+    def execute_js_script(self, script, script_args=None, async=True, new_sandbox=True, special_powers=False):
         if script_args is None:
             script_args = []
         args = self.wrapArguments(script_args)
@@ -361,7 +429,7 @@ class Marionette(object):
                                       'value',
                                       value=script,
                                       args=args,
-                                      timeout=timeout,
+                                      async=async,
                                       newSandbox=new_sandbox,
                                       specialPowers=special_powers)
         return self.unwrapValue(response)
@@ -421,7 +489,66 @@ class Marionette(object):
     def get_perf_data(self):
         return self._send_message('getPerfData', 'value')
 
-    def import_script(self, file):
-        f = open(file, "r")
-        js = f.read()
+    def import_script(self, js_file):
+        js = ''
+        with open(js_file, "r") as f:
+            js = f.read()
         return self._send_message('importScript', 'ok', script=js)
+
+    def add_cookie(self, cookie):
+        """
+           Adds a cookie to your current session.
+
+           :Args:
+           - cookie_dict: A dictionary object, with required keys - "name" and "value";
+           optional keys - "path", "domain", "secure", "expiry"
+
+           Usage:
+              driver.add_cookie({'name' : 'foo', 'value' : 'bar'})
+              driver.add_cookie({'name' : 'foo', 'value' : 'bar', 'path' : '/'})
+              driver.add_cookie({'name' : 'foo', 'value' : 'bar', 'path' : '/',
+                                 'secure':True})
+        """
+        return self._send_message('addCookie', 'ok', cookie=cookie)
+
+    def delete_all_cookies(self):
+        """
+            Delete all cookies in the scope of the session.
+            :Usage:
+                driver.delete_all_cookies()
+        """
+        return self._send_message('deleteAllCookies', 'ok')
+
+    def delete_cookie(self, name):
+        """
+            Delete a cookie by its name
+            :Usage:
+                driver.delete_cookie('foo')
+
+        """
+        return self._send_message('deleteCookie', 'ok', name=name);
+
+    def get_cookie(self, name):
+        """
+            Get a single cookie by name. Returns the cookie if found, None if not.
+
+            :Usage:
+                driver.get_cookie('my_cookie')
+        """
+        cookies = self.get_cookies()
+        for cookie in cookies:
+            if cookie['name'] == name:
+                return cookie
+        return None
+
+    def get_cookies(self):
+        return self._send_message("getAllCookies", "value")
+
+    @property
+    def application_cache(self):
+        return ApplicationCache(self)
+
+    def screenshot(self, element=None, highlights=None):
+        if element is not None:
+            element = element.id
+        return self._send_message("screenShot", 'value', element=element, highlights=highlights)

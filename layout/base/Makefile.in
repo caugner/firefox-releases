@@ -37,7 +37,9 @@ EXPORTS		= \
 		nsChangeHint.h \
 		nsCompatibility.h \
 		nsDisplayItemTypes.h \
+		nsDisplayItemTypesList.h \
 		nsDisplayList.h \
+		nsDisplayListInvalidation.h \
 		nsFrameManager.h \
 		nsFrameManagerBase.h \
 		nsFrameTraversal.h \
@@ -74,6 +76,7 @@ CPPSRCS		= \
 		nsChildIterator.cpp \
 		nsCounterManager.cpp \
 		nsDisplayList.cpp \
+		nsDisplayListInvalidation.cpp \
 		nsDocumentViewer.cpp \
 		nsFrameManager.cpp \
 		nsFrameTraversal.cpp \
@@ -89,6 +92,7 @@ CPPSRCS		= \
 		nsStyleChangeList.cpp \
 		nsStyleSheetService.cpp \
 		PaintTracker.cpp \
+ 		PositionedEventTargeting.cpp \
 		StackArena.cpp \
 		$(NULL)
 
@@ -134,7 +138,7 @@ LOCAL_INCLUDES += \
 		-I$(srcdir)/../../content/html/content/src \
 		-I$(srcdir)/../../content/svg/content/src \
 		-I$(topsrcdir)/xpcom/ds \
-		-I$(srcdir)/../svg/base/src \
+		-I$(srcdir)/../svg \
 		-I$(srcdir)/../mathml \
 		$(NULL)
 

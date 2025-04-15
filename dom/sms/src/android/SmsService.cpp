@@ -35,30 +35,33 @@ SmsService::GetNumberOfMessagesForText(const nsAString& aText, uint16_t* aResult
 
 NS_IMETHODIMP
 SmsService::Send(const nsAString& aNumber, const nsAString& aMessage,
-                 int32_t aRequestId, uint64_t aProcessId)
+                 nsISmsRequest* aRequest)
 {
   if (!AndroidBridge::Bridge()) {
     return NS_OK;
   }
 
-  AndroidBridge::Bridge()->SendMessage(aNumber, aMessage, aRequestId,
-                                       aProcessId);
+  AndroidBridge::Bridge()->SendMessage(aNumber, aMessage, aRequest);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 SmsService::CreateSmsMessage(int32_t aId,
                              const nsAString& aDelivery,
+                             const nsAString& aDeliveryStatus,
                              const nsAString& aSender,
                              const nsAString& aReceiver,
                              const nsAString& aBody,
+                             const nsAString& aMessageClass,
                              const jsval& aTimestamp,
                              const bool aRead,
                              JSContext* aCx,
                              nsIDOMMozSmsMessage** aMessage)
 {
-  return SmsMessage::Create(aId, aDelivery, aSender, aReceiver, aBody,
-                            aTimestamp, aRead, aCx, aMessage);
+  return SmsMessage::Create(aId, aDelivery, aDeliveryStatus,
+                            aSender, aReceiver,
+                            aBody, aMessageClass, aTimestamp, aRead,
+                            aCx, aMessage);
 }
 
 } // namespace sms

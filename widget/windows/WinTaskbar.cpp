@@ -250,7 +250,7 @@ WinTaskbar::GetAppUserModelID(nsAString & aDefaultGroupId) {
                            getter_AddRefs(profileDir));
     bool exists = false;
     if (profileDir && NS_SUCCEEDED(profileDir->Exists(&exists)) && exists) {
-      nsCAutoString path;
+      nsAutoCString path;
       if (NS_SUCCEEDED(profileDir->GetNativePath(path))) {
         nsAutoString id;
         id.AppendInt(HashString(path));
@@ -327,6 +327,10 @@ bool
 WinTaskbar::RegisterAppUserModelID() {
   if (WinUtils::GetWindowsVersion() < WinUtils::WIN7_VERSION)
     return false;
+
+  if (XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Metro) {
+    return false;
+  }
 
   SetCurrentProcessExplicitAppUserModelIDPtr funcAppUserModelID = nullptr;
   bool retVal = false;

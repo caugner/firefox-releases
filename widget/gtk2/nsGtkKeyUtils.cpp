@@ -18,6 +18,9 @@
 #ifdef MOZ_X11
 #include <gdk/gdkx.h>
 #endif /* MOZ_X11 */
+#if (MOZ_WIDGET_GTK == 3)
+#include <gdk/gdkkeysyms-compat.h>
+#endif
 #include "nsGUIEvent.h"
 #include "WidgetUtils.h"
 #include "keysym2ucs.h"
@@ -382,7 +385,7 @@ KeymapWrapper::InitBySystemSettings()
     int32_t foundLevel[5];
     for (uint32_t i = 0; i < ArrayLength(mod); i++) {
         mod[i] = NOT_MODIFIER;
-        foundLevel[i] = PR_INT32_MAX;
+        foundLevel[i] = INT32_MAX;
     }
     const uint32_t map_size = 8 * xmodmap->max_keypermod;
     for (uint32_t i = 0; i < map_size; i++) {
@@ -621,7 +624,6 @@ KeymapWrapper::InitInputEvent(nsInputEvent& aInputEvent,
         case NS_WHEEL_EVENT:
         case NS_DRAG_EVENT:
         case NS_SIMPLE_GESTURE_EVENT:
-        case NS_MOZTOUCH_EVENT:
             break;
         default:
             return;

@@ -21,10 +21,11 @@ using namespace mozilla::ipc;
 namespace mozilla {
 namespace net {
 
-NS_IMPL_ISUPPORTS3(WyciwygChannelChild,
+NS_IMPL_ISUPPORTS4(WyciwygChannelChild,
                    nsIRequest,
                    nsIChannel,
-                   nsIWyciwygChannel)
+                   nsIWyciwygChannel,
+                   nsIPrivateBrowsingChannel)
 
 
 WyciwygChannelChild::WyciwygChannelChild()
@@ -36,7 +37,7 @@ WyciwygChannelChild::WyciwygChannelChild()
   , mCharsetSource(kCharsetUninitialized)
   , mState(WCC_NEW)
   , mIPCOpen(false)
-  , mEventQ(this)
+  , mEventQ(NS_ISUPPORTS_CAST(nsIWyciwygChannel*, this))
 {
   LOG(("Creating WyciwygChannelChild @%x\n", this));
 }
@@ -154,18 +155,18 @@ class WyciwygDataAvailableEvent : public ChannelEvent
 public:
   WyciwygDataAvailableEvent(WyciwygChannelChild* child,
                             const nsCString& data,
-                            const uint32_t& offset)
+                            const uint64_t& offset)
   : mChild(child), mData(data), mOffset(offset) {}
   void Run() { mChild->OnDataAvailable(mData, mOffset); }
 private:
   WyciwygChannelChild* mChild;
   nsCString mData;
-  uint32_t mOffset;
+  uint64_t mOffset;
 };
 
 bool
 WyciwygChannelChild::RecvOnDataAvailable(const nsCString& data,
-                                         const uint32_t& offset)
+                                         const uint64_t& offset)
 {
   if (mEventQ.ShouldEnqueue()) {
     mEventQ.Enqueue(new WyciwygDataAvailableEvent(this, data, offset));
@@ -177,7 +178,7 @@ WyciwygChannelChild::RecvOnDataAvailable(const nsCString& data,
 
 void
 WyciwygChannelChild::OnDataAvailable(const nsCString& data,
-                                     const uint32_t& offset)
+                                     const uint64_t& offset)
 {
   LOG(("WyciwygChannelChild::RecvOnDataAvailable [this=%x]\n", this));
 
@@ -209,7 +210,7 @@ WyciwygChannelChild::OnDataAvailable(const nsCString& data,
     Cancel(rv);
 
   if (mProgressSink && NS_SUCCEEDED(rv) && !(mLoadFlags & LOAD_BACKGROUND))
-    mProgressSink->OnProgress(this, nullptr, uint64_t(offset + data.Length()),
+    mProgressSink->OnProgress(this, nullptr, offset + data.Length(),
                               uint64_t(mContentLength));
 }
 
@@ -384,6 +385,10 @@ WyciwygChannelChild::GetLoadGroup(nsILoadGroup * *aLoadGroup)
 NS_IMETHODIMP
 WyciwygChannelChild::SetLoadGroup(nsILoadGroup * aLoadGroup)
 {
+  if (!CanSetLoadGroup(aLoadGroup)) {
+    return NS_ERROR_FAILURE;
+  }
+
   mLoadGroup = aLoadGroup;
   NS_QueryNotificationCallbacks(mCallbacks,
                                 mLoadGroup,
@@ -466,6 +471,10 @@ WyciwygChannelChild::GetNotificationCallbacks(nsIInterfaceRequestor * *aCallback
 NS_IMETHODIMP
 WyciwygChannelChild::SetNotificationCallbacks(nsIInterfaceRequestor * aCallbacks)
 {
+  if (!CanSetCallbacks(aCallbacks)) {
+    return NS_ERROR_FAILURE;
+  }
+
   mCallbacks = aCallbacks;
   NS_QueryNotificationCallbacks(mCallbacks,
                                 mLoadGroup,
@@ -516,7 +525,19 @@ WyciwygChannelChild::GetContentDisposition(uint32_t *aContentDisposition)
 }
 
 NS_IMETHODIMP
+WyciwygChannelChild::SetContentDisposition(uint32_t aContentDisposition)
+{
+  return NS_ERROR_NOT_AVAILABLE;
+}
+
+NS_IMETHODIMP
 WyciwygChannelChild::GetContentDispositionFilename(nsAString &aContentDispositionFilename)
+{
+  return NS_ERROR_NOT_AVAILABLE;
+}
+
+NS_IMETHODIMP
+WyciwygChannelChild::SetContentDispositionFilename(const nsAString &aContentDispositionFilename)
 {
   return NS_ERROR_NOT_AVAILABLE;
 }

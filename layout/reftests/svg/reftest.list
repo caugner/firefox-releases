@@ -157,10 +157,10 @@ fails-if(Android) == filter-extref-differentOrigin-01.svg pass.svg # Bug 695385
 == foreignObject-fixedpos-01.html foreignObject-dynamic-abspos-01-ref.html
 == foreignObject-dynamic-fixedpos-01.html foreignObject-dynamic-abspos-01-ref.html
 == getElementById-a-element-01.svg pass.svg
-fails-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)&&!layersGPUAccelerated) == gradient-live-01a.svg gradient-live-01-ref.svg # bug 696674
-fails-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)&&!layersGPUAccelerated) == gradient-live-01b.svg gradient-live-01-ref.svg # bug 696674
-fails-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)&&!layersGPUAccelerated) == gradient-live-01c.svg gradient-live-01-ref.svg # bug 696674
-fails-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)&&!layersGPUAccelerated) == gradient-live-01d.svg gradient-live-01-ref.svg # bug 696674
+== gradient-live-01a.svg gradient-live-01-ref.svg
+== gradient-live-01b.svg gradient-live-01-ref.svg
+== gradient-live-01c.svg gradient-live-01-ref.svg
+== gradient-live-01d.svg gradient-live-01-ref.svg
 fails == inline-in-xul-basic-01.xul pass.svg
 == invalid-text-01.svg pass.svg
 == lang-attribute-01.svg pass.svg
@@ -201,6 +201,8 @@ random-if(gtk2Widget) == objectBoundingBox-and-fePointLight-02.svg objectBoundin
 == path-03.svg pass.svg
 == path-04.svg pass.svg
 == path-05.svg pass.svg
+== path-06.svg path-06-ref.svg
+== path-07.svg path-07-ref.svg
 == pathLength-01.svg pass.svg
 == pathLength-02.svg pass.svg
 == pattern-invalid-01.svg pattern-invalid-01-ref.svg
@@ -252,13 +254,14 @@ random-if(gtk2Widget) == text-font-weight-01.svg text-font-weight-01-ref.svg # b
 == text-gradient-01.svg text-gradient-01-ref.svg
 random-if(winWidget) == text-gradient-02.svg text-gradient-02-ref.svg # see bug 590101
 == text-gradient-03.svg pass.svg
+HTTP(..) == text-gradient-04.svg text-gradient-04-ref.svg
 == text-in-link-01.svg text-in-link-01-ref.svg
 == text-in-link-02.svg text-in-link-02-ref.svg
 == text-in-link-03.svg text-in-link-03-ref.svg
 # Tests for bug 546813: sanity-check using HTML text, then test SVG behavior.
 fails-if(Android) != text-language-00.xhtml text-language-00-ref.xhtml
 fails-if(Android) random-if(gtk2Widget) != text-language-01.xhtml text-language-01-ref.xhtml # Fails on Linux tryserver due to lack of CJK fonts.
-fuzzy-if(OSX==10.8,14,11) == text-layout-01.svg text-layout-01-ref.svg
+fuzzy-if(OSX==10.8,46,26) == text-layout-01.svg text-layout-01-ref.svg
 == text-layout-02.svg text-layout-02-ref.svg
 == text-layout-03.svg text-layout-03-ref.svg
 == text-layout-04.svg text-layout-04-ref.svg

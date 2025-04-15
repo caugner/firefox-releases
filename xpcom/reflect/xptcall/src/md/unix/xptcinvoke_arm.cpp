@@ -108,7 +108,7 @@ invoke_copy_to_stack(uint32_t* stk, uint32_t *end,
     }
 }
 
-typedef uint32_t (*vtable_func)(nsISupports *, uint32_t, uint32_t, uint32_t);
+typedef nsresult (*vtable_func)(nsISupports *, uint32_t, uint32_t, uint32_t);
 
 EXPORT_XPCOM_API(nsresult)
 NS_InvokeByIndex(nsISupports* that, uint32_t methodIndex,
@@ -351,7 +351,7 @@ NS_InvokeByIndex(nsISupports* that, uint32_t methodIndex,
   vtable_func func = vtable[methodIndex];
   // 'register uint32_t result asm("r0")' could be used here, but it does not
   //  seem to be reliable in all cases: http://gcc.gnu.org/PR46164
-  uint32_t result;
+  nsresult result;
   asm (
     "mov    r3, sp\n"
     "mov    %[stack_space_size], %[param_count_plus_2], lsl #3\n"

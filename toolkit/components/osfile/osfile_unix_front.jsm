@@ -80,7 +80,7 @@
      /**
       * Read some bytes from a file.
       *
-      * @param {ArrayBuffer} buffer A buffer for holding the data
+      * @param {C pointer} buffer A buffer for holding the data
       * once it is read.
       * @param {number} nbytes The number of bytes to read. It must not
       * exceed the size of |buffer| in bytes but it may exceed the number
@@ -92,7 +92,7 @@
       * the end of the file has been reached.
       * @throws {OS.File.Error} In case of I/O error.
       */
-     File.prototype.read = function read(buffer, nbytes, options) {
+     File.prototype._read = function _read(buffer, nbytes, options) {
        return throw_on_negative("read",
          UnixFile.read(this.fd, buffer, nbytes)
        );
@@ -101,7 +101,7 @@
      /**
       * Write some bytes to a file.
       *
-      * @param {ArrayBuffer} buffer A buffer holding the data that must be
+      * @param {C pointer} buffer A buffer holding the data that must be
       * written.
       * @param {number} nbytes The number of bytes to write. It must not
       * exceed the size of |buffer| in bytes.
@@ -111,7 +111,7 @@
       * @return {number} The number of bytes effectively written.
       * @throws {OS.File.Error} In case of I/O error.
       */
-     File.prototype.write = function write(buffer, nbytes, options) {
+     File.prototype._write = function _write(buffer, nbytes, options) {
        return throw_on_negative("write",
          UnixFile.write(this.fd, buffer, nbytes)
        );
@@ -142,7 +142,7 @@
       */
      File.prototype.setPosition = function setPosition(pos, whence) {
        if (whence === undefined) {
-         whence = Const.SEEK_START;
+         whence = Const.SEEK_SET;
        }
        return throw_on_negative("setPosition",
          UnixFile.lseek(this.fd, pos, whence)
@@ -157,6 +157,16 @@
      File.prototype.stat = function stat() {
        throw_on_negative("stat", UnixFile.fstat(this.fd, gStatDataPtr));
          return new File.Info(gStatData);
+     };
+
+     /**
+      * Flushes the file's buffers and causes all buffered data
+      * to be written.
+      *
+      * @throws {OS.File.Error} In case of I/O error.
+      */
+     File.prototype.flush = function flush() {
+       throw_on_negative("flush", UnixFile.fsync(this.fd));
      };
 
 
@@ -338,6 +348,9 @@
       * @option {bool} noOverwrite - If set, this function will fail if
       * a file already exists at |destPath|. Otherwise, if this file exists,
       * it will be erased silently.
+      * @option {bool} noCopy - If set, this function will fail if the
+      * operation is more sophisticated than a simple renaming, i.e. if
+      * |sourcePath| and |destPath| are not situated on the same device.
       *
       * @throws {OS.File.Error} In case of any error.
       *
@@ -401,8 +414,8 @@
          if (!pump_buffer || pump_buffer.length < bufSize) {
            pump_buffer = new (ctypes.ArrayType(ctypes.char))(bufSize);
          }
-         let read = source.read.bind(source);
-         let write = dest.write.bind(dest);
+         let read = source._read.bind(source);
+         let write = dest._write.bind(dest);
          // Perform actual copy
          let total_read = 0;
          while (true) {
@@ -505,7 +518,7 @@
            if (options.noOverwrite) {
              dest = File.open(destPath, {create:true});
            } else {
-             dest = File.open(destPath, {write:true});
+             dest = File.open(destPath, {trunc:true});
            }
            result = pump(source, dest, options);
          } catch (x) {
@@ -549,9 +562,11 @@
          return;
 
        // If the error is not EXDEV ("not on the same device"),
-       // throw it.
-       if (ctypes.errno != Const.EXDEV) {
-         throw new File.Error();
+       // or if the error is EXDEV and we have passed an option
+       // that prevents us from crossing devices, throw the
+       // error.
+       if (ctypes.errno != Const.EXDEV || options.noCopy) {
+         throw new File.Error("move");
        }
 
        // Otherwise, copy and remove.
@@ -573,53 +588,51 @@
       * @constructor
       */
      File.DirectoryIterator = function DirectoryIterator(path, options) {
+       exports.OS.Shared.AbstractFile.AbstractIterator.call(this);
        let dir = throw_on_null("DirectoryIterator", UnixFile.opendir(path));
        this._dir = dir;
        this._path = path;
      };
-     File.DirectoryIterator.prototype = {
-       __iterator__: function __iterator__() {
-         return this;
-       },
-       /**
-        * Return the next entry in the directory, if any such entry is
-        * available.
-        *
-        * Skip special directories "." and "..".
-        *
-        * @return {File.Entry} The next entry in the directory.
-        * @throws {StopIteration} Once all files in the directory have been
-        * encountered.
-        */
-       next: function next() {
-         if (!this._dir) {
-           throw StopIteration;
-         }
-         for (let entry = UnixFile.readdir(this._dir);
-              entry != null && !entry.isNull();
-              entry = UnixFile.readdir(this._dir)) {
-           let contents = entry.contents;
-           if (contents.d_type == OS.Constants.libc.DT_DIR) {
-             let name = contents.d_name.readString();
-             if (name == "." || name == "..") {
-               continue;
-             }
-           }
-           return new File.DirectoryIterator.Entry(contents, this._path);
-         }
-         this.close();
-         throw StopIteration;
-       },
+     File.DirectoryIterator.prototype = Object.create(exports.OS.Shared.AbstractFile.AbstractIterator.prototype);
 
-       /**
-        * Close the iterator and recover all resources.
-        * You should call this once you have finished iterating on a directory.
-        */
-       close: function close() {
-         if (!this._dir) return;
-         UnixFile.closedir(this._dir);
-         this._dir = null;
+     /**
+      * Return the next entry in the directory, if any such entry is
+      * available.
+      *
+      * Skip special directories "." and "..".
+      *
+      * @return {File.Entry} The next entry in the directory.
+      * @throws {StopIteration} Once all files in the directory have been
+      * encountered.
+      */
+     File.DirectoryIterator.prototype.next = function next() {
+       if (!this._dir) {
+         throw StopIteration;
        }
+       for (let entry = UnixFile.readdir(this._dir);
+            entry != null && !entry.isNull();
+            entry = UnixFile.readdir(this._dir)) {
+         let contents = entry.contents;
+         if (contents.d_type == OS.Constants.libc.DT_DIR) {
+           let name = contents.d_name.readString();
+           if (name == "." || name == "..") {
+             continue;
+           }
+         }
+         return new File.DirectoryIterator.Entry(contents, this._path);
+       }
+       this.close();
+       throw StopIteration;
+     };
+
+     /**
+      * Close the iterator and recover all resources.
+      * You should call this once you have finished iterating on a directory.
+      */
+     File.DirectoryIterator.prototype.close = function close() {
+       if (!this._dir) return;
+       UnixFile.closedir(this._dir);
+       this._dir = null;
      };
 
      /**
@@ -813,6 +826,9 @@
        }
        return new File.Info(gStatData);
      };
+
+     File.read = exports.OS.Shared.AbstractFile.read;
+     File.writeAtomic = exports.OS.Shared.AbstractFile.writeAtomic;
 
      /**
       * Get/set the current directory.

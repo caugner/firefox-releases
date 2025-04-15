@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "IPC/IPCMessageUtils.h"
+#include "ipc/IPCMessageUtils.h"
 
 #if defined(XP_UNIX) || defined(XP_BEOS)
 #include <unistd.h>
@@ -409,6 +409,14 @@ nsFileInputStream::Init(nsIFile* aFile, int32_t aIOFlags, int32_t aPerm,
 NS_IMETHODIMP
 nsFileInputStream::Close()
 {
+    // Get the cache position at the time the file was close. This allows
+    // NS_SEEK_CUR on a closed file that has been opened with
+    // REOPEN_ON_REWIND.
+    if (mBehaviorFlags & REOPEN_ON_REWIND) {
+        // Get actual position. Not one modified by subclasses
+        nsFileStreamBase::Tell(&mCachedPosition);
+    }
+
     // null out mLineBuffer in case Close() is called again after failing
     PR_FREEIF(mLineBuffer);
     nsresult rv = nsFileStreamBase::Close();
@@ -460,9 +468,15 @@ nsFileInputStream::Seek(int32_t aWhence, int64_t aOffset)
     PR_FREEIF(mLineBuffer); // this invalidates the line buffer
     if (!mFD) {
         if (mBehaviorFlags & REOPEN_ON_REWIND) {
-            nsresult rv = Reopen();
-            if (NS_FAILED(rv)) {
-                return rv;
+            rv = Open(mFile, mIOFlags, mPerm);
+            NS_ENSURE_SUCCESS(rv, rv);
+
+            // If the file was closed, and we do a relative seek, use the
+            // position we cached when we closed the file to seek to the right
+            // location.
+            if (aWhence == NS_SEEK_CUR) {
+                aWhence = NS_SEEK_SET;
+                aOffset += mCachedPosition;
             }
         } else {
             return NS_BASE_STREAM_CLOSED;
@@ -470,6 +484,18 @@ nsFileInputStream::Seek(int32_t aWhence, int64_t aOffset)
     }
 
     return nsFileStreamBase::Seek(aWhence, aOffset);
+}
+
+NS_IMETHODIMP
+nsFileInputStream::Tell(int64_t *aResult)
+{
+    return nsFileStreamBase::Tell(aResult);
+}
+
+NS_IMETHODIMP
+nsFileInputStream::Available(uint64_t *aResult)
+{
+    return nsFileStreamBase::Available(aResult);
 }
 
 void
@@ -600,7 +626,7 @@ nsPartialFileInputStream::Init(nsIFile* aFile, uint64_t aStart,
 NS_IMETHODIMP
 nsPartialFileInputStream::Tell(int64_t *aResult)
 {
-    int64_t tell;
+    int64_t tell = 0;
     nsresult rv = nsFileInputStream::Tell(&tell);
     if (NS_SUCCEEDED(rv)) {
         *aResult = tell - mStart;
@@ -611,7 +637,7 @@ nsPartialFileInputStream::Tell(int64_t *aResult)
 NS_IMETHODIMP
 nsPartialFileInputStream::Available(uint64_t* aResult)
 {
-    uint64_t available;
+    uint64_t available = 0;
     nsresult rv = nsFileInputStream::Available(&available);
     if (NS_SUCCEEDED(rv)) {
         *aResult = TruncateSize(available);

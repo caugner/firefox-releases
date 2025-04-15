@@ -329,7 +329,7 @@ nsXBLPrototypeHandler::EnsureEventHandler(nsIScriptGlobalObject* aGlobal,
   if (handlerText.IsEmpty())
     return NS_ERROR_FAILURE;
 
-  nsCAutoString bindingURI;
+  nsAutoCString bindingURI;
   mPrototypeBinding->DocURI()->GetSpec(bindingURI);
 
   uint32_t argCount;
@@ -340,7 +340,9 @@ nsXBLPrototypeHandler::EnsureEventHandler(nsIScriptGlobalObject* aGlobal,
                                                    handlerText,
                                                    bindingURI.get(), 
                                                    mLineNumber,
-                                                   JSVERSION_LATEST, aHandler);
+                                                   JSVERSION_LATEST,
+                                                   /* aIsXBL = */ true,
+                                                   aHandler);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (pWindow) {
@@ -623,7 +625,7 @@ static const keyCodeData gKeyCodes[] = {
 
 int32_t nsXBLPrototypeHandler::GetMatchingKeyCode(const nsAString& aKeyName)
 {
-  nsCAutoString keyName;
+  nsAutoCString keyName;
   keyName.AssignWithConversion(aKeyName);
   ToUpperCase(keyName); // We want case-insensitive comparison with data
                         // stored as uppercase.

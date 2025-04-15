@@ -11,10 +11,12 @@
 
 #include "mozilla/dom/PContentParent.h"
 #include "mozilla/dom/PMemoryReportRequestParent.h"
+#include "mozilla/dom/TabContext.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "mozilla/dom/ipc/Blob.h"
 #include "mozilla/Attributes.h"
 
+#include "nsFrameMessageManager.h"
 #include "nsIObserver.h"
 #include "nsIThreadInternal.h"
 #include "nsNetUtil.h"
@@ -25,8 +27,9 @@
 #include "nsDataHashtable.h"
 #include "nsHashKeys.h"
 
+#define CHILD_PROCESS_SHUTDOWN_MESSAGE NS_LITERAL_STRING("child-process-shutdown")
+
 class mozIApplication;
-class nsFrameMessageManager;
 class nsIDOMBlob;
 
 namespace mozilla {
@@ -51,12 +54,12 @@ class ContentParent : public PContentParent
                     , public nsIObserver
                     , public nsIThreadObserver
                     , public nsIDOMGeoPositionCallback
+                    , public mozilla::dom::ipc::MessageManagerCallback
 {
     typedef mozilla::ipc::GeckoChildProcessHost GeckoChildProcessHost;
     typedef mozilla::ipc::OptionalURIParams OptionalURIParams;
     typedef mozilla::ipc::TestShellParent TestShellParent;
     typedef mozilla::ipc::URIParams URIParams;
-    typedef mozilla::layers::PCompositorParent PCompositorParent;
     typedef mozilla::dom::ClonedMessageData ClonedMessageData;
 
 public:
@@ -71,15 +74,9 @@ public:
     static ContentParent* GetNewOrUsed(bool aForBrowserElement = false);
 
     /**
-     * Get or create a content process for the given app descriptor,
-     * which may be null.  This function will assign processes to app
-     * or non-app browsers by internal heuristics.
-     *
-     * Currently apps are given their own process, and browser tabs
-     * share processes.
+     * Get or create a content process for the given TabContext.
      */
-    static TabParent* CreateBrowser(mozIApplication* aApp,
-                                    bool aIsBrowserFrame);
+    static TabParent* CreateBrowserOrApp(const TabContext& aContext);
 
     static void GetAll(nsTArray<ContentParent*>& aArray);
 
@@ -87,6 +84,13 @@ public:
     NS_DECL_NSIOBSERVER
     NS_DECL_NSITHREADOBSERVER
     NS_DECL_NSIDOMGEOPOSITIONCALLBACK
+
+    /**
+     * MessageManagerCallback methods that we override.
+     */
+    virtual bool DoSendAsyncMessage(const nsAString& aMessage,
+                                    const mozilla::dom::StructuredCloneData& aData);
+    virtual bool CheckPermission(const nsAString& aPermission);
 
     /** Notify that a tab was destroyed during normal operation. */
     void NotifyTabDestroyed(PBrowserParent* aTab);
@@ -113,11 +117,20 @@ public:
 
     BlobParent* GetOrCreateActorForBlob(nsIDOMBlob* aBlob);
 
+    /**
+     * Kill our subprocess and make sure it dies.  Should only be used
+     * in emergency situations since it bypasses the normal shutdown
+     * process.
+     */
+    void KillHard();
+
 protected:
-    void OnChannelConnected(int32 pid);
+    void OnChannelConnected(int32_t pid);
     virtual void ActorDestroy(ActorDestroyReason why);
 
 private:
+    typedef base::ChildPrivileges ChildOSPrivileges;
+
     static nsDataHashtable<nsStringHashKey, ContentParent*> *gAppContentParents;
     static nsTArray<ContentParent*>* gNonAppContentParents;
     static nsTArray<ContentParent*>* gPrivateContent;
@@ -126,13 +139,15 @@ private:
     static void DelayedPreallocateAppProcess();
     static void ScheduleDelayedPreallocateAppProcess();
     static already_AddRefed<ContentParent> MaybeTakePreallocatedAppProcess();
+    static void FirstIdle();
 
     // Hide the raw constructor methods since we don't want client code
     // using them.
     using PContentParent::SendPBrowserConstructor;
     using PContentParent::SendPTestShellConstructor;
 
-    ContentParent(const nsAString& aAppManifestURL, bool aIsForBrowser);
+    ContentParent(const nsAString& aAppManifestURL, bool aIsForBrowser,
+                  ChildOSPrivileges aOSPrivileges = base::PRIVILEGES_DEFAULT);
     virtual ~ContentParent();
 
     void Init();
@@ -155,12 +170,21 @@ private:
      */
     void ShutDownProcess();
 
-    PCompositorParent* AllocPCompositor(mozilla::ipc::Transport* aTransport,
-                                        base::ProcessId aOtherProcess) MOZ_OVERRIDE;
+    PCompositorParent*
+    AllocPCompositor(mozilla::ipc::Transport* aTransport,
+                     base::ProcessId aOtherProcess) MOZ_OVERRIDE;
+    PImageBridgeParent*
+    AllocPImageBridge(mozilla::ipc::Transport* aTransport,
+                      base::ProcessId aOtherProcess) MOZ_OVERRIDE;
 
-    virtual PBrowserParent* AllocPBrowser(const uint32_t& aChromeFlags,
-                                          const bool& aIsBrowserElement,
-                                          const AppId& aApp);
+    virtual bool RecvGetProcessAttributes(uint64_t* aId,
+                                          bool* aStartBackground,
+                                          bool* aIsForApp,
+                                          bool* aIsForBrowser) MOZ_OVERRIDE;
+    virtual bool RecvGetXPCOMProcessAttributes(bool* aIsOffline) MOZ_OVERRIDE;
+
+    virtual PBrowserParent* AllocPBrowser(const IPCTabContext& aContext,
+                                          const uint32_t& aChromeFlags);
     virtual bool DeallocPBrowser(PBrowserParent* frame);
 
     virtual PDeviceStorageRequestParent* AllocPDeviceStorageRequest(const DeviceStorageParams&);
@@ -215,6 +239,10 @@ private:
     virtual PStorageParent* AllocPStorage(const StorageConstructData& aData);
     virtual bool DeallocPStorage(PStorageParent* aActor);
 
+    virtual PBluetoothParent* AllocPBluetooth();
+    virtual bool DeallocPBluetooth(PBluetoothParent* aActor);
+    virtual bool RecvPBluetoothConstructor(PBluetoothParent* aActor);
+
     virtual bool RecvReadPrefsArray(InfallibleTArray<PrefSetting>* aPrefs);
     virtual bool RecvReadFontList(InfallibleTArray<FontListEntry>* retValue);
 
@@ -237,7 +265,7 @@ private:
 
     virtual bool RecvSetURITitle(const URIParams& uri,
                                  const nsString& title);
-    
+
     virtual bool RecvShowFilePicker(const int16_t& mode,
                                     const int16_t& selectedType,
                                     const bool& addToRecentDocs,
@@ -249,7 +277,7 @@ private:
                                     InfallibleTArray<nsString>* files,
                                     int16_t* retValue,
                                     nsresult* result);
- 
+
     virtual bool RecvShowAlertNotification(const nsString& aImageUrl, const nsString& aTitle,
                                            const nsString& aText, const bool& aTextClickable,
                                            const nsString& aCookie, const nsString& aName);
@@ -276,10 +304,21 @@ private:
 
     virtual bool RecvPrivateDocShellsExist(const bool& aExist);
 
+    virtual bool RecvFirstIdle();
+
+    virtual bool RecvAudioChannelGetMuted(const AudioChannelType& aType,
+                                          const bool& aMozHidden,
+                                          bool* aValue);
+
+    virtual bool RecvAudioChannelRegisterType(const AudioChannelType& aType);
+    virtual bool RecvAudioChannelUnregisterType(const AudioChannelType& aType);
+
     virtual void ProcessingError(Result what) MOZ_OVERRIDE;
 
     GeckoChildProcessHost* mSubprocess;
+    ChildOSPrivileges mOSPrivileges;
 
+    uint64_t mChildID;
     int32_t mGeolocationWatchID;
     int mRunToCompletionDepth;
     bool mShouldCallUnblockChild;
@@ -290,11 +329,20 @@ private:
     // the nsIObserverService.
     nsCOMArray<nsIMemoryReporter> mMemoryReporters;
 
-    bool mIsAlive;
-    bool mSendPermissionUpdates;
-
     const nsString mAppManifestURL;
     nsRefPtr<nsFrameMessageManager> mMessageManager;
+
+    // True only while this is ready to be used to host remote tabs.
+    // This must not be used for new purposes after mIsAlive goes to
+    // false, but some previously scheduled IPC traffic may still pass
+    // through.
+    bool mIsAlive;
+    // True after the OS-level shutdown sequence has been initiated.
+    // After going true, any use of this at all, including lingering
+    // IPC traffic passing through, will cause assertions to fail.
+    bool mIsDestroyed;
+    bool mSendPermissionUpdates;
+    bool mIsForBrowser;
 
     friend class CrashReporterParent;
 };

@@ -7,15 +7,16 @@
 #include "mozilla/layers/ImageContainerParent.h"
 
 #include "ImageContainer.h" // for PlanarYCBCRImage
+#include "mozilla/layers/ShmemYCbCrImage.h"
 #include "ipc/AutoOpenSurface.h"
 #include "ImageLayerOGL.h"
 #include "gfxImageSurface.h"
 #include "gfxUtils.h"
 #include "yuv_convert.h"
 #include "GLContextProvider.h"
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+#if defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)
 # include "GLXLibrary.h"
-# include "mozilla/X11Util.h"
+# include "gfxXlibSurface.h"
 #endif
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -246,8 +247,6 @@ ImageLayerOGL::RenderLayer(int,
 
   NS_ASSERTION(image->GetFormat() != REMOTE_IMAGE_BITMAP,
     "Remote images aren't handled yet in OGL layers!");
-  NS_ASSERTION(mScaleMode == SCALE_NONE,
-    "Scale modes other than none not handled yet in OGL layers!");
 
   if (image->GetFormat() == PLANAR_YCBCR) {
     PlanarYCbCrImage *yuvImage =
@@ -345,18 +344,6 @@ ImageLayerOGL::RenderLayer(int,
     gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
     gl()->fBindTexture(LOCAL_GL_TEXTURE_2D, data->mTexture.GetTextureID());
 
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
-    GLXPixmap pixmap;
-
-    if (cairoImage->mSurface) {
-        pixmap = sGLXLibrary.CreatePixmap(cairoImage->mSurface);
-        NS_ASSERTION(pixmap, "Failed to create pixmap!");
-        if (pixmap) {
-            sGLXLibrary.BindTexImage(pixmap);
-        }
-    }
-#endif
-
     ShaderProgramOGL *program = 
       mOGLManager->GetProgram(data->mLayerProgram, GetMaskLayer());
 
@@ -372,18 +359,7 @@ ImageLayerOGL::RenderLayer(int,
     program->SetTextureUnit(0);
     program->LoadMask(GetMaskLayer());
 
-    mOGLManager->BindAndDrawQuadWithTextureRect(program,
-                                                GetVisibleRegion().GetBounds(),
-                                                nsIntSize(cairoImage->GetSize().width,
-                                                          cairoImage->GetSize().height));
-
-
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
-    if (cairoImage->mSurface && pixmap) {
-        sGLXLibrary.ReleaseTexImage(pixmap);
-        sGLXLibrary.DestroyPixmap(pixmap);
-    }
-#endif
+    mOGLManager->BindAndDrawQuad(program);
 #ifdef XP_MACOSX
   } else if (image->GetFormat() == MAC_IO_SURFACE) {
      MacIOSurfaceImage *ioImage =
@@ -585,16 +561,25 @@ ImageLayerOGL::AllocateTexturesCairo(CairoImage *aImage)
 
   SetClamping(gl, tex);
 
-#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
-  if (sGLXLibrary.SupportsTextureFromPixmap(aImage->mSurface)) {
-    if (aImage->mSurface->GetContentType() == gfxASurface::CONTENT_COLOR_ALPHA) {
-      backendData->mLayerProgram = gl::RGBALayerProgramType;
-    } else {
-      backendData->mLayerProgram = gl::RGBXLayerProgramType;
-    }
+#if defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)
+  if (aImage->mSurface->GetType() == gfxASurface::SurfaceTypeXlib) {
+    gfxXlibSurface *xsurf =
+      static_cast<gfxXlibSurface*>(aImage->mSurface.get());
+    GLXPixmap pixmap = xsurf->GetGLXPixmap();
+    if (pixmap) {
+      if (aImage->mSurface->GetContentType()
+          == gfxASurface::CONTENT_COLOR_ALPHA) {
+        backendData->mLayerProgram = gl::RGBALayerProgramType;
+      } else {
+        backendData->mLayerProgram = gl::RGBXLayerProgramType;
+      }
 
-    aImage->SetBackendData(LAYERS_OPENGL, backendData.forget());
-    return;
+      aImage->SetBackendData(LAYERS_OPENGL, backendData.forget());
+
+      sDefGLXLib.BindTexImage(pixmap);
+
+      return;
+    }
   }
 #endif
   backendData->mLayerProgram =
@@ -767,6 +752,7 @@ ShadowImageLayerOGL::Swap(const SharedImage& aNewFront,
                           SharedImage* aNewBack)
 {
   if (!mDestroyed) {
+
     if (aNewFront.type() == SharedImage::TSharedImageID) {
       // We are using ImageBridge protocol. The image data will be queried at render
       // time in the parent side.
@@ -831,6 +817,28 @@ ShadowImageLayerOGL::GetLayer()
   return this;
 }
 
+LayerRenderState
+ShadowImageLayerOGL::GetRenderState()
+{
+  if (!mImageContainerID) {
+    return LayerRenderState();
+  }
+
+  // Update the associated compositor ID in case Composer2D succeeds,
+  // because we won't enter RenderLayer() if so ...
+  ImageContainerParent::SetCompositorIDForImage(
+    mImageContainerID, mOGLManager->GetCompositorID());
+  // ... but do *not* try to update the local image version.  We need
+  // to retain that information in case we fall back on GL, so that we
+  // can upload / attach buffers properly.
+
+  SharedImage* img = ImageContainerParent::GetSharedImage(mImageContainerID);
+  if (img && img->type() == SharedImage::TSurfaceDescriptor) {
+    return LayerRenderState(&img->get_SurfaceDescriptor());
+  }
+  return LayerRenderState();
+}
+
 void ShadowImageLayerOGL::UploadSharedYUVToTexture(const YUVImage& yuv)
 {
   AutoOpenSurface asurfY(OPEN_READ_ONLY, yuv.Ydata());
@@ -877,6 +885,47 @@ void ShadowImageLayerOGL::UploadSharedYUVToTexture(const YUVImage& yuv)
   UploadYUVToTexture(gl(), data, &mYUVTexture[0], &mYUVTexture[1], &mYUVTexture[2]);
 }
 
+void ShadowImageLayerOGL::UploadSharedYCbCrToTexture(ShmemYCbCrImage& aImage,
+                                                     nsIntRect aPictureRect)
+{
+  mPictureRect = aPictureRect;
+
+  gfxIntSize size = aImage.GetYSize();
+  gfxIntSize CbCrSize = aImage.GetCbCrSize();
+  if (size != mSize || mCbCrSize != CbCrSize || !mYUVTexture[0].IsAllocated()) {
+
+    mSize = size;
+    mCbCrSize = CbCrSize;
+
+    if (!mYUVTexture[0].IsAllocated()) {
+        mYUVTexture[0].Allocate(gl());
+        mYUVTexture[1].Allocate(gl());
+        mYUVTexture[2].Allocate(gl());
+    }
+
+    NS_ASSERTION(mYUVTexture[0].IsAllocated() &&
+                 mYUVTexture[1].IsAllocated() &&
+                 mYUVTexture[2].IsAllocated(),
+                 "Texture allocation failed!");
+
+    gl()->MakeCurrent();
+    SetClamping(gl(), mYUVTexture[0].GetTextureID());
+    SetClamping(gl(), mYUVTexture[1].GetTextureID());
+    SetClamping(gl(), mYUVTexture[2].GetTextureID());
+  }
+
+  PlanarYCbCrImage::Data data;
+  data.mYChannel = aImage.GetYData();
+  data.mYStride = aImage.GetYStride();
+  data.mYSize = aImage.GetYSize();
+  data.mCbChannel = aImage.GetCbData();
+  data.mCrChannel = aImage.GetCrData();
+  data.mCbCrStride = aImage.GetCbCrStride();
+  data.mCbCrSize = aImage.GetCbCrSize();
+
+  UploadYUVToTexture(gl(), data, &mYUVTexture[0], &mYUVTexture[1], &mYUVTexture[2]);
+}
+
 
 void
 ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
@@ -895,6 +944,12 @@ ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
       if (img && (img->type() == SharedImage::TYUVImage)) {
         UploadSharedYUVToTexture(img->get_YUVImage());
   
+        mImageVersion = imgVersion;
+      } else if (img && (img->type() == SharedImage::TYCbCrImage)) {
+        ShmemYCbCrImage shmemImage(img->get_YCbCrImage().data(),
+                                   img->get_YCbCrImage().offset());
+        UploadSharedYCbCrToTexture(shmemImage, img->get_YCbCrImage().picture());
+
         mImageVersion = imgVersion;
 #ifdef MOZ_WIDGET_GONK
       } else if (img
@@ -935,27 +990,37 @@ ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
 
     if (gl()->CanUploadNonPowerOfTwo()) {
       do {
-        TextureImage::ScopedBindTextureAndApplyFilter texBind(mTexImage, LOCAL_GL_TEXTURE0);
-        colorProgram->SetLayerQuadRect(mTexImage->GetTileRect());
-        mOGLManager->BindAndDrawQuad(colorProgram);
+        nsIntRect rect = mTexImage->GetTileRect();
+        if (!rect.IsEmpty()) {
+          TextureImage::ScopedBindTextureAndApplyFilter texBind(mTexImage, LOCAL_GL_TEXTURE0);
+          colorProgram->SetLayerQuadRect(rect);
+          mOGLManager->BindAndDrawQuad(colorProgram);
+        }
       } while (mTexImage->NextTile());
     } else {
       do {
-        TextureImage::ScopedBindTextureAndApplyFilter texBind(mTexImage, LOCAL_GL_TEXTURE0);
-        colorProgram->SetLayerQuadRect(mTexImage->GetTileRect());
-        // We can't use BindAndDrawQuad because that always uploads the whole texture from 0.0f -> 1.0f
-        // in x and y. We use BindAndDrawQuadWithTextureRect to actually draw a subrect of the texture
-        mOGLManager->BindAndDrawQuadWithTextureRect(colorProgram,
-                                                    nsIntRect(0, 0, mTexImage->GetTileRect().width,
-                                                                    mTexImage->GetTileRect().height),
-                                                    mTexImage->GetTileRect().Size());
+        nsIntRect rect = mTexImage->GetTileRect();
+        if (!rect.IsEmpty()) {
+          TextureImage::ScopedBindTextureAndApplyFilter texBind(mTexImage, LOCAL_GL_TEXTURE0);
+          colorProgram->SetLayerQuadRect(rect);
+          // We can't use BindAndDrawQuad because that always uploads the whole texture from 0.0f -> 1.0f
+          // in x and y. We use BindAndDrawQuadWithTextureRect to actually draw a subrect of the texture
+          mOGLManager->BindAndDrawQuadWithTextureRect(colorProgram,
+                                                      nsIntRect(0, 0, mTexImage->GetTileRect().width,
+                                                                mTexImage->GetTileRect().height),
+                                                      mTexImage->GetTileRect().Size());
+        }
       } while (mTexImage->NextTile());
     }
 #ifdef MOZ_WIDGET_GONK
   } else if (mExternalBufferTexture.IsAllocated()) {
+    gl()->MakeCurrent();
+    gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
+    gl()->fBindTexture(LOCAL_GL_TEXTURE_EXTERNAL, mExternalBufferTexture.GetTextureID());
+
     ShaderProgramOGL *program = mOGLManager->GetProgram(RGBAExternalLayerProgramType, GetMaskLayer());
 
-    gl()->ApplyFilterToBoundTexture(mFilter);
+    gl()->ApplyFilterToBoundTexture(LOCAL_GL_TEXTURE_EXTERNAL, mFilter);
 
     program->Activate();
     program->SetLayerQuadRect(nsIntRect(0, 0,
@@ -966,9 +1031,8 @@ ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
     program->SetTextureUnit(0);
     program->LoadMask(GetMaskLayer());
 
-    mOGLManager->BindAndDrawQuadWithTextureRect(program,
-                                                GetVisibleRegion().GetBounds(),
-                                                nsIntSize(mSize.width, mSize.height));
+    mOGLManager->BindAndDrawQuad(program);
+    gl()->fBindTexture(LOCAL_GL_TEXTURE_EXTERNAL, 0);
 #endif
   } else if (mSharedHandle) {
     GLContext::SharedHandleDetails handleDetails;

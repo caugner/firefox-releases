@@ -664,7 +664,8 @@ static bool IsCSSWordSpacingSpace(const nsTextFragment* aFrag,
     return !IsSpaceCombiningSequenceTail(aFrag, aPos + 1);
   case '\r':
   case '\t': return !aStyleText->WhiteSpaceIsSignificant();
-  case '\n': return !aStyleText->NewlineIsSignificant();
+  case '\n': return !aStyleText->NewlineIsSignificant() &&
+                    !aStyleText->NewlineIsDiscarded();
   default: return false;
   }
 }
@@ -696,7 +697,8 @@ static bool IsTrimmableSpace(const nsTextFragment* aFrag, uint32_t aPos,
   switch (aFrag->CharAt(aPos)) {
   case ' ': return !aStyleText->WhiteSpaceIsSignificant() &&
                    !IsSpaceCombiningSequenceTail(aFrag, aPos + 1);
-  case '\n': return !aStyleText->NewlineIsSignificant();
+  case '\n': return !aStyleText->NewlineIsSignificant() &&
+                    !aStyleText->NewlineIsDiscarded();
   case '\t':
   case '\r':
   case '\f': return !aStyleText->WhiteSpaceIsSignificant();
@@ -756,6 +758,21 @@ IsAllWhitespace(const nsTextFragment* aFrag, bool aAllowNewline)
     if (ch == ' ' || ch == '\t' || ch == '\r' || (ch == '\n' && aAllowNewline))
       continue;
     return false;
+  }
+  return true;
+}
+
+static bool
+IsAllNewlines(const nsTextFragment* aFrag)
+{
+  if (aFrag->Is2b())
+    return false;
+  int32_t len = aFrag->GetLength();
+  const char* str = aFrag->Get1b();
+  for (int32_t i = 0; i < len; ++i) {
+    char ch = str[i];
+    if (ch != '\n')
+      return false;
   }
   return true;
 }
@@ -938,7 +955,7 @@ private:
   // on the line, or null if there was no previous leaf frame.
   nsIFrame*                     mCommonAncestorWithLastFrame;
   // mMaxTextLength is an upper bound on the size of the text in all mapped frames
-  // The value PR_UINT32_MAX represents overflow; text will be discarded
+  // The value UINT32_MAX represents overflow; text will be discarded
   uint32_t                      mMaxTextLength;
   bool                          mDoubleByteText;
   bool                          mBidiEnabled;
@@ -1384,7 +1401,7 @@ void BuildTextRunsScanner::FlushFrames(bool aFlushLineBreaks, bool aSuppressTrai
     } else {
       AutoFallibleTArray<uint8_t,BIG_TEXT_NODE_SIZE> buffer;
       uint32_t bufferSize = mMaxTextLength*(mDoubleByteText ? 2 : 1);
-      if (bufferSize < mMaxTextLength || bufferSize == PR_UINT32_MAX ||
+      if (bufferSize < mMaxTextLength || bufferSize == UINT32_MAX ||
           !buffer.AppendElements(bufferSize)) {
         return;
       }
@@ -1431,10 +1448,10 @@ void BuildTextRunsScanner::FlushLineBreaks(gfxTextRun* aTrailingTextRun)
 
 void BuildTextRunsScanner::AccumulateRunInfo(nsTextFrame* aFrame)
 {
-  if (mMaxTextLength != PR_UINT32_MAX) {
-    NS_ASSERTION(mMaxTextLength < PR_UINT32_MAX - aFrame->GetContentLength(), "integer overflow");
-    if (mMaxTextLength >= PR_UINT32_MAX - aFrame->GetContentLength()) {
-      mMaxTextLength = PR_UINT32_MAX;
+  if (mMaxTextLength != UINT32_MAX) {
+    NS_ASSERTION(mMaxTextLength < UINT32_MAX - aFrame->GetContentLength(), "integer overflow");
+    if (mMaxTextLength >= UINT32_MAX - aFrame->GetContentLength()) {
+      mMaxTextLength = UINT32_MAX;
     } else {
       mMaxTextLength += aFrame->GetContentLength();
     }
@@ -1537,6 +1554,7 @@ BuildTextRunsScanner::ContinueTextRunAcrossFrames(nsTextFrame* aFrame1, nsTextFr
   }
 
   nsStyleContext* sc2 = aFrame2->GetStyleContext();
+  const nsStyleText* textStyle2 = sc2->GetStyleText();
   if (sc1 == sc2)
     return true;
 
@@ -1546,6 +1564,7 @@ BuildTextRunsScanner::ContinueTextRunAcrossFrames(nsTextFrame* aFrame1, nsTextFr
   nscoord letterSpacing2 = LetterSpacing(aFrame2);
   return fontStyle1->mFont.BaseEquals(fontStyle2->mFont) &&
     sc1->GetStyleFont()->mLanguage == sc2->GetStyleFont()->mLanguage &&
+    textStyle1->mTextTransform == textStyle2->mTextTransform &&
     nsLayoutUtils::GetTextRunFlagsForStyle(sc1, fontStyle1, letterSpacing1) ==
       nsLayoutUtils::GetTextRunFlagsForStyle(sc2, fontStyle2, letterSpacing2);
 }
@@ -1737,6 +1756,7 @@ PR_STATIC_ASSERT(NS_STYLE_WHITESPACE_PRE == 1);
 PR_STATIC_ASSERT(NS_STYLE_WHITESPACE_NOWRAP == 2);
 PR_STATIC_ASSERT(NS_STYLE_WHITESPACE_PRE_WRAP == 3);
 PR_STATIC_ASSERT(NS_STYLE_WHITESPACE_PRE_LINE == 4);
+PR_STATIC_ASSERT(NS_STYLE_WHITESPACE_PRE_DISCARD_NEWLINES == 5);
 
 static const nsTextFrameUtils::CompressionMode CSSWhitespaceToCompressionMode[] =
 {
@@ -1744,7 +1764,8 @@ static const nsTextFrameUtils::CompressionMode CSSWhitespaceToCompressionMode[] 
   nsTextFrameUtils::COMPRESS_NONE,               // pre
   nsTextFrameUtils::COMPRESS_WHITESPACE_NEWLINE, // nowrap
   nsTextFrameUtils::COMPRESS_NONE,               // pre-wrap
-  nsTextFrameUtils::COMPRESS_WHITESPACE          // pre-line
+  nsTextFrameUtils::COMPRESS_WHITESPACE,         // pre-line
+  nsTextFrameUtils::DISCARD_NEWLINE              // -moz-pre-discard-newlines
 };
 
 gfxTextRun*
@@ -2077,7 +2098,7 @@ BuildTextRunsScanner::SetupLineBreakerContext(gfxTextRun *aTextRun)
 {
   AutoFallibleTArray<uint8_t,BIG_TEXT_NODE_SIZE> buffer;
   uint32_t bufferSize = mMaxTextLength*(mDoubleByteText ? 2 : 1);
-  if (bufferSize < mMaxTextLength || bufferSize == PR_UINT32_MAX) {
+  if (bufferSize < mMaxTextLength || bufferSize == UINT32_MAX) {
     return false;
   }
   void *textPtr = buffer.AppendElements(bufferSize);
@@ -2631,7 +2652,7 @@ static bool IsInBounds(const gfxSkipCharsIterator& aStart, int32_t aContentLengt
                          uint32_t aOffset, uint32_t aLength) {
   if (aStart.GetSkippedOffset() > aOffset)
     return false;
-  if (aContentLength == PR_INT32_MAX)
+  if (aContentLength == INT32_MAX)
     return true;
   gfxSkipCharsIterator iter(aStart);
   iter.AdvanceOriginal(aContentLength);
@@ -2645,9 +2666,9 @@ public:
    * Use this constructor for reflow, when we don't know what text is
    * really mapped by the frame and we have a lot of other data around.
    * 
-   * @param aLength can be PR_INT32_MAX to indicate we cover all the text
+   * @param aLength can be INT32_MAX to indicate we cover all the text
    * associated with aFrame up to where its flow chain ends in the given
-   * textrun. If PR_INT32_MAX is passed, justification and hyphen-related methods
+   * textrun. If INT32_MAX is passed, justification and hyphen-related methods
    * cannot be called, nor can GetOriginalLength().
    */
   PropertyProvider(gfxTextRun* aTextRun, const nsStyleText* aTextStyle,
@@ -2730,9 +2751,9 @@ public:
   // adjusted for whitespace trimming according to the state bits set in the frame
   // (for the static provider)
   const gfxSkipCharsIterator& GetStart() { return mStart; }
-  // May return PR_INT32_MAX if that was given to the constructor
+  // May return INT32_MAX if that was given to the constructor
   uint32_t GetOriginalLength() {
-    NS_ASSERTION(mLength != PR_INT32_MAX, "Length not known");
+    NS_ASSERTION(mLength != INT32_MAX, "Length not known");
     return mLength;
   }
   const nsTextFragment* GetFragment() { return mFrag; }
@@ -2779,7 +2800,7 @@ protected:
   // when mTabWidths is NULL (otherwise rely on mTabWidths->mLimit instead)
   uint32_t              mTabWidthsAnalyzedLimit;
 
-  int32_t               mLength; // DOM string length, may be PR_INT32_MAX
+  int32_t               mLength; // DOM string length, may be INT32_MAX
   gfxFloat              mWordSpacing;     // space for each whitespace char
   gfxFloat              mLetterSpacing;   // space for each letter
   gfxFloat              mJustificationSpacing;
@@ -3078,7 +3099,7 @@ PropertyProvider::GetHyphenationBreaks(uint32_t aStart, uint32_t aLength,
                                        bool* aBreakBefore)
 {
   NS_PRECONDITION(IsInBounds(mStart, mLength, aStart, aLength), "Range out of bounds");
-  NS_PRECONDITION(mLength != PR_INT32_MAX, "Can't call this with undefined length");
+  NS_PRECONDITION(mLength != INT32_MAX, "Can't call this with undefined length");
 
   if (!mTextStyle->WhiteSpaceCanWrap() ||
       mTextStyle->mHyphens == NS_STYLE_HYPHENS_NONE)
@@ -3148,7 +3169,7 @@ void
 PropertyProvider::FindJustificationRange(gfxSkipCharsIterator* aStart,
                                          gfxSkipCharsIterator* aEnd)
 {
-  NS_PRECONDITION(mLength != PR_INT32_MAX, "Can't call this with undefined length");
+  NS_PRECONDITION(mLength != INT32_MAX, "Can't call this with undefined length");
   NS_ASSERTION(aStart && aEnd, "aStart or/and aEnd is null");
 
   aStart->SetOriginalOffset(mStart.GetOriginalOffset());
@@ -3178,7 +3199,7 @@ PropertyProvider::FindJustificationRange(gfxSkipCharsIterator* aStart,
 void
 PropertyProvider::SetupJustificationSpacing()
 {
-  NS_PRECONDITION(mLength != PR_INT32_MAX, "Can't call this with undefined length");
+  NS_PRECONDITION(mLength != INT32_MAX, "Can't call this with undefined length");
 
   if (!(mFrame->GetStateBits() & TEXT_JUSTIFICATION_ENABLED))
     return;
@@ -3350,7 +3371,7 @@ NS_IMETHODIMP nsBlinkTimer::Notify(nsITimer *timer)
   PRTime now = PR_Now();
   char buf[50];
   PRTime delta;
-  LL_SUB(delta, now, gLastTick);
+  delta = now - gLastTick;
   gLastTick = now;
   PR_snprintf(buf, sizeof(buf), "%lldusec", delta);
   printf("%s\n", buf);
@@ -3362,8 +3383,7 @@ NS_IMETHODIMP nsBlinkTimer::Notify(nsITimer *timer)
 
     // Determine damaged area and tell view manager to redraw it
     // blink doesn't blink outline ... I hope
-    nsRect bounds(nsPoint(0, 0), frameData.mFrame->GetSize());
-    frameData.mFrame->Invalidate(bounds);
+    frameData.mFrame->InvalidateFrame();
   }
   return NS_OK;
 }
@@ -3996,7 +4016,7 @@ public:
                                    gfxSkipChars* aSkipChars = nullptr,
                                    gfxSkipCharsIterator* aSkipIter = nullptr,
                                    uint32_t aSkippedStartOffset = 0,
-                                   uint32_t aSkippedMaxLength = PR_UINT32_MAX)
+                                   uint32_t aSkippedMaxLength = UINT32_MAX)
   { return NS_ERROR_NOT_IMPLEMENTED; } // Call on a primary text frame only
 
 protected:
@@ -4410,6 +4430,7 @@ nsTextFrame::CharacterDataChanged(CharacterDataChangeInfo* aInfo)
       // will do that when it gets called during reflow.
       textFrame->AddStateBits(NS_FRAME_IS_DIRTY);
     }
+    textFrame->InvalidateFrame();
 
     // Below, frames that start after the deleted text will be adjusted so that
     // their offsets move with the trailing unchanged text. If this change
@@ -4450,7 +4471,25 @@ nsTextFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
 {
   nsFrame::DidSetStyleContext(aOldStyleContext);
   ClearTextRuns();
-} 
+}
+
+class nsDisplayTextGeometry : public nsDisplayItemGenericGeometry
+{
+public:
+  nsDisplayTextGeometry(nsDisplayItem* aItem, nsDisplayListBuilder* aBuilder)
+    : nsDisplayItemGenericGeometry(aItem, aBuilder)
+  {
+    nsTextFrame* f = static_cast<nsTextFrame*>(aItem->GetUnderlyingFrame());
+    f->GetTextDecorations(f->PresContext(), nsTextFrame::eResolvedColors, mDecorations);
+  }
+ 
+  /**
+   * We store the computed text decorations here since they are
+   * computed using style data from parent frames. Any changes to these
+   * styles will only invalidate the parent frame and not this frame.
+   */
+  nsTextFrame::TextDecorations mDecorations;
+};
 
 class nsDisplayText : public nsCharClipDisplayItem {
 public:
@@ -4467,7 +4506,10 @@ public:
 
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) {
     *aSnap = false;
-    return mFrame->GetVisualOverflowRectRelativeToSelf() + ToReferenceFrame();
+    nsRect temp = mFrame->GetVisualOverflowRectRelativeToSelf() + ToReferenceFrame();
+    // Bug 748228
+    temp.Inflate(mFrame->PresContext()->AppUnitsPerDevPixel());
+    return temp;
   }
   virtual void HitTest(nsDisplayListBuilder* aBuilder, const nsRect& aRect,
                        HitTestState* aState, nsTArray<nsIFrame*> *aOutFrames) {
@@ -4485,6 +4527,31 @@ public:
     return GetBounds(aBuilder, &snap);
   }
 
+  virtual nsDisplayItemGeometry* AllocateGeometry(nsDisplayListBuilder* aBuilder)
+  {
+    return new nsDisplayTextGeometry(this, aBuilder);
+  }
+
+  virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                         const nsDisplayItemGeometry* aGeometry,
+                                         nsRegion *aInvalidRegion)
+  {
+    const nsDisplayTextGeometry* geometry = static_cast<const nsDisplayTextGeometry*>(aGeometry);
+    nsTextFrame* f = static_cast<nsTextFrame*>(mFrame);
+
+    nsTextFrame::TextDecorations decorations;
+    f->GetTextDecorations(f->PresContext(), nsTextFrame::eResolvedColors, decorations);
+
+    bool snap;
+    nsRect newRect = geometry->mBounds;
+    nsRect oldRect = GetBounds(aBuilder, &snap);
+    if (decorations != geometry->mDecorations ||
+        !oldRect.IsEqualInterior(newRect) ||
+        !geometry->mBorderRect.IsEqualInterior(GetBorderRect())) {
+      aInvalidRegion->Or(oldRect, newRect);
+    }
+  }
+  
   virtual void DisableComponentAlpha() { mDisableSubpixelAA = true; }
 
   bool mDisableSubpixelAA;
@@ -6261,7 +6328,7 @@ nsTextFrame::SetSelectedRange(uint32_t aStart, uint32_t aEnd, bool aSelected,
       }
     }
     // Selection might change anything. Invalidate the overflow area.
-    f->InvalidateOverflowRect();
+    f->InvalidateFrame();
 
     f = static_cast<nsTextFrame*>(f->GetNextContinuation());
   }
@@ -6891,8 +6958,8 @@ nsTextFrame::AddInlineMinWidthForFlow(nsRenderingContext *aRenderingContext,
   const nsTextFragment* frag = mContent->GetText();
 
   // If we're hyphenating, the PropertyProvider needs the actual length;
-  // otherwise we can just pass PR_INT32_MAX to mean "all the text"
-  int32_t len = PR_INT32_MAX;
+  // otherwise we can just pass INT32_MAX to mean "all the text"
+  int32_t len = INT32_MAX;
   bool hyphenating = frag->GetLength() > 0 &&
     (textStyle->mHyphens == NS_STYLE_HYPHENS_AUTO ||
      (textStyle->mHyphens == NS_STYLE_HYPHENS_MANUAL &&
@@ -7064,7 +7131,7 @@ nsTextFrame::AddInlinePrefWidthForFlow(nsRenderingContext *aRenderingContext,
   const nsStyleText* textStyle = GetStyleText();
   const nsTextFragment* frag = mContent->GetText();
   PropertyProvider provider(textRun, textStyle, frag, this,
-                            iter, PR_INT32_MAX, nullptr, 0, aTextRunType);
+                            iter, INT32_MAX, nullptr, 0, aTextRunType);
 
   bool collapseWhitespace = !textStyle->WhiteSpaceIsSignificant();
   bool preformatNewlines = textStyle->NewlineIsSignificant();
@@ -7084,7 +7151,8 @@ nsTextFrame::AddInlinePrefWidthForFlow(nsRenderingContext *aRenderingContext,
       // XXXldb Shouldn't we be including the newline as part of the
       // segment that it ends rather than part of the segment that it
       // starts?
-      NS_ASSERTION(preformatNewlines, "We can't be here unless newlines are hard breaks");
+      NS_ASSERTION(preformatNewlines || textStyle->NewlineIsDiscarded(),
+                   "We can't be here unless newlines are hard breaks or are discarded");
       preformattedNewline = preformatNewlines && textRun->CharIsNewline(i);
       preformattedTab = preformatTabs && textRun->CharIsTab(i);
       if (!preformattedNewline && !preformattedTab) {
@@ -7623,8 +7691,15 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
     int32_t skipLength = newLineOffset >= 0 ? length - 1 : length;
     int32_t whitespaceCount =
       GetTrimmableWhitespaceCount(frag, offset, skipLength, 1);
-    offset += whitespaceCount;
-    length -= whitespaceCount;
+    if (whitespaceCount) {
+      offset += whitespaceCount;
+      length -= whitespaceCount;
+      // Make sure this frame maps the trimmable whitespace.
+      if (NS_UNLIKELY(offset > GetContentEnd())) {
+        SetLength(offset - GetContentOffset(), &aLineLayout,
+                  ALLOW_FRAME_CREATION_AND_DESTRUCTION);
+      }
+    }
   }
 
   bool completedFirstLetter = false;
@@ -7817,7 +7892,7 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
   int32_t lastBreak = -1;
   if (charsFit >= limitLength) {
     charsFit = limitLength;
-    if (transformedLastBreak != PR_UINT32_MAX) {
+    if (transformedLastBreak != UINT32_MAX) {
       // lastBreak is needed.
       // This may set lastBreak greater than 'length', but that's OK
       lastBreak = end.ConvertSkippedToOriginal(transformedOffset + transformedLastBreak);
@@ -8026,7 +8101,7 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
 
   SetLength(contentLength, &aLineLayout, ALLOW_FRAME_CREATION_AND_DESTRUCTION);
 
-  Invalidate(aMetrics.VisualOverflow());
+  InvalidateFrame();
 
 #ifdef NOISY_REFLOW
   ListTag(stdout);
@@ -8172,7 +8247,8 @@ static PRUnichar TransformChar(const nsStyleText* aStyle, gfxTextRun* aTextRun,
                                uint32_t aSkippedOffset, PRUnichar aChar)
 {
   if (aChar == '\n') {
-    return aStyle->NewlineIsSignificant() ? aChar : ' ';
+    return aStyle->NewlineIsSignificant() || aStyle->NewlineIsDiscarded() ?
+             aChar : ' ';
   }
   switch (aStyle->mTextTransform) {
   case NS_STYLE_TEXT_TRANSFORM_LOWERCASE:
@@ -8319,7 +8395,8 @@ nsTextFrame::IsEmpty()
   
   // XXXldb Should this check compatibility mode as well???
   const nsStyleText* textStyle = GetStyleText();
-  if (textStyle->WhiteSpaceIsSignificant()) {
+  if (textStyle->WhiteSpaceIsSignificant() &&
+      textStyle->mWhiteSpace != NS_STYLE_WHITESPACE_PRE_DISCARD_NEWLINES) {
     // XXX shouldn't we return true if the length is zero?
     return false;
   }
@@ -8331,9 +8408,12 @@ nsTextFrame::IsEmpty()
   if (mState & TEXT_IS_ONLY_WHITESPACE) {
     return true;
   }
-  
-  bool isEmpty = IsAllWhitespace(mContent->GetText(),
-          textStyle->mWhiteSpace != NS_STYLE_WHITESPACE_PRE_LINE);
+
+  bool isEmpty =
+    textStyle->mWhiteSpace == NS_STYLE_WHITESPACE_PRE_DISCARD_NEWLINES ?
+      IsAllNewlines(mContent->GetText()) :
+      IsAllWhitespace(mContent->GetText(),
+                      textStyle->mWhiteSpace != NS_STYLE_WHITESPACE_PRE_LINE);
   mState |= (isEmpty ? TEXT_IS_ONLY_WHITESPACE : TEXT_ISNOT_ONLY_WHITESPACE);
   return isEmpty;
 }
@@ -8344,7 +8424,7 @@ nsTextFrame::GetFrameName(nsAString& aResult) const
 {
   MakeFrameName(NS_LITERAL_STRING("Text"), aResult);
   int32_t totalContentLength;
-  nsCAutoString tmp;
+  nsAutoCString tmp;
   ToCString(tmp, &totalContentLength);
   tmp.SetLength(NS_MIN(tmp.Length(), 50u));
   aResult += NS_LITERAL_STRING("\"") + NS_ConvertASCIItoUTF16(tmp) + NS_LITERAL_STRING("\"");
@@ -8360,7 +8440,7 @@ nsTextFrame::GetDebugStateBits() const
 }
 
 NS_IMETHODIMP
-nsTextFrame::List(FILE* out, int32_t aIndent) const
+nsTextFrame::List(FILE* out, int32_t aIndent, uint32_t aFlags) const
 {
   // Output the tag
   IndentBy(out, aIndent);

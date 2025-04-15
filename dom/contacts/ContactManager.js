@@ -23,10 +23,6 @@ XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
                                    "@mozilla.org/childprocessmessagemanager;1",
                                    "nsIMessageSender");
 
-XPCOMUtils.defineLazyGetter(this, "mRIL", function () {
-  return Cc["@mozilla.org/telephony/system-worker-manager;1"].getService(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIRadioInterfaceLayer);
-});
-
 const nsIClassInfo            = Ci.nsIClassInfo;
 const CONTACTPROPERTIES_CID   = Components.ID("{f5181640-89e8-11e1-b0c4-0800200c9a66}");
 const nsIDOMContactProperties = Ci.nsIDOMContactProperties;
@@ -372,11 +368,26 @@ ContactManager.prototype = {
     let msg = aMessage.json;
     let contacts = msg.contacts;
 
+    let req;
     switch (aMessage.name) {
       case "Contacts:Find:Return:OK":
-        let req = this.getRequest(msg.requestID);
+        req = this.getRequest(msg.requestID);
         if (req) {
           let result = this._convertContactsArray(contacts);
+          Services.DOMRequest.fireSuccess(req.request, result);
+        } else {
+          if (DEBUG) debug("no request stored!" + msg.requestID);
+        }
+        break;
+      case "Contacts:GetSimContacts:Return:OK":
+        req = this.getRequest(msg.requestID);
+        if (req) {
+          let result = contacts.map(function(c) {
+            let contact = new Contact();
+            contact.init( { name: [c.alphaId], tel: [ { value: c.number } ] } );
+            return contact;
+          });
+          if (DEBUG) debug("result: " + JSON.stringify(result));
           Services.DOMRequest.fireSuccess(req.request, result);
         } else {
           if (DEBUG) debug("no request stored!" + msg.requestID);
@@ -402,6 +413,7 @@ ContactManager.prototype = {
       case "Contact:Save:Return:KO":
       case "Contact:Remove:Return:KO":
       case "Contacts:Clear:Return:KO":
+      case "Contacts:GetSimContacts:Return:KO":
         req = this.getRequest(msg.requestID);
         if (req)
           Services.DOMRequest.fireError(req.request, msg.errorMsg);
@@ -425,18 +437,36 @@ ContactManager.prototype = {
     this.removeRequest(msg.requestID);
   },
 
-  askPermission: function (aAccess, aReqeust, aAllowCallback, aCancelCallback) {
+  askPermission: function (aAccess, aRequest, aAllowCallback, aCancelCallback) {
     if (DEBUG) debug("askPermission for contacts");
+    let access;
+    switch(aAccess) {
+      case "create":
+        access = "create";
+        break;
+      case "update":
+      case "remove":
+        access = "write";
+        break;
+      case "find":
+      case "getSimContacts":
+      case "listen":
+        access = "read";
+        break;
+      default:
+        access = "unknown";
+      }
+      
     let requestID = this.getRequestId({
-      request: aReqeust,
+      request: aRequest,
       allow: function() {
         aAllowCallback();
       }.bind(this),
       cancel : function() {
         if (aCancelCallback) {
           aCancelCallback()
-        } else if (request) {
-          Services.DOMRequest.fireError(request, "Not Allowed");
+        } else if (aRequest) {
+          Services.DOMRequest.fireError(aRequest, "Not Allowed");
         }
       }.bind(this)
     });
@@ -444,7 +474,7 @@ ContactManager.prototype = {
     let principal = this._window.document.nodePrincipal;
     cpmm.sendAsyncMessage("PermissionPromptHelper:AskPermission", {
       type: "contacts",
-      access: aAccess,
+      access: access,
       requestID: requestID,
       origin: principal.origin,
       appID: principal.appId,
@@ -496,7 +526,7 @@ ContactManager.prototype = {
     this._setMetaData(newContact, aContact);
     if (DEBUG) debug("send: " + JSON.stringify(newContact));
     request = this.createRequest();
-    let options = { contact: newContact };
+    let options = { contact: newContact, reason: reason };
     let allowCallback = function() {
       cpmm.sendAsyncMessage("Contact:Save", {requestID: this.getRequestId({request: request, reason: reason}), options: options});
     }.bind(this)
@@ -539,24 +569,16 @@ ContactManager.prototype = {
     return request;
   },
 
-  getSimContacts: function(aType) {
+  getSimContacts: function(aContactType) {
     let request;
     request = this.createRequest();
+    let options = {contactType: aContactType};
 
     let allowCallback = function() {
-      let callback = function(aType, aContacts) {
-        if (DEBUG) debug("got SIM contacts: " + aType + " " + JSON.stringify(aContacts));
-        let result = aContacts.map(function(c) {
-          var contact = new Contact();
-          contact.init( { name: [c.alphaId], tel: [ { value: c.number } ] } );
-          return contact;
-        });
-        if (DEBUG) debug("result: " + JSON.stringify(result));
-        Services.DOMRequest.fireSuccess(request, result);
-      };
-      if (DEBUG) debug("getSimContacts " + aType);
-
-      mRIL.getICCContacts(aType, callback);
+      if (DEBUG) debug("getSimContacts " + aContactType);
+      cpmm.sendAsyncMessage("Contacts:GetSimContacts",
+        {requestID: this.getRequestId({request: request, reason: "getSimContacts"}),
+         options: options});
     }.bind(this);
 
     let cancelCallback = function() {
@@ -575,6 +597,8 @@ ContactManager.prototype = {
                               "Contacts:Clear:Return:OK", "Contacts:Clear:Return:KO",
                               "Contact:Save:Return:OK", "Contact:Save:Return:KO",
                               "Contact:Remove:Return:OK", "Contact:Remove:Return:KO",
+                              "Contacts:GetSimContacts:Return:OK",
+                              "Contacts:GetSimContacts:Return:KO",
                               "PermissionPromptHelper:AskPermission:OK"]);
   },
 
@@ -595,5 +619,5 @@ ContactManager.prototype = {
                                      flags: nsIClassInfo.DOM_OBJECT})
 }
 
-const NSGetFactory = XPCOMUtils.generateNSGetFactory(
+this.NSGetFactory = XPCOMUtils.generateNSGetFactory(
                        [Contact, ContactManager, ContactProperties, ContactAddress, ContactField, ContactTelField, ContactFindOptions])

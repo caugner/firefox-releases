@@ -120,7 +120,7 @@ NS_IMETHODIMP
 nsBinHexDecoder::OnDataAvailable(nsIRequest* request,
                                  nsISupports *aCtxt,
                                  nsIInputStream *aStream,
-                                 uint32_t aSourceOffset,
+                                 uint64_t aSourceOffset,
                                  uint32_t aCount)
 {
   nsresult rv = NS_OK;
@@ -479,7 +479,7 @@ nsresult nsBinHexDecoder::DetectContentType(nsIRequest* aRequest,
   nsCOMPtr<nsIMIMEService> mimeService(do_GetService("@mozilla.org/mime;1", &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCAutoString contentType;
+  nsAutoCString contentType;
 
   // extract the extension from aFilename and look it up.
   const char * fileExt = strrchr(aFilename.get(), '.');

@@ -10,7 +10,7 @@ interface nsIURI;
 interface nsIChannel;
 interface nsIDocShell;
 
-[scriptable, uuid(45e12581-2c3f-4142-8e0d-4075e5a67d2d)]
+[scriptable, uuid(90c6b901-9952-4934-a560-974dfd144af7)]
 interface nsIScriptSecurityManager : nsIXPCSecurityManager
 {
     ///////////////// Security Checks //////////////////
@@ -70,6 +70,10 @@ interface nsIScriptSecurityManager : nsIXPCSecurityManager
     // When using this, make sure that you actually want DISALLOW_SCRIPT, not
     // DISALLOW_INHERIT_PRINCIPAL
     const unsigned long DISALLOW_SCRIPT = 1 << 3;
+
+    // Do not report errors if we just want to check if a principal can load
+    // a URI to not unnecessarily spam the error console.
+    const unsigned long DONT_REPORT_ERRORS = 1 << 4;
 
     /**
      * Check that content with principal aPrincipal can load "uri".
@@ -132,21 +136,6 @@ interface nsIScriptSecurityManager : nsIXPCSecurityManager
     nsIPrincipal getSystemPrincipal();
 
     /**
-     * Return a principal with the specified certificate fingerprint, subject
-     * name (the full name or concatenated set of names of the entity
-     * represented by the certificate), pretty name, certificate, and
-     * codebase URI.  The certificate fingerprint and subject name MUST be
-     * nonempty; otherwise an error will be thrown.  Similarly, aCert must
-     * not be null.
-     */
-    [noscript] nsIPrincipal
-         getCertificatePrincipal(in AUTF8String aCertFingerprint,
-                                 in AUTF8String aSubjectName,
-                                 in AUTF8String aPrettyName,
-                                 in nsISupports aCert,
-                                 in nsIURI aURI);
-
-    /**
      * Return a principal that has the same origin as aURI.
      * This principals should not be used for any data/permission check, it will
      * have appId = UNKNOWN_APP_ID.
@@ -184,33 +173,6 @@ interface nsIScriptSecurityManager : nsIXPCSecurityManager
      * @deprecated use getNoAppCodebasePrincipal instead.
      */
     [deprecated] nsIPrincipal getCodebasePrincipal(in nsIURI uri);
-
-    ///////////////// Capabilities API /////////////////////
-    /**
-     * Request that 'capability' can be enabled by scripts or applets
-     * running with 'principal'. Will prompt user if
-     * necessary. Returns nsIPrincipal::ENABLE_GRANTED or
-     * nsIPrincipal::ENABLE_DENIED based on user's choice.
-     */
-    [noscript] short requestCapability(in nsIPrincipal principal,
-                                       in string capability);
-
-    /**
-     * Return true if the currently executing script has 'capability' enabled.
-     */
-    boolean isCapabilityEnabled(in string capability);
-
-    /**
-     * Enable 'capability' in the innermost frame of the currently executing
-     * script.
-     */
-    void enableCapability(in string capability);
-
-    //////////////// Master Certificate Functions ////////////////////
-    /**
-     * Allow 'certificateID' to enable 'capability.' Can only be performed
-     * by code signed by the system certificate.
-     */
 
     ///////////////////////
     /**
@@ -274,7 +236,7 @@ interface nsIScriptSecurityManager : nsIXPCSecurityManager
 
 
     const unsigned long NO_APP_ID = 0;
-    const unsigned long UNKNOWN_APP_ID = 4294967295; // PR_UINT32_MAX
+    const unsigned long UNKNOWN_APP_ID = 4294967295; // UINT32_MAX
 
     /**
      * Returns the extended origin for the uri.

@@ -249,6 +249,29 @@ nsCSSToken::AppendToString(nsString& aBuffer)
   }
 }
 
+class DeferredCleanupRunnable : public nsRunnable
+{
+public:
+  DeferredCleanupRunnable(nsCSSScanner* aToClean)
+    : mToClean(aToClean)
+  {}
+
+  NS_IMETHOD Run() {
+    if (mToClean) {
+      mToClean->PerformDeferredCleanup();
+    }
+
+    return NS_OK;
+  }
+
+  void Revoke() {
+    mToClean = nullptr;
+  }
+
+private:
+  nsCSSScanner* mToClean;
+};
+
 nsCSSScanner::nsCSSScanner()
   : mReadPointer(nullptr)
   , mSVGMode(false)
@@ -271,13 +294,24 @@ nsCSSScanner::nsCSSScanner()
 nsCSSScanner::~nsCSSScanner()
 {
   MOZ_COUNT_DTOR(nsCSSScanner);
-  Close();
+  Reset();
   if (mLocalPushback != mPushback) {
     delete [] mPushback;
   }
 }
 
 #ifdef CSS_REPORT_PARSE_ERRORS
+void
+nsCSSScanner::PerformDeferredCleanup()
+{
+  // Clean up all short term caches.
+  mCachedURI = nullptr;
+  mCachedFileName.Truncate();
+
+  // Release our DeferredCleanupRunnable.
+  mDeferredCleaner.Forget();
+}
+
 #define CSS_ERRORS_PREF "layout.css.report_errors"
 
 static int
@@ -331,17 +365,13 @@ nsCSSScanner::Init(const nsAString& aBuffer,
   mCount = aBuffer.Length();
 
 #ifdef CSS_REPORT_PARSE_ERRORS
-  // If aURI is the same as mURI, no need to reget mFileName -- it
-  // shouldn't have changed.
-  if (aURI != mURI) {
-    mURI = aURI;
-    if (aURI) {
-      aURI->GetSpec(mFileName);
-    } else {
-      mFileName.Adopt(NS_strdup("from DOM"));
-    }
+  // If aURI is different from mCachedURI, invalidate the filename cache.
+  if (aURI != mCachedURI) {
+    mCachedURI = aURI;
+    mCachedFileName.Truncate();
   }
 #endif // CSS_REPORT_PARSE_ERRORS
+
   mLineNumber = aLineNumber;
 
   // Reset variables that we use to keep track of our progress through the input
@@ -406,9 +436,20 @@ nsCSSScanner::OutputError()
       do_CreateInstance(gScriptErrorFactory, &rv);
 
     if (NS_SUCCEEDED(rv)) {
-      rv = errorObject->InitWithWindowID(mError.get(),
-                                         NS_ConvertUTF8toUTF16(mFileName).get(),
-                                         EmptyString().get(),
+      // Update the cached filename if needed.
+      if (mCachedFileName.IsEmpty()) {
+        if (mCachedURI) {
+          nsAutoCString cFileName;
+          mCachedURI->GetSpec(cFileName);
+          CopyUTF8toUTF16(cFileName, mCachedFileName);
+        } else {
+          mCachedFileName.AssignLiteral("from DOM");
+        }
+      }
+
+      rv = errorObject->InitWithWindowID(mError,
+                                         mCachedFileName,
+                                         EmptyString(),
                                          mErrorLineNumber,
                                          mErrorColNumber,
                                          nsIScriptError::warningFlag,
@@ -555,18 +596,36 @@ nsCSSScanner::ReportUnexpectedTokenParams(nsCSSToken& tok,
 void
 nsCSSScanner::Close()
 {
+  Reset();
+
+  // Schedule deferred cleanup for cached data. We want to strike a balance
+  // between performance and memory usage, so we only allow short-term caching.
+#ifdef CSS_REPORT_PARSE_ERRORS
+  if (!mDeferredCleaner.IsPending()) {
+    mDeferredCleaner = new DeferredCleanupRunnable(this);
+    if (NS_FAILED(NS_DispatchToCurrentThread(mDeferredCleaner.get()))) {
+      // Peform the "deferred" cleanup immediately if the dispatch fails.
+      // This will also have the effect of clearing mDeferredCleaner.
+      nsCSSScanner::PerformDeferredCleanup();
+    }
+  }
+#endif
+}
+
+void
+nsCSSScanner::Reset()
+{
   mReadPointer = nullptr;
 
   // Clean things up so we don't hold on to memory if our parser gets recycled.
 #ifdef CSS_REPORT_PARSE_ERRORS
-  mFileName.Truncate();
-  mURI = nullptr;
   mError.Truncate();
   mInnerWindowID = 0;
   mWindowIDCached = false;
   mSheet = nullptr;
   mLoader = nullptr;
 #endif
+
   if (mPushback != mLocalPushback) {
     delete [] mPushback;
     mPushback = mLocalPushback;
@@ -728,13 +787,7 @@ nsCSSScanner::Next(nsCSSToken& aToken)
 
     // AT_KEYWORD
     if (ch == '@') {
-      int32_t nextChar = Read();
-      if (nextChar >= 0) {
-        int32_t followingChar = Peek();
-        Pushback(nextChar);
-        if (StartsIdent(nextChar, followingChar))
-          return ParseAtKeyword(ch, aToken);
-      }
+      return ParseAtKeyword(aToken);
     }
 
     // NUMBER or DIM
@@ -1028,8 +1081,8 @@ nsCSSScanner::GatherIdent(int32_t aChar, nsString& aIdent)
     if (!ParseAndAppendEscape(aIdent, false)) {
       return false;
     }
-  }
-  else if (0 < aChar) {
+  } else {
+    MOZ_ASSERT(aChar > 0);
     aIdent.Append(aChar);
   }
   for (;;) {
@@ -1065,6 +1118,7 @@ nsCSSScanner::GatherIdent(int32_t aChar, nsString& aIdent)
       break;
     }
   }
+  MOZ_ASSERT(aIdent.Length() > 0);
   return true;
 }
 
@@ -1124,14 +1178,21 @@ nsCSSScanner::ParseIdent(int32_t aChar, nsCSSToken& aToken)
 }
 
 bool
-nsCSSScanner::ParseAtKeyword(int32_t aChar, nsCSSToken& aToken)
+nsCSSScanner::ParseAtKeyword(nsCSSToken& aToken)
 {
-  aToken.mIdent.SetLength(0);
-  aToken.mType = eCSSToken_AtKeyword;
-  if (!GatherIdent(0, aToken.mIdent)) {
-    aToken.mType = eCSSToken_Symbol;
-    aToken.mSymbol = PRUnichar('@');
+  int32_t ch = Read();
+  if (StartsIdent(ch, Peek())) {
+    aToken.mIdent.SetLength(0);
+    aToken.mType = eCSSToken_AtKeyword;
+    if (GatherIdent(ch, aToken.mIdent)) {
+      return true;
+    }
   }
+  if (ch >= 0) {
+    Pushback(ch);
+  }
+  aToken.mType = eCSSToken_Symbol;
+  aToken.mSymbol = PRUnichar('@');
   return true;
 }
 
@@ -1239,9 +1300,9 @@ nsCSSScanner::ParseNumber(int32_t c, nsCSSToken& aToken)
   } else if (!gotDot) {
     // Clamp values outside of integer range.
     if (sign > 0) {
-      aToken.mInteger = int32_t(NS_MIN(intPart, double(PR_INT32_MAX)));
+      aToken.mInteger = int32_t(NS_MIN(intPart, double(INT32_MAX)));
     } else {
-      aToken.mInteger = int32_t(NS_MAX(-intPart, double(PR_INT32_MIN)));
+      aToken.mInteger = int32_t(NS_MAX(-intPart, double(INT32_MIN)));
     }
     aToken.mIntegerValid = true;
   }

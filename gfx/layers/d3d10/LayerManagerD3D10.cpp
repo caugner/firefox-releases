@@ -244,7 +244,7 @@ LayerManagerD3D10::Initialize(bool force)
     */
     nsRefPtr<IDXGISwapChain1> swapChain1;
     hr = dxgiFactory->CreateSwapChainForCoreWindow(
-           dxgiDevice, (IUnknown *)mWidget->GetNativeData(NS_NATIVE_WINDOW),
+           dxgiDevice, (IUnknown *)mWidget->GetNativeData(NS_NATIVE_ICOREWINDOW),
            &swapDesc, nullptr, getter_AddRefs(swapChain1));
     if (FAILED(hr)) {
         return false;
@@ -359,6 +359,12 @@ LayerManagerD3D10::EndTransaction(DrawThebesLayerCallback aCallback,
   if (mRoot && !(aFlags & END_NO_IMMEDIATE_REDRAW)) {
     mCurrentCallbackInfo.Callback = aCallback;
     mCurrentCallbackInfo.CallbackData = aCallbackData;
+
+    if (aFlags & END_NO_COMPOSITE) {
+      // Apply pending tree updates before recomputing effective
+      // properties.
+      mRoot->ApplyPendingUpdatesToSubtree();
+    }
 
     // The results of our drawing always go directly into a pixel buffer,
     // so we don't need to pass any global transform here.

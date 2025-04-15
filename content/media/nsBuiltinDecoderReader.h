@@ -53,7 +53,7 @@ public:
   bool mHasVideo;
 };
 
-#ifdef MOZ_SAMPLE_TYPE_S16LE
+#ifdef MOZ_SAMPLE_TYPE_S16
 #include <ogg/os_types.h>
 typedef ogg_int32_t VorbisPCMValue;
 typedef short AudioDataValue;
@@ -121,6 +121,12 @@ public:
   nsAutoArrayPtr<AudioDataValue> mAudioData;
 };
 
+namespace mozilla {
+namespace layers {
+class GraphicBufferLocked;
+}
+}
+
 // Holds a decoded video frame, in YCbCr format. These are queued in the reader.
 class VideoData {
 public:
@@ -156,6 +162,16 @@ public:
                            int64_t aTime,
                            int64_t aEndTime,
                            const YCbCrBuffer &aBuffer,
+                           bool aKeyframe,
+                           int64_t aTimecode,
+                           nsIntRect aPicture);
+
+  static VideoData* Create(nsVideoInfo& aInfo,
+                           ImageContainer* aContainer,
+                           int64_t aOffset,
+                           int64_t aTime,
+                           int64_t aEndTime,
+                           mozilla::layers::GraphicBufferLocked *aBuffer,
                            bool aKeyframe,
                            int64_t aTimecode,
                            nsIntRect aPicture);
@@ -362,6 +378,7 @@ public:
   typedef mozilla::ReentrantMonitor ReentrantMonitor;
   typedef mozilla::ReentrantMonitorAutoEnter ReentrantMonitorAutoEnter;
   typedef mozilla::VideoFrameContainer VideoFrameContainer;
+  typedef mozilla::MediaByteRange MediaByteRange;
 
   nsBuiltinDecoderReader(nsBuiltinDecoder* aDecoder);
   virtual ~nsBuiltinDecoderReader();
@@ -398,7 +415,7 @@ public:
   // Stores the presentation time of the first frame we'd be able to play if
   // we started playback at the current position. Returns the first video
   // frame, if we have video.
-  VideoData* FindStartTime(int64_t& aOutStartTime);
+  virtual VideoData* FindStartTime(int64_t& aOutStartTime);
 
   // Moves the decode head to aTime microseconds. aStartTime and aEndTime
   // denote the start and end times of the media in usecs, and aCurrentTime
@@ -408,6 +425,7 @@ public:
                         int64_t aEndTime,
                         int64_t aCurrentTime) = 0;
 
+protected:
   // Queue of audio frames. This queue is threadsafe, and is accessed from
   // the audio, decoder, state machine, and main threads.
   MediaQueue<AudioData> mAudioQueue;
@@ -416,6 +434,7 @@ public:
   // the decoder, state machine, and main threads.
   MediaQueue<VideoData> mVideoQueue;
 
+public:
   // Populates aBuffered with the time ranges which are buffered. aStartTime
   // must be the presentation time of the first frame in the media, e.g.
   // the media time corresponding to playback time/position 0. This function
@@ -435,7 +454,7 @@ public:
     int64_t mResult;
   };
 
-  int64_t VideoQueueMemoryInUse() {
+  virtual int64_t VideoQueueMemoryInUse() {
     VideoQueueMemoryFunctor functor;
     mVideoQueue.LockedForEach(functor);
     return functor.mResult;
@@ -454,7 +473,7 @@ public:
     int64_t mResult;
   };
 
-  int64_t AudioQueueMemoryInUse() {
+  virtual int64_t AudioQueueMemoryInUse() {
     AudioQueueMemoryFunctor functor;
     mAudioQueue.LockedForEach(functor);
     return functor.mResult;
@@ -464,21 +483,38 @@ public:
   // reader than inherits from nsBuiltinDecoderReader.
   virtual void NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset) {}
 
-protected:
+  virtual MediaQueue<AudioData>& AudioQueue() { return mAudioQueue; }
+  virtual MediaQueue<VideoData>& VideoQueue() { return mVideoQueue; }
 
-  // Pumps the decode until we reach frames required to play at time aTarget
-  // (usecs).
-  nsresult DecodeToTarget(int64_t aTarget);
+  // Returns a pointer to the decoder.
+  nsBuiltinDecoder* GetDecoder() {
+    return mDecoder;
+  }
 
   // Reader decode function. Matches DecodeVideoFrame() and
   // DecodeAudioData().
   typedef bool (nsBuiltinDecoderReader::*DecodeFn)();
 
   // Calls aDecodeFn on *this until aQueue has an item, whereupon
-  // we return the first item.
+  // we return the first item. Note: Inline defn. for external accessibility.
   template<class Data>
   Data* DecodeToFirstData(DecodeFn aDecodeFn,
-                          MediaQueue<Data>& aQueue);
+                          MediaQueue<Data>& aQueue)
+  {
+    bool eof = false;
+    while (!eof && aQueue.GetSize() == 0) {
+      {
+        ReentrantMonitorAutoEnter decoderMon(mDecoder->GetReentrantMonitor());
+        if (mDecoder->GetDecodeState()
+            == nsDecoderStateMachine::DECODER_STATE_SHUTDOWN) {
+          return nullptr;
+        }
+      }
+      eof = !(this->*aDecodeFn)();
+    }
+    Data* d = nullptr;
+    return (d = aQueue.PeekFront()) ? d : nullptr;
+  }
 
   // Wrapper so that DecodeVideoFrame(bool&,int64_t) can be called from
   // DecodeToFirstData().
@@ -486,6 +522,22 @@ protected:
     bool f = false;
     return DecodeVideoFrame(f, 0);
   }
+
+  // Sets range for initialization bytes; used by DASH.
+  virtual void SetInitByteRange(MediaByteRange &aByteRange) { }
+
+  // Sets range for index frame bytes; used by DASH.
+  virtual void SetIndexByteRange(MediaByteRange &aByteRange) { }
+
+  // Returns list of ranges for index frame start/end offsets. Used by DASH.
+  virtual nsresult GetIndexByteRanges(nsTArray<MediaByteRange>& aByteRanges) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+protected:
+  // Pumps the decode until we reach frames required to play at time aTarget
+  // (usecs).
+  nsresult DecodeToTarget(int64_t aTarget);
 
   // Reference to the owning decoder object.
   nsBuiltinDecoder* mDecoder;

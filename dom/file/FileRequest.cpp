@@ -11,7 +11,7 @@
 #include "nsContentUtils.h"
 #include "nsEventDispatcher.h"
 #include "nsError.h"
-#include "nsDOMProgressEvent.h"
+#include "nsIDOMProgressEvent.h"
 #include "nsDOMClassInfoID.h"
 #include "FileHelper.h"
 #include "LockedFile.h"
@@ -110,15 +110,11 @@ FileRequest::GetLockedFile(nsIDOMLockedFile** aLockedFile)
 NS_IMPL_CYCLE_COLLECTION_CLASS(FileRequest)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(FileRequest, DOMRequest)
-  // Don't need NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS because
-  // nsDOMEventTargetHelper does it for us.
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(progress)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mLockedFile,
                                                        nsIDOMLockedFile)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(FileRequest, DOMRequest)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(progress)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLockedFile)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
@@ -142,32 +138,19 @@ FileRequest::FireProgressEvent(uint64_t aLoaded, uint64_t aTotal)
     return;
   }
 
-  nsRefPtr<nsDOMProgressEvent> event = new nsDOMProgressEvent(nullptr, nullptr);
-  nsresult rv = event->InitProgressEvent(NS_LITERAL_STRING("progress"),
-                                         false, false, false, aLoaded, aTotal);
+  nsCOMPtr<nsIDOMEvent> event;
+  nsresult rv = NS_NewDOMProgressEvent(getter_AddRefs(event), nullptr, nullptr);
   if (NS_FAILED(rv)) {
     return;
   }
 
-  rv = event->SetTrusted(true);
+  nsCOMPtr<nsIDOMProgressEvent> progress = do_QueryInterface(event);
+  MOZ_ASSERT(progress);
+  rv = progress->InitProgressEvent(NS_LITERAL_STRING("progress"), false, false,
+                                   false, aLoaded, aTotal);
   if (NS_FAILED(rv)) {
     return;
   }
 
-  bool dummy;
-  rv = DispatchEvent(static_cast<nsIDOMProgressEvent*>(event), &dummy);
-  if (NS_FAILED(rv)) {
-    return;
-  }
-}
-
-void
-FileRequest::RootResultVal()
-{
-  NS_ASSERTION(!mRooted, "Don't call me if already rooted!");
-  nsXPCOMCycleCollectionParticipant *participant;
-  CallQueryInterface(this, &participant);
-  nsContentUtils::HoldJSObjects(NS_CYCLE_COLLECTION_UPCAST(this, DOMRequest),
-                                participant);
-  mRooted = true;
+  DispatchTrustedEvent(event);
 }

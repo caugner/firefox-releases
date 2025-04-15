@@ -12,6 +12,11 @@ include protocol PBrowser;
 include protocol PWyciwygChannel;
 include protocol PFTPChannel;
 include protocol PWebSocket;
+include protocol PTCPSocket;
+
+include "SerializedLoadContext.h";
+
+using IPC::SerializedLoadContext;
 
 namespace mozilla {
 namespace net {
@@ -26,20 +31,23 @@ sync protocol PNecko
   manages PWyciwygChannel;
   manages PFTPChannel;
   manages PWebSocket;
+  manages PTCPSocket;
 
 parent:
   __delete__();
 
   PCookieService();
+  PHttpChannel(nullable PBrowser browser,
+               SerializedLoadContext loadContext);
   PWyciwygChannel();
   PFTPChannel();
   PWebSocket(PBrowser browser);
+  PTCPSocket(nsString host, uint16_t port, bool useSSL, nsString binaryType,
+             nullable PBrowser browser);
 
   HTMLDNSPrefetch(nsString hostname, uint16_t flags);
   CancelHTMLDNSPrefetch(nsString hostname, uint16_t flags, nsresult reason);
 
-both:
-  PHttpChannel(nullable PBrowser browser);
 };
 
 

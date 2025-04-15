@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "base/basictypes.h"
-#include "IPC/IPCMessageUtils.h"
+#include "ipc/IPCMessageUtils.h"
 #include "nsCOMPtr.h"
 #include "nsDOMUIEvent.h"
 #include "nsIPresShell.h"
@@ -115,7 +115,6 @@ nsDOMUIEvent::GetMovementPoint()
         mEvent->eventStructType != NS_POPUP_EVENT &&
         mEvent->eventStructType != NS_MOUSE_SCROLL_EVENT &&
         mEvent->eventStructType != NS_WHEEL_EVENT &&
-        mEvent->eventStructType != NS_MOZTOUCH_EVENT &&
         mEvent->eventStructType != NS_DRAG_EVENT &&
         mEvent->eventStructType != NS_SIMPLE_GESTURE_EVENT)) {
     return nsIntPoint(0, 0);
@@ -255,7 +254,7 @@ nsDOMUIEvent::GetRangeParent(nsIDOMNode** aRangeParent)
                                                               targetFrame);
     nsCOMPtr<nsIContent> parent = targetFrame->GetContentOffsetsFromPoint(pt).content;
     if (parent) {
-      if (parent->IsInNativeAnonymousSubtree() &&
+      if (parent->ChromeOnlyAccess() &&
           !nsContentUtils::CanAccessNativeAnon()) {
         return NS_OK;
       }
@@ -314,7 +313,6 @@ nsDOMUIEvent::GetLayerPoint()
        mEvent->eventStructType != NS_POPUP_EVENT &&
        mEvent->eventStructType != NS_MOUSE_SCROLL_EVENT &&
        mEvent->eventStructType != NS_WHEEL_EVENT &&
-       mEvent->eventStructType != NS_MOZTOUCH_EVENT &&
        mEvent->eventStructType != NS_TOUCH_EVENT &&
        mEvent->eventStructType != NS_DRAG_EVENT &&
        mEvent->eventStructType != NS_SIMPLE_GESTURE_EVENT) ||

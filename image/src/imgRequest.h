@@ -21,16 +21,16 @@
 
 #include "nsCategoryCache.h"
 #include "nsCOMPtr.h"
-#include "nsString.h"
+#include "nsStringGlue.h"
 #include "nsTObserverArray.h"
 #include "nsWeakReference.h"
 #include "nsError.h"
 #include "imgIRequest.h"
-#include "imgStatusTracker.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 
 class imgCacheValidator;
-
+class imgStatusTracker;
+class imgLoader;
 class imgRequestProxy;
 class imgCacheEntry;
 class imgMemoryReporter;
@@ -50,7 +50,7 @@ class imgRequest : public imgIDecoderObserver,
                    public nsIAsyncVerifyRedirectCallback
 {
 public:
-  imgRequest();
+  imgRequest(imgLoader* aLoader);
   virtual ~imgRequest();
 
   NS_DECL_ISUPPORTS
@@ -65,12 +65,12 @@ public:
                 int32_t aCORSMode);
 
   // Callers must call imgRequestProxy::Notify later.
-  nsresult AddProxy(imgRequestProxy *proxy);
+  void AddProxy(imgRequestProxy *proxy);
 
   // aNotify==false still sends OnStopRequest.
   nsresult RemoveProxy(imgRequestProxy *proxy, nsresult aStatus, bool aNotify);
 
-  void SniffMimeType(const char *buf, uint32_t len);
+  void SniffMimeType(const char *buf, uint32_t len, nsACString& newType);
 
   // Cancel, but also ensure that all work done in Init() is undone. Call this
   // only when the channel has failed to open, and so calling Cancel() on it
@@ -183,6 +183,8 @@ public:
 private:
   friend class imgMemoryReporter;
 
+  // Weak reference to parent loader; this request cannot outlive its owner.
+  imgLoader* mLoader;
   nsCOMPtr<nsIRequest> mRequest;
   // The original URI we were loaded with. This is the same as the URI we are
   // keyed on in the cache.
@@ -231,6 +233,7 @@ private:
   bool mGotData : 1;
   bool mIsInCache : 1;
   bool mBlockingOnload : 1;
+  bool mResniffMimeType : 1;
 };
 
 #endif

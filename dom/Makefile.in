@@ -35,6 +35,7 @@ PARALLEL_DIRS = \
   interfaces/offline \
   interfaces/geolocation \
   interfaces/notification \
+  interfaces/permission \
   interfaces/svg \
   interfaces/smil \
   interfaces/apps \
@@ -46,10 +47,13 @@ PARALLEL_DIRS += \
   activities \
   bindings \
   battery \
+  bluetooth \
   browser-element \
   contacts \
+  phonenumberutils \
   alarm \
   devicestorage \
+  encoding \
   file \
   media \
   messages \
@@ -58,6 +62,7 @@ PARALLEL_DIRS += \
   sms \
   mms \
   src \
+  time \
   locales \
   network \
   permission \
@@ -69,18 +74,25 @@ PARALLEL_DIRS += \
   identity \
   workers \
   camera \
+  audiochannel \
   $(NULL)
 
 ifdef MOZ_B2G_RIL
 PARALLEL_DIRS += \
   telephony \
   wifi \
+  icc \
+  cellbroadcast \
   $(NULL)
 endif
 
-ifdef MOZ_B2G_BT
+ifdef MOZ_B2G_FM
+PARALLEL_DIRS += fm
+endif
+
+ifdef MOZ_PAY
 PARALLEL_DIRS += \
-  bluetooth \
+  payment \
   $(NULL)
 endif
 

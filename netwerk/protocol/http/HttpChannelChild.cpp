@@ -297,7 +297,7 @@ class TransportAndDataEvent : public ChannelEvent
                         const uint64_t& progress,
                         const uint64_t& progressMax,
                         const nsCString& data,
-                        const uint32_t& offset,
+                        const uint64_t& offset,
                         const uint32_t& count)
   : mChild(child)
   , mStatus(status)
@@ -315,7 +315,7 @@ class TransportAndDataEvent : public ChannelEvent
   uint64_t mProgress;
   uint64_t mProgressMax;
   nsCString mData;
-  uint32_t mOffset;
+  uint64_t mOffset;
   uint32_t mCount;
 };
 
@@ -324,7 +324,7 @@ HttpChannelChild::RecvOnTransportAndData(const nsresult& status,
                                          const uint64_t& progress,
                                          const uint64_t& progressMax,
                                          const nsCString& data,
-                                         const uint32_t& offset,
+                                         const uint64_t& offset,
                                          const uint32_t& count)
 {
   if (mEventQ.ShouldEnqueue()) {
@@ -342,7 +342,7 @@ HttpChannelChild::OnTransportAndData(const nsresult& status,
                                      const uint64_t progress,
                                      const uint64_t& progressMax,
                                      const nsCString& data,
-                                     const uint32_t& offset,
+                                     const uint64_t& offset,
                                      const uint32_t& count)
 {
   LOG(("HttpChannelChild::OnTransportAndData [this=%x]\n", this));
@@ -372,7 +372,7 @@ HttpChannelChild::OnTransportAndData(const nsresult& status,
                  status == NS_NET_STATUS_READING,
                  "unexpected status code");
 
-    nsCAutoString host;
+    nsAutoCString host;
     mURI->GetHost(host);
     mProgressSink->OnStatus(this, nullptr, status,
                             NS_ConvertUTF8toUTF16(host).get());
@@ -568,7 +568,7 @@ HttpChannelChild::OnStatus(const nsresult& status)
   if (mProgressSink && NS_SUCCEEDED(mStatus) && mIsPending && 
       !(mLoadFlags & LOAD_BACKGROUND)) 
   {
-    nsCAutoString host;
+    nsAutoCString host;
     mURI->GetHost(host);
     mProgressSink->OnStatus(this, nullptr, status,
                             NS_ConvertUTF8toUTF16(host).get());
@@ -724,8 +724,8 @@ HttpChannelChild::Redirect1Begin(const uint32_t& newChannelId,
   mResponseHead = new nsHttpResponseHead(responseHead);
   SetCookie(mResponseHead->PeekHeader(nsHttp::Set_Cookie));
 
-  bool rewriteToGET = ShouldRewriteRedirectToGET(mResponseHead->Status(), 
-                                                 mRequestHead.Method());
+  bool rewriteToGET = nsHttp::ShouldRewriteRedirectToGET(
+                               mResponseHead->Status(), mRequestHead.Method());
   
   rv = SetupReplacementChannel(uri, newChannel, !rewriteToGET);
   if (NS_FAILED(rv)) {
@@ -807,8 +807,10 @@ HttpChannelChild::ConnectParent(uint32_t id)
   // until OnStopRequest, or we do a redirect, or we hit an IPDL error.
   AddIPDLReference();
 
-  if (!gNeckoChild->SendPHttpChannelConstructor(this, tabChild))
+  if (!gNeckoChild->SendPHttpChannelConstructor(
+                      this, tabChild, IPC::SerializedLoadContext(this))) {
     return NS_ERROR_FAILURE;
+  }
 
   if (!SendConnectChannel(id))
     return NS_ERROR_FAILURE;
@@ -1037,7 +1039,8 @@ HttpChannelChild::AsyncOpen(nsIStreamListener *listener, nsISupports *aContext)
   // until OnStopRequest, or we do a redirect, or we hit an IPDL error.
   AddIPDLReference();
 
-  gNeckoChild->SendPHttpChannelConstructor(this, tabChild);
+  gNeckoChild->SendPHttpChannelConstructor(this, tabChild,
+                                           IPC::SerializedLoadContext(this));
 
   URIParams uri;
   SerializeURI(mURI, uri);
@@ -1055,7 +1058,7 @@ HttpChannelChild::AsyncOpen(nsIStreamListener *listener, nsISupports *aContext)
                 mUploadStreamHasHeaders, mPriority, mRedirectionLimit,
                 mAllowPipelining, mForceAllowThirdPartyCookie, mSendResumeAt,
                 mStartPos, mEntityID, mChooseApplicationCache,
-                appCacheClientId, mAllowSpdy, IPC::SerializedLoadContext(this));
+                appCacheClientId, mAllowSpdy);
 
   return NS_OK;
 }
@@ -1193,7 +1196,7 @@ HttpChannelChild::ResumeAt(uint64_t startPos, const nsACString& entityID)
 NS_IMETHODIMP
 HttpChannelChild::SetPriority(int32_t aPriority)
 {
-  int16_t newValue = clamped(aPriority, PR_INT16_MIN, PR_INT16_MAX);
+  int16_t newValue = clamped<int32_t>(aPriority, INT16_MIN, INT16_MAX);
   if (mPriority == newValue)
     return NS_OK;
   mPriority = newValue;

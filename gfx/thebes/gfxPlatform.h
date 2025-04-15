@@ -6,7 +6,6 @@
 #ifndef GFX_PLATFORM_H
 #define GFX_PLATFORM_H
 
-#include "prtypes.h"
 #include "prlog.h"
 #include "nsTArray.h"
 #include "nsStringGlue.h"
@@ -126,6 +125,8 @@ GetBackendName(mozilla::gfx::BackendType aBackend)
         return "cairo";
       case mozilla::gfx::BACKEND_SKIA:
         return "skia";
+      case mozilla::gfx::BACKEND_RECORDING:
+        return "recording";
       case mozilla::gfx::BACKEND_NONE:
         return "none";
   }
@@ -184,8 +185,27 @@ public:
     virtual mozilla::RefPtr<mozilla::gfx::SourceSurface>
       GetSourceSurfaceForSurface(mozilla::gfx::DrawTarget *aTarget, gfxASurface *aSurface);
 
-    virtual mozilla::RefPtr<mozilla::gfx::ScaledFont>
+    virtual mozilla::TemporaryRef<mozilla::gfx::ScaledFont>
       GetScaledFontForFont(mozilla::gfx::DrawTarget* aTarget, gfxFont *aFont);
+
+    /*
+     * Cairo doesn't give us a way to create a surface pointing to a context
+     * without marking it as copy on write. For canvas we want to create
+     * a surface that points to what is currently being drawn by a canvas
+     * without a copy thus we need to create a special case. This works on
+     * most platforms with GetThebesSurfaceForDrawTarget but fails on Mac
+     * because when we create the surface we vm_copy the memory and never
+     * notify the context that the canvas has drawn to it thus we end up
+     * with a static snapshot.
+     *
+     * This function guarantes that the gfxASurface reflects the DrawTarget.
+     */
+    virtual already_AddRefed<gfxASurface>
+      CreateThebesSurfaceAliasForDrawTarget_hack(mozilla::gfx::DrawTarget *aTarget) {
+      // Overwrite me on platform where GetThebesSurfaceForDrawTarget returns
+      // a snapshot of the draw target.
+      return GetThebesSurfaceForDrawTarget(aTarget);
+    }
 
     virtual already_AddRefed<gfxASurface>
       GetThebesSurfaceForDrawTarget(mozilla::gfx::DrawTarget *aTarget);
@@ -198,11 +218,14 @@ public:
                               int32_t aStride, mozilla::gfx::SurfaceFormat aFormat);
 
     bool SupportsAzureCanvas();
+    bool SupportsAzureContent() {
+      return GetContentBackend() != mozilla::gfx::BACKEND_NONE;
+    }
 
     void GetAzureBackendInfo(mozilla::widget::InfoObject &aObj) {
       aObj.DefineProperty("AzureCanvasBackend", GetBackendName(mPreferredCanvasBackend));
       aObj.DefineProperty("AzureFallbackCanvasBackend", GetBackendName(mFallbackCanvasBackend));
-      aObj.DefineProperty("AzureContentBackend", GetBackendName(GetContentBackend()));
+      aObj.DefineProperty("AzureContentBackend", GetBackendName(mContentBackend));
     }
 
     mozilla::gfx::BackendType GetPreferredCanvasBackend() {
@@ -307,6 +330,13 @@ public:
      */
     virtual bool FontHintingEnabled() { return true; }
 
+    bool UsesSubpixelAATextRendering() {
+#ifdef MOZ_GFX_OPTIMIZE_MOBILE
+	return false;
+#endif
+	return true;
+    }
+
     /**
      * Whether to check all font cmaps during system font fallback
      */
@@ -375,9 +405,6 @@ public:
 
     // Break large OMTC tiled thebes layer painting into small paints.
     static bool UseProgressiveTilePainting();
-
-    // helper method to indicate if we want to use Azure content drawing
-    static bool UseAzureContentDrawing();
 
     static bool OffMainThreadCompositingEnabled();
 
@@ -478,17 +505,35 @@ protected:
      * The backend used is determined by aBackendBitmask and the order specified
      * by the gfx.canvas.azure.backends pref.
      */
-    void InitCanvasBackend(uint32_t aBackendBitmask);
+    void InitBackendPrefs(uint32_t aCanvasBitmask, uint32_t aContentBitmask);
+
     /**
      * returns the first backend named in the pref gfx.canvas.azure.backends
      * which is a component of aBackendBitmask, a bitmask of backend types
      */
     static mozilla::gfx::BackendType GetCanvasBackendPref(uint32_t aBackendBitmask);
+
+    /**
+     * returns the first backend named in the pref gfx.content.azure.backend
+     * which is a component of aBackendBitmask, a bitmask of backend types
+     */
+    static mozilla::gfx::BackendType GetContentBackendPref(uint32_t aBackendBitmask);
+
+    /**
+     * Checks the aEnabledPrefName pref and returns BACKEND_NONE if the pref is
+     * not enabled. Otherwise it will return the first backend named in
+     * aBackendPrefName allowed by aBackendBitmask, a bitmask of backend types.
+     */
+    static mozilla::gfx::BackendType GetBackendPref(const char* aEnabledPrefName,
+                                                    const char* aBackendPrefName,
+                                                    uint32_t aBackendBitmask);
+    /**
+     * Decode the backend enumberation from a string.
+     */
     static mozilla::gfx::BackendType BackendTypeForName(const nsCString& aName);
 
-    virtual mozilla::gfx::BackendType GetContentBackend()
-    {
-      return mozilla::gfx::BACKEND_NONE;
+    mozilla::gfx::BackendType GetContentBackend() {
+      return mContentBackend;
     }
 
     int8_t  mAllowDownloadableFonts;
@@ -523,9 +568,13 @@ private:
     mozilla::gfx::BackendType mPreferredCanvasBackend;
     // The fallback draw target backend to use for canvas, if the preferred backend fails
     mozilla::gfx::BackendType mFallbackCanvasBackend;
+    // The backend to use for content
+    mozilla::gfx::BackendType mContentBackend;
 
     mozilla::widget::GfxInfoCollector<gfxPlatform> mAzureCanvasBackendCollector;
     bool mWorkAroundDriverBugs;
+
+    mozilla::RefPtr<mozilla::gfx::DrawEventRecorder> mRecorder;
 };
 
 #endif /* GFX_PLATFORM_H */

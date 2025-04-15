@@ -54,11 +54,6 @@ public:
 
 private:
   /**
-   * Dispatch a trusted non-cancellable and non-bubbling event to itself.
-   */
-  nsresult DispatchTrustedEventToSelf(const nsAString& aEventName);
-
-  /**
    * Update the battery information stored in the battery manager object using
    * a battery information object.
    */
@@ -71,11 +66,6 @@ private:
    * current battery status (charging or not).
    */
   double mRemainingTime;
-
-  NS_DECL_EVENT_HANDLER(levelchange)
-  NS_DECL_EVENT_HANDLER(chargingchange)
-  NS_DECL_EVENT_HANDLER(chargingtimechange)
-  NS_DECL_EVENT_HANDLER(dischargingtimechange)
 };
 
 } // namespace battery

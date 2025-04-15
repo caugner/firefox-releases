@@ -6,6 +6,13 @@
 var testGenerator = testSteps();
 var archiveReaderEnabled = false;
 
+// The test js is shared between xpcshell (which has no SpecialPowers object)
+// and content mochitests (where the |Components| object is accessible only as
+// SpecialPowers.Components). Expose Components if necessary here to make things
+// work everywhere.
+if (typeof Components === 'undefined')
+  Components = SpecialPowers.Components;
+
 function executeSoon(aFun)
 {
   let comp = SpecialPowers.wrap(Components);
@@ -42,8 +49,9 @@ function clearAllDatabases(callback) {
   idbManager.clearDatabasesForURI(uri);
   idbManager.getUsageForURI(uri, function(uri, usage, fileUsage) {
     if (usage) {
-      throw new Error("getUsageForURI returned non-zero usage after " +
-                      "clearing all databases!");
+      ok(false,
+         "getUsageForURI returned non-zero usage after clearing all " +
+         "databases!");
     }
     runCallback();
   });

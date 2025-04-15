@@ -28,6 +28,7 @@
 #include "nsAnimationManager.h"
 #include "nsEventStates.h"
 #include "mozilla/dom/Element.h"
+#include "sampler.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -446,9 +447,7 @@ IsMoreSpecificThanAnimation(nsRuleNode *aRuleNode)
 {
   return !aRuleNode->IsRoot() &&
          (aRuleNode->GetLevel() == nsStyleSet::eTransitionSheet ||
-          (aRuleNode->IsImportantRule() &&
-           (aRuleNode->GetLevel() == nsStyleSet::eAgentSheet ||
-            aRuleNode->GetLevel() == nsStyleSet::eUserSheet)));
+          aRuleNode->IsImportantRule());
 }
 
 static nsIStyleRule*
@@ -575,13 +574,13 @@ nsStyleSet::GetContext(nsStyleContext* aParentContext,
 
   if (!result) {
     result = NS_NewStyleContext(aParentContext, aPseudoTag, aPseudoType,
-                                aRuleNode, PresContext());
+                                aRuleNode);
     if (!result)
       return nullptr;
     if (aVisitedRuleNode) {
       nsRefPtr<nsStyleContext> resultIfVisited =
         NS_NewStyleContext(parentIfVisited, aPseudoTag, aPseudoType,
-                           aVisitedRuleNode, PresContext());
+                           aVisitedRuleNode);
       if (!resultIfVisited) {
         return nullptr;
       }
@@ -716,19 +715,21 @@ nsStyleSet::FileRules(nsIStyleRuleProcessor::EnumFunc aCollectorFunc,
                       void* aData, nsIContent* aContent,
                       nsRuleWalker* aRuleWalker)
 {
+  SAMPLE_LABEL("nsStyleSet", "FileRules");
+
   // Cascading order:
   // [least important]
-  //  1. UA normal rules                    = Agent        normal
-  //  2. User normal rules                  = User         normal
-  //  3. Presentation hints                 = PresHint     normal
-  //  4. Author normal rules                = Document     normal
-  //  5. Override normal rules              = Override     normal
-  //  6. Author !important rules            = Document     !important
-  //  7. Override !important rules          = Override     !important
-  //  -. animation rules                    = Animation    normal
-  //  8. User !important rules              = User         !important
-  //  9. UA !important rules                = Agent        !important
-  //  -. transition rules                   = Transition   normal
+  //  - UA normal rules                    = Agent        normal
+  //  - User normal rules                  = User         normal
+  //  - Presentation hints                 = PresHint     normal
+  //  - Author normal rules                = Document     normal
+  //  - Override normal rules              = Override     normal
+  //  - animation rules                    = Animation    normal
+  //  - Author !important rules            = Document     !important
+  //  - Override !important rules          = Override     !important
+  //  - User !important rules              = User         !important
+  //  - UA !important rules                = Agent        !important
+  //  - transition rules                   = Transition   normal
   // [most important]
 
   // Save off the last rule before we start walking our agent sheets;
@@ -778,6 +779,10 @@ nsStyleSet::FileRules(nsIStyleRuleProcessor::EnumFunc aCollectorFunc,
   nsRuleNode* lastOvrRN = aRuleWalker->CurrentNode();
   bool haveImportantOverrideRules = !aRuleWalker->GetCheckForImportantRules();
 
+  // This needs to match IsMoreSpecificThanAnimation() above.
+  aRuleWalker->SetLevel(eAnimationSheet, false, false);
+  (*aCollectorFunc)(mRuleProcessors[eAnimationSheet], aData);
+
   if (haveImportantDocRules) {
     aRuleWalker->SetLevel(eDocSheet, true, false);
     AddImportantRules(lastDocRN, lastPresHintRN, aRuleWalker);  // doc
@@ -797,10 +802,6 @@ nsStyleSet::FileRules(nsIStyleRuleProcessor::EnumFunc aCollectorFunc,
     AssertNoImportantRules(lastOvrRN, lastDocRN);
   }
 #endif
-
-  // This needs to match IsMoreSpecificThanAnimation() above.
-  aRuleWalker->SetLevel(eAnimationSheet, false, false);
-  (*aCollectorFunc)(mRuleProcessors[eAnimationSheet], aData);
 
 #ifdef DEBUG
   AssertNoCSSRules(lastPresHintRN, lastUserRN);

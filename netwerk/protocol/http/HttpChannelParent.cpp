@@ -33,7 +33,8 @@ using namespace mozilla::ipc;
 namespace mozilla {
 namespace net {
 
-HttpChannelParent::HttpChannelParent(PBrowserParent* iframeEmbedding)
+HttpChannelParent::HttpChannelParent(PBrowserParent* iframeEmbedding,
+                                     const IPC::SerializedLoadContext& loadContext)
   : mIPCClosed(false)
   , mStoredStatus(NS_OK)
   , mStoredProgress(0)
@@ -41,13 +42,26 @@ HttpChannelParent::HttpChannelParent(PBrowserParent* iframeEmbedding)
   , mSentRedirect1Begin(false)
   , mSentRedirect1BeginFailed(false)
   , mReceivedRedirect2Verify(false)
+  , mPBOverride(kPBOverride_Unset)
 {
   // Ensure gHttpHandler is initialized: we need the atom table up and running.
   nsIHttpProtocolHandler* handler;
   CallGetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &handler);
   NS_ASSERTION(handler, "no http handler");
 
-  mTabParent = do_QueryObject(static_cast<TabParent*>(iframeEmbedding));
+  mTabParent = static_cast<mozilla::dom::TabParent*>(iframeEmbedding);
+
+  if (loadContext.IsNotNull()) {
+    if (mTabParent) {
+      mLoadContext = new LoadContext(loadContext, mTabParent->GetOwnerElement());
+    } else {
+      mLoadContext = new LoadContext(loadContext);
+    }
+  } else if (loadContext.IsPrivateBitValid()) {
+    // Don't have channel yet: override PB status after we create it.
+    mPBOverride = loadContext.mUsePrivateBrowsing ? kPBOverride_Private
+                                                  : kPBOverride_NotPrivate;
+  }
 }
 
 HttpChannelParent::~HttpChannelParent()
@@ -124,8 +138,7 @@ HttpChannelParent::RecvAsyncOpen(const URIParams&           aURI,
                                  const nsCString&           entityID,
                                  const bool&                chooseApplicationCache,
                                  const nsCString&           appCacheClientID,
-                                 const bool&                allowSpdy,
-                                 const IPC::SerializedLoadContext& loadContext)
+                                 const bool&                allowSpdy)
 {
   nsCOMPtr<nsIURI> uri = DeserializeURI(aURI);
   nsCOMPtr<nsIURI> originalUri = DeserializeURI(aOriginalURI);
@@ -147,10 +160,10 @@ HttpChannelParent::RecvAsyncOpen(const URIParams&           aURI,
   if (NS_FAILED(rv))
     return SendFailedAsyncOpen(rv);
 
-  if (loadContext.IsNotNull())
-    mLoadContext = new LoadContext(loadContext);
-
   nsHttpChannel *httpChan = static_cast<nsHttpChannel *>(mChannel.get());
+  if (mPBOverride != kPBOverride_Unset) {
+    httpChan->SetPrivate(mPBOverride == kPBOverride_Private ? true : false);
+  }
 
   if (doResumeAt)
     httpChan->ResumeAt(startPos, entityID);
@@ -240,6 +253,14 @@ HttpChannelParent::RecvConnectChannel(const uint32_t& channelId)
   LOG(("Looking for a registered channel [this=%p, id=%d]", this, channelId));
   rv = NS_LinkRedirectChannels(channelId, this, getter_AddRefs(mChannel));
   LOG(("  found channel %p, rv=%08x", mChannel.get(), rv));
+
+  if (mPBOverride != kPBOverride_Unset) {
+    // redirected-to channel may not support PB
+    nsCOMPtr<nsIPrivateBrowsingChannel> pbChannel = do_QueryInterface(mChannel);
+    if (pbChannel) {
+      pbChannel->SetPrivate(mPBOverride == kPBOverride_Private ? true : false);
+    }
+  }
 
   return true;
 }
@@ -467,7 +488,7 @@ NS_IMETHODIMP
 HttpChannelParent::OnDataAvailable(nsIRequest *aRequest, 
                                    nsISupports *aContext, 
                                    nsIInputStream *aInputStream, 
-                                   uint32_t aOffset, 
+                                   uint64_t aOffset, 
                                    uint32_t aCount)
 {
   LOG(("HttpChannelParent::OnDataAvailable [this=%x]\n", this));

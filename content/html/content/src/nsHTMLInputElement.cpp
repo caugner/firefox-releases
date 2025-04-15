@@ -6,6 +6,7 @@
 #include "mozilla/Util.h"
 
 #include "nsHTMLInputElement.h"
+#include "nsAttrValueInlines.h"
 
 #include "nsIDOMHTMLInputElement.h"
 #include "nsITextControlElement.h"
@@ -873,7 +874,6 @@ NS_IMPL_BOOL_ATTR(nsHTMLInputElement, ReadOnly, readonly)
 NS_IMPL_BOOL_ATTR(nsHTMLInputElement, Required, required)
 NS_IMPL_URI_ATTR(nsHTMLInputElement, Src, src)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, Step, step)
-NS_IMPL_INT_ATTR(nsHTMLInputElement, TabIndex, tabindex)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, UseMap, usemap)
 //NS_IMPL_STRING_ATTR(nsHTMLInputElement, Value, value)
 NS_IMPL_UINT_ATTR_NON_ZERO_DEFAULT_VALUE(nsHTMLInputElement, Size, size, DEFAULT_COLS)
@@ -881,6 +881,12 @@ NS_IMPL_STRING_ATTR(nsHTMLInputElement, Pattern, pattern)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, Placeholder, placeholder)
 NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLInputElement, Type, type,
                                 kInputDefaultType->tag)
+
+int32_t
+nsHTMLInputElement::TabIndexDefault()
+{
+  return 0;
+}
 
 NS_IMETHODIMP
 nsHTMLInputElement::GetHeight(uint32_t *aHeight)
@@ -898,20 +904,8 @@ nsHTMLInputElement::SetHeight(uint32_t aHeight)
 NS_IMETHODIMP
 nsHTMLInputElement::GetIndeterminate(bool* aValue)
 {
-  *aValue = mIndeterminate;
+  *aValue = Indeterminate();
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLInputElement::GetInputmode(nsAString& value)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-nsHTMLInputElement::SetInputmode(const nsAString& value)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 nsresult
@@ -1644,7 +1638,7 @@ nsHTMLInputElement::SetValueChanged(bool aValueChanged)
 NS_IMETHODIMP 
 nsHTMLInputElement::GetChecked(bool* aChecked)
 {
-  *aChecked = mChecked;
+  *aChecked = Checked();
   return NS_OK;
 }
 
@@ -1854,11 +1848,12 @@ nsHTMLInputElement::SetCheckedInternal(bool aChecked, bool aNotify)
   UpdateState(aNotify);
 }
 
-NS_IMETHODIMP
-nsHTMLInputElement::Focus()
+void
+nsHTMLInputElement::Focus(ErrorResult& aError)
 {
   if (mType != NS_FORM_INPUT_FILE) {
-    return nsGenericHTMLElement::Focus();
+    nsGenericHTMLElement::Focus(aError);
+    return;
   }
 
   // For file inputs, focus the button instead.
@@ -1881,7 +1876,7 @@ nsHTMLInputElement::Focus()
     }
   }
 
-  return NS_OK;
+  return;
 }
 
 NS_IMETHODIMP
@@ -1954,13 +1949,14 @@ nsHTMLInputElement::SelectAll(nsPresContext* aPresContext)
   }
 }
 
-NS_IMETHODIMP
+void
 nsHTMLInputElement::Click()
 {
-  if (mType == NS_FORM_INPUT_FILE)
+  if (mType == NS_FORM_INPUT_FILE) {
     FireAsyncClickHandler();
+  }
 
-  return nsGenericHTMLElement::Click();
+  nsGenericHTMLElement::Click();
 }
 
 NS_IMETHODIMP
@@ -2370,7 +2366,7 @@ nsHTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
                 nsCOMPtr<nsIContent> radioContent =
                   do_QueryInterface(selectedRadioButton);
                 if (radioContent) {
-                  rv = selectedRadioButton->Focus();
+                  rv = selectedRadioButton->DOMFocus();
                   if (NS_SUCCEEDED(rv)) {
                     nsEventStatus status = nsEventStatus_eIgnore;
                     nsMouseEvent event(NS_IS_TRUSTED_EVENT(aVisitor.mEvent),
@@ -4254,7 +4250,7 @@ nsHTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
     case VALIDITY_STATE_VALUE_MISSING:
     {
       nsXPIDLString message;
-      nsCAutoString key;
+      nsAutoCString key;
       switch (mType)
       {
         case NS_FORM_INPUT_FILE:
@@ -4277,7 +4273,7 @@ nsHTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
     case VALIDITY_STATE_TYPE_MISMATCH:
     {
       nsXPIDLString message;
-      nsCAutoString key;
+      nsAutoCString key;
       if (mType == NS_FORM_INPUT_EMAIL) {
         key.AssignLiteral("FormValidationInvalidEmail");
       } else if (mType == NS_FORM_INPUT_URL) {
@@ -4410,7 +4406,7 @@ nsHTMLInputElement::IsValidEmailAddressList(const nsAString& aValue)
 bool
 nsHTMLInputElement::IsValidEmailAddress(const nsAString& aValue)
 {
-  nsCAutoString value = NS_ConvertUTF16toUTF8(aValue);
+  nsAutoCString value = NS_ConvertUTF16toUTF8(aValue);
   uint32_t i = 0;
   uint32_t length = value.Length();
 
@@ -4419,7 +4415,7 @@ nsHTMLInputElement::IsValidEmailAddress(const nsAString& aValue)
   if (idnSrv) {
     bool ace;
     if (NS_SUCCEEDED(idnSrv->IsACE(value, &ace)) && !ace) {
-      nsCAutoString punyCodedValue;
+      nsAutoCString punyCodedValue;
       if (NS_SUCCEEDED(idnSrv->ConvertUTF8toACE(value, punyCodedValue))) {
         value = punyCodedValue;
         length = value.Length();

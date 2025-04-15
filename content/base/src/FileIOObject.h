@@ -40,9 +40,12 @@ public:
   NS_METHOD GetReadyState(uint16_t* aReadyState);
   NS_METHOD GetError(nsIDOMDOMError** aError);
 
-  NS_DECL_AND_IMPL_EVENT_HANDLER(abort);
-  NS_DECL_AND_IMPL_EVENT_HANDLER(error);
-  NS_DECL_AND_IMPL_EVENT_HANDLER(progress);
+  NS_METHOD GetOnabort(JSContext* aCx, JS::Value* aValue);
+  NS_METHOD SetOnabort(JSContext* aCx, const JS::Value& aValue);
+  NS_METHOD GetOnerror(JSContext* aCx, JS::Value* aValue);
+  NS_METHOD SetOnerror(JSContext* aCx, const JS::Value& aValue);
+  NS_METHOD GetOnprogress(JSContext* aCx, JS::Value* aValue);
+  NS_METHOD SetOnprogress(JSContext* aCx, const JS::Value& aValue);
 
   NS_DECL_NSITIMERCALLBACK
 
@@ -65,7 +68,7 @@ protected:
                              nsAString& aTerminationEvent) = 0;
   // and for onDataAvailable
   NS_IMETHOD DoOnDataAvailable(nsIRequest *aRequest, nsISupports *aContext,
-                               nsIInputStream *aInputStream, uint32_t aOffset,
+                               nsIInputStream *aInputStream, uint64_t aOffset,
                                uint32_t aCount) = 0;
 
   void StartProgressEventTimer();

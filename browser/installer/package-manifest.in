@@ -124,8 +124,8 @@
 #endif
 @BINPATH@/blocklist.xml
 #ifdef XP_UNIX
-@BINPATH@/run-mozilla.sh
 #ifndef XP_MACOSX
+@BINPATH@/run-mozilla.sh
 @BINPATH@/mozilla-xremote-client
 #endif
 #endif
@@ -169,6 +169,7 @@
 @BINPATH@/components/dom_telephony.xpt
 @BINPATH@/components/dom_wifi.xpt
 @BINPATH@/components/dom_system_gonk.xpt
+@BINPATH@/components/dom_icc.xpt
 #endif
 @BINPATH@/components/dom_battery.xpt
 #ifdef MOZ_B2G_BT
@@ -198,6 +199,7 @@
 @BINPATH@/components/dom_power.xpt
 @BINPATH@/components/dom_range.xpt
 @BINPATH@/components/dom_settings.xpt
+@BINPATH@/components/dom_permissionsettings.xpt
 @BINPATH@/components/dom_sidebar.xpt
 @BINPATH@/components/dom_sms.xpt
 @BINPATH@/components/dom_storage.xpt
@@ -264,6 +266,9 @@
 @BINPATH@/components/necko.xpt
 @BINPATH@/components/loginmgr.xpt
 @BINPATH@/components/parentalcontrols.xpt
+#ifdef MOZ_WEBRTC
+@BINPATH@/components/peerconnection.xpt
+#endif
 @BINPATH@/components/places.xpt
 @BINPATH@/components/plugin.xpt
 @BINPATH@/components/pref.xpt
@@ -362,8 +367,6 @@
 @BINPATH@/components/nsHelperAppDlg.js
 @BINPATH@/components/nsDownloadManagerUI.manifest
 @BINPATH@/components/nsDownloadManagerUI.js
-@BINPATH@/components/nsProxyAutoConfig.manifest
-@BINPATH@/components/nsProxyAutoConfig.js
 @BINPATH@/components/NetworkGeolocationProvider.manifest
 @BINPATH@/components/NetworkGeolocationProvider.js
 @BINPATH@/components/GPSDGeolocationProvider.manifest
@@ -461,6 +464,10 @@
 @BINPATH@/components/AitcComponents.manifest
 @BINPATH@/components/Aitc.js
 #endif
+#ifdef MOZ_SERVICES_HEALTHREPORT
+@BINPATH@/components/HealthReportComponents.manifest
+@BINPATH@/components/HealthReportService.js
+#endif
 #ifdef MOZ_SERVICES_NOTIFICATIONS
 @BINPATH@/components/NotificationsComponents.manifest
 #endif
@@ -482,12 +489,20 @@
 @BINPATH@/components/nsIDService.js
 @BINPATH@/components/Identity.manifest
 
+@BINPATH@/components/PermissionSettings.js
+@BINPATH@/components/PermissionSettings.manifest
 @BINPATH@/components/ContactManager.js
 @BINPATH@/components/ContactManager.manifest
 @BINPATH@/components/AlarmsManager.js
 @BINPATH@/components/AlarmsManager.manifest
 @BINPATH@/components/TCPSocket.js
+@BINPATH@/components/TCPSocketParentIntermediary.js
 @BINPATH@/components/TCPSocket.manifest
+
+#ifdef MOZ_WEBRTC
+@BINPATH@/components/PeerConnection.js
+@BINPATH@/components/PeerConnection.manifest
+#endif
 
 #ifdef ENABLE_MARIONETTE
 @BINPATH@/chrome/marionette@JAREXT@
@@ -559,6 +574,9 @@
 #endif
 #ifdef MOZ_SERVICES_SYNC
 @BINPATH@/@PREF_DIR@/services-sync.js
+#endif
+#ifdef MOZ_SERVICES_HEALTHREPORT
+@BINPATH@/@PREF_DIR@/healthreport-prefs.js
 #endif
 @BINPATH@/greprefs.js
 @BINPATH@/defaults/autoconfig/platform.js

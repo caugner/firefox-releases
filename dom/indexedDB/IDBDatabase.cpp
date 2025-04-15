@@ -21,6 +21,7 @@
 #include "CheckQuotaHelper.h"
 #include "DatabaseInfo.h"
 #include "IDBEvents.h"
+#include "IDBFactory.h"
 #include "IDBFileHandle.h"
 #include "IDBIndex.h"
 #include "IDBObjectStore.h"
@@ -32,6 +33,7 @@
 #include "nsContentUtils.h"
 
 #include "ipc/IndexedDBChild.h"
+#include "ipc/IndexedDBParent.h"
 
 USING_INDEXEDDB_NAMESPACE
 using mozilla::dom::ContentParent;
@@ -49,7 +51,7 @@ public:
   }
 
   virtual ChildProcessSendResult
-  MaybeSendResponseToChildProcess(nsresult aResultCode) MOZ_OVERRIDE;
+  SendResponseToChildProcess(nsresult aResultCode) MOZ_OVERRIDE;
 
   virtual nsresult
   UnpackResponseFromParentProcess(const ResponseValue& aResponseValue)
@@ -116,7 +118,7 @@ public:
     AsyncConnectionHelper::ReleaseMainThreadObjects();
   }
 
-  virtual ChildProcessSendResult MaybeSendResponseToChildProcess(
+  virtual ChildProcessSendResult SendResponseToChildProcess(
                                                            nsresult aResultCode)
                                                            MOZ_OVERRIDE
   {
@@ -170,12 +172,14 @@ private:
 // static
 already_AddRefed<IDBDatabase>
 IDBDatabase::Create(IDBWrapperCache* aOwnerCache,
+                    IDBFactory* aFactory,
                     already_AddRefed<DatabaseInfo> aDatabaseInfo,
                     const nsACString& aASCIIOrigin,
                     FileManager* aFileManager,
                     mozilla::dom::ContentParent* aContentParent)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  NS_ASSERTION(aFactory, "Null pointer!");
   NS_ASSERTION(!aASCIIOrigin.IsEmpty(), "Empty origin!");
 
   nsRefPtr<DatabaseInfo> databaseInfo(aDatabaseInfo);
@@ -188,6 +192,7 @@ IDBDatabase::Create(IDBWrapperCache* aOwnerCache,
     return nullptr;
   }
 
+  db->mFactory = aFactory;
   db->mDatabaseId = databaseInfo->id;
   db->mName = databaseInfo->name;
   db->mFilePath = databaseInfo->filePath;
@@ -212,7 +217,7 @@ IDBDatabase::IDBDatabase()
   mActorChild(nullptr),
   mActorParent(nullptr),
   mContentParent(nullptr),
-  mInvalidated(0),
+  mInvalidated(false),
   mRegistered(false),
   mClosed(false),
   mRunningVersionChange(false)
@@ -252,6 +257,8 @@ IDBDatabase::Invalidate()
     return;
   }
 
+  mInvalidated = true;
+
   // Make sure we're closed too.
   Close();
 
@@ -263,13 +270,29 @@ IDBDatabase::Invalidate()
     IndexedDatabaseManager::CancelPromptsForWindow(owner);
   }
 
-  mInvalidated = true;
+  DatabaseInfo::Remove(mDatabaseId);
+
+  // And let the child process know as well.
+  if (mActorParent) {
+    NS_ASSERTION(IndexedDatabaseManager::IsMainProcess(), "Wrong process!");
+    mActorParent->Invalidate();
+  }
 }
 
-bool
-IDBDatabase::IsInvalidated()
+void
+IDBDatabase::DisconnectFromActorParent()
 {
-  return !!mInvalidated;
+  NS_ASSERTION(IndexedDatabaseManager::IsMainProcess(), "Wrong process!");
+  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+
+  // Make sure we're closed too.
+  Close();
+
+  // Kill any outstanding prompts.
+  nsPIDOMWindow* owner = GetOwner();
+  if (owner) {
+    IndexedDatabaseManager::CancelPromptsForWindow(owner);
+  }
 }
 
 void
@@ -298,7 +321,7 @@ IDBDatabase::CloseInternal(bool aIsDead)
     }
 
     // And let the parent process know as well.
-    if (mActorChild) {
+    if (mActorChild && !IsInvalidated()) {
       NS_ASSERTION(!IndexedDatabaseManager::IsMainProcess(), "Wrong process!");
       mActorChild->SendClose(aIsDead);
     }
@@ -306,7 +329,7 @@ IDBDatabase::CloseInternal(bool aIsDead)
 }
 
 bool
-IDBDatabase::IsClosed()
+IDBDatabase::IsClosed() const
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
   return mClosed;
@@ -403,15 +426,11 @@ IDBDatabase::CreateObjectStoreInternal(IDBTransaction* aTransaction,
 NS_IMPL_CYCLE_COLLECTION_CLASS(IDBDatabase)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(IDBDatabase, IDBWrapperCache)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(abort)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(error)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(versionchange)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFactory)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(IDBDatabase, IDBWrapperCache)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(abort)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(error)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(versionchange)
+  // Don't unlink mFactory!
 
   // Do some cleanup.
   tmp->OnUnlink();
@@ -494,7 +513,6 @@ IDBDatabase::CreateObjectStore(const nsAString& aName,
 
   mozilla::dom::IDBObjectStoreParameters params;
   KeyPath keyPath(0);
-  nsTArray<nsString> keyPathArray;
 
   nsresult rv;
 
@@ -798,8 +816,8 @@ IDBDatabase::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
   return IndexedDatabaseManager::FireWindowOnError(GetOwner(), aVisitor);
 }
 
-HelperBase::ChildProcessSendResult
-NoRequestDatabaseHelper::MaybeSendResponseToChildProcess(nsresult aResultCode)
+AsyncConnectionHelper::ChildProcessSendResult
+NoRequestDatabaseHelper::SendResponseToChildProcess(nsresult aResultCode)
 {
   NS_ASSERTION(IndexedDatabaseManager::IsMainProcess(), "Wrong process!");
   return Success_NotSent;

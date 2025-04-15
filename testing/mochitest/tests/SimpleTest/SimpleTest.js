@@ -660,6 +660,12 @@ SimpleTest.executeSoon = function(aFunc) {
  * SimpleTest.waitForExplicitFinish() has been invoked.
 **/
 SimpleTest.finish = function () {
+    if (SimpleTest._alreadyFinished) {
+        SimpleTest.ok(false, "[SimpleTest.finish()] this test already called finish!");
+    }
+
+    SimpleTest._alreadyFinished = true;
+
     if (SimpleTest._expectingUncaughtException) {
         SimpleTest.ok(false, "expectUncaughtException was called but no uncaught exception was detected!");
     }
@@ -778,6 +784,9 @@ SimpleTest._deepCheck = function (e1, e2, stack, seen) {
         ok = SimpleTest._eqArray(e1, e2, stack, seen);
     } else if (typeof e1 == "object" && typeof e2 == "object") {
         ok = SimpleTest._eqAssoc(e1, e2, stack, seen);
+    } else if (typeof e1 == "number" && typeof e2 == "number"
+               && isNaN(e1) && isNaN(e2)) {
+        ok = true;
     } else {
         // If we get here, they're not the same (function references must
         // always simply reference the same function).
@@ -966,9 +975,8 @@ window.onerror = function simpletestOnerror(errorMsg, url, lineNumber) {
     // For now, for tests that self identify as having unintentional uncaught
     // exceptions, just dump it so that the error is visible but doesn't cause
     // a test failure.  See bug 652494.
-    var href = SpecialPowers.getPrivilegedProps(window, 'location.href');
     var isExpected = !!SimpleTest._expectingUncaughtException;
-    var message = "an " + (isExpected ? "" : "un") + "expected uncaught JS exception reported through window.onerror";
+    var message = (isExpected ? "expected " : "") + "uncaught exception";
     var error = errorMsg + " at " + url + ":" + lineNumber;
     if (!SimpleTest._ignoringAllUncaughtExceptions) {
         SimpleTest.ok(isExpected, message, error);

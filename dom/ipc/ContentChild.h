@@ -9,6 +9,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/PContentChild.h"
+#include "mozilla/dom/TabContext.h"
 #include "mozilla/dom/ipc/Blob.h"
 
 #include "nsTArray.h"
@@ -40,8 +41,8 @@ class PStorageChild;
 class ClonedMessageData;
 
 class ContentChild : public PContentChild
+                   , public TabContext
 {
-    typedef layers::PCompositorChild PCompositorChild;
     typedef mozilla::dom::ClonedMessageData ClonedMessageData;
     typedef mozilla::ipc::OptionalURIParams OptionalURIParams;
     typedef mozilla::ipc::URIParams URIParams;
@@ -62,7 +63,6 @@ public:
     void InitXPCOM();
 
     static ContentChild* GetSingleton() {
-        NS_ASSERTION(sSingleton, "not initialized");
         return sSingleton;
     }
 
@@ -70,12 +70,18 @@ public:
         return mAppInfo;
     }
 
-    PCompositorChild* AllocPCompositor(mozilla::ipc::Transport* aTransport,
-                                       base::ProcessId aOtherProcess) MOZ_OVERRIDE;
+    void SetProcessName(const nsAString& aName);
+    const void GetProcessName(nsAString& aName);
 
-    virtual PBrowserChild* AllocPBrowser(const uint32_t& aChromeFlags,
-                                         const bool& aIsBrowserElement,
-                                         const AppId& aAppId);
+    PCompositorChild*
+    AllocPCompositor(mozilla::ipc::Transport* aTransport,
+                     base::ProcessId aOtherProcess) MOZ_OVERRIDE;
+    PImageBridgeChild*
+    AllocPImageBridge(mozilla::ipc::Transport* aTransport,
+                      base::ProcessId aOtherProcess) MOZ_OVERRIDE;
+
+    virtual PBrowserChild* AllocPBrowser(const IPCTabContext &aContext,
+                                         const uint32_t &chromeFlags);
     virtual bool DeallocPBrowser(PBrowserChild*);
 
     virtual PDeviceStorageRequestChild* AllocPDeviceStorageRequest(const DeviceStorageParams&);
@@ -105,6 +111,17 @@ public:
     virtual bool
     RecvPMemoryReportRequestConstructor(PMemoryReportRequestChild* child);
 
+    virtual bool
+    RecvAudioChannelNotify();
+
+    virtual bool
+    RecvDumpMemoryReportsToFile(const nsString& aIdentifier,
+                                const bool& aMinimizeMemoryUsage,
+                                const bool& aDumpChildProcesses);
+    virtual bool
+    RecvDumpGCAndCCLogsToFile(const nsString& aIdentifier,
+                              const bool& aDumpChildProcesses);
+
     virtual PTestShellChild* AllocPTestShell();
     virtual bool DeallocPTestShell(PTestShellChild*);
     virtual bool RecvPTestShellConstructor(PTestShellChild*);
@@ -131,6 +148,9 @@ public:
 
     virtual PStorageChild* AllocPStorage(const StorageConstructData& aData);
     virtual bool DeallocPStorage(PStorageChild* aActor);
+
+    virtual PBluetoothChild* AllocPBluetooth();
+    virtual bool DeallocPBluetooth(PBluetoothChild* aActor);
 
     virtual bool RecvRegisterChrome(const InfallibleTArray<ChromePackage>& packages,
                                     const InfallibleTArray<ResourceMapping>& resources,
@@ -164,13 +184,10 @@ public:
     virtual bool RecvCycleCollect();
 
     virtual bool RecvAppInfo(const nsCString& version, const nsCString& buildID);
-    virtual bool RecvSetProcessAttributes(const uint64_t& id,
-                                          const bool& aIsForApp,
-                                          const bool& aIsForBrowser);
 
     virtual bool RecvLastPrivateDocShellDestroyed();
 
-    virtual bool RecvFilePathUpdate(const nsString& path, const nsCString& reason);
+    virtual bool RecvFilePathUpdate(const nsString& type, const nsString& path, const nsCString& reason);
     virtual bool RecvFileSystemUpdate(const nsString& aFsName, const nsString& aName, const int32_t& aState);
 
 #ifdef ANDROID
@@ -182,9 +199,6 @@ public:
     nsString &GetIndexedDBPath();
 
     uint64_t GetID() { return mID; }
-
-    bool IsForApp() { return mIsForApp; }
-    bool IsForBrowser() { return mIsForBrowser; }
 
     BlobChild* GetOrCreateActorForBlob(nsIDOMBlob* aBlob);
 
@@ -219,6 +233,7 @@ private:
 
     bool mIsForApp;
     bool mIsForBrowser;
+    nsString mProcessName;
 
     static ContentChild* sSingleton;
 

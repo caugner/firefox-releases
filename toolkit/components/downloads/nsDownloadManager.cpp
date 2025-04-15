@@ -20,6 +20,7 @@
 #include "nsIWebBrowserPersist.h"
 #include "nsIWindowMediator.h"
 #include "nsILocalFileWin.h"
+#include "nsILoadContext.h"
 
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsArrayEnumerator.h"
@@ -215,7 +216,7 @@ nsDownloadManager::RemoveDownloadsForURI(nsIURI *aURI)
 {
   mozStorageStatementScoper scope(mGetIdsForURIStatement);
 
-  nsCAutoString source;
+  nsAutoCString source;
   nsresult rv = aURI->GetSpec(source);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -972,6 +973,7 @@ nsDownloadManager::GetDownloadFromDB(uint32_t aID, nsDownload **retVal)
   nsRefPtr<nsDownload> dl = new nsDownload();
   if (!dl)
     return NS_ERROR_OUT_OF_MEMORY;
+  dl->mPrivate = mInPrivateBrowsing;
 
   int32_t i = 0;
   // Setting all properties of the download now
@@ -1014,7 +1016,7 @@ nsDownloadManager::GetDownloadFromDB(uint32_t aID, nsDownload **retVal)
   dl->SetProgressBytes(currBytes, maxBytes);
 
   // Build mMIMEInfo only if the mimeType in DB is not empty
-  nsCAutoString mimeType;
+  nsAutoCString mimeType;
   rv = stmt->GetUTF8String(i++, mimeType);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1031,7 +1033,7 @@ nsDownloadManager::GetDownloadFromDB(uint32_t aID, nsDownload **retVal)
     rv = dl->mMIMEInfo->SetPreferredAction(action);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCAutoString persistentDescriptor;
+    nsAutoCString persistentDescriptor;
     rv = stmt->GetUTF8String(i++, persistentDescriptor);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1315,6 +1317,7 @@ nsDownloadManager::AddDownload(DownloadType aDownloadType,
                                PRTime aStartTime,
                                nsIFile *aTempFile,
                                nsICancelable *aCancelable,
+                               bool aIsPrivate,
                                nsIDownload **aDownload)
 {
   NS_ENSURE_ARG_POINTER(aSource);
@@ -1322,6 +1325,20 @@ nsDownloadManager::AddDownload(DownloadType aDownloadType,
   NS_ENSURE_ARG_POINTER(aDownload);
 
   nsresult rv;
+
+#if !(defined(MOZ_PER_WINDOW_PRIVATE_BROWSING)) && defined(DEBUG)
+  // This code makes sure that in global private browsing mode, the flag
+  // passed to us matches the global PB mode.  This can be removed when
+  // per-window private browsing has been turned on.
+  nsCOMPtr<nsIPrivateBrowsingService> pbService =
+    do_GetService(NS_PRIVATE_BROWSING_SERVICE_CONTRACTID);
+  if (pbService) {
+    bool inPrivateBrowsing = false;
+    if (NS_SUCCEEDED(pbService->GetPrivateBrowsingEnabled(&inPrivateBrowsing))) {
+      MOZ_ASSERT(inPrivateBrowsing == aIsPrivate);
+    }
+  }
+#endif
 
   // target must be on the local filesystem
   nsCOMPtr<nsIFileURL> targetFileURL = do_QueryInterface(aTarget, &rv);
@@ -1339,6 +1356,7 @@ nsDownloadManager::AddDownload(DownloadType aDownloadType,
   dl->mTarget = aTarget;
   dl->mSource = aSource;
   dl->mTempFile = aTempFile;
+  dl->mPrivate = aIsPrivate;
 
   dl->mDisplayName = aDisplayName;
   if (dl->mDisplayName.IsEmpty())
@@ -1351,7 +1369,7 @@ nsDownloadManager::AddDownload(DownloadType aDownloadType,
   dl->mCancelable = aCancelable;
 
   // Adding to the DB
-  nsCAutoString source, target;
+  nsAutoCString source, target;
   aSource->GetSpec(source);
   aTarget->GetSpec(target);
 
@@ -1362,7 +1380,7 @@ nsDownloadManager::AddDownload(DownloadType aDownloadType,
 
   // Break down MIMEInfo but don't panic if we can't get all the pieces - we
   // can still download the file
-  nsCAutoString persistentDescriptor, mimeType;
+  nsAutoCString persistentDescriptor, mimeType;
   nsHandlerInfoAction action = nsIMIMEInfo::saveToDisk;
   if (aMIMEInfo) {
     (void)aMIMEInfo->GetType(mimeType);
@@ -1569,7 +1587,8 @@ nsDownloadManager::RetryDownload(uint32_t aID)
   dl->mCancelable = wbp;
   (void)wbp->SetProgressListener(dl);
 
-  rv = wbp->SaveURI(dl->mSource, nullptr, nullptr, nullptr, nullptr, dl->mTarget);
+  rv = wbp->SavePrivacyAwareURI(dl->mSource, nullptr, nullptr, nullptr, nullptr,
+                                dl->mTarget, dl->mPrivate);
   if (NS_FAILED(rv)) {
     dl->mCancelable = nullptr;
     (void)wbp->SetProgressListener(nullptr);
@@ -2160,7 +2179,8 @@ nsDownload::nsDownload() : mDownloadState(nsIDownloadManager::DOWNLOAD_NOTSTARTE
                            mResumedAt(-1),
                            mSpeed(0),
                            mHasMultipleFiles(false),
-                           mAutoResume(DONT_RESUME)
+                           mAutoResume(DONT_RESUME),
+                           mPrivate(false)
 {
 }
 
@@ -2320,7 +2340,7 @@ nsDownload::SetState(DownloadState aState)
 #endif
 #ifdef MOZ_WIDGET_ANDROID
         nsCOMPtr<nsIMIMEInfo> mimeInfo;
-        nsCAutoString contentType;
+        nsAutoCString contentType;
         GetMIMEInfo(getter_AddRefs(mimeInfo));
 
         if (mimeInfo)
@@ -2625,7 +2645,8 @@ nsDownload::Init(nsIURI *aSource,
                  nsIMIMEInfo *aMIMEInfo,
                  PRTime aStartTime,
                  nsIFile *aTempFile,
-                 nsICancelable *aCancelable)
+                 nsICancelable *aCancelable,
+                 bool aIsPrivate)
 {
   NS_WARNING("Huh...how did we get here?!");
   return NS_OK;
@@ -2745,6 +2766,13 @@ NS_IMETHODIMP
 nsDownload::GetResumable(bool *resumable)
 {
   *resumable = IsResumable();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDownload::GetIsPrivate(bool *isPrivate)
+{
+  *isPrivate = mPrivate;
   return NS_OK;
 }
 
@@ -2870,8 +2898,7 @@ nsDownload::OpenWithApplication()
 
   // Always schedule files to be deleted at the end of the private browsing
   // mode, regardless of the value of the pref.
-  if (deleteTempFileOnExit ||
-      nsDownloadManager::gDownloadManagerService->mInPrivateBrowsing) {
+  if (deleteTempFileOnExit || mPrivate) {
     // Use the ExternalHelperAppService to push the temporary file to the list
     // of files to be deleted on exit.
     nsCOMPtr<nsPIExternalAppLauncher> appLauncher(do_GetService
@@ -2880,7 +2907,7 @@ nsDownload::OpenWithApplication()
     // Even if we are unable to get this service we return the result
     // of LaunchWithFile() which makes more sense.
     if (appLauncher) {
-      if (nsDownloadManager::gDownloadManagerService->mInPrivateBrowsing) {
+      if (mPrivate) {
         (void)appLauncher->DeleteTemporaryPrivateFileWhenPossible(target);
       } else {
         (void)appLauncher->DeleteTemporaryFileOnExit(target);
@@ -2962,6 +2989,11 @@ nsDownload::Resume()
   nsCOMPtr<nsIInterfaceRequestor> ir(do_QueryInterface(wbp));
   rv = NS_NewChannel(getter_AddRefs(channel), mSource, nullptr, nullptr, ir);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIPrivateBrowsingChannel> pbChannel = do_QueryInterface(channel);
+  if (pbChannel) {
+    pbChannel->SetPrivate(mDownloadManager->mInPrivateBrowsing);
+  }
 
   // Make sure we can get a file, either the temporary or the real target, for
   // both purposes of file size and a target to write to
@@ -3079,7 +3111,7 @@ nsDownload::UpdateDB()
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (mReferrer) {
-    nsCAutoString referrer;
+    nsAutoCString referrer;
     rv = mReferrer->GetSpec(referrer);
     NS_ENSURE_SUCCESS(rv, rv);
     rv = stmt->BindUTF8StringByName(NS_LITERAL_CSTRING("referrer"), referrer);

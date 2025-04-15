@@ -23,6 +23,8 @@
 #include "nsDOMMediaStream.h"
 #include "mozilla/Mutex.h"
 #include "nsTimeRanges.h"
+#include "AudioChannelCommon.h"
+#include "AudioChannelAgent.h"
 
 // Define to output information on decoding and painting framerate
 /* #define DEBUG_FRAME_RATE 1 */
@@ -33,9 +35,13 @@ typedef uint16_t nsMediaReadyState;
 namespace mozilla {
 class MediaResource;
 }
+#ifdef MOZ_DASH
+class nsDASHDecoder;
+#endif
 
 class nsHTMLMediaElement : public nsGenericHTMLElement,
-                           public nsIObserver
+                           public nsIObserver,
+                           public nsIAudioChannelAgentCallback
 {
 public:
   typedef mozilla::TimeStamp TimeStamp;
@@ -45,6 +51,10 @@ public:
   typedef mozilla::MediaResource MediaResource;
 
   typedef nsDataHashtable<nsCStringHashKey, nsCString> MetadataTags;
+
+#ifdef MOZ_DASH
+  friend class nsDASHDecoder;
+#endif
 
   enum CanPlayStatus {
     CANPLAY_NO,
@@ -73,6 +83,8 @@ public:
   NS_DECL_NSIDOMHTMLMEDIAELEMENT
 
   NS_DECL_NSIOBSERVER
+
+  NS_DECL_NSIAUDIOCHANNELAGENTCALLBACK
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -105,7 +117,7 @@ public:
 
   /**
    * Call this to reevaluate whether we should start/stop due to our owner
-   * document being active or inactive.
+   * document being active, inactive, visible or hidden.
    */
   void NotifyOwnerDocumentActivityChanged();
 
@@ -307,10 +319,28 @@ public:
   static char const *const gH264Codecs[7];
 #endif
 
+#ifdef MOZ_WIDGET_GONK
+  static bool IsOmxEnabled();
+  static bool IsOmxSupportedType(const nsACString& aType);
+  static const char gOmxTypes[5][16];
+  static char const *const gH264Codecs[7];
+#endif
+
 #ifdef MOZ_MEDIA_PLUGINS
   static bool IsMediaPluginsEnabled();
   static bool IsMediaPluginsType(const nsACString& aType);
 #endif
+
+#ifdef MOZ_DASH
+  static bool IsDASHEnabled();
+  static bool IsDASHMPDType(const nsACString& aType);
+  static const char gDASHMPDTypes[1][21];
+#endif
+
+  /**
+   * Get the mime type for this element.
+   */
+  void GetMimeType(nsCString& aMimeType);
 
   /**
    * Called when a child source element is added to this media element. This
@@ -555,7 +585,7 @@ protected:
    * Called asynchronously to release a self-reference to this element.
    */
   void DoRemoveSelfReference();
-  
+
   /**
    * Possible values of the 'preload' attribute.
    */
@@ -567,7 +597,7 @@ protected:
   };
 
   /**
-   * The preloading action to perform. These dictate how we react to the 
+   * The preloading action to perform. These dictate how we react to the
    * preload attribute. See mPreloadAction.
    */
   enum PreloadAction {
@@ -594,7 +624,7 @@ protected:
 
   /**
    * Handle a change to the preload attribute. Should be called whenever the
-   * value (or presence) of the preload attribute changes. The change in 
+   * value (or presence) of the preload attribute changes. The change in
    * attribute value may cause a change in the mPreloadAction of this
    * element. If there is a change then this method will initiate any
    * behaviour that is necessary to implement the action.
@@ -621,6 +651,20 @@ protected:
    * Process any media fragment entries in the URI
    */
   void ProcessMediaFragmentURI();
+
+  /**
+   * Mute or unmute the audio, without changing the value that |muted| reports.
+   */
+  void SetMutedInternal(bool aMuted);
+
+  // Check the permissions for audiochannel.
+  bool CheckAudioChannelPermissions(const nsAString& aType);
+
+  // This method does the check for muting/unmuting the audio channel.
+  nsresult UpdateChannelMuteState(bool aCanPlay);
+
+  // Update the audio channel playing state
+  void UpdateAudioChannelPlayingState();
 
   // The current decoder. Load() has been called on this decoder.
   // At most one of mDecoder and mSrcStream can be non-null.
@@ -685,7 +729,7 @@ protected:
     // No load algorithm instance is waiting for a source to be added to the
     // media in order to continue loading.
     NOT_WAITING,
-    // We've run the load algorithm, and we tried all source children of the 
+    // We've run the load algorithm, and we tried all source children of the
     // media element, and failed to load any successfully. We're waiting for
     // another source element to be added to the media element, and will try
     // to load any such element when its added.
@@ -719,7 +763,7 @@ protected:
   // This is always the original URL we're trying to load --- before
   // redirects etc.
   nsCOMPtr<nsIURI> mLoadingSrc;
-  
+
   // Stores the current preload action for this element. Initially set to
   // PRELOAD_UNDEFINED, its value is changed by calling
   // UpdatePreloadAction().
@@ -872,6 +916,25 @@ protected:
 
   // True if the media's channel's download has been suspended.
   bool mDownloadSuspendedByCache;
+
+  // The Content-Type for this media. When we are sniffing for the Content-Type,
+  // and we are recreating a channel after the initial load, we need that
+  // information to give it as a hint to the channel for it to bypass the
+  // sniffing phase, that would fail because sniffing only works when applied to
+  // the first bytes of the stream.
+  nsCString mMimeType;
+
+  // Audio Channel Type.
+  mozilla::dom::AudioChannelType mAudioChannelType;
+
+  // The audiochannel has been muted
+  bool mChannelMuted;
+
+  // Is this media element playing?
+  bool mPlayingThroughTheAudioChannel;
+
+  // An agent used to join audio channel service.
+  nsCOMPtr<nsIAudioChannelAgent> mAudioChannelAgent;
 };
 
 #endif

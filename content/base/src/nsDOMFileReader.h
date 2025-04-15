@@ -47,10 +47,6 @@ public:
   // nsIInterfaceRequestor 
   NS_DECL_NSIINTERFACEREQUESTOR
 
-  NS_DECL_EVENT_HANDLER(load)
-  NS_DECL_EVENT_HANDLER(loadend)
-  NS_DECL_EVENT_HANDLER(loadstart)
-
   // nsIJSNativeInitializer
   NS_IMETHOD Initialize(nsISupports* aOwner, JSContext* cx, JSObject* obj,
                         uint32_t argc, jsval* argv);
@@ -61,7 +57,7 @@ public:
                              nsresult aStatus, nsAString& aSuccessEvent,
                              nsAString& aTerminationEvent);
   NS_IMETHOD DoOnDataAvailable(nsIRequest* aRequest, nsISupports* aContext,
-                               nsIInputStream* aInputStream, uint32_t aOffset,
+                               nsIInputStream* aInputStream, uint64_t aOffset,
                                uint32_t aCount);
 
   nsresult Init();

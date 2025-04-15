@@ -80,7 +80,7 @@ nsGtkIMModule::nsGtkIMModule(nsWindow* aOwnerWindow) :
     mSimpleContext(nullptr),
 #endif
     mDummyContext(nullptr),
-    mCompositionStart(PR_UINT32_MAX), mProcessingKeyEvent(nullptr),
+    mCompositionStart(UINT32_MAX), mProcessingKeyEvent(nullptr),
     mCompositionState(eCompositionState_NotComposing),
     mIsIMFocused(false), mIgnoreNativeCompositionEvent(false)
 {
@@ -101,7 +101,7 @@ nsGtkIMModule::Init()
 
     MozContainer* container = mOwnerWindow->GetMozContainer();
     NS_PRECONDITION(container, "container is null");
-    GdkWindow* gdkWindow = GTK_WIDGET(container)->window;
+    GdkWindow* gdkWindow = gtk_widget_get_window(GTK_WIDGET(container));
 
     // NOTE: gtk_im_*_new() abort (kill) the whole process when it fails.
     //       So, we don't need to check the result.
@@ -255,7 +255,11 @@ nsGtkIMModule::PrepareToDestroyContext(GtkIMContext *aContext)
     NS_PRECONDITION(container, "The container of the window is null");
 
     GtkIMMulticontext *multicontext = GTK_IM_MULTICONTEXT(aContext);
+#if (MOZ_WIDGET_GTK == 2)
     GtkIMContext *slave = multicontext->slave;
+#else
+    GtkIMContext *slave = NULL; //TODO GTK3
+#endif
     if (!slave) {
         return;
     }
@@ -1051,7 +1055,7 @@ nsGtkIMModule::DispatchCompositionStart()
     InitEvent(selection);
     mLastFocusedWindow->DispatchEvent(&selection, status);
 
-    if (!selection.mSucceeded || selection.mReply.mOffset == PR_UINT32_MAX) {
+    if (!selection.mSucceeded || selection.mReply.mOffset == UINT32_MAX) {
         PR_LOG(gGtkIMLog, PR_LOG_ALWAYS,
             ("    FAILED, cannot query the selection offset"));
         return false;
@@ -1135,7 +1139,7 @@ nsGtkIMModule::DispatchCompositionEnd()
     nsCOMPtr<nsIWidget> kungFuDeathGrip = mLastFocusedWindow;
     mLastFocusedWindow->DispatchEvent(&compEvent, status);
     mCompositionState = eCompositionState_NotComposing;
-    mCompositionStart = PR_UINT32_MAX;
+    mCompositionStart = UINT32_MAX;
     mDispatchedCompositionString.Truncate();
     if (static_cast<nsWindow*>(kungFuDeathGrip.get())->IsDestroyed() ||
         kungFuDeathGrip != mLastFocusedWindow) {
@@ -1374,7 +1378,7 @@ nsGtkIMModule::SetCursorPosition(uint32_t aTargetOffset)
         ("GtkIMModule(%p): SetCursorPosition, aTargetOffset=%u",
          this, aTargetOffset));
 
-    if (aTargetOffset == PR_UINT32_MAX) {
+    if (aTargetOffset == UINT32_MAX) {
         PR_LOG(gGtkIMLog, PR_LOG_ALWAYS,
             ("    FAILED, aTargetOffset is wrong offset"));
         return;
@@ -1463,9 +1467,9 @@ nsGtkIMModule::GetCurrentParagraph(nsAString& aText, uint32_t& aCursorPos)
 
     // XXX nsString::Find and nsString::RFind take int32_t for offset, so,
     //     we cannot support this request when the current offset is larger
-    //     than PR_INT32_MAX.
-    if (selOffset > PR_INT32_MAX || selLength > PR_INT32_MAX ||
-        selOffset + selLength > PR_INT32_MAX) {
+    //     than INT32_MAX.
+    if (selOffset > INT32_MAX || selLength > INT32_MAX ||
+        selOffset + selLength > INT32_MAX) {
         PR_LOG(gGtkIMLog, PR_LOG_ALWAYS,
             ("    FAILED, The selection is out of range"));
         return NS_ERROR_FAILURE;
@@ -1475,7 +1479,7 @@ nsGtkIMModule::GetCurrentParagraph(nsAString& aText, uint32_t& aCursorPos)
     nsQueryContentEvent queryTextContentEvent(true,
                                               NS_QUERY_TEXT_CONTENT,
                                               mLastFocusedWindow);
-    queryTextContentEvent.InitForQueryTextContent(0, PR_UINT32_MAX);
+    queryTextContentEvent.InitForQueryTextContent(0, UINT32_MAX);
     mLastFocusedWindow->DispatchEvent(&queryTextContentEvent, status);
     NS_ENSURE_TRUE(queryTextContentEvent.mSucceeded, NS_ERROR_FAILURE);
 
@@ -1570,7 +1574,7 @@ nsGtkIMModule::DeleteText(const int32_t aOffset, const uint32_t aNChars)
     nsQueryContentEvent queryTextContentEvent(true,
                                               NS_QUERY_TEXT_CONTENT,
                                               mLastFocusedWindow);
-    queryTextContentEvent.InitForQueryTextContent(0, PR_UINT32_MAX);
+    queryTextContentEvent.InitForQueryTextContent(0, UINT32_MAX);
     mLastFocusedWindow->DispatchEvent(&queryTextContentEvent, status);
     NS_ENSURE_TRUE(queryTextContentEvent.mSucceeded, NS_ERROR_FAILURE);
     if (queryTextContentEvent.mReply.mString.IsEmpty()) {

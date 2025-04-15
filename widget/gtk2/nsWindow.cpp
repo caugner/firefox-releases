@@ -26,7 +26,7 @@
 #include "nsGtkCursors.h"
 
 #include <gtk/gtk.h>
-#if defined(MOZ_WIDGET_GTK3)
+#if (MOZ_WIDGET_GTK == 3)
 #include <gtk/gtkx.h>
 #endif
 #ifdef MOZ_X11
@@ -34,7 +34,7 @@
 #include <X11/Xatom.h>
 #include <X11/extensions/XShm.h>
 #include <X11/extensions/shape.h>
-#if defined(MOZ_WIDGET_GTK3)
+#if (MOZ_WIDGET_GTK == 3)
 #include <gdk/gdkkeysyms-compat.h>
 #endif
 
@@ -44,7 +44,9 @@
 #include <X11/XF86keysym.h>
 #endif
 
+#if (MOZ_WIDGET_GTK == 2)
 #include "gtk2xtbin.h"
+#endif
 #endif /* MOZ_X11 */
 #include <gdk/gdkkeysyms.h>
 #if defined(MOZ_WIDGET_GTK2)
@@ -358,6 +360,7 @@ nsWindow::nsWindow()
     mWindowType          = eWindowType_child;
     mSizeState           = nsSizeMode_Normal;
     mLastSizeMode        = nsSizeMode_Normal;
+    mSizeConstraints.mMaxSize = GetSafeWindowSize(mSizeConstraints.mMaxSize);
 
 #ifdef MOZ_X11
     mOldFocusWindow      = 0;
@@ -448,7 +451,7 @@ nsWindow::DispatchEvent(nsGUIEvent *aEvent, nsEventStatus &aStatus)
 {
 #ifdef DEBUG
     debug_DumpEvent(stdout, aEvent->widget, aEvent,
-                    nsCAutoString("something"), 0);
+                    nsAutoCString("something"), 0);
 #endif
 
     aStatus = nsEventStatus_eIgnore;
@@ -925,19 +928,20 @@ nsWindow::ConstrainPosition(bool aAllowSlop, int32_t *aX, int32_t *aY)
 
 void nsWindow::SetSizeConstraints(const SizeConstraints& aConstraints)
 {
-  if (mShell) {
-    GdkGeometry geometry;
-    geometry.min_width = aConstraints.mMinSize.width;
-    geometry.min_height = aConstraints.mMinSize.height;
-    geometry.max_width = aConstraints.mMaxSize.width;
-    geometry.max_height = aConstraints.mMaxSize.height;
+    mSizeConstraints.mMinSize = GetSafeWindowSize(aConstraints.mMinSize);
+    mSizeConstraints.mMaxSize = GetSafeWindowSize(aConstraints.mMaxSize);
 
-    uint32_t hints = GDK_HINT_MIN_SIZE | GDK_HINT_MAX_SIZE;
-    gtk_window_set_geometry_hints(GTK_WINDOW(mShell), nullptr,
-                                  &geometry, GdkWindowHints(hints));
-  }
+    if (mShell) {
+        GdkGeometry geometry;
+        geometry.min_width = mSizeConstraints.mMinSize.width;
+        geometry.min_height = mSizeConstraints.mMinSize.height;
+        geometry.max_width = mSizeConstraints.mMaxSize.width;
+        geometry.max_height = mSizeConstraints.mMaxSize.height;
 
-  nsBaseWidget::SetSizeConstraints(aConstraints);
+        uint32_t hints = GDK_HINT_MIN_SIZE | GDK_HINT_MAX_SIZE;
+        gtk_window_set_geometry_hints(GTK_WINDOW(mShell), nullptr,
+                                      &geometry, GdkWindowHints(hints));
+    }
 }
 
 NS_IMETHODIMP
@@ -1004,7 +1008,7 @@ nsWindow::Resize(int32_t aWidth, int32_t aHeight, bool aRepaint)
     // interpreted as frame bounds, but NativeResize treats these as window
     // bounds (Bug 581866).
 
-    mBounds.SizeTo(GetSafeWindowSize(nsIntSize(aWidth, aHeight)));
+    mBounds.SizeTo(aWidth, aHeight);
 
     if (!mCreated)
         return NS_OK;
@@ -1080,7 +1084,7 @@ nsWindow::Resize(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight,
 
     mBounds.x = aX;
     mBounds.y = aY;
-    mBounds.SizeTo(GetSafeWindowSize(nsIntSize(aWidth, aHeight)));
+    mBounds.SizeTo(aWidth, aHeight);
 
     mNeedsMove = true;
 
@@ -1284,7 +1288,7 @@ SetUserTimeAndStartupIDForActivatedWindow(GtkWidget* aWindow)
     if (!GTKToolkit)
         return;
 
-    nsCAutoString desktopStartupID;
+    nsAutoCString desktopStartupID;
     GTKToolkit->GetDesktopStartupID(&desktopStartupID);
     if (desktopStartupID.IsEmpty()) {
         // We don't have the data we need. Fall back to an
@@ -1677,17 +1681,6 @@ nsWindow::GetNativeData(uint32_t aDataType)
 #endif /* MOZ_X11 */
         break;
 
-    case NS_NATIVE_GRAPHIC: {
-#if defined(MOZ_WIDGET_GTK2)
-        nsGTKToolkit* toolkit = nsGTKToolkit::GetToolkit();
-        NS_ASSERTION(nullptr != toolkit, "NULL toolkit, unable to get a GC");    
-        return toolkit->GetSharedGC();
-#else
-        return nullptr;
-#endif
-        break;
-    }
-
     case NS_NATIVE_SHELLWIDGET:
         return (void *) mShell;
 
@@ -1728,7 +1721,7 @@ nsWindow::SetIcon(const nsAString& aIconSpec)
     if (!mShell)
         return NS_OK;
 
-    nsCAutoString iconName;
+    nsAutoCString iconName;
     
     if (aIconSpec.EqualsLiteral("default")) {
         nsXPIDLString brandName;
@@ -1740,7 +1733,7 @@ nsWindow::SetIcon(const nsAString& aIconSpec)
     }
     
     nsCOMPtr<nsIFile> iconFile;
-    nsCAutoString path;
+    nsAutoCString path;
 
     gint *iconSizes =
         gtk_icon_theme_get_icon_sizes(gtk_icon_theme_get_default(),
@@ -2023,6 +2016,10 @@ nsWindow::OnExposeEvent(cairo_t *cr)
         // there is nothing left to do.
         if (!mGdkWindow)
             return TRUE;
+
+        // The will paint notification might have killed our listener.
+        if (!mWidgetListener)
+            return FALSE;
     }
 
 #if defined(MOZ_WIDGET_GTK2)
@@ -2076,8 +2073,22 @@ nsWindow::OnExposeEvent(cairo_t *cr)
     // window.
     region.And(region, nsIntRect(0, 0, mBounds.width, mBounds.height));
 
-    bool translucent = eTransparencyTransparent == GetTransparencyMode();
-    if (!translucent) {
+    bool shaped = false;
+    if (eTransparencyTransparent == GetTransparencyMode()) {
+        GdkScreen *screen = gdk_window_get_screen(mGdkWindow);
+        if (gdk_screen_is_composited(screen) &&
+            gdk_window_get_visual(mGdkWindow) ==
+            gdk_screen_get_rgba_visual(screen)) {
+            // Remove possible shape mask from when window manger was not
+            // previously compositing.
+            static_cast<nsWindow*>(GetTopLevelWidget())->
+                ClearTransparencyBitmap();
+        } else {
+            shaped = true;
+        }
+    }
+
+    if (!shaped) {
         GList *children =
             gdk_window_peek_children(mGdkWindow);
         while (children) {
@@ -2107,7 +2118,6 @@ nsWindow::OnExposeEvent(cairo_t *cr)
     }
     // If this widget uses OMTC...
     if (GetLayerManager()->AsShadowForwarder() && GetLayerManager()->AsShadowForwarder()->HasShadowManager()) {
-        nsEventStatus status;
 #if defined(MOZ_WIDGET_GTK2)
         nsRefPtr<gfxContext> ctx = new gfxContext(GetThebesSurface());
 #else
@@ -2148,10 +2158,10 @@ nsWindow::OnExposeEvent(cairo_t *cr)
 #endif
 
 #ifdef MOZ_X11
-    nsIntRect boundsRect; // for translucent only
+    nsIntRect boundsRect; // for shaped only
 
     ctx->NewPath();
-    if (translucent) {
+    if (shaped) {
         // Collapse update area to the bounding box. This is so we only have to
         // call UpdateTranslucentWindowAlpha once. After we have dropped
         // support for non-Thebes graphics, UpdateTranslucentWindowAlpha will be
@@ -2165,7 +2175,7 @@ nsWindow::OnExposeEvent(cairo_t *cr)
     ctx->Clip();
 
     BufferMode layerBuffering;
-    if (translucent) {
+    if (shaped) {
         // The double buffering is done here to extract the shape mask.
         // (The shape mask won't be necessary when a visual with an alpha
         // channel is used on compositing window managers.)
@@ -2205,7 +2215,7 @@ nsWindow::OnExposeEvent(cairo_t *cr)
 #ifdef MOZ_X11
     // PaintWindow can Destroy us (bug 378273), avoid doing any paint
     // operations below if that happened - it will lead to XError and exit().
-    if (translucent) {
+    if (shaped) {
         if (NS_LIKELY(!mIsDestroyed)) {
             if (painted) {
                 nsRefPtr<gfxPattern> pattern = ctx->PopGroup();
@@ -2373,17 +2383,11 @@ nsWindow::OnSizeAllocate(GtkWidget *aWidget, GtkAllocation *aAllocation)
     nsIntRect rect(aAllocation->x, aAllocation->y,
                    aAllocation->width, aAllocation->height);
 
-    ResizeTransparencyBitmap(rect.width, rect.height);
-
     mBounds.width = rect.width;
     mBounds.height = rect.height;
 
     if (!mGdkWindow)
         return;
-
-    if (mTransparencyBitmap) {
-      ApplyTransparencyBitmap();
-    }
 
     if (mWidgetListener)
         mWidgetListener->WindowResized(this, rect.width, rect.height);
@@ -3373,6 +3377,7 @@ nsWindow::Create(nsIWidget        *aParent,
 
     // save our bounds
     mBounds = aRect;
+    ConstrainSize(&mBounds.width, &mBounds.height);
 
     // figure out our parent window
     GtkWidget      *parentMozContainer = nullptr;
@@ -3456,19 +3461,35 @@ nsWindow::Create(nsIWidget        *aParent,
 
             // Popups that are not noautohide are only temporary. The are used
             // for menus and the like and disappear when another window is used.
-            if (!aInitData->mNoAutoHide) {
-                // For most popups, use the standard GtkWindowType
-                // GTK_WINDOW_POPUP, which will use a Window with the
-                // override-redirect attribute (for temporary windows).
-                mShell = gtk_window_new(GTK_WINDOW_POPUP);
-                gtk_window_set_wmclass(GTK_WINDOW(mShell), "Popup", 
-                                       gdk_get_program_class());
-            } else {
-                // For long-lived windows, their stacking order is managed by
-                // the window manager, as indicated by GTK_WINDOW_TOPLEVEL ...
-                mShell = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-                gtk_window_set_wmclass(GTK_WINDOW(mShell), "Popup", 
-                                       gdk_get_program_class());
+            // For most popups, use the standard GtkWindowType GTK_WINDOW_POPUP,
+            // which will use a Window with the override-redirect attribute
+            // (for temporary windows).
+            // For long-lived windows, their stacking order is managed by the
+            // window manager, as indicated by GTK_WINDOW_TOPLEVEL ...
+            GtkWindowType type = aInitData->mNoAutoHide ?
+                                     GTK_WINDOW_TOPLEVEL : GTK_WINDOW_POPUP;
+            mShell = gtk_window_new(type);
+            gtk_window_set_wmclass(GTK_WINDOW(mShell), "Popup",
+                                   gdk_get_program_class());
+
+            if (aInitData->mSupportTranslucency) {
+                // We need to select an ARGB visual here instead of in
+                // SetTransparencyMode() because it has to be done before the
+                // widget is realized.  An ARGB visual is only useful if we
+                // are on a compositing window manager.
+                GdkScreen *screen = gtk_widget_get_screen(mShell);
+                if (gdk_screen_is_composited(screen)) {
+#if defined(MOZ_WIDGET_GTK2)
+                    GdkColormap *colormap =
+                        gdk_screen_get_rgba_colormap(screen);
+                    gtk_widget_set_colormap(mShell, colormap);
+#else
+                    GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
+                    gtk_widget_set_visual(mShell, visual);
+#endif
+                }
+            }
+            if (aInitData->mNoAutoHide) {
                 // ... but the window manager does not decorate this window,
                 // nor provide a separate taskbar icon.
                 if (mBorderStyle == eBorderStyle_default) {
@@ -3815,8 +3836,6 @@ nsWindow::NativeResize(int32_t aWidth, int32_t aHeight, bool    aRepaint)
     LOG(("nsWindow::NativeResize [%p] %d %d\n", (void *)this,
          aWidth, aHeight));
 
-    ResizeTransparencyBitmap(aWidth, aHeight);
-
     // clear our resize flag
     mNeedsResize = false;
 
@@ -3849,8 +3868,6 @@ nsWindow::NativeResize(int32_t aX, int32_t aY,
     LOG(("nsWindow::NativeResize [%p] %d %d %d %d\n", (void *)this,
          aX, aY, aWidth, aHeight));
 
-    ResizeTransparencyBitmap(aWidth, aHeight);
-
     if (mIsTopLevel) {
         // aX and aY give the position of the window manager frame top-left.
         gtk_window_move(GTK_WINDOW(mShell), aX, aY);
@@ -3871,21 +3888,9 @@ nsWindow::NativeResize(int32_t aX, int32_t aY,
 }
 
 void
-nsWindow::NativeShow (bool    aAction)
+nsWindow::NativeShow(bool aAction)
 {
     if (aAction) {
-        // GTK wants us to set the window mask before we show the window
-        // for the first time, or setting the mask later won't work.
-        // GTK also wants us to NOT set the window mask if we're not really
-        // going to need it, because GTK won't let us unset the mask properly
-        // later.
-        // So, we delay setting the mask until the last moment: when the window
-        // is shown.
-        // XXX that may or may not be true for GTK+ 2.x
-        if (mTransparencyBitmap) {
-            ApplyTransparencyBitmap();
-        }
-
         // unset our flag now that our window has been shown
         mNeedsShow = false;
 
@@ -3909,6 +3914,8 @@ nsWindow::NativeShow (bool    aAction)
         if (mIsTopLevel) {
             gtk_widget_hide(GTK_WIDGET(mShell));
             gtk_widget_hide(GTK_WIDGET(mContainer));
+
+            ClearTransparencyBitmap(); // Release some resources
         }
         else if (mContainer) {
             gtk_widget_hide(GTK_WIDGET(mContainer));
@@ -3964,14 +3971,16 @@ nsWindow::SetHasMappedToplevel(bool aState)
 nsIntSize
 nsWindow::GetSafeWindowSize(nsIntSize aSize)
 {
+    // The X protocol uses CARD32 for window sizes, but the server (1.11.3)
+    // reads it as CARD16.  Sizes of pixmaps, used for drawing, are (unsigned)
+    // CARD16 in the protocol, but the server's ProcCreatePixmap returns
+    // BadAlloc if dimensions cannot be represented by signed shorts.
     nsIntSize result = aSize;
     const int32_t kInt16Max = 32767;
     if (result.width > kInt16Max) {
-        NS_WARNING("Clamping huge window width");
         result.width = kInt16Max;
     }
     if (result.height > kInt16Max) {
-        NS_WARNING("Clamping huge window height");
         result.height = kInt16Max;
     }
     return result;
@@ -3982,6 +3991,24 @@ nsWindow::EnsureGrabs(void)
 {
     if (mRetryPointerGrab)
         GrabPointer(sRetryGrabTime);
+}
+
+void
+nsWindow::CleanLayerManagerRecursive(void) {
+    if (mLayerManager) {
+        mLayerManager->Destroy();
+        mLayerManager = nullptr;
+    }
+
+    DestroyCompositor();
+
+    GList* children = gdk_window_peek_children(mGdkWindow);
+    for (GList* list = children; list; list = list->next) {
+        nsWindow* window = get_window_for_gdk_window(GDK_WINDOW(list->data));
+        if (window) {
+            window->CleanLayerManagerRecursive();
+        }
+    }
 }
 
 void
@@ -4007,21 +4034,15 @@ nsWindow::SetTransparencyMode(nsTransparencyMode aMode)
         return;
 
     if (!isTransparent) {
-        if (mTransparencyBitmap) {
-            delete[] mTransparencyBitmap;
-            mTransparencyBitmap = nullptr;
-            mTransparencyBitmapWidth = 0;
-            mTransparencyBitmapHeight = 0;
-#if defined(MOZ_WIDGET_GTK2)
-            gtk_widget_reset_shapes(mShell);
-#else
-            // GTK3 TODO
-#endif
-        }
+        ClearTransparencyBitmap();
     } // else the new default alpha values are "all 1", so we don't
     // need to change anything yet
 
     mIsTransparent = isTransparent;
+
+    // Need to clean our LayerManager up while still alive because
+    // we don't want to use layers acceleration on shaped windows
+    CleanLayerManagerRecursive();
 }
 
 nsTransparencyMode
@@ -4181,32 +4202,25 @@ nsWindow::SetWindowClipRegion(const nsTArray<nsIntRect>& aRects,
 }
 
 void
-nsWindow::ResizeTransparencyBitmap(int32_t aNewWidth, int32_t aNewHeight)
+nsWindow::ResizeTransparencyBitmap()
 {
     if (!mTransparencyBitmap)
         return;
 
-    if (aNewWidth == mTransparencyBitmapWidth &&
-        aNewHeight == mTransparencyBitmapHeight)
+    if (mBounds.width == mTransparencyBitmapWidth &&
+        mBounds.height == mTransparencyBitmapHeight)
         return;
 
-    int32_t newSize = GetBitmapStride(aNewWidth)*aNewHeight;
+    int32_t newRowBytes = GetBitmapStride(mBounds.width);
+    int32_t newSize = newRowBytes * mBounds.height;
     gchar* newBits = new gchar[newSize];
-    if (!newBits) {
-        delete[] mTransparencyBitmap;
-        mTransparencyBitmap = nullptr;
-        mTransparencyBitmapWidth = 0;
-        mTransparencyBitmapHeight = 0;
-        return;
-    }
-    // fill new mask with "opaque", first
-    memset(newBits, 255, newSize);
+    // fill new mask with "transparent", first
+    memset(newBits, 0, newSize);
 
     // Now copy the intersection of the old and new areas into the new mask
-    int32_t copyWidth = NS_MIN(aNewWidth, mTransparencyBitmapWidth);
-    int32_t copyHeight = NS_MIN(aNewHeight, mTransparencyBitmapHeight);
+    int32_t copyWidth = NS_MIN(mBounds.width, mTransparencyBitmapWidth);
+    int32_t copyHeight = NS_MIN(mBounds.height, mTransparencyBitmapHeight);
     int32_t oldRowBytes = GetBitmapStride(mTransparencyBitmapWidth);
-    int32_t newRowBytes = GetBitmapStride(aNewWidth);
     int32_t copyBytes = GetBitmapStride(copyWidth);
 
     int32_t i;
@@ -4220,8 +4234,8 @@ nsWindow::ResizeTransparencyBitmap(int32_t aNewWidth, int32_t aNewHeight)
 
     delete[] mTransparencyBitmap;
     mTransparencyBitmap = newBits;
-    mTransparencyBitmapWidth = aNewWidth;
-    mTransparencyBitmapHeight = aNewHeight;
+    mTransparencyBitmapWidth = mBounds.width;
+    mTransparencyBitmapHeight = mBounds.height;
 }
 
 static bool
@@ -4234,7 +4248,7 @@ ChangedMaskBits(gchar* aMaskBits, int32_t aMaskWidth, int32_t aMaskHeight,
         gchar* maskBytes = aMaskBits + y*maskBytesPerRow;
         uint8_t* alphas = aAlphas;
         for (x = aRect.x; x < xMax; x++) {
-            bool newBit = *alphas > 0;
+            bool newBit = *alphas > 0x7f;
             alphas++;
 
             gchar maskByte = maskBytes[x >> 3];
@@ -4260,7 +4274,7 @@ void UpdateMaskBits(gchar* aMaskBits, int32_t aMaskWidth, int32_t aMaskHeight,
         gchar* maskBytes = aMaskBits + y*maskBytesPerRow;
         uint8_t* alphas = aAlphas;
         for (x = aRect.x; x < xMax; x++) {
-            bool newBit = *alphas > 0;
+            bool newBit = *alphas > 0x7f;
             alphas++;
 
             gchar mask = 1 << (x & 7);
@@ -4320,6 +4334,32 @@ nsWindow::ApplyTransparencyBitmap()
 #endif // MOZ_X11
 }
 
+void
+nsWindow::ClearTransparencyBitmap()
+{
+    if (!mTransparencyBitmap)
+        return;
+
+    delete[] mTransparencyBitmap;
+    mTransparencyBitmap = nullptr;
+    mTransparencyBitmapWidth = 0;
+    mTransparencyBitmapHeight = 0;
+
+    if (!mShell)
+        return;
+
+#ifdef MOZ_X11
+    GdkWindow *window = gtk_widget_get_window(mShell);
+    if (!window)
+        return;
+
+    Display* xDisplay = GDK_WINDOW_XDISPLAY(window);
+    Window xWindow = gdk_x11_window_get_xid(window);
+
+    XShapeCombineMask(xDisplay, xWindow, ShapeBounding, 0, 0, None, ShapeSet);
+#endif
+}
+
 nsresult
 nsWindow::UpdateTranslucentWindowAlphaInternal(const nsIntRect& aRect,
                                                uint8_t* aAlphas, int32_t aStride)
@@ -4343,25 +4383,24 @@ nsWindow::UpdateTranslucentWindowAlphaInternal(const nsIntRect& aRect,
     if (mTransparencyBitmap == nullptr) {
         int32_t size = GetBitmapStride(mBounds.width)*mBounds.height;
         mTransparencyBitmap = new gchar[size];
-        if (mTransparencyBitmap == nullptr)
-            return NS_ERROR_FAILURE;
         memset(mTransparencyBitmap, 255, size);
         mTransparencyBitmapWidth = mBounds.width;
         mTransparencyBitmapHeight = mBounds.height;
+    } else {
+        ResizeTransparencyBitmap();
     }
 
-    NS_ASSERTION(aRect.x >= 0 && aRect.y >= 0
-            && aRect.XMost() <= mBounds.width && aRect.YMost() <= mBounds.height,
-            "Rect is out of window bounds");
+    nsIntRect rect;
+    rect.IntersectRect(aRect, nsIntRect(0, 0, mBounds.width, mBounds.height));
 
     if (!ChangedMaskBits(mTransparencyBitmap, mBounds.width, mBounds.height,
-                         aRect, aAlphas, aStride))
+                         rect, aAlphas, aStride))
         // skip the expensive stuff if the mask bits haven't changed; hopefully
         // this is the common case
         return NS_OK;
 
     UpdateMaskBits(mTransparencyBitmap, mBounds.width, mBounds.height,
-                   aRect, aAlphas, aStride);
+                   rect, aAlphas, aStride);
 
     if (!mNeedsShow) {
         ApplyTransparencyBitmap();
@@ -4737,7 +4776,7 @@ check_for_rollup(gdouble aMouseX, gdouble aMouseY,
             // if we're dealing with menus, we probably have submenus and
             // we don't want to rollup if the click is in a parent menu of
             // the current submenu
-            uint32_t popupsToRollup = PR_UINT32_MAX;
+            uint32_t popupsToRollup = UINT32_MAX;
             if (!aAlwaysRollup) {
                 nsAutoTArray<nsIWidget*, 5> widgetChain;
                 uint32_t sameTypeCount = gRollupListener->GetSubmenuWidgetChain(&widgetChain);
@@ -4765,7 +4804,7 @@ check_for_rollup(gdouble aMouseX, gdouble aMouseY,
             // if we've determined that we should still rollup, do it.
             if (rollup) {
                 gRollupListener->Rollup(popupsToRollup);
-                if (popupsToRollup == PR_UINT32_MAX) {
+                if (popupsToRollup == UINT32_MAX) {
                     retVal = true;
                 }
             }
@@ -6142,6 +6181,20 @@ nsWindow::BeginResizeDrag(nsGUIEvent* aEvent, int32_t aHorizontal, int32_t aVert
                                  screenX, screenY, aEvent->time);
 
     return NS_OK;
+}
+
+nsIWidget::LayerManager*
+nsWindow::GetLayerManager(PLayersChild* aShadowManager,
+                          LayersBackend aBackendHint,
+                          LayerManagerPersistence aPersistence,
+                          bool* aAllowRetaining)
+{
+    if (!mLayerManager && eTransparencyTransparent == GetTransparencyMode()) {
+        mLayerManager = CreateBasicLayerManager();
+    }
+
+    return nsBaseWidget::GetLayerManager(aShadowManager, aBackendHint,
+                                         aPersistence, aAllowRetaining);
 }
 
 void

@@ -189,7 +189,7 @@ nsHtml5Tokenizer::endTagExpectationToArray()
       return;
     }
     default: {
-
+      MOZ_ASSERT(false, "Bad end tag expectation.");
       return;
     }
   }
@@ -281,7 +281,7 @@ nsHtml5Tokenizer::flushChars(PRUnichar* buf, int32_t pos)
   if (pos > cstart) {
     tokenHandler->characters(buf, cstart, pos - cstart);
   }
-  cstart = PR_INT32_MAX;
+  cstart = INT32_MAX;
 }
 
 void 
@@ -398,7 +398,7 @@ nsHtml5Tokenizer::tokenizeBuffer(nsHtml5UTF16Buffer* buffer)
       break;
     }
     default: {
-      cstart = PR_INT32_MAX;
+      cstart = INT32_MAX;
       break;
     }
   }
@@ -2401,7 +2401,7 @@ nsHtml5Tokenizer::stateLoop(int32_t state, PRUnichar c, int32_t pos, PRUnichar* 
             NS_HTML5_BREAK(stateloop);
           }
           c = checkChar(buf, pos);
-
+          MOZ_ASSERT(index > 0);
           if (index < 6) {
             PRUnichar folded = c;
             if (c >= 'A' && c <= 'Z') {
@@ -3471,7 +3471,7 @@ nsHtml5Tokenizer::emitCarriageReturn(PRUnichar* buf, int32_t pos)
   silentCarriageReturn();
   flushChars(buf, pos);
   tokenHandler->characters(nsHtml5Tokenizer::LF, 0, 1);
-  cstart = PR_INT32_MAX;
+  cstart = INT32_MAX;
 }
 
 void 
@@ -3906,8 +3906,8 @@ nsHtml5Tokenizer::emitOrAppendOne(const PRUnichar* val, int32_t returnState)
 void 
 nsHtml5Tokenizer::end()
 {
-  strBuf = 0;
-  longStrBuf = 0;
+  strBuf = nullptr;
+  longStrBuf = nullptr;
   doctypeName = nullptr;
   if (systemIdentifier) {
     nsHtml5Portability::releaseString(systemIdentifier);

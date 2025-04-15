@@ -61,7 +61,7 @@ toolkit.jar:
   skin/classic/mozapps/plugins/contentPluginDownload.png          (plugins/contentPluginDownload.png)
   skin/classic/mozapps/plugins/contentPluginMissing.png           (plugins/contentPluginMissing.png)
   skin/classic/mozapps/plugins/contentPluginClickToPlay.png       (plugins/contentPluginClickToPlay.png)
-  skin/classic/mozapps/plugins/notifyPluginBlocked.png            (plugins/notifyPluginGeneric.png)
+  skin/classic/mozapps/plugins/notifyPluginBlocked.png            (plugins/pluginBlocked-16.png)
   skin/classic/mozapps/plugins/notifyPluginCrashed.png            (plugins/notifyPluginGeneric.png)
   skin/classic/mozapps/plugins/notifyPluginGeneric.png            (plugins/notifyPluginGeneric.png)
   skin/classic/mozapps/plugins/notifyPluginOutdated.png           (plugins/notifyPluginGeneric.png)
@@ -82,5 +82,6 @@ toolkit.jar:
   skin/classic/mozapps/xpinstall/xpinstallConfirm.css             (extensions/xpinstallConfirm.css)
 #ifdef MOZ_PLACES
   skin/classic/mozapps/places/defaultFavicon.png                  (places/defaultFavicon.png)
+  skin/classic/mozapps/places/defaultFavicon@2x.png               (places/defaultFavicon@2x.png)
 #endif
   skin/classic/mozapps/handling/handling.css                      (handling/handling.css)

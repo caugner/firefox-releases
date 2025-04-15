@@ -110,7 +110,7 @@ NS_IMETHODIMP
 nsUnknownDecoder::OnDataAvailable(nsIRequest* request, 
                                   nsISupports *aCtxt,
                                   nsIInputStream *aStream, 
-                                  uint32_t aSourceOffset, 
+                                  uint64_t aSourceOffset, 
                                   uint32_t aCount)
 {
   nsresult rv = NS_OK;
@@ -316,8 +316,8 @@ void nsUnknownDecoder::DetermineContentType(nsIRequest* aRequest)
       NS_ASSERTION(sSnifferEntries[i].mMimeType ||
                    sSnifferEntries[i].mContentTypeSniffer,
                    "Must have either a type string or a function to set the type");
-      NS_ASSERTION(sSnifferEntries[i].mMimeType == nullptr ||
-                   sSnifferEntries[i].mContentTypeSniffer == nullptr,
+      NS_ASSERTION(!sSnifferEntries[i].mMimeType ||
+                   !sSnifferEntries[i].mContentTypeSniffer,
                    "Both a type string and a type sniffing function set;"
                    " using type string");
       if (sSnifferEntries[i].mMimeType) {
@@ -381,7 +381,7 @@ bool nsUnknownDecoder::TryContentSniffers(nsIRequest* aRequest)
 
     nsCOMPtr<nsISupportsCString> sniffer_id(do_QueryInterface(elem));
     NS_ASSERTION(sniffer_id, "element is no nsISupportsCString!?");
-    nsCAutoString contractid;
+    nsAutoCString contractid;
     nsresult rv = sniffer_id->GetData(contractid);
     if (NS_FAILED(rv)) {
       continue;
@@ -505,7 +505,7 @@ bool nsUnknownDecoder::SniffURI(nsIRequest* aRequest)
       nsCOMPtr<nsIURI> uri;
       nsresult result = channel->GetURI(getter_AddRefs(uri));
       if (NS_SUCCEEDED(result) && uri) {
-        nsCAutoString type;
+        nsAutoCString type;
         result = mimeService->GetTypeFromURI(uri, type);
         if (NS_SUCCEEDED(result)) {
           mContentType = type;
@@ -549,7 +549,9 @@ bool nsUnknownDecoder::LastDitchSniff(nsIRequest* aRequest)
   // just call it text/plain...
   //
   uint32_t i;
-  for (i=0; i<mBufferLen && IS_TEXT_CHAR(mBuffer[i]); i++);
+  for (i = 0; i < mBufferLen && IS_TEXT_CHAR(mBuffer[i]); i++) {
+    continue;
+  }
 
   if (i == mBufferLen) {
     mContentType = TEXT_PLAIN;
@@ -643,10 +645,10 @@ nsBinaryDetector::DetermineContentType(nsIRequest* aRequest)
   }
 
   // It's an HTTP channel.  Check for the text/plain mess
-  nsCAutoString contentTypeHdr;
+  nsAutoCString contentTypeHdr;
   httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("Content-Type"),
                                  contentTypeHdr);
-  nsCAutoString contentType;
+  nsAutoCString contentType;
   httpChannel->GetContentType(contentType);
 
   // Make sure to do a case-sensitive exact match comparison here.  Apache
@@ -668,7 +670,7 @@ nsBinaryDetector::DetermineContentType(nsIRequest* aRequest)
   // detect the type.
   // XXXbz we could improve this by doing a local decompress if we
   // wanted, I'm sure.  
-  nsCAutoString contentEncoding;
+  nsAutoCString contentEncoding;
   httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("Content-Encoding"),
                                  contentEncoding);
   if (!contentEncoding.IsEmpty()) {

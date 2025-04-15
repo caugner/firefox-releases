@@ -57,9 +57,15 @@ private:
   nsScreen();
   virtual ~nsScreen();
 
-  nsRefPtr<FullScreenEventListener> mEventListener;
+  enum LockPermission {
+    LOCK_DENIED,
+    FULLSCREEN_LOCK_ALLOWED,
+    LOCK_ALLOWED
+  };
 
-  NS_DECL_EVENT_HANDLER(mozorientationchange)
+  LockPermission GetLockOrientationPermission() const;
+
+  nsRefPtr<FullScreenEventListener> mEventListener;
 };
 
 #endif /* nsScreen_h___ */

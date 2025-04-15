@@ -288,6 +288,24 @@ Java_org_mozilla_gecko_GeckoAppShell_ ## name(JNIEnv *jenv, jclass jc, type1 one
   return f_ ## name(jenv, jc, one, two, three, four, five, six, seven, eight); \
 }
 
+#define SHELL_WRAPPER9_WITH_RETURN(name, return_type, type1, type2, type3, type4, type5, type6, type7, type8, type9) \
+typedef return_type (*name ## _t)(JNIEnv *, jclass, type1 one, type2 two, type3 three, type4 four, type5 five, type6 six, type7 seven, type8 eight, type9 nine); \
+static name ## _t f_ ## name; \
+extern "C" NS_EXPORT return_type JNICALL \
+Java_org_mozilla_gecko_GeckoAppShell_ ## name(JNIEnv *jenv, jclass jc, type1 one, type2 two, type3 three, type4 four, type5 five, type6 six, type7 seven, type8 eight, type9 nine) \
+{ \
+  return f_ ## name(jenv, jc, one, two, three, four, five, six, seven, eight, nine); \
+}
+
+#define SHELL_WRAPPER9(name,type1,type2,type3,type4,type5,type6,type7,type8, type9) \
+typedef void (*name ## _t)(JNIEnv *, jclass, type1 one, type2 two, type3 three, type4 four, type5 five, type6 six, type7 seven, type8 eight, type9 nine); \
+static name ## _t f_ ## name; \
+extern "C" NS_EXPORT void JNICALL \
+Java_org_mozilla_gecko_GeckoAppShell_ ## name(JNIEnv *jenv, jclass jc, type1 one, type2 two, type3 three, type4 four, type5 five, type6 six, type7 seven, type8 eight, type9 nine) \
+{ \
+  f_ ## name(jenv, jc, one, two, three, four, five, six, seven, eight, nine); \
+}
+
 SHELL_WRAPPER0(nativeInit)
 SHELL_WRAPPER1(notifyGeckoOfEvent, jobject)
 SHELL_WRAPPER0(processNextNativeEvent)
@@ -299,7 +317,6 @@ SHELL_WRAPPER3(callObserver, jstring, jstring, jstring)
 SHELL_WRAPPER1(removeObserver, jstring)
 SHELL_WRAPPER1(onChangeNetworkLinkStatus, jstring)
 SHELL_WRAPPER1(reportJavaCrash, jstring)
-SHELL_WRAPPER0(executeNextRunnable)
 SHELL_WRAPPER1(cameraCallbackBridge, jbyteArray)
 SHELL_WRAPPER3(notifyBatteryChange, jdouble, jboolean, jdouble)
 SHELL_WRAPPER3(notifySmsReceived, jstring, jstring, jlong)
@@ -308,17 +325,17 @@ SHELL_WRAPPER0(scheduleComposite)
 SHELL_WRAPPER0(schedulePauseComposition)
 SHELL_WRAPPER2(scheduleResumeComposition, jint, jint)
 SHELL_WRAPPER3_WITH_RETURN(saveMessageInSentbox, jint, jstring, jstring, jlong)
-SHELL_WRAPPER6(notifySmsSent, jint, jstring, jstring, jlong, jint, jlong)
-SHELL_WRAPPER4(notifySmsDelivered, jint, jstring, jstring, jlong)
-SHELL_WRAPPER3(notifySmsSendFailed, jint, jint, jlong)
-SHELL_WRAPPER7(notifyGetSms, jint, jstring, jstring, jstring, jlong, jint, jlong)
-SHELL_WRAPPER3(notifyGetSmsFailed, jint, jint, jlong)
-SHELL_WRAPPER3(notifySmsDeleted, jboolean, jint, jlong)
-SHELL_WRAPPER3(notifySmsDeleteFailed, jint, jint, jlong)
-SHELL_WRAPPER2(notifyNoMessageInList, jint, jlong)
-SHELL_WRAPPER8(notifyListCreated, jint, jint, jstring, jstring, jstring, jlong, jint, jlong)
-SHELL_WRAPPER7(notifyGotNextMessage, jint, jstring, jstring, jstring, jlong, jint, jlong)
-SHELL_WRAPPER3(notifyReadingMessageListFailed, jint, jint, jlong)
+SHELL_WRAPPER5(notifySmsSent, jint, jstring, jstring, jlong, jint)
+SHELL_WRAPPER5(notifySmsDelivery, jint, jint, jstring, jstring, jlong)
+SHELL_WRAPPER2(notifySmsSendFailed, jint, jint)
+SHELL_WRAPPER7(notifyGetSms, jint, jint, jstring, jstring, jstring, jlong, jint)
+SHELL_WRAPPER2(notifyGetSmsFailed, jint, jint)
+SHELL_WRAPPER2(notifySmsDeleted, jboolean, jint)
+SHELL_WRAPPER2(notifySmsDeleteFailed, jint, jint)
+SHELL_WRAPPER1(notifyNoMessageInList, jint)
+SHELL_WRAPPER8(notifyListCreated, jint, jint, jint, jstring, jstring, jstring, jlong, jint)
+SHELL_WRAPPER7(notifyGotNextMessage, jint, jint, jstring, jstring, jstring, jlong, jint)
+SHELL_WRAPPER2(notifyReadingMessageListFailed, jint, jint)
 SHELL_WRAPPER2(notifyFilePickerResult, jstring, jlong)
 SHELL_WRAPPER1_WITH_RETURN(getSurfaceBits, jobject, jobject)
 SHELL_WRAPPER1(onFullScreenPluginHidden, jobject)
@@ -625,7 +642,8 @@ extractBuf(const char * path, Zip *zip)
   if (!zip->GetStream(path, &s))
     return NULL;
 
-  void * buf = malloc(s.GetUncompressedSize());
+  // allocate space for a trailing null byte
+  void * buf = malloc(s.GetUncompressedSize() + 1);
   if (buf == (void *)-1) {
     __android_log_print(ANDROID_LOG_ERROR, "GeckoLibLoad", "Couldn't alloc decompression buffer for %s", path);
     return NULL;
@@ -634,6 +652,9 @@ extractBuf(const char * path, Zip *zip)
     extractLib(s, buf);
   else
     memcpy(buf, s.GetBuffer(), s.GetUncompressedSize());
+
+  // null terminate it
+  ((unsigned char*) buf)[s.GetUncompressedSize()] = 0;
 
   return buf;
 }
@@ -723,7 +744,6 @@ loadGeckoLibs(const char *apkName)
   GETFUNC(removeObserver);
   GETFUNC(onChangeNetworkLinkStatus);
   GETFUNC(reportJavaCrash);
-  GETFUNC(executeNextRunnable);
   GETFUNC(cameraCallbackBridge);
   GETFUNC(notifyBatteryChange);
   GETFUNC(notifySmsReceived);
@@ -733,7 +753,7 @@ loadGeckoLibs(const char *apkName)
   GETFUNC(scheduleResumeComposition);
   GETFUNC(saveMessageInSentbox);
   GETFUNC(notifySmsSent);
-  GETFUNC(notifySmsDelivered);
+  GETFUNC(notifySmsDelivery);
   GETFUNC(notifySmsSendFailed);
   GETFUNC(notifyGetSms);
   GETFUNC(notifyGetSmsFailed);

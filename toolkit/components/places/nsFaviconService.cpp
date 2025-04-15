@@ -278,7 +278,7 @@ nsFaviconService::SetFaviconUrlForPage(nsIURI* aPageURI, nsIURI* aFaviconURI)
 
   // Now, link our icon entry with the page.
   int64_t pageId;
-  nsCAutoString guid;
+  nsAutoCString guid;
   rv = history->GetIdForPage(aPageURI, &pageId, guid);
   NS_ENSURE_SUCCESS(rv, rv);
   if (!pageId) {
@@ -329,7 +329,7 @@ nsFaviconService::SendFaviconNotifications(nsIURI* aPageURI,
                                            nsIURI* aFaviconURI,
                                            const nsACString& aGUID)
 {
-  nsCAutoString faviconSpec;
+  nsAutoCString faviconSpec;
   nsNavHistory* history = nsNavHistory::GetHistoryService();
   if (history && NS_SUCCEEDED(aFaviconURI->GetSpec(faviconSpec))) {
     history->SendPageChangedNotification(aPageURI,
@@ -344,6 +344,7 @@ NS_IMETHODIMP
 nsFaviconService::SetAndLoadFaviconForPage(nsIURI* aPageURI,
                                            nsIURI* aFaviconURI,
                                            bool aForceReload,
+                                           uint32_t aFaviconLoadType,
                                            nsIFaviconDataCallback* aCallback)
 {
   NS_ENSURE_ARG(aPageURI);
@@ -367,7 +368,7 @@ nsFaviconService::SetAndLoadFaviconForPage(nsIURI* aPageURI,
   // Finally associate the icon to the requested page if not yet associated.
   rv = AsyncFetchAndSetIconForPage::start(
     aFaviconURI, aPageURI, aForceReload ? FETCH_ALWAYS : FETCH_IF_MISSING,
-    aCallback
+    aFaviconLoadType, aCallback
   );
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -379,10 +380,12 @@ NS_IMETHODIMP
 nsFaviconService::SetAndFetchFaviconForPage(nsIURI* aPageURI,
                                             nsIURI* aFaviconURI,
                                             bool aForceReload,
+                                            uint32_t aFaviconLoadType,
                                             nsIFaviconDataCallback* aCallback)
 {
   return SetAndLoadFaviconForPage(aPageURI, aFaviconURI,
-                                  aForceReload, aCallback);
+                                  aForceReload, aFaviconLoadType,
+                                  aCallback);
 }
 
 NS_IMETHODIMP
@@ -602,7 +605,7 @@ nsFaviconService::ReplaceFaviconDataFromDataURL(nsIURI* aFaviconURI,
   uint64_t available64;
   rv = stream->Available(&available64);
   NS_ENSURE_SUCCESS(rv, rv);
-  if (available64 == 0 || available64 > PR_UINT32_MAX / sizeof(uint8_t))
+  if (available64 == 0 || available64 > UINT32_MAX / sizeof(uint8_t))
     return NS_ERROR_FILE_TOO_BIG;
   uint32_t available = (uint32_t)available64;
 
@@ -618,7 +621,7 @@ nsFaviconService::ReplaceFaviconDataFromDataURL(nsIURI* aFaviconURI,
     return rv;
   }
 
-  nsCAutoString mimeType;
+  nsAutoCString mimeType;
   rv = channel->GetContentType(mimeType);
   if (NS_FAILED(rv)) {
     nsMemory::Free(buffer);
@@ -665,7 +668,7 @@ nsFaviconService::SetFaviconDataFromDataURL(nsIURI* aFaviconURI,
   uint64_t available64;
   rv = stream->Available(&available64);
   NS_ENSURE_SUCCESS(rv, rv);
-  if (available64 == 0 || available64 > PR_UINT32_MAX / sizeof(uint8_t))
+  if (available64 == 0 || available64 > UINT32_MAX / sizeof(uint8_t))
     return NS_ERROR_FAILURE;
   uint32_t available = (uint32_t)available64;
 
@@ -681,7 +684,7 @@ nsFaviconService::SetFaviconDataFromDataURL(nsIURI* aFaviconURI,
     return rv;
   }
 
-  nsCAutoString mimeType;
+  nsAutoCString mimeType;
   rv = channel->GetContentType(mimeType);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -713,7 +716,7 @@ nsFaviconService::GetFaviconData(nsIURI* aFaviconURI, nsACString& aMimeType,
   // If we're getting the default favicon, we need to handle it separately since
   // it's not in the database.
   if (isDefaultFavicon) {
-    nsCAutoString defaultData;
+    nsAutoCString defaultData;
     rv = GetDefaultFaviconData(defaultData);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -759,7 +762,7 @@ nsFaviconService::GetDefaultFaviconData(nsCString& byteStr)
     rv = NS_OpenURI(getter_AddRefs(istream), defaultFaviconURI);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = NS_ConsumeStream(istream, PR_UINT32_MAX, mDefaultFaviconData);
+    rv = NS_ConsumeStream(istream, UINT32_MAX, mDefaultFaviconData);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = istream->Close();
@@ -782,7 +785,7 @@ nsFaviconService::GetFaviconDataAsDataURL(nsIURI* aFaviconURI,
 
   uint8_t* data;
   uint32_t dataLen;
-  nsCAutoString mimeType;
+  nsAutoCString mimeType;
 
   nsresult rv = GetFaviconData(aFaviconURI, mimeType, &dataLen, &data);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -830,7 +833,7 @@ nsFaviconService::GetFaviconForPage(nsIURI* aPageURI, nsIURI** _retval)
 
   bool hasResult;
   if (NS_SUCCEEDED(stmt->ExecuteStep(&hasResult)) && hasResult) {
-    nsCAutoString url;
+    nsAutoCString url;
     rv = stmt->GetUTF8String(1, url);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -891,7 +894,7 @@ nsFaviconService::GetFaviconImageForPage(nsIURI* aPageURI, nsIURI** _retval)
     NS_ENSURE_SUCCESS(rv, rv);
     if (dataLen > 0) {
       // this page has a favicon entry with data
-      nsCAutoString favIconUri;
+      nsAutoCString favIconUri;
       rv = stmt->GetUTF8String(1, favIconUri);
       NS_ENSURE_SUCCESS(rv, rv);
 
@@ -911,7 +914,7 @@ nsFaviconService::GetFaviconLinkForIcon(nsIURI* aFaviconURI,
   NS_ENSURE_ARG(aFaviconURI);
   NS_ENSURE_ARG_POINTER(aOutputURI);
 
-  nsCAutoString spec;
+  nsAutoCString spec;
   if (aFaviconURI) {
     nsresult rv = aFaviconURI->GetSpec(spec);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -937,7 +940,7 @@ nsFaviconService::AddFailedFavicon(nsIURI* aFaviconURI)
 {
   NS_ENSURE_ARG(aFaviconURI);
 
-  nsCAutoString spec;
+  nsAutoCString spec;
   nsresult rv = aFaviconURI->GetSpec(spec);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -960,7 +963,7 @@ nsFaviconService::RemoveFailedFavicon(nsIURI* aFaviconURI)
 {
   NS_ENSURE_ARG(aFaviconURI);
 
-  nsCAutoString spec;
+  nsAutoCString spec;
   nsresult rv = aFaviconURI->GetSpec(spec);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -974,7 +977,7 @@ NS_IMETHODIMP
 nsFaviconService::IsFailedFavicon(nsIURI* aFaviconURI, bool* _retval)
 {
   NS_ENSURE_ARG(aFaviconURI);
-  nsCAutoString spec;
+  nsAutoCString spec;
   nsresult rv = aFaviconURI->GetSpec(spec);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1009,7 +1012,7 @@ nsFaviconService::GetFaviconLinkForIconString(const nsCString& aSpec,
     return NS_NewURI(aOutput, aSpec);
   }
 
-  nsCAutoString annoUri;
+  nsAutoCString annoUri;
   annoUri.AssignLiteral("moz-anno:" FAVICON_ANNOTATION_NAME ":");
   annoUri += aSpec;
   return NS_NewURI(aOutput, annoUri);
@@ -1072,7 +1075,7 @@ nsFaviconService::OptimizeFaviconImage(const uint8_t* aData, uint32_t aDataLen,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Read the stream into a new buffer.
-  rv = NS_ConsumeStream(iconStream, PR_UINT32_MAX, aNewData);
+  rv = NS_ConsumeStream(iconStream, UINT32_MAX, aNewData);
   NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_OK;

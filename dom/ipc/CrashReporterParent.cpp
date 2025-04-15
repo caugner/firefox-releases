@@ -39,14 +39,13 @@ CrashReporterParent::RecvAddLibraryMappings(const InfallibleTArray<Mapping>& map
   return true;
 }
 
-bool
-CrashReporterParent::RecvAnnotateCrashReport(const nsCString& key,
-                                             const nsCString& data)
+void
+CrashReporterParent::AnnotateCrashReport(const nsCString& key,
+                                         const nsCString& data)
 {
 #ifdef MOZ_CRASHREPORTER
     mNotes.Put(key, data);
 #endif
-    return true;
 }
 
 bool
@@ -83,22 +82,6 @@ CrashReporterParent::SetChildData(const NativeThreadId& tid,
 
 #ifdef MOZ_CRASHREPORTER
 bool
-CrashReporterParent::GenerateHangCrashReport(const AnnotationTable* processNotes)
-{
-    if (mChildDumpID.IsEmpty())
-        return false;
-
-    GenerateChildData(processNotes);
-
-    CrashReporter::AnnotationTable notes;
-    notes.Init(4);
-    notes.Put(nsDependentCString("HangID"), NS_ConvertUTF16toUTF8(mHangID));
-    if (!CrashReporter::AppendExtraData(mParentDumpID, notes))
-        NS_WARNING("problem appending parent data to .extra");
-    return true;
-}
-
-bool
 CrashReporterParent::GenerateCrashReportForMinidump(nsIFile* minidump,
     const AnnotationTable* processNotes)
 {
@@ -112,7 +95,7 @@ CrashReporterParent::GenerateChildData(const AnnotationTable* processNotes)
 {
     MOZ_ASSERT(mInitialized);
 
-    nsCAutoString type;
+    nsAutoCString type;
     switch (mProcessType) {
         case GeckoProcessType_Content:
             type = NS_LITERAL_CSTRING("content");

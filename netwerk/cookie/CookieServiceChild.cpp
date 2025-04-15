@@ -116,8 +116,9 @@ CookieServiceChild::GetCookieStringInternal(nsIURI *aHostURI,
   SerializeURI(aHostURI, uriParams);
 
   // Synchronously call the parent.
-  nsCAutoString result;
-  SendGetCookieString(uriParams, !!isForeign, aFromHttp, &result);
+  nsAutoCString result;
+  SendGetCookieString(uriParams, !!isForeign, aFromHttp,
+                      IPC::SerializedLoadContext(aChannel), &result);
   if (!result.IsEmpty())
     *aCookieString = ToNewCString(result);
 
@@ -149,7 +150,7 @@ CookieServiceChild::SetCookieStringInternal(nsIURI *aHostURI,
 
   // Synchronously call the parent.
   SendSetCookieString(uriParams, !!isForeign, cookieString, serverTime,
-                      aFromHttp);
+                      aFromHttp, IPC::SerializedLoadContext(aChannel));
   return NS_OK;
 }
 

@@ -8,6 +8,7 @@
 #ifndef mozilla_layout_RenderFrameParent_h
 #define mozilla_layout_RenderFrameParent_h
 
+#include "mozilla/Attributes.h"
 #include <map>
 
 #include "mozilla/layout/PRenderFrameParent.h"
@@ -43,6 +44,7 @@ class RenderFrameParent : public PRenderFrameParent,
   typedef mozilla::layers::LayerManager LayerManager;
   typedef mozilla::layers::TargetConfig TargetConfig;
   typedef mozilla::layers::ShadowLayersParent ShadowLayersParent;
+  typedef mozilla::FrameLayerBuilder::ContainerParameters ContainerParameters;
   typedef FrameMetrics::ViewID ViewID;
 
 public:
@@ -83,7 +85,8 @@ public:
                                      nsIFrame* aFrame,
                                      LayerManager* aManager,
                                      const nsIntRect& aVisibleRect,
-                                     nsDisplayItem* aItem);
+                                     nsDisplayItem* aItem,
+                                     const ContainerParameters& aContainerParameters);
 
   void OwnerContentChanged(nsIContent* aContent);
 
@@ -97,6 +100,8 @@ public:
   void ZoomToRect(const gfxRect& aRect);
 
   void ContentReceivedTouch(bool aPreventDefault);
+
+  void UpdateZoomConstraints(bool aAllowZoom, float aMinZoom, float aMaxZoom);
 
 protected:
   void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
@@ -215,7 +220,7 @@ public:
     return mRect;
   }
 
-  virtual uint32_t GetPerFrameKey()
+  virtual uint32_t GetPerFrameKey() MOZ_OVERRIDE
   {
     NS_ABORT();
     return 0;

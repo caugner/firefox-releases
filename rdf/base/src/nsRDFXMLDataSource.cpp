@@ -533,10 +533,10 @@ RDFXMLDataSourceImpl::BlockingParse(nsIURI* aURL, nsIStreamListener* aConsumer)
         if (avail == 0)
             break; // eof
 
-        if (avail > PR_UINT32_MAX)
-            avail = PR_UINT32_MAX;
+        if (avail > UINT32_MAX)
+            avail = UINT32_MAX;
 
-        rv = aConsumer->OnDataAvailable(channel, nullptr, bufStream, (uint32_t)NS_MIN(offset, (uint64_t)PR_UINT32_MAX), (uint32_t)avail);
+        rv = aConsumer->OnDataAvailable(channel, nullptr, bufStream, offset, (uint32_t)avail);
         if (NS_SUCCEEDED(rv))
             offset += avail;
     }
@@ -606,7 +606,7 @@ RDFXMLDataSourceImpl::GetURI(char* *aURI)
         return NS_OK;
     }
     
-    nsCAutoString spec;
+    nsAutoCString spec;
     mURL->GetSpec(spec);
     *aURI = ToNewCString(spec);
     if (!*aURI) {
@@ -826,7 +826,7 @@ RDFXMLDataSourceImpl::Flush(void)
         return NS_ERROR_NOT_INITIALIZED;
 
 #ifdef PR_LOGGING
-    nsCAutoString spec;
+    nsAutoCString spec;
     mURL->GetSpec(spec);
     PR_LOG(gLog, PR_LOG_NOTICE,
            ("rdfxml[%p] flush(%s)", this, spec.get()));
@@ -906,7 +906,7 @@ NS_IMETHODIMP
 RDFXMLDataSourceImpl::Refresh(bool aBlocking)
 {
 #ifdef PR_LOGGING
-    nsCAutoString spec;
+    nsAutoCString spec;
     if (mURL) {
         mURL->GetSpec(spec);
     }
@@ -961,7 +961,7 @@ NS_IMETHODIMP
 RDFXMLDataSourceImpl::BeginLoad(void)
 {
 #ifdef PR_LOGGING
-    nsCAutoString spec;
+    nsAutoCString spec;
     if (mURL) {
         mURL->GetSpec(spec);
     }
@@ -987,7 +987,7 @@ NS_IMETHODIMP
 RDFXMLDataSourceImpl::Interrupt(void)
 {
 #ifdef PR_LOGGING
-    nsCAutoString spec;
+    nsAutoCString spec;
     if (mURL) {
         mURL->GetSpec(spec);
     }
@@ -1012,7 +1012,7 @@ NS_IMETHODIMP
 RDFXMLDataSourceImpl::Resume(void)
 {
 #ifdef PR_LOGGING
-    nsCAutoString spec;
+    nsAutoCString spec;
     if (mURL) {
         mURL->GetSpec(spec);
     }
@@ -1037,7 +1037,7 @@ NS_IMETHODIMP
 RDFXMLDataSourceImpl::EndLoad(void)
 {
 #ifdef PR_LOGGING
-    nsCAutoString spec;
+    nsAutoCString spec;
     if (mURL) {
         mURL->GetSpec(spec);
     }
@@ -1143,7 +1143,7 @@ NS_IMETHODIMP
 RDFXMLDataSourceImpl::OnDataAvailable(nsIRequest *request,
                                       nsISupports *ctxt,
                                       nsIInputStream *inStr,
-                                      uint32_t sourceOffset,
+                                      uint64_t sourceOffset,
                                       uint32_t count)
 {
     return mListener->OnDataAvailable(request, ctxt, inStr, sourceOffset, count);

@@ -31,7 +31,6 @@
 #include "nsZipArchive.h"
 #include "mozilla/Omnijar.h"
 #include "prenv.h"
-#include "mozilla/FunctionTimer.h"
 #include "mozilla/Telemetry.h"
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
@@ -89,8 +88,14 @@ static NS_DEFINE_CID(kZipReaderCID, NS_ZIPREADER_CID);
 StartupCache*
 StartupCache::GetSingleton() 
 {
-  if (!gStartupCache)
+  if (!gStartupCache) {
+    if (XRE_GetProcessType() != GeckoProcessType_Default) {
+      NS_WARNING("Startup cache is only available in the chrome process");
+      return nullptr;
+    }
+
     StartupCache::InitSingleton();
+  }
 
   return StartupCache::gStartupCache;
 }
@@ -144,10 +149,6 @@ StartupCache::~StartupCache()
 nsresult
 StartupCache::Init() 
 {
-  if (XRE_GetProcessType() != GeckoProcessType_Default) {
-    NS_WARNING("Startup cache is only available in the chrome process");
-    return NS_ERROR_NOT_AVAILABLE;
-  }
   // workaround for bug 653936
   nsCOMPtr<nsIProtocolHandler> jarInitializer(do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "jar"));
   
@@ -485,7 +486,6 @@ StartupCache::WaitOnWriteThread()
   if (!mWriteThread || mWriteThread == PR_GetCurrentThread())
     return;
 
-  NS_TIME_FUNCTION_MIN(30);
   PR_JoinThread(mWriteThread);
   mWriteThread = NULL;
 }

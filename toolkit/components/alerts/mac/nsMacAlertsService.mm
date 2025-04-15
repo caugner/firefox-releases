@@ -191,7 +191,7 @@ nsMacAlertsService::Init()
     do_GetService("@mozilla.org/observer-service;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Don't ever use Notification Center, it isn't ready yet.
+  // Don't ever use Notification Center support, it isn't ready.
   InitGrowl();
 
   (void)os->AddObserver(this, DOM_WINDOW_DESTROYED_TOPIC, false);

@@ -43,6 +43,7 @@
 #include "nsScreenManagerGonk.h"
 #include "nsWindow.h"
 #include "OrientationObserver.h"
+#include "GonkMemoryPressureMonitoring.h"
 
 #include "android/log.h"
 #include "libui/EventHub.h"
@@ -64,11 +65,14 @@
 using namespace android;
 using namespace mozilla;
 using namespace mozilla::dom;
+using namespace mozilla::services;
 
 bool gDrawRequest = false;
 static nsAppShell *gAppShell = NULL;
 static int epollfd = 0;
 static int signalfds[2] = {0};
+
+NS_IMPL_ISUPPORTS_INHERITED1(nsAppShell, nsBaseAppShell, nsIObserver)
 
 namespace mozilla {
 
@@ -154,7 +158,7 @@ addDOMTouch(UserInputData& data, nsTouchEvent& event, int i)
 }
 
 static nsEventStatus
-sendTouchEvent(UserInputData& data)
+sendTouchEvent(UserInputData& data, bool* captured)
 {
     uint32_t msg;
     int32_t action = data.action & AMOTION_EVENT_ACTION_MASK;
@@ -190,7 +194,7 @@ sendTouchEvent(UserInputData& data)
             addDOMTouch(data, event, i);
     }
 
-    return nsWindow::DispatchInputEvent(event);
+    return nsWindow::DispatchInputEvent(event, captured);
 }
 
 static nsEventStatus
@@ -435,7 +439,11 @@ GeckoInputDispatcher::dispatchOnce()
         nsEventStatus status = nsEventStatus_eIgnore;
         if ((data.action & AMOTION_EVENT_ACTION_MASK) !=
             AMOTION_EVENT_ACTION_HOVER_MOVE) {
-            status = sendTouchEvent(data);
+            bool captured;
+            status = sendTouchEvent(data, &captured);
+            if (captured) {
+                return;
+            }
         }
 
         uint32_t msg;
@@ -581,20 +589,25 @@ GeckoInputDispatcher::unregisterInputChannel(const sp<InputChannel>& inputChanne
 nsAppShell::nsAppShell()
     : mNativeCallbackRequest(false)
     , mHandlers()
+    , mEnableDraw(false)
 {
     gAppShell = this;
 }
 
 nsAppShell::~nsAppShell()
 {
-    // We separate requestExit() and join() here so we can wake the EventHub's
-    // input loop, and stop it from polling for input events
-    mReaderThread->requestExit();
-    mEventHub->wake();
+    // mReaderThread and mEventHub will both be null if InitInputDevices
+    // is not called.
+    if (mReaderThread.get()) {
+        // We separate requestExit() and join() here so we can wake the EventHub's
+        // input loop, and stop it from polling for input events
+        mReaderThread->requestExit();
+        mEventHub->wake();
 
-    status_t result = mReaderThread->requestExitAndWait();
-    if (result)
-        LOG("Could not stop reader thread - %d", result);
+        status_t result = mReaderThread->requestExitAndWait();
+        if (result)
+            LOG("Could not stop reader thread - %d", result);
+    }
     gAppShell = NULL;
 }
 
@@ -613,16 +626,41 @@ nsAppShell::Init()
     rv = AddFdHandler(signalfds[0], pipeHandler, "");
     NS_ENSURE_SUCCESS(rv, rv);
 
+    InitGonkMemoryPressureMonitoring();
+
+    nsCOMPtr<nsIObserverService> obsServ = GetObserverService();
+    if (obsServ) {
+        obsServ->AddObserver(this, "browser-ui-startup-complete", false);
+    }
+
     // Delay initializing input devices until the screen has been
     // initialized (and we know the resolution).
     return rv;
 }
 
 NS_IMETHODIMP
+nsAppShell::Observe(nsISupports* aSubject,
+                    const char* aTopic,
+                    const PRUnichar* aData)
+{
+    if (strcmp(aTopic, "browser-ui-startup-complete")) {
+        return nsBaseAppShell::Observe(aSubject, aTopic, aData);
+    }
+
+    mEnableDraw = true;
+    NotifyEvent();
+    return NS_OK;
+}
+
+NS_IMETHODIMP
 nsAppShell::Exit()
 {
-  OrientationObserver::ShutDown();
-  return nsBaseAppShell::Exit();
+    OrientationObserver::ShutDown();
+    nsCOMPtr<nsIObserverService> obsServ = GetObserverService();
+    if (obsServ) {
+        obsServ->RemoveObserver(this, "browser-ui-startup-complete");
+    }
+    return nsBaseAppShell::Exit();
 }
 
 void
@@ -694,7 +732,7 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
         NativeEventCallback();
     }
 
-    if (gDrawRequest) {
+    if (gDrawRequest && mEnableDraw) {
         gDrawRequest = false;
         nsWindow::DoDraw();
     }

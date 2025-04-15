@@ -221,7 +221,7 @@ static int assembleCmdLine(char *const *argv, PRUnichar **wideCmdLine,
 }
 #endif
 
-void PR_CALLBACK nsProcess::Monitor(void *arg)
+void nsProcess::Monitor(void *arg)
 {
     nsRefPtr<nsProcess> process = dont_AddRef(static_cast<nsProcess*>(arg));
 
@@ -565,7 +565,7 @@ nsProcess::Kill()
     {
         MutexAutoLock lock(mLock);
 #if defined(PROCESSMODEL_WINAPI)
-        if (TerminateProcess(mProcess, NULL) == 0)
+        if (TerminateProcess(mProcess, 0) == 0)
             return NS_ERROR_FAILURE;
 #elif defined(XP_MACOSX)
         if (kill(mPid, SIGKILL) != 0)

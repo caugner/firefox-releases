@@ -10,6 +10,7 @@
 #include "VideoFrameContainer.h"
 #include "MediaStreamGraph.h"
 #include "nsIObserver.h"
+#include "AudioChannelCommon.h"
 
 class nsHTMLMediaElement;
 class nsIStreamListener;
@@ -20,6 +21,7 @@ class nsITimer;
 
 namespace mozilla {
 class MediaResource;
+class MediaByteRange;
 }
 
 // The size to use for audio data frames in MozAudioAvailable events.
@@ -39,6 +41,7 @@ class nsMediaDecoder : public nsIObserver
 {
 public:
   typedef mozilla::MediaResource MediaResource;
+  typedef mozilla::MediaByteRange MediaByteRange;
   typedef mozilla::ReentrantMonitor ReentrantMonitor;
   typedef mozilla::SourceMediaStream SourceMediaStream;
   typedef mozilla::ProcessedMediaStream ProcessedMediaStream;
@@ -47,6 +50,7 @@ public:
   typedef mozilla::TimeStamp TimeStamp;
   typedef mozilla::TimeDuration TimeDuration;
   typedef mozilla::VideoFrameContainer VideoFrameContainer;
+  typedef mozilla::dom::AudioChannelType AudioChannelType;
 
   nsMediaDecoder();
   virtual ~nsMediaDecoder();
@@ -72,6 +76,14 @@ public:
 
   // Seek to the time position in (seconds) from the start of the video.
   virtual nsresult Seek(double aTime) = 0;
+
+  // Enables decoders to supply an enclosing byte range for a seek offset.
+  // E.g. used by ChannelMediaResource to download a whole cluster for
+  // DASH-WebM.
+  virtual nsresult GetByteRangeForSeek(int64_t const aOffset,
+                                       MediaByteRange &aByteRange) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
 
   // Called by the element when the playback rate has been changed.
   // Adjust the speed of the playback, optionally with pitch correction,
@@ -372,10 +384,13 @@ public:
   virtual int64_t AudioQueueMemoryInUse() = 0;
 
   VideoFrameContainer* GetVideoFrameContainer() { return mVideoFrameContainer; }
-  mozilla::layers::ImageContainer* GetImageContainer()
+  virtual mozilla::layers::ImageContainer* GetImageContainer()
   {
     return mVideoFrameContainer ? mVideoFrameContainer->GetImageContainer() : nullptr;
   }
+
+  void SetAudioChannelType(AudioChannelType aType) { mAudioChannelType = aType; }
+  AudioChannelType GetAudioChannelType() { return mAudioChannelType; }
 
 protected:
 
@@ -427,6 +442,10 @@ protected:
   // being run that operates on the element and decoder during shutdown.
   // Read/Write from the main thread only.
   bool mShuttingDown;
+
+  // Be assigned from media element during the initialization and pass to
+  // nsAudioStream Class.
+  AudioChannelType mAudioChannelType;
 };
 
 namespace mozilla {

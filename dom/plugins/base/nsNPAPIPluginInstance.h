@@ -34,6 +34,7 @@ class nsPluginStreamListenerPeer; // browser-initiated stream class
 class nsNPAPIPluginStreamListener; // plugin-initiated stream class
 class nsIPluginInstanceOwner;
 class nsIOutputStream;
+class nsPluginInstanceOwner;
 
 #if defined(OS_WIN)
 const NPDrawingModel kDefaultDrawingModel = NPDrawingModelSyncWin;
@@ -41,7 +42,7 @@ const NPDrawingModel kDefaultDrawingModel = NPDrawingModelSyncWin;
 const NPDrawingModel kDefaultDrawingModel = NPDrawingModelSyncX;
 #elif defined(XP_MACOSX)
 #ifndef NP_NO_QUICKDRAW
-const NPDrawingModel kDefaultDrawingModel = NPDrawingModelQuickDraw;
+const NPDrawingModel kDefaultDrawingModel = NPDrawingModelQuickDraw; // Not supported
 #else
 const NPDrawingModel kDefaultDrawingModel = NPDrawingModelCoreGraphics;
 #endif
@@ -67,7 +68,7 @@ private:
 public:
   NS_DECL_ISUPPORTS
 
-  nsresult Initialize(nsNPAPIPlugin *aPlugin, nsIPluginInstanceOwner* aOwner, const char* aMIMEType);
+  nsresult Initialize(nsNPAPIPlugin *aPlugin, nsPluginInstanceOwner* aOwner, const char* aMIMEType);
   nsresult Start();
   nsresult Stop();
   nsresult SetWindow(NPWindow* window);
@@ -77,6 +78,7 @@ public:
   nsresult GetValueFromPlugin(NPPVariable variable, void* value);
   nsresult GetDrawingModel(int32_t* aModel);
   nsresult IsRemoteDrawingCoreAnimation(bool* aDrawing);
+  nsresult ContentsScaleFactorChanged(double aContentsScaleFactor);
   nsresult GetJSObject(JSContext *cx, JSObject** outObject);
   bool ShouldCache();
   nsresult IsWindowless(bool* isWindowless);
@@ -84,7 +86,7 @@ public:
   nsresult GetImageContainer(ImageContainer **aContainer);
   nsresult GetImageSize(nsIntSize* aSize);
   nsresult NotifyPainted(void);
-  nsresult UseAsyncPainting(bool* aIsAsync);
+  nsresult GetIsOOP(bool* aIsOOP);
   nsresult SetBackgroundUnknown();
   nsresult BeginUpdateBackground(nsIntRect* aRect, gfxContext** aContext);
   nsresult EndUpdateBackground(gfxContext* aContext, nsIntRect* aRect);
@@ -97,10 +99,9 @@ public:
   nsresult InvalidateRegion(NPRegion invalidRegion);
   nsresult GetMIMEType(const char* *result);
   nsresult GetJSContext(JSContext* *outContext);
-  nsresult GetOwner(nsIPluginInstanceOwner **aOwner);
-  nsresult SetOwner(nsIPluginInstanceOwner *aOwner);
+  nsPluginInstanceOwner* GetOwner();
+  void SetOwner(nsPluginInstanceOwner *aOwner);
   nsresult ShowStatus(const char* message);
-  nsresult InvalidateOwner();
 #if defined(MOZ_WIDGET_QT) && (MOZ_PLATFORM_MAEMO == 6)
   nsresult HandleGUIEvent(const nsGUIEvent& anEvent, bool* handled);
 #endif
@@ -266,6 +267,17 @@ public:
   // event model is not supported.
   void CarbonNPAPIFailure();
 
+  // Returns the contents scale factor of the screen the plugin is drawn on.
+  double GetContentsScaleFactor();
+
+  static bool InPluginCall() { return gInPluginCalls > 0; }
+  static void BeginPluginCall() { ++gInPluginCalls; }
+  static void EndPluginCall()
+  {
+    NS_ASSERTION(InPluginCall(), "Must be in plugin call");
+    --gInPluginCalls;
+  }
+
 protected:
 
   nsresult GetTagType(nsPluginTagType *result);
@@ -337,7 +349,7 @@ private:
 
   // Weak pointer to the owner. The owner nulls this out (by calling
   // InvalidateOwner()) when it's no longer our owner.
-  nsIPluginInstanceOwner *mOwner;
+  nsPluginInstanceOwner *mOwner;
 
   nsTArray<nsNPAPITimer*> mTimers;
 
@@ -348,7 +360,6 @@ private:
   // This is only valid when the plugin is actually stopped!
   mozilla::TimeStamp mStopTime;
 
-  bool mUsePluginLayersPref;
 #ifdef MOZ_WIDGET_ANDROID
   void EnsureSharedTexture();
   nsSurfaceTexture* CreateSurfaceTexture();
@@ -361,6 +372,8 @@ private:
 
   // is this instance Java and affected by bug 750480?
   bool mHaveJavaC2PJSObjectQuirk;
+
+  static uint32_t gInPluginCalls;
 };
 
 #endif // nsNPAPIPluginInstance_h_

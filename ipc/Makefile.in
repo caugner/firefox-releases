@@ -19,6 +19,14 @@ ifdef MOZ_B2G_BT #{
 DIRS += dbus
 endif #}
 
+ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
+DIRS += netd unixsocket
+endif
+
+ifeq ($(OS_ARCH),Linux)
+DIRS += unixsocket
+endif
+
 TOOL_DIRS = app
 
 include $(topsrcdir)/config/rules.mk

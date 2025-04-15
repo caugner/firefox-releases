@@ -437,7 +437,6 @@ private:
     // NOTE: these members may be accessed from any thread (use mReentrantMonitor)
     //-------------------------------------------------------------------------
 
-    int32_t                      mRef;
     mozilla::ReentrantMonitor    mReentrantMonitor;
     nsCOMPtr<nsIEventTarget>     mSocketThreadTarget;
 
@@ -480,7 +479,7 @@ private:
                            nsHttpPipeline **);
     bool     RestrictConnections(nsConnectionEntry *);
     nsresult ProcessNewTransaction(nsHttpTransaction *);
-    nsresult EnsureSocketThreadTargetIfOnline();
+    nsresult EnsureSocketThreadTarget();
     void     ClosePersistentConnections(nsConnectionEntry *ent);
     nsresult CreateTransport(nsConnectionEntry *, nsAHttpTransaction *,
                              uint8_t, bool);

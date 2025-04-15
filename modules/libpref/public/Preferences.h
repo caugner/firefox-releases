@@ -25,7 +25,7 @@ class nsAdoptingString;
 class nsAdoptingCString;
 
 #ifndef have_PrefChangedFunc_typedef
-typedef int (*PR_CALLBACK PrefChangedFunc)(const char *, void *);
+typedef int (*PrefChangedFunc)(const char *, void *);
 #define have_PrefChangedFunc_typedef
 #endif
 
@@ -150,7 +150,8 @@ public:
   static nsAdoptingString GetLocalizedString(const char* aPref);
 
   /**
-   * Gets int or bool type pref value with raw return value of nsIPrefBranch.
+   * Gets int, float, or bool type pref value with raw return value of
+   * nsIPrefBranch.
    *
    * @param aPref       A pref name.
    * @param aResult     Must not be NULL.  The value is never modified when
@@ -158,6 +159,7 @@ public:
    */
   static nsresult GetBool(const char* aPref, bool* aResult);
   static nsresult GetInt(const char* aPref, int32_t* aResult);
+  static nsresult GetFloat(const char* aPref, float* aResult);
   static nsresult GetUint(const char* aPref, uint32_t* aResult)
   {
     int32_t result;
@@ -219,7 +221,7 @@ public:
    * Adds/Removes the observer for the root pref branch.
    * The observer is referenced strongly if AddStrongObserver is used.  On the
    * other hand, it is referenced weakly, if AddWeakObserver is used.
-   * See nsIPrefBran2.idl for the detail.
+   * See nsIPrefBranch.idl for details.
    */
   static nsresult AddStrongObserver(nsIObserver* aObserver, const char* aPref);
   static nsresult AddWeakObserver(nsIObserver* aObserver, const char* aPref);
@@ -330,6 +332,8 @@ public:
   static void GetPreferences(InfallibleTArray<PrefSetting>* aPrefs);
   static void GetPreference(PrefSetting* aPref);
   static void SetPreference(const PrefSetting& aPref);
+
+  static int64_t GetPreferencesMemoryUsed();
 
 protected:
   nsresult NotifyServiceObservers(const char *aSubject);

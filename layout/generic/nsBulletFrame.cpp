@@ -11,6 +11,7 @@
 #include "nsHTMLParts.h"
 #include "nsContainerFrame.h"
 #include "nsGenericHTMLElement.h"
+#include "nsAttrValueInlines.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIDocument.h"
@@ -118,7 +119,7 @@ nsBulletFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
         } else {
           nsLayoutUtils::DeregisterImageRequest(PresContext(), mImageRequest,
                                                 &mRequestRegistered);
-          mImageRequest->Cancel(NS_ERROR_FAILURE);
+          mImageRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
           mImageRequest = nullptr;
         }
       }
@@ -138,7 +139,7 @@ nsBulletFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
       nsLayoutUtils::DeregisterImageRequest(PresContext(), mImageRequest,
                                             &mRequestRegistered);
 
-      mImageRequest->Cancel(NS_ERROR_FAILURE);
+      mImageRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
       mImageRequest = nullptr;
     }
   }
@@ -352,8 +353,12 @@ nsBulletFrame::PaintBullet(nsRenderingContext& aRenderingContext, nsPoint aPt,
 
 int32_t
 nsBulletFrame::SetListItemOrdinal(int32_t aNextOrdinal,
-                                  bool* aChanged)
+                                  bool* aChanged,
+                                  int32_t aIncrement)
 {
+  MOZ_ASSERT(aIncrement == 1 || aIncrement == -1,
+             "We shouldn't have weird increments here");
+
   // Assume that the ordinal comes from the caller
   int32_t oldOrdinal = mOrdinal;
   mOrdinal = aNextOrdinal;
@@ -376,7 +381,7 @@ nsBulletFrame::SetListItemOrdinal(int32_t aNextOrdinal,
 
   *aChanged = oldOrdinal != mOrdinal;
 
-  return mOrdinal + 1;
+  return mOrdinal + aIncrement;
 }
 
 
@@ -1477,7 +1482,7 @@ NS_IMETHODIMP nsBulletFrame::OnDataAvailable(imgIRequest *aRequest,
   // The image has changed.
   // Invalidate the entire content area. Maybe it's not optimal but it's simple and
   // always correct, and I'll be a stunned mullet if it ever matters for performance
-  Invalidate(nsRect(0, 0, mRect.width, mRect.height));
+  InvalidateFrame();
 
   return NS_OK;
 }
@@ -1519,7 +1524,7 @@ NS_IMETHODIMP nsBulletFrame::FrameChanged(imgIRequest *aRequest,
 {
   // Invalidate the entire content area. Maybe it's not optimal but it's simple and
   // always correct.
-  Invalidate(nsRect(0, 0, mRect.width, mRect.height));
+  InvalidateFrame();
 
   return NS_OK;
 }

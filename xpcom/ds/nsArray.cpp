@@ -77,7 +77,7 @@ nsArray::IndexOf(uint32_t aStartIndex, nsISupports* aElement,
     // optimize for the common case by forwarding to mArray
     if (aStartIndex == 0) {
         uint32_t idx = mArray.IndexOf(aElement);
-        if (idx == PR_UINT32_MAX)
+        if (idx == UINT32_MAX)
             return NS_ERROR_FAILURE;
 
         *aResult = idx;
@@ -106,9 +106,7 @@ nsArray::AppendElement(nsISupports* aElement, bool aWeak)
 {
     bool result;
     if (aWeak) {
-        nsCOMPtr<nsISupports> elementRef =
-            getter_AddRefs(static_cast<nsISupports*>
-                                      (NS_GetWeakReference(aElement)));
+        nsCOMPtr<nsIWeakReference> elementRef = do_GetWeakReference(aElement);
         NS_ASSERTION(elementRef, "AppendElement: Trying to use weak references on an object that doesn't support it");
         if (!elementRef)
             return NS_ERROR_FAILURE;
@@ -134,9 +132,7 @@ nsArray::InsertElementAt(nsISupports* aElement, uint32_t aIndex, bool aWeak)
 {
     nsCOMPtr<nsISupports> elementRef;
     if (aWeak) {
-        elementRef =
-            getter_AddRefs(static_cast<nsISupports*>
-                                      (NS_GetWeakReference(aElement)));
+        elementRef = do_GetWeakReference(aElement);
         NS_ASSERTION(elementRef, "InsertElementAt: Trying to use weak references on an object that doesn't support it");
         if (!elementRef)
             return NS_ERROR_FAILURE;
@@ -152,9 +148,7 @@ nsArray::ReplaceElementAt(nsISupports* aElement, uint32_t aIndex, bool aWeak)
 {
     nsCOMPtr<nsISupports> elementRef;
     if (aWeak) {
-        elementRef =
-            getter_AddRefs(static_cast<nsISupports*>
-                                      (NS_GetWeakReference(aElement)));
+        elementRef = do_GetWeakReference(aElement);
         NS_ASSERTION(elementRef, "ReplaceElementAt: Trying to use weak references on an object that doesn't support it");
         if (!elementRef)
             return NS_ERROR_FAILURE;
@@ -195,14 +189,18 @@ FindElementCallback(void *aElement, void* aClosure)
 }
 
 nsresult
-nsArrayConstructor(nsISupports *aOuter, const nsIID& aIID, void **aResult)
+nsArray::XPCOMConstructor(nsISupports *aOuter, const nsIID& aIID, void **aResult)
 {
     if (aOuter)
         return NS_ERROR_NO_AGGREGATION;
 
-    nsCOMPtr<nsIArray> inst = NS_IsMainThread() ? new nsArrayCC : new nsArray;
-    if (!inst)
-        return NS_ERROR_OUT_OF_MEMORY;
-
+    nsCOMPtr<nsIMutableArray> inst = Create();
     return inst->QueryInterface(aIID, aResult); 
+}
+
+already_AddRefed<nsIMutableArray>
+nsArray::Create()
+{
+    nsCOMPtr<nsIMutableArray> inst = NS_IsMainThread() ? new nsArrayCC : new nsArray;
+    return inst.forget();
 }

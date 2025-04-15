@@ -36,7 +36,7 @@ self.onmessage = function(msg) {
   self.onmessage = function on_unexpected_message(msg) {
     throw new Error("Unexpected message " + JSON.stringify(msg.data));
   };
-  importScripts("resource:///modules/osfile.jsm");
+  importScripts("resource://gre/modules/osfile.jsm");
   ok(true, "Initialization complete");
 
   samples = [
@@ -48,14 +48,13 @@ self.onmessage = function(msg) {
         is(candidate, "This is a test", prefix);
       }},
     { typename: "OS.Shared.Type.char.in_ptr",
-      valuedescr: "ArrayBuffer",
+      valuedescr: "Typed array",
       value: (function() {
-                let buf = new ArrayBuffer(15);
-                let view = new Uint8Array(buf);
+                let view = new Uint8Array(15);
                 for (let i = 0; i < 15; ++i) {
                   view[i] = i;
                 }
-                return buf;
+                return view;
               })(),
       type: OS.Shared.Type.char.in_ptr,
       check: function check_ArrayBuffer(candidate, prefix) {

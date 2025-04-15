@@ -85,6 +85,10 @@ enum {
   eCSSAliasCount
 };
 
+// Use a macro in the definitions below to ensure compile-time constants
+// in all the necessary places.
+#define CSS_MAX(x, y) ((x) > (y) ? (x) : (y))
+
 enum {
   // We want the largest sizeof(#aliasname_).  To find that, we use the
   // auto-incrementing behavior of C++ enums (a value without an
@@ -98,7 +102,7 @@ enum {
 #define CSS_PROP_ALIAS(aliasname_, propid_, aliasmethod_, pref_)              \
   eMaxCSSAliasNameSizeBefore_##aliasmethod_,                                  \
   eMaxCSSAliasNameSizeWith_##aliasmethod_ =                                   \
-    PR_MAX(sizeof(#aliasname_), eMaxCSSAliasNameSizeBefore_##aliasmethod_) - 1,
+    CSS_MAX(sizeof(#aliasname_), eMaxCSSAliasNameSizeBefore_##aliasmethod_) - 1,
 #include "nsCSSPropAliasList.h"
 #undef CSS_PROP_ALIAS
 
@@ -106,17 +110,19 @@ enum {
 };
 
 struct CSSPropertyAlias {
-  const char name[PR_MAX(eMaxCSSAliasNameSize, 1)];
+  const char name[CSS_MAX(eMaxCSSAliasNameSize, 1)];
   const nsCSSProperty id;
   bool enabled;
 };
 
-static CSSPropertyAlias gAliases[PR_MAX(eCSSAliasCount, 1)] = {
+static CSSPropertyAlias gAliases[CSS_MAX(eCSSAliasCount, 1)] = {
 #define CSS_PROP_ALIAS(aliasname_, propid_, aliasmethod_, pref_)  \
   { #aliasname_, eCSSProperty_##propid_, true },
 #include "nsCSSPropAliasList.h"
 #undef CSS_PROP_ALIAS
 };
+
+#undef CSS_MAX
 
 void
 nsCSSProps::AddRefTable(void)
@@ -131,8 +137,8 @@ nsCSSProps::AddRefTable(void)
     {
       // let's verify the table...
       for (int32_t index = 0; index < eCSSProperty_COUNT; ++index) {
-        nsCAutoString temp1(kCSSRawProperties[index]);
-        nsCAutoString temp2(kCSSRawProperties[index]);
+        nsAutoCString temp1(kCSSRawProperties[index]);
+        nsAutoCString temp2(kCSSRawProperties[index]);
         ToLowerCase(temp1);
         NS_ABORT_IF_FALSE(temp1.Equals(temp2), "upper case char in prop table");
         NS_ABORT_IF_FALSE(-1 == temp1.FindChar('_'),
@@ -149,8 +155,8 @@ nsCSSProps::AddRefTable(void)
     {
       // let's verify the table...
       for (int32_t index = 0; index < eCSSFontDesc_COUNT; ++index) {
-        nsCAutoString temp1(kCSSRawFontDescs[index]);
-        nsCAutoString temp2(kCSSRawFontDescs[index]);
+        nsAutoCString temp1(kCSSRawFontDescs[index]);
+        nsAutoCString temp2(kCSSRawFontDescs[index]);
         ToLowerCase(temp1);
         NS_ABORT_IF_FALSE(temp1.Equals(temp2), "upper case char in desc table");
         NS_ABORT_IF_FALSE(-1 == temp1.FindChar('_'),
@@ -789,6 +795,7 @@ const int32_t nsCSSProps::kClearKTable[] = {
   eCSSKeyword_UNKNOWN,-1
 };
 
+// See also kObjectPatternKTable for SVG paint-specific values
 const int32_t nsCSSProps::kColorKTable[] = {
   eCSSKeyword_activeborder, LookAndFeel::eColorID_activeborder,
   eCSSKeyword_activecaption, LookAndFeel::eColorID_activecaption,
@@ -919,7 +926,7 @@ const int32_t nsCSSProps::kDirectionKTable[] = {
   eCSSKeyword_UNKNOWN,-1
 };
 
-const int32_t nsCSSProps::kDisplayKTable[] = {
+int32_t nsCSSProps::kDisplayKTable[] = {
   eCSSKeyword_none,               NS_STYLE_DISPLAY_NONE,
   eCSSKeyword_inline,             NS_STYLE_DISPLAY_INLINE,
   eCSSKeyword_block,              NS_STYLE_DISPLAY_BLOCK,
@@ -951,6 +958,9 @@ const int32_t nsCSSProps::kDisplayKTable[] = {
   eCSSKeyword__moz_groupbox,      NS_STYLE_DISPLAY_GROUPBOX,
 #endif
 #ifdef MOZ_FLEXBOX
+  // XXXdholbert NOTE: These currently need to be the last entries in the
+  // table, because the "is flexbox enabled" pref that disables these will
+  // disable all the entries after them, too.
   eCSSKeyword__moz_flex,          NS_STYLE_DISPLAY_FLEX,
   eCSSKeyword__moz_inline_flex,   NS_STYLE_DISPLAY_INLINE_FLEX,
 #endif // MOZ_FLEXBOX
@@ -1160,6 +1170,18 @@ const int32_t nsCSSProps::kListStyleKTable[] = {
   eCSSKeyword__moz_ethiopic_halehame_am, NS_STYLE_LIST_STYLE_MOZ_ETHIOPIC_HALEHAME_AM,
   eCSSKeyword__moz_ethiopic_halehame_ti_er, NS_STYLE_LIST_STYLE_MOZ_ETHIOPIC_HALEHAME_TI_ER,
   eCSSKeyword__moz_ethiopic_halehame_ti_et, NS_STYLE_LIST_STYLE_MOZ_ETHIOPIC_HALEHAME_TI_ET,
+  eCSSKeyword_UNKNOWN,-1
+};
+
+const int32_t nsCSSProps::kObjectOpacityKTable[] = {
+  eCSSKeyword__moz_objectfillopacity, NS_STYLE_OBJECT_FILL_OPACITY,
+  eCSSKeyword__moz_objectstrokeopacity, NS_STYLE_OBJECT_STROKE_OPACITY,
+  eCSSKeyword_UNKNOWN,-1
+};
+
+const int32_t nsCSSProps::kObjectPatternKTable[] = {
+  eCSSKeyword__moz_objectfill, NS_COLOR_OBJECTFILL,
+  eCSSKeyword__moz_objectstroke, NS_COLOR_OBJECTSTROKE,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -1458,6 +1480,7 @@ const int32_t nsCSSProps::kWhitespaceKTable[] = {
   eCSSKeyword_nowrap, NS_STYLE_WHITESPACE_NOWRAP,
   eCSSKeyword_pre_wrap, NS_STYLE_WHITESPACE_PRE_WRAP,
   eCSSKeyword_pre_line, NS_STYLE_WHITESPACE_PRE_LINE,
+  eCSSKeyword__moz_pre_discard_newlines, NS_STYLE_WHITESPACE_PRE_DISCARD_NEWLINES,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -1584,6 +1607,13 @@ const int32_t nsCSSProps::kStrokeLinejoinKTable[] = {
   eCSSKeyword_UNKNOWN, -1
 };
 
+// Lookup table to store the sole objectValue keyword to let SVG glyphs inherit
+// certain stroke-* properties from the outer text object
+const int32_t nsCSSProps::kStrokeObjectValueKTable[] = {
+  eCSSKeyword__moz_objectvalue, NS_STYLE_STROKE_PROP_OBJECTVALUE,
+  eCSSKeyword_UNKNOWN, -1
+};
+
 const int32_t nsCSSProps::kTextAnchorKTable[] = {
   eCSSKeyword_start, NS_STYLE_TEXT_ANCHOR_START,
   eCSSKeyword_middle, NS_STYLE_TEXT_ANCHOR_MIDDLE,
@@ -1612,16 +1642,27 @@ const int32_t nsCSSProps::kColorInterpolationKTable[] = {
   eCSSKeyword_UNKNOWN, -1
 };
 
-bool
-nsCSSProps::FindKeyword(nsCSSKeyword aKeyword, const int32_t aTable[], int32_t& aResult)
+int32_t
+nsCSSProps::FindIndexOfKeyword(nsCSSKeyword aKeyword, const int32_t aTable[])
 {
   int32_t index = 0;
   while (eCSSKeyword_UNKNOWN != nsCSSKeyword(aTable[index])) {
     if (aKeyword == nsCSSKeyword(aTable[index])) {
-      aResult = aTable[index+1];
-      return true;
+      return index;
     }
     index += 2;
+  }
+  return -1;
+}
+
+bool
+nsCSSProps::FindKeyword(nsCSSKeyword aKeyword, const int32_t aTable[],
+                        int32_t& aResult)
+{
+  int32_t index = FindIndexOfKeyword(aKeyword, aTable);
+  if (index >= 0) {
+    aResult = aTable[index + 1];
+    return true;
   }
   return false;
 }

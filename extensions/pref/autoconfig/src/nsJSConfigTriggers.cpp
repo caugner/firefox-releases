@@ -131,7 +131,10 @@ nsresult CentralizedAdminPrefManagerInit()
         static_cast<nsIXPCSecurityManager*>(new AutoConfigSecMan());
     xpc->SetSecurityManagerForJSContext(autoconfig_cx, secman, 0);
 
-    autoconfig_glob = JS_NewGlobalObject(autoconfig_cx, &global_class, NULL);
+
+    nsCOMPtr<nsIPrincipal> principal;
+    nsContentUtils::GetSecurityManager()->GetSystemPrincipal(getter_AddRefs(principal));
+    autoconfig_glob = JS_NewGlobalObject(autoconfig_cx, &global_class, nsJSPrincipals::get(principal));
     if (autoconfig_glob) {
         JSAutoCompartment ac(autoconfig_cx, autoconfig_glob);
         if (JS_InitStandardClasses(autoconfig_cx, autoconfig_glob)) {
@@ -198,7 +201,7 @@ nsresult EvaluateAdminConfigScript(const char *js_buffer, size_t length,
     JS::CompileOptions options(autoconfig_cx);
     options.setPrincipals(nsJSPrincipals::get(principal))
            .setFileAndLine(filename, 1);
-    JS::RootedObject glob(autoconfig_cx, autoconfig_glob);
+    js::RootedObject glob(autoconfig_cx, autoconfig_glob);
     ok = JS::Evaluate(autoconfig_cx, glob, options, js_buffer, length, nullptr);
     JS_EndRequest(autoconfig_cx);
 

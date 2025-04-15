@@ -80,7 +80,8 @@ class BasicTiledLayerBuffer : public TiledLayerBuffer<BasicTiledLayerBuffer, Bas
 
 public:
   BasicTiledLayerBuffer()
-    {}
+    : mLastPaintOpaque(false)
+  {}
 
   void PaintThebes(BasicTiledThebesLayer* aLayer,
                    const nsIntRegion& aNewValidRegion,
@@ -109,6 +110,7 @@ public:
   const gfxSize& GetResolution() { return mResolution; }
   void SetResolution(const gfxSize& aResolution) { mResolution = aResolution; }
 
+  bool HasFormatChanged(BasicTiledThebesLayer* aThebesLayer) const;
 protected:
   BasicTiledLayerTile ValidateTile(BasicTiledLayerTile aTile,
                                    const nsIntPoint& aTileRect,
@@ -132,6 +134,7 @@ private:
   LayerManager::DrawThebesLayerCallback mCallback;
   void* mCallbackData;
   gfxSize mResolution;
+  bool mLastPaintOpaque;
 
   // The buffer we use when UseSinglePaintBuffer() above is true.
   nsRefPtr<gfxImageSurface>     mSinglePaintBuffer;
@@ -159,6 +162,7 @@ class BasicTiledThebesLayer : public ThebesLayer,
 public:
   BasicTiledThebesLayer(BasicShadowLayerManager* const aManager)
     : ThebesLayer(aManager, static_cast<BasicImplData*>(this))
+    , mLastScrollOffset(0, 0)
   {
     MOZ_COUNT_CTOR(BasicTiledThebesLayer);
   }
@@ -172,6 +176,7 @@ public:
   // Thebes Layer
   virtual Layer* AsLayer() { return this; }
   virtual void InvalidateRegion(const nsIntRegion& aRegion) {
+    mInvalidRegion.Or(mInvalidRegion, aRegion);
     mValidRegion.Sub(mValidRegion, aRegion);
   }
 
@@ -209,6 +214,7 @@ private:
 
   // Members
   BasicTiledLayerBuffer mTiledBuffer;
+  gfx::Point mLastScrollOffset;
 };
 
 } // layers

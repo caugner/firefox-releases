@@ -18,6 +18,7 @@ include $(topsrcdir)/config/rules.mk
 # Packages later in the list can depend only on packages earlier in the list.
 MOZBASE_PACKAGES = \
   manifestdestiny \
+  mozfile \
   mozhttpd \
   mozinfo \
   mozinstall \
@@ -25,6 +26,7 @@ MOZBASE_PACKAGES = \
   mozprocess \
   mozprofile \
   mozrunner \
+  mozdevice \
   $(NULL)
 
 MOZBASE_EXTRAS = \

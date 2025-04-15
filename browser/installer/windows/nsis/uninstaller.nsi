@@ -382,6 +382,9 @@ Section "Uninstall"
   ${If} ${FileExists} "$INSTDIR\updates"
     RmDir /r /REBOOTOK "$INSTDIR\updates"
   ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\updated"
+    RmDir /r /REBOOTOK "$INSTDIR\updated"
+  ${EndIf}
   ${If} ${FileExists} "$INSTDIR\defaults\shortcuts"
     RmDir /r /REBOOTOK "$INSTDIR\defaults\shortcuts"
   ${EndIf}
@@ -405,6 +408,13 @@ Section "Uninstall"
 
   ; Remove the uninstall directory that we control
   RmDir /r /REBOOTOK "$INSTDIR\uninstall"
+
+  ; Explictly remove empty webapprt dir in case it exists
+  ; See bug 757978
+  RmDir "$INSTDIR\webapprt\components"
+  RmDir "$INSTDIR\webapprt"
+
+  RmDir /r /REBOOTOK "$INSTDIR\${TO_BE_DELETED}"
 
   ; Remove the installation directory if it is empty
   ${RemoveDir} "$INSTDIR"
@@ -656,9 +666,6 @@ FunctionEnd
 
 Function .onInit
   ; We need this set up for most of the helper.exe operations.
-  !ifdef AppName
-  ${InitHashAppModelId} "$INSTDIR" "Software\Mozilla\${AppName}\TaskBarIDs"
-  !endif
   ${UninstallOnInitCommon}
 FunctionEnd
 

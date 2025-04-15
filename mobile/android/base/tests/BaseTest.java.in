@@ -56,8 +56,9 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
 
     @Override
     protected void setUp() throws Exception {
-        // Load config file from sdcard (setup by python script)
-        String configFile = FennecNativeDriver.getFile("/mnt/sdcard/robotium.config");
+        // Load config file from root path (setup by python script)
+        String rootPath = FennecInstrumentationTestRunner.getArguments().getString("deviceroot");
+        String configFile = FennecNativeDriver.getFile(rootPath + "/robotium.config");
         HashMap config = FennecNativeDriver.convertTextToTable(configFile);
 
         // Create the intent to be used with all the important arguments.
@@ -84,7 +85,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
 
         // Set up Robotium.solo and Driver objects
         mSolo = new Solo(getInstrumentation(), mActivity);
-        mDriver = new FennecNativeDriver(mActivity, mSolo);
+        mDriver = new FennecNativeDriver(mActivity, mSolo, rootPath);
         mActions = new FennecNativeActions(mActivity, mSolo, getInstrumentation(), mAsserter);
     }
 
@@ -303,5 +304,33 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
     public InputStream getAsset(String filename) throws IOException {
         AssetManager assets = getInstrumentation().getContext().getAssets();
         return assets.open(filename);
+    }
+
+    public final void selectMenuItem(String menuItemName) {
+        //build the item name ready to be used
+        String itemName = "^" + menuItemName + "$";
+        mActions.sendSpecialKey(Actions.SpecialKey.MENU);
+
+        // Look for the 'More' menu if this device/OS uses it
+        if (mSolo.waitForText("^More$")) {
+            mSolo.clickOnText("^More$");
+        }
+
+        mSolo.waitForText(itemName);
+        mSolo.clickOnText(itemName);
+    }
+
+    public final void verifyPageTitle(String title) {
+	Element awesomebar = mDriver.findElement(getActivity(), "awesome_bar_title");
+        mAsserter.isnot(awesomebar, null, "Got the awesomebar");
+        assertMatches(awesomebar.getText(), title, "Page title match");
+    }
+
+    public final void verifyTabCount(int expectedTabCount) {
+        Activity activity = getActivity();
+        Element tabCount = mDriver.findElement(activity, "tabs_count");
+        String tabCountText = tabCount.getText();
+        int tabCountInt = Integer.parseInt(tabCountText);
+        mAsserter.is(tabCountInt, expectedTabCount, "The correct number of tabs are opened");
     }
 }

@@ -8,9 +8,11 @@
 
 #include "Workers.h"
 
+#include "nsIContentSecurityPolicy.h"
 #include "nsIRunnable.h"
 #include "nsIThread.h"
 #include "nsIThreadInternal.h"
+#include "nsPIDOMWindow.h"
 
 #include "jsapi.h"
 #include "mozilla/CondVar.h"
@@ -181,7 +183,7 @@ private:
   nsCOMPtr<nsIURI> mBaseURI;
   nsCOMPtr<nsIURI> mScriptURI;
   nsCOMPtr<nsIPrincipal> mPrincipal;
-  nsCOMPtr<nsIDocument> mDocument;
+  nsCOMPtr<nsIContentSecurityPolicy> mCSP;
 
   // Only used for top level workers.
   nsTArray<nsRefPtr<WorkerRunnable> > mQueuedRunnables;
@@ -196,6 +198,7 @@ private:
   bool mIsChromeWorker;
   bool mPrincipalIsSystem;
   bool mMainThreadObjectsForgotten;
+  bool mEvalAllowed;
 
 protected:
   WorkerPrivateParent(JSContext* aCx, JSObject* aObject, WorkerPrivate* aParent,
@@ -205,7 +208,8 @@ protected:
                       nsCOMPtr<nsIScriptContext>& aScriptContext,
                       nsCOMPtr<nsIURI>& aBaseURI,
                       nsCOMPtr<nsIPrincipal>& aPrincipal,
-                      nsCOMPtr<nsIDocument>& aDocument);
+                      nsCOMPtr<nsIContentSecurityPolicy>& aCSP,
+                      bool aEvalAllowed);
 
   ~WorkerPrivateParent();
 
@@ -290,7 +294,7 @@ public:
   ForgetMainThreadObjects(nsTArray<nsCOMPtr<nsISupports> >& aDoomed);
 
   bool
-  PostMessage(JSContext* aCx, jsval aMessage);
+  PostMessage(JSContext* aCx, jsval aMessage, jsval aTransferable);
 
   uint64_t
   GetInnerWindowId();
@@ -426,14 +430,7 @@ public:
   GetDocument() const
   {
     AssertIsOnMainThread();
-    return mDocument;
-  }
-
-  void
-  SetDocument(nsIDocument* aDocument)
-  {
-    AssertIsOnMainThread();
-    mDocument = aDocument;
+    return mWindow ? mWindow->GetExtantDoc() : nullptr;
   }
 
   nsPIDOMWindow*
@@ -441,6 +438,32 @@ public:
   {
     AssertIsOnMainThread();
     return mWindow;
+  }
+
+  nsIContentSecurityPolicy*
+  GetCSP() const
+  {
+    AssertIsOnMainThread();
+    return mCSP;
+  }
+
+  void
+  SetCSP(nsIContentSecurityPolicy* aCSP)
+  {
+    AssertIsOnMainThread();
+    mCSP = aCSP;
+  }
+
+  bool
+  IsEvalAllowed() const
+  {
+    return mEvalAllowed;
+  }
+
+  void
+  SetEvalAllowed(bool aEvalAllowed)
+  {
+    mEvalAllowed = aEvalAllowed;
   }
 
   LocationInfo&
@@ -547,6 +570,7 @@ class WorkerPrivate : public WorkerPrivateParent<WorkerPrivate>
   bool mCloseHandlerStarted;
   bool mCloseHandlerFinished;
   bool mMemoryReporterRunning;
+  bool mXHRParamsAllowed;
 
 #ifdef DEBUG
   nsCOMPtr<nsIThread> mThread;
@@ -638,7 +662,8 @@ public:
   StopSyncLoop(uint32_t aSyncLoopKey, bool aSyncResult);
 
   bool
-  PostMessageToParent(JSContext* aCx, jsval aMessage);
+  PostMessageToParent(JSContext* aCx, jsval aMessage,
+                      jsval transferable);
 
   bool
   NotifyInternal(JSContext* aCx, Status aStatus);
@@ -687,6 +712,18 @@ public:
   bool
   DisableMemoryReporter();
 
+  bool
+  XHRParamsAllowed() const
+  {
+    return mXHRParamsAllowed;
+  }
+
+  void
+  SetXHRParamsAllowed(bool aAllowed)
+  {
+    mXHRParamsAllowed = aAllowed;
+  }
+
 #ifdef JS_GC_ZEAL
   void
   UpdateGCZealInternal(JSContext* aCx, uint8_t aGCZeal);
@@ -728,7 +765,12 @@ private:
                 nsCOMPtr<nsPIDOMWindow>& aWindow,
                 nsCOMPtr<nsIScriptContext>& aScriptContext,
                 nsCOMPtr<nsIURI>& aBaseURI, nsCOMPtr<nsIPrincipal>& aPrincipal,
-                nsCOMPtr<nsIDocument>& aDocument);
+                nsCOMPtr<nsIContentSecurityPolicy>& aCSP, bool aEvalAllowed,
+                bool aXHRParamsAllowed);
+
+  static bool
+  GetContentSecurityPolicy(JSContext *aCx,
+                           nsIContentSecurityPolicy** aCsp);
 
   bool
   Dispatch(WorkerRunnable* aEvent, EventQueue* aQueue);
@@ -784,6 +826,9 @@ private:
 
   bool
   ProcessAllControlRunnables();
+
+  static bool
+  CheckXHRParamsAllowed(nsPIDOMWindow* aWindow);
 };
 
 WorkerPrivate*

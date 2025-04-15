@@ -24,7 +24,7 @@ class THEBES_API ImageLayer : public Layer {
 public:
   enum ScaleMode {
     SCALE_NONE,
-    SCALE_STRETCH // Unimplemented on GL layers and e10s
+    SCALE_STRETCH
   // Unimplemented - SCALE_PRESERVE_ASPECT_RATIO_CONTAIN
   };
 
@@ -54,6 +54,8 @@ public:
 
   ImageContainer* GetContainer() { return mContainer; }
   gfxPattern::GraphicsFilter GetFilter() { return mFilter; }
+  const gfxIntSize& GetScaleToSize() { return mScaleToSize; }
+  ScaleMode GetScaleMode() { return mScaleMode; }
 
   MOZ_LAYER_DECL_NAME("ImageLayer", TYPE_IMAGE)
 

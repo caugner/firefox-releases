@@ -11,6 +11,7 @@
 #include "InterfaceInitFuncs.h"
 #include "nsAccUtils.h"
 #include "nsIAccessibleRelation.h"
+#include "nsIAccessibleTable.h"
 #include "RootAccessible.h"
 #include "nsIAccessibleValue.h"
 #include "nsMai.h"
@@ -405,13 +406,9 @@ AccessibleWrap::CreateMaiInterfaces(void)
 
   if (!nsAccUtils::MustPrune(this)) {  // These interfaces require children
     // Table interface.
-    nsCOMPtr<nsIAccessibleTable> accessInterfaceTable;
-    QueryInterface(NS_GET_IID(nsIAccessibleTable),
-                   getter_AddRefs(accessInterfaceTable));
-    if (accessInterfaceTable) {
+    if (AsTable())
       interfacesBits |= 1 << MAI_INTERFACE_TABLE;
-    }
-      
+ 
     // Selection interface.
     if (IsSelect()) {
       interfacesBits |= 1 << MAI_INTERFACE_SELECTION;
@@ -724,7 +721,7 @@ ConvertToAtkAttributeSet(nsIPersistentProperties* aAttributes)
         nsCOMPtr<nsIPropertyElement> propElem(do_QueryInterface(sup));
         NS_ENSURE_TRUE(propElem, objAttributeSet);
 
-        nsCAutoString name;
+        nsAutoCString name;
         rv = propElem->GetKey(name);
         NS_ENSURE_SUCCESS(rv, objAttributeSet);
 
@@ -947,7 +944,7 @@ GetAccessibleWrap(AtkObject* aAtkObj)
 
   NS_ENSURE_TRUE(accWrap->GetAtkObject() == aAtkObj, nullptr);
 
-  AccessibleWrap* appAccWrap = nsAccessNode::GetApplicationAccessible();
+  AccessibleWrap* appAccWrap = ApplicationAcc();
   if (appAccWrap != accWrap && !accWrap->IsValidObject())
     return nullptr;
 

@@ -26,7 +26,8 @@ public:
   static void DestroyNeckoChild();
 
 protected:
-  virtual PHttpChannelChild* AllocPHttpChannel(PBrowserChild* iframeEmbedding);
+  virtual PHttpChannelChild* AllocPHttpChannel(PBrowserChild*,
+                                              const SerializedLoadContext&);
   virtual bool DeallocPHttpChannel(PHttpChannelChild*);
   virtual PCookieServiceChild* AllocPCookieService();
   virtual bool DeallocPCookieService(PCookieServiceChild*);
@@ -36,6 +37,12 @@ protected:
   virtual bool DeallocPFTPChannel(PFTPChannelChild*);
   virtual PWebSocketChild* AllocPWebSocket(PBrowserChild*);
   virtual bool DeallocPWebSocket(PWebSocketChild*);
+  virtual PTCPSocketChild* AllocPTCPSocket(const nsString& aHost,
+                                           const uint16_t& aPort,
+                                           const bool& useSSL,
+                                           const nsString& aBinaryType,
+                                           PBrowserChild* aBrowser);
+  virtual bool DeallocPTCPSocket(PTCPSocketChild*);
 };
 
 /**

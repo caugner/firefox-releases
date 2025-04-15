@@ -143,8 +143,9 @@ public:
 
   nsHTMLCanvasElement* GetCanvas() const
   {
-    return mCanvasElement;
-  }
+    // corresponds to changes to the old bindings made in bug 745025
+    return mCanvasElement->GetOriginalCanvas();
+}
 
   void Save();
   void Restore();
@@ -156,7 +157,7 @@ public:
   void SetTransform(double m11, double m12, double m21, double m22, double dx,
                     double dy, mozilla::ErrorResult& error);
 
-  double GetGlobalAlpha()
+  double GlobalAlpha()
   {
     return CurrentState().globalAlpha;
   }
@@ -196,7 +197,7 @@ public:
     CreatePattern(const HTMLImageOrCanvasOrVideoElement& element,
                   const nsAString& repeat, mozilla::ErrorResult& error);
 
-  double GetShadowOffsetX()
+  double ShadowOffsetX()
   {
     return CurrentState().shadowOffset.x;
   }
@@ -208,7 +209,7 @@ public:
     }
   }
 
-  double GetShadowOffsetY()
+  double ShadowOffsetY()
   {
     return CurrentState().shadowOffset.y;
   }
@@ -220,7 +221,7 @@ public:
     }
   }
 
-  double GetShadowBlur()
+  double ShadowBlur()
   {
     return CurrentState().shadowBlur;
   }
@@ -301,7 +302,7 @@ public:
                     double dirtyWidth, double dirtyHeight,
                     mozilla::ErrorResult& error);
 
-  double GetLineWidth()
+  double LineWidth()
   {
     return CurrentState().lineWidth;
   }
@@ -317,7 +318,7 @@ public:
   void GetLineJoin(nsAString& linejoin, mozilla::ErrorResult& error);
   void SetLineJoin(const nsAString& linejoin);
 
-  double GetMiterLimit()
+  double MiterLimit()
   {
     return CurrentState().miterLimit;
   }
@@ -423,7 +424,7 @@ public:
   void SetMozDash(JSContext* cx, const JS::Value& mozDash,
                   mozilla::ErrorResult& error);
 
-  double GetMozDashOffset()
+  double MozDashOffset()
   {
     return CurrentState().dashOffset;
   }
@@ -441,7 +442,7 @@ public:
     SetFont(mozTextStyle, error);
   }
 
-  bool GetImageSmoothingEnabled()
+  bool ImageSmoothingEnabled()
   {
     return CurrentState().imageSmoothingEnabled;
   }
@@ -475,7 +476,7 @@ public:
   NS_IMETHOD GetThebesSurface(gfxASurface **surface);
 
   mozilla::TemporaryRef<mozilla::gfx::SourceSurface> GetSurfaceSnapshot()
-  { return mTarget ? mTarget->Snapshot() : nullptr; }
+  { EnsureTarget(); return mTarget->Snapshot(); }
 
   NS_IMETHOD SetIsOpaque(bool isOpaque);
   NS_IMETHOD Reset();
@@ -566,6 +567,8 @@ protected:
     */
   static uint8_t (*sPremultiplyTable)[256];
 
+  static mozilla::gfx::DrawTarget* sErrorTarget;
+
   // Some helpers.  Doesn't modify a color on failure.
   void SetStyleFromJSValue(JSContext* cx, JS::Value& value, Style whichStyle);
   void SetStyleFromString(const nsAString& str, Style whichStyle);
@@ -598,6 +601,11 @@ protected:
     */
   void EnsurePremultiplyTable();
 
+  /**
+   * Creates the error target, if it doesn't exist
+   */
+  static void EnsureErrorTarget();
+
   /* This function ensures there is a writable pathbuilder available, this
    * pathbuilder may be working in user space or in device space or
    * device space.
@@ -610,10 +618,32 @@ protected:
   // used for the path.
   void EnsureUserSpacePath(bool aCommitTransform = true);
 
+  /**
+   * Needs to be called before updating the transform. This makes a call to
+   * EnsureTarget() so you don't have to.
+   */
   void TransformWillUpdate();
 
   // Report the fillRule has changed.
   void FillRuleChanged();
+
+   /**
+   * Create the backing surfacing, if it doesn't exist. If there is an error
+   * in creating the target then it will put sErrorTarget in place. If there
+   * is in turn an error in creating the sErrorTarget then they would both
+   * be null so IsTargetValid() would still return null.
+   */
+  void EnsureTarget();
+
+  /*
+   * Disposes an old target and prepares to lazily create a new target.
+   */
+  void ClearTarget();
+
+  /**
+   * Check if the target is valid after calling EnsureTarget.
+   */
+  bool IsTargetValid() { return mTarget != sErrorTarget; }
 
   /**
     * Returns the surface format this canvas should be allocated using. Takes
@@ -663,10 +693,6 @@ protected:
   // Member vars
   int32_t mWidth, mHeight;
 
-  // This is true when the canvas is valid, false otherwise, this occurs when
-  // for some reason initialization of the drawtarget fails. If the canvas
-  // is invalid certain behavior is expected.
-  bool mValid;
   // This is true when the canvas is valid, but of zero size, this requires
   // specific behavior on some operations.
   bool mZero;
@@ -684,7 +710,9 @@ protected:
   // If mCanvasElement is not provided, then a docshell is
   nsCOMPtr<nsIDocShell> mDocShell;
 
-  // our drawing surfaces, contexts, and layers
+  // This is created lazily so it is necessary to call EnsureTarget before
+  // accessing it. In the event of an error it will be equal to
+  // sErrorTarget.
   mozilla::RefPtr<mozilla::gfx::DrawTarget> mTarget;
 
   /**

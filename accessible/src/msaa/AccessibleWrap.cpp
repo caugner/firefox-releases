@@ -20,7 +20,7 @@
 #include "States.h"
 #include "uiaRawElmProvider.h"
 
-#ifdef DEBUG
+#ifdef A11Y_LOG
 #include "Logging.h"
 #endif
 
@@ -107,7 +107,7 @@ __try {
   }
 
   if (NULL == *ppv) {
-    HRESULT hr = CAccessibleValue::QueryInterface(iid, ppv);
+    HRESULT hr = ia2AccessibleValue::QueryInterface(iid, ppv);
     if (SUCCEEDED(hr))
       return hr;
   }
@@ -1568,7 +1568,7 @@ AccessibleWrap::FirePlatformEvent(AccEvent* aEvent)
   NS_ENSURE_TRUE(hWnd, NS_ERROR_FAILURE);
 
   nsAutoString tag;
-  nsCAutoString id;
+  nsAutoCString id;
   nsIContent* cnt = accessible->GetContent();
   if (cnt) {
     cnt->Tag()->ToString(tag);
@@ -1577,7 +1577,7 @@ AccessibleWrap::FirePlatformEvent(AccEvent* aEvent)
       aid->ToUTF8String(id);
   }
 
-#ifdef DEBUG
+#ifdef A11Y_LOG
   if (logging::IsEnabled(logging::ePlatforms)) {
     printf("\n\nMSAA event: event: %d, target: %s@id='%s', childid: %d, hwnd: %d\n\n",
            eventType, NS_ConvertUTF16toUTF8(tag).get(), id.get(),
@@ -1678,7 +1678,7 @@ AccessibleWrap::ConvertToIA2Attributes(nsIPersistentProperties *aAttributes,
     if (!propElem)
       return E_FAIL;
 
-    nsCAutoString name;
+    nsAutoCString name;
     if (NS_FAILED(propElem->GetKey(name)))
       return E_FAIL;
 

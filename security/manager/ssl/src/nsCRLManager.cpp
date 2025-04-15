@@ -62,7 +62,7 @@ nsCRLManager::ImportCrl (uint8_t *aData, uint32_t aLength, nsIURI * aURI, uint32
   CERTSignedData sd;
   SECStatus sec_rv;
   CERTSignedCrl *crl;
-  nsCAutoString url;
+  nsAutoCString url;
   nsCOMPtr<nsICRLInfo> crlData;
   bool importSuccessful;
   int32_t errorCode;
@@ -191,20 +191,20 @@ done:
       return rv;
     }
     
-    nsCAutoString updateErrCntPrefStr(CRL_AUTOUPDATE_ERRCNT_PREF);
+    nsAutoCString updateErrCntPrefStr(CRL_AUTOUPDATE_ERRCNT_PREF);
     LossyAppendUTF16toASCII(crlKey, updateErrCntPrefStr);
     if(importSuccessful){
       PRUnichar *updateTime;
-      nsCAutoString updateTimeStr;
+      nsAutoCString updateTimeStr;
       nsCString updateURL;
       int32_t timingTypePref;
       double dayCnt;
       char *dayCntStr;
-      nsCAutoString updateTypePrefStr(CRL_AUTOUPDATE_TIMIINGTYPE_PREF);
-      nsCAutoString updateTimePrefStr(CRL_AUTOUPDATE_TIME_PREF);
-      nsCAutoString updateUrlPrefStr(CRL_AUTOUPDATE_URL_PREF);
-      nsCAutoString updateDayCntPrefStr(CRL_AUTOUPDATE_DAYCNT_PREF);
-      nsCAutoString updateFreqCntPrefStr(CRL_AUTOUPDATE_FREQCNT_PREF);
+      nsAutoCString updateTypePrefStr(CRL_AUTOUPDATE_TIMIINGTYPE_PREF);
+      nsAutoCString updateTimePrefStr(CRL_AUTOUPDATE_TIME_PREF);
+      nsAutoCString updateUrlPrefStr(CRL_AUTOUPDATE_URL_PREF);
+      nsAutoCString updateDayCntPrefStr(CRL_AUTOUPDATE_DAYCNT_PREF);
+      nsAutoCString updateFreqCntPrefStr(CRL_AUTOUPDATE_FREQCNT_PREF);
       LossyAppendUTF16toASCII(crlKey, updateTypePrefStr);
       LossyAppendUTF16toASCII(crlKey, updateTimePrefStr);
       LossyAppendUTF16toASCII(crlKey, updateUrlPrefStr);
@@ -231,7 +231,7 @@ done:
         //with the next update date. We will not reschedule this crl in this
         //session anymore - or else, we land into a loop. It would anyway be
         //imported once the browser is restarted.
-        if(LL_CMP(updateTime, > , PR_Now())){
+        if(int64_t(updateTime) > int64_t(PR_Now())){
           toBeRescheduled = true;
         }
         nsMemory::Free(updateTime);
@@ -251,8 +251,8 @@ done:
 
     } else{
       int32_t errCnt;
-      nsCAutoString errMsg;
-      nsCAutoString updateErrDetailPrefStr(CRL_AUTOUPDATE_ERRDETAIL_PREF);
+      nsAutoCString errMsg;
+      nsAutoCString updateErrDetailPrefStr(CRL_AUTOUPDATE_ERRDETAIL_PREF);
       LossyAppendUTF16toASCII(crlKey, updateErrDetailPrefStr);
       errMsg.AssignWithConversion(errorMessage.get());
       rv = pref->GetIntPref(updateErrCntPrefStr.get(),&errCnt);
@@ -396,9 +396,9 @@ nsCRLManager::ComputeNextAutoUpdateTime(nsICRLInfo *info,
   double tmpData;
   
   LL_L2F(tmpData,secsInDay);
-  LL_MUL(tmpData,dayCnt,tmpData);
+  tmpData = dayCnt * tmpData;
   LL_F2L(secsInDayCnt,tmpData);
-  LL_MUL(microsecInDayCnt, secsInDayCnt, PR_USEC_PER_SEC);
+  microsecInDayCnt = secsInDayCnt * PR_USEC_PER_SEC;
     
   PRTime lastUpdate;
   PRTime nextUpdate;
@@ -415,17 +415,17 @@ nsCRLManager::ComputeNextAutoUpdateTime(nsICRLInfo *info,
 
   switch (autoUpdateType) {
   case TYPE_AUTOUPDATE_FREQ_BASED:
-    LL_SUB(diff, now, lastUpdate);             //diff is the no of micro sec between now and last update
-    LL_DIV(cycleCnt, diff, microsecInDayCnt);   //temp is the number of full cycles from lst update
-    LL_MOD(temp, diff, microsecInDayCnt);
-    if(!(LL_IS_ZERO(temp))) {
-      LL_ADD(cycleCnt,cycleCnt,1);            //no of complete cycles till next autoupdate instant
+    diff = now - lastUpdate;                    //diff is the no of micro sec between now and last update
+    cycleCnt = diff / microsecInDayCnt;       //temp is the number of full cycles from lst update
+    temp = diff % microsecInDayCnt;
+    if(temp != 0) {
+      ++cycleCnt;            //no of complete cycles till next autoupdate instant
     }
-    LL_MUL(temp,cycleCnt,microsecInDayCnt);    //micro secs from last update
-    LL_ADD(tempTime, lastUpdate, temp);
+    temp = cycleCnt * microsecInDayCnt;    //micro secs from last update
+    tempTime = lastUpdate + temp;
     break;  
   case TYPE_AUTOUPDATE_TIME_BASED:
-    LL_SUB(tempTime, nextUpdate, microsecInDayCnt);
+    tempTime = nextUpdate - microsecInDayCnt;
     break;
   default:
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -433,8 +433,8 @@ nsCRLManager::ComputeNextAutoUpdateTime(nsICRLInfo *info,
 
   //Now, a basic constraing is that the next auto update date can never be after
   //next update, if one is defined
-  if(LL_CMP(nextUpdate , > , 0 )) {
-    if(LL_CMP(tempTime , > , nextUpdate)) {
+  if(nextUpdate > 0) {
+    if(tempTime > nextUpdate) {
       tempTime = nextUpdate;
     }
   }

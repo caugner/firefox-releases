@@ -146,7 +146,6 @@ var interfaceNamesInGlobalScope =
     "SVGTransformList",
     "SVGTransformable",
     "XULControlElement",
-    "MozMobileConnection",
     "HTMLFrameSetElement",
     "CSSCharsetRule",
     "TouchList",
@@ -289,6 +288,8 @@ var interfaceNamesInGlobalScope =
     "CSSPrimitiveValue",
     "SVGStopElement",
     "WebGLExtensionCompressedTextureS3TC",
+    "WebGLExtensionCompressedTextureATC",
+    "WebGLExtensionCompressedTexturePVRTC",
     "XULCommandEvent",
     "HTMLMediaElement",
     "SVGPathSegLinetoHorizontalAbs",
@@ -529,10 +530,22 @@ var interfaceNamesInGlobalScope =
     "CameraManager",
     "CSSSupportsRule",
     "MozMobileCellInfo",
-    "TCPSocket"
+    "MozCanvasPrintState",
+    "TCPSocket",
+    "MozTimeManager",
+    "MozNavigatorTime",
+    "PermissionSettings",
+    "DataErrorEvent",
+    "DataChannel",
+    "MozNetworkStatsManager",
+    "MozNetworkStats",
+    "MozNetworkStatsData",
+    "RTCSessionDescription",
+    "RTCIceCandidate",
+    "RTCPeerConnection"
   ]
 
-for (var i in Components.interfaces) {
+for (var i in SpecialPowers.Components.interfaces) {
   var s = i.toString();
   var name = null;
   if (s.indexOf("nsIDOM") == 0) {

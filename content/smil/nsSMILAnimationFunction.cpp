@@ -9,6 +9,7 @@
 #include "nsSMILNullType.h"
 #include "nsISMILAnimationElement.h"
 #include "nsSMILTimedElement.h"
+#include "nsAttrValueInlines.h"
 #include "nsGkAtoms.h"
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
@@ -52,7 +53,7 @@ nsAttrValue::EnumTable nsSMILAnimationFunction::sCalcModeTable[] = {
 nsSMILAnimationFunction::nsSMILAnimationFunction()
   : mSampleTime(-1),
     mRepeatIteration(0),
-    mBeginTime(LL_MININT),
+    mBeginTime(INT64_MIN),
     mAnimationElement(nullptr),
     mErrorFlags(0),
     mIsActive(false),

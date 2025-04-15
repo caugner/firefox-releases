@@ -1406,7 +1406,7 @@ urlInlineComplete.prototype = {
         // If the untrimmed value doesn't preserve the user's input just
         // ignore it and complete to the found domain.
         if (untrimmedDomain &&
-            untrimmedDomain.toLowerCase().indexOf(this._originalSearchString.toLowerCase()) == -1) {
+            !untrimmedDomain.toLowerCase().contains(this._originalSearchString.toLowerCase())) {
           untrimmedDomain = null;
         }
 
@@ -1524,7 +1524,7 @@ urlInlineComplete.prototype = {
     // ignore it and complete to the found url.
     let untrimmedURL = prefix + url;
     if (untrimmedURL &&
-        untrimmedURL.toLowerCase().indexOf(this._originalSearchString.toLowerCase()) == -1) {
+        !untrimmedURL.toLowerCase().contains(this._originalSearchString.toLowerCase())) {
       untrimmedURL = null;
      }
 
@@ -1651,4 +1651,4 @@ urlInlineComplete.prototype = {
 };
 
 let components = [nsPlacesAutoComplete, urlInlineComplete];
-const NSGetFactory = XPCOMUtils.generateNSGetFactory(components);
+this.NSGetFactory = XPCOMUtils.generateNSGetFactory(components);

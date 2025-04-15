@@ -26,12 +26,14 @@
                   onselect="if (event.target.localName == 'tabpanels') this.parentNode.updateCurrentBrowser();">
         <xul:tabpanels flex="1" class="plain" selectedIndex="0" anonid="panelcontainer">
           <xul:notificationbox flex="1">
-            <xul:vbox flex="1" anonid="browserContainer">
-              <xul:stack flex="1" anonid="browserStack">
-                <xul:browser type="content-primary" message="true" disablehistory="true"
-                             xbl:inherits="tooltip=contenttooltip,contextmenu=contentcontextmenu,autocompletepopup"/>
-              </xul:stack>
-            </xul:vbox>
+            <xul:hbox flex="1" class="browserSidebarContainer">
+              <xul:vbox flex="1" class="browserContainer">
+                <xul:stack flex="1" class="browserStack">
+                  <xul:browser anonid="initialBrowser" type="content-primary" message="true" disablehistory="true"
+                               xbl:inherits="tooltip=contenttooltip,contextmenu=contentcontextmenu,autocompletepopup"/>
+                </xul:stack>
+              </xul:vbox>
+            </xul:hbox>
           </xul:notificationbox>
         </xul:tabpanels>
       </xul:tabbox>
@@ -292,6 +294,15 @@
       </method>
 
       <method name="getNotificationBox">
+        <parameter name="aBrowser"/>
+        <body>
+          <![CDATA[
+            return this.getSidebarContainer(aBrowser).parentNode;
+          ]]>
+        </body>
+      </method>
+
+      <method name="getSidebarContainer">
         <parameter name="aBrowser"/>
         <body>
           <![CDATA[
@@ -674,7 +685,10 @@
               if (!(aURI instanceof Ci.nsIURI))
                 aURI = makeURI(aURI);
               this.mFaviconService.setAndFetchFaviconForPage(browser.currentURI,
-                                                             aURI, false);
+                                                             aURI, false,
+                                                             gPrivateBrowsingUI.privateWindow ?
+                                                               this.mFaviconService.FAVICON_LOAD_PRIVATE :
+                                                               this.mFaviconService.FAVICON_LOAD_NON_PRIVATE);
             }
 
             if ((browser.mIconURL || "") != aTab.getAttribute("image")) {
@@ -784,7 +798,7 @@
             // add the scheme and host to the title to prevent spoofing.
             // XXX https://bugzilla.mozilla.org/show_bug.cgi?id=22183#c239
             try {
-              if (docElement.getAttribute("chromehidden").indexOf("location") != -1) {
+              if (docElement.getAttribute("chromehidden").contains("location")) {
                 var uri = this.mURIFixup.createExposableURI(
                             aBrowser.currentURI);
                 if (uri.scheme == "about")
@@ -821,6 +835,12 @@
             var newBrowser = this.getBrowserAtIndex(this.tabContainer.selectedIndex);
             if (this.mCurrentBrowser == newBrowser && !aForceUpdate)
               return;
+
+            if (!aForceUpdate) {
+              TelemetryStopwatch.start("FX_TAB_SWITCH_UPDATE_MS");
+              window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils)
+                                                             .beginTabSwitch();
+            }
 
             var oldTab = this.mCurrentTab;
 
@@ -1001,6 +1021,9 @@
                 fm.setFocus(newBrowser, focusFlags);
               } while (false);
             }
+
+            if (!aForceUpdate)
+              TelemetryStopwatch.finish("FX_TAB_SWITCH_UPDATE_MS");
           ]]>
         </body>
       </method>
@@ -1173,7 +1196,7 @@
               this.selectedTab = firstTabAdded;
             }
             else
-              window.content.focus();
+              this.selectedBrowser.focus();
           }
         ]]></body>
       </method>
@@ -1292,24 +1315,32 @@
             var stack = document.createElementNS(
                                     "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
                                     "stack");
-            stack.setAttribute("anonid", "browserStack");
+            stack.className = "browserStack";
             stack.appendChild(b);
             stack.setAttribute("flex", "1");
 
             // Create the browserContainer
-            var box = document.createElementNS(
+            var browserContainer = document.createElementNS(
                                     "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
                                     "vbox");
-            box.setAttribute("anonid", "browserContainer");
-            box.appendChild(stack);
-            box.setAttribute("flex", "1");
+            browserContainer.className = "browserContainer";
+            browserContainer.appendChild(stack);
+            browserContainer.setAttribute("flex", "1");
+
+            // Create the sidebar container
+            var browserSidebarContainer = document.createElementNS(
+                                      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+                                      "hbox");
+            browserSidebarContainer.className = "browserSidebarContainer";
+            browserSidebarContainer.appendChild(browserContainer);
+            browserSidebarContainer.setAttribute("flex", "1");
 
             // Add the Message and the Browser to the box
             var notificationbox = document.createElementNS(
                                     "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
                                     "notificationbox");
             notificationbox.setAttribute("flex", "1");
-            notificationbox.appendChild(box);
+            notificationbox.appendChild(browserSidebarContainer);
 
             var position = this.tabs.length - 1;
             var uniqueId = "panel" + Date.now() + position;
@@ -1755,7 +1786,7 @@
             // This will unload the document. An unload handler could remove
             // dependant tabs, so it's important that the tabbrowser is now in
             // a consistent state (tab removed, tab positions updated, etc.).
-            panel.removeChild(this.getBrowserContainer(browser));
+            browser.parentNode.removeChild(browser);
 
             // Release the browser in case something is erroneously holding a
             // reference to the tab after its removal.
@@ -2560,7 +2591,7 @@
 
       <constructor>
         <![CDATA[
-          this.mCurrentBrowser = this.mPanelContainer.firstChild.firstChild.firstChild.firstChild;
+          this.mCurrentBrowser = document.getAnonymousElementByAttribute(this, "anonid", "initialBrowser");
           this.mCurrentTab = this.tabContainer.firstChild;
           document.addEventListener("keypress", this, false);
           window.addEventListener("sizemodechange", this, false);
@@ -3539,33 +3570,35 @@
 
         let dt = event.dataTransfer;
         dt.mozSetDataAt(TAB_DROP_TYPE, tab, 0);
-        let uri = this.tabbrowser.getBrowserForTab(tab).currentURI;
-        let spec = uri ? uri.spec : "about:blank";
+        let browser = tab.linkedBrowser;
 
         // We must not set text/x-moz-url or text/plain data here,
         // otherwise trying to deatch the tab by dropping it on the desktop
         // may result in an "internet shortcut"
-        dt.mozSetDataAt("text/x-moz-text-internal", spec, 0);
+        dt.mozSetDataAt("text/x-moz-text-internal", browser.currentURI.spec, 0);
 
         // Set the cursor to an arrow during tab drags.
         dt.mozCursor = "default";
 
         // Create a canvas to which we capture the current tab.
+        // Until canvas is HiDPI-aware (bug 780362), we need to scale the desired
+        // canvas size (in CSS pixels) to the window's backing resolution in order
+        // to get a full-resolution drag image for use on HiDPI displays.
+        let windowUtils = window.getInterface(Ci.nsIDOMWindowUtils);
+        let scale = windowUtils.screenPixelsPerCSSPixel / windowUtils.fullZoom;
         let canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
-        let browser = tab.linkedBrowser;
         canvas.mozOpaque = true;
-        canvas.width = 160;
-        canvas.height = 90;
+        canvas.width = 160 * scale;
+        canvas.height = 90 * scale;
         PageThumbs.captureToCanvas(browser.contentWindow, canvas);
-        dt.setDragImage(canvas, -16, -16);
+        dt.setDragImage(canvas, -16 * scale, -16 * scale);
 
         // _dragData.offsetX/Y give the coordinates that the mouse should be
         // positioned relative to the corner of the new window created upon
         // dragend such that the mouse appears to have the same position
         // relative to the corner of the dragged tab.
         function clientX(ele) ele.getBoundingClientRect().left;
-        let tabOffsetX = clientX(tab) -
-                         clientX(this.children[0].pinned ? this.children[0] : this);
+        let tabOffsetX = clientX(tab) - clientX(this);
         tab._dragData = {
           offsetX: event.screenX - window.screenX - tabOffsetX,
           offsetY: event.screenY - window.screenY,
@@ -3629,22 +3662,22 @@
           }
         }
 
-        var newIndex = this._getDropIndex(event);
-        var scrollRect = tabStrip.scrollClientRect;
         var rect = tabStrip.getBoundingClientRect();
-        var minMargin = scrollRect.left - rect.left;
-        var maxMargin = Math.min(minMargin + scrollRect.width,
-                                 scrollRect.right);
-        if (!ltr)
-          [minMargin, maxMargin] = [this.clientWidth - maxMargin,
-                                    this.clientWidth - minMargin];
         var newMargin;
         if (pixelsToScroll) {
           // if we are scrolling, put the drop indicator at the edge
           // so that it doesn't jump while scrolling
+          let scrollRect = tabStrip.scrollClientRect;
+          let minMargin = scrollRect.left - rect.left;
+          let maxMargin = Math.min(minMargin + scrollRect.width,
+                                   scrollRect.right);
+          if (!ltr)
+            [minMargin, maxMargin] = [this.clientWidth - maxMargin,
+                                      this.clientWidth - minMargin];
           newMargin = (pixelsToScroll > 0) ? maxMargin : minMargin;
         }
         else {
+          let newIndex = this._getDropIndex(event);
           if (newIndex == this.childNodes.length) {
             let tabRect = this.childNodes[newIndex-1].getBoundingClientRect();
             if (ltr)
@@ -3692,6 +3725,8 @@
           if (draggedTab.parentNode != this || event.shiftKey)
             this.selectedItem = newTab;
         } else if (draggedTab && draggedTab.parentNode == this) {
+          this._finishAnimateTabMove();
+
           // actually move the dragged tab
           if ("animDropIndex" in draggedTab._dragData) {
             let newIndex = draggedTab._dragData.animDropIndex;
@@ -3699,7 +3734,6 @@
               newIndex--;
             this.tabbrowser.moveTabTo(draggedTab, newIndex);
           }
-          this._finishAnimateTabMove();
         } else if (draggedTab) {
           // swap the dropped tab with a new one we create and then close
           // it in the other window (making it seem to have moved between
@@ -3732,7 +3766,7 @@
           } catch (ex) {}
 
           // valid urls don't contain spaces ' '; if we have a space it isn't a valid url.
-          if (!url || url.indexOf(" ") != -1)
+          if (!url || url.contains(" "))
             return;
 
           let bgLoad = Services.prefs.getBoolPref("browser.tabs.loadInBackground");
@@ -3934,7 +3968,8 @@
                   class="tab-content" align="center">
           <xul:image xbl:inherits="fadein,pinned,busy,progress,selected"
                      class="tab-throbber"
-                     role="presentation"/>
+                     role="presentation"
+                     layer="true" />
           <xul:image xbl:inherits="validate,src=image,fadein,pinned,selected"
                      class="tab-icon-image"
                      role="presentation"/>

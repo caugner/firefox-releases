@@ -15,7 +15,6 @@
 #include "nsCaret.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMHTMLAnchorElement.h"
-#include "nsIDOMHTMLInputElement.h"
 #include "nsIDOMHTMLTextAreaElement.h"
 #include "nsIFrame.h"
 #include "nsIPresShell.h"
@@ -96,10 +95,8 @@ nsCaretAccessible::SetControlSelectionListener(nsIContent *aCurrentNode)
 
   nsCOMPtr<nsISelectionController> controller =
     GetSelectionControllerForNode(mCurrentControl);
-#ifdef DEBUG
   NS_ASSERTION(controller || aCurrentNode->IsNodeOfType(nsINode::eDOCUMENT),
                "No selection controller for non document node!");
-#endif
   if (!controller)
     return NS_OK;
 
@@ -181,7 +178,7 @@ nsCaretAccessible::NotifySelectionChanged(nsIDOMDocument* aDOMDocument,
   nsCOMPtr<nsIDocument> documentNode(do_QueryInterface(aDOMDocument));
   DocAccessible* document = GetAccService()->GetDocAccessible(documentNode);
 
-#ifdef DEBUG
+#ifdef A11Y_LOG
   if (logging::IsEnabled(logging::eSelection))
     logging::SelChange(aSelection, document);
 #endif

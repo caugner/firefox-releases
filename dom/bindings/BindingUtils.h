@@ -9,6 +9,7 @@
 
 #include "mozilla/dom/DOMJSClass.h"
 #include "mozilla/dom/DOMJSProxyHandler.h"
+#include "mozilla/dom/NonRefcountedDOMObject.h"
 #include "mozilla/dom/workers/Workers.h"
 #include "mozilla/ErrorResult.h"
 
@@ -177,7 +178,7 @@ IsDOMObject(JSObject* obj)
            IsNewProxyBinding(js::GetProxyHandler(obj))));
 }
 
-// Some callers don't want to set an exception when unwrappin fails
+// Some callers don't want to set an exception when unwrapping fails
 // (for example, overload resolution uses unwrapping to tell what sort
 // of thing it's looking at).
 // U must be something that a T* can be assigned to (e.g. T* or an nsRefPtr<T>).
@@ -1138,6 +1139,41 @@ XrayEnumerateProperties(JSObject* wrapper,
                         JS::AutoIdVector& props,
                         const NativeProperties* nativeProperties,
                         const NativeProperties* chromeOnlyNativeProperties);
+
+// Transfer reference in ptr to smartPtr.
+template<class T>
+inline void
+Take(nsRefPtr<T>& smartPtr, T* ptr)
+{
+  smartPtr = dont_AddRef(ptr);
+}
+
+// Transfer ownership of ptr to smartPtr.
+template<class T>
+inline void
+Take(nsAutoPtr<T>& smartPtr, T* ptr)
+{
+  smartPtr = ptr;
+}
+
+inline void
+MustInheritFromNonRefcountedDOMObject(NonRefcountedDOMObject*)
+{
+}
+
+// Set the chain of expando objects for various consumers of the given object.
+// For Paris Bindings only. See the relevant infrastructure in XrayWrapper.cpp.
+JSObject* GetXrayExpandoChain(JSObject *obj);
+void SetXrayExpandoChain(JSObject *obj, JSObject *chain);
+
+struct MainThreadDictionaryBase
+{
+protected:
+  JSContext* ParseJSON(const nsAString& aJSON,
+                       mozilla::Maybe<JSAutoRequest>& aAr,
+                       mozilla::Maybe<JSAutoCompartment>& aAc,
+                       JS::Value& aVal);
+};
 
 } // namespace dom
 } // namespace mozilla

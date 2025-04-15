@@ -16,6 +16,8 @@ Components.utils.import("resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
                                   "resource://gre/modules/FileUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "UpdateChannel",
+                                  "resource://gre/modules/UpdateChannel.jsm");
 
 const TOOLKIT_ID                      = "toolkit@mozilla.org"
 const KEY_PROFILEDIR                  = "ProfD";
@@ -31,10 +33,8 @@ const PREF_BLOCKLIST_PINGCOUNTTOTAL   = "extensions.blocklist.pingCountTotal";
 const PREF_BLOCKLIST_PINGCOUNTVERSION = "extensions.blocklist.pingCountVersion";
 const PREF_PLUGINS_NOTIFYUSER         = "plugins.update.notifyUser";
 const PREF_GENERAL_USERAGENT_LOCALE   = "general.useragent.locale";
-const PREF_PARTNER_BRANCH             = "app.partner.";
 const PREF_APP_DISTRIBUTION           = "distribution.id";
 const PREF_APP_DISTRIBUTION_VERSION   = "distribution.version";
-const PREF_APP_UPDATE_CHANNEL         = "app.update.channel";
 const PREF_EM_LOGGING_ENABLED         = "extensions.logging.enabled";
 const XMLURI_BLOCKLIST                = "http://www.mozilla.org/2006/addons-blocklist";
 const XMLURI_PARSE_ERROR              = "http://www.mozilla.org/newlayout/xml/parsererror.xml"
@@ -225,42 +225,6 @@ function getLocale() {
   return gPref.getCharPref(PREF_GENERAL_USERAGENT_LOCALE);
 }
 
-/**
- * Read the update channel from defaults only.  We do this to ensure that
- * the channel is tightly coupled with the application and does not apply
- * to other installations of the application that may use the same profile.
- */
-function getUpdateChannel() {
-  var channel = "default";
-  var prefName;
-  var prefValue;
-
-  var defaults = gPref.getDefaultBranch(null);
-  try {
-    channel = defaults.getCharPref(PREF_APP_UPDATE_CHANNEL);
-  } catch (e) {
-    // use default when pref not found
-  }
-
-  try {
-    var partners = gPref.getChildList(PREF_PARTNER_BRANCH);
-    if (partners.length) {
-      channel += "-cck";
-      partners.sort();
-
-      for each (prefName in partners) {
-        prefValue = gPref.getCharPref(prefName);
-        channel += "-" + prefValue;
-      }
-    }
-  }
-  catch (e) {
-    Components.utils.reportError(e);
-  }
-
-  return channel;
-}
-
 /* Get the distribution pref values, from defaults only */
 function getDistributionPrefValue(aPrefName) {
   var prefValue = "default";
@@ -273,6 +237,22 @@ function getDistributionPrefValue(aPrefName) {
   }
 
   return prefValue;
+}
+
+/**
+ * Parse a string representation of a regular expression. Needed because we
+ * use the /pattern/flags form (because it's detectable), which is only
+ * supported as a literal in JS.
+ *
+ * @param  aStr
+ *         String representation of regexp
+ * @return RegExp instance
+ */
+function parseRegExp(aStr) {
+  let lastSlash = aStr.lastIndexOf("/");
+  let pattern = aStr.slice(1, lastSlash);
+  let flags = aStr.slice(lastSlash + 1);
+  return new RegExp(pattern, flags);
 }
 
 /**
@@ -377,16 +357,29 @@ Blocklist.prototype = {
     if (!toolkitVersion)
       toolkitVersion = gApp.platformVersion;
 
-    var blItem = addonEntries[id];
+    var blItem = this._findMatchingAddonEntry(addonEntries, id);
     if (!blItem)
       return Ci.nsIBlocklistService.STATE_NOT_BLOCKED;
 
-    for (let currentblItem of blItem) {
+    for (let currentblItem of blItem.versions) {
       if (currentblItem.includesItem(version, appVersion, toolkitVersion))
         return currentblItem.severity >= gBlocklistLevel ? Ci.nsIBlocklistService.STATE_BLOCKED :
                                                        Ci.nsIBlocklistService.STATE_SOFTBLOCKED;
     }
     return Ci.nsIBlocklistService.STATE_NOT_BLOCKED;
+  },
+
+  _findMatchingAddonEntry: function Blocklist_findMatchingAddonEntry(aAddonEntries,
+                                                                     aId) {
+    for (let entry of aAddonEntries) {
+      if (entry.id instanceof RegExp) {
+        if (entry.id.test(aId))
+          return entry;
+      } else if (entry.id == aId) {
+        return entry;
+      }
+    }
+    return null;
   },
 
   /* See nsIBlocklistService */
@@ -397,7 +390,7 @@ Blocklist.prototype = {
     if (!this._addonEntries)
       this._loadBlocklist();
 
-    let blItem = this._addonEntries[id];
+    let blItem = this._findMatchingAddonEntry(this._addonEntries, id);
     if (!blItem || !blItem.blockID)
       return null;
 
@@ -461,7 +454,7 @@ Blocklist.prototype = {
     dsURI = dsURI.replace(/%BUILD_TARGET%/g, gApp.OS + "_" + gABI);
     dsURI = dsURI.replace(/%OS_VERSION%/g, gOSVersion);
     dsURI = dsURI.replace(/%LOCALE%/g, getLocale());
-    dsURI = dsURI.replace(/%CHANNEL%/g, getUpdateChannel());
+    dsURI = dsURI.replace(/%CHANNEL%/g, UpdateChannel.get());
     dsURI = dsURI.replace(/%PLATFORM_VERSION%/g, gApp.platformVersion);
     dsURI = dsURI.replace(/%DISTRIBUTION%/g,
                       getDistributionPrefValue(PREF_APP_DISTRIBUTION));
@@ -549,8 +542,8 @@ Blocklist.prototype = {
 
     var oldAddonEntries = this._addonEntries;
     var oldPluginEntries = this._pluginEntries;
-    this._addonEntries = { };
-    this._pluginEntries = { };
+    this._addonEntries = [];
+    this._pluginEntries = [];
     this._loadBlocklistFromFile(FileUtils.getFile(KEY_PROFILEDIR,
                                                   [FILE_BLOCKLIST]));
 
@@ -584,8 +577,8 @@ Blocklist.prototype = {
    * load it or does nothing if neither exist.
    */
   _loadBlocklist: function() {
-    this._addonEntries = { };
-    this._pluginEntries = { };
+    this._addonEntries = [];
+    this._pluginEntries = [];
     var profFile = FileUtils.getFile(KEY_PROFILEDIR, [FILE_BLOCKLIST]);
     if (profFile.exists()) {
       this._loadBlocklistFromFile(profFile);
@@ -639,7 +632,7 @@ Blocklist.prototype = {
 #              <versionRange minVersion="1.5" maxVersion="1.5.*"/>
 #            </targetApplication>
 #          </versionRange>
-#        <emItem id="item_5@domain"/>
+#        <emItem id="/@badperson\.com$/"/>
 #      </emItems>
 #      <pluginItems>
 #        <pluginItem blockID="i4">
@@ -721,23 +714,35 @@ Blocklist.prototype = {
     if (!matchesOSABI(blocklistElement))
       return;
 
+    let blockEntry = {
+      id: null,
+      versions: [],
+      blockID: null
+    };
+
     var versionNodes = blocklistElement.childNodes;
     var id = blocklistElement.getAttribute("id");
-    result[id] = [];
+    // Add-on IDs cannot contain '/', so an ID starting with '/' must be a regex
+    if (id.startsWith("/"))
+      id = parseRegExp(id);
+    blockEntry.id = id;
+
     for (var x = 0; x < versionNodes.length; ++x) {
       var versionRangeElement = versionNodes.item(x);
       if (!(versionRangeElement instanceof Ci.nsIDOMElement) ||
           versionRangeElement.localName != "versionRange")
         continue;
 
-      result[id].push(new BlocklistItemData(versionRangeElement));
+      blockEntry.versions.push(new BlocklistItemData(versionRangeElement));
     }
     // if only the extension ID is specified block all versions of the
     // extension for the current application.
-    if (result[id].length == 0)
-      result[id].push(new BlocklistItemData(null));
+    if (blockEntry.versions.length == 0)
+      blockEntry.versions.push(new BlocklistItemData(null));
 
-    result[id].blockID = blocklistElement.getAttribute("blockID");
+    blockEntry.blockID = blocklistElement.getAttribute("blockID");
+
+    result.push(blockEntry);
   },
 
   _handlePluginItemNode: function(blocklistElement, result) {
@@ -968,13 +973,6 @@ Blocklist.prototype = {
           }
         }
         plugin.blocklisted = state == Ci.nsIBlocklistService.STATE_BLOCKED;
-        if (state == Ci.nsIBlocklistService.STATE_VULNERABLE_UPDATE_AVAILABLE ||
-            state == Ci.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE)
-          plugin.clicktoplay = true;
-        // turn off clicktoplay if it was previously set by the blocklist
-        else if (oldState == Ci.nsIBlocklistService.STATE_VULNERABLE_UPDATE_AVAILABLE ||
-                 oldState == Ci.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE)
-          plugin.clicktoplay = false;
       }
 
       if (addonList.length == 0) {
@@ -1207,4 +1205,4 @@ BlocklistItemData.prototype = {
   }
 };
 
-var NSGetFactory = XPCOMUtils.generateNSGetFactory([Blocklist]);
+this.NSGetFactory = XPCOMUtils.generateNSGetFactory([Blocklist]);

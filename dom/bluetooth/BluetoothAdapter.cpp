@@ -8,23 +8,23 @@
 #include "BluetoothAdapter.h"
 #include "BluetoothDevice.h"
 #include "BluetoothPropertyEvent.h"
-#include "BluetoothService.h"
-#include "BluetoothTypes.h"
 #include "BluetoothReplyRunnable.h"
+#include "BluetoothService.h"
 #include "BluetoothUtils.h"
 #include "GeneratedEvents.h"
 
 #include "nsContentUtils.h"
 #include "nsDOMClassInfo.h"
 #include "nsDOMEvent.h"
-#include "nsIDOMBluetoothAuthorizeEvent.h"
-#include "nsIDOMBluetoothDeviceEvent.h"
 #include "nsIDOMBluetoothDeviceAddressEvent.h"
-#include "nsIDOMBluetoothPairingEvent.h"
+#include "nsIDOMBluetoothDeviceEvent.h"
 #include "nsIDOMDOMRequest.h"
+#include "nsTArrayHelpers.h"
 #include "nsThreadUtils.h"
 #include "nsXPCOMCIDInternal.h"
 
+#include "mozilla/dom/bluetooth/BluetoothTypes.h"
+#include "mozilla/dom/ContentChild.h"
 #include "mozilla/LazyIdleThread.h"
 #include "mozilla/Util.h"
 
@@ -45,27 +45,11 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(BluetoothAdapter, 
                                                   nsDOMEventTargetHelper)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(devicefound)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(devicedisappeared)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(propertychanged)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(requestconfirmation)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(requestpincode)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(requestpasskey)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(authorize)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(cancel)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(BluetoothAdapter, 
                                                 nsDOMEventTargetHelper)
   tmp->Unroot();
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(devicefound)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(devicedisappeared)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(propertychanged)  
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(requestconfirmation)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(requestpincode)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(requestpasskey)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(authorize)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(cancel)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(BluetoothAdapter)
@@ -81,8 +65,8 @@ class GetPairedDevicesTask : public BluetoothReplyRunnable
 public:
   GetPairedDevicesTask(BluetoothAdapter* aAdapterPtr,
                        nsIDOMDOMRequest* aReq) :
-    mAdapterPtr(aAdapterPtr),
-    BluetoothReplyRunnable(aReq)
+    BluetoothReplyRunnable(aReq),
+    mAdapterPtr(aAdapterPtr)
   {
     MOZ_ASSERT(aReq && aAdapterPtr);
   }
@@ -118,8 +102,7 @@ public:
       return false;
     }
 
-    rv = BluetoothDeviceArrayToJSArray(sc->GetNativeContext(),
-                                       sc->GetNativeGlobal(), devices, &JsDevices);
+    rv = nsTArrayToJSArray(sc->GetNativeContext(), devices, &JsDevices);
 
     if (JsDevices) {
       aValue->setObject(*JsDevices);
@@ -167,9 +150,9 @@ BluetoothAdapter::~BluetoothAdapter()
   BluetoothService* bs = BluetoothService::Get();
   // We can be null on shutdown, where this might happen
   if (bs) {
-    if (NS_FAILED(bs->UnregisterBluetoothSignalHandler(mPath, this))) {
-      NS_WARNING("Failed to unregister object with observer!");
-    }
+    // XXXbent I don't see anything about LOCAL_AGENT_PATH or REMOTE_AGENT_PATH
+    //         here. Probably a bug? Maybe use UnregisterAll.
+    bs->UnregisterBluetoothSignalHandler(mPath, this);
   }
   Unroot();
 }
@@ -227,8 +210,7 @@ BluetoothAdapter::SetPropertyByValue(const BluetoothNamedValue& aValue)
     nsIScriptContext* sc = GetContextForEventHandlers(&rv);
     if (sc) {
       rv =
-        StringArrayToJSArray(sc->GetNativeContext(),
-                             sc->GetNativeGlobal(), mUuids, &mJsUuids);
+        nsTArrayToJSArray(sc->GetNativeContext(), mUuids, &mJsUuids);
       if (NS_FAILED(rv)) {
         NS_WARNING("Cannot set JS UUIDs object!");
         return;
@@ -243,8 +225,8 @@ BluetoothAdapter::SetPropertyByValue(const BluetoothNamedValue& aValue)
     nsIScriptContext* sc = GetContextForEventHandlers(&rv);
     if (sc) {
       rv =
-        StringArrayToJSArray(sc->GetNativeContext(),
-                             sc->GetNativeGlobal(), mDeviceAddresses, &mJsDeviceAddresses);
+        nsTArrayToJSArray(sc->GetNativeContext(), mDeviceAddresses,
+                          &mJsDeviceAddresses);
       if (NS_FAILED(rv)) {
         NS_WARNING("Cannot set JS Device Addresses object!");
         return;
@@ -274,20 +256,8 @@ BluetoothAdapter::Create(nsPIDOMWindow* aOwner, const BluetoothValue& aValue)
   }
 
   nsRefPtr<BluetoothAdapter> adapter = new BluetoothAdapter(aOwner, aValue);
-  if (NS_FAILED(bs->RegisterBluetoothSignalHandler(adapter->GetPath(), adapter))) {
-    NS_WARNING("Failed to register object with observer!");
-    return nullptr;
-  }
 
-  if (NS_FAILED(bs->RegisterBluetoothSignalHandler(NS_LITERAL_STRING(LOCAL_AGENT_PATH), adapter))) {
-    NS_WARNING("Failed to register local agent object with observer!");
-    return nullptr;
-  }
-
-  if (NS_FAILED(bs->RegisterBluetoothSignalHandler(NS_LITERAL_STRING(REMOTE_AGENT_PATH), adapter))) {
-    NS_WARNING("Failed to register remote agent object with observer!");
-    return nullptr;
-  }
+  bs->RegisterBluetoothSignalHandler(adapter->GetPath(), adapter);
 
   return adapter.forget();
 }
@@ -305,11 +275,9 @@ BluetoothAdapter::Notify(const BluetoothSignal& aData)
     nsCOMPtr<nsIDOMBluetoothDeviceEvent> e = do_QueryInterface(event);
     e->InitBluetoothDeviceEvent(NS_LITERAL_STRING("devicefound"),
                                 false, false, device);
-    e->SetTrusted(true);
-    bool dummy;
-    DispatchEvent(event, &dummy);
+    DispatchTrustedEvent(event);
   } else if (aData.name().EqualsLiteral("DeviceDisappeared")) {
-		const nsAString& deviceAddress = aData.value().get_nsString();
+    const nsAString& deviceAddress = aData.value().get_nsString();
 
     nsCOMPtr<nsIDOMEvent> event;
     NS_NewDOMBluetoothDeviceAddressEvent(getter_AddRefs(event), nullptr, nullptr);
@@ -317,110 +285,36 @@ BluetoothAdapter::Notify(const BluetoothSignal& aData)
     nsCOMPtr<nsIDOMBluetoothDeviceAddressEvent> e = do_QueryInterface(event);
     e->InitBluetoothDeviceAddressEvent(NS_LITERAL_STRING("devicedisappeared"),
                                        false, false, deviceAddress);
-    e->SetTrusted(true);
-    bool dummy;
-    DispatchEvent(event, &dummy);
+    DispatchTrustedEvent(e);
+  } else if (aData.name().EqualsLiteral("DeviceCreated")) {
+    NS_ASSERTION(aData.value().type() == BluetoothValue::TArrayOfBluetoothNamedValue,
+                 "DeviceCreated: Invalid value type");
+
+    nsRefPtr<BluetoothDevice> device = BluetoothDevice::Create(GetOwner(),
+                                                               GetPath(),
+                                                               aData.value());
+    nsCOMPtr<nsIDOMEvent> event;
+    NS_NewDOMBluetoothDeviceEvent(getter_AddRefs(event), nullptr, nullptr);
+
+    nsCOMPtr<nsIDOMBluetoothDeviceEvent> e = do_QueryInterface(event);
+    e->InitBluetoothDeviceEvent(NS_LITERAL_STRING("devicecreated"),
+                                false, false, device);
+    DispatchTrustedEvent(e);
   } else if (aData.name().EqualsLiteral("PropertyChanged")) {
-    // Get BluetoothNamedValue, make sure array length is 1
+    NS_ASSERTION(aData.value().type() == BluetoothValue::TArrayOfBluetoothNamedValue,
+                 "PropertyChanged: Invalid value type");
     arr = aData.value().get_ArrayOfBluetoothNamedValue();
 
     NS_ASSERTION(arr.Length() == 1, "Got more than one property in a change message!");
-    NS_ASSERTION(arr[0].value().type() == BluetoothValue::TArrayOfBluetoothNamedValue,
-                 "PropertyChanged: Invalid value type");
-
     BluetoothNamedValue v = arr[0];
+
     SetPropertyByValue(v);
     nsRefPtr<BluetoothPropertyEvent> e = BluetoothPropertyEvent::Create(v.name());
     e->Dispatch(ToIDOMEventTarget(), NS_LITERAL_STRING("propertychanged"));
-  } else if (aData.name().EqualsLiteral("RequestConfirmation")) {
-    arr = aData.value().get_ArrayOfBluetoothNamedValue();
-
-    NS_ASSERTION(arr.Length() == 2, "RequestConfirmation: Wrong length of parameters");
-    NS_ASSERTION(arr[0].value().type() == BluetoothValue::TnsString,
-                 "RequestConfirmation: Invalid value type");
-    NS_ASSERTION(arr[1].value().type() == BluetoothValue::Tuint32_t,
-                 "RequestConfirmation: Invalid value type");
-
-    nsCOMPtr<nsIDOMEvent> event;
-    NS_NewDOMBluetoothPairingEvent(getter_AddRefs(event), nullptr, nullptr);
-
-    nsCOMPtr<nsIDOMBluetoothPairingEvent> e = do_QueryInterface(event);
-    e->InitBluetoothPairingEvent(NS_LITERAL_STRING("requestconfirmation"),
-                                 false,
-                                 false,
-                                 arr[0].value().get_nsString(),
-                                 arr[1].value().get_uint32_t());
-    e->SetTrusted(true);
-    bool dummy;
-    DispatchEvent(event, &dummy);
-  } else if (aData.name().EqualsLiteral("RequestPinCode")) {
-    arr = aData.value().get_ArrayOfBluetoothNamedValue();
-
-    NS_ASSERTION(arr.Length() == 1, "RequestPinCode: Wrong length of parameters");
-    NS_ASSERTION(arr[0].value().type() == BluetoothValue::TnsString,
-                 "RequestPinCode: Invalid value type");
-
-    nsCOMPtr<nsIDOMEvent> event;
-    NS_NewDOMBluetoothDeviceAddressEvent(getter_AddRefs(event), nullptr, nullptr);
-
-    nsCOMPtr<nsIDOMBluetoothDeviceAddressEvent> e = do_QueryInterface(event);
-    e->InitBluetoothDeviceAddressEvent(NS_LITERAL_STRING("requestpincode"),
-                                       false, false, arr[0].value().get_nsString());
-    e->SetTrusted(true);
-    bool dummy;
-    DispatchEvent(event, &dummy);
-  } else if (aData.name().EqualsLiteral("RequestPasskey")) {
-    arr = aData.value().get_ArrayOfBluetoothNamedValue();
-
-    NS_ASSERTION(arr.Length() == 1, "RequestPasskey: Wrong length of parameters");
-    NS_ASSERTION(arr[0].value().type() == BluetoothValue::TnsString,
-                 "RequestPasskey: Invalid value type");
-
-    nsCOMPtr<nsIDOMEvent> event;
-    NS_NewDOMBluetoothDeviceAddressEvent(getter_AddRefs(event), nullptr, nullptr);
-
-    nsCOMPtr<nsIDOMBluetoothDeviceAddressEvent> e = do_QueryInterface(event);
-    e->InitBluetoothDeviceAddressEvent(NS_LITERAL_STRING("requestpasskey"),
-                                       false, false, arr[0].value().get_nsString());
-    e->SetTrusted(true);
-    bool dummy;
-    DispatchEvent(event, &dummy);
-  } else if (aData.name().EqualsLiteral("Authorize")) {
-    arr = aData.value().get_ArrayOfBluetoothNamedValue();
-
-    NS_ASSERTION(arr.Length() == 2, "Authorize: Wrong length of parameters");
-    NS_ASSERTION(arr[0].value().type() == BluetoothValue::TnsString,
-                 "Authorize: Invalid value type");
-    NS_ASSERTION(arr[1].value().type() == BluetoothValue::TnsString,
-                 "Authorize: Invalid value type");
-
-    nsCOMPtr<nsIDOMEvent> event;
-    NS_NewDOMBluetoothAuthorizeEvent(getter_AddRefs(event), nullptr, nullptr);
-
-    nsCOMPtr<nsIDOMBluetoothAuthorizeEvent> e = do_QueryInterface(event);
-    e->InitBluetoothAuthorizeEvent(NS_LITERAL_STRING("authorize"),
-                                   false,
-                                   false,
-                                   arr[0].value().get_nsString(),
-                                   arr[1].value().get_nsString());
-    e->SetTrusted(true);
-    bool dummy;
-    DispatchEvent(event, &dummy);
-  } else if (aData.name().EqualsLiteral("Cancel")) {
-    nsCOMPtr<nsIDOMEvent> event;
-    NS_NewDOMBluetoothDeviceAddressEvent(getter_AddRefs(event), nullptr, nullptr);
-
-    nsCOMPtr<nsIDOMBluetoothDeviceAddressEvent> e = do_QueryInterface(event);
-    // Just send a null nsString, won't be used
-    e->InitBluetoothDeviceAddressEvent(NS_LITERAL_STRING("cancel"),
-                                       false, false, EmptyString());
-    e->SetTrusted(true);
-    bool dummy;
-    DispatchEvent(event, &dummy);
   } else {
 #ifdef DEBUG
     nsCString warningMsg;
-    warningMsg.AssignLiteral("Not handling manager signal: ");
+    warningMsg.AssignLiteral("Not handling adapter signal: ");
     warningMsg.Append(NS_ConvertUTF16toUTF8(aData.name()));
     NS_WARNING(warningMsg.get());
 #endif
@@ -684,7 +578,9 @@ BluetoothAdapter::Unpair(nsIDOMBluetoothDevice* aDevice, nsIDOMDOMRequest** aReq
 }
 
 nsresult
-BluetoothAdapter::SetPinCode(const nsAString& aDeviceAddress, const nsAString& aPinCode)
+BluetoothAdapter::SetPinCode(const nsAString& aDeviceAddress,
+                             const nsAString& aPinCode,
+                             nsIDOMDOMRequest** aRequest)
 {
   BluetoothService* bs = BluetoothService::Get();
   if (!bs) {
@@ -692,13 +588,34 @@ BluetoothAdapter::SetPinCode(const nsAString& aDeviceAddress, const nsAString& a
     return NS_ERROR_FAILURE;
   }
 
-  bool result = bs->SetPinCodeInternal(aDeviceAddress, aPinCode);
+  nsCOMPtr<nsIDOMRequestService> rs = do_GetService("@mozilla.org/dom/dom-request-service;1");
+  if (!rs) {
+    NS_WARNING("No DOMRequest Service!");
+    return NS_ERROR_FAILURE;
+  }
 
-  return result ? NS_OK : NS_ERROR_FAILURE;
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = rs->CreateRequest(GetOwner(), getter_AddRefs(req));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Can't create DOMRequest!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<BluetoothVoidReplyRunnable> results = new BluetoothVoidReplyRunnable(req);
+
+  bool result = bs->SetPinCodeInternal(aDeviceAddress, aPinCode, results);
+  if(!result) {
+    NS_WARNING("SetPinCode failed!");
+    return NS_ERROR_FAILURE;
+  }
+
+  req.forget(aRequest);
+  return NS_OK;  
 }
 
 nsresult
-BluetoothAdapter::SetPasskey(const nsAString& aDeviceAddress, uint32_t aPasskey)
+BluetoothAdapter::SetPasskey(const nsAString& aDeviceAddress, uint32_t aPasskey,
+                             nsIDOMDOMRequest** aRequest)
 {
   BluetoothService* bs = BluetoothService::Get();
   if (!bs) {
@@ -706,13 +623,35 @@ BluetoothAdapter::SetPasskey(const nsAString& aDeviceAddress, uint32_t aPasskey)
     return NS_ERROR_FAILURE;
   }
 
-  bool result = bs->SetPasskeyInternal(aDeviceAddress, aPasskey);
+  nsCOMPtr<nsIDOMRequestService> rs = do_GetService("@mozilla.org/dom/dom-request-service;1");
+  if (!rs) {
+    NS_WARNING("No DOMRequest Service!");
+    return NS_ERROR_FAILURE;
+  }
 
-  return result ? NS_OK : NS_ERROR_FAILURE;
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = rs->CreateRequest(GetOwner(), getter_AddRefs(req));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Can't create DOMRequest!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<BluetoothVoidReplyRunnable> results = new BluetoothVoidReplyRunnable(req);
+
+  bool result = bs->SetPasskeyInternal(aDeviceAddress, aPasskey, results);
+  if(!result) {
+    NS_WARNING("SetPasskeyInternal failed!");
+    return NS_ERROR_FAILURE;
+  }
+
+  req.forget(aRequest);
+  return NS_OK;  
 }
 
 nsresult
-BluetoothAdapter::SetPairingConfirmation(const nsAString& aDeviceAddress, bool aConfirmation)
+BluetoothAdapter::SetPairingConfirmation(const nsAString& aDeviceAddress,
+                                         bool aConfirmation,
+                                         nsIDOMDOMRequest** aRequest)
 {
   BluetoothService* bs = BluetoothService::Get();
   if (!bs) {
@@ -720,13 +659,34 @@ BluetoothAdapter::SetPairingConfirmation(const nsAString& aDeviceAddress, bool a
     return NS_ERROR_FAILURE;
   }
 
-  bool result = bs->SetPairingConfirmationInternal(aDeviceAddress, aConfirmation);
+  nsCOMPtr<nsIDOMRequestService> rs = do_GetService("@mozilla.org/dom/dom-request-service;1");
+  if (!rs) {
+    NS_WARNING("No DOMRequest Service!");
+    return NS_ERROR_FAILURE;
+  }
 
-  return result ? NS_OK : NS_ERROR_FAILURE;
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = rs->CreateRequest(GetOwner(), getter_AddRefs(req));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Can't create DOMRequest!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<BluetoothVoidReplyRunnable> results = new BluetoothVoidReplyRunnable(req);
+
+  bool result = bs->SetPairingConfirmationInternal(aDeviceAddress, aConfirmation, results);
+  if(!result) {
+    NS_WARNING("SetPairingConfirmation failed!");
+    return NS_ERROR_FAILURE;
+  }
+
+  req.forget(aRequest);
+  return NS_OK;  
 }
 
 nsresult
-BluetoothAdapter::SetAuthorization(const nsAString& aDeviceAddress, bool aAllow)
+BluetoothAdapter::SetAuthorization(const nsAString& aDeviceAddress, bool aAllow,
+                                   nsIDOMDOMRequest** aRequest)
 {
   BluetoothService* bs = BluetoothService::Get();
   if (!bs) {
@@ -734,14 +694,202 @@ BluetoothAdapter::SetAuthorization(const nsAString& aDeviceAddress, bool aAllow)
     return NS_ERROR_FAILURE;
   }
 
-  bool result = bs->SetAuthorizationInternal(aDeviceAddress, aAllow);
+  nsCOMPtr<nsIDOMRequestService> rs = do_GetService("@mozilla.org/dom/dom-request-service;1");
+  if (!rs) {
+    NS_WARNING("No DOMRequest Service!");
+    return NS_ERROR_FAILURE;
+  }
 
-  return result ? NS_OK : NS_ERROR_FAILURE;
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = rs->CreateRequest(GetOwner(), getter_AddRefs(req));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Can't create DOMRequest!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<BluetoothVoidReplyRunnable> results = new BluetoothVoidReplyRunnable(req);
+
+  bool result = bs->SetAuthorizationInternal(aDeviceAddress, aAllow, results);
+  if(!result) {
+    NS_WARNING("SetAuthorization failed!");
+    return NS_ERROR_FAILURE;
+  }
+
+  req.forget(aRequest);
+  return NS_OK;  
+}
+
+NS_IMETHODIMP
+BluetoothAdapter::Connect(const nsAString& aDeviceAddress,
+                          uint16_t aProfileId,
+                          nsIDOMDOMRequest** aRequest)
+{
+  BluetoothService* bs = BluetoothService::Get();
+  if (!bs) {
+    NS_WARNING("BluetoothService not available!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMRequestService> rs = do_GetService("@mozilla.org/dom/dom-request-service;1");
+  if (!rs) {
+    NS_WARNING("No DOMRequest Service!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = rs->CreateRequest(GetOwner(), getter_AddRefs(req));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Can't create DOMRequest!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<BluetoothVoidReplyRunnable> results =
+    new BluetoothVoidReplyRunnable(req);
+  bs->Connect(aDeviceAddress, mPath, aProfileId, results);
+
+  req.forget(aRequest);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+BluetoothAdapter::Disconnect(uint16_t aProfileId,
+                             nsIDOMDOMRequest** aRequest)
+{
+  BluetoothService* bs = BluetoothService::Get();
+  if (!bs) {
+    NS_WARNING("BluetoothService not available!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMRequestService> rs = do_GetService("@mozilla.org/dom/dom-request-service;1");
+  if (!rs) {
+    NS_WARNING("No DOMRequest Service!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = rs->CreateRequest(GetOwner(), getter_AddRefs(req));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Can't create DOMRequest!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<BluetoothVoidReplyRunnable> result =
+    new BluetoothVoidReplyRunnable(req);
+  bs->Disconnect(aProfileId, result);
+
+  req.forget(aRequest);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+BluetoothAdapter::SendFile(const nsAString& aDeviceAddress,
+                           nsIDOMBlob* aBlob,
+                           nsIDOMDOMRequest** aRequest)
+{
+  BluetoothService* bs = BluetoothService::Get();
+  if (!bs) {
+    NS_WARNING("BluetoothService not available!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMRequestService> rs = do_GetService("@mozilla.org/dom/dom-request-service;1");
+  if (!rs) {
+    NS_WARNING("No DOMRequest Service!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = rs->CreateRequest(GetOwner(), getter_AddRefs(req));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Can't create DOMRequest!");
+    return NS_ERROR_FAILURE;
+  }
+
+  BlobChild* actor =
+      mozilla::dom::ContentChild::GetSingleton()->GetOrCreateActorForBlob(aBlob);
+
+  if (!actor) {
+    NS_WARNING("Can't create actor");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<BluetoothVoidReplyRunnable> result = new BluetoothVoidReplyRunnable(req);
+  bs->SendFile(aDeviceAddress, nullptr, actor, result);
+  req.forget(aRequest);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+BluetoothAdapter::StopSendingFile(const nsAString& aDeviceAddress,
+                                  nsIDOMDOMRequest** aRequest)
+{
+  BluetoothService* bs = BluetoothService::Get();
+  if (!bs) {
+    NS_WARNING("BluetoothService not available!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMRequestService> rs = do_GetService("@mozilla.org/dom/dom-request-service;1");
+  if (!rs) {
+    NS_WARNING("No DOMRequest Service!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = rs->CreateRequest(GetOwner(), getter_AddRefs(req));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Can't create DOMRequest!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<BluetoothVoidReplyRunnable> result = new BluetoothVoidReplyRunnable(req);
+  bs->StopSendingFile(aDeviceAddress, result);
+  req.forget(aRequest);
+
+  return NS_OK;
+}
+
+nsresult
+BluetoothAdapter::ConfirmReceivingFile(const nsAString& aDeviceAddress,
+                                       bool aConfirmation,
+                                       nsIDOMDOMRequest** aRequest)
+{
+  BluetoothService* bs = BluetoothService::Get();
+  if (!bs) {
+    NS_WARNING("BluetoothService not available!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMRequestService> rs =
+    do_GetService("@mozilla.org/dom/dom-request-service;1");
+
+  if (!rs) {
+    NS_WARNING("No DOMRequest Service!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMDOMRequest> req;
+  nsresult rv = rs->CreateRequest(GetOwner(), getter_AddRefs(req));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Can't create DOMRequest!");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<BluetoothVoidReplyRunnable> result =
+    new BluetoothVoidReplyRunnable(req);
+  bs->ConfirmReceivingFile(aDeviceAddress, aConfirmation, result);
+
+  req.forget(aRequest);
+
+  return NS_OK;
 }
 
 NS_IMPL_EVENT_HANDLER(BluetoothAdapter, propertychanged)
 NS_IMPL_EVENT_HANDLER(BluetoothAdapter, devicefound)
 NS_IMPL_EVENT_HANDLER(BluetoothAdapter, devicedisappeared)
+NS_IMPL_EVENT_HANDLER(BluetoothAdapter, devicecreated)
 NS_IMPL_EVENT_HANDLER(BluetoothAdapter, requestconfirmation)
 NS_IMPL_EVENT_HANDLER(BluetoothAdapter, requestpincode)
 NS_IMPL_EVENT_HANDLER(BluetoothAdapter, requestpasskey)

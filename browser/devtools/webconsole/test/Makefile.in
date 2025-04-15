@@ -105,7 +105,10 @@ MOCHITEST_BROWSER_FILES = \
 	browser_webconsole_bug_664131_console_group.js \
 	browser_webconsole_bug_704295.js \
 	browser_webconsole_bug_658368_time_methods.js \
+	browser_webconsole_bug_764572_output_open_url.js \
 	browser_webconsole_bug_622303_persistent_filters.js \
+        browser_webconsole_bug_770099_bad_policyuri.js \
+        browser_webconsole_bug_770099_violation.js \
 	browser_webconsole_window_zombie.js \
 	browser_cached_messages.js \
 	browser_bug664688_sandbox_update_after_navigation.js \
@@ -114,6 +117,7 @@ MOCHITEST_BROWSER_FILES = \
 	browser_webconsole_bug_737873_mixedcontent.js \
 	browser_output_breaks_after_console_dir_uninspectable.js \
 	browser_console_log_inspectable_object.js \
+	browser_bug_638949_copy_link_location.js \
 	head.js \
 	$(NULL)
 
@@ -186,6 +190,10 @@ MOCHITEST_BROWSER_FILES += \
 	test-bug-658368-time-methods.html \
 	test-webconsole-error-observer.html \
 	test-for-of.html \
+        test_bug_770099_violation.html \
+        test_bug_770099_violation.html^headers^ \
+        test_bug_770099_bad_policy_uri.html \
+        test_bug_770099_bad_policy_uri.html^headers^ \
 	test-result-format-as-string.html \
 	test-bug-737873-mixedcontent.html \
 	$(NULL)

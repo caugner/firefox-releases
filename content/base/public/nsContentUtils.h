@@ -18,17 +18,6 @@
 #include <ieeefp.h>
 #endif
 
-//A trick to handle IEEE floating point exceptions on FreeBSD - E.D.
-#ifdef __FreeBSD__
-#include <ieeefp.h>
-#if !defined(__i386__) && !defined(__x86_64__)
-static fp_except_t allmask = FP_X_INV|FP_X_OFL|FP_X_UFL|FP_X_DZ|FP_X_IMP;
-#else
-static fp_except_t allmask = FP_X_INV|FP_X_OFL|FP_X_UFL|FP_X_DZ|FP_X_IMP|FP_X_DNML;
-#endif
-static fp_except_t oldmask = fpsetmask(~allmask);
-#endif
-
 #include "nsAString.h"
 #include "nsIStatefulFrame.h"
 #include "nsNodeInfoManager.h"
@@ -46,10 +35,13 @@ static fp_except_t oldmask = fpsetmask(~allmask);
 #include "nsThreadUtils.h"
 #include "nsIContent.h"
 #include "nsCharSeparatedTokenizer.h"
+#include "gfxContext.h"
+#include "gfxFont.h"
 
 #include "mozilla/AutoRestore.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/Assertions.h"
 
 struct nsNativeKeyEvent; // Don't include nsINativeKeyBindings.h here: it will force strange compilation error!
 
@@ -113,6 +105,7 @@ struct nsIntMargin;
 class nsPIDOMWindow;
 class nsIDocumentLoaderFactory;
 class nsIDOMHTMLInputElement;
+class gfxTextObjectPaint;
 
 namespace mozilla {
 
@@ -482,13 +475,6 @@ public:
     return sIOService;
   }
 
-  static imgILoader* GetImgLoader()
-  {
-    if (!sImgLoaderInitialized)
-      InitImgLoader();
-    return sImgLoader;
-  }
-
 #ifdef MOZ_XTF
   static nsIXTFService* GetXTFService();
 #endif
@@ -589,6 +575,22 @@ public:
   // system principal, and true for a null principal.
   static bool IsSitePermDeny(nsIPrincipal* aPrincipal, const char* aType);
 
+  // Get a permission-manager setting for the given principal and type.
+  // If the pref doesn't exist or if it isn't ALLOW_ACTION, false is
+  // returned, otherwise true is returned. Always returns true for the
+  // system principal, and false for a null principal.
+  // This version checks the permission for an exact host match on
+  // the principal
+  static bool IsExactSitePermAllow(nsIPrincipal* aPrincipal, const char* aType);
+
+  // Get a permission-manager setting for the given principal and type.
+  // If the pref doesn't exist or if it isn't DENY_ACTION, false is
+  // returned, otherwise true is returned. Always returns false for the
+  // system principal, and true for a null principal.
+  // This version checks the permission for an exact host match on
+  // the principal
+  static bool IsExactSitePermDeny(nsIPrincipal* aPrincipal, const char* aType);
+
   // Returns true if aDoc1 and aDoc2 have equal NodePrincipal()s.
   static bool HaveEqualPrincipals(nsIDocument* aDoc1, nsIDocument* aDoc2);
 
@@ -668,9 +670,16 @@ public:
                             imgIRequest** aRequest);
 
   /**
+   * Obtain an image loader that respects the given document/channel's privacy status.
+   * Null document/channel arguments return the public image loader.
+   */
+  static imgILoader* GetImgLoaderForDocument(nsIDocument* aDoc);
+  static imgILoader* GetImgLoaderForChannel(nsIChannel* aChannel);
+
+  /**
    * Returns whether the given URI is in the image cache.
    */
-  static bool IsImageInCache(nsIURI* aURI);
+  static bool IsImageInCache(nsIURI* aURI, nsIDocument* aDocument);
 
   /**
    * Method to get an imgIContainer from an image loading content
@@ -1298,13 +1307,17 @@ public:
                               nsWrapperCache* aCache)
   {
     if (!aCache->PreservingWrapper()) {
+      nsISupports *ccISupports;
+      aScriptObjectHolder->QueryInterface(NS_GET_IID(nsCycleCollectionISupports),
+                                          reinterpret_cast<void**>(&ccISupports));
+      MOZ_ASSERT(ccISupports);
       nsXPCOMCycleCollectionParticipant* participant;
-      CallQueryInterface(aScriptObjectHolder, &participant);
-      HoldJSObjects(aScriptObjectHolder, participant);
+      CallQueryInterface(ccISupports, &participant);
+      HoldJSObjects(ccISupports, participant);
       aCache->SetPreservingWrapper(true);
 #ifdef DEBUG
       // Make sure the cycle collector will be able to traverse to the wrapper.
-      CheckCCWrapperTraversal(aScriptObjectHolder, aCache);
+      CheckCCWrapperTraversal(ccISupports, aCache);
 #endif
     }
   }
@@ -1549,10 +1562,29 @@ public:
    * which places the viewport information in the document header instead
    * of returning it directly.
    *
+   * @param aDisplayWidth width of the on-screen display area for this
+   * document, in device pixels.
+   * @param aDisplayHeight height of the on-screen display area for this
+   * document, in device pixels.
+   *
    * NOTE: If the site is optimized for mobile (via the doctype), this
    * will return viewport information that specifies default information.
    */
-  static ViewportInfo GetViewportInfo(nsIDocument* aDocument);
+  static ViewportInfo GetViewportInfo(nsIDocument* aDocument,
+                                      uint32_t aDisplayWidth,
+                                      uint32_t aDisplayHeight);
+
+  /**
+   * Constrain the viewport calculations from the GetViewportInfo() function
+   * in order to always return sane minimum/maximum values. This modifies the
+   * ViewportInfo struct passed as an input parameter, in place.
+   */
+  static void ConstrainViewportValues(ViewportInfo& aViewInfo);
+
+  /**
+   * The device-pixel-to-CSS-px ratio used to adjust meta viewport values.
+   */
+  static double GetDevicePixelsPerMetaViewportPixel(nsIWidget* aWidget);
 
   // Call EnterMicroTask when you're entering JS execution.
   // Usually the best way to do this is to use nsAutoMicroTask.
@@ -1748,6 +1780,10 @@ public:
    */
   static nsresult CreateArrayBuffer(JSContext *aCx, const nsACString& aData,
                                     JSObject** aResult);
+
+  static nsresult CreateBlobBuffer(JSContext* aCx,
+                                   const nsACString& aData,
+                                   jsval& aBlob);
 
   static void StripNullChars(const nsAString& aInStr, nsAString& aOutStr);
 
@@ -1993,18 +2029,6 @@ public:
   static bool IsAutocompleteEnabled(nsIDOMHTMLInputElement* aInput);
 
   /**
-   * If the URI is chrome, return true unconditionarlly.
-   *
-   * Otherwise, get the contents of the given pref, and treat it as a
-   * comma-separated list of URIs.  Return true if the given URI's prepath is
-   * in the list, and false otherwise.
-   *
-   * Comparisons are case-insensitive, and whitespace between elements of the
-   * comma-separated list is ignored.
-   */
-  static bool URIIsChromeOrInPref(nsIURI *aURI, const char *aPref);
-
-  /**
    * This will parse aSource, to extract the value of the pseudo attribute
    * with the name specified in aName. See
    * http://www.w3.org/TR/xml-stylesheet/#NT-StyleSheetPI for the specification
@@ -2081,24 +2105,6 @@ public:
    */
   static nsresult IsUserIdle(uint32_t aRequestedIdleTimeInMS, bool* aUserIsIdle);
 
-  /** 
-   * Takes a window and a string to check prefs against. Assumes that
-   * the window is an app window, and that the pref is a comma
-   * seperated list of app urls that have permission to use whatever
-   * the preference refers to (for example, does the current window
-   * have access to mozTelephony). Chrome is always given permissions
-   * for the requested preference. Sets aAllowed based on preference.
-   *
-   * @param aWindow Current window asking for preference permission
-   * @param aPrefURL Preference name
-   * @param aAllowed [out] outparam on whether or not window is allowed
-   *                       to access pref
-   *
-   * @return NS_OK on successful preference lookup, error code otherwise
-   */
-  static nsresult IsOnPrefWhitelist(nsPIDOMWindow* aWindow,
-                                    const char* aPrefURL, bool *aAllowed);
-
   /**
    * Takes a selection, and a text control element (<input> or <textarea>), and
    * returns the offsets in the text content corresponding to the selection.
@@ -2116,6 +2122,13 @@ public:
                                         int32_t& aOutEndOffset);
 
   static nsIEditor* GetHTMLEditor(nsPresContext* aPresContext);
+
+  static bool PaintSVGGlyph(Element *aElement, gfxContext *aContext,
+                            gfxFont::DrawMode aDrawMode,
+                            gfxTextObjectPaint *aObjectPaint);
+
+  static bool GetSVGGlyphExtents(Element *aElement, const gfxMatrix& aSVGToAppSpace,
+                                 gfxRect *aResult);
 
 private:
   static bool InitializeEventTable();
@@ -2164,9 +2177,11 @@ private:
   static bool sImgLoaderInitialized;
   static void InitImgLoader();
 
-  // The following two members are initialized lazily
+  // The following four members are initialized lazily
   static imgILoader* sImgLoader;
+  static imgILoader* sPrivateImgLoader;
   static imgICache* sImgCache;
+  static imgICache* sPrivateImgCache;
 
   static nsIConsoleService* sConsoleService;
 

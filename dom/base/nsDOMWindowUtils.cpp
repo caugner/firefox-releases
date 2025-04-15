@@ -19,6 +19,7 @@
 #include "nsDOMTouchEvent.h"
 #include "nsIDOMTouchEvent.h"
 #include "nsObjectLoadingContent.h"
+#include "nsFrame.h"
 
 #include "nsIScrollableFrame.h"
 
@@ -64,6 +65,7 @@
 #include "sampler.h"
 #include "nsDOMBlobBuilder.h"
 #include "nsIDOMFileHandle.h"
+#include "nsPrintfCString.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -72,11 +74,7 @@ using namespace mozilla::widget;
 
 static bool IsUniversalXPConnectCapable()
 {
-  bool hasCap = false;
-  nsresult rv = nsContentUtils::GetSecurityManager()->
-                  IsCapabilityEnabled("UniversalXPConnect", &hasCap);
-  NS_ENSURE_SUCCESS(rv, false);
-  return hasCap;
+  return nsContentUtils::IsCallerChrome();
 }
 
 DOMCI_DATA(WindowUtils, nsDOMWindowUtils)
@@ -175,7 +173,7 @@ nsDOMWindowUtils::GetDocCharsetIsForced(bool *aIsForced)
 
   nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
   if (window) {
-    nsCOMPtr<nsIDocument> doc(do_QueryInterface(window->GetExtantDocument()));
+    nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
     *aIsForced = doc &&
       doc->GetDocumentCharacterSetSource() >= kCharsetFromParentForced;
   }
@@ -218,12 +216,10 @@ nsDOMWindowUtils::Redraw(uint32_t aCount, uint32_t *aDurationOut)
     nsIFrame *rootFrame = presShell->GetRootFrame();
 
     if (rootFrame) {
-      nsRect r(nsPoint(0, 0), rootFrame->GetSize());
-
       PRIntervalTime iStart = PR_IntervalNow();
 
       for (uint32_t i = 0; i < aCount; i++)
-        rootFrame->InvalidateWithFlags(r, nsIFrame::INVALIDATE_IMMEDIATE);
+        rootFrame->InvalidateFrame();
 
 #if defined(MOZ_X11) && defined(MOZ_WIDGET_GTK)
       XSync(GDK_DISPLAY_XDISPLAY(gdk_display_get_default()), False);
@@ -258,6 +254,31 @@ nsDOMWindowUtils::SetCSSViewport(float aWidthPx, float aHeightPx)
 
   presShell->ResizeReflowOverride(width, height);
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetViewportInfo(uint32_t aDisplayWidth,
+                                  uint32_t aDisplayHeight,
+                                  double *aDefaultZoom, bool *aAllowZoom,
+                                  double *aMinZoom, double *aMaxZoom,
+                                  uint32_t *aWidth, uint32_t *aHeight,
+                                  bool *aAutoSize)
+{
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
+
+  nsCOMPtr<nsIDocument> doc(do_QueryInterface(window->GetExtantDocument()));
+  NS_ENSURE_STATE(doc);
+
+  ViewportInfo info = nsContentUtils::GetViewportInfo(doc, aDisplayWidth, aDisplayHeight);
+  *aDefaultZoom = info.defaultZoom;
+  *aAllowZoom = info.allowZoom;
+  *aMinZoom = info.minZoom;
+  *aMaxZoom = info.maxZoom;
+  *aWidth = info.width;
+  *aHeight = info.height;
+  *aAutoSize = info.autoSize;
   return NS_OK;
 }
 
@@ -362,14 +383,7 @@ nsDOMWindowUtils::SetDisplayPortForElement(float aXPx, float aYPx,
 
   nsIFrame* rootFrame = presShell->FrameManager()->GetRootFrame();
   if (rootFrame) {
-    nsIContent* rootContent =
-      rootScrollFrame ? rootScrollFrame->GetContent() : nullptr;
-    nsRect rootDisplayport;
-    bool usingDisplayport = rootContent &&
-      nsLayoutUtils::GetDisplayPort(rootContent, &rootDisplayport);
-    rootFrame->InvalidateWithFlags(
-      usingDisplayport ? rootDisplayport : rootFrame->GetVisualOverflowRect(),
-      nsIFrame::INVALIDATE_NO_THEBES_LAYERS);
+    rootFrame->InvalidateFrame();
 
     // If we are hiding something that is a display root then send empty paint
     // transaction in order to release retained layers because it won't get
@@ -653,10 +667,48 @@ nsDOMWindowUtils::SendWheelEvent(float aX,
   nsEventStatus status;
   nsresult rv = widget->DispatchEvent(&wheelEvent, status);
   NS_ENSURE_SUCCESS(rv, rv);
-  // ESM must not return negative values for overflow.
-  NS_ENSURE_TRUE(wheelEvent.overflowDeltaX >= 0.0, NS_ERROR_FAILURE);
-  NS_ENSURE_TRUE(wheelEvent.overflowDeltaY >= 0.0, NS_ERROR_FAILURE);
-  return rv;
+
+  bool failedX = false;
+  if ((aOptions & WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_X_ZERO) &&
+      wheelEvent.overflowDeltaX != 0) {
+    failedX = true;
+  }
+  if ((aOptions & WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_X_POSITIVE) &&
+      wheelEvent.overflowDeltaX <= 0) {
+    failedX = true;
+  }
+  if ((aOptions & WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_X_NEGATIVE) &&
+      wheelEvent.overflowDeltaX >= 0) {
+    failedX = true;
+  }
+  bool failedY = false;
+  if ((aOptions & WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_Y_ZERO) &&
+      wheelEvent.overflowDeltaY != 0) {
+    failedY = true;
+  }
+  if ((aOptions & WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_Y_POSITIVE) &&
+      wheelEvent.overflowDeltaY <= 0) {
+    failedY = true;
+  }
+  if ((aOptions & WHEEL_EVENT_EXPECTED_OVERFLOW_DELTA_Y_NEGATIVE) &&
+      wheelEvent.overflowDeltaY >= 0) {
+    failedY = true;
+  }
+
+#ifdef DEBUG
+  if (failedX) {
+    nsPrintfCString debugMsg("SendWheelEvent(): unexpected overflowDeltaX: %f",
+                             wheelEvent.overflowDeltaX);
+    NS_WARNING(debugMsg.get());
+  }
+  if (failedY) {
+    nsPrintfCString debugMsg("SendWheelEvent(): unexpected overflowDeltaY: %f",
+                             wheelEvent.overflowDeltaY);
+    NS_WARNING(debugMsg.get());
+  }
+#endif
+
+  return (!failedX && !failedY) ? NS_OK : NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP
@@ -1449,19 +1501,30 @@ nsDOMWindowUtils::FindElementWithViewId(nsViewID aID,
 NS_IMETHODIMP
 nsDOMWindowUtils::GetScreenPixelsPerCSSPixel(float* aScreenPixels)
 {
-  *aScreenPixels = 1;
-
-  if (!nsContentUtils::IsCallerTrustedForRead())
-    return NS_ERROR_DOM_SECURITY_ERR;
-  nsPresContext* presContext = GetPresContext();
-  if (!presContext)
-    return NS_OK;
-
-  *aScreenPixels = float(nsPresContext::AppUnitsPerCSSPixel())/
-      presContext->AppUnitsPerDevPixel();
-  return NS_OK;
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
+  return window->GetDevicePixelRatio(aScreenPixels);
 }
 
+NS_IMETHODIMP
+nsDOMWindowUtils::GetFullZoom(float* aFullZoom)
+{
+  *aFullZoom = 1.0f;
+
+  if (!nsContentUtils::IsCallerTrustedForRead()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsPresContext* presContext = GetPresContext();
+  if (!presContext) {
+    return NS_OK;
+  }
+
+  *aFullZoom = presContext->DeviceContext()->GetPixelScale();
+
+  return NS_OK;
+}
+ 
 NS_IMETHODIMP
 nsDOMWindowUtils::DispatchDOMEventViaPresShell(nsIDOMNode* aTarget,
                                                nsIDOMEvent* aEvent,
@@ -1910,7 +1973,7 @@ nsDOMWindowUtils::GetParent(const JS::Value& aObject,
     return NS_ERROR_XPC_BAD_CONVERT_JS;
   }
 
-  JS::Rooted<JSObject*> parent(aCx, JS_GetParent(JSVAL_TO_OBJECT(aObject)));
+  js::Rooted<JSObject*> parent(aCx, JS_GetParent(JSVAL_TO_OBJECT(aObject)));
   *aParent = OBJECT_TO_JSVAL(parent);
 
   // Outerize if necessary.
@@ -2061,6 +2124,26 @@ nsDOMWindowUtils::StopFrameTimeRecording(uint32_t *frameCount, float **frames)
       (*frames)[i] = frameTimes[i];
     }
   }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::BeginTabSwitch()
+{
+  if (!IsUniversalXPConnectCapable()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget)
+    return NS_ERROR_FAILURE;
+
+  LayerManager *mgr = widget->GetLayerManager();
+  if (!mgr)
+    return NS_ERROR_FAILURE;
+
+  mgr->BeginTabSwitch();
 
   return NS_OK;
 }
@@ -2230,31 +2313,6 @@ nsDOMWindowUtils::GetCursorType(int16_t *aCursor)
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::GoOnline()
-{
-  // This is only allowed from about:neterror, which is unprivileged, so it
-  // can't access the io-service itself.
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
-  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
-  nsCOMPtr<nsIDocument> doc(do_QueryInterface(window->GetExtantDocument()));
-  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
-  nsCOMPtr<nsIURI> documentURI;
-  documentURI = doc->GetDocumentURI();
-
-  nsCAutoString spec;
-  documentURI->GetSpec(spec);
-  if (!StringBeginsWith(spec,  NS_LITERAL_CSTRING("about:neterror?")))
-    return NS_ERROR_DOM_SECURITY_ERR;
-
-  nsCOMPtr<nsIIOService> ios = do_GetService("@mozilla.org/network/io-service;1");
-  if (ios) {
-    ios->SetOffline(false); // !offline
-    return NS_OK;
-  }
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
-NS_IMETHODIMP
 nsDOMWindowUtils::GetDisplayDPI(float *aDPI)
 {
   if (!IsUniversalXPConnectCapable()) {
@@ -2290,6 +2348,10 @@ nsDOMWindowUtils::WrapDOMFile(nsIFile *aFile,
 {
   if (!IsUniversalXPConnectCapable()) {
     return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  if (!aFile) {
+    return NS_ERROR_FAILURE;
   }
 
   NS_ADDREF(*aDOMFile = new nsDOMFileFile(aFile));
@@ -2776,6 +2838,151 @@ nsDOMWindowUtils::ExitFullscreen()
   }
 
   nsIDocument::ExitFullScreen(/* async = */ false);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::SelectAtPoint(float aX, float aY, uint32_t aSelectBehavior,
+                                bool *_retval)
+{
+  *_retval = false;
+  if (!IsUniversalXPConnectCapable()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsSelectionAmount amount;
+  switch (aSelectBehavior) {
+    case nsIDOMWindowUtils::SELECT_CHARACTER:
+      amount = eSelectCharacter;
+    break;
+    case nsIDOMWindowUtils::SELECT_CLUSTER:
+      amount = eSelectCluster;
+    break;
+    case nsIDOMWindowUtils::SELECT_WORD:
+      amount = eSelectWord;
+    break;
+    case nsIDOMWindowUtils::SELECT_LINE:
+      amount = eSelectLine;
+    break;
+    case nsIDOMWindowUtils::SELECT_BEGINLINE:
+      amount = eSelectBeginLine;
+    break;
+    case nsIDOMWindowUtils::SELECT_ENDLINE:
+      amount = eSelectEndLine;
+    break;
+    case nsIDOMWindowUtils::SELECT_PARAGRAPH:
+      amount = eSelectParagraph;
+    break;
+    case nsIDOMWindowUtils::SELECT_WORDNOSPACE:
+      amount = eSelectWordNoSpace;
+    break;
+  }
+
+  nsIPresShell* presShell = GetPresShell();
+  if (!presShell) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  // The root frame for this content window
+  nsIFrame* rootFrame = presShell->FrameManager()->GetRootFrame();
+  if (!rootFrame) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  // Get the target frame at the client coordinates passed to us
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  nsIntPoint pt(aX, aY);
+  nsPoint ptInRoot =
+    nsLayoutUtils::GetEventCoordinatesRelativeTo(widget, pt, rootFrame);
+  nsIFrame* targetFrame = nsLayoutUtils::GetFrameForPoint(rootFrame, ptInRoot);
+  // This can happen if the page hasn't loaded yet or if the point
+  // is outside the frame.
+  if (!targetFrame) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  // Convert point to coordinates relative to the target frame, which is
+  // what targetFrame's SelectByTypeAtPoint expects.
+  nsPoint relPoint =
+    nsLayoutUtils::GetEventCoordinatesRelativeTo(widget, pt, targetFrame);
+
+  nsresult rv =
+    static_cast<nsFrame*>(targetFrame)->
+      SelectByTypeAtPoint(GetPresContext(), relPoint, amount, amount,
+                          nsFrame::SELECT_ACCUMULATE);
+  *_retval = !NS_FAILED(rv);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::LoadSheet(nsIURI *aSheetURI, uint32_t aSheetType)
+{
+  if (!IsUniversalXPConnectCapable()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  NS_ENSURE_ARG_POINTER(aSheetURI);
+  NS_ENSURE_ARG(aSheetType == AGENT_SHEET || aSheetType == USER_SHEET);
+
+  nsCOMPtr<nsIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_TRUE(window, NS_ERROR_INVALID_ARG);
+  
+  nsCOMPtr<nsIDOMDocument> ddoc;
+  nsresult rv = window->GetDocument(getter_AddRefs(ddoc));
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(ddoc, NS_ERROR_FAILURE);
+
+  nsCOMPtr<nsIDocument> doc = do_QueryInterface(ddoc);
+  NS_ENSURE_TRUE(doc, NS_ERROR_INVALID_ARG);
+
+  nsIDocument::additionalSheetType type = 
+    aSheetType == AGENT_SHEET ? nsIDocument::eAgentSheet :
+                                nsIDocument::eUserSheet;
+
+  rv = doc->LoadAdditionalStyleSheet(type, aSheetURI);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::RemoveSheet(nsIURI *aSheetURI, uint32_t aSheetType)
+{
+  if (!IsUniversalXPConnectCapable()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  NS_ENSURE_ARG_POINTER(aSheetURI);
+  NS_ENSURE_ARG(aSheetType == AGENT_SHEET || aSheetType == USER_SHEET);
+
+  nsCOMPtr<nsIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_TRUE(window, NS_ERROR_INVALID_ARG);
+
+  nsCOMPtr<nsIDOMDocument> ddoc;
+  nsresult rv = window->GetDocument(getter_AddRefs(ddoc));
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(ddoc, NS_ERROR_FAILURE);
+
+  nsCOMPtr<nsIDocument> doc = do_QueryInterface(ddoc);
+  NS_ENSURE_TRUE(doc, NS_ERROR_INVALID_ARG);
+
+  nsIDocument::additionalSheetType type = 
+    aSheetType == AGENT_SHEET ? nsIDocument::eAgentSheet :
+                                nsIDocument::eUserSheet;
+
+  doc->RemoveAdditionalStyleSheet(type, aSheetURI);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetIsHandlingUserInput(bool* aHandlingUserInput)
+{
+  if (!IsUniversalXPConnectCapable()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  *aHandlingUserInput = nsEventStateManager::IsHandlingUserInput();
+
   return NS_OK;
 }
 

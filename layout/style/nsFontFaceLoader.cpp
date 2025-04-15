@@ -159,7 +159,7 @@ nsFontFaceLoader::OnStreamComplete(nsIStreamLoader* aLoader,
 
 #ifdef PR_LOGGING
   if (LOG_ENABLED()) {
-    nsCAutoString fontURI;
+    nsAutoCString fontURI;
     mFontURI->GetSpec(fontURI);
     if (NS_SUCCEEDED(aStatus)) {
       LOG(("fontdownloader (%p) download completed - font uri: (%s)\n", 
@@ -349,7 +349,7 @@ nsUserFontSet::StartLoad(gfxProxyFontEntry *aProxy,
 
 #ifdef PR_LOGGING
   if (LOG_ENABLED()) {
-    nsCAutoString fontURI, referrerURI;
+    nsAutoCString fontURI, referrerURI;
     aFontFaceSrc->mURI->GetSpec(fontURI);
     if (aFontFaceSrc->mReferrer)
       aFontFaceSrc->mReferrer->GetSpec(referrerURI);
@@ -373,13 +373,13 @@ nsUserFontSet::StartLoad(gfxProxyFontEntry *aProxy,
     // allow data, javascript, etc URI's
     rv = channel->AsyncOpen(streamLoader, nullptr);
   } else {
-    nsCOMPtr<nsIStreamListener> listener =
-      new nsCORSListenerProxy(streamLoader, principal, channel,
-                              false, &rv);
+    nsRefPtr<nsCORSListenerProxy> listener =
+      new nsCORSListenerProxy(streamLoader, principal,
+                              false);
+    rv = listener->Init(channel);
     if (NS_FAILED(rv)) {
       fontLoader->DropChannel();  // explicitly need to break ref cycle
     }
-    NS_ENSURE_TRUE(listener, NS_ERROR_OUT_OF_MEMORY);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = channel->AsyncOpen(listener, nullptr);
@@ -700,7 +700,7 @@ nsUserFontSet::LogMessage(gfxProxyFontEntry *aProxy,
   }
 
   NS_ConvertUTF16toUTF8 familyName(aProxy->FamilyName());
-  nsCAutoString fontURI;
+  nsAutoCString fontURI;
   if (aProxy->mSrcIndex == aProxy->mSrcList.Length()) {
     fontURI.AppendLiteral("(end of source list)");
   } else {
@@ -734,7 +734,7 @@ nsUserFontSet::LogMessage(gfxProxyFontEntry *aProxy,
                                    nsCSSProps::kFontStretchKTable).get(),
         aProxy->mSrcIndex);
 
-  if (aStatus != 0) {
+  if (NS_FAILED(aStatus)) {
     msg.Append(": ");
     switch (aStatus) {
     case NS_ERROR_DOM_BAD_URI:
@@ -779,9 +779,9 @@ nsUserFontSet::LogMessage(gfxProxyFontEntry *aProxy,
   NS_ENSURE_SUCCESS(rv, rv);
 
   uint64_t innerWindowID = GetPresContext()->Document()->InnerWindowID();
-  rv = scriptError->InitWithWindowID(NS_ConvertUTF8toUTF16(msg).get(),
-                                     href.get(),   // file
-                                     text.get(),   // src line
+  rv = scriptError->InitWithWindowID(NS_ConvertUTF8toUTF16(msg),
+                                     href,         // file
+                                     text,         // src line
                                      0, 0,         // line & column number
                                      aFlags,       // flags
                                      "CSS Loader", // category (make separate?)
@@ -877,7 +877,7 @@ nsUserFontSet::SyncLoadFontData(gfxProxyFontEntry *aFontToLoad,
   if (bufferLength64 == 0) {
     return NS_ERROR_FAILURE;
   }
-  if (bufferLength64 > PR_UINT32_MAX) {
+  if (bufferLength64 > UINT32_MAX) {
     return NS_ERROR_FILE_TOO_BIG;
   }
   aBufferLength = static_cast<uint32_t>(bufferLength64);
@@ -904,7 +904,7 @@ nsUserFontSet::SyncLoadFontData(gfxProxyFontEntry *aFontToLoad,
 
   // make sure there's a mime type
   if (NS_SUCCEEDED(rv)) {
-    nsCAutoString mimeType;
+    nsAutoCString mimeType;
     rv = channel->GetContentType(mimeType);
     aBufferLength = totalRead;
   }

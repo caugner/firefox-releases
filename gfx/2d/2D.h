@@ -36,6 +36,7 @@ namespace gfx {
 class SourceSurface;
 class DataSourceSurface;
 class DrawTarget;
+class DrawEventRecorder;
 
 struct NativeSurface {
   NativeSurfaceType mType;
@@ -72,7 +73,7 @@ struct DrawOptions {
 
   Float mAlpha;
   CompositionOp mCompositionOp : 8;
-  AntialiasMode mAntialiasMode : 2;
+  AntialiasMode mAntialiasMode : 3;
   Snapping mSnapping : 1;
 };
 
@@ -456,6 +457,8 @@ class ScaledFont : public RefCounted<ScaledFont>
 public:
   virtual ~ScaledFont() {}
 
+  typedef void (*FontFileDataOutput)(const uint8_t *aData, uint32_t aLength, uint32_t aIndex, Float aGlyphSize, void *aBaton);
+
   virtual FontType GetType() const = 0;
 
   /* This allows getting a path that describes the outline of a set of glyphs.
@@ -472,8 +475,19 @@ public:
    */
   virtual void CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder) = 0;
 
+  virtual bool GetFontFileData(FontFileDataOutput, void *) { return false; }
+
+  void AddUserData(UserDataKey *key, void *userData, void (*destroy)(void*)) {
+    mUserData.Add(key, userData, destroy);
+  }
+  void *GetUserData(UserDataKey *key) {
+    return mUserData.Get(key);
+  }
+
 protected:
   ScaledFont() {}
+
+  UserData mUserData;
 };
 
 #ifdef MOZ_ENABLE_FREETYPE
@@ -728,6 +742,21 @@ public:
     CreateSimilarDrawTarget(const IntSize &aSize, SurfaceFormat aFormat) const = 0;
 
   /*
+   * Create a draw target optimized for drawing a shadow.
+   *
+   * Note that aSigma is the blur radius that must be used when we draw the
+   * shadow. Also note that this doesn't affect the size of the allocated
+   * surface, the caller is still responsible for including the shadow area in
+   * its size.
+   */
+  virtual TemporaryRef<DrawTarget>
+    CreateShadowDrawTarget(const IntSize &aSize, SurfaceFormat aFormat,
+                           float aSigma) const
+  {
+    return CreateSimilarDrawTarget(aSize, aFormat);
+  }
+
+  /*
    * Create a path builder with the specified fillmode.
    *
    * We need the fill mode up front because of Direct2D.
@@ -805,6 +834,12 @@ protected:
   SurfaceFormat mFormat;
 };
 
+class DrawEventRecorder : public RefCounted<DrawEventRecorder>
+{
+public:
+  virtual ~DrawEventRecorder() { }
+};
+
 class GFX2D_API Factory
 {
 public:
@@ -814,12 +849,27 @@ public:
 
   static TemporaryRef<DrawTarget>
     CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFormat aFormat);
-  
+
+  static TemporaryRef<DrawTarget>
+    CreateRecordingDrawTarget(DrawEventRecorder *aRecorder, DrawTarget *aDT);
+     
   static TemporaryRef<DrawTarget>
     CreateDrawTargetForData(BackendType aBackend, unsigned char* aData, const IntSize &aSize, int32_t aStride, SurfaceFormat aFormat);
 
   static TemporaryRef<ScaledFont>
     CreateScaledFontForNativeFont(const NativeFont &aNativeFont, Float aSize);
+
+  /**
+   * This creates a ScaledFont from TrueType data.
+   *
+   * aData - Pointer to the data
+   * aSize - Size of the TrueType data
+   * aFaceIndex - Index of the font face in the truetype data this ScaledFont needs to represent.
+   * aGlyphSize - Size of the glyphs in this ScaledFont
+   * aType - Type of ScaledFont that should be created.
+   */
+  static TemporaryRef<ScaledFont>
+    CreateScaledFontForTrueTypeData(uint8_t *aData, uint32_t aSize, uint32_t aFaceIndex, Float aGlyphSize, FontType aType);
 
   /*
    * This creates a scaled font with an associated cairo_scaled_font_t, and
@@ -847,6 +897,11 @@ public:
     CreateWrappingDataSourceSurface(uint8_t *aData, int32_t aStride,
                                     const IntSize &aSize, SurfaceFormat aFormat);
 
+  static TemporaryRef<DrawEventRecorder>
+    CreateEventRecorderForFile(const char *aFilename);
+
+  static void SetGlobalEventRecorder(DrawEventRecorder *aRecorder);
+
 #ifdef WIN32
   static TemporaryRef<DrawTarget> CreateDrawTargetForD3D10Texture(ID3D10Texture2D *aTexture, SurfaceFormat aFormat);
   static TemporaryRef<DrawTarget>
@@ -866,6 +921,8 @@ public:
 private:
   static ID3D10Device1 *mD3D10Device;
 #endif
+
+  static DrawEventRecorder *mRecorder;
 };
 
 }

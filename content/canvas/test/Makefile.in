@@ -8,7 +8,9 @@ topsrcdir	= @top_srcdir@
 srcdir		= @srcdir@
 VPATH		= @srcdir@
 relativesrcdir  = @relativesrcdir@
-DIRS		+= webgl crossorigin
+DIRS		+= webgl crossorigin chrome
+
+TOOLS_DIRS += compiled
 
 include $(DEPTH)/config/autoconf.mk
 MOCHITEST_FILES = \
@@ -48,6 +50,7 @@ MOCHITEST_FILES = \
 	test_2d.composite.uncovered.image.source-out.html \
 	test_2d.drawImage.zerocanvas.html \
 	test_2d.strokeRect.zero.5.html \
+	test_toBlob.html \
 	test_toDataURL_alpha.html \
 	test_toDataURL_lowercase_ascii.html \
 	test_toDataURL_parameters.html \
@@ -57,6 +60,8 @@ MOCHITEST_FILES = \
 	test_bug753758.html \
 	test_bug764125.html \
 	test_drawImage_edge_cases.html \
+	test_drawImage_document_domain.html \
+	file_drawImage_document_domain.html \
 	$(NULL)
 
 ifneq (1_Linux,$(MOZ_SUITE)_$(OS_ARCH))

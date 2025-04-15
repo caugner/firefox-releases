@@ -6,6 +6,7 @@
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "jsapi.h"
+#include "jswrapper.h"
 #include "nsCRT.h"
 #include "nsError.h"
 #include "nsXPIDLString.h"
@@ -173,7 +174,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
           // gather information to log with violation report
           nsCOMPtr<nsIURI> uri;
           principal->GetURI(getter_AddRefs(uri));
-          nsCAutoString asciiSpec;
+          nsAutoCString asciiSpec;
           uri->GetAsciiSpec(asciiSpec);
 		  csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_INLINE_SCRIPT,
 								   NS_ConvertUTF8toUTF16(asciiSpec),
@@ -222,7 +223,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
     if (!scriptContext)
         return NS_ERROR_FAILURE;
 
-    nsCAutoString script(mScript);
+    nsAutoCString script(mScript);
     // Unescape the script
     NS_UnescapeURL(script);
 
@@ -286,6 +287,18 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
 
         nsCOMPtr<nsIXPConnectJSObjectHolder> sandbox;
         rv = xpc->CreateSandbox(cx, principal, getter_AddRefs(sandbox));
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        // The nsXPConnect sandbox API gives us a wrapper to the sandbox for
+        // our current compartment. Because our current context doesn't necessarily
+        // subsume that of the sandbox, we want to unwrap and enter the sandbox's
+        // compartment. It's a shame that the APIs here are so clunkly. :-(
+        JSObject *sandboxObj;
+        rv = sandbox->GetJSObject(&sandboxObj);
+        NS_ENSURE_SUCCESS(rv, rv);
+        sandboxObj = js::UnwrapObject(sandboxObj);
+        JSAutoCompartment ac(cx, sandboxObj);
+        rv = xpc->HoldObject(cx, sandboxObj, getter_AddRefs(sandbox));
         NS_ENSURE_SUCCESS(rv, rv);
 
         jsval rval = JSVAL_VOID;
@@ -1008,9 +1021,21 @@ nsJSChannel::GetContentDisposition(uint32_t *aContentDisposition)
 }
 
 NS_IMETHODIMP
+nsJSChannel::SetContentDisposition(uint32_t aContentDisposition)
+{
+    return mStreamChannel->SetContentDisposition(aContentDisposition);
+}
+
+NS_IMETHODIMP
 nsJSChannel::GetContentDispositionFilename(nsAString &aContentDispositionFilename)
 {
     return mStreamChannel->GetContentDispositionFilename(aContentDispositionFilename);
+}
+
+NS_IMETHODIMP
+nsJSChannel::SetContentDispositionFilename(const nsAString &aContentDispositionFilename)
+{
+    return mStreamChannel->SetContentDispositionFilename(aContentDispositionFilename);
 }
 
 NS_IMETHODIMP
@@ -1044,7 +1069,7 @@ NS_IMETHODIMP
 nsJSChannel::OnDataAvailable(nsIRequest* aRequest,
                              nsISupports* aContext, 
                              nsIInputStream* aInputStream,
-                             uint32_t aOffset,
+                             uint64_t aOffset,
                              uint32_t aCount)
 {
     NS_ENSURE_TRUE(aRequest == mStreamChannel, NS_ERROR_UNEXPECTED);
@@ -1217,7 +1242,7 @@ nsJSProtocolHandler::NewURI(const nsACString &aSpec,
     if (!aCharset || !nsCRT::strcasecmp("UTF-8", aCharset))
       rv = url->SetSpec(aSpec);
     else {
-      nsCAutoString utf8Spec;
+      nsAutoCString utf8Spec;
       rv = EnsureUTF8Spec(PromiseFlatCString(aSpec), aCharset, utf8Spec);
       if (NS_SUCCEEDED(rv)) {
         if (utf8Spec.IsEmpty())

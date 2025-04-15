@@ -244,7 +244,7 @@ nsXULTemplateQueryProcessorRDF::GetDatasource(nsIArray* aDataSources,
             continue;
 
         nsCOMPtr<nsIRDFDataSource> ds;
-        nsCAutoString uristrC;
+        nsAutoCString uristrC;
         uri->GetSpec(uristrC);
 
         rv = gRDFService->GetDataSource(uristrC.get(), getter_AddRefs(ds));
@@ -254,7 +254,7 @@ nsXULTemplateQueryProcessorRDF::GetDatasource(nsIArray* aDataSources,
             // be accessible for any number of reasons, including
             // security, a bad URL, etc.
   #ifdef DEBUG
-            nsCAutoString msg;
+            nsAutoCString msg;
             msg.Append("unable to load datasource '");
             msg.Append(uristrC);
             msg.Append('\'');
@@ -691,12 +691,10 @@ nsXULTemplateQueryProcessorRDF::CompareResults(nsIXULTemplateResult* aLeft,
                 l->GetValue(&ldate);
                 r->GetValue(&rdate);
 
-                int64_t delta;
-                LL_SUB(delta, ldate, rdate);
-
-                if (LL_IS_ZERO(delta))
+                int64_t delta = ldate - rdate;
+                if (delta == 0)
                     *aResult = 0;
-                else if (LL_GE_ZERO(delta))
+                else if (delta >= 0)
                     *aResult = 1;
                 else
                     *aResult = -1;
@@ -1065,7 +1063,7 @@ nsXULTemplateQueryProcessorRDF::Log(const char* aOperation,
         if (NS_FAILED(rv))
             return rv;
 
-        nsCAutoString targetstrC;
+        nsAutoCString targetstrC;
         targetstrC.AssignWithConversion(targetStr);
         PR_LOG(gXULTemplateLog, PR_LOG_DEBUG,
                ("                        --[%s]-->[%s]",
@@ -1296,7 +1294,7 @@ nsXULTemplateQueryProcessorRDF::CompileQueryChild(nsIAtom* aTag,
         nsAutoString tagstr;
         aTag->ToString(tagstr);
 
-        nsCAutoString tagstrC;
+        nsAutoCString tagstrC;
         tagstrC.AssignWithConversion(tagstr);
         PR_LOG(gXULTemplateLog, PR_LOG_ALWAYS,
                ("xultemplate[%p] unrecognized condition test <%s>",

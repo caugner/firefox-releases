@@ -23,7 +23,6 @@
 #include "nsIXMLContentSink.h"
 #include "nsContentCID.h"
 #include "nsXMLDocument.h"
-#include "mozilla/FunctionTimer.h"
 #include "nsGkAtoms.h"
 #include "nsIMemory.h"
 #include "nsIObserverService.h"
@@ -85,7 +84,7 @@ IsAncestorBinding(nsIDocument* aDocument,
       if (bindingRecursion < NS_MAX_XBL_BINDING_RECURSION) {
         continue;
       }
-      nsCAutoString spec;
+      nsAutoCString spec;
       aChildBindingURI->GetSpec(spec);
       NS_ConvertUTF8toUTF16 bindingURI(spec);
       const PRUnichar* params[] = { bindingURI.get() };
@@ -233,8 +232,9 @@ nsXBLStreamListener::~nsXBLStreamListener()
 }
 
 NS_IMETHODIMP
-nsXBLStreamListener::OnDataAvailable(nsIRequest *request, nsISupports* aCtxt, nsIInputStream* aInStr, 
-                                     uint32_t aSourceOffset, uint32_t aCount)
+nsXBLStreamListener::OnDataAvailable(nsIRequest *request, nsISupports* aCtxt,
+                                     nsIInputStream* aInStr, 
+                                     uint64_t aSourceOffset, uint32_t aCount)
 {
   if (mInner)
     return mInner->OnDataAvailable(request, aCtxt, aInStr, aSourceOffset, aCount);
@@ -471,7 +471,7 @@ nsXBLService::LoadBindings(nsIContent* aContent, nsIURI* aURL,
 
   nsCOMPtr<nsIDocument> document = aContent->OwnerDoc();
 
-  nsCAutoString urlspec;
+  nsAutoCString urlspec;
   if (nsContentUtils::GetWrapperSafeScriptFilename(document, aURL, urlspec)) {
     // Block an attempt to load a binding that has special wrapper
     // automation needs.
@@ -508,9 +508,9 @@ nsXBLService::LoadBindings(nsIContent* aContent, nsIURI* aURL,
 
   if (!newBinding) {
 #ifdef DEBUG
-    nsCAutoString spec;
+    nsAutoCString spec;
     aURL->GetSpec(spec);
-    nsCAutoString str(NS_LITERAL_CSTRING("Failed to locate XBL binding. XBL is now using id instead of name to reference bindings. Make sure you have switched over.  The invalid binding name is: ") + spec);
+    nsAutoCString str(NS_LITERAL_CSTRING("Failed to locate XBL binding. XBL is now using id instead of name to reference bindings. Make sure you have switched over.  The invalid binding name is: ") + spec);
     NS_ERROR(str.get());
 #endif
     return NS_OK;
@@ -759,7 +759,7 @@ nsXBLService::GetBinding(nsIContent* aBoundElement, nsIURI* aURI,
   if (!aURI)
     return NS_ERROR_FAILURE;
 
-  nsCAutoString ref;
+  nsAutoCString ref;
   aURI->GetRef(ref);
 
   nsCOMPtr<nsIDocument> boundDocument = aBoundElement->OwnerDoc();
@@ -777,11 +777,11 @@ nsXBLService::GetBinding(nsIContent* aBoundElement, nsIURI* aURI,
 
   if (!protoBinding) {
 #ifdef DEBUG
-    nsCAutoString uriSpec;
+    nsAutoCString uriSpec;
     aURI->GetSpec(uriSpec);
-    nsCAutoString doc;
+    nsAutoCString doc;
     boundDocument->GetDocumentURI()->GetSpec(doc);
-    nsCAutoString message("Unable to locate an XBL binding for URI ");
+    nsAutoCString message("Unable to locate an XBL binding for URI ");
     message += uriSpec;
     message += " in document ";
     message += doc;
@@ -824,7 +824,7 @@ nsXBLService::GetBinding(nsIContent* aBoundElement, nsIURI* aURI,
         rv = aDontExtendURIs[index]->Equals(baseBindingURI, &equal);
         NS_ENSURE_SUCCESS(rv, rv);
         if (equal) {
-          nsCAutoString spec, basespec;
+          nsAutoCString spec, basespec;
           protoBinding->BindingURI()->GetSpec(spec);
           NS_ConvertUTF8toUTF16 protoSpec(spec);
           baseBindingURI->GetSpec(basespec);
@@ -1066,8 +1066,6 @@ nsXBLService::FetchBindingDocument(nsIContent* aBoundElement, nsIDocument* aBoun
                                    nsIURI* aDocumentURI, nsIURI* aBindingURI, 
                                    bool aForceSyncLoad, nsIDocument** aResult)
 {
-  NS_TIME_FUNCTION;
-
   nsresult rv = NS_OK;
   // Initialize our out pointer to nullptr
   *aResult = nullptr;

@@ -160,6 +160,7 @@ _BROWSER_FILES = \
                  browser_bug763468.js \
                  browser_bug767836.js \
                  browser_bug783614.js \
+                 browser_bug797677.js \
                  browser_canonizeURL.js \
                  browser_customize.js \
                  browser_findbarClose.js \
@@ -181,6 +182,7 @@ _BROWSER_FILES = \
                  browser_pinnedTabs.js \
                  browser_plainTextLinks.js \
                  browser_pluginnotification.js \
+                 browser_clickToPlayPluginScriptAccessPopup.js \
                  browser_pluginplaypreview.js \
                  browser_relatedTabs.js \
                  browser_sanitize-passwordDisabledHosts.js \
@@ -195,6 +197,11 @@ _BROWSER_FILES = \
                  bug564387.html \
                  bug564387_video1.ogv \
                  bug564387_video1.ogv^headers^ \
+                 browser_save_link.js \
+                 browser_save_private_link.js \
+                 bug792517.html \
+                 bug792517-2.html \
+                 bug792517.sjs \
                  browser_scope.js \
                  browser_selectTabAtIndex.js \
                  browser_tab_dragdrop.js \
@@ -230,6 +237,13 @@ _BROWSER_FILES = \
                  plugin_test.html \
                  plugin_test2.html \
                  plugin_test3.html \
+                 plugin_test_noScriptNoPopup.html \
+                 plugin_test_scriptedPopup1.html \
+                 plugin_test_scriptedPopup2.html \
+                 plugin_test_scriptedPopup3.html \
+                 plugin_test_scriptedNoPopup1.html \
+                 plugin_test_scriptedNoPopup2.html \
+                 plugin_test_scriptedNoPopup3.html \
                  plugin_alternate_content.html \
                  plugin_both.html \
                  plugin_both2.html \
@@ -237,6 +251,8 @@ _BROWSER_FILES = \
                  plugin_clickToPlayAllow.html \
                  plugin_clickToPlayDeny.html \
                  plugin_bug749455.html \
+                 plugin_bug797677.html \
+                 plugin_bug818009.html \
                  plugin_hidden_to_visible.html \
                  plugin_two_types.html \
                  alltabslistener.html \
@@ -263,6 +279,8 @@ _BROWSER_FILES = \
                  browser_tabDrop.js \
                  browser_lastAccessedTab.js \
                  browser_bug734076.js \
+                 browser_bug818009.js \
+                 browser_utilityOverlay.js \
                  browser_social.js \
                  browser_social_toolbar.js \
                  browser_social_shareButton.js \
@@ -278,6 +296,7 @@ _BROWSER_FILES = \
                  social_flyout.html \
                  social_window.html \
                  social_worker.js \
+                 browser_URLBarSetURI.js \
                  $(NULL)
 
 ifneq (cocoa,$(MOZ_WIDGET_TOOLKIT))

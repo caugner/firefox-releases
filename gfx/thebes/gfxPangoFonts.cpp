@@ -44,6 +44,8 @@
 #include <pango/pango-modules.h>
 #include <pango/pangofc-fontmap.h>
 
+#include FT_TRUETYPE_TABLES_H
+
 #ifdef MOZ_WIDGET_GTK
 #include <gdk/gdk.h>
 #endif
@@ -451,7 +453,7 @@ gfxUserFcFontEntry::AdjustPatternToCSS(FcPattern *aPattern)
     FcChar8 *unused;
     if (FcPatternGetString(aPattern,
                            FC_FULLNAME, 0, &unused) == FcResultNoMatch) {
-        nsCAutoString fullname;
+        nsAutoCString fullname;
         if (gfxFontconfigUtils::GetFullnameFromFamilyAndStyle(aPattern,
                                                               &fullname)) {
             FcPatternAddString(aPattern, FC_FULLNAME,
@@ -459,7 +461,7 @@ gfxUserFcFontEntry::AdjustPatternToCSS(FcPattern *aPattern)
         }
     }
 
-    nsCAutoString family;
+    nsAutoCString family;
     family.Append(FONT_FACE_FAMILY_PREFIX);
     AppendUTF16toUTF8(Name(), family);
 
@@ -532,6 +534,9 @@ public:
     // reference if it wishes to keep the PangoCoverage longer than the
     // lifetime of the FontEntry.
     PangoCoverage *GetPangoCoverage();
+
+    virtual nsresult
+    GetFontTable(uint32_t aTableTag, FallibleTArray<uint8_t>& aBuffer) MOZ_OVERRIDE;
 
 protected:
     void InitPattern();
@@ -746,6 +751,29 @@ gfxDownloadedFcFontEntry::GetPangoCoverage()
         mPangoCoverage.own(NewPangoCoverage(mPatterns[0]));
     }
     return mPangoCoverage;
+}
+
+nsresult
+gfxDownloadedFcFontEntry::GetFontTable(uint32_t aTableTag,
+                                       FallibleTArray<uint8_t>& aBuffer)
+{
+    FT_ULong length = 0;
+    FT_Error error = FT_Load_Sfnt_Table(mFace, aTableTag, 0, nullptr, &length);
+    if (error) {
+        return NS_ERROR_NOT_AVAILABLE;
+    }
+
+    if (!aBuffer.SetLength(length)) {
+        return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    error = FT_Load_Sfnt_Table(mFace, aTableTag, 0, aBuffer.Elements(), &length);
+    if (error) {
+        aBuffer.Clear();
+        return NS_ERROR_FAILURE;
+    }
+
+    return NS_OK;
 }
 
 /*
@@ -3137,7 +3165,7 @@ GuessPangoLanguage(nsIAtom *aLanguage)
 
     // Pango and fontconfig won't understand mozilla's internal langGroups, so
     // find a real language.
-    nsCAutoString lang;
+    nsAutoCString lang;
     gfxFontconfigUtils::GetSampleLangForGroup(aLanguage, &lang);
     if (lang.IsEmpty())
         return NULL;

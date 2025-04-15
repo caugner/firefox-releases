@@ -194,7 +194,6 @@ pref("extensions.update.background.url", "https://versioncheck-bg.addons.mozilla
 pref("extensions.update.interval", 86400);  // Check for updates to Extensions and 
                                             // Themes every day
 // Non-symmetric (not shared by extensions) extension-specific [update] preferences
-pref("extensions.getMoreThemesURL", "https://addons.mozilla.org/%LOCALE%/firefox/getpersonas");
 pref("extensions.dss.enabled", false);          // Dynamic Skin Switching                                               
 pref("extensions.dss.switchPending", false);    // Non-dynamic switch pending after next
                                                 // restart.
@@ -204,6 +203,7 @@ pref("extensions.{972ce4c6-7e08-4474-a285-3208198ce6fd}.description", "chrome://
 
 pref("xpinstall.whitelist.add", "addons.mozilla.org");
 pref("xpinstall.whitelist.add.36", "getpersonas.com");
+pref("xpinstall.whitelist.add.180", "marketplace.firefox.com");
 
 pref("lightweightThemes.update.enabled", true);
 
@@ -222,19 +222,7 @@ pref("general.autoScroll", false);
 pref("general.autoScroll", true);
 #endif
 
-pref("general.useragent.complexOverride.moodle", true); // bug 797703
-pref("general.useragent.override.bank.barclays.co.uk",   "Gecko/[^ ]*#Gecko/20100101"); // bug 804169
-pref("general.useragent.override.bankmillennium.pl",     "Gecko/[^ ]*#Gecko/20100101"); // bug 804103
-pref("general.useragent.override.becu.org",              "Gecko/[^ ]*#Gecko/20100101"); // bug 804170
-pref("general.useragent.override.becuonlinebanking.org", "Gecko/[^ ]*#Gecko/20100101"); // bug 804170
-pref("general.useragent.override.bfsfcu.org",            "Gecko/[^ ]*#Gecko/20100101"); // bug 804171
-pref("general.useragent.override.cenfedcu.org",          "Gecko/[^ ]*#Gecko/20100101"); // bug 804172
-pref("general.useragent.override.coastal24.com",         "Gecko/[^ ]*#Gecko/20100101"); // bug 804175
-pref("general.useragent.override.mtb.com",               "Gecko/[^ ]*#Gecko/20100101"); // bug 795350
-pref("general.useragent.override.mandtbank.com",         "Gecko/[^ ]*#Gecko/20100101"); // bug 795350
-pref("general.useragent.override.natweststockbrokers.co.uk", "Gecko/[^ ]*#Gecko/20100101"); // bug 804179
-pref("general.useragent.override.natweststockbrokers.com", "Gecko/[^ ]*#Gecko/20100101"); // bug 804179
-pref("general.useragent.override.raiffeisen.hu",         "Gecko/[^ ]*#Gecko/20100101"); // bug 795348
+pref("general.useragent.complexOverride.moodle", false); // bug 797703
 
 // At startup, check if we're the default browser and prompt user if not.
 pref("browser.shell.checkDefaultBrowser", true);
@@ -590,7 +578,6 @@ pref("plugins.hide_infobar_for_missing_plugin", false);
 pref("plugins.hide_infobar_for_outdated_plugin", false);
 
 #ifdef XP_MACOSX
-pref("plugins.use_layers", true);
 pref("plugins.hide_infobar_for_carbon_failure_plugin", false);
 #endif
 
@@ -747,7 +734,7 @@ pref("urlclassifier.gethashtables", "goog-phish-shavar,goog-malware-shavar");
 // If an urlclassifier table has not been updated in this number of seconds,
 // a gethash request will be forced to check that the result is still in
 // the database.
-pref("urlclassifier.confirm-age", 2700);
+pref("urlclassifier.max-complete-age", 2700);
 #endif
 
 pref("browser.geolocation.warning.infoURL", "http://www.mozilla.com/%LOCALE%/firefox/geolocation/");
@@ -1017,6 +1004,7 @@ pref("devtools.inspector.htmlHeight", 112);
 pref("devtools.inspector.htmlPanelOpen", false);
 pref("devtools.inspector.sidebarOpen", false);
 pref("devtools.inspector.activeSidebar", "ruleview");
+pref("devtools.inspector.markupPreview", false);
 
 // Enable the Layout View
 pref("devtools.layoutview.enabled", true);
@@ -1031,7 +1019,7 @@ pref("devtools.debugger.chrome-enabled", false);
 pref("devtools.debugger.remote-host", "localhost");
 pref("devtools.debugger.remote-autoconnect", false);
 pref("devtools.debugger.remote-connection-retries", 3);
-pref("devtools.debugger.remote-timeout", 3000);
+pref("devtools.debugger.remote-timeout", 20000);
 
 // The default Debugger UI settings
 pref("devtools.debugger.ui.height", 250);
@@ -1186,3 +1174,5 @@ pref("social.sidebar.open", true);
 pref("social.sidebar.unload_timeout_ms", 10000);
 pref("social.active", false);
 pref("social.toast-notifications.enabled", true);
+
+pref("dom.identity.enabled", false);

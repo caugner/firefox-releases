@@ -116,6 +116,44 @@ bool nsOggCodecState::Init() {
   return ret == 0;
 }
 
+bool nsOggCodecState::IsValidVorbisTagName(nsCString& aName)
+{
+  // Tag names must consist of ASCII 0x20 through 0x7D,
+  // excluding 0x3D '=' which is the separator.
+  uint32_t length = aName.Length();
+  const char* data = aName.Data();
+  for (uint32_t i = 0; i < length; i++) {
+    if (data[i] < 0x20 || data[i] > 0x7D || data[i] == '=') {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool nsOggCodecState::AddVorbisComment(nsHTMLMediaElement::MetadataTags* aTags,
+                                       const char* aComment,
+                                       uint32_t aLength)
+{
+  const char* div = (const char*)memchr(aComment, '=', aLength);
+  if (!div) {
+    LOG(PR_LOG_DEBUG, ("Skipping comment: no separator"));
+    return false;
+  }
+  nsCString key = nsCString(aComment, div-aComment);
+  if (!IsValidVorbisTagName(key)) {
+    LOG(PR_LOG_DEBUG, ("Skipping comment: invalid tag name"));
+    return false;
+  }
+  uint32_t valueLength = aLength - (div-aComment);
+  nsCString value = nsCString(div + 1, valueLength);
+  if (!IsUTF8(value)) {
+    LOG(PR_LOG_DEBUG, ("Skipping comment: invalid UTF-8 in value"));
+    return false;
+  }
+  aTags->Put(key, value);
+  return true;
+}
+
 void nsVorbisState::RecordVorbisPacketSamples(ogg_packet* aPacket,
                                               long aSamples)
 {
@@ -616,6 +654,21 @@ nsVorbisState::IsHeader(ogg_packet* aPacket)
   return aPacket->bytes > 0 ? (aPacket->packet[0] & 0x1) : false;
 }
 
+nsHTMLMediaElement::MetadataTags*
+nsVorbisState::GetTags()
+{
+  nsHTMLMediaElement::MetadataTags* tags;
+  NS_ASSERTION(mComment.user_comments, "no vorbis comment strings!");
+  NS_ASSERTION(mComment.comment_lengths, "no vorbis comment lengths!");
+  tags = new nsHTMLMediaElement::MetadataTags;
+  tags->Init();
+  for (int i = 0; i < mComment.comments; i++) {
+    AddVorbisComment(tags, mComment.user_comments[i],
+                     mComment.comment_lengths[i]);
+  }
+  return tags;
+}
+
 nsresult
 nsVorbisState::PageIn(ogg_page* aPage)
 {
@@ -880,24 +933,51 @@ bool nsOpusState::DecodeHeader(ogg_packet* aPacket)
       mGain = static_cast<float>(pow(10,0.05*gain_dB));
 #else
       mGain_Q16 = static_cast<int32_t>(NS_MIN(65536*pow(10,0.05*gain_dB)+0.5,
-                                              static_cast<double>(PR_INT32_MAX)));
+                                              static_cast<double>(INT32_MAX)));
 #endif
       mChannelMapping = aPacket->packet[18];
 
       if (mChannelMapping == 0) {
+        // Mapping family 0 only allows two channels
+        if (mChannels>2) {
+          LOG(PR_LOG_DEBUG, ("Invalid Opus file: too many channels (%d) for"
+                             " mapping family 0.", mChannels));
+          return false;
+        }
         mStreams = 1;
         mCoupledStreams = mChannels - 1;
         mMappingTable[0] = 0;
         mMappingTable[1] = 1;
-      } else if (aPacket->bytes>20+mChannels) {
-        mStreams = aPacket->packet[19];
-        mCoupledStreams = aPacket->packet[20];
-        int i;
-        for (i=0; i<mChannels; i++)
-          mMappingTable[i] = aPacket->packet[21+i];
+      } else if (mChannelMapping == 1) {
+        // Currently only up to 8 channels are defined for mapping family 1
+        if (mChannels>8) {
+          LOG(PR_LOG_DEBUG, ("Invalid Opus file: too many channels (%d) for"
+                             " mapping family 1.", mChannels));
+          return false;
+        }
+        if (aPacket->bytes>20+mChannels) {
+          mStreams = aPacket->packet[19];
+          mCoupledStreams = aPacket->packet[20];
+          int i;
+          for (i=0; i<mChannels; i++)
+            mMappingTable[i] = aPacket->packet[21+i];
+        } else {
+          LOG(PR_LOG_DEBUG, ("Invalid Opus file: channel mapping %d,"
+                             " but no channel mapping table", mChannelMapping));
+          return false;
+        }
       } else {
-        LOG(PR_LOG_DEBUG, ("Invalid Opus file: channel mapping %d,"
-                           " but no channel mapping table", mChannelMapping));
+        LOG(PR_LOG_DEBUG, ("Invalid Opus file: unsupported channel mapping "
+                           "family %d", mChannelMapping));
+        return false;
+      }
+      if (mStreams < 1) {
+        LOG(PR_LOG_DEBUG, ("Invalid Opus file: no streams"));
+        return false;
+      }
+      if (mCoupledStreams > mStreams) {
+        LOG(PR_LOG_DEBUG, ("Invalid Opus file: more coupled streams (%d) than "
+                           "total streams (%d)", mCoupledStreams, mStreams));
         return false;
       }
 
@@ -919,31 +999,32 @@ bool nsOpusState::DecodeHeader(ogg_packet* aPacket)
       if (aPacket->bytes < 16 || memcmp(aPacket->packet, "OpusTags", 8))
         return false;
 
-      // We don't actually need any of the data here, but validating the
-      // contents helps reduce the propagation of broken files.
-      // This only checks for actual malicious content: too little data, too
-      // many comments, or comments that are too long.
-      // It does not ensure they are valid UTF-8, nor does it validate the
-      // required ASCII_TAG=value format of the user comments.
-      const unsigned char *buf = aPacket->packet + 8;
+      // Copy out the raw comment lines, but only do basic validation
+      // checks against the string packing: too little data, too many
+      // comments, or comments that are too long. Rejecting these cases
+      // helps reduce the propagation of broken files.
+      // We do not ensure they are valid UTF-8 here, nor do we validate
+      // the required ASCII_TAG=value format of the user comments.
+      const unsigned char* buf = aPacket->packet + 8;
       uint32_t bytes = aPacket->bytes - 8;
       uint32_t len;
-      // Skip the vendor string.
+      // Read the vendor string.
       len = LEUint32(buf);
       buf += 4;
       bytes -= 4;
       if (len > bytes)
         return false;
+      mVendorString = nsCString(reinterpret_cast<const char*>(buf), len);
       buf += len;
       bytes -= len;
-      // Skip the user comments.
+      // Read the user comments.
       if (bytes < 4)
         return false;
       uint32_t ncomments = LEUint32(buf);
       buf += 4;
       bytes -= 4;
-      // If there are so many comments even their length fields won't fit in
-      // the packet, stop reading now.
+      // If there are so many comments even their length fields
+      // won't fit in the packet, stop reading now.
       if (ncomments > (bytes>>2))
         return false;
       uint32_t i;
@@ -955,9 +1036,18 @@ bool nsOpusState::DecodeHeader(ogg_packet* aPacket)
         bytes -= 4;
         if (len > bytes)
           return false;
+        mTags.AppendElement(nsCString(reinterpret_cast<const char*>(buf), len));
         buf += len;
         bytes -= len;
       }
+
+#ifdef DEBUG
+      LOG(PR_LOG_DEBUG, ("Opus metadata header:"));
+      LOG(PR_LOG_DEBUG, ("  vendor: %s", mVendorString.get()));
+      for (uint32_t i = 0; i < mTags.Length(); i++) {
+        LOG(PR_LOG_DEBUG, (" %s", mTags[i].get()));
+      }
+#endif
     }
     break;
 
@@ -971,6 +1061,20 @@ bool nsOpusState::DecodeHeader(ogg_packet* aPacket)
     break;
   }
   return true;
+}
+
+/* Construct and return a tags hashmap from our internal array */
+nsHTMLMediaElement::MetadataTags* nsOpusState::GetTags()
+{
+  nsHTMLMediaElement::MetadataTags* tags;
+
+  tags = new nsHTMLMediaElement::MetadataTags;
+  tags->Init();
+  for (uint32_t i = 0; i < mTags.Length(); i++) {
+    AddVorbisComment(tags, mTags[i].Data(), mTags[i].Length());
+  }
+
+  return tags;
 }
 
 /* Return the timestamp (in microseconds) equivalent to a granulepos. */
@@ -1064,7 +1168,7 @@ bool nsOpusState::ReconstructOpusGranulepos(void)
         ogg_packet* packet = mUnstamped[i];
         int offset = GetOpusDeltaGP(packet);
         // Check for error (negative offset) and overflow.
-        if (offset >= 0 && gp <= PR_INT64_MAX - offset) {
+        if (offset >= 0 && gp <= INT64_MAX - offset) {
           gp += offset;
           if (gp >= last_gp) {
             NS_WARNING("Opus end trimming removed more than a full packet.");

@@ -58,8 +58,6 @@
         this._formattingEnabled = this._prefs.getBoolPref("formatting.enabled");
         this._mayTrimURLs = this._prefs.getBoolPref("trimURLs");
 
-        this._urlTooltip = document.getElementById("urlTooltip");
-
         this.inputField.controllers.insertControllerAt(0, this._copyCutController);
         this.inputField.addEventListener("mousedown", this, false);
         this.inputField.addEventListener("mousemove", this, false);
@@ -184,12 +182,16 @@
           if (domain[0] != "[") {
             try {
               baseDomain = Services.eTLD.getBaseDomainFromHost(domain);
+              if (!domain.endsWith(baseDomain)) {
+                // getBaseDomainFromHost converts its resultant to ACE.
+                let IDNService = Cc["@mozilla.org/network/idn-service;1"]
+                                 .getService(Ci.nsIIDNService);
+                baseDomain = IDNService.convertACEtoUTF8(baseDomain);
+              }
             } catch (e) {}
           }
           if (baseDomain != domain) {
-            let segments = function (s) s.replace(/[^.]*/g, "").length + 1;
-            let subSegments = segments(domain) - segments(baseDomain);
-            subDomain = domain.match(new RegExp("(?:[^.]*\.){" + subSegments + "}"))[0];
+            subDomain = domain.slice(0, -baseDomain.length);
           }
 
           let rangeLength = preDomain.length + subDomain.length;
@@ -327,7 +329,9 @@
               loadCurrent();
             } else {
               this.handleRevert();
-              let params = { allowThirdPartyFixup: true, postData: postData };
+              let params = { allowThirdPartyFixup: true,
+                             postData: postData,
+                             initiatingDoc: document };
               if (!this.valueIsTyped)
                 params.isUTF8 = true;
               openUILinkIn(url, where, params);
@@ -410,26 +414,13 @@
         <body><![CDATA[
           if (this.focused || !this._contentIsCropped)
             return;
-          if (this._tooltipTimer)
-            clearTimeout(this._tooltipTimer);
-          this._tooltipTimer = setTimeout(function (self) {
-            self._tooltipTimer = 0;
-            var label = self._urlTooltip.firstChild;
-            label.value = self.value;
-            var bO = self.boxObject;
-            self._urlTooltip.maxWidth = bO.width;
-            self._urlTooltip.showPopup(self, bO.screenX, bO.screenY + bO.height, "tooltip");
-          }, 700, this);
+          this.inputField.setAttribute("tooltiptext", this.value);
         ]]></body>
       </method>
 
       <method name="_hideURLTooltip">
         <body><![CDATA[
-          if (this._tooltipTimer) {
-            clearTimeout(this._tooltipTimer);
-            this._tooltipTimer = 0;
-          }
-          this._urlTooltip.hidePopup();
+          this.inputField.removeAttribute("tooltiptext");
         ]]></body>
       </method>
 
@@ -481,7 +472,7 @@
             return selectedVal;
           // The selection doesn't span the full domain if it doesn't contain a slash and is
           // followed by some character other than a slash.
-          if (selectedVal.indexOf("/") == -1) {
+          if (!selectedVal.contains("/")) {
             let remainder = inputVal.replace(selectedVal, "");
             if (remainder != "" && remainder[0] != "/")
               return selectedVal;
@@ -656,7 +647,7 @@
       <method name="_parseActionUrl">
         <parameter name="aUrl"/>
         <body><![CDATA[
-          if (!/^moz-action:/.test(aUrl))
+          if (!aUrl.startsWith("moz-action:"))
             return null;
 
           // url is in the format moz-action:ACTION,PARAM
@@ -1446,7 +1437,8 @@
         <xul:hbox flex="1" align="center" class="center-item-warning">
           <xul:image class="center-item-warning-icon"/>
           <xul:label class="center-item-warning-description" xbl:inherits="xbl:text=warningText"/>
-          <xul:label xbl:inherits="href=updateLink" value="&checkForUpdates;" class="text-link"/>
+          <!-- using onclick to override default behavior due to bug 263433 -->
+          <xul:label xbl:inherits="href=updateLink" value="&checkForUpdates;" class="text-link" onclick="event.preventDefault(); openUILinkIn(this.href, 'tab');"/>
           <xul:spacer flex="1"/>
         </xul:hbox>
       </xul:vbox>
@@ -1743,10 +1735,16 @@
           // otherwise just rely on the panel id for common arrowpanels.
           let type = this._panel.firstChild.getAttribute("popupid") ||
                      this._panel.id;
-          if (/^password-/.test(type))
+          if (type.startsWith("password-"))
             return "passwords";
           if (type == "editBookmarkPanel")
             return "bookmarks";
+          if (type == "addon-install-complete") {
+            if (!Services.prefs.prefHasUserValue("services.sync.username"))
+              return "addons";
+            if (!Services.prefs.getBoolPref("services.sync.engine.addons"))
+              return "addons-sync-disabled";
+          }
           return null;
         ]]></getter>
       </property>
@@ -1756,6 +1754,14 @@
             "syncPromoNotification." + this._notificationType + ".description",
             [this._brandBundle.GetStringFromName("syncBrandShortName")]
           );
+        ]]></getter>
+      </property>
+      <property name="_notificationLink">
+        <getter><![CDATA[
+          if (this._notificationType == "addons-sync-disabled") {
+            return "https://support.mozilla.org/kb/how-do-i-enable-add-sync";
+          }
+          return "https://services.mozilla.com/sync/";
         ]]></getter>
       </property>
       <method name="onCloseButtonCommand">
@@ -1788,7 +1794,8 @@
 
           let viewsLeft = this._viewsLeft;
           if (viewsLeft) {
-            if (Services.prefs.prefHasUserValue("services.sync.username")) {
+            if (Services.prefs.prefHasUserValue("services.sync.username") &&
+               this._notificationType != "addons-sync-disabled") {
               // If the user has already setup Sync, don't show the notification.
               this._viewsLeft = 0;
               // Be sure to hide the panel, in case it was visible and the user
@@ -1801,7 +1808,7 @@
               this._viewsLeft = viewsLeft - 1;
             }
 
-            this._promolink.setAttribute("href", "https://services.mozilla.com/sync/");
+            this._promolink.setAttribute("href", this._notificationLink);
             this._promolink.value = gNavigatorBundle.getString("syncPromoNotification.learnMoreLinkText");
 
             this.hidden = false;

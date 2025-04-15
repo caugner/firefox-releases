@@ -46,7 +46,8 @@ public:
     virtual ~nsWindow();
 
     static void DoDraw(void);
-    static nsEventStatus DispatchInputEvent(nsGUIEvent &aEvent);
+    static nsEventStatus DispatchInputEvent(nsGUIEvent &aEvent,
+                                            bool* aWasCaptured = nullptr);
 
     NS_IMETHOD Create(nsIWidget *aParent,
                       void *aNativeParent,
@@ -108,6 +109,8 @@ public:
 
     virtual nsIntRect GetNaturalBounds() MOZ_OVERRIDE;
     virtual bool NeedsPaint();
+
+    virtual Composer2D* GetComposer2D() MOZ_OVERRIDE;
 
 protected:
     nsWindow* mParent;

@@ -77,7 +77,7 @@ NS_IMETHODIMP
 MediaDocumentStreamListener::OnDataAvailable(nsIRequest* request,
                                              nsISupports *ctxt,
                                              nsIInputStream *inStr,
-                                             uint32_t sourceOffset,
+                                             uint64_t sourceOffset,
                                              uint32_t count)
 {
   if (mNextStream) {
@@ -163,7 +163,7 @@ MediaDocument::StartDocumentLoad(const char*         aCommand,
   // not being able to set the charset is not critical.
   NS_ENSURE_TRUE(docShell, NS_OK); 
 
-  nsCAutoString charset;
+  nsAutoCString charset;
 
   nsCOMPtr<nsIAtom> csAtom;
   docShell->GetParentCharset(getter_AddRefs(csAtom));
@@ -280,9 +280,9 @@ MediaDocument::StartLayout()
   nsCOMPtr<nsIPresShell> shell = GetShell();
   // Don't mess with the presshell if someone has already handled
   // its initial reflow.
-  if (shell && !shell->DidInitialReflow()) {
+  if (shell && !shell->DidInitialize()) {
     nsRect visibleArea = shell->GetPresContext()->GetVisibleArea();
-    nsresult rv = shell->InitialReflow(visibleArea.width, visibleArea.height);
+    nsresult rv = shell->Initialize(visibleArea.width, visibleArea.height);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -298,12 +298,12 @@ MediaDocument::GetFileName(nsAString& aResult)
   if (!url)
     return;
 
-  nsCAutoString fileName;
+  nsAutoCString fileName;
   url->GetFileName(fileName);
   if (fileName.IsEmpty())
     return;
 
-  nsCAutoString docCharset;
+  nsAutoCString docCharset;
   // Now that the charset is set in |StartDocumentLoad| to the charset of
   // the document viewer instead of a bogus value ("ISO-8859-1" set in
   // |nsDocument|'s ctor), the priority is given to the current charset. 

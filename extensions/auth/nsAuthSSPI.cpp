@@ -96,7 +96,7 @@ MakeSN(const char *principal, nsCString &result)
 {
     nsresult rv;
 
-    nsCAutoString buf(principal);
+    nsAutoCString buf(principal);
 
     // The service name looks like "protocol@hostname", we need to map
     // this to a value that SSPI expects.  To be consistent with IE, we
@@ -124,7 +124,7 @@ MakeSN(const char *principal, nsCString &result)
     if (NS_FAILED(rv))
         return rv;
 
-    nsCAutoString cname;
+    nsAutoCString cname;
     rv = record->GetCanonicalName(cname);
     if (NS_SUCCEEDED(rv)) {
         result = StringHead(buf, index) + NS_LITERAL_CSTRING("/") + cname;
@@ -386,7 +386,7 @@ nsAuthSSPI::GetNextToken(const void *inToken,
           
                 // Start hashing. We are always doing SHA256, but depending
                 // on the certificate, a different alogirthm might be needed.
-                nsCAutoString hashString;
+                nsAutoCString hashString;
 
                 nsresult rv;
                 nsCOMPtr<nsICryptoHash> crypto;

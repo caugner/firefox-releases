@@ -7,14 +7,12 @@ import threading
 import os
 import Queue
 import re
-import socket
 import shutil
-import sys
 import tempfile
 import time
 
 from automation import Automation
-from devicemanager import DeviceManager, NetworkTools
+from devicemanager import NetworkTools
 from mozprocess import ProcessHandlerMixin
 
 
@@ -86,7 +84,7 @@ class B2GRemoteAutomation(Automation):
         active = False
         time_out = 0
         while not active and time_out < 40:
-            data = self._devicemanager.runCmd(['shell', '/system/bin/netcfg']).stdout.readlines()
+            data = self._devicemanager._runCmd(['shell', '/system/bin/netcfg']).stdout.readlines()
             data.pop(0)
             for line in data:
                 if (re.search(r'UP\s+(?:[0-9]{1,3}\.){3}[0-9]{1,3}', line)):
@@ -160,7 +158,7 @@ class B2GRemoteAutomation(Automation):
         serial = serial or self._devicemanager.deviceSerial
         status = 'unknown'
 
-        for line in self._devicemanager.runCmd(['devices']).stdout.readlines():
+        for line in self._devicemanager._runCmd(['devices']).stdout.readlines():
             result =  re.match('(.*?)\t(.*)', line)
             if result:
                 thisSerial = result.group(1)
@@ -173,10 +171,10 @@ class B2GRemoteAutomation(Automation):
     def restartB2G(self):
         # TODO hangs in subprocess.Popen without this delay
         time.sleep(5)
-        self._devicemanager.checkCmd(['shell', 'stop', 'b2g'])
+        self._devicemanager._checkCmd(['shell', 'stop', 'b2g'])
         # Wait for a bit to make sure B2G has completely shut down.
         time.sleep(10)
-        self._devicemanager.checkCmd(['shell', 'start', 'b2g'])
+        self._devicemanager._checkCmd(['shell', 'start', 'b2g'])
         if self._is_emulator:
             self.marionette.emulator.wait_for_port()
 
@@ -185,7 +183,7 @@ class B2GRemoteAutomation(Automation):
         serial, status = self.getDeviceStatus()
 
         # reboot!
-        self._devicemanager.runCmd(['shell', '/system/bin/reboot'])
+        self._devicemanager._runCmd(['shell', '/system/bin/reboot'])
 
         # The above command can return while adb still thinks the device is
         # connected, so wait a little bit for it to disconnect from adb.
@@ -225,7 +223,7 @@ class B2GRemoteAutomation(Automation):
                                 " prior to running before running the automation framework")
 
         # stop b2g
-        self._devicemanager.runCmd(['shell', 'stop', 'b2g'])
+        self._devicemanager._runCmd(['shell', 'stop', 'b2g'])
         time.sleep(5)
 
         # relaunch b2g inside b2g instance
@@ -236,9 +234,9 @@ class B2GRemoteAutomation(Automation):
         # Set up port forwarding again for Marionette, since any that
         # existed previously got wiped out by the reboot.
         if not self._is_emulator:
-            self._devicemanager.checkCmd(['forward',
-                                          'tcp:%s' % self.marionette.port,
-                                          'tcp:%s' % self.marionette.port])
+            self._devicemanager._checkCmd(['forward',
+                                           'tcp:%s' % self.marionette.port,
+                                           'tcp:%s' % self.marionette.port])
 
         if self._is_emulator:
             self.marionette.emulator.wait_for_port()
@@ -250,23 +248,29 @@ class B2GRemoteAutomation(Automation):
         if 'b2g' not in session:
             raise Exception("bad session value %s returned by start_session" % session)
 
+        if self._is_emulator:
+            # Disable offline status management (bug 777145), otherwise the network
+            # will be 'offline' when the mochitests start.  Presumably, the network
+            # won't be offline on a real device, so we only do this for emulators.
+            self.marionette.set_context(self.marionette.CONTEXT_CHROME)
+            self.marionette.execute_script("""
+                Components.utils.import("resource://gre/modules/Services.jsm");
+                Services.io.manageOfflineStatus = false;
+                Services.io.offline = false;
+                """)
+
         if self.context_chrome:
             self.marionette.set_context(self.marionette.CONTEXT_CHROME)
+        else:
+            self.marionette.set_context(self.marionette.CONTEXT_CONTENT)
 
-        # start the tests
-        if hasattr(self, 'testURL'):
-            # Start the tests by navigating to the mochitest url, by setting it
-            # as the 'src' attribute to the homescreen mozbrowser element
-            # provided by B2G's shell.js.
-            self.marionette.execute_script("document.getElementById('homescreen').src='%s';" % self.testURL)
         # run the script that starts the tests
-        elif self.test_script:
+        if self.test_script:
             if os.path.isfile(self.test_script):
                 script = open(self.test_script, 'r')
                 self.marionette.execute_script(script.read(), script_args=self.test_script_args)
                 script.close()
-            else:
-                # assume test_script is a string
+            elif isinstance(self.test_script, basestring):
                 self.marionette.execute_script(self.test_script, script_args=self.test_script_args)
         else:
             # assumes the tests are started on startup automatically

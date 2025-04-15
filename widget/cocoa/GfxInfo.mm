@@ -10,7 +10,6 @@
 
 #include "GfxInfo.h"
 #include "nsUnicharUtils.h"
-#include "mozilla/FunctionTimer.h"
 #include "nsCocoaFeatures.h"
 #include "mozilla/Preferences.h"
 
@@ -103,8 +102,6 @@ GfxInfo::GetDeviceInfo()
 nsresult
 GfxInfo::Init()
 {
-  NS_TIME_FUNCTION;
-
   nsresult rv = GfxInfoBase::Init();
 
   // Calling CGLQueryRendererInfo causes us to switch to the discrete GPU
@@ -294,7 +291,7 @@ GfxInfo::AddCrashReportAnnotations()
 {
 #if defined(MOZ_CRASHREPORTER)
   nsString deviceID, vendorID;
-  nsCAutoString narrowDeviceID, narrowVendorID;
+  nsAutoCString narrowDeviceID, narrowVendorID;
 
   GetAdapterDeviceID(deviceID);
   CopyUTF16toUTF8(deviceID, narrowDeviceID);
@@ -307,7 +304,7 @@ GfxInfo::AddCrashReportAnnotations()
                                      narrowDeviceID);
   /* Add an App Note for now so that we get the data immediately. These
    * can go away after we store the above in the socorro db */
-  nsCAutoString note;
+  nsAutoCString note;
   /* AppendPrintf only supports 32 character strings, mrghh. */
   note.Append("AdapterVendorID: ");
   note.Append(narrowVendorID);

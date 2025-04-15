@@ -7,7 +7,7 @@
 #define mozilla_dom_DOMJSProxyHandler_h
 
 #include "jsapi.h"
-#include "jsatom.h"
+#include "jsfriendapi.h"
 #include "jsproxy.h"
 #include "xpcpublic.h"
 #include "nsString.h"
@@ -19,7 +19,8 @@ namespace mozilla {
 namespace dom {
 
 enum {
-  JSPROXYSLOT_EXPANDO = 0
+  JSPROXYSLOT_EXPANDO = 0,
+  JSPROXYSLOT_XRAY_EXPANDO
 };
 
 template<typename T> struct Prefable;

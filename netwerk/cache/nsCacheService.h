@@ -12,6 +12,8 @@
 #include "nsCacheSession.h"
 #include "nsCacheDevice.h"
 #include "nsCacheEntry.h"
+#include "nsThreadUtils.h"
+#include "nsICacheListener.h"
 
 #include "prthread.h"
 #include "nsIObserver.h"
@@ -30,6 +32,30 @@ class nsOfflineCacheDevice;
 class nsCacheServiceAutoLock;
 class nsITimer;
 
+
+/******************************************************************************
+ * nsNotifyDoomListener
+ *****************************************************************************/
+
+class nsNotifyDoomListener : public nsRunnable {
+public:
+    nsNotifyDoomListener(nsICacheListener *listener,
+                         nsresult status)
+        : mListener(listener)      // transfers reference
+        , mStatus(status)
+    {}
+
+    NS_IMETHOD Run()
+    {
+        mListener->OnCacheEntryDoomed(mStatus);
+        NS_RELEASE(mListener);
+        return NS_OK;
+    }
+
+private:
+    nsICacheListener *mListener;
+    nsresult          mStatus;
+};
 
 /******************************************************************************
  *  nsCacheService
@@ -168,8 +194,6 @@ public:
 
     static void      SetCacheCompressionLevel(int32_t level);
 
-    static void      OnEnterExitPrivateBrowsing();
-
     // Starts smart cache size computation if disk device is available
     static nsresult  SetDiskSmartSize();
 
@@ -179,7 +203,10 @@ public:
     static void      AssertOwnsLock()
     { gService->mLock.AssertCurrentThreadOwns(); }
 
+    static void      LeavePrivateBrowsing();
     bool             IsDoomListEmpty();
+
+    typedef bool (*DoomCheckFn)(nsCacheEntry* entry);
 
 private:
     friend class nsCacheServiceAutoLock;
@@ -191,6 +218,8 @@ private:
     friend class nsDoomEvent;
     friend class nsDisableOldMaxSmartSizePrefEvent;
     friend class nsDiskCacheMap;
+    friend class nsAsyncDoomEvent;
+    friend class nsCacheEntryDescriptor;
 
     /**
      * Internal Methods
@@ -248,13 +277,13 @@ private:
     void             ClearPendingRequests(nsCacheEntry * entry);
     void             ClearDoomList(void);
     void             ClearActiveEntries(void);
-    void             DoomActiveEntries(void);
+    void             DoomActiveEntries(DoomCheckFn check);
 
     static
-    PLDHashOperator  DeactivateAndClearEntry(PLDHashTable *    table,
-                                             PLDHashEntryHdr * hdr,
-                                             uint32_t          number,
-                                             void *            arg);
+    PLDHashOperator  GetActiveEntries(PLDHashTable *    table,
+                                      PLDHashEntryHdr * hdr,
+                                      uint32_t          number,
+                                      void *            arg);
     static
     PLDHashOperator  RemoveActiveEntry(PLDHashTable *    table,
                                        PLDHashEntryHdr * hdr,

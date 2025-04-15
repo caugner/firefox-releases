@@ -10,7 +10,7 @@
 #ifndef nsMenuPopupFrame_h__
 #define nsMenuPopupFrame_h__
 
-#include "prtypes.h"
+#include "mozilla/Attributes.h"
 #include "nsIAtom.h"
 #include "nsGkAtoms.h"
 #include "nsCOMPtr.h"
@@ -105,9 +105,9 @@ public:
 
   // nsMenuParent interface
   virtual nsMenuFrame* GetCurrentMenuItem();
-  NS_IMETHOD SetCurrentMenuItem(nsMenuFrame* aMenuItem);
-  virtual void CurrentMenuIsBeingDestroyed();
-  NS_IMETHOD ChangeMenuItem(nsMenuFrame* aMenuItem, bool aSelectFirstItem);
+  NS_IMETHOD SetCurrentMenuItem(nsMenuFrame* aMenuItem) MOZ_OVERRIDE;
+  virtual void CurrentMenuIsBeingDestroyed() MOZ_OVERRIDE;
+  NS_IMETHOD ChangeMenuItem(nsMenuFrame* aMenuItem, bool aSelectFirstItem) MOZ_OVERRIDE;
 
   // as popups are opened asynchronously, the popup pending state is used to
   // prevent multiple requests from attempting to open the same popup twice
@@ -115,8 +115,8 @@ public:
   void SetPopupState(nsPopupState aPopupState) { mPopupState = aPopupState; }
 
   NS_IMETHOD SetActive(bool aActiveFlag) { return NS_OK; } // We don't care.
-  virtual bool IsActive() { return false; }
-  virtual bool IsMenuBar() { return false; }
+  virtual bool IsActive() MOZ_OVERRIDE { return false; }
+  virtual bool IsMenuBar() MOZ_OVERRIDE { return false; }
 
   /*
    * When this popup is open, should clicks outside of it be consumed?
@@ -136,12 +136,12 @@ public:
    */
   bool ConsumeOutsideClicks();
 
-  virtual bool IsContextMenu() { return mIsContextMenu; }
+  virtual bool IsContextMenu() MOZ_OVERRIDE { return mIsContextMenu; }
 
-  virtual bool MenuClosed() { return true; }
+  virtual bool MenuClosed() MOZ_OVERRIDE { return true; }
 
-  virtual void LockMenuUntilClosed(bool aLock);
-  virtual bool IsMenuLocked() { return mIsMenuLocked; }
+  virtual void LockMenuUntilClosed(bool aLock) MOZ_OVERRIDE;
+  virtual bool IsMenuLocked() MOZ_OVERRIDE { return mIsMenuLocked; }
 
   nsIWidget* GetWidget();
 
@@ -151,17 +151,13 @@ public:
   // Overridden methods
   NS_IMETHOD Init(nsIContent*      aContent,
                   nsIFrame*        aParent,
-                  nsIFrame*        aPrevInFlow);
+                  nsIFrame*        aPrevInFlow) MOZ_OVERRIDE;
 
   NS_IMETHOD AttributeChanged(int32_t aNameSpaceID,
                               nsIAtom* aAttribute,
-                              int32_t aModType);
+                              int32_t aModType) MOZ_OVERRIDE;
 
-  virtual void DestroyFrom(nsIFrame* aDestructRoot);
-
-  virtual void InvalidateInternal(const nsRect& aDamageRect,
-                                  nscoord aX, nscoord aY, nsIFrame* aForChild,
-                                  uint32_t aFlags);
+  virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
 
   // returns true if the popup is a panel with the noautohide attribute set to
   // true. These panels do not roll up automatically.
@@ -178,7 +174,7 @@ public:
   uint8_t GetShadowStyle();
 
   NS_IMETHOD SetInitialChildList(ChildListID     aListID,
-                                 nsFrameList&    aChildList);
+                                 nsFrameList&    aChildList) MOZ_OVERRIDE;
 
   virtual bool IsLeaf() const;
 
@@ -207,7 +203,7 @@ public:
 
   nsPopupType PopupType() const { return mPopupType; }
   bool IsMenu() { return mPopupType == ePopupTypeMenu; }
-  bool IsOpen() { return mPopupState == ePopupOpen || mPopupState == ePopupOpenAndVisible; }
+  bool IsOpen() MOZ_OVERRIDE { return mPopupState == ePopupOpen || mPopupState == ePopupOpenAndVisible; }
 
   bool IsDragPopup() { return mIsDragPopup; }
 
@@ -256,10 +252,10 @@ public:
 
   void ClearIncrementalString() { mIncrementalString.Truncate(); }
 
-  virtual nsIAtom* GetType() const { return nsGkAtoms::menuPopupFrame; }
+  virtual nsIAtom* GetType() const MOZ_OVERRIDE { return nsGkAtoms::menuPopupFrame; }
 
 #ifdef DEBUG
-  NS_IMETHOD GetFrameName(nsAString& aResult) const
+  NS_IMETHOD GetFrameName(nsAString& aResult) const MOZ_OVERRIDE
   {
       return MakeFrameName(NS_LITERAL_STRING("MenuPopup"), aResult);
   }
@@ -267,9 +263,9 @@ public:
 
   void EnsureMenuItemIsVisible(nsMenuFrame* aMenuFrame);
 
-  // Move the popup to the screen coordinate (aLeft, aTop). If aUpdateAttrs
-  // is true, and the popup already has left or top attributes, then those
-  // attributes are updated to the new location.
+  // Move the popup to the screen coordinate (aLeft, aTop) in CSS pixels.
+  // If aUpdateAttrs is true, and the popup already has left or top attributes,
+  // then those attributes are updated to the new location.
   // The frame may be destroyed by this method.
   void MoveTo(int32_t aLeft, int32_t aTop, bool aUpdateAttrs);
 
@@ -305,11 +301,12 @@ public:
   nsIContent* GetAnchor() const { return mAnchorContent; }
 
   // Return the screen coordinates of the popup, or (-1, -1) if anchored.
+  // This position is in CSS pixels.
   nsIntPoint ScreenPosition() const { return nsIntPoint(mScreenXPos, mScreenYPos); }
 
   NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                               const nsRect&           aDirtyRect,
-                              const nsDisplayListSet& aLists);
+                              const nsDisplayListSet& aLists) MOZ_OVERRIDE;
 
   nsIntPoint GetLastClientOffset() const { return mLastClientOffset; }
 
@@ -390,8 +387,9 @@ protected:
   // would be before resizing. Computations are performed using this size.
   nsSize mPrefSize;
 
-  // the position of the popup. The screen coordinates, if set to values other
-  // than -1, override mXPos and mYPos.
+  // The position of the popup, in CSS pixels.
+  // The screen coordinates, if set to values other than -1,
+  // override mXPos and mYPos.
   int32_t mXPos;
   int32_t mYPos;
   int32_t mScreenXPos;

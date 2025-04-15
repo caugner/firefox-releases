@@ -59,6 +59,9 @@ private:
   bool mWithCredentials;
   bool mCanceled;
 
+  bool mMozAnon;
+  bool mMozSystem;
+
 protected:
   XMLHttpRequest(JSContext* aCx, WorkerPrivate* aWorkerPrivate);
   virtual ~XMLHttpRequest();
@@ -113,7 +116,7 @@ public:
 #undef IMPL_GETTER_AND_SETTER
 
   uint16_t
-  GetReadyState() const
+  ReadyState() const
   {
     return mStateData.mReadyState;
   }
@@ -128,7 +131,7 @@ public:
                    ErrorResult& aRv);
 
   uint32_t
-  GetTimeout() const
+  Timeout() const
   {
     return mTimeout;
   }
@@ -137,7 +140,7 @@ public:
   SetTimeout(uint32_t aTimeout, ErrorResult& aRv);
 
   bool
-  GetWithCredentials() const
+  WithCredentials() const
   {
     return mWithCredentials;
   }
@@ -146,7 +149,7 @@ public:
   SetWithCredentials(bool aWithCredentials, ErrorResult& aRv);
 
   bool
-  GetMultipart() const
+  Multipart() const
   {
     return mMultipart;
   }
@@ -155,7 +158,7 @@ public:
   SetMultipart(bool aMultipart, ErrorResult& aRv);
 
   bool
-  GetMozBackgroundRequest() const
+  MozBackgroundRequest() const
   {
     return mBackgroundRequest;
   }
@@ -210,7 +213,7 @@ public:
   OverrideMimeType(const nsAString& aMimeType, ErrorResult& aRv);
 
   XMLHttpRequestResponseType
-  GetResponseType() const
+  ResponseType() const
   {
     return mResponseType;
   }
@@ -262,14 +265,14 @@ public:
     mStateData.mResponse = JSVAL_NULL;
   }
 
-  bool GetMozAnon() {
-    // TODO: bug 761227
-    return false;
+  bool MozAnon() const
+  {
+    return mMozAnon;
   }
 
-  bool GetMozSystem() {
-    // TODO: bug 761227
-    return false;
+  bool MozSystem() const
+  {
+    return mMozSystem;
   }
 
 private:

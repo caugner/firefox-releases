@@ -11,6 +11,10 @@
 namespace mozilla {
 namespace gfx {
 
+#ifdef _MSC_VER
+#pragma warning( disable : 4251 )
+#endif
+
 /**
  * Implementation of a triple box blur approximation of a Gaussian blur.
  *
@@ -56,6 +60,11 @@ public:
                const IntSize& aBlurRadius,
                const Rect* aDirtyRect,
                const Rect* aSkipRect);
+
+  AlphaBoxBlur(uint8_t* aData,
+               const Rect& aRect,
+               int32_t aStride,
+               float aSigma);
 
   ~AlphaBoxBlur();
 
@@ -135,7 +144,12 @@ private:
   /**
    * A pointer to the backing 8-bit alpha surface.
    */
-  unsigned char* mData;
+  uint8_t* mData;
+
+  /**
+   * True if we need to dispose the data.
+   */
+  bool mFreeData;
 
   /**
    * The stride of the data contained in mData.

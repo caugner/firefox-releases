@@ -264,7 +264,6 @@ REMOTE_XPCSHELL = \
 	rm -f ./$@.log && \
 	$(PYTHON) -u $(topsrcdir)/config/pythonpath.py \
 	  -I$(topsrcdir)/build \
-	  -I$(topsrcdir)/build/mobile \
 	  $(topsrcdir)/testing/xpcshell/remotexpcshelltests.py \
 	  --manifest=$(DEPTH)/_tests/xpcshell/xpcshell.ini \
 	  --build-info-json=$(DEPTH)/mozinfo.json \
@@ -274,6 +273,37 @@ REMOTE_XPCSHELL = \
 	  --objdir=$(DEPTH) \
 	  $(SYMBOLS_PATH) \
 	  $(TEST_PATH_ARG) $(EXTRA_TEST_ARGS)
+
+B2G_XPCSHELL = \
+	rm -f ./@.log && \
+	$(PYTHON) -u $(topsrcdir)/config/pythonpath.py \
+	  -I$(topsrcdir)/build \
+	  $(topsrcdir)/testing/xpcshell/runtestsb2g.py \
+	  --manifest=$(DEPTH)/_tests/xpcshell/xpcshell.ini \
+	  --build-info-json=$(DEPTH)/mozinfo.json \
+	  --no-logfiles \
+	  --use-device-libs \
+	  --no-clean \
+	  --objdir=$(DEPTH) \
+	  $$EXTRA_XPCSHELL_ARGS \
+	  --b2gpath=${B2G_HOME} \
+	  $(TEST_PATH_ARG) $(EXTRA_TEST_ARGS)
+
+xpcshell-tests-b2g: ADB_PATH?=$(shell which adb)
+xpcshell-tests-b2g:
+	@if [ "${B2G_HOME}" = "" ]; then \
+		echo "Please set the B2G_HOME variable"; exit 1; \
+	elif [ ! -f "${ADB_PATH}" ]; then \
+		echo "Please set the ADB_PATH variable"; exit 1; \
+	elif [ "${EMULATOR}" != "" ]; then \
+		EXTRA_XPCSHELL_ARGS=--emulator=${EMULATOR}; \
+		$(call B2G_XPCSHELL); \
+		exit 0; \
+	else \
+		EXTRA_XPCSHELL_ARGS=--address=localhost:2828; \
+		$(call B2G_XPCSHELL); \
+		exit 0; \
+	fi
 
 xpcshell-tests-remote: DM_TRANS?=adb
 xpcshell-tests-remote:
@@ -308,7 +338,6 @@ package-tests: \
   stage-xpcshell \
   stage-jstests \
   stage-jetpack \
-  stage-firebug \
   stage-peptest \
   stage-mozbase \
   stage-tps \
@@ -328,11 +357,12 @@ else
 	#building tests.jar (bug 543800) fails on unify, so we build tests.jar after unify is run
 	$(MAKE) -C $(DEPTH)/testing/mochitest stage-chromejar PKG_STAGE=$(DIST)/universal
 endif
+	find $(PKG_STAGE) -name "*.pyc" -exec rm {} \;
 	cd $(PKG_STAGE) && \
 	  zip -rq9D "$(call core_abspath,$(DIST)/$(PKG_PATH)$(TEST_PACKAGE))" \
 	  * -x \*/.mkdir.done
 
-ifeq (Android, $(OS_TARGET))
+ifeq ($(MOZ_WIDGET_TOOLKIT),android)
 package-tests: stage-android
 endif
 
@@ -343,7 +373,6 @@ make-stage-dir:
 	$(NSINSTALL) -D $(PKG_STAGE)/bin/components
 	$(NSINSTALL) -D $(PKG_STAGE)/certs
 	$(NSINSTALL) -D $(PKG_STAGE)/jetpack
-	$(NSINSTALL) -D $(PKG_STAGE)/firebug
 	$(NSINSTALL) -D $(PKG_STAGE)/peptest
 	$(NSINSTALL) -D $(PKG_STAGE)/mozbase
 	$(NSINSTALL) -D $(PKG_STAGE)/modules
@@ -377,9 +406,6 @@ stage-android: make-stage-dir
 
 stage-jetpack: make-stage-dir
 	$(NSINSTALL) $(topsrcdir)/testing/jetpack/jetpack-location.txt $(PKG_STAGE)/jetpack
-
-stage-firebug: make-stage-dir
-	$(MAKE) -C $(DEPTH)/testing/firebug stage-package
 
 stage-peptest: make-stage-dir
 	$(MAKE) -C $(DEPTH)/testing/peptest stage-package
@@ -425,7 +451,6 @@ stage-mozbase: make-stage-dir
   stage-jstests \
   stage-android \
   stage-jetpack \
-  stage-firebug \
   stage-peptest \
   stage-mozbase \
   stage-tps \

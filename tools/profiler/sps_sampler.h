@@ -48,6 +48,7 @@ extern bool stack_key_initialized;
 #define SAMPLER_IS_ACTIVE() mozilla_sampler_is_active()
 #define SAMPLER_RESPONSIVENESS(time) mozilla_sampler_responsiveness(time)
 #define SAMPLER_GET_RESPONSIVENESS() mozilla_sampler_get_responsiveness()
+#define SAMPLER_FRAME_NUMBER(frameNumber) mozilla_sampler_frame_number(frameNumber)
 #define SAMPLER_SAVE() mozilla_sampler_save()
 #define SAMPLER_GET_PROFILE() mozilla_sampler_get_profile()
 #define SAMPLER_GET_PROFILE_DATA(ctx) mozilla_sampler_get_profile_data(ctx)
@@ -75,8 +76,27 @@ extern bool stack_key_initialized;
 #warning Please add support for your architecture in chromium_types.h
 #endif
 
-#define PROFILE_DEFAULT_ENTRY 100000
-#ifdef ANDROID
+/* FIXME/bug 789667: memory constraints wouldn't much of a problem for
+ * this small a sample buffer size, except that serializing the
+ * profile data is extremely, unnecessarily memory intensive. */
+#ifdef MOZ_WIDGET_GONK
+# define PLATFORM_LIKELY_MEMORY_CONSTRAINED
+#endif
+
+#ifndef PLATFORM_LIKELY_MEMORY_CONSTRAINED
+# define PROFILE_DEFAULT_ENTRY 1000000
+#else
+# define PROFILE_DEFAULT_ENTRY 100000
+#endif
+
+#if defined(PLATFORM_LIKELY_MEMORY_CONSTRAINED)
+/* A 1ms sampling interval has been shown to be a large perf hit
+ * (10fps) on memory-contrained (low-end) platforms, and additionally
+ * to yield different results from the profiler.  Where this is the
+ * important case, b2g, there are also many gecko processes which
+ * magnify these effects. */
+# define PROFILE_DEFAULT_INTERVAL 10
+#elif defined(ANDROID)
 // We use a lower frequency on Android, in order to make things work
 // more smoothly on phones.  This value can be adjusted later with
 // some libunwind optimizations.
@@ -143,6 +163,7 @@ void mozilla_sampler_start(int aEntries, int aInterval, const char** aFeatures, 
 void mozilla_sampler_stop();
 bool mozilla_sampler_is_active();
 void mozilla_sampler_responsiveness(TimeStamp time);
+void mozilla_sampler_frame_number(int frameNumber);
 const double* mozilla_sampler_get_responsiveness();
 void mozilla_sampler_save();
 char* mozilla_sampler_get_profile();
@@ -241,6 +262,7 @@ public:
     : mStackPointer(0)
     , mMarkerPointer(0)
     , mQueueClearMarker(false)
+    , mRuntime(NULL)
     , mStartJSSampling(false)
   { }
 

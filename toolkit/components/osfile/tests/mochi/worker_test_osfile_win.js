@@ -41,17 +41,19 @@ function isnot(a, b, description) {
 
 function test_init() {
   ok(true, "Starting test_init");
-  importScripts("resource:///modules/osfile.jsm");
+  importScripts("resource://gre/modules/osfile.jsm");
 }
 
 function test_OpenClose() {
   ok(true, "Starting test_OpenClose");
   is(typeof OS.Win.File.CreateFile, "function", "OS.Win.File.CreateFile is a function");
+  is(OS.Win.File.CloseHandle(OS.Constants.Win.INVALID_HANDLE_VALUE), true, "CloseHandle returns true given the invalid handle");
+  is(OS.Win.File.FindClose(OS.Constants.Win.INVALID_HANDLE_VALUE), true, "FindClose returns true given the invalid handle");
   isnot(OS.Constants.Win.GENERIC_READ, undefined, "GENERIC_READ exists");
   isnot(OS.Constants.Win.FILE_SHARE_READ, undefined, "FILE_SHARE_READ exists");
   isnot(OS.Constants.Win.FILE_ATTRIBUTE_NORMAL, undefined, "FILE_ATTRIBUTE_NORMAL exists");
   let file = OS.Win.File.CreateFile(
-    "chrome\\toolkit\\components\\osfile\\tests\\mochi\\worker_test_osfile_unix.js",
+    "chrome\\toolkit\\components\\osfile\\tests\\mochi\\worker_test_osfile_win.js",
     OS.Constants.Win.GENERIC_READ,
     0,
     null,
@@ -105,7 +107,7 @@ function test_ReadWrite()
   let output_name = "osfile_copy.tmp";
   // Copy file
   let input = OS.Win.File.CreateFile(
-    "chrome\\toolkit\\components\\osfile\\tests\\mochi\\worker_test_osfile_unix.js",
+    "chrome\\toolkit\\components\\osfile\\tests\\mochi\\worker_test_osfile_win.js",
      OS.Constants.Win.GENERIC_READ,
      0,
      null,

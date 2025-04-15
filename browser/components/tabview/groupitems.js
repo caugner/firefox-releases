@@ -34,7 +34,6 @@ function GroupItem(listOfEls, options) {
   this._inited = false;
   this._uninited = false;
   this._children = []; // an array of Items
-  this.defaultSize = new Point(TabItems.tabWidth * 1.5, TabItems.tabHeight * 1.5);
   this.isAGroupItem = true;
   this.id = options.id || GroupItems.getNextID();
   this._isStacked = false;
@@ -94,7 +93,7 @@ function GroupItem(listOfEls, options) {
   // ___ Titlebar
   var html =
     "<div class='title-container'>" +
-      "<input class='name' placeholder='" + this.defaultName + "'/>" +
+      "<input class='name' />" +
       "<div class='title-shield' />" +
     "</div>";
 
@@ -113,7 +112,7 @@ function GroupItem(listOfEls, options) {
 
   // ___ Title
   this.$titleContainer = iQ('.title-container', this.$titlebar);
-  this.$title = iQ('.name', this.$titlebar);
+  this.$title = iQ('.name', this.$titlebar).attr('placeholder', this.defaultName);
   this.$titleShield = iQ('.title-shield', this.$titlebar);
   this.setTitle(options.title);
 
@@ -2109,18 +2108,6 @@ let GroupItems = {
     this.nextID++;
     this._save();
     return result;
-  },
-
-  // ----------
-  // Function: getStorageData
-  // Returns an object for saving GroupItems state to persistent storage.
-  getStorageData: function GroupItems_getStorageData() {
-    var data = {nextID: this.nextID, groupItems: []};
-    this.groupItems.forEach(function(groupItem) {
-      data.groupItems.push(groupItem.getStorageData());
-    });
-
-    return data;
   },
 
   // ----------

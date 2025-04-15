@@ -98,7 +98,9 @@ nsXBLDocGlobalObject::doCheckAccess(JSContext *cx, JSObject *obj, jsid id, uint3
   // Make sure to actually operate on our object, and not some object further
   // down on the proto chain.
   while (JS_GetClass(obj) != &nsXBLDocGlobalObject::gSharedGlobalClass) {
-    obj = ::JS_GetPrototype(obj);
+    if (!::JS_GetPrototype(cx, obj, &obj)) {
+      return JS_FALSE;
+    }
     if (!obj) {
       ::JS_ReportError(cx, "Invalid access to a global object property.");
       return JS_FALSE;
@@ -128,7 +130,7 @@ nsXBLDocGlobalObject_setProperty(JSContext *cx, JSHandleObject obj,
 
 static JSBool
 nsXBLDocGlobalObject_checkAccess(JSContext *cx, JSHandleObject obj, JSHandleId id,
-                                 JSAccessMode mode, jsval *vp)
+                                 JSAccessMode mode, JSMutableHandleValue vp)
 {
   uint32_t translated;
   if (mode & JSACC_WRITE) {
@@ -218,10 +220,15 @@ XBL_ProtoErrorReporter(JSContext *cx,
   if (errorObject && consoleService) {
     uint32_t column = report->uctokenptr - report->uclinebuf;
 
+    const PRUnichar* ucmessage =
+      static_cast<const PRUnichar*>(report->ucmessage);
+    const PRUnichar* uclinebuf =
+      static_cast<const PRUnichar*>(report->uclinebuf);
+
     errorObject->Init
-         (reinterpret_cast<const PRUnichar*>(report->ucmessage),
-          NS_ConvertUTF8toUTF16(report->filename).get(),
-          reinterpret_cast<const PRUnichar*>(report->uclinebuf),
+         (ucmessage ? nsDependentString(ucmessage) : EmptyString(),
+          NS_ConvertUTF8toUTF16(report->filename),
+          uclinebuf ? nsDependentString(uclinebuf) : EmptyString(),
           report->lineno, column, report->flags,
           "xbl javascript"
           );
@@ -277,8 +284,8 @@ nsXBLDocGlobalObject::EnsureScriptEnvironment()
   nsIPrincipal *principal = GetPrincipal();
   JSCompartment *compartment;
 
-  rv = xpc_CreateGlobalObject(cx, &gSharedGlobalClass, principal, nullptr,
-                              false, &mJSObject, &compartment);
+  rv = xpc::CreateGlobalObject(cx, &gSharedGlobalClass, principal, false,
+                               &mJSObject, &compartment);
   NS_ENSURE_SUCCESS(rv, NS_OK);
 
   // Set the location information for the new global, so that tools like
@@ -593,7 +600,7 @@ nsXBLDocumentInfo::ReadPrototypeBindings(nsIURI* aURI, nsXBLDocumentInfo** aDocI
 {
   *aDocInfo = nullptr;
 
-  nsCAutoString spec(kXBLCachePrefix);
+  nsAutoCString spec(kXBLCachePrefix);
   nsresult rv = PathifyURI(aURI, spec);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -663,7 +670,7 @@ nsXBLDocumentInfo::WritePrototypeBindings()
   if (!nsContentUtils::IsSystemPrincipal(mDocument->NodePrincipal()))
     return NS_OK;
 
-  nsCAutoString spec(kXBLCachePrefix);
+  nsAutoCString spec(kXBLCachePrefix);
   nsresult rv = PathifyURI(DocumentURI(), spec);
   NS_ENSURE_SUCCESS(rv, rv);
 

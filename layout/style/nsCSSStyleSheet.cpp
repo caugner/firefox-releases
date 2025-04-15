@@ -39,7 +39,8 @@
 #include "nsMediaFeatures.h"
 #include "nsDOMClassInfoID.h"
 
-namespace css = mozilla::css;
+using namespace mozilla;
+
 
 // -------------------------------
 // Style Rule List for the DOM
@@ -763,8 +764,10 @@ nsMediaList::Append(const nsAString& aNewMedium)
 //
 
 
-nsCSSStyleSheetInner::nsCSSStyleSheetInner(nsCSSStyleSheet* aPrimarySheet)
+nsCSSStyleSheetInner::nsCSSStyleSheetInner(nsCSSStyleSheet* aPrimarySheet,
+                                           CORSMode aCORSMode)
   : mSheets(),
+    mCORSMode(aCORSMode),
     mComplete(false)
 #ifdef DEBUG
     , mPrincipalSet(false)
@@ -860,10 +863,18 @@ nsCSSStyleSheet::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
   const nsCSSStyleSheet* s = this;
   while (s) {
     n += aMallocSizeOf(s);
-    n += s->mInner->SizeOfIncludingThis(aMallocSizeOf);
 
-    // Measurement of the following members may be added later if DMD finds it is
-    // worthwhile:
+    // Each inner can be shared by multiple sheets.  So we only count the inner
+    // if this sheet is the first one in the list of those sharing it.  As a
+    // result, the first such sheet takes all the blame for the memory
+    // consumption of the inner, which isn't ideal but it's better than
+    // double-counting the inner.
+    if (s->mInner->mSheets[0] == s) {
+      n += s->mInner->SizeOfIncludingThis(aMallocSizeOf);
+    }
+
+    // Measurement of the following members may be added later if DMD finds it
+    // is worthwhile:
     // - s->mTitle
     // - s->mMedia
     // - s->mRuleCollection
@@ -884,6 +895,7 @@ nsCSSStyleSheetInner::nsCSSStyleSheetInner(nsCSSStyleSheetInner& aCopy,
     mOriginalSheetURI(aCopy.mOriginalSheetURI),
     mBaseURI(aCopy.mBaseURI),
     mPrincipal(aCopy.mPrincipal),
+    mCORSMode(aCopy.mCORSMode),
     mComplete(aCopy.mComplete)
 #ifdef DEBUG
     , mPrincipalSet(aCopy.mPrincipalSet)
@@ -1012,7 +1024,7 @@ nsCSSStyleSheetInner::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
 // CSS Style Sheet
 //
 
-nsCSSStyleSheet::nsCSSStyleSheet()
+nsCSSStyleSheet::nsCSSStyleSheet(CORSMode aCORSMode)
   : mTitle(), 
     mParent(nullptr),
     mOwnerRule(nullptr),
@@ -1024,7 +1036,7 @@ nsCSSStyleSheet::nsCSSStyleSheet()
     mRuleProcessors(nullptr)
 {
 
-  mInner = new nsCSSStyleSheetInner(this);
+  mInner = new nsCSSStyleSheetInner(this, aCORSMode);
 }
 
 nsCSSStyleSheet::nsCSSStyleSheet(const nsCSSStyleSheet& aCopy,
@@ -1607,7 +1619,7 @@ nsCSSStyleSheet::List(FILE* out, int32_t aIndent) const
   for (index = aIndent; --index >= 0; ) fputs("  ", out);
 
   fputs("CSS Style Sheet: ", out);
-  nsCAutoString urlSpec;
+  nsAutoCString urlSpec;
   nsresult rv = mInner->mSheetURI->GetSpec(urlSpec);
   if (NS_SUCCEEDED(rv) && !urlSpec.IsEmpty()) {
     fputs(urlSpec.get(), out);
@@ -1671,7 +1683,7 @@ nsCSSStyleSheet::DidDirty()
 }
 
 nsresult
-nsCSSStyleSheet::SubjectSubsumesInnerPrincipal() const
+nsCSSStyleSheet::SubjectSubsumesInnerPrincipal()
 {
   // Get the security manager and do the subsumes check
   nsIScriptSecurityManager *securityManager =
@@ -1694,7 +1706,26 @@ nsCSSStyleSheet::SubjectSubsumesInnerPrincipal() const
   }
   
   if (!nsContentUtils::IsCallerTrustedForWrite()) {
-    return NS_ERROR_DOM_SECURITY_ERR;
+    // Allow access only if CORS mode is not NONE
+    if (GetCORSMode() == CORS_NONE) {
+      return NS_ERROR_DOM_SECURITY_ERR;
+    }
+
+    // Now make sure we set the principal of our inner to the
+    // subjectPrincipal.  That means we need a unique inner, of
+    // course.  But we don't want to do that if we're not complete
+    // yet.  Luckily, all the callers of this method throw anyway if
+    // not complete, so we can just do that here too.
+    if (!mInner->mComplete) {
+      return NS_ERROR_DOM_INVALID_ACCESS_ERR;
+    }
+
+    rv = WillDirty();
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    mInner->mPrincipal = subjectPrincipal;
+
+    DidDirty();
   }
 
   return NS_OK;
@@ -1758,7 +1789,7 @@ NS_IMETHODIMP
 nsCSSStyleSheet::GetHref(nsAString& aHref)
 {
   if (mInner->mOriginalSheetURI) {
-    nsCAutoString str;
+    nsAutoCString str;
     mInner->mOriginalSheetURI->GetSpec(str);
     CopyUTF8toUTF16(str, aHref);
   } else {
@@ -1885,7 +1916,7 @@ nsCSSStyleSheet::InsertRuleInternal(const nsAString& aRule,
   if (aIndex > uint32_t(mInner->mOrderedRules.Count()))
     return NS_ERROR_DOM_INDEX_SIZE_ERR;
   
-  NS_ASSERTION(uint32_t(mInner->mOrderedRules.Count()) <= PR_INT32_MAX,
+  NS_ASSERTION(uint32_t(mInner->mOrderedRules.Count()) <= INT32_MAX,
                "Too many style rules!");
 
   // Hold strong ref to the CSSLoader in case the document update
@@ -2019,7 +2050,7 @@ nsCSSStyleSheet::DeleteRule(uint32_t aIndex)
     if (aIndex >= uint32_t(mInner->mOrderedRules.Count()))
       return NS_ERROR_DOM_INDEX_SIZE_ERR;
 
-    NS_ASSERTION(uint32_t(mInner->mOrderedRules.Count()) <= PR_INT32_MAX,
+    NS_ASSERTION(uint32_t(mInner->mOrderedRules.Count()) <= INT32_MAX,
                  "Too many style rules!");
 
     // Hold a strong ref to the rule so it doesn't die when we RemoveObjectAt
@@ -2197,8 +2228,6 @@ nsCSSStyleSheet::ParseSheet(const nsAString& aInput)
     loader = new css::Loader();
   }
 
-  nsCSSParser parser(loader, this);
-
   mozAutoDocUpdate updateBatch(mDocument, UPDATE_STYLE, true);
 
   nsresult rv = WillDirty();
@@ -2226,6 +2255,8 @@ nsCSSStyleSheet::ParseSheet(const nsAString& aInput)
 
   // allow unsafe rules if the style sheet's principal is the system principal
   bool allowUnsafeRules = nsContentUtils::IsSystemPrincipal(mInner->mPrincipal);
+
+  nsCSSParser parser(loader, this);
   rv = parser.ParseSheet(aInput, mInner->mSheetURI, mInner->mBaseURI,
                          mInner->mPrincipal, 1, allowUnsafeRules);
   DidDirty(); // we are always 'dirty' here since we always remove rules first

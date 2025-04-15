@@ -5,6 +5,7 @@
 import json
 import os
 import sys
+import collections
 
 import writeMakefile
 
@@ -31,11 +32,17 @@ def dumpFailures(lines):
         if objstr == '{}\n':
             continue
 
+        # Avoid overly large diffs.
+        if '/editing/' in url:
+            sep = ':'
+        else:
+            sep = ': '
+
         jsonpath = 'failures/' + url + '.json'
         files.append(jsonpath)
         ensuredir(jsonpath)
-        obj = json.loads(objstr)
-        formattedobj = json.dumps(obj, sort_keys=True, indent=2, separators=(',', ': '))
+        obj = json.loads(objstr, object_pairs_hook=collections.OrderedDict)
+        formattedobj = json.dumps(obj, indent=2, separators=(',', sep))
         fp = open(jsonpath, 'w')
         fp.write(formattedobj + '\n')
         fp.close()
@@ -48,7 +55,7 @@ def writeMakefiles(files):
         pathmap.setdefault(dirp, []).append(leaf)
 
     for k, v in pathmap.iteritems():
-        result = writeMakefile.substMakefile('parseFailures.py', 'dom/imptests/' + k, [], v)
+        result = writeMakefile.substMakefile('parseFailures.py', [], v)
 
         fp = open(k + '/Makefile.in', 'wb')
         fp.write(result)

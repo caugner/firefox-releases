@@ -109,7 +109,7 @@ SettingsLock.prototype = {
               results[name] = value;
               results.__exposedProps__[name] = "r";
               // If the value itself is an object, expose the properties.
-              if (typeof value == "object") {
+              if (typeof value == "object" && value != null) {
                 var exposed = {};
                 Object.keys(value).forEach(function(key) { exposed[key] = 'r'; });
                 results[name].__exposedProps__ = exposed;
@@ -137,7 +137,8 @@ SettingsLock.prototype = {
       var lock;
       while (lock = this._settingsManager._locks.dequeue()) {
         if (!lock._transaction) {
-          lock._transaction = lock._settingsManager._settingsDB._db.transaction(SETTINGSSTORE_NAME, "readwrite");
+          let transactionType = this._settingsManager.hasWritePrivileges ? "readwrite" : "readonly";
+          lock._transaction = lock._settingsManager._settingsDB._db.transaction(SETTINGSSTORE_NAME, transactionType);
         }
         lock.process();
       }
@@ -152,7 +153,7 @@ SettingsLock.prototype = {
       throw Components.results.NS_ERROR_ABORT;
     }
 
-    if (this._settingsManager.hasPrivileges) {
+    if (this._settingsManager.hasReadPrivileges) {
       let req = Services.DOMRequest.createRequest(this._settingsManager._window);
       this._requests.enqueue({ request: req, intent:"get", name: aName });
       this.createTransactionAndProcess();
@@ -169,7 +170,7 @@ SettingsLock.prototype = {
       throw Components.results.NS_ERROR_ABORT;
     }
 
-    if (this._settingsManager.hasPrivileges) {
+    if (this._settingsManager.hasWritePrivileges) {
       let req = Services.DOMRequest.createRequest(this._settingsManager._window);
       debug("send: " + JSON.stringify(aSettings));
       this._requests.enqueue({request: req, intent: "set", settings: aSettings});
@@ -187,7 +188,7 @@ SettingsLock.prototype = {
       throw Components.results.NS_ERROR_ABORT;
     }
 
-    if (this._settingsManager.hasPrivileges) {
+    if (this._settingsManager.hasWritePrivileges) {
       let req = Services.DOMRequest.createRequest(this._settingsManager._window);
       this._requests.enqueue({ request: req, intent: "clear"});
       this.createTransactionAndProcess();
@@ -209,7 +210,7 @@ SettingsLock.prototype = {
 };
 
 const SETTINGSMANAGER_CONTRACTID = "@mozilla.org/settingsManager;1";
-const SETTINGSMANAGER_CID        = Components.ID("{dd9f5380-a454-11e1-b3dd-0800200c9a66}");
+const SETTINGSMANAGER_CID        = Components.ID("{c40b1c70-00fb-11e2-a21f-0800200c9a66}");
 const nsIDOMSettingsManager      = Ci.nsIDOMSettingsManager;
 
 let myGlobal = this;
@@ -217,8 +218,10 @@ let myGlobal = this;
 function SettingsManager()
 {
   this._locks = new Queue();
-  var idbManager = Components.classes["@mozilla.org/dom/indexeddb/manager;1"].getService(Ci.nsIIndexedDatabaseManager);
-  idbManager.initWindowless(myGlobal);
+  if (!("indexedDB" in myGlobal)) {
+    let idbManager = Components.classes["@mozilla.org/dom/indexeddb/manager;1"].getService(Ci.nsIIndexedDatabaseManager);
+    idbManager.initWindowless(myGlobal);
+  }
   this._settingsDB = new SettingsDB();
   this._settingsDB.init(myGlobal);
 }
@@ -235,17 +238,21 @@ SettingsManager.prototype = {
   },
 
   set onsettingchange(aCallback) {
-    if (this.hasPrivileges)
+    if (this.hasReadPrivileges) {
+      if (!this._onsettingchange) {
+        cpmm.sendAsyncMessage("Settings:RegisterForMessages");
+      }
       this._onsettingchange = aCallback;
-    else
+    } else {
       throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
+    }
   },
 
   get onsettingchange() {
     return this._onsettingchange;
   },
 
-  getLock: function() {
+  createLock: function() {
     debug("get lock!");
     var lock = new SettingsLock(this);
     this._locks.enqueue(lock);
@@ -292,8 +299,10 @@ SettingsManager.prototype = {
 
   addObserver: function addObserver(aName, aCallback) {
     debug("addObserver " + aName);
-    if (!this._callbacks)
+    if (!this._callbacks) {
+      cpmm.sendAsyncMessage("Settings:RegisterForMessages");
       this._callbacks = {};
+    }
     if (!this._callbacks[aName]) {
       this._callbacks[aName] = [aCallback];
     } else {
@@ -326,9 +335,15 @@ SettingsManager.prototype = {
     let util = aWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
     this.innerWindowID = util.currentInnerWindowID;
 
-    let perm = Services.perms.testExactPermissionFromPrincipal(aWindow.document.nodePrincipal, "settings");
-    this.hasPrivileges = perm == Ci.nsIPermissionManager.ALLOW_ACTION;
-    debug("has privileges :" + this.hasPrivileges);
+    let readPerm = Services.perms.testExactPermissionFromPrincipal(aWindow.document.nodePrincipal, "settings-read");
+    let writePerm = Services.perms.testExactPermissionFromPrincipal(aWindow.document.nodePrincipal, "settings-write");
+    this.hasReadPrivileges = readPerm == Ci.nsIPermissionManager.ALLOW_ACTION;
+    this.hasWritePrivileges = writePerm == Ci.nsIPermissionManager.ALLOW_ACTION;
+
+    if (!this.hasReadPrivileges && !this.hasWritePrivileges) {
+      Cu.reportError("NO SETTINGS PERMISSION FOR: " + aWindow.document.nodePrincipal.origin + "\n");
+      return null;
+    }
   },
 
   observe: function(aSubject, aTopic, aData) {
@@ -357,4 +372,4 @@ SettingsManager.prototype = {
                                      flags: nsIClassInfo.DOM_OBJECT})
 }
 
-const NSGetFactory = XPCOMUtils.generateNSGetFactory([SettingsManager, SettingsLock])
+this.NSGetFactory = XPCOMUtils.generateNSGetFactory([SettingsManager, SettingsLock])

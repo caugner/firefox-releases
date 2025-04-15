@@ -2,9 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const EXPORTED_SYMBOLS = ['BookmarksEngine', "PlacesItem", "Bookmark",
-                          "BookmarkFolder", "BookmarkQuery",
-                          "Livemark", "BookmarkSeparator"];
+this.EXPORTED_SYMBOLS = ['BookmarksEngine', "PlacesItem", "Bookmark",
+                         "BookmarkFolder", "BookmarkQuery",
+                         "Livemark", "BookmarkSeparator"];
 
 const Cc = Components.classes;
 const Ci = Components.interfaces;
@@ -35,7 +35,7 @@ const ANNOS_TO_TRACK = [DESCRIPTION_ANNO, SIDEBAR_ANNO,
 const SERVICE_NOT_SUPPORTED = "Service not supported on this platform";
 const FOLDER_SORTINDEX = 1000000;
 
-function PlacesItem(collection, id, type) {
+this.PlacesItem = function PlacesItem(collection, id, type) {
   CryptoWrapper.call(this, collection, id);
   this.type = type || "item";
 }
@@ -78,7 +78,7 @@ Utils.deferGetSet(PlacesItem,
                   "cleartext",
                   ["hasDupe", "parentid", "parentName", "type"]);
 
-function Bookmark(collection, id, type) {
+this.Bookmark = function Bookmark(collection, id, type) {
   PlacesItem.call(this, collection, id, type || "bookmark");
 }
 Bookmark.prototype = {
@@ -91,7 +91,7 @@ Utils.deferGetSet(Bookmark,
                   ["title", "bmkUri", "description",
                    "loadInSidebar", "tags", "keyword"]);
 
-function BookmarkQuery(collection, id) {
+this.BookmarkQuery = function BookmarkQuery(collection, id) {
   Bookmark.call(this, collection, id, "query");
 }
 BookmarkQuery.prototype = {
@@ -103,7 +103,7 @@ Utils.deferGetSet(BookmarkQuery,
                   "cleartext",
                   ["folderName", "queryId"]);
 
-function BookmarkFolder(collection, id, type) {
+this.BookmarkFolder = function BookmarkFolder(collection, id, type) {
   PlacesItem.call(this, collection, id, type || "folder");
 }
 BookmarkFolder.prototype = {
@@ -114,7 +114,7 @@ BookmarkFolder.prototype = {
 Utils.deferGetSet(BookmarkFolder, "cleartext", ["description", "title",
                                                 "children"]);
 
-function Livemark(collection, id) {
+this.Livemark = function Livemark(collection, id) {
   BookmarkFolder.call(this, collection, id, "livemark");
 }
 Livemark.prototype = {
@@ -124,7 +124,7 @@ Livemark.prototype = {
 
 Utils.deferGetSet(Livemark, "cleartext", ["siteUri", "feedUri"]);
 
-function BookmarkSeparator(collection, id) {
+this.BookmarkSeparator = function BookmarkSeparator(collection, id) {
   PlacesItem.call(this, collection, id, "separator");
 }
 BookmarkSeparator.prototype = {
@@ -193,7 +193,7 @@ let kSpecialIds = {
   get mobile()  this.findMobileRoot(true),
 };
 
-function BookmarksEngine() {
+this.BookmarksEngine = function BookmarksEngine() {
   SyncEngine.call(this, "Bookmarks");
 }
 BookmarksEngine.prototype = {
@@ -487,14 +487,21 @@ BookmarksStore.prototype = {
   },
   
   applyIncoming: function BStore_applyIncoming(record) {
-    // Don't bother with pre and post-processing for deletions.
+    let isSpecial = record.id in kSpecialIds;
+
     if (record.deleted) {
+      if (isSpecial) {
+        this._log.warn("Ignoring deletion for special record " + record.id);
+        return;
+      }
+
+      // Don't bother with pre and post-processing for deletions.
       Store.prototype.applyIncoming.call(this, record);
       return;
     }
 
     // For special folders we're only interested in child ordering.
-    if ((record.id in kSpecialIds) && record.children) {
+    if (isSpecial && record.children) {
       this._log.debug("Processing special node: " + record.id);
       // Reorder children later
       this._childrenToOrder[record.id] = record.children;
@@ -770,6 +777,11 @@ BookmarksStore.prototype = {
   },
 
   remove: function BStore_remove(record) {
+    if (kSpecialIds.isSpecialGUID(record.id)) {
+      this._log.warn("Refusing to remove special folder " + record.id);
+      return;
+    }
+
     let itemId = this.idForGUID(record.id);
     if (itemId <= 0) {
       this._log.debug("Item " + record.id + " already removed");

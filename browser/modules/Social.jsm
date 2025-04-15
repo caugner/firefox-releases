@@ -4,7 +4,7 @@
 
 "use strict";
 
-let EXPORTED_SYMBOLS = ["Social"];
+this.EXPORTED_SYMBOLS = ["Social"];
 
 const Ci = Components.interfaces;
 const Cc = Components.classes;
@@ -16,7 +16,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "SocialService",
   "resource://gre/modules/SocialService.jsm");
 
-let Social = {
+this.Social = {
   lastEventReceived: 0,
   provider: null,
   _disabledForSafeMode: false,
@@ -48,6 +48,12 @@ let Social = {
         this._enabledBeforePrivateBrowsing = this.enabled;
         this.enabled = false;
       } else if (aData == "exit") {
+        // if the user has explicitly re-enabled social in PB mode, then upon
+        // leaving we want to tear the world down then reenable to prevent
+        // information leaks during this transition.
+        // The next 2 lines rely on the fact that setting this.enabled to
+        // its current value doesn't actually do anything...
+        this.enabled = false;
         this.enabled = this._enabledBeforePrivateBrowsing;
       }
     }
