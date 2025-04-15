@@ -72,8 +72,8 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     gfxImageFormat format
       = gfxPlatform::GetPlatform()->OptimalFormatForContent(contentType);
     TextureFlags flags = TextureFlags::DEFAULT;
-    if (mTextureFlags & TextureFlags::NEEDS_Y_FLIP) {
-      flags |= TextureFlags::NEEDS_Y_FLIP;
+    if (mTextureFlags & TextureFlags::ORIGIN_BOTTOM_LEFT) {
+      flags |= TextureFlags::ORIGIN_BOTTOM_LEFT;
     }
 
     gfx::SurfaceFormat surfaceFormat = gfx::ImageFormatToSurfaceFormat(format);
@@ -112,6 +112,7 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   if (updated) {
     GetForwarder()->UpdatedTexture(this, mBuffer, nullptr);
     GetForwarder()->UseTexture(this, mBuffer);
+    mBuffer->SyncWithObject(GetForwarder()->GetSyncObject());
   }
 }
 
@@ -154,7 +155,8 @@ CanvasClientSharedSurface::CanvasClientSharedSurface(CompositableForwarder* aLay
 // Accelerated backends
 
 static TemporaryRef<TextureClient>
-TexClientFromShSurf(SharedSurface* surf, TextureFlags flags)
+TexClientFromShSurf(ISurfaceAllocator* aAllocator, SharedSurface* surf,
+                    TextureFlags flags)
 {
   switch (surf->mType) {
     case SharedSurfaceType::Basic:
@@ -166,7 +168,7 @@ TexClientFromShSurf(SharedSurface* surf, TextureFlags flags)
 #endif
 
     default:
-      return new SharedSurfaceTextureClient(flags, surf);
+      return new SharedSurfaceTextureClient(aAllocator, flags, surf);
   }
 }
 
@@ -366,7 +368,7 @@ CanvasClientSharedSurface::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   auto flags = GetTextureFlags() | TextureFlags::IMMUTABLE;
 
   // Get a TexClient from our surf.
-  RefPtr<TextureClient> newTex = TexClientFromShSurf(surf, flags);
+  RefPtr<TextureClient> newTex = TexClientFromShSurf(GetForwarder(), surf, flags);
   if (!newTex) {
     auto manager = aLayer->ClientManager();
     auto shadowForwarder = manager->AsShadowForwarder();
@@ -384,6 +386,7 @@ CanvasClientSharedSurface::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   // Add the new TexClient.
   MOZ_ALWAYS_TRUE( AddTextureClient(newTex) );
 
+#ifdef MOZ_WIDGET_GONK
   // Remove the old TexClient.
   if (mFrontTex) {
     // remove old buffer from CompositableHost
@@ -396,6 +399,7 @@ CanvasClientSharedSurface::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 
     mFrontTex = nullptr;
   }
+#endif
 
   // Use the new TexClient.
   mFrontTex = newTex;
