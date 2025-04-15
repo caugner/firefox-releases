@@ -89,7 +89,7 @@ public:
     notification->SetStoredState(true);
 
     JSAutoCompartment ac(aCx, mGlobal);
-    JS::Rooted<JSObject*> element(aCx, notification->WrapObject(aCx));
+    JS::Rooted<JSObject*> element(aCx, notification->WrapObject(aCx, JS::NullPtr()));
     NS_ENSURE_TRUE(element, NS_ERROR_FAILURE);
 
     JS::Rooted<JSObject*> notifications(aCx, mNotifications);
@@ -368,7 +368,6 @@ NotificationObserver::Observe(nsISupports* aSubject, const char* aTopic,
   }
 
   if (!strcmp("alertclickcallback", aTopic)) {
-
     nsCOMPtr<nsIDOMEvent> event;
     NS_NewDOMEvent(getter_AddRefs(event), mNotification, nullptr, nullptr);
     nsresult rv = event->InitEvent(NS_LITERAL_STRING("click"), false, true);
@@ -823,9 +822,9 @@ Notification::Get(const GlobalObject& aGlobal,
 }
 
 JSObject*
-Notification::WrapObject(JSContext* aCx)
+Notification::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return mozilla::dom::NotificationBinding::Wrap(aCx, this);
+  return mozilla::dom::NotificationBinding::Wrap(aCx, this, aGivenProto);
 }
 
 void

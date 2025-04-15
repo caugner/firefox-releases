@@ -29,6 +29,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "Metrics",
   "resource://gre/modules/Metrics.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "ReaderMode",
   "resource://gre/modules/ReaderMode.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "ReaderParent",
+  "resource:///modules/ReaderParent.jsm");
 
 // See LOG_LEVELS in Console.jsm. Common examples: "All", "Info", "Warn", & "Error".
 const PREF_LOG_LEVEL      = "browser.uitour.loglevel";
@@ -37,6 +39,7 @@ const PREF_READERVIEW_TRIGGER = "browser.uitour.readerViewTrigger";
 
 const BACKGROUND_PAGE_ACTIONS_ALLOWED = new Set([
   "endUrlbarCapture",
+  "forceShowReaderIcon",
   "getConfiguration",
   "getTreatmentTag",
   "hideHighlight",
@@ -187,6 +190,11 @@ this.UITour = {
         }
         return loopBrowser.contentDocument.querySelector(".signin-link");
       },
+    }],
+    ["pocket", {
+      allowAdd: true,
+      query: "#pocket-button",
+      widgetName: "pocket-button",
     }],
     ["privateWindow",  {query: "#privatebrowsing-button"}],
     ["quit",        {query: "#PanelUI-quit"}],
@@ -704,6 +712,11 @@ this.UITour = {
           ReaderParent.toggleReaderMode({target: target.node});
         });
       }
+
+      case "forceShowReaderIcon": {
+        ReaderParent.forceShowReaderIcon(browser);
+        break;
+      }
     }
 
     if (!this.tourBrowsersByWindow.has(window)) {
@@ -711,7 +724,7 @@ this.UITour = {
     }
     this.tourBrowsersByWindow.get(window).add(browser);
 
-    Services.obs.addObserver(this, "message-manager-disconnect", false);
+    Services.obs.addObserver(this, "message-manager-close", false);
 
     window.addEventListener("SSWindowClosing", this);
 
@@ -763,7 +776,7 @@ this.UITour = {
     switch (aTopic) {
       // The browser message manager is disconnected when the <browser> is
       // destroyed and we want to teardown at that point.
-      case "message-manager-disconnect": {
+      case "message-manager-close": {
         let winEnum = Services.wm.getEnumerator("navigator:browser");
         while (winEnum.hasMoreElements()) {
           let window = winEnum.getNext();
@@ -1460,6 +1473,12 @@ this.UITour = {
                                        showInfoPanel.bind(this, this._correctAnchor(aAnchor.node)));
   },
 
+  isInfoOnTarget(aChromeWindow, aTargetName) {
+    let document = aChromeWindow.document;
+    let tooltip = document.getElementById("UITourTooltip");
+    return tooltip.getAttribute("targetName") == aTargetName && tooltip.state != "closed";
+  },
+
   hideInfo: function(aWindow) {
     let document = aWindow.document;
 
@@ -1535,6 +1554,46 @@ this.UITour = {
       this.getTarget(aWindow, "searchProvider").then(target => {
         openMenuButton(target.node);
       }).catch(log.error);
+    } else if (aMenuName == "pocket") {
+      this.getTarget(aWindow, "pocket").then(Task.async(function* onPocketTarget(target) {
+        let widgetGroupWrapper = CustomizableUI.getWidget(target.widgetName);
+        if (widgetGroupWrapper.type != "view" || !widgetGroupWrapper.viewId) {
+          log.error("Can't open the pocket menu without a view");
+          return;
+        }
+        let placement = CustomizableUI.getPlacementOfWidget(target.widgetName);
+        if (!placement || !placement.area) {
+          log.error("Can't open the pocket menu without a placement");
+          return;
+        }
+
+        if (placement.area == CustomizableUI.AREA_PANEL) {
+          // Open the appMenu and wait for it if it's not already opened or showing a subview.
+          yield new Promise((resolve, reject) => {
+            if (aWindow.PanelUI.panel.state != "closed") {
+              if (aWindow.PanelUI.multiView.showingSubView) {
+                reject("A subview is already showing");
+                return;
+              }
+
+              resolve();
+              return;
+            }
+
+            aWindow.PanelUI.panel.addEventListener("popupshown", function onShown() {
+              aWindow.PanelUI.panel.removeEventListener("popupshown", onShown);
+              resolve();
+            });
+
+            aWindow.PanelUI.show();
+          });
+        }
+
+        let widgetWrapper = widgetGroupWrapper.forWindow(aWindow);
+        aWindow.PanelUI.showSubView(widgetGroupWrapper.viewId,
+                                    widgetWrapper.anchor,
+                                    placement.area);
+      })).catch(log.error);
     }
   },
 
