@@ -10,8 +10,9 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "js/RootingAPI.h"
-#include "js/Tracer.h"
+#include "js/TracingAPI.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Move.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "nsWrapperCache.h"
 
@@ -27,6 +28,12 @@ protected:
 
   TypedArrayObjectStorage(JSObject *obj) : mObj(obj)
   {
+  }
+
+  explicit TypedArrayObjectStorage(TypedArrayObjectStorage&& aOther)
+    : mObj(aOther.mObj)
+  {
+    aOther.mObj = nullptr;
   }
 
 public:
@@ -68,6 +75,15 @@ struct TypedArray_base : public TypedArrayObjectStorage {
       mLength(0),
       mComputed(false)
   {
+  }
+
+  explicit TypedArray_base(TypedArray_base&& aOther)
+    : TypedArrayObjectStorage(Move(aOther)),
+      mData(aOther.mData),
+      mLength(aOther.mLength)
+  {
+    aOther.mData = nullptr;
+    aOther.mLength = 0;
   }
 
 private:
@@ -149,6 +165,11 @@ struct TypedArray : public TypedArray_base<T, UnwrapArray, GetLengthAndData> {
     TypedArray_base<T, UnwrapArray, GetLengthAndData>()
   {}
 
+  explicit TypedArray(TypedArray&& aOther)
+    : TypedArray_base<T, UnwrapArray, GetLengthAndData>(Move(aOther))
+  {
+  }
+
   static inline JSObject*
   Create(JSContext* cx, nsWrapperCache* creator, uint32_t length,
          const T* data = nullptr) {
@@ -158,24 +179,17 @@ struct TypedArray : public TypedArray_base<T, UnwrapArray, GetLengthAndData> {
       ac.construct(cx, creatorWrapper);
     }
 
-    return CreateCommon(cx, creatorWrapper, length, data);
+    return CreateCommon(cx, length, data);
   }
 
   static inline JSObject*
-  Create(JSContext* cx, JS::Handle<JSObject*> creator, uint32_t length,
-         const T* data = nullptr) {
-    Maybe<JSAutoCompartment> ac;
-    if (creator) {
-      ac.construct(cx, creator);
-    }
-
-    return CreateCommon(cx, creator, length, data);
+  Create(JSContext* cx, uint32_t length, const T* data = nullptr) {
+    return CreateCommon(cx, length, data);
   }
 
 private:
   static inline JSObject*
-  CreateCommon(JSContext* cx, JS::Handle<JSObject*> creator, uint32_t length,
-               const T* data) {
+  CreateCommon(JSContext* cx, uint32_t length, const T* data) {
     JSObject* obj = CreateNew(cx, length);
     if (!obj) {
       return nullptr;
@@ -237,9 +251,9 @@ class TypedArrayCreator
       : mArray(aArray)
     {}
 
-    JSObject* Create(JSContext* aCx, JS::Handle<JSObject*> aCreator) const
+    JSObject* Create(JSContext* aCx) const
     {
-      return TypedArrayType::Create(aCx, aCreator, mArray.Length(), mArray.Elements());
+      return TypedArrayType::Create(aCx, mArray.Length(), mArray.Elements());
     }
 
   private:

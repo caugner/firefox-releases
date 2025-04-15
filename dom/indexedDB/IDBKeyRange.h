@@ -148,7 +148,7 @@ public:
 
   // WebIDL
   JSObject*
-  WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope);
+  WrapObject(JSContext* aCx);
 
   nsISupports*
   GetParentObject() const
@@ -156,11 +156,13 @@ public:
     return mGlobal;
   }
 
-  JS::Value
-  GetLower(JSContext* aCx, ErrorResult& aRv);
+  void
+  GetLower(JSContext* aCx, JS::MutableHandle<JS::Value> aResult,
+           ErrorResult& aRv);
 
-  JS::Value
-  GetUpper(JSContext* aCx, ErrorResult& aRv);
+  void
+  GetUpper(JSContext* aCx, JS::MutableHandle<JS::Value> aResult,
+           ErrorResult& aRv);
 
   bool
   LowerOpen() const

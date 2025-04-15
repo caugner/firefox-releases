@@ -35,13 +35,13 @@
 #include "nsIScriptObjectPrincipal.h"
 #include "nsHostObjectProtocolHandler.h"
 #include "mozilla/Base64.h"
+#include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/EncodingUtils.h"
 #include "mozilla/dom/FileReaderBinding.h"
 #include "xpcpublic.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsDOMJSUtils.h"
-#include "nsDOMEventTargetHelper.h"
 
 #include "jsfriendapi.h"
 
@@ -69,7 +69,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(nsDOMFileReader,
-                                               nsDOMEventTargetHelper)
+                                               DOMEventTargetHelper)
   NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mResultArrayBuffer)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
@@ -180,12 +180,11 @@ nsDOMFileReader::GetReadyState(uint16_t *aReadyState)
   return NS_OK;
 }
 
-JS::Value
-nsDOMFileReader::GetResult(JSContext* aCx, ErrorResult& aRv)
+void
+nsDOMFileReader::GetResult(JSContext* aCx, JS::MutableHandle<JS::Value> aResult,
+                           ErrorResult& aRv)
 {
-  JS::Rooted<JS::Value> result(aCx);
-  aRv = GetResult(aCx, &result);
-  return result;
+  aRv = GetResult(aCx, aResult);
 }
 
 NS_IMETHODIMP
@@ -552,7 +551,7 @@ nsDOMFileReader::GetAsDataURL(nsIDOMBlob *aFile,
 }
 
 /* virtual */ JSObject*
-nsDOMFileReader::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
+nsDOMFileReader::WrapObject(JSContext* aCx)
 {
-  return FileReaderBinding::Wrap(aCx, aScope, this);
+  return FileReaderBinding::Wrap(aCx, this);
 }

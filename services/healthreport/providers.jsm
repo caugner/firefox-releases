@@ -55,14 +55,14 @@ const LAST_NUMERIC_FIELD = {type: Metrics.Storage.FIELD_LAST_NUMERIC};
 const LAST_TEXT_FIELD = {type: Metrics.Storage.FIELD_LAST_TEXT};
 const DAILY_DISCRETE_NUMERIC_FIELD = {type: Metrics.Storage.FIELD_DAILY_DISCRETE_NUMERIC};
 const DAILY_LAST_NUMERIC_FIELD = {type: Metrics.Storage.FIELD_DAILY_LAST_NUMERIC};
+const DAILY_LAST_TEXT_FIELD = {type: Metrics.Storage.FIELD_DAILY_LAST_TEXT};
 const DAILY_COUNTER_FIELD = {type: Metrics.Storage.FIELD_DAILY_COUNTER};
 
-// Preprocess to use the correct telemetry pref.
-#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
-const TELEMETRY_PREF = "toolkit.telemetry.enabledPreRelease";
-#else
 const TELEMETRY_PREF = "toolkit.telemetry.enabled";
-#endif
+
+function isTelemetryEnabled(prefs) {
+  return prefs.get(TELEMETRY_PREF, false);
+}
 
 /**
  * Represents basic application state.
@@ -358,7 +358,7 @@ AppInfoProvider.prototype = Object.freeze({
   },
 
   _recordIsTelemetryEnabled: function (m) {
-    let enabled = TELEMETRY_PREF && this._prefs.get(TELEMETRY_PREF, false);
+    let enabled = isTelemetryEnabled(this._prefs);
     this._log.debug("Recording telemetry enabled (" + TELEMETRY_PREF + "): " + enabled);
     yield m.setDailyLastNumeric("isTelemetryEnabled", enabled ? 1 : 0);
   },
@@ -1228,6 +1228,7 @@ SearchCountMeasurementBase.prototype = Object.freeze({
   SOURCES: [
     "abouthome",
     "contextmenu",
+    "newtab",
     "searchbar",
     "urlbar",
   ],
@@ -1267,8 +1268,25 @@ SearchCountMeasurement3.prototype = Object.freeze({
   },
 });
 
+function SearchEnginesMeasurement1() {
+  Metrics.Measurement.call(this);
+}
+
+SearchEnginesMeasurement1.prototype = Object.freeze({
+  __proto__: Metrics.Measurement.prototype,
+
+  name: "engines",
+  version: 1,
+
+  fields: {
+    default: DAILY_LAST_TEXT_FIELD,
+  },
+});
+
 this.SearchesProvider = function () {
   Metrics.Provider.call(this);
+
+  this._prefs = new Preferences({defaultBranch: null});
 };
 
 this.SearchesProvider.prototype = Object.freeze({
@@ -1279,6 +1297,7 @@ this.SearchesProvider.prototype = Object.freeze({
     SearchCountMeasurement1,
     SearchCountMeasurement2,
     SearchCountMeasurement3,
+    SearchEnginesMeasurement1,
   ],
 
   /**
@@ -1291,6 +1310,36 @@ this.SearchesProvider.prototype = Object.freeze({
       deferred.resolve();
     });
     return deferred.promise;
+  },
+
+  collectDailyData: function () {
+    return this.storage.enqueueTransaction(function getDaily() {
+      // We currently only record this if Telemetry is enabled.
+      if (!isTelemetryEnabled(this._prefs)) {
+        return;
+      }
+
+      let m = this.getMeasurement(SearchEnginesMeasurement1.prototype.name,
+                                  SearchEnginesMeasurement1.prototype.version);
+
+      let engine;
+      try {
+        engine = Services.search.defaultEngine;
+      } catch (e) {}
+      let name;
+
+      if (!engine) {
+        name = "NONE";
+      } else if (engine.identifier) {
+        name = engine.identifier;
+      } else if (engine.name) {
+        name = "other-" + engine.name;
+      } else {
+        name = "UNDEFINED";
+      }
+
+      yield m.setDailyLastText("default", name);
+    }.bind(this));
   },
 
   /**

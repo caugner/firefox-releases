@@ -6,7 +6,6 @@
 
 #include "jit/IonCaches.h"
 
-#include "mozilla/DebugOnly.h"
 #include "mozilla/TemplateLib.h"
 
 #include "jsproxy.h"
@@ -31,7 +30,6 @@
 using namespace js;
 using namespace js::jit;
 
-using mozilla::DebugOnly;
 using mozilla::tl::FloorLog2;
 
 void
@@ -388,13 +386,15 @@ IonCache::attachStub(MacroAssembler &masm, StubAttacher &attacher, Handle<JitCod
     // Update the success path to continue after the IC initial jump.
     attacher.patchRejoinJump(masm, code);
 
-    // Update the failure path.
-    attacher.patchNextStubJump(masm, code);
-
     // Replace the STUB_ADDR constant by the address of the generated stub, such
     // as it can be kept alive even if the cache is flushed (see
     // MarkJitExitFrame).
     attacher.patchStubCodePointer(masm, code);
+
+    // Update the failure path. Note it is this patch that makes the stub
+    // accessible for parallel ICs so it should not be moved unless you really
+    // know what is going on.
+    attacher.patchNextStubJump(masm, code);
 }
 
 bool
@@ -402,12 +402,14 @@ IonCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, StubAttacher &a
                             IonScript *ion, const char *attachKind)
 {
     Rooted<JitCode *> code(cx);
-    AutoFlushICache afc("IonCache");
-    LinkStatus status = linkCode(cx, masm, ion, code.address());
-    if (status != LINK_GOOD)
-        return status != LINK_ERROR;
-
-    attachStub(masm, attacher, code);
+    {
+        // Need to exit the AutoFlushICache context to flush the cache
+        // before attaching the stub below.
+        AutoFlushICache afc("IonCache");
+        LinkStatus status = linkCode(cx, masm, ion, code.address());
+        if (status != LINK_GOOD)
+            return status != LINK_ERROR;
+    }
 
     if (pc_) {
         IonSpew(IonSpew_InlineCaches, "Cache %p(%s:%d/%d) generated %s %s stub at %p",
@@ -421,6 +423,8 @@ IonCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, StubAttacher &a
 #ifdef JS_ION_PERF
     writePerfSpewerJitCodeProfile(code, "IonCache");
 #endif
+
+    attachStub(masm, attacher, code);
 
     return true;
 }
@@ -619,11 +623,14 @@ IsCacheableGetPropCallNative(JSObject *obj, JSObject *holder, Shape *shape)
     if (!getter.isNative())
         return false;
 
-    // Check for a DOM method; those are OK with both inner and outer objects.
-    if (getter.jitInfo() && getter.jitInfo()->isDOMJitInfo())
+    // Check for a getter that has jitinfo and whose jitinfo says it's
+    // OK with both inner and outer objects.
+    if (getter.jitInfo() && !getter.jitInfo()->needsOuterizedThisObject())
         return true;
 
-    // For non-DOM methods, don't cache if obj has an outerObject hook.
+    // For getters that need an outerized this object, don't cache if
+    // obj has an outerObject hook, since our cache will pass obj
+    // itself without outerizing.
     return !obj->getClass()->ext.outerObject;
 }
 
@@ -1212,7 +1219,6 @@ GetPropertyIC::tryAttachNative(JSContext *cx, IonScript *ion, HandleObject obj,
     *emitted = true;
 
     MacroAssembler masm(cx, ion, script_, pc_);
-    SkipRoot skip(cx, &masm);
 
     RepatchStubAppender attacher(*this);
     const char *attachKind;
@@ -2850,8 +2856,8 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
 
     // Avoid unnecessary locking if cannot attach stubs.
     if (!cache.canAttachStub()) {
-        return baseops::SetPropertyHelper<ParallelExecution>(cx, obj, obj, id, 0,
-                                                             &v, cache.strict());
+        return baseops::SetPropertyHelper<ParallelExecution>(
+            cx, obj, obj, id, baseops::Qualified, &v, cache.strict());
     }
 
     SetPropertyIC::NativeSetPropCacheability canCache = SetPropertyIC::CanAttachNone;
@@ -2866,8 +2872,8 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
             if (!cache.hasOrAddStubbedShape(ncx, obj->lastProperty(), &alreadyStubbed))
                 return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
             if (alreadyStubbed) {
-                return baseops::SetPropertyHelper<ParallelExecution>(cx, obj, obj, id, 0,
-                                                                     &v, cache.strict());
+                return baseops::SetPropertyHelper<ParallelExecution>(
+                    cx, obj, obj, id, baseops::Qualified, &v, cache.strict());
             }
 
             // If the object has a lazy type, we need to de-lazify it, but
@@ -2894,8 +2900,11 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
     uint32_t oldSlots = obj->numDynamicSlots();
     RootedShape oldShape(cx, obj->lastProperty());
 
-    if (!baseops::SetPropertyHelper<ParallelExecution>(cx, obj, obj, id, 0, &v, cache.strict()))
+    if (!baseops::SetPropertyHelper<ParallelExecution>(cx, obj, obj, id, baseops::Qualified, &v,
+                                                       cache.strict()))
+    {
         return false;
+    }
 
     bool checkTypeset;
     if (!attachedStub && canCache == SetPropertyIC::MaybeCanAttachAddSlot &&
@@ -2986,7 +2995,6 @@ GetElementIC::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
 
     Label failures;
     MacroAssembler masm(cx, ion);
-    SkipRoot skip(cx, &masm);
 
     // Ensure the index is a string.
     ValueOperand val = index().reg().valueReg();

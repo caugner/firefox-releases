@@ -80,7 +80,6 @@ class ABIArgGenerator
     uint32_t stackBytesConsumedSoFar() const { return stackOffset_; }
     static const Register NonArgReturnVolatileReg0;
     static const Register NonArgReturnVolatileReg1;
-
 };
 
 static MOZ_CONSTEXPR_VAR Register PreBarrierReg = r1;
@@ -97,6 +96,22 @@ static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloatReg = { FloatRegisters::d0 };
 static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloatReg = { FloatRegisters::d15 };
 
 static MOZ_CONSTEXPR_VAR FloatRegister NANReg = { FloatRegisters::d14 };
+
+// Registers used in the GenerateFFIIonExit Enable Activation block.
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegCallee = r4;
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegE0 = r0;
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegE1 = r1;
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegE2 = r2;
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegE3 = r3;
+
+// Registers used in the GenerateFFIIonExit Disable Activation block.
+// None of these may be the second scratch register (lr).
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegReturnData = r2;
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegReturnType = r3;
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegD0 = r0;
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegD1 = r1;
+static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegD2 = r4;
+
 
 static MOZ_CONSTEXPR_VAR FloatRegister d0  = {FloatRegisters::d0};
 static MOZ_CONSTEXPR_VAR FloatRegister d1  = {FloatRegisters::d1};
@@ -727,7 +742,6 @@ class O2RegImmShift : public Op2Reg
         datastore::Reg r(*this);
         datastore::RIS ris(r);
         return ris.ShiftAmount;
-        
     }
 };
 
@@ -972,7 +986,8 @@ class BOffImm
       : data ((offset - 8) >> 2 & 0x00ffffff)
     {
         JS_ASSERT((offset & 0x3) == 0);
-        JS_ASSERT(isInRange(offset));
+        if (!isInRange(offset))
+            CrashAtUnhandlableOOM("BOffImm");
     }
     static bool isInRange(int offset)
     {
@@ -1112,7 +1127,7 @@ class InstructionIterator;
 class Assembler;
 typedef js::jit::AssemblerBufferWithConstantPool<1024, 4, Instruction, Assembler, 1> ARMBuffer;
 
-class Assembler
+class Assembler : public AssemblerShared
 {
   public:
     // ARM conditional constants
@@ -1225,18 +1240,10 @@ class Assembler
     // gets moved (executable copy, gc, etc.)
     struct RelativePatch
     {
-        // the offset within the code buffer where the value is loaded that
-        // we want to fix-up
-        BufferOffset offset;
         void *target;
         Relocation::Kind kind;
-        void fixOffset(ARMBuffer &m_buffer) {
-            offset = BufferOffset(offset.getOffset() + m_buffer.poolSizeBefore(offset.getOffset()));
-        }
-        RelativePatch(BufferOffset offset, void *target, Relocation::Kind kind)
-          : offset(offset),
-            target(target),
-            kind(kind)
+        RelativePatch(void *target, Relocation::Kind kind)
+            : target(target), kind(kind)
         { }
     };
 
@@ -1247,7 +1254,6 @@ class Assembler
     js::Vector<BufferOffset, 0, SystemAllocPolicy> tmpJumpRelocations_;
     js::Vector<BufferOffset, 0, SystemAllocPolicy> tmpDataRelocations_;
     js::Vector<BufferOffset, 0, SystemAllocPolicy> tmpPreBarriers_;
-    AsmJSAbsoluteLinkVector asmJSAbsoluteLinks_;
 
     CompactBufferWriter jumpRelocations_;
     CompactBufferWriter dataRelocations_;
@@ -1369,13 +1375,6 @@ class Assembler
         return codeLabels_[i];
     }
 
-    size_t numAsmJSAbsoluteLinks() const {
-        return asmJSAbsoluteLinks_.length();
-    }
-    AsmJSAbsoluteLink asmJSAbsoluteLink(size_t i) const {
-        return asmJSAbsoluteLinks_[i];
-    }
-
     // Size of the instruction stream, in bytes.
     size_t size() const;
     // Size of the jump relocation table, in bytes.
@@ -1484,14 +1483,14 @@ class Assembler
     //overwrite a pool entry with new data.
     void as_WritePoolEntry(Instruction *addr, Condition c, uint32_t data);
     // load a 32 bit immediate from a pool into a register
-    BufferOffset as_Imm32Pool(Register dest, uint32_t value, ARMBuffer::PoolEntry *pe = nullptr, Condition c = Always);
+    BufferOffset as_Imm32Pool(Register dest, uint32_t value, Condition c = Always);
     // make a patchable jump that can target the entire 32 bit address space.
     BufferOffset as_BranchPool(uint32_t value, RepatchLabel *label, ARMBuffer::PoolEntry *pe = nullptr, Condition c = Always);
 
     // load a 64 bit floating point immediate from a pool into a register
-    BufferOffset as_FImm64Pool(VFPRegister dest, double value, ARMBuffer::PoolEntry *pe = nullptr, Condition c = Always);
+    BufferOffset as_FImm64Pool(VFPRegister dest, double value, Condition c = Always);
     // load a 32 bit floating point immediate from a pool into a register
-    BufferOffset as_FImm32Pool(VFPRegister dest, float value, ARMBuffer::PoolEntry *pe = nullptr, Condition c = Always);
+    BufferOffset as_FImm32Pool(VFPRegister dest, float value, Condition c = Always);
 
     // Control flow stuff:
 
@@ -1646,7 +1645,7 @@ class Assembler
 
   protected:
     void addPendingJump(BufferOffset src, ImmPtr target, Relocation::Kind kind) {
-        enoughMemory_ &= jumps_.append(RelativePatch(src, target.value, kind));
+        enoughMemory_ &= jumps_.append(RelativePatch(target.value, kind));
         if (kind == Relocation::JITCODE)
             writeRelocation(src);
     }

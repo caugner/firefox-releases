@@ -8,10 +8,10 @@
 #define mozilla_dom_bluetooth_bluetoothadapter_h__
 
 #include "mozilla/Attributes.h"
+#include "mozilla/DOMEventTargetHelper.h"
 #include "BluetoothCommon.h"
 #include "BluetoothPropertyContainer.h"
 #include "nsCOMPtr.h"
-#include "nsDOMEventTargetHelper.h"
 
 namespace mozilla {
 namespace dom {
@@ -28,7 +28,7 @@ class BluetoothSignal;
 class BluetoothNamedValue;
 class BluetoothValue;
 
-class BluetoothAdapter : public nsDOMEventTargetHelper
+class BluetoothAdapter : public DOMEventTargetHelper
                        , public BluetoothSignalObserver
                        , public BluetoothPropertyContainer
 {
@@ -36,7 +36,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(BluetoothAdapter,
-                                                         nsDOMEventTargetHelper)
+                                                         DOMEventTargetHelper)
 
   static already_AddRefed<BluetoothAdapter>
   Create(nsPIDOMWindow* aOwner, const BluetoothValue& aValue);
@@ -45,6 +45,8 @@ public:
 
   void Unroot();
   virtual void SetPropertyByValue(const BluetoothNamedValue& aValue) MOZ_OVERRIDE;
+
+  virtual void DisconnectFromOwner() MOZ_OVERRIDE;
 
   void GetAddress(nsString& aAddress) const
   {
@@ -81,8 +83,10 @@ public:
     return mDiscoverableTimeout;
   }
 
-  JS::Value GetDevices(JSContext* aContext, ErrorResult& aRv);
-  JS::Value GetUuids(JSContext* aContext, ErrorResult& aRv);
+  void GetDevices(JSContext* aContext, JS::MutableHandle<JS::Value> aDevices,
+                  ErrorResult& aRv);
+  void GetUuids(JSContext* aContext, JS::MutableHandle<JS::Value> aUuids,
+                ErrorResult& aRv);
 
   already_AddRefed<mozilla::dom::DOMRequest>
     SetName(const nsAString& aName, ErrorResult& aRv);
@@ -158,7 +162,7 @@ public:
   }
 
   virtual JSObject*
-    WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+    WrapObject(JSContext* aCx) MOZ_OVERRIDE;
 
 private:
   BluetoothAdapter(nsPIDOMWindow* aOwner, const BluetoothValue& aValue);

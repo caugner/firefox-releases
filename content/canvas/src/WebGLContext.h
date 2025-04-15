@@ -23,8 +23,8 @@
 #include "nsLayoutUtils.h"
 
 #include "GLContextProvider.h"
-#include "gfxImageSurface.h"
 
+#include "mozilla/EnumeratedArray.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Scoped.h"
@@ -152,8 +152,7 @@ public:
     NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(WebGLContext,
                                                            nsIDOMWebGLRenderingContext)
 
-    virtual JSObject* WrapObject(JSContext *cx,
-                                 JS::Handle<JSObject*> scope) = 0;
+    virtual JSObject* WrapObject(JSContext *cx) = 0;
 
     NS_DECL_NSIDOMWEBGLRENDERINGCONTEXT
 
@@ -167,15 +166,11 @@ public:
         { return NS_ERROR_NOT_IMPLEMENTED; }
     NS_IMETHOD Reset() MOZ_OVERRIDE
         { /* (InitializeWithSurface) */ return NS_ERROR_NOT_IMPLEMENTED; }
-    NS_IMETHOD Render(gfxContext *ctx,
-                      GraphicsFilter f,
-                      uint32_t aFlags = RenderFlagPremultAlpha) MOZ_OVERRIDE;
     virtual void GetImageBuffer(uint8_t** aImageBuffer, int32_t* aFormat);
     NS_IMETHOD GetInputStream(const char* aMimeType,
                               const char16_t* aEncoderOptions,
                               nsIInputStream **aStream) MOZ_OVERRIDE;
-    NS_IMETHOD GetThebesSurface(gfxASurface **surface) MOZ_OVERRIDE;
-    mozilla::TemporaryRef<mozilla::gfx::SourceSurface> GetSurfaceSnapshot() MOZ_OVERRIDE;
+    mozilla::TemporaryRef<mozilla::gfx::SourceSurface> GetSurfaceSnapshot(bool* aPremultAlpha) MOZ_OVERRIDE;
 
     NS_IMETHOD SetIsOpaque(bool b) MOZ_OVERRIDE { return NS_OK; };
     bool GetIsOpaque() MOZ_OVERRIDE { return false; }
@@ -245,6 +240,7 @@ public:
 
     // Calls ForceClearFramebufferWithDefaultValues() for the Context's 'screen'.
     void ClearScreen();
+    void ClearBackbufferIfNeeded();
 
     bool MinCapabilityMode() const { return mMinCapability; }
 
@@ -261,7 +257,9 @@ public:
     void GetContextAttributes(dom::Nullable<dom::WebGLContextAttributes>& retval);
     bool IsContextLost() const { return mContextStatus != ContextNotLost; }
     void GetSupportedExtensions(JSContext *cx, dom::Nullable< nsTArray<nsString> > &retval);
-    JSObject* GetExtension(JSContext* cx, const nsAString& aName, ErrorResult& rv);
+    void GetExtension(JSContext* cx, const nsAString& aName,
+                      JS::MutableHandle<JSObject*> aRetval,
+                      ErrorResult& rv);
     void ActiveTexture(GLenum texture);
     void AttachShader(WebGLProgram* program, WebGLShader* shader);
     void BindAttribLocation(WebGLProgram* program, GLuint location,
@@ -333,9 +331,10 @@ public:
                             dom::Nullable< nsTArray<WebGLShader*> > &retval);
     GLint GetAttribLocation(WebGLProgram* prog, const nsAString& name);
     JS::Value GetBufferParameter(GLenum target, GLenum pname);
-    JS::Value GetBufferParameter(JSContext* /* unused */, GLenum target,
-                                 GLenum pname) {
-        return GetBufferParameter(target, pname);
+    void GetBufferParameter(JSContext* /* unused */, GLenum target,
+                            GLenum pname,
+                            JS::MutableHandle<JS::Value> retval) {
+        retval.set(GetBufferParameter(target, pname));
     }
     GLenum GetError();
     JS::Value GetFramebufferAttachmentParameter(JSContext* cx,
@@ -343,22 +342,34 @@ public:
                                                 GLenum attachment,
                                                 GLenum pname,
                                                 ErrorResult& rv);
+    void GetFramebufferAttachmentParameter(JSContext* cx,
+                                           GLenum target,
+                                           GLenum attachment,
+                                           GLenum pname,
+                                           JS::MutableHandle<JS::Value> retval,
+                                           ErrorResult& rv) {
+        retval.set(GetFramebufferAttachmentParameter(cx, target, attachment,
+                                                     pname, rv));
+    }
     JS::Value GetProgramParameter(WebGLProgram *prog, GLenum pname);
-    JS::Value GetProgramParameter(JSContext* /* unused */, WebGLProgram *prog,
-                                  GLenum pname) {
-        return GetProgramParameter(prog, pname);
+    void  GetProgramParameter(JSContext* /* unused */, WebGLProgram *prog,
+                              GLenum pname,
+                              JS::MutableHandle<JS::Value> retval) {
+        retval.set(GetProgramParameter(prog, pname));
     }
     void GetProgramInfoLog(WebGLProgram *prog, nsACString& retval);
     void GetProgramInfoLog(WebGLProgram *prog, nsAString& retval);
     JS::Value GetRenderbufferParameter(GLenum target, GLenum pname);
-    JS::Value GetRenderbufferParameter(JSContext* /* unused */,
-                                       GLenum target, GLenum pname) {
-        return GetRenderbufferParameter(target, pname);
+    void GetRenderbufferParameter(JSContext* /* unused */,
+                                  GLenum target, GLenum pname,
+                                  JS::MutableHandle<JS::Value> retval) {
+        retval.set(GetRenderbufferParameter(target, pname));
     }
     JS::Value GetShaderParameter(WebGLShader *shader, GLenum pname);
-    JS::Value GetShaderParameter(JSContext* /* unused */, WebGLShader *shader,
-                                 GLenum pname) {
-        return GetShaderParameter(shader, pname);
+    void GetShaderParameter(JSContext* /* unused */, WebGLShader *shader,
+                            GLenum pname,
+                            JS::MutableHandle<JS::Value> retval) {
+        retval.set(GetShaderParameter(shader, pname));
     }
     already_AddRefed<WebGLShaderPrecisionFormat>
       GetShaderPrecisionFormat(GLenum shadertype, GLenum precisiontype);
@@ -367,12 +378,18 @@ public:
     void GetShaderSource(WebGLShader *shader, nsAString& retval);
     void GetShaderTranslatedSource(WebGLShader *shader, nsAString& retval);
     JS::Value GetTexParameter(GLenum target, GLenum pname);
-    JS::Value GetTexParameter(JSContext * /* unused */, GLenum target,
-                              GLenum pname) {
-        return GetTexParameter(target, pname);
+    void GetTexParameter(JSContext * /* unused */, GLenum target,
+                         GLenum pname,
+                         JS::MutableHandle<JS::Value> retval) {
+        retval.set(GetTexParameter(target, pname));
     }
     JS::Value GetUniform(JSContext* cx, WebGLProgram *prog,
                          WebGLUniformLocation *location);
+    void GetUniform(JSContext* cx, WebGLProgram *prog,
+                    WebGLUniformLocation *location,
+                    JS::MutableHandle<JS::Value> retval) {
+        retval.set(GetUniform(cx, prog, location));
+    }
     already_AddRefed<WebGLUniformLocation>
       GetUniformLocation(WebGLProgram *prog, const nsAString& name);
     void Hint(GLenum target, GLenum mode);
@@ -663,6 +680,10 @@ public:
     bool IsQuery(WebGLQuery *query);
     already_AddRefed<WebGLQuery> GetQuery(GLenum target, GLenum pname);
     JS::Value GetQueryObject(JSContext* cx, WebGLQuery *query, GLenum pname);
+    void GetQueryObject(JSContext* cx, WebGLQuery *query, GLenum pname,
+                        JS::MutableHandle<JS::Value> retval) {
+        retval.set(GetQueryObject(cx, query, pname));
+    }
 
 private:
     // ANY_SAMPLES_PASSED(_CONSERVATIVE) slot
@@ -712,7 +733,12 @@ public:
     void Disable(GLenum cap);
     void Enable(GLenum cap);
     JS::Value GetParameter(JSContext* cx, GLenum pname, ErrorResult& rv);
-    JS::Value GetParameterIndexed(JSContext* cx, GLenum pname, GLuint index);
+    void GetParameter(JSContext* cx, GLenum pname,
+                      JS::MutableHandle<JS::Value> retval, ErrorResult& rv) {
+        retval.set(GetParameter(cx, pname, rv));
+    }
+    void GetParameterIndexed(JSContext* cx, GLenum pname, GLuint index,
+                             JS::MutableHandle<JS::Value> retval);
     bool IsEnabled(GLenum cap);
 
 private:
@@ -738,6 +764,11 @@ public:
 
     JS::Value GetVertexAttrib(JSContext* cx, GLuint index, GLenum pname,
                               ErrorResult& rv);
+    void GetVertexAttrib(JSContext* cx, GLuint index, GLenum pname,
+                         JS::MutableHandle<JS::Value> retval,
+                         ErrorResult& rv) {
+        retval.set(GetVertexAttrib(cx, index, pname, rv));
+    }
     WebGLsizeiptr GetVertexAttribOffset(GLuint index, GLenum pname);
 
     void VertexAttrib1f(GLuint index, GLfloat x0);
@@ -831,7 +862,6 @@ protected:
     WebGLVertexAttrib0Status WhatDoesVertexAttrib0Need();
     bool DoFakeVertexAttrib0(GLuint vertexCount);
     void UndoFakeVertexAttrib0();
-    void InvalidateFakeVertexAttrib0();
 
     static CheckedUint32 GetImageSize(GLsizei height,
                                       GLsizei width,
@@ -859,7 +889,7 @@ protected:
     bool mLoseContextOnHeapMinimize;
     bool mCanLoseContextInForeground;
     bool mShouldPresent;
-    bool mIsScreenCleared;
+    bool mBackbufferNeedsClear;
     bool mDisableFragHighP;
 
     template<typename WebGLObjectType>
@@ -913,33 +943,11 @@ protected:
 
     // -------------------------------------------------------------------------
     // WebGL extensions (implemented in WebGLContextExtensions.cpp)
-    enum WebGLExtensionID {
-        EXT_color_buffer_half_float,
-        EXT_frag_depth,
-        EXT_sRGB,
-        EXT_texture_filter_anisotropic,
-        OES_element_index_uint,
-        OES_standard_derivatives,
-        OES_texture_float,
-        OES_texture_float_linear,
-        OES_texture_half_float,
-        OES_texture_half_float_linear,
-        OES_vertex_array_object,
-        WEBGL_color_buffer_float,
-        WEBGL_compressed_texture_atc,
-        WEBGL_compressed_texture_etc1,
-        WEBGL_compressed_texture_pvrtc,
-        WEBGL_compressed_texture_s3tc,
-        WEBGL_debug_renderer_info,
-        WEBGL_debug_shaders,
-        WEBGL_depth_texture,
-        WEBGL_lose_context,
-        WEBGL_draw_buffers,
-        ANGLE_instanced_arrays,
-        WebGLExtensionID_max,
-        WebGLExtensionID_unknown_extension
-    };
-    nsTArray<nsRefPtr<WebGLExtensionBase> > mExtensions;
+    typedef EnumeratedArray<WebGLExtensionID,
+                            WebGLExtensionID::Max,
+                            nsRefPtr<WebGLExtensionBase>> ExtensionsArrayType;
+
+    ExtensionsArrayType mExtensions;
 
     // enable an extension. the extension should not be enabled before.
     void EnableExtension(WebGLExtensionID ext);
@@ -1052,7 +1060,7 @@ protected:
         if (mPixelStoreColorspaceConversion == LOCAL_GL_NONE)
             flags |= nsLayoutUtils::SFE_NO_COLORSPACE_CONVERSION;
         if (!mPixelStorePremultiplyAlpha)
-            flags |= nsLayoutUtils::SFE_NO_PREMULTIPLY_ALPHA;
+            flags |= nsLayoutUtils::SFE_PREFER_NO_PREMULTIPLY_ALPHA;
         return nsLayoutUtils::SurfaceFromElement(aElement, flags);
     }
     template<class ElementType>

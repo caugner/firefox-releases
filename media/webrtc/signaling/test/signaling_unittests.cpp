@@ -48,7 +48,9 @@
 #include "mtransport_test_utils.h"
 #include "gtest_ringbuffer_dumper.h"
 MtransportTestUtils *test_utils;
-nsCOMPtr<nsIThread> gThread;
+nsCOMPtr<nsIThread> gMainThread;
+nsCOMPtr<nsIThread> gGtestThread;
+bool gTestsComplete = false;
 
 #ifndef USE_FAKE_MEDIA_STREAMS
 #error USE_FAKE_MEDIA_STREAMS undefined
@@ -57,7 +59,7 @@ nsCOMPtr<nsIThread> gThread;
 #error USE_FAKE_PCOBSERVER undefined
 #endif
 
-static int kDefaultTimeout = 5000;
+static int kDefaultTimeout = 7000;
 static bool fRtcpMux = true;
 
 static std::string callerName = "caller";
@@ -233,19 +235,6 @@ enum mediaPipelineFlags
 };
 
 
-static bool SetupGlobalThread() {
-  if (!gThread) {
-    nsIThread *thread;
-
-    nsresult rv = NS_NewNamedThread("pseudo-main",&thread);
-    if (NS_FAILED(rv))
-      return false;
-
-    gThread = thread;
-  }
-  return true;
-}
-
 class TestObserver : public AFakePCObserver
 {
 public:
@@ -286,7 +275,7 @@ public:
   NS_IMETHODIMP OnIceCandidate(uint16_t level, const char *mid, const char *cand, ER&);
 };
 
-NS_IMPL_ISUPPORTS1(TestObserver, nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(TestObserver, nsISupportsWeakReference)
 
 NS_IMETHODIMP
 TestObserver::OnCreateOfferSuccess(const char* offer, ER&)
@@ -723,7 +712,7 @@ class SignalingAgent {
 
 
   ~SignalingAgent() {
-    mozilla::SyncRunnable::DispatchToThread(gThread,
+    mozilla::SyncRunnable::DispatchToThread(gMainThread,
       WrapRunnable(this, &SignalingAgent::Close));
   }
 
@@ -746,7 +735,7 @@ class SignalingAgent {
 
   void WaitForGather() {
     ASSERT_TRUE_WAIT(ice_gathering_state() == PCImplIceGatheringState::Complete,
-                     5000);
+                     kDefaultTimeout);
 
     std::cout << name << ": Init Complete" << std::endl;
   }
@@ -755,7 +744,7 @@ class SignalingAgent {
     EXPECT_TRUE_WAIT(
         ice_gathering_state() == PCImplIceGatheringState::Complete ||
         ice_connection_state() == PCImplIceConnectionState::Failed,
-        5000);
+        kDefaultTimeout);
 
     if (ice_connection_state() == PCImplIceConnectionState::Failed) {
       std::cout << name << ": Init Failed" << std::endl;
@@ -1302,7 +1291,6 @@ class SignalingEnvironment : public ::testing::Environment {
 class SignalingAgentTest : public ::testing::Test {
  public:
   static void SetUpTestCase() {
-    ASSERT_TRUE(SetupGlobalThread());
   }
 
   void TearDown() {
@@ -1321,7 +1309,7 @@ class SignalingAgentTest : public ::testing::Test {
     ScopedDeletePtr<SignalingAgent> agent(
         new SignalingAgent("agent", stun_addr, stun_port));
 
-    agent->Init(gThread);
+    agent->Init(gMainThread);
 
     if (wait_for_gather) {
       if (!agent->WaitForGatherAllowFail())
@@ -1365,7 +1353,6 @@ public:
         stun_port_(stun_port) {}
 
   static void SetUpTestCase() {
-    ASSERT_TRUE(SetupGlobalThread());
   }
 
   void EnsureInit() {
@@ -1376,8 +1363,8 @@ public:
     a1_ = new SignalingAgent(callerName, stun_addr_, stun_port_);
     a2_ = new SignalingAgent(calleeName, stun_addr_, stun_port_);
 
-    a1_->Init(gThread);
-    a2_->Init(gThread);
+    a1_->Init(gMainThread);
+    a2_->Init(gMainThread);
 
     if (wait_for_gather_) {
       WaitForGather();
@@ -1390,7 +1377,6 @@ public:
   }
 
   static void TearDownTestCase() {
-    gThread = nullptr;
   }
 
   void CreateOffer(sipcc::MediaConstraints& constraints,
@@ -1656,12 +1642,51 @@ public:
   uint16_t stun_port_;
 };
 
+static void SetIntPrefOnMainThread(nsCOMPtr<nsIPrefBranch> prefs,
+  const char *pref_name,
+  int new_value) {
+  MOZ_ASSERT(NS_IsMainThread());
+  prefs->SetIntPref(pref_name, new_value);
+}
+
+static void SetMaxFsFr(nsCOMPtr<nsIPrefBranch> prefs,
+  int max_fs,
+  int max_fr) {
+  gMainThread->Dispatch(
+    WrapRunnableNM(SetIntPrefOnMainThread,
+      prefs,
+      "media.navigator.video.max_fs",
+      max_fs),
+    NS_DISPATCH_SYNC);
+
+  gMainThread->Dispatch(
+    WrapRunnableNM(SetIntPrefOnMainThread,
+      prefs,
+      "media.navigator.video.max_fr",
+      max_fr),
+    NS_DISPATCH_SYNC);
+}
+
 class FsFrPrefClearer {
   public:
     FsFrPrefClearer(nsCOMPtr<nsIPrefBranch> prefs): mPrefs(prefs) {}
     ~FsFrPrefClearer() {
-      mPrefs->ClearUserPref("media.navigator.video.max_fs");
-      mPrefs->ClearUserPref("media.navigator.video.max_fr");
+      gMainThread->Dispatch(
+        WrapRunnableNM(FsFrPrefClearer::ClearUserPrefOnMainThread,
+          mPrefs,
+          "media.navigator.video.max_fs"),
+        NS_DISPATCH_SYNC);
+      gMainThread->Dispatch(
+        WrapRunnableNM(FsFrPrefClearer::ClearUserPrefOnMainThread,
+          mPrefs,
+          "media.navigator.video.max_fr"),
+        NS_DISPATCH_SYNC);
+    }
+
+    static void ClearUserPrefOnMainThread(nsCOMPtr<nsIPrefBranch> prefs,
+      const char *pref_name) {
+      MOZ_ASSERT(NS_IsMainThread());
+      prefs->ClearUserPref(pref_name);
     }
   private:
     nsCOMPtr<nsIPrefBranch> mPrefs;
@@ -3502,8 +3527,7 @@ TEST_F(SignalingTest, MaxFsFrInOffer)
   ASSERT_TRUE(prefs);
   FsFrPrefClearer prefClearer(prefs);
 
-  prefs->SetIntPref("media.navigator.video.max_fs", 300);
-  prefs->SetIntPref("media.navigator.video.max_fr", 30);
+  SetMaxFsFr(prefs, 300, 30);
 
   a1_->CreateOffer(constraints, OFFER_AV, SHOULD_CHECK_AV);
 
@@ -3523,8 +3547,7 @@ TEST_F(SignalingTest, MaxFsFrInAnswer)
   FsFrPrefClearer prefClearer(prefs);
 
   // We don't want max_fs and max_fr prefs impact SDP at this moment
-  prefs->SetIntPref("media.navigator.video.max_fs", 0);
-  prefs->SetIntPref("media.navigator.video.max_fr", 0);
+  SetMaxFsFr(prefs, 0, 0);
 
   a1_->CreateOffer(constraints, OFFER_AV, SHOULD_CHECK_AV);
 
@@ -3533,8 +3556,7 @@ TEST_F(SignalingTest, MaxFsFrInAnswer)
 
   a2_->SetRemote(TestObserver::OFFER, a1_->offer());
 
-  prefs->SetIntPref("media.navigator.video.max_fs", 600);
-  prefs->SetIntPref("media.navigator.video.max_fr", 60);
+  SetMaxFsFr(prefs, 600, 60);
 
   a2_->CreateAnswer(constraints, a1_->offer(), OFFER_AV | ANSWER_AV);
 
@@ -3554,8 +3576,7 @@ TEST_F(SignalingTest, MaxFsFrCalleeCodec)
   FsFrPrefClearer prefClearer(prefs);
 
   // We don't want max_fs and max_fr prefs impact SDP at this moment
-  prefs->SetIntPref("media.navigator.video.max_fs", 0);
-  prefs->SetIntPref("media.navigator.video.max_fr", 0);
+  SetMaxFsFr(prefs, 0, 0);
 
   a1_->CreateOffer(constraints, OFFER_AV, SHOULD_CHECK_AV);
 
@@ -3611,8 +3632,7 @@ TEST_F(SignalingTest, MaxFsFrCallerCodec)
   FsFrPrefClearer prefClearer(prefs);
 
   // We don't want max_fs and max_fr prefs impact SDP at this moment
-  prefs->SetIntPref("media.navigator.video.max_fs", 0);
-  prefs->SetIntPref("media.navigator.video.max_fr", 0);
+  SetMaxFsFr(prefs, 0, 0);
 
   a1_->CreateOffer(constraints, OFFER_AV, SHOULD_CHECK_AV);
   a1_->SetLocal(TestObserver::OFFER, a1_->offer());
@@ -3686,6 +3706,39 @@ static std::string get_environment(const char *name) {
   return value;
 }
 
+// This exists to send as an event to trigger shutdown.
+static void tests_complete() {
+  gTestsComplete = true;
+}
+
+// The GTest thread runs this instead of the main thread so it can
+// do things like ASSERT_TRUE_WAIT which you could not do on the main thread.
+static int gtest_main(int argc, char **argv) {
+  MOZ_ASSERT(!NS_IsMainThread());
+
+  ::testing::InitGoogleTest(&argc, argv);
+
+  for(int i=0; i<argc; i++) {
+    if (!strcmp(argv[i],"-t")) {
+      kDefaultTimeout = 20000;
+    }
+   }
+
+  ::testing::AddGlobalTestEnvironment(new test::SignalingEnvironment);
+  int result = RUN_ALL_TESTS();
+
+  test_utils->sts_target()->Dispatch(
+    WrapRunnableNM(&TestStunServer::ShutdownInstance), NS_DISPATCH_SYNC);
+
+  // Set the global shutdown flag and tickle the main thread
+  // The main thread did not go through Init() so calling Shutdown()
+  // on it will not work.
+  gMainThread->Dispatch(WrapRunnableNM(tests_complete), NS_DISPATCH_SYNC);
+
+  return result;
+}
+
+
 int main(int argc, char **argv) {
 
   // This test can cause intermittent oranges on the builders
@@ -3711,14 +3764,6 @@ int main(int argc, char **argv) {
   NSS_NoDB_Init(nullptr);
   NSS_SetDomesticPolicy();
 
-  ::testing::InitGoogleTest(&argc, argv);
-
-  for(int i=0; i<argc; i++) {
-    if (!strcmp(argv[i],"-t")) {
-      kDefaultTimeout = 20000;
-    }
-  }
-
   ::testing::TestEventListeners& listeners =
         ::testing::UnitTest::GetInstance()->listeners();
   // Adds a listener to the end.  Google Test takes the ownership.
@@ -3726,15 +3771,28 @@ int main(int argc, char **argv) {
   test_utils->sts_target()->Dispatch(
     WrapRunnableNM(&TestStunServer::GetInstance), NS_DISPATCH_SYNC);
 
-  ::testing::AddGlobalTestEnvironment(new test::SignalingEnvironment);
-  int result = RUN_ALL_TESTS();
+  // Set the main thread global which is this thread.
+  nsIThread *thread;
+  NS_GetMainThread(&thread);
+  gMainThread = thread;
+  MOZ_ASSERT(NS_IsMainThread());
 
-  test_utils->sts_target()->Dispatch(
-    WrapRunnableNM(&TestStunServer::ShutdownInstance), NS_DISPATCH_SYNC);
+  // Now create the GTest thread and run all of the tests on it
+  // When it is complete it will set gTestsComplete
+  NS_NewNamedThread("gtest_thread", &thread);
+  gGtestThread = thread;
 
-  // Because we don't initialize on the main thread, we can't register for
-  // XPCOM shutdown callbacks (where the context is usually shut down) --
-  // so we need to explictly destroy the context.
+  int result;
+  gGtestThread->Dispatch(
+    WrapRunnableNMRet(gtest_main, argc, argv, &result), NS_DISPATCH_NORMAL);
+
+  // Here we handle the event queue for dispatches to the main thread
+  // When the GTest thread is complete it will send one more dispatch
+  // with gTestsComplete == true.
+  while (!gTestsComplete && NS_ProcessNextEvent());
+
+  gGtestThread->Shutdown();
+
   sipcc::PeerConnectionCtx::Destroy();
   delete test_utils;
 

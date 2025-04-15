@@ -36,8 +36,9 @@ public:
 public:
 
   MozNDEFRecord(JSContext* aCx, nsPIDOMWindow* aWindow, uint8_t aTnf,
-                const Uint8Array& aType, const Uint8Array& aId,
-                const Uint8Array& aPlayload);
+                const Optional<Uint8Array>& aType,
+                const Optional<Uint8Array>& aId,
+                const Optional<Uint8Array>& aPlayload);
 
   ~MozNDEFRecord();
 
@@ -46,47 +47,41 @@ public:
     return mWindow;
   }
 
-  virtual JSObject* WrapObject(JSContext* aCx,
-                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx) MOZ_OVERRIDE;
 
   static already_AddRefed<MozNDEFRecord>
-                  Constructor(const GlobalObject& aGlobal, uint8_t aTnf,
-                              const Uint8Array& aType, const Uint8Array& aId,
-                              const Uint8Array& aPayload, ErrorResult& aRv);
+  Constructor(const GlobalObject& aGlobal, uint8_t aTnf,
+              const Optional<Uint8Array>& aType,
+              const Optional<Uint8Array>& aId,
+              const Optional<Uint8Array>& aPayload, ErrorResult& aRv);
 
   uint8_t Tnf() const
   {
     return mTnf;
   }
 
-  JSObject* Type(JSContext* cx) const
+  void GetType(JSContext* cx, JS::MutableHandle<JSObject*> retval) const
   {
-    return GetTypeObject();
-  }
-  JSObject* GetTypeObject() const
-  {
-    JS::ExposeObjectToActiveJS(mType);
-    return mType;
+    if (mType) {
+      JS::ExposeObjectToActiveJS(mType);
+    }
+    retval.set(mType);
   }
 
-  JSObject* Id(JSContext* cx) const
+  void GetId(JSContext* cx, JS::MutableHandle<JSObject*> retval) const
   {
-    return GetIdObject();
-  }
-  JSObject* GetIdObject() const
-  {
-    JS::ExposeObjectToActiveJS(mId);
-    return mId;
+    if (mId) {
+      JS::ExposeObjectToActiveJS(mId);
+    }
+    retval.set(mId);
   }
 
-  JSObject* Payload(JSContext* cx) const
+  void GetPayload(JSContext* cx, JS::MutableHandle<JSObject*> retval) const
   {
-    return GetPayloadObject();
-  }
-  JSObject* GetPayloadObject() const
-  {
-    JS::ExposeObjectToActiveJS(mPayload);
-    return mPayload;
+    if (mPayload) {
+      JS::ExposeObjectToActiveJS(mPayload);
+    }
+    retval.set(mPayload);
   }
 
 private:

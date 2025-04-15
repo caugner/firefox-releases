@@ -110,6 +110,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "CharsetMenu",
   ["WebrtcUI", ["getUserMedia:request", "recording-device-events"], "chrome://browser/content/WebrtcUI.js"],
 #endif
   ["MemoryObserver", ["memory-pressure", "Memory:Dump"], "chrome://browser/content/MemoryObserver.js"],
+  ["ConsoleAPI", ["console-api-log-event"], "chrome://browser/content/ConsoleAPI.js"],
   ["FindHelper", ["FindInPage:Find", "FindInPage:Prev", "FindInPage:Next", "FindInPage:Closed", "Tab:Selected"], "chrome://browser/content/FindHelper.js"],
   ["PermissionsHelper", ["Permissions:Get", "Permissions:Clear"], "chrome://browser/content/PermissionsHelper.js"],
   ["FeedHandler", ["Feeds:Subscribe"], "chrome://browser/content/FeedHandler.js"],
@@ -131,7 +132,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "CharsetMenu",
 
 // Lazily-loaded JS modules that use observer notifications
 [
-  ["Home", ["HomeBanner:Get", "HomePanels:Get", "HomePanels:Installed", "HomePanels:Uninstalled"], "resource://gre/modules/Home.jsm"],
+  ["Home", ["HomeBanner:Get", "HomePanels:Get", "HomePanels:Authenticate", "HomePanels:RefreshView",
+            "HomePanels:Installed", "HomePanels:Uninstalled"], "resource://gre/modules/Home.jsm"],
 ].forEach(module => {
   let [name, notifications, resource] = module;
   XPCOMUtils.defineLazyModuleGetter(this, name, resource);
@@ -242,12 +244,6 @@ function resolveGeckoURI(aURI) {
     return handler.resolveURI(Services.io.newURI(aURI, null, null));
   }
   return aURI;
-}
-
-function shouldShowProgress(url) {
-  return (url != "about:home" &&
-          url != "about:privatebrowsing" &&
-          !url.startsWith("about:reader"));
 }
 
 /**
@@ -482,6 +478,9 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.openInNewTab"),
       NativeWindow.contextmenus.linkOpenableNonPrivateContext,
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_open_new_tab");
+        UITelemetry.addEvent("loadurl.1", "contextmenu", null);
+
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         ContentAreaUtils.urlSecurityCheck(url, aTarget.ownerDocument.nodePrincipal);
         BrowserApp.addTab(url, { selected: false, parentId: BrowserApp.selectedTab.id });
@@ -494,6 +493,9 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.openInPrivateTab"),
       NativeWindow.contextmenus.linkOpenableContext,
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_open_private_tab");
+        UITelemetry.addEvent("loadurl.1", "contextmenu", null);
+
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         ContentAreaUtils.urlSecurityCheck(url, aTarget.ownerDocument.nodePrincipal);
         BrowserApp.addTab(url, { selected: false, parentId: BrowserApp.selectedTab.id, isPrivate: true });
@@ -506,6 +508,8 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyLink"),
       NativeWindow.contextmenus.linkCopyableContext,
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_link");
+
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         NativeWindow.contextmenus._copyStringToDefaultClipboard(url);
       });
@@ -513,6 +517,8 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyEmailAddress"),
       NativeWindow.contextmenus.emailLinkContext,
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_email");
+
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         let emailAddr = NativeWindow.contextmenus._stripScheme(url);
         NativeWindow.contextmenus._copyStringToDefaultClipboard(emailAddr);
@@ -521,6 +527,8 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyPhoneNumber"),
       NativeWindow.contextmenus.phoneNumberLinkContext,
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_phone");
+
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         let phoneNumber = NativeWindow.contextmenus._stripScheme(url);
         NativeWindow.contextmenus._copyStringToDefaultClipboard(phoneNumber);
@@ -537,7 +545,9 @@ var BrowserApp = {
         };
       },
       icon: "drawable://ic_menu_share",
-      callback: function(aTarget) { }
+      callback: function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_link");
+      }
     });
 
     NativeWindow.contextmenus.add({
@@ -554,7 +564,9 @@ var BrowserApp = {
         };
       },
       icon: "drawable://ic_menu_share",
-      callback: function(aTarget) { }
+      callback: function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_email");
+      }
     });
 
     NativeWindow.contextmenus.add({
@@ -571,12 +583,16 @@ var BrowserApp = {
         };
       },
       icon: "drawable://ic_menu_share",
-      callback: function(aTarget) { }
+      callback: function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_phone");
+      }
     });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.addToContacts"),
       NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.emailLinkContext),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_contact_email");
+
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         sendMessageToJava({
           type: "Contact:Add",
@@ -587,6 +603,8 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.addToContacts"),
       NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.phoneNumberLinkContext),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_contact_phone");
+
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         sendMessageToJava({
           type: "Contact:Add",
@@ -597,6 +615,8 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.bookmarkLink"),
       NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.linkBookmarkableContext),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_bookmark");
+
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         let title = aTarget.textContent || aTarget.title || url;
         sendMessageToJava({
@@ -609,18 +629,21 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.playMedia"),
       NativeWindow.contextmenus.mediaContext("media-paused"),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_play");
         aTarget.play();
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.pauseMedia"),
       NativeWindow.contextmenus.mediaContext("media-playing"),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_pause");
         aTarget.pause();
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.showControls2"),
       NativeWindow.contextmenus.mediaContext("media-hidingcontrols"),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_controls_media");
         aTarget.setAttribute("controls", true);
       });
 
@@ -639,30 +662,36 @@ var BrowserApp = {
       },
       icon: "drawable://ic_menu_share",
       callback: function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_media");
       }
     });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.fullScreen"),
       NativeWindow.contextmenus.SelectorContext("video:not(:-moz-full-screen)"),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_fullscreen");
         aTarget.mozRequestFullScreen();
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.mute"),
       NativeWindow.contextmenus.mediaContext("media-unmuted"),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_mute");
         aTarget.muted = true;
       });
   
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.unmute"),
       NativeWindow.contextmenus.mediaContext("media-muted"),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_unmute");
         aTarget.muted = false;
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyImageLocation"),
       NativeWindow.contextmenus.imageLocationCopyableContext,
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_image");
+
         let url = aTarget.src;
         NativeWindow.contextmenus._copyStringToDefaultClipboard(url);
       });
@@ -685,12 +714,16 @@ var BrowserApp = {
       },
       icon: "drawable://ic_menu_share",
       menu: true,
-      callback: function(aTarget) { }
+      callback: function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_image");
+      }
     });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.saveImage"),
       NativeWindow.contextmenus.imageSaveableContext,
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_save_image");
+
         ContentAreaUtils.saveImageURL(aTarget.currentURI.spec, null, "SaveImageTitle",
                                       false, true, aTarget.ownerDocument.documentURIObject,
                                       aTarget.ownerDocument);
@@ -699,6 +732,8 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.setImageAs"),
       NativeWindow.contextmenus._disableInGuest(NativeWindow.contextmenus.imageSaveableContext),
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_background_image");
+
         let src = aTarget.src;
         sendMessageToJava({
           type: "Image:SetAs",
@@ -720,6 +755,8 @@ var BrowserApp = {
         return Strings.browser.GetStringFromName("contextmenu.saveVideo");
       }, NativeWindow.contextmenus.mediaSaveableContext,
       function(aTarget) {
+        UITelemetry.addEvent("action.1", "contextmenu", null, "web_save_media");
+
         let url = aTarget.currentSrc || aTarget.src;
         let filePickerTitleKey = (aTarget instanceof HTMLVideoElement &&
                                   (aTarget.videoWidth != 0 && aTarget.videoHeight != 0))
@@ -1170,20 +1207,6 @@ var BrowserApp = {
 #endif
       }
 
-      // Pref name translation.
-      switch (prefName) {
-#ifdef MOZ_TELEMETRY_REPORTING
-        // Telemetry pref differs based on build.
-        case Telemetry.SHARED_PREF_TELEMETRY_ENABLED:
-#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
-          prefName = "toolkit.telemetry.enabledPreRelease";
-#else
-          prefName = "toolkit.telemetry.enabled";
-#endif
-          break;
-#endif
-      }
-
       try {
         switch (Services.prefs.getPrefType(prefName)) {
           case Ci.nsIPrefBranch.PREF_BOOL:
@@ -1299,20 +1322,6 @@ var BrowserApp = {
         break;
     }
 
-    // Pref name translation.
-    switch (json.name) {
-#ifdef MOZ_TELEMETRY_REPORTING
-      // Telemetry pref differs based on build.
-      case Telemetry.SHARED_PREF_TELEMETRY_ENABLED:
-#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
-        json.name = "toolkit.telemetry.enabledPreRelease";
-#else
-        json.name = "toolkit.telemetry.enabled";
-#endif
-        break;
-#endif
-    }
-
     switch (json.type) {
       case "bool":
         Services.prefs.setBoolPref(json.name, json.value);
@@ -1339,16 +1348,6 @@ var BrowserApp = {
 
       try {
         switch (key) {
-          case "history_downloads":
-            Sanitizer.clearItem("history");
-
-            // If we're also removing downloaded files, don't clear the
-            // download history yet since it will be handled when the files are
-            // removed.
-            if (!json["downloadFiles"]) {
-              Sanitizer.clearItem("downloads");
-            }
-            break;
           case "cookies_sessions":
             Sanitizer.clearItem("cookies");
             Sanitizer.clearItem("sessions");
@@ -2072,13 +2071,6 @@ var NativeWindow = {
         if (uri)
           return uri.schemeIs("tel");
         return false;
-      }
-    },
-
-    textContext: {
-      matches: function textContext(aElement) {
-        return ((aElement instanceof Ci.nsIDOMHTMLInputElement && aElement.mozIsTextField(false))
-                || aElement instanceof Ci.nsIDOMHTMLTextAreaElement);
       }
     },
 
@@ -2930,6 +2922,7 @@ function Tab(aURL, aParams) {
   this.lastTouchedAt = Date.now();
   this._zoom = 1.0;
   this._drawZoom = 1.0;
+  this._restoreZoom = false;
   this._fixedMarginLeft = 0;
   this._fixedMarginTop = 0;
   this._fixedMarginRight = 0;
@@ -3058,10 +3051,13 @@ Tab.prototype = {
     this.browser.addEventListener("blur", this, true);
     this.browser.addEventListener("scroll", this, true);
     this.browser.addEventListener("MozScrolledAreaChanged", this, true);
-    // Note that the XBL binding is untrusted
-    this.browser.addEventListener("PluginBindingAttached", this, true, true);
     this.browser.addEventListener("pageshow", this, true);
     this.browser.addEventListener("MozApplicationManifest", this, true);
+
+    // Note that the XBL binding is untrusted
+    this.browser.addEventListener("PluginBindingAttached", this, true, true);
+    this.browser.addEventListener("VideoBindingAttached", this, true, true);
+    this.browser.addEventListener("VideoBindingCast", this, true, true);
 
     Services.obs.addObserver(this, "before-first-paint", false);
     Services.obs.addObserver(this, "after-viewport-change", false);
@@ -3227,9 +3223,12 @@ Tab.prototype = {
     this.browser.removeEventListener("blur", this, true);
     this.browser.removeEventListener("scroll", this, true);
     this.browser.removeEventListener("MozScrolledAreaChanged", this, true);
-    this.browser.removeEventListener("PluginBindingAttached", this, true);
     this.browser.removeEventListener("pageshow", this, true);
     this.browser.removeEventListener("MozApplicationManifest", this, true);
+
+    this.browser.removeEventListener("PluginBindingAttached", this, true, true);
+    this.browser.removeEventListener("VideoBindingAttached", this, true, true);
+    this.browser.removeEventListener("VideoBindingCast", this, true, true);
 
     Services.obs.removeObserver(this, "before-first-paint");
     Services.obs.removeObserver(this, "after-viewport-change");
@@ -3528,6 +3527,7 @@ Tab.prototype = {
 
     let win = this.browser.contentWindow;
     win.scrollTo(x, y);
+    this.saveSessionZoom(aViewport.zoom);
 
     this.userScrollPos.x = win.scrollX;
     this.userScrollPos.y = win.scrollY;
@@ -3577,12 +3577,13 @@ Tab.prototype = {
   getViewport: function() {
     let screenW = gScreenWidth - gViewportMargins.left - gViewportMargins.right;
     let screenH = gScreenHeight - gViewportMargins.top - gViewportMargins.bottom;
+    let zoom = this.restoredSessionZoom() || this._zoom;
 
     let viewport = {
       width: screenW,
       height: screenH,
-      cssWidth: screenW / this._zoom,
-      cssHeight: screenH / this._zoom,
+      cssWidth: screenW / zoom,
+      cssHeight: screenH / zoom,
       pageLeft: 0,
       pageTop: 0,
       pageRight: screenW,
@@ -3590,13 +3591,13 @@ Tab.prototype = {
       // We make up matching css page dimensions
       cssPageLeft: 0,
       cssPageTop: 0,
-      cssPageRight: screenW / this._zoom,
-      cssPageBottom: screenH / this._zoom,
+      cssPageRight: screenW / zoom,
+      cssPageBottom: screenH / zoom,
       fixedMarginLeft: this._fixedMarginLeft,
       fixedMarginTop: this._fixedMarginTop,
       fixedMarginRight: this._fixedMarginRight,
       fixedMarginBottom: this._fixedMarginBottom,
-      zoom: this._zoom,
+      zoom: zoom,
     };
 
     // Set the viewport offset to current scroll offset
@@ -3982,6 +3983,16 @@ Tab.prototype = {
         break;
       }
 
+      case "VideoBindingAttached": {
+        CastingApps.handleVideoBindingAttached(this, aEvent);
+        break;
+      }
+
+      case "VideoBindingCast": {
+        CastingApps.handleVideoBindingCast(this, aEvent);
+        break;
+      }
+
       case "MozApplicationManifest": {
         OfflineApps.offlineAppRequested(aEvent.originalTarget.defaultView);
         break;
@@ -4090,15 +4101,14 @@ Tab.prototype = {
 
       // Check to see if we restoring the content from a previous presentation (session)
       // since there should be no real network activity
-      let restoring = aStateFlags & Ci.nsIWebProgressListener.STATE_RESTORING;
-      let showProgress = restoring ? false : shouldShowProgress(uri);
+      let restoring = (aStateFlags & Ci.nsIWebProgressListener.STATE_RESTORING) > 0;
 
       let message = {
         type: "Content:StateChange",
         tabID: this.id,
         uri: uri,
         state: aStateFlags,
-        showProgress: showProgress,
+        restoring: restoring,
         success: success
       };
       sendMessageToJava(message);
@@ -4219,6 +4229,9 @@ Tab.prototype = {
       tabID: this.id,
     };
 
+    // Restore zoom only when moving in session history, not for new page loads.
+    this._restoreZoom = aMessage != "New";
+
     if (aParams) {
       if ("url" in aParams)
         message.url = aParams.url;
@@ -4229,6 +4242,28 @@ Tab.prototype = {
     }
 
     sendMessageToJava(message);
+  },
+
+  _getGeckoZoom: function() {
+    let res = {x: {}, y: {}};
+    let cwu = this.browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+    cwu.getResolution(res.x, res.y);
+    let zoom = res.x.value * window.devicePixelRatio;
+    return zoom;
+  },
+
+  saveSessionZoom: function(aZoom) {
+    let cwu = this.browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+    cwu.setResolution(aZoom / window.devicePixelRatio, aZoom / window.devicePixelRatio);
+  },
+
+  restoredSessionZoom: function() {
+    let cwu = this.browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+
+    if (this._restoreZoom && cwu.isResolutionSet) {
+      return this._getGeckoZoom();
+    }
+    return null;
   },
 
   OnHistoryNewEntry: function(aUri) {
@@ -4259,6 +4294,11 @@ Tab.prototype = {
   OnHistoryPurge: function(aNumEntries) {
     this._sendHistoryEvent("Purge", { numEntries: aNumEntries });
     return true;
+  },
+
+  OnHistoryReplaceEntry: function(aIndex) {
+    // we don't do anything with this, so don't propogate it
+    // for now anyway.
   },
 
   get metadata() {
@@ -4355,8 +4395,11 @@ Tab.prototype = {
     // In all of these cases, we maintain how much actual content is visible
     // within the screen width. Note that "actual content" may be different
     // with respect to CSS pixels because of the CSS viewport size changing.
-    let zoomScale = (screenW * oldBrowserWidth) / (aOldScreenWidth * viewportW);
-    let zoom = (aInitialLoad && metadata.defaultZoom) ? metadata.defaultZoom : this.clampZoom(this._zoom * zoomScale);
+    let zoom = this.restoredSessionZoom() || metadata.defaultZoom;
+    if (!zoom || !aInitialLoad) {
+      let zoomScale = (screenW * oldBrowserWidth) / (aOldScreenWidth * viewportW);
+      zoom = this.clampZoom(this._zoom * zoomScale);
+    }
     this.setResolution(zoom, false);
     this.setScrollClampingSize(zoom);
 
@@ -4492,7 +4535,8 @@ Tab.prototype = {
           // and zoom when calculating the new ones, so we need to reset these
           // things here before calling updateMetadata.
           this.setBrowserSize(kDefaultCSSViewportWidth, kDefaultCSSViewportHeight);
-          this.setResolution(gScreenWidth / this.browserWidth, false);
+          let zoom = this.restoredSessionZoom() || gScreenWidth / this.browserWidth;
+          this.setResolution(zoom, true);
           ViewportHandler.updateMetadata(this, true);
 
           // Note that if we draw without a display-port, things can go wrong. By the
@@ -4501,7 +4545,7 @@ Tab.prototype = {
           // call above does so at the end of the updateViewportSize function. As long
           // as that is happening, we don't need to do it again here.
 
-          if (contentDocument.mozSyntheticDocument) {
+          if (!this.restoredSessionZoom() && contentDocument.mozSyntheticDocument) {
             // for images, scale to fit width. this needs to happen *after* the call
             // to updateMetadata above, because that call sets the CSS viewport which
             // will affect the page size (i.e. contentDocument.body.scroll*) that we
@@ -4953,8 +4997,8 @@ var BrowserEventHandler = {
         let rect = rects[0];
         // if either width or height is zero, we don't want to move the click to the edge of the element. See bug 757208
         if (rect.width != 0 && rect.height != 0) {
-          aX = Math.min(Math.floor(rect.left + rect.width), Math.max(Math.ceil(rect.left), aX));
-          aY = Math.min(Math.floor(rect.top + rect.height), Math.max(Math.ceil(rect.top),  aY));
+          aX = Math.min(Math.ceil(rect.left + rect.width) - 1, Math.max(Math.ceil(rect.left), aX));
+          aY = Math.min(Math.ceil(rect.top + rect.height) - 1, Math.max(Math.ceil(rect.top),  aY));
         }
       }
     }
@@ -5685,12 +5729,7 @@ let HealthReportStatusListener = {
 
   PREF_TELEMETRY_ENABLED:
 #ifdef MOZ_TELEMETRY_REPORTING
-    // Telemetry pref differs based on build.
-#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
-    "toolkit.telemetry.enabledPreRelease",
-#else
     "toolkit.telemetry.enabled",
-#endif
 #else
     null,
 #endif
@@ -5907,7 +5946,10 @@ var XPInstallObserver = {
         if (!tab)
           return;
 
-        let host = installInfo.originatingURI.host;
+        let host = null;
+        if (installInfo.originatingURI) {
+          host = installInfo.originatingURI.host;
+        }
 
         let brandShortName = Strings.brand.GetStringFromName("brandShortName");
         let notificationName, buttons, message;
@@ -5935,7 +5977,23 @@ var XPInstallObserver = {
           }
         } else {
           notificationName = "xpinstall";
-          message = strings.formatStringFromName("xpinstallPromptWarning2", [brandShortName, host], 2);
+          if (host) {
+            // We have a host which asked for the install.
+            message = strings.formatStringFromName("xpinstallPromptWarning2", [brandShortName, host], 2);
+          } else {
+            // Without a host we address the add-on as the initiator of the install.
+            let addon = null;
+            if (installInfo.installs.length > 0) {
+              addon = installInfo.installs[0].name;
+            }
+            if (addon) {
+              // We have an addon name, show the regular message.
+              message = strings.formatStringFromName("xpinstallPromptWarningLocal", [brandShortName, addon], 2);
+            } else {
+              // We don't have an addon name, show an alternative message.
+              message = strings.formatStringFromName("xpinstallPromptWarningDirect", [brandShortName], 1);
+            }
+          }
 
           buttons = [{
             label: strings.GetStringFromName("xpinstallPromptAllowButton"),
@@ -6468,119 +6526,6 @@ var IndexedDB = {
   }
 };
 
-var ClipboardHelper = {
-  // Recorded so search with option can be removed/replaced when default engine changed.
-  _searchMenuItem: -1,
-
-  get clipboardHelper() {
-    delete this.clipboardHelper;
-    return this.clipboardHelper = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper);
-  },
-
-  get clipboard() {
-    delete this.clipboard;
-    return this.clipboard = Cc["@mozilla.org/widget/clipboard;1"].getService(Ci.nsIClipboard);
-  },
-
-  copy: function(aElement, aX, aY) {
-    if (SelectionHandler.isSelectionActive()) {
-      SelectionHandler.copySelection();
-      return;
-    }
-
-    let selectionStart = aElement.selectionStart;
-    let selectionEnd = aElement.selectionEnd;
-    if (selectionStart != selectionEnd) {
-      string = aElement.value.slice(selectionStart, selectionEnd);
-      this.clipboardHelper.copyString(string, aElement.ownerDocument);
-    } else {
-      this.clipboardHelper.copyString(aElement.value, aElement.ownerDocument);
-    }
-  },
-
-  paste: function(aElement) {
-    if (!aElement || !(aElement instanceof Ci.nsIDOMNSEditableElement))
-      return;
-    let target = aElement.QueryInterface(Ci.nsIDOMNSEditableElement);
-    target.editor.paste(Ci.nsIClipboard.kGlobalClipboard);
-    target.focus();  
-  },
-
-  inputMethod: function(aElement) {
-    Cc["@mozilla.org/imepicker;1"].getService(Ci.nsIIMEPicker).show();
-  },
-
-  getCopyContext: function(isCopyAll) {
-    return {
-      matches: function(aElement, aX, aY) {
-        // Do not show "Copy All" for normal non-input text selection.
-        if (!isCopyAll && SelectionHandler.isSelectionActive())
-          return true;
-
-        if (NativeWindow.contextmenus.textContext.matches(aElement)) {
-          // Don't include "copy" for password fields.
-          // mozIsTextField(true) tests for only non-password fields.
-          if (aElement instanceof Ci.nsIDOMHTMLInputElement && !aElement.mozIsTextField(true))
-            return false;
-
-          let selectionStart = aElement.selectionStart;
-          let selectionEnd = aElement.selectionEnd;
-          if (selectionStart != selectionEnd)
-            return true;
-
-          if (isCopyAll && aElement.textLength > 0)
-            return true;
-        }
-        return false;
-      }
-    };
-  },
-
-  selectAllContext: {
-    matches: function selectAllContextMatches(aElement, aX, aY) {
-      if (SelectionHandler.isSelectionActive())
-        return true;
-
-      if (NativeWindow.contextmenus.textContext.matches(aElement))
-        return (aElement.selectionStart > 0 || aElement.selectionEnd < aElement.textLength);
-
-      return false;
-    }
-  },
-
-  shareContext: {
-    matches: function shareContextMatches(aElement, aX, aY) {
-      return SelectionHandler.isSelectionActive();
-    }
-  },
-
-  searchWithContext: {
-    matches: function searchWithContextMatches(aElement, aX, aY) {
-      return SelectionHandler.isSelectionActive();
-    }
-  },
-
-  pasteContext: {
-    matches: function(aElement) {
-      if (NativeWindow.contextmenus.textContext.matches(aElement)) {
-        let flavors = ["text/unicode"];
-        return ClipboardHelper.clipboard.hasDataMatchingFlavors(flavors, flavors.length, Ci.nsIClipboard.kGlobalClipboard);
-      }
-      return false;
-    }
-  },
-
-  cutContext: {
-    matches: function(aElement) {
-      let copyctx = ClipboardHelper.getCopyContext(false);
-      if (NativeWindow.contextmenus.textContext.matches(aElement)) {
-        return copyctx.matches(aElement);
-      }
-      return false;
-    }
-  }
-};
-
 var CharacterEncoding = {
   _charsets: [],
 
@@ -6907,6 +6852,7 @@ var SearchEngines = {
       icon: "drawable://ab_add_search_engine",
       selector: filter,
       action: function(aElement) {
+        UITelemetry.addEvent("action.1", "actionbar", null, "add_search_engine");
         SearchEngines.addEngine(aElement);
       }
     });
@@ -7262,7 +7208,7 @@ var WebappsUI = {
          manifestURL: aData.app.manifestURL,
          origin: origin
       }, (data) => {
-        let profilePath = JSON.parse(data).profile;
+        let profilePath = data.profile;
         if (!profilePath)
           return;
 
@@ -7539,8 +7485,6 @@ var RemoteDebugger = {
 };
 
 var Telemetry = {
-  SHARED_PREF_TELEMETRY_ENABLED: "datareporting.telemetry.enabled",
-
   addData: function addData(aHistogramId, aValue) {
     let histogram = Services.telemetry.getHistogramById(aHistogramId);
     histogram.add(aValue);
@@ -7578,26 +7522,29 @@ let Reader = {
   pageAction: {
     readerModeCallback: function(){
       sendMessageToJava({
-        gecko: {
-          type: "Reader:Click",
-        }
+        type: "Reader:Click",
       });
     },
 
     readerModeActiveCallback: function(){
       sendMessageToJava({
-        gecko: {
-          type: "Reader:LongClick",
-        }
+        type: "Reader:LongClick",
       });
+
+      // Create a relative timestamp for telemetry
+      let uptime = Date.now() - Services.startup.getStartupInfo().linkerInitialized;
+      UITelemetry.addEvent("save.1", "pageaction", uptime, "reader");
     },
   },
 
   updatePageAction: function(tab) {
-    if(this.pageAction.id) {
+    if (this.pageAction.id) {
       NativeWindow.pageactions.remove(this.pageAction.id);
       delete this.pageAction.id;
     }
+
+    // Create a relative timestamp for telemetry
+    let uptime = Date.now() - Services.startup.getStartupInfo().linkerInitialized;
 
     if (tab.readerActive) {
       this.pageAction.id = NativeWindow.pageactions.add({
@@ -7606,7 +7553,17 @@ let Reader = {
         clickCallback: this.pageAction.readerModeCallback,
         important: true
       });
-    } else if (tab.readerEnabled) {
+
+      // Only start a reader session if the viewer is in the foreground. We do
+      // not track background reader viewers.
+      UITelemetry.startSession("reader.1", uptime);
+      return;
+    }
+
+    // Only stop a reader session if the foreground viewer is not visible.
+    UITelemetry.stopSession("reader.1", "", uptime);
+
+    if (tab.readerEnabled) {
       this.pageAction.id = NativeWindow.pageactions.add({
         title: Strings.browser.GetStringFromName("readerMode.enter"),
         icon: "drawable://reader",
@@ -8178,6 +8135,10 @@ var ExternalApps = {
       icon: "drawable://icon_openinapp",
 
       clickCallback: () => {
+        // Create a relative timestamp for telemetry
+        let uptime = Date.now() - Services.startup.getStartupInfo().linkerInitialized;
+        UITelemetry.addEvent("launch.1", "pageaction", uptime, "helper");
+
         if (apps.length > 1) {
           // Use the HelperApps prompt here to filter out any Http handlers
           HelperApps.prompt(apps, {

@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#include "insanity/pkix.h"
+#include "pkix/pkix.h"
 #include "ExtendedValidation.h"
 #include "NSSCertDBTrustDomain.h"
 #include "cert.h"
@@ -17,9 +17,9 @@
 #include "prerror.h"
 #include "sslerr.h"
 
-// ScopedXXX in this file are insanity::pkix::ScopedXXX, not
+// ScopedXXX in this file are mozilla::pkix::ScopedXXX, not
 // mozilla::ScopedXXX.
-using namespace insanity::pkix;
+using namespace mozilla::pkix;
 using namespace mozilla::psm;
 
 #ifdef PR_LOGGING
@@ -65,7 +65,7 @@ InitCertVerifierLog()
 }
 
 #if 0
-// Once we migrate to insanity::pkix or change the overridable error
+// Once we migrate to mozilla::pkix or change the overridable error
 // logic this will become unnecesary.
 static SECStatus
 insertErrorIntoVerifyLog(CERTCertificate* cert, const PRErrorCode err,
@@ -195,25 +195,20 @@ destroyCertListThatShouldNotExist(CERTCertList** certChain)
 
 static SECStatus
 BuildCertChainForOneKeyUsage(TrustDomain& trustDomain, CERTCertificate* cert,
-                             PRTime time, KeyUsages ku1, KeyUsages ku2,
-                             KeyUsages ku3, SECOidTag eku,
+                             PRTime time, KeyUsage ku1, KeyUsage ku2,
+                             KeyUsage ku3, SECOidTag eku,
                              SECOidTag requiredPolicy,
                              const SECItem* stapledOCSPResponse,
                              ScopedCERTCertList& builtChain)
 {
-  PR_ASSERT(ku1);
-  PR_ASSERT(ku2);
-
   SECStatus rv = BuildCertChain(trustDomain, cert, time, MustBeEndEntity,
                                 ku1, eku, requiredPolicy, stapledOCSPResponse,
                                 builtChain);
-  if (rv != SECSuccess && ku2 &&
-      PR_GetError() == SEC_ERROR_INADEQUATE_KEY_USAGE) {
+  if (rv != SECSuccess && PR_GetError() == SEC_ERROR_INADEQUATE_KEY_USAGE) {
     rv = BuildCertChain(trustDomain, cert, time, MustBeEndEntity,
                         ku2, eku, requiredPolicy, stapledOCSPResponse,
                         builtChain);
-    if (rv != SECSuccess && ku3 &&
-        PR_GetError() == SEC_ERROR_INADEQUATE_KEY_USAGE) {
+    if (rv != SECSuccess && PR_GetError() == SEC_ERROR_INADEQUATE_KEY_USAGE) {
       rv = BuildCertChain(trustDomain, cert, time, MustBeEndEntity,
                           ku3, eku, requiredPolicy, stapledOCSPResponse,
                           builtChain);
@@ -226,17 +221,17 @@ BuildCertChainForOneKeyUsage(TrustDomain& trustDomain, CERTCertificate* cert,
 }
 
 SECStatus
-CertVerifier::InsanityVerifyCert(
+CertVerifier::MozillaPKIXVerifyCert(
                    CERTCertificate* cert,
                    const SECCertificateUsage usage,
                    const PRTime time,
                    void* pinArg,
                    const Flags flags,
       /*optional*/ const SECItem* stapledOCSPResponse,
-  /*optional out*/ insanity::pkix::ScopedCERTCertList* validationChain,
+  /*optional out*/ mozilla::pkix::ScopedCERTCertList* validationChain,
   /*optional out*/ SECOidTag* evOidPolicy)
 {
-  PR_LOG(gCertVerifierLog, PR_LOG_DEBUG, ("Top of InsanityVerifyCert\n"));
+  PR_LOG(gCertVerifierLog, PR_LOG_DEBUG, ("Top of MozillaPKIXVerifyCert\n"));
 
   PR_ASSERT(cert);
   PR_ASSERT(usage == certificateUsageSSLServer || !(flags & FLAG_MUST_BE_EV));
@@ -270,7 +265,7 @@ CertVerifier::InsanityVerifyCert(
   // TODO(bug 915931): Pass in stapled OCSP response in all calls to
   //                   BuildCertChain.
 
-  insanity::pkix::ScopedCERTCertList builtChain;
+  mozilla::pkix::ScopedCERTCertList builtChain;
   switch (usage) {
     case certificateUsageSSLClient: {
       // XXX: We don't really have a trust bit for SSL client authentication so
@@ -278,7 +273,7 @@ CertVerifier::InsanityVerifyCert(
       NSSCertDBTrustDomain trustDomain(trustEmail, ocspFetching, mOCSPCache,
                                        pinArg);
       rv = BuildCertChain(trustDomain, cert, time, MustBeEndEntity,
-                          KU_DIGITAL_SIGNATURE,
+                          KeyUsage::digitalSignature,
                           SEC_OID_EXT_KEY_USAGE_CLIENT_AUTH,
                           SEC_OID_X509_ANY_POLICY,
                           stapledOCSPResponse, builtChain);
@@ -302,9 +297,9 @@ CertVerifier::InsanityVerifyCert(
                         : NSSCertDBTrustDomain::FetchOCSPForEV,
                       mOCSPCache, pinArg);
         rv = BuildCertChainForOneKeyUsage(trustDomain, cert, time,
-                                          KU_DIGITAL_SIGNATURE, // ECDHE/DHE
-                                          KU_KEY_ENCIPHERMENT, // RSA
-                                          KU_KEY_AGREEMENT, // ECDH/DH
+                                          KeyUsage::digitalSignature, // ECDHE/DHE
+                                          KeyUsage::keyEncipherment, // RSA
+                                          KeyUsage::keyAgreement,    // (EC)DH
                                           SEC_OID_EXT_KEY_USAGE_SERVER_AUTH,
                                           evPolicy, stapledOCSPResponse,
                                           builtChain);
@@ -328,9 +323,9 @@ CertVerifier::InsanityVerifyCert(
       NSSCertDBTrustDomain trustDomain(trustSSL, ocspFetching, mOCSPCache,
                                        pinArg);
       rv = BuildCertChainForOneKeyUsage(trustDomain, cert, time,
-                                        KU_DIGITAL_SIGNATURE, // ECDHE/DHE
-                                        KU_KEY_ENCIPHERMENT, // RSA
-                                        KU_KEY_AGREEMENT, // ECDH/DH
+                                        KeyUsage::digitalSignature, // (EC)DHE
+                                        KeyUsage::keyEncipherment, // RSA
+                                        KeyUsage::keyAgreement, // (EC)DH
                                         SEC_OID_EXT_KEY_USAGE_SERVER_AUTH,
                                         SEC_OID_X509_ANY_POLICY,
                                         stapledOCSPResponse, builtChain);
@@ -341,7 +336,7 @@ CertVerifier::InsanityVerifyCert(
       NSSCertDBTrustDomain trustDomain(trustSSL, ocspFetching, mOCSPCache,
                                        pinArg);
       rv = BuildCertChain(trustDomain, cert, time, MustBeCA,
-                          KU_KEY_CERT_SIGN,
+                          KeyUsage::keyCertSign,
                           SEC_OID_EXT_KEY_USAGE_SERVER_AUTH,
                           SEC_OID_X509_ANY_POLICY,
                           stapledOCSPResponse, builtChain);
@@ -352,7 +347,7 @@ CertVerifier::InsanityVerifyCert(
       NSSCertDBTrustDomain trustDomain(trustEmail, ocspFetching, mOCSPCache,
                                        pinArg);
       rv = BuildCertChain(trustDomain, cert, time, MustBeEndEntity,
-                          KU_DIGITAL_SIGNATURE,
+                          KeyUsage::digitalSignature,
                           SEC_OID_EXT_KEY_USAGE_EMAIL_PROTECT,
                           SEC_OID_X509_ANY_POLICY,
                           stapledOCSPResponse, builtChain);
@@ -365,13 +360,18 @@ CertVerifier::InsanityVerifyCert(
       // based on the result of the verification(s).
       NSSCertDBTrustDomain trustDomain(trustEmail, ocspFetching, mOCSPCache,
                                        pinArg);
-      rv = BuildCertChainForOneKeyUsage(trustDomain, cert, time,
-                                        KU_KEY_ENCIPHERMENT, // RSA
-                                        KU_KEY_AGREEMENT, // ECDH/DH
-                                        0,
-                                        SEC_OID_EXT_KEY_USAGE_EMAIL_PROTECT,
-                                        SEC_OID_X509_ANY_POLICY,
-                                        stapledOCSPResponse, builtChain);
+      rv = BuildCertChain(trustDomain, cert, time, MustBeEndEntity,
+                          KeyUsage::keyEncipherment, // RSA
+                          SEC_OID_EXT_KEY_USAGE_EMAIL_PROTECT,
+                          SEC_OID_X509_ANY_POLICY,
+                          stapledOCSPResponse, builtChain);
+      if (rv != SECSuccess && PR_GetError() == SEC_ERROR_INADEQUATE_KEY_USAGE) {
+        rv = BuildCertChain(trustDomain, cert, time, MustBeEndEntity,
+                            KeyUsage::keyAgreement, // ECDH/DH
+                            SEC_OID_EXT_KEY_USAGE_EMAIL_PROTECT,
+                            SEC_OID_X509_ANY_POLICY,
+                            stapledOCSPResponse, builtChain);
+      }
       break;
     }
 
@@ -379,7 +379,7 @@ CertVerifier::InsanityVerifyCert(
       NSSCertDBTrustDomain trustDomain(trustObjectSigning, ocspFetching,
                                        mOCSPCache, pinArg);
       rv = BuildCertChain(trustDomain, cert, time, MustBeEndEntity,
-                          KU_DIGITAL_SIGNATURE,
+                          KeyUsage::digitalSignature,
                           SEC_OID_EXT_KEY_USAGE_CODE_SIGN,
                           SEC_OID_X509_ANY_POLICY,
                           stapledOCSPResponse, builtChain);
@@ -392,16 +392,16 @@ CertVerifier::InsanityVerifyCert(
       // by the implementation of window.crypto.importCertificates and in the
       // certificate viewer UI. Because we don't know what trust bit is
       // interesting, we just try them all.
-      insanity::pkix::EndEntityOrCA endEntityOrCA;
-      insanity::pkix::KeyUsages keyUsage;
+      mozilla::pkix::EndEntityOrCA endEntityOrCA;
+      mozilla::pkix::KeyUsage keyUsage;
       SECOidTag eku;
       if (usage == certificateUsageVerifyCA) {
         endEntityOrCA = MustBeCA;
-        keyUsage = KU_KEY_CERT_SIGN;
+        keyUsage = KeyUsage::keyCertSign;
         eku = SEC_OID_UNKNOWN;
       } else {
         endEntityOrCA = MustBeEndEntity;
-        keyUsage = KU_DIGITAL_SIGNATURE;
+        keyUsage = KeyUsage::digitalSignature;
         eku = SEC_OID_OCSP_RESPONDER;
       }
 
@@ -416,7 +416,7 @@ CertVerifier::InsanityVerifyCert(
         rv = BuildCertChain(emailTrust, cert, time, endEntityOrCA, keyUsage,
                             eku, SEC_OID_X509_ANY_POLICY,
                             stapledOCSPResponse, builtChain);
-        if (rv == SECFailure && SEC_ERROR_UNKNOWN_ISSUER) {
+        if (rv == SECFailure && PR_GetError() == SEC_ERROR_UNKNOWN_ISSUER) {
           NSSCertDBTrustDomain objectSigningTrust(trustObjectSigning,
                                                   ocspFetching, mOCSPCache,
                                                   pinArg);
@@ -452,10 +452,10 @@ CertVerifier::VerifyCert(CERTCertificate* cert,
                          /*optional out*/ SECOidTag* evOidPolicy,
                          /*optional out*/ CERTVerifyLog* verifyLog)
 {
-  if (mImplementation == insanity) {
-    return InsanityVerifyCert(cert, usage, time, pinArg, flags,
-                              stapledOCSPResponse, validationChain,
-                              evOidPolicy);
+  if (mImplementation == mozillapkix) {
+    return MozillaPKIXVerifyCert(cert, usage, time, pinArg, flags,
+                                 stapledOCSPResponse, validationChain,
+                                 evOidPolicy);
   }
 
   if (!cert)
@@ -803,7 +803,7 @@ CertVerifier::VerifySSLServerCert(CERTCertificate* peerCert,
                      /*optional*/ void* pinarg,
                                   const char* hostname,
                                   bool saveIntermediatesInPermanentDatabase,
-                 /*optional out*/ insanity::pkix::ScopedCERTCertList* certChainOut,
+                 /*optional out*/ mozilla::pkix::ScopedCERTCertList* certChainOut,
                  /*optional out*/ SECOidTag* evOidPolicy)
 {
   PR_ASSERT(peerCert);

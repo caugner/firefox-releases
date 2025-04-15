@@ -61,9 +61,9 @@ public:
   {
     return mHeight;
   }
-  JSObject* Data(JSContext* cx) const
+  void GetData(JSContext* cx, JS::MutableHandle<JSObject*> aData) const
   {
-    return GetDataObject();
+    aData.set(GetDataObject());
   }
   JSObject* GetDataObject() const
   {
@@ -71,7 +71,7 @@ public:
     return mData;
   }
 
-  JSObject* WrapObject(JSContext* cx, JS::Handle<JSObject*> scope);
+  JSObject* WrapObject(JSContext* cx);
 
 private:
   void HoldData();

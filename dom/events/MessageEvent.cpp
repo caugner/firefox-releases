@@ -57,27 +57,28 @@ MessageEvent::~MessageEvent()
 }
 
 JSObject*
-MessageEvent::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
+MessageEvent::WrapObject(JSContext* aCx)
 {
-  return mozilla::dom::MessageEventBinding::Wrap(aCx, aScope, this);
+  return mozilla::dom::MessageEventBinding::Wrap(aCx, this);
 }
 
 NS_IMETHODIMP
 MessageEvent::GetData(JSContext* aCx, JS::MutableHandle<JS::Value> aData)
 {
   ErrorResult rv;
-  aData.set(GetData(aCx, rv));
+  GetData(aCx, aData, rv);
   return rv.ErrorCode();
 }
 
-JS::Value
-MessageEvent::GetData(JSContext* aCx, ErrorResult& aRv)
+void
+MessageEvent::GetData(JSContext* aCx, JS::MutableHandle<JS::Value> aData,
+                      ErrorResult& aRv)
 {
-  JS::Rooted<JS::Value> data(aCx, mData);
-  if (!JS_WrapValue(aCx, &data)) {
+  JS::ExposeValueToActiveJS(mData);
+  aData.set(mData);
+  if (!JS_WrapValue(aCx, aData)) {
     aRv.Throw(NS_ERROR_FAILURE);
   }
-  return data;
 }
 
 NS_IMETHODIMP
@@ -203,5 +204,7 @@ NS_NewDOMMessageEvent(nsIDOMEvent** aInstancePtrResult,
                       WidgetEvent* aEvent) 
 {
   MessageEvent* it = new MessageEvent(aOwner, aPresContext, aEvent);
-  return CallQueryInterface(it, aInstancePtrResult);
+  NS_ADDREF(it);
+  *aInstancePtrResult = static_cast<Event*>(it);
+  return NS_OK;
 }

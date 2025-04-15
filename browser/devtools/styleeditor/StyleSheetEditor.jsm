@@ -172,14 +172,16 @@ StyleSheetEditor.prototype = {
     let relatedSheet = this.styleSheet.relatedStyleSheet;
 
     let path;
-    var uri = NetUtil.newURI(relatedSheet.href);
+    let href = removeQuery(relatedSheet.href);
+    let uri = NetUtil.newURI(href);
 
     if (uri.scheme == "file") {
-      var file = uri.QueryInterface(Ci.nsIFileURL).file;
+      let file = uri.QueryInterface(Ci.nsIFileURL).file;
       path = file.path;
     }
     else if (this.savedFile) {
-      let origUri = NetUtil.newURI(this.styleSheet.href);
+      let origHref = removeQuery(this.styleSheet.href);
+      let origUri = NetUtil.newURI(origHref);
       path = findLinkedFilePath(uri, origUri, this.savedFile);
     }
     else {
@@ -209,7 +211,8 @@ StyleSheetEditor.prototype = {
   fetchSource: function(callback) {
     this.styleSheet.getText().then((longStr) => {
       longStr.string().then((source) => {
-        this._state.text = prettifyCSS(source);
+        let ruleCount = this.styleSheet.ruleCount;
+        this._state.text = prettifyCSS(source, ruleCount);
         this.sourceLoaded = true;
 
         callback(source);
@@ -568,10 +571,16 @@ const LINE_SEPARATOR = CURRENT_OS === "WINNT" ? "\r\n" : "\n";
  * @return string
  *         Prettified CSS source
  */
-function prettifyCSS(text)
+function prettifyCSS(text, ruleCount)
 {
   // remove initial and terminating HTML comments and surrounding whitespace
   text = text.replace(/(?:^\s*<!--[\r\n]*)|(?:\s*-->\s*$)/g, "");
+
+  // don't attempt to prettify if there's more than one line per rule.
+  let lineCount = text.split("\n").length - 1;
+  if (ruleCount !== null && lineCount >= ruleCount) {
+    return text;
+  }
 
   let parts = [];    // indented parts
   let partStart = 0; // start offset of currently parsed part
@@ -699,4 +708,16 @@ function findUnsharedBranches(origUri, uri) {
     branch: uri,
     origBranch: origUri
   };
+}
+
+/**
+ * Remove the query string from a url.
+ *
+ * @param  {string} href
+ *         Url to remove query string from
+ * @return {string}
+ *         Url without query string
+ */
+function removeQuery(href) {
+  return href.replace(/\?.*/, "");
 }

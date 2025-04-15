@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* vim:set ts=4 sw=4 et cindent: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -306,18 +307,18 @@ nsSocketInputStream::OnSocketReady(nsresult condition)
         callback->OnInputStreamReady(this);
 }
 
-NS_IMPL_QUERY_INTERFACE2(nsSocketInputStream,
-                         nsIInputStream,
-                         nsIAsyncInputStream)
+NS_IMPL_QUERY_INTERFACE(nsSocketInputStream,
+                        nsIInputStream,
+                        nsIAsyncInputStream)
 
-NS_IMETHODIMP_(nsrefcnt)
+NS_IMETHODIMP_(MozExternalRefCountType)
 nsSocketInputStream::AddRef()
 {
     ++mReaderRefCnt;
     return mTransport->AddRef();
 }
 
-NS_IMETHODIMP_(nsrefcnt)
+NS_IMETHODIMP_(MozExternalRefCountType)
 nsSocketInputStream::Release()
 {
     if (--mReaderRefCnt == 0)
@@ -569,18 +570,18 @@ nsSocketOutputStream::OnSocketReady(nsresult condition)
         callback->OnOutputStreamReady(this);
 }
 
-NS_IMPL_QUERY_INTERFACE2(nsSocketOutputStream,
-                         nsIOutputStream,
-                         nsIAsyncOutputStream)
+NS_IMPL_QUERY_INTERFACE(nsSocketOutputStream,
+                        nsIOutputStream,
+                        nsIAsyncOutputStream)
 
-NS_IMETHODIMP_(nsrefcnt)
+NS_IMETHODIMP_(MozExternalRefCountType)
 nsSocketOutputStream::AddRef()
 {
     ++mWriterRefCnt;
     return mTransport->AddRef();
 }
 
-NS_IMETHODIMP_(nsrefcnt)
+NS_IMETHODIMP_(MozExternalRefCountType)
 nsSocketOutputStream::Release()
 {
     if (--mWriterRefCnt == 0)
@@ -764,6 +765,7 @@ nsSocketTransport::nsSocketTransport()
     , mFD(MOZ_THIS_IN_INITIALIZER_LIST())
     , mFDref(0)
     , mFDconnected(false)
+    , mSocketTransportService(gSocketTransportService)
     , mInput(MOZ_THIS_IN_INITIALIZER_LIST())
     , mOutput(MOZ_THIS_IN_INITIALIZER_LIST())
     , mQoSBits(0x00)
@@ -773,8 +775,6 @@ nsSocketTransport::nsSocketTransport()
     , mKeepaliveProbeCount(-1)
 {
     SOCKET_LOG(("creating nsSocketTransport @%p\n", this));
-
-    NS_ADDREF(gSocketTransportService);
 
     mTimeouts[TIMEOUT_CONNECT]    = UINT16_MAX; // no timeout
     mTimeouts[TIMEOUT_READ_WRITE] = UINT16_MAX; // no timeout
@@ -791,9 +791,6 @@ nsSocketTransport::~nsSocketTransport()
             PL_strfree(mTypes[i]);
         free(mTypes);
     }
- 
-    nsSocketTransportService *serv = gSocketTransportService;
-    NS_RELEASE(serv); // nulls argument
 }
 
 nsresult
@@ -961,7 +958,7 @@ nsSocketTransport::PostEvent(uint32_t type, nsresult status, nsISupports *param)
     if (!event)
         return NS_ERROR_OUT_OF_MEMORY;
 
-    return gSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
+    return mSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
 }
 
 void
@@ -1175,14 +1172,31 @@ nsSocketTransport::InitiateSocket()
 {
     SOCKET_LOG(("nsSocketTransport::InitiateSocket [this=%p]\n", this));
 
+    static bool crashOnNonLocalConnections = !!getenv("MOZ_DISABLE_NONLOCAL_CONNECTIONS");
+
     nsresult rv;
+    bool isLocal;
+    IsLocal(&isLocal);
 
     if (gIOService->IsOffline()) {
-        bool isLocal;
-
-        IsLocal(&isLocal);
         if (!isLocal)
             return NS_ERROR_OFFLINE;
+    } else if (!isLocal) {
+        if (NS_SUCCEEDED(mCondition) &&
+            crashOnNonLocalConnections &&
+            !(IsIPAddrAny(&mNetAddr) || IsIPAddrLocal(&mNetAddr))) {
+            nsAutoCString ipaddr;
+            nsRefPtr<nsNetAddr> netaddr = new nsNetAddr(&mNetAddr);
+            netaddr->GetAddress(ipaddr);
+            fprintf_stderr(stderr,
+                           "Non-local network connections are disabled and a connection "
+                           "attempt to %s (%s) was made.  You should only access hostnames "
+                           "available via the test networking proxy (if running mochitests) "
+                           "or from a test-specific httpd.js server (if running xpcshell tests)."
+                           " Browser services should be disabled or redirected to a local server.\n",
+                           mHost.get(), ipaddr.get());
+            MOZ_CRASH("Attempting to connect to non-local address!");
+        }
     }
 
     // Hosts/Proxy Hosts that are Local IP Literals should not be speculatively
@@ -1219,19 +1233,19 @@ nsSocketTransport::InitiateSocket()
     // FIFO ordering (which wouldn't even be that valuable IMO).  see bug
     // 194402 for more info.
     //
-    if (!gSocketTransportService->CanAttachSocket()) {
+    if (!mSocketTransportService->CanAttachSocket()) {
         nsCOMPtr<nsIRunnable> event =
                 new nsSocketEvent(this, MSG_RETRY_INIT_SOCKET);
         if (!event)
             return NS_ERROR_OUT_OF_MEMORY;
-        return gSocketTransportService->NotifyWhenCanAttachSocket(event);
+        return mSocketTransportService->NotifyWhenCanAttachSocket(event);
     }
 
     //
     // if we already have a connected socket, then just attach and return.
     //
     if (mFD.IsInitialized()) {
-        rv = gSocketTransportService->AttachSocket(mFD, this);
+        rv = mSocketTransportService->AttachSocket(mFD, this);
         if (NS_SUCCEEDED(rv))
             mAttached = true;
         return rv;
@@ -1273,7 +1287,7 @@ nsSocketTransport::InitiateSocket()
     // The Windows default of 8KB is too small and as of vista sp1, autotuning
     // only applies to receive window
     int32_t sndBufferSize;
-    gSocketTransportService->GetSendBufferSize(&sndBufferSize);
+    mSocketTransportService->GetSendBufferSize(&sndBufferSize);
     if (sndBufferSize > 0) {
         opt.option = PR_SockOpt_SendBufferSize;
         opt.value.send_buffer_size = sndBufferSize;
@@ -1287,7 +1301,7 @@ nsSocketTransport::InitiateSocket()
     }
 
     // inform socket transport about this newly created socket...
-    rv = gSocketTransportService->AttachSocket(fd, this);
+    rv = mSocketTransportService->AttachSocket(fd, this);
     if (NS_FAILED(rv)) {
         PR_Close(fd);
         return rv;
@@ -1464,7 +1478,7 @@ nsSocketTransport::RecoverFromError()
     // Retry if that connection is made.
     if (!tryAgain) {
         bool autodialEnabled;
-        gSocketTransportService->GetAutodialEnabled(&autodialEnabled);
+        mSocketTransportService->GetAutodialEnabled(&autodialEnabled);
         if (autodialEnabled) {
           tryAgain = nsNativeConnectionHelper::OnConnectionFailed(
                        NS_ConvertUTF8toUTF16(SocketHost()).get());
@@ -1928,15 +1942,15 @@ nsSocketTransport::IsLocal(bool *aIsLocal)
 //-----------------------------------------------------------------------------
 // xpcom api
 
-NS_IMPL_ISUPPORTS4(nsSocketTransport,
-                   nsISocketTransport,
-                   nsITransport,
-                   nsIDNSListener,
-                   nsIClassInfo)
-NS_IMPL_CI_INTERFACE_GETTER3(nsSocketTransport,
-                             nsISocketTransport,
-                             nsITransport,
-                             nsIDNSListener)
+NS_IMPL_ISUPPORTS(nsSocketTransport,
+                  nsISocketTransport,
+                  nsITransport,
+                  nsIDNSListener,
+                  nsIClassInfo)
+NS_IMPL_CI_INTERFACE_GETTER(nsSocketTransport,
+                            nsISocketTransport,
+                            nsITransport,
+                            nsIDNSListener)
 
 NS_IMETHODIMP
 nsSocketTransport::OpenInputStream(uint32_t flags,
@@ -1966,7 +1980,7 @@ nsSocketTransport::OpenInputStream(uint32_t flags,
         if (NS_FAILED(rv)) return rv;
 
         // async copy from socket to pipe
-        rv = NS_AsyncCopy(&mInput, pipeOut, gSocketTransportService,
+        rv = NS_AsyncCopy(&mInput, pipeOut, mSocketTransportService,
                           NS_ASYNCCOPY_VIA_WRITESEGMENTS, segsize);
         if (NS_FAILED(rv)) return rv;
 
@@ -2012,7 +2026,7 @@ nsSocketTransport::OpenOutputStream(uint32_t flags,
         if (NS_FAILED(rv)) return rv;
 
         // async copy from socket to pipe
-        rv = NS_AsyncCopy(pipeIn, &mOutput, gSocketTransportService,
+        rv = NS_AsyncCopy(pipeIn, &mOutput, mSocketTransportService,
                           NS_ASYNCCOPY_VIA_READSEGMENTS, segsize);
         if (NS_FAILED(rv)) return rv;
 
@@ -2437,11 +2451,11 @@ nsSocketTransport::OnKeepaliveEnabledPrefChange(bool aEnabled)
 nsresult
 nsSocketTransport::SetKeepaliveEnabledInternal(bool aEnable)
 {
-    MOZ_ASSERT(mKeepaliveIdleTimeS > 0 ||
+    MOZ_ASSERT(mKeepaliveIdleTimeS > 0 &&
                mKeepaliveIdleTimeS <= kMaxTCPKeepIdle);
-    MOZ_ASSERT(mKeepaliveRetryIntervalS > 0 ||
+    MOZ_ASSERT(mKeepaliveRetryIntervalS > 0 &&
                mKeepaliveRetryIntervalS <= kMaxTCPKeepIntvl);
-    MOZ_ASSERT(mKeepaliveProbeCount > 0 ||
+    MOZ_ASSERT(mKeepaliveProbeCount > 0 &&
                mKeepaliveProbeCount <= kMaxTCPKeepCount);
 
     PRFileDescAutoLock fd(this);
@@ -2451,7 +2465,7 @@ nsSocketTransport::SetKeepaliveEnabledInternal(bool aEnable)
 
     // Only enable if keepalives are globally enabled, but ensure other
     // options are set correctly on the fd.
-    bool enable = aEnable && gSocketTransportService->IsKeepaliveEnabled();
+    bool enable = aEnable && mSocketTransportService->IsKeepaliveEnabled();
     nsresult rv = fd.SetKeepaliveVals(enable,
                                       mKeepaliveIdleTimeS,
                                       mKeepaliveRetryIntervalS,
@@ -2483,21 +2497,21 @@ nsSocketTransport::EnsureKeepaliveValsAreInitialized()
     nsresult rv = NS_OK;
     int32_t val = -1;
     if (mKeepaliveIdleTimeS == -1) {
-        rv = gSocketTransportService->GetKeepaliveIdleTime(&val);
+        rv = mSocketTransportService->GetKeepaliveIdleTime(&val);
         if (NS_WARN_IF(NS_FAILED(rv))) {
             return rv;
         }
         mKeepaliveIdleTimeS = val;
     }
     if (mKeepaliveRetryIntervalS == -1) {
-        rv = gSocketTransportService->GetKeepaliveRetryInterval(&val);
+        rv = mSocketTransportService->GetKeepaliveRetryInterval(&val);
         if (NS_WARN_IF(NS_FAILED(rv))) {
             return rv;
         }
         mKeepaliveRetryIntervalS = val;
     }
     if (mKeepaliveProbeCount == -1) {
-        rv = gSocketTransportService->GetKeepaliveProbeCount(&val);
+        rv = mSocketTransportService->GetKeepaliveProbeCount(&val);
         if (NS_WARN_IF(NS_FAILED(rv))) {
             return rv;
         }
@@ -2534,7 +2548,7 @@ nsSocketTransport::SetKeepaliveEnabled(bool aEnable)
                 this, aEnable ? "enabled" : "disabled",
                 mKeepaliveIdleTimeS, mKeepaliveRetryIntervalS,
                 mKeepaliveProbeCount,
-                gSocketTransportService->IsKeepaliveEnabled() ?
+                mSocketTransportService->IsKeepaliveEnabled() ?
                 "enabled" : "disabled"));
 
     // Set mKeepaliveEnabled here so that state is maintained; it is possible
@@ -2583,7 +2597,7 @@ nsSocketTransport::SetKeepaliveVals(int32_t aIdleTime,
     nsresult rv = NS_OK;
     if (mKeepaliveProbeCount == -1) {
         int32_t val = -1;
-        nsresult rv = gSocketTransportService->GetKeepaliveProbeCount(&val);
+        nsresult rv = mSocketTransportService->GetKeepaliveProbeCount(&val);
         if (NS_WARN_IF(NS_FAILED(rv))) {
             return rv;
         }

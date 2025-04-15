@@ -10,7 +10,6 @@
 
 #include "mozilla/storage.h"
 #include "nsComponentManagerUtils.h"
-#include "nsEventDispatcher.h"
 #include "nsJSUtils.h"
 #include "nsThreadUtils.h"
 
@@ -547,18 +546,18 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(IDBCursor)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(IDBCursor)
 
 JSObject*
-IDBCursor::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
+IDBCursor::WrapObject(JSContext* aCx)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
   switch (mType) {
     case OBJECTSTORE:
     case INDEXOBJECT:
-      return IDBCursorWithValueBinding::Wrap(aCx, aScope, this);
+      return IDBCursorWithValueBinding::Wrap(aCx, this);
 
     case OBJECTSTOREKEY:
     case INDEXKEY:
-      return IDBCursorBinding::Wrap(aCx, aScope, this);
+      return IDBCursorBinding::Wrap(aCx, this);
 
     default:
       MOZ_ASSUME_UNREACHABLE("Bad type!");
@@ -611,14 +610,16 @@ IDBCursor::GetSource(OwningIDBObjectStoreOrIDBIndex& aSource) const
   }
 }
 
-JS::Value
-IDBCursor::GetKey(JSContext* aCx, ErrorResult& aRv)
+void
+IDBCursor::GetKey(JSContext* aCx, JS::MutableHandle<JS::Value> aResult,
+                  ErrorResult& aRv)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(!mKey.IsUnset() || !mHaveValue);
 
   if (!mHaveValue) {
-    return JSVAL_VOID;
+    aResult.setUndefined();
+    return;
   }
 
   if (!mHaveCachedKey) {
@@ -628,21 +629,26 @@ IDBCursor::GetKey(JSContext* aCx, ErrorResult& aRv)
     }
 
     aRv = mKey.ToJSVal(aCx, mCachedKey);
-    ENSURE_SUCCESS(aRv, JSVAL_VOID);
+    if (NS_WARN_IF(aRv.Failed())) {
+      return;
+    }
 
     mHaveCachedKey = true;
   }
 
-  return mCachedKey;
+  JS::ExposeValueToActiveJS(mCachedKey);
+  aResult.set(mCachedKey);
 }
 
-JS::Value
-IDBCursor::GetPrimaryKey(JSContext* aCx, ErrorResult& aRv)
+void
+IDBCursor::GetPrimaryKey(JSContext* aCx, JS::MutableHandle<JS::Value> aResult,
+                         ErrorResult& aRv)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
   if (!mHaveValue) {
-    return JSVAL_VOID;
+    aResult.setUndefined();
+    return;
   }
 
   if (!mHaveCachedPrimaryKey) {
@@ -656,22 +662,27 @@ IDBCursor::GetPrimaryKey(JSContext* aCx, ErrorResult& aRv)
     MOZ_ASSERT(!key.IsUnset());
 
     aRv = key.ToJSVal(aCx, mCachedPrimaryKey);
-    ENSURE_SUCCESS(aRv, JSVAL_VOID);
+    if (NS_WARN_IF(aRv.Failed())) {
+      return;
+    }
 
     mHaveCachedPrimaryKey = true;
   }
 
-  return mCachedPrimaryKey;
+  JS::ExposeValueToActiveJS(mCachedPrimaryKey);
+  aResult.set(mCachedPrimaryKey);
 }
 
-JS::Value
-IDBCursor::GetValue(JSContext* aCx, ErrorResult& aRv)
+void
+IDBCursor::GetValue(JSContext* aCx, JS::MutableHandle<JS::Value> aResult,
+                    ErrorResult& aRv)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(mType == OBJECTSTORE || mType == INDEXOBJECT);
 
   if (!mHaveValue) {
-    return JSVAL_VOID;
+    aResult.setUndefined();
+    return;
   }
 
   if (!mHaveCachedValue) {
@@ -683,7 +694,7 @@ IDBCursor::GetValue(JSContext* aCx, ErrorResult& aRv)
     JS::Rooted<JS::Value> val(aCx);
     if (!IDBObjectStore::DeserializeValue(aCx, mCloneReadInfo, &val)) {
       aRv.Throw(NS_ERROR_DOM_DATA_CLONE_ERR);
-      return JSVAL_VOID;
+      return;
     }
 
     mCloneReadInfo.mCloneBuffer.clear();
@@ -692,7 +703,8 @@ IDBCursor::GetValue(JSContext* aCx, ErrorResult& aRv)
     mHaveCachedValue = true;
   }
 
-  return mCachedValue;
+  JS::ExposeValueToActiveJS(mCachedValue);
+  aResult.set(mCachedValue);
 }
 
 void

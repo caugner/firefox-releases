@@ -169,9 +169,9 @@ DataTransfer::Constructor(const GlobalObject& aGlobal,
 }
 
 JSObject*
-DataTransfer::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
+DataTransfer::WrapObject(JSContext* aCx)
 {
-  return DataTransferBinding::Wrap(aCx, aScope, this);
+  return DataTransferBinding::Wrap(aCx, this);
 }
 
 NS_IMETHODIMP
@@ -642,28 +642,27 @@ DataTransfer::MozGetDataAt(const nsAString& aFormat, uint32_t aIndex,
   return NS_OK;
 }
 
-JS::Value
+void
 DataTransfer::MozGetDataAt(JSContext* aCx, const nsAString& aFormat,
-                           uint32_t aIndex, mozilla::ErrorResult& aRv)
+                           uint32_t aIndex,
+                           JS::MutableHandle<JS::Value> aRetval,
+                           mozilla::ErrorResult& aRv)
 {
   nsCOMPtr<nsIVariant> data;
   aRv = MozGetDataAt(aFormat, aIndex, getter_AddRefs(data));
   if (aRv.Failed()) {
-    return JS::UndefinedValue();
+    return;
   }
 
   if (!data) {
-    return JS::NullValue();
+    return;
   }
 
   JS::Rooted<JS::Value> result(aCx);
-  JS::Rooted<JSObject*> scope(aCx, GetWrapper());
-  if (!VariantToJsval(aCx, scope, data, &result)) {
+  if (!VariantToJsval(aCx, data, aRetval)) {
     aRv = NS_ERROR_FAILURE;
-    return JS::UndefinedValue();
+    return;
   }
-
-  return result;
 }
 
 NS_IMETHODIMP

@@ -23,7 +23,9 @@ const OCSPHost sOCSPHosts[] =
 {
   { "ocsp-stapling-good.example.com", ORTGood, nullptr },
   { "ocsp-stapling-revoked.example.com", ORTRevoked, nullptr },
+  { "ocsp-stapling-revoked-old.example.com", ORTRevokedOld, nullptr },
   { "ocsp-stapling-unknown.example.com", ORTUnknown, nullptr },
+  { "ocsp-stapling-unknown-old.example.com", ORTUnknownOld, nullptr },
   { "ocsp-stapling-good-other.example.com", ORTGoodOtherCert, "ocspOtherEndEntity" },
   { "ocsp-stapling-good-other-ca.example.com", ORTGoodOtherCA, "otherCA" },
   { "ocsp-stapling-expired.example.com", ORTExpired, nullptr },
@@ -37,6 +39,19 @@ const OCSPHost sOCSPHosts[] =
   { "ocsp-stapling-unauthorized.example.com", ORTUnauthorized, nullptr },
   { "ocsp-stapling-with-intermediate.example.com", ORTGood, "ocspEEWithIntermediate" },
   { "ocsp-stapling-bad-signature.example.com", ORTBadSignature, nullptr },
+  { "ocsp-stapling-skip-responseBytes.example.com", ORTSkipResponseBytes, nullptr },
+  { "ocsp-stapling-critical-extension.example.com", ORTCriticalExtension, nullptr },
+  { "ocsp-stapling-noncritical-extension.example.com", ORTNoncriticalExtension, nullptr },
+  { "ocsp-stapling-empty-extensions.example.com", ORTEmptyExtensions, nullptr },
+  { "ocsp-stapling-delegated-included.example.com", ORTDelegatedIncluded, "delegatedSigner" },
+  { "ocsp-stapling-delegated-included-last.example.com", ORTDelegatedIncludedLast, "delegatedSigner" },
+  { "ocsp-stapling-delegated-missing.example.com", ORTDelegatedMissing, "delegatedSigner" },
+  { "ocsp-stapling-delegated-missing-multiple.example.com", ORTDelegatedMissingMultiple, "delegatedSigner" },
+  { "ocsp-stapling-delegated-no-extKeyUsage.example.com", ORTDelegatedIncluded, "invalidDelegatedSignerNoExtKeyUsage" },
+  { "ocsp-stapling-delegated-from-intermediate.example.com", ORTDelegatedIncluded, "invalidDelegatedSignerFromIntermediate" },
+  { "ocsp-stapling-delegated-keyUsage-crlSigning.example.com", ORTDelegatedIncluded, "invalidDelegatedSignerKeyUsageCrlSigning" },
+  { "ocsp-stapling-delegated-wrong-extKeyUsage.example.com", ORTDelegatedIncluded, "invalidDelegatedSignerWrongExtKeyUsage" },
+  { "ocsp-stapling-ancient-valid.example.com", ORTAncientAlmostExpired, nullptr},
   { nullptr, ORTNull, nullptr }
 };
 

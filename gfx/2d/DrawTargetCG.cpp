@@ -3,7 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "BorrowedContext.h"
+#include "DataSurfaceHelpers.h"
 #include "DrawTargetCG.h"
+#include "Logging.h"
 #include "SourceSurfaceCG.h"
 #include "Rect.h"
 #include "ScaledFontMac.h"
@@ -13,6 +15,7 @@
 #include "MacIOSurface.h"
 #include "FilterNodeSoftware.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/Types.h" // for decltype
 #include "mozilla/FloatingPoint.h"
 
 using namespace std;
@@ -26,11 +29,6 @@ namespace mozilla {
 namespace gfx {
 
 static CGRect RectToCGRect(Rect r)
-{
-  return CGRectMake(r.x, r.y, r.width, r.height);
-}
-
-static CGRect IntRectToCGRect(IntRect r)
 {
   return CGRectMake(r.x, r.y, r.width, r.height);
 }
@@ -234,7 +232,11 @@ GetRetainedImageFromSourceSurface(SourceSurface *aSurface)
 TemporaryRef<SourceSurface>
 DrawTargetCG::OptimizeSourceSurface(SourceSurface *aSurface) const
 {
-  return nullptr;
+  if (aSurface->GetType() == SurfaceType::COREGRAPHICS_IMAGE ||
+      aSurface->GetType() == SurfaceType::COREGRAPHICS_CGCONTEXT) {
+    return aSurface;
+  }
+  return aSurface->GetDataSurface();
 }
 
 class UnboundnessFixer
@@ -245,11 +247,14 @@ class UnboundnessFixer
   public:
     UnboundnessFixer() : mCg(nullptr) {}
 
-    CGContextRef Check(CGContextRef baseCg, CompositionOp blend)
+    CGContextRef Check(CGContextRef baseCg, CompositionOp blend, const Rect* maskBounds = nullptr)
     {
       if (!IsOperatorBoundByMask(blend)) {
         mClipBounds = CGContextGetClipBoundingBox(baseCg);
-        if (CGRectIsEmpty(mClipBounds)) {
+        // If we're entirely clipped out or if the drawing operation covers the entire clip then
+        // we don't need to create a temporary surface.
+        if (CGRectIsEmpty(mClipBounds) ||
+            (maskBounds && maskBounds->Contains(CGRectToRect(mClipBounds)))) {
           return baseCg;
         }
 
@@ -297,33 +302,48 @@ DrawTargetCG::DrawSurface(SourceSurface *aSurface,
 
   CGContextSetBlendMode(mCg, ToBlendMode(aDrawOptions.mCompositionOp));
   UnboundnessFixer fixer;
-  CGContextRef cg = fixer.Check(mCg, aDrawOptions.mCompositionOp);
+  CGContextRef cg = fixer.Check(mCg, aDrawOptions.mCompositionOp, &aDest);
   CGContextSetAlpha(cg, aDrawOptions.mAlpha);
   CGContextSetShouldAntialias(cg, aDrawOptions.mAntialiasMode != AntialiasMode::NONE);
 
   CGContextConcatCTM(cg, GfxMatrixToCGAffineTransform(mTransform));
-  CGImageRef image = GetRetainedImageFromSourceSurface(aSurface);
-
-  /* we have two options here:
-   *  - create a subimage -- this is slower
-   *  - fancy things with clip and different dest rects */
-  CGImageRef subimage = CGImageCreateWithImageInRect(image, RectToCGRect(aSource));
-  CGImageRelease(image);
-
-  CGContextScaleCTM(cg, 1, -1);
-
-  CGRect flippedRect = CGRectMake(aDest.x, -(aDest.y + aDest.height),
-                                  aDest.width, aDest.height);
 
   CGContextSetInterpolationQuality(cg, InterpolationQualityFromFilter(aSurfOptions.mFilter));
 
-  CGContextDrawImage(cg, flippedRect, subimage);
+  CGImageRef image = GetRetainedImageFromSourceSurface(aSurface);
+
+  if (aSurfOptions.mFilter == Filter::POINT) {
+    CGImageRef subimage = CGImageCreateWithImageInRect(image, RectToCGRect(aSource));
+    CGImageRelease(image);
+
+    CGContextScaleCTM(cg, 1, -1);
+
+    CGRect flippedRect = CGRectMake(aDest.x, -(aDest.y + aDest.height),
+                                    aDest.width, aDest.height);
+
+    CGContextDrawImage(cg, flippedRect, subimage);
+    CGImageRelease(subimage);
+  } else {
+    CGRect destRect = CGRectMake(aDest.x, aDest.y, aDest.width, aDest.height);
+    CGContextClipToRect(cg, destRect);
+
+    float xScale = aSource.width / aDest.width;
+    float yScale = aSource.height / aDest.height;
+    CGContextTranslateCTM(cg, aDest.x - aSource.x / xScale, aDest.y - aSource.y / yScale);
+
+    CGRect adjustedDestRect = CGRectMake(0, 0, CGImageGetWidth(image) / xScale,
+                                         CGImageGetHeight(image) / yScale);
+
+    CGContextTranslateCTM(cg, 0, CGRectGetHeight(adjustedDestRect));
+    CGContextScaleCTM(cg, 1, -1);
+
+    CGContextDrawImage(cg, adjustedDestRect, image);
+    CGImageRelease(image);
+  }
 
   fixer.Fix(mCg);
 
   CGContextRestoreGState(mCg);
-
-  CGImageRelease(subimage);
 }
 
 TemporaryRef<FilterNode>
@@ -845,7 +865,7 @@ DrawTargetCG::FillRect(const Rect &aRect,
   CGContextSaveGState(mCg);
 
   UnboundnessFixer fixer;
-  CGContextRef cg = fixer.Check(mCg, aDrawOptions.mCompositionOp);
+  CGContextRef cg = fixer.Check(mCg, aDrawOptions.mCompositionOp, &aRect);
   CGContextSetAlpha(mCg, aDrawOptions.mAlpha);
   CGContextSetShouldAntialias(cg, aDrawOptions.mAntialiasMode != AntialiasMode::NONE);
   CGContextSetBlendMode(mCg, ToBlendMode(aDrawOptions.mCompositionOp));
@@ -1211,34 +1231,32 @@ DrawTargetCG::CopySurface(SourceSurface *aSurface,
       aSurface->GetType() == SurfaceType::DATA) {
     CGImageRef image = GetRetainedImageFromSourceSurface(aSurface);
 
-    /* we have two options here:
-     *  - create a subimage -- this is slower
-     *  - fancy things with clip and different dest rects */
-    CGImageRef subimage = CGImageCreateWithImageInRect(image, IntRectToCGRect(aSourceRect));
-    CGImageRelease(image);
     // XXX: it might be more efficient for us to do the copy directly if we have access to the bits
 
     CGContextSaveGState(mCg);
 
     // CopySurface ignores the clip, so we need to use private API to temporarily reset it
     CGContextResetClip(mCg);
+    CGRect destRect = CGRectMake(aDestination.x, aDestination.y,
+                                 aSourceRect.width, aSourceRect.height);
+    CGContextClipToRect(mCg, destRect);
+
     CGContextSetBlendMode(mCg, kCGBlendModeCopy);
 
     CGContextScaleCTM(mCg, 1, -1);
 
-    CGRect flippedRect = CGRectMake(aDestination.x, -(aDestination.y + aSourceRect.height),
-                                    aSourceRect.width, aSourceRect.height);
+    CGRect flippedRect = CGRectMake(aDestination.x - aSourceRect.x, -(aDestination.y - aSourceRect.y + double(CGImageGetHeight(image))),
+                                    CGImageGetWidth(image), CGImageGetHeight(image));
 
     // Quartz seems to copy A8 surfaces incorrectly if we don't initialize them
     // to transparent first.
     if (mFormat == SurfaceFormat::A8) {
       CGContextClearRect(mCg, flippedRect);
     }
-    CGContextDrawImage(mCg, flippedRect, subimage);
+    CGContextDrawImage(mCg, flippedRect, image);
 
     CGContextRestoreGState(mCg);
-
-    CGImageRelease(subimage);
+    CGImageRelease(image);
   }
 }
 
@@ -1285,6 +1303,7 @@ DrawTargetCG::Init(BackendType aType,
       // 32767 is the maximum size supported by cairo
       // we clamp to that to make it easier to interoperate
       aSize.width > 32767 || aSize.height > 32767) {
+    gfxWarning() << "Failed to Init() DrawTargetCG because of bad size.";
     mColorSpace = nullptr;
     mCg = nullptr;
     return false;
@@ -1297,9 +1316,17 @@ DrawTargetCG::Init(BackendType aType,
 
   if (aData == nullptr && aType != BackendType::COREGRAPHICS_ACCELERATED) {
     // XXX: Currently, Init implicitly clears, that can often be a waste of time
-    mData.Realloc(aStride * aSize.height);
+    size_t bufLen = BufferSizeFromStrideAndHeight(aStride, aSize.height);
+    if (bufLen == 0) {
+      mColorSpace = nullptr;
+      mCg = nullptr;
+      return false;
+    }
+    static_assert(sizeof(decltype(mData[0])) == 1,
+                  "mData.Realloc() takes an object count, so its objects must be 1-byte sized if we use bufLen");
+    mData.Realloc(/* actually an object count */ bufLen);
     aData = static_cast<unsigned char*>(mData);
-    memset(aData, 0, aStride * aSize.height);
+    memset(aData, 0, bufLen);
   }
 
   mSize = aSize;

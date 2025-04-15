@@ -94,8 +94,7 @@ public:
 
   bool TrimTrailingWhiteSpace();
 
-  void InlineDirAlignFrames(nsRect& aLineBounds, bool aIsLastLine,
-                             int32_t aFrameCount);
+  void InlineDirAlignFrames(nsLineBox* aLine, bool aIsLastLine);
 
   /**
    * Handle all the relative positioning in the line, compute the
@@ -529,8 +528,8 @@ protected:
 
   void PushFrame(nsIFrame* aFrame);
 
-  void ApplyStartMargin(PerFrameData* pfd,
-                        nsHTMLReflowState& aReflowState);
+  void AllowForStartMargin(PerFrameData* pfd,
+                           nsHTMLReflowState& aReflowState);
 
   bool CanPlaceFrame(PerFrameData* pfd,
                        bool aNotSafeToBreak,

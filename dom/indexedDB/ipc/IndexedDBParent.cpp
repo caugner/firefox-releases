@@ -408,7 +408,8 @@ IndexedDBDatabaseParent::HandleRequestEvent(nsIDOMEvent* aEvent,
   AutoSafeJSContext cx;
 
   ErrorResult error;
-  JS::Rooted<JS::Value> result(cx, mOpenRequest->GetResult(cx, error));
+  JS::Rooted<JS::Value> result(cx);
+  mOpenRequest->GetResult(cx, &result, error);
   ENSURE_SUCCESS(error, error.ErrorCode());
 
   MOZ_ASSERT(!JSVAL_IS_PRIMITIVE(result));
@@ -2248,7 +2249,7 @@ IndexedDBDeleteDatabaseRequestParent::SetOpenRequest(
  * WeakEventListener
  ******************************************************************************/
 
- NS_IMPL_ISUPPORTS1(WeakEventListenerBase, nsIDOMEventListener)
+ NS_IMPL_ISUPPORTS(WeakEventListenerBase, nsIDOMEventListener)
 
  NS_IMETHODIMP
  WeakEventListenerBase::HandleEvent(nsIDOMEvent* aEvent)

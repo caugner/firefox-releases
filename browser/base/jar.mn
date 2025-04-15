@@ -59,6 +59,9 @@ browser.jar:
         content/browser/aboutaccounts/images/graphic_sync_intro.png           (content/aboutaccounts/images/graphic_sync_intro.png)
         content/browser/aboutaccounts/images/graphic_sync_intro@2x.png        (content/aboutaccounts/images/graphic_sync_intro@2x.png)
 
+        content/browser/certerror/aboutCertError.xhtml     (content/aboutcerterror/aboutCertError.xhtml)
+        content/browser/certerror/aboutCertError.css       (content/aboutcerterror/aboutCertError.css)
+
         content/browser/aboutRobots-icon.png          (content/aboutRobots-icon.png)
         content/browser/aboutRobots-widget-left.png   (content/aboutRobots-widget-left.png)
         content/browser/aboutSocialError.xhtml        (content/aboutSocialError.xhtml)
@@ -70,6 +73,9 @@ browser.jar:
 *       content/browser/browser-tabPreviews.xml       (content/browser-tabPreviews.xml)
 *       content/browser/chatWindow.xul                (content/chatWindow.xul)
         content/browser/content.js                    (content/content.js)
+        content/browser/fonts/ClearSans-Regular.woff  (content/fonts/ClearSans-Regular.woff)
+        content/browser/fonts/FiraSans-Regular.woff   (content/fonts/FiraSans-Regular.woff)
+        content/browser/fonts/FiraSans-Light.woff     (content/fonts/FiraSans-Light.woff)
         content/browser/newtab/newTab.xul             (content/newtab/newTab.xul)
 *       content/browser/newtab/newTab.js              (content/newtab/newTab.js)
         content/browser/newtab/newTab.css             (content/newtab/newTab.css)

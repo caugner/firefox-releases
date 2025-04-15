@@ -56,9 +56,9 @@ RtspControllerParent::Destroy()
 
 NS_IMPL_ADDREF(RtspControllerParent)
 NS_IMPL_RELEASE_WITH_DESTROY(RtspControllerParent, Destroy())
-NS_IMPL_QUERY_INTERFACE2(RtspControllerParent,
-                         nsIInterfaceRequestor,
-                         nsIStreamingProtocolListener)
+NS_IMPL_QUERY_INTERFACE(RtspControllerParent,
+                        nsIInterfaceRequestor,
+                        nsIStreamingProtocolListener)
 
 RtspControllerParent::RtspControllerParent()
   : mIPCOpen(true)
@@ -81,8 +81,10 @@ RtspControllerParent::ActorDestroy(ActorDestroyReason why)
   mIPCOpen = false;
 
   NS_ENSURE_TRUE_VOID(mController);
-  mController->Stop();
-  mController = nullptr;
+  if (mController) {
+    mController->Stop();
+    mController = nullptr;
+  }
 }
 
 bool
@@ -283,6 +285,9 @@ RtspControllerParent::OnDisconnected(uint8_t index,
   LOG(("RtspControllerParent::OnDisconnected() for track %d reason = 0x%x", index, reason));
   if (!mIPCOpen || !SendOnDisconnected(index, reason)) {
     return NS_ERROR_FAILURE;
+  }
+  if (mController) {
+    mController = nullptr;
   }
   return NS_OK;
 }

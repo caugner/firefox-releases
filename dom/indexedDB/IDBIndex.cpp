@@ -13,7 +13,6 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ipc/Blob.h"
 #include "mozilla/storage.h"
-#include "nsEventDispatcher.h"
 #include "nsThreadUtils.h"
 #include "xpcpublic.h"
 
@@ -822,29 +821,35 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(IDBIndex)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(IDBIndex)
 
 JSObject*
-IDBIndex::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
+IDBIndex::WrapObject(JSContext* aCx)
 {
-  return IDBIndexBinding::Wrap(aCx, aScope, this);
+  return IDBIndexBinding::Wrap(aCx, this);
 }
 
-JS::Value
-IDBIndex::GetKeyPath(JSContext* aCx, ErrorResult& aRv)
+void
+IDBIndex::GetKeyPath(JSContext* aCx, JS::MutableHandle<JS::Value> aResult,
+                     ErrorResult& aRv)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 
   if (!JSVAL_IS_VOID(mCachedKeyPath)) {
-    return mCachedKeyPath;
+    JS::ExposeValueToActiveJS(mCachedKeyPath);
+    aResult.set(mCachedKeyPath);
+    return;
   }
 
   aRv = GetKeyPath().ToJSVal(aCx, mCachedKeyPath);
-  ENSURE_SUCCESS(aRv, JSVAL_VOID);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return;
+  }
 
   if (JSVAL_IS_GCTHING(mCachedKeyPath)) {
     mozilla::HoldJSObjects(this);
     mRooted = true;
   }
 
-  return mCachedKeyPath;
+  JS::ExposeValueToActiveJS(mCachedKeyPath);
+  aResult.set(mCachedKeyPath);
 }
 
 already_AddRefed<IDBRequest>

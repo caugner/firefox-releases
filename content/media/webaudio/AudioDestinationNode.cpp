@@ -8,6 +8,7 @@
 #include "mozilla/dom/AudioDestinationNodeBinding.h"
 #include "mozilla/Preferences.h"
 #include "AudioChannelAgent.h"
+#include "AudioChannelService.h"
 #include "AudioNodeEngine.h"
 #include "AudioNodeStream.h"
 #include "MediaStreamGraph.h"
@@ -125,6 +126,7 @@ public:
 
     AutoPushJSContext cx(context->GetJSContext());
     if (!cx) {
+
       return;
     }
     JSAutoRequest ar(cx);
@@ -145,6 +147,18 @@ public:
         new OfflineAudioCompletionEvent(context, nullptr, nullptr);
     event->InitEvent(renderedBuffer);
     context->DispatchTrustedEvent(event);
+  }
+
+  virtual size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE
+  {
+    size_t amount = AudioNodeEngine::SizeOfExcludingThis(aMallocSizeOf);
+    amount += mInputChannels.SizeOfExcludingThis(aMallocSizeOf);
+    return amount;
+  }
+
+  virtual size_t SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE
+  {
+    return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
   }
 
 private:
@@ -188,6 +202,11 @@ public:
     VOLUME,
   };
 
+  virtual size_t SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE
+  {
+    return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
+  }
+
 private:
   float mVolume;
 };
@@ -197,8 +216,8 @@ static bool UseAudioChannelService()
   return Preferences::GetBool("media.useAudioChannelService");
 }
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_1(AudioDestinationNode, AudioNode,
-                                     mAudioChannelAgent)
+NS_IMPL_CYCLE_COLLECTION_INHERITED(AudioDestinationNode, AudioNode,
+                                   mAudioChannelAgent)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(AudioDestinationNode)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventListener)
@@ -211,6 +230,7 @@ NS_IMPL_RELEASE_INHERITED(AudioDestinationNode, AudioNode)
 
 AudioDestinationNode::AudioDestinationNode(AudioContext* aContext,
                                            bool aIsOffline,
+                                           AudioChannel aChannel,
                                            uint32_t aNumberOfChannels,
                                            uint32_t aLength,
                                            float aSampleRate)
@@ -227,7 +247,7 @@ AudioDestinationNode::AudioDestinationNode(AudioContext* aContext,
   , mExtraCurrentTimeUpdatedSinceLastStableState(false)
 {
   MediaStreamGraph* graph = aIsOffline ?
-                            MediaStreamGraph::CreateNonRealtimeInstance() :
+                            MediaStreamGraph::CreateNonRealtimeInstance(aSampleRate) :
                             MediaStreamGraph::GetInstance();
   AudioNodeEngine* engine = aIsOffline ?
                             new OfflineDestinationNodeEngine(this, aNumberOfChannels,
@@ -235,8 +255,14 @@ AudioDestinationNode::AudioDestinationNode(AudioContext* aContext,
                             static_cast<AudioNodeEngine*>(new DestinationNodeEngine(this));
 
   mStream = graph->CreateAudioNodeStream(engine, MediaStreamGraph::EXTERNAL_STREAM);
+  mStream->SetAudioChannelType(aChannel);
   mStream->AddMainThreadListener(this);
   mStream->AddAudioOutput(&gWebAudioOutputKey);
+
+  if (aChannel != AudioChannel::Normal) {
+    ErrorResult rv;
+    SetMozAudioChannelType(aChannel, rv);
+  }
 
   if (!aIsOffline && UseAudioChannelService()) {
     nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(GetOwner());
@@ -248,6 +274,21 @@ AudioDestinationNode::AudioDestinationNode(AudioContext* aContext,
 
     CreateAudioChannelAgent();
   }
+}
+
+size_t
+AudioDestinationNode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
+{
+  size_t amount = AudioNode::SizeOfExcludingThis(aMallocSizeOf);
+  // Might be useful in the future:
+  // - mAudioChannelAgent
+  return amount;
+}
+
+size_t
+AudioDestinationNode::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
+{
+  return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
 }
 
 void
@@ -339,9 +380,9 @@ AudioDestinationNode::OfflineShutdown()
 }
 
 JSObject*
-AudioDestinationNode::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
+AudioDestinationNode::WrapObject(JSContext* aCx)
 {
-  return AudioDestinationNodeBinding::Wrap(aCx, aScope, this);
+  return AudioDestinationNodeBinding::Wrap(aCx, this);
 }
 
 void
@@ -437,6 +478,11 @@ AudioDestinationNode::CheckAudioChannelPermissions(AudioChannel aValue)
     return true;
   }
 
+  // Maybe this audio channel is equal to the default one.
+  if (aValue == AudioChannelService::GetDefaultAudioChannel()) {
+    return true;
+  }
+
   nsCOMPtr<nsIPermissionManager> permissionManager =
     do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
   if (!permissionManager) {
@@ -466,40 +512,10 @@ AudioDestinationNode::CreateAudioChannelAgent()
     mAudioChannelAgent->StopPlaying();
   }
 
-  AudioChannelType type = AUDIO_CHANNEL_NORMAL;
-  switch(mAudioChannel) {
-    case AudioChannel::Normal:
-      type = AUDIO_CHANNEL_NORMAL;
-      break;
-
-    case AudioChannel::Content:
-      type = AUDIO_CHANNEL_CONTENT;
-      break;
-
-    case AudioChannel::Notification:
-      type = AUDIO_CHANNEL_NOTIFICATION;
-      break;
-
-    case AudioChannel::Alarm:
-      type = AUDIO_CHANNEL_ALARM;
-      break;
-
-    case AudioChannel::Telephony:
-      type = AUDIO_CHANNEL_TELEPHONY;
-      break;
-
-    case AudioChannel::Ringer:
-      type = AUDIO_CHANNEL_RINGER;
-      break;
-
-    case AudioChannel::Publicnotification:
-      type = AUDIO_CHANNEL_PUBLICNOTIFICATION;
-      break;
-
-  }
-
   mAudioChannelAgent = new AudioChannelAgent();
-  mAudioChannelAgent->InitWithWeakCallback(GetOwner(), type, this);
+  mAudioChannelAgent->InitWithWeakCallback(GetOwner(),
+                                           static_cast<int32_t>(mAudioChannel),
+                                           this);
 
   nsCOMPtr<nsIDocShell> docshell = do_GetInterface(GetOwner());
   if (docshell) {

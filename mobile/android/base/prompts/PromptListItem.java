@@ -56,12 +56,15 @@ public class PromptListItem {
             isParent = aObject.optBoolean("isParent") || aObject.optBoolean("menu");
         }
 
-        BitmapUtils.getDrawable(context, aObject.optString("icon"), new BitmapUtils.BitmapLoader() {
-            @Override
-            public void onBitmapFound(Drawable d) {
-                mIcon = d;
-            }
-        });
+        final String iconStr = aObject.optString("icon");
+        if (iconStr != null) {
+            BitmapUtils.getDrawable(context, iconStr, new BitmapUtils.BitmapLoader() {
+                    @Override
+                    public void onBitmapFound(Drawable d) {
+                        mIcon = d;
+                    }
+                });
+        }
     }
 
     public void setIntent(Intent i) {

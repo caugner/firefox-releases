@@ -1518,12 +1518,21 @@ gfxContext::Mask(gfxASurface *surface, const gfxPoint& offset)
 
     gfxPoint pt = surface->GetDeviceOffset();
 
-    // We clip here to bind to the mask surface bounds, see above.
-    mDT->MaskSurface(GeneralPattern(this), 
-              sourceSurf,
-              Point(offset.x - pt.x, offset.y -  pt.y),
-              DrawOptions(1.0f, CurrentState().op, CurrentState().aaMode));
+    Mask(sourceSurf, Point(offset.x - pt.x, offset.y - pt.y));
   }
+}
+
+void
+gfxContext::Mask(SourceSurface *surface, const Point& offset)
+{
+  MOZ_ASSERT(mDT);
+
+
+  // We clip here to bind to the mask surface bounds, see above.
+  mDT->MaskSurface(GeneralPattern(this),
+            surface,
+            offset,
+            DrawOptions(1.0f, CurrentState().op, CurrentState().aaMode));
 }
 
 void
@@ -2233,6 +2242,12 @@ gfxContext::GetAzureDeviceSpaceClipBounds()
   return rect;
 }
 
+Point
+gfxContext::GetDeviceOffset() const
+{
+  return CurrentState().deviceOffset;
+}
+
 Matrix
 gfxContext::GetDeviceTransform() const
 {
@@ -2259,9 +2274,21 @@ gfxContext::PushNewDT(gfxContentType content)
   clipBounds.width = std::max(1.0f, clipBounds.width);
   clipBounds.height = std::max(1.0f, clipBounds.height);
 
+  SurfaceFormat format = gfxPlatform::GetPlatform()->Optimal2DFormatForContent(content);
+
   RefPtr<DrawTarget> newDT =
     mDT->CreateSimilarDrawTarget(IntSize(int32_t(clipBounds.width), int32_t(clipBounds.height)),
-                                  gfxPlatform::GetPlatform()->Optimal2DFormatForContent(content));
+                                 format);
+
+  if (!newDT) {
+    NS_WARNING("Failed to create DrawTarget of sufficient size.");
+    newDT = mDT->CreateSimilarDrawTarget(IntSize(64, 64), format);
+
+    if (!newDT) {
+      // If even this fails.. we're most likely just out of memory!
+      NS_ABORT_OOM(BytesPerPixel(format) * 64 * 64);
+    }
+  }
 
   Save();
 

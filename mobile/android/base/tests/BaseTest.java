@@ -20,10 +20,12 @@ import org.mozilla.gecko.Element;
 import org.mozilla.gecko.FennecNativeActions;
 import org.mozilla.gecko.FennecNativeDriver;
 import org.mozilla.gecko.GeckoAppShell;
+import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.GeckoThread;
 import org.mozilla.gecko.GeckoThread.LaunchState;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.RobocopUtils;
+import org.mozilla.gecko.Tab;
 import org.mozilla.gecko.Tabs;
 
 import android.app.Activity;
@@ -55,7 +57,6 @@ import com.jayway.android.robotium.solo.Solo;
  */
 @SuppressWarnings("unchecked")
 abstract class BaseTest extends BaseRobocopTest {
-    private static final String LAUNCH_ACTIVITY_FULL_CLASSNAME = TestConstants.ANDROID_PACKAGE_NAME + ".App";
     private static final int VERIFY_URL_TIMEOUT = 2000;
     private static final int MAX_WAIT_ENABLED_TEXT_MS = 10000;
     private static final int MAX_WAIT_HOME_PAGER_HIDDEN_MS = 15000;
@@ -64,7 +65,6 @@ abstract class BaseTest extends BaseRobocopTest {
     private static final int GECKO_READY_WAIT_MS = 180000;
     public static final int MAX_WAIT_BLOCK_FOR_EVENT_DATA_MS = 90000;
 
-    private static Class<Activity> mLauncherActivityClass;
     private Activity mActivity;
     private int mPreferenceRequestID = 0;
     protected Solo mSolo;
@@ -76,6 +76,8 @@ abstract class BaseTest extends BaseRobocopTest {
     public Device mDevice;
     protected DatabaseHelper mDatabaseHelper;
     protected StringHelper mStringHelper;
+    protected int mScreenMidWidth;
+    protected int mScreenMidHeight;
 
     protected void blockForGeckoReady() {
         try {
@@ -87,18 +89,6 @@ abstract class BaseTest extends BaseRobocopTest {
         } catch (Exception e) {
             mAsserter.dumpLog("Exception in blockForGeckoReady", e);
         }
-    }
-
-    static {
-        try {
-            mLauncherActivityClass = (Class<Activity>)Class.forName(LAUNCH_ACTIVITY_FULL_CLASSNAME);
-        } catch (ClassNotFoundException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    public BaseTest() {
-        super(TARGET_PACKAGE_ID, mLauncherActivityClass);
     }
 
     @Override
@@ -151,6 +141,10 @@ abstract class BaseTest extends BaseRobocopTest {
     public void tearDown() throws Exception {
         try {
             mAsserter.endTest();
+            // request a force quit of the browser and wait for it to take effect
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Robocop:Quit", null));
+            mSolo.sleep(7000);
+            // if still running, finish activities as recommended by Robotium
             mSolo.finishOpenedActivities();
         } catch (Throwable e) {
             e.printStackTrace();
@@ -181,10 +175,8 @@ abstract class BaseTest extends BaseRobocopTest {
                 EditText urlEditText = (EditText) mSolo.getView(R.id.url_edit_text);
                 if (urlEditText.isInputMethodTarget()) {
                     return true;
-                } else {
-                    mSolo.clickOnView(urlEditText);
-                    return false;
                 }
+                return false;
             }
         }, MAX_WAIT_ENABLED_TEXT_MS);
 
@@ -243,6 +235,12 @@ abstract class BaseTest extends BaseRobocopTest {
             mAsserter.dumpLog("Exception in loadUrl", e);
             throw new RuntimeException(e);
         }
+    }
+
+    protected final void closeTab(int tabId) {
+        Tabs tabs = Tabs.getInstance();
+        Tab tab = tabs.getTab(tabId);
+        tabs.closeTab(tab);
     }
 
     public final void verifyUrl(String url) {
@@ -375,6 +373,27 @@ abstract class BaseTest extends BaseRobocopTest {
         return rc;
     }
 
+    // waitForText usually scrolls down in a view when text is not visible.
+    // For PreferenceScreens and dialogs, Solo.waitForText scrolling does not
+    // work, so we use this hack to do the same thing.
+    protected boolean waitForPreferencesText(String txt) {
+        boolean foundText = waitForText(txt);
+        if (!foundText) {
+            if ((mScreenMidWidth == 0) || (mScreenMidHeight == 0)) {
+                mScreenMidWidth = mDriver.getGeckoWidth()/2;
+                mScreenMidHeight = mDriver.getGeckoHeight()/2;
+            }
+
+            // If we don't see the item, scroll down once in case it's off-screen.
+            // Hacky way to scroll down.  solo.scroll* does not work in dialogs.
+            MotionEventHelper meh = new MotionEventHelper(getInstrumentation(), mDriver.getGeckoLeft(), mDriver.getGeckoTop());
+            meh.dragSync(mScreenMidWidth, mScreenMidHeight+100, mScreenMidWidth, mScreenMidHeight-100);
+
+            foundText = mSolo.waitForText(txt);
+        }
+        return foundText;
+    }
+
     /**
      * Wait for <text> to be visible and also be enabled/clickable.
      */
@@ -426,9 +445,8 @@ abstract class BaseTest extends BaseRobocopTest {
         if (listLength > 1) {
             for (int i = 1; i < listLength; i++) {
                 String itemName = "^" + listItems[i] + "$";
-                if (!waitForEnabledText(itemName)) {
-                    mSolo.scrollDown();
-                }
+                mAsserter.ok(waitForPreferencesText(itemName), "Waiting for and scrolling once to find item " + itemName, itemName + " found");
+                mAsserter.ok(waitForEnabledText(itemName), "Waiting for enabled text " + itemName, itemName + " option is present and enabled");
                 mSolo.clickOnText(itemName);
             }
         }
@@ -520,7 +538,10 @@ abstract class BaseTest extends BaseRobocopTest {
             }
         }, MAX_WAIT_MS);
         mAsserter.ok(success, "waiting for add tab view", "add tab view available");
+        Actions.EventExpecter pageShowExpecter = mActions.expectGeckoEvent("Content:PageShow");
         mSolo.clickOnView(mSolo.getView(R.id.add_tab));
+        pageShowExpecter.blockForEvent();
+        pageShowExpecter.unregisterListener();
     }
 
     public void addTab(String url) {

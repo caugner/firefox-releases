@@ -51,6 +51,14 @@ user_pref("toolkit.telemetry.notifiedOptOut", 999);
 user_pref("font.size.inflation.emPerLine", 0);
 user_pref("font.size.inflation.minTwips", 0);
 
+// AddonManager tests require that the experiments provider be present.
+user_pref("experiments.supported", true);
+user_pref("experiments.logging.level", "Trace");
+user_pref("experiments.logging.dump", true);
+// Point the manifest at something local so we don't risk it hitting production
+// data and installing experiments that may vary over time.
+user_pref("experiments.manifest.uri", "http://%(server)s/experiments-dummy/manifest");
+
 // Only load extensions from the application and user profile
 // AddonManager.SCOPE_PROFILE + AddonManager.SCOPE_APPLICATION
 user_pref("extensions.enabledScopes", 5);
@@ -114,6 +122,7 @@ user_pref("datareporting.policy.dataSubmissionPolicyBypassAcceptance", true);
 // Point Firefox Health Report at a local server. We don't care if it actually
 // works. It just can't hit the default production endpoint.
 user_pref("datareporting.healthreport.documentServerURI", "http://%(server)s/healthreport/");
+user_pref("datareporting.healthreport.about.reportUrl", "http://%(server)s/abouthealthreport/");
 
 // Make sure CSS error reporting is enabled for tests
 user_pref("layout.css.report_errors", true);
@@ -137,9 +146,6 @@ user_pref("dom.gamepad.enabled", true);
 user_pref("dom.gamepad.non_standard_events.enabled", true);
 
 // Enable Web Audio legacy APIs
-user_pref("media.webaudio.legacy.AudioBufferSourceNode", true);
-user_pref("media.webaudio.legacy.AudioContext", true);
-user_pref("media.webaudio.legacy.AudioParam", true);
 user_pref("media.webaudio.legacy.BiquadFilterNode", true);
 user_pref("media.webaudio.legacy.PannerNode", true);
 user_pref("media.webaudio.legacy.OscillatorNode", true);
@@ -169,6 +175,12 @@ user_pref("browser.webapps.testing", true);
 // Disable android snippets
 user_pref("browser.snippets.enabled", false);
 user_pref("browser.snippets.syncPromo.enabled", false);
+
+// Disable useragent updates.
+user_pref("general.useragent.updates.enabled", false);
+
+// Disable webapp updates.  Yes, it is supposed to be an integer.
+user_pref("browser.webapps.checkForUpdates", 0);
 
 // Do not turn HTTP cache v2 for our infra tests (some tests are failing)
 user_pref("browser.cache.use_new_backend_temp", false);

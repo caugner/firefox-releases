@@ -27,6 +27,12 @@ class FileReaderSync MOZ_FINAL
 {
   NS_INLINE_DECL_REFCOUNTING(FileReaderSync)
 
+private:
+  // Private destructor, to discourage deletion outside of Release():
+  ~FileReaderSync()
+  {
+  }
+
   nsresult ConvertStream(nsIInputStream *aStream, const char *aCharset,
                          nsAString &aResult);
 
@@ -34,11 +40,12 @@ public:
   static already_AddRefed<FileReaderSync>
   Constructor(const GlobalObject& aGlobal, ErrorResult& aRv);
 
-  JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope);
+  JSObject* WrapObject(JSContext* aCx);
 
-  JSObject* ReadAsArrayBuffer(JSContext* aCx, JS::Handle<JSObject*> aScopeObj,
-                              JS::Handle<JSObject*> aBlob,
-                              ErrorResult& aRv);
+  void ReadAsArrayBuffer(JSContext* aCx, JS::Handle<JSObject*> aScopeObj,
+                         JS::Handle<JSObject*> aBlob,
+                         JS::MutableHandle<JSObject*> aRetval,
+                         ErrorResult& aRv);
   void ReadAsBinaryString(JS::Handle<JSObject*> aBlob, nsAString& aResult,
                           ErrorResult& aRv);
   void ReadAsText(JS::Handle<JSObject*> aBlob,

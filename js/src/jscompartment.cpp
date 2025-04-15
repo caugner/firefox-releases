@@ -53,12 +53,10 @@ JSCompartment::JSCompartment(Zone *zone, const JS::CompartmentOptions &options =
     objectMetadataCallback(nullptr),
     lastAnimationTime(0),
     regExps(runtime_),
-    typeReprs(runtime_),
     globalWriteBarriered(false),
     propertyTree(thisForCtor()),
     selfHostingScriptSource(nullptr),
     gcIncomingGrayPointers(nullptr),
-    gcLiveArrayBuffers(nullptr),
     gcWeakMapList(nullptr),
     debugModeBits(runtime_->debugMode ? DebugFromC : 0),
     rngState(0),
@@ -111,11 +109,11 @@ JSCompartment::init(JSContext *cx)
     if (!regExps.init(cx))
         return false;
 
-    if (!typeReprs.init())
-        return false;
-
     enumerators = NativeIterator::allocateSentinel(cx);
     if (!enumerators)
+        return false;
+
+    if (!savedStacks_.init())
         return false;
 
     return debuggees.init(0);
@@ -182,20 +180,6 @@ JSCompartment::ensureJitCompartmentExists(JSContext *cx)
     return true;
 }
 #endif
-
-static bool
-WrapForSameCompartment(JSContext *cx, MutableHandleObject obj, const JSWrapObjectCallbacks *cb)
-{
-    JS_ASSERT(cx->compartment() == obj->compartment());
-    if (!cb->sameCompartmentWrap)
-        return true;
-
-    RootedObject wrapped(cx, cb->sameCompartmentWrap(cx, obj));
-    if (!wrapped)
-        return false;
-    obj.set(wrapped);
-    return true;
-}
 
 #ifdef JSGC_GENERATIONAL
 
@@ -289,12 +273,13 @@ JSCompartment::wrap(JSContext *cx, JSString **strp)
 
     /* If the string is already in this compartment, we are done. */
     JSString *str = *strp;
-    if (str->zone() == zone())
+    if (str->zoneFromAnyThread() == zone())
         return true;
 
     /* If the string is an atom, we don't have to copy. */
     if (str->isAtom()) {
-        JS_ASSERT(cx->runtime()->isAtomsZone(str->zone()));
+        JS_ASSERT(str->isPermanentAtom() ||
+                  cx->runtime()->isAtomsZone(str->zone()));
         return true;
     }
 
@@ -362,20 +347,28 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
     JS_ASSERT(global);
     JS_ASSERT(objGlobal);
 
-    JS_ASSERT(!cx->runtime()->isSelfHostingGlobal(global) &&
-              !cx->runtime()->isSelfHostingGlobal(objGlobal));
-
     const JSWrapObjectCallbacks *cb = cx->runtime()->wrapObjectCallbacks;
 
-    if (obj->compartment() == this)
-        return WrapForSameCompartment(cx, obj, cb);
+    if (obj->compartment() == this) {
+        obj.set(GetOuterObject(cx, obj));
+        return true;
+    }
+
+    // If we have a cross-compartment wrapper, make sure that the cx isn't
+    // associated with the self-hosting global. We don't want to create
+    // wrappers for objects in other runtimes, which may be the case for the
+    // self-hosting global.
+    JS_ASSERT(!cx->runtime()->isSelfHostingGlobal(global) &&
+              !cx->runtime()->isSelfHostingGlobal(objGlobal));
 
     // Unwrap the object, but don't unwrap outer windows.
     unsigned flags = 0;
     obj.set(UncheckedUnwrap(obj, /* stopAtOuter = */ true, &flags));
 
-    if (obj->compartment() == this)
-        return WrapForSameCompartment(cx, obj, cb);
+    if (obj->compartment() == this) {
+        MOZ_ASSERT(obj == GetOuterObject(cx, obj));
+        return true;
+    }
 
     // Translate StopIteration singleton.
     if (obj->is<StopIterationObject>()) {
@@ -396,16 +389,11 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
         if (!obj)
             return false;
     }
+    MOZ_ASSERT(obj == GetOuterObject(cx, obj));
 
     if (obj->compartment() == this)
-        return WrapForSameCompartment(cx, obj, cb);
+        return true;
 
-#ifdef DEBUG
-    {
-        JSObject *outer = GetOuterObject(cx, obj);
-        JS_ASSERT(outer && outer == obj);
-    }
-#endif
 
     // If we already have a wrapper for this value, use it.
     RootedValue key(cx, ObjectValue(*obj));
@@ -535,9 +523,16 @@ JSCompartment::markCrossCompartmentWrappers(JSTracer *trc)
 }
 
 void
+JSCompartment::trace(JSTracer *trc)
+{
+    // At the moment, this is merely ceremonial, but any live-compartment-only tracing should go
+    // here.
+}
+
+void
 JSCompartment::markRoots(JSTracer *trc)
 {
-    JS_ASSERT(!trc->runtime->isHeapMinorCollecting());
+    JS_ASSERT(!trc->runtime()->isHeapMinorCollecting());
 
 #ifdef JS_ION
     if (jitCompartment_)
@@ -572,6 +567,7 @@ JSCompartment::sweep(FreeOp *fop, bool releaseTypes)
         sweepNewTypeObjectTable(newTypeObjects);
         sweepNewTypeObjectTable(lazyTypeObjects);
         sweepCallsiteClones();
+        savedStacks_.sweep(rt);
 
         if (global_ && IsObjectAboutToBeFinalized(global_.unsafeGet()))
             global_ = nullptr;
@@ -675,6 +671,8 @@ JSCompartment::clearTables()
         newTypeObjects.clear();
     if (lazyTypeObjects.initialized())
         lazyTypeObjects.clear();
+    if (savedStacks_.initialized())
+        savedStacks_.clear();
 }
 
 void
@@ -691,7 +689,7 @@ bool
 JSCompartment::hasScriptsOnStack()
 {
     for (ActivationIterator iter(runtimeFromMainThread()); !iter.done(); ++iter) {
-        if (iter.activation()->compartment() == this)
+        if (iter->compartment() == this)
             return true;
     }
 
@@ -776,16 +774,13 @@ JSCompartment::setDebugModeFromC(JSContext *cx, bool b, AutoDebugModeInvalidatio
     bool enabledBefore = debugMode();
     bool enabledAfter = (debugModeBits & DebugModeFromMask & ~DebugFromC) || b;
 
-    // Debug mode can be enabled only when no scripts from the target
-    // compartment are on the stack. It would even be incorrect to discard just
-    // the non-live scripts' JITScripts because they might share ICs with live
-    // scripts (bug 632343).
+    // Enabling debug mode from C (vs of from JS) can only be done when no
+    // scripts from the target compartment are on the stack.
     //
     // We do allow disabling debug mode while scripts are on the stack.  In
     // that case the debug-mode code for those scripts remains, so subsequently
     // hooks may be called erroneously, even though debug mode is supposedly
     // off, and we have to live with it.
-    //
     bool onStack = false;
     if (enabledBefore != enabledAfter) {
         onStack = hasScriptsOnStack();
@@ -798,36 +793,28 @@ JSCompartment::setDebugModeFromC(JSContext *cx, bool b, AutoDebugModeInvalidatio
     debugModeBits = (debugModeBits & ~DebugFromC) | (b ? DebugFromC : 0);
     JS_ASSERT(debugMode() == enabledAfter);
     if (enabledBefore != enabledAfter) {
-        updateForDebugMode(cx->runtime()->defaultFreeOp(), invalidate);
+        // Pass in a nullptr cx to not bother recompiling for JSD1, since
+        // we're still enforcing the idle-stack invariant here.
+        if (!updateJITForDebugMode(nullptr, invalidate))
+            return false;
         if (!enabledAfter)
             DebugScopes::onCompartmentLeaveDebugMode(this);
     }
     return true;
 }
 
-void
-JSCompartment::updateForDebugMode(FreeOp *fop, AutoDebugModeInvalidation &invalidate)
+bool
+JSCompartment::updateJITForDebugMode(JSContext *maybecx, AutoDebugModeInvalidation &invalidate)
 {
-    JSRuntime *rt = runtimeFromMainThread();
-
-    for (ContextIter acx(rt); !acx.done(); acx.next()) {
-        if (acx->compartment() == this)
-            acx->updateJITEnabled();
-    }
-
 #ifdef JS_ION
-    MOZ_ASSERT(invalidate.isFor(this));
-    JS_ASSERT_IF(debugMode(), !hasScriptsOnStack());
-
-    // Invalidate all JIT code since debug mode invalidates assumptions made
-    // by the JIT.
-    //
     // The AutoDebugModeInvalidation argument makes sure we can't forget to
     // invalidate, but it is also important not to run any scripts in this
     // compartment until the invalidate is destroyed.  That is the caller's
     // responsibility.
-    invalidate.scheduleInvalidation(debugMode());
+    if (!jit::UpdateForDebugMode(maybecx, this, invalidate))
+        return false;
 #endif
+    return true;
 }
 
 bool
@@ -850,25 +837,47 @@ JSCompartment::addDebuggee(JSContext *cx,
         return false;
     }
     debugModeBits |= DebugFromJS;
-    if (!wasEnabled)
-        updateForDebugMode(cx->runtime()->defaultFreeOp(), invalidate);
+    if (!wasEnabled && !updateJITForDebugMode(cx, invalidate))
+        return false;
     return true;
 }
 
-void
-JSCompartment::removeDebuggee(FreeOp *fop,
+bool
+JSCompartment::removeDebuggee(JSContext *cx,
                               js::GlobalObject *global,
                               js::GlobalObjectSet::Enum *debuggeesEnum)
 {
     AutoDebugModeInvalidation invalidate(this);
-    return removeDebuggee(fop, global, invalidate, debuggeesEnum);
+    return removeDebuggee(cx, global, invalidate, debuggeesEnum);
 }
 
-void
-JSCompartment::removeDebuggee(FreeOp *fop,
+bool
+JSCompartment::removeDebuggee(JSContext *cx,
                               js::GlobalObject *global,
                               AutoDebugModeInvalidation &invalidate,
                               js::GlobalObjectSet::Enum *debuggeesEnum)
+{
+    bool wasEnabled = debugMode();
+    removeDebuggeeUnderGC(cx->runtime()->defaultFreeOp(), global, invalidate, debuggeesEnum);
+    if (wasEnabled && !debugMode() && !updateJITForDebugMode(cx, invalidate))
+        return false;
+    return true;
+}
+
+void
+JSCompartment::removeDebuggeeUnderGC(FreeOp *fop,
+                                     js::GlobalObject *global,
+                                     js::GlobalObjectSet::Enum *debuggeesEnum)
+{
+    AutoDebugModeInvalidation invalidate(this);
+    removeDebuggeeUnderGC(fop, global, invalidate, debuggeesEnum);
+}
+
+void
+JSCompartment::removeDebuggeeUnderGC(FreeOp *fop,
+                                     js::GlobalObject *global,
+                                     AutoDebugModeInvalidation &invalidate,
+                                     js::GlobalObjectSet::Enum *debuggeesEnum)
 {
     bool wasEnabled = debugMode();
     JS_ASSERT(debuggees.has(global));
@@ -879,15 +888,13 @@ JSCompartment::removeDebuggee(FreeOp *fop,
 
     if (debuggees.empty()) {
         debugModeBits &= ~DebugFromJS;
-        if (wasEnabled && !debugMode()) {
+        if (wasEnabled && !debugMode())
             DebugScopes::onCompartmentLeaveDebugMode(this);
-            updateForDebugMode(fop, invalidate);
-        }
     }
 }
 
 void
-JSCompartment::clearBreakpointsIn(FreeOp *fop, js::Debugger *dbg, JSObject *handler)
+JSCompartment::clearBreakpointsIn(FreeOp *fop, js::Debugger *dbg, HandleObject handler)
 {
     for (gc::CellIter i(zone(), gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
         JSScript *script = i.get<JSScript>();
@@ -916,7 +923,8 @@ JSCompartment::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                       size_t *shapesCompartmentTables,
                                       size_t *crossCompartmentWrappersArg,
                                       size_t *regexpCompartment,
-                                      size_t *debuggeesSet)
+                                      size_t *debuggeesSet,
+                                      size_t *savedStacksSet)
 {
     *compartmentObject += mallocSizeOf(this);
     types.addSizeOfExcludingThis(mallocSizeOf, tiAllocationSiteTables,
@@ -928,6 +936,7 @@ JSCompartment::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
     *crossCompartmentWrappersArg += crossCompartmentWrappers.sizeOfExcludingThis(mallocSizeOf);
     *regexpCompartment += regExps.sizeOfExcludingThis(mallocSizeOf);
     *debuggeesSet += debuggees.sizeOfExcludingThis(mallocSizeOf);
+    *savedStacksSet += savedStacks_.sizeOfExcludingThis(mallocSizeOf);
 }
 
 void

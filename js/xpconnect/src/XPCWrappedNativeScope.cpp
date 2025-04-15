@@ -1,6 +1,6 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=78:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set ts=8 sts=4 et sw=4 tw=99: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -129,8 +129,8 @@ XPCWrappedNativeScope::IsDyingScope(XPCWrappedNativeScope *scope)
     return false;
 }
 
-JSObject*
-XPCWrappedNativeScope::GetComponentsJSObject()
+bool
+XPCWrappedNativeScope::GetComponentsJSObject(JS::MutableHandleObject obj)
 {
     AutoJSContext cx;
     if (!mComponents) {
@@ -146,17 +146,17 @@ XPCWrappedNativeScope::GetComponentsJSObject()
                                                    nullptr, nullptr, false,
                                                    nullptr);
     if (NS_WARN_IF(!ok))
-        return nullptr;
+        return false;
 
     if (NS_WARN_IF(!val.isObject()))
-        return nullptr;
+        return false;
 
     // The call to wrap() here is necessary even though the object is same-
     // compartment, because it applies our security wrapper.
-    JS::RootedObject obj(cx, &val.toObject());
-    if (NS_WARN_IF(!JS_WrapObject(cx, &obj)))
-        return nullptr;
-    return obj;
+    obj.set(&val.toObject());
+    if (NS_WARN_IF(!JS_WrapObject(cx, obj)))
+        return false;
+    return true;
 }
 
 void
@@ -175,8 +175,8 @@ XPCWrappedNativeScope::ForcePrivilegedComponents()
 bool
 XPCWrappedNativeScope::AttachComponentsObject(JSContext* aCx)
 {
-    RootedObject components(aCx, GetComponentsJSObject());
-    if (!components)
+    RootedObject components(aCx);
+    if (!GetComponentsJSObject(&components))
         return false;
 
     RootedObject global(aCx, GetGlobalJSObject());
@@ -603,7 +603,7 @@ XPCWrappedNativeScope::RemoveWrappedNativeProtos()
 }
 
 JSObject *
-XPCWrappedNativeScope::GetExpandoChain(JSObject *target)
+XPCWrappedNativeScope::GetExpandoChain(HandleObject target)
 {
     MOZ_ASSERT(GetObjectScope(target) == this);
     if (!mXrayExpandos.initialized())
@@ -620,7 +620,7 @@ XPCWrappedNativeScope::SetExpandoChain(JSContext *cx, HandleObject target,
     MOZ_ASSERT_IF(chain, GetObjectScope(chain) == this);
     if (!mXrayExpandos.initialized() && !mXrayExpandos.init(cx))
         return false;
-    return mXrayExpandos.put(target, chain);
+    return mXrayExpandos.put(cx, target, chain);
 }
 
 /***************************************************************************/
@@ -715,8 +715,8 @@ XPCWrappedNativeScope::AddSizeOfIncludingThis(ScopeSizeInfo* scopeSizeInfo)
     scopeSizeInfo->mScopeAndMapSize +=
         mWrappedNativeProtoMap->SizeOfIncludingThis(scopeSizeInfo->mMallocSizeOf);
 
-    if (dom::HasProtoAndIfaceArray(mGlobalJSObject)) {
-        dom::ProtoAndIfaceArray* cache = dom::GetProtoAndIfaceArray(mGlobalJSObject);
+    if (dom::HasProtoAndIfaceCache(mGlobalJSObject)) {
+        dom::ProtoAndIfaceCache* cache = dom::GetProtoAndIfaceCache(mGlobalJSObject);
         scopeSizeInfo->mProtoAndIfaceCacheSize +=
             cache->SizeOfIncludingThis(scopeSizeInfo->mMallocSizeOf);
     }

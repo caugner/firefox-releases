@@ -798,9 +798,11 @@ nsLineLayout::ReflowFrame(nsIFrame* aFrame,
         reflowState.ComputedLogicalOffsets().ConvertTo(frameWM, stateWM);
     }
 
-    // Apply start margins (as appropriate) to the frame computing the
-    // new starting x,y coordinates for the frame.
-    ApplyStartMargin(pfd, reflowState);
+    // Calculate whether the the frame should have a start margin and
+    // subtract the margin from the available width if necessary.
+    // The margin will be applied to the starting inline coordinates of
+    // the frame in CanPlaceFrame() after reflowing the frame.
+    AllowForStartMargin(pfd, reflowState);
   }
   // if isText(), no need to propagate NS_FRAME_IS_DIRTY from the parent,
   // because reflow doesn't look at the dirty bits on the frame being reflowed.
@@ -1061,15 +1063,14 @@ nsLineLayout::ReflowFrame(nsIFrame* aFrame,
 }
 
 void
-nsLineLayout::ApplyStartMargin(PerFrameData* pfd,
-                               nsHTMLReflowState& aReflowState)
+nsLineLayout::AllowForStartMargin(PerFrameData* pfd,
+                                  nsHTMLReflowState& aReflowState)
 {
   NS_ASSERTION(!aReflowState.IsFloating(),
                "How'd we get a floated inline frame? "
                "The frame ctor should've dealt with this.");
 
   WritingMode frameWM = pfd->mFrame->GetWritingMode();
-  WritingMode lineWM = mRootSpan->mWritingMode;
 
   // Only apply start-margin on the first-in flow for inline frames,
   // and make sure to not apply it to any inline other than the first
@@ -1082,21 +1083,7 @@ nsLineLayout::ApplyStartMargin(PerFrameData* pfd,
     // Zero this out so that when we compute the max-element-width of
     // the frame we will properly avoid adding in the starting margin.
     pfd->mMargin.IStart(frameWM) = 0;
-  }
-  if ((pfd->mFrame->LastInFlow()->GetNextContinuation() ||
-      pfd->mFrame->FrameIsNonLastInIBSplit())
-    && !pfd->GetFlag(PFD_ISLETTERFRAME)) {
-    pfd->mMargin.IEnd(frameWM) = 0;
-  }
-  nscoord startMargin = pfd->mMargin.ConvertTo(lineWM, frameWM).IStart(lineWM);
-  if (startMargin) {
-    // In RTL mode, we will only apply the start margin to the frame bounds
-    // after we finish flowing the frame and know more accurately whether we
-    // want to skip the margins.
-    if (lineWM.IsBidiLTR() && frameWM.IsBidiLTR()) {
-      pfd->mBounds.IStart(lineWM) += startMargin;
-    }
-
+  } else {
     NS_WARN_IF_FALSE(NS_UNCONSTRAINEDSIZE != aReflowState.AvailableWidth(),
                      "have unconstrained width; this should only result from "
                      "very large sizes, not attempts at intrinsic width "
@@ -1106,7 +1093,7 @@ nsLineLayout::ApplyStartMargin(PerFrameData* pfd,
       // in the reflow state), adjust available width to account for the
       // start margin. The end margin will be accounted for when we
       // finish flowing the frame.
-      aReflowState.AvailableWidth() -= startMargin;
+      aReflowState.AvailableWidth() -= pfd->mMargin.IStart(frameWM);
     }
   }
 }
@@ -1161,23 +1148,20 @@ nsLineLayout::CanPlaceFrame(PerFrameData* pfd,
    *
    * However, none of that applies if this is a letter frame (XXXbz why?)
    */
-  if (pfd->mFrame->GetPrevContinuation() ||
-      pfd->mFrame->FrameIsNonFirstInIBSplit()) {
-    pfd->mMargin.IStart(frameWM) = 0;
-  }
   if ((NS_FRAME_IS_NOT_COMPLETE(aStatus) ||
        pfd->mFrame->LastInFlow()->GetNextContinuation() ||
        pfd->mFrame->FrameIsNonLastInIBSplit())
       && !pfd->GetFlag(PFD_ISLETTERFRAME)) {
     pfd->mMargin.IEnd(frameWM) = 0;
   }
+
+  // Convert the frame's margins to the line's writing mode and apply
+  // the start margin to the frame bounds.
   LogicalMargin usedMargins = pfd->mMargin.ConvertTo(lineWM, frameWM);
   nscoord startMargin = usedMargins.IStart(lineWM);
   nscoord endMargin = usedMargins.IEnd(lineWM);
 
-  if (!(lineWM.IsBidiLTR() && frameWM.IsBidiLTR())) {
-    pfd->mBounds.IStart(lineWM) += startMargin;
-  }
+  pfd->mBounds.IStart(lineWM) += startMargin;
 
   PerSpanData* psd = mCurrentSpan;
   if (psd->mNoWrap) {
@@ -1481,18 +1465,18 @@ nsLineLayout::BlockDirAlignLine()
   }
 
   // Fill in returned line-box and max-element-width data
-  mLineBox->mBounds.x = psd->mIStart;
-  mLineBox->mBounds.y = mBStartEdge;
-  mLineBox->mBounds.width = psd->mICoord - psd->mIStart;
-  mLineBox->mBounds.height = lineBSize;
+  mLineBox->SetBounds(lineWM,
+                      psd->mIStart, mBStartEdge,
+                      psd->mICoord - psd->mIStart, lineBSize,
+                      mContainerWidth);
 
   mFinalLineBSize = lineBSize;
   mLineBox->SetAscent(baselineBCoord - mBStartEdge);
 #ifdef NOISY_BLOCKDIR_ALIGN
   printf(
     "  [line]==> bounds{x,y,w,h}={%d,%d,%d,%d} lh=%d a=%d\n",
-    mLineBox->mBounds.x, mLineBox->mBounds.y,
-    mLineBox->mBounds.width, mLineBox->mBounds.height,
+    mLineBox->mBounds.IStart(lineWM), mLineBox->mBounds.BStart(lineWM),
+    mLineBox->mBounds.ISize(lineWM), mLineBox->mBounds.BSize(lineWM),
     mFinalLineBSize, mLineBox->GetAscent());
 #endif
 
@@ -2458,7 +2442,7 @@ nsLineLayout::ApplyFrameJustification(PerSpanData* aPSD, FrameJustificationState
     // Don't reposition bullets (and other frames that occur out of X-order?)
     if (!pfd->GetFlag(PFD_ISBULLET)) {
       nscoord dw = 0;
-      WritingMode lineWM = aPSD->mWritingMode;
+      WritingMode lineWM = mRootSpan->mWritingMode;
 
       pfd->mBounds.IStart(lineWM) += deltaICoord;
 
@@ -2509,28 +2493,26 @@ nsLineLayout::ApplyFrameJustification(PerSpanData* aPSD, FrameJustificationState
 }
 
 void
-nsLineLayout::InlineDirAlignFrames(nsRect& aLineBounds,
-                                    bool aIsLastLine,
-                                    int32_t aFrameCount)
+nsLineLayout::InlineDirAlignFrames(nsLineBox* aLine,
+                                   bool aIsLastLine)
 {
   /**
    * NOTE: aIsLastLine ain't necessarily so: it is correctly set by caller
    * only in cases where the last line needs special handling.
    */
   PerSpanData* psd = mRootSpan;
+  WritingMode lineWM = psd->mWritingMode;
   NS_WARN_IF_FALSE(psd->mIEnd != NS_UNCONSTRAINEDSIZE,
                    "have unconstrained width; this should only result from "
                    "very large sizes, not attempts at intrinsic width "
                    "calculation");
-  nscoord availWidth = psd->mIEnd - psd->mIStart;
-  nscoord remainingWidth = availWidth - aLineBounds.width;
+  nscoord availISize = psd->mIEnd - psd->mIStart;
+  nscoord remainingISize = availISize - aLine->ISize();
 #ifdef NOISY_INLINEDIR_ALIGN
   nsFrame::ListTag(stdout, mBlockReflowState->frame);
-  printf(": availWidth=%d lineBounds.x=%d lineWidth=%d delta=%d\n",
-         availWidth, aLineBounds.x, aLineBounds.width, remainingWidth);
+  printf(": availISize=%d lineBounds.IStart=%d lineISize=%d delta=%d\n",
+         availISize, aLine->IStart(), aLine->ISize(), remainingISize);
 #endif
-
-  WritingMode lineWM = psd->mWritingMode;
 
   // 'text-align-last: auto' is equivalent to the value of the 'text-align'
   // property except when 'text-align' is set to 'justify', in which case it
@@ -2552,24 +2534,25 @@ nsLineLayout::InlineDirAlignFrames(nsRect& aLineBounds,
     }
   }
 
-  if ((remainingWidth > 0 || textAlignTrue) &&
+  if ((remainingISize > 0 || textAlignTrue) &&
       !(mBlockReflowState->frame->IsSVGText())) {
 
     switch (textAlign) {
       case NS_STYLE_TEXT_ALIGN_JUSTIFY:
         int32_t numSpaces;
         int32_t numLetters;
-            
+
         ComputeJustificationWeights(psd, &numSpaces, &numLetters);
 
         if (numSpaces > 0) {
           FrameJustificationState state =
-            { numSpaces, numLetters, remainingWidth, 0, 0, 0, 0, 0 };
+            { numSpaces, numLetters, remainingISize, 0, 0, 0, 0, 0 };
 
           // Apply the justification, and make sure to update our linebox
           // width to account for it.
-          aLineBounds.width += ApplyFrameJustification(psd, &state);
-          remainingWidth = availWidth - aLineBounds.width;
+          aLine->ExpandBy(ApplyFrameJustification(psd, &state),
+                          mContainerWidth);
+          remainingISize = availISize - aLine->ISize();
           break;
         }
         // Fall through to the default case if we could not justify to fill
@@ -2582,25 +2565,25 @@ nsLineLayout::InlineDirAlignFrames(nsRect& aLineBounds,
       case NS_STYLE_TEXT_ALIGN_LEFT:
       case NS_STYLE_TEXT_ALIGN_MOZ_LEFT:
         if (!lineWM.IsBidiLTR()) {
-          dx = remainingWidth;
+          dx = remainingISize;
         }
         break;
 
       case NS_STYLE_TEXT_ALIGN_RIGHT:
       case NS_STYLE_TEXT_ALIGN_MOZ_RIGHT:
         if (lineWM.IsBidiLTR()) {
-          dx = remainingWidth;
+          dx = remainingISize;
         }
         break;
 
       case NS_STYLE_TEXT_ALIGN_END:
-        dx = remainingWidth;
+        dx = remainingISize;
         break;
 
 
       case NS_STYLE_TEXT_ALIGN_CENTER:
       case NS_STYLE_TEXT_ALIGN_MOZ_CENTER:
-        dx = remainingWidth / 2;
+        dx = remainingISize / 2;
         break;
     }
   }
@@ -2610,12 +2593,13 @@ nsLineLayout::InlineDirAlignFrames(nsRect& aLineBounds,
       pfd->mBounds.IStart(lineWM) += dx;
       pfd->mFrame->SetRect(lineWM, pfd->mBounds, mContainerWidth);
     }
-    aLineBounds.x += dx;
+    aLine->IndentBy(dx, mContainerWidth);
   }
 
   if (mPresContext->BidiEnabled() &&
       (!mPresContext->IsVisualMode() || !lineWM.IsBidiLTR())) {
-    nsBidiPresUtils::ReorderFrames(psd->mFirstFrame->mFrame, aFrameCount,
+    nsBidiPresUtils::ReorderFrames(psd->mFirstFrame->mFrame,
+                                   aLine->GetChildCount(),
                                    lineWM, mContainerWidth);
   }
 }

@@ -8,8 +8,8 @@
 #define mozilla_dom_domrequest_h__
 
 #include "nsIDOMDOMRequest.h"
-#include "nsDOMEventTargetHelper.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/dom/DOMRequestBinding.h"
 
 #include "nsCOMPtr.h"
@@ -17,7 +17,7 @@
 namespace mozilla {
 namespace dom {
 
-class DOMRequest : public nsDOMEventTargetHelper,
+class DOMRequest : public DOMEventTargetHelper,
                    public nsIDOMDOMRequest
 {
 protected:
@@ -28,10 +28,10 @@ protected:
 public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIDOMDOMREQUEST
-  NS_REALLY_FORWARD_NSIDOMEVENTTARGET(nsDOMEventTargetHelper)
+  NS_REALLY_FORWARD_NSIDOMEVENTTARGET(DOMEventTargetHelper)
 
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(DOMRequest,
-                                                         nsDOMEventTargetHelper)
+                                                         DOMEventTargetHelper)
 
   // WrapperCache
   nsPIDOMWindow* GetParentObject() const
@@ -39,8 +39,7 @@ public:
     return GetOwner();
   }
 
-  virtual JSObject* WrapObject(JSContext* aCx,
-                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx) MOZ_OVERRIDE;
 
   // WebIDL Interface
   DOMRequestReadyState ReadyState() const
@@ -49,11 +48,12 @@ public:
                  : DOMRequestReadyState::Pending;
   }
 
-  JS::Value Result(JSContext* = nullptr) const
+  void GetResult(JSContext*, JS::MutableHandle<JS::Value> aRetval) const
   {
     NS_ASSERTION(mDone || mResult == JSVAL_VOID,
-               "Result should be undefined when pending");
-    return mResult;
+                 "Result should be undefined when pending");
+    JS::ExposeValueToActiveJS(mResult);
+    aRetval.set(mResult);
   }
 
   nsISupports* GetError() const

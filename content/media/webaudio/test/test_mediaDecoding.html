@@ -298,13 +298,10 @@ function checkResampledBuffer(buffer, test, callback) {
 }
 
 function runResampling(test, response, callback) {
-  var compressedAudio = response.slice(0);
   var sampleRate = test.sampleRate == 44100 ? 48000 : 44100;
   var cx = new OfflineAudioContext(1, 1, sampleRate);
   cx.decodeAudioData(response, function onSuccess(asyncResult) {
     is(asyncResult.sampleRate, sampleRate, "Correct sample rate");
-    syncResult = cx.createBuffer(compressedAudio, false);
-    compareBuffers(syncResult, asyncResult);
 
     checkResampledBuffer(asyncResult, test, callback);
   }, function onFailure() {
@@ -314,6 +311,8 @@ function runResampling(test, response, callback) {
 }
 
 function runTest(test, response, callback) {
+  // We need to copy the array here, because decodeAudioData is going to neuter
+  // the array.
   var compressedAudio = response.slice(0);
   var expectCallback = false;
   var cx = new OfflineAudioContext(test.numberOfChannels || 1,
@@ -322,8 +321,6 @@ function runTest(test, response, callback) {
     ok(expectCallback, "Success callback should fire asynchronously");
     ok(test.valid, "Did expect success for test " + test.url);
 
-    syncResult = cx.createBuffer(compressedAudio, false);
-    compareBuffers(syncResult, asyncResult);
     checkAudioBuffer(asyncResult, test);
 
     test.expectedBuffer = asyncResult;

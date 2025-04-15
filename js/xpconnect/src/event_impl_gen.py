@@ -143,7 +143,7 @@ def print_class_declaration(eventname, iface, fd, conf):
                 allattributes.append(member)
     allattributes.extend(attributes);
 
-    fd.write("\nclass %s : public %s, public %s\n" % (classname, basename, iface.name))
+    fd.write("\nclass %s MOZ_FINAL : public %s, public %s\n" % (classname, basename, iface.name))
     fd.write("{\n")
     fd.write("public:\n")
     fd.write("  %s(mozilla::dom::EventTarget* aOwner, " % classname)
@@ -171,9 +171,9 @@ def print_class_declaration(eventname, iface, fd, conf):
     fd.write("const %sInit& aParam, " % eventname)
     fd.write("ErrorResult& aRv);\n\n")
 
-    fd.write("  virtual JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE\n")
+    fd.write("  virtual JSObject* WrapObject(JSContext* aCx) MOZ_OVERRIDE\n")
     fd.write("  {\n")
-    fd.write("    return mozilla::dom::%sBinding::Wrap(aCx, aScope, this);\n" % eventname)
+    fd.write("    return mozilla::dom::%sBinding::Wrap(aCx, this);\n" % eventname)
     fd.write("  }\n\n")
 
     for a in attributes:
@@ -183,7 +183,7 @@ def print_class_declaration(eventname, iface, fd, conf):
         if a.realtype.nativeType('in').count("nsAString"):
             continue
         elif a.realtype.nativeType('in').count("nsIVariant"):
-            fd.write("  JS::Value Get%s(JSContext* aCx, ErrorResult& aRv);\n\n" % firstCapName);
+            fd.write("  void Get%s(JSContext* aCx, JS::MutableHandle<JS::Value> aRetval, ErrorResult& aRv);\n\n" % firstCapName);
         elif a.realtype.nativeType('in').endswith('*'):
             fd.write("  already_AddRefed<%s> Get%s()\n" % (xpidl_to_native(cleanNativeType, conf), firstCapName))
             fd.write("  {\n");
@@ -305,15 +305,15 @@ def writeAttributeGetter(fd, classname, a):
     fd.write("  return NS_OK;\n");
     fd.write("}\n\n");
     if a.realtype.nativeType('in').count("nsIVariant"):
-        fd.write("JS::Value\n")
-        fd.write("%s::Get%s(JSContext* aCx, ErrorResult& aRv)\n" % (classname, firstCap(a.name)))
+        fd.write("void\n")
+        fd.write("%s::Get%s(JSContext* aCx, JS::MutableHandle<JS::Value> aRetval, ErrorResult& aRv)\n" % (classname, firstCap(a.name)))
         fd.write("{\n")
-        fd.write("  JS::Rooted<JS::Value> retVal(aCx, JS::NullValue());\n");
         fd.write("  nsresult rv = NS_ERROR_UNEXPECTED;\n")
-        fd.write("  if (m%s && !XPCVariant::VariantDataToJS(m%s, &rv, &retVal)) {\n" % (firstCap(a.name), firstCap(a.name)))
+        fd.write("  if (!m%s) {\n" % firstCap(a.name))
+        fd.write("    aRetval.setNull();\n")
+        fd.write("  } else if (!XPCVariant::VariantDataToJS(m%s, &rv, aRetval)) {\n" % (firstCap(a.name)))
         fd.write("    aRv.Throw(NS_ERROR_FAILURE);\n")
         fd.write("  }\n")
-        fd.write("  return retVal;\n");
         fd.write("}\n\n")
 
 def writeAttributeParams(fd, a):
@@ -490,7 +490,9 @@ def write_cpp(eventname, iface, fd, conf):
     fd.write("mozilla::dom::EventTarget* aOwner, nsPresContext* aPresContext = nullptr, mozilla::WidgetEvent* aEvent = nullptr)\n")
     fd.write("{\n")
     fd.write("  mozilla::dom::%s* it = new mozilla::dom::%s(aOwner, aPresContext, aEvent);\n" % (classname, classname))
-    fd.write("  return CallQueryInterface(it, aInstance);\n")
+    fd.write("  NS_ADDREF(it);\n")
+    fd.write("  *aInstance = static_cast<mozilla::dom::Event*>(it);\n")
+    fd.write("  return NS_OK;\n");
     fd.write("}\n\n")
 
 def toWebIDLType(attribute, inType=False, onlyInterface=False):

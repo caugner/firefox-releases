@@ -48,8 +48,7 @@ public:
     return mContext;
   }
 
-  virtual JSObject* WrapObject(JSContext* aCx,
-                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx) MOZ_OVERRIDE;
 
   float SampleRate() const
   {
@@ -75,8 +74,9 @@ public:
    * If mSharedChannels is non-null, copies its contents to
    * new Float32Arrays in mJSChannels. Returns a Float32Array.
    */
-  JSObject* GetChannelData(JSContext* aJSContext, uint32_t aChannel,
-                           ErrorResult& aRv);
+  void GetChannelData(JSContext* aJSContext, uint32_t aChannel,
+                      JS::MutableHandle<JSObject*> aRetval,
+                      ErrorResult& aRv);
 
   void CopyFromChannel(const Float32Array& aDestination, uint32_t aChannelNumber,
                        uint32_t aStartInChannel, ErrorResult& aRv);
@@ -97,8 +97,6 @@ public:
   void SetRawChannelContents(JSContext* aJSContext,
                              uint32_t aChannel,
                              float* aContents);
-
-  void MixToMono(JSContext* aJSContext);
 
 protected:
   AudioBuffer(AudioContext* aContext, uint32_t aNumberOfChannels,

@@ -77,7 +77,10 @@ public:
     uint8_t        RedirectionLimit()        { return mRedirectionLimit; }
     PRIntervalTime IdleTimeout()             { return mIdleTimeout; }
     PRIntervalTime SpdyTimeout()             { return mSpdyTimeout; }
-    PRIntervalTime ResponseTimeout()         { return mResponseTimeout; }
+    PRIntervalTime ResponseTimeout() {
+      return mResponseTimeoutEnabled ? mResponseTimeout : 0;
+    }
+    PRIntervalTime ResponseTimeoutEnabled()  { return mResponseTimeoutEnabled; }
     uint16_t       MaxRequestAttempts()      { return mMaxRequestAttempts; }
     const char    *DefaultSocketType()       { return mDefaultSocketType.get(); /* ok to return null */ }
     uint32_t       PhishyUserPassLength()    { return mPhishyUserPassLength; }
@@ -361,6 +364,7 @@ private:
     PRIntervalTime mIdleTimeout;
     PRIntervalTime mSpdyTimeout;
     PRIntervalTime mResponseTimeout;
+    bool mResponseTimeoutEnabled;
 
     uint16_t mMaxRequestAttempts;
     uint16_t mMaxRequestDelay;
@@ -433,6 +437,10 @@ private:
     // For broadcasting tracking preference
     bool           mDoNotTrackEnabled;
     uint8_t        mDoNotTrackValue;
+
+    // for broadcasting safe hint;
+    bool           mSafeHintEnabled;
+    bool           mParentalControlEnabled;
 
     // Whether telemetry is reported or not
     uint32_t           mTelemetryEnabled : 1;

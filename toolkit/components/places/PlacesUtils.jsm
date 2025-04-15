@@ -42,7 +42,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-                                  "resource://gre/modules/commonjs/sdk/core/promise.js");
+                                  "resource://gre/modules/Promise.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "Deprecated",
                                   "resource://gre/modules/Deprecated.jsm");
@@ -1697,12 +1697,12 @@ let GUIDHelper = {
         if (row)
           itemId = row.getResultByIndex(0);
       },
-      handleCompletion: function (aReason) {
+      handleCompletion: aReason => {
         if (aReason == REASON_FINISHED && itemId != -1) {
-          deferred.resolve(itemId);
-
           this.ensureObservingRemovedItems();
           this.idsForGUIDs.set(aGUID, itemId);
+
+          deferred.resolve(itemId);
         }
         else if (itemId != -1) {
           deferred.reject("no item found for the given guid");
@@ -1718,7 +1718,7 @@ let GUIDHelper = {
 
   getItemGUID: function (aItemId) {
     if (this.GUIDsForIds.has(aItemId))
-      return Promise.resolve(this.GUIDsForIds.has(aItemId));
+      return Promise.resolve(this.GUIDsForIds.get(aItemId));
 
     let deferred = Promise.defer();
     let guid = "";
@@ -1731,12 +1731,12 @@ let GUIDHelper = {
           guid = row.getResultByIndex(1);
         }
       },
-      handleCompletion: function (aReason) {
+      handleCompletion: aReason => {
         if (aReason == REASON_FINISHED && guid) {
-          deferred.resolve(guid);
-
           this.ensureObservingRemovedItems();
           this.GUIDsForIds.set(aItemId, guid);
+
+          deferred.resolve(guid);
         }
         else if (!guid) {
           deferred.reject("no item found for the given itemId");

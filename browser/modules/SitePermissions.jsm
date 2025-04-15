@@ -186,12 +186,8 @@ let gPermissionObject = {
 
   "desktop-notification": {},
 
-  "camera": {
-    states: [ SitePermissions.UNKNOWN, SitePermissions.BLOCK ]
-  },
-  "microphone": {
-    states: [ SitePermissions.UNKNOWN, SitePermissions.BLOCK ]
-  },
+  "camera": {},
+  "microphone": {},
 
   "popup": {
     getDefault: function () {

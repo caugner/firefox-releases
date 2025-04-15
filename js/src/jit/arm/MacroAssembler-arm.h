@@ -312,7 +312,7 @@ class MacroAssemblerARM : public Assembler
     void ma_vpush(VFPRegister r);
 
     // branches when done from within arm-specific code
-    void ma_b(Label *dest, Condition c = Always, bool isPatchable = false);
+    BufferOffset ma_b(Label *dest, Condition c = Always, bool isPatchable = false);
     void ma_bx(Register dest, Condition c = Always);
 
     void ma_b(void *target, Relocation::Kind reloc, Condition c = Always);
@@ -398,6 +398,9 @@ class MacroAssemblerARM : public Assembler
     void ma_callIonHalfPush(const Register reg);
 
     void ma_call(ImmPtr dest);
+
+    // calls reg, storing the return address into sp[0]
+    void ma_callAndStoreRet(const Register reg, uint32_t stackArgBytes);
 
     // Float registers can only be loaded/stored in continuous runs
     // when using vstm/vldm.
@@ -543,7 +546,6 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void call(const Register reg) {
         as_blx(reg);
     }
-
     void call(Label *label) {
         // for now, assume that it'll be nearby?
         as_bl(label, Always);
@@ -572,6 +574,38 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         ma_movPatchable(ImmPtr(c->raw()), ScratchRegister, Always, rs);
         ma_callIonHalfPush(ScratchRegister);
     }
+
+    void appendCallSite(const CallSiteDesc &desc) {
+        enoughMemory_ &= append(CallSite(desc, currentOffset(), framePushed_));
+    }
+
+    void call(const CallSiteDesc &desc, const Register reg) {
+        call(reg);
+        appendCallSite(desc);
+    }
+    void call(const CallSiteDesc &desc, Label *label) {
+        call(label);
+        appendCallSite(desc);
+    }
+    void call(const CallSiteDesc &desc, AsmJSImmPtr imm) {
+        call(imm);
+        appendCallSite(desc);
+    }
+    void callExit(AsmJSImmPtr imm, uint32_t stackArgBytes) {
+        movePtr(imm, CallReg);
+        ma_callAndStoreRet(CallReg, stackArgBytes);
+        appendCallSite(CallSiteDesc::Exit());
+    }
+    void callIonFromAsmJS(const Register reg) {
+        ma_callIonNoPush(reg);
+        appendCallSite(CallSiteDesc::Exit());
+
+        // The Ion ABI has the callee pop the return address off the stack.
+        // The asm.js caller assumes that the call leaves sp unchanged, so bump
+        // the stack.
+        subPtr(Imm32(sizeof(void*)), sp);
+    }
+
     void branch(JitCode *c) {
         BufferOffset bo = m_buffer.nextOffset();
         addPendingJump(bo, ImmPtr(c->raw()), Relocation::JITCODE);
@@ -692,6 +726,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     }
     void test32(Register lhs, Register rhs) {
         ma_tst(lhs, rhs);
+    }
+    void test32(Register lhs, Imm32 imm) {
+        ma_tst(lhs, imm);
     }
     void test32(const Address &address, Imm32 imm) {
         ma_ldr(Operand(address.base, address.offset), ScratchRegister);
@@ -853,8 +890,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         if (lhs.getTag() == Operand::OP2) {
             branch32(cond, lhs.toReg(), rhs, label);
         } else {
-            ma_ldr(lhs, ScratchRegister);
-            branch32(cond, ScratchRegister, rhs, label);
+            // branch32 will use ScratchRegister.
+            ma_ldr(lhs, secondScratchReg_);
+            branch32(cond, secondScratchReg_, rhs, label);
         }
     }
     void branch32(Condition cond, const Address &lhs, Register rhs, Label *label) {
@@ -862,8 +900,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         branch32(cond, ScratchRegister, rhs, label);
     }
     void branch32(Condition cond, const Address &lhs, Imm32 rhs, Label *label) {
-        load32(lhs, ScratchRegister);
-        branch32(cond, ScratchRegister, rhs, label);
+        // branch32 will use ScratchRegister.
+        load32(lhs, secondScratchReg_);
+        branch32(cond, secondScratchReg_, rhs, label);
     }
     void branchPtr(Condition cond, const Address &lhs, Register rhs, Label *label) {
         branch32(cond, lhs, rhs, label);
@@ -927,9 +966,20 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         branch32(cond, val.payloadReg(), Imm32(static_cast<int32_t>(why)), label);
         bind(&notmagic);
     }
-    template<typename T>
-    void branchTestBooleanTruthy(bool b, const T & t, Label *label) {
-        Condition c = testBooleanTruthy(b, t);
+    void branchTestInt32Truthy(bool truthy, const ValueOperand &operand, Label *label) {
+        Condition c = testInt32Truthy(truthy, operand);
+        ma_b(label, c);
+    }
+    void branchTestBooleanTruthy(bool truthy, const ValueOperand &operand, Label *label) {
+        Condition c = testBooleanTruthy(truthy, operand);
+        ma_b(label, c);
+    }
+    void branchTestDoubleTruthy(bool truthy, const FloatRegister &reg, Label *label) {
+        Condition c = testDoubleTruthy(truthy, reg);
+        ma_b(label, c);
+    }
+    void branchTestStringTruthy(bool truthy, const ValueOperand &value, Label *label) {
+        Condition c = testStringTruthy(truthy, value);
         ma_b(label, c);
     }
     void branchTest32(Condition cond, const Register &lhs, const Register &rhs, Label *label) {
@@ -946,8 +996,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         ma_b(label, cond);
     }
     void branchTest32(Condition cond, const Address &address, Imm32 imm, Label *label) {
-        ma_ldr(Operand(address.base, address.offset), ScratchRegister);
-        branchTest32(cond, ScratchRegister, imm, label);
+        // branchTest32 will use ScratchRegister.
+        load32(address, secondScratchReg_);
+        branchTest32(cond, secondScratchReg_, imm, label);
     }
     void branchTestPtr(Condition cond, const Register &lhs, const Register &rhs, Label *label) {
         branchTest32(cond, lhs, rhs, label);
@@ -974,6 +1025,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void branchPtr(Condition cond, Register lhs, AsmJSImmPtr imm, Label *label) {
         movePtr(imm, ScratchRegister);
         branchPtr(cond, lhs, ScratchRegister, label);
+    }
+    void branchPtr(Condition cond, Register lhs, Imm32 imm, Label *label) {
+        branch32(cond, lhs, imm, label);
     }
     void decBranchPtr(Condition cond, const Register &lhs, Imm32 imm, Label *label) {
         subPtr(imm, lhs);
@@ -1232,6 +1286,16 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void add32(Imm32 imm, const Address &dest);
     void sub32(Imm32 imm, Register dest);
     void sub32(Register src, Register dest);
+    template <typename T>
+    void branchAdd32(Condition cond, T src, Register dest, Label *label) {
+        add32(src, dest);
+        j(cond, label);
+    }
+    template <typename T>
+    void branchSub32(Condition cond, T src, Register dest, Label *label) {
+        sub32(src, dest);
+        j(cond, label);
+    }
     void xor32(Imm32 imm, Register dest);
 
     void and32(Imm32 imm, Register dest);
@@ -1350,6 +1414,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void cmpPtr(const Register &lhs, const ImmPtr &rhs);
     void cmpPtr(const Register &lhs, const Register &rhs);
     void cmpPtr(const Register &lhs, const ImmGCPtr &rhs);
+    void cmpPtr(const Register &lhs, const Imm32 &rhs);
     void cmpPtr(const Address &lhs, const Register &rhs);
     void cmpPtr(const Address &lhs, const ImmWord &rhs);
     void cmpPtr(const Address &lhs, const ImmPtr &rhs);
@@ -1357,6 +1422,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void subPtr(Imm32 imm, const Register dest);
     void subPtr(const Address &addr, const Register dest);
     void subPtr(const Register &src, const Register &dest);
+    void subPtr(const Register &src, const Address &dest);
     void addPtr(Imm32 imm, const Register dest);
     void addPtr(Imm32 imm, const Address &dest);
     void addPtr(ImmWord imm, const Register dest) {
@@ -1398,6 +1464,28 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     {
         ma_mov(Imm32(0), dest);
         ma_mov(Imm32(1), dest, NoSetCond, cond);
+    }
+
+    template <typename T1, typename T2>
+    void cmpPtrSet(Assembler::Condition cond, T1 lhs, T2 rhs, const Register &dest)
+    {
+        cmpPtr(lhs, rhs);
+        emitSet(cond, dest);
+    }
+    template <typename T1, typename T2>
+    void cmp32Set(Assembler::Condition cond, T1 lhs, T2 rhs, const Register &dest)
+    {
+        cmp32(lhs, rhs);
+        emitSet(cond, dest);
+    }
+
+    void testNullSet(Condition cond, const ValueOperand &value, Register dest) {
+        cond = testNull(cond, value);
+        emitSet(cond, dest);
+    }
+    void testUndefinedSet(Condition cond, const ValueOperand &value, Register dest) {
+        cond = testUndefined(cond, value);
+        emitSet(cond, dest);
     }
 
     // Setup a call to C/C++ code, given the number of general arguments it
@@ -1466,7 +1554,6 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         ma_b(handleNotAnInt, Above);
     }
 
-    void enterOsr(Register calleeToken, Register code);
     void memIntToValue(Address Source, Address Dest) {
         load32(Source, lr);
         storeValue(JSVAL_TYPE_INT32, lr, Dest);
@@ -1509,6 +1596,11 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void moveFloat32(FloatRegister src, FloatRegister dest) {
         as_vmov(VFPRegister(dest).singleOverlay(), VFPRegister(src).singleOverlay());
     }
+
+#ifdef JSGC_GENERATIONAL
+    void branchPtrInNurseryRange(Register ptr, Register temp, Label *label);
+    void branchValueIsNurseryObject(ValueOperand value, Register temp, Label *label);
+#endif
 };
 
 typedef MacroAssemblerARMCompat MacroAssemblerSpecific;

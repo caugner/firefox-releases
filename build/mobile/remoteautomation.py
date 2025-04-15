@@ -10,7 +10,7 @@ import shutil
 import subprocess
 
 from automation import Automation
-from devicemanager import NetworkTools, DMError
+from devicemanager import DMError
 import mozcrash
 
 # signatures for logcat messages that we don't care about much
@@ -70,6 +70,9 @@ class RemoteAutomation(Automation):
         else:
             env['MOZ_CRASHREPORTER_DISABLE'] = '1'
 
+        # Crash on non-local network connections.
+        env['MOZ_DISABLE_NONLOCAL_CONNECTIONS'] = '1'
+
         return env
 
     def waitForFinish(self, proc, utilityPath, timeout, maxTime, startTime, debuggerInfo, symbolsPath):
@@ -98,10 +101,12 @@ class RemoteAutomation(Automation):
         return status
 
     def deleteANRs(self):
-        # delete ANR traces.txt file; usually need root permissions
+        # empty ANR traces.txt file; usually need root permissions
+        # we make it empty and writable so we can test the ANR reporter later
         traces = "/data/anr/traces.txt"
         try:
-            self._devicemanager.shellCheckOutput(['rm', traces], root=True)
+            self._devicemanager.shellCheckOutput(['echo', '', '>', traces], root=True)
+            self._devicemanager.shellCheckOutput(['chmod', '666', traces], root=True)
         except DMError:
             print "Error deleting %s" % traces
             pass
@@ -174,10 +179,6 @@ class RemoteAutomation(Automation):
 #TODO: figure out which platform require NO_EM_RESTART
 #        return app, ['--environ:NO_EM_RESTART=1'] + args
         return app, args
-
-    def getLanIp(self):
-        nettools = NetworkTools()
-        return nettools.getLanIp()
 
     def Process(self, cmd, stdout = None, stderr = None, env = None, cwd = None):
         if stdout == None or stdout == -1 or stdout == subprocess.PIPE:

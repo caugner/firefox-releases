@@ -97,9 +97,9 @@ AudioBuffer::Create(AudioContext* aContext, uint32_t aNumberOfChannels,
 }
 
 JSObject*
-AudioBuffer::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
+AudioBuffer::WrapObject(JSContext* aCx)
 {
-  return AudioBufferBinding::Wrap(aCx, aScope, this);
+  return AudioBufferBinding::Wrap(aCx, this);
 }
 
 bool
@@ -191,21 +191,25 @@ AudioBuffer::SetRawChannelContents(JSContext* aJSContext, uint32_t aChannel,
   PodCopy(JS_GetFloat32ArrayData(mJSChannels[aChannel]), aContents, mLength);
 }
 
-JSObject*
+void
 AudioBuffer::GetChannelData(JSContext* aJSContext, uint32_t aChannel,
+                            JS::MutableHandle<JSObject*> aRetval,
                             ErrorResult& aRv)
 {
   if (aChannel >= NumberOfChannels()) {
     aRv.Throw(NS_ERROR_DOM_SYNTAX_ERR);
-    return nullptr;
+    return;
   }
 
   if (!RestoreJSChannelData(aJSContext)) {
     aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
-    return nullptr;
+    return;
   }
 
-  return mJSChannels[aChannel];
+  if (mJSChannels[aChannel]) {
+    JS::ExposeObjectToActiveJS(mJSChannels[aChannel]);
+  }
+  aRetval.set(mJSChannels[aChannel]);
 }
 
 static already_AddRefed<ThreadSharedFloatArrayBufferList>
@@ -216,13 +220,12 @@ StealJSArrayDataIntoThreadSharedFloatArrayBufferList(JSContext* aJSContext,
     new ThreadSharedFloatArrayBufferList(aJSArrays.Length());
   for (uint32_t i = 0; i < aJSArrays.Length(); ++i) {
     JS::Rooted<JSObject*> arrayBuffer(aJSContext,
-                                      JS_GetArrayBufferViewBuffer(aJSArrays[i]));
-    void* dataToFree = nullptr;
-    uint8_t* stolenData = nullptr;
-    if (arrayBuffer &&
-        JS_StealArrayBufferContents(aJSContext, arrayBuffer, &dataToFree,
-                                    &stolenData)) {
-      result->SetData(i, dataToFree, reinterpret_cast<float*>(stolenData));
+                                      JS_GetArrayBufferViewBuffer(aJSContext, aJSArrays[i]));
+    uint8_t* stolenData = arrayBuffer
+                          ? (uint8_t*) JS_StealArrayBufferContents(aJSContext, arrayBuffer)
+                          : nullptr;
+    if (stolenData) {
+      result->SetData(i, stolenData, reinterpret_cast<float*>(stolenData));
     } else {
       return nullptr;
     }
@@ -246,33 +249,6 @@ AudioBuffer::GetThreadSharedChannelsForRate(JSContext* aJSContext)
   }
 
   return mSharedChannels;
-}
-
-void
-AudioBuffer::MixToMono(JSContext* aJSContext)
-{
-  if (mJSChannels.Length() == 1) {
-    // The buffer is already mono
-    return;
-  }
-
-  // Prepare the input channels
-  nsAutoTArray<const void*, GUESS_AUDIO_CHANNELS> channels;
-  channels.SetLength(mJSChannels.Length());
-  for (uint32_t i = 0; i < mJSChannels.Length(); ++i) {
-    channels[i] = JS_GetFloat32ArrayData(mJSChannels[i]);
-  }
-
-  // Prepare the output channels
-  float* downmixBuffer = new float[mLength];
-
-  // Perform the down-mix
-  AudioChannelsDownMix(channels, &downmixBuffer, 1, mLength);
-
-  // Truncate the shared channels and copy the downmixed data over
-  mJSChannels.SetLength(1);
-  SetRawChannelContents(aJSContext, 0, downmixBuffer);
-  delete[] downmixBuffer;
 }
 
 size_t

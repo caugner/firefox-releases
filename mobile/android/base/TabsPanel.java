@@ -5,6 +5,8 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.Telemetry;
+import org.mozilla.gecko.TelemetryContract;
 import org.mozilla.gecko.animation.PropertyAnimator;
 import org.mozilla.gecko.animation.ViewHelper;
 import org.mozilla.gecko.widget.IconTabWidget;
@@ -88,13 +90,13 @@ public class TabsPanel extends LinearLayout
         mHeader = (RelativeLayout) findViewById(R.id.tabs_panel_header);
         mTabsContainer = (TabsListContainer) findViewById(R.id.tabs_container);
 
-        mPanelNormal = (TabsTray) findViewById(R.id.normal_tabs);
+        mPanelNormal = (PanelView) findViewById(R.id.normal_tabs);
         mPanelNormal.setTabsPanel(this);
 
-        mPanelPrivate = (TabsTray) findViewById(R.id.private_tabs);
+        mPanelPrivate = (PanelView) findViewById(R.id.private_tabs);
         mPanelPrivate.setTabsPanel(this);
 
-        mPanelRemote = (RemoteTabs) findViewById(R.id.synced_tabs);
+        mPanelRemote = (PanelView) findViewById(R.id.synced_tabs);
         mPanelRemote.setTabsPanel(this);
 
         mFooter = (RelativeLayout) findViewById(R.id.tabs_panel_footer);
@@ -119,11 +121,14 @@ public class TabsPanel extends LinearLayout
         mTabWidget.setTabSelectionListener(this);
     }
 
-    public void addTab() {
-        if (mCurrentPanel == Panel.NORMAL_TABS)
-           mActivity.addTab();
-        else
-           mActivity.addPrivateTab();
+    private void addTab() {
+        if (mCurrentPanel == Panel.NORMAL_TABS) {
+            Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.ACTIONBAR, "new_tab");
+            mActivity.addTab();
+        } else {
+            Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.ACTIONBAR, "new_private_tab");
+            mActivity.addPrivateTab();
+        }
 
         mActivity.autoHideTabs();
     }
@@ -436,6 +441,13 @@ public class TabsPanel extends LinearLayout
 
         mHeader.setLayerType(View.LAYER_TYPE_NONE, null);
         mTabsContainer.setLayerType(View.LAYER_TYPE_NONE, null);
+
+        // If the tray is now hidden, call hide() on current panel and unset it as the current panel
+        // to avoid hide() being called again when the tray is opened next.
+        if (!mVisible && mPanel != null) {
+            mPanel.hide();
+            mPanel = null;
+        }
     }
 
     public void setTabsLayoutChangeListener(TabsLayoutChangeListener listener) {

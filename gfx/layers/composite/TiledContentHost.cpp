@@ -343,9 +343,8 @@ TiledContentHost::RenderTile(const TileHost& aTile,
   }
 
   nsIntRect screenBounds = aScreenRegion.GetBounds();
-  Matrix mat = aTransform.As2D();
   Rect quad(screenBounds.x, screenBounds.y, screenBounds.width, screenBounds.height);
-  quad = mat.TransformBounds(quad);
+  quad = aTransform.TransformBounds(quad);
 
   if (!quad.Intersects(mCompositor->ClipRectInLayersCoordinates(aClipRect))) {
     return;
@@ -382,7 +381,7 @@ TiledContentHost::RenderTile(const TileHost& aTile,
     mCompositor->DrawQuad(graphicsRect, aClipRect, aEffectChain, aOpacity, aTransform);
   }
   mCompositor->DrawDiagnostics(DIAGNOSTIC_CONTENT|DIAGNOSTIC_TILE,
-                               aScreenRegion, aClipRect, aTransform);
+                               aScreenRegion, aClipRect, aTransform, mFlashCounter);
 }
 
 void
@@ -430,24 +429,25 @@ TiledContentHost::RenderLayerBuffer(TiledLayerBufferComposite& aLayerBuffer,
   uint32_t rowCount = 0;
   uint32_t tileX = 0;
   nsIntRect visibleRect = aVisibleRegion.GetBounds();
+  gfx::IntSize scaledTileSize = aLayerBuffer.GetScaledTileSize();
   for (int32_t x = visibleRect.x; x < visibleRect.x + visibleRect.width;) {
     rowCount++;
-    int32_t tileStartX = aLayerBuffer.GetTileStart(x);
-    int32_t w = aLayerBuffer.GetScaledTileLength() - tileStartX;
+    int32_t tileStartX = aLayerBuffer.GetTileStart(x, scaledTileSize.width);
+    int32_t w = scaledTileSize.width - tileStartX;
     if (x + w > visibleRect.x + visibleRect.width) {
       w = visibleRect.x + visibleRect.width - x;
     }
     int tileY = 0;
     for (int32_t y = visibleRect.y; y < visibleRect.y + visibleRect.height;) {
-      int32_t tileStartY = aLayerBuffer.GetTileStart(y);
-      int32_t h = aLayerBuffer.GetScaledTileLength() - tileStartY;
+      int32_t tileStartY = aLayerBuffer.GetTileStart(y, scaledTileSize.height);
+      int32_t h = scaledTileSize.height - tileStartY;
       if (y + h > visibleRect.y + visibleRect.height) {
         h = visibleRect.y + visibleRect.height - y;
       }
 
       TileHost tileTexture = aLayerBuffer.
-        GetTile(nsIntPoint(aLayerBuffer.RoundDownToTileEdge(x),
-                           aLayerBuffer.RoundDownToTileEdge(y)));
+        GetTile(nsIntPoint(aLayerBuffer.RoundDownToTileEdge(x, scaledTileSize.width),
+                           aLayerBuffer.RoundDownToTileEdge(y, scaledTileSize.height)));
       if (tileTexture != aLayerBuffer.GetPlaceholderTile()) {
         nsIntRegion tileDrawRegion;
         tileDrawRegion.And(nsIntRect(x, y, w, h), aLayerBuffer.GetValidRegion());
@@ -458,9 +458,9 @@ TiledContentHost::RenderLayerBuffer(TiledLayerBufferComposite& aLayerBuffer,
           tileDrawRegion.ScaleRoundOut(resolution, resolution);
           nsIntPoint tileOffset((x - tileStartX) * resolution,
                                 (y - tileStartY) * resolution);
-          uint32_t tileSize = aLayerBuffer.GetTileLength();
+          gfx::IntSize tileSize = aLayerBuffer.GetTileSize();
           RenderTile(tileTexture, aEffectChain, aOpacity, aTransform, aFilter, aClipRect, tileDrawRegion,
-                     tileOffset, nsIntSize(tileSize, tileSize));
+                     tileOffset, nsIntSize(tileSize.width, tileSize.height));
         }
       }
       tileY++;
@@ -472,7 +472,7 @@ TiledContentHost::RenderLayerBuffer(TiledLayerBufferComposite& aLayerBuffer,
   gfx::Rect rect(visibleRect.x, visibleRect.y,
                  visibleRect.width, visibleRect.height);
   GetCompositor()->DrawDiagnostics(DIAGNOSTIC_CONTENT,
-                                   rect, aClipRect, aTransform);
+                                   rect, aClipRect, aTransform, mFlashCounter);
 }
 
 void

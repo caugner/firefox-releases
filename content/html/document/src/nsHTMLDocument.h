@@ -104,7 +104,8 @@ public:
   NS_DECL_NSIDOMHTMLDOCUMENT
 
   mozilla::dom::HTMLAllCollection* All();
-  JSObject* GetAll(JSContext* aCx, mozilla::ErrorResult& aRv);
+  void GetAll(JSContext* aCx, JS::MutableHandle<JSObject*> aRetval,
+              mozilla::ErrorResult& aRv);
 
   nsISupports* ResolveName(const nsAString& aName, nsWrapperCache **aCache);
 
@@ -166,15 +167,17 @@ public:
   virtual bool WillIgnoreCharsetOverride() MOZ_OVERRIDE;
 
   // WebIDL API
-  virtual JSObject* WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
+  virtual JSObject* WrapNode(JSContext* aCx)
     MOZ_OVERRIDE;
   void GetDomain(nsAString& aDomain, mozilla::ErrorResult& rv);
   void SetDomain(const nsAString& aDomain, mozilla::ErrorResult& rv);
   void GetCookie(nsAString& aCookie, mozilla::ErrorResult& rv);
   void SetCookie(const nsAString& aCookie, mozilla::ErrorResult& rv);
-  JSObject* NamedGetter(JSContext* cx, const nsAString& aName, bool& aFound,
-                        mozilla::ErrorResult& rv);
-  void GetSupportedNames(nsTArray<nsString>& aNames);
+  void NamedGetter(JSContext* cx, const nsAString& aName, bool& aFound,
+                   JS::MutableHandle<JSObject*> aRetval,
+                   mozilla::ErrorResult& rv);
+  bool NameIsEnumerable(const nsAString& aName);
+  void GetSupportedNames(unsigned, nsTArray<nsString>& aNames);
   nsGenericHTMLElement *GetBody();
   void SetBody(nsGenericHTMLElement* aBody, mozilla::ErrorResult& rv);
   mozilla::dom::HTMLSharedElement *GetHead() {
@@ -233,7 +236,7 @@ public:
   {
     // Deprecated
   }
-  already_AddRefed<mozilla::Selection> GetSelection(mozilla::ErrorResult& rv);
+  mozilla::dom::Selection* GetSelection(mozilla::ErrorResult& aRv);
   // The XPCOM CaptureEvents works fine for us.
   // The XPCOM ReleaseEvents works fine for us.
   // We're picking up GetLocation from Document
