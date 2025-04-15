@@ -71,6 +71,7 @@
 #include "nsChangeHint.h"
 #include "nsGUIEvent.h"
 #include "nsInterfaceHashtable.h"
+#include "nsEventStates.h"
 
 class nsIContent;
 class nsIDocument;
@@ -143,8 +144,8 @@ typedef struct CapturingContentInfo {
 } CapturingContentInfo;
 
 #define NS_IPRESSHELL_IID    \
-{ 0x4a975eb5, 0xa46c, 0x46db, \
- { 0xa6, 0x96, 0x9a, 0x46, 0x6c, 0xad, 0x2e, 0x83 } }
+        { 0x4dc4db09, 0x03d4, 0x4427, \
+          { 0xbe, 0xfb, 0xc9, 0x29, 0xac, 0x5c, 0x62, 0xab } }
 
 // Constants for ScrollContentIntoView() function
 #define NS_PRESSHELL_SCROLL_TOP      0
@@ -269,8 +270,10 @@ public:
   nsCSSFrameConstructor* FrameConstructor() const { return mFrameConstructor; }
 
   nsFrameManager* FrameManager() const {
+    // reinterpret_cast is valid since nsFrameManager does not add
+    // any members over nsFrameManagerBase.
     return reinterpret_cast<nsFrameManager*>
-                           (&const_cast<nsIPresShell*>(this)->mFrameManager);
+                           (const_cast<nsIPresShell*>(this)->mFrameManager);
   }
 
 #endif
@@ -382,7 +385,7 @@ public:
   virtual NS_HIDDEN_(nsIFrame*) GetRootFrameExternal() const;
   nsIFrame* GetRootFrame() const {
 #ifdef _IMPL_NS_LAYOUT
-    return mFrameManager.GetRootFrame();
+    return mFrameManager->GetRootFrame();
 #else
     return GetRootFrameExternal();
 #endif
@@ -781,6 +784,13 @@ public:
   virtual nsresult ReconstructFrames() = 0;
 
   /**
+   * Notify that a content node's state has changed
+   */
+  virtual void ContentStateChanged(nsIDocument* aDocument,
+                                   nsIContent* aContent,
+                                   nsEventStates aStateMask) = 0;
+
+  /**
    * Given aFrame, the root frame of a stacking context, find its descendant
    * frame under the point aPt that receives a mouse event at that location,
    * or nsnull if there is no such frame.
@@ -1161,9 +1171,15 @@ public:
    * root pres shell.
    */
   virtual void DidPaint() = 0;
+  virtual void ScheduleViewManagerFlush() = 0;
   virtual void ClearMouseCaptureOnView(nsIView* aView) = 0;
   virtual bool IsVisible() = 0;
   virtual void DispatchSynthMouseMove(nsGUIEvent *aEvent, bool aFlushOnHoverChange) = 0;
+
+  virtual void SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                   size_t *aArenasSize,
+                                   size_t *aStyleSetsSize,
+                                   size_t *aTextRunsSize) const = 0;
 
   /**
    * Refresh observer management.
@@ -1221,7 +1237,9 @@ protected:
   nsCSSFrameConstructor*    mFrameConstructor; // [OWNS]
   nsIViewManager*           mViewManager;   // [WEAK] docViewer owns it so I don't have to
   nsFrameSelection*         mSelection;
-  nsFrameManagerBase        mFrameManager;  // [OWNS]
+  // Pointer into mFrameConstructor - this is purely so that FrameManager() and
+  // GetRootFrame() can be inlined:
+  nsFrameManagerBase*       mFrameManager;
   nsWeakPtr                 mForwardingContainer;
 
 #ifdef NS_DEBUG
@@ -1269,10 +1287,6 @@ protected:
   // less pixels in the given dimension.
   float                     mXResolution;
   float                     mYResolution;
-
-  // Live pres shells, for memory and other tracking
-  typedef nsPtrHashKey<nsIPresShell> PresShellPtrKey;
-  static nsTHashtable<PresShellPtrKey> *sLiveShells;
 
   static nsIContent* gKeyDownTarget;
 };

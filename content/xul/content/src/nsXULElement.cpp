@@ -126,6 +126,7 @@
 #include "prlog.h"
 #include "rdf.h"
 #include "nsIControllers.h"
+#include "nsAttrValueOrString.h"
 
 // The XUL doc interface
 #include "nsIDOMXULDocument.h"
@@ -374,8 +375,7 @@ NS_TrustedNewXULElement(nsIContent** aResult, already_AddRefed<nsINodeInfo> aNod
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsXULElement,
                                                   nsStyledElement)
-    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_MEMBER(mPrototype,
-                                                    nsXULPrototypeElement)
+    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPrototype)
     {
         nsXULSlots* slots = static_cast<nsXULSlots*>(tmp->GetExistingSlots());
         if (slots) {
@@ -1055,7 +1055,7 @@ nsXULElement::UnregisterAccessKey(const nsAString& aOldValue)
 
 nsresult
 nsXULElement::BeforeSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
-                            const nsAString* aValue, bool aNotify)
+                            const nsAttrValueOrString* aValue, bool aNotify)
 {
     if (aNamespaceID == kNameSpaceID_None && aName == nsGkAtoms::accesskey &&
         IsInDoc()) {
@@ -1084,10 +1084,9 @@ nsXULElement::BeforeSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
              mNodeInfo->Equals(nsGkAtoms::window) &&
              aName == nsGkAtoms::chromemargin) {
       nsAttrValue attrValue;
-      nsIntMargin margins;
       // Make sure the margin format is valid first
-      if (!attrValue.ParseIntMarginValue(*aValue)) {
-          return NS_ERROR_INVALID_ARG;
+      if (!attrValue.ParseIntMarginValue(aValue->String())) {
+        return NS_ERROR_INVALID_ARG;
       }
     }
 
@@ -1097,7 +1096,7 @@ nsXULElement::BeforeSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
 
 nsresult
 nsXULElement::AfterSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
-                           const nsAString* aValue, bool aNotify)
+                           const nsAttrValue* aValue, bool aNotify)
 {
     if (aNamespaceID == kNameSpaceID_None) {
         // XXX UnsetAttr handles more attributes than we do. See bug 233642.
@@ -1113,17 +1112,24 @@ nsXULElement::AfterSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
             // nsXULPrototypeAttribute is expensive!)
             bool defer = mPrototype == nsnull ||
                            mPrototype->mScriptTypeID == GetScriptTypeID();
-            AddScriptEventListener(aName, *aValue, defer);
+            if (aValue->Type() == nsAttrValue::eString) {
+                AddScriptEventListener(aName, aValue->GetStringValue(), defer);
+            } else {
+                nsAutoString body;
+                aValue->ToString(body);
+                AddScriptEventListener(aName, body, defer);
+            }
         }
 
         // Hide chrome if needed
         if (mNodeInfo->Equals(nsGkAtoms::window) && aValue) {
-          if (aName == nsGkAtoms::hidechrome) {
-              HideWindowChrome(aValue->EqualsLiteral("true"));
-          }
-          else if (aName == nsGkAtoms::chromemargin) {
-              SetChromeMargins(aValue);
-          }
+            if (aName == nsGkAtoms::hidechrome) {
+                HideWindowChrome(
+                  aValue->Equals(NS_LITERAL_STRING("true"), eCaseMatters));
+            }
+            else if (aName == nsGkAtoms::chromemargin) {
+                SetChromeMargins(aValue);
+            }
         }
 
         // title, (in)activetitlebarcolor and drawintitlebar are settable on
@@ -1134,15 +1140,22 @@ nsXULElement::AfterSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
                 document->NotifyPossibleTitleChange(false);
             }
             else if ((aName == nsGkAtoms::activetitlebarcolor ||
-                      aName == nsGkAtoms::inactivetitlebarcolor)) {
+                      aName == nsGkAtoms::inactivetitlebarcolor) && aValue) {
                 nscolor color = NS_RGBA(0, 0, 0, 0);
-                nsAttrValue attrValue;
-                attrValue.ParseColor(*aValue);
-                attrValue.GetColorValue(color);
+                if (aValue->Type() == nsAttrValue::eColor) {
+                    aValue->GetColorValue(color);
+                } else {
+                    nsAutoString tmp;
+                    nsAttrValue attrValue;
+                    aValue->ToString(tmp);
+                    attrValue.ParseColor(tmp);
+                    attrValue.GetColorValue(color);
+                }
                 SetTitlebarColor(color, aName == nsGkAtoms::activetitlebarcolor);
             }
             else if (aName == nsGkAtoms::drawintitlebar) {
-                SetDrawsInTitlebar(aValue && aValue->EqualsLiteral("true"));
+                SetDrawsInTitlebar(aValue &&
+                    aValue->Equals(NS_LITERAL_STRING("true"), eCaseMatters));
             }
             else if (aName == nsGkAtoms::localedir) {
                 // if the localedir changed on the root element, reset the document direction
@@ -1354,7 +1367,8 @@ nsXULElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, bool aNotify)
     if (hasMutationListeners) {
         nsAutoString ns;
         nsContentUtils::NameSpaceManager()->GetNameSpaceURI(aNameSpaceID, ns);
-        GetAttributeNodeNS(ns, nsDependentAtomString(aName), getter_AddRefs(attrNode));
+        GetAttributeNodeNSInternal(ns, nsDependentAtomString(aName),
+                                   getter_AddRefs(attrNode));
     }
 
     nsDOMSlots *slots = GetExistingDOMSlots();
@@ -2435,7 +2449,7 @@ private:
 };
 
 void
-nsXULElement::SetChromeMargins(const nsAString* aValue)
+nsXULElement::SetChromeMargins(const nsAttrValue* aValue)
 {
     if (!aValue)
         return;
@@ -2445,13 +2459,17 @@ nsXULElement::SetChromeMargins(const nsAString* aValue)
         return;
 
     // top, right, bottom, left - see nsAttrValue
-    nsAttrValue attrValue;
     nsIntMargin margins;
+    bool gotMargins = false;
 
-    nsAutoString data;
-    data.Assign(*aValue);
-    if (attrValue.ParseIntMarginValue(data) &&
-        attrValue.GetIntMarginValue(margins)) {
+    if (aValue->Type() == nsAttrValue::eIntMarginValue) {
+        gotMargins = aValue->GetIntMarginValue(margins);
+    } else {
+        nsAutoString tmp;
+        aValue->ToString(tmp);
+        gotMargins = nsContentUtils::ParseIntMarginValue(tmp, margins);
+    }
+    if (gotMargins) {
         nsContentUtils::AddScriptRunner(new MarginSetter(mainWidget, margins));
     }
 }
@@ -2534,7 +2552,7 @@ nsXULElement::RecompileScriptEventListeners()
 }
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULPrototypeNode)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_NATIVE(nsXULPrototypeNode)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXULPrototypeNode)
     if (tmp->mType == nsXULPrototypeNode::eType_Element) {
         static_cast<nsXULPrototypeElement*>(tmp)->Unlink();
     }
@@ -2542,7 +2560,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_NATIVE(nsXULPrototypeNode)
         static_cast<nsXULPrototypeScript*>(tmp)->UnlinkJSObjects();
     }
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_BEGIN(nsXULPrototypeNode)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsXULPrototypeNode)
     if (tmp->mType == nsXULPrototypeNode::eType_Element) {
         nsXULPrototypeElement *elem =
             static_cast<nsXULPrototypeElement*>(tmp);
@@ -2558,14 +2576,13 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_BEGIN(nsXULPrototypeNode)
             }
         }
         for (i = 0; i < elem->mChildren.Length(); ++i) {
-            NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_PTR(elem->mChildren[i].get(),
-                                                         nsXULPrototypeNode,
-                                                         "mChildren[i]")
+            NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mChildren[i]");
+            cb.NoteXPCOMChild(elem->mChildren[i]);
         }
     }
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-NS_IMPL_CYCLE_COLLECTION_TRACE_NATIVE_BEGIN(nsXULPrototypeNode)
+NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsXULPrototypeNode)
     if (tmp->mType == nsXULPrototypeNode::eType_Element) {
         nsXULPrototypeElement *elem =
             static_cast<nsXULPrototypeElement*>(tmp);
@@ -2587,8 +2604,13 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_NATIVE_BEGIN(nsXULPrototypeNode)
                                                 "mScriptObject.mObject")
     }
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(nsXULPrototypeNode, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(nsXULPrototypeNode, Release)
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF(nsXULPrototypeNode)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(nsXULPrototypeNode)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsXULPrototypeNode)
+    NS_INTERFACE_MAP_ENTRY(nsISupports)
+NS_INTERFACE_MAP_END
 
 //----------------------------------------------------------------------
 //

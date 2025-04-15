@@ -68,7 +68,6 @@
 #include "nsEventStates.h"
 #include "nsIStructuredCloneContainer.h"
 #include "nsIBFCacheEntry.h"
-#include "nsDOMMemoryReporter.h"
 
 class nsIContent;
 class nsPresContext;
@@ -111,6 +110,7 @@ class nsIBoxObject;
 class imgIRequest;
 class nsISHEntry;
 class nsDOMNavigationTiming;
+class nsWindowSizes;
 
 namespace mozilla {
 namespace css {
@@ -156,7 +156,6 @@ public:
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_IDOCUMENT_IID)
   NS_DECL_AND_IMPL_ZEROING_OPERATOR_NEW
-  NS_DECL_DOM_MEMORY_REPORTER_SIZEOF
 
 #ifdef MOZILLA_INTERNAL_API
   nsIDocument()
@@ -183,9 +182,10 @@ public:
   
   /**
    * Let the document know that we're starting to load data into it.
-   * @param aCommand The parser command
+   * @param aCommand The parser command. Must not be null.
    *                 XXXbz It's odd to have that here.
-   * @param aChannel The channel the data will come from
+   * @param aChannel The channel the data will come from. The channel must be
+   *                 able to report its Content-Type.
    * @param aLoadGroup The loadgroup this document should use from now on.
    *                   Note that the document might not be the only thing using
    *                   this loadgroup.
@@ -204,6 +204,9 @@ public:
    * @param aSink The content sink to use for the data.  If this is null and
    *              the document needs a content sink, it will create one based
    *              on whatever it knows about the data it's going to load.
+   *              This MUST be null if the underlying document is an HTML
+   *              document. Even in the XML case, please don't add new calls
+   *              with non-null sink.
    *
    * Once this has been called, the document will return false for
    * MayStartLayout() until SetMayStartLayout(true) is called on it.  Making
@@ -1429,7 +1432,8 @@ public:
   /**
    * Called by nsParser to preload images. Can be removed and code moved
    * to nsPreloadURIs::PreloadURIs() in file nsParser.cpp whenever the
-   * parser-module is linked with gklayout-module.
+   * parser-module is linked with gklayout-module.  aCrossOriginAttr should
+   * be a void string if the attr is not present.
    */
   virtual void MaybePreLoadImage(nsIURI* uri,
                                  const nsAString& aCrossOriginAttr) = 0;
@@ -1620,6 +1624,16 @@ public:
       mDisplayDocument->SetNeedStyleFlush();
     }
   }
+
+  // Note: nsIDocument is a sub-class of nsINode, which has a
+  // SizeOfExcludingThis function.  However, because nsIDocument objects can
+  // only appear at the top of the DOM tree, we have a specialized measurement
+  // function which returns multiple sizes.
+  virtual void DocSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const;
+  // DocSizeOfIncludingThis doesn't need to be overridden by sub-classes
+  // because nsIDocument inherits from nsINode;  see the comment above the
+  // declaration of nsINode::SizeOfIncludingThis.
+  virtual void DocSizeOfIncludingThis(nsWindowSizes* aWindowSizes) const;
 
 private:
   PRUint64 mWarnedAbout;

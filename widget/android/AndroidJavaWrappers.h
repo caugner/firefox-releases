@@ -135,6 +135,8 @@ public:
     int Left() { return mLeft; }
     int Right() { return mRight; }
     int Top() { return mTop; }
+    int Width() { return mRight - mLeft; }
+    int Height() { return mBottom - mTop; }
 
 protected:
     int mBottom;
@@ -161,7 +163,7 @@ public:
     jobject LockBuffer();
     unsigned char *LockBufferBits();
     void UnlockBuffer();
-    bool BeginDrawing(int aWidth, int aHeight, int aTileWidth, int aTileHeight, const nsAString &aMetadata, bool aHasDirectTexture);
+    bool BeginDrawing(int aWidth, int aHeight, int aTileWidth, int aTileHeight, nsIntRect &aDirtyRect, const nsAString &aMetadata, bool aHasDirectTexture);
     void EndDrawing(const nsIntRect &aRect);
 
 private:
@@ -443,6 +445,7 @@ public:
     double X() { return mX; }
     double Y() { return mY; }
     double Z() { return mZ; }
+    double Distance() { return mDistance; }
     const nsIntRect& Rect() { return mRect; }
     nsAString& Characters() { return mCharacters; }
     nsAString& CharactersExtra() { return mCharactersExtra; }
@@ -479,6 +482,7 @@ protected:
     int mRangeForeColor, mRangeBackColor;
     double mAlpha, mBeta, mGamma;
     double mX, mY, mZ;
+    double mDistance;
     int mPointerIndex;
     nsString mCharacters, mCharactersExtra;
     nsRefPtr<nsGeoPosition> mGeoPosition;
@@ -517,6 +521,7 @@ protected:
     static jfieldID jXField;
     static jfieldID jYField;
     static jfieldID jZField;
+    static jfieldID jDistanceField;
     static jfieldID jRectField;
     static jfieldID jNativeWindowField;
 
@@ -563,6 +568,9 @@ public:
         VIEWPORT = 20,
         VISITED = 21,
         NETWORK_CHANGED = 22,
+        PROXIMITY_EVENT = 23,
+        ACTIVITY_RESUMING = 24,
+        SCREENSHOT = 25,
         dummy_java_enum_list_end
     };
 

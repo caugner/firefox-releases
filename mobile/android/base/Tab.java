@@ -38,6 +38,7 @@
 package org.mozilla.gecko;
 
 import android.content.ContentResolver;
+import android.database.ContentObserver;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
@@ -60,7 +61,7 @@ import java.util.List;
 public final class Tab {
     private static final String LOGTAG = "GeckoTab";
     private static final int kThumbnailWidth = 136;
-    private static final int kThumbnailHeight = 77;
+    private static final int kThumbnailHeight = 78;
 
     private static float sMinDim = 0;
     private static float sDensity = 1;
@@ -77,7 +78,6 @@ public final class Tab {
     private int mHistoryIndex;
     private int mParentId;
     private boolean mExternal;
-    private boolean mLoading;
     private boolean mBookmark;
     private HashMap<String, DoorHanger> mDoorHangers;
     private long mFaviconLoadId;
@@ -87,7 +87,14 @@ public final class Tab {
     private boolean mHasTouchListeners;
     private ArrayList<View> mPluginViews;
     private HashMap<Surface, Layer> mPluginLayers;
-    private boolean mHasLoaded;
+    private ContentResolver mContentResolver;
+    private ContentObserver mContentObserver;
+    private int mState;
+
+    public static final int STATE_DELAYED = 0;
+    public static final int STATE_LOADING = 1;
+    public static final int STATE_SUCCESS = 2;
+    public static final int STATE_ERROR = 3;
 
     public static final class HistoryEntry {
         public String mUri;         // must never be null
@@ -97,10 +104,6 @@ public final class Tab {
             mUri = uri;
             mTitle = title;
         }
-    }
-
-    public Tab() {
-        this(-1, "", false, -1, "");
     }
 
     public Tab(int id, String url, boolean external, int parentId, String title) {
@@ -122,7 +125,19 @@ public final class Tab {
         mContentType = "";
         mPluginViews = new ArrayList<View>();
         mPluginLayers = new HashMap<Surface, Layer>();
-        mHasLoaded = false;
+        mState = STATE_LOADING;
+        mContentResolver = Tabs.getInstance().getContentResolver();
+        mContentObserver = new ContentObserver(GeckoAppShell.getHandler()) {
+            public void onChange(boolean selfChange) {
+                updateBookmark();
+            }
+        };
+        BrowserDB.registerBookmarkObserver(mContentResolver, mContentObserver);
+    }
+
+    public void onDestroy() {
+        mDoorHangers = new HashMap<String, DoorHanger>();
+        BrowserDB.unregisterBookmarkObserver(mContentResolver, mContentObserver);
     }
 
     public int getId() {
@@ -133,6 +148,7 @@ public final class Tab {
         return mParentId;
     }
 
+    // may be null if user-entered query hasn't yet been resolved to a URI
     public String getURL() {
         return mUrl;
     }
@@ -220,7 +236,9 @@ public final class Tab {
                                                           b.getHeight());
 
                         Bitmap bitmap = Bitmap.createScaledBitmap(cropped, getThumbnailWidth(), getThumbnailHeight(), false);
-                        saveThumbnailToDB(new BitmapDrawable(bitmap));
+
+                        if (mState == Tab.STATE_SUCCESS)
+                            saveThumbnailToDB(new BitmapDrawable(bitmap));
 
                         if (!cropped.equals(b))
                             b.recycle();
@@ -235,7 +253,7 @@ public final class Tab {
                 }
                 GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
                     public void run() {
-                        GeckoApp.mAppContext.onTabsChanged(tab);
+                        Tabs.getInstance().notifyListeners(tab, Tabs.TabEvents.THUMBNAIL);
                     }
                 });
             }
@@ -248,10 +266,6 @@ public final class Tab {
 
     public String getSecurityMode() {
         return mSecurityMode;
-    }
-
-    public boolean isLoading() {
-        return mLoading;
     }
 
     public boolean isBookmark() {
@@ -309,19 +323,19 @@ public final class Tab {
         }
     }
 
-    public void setLoading(boolean loading) {
-        mLoading = loading;
+    public void setState(int state) {
+        mState = state;
     }
 
-    private void setBookmark(boolean bookmark) {
-        mBookmark = bookmark;
+    public int getState() {
+        return mState;
     }
 
     public void setHasTouchListeners(boolean aValue) {
         mHasTouchListeners = aValue;
     }
 
-    public boolean hasTouchListeners() {
+    public boolean getHasTouchListeners() {
         return mHasTouchListeners;
     }
 
@@ -359,24 +373,44 @@ public final class Tab {
                 if (mCheckBookmarkTask != null)
                     mCheckBookmarkTask.cancel(false);
 
-                mCheckBookmarkTask = new CheckBookmarkTask(getURL());
+                String url = getURL();
+                if (url == null)
+                    return;
+
+                mCheckBookmarkTask = new CheckBookmarkTask(url);
                 mCheckBookmarkTask.execute();
             }
         });
     }
 
     public void addBookmark() {
-        new AddBookmarkTask().execute();
+        GeckoAppShell.getHandler().post(new Runnable() {
+            public void run() {
+                String url = getURL();
+                if (url == null)
+                    return;
+
+                BrowserDB.addBookmark(mContentResolver, getTitle(), url);
+            }
+        });
     }
 
     public void removeBookmark() {
-        new RemoveBookmarkTask().execute();
+        GeckoAppShell.getHandler().post(new Runnable() {
+            public void run() {
+                String url = getURL();
+                if (url == null)
+                    return;
+
+                BrowserDB.removeBookmarksWithURL(mContentResolver, url);
+            }
+        });
     }
 
     public boolean doReload() {
         if (mHistory.isEmpty())
             return false;
-        GeckoEvent e = new GeckoEvent("Session:Reload", "");
+        GeckoEvent e = GeckoEvent.createBroadcastEvent("Session:Reload", "");
         GeckoAppShell.sendEventToGecko(e);
         return true;
     }
@@ -385,13 +419,13 @@ public final class Tab {
         if (mHistoryIndex < 1) {
             return false;
         }
-        GeckoEvent e = new GeckoEvent("Session:Back", "");
+        GeckoEvent e = GeckoEvent.createBroadcastEvent("Session:Back", "");
         GeckoAppShell.sendEventToGecko(e);
         return true;
     }
 
     public boolean doStop() {
-        GeckoEvent e = new GeckoEvent("Session:Stop", "");
+        GeckoEvent e = GeckoEvent.createBroadcastEvent("Session:Stop", "");
         GeckoAppShell.sendEventToGecko(e);
         return true;
     }
@@ -404,7 +438,7 @@ public final class Tab {
         if (mHistoryIndex + 1 >= mHistory.size()) {
             return false;
         }
-        GeckoEvent e = new GeckoEvent("Session:Forward", "");
+        GeckoEvent e = GeckoEvent.createBroadcastEvent("Session:Forward", "");
         GeckoAppShell.sendEventToGecko(e);
         return true;
     }
@@ -415,10 +449,6 @@ public final class Tab {
 
     public void removeDoorHanger(String value) {
         mDoorHangers.remove(value);
-    }
-
-    public void removeAllDoorHangers() {
-        mDoorHangers = new HashMap<String, DoorHanger>();
     }
 
     public void removeTransientDoorHangers() {
@@ -441,14 +471,6 @@ public final class Tab {
 
     public HashMap<String, DoorHanger> getDoorHangers() {
         return mDoorHangers;
-    }
-
-    public void setHasLoaded(boolean hasLoaded) {
-        mHasLoaded = hasLoaded;
-    }
-
-    public boolean hasLoaded() {
-        return mHasLoaded;
     }
 
     void handleSessionHistoryMessage(String event, JSONObject message) throws JSONException {
@@ -499,8 +521,7 @@ public final class Tab {
 
         @Override
         protected Boolean doInBackground(Void... unused) {
-            ContentResolver resolver = Tabs.getInstance().getContentResolver();
-            return BrowserDB.isBookmark(resolver, mUrl);
+            return BrowserDB.isBookmark(mContentResolver, mUrl);
         }
 
         @Override
@@ -519,46 +540,21 @@ public final class Tab {
                     if (!mUrl.equals(getURL()))
                         return;
 
-                    setBookmark(isBookmark.booleanValue());
+                    mBookmark = isBookmark.booleanValue();
                 }
             });
         }
     }
 
-    private final class AddBookmarkTask extends GeckoAsyncTask<Void, Void, Void> {
-        @Override
-        protected Void doInBackground(Void... unused) {
-            ContentResolver resolver = Tabs.getInstance().getContentResolver();
-            BrowserDB.addBookmark(resolver, getTitle(), getURL());
-            return null;
-        }
-
-        @Override
-        protected void onPostExecute(Void unused) {
-            setBookmark(true);
-        }
-    }
-
     private void saveThumbnailToDB(BitmapDrawable thumbnail) {
         try {
-            ContentResolver resolver = Tabs.getInstance().getContentResolver();
-            BrowserDB.updateThumbnailForUrl(resolver, getURL(), thumbnail);
+            String url = getURL();
+            if (url == null)
+                return;
+
+            BrowserDB.updateThumbnailForUrl(mContentResolver, url, thumbnail);
         } catch (Exception e) {
             // ignore
-        }
-    }
-
-    private final class RemoveBookmarkTask extends GeckoAsyncTask<Void, Void, Void> {
-        @Override
-        protected Void doInBackground(Void... unused) {
-            ContentResolver resolver = Tabs.getInstance().getContentResolver();
-            BrowserDB.removeBookmark(resolver, getURL());
-            return null;
-        }
-
-        @Override
-        protected void onPostExecute(Void unused) {
-            setBookmark(false);
         }
     }
 

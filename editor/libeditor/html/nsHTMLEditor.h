@@ -71,6 +71,9 @@
 #include "nsPoint.h"
 #include "nsTArray.h"
 #include "nsAutoPtr.h"
+#include "nsAttrName.h"
+
+#include "mozilla/dom/Element.h"
 
 class nsIDOMKeyEvent;
 class nsITransferable;
@@ -367,8 +370,7 @@ public:
                               nsCOMPtr<nsIDOMNode> *ioParent, 
                               PRInt32 *ioOffset, 
                               bool aNoEmptyNodes);
-  already_AddRefed<nsIDOMNode> FindUserSelectAllNode(nsIDOMNode* aNode);
-                                
+  virtual already_AddRefed<nsIDOMNode> FindUserSelectAllNode(nsIDOMNode* aNode);
 
   /** returns the absolute position of the end points of aSelection
     * in the document as a text stream.
@@ -418,7 +420,21 @@ public:
                                   nsCSSStyleSheet *aStyleSheet);
 
   nsresult RemoveStyleSheetFromList(const nsAString &aURL);
-                       
+
+  bool IsCSSEnabled()
+  {
+    // TODO: removal of mCSSAware and use only the presence of mHTMLCSSUtils
+    return mCSSAware && mHTMLCSSUtils && mHTMLCSSUtils->IsCSSPrefChecked();
+  }
+
+  static bool HasAttributes(mozilla::dom::Element* aElement)
+  {
+    MOZ_ASSERT(aElement);
+    PRUint32 attrCount = aElement->GetAttrCount();
+    return attrCount > 1 ||
+           (1 == attrCount && !aElement->GetAttrNameAt(0)->Equals(nsGkAtoms::mozdirty));
+  }
+
 protected:
 
   NS_IMETHOD  InitRules();
@@ -440,16 +456,12 @@ protected:
   // Return TRUE if aElement is a table-related elemet and caret was set
   bool SetCaretInTableCell(nsIDOMElement* aElement);
   bool IsNodeInActiveEditor(nsIDOMNode* aNode);
+  bool IsNodeInActiveEditor(nsINode* aNode);
 
   // key event helpers
   NS_IMETHOD TabInTable(bool inIsShift, bool *outHandled);
   NS_IMETHOD CreateBR(nsIDOMNode *aNode, PRInt32 aOffset, 
                       nsCOMPtr<nsIDOMNode> *outBRNode, nsIEditor::EDirection aSelect = nsIEditor::eNone);
-  NS_IMETHOD CreateBRImpl(nsCOMPtr<nsIDOMNode> *aInOutParent, 
-                         PRInt32 *aInOutOffset, 
-                         nsCOMPtr<nsIDOMNode> *outBRNode, 
-                         nsIEditor::EDirection aSelect);
-  NS_IMETHOD InsertBR(nsCOMPtr<nsIDOMNode> *outBRNode);
 
 // Table Editing (implemented in nsTableEditor.cpp)
 
@@ -559,11 +571,20 @@ protected:
   NS_IMETHOD InsertAsPlaintextQuotation(const nsAString & aQuotedText,
                                         bool aAddCites,
                                         nsIDOMNode **aNodeInserted);
+  // Return true if the data is safe to insert as the source and destination
+  // principals match, or we are in a editor context where this doesn't matter.
+  // Otherwise, the data must be sanitized first.
+  bool IsSafeToInsertData(nsIDOMDocument* aSourceDoc);
+
+  nsresult InsertObject(const char* aType, nsISupports* aObject, bool aIsSafe,
+                        nsIDOMDocument *aSourceDoc,
+                        nsIDOMNode *aDestinationNode,
+                        PRInt32 aDestOffset,
+                        bool aDoDeleteSelection);
 
   // factored methods for handling insertion of data from transferables (drag&drop or clipboard)
   NS_IMETHOD PrepareTransferable(nsITransferable **transferable);
   NS_IMETHOD PrepareHTMLTransferable(nsITransferable **transferable, bool havePrivFlavor);
-  nsresult   PutDragDataInTransferable(nsITransferable **aTransferable);
   NS_IMETHOD InsertFromTransferable(nsITransferable *transferable, 
                                     nsIDOMDocument *aSourceDoc,
                                     const nsAString & aContextStr,
@@ -571,6 +592,12 @@ protected:
                                     nsIDOMNode *aDestinationNode,
                                     PRInt32 aDestinationOffset,
                                     bool aDoDeleteSelection);
+  nsresult InsertFromDataTransfer(nsIDOMDataTransfer *aDataTransfer,
+                                  PRInt32 aIndex,
+                                  nsIDOMDocument *aSourceDoc,
+                                  nsIDOMNode *aDestinationNode,
+                                  PRInt32 aDestOffset,
+                                  bool aDoDeleteSelection);
   bool HavePrivateHTMLFlavor( nsIClipboard *clipboard );
   nsresult   ParseCFHTML(nsCString & aCfhtml, PRUnichar **aStuffToPaste, PRUnichar **aCfcontext);
   nsresult   DoContentFilterCallback(const nsAString &aFlavor,
@@ -709,9 +736,6 @@ protected:
   nsresult GetFirstEditableLeaf( nsIDOMNode *aNode, nsCOMPtr<nsIDOMNode> *aOutFirstLeaf);
   nsresult GetLastEditableLeaf( nsIDOMNode *aNode, nsCOMPtr<nsIDOMNode> *aOutLastLeaf);
 
-  //XXX Kludge: Used to suppress spurious drag/drop events (bug 50703)
-  bool     mIgnoreSpuriousDragEvent;
-
   nsresult GetInlinePropertyBase(nsIAtom *aProperty, 
                              const nsAString *aAttribute,
                              const nsAString *aValue,
@@ -720,8 +744,8 @@ protected:
                              bool *aAll,
                              nsAString *outValue,
                              bool aCheckDefaults = true);
-  nsresult HasStyleOrIdOrClass(nsIDOMElement * aElement, bool *aHasStyleOrIdOrClass);
-  nsresult RemoveElementIfNoStyleOrIdOrClass(nsIDOMElement * aElement, nsIAtom * aTag);
+  bool HasStyleOrIdOrClass(mozilla::dom::Element* aElement);
+  nsresult RemoveElementIfNoStyleOrIdOrClass(nsIDOMNode* aElement);
 
   // Whether the outer window of the DOM event target has focus or not.
   bool     OurWindowHasFocus();

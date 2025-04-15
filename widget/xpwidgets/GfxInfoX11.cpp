@@ -118,7 +118,7 @@ GfxInfo::GetData()
                 wait_for_glxtest_process = true;
             } else {
                 // Bug 718629
-                // ECHILD happens when the glxtest process got reaped by a PR_WaitProcess
+                // ECHILD happens when the glxtest process got reaped got reaped after a PR_CreateProcess
                 // as per bug 227246. This shouldn't matter, as we still seem to get the data
                 // from the pipe, and if we didn't, the outcome would be to blacklist anyway.
                 waiting_for_glxtest_process_failed = (waitpid_errno != ECHILD);
@@ -283,6 +283,8 @@ GfxInfo::GetFeatureStatusImpl(PRInt32 aFeature,
                               OperatingSystem* aOS /* = nsnull */)
 
 {
+  GetData();
+
   NS_ENSURE_ARG_POINTER(aStatus);
   *aStatus = nsIGfxInfo::FEATURE_STATUS_UNKNOWN;
   aSuggestedDriverVersion.SetIsVoid(true);
@@ -310,7 +312,6 @@ GfxInfo::GetFeatureStatusImpl(PRInt32 aFeature,
     if (aFeature == nsIGfxInfo::FEATURE_OPENGL_LAYERS ||
         aFeature == nsIGfxInfo::FEATURE_WEBGL_OPENGL ||
         aFeature == nsIGfxInfo::FEATURE_WEBGL_MSAA) {
-      GetData();
 
       // Disable OpenGL layers when we don't have texture_from_pixmap because it regresses performance. 
       if (aFeature == nsIGfxInfo::FEATURE_OPENGL_LAYERS && !mHasTextureFromPixmap) {

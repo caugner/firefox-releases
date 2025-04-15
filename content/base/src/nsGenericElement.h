@@ -49,6 +49,7 @@
 #include "mozilla/dom/Element.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMDocumentFragment.h"
+#include "nsIDOMNSElement.h"
 #include "nsILinkHandler.h"
 #include "nsNodeUtils.h"
 #include "nsAttrAndChildArray.h"
@@ -65,6 +66,7 @@
 #include "nsDOMClassInfoID.h" // DOMCI_DATA
 #include "nsIDOMTouchEvent.h"
 #include "nsIInlineEventHandlers.h"
+#include "mozilla/CORSMode.h"
 
 #include "nsISMILAttr.h"
 
@@ -79,8 +81,10 @@ class nsINodeInfo;
 class nsIControllers;
 class nsEventListenerManager;
 class nsIScrollableFrame;
+class nsAttrValueOrString;
 class nsContentList;
 class nsDOMTokenList;
+class ContentUnbinder;
 struct nsRect;
 
 typedef PRUptrdiff PtrBits;
@@ -101,7 +105,7 @@ public:
   }
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(nsChildContentList)
+  NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS(nsChildContentList)
 
   // nsWrapperCache
   virtual JSObject* WrapObject(JSContext *cx, XPCWrappedNativeScope *scope,
@@ -227,6 +231,7 @@ private:
 };
 
 // Forward declare to allow being a friend
+class nsNSElementTearoff;
 class nsTouchEventReceiverTearoff;
 class nsInlineEventHandlersTearoff;
 
@@ -240,12 +245,13 @@ public:
   nsGenericElement(already_AddRefed<nsINodeInfo> aNodeInfo);
   virtual ~nsGenericElement();
 
+  friend class nsNSElementTearoff;
   friend class nsTouchEventReceiverTearoff;
   friend class nsInlineEventHandlersTearoff;
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
 
-  NS_DECL_DOM_MEMORY_REPORTER_SIZEOF
+  NS_DECL_SIZEOF_EXCLUDING_THIS
 
   /**
    * Called during QueryInterface to give the binding manager a chance to
@@ -289,16 +295,18 @@ public:
    * have mutation listeners (in which case it's cheap to just return false
    * and let the caller go ahead and set the value).
    * @param aOldValue Set to the old value of the attribute, but only if there
-   *   are event listeners
+   *   are event listeners. If set, the type of aOldValue will be either
+   *   nsAttrValue::eString or nsAttrValue::eAtom.
    * @param aModType Set to nsIDOMMutationEvent::MODIFICATION or to
    *   nsIDOMMutationEvent::ADDITION, but only if this helper returns true
    * @param aHasListeners Set to true if there are mutation event listeners
    *   listening for NS_EVENT_BITS_MUTATION_ATTRMODIFIED
    */
   bool MaybeCheckSameAttrVal(PRInt32 aNamespaceID, nsIAtom* aName,
-                               nsIAtom* aPrefix, const nsAString& aValue,
-                               bool aNotify, nsAutoString* aOldValue,
-                               PRUint8* aModType, bool* aHasListeners);
+                             nsIAtom* aPrefix,
+                             const nsAttrValueOrString& aValue,
+                             bool aNotify, nsAttrValue& aOldValue,
+                             PRUint8* aModType, bool* aHasListeners);
   virtual nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, nsIAtom* aPrefix,
                            const nsAString& aValue, bool aNotify);
   virtual nsresult SetParsedAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
@@ -432,10 +440,44 @@ public:
   }
 
   // nsIDOMElement method implementation
-  NS_DECL_NSIDOMELEMENT
+  NS_IMETHOD GetTagName(nsAString& aTagName);
+  NS_IMETHOD GetAttribute(const nsAString& aName,
+                          nsAString& aReturn);
+  NS_IMETHOD SetAttribute(const nsAString& aName,
+                          const nsAString& aValue);
+  NS_IMETHOD RemoveAttribute(const nsAString& aName);
+  NS_IMETHOD GetAttributeNode(const nsAString& aName,
+                              nsIDOMAttr** aReturn);
+  NS_IMETHOD SetAttributeNode(nsIDOMAttr* aNewAttr, nsIDOMAttr** aReturn);
+  NS_IMETHOD RemoveAttributeNode(nsIDOMAttr* aOldAttr, nsIDOMAttr** aReturn);
+  NS_IMETHOD GetElementsByTagName(const nsAString& aTagname,
+                                  nsIDOMNodeList** aReturn);
+  NS_IMETHOD GetAttributeNS(const nsAString& aNamespaceURI,
+                            const nsAString& aLocalName,
+                            nsAString& aReturn);
+  NS_IMETHOD SetAttributeNS(const nsAString& aNamespaceURI,
+                            const nsAString& aQualifiedName,
+                            const nsAString& aValue);
+  NS_IMETHOD RemoveAttributeNS(const nsAString& aNamespaceURI,
+                               const nsAString& aLocalName);
+  NS_IMETHOD GetAttributeNodeNS(const nsAString& aNamespaceURI,
+                                const nsAString& aLocalName,
+                                nsIDOMAttr** aReturn);
+  NS_IMETHOD SetAttributeNodeNS(nsIDOMAttr* aNewAttr, nsIDOMAttr** aReturn);
+  NS_IMETHOD GetElementsByTagNameNS(const nsAString& aNamespaceURI,
+                                    const nsAString& aLocalName,
+                                    nsIDOMNodeList** aReturn);
+  NS_IMETHOD HasAttribute(const nsAString& aName, bool* aReturn);
+  NS_IMETHOD HasAttributeNS(const nsAString& aNamespaceURI,
+                            const nsAString& aLocalName,
+                            bool* aReturn);
 
-  nsresult CloneNode(bool aDeep, nsIDOMNode **aResult)
+  nsresult CloneNode(bool aDeep, PRUint8 aOptionalArgc, nsIDOMNode **aResult)
   {
+    if (!aOptionalArgc) {
+      aDeep = true;
+    }
+    
     return nsNodeUtils::CloneNodeImpl(this, aDeep, true, aResult);
   }
 
@@ -565,8 +607,15 @@ public:
   {
   }
 
+  // nsIDOMNSElement methods
+  nsresult GetElementsByClassName(const nsAString& aClasses,
+                                  nsIDOMNodeList** aReturn);
+  nsresult GetClientRects(nsIDOMClientRectList** aResult);
+  nsresult GetBoundingClientRect(nsIDOMClientRect** aResult);
   PRInt32 GetScrollTop();
+  void SetScrollTop(PRInt32 aScrollTop);
   PRInt32 GetScrollLeft();
+  void SetScrollLeft(PRInt32 aScrollLeft);
   PRInt32 GetScrollHeight();
   PRInt32 GetScrollWidth();
   PRInt32 GetClientTop()
@@ -589,7 +638,35 @@ public:
   nsIContent* GetLastElementChild();
   nsIContent* GetPreviousElementSibling();
   nsIContent* GetNextElementSibling();
-  nsIDOMDOMTokenList* GetClassList(nsresult *aResult);
+  nsresult GetChildElementCount(PRUint32* aResult)
+  {
+    nsContentList* list = GetChildrenList();
+    if (!list) {
+      *aResult = 0;
+
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    *aResult = list->Length(true);
+
+    return NS_OK;
+  }
+  nsresult GetChildren(nsIDOMNodeList** aResult)
+  {
+    nsContentList* list = GetChildrenList();
+    if (!list) {
+      *aResult = nsnull;
+
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    NS_ADDREF(*aResult = list);
+
+    return NS_OK;
+  }
+  void SetCapture(bool aRetargetToElement);
+  void ReleaseCapture();
+  nsDOMTokenList* GetClassList(nsresult *aResult);
   bool MozMatchesSelector(const nsAString& aSelector, nsresult* aResult);
 
   /**
@@ -626,18 +703,52 @@ public:
   static bool CanSkip(nsINode* aNode, bool aRemovingAllowed);
   static bool CanSkipInCC(nsINode* aNode);
   static bool CanSkipThis(nsINode* aNode);
+  static void MarkNodeChildren(nsINode* aNode);
   static void InitCCCallbacks();
   static void MarkUserData(void* aObject, nsIAtom* aKey, void* aChild,
                            void *aData);
   static void MarkUserDataHandler(void* aObject, nsIAtom* aKey, void* aChild,
                                   void* aData);
+
+  /**
+   * Parse a string into an nsAttrValue for a CORS attribute.  This
+   * never fails.  The resulting value is an enumerated value whose
+   * GetEnumValue() returns one of the above constants.
+   */
+  static void ParseCORSValue(const nsAString& aValue, nsAttrValue& aResult);
+
+  /**
+   * Return the CORS mode for a given string
+   */
+  static mozilla::CORSMode StringToCORSMode(const nsAString& aValue);
+  
+  /**
+   * Return the CORS mode for a given nsAttrValue (which may be null,
+   * but if not should have been parsed via ParseCORSValue).
+   */
+  static mozilla::CORSMode AttrValueToCORSMode(const nsAttrValue* aValue);
+
 protected:
+  /*
+   * Named-bools for use with SetAttrAndNotify to make call sites easier to
+   * read.
+   */
+  static const bool kFireMutationEvent           = true;
+  static const bool kDontFireMutationEvent       = false;
+  static const bool kNotifyDocumentObservers     = true;
+  static const bool kDontNotifyDocumentObservers = false;
+  static const bool kCallAfterSetAttr            = true;
+  static const bool kDontCallAfterSetAttr        = false;
+
   /**
    * Set attribute and (if needed) notify documentobservers and fire off
    * mutation events.  This will send the AttributeChanged notification.
    * Callers of this method are responsible for calling AttributeWillChange,
    * since that needs to happen before the new attr value has been set, and
    * in particular before it has been parsed.
+   *
+   * For the boolean parameters, consider using the named bools above to aid
+   * code readability.
    *
    * @param aNamespaceID  namespace of attribute
    * @param aAttribute    local-name of attribute
@@ -649,18 +760,17 @@ protected:
    *                      needed if aFireMutation or aNotify is true.
    * @param aFireMutation should mutation-events be fired?
    * @param aNotify       should we notify document-observers?
-   * @param aValueForAfterSetAttr If not null, AfterSetAttr will be called
-   *                      with the value pointed by this parameter.
+   * @param aCallAfterSetAttr should we call AfterSetAttr?
    */
   nsresult SetAttrAndNotify(PRInt32 aNamespaceID,
                             nsIAtom* aName,
                             nsIAtom* aPrefix,
-                            const nsAString& aOldValue,
+                            const nsAttrValue& aOldValue,
                             nsAttrValue& aParsedValue,
                             PRUint8 aModType,
                             bool aFireMutation,
                             bool aNotify,
-                            const nsAString* aValueForAfterSetAttr);
+                            bool aCallAfterSetAttr);
 
   /**
    * Convert an attribute string value to attribute type based on the type of
@@ -705,14 +815,16 @@ protected:
    *
    * @param aNamespaceID the namespace of the attr being set
    * @param aName the localname of the attribute being set
-   * @param aValue the value it's being set to.  If null, the attr is being
-   *        removed.
+   * @param aValue the value it's being set to represented as either a string or
+   *        a parsed nsAttrValue. Alternatively, if the attr is being removed it
+   *        will be null.
    * @param aNotify Whether we plan to notify document observers.
    */
   // Note that this is inlined so that when subclasses call it it gets
   // inlined.  Those calls don't go through a vtable.
   virtual nsresult BeforeSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
-                                 const nsAString* aValue, bool aNotify)
+                                 const nsAttrValueOrString* aValue,
+                                 bool aNotify)
   {
     return NS_OK;
   }
@@ -732,7 +844,7 @@ protected:
   // Note that this is inlined so that when subclasses call it it gets
   // inlined.  Those calls don't go through a vtable.
   virtual nsresult AfterSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
-                                const nsAString* aValue, bool aNotify)
+                                const nsAttrValue* aValue, bool aNotify)
   {
     return NS_OK;
   }
@@ -770,6 +882,10 @@ protected:
   {
     return this;
   }
+
+  nsresult GetAttributeNodeNSInternal(const nsAString& aNamespaceURI,
+                                      const nsAString& aLocalName,
+                                      nsIDOMAttr** aReturn);
 
 public:
   // Because of a bug in MS C++ compiler nsDOMSlots must be declared public,
@@ -929,6 +1045,7 @@ protected:
    */
   virtual void GetLinkTarget(nsAString& aTarget);
 
+  friend class ContentUnbinder;
   /**
    * Array containing all attributes and children for this element
    */
@@ -998,6 +1115,27 @@ _elementName::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const        \
     return static_cast<nsXPCClassInfo*>(                                \
       NS_GetDOMClassInfoInstance(eDOMClassInfo_##_interface##_id));     \
   }
+
+/**
+ * Yet another tearoff class for nsGenericElement
+ * to implement additional interfaces
+ */
+class nsNSElementTearoff : public nsIDOMNSElement
+{
+public:
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+
+  NS_DECL_NSIDOMNSELEMENT
+
+  NS_DECL_CYCLE_COLLECTION_CLASS(nsNSElementTearoff)
+
+  nsNSElementTearoff(nsGenericElement *aContent) : mContent(aContent)
+  {
+  }
+
+private:
+  nsRefPtr<nsGenericElement> mContent;
+};
 
 /**
  * Tearoff class to implement nsITouchEventReceiver

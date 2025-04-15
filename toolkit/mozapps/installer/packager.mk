@@ -71,6 +71,7 @@ ifeq ($(OS_ARCH),WINNT)
 INSTALLER_DIR   = windows
 endif
 
+PACKAGE_BASE_DIR = $(_ABS_DIST)
 PACKAGE       = $(PKG_PATH)$(PKG_BASENAME)$(PKG_SUFFIX)
 
 # By default, the SDK uses the same packaging type as the main bundle,
@@ -88,14 +89,11 @@ SDK           = $(SDK_PATH)$(PKG_BASENAME).sdk$(SDK_SUFFIX)
 ifndef LIBXUL_SDK
 JSSHELL_BINS  = \
   $(DIST)/bin/js$(BIN_SUFFIX) \
-  $(DIST)/bin/mozglue$(DLL_SUFFIX) \
+  $(DIST)/bin/$(DLL_PREFIX)mozglue$(DLL_SUFFIX) \
   $(NULL)
 ifndef MOZ_NATIVE_NSPR
-JSSHELL_BINS += $(DIST)/bin/$(LIB_PREFIX)nspr4$(DLL_SUFFIX)
+JSSHELL_BINS += $(DIST)/bin/$(DLL_PREFIX)nspr4$(DLL_SUFFIX)
 ifeq ($(OS_ARCH),WINNT)
-ifdef MOZ_MEMORY
-JSSHELL_BINS += $(DIST)/bin/jemalloc$(DLL_SUFFIX)
-endif
 ifeq ($(_MSC_VER),1400)
 JSSHELL_BINS += $(DIST)/bin/Microsoft.VC80.CRT.manifest
 JSSHELL_BINS += $(DIST)/bin/msvcr80.dll
@@ -112,8 +110,8 @@ JSSHELL_BINS += $(DIST)/bin/msvcr110.dll
 endif
 else
 JSSHELL_BINS += \
-  $(DIST)/bin/$(LIB_PREFIX)plds4$(DLL_SUFFIX) \
-  $(DIST)/bin/$(LIB_PREFIX)plc4$(DLL_SUFFIX) \
+  $(DIST)/bin/$(DLL_PREFIX)plds4$(DLL_SUFFIX) \
+  $(DIST)/bin/$(DLL_PREFIX)plc4$(DLL_SUFFIX) \
   $(NULL)
 endif
 endif # MOZ_NATIVE_NSPR
@@ -311,6 +309,12 @@ DIST_FILES += \
   recommended-addons.json \
   $(NULL)
 
+ifdef MOZ_ENABLE_SZIP
+SZIP_LIBRARIES = \
+  libxul.so \
+  $(NULL)
+endif
+
 NON_DIST_FILES = \
   classes.dex \
   $(NULL)
@@ -341,8 +345,11 @@ ifdef ENABLE_TESTS
 INNER_ROBOCOP_PACKAGE=echo
 ifeq ($(MOZ_BUILD_APP),mobile/android)
 UPLOAD_EXTRA_FILES += robocop.apk
+UPLOAD_EXTRA_FILES += fennec_ids.txt
 ROBOCOP_PATH = $(call core_abspath,$(_ABS_DIST)/../build/mobile/robocop)
 INNER_ROBOCOP_PACKAGE= \
+  $(PYTHON) $(abspath $(topsrcdir)/build/mobile/robocop/parse_ids.py) -i $(call core_abspath,$(DEPTH)/mobile/android/base/R.java) -o $(call core_abspath,$(DEPTH)/build/mobile/robocop/fennec_ids.txt) && \
+  $(NSINSTALL) $(call core_abspath,$(DEPTH)/build/mobile/robocop/fennec_ids.txt) $(_ABS_DIST) && \
   $(APKBUILDER) $(_ABS_DIST)/robocop-raw.apk -v $(APKBUILDER_FLAGS) -z $(ROBOCOP_PATH)/robocop.ap_ -f $(ROBOCOP_PATH)/classes.dex && \
   $(JARSIGNER) $(_ABS_DIST)/robocop-raw.apk && \
   $(ZIPALIGN) -f -v 4 $(_ABS_DIST)/robocop-raw.apk $(_ABS_DIST)/robocop.apk
@@ -353,6 +360,7 @@ endif
 
 PKG_SUFFIX      = .apk
 INNER_MAKE_PACKAGE	= \
+  $(foreach lib,$(SZIP_LIBRARIES),host/bin/szip $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(lib) $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(lib:.so=.sz) && mv $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(lib:.so=.sz) $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(lib) && ) \
   make -C $(GECKO_APP_AP_PATH) gecko.ap_ && \
   cp $(GECKO_APP_AP_PATH)/gecko.ap_ $(_ABS_DIST) && \
   ( cd $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH) && \
@@ -365,7 +373,8 @@ INNER_MAKE_PACKAGE	= \
     done && \
     unzip -o $(_ABS_DIST)/gecko.ap_ && \
     rm $(_ABS_DIST)/gecko.ap_ && \
-    $(ZIP) -r9D $(_ABS_DIST)/gecko.ap_ $(DIST_FILES) -x $(NON_DIST_FILES) && \
+    $(if $(SZIP_LIBRARIES),$(ZIP) -0 $(_ABS_DIST)/gecko.ap_ $(SZIP_LIBRARIES) && ) \
+    $(ZIP) -r9D $(_ABS_DIST)/gecko.ap_ $(DIST_FILES) -x $(NON_DIST_FILES) $(SZIP_LIBRARIES) && \
     $(ZIP) -0 $(_ABS_DIST)/gecko.ap_ $(OMNIJAR_NAME)) && \
   rm -f $(_ABS_DIST)/gecko.apk && \
   $(APKBUILDER) $(_ABS_DIST)/gecko.apk -v $(APKBUILDER_FLAGS) -z $(_ABS_DIST)/gecko.ap_ -f $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/classes.dex && \
@@ -474,12 +483,13 @@ PRECOMPILE_RESOURCE=gre
 PRECOMPILE_GRE=$$PWD
 endif
 
+# Silence the unzip step so we don't print any binary data from the comment field.
 GENERATE_CACHE = \
   $(_ABS_RUN_TEST_PROGRAM) $(LIBXUL_DIST)/bin/xpcshell$(BIN_SUFFIX) -g "$(PRECOMPILE_GRE)" -a "$$PWD" -f $(call core_abspath,$(MOZILLA_DIR)/toolkit/mozapps/installer/precompile_cache.js) -e "populate_startupcache('$(PRECOMPILE_DIR)', '$(OMNIJAR_NAME)', 'startupCache.zip');" && \
-  rm -rf jsloader && \
-  $(UNZIP) startupCache.zip && \
+  rm -rf jsloader jssubloader && \
+  $(UNZIP) -q startupCache.zip && \
   rm startupCache.zip && \
-  $(ZIP) -r9m $(OMNIJAR_NAME) jsloader/resource/$(PRECOMPILE_RESOURCE)
+  $(ZIP) -r9m $(OMNIJAR_NAME) jsloader/resource/$(PRECOMPILE_RESOURCE) jssubloader/*/resource/$(PRECOMPILE_RESOURCE)
 else
 GENERATE_CACHE = true
 endif
@@ -498,6 +508,7 @@ OMNIJAR_FILES	= \
   defaults \
   greprefs.js \
   jsloader \
+  jssubloader \
   hyphenation \
   update.locale \
   $(NULL)
@@ -548,8 +559,15 @@ MOZ_SIGN_PACKAGE_CMD=$(MOZ_SIGN_CMD) $(foreach f,$(MOZ_EXTERNAL_SIGNING_FORMAT),
 endif
 
 ifdef MOZ_SIGN_PREPARED_PACKAGE_CMD
+ifeq (Darwin, $(OS_ARCH)) 
+MAKE_PACKAGE    = $(PREPARE_PACKAGE) \
+                  && cd ./$(PKG_DMG_SOURCE) && $(MOZ_SIGN_PREPARED_PACKAGE_CMD) $(MOZ_MACBUNDLE_NAME)  && cd $(PACKAGE_BASE_DIR) \
+                  && $(INNER_MAKE_PACKAGE)
+else
 MAKE_PACKAGE    = $(PREPARE_PACKAGE) && $(MOZ_SIGN_PREPARED_PACKAGE_CMD) \
 		  $(MOZ_PKG_DIR) && $(INNER_MAKE_PACKAGE)
+endif #Darwin
+
 else
 MAKE_PACKAGE    = $(PREPARE_PACKAGE) && $(INNER_MAKE_PACKAGE)
 endif
@@ -747,6 +765,11 @@ ifdef MOZ_PKG_MANIFEST
 	$(call PACKAGER_COPY, "$(call core_abspath,$(DIST))",\
 	  "$(call core_abspath,$(DIST)/$(MOZ_PKG_DIR))", \
 	  "$(MOZ_PKG_MANIFEST)", "$(PKGCP_OS)", 1, 0, 1)
+ifeq (DMG, $(MOZ_PKG_FORMAT))
+ifeq (dmg, $(filter dmg, $(MOZ_INTERNAL_SIGNING_FORMAT)))
+	@cd $(DIST)/$(_APPNAME)/Contents && ln -sf _CodeSignature/CodeResources CodeResources
+endif
+endif
 	$(PERL) $(MOZILLA_DIR)/toolkit/mozapps/installer/xptlink.pl -s $(DIST) -d $(DIST)/xpt -f $(DIST)/$(MOZ_PKG_DIR)/$(_BINPATH)/components -v -x "$(XPIDL_LINK)"
 	$(PYTHON) $(MOZILLA_DIR)/toolkit/mozapps/installer/link-manifests.py \
 	  $(DIST)/$(MOZ_PKG_DIR)/$(_BINPATH)/components/components.manifest \
@@ -823,10 +846,12 @@ ifdef MOZ_POST_STAGING_CMD
 	cd $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH) && $(MOZ_POST_STAGING_CMD)
 endif # MOZ_POST_STAGING_CMD
 ifndef LIBXUL_SDK
+ifdef MOZ_PACKAGE_JSSHELL
 # Package JavaScript Shell
 	@echo "Packaging JavaScript Shell..."
 	$(RM) $(PKG_JSSHELL)
 	$(MAKE_JSSHELL)
+endif # MOZ_PACKAGE_JSSHELL
 endif # LIBXUL_SDK
 
 make-package: stage-package $(PACKAGE_XULRUNNER) make-sourcestamp-file

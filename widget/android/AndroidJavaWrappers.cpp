@@ -55,6 +55,7 @@ jfieldID AndroidGeckoEvent::jGammaField = 0;
 jfieldID AndroidGeckoEvent::jXField = 0;
 jfieldID AndroidGeckoEvent::jYField = 0;
 jfieldID AndroidGeckoEvent::jZField = 0;
+jfieldID AndroidGeckoEvent::jDistanceField = 0;
 jfieldID AndroidGeckoEvent::jRectField = 0;
 jfieldID AndroidGeckoEvent::jNativeWindowField = 0;
 
@@ -168,6 +169,7 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jXField = getField("mX", "D");
     jYField = getField("mY", "D");
     jZField = getField("mZ", "D");
+    jDistanceField = getField("mDistance", "D");
     jRectField = getField("mRect", "Landroid/graphics/Rect;");
 
     jCharactersField = getField("mCharacters", "Ljava/lang/String;");
@@ -329,7 +331,7 @@ AndroidGeckoSoftwareLayerClient::InitGeckoSoftwareLayerClientClass(JNIEnv *jEnv)
 
     jLockBufferMethod = getMethod("lockBuffer", "()Ljava/nio/ByteBuffer;");
     jUnlockBufferMethod = getMethod("unlockBuffer", "()V");
-    jBeginDrawingMethod = getMethod("beginDrawing", "(IIIILjava/lang/String;Z)Z");
+    jBeginDrawingMethod = getMethod("beginDrawing", "(IIIILjava/lang/String;Z)Landroid/graphics/Rect;");
     jEndDrawingMethod = getMethod("endDrawing", "(IIII)V");
 #endif
 }
@@ -390,8 +392,8 @@ AndroidGeckoEvent::ReadRectField(JNIEnv *jenv)
     if (!r.isNull()) {
         mRect.SetRect(r.Left(),
                       r.Top(),
-                      r.Right() - r.Left(),
-                      r.Bottom() - r.Top());
+                      r.Width(),
+                      r.Height());
     } else {
         mRect.SetEmpty();
     }
@@ -540,6 +542,24 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
             break;
         }
 
+        case PROXIMITY_EVENT: {
+            mDistance = jenv->GetDoubleField(jobj, jDistanceField);
+            break;
+        }
+
+        case ACTIVITY_STOPPING:
+        case ACTIVITY_START:
+        case ACTIVITY_PAUSING:
+        case ACTIVITY_RESUMING: {
+            mFlags = jenv->GetIntField(jobj, jFlagsField);
+            break;
+        }
+
+        case SCREENSHOT: {
+            mMetaState = jenv->GetIntField(jobj, jMetaStateField);
+            ReadPointArray(mPoints, jenv, jPoints, 2);
+        }
+
         default:
             break;
     }
@@ -683,7 +703,7 @@ AndroidGeckoSoftwareLayerClient::UnlockBuffer()
 }
 
 bool
-AndroidGeckoSoftwareLayerClient::BeginDrawing(int aWidth, int aHeight, int aTileWidth, int aTileHeight, const nsAString &aMetadata, bool aHasDirectTexture)
+AndroidGeckoSoftwareLayerClient::BeginDrawing(int aWidth, int aHeight, int aTileWidth, int aTileHeight, nsIntRect &aDirtyRect, const nsAString &aMetadata, bool aHasDirectTexture)
 {
     NS_ASSERTION(!isNull(), "BeginDrawing() called on null software layer client!");
     JNIEnv *env = AndroidBridge::GetJNIEnv();
@@ -692,7 +712,20 @@ AndroidGeckoSoftwareLayerClient::BeginDrawing(int aWidth, int aHeight, int aTile
 
     AndroidBridge::AutoLocalJNIFrame(env, 1);
     jstring jMetadata = env->NewString(nsPromiseFlatString(aMetadata).get(), aMetadata.Length());
-    return env->CallBooleanMethod(wrapped_obj, jBeginDrawingMethod, aWidth, aHeight, aTileWidth, aTileHeight, jMetadata, aHasDirectTexture);
+
+    jobject rectObject = env->CallObjectMethod(wrapped_obj, jBeginDrawingMethod,
+                                               aWidth, aHeight, aTileWidth, aTileHeight,
+                                               jMetadata, aHasDirectTexture);
+
+    if (rectObject == nsnull)
+        return false;
+
+    AndroidRect rect(env, rectObject);
+    nsIntRect newDirtyRect = aDirtyRect.Intersect(nsIntRect(rect.Top(), rect.Left(),
+                                                            rect.Width(), rect.Height()));
+    aDirtyRect.SetRect(newDirtyRect.x, newDirtyRect.y, newDirtyRect.width, newDirtyRect.height);
+
+    return true;
 }
 
 void

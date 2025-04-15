@@ -73,6 +73,7 @@ CPPSRCS = \
         BasicImages.cpp \
         BasicLayers.cpp \
         Layers.cpp \
+        RenderTrace.cpp \
         ReadbackProcessor.cpp \
         ThebesLayerBuffer.cpp \
         CanvasLayerOGL.cpp \
@@ -82,13 +83,8 @@ CPPSRCS = \
         LayerManagerOGL.cpp \
         ThebesLayerOGL.cpp \
         LayerSorter.cpp \
+        ImageLayers.cpp \
         $(NULL)
-
-ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
-CMMSRCS = \
-        MacIOSurfaceImageOGL.mm \
-        $(NULL)
-endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 ifdef MOZ_ENABLE_D3D9_LAYER

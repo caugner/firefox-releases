@@ -191,7 +191,7 @@ public:
 
   /**
    * Scrolls the given frame to the point, used for implememntation of
-   * nsIAccessNode::scrollToPoint and nsIAccessibleText::scrollSubstringToPoint.
+   * nsIAccessible::scrollToPoint and nsIAccessibleText::scrollSubstringToPoint.
    *
    * @param aScrollableFrame  the scrollable frame
    * @param aFrame            the frame to scroll
@@ -242,25 +242,11 @@ public:
   static bool IsErrorPage(nsIDocument *aDocument);
 
   /**
-   * Retrun true if the type of given frame equals to the given frame type.
-   *
-   * @param aFrame  the frame
-   * @param aAtom   the frame type
-   */
-  static bool IsCorrectFrameType(nsIFrame* aFrame, nsIAtom* aAtom);
-
-  /**
    * Return presShell for the document containing the given DOM node.
    */
   static nsIPresShell *GetPresShellFor(nsINode *aNode)
   {
     return aNode->OwnerDoc()->GetShell();
-  }
-  static already_AddRefed<nsIWeakReference> GetWeakShellFor(nsINode *aNode)
-  {
-    nsCOMPtr<nsIWeakReference> weakShell =
-      do_GetWeakReference(GetPresShellFor(aNode));
-    return weakShell.forget();
   }
 
   /**
@@ -301,13 +287,6 @@ public:
    */
   static void GetLanguageFor(nsIContent *aContent, nsIContent *aRootContent,
                              nsAString& aLanguage);
-
-  /**
-   * Return computed styles declaration for the given node.
-   */
-  static already_AddRefed<nsIDOMCSSStyleDeclaration>
-    GetComputedStyleDeclaration(const nsAString& aPseudoElt,
-                                nsIContent *aContent);
 
   /**
    * Return box object for XUL treechildren element by tree box object.

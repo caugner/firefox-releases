@@ -59,11 +59,11 @@
 #ifdef MOZ_GRAPHITE
 #include "gfxGraphiteShaper.h"
 #endif
-#include "gfxUnicodeProperties.h"
 #include "gfxAtoms.h"
 #include "nsTArray.h"
 #include "nsUnicodeRange.h"
 #include "nsCRT.h"
+#include "nsXULAppAPI.h"
 
 #include "prlog.h"
 #include "prinit.h"
@@ -398,11 +398,12 @@ gfxFT2FontGroup::WhichPrefFontSupportsChar(PRUint32 aCh)
 }
 
 already_AddRefed<gfxFont>
-gfxFT2FontGroup::WhichSystemFontSupportsChar(PRUint32 aCh)
+gfxFT2FontGroup::WhichSystemFontSupportsChar(PRUint32 aCh, PRInt32 aRunScript)
 {
 #if defined(XP_WIN) || defined(ANDROID)
     FontEntry *fe = static_cast<FontEntry*>
-        (gfxPlatformFontList::PlatformFontList()->FindFontForChar(aCh, GetFontAt(0)));
+        (gfxPlatformFontList::PlatformFontList()->
+            SystemFindFontForChar(aCh, aRunScript, &mStyle));
     if (fe) {
         nsRefPtr<gfxFT2Font> f = gfxFT2Font::GetOrMakeFont(fe, &mStyle);
         nsRefPtr<gfxFont> font = f.get();
@@ -642,11 +643,10 @@ gfxFT2Font::FillGlyphDataForChar(PRUint32 ch, CachedGlyphData *gd)
         return;
     }
 
-#ifdef MOZ_GFX_OPTIMIZE_MOBILE
-    FT_Error err = FT_Load_Glyph(face, gid, FT_LOAD_NO_AUTOHINT | FT_LOAD_NO_HINTING);
-#else
-    FT_Error err = FT_Load_Glyph(face, gid, FT_LOAD_DEFAULT);
-#endif
+    FT_Int32 flags = gfxPlatform::GetPlatform()->FontHintingEnabled() ?
+                     FT_LOAD_DEFAULT :
+                     (FT_LOAD_NO_AUTOHINT | FT_LOAD_NO_HINTING);
+    FT_Error err = FT_Load_Glyph(face, gid, flags);
 
     if (err) {
         // hmm, this is weird, we failed to load a glyph that we had?

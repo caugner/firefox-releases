@@ -197,6 +197,21 @@ typedef struct _nsCocoaWindowList {
 - (void)setDrawsContentsIntoWindowFrame:(BOOL)aState;
 @end
 
+#if !defined(MAC_OS_X_VERSION_10_7) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7)
+enum {
+  NSWindowAnimationBehaviorDefault = 0,
+  NSWindowAnimationBehaviorNone = 2,
+  NSWindowAnimationBehaviorDocumentWindow = 3,
+  NSWindowAnimationBehaviorUtilityWindow = 4,
+  NSWindowAnimationBehaviorAlertPanel = 5
+};
+typedef NSInteger NSWindowAnimationBehavior;
+
+@interface NSWindow (LionWindowFeatures)
+- (void)setAnimationBehavior:(NSWindowAnimationBehavior)newAnimationBehavior;
+@end
+#endif
+
 class nsCocoaWindow : public nsBaseWidget, public nsPIWidgetCocoa
 {
 private:
@@ -252,8 +267,7 @@ public:
 
     NS_IMETHOD              SetTitle(const nsAString& aTitle);
 
-    NS_IMETHOD Invalidate(const nsIntRect &aRect, bool aIsSynchronous);
-    NS_IMETHOD Update();
+    NS_IMETHOD Invalidate(const nsIntRect &aRect);
     virtual nsresult ConfigureChildren(const nsTArray<Configuration>& aConfigurations);
     virtual LayerManager* GetLayerManager(PLayersChild* aShadowManager = nsnull,
                                           LayersBackend aBackendHint = LayerManager::LAYERS_NONE,
@@ -267,6 +281,7 @@ public:
     virtual void SetTransparencyMode(nsTransparencyMode aMode);
     NS_IMETHOD SetWindowShadowStyle(PRInt32 aStyle);
     virtual void SetShowsToolbarButton(bool aShow);
+    virtual void SetWindowAnimationType(WindowAnimationType aType);
     NS_IMETHOD SetWindowTitlebarColor(nscolor aColor, bool aActive);
     virtual void SetDrawsInTitlebar(bool aState);
     virtual nsresult SynthesizeNativeMouseEvent(nsIntPoint aPoint,
@@ -336,11 +351,16 @@ protected:
   PRInt32              mShadowStyle;
   NSUInteger           mWindowFilter;
 
+  WindowAnimationType  mAnimationType;
+
   bool                 mWindowMadeHere; // true if we created the window, false for embedding
   bool                 mSheetNeedsShow; // if this is a sheet, are we waiting to be shown?
                                         // this is used for sibling sheet contention only
   bool                 mFullScreen;
+  bool                 mInFullScreenTransition; // true from the request to enter/exit fullscreen
   bool                 mModal;
+
+  bool                 mIsAnimationSuppressed;
 
   bool                 mInReportMoveEvent; // true if in a call to ReportMoveEvent().
 

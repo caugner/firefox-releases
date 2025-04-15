@@ -46,6 +46,7 @@
 #include "json.h"
 #include "jsweakmap.h"
 
+#include "builtin/MapObject.h"
 #include "builtin/RegExp.h"
 #include "frontend/BytecodeEmitter.h"
 #include "vm/GlobalObject-inl.h"
@@ -77,7 +78,7 @@ js_InitFunctionClass(JSContext *cx, JSObject *obj)
 }
 
 static JSBool
-ThrowTypeError(JSContext *cx, uintN argc, Value *vp)
+ThrowTypeError(JSContext *cx, unsigned argc, Value *vp)
 {
     JS_ReportErrorFlagsAndNumber(cx, JSREPORT_ERROR, js_GetErrorMessage, NULL,
                                  JSMSG_THROW_TYPE_ERROR);
@@ -325,7 +326,9 @@ GlobalObject::initStandardClasses(JSContext *cx)
 #endif
            js_InitDateClass(cx, this) &&
            js_InitWeakMapClass(cx, this) &&
-           js_InitProxyClass(cx, this);
+           js_InitProxyClass(cx, this) &&
+           js_InitMapClass(cx, this) &&
+           js_InitSetClass(cx, this);
 }
 
 void
@@ -363,8 +366,12 @@ GlobalObject::clear(JSContext *cx)
     cx->compartment->newObjectCache.reset();
 
 #ifdef JS_METHODJIT
-    /* Destroy compiled code for any scripts parented to this global. */
-    for (gc::CellIter i(cx, cx->compartment, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
+    /*
+     * Destroy compiled code for any scripts parented to this global. Call ICs
+     * can directly call scripts which have associated JIT code, and do so
+     * without checking whether the script's global has been cleared.
+     */
+    for (gc::CellIter i(cx->compartment, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
         JSScript *script = i.get<JSScript>();
         if (script->compileAndGo && script->hasJITCode() && script->hasClearedGlobal()) {
             mjit::Recompiler::clearStackReferences(cx, script);
@@ -377,24 +384,21 @@ GlobalObject::clear(JSContext *cx)
 bool
 GlobalObject::isRuntimeCodeGenEnabled(JSContext *cx)
 {
-    HeapValue &v = getSlotRef(RUNTIME_CODEGEN_ENABLED);
+    HeapSlot &v = getSlotRef(RUNTIME_CODEGEN_ENABLED);
     if (v.isUndefined()) {
-        JSSecurityCallbacks *callbacks = JS_GetSecurityCallbacks(cx);
-
         /*
          * If there are callbacks, make sure that the CSP callback is installed
          * and that it permits runtime code generation, then cache the result.
          */
-        v.set(compartment(),
-              BooleanValue((!callbacks || !callbacks->contentSecurityPolicyAllows) ||
-                           callbacks->contentSecurityPolicyAllows(cx)));
+        JSCSPEvalChecker allows = cx->runtime->securityCallbacks->contentSecurityPolicyAllows;
+        v.set(this, RUNTIME_CODEGEN_ENABLED, BooleanValue(!allows || allows(cx)));
     }
     return !v.isFalse();
 }
 
 JSFunction *
 GlobalObject::createConstructor(JSContext *cx, Native ctor, Class *clasp, JSAtom *name,
-                                uintN length, gc::AllocKind kind)
+                                unsigned length, gc::AllocKind kind)
 {
     RootedVarObject self(cx, this);
 

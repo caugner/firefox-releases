@@ -70,7 +70,7 @@ interface nsIDOMFile;
 interface nsIFile;
 interface nsIDOMTouch;
 
-[scriptable, uuid(401b9315-c562-4066-a15c-7feb7ad5bb47)]
+[scriptable, uuid(73b48170-55d5-11e1-b86c-0800200c9a66)]
 interface nsIDOMWindowUtils : nsISupports {
 
   /**
@@ -431,12 +431,6 @@ interface nsIDOMWindowUtils : nsISupports {
    */
   void cycleCollect([optional] in nsICycleCollectorListener aListener,
                     [optional] in long aExtraForgetSkippableCalls);
-
-  /**
-   * Force processing of any queued paints
-   */
-
-  void processUpdates();
 
   /** Synthesize a simple gesture event for a window. The event types
    *  supported are: MozSwipeGesture, MozMagnifyGestureStart,
@@ -997,6 +991,12 @@ interface nsIDOMWindowUtils : nsISupports {
                             [optional] out long aRefCnt,
                             [optional] out long aDBRefCnt,
                             [optional] out long aSliceRefCnt);
+
+  /**
+   * Return whether incremental GC has been disabled due to a binary add-on.
+   */
+  [implicit_jscontext]
+  boolean isIncrementalGCEnabled();
 
   /**
    * Begin opcode-level profiling of all JavaScript execution in the window's

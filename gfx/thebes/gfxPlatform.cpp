@@ -62,7 +62,7 @@
 #include "gfxContext.h"
 #include "gfxImageSurface.h"
 #include "gfxUserFontSet.h"
-#include "gfxUnicodeProperties.h"
+#include "nsUnicodeProperties.h"
 #include "harfbuzz/hb-unicode.h"
 #ifdef MOZ_GRAPHITE
 #include "gfxGraphiteShaper.h"
@@ -71,7 +71,6 @@
 #include "nsUnicodeRange.h"
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
-#include "nsIUGenCategory.h"
 #include "nsUnicharUtilCIID.h"
 #include "nsILocaleService.h"
 
@@ -119,6 +118,7 @@ static PRLogModuleInfo *sFontlistLog = nsnull;
 static PRLogModuleInfo *sFontInitLog = nsnull;
 static PRLogModuleInfo *sTextrunLog = nsnull;
 static PRLogModuleInfo *sTextrunuiLog = nsnull;
+static PRLogModuleInfo *sCmapDataLog = nsnull;
 #endif
 
 /* Class to listen for pref changes so that chrome code can dynamically
@@ -149,7 +149,8 @@ SRGBOverrideObserver::Observe(nsISupports *aSubject,
 #define GFX_DOWNLOADABLE_FONTS_SANITIZE "gfx.downloadable_fonts.sanitize"
 
 #define GFX_PREF_HARFBUZZ_SCRIPTS "gfx.font_rendering.harfbuzz.scripts"
-#define HARFBUZZ_SCRIPTS_DEFAULT  gfxUnicodeProperties::SHAPING_DEFAULT
+#define HARFBUZZ_SCRIPTS_DEFAULT  mozilla::unicode::SHAPING_DEFAULT
+#define GFX_PREF_FALLBACK_USE_CMAPS  "gfx.font_rendering.fallback.always_use_cmaps"
 
 #ifdef MOZ_GRAPHITE
 #define GFX_PREF_GRAPHITE_SHAPING "gfx.font_rendering.graphite.enabled"
@@ -233,6 +234,8 @@ gfxPlatform::gfxPlatform()
     mUseHarfBuzzScripts = UNINITIALIZED_VALUE;
     mAllowDownloadableFonts = UNINITIALIZED_VALUE;
     mDownloadableFontsSanitize = UNINITIALIZED_VALUE;
+    mFallbackUsesCmaps = UNINITIALIZED_VALUE;
+
 #ifdef MOZ_GRAPHITE
     mGraphiteShapingEnabled = UNINITIALIZED_VALUE;
 #endif
@@ -269,6 +272,7 @@ gfxPlatform::Init()
     sFontInitLog = PR_NewLogModule("fontinit");;
     sTextrunLog = PR_NewLogModule("textrun");;
     sTextrunuiLog = PR_NewLogModule("textrunui");;
+    sCmapDataLog = PR_NewLogModule("cmapdata");;
 #endif
 
 
@@ -297,6 +301,10 @@ gfxPlatform::Init()
     gPlatform = new gfxAndroidPlatform;
 #else
     #error "No gfxPlatform implementation available"
+#endif
+
+#ifdef DEBUG
+    mozilla::gl::GLContext::StaticInit();
 #endif
 
     nsresult rv;
@@ -366,7 +374,21 @@ gfxPlatform::Shutdown()
         gPlatform->mFontPrefsObserver = nsnull;
     }
 
+    // Shut down the default GL context provider.
     mozilla::gl::GLContextProvider::Shutdown();
+
+    // We always have OSMesa at least potentially available; shut it down too.
+    mozilla::gl::GLContextProviderOSMesa::Shutdown();
+
+#if defined(XP_WIN)
+    // The above shutdown calls operate on the available context providers on
+    // most platforms.  Windows is a "special snowflake", though, and has three
+    // context providers available, so we have to shut all of them down.
+    // We should only support the default GL provider on Windows; then, this
+    // could go away. Unfortunately, we currently support WGL (the default) for
+    // WebGL on Optimus.
+    mozilla::gl::GLContextProviderEGL::Shutdown();
+#endif
 
     delete gPlatform;
     gPlatform = nsnull;
@@ -663,6 +685,17 @@ gfxPlatform::SanitizeDownloadedFonts()
     return mDownloadableFontsSanitize;
 }
 
+bool
+gfxPlatform::UseCmapsDuringSystemFallback()
+{
+    if (mFallbackUsesCmaps == UNINITIALIZED_VALUE) {
+        mFallbackUsesCmaps =
+            Preferences::GetBool(GFX_PREF_FALLBACK_USE_CMAPS, false);
+    }
+
+    return mFallbackUsesCmaps;
+}
+
 #ifdef MOZ_GRAPHITE
 bool
 gfxPlatform::UseGraphiteShaping()
@@ -683,7 +716,7 @@ gfxPlatform::UseHarfBuzzForScript(PRInt32 aScriptCode)
         mUseHarfBuzzScripts = Preferences::GetInt(GFX_PREF_HARFBUZZ_SCRIPTS, HARFBUZZ_SCRIPTS_DEFAULT);
     }
 
-    PRInt32 shapingType = gfxUnicodeProperties::ScriptShapingType(aScriptCode);
+    PRInt32 shapingType = mozilla::unicode::ScriptShapingType(aScriptCode);
 
     return (mUseHarfBuzzScripts & shapingType) != 0;
 }
@@ -1341,14 +1374,24 @@ gfxPlatform::FontsPrefsChanged(const char *aPref)
         mAllowDownloadableFonts = UNINITIALIZED_VALUE;
     } else if (!strcmp(GFX_DOWNLOADABLE_FONTS_SANITIZE, aPref)) {
         mDownloadableFontsSanitize = UNINITIALIZED_VALUE;
+    } else if (!strcmp(GFX_PREF_FALLBACK_USE_CMAPS, aPref)) {
+        mFallbackUsesCmaps = UNINITIALIZED_VALUE;
 #ifdef MOZ_GRAPHITE
     } else if (!strcmp(GFX_PREF_GRAPHITE_SHAPING, aPref)) {
         mGraphiteShapingEnabled = UNINITIALIZED_VALUE;
-        gfxFontCache::GetCache()->AgeAllGenerations();
+        gfxFontCache *fontCache = gfxFontCache::GetCache();
+        if (fontCache) {
+            fontCache->AgeAllGenerations();
+            fontCache->FlushShapedWordCaches();
+        }
 #endif
     } else if (!strcmp(GFX_PREF_HARFBUZZ_SCRIPTS, aPref)) {
         mUseHarfBuzzScripts = UNINITIALIZED_VALUE;
-        gfxFontCache::GetCache()->AgeAllGenerations();
+        gfxFontCache *fontCache = gfxFontCache::GetCache();
+        if (fontCache) {
+            fontCache->AgeAllGenerations();
+            fontCache->FlushShapedWordCaches();
+        }
     } else if (!strcmp(BIDI_NUMERAL_PREF, aPref)) {
         mBidiNumeralOption = UNINITIALIZED_VALUE;
     }
@@ -1371,6 +1414,9 @@ gfxPlatform::GetLog(eGfxLog aWhichLog)
         break;
     case eGfxLog_textrunui:
         return sTextrunuiLog;
+        break;
+    case eGfxLog_cmapdata:
+        return sCmapDataLog;
         break;
     default:
         break;

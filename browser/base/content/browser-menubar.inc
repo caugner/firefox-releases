@@ -291,12 +291,12 @@
                 </menu>
                 <menu id="pageStyleMenu" label="&pageStyleMenu.label;"
                       accesskey="&pageStyleMenu.accesskey;" observes="isImage">
-                  <menupopup onpopupshowing="stylesheetFillPopup(this);"
-                             oncommand="stylesheetSwitchAll(window.content, event.target.getAttribute('data')); setStyleDisabled(false);">
+                  <menupopup onpopupshowing="gPageStyleMenu.fillPopup(this);"
+                             oncommand="gPageStyleMenu.switchStyleSheet(event.target.getAttribute('data'));">
                     <menuitem id="menu_pageStyleNoStyle"
                               label="&pageStyleNoStyle.label;"
                               accesskey="&pageStyleNoStyle.accesskey;"
-                              oncommand="setStyleDisabled(true); event.stopPropagation();"
+                              oncommand="gPageStyleMenu.disableStyle(); event.stopPropagation();"
                               type="radio"/>
                     <menuitem id="menu_pageStylePersistentOnly"
                               label="&pageStylePersistentOnly.label;"
@@ -546,6 +546,11 @@
                             accesskey="&inspectMenu.accesskey;"
                             key="key_inspect"
                             command="Tools:Inspect"/>
+                  <menuitem id="menu_debugger"
+                            hidden="true"
+                            label="&debuggerMenu.label;"
+                            key="key_debugger"
+                            command="Tools:Debugger"/>
                   <menuitem id="menu_scratchpad"
                             hidden="true"
                             label="&scratchpad.label;"

@@ -1,7 +1,10 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Cu.import("resource:///modules/PageThumbs.jsm");
+let tmp = {};
+Cu.import("resource:///modules/PageThumbs.jsm", tmp);
+let PageThumbs = tmp.PageThumbs;
+let PageThumbsCache = tmp.PageThumbsCache;
 
 registerCleanupFunction(function () {
   while (gBrowser.tabs.length > 1)
@@ -91,33 +94,42 @@ function whenLoaded(aElement, aCallback) {
  * @param aMessage The info message to print when comparing the pixel color.
  */
 function captureAndCheckColor(aRed, aGreen, aBlue, aMessage) {
-  let window = gBrowser.selectedTab.linkedBrowser.contentWindow;
+  let browser = gBrowser.selectedBrowser;
 
-  let key = Date.now();
-  let data = PageThumbs.capture(window);
+  // Capture the screenshot.
+  PageThumbs.captureAndStore(browser, function () {
+    checkThumbnailColor(browser.currentURI.spec, aRed, aGreen, aBlue, aMessage);
+  });
+}
 
-  // Store the thumbnail in the cache.
-  PageThumbs.store(key, data, function () {
-    let width = 100, height = 100;
-    let thumb = PageThumbs.getThumbnailURL(key, width, height);
+/**
+ * Retrieve a thumbnail from the cache and compare its pixel color values.
+ * @param aURL The URL of the thumbnail's page.
+ * @param aRed The red component's intensity.
+ * @param aGreen The green component's intensity.
+ * @param aBlue The blue component's intensity.
+ * @param aMessage The info message to print when comparing the pixel color.
+ */
+function checkThumbnailColor(aURL, aRed, aGreen, aBlue, aMessage) {
+  let width = 100, height = 100;
+  let thumb = PageThumbs.getThumbnailURL(aURL, width, height);
 
-    getXULDocument(function (aDocument) {
-      let htmlns = "http://www.w3.org/1999/xhtml";
-      let img = aDocument.createElementNS(htmlns, "img");
-      img.setAttribute("src", thumb);
+  getXULDocument(function (aDocument) {
+    let htmlns = "http://www.w3.org/1999/xhtml";
+    let img = aDocument.createElementNS(htmlns, "img");
+    img.setAttribute("src", thumb);
 
-      whenLoaded(img, function () {
-        let canvas = aDocument.createElementNS(htmlns, "canvas");
-        canvas.setAttribute("width", width);
-        canvas.setAttribute("height", height);
+    whenLoaded(img, function () {
+      let canvas = aDocument.createElementNS(htmlns, "canvas");
+      canvas.setAttribute("width", width);
+      canvas.setAttribute("height", height);
 
-        // Draw the image to a canvas and compare the pixel color values.
-        let ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        checkCanvasColor(ctx, aRed, aGreen, aBlue, aMessage);
+      // Draw the image to a canvas and compare the pixel color values.
+      let ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      checkCanvasColor(ctx, aRed, aGreen, aBlue, aMessage);
 
-        next();
-      });
+      next();
     });
   });
 }

@@ -546,7 +546,7 @@ CSS_PROP_BACKGROUND(
     background-repeat,
     background_repeat,
     BackgroundRepeat,
-    CSS_PROPERTY_PARSE_VALUE_LIST |
+    CSS_PROPERTY_PARSE_FUNCTION |
         CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
         CSS_PROPERTY_VALUE_LIST_USES_COMMAS,
     VARIANT_KEYWORD, // used by list parsing
@@ -1256,6 +1256,15 @@ CSS_PROP_COLUMN(
     nsnull,
     offsetof(nsStyleColumn, mColumnCount),
     eStyleAnimType_Custom)
+CSS_PROP_COLUMN(
+    -moz-column-fill,
+    _moz_column_fill,
+    CSS_PROP_DOMPROP_PREFIXED(ColumnFill),
+    CSS_PROPERTY_PARSE_VALUE,
+    VARIANT_HK,
+    kColumnFillKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
 CSS_PROP_COLUMN(
     -moz-column-width,
     _moz_column_width,
@@ -2297,7 +2306,7 @@ CSS_PROP_DISPLAY(
     perspective,
     CSS_PROP_DOMPROP_PREFIXED(Perspective),
     CSS_PROPERTY_PARSE_VALUE,
-    VARIANT_NONE | VARIANT_INHERIT | VARIANT_LENGTH,
+    VARIANT_NONE | VARIANT_INHERIT | VARIANT_LENGTH | VARIANT_POSITIVE_LENGTH,
     nsnull,
     offsetof(nsStyleDisplay, mChildPerspective),
     eStyleAnimType_Coord)

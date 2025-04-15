@@ -1347,6 +1347,7 @@ WebSocketChannel::PrimeNewOutgoingMessage()
   if (msgType == kMsgTypeFin) {
     // This is a demand to create a close message
     if (mClientClosed) {
+      DeleteCurrentOutGoingMessage();
       PrimeNewOutgoingMessage();
       return;
     }
@@ -1513,6 +1514,14 @@ WebSocketChannel::PrimeNewOutgoingMessage()
   // mCurrentOut->Length() bytes from mCurrentOut. The latter may be
   // coaleseced into the former for small messages or as the result of the
   // compression process,
+}
+
+void
+WebSocketChannel::DeleteCurrentOutGoingMessage()
+{
+  delete mCurrentOut;
+  mCurrentOut = nsnull;
+  mCurrentOutSent = 0;
 }
 
 void
@@ -2310,15 +2319,14 @@ WebSocketChannel::Close(PRUint16 code, const nsACString & reason)
   LOG(("WebSocketChannel::Close() %p\n", this));
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "not main thread");
 
+  if (mRequestedClose) {
+    return NS_OK;
+  }
+
   if (!mTransport) {
     LOG(("WebSocketChannel::Close() without transport - aborting."));
     AbortSession(NS_ERROR_NOT_CONNECTED);
     return NS_ERROR_NOT_CONNECTED;
-  }
-
-  if (mRequestedClose) {
-    LOG(("WebSocketChannel:: Double close error\n"));
-    return NS_ERROR_UNEXPECTED;
   }
 
   // The API requires the UTF-8 string to be 123 or less bytes
@@ -2728,9 +2736,7 @@ WebSocketChannel::OnOutputStreamReady(nsIAsyncOutputStream *aStream)
           NS_DispatchToMainThread(new CallAcknowledge(this,
                                                       mCurrentOut->Length()));
         }
-        delete mCurrentOut;
-        mCurrentOut = nsnull;
-        mCurrentOutSent = 0;
+        DeleteCurrentOutGoingMessage();
         PrimeNewOutgoingMessage();
       } else {
         mCurrentOutSent += amtSent;

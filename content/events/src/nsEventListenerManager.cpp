@@ -471,7 +471,8 @@ nsEventListenerManager::AddScriptEventListener(nsIAtom *aName,
     // Try to get context from doc
     // XXX sXBL/XBL2 issue -- do we really want the owner here?  What
     // if that's the XBL document?
-    global = node->OwnerDoc()->GetScriptGlobalObject();
+    doc = node->OwnerDoc();
+    global = doc->GetScriptGlobalObject();
   } else {
     nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(mTarget));
     if (win) {
@@ -1004,20 +1005,20 @@ nsEventListenerManager::GetJSEventListener(nsIAtom *aEventName, jsval *vp)
   *vp = OBJECT_TO_JSVAL(listener->GetHandler());
 }
 
-PRInt64
-nsEventListenerManager::SizeOf() const
+size_t
+nsEventListenerManager::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+  const
 {
-  PRInt64 size = sizeof(*this);
+  size_t n = aMallocSizeOf(this);
+  n += mListeners.SizeOfExcludingThis(aMallocSizeOf);
   PRUint32 count = mListeners.Length();
   for (PRUint32 i = 0; i < count; ++i) {
-    const nsListenerStruct& ls = mListeners.ElementAt(i);
-    size += sizeof(ls);
-    nsIJSEventListener* jsl = ls.GetJSListener();
+    nsIJSEventListener* jsl = mListeners.ElementAt(i).GetJSListener();
     if (jsl) {
-      size += jsl->SizeOf();
+      n += jsl->SizeOfIncludingThis(aMallocSizeOf);
     }
   }
-  return size;
+  return n;
 }
 
 void

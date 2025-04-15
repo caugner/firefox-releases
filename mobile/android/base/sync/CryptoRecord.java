@@ -1,39 +1,6 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Android Sync Client.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Richard Newman <rnewman@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 package org.mozilla.gecko.sync;
 
@@ -46,7 +13,6 @@ import org.json.simple.parser.ParseException;
 import org.mozilla.apache.commons.codec.binary.Base64;
 import org.mozilla.gecko.sync.crypto.CryptoException;
 import org.mozilla.gecko.sync.crypto.CryptoInfo;
-import org.mozilla.gecko.sync.crypto.Cryptographer;
 import org.mozilla.gecko.sync.crypto.KeyBundle;
 import org.mozilla.gecko.sync.crypto.MissingCryptoInputException;
 import org.mozilla.gecko.sync.crypto.NoKeyBundleException;
@@ -55,18 +21,20 @@ import org.mozilla.gecko.sync.repositories.domain.Record;
 /**
  * A Sync crypto record has:
  *
- * * a collection of fields which are not encrypted (id and collection)
- * * a set of metadata fields (index, modified, ttl)
- * * a payload, which is encrypted and decrypted on request.
+ * <ul>
+ * <li>a collection of fields which are not encrypted (id and collection);</il>
+ * <li>a set of metadata fields (index, modified, ttl);</il>
+ * <li>a payload, which is encrypted and decrypted on request.</il>
+ * </ul>
  *
  * The payload flips between being a blob of JSON with hmac/IV/ciphertext
  * attributes and the cleartext itself.
  *
- * Until there's some benefit to the abstraction, we're simply going to
- * call this CryptoRecord.
+ * Until there's some benefit to the abstraction, we're simply going to call
+ * this <code>CryptoRecord</code>.
  *
- * @author rnewman
- *
+ * <code>CryptoRecord</code> uses <code>CryptoInfo</code> to do the actual
+ * encryption and decryption.
  */
 public class CryptoRecord extends Record {
 
@@ -92,7 +60,8 @@ public class CryptoRecord extends Record {
     byte[] ciphertext = Base64.decodeBase64(((String) payload.get(KEY_CIPHERTEXT)).getBytes("UTF-8"));
     byte[] iv         = Base64.decodeBase64(((String) payload.get(KEY_IV)).getBytes("UTF-8"));
     byte[] hmac       = Utils.hex2Byte((String) payload.get(KEY_HMAC));
-    return Cryptographer.decrypt(new CryptoInfo(ciphertext, iv, hmac, keybundle));
+
+    return CryptoInfo.decrypt(ciphertext, iv, hmac, keybundle).getMessage();
   }
 
   // The encrypted JSON body object.
@@ -150,6 +119,8 @@ public class CryptoRecord extends Record {
    *
    * @param jsonRecord
    * @return
+   *        A CryptoRecord that encapsulates the provided record.
+   *
    * @throws NonObjectJSONException
    * @throws ParseException
    * @throws IOException
@@ -174,7 +145,7 @@ public class CryptoRecord extends Record {
     if (jsonRecord.containsKey(KEY_MODIFIED)) {
       record.lastModified = jsonRecord.getTimestamp(KEY_MODIFIED);
     }
-    if (jsonRecord.containsKey(KEY_SORTINDEX )) {
+    if (jsonRecord.containsKey(KEY_SORTINDEX)) {
       record.sortIndex = jsonRecord.getLong(KEY_SORTINDEX);
     }
     // TODO: deleted?
@@ -221,8 +192,7 @@ public class CryptoRecord extends Record {
     }
     String cleartext = payload.toJSONString();
     byte[] cleartextBytes = cleartext.getBytes("UTF-8");
-    CryptoInfo info = new CryptoInfo(cleartextBytes, keyBundle);
-    Cryptographer.encrypt(info);
+    CryptoInfo info = CryptoInfo.encrypt(cleartextBytes, keyBundle);
     String message = new String(Base64.encodeBase64(info.getMessage()));
     String iv      = new String(Base64.encodeBase64(info.getIV()));
     String hmac    = Utils.byte2hex(info.getHMAC());
@@ -235,12 +205,22 @@ public class CryptoRecord extends Record {
   }
 
   @Override
-  public void initFromPayload(CryptoRecord payload) {
+  public void initFromEnvelope(CryptoRecord payload) {
     throw new IllegalStateException("Can't do this with a CryptoRecord.");
   }
 
   @Override
-  public CryptoRecord getPayload() {
+  public CryptoRecord getEnvelope() {
+    throw new IllegalStateException("Can't do this with a CryptoRecord.");
+  }
+
+  @Override
+  protected void populatePayload(ExtendedJSONObject payload) {
+    throw new IllegalStateException("Can't do this with a CryptoRecord.");
+  }
+
+  @Override
+  protected void initFromPayload(ExtendedJSONObject payload) {
     throw new IllegalStateException("Can't do this with a CryptoRecord.");
   }
 

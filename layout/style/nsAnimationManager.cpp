@@ -435,9 +435,12 @@ nsAnimationManager::RulesMatching(XULTreeRuleProcessorData* aData)
 /* virtual */ size_t
 nsAnimationManager::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const
 {
-  // XXX: various other members in nsAnimationManager could be measured here.
-  // Bug 671299 may do this.
   return CommonAnimationManager::SizeOfExcludingThis(aMallocSizeOf);
+
+  // Measurement of the following members may be added later if DMD finds it is
+  // worthwhile:
+  // - mKeyframesRules
+  // - mPendingEvents
 }
 
 /* virtual */ size_t
@@ -568,8 +571,10 @@ public:
 
   static KeyTypePointer KeyToPointer(KeyType aKey) { return &aKey; }
   static PLDHashNumber HashKey(KeyTypePointer aKey) {
-    PR_STATIC_ASSERT(sizeof(PLDHashNumber) == sizeof(PRUint32));
-    PR_STATIC_ASSERT(PLDHashNumber(-1) > PLDHashNumber(0));
+    MOZ_STATIC_ASSERT(sizeof(PLDHashNumber) == sizeof(PRUint32),
+                      "this hash function assumes PLDHashNumber is PRUint32");
+    MOZ_STATIC_ASSERT(PLDHashNumber(-1) > PLDHashNumber(0),
+                      "this hash function assumes PLDHashNumber is PRUint32");
     float key = *aKey;
     NS_ABORT_IF_FALSE(0.0f <= key && key <= 1.0f, "out of range");
     return PLDHashNumber(key * PR_UINT32_MAX);

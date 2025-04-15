@@ -41,13 +41,11 @@ import java.util.HashMap;
 
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
-import org.mozilla.gecko.sync.CryptoRecord;
 import org.mozilla.gecko.sync.ExtendedJSONObject;
+import org.mozilla.gecko.sync.Logger;
 import org.mozilla.gecko.sync.NonArrayJSONException;
 import org.mozilla.gecko.sync.Utils;
 import org.mozilla.gecko.sync.repositories.android.RepoUtils;
-
-import android.util.Log;
 
 /**
  * Visits are in microsecond precision.
@@ -110,37 +108,24 @@ public class HistoryRecord extends Record {
   }
 
   @Override
-  public void initFromPayload(CryptoRecord payload) {
-    ExtendedJSONObject p = payload.payload;
-
-    this.guid = payload.guid;
-    this.checkGUIDs(p);
-
-    this.lastModified  = payload.lastModified;
-    this.deleted       = payload.deleted;
-
-    this.histURI = (String) p.get("histUri");
-    this.title   = (String) p.get("title");
-    try {
-      this.visits = p.getArray("visits");
-    } catch (NonArrayJSONException e) {
-      Log.e(LOG_TAG, "Got non-array visits in history record " + this.guid, e);
-      this.visits = new JSONArray();
-    }
+  protected void populatePayload(ExtendedJSONObject payload) {
+    putPayload(payload, "id",      this.guid);
+    putPayload(payload, "title",   this.title);
+    putPayload(payload, "histUri", this.histURI);             // TODO: encoding?
+    payload.put("visits",  this.visits);
   }
 
   @Override
-  public CryptoRecord getPayload() {
-    CryptoRecord rec = new CryptoRecord(this);
-    rec.payload = new ExtendedJSONObject();
-    Log.d(LOG_TAG, "Getting payload for history record " + this.guid + " (" + this.guid.length() + ").");
-    rec.payload.put("id",      this.guid);
-    rec.payload.put("title",   this.title);
-    rec.payload.put("histUri", this.histURI);             // TODO: encoding?
-    rec.payload.put("visits",  this.visits);
-    return rec;
+  protected void initFromPayload(ExtendedJSONObject payload) {
+    this.histURI = (String) payload.get("histUri");
+    this.title   = (String) payload.get("title");
+    try {
+      this.visits = payload.getArray("visits");
+    } catch (NonArrayJSONException e) {
+      Logger.error(LOG_TAG, "Got non-array visits in history record " + this.guid, e);
+      this.visits = new JSONArray();
+    }
   }
-
 
   /**
    * We consider two history records to be congruent if they represent the
@@ -162,12 +147,12 @@ public class HistoryRecord extends Record {
   @Override
   public boolean equalPayloads(Object o) {
     if (o == null || !(o instanceof HistoryRecord)) {
-      Log.d(LOG_TAG, "Not a HistoryRecord: " + o);
+      Logger.debug(LOG_TAG, "Not a HistoryRecord: " + o);
       return false;
     }
     HistoryRecord other = (HistoryRecord) o;
     if (!super.equalPayloads(other)) {
-      Log.d(LOG_TAG, "super.equalPayloads returned false.");
+      Logger.debug(LOG_TAG, "super.equalPayloads returned false.");
       return false;
     }
     return RepoUtils.stringsEqual(this.title, other.title) &&
@@ -191,10 +176,11 @@ public class HistoryRecord extends Record {
   }
 
   private boolean checkVisitsEquals(HistoryRecord other) {
-    Log.d(LOG_TAG, "Checking visits.");
-    if (Utils.ENABLE_TRACE_LOGGING) {
-      Log.d(LOG_TAG, ">> Mine:   " + ((this.visits == null) ? "null" : this.visits.toJSONString()));
-      Log.d(LOG_TAG, ">> Theirs: " + ((other.visits == null) ? "null" : other.visits.toJSONString()));
+    Logger.debug(LOG_TAG, "Checking visits.");
+    if (Logger.logVerbose(LOG_TAG)) {
+      // Don't JSON-encode unless we're logging.
+      Logger.trace(LOG_TAG, ">> Mine:   " + ((this.visits == null) ? "null" : this.visits.toJSONString()));
+      Logger.trace(LOG_TAG, ">> Theirs: " + ((other.visits == null) ? "null" : other.visits.toJSONString()));
     }
 
     // Handle nulls.

@@ -156,11 +156,17 @@ public:
 
     static void NotifyIMEChange(const PRUnichar *aText, PRUint32 aTextLen, int aStart, int aEnd, int aNewEnd);
 
+    nsresult TakeScreenshot(nsIDOMWindow *window, PRInt32 srcX, PRInt32 srcY, PRInt32 srcW, PRInt32 srcH, PRInt32 dstW, PRInt32 dstH, PRInt32 tabId, float scale);
+
     void AcknowledgeEventSync();
 
     void EnableDeviceMotion(bool aEnable);
 
     void EnableLocation(bool aEnable);
+
+    void EnableSensor(int aSensorType);
+
+    void DisableSensor(int aSensorType);
 
     void ReturnIMEQueryResult(const PRUnichar *aResult, PRUint32 aLen, int aSelStart, int aSelLen);
 
@@ -219,7 +225,8 @@ public:
 
     int GetDPI();
 
-    void ShowFilePicker(nsAString& aFilePath, nsAString& aFilters);
+    void ShowFilePickerForExtensions(nsAString& aFilePath, const nsAString& aExtensions);
+    void ShowFilePickerForMimeType(nsAString& aFilePath, const nsAString& aMimeType);
 
     void PerformHapticFeedback(bool aIsLongPress);
 
@@ -351,7 +358,7 @@ public:
 
     nsCOMPtr<nsIAndroidDrawMetadataProvider> GetDrawMetadataProvider();
 
-    void EmitGeckoAccessibilityEvent (PRInt32 eventType, const nsAString& role, const nsAString& text, const nsAString& description, bool enabled, bool checked, bool password);
+    void EmitGeckoAccessibilityEvent (PRInt32 eventType, const nsTArray<nsString>& text, const nsAString& description, bool enabled, bool checked, bool password);
 
     void CheckURIVisited(const nsAString& uri);
     void MarkURIVisited(const nsAString& uri);
@@ -416,9 +423,12 @@ protected:
     jmethodID jNotifyIME;
     jmethodID jNotifyIMEEnabled;
     jmethodID jNotifyIMEChange;
+    jmethodID jNotifyScreenShot;
     jmethodID jAcknowledgeEventSync;
     jmethodID jEnableDeviceMotion;
     jmethodID jEnableLocation;
+    jmethodID jEnableSensor;
+    jmethodID jDisableSensor;
     jmethodID jReturnIMEQueryResult;
     jmethodID jNotifyAppShellReady;
     jmethodID jNotifyXreExit;
@@ -433,7 +443,8 @@ protected:
     jmethodID jGetClipboardText;
     jmethodID jSetClipboardText;
     jmethodID jShowAlertNotification;
-    jmethodID jShowFilePicker;
+    jmethodID jShowFilePickerForExtensions;
+    jmethodID jShowFilePickerForMimeType;
     jmethodID jAlertsProgressListener_OnProgress;
     jmethodID jAlertsProgressListener_OnCancel;
     jmethodID jGetDpi;
@@ -488,6 +499,9 @@ protected:
     jclass jEGLDisplayImplClass;
     jclass jEGLContextClass;
     jclass jEGL10Class;
+
+    // some convinient types to have around
+    jclass jStringClass;
 
     // calls we've dlopened from libjnigraphics.so
     int (* AndroidBitmap_getInfo)(JNIEnv *env, jobject bitmap, void *info);

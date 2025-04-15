@@ -48,8 +48,9 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsILoadGroup.h"
 #include "nsIObserver.h"
-#include "ImageLayers.h"
 #include "nsAudioStream.h"
+#include "VideoFrameContainer.h"
+#include "mozilla/CORSMode.h"
 
 // Define to output information on decoding and painting framerate
 /* #define DEBUG_FRAME_RATE 1 */
@@ -60,12 +61,10 @@ typedef PRUint16 nsMediaReadyState;
 class nsHTMLMediaElement : public nsGenericHTMLElement,
                            public nsIObserver
 {
-  typedef mozilla::layers::ImageContainer ImageContainer;
-
 public:
-
   typedef mozilla::TimeStamp TimeStamp;
-  typedef mozilla::TimeDuration TimeDuration;
+  typedef mozilla::layers::ImageContainer ImageContainer;
+  typedef mozilla::VideoFrameContainer VideoFrameContainer;
 
   enum CanPlayStatus {
     CANPLAY_NO,
@@ -73,7 +72,7 @@ public:
     CANPLAY_YES
   };
 
-  CORSMode GetCORSMode() {
+  mozilla::CORSMode GetCORSMode() {
     return mCORSMode;
   }
 
@@ -192,7 +191,12 @@ public:
 
   // Called by the media decoder and the video frame to get the
   // ImageContainer containing the video data.
-  ImageContainer* GetImageContainer();
+  VideoFrameContainer* GetVideoFrameContainer();
+  ImageContainer* GetImageContainer()
+  {
+    VideoFrameContainer* container = GetVideoFrameContainer();
+    return container ? container->GetImageContainer() : nsnull;
+  }
 
   // Called by the video frame to get the print surface, if this is
   // a static document and we're not actually playing video
@@ -454,6 +458,12 @@ protected:
   void SelectResource();
 
   /**
+   * A wrapper function that allows us to cleanly reset flags after a call
+   * to SelectResource()
+   */
+  void SelectResourceWrapper();
+
+  /**
    * Asynchronously awaits a stable state, and then causes SelectResource()
    * to be run on the main thread's event loop.
    */
@@ -569,9 +579,9 @@ protected:
   // The current decoder. Load() has been called on this decoder.
   nsRefPtr<nsMediaDecoder> mDecoder;
 
-  // A reference to the ImageContainer which contains the current frame
+  // A reference to the VideoFrameContainer which contains the current frame
   // of video to display.
-  nsRefPtr<ImageContainer> mImageContainer;
+  nsRefPtr<VideoFrameContainer> mVideoFrameContainer;
 
   // Holds a reference to the first channel we open to the media resource.
   // Once the decoder is created, control over the channel passes to the
@@ -642,7 +652,10 @@ protected:
   PreloadAction mPreloadAction;
 
   // Size of the media. Updated by the decoder on the main thread if
-  // it changes. Defaults to a width and height of -1 inot set.
+  // it changes. Defaults to a width and height of -1 if not set.
+  // We keep this separate from the intrinsic size stored in the
+  // VideoFrameContainer so that it doesn't change unexpectedly under us
+  // due to decoder activity.
   nsIntSize mMediaSize;
 
   // Time that the last timeupdate event was fired. Read/Write from the
@@ -733,6 +746,9 @@ protected:
   // or while we're running SelectResource().
   bool mIsRunningSelectResource;
 
+  // True when we already have select resource call queued
+  bool mHaveQueuedSelectResource;
+
   // True if we suspended the decoder because we were paused,
   // preloading metadata is enabled, autoplay was not enabled, and we loaded
   // the first frame.
@@ -766,7 +782,7 @@ protected:
   bool mMediaSecurityVerified;
 
   // The CORS mode when loading the media element
-  CORSMode mCORSMode;
+  mozilla::CORSMode mCORSMode;
 };
 
 #endif

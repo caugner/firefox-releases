@@ -40,15 +40,9 @@
 #define nsBuiltinDecoderReader_h_
 
 #include <nsDeque.h>
-#include "Layers.h"
 #include "ImageLayers.h"
-#include "nsClassHashtable.h"
-#include "mozilla/TimeStamp.h"
 #include "nsSize.h"
-#include "nsRect.h"
 #include "mozilla/ReentrantMonitor.h"
-
-class nsBuiltinDecoderStateMachine;
 
 // Stores info relevant to presenting media frames.
 class nsVideoInfo {
@@ -392,6 +386,7 @@ class nsBuiltinDecoderReader : public nsRunnable {
 public:
   typedef mozilla::ReentrantMonitor ReentrantMonitor;
   typedef mozilla::ReentrantMonitorAutoEnter ReentrantMonitorAutoEnter;
+  typedef mozilla::VideoFrameContainer VideoFrameContainer;
 
   nsBuiltinDecoderReader(nsBuiltinDecoder* aDecoder);
   ~nsBuiltinDecoderReader();
@@ -498,7 +493,7 @@ public:
 
   // Only used by nsWebMReader for now, so stub here rather than in every
   // reader than inherits from nsBuiltinDecoderReader.
-  virtual void NotifyDataArrived(const char* aBuffer, PRUint32 aLength, PRUint32 aOffset) {}
+  virtual void NotifyDataArrived(const char* aBuffer, PRUint32 aLength, PRInt64 aOffset) {}
 
 protected:
 

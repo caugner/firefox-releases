@@ -263,6 +263,23 @@ nsBaseWidget::CreateChild(const nsIntRect  &aRect,
   return nsnull;
 }
 
+NS_IMETHODIMP
+nsBaseWidget::SetEventCallback(EVENT_CALLBACK aEventFunction,
+                               nsDeviceContext *aContext)
+{
+  NS_ASSERTION(aEventFunction, "Must have valid event callback!");
+
+  mEventCallback = aEventFunction;
+
+  if (aContext) {
+    NS_IF_RELEASE(mContext);
+    mContext = aContext;
+    NS_ADDREF(mContext);
+  }
+
+  return NS_OK;
+}
+
 // Attach a view to our widget which we'll send events to. 
 NS_IMETHODIMP
 nsBaseWidget::AttachViewToTopLevel(EVENT_CALLBACK aViewEventFunction,
@@ -846,6 +863,7 @@ void nsBaseWidget::CreateCompositor()
       if (!lf) {
         delete lm;
         mCompositorChild = nsnull;
+        return;
       }
       lf->SetShadowManager(shadowManager);
       lf->SetParentBackendType(LayerManager::LAYERS_OPENGL);
@@ -1540,7 +1558,6 @@ nsBaseWidget::debug_DumpPaintEvent(FILE *                aFileOut,
 nsBaseWidget::debug_DumpInvalidate(FILE *                aFileOut,
                                    nsIWidget *           aWidget,
                                    const nsIntRect *     aRect,
-                                   bool                  aIsSynchronous,
                                    const nsCAutoString & aWidgetName,
                                    PRInt32               aWindowID)
 {
@@ -1572,10 +1589,6 @@ nsBaseWidget::debug_DumpInvalidate(FILE *                aFileOut,
             " rect=%-15s",
             "none");
   }
-
-  fprintf(aFileOut,
-          " sync=%s",
-          (const char *) (aIsSynchronous ? "yes" : "no "));
   
   fprintf(aFileOut,"\n");
 }

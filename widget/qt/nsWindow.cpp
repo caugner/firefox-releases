@@ -751,11 +751,10 @@ nsWindow::SetCursor(imgIContainer* aCursor,
 }
 
 NS_IMETHODIMP
-nsWindow::Invalidate(const nsIntRect &aRect,
-                     bool          aIsSynchronous)
+nsWindow::Invalidate(const nsIntRect &aRect)
 {
-    LOGDRAW(("Invalidate (rect) [%p,%p]: %d %d %d %d (sync: %d)\n", (void *)this,
-             (void*)mWidget,aRect.x, aRect.y, aRect.width, aRect.height, aIsSynchronous));
+    LOGDRAW(("Invalidate (rect) [%p,%p]: %d %d %d %d\n", (void *)this,
+             (void*)mWidget,aRect.x, aRect.y, aRect.width, aRect.height));
 
     if (!mWidget)
         return NS_OK;
@@ -764,19 +763,6 @@ nsWindow::Invalidate(const nsIntRect &aRect,
 
     mWidget->update(aRect.x, aRect.y, aRect.width, aRect.height);
 
-    // QGraphicsItems cannot trigger a repaint themselves, so we start it on the view
-    if (aIsSynchronous) {
-        QWidget *widget = GetViewWidget();
-        if (widget)
-            widget->repaint();
-    }
-
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsWindow::Update()
-{
     return NS_OK;
 }
 
@@ -3324,3 +3310,19 @@ nsWindow::UserActivity()
     mIdleService->ResetIdleTimeOut();
   }
 }
+
+PRUint32
+nsWindow::GetGLFrameBufferFormat()
+{
+    if (mLayerManager &&
+        mLayerManager->GetBackendType() == LayerManager::LAYERS_OPENGL) {
+        // On maemo the hardware fb has RGB format.
+#ifdef MOZ_PLATFORM_MAEMO
+        return LOCAL_GL_RGB;
+#else
+        return LOCAL_GL_RGBA;
+#endif
+    }
+    return LOCAL_GL_NONE;
+}
+

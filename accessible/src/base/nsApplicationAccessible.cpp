@@ -421,7 +421,7 @@ nsApplicationAccessible::GetSiblingAtOffset(PRInt32 aOffset,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// nsIAccessNode and nsAccessNode
+// nsIAccessible
 
 NS_IMETHODIMP
 nsApplicationAccessible::GetDOMNode(nsIDOMNode **aDOMNode)
@@ -464,24 +464,6 @@ NS_IMETHODIMP
 nsApplicationAccessible::ScrollToPoint(PRUint32 aCoordinateType,
                                        PRInt32 aX, PRInt32 aY)
 {
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsApplicationAccessible::GetComputedStyleValue(const nsAString &aPseudoElt,
-                                               const nsAString &aPropertyName,
-                                               nsAString &aValue)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsApplicationAccessible::GetComputedStyleCSSValue(const nsAString &aPseudoElt,
-                                                  const nsAString &aPropertyName,
-                                                  nsIDOMCSSPrimitiveValue **aCSSPrimitiveValue)
-{
-  NS_ENSURE_ARG_POINTER(aCSSPrimitiveValue);
-  *aCSSPrimitiveValue = nsnull;
   return NS_OK;
 }
 

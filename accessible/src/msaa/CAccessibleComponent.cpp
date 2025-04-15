@@ -43,6 +43,8 @@
 #include "AccessibleComponent_i.c"
 
 #include "nsAccessible.h"
+#include "nsCoreUtils.h"
+#include "nsWinUtils.h"
 #include "States.h"
 
 #include "nsString.h"
@@ -155,18 +157,24 @@ CAccessibleComponent::GetARGBValueFromCSSProperty(const nsAString& aPropName,
 __try {
   *aColorValue = 0;
 
-  nsCOMPtr<nsIAccessNode> acc(do_QueryObject(this));
-  if (!acc)
+  nsRefPtr<nsAccessible> acc(do_QueryObject(this));
+  if (acc->IsDefunct())
     return E_FAIL;
 
-  nsCOMPtr<nsIDOMCSSPrimitiveValue> cssValue;
-  nsresult rv = acc->GetComputedStyleCSSValue(EmptyString(), aPropName,
-                                              getter_AddRefs(cssValue));
-  if (NS_FAILED(rv) || !cssValue)
-    return GetHRESULT(rv);
+  nsCOMPtr<nsIDOMCSSStyleDeclaration> styleDecl =
+    nsWinUtils::GetComputedStyleDeclaration(acc->GetContent());
+  NS_ENSURE_STATE(styleDecl);
+
+  nsCOMPtr<nsIDOMCSSValue> cssGenericValue;
+  styleDecl->GetPropertyCSSValue(aPropName, getter_AddRefs(cssGenericValue));
+
+  nsCOMPtr<nsIDOMCSSPrimitiveValue> cssValue =
+    do_QueryInterface(cssGenericValue);
+  if (!cssValue)
+    return E_FAIL;
 
   nsCOMPtr<nsIDOMRGBColor> rgbColor;
-  rv = cssValue->GetRGBColorValue(getter_AddRefs(rgbColor));
+  nsresult rv = cssValue->GetRGBColorValue(getter_AddRefs(rgbColor));
   if (NS_FAILED(rv) || !rgbColor)
     return GetHRESULT(rv);
 

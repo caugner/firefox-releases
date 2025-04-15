@@ -67,7 +67,6 @@
 #include "prlog.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsIPrefBranch2.h"
 #include "nsIDateTimeFormat.h"
 #include "nsDateTimeFormatCID.h"
 #include "nsIDOMEvent.h"
@@ -1366,8 +1365,6 @@ nsresult nsNSSComponent::getParamsForNextCrlToDownload(nsAutoString *url, PRTime
 NS_IMETHODIMP
 nsNSSComponent::Notify(nsITimer *timer)
 {
-  nsresult rv;
-
   //Timer has fired. So set the flag accordingly
   {
     MutexAutoLock lock(mCrlTimerLock);
@@ -1375,7 +1372,7 @@ nsNSSComponent::Notify(nsITimer *timer)
   }
 
   //First, handle this download
-  rv = DownloadCrlSilently();
+  DownloadCrlSilently();
 
   //Dont Worry if successful or not
   //Set the next timer
@@ -1600,6 +1597,26 @@ nsNSSComponent::TryCFM2MachOMigration(nsIFile *cfmPath, nsIFile *machoPath)
 }
 #endif
 
+static void configureMD5(bool enabled)
+{
+  if (enabled) { // set flags
+    NSS_SetAlgorithmPolicy(SEC_OID_MD5, 
+        NSS_USE_ALG_IN_CERT_SIGNATURE | NSS_USE_ALG_IN_CMS_SIGNATURE, 0);
+    NSS_SetAlgorithmPolicy(SEC_OID_PKCS1_MD5_WITH_RSA_ENCRYPTION,
+        NSS_USE_ALG_IN_CERT_SIGNATURE | NSS_USE_ALG_IN_CMS_SIGNATURE, 0);
+    NSS_SetAlgorithmPolicy(SEC_OID_PKCS5_PBE_WITH_MD5_AND_DES_CBC,
+        NSS_USE_ALG_IN_CERT_SIGNATURE | NSS_USE_ALG_IN_CMS_SIGNATURE, 0);
+  }
+  else { // clear flags
+    NSS_SetAlgorithmPolicy(SEC_OID_MD5,
+        0, NSS_USE_ALG_IN_CERT_SIGNATURE | NSS_USE_ALG_IN_CMS_SIGNATURE);
+    NSS_SetAlgorithmPolicy(SEC_OID_PKCS1_MD5_WITH_RSA_ENCRYPTION,
+        0, NSS_USE_ALG_IN_CERT_SIGNATURE | NSS_USE_ALG_IN_CMS_SIGNATURE);
+    NSS_SetAlgorithmPolicy(SEC_OID_PKCS5_PBE_WITH_MD5_AND_DES_CBC,
+        0, NSS_USE_ALG_IN_CERT_SIGNATURE | NSS_USE_ALG_IN_CMS_SIGNATURE);
+  }
+}
+
 nsresult
 nsNSSComponent::InitializeNSS(bool showWarningBox)
 {
@@ -1782,8 +1799,7 @@ nsNSSComponent::InitializeNSS(bool showWarningBox)
       PK11_SetPasswordFunc(PK11PasswordPrompt);
 
       // Register an observer so we can inform NSS when these prefs change
-      nsCOMPtr<nsIPrefBranch2> pbi = do_QueryInterface(mPrefBranch);
-      pbi->AddObserver("security.", this, false);
+      mPrefBranch->AddObserver("security.", this, false);
 
       SSL_OptionSetDefault(SSL_ENABLE_SSL2, false);
       SSL_OptionSetDefault(SSL_V2_COMPATIBLE_HELLO, false);
@@ -1792,6 +1808,8 @@ nsNSSComponent::InitializeNSS(bool showWarningBox)
       SSL_OptionSetDefault(SSL_ENABLE_SSL3, enabled);
       mPrefBranch->GetBoolPref("security.enable_tls", &enabled);
       SSL_OptionSetDefault(SSL_ENABLE_TLS, enabled);
+      mPrefBranch->GetBoolPref("security.enable_md5_signatures", &enabled);
+      configureMD5(enabled);
 
       // Configure TLS session tickets
       mPrefBranch->GetBoolPref("security.enable_tls_session_tickets", &enabled);
@@ -1907,8 +1925,7 @@ nsNSSComponent::ShutdownNSS()
     UnregisterMyOCSPAIAInfoCallback();
 
     if (mPrefBranch) {
-      nsCOMPtr<nsIPrefBranch2> pbi = do_QueryInterface(mPrefBranch);
-      pbi->RemoveObserver("security.", this);
+      mPrefBranch->RemoveObserver("security.", this);
     }
 
     ShutdownSmartCardThreads();
@@ -2283,11 +2300,9 @@ nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic,
     // Cleanup code that requires services, it's too late in destructor.
 
     if (mPSMContentListener) {
-      nsresult rv = NS_ERROR_FAILURE;
-
       nsCOMPtr<nsIURILoader> dispatcher(do_GetService(NS_URI_LOADER_CONTRACTID));
       if (dispatcher) {
-        rv = dispatcher->UnRegisterContentListener(mPSMContentListener);
+        dispatcher->UnRegisterContentListener(mPSMContentListener);
       }
       mPSMContentListener = nsnull;
     }
@@ -2316,6 +2331,10 @@ nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic,
     } else if (prefName.Equals("security.enable_tls")) {
       mPrefBranch->GetBoolPref("security.enable_tls", &enabled);
       SSL_OptionSetDefault(SSL_ENABLE_TLS, enabled);
+      clearSessionCache = true;
+    } else if (prefName.Equals("security.enable_md5_signatures")) {
+      mPrefBranch->GetBoolPref("security.enable_md5_signatures", &enabled);
+      configureMD5(enabled);
       clearSessionCache = true;
     } else if (prefName.Equals("security.enable_tls_session_tickets")) {
       mPrefBranch->GetBoolPref("security.enable_tls_session_tickets", &enabled);

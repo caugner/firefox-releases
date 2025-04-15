@@ -95,6 +95,7 @@ nsHttpConnectionMgr::nsHttpConnectionMgr()
     , mNumActiveConns(0)
     , mNumIdleConns(0)
     , mTimeOfNextWakeUp(LL_MAXUINT)
+    , mReadTimeoutTickArmed(false)
 {
     LOG(("Creating nsHttpConnectionMgr @%x\n", this));
     mCT.Init();
@@ -105,6 +106,8 @@ nsHttpConnectionMgr::nsHttpConnectionMgr()
 nsHttpConnectionMgr::~nsHttpConnectionMgr()
 {
     LOG(("Destroying nsHttpConnectionMgr @%x\n", this));
+    if (mReadTimeoutTick)
+        mReadTimeoutTick->Cancel();
 }
 
 nsresult
@@ -252,6 +255,24 @@ nsHttpConnectionMgr::ConditionallyStopPruneDeadConnectionsTimer()
     }
 }
 
+void
+nsHttpConnectionMgr::ConditionallyStopReadTimeoutTick()
+{
+    LOG(("nsHttpConnectionMgr::ConditionallyStopReadTimeoutTick "
+         "armed=%d active=%d\n", mReadTimeoutTickArmed, mNumActiveConns));
+
+    if (!mReadTimeoutTickArmed)
+        return;
+
+    if (mNumActiveConns)
+        return;
+
+    LOG(("nsHttpConnectionMgr::ConditionallyStopReadTimeoutTick stop==true\n"));
+
+    mReadTimeoutTick->Cancel();
+    mReadTimeoutTickArmed = false;
+}
+
 //-----------------------------------------------------------------------------
 // nsHttpConnectionMgr::nsIObserver
 //-----------------------------------------------------------------------------
@@ -263,13 +284,19 @@ nsHttpConnectionMgr::Observe(nsISupports *subject,
 {
     LOG(("nsHttpConnectionMgr::Observe [topic=\"%s\"]\n", topic));
 
-    if (0 == strcmp(topic, "timer-callback")) {
-        // prune dead connections
-        PruneDeadConnections();
-#ifdef DEBUG
+    if (0 == strcmp(topic, NS_TIMER_CALLBACK_TOPIC)) {
         nsCOMPtr<nsITimer> timer = do_QueryInterface(subject);
-        NS_ASSERTION(timer == mTimer, "unexpected timer-callback");
-#endif
+        if (timer == mTimer) {
+            PruneDeadConnections();
+        }
+        else if (timer == mReadTimeoutTick) {
+            ReadTimeoutTick();
+        }
+        else {
+            NS_ABORT_IF_FALSE(false, "unexpected timer-callback");
+            LOG(("Unexpected timer object\n"));
+            return NS_ERROR_UNEXPECTED;
+        }
     }
 
     return NS_OK;
@@ -572,12 +599,11 @@ nsHttpConnectionMgr::ReportSpdyAlternateProtocol(nsHttpConnection *conn)
     if (mAlternateProtocolHash.Contains(hostPortKey))
         return;
     
-    if (mAlternateProtocolHash.mHashTable.entryCount > 2000)
-        PL_DHashTableEnumerate(&mAlternateProtocolHash.mHashTable,
-                               &nsHttpConnectionMgr::TrimAlternateProtocolHash,
-                               this);
+    if (mAlternateProtocolHash.Count() > 2000)
+        mAlternateProtocolHash.EnumerateEntries(&TrimAlternateProtocolHash,
+						this);
     
-    mAlternateProtocolHash.Put(hostPortKey);
+    mAlternateProtocolHash.PutEntry(hostPortKey);
 }
 
 void
@@ -587,18 +613,16 @@ nsHttpConnectionMgr::RemoveSpdyAlternateProtocol(nsACString &hostPortKey)
     // it is read from both the main and the network thread.
     ReentrantMonitorAutoEnter mon(mReentrantMonitor);
 
-    return mAlternateProtocolHash.Remove(hostPortKey);
+    return mAlternateProtocolHash.RemoveEntry(hostPortKey);
 }
 
 PLDHashOperator
-nsHttpConnectionMgr::TrimAlternateProtocolHash(PLDHashTable *table,
-                                               PLDHashEntryHdr *hdr,
-                                               PRUint32 number,
+nsHttpConnectionMgr::TrimAlternateProtocolHash(nsCStringHashKey *entry,
                                                void *closure)
 {
     nsHttpConnectionMgr *self = (nsHttpConnectionMgr *) closure;
     
-    if (self->mAlternateProtocolHash.mHashTable.entryCount > 2000)
+    if (self->mAlternateProtocolHash.Count() > 2000)
         return PL_DHASH_REMOVE;
     return PL_DHASH_STOP;
 }
@@ -1109,14 +1133,35 @@ nsHttpConnectionMgr::GetConnection(nsConnectionEntry *ent,
         
         if (gHttpHandler->IsSpdyEnabled() &&
             ent->mConnInfo->UsingSSL() &&
-            !ent->mConnInfo->UsingHttpProxy())
-        {
-            // If this host is trying to negotiate a SPDY session right now,
-            // don't create any new connections until the result of the
-            // negotiation is known.
-    
-            if ((!ent->mTestedSpdy || ent->mUsingSpdy) &&
-                (ent->mHalfOpens.Length() || ent->mActiveConns.Length()))
+            !ent->mConnInfo->UsingHttpProxy() &&
+            !(trans->Caps() & NS_HTTP_DISALLOW_SPDY) &&
+            (!ent->mTestedSpdy || ent->mUsingSpdy) &&
+            (ent->mHalfOpens.Length() || ent->mActiveConns.Length())) {
+            bool restrictConnection = true;
+
+            // There is a concern that a host is using a mix of HTTP/1 and SPDY.
+            // In that case we don't want to restrict connections just because
+            // there is a single active HTTP/1 session in use. Confirm that the
+            // restriction is due to a handshake in progress or a live spdy
+            // session.
+            if (!ent->mHalfOpens.Length() &&
+                ent->mUsingSpdy && ent->mActiveConns.Length()) {
+                bool confirmedRestrict = false;
+
+                for (PRUint32 index = 0; index < ent->mActiveConns.Length(); ++index) {
+                    nsHttpConnection *conn = ent->mActiveConns[index];
+                    if (!conn->ReportedNPN() || conn->CanDirectlyActivate()) {
+                        confirmedRestrict = true;
+                        break; // confirmed;
+                    }
+                }
+                if (!confirmedRestrict) {
+                    LOG(("nsHttpConnectionMgr spdy connection restriction to "
+                         "%s bypassed.\n", ent->mConnInfo->Host()));
+                    restrictConnection = false;
+                }
+            }
+            if (restrictConnection)
                 return;
         }
         
@@ -1167,6 +1212,7 @@ nsHttpConnectionMgr::AddActiveConn(nsHttpConnection *conn,
     NS_ADDREF(conn);
     ent->mActiveConns.AppendElement(conn);
     mNumActiveConns++;
+    ActivateTimeoutTick();
 }
 
 void
@@ -1179,6 +1225,7 @@ void
 nsHttpConnectionMgr::RecvdConnect()
 {
     mNumActiveConns--;
+    ConditionallyStopReadTimeoutTick();
 }
 
 nsresult
@@ -1240,6 +1287,8 @@ nsHttpConnectionMgr::DispatchTransaction(nsConnectionEntry *ent,
         LOG(("  conn->Activate failed [rv=%x]\n", rv));
         ent->mActiveConns.RemoveElement(conn);
         mNumActiveConns--;
+        ConditionallyStopReadTimeoutTick();
+
         // sever back references to connection, and do so without triggering
         // a call to ReclaimConnection ;-)
         trans->SetConnection(nsnull);
@@ -1472,6 +1521,12 @@ nsHttpConnectionMgr::OnMsgShutdown(PRInt32, void *)
 
     mCT.Enumerate(ShutdownPassCB, this);
 
+    if (mReadTimeoutTick) {
+        mReadTimeoutTick->Cancel();
+        mReadTimeoutTick = nsnull;
+        mReadTimeoutTickArmed = false;
+    }
+    
     // signal shutdown complete
     ReentrantMonitorAutoEnter mon(mReentrantMonitor);
     mon.Notify();
@@ -1628,6 +1683,7 @@ nsHttpConnectionMgr::OnMsgReclaimConnection(PRInt32, void *param)
             nsHttpConnection *temp = conn;
             NS_RELEASE(temp);
             mNumActiveConns--;
+            ConditionallyStopReadTimeoutTick();
         }
 
         if (conn->CanReuse()) {
@@ -1709,6 +1765,72 @@ nsHttpConnectionMgr::nsConnectionEntry::~nsConnectionEntry()
         gHttpHandler->ConnMgr()->RemoveSpdyPreferredEnt(mCoalescingKey);
 
     NS_RELEASE(mConnInfo);
+}
+
+// Read Timeout Tick handlers
+
+void
+nsHttpConnectionMgr::ActivateTimeoutTick()
+{
+    NS_ABORT_IF_FALSE(PR_GetCurrentThread() == gSocketThread, "wrong thread");
+    LOG(("nsHttpConnectionMgr::ActivateTimeoutTick() "
+         "this=%p mReadTimeoutTick=%p\n"));
+
+    // right now the spdy timeout code is the only thing hooked to the timeout
+    // tick, so disable it if spdy is not being used. However pipelining code
+    // will also want this functionality soon.
+    if (!gHttpHandler->IsSpdyEnabled())
+        return;
+
+    // The timer tick should be enabled if it is not already pending.
+    // Upon running the tick will rearm itself if there are active
+    // connections available.
+
+    if (mReadTimeoutTick && mReadTimeoutTickArmed)
+        return;
+
+    if (!mReadTimeoutTick) {
+        mReadTimeoutTick = do_CreateInstance(NS_TIMER_CONTRACTID);
+        if (!mReadTimeoutTick) {
+            NS_WARNING("failed to create timer for http timeout management");
+            return;
+        }
+        mReadTimeoutTick->SetTarget(mSocketThreadTarget);
+    }
+
+    NS_ABORT_IF_FALSE(!mReadTimeoutTickArmed, "timer tick armed");
+    mReadTimeoutTickArmed = true;
+    // pipeline will expect a 1000ms granuality
+    mReadTimeoutTick->Init(this, 15000, nsITimer::TYPE_REPEATING_SLACK);
+}
+
+void
+nsHttpConnectionMgr::ReadTimeoutTick()
+{
+    NS_ABORT_IF_FALSE(PR_GetCurrentThread() == gSocketThread, "wrong thread");
+    NS_ABORT_IF_FALSE(mReadTimeoutTick, "no readtimeout tick");
+
+    LOG(("nsHttpConnectionMgr::ReadTimeoutTick active=%d\n",
+         mNumActiveConns));
+
+    mCT.Enumerate(ReadTimeoutTickCB, this);
+}
+
+PLDHashOperator
+nsHttpConnectionMgr::ReadTimeoutTickCB(const nsACString &key,
+                                       nsAutoPtr<nsConnectionEntry> &ent,
+                                       void *closure)
+{
+    nsHttpConnectionMgr *self = (nsHttpConnectionMgr *) closure;
+
+    LOG(("nsHttpConnectionMgr::ReadTimeoutTickCB() this=%p host=%s\n",
+         self, ent->mConnInfo->Host()));
+
+    PRIntervalTime now = PR_IntervalNow();
+    for (PRUint32 index = 0; index < ent->mActiveConns.Length(); ++index)
+        ent->mActiveConns[index]->ReadTimeoutTick(now);
+
+    return PL_DHASH_NEXT;
 }
 
 //-----------------------------------------------------------------------------
@@ -2093,7 +2215,11 @@ nsHalfOpenSocket::OnOutputStreamReady(nsIAsyncOutputStream *out)
 
         // We need to establish a small non-zero idle timeout so the connection
         // mgr perceives this socket as suitable for persistent connection reuse
-        conn->SetIdleTimeout(NS_MIN((PRUint16) 5, gHttpHandler->IdleTimeout()));
+        const PRIntervalTime k5Sec = PR_SecondsToInterval(5);
+        if (k5Sec < gHttpHandler->IdleTimeout())
+            conn->SetIdleTimeout(k5Sec);
+        else
+            conn->SetIdleTimeout(gHttpHandler->IdleTimeout());
 
         // After about 1 second allow for the possibility of restarting a
         // transaction due to server close. Keep at sub 1 second as that is the

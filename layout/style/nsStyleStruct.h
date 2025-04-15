@@ -436,6 +436,26 @@ struct nsStyleBackground {
       return !(*this == aOther);
     }
   };
+  
+  struct Repeat;
+  friend struct Repeat;
+  struct Repeat {
+    PRUint8 mXRepeat, mYRepeat;
+    
+    // Initialize nothing
+    Repeat() {}
+
+    // Initialize to initial values
+    void SetInitialValues();
+
+    bool operator==(const Repeat& aOther) const {
+      return mXRepeat == aOther.mXRepeat &&
+             mYRepeat == aOther.mYRepeat;
+    }
+    bool operator!=(const Repeat& aOther) const {
+      return !(*this == aOther);
+    }
+  };
 
   struct Layer;
   friend struct Layer;
@@ -443,7 +463,7 @@ struct nsStyleBackground {
     PRUint8 mAttachment;                // [reset] See nsStyleConsts.h
     PRUint8 mClip;                      // [reset] See nsStyleConsts.h
     PRUint8 mOrigin;                    // [reset] See nsStyleConsts.h
-    PRUint8 mRepeat;                    // [reset] See nsStyleConsts.h
+    Repeat mRepeat;                     // [reset] See nsStyleConsts.h
     Position mPosition;                 // [reset]
     nsStyleImage mImage;                // [reset]
     Size mSize;                         // [reset]
@@ -2084,6 +2104,8 @@ struct nsStyleColumn {
 
   nscolor      mColumnRuleColor;  // [reset]
   PRUint8      mColumnRuleStyle;  // [reset]
+  PRUint8      mColumnFill;  // [reset] see nsStyleConsts.h
+
   // See https://bugzilla.mozilla.org/show_bug.cgi?id=271586#c43 for why
   // this is hard to replace with 'currentColor'.
   bool mColumnRuleColorIsForeground;

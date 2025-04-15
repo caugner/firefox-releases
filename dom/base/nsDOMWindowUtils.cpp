@@ -603,7 +603,7 @@ nsDOMWindowUtils::SendTouchEvent(const nsAString& aType,
   }
   event.touches.SetCapacity(aCount);
   PRInt32 appPerDev = presContext->AppUnitsPerDevPixel();
-  for (int i = 0; i < aCount; ++i) {
+  for (PRUint32 i = 0; i < aCount; ++i) {
     nsIntPoint pt(0, 0);
     pt.x =
       NSAppUnitsToIntPixels(nsPresContext::CSSPixelsToAppUnits(aXs[i]) + offset.x,
@@ -835,27 +835,6 @@ nsDOMWindowUtils::CycleCollect(nsICycleCollectorListener *aListener,
 #endif
 
   nsJSContext::CycleCollectNow(aListener, aExtraForgetSkippableCalls);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::ProcessUpdates()
-{
-  nsPresContext* presContext = GetPresContext();
-  if (!presContext)
-    return NS_ERROR_UNEXPECTED;
-
-  nsIPresShell* shell = presContext->GetPresShell();
-  if (!shell)
-    return NS_ERROR_UNEXPECTED;
-
-  nsIViewManager *viewManager = shell->GetViewManager();
-  if (!viewManager)
-    return NS_ERROR_UNEXPECTED;
-  
-  nsIViewManager::UpdateViewBatch batch;
-  batch.BeginUpdateViewBatch(viewManager);
-  batch.EndUpdateViewBatch(NS_VMREFRESH_IMMEDIATE);
   return NS_OK;
 }
 
@@ -1547,7 +1526,7 @@ nsDOMWindowUtils::GetClassName(const JS::Value& aObject, JSContext* aCx, char** 
     return NS_ERROR_XPC_BAD_CONVERT_JS;
   }
 
-  *aName = NS_strdup(JS_GET_CLASS(aCx, JSVAL_TO_OBJECT(aObject))->name);
+  *aName = NS_strdup(JS_GetClass(JSVAL_TO_OBJECT(aObject))->name);
   NS_ABORT_IF_FALSE(*aName, "NS_strdup should be infallible.");
   return NS_OK;
 }
@@ -1627,7 +1606,7 @@ nsDOMWindowUtils::GetParent(const JS::Value& aObject,
     return NS_ERROR_XPC_BAD_CONVERT_JS;
   }
 
-  JSObject* parent = JS_GetParent(aCx, JSVAL_TO_OBJECT(aObject));
+  JSObject* parent = JS_GetParent(JSVAL_TO_OBJECT(aObject));
   *aParent = OBJECT_TO_JSVAL(parent);
 
   // Outerize if necessary.
@@ -2109,6 +2088,13 @@ nsDOMWindowUtils::GetFileReferences(const nsAString& aDatabaseName,
 
   *aRefCnt = *aDBRefCnt = *aSliceRefCnt = -1;
   *aResult = false;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::IsIncrementalGCEnabled(JSContext* cx, bool* aResult)
+{
+  *aResult = js::IsIncrementalGCEnabled(JS_GetRuntime(cx));
   return NS_OK;
 }
 

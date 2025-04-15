@@ -121,6 +121,8 @@ public:
      */
     static nsCSSCompressedDataBlock* CreateEmptyBlock();
 
+    size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
+
 private:
     void* operator new(size_t aBaseSize, size_t aDataSize) {
         NS_ABORT_IF_FALSE(aBaseSize == sizeof(nsCSSCompressedDataBlock),
@@ -159,8 +161,10 @@ private:
 };
 
 /* Make sure the CDBValueStorage elements are aligned appropriately. */
-PR_STATIC_ASSERT(sizeof(nsCSSCompressedDataBlock) == 8);
-PR_STATIC_ASSERT(NS_ALIGNMENT_OF(CDBValueStorage) <= 8); 
+MOZ_STATIC_ASSERT(sizeof(nsCSSCompressedDataBlock) == 8,
+                  "nsCSSCompressedDataBlock's size has changed");
+MOZ_STATIC_ASSERT(NS_ALIGNMENT_OF(CDBValueStorage) <= 8,
+                  "CDBValueStorage needs too much alignment");
 
 class nsCSSExpandedDataBlock {
     friend class nsCSSCompressedDataBlock;

@@ -292,7 +292,7 @@ GetIntFromJSObject(JSContext* aCtx,
   NS_ENSURE_ARG(JSVAL_IS_PRIMITIVE(value));
   NS_ENSURE_ARG(JSVAL_IS_NUMBER(value));
 
-  jsdouble num;
+  double num;
   rc = JS_ValueToNumber(aCtx, value, &num);
   NS_ENSURE_TRUE(rc, NS_ERROR_UNEXPECTED);
   NS_ENSURE_ARG(IntType(num) == num);
@@ -318,7 +318,7 @@ GetIntFromJSObject(JSContext* aCtx,
 nsresult
 GetJSObjectFromArray(JSContext* aCtx,
                      JSObject* aArray,
-                     jsuint aIndex,
+                     uint32_t aIndex,
                      JSObject** _rooter)
 {
   NS_PRECONDITION(JS_IsArrayObject(aCtx, aArray),
@@ -462,6 +462,7 @@ public:
                        VisitData& aReferrer)
   : mPlace(aPlace)
   , mReferrer(aReferrer)
+  , mHistory(History::GetService())
   {
   }
 
@@ -469,6 +470,11 @@ public:
   {
     NS_PRECONDITION(NS_IsMainThread(),
                     "This should be called on the main thread");
+    // We are in the main thread, no need to lock.
+    if (mHistory->IsShuttingDown()) {
+      // If we are shutting down, we cannot notify the observers.
+      return NS_OK;
+    }
 
     nsNavHistory* navHistory = nsNavHistory::GetHistoryService();
     if (!navHistory) {
@@ -506,6 +512,7 @@ public:
 private:
   VisitData mPlace;
   VisitData mReferrer;
+  nsRefPtr<History> mHistory;
 };
 
 /**
@@ -736,6 +743,13 @@ public:
   {
     NS_PRECONDITION(!NS_IsMainThread(),
                     "This should not be called on the main thread");
+
+    // Prevent the main thread from shutting down while this is running.
+    MutexAutoLock lockedScope(mHistory->GetShutdownMutex());
+    if(mHistory->IsShuttingDown()) {
+      // If we were already shutting down, we cannot insert the URIs.
+      return NS_OK;
+    }
 
     mozStorageTransaction transaction(mDBConn, false,
                                       mozIStorageConnection::TRANSACTION_IMMEDIATE);
@@ -1438,6 +1452,7 @@ History* History::gService = NULL;
 
 History::History()
   : mShuttingDown(false)
+  , mShutdownMutex("History::mShutdownMutex")
 {
   NS_ASSERTION(!gService, "Ruh-roh!  This service has already been created!");
   gService = this;
@@ -1751,6 +1766,10 @@ void
 History::Shutdown()
 {
   MOZ_ASSERT(NS_IsMainThread());
+
+  // Prevent other threads from scheduling uses of the DB while we mark
+  // ourselves as shutting down.
+  MutexAutoLock lockedScope(mShutdownMutex);
   MOZ_ASSERT(!mShuttingDown && "Shutdown was called more than once!");
 
   mShuttingDown = true;
@@ -2085,7 +2104,7 @@ History::UpdatePlaces(const jsval& aPlaceInfos,
   NS_ENSURE_TRUE(NS_IsMainThread(), NS_ERROR_UNEXPECTED);
   NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(aPlaceInfos), NS_ERROR_INVALID_ARG);
 
-  jsuint infosLength = 1;
+  uint32_t infosLength = 1;
   JSObject* infos;
   if (JS_IsArrayObject(aCtx, JSVAL_TO_OBJECT(aPlaceInfos))) {
     infos = JSVAL_TO_OBJECT(aPlaceInfos);
@@ -2103,7 +2122,7 @@ History::UpdatePlaces(const jsval& aPlaceInfos,
   }
 
   nsTArray<VisitData> visitData;
-  for (jsuint i = 0; i < infosLength; i++) {
+  for (uint32_t i = 0; i < infosLength; i++) {
     JSObject* info;
     nsresult rv = GetJSObjectFromArray(aCtx, infos, i, &info);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -2149,7 +2168,7 @@ History::UpdatePlaces(const jsval& aPlaceInfos,
     }
     NS_ENSURE_ARG(visits);
 
-    jsuint visitsLength = 0;
+    uint32_t visitsLength = 0;
     if (visits) {
       (void)JS_GetArrayLength(aCtx, visits, &visitsLength);
     }
@@ -2157,7 +2176,7 @@ History::UpdatePlaces(const jsval& aPlaceInfos,
 
     // Check each visit, and build our array of VisitData objects.
     visitData.SetCapacity(visitData.Length() + visitsLength);
-    for (jsuint j = 0; j < visitsLength; j++) {
+    for (uint32_t j = 0; j < visitsLength; j++) {
       JSObject* visit;
       rv = GetJSObjectFromArray(aCtx, visits, j, &visit);
       NS_ENSURE_SUCCESS(rv, rv);

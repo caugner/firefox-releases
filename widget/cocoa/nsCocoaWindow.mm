@@ -135,10 +135,13 @@ nsCocoaWindow::nsCocoaWindow()
 , mPopupContentView(nil)
 , mShadowStyle(NS_STYLE_WINDOW_SHADOW_DEFAULT)
 , mWindowFilter(0)
+, mAnimationType(nsIWidget::eGenericWindowAnimation)
 , mWindowMadeHere(false)
 , mSheetNeedsShow(false)
 , mFullScreen(false)
+, mInFullScreenTransition(false)
 , mModal(false)
+, mIsAnimationSuppressed(false)
 , mInReportMoveEvent(false)
 , mNumModalDescendents(0)
 {
@@ -303,6 +306,8 @@ nsresult nsCocoaWindow::Create(nsIWidget *aParent,
     }
     return CreatePopupContentView(newBounds, aHandleEventFunction, aContext);
   }
+
+  mIsAnimationSuppressed = aInitData->mIsAnimationSuppressed;
 
   return NS_OK;
 
@@ -745,6 +750,26 @@ NS_IMETHODIMP nsCocoaWindow::Show(bool bState)
     }
     else {
       NS_OBJC_BEGIN_TRY_LOGONLY_BLOCK;
+      if (mWindowType == eWindowType_toplevel &&
+          [mWindow respondsToSelector:@selector(setAnimationBehavior:)]) {
+        NSWindowAnimationBehavior behavior;
+        if (mIsAnimationSuppressed) {
+          behavior = NSWindowAnimationBehaviorNone;
+        } else {
+          switch (mAnimationType) {
+            case nsIWidget::eDocumentWindowAnimation:
+              behavior = NSWindowAnimationBehaviorDocumentWindow;
+              break;
+            default:
+              NS_NOTREACHED("unexpected mAnimationType value");
+              // fall through
+            case nsIWidget::eGenericWindowAnimation:
+              behavior = NSWindowAnimationBehaviorDefault;
+              break;
+          }
+        }
+        [mWindow setAnimationBehavior:behavior];
+      }
       [mWindow makeKeyAndOrderFront:nil];
       NS_OBJC_END_TRY_LOGONLY_BLOCK;
       SendSetZLevelEvent();
@@ -1087,6 +1112,10 @@ NS_METHOD nsCocoaWindow::SetSizeMode(PRInt32 aMode)
     if (![mWindow isZoomed])
       [mWindow zoom:nil];
   }
+  else if (aMode == nsSizeMode_Fullscreen) {
+    if (!mFullScreen)
+      MakeFullScreen(true);
+  }
 
   return NS_OK;
 
@@ -1159,6 +1188,7 @@ NS_METHOD nsCocoaWindow::MakeFullScreen(bool aFullScreen)
 
   NS_ASSERTION(mFullScreen != aFullScreen, "Unnecessary MakeFullScreen call");
 
+  mInFullScreenTransition = true;
   NSDisableScreenUpdates();
   // The order here matters. When we exit full screen mode, we need to show the
   // Dock first, otherwise the newly-created window won't have its minimize
@@ -1168,7 +1198,9 @@ NS_METHOD nsCocoaWindow::MakeFullScreen(bool aFullScreen)
   NSEnableScreenUpdates();
   NS_ENSURE_SUCCESS(rv, rv);
 
+  mInFullScreenTransition = false;
   mFullScreen = aFullScreen;
+  DispatchSizeModeEvent();
 
   return NS_OK;
 
@@ -1276,18 +1308,10 @@ NS_IMETHODIMP nsCocoaWindow::SetTitle(const nsAString& aTitle)
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
-NS_IMETHODIMP nsCocoaWindow::Invalidate(const nsIntRect & aRect, bool aIsSynchronous)
+NS_IMETHODIMP nsCocoaWindow::Invalidate(const nsIntRect & aRect)
 {
   if (mPopupContentView)
-    return mPopupContentView->Invalidate(aRect, aIsSynchronous);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsCocoaWindow::Update()
-{
-  if (mPopupContentView)
-    return mPopupContentView->Update();
+    return mPopupContentView->Invalidate(aRect);
 
   return NS_OK;
 }
@@ -1383,8 +1407,14 @@ nsCocoaWindow::DispatchEvent(nsGUIEvent* event, nsEventStatus& aStatus)
   return NS_OK;
 }
 
+// aFullScreen should be the window's mFullScreen. We don't have access to that
+// from here, so we need to pass it in. mFullScreen should be the canonical
+// indicator that a window is currently full screen and it makes sense to keep
+// all sizemode logic here.
 static nsSizeMode
-GetWindowSizeMode(NSWindow* aWindow) {
+GetWindowSizeMode(NSWindow* aWindow, bool aFullScreen) {
+  if (aFullScreen)
+    return nsSizeMode_Fullscreen;
   if ([aWindow isMiniaturized])
     return nsSizeMode_Minimized;
   if (([aWindow styleMask] & NSResizableWindowMask) && [aWindow isZoomed])
@@ -1424,9 +1454,14 @@ nsCocoaWindow::ReportMoveEvent()
 void
 nsCocoaWindow::DispatchSizeModeEvent()
 {
-  nsSizeMode newMode = GetWindowSizeMode(mWindow);
-  if (mSizeMode == newMode)
+  nsSizeMode newMode = GetWindowSizeMode(mWindow, mFullScreen);
+
+  // Don't dispatch a sizemode event if:
+  // 1. the window is transitioning to fullscreen
+  // 2. the new sizemode is the same as the current sizemode
+  if (mInFullScreenTransition || mSizeMode == newMode) {
     return;
+  }
 
   mSizeMode = newMode;
   nsSizeModeEvent event(true, NS_SIZEMODE, this);
@@ -1613,6 +1648,11 @@ void nsCocoaWindow::SetShowsToolbarButton(bool aShow)
   [mWindow setShowsToolbarButton:aShow];
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
+}
+
+void nsCocoaWindow::SetWindowAnimationType(nsIWidget::WindowAnimationType aType)
+{
+  mAnimationType = aType;
 }
 
 NS_IMETHODIMP nsCocoaWindow::SetWindowTitlebarColor(nscolor aColor, bool aActive)

@@ -7,7 +7,8 @@
 ]>
 <resources>
 #include ../sync/strings.xml.in
-  <string name="splash_firstrun">&splash_firstrun;</string>
+  <string name="splash_settingup">&splash_settingup;</string>
+  <string name="splash_bookmarks_history">&splash_bookmarks_history;</string>
   <string name="no_space_to_start_error">&no_space_to_start_error;</string>
   <string name="error_loading_file">&error_loading_file;</string>
 
@@ -33,11 +34,15 @@
   <string name="choose_file">&choose_file;</string>
 
   <string name="awesomebar_default_text">&awesomebar_default_text;</string>
+  
+  <string name="remote_tabs">&remote_tabs;</string>
+  <string name="remote_tabs_show_all">&remote_tabs_show_all;</string>
 
   <string name="quit">&quit;</string>
   <string name="bookmark">&bookmark;</string>
   <string name="bookmark_added">&bookmark_added;</string>
   <string name="bookmark_removed">&bookmark_removed;</string>
+  <string name="bookmark_updated">&bookmark_updated;</string>
 
   <string name="history_today_section">&history_today_section;</string>
   <string name="history_yesterday_section">&history_yesterday_section;</string>
@@ -45,6 +50,7 @@
   <string name="history_older_section">&history_older_section;</string>
 
   <string name="share">&share;</string>
+  <string name="share_title">&share_title;</string>
   <string name="save_as_pdf">&save_as_pdf;</string>
 
   <string name="settings">&settings;</string>
@@ -93,6 +99,12 @@
   <string name="contextmenu_remove_bookmark">&contextmenu_remove_bookmark;</string>
   <string name="contextmenu_add_to_launcher">&contextmenu_add_to_launcher;</string>
   <string name="contextmenu_share">&contextmenu_share;</string>
+  <string name="contextmenu_edit_bookmark">&contextmenu_edit_bookmark;</string>
+
+  <string name="bookmark_edit_title">&bookmark_edit_title;</string>
+  <string name="bookmark_edit_name">&bookmark_edit_name;</string>
+  <string name="bookmark_edit_location">&bookmark_edit_location;</string>
+  <string name="bookmark_edit_keyword">&bookmark_edit_keyword;</string>
 
   <string name="pref_use_master_password">&pref_use_master_password;</string>
   <string name="masterpassword_create_title">&masterpassword_create_title;</string>
@@ -112,4 +124,9 @@
   <string name="abouthome_no_top_sites">&abouthome_no_top_sites;</string>
   <string name="abouthome_about_sync">&abouthome_about_sync;</string>
   <string name="abouthome_sync_bold_name">&abouthome_sync_bold_name;</string>
+
+  <string name="filepicker_title">&filepicker_title;</string>
+  <string name="filepicker_audio_title">&filepicker_audio_title;</string>
+  <string name="filepicker_image_title">&filepicker_image_title;</string>
+  <string name="filepicker_video_title">&filepicker_video_title;</string>
 </resources>

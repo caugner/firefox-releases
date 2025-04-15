@@ -62,7 +62,6 @@
 #include "nsILinkHandler.h"
 #include "nsIURL.h"
 #include "nsIIOService.h"
-#include "nsIURL.h"
 #include "nsILoadGroup.h"
 #include "nsISupportsPriority.h"
 #include "nsIServiceManager.h"
@@ -80,7 +79,6 @@
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
 #endif
-#include "nsIServiceManager.h"
 #include "nsIDOMNode.h"
 #include "nsGUIEvent.h"
 #include "nsLayoutUtils.h"
@@ -1211,10 +1209,10 @@ nsDisplayImage::Paint(nsDisplayListBuilder* aBuilder,
 }
 
 already_AddRefed<ImageContainer>
-nsDisplayImage::GetContainer(LayerManager* aManager)
+nsDisplayImage::GetContainer()
 {
   nsRefPtr<ImageContainer> container;
-  nsresult rv = mImage->GetImageContainer(aManager, getter_AddRefs(container));
+  nsresult rv = mImage->GetImageContainer(getter_AddRefs(container));
   NS_ENSURE_SUCCESS(rv, nsnull);
   return container.forget();
 }

@@ -51,7 +51,12 @@ nsIFrame*
 NS_NewSVGContainerFrame(nsIPresShell* aPresShell,
                         nsStyleContext* aContext)
 {
-  return new (aPresShell) nsSVGContainerFrame(aContext);
+  nsIFrame *frame = new (aPresShell) nsSVGContainerFrame(aContext);
+  // If we were called directly, then the frame is for a <defs> or
+  // an unknown element type. In both cases we prevent the content
+  // from displaying directly.
+  frame->AddStateBits(NS_STATE_SVG_NONDISPLAY_CHILD);
+  return frame;
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(nsSVGContainerFrame)
@@ -89,25 +94,16 @@ nsSVGContainerFrame::RemoveFrame(ChildListID aListID,
 }
 
 NS_IMETHODIMP
-nsSVGContainerFrame::Init(nsIContent* aContent,
-                          nsIFrame* aParent,
-                          nsIFrame* aPrevInFlow)
-{
-  AddStateBits(NS_STATE_SVG_NONDISPLAY_CHILD);
-  nsresult rv = nsSVGContainerFrameBase::Init(aContent, aParent, aPrevInFlow);
-  return rv;
-}
-
-NS_IMETHODIMP
 nsSVGDisplayContainerFrame::Init(nsIContent* aContent,
                                  nsIFrame* aParent,
                                  nsIFrame* aPrevInFlow)
 {
   if (!(GetStateBits() & NS_STATE_IS_OUTER_SVG)) {
     AddStateBits(aParent->GetStateBits() &
-      (NS_STATE_SVG_NONDISPLAY_CHILD | NS_STATE_SVG_CLIPPATH_CHILD));
+      (NS_STATE_SVG_NONDISPLAY_CHILD | NS_STATE_SVG_CLIPPATH_CHILD |
+       NS_STATE_SVG_REDRAW_SUSPENDED));
   }
-  nsresult rv = nsSVGContainerFrameBase::Init(aContent, aParent, aPrevInFlow);
+  nsresult rv = nsSVGContainerFrame::Init(aContent, aParent, aPrevInFlow);
   return rv;
 }
 
@@ -145,11 +141,14 @@ NS_IMETHODIMP
 nsSVGDisplayContainerFrame::RemoveFrame(ChildListID aListID,
                                         nsIFrame* aOldFrame)
 {
+  // Force the invalidation before it's too late
+  RemoveStateBits(NS_STATE_SVG_REDRAW_SUSPENDED);
+
   nsSVGUtils::InvalidateCoveredRegion(aOldFrame);
 
   nsresult rv = nsSVGContainerFrame::RemoveFrame(aListID, aOldFrame);
 
-  if (!(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
+  if (!(GetStateBits() & (NS_STATE_SVG_NONDISPLAY_CHILD | NS_STATE_IS_OUTER_SVG))) {
     nsSVGUtils::NotifyAncestorsOfFilterRegionChange(this);
   }
 
@@ -160,7 +159,7 @@ nsSVGDisplayContainerFrame::RemoveFrame(ChildListID aListID,
 // nsISVGChildFrame methods
 
 NS_IMETHODIMP
-nsSVGDisplayContainerFrame::PaintSVG(nsSVGRenderState* aContext,
+nsSVGDisplayContainerFrame::PaintSVG(nsRenderingContext* aContext,
                                      const nsIntRect *aDirtyRect)
 {
   const nsStyleDisplay *display = mStyleContext->GetStyleDisplay();
@@ -228,36 +227,26 @@ nsSVGDisplayContainerFrame::InitialUpdate()
 void
 nsSVGDisplayContainerFrame::NotifySVGChanged(PRUint32 aFlags)
 {
-  NS_ASSERTION(aFlags & (TRANSFORM_CHANGED | COORD_CONTEXT_CHANGED),
-               "Invalidation logic may need adjusting");
+  NS_ABORT_IF_FALSE(!(aFlags & DO_NOT_NOTIFY_RENDERING_OBSERVERS) ||
+                    (GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD),
+                    "Must be NS_STATE_SVG_NONDISPLAY_CHILD!");
+
+  NS_ABORT_IF_FALSE(aFlags & (TRANSFORM_CHANGED | COORD_CONTEXT_CHANGED),
+                    "Invalidation logic may need adjusting");
 
   nsSVGUtils::NotifyChildrenOfSVGChange(this, aFlags);
 }
 
-NS_IMETHODIMP
+void
 nsSVGDisplayContainerFrame::NotifyRedrawSuspended()
 {
-  for (nsIFrame* kid = mFrames.FirstChild(); kid;
-       kid = kid->GetNextSibling()) {
-    nsISVGChildFrame* SVGFrame = do_QueryFrame(kid);
-    if (SVGFrame) {
-      SVGFrame->NotifyRedrawSuspended();
-    }
-  }
-  return NS_OK;
+  nsSVGUtils::NotifyRedrawSuspended(this);
 }
 
-NS_IMETHODIMP
+void
 nsSVGDisplayContainerFrame::NotifyRedrawUnsuspended()
 {
-  for (nsIFrame* kid = mFrames.FirstChild(); kid;
-       kid = kid->GetNextSibling()) {
-    nsISVGChildFrame* SVGFrame = do_QueryFrame(kid);
-    if (SVGFrame) {
-      SVGFrame->NotifyRedrawUnsuspended();
-    }
-  }
-  return NS_OK;
+  nsSVGUtils::NotifyRedrawUnsuspended(this);
 }
 
 gfxRect
@@ -275,7 +264,7 @@ nsSVGDisplayContainerFrame::GetBBoxContribution(
       nsIContent *content = kid->GetContent();
       if (content->IsSVG() && !content->IsNodeOfType(nsINode::eTEXT)) {
         transform = static_cast<nsSVGElement*>(content)->
-                      PrependLocalTransformTo(aToBBoxUserspace);
+                      PrependLocalTransformsTo(aToBBoxUserspace);
       }
       bboxUnion =
         bboxUnion.Union(svgKid->GetBBoxContribution(transform, aFlags));

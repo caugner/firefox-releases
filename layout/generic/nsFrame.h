@@ -190,7 +190,7 @@ public:
                                          nsStyleContext* aStyleContext);
   virtual void SetParent(nsIFrame* aParent);
   virtual nscoord GetBaseline() const;
-  virtual nsFrameList GetChildList(ChildListID aListID) const;
+  virtual const nsFrameList& GetChildList(ChildListID aListID) const;
   virtual void GetChildLists(nsTArray<ChildList>* aLists) const;
 
   NS_IMETHOD  HandleEvent(nsPresContext* aPresContext, 
@@ -263,7 +263,7 @@ public:
   virtual already_AddRefed<nsAccessible> CreateAccessible();
 #endif
 
-  virtual nsIFrame* GetParentStyleContextFrame() {
+  virtual nsIFrame* GetParentStyleContextFrame() const {
     return DoGetParentStyleContextFrame();
   }
 
@@ -274,7 +274,7 @@ public:
    * frames by using the frame manager's placeholder map and it also
    * handles block-within-inline and generated content wrappers.)
    */
-  nsIFrame* DoGetParentStyleContextFrame();
+  nsIFrame* DoGetParentStyleContextFrame() const;
 
   virtual bool IsEmpty();
   virtual bool IsSelfEmpty();
@@ -338,11 +338,13 @@ public:
   void ReflowAbsoluteFrames(nsPresContext*           aPresContext,
                             nsHTMLReflowMetrics&     aDesiredSize,
                             const nsHTMLReflowState& aReflowState,
-                            nsReflowStatus&          aStatus);
+                            nsReflowStatus&          aStatus,
+                            bool                     aConstrainHeight = true);
   void FinishReflowWithAbsoluteFrames(nsPresContext*           aPresContext,
                                       nsHTMLReflowMetrics&     aDesiredSize,
                                       const nsHTMLReflowState& aReflowState,
-                                      nsReflowStatus&          aStatus);
+                                      nsReflowStatus&          aStatus,
+                                      bool                     aConstrainHeight = true);
   void DestroyAbsoluteFrames(nsIFrame* aDestructRoot);
   virtual bool CanContinueTextRun() const;
 
@@ -728,7 +730,8 @@ public:
 public:
 
   static void PrintDisplayList(nsDisplayListBuilder* aBuilder,
-                               const nsDisplayList& aList);
+                               const nsDisplayList& aList,
+                               FILE* aFile = stdout);
 
 #endif
 };

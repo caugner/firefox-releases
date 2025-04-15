@@ -159,6 +159,13 @@ nsSVGAFrame::GetType() const
 void
 nsSVGAFrame::NotifySVGChanged(PRUint32 aFlags)
 {
+  NS_ABORT_IF_FALSE(!(aFlags & DO_NOT_NOTIFY_RENDERING_OBSERVERS) ||
+                    (GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD),
+                    "Must be NS_STATE_SVG_NONDISPLAY_CHILD!");
+
+  NS_ABORT_IF_FALSE(aFlags & (TRANSFORM_CHANGED | COORD_CONTEXT_CHANGED),
+                    "Invalidation logic may need adjusting");
+
   if (aFlags & TRANSFORM_CHANGED) {
     // make sure our cached transform matrix gets (lazily) updated
     mCanvasTM = nsnull;
@@ -179,7 +186,7 @@ nsSVGAFrame::GetCanvasTM()
     nsSVGContainerFrame *parent = static_cast<nsSVGContainerFrame*>(mParent);
     nsSVGAElement *content = static_cast<nsSVGAElement*>(mContent);
 
-    gfxMatrix tm = content->PrependLocalTransformTo(parent->GetCanvasTM());
+    gfxMatrix tm = content->PrependLocalTransformsTo(parent->GetCanvasTM());
 
     mCanvasTM = new gfxMatrix(tm);
   }

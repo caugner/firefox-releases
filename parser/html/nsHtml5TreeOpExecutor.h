@@ -55,8 +55,9 @@
 #include "nsIParser.h"
 #include "nsAHtml5TreeOpSink.h"
 #include "nsHtml5TreeOpStage.h"
-#include "nsHashSets.h"
 #include "nsIURI.h"
+#include "nsTHashtable.h"
+#include "nsHashKeys.h"
 
 class nsHtml5Parser;
 class nsHtml5TreeBuilder;
@@ -107,7 +108,7 @@ class nsHtml5TreeOpExecutor : public nsContentSink,
     /**
      * URLs already preloaded/preloading.
      */
-    nsCStringHashSet mPreloadedURLs;
+    nsTHashtable<nsCStringHashKey> mPreloadedURLs;
 
     nsCOMPtr<nsIURI> mSpeculationBaseURI;
 
@@ -423,7 +424,8 @@ class nsHtml5TreeOpExecutor : public nsContentSink,
 
     void PreloadScript(const nsAString& aURL,
                        const nsAString& aCharset,
-                       const nsAString& aType);
+                       const nsAString& aType,
+                       const nsAString& aCrossOrigin);
 
     void PreloadStyle(const nsAString& aURL, const nsAString& aCharset);
 

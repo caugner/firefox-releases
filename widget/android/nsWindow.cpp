@@ -589,17 +589,10 @@ nsWindow::IsEnabled(bool *aState)
 }
 
 NS_IMETHODIMP
-nsWindow::Invalidate(const nsIntRect &aRect,
-                     bool aIsSynchronous)
+nsWindow::Invalidate(const nsIntRect &aRect)
 {
     AndroidGeckoEvent *event = new AndroidGeckoEvent(AndroidGeckoEvent::DRAW, aRect);
     nsAppShell::gAppShell->PostEvent(event);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsWindow::Update()
-{
     return NS_OK;
 }
 
@@ -736,6 +729,12 @@ nsWindow::DispatchEvent(nsGUIEvent *aEvent)
             break;
         case NS_TEXT_TEXT:
             mIMEComposingText = static_cast<nsTextEvent*>(aEvent)->theText;
+            break;
+        case NS_KEY_PRESS:
+            // Sometimes the text changes after a key press do not generate notifications (see Bug 723810)
+            // Call the corresponding methods explicitly to send those changes back to Java
+            OnIMETextChange(0, 0, 0);
+            OnIMESelectionChange();
             break;
         }
         return status;
@@ -973,8 +972,8 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
                 if (points.Length() > 0) {
                     pt = points[0];
                 }
-                pt.x = clamped(pt.x, 0, gAndroidBounds.width - 1);
-                pt.y = clamped(pt.y, 0, gAndroidBounds.height - 1);
+                pt.x = clamped(pt.x, 0, NS_MAX(gAndroidBounds.width - 1, 0));
+                pt.y = clamped(pt.y, 0, NS_MAX(gAndroidBounds.height - 1, 0));
                 nsWindow *target = win->FindWindowForPoint(pt);
 #if 0
                 ALOG("MOTION_EVENT %f,%f -> %p (visible: %d children: %d)", pt.x, pt.y, (void*)target,
@@ -1215,15 +1214,15 @@ nsWindow::OnDraw(AndroidGeckoEvent *ae)
         metadataProvider->GetDrawMetadata(metadata);
     }
 
+    nsIntRect dirtyRect = ae->Rect().Intersect(nsIntRect(0, 0, gAndroidBounds.width, gAndroidBounds.height));
+
     AndroidGeckoSoftwareLayerClient &client =
         AndroidBridge::Bridge()->GetSoftwareLayerClient();
     if (!client.BeginDrawing(gAndroidBounds.width, gAndroidBounds.height,
                              gAndroidTileSize.width, gAndroidTileSize.height,
-                             metadata, HasDirectTexture())) {
+                             dirtyRect, metadata, HasDirectTexture())) {
         return;
     }
-
-    nsIntRect dirtyRect = ae->Rect().Intersect(nsIntRect(0, 0, gAndroidBounds.width, gAndroidBounds.height));
 
     unsigned char *bits = NULL;
     if (HasDirectTexture()) {
@@ -1801,6 +1800,8 @@ nsWindow::InitKeyEvent(nsKeyEvent& event, AndroidGeckoEvent& key)
     case AndroidKeyEvent::KEYCODE_ENVELOPE:
         break;
     case AndroidKeyEvent::KEYCODE_DPAD_CENTER:
+        event.keyCode = NS_VK_ENTER;
+        break;
     case AndroidKeyEvent::KEYCODE_ENTER:
         event.keyCode = NS_VK_RETURN;
         break;

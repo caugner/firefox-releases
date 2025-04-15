@@ -673,9 +673,8 @@ NotificationController::CoalesceTextChangeEventsFor(AccShowEvent* aTailEvent,
 void
 NotificationController::CreateTextChangeEventFor(AccMutationEvent* aEvent)
 {
-  nsAccessible* container =
-    GetAccService()->GetContainerAccessible(aEvent->mNode,
-                                            aEvent->mAccessible->GetWeakShell());
+  nsDocAccessible* document = aEvent->GetDocAccessible();
+  nsAccessible* container = document->GetContainerAccessible(aEvent->mNode);
   if (!container)
     return;
 
@@ -685,8 +684,7 @@ NotificationController::CreateTextChangeEventFor(AccMutationEvent* aEvent)
 
   // Don't fire event for the first html:br in an editor.
   if (aEvent->mAccessible->Role() == roles::WHITESPACE) {
-    nsCOMPtr<nsIEditor> editor;
-    textAccessible->GetAssociatedEditor(getter_AddRefs(editor));
+    nsCOMPtr<nsIEditor> editor = textAccessible->GetEditor();
     if (editor) {
       bool isEmpty = false;
       editor->GetDocumentIsEmpty(&isEmpty);

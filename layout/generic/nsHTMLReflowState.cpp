@@ -103,13 +103,7 @@ nsHTMLReflowState::nsHTMLReflowState(nsPresContext*       aPresContext,
   availableHeight = aAvailableSpace.height;
   mFloatManager = nsnull;
   mLineLayout = nsnull;
-  mFlags.mSpecialHeightReflow = false;
-  mFlags.mIsTopOfPage = false;
-  mFlags.mTableIsSplittable = false;
-  mFlags.mNextInFlowUntouched = false;
-  mFlags.mAssumingHScrollbar = mFlags.mAssumingVScrollbar = false;
-  mFlags.mHasClearance = false;
-  mFlags.mHeightDependsOnAncestorCell = false;
+  memset(&mFlags, 0, sizeof(mFlags));
   mDiscoveredClearance = nsnull;
   mPercentHeightObserver = nsnull;
   Init(aPresContext);
@@ -174,6 +168,7 @@ nsHTMLReflowState::nsHTMLReflowState(nsPresContext*           aPresContext,
     CheckNextInFlowParenthood(aFrame, aParentReflowState.frame);
   mFlags.mAssumingHScrollbar = mFlags.mAssumingVScrollbar = false;
   mFlags.mHasClearance = false;
+  mFlags.mIsColumnBalancing = false;
 
   mDiscoveredClearance = nsnull;
   mPercentHeightObserver = (aParentReflowState.mPercentHeightObserver && 
@@ -302,8 +297,13 @@ nsHTMLReflowState::Init(nsPresContext* aPresContext,
       !(parent->GetType() == nsGkAtoms::scrollFrame &&
         parent->GetStyleDisplay()->mOverflowY != NS_STYLE_OVERFLOW_HIDDEN)) {
     frame->AddStateBits(NS_FRAME_IN_CONSTRAINED_HEIGHT);
-  } else if (mStylePosition->mHeight.GetUnit() != eStyleUnit_Auto ||
-             mStylePosition->mMaxHeight.GetUnit() != eStyleUnit_None) {
+  } else if ((mStylePosition->mHeight.GetUnit() != eStyleUnit_Auto ||
+              mStylePosition->mMaxHeight.GetUnit() != eStyleUnit_None) &&
+              // Don't set NS_FRAME_IN_CONSTRAINED_HEIGHT on body or html
+              // elements.
+             (frame->GetContent() &&
+            !(frame->GetContent()->IsHTML(nsGkAtoms::body) ||
+              frame->GetContent()->IsHTML(nsGkAtoms::html)))) {
     frame->AddStateBits(NS_FRAME_IN_CONSTRAINED_HEIGHT);
   } else {
     frame->RemoveStateBits(NS_FRAME_IN_CONSTRAINED_HEIGHT);

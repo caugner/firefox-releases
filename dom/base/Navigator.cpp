@@ -69,6 +69,9 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
 #include "BatteryManager.h"
+#include "PowerManager.h"
+#include "nsIDOMWakeLock.h"
+#include "nsIPowerManagerService.h"
 #include "SmsManager.h"
 #include "nsISmsService.h"
 #include "mozilla/Hal.h"
@@ -78,6 +81,10 @@
 
 #ifdef MOZ_B2G_RIL
 #include "TelephonyFactory.h"
+#endif
+#ifdef MOZ_B2G_BT
+#include "nsIDOMBluetoothAdapter.h"
+#include "BluetoothAdapter.h"
 #endif
 
 // This should not be in the namespace.
@@ -132,6 +139,9 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorTelephony)
 #endif
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
+#ifdef MOZ_B2G_BT
+  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorBluetooth)
+#endif
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(Navigator)
 NS_INTERFACE_MAP_END
 
@@ -164,6 +174,11 @@ Navigator::Invalidate()
     mBatteryManager = nsnull;
   }
 
+  if (mPowerManager) {
+    mPowerManager->Shutdown();
+    mPowerManager = nsnull;
+  }
+
   if (mSmsManager) {
     mSmsManager->Shutdown();
     mSmsManager = nsnull;
@@ -179,6 +194,12 @@ Navigator::Invalidate()
     mConnection->Shutdown();
     mConnection = nsnull;
   }
+
+#ifdef MOZ_B2G_BT
+  if (mBluetooth) {
+    mBluetooth = nsnull;
+  }
+#endif
 }
 
 nsPIDOMWindow *
@@ -908,13 +929,9 @@ NS_IMETHODIMP Navigator::GetMozNotification(nsIDOMDesktopNotificationCenter** aR
   }
 
   nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
-  nsCOMPtr<nsIScriptGlobalObject> sgo(do_QueryInterface(win));
-  NS_ENSURE_TRUE(sgo && win->GetDocShell(), NS_ERROR_FAILURE);
+  NS_ENSURE_TRUE(win && win->GetDocShell(), NS_ERROR_FAILURE);
 
-  nsIScriptContext* scx = sgo->GetContext();
-  NS_ENSURE_TRUE(scx, NS_ERROR_FAILURE);
-
-  mNotification = new nsDesktopNotificationCenter(win, scx);
+  mNotification = new nsDesktopNotificationCenter(win);
 
   NS_ADDREF(*aRetVal = mNotification);
   return NS_OK;
@@ -931,19 +948,50 @@ Navigator::GetMozBattery(nsIDOMMozBatteryManager** aBattery)
     *aBattery = nsnull;
 
     nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
-    nsCOMPtr<nsIScriptGlobalObject> sgo(do_QueryInterface(win));
-    NS_ENSURE_TRUE(sgo && win->GetDocShell(), NS_OK);
-
-    nsIScriptContext* scx = sgo->GetContext();
-    NS_ENSURE_TRUE(scx, NS_OK);
+    NS_ENSURE_TRUE(win->GetDocShell(), NS_OK);
 
     mBatteryManager = new battery::BatteryManager();
-    mBatteryManager->Init(win, scx);
+    mBatteryManager->Init(win);
   }
 
   NS_ADDREF(*aBattery = mBatteryManager);
 
   return NS_OK;
+}
+
+NS_IMETHODIMP
+Navigator::GetMozPower(nsIDOMMozPowerManager** aPower)
+{
+  *aPower = nsnull;
+
+  if (!mPowerManager) {
+    nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
+    NS_ENSURE_TRUE(win, NS_OK);
+
+    mPowerManager = new power::PowerManager();
+    mPowerManager->Init(win);
+  }
+
+  nsCOMPtr<nsIDOMMozPowerManager> power =
+    do_QueryInterface(NS_ISUPPORTS_CAST(nsIDOMMozPowerManager*, mPowerManager));
+  power.forget(aPower);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+Navigator::RequestWakeLock(const nsAString &aTopic, nsIDOMMozWakeLock **aWakeLock)
+{
+  *aWakeLock = nsnull;
+
+  nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
+  NS_ENSURE_TRUE(win, NS_OK);
+
+  nsCOMPtr<nsIPowerManagerService> pmService =
+    do_GetService(POWERMANAGERSERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(pmService, NS_OK);
+
+  return pmService->NewWakeLock(aTopic, win, aWakeLock);
 }
 
 //*****************************************************************************
@@ -1034,14 +1082,8 @@ Navigator::GetMozSms(nsIDOMMozSmsManager** aSmsManager)
     nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
     NS_ENSURE_TRUE(window && window->GetDocShell(), NS_OK);
 
-    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(window);
-    NS_ENSURE_TRUE(sgo, NS_OK);
-
-    nsIScriptContext* scx = sgo->GetContext();
-    NS_ENSURE_TRUE(scx, NS_OK);
-
     mSmsManager = new sms::SmsManager();
-    mSmsManager->Init(window, scx);
+    mSmsManager->Init(window);
   }
 
   NS_ADDREF(*aSmsManager = mSmsManager);
@@ -1090,35 +1132,49 @@ Navigator::GetMozConnection(nsIDOMMozConnection** aConnection)
     nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
     NS_ENSURE_TRUE(window && window->GetDocShell(), NS_OK);
 
-    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(window);
-    NS_ENSURE_TRUE(sgo, NS_OK);
-
-    nsIScriptContext* scx = sgo->GetContext();
-    NS_ENSURE_TRUE(scx, NS_OK);
-
     mConnection = new network::Connection();
-    mConnection->Init(window, scx);
+    mConnection->Init(window);
   }
 
   NS_ADDREF(*aConnection = mConnection);
   return NS_OK;
 }
 
-PRInt64
-Navigator::SizeOf() const
+#ifdef MOZ_B2G_BT
+//*****************************************************************************
+//    nsNavigator::nsIDOMNavigatorBluetooth
+//*****************************************************************************
+
+NS_IMETHODIMP
+Navigator::GetMozBluetooth(nsIDOMBluetoothAdapter** aBluetooth)
 {
-  PRInt64 size = sizeof(*this);
+  nsCOMPtr<nsIDOMBluetoothAdapter> bluetooth = mBluetooth;
 
-  // TODO: add SizeOf() to nsMimeTypeArray, bug 674113.
-  size += mMimeTypes ? sizeof(*mMimeTypes.get()) : 0;
-  // TODO: add SizeOf() to nsPluginArray, bug 674114.
-  size += mPlugins ? sizeof(*mPlugins.get()) : 0;
-  // TODO: add SizeOf() to nsGeolocation, bug 674115.
-  size += mGeolocation ? sizeof(*mGeolocation.get()) : 0;
-  // TODO: add SizeOf() to nsDesktopNotificationCenter, bug 674116.
-  size += mNotification ? sizeof(*mNotification.get()) : 0;
+  if (!bluetooth) {
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+    NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
 
-  return size;
+    mBluetooth = new bluetooth::BluetoothAdapter();
+
+    bluetooth = mBluetooth;
+  }
+
+  bluetooth.forget(aBluetooth);
+  return NS_OK;
+}
+#endif //MOZ_B2G_BT
+
+size_t
+Navigator::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
+{
+  size_t n = aMallocSizeOf(this);
+
+  // TODO: add SizeOfIncludingThis() to nsMimeTypeArray, bug 674113.
+  // TODO: add SizeOfIncludingThis() to nsPluginArray, bug 674114.
+  // TODO: add SizeOfIncludingThis() to nsGeolocation, bug 674115.
+  // TODO: add SizeOfIncludingThis() to nsDesktopNotificationCenter, bug 674116.
+
+  return n;
 }
 
 void

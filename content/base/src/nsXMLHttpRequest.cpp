@@ -61,7 +61,7 @@
 #include "nsIJSContextStack.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsWeakPtr.h"
-#include "nsICharsetAlias.h"
+#include "nsCharsetAlias.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsDOMClassInfoID.h"
 #include "nsIDOMElement.h"
@@ -301,7 +301,7 @@ nsMultipartProxyListener::OnDataAvailable(nsIRequest *aRequest,
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsXHREventTarget)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsXHREventTarget,
-                                                  nsDOMEventTargetWrapperCache)
+                                                  nsDOMEventTargetHelper)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mOnLoadListener)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mOnErrorListener)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mOnAbortListener)
@@ -312,7 +312,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsXHREventTarget,
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsXHREventTarget,
-                                                nsDOMEventTargetWrapperCache)
+                                                nsDOMEventTargetHelper)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mOnLoadListener)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mOnErrorListener)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mOnAbortListener)
@@ -324,10 +324,23 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(nsXHREventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIXMLHttpRequestEventTarget)
-NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetWrapperCache)
+NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 
-NS_IMPL_ADDREF_INHERITED(nsXHREventTarget, nsDOMEventTargetWrapperCache)
-NS_IMPL_RELEASE_INHERITED(nsXHREventTarget, nsDOMEventTargetWrapperCache)
+NS_IMPL_ADDREF_INHERITED(nsXHREventTarget, nsDOMEventTargetHelper)
+NS_IMPL_RELEASE_INHERITED(nsXHREventTarget, nsDOMEventTargetHelper)
+
+void
+nsXHREventTarget::DisconnectFromOwner()
+{
+  nsDOMEventTargetHelper::DisconnectFromOwner();
+  NS_DISCONNECT_EVENT_HANDLER(Load)
+  NS_DISCONNECT_EVENT_HANDLER(Error)
+  NS_DISCONNECT_EVENT_HANDLER(Abort)
+  NS_DISCONNECT_EVENT_HANDLER(Load)
+  NS_DISCONNECT_EVENT_HANDLER(Progress)
+  NS_DISCONNECT_EVENT_HANDLER(Loadend)
+  NS_DISCONNECT_EVENT_HANDLER(Timeout)
+}
 
 NS_IMETHODIMP
 nsXHREventTarget::GetOnload(nsIDOMEventListener** aOnLoad)
@@ -445,8 +458,8 @@ nsXMLHttpRequest::nsXMLHttpRequest()
     mProgressSinceLastProgressEvent(false),
     mUploadProgress(0), mUploadProgressMax(0),
     mRequestSentTime(0), mTimeoutMilliseconds(0),
-    mErrorLoad(false), mProgressTimerIsActive(false),
-    mProgressEventWasDelayed(false),
+    mErrorLoad(false), mWaitingForOnStopRequest(false),
+    mProgressTimerIsActive(false), mProgressEventWasDelayed(false),
     mIsHtml(false),
     mWarnAboutMultipartHtml(false),
     mWarnAboutSyncHtml(false),
@@ -489,7 +502,7 @@ nsXMLHttpRequest::RootResultArrayBuffer()
 nsresult
 nsXMLHttpRequest::Init()
 {
-  // Set the original mScriptContext and mPrincipal, if available.
+  // Set the original mPrincipal, if available.
   // Get JSContext from stack.
   nsCOMPtr<nsIJSContextStack> stack =
     do_GetService("@mozilla.org/js/xpc/ContextStack;1");
@@ -515,12 +528,9 @@ nsXMLHttpRequest::Init()
 
   nsIScriptContext* context = GetScriptContextFromJSContext(cx);
   if (context) {
-    mScriptContext = context;
     nsCOMPtr<nsPIDOMWindow> window =
       do_QueryInterface(context->GetGlobalObject());
-    if (window) {
-      mOwner = window->GetCurrentInnerWindow();
-    }
+    BindToOwner(window ? window->GetCurrentInnerWindow() : nsnull);
   }
 
   return NS_OK;
@@ -536,18 +546,8 @@ nsXMLHttpRequest::Init(nsIPrincipal* aPrincipal,
 {
   NS_ENSURE_ARG_POINTER(aPrincipal);
 
-  // This object may have already been initialized in the other Init call above
-  // if JS was on the stack. Clear the old values for mScriptContext and mOwner
-  // if new ones are not supplied here.
-
   mPrincipal = aPrincipal;
-  mScriptContext = aScriptContext;
-  if (aOwnerWindow) {
-    mOwner = aOwnerWindow->GetCurrentInnerWindow();
-  }
-  else {
-    mOwner = nsnull;
-  }
+  BindToOwner(aOwnerWindow ? aOwnerWindow->GetCurrentInnerWindow() : nsnull);
   mBaseURI = aBaseURI;
 
   return NS_OK;
@@ -560,8 +560,8 @@ NS_IMETHODIMP
 nsXMLHttpRequest::Initialize(nsISupports* aOwner, JSContext* cx, JSObject* obj,
                              PRUint32 argc, jsval *argv)
 {
-  mOwner = do_QueryInterface(aOwner);
-  if (!mOwner) {
+  nsCOMPtr<nsPIDOMWindow> owner = do_QueryInterface(aOwner);
+  if (!owner) {
     NS_WARNING("Unexpected nsIJSNativeInitializer owner");
     return NS_OK;
   }
@@ -571,10 +571,7 @@ nsXMLHttpRequest::Initialize(nsISupports* aOwner, JSContext* cx, JSObject* obj,
   nsCOMPtr<nsIScriptObjectPrincipal> scriptPrincipal = do_QueryInterface(aOwner);
   NS_ENSURE_STATE(scriptPrincipal);
   mPrincipal = scriptPrincipal->GetPrincipal();
-  nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(aOwner);
-  NS_ENSURE_STATE(sgo);
-  mScriptContext = sgo->GetContext();
-  NS_ENSURE_STATE(mScriptContext);
+  BindToOwner(owner);
   return NS_OK; 
 }
 
@@ -602,7 +599,8 @@ nsXMLHttpRequest::SetRequestObserver(nsIRequestObserver* aObserver)
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsXMLHttpRequest)
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsXMLHttpRequest)
-  if (tmp->IsBlack()) {
+  bool isBlack = tmp->IsBlack();
+  if (isBlack || tmp->mWaitingForOnStopRequest) {
     if (tmp->mListenerManager) {
       tmp->mListenerManager->UnmarkGrayJSListeners();
       NS_UNMARK_LISTENER_WRAPPER(Load)
@@ -613,6 +611,11 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsXMLHttpRequest)
       NS_UNMARK_LISTENER_WRAPPER(Loadend)
       NS_UNMARK_LISTENER_WRAPPER(UploadProgress)
       NS_UNMARK_LISTENER_WRAPPER(Readystatechange)
+    }
+    if (!isBlack) {
+      xpc_UnmarkGrayObject(tmp->PreservingWrapper() ? 
+                           tmp->GetWrapperPreserveColor() :
+                           tmp->GetExpandoObjectPreserveColor());
     }
     return true;
   }
@@ -699,6 +702,15 @@ NS_INTERFACE_MAP_END_INHERITING(nsXHREventTarget)
 NS_IMPL_ADDREF_INHERITED(nsXMLHttpRequest, nsXHREventTarget)
 NS_IMPL_RELEASE_INHERITED(nsXMLHttpRequest, nsXHREventTarget)
 
+void
+nsXMLHttpRequest::DisconnectFromOwner()
+{
+  nsXHREventTarget::DisconnectFromOwner();
+  NS_DISCONNECT_EVENT_HANDLER(UploadProgress)
+  NS_DISCONNECT_EVENT_HANDLER(Readystatechange)
+  Abort();
+}
+
 NS_IMETHODIMP
 nsXMLHttpRequest::GetOnreadystatechange(nsIDOMEventListener * *aOnreadystatechange)
 {
@@ -771,11 +783,11 @@ nsXMLHttpRequest::GetResponseXML(nsIDOMDocument **aResponseXML)
   }
   if (mWarnAboutMultipartHtml) {
     mWarnAboutMultipartHtml = false;
-    LogMessage("HTMLMultipartXHRWarning", mOwner);
+    LogMessage("HTMLMultipartXHRWarning", GetOwner());
   }
   if (mWarnAboutSyncHtml) {
     mWarnAboutSyncHtml = false;
-    LogMessage("HTMLSyncXHRWarning", mOwner);
+    LogMessage("HTMLSyncXHRWarning", GetOwner());
   }
   return NS_OK;
 }
@@ -806,11 +818,7 @@ nsXMLHttpRequest::DetectCharset()
   nsresult rv = channel ? channel->GetContentCharset(charsetVal) :
                 NS_ERROR_FAILURE;
   if (NS_SUCCEEDED(rv)) {
-    nsCOMPtr<nsICharsetAlias> calias =
-      do_GetService(NS_CHARSETALIAS_CONTRACTID, &rv);
-    if (NS_SUCCEEDED(rv) && calias) {
-      rv = calias->GetPreferred(charsetVal, mResponseCharset);
-    }
+    rv = nsCharsetAlias::GetPreferred(charsetVal, mResponseCharset);
   }
 
   if (NS_FAILED(rv) || mResponseCharset.IsEmpty()) {
@@ -821,7 +829,7 @@ nsXMLHttpRequest::DetectCharset()
   if (mResponseType == XML_HTTP_RESPONSE_TYPE_JSON &&
       !mResponseCharset.EqualsLiteral("UTF-8")) {
     // The XHR spec says only UTF-8 is supported for responseType == "json"
-    LogMessage("JSONCharsetWarning", mOwner);
+    LogMessage("JSONCharsetWarning", GetOwner());
     mResponseCharset.AssignLiteral("UTF-8");
   }
 
@@ -1042,9 +1050,9 @@ NS_IMETHODIMP nsXMLHttpRequest::SetResponseType(const nsAString& aResponseType)
     return NS_ERROR_DOM_INVALID_STATE_ERR;
 
   // sync request is not allowed setting responseType in window context
-  if (mOwner &&
+  if (HasOrHasHadOwner() &&
       !(mState & (XML_HTTP_REQUEST_UNSENT | XML_HTTP_REQUEST_ASYNC))) {
-    LogMessage("ResponseTypeSyncXHRWarning", mOwner);
+    LogMessage("ResponseTypeSyncXHRWarning", GetOwner());
     return NS_ERROR_DOM_INVALID_ACCESS_ERR;
   }
 
@@ -1313,31 +1321,47 @@ nsXMLHttpRequest::Abort()
   return NS_OK;
 }
 
-/* string getAllResponseHeaders (); */
+/* DOMString getAllResponseHeaders(); */
 NS_IMETHODIMP
-nsXMLHttpRequest::GetAllResponseHeaders(char **_retval)
+nsXMLHttpRequest::GetAllResponseHeaders(nsAString& aResponseHeaders)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
-  *_retval = nsnull;
+  aResponseHeaders.Truncate();
 
-  if (mState & XML_HTTP_REQUEST_USE_XSITE_AC) {
-    *_retval = ToNewCString(EmptyString());
+  // If the state is UNSENT or OPENED,
+  // return the empty string and terminate these steps.
+  if (mState & (XML_HTTP_REQUEST_UNSENT |
+                XML_HTTP_REQUEST_OPENED | XML_HTTP_REQUEST_SENT)) {
     return NS_OK;
   }
 
-  nsCOMPtr<nsIHttpChannel> httpChannel = GetCurrentHttpChannel();
+  if (mState & XML_HTTP_REQUEST_USE_XSITE_AC) {
+    return NS_OK;
+  }
 
-  if (httpChannel) {
+  if (nsCOMPtr<nsIHttpChannel> httpChannel = GetCurrentHttpChannel()) {
     nsRefPtr<nsHeaderVisitor> visitor = new nsHeaderVisitor();
-    nsresult rv = httpChannel->VisitResponseHeaders(visitor);
-    if (NS_SUCCEEDED(rv))
-      *_retval = ToNewCString(visitor->Headers());
-  }
- 
-  if (!*_retval) {
-    *_retval = ToNewCString(EmptyString());
+    if (NS_SUCCEEDED(httpChannel->VisitResponseHeaders(visitor))) {
+      aResponseHeaders = NS_ConvertUTF8toUTF16(visitor->Headers());
+    }
+    return NS_OK;
   }
 
+  if (!mChannel) {
+    return NS_OK;
+  }
+
+  // Even non-http channels supply content type.
+  nsCAutoString value;
+  if (NS_SUCCEEDED(mChannel->GetContentType(value))) {
+    aResponseHeaders.AppendLiteral("Content-Type: ");
+    aResponseHeaders.Append(NS_ConvertUTF8toUTF16(value));
+    if (NS_SUCCEEDED(mChannel->GetContentCharset(value)) &&
+        !value.IsEmpty()) {
+      aResponseHeaders.AppendLiteral(";charset=");
+      aResponseHeaders.Append(NS_ConvertUTF8toUTF16(value));
+    }
+    aResponseHeaders.Append('\n');
+  }
   return NS_OK;
 }
 
@@ -1352,6 +1376,37 @@ nsXMLHttpRequest::GetResponseHeader(const nsACString& header,
   nsCOMPtr<nsIHttpChannel> httpChannel = GetCurrentHttpChannel();
 
   if (!httpChannel) {
+    // If the state is UNSENT or OPENED,
+    // return null and terminate these steps.
+    if (mState & (XML_HTTP_REQUEST_UNSENT |
+                  XML_HTTP_REQUEST_OPENED | XML_HTTP_REQUEST_SENT)) {
+      return NS_OK;
+    }
+
+    // Even non-http channels supply content type.
+    // Remember we don't leak header information from denied cross-site
+    // requests.
+    nsresult status;
+    if (!mChannel ||
+        NS_FAILED(mChannel->GetStatus(&status)) ||
+        NS_FAILED(status) ||
+        !header.LowerCaseEqualsASCII("content-type")) {
+      return NS_OK;
+    }
+
+    if (NS_FAILED(mChannel->GetContentType(_retval))) {
+      // Means no content type
+      _retval.SetIsVoid(true);
+      return NS_OK;
+    }
+
+    nsCString value;
+    if (NS_SUCCEEDED(mChannel->GetContentCharset(value)) &&
+        !value.IsEmpty()) {
+      _retval.Append(";charset=");
+      _retval.Append(value);
+    }
+
     return NS_OK;
   }
 
@@ -1430,12 +1485,15 @@ nsXMLHttpRequest::GetResponseHeader(const nsACString& header,
 already_AddRefed<nsILoadGroup>
 nsXMLHttpRequest::GetLoadGroup() const
 {
-  if (mState & XML_HTTP_REQUEST_BACKGROUND) {
+  if (mState & XML_HTTP_REQUEST_BACKGROUND) {                 
     return nsnull;
   }
 
+  nsresult rv = NS_ERROR_FAILURE;
+  nsIScriptContext* sc =
+    const_cast<nsXMLHttpRequest*>(this)->GetContextForEventHandlers(&rv);
   nsCOMPtr<nsIDocument> doc =
-    nsContentUtils::GetDocumentFromScriptContext(mScriptContext);
+    nsContentUtils::GetDocumentFromScriptContext(sc);
   if (doc) {
     return doc->GetDocumentLoadGroup();
   }
@@ -1514,7 +1572,7 @@ nsXMLHttpRequest::DispatchProgressEvent(nsDOMEventTargetHelper* aTarget,
 
   if (aUseLSEventWrapper) {
     nsCOMPtr<nsIDOMProgressEvent> xhrprogressEvent =
-      new nsXMLHttpProgressEvent(progress, aPosition, aTotalSize, mOwner);
+      new nsXMLHttpProgressEvent(progress, aPosition, aTotalSize, GetOwner());
     event = xhrprogressEvent;
   }
   aTarget->DispatchDOMEvent(nsnull, event, nsnull, nsnull);
@@ -1617,18 +1675,18 @@ nsXMLHttpRequest::Open(const nsACString& method, const nsACString& url,
 
   // sync request is not allowed using withCredential or responseType
   // in window context
-  if (!async && mOwner &&
+  if (!async && HasOrHasHadOwner() &&
       (mState & XML_HTTP_REQUEST_AC_WITH_CREDENTIALS ||
        mTimeoutMilliseconds ||
        mResponseType != XML_HTTP_RESPONSE_TYPE_DEFAULT)) {
     if (mState & XML_HTTP_REQUEST_AC_WITH_CREDENTIALS) {
-      LogMessage("WithCredentialsSyncXHRWarning", mOwner);
+      LogMessage("WithCredentialsSyncXHRWarning", GetOwner());
     }
     if (mTimeoutMilliseconds) {
-      LogMessage("TimeoutSyncXHRWarning", mOwner);
+      LogMessage("TimeoutSyncXHRWarning", GetOwner());
     }
     if (mResponseType != XML_HTTP_RESPONSE_TYPE_DEFAULT) {
-      LogMessage("ResponseTypeSyncXHRWarning", mOwner);
+      LogMessage("ResponseTypeSyncXHRWarning", GetOwner());
     }
     return NS_ERROR_DOM_INVALID_ACCESS_ERR;
   }
@@ -1662,8 +1720,10 @@ nsXMLHttpRequest::Open(const nsACString& method, const nsACString& url,
 
   mState &= ~XML_HTTP_REQUEST_MPART_HEADERS;
 
+  nsIScriptContext* sc = GetContextForEventHandlers(&rv);
+  NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIDocument> doc =
-    nsContentUtils::GetDocumentFromScriptContext(mScriptContext);
+    nsContentUtils::GetDocumentFromScriptContext(sc);
   
   nsCOMPtr<nsIURI> baseURI;
   if (mBaseURI) {
@@ -1676,8 +1736,6 @@ nsXMLHttpRequest::Open(const nsACString& method, const nsACString& url,
   rv = NS_NewURI(getter_AddRefs(uri), url, nsnull, baseURI);
   if (NS_FAILED(rv)) return rv;
 
-  // mScriptContext should be initialized because of GetBaseURI() above.
-  // Still need to consider the case that doc is nsnull however.
   rv = CheckInnerWindowCorrectness();
   NS_ENSURE_SUCCESS(rv, rv);
   PRInt16 shouldLoad = nsIContentPolicy::ACCEPT;
@@ -2074,8 +2132,10 @@ nsXMLHttpRequest::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
 
   if (mState & XML_HTTP_REQUEST_PARSEBODY) {
     nsCOMPtr<nsIURI> baseURI, docURI;
+    nsIScriptContext* sc = GetContextForEventHandlers(&rv);
+    NS_ENSURE_SUCCESS(rv, rv);
     nsCOMPtr<nsIDocument> doc =
-      nsContentUtils::GetDocumentFromScriptContext(mScriptContext);
+      nsContentUtils::GetDocumentFromScriptContext(sc);
 
     if (doc) {
       docURI = doc->GetDocumentURI();
@@ -2087,7 +2147,7 @@ nsXMLHttpRequest::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
     // principal, so use mPrincipal when creating the document, then reset the
     // principal.
     const nsAString& emptyStr = EmptyString();
-    nsCOMPtr<nsIScriptGlobalObject> global = do_QueryInterface(mOwner);
+    nsCOMPtr<nsIScriptGlobalObject> global = do_QueryInterface(GetOwner());
     rv = nsContentUtils::CreateDocument(emptyStr, emptyStr, nsnull, docURI,
                                         baseURI, mPrincipal, global,
                                         mIsHtml ? DocumentFlavorHTML :
@@ -2141,6 +2201,8 @@ nsXMLHttpRequest::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult
   if (!IsSameOrBaseChannel(request, mChannel)) {
     return NS_OK;
   }
+
+  mWaitingForOnStopRequest = false;
 
   nsresult rv = NS_OK;
 
@@ -2303,6 +2365,7 @@ nsXMLHttpRequest::ChangeStateToDone()
     // methods/members will not throw.
     // This matches what IE does.
     mChannel = nsnull;
+    mCORSPreflightChannel = nsnull;
   }
   else if (!(mState & XML_HTTP_REQUEST_GOT_FINAL_STOP)) {
     // We're a multipart request, so we're not done. Reset to opened.
@@ -2527,8 +2590,10 @@ nsXMLHttpRequest::Send(nsIVariant *aBody)
       nsCOMPtr<nsIURI> principalURI;
       mPrincipal->GetURI(getter_AddRefs(principalURI));
 
+      nsIScriptContext* sc = GetContextForEventHandlers(&rv);
+      NS_ENSURE_SUCCESS(rv, rv);
       nsCOMPtr<nsIDocument> doc =
-        nsContentUtils::GetDocumentFromScriptContext(mScriptContext);
+        nsContentUtils::GetDocumentFromScriptContext(sc);
 
       nsCOMPtr<nsIURI> docCurURI;
       nsCOMPtr<nsIURI> docOrigURI;
@@ -2776,15 +2841,18 @@ nsXMLHttpRequest::Send(nsIVariant *aBody)
     return rv;
   }
 
+  // Either AsyncOpen was called, or CORS will open the channel later.
+  mWaitingForOnStopRequest = true;
+
   // If we're synchronous, spin an event loop here and wait
   if (!(mState & XML_HTTP_REQUEST_ASYNC)) {
     mState |= XML_HTTP_REQUEST_SYNCLOOPING;
 
     nsCOMPtr<nsIDocument> suspendedDoc;
     nsCOMPtr<nsIRunnable> resumeTimeoutRunnable;
-    if (mOwner) {
+    if (GetOwner()) {
       nsCOMPtr<nsIDOMWindow> topWindow;
-      if (NS_SUCCEEDED(mOwner->GetTop(getter_AddRefs(topWindow)))) {
+      if (NS_SUCCEEDED(GetOwner()->GetTop(getter_AddRefs(topWindow)))) {
         nsCOMPtr<nsPIDOMWindow> suspendedWindow(do_QueryInterface(topWindow));
         if (suspendedWindow &&
             (suspendedWindow = suspendedWindow->GetCurrentInnerWindow())) {
@@ -2954,7 +3022,8 @@ nsXMLHttpRequest::GetTimeout(PRUint32 *aTimeout)
 NS_IMETHODIMP
 nsXMLHttpRequest::SetTimeout(PRUint32 aTimeout)
 {
-  if ((mState & (XML_HTTP_REQUEST_ASYNC | XML_HTTP_REQUEST_UNSENT)) || !mOwner) {
+  if ((mState & (XML_HTTP_REQUEST_ASYNC | XML_HTTP_REQUEST_UNSENT)) ||
+      !HasOrHasHadOwner()) {
     mTimeoutMilliseconds = aTimeout;
     if (mRequestSentTime) {
       StartTimeoutTimer();
@@ -2964,7 +3033,7 @@ nsXMLHttpRequest::SetTimeout(PRUint32 aTimeout)
 
   /* Timeout is not supported for synchronous requests with an owning window,
      per XHR2 spec. */
-  LogMessage("TimeoutSyncXHRWarning", mOwner);
+  LogMessage("TimeoutSyncXHRWarning", GetOwner());
   return NS_ERROR_DOM_INVALID_ACCESS_ERR;
 }
 
@@ -3112,9 +3181,9 @@ nsXMLHttpRequest::SetWithCredentials(bool aWithCredentials)
   }
 
   // sync request is not allowed setting withCredentials in window context
-  if (mOwner &&
+  if (HasOrHasHadOwner() &&
       !(mState & (XML_HTTP_REQUEST_UNSENT | XML_HTTP_REQUEST_ASYNC))) {
-    LogMessage("WithCredentialsSyncXHRWarning", mOwner);
+    LogMessage("WithCredentialsSyncXHRWarning", GetOwner());
     return NS_ERROR_DOM_INVALID_ACCESS_ERR;
   }
 
@@ -3465,8 +3534,8 @@ nsXMLHttpRequest::GetInterface(const nsIID & aIID, void **aResult)
     // of the dialogs works as it should when using tabs.
 
     nsCOMPtr<nsIDOMWindow> window;
-    if (mOwner) {
-      window = mOwner->GetOuterWindow();
+    if (GetOwner()) {
+      window = GetOwner()->GetOuterWindow();
     }
 
     return wwatch->GetPrompt(window, aIID,
@@ -3487,7 +3556,7 @@ nsXMLHttpRequest::GetUpload(nsIXMLHttpRequestUpload** aUpload)
     GetContextForEventHandlers(&rv);
   NS_ENSURE_SUCCESS(rv, rv);
   if (!mUpload) {
-    mUpload = new nsXMLHttpRequestUpload(mOwner, scriptContext);
+    mUpload = new nsXMLHttpRequestUpload(this);
     NS_ENSURE_TRUE(mUpload, NS_ERROR_OUT_OF_MEMORY);
   }
   NS_ADDREF(*aUpload = mUpload);

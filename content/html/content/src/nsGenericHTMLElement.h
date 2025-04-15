@@ -45,7 +45,6 @@
 #include "nsFrameLoader.h"
 #include "nsGkAtoms.h"
 #include "nsContentCreatorFunctions.h"
-#include "nsDOMMemoryReporter.h"
 
 class nsIDOMAttr;
 class nsIDOMEventListener;
@@ -81,9 +80,6 @@ public:
     NS_ASSERTION(mNodeInfo->NamespaceID() == kNameSpaceID_XHTML,
                  "Unexpected namespace");
   }
-
-  NS_DECL_AND_IMPL_DOM_MEMORY_REPORTER_SIZEOF(nsGenericHTMLElement,
-                                              nsGenericHTMLElementBase)
 
   /** Typesafe, non-refcounting cast from nsIContent.  Cheaper than QI. **/
   static nsGenericHTMLElement* FromContent(nsIContent *aContent)
@@ -534,39 +530,13 @@ public:
    * Returns the current disabled state of the element.
    */
   virtual bool IsDisabled() const {
-    return HasAttr(kNameSpaceID_None, nsGkAtoms::disabled);
+    return false;
   }
 
   bool IsHidden() const
   {
     return HasAttr(kNameSpaceID_None, nsGkAtoms::hidden);
   }
-
-  /**
-   * Shared cross-origin resource sharing attributes so they don't get
-   * duplicated on every CORS-enabled element
-   */
-
-  enum CORSMode {
-    /**
-     * The default of not using CORS to validate cross-origin loads.
-     */
-    CORS_NONE,
-
-    /**
-     * Validate cross-site loads using CORS, but do not send any credentials
-     * (cookies, HTTP auth logins, etc) along with the request.
-     */
-    CORS_ANONYMOUS,
-
-    /**
-     * Validate cross-site loads using CORS, and send credentials such as cookies
-     * and HTTP auth logins along with the request.
-     */
-    CORS_USE_CREDENTIALS
-  };
-
-  const static nsAttrValue::EnumTable kCORSAttributeTable[];
 
 protected:
   /**
@@ -631,7 +601,7 @@ protected:
   bool IsEventName(nsIAtom* aName);
 
   virtual nsresult AfterSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
-                                const nsAString* aValue, bool aNotify);
+                                const nsAttrValue* aValue, bool aNotify);
 
   virtual nsEventListenerManager*
     GetEventListenerManagerForAttr(nsIAtom* aAttrName, bool* aDefer);
@@ -874,9 +844,6 @@ public:
   nsGenericHTMLFormElement(already_AddRefed<nsINodeInfo> aNodeInfo);
   virtual ~nsGenericHTMLFormElement();
 
-  NS_DECL_AND_IMPL_DOM_MEMORY_REPORTER_SIZEOF(nsGenericHTMLFormElement,
-                                              nsGenericHTMLElement)
-
   NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
 
   virtual bool IsNodeOfType(PRUint32 aFlags) const;
@@ -950,10 +917,11 @@ public:
 
 protected:
   virtual nsresult BeforeSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
-                                 const nsAString* aValue, bool aNotify);
+                                 const nsAttrValueOrString* aValue,
+                                 bool aNotify);
 
   virtual nsresult AfterSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
-                                const nsAString* aValue, bool aNotify);
+                                const nsAttrValue* aValue, bool aNotify);
 
   void UpdateEditableFormControlState(bool aNotify);
 

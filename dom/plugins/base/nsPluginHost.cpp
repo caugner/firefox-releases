@@ -83,7 +83,7 @@
 #include "nsHashtable.h"
 #include "nsIProxyInfo.h"
 #include "nsPluginLogging.h"
-#include "nsIPrefBranch2.h"
+#include "nsIPrefBranch.h"
 #include "nsIScriptChannel.h"
 #include "nsIBlocklistService.h"
 #include "nsVersionComparator.h"
@@ -155,6 +155,7 @@
 #include "nsContentErrors.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Telemetry.h"
+#include "nsIImageLoadingContent.h"
 #include "mozilla/Preferences.h"
 
 #if defined(XP_WIN)
@@ -342,49 +343,13 @@ static bool UnloadPluginsASAP()
   nsCOMPtr<nsIPrefBranch> pref(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   if (NS_SUCCEEDED(rv)) {
     bool unloadPluginsASAP = false;
-    rv = pref->GetBoolPref("plugins.unloadASAP", &unloadPluginsASAP);
+    rv = pref->GetBoolPref("dom.ipc.plugins.unloadASAP", &unloadPluginsASAP);
     if (NS_SUCCEEDED(rv)) {
       return unloadPluginsASAP;
     }
   }
 
   return false;
-}
-
-// helper struct for asynchronous handling of plugin unloading
-class nsPluginUnloadEvent : public nsRunnable {
-public:
-  nsPluginUnloadEvent(PRLibrary* aLibrary)
-    : mLibrary(aLibrary)
-  {}
- 
-  NS_DECL_NSIRUNNABLE
- 
-  PRLibrary* mLibrary;
-};
-
-NS_IMETHODIMP nsPluginUnloadEvent::Run()
-{
-  if (mLibrary) {
-    // put our unload call in a safety wrapper
-    NS_TRY_SAFE_CALL_VOID(PR_UnloadLibrary(mLibrary), nsnull);
-  } else {
-    NS_WARNING("missing library from nsPluginUnloadEvent");
-  }
-  return NS_OK;
-}
-
-// unload plugin asynchronously if possible, otherwise just unload now
-nsresult nsPluginHost::PostPluginUnloadEvent(PRLibrary* aLibrary)
-{
-  nsCOMPtr<nsIRunnable> ev = new nsPluginUnloadEvent(aLibrary);
-  if (ev && NS_SUCCEEDED(NS_DispatchToCurrentThread(ev)))
-    return NS_OK;
-
-  // failure case
-  NS_TRY_SAFE_CALL_VOID(PR_UnloadLibrary(aLibrary), nsnull);
-
-  return NS_ERROR_FAILURE;
 }
 
 nsPluginHost::nsPluginHost()
@@ -413,6 +378,10 @@ nsPluginHost::nsPluginHost()
   if (obsService) {
     obsService->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
     obsService->AddObserver(this, NS_PRIVATE_BROWSING_SWITCH_TOPIC, false);
+#ifdef MOZ_WIDGET_ANDROID
+    obsService->AddObserver(this, "application-foreground", false);
+    obsService->AddObserver(this, "application-background", false);
+#endif
   }
 
 #ifdef PLUGIN_LOGGING
@@ -429,8 +398,8 @@ nsPluginHost::nsPluginHost()
 #endif
 
 #ifdef MAC_CARBON_PLUGINS
-  mVisiblePluginTimer = do_CreateInstance("@mozilla.org/timer;1");
-  mHiddenPluginTimer = do_CreateInstance("@mozilla.org/timer;1");
+  mVisiblePluginTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
+  mHiddenPluginTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
 #endif
 }
 
@@ -534,7 +503,7 @@ nsresult nsPluginHost::ReloadPlugins(bool reloadPages)
       p->mNext = nsnull;
 
       // attempt to unload plugins whenever they are removed from the list
-      p->TryUnloadPlugin();
+      p->TryUnloadPlugin(false);
 
       p = next;
       continue;
@@ -877,7 +846,7 @@ nsresult nsPluginHost::Destroy()
 
   nsPluginTag *pluginTag;
   for (pluginTag = mPlugins; pluginTag; pluginTag = pluginTag->mNext) {
-    pluginTag->TryUnloadPlugin();
+    pluginTag->TryUnloadPlugin(true);
   }
 
   NS_ITERATIVE_UNREF_LIST(nsRefPtr<nsPluginTag>, mPlugins, mNext);
@@ -915,8 +884,33 @@ void nsPluginHost::OnPluginInstanceDestroyed(nsPluginTag* aPluginTag)
     }
   }
 
-  if (!hasInstance && UnloadPluginsASAP()) {
-    aPluginTag->TryUnloadPlugin();
+  // We have some options for unloading plugins if they have no instances.
+  //
+  // Unloading plugins immediately can be bad - some plugins retain state
+  // between instances even when there are none. This is largely limited to
+  // going from one page to another, so state is retained without an instance
+  // for only a very short period of time. In order to allow this to work
+  // we don't unload plugins immediately by default. This is supported
+  // via a hidden user pref though.
+  //
+  // Another reason not to unload immediately is that loading is expensive,
+  // and it is better to leave popular plugins loaded.
+  //
+  // Our default behavior is to try to unload a plugin three minutes after
+  // its last instance is destroyed. This seems like a reasonable compromise
+  // that allows us to reclaim memory while allowing short state retention
+  // and avoid perf hits for loading popular plugins.
+  if (!hasInstance) {
+    if (UnloadPluginsASAP()) {
+      aPluginTag->TryUnloadPlugin(false);
+    } else {
+      if (aPluginTag->mUnloadTimer) {
+        aPluginTag->mUnloadTimer->Cancel();
+      } else {
+        aPluginTag->mUnloadTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
+      }
+      aPluginTag->mUnloadTimer->InitWithCallback(this, 1000 * 60 * 3, nsITimer::TYPE_ONE_SHOT);
+    }
   }
 }
 
@@ -941,11 +935,11 @@ nsPluginHost::GetPluginTempDir(nsIFile **aDir)
   return sPluginTempDir->Clone(aDir);
 }
 
-nsresult nsPluginHost::InstantiatePluginForChannel(nsIChannel* aChannel,
-                                                   nsIPluginInstanceOwner* aOwner,
-                                                   nsIStreamListener** aListener)
+nsresult nsPluginHost::CreateListenerForChannel(nsIChannel* aChannel,
+                                                nsObjectLoadingContent* aContent,
+                                                nsIStreamListener** aListener)
 {
-  NS_PRECONDITION(aChannel && aOwner,
+  NS_PRECONDITION(aChannel && aContent,
                   "Invalid arguments to InstantiatePluginForChannel");
   nsCOMPtr<nsIURI> uri;
   nsresult rv = aChannel->GetURI(getter_AddRefs(uri));
@@ -958,8 +952,8 @@ nsresult nsPluginHost::InstantiatePluginForChannel(nsIChannel* aChannel,
     uri->GetAsciiSpec(urlSpec);
 
     PR_LOG(nsPluginLogging::gPluginLog, PLUGIN_LOG_NORMAL,
-           ("nsPluginHost::InstantiatePluginForChannel Begin owner=%p, url=%s\n",
-           aOwner, urlSpec.get()));
+           ("nsPluginHost::InstantiatePluginForChannel Begin content=%p, url=%s\n",
+           aContent, urlSpec.get()));
 
     PR_LogFlush();
   }
@@ -968,12 +962,13 @@ nsresult nsPluginHost::InstantiatePluginForChannel(nsIChannel* aChannel,
   // Note that we're not setting up a plugin instance here; the stream
   // listener's OnStartRequest will handle doing that.
 
-  return NewEmbeddedPluginStreamListener(uri, aOwner, nsnull, aListener);
+  return NewEmbeddedPluginStreamListener(uri, aContent, nsnull, aListener);
 }
 
 nsresult
 nsPluginHost::InstantiateEmbeddedPlugin(const char *aMimeType, nsIURI* aURL,
-                                        nsIPluginInstanceOwner* aOwner)
+                                        nsObjectLoadingContent *aContent,
+                                        nsPluginInstanceOwner** aOwner)
 {
   NS_ENSURE_ARG_POINTER(aOwner);
 
@@ -983,27 +978,39 @@ nsPluginHost::InstantiateEmbeddedPlugin(const char *aMimeType, nsIURI* aURL,
     aURL->GetAsciiSpec(urlSpec);
 
   PR_LOG(nsPluginLogging::gPluginLog, PLUGIN_LOG_NORMAL,
-        ("nsPluginHost::InstantiateEmbeddedPlugin Begin mime=%s, owner=%p, url=%s\n",
-        aMimeType, aOwner, urlSpec.get()));
+        ("nsPluginHost::InstantiateEmbeddedPlugin Begin mime=%s, url=%s\n",
+        aMimeType, urlSpec.get()));
 
   PR_LogFlush();
 #endif
 
-  nsresult rv;
+  nsRefPtr<nsPluginInstanceOwner> instanceOwner = new nsPluginInstanceOwner();
+  if (!instanceOwner) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+
+  nsCOMPtr<nsIContent> ourContent = do_QueryInterface(static_cast<nsIImageLoadingContent*>(aContent));
+  nsresult rv = instanceOwner->Init(ourContent);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
   nsCOMPtr<nsIPluginTagInfo> pti;
+  rv = instanceOwner->QueryInterface(kIPluginTagInfoIID, getter_AddRefs(pti));
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
   nsPluginTagType tagType;
-
-  rv = aOwner->QueryInterface(kIPluginTagInfoIID, getter_AddRefs(pti));
-
-  if (rv != NS_OK)
-    return rv;
-
   rv = pti->GetTagType(&tagType);
-
-  if ((rv != NS_OK) || !((tagType == nsPluginTagType_Embed)
-                        || (tagType == nsPluginTagType_Applet)
-                        || (tagType == nsPluginTagType_Object))) {
+  if (NS_FAILED(rv)) {
     return rv;
+  }
+
+  if (tagType != nsPluginTagType_Embed &&
+      tagType != nsPluginTagType_Applet &&
+      tagType != nsPluginTagType_Object) {
+    return NS_ERROR_FAILURE;
   }
 
   // Security checks. Can't do security checks without a URI - hopefully the plugin
@@ -1015,7 +1022,7 @@ nsPluginHost::InstantiateEmbeddedPlugin(const char *aMimeType, nsIURI* aURL,
       return rv; // Better fail if we can't do security checks
 
     nsCOMPtr<nsIDocument> doc;
-    aOwner->GetDocument(getter_AddRefs(doc));
+    instanceOwner->GetDocument(getter_AddRefs(doc));
     if (!doc)
       return NS_ERROR_NULL_POINTER;
 
@@ -1063,97 +1070,118 @@ nsPluginHost::InstantiateEmbeddedPlugin(const char *aMimeType, nsIURI* aURL,
 
   // if we don't have a MIME type at this point, we still have one more chance by
   // opening the stream and seeing if the server hands one back
-  if (!aMimeType)
-    return bCanHandleInternally ? NewEmbeddedPluginStream(aURL, aOwner, nsnull) : NS_ERROR_FAILURE;
-
-  rv = SetUpPluginInstance(aMimeType, aURL, aOwner);
-
-  if (NS_FAILED(rv))
+  if (!aMimeType) {
+    if (bCanHandleInternally && !aContent->SrcStreamLoading()) {
+      NewEmbeddedPluginStream(aURL, aContent, nsnull);
+    }
     return NS_ERROR_FAILURE;
+  }
+
+  rv = SetUpPluginInstance(aMimeType, aURL, instanceOwner);
+  if (NS_FAILED(rv)) {
+    return NS_ERROR_FAILURE;
+  }
 
   nsRefPtr<nsNPAPIPluginInstance> instance;
-  rv = aOwner->GetInstance(getter_AddRefs(instance));
-  // if we have a failure error, it means we found a plugin for the mimetype,
-  // but we had a problem with the entry point
-  if (rv == NS_ERROR_FAILURE)
+  rv = instanceOwner->GetInstance(getter_AddRefs(instance));
+  if (NS_FAILED(rv)) {
     return rv;
+  }
 
   if (instance) {
-    aOwner->CreateWidget();
+    instanceOwner->CreateWidget();
 
     // If we've got a native window, the let the plugin know about it.
-    aOwner->SetWindow();
+    instanceOwner->CallSetWindow();
 
     // create an initial stream with data
     // don't make the stream if it's a java applet or we don't have SRC or DATA attribute
-    bool havedata = false;
-
-    nsCOMPtr<nsIPluginTagInfo> pti(do_QueryInterface(aOwner, &rv));
-
-    if (pti) {
-      const char *value;
-      havedata = NS_SUCCEEDED(pti->GetAttribute("SRC", &value));
-      // no need to check for "data" as it would have been converted to "src"
+    // no need to check for "data" as it would have been converted to "src"
+    const char *value;
+    bool havedata = NS_SUCCEEDED(pti->GetAttribute("SRC", &value));
+    if (havedata && !isJava && bCanHandleInternally && !aContent->SrcStreamLoading()) {
+      NewEmbeddedPluginStream(aURL, aContent, instance.get());
     }
-
-    if (havedata && !isJava && bCanHandleInternally)
-      rv = NewEmbeddedPluginStream(aURL, aOwner, instance.get());
   }
+
+  // At this point we consider instantiation to be successful. Do not return an error.
+  instanceOwner.forget(aOwner);
 
 #ifdef PLUGIN_LOGGING
   nsCAutoString urlSpec2;
   if (aURL != nsnull) aURL->GetAsciiSpec(urlSpec2);
 
   PR_LOG(nsPluginLogging::gPluginLog, PLUGIN_LOG_NORMAL,
-        ("nsPluginHost::InstantiateEmbeddedPlugin Finished mime=%s, rv=%d, owner=%p, url=%s\n",
-        aMimeType, rv, aOwner, urlSpec2.get()));
+        ("nsPluginHost::InstantiateEmbeddedPlugin Finished mime=%s, rv=%d, url=%s\n",
+        aMimeType, rv, urlSpec2.get()));
 
   PR_LogFlush();
 #endif
 
-  return rv;
+  return NS_OK;
 }
 
 nsresult nsPluginHost::InstantiateFullPagePlugin(const char *aMimeType,
                                                  nsIURI* aURI,
-                                                 nsIPluginInstanceOwner *aOwner,
+                                                 nsObjectLoadingContent *aContent,
+                                                 nsPluginInstanceOwner **aOwner,
                                                  nsIStreamListener **aStreamListener)
 {
 #ifdef PLUGIN_LOGGING
   nsCAutoString urlSpec;
   aURI->GetSpec(urlSpec);
   PLUGIN_LOG(PLUGIN_LOG_NORMAL,
-  ("nsPluginHost::InstantiateFullPagePlugin Begin mime=%s, owner=%p, url=%s\n",
-  aMimeType, aOwner, urlSpec.get()));
+  ("nsPluginHost::InstantiateFullPagePlugin Begin mime=%s, url=%s\n",
+  aMimeType, urlSpec.get()));
 #endif
 
-  nsresult rv = SetUpPluginInstance(aMimeType, aURI, aOwner);
-
-  if (NS_OK == rv) {
-    nsRefPtr<nsNPAPIPluginInstance> instance;
-    aOwner->GetInstance(getter_AddRefs(instance));
-
-    NPWindow* win = nsnull;
-    aOwner->GetWindow(win);
-
-    if (win && instance) {
-      aOwner->CreateWidget();
-
-      // If we've got a native window, the let the plugin know about it.
-      aOwner->SetWindow();
-
-      rv = NewFullPagePluginStream(aURI, instance.get(), aStreamListener);
-
-      // If we've got a native window, the let the plugin know about it.
-      aOwner->SetWindow();
-    }
+  nsRefPtr<nsPluginInstanceOwner> instanceOwner = new nsPluginInstanceOwner();
+  if (!instanceOwner) {
+    return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  PLUGIN_LOG(PLUGIN_LOG_NORMAL,
-  ("nsPluginHost::InstantiateFullPagePlugin End mime=%s, rv=%d, owner=%p, url=%s\n",
-  aMimeType, rv, aOwner, urlSpec.get()));
+  nsCOMPtr<nsIContent> ourContent = do_QueryInterface(static_cast<nsIImageLoadingContent*>(aContent));
+  nsresult rv = instanceOwner->Init(ourContent);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
-  return rv;
+  rv = SetUpPluginInstance(aMimeType, aURI, instanceOwner);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  nsRefPtr<nsNPAPIPluginInstance> instance;
+  instanceOwner->GetInstance(getter_AddRefs(instance));
+  if (!instance) {
+    return NS_ERROR_FAILURE;
+  }
+
+  NPWindow* win = nsnull;
+  instanceOwner->GetWindow(win);
+  if (!win) {
+    return NS_ERROR_FAILURE;
+  }
+
+  // Set up any widget that might be required.
+  instanceOwner->CreateWidget();
+  instanceOwner->CallSetWindow();
+
+  rv = NewFullPagePluginStream(aURI, instance.get(), aStreamListener);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  // Call SetWindow again in case something changed.
+  instanceOwner->CallSetWindow();
+
+  instanceOwner.forget(aOwner);
+
+  PLUGIN_LOG(PLUGIN_LOG_NORMAL,
+  ("nsPluginHost::InstantiateFullPagePlugin End mime=%s, rv=%d, url=%s\n",
+  aMimeType, rv, urlSpec.get()));
+
+  return NS_OK;
 }
 
 nsPluginTag*
@@ -1316,6 +1344,12 @@ nsPluginHost::TrySetUpPluginInstance(const char *aMimeType,
     return rv;
   }
 
+  // Cancel the plugin unload timer since we are creating
+  // an instance for it.
+  if (pluginTag->mUnloadTimer) {
+    pluginTag->mUnloadTimer->Cancel();
+  }
+
   mInstances.AppendElement(instance.get());
 
 #ifdef PLUGIN_LOGGING
@@ -1336,17 +1370,9 @@ nsPluginHost::TrySetUpPluginInstance(const char *aMimeType,
 nsresult
 nsPluginHost::IsPluginEnabledForType(const char* aMimeType)
 {
-  // If plugins.click_to_play is false, plugins should always play
-  return IsPluginEnabledForType(aMimeType,
-                                !Preferences::GetBool("plugins.click_to_play", false));
-}
-
-nsresult
-nsPluginHost::IsPluginEnabledForType(const char* aMimeType, bool aShouldPlay)
-{
   nsPluginTag *plugin = FindPluginForType(aMimeType, true);
   if (plugin)
-    return aShouldPlay ? NS_OK : NS_ERROR_PLUGIN_CLICKTOPLAY;
+    return NS_OK;
 
   // Pass false as the second arg so we can return NS_ERROR_PLUGIN_DISABLED
   // for disabled plug-ins.
@@ -1361,7 +1387,7 @@ nsPluginHost::IsPluginEnabledForType(const char* aMimeType, bool aShouldPlay)
       return NS_ERROR_PLUGIN_DISABLED;
   }
 
-  return aShouldPlay ? NS_OK : NS_ERROR_PLUGIN_CLICKTOPLAY;
+  return NS_OK;
 }
 
 // check comma delimitered extensions
@@ -1390,21 +1416,12 @@ static int CompareExtensions(const char *aExtensionList, const char *aExtension)
 }
 
 nsresult
-nsPluginHost::IsPluginEnabledForExtension(const char* aExtension, const char* &aMimeType)
-{
-  // If plugins.click_to_play is false, plugins should always play
-  return IsPluginEnabledForExtension(aExtension, aMimeType,
-                                     !Preferences::GetBool("plugins.click_to_play", false));
-}
-
-nsresult
 nsPluginHost::IsPluginEnabledForExtension(const char* aExtension,
-                                          const char* &aMimeType,
-                                          bool aShouldPlay)
+                                          const char* &aMimeType)
 {
   nsPluginTag *plugin = FindPluginEnabledForExtension(aExtension, aMimeType);
   if (plugin)
-    return aShouldPlay ? NS_OK : NS_ERROR_PLUGIN_CLICKTOPLAY;
+    return NS_OK;
 
   return NS_ERROR_FAILURE;
 }
@@ -2191,7 +2208,7 @@ nsresult nsPluginHost::ScanPluginsDirectory(nsIFile *pluginsDir,
       // the library in the process then we want to attempt to unload it here.
       // Only do this if the pref is set for aggressive unloading.
       if (UnloadPluginsASAP()) {
-        pluginTag->TryUnloadPlugin();
+        pluginTag->TryUnloadPlugin(false);
       }
     }
 
@@ -2618,7 +2635,7 @@ nsPluginHost::WritePluginInfo()
       PR_fprintf(fd, "%lld%c%d%c%lu%c%c\n",
         tag->mLastModifiedTime,
         PLUGIN_REGISTRY_FIELD_DELIMITER,
-        tag->mCanUnloadLibrary,
+        false, // did store whether or not to unload in-process plugins
         PLUGIN_REGISTRY_FIELD_DELIMITER,
         tag->Flags(),
         PLUGIN_REGISTRY_FIELD_DELIMITER,
@@ -2882,7 +2899,6 @@ nsPluginHost::ReadPluginInfo()
 
     // If this is an old plugin registry mark this plugin tag to be refreshed
     PRInt64 lastmod = (vdiff == 0) ? nsCRT::atoll(values[0]) : -1;
-    bool canunload = atoi(values[1]);
     PRUint32 tagflag = atoi(values[2]);
     if (!reader.NextLine())
       return rv;
@@ -2942,7 +2958,7 @@ nsPluginHost::ReadPluginInfo()
       (const char* const*)mimetypes,
       (const char* const*)mimedescriptions,
       (const char* const*)extensions,
-      mimetypecount, lastmod, canunload, true);
+      mimetypecount, lastmod, true);
     if (heapalloced)
       delete [] heapalloced;
 
@@ -3114,6 +3130,24 @@ nsresult nsPluginHost::NewPluginURLStream(const nsString& aURL,
   // deal with headers and post data
   nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
   if (httpChannel) {
+    if (!aPostStream) {
+      // Only set the Referer header for GET requests because IIS throws
+      // errors about malformed requests if we include it in POSTs. See
+      // bug 724465.
+      nsCOMPtr<nsIURI> referer;
+
+      nsCOMPtr<nsIObjectLoadingContent> olc = do_QueryInterface(element);
+      if (olc)
+        olc->GetSrcURI(getter_AddRefs(referer));
+
+
+      if (!referer)
+        referer = doc->GetDocumentURI();
+
+      rv = httpChannel->SetReferrer(referer);
+      NS_ENSURE_SUCCESS(rv,rv);
+    }
+      
     if (aPostStream) {
       // XXX it's a bit of a hack to rewind the postdata stream
       // here but it has to be done in case the post data is
@@ -3129,8 +3163,10 @@ nsresult nsPluginHost::NewPluginURLStream(const nsString& aURL,
       uploadChannel->SetUploadStream(aPostStream, EmptyCString(), -1);
     }
 
-    if (aHeadersData)
+    if (aHeadersData) {
       rv = AddHeadersToChannel(aHeadersData, aHeadersDataLen, httpChannel);
+      NS_ENSURE_SUCCESS(rv,rv);
+    }
   }
   rv = channel->AsyncOpen(listenerPeer, nsnull);
   if (NS_SUCCEEDED(rv))
@@ -3242,6 +3278,7 @@ nsPluginHost::StopPluginInstance(nsNPAPIPluginInstance* aInstance)
     return NS_OK;
   }
 
+  Telemetry::AutoTimer<Telemetry::PLUGIN_SHUTDOWN_MS> timer;
   aInstance->Stop();
 
   // if the instance does not want to be 'cached' just remove it
@@ -3275,7 +3312,7 @@ nsPluginHost::StopPluginInstance(nsNPAPIPluginInstance* aInstance)
 }
 
 nsresult nsPluginHost::NewEmbeddedPluginStreamListener(nsIURI* aURL,
-                                                       nsIPluginInstanceOwner *aOwner,
+                                                       nsObjectLoadingContent *aContent,
                                                        nsNPAPIPluginInstance* aInstance,
                                                        nsIStreamListener** aListener)
 {
@@ -3293,11 +3330,12 @@ nsresult nsPluginHost::NewEmbeddedPluginStreamListener(nsIURI* aURL,
   // so the listener can set up the instance later after
   // we've determined the mimetype of the stream
   if (aInstance)
-    rv = listener->InitializeEmbedded(aURL, aInstance);
-  else if (aOwner != nsnull)
-    rv = listener->InitializeEmbedded(aURL, nsnull, aOwner);
+    rv = listener->InitializeEmbedded(aURL, aInstance, nsnull);
+  else if (aContent)
+    rv = listener->InitializeEmbedded(aURL, nsnull, aContent);
   else
     rv = NS_ERROR_ILLEGAL_VALUE;
+
   if (NS_SUCCEEDED(rv))
     NS_ADDREF(*aListener = listener);
 
@@ -3306,18 +3344,19 @@ nsresult nsPluginHost::NewEmbeddedPluginStreamListener(nsIURI* aURL,
 
 // Called by InstantiateEmbeddedPlugin()
 nsresult nsPluginHost::NewEmbeddedPluginStream(nsIURI* aURL,
-                                               nsIPluginInstanceOwner *aOwner,
+                                               nsObjectLoadingContent *aContent,
                                                nsNPAPIPluginInstance* aInstance)
 {
   nsCOMPtr<nsIStreamListener> listener;
-  nsresult rv = NewEmbeddedPluginStreamListener(aURL, aOwner, aInstance,
+  nsresult rv = NewEmbeddedPluginStreamListener(aURL, aContent, aInstance,
                                                 getter_AddRefs(listener));
   if (NS_SUCCEEDED(rv)) {
     nsCOMPtr<nsIDocument> doc;
     nsCOMPtr<nsILoadGroup> loadGroup;
-    if (aOwner) {
-      rv = aOwner->GetDocument(getter_AddRefs(doc));
-      if (NS_SUCCEEDED(rv) && doc) {
+    if (aContent) {
+      nsCOMPtr<nsIContent> aIContent = do_QueryInterface(static_cast<nsIImageLoadingContent*>(aContent));
+      doc = aIContent->GetDocument();
+      if (doc) {
         loadGroup = doc->GetDocumentLoadGroup();
       }
     }
@@ -3375,6 +3414,24 @@ NS_IMETHODIMP nsPluginHost::Observe(nsISupports *aSubject,
       mInstances[i]->PrivateModeStateChanged();
     }
   }
+#ifdef MOZ_WIDGET_ANDROID
+  if (!nsCRT::strcmp("application-background", aTopic)) {
+    for(PRUint32 i = 0; i < mInstances.Length(); i++) {
+      mInstances[i]->NotifyForeground(false);
+    }
+  }
+  if (!nsCRT::strcmp("application-foreground", aTopic)) {
+    for(PRUint32 i = 0; i < mInstances.Length(); i++) {
+      if (mInstances[i]->IsOnScreen())
+        mInstances[i]->NotifyForeground(true);
+    }
+  }
+  if (!nsCRT::strcmp("memory-pressure", aTopic)) {
+    for(PRUint32 i = 0; i < mInstances.Length(); i++) {
+      mInstances[i]->MemoryPressure();
+    }
+  }
+#endif
   return NS_OK;
 }
 
@@ -3731,12 +3788,6 @@ nsPluginHost::NewPluginNativeWindow(nsPluginNativeWindow ** aPluginNativeWindow)
 }
 
 nsresult
-nsPluginHost::DeletePluginNativeWindow(nsPluginNativeWindow * aPluginNativeWindow)
-{
-  return PLUG_DeletePluginNativeWindow(aPluginNativeWindow);
-}
-
-nsresult
 nsPluginHost::InstantiateDummyJavaPlugin(nsIPluginInstanceOwner *aOwner)
 {
   // Pass false as the second arg, we want the answer to be the
@@ -3864,6 +3915,18 @@ NS_IMETHODIMP nsPluginHost::Notify(nsITimer* timer)
     return NS_OK;
   }
 #endif
+
+  nsRefPtr<nsPluginTag> pluginTag = mPlugins;
+  while (pluginTag) {
+    if (pluginTag->mUnloadTimer == timer) {
+      if (!IsRunningPlugin(pluginTag)) {
+        pluginTag->TryUnloadPlugin(false);
+      }
+      return NS_OK;
+    }
+    pluginTag = pluginTag->mNext;
+  }
+
   return NS_ERROR_FAILURE;
 }
 

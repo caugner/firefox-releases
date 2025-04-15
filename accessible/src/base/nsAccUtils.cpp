@@ -163,7 +163,7 @@ nsAccUtils::GetPositionAndSizeForXULSelectControlItem(nsIContent *aContent,
     nsCOMPtr<nsINode> currNode(do_QueryInterface(currItem));
 
     nsAccessible* itemAcc = currNode ?
-      GetAccService()->GetAccessible(currNode) : nsnull;
+      GetAccService()->GetAccessible(currNode, nsnull) : nsnull;
 
     if (!itemAcc || itemAcc->State() & states::INVISIBLE) {
       (*aSetSize)--;
@@ -173,70 +173,6 @@ nsAccUtils::GetPositionAndSizeForXULSelectControlItem(nsIContent *aContent,
   }
 
   (*aPosInSet)++; // group position is 1-index based.
-}
-
-void
-nsAccUtils::GetPositionAndSizeForXULContainerItem(nsIContent *aContent,
-                                                  PRInt32 *aPosInSet,
-                                                  PRInt32 *aSetSize)
-{
-  nsCOMPtr<nsIDOMXULContainerItemElement> item(do_QueryInterface(aContent));
-  if (!item)
-    return;
-
-  nsCOMPtr<nsIDOMXULContainerElement> container;
-  item->GetParentContainer(getter_AddRefs(container));
-  if (!container)
-    return;
-
-  // Get item count.
-  PRUint32 itemsCount = 0;
-  container->GetItemCount(&itemsCount);
-
-  // Get item index.
-  PRInt32 indexOf = 0;
-  container->GetIndexOfItem(item, &indexOf);
-
-  // Calculate set size and position in the set.
-  *aSetSize = 0, *aPosInSet = 0;
-  for (PRInt32 index = indexOf; index >= 0; index--) {
-    nsCOMPtr<nsIDOMXULElement> item;
-    container->GetItemAtIndex(index, getter_AddRefs(item));
-    nsCOMPtr<nsINode> itemNode(do_QueryInterface(item));
-
-    nsAccessible* itemAcc = itemNode ?
-      GetAccService()->GetAccessible(itemNode) : nsnull;
-
-    if (itemAcc) {
-      PRUint32 itemRole = Role(itemAcc);
-      if (itemRole == nsIAccessibleRole::ROLE_SEPARATOR)
-        break; // We reached the beginning of our group.
-
-      if (!(itemAcc->State() & states::INVISIBLE)) {
-        (*aSetSize)++;
-        (*aPosInSet)++;
-      }
-    }
-  }
-
-  for (PRInt32 index = indexOf + 1; index < static_cast<PRInt32>(itemsCount);
-       index++) {
-    nsCOMPtr<nsIDOMXULElement> item;
-    container->GetItemAtIndex(index, getter_AddRefs(item));
-    nsCOMPtr<nsINode> itemNode(do_QueryInterface(item));
-
-    nsAccessible* itemAcc =
-      itemNode ? GetAccService()->GetAccessible(itemNode) : nsnull;
-
-    if (itemAcc) {
-      PRUint32 itemRole = Role(itemAcc);
-      if (itemRole == nsIAccessibleRole::ROLE_SEPARATOR)
-        break; // We reached the end of our group.
-
-      if (!(itemAcc->State() & states::INVISIBLE))
-        (*aSetSize)++;
-    }
-  }
 }
 
 PRInt32
@@ -353,11 +289,11 @@ nsAccUtils::GetARIAToken(dom::Element* aElement, nsIAtom* aAttr)
   return nsnull;
 }
 
-nsAccessible *
+nsAccessible*
 nsAccUtils::GetAncestorWithRole(nsAccessible *aDescendant, PRUint32 aRole)
 {
-  nsAccessible *document = aDescendant->GetDocAccessible();
-  nsAccessible *parent = aDescendant;
+  nsAccessible* document = aDescendant->Document();
+  nsAccessible* parent = aDescendant;
   while ((parent = parent->Parent())) {
     PRUint32 testRole = parent->Role();
     if (testRole == aRole)
@@ -389,7 +325,7 @@ nsAccUtils::GetSelectableContainer(nsAccessible* aAccessible, PRUint64 aState)
 nsAccessible*
 nsAccUtils::GetMultiSelectableContainer(nsINode* aNode)
 {
-  nsAccessible* accessible = GetAccService()->GetAccessible(aNode);
+  nsAccessible* accessible = GetAccService()->GetAccessible(aNode, nsnull);
   if (accessible) {
     nsAccessible* container = GetSelectableContainer(accessible,
                                                      accessible->State());
@@ -425,11 +361,12 @@ nsAccUtils::GetTextAccessibleFromSelection(nsISelection* aSelection)
   nsCOMPtr<nsINode> focusNode(do_QueryInterface(focusDOMNode));
   nsCOMPtr<nsINode> resultNode =
     nsCoreUtils::GetDOMNodeFromDOMPoint(focusNode, focusOffset);
-  nsCOMPtr<nsIWeakReference> weakShell(nsCoreUtils::GetWeakShellFor(resultNode));
 
   // Get text accessible containing the result node.
-  nsAccessible* accessible =
-    GetAccService()->GetAccessibleOrContainer(resultNode, weakShell);
+  nsDocAccessible* doc = 
+    GetAccService()->GetDocAccessible(resultNode->OwnerDoc());
+  nsAccessible* accessible = doc ? 
+    doc->GetAccessibleOrContainer(resultNode) : nsnull;
   if (!accessible) {
     NS_NOTREACHED("No nsIAccessibleText for selection change event!");
     return nsnull;
@@ -525,9 +462,8 @@ nsAccUtils::GetScreenCoordsForWindow(nsAccessNode *aAccessNode)
 nsIntPoint
 nsAccUtils::GetScreenCoordsForParent(nsAccessNode *aAccessNode)
 {
-  nsAccessible *parent =
-    GetAccService()->GetContainerAccessible(aAccessNode->GetNode(),
-                                            aAccessNode->GetWeakShell());
+  nsDocAccessible* document = aAccessNode->Document();
+  nsAccessible* parent = document->GetContainerAccessible(aAccessNode->GetNode());
   if (!parent)
     return nsIntPoint(0, 0);
 

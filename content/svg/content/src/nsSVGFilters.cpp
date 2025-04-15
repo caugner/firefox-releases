@@ -310,6 +310,15 @@ nsSVGFE::IsAttributeMapped(const nsIAtom* name) const
 //----------------------------------------------------------------------
 // nsSVGElement methods
 
+/* virtual */ bool
+nsSVGFE::HasValidDimensions() const
+{
+  return (!mLengthAttributes[WIDTH].IsExplicitlySet() ||
+           mLengthAttributes[WIDTH].GetAnimValInSpecifiedUnits() > 0) &&
+         (!mLengthAttributes[HEIGHT].IsExplicitlySet() || 
+           mLengthAttributes[HEIGHT].GetAnimValInSpecifiedUnits() > 0);
+}
+
 nsSVGElement::LengthAttributesInfo
 nsSVGFE::GetLengthInfo()
 {
@@ -4927,7 +4936,7 @@ GenerateNormal(float *N, const PRUint8 *data, PRInt32 stride,
                PRInt32 x, PRInt32 y, float surfaceScale)
 {
   // See this for source of constants:
-  //   http://www.w3.org/TR/SVG11/filters.html#feDiffuseLighting
+  //   http://www.w3.org/TR/SVG11/filters.html#feDiffuseLightingElement
   static const PRInt8 Kx[3][3][3][3] =
     { { { {  0,  0,  0}, { 0, -2,  2}, { 0, -1,  1} },
         { {  0,  0,  0}, {-2,  0,  2}, {-1,  0,  1} },
@@ -5561,7 +5570,7 @@ nsSVGFEImageElement::IsAttributeMapped(const nsIAtom* name) const
 
 nsresult
 nsSVGFEImageElement::AfterSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
-                                  const nsAString* aValue, bool aNotify)
+                                  const nsAttrValue* aValue, bool aNotify)
 {
   if (aNamespaceID == kNameSpaceID_XLink && aName == nsGkAtoms::href) {
 

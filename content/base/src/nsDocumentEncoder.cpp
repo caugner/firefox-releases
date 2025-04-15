@@ -83,6 +83,13 @@
 #include "nsIFrame.h"
 #include "nsStringBuffer.h"
 #include "mozilla/dom/Element.h"
+#include "nsIEditorDocShell.h"
+#include "nsIEditor.h"
+#include "nsIHTMLEditor.h"
+#include "nsIDocShell.h"
+
+using namespace mozilla;
+using namespace mozilla::dom;
 
 nsresult NS_NewDomSelection(nsISelection **aDomSelection);
 
@@ -346,6 +353,42 @@ nsDocumentEncoder::IncludeInContext(nsINode *aNode)
   return false;
 }
 
+static
+bool
+IsInvisibleBreak(nsINode *aNode) {
+  // xxxehsan: we should probably figure out a way to determine
+  // if a BR node is visible without using the editor.
+  Element* elt = aNode->AsElement();
+  if (!elt->IsHTML(nsGkAtoms::br) ||
+      !aNode->IsEditable()) {
+    return false;
+  }
+
+  // Grab the editor associated with the document
+  nsIDocument *doc = aNode->GetCurrentDoc();
+  if (doc) {
+    nsPIDOMWindow *window = doc->GetWindow();
+    if (window) {
+      nsIDocShell *docShell = window->GetDocShell();
+      if (docShell) {
+        nsCOMPtr<nsIEditorDocShell> editorDocShell = do_QueryInterface(docShell);
+        if (editorDocShell) {
+          nsCOMPtr<nsIEditor> editor;
+          editorDocShell->GetEditor(getter_AddRefs(editor));
+          nsCOMPtr<nsIHTMLEditor> htmlEditor = do_QueryInterface(editor);
+          if (htmlEditor) {
+            bool isVisible = false;
+            nsCOMPtr<nsIDOMNode> domNode = do_QueryInterface(aNode);
+            htmlEditor->BreakIsVisible(domNode, &isVisible);
+            return !isVisible;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
 nsresult
 nsDocumentEncoder::SerializeNodeStart(nsINode* aNode,
                                       PRInt32 aStartOffset,
@@ -378,7 +421,12 @@ nsDocumentEncoder::SerializeNodeStart(nsINode* aNode,
     node = aNode;
   
   if (node->IsElement()) {
-    mozilla::dom::Element* originalElement =
+    if ((mFlags & (nsIDocumentEncoder::OutputPreformatted |
+                   nsIDocumentEncoder::OutputDropInvisibleBreak)) &&
+        IsInvisibleBreak(node)) {
+      return NS_OK;
+    }
+    Element* originalElement =
       aOriginalNode && aOriginalNode->IsElement() ?
         aOriginalNode->AsElement() : nsnull;
     mSerializer->AppendElementStart(node->AsElement(),
@@ -1268,7 +1316,15 @@ nsHTMLCopyEncoder::Init(nsIDOMDocument* aDocument,
   mDocument = do_QueryInterface(aDocument);
   NS_ENSURE_TRUE(mDocument, NS_ERROR_FAILURE);
 
-  mMimeType.AssignLiteral("text/html");
+  // Hack, hack! Traditionally, the caller passes text/unicode, which is
+  // treated as "guess text/html or text/plain" in this context. (It has a
+  // different meaning in other contexts. Sigh.) From now on, "text/plain"
+  // means forcing text/plain instead of guessing.
+  if (aMimeType.EqualsLiteral("text/plain")) {
+    mMimeType.AssignLiteral("text/plain");
+  } else {
+    mMimeType.AssignLiteral("text/html");
+  }
 
   // Make all links absolute when copying
   // (see related bugs #57296, #41924, #58646, #32768)
@@ -1795,22 +1851,12 @@ nsHTMLCopyEncoder::GetChildAt(nsIDOMNode *aParent, PRInt32 aOffset)
 bool 
 nsHTMLCopyEncoder::IsMozBR(nsIDOMNode* aNode)
 {
-  nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
-  if (IsTag(content, nsGkAtoms::br))
-  {
-    nsCOMPtr<nsIDOMElement> elem = do_QueryInterface(aNode);
-    if (elem)
-    {
-      nsAutoString typeAttrName(NS_LITERAL_STRING("type"));
-      nsAutoString typeAttrVal;
-      nsresult rv = elem->GetAttribute(typeAttrName, typeAttrVal);
-      ToLowerCase(typeAttrVal);
-      if (NS_SUCCEEDED(rv) && (typeAttrVal.EqualsLiteral("_moz")))
-        return true;
-    }
-    return false;
-  }
-  return false;
+  MOZ_ASSERT(aNode);
+  nsCOMPtr<Element> element = do_QueryInterface(aNode);
+  return element &&
+         element->IsHTML(nsGkAtoms::br) &&
+         element->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
+                              NS_LITERAL_STRING("_moz"), eIgnoreCase);
 }
 
 nsresult 

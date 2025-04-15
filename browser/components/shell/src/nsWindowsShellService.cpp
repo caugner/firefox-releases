@@ -336,7 +336,6 @@ nsWindowsShellService::ShortcutMaintenance()
 bool
 nsWindowsShellService::IsDefaultBrowserVista(bool* aIsDefaultBrowser)
 {
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
   IApplicationAssociationRegistration* pAAR;
   
   HRESULT hr = CoCreateInstance(CLSID_ApplicationAssociationRegistration,
@@ -355,7 +354,6 @@ nsWindowsShellService::IsDefaultBrowserVista(bool* aIsDefaultBrowser)
     pAAR->Release();
     return true;
   }
-#endif  
   return false;
 }
 
@@ -638,6 +636,14 @@ nsWindowsShellService::SetDesktopBackground(nsIDOMElement* aElement,
         break;
       case BACKGROUND_STRETCH:
         style.AssignLiteral("2");
+        tile.AssignLiteral("0");
+        break;
+      case BACKGROUND_FILL:
+        style.AssignLiteral("10");
+        tile.AssignLiteral("0");
+        break;
+      case BACKGROUND_FIT:
+        style.AssignLiteral("6");
         tile.AssignLiteral("0");
         break;
     }

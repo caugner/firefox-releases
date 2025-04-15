@@ -353,7 +353,8 @@ protected:
                         nsMouseScrollEvent* aMouseEvent,
                         nsIScrollableFrame::ScrollUnit aScrollQuantity,
                         bool aAllowScrollSpeedOverride,
-                        nsQueryContentEvent* aQueryEvent = nsnull);
+                        nsQueryContentEvent* aQueryEvent = nsnull,
+                        nsIAtom *aOrigin = nsnull);
   void DoScrollHistory(PRInt32 direction);
   void DoScrollZoom(nsIFrame *aTargetFrame, PRInt32 adjustment);
   nsresult GetMarkupDocumentViewer(nsIMarkupDocumentViewer** aMv);
@@ -417,15 +418,13 @@ protected:
    *
    * aSelectionTarget - target to check for selection
    * aDataTransfer - data transfer object that will contain the data to drag
-   * aIsSelection - [out] set to true if a selection is being dragged
-   * aIsInEditor - [out] set to true if the content is in an editor field
+   * aSelection - [out] set to the selection to be dragged
    * aTargetNode - [out] the draggable node, or null if there isn't one
    */
   void DetermineDragTarget(nsPresContext* aPresContext,
                            nsIContent* aSelectionTarget,
                            nsDOMDataTransfer* aDataTransfer,
-                           bool* aIsSelection,
-                           bool* aIsInEditor,
+                           nsISelection** aSelection,
                            nsIContent** aTargetNode);
 
   /*
@@ -436,13 +435,13 @@ protected:
    * aDragEvent - the dragstart/draggesture event
    * aDataTransfer - the data transfer that holds the data to be dragged
    * aDragTarget - the target of the drag
-   * aIsSelection - true if a selection is being dragged
+   * aSelection - the selection to be dragged
    */
   bool DoDefaultDragStart(nsPresContext* aPresContext,
                             nsDragEvent* aDragEvent,
                             nsDOMDataTransfer* aDataTransfer,
                             nsIContent* aDragTarget,
-                            bool aIsSelection);
+                            nsISelection* aSelection);
 
   bool IsTrackingDragGesture ( ) const { return mGestureDownContent != nsnull; }
   /**

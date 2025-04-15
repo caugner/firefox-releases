@@ -137,7 +137,7 @@ ApplyPropertyOp<JSStrictPropertyOp>(JSContext *cx, JSStrictPropertyOp op, JSObje
 
 template<typename Op>
 static JSBool
-PropertyOpForwarder(JSContext *cx, uintN argc, jsval *vp)
+PropertyOpForwarder(JSContext *cx, unsigned argc, jsval *vp)
 {
     // Layout:
     //   this = our this
@@ -152,7 +152,7 @@ PropertyOpForwarder(JSContext *cx, uintN argc, jsval *vp)
     jsval v = js::GetFunctionNativeReserved(callee, 0);
 
     JSObject *ptrobj = JSVAL_TO_OBJECT(v);
-    Op *popp = static_cast<Op *>(JS_GetPrivate(cx, ptrobj));
+    Op *popp = static_cast<Op *>(JS_GetPrivate(ptrobj));
 
     v = js::GetFunctionNativeReserved(callee, 1);
 
@@ -167,7 +167,7 @@ PropertyOpForwarder(JSContext *cx, uintN argc, jsval *vp)
 static void
 PointerFinalize(JSContext *cx, JSObject *obj)
 {
-    JSPropertyOp *popp = static_cast<JSPropertyOp *>(JS_GetPrivate(cx, obj));
+    JSPropertyOp *popp = static_cast<JSPropertyOp *>(JS_GetPrivate(obj));
     delete popp;
 }
 
@@ -181,7 +181,7 @@ PointerHolderClass = {
 
 template<typename Op>
 static JSObject *
-GeneratePropertyOp(JSContext *cx, JSObject *obj, jsid id, uintN argc, Op pop)
+GeneratePropertyOp(JSContext *cx, JSObject *obj, jsid id, unsigned argc, Op pop)
 {
     // The JS engine provides two reserved slots on function objects for
     // XPConnect to use. Use them to stick the necessary info here.
@@ -203,7 +203,7 @@ GeneratePropertyOp(JSContext *cx, JSObject *obj, jsid id, uintN argc, Op pop)
     if (!popp)
         return nsnull;
     *popp = pop;
-    JS_SetPrivate(cx, ptrobj, popp);
+    JS_SetPrivate(ptrobj, popp);
 
     js::SetFunctionNativeReserved(funobj, 0, OBJECT_TO_JSVAL(ptrobj));
     js::SetFunctionNativeReserved(funobj, 1, js::IdToJsval(id));
@@ -211,7 +211,7 @@ GeneratePropertyOp(JSContext *cx, JSObject *obj, jsid id, uintN argc, Op pop)
 }
 
 static JSBool
-ReifyPropertyOps(JSContext *cx, JSObject *obj, jsid id, uintN orig_attrs,
+ReifyPropertyOps(JSContext *cx, JSObject *obj, jsid id, unsigned orig_attrs,
                  JSPropertyOp getter, JSStrictPropertyOp setter,
                  JSObject **getterobjp, JSObject **setterobjp)
 {
@@ -219,7 +219,7 @@ ReifyPropertyOps(JSContext *cx, JSObject *obj, jsid id, uintN orig_attrs,
     jsval roots[2] = { JSVAL_NULL, JSVAL_NULL };
     JS::AutoArrayRooter tvr(cx, ArrayLength(roots), roots);
 
-    uintN attrs = JSPROP_SHARED | (orig_attrs & JSPROP_ENUMERATE);
+    unsigned attrs = JSPROP_SHARED | (orig_attrs & JSPROP_ENUMERATE);
     JSObject *getterobj;
     if (getter) {
         getterobj = GeneratePropertyOp(cx, obj, id, 0, getter);
@@ -251,7 +251,7 @@ ReifyPropertyOps(JSContext *cx, JSObject *obj, jsid id, uintN orig_attrs,
 }
 
 static JSBool
-LookupGetterOrSetter(JSContext *cx, JSBool wantGetter, uintN argc, jsval *vp)
+LookupGetterOrSetter(JSContext *cx, JSBool wantGetter, unsigned argc, jsval *vp)
 {
     XPC_QS_ASSERT_CONTEXT_OK(cx);
 
@@ -319,21 +319,21 @@ LookupGetterOrSetter(JSContext *cx, JSBool wantGetter, uintN argc, jsval *vp)
 }
 
 static JSBool
-SharedLookupGetter(JSContext *cx, uintN argc, jsval *vp)
+SharedLookupGetter(JSContext *cx, unsigned argc, jsval *vp)
 {
     return LookupGetterOrSetter(cx, true, argc, vp);
 }
 
 static JSBool
-SharedLookupSetter(JSContext *cx, uintN argc, jsval *vp)
+SharedLookupSetter(JSContext *cx, unsigned argc, jsval *vp)
 {
     return LookupGetterOrSetter(cx, false, argc, vp);
 }
 
 static JSBool
-DefineGetterOrSetter(JSContext *cx, uintN argc, JSBool wantGetter, jsval *vp)
+DefineGetterOrSetter(JSContext *cx, unsigned argc, JSBool wantGetter, jsval *vp)
 {
-    uintN attrs;
+    unsigned attrs;
     JSBool found;
     JSPropertyOp getter;
     JSStrictPropertyOp setter;
@@ -374,20 +374,20 @@ DefineGetterOrSetter(JSContext *cx, uintN argc, JSBool wantGetter, jsval *vp)
 }
 
 static JSBool
-SharedDefineGetter(JSContext *cx, uintN argc, jsval *vp)
+SharedDefineGetter(JSContext *cx, unsigned argc, jsval *vp)
 {
     return DefineGetterOrSetter(cx, argc, true, vp);
 }
 
 static JSBool
-SharedDefineSetter(JSContext *cx, uintN argc, jsval *vp)
+SharedDefineSetter(JSContext *cx, unsigned argc, jsval *vp)
 {
     return DefineGetterOrSetter(cx, argc, false, vp);
 }
 
 
 JSBool
-xpc_qsDefineQuickStubs(JSContext *cx, JSObject *proto, uintN flags,
+xpc_qsDefineQuickStubs(JSContext *cx, JSObject *proto, unsigned flags,
                        PRUint32 ifacec, const nsIID **interfaces,
                        PRUint32 tableSize, const xpc_qsHashEntry *table,
                        const xpc_qsPropertySpec *propspecs,
@@ -516,7 +516,7 @@ GetMethodInfo(JSContext *cx, jsval *vp, const char **ifaceNamep, jsid *memberIdp
     *memberIdp = methodId;
 }
 
-static JSBool
+static bool
 ThrowCallFailed(JSContext *cx, nsresult rv,
                 const char *ifaceName, jsid memberId, const char *memberName)
 {
@@ -592,17 +592,17 @@ xpc_qsThrowMethodFailedWithCcx(XPCCallContext &ccx, nsresult rv)
     return false;
 }
 
-void
+bool
 xpc_qsThrowMethodFailedWithDetails(JSContext *cx, nsresult rv,
                                    const char *ifaceName,
                                    const char *memberName)
 {
-    ThrowCallFailed(cx, rv, ifaceName, JSID_VOID, memberName);
+    return ThrowCallFailed(cx, rv, ifaceName, JSID_VOID, memberName);
 }
 
 static void
 ThrowBadArg(JSContext *cx, nsresult rv, const char *ifaceName,
-            jsid memberId, const char *memberName, uintN paramnum)
+            jsid memberId, const char *memberName, unsigned paramnum)
 {
     /* Only one memberId or memberName should be given. */
     JS_ASSERT(JSID_IS_VOID(memberId) != !memberName);
@@ -630,7 +630,7 @@ ThrowBadArg(JSContext *cx, nsresult rv, const char *ifaceName,
 }
 
 void
-xpc_qsThrowBadArg(JSContext *cx, nsresult rv, jsval *vp, uintN paramnum)
+xpc_qsThrowBadArg(JSContext *cx, nsresult rv, jsval *vp, unsigned paramnum)
 {
     const char *ifaceName;
     jsid memberId;
@@ -639,13 +639,13 @@ xpc_qsThrowBadArg(JSContext *cx, nsresult rv, jsval *vp, uintN paramnum)
 }
 
 void
-xpc_qsThrowBadArgWithCcx(XPCCallContext &ccx, nsresult rv, uintN paramnum)
+xpc_qsThrowBadArgWithCcx(XPCCallContext &ccx, nsresult rv, unsigned paramnum)
 {
     XPCThrower::ThrowBadParam(rv, paramnum, ccx);
 }
 
 void
-xpc_qsThrowBadArgWithDetails(JSContext *cx, nsresult rv, uintN paramnum,
+xpc_qsThrowBadArgWithDetails(JSContext *cx, nsresult rv, unsigned paramnum,
                              const char *ifaceName, const char *memberName)
 {
     ThrowBadArg(cx, rv, ifaceName, JSID_VOID, memberName, paramnum);
@@ -788,7 +788,7 @@ getWrapper(JSContext *cx,
            XPCWrappedNativeTearOff **tearoff)
 {
     if (XPCWrapper::IsSecurityWrapper(obj) &&
-        !(obj = XPCWrapper::Unwrap(cx, obj))) {
+        !(obj = XPCWrapper::Unwrap(cx, obj, false))) {
         return NS_ERROR_XPC_SECURITY_MANAGER_VETO;
     }
 
@@ -1019,14 +1019,20 @@ xpc_qsJsvalToWcharStr(JSContext *cx, jsval v, jsval *pval, const PRUnichar **pst
 namespace xpc {
 
 bool
-StringToJsval(JSContext *cx, nsString &str, JS::Value *rval)
+StringToJsval(JSContext *cx, nsAString &str, JS::Value *rval)
 {
     // From the T_DOMSTRING case in XPCConvert::NativeData2JS.
     if (str.IsVoid()) {
         *rval = JSVAL_NULL;
         return true;
     }
+    return NonVoidStringToJsval(cx, str, rval);
+}
 
+bool
+NonVoidStringToJsval(JSContext *cx, nsAString &str, JS::Value *rval)
+{
+    MOZ_ASSERT(!str.IsVoid());
     nsStringBuffer* sharedBuffer;
     jsval jsstr = XPCStringConvert::ReadableToJSVal(cx, str, &sharedBuffer);
     if (JSVAL_IS_NULL(jsstr))
@@ -1076,16 +1082,10 @@ xpc_qsXPCOMObjectToJsval(XPCLazyCallContext &lccx, qsObjectHelper &aHelper,
 
     JSContext *cx = lccx.GetJSContext();
 
-    // XXX The OBJ_IS_NOT_GLOBAL here is not really right. In
-    // fact, this code is depending on the fact that the
-    // global object will not have been collected, and
-    // therefore this NativeInterface2JSObject will not end up
-    // creating a new XPCNativeScriptableShared.
-
     nsresult rv;
     if (!XPCConvert::NativeInterface2JSObject(lccx, rval, nsnull,
                                               aHelper, iid, iface,
-                                              true, OBJ_IS_NOT_GLOBAL, &rv)) {
+                                              true, &rv)) {
         // I can't tell if NativeInterface2JSObject throws JS exceptions
         // or not.  This is a sloppy stab at the right semantics; the
         // method really ought to be fixed to behave consistently.

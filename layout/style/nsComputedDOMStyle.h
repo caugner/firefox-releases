@@ -62,8 +62,8 @@ class nsComputedDOMStyle : public nsDOMCSSDeclaration,
 {
 public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsComputedDOMStyle,
-                                           nsICSSDeclaration)
+  NS_DECL_CYCLE_COLLECTION_SKIPPABLE_CLASS_AMBIGUOUS(nsComputedDOMStyle,
+                                                     nsICSSDeclaration)
 
   NS_IMETHOD Init(nsIDOMElement *aElement,
                   const nsAString& aPseudoElt,
@@ -366,6 +366,7 @@ private:
 
   /* Column properties */
   nsIDOMCSSValue* DoGetColumnCount();
+  nsIDOMCSSValue* DoGetColumnFill();
   nsIDOMCSSValue* DoGetColumnWidth();
   nsIDOMCSSValue* DoGetColumnGap();
   nsIDOMCSSValue* DoGetColumnRuleWidth();
