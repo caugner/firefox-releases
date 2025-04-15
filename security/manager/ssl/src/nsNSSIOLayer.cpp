@@ -226,7 +226,8 @@ nsNSSSocketInfo::nsNSSSocketInfo()
     mAllowTLSIntoleranceTimeout(PR_TRUE),
     mRememberClientAuthCertificate(PR_FALSE),
     mHandshakeStartTime(0),
-    mPort(0)
+    mPort(0),
+    mIsCertIssuerBlacklisted(PR_FALSE)
 {
   mThreadData = new nsSSLSocketThreadData;
 }
@@ -360,7 +361,7 @@ nsNSSSocketInfo::EnsureDocShellDependentStuffKnown()
   if (mDocShellDependentStuffKnown)
     return NS_OK;
 
-  if (!mCallbacks || nsSSLThread::exitRequested())
+  if (!mCallbacks || nsSSLThread::stoppedOrStopping())
     return NS_ERROR_FAILURE;
 
   mDocShellDependentStuffKnown = PR_TRUE;
@@ -567,7 +568,7 @@ NS_IMETHODIMP nsNSSSocketInfo::GetInterface(const nsIID & uuid, void * *result)
 
     rv = ir->GetInterface(uuid, result);
   } else {
-    if (nsSSLThread::exitRequested())
+    if (nsSSLThread::stoppedOrStopping())
       return NS_ERROR_FAILURE;
 
     nsCOMPtr<nsIInterfaceRequestor> proxiedCallbacks;
@@ -1413,7 +1414,7 @@ displayAlert(nsAFlatString &formattedString, nsNSSSocketInfo *infoObject)
   // The interface requestor object may not be safe, so proxy the call to get
   // the nsIPrompt.
 
-  if (nsSSLThread::exitRequested())
+  if (nsSSLThread::stoppedOrStopping())
     return NS_ERROR_FAILURE;
 
   nsCOMPtr<nsIInterfaceRequestor> proxiedCallbacks;
@@ -1450,7 +1451,7 @@ nsHandleSSLError(nsNSSSocketInfo *socketInfo, PRInt32 err)
     return NS_OK;
   }
 
-  if (nsSSLThread::exitRequested()) {
+  if (nsSSLThread::stoppedOrStopping()) {
     return NS_ERROR_FAILURE;
   }
 
@@ -3354,7 +3355,7 @@ nsNSSBadCertHandler(void *arg, PRFileDesc *sslSocket)
   if (!infoObject)
     return SECFailure;
 
-  if (nsSSLThread::exitRequested())
+  if (nsSSLThread::stoppedOrStopping())
     return cancel_and_failure(infoObject);
 
   CERTCertificate *peerCert = nsnull;
@@ -3440,6 +3441,10 @@ nsNSSBadCertHandler(void *arg, PRFileDesc *sslSocket)
       srv = CERT_PKIXVerifyCert(peerCert, certificateUsageSSLServer,
                                 survivingParams->GetRawPointerForNSS(),
                                 cvout, (void*)infoObject);
+    }
+
+    if (infoObject->IsCertIssuerBlacklisted()) {
+      collected_errors |= nsICertOverrideService::ERROR_UNTRUSTED;
     }
 
     // We ignore the result code of the cert verification.
