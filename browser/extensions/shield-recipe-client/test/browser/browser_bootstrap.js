@@ -24,6 +24,12 @@ function withBootstrap(testFunction) {
 const initPref1 = "test.initShieldPrefs1";
 const initPref2 = "test.initShieldPrefs2";
 const initPref3 = "test.initShieldPrefs3";
+
+const experimentPref1 = "test.initExperimentPrefs1";
+const experimentPref2 = "test.initExperimentPrefs2";
+const experimentPref3 = "test.initExperimentPrefs3";
+const experimentPref4 = "test.initExperimentPrefs4";
+
 decorate_task(
   withPrefEnv({
     clear: [[initPref1], [initPref2], [initPref3]],
@@ -81,9 +87,6 @@ decorate_task(
   },
 );
 
-const experimentPref1 = "test.initExperimentPrefs1";
-const experimentPref2 = "test.initExperimentPrefs2";
-const experimentPref3 = "test.initExperimentPrefs3";
 decorate_task(
   withPrefEnv({
     set: [
@@ -170,70 +173,98 @@ decorate_task(
 
 decorate_task(
   withBootstrap,
-  withStub(ShieldRecipeClient, "startup"),
-  async function testStartupDelayed(Bootstrap, startupStub) {
-    const startupPromise = Bootstrap.startup(undefined, 1); // 1 == APP_STARTUP
-    Bootstrap.observe(null, "sessionstore-windows-restored");
-    await startupPromise;
-    ok(
-      startupStub.called,
-      "Once the sessionstore-windows-restored event is observed, call ShieldRecipeClient.startup.",
-    );
+  async function testStartupDelayed(Bootstrap) {
+    const finishStartupStub = sinon.stub(Bootstrap, "finishStartup");
+    try {
+      Bootstrap.startup(undefined, 1); // 1 == APP_STARTUP
+      ok(
+        !finishStartupStub.called,
+        "When started at app startup, do not call ShieldRecipeClient.startup immediately.",
+      );
+
+      Bootstrap.observe(null, "sessionstore-windows-restored");
+      ok(
+        finishStartupStub.called,
+        "Once the sessionstore-windows-restored event is observed, call ShieldRecipeClient.startup.",
+      );
+    } finally {
+      finishStartupStub.restore();
+    }
   },
 );
 
 decorate_task(
   withBootstrap,
-  withStub(ShieldRecipeClient, "startup"),
-  async function testStartupDelayed(Bootstrap, startupStub) {
-    await Bootstrap.startup(undefined, 3); // 3 == ADDON_ENABLED
-    ok(
-      startupStub.called,
-      "When the add-on is enabled outside app startup, call ShieldRecipeClient.startup immediately.",
-    );
+  async function testStartupDelayed(Bootstrap) {
+    const finishStartupStub = sinon.stub(Bootstrap, "finishStartup");
+    try {
+      Bootstrap.startup(undefined, 3); // 3 == ADDON_ENABLED
+      ok(
+        finishStartupStub.called,
+        "When the add-on is enabled outside app startup, call ShieldRecipeClient.startup immediately.",
+      );
+    } finally {
+      finishStartupStub.restore();
+    }
   },
 );
 
+// During startup, preferences that are changed for experiments should
+// be record by calling PreferenceExperiments.recordOriginalValues.
 decorate_task(
+  withPrefEnv({
+    set: [
+      [`extensions.shield-recipe-client.startupExperimentPrefs.${experimentPref1}`, true],
+      [`extensions.shield-recipe-client.startupExperimentPrefs.${experimentPref2}`, 2],
+      [`extensions.shield-recipe-client.startupExperimentPrefs.${experimentPref3}`, "string"],
+      [`extensions.shield-recipe-client.startupExperimentPrefs.${experimentPref4}`, "another string"],
+    ],
+    clear: [
+      [experimentPref1],
+      [experimentPref2],
+      [experimentPref3],
+      [experimentPref4],
+      ["extensions.shield-recipe-client.startupExperimentPrefs.existingPref"],
+    ],
+  }),
   withBootstrap,
-  withMockPreferences,
-  PreferenceExperiments.withMockExperiments,
-  async function testMigrateOldPreferenceExperiments(Bootstrap, mockPreferences, mockExperiments) {
+  withStub(PreferenceExperiments, "recordOriginalValues"),
+  async function testInitExperimentPrefs(Bootstrap, recordOriginalValuesStub) {
     const defaultBranch = Services.prefs.getDefaultBranch("");
-    const experimentBranch = Services.prefs.getBranch("extensions.shield-recipe-client.startupExperimentPrefs.");
-    experimentBranch.deleteBranch("");
 
-    mockExperiments.test = experimentFactory({
-      preferenceName: "test.shieldMigrate",
-      preferenceType: "integer",
-      preferenceValue: 7,
-    });
-    mockPreferences.set("test.shieldMigrate", 10, "default");
-    mockPreferences.set("extensions.shield-recipe-client.startupExperimentMigrated", false, "user");
+    defaultBranch.setBoolPref(experimentPref1, false);
+    defaultBranch.setIntPref(experimentPref2, 1);
+    defaultBranch.setCharPref(experimentPref3, "original string");
+    // experimentPref4 is left unset
 
-    await Bootstrap.initExperimentPrefs();
+    Bootstrap.initExperimentPrefs();
+    await Bootstrap.finishStartup();
 
-    is(
-      defaultBranch.getIntPref("test.shieldMigrate"),
-      7,
-      "initExperimentPrefs initialized test.shieldMigrate after migrating the experiment prefs.",
-    );
-    ok(
-      Services.prefs.getBoolPref("extensions.shield-recipe-client.startupExperimentMigrated"),
-      "initExperimentPrefs set the migration pref after finishing the migration.",
+    Assert.deepEqual(
+      recordOriginalValuesStub.getCall(0).args,
+      [{
+        [experimentPref1]: false,
+        [experimentPref2]: 1,
+        [experimentPref3]: "original string",
+        [experimentPref4]: null,  // null because it was not initially set.
+      }],
+      "finishStartup should record original values of the prefs initExperimentPrefs changed",
     );
   },
 );
 
+// Test that startup prefs are handled correctly when there is a value on the user branch but not the default branch.
 decorate_task(
+  withPrefEnv({
+    set: [
+      ["extensions.shield-recipe-client.startupExperimentPrefs.testing.does-not-exist", "foo"],
+      ["testing.does-not-exist", "foo"],
+    ],
+  }),
   withBootstrap,
-  withMockPreferences,
-  withStub(PreferenceExperiments, "saveStartupPrefs"),
-  async function testAlreadyMigrated(Bootstrap, mockPreferences, saveStartupPrefsStub) {
-    mockPreferences.set("extensions.shield-recipe-client.startupExperimentMigrated", true, "user");
-
-    await Bootstrap.initExperimentPrefs();
-
-    sinon.assert.notCalled(saveStartupPrefsStub);
+  withStub(PreferenceExperiments, "recordOriginalValues"),
+  async function testInitExperimentPrefsNoDefaultValue(Bootstrap) {
+    Bootstrap.initExperimentPrefs();
+    ok(true, "initExperimentPrefs should not throw for non-existant prefs");
   },
 );

@@ -3,14 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const {utils: Cu} = Components;
+const {results: Cr, utils: Cu} = Components;
 Cu.import("resource://gre/modules/AppConstants.jsm");
 Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "PromiseUtils",
-  "resource://gre/modules/PromiseUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "LogManager",
   "resource://shield-recipe-client/lib/LogManager.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "ShieldRecipeClient",
@@ -24,7 +22,6 @@ this.EXPORTED_SYMBOLS = ["Bootstrap"];
 
 const REASON_APP_STARTUP = 1;
 const UI_AVAILABLE_NOTIFICATION = "sessionstore-windows-restored";
-const STARTUP_EXPERIMENT_MIGRATED_PREF = "extensions.shield-recipe-client.startupExperimentMigrated";
 const STARTUP_EXPERIMENT_PREFS_BRANCH = "extensions.shield-recipe-client.startupExperimentPrefs.";
 const PREF_LOGGING_LEVEL = "extensions.shield-recipe-client.logging.level";
 const BOOTSTRAP_LOGGER_NAME = "extensions.shield-recipe-client.bootstrap";
@@ -48,10 +45,9 @@ const log = Log.repository.getLogger(BOOTSTRAP_LOGGER_NAME);
 log.addAppender(new Log.ConsoleAppender(new Log.BasicFormatter()));
 log.level = Services.prefs.getIntPref(PREF_LOGGING_LEVEL, Log.Level.Warn);
 
-this.Bootstrap = {
-  _readyToStartup: null,
-  _startupFinished: null,
+let studyPrefsChanged = {};
 
+this.Bootstrap = {
   initShieldPrefs(defaultPrefs) {
     const prefBranch = Services.prefs.getDefaultBranch("");
     for (const [name, value] of Object.entries(defaultPrefs)) {
@@ -71,17 +67,10 @@ this.Bootstrap = {
     }
   },
 
-  async initExperimentPrefs() {
+  initExperimentPrefs() {
+    studyPrefsChanged = {};
     const defaultBranch = Services.prefs.getDefaultBranch("");
     const experimentBranch = Services.prefs.getBranch(STARTUP_EXPERIMENT_PREFS_BRANCH);
-
-    // If the user has upgraded from a Shield version that doesn't save experiment prefs on
-    // shutdown, we need to manually import them. This incurs a one-time startup i/o hit, but we
-    // already had this startup i/o hit anyway in the affected versions. (bug 1399936)
-    if (!Services.prefs.getBoolPref(STARTUP_EXPERIMENT_MIGRATED_PREF, false)) {
-      await PreferenceExperiments.saveStartupPrefs();
-      Services.prefs.setBoolPref(STARTUP_EXPERIMENT_MIGRATED_PREF, true);
-    }
 
     for (const prefName of experimentBranch.getChildList("")) {
       const experimentPrefType = experimentBranch.getPrefType(prefName);
@@ -92,6 +81,40 @@ this.Bootstrap = {
         continue;
       }
 
+      // record the value of the default branch before setting it
+      try {
+        switch (realPrefType) {
+          case Services.prefs.PREF_STRING:
+            studyPrefsChanged[prefName] = defaultBranch.getCharPref(prefName);
+            break;
+
+          case Services.prefs.PREF_INT:
+            studyPrefsChanged[prefName] = defaultBranch.getIntPref(prefName);
+            break;
+
+          case Services.prefs.PREF_BOOL:
+            studyPrefsChanged[prefName] = defaultBranch.getBoolPref(prefName);
+            break;
+
+          case Services.prefs.PREF_INVALID:
+            studyPrefsChanged[prefName] = null;
+            break;
+
+          default:
+            // This should never happen
+            log.error(`Error getting startup pref ${prefName}; unknown value type ${experimentPrefType}.`);
+        }
+      } catch (e) {
+        if (e.result == Cr.NS_ERROR_UNEXPECTED) {
+          // There is a value for the pref on the user branch but not on the default branch. This is ok.
+          studyPrefsChanged[prefName] = null;
+        } else {
+          // rethrow
+          throw e;
+        }
+      }
+
+      // now set the new default value
       switch (experimentPrefType) {
         case Services.prefs.PREF_STRING:
           defaultBranch.setCharPref(prefName, experimentBranch.getCharPref(prefName));
@@ -120,7 +143,7 @@ this.Bootstrap = {
   observe(subject, topic, data) {
     if (topic === UI_AVAILABLE_NOTIFICATION) {
       Services.obs.removeObserver(this, UI_AVAILABLE_NOTIFICATION);
-      this._readyToStartup.resolve();
+      this.finishStartup();
     }
   },
 
@@ -128,35 +151,26 @@ this.Bootstrap = {
     // Nothing to do during install
   },
 
-  async startup(data, reason) {
-    this._readyToStartup = PromiseUtils.defer();
-    this._startupFinished = PromiseUtils.defer();
+  startup(data, reason) {
+    // Initialization that needs to happen before the first paint on startup.
+    this.initShieldPrefs(DEFAULT_PREFS);
+    this.initExperimentPrefs();
 
-    // _readyToStartup should only be resolved after first paint has
-    // already occurred.
+    // If the app is starting up, wait until the UI is available before finishing
+    // init.
     if (reason === REASON_APP_STARTUP) {
       Services.obs.addObserver(this, UI_AVAILABLE_NOTIFICATION);
     } else {
-      this._readyToStartup.resolve();
+      this.finishStartup();
     }
+  },
 
-    // Initialization that needs to happen before the first paint on startup.
-    try {
-      this.initShieldPrefs(DEFAULT_PREFS);
-      await this.initExperimentPrefs();
-
-      await this._readyToStartup.promise;
-      await ShieldRecipeClient.startup();
-    } finally {
-      this._startupFinished.resolve();
-    }
-
+  async finishStartup() {
+    await PreferenceExperiments.recordOriginalValues(studyPrefsChanged);
+    ShieldRecipeClient.startup();
   },
 
   async shutdown(data, reason) {
-    // If startup is still in progress, wait for it to finish
-    await this._startupFinished.promise;
-
     // Wait for async write operations during shutdown before unloading modules.
     await ShieldRecipeClient.shutdown(reason);
 

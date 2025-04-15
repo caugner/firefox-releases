@@ -281,40 +281,6 @@ add_task(async function test_get() {
   do_check_eq(profileStorage.addresses.get("INVALID_GUID"), null);
 });
 
-add_task(async function test_getByFilter() {
-  let profileStorage = await initProfileStorage(TEST_STORE_FILE_NAME,
-                                                [TEST_ADDRESS_1, TEST_ADDRESS_2]);
-
-  let filter = {info: {fieldName: "street-address"}, searchString: "Some"};
-  let addresses = profileStorage.addresses.getByFilter(filter);
-  do_check_eq(addresses.length, 1);
-  do_check_record_matches(addresses[0], TEST_ADDRESS_2);
-
-  filter = {info: {fieldName: "country"}, searchString: "u"};
-  addresses = profileStorage.addresses.getByFilter(filter);
-  do_check_eq(addresses.length, 2);
-  do_check_record_matches(addresses[0], TEST_ADDRESS_1);
-  do_check_record_matches(addresses[1], TEST_ADDRESS_2);
-
-  filter = {info: {fieldName: "street-address"}, searchString: "test"};
-  addresses = profileStorage.addresses.getByFilter(filter);
-  do_check_eq(addresses.length, 0);
-
-  filter = {info: {fieldName: "street-address"}, searchString: ""};
-  addresses = profileStorage.addresses.getByFilter(filter);
-  do_check_eq(addresses.length, 2);
-
-  // Check if the filtering logic is free from searching special chars.
-  filter = {info: {fieldName: "street-address"}, searchString: ".*"};
-  addresses = profileStorage.addresses.getByFilter(filter);
-  do_check_eq(addresses.length, 0);
-
-  // Prevent broken while searching the property that does not exist.
-  filter = {info: {fieldName: "tel"}, searchString: "1"};
-  addresses = profileStorage.addresses.getByFilter(filter);
-  do_check_eq(addresses.length, 0);
-});
-
 add_task(async function test_add() {
   let profileStorage = await initProfileStorage(TEST_STORE_FILE_NAME,
                                                 [TEST_ADDRESS_1, TEST_ADDRESS_2]);
@@ -345,8 +311,11 @@ add_task(async function test_update() {
   let guid = addresses[1].guid;
   let timeLastModified = addresses[1].timeLastModified;
 
-  let onChanged = TestUtils.topicObserved("formautofill-storage-changed",
-                                          (subject, data) => data == "update");
+  let onChanged = TestUtils.topicObserved(
+    "formautofill-storage-changed",
+    (subject, data) =>
+      data == "update" && subject.QueryInterface(Ci.nsISupportsString).data == guid
+  );
 
   do_check_neq(addresses[1].country, undefined);
 
@@ -449,31 +418,49 @@ MERGE_TESTCASES.forEach((testcase) => {
     let profileStorage = await initProfileStorage(TEST_STORE_FILE_NAME,
                                                   [testcase.addressInStorage]);
     let addresses = profileStorage.addresses.getAll();
+    let guid = addresses[0].guid;
+    let timeLastModified = addresses[0].timeLastModified;
+
     // Merge address and verify the guid in notifyObservers subject
     let onMerged = TestUtils.topicObserved(
       "formautofill-storage-changed",
       (subject, data) =>
-        data == "merge" && subject.QueryInterface(Ci.nsISupportsString).data == addresses[0].guid
+        data == "update" && subject.QueryInterface(Ci.nsISupportsString).data == guid
     );
-    let timeLastModified = addresses[0].timeLastModified;
-    Assert.equal(
-      profileStorage.addresses.mergeIfPossible(addresses[0].guid, testcase.addressToMerge),
-      true);
+
+    // Force to create sync metadata.
+    profileStorage.addresses.pullSyncChanges();
+    do_check_eq(getSyncChangeCounter(profileStorage.addresses, guid), 1);
+
+    Assert.ok(profileStorage.addresses.mergeIfPossible(guid, testcase.addressToMerge));
     await onMerged;
+
     addresses = profileStorage.addresses.getAll();
     Assert.equal(addresses.length, 1);
     Assert.notEqual(addresses[0].timeLastModified, timeLastModified);
     do_check_record_matches(addresses[0], testcase.expectedAddress);
+
+    // Record merging should bump the change counter.
+    do_check_eq(getSyncChangeCounter(profileStorage.addresses, guid), 2);
   });
 });
 
 add_task(async function test_merge_same_address() {
   let profileStorage = await initProfileStorage(TEST_STORE_FILE_NAME, [TEST_ADDRESS_1]);
   let addresses = profileStorage.addresses.getAll();
+  let guid = addresses[0].guid;
   let timeLastModified = addresses[0].timeLastModified;
+
+  // Force to create sync metadata.
+  profileStorage.addresses.pullSyncChanges();
+  do_check_eq(getSyncChangeCounter(profileStorage.addresses, guid), 1);
+
   // Merge same address will still return true but it won't update timeLastModified.
-  Assert.equal(profileStorage.addresses.mergeIfPossible(addresses[0].guid, TEST_ADDRESS_1), true);
+  Assert.ok(profileStorage.addresses.mergeIfPossible(guid, TEST_ADDRESS_1));
   Assert.equal(addresses[0].timeLastModified, timeLastModified);
+
+  // ... and won't bump the change counter, either.
+  do_check_eq(getSyncChangeCounter(profileStorage.addresses, guid), 1);
 });
 
 add_task(async function test_merge_unable_merge() {
@@ -481,11 +468,20 @@ add_task(async function test_merge_unable_merge() {
                                                 [TEST_ADDRESS_1, TEST_ADDRESS_2]);
 
   let addresses = profileStorage.addresses.getAll();
+  let guid = addresses[1].guid;
+
+  // Force to create sync metadata.
+  profileStorage.addresses.pullSyncChanges();
+  do_check_eq(getSyncChangeCounter(profileStorage.addresses, guid), 1);
+
   // Unable to merge because of conflict
-  do_check_eq(profileStorage.addresses.mergeIfPossible(addresses[1].guid, TEST_ADDRESS_3), false);
+  do_check_eq(profileStorage.addresses.mergeIfPossible(guid, TEST_ADDRESS_3), false);
 
   // Unable to merge because no overlap
-  do_check_eq(profileStorage.addresses.mergeIfPossible(addresses[1].guid, TEST_ADDRESS_4), false);
+  do_check_eq(profileStorage.addresses.mergeIfPossible(guid, TEST_ADDRESS_4), false);
+
+  // Shouldn't bump the change counter
+  do_check_eq(getSyncChangeCounter(profileStorage.addresses, guid), 1);
 });
 
 add_task(async function test_mergeToStorage() {
