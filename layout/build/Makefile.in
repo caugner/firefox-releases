@@ -80,6 +80,7 @@ REQUIRES	= xpcom \
 		  locale \
 		  necko \
 		  dom \
+		  storage \
 		  editor \
 		  webshell \
 		  docshell \
@@ -101,17 +102,20 @@ REQUIRES	= xpcom \
 		  commandhandler \
 		  webbrwsr \
 		  uconv \
+		  inspector \
 		  $(NULL)
 
 CPPSRCS		= \
 		nsLayoutModule.cpp \
 		nsContentHTTPStartup.cpp \
 		nsContentDLF.cpp \
+		nsLayoutStatics.cpp \
 		$(NULL)
 
 EXPORTS		= \
 		nsLayoutCID.h \
 		nsContentDLF.h \
+		nsLayoutStatics.h \
 		$(NULL)
 
 SHARED_LIBRARY_LIBS = \
@@ -136,6 +140,7 @@ SHARED_LIBRARY_LIBS = \
 		$(DIST)/lib/$(LIB_PREFIX)jsdombase_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)jsdomevents_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)jsurl_s.$(LIB_SUFFIX) \
+		$(DIST)/lib/$(LIB_PREFIX)jsdomstorage_s.$(LIB_SUFFIX) \
 		$(NULL)
 
 ifdef MOZ_XUL
@@ -144,6 +149,14 @@ SHARED_LIBRARY_LIBS += \
 		$(DIST)/lib/$(LIB_PREFIX)gkxulgrid_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconxultmpl_s.$(LIB_SUFFIX) \
 		$(NULL)
+endif
+
+ifndef MOZ_NO_INSPECTOR_APIS
+SHARED_LIBRARY_LIBS += \
+		$(DIST)/lib/$(LIB_PREFIX)inspector_s.$(LIB_SUFFIX) \
+		$(NULL)
+else
+DEFINES += -DMOZ_NO_INSPECTOR_APIS
 endif
 
 ifdef MOZ_MATHML
@@ -221,7 +234,7 @@ EXTRA_DSO_LDOPTS += $(MOZ_CAIRO_LIBS) \
 		    $(NULL)
 endif
 
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifneq (,$(filter mac cocoa gtk,$(MOZ_WIDGET_TOOLKIT)))
 EXTRA_DSO_LDOPTS += \
 	$(TK_LIBS) \
 	$(NULL)
@@ -235,6 +248,7 @@ LOCAL_INCLUDES	+= -I$(srcdir)/../base \
 		   -I$(srcdir)/../style \
 		   -I$(srcdir)/../xul/content/src \
 		   -I$(srcdir)/../xul/base/src \
+		   -I$(srcdir)/../inspector/src \
 		   -I$(srcdir)/../../content/base/src \
 		   -I$(srcdir)/../../content/html/content/src \
 		   -I$(srcdir)/../../content/html/document/src \
@@ -246,6 +260,7 @@ LOCAL_INCLUDES	+= -I$(srcdir)/../base \
 		   -I$(topsrcdir)/view/src \
 		   -I$(topsrcdir)/dom/src/base \
 		   -I$(topsrcdir)/dom/src/jsurl \
+		   -I$(topsrcdir)/dom/src/storage \
 		   -I. \
 		   $(NULL)
 

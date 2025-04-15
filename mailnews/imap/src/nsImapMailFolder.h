@@ -45,6 +45,7 @@
 #include "nsICopyMessageListener.h"
 #include "nsIImapService.h"
 #include "nsIUrlListener.h"
+#include "nsAutoPtr.h"
 #include "nsIImapIncomingServer.h" // we need this for its IID
 #include "nsIMsgParseMailMsgState.h"
 #include "nsITransactionManager.h"
@@ -83,7 +84,7 @@ public:
 
     nsCOMPtr<nsISupports> m_srcSupport; // source file spec or folder
     nsCOMPtr<nsISupportsArray> m_messages; // array of source messages
-    nsCOMPtr<nsMsgTxn> m_undoMsgTxn; // undo object with this copy operation
+    nsRefPtr<nsMsgTxn> m_undoMsgTxn; // undo object with this copy operation
     nsCOMPtr<nsIMsgDBHdr> m_message; // current message to be copied
     nsCOMPtr<nsIMsgCopyServiceListener> m_listener; // listener of this copy
                                                     // operation 
@@ -284,6 +285,13 @@ public:
   NS_IMETHOD DownloadAllForOffline(nsIUrlListener *listener, nsIMsgWindow *msgWindow);
   NS_IMETHOD GetCanFileMessages(PRBool *aCanFileMessages);
   NS_IMETHOD GetCanDeleteMessages(PRBool *aCanDeleteMessages);
+  NS_IMETHOD FetchMsgPreviewText(nsMsgKey *aKeysToFetch, PRUint32 aNumKeys,
+                                                 PRBool aLocalOnly, nsIUrlListener *aUrlListener, 
+                                                 PRBool *aAsyncResults);
+
+  NS_IMETHOD AddKeywordToMessages(nsISupportsArray *aMessages, const char *aKeyword);
+  NS_IMETHOD RemoveKeywordFromMessages(nsISupportsArray *aMessages, const char *aKeyword);
+
   // nsIMsgImapMailFolder methods
   NS_DECL_NSIMSGIMAPMAILFOLDER
           
@@ -344,7 +352,7 @@ protected:
   
   nsresult SetupHeaderParseStream(PRUint32 size, const char *content_type, nsIMailboxSpec *boxSpec);
   nsresult  ParseAdoptedHeaderLine(const char *messageLine, PRUint32 msgKey);
-  nsresult  NormalEndHeaderParseStream(nsIImapProtocol *aProtocol);
+  nsresult  NormalEndHeaderParseStream(nsIImapProtocol *aProtocol, nsIImapUrl *imapUrl);
   
   void EndOfflineDownload();
 
@@ -417,6 +425,7 @@ protected:
   nsresult CopyOfflineMsgBody(nsIMsgFolder *srcFolder, nsIMsgDBHdr *destHdr, nsIMsgDBHdr *origHdr);
   
   void GetTrashFolderName(nsAString &aFolderName);
+  PRBool ShowPreviewText();
   
   PRBool m_initialized;
   PRBool m_haveDiscoveredAllFolders;
@@ -439,7 +448,7 @@ protected:
   PRBool m_urlRunning;
   
   // *** jt - undo move/copy trasaction support
-  nsCOMPtr<nsMsgTxn> m_pendingUndoTxn;
+  nsRefPtr<nsMsgTxn> m_pendingUndoTxn;
   nsCOMPtr<nsImapMailCopyState> m_copyState;
   PRMonitor *m_appendMsgMonitor;
   PRUnichar m_hierarchyDelimiter;

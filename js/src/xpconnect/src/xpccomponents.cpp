@@ -1905,6 +1905,11 @@ nsXPCComponents_Utils::LookupMethod()
         return NS_ERROR_XPC_BAD_CONVERT_JS;
 
     // this will do verification and the method lookup for us
+    // Note that if |obj| is an XPCNativeWrapper this will all still work.
+    // We'll hand back the same method that we'd hand back for the underlying
+    // XPCWrappedNative.  This means no deep wrapping, unfortunately, but we
+    // can't keep track of both the underlying function and the
+    // XPCNativeWrapper at once in a single parent slot...
     XPCCallContext inner_cc(JS_CALLER, cx, obj, nsnull, argv[1]);
 
     // was our jsobject really a wrapped native at all?
@@ -2127,6 +2132,84 @@ SandboxDebug(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
 }
 
 JS_STATIC_DLL_CALLBACK(JSBool)
+SandboxFunForwarder(JSContext *cx, JSObject *obj, uintN argc, jsval *argv,
+                    jsval *rval)
+{
+    jsval v;
+    if (!JS_GetReservedSlot(cx, JSVAL_TO_OBJECT(argv[-2]), 0, &v) ||
+        !JS_CallFunctionValue(cx, obj, v, argc, argv, rval)) {
+        return JS_FALSE;
+    }
+
+    if (JSVAL_IS_PRIMITIVE(*rval))
+        return JS_TRUE; // nothing more to do.
+    
+    XPCThrower::Throw(NS_ERROR_NOT_IMPLEMENTED, cx);
+    return JS_FALSE;
+}
+
+JS_STATIC_DLL_CALLBACK(JSBool)
+SandboxImport(JSContext *cx, JSObject *obj, uintN argc, jsval *argv,
+              jsval *rval)
+{
+    JSFunction *fun = JS_ValueToFunction(cx, argv[0]);
+    if (!fun) {
+        XPCThrower::Throw(NS_ERROR_INVALID_ARG, cx);
+        return JS_FALSE;
+    }
+
+    JSString *funname;
+    if (argc > 1) {
+        // Use the second parameter as the function name.
+        funname = JS_ValueToString(cx, argv[1]);
+        if (!funname)
+            return JS_FALSE;
+        argv[1] = STRING_TO_JSVAL(funname);
+    } else {
+        // Use the actual function name as the name.
+        funname = JS_GetFunctionId(fun);
+        if (!funname) {
+            XPCThrower::Throw(NS_ERROR_INVALID_ARG, cx);
+            return JS_FALSE;
+        }
+    }
+
+    nsresult rv = NS_ERROR_FAILURE;
+    JSObject *oldfunobj = JS_GetFunctionObject(fun);
+    nsXPConnect *xpc = nsXPConnect::GetXPConnect();
+
+    if (xpc && oldfunobj) {
+        nsIXPCSecurityManager *secman = xpc->GetDefaultSecurityManager();
+        if (secman) {
+            rv = secman->CanAccess(nsIXPCSecurityManager::ACCESS_CALL_METHOD,
+                                   nsnull, cx, oldfunobj, nsnull, nsnull,
+                                   STRING_TO_JSVAL(funname), nsnull);
+        }
+    }
+
+    if (NS_FAILED(rv)) {
+        if (rv == NS_ERROR_FAILURE)
+            XPCThrower::Throw(NS_ERROR_XPC_SECURITY_MANAGER_VETO, cx);
+        return JS_FALSE;
+    }
+
+    JSFunction *newfun = JS_DefineUCFunction(cx, obj,
+            JS_GetStringChars(funname), JS_GetStringLength(funname),
+            SandboxFunForwarder, JS_GetFunctionArity(fun), 0);
+
+    if (!newfun)
+        return JS_FALSE;
+
+    JSObject *newfunobj = JS_GetFunctionObject(newfun);
+    if (!newfunobj)
+        return JS_FALSE;
+
+    // Functions come with two extra reserved slots on them. Use the 0-th slot
+    // to communicate the wrapped function to our forwarder.
+    return JS_SetReservedSlot(cx, newfunobj, 0, argv[0]);
+}
+
+JS_STATIC_DLL_CALLBACK(JSBool)
 sandbox_enumerate(JSContext *cx, JSObject *obj)
 {
     return JS_EnumerateStandardClasses(cx, obj);
@@ -2157,6 +2240,7 @@ static JSClass SandboxClass = {
 static JSFunctionSpec SandboxFunctions[] = {
     {"dump", SandboxDump, 1},
     {"debug", SandboxDebug, 1},
+    {"importFunction", SandboxImport, 1},
     {0}
 };
 
@@ -2244,9 +2328,15 @@ nsXPCComponents_utils_Sandbox::CallOrConstruct(nsIXPConnectWrappedNative *wrappe
     if(NS_FAILED(rv))
         return ThrowAndFail(NS_ERROR_XPC_UNEXPECTED, cx, _retval);
 
-    JSObject *sandbox = JS_NewObject(cx, &SandboxClass, nsnull, nsnull);
+    XPCAutoJSContext tempcx(JS_NewContext(JS_GetRuntime(cx), 1024), PR_FALSE);
+    if (!tempcx)
+        return ThrowAndFail(NS_ERROR_OUT_OF_MEMORY, cx, _retval);
+
+    JSObject *sandbox = JS_NewObject(tempcx, &SandboxClass, nsnull, nsnull);
     if (!sandbox)
         return ThrowAndFail(NS_ERROR_XPC_UNEXPECTED, cx, _retval);
+
+    JS_SetGlobalObject(tempcx, sandbox);
 
     rv = xpc->InitClasses(cx, sandbox);
     if (NS_SUCCEEDED(rv) &&
@@ -2322,19 +2412,64 @@ nsXPCComponents_utils_Sandbox::CallOrConstruct(nsIXPConnectWrappedNative *wrappe
 #endif
 }
 
-/***************************************************************************/
 
 /*
  * Throw an exception on caller_cx that is made from message and report,
  * which were reported as uncaught on cx.
  */
 static void
+SandboxErrorReporter(JSContext *cx, const char *message, JSErrorReport *report);
+
+class ContextHolder : public nsISupports
+{
+public:
+    ContextHolder(JSContext *aOuterCx, JSObject *aSandbox);
+
+    JSContext *GetJSContext()
+    {
+        return mJSContext;
+    }
+    JSContext *GetOuterContext()
+    {
+        NS_ASSERTION(mOuterContext, "GetOuterContext called late");
+        return mOuterContext;
+    }
+
+    void DidEval()
+    {
+        JS_SetErrorReporter(mJSContext, nsnull);
+        mOuterContext = nsnull;
+    }
+
+    NS_DECL_ISUPPORTS
+
+private:
+    XPCAutoJSContext mJSContext;
+    JSContext *mOuterContext;
+};
+
+NS_IMPL_ISUPPORTS0(ContextHolder)
+
+ContextHolder::ContextHolder(JSContext *aOuterCx, JSObject *aSandbox)
+    : mJSContext(JS_NewContext(JS_GetRuntime(aOuterCx), 1024), JS_FALSE),
+      mOuterContext(aOuterCx)
+{
+    if (mJSContext) {
+        JS_SetOptions(mJSContext, JSOPTION_PRIVATE_IS_NSISUPPORTS);
+        JS_SetGlobalObject(mJSContext, aSandbox);
+        JS_SetContextPrivate(mJSContext, this);
+        JS_SetErrorReporter(mJSContext, SandboxErrorReporter);
+    }
+}
+
+static void
 SandboxErrorReporter(JSContext *cx, const char *message, JSErrorReport *report)
 {
-    JSContext *caller_cx = NS_STATIC_CAST(JSContext*, JS_GetContextPrivate(cx));
-
-    JS_ThrowReportedError(caller_cx, message, report);
+    ContextHolder *ch = NS_STATIC_CAST(ContextHolder*, JS_GetContextPrivate(cx));
+    JS_ThrowReportedError(ch->GetOuterContext(), message, report);
 }
+
+/***************************************************************************/
 
 /* void evalInSandbox(in AString source, in nativeobj sandbox); */
 NS_IMETHODIMP
@@ -2400,41 +2535,34 @@ nsXPCComponents_Utils::EvalInSandbox(const nsAString &source)
         return NS_ERROR_FAILURE;
     }
 
-    JSContext *sandcx = JS_NewContext(JS_GetRuntime(cx), 1024);
-    if(!sandcx) {
+    nsRefPtr<ContextHolder> sandcx = new ContextHolder(cx, sandbox);
+    if(!sandcx || !sandcx->GetJSContext()) {
         JS_ReportError(cx, "Can't prepare context for evalInSandbox");
         JSPRINCIPALS_DROP(cx, jsPrincipals);
         return NS_ERROR_OUT_OF_MEMORY;
     }
 
-    JS_SetGlobalObject(sandcx, sandbox);
-
     XPCPerThreadData *data = XPCPerThreadData::GetData();
     XPCJSContextStack *stack;
     PRBool popContext = PR_FALSE;
     if (data && (stack = data->GetJSContextStack())) {
-        if (NS_FAILED(stack->Push(sandcx))) {
+        if (NS_FAILED(stack->Push(sandcx->GetJSContext()))) {
             JS_ReportError(cx,
                     "Unable to initialize XPConnect with the sandbox context");
             JSPRINCIPALS_DROP(cx, jsPrincipals);
-            JS_DestroyContextNoGC(sandcx);
             return NS_ERROR_FAILURE;
         }
 
         popContext = PR_TRUE;
     }
 
-    // Capture uncaught exceptions reported as errors on sandcx and
-    // re-throw them on cx.
-    JS_SetContextPrivate(sandcx, cx);
-    JS_SetErrorReporter(sandcx, SandboxErrorReporter);
 
     // Push a fake frame onto sandcx so that we can properly propagate uncaught
     // exceptions.
     JSStackFrame frame;
     memset(&frame, 0, sizeof frame);
 
-    sandcx->fp = &frame;
+    sandcx->GetJSContext()->fp = &frame;
 
     // Get the current source info from xpc. Use the codebase as a fallback,
     // though.
@@ -2452,14 +2580,14 @@ nsXPCComponents_Utils::EvalInSandbox(const nsAString &source)
         }
     }
 
-    if (!JS_EvaluateUCScriptForPrincipals(sandcx, sandbox, jsPrincipals,
+    if (!JS_EvaluateUCScriptForPrincipals(sandcx->GetJSContext(), sandbox,
+                                          jsPrincipals,
                                           NS_REINTERPRET_CAST(const jschar *,
                                               PromiseFlatString(source).get()),
                                           source.Length(), filename.get(),
                                           lineNo, rval)) {
-
         jsval exn;
-        if (JS_GetPendingException(sandcx, &exn)) {
+        if (JS_GetPendingException(sandcx->GetJSContext(), &exn)) {
             JS_SetPendingException(cx, exn);
             cc->SetExceptionWasThrown(PR_TRUE);
         } else {
@@ -2473,7 +2601,11 @@ nsXPCComponents_Utils::EvalInSandbox(const nsAString &source)
         stack->Pop(nsnull);
     }
 
-    JS_DestroyContextNoGC(sandcx);
+    NS_ASSERTION(sandcx->GetJSContext()->fp == &frame, "Dangling frame");
+    sandcx->GetJSContext()->fp = NULL;
+
+    sandcx->DidEval();
+
     JSPRINCIPALS_DROP(cx, jsPrincipals);
     return rv;
 #endif /* !XPCONNECT_STANDALONE */
@@ -2751,7 +2883,7 @@ nsXPCComponents::AttachNewComponentsObject(XPCCallContext& ccx,
 
     nsCOMPtr<XPCWrappedNative> wrapper;
     XPCWrappedNative::GetNewOrUsed(ccx, cholder, aScope, iface,
-                                   getter_AddRefs(wrapper));
+                                   OBJ_IS_NOT_GLOBAL, getter_AddRefs(wrapper));
     if(!wrapper)
         return JS_FALSE;
 

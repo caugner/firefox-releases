@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ * vim: set ts=2 sw=2 et tw=78:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
@@ -86,6 +87,7 @@
 #include "nsIForm.h"
 #include "nsIFormControl.h"
 #include "nsHTMLAtoms.h"
+#include "nsHTMLParts.h"
 #include "nsISupportsPrimitives.h"
 #include "nsLayoutAtoms.h"
 #include "imgIDecoderObserver.h"
@@ -111,6 +113,7 @@ static NS_DEFINE_CID(kXTFServiceCID, NS_XTFSERVICE_CID);
 #include "nsIMIMEService.h"
 #include "jsdbgapi.h"
 #include "nsIJSRuntimeService.h"
+#include "nsIFragmentContentSink.h"
 
 // for ReportToConsole
 #include "nsIStringBundle.h"
@@ -415,6 +418,9 @@ nsContentUtils::Shutdown()
 {
   sInitialized = PR_FALSE;
 
+  NS_HTMLParanoidFragmentSinkShutdown();
+  NS_XHTMLParanoidFragmentSinkShutdown();
+
   PRInt32 i;
   for (i = 0; i < PRInt32(PropertiesFile_COUNT); ++i)
     NS_IF_RELEASE(sStringBundles[i]);
@@ -638,6 +644,17 @@ nsContentUtils::CheckSameOrigin(nsIDOMNode *aTrustedNode,
     }
   }
 
+  if (!unTrustedPrincipal) {
+    unTrustedPrincipal = unTrustedDoc->GetPrincipal();
+
+    if (!unTrustedPrincipal) {
+      // If the trusted node doesn't have a principal we can't check
+      // security against it
+
+      return NS_ERROR_DOM_SECURITY_ERR;
+    }
+  }
+
   return sSecurityManager->CheckSameOriginPrincipal(trustedPrincipal,
                                                     unTrustedPrincipal);
 }
@@ -682,8 +699,17 @@ nsContentUtils::CanCallerAccess(nsIDOMNode *aNode)
     return PR_TRUE;
   }
 
-  rv = sSecurityManager->CheckSameOriginPrincipal(subjectPrincipal,
-                                                  principal);
+  PRBool enabled = PR_FALSE;
+  if (principal == systemPrincipal) {
+    // we know subjectPrincipal != systemPrincipal so we can only
+    // access the object if UniversalXPConnect is enabled. We can
+    // avoid wasting time in CheckSameOriginPrincipal
+
+    rv = sSecurityManager->IsCapabilityEnabled("UniversalXPConnect", &enabled);
+    return NS_SUCCEEDED(rv) && enabled;
+  }
+
+  rv = sSecurityManager->CheckSameOriginPrincipal(subjectPrincipal, principal);
   if (NS_SUCCEEDED(rv)) {
     return PR_TRUE;
   }
@@ -691,11 +717,8 @@ nsContentUtils::CanCallerAccess(nsIDOMNode *aNode)
   // see if the caller has otherwise been given the ability to touch
   // input args to DOM methods
 
-  PRBool enabled = PR_FALSE;
-  rv = sSecurityManager->IsCapabilityEnabled("UniversalBrowserRead",
-                                             &enabled);
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
-  return enabled;
+  rv = sSecurityManager->IsCapabilityEnabled("UniversalBrowserRead", &enabled);
+  return NS_SUCCEEDED(rv) && enabled;
 }
 
 //static
@@ -739,39 +762,33 @@ nsContentUtils::InProlog(nsIDOMNode *aNode)
 
 // static
 nsresult
-nsContentUtils::doReparentContentWrapper(nsIContent *aChild,
-                                         nsIDocument *aNewDocument,
-                                         nsIDocument *aOldDocument,
+nsContentUtils::doReparentContentWrapper(nsIContent *aNode,
                                          JSContext *cx,
-                                         JSObject *parent_obj)
+                                         JSObject *aOldGlobal,
+                                         JSObject *aNewGlobal)
 {
   nsCOMPtr<nsIXPConnectJSObjectHolder> old_wrapper;
 
   nsresult rv;
 
-  rv = sXPConnect->ReparentWrappedNativeIfFound(cx, ::JS_GetGlobalObject(cx),
-                                                parent_obj, aChild,
+  rv = sXPConnect->ReparentWrappedNativeIfFound(cx, aOldGlobal, aNewGlobal,
+                                                aNode,
                                                 getter_AddRefs(old_wrapper));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!old_wrapper) {
-    // If aChild isn't wrapped none of it's children are wrapped so
-    // there's no need to walk into aChild's children.
+  // Whether or not aChild is already wrapped we must iterate through
+  // its descendants since there's no guarantee that a descendant isn't
+  // wrapped even if this child is not wrapped. That used to be true
+  // when every DOM node's JSObject was parented at the DOM node's
+  // parent's JSObject, but that's no longer the case.
 
-    return NS_OK;
-  }
-
-  JSObject *old;
-  rv = old_wrapper->GetJSObject(&old);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  PRUint32 i, count = aChild->GetChildCount();
+  PRUint32 i, count = aNode->GetChildCount();
 
   for (i = 0; i < count; i++) {
-    nsIContent *child = aChild->GetChildAt(i);
+    nsIContent *child = aNode->GetChildAt(i);
     NS_ENSURE_TRUE(child, NS_ERROR_UNEXPECTED);
 
-    rv = doReparentContentWrapper(child, aNewDocument, aOldDocument, cx, old);
+    rv = doReparentContentWrapper(child, cx, aOldGlobal, aNewGlobal);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -779,18 +796,26 @@ nsContentUtils::doReparentContentWrapper(nsIContent *aChild,
 }
 
 static JSContext *
-GetContextFromDocument(nsIDocument *aDocument)
+GetContextFromDocument(nsIDocument *aDocument, JSObject** aGlobalObject)
 {
-  nsIScriptGlobalObject *sgo = aDocument->GetScriptGlobalObject();
-
+  nsCOMPtr<nsIDocument_MOZILLA_1_8_0_BRANCH> doc18 =
+    do_QueryInterface(aDocument);
+  if (!doc18) {
+    NS_ERROR("What kind of crazy document was passed in?");
+    return nsnull;
+  }
+  nsIScriptGlobalObject *sgo = doc18->GetScopeObject();
   if (!sgo) {
     // No script global, no context.
+
+    *aGlobalObject = nsnull;
 
     return nsnull;
   }
 
-  nsIScriptContext *scx = sgo->GetContext();
+  *aGlobalObject = sgo->GetGlobalJSObject();
 
+  nsIScriptContext *scx = sgo->GetContext();
   if (!scx) {
     // No context left in the old scope...
 
@@ -811,58 +836,115 @@ nsContentUtils::ReparentContentWrapper(nsIContent *aContent,
     return NS_OK;
   }
 
-  if (!aOldDocument) {
-    // If we can't find our old document we don't know what our old
-    // scope was so there's no way to find the old wrapper
 
+  nsCOMPtr<nsIDocument_MOZILLA_1_8_0_BRANCH> doc18 =
+    do_QueryInterface(aNewDocument);
+  if (!doc18) {
+    NS_ERROR("Crazy document passed in");
+    return NS_ERROR_UNEXPECTED;
+  }
+  nsIScriptGlobalObject *newSGO = doc18->GetScopeObject();
+  JSObject *newScope;
+
+  // If we can't find our old document we don't know what our old
+  // scope was so there's no way to find the old wrapper, and if there
+  // is no new scope there's no reason to reparent.
+  if (!aOldDocument || !newSGO || !(newScope = newSGO->GetGlobalJSObject())) {
     return NS_OK;
   }
 
   NS_ENSURE_TRUE(sXPConnect, NS_ERROR_NOT_INITIALIZED);
 
-  nsISupports* new_parent = aNewParent ? (nsISupports*)aNewParent :
-    (nsISupports*)aNewDocument;
+  // Make sure to get our hands on the right scope object, since
+  // GetWrappedNativeOfNativeObject doesn't call PreCreate and hence won't get
+  // the right scope if we pass in something bogus.  The right scope lives on
+  // the script global of the old document.
+  // XXXbz note that if GetWrappedNativeOfNativeObject did call PreCreate it
+  // would get the wrong scope (that of the _new_ document), so we should be
+  // glad it doesn't!
+  JSObject *globalObj;
+  JSContext *cx = GetContextFromDocument(aOldDocument, &globalObj);
 
-  JSContext *cx = GetContextFromDocument(aOldDocument);
+  if (!globalObj) {
+    // No global object around; can't find the old wrapper w/o the old
+    // global object
+
+    return NS_OK;
+  }
 
   if (!cx) {
-    // No JSContext left in the old scope, can't find the old wrapper
-    // w/o the old context.
+    JSObject *dummy;
+    cx = GetContextFromDocument(aNewDocument, &dummy);
 
-    return NS_OK;
+    if (!cx) {
+      // No context reachable from the old or new document, use the
+      // calling context, or the safe context if no caller can be
+      // found.
+
+      sThreadJSContextStack->Peek(&cx);
+
+      if (!cx) {
+        sThreadJSContextStack->GetSafeJSContext(&cx);
+      }
+    }
   }
 
-  nsCOMPtr<nsIXPConnectWrappedNative> wrapper;
+  return doReparentContentWrapper(aContent, cx, globalObj, newScope);
+}
 
-  nsresult rv;
+nsresult
+nsContentUtils::ReparentContentWrappersInScope(nsIScriptGlobalObject *aOldScope,
+                                               nsIScriptGlobalObject *aNewScope)
+{
+  JSContext *cx = nsnull;
 
-  rv = sXPConnect->GetWrappedNativeOfNativeObject(cx, ::JS_GetGlobalObject(cx),
-                                                  aContent,
-                                                  NS_GET_IID(nsISupports),
-                                                  getter_AddRefs(wrapper));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!wrapper) {
-    // aContent is not wrapped (and thus none of its children are
-    // wrapped) so there's no need to reparent anything.
-
-    return NS_OK;
+  // Try really hard to find a context to work on.
+  nsIScriptContext *context = aOldScope->GetContext();
+  if (context) {
+    cx = NS_STATIC_CAST(JSContext *, context->GetNativeContext());
   }
 
-  // Wrap the new parent and reparent aContent
+  if (!cx) {
+    context = aNewScope->GetContext();
+    if (context) {
+      cx = NS_STATIC_CAST(JSContext *, context->GetNativeContext());
+    }
 
-  nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
-  rv = sXPConnect->WrapNative(cx, ::JS_GetGlobalObject(cx), new_parent,
-                              NS_GET_IID(nsISupports),
-                              getter_AddRefs(holder));
-  NS_ENSURE_SUCCESS(rv, rv);
+    if (!cx) {
+      sThreadJSContextStack->Peek(&cx);
 
-  JSObject *obj;
-  rv = holder->GetJSObject(&obj);
-  NS_ENSURE_SUCCESS(rv, rv);
+      if (!cx) {
+        sThreadJSContextStack->GetSafeJSContext(&cx);
 
-  return doReparentContentWrapper(aContent, aNewDocument, aOldDocument, cx,
-                                  obj);
+        if (!cx) {
+          // Wow, this is really bad!
+          NS_WARNING("No context reachable in ReparentContentWrappers()!");
+
+          return NS_ERROR_NOT_AVAILABLE;
+        }
+      }
+    }
+  }
+
+  // Now that we have a context, let's get the global objects from the two
+  // scopes and ask XPConnect to do the rest of the work.
+
+  JSObject *oldScopeObj = aOldScope->GetGlobalJSObject();
+  JSObject *newScopeObj = aNewScope->GetGlobalJSObject();
+
+  if (!newScopeObj || !oldScopeObj) {
+    // We can't really do anything without the JSObjects.
+
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  nsCOMPtr<nsIXPConnect_MOZILLA_1_8_BRANCH> xpconnect18 =
+    do_QueryInterface(sXPConnect);
+  if (!xpconnect18) {
+    NS_ERROR("Weird things are happening in XPConnect");
+    return NS_ERROR_FAILURE;
+  }
+  return xpconnect18->ReparentScopeAwareWrappers(cx, oldScopeObj, newScopeObj);
 }
 
 nsIDocShell *
@@ -916,12 +998,46 @@ PRBool
 nsContentUtils::IsCallerChrome()
 {
   PRBool is_caller_chrome = PR_FALSE;
-  nsresult rv = sSecurityManager->SubjectPrincipalIsSystem(&is_caller_chrome);
-  if (NS_FAILED(rv)) {
-    return PR_FALSE;
+
+  if (sSecurityManager) {
+    nsresult rv = sSecurityManager->SubjectPrincipalIsSystem(&is_caller_chrome);
+    if (NS_FAILED(rv)) {
+      return PR_FALSE;
+    }
   }
 
   return is_caller_chrome;
+}
+
+static PRBool IsCallerTrustedForCapability(const char* aCapability)
+{
+  if (nsContentUtils::IsCallerChrome())
+    return PR_TRUE;
+
+  // The secman really should handle UniversalXPConnect case, since that
+  // should include UniversalBrowserRead... doesn't right now, though.
+  PRBool hasCap;
+  nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
+  if (NS_FAILED(ssm->IsCapabilityEnabled(aCapability, &hasCap)))
+    return PR_FALSE;
+  if (hasCap)
+    return PR_TRUE;
+    
+  if (NS_FAILED(ssm->IsCapabilityEnabled("UniversalXPConnect", &hasCap)))
+    return PR_FALSE;
+  return hasCap;
+}
+
+PRBool
+nsContentUtils::IsCallerTrustedForRead()
+{
+  return IsCallerTrustedForCapability("UniversalBrowserRead");
+}
+
+PRBool
+nsContentUtils::IsCallerTrustedForWrite()
+{
+  return IsCallerTrustedForCapability("UniversalBrowserWrite");
 }
 
 // static
@@ -2352,7 +2468,14 @@ nsContentUtils::NotifyXPCIfExceptionPending(JSContext* aCx)
   nsCOMPtr<nsIXPCNativeCallContext> nccx;
   XPConnect()->GetCurrentNativeCallContext(getter_AddRefs(nccx));
   if (nccx) {
-    nccx->SetExceptionWasThrown(PR_TRUE);
+    // Check to make sure that the JSContext that nccx will mess with is the
+    // same as the JSContext we've set an exception on.  If they're not the
+    // same, don't mess with nccx.
+    JSContext* cx;
+    nccx->GetJSContext(&cx);
+    if (cx == aCx) {
+      nccx->SetExceptionWasThrown(PR_TRUE);
+    }
   }
 }
 

@@ -36,38 +36,34 @@
 
  ***** END LICENSE BLOCK ***** -->
 
-<!ENTITY pane.title                           "Composition">
-<!ENTITY forwardReply.label                   "Forwarding Messages">
+<!ENTITY pref.composing.messages.title        "Composition">
+<!ENTITY generalComposing.label               "General">
 <!ENTITY forwardMsg.label                     "Forward messages:">
 <!ENTITY inline.label                         "Inline">
-<!ENTITY inline.accesskey                     "I">
+<!ENTITY inline.accesskey                     "n">
 <!ENTITY asAttachment.label                   "As Attachment">
 <!ENTITY asAttachment.accesskey               "A">
 
 <!ENTITY warnOnSendAccelKey.label             "Confirm when using keyboard shortcut to send message">
 <!ENTITY warnOnSendAccelKey.accesskey         "k">
-
-<!ENTITY sendingMessagesHeader.label          "Composing Messages">
 <!-- LOCALIZATION NOTE (autoSave.label): This will concatenate with
      "xxx minutes", using a number and (autoSaveEnd.label). -->
 <!ENTITY autoSave.label                       "Automatically save the message every">
-<!ENTITY autoSave.accesskey                   "m">
+<!ENTITY autoSave.accesskey                   "u">
 <!ENTITY autoSaveEnd.label                    "minutes">
-<!ENTITY spellCheck.label                     "Check spelling before sending">
-<!ENTITY spellCheck.accesskey                 "C">
-<!ENTITY spellCheckInline.label               "Check spelling as you type">
-<!ENTITY spellCheckInline.accesskey           "e">
 <!-- LOCALIZATION NOTE (wrapOutMsg.label): This will concatenate with "xxx characters", using a number and (char.label). -->
 <!ENTITY wrapOutMsg.label                     "Wrap plain text messages at">
 <!ENTITY wrapOutMsg.accesskey                 "W">
 <!ENTITY char.label                           "characters">
-<!ENTITY useMIME.label                        "For messages that contain 8-bit characters, use 'quoted printable' MIME encoding. Leave unchecked to send the messages as is.">
-<!ENTITY useMIME.accesskey                    "o">
 
-<!ENTITY sendDefaultCharset.label             "Default Character Encoding:">
-<!ENTITY sendDefaultCharset.accesskey         "D">
-<!ENTITY replyInDefaultCharset.label          "Always use this default character encoding in replies. (When unchecked, only new messages use this default.)">
-<!ENTITY replyInDefaultCharset.accesskey      "r">
+<!ENTITY spellingHeader.label                 "Spelling">
+<!ENTITY spellCheck.label                     "Check spelling before sending">
+<!ENTITY spellCheck.accesskey                 "C">
+<!ENTITY spellCheckInline.label               "Check spelling as you type">
+<!ENTITY spellCheckInline.accesskey           "e">
+<!ENTITY languagePopup.label                  "Language:">
+<!ENTITY languagePopup.accessKey              "g">
+<!ENTITY moreDictionaries.label               "Download more dictionaries...">
 
 <!ENTITY defaultMessagesHeader.label          "Defaults for HTML Messages">
 <!ENTITY font.label                           "Font:">

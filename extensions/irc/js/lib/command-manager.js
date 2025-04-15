@@ -172,6 +172,9 @@ function CommandManager (defaultBundle)
 {
     this.commands = new Object();
     this.defaultBundle = defaultBundle;
+    this.currentDispatchDepth = 0;
+    this.maxDispatchDepth = 10;
+    this.dispatchUnwinding = false;
 }
 
 CommandManager.prototype.defaultFlags = 0;
@@ -255,8 +258,8 @@ function cmgr_instkeys (document, commands)
     if (!parentElem)
     {
         parentElem = document.createElement("keyset");
-        parentElem.setAttribute ("id", "dynamic-keys");
-        document.firstChild.appendChild (parentElem);
+        parentElem.setAttribute("id", "dynamic-keys");
+        document.documentElement.appendChild(parentElem);
     }
 
     if (!commands)
@@ -457,10 +460,13 @@ function cmgr_list (partialName, flags)
     var ary = new Array();
     var commandNames = keys(this.commands);
 
-    /* a command named "eval" wouldn't show up in the result of keys() because
-     * eval is not-enumerable, even if overwritten. */
-    if ("eval" in this.commands && typeof this.commands.eval == "object")
-        commandNames.push ("eval");
+    /* A command named "eval" wouldn't show up in the result of keys() because
+     * eval is not-enumerable, even if overwritten, in Mozilla 1.0. */
+    if (("eval" in this.commands) && (typeof this.commands.eval == "object") &&
+        !arrayContains(commandNames, "eval"))
+    {
+        commandNames.push("eval");
+    }
 
     for (var i in commandNames)
     {

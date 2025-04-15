@@ -106,13 +106,54 @@ function initMenus()
         ]
     };
 
-    var notInChannel = "((cx.TYPE == 'IRCChannel') and !cx.channel.active)";
-    var inChannel = "((cx.TYPE == 'IRCChannel') and cx.channel.active)";
-    var netConnected = "cx.network and cx.network.isConnected()";
-    var netDisconnected = "cx.network and !cx.network.isConnected()";
+    // OS values
+    var Win      = "(client.platform == 'Windows')";
+    var NotWin   = "(client.platform != 'Windows')";
+    var Linux    = "(client.platform == 'Linux')";
+    var NotLinux = "(client.platform != 'Linux')";
+    var Mac      = "(client.platform == 'Mac')";
+    var NotMac   = "(client.platform != 'Mac')";
 
-    client.menuSpecs["mainmenu:file"] = {
-        label: MSG_MNU_FILE,
+    // Platform values
+    var Mozilla    = "(client.host == 'Mozilla')";
+    var NotMozilla = "(client.host != 'Mozilla')";
+    var Toolkit    = NotMozilla;
+    var XULRunner  = "(client.host == 'XULrunner')";
+
+    // Useful combinations
+    var ToolkitOnLinux    = "(" + Toolkit + " and " + Linux + ")";
+    var ToolkitNotOnLinux = "(" + Toolkit + " and " + NotLinux + ")";
+    var ToolkitOnMac      = "(" + Toolkit + " and " + Mac + ")";
+    var ToolkitNotOnMac   = "(" + Toolkit + " and " + NotMac + ")";
+
+    // IRC specific values
+    var ViewClient  = "(cx.TYPE == 'IRCClient')";
+    var ViewNetwork = "(cx.TYPE == 'IRCNetwork')";
+    var ViewChannel = "(cx.TYPE == 'IRCChannel')";
+    var ViewUser    = "(cx.TYPE == 'IRCUser')";
+
+    // IRC specific combinations
+    var ChannelActive   = "(" + ViewChannel + " and cx.channel.active)";
+    var ChannelInactive = "(" + ViewChannel + " and !cx.channel.active)";
+    var NetConnected    = "(cx.network and cx.network.isConnected())";
+    var NetDisconnected = "(cx.network and !cx.network.isConnected())";
+
+    client.menuSpecs["mainmenu:chatzilla"] = {
+        label: MSG_MNU_CHATZILLA,
+        getContext: getDefaultContext,
+        items:
+        [
+         ["cmd-prefs",  {id: "menu_preferences"}],
+         ["print"],
+         ["save"],
+         ["-",           {visibleif: NotMac}],
+         ["exit",        {visibleif: Win}],
+         ["quit",        {visibleif: NotMac + " and " + NotWin}]
+        ]
+    };
+
+    client.menuSpecs["mainmenu:irc"] = {
+        label: MSG_MNU_IRC,
         getContext: getDefaultContext,
         items:
         [
@@ -123,25 +164,25 @@ function initMenus()
          //["manage-networks"],
          //["manage-plugins"],
          ["-"],
-         ["leave",       {visibleif: inChannel}],
-         ["rejoin",      {visibleif: notInChannel}],
-         ["delete-view", {visibleif: "!" + inChannel}],
-         ["disconnect",  {visibleif: netConnected}],
-         ["reconnect",   {visibleif: netDisconnected}],
+         // Planned future menu items, not implemented yet.
+         //["-"]
+         //[">popup:current_networks"]
+         [">popup:nickname"],
          ["-"],
-         ["print"],
+         ["leave",       {visibleif: ChannelActive}],
+         ["rejoin",      {visibleif: ChannelInactive}],
+         ["disconnect",  {visibleif: NetConnected}],
+         ["reconnect",   {visibleif: NetDisconnected}],
+         ["-",           {visibleif: "cx.network"}],
+         ["clear-view"],
+         ["hide-view",   {enabledif: "client.viewsArray.length > 1"}],
+         ["delete-view", {enabledif: "client.viewsArray.length > 1"}],
          ["-"],
-         ["save"],
-         ["-"],
-         [navigator.platform.search(/win/i) == -1 ? "quit" : "exit"]
+         ["toggle-oas",
+                 {type: "checkbox",
+                  checkedif: "isStartupURL(cx.sourceObject.getURL())"}]
         ]
     };
-
-    var Mozilla = "(client.host == 'Mozilla')";
-    var ToolkitAppOnLinux = "((client.host != 'Mozilla') and " +
-                            "(client.platform == 'Linux'))";
-    var ToolkitAppNotOnLinux = "((client.host != 'Mozilla') and " +
-                               "!(client.platform == 'Linux'))";
 
     client.menuSpecs["mainmenu:edit"] = {
         label: MSG_MNU_EDIT,
@@ -160,20 +201,11 @@ function initMenus()
          ["-"],
          ["find"],
          ["find-again", {enabledif: "canFindAgainInPage()"}],
+         // Mozilla (suite) gets  : separator, Mozilla Prefs, ChatZilla prefs.
+         // Toolkit Linux apps get: separator, ChatZilla prefs.
+         // Toolkit Mac apps get  : ChatZilla prefs (special Mac ID).
          ["-",                   {visibleif: Mozilla}],
-         ["cmd-mozilla-prefs",   {visibleif: Mozilla}],
-         ["cmd-chatzilla-prefs", {visibleif: Mozilla}],
-         ["-",                   {visibleif: ToolkitAppOnLinux}],
-         ["cmd-prefs",           {visibleif: ToolkitAppOnLinux}]
-        ]
-    };
-
-    client.menuSpecs["mainmenu:tools"] = {
-        label: MSG_MNU_TOOLS,
-        getContext: getDefaultContext,
-        items:
-        [
-         ["cmd-chatzilla-opts", {visibleif: ToolkitAppNotOnLinux}]
+         ["cmd-mozilla-prefs",   {visibleif: Mozilla}]
         ]
     };
 
@@ -198,13 +230,18 @@ function initMenus()
         getContext: getDefaultContext,
         items:
         [
-         [">popup:showhide"],
-         ["-"],
-         ["clear-view"],
-         ["hide-view", {enabledif: "client.viewsArray.length > 1"}],
-         ["toggle-oas",
+         ["tabstrip",
                  {type: "checkbox",
-                  checkedif: "isStartupURL(cx.sourceObject.getURL())"}],
+                  checkedif: "isVisible('view-tabs')"}],
+         ["header",
+                 {type: "checkbox",
+                  checkedif: "cx.sourceObject.prefs['displayHeader']"}],
+         ["userlist",
+                 {type: "checkbox",
+                  checkedif: "isVisible('user-list-box')"}],
+         ["statusbar",
+                 {type: "checkbox",
+                  checkedif: "isVisible('status-bar')"}],
          ["-"],
          [">popup:motifs"],
          [">popup:fonts"],
@@ -228,27 +265,11 @@ function initMenus()
         domID: "menu_Help",
         items:
         [
-         ["about"],
-        ]
-    };
-
-    client.menuSpecs["popup:showhide"] = {
-        label: MSG_MNU_SHOWHIDE,
-        items:
-        [
-         ["tabstrip",
-                 {type: "checkbox",
-                  checkedif: "isVisible('view-tabs')"}],
-         ["header",
-                 {type: "checkbox",
-                  checkedif: "cx.sourceObject.prefs['displayHeader']"}],
-         ["userlist",
-                 {type: "checkbox",
-                  checkedif: "isVisible('user-list-box')"}],
-         ["statusbar",
-                 {type: "checkbox",
-                  checkedif: "isVisible('status-bar')"}],
-
+         ["-", {visibleif: Mozilla}],
+         ["homepage"],
+         ["faq"],
+         ["-"],
+         ["about"]
         ]
     };
 
@@ -310,6 +331,23 @@ function initMenus()
     };
 
 
+    client.menuSpecs["popup:usercommands"] = {
+        label: MSG_MNU_USERCOMMANDS,
+        items:
+        [
+         ["query",    {visibleif: "cx.user"}],
+         ["whois",    {visibleif: "cx.user"}],
+         ["whowas",   {visibleif: "cx.nickname && !cx.user"}],
+         ["ping",     {visibleif: "cx.user"}],
+         ["time",     {visibleif: "cx.user"}],
+         ["version",  {visibleif: "cx.user"}],
+         ["-",        {visibleif: "cx.user"}],
+         ["dcc-chat", {visibleif: "cx.user"}],
+         ["dcc-send", {visibleif: "cx.user"}],
+        ]
+    };
+
+
     client.menuSpecs["context:userlist"] = {
         getContext: getUserlistContext,
         items:
@@ -320,15 +358,14 @@ function initMenus()
                            checkedif: "client.prefs['showModeSymbols']"}],
          ["-", {visibleif: "cx.nickname"}],
          ["label-user", {visibleif: "cx.nickname", header: true}],
-         [">popup:opcommands", {visibleif: "cx.channel && " + isopish + "cx.user"}],
-         ["whois",   {visibleif: "cx.nickname"}],
-         ["query",   {visibleif: "cx.nickname"}],
-         ["version", {visibleif: "cx.nickname"}],
+         [">popup:opcommands", {visibleif: "cx.nickname",
+                                enabledif: isopish + "true"}],
+         [">popup:usercommands", {visibleif: "cx.nickname"}],
         ]
     };
 
     var urlenabled = "has('url')";
-    var urlexternal = "has('url') && cx.url.search(/^irc:/i) == -1";
+    var urlexternal = "has('url') && cx.url.search(/^ircs?:/i) == -1";
     var textselected = "getCommandEnabled('cmd_copy')";
 
     client.menuSpecs["context:messages"] = {
@@ -336,30 +373,28 @@ function initMenus()
         items:
         [
          ["goto-url", {visibleif: urlenabled}],
-         ["goto-url-newwin", {visibleif: urlexternal}],
-         ["goto-url-newtab", {visibleif: urlexternal}],
+         ["goto-url-newwin", {visibleif: urlexternal + " && !" + XULRunner}],
+         ["goto-url-newtab", {visibleif: urlexternal + " && !" + XULRunner}],
          ["cmd-copy-link-url", {visibleif: urlenabled}],
          ["cmd-copy", {visibleif: "!" + urlenabled, enabledif: textselected }],
          ["cmd-selectall", {visibleif: "!" + urlenabled }],
+         ["-", {visibleif: "cx.channel && cx.nickname"}],
+         ["label-user", {visibleif: "cx.channel && cx.nickname", header: true}],
+         [">popup:opcommands", {visibleif: "cx.channel && cx.nickname",
+                                enabledif: isopish + "cx.user"}],
+         [">popup:usercommands", {visibleif: "cx.channel && cx.nickname"}],
          ["-"],
          ["clear-view"],
          ["hide-view", {enabledif: "client.viewsArray.length > 1"}],
          ["toggle-oas",
                  {type: "checkbox",
                   checkedif: "isStartupURL(cx.sourceObject.getURL())"}],
-         ["-", {visibleif: "cx.channel && cx.nickname"}],
-         ["label-user", {visibleif: "cx.channel && cx.nickname", header: true}],
-         [">popup:opcommands", {visibleif: "cx.channel && " + isopish + "cx.user"}],
-         ["whois",   {visibleif: "cx.user"}],
-         ["whowas",  {visibleif: "cx.nickname && !cx.user"}],
-         ["query",   {visibleif: "cx.nickname"}],
-         ["version", {visibleif: "cx.nickname"}],
          ["-"],
-         ["leave",       {visibleif: inChannel}],
-         ["rejoin",      {visibleif: notInChannel}],
-         ["delete-view", {visibleif: "!" + inChannel}],
-         ["disconnect",  {visibleif: netConnected}],
-         ["reconnect",   {visibleif: netDisconnected}],
+         ["leave",       {visibleif: ChannelActive}],
+         ["rejoin",      {visibleif: ChannelInactive}],
+         ["delete-view", {visibleif: "!" + ChannelActive}],
+         ["disconnect",  {visibleif: NetConnected}],
+         ["reconnect",   {visibleif: NetDisconnected}],
          ["-"],
          ["toggle-text-dir"]
         ]
@@ -375,11 +410,11 @@ function initMenus()
                  {type: "checkbox",
                   checkedif: "isStartupURL(cx.sourceObject.getURL())"}],
          ["-"],
-         ["leave",       {visibleif: inChannel}],
-         ["rejoin",      {visibleif: notInChannel}],
-         ["delete-view", {visibleif: "!" + inChannel}],
-         ["disconnect",  {visibleif: netConnected}],
-         ["reconnect",   {visibleif: netDisconnected}],
+         ["leave",       {visibleif: ChannelActive}],
+         ["rejoin",      {visibleif: ChannelInactive}],
+         ["delete-view", {visibleif: "!" + ChannelActive}],
+         ["disconnect",  {visibleif: NetConnected}],
+         ["reconnect",   {visibleif: NetDisconnected}],
          ["-"],
          ["toggle-text-dir"]
         ]
@@ -387,8 +422,7 @@ function initMenus()
 
     var net          = "cx.network";
     var netAway      = "cx.network.prefs['away']";
-    var netAwayIsDef = "(cx.network.prefs['away'] == '" + MSG_AWAY_DEFAULT +
-                       "') and " + netAway;
+    var awayChecked = "cx.network and (cx.network.prefs.away == item.message)";
 
     client.menuSpecs["mainmenu:nickname"] = {
         label: client.prefs["nickname"],
@@ -399,10 +433,19 @@ function initMenus()
          ["nick"],
          ["-"],
          ["back", {type: "checkbox", checkedif: net + " and !" + netAway}],
-         ["away", {type: "checkbox", checkedif: net + " and " + netAwayIsDef}],
-         ["custom-away",
-                  {type: "checkbox", checkedif: net + " and !" + netAwayIsDef}]
+         ["away", {type: "checkbox",
+                     checkedif: awayChecked,
+                     repeatfor: "client.awayMsgs",
+                     repeatmap: "cx.reason = item.message" }],
+         ["-"],
+         ["custom-away"]
         ]
+    };
+
+    client.menuSpecs["popup:nickname"] = {
+        label: MSG_STATUS,
+        getContext: getDefaultContext,
+        items: client.menuSpecs["mainmenu:nickname"].items
     };
 
 }
@@ -415,7 +458,6 @@ function createMenus()
     // The menus and the component bar need to be hidden on some hosts.
     var winMenu   = document.getElementById("windowMenu");
     var tasksMenu = document.getElementById("tasksMenu");
-    var toolsMenu = document.getElementById("mainmenu:tools");
     var comBar    = document.getElementById("component-bar");
 
     if (client.host != "Mozilla") {
@@ -425,8 +467,13 @@ function createMenus()
         comBar.collapsed = false;
     }
 
-    if ((client.host == "Mozilla") || (client.platform == "Linux")) {
-        toolsMenu.parentNode.removeChild(toolsMenu);
+    if (client.host == "XULrunner")
+    {
+        // This is a hack to work around Gecko bug 98997, which means that
+        // :empty causes menus to be hidden until we force a reflow.
+        var menuBar = document.getElementById("mainmenu");
+        menuBar.hidden = true;
+        menuBar.hidden = false;
     }
 }
 

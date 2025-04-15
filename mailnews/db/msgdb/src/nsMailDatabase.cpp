@@ -79,6 +79,19 @@ NS_IMETHODIMP nsMailDatabase::SetFolderStream(nsIOFileStream *aFileStream)
   return NS_OK;
 }
 
+NS_IMETHODIMP nsMailDatabase::GetFolderStream(nsIOFileStream **aFileStream)
+{
+  NS_ENSURE_ARG_POINTER(aFileStream);
+  if (!m_folderStream)
+  {
+    m_folderStream = new nsIOFileStream(nsFileSpec(*m_folderSpec));
+    m_ownFolderStream = PR_TRUE;
+  }
+  // N.B. - not a ref-counted interface pointer
+  *aFileStream = m_folderStream;
+  return NS_OK;
+}
+
 static PRBool gGotGlobalPrefs = PR_FALSE;
 static PRInt32 gTimeStampLeeway;
 
@@ -153,7 +166,6 @@ NS_IMETHODIMP nsMailDatabase::EndBatch()
     m_ownFolderStream = PR_FALSE;
   }
   SetSummaryValid(PR_TRUE);
-  Commit(nsMsgDBCommitType::kLargeCommit);
   return NS_OK;
 }
 
@@ -487,12 +499,14 @@ NS_IMETHODIMP nsMailDatabase::SetSummaryValid(PRBool valid)
       
       m_dbFolderInfo->SetFolderSize(m_folderSpec->GetFileSize());
       m_dbFolderInfo->SetFolderDate(actualFolderTimeStamp);
+      m_dbFolderInfo->SetVersion(GetCurVersion());
     }
     else
     {
       m_dbFolderInfo->SetVersion(0);	// that ought to do the trick.
     }
   }
+  Commit(nsMsgDBCommitType::kLargeCommit);
   return ret;
 }
 
@@ -562,6 +576,15 @@ NS_IMETHODIMP nsMailDatabase::GetOfflineOpForKey(nsMsgKey msgKey, PRBool create,
     }
     if (!hasOid && m_dbFolderInfo)
     {
+      // set initial value for flags so we don't lose them.
+      nsCOMPtr <nsIMsgDBHdr> msgHdr;
+      GetMsgHdrForKey(msgKey, getter_AddRefs(msgHdr));
+      if (msgHdr)
+      {
+        PRUint32 flags;
+        msgHdr->GetFlags(&flags);
+        (*offlineOp)->SetNewFlags(flags);
+      }
       PRInt32 newFlags;
       m_dbFolderInfo->OrFlags(MSG_FOLDER_FLAG_OFFLINEEVENTS, &newFlags);
     }

@@ -194,7 +194,10 @@ select::-moz-dummy-option {
   overflow: -moz-hidden-unscrollable;
   /* This top/bottom padding plus the combobox top/bottom border need to
      add up to the top/bottom borderpadding of text inputs and buttons */ 
-  padding: 1px 0 1px 4px;
+  padding-top: 1px;
+  padding-bottom: 1px;
+  -moz-padding-start: 4px;
+  -moz-padding-end: 0;
   background-color: inherit;
   color: inherit;
   white-space: nowrap;
@@ -211,7 +214,10 @@ option {
 }
 
 select > option {
-  padding: 0 5px 0 3px;
+  padding-top : 0;
+  padding-bottom: 0;
+  -moz-padding-start: 3px;
+  -moz-padding-end: 5px;
 }
 
 option:checked {
@@ -522,7 +528,7 @@ input[type="file"] > input[type="text"] {
   input[type="file"] { height: 2em; }
 }
 
-#if OSARCH=="OS2"
+%if OSARCH=="OS2"
 input {
   font: medium serif; font-family: inherit
 }
@@ -541,9 +547,9 @@ input[type="submit"] {
   font: medium serif; font-family: inherit
 }
 
-#endif
+%endif
 
-#if MOZ_DEFAULT_TOOLKIT=="cocoa"
+%if MOZ_DEFAULT_TOOLKIT=="cocoa"
 /* makes sure enabled and disabled input and text area fields are drawn */
 input,
 input[disabled] {
@@ -584,7 +590,7 @@ select[multiple],
 select[size][multiple] {
   -moz-appearance: none; /* we'll draw by hand, thanks */
   border-width: 0;
-  background-color: transparent !important;
+  background-color: -moz-Field !important;
   border-style: solid;
   border-color: #737373 #999999 #999999 #999999;
   border-width: 1px;
@@ -610,6 +616,16 @@ option[disabled],
 optgroup[disabled],
 select[disabled] {
   color: GrayText !important;
+}
+
+input[type="image"] {
+  margin: 0;
+}
+
+/* fixes Apple's proprietary search boxes in Camino */
+input[type="search"],
+input[type="search"] disabled {
+  margin: 0;
 }
 
 /* margins makes sure they are aligned with the text baseline */
@@ -664,7 +680,7 @@ button[disabled]:active {
   -moz-appearance: none;
 }
 
-/* this turns off the mozilla focus ring shown inside clicked or selecetd buttons */
+/* this turns off the mozilla focus ring shown inside clicked or selected buttons */
 input[type="reset"]::-moz-focus-inner,
 input[type="button"]::-moz-focus-inner,
 input[type="submit"]::-moz-focus-inner,
@@ -677,4 +693,14 @@ input[type="file"] > input[type="button"] {
   margin: 0px 0px 2px 5px !important;
 }
 
-#endif
+/* make sure disabled images have transparent background */
+input[type="image"][disabled] {
+  background-color: transparent;
+}
+
+/* avoid flickering size when file selector buttons with large text are activated */
+input[type="file"] > input[type="button"]:active:hover {
+  font-size: inherit;
+}
+
+%endif

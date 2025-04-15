@@ -42,7 +42,13 @@
 <script type="application/x-javascript" src="chrome://global/content/findBar.js"/>
 <script type="application/x-javascript" src="chrome://global/content/printUtils.js"/>
 <script type="application/x-javascript" src="chrome://browser/content/utilityOverlay.js"/>
+#ifdef MOZ_PLACES
+<script type="application/x-javascript" src="chrome://browser/content/places/controller.js"/>
+#else
 <script type="application/x-javascript" src="chrome://browser/content/bookmarks/bookmarks.js"/>
 <script type="application/x-javascript" src="chrome://browser/content/bookmarks/bookmarksMenu.js"/>
+#endif
 <script type="application/x-javascript" src="chrome://global/content/viewZoomOverlay.js"/>
 <script type="application/x-javascript" src="chrome://browser/content/browser.js"/>
+<script type="application/x-javascript" src="chrome://global/content/inlineSpellCheckUI.js"/>
+<script type="application/x-javascript" src="chrome://global/content/viewSourceUtils.js"/>

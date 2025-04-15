@@ -53,11 +53,42 @@
 #include "nsCRT.h"
 #include "nsWidgetSupport.h"
 
-#include <CFString.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <Carbon/Carbon.h>
 
-#include <Gestalt.h>
-#include <Quickdraw.h>
-#include <MacWindows.h>
+#if MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_3
+#define kWindowFadeTransitionEffect 4
+#define kEventWindowTransitionCompleted 89
+
+typedef struct TransitionWindowOptions {
+  UInt32    version;
+  EventTime duration;
+  WindowRef window;
+  void*     userData;
+} TransitionWindowOptions;
+
+#define kEventParamWindowPartCode 'wpar'
+#define typeWindowPartCode        'wpar'
+#endif
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED <= MAC_OS_X_VERSION_10_4
+// http://developer.apple.com/qa/qa2005/qa1453.html
+// These are not defined in early versions of the 10.4/10.4u SDK (as of Xcode
+// 2.2), but they may appear in later releases.  Since we can't check which
+// version of the SDK is in use beyond knowing that it's "10.4", define these
+// on 10.4.  #defines should override what's present in the SDK when defined,
+// because the system headers use enums.
+#define kEventParamMouseWheelSmoothVerticalDelta   'saxy'
+#define kEventParamMouseWheelSmoothHorizontalDelta 'saxx'
+#define kEventMouseScroll 11
+#endif
+
+typedef OSStatus (*TransitionWindowWithOptions_type) (WindowRef,
+                                             WindowTransitionEffect,
+                                             WindowTransitionAction,
+                                             const HIRect*,
+                                             Boolean,
+                                             TransitionWindowOptions*);
 
 static const char sScreenManagerContractID[] = "@mozilla.org/gfx/screenmanager;1";
 
@@ -79,9 +110,9 @@ extern nsIWidget         * gRollupWidget;
 // These are only initial guesses. Real values are filled in
 // after window creation.
 const short kWindowTitleBarHeight = 22;
-const short kWindowMarginWidth = 6;
-const short kDialogTitleBarHeight = 26;
-const short kDialogMarginWidth = 6;
+const short kWindowMarginWidth = 0;
+const short kDialogTitleBarHeight = 22;
+const short kDialogMarginWidth = 0;
 
 #if 0
 
@@ -193,7 +224,7 @@ nsMacWindow::DragReceiveHandler (WindowPtr theWindow, void *handlerRefCon,
 } // DragReceiveHandler
 
 
-NS_IMPL_ISUPPORTS_INHERITED4(nsMacWindow, Inherited, nsIEventSink, nsPIWidgetMac, nsPIEventSinkStandalone, 
+NS_IMPL_ISUPPORTS_INHERITED5(nsMacWindow, Inherited, nsIEventSink, nsPIWidgetMac, nsPIWidgetMac_MOZILLA_1_8_BRANCH, nsPIEventSinkStandalone, 
                                           nsIMacTextInputEventSink)
 
 
@@ -205,16 +236,20 @@ NS_IMPL_ISUPPORTS_INHERITED4(nsMacWindow, Inherited, nsIEventSink, nsPIWidgetMac
 nsMacWindow::nsMacWindow() : Inherited()
   , mWindowMadeHere(PR_FALSE)
   , mIsSheet(PR_FALSE)
-  , mIgnoreDeactivate(PR_FALSE)
   , mAcceptsActivation(PR_TRUE)
   , mIsActive(PR_FALSE)
   , mZoomOnShow(PR_FALSE)
   , mZooming(PR_FALSE)
   , mResizeIsFromUs(PR_FALSE)
   , mShown(PR_FALSE)
+  , mSheetNeedsShow(PR_FALSE)
+  , mSheetShown(PR_FALSE)
+  , mInPixelMouseScroll(PR_FALSE)
   , mMacEventHandler(nsnull)
+#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_3
+  , mNeedsResize(PR_FALSE)
+#endif
 {
-  mMacEventHandler.reset(new nsMacEventHandler(this));
   WIDGET_SET_CLASSNAME("nsMacWindow");  
 
   // create handlers for drag&drop
@@ -233,12 +268,6 @@ nsMacWindow::nsMacWindow() : Inherited()
 nsMacWindow::~nsMacWindow()
 {
   if ( mWindowPtr && mWindowMadeHere ) {
-    
-    // cleanup our special defproc if we are a popup
-    if ( mWindowType == eWindowType_popup )
-      RemoveBorderlessDefProc ( mWindowPtr );
-
-      
     // clean up DragManager stuff
     if ( mDragTrackingHandlerUPP ) {
       ::RemoveTrackingHandler ( mDragTrackingHandlerUPP, mWindowPtr );
@@ -288,6 +317,35 @@ nsresult nsMacWindow::StandardCreate(nsIWidget *aParent,
 
   NS_ASSERTION(!aInitData || aInitData->mWindowType != eWindowType_popup ||
                !aParent, "Popups should not be hooked into nsIWidget hierarchy");
+
+  nsMacEventDispatchHandler* eventDispatchHandler = nsnull;
+
+  if (aInitData && aInitData->mWindowType == eWindowType_popup &&
+      aNativeParent) {
+    // For popup windows, use the same event dispatch handler as the
+    // associated top-level window.  This ensures that enter/exit events
+    // will be generated as the mouse moves between the top-level window
+    // and the popup when both are "active."
+
+    // When creating a popup window, aNativeParent is not a WindowPtr but
+    // an nsIWidget, so walk up that tree to the top-level window and get
+    // the dispatch handler.
+    nsCOMPtr<nsIWidget> widget = NS_STATIC_CAST(nsIWidget*, aNativeParent);
+    nsIWidget* topWidget = nsnull;
+
+    while (widget && (widget = dont_AddRef(widget->GetParent())))
+      topWidget = widget;
+
+    if (topWidget) {
+      nsCOMPtr<nsPIWidgetMac_MOZILLA_1_8_BRANCH> parentMacWindow =
+       do_QueryInterface(topWidget);
+
+      if (parentMacWindow)
+        parentMacWindow->GetEventDispatchHandler(&eventDispatchHandler);
+    }
+  }
+
+  mMacEventHandler.reset(new nsMacEventHandler(this, eventDispatchHandler));
 
   // build the main native window
   if (!aNativeParent || (aInitData && aInitData->mWindowType == eWindowType_popup))
@@ -344,16 +402,16 @@ nsresult nsMacWindow::StandardCreate(nsIWidget *aParent,
         mIsTopWidgetWindow = PR_TRUE;
         if (aInitData)
         {
-          // I'm making the assumption here that any dialog created w/out a titlebar is modal and am
-          // therefore keeping the old modal dialog proc. I'm only special-casing dialogs with a
-          // titlebar since those are the only ones that might end up not being modal.
           // We never give dialog boxes a close box.
 
           switch (aInitData->mBorderStyle)
           {
             case eBorderStyle_none:
-            case eBorderStyle_default:
               windowClass = kModalWindowClass;
+              break;
+
+            case eBorderStyle_default:
+              windowClass = kDocumentWindowClass;
               break;
 
             case eBorderStyle_all:
@@ -379,7 +437,16 @@ nsresult nsMacWindow::StandardCreate(nsIWidget *aParent,
                       kWindowCollapseBoxAttribute | kWindowResizableAttributes;
                     break;
 
-                  default:
+                  case eBorderStyle_none: // 0
+                    // kSimpleWindowClass (18) is only defined in SDK >=
+                    // 10.3, but it works with runtime >= 10.1.  It's
+                    // borderless and chromeless, which is more visually
+                    // appropriate in Aqua than kPlainWindowClass, which
+                    // gives a 1px black border.
+                    windowClass = 18; // kSimpleWindowClass
+                    break;
+
+                  default: // not reached
                     NS_WARNING("Unhandled combination of window flags");
                     break;
                 }
@@ -493,11 +560,12 @@ nsresult nsMacWindow::StandardCreate(nsIWidget *aParent,
 
     mWindowMadeHere = PR_TRUE;
 
-    Rect content, structure;
+    // Getting kWindowContentRgn can give back bad values on Panther
+    // (fixed on Tiger), but wRect is already set to the content rect anyway.
+    Rect structure;
     ::GetWindowBounds(mWindowPtr, kWindowStructureRgn, &structure);
-    ::GetWindowBounds(mWindowPtr, kWindowContentRgn, &content);
-    mBoundsOffset.v = content.top - structure.top;
-    mBoundsOffset.h = content.left - structure.left;
+    mBoundsOffset.v = wRect.top - structure.top;
+    mBoundsOffset.h = wRect.left - structure.left;
   }
   else
   {
@@ -549,41 +617,76 @@ nsresult nsMacWindow::StandardCreate(nsIWidget *aParent,
     if ( mWindowType != eWindowType_invisible &&
          mWindowType != eWindowType_plugin &&
          mWindowType != eWindowType_java) {
-      const EventTypeSpec scrollEventList[] = {
-        { kEventClassMouse, kEventMouseWheelMoved }
+      const EventTypeSpec kScrollEventList[] = {
+        { kEventClassMouse, kEventMouseWheelMoved },
+#if 0
+        // Disabled due to bug 347626
+        { kEventClassMouse, kEventMouseScroll },
+#endif
       };
-      // note, passing NULL as the final param to IWEH() causes the UPP to be
-      // disposed automatically when the event target (the window) goes away.
-      // See CarbonEvents.h for info.
-      err = ::InstallWindowEventHandler(mWindowPtr,
-                                        NewEventHandlerUPP(ScrollEventHandler),
-                                        GetEventTypeCount(scrollEventList),
-                                        scrollEventList, this, NULL);
 
-      NS_ASSERTION(err == noErr,
-                   "Couldn't install Carbon Scroll Event handlers");
+      static EventHandlerUPP sScrollEventHandlerUPP;
+      if (!sScrollEventHandlerUPP)
+        sScrollEventHandlerUPP = ::NewEventHandlerUPP(ScrollEventHandler);
+
+      err = ::InstallWindowEventHandler(mWindowPtr,
+                                        sScrollEventHandlerUPP,
+                                        GetEventTypeCount(kScrollEventList),
+                                        kScrollEventList,
+                                        (void*)this,
+                                        NULL);
+      NS_ASSERTION(err == noErr, "Couldn't install scroll event handler");
     }
 
-    // Since we can only call IWEH() once for each event class such as
-    // kEventClassWindow, we register all the event types that  we are going to
-    // handle here.
-    const EventTypeSpec windEventList[] = {
+    // Window event handler
+    const EventTypeSpec kWindowEventList[] = {
       // to enable live resizing
       { kEventClassWindow, kEventWindowBoundsChanged },
       // to roll up popups when we're minimized
-      { kEventClassWindow, kEventWindowCollapse },
+      { kEventClassWindow, kEventWindowCollapsing },
+      // to activate when restoring
+      { kEventClassWindow, kEventWindowExpanded },
       // to keep invisible windows off the screen
       { kEventClassWindow, kEventWindowConstrain },
       // to handle update events
       { kEventClassWindow, kEventWindowUpdate },
+      // to handle activation
+      { kEventClassWindow, kEventWindowActivated },
+      { kEventClassWindow, kEventWindowDeactivated },
+      // to clean up after a transition is complete
+      { kEventClassWindow, kEventWindowTransitionCompleted },
     };
 
-    PRUint32 typeCount = GetEventTypeCount(windEventList);
+    static EventHandlerUPP sWindowEventHandlerUPP;
+    if (!sWindowEventHandlerUPP)
+      sWindowEventHandlerUPP = ::NewEventHandlerUPP(WindowEventHandler);
 
     err = ::InstallWindowEventHandler(mWindowPtr,
-                                      NewEventHandlerUPP(WindowEventHandler),
-                                      typeCount, windEventList, this, NULL);
-    NS_ASSERTION(err == noErr, "Couldn't install sheet Event handlers");
+                                      sWindowEventHandlerUPP,
+                                      GetEventTypeCount(kWindowEventList),
+                                      kWindowEventList,
+                                      (void*)this,
+                                      NULL);
+    NS_ASSERTION(err == noErr, "Couldn't install window event handler");
+
+    // Key event handler
+    const EventTypeSpec kKeyEventList[] = {
+      { kEventClassKeyboard, kEventRawKeyDown },
+      { kEventClassKeyboard, kEventRawKeyUp },
+      { kEventClassKeyboard, kEventRawKeyModifiersChanged },
+    };
+
+    static EventHandlerUPP sKeyEventHandlerUPP;
+    if (!sKeyEventHandlerUPP)
+      sKeyEventHandlerUPP = ::NewEventHandlerUPP(KeyEventHandler);
+
+    err = ::InstallWindowEventHandler(mWindowPtr,
+                                      sKeyEventHandlerUPP,
+                                      GetEventTypeCount(kKeyEventList),
+                                      kKeyEventList,
+                                      NS_STATIC_CAST(void*, this),
+                                      NULL);
+    NS_ASSERTION(err == noErr, "Couldn't install key event handler");
 
     // register tracking and receive handlers with the native Drag Manager
     if ( mDragTrackingHandlerUPP ) {
@@ -595,10 +698,14 @@ nsresult nsMacWindow::StandardCreate(nsIWidget *aParent,
       NS_ASSERTION ( err == noErr, "can't install drag receive handler");
     }
 
-    // If we're a popup, we don't want a border (we want CSS to draw it for us). So
-    // install our own window defProc.
-    if ( mWindowType == eWindowType_popup )
-      InstallBorderlessDefProc(mWindowPtr);
+    if (mWindowType == eWindowType_popup) {
+      // Popup windows are used for contextual menus, pop-up/drop-down menus,
+      // autocomplete dropdowns, and tooltips, all of which have a very slight
+      // transparency when native.  Use 5%, which is almost imperceptible
+      // and matches what Tiger does.
+      const float kPopupWindowAlpha = 0.95;
+      ::SetWindowAlpha(mWindowPtr, kPopupWindowAlpha);
+    }
 
   } // if we created windowPtr
 
@@ -610,37 +717,121 @@ nsresult nsMacWindow::StandardCreate(nsIWidget *aParent,
 
 
 pascal OSStatus
-nsMacWindow::ScrollEventHandler ( EventHandlerCallRef inHandlerChain, EventRef inEvent, void* userData )
+nsMacWindow::ScrollEventHandler(EventHandlerCallRef aHandlerCallRef,
+                                EventRef            aEvent,
+                                void*               aUserData)
 {
   OSStatus retVal = eventNotHandledErr;
-  EventMouseWheelAxis axis = kEventMouseWheelAxisY;
-  SInt32 delta = 0;
+
   Point mouseLoc;
   UInt32 modifiers = 0;
-  if (::GetEventParameter(inEvent, kEventParamMouseWheelAxis,
-                          typeMouseWheelAxis, NULL,
-                          sizeof(EventMouseWheelAxis), NULL, &axis) == noErr &&
-      ::GetEventParameter(inEvent, kEventParamMouseWheelDelta,
-                          typeLongInteger, NULL,
-                          sizeof(SInt32), NULL, &delta) == noErr &&
-      ::GetEventParameter(inEvent, kEventParamMouseLocation,
+  if (::GetEventParameter(aEvent, kEventParamMouseLocation,
                           typeQDPoint, NULL,
-                          sizeof(Point), NULL, &mouseLoc) == noErr &&
-      ::GetEventParameter(inEvent, kEventParamKeyModifiers,
+                          sizeof(Point), NULL, &mouseLoc) != noErr ||
+      ::GetEventParameter(aEvent, kEventParamKeyModifiers,
                           typeUInt32, NULL,
-                          sizeof(UInt32), NULL, &modifiers) == noErr) {
-    nsMacWindow* self = NS_REINTERPRET_CAST(nsMacWindow*, userData);
-    NS_ENSURE_TRUE(self->mMacEventHandler.get(), eventNotHandledErr);
-    if (self) {
-      // Convert mouse to local coordinates since that's how the event handler 
-      // wants them
-      StPortSetter portSetter(self->mWindowPtr);
-      StOriginSetter originSetter(self->mWindowPtr);
-      ::GlobalToLocal(&mouseLoc);
-      self->mMacEventHandler->Scroll(axis, delta, mouseLoc, self, modifiers);
-      retVal = noErr;
+                          sizeof(UInt32), NULL, &modifiers) != noErr) {
+    // Need both of these params regardless of event kind.
+    return retVal;
+  }
+
+  SInt32 deltaY = 0, deltaX = 0;
+  PRBool isPixels = PR_FALSE;
+
+  nsMacWindow* self = NS_REINTERPRET_CAST(nsMacWindow*, aUserData);
+
+  EventKind kind = ::GetEventKind(aEvent);
+
+  switch (kind) {
+    case kEventMouseWheelMoved: {
+      // Notchy scrolling hardware, like conventional wheel mice, scroll
+      // a line at a time.
+
+      if (self->mInPixelMouseScroll) {
+        // A smooth scroll was already done by pixels.  Don't scroll again by
+        // lines.
+        return noErr; 
+      }
+
+      EventMouseWheelAxis axis = kEventMouseWheelAxisY;
+      SInt32 delta = 0;
+      if (::GetEventParameter(aEvent, kEventParamMouseWheelAxis,
+                              typeMouseWheelAxis, NULL,
+                              sizeof(EventMouseWheelAxis), NULL,
+                              &axis) != noErr ||
+          ::GetEventParameter(aEvent, kEventParamMouseWheelDelta,
+                              typeLongInteger, NULL,
+                              sizeof(SInt32), NULL, &delta) != noErr) {
+        // Need both of these params.
+        return retVal;
+      }
+
+      if (axis == kEventMouseWheelAxisY)
+        deltaY = delta;
+      else
+        deltaX = delta;
+
+      break;
+    }
+
+    case kEventMouseScroll: {
+      // On Tiger or later, smooth scrolling hardware, like Apple touchpads
+      // and Mighty Mice, scroll a pixel at a time.  Handling this event means
+      // that the system won't send a kEventMouseWheelMoved event.
+      isPixels = PR_TRUE;
+      OSErr errY, errX;
+      errY = ::GetEventParameter(aEvent,
+                                 kEventParamMouseWheelSmoothVerticalDelta,
+                                 typeSInt32, NULL,
+                                 sizeof(SInt32), NULL, &deltaY);
+      errX = ::GetEventParameter(aEvent,
+                                 kEventParamMouseWheelSmoothHorizontalDelta,
+                                 typeSInt32, NULL,
+                                 sizeof(SInt32), NULL, &deltaX);
+      if (errY != noErr && errX != noErr) {
+        // Need at least one of these params.
+        return retVal;
+      }
+      if ((errY != noErr && errY != eventParameterNotFoundErr) ||
+          (errX != noErr && errX != eventParameterNotFoundErr)) {
+        // eventParameterNotFoundErr is the only permissible "error",
+        // in that case, leave the delta set to 0.
+        return retVal;
+      }
+      break;
+    }
+
+    default: {
+      // What?
+      return retVal;
+      break;
     }
   }
+
+  {
+    // Convert mouse to local coordinates since that's how the event handler 
+    // wants them
+    StPortSetter portSetter(self->mWindowPtr);
+    StOriginSetter originSetter(self->mWindowPtr);
+    ::GlobalToLocal(&mouseLoc);
+    self->mMacEventHandler->Scroll(deltaY, deltaX, isPixels, mouseLoc,
+                                   self, modifiers);
+    retVal = noErr;
+  }
+
+  if (kind == kEventMouseScroll && (deltaX != 0 || deltaY != 0)) {
+    // Plug-ins might depend on kEventMouseWheelMoved, so if the event was
+    // kEventMouseScroll, call to the next handler to give the system the
+    // chance to turn one event into the other.  See
+    // http://developer.apple.com/qa/qa2005/qa1453.html .  When the
+    // new event reaches this handler, mInPixelMouseScroll will prevent
+    // double-scrolling.
+    PRBool lastInPixelMouseScroll = self->mInPixelMouseScroll;
+    self->mInPixelMouseScroll = PR_TRUE;
+    ::CallNextEventHandler(aHandlerCallRef, aEvent);
+    self->mInPixelMouseScroll = lastInPixelMouseScroll;
+  }
+
   return retVal;
 } // ScrollEventHandler
 
@@ -649,11 +840,10 @@ pascal OSStatus
 nsMacWindow::WindowEventHandler ( EventHandlerCallRef inHandlerChain, EventRef inEvent, void* userData )
 {
   OSStatus retVal = eventNotHandledErr;  // Presume we won't consume the event
-  WindowRef myWind = NULL;
-  ::GetEventParameter ( inEvent, kEventParamDirectObject, typeWindowRef, NULL, sizeof(myWind), NULL, &myWind );
-  if ( myWind ) {
-    UInt32 what = ::GetEventKind ( inEvent );
-    switch ( what ) {
+  nsMacWindow* self = NS_REINTERPRET_CAST(nsMacWindow*, userData);
+  if (self) {
+    UInt32 what = ::GetEventKind(inEvent);
+    switch (what) {
     
       case kEventWindowBoundsChanged:
       {
@@ -661,15 +851,16 @@ nsMacWindow::WindowEventHandler ( EventHandlerCallRef inHandlerChain, EventRef i
         UInt32 attributes = 0;
         ::GetEventParameter ( inEvent, kEventParamAttributes, typeUInt32, NULL, sizeof(attributes), NULL, &attributes );
         if ( attributes & kWindowBoundsChangeSizeChanged ) {
+          WindowRef myWind = NULL;
+          ::GetEventParameter(inEvent, kEventParamDirectObject, typeWindowRef, NULL, sizeof(myWind), NULL, &myWind);
           Rect bounds;
           ::InvalWindowRect(myWind, ::GetWindowPortBounds(myWind, &bounds));
           
           // resize the window and repaint
-          nsMacWindow* self = NS_REINTERPRET_CAST(nsMacWindow*, userData);
           NS_ENSURE_TRUE(self->mMacEventHandler.get(), eventNotHandledErr);
-          if ( self && !self->mResizeIsFromUs ) {
+          if (!self->mResizeIsFromUs ) {
             self->mMacEventHandler->ResizeEvent(myWind);
-            self->mMacEventHandler->UpdateEvent();
+            self->Update();
           }
           retVal = noErr;  // We did consume the resize event
         }
@@ -680,36 +871,70 @@ nsMacWindow::WindowEventHandler ( EventHandlerCallRef inHandlerChain, EventRef i
       {
         // Ignore this event if we're an invisible window, otherwise pass along the
         // chain to ensure it's onscreen.
-        nsMacWindow* self = NS_REINTERPRET_CAST(nsMacWindow*, userData);
-        if ( self ) {
-          if ( self->mWindowType != eWindowType_invisible )
-            retVal = ::CallNextEventHandler(inHandlerChain, inEvent);
-          else
-            retVal = noErr;  // consume the event for the hidden window
-        }
+        if ( self->mWindowType != eWindowType_invisible )
+          retVal = ::CallNextEventHandler(inHandlerChain, inEvent);
+        else
+          retVal = noErr;  // consume the event for the hidden window
         break;
       }      
 
       case kEventWindowUpdate:
       {
-        nsMacWindow *self = NS_REINTERPRET_CAST(nsMacWindow *, userData);
-        if (self) self->Update();
+        self->Update();
+        retVal = noErr; // consume
       }
       break;
 
       // roll up popups when we're minimized
-      case kEventWindowCollapse:
+      case kEventWindowCollapsing:
       {
         if ( gRollupListener && gRollupWidget )
           gRollupListener->Rollup();        
-        retVal = ::CallNextEventHandler(inHandlerChain, inEvent);
+        self->mMacEventHandler->GetEventDispatchHandler()->DispatchGuiEvent(self, NS_DEACTIVATE);
+        ::CallNextEventHandler(inHandlerChain, inEvent);
+        retVal = noErr; // do default processing, but consume
       }
       break;
-        
-      default:
-        // do nothing...
+
+      // Activate when restoring from the minimized state.  This ensures that
+      // the restored window will be able to take focus.
+      case kEventWindowExpanded:
+      {
+        self->mMacEventHandler->GetEventDispatchHandler()->DispatchGuiEvent(self, NS_ACTIVATE);
+        ::CallNextEventHandler(inHandlerChain, inEvent);
+        retVal = noErr; // do default processing, but consume
+      }
+      break;
+
+      case kEventWindowActivated:
+      {
+        // This cooperates with the sheet case in Show to avoid activating
+        // sheets prematurely.  The activate event sent by ShowSheetWindow
+        // will be ignored, but Show will set mSheetShown and send another
+        // activate event to ensure that activation occurs.
+        if (self->mWindowType != eWindowType_sheet ||
+            self->mSheetShown) {
+          self->mMacEventHandler->HandleActivateEvent(inEvent);
+        }
+        ::CallNextEventHandler(inHandlerChain, inEvent);
+        retVal = noErr; // do default processing, but consume
+      }
+      break;
+
+      case kEventWindowDeactivated:
+      {
+        self->mMacEventHandler->HandleActivateEvent(inEvent);
+        ::CallNextEventHandler(inHandlerChain, inEvent);
+        retVal = noErr; // do default processing, but consume
+      }
+      break;
+
+      case kEventWindowTransitionCompleted: {
+        self->mDeathGripDuringTransition = nsnull;
+        retVal = noErr;
         break;
-    
+      }
+
     } // case of which event?
   }
   
@@ -738,85 +963,106 @@ NS_IMETHODIMP nsMacWindow::Create(nsNativeWidget aNativeParent,   // this is a w
 }
 
 
-//
-// InstallBorderlessDefProc
-//
-// For xul popups, we want borderless windows to match win32's borderless windows. Stash
-// our fake WDEF into this window which takes care of not-drawing the borders.
-//
-void 
-nsMacWindow::InstallBorderlessDefProc ( WindowPtr inWindow )
-{
-} // InstallBorderlessDefProc
-
-
-//
-// RemoveBorderlessDefProc
-//
-// Clean up the mess we've made with our fake defproc. Reset it to
-// the system one, just in case someone needs it around after we're
-// through with it.
-//
-void
-nsMacWindow::RemoveBorderlessDefProc ( WindowPtr inWindow )
-{
-}
-
-
 //-------------------------------------------------------------------------
 //
 // Hide or show this window
 //
 //-------------------------------------------------------------------------
-NS_IMETHODIMP nsMacWindow::Show(PRBool bState)
+NS_IMETHODIMP nsMacWindow::Show(PRBool aState)
 {
   // Mac OS X sheet support
   nsIWidget *parentWidget = mParent;
-  nsCOMPtr<nsPIWidgetMac> piParentWidget ( do_QueryInterface(parentWidget) );
+  nsCOMPtr<nsPIWidgetMac_MOZILLA_1_8_BRANCH> piParentWidget ( do_QueryInterface(parentWidget) );
   WindowRef parentWindowRef = (parentWidget) ?
     reinterpret_cast<WindowRef>(parentWidget->GetNativeData(NS_NATIVE_DISPLAY)) : nsnull;
 
-  Inherited::Show(bState);
+  Inherited::Show(aState);
   
   // we need to make sure we call ::Show/HideWindow() to generate the 
   // necessary activate/deactivate events. Calling ::ShowHide() is
   // not adequate, unless we don't want activation (popups). (pinkerton).
-  if ( bState && !mBounds.IsEmpty() ) {
-    if ( mIsSheet && parentWindowRef ) {
+  if (aState && !mBounds.IsEmpty()) {
+    if (mIsSheet) {
+      if (parentWindowRef) {
         WindowPtr top = GetWindowTop(parentWindowRef);
-        if (piParentWidget)
-        {
-          piParentWidget->SetIgnoreDeactivate(PR_TRUE);
-          PRBool sheetFlag = PR_FALSE;
-          if (parentWindowRef &&
-            NS_SUCCEEDED(piParentWidget->GetIsSheet(&sheetFlag)) && (sheetFlag))
-          {
+        if (piParentWidget) {
+          PRBool parentIsSheet = PR_FALSE;
+          if (NS_SUCCEEDED(piParentWidget->GetIsSheet(&parentIsSheet)) &&
+              parentIsSheet) {
+            // If this sheet is the child of another sheet, hide the parent
+            // so that this sheet can be displayed.
+            // Leave the parent's mShown and mSheetNeedsShow alone, those are
+            // only used to handle sibling sheet contention.  The parent will
+            // be displayed again when it has no more child sheets.
             ::GetSheetWindowParent(parentWindowRef, &top);
             ::HideSheetWindow(parentWindowRef);
+            piParentWidget->SetSheetShown(PR_FALSE);
           }
         }
-        ::ShowSheetWindow(mWindowPtr, top);
-        UpdateWindowMenubar(parentWindowRef, PR_FALSE);
-        gEventDispatchHandler.DispatchGuiEvent(this, NS_GOTFOCUS);
-        gEventDispatchHandler.DispatchGuiEvent(this, NS_ACTIVATE);
+
+        nsMacWindow* sheetShown = nsnull;
+        if (NS_SUCCEEDED(piParentWidget->GetChildSheet(PR_TRUE,
+                                                       &sheetShown)) &&
+            (!sheetShown || sheetShown == this)) {
+          if (!sheetShown) {
+            // There is no sheet on the top-level window, show this one.
+
+            // Important to set these member variables first, because
+            // ShowSheetWindow may result in native event dispatch causing
+            // reentrancy into this code for this window - if mSheetNeedsShow
+            // is true, it's possible to show the same sheet twice, and that
+            // will cause tremendous problems.
+            mShown = PR_TRUE;
+            mSheetNeedsShow = PR_FALSE;
+
+            ::ShowSheetWindow(mWindowPtr, top);
+
+            // ShowSheetWindow sends an activate event, which could potentially
+            // cause the modal loop to run.  In some cases, this will occur
+            // before the sheet is actually displayed, resulting in a loop
+            // waiting for input from the user that is impossible to achieve.
+            // As a workaround, the activate event sent by ShowSheetWindow
+            // will not be handled by Gecko, and instead another activate
+            // event will be sent once the sheet is known to be displayed.
+            mSheetShown = PR_TRUE;
+            ::ActivateWindow(mWindowPtr, true);
+          }
+          UpdateWindowMenubar(parentWindowRef, PR_FALSE);
+          mMacEventHandler->GetEventDispatchHandler()->DispatchGuiEvent(this, NS_GOTFOCUS);
+          mMacEventHandler->GetEventDispatchHandler()->DispatchGuiEvent(this, NS_ACTIVATE);
+          ComeToFront();
+        }
+        else {
+          // A sibling of this sheet is active, don't show this sheet yet.
+          // When the active sheet hides, its brothers and sisters that have
+          // mSheetNeedsShow set will have their opportunities to display.
+          mSheetNeedsShow = PR_TRUE;
+        }
+      }
     }
-    else
-    if ( mAcceptsActivation )
-      ::ShowWindow(mWindowPtr);
     else {
-      ::ShowHide(mWindowPtr, true);
-      ::BringToFront(mWindowPtr); // competes with ComeToFront, but makes popups work
+      if (mAcceptsActivation)
+        ::ShowWindow(mWindowPtr);
+      else {
+        ::ShowHide(mWindowPtr, true);
+        // competes with ComeToFront, but makes popups work
+        ::BringToFront(mWindowPtr);
+      }
+      ComeToFront();
+      mShown = PR_TRUE;
     }
-    mShown = PR_TRUE;
+
     if (mZoomOnShow) {
       SetSizeMode(nsSizeMode_Maximized);
       mZoomOnShow = PR_FALSE;
     }
-    ComeToFront();
+
+    if (::IsWindowCollapsed(mWindowPtr))
+      ::CollapseWindow(mWindowPtr, false);
   }
   else {
-    // when a toplevel window goes away, make sure we rollup any popups that may 
-    // be lurking. We want to catch this here because we're guaranteed that
+    // when a toplevel window goes away, make sure we rollup any popups that
+    // may be lurking. We want to catch this here because we're guaranteed that
     // we hide a window before we destroy it, and doing it here more closely
     // approximates where we do the same thing on windows.
     if ( mWindowType == eWindowType_toplevel ) {
@@ -825,55 +1071,126 @@ NS_IMETHODIMP nsMacWindow::Show(PRBool bState)
       NS_IF_RELEASE(gRollupListener);
       NS_IF_RELEASE(gRollupWidget);
     }
+
     // Mac OS X sheet support
     if (mIsSheet) {
-      if (piParentWidget)
-        piParentWidget->SetIgnoreDeactivate(PR_FALSE);
+      if (mShown) {
+        // Set mShown here because a sibling sheet may want to be activated,
+        // and mShown needs to be false in order for sibling sheets to display.
+        mShown = PR_FALSE;
 
-      // get sheet's parent *before* hiding the sheet (which breaks the linkage)
-      WindowPtr sheetParent = nsnull;
-      ::GetSheetWindowParent(mWindowPtr, &sheetParent);
+        // get sheet's parent *before* hiding the sheet (which breaks the
+        // linkage)
+        WindowPtr sheetParent = nsnull;
+        ::GetSheetWindowParent(mWindowPtr, &sheetParent);
 
-      ::HideSheetWindow(mWindowPtr);
+        ::HideSheetWindow(mWindowPtr);
+        mSheetShown = PR_FALSE;
 
-      gEventDispatchHandler.DispatchGuiEvent(this, NS_DEACTIVATE);
+        mMacEventHandler->GetEventDispatchHandler()->DispatchGuiEvent(this, NS_DEACTIVATE);
 
-      // if we had several sheets open, when the last one goes away
-      // we need to ensure that the top app window is active
-      WindowPtr top = GetWindowTop(parentWindowRef);
-      piParentWidget = do_QueryInterface(parentWidget);
+        WindowPtr top = GetWindowTop(parentWindowRef);
+        nsMacWindow* siblingSheetToShow = nsnull;
+        PRBool parentIsSheet = PR_FALSE;
 
-      PRBool sheetFlag = PR_FALSE;
-      if (parentWindowRef && piParentWidget &&
-        NS_SUCCEEDED(piParentWidget->GetIsSheet(&sheetFlag)) && (sheetFlag))
-      {
-        nsCOMPtr<nsIWidget> parentWidget;
-        nsToolkit::GetTopWidget(sheetParent, getter_AddRefs(parentWidget));
-        piParentWidget = do_QueryInterface(parentWidget);
-        if (piParentWidget)
-          piParentWidget->SetIgnoreDeactivate(PR_TRUE);
-        ::ShowSheetWindow(parentWindowRef, sheetParent);
+        if (parentWindowRef && piParentWidget &&
+            NS_SUCCEEDED(piParentWidget->GetChildSheet(PR_FALSE, 
+                                                       &siblingSheetToShow)) &&
+            siblingSheetToShow) {
+          // First, give sibling sheets an opportunity to show.
+          siblingSheetToShow->Show(PR_TRUE);
+        }
+        else if (parentWindowRef && piParentWidget &&
+                 NS_SUCCEEDED(piParentWidget->GetIsSheet(&parentIsSheet)) &&
+                 parentIsSheet) {
+          // If there are no sibling sheets, but the parent is a sheet, restore
+          // it.  It wasn't sent any deactivate events when it was hidden, so
+          // don't call through Show, just let the OS put it back up.
+          ::ShowSheetWindow(parentWindowRef, sheetParent);
+
+          // See the other ShowSheetWindow call above for an explanation of
+          // why this is done.
+          piParentWidget->SetSheetShown(PR_TRUE);
+          ::ActivateWindow(parentWindowRef, true);
+        }
+        else {
+          // Sheet, that was hard.  No more siblings or parents, going back
+          // to a real window.
+
+          // if we had several sheets open, when the last one goes away
+          // we need to ensure that the top app window is active
+          if (mAcceptsActivation)
+            ::ShowWindow(top);
+          else {
+            ::ShowHide(top, true);
+            // competes with ComeToFront, but makes popups work
+            ::BringToFront(top);
+          }
+        }
+        ComeToFront();
+
+        if (top == parentWindowRef)
+          UpdateWindowMenubar(parentWindowRef, PR_TRUE);
       }
-      else if ( mAcceptsActivation ) {
-        ::ShowWindow(top);
-      }
-      else {
-        ::ShowHide(top, true);
-        ::BringToFront(top); // competes with ComeToFront, but makes popups work
-      }
-      ComeToFront();
-
-      if (top == parentWindowRef) {
-        UpdateWindowMenubar(parentWindowRef, PR_TRUE);
+      else if (mSheetNeedsShow) {
+        // This is an attempt to hide a sheet that never had a chance to
+        // be shown.  There's nothing to do other than make sure that it
+        // won't show.
+        mSheetNeedsShow = PR_FALSE;
       }
     }
-    else
-      if ( mWindowPtr ) {
-        ::HideWindow(mWindowPtr);
+    else {
+      if (mWindowPtr) {
+        static TransitionWindowWithOptions_type transitionFunc;
+        if (mWindowType == eWindowType_popup) {
+          // Popups will hide by fading out with TransitionWindowWithOptions,
+          // if available.  It's present in 10.3 and later.  If that SDK or
+          // newer is used, just grab the address of the function, otherwise,
+          // dynamically look it up at runtime.  Fall back to calling
+          // HideWindow if TransitionWindowWithOptions isn't available.
+          static PRBool sChecked;
+          if (!sChecked) {
+            sChecked = PR_TRUE;
+#if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_3
+            transitionFunc = ::TransitionWindowWithOptions;
+#else
+            CFBundleRef carbonBundle =
+             ::CFBundleGetBundleWithIdentifier(CFSTR("com.apple.Carbon"));
+            if (carbonBundle) {
+              transitionFunc = (TransitionWindowWithOptions_type)
+               ::CFBundleGetFunctionPointerForName(carbonBundle,
+                                         CFSTR("TransitionWindowWithOptions"));
+            }
+#endif
+          }
+        }
+        // Bug 345388: hiding windows using the async
+        // TransitionWindowWithOptions causes memory corruption on 10.3, even
+        // though the API is supported there.  Only fade these windows out on
+        // 10.4 or later, which are able to handle it without corruption or
+        // crashing.
+        if (mWindowType == eWindowType_popup && transitionFunc
+#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_4
+            && nsToolkit::OSXVersion() >= MAC_OS_X_VERSION_10_4_HEX
+#endif
+           ) {
+          mDeathGripDuringTransition = this;
+          TransitionWindowOptions transitionOptions = { version  : 0,
+                                                        duration : 0.2,
+                                                        window   : nsnull,
+                                                        userData : nsnull };
+          transitionFunc(mWindowPtr, kWindowFadeTransitionEffect,
+                         kWindowHideTransitionAction, nsnull,
+                         PR_TRUE, &transitionOptions);
+        }
+        else
+          ::HideWindow(mWindowPtr);
       }
       mShown = PR_FALSE;
     }
-    return NS_OK;
+  }
+
+  return NS_OK;
 }
 
 
@@ -1341,15 +1658,13 @@ nsMacWindow::GetMenuBar(nsIMenuBar **_retval)
 NS_IMETHODIMP
 nsMacWindow::GetIgnoreDeactivate(PRBool *_retval)
 {
-  *_retval = mIgnoreDeactivate;
-  return(NS_OK);
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
 nsMacWindow::SetIgnoreDeactivate(PRBool ignoreDeactivate)
 {
-  mIgnoreDeactivate = ignoreDeactivate;
-  return(NS_OK);
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1411,6 +1726,24 @@ NS_IMETHODIMP nsMacWindow::Resize(PRInt32 aWidth, PRInt32 aHeight, PRBool aRepai
 nsresult nsMacWindow::Resize(PRInt32 aWidth, PRInt32 aHeight, PRBool aRepaint, PRBool aFromUI)
 {
   if (mWindowMadeHere) {
+#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_3
+    if (mInUpdate && nsToolkit::OSXVersion() < MAC_OS_X_VERSION_10_3_HEX) {
+      // Calling SizeWindow in the middle of an update will hang on 10.2,
+      // even if care is taken to break out of the update with EndUpdate.
+      // On 10.2, defer the resize until the update is done.  Update will
+      // call back into Resize with these values after the update is
+      // finished.
+      mResizeTo.width = aWidth;
+      mResizeTo.height = aHeight;
+      mResizeTo.repaint = aRepaint;
+      mResizeTo.fromUI = aFromUI;
+
+      mNeedsResize = PR_TRUE;
+
+      return NS_OK;
+    }
+#endif
+
     Rect windowRect;
     if (::GetWindowBounds(mWindowPtr, kWindowContentRgn, &windowRect)
         != noErr) {
@@ -1640,15 +1973,7 @@ nsMacWindow::HandleUpdateActiveInputAreaForNonUnicode(const nsACString & text,
                                                       PRInt32 fixLen, void * hiliteRng, 
                                                       OSStatus *_retval)
 {
-  *_retval = eventNotHandledErr;
-  NS_ENSURE_TRUE(mMacEventHandler.get(), NS_ERROR_FAILURE);
-  const nsPromiseFlatCString& buffer = PromiseFlatCString(text);
-  // ignore langauge information for now. 
-  nsresult res = mMacEventHandler->HandleUpdateInputArea(buffer.get(), buffer.Length(), script, fixLen, (TextRangeArray*) hiliteRng);
-  // we will lost the real OSStatus for now untill we change the nsMacEventHandler
-  if (NS_SUCCEEDED(res))
-    *_retval = noErr;
-  return res;
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 /* OSStatus HandleUnicodeForKeyEvent (in wstring text, in long textLength, in short script, in short language, in voidPtr keyboardEvent); */
@@ -1785,8 +2110,9 @@ nsMacWindow::Scroll ( PRBool aVertical, PRInt16 aNumLines, PRInt16 aMouseLocalX,
   *_retval = PR_FALSE;
   NS_ENSURE_TRUE(mMacEventHandler.get(), NS_ERROR_FAILURE);
   Point localPoint = {aMouseLocalY, aMouseLocalX};
-  *_retval = mMacEventHandler->Scroll(aVertical ? kEventMouseWheelAxisY : kEventMouseWheelAxisX,
-                                      aNumLines, localPoint, this, 0);
+  *_retval = mMacEventHandler->Scroll(aVertical ? aNumLines : 0,
+                                      aVertical ? 0 : aNumLines,
+                                      PR_FALSE, localPoint, this, 0);
   return NS_OK;
 }
 
@@ -2034,5 +2360,108 @@ nsresult nsMacWindow::GetDesktopRect(Rect* desktopRect)
 
   // *desktopRect is now clear of the menu bar and dock, if they needed
   // to be cleared.
+  return NS_OK;
+}
+
+//
+// GetChildSheet
+//
+// If aShown is true, returns the child widget associated with the sheet
+// attached to this nsMacWindow, or nsnull if none.
+//
+// If aShown is false, returns the first child widget of this nsMacWindow
+// corresponding to a sheet that wishes to be displayed, or nsnull if no
+// sheets are waiting to be shown.
+//
+NS_IMETHODIMP nsMacWindow::GetChildSheet(PRBool aShown, nsMacWindow** _retval)
+{
+  nsIWidget* child = GetFirstChild();
+
+  while (child) {
+    // nsWindow is the base widget in the Carbon widget library, this is safe
+    nsWindow* window = NS_STATIC_CAST(nsWindow*, child);
+
+    nsWindowType type;
+    if (NS_SUCCEEDED(window->GetWindowType(type)) &&
+        type == eWindowType_sheet) {
+      // if it's a sheet, it must be an nsMacWindow
+      nsMacWindow* macWindow = NS_STATIC_CAST(nsMacWindow*, window);
+
+      if ((aShown && macWindow->mShown) ||
+          (!aShown && macWindow->mSheetNeedsShow)) {
+        *_retval = macWindow;
+        return NS_OK;
+      }
+    }
+
+    child = child->GetNextSibling();
+  }
+
+  *_retval = nsnull;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMacWindow::Update()
+{
+  nsresult rv = Inherited::Update();
+
+#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_3
+  if (NS_SUCCEEDED(rv) && mNeedsResize) {
+    // Something wanted to resize this window in the middle of the update
+    // above, and the host OS is 10.2.  The resize would have caused a
+    // hang in SizeWindow, so it was deferred.  Now that the update is
+    // done, it's safe to resize.
+    mNeedsResize = PR_FALSE;
+
+    Resize(mResizeTo.width, mResizeTo.height,
+           mResizeTo.repaint, mResizeTo.fromUI);
+  }
+#endif
+
+  return rv;
+}
+
+pascal OSStatus
+nsMacWindow::KeyEventHandler(EventHandlerCallRef aHandlerCallRef,
+                             EventRef            aEvent,
+                             void*               aUserData)
+{
+  nsMacWindow* self = NS_STATIC_CAST(nsMacWindow*, aUserData);
+  NS_ASSERTION(self, "No self?");
+  NS_ASSERTION(self->mMacEventHandler.get(), "No mMacEventHandler?");
+
+  PRBool handled = PR_FALSE;
+
+  EventKind kind = ::GetEventKind(aEvent);
+  if (kind == kEventRawKeyModifiersChanged)
+    handled = self->mMacEventHandler->HandleKeyModifierEvent(aHandlerCallRef,
+                                                             aEvent);
+  else
+    handled = self->mMacEventHandler->HandleKeyUpDownEvent(aHandlerCallRef,
+                                                           aEvent);
+
+  if (!handled)
+    return eventNotHandledErr;
+
+  return noErr;
+}
+
+NS_IMETHODIMP
+nsMacWindow::GetEventDispatchHandler(nsMacEventDispatchHandler** aEventDispatchHandler) {
+  *aEventDispatchHandler = mMacEventHandler->GetEventDispatchHandler();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMacWindow::GetSheetShown(PRBool *aSheetShown)
+{
+  *aSheetShown = mSheetShown;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMacWindow::SetSheetShown(PRBool aSheetShown)
+{
+  mSheetShown = aSheetShown;
   return NS_OK;
 }

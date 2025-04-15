@@ -21,6 +21,7 @@
  *
  * Contributor(s):
  *   David Bienvenu (bienvenu@nventure.com)
+ *   Howard Chu <hyc@symas.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -44,6 +45,8 @@
 #include "nsIMsgFilter.h"
 #include "nsMsgSearchArray.h"
 #include "nsIMsgSearchScopeTerm.h"
+#include "nsMsgSearchBoolExpression.h"
+#include "nsIDateTimeFormat.h"
 
 class nsMsgRuleAction : public nsIMsgRuleAction
 {
@@ -114,12 +117,13 @@ protected:
   PRPackedBool m_enabled;
   PRPackedBool m_temporary;
   PRPackedBool m_unparseable;
-
   nsIMsgFilterList *m_filterList;	/* owning filter list */
   nsCOMPtr<nsISupportsArray> m_termList;       /* linked list of criteria terms */
   nsCOMPtr<nsIMsgSearchScopeTerm> m_scope;         /* default for mail rules is inbox, but news rules could
                                                   have a newsgroup - LDAP would be invalid */
   nsCOMPtr<nsISupportsArray> m_actionList;
+  nsMsgSearchBoolExpression *m_expressionTree;
+  nsCOMPtr<nsIDateTimeFormat> mDateFormatter;
 };
 
 #endif

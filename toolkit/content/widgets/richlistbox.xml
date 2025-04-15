@@ -128,7 +128,8 @@
 
               if (element) {
                 this.selectedItem = element;
-                this.scrollBoxObject.scrollToElement(this.selectedItem);
+                if (!this._isItemVisible(this.selectedItem))
+                  this.scrollBoxObject.scrollToElement(this.selectedItem);
                 return;
               }
             }
@@ -192,22 +193,7 @@
       <property name="selectedIndex">
         <getter>
           <![CDATA[
-            var returnValue = -1;
-
-            // if there is a selected item, iterate the children looking for it.
-            if (this.selectedItem) {
-              var children = this.children;
-
-              var run = 0;
-              while (children[run] != this.selectedItem && run < children.length) {
-                run++;
-              }
-
-              if (children[run] == this.selectedItem)
-                returnValue = run;
-            }
-
-            return returnValue;
+            return this.getIndexOf(this.selectedItem);
           ]]>
         </getter>
         <setter>
@@ -402,18 +388,11 @@
         <parameter name="aElement"/>
         <body>
           <![CDATA[
-            var run = 0;
-            var index = -1;
-            var children = this.children;
+            // don't search the children, if we're looking for none of them
+            if (aElement == null)
+              return -1;
 
-            while (children[run] != aElement && run < children.length) {
-              run++;
-            }
-
-            if (children[run] == aElement)
-              index = run;
-
-            return index;
+            return this.children.indexOf(aElement);
           ]]>
         </body>
       </method>
@@ -456,7 +435,7 @@
 
             if (!this.suppressOnSelect) {
               var event = document.createEvent("Events");
-              event.initEvent("select", false, true);
+              event.initEvent("select", true, true);
               this.dispatchEvent(event);
 
               // if we have controllers, notify the command dispatcher

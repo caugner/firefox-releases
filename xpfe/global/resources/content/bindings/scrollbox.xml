@@ -22,12 +22,12 @@
   <binding id="arrowscrollbox" extends="chrome://global/content/bindings/scrollbox.xml#scrollbox-base">
     <content>
       <xul:autorepeatbutton class="autorepeatbutton-up" collapsed="true"
-                            oncommand="this.parentNode.scrollByIndex(-1); event.preventBubble();"/>
+                            oncommand="this.parentNode.scrollByIndex(-1); event.stopPropagation();"/>
       <xul:scrollbox xbl:inherits="orient,align,pack,dir" flex="1">
         <children/>
       </xul:scrollbox>
       <xul:autorepeatbutton class="autorepeatbutton-down" collapsed="true"
-                            oncommand="this.parentNode.scrollByIndex(1); event.preventBubble();"/>
+                            oncommand="this.parentNode.scrollByIndex(1); event.stopPropagation();"/>
     </content>
     
     <implementation>
@@ -41,24 +41,34 @@
 
           this.mScrollBoxObject.scrollByIndex(lines);
         ]]></body>
-      </method>            
+      </method>
     </implementation>    
 
     <handlers>
-      <handler event="DOMMouseScroll" action="this.scrollByIndex(event.detail); event.preventBubble();"/>
+      <handler event="DOMMouseScroll" action="this.scrollByIndex(event.detail); event.stopPropagation();"/>
 
       <handler event="underflow"><![CDATA[
+        // XXX Workaround for unexpected events dispatched during scrollbox
+        // destruction (bug 341047).
+        if (this.boxObject.width <= 0)
+          return;
+
         var kids = document.getAnonymousNodes(this);
         kids[0].collapsed = true;
         kids[2].collapsed = true;
-        event.preventBubble();
+        event.stopPropagation();
       ]]></handler>
 
       <handler event="overflow"><![CDATA[
+        // XXX Workaround for unexpected events dispatched during scrollbox
+        // destruction (bug 341047).
+        if (this.boxObject.width <= 0)
+          return;
+
         var kids = document.getAnonymousNodes(this);
         kids[0].collapsed = false;
         kids[2].collapsed = false;
-        event.preventBubble();
+        event.stopPropagation();
       ]]></handler>
     </handlers>
   </binding>

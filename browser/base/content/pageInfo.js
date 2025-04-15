@@ -222,6 +222,8 @@ const nsIEmbedElement    = Components.interfaces.nsIDOMHTMLEmbedElement
 const nsIButtonElement   = Components.interfaces.nsIDOMHTMLButtonElement
 const nsISelectElement   = Components.interfaces.nsIDOMHTMLSelectElement
 const nsITextareaElement = Components.interfaces.nsIDOMHTMLTextAreaElement
+const nsIQuoteElement    = Components.interfaces.nsIDOMHTMLQuoteElement
+const nsIModElement      = Components.interfaces.nsIDOMHTMLModElement
 
 // Interface for image loading content
 const nsIImageLoadingContent = Components.interfaces.nsIImageLoadingContent;
@@ -267,6 +269,8 @@ function onLoadPageInfo()
   gStrings.linkStylesheet = theBundle.getString("linkStylesheet");
   gStrings.linkRev = theBundle.getString("linkRev");
   gStrings.linkX = theBundle.getString("linkX");
+  gStrings.linkQuote = theBundle.getString("linkQuote");
+  gStrings.linkMod = theBundle.getString("linkMod");
   gStrings.mediaImg = theBundle.getString("mediaImg");
   gStrings.mediaBGImg = theBundle.getString("mediaBGImg");
   gStrings.mediaApplet = theBundle.getString("mediaApplet");
@@ -276,7 +280,8 @@ function onLoadPageInfo()
   gStrings.mediaInput = theBundle.getString("mediaInput");
 
   var docTitle = "";
-  if ("arguments" in window && window.arguments.length >= 1 && window.arguments[0] && window.arguments[0].doc)
+  if ("arguments" in window && window.arguments.length >= 1 &&
+       window.arguments[0] && window.arguments[0].doc)
   {
     theWindow = null;
     theDocument = window.arguments[0].doc;
@@ -311,7 +316,8 @@ function onLoadPageInfo()
 
   /* Select the requested tab, if the name is specified */
   var tabControl = document.getElementById("tabbox");
-  if ("arguments" in window && window.arguments.length >= 1 && window.arguments[0] && window.arguments[0].initialTab)
+  if ("arguments" in window && window.arguments.length >= 1 &&
+       window.arguments[0] && window.arguments[0].initialTab)
   {
     var tab = document.getElementById(window.arguments[0].initialTab);
     if (tab)
@@ -532,6 +538,10 @@ function grabAll(elem)
     addImage(elem.src, gStrings.mediaImg, (elem.hasAttribute("alt")) ? elem.alt : gStrings.notSet, elem, false);
   else if (elem instanceof nsIAreaElement)
     linkView.addRow([elem.alt, elem.href, gStrings.linkArea, elem.target]);
+  else if (elem instanceof nsIQuoteElement && elem.cite)
+    linkView.addRow([getValueText(elem), elem.cite, gStrings.linkQuote]);
+  else if (elem instanceof nsIModElement && elem.cite)
+    linkView.addRow([getValueText(elem), elem.cite, gStrings.linkMod]);
   else if (elem instanceof nsILinkElement)
   {
     if (elem.rel)
@@ -555,12 +565,9 @@ function grabAll(elem)
         addImage(elem.src, gStrings.mediaInput, (elem.hasAttribute("alt")) ? elem.alt : gStrings.notSet, elem, false);
         // Fall through, <input type="image"> submits, too
       case "submit":
-        // Form element properties can be hidden by child elements with the same name, so
-        // we need to use a special access method, XPCNativeWrapper, to get their real values
         if ("form" in elem && elem.form)
         {
-          var formWrapper = new XPCNativeWrapper(elem.form, "target", "action");
-          linkView.addRow([elem.value || getValueText(elem) || gStrings.linkSubmit, formWrapper.action, gStrings.linkSubmission, formWrapper.target]);
+          linkView.addRow([elem.value || getValueText(elem) || gStrings.linkSubmit, elem.form.action, gStrings.linkSubmission, elem.form.target]);
         }
         else
           linkView.addRow([elem.value || getValueText(elem) || gStrings.linkSubmit, '', gStrings.linkSubmission, '']);
@@ -568,8 +575,7 @@ function grabAll(elem)
   }
   else if (elem instanceof nsIFormElement)
   {
-    formWrapper = new XPCNativeWrapper(elem, "name", "method", "action");
-    formView.addRow([formWrapper.name, formWrapper.method, formWrapper.action, elem]);
+    formView.addRow([elem.name, elem.method, elem.action, elem]);
   }
   else if (elem instanceof nsIAppletElement)
   {
@@ -584,13 +590,18 @@ function grabAll(elem)
     addImage(elem.data, gStrings.mediaObject, getValueText(elem), elem, false);
   else if (elem instanceof nsIEmbedElement)
     addImage(elem.src, gStrings.mediaEmbed, "", elem, false);
-  else
-    if (elem.hasAttributeNS(XLinkNS, "href"))
-      linkView.addRow([getValueText(elem),
-                       ioService.newURI(elem.getAttributeNS(XLinkNS, "href"), null, elem.baseURI).spec,
-                       gStrings.linkX,
-                       ""]);
-
+  else if (elem.hasAttributeNS(XLinkNS, "href")) {
+    var ioService = Components.classes["@mozilla.org/network/io-service;1"]
+                              .getService(Components.interfaces.nsIIOService);
+    var href = elem.getAttributeNS(XLinkNS, "href");
+    try {
+      var baseURI = ioService.newURI(elem.baseURI,
+                                     elem.ownerDocument.characterSet, null);
+      var uri = ioService.newURI(href, elem.ownerDocument.characterSet,
+                                 baseURI).spec;
+    } catch (e) {}
+    linkView.addRow([getValueText(elem), uri, gStrings.linkX, ""]);
+  }
   return NodeFilter.FILTER_ACCEPT;
 }
 
@@ -609,18 +620,16 @@ function onFormSelect()
     var clickedRow = formView.selection.currentIndex;
     // form-node;
     var form = formView.data[clickedRow][3];
-    const formWrapper = new XPCNativeWrapper(form,
-      "name", "elements", "encoding", "target", "getElementsByTagName()");
 
     var ft = null;
-    if (formWrapper.name)
-      ft = theBundle.getFormattedString("formTitle", [formWrapper.name]);
+    if (form.name)
+      ft = theBundle.getFormattedString("formTitle", [form.name]);
 
-    setItemValue("formenctype", formWrapper.encoding, theBundle.getString("default"));
-    setItemValue("formtarget", formWrapper.target, theBundle.getString("formDefaultTarget"));
+    setItemValue("formenctype", form.encoding, theBundle.getString("default"));
+    setItemValue("formtarget", form.target, theBundle.getString("formDefaultTarget"));
     document.getElementById("formname").value = ft || theBundle.getString("formUntitled");
 
-    var formfields = formWrapper.elements;
+    var formfields = form.elements;
 
     var length = formfields.length;
 
@@ -639,7 +648,7 @@ function onFormSelect()
       fieldView.addRow(["", elem.name, elem.type, val]);
     }
 
-    var labels = formWrapper.getElementsByTagName("label");
+    var labels = form.getElementsByTagName("label");
     var llength = labels.length;
     var label;
 

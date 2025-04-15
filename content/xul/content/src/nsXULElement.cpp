@@ -557,7 +557,7 @@ nsXULElement::GetElementsByAttribute(const nsAString& aAttribute,
                           this,
                           PR_TRUE,
                           attrAtom,
-                          kNameSpaceID_None);
+                          kNameSpaceID_Unknown);
     NS_ENSURE_TRUE(list, NS_ERROR_OUT_OF_MEMORY);
 
     NS_ADDREF(*aReturn = list);
@@ -865,45 +865,59 @@ nsXULElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     new_bits |= mParentPtrBits & nsIContent::kParentBitMask;
     mParentPtrBits = new_bits;
 
+    nsIDocument *oldOwnerDocument = GetOwnerDoc();
+    nsIDocument *newOwnerDocument;
+    nsNodeInfoManager* nodeInfoManager;
+
+    // XXXbz sXBL/XBL2 issue!
+
     // Finally, set the document
-    if (aDocument && aDocument != GetCurrentDoc()) {
+    if (aDocument) {
         // Notify XBL- & nsIAnonymousContentCreator-generated
-        // anonymous content that the document is changing.
-        // XXXbz ordering issues here?  Probably not, since ChangeDocumentFor
-        // is just pretty broken anyway....  Need to get it working.
+        // anonymous content that the document is changing.  XXXbz
+        // ordering issues here?  Probably not, since
+        // ChangeDocumentFor is just pretty broken anyway....  Need to
+        // get it working.
+
         // XXXbz XBL doesn't handle this (asserts), and we don't really want
         // to be doing this during parsing anyway... sort this out.    
         //    aDocument->BindingManager()->ChangeDocumentFor(this, nsnull,
         //                                                   aDocument);
-        
+
         // Being added to a document.
         mParentPtrBits |= PARENT_BIT_INDOCUMENT;
 
-        // check the document on the nodeinfo to see whether we need a
-        // new nodeinfo
-        // XXXbz sXBL/XBL2 issue!
-        nsIDocument *ownerDocument = GetOwnerDoc();
-        if (aDocument != ownerDocument) {
+        newOwnerDocument = aDocument;
+        nodeInfoManager = newOwnerDocument->NodeInfoManager();
+    } else {
+        newOwnerDocument = aParent->GetOwnerDoc();
+        nodeInfoManager = aParent->GetNodeInfo()->NodeInfoManager();
+    }
 
-            if (HasProperties()) {
-                ownerDocument->PropertyTable()->DeleteAllPropertiesFor(this);
-            }
+    // Handle a change in our owner document.
 
-            // get a new nodeinfo
-            nsNodeInfoManager* nodeInfoManager = aDocument->NodeInfoManager();
-            if (nodeInfoManager) {
-                nsCOMPtr<nsINodeInfo> newNodeInfo;
-                nsresult rv =
-                    nodeInfoManager->GetNodeInfo(mNodeInfo->NameAtom(),
-                                                 mNodeInfo->GetPrefixAtom(),
-                                                 mNodeInfo->NamespaceID(),
-                                                 getter_AddRefs(newNodeInfo));
-                NS_ENSURE_SUCCESS(rv, rv);
-                NS_ASSERTION(newNodeInfo, "GetNodeInfo lies");
-                mNodeInfo.swap(newNodeInfo);
-            }
+    if (oldOwnerDocument && oldOwnerDocument != newOwnerDocument) {
+        // Remove all properties.
+        nsCOMPtr<nsIDOMNSDocument> nsDoc = do_QueryInterface(oldOwnerDocument);
+        if (nsDoc) {
+            nsDoc->SetBoxObjectFor(this, nsnull);
         }
+        oldOwnerDocument->PropertyTable()->DeleteAllPropertiesFor(this);
+    }
 
+    nsresult rv;
+    if (mNodeInfo->NodeInfoManager() != nodeInfoManager) {
+        nsCOMPtr<nsINodeInfo> newNodeInfo;
+        rv = nodeInfoManager->GetNodeInfo(mNodeInfo->NameAtom(),
+                                          mNodeInfo->GetPrefixAtom(),
+                                          mNodeInfo->NamespaceID(),
+                                          getter_AddRefs(newNodeInfo));
+        NS_ENSURE_SUCCESS(rv, rv);
+        NS_ASSERTION(newNodeInfo, "GetNodeInfo lies");
+        mNodeInfo.swap(newNodeInfo);
+    }
+
+    if (newOwnerDocument) {
         // we need to (re-)initialize several attributes that are dependant on
         // the document. Do that now.
         // XXXbz why do we have attributes depending on the current document?
@@ -1000,7 +1014,7 @@ nsXULElement::UnbindFromTree(PRBool aDeep, PRBool aNullParent)
     // XXXbz why are we nuking our listener manager?  We can get events while
     // not in a document!
     if (mListenerManager) {
-        mListenerManager->SetListenerTarget(nsnull);
+        mListenerManager->Disconnect();
         mListenerManager = nsnull;
     }
 
@@ -1033,8 +1047,9 @@ nsXULElement::UnbindFromTree(PRBool aDeep, PRBool aNullParent)
 PRBool
 nsXULElement::IsNativeAnonymous() const
 {
-    // XXX Workarond for bug 280541
-    return PR_FALSE;
+    // XXX Workaround for bug 280541, wallpaper for bug 326644
+    return Tag() == nsXULAtoms::popupgroup &&
+           nsGenericElement::IsNativeAnonymous();
 }
 
 PRUint32
@@ -1186,19 +1201,11 @@ nsXULElement::RemoveChildAt(PRUint32 aIndex, PRBool aNotify)
     nsresult rv = EnsureContentsGenerated();
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIContent> oldKid = mAttrsAndChildren.ChildAt(aIndex);
-    NS_ENSURE_TRUE(oldKid, NS_ERROR_FAILURE);
+    nsMutationGuard::DidMutate();
 
-    nsIDocument* doc = GetCurrentDoc();
-    mozAutoDocUpdate updateBatch(doc, UPDATE_CONTENT_MODEL, aNotify);
-
-    if (HasMutationListeners(this, NS_EVENT_BITS_MUTATION_NODEREMOVED)) {
-      nsMutationEvent mutation(PR_TRUE, NS_MUTATION_NODEREMOVED, oldKid);
-      mutation.mRelatedNode =
-          do_QueryInterface(NS_STATIC_CAST(nsIStyledContent*, this));
-
-      nsEventStatus status = nsEventStatus_eIgnore;
-      oldKid->HandleDOMEvent(nsnull, &mutation, nsnull, NS_EVENT_FLAG_INIT, &status);
+    nsCOMPtr<nsIContent> oldKid = mAttrsAndChildren.GetSafeChildAt(aIndex);
+    if (!oldKid) {
+      return NS_OK;
     }
 
     // On the removal of a <treeitem>, <treechildren>, or <treecell> element,
@@ -1246,7 +1253,7 @@ nsXULElement::RemoveChildAt(PRUint32 aIndex, PRBool aNotify)
         nsCOMPtr<nsIDOMXULSelectControlItemElement> curItem;
         controlElement->GetCurrentItem(getter_AddRefs(curItem));
         nsCOMPtr<nsIContent> curNode = do_QueryInterface(curItem);
-        if (curNode && isSelfOrAncestor(curNode, oldKid)) {
+        if (curNode && nsContentUtils::ContentIsDescendantOf(curNode, oldKid)) {
             // Current item going away
             nsCOMPtr<nsIBoxObject> box;
             controlElement->GetBoxObject(getter_AddRefs(box));
@@ -1262,11 +1269,7 @@ nsXULElement::RemoveChildAt(PRUint32 aIndex, PRBool aNotify)
       }
     }
 
-    mAttrsAndChildren.RemoveChildAt(aIndex);
-    //nsRange::OwnerChildRemoved(this, aIndex, oldKid);
-    if (aNotify && doc) {
-        doc->ContentRemoved(this, oldKid, aIndex);
-    }
+    rv = nsGenericElement::RemoveChildAt(aIndex, aNotify);
 
     if (newCurrentIndex == -2)
         controlElement->SetCurrentItem(nsnull);
@@ -1286,7 +1289,8 @@ nsXULElement::RemoveChildAt(PRUint32 aIndex, PRBool aNotify)
         }
     }
 
-    if (fireSelectionHandler && doc) {
+    nsIDocument* doc;
+    if (fireSelectionHandler && (doc = GetCurrentDoc())) {
       nsCOMPtr<nsIDOMDocumentEvent> docEvent(do_QueryInterface(doc));
       nsCOMPtr<nsIDOMEvent> event;
       docEvent->CreateEvent(NS_LITERAL_STRING("Events"), getter_AddRefs(event));
@@ -1304,11 +1308,7 @@ nsXULElement::RemoveChildAt(PRUint32 aIndex, PRBool aNotify)
       }
     }
 
-    // This will cause the script object to be unrooted for each
-    // element in the subtree.
-    oldKid->UnbindFromTree();
-
-    return NS_OK;
+    return rv;
 }
 
 void
@@ -1976,10 +1976,86 @@ nsXULElement::HandleDOMEvent(nsPresContext* aPresContext, nsEvent* aEvent,
                 nsCOMPtr<nsIDOMElement> commandElt;
                 domDoc->GetElementById(command, getter_AddRefs(commandElt));
                 nsCOMPtr<nsIContent> commandContent(do_QueryInterface(commandElt));
-                if (commandContent &&
-                    commandContent->IsContentOfType(nsIContent::eXUL) &&
-                    commandContent->Tag() == nsXULAtoms::command) {
-                    return commandContent->HandleDOMEvent(aPresContext, aEvent, nsnull, NS_EVENT_FLAG_INIT, aEventStatus);
+                if (commandContent) {
+                    // Create a new command event to the element pointed to
+                    // by the command attribute.  The new event's sourceEvent
+                    // will be the original event that we're handling.
+                    aEvent->flags |= NS_EVENT_FLAG_STOP_DISPATCH;
+
+                    nsXULCommandEvent event(NS_IS_TRUSTED_EVENT(aEvent),
+                                            NS_XUL_COMMAND, nsnull);
+                    if (aEvent->eventStructType == NS_XUL_COMMAND_EVENT) {
+                        nsXULCommandEvent *orig =
+                            NS_STATIC_CAST(nsXULCommandEvent*, aEvent);
+
+                        event.isShift = orig->isShift;
+                        event.isControl = orig->isControl;
+                        event.isAlt = orig->isAlt;
+                        event.isMeta = orig->isMeta;
+                    } else {
+                        NS_WARNING("Incorrect eventStructType for command event");
+                    }
+
+                    // Make sure we have a DOMEvent.
+                    if (aDOMEvent) {
+                        if (*aDOMEvent) {
+                            externalDOMEvent = PR_TRUE;
+                        }
+                    } else {
+                        aDOMEvent = &domEvent;
+                    }
+
+                    if (!*aDOMEvent) {
+                        nsCOMPtr<nsIEventListenerManager> lm;
+                        ret = GetListenerManager(getter_AddRefs(lm));
+                        NS_ENSURE_SUCCESS(ret, ret);
+
+                        ret = lm->CreateEvent(aPresContext, aEvent,
+                                              EmptyString(), aDOMEvent);
+                        NS_ENSURE_SUCCESS(ret, ret);
+
+                        // We need to explicitly set the target here, because
+                        // the DOM implementation will try to compute the
+                        // target from the frame. If we don't have a frame
+                        // (e.g., we're a key), then that breaks.
+                        nsCOMPtr<nsIPrivateDOMEvent> privateEvent =
+                            do_QueryInterface(*aDOMEvent);
+                        NS_ENSURE_TRUE(privateEvent, NS_ERROR_FAILURE);
+
+                        nsCOMPtr<nsIDOMEventTarget> target =
+                            do_QueryInterface(NS_STATIC_CAST(nsIContent*,
+                                                             this));
+                        privateEvent->SetTarget(target);
+                    }
+                    event.sourceEvent = *aDOMEvent;
+
+                    ret = commandContent->HandleDOMEvent(aPresContext,
+                                                         &event, nsnull,
+                                                         NS_EVENT_FLAG_INIT,
+                                                         aEventStatus);
+
+                    // We're leaving the DOM event loop so if we created a
+                    // DOM event, release here.  If externalDOMEvent is
+                    // set, the event was passed in, and we don't own it.
+                    if (*aDOMEvent && !externalDOMEvent) {
+                        nsrefcnt rc;
+                        NS_RELEASE2(*aDOMEvent, rc);
+                        // Note: we expect one outstanding reference to
+                        // *aDOMEvent, because we set it in event.sourceEvent.
+                        if (rc > 1) {
+                            // Okay, so someone in the DOM loop (a listener,
+                            // JS object) still has a ref to the DOM Event,
+                            // but the internal data hasn't been malloc'd.
+                            // Force a copy of the data here so the DOM Event
+                            // is still valid.
+                            nsCOMPtr<nsIPrivateDOMEvent> privateEvent =
+                                do_QueryInterface(*aDOMEvent);
+                            if (privateEvent) {
+                                privateEvent->DuplicatePrivateData();
+                            }
+                        }
+                    }
+                    return ret;
                 }
                 else {
                     NS_WARNING("A XUL element is attached to a command that doesn't exist!\n");
@@ -2490,12 +2566,6 @@ NS_IMETHODIMP
 nsXULElement::GetControllers(nsIControllers** aResult)
 {
     if (! Controllers()) {
-        // XXX sXBL/XBL2 issue! Owner or current document?
-        nsIDocument* doc = GetCurrentDoc();
-        NS_PRECONDITION(doc, "no document");
-        if (!doc)
-            return NS_ERROR_NOT_INITIALIZED;
-
         nsDOMSlots* slots = GetDOMSlots();
         if (!slots)
           return NS_ERROR_OUT_OF_MEMORY;
@@ -2505,18 +2575,6 @@ nsXULElement::GetControllers(nsIControllers** aResult)
                                   NS_REINTERPRET_CAST(void**, &slots->mControllers));
 
         NS_ASSERTION(NS_SUCCEEDED(rv), "unable to create a controllers");
-        if (NS_FAILED(rv)) return rv;
-
-        // Set the command dispatcher on the new controllers object
-        nsCOMPtr<nsIDOMXULDocument> domxuldoc = do_QueryInterface(doc);
-        if (! domxuldoc)
-            return NS_ERROR_UNEXPECTED;
-
-        nsCOMPtr<nsIDOMXULCommandDispatcher> dispatcher;
-        rv = domxuldoc->GetCommandDispatcher(getter_AddRefs(dispatcher));
-        if (NS_FAILED(rv)) return rv;
-
-        rv = slots->mControllers->SetCommandDispatcher(dispatcher);
         if (NS_FAILED(rv)) return rv;
     }
 
@@ -2747,8 +2805,7 @@ nsXULElement::DoCommand()
             context = shell->GetPresContext();
 
             nsEventStatus status = nsEventStatus_eIgnore;
-            nsMouseEvent event(PR_TRUE, NS_XUL_COMMAND, nsnull,
-                               nsMouseEvent::eReal);
+            nsXULCommandEvent event(PR_TRUE, NS_XUL_COMMAND, nsnull);
             HandleDOMEvent(context, &event, nsnull, NS_EVENT_FLAG_INIT,
                            &status);
         }

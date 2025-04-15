@@ -61,10 +61,11 @@ nsIAtom *nsXFormsAtoms::incremental;
 nsIAtom *nsXFormsAtoms::clazz;
 nsIAtom *nsXFormsAtoms::deferredBindListProperty;
 nsIAtom *nsXFormsAtoms::readyForBindProperty;
-nsIAtom *nsXFormsAtoms::accesskey;
 nsIAtom *nsXFormsAtoms::fatalError;
 nsIAtom *nsXFormsAtoms::isInstanceDocument;
 nsIAtom *nsXFormsAtoms::instanceDocumentOwner;
+nsIAtom *nsXFormsAtoms::externalMessagesProperty;
+nsIAtom* nsXFormsAtoms::deferredEventListProperty;
 
 const nsStaticAtom nsXFormsAtoms::Atoms_info[] = {
   { "src",                      &nsXFormsAtoms::src },
@@ -89,10 +90,11 @@ const nsStaticAtom nsXFormsAtoms::Atoms_info[] = {
   { "class",                    &nsXFormsAtoms::clazz },
   { "DeferredBindListProperty", &nsXFormsAtoms::deferredBindListProperty },
   { "ReadyForBindProperty",     &nsXFormsAtoms::readyForBindProperty },
-  { "accesskey",                &nsXFormsAtoms::accesskey },
   { "fatalError",               &nsXFormsAtoms::fatalError },
   { "isInstanceDocument",       &nsXFormsAtoms::isInstanceDocument },
-  { "instanceDocumentOwner",    &nsXFormsAtoms::instanceDocumentOwner }
+  { "instanceDocumentOwner",    &nsXFormsAtoms::instanceDocumentOwner },
+  { "ExternalMessagesProperty", &nsXFormsAtoms::externalMessagesProperty },
+  { "DeferredEventListProperty",&nsXFormsAtoms::deferredEventListProperty }
 };
 
 void

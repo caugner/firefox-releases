@@ -61,9 +61,10 @@
 #include "nsIAtom.h"
 #include "nsIImapIncomingServer.h"
 #include "nsIWeakReference.h"
-#include "nsIObserver.h"
 #include "nsIMsgFilterPlugin.h"
 #include "nsIStringBundle.h"
+#include "nsMsgTagService.h"
+#include "nsCOMArray.h"
 
 #define MESSENGER_STRING_URL       "chrome://messenger/locale/messenger.properties"
 
@@ -90,7 +91,7 @@ enum eFieldType {
 // The classes that implement the tree support will probably
 // inherit from this class.
 class nsMsgDBView : public nsIMsgDBView, public nsIDBChangeListener,
-                    public nsITreeView, public nsIObserver,
+                    public nsITreeView,
                     public nsIJunkMailClassificationListener
 {
 public:
@@ -101,7 +102,6 @@ public:
   NS_DECL_NSIMSGDBVIEW
   NS_DECL_NSIDBCHANGELISTENER
   NS_DECL_NSITREEVIEW
-  NS_DECL_NSIOBSERVER
   NS_DECL_NSIJUNKMAILCLASSIFICATIONLISTENER
 
   nsMsgViewIndex GetInsertIndexHelper(nsIMsgDBHdr *msgHdr, nsMsgKeyArray *keys,
@@ -162,6 +162,9 @@ protected:
                         // during delete/move operations.
   PRPackedBool  mCommandsNeedDisablingBecauseOfSelection;
   PRPackedBool  mSuppressChangeNotification;
+  PRPackedBool  mGoForwardEnabled;
+  PRPackedBool  mGoBackEnabled;
+  
   virtual const char * GetViewName(void) {return "MsgDBView"; }
   nsresult FetchAuthor(nsIMsgDBHdr * aHdr, PRUnichar ** aAuthorString);
   nsresult FetchRecipients(nsIMsgDBHdr * aHdr, PRUnichar ** aRecipientsString);
@@ -171,6 +174,8 @@ protected:
   nsresult FetchSize(nsIMsgDBHdr * aHdr, PRUnichar ** aSizeString);
   nsresult FetchPriority(nsIMsgDBHdr *aHdr, PRUnichar ** aPriorityString);
   nsresult FetchLabel(nsIMsgDBHdr *aHdr, PRUnichar ** aLabelString);
+  nsresult FetchTags(nsIMsgDBHdr *aHdr, PRUnichar ** aTagString);
+  nsresult FetchKeywords(nsIMsgDBHdr *aHdr, char ** keywordString);
   nsresult FetchAccount(nsIMsgDBHdr * aHdr, PRUnichar ** aAccount);
   nsresult CycleThreadedColumn(nsIDOMElement * aElement);
 
@@ -226,6 +231,7 @@ protected:
   nsresult ReverseThreads();
   nsresult SaveSortInfo(nsMsgViewSortTypeValue sortType, nsMsgViewSortOrderValue sortOrder);
   nsresult PersistFolderInfo(nsIDBFolderInfo **dbFolderInfo);
+  void     SetMRUTimeForFolder(nsIMsgFolder *folder);
 
   nsMsgKey		GetAt(nsMsgViewIndex index) ;
   nsMsgViewIndex	FindViewIndex(nsMsgKey  key) 
@@ -283,8 +289,10 @@ protected:
 
   // for sorting
   nsresult GetFieldTypeAndLenForSort(nsMsgViewSortTypeValue sortType, PRUint16 *pMaxLen, eFieldType *pFieldType);
-  nsresult GetCollationKey(nsIMsgDBHdr *msgHdr, nsMsgViewSortTypeValue sortType, PRUint8 **result, PRUint32 *len);
-  nsresult GetLongField(nsIMsgDBHdr *msgHdr, nsMsgViewSortTypeValue sortType, PRUint32 *result);
+  nsresult GetCollationKey(nsIMsgDBHdr *msgHdr, nsMsgViewSortTypeValue sortType, PRUint8 **result, 
+                          PRUint32 *len, nsIMsgCustomColumnHandler* colHandler = nsnull);
+  nsresult GetLongField(nsIMsgDBHdr *msgHdr, nsMsgViewSortTypeValue sortType, PRUint32 *result, 
+                          nsIMsgCustomColumnHandler* colHandler = nsnull);
   nsresult GetStatusSortValue(nsIMsgDBHdr *msgHdr, PRUint32 *result);
   nsresult GetLocationCollationKey(nsIMsgDBHdr *msgHdr, PRUint8 **result, PRUint32 *len);
 
@@ -293,7 +301,6 @@ protected:
               nsMsgViewIndex *pResultIndex, nsMsgViewIndex *pThreadIndex, PRBool wrap);
   nsresult FindNextFlagged(nsMsgViewIndex startIndex, nsMsgViewIndex *pResultIndex);
   nsresult FindFirstNew(nsMsgViewIndex *pResultIndex);
-  nsresult FindNextUnread(nsMsgKey startId, nsMsgKey *pResultKey, nsMsgKey *resultThreadId);
   nsresult FindPrevUnread(nsMsgKey startKey, nsMsgKey *pResultKey, nsMsgKey *resultThreadId);
   nsresult FindFirstFlagged(nsMsgViewIndex *pResultIndex);
   nsresult FindPrevFlagged(nsMsgViewIndex startIndex, nsMsgViewIndex *pResultIndex);
@@ -304,13 +311,10 @@ protected:
   PRBool OfflineMsgSelected(nsMsgViewIndex * indices, PRInt32 numIndices);
   PRBool NonDummyMsgSelected(nsMsgViewIndex * indices, PRInt32 numIndices);
   PRUnichar * GetString(const PRUnichar *aStringName);
-  nsresult AddLabelPrefObservers();
-  nsresult RemoveLabelPrefObservers();
   nsresult GetPrefLocalizedString(const char *aPrefName, nsString& aResult);
   nsresult GetLabelPrefStringAndAtom(const char *aPrefName, nsString& aColor, nsIAtom** aColorAtom);
-  nsresult AppendLabelProperties(nsMsgLabelValue label, nsISupportsArray *aProperties);
-  nsresult AppendSelectedTextColorProperties(nsMsgLabelValue label, nsISupportsArray *aProperties);
-  nsresult InitLabelPrefs(void);
+  nsresult AppendKeywordProperties(const char *keywords, nsISupportsArray *properties, PRBool addSelectedTextProperty);
+  nsresult InitLabelStrings(void);
   nsresult CopyDBView(nsMsgDBView *aNewMsgDBView, nsIMessenger *aMessengerInstance, nsIMsgWindow *aMsgWindow, nsIMsgDBViewCommandUpdater *aCmdUpdater);
   void InitializeAtomsAndLiterals();
   virtual PRInt32 FindLevelInThread(nsIMsgDBHdr *msgHdr, nsMsgViewIndex startOfThread, nsMsgViewIndex viewIndex);
@@ -358,6 +362,7 @@ protected:
   // I18N date formater service which we'll want to cache locally.
   nsCOMPtr<nsIDateTimeFormat> mDateFormater;
   nsCOMPtr<nsIMsgHeaderParser> mHeaderParser;
+  nsCOMPtr<nsIMsgTagService> mTagService;
   // i'm not sure if we are going to permamently need a nsIMessenger instance or if we'll be able
   // to phase it out eventually....for now we need it though.
   nsCOMPtr<nsIMessenger> mMessengerInstance;
@@ -383,6 +388,12 @@ protected:
   
   nsUInt32Array mIndicesToNoteChange;
 
+  //these hold pointers (and IDs) for the nsIMsgCustomColumnHandler object that constitutes the custom column handler
+  nsCOMArray <nsIMsgCustomColumnHandler> m_customColumnHandlers;
+  nsStringArray m_customColumnHandlerIDs;
+  
+  nsIMsgCustomColumnHandler* GetColumnHandler(const PRUnichar*);
+  nsIMsgCustomColumnHandler* GetCurColumnHandlerFromDBInfo();
 
 protected:
   static nsresult   InitDisplayFormats();

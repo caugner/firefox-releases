@@ -85,13 +85,17 @@ function Startup()
   document.getElementById("CommandUpdate_Bookmarks").setAttribute("commandupdater","true");
   bookmarksView.focus();
 
-  BMSVC.transactionManager.AddListener(BookmarkEditMenuTxnListener);
+  var bkmkTxnSvc = Components.classes["@mozilla.org/bookmarks/transactionmanager;1"]
+                             .getService(Components.interfaces.nsIBookmarkTransactionManager);
+  bkmkTxnSvc.transactionManager.AddListener(BookmarkEditMenuTxnListener);
 
 }
 
 function Shutdown()
 {
-  BMSVC.transactionManager.RemoveListener(BookmarkEditMenuTxnListener);
+  var bkmkTxnSvc = Components.classes["@mozilla.org/bookmarks/transactionmanager;1"]
+                             .getService(Components.interfaces.nsIBookmarkTransactionManager);
+  bkmkTxnSvc.transactionManager.RemoveListener(BookmarkEditMenuTxnListener);
   // Store current window position and size in window attributes (for persistence).
   var win = document.getElementById("bookmark-window");
   win.setAttribute("x", screenX);
@@ -185,7 +189,7 @@ function onViewMenuSortItemSelected(aEvent)
     break;
   }
 
-  aEvent.preventCapture();
+  aEvent.stopPropagation();
 }  
 
 var gConstructedColumnsMenuItems = false;
@@ -216,7 +220,7 @@ function fillColumnsMenu(aEvent)
     }
   }
   
-  aEvent.preventBubble();
+  aEvent.stopPropagation();
 }
 
 function onViewMenuColumnItemSelected(aEvent)
@@ -227,7 +231,7 @@ function onViewMenuColumnItemSelected(aEvent)
     bookmarksView.toggleColumnVisibility(resource);
   }  
 
-  aEvent.preventBubble();
+  aEvent.stopPropagation();
 }
 
 function onViewSelected(aEvent)

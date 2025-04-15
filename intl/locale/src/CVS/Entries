@@ -1,19 +1,19 @@
-/.cvsignore/1.2/Tue Feb  2 01:47:18 1999//TFIREFOX_1_5_RELEASE
-/Makefile.in/1.35/Thu Dec  9 19:28:04 2004//TFIREFOX_1_5_RELEASE
-/langGroups.properties/1.15/Sat Apr 30 02:57:55 2005//TFIREFOX_1_5_RELEASE
-/language.properties/1.16/Sat Apr 30 02:57:55 2005//TFIREFOX_1_5_RELEASE
-/nsCollation.cpp/1.37/Sun Apr 18 14:21:05 2004//TFIREFOX_1_5_RELEASE
-/nsCollation.h/1.18/Sun Apr 18 14:21:05 2004//TFIREFOX_1_5_RELEASE
-/nsFontPackageService.cpp/1.14/Sun Apr 18 14:21:05 2004//TFIREFOX_1_5_RELEASE
-/nsFontPackageService.h/1.6/Sun Apr 18 14:21:05 2004//TFIREFOX_1_5_RELEASE
-/nsLanguageAtomService.cpp/1.33/Tue Apr  5 08:31:32 2005//TFIREFOX_1_5_RELEASE
-/nsLanguageAtomService.h/1.13/Mon Jun 21 10:32:27 2004//TFIREFOX_1_5_RELEASE
-/nsLocale.cpp/1.25/Sun Apr 18 14:21:05 2004//TFIREFOX_1_5_RELEASE
-/nsLocale.h/1.14/Sun Apr 18 14:21:05 2004//TFIREFOX_1_5_RELEASE
-/nsLocaleConstructors.h/1.10/Sun Apr 18 14:21:05 2004//TFIREFOX_1_5_RELEASE
-/nsLocaleService.cpp/1.63/Tue Jan 25 13:08:22 2005//TFIREFOX_1_5_RELEASE
-/nsScriptableDateFormat.cpp/1.25/Sun Apr 18 14:21:05 2004//TFIREFOX_1_5_RELEASE
-/win32.order/1.4/Thu Apr  5 05:57:54 2001//TFIREFOX_1_5_RELEASE
+/.cvsignore/1.2/Tue Feb  2 01:47:18 1999//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.35/Thu Dec  9 19:28:04 2004//TFIREFOX_2_0_RELEASE
+/langGroups.properties/1.15/Sat Apr 30 02:57:55 2005//TFIREFOX_2_0_RELEASE
+/language.properties/1.16/Sat Apr 30 02:57:55 2005//TFIREFOX_2_0_RELEASE
+/nsCollation.cpp/1.37/Sun Apr 18 14:21:05 2004//TFIREFOX_2_0_RELEASE
+/nsCollation.h/1.18/Sun Apr 18 14:21:05 2004//TFIREFOX_2_0_RELEASE
+/nsFontPackageService.cpp/1.14/Sun Apr 18 14:21:05 2004//TFIREFOX_2_0_RELEASE
+/nsFontPackageService.h/1.6/Sun Apr 18 14:21:05 2004//TFIREFOX_2_0_RELEASE
+/nsLanguageAtomService.cpp/1.33/Tue Apr  5 08:31:32 2005//TFIREFOX_2_0_RELEASE
+/nsLanguageAtomService.h/1.13/Mon Jun 21 10:32:27 2004//TFIREFOX_2_0_RELEASE
+/nsLocale.cpp/1.25/Sun Apr 18 14:21:05 2004//TFIREFOX_2_0_RELEASE
+/nsLocale.h/1.14/Sun Apr 18 14:21:05 2004//TFIREFOX_2_0_RELEASE
+/nsLocaleConstructors.h/1.10/Sun Apr 18 14:21:05 2004//TFIREFOX_2_0_RELEASE
+/nsLocaleService.cpp/1.63/Tue Jan 25 13:08:22 2005//TFIREFOX_2_0_RELEASE
+/nsScriptableDateFormat.cpp/1.25/Sun Apr 18 14:21:05 2004//TFIREFOX_2_0_RELEASE
+/win32.order/1.4/Thu Apr  5 05:57:54 2001//TFIREFOX_2_0_RELEASE
 D/mac////
 D/os2////
 D/unix////

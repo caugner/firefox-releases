@@ -94,13 +94,14 @@ function initCopiesAndFolder(identity)
   document.getElementById('identity.doBcc').checked = copiesAndFoldersIdentity.doBcc;
   document.getElementById('identity.doBccList').value = copiesAndFoldersIdentity.doBccList;
   document.getElementById('identity.doFcc').checked = copiesAndFoldersIdentity.doFcc;
+  document.getElementById('identity.fccReplyFollowsParent').checked = copiesAndFoldersIdentity.fccReplyFollowsParent;
   document.getElementById('identity.showSaveMsgDlg').checked = copiesAndFoldersIdentity.showSaveMsgDlg;
   onInitCopiesAndFolders(); // am-copies.js method
 }
 
 function initCompositionAndAddressing(identity)
 {
-  createDirectoriesList(false);
+  createDirectoriesList();
 
   // if we are editing an existing identity, use it...otherwise copy our values from the default identity
   var addressingIdentity = identity ? identity : gAccount.defaultIdentity;
@@ -216,6 +217,7 @@ function saveCopiesAndFolderSettings(identity)
   identity.doBcc = document.getElementById('identity.doBcc').checked;
   identity.doBccList = document.getElementById('identity.doBccList').value;
   identity.doFcc = document.getElementById('identity.doFcc').checked;
+  identity.fccReplyFollowsParent = document.getElementById('identity.fccReplyFollowsParent').checked;
   identity.showSaveMsgDlg = document.getElementById('identity.showSaveMsgDlg').checked;
 }
 

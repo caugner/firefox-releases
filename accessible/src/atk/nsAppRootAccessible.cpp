@@ -43,9 +43,13 @@
 #include "nsMai.h"
 #include "nsAppRootAccessible.h"
 #include "prlink.h"
+#include "nsIServiceManager.h"
 
 #include <gtk/gtk.h>
 #include <atk/atk.h>
+
+/* app root accessible */
+static nsAppRootAccessible *sAppRoot = nsnull;
 
 /* maiutil */
 
@@ -137,8 +141,8 @@ struct _MaiUtilClass
 /* supporting */
 PRLogModuleInfo *gMaiLog = NULL;
 
-#define MAI_VERSION "0.0.6"
-#define MAI_NAME "mozilla"
+#define MAI_VERSION MOZILLA_VERSION
+#define MAI_NAME "Gecko"
 
 struct _MaiUtilListenerInfo
 {
@@ -549,11 +553,9 @@ NS_IMETHODIMP nsAppRootAccessible::Init()
     return rv;
 }
 
-NS_IMETHODIMP nsAppRootAccessible::Shutdown()
+/* static */ void nsAppRootAccessible::Unload()
 {
-    nsAppRootAccessible *root = nsAppRootAccessible::Create();
-    if (root)
-        NS_IF_RELEASE(root);
+    NS_IF_RELEASE(sAppRoot);
     if (sAtkBridge.lib) {
         if (sAtkBridge.shutdown)
             (*sAtkBridge.shutdown)();
@@ -563,18 +565,36 @@ NS_IMETHODIMP nsAppRootAccessible::Shutdown()
         sAtkBridge.init = NULL;
         sAtkBridge.shutdown = NULL;
     }
-    return NS_OK;
 }
 
 NS_IMETHODIMP nsAppRootAccessible::GetName(nsAString& _retval)
 {
-    _retval.AssignLiteral("Mozilla");
+    nsCOMPtr<nsIStringBundleService> bundleService = 
+      do_GetService(NS_STRINGBUNDLE_CONTRACTID);
+
+    NS_ASSERTION(bundleService, "String bundle service must be present!");
+
+    nsCOMPtr<nsIStringBundle> bundle;
+    bundleService->CreateBundle("chrome://branding/locale/brand.properties",
+                                getter_AddRefs(bundle));
+    nsXPIDLString appName;
+
+    if (bundle) {
+      bundle->GetStringFromName(NS_LITERAL_STRING("brandShortName").get(),
+                                getter_Copies(appName));
+    } else {
+      NS_WARNING("brand.properties not present, using default app name");
+      appName.AssignLiteral("Mozilla");
+    }
+
+    _retval.Assign(appName);
     return NS_OK;
 }
 
 NS_IMETHODIMP nsAppRootAccessible::GetDescription(nsAString& aDescription)
 {
-    aDescription.AssignLiteral("Mozilla Root Accessible");
+    GetName(aDescription);
+    aDescription.AppendLiteral(" Root Accessible");
     return NS_OK;
 }
 
@@ -582,6 +602,11 @@ NS_IMETHODIMP nsAppRootAccessible::GetRole(PRUint32 *aRole)
 {
     *aRole = ROLE_APPLICATION;
     return NS_OK;
+}
+
+NS_IMETHODIMP nsAppRootAccessible::GetFinalRole(PRUint32 *aFinalRole)
+{
+    return GetRole(aFinalRole);
 }
 
 NS_IMETHODIMP nsAppRootAccessible::GetParent(nsIAccessible **  aParent)
@@ -743,7 +768,6 @@ nsAppRootAccessible::RemoveRootAccessible(nsRootAccessibleWrap *aRootAccWrap)
 nsAppRootAccessible *
 nsAppRootAccessible::Create()
 {
-    static nsAppRootAccessible *sAppRoot = nsnull;
     if (!sAppRoot) {
         sAppRoot = new nsAppRootAccessible();
         NS_ASSERTION(sAppRoot, "OUT OF MEMORY");

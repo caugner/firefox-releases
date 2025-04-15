@@ -49,6 +49,8 @@ DIRS		= base/public
 ifdef MOZ_PLUGINS
 DIRS		+= base/src 
 
+ifndef MINIMO
+
 ifneq (,$(filter gtk gtk2 xlib ,$(MOZ_WIDGET_TOOLKIT)))
 TOOL_DIRS += samples/unixprinting
 endif
@@ -89,6 +91,8 @@ ifneq (,$(filter WINNT Darwin Linux,$(OS_ARCH)))
 TOOL_DIRS += tools/sdk
 endif
 endif
+
+endif # MINIMO
 
 endif # MOZ_PLUGINS
 

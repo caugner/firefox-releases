@@ -1,8 +1,8 @@
-/.cvsignore/1.1/Wed Sep  8 07:14:49 1999//TFIREFOX_1_5_RELEASE
-/Makefile.in/1.17/Thu Dec  9 19:28:26 2004//TFIREFOX_1_5_RELEASE
-/nsDataChannel.cpp/1.71.12.1/Sat Aug 13 19:34:01 2005//TFIREFOX_1_5_RELEASE
-/nsDataChannel.h/1.23/Sun Apr 18 21:59:14 2004//TFIREFOX_1_5_RELEASE
-/nsDataHandler.cpp/1.26/Sat Dec  4 10:19:27 2004//TFIREFOX_1_5_RELEASE
-/nsDataHandler.h/1.6/Sun May  9 18:18:07 2004//TFIREFOX_1_5_RELEASE
-/nsDataModule.cpp/1.8/Sun Apr 18 21:59:14 2004//TFIREFOX_1_5_RELEASE
+/.cvsignore/1.1/Wed Sep  8 07:14:49 1999//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.17/Thu Dec  9 19:28:26 2004//TFIREFOX_2_0_RELEASE
+/nsDataChannel.cpp/1.71.12.2/Tue Jan 31 14:51:52 2006//TFIREFOX_2_0_RELEASE
+/nsDataChannel.h/1.23/Sun Apr 18 21:59:14 2004//TFIREFOX_2_0_RELEASE
+/nsDataHandler.cpp/1.26.18.2/Wed Feb 15 09:51:18 2006//TFIREFOX_2_0_RELEASE
+/nsDataHandler.h/1.6/Sun May  9 18:18:07 2004//TFIREFOX_2_0_RELEASE
+/nsDataModule.cpp/1.8/Sun Apr 18 21:59:14 2004//TFIREFOX_2_0_RELEASE
 D

@@ -157,11 +157,20 @@ nsXBLProtoImplMethod::InstallMember(nsIScriptContext* aContext,
   if (mJSMethodObject && targetClassObject) {
     nsDependentString name(mName);
     JSObject * method = ::JS_CloneFunctionObject(cx, mJSMethodObject, globalObject);
-    if (!method ||
-        !::JS_DefineUCProperty(cx, targetClassObject, NS_REINTERPRET_CAST(const jschar*, mName), 
-                               name.Length(), OBJECT_TO_JSVAL(method),
-                               NULL, NULL, JSPROP_ENUMERATE))
+    if (!method) {
       return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    nsresult rv;
+    nsAutoGCRoot root(&method, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    
+    if (!::JS_DefineUCProperty(cx, targetClassObject,
+                               NS_REINTERPRET_CAST(const jschar*, mName), 
+                               name.Length(), OBJECT_TO_JSVAL(method),
+                               NULL, NULL, JSPROP_ENUMERATE)) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
   }
   return NS_OK;
 }
@@ -255,12 +264,8 @@ nsXBLProtoImplMethod::CompileMember(nsIScriptContext* aContext, const nsCString&
 
   if (methodObject) {
     // Root the compiled prototype script object.
-    JSContext* cx = NS_REINTERPRET_CAST(JSContext*,
-                                        aContext->GetNativeContext());
-    rv = cx ?
-      nsContentUtils::AddJSGCRoot(&mJSMethodObject,
-                                  "nsXBLProtoImplMethod::mJSMethodObject") :
-      NS_ERROR_UNEXPECTED;
+    rv = nsContentUtils::AddJSGCRoot(&mJSMethodObject,
+                                     "nsXBLProtoImplMethod::mJSMethodObject");
     if (NS_FAILED(rv)) {
       mJSMethodObject = nsnull;
     }
@@ -340,10 +345,9 @@ nsXBLProtoImplAnonymousMethod::Execute(nsIContent* aBoundElement)
   }
 
   if (!ok) {
-    // Tell XPConnect about any pending exceptions. This is needed
-    // to avoid dropping JS exceptions in case we got here through
-    // nested calls through XPConnect.
-    nsContentUtils::NotifyXPCIfExceptionPending(cx);
+    // If a constructor or destructor threw an exception, it doesn't
+    // stop anything else.  We just report it.
+    ::JS_ReportPendingException(cx);
     return NS_ERROR_FAILURE;
   }
 

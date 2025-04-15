@@ -48,11 +48,11 @@
 
 <window id="JSConsoleWindow"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
-        title="&console.title;"
+        title="&errorConsole.title;"
         windowtype="global:console"
         width="640" height="480"
         screenX="10" screenY="10"
-        persist="screenX screenY width height"
+        persist="screenX screenY width height sizemode"
         onclose="return closeWindow(false);"> 
 
   <script type="application/x-javascript" src="chrome://global/content/globalOverlay.js"/>
@@ -114,7 +114,7 @@
     </popup>
   </popupset>
   
-  <toolbox>
+  <toolbox id="console-toolbox">
     <toolbar class="chromeclass-toolbar" id="ToolbarMode">
       <toolbarbutton type="radio" group="mode" observes="Console:modeAll"/>
       <toolbarbutton type="radio" group="mode" observes="Console:modeErrors"/>
@@ -132,7 +132,7 @@
   
   <vbox id="ConsoleBox" class="console-box" flex="1" context="ConsoleContext" persist="sortOrder"/>
 
-  <iframe name="Evaluator" id="Evaluator" collapsed="true"/>
+  <iframe name="Evaluator" id="Evaluator" collapsed="true" src="chrome://global/content/blank.html"/>
 
 </window>
 

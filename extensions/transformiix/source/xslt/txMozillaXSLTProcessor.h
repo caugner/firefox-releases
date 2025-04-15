@@ -48,15 +48,18 @@
 #include "txExpandedNameMap.h"
 #include "txXMLEventHandler.h"
 #include "nsIXSLTProcessorObsolete.h"
+#include "nsIXSLTProcessorPrivate.h"
 #include "txXSLTProcessor.h"
 #include "nsVoidArray.h"
 #include "nsAutoPtr.h"
 #include "nsIDocumentObserver.h"
+#include "txNamespaceMap.h"
 
 class nsIURI;
 class nsIXMLContentSink;
 class nsIDOMNode;
 class nsIPrincipal;
+class txResultRecycler;
 
 /* bacd8ad0-552f-11d3-a9f7-000064657374 */
 #define TRANSFORMIIX_XSLT_PROCESSOR_CID   \
@@ -70,13 +73,17 @@ class nsIPrincipal;
 class txVariable : public txIGlobalParameter
 {
 public:
-    txVariable(nsIVariant *aValue) : mValue(aValue),
-                                     mTxValue(nsnull)
+    txVariable(nsIVariant *aValue) : mValue(aValue)
     {
+        NS_ASSERTION(aValue, "missing value");
+    }
+    txVariable(txAExprResult* aValue) : mTxValue(aValue)
+    {
+        NS_ASSERTION(aValue, "missing value");
     }
     nsresult getValue(txAExprResult** aValue)
     {
-        NS_ASSERTION(mValue, "variablevalue is null");
+        NS_ASSERTION(mValue || mTxValue, "variablevalue is null");
 
         if (!mTxValue) {
             nsresult rv = Convert(mValue, getter_AddRefs(mTxValue));
@@ -100,6 +107,12 @@ public:
         mValue = aValue;
         mTxValue = nsnull;
     }
+    void setValue(txAExprResult* aValue)
+    {
+        NS_ASSERTION(aValue, "setting variablevalue to null");
+        mValue = nsnull;
+        mTxValue = aValue;
+    }
 
 private:
     static nsresult Convert(nsIVariant *aValue, txAExprResult** aResult);
@@ -113,7 +126,9 @@ private:
  */
 class txMozillaXSLTProcessor : public nsIXSLTProcessor,
                                public nsIXSLTProcessorObsolete,
+                               public nsIXSLTProcessorPrivate,
                                public nsIDocumentTransformer,
+                               public nsIDocumentTransformer_1_8_BRANCH,
                                public nsIDocumentObserver
 {
 public:
@@ -136,12 +151,22 @@ public:
     // nsIXSLTProcessorObsolete interface
     NS_DECL_NSIXSLTPROCESSOROBSOLETE
 
+    // nsIXSLTProcessorPrivate interface
+    NS_DECL_NSIXSLTPROCESSORPRIVATE
+
     // nsIDocumentTransformer interface
     NS_IMETHOD SetTransformObserver(nsITransformObserver* aObserver);
     NS_IMETHOD LoadStyleSheet(nsIURI* aUri, nsILoadGroup* aLoadGroup,
                               nsIPrincipal* aCallerPrincipal);
     NS_IMETHOD SetSourceContentModel(nsIDOMNode* aSource);
     NS_IMETHOD CancelLoads() {return NS_OK;};
+    NS_IMETHOD AddXSLTParamNamespace(const nsString& aPrefix,
+                                     const nsString& aNamespace);
+    NS_IMETHOD AddXSLTParam(const nsString& aName,
+                            const nsString& aNamespace,
+                            const nsString& aSelect,
+                            const nsString& aValue,
+                            nsIDOMNode* aContext);
 
     // nsIDocumentObserver interface
     NS_DECL_NSIDOCUMENTOBSERVER
@@ -155,12 +180,18 @@ public:
         return mSource;
     }
 
+    nsresult TransformToDoc(nsIDOMDocument *aOutputDoc,
+                            nsIDOMDocument **aResult);
+
+    PRBool IsLoadDisabled()
+    {
+        return (mFlags & DISABLE_ALL_LOADS) != 0;
+    }
+
 private:
     nsresult DoTransform();
     void notifyError();
     nsresult ensureStylesheet();
-    nsresult TransformToDoc(nsIDOMDocument *aOutputDoc,
-                            nsIDOMDocument **aResult);
 
     nsRefPtr<txStylesheet> mStylesheet;
     nsIDocument* mStylesheetDocument; // weak
@@ -172,6 +203,10 @@ private:
     nsString mErrorText, mSourceText;
     nsCOMPtr<nsITransformObserver> mObserver;
     txExpandedNameMap mVariables;
+    txNamespaceMap mParamNamespaceMap;
+    nsRefPtr<txResultRecycler> mRecycler;
+
+    PRUint32 mFlags;
 };
 
 extern nsresult TX_LoadSheet(nsIURI* aUri, txMozillaXSLTProcessor* aProcessor,
@@ -179,6 +214,7 @@ extern nsresult TX_LoadSheet(nsIURI* aUri, txMozillaXSLTProcessor* aProcessor,
                              nsIPrincipal* aCallerPrincipal);
 
 extern nsresult TX_CompileStylesheet(nsIDOMNode* aNode,
+                                     txMozillaXSLTProcessor* aProcessor,
                                      txStylesheet** aStylesheet);
 
 #endif

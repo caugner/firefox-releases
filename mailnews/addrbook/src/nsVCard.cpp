@@ -944,14 +944,16 @@ static char * lexGetDataFromBase64()
 		b = 62;
 	    else if (c == '/')
 		b = 63;
-	    else if (c == '=') {
+      else if (c == '=' && (quadIx == 2 || quadIx == 3)) {
 		b = 0;
 		pad++;
 	    } else if ((c == ' ') || (c == '\t')) {
 		continue;
 	    } else { /* error condition */
-		PR_FREEIF (bytes);
-		PR_FREEIF(oldBytes);
+                if (bytes)
+		  PR_Free (bytes);
+                else if (oldBytes)
+		  PR_Free (oldBytes);
 		/* error recovery: skip until 2 adjacent newlines. */
 		DBG_(("db: invalid character 0x%x '%c'\n", c,c));
 		if (c != EOF)  {
@@ -996,6 +998,7 @@ static char * lexGetDataFromBase64()
 		}
 		trip = 0;
 		quadIx = 0;
+        pad = 0;
 		}
 	    }
 	} /* while */
@@ -1134,9 +1137,9 @@ static int yylex() {
 	    if (lexWithinMode(L_BASE64)) {
 		/* get each char and convert to bin on the fly... */
 		p = lexGetDataFromBase64();
-		yylval.str = p;
-		return STRING;
-		}
+                yylval.str = p;
+                return !p && lexLookahead() == EOF ? 0 : STRING;
+            }
 	    else if (lexWithinMode(L_QUOTED_PRINTABLE)) {
 		p = lexGetQuotedPrintable();
 		}

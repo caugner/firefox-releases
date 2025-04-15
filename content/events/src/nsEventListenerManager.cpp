@@ -39,6 +39,8 @@
 #include "nsGUIEvent.h"
 #include "nsDOMEvent.h"
 #include "nsEventListenerManager.h"
+#include "nsICaret.h"
+#include "nsIFrameSelection.h"
 #include "nsIDOMNSEvent.h"
 #include "nsIDOMEventListener.h"
 #include "nsIDOMMouseListener.h"
@@ -57,6 +59,7 @@
 #include "nsIDOMMutationListener.h"
 #include "nsIDOMUIListener.h"
 #include "nsIDOMPageTransitionListener.h"
+#include "nsITextControlFrame.h"
 #ifdef MOZ_SVG
 #include "nsIDOMSVGListener.h"
 #include "nsIDOMSVGZoomListener.h"
@@ -411,34 +414,20 @@ GenericListenersHashEnum(nsHashKey *aKey, void *aData, void* closure)
   if (listeners) {
     PRInt32 i, count = listeners->Count();
     nsListenerStruct *ls;
-    PRBool* scriptOnly = NS_STATIC_CAST(PRBool*, closure);
     for (i = count-1; i >= 0; --i) {
       ls = (nsListenerStruct*)listeners->ElementAt(i);
       if (ls) {
-        if (*scriptOnly) {
-          if (ls->mFlags & NS_PRIV_EVENT_FLAG_SCRIPT) {
-            NS_RELEASE(ls->mListener);
-            //listeners->RemoveElement((void*)ls); we delete the entire array anyways, no need to RemoveElement
-            PR_DELETE(ls);
-          }
-        }
-        else {
-          NS_IF_RELEASE(ls->mListener);
-          PR_DELETE(ls);
-        }
+        delete ls;
       }
     }
-    //Only delete if we were removing all listeners
-    if (!*scriptOnly) {
-      delete listeners;
-    }
+    delete listeners;
   }
   return PR_TRUE;
 }
 
 nsEventListenerManager::~nsEventListenerManager() 
 {
-  RemoveAllListeners(PR_FALSE);
+  RemoveAllListeners();
 
   --mInstanceCount;
   if(mInstanceCount == 0) {
@@ -448,13 +437,11 @@ nsEventListenerManager::~nsEventListenerManager()
 }
 
 nsresult
-nsEventListenerManager::RemoveAllListeners(PRBool aScriptOnly)
+nsEventListenerManager::RemoveAllListeners()
 {
-  if (!aScriptOnly) {
-    mListenersRemoved = PR_TRUE;
-  }
+  mListenersRemoved = PR_TRUE;
 
-  ReleaseListeners(&mSingleListener, aScriptOnly);
+  ReleaseListeners(&mSingleListener);
   if (!mSingleListener) {
     mSingleListenerType = eEventArrayType_None;
     mManagerType &= ~NS_ELM_SINGLE;
@@ -465,24 +452,19 @@ nsEventListenerManager::RemoveAllListeners(PRBool aScriptOnly)
     for (PRInt32 i=0; i<EVENT_ARRAY_TYPE_LENGTH && i < mMultiListeners->Count(); i++) {
       nsVoidArray* listeners;
       listeners = NS_STATIC_CAST(nsVoidArray*, mMultiListeners->ElementAt(i));
-      ReleaseListeners(&listeners, aScriptOnly);
+      ReleaseListeners(&listeners);
     }
-    if (!aScriptOnly) {
-      delete mMultiListeners;
-      mMultiListeners = nsnull;
-      mManagerType &= ~NS_ELM_MULTI;
-    }
+    delete mMultiListeners;
+    mMultiListeners = nsnull;
+    mManagerType &= ~NS_ELM_MULTI;
   }
 
   if (mGenericListeners) {
-    PRBool scriptOnly = aScriptOnly;
-    mGenericListeners->Enumerate(GenericListenersHashEnum, &scriptOnly);
+    mGenericListeners->Enumerate(GenericListenersHashEnum, nsnull);
     //hash destructor
-    if (!aScriptOnly) {
-      delete mGenericListeners;
-      mGenericListeners = nsnull;
-      mManagerType &= ~NS_ELM_HASH;
-    }
+    delete mGenericListeners;
+    mGenericListeners = nsnull;
+    mManagerType &= ~NS_ELM_HASH;
   }
 
   return NS_OK;
@@ -673,8 +655,7 @@ nsEventListenerManager::GetTypeForIID(const nsIID& aIID)
 }
 
 void
-nsEventListenerManager::ReleaseListeners(nsVoidArray** aListeners,
-                                         PRBool aScriptOnly)
+nsEventListenerManager::ReleaseListeners(nsVoidArray** aListeners)
 {
   if (nsnull != *aListeners) {
     PRInt32 i, count = (*aListeners)->Count();
@@ -682,24 +663,11 @@ nsEventListenerManager::ReleaseListeners(nsVoidArray** aListeners,
     for (i = 0; i < count; i++) {
       ls = (nsListenerStruct*)(*aListeners)->ElementAt(i);
       if (ls) {
-        if (aScriptOnly) {
-          if (ls->mFlags & NS_PRIV_EVENT_FLAG_SCRIPT) {
-            NS_RELEASE(ls->mListener);
-            //(*aListeners)->RemoveElement((void*)ls); We're going to delete the array anyways
-            PR_DELETE(ls);
-          }
-        }
-        else {
-          NS_IF_RELEASE(ls->mListener);
-          PR_DELETE(ls);
-        }
+        delete ls;
       }
     }
-    //Only delete if we were removing all listeners
-    if (!aScriptOnly) {
-      delete *aListeners;
-      *aListeners = nsnull;
-    }
+    delete *aListeners;
+    *aListeners = nsnull;
   }
 }
 
@@ -762,7 +730,8 @@ nsEventListenerManager::AddEventListener(nsIDOMEventListener *aListener,
 
   for (PRInt32 i=0; i<listeners->Count(); i++) {
     ls = (nsListenerStruct*)listeners->ElementAt(i);
-    if (ls->mListener == aListener && ls->mFlags == aFlags &&
+    nsRefPtr<nsIDOMEventListener> iListener = ls->mListener.Get();
+    if (iListener == aListener && ls->mFlags == aFlags &&
         ls->mGroupFlags == group) {
       ls->mSubType |= aSubType;
       found = PR_TRUE;
@@ -771,17 +740,20 @@ nsEventListenerManager::AddEventListener(nsIDOMEventListener *aListener,
   }
 
   if (!found) {
-    ls = PR_NEW(nsListenerStruct);
-    if (ls) {
-      ls->mListener = aListener;
-      ls->mFlags = aFlags;
-      ls->mSubType = aSubType;
-      ls->mSubTypeCapture = NS_EVENT_BITS_NONE;
-      ls->mHandlerIsString = 0;
-      ls->mGroupFlags = group;
-      listeners->AppendElement((void*)ls);
-      NS_ADDREF(aListener);
+    ls = new nsListenerStruct;
+    if (!ls) {
+      return NS_ERROR_OUT_OF_MEMORY;
     }
+
+    nsCOMPtr<nsIDOMGCParticipant> participant = do_QueryInterface(mTarget);
+    NS_ASSERTION(participant, "must implement nsIDOMGCParticipant");
+    ls->mListener.Set(aListener, participant);
+    ls->mFlags = aFlags;
+    ls->mSubType = aSubType;
+    ls->mSubTypeCapture = NS_EVENT_BITS_NONE;
+    ls->mHandlerIsString = 0;
+    ls->mGroupFlags = group;
+    listeners->AppendElement((void*)ls);
   }
 
   return NS_OK;
@@ -802,18 +774,17 @@ nsEventListenerManager::RemoveEventListener(nsIDOMEventListener *aListener,
   }
 
   nsListenerStruct* ls;
-  PRBool listenerRemoved = PR_FALSE;
+  aFlags &= ~NS_PRIV_EVENT_UNTRUSTED_PERMITTED;
 
   for (PRInt32 i=0; i<listeners->Count(); i++) {
     ls = (nsListenerStruct*)listeners->ElementAt(i);
-    if (ls->mListener == aListener &&
+    nsRefPtr<nsIDOMEventListener> iListener = ls->mListener.Get();
+    if (iListener == aListener &&
         (ls->mFlags & ~NS_PRIV_EVENT_UNTRUSTED_PERMITTED) == aFlags) {
       ls->mSubType &= ~aSubType;
       if (ls->mSubType == NS_EVENT_BITS_NONE) {
-        NS_RELEASE(ls->mListener);
         listeners->RemoveElement((void*)ls);
-        PR_DELETE(ls);
-        listenerRemoved = PR_TRUE;
+        delete ls;
       }
       break;
     }
@@ -1400,14 +1371,12 @@ nsEventListenerManager::RemoveScriptEventListener(nsIAtom *aName)
   if (ls) {
     ls->mSubType &= ~flags;
     if (ls->mSubType == NS_EVENT_BITS_NONE) {
-      NS_RELEASE(ls->mListener);
-
       //Get the listeners array so we can remove ourselves from it
       nsVoidArray* listeners;
       listeners = GetListenersByType(arrayType, nsnull, PR_FALSE);
       NS_ENSURE_TRUE(listeners, NS_ERROR_FAILURE);
       listeners->RemoveElement((void*)ls);
-      PR_DELETE(ls);
+      delete ls;
     }
   }
 
@@ -1633,6 +1602,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsIScriptContext *aContext,
 
 nsresult
 nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
+                                           nsIDOMEventListener* aListener,
                                            nsIDOMEvent* aDOMEvent,
                                            nsIDOMEventTarget* aCurrentTarget,
                                            PRUint32 aSubType,
@@ -1658,7 +1628,7 @@ nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
     }
     if (aListenerStruct->mHandlerIsString & aSubType) {
 
-      nsCOMPtr<nsIJSEventListener> jslistener = do_QueryInterface(aListenerStruct->mListener);
+      nsCOMPtr<nsIJSEventListener> jslistener = do_QueryInterface(aListener);
       if (jslistener) {
         nsAutoString eventString;
         if (NS_SUCCEEDED(aDOMEvent->GetType(eventString))) {
@@ -1682,7 +1652,7 @@ nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
   if (NS_SUCCEEDED(result)) {
     nsCOMPtr<nsIPrivateDOMEvent> aPrivDOMEvent(do_QueryInterface(aDOMEvent));
     aPrivDOMEvent->SetCurrentTarget(aCurrentTarget);
-    result = aListenerStruct->mListener->HandleEvent(aDOMEvent);
+    result = aListener->HandleEvent(aDOMEvent);
     aPrivDOMEvent->SetCurrentTarget(nsnull);
   }
 
@@ -1771,19 +1741,23 @@ nsEventListenerManager::HandleEvent(nsPresContext* aPresContext,
             ls->mGroupFlags == currentGroup &&
             (NS_IS_TRUSTED_EVENT(aEvent) ||
              ls->mFlags & NS_PRIV_EVENT_UNTRUSTED_PERMITTED)) {
-          // Try the type-specific listener interface
-          PRBool hasInterface = PR_FALSE;
-          if (typeData)
-            DispatchToInterface(*aDOMEvent, ls->mListener,
-                                dispData->method, *typeData->iid,
-                                &hasInterface);
+          nsRefPtr<nsIDOMEventListener> eventListener = ls->mListener.Get();
+          NS_ASSERTION(eventListener, "listener wasn't preserved properly");
+          if (eventListener) {
+            // Try the type-specific listener interface
+            PRBool hasInterface = PR_FALSE;
+            if (typeData)
+              DispatchToInterface(*aDOMEvent, eventListener,
+                                  dispData->method, *typeData->iid,
+                                  &hasInterface);
 
-          // If it doesn't implement that, call the generic HandleEvent()
-          if (!hasInterface && (ls->mSubType == NS_EVENT_BITS_NONE ||
-                                ls->mSubType & dispData->bits)) {
-            HandleEventSubType(ls, *aDOMEvent, aCurrentTarget,
-                               dispData ? dispData->bits : NS_EVENT_BITS_NONE,
-                               aFlags);
+            // If it doesn't implement that, call the generic HandleEvent()
+            if (!hasInterface && (ls->mSubType == NS_EVENT_BITS_NONE ||
+                                  ls->mSubType & dispData->bits)) {
+              HandleEventSubType(ls, eventListener, *aDOMEvent, aCurrentTarget,
+                                 dispData ? dispData->bits : NS_EVENT_BITS_NONE,
+                                 aFlags);
+            }
           }
         }
       }
@@ -1853,6 +1827,10 @@ nsEventListenerManager::CreateEvent(nsPresContext* aPresContext,
       return NS_NewDOMSVGZoomEvent(aDOMEvent, aPresContext,
                                    NS_STATIC_CAST(nsGUIEvent*,aEvent));
 #endif // MOZ_SVG
+    case NS_XUL_COMMAND_EVENT:
+      return NS_NewDOMXULCommandEvent(aDOMEvent, aPresContext,
+                                      NS_STATIC_CAST(nsXULCommandEvent*,
+                                                     aEvent));
     }
 
     // For all other types of events, create a vanilla event object.
@@ -1901,6 +1879,9 @@ nsEventListenerManager::CreateEvent(nsPresContext* aPresContext,
     return NS_NewDOMSVGZoomEvent(aDOMEvent, aPresContext,
                                  NS_STATIC_CAST(nsGUIEvent*,aEvent));
 #endif // MOZ_SVG
+  if (aEventType.LowerCaseEqualsLiteral("xulcommandevent") ||
+      aEventType.LowerCaseEqualsLiteral("xulcommandevents"))
+    return NS_NewDOMXULCommandEvent(aDOMEvent, aPresContext, nsnull);
 
   return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
 }
@@ -2051,9 +2032,23 @@ nsEventListenerManager::FlipCaptureBit(PRInt32 aEventTypes,
 }
 
 NS_IMETHODIMP
+nsEventListenerManager::Disconnect(PRBool)
+{
+  mTarget = nsnull;
+
+  // Bug 323807: nsDOMClassInfo::PreserveWrapper (and
+  // nsIDOMGCParticipant) require that we remove all event listeners now
+  // to remove any weak references in the nsDOMClassInfo's preserved
+  // wrapper table to the target.
+  return RemoveAllListeners();
+}
+
+NS_IMETHODIMP
 nsEventListenerManager::SetListenerTarget(nsISupports* aTarget)
 {
-  //WEAK reference, must be set back to nsnull when done
+  NS_PRECONDITION(aTarget, "unexpected null pointer");
+
+  //WEAK reference, must be set back to nsnull when done by calling Disconnect
   mTarget = aTarget;
   return NS_OK;
 }
@@ -2220,12 +2215,41 @@ nsEventListenerManager::FixContextMenuEvent(nsPresContext* aPresContext,
                                             nsEvent* aEvent,
                                             nsIDOMEvent** aDOMEvent)
 {
+  nsIPresShell* shell = aPresContext->GetPresShell();
+  if (!shell) {
+    // Nothing to do.
+    return NS_OK;
+  }
+
+  nsresult ret = NS_OK;
+
+  if (nsnull == *aDOMEvent) {
+    // If we're here because of the key-equiv for showing context menus, we
+    // have to twiddle with the NS event to make sure the context menu comes
+    // up in the upper left of the relevant content area before we create
+    // the DOM event. Since we never call InitMouseEvent() on the event, 
+    // the client X/Y will be 0,0. We can make use of that if the widget is null.
+    if (aEvent->message == NS_CONTEXTMENU_KEY) {
+      NS_IF_RELEASE(((nsGUIEvent*)aEvent)->widget);
+      aPresContext->GetViewManager()->GetWidget(&((nsGUIEvent*)aEvent)->widget);
+      aEvent->refPoint.x = 0;
+      aEvent->refPoint.y = 0;
+    }
+    ret = NS_NewDOMMouseEvent(aDOMEvent, aPresContext, NS_STATIC_CAST(nsInputEvent*, aEvent));
+    NS_ENSURE_SUCCESS(ret, ret);
+  }
+
+  // see if we should use the caret position for the popup
+  if (aEvent->message == NS_CONTEXTMENU_KEY) {
+    if (PrepareToUseCaretPosition(((nsGUIEvent*)aEvent)->widget, aEvent, shell))
+      return NS_OK;
+  }
+
   // If we're here because of the key-equiv for showing context menus, we
   // have to reset the event target to the currently focused element. Get it
   // from the focus controller.
   nsCOMPtr<nsIDOMEventTarget> currentTarget(aCurrentTarget);
   nsCOMPtr<nsIDOMElement> currentFocus;
-  nsIPresShell* shell = aPresContext->PresShell();
 
   if (aEvent->message == NS_CONTEXTMENU_KEY) {
     nsIDocument *doc = shell->GetDocument();
@@ -2240,37 +2264,149 @@ nsEventListenerManager::FixContextMenuEvent(nsPresContext* aPresContext,
     }
   }
 
-  nsresult ret = NS_OK;
+  if (currentFocus) {
+    // Reset event coordinates relative to focused frame in view
+    nsPoint targetPt;
+    GetCoordinatesFor(currentFocus, aPresContext, shell, targetPt);
+    aEvent->refPoint.x = targetPt.x;
+    aEvent->refPoint.y = targetPt.y;
 
-  if (nsnull == *aDOMEvent) {        
-    // If we're here because of the key-equiv for showing context menus, we
-    // have to twiddle with the NS event to make sure the context menu comes
-    // up in the upper left of the relevant content area before we create
-    // the DOM event. Since we never call InitMouseEvent() on the event, 
-    // the client X/Y will be 0,0. We can make use of that if the widget is null.
-    if (aEvent->message == NS_CONTEXTMENU_KEY)
-      NS_IF_RELEASE(((nsGUIEvent*)aEvent)->widget);   // nulls out widget
-    ret = NS_NewDOMMouseEvent(aDOMEvent, aPresContext, NS_STATIC_CAST(nsInputEvent*, aEvent));
-  }
-
-  if (NS_SUCCEEDED(ret)) {
-    // update the target
-    if (currentFocus) {
-      // Reset event coordinates relative to focused frame in view
-      nsPoint targetPt;
-      GetCoordinatesFor(currentFocus, aPresContext, shell, targetPt);
-      aEvent->point.x += targetPt.x - aEvent->refPoint.x;
-      aEvent->point.y += targetPt.y - aEvent->refPoint.y;
-      aEvent->refPoint.x = targetPt.x;
-      aEvent->refPoint.y = targetPt.y;
-
-      currentTarget = do_QueryInterface(currentFocus);
-      nsCOMPtr<nsIPrivateDOMEvent> pEvent(do_QueryInterface(*aDOMEvent));
-      pEvent->SetTarget(currentTarget);
-    }
+    currentTarget = do_QueryInterface(currentFocus);
+    nsCOMPtr<nsIPrivateDOMEvent> pEvent(do_QueryInterface(*aDOMEvent));
+    pEvent->SetTarget(currentTarget);
   }
 
   return ret;
+}
+
+// nsEventListenerManager::PrepareToUseCaretPosition
+//
+//    This checks to see if we should use the caret position for popup context
+//    menus. If we should, it fills in refpoint and point on the event and
+//    returns true. This function will also scroll the window as needed to make
+//    the caret visible.
+//
+//    The event widget should be the widget that generated the event, and
+//    whose coordinate system the resulting event's refPoint should be
+//    relative to.
+
+PRBool
+nsEventListenerManager::PrepareToUseCaretPosition(nsIWidget* aEventWidget,
+                                                  nsEvent* aEvent,
+                                                  nsIPresShell* aShell)
+{
+  nsresult rv;
+  NS_ASSERTION(aEventWidget, "Event widget is null");
+  NS_ASSERTION(aShell, "Shell is null");
+
+  // check caret visibility
+  nsCOMPtr<nsICaret> caret;
+  rv = aShell->GetCaret(getter_AddRefs(caret));
+  NS_ENSURE_SUCCESS(rv, PR_FALSE);
+  NS_ENSURE_TRUE(caret, PR_FALSE);
+
+  PRBool caretVisible = PR_FALSE;
+  rv = caret->GetCaretVisible(&caretVisible);
+  if (NS_FAILED(rv) || ! caretVisible)
+    return PR_FALSE;
+
+  // caret selection, watch out: GetCaretDOMSelection can return null but NS_OK
+  nsCOMPtr<nsISelection> domSelection;
+  rv = caret->GetCaretDOMSelection(getter_AddRefs(domSelection));
+  NS_ENSURE_SUCCESS(rv, PR_FALSE);
+  NS_ENSURE_TRUE(domSelection, PR_FALSE);
+
+  // since the match could be an anonymous textnode inside a
+  // <textarea> or text <input>, we need to get the outer frame
+  // note: frames are not refcounted
+  nsIFrame* frame = nsnull; // may be NULL
+  nsITextControlFrame* tcFrame = nsnull; // may be NULL
+  nsCOMPtr<nsIDOMNode> node;
+  rv = domSelection->GetFocusNode(getter_AddRefs(node));
+  NS_ENSURE_SUCCESS(rv, PR_FALSE);
+  NS_ENSURE_TRUE(node, PR_FALSE);
+  nsCOMPtr<nsIContent> content(do_QueryInterface(node));
+  for ( ; content; content = content->GetParent()) {
+    if (!content->IsNativeAnonymous()) {
+      rv = aShell->GetPrimaryFrameFor(content, &frame);
+      if (NS_FAILED(rv) || frame) {
+        // not refcounted, will be NULL for some elements
+        CallQueryInterface(frame, &tcFrame);
+      }
+      break;
+    }
+  }
+
+  // It seems like selCon->ScrollSelectionIntoView should be enough, but it's
+  // not. The problem is that scrolling the selection into view when it is
+  // below the current viewport will align the top line of the frame exactly
+  // with the bottom of the window. This is fine, BUT, the popup event causes
+  // the control to be re-focused which does this exact call to
+  // ScrollFrameIntoView, which has a one-pixel disagreement of whether the
+  // frame is actually in view. The result is that the frame is aligned with
+  // the top of the window, but the menu is still at the bottom.
+  //
+  // Doing this call first forces the frame to be in view, eliminating the
+  // problem. The only difference in the result is that if your cursor is in
+  // an edit box below the current view, you'll get the edit box aligned with
+  // the top of the window. This is arguably better behavior anyway.
+  if (frame) {
+    rv = aShell->ScrollFrameIntoView(frame, NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,
+                                     NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE);
+    NS_ENSURE_SUCCESS(rv, PR_FALSE);
+  }
+
+  // Actually scroll the selection (ie caret) into view. Note that this must
+  // be synchronous since we will be checking the caret position on the screen.
+  //
+  // Be easy about errors, and just don't scroll in those cases. Better to have
+  // the correct menu at a weird place than the wrong menu.
+  nsCOMPtr<nsISelectionController> selCon;
+  if (tcFrame)
+    tcFrame->GetSelectionContr(getter_AddRefs(selCon));
+  else
+    selCon = do_QueryInterface(aShell);
+  if (selCon) {
+    rv = selCon->ScrollSelectionIntoView(nsISelectionController::SELECTION_NORMAL,
+        nsISelectionController::SELECTION_FOCUS_REGION, PR_TRUE);
+    NS_ENSURE_SUCCESS(rv, PR_FALSE);
+  }
+
+  // get caret position relative to some view (normally the same as the
+  // event widget view, but this is not guaranteed)
+  PRBool isCollapsed;
+  nsIView* view;
+  nsRect caretCoords;
+  rv = caret->GetCaretCoordinates(nsICaret::eRenderingViewCoordinates,
+                                  domSelection, &caretCoords, &isCollapsed,
+                                  &view);
+  NS_ENSURE_SUCCESS(rv, PR_FALSE);
+
+  // in case the view used for caret coordinates was something else, we need
+  // to bring those coordinates into the space of the widget view
+  nsIView* widgetView = nsIView::GetViewFor(aEventWidget);
+  NS_ENSURE_TRUE(widgetView, PR_FALSE);
+  nsPoint viewToWidget;
+  widgetView->GetNearestWidget(&viewToWidget);
+  nsPoint viewDelta = view->GetOffsetTo(widgetView) + viewToWidget;
+
+  // caret coordinates are in twips, convert to pixels for refpoint
+  float t2p = aShell->GetPresContext()->TwipsToPixels();
+  aEvent->refPoint.x = NSTwipsToIntPixels(viewDelta.x + caretCoords.x + caretCoords.width, t2p);
+  aEvent->refPoint.y = NSTwipsToIntPixels(viewDelta.y + caretCoords.y + caretCoords.height, t2p);
+
+  // convert to coordinate system for point
+  aEvent->point.x = aEvent->point.y = 0;
+  nsPresContext* context = aShell->GetPresContext();
+  if (context) {
+    nsIFrame* eventFrame;
+    context->EventStateManager()->GetEventTarget(&eventFrame);
+    if (eventFrame) {
+      aEvent->point = nsLayoutUtils::GetEventCoordinatesForNearestView(
+          aEvent, eventFrame);
+    }
+  }
+  return PR_TRUE;
 }
 
 // Get coordinates relative to root view for element, 

@@ -49,6 +49,7 @@
 #include "nsIContentViewer.h"
 #include "nsIPrefBranch.h"
 #include "nsVoidArray.h"
+#include "nsInterfaceHashtable.h"
 #include "nsIScriptContext.h"
 #include "nsITimer.h"
 
@@ -102,71 +103,7 @@
 #include "nsDocShellTransferableHooks.h"
 #include "nsIAuthPromptProvider.h"
 #include "nsISecureBrowserUI.h"
-
-/**
- * Load flag for error pages. This should be bigger than all flags on
- * nsIWebNavigation.
- */
-#define LOAD_FLAGS_ERROR_PAGE 0x8000U
-
-#define MAKE_LOAD_TYPE(type, flags) ((type) | ((flags) << 16))
-#define LOAD_TYPE_HAS_FLAGS(type, flags) ((type) & ((flags) << 16))
-
-/* load commands were moved to nsIDocShell.h */
-
-/* load types are legal combinations of load commands and flags 
- *  
- * NOTE:
- *  Remember to update the IsValidLoadType function below if you change this
- *  enum to ensure bad flag combinations will be rejected.
- */
-enum LoadType {
-    LOAD_NORMAL = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_NORMAL, nsIWebNavigation::LOAD_FLAGS_NONE),
-    LOAD_NORMAL_REPLACE = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_NORMAL, nsIWebNavigation::LOAD_FLAGS_REPLACE_HISTORY),
-    LOAD_NORMAL_EXTERNAL = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_NORMAL, nsIWebNavigation::LOAD_FLAGS_FROM_EXTERNAL),
-    LOAD_HISTORY = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_HISTORY, nsIWebNavigation::LOAD_FLAGS_NONE),
-    LOAD_RELOAD_NORMAL = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_RELOAD, nsIWebNavigation::LOAD_FLAGS_NONE),
-    LOAD_RELOAD_BYPASS_CACHE = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_RELOAD, nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE),
-    LOAD_RELOAD_BYPASS_PROXY = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_RELOAD, nsIWebNavigation::LOAD_FLAGS_BYPASS_PROXY),
-    LOAD_RELOAD_BYPASS_PROXY_AND_CACHE = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_RELOAD, nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE | nsIWebNavigation::LOAD_FLAGS_BYPASS_PROXY),
-    LOAD_LINK = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_NORMAL, nsIWebNavigation::LOAD_FLAGS_IS_LINK),
-    LOAD_REFRESH = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_NORMAL, nsIWebNavigation::LOAD_FLAGS_IS_REFRESH),
-    LOAD_RELOAD_CHARSET_CHANGE = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_RELOAD, nsIWebNavigation::LOAD_FLAGS_CHARSET_CHANGE),
-    LOAD_BYPASS_HISTORY = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_NORMAL, nsIWebNavigation::LOAD_FLAGS_BYPASS_HISTORY),
-    LOAD_STOP_CONTENT = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_NORMAL, nsIWebNavigation::LOAD_FLAGS_STOP_CONTENT),
-    LOAD_STOP_CONTENT_AND_REPLACE = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_NORMAL, nsIWebNavigation::LOAD_FLAGS_STOP_CONTENT | nsIWebNavigation::LOAD_FLAGS_REPLACE_HISTORY),
-    /**
-     * Load type for an error page. These loads are never triggered by users of
-     * Docshell. Instead, Docshell triggers the load itself when a
-     * consumer-triggered load failed.
-     */
-    LOAD_ERROR_PAGE = MAKE_LOAD_TYPE(nsIDocShell::LOAD_CMD_NORMAL, LOAD_FLAGS_ERROR_PAGE)
-
-    // NOTE: Adding a new value? Remember to update IsValidLoadType!
-};
-static inline PRBool IsValidLoadType(PRUint32 aLoadType)
-{
-    switch (aLoadType)
-    {
-    case LOAD_NORMAL:
-    case LOAD_NORMAL_REPLACE:
-    case LOAD_NORMAL_EXTERNAL:
-    case LOAD_HISTORY:
-    case LOAD_RELOAD_NORMAL:
-    case LOAD_RELOAD_BYPASS_CACHE:
-    case LOAD_RELOAD_BYPASS_PROXY:
-    case LOAD_RELOAD_BYPASS_PROXY_AND_CACHE:
-    case LOAD_LINK:
-    case LOAD_REFRESH:
-    case LOAD_RELOAD_CHARSET_CHANGE:
-    case LOAD_BYPASS_HISTORY:
-    case LOAD_STOP_CONTENT:
-    case LOAD_STOP_CONTENT_AND_REPLACE:
-    case LOAD_ERROR_PAGE:
-        return PR_TRUE;
-    }
-    return PR_FALSE;
-}
+#include "nsDocShellLoadTypes.h"
 
 /* internally used ViewMode types */
 enum ViewMode {
@@ -204,6 +141,7 @@ protected:
 
 class nsDocShell : public nsDocLoader,
                    public nsIDocShell,
+                   public nsIDocShell_MOZILLA_1_8_BRANCH,
                    public nsIDocShellTreeItem, 
                    public nsIDocShellTreeNode,
                    public nsIDocShellHistory,
@@ -231,6 +169,7 @@ public:
     NS_DECL_ISUPPORTS_INHERITED
 
     NS_DECL_NSIDOCSHELL
+    NS_DECL_NSIDOCSHELL_MOZILLA_1_8_BRANCH
     NS_DECL_NSIDOCSHELLTREEITEM
     NS_DECL_NSIDOCSHELLTREENODE
     NS_DECL_NSIDOCSHELLHISTORY
@@ -297,7 +236,8 @@ protected:
                                nsIInputStream * aHeadersData,
                                PRBool firstParty,
                                nsIDocShell ** aDocShell,
-                               nsIRequest ** aRequest);
+                               nsIRequest ** aRequest,
+                               PRBool aIsNewWindowTarget);
     NS_IMETHOD AddHeadersToChannel(nsIInputStream * aHeadersData, 
                                   nsIChannel * aChannel);
     virtual nsresult DoChannelLoad(nsIChannel * aChannel,
@@ -392,8 +332,16 @@ protected:
                                        WalkHistoryEntriesFunc aCallback,
                                        void *aData);
 
+    // overridden from nsDocLoader, this provides more information than the
+    // normal OnStateChange with flags STATE_REDIRECTING
+    virtual void OnRedirectStateChange(nsIChannel* aOldChannel,
+                                       nsIChannel* aNewChannel,
+                                       PRUint32 aRedirectFlags,
+                                       PRUint32 aStateFlags);
+
     // Global History
-    nsresult AddToGlobalHistory(nsIURI * aURI, PRBool aRedirect, nsIURI * aReferrer);
+    nsresult AddToGlobalHistory(nsIURI * aURI, PRBool aRedirect,
+                                nsIChannel * aChannel);
 
     // Helper Routines
     NS_IMETHOD GetPromptAndStringBundle(nsIPrompt ** aPrompt,
@@ -427,10 +375,6 @@ protected:
       LL_L2I(t_sec, t_usec);
       return t_sec;
     }
-
-    nsresult FindTarget(const PRUnichar *aTargetName,
-                        PRBool *aIsNewWindow,
-                        nsIDocShell **aResult);
 
     PRBool IsFrame();
 
@@ -525,6 +469,7 @@ protected:
     PRPackedBool               mCreatingDocument; // (should be) debugging only
     PRPackedBool               mUseErrorPages;
     PRPackedBool               mAllowAuth;
+    PRPackedBool               mAllowKeywordFixup;
 
     PRPackedBool               mFiredUnloadEvent;
 
@@ -589,6 +534,9 @@ protected:
     // Reference to the SHEntry for this docshell until the page is loaded
     // Somebody give me better name
     nsCOMPtr<nsISHEntry>       mLSHE;
+
+    // hash of session storages, keyed by domain
+    nsInterfaceHashtable<nsCStringHashKey, nsIDOMStorage> mStorages;
 
     // Index into the SHTransaction list, indicating the previous and current
     // transaction at the time that this DocShell begins to load

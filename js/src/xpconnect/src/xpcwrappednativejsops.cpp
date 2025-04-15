@@ -119,11 +119,12 @@ ToStringGuts(XPCCallContext& ccx)
 
 /***************************************************************************/
 
-JSBool JS_DLL_CALLBACK
+JS_STATIC_DLL_CALLBACK(JSBool)
 XPC_WN_Shared_ToString(JSContext *cx, JSObject *obj,
                        uintN argc, jsval *argv, jsval *vp)
 {
     XPCCallContext ccx(JS_CALLER, cx, obj);
+    ccx.SetName(ccx.GetRuntime()->GetStringJSVal(XPCJSRuntime::IDX_TO_STRING));
     ccx.SetArgsAndResultPtr(argc, argv, vp);
     return ToStringGuts(ccx);
 }
@@ -665,6 +666,12 @@ MarkScopeJSObjects(JSContext *cx, XPCWrappedNativeScope* scope, void *arg)
     {
         JS_MarkGCThing(cx, obj, "XPCWrappedNativeScope::mPrototypeJSObject", arg);
     }
+
+    obj = scope->GetPrototypeJSFunction();
+    if(obj)
+    {
+        JS_MarkGCThing(cx, obj, "XPCWrappedNativeScope::mPrototypeJSFunction", arg);
+    }
 }
 
 void
@@ -890,7 +897,7 @@ JSExtendedClass XPC_WN_NoHelper_JSClass = {
     XPC_WN_Equality,
     XPC_WN_OuterObject,
     XPC_WN_InnerObject,
-    JSCLASS_NO_RESERVED_MEMBERS
+    nsnull,nsnull,nsnull,nsnull,nsnull
 };
 
 
@@ -1284,6 +1291,7 @@ JSBool xpc_InitWrappedNativeJSOps()
 // static
 XPCNativeScriptableInfo*
 XPCNativeScriptableInfo::Construct(XPCCallContext& ccx,
+                                   JSBool isGlobal,
                                    const XPCNativeScriptableCreateInfo* sci)
 {
     NS_ASSERTION(sci->GetCallback(), "bad param");
@@ -1307,7 +1315,7 @@ XPCNativeScriptableInfo::Construct(XPCCallContext& ccx,
     XPCNativeScriptableSharedMap* map = rt->GetNativeScriptableSharedMap();
     {   // scoped lock
         XPCAutoLock lock(rt->GetMapLock());
-        success = map->GetNewOrUsed(sci->GetFlags(), name, newObj);
+        success = map->GetNewOrUsed(sci->GetFlags(), name, isGlobal, newObj);
     }
 
     if(!success)
@@ -1320,7 +1328,7 @@ XPCNativeScriptableInfo::Construct(XPCCallContext& ccx,
 }
 
 void
-XPCNativeScriptableShared::PopulateJSClass()
+XPCNativeScriptableShared::PopulateJSClass(JSBool isGlobal)
 {
     NS_ASSERTION(mJSClass.base.name, "bad state!");
 
@@ -1328,6 +1336,9 @@ XPCNativeScriptableShared::PopulateJSClass()
                           JSCLASS_PRIVATE_IS_NSISUPPORTS |
                           JSCLASS_NEW_RESOLVE |
                           JSCLASS_IS_EXTENDED;
+
+    if(isGlobal)
+        mJSClass.base.flags |= JSCLASS_GLOBAL_FLAGS;
 
     if(mFlags.WantAddProperty())
         mJSClass.base.addProperty = XPC_WN_Helper_AddProperty;

@@ -96,7 +96,7 @@ nsDeviceContextOS2::~nsDeviceContextOS2()
     nsresult rv;
     nsCOMPtr<nsIPref> prefs = do_GetService(NS_PREF_CONTRACTID, &rv);
     if (NS_SUCCEEDED(rv)) {
-      prefs->UnregisterCallback("browser.display.screen_resolution",
+      prefs->UnregisterCallback("layout.css.dpi",
                                 prefChanged, (void *)this);
     }
   }
@@ -115,7 +115,7 @@ nsresult nsDeviceContextOS2::Init( nsNativeWidget aWidget)
     initialized = 1;
 
     // Set prefVal the value of the preference
-    // "browser.display.screen_resolution"
+    // "layout.css.dpi"
     // or -1 if we can't get it.
     // If it's negative, we pretend it's not set.
     // If it's 0, it means force use of the operating system's logical
@@ -125,11 +125,11 @@ nsresult nsDeviceContextOS2::Init( nsNativeWidget aWidget)
 
     nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &res));
     if (NS_SUCCEEDED(res) && prefs) {
-      res = prefs->GetIntPref("browser.display.screen_resolution", &prefVal);
+      res = prefs->GetIntPref("layout.css.dpi", &prefVal);
       if (NS_FAILED(res)) {
         prefVal = -1;
       }
-      prefs->RegisterCallback("browser.display.screen_resolution", prefChanged,
+      prefs->RegisterCallback("layout.css.dpi", prefChanged,
                               (void *)this);
     }
 
@@ -573,16 +573,18 @@ nsDeviceContextOS2::SetDPI(PRInt32 aPrefDPI)
   GFX (::DevQueryCaps(hdc, CAPS_HORIZONTAL_FONT_RES, 1, &OSVal), FALSE);
   ::WinReleasePS(ps);
 
-  if (aPrefDPI == 0) {
-    // If the pref is 0 use of OS value
-    mDpi = OSVal;
-  } else if (aPrefDPI > 0) {
+  if (aPrefDPI > 0) {
     // If there's a valid pref value for the logical resolution,
     // use it.
     mDpi = aPrefDPI;
+  } else if ((aPrefDPI == 0) || (OSVal > 96)) {
+    // Either if the pref is 0 (force use of OS value) or the OS
+    // value is bigger than 96, use the OS value.
+    mDpi = OSVal;
   } else {
-    // if we couldn't get the pref or it's negative then use 120
-    mDpi = 120;
+    // if we couldn't get the pref or it's negative, and the OS
+    // value is under 96ppi, then use 96.
+    mDpi = 96;
   }
 
   int pt2t = 72;
@@ -600,7 +602,7 @@ int prefChanged(const char *aPref, void *aClosure)
   nsDeviceContextOS2 *context = (nsDeviceContextOS2*)aClosure;
   nsresult rv;
   
-  if (nsCRT::strcmp(aPref, "browser.display.screen_resolution")==0) {
+  if (nsCRT::strcmp(aPref, "layout.css.dpi")==0) {
     PRInt32 dpi;
     nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
     rv = prefs->GetIntPref(aPref, &dpi);

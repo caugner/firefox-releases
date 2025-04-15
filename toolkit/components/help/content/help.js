@@ -101,10 +101,6 @@ var helpFileDS;
 # reduction on all links within the current help set.
 var helpBaseURI;
 
-var gIgnoreFocus = false;
-var gClickSelectsAll;
-var gIgnoreClick = false;
-
 /* defaultTopic is either set
    1. in the openHelp() call, passed as an argument to the Help window and
       evaluated in init(), or
@@ -144,7 +140,7 @@ function init() {
   strBundle = document.getElementById("bundle_help");
   emptySearchText = strBundle.getString("emptySearchText");
 
-  initFindBar();
+  gFindBar.initFindBar();
 
   // Get the content pack, base URL, and help topic
   var helpTopic = defaultTopic;
@@ -179,8 +175,9 @@ function init() {
 
   webProgress.addProgressListener(window.XULBrowserWindow, Components.interfaces.nsIWebProgress.NOTIFY_ALL);
 
-  gClickSelectsAll = getBoolPref("browser.urlbar.clickSelectsAll", true);
-  
+  var searchBox = document.getElementById("findText");
+  searchBox.clickSelectsAll = getBoolPref("browser.urlbar.clickSelectsAll", true);
+
   setTimeout(focusSearch, 0);
 }
 
@@ -428,33 +425,6 @@ function goBack() {
   }
 }
 
-/* copied from browser.js */
-function BrowserReloadWithFlags(reloadFlags) {
-    /* First, we'll try to use the session history object to reload so 
-     * that framesets are handled properly. If we're in a special 
-     * window (such as view-source) that has no session history, fall 
-     * back on using the web navigation's reload method.
-     */
-
-    var webNav = getWebNavigation();
-    try {
-      var sh = webNav.sessionHistory;
-      if (sh)
-        webNav = sh.QueryInterface(Components.interfaces.nsIWebNavigation);
-    } catch (e) {
-    }
-
-    try {
-      webNav.reload(reloadFlags);
-    } catch (e) {
-    }
-}
-
-function reload() {
-  const reloadFlags = Components.interfaces.nsIWebNavigation.LOAD_FLAGS_NONE;
-  return BrowserReloadWithFlags(reloadFlags);
-}
-
 function goForward() {
     try
     {
@@ -632,33 +602,6 @@ function onselect_loadURI(tree) {
     }// when switching between tabs a spurious row number is returned.
 }
 
-// copied from browser.js to handle the searchbar
-function SearchbarFocusHandler(aEvent, aElt)
-{
-  if (gIgnoreFocus)
-    gIgnoreFocus = false;
-  else if (gClickSelectsAll)
-    aElt.select();
-}
-
-function SearchbarMouseDownHandler(aEvent, aElt)
-{
-  if (aElt.hasAttribute("focused")) {
-    gIgnoreClick = true;
-  } else {
-    gIgnoreFocus = true;
-    gIgnoreClick = false;
-    aElt.setSelectionRange(0, 0);
-  }
-}
-
-function SearchbarClickHandler(aEvent, aElt)
-{
-  if (!gIgnoreClick && gClickSelectsAll && aElt.selectionStart == aElt.selectionEnd)
-    aElt.select();
-}
-
-
 function focusSearch() {
   var searchBox = document.getElementById("findText");
   searchBox.focus();
@@ -815,7 +758,7 @@ function getLiteralValue(literal, defaultValue) {
     return null;
 }
 
-# Write debug string to javascript console.
+# Write debug string to error console.
 function log(aText) {
     CONSOLE_SERVICE.logStringMessage(aText);
 }

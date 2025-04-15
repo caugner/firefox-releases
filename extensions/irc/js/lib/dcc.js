@@ -90,6 +90,7 @@ function CIRCDCC(parent)
 }
 
 CIRCDCC.prototype.TYPE = "IRCDCC";
+CIRCDCC.prototype.listenPorts = [];
 
 CIRCDCC.prototype.addUser =
 function dcc_adduser(user, remoteIP)
@@ -129,7 +130,15 @@ function dcc_addhost(host, auth)
     };
 
     try {
-        var dnsRecord = this._dnsSvc.asyncResolve(host, false, listener, null);
+        var th;
+        if (jsenv.HAS_THREAD_MANAGER) {
+          th = getService("@mozilla.org/thread-manager;1").currentThread;
+        } else {
+          const EQS = getService("@mozilla.org/event-queue-service;1",
+                                 "nsIEventQueueService");
+          th = EQS.getSpecialEventQueue(EQS.CURRENT_THREAD_EVENT_QUEUE);
+        }
+        var dnsRecord = this._dnsSvc.asyncResolve(host, false, listener, th);
     } catch (ex) {
         dd("Error resolving host to IP: " + ex);
     }
@@ -150,19 +159,25 @@ function dcc_addip(ip, auth)
 CIRCDCC.prototype.getMatches =
 function dcc_getmatches(nickname, filename, types, dirs, states)
 {
+    function matchNames(name, otherName)
+    {
+        return ((name.match(new RegExp(otherName, "i"))) ||
+                (name.toLowerCase().indexOf(otherName.toLowerCase()) != -1));
+    };
+
     var k;
     var list = new Array();
     if (!types)
         types = ["chat", "file"];
 
-    var n = new RegExp(nickname, "i");
-    var f = new RegExp(filename, "i");
+    var n = nickname;
+    var f = filename;
 
     if (arrayIndexOf(types, "chat") >= 0)
     {
         for (k = 0; k < this.chats.length; k++)
         {
-            if ((!nickname || this.chats[k].user.unicodeName.match(n)) &&
+            if ((!nickname || matchNames(this.chats[k].user.unicodeName, n)) &&
                 (!dirs || arrayIndexOf(dirs, this.chats[k].state.dir) >= 0) &&
                 (!states || arrayIndexOf(states, this.chats[k].state.state) >= 0))
             {
@@ -174,8 +189,8 @@ function dcc_getmatches(nickname, filename, types, dirs, states)
     {
         for (k = 0; k < this.files.length; k++)
         {
-            if ((!nickname || this.files[k].user.unicodeName.match(n)) &&
-                (!filename || this.files[k].fileName.match(f)) &&
+            if ((!nickname || matchNames(this.files[k].user.unicodeName, n)) &&
+                (!filename || matchNames(this.files[k].filename, f)) &&
                 (!dirs || arrayIndexOf(dirs, this.files[k].state.dir) >= 0) &&
                 (!states || arrayIndexOf(states, this.files[k].state.state) >= 0))
             {
@@ -190,7 +205,7 @@ function dcc_getmatches(nickname, filename, types, dirs, states)
 CIRCDCC.prototype.getNextPort =
 function dcc_getnextport()
 {
-    var portList = this.parent.prefs["dcc.listenPorts"];
+    var portList = this.listenPorts;
 
     var newPort = this._lastPort;
 
@@ -618,7 +633,7 @@ function dchat_accept()
     this.state.sendAccept();
 
     this.connection = new CBSConnection();
-    if (this.connection.connect(this.remoteIP, this.port, null, true, null))
+    if (this.connection.connect(this.remoteIP, this.port))
     {
         this.state.socketConnected();
 
@@ -638,7 +653,7 @@ function dchat_accept()
 
 // Call to make this end decline DCC Chat with target user.
 CIRCDCCChat.prototype.decline =
-function dchat_accept()
+function dchat_decline()
 {
     this.state.sendDecline();
 
@@ -866,6 +881,9 @@ function serv_ctcp(e)
         return false;
     }
 
+    e.CTCPCode = toUnicode(e.CTCPCode, e.replyTo);
+    e.CTCPData = toUnicode(e.CTCPData, e.replyTo);
+
     e.type = "ctcp-" + e.CTCPCode;
     e.destMethod = "onCTCP" + ary[1][0].toUpperCase() +
                    ary[1].substr(1, ary[1].length).toLowerCase();
@@ -892,13 +910,14 @@ function dchat_ctcp(code, msg)
 {
     msg = msg || "";
 
-    this.connection.sendData("\x01" + code + " " + msg + "\x01\n");
+    this.connection.sendData("\x01" + fromUnicode(code, this) + " " +
+                             fromUnicode(msg, this) + "\x01\n");
 }
 
 CIRCDCCChat.prototype.say =
 function dchat_say (msg)
 {
-    this.connection.sendData(msg + "\n");
+    this.connection.sendData(fromUnicode(msg, this) + "\n");
 }
 
 CIRCDCCChat.prototype.act =
@@ -958,6 +977,24 @@ function dfile_geturl()
            this.port + "/" + encodeURIComponent(this.filename);
 }
 
+CIRCDCCFileTransfer.prototype.dispose =
+function dfile_dispose()
+{
+    if (this.connection)
+    {
+        // close is for the server socket, disconnect for the client socket.
+        this.connection.close();
+        this.connection.disconnect();
+    }
+
+    if (this.localFile)
+        this.localFile.close();
+
+    this.connection = null;
+    this.localFile = null;
+    this.filestream = null;
+}
+
 // Call to make this end offer DCC File to targeted user.
 CIRCDCCFileTransfer.prototype.request =
 function dfile_request(localFile)
@@ -982,6 +1019,7 @@ function dfile_request(localFile)
     if (!this.connection.listen(this.port, this))
     {
         this.state.failed();
+        this.dispose();
         return false;
     }
 
@@ -1014,6 +1052,7 @@ function dfile_accept(localFile)
     this.state.sendAccept();
 
     this.localFile = new LocalFile(localFile, ">");
+    this.localPath = localFile.path;
 
     this.filestream = Components.classes["@mozilla.org/binaryoutputstream;1"];
     this.filestream = this.filestream.createInstance(nsIBinaryOutputStream);
@@ -1022,7 +1061,7 @@ function dfile_accept(localFile)
     this.connection = new CBSConnection(true);
     this.position = 0;
 
-    if (this.connection.connect(this.remoteIP, this.port, null, true, null))
+    if (this.connection.connect(this.remoteIP, this.port))
     {
         this.state.socketConnected();
 
@@ -1035,6 +1074,7 @@ function dfile_accept(localFile)
     else
     {
         this.state.failed();
+        this.dispose();
     }
 
     return (this.state == DCC_STATE_ACCEPTED);
@@ -1042,7 +1082,7 @@ function dfile_accept(localFile)
 
 // Call to make this end decline DCC File from target user.
 CIRCDCCFileTransfer.prototype.decline =
-function dfile_accept()
+function dfile_decline()
 {
     this.state.sendDecline();
 
@@ -1056,11 +1096,7 @@ function dfile_accept()
 CIRCDCCFileTransfer.prototype.disconnect =
 function dfile_disconnect()
 {
-    this.connection.disconnect();
-    if (this.localFile)
-        this.localFile.close();
-    this.localFile = null;
-    this.filestream = null;
+    this.dispose();
 
     return true;
 }
@@ -1076,9 +1112,7 @@ function dfile_abort()
     }
 
     this.state.sendAbort();
-
-    if (this.connection)
-        this.connection.close();
+    this.dispose();
 }
 
 // Event to handle a request from the target user.
@@ -1188,6 +1222,7 @@ function dfile_sockdiscon(status)
         this.state.failed();
     else
         this.state.socketDisconnected();
+    this.dispose();
 }
 
 CIRCDCCFileTransfer.prototype.onDataAvailable =
@@ -1223,7 +1258,10 @@ function dfile_dataavailable(e)
                 this.connection.sendData(d);
 
                 if (this.position >= this.size)
+                {
+                    this.dispose();
                     break;
+                }
             }
         }
         else if (this.state.dir == DCC_DIR_GETTING)

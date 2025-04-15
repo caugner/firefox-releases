@@ -38,11 +38,9 @@
 
 #include "nsXFormsAtoms.h"
 #include "nsXFormsStubElement.h"
+#include "nsXFormsDelegateStub.h"
 #include "nsXFormsActionElement.h"
 #include "nsIXFormsActionModuleElement.h"
-
-#include "nsIXTFXMLVisual.h"
-#include "nsIXTFXMLVisualWrapper.h"
 
 #include "nsIDOMText.h"
 #include "nsIDOM3Node.h"
@@ -77,19 +75,14 @@
 #include "nsIStringBundle.h"
 #include "nsIDOMSerializer.h"
 #include "nsIServiceManager.h"
-#include "nsIXFormsDelegate.h"
-
-#define EPHEMERAL_STYLE \
-  "position:absolute;z-index:2147483647; \
-  background:inherit;color:inherit; \
-  border:inherit;visibility:visible;"
-
-#define EPHEMERAL_STYLE_HIDDEN \
-  "position:absolute;z-index:2147483647;visibility:hidden;"
+#include "nsIDelegateInternal.h"
+#include "nsNetUtil.h"
+#include "nsIDOMDocumentEvent.h"
+#include "nsIChannelEventSink.h"
+#include "nsIXFormsEphemeralMessageUI.h"
 
 #define MESSAGE_WINDOW_PROPERTIES \
   "location=false,scrollbars=yes,centerscreen"
-
 
 // Defining a simple dialog for modeless and modal messages.
 
@@ -98,7 +91,15 @@
    <?xml-stylesheet href='chrome://global/skin/' type='text/css'?> \
    <window title='[XForms]'\
      xmlns='http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul' \
-     onload='document.documentElement.lastChild.previousSibling \
+     onkeypress='if (event.keyCode == event.DOM_VK_ESCAPE) window.close();' "
+
+#define MESSAGE_WINDOW_UI_PART1_WITH_SRC \
+     "onload='document.documentElement.lastChild.previousSibling \
+             .firstChild.nextSibling.focus();'>"
+
+#define MESSAGE_WINDOW_UI_PART1_WITHOUT_SRC \
+     "onload='window.sizeToContent(); \
+             document.documentElement.lastChild.previousSibling \
              .firstChild.nextSibling.focus();'>"
 
 #define MESSAGE_WINDOW_UI_PART2 \
@@ -118,9 +119,12 @@ class nsXFormsEventListener;
  *
  * @see http://www.w3.org/TR/xforms/slice10.html#action-info
  */
-class nsXFormsMessageElement : public nsXFormsXMLVisualStub,
+class nsXFormsMessageElement : public nsXFormsDelegateStub,
                                public nsIDOMEventListener,
-                               public nsIXFormsActionModuleElement
+                               public nsIXFormsActionModuleElement,
+                               public nsIStreamListener,
+                               public nsIInterfaceRequestor,
+                               public nsIChannelEventSink
 {
 public:
   NS_DECL_ISUPPORTS_INHERITED
@@ -128,16 +132,15 @@ public:
   // nsIXTFElement overrides
   NS_IMETHOD WillChangeDocument(nsIDOMDocument *aNewDocument);
   NS_IMETHOD OnDestroyed();
-  
-  // nsIXTFXMLVisual overrides
-  NS_IMETHOD OnCreated(nsIXTFXMLVisualWrapper *aWrapper);
-
-  // nsIXTFVisual overrides
-  NS_IMETHOD GetVisualContent(nsIDOMElement **aElement);
-  NS_IMETHOD GetInsertionPoint(nsIDOMElement **aElement);
   NS_IMETHOD ParentChanged(nsIDOMElement *aNewParent);
   NS_IMETHOD WillChangeParent(nsIDOMElement *aNewParent);
+  NS_IMETHOD AttributeSet(nsIAtom *aName, const nsAString &aSrc);
+  NS_IMETHOD AttributeRemoved(nsIAtom *aName);
 
+  NS_DECL_NSICHANNELEVENTSINK
+  NS_DECL_NSIREQUESTOBSERVER
+  NS_DECL_NSISTREAMLISTENER
+  NS_DECL_NSIINTERFACEREQUESTOR
   NS_DECL_NSIDOMEVENTLISTENER
   NS_DECL_NSIXFORMSACTIONMODULEELEMENT
 
@@ -160,86 +163,63 @@ public:
     eType_Alert
   };
 
+  enum StopType {
+    eStopType_None,
+    eStopType_Security,
+    eStopType_LinkError
+  };
+
+
   nsXFormsMessageElement(MessageType aType) :
-    mType(aType), mElement(nsnull), mPosX(-1), mPosY(-1) {}
+    mType(aType), mPosX(-1), mPosY(-1), mDocument(nsnull),
+    mStopType(eStopType_None) {}
 private:
   nsresult HandleEphemeralMessage(nsIDOMDocument* aDoc, nsIDOMEvent* aEvent);
   nsresult HandleModalAndModelessMessage(nsIDOMDocument* aDoc, nsAString& aLevel);
   void CloneNode(nsIDOMNode* aSrc, nsIDOMNode** aTarget);
-  void AppendCSSOptions(nsIDOMViewCSS* aViewCSS, nsAString& aOptions);
   PRBool HandleInlineAlert(nsIDOMEvent* aEvent);
-  nsresult ConstructMessageWindowURL(nsAString& aData,
+  nsresult ConstructMessageWindowURL(const nsAString& aData,
                                      PRBool aIsLink,
                                      /*out*/ nsAString& aURL);
 
-  MessageType mType;
+  /**
+   * Begin the process of testing to see if this message element could get held
+   * up later by linking to an external resource.  Run this when the element is
+   * set up and it will try to access any external resource that this message
+   * may later try to access.  If we can't get to it by the time the message
+   * is triggered, then throw a xforms-link-error.
+   */
+  nsresult TestExternalFile();
 
-  nsCOMPtr<nsIDOMElement> mVisualElement;
-  nsIDOMElement *mElement;
+  /**
+   * Either add or subtract from the number of messages with external resources
+   * currently loading in this document.  aAdd == PR_TRUE will add to the total
+   * otherwise we will subtract from the total (as long as it isn't already 0).
+   */
+  void AddRemoveExternalResource(PRBool aAdd);
+
+  MessageType          mType;
 
   // The position of the ephemeral message
-  PRInt32 mPosX;
-  PRInt32 mPosY;
+  PRInt32              mPosX;
+  PRInt32              mPosY;
 
-  nsCOMPtr<nsITimer> mEphemeralTimer;
-  nsCOMPtr<nsIDOMDocument> mDocument;
+  nsCOMPtr<nsITimer>   mEphemeralTimer;
+  nsIDOMDocument*      mDocument;
+  nsCOMPtr<nsIChannel> mChannel;
+  StopType mStopType;
 };
 
-NS_IMPL_ADDREF_INHERITED(nsXFormsMessageElement, nsXFormsXMLVisualStub)
-NS_IMPL_RELEASE_INHERITED(nsXFormsMessageElement, nsXFormsXMLVisualStub)
+NS_IMPL_ADDREF_INHERITED(nsXFormsMessageElement, nsXFormsDelegateStub)
+NS_IMPL_RELEASE_INHERITED(nsXFormsMessageElement, nsXFormsDelegateStub)
 
 NS_INTERFACE_MAP_BEGIN(nsXFormsMessageElement)
+  NS_INTERFACE_MAP_ENTRY(nsIChannelEventSink)
+  NS_INTERFACE_MAP_ENTRY(nsIInterfaceRequestor)
+  NS_INTERFACE_MAP_ENTRY(nsIStreamListener)
   NS_INTERFACE_MAP_ENTRY(nsIXFormsActionModuleElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventListener)
-NS_INTERFACE_MAP_END_INHERITING(nsXFormsXMLVisualStub)
-
-// nsIXTFXMLVisual
-
-NS_IMETHODIMP
-nsXFormsMessageElement::OnCreated(nsIXTFXMLVisualWrapper *aWrapper)
-{
-  nsresult rv = nsXFormsXMLVisualStub::OnCreated(aWrapper);
-  NS_ENSURE_SUCCESS(rv, rv);
-  
-  aWrapper->SetNotificationMask(nsIXTFElement::NOTIFY_WILL_CHANGE_DOCUMENT |
-                                nsIXTFElement::NOTIFY_PARENT_CHANGED);
-
-  nsCOMPtr<nsIDOMElement> node;
-  rv = aWrapper->GetElementNode(getter_AddRefs(node));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  mElement = node;
-  NS_ASSERTION(mElement, "Wrapper is not an nsIDOMElement, we'll crash soon");
-
-  nsCOMPtr<nsIDOMDocument> domDoc;
-  mElement->GetOwnerDocument(getter_AddRefs(domDoc));
-  domDoc->CreateElementNS(NS_LITERAL_STRING(NS_NAMESPACE_XHTML),
-                          mType == eType_Alert
-                          ? NS_LITERAL_STRING("span")
-                          : NS_LITERAL_STRING("div"),
-                          getter_AddRefs(mVisualElement));
-  if (mVisualElement && mType != eType_Alert)
-      mVisualElement->SetAttribute(NS_LITERAL_STRING("style"),
-                                   NS_LITERAL_STRING(EPHEMERAL_STYLE_HIDDEN));
-
-  return NS_OK;
-}
-
-// nsIXTFVisual
-
-NS_IMETHODIMP
-nsXFormsMessageElement::GetVisualContent(nsIDOMElement **aElement)
-{
-  NS_IF_ADDREF(*aElement = mVisualElement);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsXFormsMessageElement::GetInsertionPoint(nsIDOMElement **aElement)
-{
-  NS_IF_ADDREF(*aElement = mVisualElement);
-  return NS_OK;
-}
+NS_INTERFACE_MAP_END_INHERITING(nsXFormsDelegateStub)
 
 // nsIXTFElement
 
@@ -260,18 +240,24 @@ nsXFormsMessageElement::WillChangeDocument(nsIDOMDocument *aNewDocument)
       if (msg == this)
         doc->UnsetProperty(nsXFormsAtoms::messageProperty);
     }
+
+    // If we are currently trying to load an external message, cancel the
+    // request.
+    if (mChannel) {
+      mChannel->Cancel(NS_BINDING_ABORTED);
+    }
   }
 
   mDocument = aNewDocument;
-  return NS_OK;
+  return nsXFormsDelegateStub::WillChangeDocument(aNewDocument);
 }
 
 NS_IMETHODIMP
 nsXFormsMessageElement::OnDestroyed()
 {
-  mElement = nsnull;
-  mVisualElement = nsnull;
-  return NS_OK;
+  mChannel = nsnull;
+  mDocument = nsnull;
+  return nsXFormsDelegateStub::OnDestroyed();
 }
 
 NS_IMETHODIMP
@@ -293,7 +279,7 @@ nsXFormsMessageElement::CloneNode(nsIDOMNode* aSrc, nsIDOMNode** aTarget)
   // to support <output> here.
   if (ns.EqualsLiteral(NS_NAMESPACE_XFORMS) &&
       localName.EqualsLiteral("output")) {
-    nsCOMPtr<nsIXFormsDelegate> outEl(do_QueryInterface(aSrc));
+    nsCOMPtr<nsIDelegateInternal> outEl(do_QueryInterface(aSrc));
     if (outEl) {
       nsCOMPtr<nsIDOMDocument> doc;
       aSrc->GetOwnerDocument(getter_AddRefs(doc));
@@ -340,12 +326,12 @@ NS_IMETHODIMP
 nsXFormsMessageElement::WillChangeParent(nsIDOMElement *aNewParent)
 {
   if (mType == eType_Normal)
-    return NS_OK;
+    return nsXFormsDelegateStub::WillChangeParent(aNewParent);
   
   nsCOMPtr<nsIDOMNode> parent;
   mElement->GetParentNode(getter_AddRefs(parent));
   if (!parent)
-    return NS_OK;
+    return nsXFormsDelegateStub::WillChangeParent(aNewParent);
 
   nsCOMPtr<nsIDOMEventTarget> targ(do_QueryInterface(parent));
   NS_ENSURE_STATE(targ);
@@ -362,14 +348,14 @@ nsXFormsMessageElement::WillChangeParent(nsIDOMElement *aNewParent)
     targ->RemoveEventListener(NS_LITERAL_STRING("xforms-binding-exception"),this, PR_TRUE);
   }
 
-  return NS_OK;
+  return nsXFormsDelegateStub::WillChangeParent(aNewParent);
 }
 
 NS_IMETHODIMP
 nsXFormsMessageElement::ParentChanged(nsIDOMElement *aNewParent)
 {
   if (mType == eType_Normal || !aNewParent)
-    return NS_OK;
+    return nsXFormsDelegateStub::ParentChanged(aNewParent);
 
   nsCOMPtr<nsIDOMEventTarget> targ(do_QueryInterface(aNewParent));
   NS_ENSURE_STATE(targ);
@@ -387,7 +373,40 @@ nsXFormsMessageElement::ParentChanged(nsIDOMElement *aNewParent)
     targ->AddEventListener(NS_LITERAL_STRING("xforms-binding-exception"), this, PR_TRUE);
   }
 
-  return NS_OK;
+  return nsXFormsDelegateStub::ParentChanged(aNewParent);
+}
+
+NS_IMETHODIMP
+nsXFormsMessageElement::AttributeSet(nsIAtom *aName, const nsAString &aValue)
+{
+  if (aName == nsXFormsAtoms::src) {
+    // If we are currently trying to load an external message, cancel the
+    // request.
+    if (mChannel) {
+      mChannel->Cancel(NS_BINDING_ABORTED);
+    }
+
+    mStopType = eStopType_None;
+    TestExternalFile();
+  }
+
+  return nsXFormsDelegateStub::AttributeSet(aName, aValue);
+}
+
+NS_IMETHODIMP
+nsXFormsMessageElement::AttributeRemoved(nsIAtom *aName)
+{
+  if (aName == nsXFormsAtoms::src) {
+    // If we are currently trying to test an external resource, cancel the
+    // request.
+    if (mChannel) {
+      mChannel->Cancel(NS_BINDING_ABORTED);
+    }
+
+    mStopType = eStopType_None;
+  }
+
+  return nsXFormsDelegateStub::AttributeRemoved(aName);
 }
 
 NS_IMETHODIMP
@@ -396,6 +415,31 @@ nsXFormsMessageElement::HandleAction(nsIDOMEvent* aEvent,
 {
   if (!mElement)
     return NS_OK;
+
+  // If TestExternalFile fails, then there is an external link that we need
+  // to use that we can't reach right now.  If it won't load, then might as
+  // well stop here.  We don't want to be popping up empty windows
+  // or windows that will just end up showing 404 messages.
+  // We also stop if we were not allowed to access the given resource.
+  if (mStopType == eStopType_LinkError ||
+      mStopType == eStopType_Security) {
+    // we couldn't successfully link to our external resource.  Better throw
+    // the xforms-link-error event
+    nsCOMPtr<nsIModelElementPrivate> modelPriv =
+      nsXFormsUtils::GetModel(mElement);
+    nsCOMPtr<nsIDOMNode> model = do_QueryInterface(modelPriv);
+    nsXFormsUtils::DispatchEvent(model, eEvent_LinkError);
+    return NS_OK;
+  }
+
+  // If there is still a channel, then someone must have changed the value of
+  // the src attribute since the document finished loading and we haven't yet
+  // determined whether the new link is valid or not.  For now we'll assume
+  // that the value is good rather than returning a link error.  Also
+  // canceling the channel since it is too late now.
+  if (mChannel) {
+    mChannel->Cancel(NS_BINDING_ABORTED);
+  }
 
   if (mType != eType_Normal) {
     nsCOMPtr<nsIDOMEventTarget> target;
@@ -456,20 +500,12 @@ PRBool
 nsXFormsMessageElement::HandleInlineAlert(nsIDOMEvent* aEvent)
 {
   nsCOMPtr<nsIDOMDocument> doc;
+  nsCOMPtr<nsIDOMWindowInternal> internal;
   mElement->GetOwnerDocument(getter_AddRefs(doc));
-  
-  nsCOMPtr<nsIDOMDocumentView> dview(do_QueryInterface(doc));
-  if (!dview)
+  nsXFormsUtils::GetWindowFromDocument(doc, getter_AddRefs(internal));
+  if (!internal) {
     return PR_FALSE;
-
-  nsCOMPtr<nsIDOMAbstractView> aview;
-  dview->GetDefaultView(getter_AddRefs(aview));
-  if (!aview)
-    return PR_FALSE;
-
-  nsCOMPtr<nsIDOMWindowInternal> internal(do_QueryInterface(aview));
-  if (!internal)
-    return PR_FALSE;
+  }
 
   nsCOMPtr<nsIDOMViewCSS> cssView(do_QueryInterface(internal));
   if (!cssView)
@@ -486,21 +522,8 @@ nsXFormsMessageElement::HandleInlineAlert(nsIDOMEvent* aEvent)
     if (displayValue) {
       nsAutoString type;
       displayValue->GetStringValue(type);
-      if (type.EqualsLiteral("none"))
-        return PR_FALSE;
-
-      nsAutoString instanceData;
-      PRBool hasBinding = nsXFormsUtils::GetSingleNodeBindingValue(mElement,
-                                                                   instanceData);
-      if (hasBinding) {
-        nsCOMPtr<nsIDOM3Node> visualElement3(do_QueryInterface(mVisualElement));
-        if (visualElement3) {
-          visualElement3->SetTextContent(instanceData);
-        }
-      }
-      return PR_TRUE;
+      return !type.EqualsLiteral("none");
     }
-    
   }
   return PR_FALSE;
 }
@@ -533,10 +556,10 @@ nsXFormsMessageElement::HandleEphemeralMessage(nsIDOMDocument* aDoc,
           mEphemeralTimer = nsnull;
         }
         doc->UnsetProperty(nsXFormsAtoms::messageProperty);
-  
-        if (mVisualElement) {
-          mVisualElement->SetAttribute(NS_LITERAL_STRING("style"),
-                                       NS_LITERAL_STRING(EPHEMERAL_STYLE_HIDDEN));
+
+        nsCOMPtr<nsIXFormsEphemeralMessageUI> ui(do_QueryInterface(mElement));
+        if (ui) {
+          ui->Hide();
         }
         ResetEphemeralPosition();
       }
@@ -581,15 +604,6 @@ nsXFormsMessageElement::HandleEphemeralMessage(nsIDOMDocument* aDoc,
         return NS_OK;
       }
 
-      nsAutoString instanceData;
-      PRBool hasBinding = nsXFormsUtils::GetSingleNodeBindingValue(mElement,
-                                                                   instanceData);
-      if (hasBinding) {
-        nsCOMPtr<nsIDOM3Node> visualElement3(do_QueryInterface(mVisualElement));
-        if (visualElement3) {
-          visualElement3->SetTextContent(instanceData);
-        }
-      }
       StartEphemeral();
     }
   }
@@ -600,31 +614,23 @@ nsresult
 nsXFormsMessageElement::HandleModalAndModelessMessage(nsIDOMDocument* aDoc,
                                                       nsAString& aLevel)
 {
-  nsCOMPtr<nsIDOMDocumentView> dview(do_QueryInterface(aDoc));
-  if (!dview)
+  nsCOMPtr<nsIDOMWindowInternal> internal;
+  nsXFormsUtils::GetWindowFromDocument(aDoc, getter_AddRefs(internal));
+  if (!internal) {
     return NS_OK;
-
-  nsCOMPtr<nsIDOMAbstractView> aview;
-  dview->GetDefaultView(getter_AddRefs(aview));
-
-  nsCOMPtr<nsIDOMWindowInternal> internal(do_QueryInterface(aview));
-  if (!internal)
-    return NS_OK;
+  }
 
   nsAutoString instanceData;
   PRBool hasBinding = nsXFormsUtils::GetSingleNodeBindingValue(mElement,
                                                                instanceData);
 
   nsAutoString options;
-  options.AppendLiteral(MESSAGE_WINDOW_PROPERTIES);
+  options.AssignLiteral(MESSAGE_WINDOW_PROPERTIES);
 
   nsAutoString src;
   if (!hasBinding) {
     mElement->GetAttribute(NS_LITERAL_STRING("src"), src);
   }
-
-  nsCOMPtr<nsIDOMViewCSS> cssView(do_QueryInterface(internal));
-  AppendCSSOptions(cssView, options);
 
   // order of precedence is single-node binding, linking attribute then
   // inline text
@@ -632,12 +638,24 @@ nsXFormsMessageElement::HandleModalAndModelessMessage(nsIDOMDocument* aDoc,
   if (!hasBinding && !src.IsEmpty()) {
     // Creating a normal window for messages with src attribute.
     options.AppendLiteral(",chrome=no");
-    rv = ConstructMessageWindowURL(src, PR_TRUE, src);
+
+    // Create a new URI so that we properly convert relative urls to absolute.
+    nsCOMPtr<nsIDocument> doc(do_QueryInterface(aDoc));
+    NS_ENSURE_STATE(doc);
+    nsCOMPtr<nsIURI> uri;
+    NS_NewURI(getter_AddRefs(uri), src, doc->GetDocumentCharacterSet().get(),
+              doc->GetDocumentURI());
+    NS_ENSURE_STATE(uri);
+    nsCAutoString uriSpec;
+    uri->GetSpec(uriSpec);
+    rv = ConstructMessageWindowURL(NS_ConvertUTF8toUTF16(uriSpec),
+                                   PR_TRUE,
+                                   src);
     NS_ENSURE_SUCCESS(rv, rv);
   } else {
     // Cloning the content of the xf:message and creating a
     // dialog for it.
-    options.AppendLiteral(",dialog,chrome,dependent");
+    options.AppendLiteral(",dialog,chrome,dependent,width=200,height=200");
     nsCOMPtr<nsIDOMDocument> ddoc;
     nsCOMPtr<nsIDOMDOMImplementation> domImpl;
     rv = aDoc->GetImplementation(getter_AddRefs(domImpl));
@@ -656,14 +674,14 @@ nsXFormsMessageElement::HandleModalAndModelessMessage(nsIDOMDocument* aDoc,
                                getter_AddRefs(htmlEl));
     NS_ENSURE_SUCCESS(rv, rv);
     ddoc->AppendChild(htmlEl, getter_AddRefs(tmp));
-    
+
     nsCOMPtr<nsIDOMElement> bodyEl;
     rv = ddoc->CreateElementNS(NS_LITERAL_STRING(NS_NAMESPACE_XHTML),
                                NS_LITERAL_STRING("body"),
                                getter_AddRefs(bodyEl));
     NS_ENSURE_SUCCESS(rv, rv);
     htmlEl->AppendChild(bodyEl, getter_AddRefs(tmp));
-    
+
     // If we have a binding, it is enough to show a simple message
     if (hasBinding) {
       nsCOMPtr<nsIDOM3Node> body3(do_QueryInterface(bodyEl));
@@ -692,7 +710,7 @@ nsXFormsMessageElement::HandleModalAndModelessMessage(nsIDOMDocument* aDoc,
         }
       }
     }
-    
+
     nsCOMPtr<nsIDOMSerializer> serializer =
       do_CreateInstance(NS_XMLSERIALIZER_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -700,11 +718,11 @@ nsXFormsMessageElement::HandleModalAndModelessMessage(nsIDOMDocument* aDoc,
     nsAutoString docString;
     rv = serializer->SerializeToString(ddoc, docString);
     NS_ENSURE_SUCCESS(rv, rv);
-    
+
     rv = ConstructMessageWindowURL(docString, PR_FALSE, src);
     NS_ENSURE_SUCCESS(rv, rv);
   }
-  
+
   nsCOMPtr<nsISupports> arg;
   PRBool isModal = aLevel.EqualsLiteral("modal");
   if (isModal) {
@@ -714,73 +732,17 @@ nsXFormsMessageElement::HandleModalAndModelessMessage(nsIDOMDocument* aDoc,
     // cycles between the windows.
     arg = nsXFormsAtoms::messageProperty;
   }
-  
-  //XXX Add support for xforms-link-error.
+
   nsCOMPtr<nsIDOMWindow> messageWindow;
-  internal->OpenDialog(src, aLevel, options, arg, getter_AddRefs(messageWindow));
-  if (!isModal) {
-    nsCOMPtr<nsIDOMWindowInternal> msgWinInternal =
-      do_QueryInterface(messageWindow);
-    if (msgWinInternal)
-      msgWinInternal->Focus();
-  }
+  // The 2nd argument is the window name, and if a window with the name exists,
+  // it gets reused.  Using "_blank" makes sure we get a new window each time.
+  internal->OpenDialog(src, NS_LITERAL_STRING("_blank"), options, arg,
+                       getter_AddRefs(messageWindow));
   return NS_OK;
 }
 
-void
-nsXFormsMessageElement::AppendCSSOptions(nsIDOMViewCSS* aViewCSS, nsAString& aOptions)
-{
-  if (!aViewCSS)
-    return;
-  // Try to get the calculated size of the message element. It will
-  // be used for the new window.
-  //XXX This could be extended also for 'top', 'left' etc. properties.
-  PRInt32 computedWidth = 0;
-  PRInt32 computedHeight = 0;
-  
-  nsAutoString tmp;
-  nsCOMPtr<nsIDOMCSSStyleDeclaration> styles;
-  aViewCSS->GetComputedStyle(mElement, tmp, getter_AddRefs(styles));
-  if (styles) {
-    nsCOMPtr<nsIDOMCSSValue> cssWidth;
-    styles->GetPropertyCSSValue(NS_LITERAL_STRING("width"),
-                                getter_AddRefs(cssWidth));
-    nsCOMPtr<nsIDOMCSSPrimitiveValue> pvalueWidth(do_QueryInterface(cssWidth));
-    float width = 0;
-    if (pvalueWidth) {
-      PRUint16 type;
-      pvalueWidth->GetPrimitiveType(&type);
-      if (type == nsIDOMCSSPrimitiveValue::CSS_PX)
-        pvalueWidth->GetFloatValue(type, &width);
-    }
-
-    nsCOMPtr<nsIDOMCSSValue> cssHeight;
-    styles->GetPropertyCSSValue(NS_LITERAL_STRING("height"),
-                                getter_AddRefs(cssHeight));
-    nsCOMPtr<nsIDOMCSSPrimitiveValue> pvalueHeight(do_QueryInterface(cssHeight));
-    float height = 0;
-    if (pvalueHeight) {
-      PRUint16 type;
-      pvalueHeight->GetPrimitiveType(&type);
-      if (type == nsIDOMCSSPrimitiveValue::CSS_PX)
-        pvalueHeight->GetFloatValue(type, &height);
-    }
-    computedWidth = NS_STATIC_CAST(PRInt32, width);
-    computedHeight = NS_STATIC_CAST(PRInt32, height);
-  }
-
-  if (computedWidth > 0 && computedHeight > 0) {
-    nsAutoString options;
-    options.AppendLiteral(",innerWidth=");
-    options.AppendInt(computedWidth);
-    options.AppendLiteral(",innerHeight=");
-    options.AppendInt(computedHeight);
-    aOptions.Append(options);
-  }
-}
-
 nsresult
-nsXFormsMessageElement::ConstructMessageWindowURL(nsAString& aData,
+nsXFormsMessageElement::ConstructMessageWindowURL(const nsAString& aData,
                                                   PRBool aIsLink,
                                                   nsAString& aURL)
 {
@@ -801,8 +763,12 @@ nsXFormsMessageElement::ConstructMessageWindowURL(nsAString& aData,
 
   nsAutoString xul;
   xul.AssignLiteral(MESSAGE_WINDOW_UI_PART1);
-  if (aIsLink)
+  if (aIsLink) {
+    xul.AppendLiteral(MESSAGE_WINDOW_UI_PART1_WITH_SRC);
     xul.AppendLiteral("<browser flex='1' src='");
+  } else {
+    xul.AppendLiteral(MESSAGE_WINDOW_UI_PART1_WITHOUT_SRC);
+  }
 
   xul.Append(aData);
 
@@ -884,17 +850,14 @@ nsXFormsMessageElement::ShowEphemeral()
   if (!mElement)
     return;
 
-  nsAutoString style;
-  style.AppendLiteral(EPHEMERAL_STYLE);
-  style.AppendLiteral("left:");
-  style.AppendInt(mPosX);
-  style.AppendLiteral("px;top:");
-  style.AppendInt(mPosY);
-  style.AppendLiteral("px;");
-  mVisualElement->SetAttribute(NS_LITERAL_STRING("style"), style);
+  nsCOMPtr<nsIXFormsEphemeralMessageUI> ui(do_QueryInterface(mElement));
+  if (ui) {
+    ui->Show(mPosX, mPosY);
+  }
+
   mEphemeralTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
   if (mEphemeralTimer)
-    mEphemeralTimer->InitWithFuncCallback(sEphemeralCallbackHide, this, 
+    mEphemeralTimer->InitWithFuncCallback(sEphemeralCallbackHide, this,
                                           HIDE_EPHEMERAL_TIMEOUT,
                                           nsITimer::TYPE_ONE_SHOT);
 }
@@ -923,9 +886,10 @@ nsXFormsMessageElement::HideEphemeral()
   }
   doc->UnsetProperty(nsXFormsAtoms::messageProperty);
 
-  if (mVisualElement)
-    mVisualElement->SetAttribute(NS_LITERAL_STRING("style"),
-                                 NS_LITERAL_STRING(EPHEMERAL_STYLE_HIDDEN));
+  nsCOMPtr<nsIXFormsEphemeralMessageUI> ui(do_QueryInterface(mElement));
+  if (ui) {
+    ui->Hide();
+  }
 
   mEphemeralTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
   if (mEphemeralTimer)
@@ -933,6 +897,277 @@ nsXFormsMessageElement::HideEphemeral()
                                           this, 
                                           EPHEMERAL_POSITION_RESET_TIMEOUT,
                                           nsITimer::TYPE_ONE_SHOT);
+}
+
+nsresult
+nsXFormsMessageElement::TestExternalFile()
+{
+  // Let's see if checking for any external resources is even necessary.  Single
+  // node binding trumps linking attributes in order of precendence.  If we
+  // find single node binding in evidence, then return NS_OK to show that
+  // this message element has access to the info that it needs.
+  nsAutoString snb;
+  mElement->GetAttribute(NS_LITERAL_STRING("bind"), snb);
+  if (!snb.IsEmpty()) {
+    return NS_OK;
+  }
+  mElement->GetAttribute(NS_LITERAL_STRING("ref"), snb);
+  if (!snb.IsEmpty()) {
+    return NS_OK;
+  }
+
+  // if no linking attribute, no need to go on
+  nsAutoString src;
+  mElement->GetAttribute(NS_LITERAL_STRING("src"), src);
+  if (src.IsEmpty()) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIDOMDocument> domDoc;
+  mElement->GetOwnerDocument(getter_AddRefs(domDoc));
+  nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
+  NS_ENSURE_STATE(doc);
+  nsCOMPtr<nsIURI> uri;
+  NS_NewURI(getter_AddRefs(uri), src, doc->GetDocumentCharacterSet().get(),
+            doc->GetDocumentURI());
+  NS_ENSURE_STATE(uri);
+
+  if (!nsXFormsUtils::CheckConnectionAllowed(mElement, uri)) {
+    nsAutoString tagName;
+    mElement->GetLocalName(tagName);
+    const PRUnichar *strings[] = { tagName.get() };
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLinkLoadOrigin"),
+                               strings, 1, mElement, mElement);
+    // Keep the the dialog from popping up.  Won't be able to reach the
+    // resource anyhow.
+    mStopType = eStopType_Security;
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsILoadGroup> loadGroup = doc->GetDocumentLoadGroup();
+  NS_WARN_IF_FALSE(loadGroup, "No load group!");
+
+  // Using the same load group as the main document and creating
+  // the channel with LOAD_NORMAL flag delays the dispatching of
+  // the 'load' event until message data document has been loaded.
+  nsresult rv = NS_NewChannel(getter_AddRefs(mChannel), uri, nsnull, loadGroup,
+                              this, nsIRequest::LOAD_NORMAL);
+  NS_ENSURE_TRUE(mChannel, rv);
+  
+  // See if it's an http channel.  We'll look at the http status code more
+  // closely and only request the "HEAD" to keep the response small.
+  // Especially since we are requesting this for every message in the document
+  // and in most cases we pass off the URL to another browser service to
+  // get and display the message so no good to try to look at the contents
+  // anyway.
+
+  // XXX ephemeral messages should probably get their full contents here once
+  // they are set up to handle external resources.
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(mChannel);
+  if (httpChannel) {
+    PRBool isReallyHTTP = PR_FALSE;
+    uri->SchemeIs("http", &isReallyHTTP);
+    if (!isReallyHTTP) {
+      uri->SchemeIs("https", &isReallyHTTP);
+    }
+    if (isReallyHTTP) {
+      httpChannel->SetRequestMethod(NS_LITERAL_CSTRING("HEAD"));
+    }
+  }
+
+  rv = mChannel->AsyncOpen(this, nsnull);
+  if (NS_FAILED(rv)) {
+    mChannel = nsnull;
+  
+    // URI doesn't exist; report error.
+    // set up the error strings
+    nsAutoString tagName;
+    mElement->GetLocalName(tagName);
+    const PRUnichar *strings[] = { src.get(), tagName.get() };
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLink1Error"),
+                               strings, 2, mElement, mElement);
+    mStopType = eStopType_LinkError;
+    return NS_ERROR_FAILURE;
+  }
+
+  // channel should be running along smoothly, increment the count
+  AddRemoveExternalResource(PR_TRUE);
+  return NS_OK;
+}
+
+// nsIInterfaceRequestor
+
+NS_IMETHODIMP
+nsXFormsMessageElement::GetInterface(const nsIID &aIID, void **aResult)
+{
+  *aResult = nsnull;
+  return QueryInterface(aIID, aResult);
+}
+
+// nsIChannelEventSink
+
+NS_IMETHODIMP
+nsXFormsMessageElement::OnChannelRedirect(nsIChannel *OldChannel,
+                                          nsIChannel *aNewChannel,
+                                          PRUint32    aFlags)
+{
+  NS_PRECONDITION(aNewChannel, "Redirect without a channel?");
+
+  nsCOMPtr<nsIURI> newURI;
+  nsresult rv = aNewChannel->GetURI(getter_AddRefs(newURI));
+  NS_ENSURE_SUCCESS(rv, rv);
+  
+  if (!nsXFormsUtils::CheckConnectionAllowed(mElement, newURI)) {
+    nsAutoString tagName;
+    mElement->GetLocalName(tagName);
+    const PRUnichar *strings[] = { tagName.get() };
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLinkLoadOrigin"),
+                               strings, 1, mElement, mElement);
+    mStopType = eStopType_Security;
+    return NS_ERROR_ABORT;
+  }
+
+  return NS_OK;
+}
+
+// nsIStreamListener
+
+NS_IMETHODIMP
+nsXFormsMessageElement::OnStartRequest(nsIRequest *aRequest,
+                                       nsISupports *aContext)
+{
+  // Make sure to null out mChannel before we return.  Keep in mind that
+  // if this is the last message channel to be loaded for the xforms
+  // document then when AddRemoveExternalResource is called, it may result
+  // in xforms-ready firing. Should there be a message acting as a handler
+  // for xforms-ready, it will start the logic to display itself
+  // (HandleAction()).  So we can't call AddRemoveExternalResource to remove
+  // this channel from the count until we've set the mStopType to be the
+  // proper value.  Entering this function, mStopType will be eStopType_None,
+  // so if we need mStopType to be any other value (like in an error
+  // condition), please make sure it is set before AddRemoveExternalResource
+  // is called.
+  NS_ASSERTION(aRequest == mChannel, "unexpected request");
+  NS_ASSERTION(mChannel, "no channel");
+
+  nsresult status;
+  nsresult rv = mChannel->GetStatus(&status);
+  // DNS errors and other obvious problems will return failure status
+  if (NS_FAILED(rv) || NS_FAILED(status)) {
+    // NS_BINDING_ABORTED means that we have been cancelled by a later
+    // AttributeSet() call (which will also reset mStopType), so don't
+    // treat it like an error.
+    if (status != NS_BINDING_ABORTED) {
+      nsAutoString src, tagName;
+      mElement->GetLocalName(tagName);
+      mElement->GetAttribute(NS_LITERAL_STRING("src"), src);
+      const PRUnichar *strings[] = { tagName.get(), src.get() };
+      nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLink2Error"),
+                                 strings, 2, mElement, mElement);
+      mStopType = eStopType_LinkError;
+    }
+
+    AddRemoveExternalResource(PR_FALSE);
+    mChannel = nsnull;
+
+    return NS_BINDING_ABORTED;
+  }
+
+  // If status is zero, it might still be an error if it's http:
+  // http has data even when there's an error like a 404.
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(mChannel);
+  if (httpChannel) {
+    // If responseStatus is 2xx, it is valid.
+    // 3xx (various flavors of redirection) COULD be successful.  Can't really
+    // follow those to conclusion so we'll assume they were successful.
+    // If responseStatus is 4xx or 5xx, it is an error.
+    PRUint32 responseStatus;
+    rv = httpChannel->GetResponseStatus(&responseStatus);
+    if (NS_FAILED(rv) || (responseStatus >= 400)) {
+      nsAutoString src, tagName;
+      mElement->GetLocalName(tagName);
+      mElement->GetAttribute(NS_LITERAL_STRING("src"), src);
+      const PRUnichar *strings[] = { tagName.get(), src.get() };
+      nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLink2Error"),
+                                 strings, 2, mElement, mElement);
+      mStopType = eStopType_LinkError;
+    }
+  }
+
+  AddRemoveExternalResource(PR_FALSE);
+  mChannel = nsnull;
+
+  return NS_BINDING_ABORTED;
+}
+
+NS_IMETHODIMP
+nsXFormsMessageElement::OnDataAvailable(nsIRequest *aRequest,
+                                        nsISupports *aContext,
+                                        nsIInputStream *aInputStream,
+                                        PRUint32 aOffset,
+                                        PRUint32 aCount)
+{
+  NS_NOTREACHED("nsXFormsMessageElement::OnDataAvailable");
+  return NS_BINDING_ABORTED;
+}
+
+NS_IMETHODIMP
+nsXFormsMessageElement::OnStopRequest(nsIRequest *aRequest,
+                                      nsISupports *aContext,
+                                      nsresult aStatusCode)
+{
+  return NS_OK;
+}
+
+void
+nsXFormsMessageElement::AddRemoveExternalResource(PRBool aAdd)
+{
+  // if this message doesn't have a channel established already or it has
+  // already returned, then no sense bumping the counter.
+  if (!mChannel) {
+    return;
+  }
+
+  nsCOMPtr<nsIDOMDocument> domDoc;
+  mElement->GetOwnerDocument(getter_AddRefs(domDoc));
+  if (!domDoc) {
+    return;
+  }
+
+  nsCOMPtr<nsIDocument> doc = do_QueryInterface(domDoc);
+  PRUint32 loadingMessages = NS_PTR_TO_UINT32(
+    doc->GetProperty(nsXFormsAtoms::externalMessagesProperty));
+  if (aAdd) {
+    loadingMessages++;
+  } else {
+    if (loadingMessages) {
+      loadingMessages--;
+    }
+  }
+  doc->SetProperty(nsXFormsAtoms::externalMessagesProperty,
+                   NS_REINTERPRET_CAST(void *, loadingMessages), nsnull);
+
+  if (!loadingMessages) {
+    // no outstanding loads left, let the model in the document know in case
+    // the models are waiting to send out the xforms-ready event
+
+    nsCOMPtr<nsIModelElementPrivate> modelPriv =
+      nsXFormsUtils::GetModel(mElement);
+    if (modelPriv) {
+      // if there are no more messages loading then it is probably the case
+      // that my mChannel is going to get nulled out as soon as this function
+      // returns.  If the model is waiting for this notification, then it may
+      // kick off the message right away and we should probably ensure that
+      // mChannel is gone before HandleAction is called.  So...if the channel
+      // isn't pending, let's null it out right here.
+      PRBool isPending = PR_TRUE;
+      mChannel->IsPending(&isPending);
+      if (!isPending) {
+        mChannel = nsnull;
+      }
+      modelPriv->MessageLoadFinished();
+    }
+  }
 }
 
 NS_HIDDEN_(nsresult)

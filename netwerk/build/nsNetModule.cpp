@@ -72,7 +72,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "nsIOService.h"
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsIOService, Init)
+NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsIOService, nsIOService::GetInstance)
 
 #include "nsDNSService2.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsDNSService, Init)
@@ -233,6 +233,13 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsStandardURL)
 
 #include "nsIDNService.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsIDNService, Init)
+
+///////////////////////////////////////////////////////////////////////////////
+
+#if defined(XP_WIN) && !defined(WINCE)
+#include "nsNotifyAddrListener.h"
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsNotifyAddrListener, Init)
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -845,6 +852,12 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       CreateNewUnknownDecoderFactory
     },
 
+    { "Unknown Content-Type Decoder",
+      NS_UNKNOWNDECODER_CID,
+      NS_GENERIC_CONTENT_SNIFFER,
+      CreateNewUnknownDecoderFactory
+    },
+
     { "Binary Detector",
       NS_BINARYDETECTOR_CID,
       NS_ISTREAMCONVERTER_KEY MAYBE_TEXT,
@@ -1085,6 +1098,13 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
     },
 #endif
 
+#if defined(XP_WIN) && !defined(WINCE)
+    { NS_NETWORK_LINK_SERVICE_CLASSNAME,
+      NS_NETWORK_LINK_SERVICE_CID,
+      NS_NETWORK_LINK_SERVICE_CONTRACTID,
+      nsNotifyAddrListenerConstructor
+    },
+#endif
 };
 
 NS_IMPL_NSGETMODULE_WITH_CTOR_DTOR(necko_core_and_primary_protocols,

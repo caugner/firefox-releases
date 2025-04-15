@@ -37,7 +37,7 @@
 /*
  * Moved from secpkcs7.c
  *
- * $Id: crl.c,v 1.49 2005/04/17 03:17:07 julien.pierre.bugs%sun.com Exp $
+ * $Id: crl.c,v 1.49.14.3 2006/06/12 12:55:40 kaie%kuix.de Exp $
  */
  
 #include "cert.h"
@@ -2127,7 +2127,6 @@ static SECStatus DPCache_Create(CRLDPCache** returned, CERTCertificate* issuer,
     }
     *returned = NULL;
     cache = PORT_ZAlloc(sizeof(CRLDPCache));
-    PORT_Assert(cache);
     if (!cache)
     {
         return SECFailure;
@@ -2139,6 +2138,7 @@ static SECStatus DPCache_Create(CRLDPCache** returned, CERTCertificate* issuer,
 #endif
     if (!cache->lock)
     {
+	PORT_Free(cache);
         return SECFailure;
     }
     if (issuer)
@@ -2776,25 +2776,29 @@ SECStatus CERT_UncacheCRL(CERTCertDBHandle* dbhandle, SECItem* olddercrl)
                 }
                 if (PR_TRUE == dupe)
                 {
-                    DPCache_RemoveCRL(cache, i); /* got a match */
-                    cache->mustchoose = PR_TRUE;
-                    removed = PR_TRUE;
+                    rv = DPCache_RemoveCRL(cache, i); /* got a match */
+                    if (SECSuccess == rv) {
+                        cache->mustchoose = PR_TRUE;
+                        removed = PR_TRUE;
+                    }
                     break;
                 }
             }
             
             DPCache_UnlockWrite();
+
+            if (SECSuccess != CachedCrl_Destroy(returned) ) {
+                rv = SECFailure;
+            }
         }
 
         ReleaseDPCache(cache, writeLocked);
-
-        if (PR_TRUE != removed)
-        {
-            rv = SECFailure;
-        }
     }
-    SEC_DestroyCrl(oldcrl); /* need to do this because object is refcounted */
-    if (PR_TRUE != removed)
+    if (SECSuccess != SEC_DestroyCrl(oldcrl) ) { 
+        /* need to do this because object is refcounted */
+        rv = SECFailure;
+    }
+    if (SECSuccess == rv && PR_TRUE != removed)
     {
         PORT_SetError(SEC_ERROR_CRL_NOT_FOUND);
     }

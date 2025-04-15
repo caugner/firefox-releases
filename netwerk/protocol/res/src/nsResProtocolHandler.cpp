@@ -236,6 +236,7 @@ nsResProtocolHandler::NewURI(const nsACString &aSpec,
 NS_IMETHODIMP
 nsResProtocolHandler::NewChannel(nsIURI* uri, nsIChannel* *result)
 {
+    NS_ENSURE_ARG_POINTER(uri);
     nsresult rv;
     nsCAutoString spec;
 
@@ -310,6 +311,11 @@ NS_IMETHODIMP
 nsResProtocolHandler::ResolveURI(nsIURI *uri, nsACString &result)
 {
     nsresult rv;
+
+    nsCOMPtr<nsIURL> url(do_QueryInterface(uri));
+    if (!url)
+        return NS_NOINTERFACE;
+
     nsCAutoString host;
     nsCAutoString path;
 
@@ -319,12 +325,22 @@ nsResProtocolHandler::ResolveURI(nsIURI *uri, nsACString &result)
     rv = uri->GetPath(path);
     if (NS_FAILED(rv)) return rv;
 
-    nsCOMPtr<nsIURI> baseURI;
-    rv = GetSubstitution(host, getter_AddRefs(baseURI));
-    if (NS_FAILED(rv)) return rv;
+    nsCAutoString filepath;
+    url->GetFilePath(filepath);
+
+    // Don't misinterpret the filepath as an absolute URI.
+    if (filepath.FindChar(':') != -1)
+        return NS_ERROR_MALFORMED_URI;
 
     const char *p = path.get() + 1; // path always starts with a slash
     NS_ASSERTION(*(p-1) == '/', "Path did not begin with a slash!");
+
+    if (*p == '/')
+        return NS_ERROR_MALFORMED_URI;
+
+    nsCOMPtr<nsIURI> baseURI;
+    rv = GetSubstitution(host, getter_AddRefs(baseURI));
+    if (NS_FAILED(rv)) return rv;
 
     rv = baseURI->Resolve(nsDependentCString(p, path.Length()-1), result);
 

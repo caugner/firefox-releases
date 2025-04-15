@@ -1,27 +1,29 @@
 /*
 # -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+# ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
-# 
+#
 # The contents of this file are subject to the Mozilla Public License Version
 # 1.1 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
 # http://www.mozilla.org/MPL/
-# 
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is the Firefox Preferences System.
-# 
-# The Initial Developer of the Original Code is Ben Goodger.
+#
+# The Initial Developer of the Original Code is
+# Ben Goodger.
 # Portions created by the Initial Developer are Copyright (C) 2005
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
 #   Ben Goodger <ben@mozilla.org>
 #   Kevin Gerich <webmail@kmgerich.com>
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -33,7 +35,7 @@
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
-# 
+#
 # ***** END LICENSE BLOCK *****
 */
 prefwindow {
@@ -81,53 +83,90 @@ radio[pane][selected="true"] {
     color: ButtonText !important;
 }
 
-radio[pane=paneGeneral] {
+
+/* ----- GENERAL BUTTON ----- */
+
+radio[pane=paneGeneral],
+radio[pane=paneMain] {
 	-moz-image-region: rect(0px, 32px, 32px, 0px)
 }
-
-radio[pane=paneGeneral]:active {
+radio[pane=paneGeneral]:hover, 
+radio[pane=paneGeneral]:active,
+radio[pane=paneGeneral][selected="true"],
+radio[pane=paneMain]:hover, 
+radio[pane=paneMain]:active,
+radio[pane=paneMain][selected="true"]  {
 	-moz-image-region: rect(32px, 32px, 64px, 0px)
 }
 
-radio[pane=panePrivacy] {
-	-moz-image-region: rect(0px, 64px, 32px, 32px)
-}
-
-radio[pane=panePrivacy]:active {
-	-moz-image-region: rect(32px, 64px, 64px, 32px)
-}
-
-radio[pane=paneContent] {
-	-moz-image-region: rect(0px, 96px, 32px, 64px)
-}
-
-radio[pane=paneContent]:active {
-	-moz-image-region: rect(32px, 96px, 64px, 64px)
-}
+/* ----- TABS BUTTON ----- */
 
 radio[pane=paneTabs] {
-	-moz-image-region: rect(0px, 128px, 32px, 96px)
+	-moz-image-region: rect(0px, 64px, 32px, 32px);
+}
+radio[pane=paneTabs]:hover,
+radio[pane=paneTabs]:active,
+radio[pane=paneTabs][selected="true"] {
+	-moz-image-region: rect(32px, 64px, 64px, 32px);
 }
 
-radio[pane=paneTabs]:active {
-	-moz-image-region: rect(32px, 128px, 64px, 96px)
+/* ----- CONTENT BUTTON ----- */
+
+radio[pane=paneContent] {
+	-moz-image-region: rect(0px, 96px, 32px, 64px);
 }
 
-radio[pane=paneDownloads] {
-	-moz-image-region: rect(0px, 224px, 32px, 192px)
+radio[pane=paneContent]:hover,
+radio[pane=paneContent]:active,
+radio[pane=paneContent][selected="true"] {
+	-moz-image-region: rect(32px, 96px, 64px, 64px);
 }
 
-radio[pane=paneDownloads]:active {
-	-moz-image-region: rect(32px, 224px, 64px, 192px)
+/* ----- FEEDS BUTTON ----- */
+
+radio[pane=paneFeeds] {
+	-moz-image-region: rect(0px, 128px, 32px, 96px);
 }
+radio[pane=paneFeeds]:hover,
+radio[pane=paneFeeds]:active,
+radio[pane=paneFeeds][selected="true"] {
+	-moz-image-region: rect(32px, 128px, 64px, 96px);
+}
+
+/* ----- PRIVACY BUTTON ----- */
+
+radio[pane=panePrivacy] {
+	-moz-image-region: rect(0px, 160px, 32px, 128px);
+}
+radio[pane=panePrivacy]:hover,
+radio[pane=panePrivacy]:active,
+radio[pane=panePrivacy][selected="true"] {
+	-moz-image-region: rect(32px, 160px, 64px, 128px);
+}
+
+/* ----- SECURITY BUTTON ----- */
+
+radio[pane=paneSecurity] {
+	-moz-image-region: rect(0px, 192px, 32px, 160px);
+}
+radio[pane=paneSecurity]:hover,
+radio[pane=paneSecurity]:active,
+radio[pane=paneSecurity][selected="true"] {
+	-moz-image-region: rect(32px, 192px, 64px, 160px);
+}
+
+/* ----- ADVANCED BUTTON ----- */
 
 radio[pane=paneAdvanced] {
-	-moz-image-region: rect(0px, 192px, 32px, 160px)
+	-moz-image-region: rect(0px, 224px, 32px, 192px);
+}
+radio[pane=paneAdvanced]:hover,
+radio[pane=paneAdvanced]:active,
+radio[pane=paneAdvanced][selected="true"] {
+	-moz-image-region: rect(32px, 224px, 64px, 192px);
 }
 
-radio[pane=paneAdvanced]:active {
-	-moz-image-region: rect(32px, 192px, 64px, 160px)
-}
+
 
 .content-box > separator {
   border: 1px solid red;
@@ -138,10 +177,6 @@ description {
   font-weight: normal;
   line-height: 1.3em;
   margin-bottom: 4px !important;
-}
-
-#browserStartupHomepage {
-  padding: 2px 2px 3px 4px;
 }
 
 #downloadFolderIcon {
@@ -198,7 +233,10 @@ caption {
   padding: 4px 4px 0px 0px !important;
 }
 
-#paneGeneral description, #paneAdvanced description, #paneDownloads description {
+#paneMain description,
+#paneContent description,
+#paneAdvanced description,
+#paneSecurity description {
   font: -moz-dialog;
 }
 
@@ -237,10 +275,6 @@ caption {
   padding: 18px 10px 10px 10px;
 }
 
-#browserStartupHomepage {
-  padding: 0;
-}
-
 #OCSPDialogPane {
   font: message-box !important;
 }
@@ -257,3 +291,9 @@ caption {
 }
 
 
+/**
+ * Feeds pane
+ */
+#chooseClientAppCell {
+  -moz-padding-end: 12px;
+}

@@ -44,10 +44,12 @@
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
 #include "nsIDOMNode.h"
+#include "nsIDocument.h"
 #include "nsIDOMXPathResult.h"
 #include "nsIModelElementPrivate.h"
 #include "nsIScriptError.h"
 #include "nsVoidArray.h"
+#include "nsIDOMWindowInternal.h"
 
 class nsIDOMElement;
 class nsIXFormsModelElement;
@@ -62,6 +64,15 @@ class nsIDOMEvent;
 #define NS_NAMESPACE_XML_SCHEMA_INSTANCE "http://www.w3.org/2001/XMLSchema-instance"
 #define NS_NAMESPACE_MOZ_XFORMS_TYPE     "http://www.mozilla.org/projects/xforms/2005/type"
 #define NS_NAMESPACE_MOZ_XFORMS_LAZY     "http://www.mozilla.org/projects/xforms/2005/lazy"
+
+/**
+ * Error codes
+ */
+
+#define NS_OK_XFORMS_NOREFRESH \
+NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_GENERAL, 1)
+#define NS_OK_XFORMS_DEFERRED \
+NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_GENERAL, 2)
 
 /**
  * XForms event types
@@ -126,6 +137,12 @@ struct EventData
 
 extern const EventData sXFormsEventsEntries[42];
 
+// Default intrinsic state for XForms Controls
+extern const PRInt32 kDefaultIntrinsicState;
+
+// Disabled intrinsic state for XForms Controls
+extern const PRInt32 kDisabledIntrinsicState;
+
 /**
  * This class has static helper methods that don't fit into a specific place
  * in the class hierarchy.
@@ -173,6 +190,7 @@ public:
    * @param aModel            The \<model\> for the element
    * @param aBindElement      The \<bind\> the element is bound to (if any)
    * @param aOuterBind        Whether the \<bind\> is an outermost bind
+   * @param aParentControl    The parent control, ie the one setting the context
    * @param aContextNode      The context node for the element
    * @param aContextPosition  The context position for the element
    * @param aContextSize      The context size for the element
@@ -183,6 +201,7 @@ public:
                    nsIModelElementPrivate **aModel,
                    nsIDOMElement          **aBindElement,
                    PRBool                  *aOuterBind,
+                   nsIXFormsControl       **aParentControl,
                    nsIDOMNode             **aContextNode,
                    PRInt32                 *aContextPosition = nsnull,
                    PRInt32                 *aContextSize = nsnull);
@@ -193,12 +212,17 @@ public:
    * @note Actually it is just a shortcut for GetNodeContext().
    *
    * @param aElement          The element
+   * @param aParentControl    The parent control setting the context
    * @param aElementFlags     Flags describing characteristics of aElement
+   * @param aContextNode      The context node
    * @return                  The model
    */
   static NS_HIDDEN_(already_AddRefed<nsIModelElementPrivate>)
-    GetModel(nsIDOMElement  *aElement,
-             PRUint32        aElementFlags = ELEMENT_WITH_MODEL_ATTR);
+    GetModel(nsIDOMElement     *aElement,
+             nsIXFormsControl **aParentControl = nsnull,
+             PRUint32           aElementFlags = ELEMENT_WITH_MODEL_ATTR,
+             nsIDOMNode       **aContextNode = nsnull);
+
 
   /**
    * Evaluate a 'bind' or |aBindingAttr| attribute on |aElement|.
@@ -218,6 +242,8 @@ public:
                         PRUint16                 aResultType,
                         nsIModelElementPrivate **aModel,
                         nsIDOMXPathResult      **aResult,
+                        PRBool                  *aUsesModelBind,
+                        nsIXFormsControl       **aParentControl = nsnull,
                         nsCOMArray<nsIDOMNode>  *aDeps = nsnull,
                         nsStringArray           *aIndexesUsed = nsnull);
 
@@ -227,11 +253,12 @@ public:
    * nsIXFormsXPathEvaluator::Evalute using the given expression, context node,
    * namespace resolver, and result type.
    */
-  static NS_HIDDEN_(already_AddRefed<nsIDOMXPathResult>)
+  static NS_HIDDEN_(nsresult)
     EvaluateXPath(const nsAString        &aExpression,
                   nsIDOMNode             *aContextNode,
                   nsIDOMNode             *aResolverNode,
                   PRUint16                aResultType,
+                  nsIDOMXPathResult     **aResult,
                   PRInt32                 aContextPosition = 1,
                   PRInt32                 aContextSize = 1,
                   nsCOMArray<nsIDOMNode> *aSet = nsnull,
@@ -243,13 +270,6 @@ public:
    */
   static NS_HIDDEN_(void) GetNodeValue(nsIDOMNode *aDataNode,
                                        nsAString  &aNodeValue);
-
-  /**
-   * Given a node in the instance data and a string, store the value according
-   * to section 10.1.9 of the XForms specification.
-   */
-  static NS_HIDDEN_(void) SetNodeValue(nsIDOMNode     *aDataNode,
-                                       const nsString &aNodeValue);
 
   /**
    * Convenience method for doing XPath evaluations to get bound node
@@ -269,20 +289,20 @@ public:
     GetSingleNodeBindingValue(nsIDOMElement* aElement, nsString& aValue);
 
   /**
-   * Convenience method for doing XPath evaluations to set string value
-   * for an element.
-   * Returns PR_TRUE if the evaluation succeeds.
-   */
-  static NS_HIDDEN_(PRBool)
-    SetSingleNodeBindingValue(nsIDOMElement *aElement, const nsAString &aValue,
-                              PRBool *aChanged);
-  /**
    * Dispatch an XForms event.  aDefaultActionEnabled is returned indicating
-   * if the default action of the dispatched event was enabled.
+   * if the default action of the dispatched event was enabled.  aSrcElement
+   * is passed for events targeted at models.  If the model doesn't exist, yet,
+   * then the event dispatching is deferred.  Once DOMContentLoaded is detected
+   * we'll grab the model from aSrcElement and dispatch the event to that
+   * model.
    */
   static NS_HIDDEN_(nsresult)
     DispatchEvent(nsIDOMNode* aTarget, nsXFormsEvent aEvent,
-                  PRBool *aDefaultActionEnabled = nsnull);
+                  PRBool *aDefaultActionEnabled = nsnull,
+                  nsIDOMElement *aSrcElement = nsnull);
+
+  static NS_HIDDEN_(nsresult)
+    DispatchDeferredEvents(nsIDOMDocument* aDocument);
 
   /**
    * Sets aEvent trusted if aRelatedNode is in chrome.
@@ -334,25 +354,46 @@ public:
   /**
    * Returns the context for the element, if set by a parent node.
    *
-   * Controls inheriting from nsIXFormsContextControl sets the context for its children.
+   * Controls inheriting from nsIXFormsContextControl sets the context for its
+   * children.
    *
    * @param aElement          The document element of the caller
    * @param aModel            The model for |aElement| (if (!*aModel), it is set)
+   * @param aParentControl    The parent control setting the context
    * @param aContextNode      The resulting context node
    * @param aContextPosition  The resulting context position
    * @param aContextSize      The resulting context size
    */
   static NS_HIDDEN_(nsresult) FindParentContext(nsIDOMElement           *aElement,
                                                 nsIModelElementPrivate **aModel,
+                                                nsIXFormsControl       **aParentControl,
                                                 nsIDOMNode             **aContextNode,
                                                 PRInt32                 *aContextPosition,
                                                 PRInt32                 *aContextSize);
 
+  /** Connection type used by CheckConnectionAllowed */
+  enum ConnectionType {
+    /** Send data, such as doing submission */
+    kXFormsActionSend = 1,
+
+    /** Load data, such as getting external instance data */
+    kXFormsActionLoad = 2,
+
+    /** Send and Load data, which is replace=instance */
+    kXFormsActionLoadSend = 3
+  };
+
   /**
-   * @return true if aTestURI has the same origin as aBaseURI
+   * Check whether a connecion to aTestURI from aElement is allowed.
+   *
+   * @param  aElement          The element trying to access the resource
+   * @param  aTestURI          The uri we are trying to connect to
+   * @param  aType             The type of connection (see ConnectionType)
+   * @return                   Whether connection is allowed
    */
-  static NS_HIDDEN_(PRBool) CheckSameOrigin(nsIURI *aBaseURI,
-                                            nsIURI *aTestURI);
+  static NS_HIDDEN_(PRBool) CheckConnectionAllowed(nsIDOMElement *aElement,
+                                                   nsIURI        *aTestURI,
+                                                   ConnectionType aType = kXFormsActionLoad);
 
   /**
    * @return true if aNode is element, its namespace URI is 
@@ -382,15 +423,19 @@ public:
                                                      nsIDOMNode  **aInstanceNode);
 
   /**
-   * This function takes an instance data node, finds the type bound to it, and
-   * returns the seperated out type (integer) and namespace prefix (xsd).
+   * Returns the type bound to the given node.
+   *
+   * @param aInstanceData   An instance data node or attribute on an instance
+   *                        data node from which to retrieve type.
+   * @param aType           On return, type of given node.
+   * @param aNSUri          On return, namespace URI of aType.
    */
   static NS_HIDDEN_(nsresult) ParseTypeFromNode(nsIDOMNode *aInstanceData,
                                                 nsAString  &aType,
-                                                nsAString  &aNSPrefix);
+                                                nsAString  &aNSUri);
 
   /**
-   * Outputs to the JavaScript console.
+   * Outputs to the Error console.
    *
    * @param aMessageName      Name of string to output, which is loaded from
                               xforms.properties
@@ -448,6 +493,92 @@ public:
                                              const PRBool      aOnlyXForms,
                                              nsIDOMElement    *aCaller,
                                              nsIDOMElement   **aElement);
+  
+  /**
+   * Shows an error dialog for fatal errors.
+   *
+   * The dialog can be disabled via the |xforms.disablePopup| preference.
+   *
+   * @param aElement         Element the exception occured at
+   * @param aName            The name to use for the new window
+   * @return                 Whether handling was successful
+   */
+  static NS_HIDDEN_(PRBool) HandleFatalError(nsIDOMElement   *aElement,
+                                             const nsAString &aName);
+
+  /**
+   * Returns whether the given NamedNodeMaps of Entities are equal
+   *
+   */
+  static NS_HIDDEN_(PRBool) AreEntitiesEqual(nsIDOMNamedNodeMap *aEntities1,
+                                             nsIDOMNamedNodeMap *aEntities2);
+
+  /**
+   * Returns whether the given NamedNodeMaps of Notations are equal
+   *
+   */
+  static NS_HIDDEN_(PRBool) AreNotationsEqual(nsIDOMNamedNodeMap *aNotations1,
+                                              nsIDOMNamedNodeMap *aNotations2);
+
+  /**
+   * Returns whether the given nodes are equal as described in the isEqualNode
+   * function defined in the DOM Level 3 Core spec.
+   * http://www.w3.org/TR/2004/REC-DOM-Level-3-Core-20040407/DOM3-Core.html#core-Node3-isEqualNode
+   *
+   * XXX: this is just temporary until isEqualNode is implemented in Mozilla
+   * (https://bugzilla.mozilla.org/show_bug.cgi?id=159167)
+   *
+   * @param aFirstNode          The first node to compare
+   * @param aSecondNode         The second node to compare
+   * @param aAlreadyNormalized  Whether the two nodes and their children, etc.
+   *                            have already been normalized to allow for
+   *                            more accurate child node comparisons, as
+   *                            recommended in the DOM Level 3 Core spec.
+   */
+  static NS_HIDDEN_(PRBool) AreNodesEqual(nsIDOMNode *aFirstNode,
+                                          nsIDOMNode *aSecondNode,
+                                          PRBool      aAlreadyNormalized = PR_FALSE);
+
+  /**
+   * Retrieve the window object from the given document
+   *
+   * @param aDoc              The document to get window object from
+   * @param aWindow           The found window object
+   */
+  static NS_HIDDEN_(nsresult) GetWindowFromDocument(nsIDOMDocument        *aDoc,
+                                                    nsIDOMWindowInternal **aWindow);
+
+private:
+  /**
+   * Do same origin checks on aBaseDocument and aTestURI. Hosts can be
+   * whitelisted through the XForms permissions.
+   *
+   * @note The function assumes that the caller does not pass null arguments
+   *
+   * @param  aBaseDocument     The document the XForms lives in
+   * @param  aTestURI          The uri we are trying to connect to
+   * @param  aType             The type of connection (see ConnectionType)
+   * @return                   Whether connection is allowed
+   *
+   */
+  static NS_HIDDEN_(PRBool) CheckSameOrigin(nsIDocument   *aBaseDocument,
+                                            nsIURI        *aTestURI,
+                                            ConnectionType aType = kXFormsActionLoad);
+
+  /**
+   * Check content policy for loading the specificed aTestURI.
+   *
+   * @note The function assumes that the caller does not pass null arguments
+   *
+   * @param  aElement          The element trying to load the content
+   * @param  aBaseDocument     The document the XForms lives in
+   * @param  aTestURI          The uri we are trying to load
+   * @return                   Whether loading is allowed.
+   */
+  static NS_HIDDEN_(PRBool) CheckContentPolicy(nsIDOMElement *aElement,
+                                               nsIDocument   *aDoc,
+                                               nsIURI        *aURI);
+
 };
 
 #endif

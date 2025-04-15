@@ -68,7 +68,7 @@
 #include "nsIDOMEventReceiver.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsILocalFile.h"
-#include "nsITextControlElement.h"
+#include "nsIFileControlElement.h"
 #include "nsNodeInfoManager.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsContentUtils.h"
@@ -94,8 +94,7 @@ NS_NewFileControlFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
 
 nsFileControlFrame::nsFileControlFrame():
   mTextFrame(nsnull), 
-  mCachedState(nsnull),
-  mDidPreDestroy(PR_FALSE)
+  mCachedState(nsnull)
 {
     //Shrink the area around it's contents
   SetFlags(NS_BLOCK_SHRINK_WRAP);
@@ -115,52 +114,11 @@ nsFileControlFrame::~nsFileControlFrame()
   }
 }
 
-void
-nsFileControlFrame::PreDestroy(nsPresContext* aPresContext)
-{
-  // Toss the value into the control from the anonymous content, which is about
-  // to get lost.  Note that if the page is being torn down then the anonymous
-  // content may no longer have access to its frame.  But _we_ can access that
-  // frame.  So if it's there, get the value from the frame
-  if (mTextContent) {
-    nsAutoString value;
-    if (mTextFrame) {
-      // Second arg doesn't really matter here...
-      mTextFrame->GetValue(value, PR_TRUE);
-    } else {
-      // Get from the content
-      nsCOMPtr<nsIDOMHTMLInputElement> input = do_QueryInterface(mTextContent);
-      input->GetValue(value);
-    }
-
-    // Have it take the value, just like when input type=text goes away
-    nsCOMPtr<nsITextControlElement> fileInput = do_QueryInterface(mContent);
-    fileInput->TakeTextFrameValue(value);
-  }
-  mDidPreDestroy = PR_TRUE;
-}
-
 NS_IMETHODIMP
 nsFileControlFrame::Destroy(nsPresContext* aPresContext)
 {
-  if (!mDidPreDestroy) {
-    PreDestroy(aPresContext);
-  }
   mTextFrame = nsnull;
   return nsAreaFrame::Destroy(aPresContext);
-}
-
-void
-nsFileControlFrame::RemovedAsPrimaryFrame(nsPresContext* aPresContext)
-{
-  if (!mDidPreDestroy) {
-    PreDestroy(aPresContext);
-  }
-#ifdef DEBUG
-  else {
-    NS_ERROR("RemovedAsPrimaryFrame called after PreDestroy");
-  }
-#endif
 }
 
 NS_IMETHODIMP
@@ -186,13 +144,14 @@ nsFileControlFrame::CreateAnonymousContent(nsPresContext* aPresContext,
 
   if (mTextContent) {
     mTextContent->SetAttr(kNameSpaceID_None, nsHTMLAtoms::type, NS_LITERAL_STRING("text"), PR_FALSE);
+    nsCOMPtr<nsIFileControlElement> fileControl = do_QueryInterface(mContent);
     nsCOMPtr<nsIDOMHTMLInputElement> textControl = do_QueryInterface(mTextContent);
-    if (fileContent && textControl) {
+    if (fileControl && fileContent && textControl) {
       // Initialize value when we create the content in case the value was set
       // before we got here
       nsAutoString value;
       nsAutoString accessKey;
-      fileContent->GetValue(value);
+      fileControl->GetFileName(value);
       textControl->SetValue(value);
 
       PRInt32 tabIndex;
@@ -379,6 +338,11 @@ nsFileControlFrame::MouseClick(nsIDOMEvent* aMouseEvent)
     result = localFile->GetPath(unicodePath);
     if (!unicodePath.IsEmpty()) {
       mTextFrame->SetProperty(mPresContext, nsHTMLAtoms::value, unicodePath);
+      nsCOMPtr<nsIFileControlElement> fileControl = do_QueryInterface(mContent);
+      if (fileControl) {
+        fileControl->SetFileName(unicodePath, PR_FALSE);
+      }
+      
       // May need to fire an onchange here
       mTextFrame->CheckFireOnChange();
       return NS_OK;
@@ -413,8 +377,6 @@ NS_IMETHODIMP nsFileControlFrame::Reflow(nsPresContext*          aPresContext,
   // except for when style is used to change its size.
   nsresult rv = nsAreaFrame::Reflow(aPresContext, aDesiredSize, aReflowState, aStatus);
   if (NS_SUCCEEDED(rv) && mTextFrame != nsnull) {
-    const nsStyleVisibility* vis = GetStyleVisibility();
-
     nsIFrame* child = GetFirstChild(nsnull);
     if (child == mTextFrame) {
       child = child->GetNextSibling();
@@ -431,7 +393,9 @@ NS_IMETHODIMP nsFileControlFrame::Reflow(nsPresContext*          aPresContext,
           txtRect.height != aDesiredSize.height) {
         nsHTMLReflowMetrics txtKidSize(PR_TRUE);
         nsSize txtAvailSize(aReflowState.availableWidth, aDesiredSize.height);
-        nsHTMLReflowState   txtKidReflowState(aPresContext, aReflowState, this, txtAvailSize,
+        nsHTMLReflowState   txtKidReflowState(aPresContext,
+                                              *aReflowState.parentReflowState,
+                                              this, txtAvailSize,
                                               eReflowReason_Resize);
         txtKidReflowState.mComputedHeight = aDesiredSize.height;
         rv = nsAreaFrame::WillReflow(aPresContext);
@@ -441,31 +405,15 @@ NS_IMETHODIMP nsFileControlFrame::Reflow(nsPresContext*          aPresContext,
         rv = nsAreaFrame::DidReflow(aPresContext, &txtKidReflowState, aStatus);
         NS_ASSERTION(NS_SUCCEEDED(rv), "Should have succeeded");
 
-        // If LTR then re-calc and set the correct rect
-        if (NS_STYLE_DIRECTION_RTL != vis->mDirection) {
-          // now adjust the frame positions
-          txtRect.y      = aReflowState.mComputedBorderPadding.top;
-          txtRect.height = aDesiredSize.height;
-          mTextFrame->SetRect(txtRect);
-        }
+        // Re-calc and set the correct rect
+        txtRect.y      = aReflowState.mComputedBorderPadding.top;
+        txtRect.height = aDesiredSize.height;
+        mTextFrame->SetRect(txtRect);
+
         if (aDesiredSize.mComputeMEW) {
            aDesiredSize.SetMEWToActualWidth(aReflowState.mStylePosition->mWidth.GetUnit());
         }
       }
-
-      // Do RTL positioning
-      // for some reason the areaframe does set the X coord of the rects correctly
-      // so we must redo them here
-      // and we must make sure the text field is the correct height
-      if (NS_STYLE_DIRECTION_RTL == vis->mDirection) {
-        buttonRect.x      = aReflowState.mComputedBorderPadding.left;
-        child->SetRect(buttonRect);
-        txtRect.x         = aDesiredSize.width - txtRect.width + aReflowState.mComputedBorderPadding.left;
-        txtRect.y         = aReflowState.mComputedBorderPadding.top;
-        txtRect.height    = aDesiredSize.height;
-        mTextFrame->SetRect(txtRect);
-      }
-
     }
   }
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
@@ -634,7 +582,7 @@ NS_IMETHODIMP nsFileControlFrame::SetProperty(nsPresContext* aPresContext,
                                               const nsAString& aValue)
 {
   nsresult rv = NS_OK;
-  if (nsHTMLAtoms::value == aName) {
+  if (nsHTMLAtoms::value == aName || nsHTMLAtoms::filename == aName) {
     if (mTextFrame) {
       mTextFrame->SetValue(aValue);
     } else {
@@ -650,7 +598,7 @@ NS_IMETHODIMP nsFileControlFrame::GetProperty(nsIAtom* aName, nsAString& aValue)
 {
   aValue.Truncate();  // initialize out param
 
-  if (nsHTMLAtoms::value == aName) {
+  if (nsHTMLAtoms::value == aName || nsHTMLAtoms::filename == aName) {
     if (mTextFrame) {
       mTextFrame->GetValue(aValue, PR_FALSE);
     }
@@ -671,6 +619,13 @@ nsFileControlFrame::Paint(nsPresContext*      aPresContext,
                           nsFramePaintLayer    aWhichLayer,
                           PRUint32             aFlags)
 {
+  if (NS_FRAME_PAINT_LAYER_BACKGROUND == aWhichLayer) {
+    // Our background is inherited to the text input.  And we never have
+    // padding or borders, per styles in forms.css.  So don't paint anything
+    // here -- doing it just makes us look ugly in some cases and has no effect
+    // in others.
+    return NS_OK;
+  }
   PRBool isVisible;
   if (NS_SUCCEEDED(IsVisibleForPainting(aPresContext, aRenderingContext, PR_TRUE, &isVisible)) && !isVisible) {
     return NS_OK;

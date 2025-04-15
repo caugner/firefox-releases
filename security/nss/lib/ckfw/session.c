@@ -35,7 +35,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #ifdef DEBUG
-static const char CVS_ID[] = "@(#) $RCSfile: session.c,v $ $Revision: 1.8 $ $Date: 2005/01/20 02:25:45 $";
+static const char CVS_ID[] = "@(#) $RCSfile: session.c,v $ $Revision: 1.8.18.1 $ $Date: 2006/05/15 17:45:22 $";
 #endif /* DEBUG */
 
 /*
@@ -234,7 +234,7 @@ nssCKFWSession_Create
 
  loser:
   if( (NSSArena *)NULL != arena ) {
-    if( (nssCKFWHash *)NULL != fwSession->sessionObjectHash ) {
+    if( fwSession && (nssCKFWHash *)NULL != fwSession->sessionObjectHash ) {
       (void)nssCKFWHash_Destroy(fwSession->sessionObjectHash);
     }
     NSSArena_Destroy(arena);

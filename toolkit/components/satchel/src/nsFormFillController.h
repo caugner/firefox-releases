@@ -51,28 +51,32 @@
 #include "nsIDOMFormListener.h"
 #include "nsIDOMMouseListener.h"
 #include "nsIDOMLoadListener.h"
+#include "nsIDOMContextMenuListener.h"
 #include "nsCOMPtr.h"
 #include "nsISupportsArray.h"
 #include "nsIDocShell.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMHTMLInputElement.h"
-#include "nsFormHistory.h"
+
+class nsFormHistory;
 
 class nsFormFillController : public nsIFormFillController,
-                             public nsIAutoCompleteInput,
+                             public nsIAutoCompleteInput_MOZILLA_1_8_BRANCH,
                              public nsIAutoCompleteSearch,
                              public nsIDOMFocusListener,
                              public nsIDOMKeyListener,
                              public nsIDOMCompositionListener,
                              public nsIDOMFormListener,
                              public nsIDOMMouseListener,
-                             public nsIDOMLoadListener
+                             public nsIDOMLoadListener,
+                             public nsIDOMContextMenuListener
 {
 public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIFORMFILLCONTROLLER
   NS_DECL_NSIAUTOCOMPLETESEARCH
   NS_DECL_NSIAUTOCOMPLETEINPUT
+  NS_DECL_NSIAUTOCOMPLETEINPUT_MOZILLA_1_8_BRANCH
   NS_DECL_NSIDOMEVENTLISTENER
 
   // nsIDOMFocusListener
@@ -112,6 +116,9 @@ public:
   NS_IMETHOD Unload(nsIDOMEvent *aLoadEvent);
   NS_IMETHOD Abort(nsIDOMEvent *aLoadEvent);
   NS_IMETHOD Error(nsIDOMEvent *aLoadEvent);
+
+  // nsIDOMContextMenuListener
+  NS_IMETHOD ContextMenu(nsIDOMEvent* aContextMenuEvent);
 
   nsFormFillController();
   virtual ~nsFormFillController();

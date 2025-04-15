@@ -51,20 +51,15 @@
 #include "nsDOMString.h"
 
 class nsDocumentFragment : public nsGenericElement,
-                           public nsIDocumentFragment,
+                           public nsIDOMDocumentFragment,
                            public nsIDOM3Node
 {
 public:
-  nsDocumentFragment(nsINodeInfo *aNodeInfo, nsIDocument* aOwnerDocument);
+  nsDocumentFragment(nsINodeInfo *aNodeInfo);
   virtual ~nsDocumentFragment();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
-
-  // interface nsIDocumentFragment
-  NS_IMETHOD DisconnectChildren();
-  NS_IMETHOD ReconnectChildren();
-  NS_IMETHOD DropChildReferences();
 
   // interface nsIDOMDocumentFragment
   NS_IMETHOD    GetNodeName(nsAString& aNodeName)
@@ -91,7 +86,8 @@ public:
       *aAttributes = nsnull;
       return NS_OK;
     }
-  NS_IMETHOD    GetOwnerDocument(nsIDOMDocument** aOwnerDocument);
+  NS_IMETHOD    GetOwnerDocument(nsIDOMDocument** aOwnerDocument)
+  { return nsGenericElement::GetOwnerDocument(aOwnerDocument); }
   NS_IMETHOD    InsertBefore(nsIDOMNode* aNewChild, nsIDOMNode* aRefChild, 
                              nsIDOMNode** aReturn)
   { return nsGenericElement::InsertBefore(aNewChild, aRefChild, aReturn); }
@@ -163,26 +159,22 @@ public:
     *aEventStatus = nsEventStatus_eIgnore;
     return NS_OK;
   }
-
-protected:
-  nsCOMPtr<nsIDocument> mOwnerDocument;
 };
 
 nsresult
 NS_NewDocumentFragment(nsIDOMDocumentFragment** aInstancePtrResult,
-                       nsIDocument* aOwnerDocument)
+                       nsNodeInfoManager *aNodeInfoManager)
 {
-  NS_ENSURE_ARG(aOwnerDocument);
-
-  nsNodeInfoManager *nimgr = aOwnerDocument->NodeInfoManager();
+  NS_ENSURE_ARG(aNodeInfoManager);
 
   nsCOMPtr<nsINodeInfo> nodeInfo;
-  nsresult rv = nimgr->GetNodeInfo(nsLayoutAtoms::documentFragmentNodeName,
-                                   nsnull, kNameSpaceID_None,
-                                   getter_AddRefs(nodeInfo));
+  nsresult rv =
+    aNodeInfoManager->GetNodeInfo(nsLayoutAtoms::documentFragmentNodeName,
+                                  nsnull, kNameSpaceID_None,
+                                  getter_AddRefs(nodeInfo));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsDocumentFragment* it = new nsDocumentFragment(nodeInfo, aOwnerDocument);
+  nsDocumentFragment *it = new nsDocumentFragment(nodeInfo);
   if (!it) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -194,11 +186,9 @@ NS_NewDocumentFragment(nsIDOMDocumentFragment** aInstancePtrResult,
   return NS_OK;
 }
 
-nsDocumentFragment::nsDocumentFragment(nsINodeInfo *aNodeInfo,
-                                       nsIDocument* aOwnerDocument)
+nsDocumentFragment::nsDocumentFragment(nsINodeInfo *aNodeInfo)
   : nsGenericElement(aNodeInfo)
 {
-  mOwnerDocument = aOwnerDocument;
 }
 
 nsDocumentFragment::~nsDocumentFragment()
@@ -208,11 +198,11 @@ nsDocumentFragment::~nsDocumentFragment()
 
 // QueryInterface implementation for nsDocumentFragment
 NS_INTERFACE_MAP_BEGIN(nsDocumentFragment)
-  NS_INTERFACE_MAP_ENTRY(nsIDocumentFragment)
   NS_INTERFACE_MAP_ENTRY(nsIDOMDocumentFragment)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNode)
   NS_INTERFACE_MAP_ENTRY(nsIDOM3Node)
   NS_INTERFACE_MAP_ENTRY(nsIContent)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMGCParticipant)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIContent)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(DocumentFragment)
 NS_INTERFACE_MAP_END
@@ -221,89 +211,11 @@ NS_INTERFACE_MAP_END
 NS_IMPL_ADDREF(nsDocumentFragment)
 NS_IMPL_RELEASE(nsDocumentFragment)
 
-NS_IMETHODIMP
-nsDocumentFragment::DisconnectChildren()
-{
-  PRUint32 i, count = GetChildCount();
-
-  for (i = 0; i < count; i++) {
-    NS_ASSERTION(GetChildAt(i)->GetCurrentDoc() == nsnull,
-                 "How did we get a child with a current doc?");
-    // Safe to unbind PR_FALSE, since kids should never have a current document
-    // or a binding parent
-    GetChildAt(i)->UnbindFromTree(PR_FALSE);
-  }
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocumentFragment::ReconnectChildren()
-{
-  PRUint32 i, count = GetChildCount();
-  NS_PRECONDITION(GetCurrentDoc() == nsnull,
-                  "We really shouldn't have a current doc!");
-
-  for (i = 0; i < count; i++) {
-    nsIContent *child = GetChildAt(i);
-    nsIContent *parent = child->GetParent();
-
-    if (parent) {
-      // This is potentially a O(n**2) operation, but it should only
-      // happen in error cases (such as out of memory or something
-      // similar) so we don't care for now.
-      // XXXbz I don't think this is O(n**2) with our IndexOf cache, is it?
-
-      PRInt32 indx = parent->IndexOf(child);
-
-      if (indx >= 0) {
-        parent->RemoveChildAt(indx, PR_TRUE);
-      }
-    }
-
-    nsresult rv = child->BindToTree(nsnull, this, nsnull, PR_FALSE);
-    if (NS_FAILED(rv)) {
-      // It's all bad now...  Just  forget about this kid, I guess
-      child->UnbindFromTree();
-      mAttrsAndChildren.RemoveChildAt(i);
-      // Adjust count and iterator accordingly
-      --count;
-      --i;
-    }
-  }
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocumentFragment::DropChildReferences()
-{
-  PRUint32 count = mAttrsAndChildren.ChildCount();
-  while (count > 0) {
-    mAttrsAndChildren.RemoveChildAt(--count);
-  }
-
-  return NS_OK;
-}
-
 NS_IMETHODIMP    
 nsDocumentFragment::GetNodeType(PRUint16* aNodeType)
 {
   *aNodeType = (PRUint16)nsIDOMNode::DOCUMENT_FRAGMENT_NODE;
   return NS_OK;
-}
-
-NS_IMETHODIMP    
-nsDocumentFragment::GetOwnerDocument(nsIDOMDocument** aOwnerDocument)
-{
-  NS_ENSURE_ARG_POINTER(aOwnerDocument);
-
-  if (!mOwnerDocument) {
-    *aOwnerDocument = nsnull;
-    return NS_OK;
-  }
-
-  return CallQueryInterface(mOwnerDocument, aOwnerDocument);
 }
 
 NS_IMETHODIMP
@@ -321,7 +233,8 @@ nsDocumentFragment::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   nsresult rv = NS_OK;
   nsCOMPtr<nsIDOMDocumentFragment> newFragment;
 
-  rv = NS_NewDocumentFragment(getter_AddRefs(newFragment), mOwnerDocument);
+  rv = NS_NewDocumentFragment(getter_AddRefs(newFragment),
+                              mNodeInfo->NodeInfoManager());
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (aDeep) {

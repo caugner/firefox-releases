@@ -1,10 +1,10 @@
-/.cvsignore/1.1/Sat Dec  5 09:00:59 1998//TFIREFOX_1_5_RELEASE
-/Makefile.in/1.64/Tue Mar  8 17:21:32 2005//TFIREFOX_1_5_RELEASE
-/caps.pkg/1.2/Wed Jan  7 01:21:16 2004//TFIREFOX_1_5_RELEASE
-/nsJSPrincipals.cpp/1.24/Fri Jul  8 23:26:35 2005//TFIREFOX_1_5_RELEASE
-/nsPrincipal.cpp/1.37.2.1/Mon Oct 17 21:40:50 2005//TFIREFOX_1_5_RELEASE
-/nsScriptSecurityManager.cpp/1.266.2.7/Tue Oct 25 00:40:48 2005//TFIREFOX_1_5_RELEASE
-/nsSecurityManagerFactory.cpp/1.41/Fri Jul 22 19:05:40 2005//TFIREFOX_1_5_RELEASE
-/nsSystemPrincipal.cpp/1.31/Fri Jul 22 19:05:40 2005//TFIREFOX_1_5_RELEASE
-/win32.order/1.4/Thu Apr  5 05:57:26 2001//TFIREFOX_1_5_RELEASE
+/.cvsignore/1.1/Sat Dec  5 09:00:59 1998//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.64/Tue Mar  8 17:21:32 2005//TFIREFOX_2_0_RELEASE
+/caps.pkg/1.2/Wed Jan  7 01:21:16 2004//TFIREFOX_2_0_RELEASE
+/nsJSPrincipals.cpp/1.24/Fri Jul  8 23:26:35 2005//TFIREFOX_2_0_RELEASE
+/nsPrincipal.cpp/1.37.2.1/Mon Oct 17 21:40:50 2005//TFIREFOX_2_0_RELEASE
+/nsScriptSecurityManager.cpp/1.266.2.14/Thu Jul  6 21:07:15 2006//TFIREFOX_2_0_RELEASE
+/nsSecurityManagerFactory.cpp/1.41/Fri Jul 22 19:05:40 2005//TFIREFOX_2_0_RELEASE
+/nsSystemPrincipal.cpp/1.31/Fri Jul 22 19:05:40 2005//TFIREFOX_2_0_RELEASE
+/win32.order/1.4/Thu Apr  5 05:57:26 2001//TFIREFOX_2_0_RELEASE
 D

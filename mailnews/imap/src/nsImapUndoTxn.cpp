@@ -50,17 +50,6 @@ nsImapMoveCopyMsgTxn::nsImapMoveCopyMsgTxn() :
 {
 }
 
-nsImapMoveCopyMsgTxn::nsImapMoveCopyMsgTxn(
-	nsIMsgFolder* srcFolder, nsMsgKeyArray* srcKeyArray, 
-	const char* srcMsgIdString, nsIMsgFolder* dstFolder,
-	PRBool idsAreUids, PRBool isMove,
-	nsIEventQueue* eventQueue, nsIUrlListener* urlListener) :
-    m_idsAreUids(PR_FALSE), m_isMove(PR_FALSE), m_srcIsPop3(PR_FALSE)
-{
-    Init(srcFolder, srcKeyArray, srcMsgIdString, dstFolder, idsAreUids,
-         isMove, eventQueue, urlListener);
-}
-
 nsresult
 nsImapMoveCopyMsgTxn::Init(
 	nsIMsgFolder* srcFolder, nsMsgKeyArray* srcKeyArray, 
@@ -123,7 +112,7 @@ nsImapMoveCopyMsgTxn::Init(
       }
     }
   }
-  return rv;
+  return nsMsgTxn::Init();
 }
 
 nsImapMoveCopyMsgTxn::~nsImapMoveCopyMsgTxn()
@@ -398,7 +387,6 @@ nsImapMoveCopyMsgTxn::UndoMailboxDelete()
 		   }
         }
         srcDB->SetSummaryValid(PR_TRUE);
-        srcDB->Commit(nsMsgDBCommitType::kLargeCommit);
         return NS_OK; // always return NS_OK
     }
     else
@@ -423,7 +411,6 @@ nsImapMoveCopyMsgTxn::RedoMailboxDelete()
         {
             srcDB->DeleteMessages(&m_srcKeyArray, nsnull);
             srcDB->SetSummaryValid(PR_TRUE);
-            srcDB->Commit(nsMsgDBCommitType::kLargeCommit);
         }
         return NS_OK; // always return NS_OK
     }

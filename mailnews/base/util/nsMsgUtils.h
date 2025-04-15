@@ -137,6 +137,16 @@ NS_MSG_BASE nsresult MSGApopMD5(const char *text, PRInt32 text_len, const char *
 NS_MSG_BASE void PRTime2Seconds(PRTime prTime, PRUint32 *seconds);
 NS_MSG_BASE void PRTime2Seconds(PRTime prTime, PRInt32 *seconds);
 NS_MSG_BASE void Seconds2PRTime(PRUint32 seconds, PRTime *prTime);
+// helper function to generate current date+time as a string
+NS_MSG_BASE void MsgGenerateNowStr(nsACString &nowStr);
+
+// fills in the position of the passed in keyword in the passed in keyword list
+// and returns false if the keyword isn't present
+NS_MSG_BASE PRBool MsgFindKeyword(const nsACString &keyword, nsACString &keywords, 
+                                  nsACString::const_iterator &start, 
+                                  nsACString::const_iterator &end);
+
+NS_MSG_BASE PRBool MsgHostDomainIsTrusted(nsCString &host, nsCString &trustedMailDomains);
 
 #endif
 

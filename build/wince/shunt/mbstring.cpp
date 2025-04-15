@@ -51,7 +51,7 @@ extern "C" {
 **  Right now, bail with a default implementation.
 */
 
-// #define LOG_CALLS
+#define LOG_CALLS
 
 MOZCE_SHUNT_API unsigned char* mozce_mbsinc(const unsigned char* inCurrent)
 {
@@ -123,6 +123,22 @@ MOZCE_SHUNT_API int mozce_mbsicmp(const unsigned char *string1, const unsigned c
 #endif
 #endif
     return _stricmp((const char*)string1, (const char*)string2);
+}
+
+MOZCE_SHUNT_API unsigned char* mozce_mbsdec(const unsigned char *string1, const unsigned char *string2)
+{
+    MOZCE_PRECHECK
+
+#ifdef LOG_CALLS
+#ifdef DEBUG
+    mozce_printf("mozce_mbsdec called\n");
+#endif
+#endif
+    
+    if (string1 == string2)
+        return 0;
+    
+    return (unsigned char *)string2 - 1;
 }
 
 #if 0

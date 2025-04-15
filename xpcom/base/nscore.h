@@ -105,7 +105,7 @@
 #define NS_VISIBILITY_HIDDEN
 #endif
 
-#if defined(HAVE_VISIBILITY_HIDDEN_ATTRIBUTE) && defined(HAVE_VISIBILITY_PRAGMA)
+#if defined(HAVE_VISIBILITY_ATTRIBUTE)
 #define NS_VISIBILITY_DEFAULT __attribute__ ((visibility ("default")))
 #else
 #define NS_VISIBILITY_DEFAULT
@@ -140,7 +140,7 @@
  *           NS_HIDDEN_(int) NS_FASTCALL func2(char *foo);
  */
 
-#if defined(__i386__) && defined(__GNUC__) && (__GNUC__ >= 3) && !defined(XP_OS2) && !defined(XP_MACOSX)
+#if defined(__i386__) && defined(__GNUC__) && (__GNUC__ >= 3) && !defined(XP_OS2)
 #define NS_FASTCALL __attribute__ ((regparm (3), stdcall))
 #else
 #define NS_FASTCALL
@@ -150,7 +150,7 @@
  * NS_DEFCALL undoes the effect of a global regparm/stdcall setting
  * so that xptcall works correctly.
  */
-#if defined(__i386__) && defined(__GNUC__) && (__GNUC__ >= 3) && !defined(XP_OS2) && !defined(XP_MACOSX)
+#if defined(__i386__) && defined(__GNUC__) && (__GNUC__ >= 3) && !defined(XP_OS2)
 #define NS_DEFCALL __attribute__ ((regparm (0), cdecl))
 #else
 #define NS_DEFCALL
@@ -233,9 +233,9 @@
 
 #ifdef _IMPL_NS_COM
 #define NS_COM NS_EXPORT
-#elif  _IMPL_NS_COM_OFF
+#elif  defined(_IMPL_NS_COM_OFF)
 #define NS_COM
-#elif  XPCOM_GLUE
+#elif  defined(XPCOM_GLUE)
 #define NS_COM
 #else
 #define NS_COM NS_IMPORT

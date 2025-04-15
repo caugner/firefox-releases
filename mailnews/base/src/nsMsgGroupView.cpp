@@ -48,38 +48,14 @@
 #define MSGHDR_CACHE_MAX_SIZE         8192  // Max msghdr cache entries.
 #define MSGHDR_CACHE_DEFAULT_SIZE     100
 
-PRUnichar * nsMsgGroupView::kTodayString = nsnull;
-PRUnichar * nsMsgGroupView::kYesterdayString = nsnull;
-PRUnichar * nsMsgGroupView::kLastWeekString = nsnull;
-PRUnichar * nsMsgGroupView::kTwoWeeksAgoString = nsnull;
-PRUnichar * nsMsgGroupView::kOldMailString = nsnull;
-
 nsMsgGroupView::nsMsgGroupView()
 {
-  if (!kTodayString) 
-  {
-    // priority strings
-    kTodayString = GetString(NS_LITERAL_STRING("today").get());
-    kYesterdayString = GetString(NS_LITERAL_STRING("yesterday").get());
-    kLastWeekString = GetString(NS_LITERAL_STRING("lastWeek").get());
-    kTwoWeeksAgoString = GetString(NS_LITERAL_STRING("twoWeeksAgo").get());
-    kOldMailString = GetString(NS_LITERAL_STRING("older").get());
-  }
   m_dayChanged = PR_FALSE;
   m_lastCurExplodedTime.tm_mday = 0;
 }
 
 nsMsgGroupView::~nsMsgGroupView()
 {
-  // release our global strings
-  if (gInstanceCount <= 1) 
-  {
-    nsCRT::free(kTodayString);
-    nsCRT::free(kYesterdayString);
-    nsCRT::free(kLastWeekString);
-    nsCRT::free(kTwoWeeksAgoString);
-    nsCRT::free(kOldMailString);
-  }
 }
 
 NS_IMETHODIMP nsMsgGroupView::Open(nsIMsgFolder *aFolder, nsMsgViewSortTypeValue aSortType, nsMsgViewSortOrderValue aSortOrder, nsMsgViewFlagsTypeValue aViewFlags, PRInt32 *aCount)
@@ -159,24 +135,32 @@ nsHashKey *nsMsgGroupView::AllocHashKeyForHdr(nsIMsgDBHdr *msgHdr)
       (void) msgHdr->GetRecipients(getter_Copies(cStringKey));
       return new nsCStringKey(cStringKey.get());
     case nsMsgViewSortType::byAccount:
+    case nsMsgViewSortType::byTags:
       {
         nsCOMPtr <nsIMsgDatabase> dbToUse = m_db;
   
         if (!dbToUse) // probably search view
           GetDBForViewIndex(0, getter_AddRefs(dbToUse));
 
-        (void) FetchAccount(msgHdr, getter_Copies(stringKey));
-        return new nsStringKey (stringKey.get());
+        nsresult rv = (m_sortType == nsMsgViewSortType::byAccount) 
+          ? FetchAccount(msgHdr, getter_Copies(stringKey))
+          : FetchTags(msgHdr, getter_Copies(stringKey));
+        return NS_SUCCEEDED(rv) ? new nsStringKey(stringKey.get()) : nsnull;
 
       }
       break;
-    case nsMsgViewSortType::byLabel:
+    case nsMsgViewSortType::byAttachments:
       {
-        nsMsgLabelValue label;
-        msgHdr->GetLabel(&label);
-        return new nsPRUint32Key(label);
+        PRUint32 flags;
+        msgHdr->GetFlags(&flags);
+        return new nsPRUint32Key(flags & MSG_FLAG_ATTACHMENT ? 1 : 0);
       }
-      break;
+    case nsMsgViewSortType::byFlagged:
+      {
+        PRUint32 flags;
+        msgHdr->GetFlags(&flags);
+        return new nsPRUint32Key(flags & MSG_FLAG_MARKED ? 1 : 0);
+      }
     case nsMsgViewSortType::byPriority:
       {
         nsMsgPriorityValue priority;
@@ -348,7 +332,7 @@ NS_IMETHODIMP nsMsgGroupView::OpenWithHdrs(nsISimpleEnumerator *aHeaders, nsMsgV
   nsresult rv = NS_OK;
 
   if (aSortType == nsMsgViewSortType::byThread || aSortType == nsMsgViewSortType::byId
-    || aSortType == nsMsgViewSortType::byNone)
+    || aSortType == nsMsgViewSortType::byNone || aSortType == nsMsgViewSortType::bySize)
     return NS_ERROR_INVALID_ARG;
 
   m_sortType = aSortType;
@@ -577,8 +561,6 @@ NS_IMETHODIMP nsMsgGroupView::OnHdrDeleted(nsIMsgDBHdr *aHdrDeleted, nsMsgKey aP
       nsMsgDBView::RemoveByIndex(viewIndexOfThread - 1);
       if (m_deletingRows)
         mIndicesToNoteChange.Add(viewIndexOfThread - 1);
-      else
-        NoteChange(viewIndexOfThread - 1, -1, nsMsgViewNotificationCode::insertOrDelete); // an example where view is not the listener - D&D messages
     }
     else if (rootDeleted)
     {
@@ -638,19 +620,29 @@ NS_IMETHODIMP nsMsgGroupView::GetCellText(PRInt32 aRow, nsITreeColumn* aCol, nsA
           switch (((nsPRUint32Key *)hashKey)->GetValue())
           {
           case 1:
-            aValue.Assign(kTodayString);
+            if (!m_kTodayString.get())
+              m_kTodayString.Adopt(GetString(NS_LITERAL_STRING("today").get()));
+            aValue.Assign(m_kTodayString);
             break;
           case 2:
-            aValue.Assign(kYesterdayString);
+            if (!m_kYesterdayString.get())
+              m_kYesterdayString.Adopt(GetString(NS_LITERAL_STRING("yesterday").get()));
+            aValue.Assign(m_kYesterdayString);
             break;
           case 3:
-            aValue.Assign(kLastWeekString);
+            if (!m_kLastWeekString.get())
+              m_kLastWeekString.Adopt(GetString(NS_LITERAL_STRING("lastWeek").get()));
+            aValue.Assign(m_kLastWeekString);
             break;
           case 4:
-            aValue.Assign(kTwoWeeksAgoString);
+            if (!m_kTwoWeeksAgoString.get())
+              m_kTwoWeeksAgoString.Adopt(GetString(NS_LITERAL_STRING("twoWeeksAgo").get()));
+            aValue.Assign(m_kTwoWeeksAgoString);
             break;
           case 5:
-            aValue.Assign(kOldMailString);
+            if (!m_kOldMailString.get())
+              m_kOldMailString.Adopt(GetString(NS_LITERAL_STRING("older").get()));
+            aValue.Assign(m_kOldMailString);
             break;
           default:
             NS_ASSERTION(PR_FALSE, "bad age thread");
@@ -668,10 +660,10 @@ NS_IMETHODIMP nsMsgGroupView::GetCellText(PRInt32 aRow, nsITreeColumn* aCol, nsA
             valueText.Adopt(GetString(NS_LITERAL_STRING("messagesWithNoStatus").get()));
           aValue.Assign(valueText);
           break;
-        case nsMsgViewSortType::byLabel:
-          rv = FetchLabel(msgHdr, getter_Copies(valueText));
-          if (!valueText)
-            valueText.Adopt(GetString(NS_LITERAL_STRING("unlabeledMessages").get()));
+        case nsMsgViewSortType::byTags:
+          rv = FetchTags(msgHdr, getter_Copies(valueText));
+          if (valueText.IsEmpty())
+            valueText.Adopt(GetString(NS_LITERAL_STRING("untaggedMessages").get()));
           aValue.Assign(valueText);
           break;
         case nsMsgViewSortType::byPriority:
@@ -688,6 +680,19 @@ NS_IMETHODIMP nsMsgGroupView::GetCellText(PRInt32 aRow, nsITreeColumn* aCol, nsA
           FetchRecipients(msgHdr, getter_Copies(valueText));
           aValue.Assign(valueText);
           break;
+        case nsMsgViewSortType::byAttachments:
+          valueText.Adopt(GetString(((nsPRUint32Key *)hashKey)->GetValue()
+            ? NS_LITERAL_STRING("attachments").get()
+            : NS_LITERAL_STRING("noAttachments").get()));
+          aValue.Assign(valueText);
+          break;
+        case nsMsgViewSortType::byFlagged:
+          valueText.Adopt(GetString(((nsPRUint32Key *)hashKey)->GetValue()
+            ? NS_LITERAL_STRING("groupFlagged").get()
+            : NS_LITERAL_STRING("notFlagged").get()));
+          aValue.Assign(valueText);
+          break;
+
         default:
           NS_ASSERTION(PR_FALSE, "we don't sort by group for this type");
           break;
@@ -715,6 +720,8 @@ NS_IMETHODIMP nsMsgGroupView::LoadMessageByViewIndex(nsMsgViewIndex aViewIndex)
     nsCOMPtr <nsIMsgMessagePaneController> controller;
     if (mMsgWindow && NS_SUCCEEDED(mMsgWindow->GetMessagePaneController(getter_AddRefs(controller))) && controller)
       controller->ClearMsgPane();
+    // since we are selecting a dummy row, we should also clear out m_currentlyDisplayedMsgUri
+    m_currentlyDisplayedMsgUri.Truncate();
     return NS_OK;
   }
   else
@@ -737,7 +744,8 @@ nsresult nsMsgGroupView::GetThreadContainingMsgHdr(nsIMsgDBHdr *msgHdr, nsIMsgTh
   return (*pThread) ? NS_OK : NS_ERROR_FAILURE;
 }
 
-PRInt32 nsMsgGroupView::FindLevelInThread(nsIMsgDBHdr *msgHdr, nsMsgViewIndex startOfThread, nsMsgViewIndex viewIndex)
+PRInt32 nsMsgGroupView::FindLevelInThread(nsIMsgDBHdr *msgHdr,
+                                          nsMsgViewIndex startOfThread, nsMsgViewIndex viewIndex)
 {
   return (startOfThread == viewIndex) ? 0 : 1;
 }

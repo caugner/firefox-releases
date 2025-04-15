@@ -50,10 +50,7 @@ NS_IMPL_ISUPPORTS2(nsConverterOutputStream,
 
 nsConverterOutputStream::~nsConverterOutputStream()
 {
-    if (mOutStream) {
-        Flush();
-        Close();
-    }
+    Close();
 }
 
 NS_IMETHODIMP
@@ -67,8 +64,6 @@ nsConverterOutputStream::Init(nsIOutputStream* aOutStream,
     if (!aCharset)
         aCharset = "UTF-8";
 
-    mOutStream = aOutStream;
-
     nsresult rv;
     nsCOMPtr<nsICharsetConverterManager> ccm =
         do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
@@ -77,6 +72,8 @@ nsConverterOutputStream::Init(nsIOutputStream* aOutStream,
     rv = ccm->GetUnicodeEncoder(aCharset, getter_AddRefs(mConverter));
     if (NS_FAILED(rv))
         return rv;
+
+    mOutStream = aOutStream;
 
     PRInt32 behaviour = aReplacementChar ? nsIUnicodeEncoder::kOnError_Replace
                                          : nsIUnicodeEncoder::kOnError_Signal;
@@ -90,6 +87,12 @@ NS_IMETHODIMP
 nsConverterOutputStream::Write(PRUint32 aCount, const PRUnichar* aChars,
                                PRBool* aSuccess)
 {
+    if (!mOutStream) {
+        NS_ASSERTION(!mConverter, "Closed streams shouldn't have converters");
+        return NS_BASE_STREAM_CLOSED;
+    }
+    NS_ASSERTION(mConverter, "Must have a converter when not closed");
+
     PRInt32 inLen = aCount;
 
     PRInt32 maxLen;
@@ -157,6 +160,9 @@ nsConverterOutputStream::Flush()
 NS_IMETHODIMP
 nsConverterOutputStream::Close()
 {
+    if (!mOutStream)
+        return NS_OK; // Already closed.
+
     nsresult rv1 = Flush();
 
     nsresult rv2 = mOutStream->Close();

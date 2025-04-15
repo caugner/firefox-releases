@@ -322,7 +322,7 @@ void Area::ParseCoords(const nsAString& aSpec)
   char* cp = ToNewCString(aSpec);
   if (cp) {
     mCoords = lo_parse_coord_list(cp, &mNumCoords);
-    nsCRT::free(cp);
+    NS_Free(cp);
   }
 }
 
@@ -924,27 +924,6 @@ nsImageMap::IsInside(nscoord aX, nscoord aY,
     }
   }
 
-  return PR_FALSE;
-}
-
-PRBool
-nsImageMap::IsInside(nscoord aX, nscoord aY) const
-{
-  PRInt32 i, n = mAreas.Count();
-  for (i = 0; i < n; i++) {
-    Area* area = (Area*) mAreas.ElementAt(i);
-    if (area->IsInside(aX, aY)) {
-      nsAutoString href;
-      area->GetHREF(href);
-      if (!href.IsEmpty()) {
-        return PR_TRUE;
-      }
-      else {
-        //We need to return here so we don't hit an overlapping map area
-        return PR_FALSE;
-      }
-    }
-  }
   return PR_FALSE;
 }
 

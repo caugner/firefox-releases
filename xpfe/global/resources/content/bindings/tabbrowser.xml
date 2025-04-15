@@ -22,6 +22,8 @@
    -
    - Contributor(s):
    -   David Hyatt <hyatt@netscape.com> (Original Author of <tabbrowser>)
+   -   Mike Connor <mconnor@steelgryphon.com>
+   -   Christopher Thomas <cst@yecc.com>
    -
    - Alternatively, the contents of this file may be used under the terms of
    - either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -44,6 +46,7 @@
 
 <bindings id="tabBrowserBindings"
           xmlns="http://www.mozilla.org/xbl"
+          xmlns:html="http://www.w3.org/1999/xhtml"
           xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
           xmlns:xbl="http://www.mozilla.org/xbl">
 
@@ -53,10 +56,21 @@
     </resources>
 
     <content>
-      <xul:stringbundle src="chrome://global/locale/tabbrowser.properties"/>
-      <xul:tabbox flex="1" eventnode="document" xbl:inherits="handleCtrlPageUpDown">
-        <xul:hbox class="tabbrowser-strip" collapsed="true" tooltip="_child" context="_child">
-          <xul:tooltip onpopupshowing="event.preventBubble(); if (document.tooltipNode.hasAttribute('label')) { this.setAttribute('label', document.tooltipNode.getAttribute('label')); return true; } return false;"/>
+      <xul:stringbundle anonid="tbstringbundle" src="chrome://global/locale/tabbrowser.properties"/>
+      <xul:tabbox anonid="tabbox" flex="1" eventnode="document" xbl:inherits="handleCtrlPageUpDown">
+        <xul:hbox class="tab-drop-indicator-bar" hidden="true">
+          <xul:image class="tab-drop-indicator"/>
+        </xul:hbox>
+        <xul:hbox class="tabbrowser-strip" collapsed="true" tooltip="_child" context="_child"
+                  anonid="strip"
+                  ondraggesture="nsDragAndDrop.startDrag(event, this.parentNode.parentNode); event.stopPropagation();"
+                  ondragover="nsDragAndDrop.dragOver(event, this.parentNode.parentNode); event.stopPropagation();"
+                  ondragdrop="nsDragAndDrop.drop(event, this.parentNode.parentNode); event.stopPropagation();"
+                  ondragexit="nsDragAndDrop.dragExit(event, this.parentNode.parentNode); event.stopPropagation();">
+          <xul:tooltip onpopupshowing="event.stopPropagation(); return this.parentNode.parentNode.parentNode.doPreview(this);" orient="vertical">
+            <xul:label class="tooltip-label" crop="right"/>
+            <xul:label class="tooltip-label" hidden="true"><html:canvas class="tab-tooltip-canvas"/></xul:label>
+          </xul:tooltip>
           <xul:menupopup onpopupshowing="this.parentNode.parentNode.parentNode.updatePopupMenu(this);">
             <xul:menuitem label="&closeTab.label;" accesskey="&closeTab.accesskey;"
                           tbattr="tabbrowser-multiple"
@@ -84,13 +98,10 @@
           </xul:menupopup>
 
           <xul:tabs class="tabbrowser-tabs" closebutton="true" flex="1"
+                    anonid="tabcontainer"
                     tooltiptextnew="&newTabButton.tooltip;"
                     setfocus="false"
                     onclick="this.parentNode.parentNode.parentNode.onTabClick(event);"
-                    ondragover="nsDragAndDrop.dragOver(event, this.parentNode.parentNode.parentNode);
-                                event.stopPropagation();"
-                    ondragdrop="nsDragAndDrop.drop(event, this.parentNode.parentNode.parentNode);
-                                event.stopPropagation();"
                     xbl:inherits="onnewtab"
                     onclosetab="var node = this.parentNode;
                                 while (node.localName != 'tabbrowser')
@@ -103,7 +114,7 @@
                      class="tabbrowser-tab" label="&untitledTab;" crop="end"/>
           </xul:tabs>
         </xul:hbox>
-        <xul:tabpanels flex="1" class="plain" selectedIndex="0">
+        <xul:tabpanels flex="1" class="plain" selectedIndex="0" anonid="panelcontainer">
           <xul:browser type="content-primary" xbl:inherits="tooltip=contenttooltip,contextmenu=contentcontextmenu"/>
         </xul:tabpanels>
       </xul:tabbox>
@@ -119,20 +130,23 @@
         Components.classes["@mozilla.org/docshell/urifixup;1"]
                   .getService(Components.interfaces.nsIURIFixup);
       </field>
-      <field name="mTabBox">
-        document.getAnonymousNodes(this)[1]
+      <field name="mTabBox" readonly="true">
+        document.getAnonymousElementByAttribute(this, "anonid", "tabbox");
       </field>
-      <field name="mStrip">
-        this.mTabBox.firstChild
+      <field name="mStrip" readonly="true">
+        document.getAnonymousElementByAttribute(this, "anonid", "strip");
       </field>
-      <field name="mTabContainer">
-        this.mStrip.childNodes[2]
+      <field name="mTabContainer" readonly="true">
+        document.getAnonymousElementByAttribute(this, "anonid", "tabcontainer");
       </field>
-      <field name="mPanelContainer">
-        this.mTabBox.childNodes[1]
+      <field name="mPanelContainer" readonly="true">
+        document.getAnonymousElementByAttribute(this, "anonid", "panelcontainer");
+      </field>
+      <field name="mTabs" readonly="true">
+        this.mTabContainer.childNodes
       </field>
       <field name="mStringBundle">
-        document.getAnonymousNodes(this)[0]
+        document.getAnonymousElementByAttribute(this, "anonid", "tbstringbundle");
       </field>
       <field name="mCurrentTab">
         null
@@ -166,11 +180,92 @@
         tabbrowser: this,
         handleEvent: function handleEvent(aEvent) {
           if (aEvent.ctrlKey && aEvent.keyCode == KeyEvent.DOM_VK_F4 &&
-            this.tabbrowser.mTabBox.handleCtrlPageUpDown)
-          this.tabbrowser.removeCurrentTab();
+              this.tabbrowser.mTabBox.handleCtrlPageUpDown &&
+              this.tabbrowser.getStripVisibility())
+            this.tabbrowser.removeCurrentTab();
         }
       })]]>
       </field>
+      <field name="arrowKeysShouldWrap">
+        null
+      </field>
+      <field name="nextTabNumber">
+        0
+      </field>
+      <field name="_browsers">
+        null
+      </field>
+
+      <method name="doPreview">
+        <parameter name="aPopup"/>
+        <body>
+        <![CDATA[
+          var tab = document.tooltipNode;
+          if (tab.localName != "tab")
+            return false;
+          var b = tab.linkedBrowser;
+          if (!b)
+            return false;
+
+          var label = aPopup.firstChild;
+          label.setAttribute("value", tab.getAttribute("label"));
+
+          var canvas = aPopup.lastChild.firstChild;
+          canvas.parentNode.hidden = true;
+
+          if (!this.mPrefs.getBoolPref("browser.tabs.tooltippreview.enable")) {
+            label.removeAttribute("width");
+            aPopup.removeAttribute("tabpreview");
+            return true;
+          }
+
+          var ctx;
+          try {
+            ctx = canvas.getContext("2d");
+          } catch (e) {
+            return true;
+          }
+
+          label.width = 0;
+          aPopup.setAttribute("tabpreview", "true");
+          var win = b.contentWindow;
+          var w = win.innerWidth;
+          var h = win.innerHeight;
+
+          var canvasW = this.mPrefs.getIntPref("browser.tabs.tooltippreview.width");
+          var canvasH = Math.round(canvasW * h / w);
+          canvas.width = canvasW;
+          canvas.height = canvasH;
+          canvas.parentNode.hidden = false;
+
+          var bgColor = this.mPrefs.getCharPref("browser.display.background_color");
+          if (b.contentDocument instanceof ImageDocument &&
+              !(b.contentDocument.imageRequest.imageStatus &
+                Components.interfaces.imgIRequest.STATUS_ERROR)) {
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, canvasW, canvasH);
+            var img = b.contentDocument.body.firstChild;
+            var ratio = img.naturalHeight / img.naturalWidth;
+            if (img.naturalHeight < canvasH && img.naturalWidth < canvasW) {
+              ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
+            }
+            else if (ratio * canvasW > canvasH) {
+              ctx.drawImage(img, 0, 0, canvasH / ratio, canvasH);
+            }
+            else {
+              ctx.drawImage(img, 0, 0, canvasW, ratio * canvasW);
+            }
+          }
+          else {
+            ctx.save();
+            ctx.scale(canvasW / w, canvasH / h);
+            ctx.drawWindow(win, win.pageXOffset, win.pageYOffset, w, h, bgColor);
+            ctx.restore();
+          }
+          return true;
+        ]]>
+        </body>
+      </method>
 
       <!-- A web progress listener object definition for a given tab. -->
       <method name="mTabProgressListener">
@@ -219,9 +314,12 @@
                 // loading a document. If the user types, this flag gets
                 // set to false, if the document load ends without an
                 // onLocationChange, this flag also gets set to false
-                // (so we keep it while switching tabs after failed load
+                // (so we keep it while switching tabs after a failed load).
+                // We need to add 2 because loadURIWithFlags may have
+                // cancelled a pending load which would have cleared
+                // its anchor scroll detection temporary increment.
                 if (aWebProgress.DOMWindow == this.mBrowser.contentWindow)
-                  this.mBrowser.userTypedClear++;
+                  this.mBrowser.userTypedClear += 2;
 
                 if (!this.mBlank) {
                   this.mTab.removeAttribute("progress");
@@ -238,7 +336,9 @@
                 // The document is done loading, it's okay to clear
                 // the value again.
                 if (aWebProgress.DOMWindow == this.mBrowser.contentWindow)
-                  if (this.mBrowser.userTypedClear > 0)
+                  if (this.mBrowser.userTypedClear > 1)
+                    this.mBrowser.userTypedClear -= 2;
+                  else if (this.mBrowser.userTypedClear > 0)
                     this.mBrowser.userTypedClear--;
 
                 if (this.mBlank)
@@ -250,7 +350,8 @@
                 if (this.mIcon) {
                   this.mTab.setAttribute("image", this.mIcon);
                 }
-                else if (this.mBrowser.contentDocument instanceof ImageDocument) {
+                else if (this.mBrowser.contentDocument instanceof ImageDocument &&
+                         this.mTabBrowser.mPrefs.getBoolPref("browser.chrome.site_icons")) {
                   var req = this.mBrowser.contentDocument.imageRequest;
                   var sz = this.mTabBrowser.mPrefs.getIntPref("browser.chrome.image_icons.max_size");
                   if (req && req.image.width <= sz && req.image.height <= sz)
@@ -509,12 +610,13 @@
             // If location bar is hidden and the URL type supports a host,
             // add the scheme and host to the title to prevent spoofing.
             // XXX https://bugzilla.mozilla.org/show_bug.cgi?id=22183#c239
+            // (only for schemes that support a host)
             try {
               if (docElement.getAttribute("chromehidden").indexOf("location") != -1) {
-                var host = this.mURIFixup.createExposableURI(
-                             this.mCurrentBrowser.currentURI).prePath;
-                if (host)
-                  newTitle = host + sep + newTitle;
+                var uri  = this.mURIFixup.createExposableURI(
+                             this.mCurrentBrowser.currentURI);
+                if (uri.host)
+                  newTitle = uri.prePath + sep + newTitle;
               }
             } catch (e) {}
 
@@ -531,7 +633,7 @@
             var disabled = this.mPanelContainer.childNodes.length == 1;
             var menuItems = aPopupMenu.getElementsByAttribute("tbattr", "tabbrowser-multiple");
             for (var i = 0; i < menuItems.length; i++)
-              menuItems[i].disabled = disabled;
+              menuItems[i].setAttribute("disabled", disabled);
           ]]>
         </body>
       </method>
@@ -543,14 +645,14 @@
             // tabs have been opened and the user hasn't switched tabs
             this.mPreviousTab = null;
 
-            var newBrowser = this.mPanelContainer.childNodes[this.mPanelContainer.selectedIndex];
+            var newBrowser = this.mPanelContainer.selectedPanel;
             if (this.mCurrentBrowser) {
               // Only save the focused element if it is in our content window
               // or in an ancestor window.
               var focusedWindow = document.commandDispatcher.focusedWindow;
               var saveFocus = false;
 
-              if (focusedWindow.top == window.content) {
+              if (focusedWindow && focusedWindow.top == window.content) {
                 saveFocus = true;
               } else {
                 var contentWindow = window;
@@ -577,11 +679,16 @@
                 this.mCurrentBrowser.focusedElement = document.commandDispatcher.focusedElement;
               }
 
-              if (this.mCurrentBrowser.focusedElement) {
+              if (this.mCurrentBrowser.focusedElement instanceof NSHTMLElement || 
+                  this.mCurrentBrowser.focusedElement instanceof XULElement) {
                 // Clear focus outline before we draw on top of it
                 this.mCurrentBrowser.focusedElement.blur();
               }
-              this.mCurrentBrowser.setAttribute("type", "content");
+              else {
+                // non-HTML/XUL elements have no blur method, see bug 323806
+                this.mCurrentBrowser.focusedElement = null;
+              }
+              this.mCurrentBrowser.setAttribute("type", "content-targetable");
             }
 
             newBrowser.setAttribute("type", "content-primary");
@@ -604,7 +711,7 @@
                 p.onLocationChange(webProgress, null, loc);
                 if (securityUI)
                   p.onSecurityChange(webProgress, null, securityUI.state);
-                var listener = this.mTabListeners[this.mPanelContainer.selectedIndex];
+                var listener = this.mTabListeners[this.mTabContainer.selectedIndex];
                 if (listener.mIcon && 'onLinkIconAvailable' in p)
                   p.onLinkIconAvailable(listener.mIcon);
               }
@@ -764,14 +871,8 @@
             if (evt.target != this.contentDocument)
               return;
 
-            var i = 0;
-            for ( ; i < this.parentNode.childNodes.length; i++) {
-              if (this.parentNode.childNodes[i] == this)
-                break;
-            }
-
             var tabBrowser = this.parentNode.parentNode.parentNode;
-            var tab = tabBrowser.mTabContainer.childNodes[i];
+            var tab = document.getAnonymousElementByAttribute(tabBrowser, "linkedpanel", this.id);
 
             tabBrowser.setTabTitle(tab);
 
@@ -785,7 +886,7 @@
         <parameter name="aTab"/>
         <body>
           <![CDATA[
-            var browser = this.getBrowserForTab(aTab);
+            var browser = aTab.linkedBrowser;
             var title = browser.contentTitle;
             var crop = "end";
 
@@ -827,9 +928,9 @@
       <method name="setStripVisibilityTo">
         <parameter name="aShow"/>
         <body>
-        <![CDATA[
-          this.mStrip.collapsed = !aShow;
-        ]]>
+          <![CDATA[
+            this.mStrip.collapsed = !aShow;
+          ]]>
         </body>
       </method>
 
@@ -844,8 +945,11 @@
         <parameter name="aReferrerURI"/>
         <parameter name="aCharset"/>
         <parameter name="aFocusNewTab"/>
+        <parameter name="aFlags"/>
         <body>
           <![CDATA[
+            this._browsers = null; // invalidate cache
+
             var t = document.createElementNS("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
                                              "tab");
 
@@ -868,20 +972,20 @@
 
             var b = document.createElementNS("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
                                              "browser");
-            b.setAttribute("type", "content");
+            b.setAttribute("type", "content-targetable");
             b.setAttribute("contextmenu", this.getAttribute("contentcontextmenu"));
             b.setAttribute("tooltip", this.getAttribute("contenttooltip"));
 
             this.mPanelContainer.appendChild(b);
 
-            b.addEventListener("DOMTitleChanged", this.onTitleChanged, false);
+            b.addEventListener("DOMTitleChanged", this.onTitleChanged, true);
 
             this.mStrip.collapsed = false;
 
             this.mPrefs.setBoolPref("browser.tabs.forceHide", false);
 
             // wire up a progress listener for the new browser object.
-            var position = this.mTabContainer.childNodes.length-1;
+            var position = this.mTabs.length - 1;
             var tabListener = this.mTabProgressListener(t, b, blank);
             const filter = Components.classes["@mozilla.org/appshell/component/browser-status-filter;1"]
                                      .createInstance(Components.interfaces.nsIWebProgress);
@@ -890,12 +994,19 @@
             this.mTabListeners[position] = tabListener;
             this.mTabFilters[position] = filter;
 
+            var uniqueId = "panel" + this.nextTabNumber++;
+            b.id = uniqueId;
+            t.linkedPanel = uniqueId;
+            t.linkedBrowser = b;
+            if (t.previousSibling.selected)
+              t.setAttribute("afterselected", true);
+
             if (!blank) {
               // pretend the user typed this so it'll be available till
               // the document successfully loads
               b.userTypedValue = aURI;
 
-              b.loadURI(aURI, aReferrerURI, aCharset);
+              b.loadURIWithFlags(aURI, aFlags, aReferrerURI, aCharset);
             }
 
             if (aFocusNewTab) {
@@ -917,7 +1028,7 @@
         <parameter name="aTab"/>
         <body>
           <![CDATA[
-            var numTabs = this.mTabContainer.childNodes.length;
+            var numTabs = this.mTabs.length;
 
             if (numTabs > 1) {
               const closeOtherTabsPref = "browser.tabs.warnOnCloseOther";
@@ -954,11 +1065,9 @@
                 else
                   this.mTabContainer.selectedItem = aTab;
 
-                var childNodes = this.mTabContainer.childNodes;
-
-                for (var i = childNodes.length - 1; i >= 0; --i) {
-                  if (childNodes[i] != aTab)
-                    this.removeTab(childNodes[i]);
+                for (var i = this.mTabs.length - 1; i >= 0; --i) {
+                  if (this.mTabs[i] != aTab)
+                    this.removeTab(this.mTabs[i]);
                 }
               }
             }
@@ -978,68 +1087,57 @@
         <parameter name="aTab"/>
         <body>
           <![CDATA[
+            this._browsers = null; // invalidate cache
+
             if (aTab.localName != "tab")
               aTab = this.mCurrentTab;
 
-            var l = this.mTabContainer.childNodes.length;
-            if (l == 1) {
-              // hide the tab bar
-              this.mPrefs.setBoolPref("browser.tabs.forceHide", true);
-              this.mStrip.collapsed = true;
-              return;
-            }
+            var l = this.mTabs.length;
 
-            var ds = this.getBrowserForTab(aTab).docShell;
+            var ds = aTab.linkedBrowser.docShell;
 
             if (ds.contentViewer && !ds.contentViewer.permitUnload())
               return;
 
-            if (l == 2) {
+            if (l == 1) {
+              // add a new blank tab to replace the one we're about to close
+              // (this ensures that the remaining tab is as good as new)
+              this.addTab("about:blank");
+              l++;
+            }
+            else if (l == 2) {
               if (this.mPrefs.getBoolPref("browser.tabs.autoHide"))
                 this.mStrip.collapsed = true;
             }
 
-            var index = -1;
-            if (this.mCurrentTab == aTab)
-              index = this.mPanelContainer.selectedIndex;
-            else {
-              // Find and locate the tab in our list.
-              for (var i = 0; i < l; i++)
-                if (this.mTabContainer.childNodes[i] == aTab)
-                  index = i;
-            }
+            var index = this.getTabIndex(aTab);
 
             // Remove the tab's filter and progress listener.
             const filter = this.mTabFilters[index];
-            var oldBrowser = this.mPanelContainer.childNodes[index];
+            var oldBrowser = aTab.linkedBrowser;
             oldBrowser.webProgress.removeProgressListener(filter);
             filter.removeProgressListener(this.mTabListeners[index]);
             this.mTabFilters.splice(index, 1);
             this.mTabListeners.splice(index, 1);
 
             // Remove our title change listener
-            oldBrowser.removeEventListener("DOMTitleChanged", this.onTitleChanged, false);
+            oldBrowser.removeEventListener("DOMTitleChanged", this.onTitleChanged, true);
 
             // We are no longer the primary content area.
-            oldBrowser.setAttribute("type", "content");
+            oldBrowser.setAttribute("type", "content-targetable");
 
             // Now select the new tab before nuking the old one.
-            var currentIndex = this.mPanelContainer.selectedIndex;
+            var currentIndex = this.mTabContainer.selectedIndex;
 
             var newIndex = -1;
             if (currentIndex > index)
-              newIndex = currentIndex-1;
+              newIndex = currentIndex - 1;
             else if (currentIndex < index)
               newIndex = currentIndex;
             else if (index == l - 1)
-              newIndex = index-1;
+              newIndex = index - 1;
             else
               newIndex = index;
-
-            var oldTab = aTab;
-
-            // clean up the before/afterselected attributes before removing the tab
-            oldTab.selected = false;
 
             // Because of the way XBL works (fields just set JS
             // properties on the element) and the code we have in place
@@ -1052,24 +1150,29 @@
             if (oldBrowser == this.mCurrentBrowser)
               this.mCurrentBrowser = null;
 
-            this.mTabContainer.removeChild(oldTab);
-            this.mPanelContainer.removeChild(oldBrowser);
+            // Clean up before/afterselected attributes before removing the tab
+            aTab.selected = false;
+            this.mTabContainer.removeChild(aTab);
 
             // When the current tab is removed select a new tab
             // and fire select events on tabpanels and tabs
-            if (this.mPreviousTab && (oldTab == this.mCurrentTab))
+            if (this.mPreviousTab && (aTab == this.mCurrentTab))
               this.selectedTab = this.mPreviousTab;
             else {
               this.mTabContainer.selectedIndex = newIndex;
 
-              // When removing a tab to the left of the current tab
-              // fix up the panel index without firing any events
-              this.mPanelContainer.selectedIndex = newIndex;
-              
               // We need to explicitly clear this, because updateCurrentBrowser
               // doesn't get called for a background tab
               this.mPreviousTab = null;
             }
+
+            // The pagehide event that this removal triggers is safe
+            // because the browser is no longer current at this point
+            this.mPanelContainer.removeChild(oldBrowser);
+
+            // Fix up the selected panel in the case the removed
+            // browser was to the left of the current browser
+            this.mTabBox.selectedPanel = this.selectedTab.linkedBrowser;
           ]]>
         </body>
       </method>
@@ -1096,7 +1199,7 @@
             if (aTab.localName != "tab")
               aTab = this.mCurrentTab;
 
-            this.getBrowserForTab(aTab).reload();
+            aTab.linkedBrowser.reload();
           ]]>
         </body>
       </method>
@@ -1128,18 +1231,24 @@
       <method name="getBrowserForTab">
         <parameter name="aTab"/>
         <body>
-        <![CDATA[
-          if (this.mCurrentTab == aTab)
-            return this.mCurrentBrowser;
+          <![CDATA[
+            if (aTab.localName != "tab")
+              return null;
+            return aTab.linkedBrowser;
+          ]]>
+        </body>
+      </method>
 
-          for (var i = 0; i < this.mTabContainer.childNodes.length; i++) {
-            if (this.mTabContainer.childNodes[i] == aTab) {
-              return this.mPanelContainer.childNodes[i];
-            }
-          }
+      <method name="getTabIndex">
+        <parameter name="aTab"/>
+        <body>
+          <![CDATA[
+            for (var i = 0; i < this.mTabs.length; ++i)
+              if (this.mTabs[i] == aTab) 
+                return i;
 
-          return null;
-        ]]>
+            throw Components.results.NS_ERROR_ILLEGAL_VALUE;
+          ]]>
         </body>
       </method>
 
@@ -1166,27 +1275,106 @@
                 onget="return this.mCurrentBrowser;"
                 readonly="true"/>
 
-
-      <property name="browsers"
-                onget="return this.mPanelContainer.childNodes;"
-                readonly="true"/>
+      <property name="browsers" readonly="true">
+        <getter>
+          <![CDATA[
+            if (!this._browsers) {
+              var browsers = [];
+              browsers.item = function(i) {return this[i];}
+              for (var i = 0; i < this.mTabs.length; i++)
+                browsers.push(this.mTabs[i].linkedBrowser);
+              this._browsers = browsers;
+            }
+            return this._browsers;
+          ]]>
+        </getter>
+      </property>
 
       <!-- Drag and drop observer API -->
-      <!--<method name="onDragStart">
+      <method name="onDragStart">
         <parameter name="aEvent"/>
         <parameter name="aXferData"/>
         <parameter name="aDragAction"/>
-        <body/>
-      </method>-->
+        <body>
+          <![CDATA[
+            if (aEvent.target.localName == "tab") {
+              aXferData.data = new TransferData();
+
+              var URI = aEvent.target.linkedBrowser.currentURI;
+              var title = aEvent.target.linkedBrowser.contentTitle || URI.spec;
+              aXferData.data.addDataForFlavour("text/unicode", URI.spec);
+              aXferData.data.addDataForFlavour("text/x-moz-url", URI.spec + "\n" + title);
+              aXferData.data.addDataForFlavour("text/html", '<a href="' + URI.spec + '">' + title + '</a>');
+            }
+          ]]>
+        </body>
+      </method>
+
+      <method name="canDrop">
+        <parameter name="aEvent"/>
+        <parameter name="aDragSession"/>
+        <body>
+          <![CDATA[
+            if (aDragSession.sourceNode &&
+                aDragSession.sourceNode.parentNode == this.mTabContainer) {
+              var newIndex = this.getDropIndex(aEvent);
+              var tabIndex = this.getTabIndex(aDragSession.sourceNode);
+              if (newIndex == tabIndex || newIndex == tabIndex + 1)
+                return false;
+            }
+            return true;
+          ]]>
+        </body>
+      </method>
 
       <method name="onDragOver">
         <parameter name="aEvent"/>
         <parameter name="aFlavour"/>
         <parameter name="aDragSession"/>
         <body>
-        <![CDATA[
-          return; // Just having this makes our feedback correct.
-        ]]>
+          <![CDATA[
+            var ib = document.getAnonymousElementByAttribute(this, "class", "tab-drop-indicator-bar");
+
+            if (!aDragSession.canDrop) {
+              ib.hidden = true;
+              return;
+            }
+
+            var ind = document.getAnonymousElementByAttribute(this, "class", "tab-drop-indicator");
+
+            var newIndexOn = aDragSession.sourceNode &&
+                             aDragSession.sourceNode.parentNode == this.mTabContainer ?
+                             -1 : this.getDropOnIndex(aEvent);
+
+            var ltr = window.getComputedStyle(this, null).direction == "ltr";
+            var arrowX, tabBoxObject;
+            if (newIndexOn != -1) {
+              tabBoxObject = this.mTabs[newIndexOn].boxObject;
+              arrowX = tabBoxObject.x + tabBoxObject.width / 2;
+            }
+            else {
+              var newIndexBetween = this.getDropIndex(aEvent);
+              if (newIndexBetween == this.mTabs.length) {
+                tabBoxObject = this.mTabs[this.mTabs.length - 1].boxObject;
+                arrowX = tabBoxObject.x;
+                if (ltr) // for LTR "after" is on the right-hand side of the tab
+                  arrowX += tabBoxObject.width;
+              }
+              else {
+                tabBoxObject = this.mTabs[newIndexBetween].boxObject;
+                arrowX = tabBoxObject.x;
+                if (!ltr) // for RTL "before" is on the right-hand side of the tab
+                  arrowX += tabBoxObject.width;
+              }
+            }
+
+            if (ltr)
+              ind.style.marginLeft = (arrowX - this.boxObject.x) + "px";
+            else
+              ind.style.marginRight = (this.boxObject.x + this.boxObject.width - arrowX) + "px";
+
+            ib.hidden = false;
+          ]]>
         </body>
       </method>
 
@@ -1196,47 +1384,226 @@
         <parameter name="aDragSession"/>
         <body>
           <![CDATA[
-            var url = transferUtils.retrieveURLFromData(aXferData.data, aXferData.flavour.contentType);
+            var newIndex = this.getDropIndex(aEvent);
+            var tabIndex;
+            if (aDragSession.sourceNode &&
+                aDragSession.sourceNode.parentNode == this.mTabContainer) {
+              tabIndex = this.getTabIndex(aDragSession.sourceNode);
+              if (newIndex > tabIndex)
+                newIndex--;
+              this.moveTabTo(tabIndex, newIndex);
+            } else {
+              var url = transferUtils.retrieveURLFromData(aXferData.data, aXferData.flavour.contentType);
 
-            // valid urls don't contain spaces ' '; if we have a space it isn't a valid url.
-            // also disallow javascript: and data: urls--bail out
-            if (!url || !url.length || url.indexOf(" ", 0) != -1 ||
-                /^\s*(javascript|data):/.test(url))
+              // valid urls don't contain spaces ' '; if we have a space it isn't a valid url.
+              // Also disallow dropping javascript: or data: urls--bail out
+              if (!url || !url.length || url.indexOf(" ", 0) != -1 ||
+                  /^\s*(javascript|data):/.test(url))
+                return;
+
+              // Perform a security check before loading the URI
+              nsDragAndDrop.dragDropSecurityCheck(aEvent, aDragSession, url);
+
+              var bgLoad = this.mPrefs.getBoolPref("browser.tabs.loadInBackground");
+
+              var tab = null;
+              tabIndex = this.getDropOnIndex(aEvent);
+              if (tabIndex != -1) {
+                // Load in an existing tab
+                tab = this.mTabs[tabIndex];
+                tab.linkedBrowser.loadURI(getShortcutOrURI(url));
+                if (this.mCurrentTab != tab && !bgLoad)
+                  this.selectedTab = tab;
+              }
+              else if (aDragSession.sourceDocument &&
+                       aDragSession.sourceDocument.defaultView.top == content) {
+                // We're adding a new tab, and we may want parent-tab tracking
+                tab = this.addTab(getShortcutOrURI(url), null, null, !bgLoad);
+                if (newIndex != this.mTabs.length - 1)
+                  this.moveTabTo(this.mTabs.length - 1, newIndex);
+              }
+              else {
+                // We're adding a new tab, but do not want parent-tab tracking
+                tab = this.addTab(getShortcutOrURI(url));
+                if (newIndex != this.mTabs.length - 1)
+                  this.moveTabTo(this.mTabs.length - 1, newIndex);
+                if (this.mCurrentTab != tab && !bgLoad)
+                  this.selectedTab = tab;
+              }
+            }
+          ]]>
+        </body>
+      </method>
+
+      <method name="onDragExit">
+        <parameter name="aEvent"/>
+        <parameter name="aDragSession"/>
+        <body>
+          <![CDATA[
+            var target = aEvent.relatedTarget;
+            while (target && target != this.mStrip)
+              target = target.parentNode;
+
+            if (target)
               return;
 
-            // Perform a security check before loading the URI
-            nsDragAndDrop.dragDropSecurityCheck(aEvent, aDragSession, url);
-
-            var bgLoad = this.mPrefs.getBoolPref("browser.tabs.loadInBackground");
-
-            var tab = null;
-            if (aEvent.originalTarget.localName != "tab") {
-              // We're adding a new tab.
-              tab = this.addTab(getShortcutOrURI(url));
-            }
-            else {
-              // Load in an existing tab.
-              tab = aEvent.originalTarget;
-              this.getBrowserForTab(tab).loadURI(getShortcutOrURI(url));
-            }
-            if (this.mCurrentTab != tab && !bgLoad)
-              this.selectedTab = tab;
+            document.getAnonymousElementByAttribute(this, "class",
+                                                    "tab-drop-indicator-bar")
+                    .hidden = true;
           ]]>
         </body>
       </method>
 
       <method name="getSupportedFlavours">
         <body>
-        <![CDATA[
-          var flavourSet = new FlavourSet();
-          flavourSet.appendFlavour("text/x-moz-url");
-          flavourSet.appendFlavour("text/unicode");
-          flavourSet.appendFlavour("application/x-moz-file", "nsIFile");
-          return flavourSet;
-        ]]>
+          <![CDATA[
+            var flavourSet = new FlavourSet();
+            flavourSet.appendFlavour("text/x-moz-url");
+            flavourSet.appendFlavour("text/unicode");
+            flavourSet.appendFlavour("application/x-moz-file", "nsIFile");
+            return flavourSet;
+          ]]>
         </body>
       </method>
 
+      <method name="moveTabTo">
+        <parameter name="aSrcIndex"/>
+        <parameter name="aDestIndex"/>
+        <body>
+          <![CDATA[
+            this._browsers = null; // invalidate cache
+
+            // for compatibility with extensions
+            if (typeof(aSrcIndex) != "number")
+              aSrcIndex = this.getTabIndex(aSrcIndex);
+
+            this.mTabFilters.splice(aDestIndex, 0, this.mTabFilters.splice(aSrcIndex, 1)[0]);
+            this.mTabListeners.splice(aDestIndex, 0, this.mTabListeners.splice(aSrcIndex, 1)[0]);
+
+            this.mCurrentTab.selected = false;
+
+            if (aDestIndex >= aSrcIndex)
+              ++aDestIndex;
+            var tab = this.mTabContainer.insertBefore(this.mTabs[aSrcIndex], this.mTabs.item(aDestIndex));
+
+            this.mCurrentTab.selected = true;
+
+            return tab;
+          ]]>
+        </body>
+      </method>
+
+      <method name="getDropIndex">
+        <parameter name="aEvent"/>
+        <body>
+          <![CDATA[     
+            for (var i = 0; i < this.mTabs.length; ++i) {
+              var coord = this.mTabs[i].boxObject.x +
+                          this.mTabs[i].boxObject.width / 2;
+              if (window.getComputedStyle(this, null).direction == "ltr") {
+                if (aEvent.clientX < coord) 
+                  return i;
+              } else {
+                if (aEvent.clientX > coord) 
+                  return i;
+              }
+            }
+
+            return this.mTabs.length;
+          ]]>
+        </body>
+      </method>
+
+      <method name="getDropOnIndex">
+        <parameter name="aEvent"/>
+        <body>
+          <![CDATA[     
+            for (var i = 0; i < this.mTabs.length; ++i) {
+              var tabBoxObject = this.mTabs[i].boxObject;
+              if (aEvent.clientX > tabBoxObject.x + tabBoxObject.width * .25 &&
+                  aEvent.clientX < tabBoxObject.x + tabBoxObject.width * .75)
+                return i;
+            }
+
+            return -1;
+          ]]>
+        </body>
+      </method>
+
+      <method name="moveTabLeft">
+        <body>
+          <![CDATA[
+            if (window.getComputedStyle(this, null).direction == "ltr")
+              this.moveTabBackward();
+            else
+              this.moveTabForward();
+          ]]>
+        </body>
+      </method>
+
+      <method name="moveTabRight">
+        <body>
+          <![CDATA[
+            if (window.getComputedStyle(this, null).direction == "ltr")
+              this.moveTabForward();
+            else
+              this.moveTabBackward();
+          ]]>
+        </body>
+      </method>
+
+      <method name="moveTabForward">
+        <body>
+          <![CDATA[
+            var tabPos = this.mTabContainer.selectedIndex;
+            if (tabPos < this.browsers.length - 1) {
+              this.moveTabTo(tabPos, tabPos + 1);
+              this.mCurrentTab.focus();
+            }
+            else if (this.arrowKeysShouldWrap)
+              this.moveTabToStart();
+          ]]>
+        </body>
+      </method>
+
+      <method name="moveTabBackward">
+        <body>
+          <![CDATA[
+            var tabPos = this.mTabContainer.selectedIndex;
+            if (tabPos > 0) {
+              this.moveTabTo(tabPos, tabPos - 1);
+              this.mCurrentTab.focus();
+            }
+            else if (this.arrowKeysShouldWrap)
+              this.moveTabToEnd();
+          ]]>
+        </body>
+      </method>
+
+      <method name="moveTabToStart">
+        <body>
+          <![CDATA[
+            var tabPos = this.mTabContainer.selectedIndex;
+            if (tabPos > 0) {
+              this.moveTabTo(tabPos, 0);
+              this.mCurrentTab.focus();
+            }
+          ]]>
+        </body>
+      </method>
+      
+      <method name="moveTabToEnd">
+        <body>
+          <![CDATA[
+            var tabPos = this.mTabContainer.selectedIndex;
+            if (tabPos < this.browsers.length - 1) {
+              this.moveTabTo(tabPos, this.browsers.length - 1);
+              this.mCurrentTab.focus();
+            }
+          ]]>
+        </body>
+      </method>
+      
       <field name="backBrowserGroup">
         []
       </field>
@@ -1270,11 +1637,12 @@
               }
             }
             if (i < oldCount) {
+              var firstTab = this.mTabContainer.firstChild;
               var browserData = {
-                sessionHistory : this.mPanelContainer.firstChild.sessionHistory
+                sessionHistory : firstTab.linkedBrowser.sessionHistory
               }
               oldBrowserGroup.push(browserData);
-              this.removeTab(this.mTabContainer.firstChild);
+              this.removeTab(firstTab);
             }
           }
           return oldBrowserGroup;
@@ -1304,9 +1672,9 @@
 
           var tab;
           if (this.mPrefs.getIntPref("browser.tabs.loadGroup") == 0) {
-            var oldCount = this.mTabContainer.childNodes.length;
+            var oldCount = this.mTabs.length;
             this.appendGroup(aGroup);
-            tab = this.mTabContainer.childNodes[oldCount];
+            tab = this.mTabs[oldCount];
           } else {
             this.backBrowserGroup = this.replaceGroup(aGroup);
             this.forwardBrowserGroup = [];
@@ -1518,9 +1886,15 @@
           this.mCurrentTab = this.mTabContainer.firstChild;
           document.addEventListener("keypress", this._keyEventHandler, false);
           this.mTabBox.handleCtrlTab = !/Mac/.test(navigator.platform);
+          this.arrowKeysShouldWrap = /Mac/.test(navigator.platform);
+
+          var uniqueId = "panel" + this.nextTabNumber++;
+          this.mPanelContainer.childNodes[0].id = uniqueId;
+          this.mTabs[0].linkedPanel = uniqueId;
+          this.mTabs[0].linkedBrowser = this.mPanelContainer.childNodes[0];
 
           // Wire up the first title change listener.
-          this.mCurrentBrowser.addEventListener("DOMTitleChanged", this.onTitleChanged, false);
+          this.mCurrentBrowser.addEventListener("DOMTitleChanged", this.onTitleChanged, true);
 
           // Ensure the browser's session history and security UI are wired up
           this.mCurrentBrowser.init();
@@ -1552,7 +1926,7 @@
             this.mTabFilters[i].removeProgressListener(this.mTabListeners[i]);
             this.mTabFilters[i] = null;
             this.mTabListeners[i] = null;
-            this.mPanelContainer.childNodes[i].removeEventListener("DOMTitleChanged", this.onTitleChanged, false);
+            this.mPanelContainer.childNodes[i].removeEventListener("DOMTitleChanged", this.onTitleChanged, true);
           }
           document.removeEventListener("keypress", this._keyEventHandler, false);
         ]]>
@@ -1562,9 +1936,9 @@
     <handlers>
       <handler event="select" action="if (event.originalTarget == this.mPanelContainer) this.updateCurrentBrowser();"/>
 
-      <handler event="DOMLinkAdded" action="this.onLinkAdded(event);"/>
+      <handler event="DOMLinkAdded" phase="capturing" action="this.onLinkAdded(event);"/>
 
-      <handler event="DOMWindowClose">
+      <handler event="DOMWindowClose" phase="capturing">
         <![CDATA[
           if (!event.isTrusted)
             return;
@@ -1577,11 +1951,11 @@
             if (browsers[i].contentWindow == event.target)
               break;
           }
-          this.removeTab(this.mTabContainer.childNodes[i]);
+          this.removeTab(this.mTabs[i]);
           event.preventDefault();
         ]]>
       </handler>
-      <handler event="DOMWillOpenModalDialog">
+      <handler event="DOMWillOpenModalDialog" phase="capturing">
         <![CDATA[
           if (!event.isTrusted)
             return;
@@ -1592,13 +1966,20 @@
           const browsers = this.browsers;
           for (var i = 0; i < browsers.length; ++i) {
             if (browsers[i].contentWindow == event.target.top) {
-              this.selectedTab = this.mTabContainer.childNodes[i];
+              this.selectedTab = this.mTabs[i];
 
               break;
             }
           }
         ]]>
       </handler>
+
+      <handler event="keypress" keycode="VK_LEFT" modifiers="accel" action="if (event.target == this) { this.moveTabLeft(); event.preventDefault(); }"/>
+      <handler event="keypress" keycode="VK_RIGHT" modifiers="accel" action="if (event.target == this) { this.moveTabRight(); event.preventDefault(); }"/>
+      <handler event="keypress" keycode="VK_UP" modifiers="accel" action="if (event.target == this) { this.moveTabBackward(); event.preventDefault(); }"/>
+      <handler event="keypress" keycode="VK_DOWN" modifiers="accel" action="if (event.target == this) { this.moveTabForward(); event.preventDefault(); }"/>
+      <handler event="keypress" keycode="VK_HOME" modifiers="accel" action="if (event.target == this) { this.moveTabToStart(); event.preventDefault(); }"/>
+      <handler event="keypress" keycode="VK_END" modifiers="accel" action="if (event.target == this) { this.moveTabToEnd(); event.preventDefault(); }"/>
     </handlers>
   </binding>
 

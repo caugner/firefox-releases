@@ -182,6 +182,9 @@ nsresult nsMailboxService::FetchMessage(const char* aMessageURI,
   nsMailboxAction actionToUse = mailboxAction;
   
   nsCOMPtr <nsIURI> url;
+
+  nsCAutoString uriString(aMessageURI);
+
   if (!strncmp(aMessageURI, "file:", 5))
   {
     PRInt64 fileSize;
@@ -222,7 +225,18 @@ nsresult nsMailboxService::FetchMessage(const char* aMessageURI,
   }
   else
   {
-    rv = PrepareMessageUrl(aMessageURI, aUrlListener, actionToUse , getter_AddRefs(mailboxurl), aMsgWindow);
+
+    // this happens with forward inline of message/rfc822 attachment
+    // opened in a stand-alone msg window.
+    PRInt32 typeIndex = typeIndex = uriString.Find("&type=application/x-message-display");
+    if (typeIndex != kNotFound)
+    {
+      uriString.Cut(typeIndex, sizeof("&type=application/x-message-display") - 1);
+      rv = NS_NewURI(getter_AddRefs(url), uriString.get());
+      mailboxurl = do_QueryInterface(url);
+    }
+    else
+      rv = PrepareMessageUrl(aMessageURI, aUrlListener, actionToUse , getter_AddRefs(mailboxurl), aMsgWindow);
   
     if (NS_SUCCEEDED(rv))
     {
@@ -255,7 +269,7 @@ nsresult nsMailboxService::FetchMessage(const char* aMessageURI,
   else
     rv = RunMailboxUrl(url, aDisplayConsumer); 
  
-  if (aURL)
+  if (aURL && mailboxurl)
     mailboxurl->QueryInterface(NS_GET_IID(nsIURI), (void **) aURL);
   
   return rv;
@@ -319,17 +333,6 @@ NS_IMETHODIMP nsMailboxService::OpenAttachment(const char *aContentType,
 {
   nsCOMPtr <nsIURI> URL;
   nsCAutoString urlString(aUrl);
-  // strip out ?type=application/x-message-display because it confuses libmime
-
-  PRInt32 typeIndex = urlString.Find("?type=application/x-message-display");
-  if (typeIndex != kNotFound)
-  {
-    urlString.Cut(typeIndex, sizeof("?type=application/x-message-display") - 1);
-    // we also need to replace the next '&' with '?'
-    PRInt32 firstPartIndex = urlString.FindChar('&');
-    if (firstPartIndex != kNotFound)
-      urlString.SetCharAt('?', firstPartIndex);
-  }
   urlString += "&type=";
   urlString += aContentType;
   urlString += "&filename=";
@@ -390,7 +393,8 @@ nsMailboxService::SaveMessageToDisk(const char *aMessageURI,
 
 NS_IMETHODIMP nsMailboxService::GetUrlForUri(const char *aMessageURI, nsIURI **aURL, nsIMsgWindow *aMsgWindow)
 {
-  if (!strncmp(aMessageURI, "file:", 5))
+  if (!strncmp(aMessageURI, "file:", 5) || PL_strstr(aMessageURI, "type=application/x-message-display")
+    || !strncmp(aMessageURI, "mailbox:", 8))
     return NS_NewURI(aURL, aMessageURI);
 
   nsresult rv = NS_OK;
@@ -453,7 +457,7 @@ nsresult nsMailboxService::PrepareMessageUrl(const char * aSrcMsgMailboxURI, nsI
       nsFilePath filePath(folderPath); // convert to file url representation...
       nsCAutoString buf;
       NS_EscapeURL((const char *)filePath,-1,
-                   esc_Minimal|esc_Forced|esc_AlwaysCopy,buf);
+                   esc_Directory|esc_Forced|esc_AlwaysCopy,buf);
       if (mPrintingOperation)
         urlSpec = PR_smprintf("mailbox://%s?number=%d&header=print", buf.get(), msgKey);
       else if (part)
@@ -558,6 +562,7 @@ NS_IMETHODIMP nsMailboxService::NewURI(const nsACString &aSpec,
 
 NS_IMETHODIMP nsMailboxService::NewChannel(nsIURI *aURI, nsIChannel **_retval)
 {
+  NS_ENSURE_ARG_POINTER(aURI);
   nsresult rv = NS_OK;
   nsMailboxProtocol * protocol = new nsMailboxProtocol(aURI);
   if (protocol)

@@ -1559,7 +1559,7 @@ nsCSSStyleSheet::SetOwningDocument(nsIDocument* aDocument)
   mDocument = aDocument;
   // Now set the same document on all our child sheets....
   for (nsCSSStyleSheet* child = mFirstChild; child; child = child->mNext) {
-    child->mDocument = aDocument;
+    child->SetOwningDocument(aDocument);
   }
   return NS_OK;
 }
@@ -2728,10 +2728,30 @@ RuleProcessorData::~RuleProcessorData()
 {
   MOZ_COUNT_DTOR(RuleProcessorData);
 
-  if (mPreviousSiblingData)
-    mPreviousSiblingData->Destroy(mPresContext);
-  if (mParentData)
-    mParentData->Destroy(mPresContext);
+  // Destroy potentially long chains of previous sibling and parent data
+  // without more than one level of recursion.
+  if (mPreviousSiblingData || mParentData) {
+    nsAutoVoidArray destroyQueue;
+    destroyQueue.AppendElement(this);
+
+    do {
+      RuleProcessorData *d = NS_STATIC_CAST(RuleProcessorData*,
+        destroyQueue.FastElementAt(destroyQueue.Count() - 1));
+      destroyQueue.RemoveElementAt(destroyQueue.Count() - 1);
+
+      if (d->mPreviousSiblingData) {
+        destroyQueue.AppendElement(d->mPreviousSiblingData);
+        d->mPreviousSiblingData = nsnull;
+      }
+      if (d->mParentData) {
+        destroyQueue.AppendElement(d->mParentData);
+        d->mParentData = nsnull;
+      }
+
+      if (d != this)
+        d->Destroy(mPresContext);
+    } while (destroyQueue.Count());
+  }
 
   NS_IF_RELEASE(mStyledContent);
 
@@ -3157,6 +3177,12 @@ static PRBool SelectorMatches(RuleProcessorData &data,
     }
     else if (nsCSSPseudoClasses::mozReadWrite == pseudoClass->mAtom) {
       result = STATE_CHECK(NS_EVENT_STATE_MOZ_READWRITE);
+    }
+    else if (nsCSSPseudoClasses::mozIsHTML == pseudoClass->mAtom) {
+      result =
+        (data.mIsHTMLContent &&
+         data.mContent->GetNameSpaceID() == kNameSpaceID_None) ? localTrue :
+                                                                 localFalse;
     }
     else {
       NS_ERROR("CSS parser parsed a pseudo-class that we do not handle");

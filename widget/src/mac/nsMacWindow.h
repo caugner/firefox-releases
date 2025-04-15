@@ -59,7 +59,7 @@ class nsMacEventHandler;
 //-------------------------------------------------------------------------
 //	MacOS native window
 
-class nsMacWindow : public nsChildWindow, public nsIEventSink, public nsPIWidgetMac, 
+class nsMacWindow : public nsChildWindow, public nsIEventSink, public nsPIWidgetMac_MOZILLA_1_8_BRANCH,
                     public nsPIEventSinkStandalone, public nsIMacTextInputEventSink
 {
 private:
@@ -72,6 +72,7 @@ public:
     NS_DECL_ISUPPORTS_INHERITED
     NS_DECL_NSIEVENTSINK 
     NS_DECL_NSPIWIDGETMAC
+    NS_DECL_NSPIWIDGETMAC_MOZILLA_1_8_BRANCH
     NS_DECL_NSPIEVENTSINKSTANDALONE
     NS_DECL_NSIMACTEXTINPUTEVENTSINK
     
@@ -132,11 +133,10 @@ public:
     WindowPtr GetWindowTop(WindowPtr baseWindowRef);
     void UpdateWindowMenubar(WindowPtr parentWindow, PRBool enableFlag);
 
+    NS_IMETHOD              Update();
+
 protected:
   
-  void InstallBorderlessDefProc ( WindowPtr inWindow ) ;
-  void RemoveBorderlessDefProc ( WindowPtr inWindow ) ;
-
 	pascal static OSErr DragTrackingHandler ( DragTrackingMessage theMessage, WindowPtr theWindow, 
 										void *handlerRefCon, DragReference theDrag );
 	pascal static OSErr DragReceiveHandler (WindowPtr theWindow,
@@ -147,23 +147,39 @@ protected:
 
   pascal static OSStatus WindowEventHandler ( EventHandlerCallRef inHandlerChain, 
                                                EventRef inEvent, void* userData ) ;
-  pascal static OSStatus ScrollEventHandler ( EventHandlerCallRef inHandlerChain, 
-                                               EventRef inEvent, void* userData ) ;
+  pascal static OSStatus ScrollEventHandler(EventHandlerCallRef aHandlerCallRef,
+                                            EventRef            aEvent,
+                                            void*               aUserData);
+  pascal static OSStatus KeyEventHandler(EventHandlerCallRef aHandlerCallRef,
+                                         EventRef            aEvent,
+                                         void*               aUserData);
   nsresult GetDesktopRect(Rect* desktopRect);
 
 	PRPackedBool                    mWindowMadeHere; // true if we created the window
 	PRPackedBool                    mIsSheet;        // true if the window is a sheet (Mac OS X)
-	PRPackedBool                    mIgnoreDeactivate;  // true if this window has a (Mac OS X) sheet opening
 	PRPackedBool                    mAcceptsActivation;
 	PRPackedBool                    mIsActive;
 	PRPackedBool                    mZoomOnShow;
 	PRPackedBool                    mZooming;
 	PRPackedBool                    mResizeIsFromUs;    // we originated the resize, prevent infinite recursion
-  PRPackedBool                    mShown;             // whether the window was actually shown on screen
+	PRPackedBool                    mShown;             // whether the window was actually shown on screen
+	PRPackedBool                    mSheetNeedsShow;    // a sheet that wants to be displayed but isn't because a sibling sheet is open
+	PRPackedBool                    mSheetShown;
+	PRPackedBool			mInPixelMouseScroll;
 	Point                           mBoundsOffset;      // offset from window structure to content
 	auto_ptr<nsMacEventHandler>     mMacEventHandler;
 	nsIWidget                      *mOffsetParent;
+        nsCOMPtr<nsIWidget>             mDeathGripDuringTransition;
 	
+#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_3
+	PRPackedBool                    mNeedsResize;
+	struct {
+	  PRInt32      width;
+	  PRInt32      height;
+	  PRPackedBool repaint;
+	  PRPackedBool fromUI;
+	}                               mResizeTo;
+#endif
 };
 
 #endif // MacWindow_h__

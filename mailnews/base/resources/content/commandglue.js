@@ -176,6 +176,8 @@ function ChangeFolderByURI(uri, viewType, viewFlags, sortType, sortOrder)
   if (uri == gCurrentLoadingFolderURI)
     return;
 
+  SetUpToolbarButtons(uri);
+
   // hook for extra toolbar items
   var observerService = Components.classes["@mozilla.org/observer-service;1"].getService(Components.interfaces.nsIObserverService);
   observerService.notifyObservers(window, "mail:setupToolbarItems", uri);
@@ -211,16 +213,7 @@ function ChangeFolderByURI(uri, viewType, viewFlags, sortType, sortOrder)
   }
 
   // If the user clicks on msgfolder, time to display thread pane and message pane.
-  // Hide AccountCentral page
-  if (gAccountCentralLoaded)
-  {
-      HideAccountCentral();
-  }
-
-  if (gFakeAccountPageLoaded)
-  {
-      HideFakeAccountPage();
-  }
+  ShowThreadPane();
 
   gCurrentLoadingFolderURI = uri;
   gNextMessageAfterDelete = null; // forget what message to select, if any
@@ -363,9 +356,9 @@ function RerootFolder(uri, newFolder, viewType, viewFlags, sortType, sortOrder)
   // that should have initialized gDBView, now re-root the thread pane
   RerootThreadPane();
 
-  SetUpToolbarButtons(uri);
+  UpdateLocationBar(newFolder);
 
-  UpdateStatusMessageCounts(newFolder);
+  UpdateStatusMessageCounts(gMsgFolderSelected);
   
   UpdateMailToolbar("reroot folder in 3 pane");
   // hook for extra toolbar items
@@ -571,8 +564,8 @@ function ConvertColumnIDToSortType(columnID)
     case "threadCol":
       sortKey = nsMsgViewSortType.byThread;
       break;
-    case "labelCol":
-      sortKey = nsMsgViewSortType.byLabel;
+    case "tagsCol":
+      sortKey = nsMsgViewSortType.byTags;
       break;
     case "junkStatusCol":
       sortKey = nsMsgViewSortType.byJunkStatus;
@@ -624,8 +617,8 @@ function ConvertSortTypeToColumnID(sortKey)
     case nsMsgViewSortType.byStatus:
       columnID = "statusCol";
       break;
-    case nsMsgViewSortType.byLabel:
-      columnID = "labelCol";
+    case nsMsgViewSortType.byTags:
+      columnID = "tagsCol";
       break;
     case nsMsgViewSortType.bySize:
       columnID = "sizeCol";
@@ -680,6 +673,9 @@ function CreateBareDBView(originalView, msgFolder, viewType, viewFlags, sortType
   switch (viewType) {
       case nsMsgViewType.eShowQuickSearchResults:
           dbviewContractId += "quicksearch";
+          break;
+      case nsMsgViewType.eShowSearch:
+          dbviewContractId += "search";
           break;
       case nsMsgViewType.eShowThreadsWithUnread:
           dbviewContractId += "threadswithunread";
@@ -773,9 +769,14 @@ function ChangeMessagePaneVisibility(now_hidden)
     node.hidden = now_hidden;
 
   if (gDBView) {
+    // clear the subject, collapsing won't automatically do this
+    setTitleFromFolder(GetThreadPaneFolder(), null);
     // the collapsed state is the state after we released the mouse 
     // so we take it as it is
     gDBView.suppressMsgDisplay = now_hidden;
+    // set the subject, uncollapsing won't automatically do this
+    gDBView.loadMessageByUrl("about:blank");
+    gDBView.selectionChanged();
   }
   var event = document.createEvent('Events');
   if (now_hidden) {
@@ -787,18 +788,9 @@ function ChangeMessagePaneVisibility(now_hidden)
   document.getElementById("messengerWindow").dispatchEvent(event);
 }
 
-function OnMouseUpThreadAndMessagePaneSplitter()
+function OnClickThreadAndMessagePaneSplitter()
 {
-  // the collapsed state is the state after we released the mouse 
-  // so we take it as it is
   ChangeMessagePaneVisibility(IsMessagePaneCollapsed());
-}
-
-function OnClickThreadAndMessagePaneSplitterGrippy()
-{
-  // the collapsed state is the state when we clicked on the grippy
-  // not when afterwards, so we need to reverse this value
-  ChangeMessagePaneVisibility(!IsMessagePaneCollapsed());
 }
 
 function FolderPaneSelectionChange()
@@ -831,6 +823,7 @@ function FolderPaneSelectionChange()
 
         folderSelection.getRangeAt(0, startIndex, endIndex);
         var folderResource = GetFolderResource(folderTree, startIndex.value);
+        UpdateLocationBar(folderResource);
         var uriToLoad = folderResource.Value;
         var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
         if (msgFolder == gMsgFolderSelected)
@@ -867,9 +860,12 @@ function FolderPaneSelectionChange()
                 var msgDatabase = msgFolder.getMsgDatabase(msgWindow);
                 if (msgDatabase)
                 {
+                  gSearchSession = null;
                   var dbFolderInfo = msgDatabase.dBFolderInfo;
                   sortType = dbFolderInfo.sortType;
                   sortOrder = dbFolderInfo.sortOrder;
+                  viewType = dbFolderInfo.viewType;
+                  viewFlags = dbFolderInfo.viewFlags;
                   if (folderFlags & MSG_FOLDER_FLAG_VIRTUAL)
                   {
                     viewType = nsMsgViewType.eShowQuickSearchResults;
@@ -894,7 +890,6 @@ function FolderPaneSelectionChange()
                     }
                     else
                     {
-                      gSearchSession = null;
                       uriToLoad = srchFolderUri;
                       // we need to load the db for the actual folder so that many hdrs to download
                       // will return false...
@@ -906,12 +901,6 @@ function FolderPaneSelectionChange()
                       gVirtualFolderTerms = CreateGroupedSearchTerms(tempFilter.searchTerms);
 //                      gSearchInput.showingSearchCriteria = false;
                     }
-                  }
-                  else
-                  {
-                    gSearchSession = null;
-                    viewFlags = dbFolderInfo.viewFlags;
-                    viewType = dbFolderInfo.viewType;
                   }
                   msgDatabase = null;
                   dbFolderInfo = null;
@@ -1031,6 +1020,16 @@ function AddMailOfflineObserver()
 {
   var observerService = Components.classes["@mozilla.org/observer-service;1"].getService(Components.interfaces.nsIObserverService); 
   observerService.addObserver(mailOfflineObserver, "network:offline-status-changed", false);
+  
+  try {
+    // Stop automatic management of the offline status.
+    // XXX need to watch the link status changes and manage
+    // offline mode accordingly.
+    var ioService = Components.classes["@mozilla.org/network/io-service;1"].
+      getService(Components.interfaces.nsIIOService2);
+    ioService.manageOfflineStatus = false;
+  } catch (ex) {
+  }
 }
 
 function RemoveMailOfflineObserver()
@@ -1051,6 +1050,11 @@ function getSearchTermString(searchTerms)
     if (condition.length > 1)
       condition += ' ';
     
+    if (term.matchAll)
+    {
+        condition = "ALL";
+        break;
+    }
     condition += (term.booleanAnd) ? "AND (" : "OR (";
     condition += term.termAsString + ')';
   }
@@ -1159,6 +1163,7 @@ function CreateGroupedSearchTerms(searchTermsArray)
     var searchTermForQS = searchSession.createTerm();
     searchTermForQS.value = searchTerm.value;
     searchTermForQS.attrib = searchTerm.attrib;
+    searchTermForQS.arbitraryHeader = searchTerm.arbitraryHeader
     searchTermForQS.op = searchTerm.op;
 
     // mark the first node as a group

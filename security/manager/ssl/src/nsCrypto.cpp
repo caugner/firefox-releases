@@ -69,6 +69,7 @@
 #include "nsIDOMCryptoDialogs.h"
 #include "nsIFormSigningDialog.h"
 #include "nsIProxyObjectManager.h"
+#include "nsIJSContextStack.h"
 #include "jsapi.h"
 #include "jsdbgapi.h"
 #include <ctype.h>
@@ -98,6 +99,7 @@ NSSCleanupAutoPtrClass(PK11SlotInfo, PK11_FreeSlot)
 NSSCleanupAutoPtrClass(CERTCertNicknames, CERT_FreeNicknames)
 
 #include "nsNSSShutDown.h"
+#include "nsNSSCertHelper.h"
 
 /*
  * These are the most common error strings that are returned
@@ -150,6 +152,7 @@ class nsCryptoRunArgs : public nsISupports {
 public:
   nsCryptoRunArgs();
   virtual ~nsCryptoRunArgs();
+  nsCOMPtr<nsISupports> m_kungFuDeathGrip;
   JSContext *m_cx;
   JSObject  *m_scope;
   nsCOMPtr<nsIPrincipal> m_principals;
@@ -243,7 +246,7 @@ nsCrypto::~nsCrypto()
 NS_IMETHODIMP
 nsCrypto::SetEnableSmartCardEvents(PRBool aEnable)
 {
-  nsresult rv;
+  nsresult rv = NS_OK;
 
   // this has the side effect of starting the nssComponent (and initializing
   // NSS) even if it isn't already going. Starting the nssComponent is a 
@@ -285,7 +288,7 @@ cryptojs_GetScriptPrincipal(JSContext *cx, JSScript *script,
   }
   nsJSPrincipals *nsJSPrin = NS_STATIC_CAST(nsJSPrincipals *, jsp);
   *result = nsJSPrin->nsIPrincipalPtr;
-  if (!result) {
+  if (!*result) {
     return NS_ERROR_FAILURE;
   }
   NS_ADDREF(*result);
@@ -1408,7 +1411,15 @@ loser:
   return nsnull;;
 }
 
-                                                 
+static nsISupports *
+GetISupportsFromContext(JSContext *cx)
+{
+    if (JS_GetOptions(cx) & JSOPTION_PRIVATE_IS_NSISUPPORTS)
+        return NS_STATIC_CAST(nsISupports *, JS_GetContextPrivate(cx));
+
+    return nsnull;
+}
+
 //The top level method which is a member of nsIDOMCrypto
 //for generate a base64 encoded CRMF request.
 NS_IMETHODIMP
@@ -1447,7 +1458,7 @@ nsCrypto::GenerateCRMFRequest(nsIDOMCRMFObject** aReturn)
   /*
    * Get all of the parameters.
    */
-  if (((argc-5) % 3) != 0) {
+  if (argc < 5 || ((argc-5) % 3) != 0) {
     JS_ReportError(cx, "%s", "%s%s\n", JS_ERROR,
                   "incorrect number of parameters");
     return NS_ERROR_FAILURE;
@@ -1580,6 +1591,7 @@ nsCrypto::GenerateCRMFRequest(nsIDOMCRMFObject** aReturn)
   printf ("Created the folloing CRMF request:\n%s\n", encodedRequest);
 #endif
   if (!encodedRequest) {
+    nsFreeKeyPairInfo(keyids, numRequests);
     return NS_ERROR_FAILURE;
   }                                                    
   nsCRMFObject *newObject = new nsCRMFObject();
@@ -1615,6 +1627,7 @@ nsCrypto::GenerateCRMFRequest(nsIDOMCRMFObject** aReturn)
     return NS_ERROR_OUT_OF_MEMORY;
 
   args->m_cx         = cx;
+  args->m_kungFuDeathGrip = GetISupportsFromContext(cx);
   args->m_scope      = JS_GetParent(cx, script_obj);
   args->m_jsCallback.Adopt(jsCallback ? nsCRT::strdup(jsCallback) : 0);
   args->m_principals = principals;
@@ -1773,15 +1786,23 @@ nsCryptoRunnable::Run()
   if (NS_FAILED(rv))
     return NS_ERROR_FAILURE;
 
+  // make sure the right context is on the stack. must not return w/out popping
+  nsCOMPtr<nsIJSContextStack> stack(do_GetService("@mozilla.org/js/xpc/ContextStack;1"));
+  if (!stack || NS_FAILED(stack->Push(cx))) {
+    return NS_ERROR_FAILURE;
+  }
+
   jsval retval;
   if (JS_EvaluateScriptForPrincipals(cx, m_args->m_scope, principals,
                                      m_args->m_jsCallback, 
                                      strlen(m_args->m_jsCallback),
                                      nsnull, 0,
                                      &retval) != JS_TRUE) {
-    return NS_ERROR_FAILURE;
+    rv = NS_ERROR_FAILURE;
   }
-  return NS_OK;
+
+  stack->Pop(nsnull);
+  return rv;
 }
 
 //Quick helper function to check if a newly issued cert
@@ -1839,7 +1860,6 @@ nsCrypto::ImportUserCertificates(const nsAString& aNickname,
   nsNSSShutDownPreventionLock locker;
   char *nickname=nsnull, *cmmfResponse=nsnull;
   char *retString=nsnull;
-  char *freeString=nsnull;
   CMMFCertRepContent *certRepContent = nsnull;
   int numResponses = 0;
   nsIX509Cert **certArr = nsnull;
@@ -2020,14 +2040,11 @@ nsCrypto::ImportUserCertificates(const nsAString& aNickname,
     delete []certArr;
   }
   aReturn.Assign(NS_ConvertASCIItoUCS2(retString));
-  if (freeString != nsnull) {
-    PR_smprintf_free(freeString);
-  }
   if (nickname) {
-    nsCRT::free(nickname);
+    NS_Free(nickname);
   }
   if (cmmfResponse) {
-    nsCRT::free(cmmfResponse);
+    NS_Free(cmmfResponse);
   }
   if (certRepContent) {
     CMMF_DestroyCertRepContent(certRepContent);
@@ -2078,9 +2095,6 @@ void signTextOutputCallback(void *arg, const char *buf, unsigned long len)
 {
   ((nsCString*)arg)->Append(buf, len);
 }
-
-#define NICKNAME_EXPIRED_STRING " (expired)"
-#define NICKNAME_NOT_YET_VALID_STRING " (not yet valid)"
 
 NS_IMETHODIMP
 nsCrypto::SignText(const nsAString& aStringToSign, const nsAString& aCaOption,
@@ -2160,7 +2174,7 @@ nsCrypto::SignText(const nsAString& aStringToSign, const nsAString& aCaOption,
 
         return NS_OK;
       }
-      caNames[i] = JS_GetStringBytes(caName);
+      caNames[i - 2] = JS_GetStringBytes(caName);
     }
 
     if (certList &&
@@ -2236,9 +2250,8 @@ nsCrypto::SignText(const nsAString& aStringToSign, const nsAString& aCaOption,
     ++numberOfCerts;
   }
 
-  CERTCertNicknames* nicknames =
-    CERT_NicknameStringsFromCertList(certList, NICKNAME_EXPIRED_STRING,
-                                     NICKNAME_NOT_YET_VALID_STRING);
+  CERTCertNicknames* nicknames = getNSSCertNicknamesFromCertList(certList);
+
   if (!nicknames) {
     aResult.Append(internalError);
 
@@ -2522,7 +2535,8 @@ nsPkcs11::~nsPkcs11()
 PRBool
 confirm_user(const PRUnichar *message)
 {
-  PRBool confirmation = PR_FALSE;
+  PRInt32 buttonPressed = 1; // If the user exits by clicking the close box, assume No (button 1)
+
   nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
   nsCOMPtr<nsIPrompt> prompter;
   if (wwatch)
@@ -2531,11 +2545,16 @@ confirm_user(const PRUnichar *message)
   if (prompter) {
     nsPSMUITracker tracker;
     if (!tracker.isUIForbidden()) {
-      prompter->Confirm(0, message, &confirmation);
+      prompter->ConfirmEx(0, message,
+                          (nsIPrompt::BUTTON_DELAY_ENABLE) +
+                          (nsIPrompt::BUTTON_POS_1_DEFAULT) +
+                          (nsIPrompt::BUTTON_TITLE_OK * nsIPrompt::BUTTON_POS_0) +
+                          (nsIPrompt::BUTTON_TITLE_CANCEL * nsIPrompt::BUTTON_POS_1),
+                          nsnull, nsnull, nsnull, nsnull, nsnull, &buttonPressed);
     }
   }
 
-  return confirmation;
+  return (buttonPressed == 0);
 }
 
 //Delete a PKCS11 module from the user's profile.

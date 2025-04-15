@@ -1348,11 +1348,22 @@ nsBoxFrame::AttributeChanged(nsIContent* aChild,
   }
   else if (aAttribute == nsXULAtoms::ordinal) {
     nsBoxLayoutState state(GetPresContext()->PresShell());
+
+    nsIFrame* frameToMove = this;
+    if (GetStateBits() & NS_FRAME_OUT_OF_FLOW) {
+      GetPresContext()->PresShell()->GetPlaceholderFrameFor(this,
+                                                            &frameToMove);
+      NS_ASSERTION(frameToMove, "Out of flow without placeholder?");
+    }
     
     nsIBox* parent;
-    GetParentBox(&parent);
-    parent->RelayoutChildAtOrdinal(state, this);
-    parent->MarkDirty(state);
+    frameToMove->GetParentBox(&parent);
+    // If our parent is not a box, there's not much we can do... but in that
+    // case our ordinal doesn't matter anyway, so that's ok.
+    if (parent) {
+      parent->RelayoutChildAtOrdinal(state, frameToMove);
+      parent->MarkDirty(state);
+    }
   }
   // If the accesskey changed, register for the new value
   // The old value has been unregistered in nsXULElement::SetAttr
@@ -2565,9 +2576,8 @@ nsBoxFrame::RegUnregAccessKey(nsPresContext* aPresContext, PRBool aDoReg)
   return rv;
 }
 
-
 void
-nsBoxFrame::FireDOMEvent(const nsAString& aDOMEventName, nsIContent *aContent)
+nsBoxFrame::FireDOMEventSynch(const nsAString& aDOMEventName, nsIContent *aContent)
 {
   nsIContent *content = aContent ? aContent : mContent;
   if (content && mPresContext) {

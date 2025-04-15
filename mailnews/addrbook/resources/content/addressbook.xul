@@ -372,6 +372,13 @@
             <menuitem label="&importCmd.label;" accesskey="&importCmd.accesskey;" oncommand="toImport()"/>
             <menuitem label="&exportCmd.label;" accesskey="&exportCmd.accesskey;" oncommand="AbExport()"/>
             <menuseparator/>
+            <menuitem label="&allowOnlineCheck.label;"
+                      accesskey="&allowOnlineCheck.accesskey;"
+                      id="menu_allow_online_check"
+                      oncommand="onAllowOnlineCheck(event.target);"
+                      type="checkbox"
+                      checked="true"/>
+            <menuseparator/>
           </menupopup>
         </menu>
 
@@ -428,8 +435,10 @@
                accesskey="&SearchNameOrEmail.accesskey;"
                control="searchInput"/>
         <textbox id="searchInput" flex="1" 
-                oninput="onAbSearchInput(false);"
-                onkeypress="onAbSearchKeyPress(event);"
+                type="timed" timeout="800"
+                oninput="SearchInputChanged();"
+                oncommand="onEnterInSearchBar();"
+                onkeypress="if (event.keyCode == KeyEvent.DOM_VK_RETURN) this.select();"
                 onfocus="this.select();" onclick="this.select();"/>
         <button id="clear" label="&clearButton.label;" disabled="true"
                 accesskey="&clearButton.accesskey;"

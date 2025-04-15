@@ -135,7 +135,7 @@ NS_IMETHODIMP
 nsBoxObject::Init(nsIContent* aContent, nsIPresShell* aShell)
 {
   mContent = aContent;
-  mPresShell = aShell;
+  mPresShell = do_GetWeakReference(aShell);
   return NS_OK;
 }
 
@@ -144,10 +144,11 @@ nsBoxObject::SetDocument(nsIDocument* aDocument)
 {
   mPresState = nsnull;
   if (aDocument) {
-    mPresShell = aDocument->GetShellAt(0);
+    mPresShell = do_GetWeakReference(aDocument->GetShellAt(0));
   }
   else {
     mPresShell = nsnull;
+    mContent = nsnull;
   }
   return NS_OK;
 }
@@ -164,11 +165,24 @@ nsIFrame*
 nsBoxObject::GetFrame()
 {
   nsIFrame* frame = nsnull;
-  if (mPresShell) {
-    mPresShell->FlushPendingNotifications(Flush_Frames);
-    mPresShell->GetPrimaryFrameFor(mContent, &frame);
+  nsCOMPtr<nsIPresShell> shell = GetPresShell();
+  if (shell) {
+    shell->FlushPendingNotifications(Flush_Frames);
+    shell->GetPrimaryFrameFor(mContent, &frame);
   }
   return frame;
+}
+
+already_AddRefed<nsIPresShell>
+nsBoxObject::GetPresShell()
+{
+  if (!mPresShell) {
+    return nsnull;
+  }
+
+  nsIPresShell* shell = nsnull;
+  CallQueryReferent(mPresShell.get(), &shell);
+  return shell;
 }
 
 nsresult 
@@ -405,8 +419,23 @@ nsBoxObject::GetPropertyAsSupports(const PRUnichar* aPropertyName, nsISupports**
 NS_IMETHODIMP
 nsBoxObject::SetPropertyAsSupports(const PRUnichar* aPropertyName, nsISupports* aValue)
 {
-  if (!mPresState)
+#ifdef DEBUG
+  if (aValue) {
+    nsIFrame* frame;
+    CallQueryInterface(aValue, &frame);
+    NS_ASSERTION(!frame,
+                 "Calling SetPropertyAsSupports on a frame.  Prepare to crash "
+                 "and be exploited any time some random website decides to "
+                 "exploit you");
+  }
+#endif
+
+  NS_ENSURE_ARG(aPropertyName && *aPropertyName);
+  
+  if (!mPresState) {
     NS_NewPresState(getter_Transfers(mPresState));
+    NS_ENSURE_TRUE(mPresState, NS_ERROR_OUT_OF_MEMORY);
+  }
 
   nsDependentString propertyName(aPropertyName);
   return mPresState->SetStatePropertyAsSupports(propertyName, aValue);
@@ -415,6 +444,8 @@ nsBoxObject::SetPropertyAsSupports(const PRUnichar* aPropertyName, nsISupports* 
 NS_IMETHODIMP
 nsBoxObject::GetProperty(const PRUnichar* aPropertyName, PRUnichar** aResult)
 {
+  NS_ENSURE_ARG(aPropertyName && *aPropertyName);
+  
   if (!mPresState) {
     *aResult = nsnull;
     return NS_OK;
@@ -537,10 +568,6 @@ nsBoxObject::GetDocShell(nsIDocShell** aResult)
 {
   *aResult = nsnull;
 
-  if (!mPresShell) {
-    return NS_OK;
-  }
-
   nsIFrame *frame = GetFrame();
 
   if (frame) {
@@ -558,8 +585,18 @@ nsBoxObject::GetDocShell(nsIDocShell** aResult)
   // No nsIFrameFrame available for mContent, try if there's a mapping
   // between mContent's document to mContent's subdocument.
 
-  nsIDocument *sub_doc =
-    mPresShell->GetDocument()->GetSubDocumentFor(mContent);
+  if (!mContent) {
+    return NS_OK;
+  }
+
+  // XXXbz sXBL/XBL2 issue -- ownerDocument or currentDocument?
+  nsIDocument *doc = mContent->GetDocument();
+
+  if (!doc) {
+    return NS_OK;
+  }
+  
+  nsIDocument *sub_doc = doc->GetSubDocumentFor(mContent);
 
   if (!sub_doc) {
     return NS_OK;

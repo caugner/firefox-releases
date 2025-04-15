@@ -126,6 +126,8 @@ function onLoad()
     }
 
     gFilterTree.addEventListener("click",onFilterClick,true);
+
+    window.tryToClose = onFilterClose;
 }
 
 /*
@@ -373,13 +375,16 @@ function viewLog()
   window.openDialog("chrome://messenger/content/viewLog.xul", "FilterLog", "chrome,modal,titlebar,resizable,centerscreen", args);
 }
 
-function onFilterClose()
+function onFilterUnload()
 {
   // make sure to save the filter to disk
   var filterList = currentFilterList();
   if (filterList) 
     filterList.saveToDefaultFile();
+}
 
+function onFilterClose()
+{
   if (gRunFiltersButton.getAttribute("label") == gRunFiltersButton.getAttribute("stoplabel")) {
     var promptTitle = gFilterBundle.getString("promptTitle");
     var promptMsg = gFilterBundle.getString("promptMsg");;
@@ -399,7 +404,6 @@ function onFilterClose()
       return false;
   }
 
-  window.close();
   return true;
 }
 
@@ -598,7 +602,7 @@ function onFilterClick(event)
     if (row.value == -1 || row.value > filterTree.view.rowCount-1 || event.originalTarget.localName != "treechildren") {
       if (event.originalTarget.localName == "treecol") { 
         // clicking on the name column in the filter list should not sort
-        event.preventBubble();
+        event.stopPropagation();
       }
       return;
     }

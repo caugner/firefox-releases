@@ -53,6 +53,7 @@ class nsIPresShell;
 [ptr] native nsIPresShell(nsIPresShell);
 
 interface nsIURI;
+interface nsIChannel;
 interface nsIContentViewer;
 interface nsIURIContentListener;
 interface nsIChromeEventHandler;
@@ -65,6 +66,7 @@ interface nsIRequest;
 interface nsISHEntry;
 interface nsILayoutHistoryState;
 interface nsISecureBrowserUI;
+interface nsIDOMStorage;
 
 [scriptable, uuid(9f0c7461-b9a4-47f6-b88c-421dce1bce66)]
 interface nsIDocShell : nsISupports
@@ -115,9 +117,14 @@ interface nsIDocShell : nsISupports
                             in ACString aContentCharset,
                             in nsIDocShellLoadInfo aLoadInfo);
 
-  const long INTERNAL_LOAD_FLAGS_NONE               = 0x0;
-  const long INTERNAL_LOAD_FLAGS_INHERIT_OWNER      = 0x1;
-  const long INTERNAL_LOAD_FLAGS_DONT_SEND_REFERRER = 0x2;
+  const long INTERNAL_LOAD_FLAGS_NONE                    = 0x0;
+  const long INTERNAL_LOAD_FLAGS_INHERIT_OWNER           = 0x1;
+  const long INTERNAL_LOAD_FLAGS_DONT_SEND_REFERRER      = 0x2;
+  const long INTERNAL_LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP = 0x4;
+
+  // This flag marks the first load in this object
+  // @see nsIWebNavigation::LOAD_FLAGS_FIRST_LOAD
+  const long INTERNAL_LOAD_FLAGS_FIRST_LOAD              = 0x8;
 
   /**
    * Loads the given URI.  This method is identical to loadURI(...) except
@@ -405,3 +412,29 @@ interface nsIDocShell : nsISupports
   void historyPurged(in long numEntries);
 };
 
+[scriptable, uuid(45988A14-B240-4D07-AE64-50ECCA26E6D8)]
+interface nsIDocShell_MOZILLA_1_8_BRANCH : nsISupports
+{
+  /*
+   * Retrieves the WebApps session storage object for the supplied domain.
+   * If it doesn't already exist, a new one will be created.
+   *
+   * @param domain the domain of the storage object to retrieve
+   */
+  nsIDOMStorage getSessionStorageForURI(in nsIURI uri);
+
+  /*
+   * Add a WebApps session storage object to the docshell.
+   *
+   * @param domain the domain the storage object is associated with
+   * @param storage the storage object to add
+   */
+  void addSessionStorage(in ACString aDomain, in nsIDOMStorage storage);
+
+  /**
+   * Gets the channel for the currently loaded document, if any. 
+   * For a new document load, this will be the channel of the previous document
+   * until after OnLocationChange fires.
+   */
+  readonly attribute nsIChannel currentDocumentChannel;
+};

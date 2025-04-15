@@ -353,7 +353,8 @@ nsPop3Sink::BeginMailDelivery(PRBool uidlDownload, nsIMsgWindow *aMsgWindow, PRB
     rv = GetServerFolder(getter_AddRefs(serverFolder));
     if (NS_FAILED(rv)) return rv;
 
-    rv = m_newMailParser->Init(serverFolder, m_folder, (m_downloadingToTempFile) ? m_tmpDownloadFileSpec : fileSpec, m_outFileStream, aMsgWindow);
+    rv = m_newMailParser->Init(serverFolder, m_folder, (m_downloadingToTempFile) ? m_tmpDownloadFileSpec : fileSpec, 
+                              m_outFileStream, aMsgWindow, m_downloadingToTempFile);
 	// if we failed to initialize the parser, then just don't use it!!!
 	// we can still continue without one...
 
@@ -593,6 +594,8 @@ nsPop3Sink::IncorporateBegin(const char* uidlString,
     if (NS_FAILED(rv)) return rv;
     rv = WriteLineToMailbox("X-Mozilla-Status2: 00000000" MSG_LINEBREAK);
     if (NS_FAILED(rv)) return rv;
+    // leave space for 60 bytes worth of keys/tags
+    rv = WriteLineToMailbox(X_MOZILLA_KEYWORDS);
     PR_smprintf_free(statusLine);
     return NS_OK;
 }
@@ -808,8 +811,17 @@ nsPop3Sink::IncorporateComplete(nsIMsgWindow *aMsgWindow, PRInt32 aSize)
         return HandleTempDownloadFailed(aMsgWindow);   
 
       m_outFileStream->Open(m_tmpDownloadFileSpec, (PR_RDWR | PR_CREATE_FILE));
-
+      nsMsgKey saveMsgKey;
+      hdr->GetMessageKey(&saveMsgKey);
+      // this is the offset in the temp file, which we need to be correct
+      // when applying filters;
+      hdr->SetMessageKey(0); 
       m_newMailParser->ApplyFilters(&moved, aMsgWindow, 0);
+      // restore the msg key so that we don't confuse the msg hdr
+      // use cache, which requires the hdr to have the same msg key when put
+      // in the use cache as when it is deleted and hence removed
+      // from the use cache.
+      hdr->SetMessageKey(saveMsgKey);
       if (!moved)
       {
         if (m_outFileStream->is_open())

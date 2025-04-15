@@ -60,8 +60,9 @@ const nsIWindowMediator      = Components.interfaces.nsIWindowMediator;
 const nsIWindowWatcher       = Components.interfaces.nsIWindowWatcher;
 const nsICategoryManager     = Components.interfaces.nsICategoryManager;
 const nsIWebNavigationInfo   = Components.interfaces.nsIWebNavigationInfo;
+const nsIBrowserSearchService = Components.interfaces.nsIBrowserSearchService;
 
-const NS_BINDING_ABORTED = 0x80020006;
+const NS_BINDING_ABORTED = 0x804b0002;
 const NS_ERROR_WONT_HANDLE_CONTENT = 0x805d0001;
 const NS_ERROR_ABORT = Components.results.NS_ERROR_ABORT;
 
@@ -114,16 +115,19 @@ function needHomepageOverride(prefb) {
   }
 
   if (savedmstone == "ignore")
-    return false;
+    return 0;
 
   var mstone = Components.classes["@mozilla.org/network/protocol;1?name=http"]
                          .getService(nsIHttpProtocolHandler).misc;
 
-  if (mstone == savedmstone)
-    return false;
-
-  prefb.setCharPref("browser.startup.homepage_override.mstone", mstone);
-  return true;
+  if (mstone != savedmstone) {
+    prefb.setCharPref("browser.startup.homepage_override.mstone", mstone);
+    // Return 1 if true if the pref didn't exist (i.e. new profile) or 2 for an upgrade
+    return (savedmstone ? 2 : 1);
+  }
+  
+  // Return 0 if not a new profile and not an upgrade
+  return 0;
 }
 
 function openWindow(parent, url, target, features, args) {
@@ -198,6 +202,38 @@ function getMostRecentBrowserWindow() {
   return win;
 }
 
+function doSearch(searchTerm, cmdLine) {
+  var ss = Components.classes["@mozilla.org/browser/search-service;1"]
+                     .getService(nsIBrowserSearchService);
+
+  var submission = ss.defaultEngine.getSubmission(searchTerm, null);
+
+  // fill our nsISupportsArray with uri-as-wstring, null, null, postData
+  var sa = Components.classes["@mozilla.org/supports-array;1"]
+                     .createInstance(Components.interfaces.nsISupportsArray);
+
+  var wuri = Components.classes["@mozilla.org/supports-string;1"]
+                       .createInstance(Components.interfaces.nsISupportsString);
+  wuri.data = submission.uri.spec;
+
+  sa.AppendElement(wuri);
+  sa.AppendElement(null);
+  sa.AppendElement(null);
+  sa.AppendElement(submission.postData);
+
+  // XXXbsmedberg: use handURIToExistingBrowser to obey tabbed-browsing
+  // preferences, but need nsIBrowserDOMWindow extensions
+
+  var wwatch = Components.classes["@mozilla.org/embedcomp/window-watcher;1"]
+                         .getService(nsIWindowWatcher);
+
+  return wwatch.openWindow(null, nsBrowserContentHandler.chromeURL,
+                           "_blank",
+                           "chrome,dialog=no,all" +
+                             nsBrowserContentHandler.getFeatures(cmdLine),
+                           sa);
+}
+
 var nsBrowserContentHandler = {
   /* helper functions */
 
@@ -247,7 +283,14 @@ var nsBrowserContentHandler = {
       try {
         var a = /^\s*(\w+)\(([^\)]*)\)\s*$/.exec(remoteCommand);
         var remoteVerb = a[1].toLowerCase();
-        var remoteParams = a[2].split(",");
+        var remoteParams = [];
+        var sepIndex = a[2].lastIndexOf(",");
+        if (sepIndex == -1)
+          remoteParams[0] = a[2];
+        else {
+          remoteParams[0] = a[2].substring(0, sepIndex);
+          remoteParams[1] = a[2].substring(sepIndex + 1);
+        }
 
         switch (remoteVerb) {
         case "openurl":
@@ -337,6 +380,28 @@ var nsBrowserContentHandler = {
       openPreferences();
       cmdLine.preventDefault = true;
     }
+    if (cmdLine.handleFlag("silent", false))
+      cmdLine.preventDefault = true;
+
+    var searchParam = cmdLine.handleFlagWithParam("search", false);
+    if (searchParam) {
+      doSearch(searchParam, cmdLine);
+      cmdLine.preventDefault = true;
+    }
+
+#ifdef XP_WIN
+    // Handle "? searchterm" for Windows Vista start menu integration
+    for (var i = cmdLine.length - 1; i >= 0; --i) {
+      var param = cmdLine.getArgument(i);
+      if (param.match(/^\? /)) {
+        cmdLine.removeArguments(i, i);
+        cmdLine.preventDefault = true;
+
+        searchParam = param.substr(2);
+        doSearch(searchParam, cmdLine);
+      }
+    }
+#endif
   },
 
   helpInfo : "  -browser            Open a browser window.\n",
@@ -346,29 +411,42 @@ var nsBrowserContentHandler = {
   get defaultArgs() {
     var prefb = Components.classes["@mozilla.org/preferences-service;1"]
                           .getService(nsIPrefBranch);
+    var formatter = Components.classes["@mozilla.org/toolkit/URLFormatterService;1"]
+                              .getService(Components.interfaces.nsIURLFormatter);
 
-    if (needHomepageOverride(prefb)) {
-      try {
-        return prefb.getComplexValue("startup.homepage_override_url",
-                                     nsIPrefLocalizedString).data;
-      }
-      catch (e) {
-      }
-    }
-
+    var pagesToLoad = "";
+    var overrideState = needHomepageOverride(prefb);
     try {
-      var choice = prefb.getIntPref("browser.startup.page");
-      if (choice == 1)
-        return this.startPage;
-
-      if (choice == 2)
-        return Components.classes["@mozilla.org/browser/global-history;2"]
-                         .getService(nsIBrowserHistory).lastPageVisited;
+      if (overrideState == 1) {
+        pagesToLoad = formatter.formatURLPref("startup.homepage_welcome_url");
+      }
+      else if (overrideState == 2) {
+        pagesToLoad = formatter.formatURLPref("startup.homepage_override_url");
+      }
     }
     catch (e) {
     }
 
-    return "about:blank";
+    var startpage = "";
+    try {
+      var choice = prefb.getIntPref("browser.startup.page");
+      if (choice == 1)
+        startpage = this.startPage;
+
+      if (choice == 2)
+        startpage = Components.classes["@mozilla.org/browser/global-history;2"]
+                              .getService(nsIBrowserHistory).lastPageVisited;
+    }
+    catch (e) {
+    }
+
+    if (startpage == "about:blank")
+      startpage = "";
+
+    if (pagesToLoad && startpage) pagesToLoad += "|";
+    pagesToLoad += startpage;
+
+    return (pagesToLoad ?  pagesToLoad : "about:blank");
   },
 
   get startPage() {
@@ -631,11 +709,11 @@ var Module = {
 
     function registerType(contentType) {
       compReg.registerFactoryLocation( bch_CID,
-				       "Browser Cmdline Handler",
-				       CONTRACTID_PREFIX + contentType,
-				       fileSpec,
-				       location,
-				       type );
+                                       "Browser Cmdline Handler",
+                                       CONTRACTID_PREFIX + contentType,
+                                       fileSpec,
+                                       location,
+                                       type );
     }
 
     registerType("text/html");

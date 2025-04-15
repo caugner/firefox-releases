@@ -62,7 +62,7 @@ nsRenderingContextBeOS::nsRenderingContextBeOS()
 	mStateCache = new nsVoidArray();
 	mView = nsnull;	
 	mCurrentColor = NS_RGB(255, 255, 255);
-	mCurrentFont = nsnull;
+	mCurrentBFont = nsnull;
 	mCurrentLineStyle = nsLineStyle_kSolid;
 	mP2T = 1.0f;
 	mTranMatrix = nsnull;
@@ -323,7 +323,6 @@ NS_IMETHODIMP nsRenderingContextBeOS::SetClipRect(const nsRect& aRect, nsClipCom
 			mClipRegion->SetTo(trect.x, trect.y, trect.width, trect.height);
 			break;
 	}
-	
 	return NS_OK;
 } 
 
@@ -334,18 +333,28 @@ NS_IMETHODIMP nsRenderingContextBeOS::SetClipRect(const nsRect& aRect, nsClipCom
 bool nsRenderingContextBeOS::LockAndUpdateView() 
 {
 	bool rv = false;
+	if (!mSurface)
+		return rv;
 	if (mView) 
 		mView = nsnull;
-	
 	mSurface->AcquireView(&mView);
+	if (!mView)
+		return rv; 
+
 	// Intelligent lock
-	if (mView && mSurface->LockDrawable()) 
+	if (mSurface->LockDrawable()) 
 	{
-		if (mCurrentFont == nsnull) 
-			mCurrentFont = (BFont *)be_plain_font;
-	
-		mView->SetFont(mCurrentFont);
-		mView->SetHighColor(mRGB_color);
+		// if BFont wasn't set already
+		if (mCurrentBFont == nsnull)
+		{ 
+			if (mFontMetrics)
+				mFontMetrics->GetFontHandle((nsFontHandle)mCurrentBFont);
+
+			if (mCurrentBFont)
+				mView->SetFont(mCurrentBFont);
+			else
+				mView->SetFont(be_plain_font); // fallback - only for single call
+		}
 
 		if (mClipRegion) 
 		{
@@ -436,7 +445,6 @@ NS_IMETHODIMP nsRenderingContextBeOS::SetClipRegion(const nsIRegion &aRegion, ns
 			mClipRegion->SetTo(aRegion);
 			break;
 	}
-	
 	return NS_OK;
 }
 
@@ -476,6 +484,11 @@ NS_IMETHODIMP nsRenderingContextBeOS::SetColor(nscolor aColor)
 	mRGB_color.green = NS_GET_G(mCurrentColor);
 	mRGB_color.blue = NS_GET_B(mCurrentColor);
 	mRGB_color.alpha = 255;	
+	if (LockAndUpdateView())
+	{
+		mView->SetHighColor(mRGB_color);
+		UnlockView();
+	}
 	return NS_OK;
 }
 
@@ -496,16 +509,13 @@ NS_IMETHODIMP nsRenderingContextBeOS::SetFont(const nsFont &aFont, nsIAtom* aLan
 
 NS_IMETHODIMP nsRenderingContextBeOS::SetFont(nsIFontMetrics *aFontMetrics)
 {
+	mCurrentBFont = nsnull;
 	NS_IF_RELEASE(mFontMetrics);
 	mFontMetrics = aFontMetrics;
 	NS_IF_ADDREF(mFontMetrics);
-	
-	if (mFontMetrics)
-	{
-		nsFontHandle fontHandle;
-		mFontMetrics->GetFontHandle(fontHandle);
-		mCurrentFont = (BFont *)fontHandle;
-	}
+	// Assigning value to mCurrentBFont and setting it as mView font
+	if (LockAndUpdateView())
+		UnlockView();
 	return NS_OK;
 }
 
@@ -1017,12 +1027,8 @@ inline uint32 utf8_str_len(const char* ustring)
 
 NS_IMETHODIMP nsRenderingContextBeOS::GetWidth(char aC, nscoord &aWidth)
 {
-	// Check for the very common case of trying to get the width of a single space
-	if ((aC == ' ') && (nsnull != mFontMetrics))
-		return mFontMetrics->GetSpaceWidth(aWidth);
-	else
-		return GetWidth(&aC, 1, aWidth);
-	}
+	return GetWidth(&aC, 1, aWidth);
+}
 
 NS_IMETHODIMP nsRenderingContextBeOS::GetWidth(PRUnichar aC, nscoord &aWidth, PRInt32 *aFontID)
 {
@@ -1041,7 +1047,6 @@ NS_IMETHODIMP nsRenderingContextBeOS::GetWidth(const char *aString, nscoord &aWi
 
 NS_IMETHODIMP nsRenderingContextBeOS::GetWidth(const char *aString, PRUint32 aLength, nscoord &aWidth)
 {
-	
 	if (0 == aLength)
 	{
 		aWidth = 0;
@@ -1050,8 +1055,8 @@ NS_IMETHODIMP nsRenderingContextBeOS::GetWidth(const char *aString, PRUint32 aLe
 	{
 		if (aString == nsnull)
 			return NS_ERROR_FAILURE;
-		PRUint32 rawWidth = (PRUint32)mCurrentFont->StringWidth(aString, aLength);
-		aWidth = NSToCoordRound(rawWidth * mP2T);
+		// Using cached width if possible
+		aWidth  = nscoord(((nsFontMetricsBeOS *)mFontMetrics)->GetStringWidth((char *)aString, aLength) * mP2T);
 	}
 	return NS_OK;
 }
@@ -1236,8 +1241,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::GetTextDimensions(const char* aString, PRI
 		} 
 		else if (numChars > 0) 
 		{
-			float  size = mCurrentFont->StringWidth(&aString[utf8pos[start]], numBytes);
-			twWidth = NSToCoordRound(size * mP2T);
+			GetWidth(&aString[utf8pos[start]], numBytes, twWidth);
 		} 
 
 		// See if the text fits
@@ -1294,8 +1298,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::GetTextDimensions(const char* aString, PRI
 				}
 				else if (numChars > 0) 
 				{
-					float size = mCurrentFont->StringWidth(&aString[utf8pos[start]], numBytes);
-					twWidth = NSToCoordRound(size * mP2T);
+					GetWidth(&aString[utf8pos[start]], numBytes, twWidth);
 				}
 				width -= twWidth;
 				aNumCharsFit = start;
@@ -1495,7 +1498,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::CopyOffScreenBits(nsIDrawingSurface* aSrcS
 	return NS_OK;
 }
 
-NS_IMETHODIMP nsRenderingContextBeOS::RetrieveCurrentNativeGraphicData(PRUint32 *ngd)
+NS_IMETHODIMP nsRenderingContextBeOS::RetrieveCurrentNativeGraphicData(void** ngd)
 {
 	return NS_OK;
 }
@@ -1510,7 +1513,7 @@ NS_IMETHODIMP
 nsRenderingContextBeOS::GetBoundingMetrics(const char* aString, PRUint32 aLength, nsBoundingMetrics& aBoundingMetrics)
 {
 	aBoundingMetrics.Clear();
-	if (0 >= aLength || !aString || !mCurrentFont)
+	if (0 >= aLength || !aString || !mCurrentBFont)
 		return NS_ERROR_FAILURE;
 
 	BRect rect;
@@ -1518,10 +1521,10 @@ nsRenderingContextBeOS::GetBoundingMetrics(const char* aString, PRUint32 aLength
 	delta.nonspace = 0;
 	delta.space = 0;
 	// Use the printing metric to get more detail
-	mCurrentFont->GetBoundingBoxesForStrings(&aString, 1, B_PRINTING_METRIC, &delta, &rect);
+	mCurrentBFont->GetBoundingBoxesForStrings(&aString, 1, B_PRINTING_METRIC, &delta, &rect);
 
 
-	aBoundingMetrics.width = NSToCoordRound(mCurrentFont->StringWidth(aString) * mP2T);
+	GetWidth(aString, aLength, aBoundingMetrics.width );
 	
 	aBoundingMetrics.leftBearing = NSToCoordRound(rect.left * mP2T);
 	aBoundingMetrics.rightBearing = NSToCoordRound(rect.right * mP2T);

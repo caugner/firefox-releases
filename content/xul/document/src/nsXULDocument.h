@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set ts=4 sw=4 et tw=78: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -82,7 +83,8 @@ struct PRLogModuleInfo;
  */
 class nsXULDocument : public nsXMLDocument,
                       public nsIXULDocument,
-                      public nsIDOMXULDocument,
+                      public nsIDOMXULDocument2,
+                      public nsIDOMXULDocument_MOZILLA_1_8_BRANCH,
                       public nsIStreamLoaderObserver
 {
 public:
@@ -161,6 +163,8 @@ public:
 
     // nsIDOMXULDocument interface
     NS_DECL_NSIDOMXULDOCUMENT
+    NS_DECL_NSIDOMXULDOCUMENT2
+    NS_DECL_NSIDOMXULDOCUMENT_MOZILLA_1_8_BRANCH
 
     // nsIDOMNSDocument
     NS_IMETHOD GetContentType(nsAString& aContentType);
@@ -269,6 +273,7 @@ protected:
     PRPackedBool               mIsFastLoad;
     PRPackedBool               mApplyingPersistedAttrs;
     PRPackedBool               mIsWritingFastLoad;
+    PRPackedBool               mDocumentLoaded;
     nsCOMPtr<nsIDOMXULCommandDispatcher>     mCommandDispatcher; // [OWNER] of the focus tracker
 
     // Maintains the template builders that have been attached to

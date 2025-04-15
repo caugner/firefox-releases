@@ -56,8 +56,8 @@
 #include "nsIIOService.h"
 #include "nsICacheService.h"
 #include "nsICacheSession.h"
-#include "nsITransactionManager.h"
 #include "nsIPrefBranch.h"
+#include "nsICharsetResolver.h"
 
 class nsIOutputStream;
 
@@ -67,10 +67,11 @@ class nsIOutputStream;
 #endif
 #endif
 
-class nsBookmarksService : public nsIBookmarksService,
+class nsBookmarksService : public nsIBookmarksService_MOZILLA_1_8_BRANCH,
                            public nsIRDFDataSource,
                            public nsIRDFRemoteDataSource,
                            public nsIStreamListener,
+                           public nsICharsetResolver,
                            public nsIRDFObserver,
                            public nsIObserver,
                            public nsSupportsWeakReference
@@ -84,7 +85,6 @@ protected:
     nsCOMPtr<nsIIOService>          mNetService;
     nsCOMPtr<nsICacheService>       mCacheService;
     nsCOMPtr<nsICacheSession>       mCacheSession;
-    nsCOMPtr<nsITransactionManager> mTransactionManager;
 
     PRUint32      htmlSize;
     PRInt32       mUpdateBatchNest;
@@ -165,7 +165,7 @@ protected:
     nsresult GetURLFromResource(nsIRDFResource* aResource, nsAString& aURL);
 
     nsresult LoadBookmarks();
-    nsresult ArchiveBookmarksFile(PRBool forceArchive);
+    nsresult ArchiveBookmarksFile(PRInt32 numberOfBackups, PRBool forceArchive);
     nsresult InitDataSource();
 
     nsresult GetLastModifiedFolders(nsISimpleEnumerator **aResult);
@@ -180,6 +180,9 @@ protected:
 
     // nsIStreamListener methods:
     NS_DECL_NSISTREAMLISTENER
+
+    // nsICharsetResolver
+    NS_DECL_NSICHARSETRESOLVER
 
     // nsIObserver methods:
     NS_DECL_NSIOBSERVER
@@ -198,6 +201,7 @@ public:
 
     // nsIBookmarksService
     NS_DECL_NSIBOOKMARKSSERVICE
+    NS_DECL_NSIBOOKMARKSSERVICE_MOZILLA_1_8_BRANCH
 
     // nsIRDFDataSource
     NS_IMETHOD GetURI(char* *uri);

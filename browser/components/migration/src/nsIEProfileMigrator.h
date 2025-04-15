@@ -50,7 +50,11 @@
 class nsIFile;
 class nsICookieManager2;
 class nsIRDFResource;
+#ifdef MOZ_PLACES
+class nsINavBookmarksService;
+#else
 class nsIBookmarksService;
+#endif
 class nsIPrefBranch;
 
 #import PSTOREC_DLL raw_interfaces_only
@@ -75,6 +79,7 @@ protected:
   PRBool   KeyIsURI(const nsAString& aKey, char** aRealm);
 
   nsresult CopyPasswords(PRBool aReplace);
+  nsresult MigrateSiteAuthSignons(IPStore* aPStore);
   nsresult GetSignonsListFromPStore(IPStore* aPStore, nsVoidArray* aSignonsFound);
   nsresult ResolveAndMigrateSignons(IPStore* aPStore, nsVoidArray* aSignonsFound);
   void     EnumerateUsernames(const nsAString& aKey, PRUnichar* aData, unsigned long aCount, nsVoidArray* aSignonsFound);
@@ -85,12 +90,21 @@ protected:
 
   nsresult CopyFavorites(PRBool aReplace);
   void     ResolveShortcut(const nsAFlatString &aFileName, char** aOutURL);
+#ifdef MOZ_PLACES
+  nsresult ParseFavoritesFolder(nsIFile* aDirectory, 
+                                PRInt64 aParentFolder,
+                                nsINavBookmarksService* aBookmarksService,
+                                const nsAString& aPersonalToolbarFolderName,
+                                PRBool aIsAtRootLevel);
+  nsresult CopySmartKeywords(PRInt64 aParentFolder);
+#else
   nsresult ParseFavoritesFolder(nsIFile* aDirectory, 
                                 nsIRDFResource* aParentResource,
-                                nsIBookmarksService* aBookmarksService, 
+                                nsIBookmarksService* aBookmarksService,
                                 const nsAString& aPersonalToolbarFolderName,
                                 PRBool aIsAtRootLevel);
   nsresult CopySmartKeywords(nsIRDFResource* aParentFolder);
+#endif 
 
   nsresult CopyCookiesFromBuffer(char *aBuffer, PRUint32 aBufferLength,
                                  nsICookieManager2 *aCookieManager);

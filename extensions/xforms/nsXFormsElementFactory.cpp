@@ -37,10 +37,6 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsXFormsElementFactory.h"
-#include "nsXFormsModelElement.h"
-#include "nsXFormsInstanceElement.h"
-#include "nsXFormsSubmissionElement.h"
-#include "nsXFormsStubElement.h"
 #include "nsIDOMDocument.h"
 #include "nsXFormsAtoms.h"
 #include "nsIDocument.h"
@@ -72,6 +68,8 @@ NS_HIDDEN_(nsresult) NS_NewXFormsItemElement(nsIXTFElement **aElement);
 NS_HIDDEN_(nsresult) NS_NewXFormsValueElement(nsIXTFElement **aElement);
 NS_HIDDEN_(nsresult) NS_NewXFormsChoicesElement(nsIXTFElement **aElement);
 NS_HIDDEN_(nsresult) NS_NewXFormsItemSetElement(nsIXTFElement **aElement);
+NS_HIDDEN_(nsresult) NS_NewXFormsRangeElement(nsIXTFElement **aElement);
+NS_HIDDEN_(nsresult) NS_NewXFormsCopyElement(nsIXTFElement **aElement);
 
 //Action Module Elements
 NS_HIDDEN_(nsresult) NS_NewXFormsDispatchElement(nsIXTFElement **aResult);
@@ -94,6 +92,11 @@ NS_HIDDEN_(nsresult) NS_NewXFormsAlertElement(nsIXTFElement **aResult);
 NS_HIDDEN_(nsresult) NS_NewXFormsToggleElement(nsIXTFElement **aResult);
 NS_HIDDEN_(nsresult) NS_NewXFormsCaseElement(nsIXTFElement **aResult);
 NS_HIDDEN_(nsresult) NS_NewXFormsSwitchElement(nsIXTFElement **aResult);
+
+NS_HIDDEN_(nsresult) NS_NewXFormsModelElement(nsIXTFElement **aElement);
+NS_HIDDEN_(nsresult) NS_NewXFormsSubmissionElement(nsIXTFElement **aElement);
+NS_HIDDEN_(nsresult) NS_NewXFormsInstanceElement(nsIXTFElement **aElement);
+NS_HIDDEN_(nsresult) NS_NewXFormsStubElement(nsIXTFElement **aElement);
 
 NS_IMPL_ISUPPORTS2(nsXFormsElementFactory,
                    nsIXTFElementFactory,
@@ -188,6 +191,10 @@ nsXFormsElementFactory::CreateElement(const nsAString& aTagName,
     return NS_NewXFormsSwitchElement(aElement);
   if (aTagName.EqualsLiteral("upload"))
     return NS_NewXFormsUploadElement(aElement);
+  if (aTagName.EqualsLiteral("range"))
+    return NS_NewXFormsRangeElement(aElement);
+  if (aTagName.EqualsLiteral("copy"))
+    return NS_NewXFormsCopyElement(aElement);
 
   *aElement = nsnull;
   return NS_ERROR_FAILURE;

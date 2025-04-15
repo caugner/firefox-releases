@@ -128,10 +128,6 @@ toolbarbutton[type="menu"] {
   -moz-binding: url("chrome://global/content/bindings/toolbarbutton.xml#menu");
 }
 
-toolbarbutton[orient] {
-  -moz-binding: url("chrome://global/content/bindings/toolbarbutton.xml#menu-orient");
-}
-
 toolbarbutton[type="menu-button"] {
   -moz-binding: url("chrome://global/content/bindings/toolbarbutton.xml#menu-button");
 }
@@ -152,10 +148,6 @@ browser {
   -moz-binding: url("chrome://global/content/bindings/browser.xml#browser");
 }
 
-browsermessage {
-  -moz-binding: url("chrome://global/content/bindings/browser.xml#browsermessage"); 
-}
-
 tabbrowser {
   -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser");
 }
@@ -166,6 +158,18 @@ editor {
 
 iframe {
   -moz-binding: url("chrome://global/content/bindings/general.xml#iframe");
+}
+
+/********** notifications **********/
+
+notificationbox {
+  -moz-binding: url("chrome://global/content/bindings/notification.xml#notificationbox");
+  -moz-box-orient: vertical;
+  overflow-y: hidden;
+}
+
+notification {
+  -moz-binding: url("chrome://global/content/bindings/notification.xml#notification");
 }
 
 /********** image **********/
@@ -219,12 +223,12 @@ toolbar {
   -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbar");
 }
 
-#ifdef XP_MACOSX
+%ifdef XP_MACOSX
 toolbar[type="menubar"] {
   min-height: 0 !important;
   border: 0 !important;
 }
-#endif
+%endif
 
 toolbarseparator {
   -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbardecoration");
@@ -336,15 +340,15 @@ tooltip {
   margin-top: 21px;
 }
 
-#ifdef XP_MACOSX
+%ifdef XP_MACOSX
 .statusbar-resizerpanel {
   display: none;
 }
-#else
+%else
 window[sizemode="maximized"] statusbarpanel.statusbar-resizerpanel {
   visibility: collapse;
 }
-#endif
+%endif
 
 /********** floating popups **********/
 
@@ -590,6 +594,13 @@ tabs {
   -moz-box-orient: horizontal;
 }
 
+/**
+ * XXXben - this looks like something added specifically for tabbrowser.
+ *          if it turns out no one uses this that can't easily be evangelized to
+ *          use their own roll-your-own binding, then we should get rid of this
+ *          to tighten up the toolkit api. This binding made obsolete in Firefox
+ *          by 308396. 
+ */
 tabs[closebutton="true"] {
   -moz-binding: url("chrome://global/content/bindings/tabbox.xml#tabs-closebutton");
 }
@@ -600,9 +611,42 @@ tab {
   -moz-box-pack: center;
 }
 
+.tabbrowser-tabs {
+  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-tabs");
+}
+
+.tabbrowser-tabs > .tabbrowser-tab {
+  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-tab");
+}
+
+.tabbrowser-tabs > .tabbrowser-tab > .tab-close-button,
+.tabs-closebutton-box > .tabs-closebutton {
+  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-close-tab-button");
+}
+
+.tabbrowser-arrowscrollbox {
+  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-arrowscrollbox");
+}
+
+.tab-close-button {
+  display: none;
+}
+
+.tabbrowser-tabs:not([closebuttons="noclose"]):not([closebuttons="closeatend"]) > .tabbrowser-tab[selected="true"] > .tab-close-button {
+  display: -moz-box;
+}
+
+.tabbrowser-tabs[closebuttons="alltabs"] > .tabbrowser-tab > .tab-close-button {
+  display: -moz-box;
+}
+
 tabpanels {
   -moz-binding: url("chrome://global/content/bindings/tabbox.xml#tabpanels");
   display: -moz-deck;
+}
+
+.tabs-alltabs-popup {
+  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-alltabs-popup");
 }
 
 /********** progressmeter **********/
@@ -680,13 +724,13 @@ textbox[type="timed"] {
 
 /* thunderbird and Nvu don't use the new toolkit's autocomplete widget yet.... */
 
-#ifdef MOZ_THUNDERBIRD
-#define AUTOCOMPLETE_OLD_STYLE
-#elifdef MOZ_STANDALONE_COMPOSER
-#define AUTOCOMPLETE_OLD_STYLE
-#endif
+%ifdef MOZ_THUNDERBIRD
+%define AUTOCOMPLETE_OLD_STYLE
+%elifdef MOZ_STANDALONE_COMPOSER
+%define AUTOCOMPLETE_OLD_STYLE
+%endif
 
-#ifdef AUTOCOMPLETE_OLD_STYLE
+%ifdef AUTOCOMPLETE_OLD_STYLE
 
 textbox[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete");
@@ -716,7 +760,7 @@ textbox[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/autocomplete.xml#history-dropmarker");
 }
 
-#else
+%else
 
 textbox[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#autocomplete");
@@ -748,9 +792,13 @@ popup[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#history-dropmarker");
 }
 
-#endif
+/* To be overridden by themes that use a background for the dropmarker (e.g. winstripe): */
+.autocomplete-dropmarker-bkgnd {
+  background-image: none;
+  list-style-image: none;
+}
 
-
+%endif
 
 /* the C++ implementation of widgets is too eager to make popups visible.
    this causes problems (bug 120155 and others), thus this workaround: */
@@ -843,6 +891,14 @@ scrollbar, scrollbarbutton, scrollcorner, slider, thumb {
   -moz-user-select: none;
 }
 
+scrollcorner {
+  display: -moz-box !important;
+}
+
+scrollcorner[hidden="true"] {
+  display: none !important;
+}
+
 scrollbar[value="hidden"] {
   visibility: hidden;
 }
@@ -859,6 +915,10 @@ arrowscrollbox {
   -moz-binding: url("chrome://global/content/bindings/scrollbox.xml#arrowscrollbox");
 }
 
+arrowscrollbox[clicktoscroll="true"] {
+  -moz-binding: url("chrome://global/content/bindings/scrollbox.xml#arrowscrollbox-clicktoscroll");
+}
+
 autorepeatbutton {
   -moz-binding: url("chrome://global/content/bindings/scrollbox.xml#autorepeatbutton");
 }
@@ -868,9 +928,9 @@ autorepeatbutton {
 statusbar 
 {
   -moz-binding: url("chrome://global/content/bindings/general.xml#statusbar");
-#ifdef XP_MACOSX
+%ifdef XP_MACOSX
   padding-right: 14px;
-#endif
+%endif
 }
 
 statusbarpanel {

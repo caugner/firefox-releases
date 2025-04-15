@@ -58,8 +58,8 @@
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
 #include "nsPrimitiveHelpers.h"
-#include "nsWatchTask.h"
 #include "nsLinebreakConverter.h"
+#include "nsIMacUtils.h"
 
 #include "nsIContent.h"
 #include "nsIDOMNode.h"
@@ -84,6 +84,9 @@
 #include "nsMacNativeUnicodeConverter.h"
 #include "nsICharsetConverterManager.h"
 #include "nsStylClipboardUtils.h"
+
+static const PRUint32 kPrivateFlavorMask = 0xffff0000;
+static const PRUint32 kPrivateFlavorTag = 'MZ..' & kPrivateFlavorMask;
 
 
 // we need our own stuff for MacOS because of nsIDragSessionMac.
@@ -203,7 +206,7 @@ nsDragService::ComputeGlobalRectFromFrame ( nsIDOMNode* aDOMNode, Rect & outScre
 
 
 //
-// StartDragSession
+// InvokeDragSession
 //
 // Do all the work to kick it off.
 //
@@ -293,7 +296,7 @@ nsDragService::InvokeDragSession (nsIDOMNode *aDOMNode, nsISupportsArray * aTran
 
   return NS_OK; 
 
-} // StartDragSession
+} // InvokeDragSession
 
 
 //
@@ -453,7 +456,7 @@ nsDragService::RegisterDragItemsAndFlavors(nsISupportsArray* inArray, RgnHandle 
     if ( mapping && mappingLen ) {
       ::AddDragItemFlavor ( mDragRef, itemIndex, nsMimeMapperMac::MappingFlavor(), 
                                mapping, mappingLen, flags );
-	    nsCRT::free ( mapping );
+	    nsMemory::Free ( mapping );
     
       ::SetDragItemBounds(mDragRef, itemIndex, &dragRgnBounds);
 	  }
@@ -494,7 +497,7 @@ nsDragService::GetData ( nsITransferable * aTransferable, PRUint32 aItemIndex )
   // create a mime mapper to help us out based on data in a special flavor for this item
   char* mappings = LookupMimeMappingsForItem(mDragRef, itemRef);
   nsMimeMapperMac theMapper ( mappings );
-  nsCRT::free ( mappings );
+  nsMemory::Free ( mappings );
   
   // Now walk down the list of flavors. When we find one that is actually present,
   // copy out the data into the transferable in that format. SetTransferData()
@@ -764,6 +767,26 @@ nsDragService::DragSendDataProc(FlavorType inFlavor, void* inRefCon, ItemReferen
     PRUint32 dataSize = 0;
     retVal = dragService->GetDataForFlavor(dragService->mDataItems, inDragRef, inItemRef, inFlavor, &data, &dataSize);
     if ( retVal == noErr ) {      
+        if ((inFlavor & kPrivateFlavorMask) == kPrivateFlavorTag) {
+          // Byte-swap private flavors if running translated
+          nsCOMPtr<nsIMacUtils> macUtils =
+           do_GetService("@mozilla.org/xpcom/mac-utils;1");
+          PRBool isTranslated;
+          if (macUtils &&
+              NS_SUCCEEDED(macUtils->GetIsTranslated(&isTranslated)) &&
+              isTranslated) {
+            char* swappedData = (char*) nsMemory::Alloc(dataSize);
+            if (!swappedData) {
+              nsMemory::Free(data);
+              return notEnoughMemoryErr;
+            }
+            else {
+              swab(data, swappedData, dataSize);
+              nsMemory::Free(data);
+              data = swappedData;
+            }
+          }
+        }
         // make the data accessable to the DragManager
         retVal = ::SetDragItemFlavorData ( inDragRef, inItemRef, inFlavor, data, dataSize, 0 );
         NS_ASSERTION ( retVal == noErr, "SDIFD failed in DragSendDataProc" );
@@ -1062,7 +1085,27 @@ nsDragService::ExtractDataFromOS ( DragReference inDragRef, ItemReference inItem
     buff = NS_REINTERPRET_CAST(char*, nsMemory::Alloc(buffSize + 1));
     if ( buff ) {	     
       err = ::GetFlavorData ( inDragRef, inItemRef, inFlavor, buff, &buffSize, 0 );
-      if ( err ) {
+      if (err == noErr) {
+        if ((inFlavor & kPrivateFlavorMask) == kPrivateFlavorTag) {
+          // Byte-swap private flavors if running translated
+          nsCOMPtr<nsIMacUtils> macUtils =
+           do_GetService("@mozilla.org/xpcom/mac-utils;1");
+          PRBool isTranslated;
+          if (macUtils &&
+              NS_SUCCEEDED(macUtils->GetIsTranslated(&isTranslated)) &&
+              isTranslated) {
+            char* swappedData = (char*) nsMemory::Alloc(buffSize);
+            if (!swappedData)
+              retval = NS_ERROR_OUT_OF_MEMORY;
+            else {
+              swab(buff, swappedData, buffSize);
+              nsMemory::Free(buff);
+              buff = swappedData;
+            }
+          }
+        }
+      }
+      else {
         #ifdef NS_DEBUG
           printf("nsDragService: Error getting data out of drag manager, #%ld\n", err);
         #endif
@@ -1084,30 +1127,6 @@ nsDragService::ExtractDataFromOS ( DragReference inDragRef, ItemReference inItem
   return retval;
 
 } // ExtractDataFromOS
-
-
-//
-// StartDragSession
-// EndDragSession
-//
-// Override the defaults to disable/enable the watch cursor while we're dragging
-//
-
-nsresult
-nsDragService::StartDragSession ( )
-{
-  nsWatchTask::GetTask().Suspend();
-  
-  return nsBaseDragService::StartDragSession();
-}
-
-nsresult
-nsDragService::EndDragSession ( )
-{
-  nsWatchTask::GetTask().Resume();
-  
-  return nsBaseDragService::EndDragSession();
-}
 
 
 //

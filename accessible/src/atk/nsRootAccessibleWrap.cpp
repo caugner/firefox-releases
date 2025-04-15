@@ -40,23 +40,39 @@
 #include "nsMai.h"
 #include "nsRootAccessibleWrap.h"
 #include "nsAppRootAccessible.h"
+#include "nsIDOMWindow.h"
+#include "nsPIDOMWindow.h"
+#include "nsIFocusController.h"
 
 nsRootAccessibleWrap::nsRootAccessibleWrap(nsIDOMNode *aDOMNode,
                                            nsIWeakReference* aShell):
     nsRootAccessible(aDOMNode, aShell)
 {
     MAI_LOG_DEBUG(("New Root Acc=%p\n", (void*)this));
+}
+
+NS_IMETHODIMP nsRootAccessibleWrap::Init()
+{
+    nsresult rv = nsRootAccessible::Init();
     nsAppRootAccessible *root = nsAppRootAccessible::Create();
-    if (root)
+    if (root) {
         root->AddRootAccessible(this);
+    }
+    return rv;
 }
 
 nsRootAccessibleWrap::~nsRootAccessibleWrap()
 {
     MAI_LOG_DEBUG(("Delete Root Acc=%p\n", (void*)this));
+}
+
+NS_IMETHODIMP nsRootAccessibleWrap::Shutdown()
+{
     nsAppRootAccessible *root = nsAppRootAccessible::Create();
-    if (root)
+    if (root) {
         root->RemoveRootAccessible(this);
+    }
+    return nsRootAccessible::Shutdown();
 }
 
 NS_IMETHODIMP nsRootAccessibleWrap::GetParent(nsIAccessible **  aParent)
@@ -76,5 +92,24 @@ NS_IMETHODIMP nsRootAccessibleWrap::GetParent(nsIAccessible **  aParent)
 NS_IMETHODIMP nsRootAccessibleWrap::GetRole(PRUint32 *_retval)
 {
     *_retval = ROLE_FRAME;
+    return NS_OK;
+}
+
+NS_IMETHODIMP nsRootAccessibleWrap::GetExtState(PRUint32 *aState)
+{
+    nsAccessibleWrap::GetExtState(aState);
+    
+    nsCOMPtr<nsIDOMWindow> domWin;
+    GetWindow(getter_AddRefs(domWin));
+    nsCOMPtr<nsPIDOMWindow> privateDOMWindow(do_QueryInterface(domWin));
+    if (privateDOMWindow) {
+        nsIFocusController *focusController =
+            privateDOMWindow->GetRootFocusController();
+        PRBool isActive = PR_FALSE;
+        focusController->GetActive(&isActive);
+        if (isActive) {
+            *aState |= EXT_STATE_ACTIVE;
+        }
+    }
     return NS_OK;
 }

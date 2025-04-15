@@ -24,6 +24,7 @@
  *   Makoto Kato  <m_kato@ga2.so-net.ne.jp>
  *   Dean Tessman <dean_tessman@hotmail.com>
  *   Mats Palmgren <mats.palmgren@bredband.net>
+ *   Simon Bünzli <zeniko@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -158,15 +159,22 @@ static PRInt8 sTextfieldSelectModel = eTextfieldSelect_unset;
 static PRBool sLeftClickOnly = PR_TRUE;
 static PRBool sKeyCausesActivation = PR_TRUE;
 static PRUint32 sESMInstanceCount = 0;
-static PRInt32 sGeneralAccesskeyModifier = -1; // magic value of -1 means uninitialized
+static PRInt32 sChromeAccessModifier = 0, sContentAccessModifier = 0;
 PRInt32 nsEventStateManager::sUserInputEventDepth = 0;
 
 enum {
  MOUSE_SCROLL_N_LINES,
  MOUSE_SCROLL_PAGE,
  MOUSE_SCROLL_HISTORY,
- MOUSE_SCROLL_TEXTSIZE
+ MOUSE_SCROLL_TEXTSIZE,
+ MOUSE_SCROLL_PIXELS
 };
+
+// mask values for ui.key.chromeAccess and ui.key.contentAccess
+#define NS_MODIFIER_SHIFT    1
+#define NS_MODIFIER_CONTROL  2
+#define NS_MODIFIER_ALT      4
+#define NS_MODIFIER_META     8
 
 static nsIScriptGlobalObject *
 GetDocumentOuterWindow(nsIDocument *aDocument)
@@ -202,6 +210,29 @@ GetDocumentFromWindow(nsIDOMWindow *aWindow)
   return doc;
 }
 
+static PRInt32
+GetAccessModifierMaskFromPref(PRInt32 aItemType)
+{
+  PRInt32 accessKey = nsContentUtils::GetIntPref("ui.key.generalAccessKey", -1);
+  switch (accessKey) {
+    case -1:                             break; // use the individual prefs
+    case nsIDOMKeyEvent::DOM_VK_SHIFT:   return NS_MODIFIER_SHIFT;
+    case nsIDOMKeyEvent::DOM_VK_CONTROL: return NS_MODIFIER_CONTROL;
+    case nsIDOMKeyEvent::DOM_VK_ALT:     return NS_MODIFIER_ALT;
+    case nsIDOMKeyEvent::DOM_VK_META:    return NS_MODIFIER_META;
+    default:                             return 0;
+  }
+
+  switch (aItemType) {
+  case nsIDocShellTreeItem::typeChrome:
+    return nsContentUtils::GetIntPref("ui.key.chromeAccess", 0);
+  case nsIDocShellTreeItem::typeContent:
+    return nsContentUtils::GetIntPref("ui.key.contentAccess", 0);
+  default:
+    return 0;
+  }
+}
+
 /******************************************************************/
 /* nsEventStateManager                                            */
 /******************************************************************/
@@ -215,6 +246,7 @@ nsEventStateManager::nsEventStateManager()
     mGestureDownPoint(0,0),
     mCurrentFocusFrame(nsnull),
     mCurrentTabIndex(0),
+    mLastFocusedWith(eEventFocusedByUnknown),
     mPresContext(nsnull),
     mLClickCount(0),
     mMClickCount(0),
@@ -250,9 +282,10 @@ nsEventStateManager::Init()
         nsContentUtils::GetBoolPref("nglayout.events.dispatchLeftClickOnly",
                                     sLeftClickOnly);
 
-      sGeneralAccesskeyModifier =
-        nsContentUtils::GetIntPref("ui.key.generalAccessKey",
-                                   sGeneralAccesskeyModifier);
+      sChromeAccessModifier =
+        GetAccessModifierMaskFromPref(nsIDocShellTreeItem::typeChrome);
+      sContentAccessModifier =
+        GetAccessModifierMaskFromPref(nsIDocShellTreeItem::typeContent);
 
       nsIContent::sTabFocusModelAppliesToXUL =
         nsContentUtils::GetBoolPref("accessibility.tabfocus_applies_to_xul",
@@ -263,6 +296,8 @@ nsEventStateManager::Init()
     prefBranch->AddObserver("accessibility.tabfocus_applies_to_xul", this, PR_TRUE);
     prefBranch->AddObserver("nglayout.events.dispatchLeftClickOnly", this, PR_TRUE);
     prefBranch->AddObserver("ui.key.generalAccessKey", this, PR_TRUE);
+    prefBranch->AddObserver("ui.key.chromeAccess", this, PR_TRUE);
+    prefBranch->AddObserver("ui.key.contentAccess", this, PR_TRUE);
 #if 0
     prefBranch->AddObserver("mousewheel.withaltkey.action", this, PR_TRUE);
     prefBranch->AddObserver("mousewheel.withaltkey.numlines", this, PR_TRUE);
@@ -337,6 +372,8 @@ nsEventStateManager::Shutdown()
     prefBranch->RemoveObserver("accessibility.tabfocus_applies_to_xul", this);
     prefBranch->RemoveObserver("nglayout.events.dispatchLeftClickOnly", this);
     prefBranch->RemoveObserver("ui.key.generalAccessKey", this);
+    prefBranch->RemoveObserver("ui.key.chromeAccess", this);
+    prefBranch->RemoveObserver("ui.key.contentAccess", this);
 #if 0
     prefBranch->RemoveObserver("mousewheel.withshiftkey.action", this);
     prefBranch->RemoveObserver("mousewheel.withshiftkey.numlines", this);
@@ -386,9 +423,16 @@ nsEventStateManager::Observe(nsISupports *aSubject,
         nsContentUtils::GetBoolPref("nglayout.events.dispatchLeftClickOnly",
                                     sLeftClickOnly);
     } else if (data.EqualsLiteral("ui.key.generalAccessKey")) {
-      sGeneralAccesskeyModifier =
-        nsContentUtils::GetIntPref("ui.key.generalAccessKey",
-                                   sGeneralAccesskeyModifier);
+      sChromeAccessModifier =
+        GetAccessModifierMaskFromPref(nsIDocShellTreeItem::typeChrome);
+      sContentAccessModifier =
+        GetAccessModifierMaskFromPref(nsIDocShellTreeItem::typeContent);
+    } else if (data.EqualsLiteral("ui.key.chromeAccess")) {
+      sChromeAccessModifier =
+        GetAccessModifierMaskFromPref(nsIDocShellTreeItem::typeChrome);
+    } else if (data.EqualsLiteral("ui.key.contentAccess")) {
+      sContentAccessModifier =
+        GetAccessModifierMaskFromPref(nsIDocShellTreeItem::typeContent);
 #if 0
     } else if (data.EqualsLiteral("mousewheel.withaltkey.action")) {
     } else if (data.EqualsLiteral("mousewheel.withaltkey.numlines")) {
@@ -831,7 +875,9 @@ nsEventStateManager::PreHandleEvent(nsPresContext* aPresContext,
         nsCOMPtr<nsIDocument> document = GetDocumentFromWindow(focusedWindow);
 
         if (document) {
-          nsIPresShell *shell = document->GetShellAt(0);
+          // Use a strong ref to make sure that the shell is alive still
+          // when calling FrameSelection().
+          nsCOMPtr<nsIPresShell> shell = document->GetShellAt(0);
           NS_ASSERTION(shell, "Focus events should not be getting thru when this is null!");
           if (shell) {
             if (focusedElement) {
@@ -946,16 +992,21 @@ nsEventStateManager::PreHandleEvent(nsPresContext* aPresContext,
 
       nsKeyEvent* keyEvent = (nsKeyEvent*)aEvent;
 
-      PRBool isSpecialAccessKeyDown = PR_FALSE;
-      switch (sGeneralAccesskeyModifier) {
-        case nsIDOMKeyEvent::DOM_VK_CONTROL: isSpecialAccessKeyDown = keyEvent->isControl; break;
-        case nsIDOMKeyEvent::DOM_VK_ALT: isSpecialAccessKeyDown = keyEvent->isAlt; break;
-        case nsIDOMKeyEvent::DOM_VK_META: isSpecialAccessKeyDown = keyEvent->isMeta; break;
-      }
+      PRInt32 modifierMask = 0;
+      if (keyEvent->isShift)
+        modifierMask |= NS_MODIFIER_SHIFT;
+      if (keyEvent->isControl)
+        modifierMask |= NS_MODIFIER_CONTROL;
+      if (keyEvent->isAlt)
+        modifierMask |= NS_MODIFIER_ALT;
+      if (keyEvent->isMeta)
+        modifierMask |= NS_MODIFIER_META;
 
-      //This is to prevent keyboard scrolling while alt or other accesskey modifier in use.
-      if (isSpecialAccessKeyDown)
-        HandleAccessKey(aPresContext, keyEvent, aStatus, -1, eAccessKeyProcessingNormal);
+      // Prevent keyboard scrolling while an accesskey modifier is in use.
+      if (modifierMask && (modifierMask == sChromeAccessModifier ||
+                           modifierMask == sContentAccessModifier))
+        HandleAccessKey(aPresContext, keyEvent, aStatus, -1,
+                        eAccessKeyProcessingNormal, modifierMask);
     }
   case NS_KEY_DOWN:
   case NS_KEY_UP:
@@ -970,6 +1021,28 @@ nsEventStateManager::PreHandleEvent(nsPresContext* aPresContext,
   return NS_OK;
 }
 
+static PRInt32
+GetAccessModifierMask(nsISupports* aDocShell)
+{
+  nsCOMPtr<nsIDocShellTreeItem> treeItem(do_QueryInterface(aDocShell));
+  if (!treeItem)
+    return -1; // invalid modifier
+
+  PRInt32 itemType;
+  treeItem->GetItemType(&itemType);
+  switch (itemType) {
+
+  case nsIDocShellTreeItem::typeChrome:
+    return sChromeAccessModifier;
+
+  case nsIDocShellTreeItem::typeContent:
+    return sContentAccessModifier;
+
+  default:
+    return -1; // invalid modifier
+  }
+}
+
 // Note: for the in parameter aChildOffset,
 // -1 stands for not bubbling from the child docShell
 // 0 -- childCount - 1 stands for the child docShell's offset
@@ -979,11 +1052,14 @@ nsEventStateManager::HandleAccessKey(nsPresContext* aPresContext,
                                      nsKeyEvent *aEvent,
                                      nsEventStatus* aStatus,
                                      PRInt32 aChildOffset,
-                                     ProcessingAccessKeyState aAccessKeyState)
+                                     ProcessingAccessKeyState aAccessKeyState,
+                                     PRInt32 aModifierMask)
 {
-
+  nsCOMPtr<nsISupports> pcContainer = aPresContext->GetContainer();
+  NS_ASSERTION(pcContainer, "no container for presContext");
+  
   // Alt or other accesskey modifier is down, we may need to do an accesskey
-  if (mAccessKeys) {
+  if (mAccessKeys && aModifierMask == GetAccessModifierMask(pcContainer)) {
     // Someone registered an accesskey.  Find and activate it.
     PRUint32 accKey = (IS_IN_BMP(aEvent->charCode)) ? 
       ToLowerCase((PRUnichar)aEvent->charCode) : aEvent->charCode;
@@ -1050,9 +1126,11 @@ nsEventStateManager::HandleAccessKey(nsPresContext* aPresContext,
         }
       } else { // otherwise, it must be HTML
         // It's hard to say what HTML4 wants us to do in all cases.
-        // So for now we'll settle for A) Set focus
-        ChangeFocusWith(content, eEventFocusedByKey);
-
+        // So for now we'll settle for A) Set focus (except for <label>s
+        // which focus their control in nsHTMLLabelElement::HandleDOMEvent)
+        if (content->Tag() != nsHTMLAtoms::label || !sKeyCausesActivation) {
+          ChangeFocusWith(content, eEventFocusedByKey);
+        }
         if (sKeyCausesActivation) {
           // B) Click on it if the users prefs indicate to do so.
 
@@ -1066,7 +1144,14 @@ nsEventStateManager::HandleAccessKey(nsPresContext* aPresContext,
 
           nsCOMPtr<nsIContent> oldTargetContent = mCurrentTargetContent;
           mCurrentTargetContent = content;
-          content->HandleDOMEvent(mPresContext, &event, nsnull, NS_EVENT_FLAG_INIT, &status);
+          PRUint32 flags = NS_EVENT_FLAG_INIT;
+          content->HandleDOMEvent(mPresContext, &event, nsnull, flags, &status);
+          event.flags &= ~NS_EVENT_FLAG_STOP_DISPATCH;
+          if (mCurrentTargetContent && mCurrentTargetContent == content) {
+            flags |= NS_EVENT_FLAG_SYSTEM_EVENT;
+            content->HandleDOMEvent(mPresContext, &event, nsnull, flags,
+                                    &status);
+          }
           mCurrentTargetContent = oldTargetContent;
         }
 
@@ -1079,11 +1164,11 @@ nsEventStateManager::HandleAccessKey(nsPresContext* aPresContext,
   if (nsEventStatus_eConsumeNoDefault != *aStatus) {
     // checking all sub docshells
 
-    nsCOMPtr<nsISupports> pcContainer = aPresContext->GetContainer();
-    NS_ASSERTION(pcContainer, "no container for presContext");
-
     nsCOMPtr<nsIDocShellTreeNode> docShell(do_QueryInterface(pcContainer));
-    NS_ASSERTION(docShell, "no docShellTreeNode for presContext");
+    if (!docShell) {
+      NS_WARNING("no docShellTreeNode for presContext");
+      return;
+    }
 
     PRInt32 childCount;
     docShell->GetChildCount(&childCount);
@@ -1114,7 +1199,8 @@ nsEventStateManager::HandleAccessKey(nsPresContext* aPresContext,
           NS_STATIC_CAST(nsEventStateManager *, subPC->EventStateManager());
 
         if (esm)
-          esm->HandleAccessKey(subPC, aEvent, aStatus, -1, eAccessKeyProcessingDown);
+          esm->HandleAccessKey(subPC, aEvent, aStatus, -1,
+                               eAccessKeyProcessingDown, aModifierMask);
 
         if (nsEventStatus_eConsumeNoDefault == *aStatus)
           break;
@@ -1124,11 +1210,11 @@ nsEventStateManager::HandleAccessKey(nsPresContext* aPresContext,
 
   // bubble up the process to the parent docShell if necesary
   if (eAccessKeyProcessingDown != aAccessKeyState && nsEventStatus_eConsumeNoDefault != *aStatus) {
-    nsCOMPtr<nsISupports> pcContainer = aPresContext->GetContainer();
-    NS_ASSERTION(pcContainer, "no container for presContext");
-
     nsCOMPtr<nsIDocShellTreeItem> docShell(do_QueryInterface(pcContainer));
-    NS_ASSERTION(docShell, "no docShellTreeItem for presContext");
+    if (!docShell) {
+      NS_WARNING("no docShellTreeNode for presContext");
+      return;
+    }
 
     nsCOMPtr<nsIDocShellTreeItem> parentShellItem;
     docShell->GetParent(getter_AddRefs(parentShellItem));
@@ -1149,7 +1235,8 @@ nsEventStateManager::HandleAccessKey(nsPresContext* aPresContext,
         NS_STATIC_CAST(nsEventStateManager *, parentPC->EventStateManager());
 
       if (esm)
-        esm->HandleAccessKey(parentPC, aEvent, aStatus, myOffset, eAccessKeyProcessingUp);
+        esm->HandleAccessKey(parentPC, aEvent, aStatus, myOffset,
+                             eAccessKeyProcessingUp, aModifierMask);
     }
   }// if end. bubble up process
 }// end of HandleAccessKey
@@ -1410,7 +1497,8 @@ nsEventStateManager::BeginTrackingDragGesture(nsPresContext* aPresContext,
 
 #ifdef CLICK_HOLD_CONTEXT_MENUS
   // fire off a timer to track click-hold
-  CreateClickHoldTimer ( aPresContext, inDownFrame, inDownEvent );
+  if (nsContentUtils::GetBoolPref("ui.click_hold_context_menus", PR_TRUE))
+    CreateClickHoldTimer ( aPresContext, inDownFrame, inDownEvent );
 #endif
 }
 
@@ -1691,14 +1779,52 @@ nsEventStateManager::DoScrollTextsize(nsIFrame *aTargetFrame,
     }
 }
 
+inline PRBool
+ShouldScrollRootView(nsPresContext* aPresContext)
+{
+  return (aPresContext->Type() == nsPresContext::eContext_PrintPreview);
+}
+
 nsresult
 nsEventStateManager::DoScrollText(nsPresContext* aPresContext,
                                   nsIFrame* aTargetFrame,
                                   nsInputEvent* aEvent,
                                   PRInt32 aNumLines,
                                   PRBool aScrollHorizontal,
-                                  PRBool aScrollPage)
+                                  ScrollQuantity aScrollQuantity)
 {
+  nsIScrollableView* scrollView = nsnull;
+  PRBool scrollRootView = ShouldScrollRootView(aPresContext);
+
+  if (scrollRootView) {
+    // Get root scroll view
+    nsIViewManager* vm = aPresContext->GetViewManager();
+    NS_ENSURE_TRUE(vm, NS_ERROR_FAILURE);
+    vm->GetRootScrollableView(&scrollView);
+    if (!scrollView) {
+      // We don't have root scrollable view in current document.
+      // Maybe, this is sub frame on Print Preview.
+      // Let's pass to parent document.
+      nsIFrame* newFrame = nsnull;
+      nsCOMPtr<nsPresContext> newPresContext = nsnull;
+      nsresult rv = GetParentScrollingView(aEvent, aPresContext, newFrame,
+                                           *getter_AddRefs(newPresContext));
+      NS_ENSURE_SUCCESS(rv, rv);
+      NS_ENSURE_TRUE(newFrame && newPresContext, NS_ERROR_FAILURE);
+      return DoScrollText(newPresContext, newFrame, aEvent, aNumLines,
+                          aScrollHorizontal, aScrollQuantity);
+    }
+    // find target frame that is root scrollable content
+    nsIFrame* targetFrame = aTargetFrame;
+    for ( ;targetFrame; targetFrame = targetFrame->GetParent()) {
+      nsCOMPtr<nsIScrollableViewProvider> svp = do_QueryInterface(targetFrame);
+      if (svp && scrollView == svp->GetScrollableView())
+        break;
+    }
+    NS_ENSURE_TRUE(targetFrame, NS_ERROR_FAILURE);
+    aTargetFrame = targetFrame;
+  }
+
   nsCOMPtr<nsIContent> targetContent = aTargetFrame->GetContent();
   if (!targetContent)
     GetFocusedContent(getter_AddRefs(targetContent));
@@ -1716,7 +1842,7 @@ nsEventStateManager::DoScrollText(nsPresContext* aPresContext,
     nsCOMPtr<nsIDOMAbstractView> view;
     docView->GetDefaultView(getter_AddRefs(view));
 
-    if (aScrollPage) {
+    if (aScrollQuantity == eScrollByPage) {
       if (aNumLines > 0) {
         aNumLines = nsIDOMNSUIEvent::SCROLL_PAGE_DOWN;
       } else {
@@ -1745,21 +1871,28 @@ nsEventStateManager::DoScrollText(nsPresContext* aPresContext,
       target->DispatchEvent(event, &defaultActionEnabled);
       if (!defaultActionEnabled)
         return NS_OK;
-      // Re-resolve |aTargetFrame| in case it was destroyed by the
-      // DOM event handler above, bug 257998.
-      aPresContext->GetPresShell()->GetPrimaryFrameFor(targetContent, &aTargetFrame);
-      if (!aTargetFrame) {
-        // Without a frame we can't do the normal ancestor search for a view to scroll.
-        // Don't fall through to the "passToParent" code at the end because that will
-        // likely scroll the wrong view (in an enclosing document).
-        return NS_OK;
+      if (!scrollRootView) {
+        // Re-resolve |aTargetFrame| in case it was destroyed by the
+        // DOM event handler above, bug 257998.
+        // But only if PresShell is still alive, bug 336587.
+        nsIPresShell* shell = aPresContext->GetPresShell();
+        aTargetFrame = nsnull;
+        if (shell) {
+          shell->GetPrimaryFrameFor(targetContent, &aTargetFrame);
+        }
+        if (!aTargetFrame) {
+          // Without a frame we can't do the normal ancestor search for a view
+          // to scroll. Don't fall through to the "passToParent" code at the end
+          // because that will likely scroll the wrong view (in an enclosing
+          // document).
+          return NS_OK;
+        }
       }
     }
   }
 
   nsIFrame* scrollFrame = aTargetFrame;
-  nsIScrollableView* scrollView = nsnull;
-  PRBool passToParent = PR_TRUE;
+  PRBool passToParent = !scrollRootView;
 
   for( ; scrollFrame && passToParent; scrollFrame = scrollFrame->GetParent()) {
     // Check whether the frame wants to provide us with a scrollable view.
@@ -1814,7 +1947,7 @@ nsEventStateManager::DoScrollText(nsPresContext* aPresContext,
     PRInt32 scrollX = 0;
     PRInt32 scrollY = aNumLines;
 
-    if (aScrollPage)
+    if (aScrollQuantity == eScrollByPage)
       scrollY = (scrollY > 0) ? 1 : -1;
       
     if (aScrollHorizontal) {
@@ -1822,8 +1955,17 @@ nsEventStateManager::DoScrollText(nsPresContext* aPresContext,
       scrollY = 0;
     }
     
-    if (aScrollPage)
+    if (aScrollQuantity == eScrollByPage)
       scrollView->ScrollByPages(scrollX, scrollY);
+    else if (aScrollQuantity == eScrollByPixel) {
+      // CallQueryInterface doesn't work beacuse nsIScrollableView does not
+      // contain QueryInterface.  Casting is fine, because nsScrollPortView
+      // is the only class that implements the interface, and it's been
+      // updated to implement nsIScrollableView_MOZILLA_1_8_BRANCH.
+      nsIScrollableView_MOZILLA_1_8_BRANCH* scrollView_MOZILLA_1_8_BRANCH =
+       NS_STATIC_CAST(nsIScrollableView_MOZILLA_1_8_BRANCH*, scrollView);
+      scrollView_MOZILLA_1_8_BRANCH->ScrollByPixels(scrollX, scrollY);
+    }
     else
       scrollView->ScrollByLines(scrollX, scrollY);
 
@@ -1838,7 +1980,7 @@ nsEventStateManager::DoScrollText(nsPresContext* aPresContext,
                                 *getter_AddRefs(newPresContext));
     if (NS_SUCCEEDED(rv) && newFrame)
       return DoScrollText(newPresContext, newFrame, aEvent, aNumLines,
-                          aScrollHorizontal, aScrollPage);
+                          aScrollHorizontal, aScrollQuantity);
     else
       return NS_ERROR_FAILURE;
   }
@@ -1866,7 +2008,16 @@ nsEventStateManager::GetParentScrollingView(nsInputEvent *aEvent,
     return NS_OK;
   }
 
-  nsIPresShell *pPresShell = parentDoc->GetShellAt(0);
+  nsIPresShell *pPresShell = nsnull;
+  for (PRUint32 i = 0; i < parentDoc->GetNumberOfShells(); i++) {
+    nsIPresShell *tmpPresShell = parentDoc->GetShellAt(i);
+    NS_ENSURE_TRUE(tmpPresShell, NS_ERROR_FAILURE);
+    NS_ENSURE_TRUE(tmpPresShell->GetPresContext(), NS_ERROR_FAILURE);
+    if (tmpPresShell->GetPresContext()->Type() == aPresContext->Type()) {
+      pPresShell = tmpPresShell;
+      break;
+    }
+  }
   NS_ENSURE_TRUE(pPresShell, NS_ERROR_FAILURE);
 
   /* now find the content node in our parent docshell's document that
@@ -1904,6 +2055,8 @@ nsEventStateManager::PostHandleEvent(nsPresContext* aPresContext,
   mCurrentTarget = aTargetFrame;
   mCurrentTargetContent = nsnull;
   nsresult ret = NS_OK;
+  //Keep the prescontext alive, we might need it after event dispatch
+  nsRefPtr<nsPresContext> presContext = aPresContext;
 
   NS_ASSERTION(mCurrentTarget, "mCurrentTarget is null");
   if (!mCurrentTarget) return NS_ERROR_NULL_POINTER;
@@ -2013,8 +2166,8 @@ nsEventStateManager::PostHandleEvent(nsPresContext* aPresContext,
         GetEventTarget(&targ);
         if (!targ) return NS_ERROR_FAILURE;
       }
-      ret = CheckForAndDispatchClick(aPresContext, (nsMouseEvent*)aEvent, aStatus);
-      nsIPresShell *shell = aPresContext->GetPresShell();
+      ret = CheckForAndDispatchClick(presContext, (nsMouseEvent*)aEvent, aStatus);
+      nsIPresShell *shell = presContext->GetPresShell();
       if (shell) {
         shell->FrameSelection()->SetMouseDownState(PR_FALSE);
       }
@@ -2069,6 +2222,8 @@ nsEventStateManager::PostHandleEvent(nsPresContext* aPresContext,
         numLines = msEvent->delta;
         if (msEvent->scrollFlags & nsMouseScrollEvent::kIsFullPage)
           action = MOUSE_SCROLL_PAGE;
+        else if (msEvent->scrollFlags & nsMouseScrollEvent::kIsPixels)
+          action = MOUSE_SCROLL_PIXELS;
       }
       else
         {
@@ -2103,13 +2258,27 @@ nsEventStateManager::PostHandleEvent(nsPresContext* aPresContext,
 
       switch (action) {
       case MOUSE_SCROLL_N_LINES:
+        {
+          DoScrollText(presContext, aTargetFrame, msEvent, numLines,
+                       (msEvent->scrollFlags & nsMouseScrollEvent::kIsHorizontal),
+                       eScrollByLine);
+        }
+        break;
+
       case MOUSE_SCROLL_PAGE:
         {
-          DoScrollText(aPresContext, aTargetFrame, msEvent, numLines,
+          DoScrollText(presContext, aTargetFrame, msEvent, numLines,
                        (msEvent->scrollFlags & nsMouseScrollEvent::kIsHorizontal),
-                       (action == MOUSE_SCROLL_PAGE));
+                       eScrollByPage);
         }
+        break;
 
+      case MOUSE_SCROLL_PIXELS:
+        {
+          DoScrollText(presContext, aTargetFrame, msEvent, numLines,
+                       (msEvent->scrollFlags & nsMouseScrollEvent::kIsHorizontal),
+                       eScrollByPixel);
+        }
         break;
 
       case MOUSE_SCROLL_HISTORY:
@@ -2137,7 +2306,7 @@ nsEventStateManager::PostHandleEvent(nsPresContext* aPresContext,
   case NS_DRAGDROP_EXIT:
     // clean up after ourselves. make sure we do this _after_ the event, else we'll
     // clean up too early!
-    GenerateDragDropEnterExit(aPresContext, (nsGUIEvent*)aEvent);
+    GenerateDragDropEnterExit(presContext, (nsGUIEvent*)aEvent);
     break;
 
   case NS_KEY_UP:
@@ -2256,7 +2425,7 @@ nsEventStateManager::PostHandleEvent(nsPresContext* aPresContext,
   case NS_MOUSE_ENTER:
     if (mCurrentTarget) {
       nsCOMPtr<nsIContent> targetContent;
-      mCurrentTarget->GetContentForEvent(aPresContext, aEvent,
+      mCurrentTarget->GetContentForEvent(presContext, aEvent,
                                          getter_AddRefs(targetContent));
       SetContentState(targetContent, NS_EVENT_STATE_HOVER);
     }
@@ -2710,8 +2879,7 @@ nsEventStateManager::NotifyMouseOver(nsGUIEvent* aEvent, nsIContent* aContent)
     return;
 
   // Before firing mouseover, check for recursion
-  if (mLastMouseOverElement == mFirstMouseOverEventElement &&
-      mFirstMouseOverEventElement)
+  if (aContent == mFirstMouseOverEventElement && mFirstMouseOverEventElement)
     return;
 
   // Check to see if we're a subdocument and if so update the parent
@@ -3073,10 +3241,31 @@ NS_IMETHODIMP
 nsEventStateManager::ChangeFocusWith(nsIContent* aFocusContent,
                                      EFocusedWithType aFocusedWith)
 {
+  mLastFocusedWith = aFocusedWith;
   if (!aFocusContent) {
     SetContentState(nsnull, NS_EVENT_STATE_FOCUS);
     return NS_OK;
   }
+
+  // Get focus controller.
+  EnsureDocument(mPresContext);
+  nsCOMPtr<nsIFocusController> focusController = nsnull;
+  nsCOMPtr<nsPIDOMWindow> window =
+    do_QueryInterface(GetDocumentOuterWindow(mDocument));
+  if (window)
+    focusController = window->GetRootFocusController();
+
+  // If this is called from mouse event, we lock to scroll.
+  // Because the part of element is always in view. See bug 105894.
+  PRBool suppressFocusScroll =
+    focusController && (aFocusedWith == eEventFocusedByMouse);
+  if (suppressFocusScroll) {
+    PRBool currentState = PR_FALSE;
+    focusController->GetSuppressFocusScroll(&currentState);
+    NS_ASSERTION(!currentState, "locked scroll already!");
+    focusController->SetSuppressFocusScroll(PR_TRUE);
+  }
+
   aFocusContent->SetFocus(mPresContext);
   if (aFocusedWith != eEventFocusedByMouse) {
     MoveCaretToFocus();
@@ -3096,24 +3285,10 @@ nsEventStateManager::ChangeFocusWith(nsIContent* aFocusContent,
       }
     }
   }
-  else {
-    nsCOMPtr<nsISelectionController> selCon(do_QueryInterface(mPresContext->PresShell()));
-    nsCOMPtr<nsISelection> selection;
-    if (selCon) {
-      selCon->GetSelection(nsISelectionController::SELECTION_NORMAL,
-                           getter_AddRefs(selection));
-      nsCOMPtr<nsIDOMNode> focusNode(do_QueryInterface(aFocusContent));
-      NS_ASSERTION(focusNode, "No focus node for non-docroot content");
-      // Move caret to focus only if focus not already contained in selection
-      PRBool isFocusInSelection = PR_FALSE;
-      if (selection) {
-        selection->ContainsNode(focusNode, PR_TRUE, &isFocusInSelection);
-      }
-      if (!isFocusInSelection) {
-        MoveCaretToFocus();
-      }
-    }
-  }
+
+  // Unlock scroll
+  if (suppressFocusScroll)
+    focusController->SetSuppressFocusScroll(PR_FALSE);
 
   return NS_OK;
 }
@@ -3232,8 +3407,7 @@ nsEventStateManager::ShiftFocusInternal(PRBool aForward, nsIContent* aStart)
   // point was given.
   if (!aStart && itemType != nsIDocShellTreeItem::typeChrome) {
     // We're going to tab from the selection position
-    nsCOMPtr<nsIDOMHTMLAreaElement> areaElement(do_QueryInterface(mCurrentFocus));
-    if (!areaElement) {
+    if (!mCurrentFocus || (mLastFocusedWith != eEventFocusedByMouse && mCurrentFocus->Tag() != nsHTMLAtoms::area)) {
       nsCOMPtr<nsIContent> selectionContent, endSelectionContent;  // We won't be using this, need arg for method call
       PRUint32 selectionOffset; // We won't be using this either, need arg for method call
       GetDocSelectionLocation(getter_AddRefs(selectionContent), getter_AddRefs(endSelectionContent), &selectionFrame, &selectionOffset);
@@ -3246,6 +3420,11 @@ nsEventStateManager::ShiftFocusInternal(PRBool aForward, nsIContent* aStart)
         PRBool selectionWithFocus;
         MoveFocusToCaret(PR_FALSE, &selectionWithFocus);
         ignoreTabIndex = !selectionWithFocus;
+        // Refresh |selectionFrame| since MoveFocusToCaret() could have
+        // destroyed it. (bug 308086)
+        GetDocSelectionLocation(getter_AddRefs(selectionContent),
+                                getter_AddRefs(endSelectionContent),
+                                &selectionFrame, &selectionOffset);
       }
     }
   }
@@ -4654,7 +4833,7 @@ nsEventStateManager::GetDocSelectionLocation(nsIContent **aStartContent,
       nsIContent *childContent = nsnull;
 
       startContent = do_QueryInterface(startNode);
-      if (startContent->IsContentOfType(nsIContent::eELEMENT)) {
+      if (startContent && startContent->IsContentOfType(nsIContent::eELEMENT)) {
         NS_ASSERTION(*aStartOffset >= 0, "Start offset cannot be negative");  
         childContent = startContent->GetChildAt(*aStartOffset);
         if (childContent) {
@@ -4663,7 +4842,7 @@ nsEventStateManager::GetDocSelectionLocation(nsIContent **aStartContent,
       }
 
       endContent = do_QueryInterface(endNode);
-      if (endContent->IsContentOfType(nsIContent::eELEMENT)) {
+      if (endContent && endContent->IsContentOfType(nsIContent::eELEMENT)) {
         PRInt32 endOffset = 0;
         domRange->GetEndOffset(&endOffset);
         NS_ASSERTION(endOffset >= 0, "End offset cannot be negative");
@@ -5063,6 +5242,18 @@ nsEventStateManager::SetContentCaretVisible(nsIPresShell* aPresShell,
     if (domSelection) {
       // First, tell the caret which selection to use
       caret->SetCaretDOMSelection(domSelection);
+
+      if (aVisible) {
+        // Check whether domSelection has focus node
+        // If not, we need move caret to the top of the document 
+        nsCOMPtr<nsIDOMNode> focusNode;
+        domSelection->GetFocusNode(getter_AddRefs(focusNode));
+        if (!focusNode) {
+          nsCOMPtr<nsISelectionController> selCon(do_QueryInterface(aPresShell));
+          if (selCon)
+            selCon->CompleteMove(PR_FALSE, PR_FALSE);
+        }
+      }
 
       // In content, we need to set the caret
       // the only other case is edit fields, where they have a different frame selection from the doc's

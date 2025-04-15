@@ -374,7 +374,7 @@ nsSVGImageFrame::PaintSVG(nsISVGRendererCanvas* canvas, const nsRect& dirtyRectT
     if (align == nsIDOMSVGPreserveAspectRatio::SVG_PRESERVEASPECTRATIO_UNKNOWN)
       align = nsIDOMSVGPreserveAspectRatio::SVG_PRESERVEASPECTRATIO_XMIDYMID;
     if (meetOrSlice == nsIDOMSVGPreserveAspectRatio::SVG_MEETORSLICE_UNKNOWN)
-      align = nsIDOMSVGPreserveAspectRatio::SVG_MEETORSLICE_MEET;
+      meetOrSlice = nsIDOMSVGPreserveAspectRatio::SVG_MEETORSLICE_MEET;
     
     float a, d, e, f;
     a = width/nativeWidth;
@@ -522,6 +522,10 @@ nsSVGImageFrame::ConvertFrame(gfxIImageFrame *aNewFrame)
 #define REVERSE_CHANNELS
 #endif
 
+#if defined(XP_MACOSX) && defined(__i386__)
+#define REVERSE_CHANNELS
+#endif
+
   // cairo/os-x wants ABGR format, GDI+ wants RGBA, cairo/unix wants BGRA
   if (!alpha) {
     for (PRInt32 y=0; y<height; y++) {
@@ -530,7 +534,7 @@ nsSVGImageFrame::ConvertFrame(gfxIImageFrame *aNewFrame)
       else
         target = data + stride * (1 - height) + stride * y;
       for (PRInt32 x=0; x<width; x++) {
-#ifdef XP_MACOSX
+#if defined(XP_MACOSX) && !defined(__i386__)
         *target++ = 255;
 #endif
 #ifndef REVERSE_CHANNELS
@@ -542,7 +546,7 @@ nsSVGImageFrame::ConvertFrame(gfxIImageFrame *aNewFrame)
         *target++ = rgb[y*bpr + bpp*x + 1];
         *target++ = rgb[y*bpr + bpp*x];
 #endif
-#ifndef XP_MACOSX
+#if !defined(XP_MACOSX) || (defined(XP_MACOSX) && defined(__i386__))
         *target++ = 255;
 #endif
       }
@@ -557,7 +561,7 @@ nsSVGImageFrame::ConvertFrame(gfxIImageFrame *aNewFrame)
           target = data + stride * (1 - height) + stride * y;
         for (PRInt32 x=0; x<width; x++) {
           PRUint32 a = alpha[y*abpr + x];
-#ifdef XP_MACOSX
+#if defined(XP_MACOSX) && !defined(__i386__)
           *target++ = a;
 #endif
 #ifndef REVERSE_CHANNELS
@@ -569,7 +573,7 @@ nsSVGImageFrame::ConvertFrame(gfxIImageFrame *aNewFrame)
           FAST_DIVIDE_BY_255(*target++, rgb[y*bpr + bpp*x + 1] * a);
           FAST_DIVIDE_BY_255(*target++, rgb[y*bpr + bpp*x] * a);
 #endif
-#ifndef XP_MACOSX
+#if !defined(XP_MACOSX) || (defined(XP_MACOSX) && defined(__i386__))
           *target++ = a;
 #endif
         }

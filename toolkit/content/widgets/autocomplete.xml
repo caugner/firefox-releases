@@ -24,6 +24,8 @@
 # Contributor(s):
 #   Pierre Chanial (p_ch@verizon.net)
 #   Dean Tessman   (dean_tessman@hotmail.com)
+#   Masayuki Nakano (masayuki@d-toybox.com)
+#   Pamela Greene (pamg.bugs@gmail.com)
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -53,7 +55,7 @@
 
     <content sizetopopup="pref">
       <xul:hbox class="autocomplete-textbox-container" flex="1">
-        <children includes="image|deck">
+        <children includes="image|deck|stack">
           <xul:image class="autocomplete-icon" allowevents="true"/>
         </children>
 
@@ -73,11 +75,14 @@
       <xul:popupset anonid="popupset" class="autocomplete-result-popupset"/>
     </content>
 
-    <implementation implements="nsIAccessibleProvider, nsIAutoCompleteInput, nsIDOMXULMenuListElement">
+    <implementation implements="nsIAccessibleProvider,
+                                nsIAutoCompleteInput_MOZILLA_1_8_BRANCH,
+                                nsIDOMXULMenuListElement">
       <field name="mController">null</field>
       <field name="mSearchNames">null</field>
       <field name="mIgnoreInput">false</field>
       <field name="mEnterEvent">null</field>
+      <field name="mConsumeRollupEvent">false</field>
       
       <field name="mInputElt">
         document.getAnonymousElementByAttribute(this, "anonid", "input");
@@ -163,7 +168,14 @@
 
       <property name="searchCount" readonly="true"
                 onget="this.initSearchNames(); return this.mSearchNames.length;"/>
-    
+
+      <property name="consumeRollupEvent" readonly="true"
+                onget="return this.mConsumeRollupEvent;"/>
+
+       <!-- This is the maximum number of drop-down rows we get when we
+            hit the drop marker beside fields that have it (like the URLbar).-->
+       <field name="maxDropMarkerRows" readonly="true">14</field>
+ 
       <method name="getSearchAt">
         <parameter name="aIndex"/>
         <body><![CDATA[
@@ -317,19 +329,32 @@
 
       <method name="openPopup">
         <body><![CDATA[
-          this.popup.openPopup(this, this.boxObject.screenX, this.boxObject.screenY+this.boxObject.height, this.boxObject.width);
+          this.popup.openPopup(this, -1, -1, this.boxObject.width);
         ]]></body>
       </method>
 
       <method name="closePopup">
         <body><![CDATA[
+          this.mConsumeRollupEvent = false;
           this.popup.closePopup();
         ]]></body>
       </method>
 
       <method name="showHistoryPopup">
         <body><![CDATA[
-          this.maxRows = 14;
+          // Store our "normal" maxRows on the popup, so that it can reset the
+          // value when the popup is hidden.
+          this.popup._normalMaxRows = this.maxRows;
+
+          // Increase our maxRows temporarily, since we want the dropdown to
+          // be bigger in this case. The popup's popupshowing/popuphiding
+          // handlers will take care of resetting this.
+          this.maxRows = this.maxDropMarkerRows;
+
+          // Ensure that we have focus.
+          if (!this.focused)
+            this.focus();
+          this.mConsumeRollupEvent = true;
           this.attachController();
           this.mController.startSearch("");
         ]]></body>
@@ -343,7 +368,7 @@
             this.closePopup();
         ]]></body>
       </method>
-      
+
       <!-- ::::::::::::: event dispatching ::::::::::::: -->
 
       <method name="fireEvent">
@@ -356,7 +381,7 @@
             var fn = new Function("eventType", "param", handler);
             cancel = fn.apply(this, arguments);
           }
-          
+
           return cancel;
         ]]></body>
       </method>
@@ -372,19 +397,12 @@
 
           var cancel = false;
           const IController = Components.interfaces.nsIAutoCompleteController;
-          
-          if (!this.disableKeyNavigation && !aEvent.ctrlKey && !aEvent.altKey) {
+
+          // Catch any keys that could potentially move the caret. Ctrl can be
+          // used in combination with these keys, so only make sure that Alt
+          // isn't used.
+          if (!this.disableKeyNavigation && !aEvent.altKey) {
             switch (aEvent.keyCode) {
-              case KeyEvent.DOM_VK_TAB:
-                if (this.tabScrolling && this.popup.mPopupOpen)
-                  cancel = this.mController.handleKeyNavigation(aEvent.shiftKey ? IController.KEY_UP : IController.KEY_DOWN);
-                break;
-              case KeyEvent.DOM_VK_UP:
-                cancel = this.mController.handleKeyNavigation(IController.KEY_UP);
-                break;
-              case KeyEvent.DOM_VK_DOWN:
-                cancel = this.mController.handleKeyNavigation(IController.KEY_DOWN);
-                break;
               case KeyEvent.DOM_VK_LEFT:
                 cancel = this.mController.handleKeyNavigation(IController.KEY_LEFT);
                 break;
@@ -394,6 +412,24 @@
               case KeyEvent.DOM_VK_HOME:
                 cancel = this.mController.handleKeyNavigation(IController.KEY_HOME);
                 break;
+            }
+          }
+
+          // Handle keys that are not part of a keyboard shortcut (no Ctrl or Alt)
+          if (!this.disableKeyNavigation && !aEvent.ctrlKey && !aEvent.altKey) {
+            switch (aEvent.keyCode) {
+              case KeyEvent.DOM_VK_TAB:
+                if (this.tabScrolling && this.popup.mPopupOpen)
+                  cancel = this.mController.handleKeyNavigation(aEvent.shiftKey ?
+                                                                IController.KEY_UP :
+                                                                IController.KEY_DOWN);
+                break;
+              case KeyEvent.DOM_VK_UP:
+                cancel = this.mController.handleKeyNavigation(IController.KEY_UP);
+                break;
+              case KeyEvent.DOM_VK_DOWN:
+                cancel = this.mController.handleKeyNavigation(IController.KEY_DOWN);
+                break;
               case KeyEvent.DOM_VK_PAGE_UP:
                 cancel = this.mController.handleKeyNavigation(IController.KEY_PAGE_UP);
                 break;
@@ -402,7 +438,9 @@
                 break;
             }
           }
-          
+
+          // Handle keys we know aren't part of a shortcut, even with Alt or
+          // Ctrl.
           switch (aEvent.keyCode) {
             case KeyEvent.DOM_VK_ESCAPE:
               cancel = this.mController.handleEscape();
@@ -411,12 +449,12 @@
               this.mEnterEvent = aEvent;
               cancel = this.mController.handleEnter();
               break;
+            case KeyEvent.DOM_VK_DELETE:
 #ifdef XP_MACOSX
             case KeyEvent.DOM_VK_BACK_SPACE:
-#endif
-            case KeyEvent.DOM_VK_DELETE:
               if (aEvent.shiftKey)
-                cancel = this.mController.handleDelete();
+#endif
+              cancel = this.mController.handleDelete();
               break;
             case KeyEvent.DOM_VK_DOWN:
             case KeyEvent.DOM_VK_UP:
@@ -490,7 +528,10 @@
 
       <handler event="blur" phase="capturing"
                action="if (!this._dontBlur) this.detachController();"/>
-               
+
+      <handler event="contextmenu" phase="capturing"
+               action="this.closePopup();"/>
+
     </handlers>
   </binding> 
 
@@ -561,7 +602,18 @@
             this.setAttribute("width", aWidth < 100 ? 100 : aWidth);
 
             document.popupNode = null;
-            this.showPopup(document.documentElement, aX, aY, "popup", null, null);
+            if (aY == -1) {
+              this.showPopup(this.mInput, -1, -1, "popup", 'bottomleft', 'topleft');
+            }
+            else {
+              this.showPopup(document.documentElement, aX, aY, "popup", null, null);            
+            }
+            this.enableRollup(false);
+            var controller =
+              this.mInput.controller.QueryInterface(Components.interfaces.
+                nsIAutoCompleteController_MOZILLA_1_8_BRANCH);
+            if (controller)
+              controller.attachRollupListener();
           }
         ]]></body>
       </method>
@@ -573,6 +625,11 @@
             document.popupNode = null;
 
             this.setAttribute("hidden", "true");
+            var controller =
+              this.mInput.controller.QueryInterface(Components.interfaces.
+                nsIAutoCompleteController_MOZILLA_1_8_BRANCH);
+            if (controller)
+              controller.detachRollupListener();
           }
         ]]></body>
       </method>
@@ -623,9 +680,25 @@
         ]]></setter>
       </property>
 
+      <!-- This is the default number of rows that we give the autocomplete
+           popup when the textbox doesn't have a "maxrows" attribute
+           for us to use. -->
+      <field name="defaultMaxRows" readonly="true">6</field>
+
+      <!-- In some cases (e.g. when the input's dropmarker button is clicked),
+           the input wants to display a popup with more rows. In that case, it
+           should increase its maxRows property and store the "normal" maxRows
+           in this field. When the popup is hidden, we restore the input's
+           maxRows to the value stored in this field.
+
+           This field is set to -1 between uses so that we can tell when it's
+           been set by the input and when we need to set it in the popupshowing
+           handler. -->
+      <field name="_normalMaxRows">-1</field>
+
       <property name="maxRows" readonly="true">
         <getter><![CDATA[
-          return (this.mInput && this.mInput.maxRows) || 6;
+          return (this.mInput && this.mInput.maxRows) || this.defaultMaxRows;
         ]]></getter>
       </property>
 
@@ -730,13 +803,23 @@
     </implementation>
 
     <handlers>
-      <handler event="popupshowing">
+      <handler event="popupshowing"><![CDATA[
+        // If normalMaxRows wasn't already set by the input, then set it here
+        // so that we restore the correct number when the popup is hidden.
+        if (this._normalMaxRows < 0)
+          this._normalMaxRows = this.mInput.maxRows;
+
         this.mPopupOpen = true;
-      </handler>
+      ]]></handler>
 
       <handler event="popuphiding">
         setTimeout(this.clearOpenProperty, 0, this);
-        this.mInput.maxRows = 6;
+
+        // Reset the maxRows property to the cached "normal" value, and reset
+        // _normalMaxRows so that we can detect whether it was set by the input
+        // when the popupshowing handler runs.
+        this.mInput.maxRows = this._normalMaxRows;
+        this._normalMaxRows = -1;
       </handler>
     </handlers>
   </binding>
@@ -772,8 +855,13 @@
     </implementation>
     
     <handlers>
-      <handler event="mouseout" action="this.parentNode.currentIndex = -1;"/>
       <handler event="mouseup" action="this.parentNode.parentNode.onPopupClick(event);"/>
+
+      <handler event="mousedown"><![CDATA[
+         var rc = this.getHoverCell(event);
+         if (rc && rc.row != this.parentNode.currentIndex)
+            this.parentNode.view.selection.select(rc.row);
+      ]]></handler>
 
       <handler event="mousemove"><![CDATA[
         if (new Date() - this.mLastMoveTime > 30) {
@@ -797,7 +885,21 @@
 
   <binding id="history-dropmarker" extends="xul:button">
     <content>
-      <xul:image class="dropmarker-image"/>
+      <xul:stack class="history-dropmarker-stack">
+        <xul:vbox class="autocomplete-dropmarker-bkgnd-box">
+          <xul:image class="autocomplete-dropmarker-bkgnd-top autocomplete-dropmarker-bkgnd"/>
+          <xul:vbox flex="1" class="autocomplete-dropmarker-inner-box">
+            <xul:image flex="1" class="autocomplete-dropmarker-bkgnd-mid-top autocomplete-dropmarker-bkgnd"/>
+            <xul:image flex="1" class="autocomplete-dropmarker-bkgnd-mid-bottom autocomplete-dropmarker-bkgnd"/>
+          </xul:vbox>
+          <xul:image class="autocomplete-dropmarker-bkgnd-bottom autocomplete-dropmarker-bkgnd"/>
+        </xul:vbox>
+
+        <xul:hbox align="center" class="dropmarker-image-container">
+          <xul:image class="dropmarker-image"/>
+        </xul:hbox>
+      </xul:stack>
+
     </content>
       
     <implementation implements="nsIAccessibleProvider">

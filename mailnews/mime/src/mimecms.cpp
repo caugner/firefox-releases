@@ -20,6 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s): 
+ *   Kai Engert <kengert@redhat.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -36,6 +37,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsICMSMessage.h"
+#include "nsICMSMessage2.h"
 #include "nsICMSMessageErrors.h"
 #include "nsICMSDecoder.h"
 #include "mimecms.h"
@@ -53,18 +55,18 @@
 #include "nsCOMPtr.h"
 #include "nsIX509Cert.h"
 #include "nsIMsgHeaderParser.h"
+#include "nsIProxyObjectManager.h"
 
 
 #define MIME_SUPERCLASS mimeEncryptedClass
 MimeDefClass(MimeEncryptedCMS, MimeEncryptedCMSClass,
-	     mimeEncryptedCMSClass, &MIME_SUPERCLASS);
+       mimeEncryptedCMSClass, &MIME_SUPERCLASS);
 
 static void *MimeCMS_init(MimeObject *, int (*output_fn) (const char *, PRInt32, void *), void *);
 static int MimeCMS_write (const char *, PRInt32, void *);
 static int MimeCMS_eof (void *, PRBool);
 static char * MimeCMS_generate (void *);
 static void MimeCMS_free (void *);
-static void MimeCMS_get_content_info (MimeObject *, nsICMSMessage **, char **, PRInt32 *, PRInt32 *, PRBool *);
 
 extern int SEC_ERROR_CERT_ADDR_MISMATCH;
 
@@ -82,8 +84,6 @@ static int MimeEncryptedCMSClassInitialize(MimeEncryptedCMSClass *clazz)
   eclass->crypto_generate_html = MimeCMS_generate;
   eclass->crypto_free          = MimeCMS_free;
 
-  clazz->get_content_info	   = MimeCMS_get_content_info;
-
   return 0;
 }
 
@@ -96,8 +96,7 @@ typedef struct MimeCMSdata
   nsCOMPtr<nsICMSMessage> content_info;
   PRBool ci_is_encrypted;
   char *sender_addr;
-  PRInt32 decode_error;
-  PRInt32 verify_error;
+  PRBool decoding_failed;
   MimeObject *self;
   PRBool parent_is_encrypted_p;
   PRBool parent_holds_stamp_p;
@@ -108,8 +107,7 @@ typedef struct MimeCMSdata
   output_closure(nsnull),
   ci_is_encrypted(PR_FALSE),
   sender_addr(nsnull),
-  decode_error(PR_FALSE),
-  verify_error(PR_FALSE),
+  decoding_failed(PR_FALSE),
   self(nsnull),
   parent_is_encrypted_p(PR_FALSE),
   parent_holds_stamp_p(PR_FALSE)
@@ -130,30 +128,6 @@ typedef struct MimeCMSdata
   }
 } MimeCMSdata;
 
-
-static void MimeCMS_get_content_info(MimeObject *obj, 
-                                     nsICMSMessage **content_info_ret, 
-                                     char **sender_email_addr_return, 
-                                     PRInt32 *decode_error_ret, 
-                                     PRInt32 *verify_error_ret, 
-                                     PRBool *ci_is_encrypted)
-{
-  MimeEncrypted *enc = (MimeEncrypted *) obj;
-  if (enc && enc->crypto_closure)
-	{
-	  MimeCMSdata *data = (MimeCMSdata *) enc->crypto_closure;
-
-          *decode_error_ret = data->decode_error;
-          *verify_error_ret = data->verify_error;
-          *content_info_ret = data->content_info;
-          *ci_is_encrypted  = data->ci_is_encrypted;
-
-	  if (sender_email_addr_return)
-		*sender_email_addr_return = (data->sender_addr ? nsCRT::strdup(data->sender_addr) : 0);
-	}
-}
-
-
 /*   SEC_PKCS7DecoderContentCallback for SEC_PKCS7DecoderStart() */
 static void MimeCMS_content_callback (void *arg, const char *buf, unsigned long length)
 {
@@ -162,16 +136,16 @@ static void MimeCMS_content_callback (void *arg, const char *buf, unsigned long 
   if (!data) return;
 
   if (!data->output_fn)
-	return;
+    return;
 
   PR_SetError(0,0);
   status = data->output_fn (buf, length, data->output_closure);
   if (status < 0)
-	{
-	  PR_SetError(status, 0);
-	  data->output_fn = 0;
-	  return;
-	}
+  {
+    PR_SetError(status, 0);
+    data->output_fn = 0;
+    return;
+  }
 }
 
 PRBool MimeEncryptedCMS_encrypted_p (MimeObject *obj)
@@ -180,17 +154,17 @@ PRBool MimeEncryptedCMS_encrypted_p (MimeObject *obj)
 
   if (!obj) return PR_FALSE;
   if (mime_typep(obj, (MimeObjectClass *) &mimeEncryptedCMSClass))
-	{
-	  MimeEncrypted *enc = (MimeEncrypted *) obj;
-	  MimeCMSdata *data = (MimeCMSdata *) enc->crypto_closure;
-	  if (!data || !data->content_info) return PR_FALSE;
+  {
+    MimeEncrypted *enc = (MimeEncrypted *) obj;
+    MimeCMSdata *data = (MimeCMSdata *) enc->crypto_closure;
+    if (!data || !data->content_info) return PR_FALSE;
                 data->content_info->ContentIsEncrypted(&encrypted);
-	        return encrypted;
-	}
+          return encrypted;
+  }
   return PR_FALSE;
 }
 
-// extern MimeMessageClass mimeMessageClass;			/* gag */
+// extern MimeMessageClass mimeMessageClass;      /* gag */
 
 static void ParseRFC822Addresses (const char *line, nsXPIDLCString &names, nsXPIDLCString &addresses)
 {
@@ -204,19 +178,14 @@ static void ParseRFC822Addresses (const char *line, nsXPIDLCString &names, nsXPI
   }
 }
 
-extern char *IMAP_CreateReloadAllPartsUrl(const char *url);
-
-
-PRBool MimeCMSHeadersAndCertsMatch(MimeObject *obj, 
-                                   nsICMSMessage *content_info, 
-                                   PRBool *signing_cert_without_email_address, 
-                                   char **sender_email_addr_return)
+PRBool MimeCMSHeadersAndCertsMatch(nsICMSMessage *content_info, 
+                                   nsIX509Cert *signerCert,
+                                   const char *from_addr,
+                                   const char *from_name,
+                                   const char *sender_addr,
+                                   const char *sender_name,
+                                   PRBool *signing_cert_without_email_address)
 {
-  MimeHeaders *msg_headers = 0;
-  nsXPIDLCString from_addr;
-  nsXPIDLCString from_name;
-  nsXPIDLCString sender_addr;
-  nsXPIDLCString sender_name;
   nsXPIDLCString cert_addr;
   PRBool match = PR_TRUE;
   PRBool foundFrom = PR_FALSE;
@@ -225,78 +194,29 @@ PRBool MimeCMSHeadersAndCertsMatch(MimeObject *obj,
   /* Find the name and address in the cert.
    */
   if (content_info)
-	{
-	  // Extract any address contained in the cert.
-	  // This will be used for testing, whether the cert contains no addresses at all.
-	  content_info->GetSignerEmailAddress (getter_Copies(cert_addr));
-	}
+  {
+    // Extract any address contained in the cert.
+    // This will be used for testing, whether the cert contains no addresses at all.
+    content_info->GetSignerEmailAddress (getter_Copies(cert_addr));
+  }
 
   if (signing_cert_without_email_address)
   {
     *signing_cert_without_email_address = (!cert_addr);
   }
 
-  if (!cert_addr) {
-    // no address, no match
-    return PR_FALSE;
-  }
-
-  /* Find the headers of the MimeMessage which is the parent (or grandparent)
-	 of this object (remember, crypto objects nest.) */
-  {
-	MimeObject *o2 = obj;
-	msg_headers = o2->headers;
-	while (o2 &&
-		   o2->parent &&
-		   !mime_typep(o2->parent, (MimeObjectClass *) &mimeMessageClass))
-	  {
-		o2 = o2->parent;
-		msg_headers = o2->headers;
-	  }
-  }
-
-  if (!msg_headers) {
-    // no headers, no match
-    return PR_FALSE;
-  }
-
-  /* Find the names and addresses in the From and/or Sender fields.
-   */
-  {
-	char *s;
-
-	/* Extract the name and address of the "From:" field. */
-	s = MimeHeaders_get(msg_headers, HEADER_FROM, PR_FALSE, PR_FALSE);
-	if (s)
-	  {
-		ParseRFC822Addresses(s, from_name, from_addr);
-		PR_FREEIF(s);
-	  }
-
-	/* Extract the name and address of the "Sender:" field. */
-	s = MimeHeaders_get(msg_headers, HEADER_SENDER, PR_FALSE, PR_FALSE);
-	if (s)
-	  {
-		ParseRFC822Addresses(s, sender_name, sender_addr);
-		PR_FREEIF(s);
-	  }
-  }
-
   /* Now compare them --
-	 consider it a match if the address in the cert matches either the
-	 address in the From or Sender field
+   consider it a match if the address in the cert matches either the
+   address in the From or Sender field
    */
 
   /* If there is no addr in the cert at all, it can not match and we fail. */
   if (!cert_addr)
   {
-  	match = PR_FALSE;
+    match = PR_FALSE;
   }
   else
   {
-    nsCOMPtr<nsIX509Cert> signerCert;
-    content_info->GetSignerCert(getter_AddRefs(signerCert));
-
     if (signerCert)
     {
       if (from_addr && *from_addr)
@@ -320,24 +240,104 @@ PRBool MimeCMSHeadersAndCertsMatch(MimeObject *obj,
 
     if (!foundSender && !foundFrom)
     {
-		  match = PR_FALSE;
-	  }
-  }
-
-  if (sender_email_addr_return) {
-    if (match && foundFrom)
-      *sender_email_addr_return = nsCRT::strdup(from_addr);
-    if (match && foundSender)
-      *sender_email_addr_return = nsCRT::strdup(sender_addr);
-    else if (from_addr && *from_addr)
-      *sender_email_addr_return = nsCRT::strdup(from_addr);
-    else if (sender_addr && *sender_addr)
-      *sender_email_addr_return = nsCRT::strdup(sender_addr);
-    else
-      *sender_email_addr_return = 0;
+      match = PR_FALSE;
+    }
   }
 
   return match;
+}
+
+class nsSMimeVerificationListener : public nsISMimeVerificationListener
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSISMIMEVERIFICATIONLISTENER
+
+  nsSMimeVerificationListener(const char *aFromAddr, const char *aFromName,
+                              const char *aSenderAddr, const char *aSenderName,
+                              nsIMsgSMIMEHeaderSink *aHeaderSink, PRInt32 aMimeNestingLevel);
+
+  virtual ~nsSMimeVerificationListener() {}
+  
+protected:
+  nsCOMPtr<nsIMsgSMIMEHeaderSink> mHeaderSink;
+  PRInt32 mMimeNestingLevel;
+
+  nsXPIDLCString mFromAddr;
+  nsXPIDLCString mFromName;
+  nsXPIDLCString mSenderAddr;
+  nsXPIDLCString mSenderName;
+};
+
+NS_IMPL_ISUPPORTS1(nsSMimeVerificationListener, nsISMimeVerificationListener)
+
+nsSMimeVerificationListener::nsSMimeVerificationListener(const char *aFromAddr, const char *aFromName,
+                                                         const char *aSenderAddr, const char *aSenderName,
+                                                         nsIMsgSMIMEHeaderSink *aHeaderSink, PRInt32 aMimeNestingLevel)
+{
+  mHeaderSink = aHeaderSink;
+  mMimeNestingLevel = aMimeNestingLevel;
+
+  mFromAddr = aFromAddr;
+  mFromName = aFromName;
+  mSenderAddr = aSenderAddr;
+  mSenderName = aSenderName;
+}
+
+NS_IMETHODIMP nsSMimeVerificationListener::Notify(nsICMSMessage2 *aVerifiedMessage,
+                                                  nsresult aVerificationResultCode)
+{
+  // Only continue if we have a valid pointer to the UI
+  NS_ENSURE_TRUE(mHeaderSink, NS_OK);
+  
+  NS_ENSURE_TRUE(aVerifiedMessage, NS_ERROR_FAILURE);
+  
+  nsCOMPtr<nsICMSMessage> msg = do_QueryInterface(aVerifiedMessage);
+  NS_ENSURE_TRUE(msg, NS_ERROR_FAILURE);
+  
+  nsCOMPtr<nsIX509Cert> signerCert;
+  msg->GetSignerCert(getter_AddRefs(signerCert));
+  
+  PRInt32 signature_status = nsICMSMessageErrors::GENERAL_ERROR;
+  
+  if (NS_FAILED(aVerificationResultCode))
+  {
+    if (NS_ERROR_MODULE_SECURITY == NS_ERROR_GET_MODULE(aVerificationResultCode))
+      signature_status = NS_ERROR_GET_CODE(aVerificationResultCode);
+    else if (NS_ERROR_NOT_IMPLEMENTED == aVerificationResultCode)
+      signature_status = nsICMSMessageErrors::VERIFY_ERROR_PROCESSING;
+  }
+  else
+  {
+    PRBool signing_cert_without_email_address;
+
+    PRBool good_p = MimeCMSHeadersAndCertsMatch(msg, signerCert,
+                                                mFromAddr.get(), mFromName.get(),
+                                                mSenderAddr.get(), mSenderName.get(),
+                                                &signing_cert_without_email_address);
+    if (!good_p)
+    {
+      if (signing_cert_without_email_address)
+        signature_status = nsICMSMessageErrors::VERIFY_CERT_WITHOUT_ADDRESS;
+      else
+        signature_status = nsICMSMessageErrors::VERIFY_HEADER_MISMATCH;
+    }
+    else 
+      signature_status = nsICMSMessageErrors::SUCCESS;
+  }
+
+
+  nsCOMPtr<nsIProxyObjectManager> proxyman(do_GetService(NS_XPCOMPROXY_CONTRACTID));
+  if (proxyman)
+  {
+    nsCOMPtr<nsIMsgSMIMEHeaderSink> proxySink;
+    proxyman->GetProxyForObject(NS_UI_THREAD_EVENTQ, NS_GET_IID(nsIMsgSMIMEHeaderSink),
+                                mHeaderSink, PROXY_SYNC, getter_AddRefs(proxySink));
+    if (proxySink)
+      proxySink->SignedStatus(mMimeNestingLevel, signature_status, signerCert);
+  }
+
+  return NS_OK;
 }
 
 int MIMEGetRelativeCryptoNestLevel(MimeObject *obj)
@@ -371,7 +371,10 @@ int MIMEGetRelativeCryptoNestLevel(MimeObject *obj)
         aTopShownObject = walker;
       }
       if (!aAlreadyFoundTop && !walker->parent) {
-        aTopShownObject = walker;
+        // The mime part part_to_load is not a parent of the
+        // the crypto mime part passed in to this function as parameter obj.
+        // That means the crypto part belongs to another branch of the mime tree.
+        return -1;
       }
     }
   }
@@ -431,22 +434,22 @@ static void *MimeCMS_init(MimeObject *obj,
 
   // XXX Fix later XXX //
   data->parent_holds_stamp_p =
-	(obj->parent &&
-	 (mime_crypto_stamped_p(obj->parent) ||
-	  mime_typep(obj->parent, (MimeObjectClass *) &mimeEncryptedClass)));
+  (obj->parent &&
+   (mime_crypto_stamped_p(obj->parent) ||
+    mime_typep(obj->parent, (MimeObjectClass *) &mimeEncryptedClass)));
 
   data->parent_is_encrypted_p =
-	(obj->parent && MimeEncryptedCMS_encrypted_p (obj->parent));
+  (obj->parent && MimeEncryptedCMS_encrypted_p (obj->parent));
 
   /* If the parent of this object is a crypto-blob, then it's the grandparent
-	 who would have written out the headers and prepared for a stamp...
-	 (This shit sucks.)
+   who would have written out the headers and prepared for a stamp...
+   (This shit sucks.)
    */
   if (data->parent_is_encrypted_p &&
-	  !data->parent_holds_stamp_p &&
-	  obj->parent && obj->parent->parent)
-	data->parent_holds_stamp_p =
-	  mime_crypto_stamped_p (obj->parent->parent);
+    !data->parent_holds_stamp_p &&
+    obj->parent && obj->parent->parent)
+  data->parent_holds_stamp_p =
+    mime_crypto_stamped_p (obj->parent->parent);
 
   mime_stream_data *msd = (mime_stream_data *) (data->self->options->stream_closure);
   if (msd)
@@ -509,11 +512,75 @@ MimeCMS_write (const char *buf, PRInt32 buf_size, void *closure)
 
   PR_SetError(0, 0);
   rv = data->decoder_context->Update(buf, buf_size);
-  if (NS_FAILED(rv)) {
-    data->verify_error = -1;
-  }
+  data->decoding_failed = NS_FAILED(rv);
 
   return 0;
+}
+
+void MimeCMSGetFromSender(MimeObject *obj,
+                          nsXPIDLCString &from_addr,
+                          nsXPIDLCString &from_name,
+                          nsXPIDLCString &sender_addr,
+                          nsXPIDLCString &sender_name)
+{
+  MimeHeaders *msg_headers = 0;
+
+  /* Find the headers of the MimeMessage which is the parent (or grandparent)
+   of this object (remember, crypto objects nest.) */
+  MimeObject *o2 = obj;
+  msg_headers = o2->headers;
+  while (o2 &&
+       o2->parent &&
+       !mime_typep(o2->parent, (MimeObjectClass *) &mimeMessageClass))
+    {
+    o2 = o2->parent;
+    msg_headers = o2->headers;
+    }
+
+  if (!msg_headers)
+    return;
+
+  /* Find the names and addresses in the From and/or Sender fields.
+   */
+  char *s;
+
+  /* Extract the name and address of the "From:" field. */
+  s = MimeHeaders_get(msg_headers, HEADER_FROM, PR_FALSE, PR_FALSE);
+  if (s)
+    {
+    ParseRFC822Addresses(s, from_name, from_addr);
+    PR_FREEIF(s);
+    }
+
+  /* Extract the name and address of the "Sender:" field. */
+  s = MimeHeaders_get(msg_headers, HEADER_SENDER, PR_FALSE, PR_FALSE);
+  if (s)
+    {
+    ParseRFC822Addresses(s, sender_name, sender_addr);
+    PR_FREEIF(s);
+    }
+}
+
+void MimeCMSRequestAsyncSignatureVerification(nsICMSMessage *aCMSMsg,
+                                              const char *aFromAddr, const char *aFromName,
+                                              const char *aSenderAddr, const char *aSenderName,
+                                              nsIMsgSMIMEHeaderSink *aHeaderSink, PRInt32 aMimeNestingLevel,
+                                              unsigned char* item_data, PRUint32 item_len)
+{
+  nsCOMPtr<nsICMSMessage2> msg2 = do_QueryInterface(aCMSMsg);
+  if (!msg2)
+    return;
+  
+  nsRefPtr<nsSMimeVerificationListener> listener = 
+    new nsSMimeVerificationListener(aFromAddr, aFromName, aSenderAddr, aSenderName,
+                                    aHeaderSink, aMimeNestingLevel);
+  if (!listener)
+    return;
+  
+  if (item_data)
+    msg2->AsyncVerifyDetachedSignature(listener, item_data, item_len);
+  else
+    msg2->AsyncVerifySignature(listener);
 }
 
 static int
@@ -521,26 +588,26 @@ MimeCMS_eof (void *crypto_closure, PRBool abort_p)
 {
   MimeCMSdata *data = (MimeCMSdata *) crypto_closure;
   nsresult rv;
+  PRInt32 status = nsICMSMessageErrors::SUCCESS;
 
   if (!data || !data->output_fn || !data->decoder_context) {
-  	return -1;
+    return -1;
   }
 
   int aRelativeNestLevel = MIMEGetRelativeCryptoNestLevel(data->self);
 
   /* Hand an EOF to the crypto library.  It may call data->output_fn.
-	 (Today, the crypto library has no flushing to do, but maybe there
-	 will be someday.)
+   (Today, the crypto library has no flushing to do, but maybe there
+   will be someday.)
 
-	 We save away the value returned and will use it later to emit a
-	 blurb about whether the signature validation was cool.
+   We save away the value returned and will use it later to emit a
+   blurb about whether the signature validation was cool.
    */
 
   PR_SetError(0, 0);
   rv = data->decoder_context->Finish(getter_AddRefs(data->content_info));
-
   if (NS_FAILED(rv))
-	  data->verify_error = PR_GetError();
+    status = nsICMSMessageErrors::GENERAL_ERROR;
 
   data->decoder_context = 0;
 
@@ -549,9 +616,8 @@ MimeCMS_eof (void *crypto_closure, PRBool abort_p)
   if (!data->smimeHeaderSink)
     return 0;
 
-  if (aRelativeNestLevel < 0) {
+  if (aRelativeNestLevel < 0)
     return 0;
-  }
 
   PRInt32 maxNestLevel = 0;
   data->smimeHeaderSink->MaxWantedNesting(&maxNestLevel);
@@ -559,14 +625,8 @@ MimeCMS_eof (void *crypto_closure, PRBool abort_p)
   if (aRelativeNestLevel > maxNestLevel)
     return 0;
 
-  PRInt32 status = nsICMSMessageErrors::SUCCESS;
-
-  if (data->verify_error
-      || data->decode_error
-      || NS_FAILED(rv))
-  {
+  if (data->decoding_failed)
     status = nsICMSMessageErrors::GENERAL_ERROR;
-  }
 
   if (!data->content_info)
   {
@@ -598,48 +658,26 @@ MimeCMS_eof (void *crypto_closure, PRBool abort_p)
         return 0;
       }
 
-      rv = data->content_info->VerifySignature();
+      nsXPIDLCString from_addr;
+      nsXPIDLCString from_name;
+      nsXPIDLCString sender_addr;
+      nsXPIDLCString sender_name;
 
-	    if (NS_FAILED(rv)) {
-        if (NS_ERROR_MODULE_SECURITY == NS_ERROR_GET_MODULE(rv)) {
-          status = NS_ERROR_GET_CODE(rv);
-        }
-        else if (NS_ERROR_NOT_IMPLEMENTED == rv) {
-          status = nsICMSMessageErrors::VERIFY_ERROR_PROCESSING;
-        }
-      }
-      else {
-        PRBool signing_cert_without_email_address;
-        if (MimeCMSHeadersAndCertsMatch(data->self, data->content_info, &signing_cert_without_email_address,                                         &data->sender_addr))
-        {
-          status = nsICMSMessageErrors::SUCCESS;
-        }
-        else
-        {
-          if (signing_cert_without_email_address) {
-            status = nsICMSMessageErrors::VERIFY_CERT_WITHOUT_ADDRESS;
-          }
-          else {
-            status = nsICMSMessageErrors::VERIFY_HEADER_MISMATCH;
-          }
-        }
-      }
+      MimeCMSGetFromSender(data->self, 
+                           from_addr, from_name,
+                           sender_addr, sender_name);
 
-      data->content_info->GetSignerCert(getter_AddRefs(certOfInterest));
+      MimeCMSRequestAsyncSignatureVerification(data->content_info, 
+                                               from_addr, from_name,
+                                               sender_addr, sender_name,
+                                               data->smimeHeaderSink, aRelativeNestLevel, 
+                                               nsnull, 0);
     }
   }
 
   if (data->ci_is_encrypted)
   {
     data->smimeHeaderSink->EncryptionStatus(
-      aRelativeNestLevel,
-      status,
-      certOfInterest
-    );
-  }
-  else
-  {
-    data->smimeHeaderSink->SignedStatus(
       aRelativeNestLevel,
       status,
       certOfInterest
@@ -658,153 +696,9 @@ MimeCMS_free (void *crypto_closure)
   delete data;
 }
 
-char *
-MimeCMS_MakeSAURL(MimeObject *obj)
-{
-  char *stamp_url = 0;
-
-  /* Skip over any crypto objects which lie between us and a message/rfc822.
-	 But if we reach an object that isn't a crypto object or a message/rfc822
-	 then stop on the crypto object *before* it.  That is, leave `obj' set to
-	 either a crypto object, or a message/rfc822, but leave it set to the
-	 innermost message/rfc822 above a consecutive run of crypto objects.
-   */
-  while (1)
-	{
-	  if (!obj->parent)
-		break;
-	  else if (mime_typep (obj->parent, (MimeObjectClass *) &mimeMessageClass))
-		{
-		  obj = obj->parent;
-		  break;
-		}
-#if 0 // XXX Fix later XXX //
-	  else if (!mime_typep (obj->parent, (MimeObjectClass *) &mimeEncryptedClass) && !mime_typep (obj->parent,
-                                             (MimeObjectClass *) &mimeMultipartSignedClass))
-#endif
-	  else if (!mime_typep (obj->parent, (MimeObjectClass *) &mimeEncryptedClass))
-		{
-		  break;
-		}
-	  obj = obj->parent;
-	  NS_ASSERTION(obj, "1.2 <mscott@netscape.com> 01 Nov 2001 17:59");
-	}
-
-
-  if (obj->options)
-	{
-	  const char *base_url = obj->options->url;
-	  char *id = (base_url ? mime_part_address (obj) : 0);
-	  char *url = (id && base_url
-				   ? mime_set_url_part(base_url, id, PR_TRUE)
-				   : 0);
-	  char *url2 = (url ? nsEscape(url, url_XAlphas) : 0);
-	  PR_FREEIF(id);
-	  PR_FREEIF(url);
-
-	  stamp_url = (char *) PR_MALLOC(strlen(url2) + 50);
-	  if (stamp_url)
-		{
-                   PL_strcpy(stamp_url, "about:security?advisor=");
-                   PL_strcat(stamp_url, url2);
-		}
-	  PR_FREEIF(url2);
-	}
-  return stamp_url;
-}
-
 static char *
 MimeCMS_generate (void *crypto_closure)
 {
-  MimeCMSdata *data = (MimeCMSdata *) crypto_closure;
-  PRBool self_signed_p = PR_FALSE;
-  PRBool self_encrypted_p = PR_FALSE;
-  PRBool union_encrypted_p = PR_FALSE;
-  PRBool good_p = PR_FALSE;
-  PRBool unverified_p = PR_FALSE;
-
-  if (!data || !data->output_fn) return 0;
-
-  if (data->content_info)
-	{
-	  data->content_info->ContentIsSigned(&self_signed_p);
-	  data->content_info->ContentIsEncrypted(&self_encrypted_p);
-	  union_encrypted_p = (self_encrypted_p || data->parent_is_encrypted_p);
-
-	  if (self_signed_p)
-		{
-		  PR_SetError(0, 0);
-      good_p = data->content_info->VerifySignature();
-		  if (!good_p)
-      {
-        if (!data->verify_error)
-          data->verify_error = PR_GetError();
-        if (data->verify_error >= 0)
-          data->verify_error = -1;
-      }
-		  else
-			{
-			  PRBool signing_cert_without_email_address;
-			  good_p = MimeCMSHeadersAndCertsMatch(data->self, data->content_info,                                                                &signing_cert_without_email_address,
-                                                               &data->sender_addr);
-			  if (!good_p && !data->verify_error) {
-          // data->verify_error = SEC_ERROR_CERT_ADDR_MISMATCH; XXX Fix later XXX //
-          data->verify_error = -1;
-        }
-			}
-		}
-
-#if 0 
-	  if (SEC_PKCS7ContainsCertsOrCrls(data->content_info))
-		{
-		  /* #### call libsec telling it to import the certs */
-		}
-#endif
-
-	  /* Don't free these yet -- keep them around for the lifetime of the
-		 MIME object, so that we can get at the security info of sub-parts
-		 of the currently-displayed message. */
-#if 0
-	  SEC_PKCS7DestroyContentInfo(data->content_info);
-	  data->content_info = 0;
-#endif /* 0 */
-	}
-  else
-	{
-	  /* No content info?  Something's horked.  Guess. */
-	  self_encrypted_p = PR_TRUE;
-	  union_encrypted_p = PR_TRUE;
-	  if (!data->decode_error && !data->verify_error)
-  		data->decode_error = -1;
-	}
-
-  unverified_p = data->self->options->missing_parts;
-
-  if (data->self && data->self->parent) {
-	  mime_set_crypto_stamp(data->self->parent, self_signed_p, self_encrypted_p);
-  }
-
-  {
-    char *stamp_url = 0, *result = nsnull;
-    if (data->self)
-    {
-	    if (unverified_p && data->self->options) {
-		    // stamp_url = IMAP_CreateReloadAllPartsUrl(data->self->options->url); XXX Fix later XXX //
-        stamp_url = nsnull;
-      }
-	    else {
-		    stamp_url = MimeCMS_MakeSAURL(data->self);
-      }
-    }
-
-    result =
-	    MimeHeaders_make_crypto_stamp (union_encrypted_p,
-        self_signed_p,
-        good_p,
-        unverified_p,
-        data->parent_holds_stamp_p,
-        stamp_url);
-    PR_FREEIF(stamp_url);
-    return result;
-  }
+  return nsnull;
 }
+

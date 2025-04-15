@@ -572,35 +572,42 @@ nsPresContext::GetUserPreferences()
     mImageAnimationModePref = imgIContainer::kLoopOnceAnimMode;
 
 #ifdef IBMBIDI
+  PRUint32 bidiOptions = mBidi;
+
   PRInt32 prefInt =
     nsContentUtils::GetIntPref("bidi.direction",
-                               GET_BIDI_OPTION_DIRECTION(mBidi));
-  SET_BIDI_OPTION_DIRECTION(mBidi, prefInt);
+                               GET_BIDI_OPTION_DIRECTION(bidiOptions));
+  SET_BIDI_OPTION_DIRECTION(bidiOptions, prefInt);
 
   prefInt =
     nsContentUtils::GetIntPref("bidi.texttype",
-                               GET_BIDI_OPTION_TEXTTYPE(mBidi));
-  SET_BIDI_OPTION_TEXTTYPE(mBidi, prefInt);
+                               GET_BIDI_OPTION_TEXTTYPE(bidiOptions));
+  SET_BIDI_OPTION_TEXTTYPE(bidiOptions, prefInt);
 
   prefInt =
     nsContentUtils::GetIntPref("bidi.controlstextmode",
-                               GET_BIDI_OPTION_CONTROLSTEXTMODE(mBidi));
-  SET_BIDI_OPTION_CONTROLSTEXTMODE(mBidi, prefInt);
+                               GET_BIDI_OPTION_CONTROLSTEXTMODE(bidiOptions));
+  SET_BIDI_OPTION_CONTROLSTEXTMODE(bidiOptions, prefInt);
 
   prefInt =
     nsContentUtils::GetIntPref("bidi.numeral",
-                               GET_BIDI_OPTION_NUMERAL(mBidi));
-  SET_BIDI_OPTION_NUMERAL(mBidi, prefInt);
+                               GET_BIDI_OPTION_NUMERAL(bidiOptions));
+  SET_BIDI_OPTION_NUMERAL(bidiOptions, prefInt);
 
   prefInt =
     nsContentUtils::GetIntPref("bidi.support",
-                               GET_BIDI_OPTION_SUPPORT(mBidi));
-  SET_BIDI_OPTION_SUPPORT(mBidi, prefInt);
+                               GET_BIDI_OPTION_SUPPORT(bidiOptions));
+  SET_BIDI_OPTION_SUPPORT(bidiOptions, prefInt);
 
   prefInt =
     nsContentUtils::GetIntPref("bidi.characterset",
-                               GET_BIDI_OPTION_CHARACTERSET(mBidi));
-  SET_BIDI_OPTION_CHARACTERSET(mBidi, prefInt);
+                               GET_BIDI_OPTION_CHARACTERSET(bidiOptions));
+  SET_BIDI_OPTION_CHARACTERSET(bidiOptions, prefInt);
+
+  // We don't need to force reflow: either we are initializing a new
+  // prescontext or we are being called from UpdateAfterPreferencesChanged()
+  // which triggers a reflow anyway.
+  SetBidi(bidiOptions, PR_FALSE);
 #endif
 }
 
@@ -749,13 +756,13 @@ nsPresContext::SetShell(nsIPresShell* aShell)
     nsIDocument *doc = mShell->GetDocument();
     NS_ASSERTION(doc, "expect document here");
     if (doc) {
-      nsIURI *baseURI = doc->GetBaseURI();
+      nsIURI *docURI = doc->GetDocumentURI();
 
-      if (mMedium != nsLayoutAtoms::print && baseURI) {
+      if (mMedium != nsLayoutAtoms::print && docURI) {
         PRBool isChrome = PR_FALSE;
         PRBool isRes = PR_FALSE;
-        baseURI->SchemeIs("chrome", &isChrome);
-        baseURI->SchemeIs("resource", &isRes);
+        docURI->SchemeIs("chrome", &isChrome);
+        docURI->SchemeIs("resource", &isRes);
 
         if (!isChrome && !isRes)
           mImageAnimationMode = mImageAnimationModePref;
@@ -1142,6 +1149,14 @@ nsPresContext::GetBidiUtils()
 void
 nsPresContext::SetBidi(PRUint32 aSource, PRBool aForceReflow)
 {
+  // Don't do all this stuff if the options haven't changed
+  if (aSource == mBidi) {
+    return;
+  }
+
+  NS_ASSERTION(!(aForceReflow && (mBidi == 0)), 
+               "ForceReflow on new prescontext");
+
   mBidi = aSource;
   if (IBMBIDI_TEXTDIRECTION_RTL == GET_BIDI_OPTION_DIRECTION(mBidi)
       || IBMBIDI_NUMERAL_HINDI == GET_BIDI_OPTION_NUMERAL(mBidi)) {
@@ -1154,12 +1169,14 @@ nsPresContext::SetBidi(PRUint32 aSource, PRBool aForceReflow)
     SetVisualMode(PR_FALSE);
   }
   else {
-    nsIDocument* doc = mShell->GetDocument();
-    if (doc) {
-      SetVisualMode(IsVisualCharset(doc->GetDocumentCharacterSet()));
+    if (mShell) {
+      nsIDocument* doc = mShell->GetDocument();
+      if (doc) {
+        SetVisualMode(IsVisualCharset(doc->GetDocumentCharacterSet()));
+      }
     }
   }
-  if (mShell && aForceReflow) {
+  if (aForceReflow) {
     ClearStyleDataAndReflow();
   }
 }

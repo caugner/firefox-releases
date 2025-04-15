@@ -127,7 +127,11 @@ CIRCNetwork.prototype.INITIAL_CHANNEL = "#jsbot";
 CIRCNetwork.prototype.INITIAL_UMODE = "+iw";
 
 CIRCNetwork.prototype.MAX_CONNECT_ATTEMPTS = 5;
+CIRCNetwork.prototype.getReconnectDelayMs = function() { return 15000; }
 CIRCNetwork.prototype.stayingPower = false;
+
+// "http" = use HTTP proxy, "none" = none, anything else = auto.
+CIRCNetwork.prototype.PROXY_TYPE_OVERRIDE = "";
 
 CIRCNetwork.prototype.TYPE = "IRCNetwork";
 
@@ -192,11 +196,66 @@ function net_hasSecure()
     return false;
 }
 
+CIRCNetwork.prototype.clearServerList =
+function net_clearserverlist()
+{
+    /* Note: we don't have to worry about being connected, since primServ
+     * keeps the currently connected server alive if we still need it.
+     */
+    this.servers = new Object();
+    this.serverList = new Array();
+}
+
+/** Trigger an onDoConnect event after a delay. */
+CIRCNetwork.prototype.delayedConnect =
+function net_delayedConnect(eventProperties)
+{
+    function reconnectFn(network, eventProperties)
+    {
+        network.immediateConnect(eventProperties);
+    };
+
+    if ((-1 != this.MAX_CONNECT_ATTEMPTS) &&
+        (this.connectAttempt >= this.MAX_CONNECT_ATTEMPTS))
+    {
+        this.state = NET_OFFLINE;
+
+        var ev = new CEvent("network", "error", this, "onError");
+        ev.debug = "Connection attempts exhausted, giving up.";
+        ev.errorCode = JSIRC_ERR_EXHAUSTED;
+        this.eventPump.addEvent(ev);
+
+        return;
+    }
+
+    this.state = NET_WAITING;
+    this.reconnectTimer = setTimeout(reconnectFn,
+                                     this.getReconnectDelayMs(),
+                                     this,
+                                     eventProperties);
+}
+
+/**
+ * Immediately trigger an onDoConnect event. Use delayedConnect for automatic
+ * repeat attempts, instead, to throttle the attempts to a reasonable pace.
+ */
+CIRCNetwork.prototype.immediateConnect =
+function net_immediateConnect(eventProperties)
+{
+    var ev = new CEvent("network", "do-connect", this, "onDoConnect");
+
+    if (typeof eventProperties != "undefined")
+        for (var key in eventProperties)
+            ev[key] = eventProperties[key];
+
+    this.eventPump.addEvent(ev);
+}
+
 CIRCNetwork.prototype.connect =
 function net_connect(requireSecurity)
 {
     if ("primServ" in this && this.primServ.isConnected)
-        return;
+        return true;
 
     // We need to test for secure servers in the network object here,
     // because without them all connection attempts will fail anyway.
@@ -213,12 +272,11 @@ function net_connect(requireSecurity)
     }
 
     this.state = NET_CONNECTING;
-    this.connectAttempt = 0;
+    this.connectAttempt = 0;            // actual connection attempts
+    this.connectCandidate = 0;          // incl. requireSecurity non-attempts
     this.nextHost = 0;
     this.requireSecurity = requireSecurity || false;
-    var ev = new CEvent("network", "do-connect", this, "onDoConnect");
-    ev.password = null;
-    this.eventPump.addEvent(ev);
+    this.immediateConnect({"password": null});
     return true;
 }
 
@@ -232,18 +290,29 @@ function net_quit (reason)
 CIRCNetwork.prototype.cancel =
 function net_cancel()
 {
+    // We're online, pull the plug on the current connection, or...
     if (this.state == NET_ONLINE)
     {
-        // Pull the plug on the current connection, or...
         this.quit();
     }
-    else if ((this.state == NET_CONNECTING) || (this.state == NET_WAITING))
+    // We're waiting for the 001, too late to throw a reconnect, or...
+    else if (this.state == NET_CONNECTING)
     {
         this.state = NET_CANCELLING;
-
-        // ...try a reconnect (which will fail us).
-        var ev = new CEvent("network", "do-connect", this, "onDoConnect");
+        this.primServ.connection.disconnect();
+        // Throw the necessary error events:
+        ev = new CEvent ("network", "error", this, "onError");
+        ev.server = this;
+        ev.debug = "Connect sequence was cancelled.";
+        ev.errorCode = JSIRC_ERR_CANCELLED;
         this.eventPump.addEvent(ev);
+    }
+    // We're waiting for onDoConnect, so try a reconnect (which will fail us)
+    else if (this.state == NET_WAITING)
+    {
+        this.state = NET_CANCELLING;
+        // onDoConnect will throw the error events for us, as it will fail
+        this.immediateConnect();
     }
     else
     {
@@ -288,18 +357,8 @@ function net_doconnect(e)
     if ("primServ" in this && this.primServ.isConnected)
         return true;
 
-    if (this.connectAttempt++ >= this.MAX_CONNECT_ATTEMPTS)
-    {
-        this.state = NET_OFFLINE;
-
-        ev = new CEvent ("network", "error", this, "onError");
-        ev.server = this;
-        ev.debug = "Connection attempts exhausted, giving up.";
-        ev.errorCode = JSIRC_ERR_EXHAUSTED;
-        this.eventPump.addEvent(ev);
-
-        return false;
-    }
+    this.connectAttempt++;
+    this.connectCandidate++;
 
     this.state = NET_CONNECTING; /* connection is considered "made" when server
                                   * sends a 001 message (see server.on001) */
@@ -321,6 +380,7 @@ function net_doconnect(e)
         ev.port = this.serverList[host].port;
         ev.server = this.serverList[host];
         ev.connectAttempt = this.connectAttempt;
+        ev.reconnectDelayMs = this.getReconnectDelayMs();
         this.eventPump.addEvent (ev);
 
         try
@@ -328,8 +388,7 @@ function net_doconnect(e)
             if (!this.serverList[host].connect(null))
             {
                 /* connect failed, try again  */
-                ev = new CEvent ("network", "do-connect", this, "onDoConnect");
-                this.eventPump.addEvent (ev);
+                this.delayedConnect();
             }
         }
         catch(ex)
@@ -350,8 +409,7 @@ function net_doconnect(e)
         /* Server doesn't use SSL as requested, try next one.
          * In the meantime, correct the connection attempt counter  */
         this.connectAttempt--;
-        ev = new CEvent ("network", "do-connect", this, "onDoConnect");
-        this.eventPump.addEvent (ev);
+        this.immediateConnect();
     }
 
     return true;
@@ -454,6 +512,58 @@ CIRCServer.prototype.LIGHTWEIGHT_WHO = false;
 CIRCServer.prototype.PRUNE_OLD_USERS = -1;
 
 CIRCServer.prototype.TYPE = "IRCServer";
+
+// Define functions to set modes so they're easily readable.
+// name is the name used on the CIRCChanMode object
+// getValue is a function returning the value the canonicalmode should be set to
+// given a certain modifier and appropriate data.
+CIRCServer.prototype.canonicalChanModes = {
+    i: {
+           name: "invite",
+           getValue: function (modifier) { return (modifier == "+"); }
+       },
+    m: {
+           name: "moderated",
+           getValue: function (modifier) { return (modifier == "+"); }
+       },
+    n: {
+           name: "publicMessages",
+           getValue: function (modifier) { return (modifier == "-"); }
+       },
+    t: {
+           name: "publicTopic",
+           getValue: function (modifier) { return (modifier == "-"); }
+       },
+    s: {
+           name: "secret",
+           getValue: function (modifier) { return (modifier == "+"); }
+       },
+    p: {
+           name: "pvt",
+           getValue: function (modifier) { return (modifier == "+"); }
+       },
+    k: {
+           name: "key",
+           getValue: function (modifier, data)
+                     {
+                         if (modifier == "+")
+                             return data;
+                         else
+                             return "";
+                     }
+       },
+    l: {
+           name: "limit",
+           getValue: function (modifier, data)
+                     {
+                         // limit is special - we return -1 if there is no limit.
+                         if (modifier == "-")
+                             return -1;
+                         else
+                             return data;
+                     }
+       }
+};
 
 CIRCServer.prototype.toLowerCase =
 function serv_tolowercase(str)
@@ -566,7 +676,11 @@ function serv_connect (password)
         return false;
     }
 
-    if (this.connection.connect(this.hostname, this.port, null, true, this.isSecure, null))
+    var config = { isSecure: this.isSecure };
+    if (this.parent.PROXY_TYPE_OVERRIDE)
+        config.proxy = this.parent.PROXY_TYPE_OVERRIDE;
+
+    if (this.connection.connect(this.hostname, this.port, config))
     {
         var ev = new CEvent("server", "connect", this, "onConnect");
 
@@ -580,8 +694,8 @@ function serv_connect (password)
         if (jsenv.HAS_NSPR_EVENTQ)
             this.connection.startAsyncRead(this);
         else
-            s.parent.eventPump.addEvent(new CEvent ("server", "poll", s,
-                                                    "onPoll"));
+            this.parent.eventPump.addEvent(new CEvent("server", "poll", this,
+                                                      "onPoll"));
     }
 
     return true;
@@ -860,6 +974,18 @@ function serv_uptimer()
     this.lastPing = this.lastPingSent = new Date();
 }
 
+CIRCServer.prototype.userhost =
+function serv_userhost(target)
+{
+    this.sendData("USERHOST " + fromUnicode(target, this) + "\n");
+}
+
+CIRCServer.prototype.userip =
+function serv_userip(target)
+{
+    this.sendData("USERIP " + fromUnicode(target, this) + "\n");
+}
+
 CIRCServer.prototype.who =
 function serv_who(target)
 {
@@ -895,19 +1021,16 @@ function serv_disconnect(e)
         network.state = state;
     };
 
+    function delayedConnectFn(network) {
+        network.delayedConnect();
+    };
+
     if ((this.parent.state == NET_CONNECTING) ||
         /* fell off while connecting, try again */
         (this.parent.primServ == this) && (this.parent.state == NET_ONLINE) &&
         (!("quitting" in this) && this.parent.stayingPower))
     { /* fell off primary server, reconnect to any host in the serverList */
-        var reconnectFn = function(server) {
-            delete server.parent.reconnectTimer;
-            var ev = new CEvent("network", "do-connect", server.parent,
-                                "onDoConnect");
-            server.parent.eventPump.addEvent(ev);
-        };
-        setTimeout(stateChangeFn, 0, this.parent, NET_WAITING);
-        this.parent.reconnectTimer = setTimeout(reconnectFn, 15000, this);
+        setTimeout(delayedConnectFn, 0, this.parent);
     }
     else
     {
@@ -937,7 +1060,7 @@ function serv_disconnect(e)
 CIRCServer.prototype.onSendData =
 function serv_onsenddata (e)
 {
-    if (!this.isConnected)
+    if (!this.isConnected || (this.parent.state == NET_CANCELLING))
     {
         dd ("Can't send to disconnected socket");
         this.flushSendQueue();
@@ -1003,7 +1126,8 @@ function serv_poll(e)
 
     try
     {
-        line = this.connection.readData(this.READ_TIMEOUT);
+        if (this.parent.state != NET_CANCELLING)
+            line = this.connection.readData(this.READ_TIMEOUT);
     }
     catch (ex)
     {
@@ -1064,7 +1188,7 @@ function serv_ppline(e)
         ev.data = lines[i].replace(/\r/g, "");
         if (ev.data)
         {
-            if (ev.data.match(/^(?::[^ ]+ )?32[123] /i))
+            if (ev.data.match(/^(?::[^ ]+ )?(?:32[123]|352|315) /i))
                 this.parent.eventPump.addBulkEvent(ev);
             else
                 this.parent.eventPump.addEvent(ev);
@@ -1097,51 +1221,6 @@ function serv_ppline(e)
 CIRCServer.prototype.onRawData =
 function serv_onRawData(e)
 {
-    function makeMaskRegExp(text)
-    {
-        function escapeChars(c)
-        {
-            if (c == "*")
-                return ".*";
-            if (c == "?")
-                return ".";
-            return "\\" + c;
-        }
-        // Anything that's not alpha-numeric gets escaped.
-        // "*" and "?" are 'escaped' to ".*" and ".".
-        // Optimisation; * translates as 'match all'.
-        return new RegExp("^" + text.replace(/[^\w\d]/g, escapeChars) + "$", "i");
-    };
-    function hostmaskMatches(user, mask)
-    {
-        // Need to match .nick, .user, and .host.
-        if (!("nickRE" in mask))
-        {
-            // We cache all the regexp objects, but use null if the term is
-            // just "*", so we can skip having the object *and* the .match
-            // later on.
-            if (mask.nick == "*")
-                mask.nickRE = null;
-            else
-                mask.nickRE = makeMaskRegExp(mask.nick);
-
-            if (mask.user == "*")
-                mask.userRE = null;
-            else
-                mask.userRE = makeMaskRegExp(mask.user);
-
-            if (mask.host == "*")
-                mask.hostRE = null;
-            else
-                mask.hostRE = makeMaskRegExp(mask.host);
-        }
-        if ((!mask.nickRE || user.unicodeName.match(mask.nickRE)) &&
-            (!mask.userRE || user.name.match(mask.userRE)) &&
-            (!mask.hostRE || user.host.match(mask.hostRE)))
-            return true;
-        return false;
-    };
-
     var ary;
     var l = e.data;
 
@@ -1288,7 +1367,10 @@ CIRCServer.prototype.on001 =
 function serv_001 (e)
 {
     this.parent.connectAttempt = 0;
+    this.parent.connectCandidate = 0;
     this.parent.state = NET_ONLINE;
+    // nextHost is incremented after picking a server. Push it back here.
+    this.parent.nextHost--;
 
     /* servers won't send a nick change notification if user was forced
      * to change nick while logging in (eg. nick already in use.)  We need
@@ -1752,6 +1834,15 @@ function serv_348(e)
     e.channel = new CIRCChannel(this, null, e.params[2]);
     e.destObject = e.channel;
     e.set = "channel";
+    e.except = e.params[3];
+    e.user = new CIRCUser(this, null, e.params[4]);
+    e.exceptTime = new Date (Number(e.params[5]) * 1000);
+
+    if (typeof e.channel.excepts[e.except] == "undefined")
+    {
+        e.channel.excepts[e.except] = {host: e.except, user: e.user,
+                                       time: e.exceptTime };
+    }
 
     return true;
 }
@@ -1872,7 +1963,10 @@ function serv_chanmode (e)
 
     var nick;
     var user;
-    var mList = this.userModes;
+    var umList = this.userModes;
+    var cmList = this.channelModes;
+    var modeMap = this.canonicalChanModes;
+    var canonicalModeValue;
 
     for (var i = 0; i < mode_str.length ; i++)
     {
@@ -1884,13 +1978,13 @@ function serv_chanmode (e)
         }
 
         var done = false;
-        for (var m in mList)
+        for (var m in umList)
         {
-            if ((mode_str[i] == mList[m].mode) && (modifier != ""))
+            if ((mode_str[i] == umList[m].mode) && (modifier != ""))
             {
                 nick = e.params[BASE_PARAM + params_eaten];
                 user = new CIRCChanUser(e.channel, null, nick,
-                                        [ modifier + mList[m].mode ]);
+                                        [ modifier + umList[m].mode ]);
                 params_eaten++;
                 e.usersAffected.push (user);
                 done = true;
@@ -1900,102 +1994,68 @@ function serv_chanmode (e)
         if (done)
             continue;
 
-        switch (mode_str[i])
+        // Update legacy canonical modes if necessary.
+        if (mode_str[i] in modeMap)
         {
-            /* user modes */
-            case "b": /* ban */
-                var ban = e.params[BASE_PARAM + params_eaten];
-                params_eaten++;
+            // Get the data in case we need it, but don't increment the counter.
+            var datacounter = BASE_PARAM + params_eaten;
+            var data = (datacounter in e.params) ? e.params[datacounter] : null;
+            canonicalModeValue = modeMap[mode_str[i]].getValue(modifier, data);
+            e.channel.mode[modeMap[mode_str[i]].name] = canonicalModeValue;
+        }
 
-                if ((modifier == "+") &&
-                    (typeof e.channel.bans[ban] == "undefined"))
+        if (arrayContains(cmList.a, mode_str[i]))
+        {
+            var data = e.params[BASE_PARAM + params_eaten++];
+            if (modifier == "+")
+            {
+                e.channel.mode.modeA[data] = true;
+            }
+            else
+            {
+                if (data in e.channel.mode.modeA)
                 {
-                    e.channel.bans[ban] = {host: ban};
-                    var ban_evt = new CEvent ("channel", "ban", e.channel,
-                                          "onBan");
-                    ban_evt.channel = e.channel;
-                    ban_evt.ban = ban;
-                    ban_evt.source = e.user;
-                    this.parent.eventPump.addEvent (e);
+                    delete e.channel.mode.modeA[data];
                 }
                 else
-                    if (modifier == "-")
-                        delete e.channel.bans[ban];
-                break;
-
-
-            /* channel modes */
-            case "l": /* limit */
-                if (modifier == "+")
                 {
-                    var limit = e.params[BASE_PARAM + params_eaten];
-                    params_eaten++;
-                    e.channel.mode.limit = limit;
+                    dd("** Trying to remove channel mode '" + mode_str[i] +
+                       "'/'" + data + "' which does not exist in list.");
                 }
-                else
-                    if (modifier == "-")
-                        e.channel.mode.limit = -1;
-                break;
-
-            case "k": /* key */
-                var key = e.params[BASE_PARAM + params_eaten];
-                params_eaten++;
-
-                if (modifier == "+")
-                    e.channel.mode.key = key;
-                else
-                    if (modifier == "-")
-                        e.channel.mode.key = "";
-                break;
-
-            case "m": /* moderated */
-                if (modifier == "+")
-                    e.channel.mode.moderated = true;
-                else
-                    if (modifier == "-")
-                        e.channel.mode.moderated = false;
-                break;
-
-            case "n": /* no outside messages */
-                if (modifier == "+")
-                    e.channel.mode.publicMessages = false;
-                else
-                    if (modifier == "-")
-                        e.channel.mode.publicMessages = true;
-                break;
-
-            case "t": /* topic */
-                if (modifier == "+")
-                    e.channel.mode.publicTopic = false;
-                else
-                    if (modifier == "-")
-                        e.channel.mode.publicTopic = true;
-                break;
-
-            case "i": /* invite */
-                if (modifier == "+")
-                    e.channel.mode.invite = true;
-                else
-                    if (modifier == "-")
-                        e.channel.mode.invite = false;
-                break;
-
-            case "s": /* secret */
-                if (modifier == "+")
-                    e.channel.mode.secret  = true;
-                else
-                    if (modifier == "-")
-                        e.channel.mode.secret = false;
-                break;
-
-            case "p": /* private */
-                if (modifier == "+")
-                    e.channel.mode.pvt = true;
-                else
-                    if (modifier == "-")
-                        e.channel.mode.pvt = false;
-                break;
-
+            }
+        }
+        else if (arrayContains(cmList.b, mode_str[i]))
+        {
+            var data = e.params[BASE_PARAM + params_eaten++];
+            if (modifier == "+")
+            {
+                e.channel.mode.modeB[mode_str[i]] = data;
+            }
+            else
+            {
+                // Save 'null' even though we have some data.
+                e.channel.mode.modeB[mode_str[i]] = null;
+            }
+        }
+        else if (arrayContains(cmList.c, mode_str[i]))
+        {
+            if (modifier == "+")
+            {
+                var data = e.params[BASE_PARAM + params_eaten++];
+                e.channel.mode.modeC[mode_str[i]] = data;
+            }
+            else
+            {
+                e.channel.mode.modeC[mode_str[i]] = null;
+            }
+        }
+        else if (arrayContains(cmList.d, mode_str[i]))
+        {
+            e.channel.mode.modeD[mode_str[i]] = (modifier == "+");
+        }
+        else
+        {
+            dd("** UNKNOWN mode symbol '" + mode_str[i] + "' in ChanMode event **");
         }
     }
 
@@ -2217,36 +2277,50 @@ function serv_invite(e)
 CIRCServer.prototype.onNotice =
 function serv_notice (e)
 {
-    if (!("user" in e))
+    var targetName = e.params[1];
+
+    // Strip off one (and only one) user mode prefix.
+    for (var i = 0; i < this.userModes.length; i++)
+    {
+        if (targetName[0] == this.userModes[i].symbol)
+        {
+            targetName = targetName.substr(1);
+            break;
+        }
+    }
+
+    if (arrayIndexOf(this.channelTypes, targetName[0]) != -1)
+    {
+        e.channel = new CIRCChannel(this, null, targetName);
+        if ("user" in e)
+            e.user = new CIRCChanUser(e.channel, e.user.unicodeName);
+        e.replyTo = e.channel;
+        e.set = "channel";
+    }
+    else if (!("user" in e))
     {
         e.set = "network";
         e.destObject = this.parent;
         return true;
     }
-
-    if (arrayIndexOf(this.channelTypes, e.params[1][0]) != -1)
+    else
     {
-        e.channel = new CIRCChannel(this, null, e.params[1]);
-        e.user = new CIRCChanUser(e.channel, e.user.unicodeName);
-        e.replyTo = e.channel;
-        e.set = "channel";
+        e.set = "user";
+        e.replyTo = e.user; /* send replies to the user who sent the message */
     }
-    else if (e.params[2].search (/\x01.*\x01/i) != -1)
+
+    if (e.params[2].search (/\x01.*\x01/i) != -1)
     {
         e.type = "ctcp-reply";
         e.destMethod = "onCTCPReply";
         e.set = "server";
         e.destObject = this;
-        return true;
     }
     else
     {
-        e.set = "user";
-        e.replyTo = e.user; /* send replys to the user who sent the message */
+        e.msg = e.decodeParam(2, e.replyTo);
+        e.destObject = e.replyTo;
     }
-
-    e.msg = e.decodeParam(2, e.replyTo);
-    e.destObject = e.replyTo;
 
     return true;
 }
@@ -2254,11 +2328,23 @@ function serv_notice (e)
 CIRCServer.prototype.onPrivmsg =
 function serv_privmsg (e)
 {
-    /* setting replyTo provides a standard place to find the target for     */
-    /* replys associated with this event.                                   */
-    if (arrayIndexOf(this.channelTypes, e.params[1][0]) != -1)
+    var targetName = e.params[1];
+
+    // Strip off one (and only one) user mode prefix.
+    for (var i = 0; i < this.userModes.length; i++)
     {
-        e.channel = new CIRCChannel(this, null, e.params[1]);
+        if (targetName[0] == this.userModes[i].symbol)
+        {
+            targetName = targetName.substr(1);
+            break;
+        }
+    }
+
+    /* setting replyTo provides a standard place to find the target for     */
+    /* replies associated with this event.                                  */
+    if (arrayIndexOf(this.channelTypes, targetName[0]) != -1)
+    {
+        e.channel = new CIRCChannel(this, null, targetName);
         e.user = new CIRCChanUser(e.channel, e.user.unicodeName);
         e.replyTo = e.channel;
         e.set = "channel";
@@ -2426,6 +2512,13 @@ function serv_cact (e)
     e.set = (e.replyTo == e.user) ? "user" : "channel";
 }
 
+CIRCServer.prototype.onCTCPFinger =
+function serv_cfinger (e)
+{
+    e.user.ctcp("FINGER", this.parent.INITIAL_DESC, "NOTICE");
+    return true;
+}
+
 CIRCServer.prototype.onCTCPTime =
 function serv_cping (e)
 {
@@ -2583,6 +2676,7 @@ function CIRCChannel(parent, unicodeName, encodedName)
 
     this.users = new Object();
     this.bans = new Object();
+    this.excepts = new Object();
     this.mode = new CIRCChanMode(this);
     this.usersStable = true;
     /* These next two flags represent a subtle difference in state:
@@ -2707,19 +2801,19 @@ function chan_userslen (mode)
 CIRCChannel.prototype.iAmOp =
 function chan_amop()
 {
-    return this.users[this.parent.me.canonicalName].isOp;
+    return this.active && this.users[this.parent.me.canonicalName].isOp;
 }
 
 CIRCChannel.prototype.iAmHalfOp =
 function chan_amhalfop()
 {
-    return this.users[this.parent.me.canonicalName].isHalfOp;
+    return this.active && this.users[this.parent.me.canonicalName].isHalfOp;
 }
 
 CIRCChannel.prototype.iAmVoice =
 function chan_amvoice()
 {
-    return this.parent.users[this.parent.parent.me.canonicalName].isVoice;
+    return this.active && this.users[this.parent.me.canonicalName].isVoice;
 }
 
 CIRCChannel.prototype.setTopic =
@@ -2796,14 +2890,20 @@ function chan_inviteuser (nick)
 function CIRCChanMode (parent)
 {
     this.parent = parent;
-    this.limit = -1;
-    this.key = "";
+
+    this.modeA = new Object();
+    this.modeB = new Object();
+    this.modeC = new Object();
+    this.modeD = new Object();
+
+    this.invite = false;
     this.moderated = false;
     this.publicMessages = true;
     this.publicTopic = true;
-    this.invite = false;
     this.secret = false;
     this.pvt = false;
+    this.key = "";
+    this.limit = -1;
 }
 
 CIRCChanMode.prototype.TYPE = "IRCChanMode";
@@ -2812,26 +2912,34 @@ CIRCChanMode.prototype.getModeStr =
 function chan_modestr (f)
 {
     var str = "";
+    var modeCparams = "";
 
-    if (this.invite)
-        str += "i";
-    if (this.moderated)
-        str += "m";
-    if (!this.publicMessages)
-        str += "n";
-    if (!this.publicTopic)
-        str += "t";
-    if (this.secret)
-        str += "s";
-    if (this.pvt)
-        str += "p";
-    if (this.key)
-        str += "k";
-    if (this.limit != -1)
-        str += "l " + this.limit;
+    /* modeA are 'list' ones, and so should not be shown.
+     * modeB are 'param' ones, like +k key, so we wont show them either.
+     * modeC are 'on-param' ones, like +l limit, which we will show.
+     * modeD are 'boolean' ones, which we will definitely show.
+     */
 
+    // Add modeD:
+    for (var m in this.modeD)
+    {
+        if (this.modeD[m])
+            str += m;
+    }
+
+    // Add modeC, save parameters for adding all the way at the end:
+    for (var m in this.modeC)
+    {
+        if (this.modeC[m])
+        {
+            str += m;
+            modeCparams += " " + this.modeC[m];
+        }
+    }
+
+    // Add parameters:
     if (str)
-        str = "+" + str;
+        str = "+" + str + modeCparams;
 
     return str;
 }
@@ -3026,9 +3134,14 @@ function usr_hostmask (pfx)
 CIRCUser.prototype.getBanMask =
 function usr_banmask()
 {
+    if (!this.host)
+        return this.unicodeName + "!*@*";
+
     var hostmask = this.host;
     if (!/^\d+\.\d+\.\d+\.\d+$/.test(hostmask))
         hostmask = hostmask.replace(/^[^.]+/, "*");
+    else
+        hostmask = hostmask.replace(/[^.]+$/, "*");
     return "*!" + this.name + "@" + hostmask;
 }
 
@@ -3121,6 +3234,10 @@ function CIRCChanUser(parent, unicodeName, encodedName, modes)
                 }
             }
         }
+        existingUser.isFounder = (arrayContains(existingUser.modes, "q")) ?
+            true : false;
+        existingUser.isAdmin = (arrayContains(existingUser.modes, "a")) ?
+            true : false;
         existingUser.isOp = (arrayContains(existingUser.modes, "o")) ?
             true : false;
         existingUser.isHalfOp = (arrayContains(existingUser.modes, "h")) ?
@@ -3151,6 +3268,8 @@ function CIRCChanUser(parent, unicodeName, encodedName, modes)
     this.modes = new Array();
     if (typeof modes != "undefined")
         this.modes = modes;
+    this.isFounder = (arrayContains(this.modes, "q")) ? true : false;
+    this.isAdmin = (arrayContains(this.modes, "a")) ? true : false;
     this.isOp = (arrayContains(this.modes, "o")) ? true : false;
     this.isHalfOp = (arrayContains(this.modes, "h")) ? true : false;
     this.isVoice = (arrayContains(this.modes, "v")) ? true : false;
@@ -3220,7 +3339,7 @@ function cusr_setban (f)
         return false;
 
     var modifier = (f) ? " +b " : " -b ";
-    modifier += this.getBanMask() + " ";
+    modifier += fromUnicode(this.getBanMask(), server) + " ";
 
     server.sendData("MODE " + this.parent.encodedName + modifier + "\n");
 
@@ -3236,7 +3355,8 @@ function cusr_kban (reason)
         return false;
 
     reason = (typeof reason != "undefined") ? reason : this.encodedName;
-    var modifier = " -o+b " + this.encodedName + " " + this.getBanMask() + " ";
+    var modifier = " -o+b " + this.encodedName + " " +
+                   fromUnicode(this.getBanMask(), server) + " ";
 
     server.sendData("MODE " + this.parent.encodedName + modifier + "\n" +
                     "KICK " + this.parent.encodedName + " " +

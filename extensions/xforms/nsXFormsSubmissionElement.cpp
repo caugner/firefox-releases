@@ -67,14 +67,13 @@
 #include "nsIDOMProcessingInstruction.h"
 #include "nsIDOMParser.h"
 #include "nsComponentManagerUtils.h"
+#include "nsStringStream.h"
 #include "nsIDocShell.h"
-#include "nsIStringStream.h"
 #include "nsIInputStream.h"
 #include "nsIStorageStream.h"
 #include "nsIMultiplexInputStream.h"
 #include "nsIMIMEInputStream.h"
 #include "nsINameSpaceManager.h"
-#include "nsIDocument.h"
 #include "nsIContent.h"
 #include "nsIFileURL.h"
 #include "nsIMIMEService.h"
@@ -93,12 +92,11 @@
 #include "nsIPermissionManager.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
+#include "nsIExternalProtocolService.h"
+#include "nsEscape.h"
+#include "nsAutoPtr.h"
 
 // namespace literals
-#define NAMESPACE_XML_SCHEMA \
-        NS_LITERAL_STRING("http://www.w3.org/2001/XMLSchema")
-#define NAMESPACE_XML_SCHEMA_INSTANCE \
-        NS_LITERAL_STRING("http://www.w3.org/2001/XMLSchema-instance")
 #define kXMLNSNameSpaceURI \
         NS_LITERAL_STRING("http://www.w3.org/2000/xmlns/")
 
@@ -382,7 +380,7 @@ nsXFormsSubmissionElement::OnChannelRedirect(nsIChannel *aOldChannel,
   nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
   NS_ENSURE_STATE(doc);
 
-  if (!CheckSameOrigin(doc->GetDocumentURI(), newURI)) {
+  if (!CheckSameOrigin(doc, newURI)) {
     nsXFormsUtils::ReportError(NS_LITERAL_STRING("submitSendOrigin"),
                                mElement);
     return NS_ERROR_ABORT;
@@ -392,43 +390,56 @@ nsXFormsSubmissionElement::OnChannelRedirect(nsIChannel *aOldChannel,
 }
 
 NS_IMETHODIMP
-nsXFormsSubmissionElement::OnStartRequest(nsIRequest *request, nsISupports *ctx)
+nsXFormsSubmissionElement::OnStartRequest(nsIRequest  *aRequest,
+                                          nsISupports *aCtx)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsXFormsSubmissionElement::OnStopRequest(nsIRequest *request, nsISupports *ctx, nsresult status)
+nsXFormsSubmissionElement::OnStopRequest(nsIRequest  *aRequest,
+                                         nsISupports *aCtx,
+                                         nsresult     aStatus)
 {
-  LOG(("xforms submission complete [status=%x]\n", status));
+  LOG(("xforms submission complete [status=%x]\n", aStatus));
 
   if (!mElement) {
     return NS_OK;
   }
 
-  nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
+  nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
   NS_ASSERTION(channel, "request should be a channel");
 
-  PRBool succeeded = NS_SUCCEEDED(status);
-  if (succeeded)
-  {
-    PRUint32 avail = 0;
-    mPipeIn->Available(&avail);
-    if (avail > 0)
-    {
+  PRBool succeeded = NS_SUCCEEDED(aStatus);
+  if (succeeded) {
 
-      nsresult rv;
-      if (mIsReplaceInstance) {
-        rv = LoadReplaceInstance(channel);
-      } else {
-        nsAutoString replace;
-        mElement->GetAttribute(NS_LITERAL_STRING("replace"), replace);
-        if (replace.IsEmpty() || replace.EqualsLiteral("all"))
-          rv = LoadReplaceAll(channel);
-        else
-          rv = NS_OK;
+    // If it is a HTTP request, then check for error responses, which should
+    // result in NOP and an xforms-submit-error.
+    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(channel);
+    if (httpChannel) {
+      PRUint32 response;
+      nsresult rv = httpChannel->GetResponseStatus(&response);
+      succeeded = NS_SUCCEEDED(rv) && (response < 400);
+    }
+
+    if (succeeded) {
+      PRUint32 avail = 0;
+      mPipeIn->Available(&avail);
+      if (avail > 0) {
+
+        nsresult rv;
+        if (mIsReplaceInstance) {
+          rv = LoadReplaceInstance(channel);
+        } else {
+          nsAutoString replace;
+          mElement->GetAttribute(NS_LITERAL_STRING("replace"), replace);
+          if (replace.IsEmpty() || replace.EqualsLiteral("all"))
+            rv = LoadReplaceAll(channel);
+          else
+            rv = NS_OK;
+        }
+        succeeded = NS_SUCCEEDED(rv);
       }
-      succeeded = NS_SUCCEEDED(rv);
     }
   }
 
@@ -482,6 +493,15 @@ nsXFormsSubmissionElement::LoadReplaceInstance(nsIChannel *channel)
   PRUint32 contentLength;
   mPipeIn->Available(&contentLength);
 
+  // set the base uri so that the document can get the correct security
+  // principal (this has to be here to work on 1.8.0)
+  // @see https://bugzilla.mozilla.org/show_bug.cgi?id=338451
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = channel->GetURI(getter_AddRefs(uri));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = parser->SetBaseURI(uri);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsCOMPtr<nsIDOMDocument> newDoc;
   parser->ParseFromStream(mPipeIn, contentCharset.get(), contentLength,
                           "application/xml", getter_AddRefs(newDoc));
@@ -512,54 +532,53 @@ nsXFormsSubmissionElement::LoadReplaceInstance(nsIChannel *channel)
 
   // Get the appropriate instance node.  If the "instance" attribute is set,
   // then get that instance node.  Otherwise, get the one we are bound to.
-  nsresult rv;
   nsCOMPtr<nsIModelElementPrivate> model = GetModel();
   NS_ENSURE_STATE(model);
   nsCOMPtr<nsIInstanceElementPrivate> instanceElement;
   nsAutoString value;
   mElement->GetAttribute(NS_LITERAL_STRING("instance"), value);
-  if (!value.IsEmpty()){
+  if (!value.IsEmpty()) {
     rv = GetSelectedInstanceElement(value, model,
                                     getter_AddRefs(instanceElement));
   } else {
     nsCOMPtr<nsIDOMNode> data;
     rv = GetBoundInstanceData(getter_AddRefs(data));
-  if (NS_SUCCEEDED(rv)) {
-    nsCOMPtr<nsIDOMNode> instanceNode;
-    rv = nsXFormsUtils::GetInstanceNodeForData(data,
-                                               getter_AddRefs(instanceNode));
-    NS_ENSURE_SUCCESS(rv, rv);
+    if (NS_SUCCEEDED(rv)) {
+      nsCOMPtr<nsIDOMNode> instanceNode;
+      rv = nsXFormsUtils::GetInstanceNodeForData(data,
+                                                 getter_AddRefs(instanceNode));
+      NS_ENSURE_SUCCESS(rv, rv);
 
       instanceElement = do_QueryInterface(instanceNode);
     }
   }
 
-    // replace the document referenced by this instance element with the info
-    // returned back from the submission
+  // replace the document referenced by this instance element with the info
+  // returned back from the submission
   if (NS_SUCCEEDED(rv) && instanceElement) {
-      instanceElement->SetDocument(newDoc);
+    instanceElement->SetInstanceDocument(newDoc);
 
-      // refresh everything
-      model->Rebuild();
-      model->Recalculate();
-      model->Revalidate();
-      model->Refresh();
-    }
+    // refresh everything
+    model->Rebuild();
+    model->Recalculate();
+    model->Revalidate();
+    model->Refresh();
+  }
 
 
   return NS_OK;
-  }
+}
 
 nsresult
 nsXFormsSubmissionElement::GetSelectedInstanceElement(
-                                            const nsString &aInstanceID,
+                                            const nsAString &aInstanceID,
                                             nsIModelElementPrivate *aModel,
                                             nsIInstanceElementPrivate **aResult)
 {
   aModel->FindInstanceElement(aInstanceID, aResult);
   if (*aResult == nsnull) {
     // if failed to get desired instance, dispatch binding exception
-    const PRUnichar *strings[] = { aInstanceID.get() };
+    const PRUnichar *strings[] = { PromiseFlatString(aInstanceID).get() };
     nsXFormsUtils::ReportError(NS_LITERAL_STRING("instanceBindError"),
                                strings, 1, mElement, mElement);
     nsXFormsUtils::DispatchEvent(mElement, eEvent_BindingException);
@@ -576,10 +595,9 @@ nsXFormsSubmissionElement::LoadReplaceAll(nsIChannel *channel)
 
   // XXX do we need to transfer nsIChannel::securityInfo ???
 
-  nsCOMPtr<nsIDOMDocument> domDoc;
-  mElement->GetOwnerDocument(getter_AddRefs(domDoc));
-
-  nsCOMPtr<nsIDocument> doc = do_QueryInterface(domDoc);
+  nsCOMPtr<nsIContent> content(do_QueryInterface(mElement));
+  NS_ASSERTION(content, "mElement not implementing nsIContent?!");
+  nsIDocument* doc = content->GetCurrentDoc();
   NS_ENSURE_STATE(doc);
 
   // the container is the docshell, and we use it as our provider of
@@ -602,10 +620,17 @@ nsXFormsSubmissionElement::Submit()
 {
   LOG(("+++ nsXFormsSubmissionElement::Submit\n"));
 
+  NS_ENSURE_STATE(mElement);
+
   nsresult rv;
 
+  //
   // 1. ensure that we are not currently processing a xforms-submit (see E37)
-  NS_ENSURE_STATE(!mSubmissionActive);
+  if (mSubmissionActive) {
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("warnSubmitAlreadyRunning"),
+                               mElement, nsIScriptError::warningFlag);
+    return NS_ERROR_FAILURE;
+  }
   mSubmissionActive = PR_TRUE;
   
   if (mActivator)
@@ -616,16 +641,9 @@ nsXFormsSubmissionElement::Submit()
   nsAutoString replace;
   mElement->GetAttribute(NS_LITERAL_STRING("replace"), replace);
   mIsReplaceInstance = replace.EqualsLiteral("instance");
-  
-  // XXX seems to be required by 
-  // http://www.w3.org/TR/2003/REC-xforms-20031014/slice4.html#evt-revalidate
-  // but is it really needed for us?
-  nsCOMPtr<nsIModelElementPrivate> model = GetModel();
-  model->Recalculate();
-  model->Revalidate();
 
-  // 2. get selected node from the instance data (use xpath, gives us node
-  //    iterator)
+  //
+  // 2. get selected node from the instance data
   nsCOMPtr<nsIDOMNode> data;
   rv = GetBoundInstanceData(getter_AddRefs(data));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -636,27 +654,44 @@ nsXFormsSubmissionElement::Submit()
     return NS_OK;
   }
 
-  // 3. revalidate selected instance data (only for namespaces considered for
-  //    serialization)
+  //
+  // 3. Create submission document (include namespaces, purge non-relevant
+  // nodes, check simple type validity)
+  nsCOMPtr<nsIDOMDocument> submissionDoc;
+  rv = CreateSubmissionDoc(data, getter_AddRefs(submissionDoc));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // XXX call nsISchemaValidator::validate on each node
+  //
+  // 4. Validate document
+  // XXX: model->ValidateDocument(submissionDoc, &res);
 
-
-  // 4. serialize instance data
+  //
+  // 5. Convert submission document into the requested format
   // Checking the format only before starting the submission.
   mFormat = GetSubmissionFormat(mElement);
   NS_ENSURE_STATE(mFormat != 0);
 
   nsCOMPtr<nsIInputStream> stream;
   nsCAutoString uri, contentType;
-  rv = SerializeData(data, uri, getter_AddRefs(stream), contentType);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsAutoString action;
+  mElement->GetAttribute(NS_LITERAL_STRING("action"), action);
+  CopyUTF16toUTF8(action, uri);
 
+  rv = SerializeData(submissionDoc, uri, getter_AddRefs(stream), contentType);
+  if (NS_FAILED(rv)) {
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("warnSubmitSerializeFailed"),
+                               mElement, nsIScriptError::warningFlag);
+    return rv;
+  }
 
-  // 5. dispatch network request
-  
+  //
+  // 6. dispatch network request
   rv = SendData(uri, stream, contentType);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("warnSubmitNetworkFailure"),
+                               mElement, nsIScriptError::warningFlag);
+    return rv;
+  }
 
   return rv;
 }
@@ -666,18 +701,21 @@ nsXFormsSubmissionElement::GetBoundInstanceData(nsIDOMNode **result)
 {
   nsCOMPtr<nsIModelElementPrivate> model;
   nsCOMPtr<nsIDOMXPathResult> xpRes;
+  PRBool usesModelBind;
   nsresult rv =
     nsXFormsUtils::EvaluateNodeBinding(mElement, 0,
                                        NS_LITERAL_STRING("ref"),
                                        NS_LITERAL_STRING("/"),
                                        nsIDOMXPathResult::FIRST_ORDERED_NODE_TYPE,
                                        getter_AddRefs(model),
-                                       getter_AddRefs(xpRes));
+                                       getter_AddRefs(xpRes),
+                                       &usesModelBind);
 
   if (NS_FAILED(rv) || !xpRes)
     return NS_ERROR_UNEXPECTED;
 
-  return xpRes->GetSingleNodeValue(result);
+  return usesModelBind ? xpRes->SnapshotItem(0, result)
+                       : xpRes->GetSingleNodeValue(result);
 }
 
 PRBool
@@ -733,58 +771,41 @@ nsXFormsSubmissionElement::GetDefaultInstanceData(nsIDOMNode **result)
 }
 
 nsresult
-nsXFormsSubmissionElement::SerializeData(nsIDOMNode *data,
-                                         nsCString &uri,
-                                         nsIInputStream **stream,
-                                         nsCString &contentType)
+nsXFormsSubmissionElement::SerializeData(nsIDOMDocument  *aData,
+                                         nsCString       &aUri,
+                                         nsIInputStream **aStream,
+                                         nsCString       &aContentType)
 {
-  // initialize uri to the given action
-  nsAutoString action;
-  mElement->GetAttribute(NS_LITERAL_STRING("action"), action);
-  CopyUTF16toUTF8(action, uri);
-
-  // 'get' method:
-  // The URI is constructed as follows:
-  //  o The submit URI from the action attribute is examined. If it does not
-  //    already contain a ? (question mark) character, one is appended. If it
-  //    does already contain a question mark character, then a separator
-  //    character from the attribute separator is appended.
-  //  o The serialized form data is appended to the URI.
-
   if (mFormat & ENCODING_XML)
-    return SerializeDataXML(data, stream, contentType, nsnull);
+    return SerializeDataXML(aData, aStream, aContentType);
 
   if (mFormat & ENCODING_URL)
-    return SerializeDataURLEncoded(data, uri, stream, contentType);
+    return SerializeDataURLEncoded(aData, aUri, aStream, aContentType);
 
   if (mFormat & ENCODING_MULTIPART_RELATED)
-    return SerializeDataMultipartRelated(data, stream, contentType);
+    return SerializeDataMultipartRelated(aData, aStream, aContentType);
 
   if (mFormat & ENCODING_MULTIPART_FORM_DATA)
-    return SerializeDataMultipartFormData(data, stream, contentType);
+    return SerializeDataMultipartFormData(aData, aStream, aContentType);
 
   NS_WARNING("unsupported submission encoding");
   return NS_ERROR_UNEXPECTED;
 }
 
 nsresult
-nsXFormsSubmissionElement::SerializeDataXML(nsIDOMNode *data,
+nsXFormsSubmissionElement::SerializeDataXML(nsIDOMDocument  *data,
                                             nsIInputStream **stream,
-                                            nsCString &contentType,
-                                            SubmissionAttachmentArray *attachments)
+                                            nsCString        &contentType)
 {
+  nsresult rv;
   nsAutoString mediaType;
   mElement->GetAttribute(NS_LITERAL_STRING("mediatype"), mediaType);
+
   if (mediaType.IsEmpty())
     contentType.AssignLiteral("application/xml");
   else
     CopyUTF16toUTF8(mediaType, contentType);
-
-  nsAutoString encoding;
-  mElement->GetAttribute(NS_LITERAL_STRING("encoding"), encoding);
-  if (encoding.IsEmpty())
-    encoding.AssignLiteral("UTF-8");
-
+  
   nsCOMPtr<nsIStorageStream> storage;
   NS_NewStorageStream(4096, PR_UINT32_MAX, getter_AddRefs(storage));
   NS_ENSURE_TRUE(storage, NS_ERROR_OUT_OF_MEMORY);
@@ -795,104 +816,16 @@ nsXFormsSubmissionElement::SerializeDataXML(nsIDOMNode *data,
 
   nsCOMPtr<nsIDOMSerializer> serializer =
       do_GetService("@mozilla.org/xmlextras/xmlserializer;1");
-  NS_ENSURE_TRUE(serializer, NS_ERROR_UNEXPECTED);
-
-  nsCOMPtr<nsIDOMDocument> doc, newDoc;
-  data->GetOwnerDocument(getter_AddRefs(doc));
-
-  nsresult rv;
-  // XXX: We can't simply pass in data if !doc, since it crashes
-  if (!doc) {
-    // owner doc is null when the data node is the document (e.g., ref="/")
-    // so we can just get the document via QI.
-    doc = do_QueryInterface(data);
-    NS_ENSURE_TRUE(doc, NS_ERROR_UNEXPECTED);
-
-    rv = CreateSubmissionDoc(doc, encoding, attachments,
-                             getter_AddRefs(newDoc));
-  } else {
-    // if we got a document, we need to create a new
-    rv = CreateSubmissionDoc(data, encoding, attachments,
-                             getter_AddRefs(newDoc));
-  }
-
-  // clone and possibly modify the document for submission
-  NS_ENSURE_SUCCESS(rv, rv);
-  NS_ENSURE_TRUE(newDoc, NS_ERROR_UNEXPECTED);
-
-  // We now need to add namespaces to the submission document.  We get them
-  // from 3 sources - the main document's documentElement, the model and the
-  // xforms:instance that contains the submitted instance data node.
-
-  // first handle the main document
-  nsCOMPtr<nsIDOMDocument> mainDoc;
-  mElement->GetOwnerDocument(getter_AddRefs(mainDoc));
-  NS_ENSURE_TRUE(mainDoc, NS_ERROR_UNEXPECTED);
-
-  nsCOMPtr<nsIDOMElement> docElm;
-  mainDoc->GetDocumentElement(getter_AddRefs(docElm));
-  nsCOMPtr<nsIDOMNode> node(do_QueryInterface(docElm));
-  NS_ENSURE_TRUE(node, NS_ERROR_UNEXPECTED);
-
-  // get the document element of the document we are going to submit
-  nsCOMPtr<nsIDOMElement> newDocElm;
-  newDoc->GetDocumentElement(getter_AddRefs(newDocElm));
-
-  nsCOMPtr<nsIDOMNode> instanceNode;
-  rv = nsXFormsUtils::GetInstanceNodeForData(data, getter_AddRefs(instanceNode));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // add namespaces from the main document to the submission document, but only
-  // if the instance data is local, not remote.
-  PRBool serialize = PR_FALSE;
-  nsCOMPtr<nsIDOMElement> instanceElement(do_QueryInterface(instanceNode));
-
-  // make sure that this is a DOMElement.  It won't be if it was lazy
-  // authored.  Lazy authored instance documents don't inherit namespaces
-  // from parent nodes or the original document (in formsPlayer and Novell,
-  // at least).
-  if (instanceElement) {
-    PRBool hasSrc = PR_FALSE;
-    instanceElement->HasAttribute(NS_LITERAL_STRING("src"), &hasSrc);
-    serialize = !hasSrc;
-  }
-
-  if (serialize) {
-    // Handle "includenamespaceprefixes" attribute, if present
-    nsStringHashSet* prefixHash = nsnull;
-    PRBool hasPrefixAttr = PR_FALSE;
-    mElement->HasAttribute(kIncludeNamespacePrefixes, &hasPrefixAttr);
-    if (hasPrefixAttr) {
-      rv = GetIncludeNSPrefixesAttr(&prefixHash);
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
-
-    // handle namespace on main document
-    rv = AddNameSpaces(newDocElm, node, prefixHash);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // handle namespaces on the model
-    nsCOMPtr<nsIModelElementPrivate> model = GetModel();
-    node = do_QueryInterface(model);
-    NS_ENSURE_STATE(node);
-    rv = AddNameSpaces(newDocElm, node, prefixHash);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // handle namespaces on the xforms:instance
-    rv = AddNameSpaces(newDocElm, instanceNode, prefixHash);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // handle namespaces on the root element of the instance document
-    doc->GetDocumentElement(getter_AddRefs(docElm));
-    rv = AddNameSpaces(newDocElm, docElm, prefixHash);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    if (prefixHash)
-      delete prefixHash;
-  }
+  NS_ENSURE_STATE(serializer);
 
   // Serialize content
-  rv = serializer->SerializeToStream(newDoc, sink,
+  nsAutoString encoding;
+  mElement->GetAttribute(NS_LITERAL_STRING("encoding"), encoding);
+  if (encoding.IsEmpty())
+    encoding.AssignLiteral("UTF-8");
+
+  // XXX: should check @indent and possibly indent content. Bug 278761
+  rv = serializer->SerializeToStream(data, sink,
                                      NS_LossyConvertUTF16toASCII(encoding));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -904,7 +837,8 @@ nsXFormsSubmissionElement::SerializeDataXML(nsIDOMNode *data,
 }
 
 PRBool
-nsXFormsSubmissionElement::CheckSameOrigin(nsIURI *aBaseURI, nsIURI *aTestURI)
+nsXFormsSubmissionElement::CheckSameOrigin(nsIDocument *aBaseDocument,
+                                           nsIURI      *aTestURI)
 {
   // we default to true to allow regular posts to work like html forms.
   PRBool allowSubmission = PR_TRUE;
@@ -923,80 +857,42 @@ nsXFormsSubmissionElement::CheckSameOrigin(nsIURI *aBaseURI, nsIURI *aTestURI)
 
     // if same origin is required, default to false
     allowSubmission = PR_FALSE;
+    nsIURI *baseURI = aBaseDocument->GetDocumentURI();
 
     // if we don't replace the instance, we allow file:// to submit data anywhere
     if (!mIsReplaceInstance) {
-      aBaseURI->SchemeIs("file", &allowSubmission);
-    }
-
-    // let's check the permission manager
-    if (!allowSubmission) {
-      allowSubmission = CheckPermissionManager(aBaseURI);
+      baseURI->SchemeIs("file", &allowSubmission);
     }
 
     // if none of the above checks have allowed the submission, we do a
     // same origin check.
     if (!allowSubmission) {
-      allowSubmission = nsXFormsUtils::CheckSameOrigin(aBaseURI, aTestURI);
+      // replace instance is both a send and a load
+      nsXFormsUtils::ConnectionType mode;
+      if (mIsReplaceInstance)
+        mode = nsXFormsUtils::kXFormsActionLoadSend;
+      else
+        mode = nsXFormsUtils::kXFormsActionSend;
+
+      allowSubmission =
+        nsXFormsUtils::CheckConnectionAllowed(mElement, aTestURI, mode);
     }
   }
 
   return allowSubmission;
 }
 
-PRBool
-nsXFormsSubmissionElement::CheckPermissionManager(nsIURI *aBaseURI)
-{
-  PRBool result = PR_FALSE;
-
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-    do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-
-  PRUint32 permission = nsIPermissionManager::UNKNOWN_ACTION;
-
-  if (NS_SUCCEEDED(rv) && prefBranch) {
-    // check if the user has enabled the xforms cross domain preference
-    PRBool checkPermission = PR_FALSE;
-    prefBranch->GetBoolPref("xforms.crossdomain.enabled", &checkPermission);
-
-    if (checkPermission) {
-      // if the user enabled the cross domain check, query the permission
-      // manager with the URI.  It will return 1 if the URI was allowed by the
-      // user.
-      nsCOMPtr<nsIPermissionManager> permissionManager =
-        do_GetService("@mozilla.org/permissionmanager;1");
-
-      nsCOMPtr<nsIDOMDocument> domDoc;
-      mElement->GetOwnerDocument(getter_AddRefs(domDoc));
-
-      nsCOMPtr<nsIDocument> doc = do_QueryInterface(domDoc);
-      NS_ENSURE_STATE(doc);
-
-      permissionManager->TestPermission(doc->GetDocumentURI(),
-                                       "xforms-xd", &permission);
-    }
-  }
-
-  if (permission == nsIPermissionManager::ALLOW_ACTION) {
-    // not in the permission manager
-    result = PR_TRUE;
-  }
-
-  return result;
-}
-
 nsresult
-nsXFormsSubmissionElement::AddNameSpaces(nsIDOMElement* aTarget,
-                                         nsIDOMNode* aSource,
-                                         nsStringHashSet* aPrefixHash)
+nsXFormsSubmissionElement::AddNameSpaces(nsIDOMElement   *aTarget,
+                                         nsIDOMNode      *aSource,
+                                         nsStringHashSet *aPrefixHash)
 {
   nsCOMPtr<nsIDOMNamedNodeMap> attrMap;
   nsCOMPtr<nsIDOMNode> attrNode;
-  nsAutoString nsURI, localName, value, attrName;
+  nsAutoString nsURI, localName, value;
 
   aSource->GetAttributes(getter_AddRefs(attrMap));
-  NS_ENSURE_TRUE(attrMap, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(attrMap);
 
   PRUint32 length;
   attrMap->GetLength(&length);
@@ -1009,18 +905,26 @@ nsXFormsSubmissionElement::AddNameSpaces(nsIDOMElement* aTarget,
       attrNode->GetLocalName(localName);
       attrNode->GetNodeValue(value);
 
-      attrName.AssignLiteral("xmlns");
-      // xmlns:foo, not xmlns=
       if (!localName.EqualsLiteral("xmlns")) {
-        // If "includenamespaceprefixes" attribute is present, don't add
-        // namespace unless it appears in hash
-        if (aPrefixHash && !aPrefixHash->Contains(localName))
-          continue;
-        attrName.AppendLiteral(":");
-        attrName.Append(localName);
-      }
+        if (!aPrefixHash || aPrefixHash->Contains(localName)) {
+          nsAutoString attrName(NS_LITERAL_STRING("xmlns:"));
+          attrName.Append(localName);
+          aTarget->SetAttributeNS(kXMLNSNameSpaceURI, attrName, value);
+        }
+      } else if (!value.IsEmpty()) {
+        PRBool hasDefaultNSAttr;
+        aTarget->HasAttributeNS(kXMLNSNameSpaceURI,
+                                NS_LITERAL_STRING("xmlns"), &hasDefaultNSAttr);
 
-      aTarget->SetAttribute(attrName, value);
+        if (!hasDefaultNSAttr) {
+          aTarget->GetNamespaceURI(nsURI);
+          if (!nsURI.IsEmpty()) {
+            // if aTarget default namespace uri isn't empty and it hasn't
+            // default namespace attribute then we should add it.
+            aTarget->SetAttributeNS(kXMLNSNameSpaceURI, localName, value);
+          }
+        }
+      }
     }
   }
 
@@ -1068,12 +972,124 @@ nsXFormsSubmissionElement::GetIncludeNSPrefixesAttr(nsStringHashSet** aHash)
 }
 
 nsresult
-nsXFormsSubmissionElement::CreateSubmissionDoc(nsIDOMNode *source,
-                                               const nsString &encoding,
-                                               SubmissionAttachmentArray *attachments,
-                                               nsIDOMDocument **result)
+nsXFormsSubmissionElement::CreateSubmissionDoc(nsIDOMNode      *aRoot,
+                                               nsIDOMDocument **aReturnDoc)
 {
-  PRBool indent = GetBooleanAttr(NS_LITERAL_STRING("indent"), PR_FALSE);
+  NS_ENSURE_ARG_POINTER(aRoot);
+  NS_ENSURE_ARG_POINTER(aReturnDoc);
+
+  nsCOMPtr<nsIDOMDocument> instDoc, submDoc;
+  aRoot->GetOwnerDocument(getter_AddRefs(instDoc));
+  nsresult rv;
+
+  if (!instDoc) {
+    // owner doc is null when the aRoot node is the document (e.g., ref="/")
+    // so we can just get the document via QI.
+    instDoc = do_QueryInterface(aRoot);
+    NS_ENSURE_STATE(instDoc);
+
+    rv = CreatePurgedDoc(instDoc, getter_AddRefs(submDoc));
+  } else {
+    rv = CreatePurgedDoc(aRoot, getter_AddRefs(submDoc));
+  }
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_STATE(submDoc);
+
+  // We now need to add namespaces to the submission document.  We get them
+  // from 3 sources - the main document's documentElement, the model and the
+  // xforms:instance that contains the submitted instance data node.
+
+  nsCOMPtr<nsIDOMNode> instanceNode;
+  rv = nsXFormsUtils::GetInstanceNodeForData(aRoot,
+                                             getter_AddRefs(instanceNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // add namespaces from the main document to the submission document, but only
+  // if the instance data is local, not remote.
+  PRBool serialize = PR_FALSE;
+  nsCOMPtr<nsIDOMElement> instanceElement(do_QueryInterface(instanceNode));
+
+  // make sure that this is a DOMElement.  It won't be if it was lazy
+  // authored.  Lazy authored instance documents don't inherit namespaces
+  // from parent nodes or the original document (in formsPlayer and Novell,
+  // at least).
+  if (instanceElement) {
+    PRBool hasSrc = PR_FALSE;
+    instanceElement->HasAttribute(NS_LITERAL_STRING("src"), &hasSrc);
+    serialize = !hasSrc;
+  }
+
+  if (serialize) {
+    // Handle "includenamespaceprefixes" attribute, if present
+    nsAutoPtr<nsStringHashSet> prefixHash;
+    PRBool hasPrefixAttr = PR_FALSE;
+    mElement->HasAttribute(kIncludeNamespacePrefixes, &hasPrefixAttr);
+    if (hasPrefixAttr) {
+      rv = GetIncludeNSPrefixesAttr(getter_Transfers(prefixHash));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    // get the document element of the document we are going to submit
+    nsCOMPtr<nsIDOMElement> submDocElm;
+    submDoc->GetDocumentElement(getter_AddRefs(submDocElm));
+    NS_ENSURE_STATE(submDocElm);
+
+    // if submission document has empty default namespace attribute and if
+    // @includenamespaceprefixes attribute doesn't contain "#default" value then
+    // we should remove default namespace attribute (see the specs 11.3).
+    nsAutoString XMLNSAttrValue;
+    submDocElm->GetAttributeNS(kXMLNSNameSpaceURI, NS_LITERAL_STRING("xmlns"),
+                               XMLNSAttrValue);
+
+    if (XMLNSAttrValue.IsEmpty() && (!prefixHash ||
+        !prefixHash->Contains(NS_LITERAL_STRING("#default")))) {
+      submDocElm->RemoveAttributeNS(kXMLNSNameSpaceURI,
+                                    NS_LITERAL_STRING("xmlns"));
+    }
+
+    // handle namespaces on the root element of the instance document
+    nsCOMPtr<nsIDOMElement> instDocElm;
+    instDoc->GetDocumentElement(getter_AddRefs(instDocElm));
+    nsCOMPtr<nsIDOMNode> instDocNode(do_QueryInterface(instDocElm));
+    NS_ENSURE_STATE(instDocNode);
+    rv = AddNameSpaces(submDocElm, instDocNode, prefixHash);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // handle namespaces on the xforms:instance
+    rv = AddNameSpaces(submDocElm, instanceNode, prefixHash);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // handle namespaces on the model
+    nsCOMPtr<nsIModelElementPrivate> model = GetModel();
+    nsCOMPtr<nsIDOMNode> modelNode(do_QueryInterface(model));
+    NS_ENSURE_STATE(modelNode);
+    rv = AddNameSpaces(submDocElm, modelNode, prefixHash);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // handle namespace on main document
+    nsCOMPtr<nsIDOMDocument> mainDoc;
+    mElement->GetOwnerDocument(getter_AddRefs(mainDoc));
+    NS_ENSURE_STATE(mainDoc);
+
+    nsCOMPtr<nsIDOMElement> mainDocElm;
+    mainDoc->GetDocumentElement(getter_AddRefs(mainDocElm));
+    nsCOMPtr<nsIDOMNode> mainDocNode(do_QueryInterface(mainDocElm));
+    NS_ENSURE_STATE(mainDocNode);
+
+    rv = AddNameSpaces(submDocElm, mainDocNode, prefixHash);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  NS_ADDREF(*aReturnDoc = submDoc);
+
+  return NS_OK;
+}
+
+
+nsresult
+nsXFormsSubmissionElement::CreatePurgedDoc(nsIDOMNode      *source,
+                                           nsIDOMDocument **result)
+{
   PRBool omit_xml_declaration
       = GetBooleanAttr(NS_LITERAL_STRING("omit-xml-declaration"), PR_FALSE);
 
@@ -1099,18 +1115,23 @@ nsXFormsSubmissionElement::CreateSubmissionDoc(nsIDOMNode *source,
     source->GetOwnerDocument(getter_AddRefs(tmpDoc));
     tmpDoc->GetImplementation(getter_AddRefs(impl));
   }
-  NS_ENSURE_TRUE(impl, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(impl);
 
   nsCOMPtr<nsIDOMDocument> doc;
   impl->CreateDocument(EmptyString(), EmptyString(), nsnull,
                        getter_AddRefs(doc));
-  NS_ENSURE_TRUE(doc, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(doc);
 
-  if (!omit_xml_declaration)
-  {
-    nsAutoString buf
-        = NS_LITERAL_STRING("version=\"1.0\" encoding=\"") + encoding
-        + NS_LITERAL_STRING("\"");
+  if (!omit_xml_declaration) {
+    nsAutoString encoding;
+    mElement->GetAttribute(NS_LITERAL_STRING("encoding"), encoding);
+    if (encoding.IsEmpty())
+      encoding.AssignLiteral("UTF-8");
+
+    nsAutoString buf =
+      NS_LITERAL_STRING("version=\"1.0\" encoding=\"") +
+      encoding +
+      NS_LITERAL_STRING("\"");
 
     nsCOMPtr<nsIDOMProcessingInstruction> pi;
     doc->CreateProcessingInstruction(NS_LITERAL_STRING("xml"), buf,
@@ -1131,8 +1152,9 @@ nsXFormsSubmissionElement::CreateSubmissionDoc(nsIDOMNode *source,
     startNode = source;
   }
 
-  nsresult rv = CopyChildren(startNode, doc, doc, attachments, cdataElements,
-                             indent, 0);
+  nsCOMPtr<nsIModelElementPrivate> model = GetModel();
+  NS_ENSURE_STATE(model);
+  nsresult rv = CopyChildren(model, startNode, doc, doc, cdataElements, 0);
   NS_ENSURE_SUCCESS(rv, rv);
 
   NS_ADDREF(*result = doc);
@@ -1140,157 +1162,182 @@ nsXFormsSubmissionElement::CreateSubmissionDoc(nsIDOMNode *source,
 }
 
 nsresult
-nsXFormsSubmissionElement::CopyChildren(nsIDOMNode *source, nsIDOMNode *dest,
-                                        nsIDOMDocument *destDoc,
-                                        SubmissionAttachmentArray *attachments,
-                                        const nsString &cdataElements,
-                                        PRBool indent, PRUint32 depth)
+nsXFormsSubmissionElement::CreateAttachments(nsIModelElementPrivate *aModel,
+                                             nsIDOMNode             *aNode,
+                                             SubmissionAttachmentArray *aAttachments)
 {
-  nsCOMPtr<nsIDOMNode> currentNode(source), node, destChild;
-  nsCOMPtr<nsIModelElementPrivate> model = GetModel();
+  nsCOMPtr<nsIDOMNode> currentNode(aNode);
 
-  while (currentNode)
-  {
-    // if not indenting, then strip all unnecessary whitespace
+  while (currentNode) {
+    // If |currentNode| is an element node of type 'xsd:anyURI', we need to
+    // generate a ContentID for the child of this element, and append a new
+    // attachment to the attachments array.
 
+    PRUint32 encType;
+    nsresult rv;
+    if (NS_SUCCEEDED(GetElementEncodingType(currentNode, &encType, aModel)) &&
+        encType == ELEMENT_ENCTYPE_URI) {
+      // ok, looks like we have a local file to upload
+
+      nsCOMPtr<nsIContent> content = do_QueryInterface(currentNode);
+      NS_ENSURE_STATE(content);
+
+      nsIFile *file =
+        NS_STATIC_CAST(nsIFile *,
+                       content->GetProperty(nsXFormsAtoms::uploadFileProperty));
+      // NOTE: this value may be null if a file hasn't been selected.
+
+      nsCString cid;
+      MakeMultipartContentID(cid);
+
+      nsAutoString cidURI;
+      cidURI.AssignLiteral("cid:");
+      AppendASCIItoUTF16(cid, cidURI);
+
+      aAttachments->Append(file, cid);
+
+      rv = currentNode->SetNodeValue(cidURI);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    nsCOMPtr<nsIDOMNode> child;
+    currentNode->GetFirstChild(getter_AddRefs(child));
+    if (child) {
+      rv = CreateAttachments(aModel, child, aAttachments);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    nsCOMPtr<nsIDOMNode> node;
+    currentNode->GetNextSibling(getter_AddRefs(node));
+    currentNode.swap(node);
+  }
+  
+  return NS_OK;
+}
+      
+
+nsresult
+nsXFormsSubmissionElement::CopyChildren(nsIModelElementPrivate *aModel,
+                                        nsIDOMNode             *aSource,
+                                        nsIDOMNode             *aDest,
+                                        nsIDOMDocument         *aDestDoc,
+                                        const nsString         &aCDATAElements,
+                                        PRUint32                aDepth)
+{
+  nsCOMPtr<nsIDOMNode> currentNode(aSource), node, destChild;
+
+  while (currentNode) {
     // XXX importing the entire node is not quite right here... we also have
     // to iterate over the attributes since the attributes could somehow
     // (remains to be determined) reference external entities.
 
-    destDoc->ImportNode(currentNode, PR_FALSE, getter_AddRefs(destChild));
-    NS_ENSURE_TRUE(destChild, NS_ERROR_UNEXPECTED);
+    aDestDoc->ImportNode(currentNode, PR_FALSE, getter_AddRefs(destChild));
+    NS_ENSURE_STATE(destChild);
 
     PRUint16 type;
     destChild->GetNodeType(&type);
-    if (type == nsIDOMNode::PROCESSING_INSTRUCTION_NODE)
-    {
-      nsCOMPtr<nsIDOMProcessingInstruction> pi = do_QueryInterface(destChild);
-      NS_ENSURE_TRUE(pi, NS_ERROR_UNEXPECTED);
+    switch (type) {
+      case nsIDOMNode::PROCESSING_INSTRUCTION_NODE: {
+        nsCOMPtr<nsIDOMProcessingInstruction> pi = do_QueryInterface(destChild);
+        NS_ENSURE_STATE(pi);
 
-      // ignore "<?xml ... ?>" since we would have already inserted this.
+        // ignore "<?xml ... ?>" since we would have already inserted this.
+        // XXXbeaufour: depends on omit-xml-decl, does it not?
 
-      nsAutoString target;
-      pi->GetTarget(target);
-      if (!target.EqualsLiteral("xml"))
-        dest->AppendChild(destChild, getter_AddRefs(node));
-    }
-    else if (type == nsIDOMNode::TEXT_NODE)
-    {
-      // honor cdata-section-elements (see xslt spec section 16.1)
-      if (cdataElements.IsEmpty())
-      {
-        dest->AppendChild(destChild, getter_AddRefs(node));
+        nsAutoString target;
+        pi->GetTarget(target);
+        if (!target.EqualsLiteral("xml"))
+          aDest->AppendChild(destChild, getter_AddRefs(node));
+        break;
       }
-      else
-      {
-        currentNode->GetParentNode(getter_AddRefs(node));
-        NS_ENSURE_STATE(node);
 
-        nsAutoString name;
-        node->GetNodeName(name);
-        // check to see if name is mentioned on cdataElements
-        if (HasToken(cdataElements, name))
-        {
-          nsCOMPtr<nsIDOMText> textNode = do_QueryInterface(destChild);
-          NS_ENSURE_STATE(textNode);
+      case nsIDOMNode::TEXT_NODE: {
+        // honor cdata-section-elements (see xslt spec section 16.1)
+        if (aCDATAElements.IsEmpty()) {
+          aDest->AppendChild(destChild, getter_AddRefs(node));
+        } else {
+          currentNode->GetParentNode(getter_AddRefs(node));
+          NS_ENSURE_STATE(node);
 
-          nsAutoString textData;
-          textNode->GetData(textData);
+          nsAutoString name;
+          node->GetNodeName(name);
+          // check to see if name is mentioned on cdataElements
+          if (HasToken(aCDATAElements, name)) {
+            nsCOMPtr<nsIDOMText> textNode = do_QueryInterface(destChild);
+            NS_ENSURE_STATE(textNode);
 
-          nsCOMPtr<nsIDOMCDATASection> cdataNode;
-          destDoc->CreateCDATASection(textData, getter_AddRefs(cdataNode));
+            nsAutoString textData;
+            textNode->GetData(textData);
 
-          dest->AppendChild(cdataNode, getter_AddRefs(node));
-        }
-        else
-        {
-          dest->AppendChild(destChild, getter_AddRefs(node));
+            nsCOMPtr<nsIDOMCDATASection> cdataNode;
+            aDestDoc->CreateCDATASection(textData, getter_AddRefs(cdataNode));
+
+            aDest->AppendChild(cdataNode, getter_AddRefs(node));
+          } else {
+            aDest->AppendChild(destChild, getter_AddRefs(node));
+          }
         }
       }
-    }
-    else
-    {
 
-     PRUint16 handleNodeResult;
-     model->HandleInstanceDataNode(currentNode, &handleNodeResult);
+      default: {
+        PRUint16 handleNodeResult;
+        aModel->HandleInstanceDataNode(currentNode, &handleNodeResult);
 
-      /*
-       *  SUBMIT_SERIALIZE_NODE   - node is to be serialized
-       *  SUBMIT_SKIP_NODE        - node is not to be serialized
-       *  SUBMIT_ABORT_SUBMISSION - abort submission (invalid node or empty required node)
-       */
-      if (handleNodeResult == nsIModelElementPrivate::SUBMIT_SKIP_NODE) {
-         // skip node and subtree
-         currentNode->GetNextSibling(getter_AddRefs(node));
-         currentNode.swap(node);
-         continue;
-      } else if (handleNodeResult == nsIModelElementPrivate::SUBMIT_ABORT_SUBMISSION) {
-        // abort
-        return NS_ERROR_ILLEGAL_VALUE;
-      }
+        /*
+         *  SUBMIT_SERIALIZE_NODE   - node is to be serialized
+         *  SUBMIT_SKIP_NODE        - node is not to be serialized
+         *  SUBMIT_ABORT_SUBMISSION - abort submission (invalid node or empty required node)
+         */
+        if (handleNodeResult == nsIModelElementPrivate::SUBMIT_SKIP_NODE) {
+          // skip node and subtree
+          currentNode->GetNextSibling(getter_AddRefs(node));
+          currentNode.swap(node);
+          continue;
+        } else if (handleNodeResult == nsIModelElementPrivate::SUBMIT_ABORT_SUBMISSION) {
+          // abort
+          nsXFormsUtils::ReportError(NS_LITERAL_STRING("warnSubmitInvalidNode"),
+                                     currentNode, nsIScriptError::warningFlag);
+          return NS_ERROR_ILLEGAL_VALUE;
+        }
 
-      // if |destChild| is an element node of type 'xsd:anyURI', and if we have
-      // an attachments array, then we need to perform multipart/related
-      // processing (i.e., generate a ContentID for the child of this element,
-      // and append a new attachment to the attachments array).
-
-      PRUint32 encType;
-      if (attachments &&
-          NS_SUCCEEDED(GetElementEncodingType(destChild, &encType)) &&
-          encType == ELEMENT_ENCTYPE_URI)
-      {
-        // ok, looks like we have a local file to upload
-
-        nsCOMPtr<nsIContent> content = do_QueryInterface(currentNode);
-        NS_ENSURE_STATE(content);
-
-        nsIFile *file =
-            NS_STATIC_CAST(nsIFile *,
-                           content->GetProperty(nsXFormsAtoms::uploadFileProperty));
-        // NOTE: this value may be null if a file hasn't been selected.
-
-        nsCString cid;
-        MakeMultipartContentID(cid);
-
-        nsAutoString cidURI;
-        cidURI.AssignLiteral("cid:");
-        AppendASCIItoUTF16(cid, cidURI);
-
-        nsCOMPtr<nsIDOMText> text;
-        destDoc->CreateTextNode(cidURI, getter_AddRefs(text));
-        NS_ENSURE_TRUE(text, NS_ERROR_UNEXPECTED);
-
-        destChild->AppendChild(text, getter_AddRefs(node));
-        dest->AppendChild(destChild, getter_AddRefs(node));
-
-        attachments->Append(file, cid);
-      }
-      else
-      {
-        dest->AppendChild(destChild, getter_AddRefs(node));
+        aDest->AppendChild(destChild, getter_AddRefs(node));
 
         // recurse
         nsCOMPtr<nsIDOMNode> startNode;
         currentNode->GetFirstChild(getter_AddRefs(startNode));
 
-        nsresult rv = CopyChildren(startNode, destChild, destDoc, attachments,
-                                   cdataElements, indent, depth + 1);
+        nsresult rv = CopyChildren(aModel, startNode, destChild, aDestDoc,
+                                   aCDATAElements, aDepth + 1);
         NS_ENSURE_SUCCESS(rv, rv);
+
       }
+    }
+    
+    if (!aDepth) {
+      break;
     }
 
     currentNode->GetNextSibling(getter_AddRefs(node));
     currentNode.swap(node);
   }
+
   return NS_OK;
 }
 
 nsresult
-nsXFormsSubmissionElement::SerializeDataURLEncoded(nsIDOMNode *data,
+nsXFormsSubmissionElement::SerializeDataURLEncoded(nsIDOMDocument *data,
                                                    nsCString &uri,
                                                    nsIInputStream **stream,
                                                    nsCString &contentType)
 {
+  // 'get' method:
+  // The URI is constructed as follows:
+  //  o The submit URI from the action attribute is examined. If it does not
+  //    already contain a ? (question mark) character, one is appended. If it
+  //    does already contain a question mark character, then a separator
+  //    character from the attribute separator is appended.
+  //  o The serialized form data is appended to the URI.
+
   nsCAutoString separator;
   {
     nsAutoString temp;
@@ -1333,7 +1380,7 @@ nsXFormsSubmissionElement::SerializeDataURLEncoded(nsIDOMNode *data,
 
     // make new stream
     NS_NewCStringInputStream(stream, buf);
-    NS_ENSURE_TRUE(*stream, NS_ERROR_UNEXPECTED);
+    NS_ENSURE_STATE(*stream);
 
     contentType.AssignLiteral("application/x-www-form-urlencoded");
   }
@@ -1422,7 +1469,7 @@ nsXFormsSubmissionElement::AppendURLEncodedData(nsIDOMNode *data,
 }
 
 nsresult
-nsXFormsSubmissionElement::SerializeDataMultipartRelated(nsIDOMNode *data,
+nsXFormsSubmissionElement::SerializeDataMultipartRelated(nsIDOMDocument *data,
                                                          nsIInputStream **stream,
                                                          nsCString &contentType)
 {
@@ -1433,19 +1480,22 @@ nsXFormsSubmissionElement::SerializeDataMultipartRelated(nsIDOMNode *data,
 
   nsCOMPtr<nsIMultiplexInputStream> multiStream =
       do_CreateInstance("@mozilla.org/io/multiplex-input-stream;1");
-  NS_ENSURE_TRUE(multiStream, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(multiStream);
 
   nsCAutoString type, start;
 
   MakeMultipartContentID(start);
 
-  // XXX we need to extend SerializeDataXML so that it has a mode in which it
-  //     generates ContentIDs for elements of type xsd:anyURI, and returns a
-  //     list of ContentID <-> URI mappings.
+  nsresult rv;
+  nsCOMPtr<nsIModelElementPrivate> model(GetModel());
+  NS_ENSURE_STATE(model);
+  SubmissionAttachmentArray attachments;
+  rv = CreateAttachments(model, data, &attachments);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIInputStream> xml;
-  SubmissionAttachmentArray attachments;
-  SerializeDataXML(data, getter_AddRefs(xml), type, &attachments);
+  rv = SerializeDataXML(data, getter_AddRefs(xml), type);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // XXX we should output a 'charset=' with the 'Content-Type' header
 
@@ -1454,13 +1504,12 @@ nsXFormsSubmissionElement::SerializeDataMultipartRelated(nsIDOMNode *data,
                 +  NS_LITERAL_CSTRING("\r\nContent-Type: ") + type
                 +  NS_LITERAL_CSTRING("\r\nContent-ID: <") + start
                 +  NS_LITERAL_CSTRING(">\r\n\r\n");
-  nsresult rv = AppendPostDataChunk(postDataChunk, multiStream);
+  rv = AppendPostDataChunk(postDataChunk, multiStream);
   NS_ENSURE_SUCCESS(rv, rv);
 
   multiStream->AppendStream(xml);
 
-  for (PRUint32 i=0; i<attachments.Count(); ++i)
-  {
+  for (PRUint32 i = 0; i < attachments.Count(); ++i) {
     SubmissionAttachment *a = attachments.Item(i);
 
     nsCOMPtr<nsIInputStream> fileStream;
@@ -1509,7 +1558,7 @@ nsXFormsSubmissionElement::SerializeDataMultipartRelated(nsIDOMNode *data,
 }
 
 nsresult
-nsXFormsSubmissionElement::SerializeDataMultipartFormData(nsIDOMNode *data,
+nsXFormsSubmissionElement::SerializeDataMultipartFormData(nsIDOMDocument *data,
                                                           nsIInputStream **stream,
                                                           nsCString &contentType)
 {
@@ -1537,7 +1586,7 @@ nsXFormsSubmissionElement::SerializeDataMultipartFormData(nsIDOMNode *data,
 
   nsCOMPtr<nsIMultiplexInputStream> multiStream =
       do_CreateInstance("@mozilla.org/io/multiplex-input-stream;1");
-  NS_ENSURE_TRUE(multiStream, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(multiStream);
 
   nsCString postDataChunk;
   nsresult rv = AppendMultipartFormData(data, boundary, postDataChunk, multiStream);
@@ -1657,7 +1706,7 @@ nsXFormsSubmissionElement::AppendMultipartFormData(nsIDOMNode *data,
     }
     else
     {
-      // for base64binary and hexBinary types, we assume that the data is
+      // for base64Binary and hexBinary types, we assume that the data is
       // already encoded.  this assumption is based on section 8.1.6 of the
       // xforms spec.
 
@@ -1700,47 +1749,35 @@ nsXFormsSubmissionElement::AppendPostDataChunk(nsCString &postDataChunk,
 }
 
 nsresult
-nsXFormsSubmissionElement::GetElementEncodingType(nsIDOMNode *node, PRUint32 *encType)
+nsXFormsSubmissionElement::GetElementEncodingType(nsIDOMNode             *node,
+                                                  PRUint32               *encType,
+                                                  nsIModelElementPrivate *aModel)
 {
   *encType = ELEMENT_ENCTYPE_STRING; // default
 
   nsCOMPtr<nsIDOMElement> element = do_QueryInterface(node);
-  NS_ENSURE_TRUE(element, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(element);
 
-  nsAutoString type;
-  element->GetAttributeNS(NS_LITERAL_STRING(NS_NAMESPACE_XML_SCHEMA_INSTANCE),
-                          NS_LITERAL_STRING("type"), type);
-  if (!type.IsEmpty())
+  // check for 'xsd:base64Binary', 'xsd:hexBinary', or 'xsd:anyURI'
+  nsAutoString type, nsuri;
+  nsresult rv;
+  if (aModel) {
+    rv = aModel->GetTypeFromNode(node, type, nsuri);
+  } else {
+    rv = nsXFormsUtils::ParseTypeFromNode(node, type, nsuri);
+  }
+  if (NS_SUCCEEDED(rv) &&
+      nsuri.EqualsLiteral(NS_NAMESPACE_XML_SCHEMA) &&
+      !type.IsEmpty())
   {
-    // check for 'xsd:base64binary', 'xsd:hexBinary', or 'xsd:anyURI'
+    if (type.Equals(NS_LITERAL_STRING("anyURI")))
+      *encType = ELEMENT_ENCTYPE_URI;
+    else if (type.Equals(NS_LITERAL_STRING("base64Binary")))
+      *encType = ELEMENT_ENCTYPE_BASE64;
+    else if (type.Equals(NS_LITERAL_STRING("hexBinary")))
+      *encType = ELEMENT_ENCTYPE_HEX;
 
     // XXX need to handle derived types (fixing bug 263384 will help)
-
-    // get 'xsd' namespace prefix
-    nsCOMPtr<nsIDOM3Node> dom3Node = do_QueryInterface(node);
-    NS_ENSURE_TRUE(dom3Node, NS_ERROR_UNEXPECTED);
-
-    nsAutoString prefix;
-    dom3Node->LookupPrefix(NS_LITERAL_STRING(NS_NAMESPACE_XML_SCHEMA), prefix);
-
-    if (prefix.IsEmpty())
-    {
-      NS_WARNING("namespace prefix not found! -- assuming 'xsd'");
-      prefix.AssignLiteral("xsd"); // XXX HACK HACK HACK
-    }
-
-    if (type.Length() > prefix.Length() &&
-        prefix.Equals(StringHead(type, prefix.Length())) &&
-        type.CharAt(prefix.Length()) == PRUnichar(':'))
-    {
-      const nsSubstring &tail = Substring(type, prefix.Length() + 1);
-      if (tail.Equals(NS_LITERAL_STRING("anyURI")))
-        *encType = ELEMENT_ENCTYPE_URI;
-      else if (tail.Equals(NS_LITERAL_STRING("base64binary")))
-        *encType = ELEMENT_ENCTYPE_BASE64;
-      else if (tail.Equals(NS_LITERAL_STRING("hexBinary")))
-        *encType = ELEMENT_ENCTYPE_HEX;
-    }
   }
 
   return NS_OK;
@@ -1756,20 +1793,20 @@ nsXFormsSubmissionElement::CreateFileStream(const nsString &absURI,
 
   nsCOMPtr<nsIURI> uri;
   NS_NewURI(getter_AddRefs(uri), absURI);
-  NS_ENSURE_TRUE(uri, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(uri);
 
   // restrict to file:// -- XXX is this correct?
   PRBool schemeIsFile = PR_FALSE;
   uri->SchemeIs("file", &schemeIsFile);
-  NS_ENSURE_TRUE(schemeIsFile, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(schemeIsFile);
 
   // NOTE: QI to nsIFileURL just means that the URL corresponds to a 
   // local file resource, which is not restricted to file://
   nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(uri);
-  NS_ENSURE_TRUE(fileURL, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(fileURL);
 
   fileURL->GetFile(resultFile);
-  NS_ENSURE_TRUE(*resultFile, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_STATE(*resultFile);
 
   return NS_NewLocalFileInputStream(resultStream, *resultFile);
 }
@@ -1803,7 +1840,94 @@ nsXFormsSubmissionElement::SendData(const nsCString &uriSpec,
 
   nsresult rv;
 
-  if (!CheckSameOrigin(doc->GetDocumentURI(), uri)) {
+  // handle mailto: submission
+  if (!mIsReplaceInstance) {
+    PRBool isMailto;
+    rv = uri->SchemeIs("mailto", &isMailto);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (isMailto) {
+      nsCOMPtr<nsIExternalProtocolService> extProtService =
+        do_GetService("@mozilla.org/uriloader/external-protocol-service;1");
+      NS_ENSURE_STATE(extProtService);
+
+      PRBool hasExposedMailClient;
+      rv = extProtService->ExternalProtocolHandlerExists("mailto",
+                                                         &hasExposedMailClient);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      if (hasExposedMailClient) {
+        nsCAutoString mailtoUrl(uriSpec);
+
+        // A mailto url looks like this: mailto:foo@bar.com, which can be followed
+        // by parameters (subject and body).  The first parameter has to have an
+        // "?" before it, and an additional one needs to have an "&".
+        // So if "?" already exists in the string, we use "&".
+
+        if (mailtoUrl.Find("&body=") != kNotFound ||
+            mailtoUrl.Find("?body=") != kNotFound) {
+          // body parameter already exists, so report a warning
+          nsXFormsUtils::ReportError(NS_LITERAL_STRING("warnMailtoBodyParam"),
+                                     mElement, nsIScriptError::warningFlag);
+        }
+
+        if (mailtoUrl.FindChar('?') != kNotFound)
+          mailtoUrl.AppendLiteral("&body=");
+        else
+          mailtoUrl.AppendLiteral("?body=");
+
+        // get the stream contents
+        PRUint32 len, read, numReadIn = 1;
+        rv = stream->Available(&len);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        char *buf = new char[len+1];
+        if (buf == NULL) {
+          return NS_ERROR_OUT_OF_MEMORY;
+        }
+        memset(buf, 0, len+1);
+
+        // Read returns 0 if eos
+        while (numReadIn != 0) {
+          numReadIn = stream->Read(buf, len, &read);
+          NS_EscapeURL(buf, read, esc_Query|esc_AlwaysCopy, mailtoUrl);
+        }
+
+        delete [] buf;
+
+        // create an nsIUri out of the string
+        nsCOMPtr<nsIURI> mailUri;
+        ios->NewURI(mailtoUrl,
+                    nsnull,
+                    nsnull,
+                    getter_AddRefs(mailUri));
+        NS_ENSURE_STATE(mailUri);
+
+        // let the OS handle the uri
+        rv = extProtService->LoadURI(mailUri, nsnull);
+
+        if (NS_FAILED(rv)) {
+          // opening an mail client failed.
+          nsXFormsUtils::ReportError(NS_LITERAL_STRING("submitMailtoFailed"),
+                                     mElement);
+          EndSubmit(PR_FALSE);
+        } else {
+          // the protocol service succeeded
+          EndSubmit(PR_TRUE);
+        }
+
+      } else {
+        // no system mail client found
+        nsXFormsUtils::ReportError(NS_LITERAL_STRING("submitMailtoInit"),
+                                   mElement);
+        EndSubmit(PR_FALSE);
+      }
+
+      return NS_OK;
+    }
+  }
+
+  if (!CheckSameOrigin(doc, uri)) {
     nsXFormsUtils::ReportError(NS_LITERAL_STRING("submitSendOrigin"),
                                mElement);
     return NS_ERROR_ABORT;
@@ -1816,7 +1940,7 @@ nsXFormsSubmissionElement::SendData(const nsCString &uriSpec,
   if (stream)
   {
     NS_NewBufferedInputStream(getter_AddRefs(bufferedStream), stream, 4096);
-    NS_ENSURE_TRUE(bufferedStream, NS_ERROR_UNEXPECTED);
+    NS_ENSURE_STATE(bufferedStream);
   }
 
   nsCOMPtr<nsIChannel> channel;
@@ -1847,6 +1971,12 @@ nsXFormsSubmissionElement::SendData(const nsCString &uriSpec,
   nsCOMPtr<nsILoadGroup> loadGroup = doc->GetDocumentLoadGroup();
   channel->SetLoadGroup(loadGroup);
 
+  // set LOAD_DOCUMENT_URI so throbber works during submit
+  nsLoadFlags loadFlags = 0;
+  channel->GetLoadFlags(&loadFlags);
+  loadFlags |= nsIChannel::LOAD_DOCUMENT_URI;
+  channel->SetLoadFlags(loadFlags);
+
   // create a pipe in which to store the response (yeah, this kind of
   // sucks since we'll use a lot of memory if the response is large).
   //
@@ -1857,7 +1987,7 @@ nsXFormsSubmissionElement::SendData(const nsCString &uriSpec,
 
   nsCOMPtr<nsIOutputStream> pipeOut;
   rv = NS_NewPipe(getter_AddRefs(mPipeIn), getter_AddRefs(pipeOut),
-                  0, PR_UINT32_MAX, PR_TRUE, PR_TRUE);
+                  4096, PR_UINT32_MAX, PR_TRUE, PR_TRUE);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // use a simple stream listener to tee our data into the pipe, and

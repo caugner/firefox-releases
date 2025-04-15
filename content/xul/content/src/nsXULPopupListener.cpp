@@ -78,6 +78,8 @@
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIEventStateManager.h"
+#include "nsIFocusController.h"
+#include "nsPIDOMWindow.h"
 
 #include "nsIFrame.h"
 
@@ -126,7 +128,6 @@ protected:
 
     virtual nsresult LaunchPopup(nsIDOMEvent* anEvent);
     virtual nsresult LaunchPopup(PRInt32 aClientX, PRInt32 aClientY) ;
-    virtual void ClosePopup();
 
 private:
 
@@ -137,7 +138,7 @@ private:
     nsIDOMElement* mElement;               // Weak ref. The element will go away first.
 
     // The popup that is getting shown on top of mElement.
-    nsIDOMElement* mPopupContent; 
+    nsCOMPtr<nsIPopupBoxObject> mPopup;
 
     // The type of the popup
     XULPopupType popupType;
@@ -147,13 +148,15 @@ private:
 ////////////////////////////////////////////////////////////////////////
       
 XULPopupListenerImpl::XULPopupListenerImpl(void)
-  : mElement(nsnull), mPopupContent(nsnull)
+  : mElement(nsnull)
 {
 }
 
 XULPopupListenerImpl::~XULPopupListenerImpl(void)
 {
-  ClosePopup();
+  if (mPopup) {
+    mPopup->HidePopup();
+  }
   
 #ifdef DEBUG_REFS
     --gInstanceCount;
@@ -274,17 +277,17 @@ XULPopupListenerImpl::PreLaunchPopup(nsIDOMEvent* aMouseEvent)
   // Get the document with the popup.
   nsCOMPtr<nsIContent> content = do_QueryInterface(mElement);
 
-  // Turn the document into a XUL document so we can use SetPopupNode.
-  nsCOMPtr<nsIDOMXULDocument> xulDocument = do_QueryInterface(content->GetDocument());
+  // Turn the document into a XUL document so we can use SetPopupNode
+  nsCOMPtr<nsIDOMXULDocument2> xulDocument = do_QueryInterface(content->GetDocument());
   if (!xulDocument) {
     NS_ERROR("Popup attached to an element that isn't in XUL!");
     return NS_ERROR_FAILURE;
   }
 
   // Store clicked-on node in xul document for context menus and menu popups.
+  // CLEAR THE POPUP EVENT BEFORE THIS FUNCTION EXITS
   xulDocument->SetPopupNode( targetNode );
-
-  nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
+  xulDocument->SetTrustedPopupEvent( aMouseEvent );
 
   switch (popupType) {
     case eXULPopupType_popup:
@@ -293,11 +296,7 @@ XULPopupListenerImpl::PreLaunchPopup(nsIDOMEvent* aMouseEvent)
       if (button == 0) {
         // Time to launch a popup menu.
         LaunchPopup(aMouseEvent);
-
-        if (nsevent) {
-            nsevent->PreventBubble();
-        }
-
+        aMouseEvent->StopPropagation();
         aMouseEvent->PreventDefault();
       }
       break;
@@ -310,14 +309,11 @@ XULPopupListenerImpl::PreLaunchPopup(nsIDOMEvent* aMouseEvent)
     FireFocusOnTargetContent(targetNode);
 #endif
     LaunchPopup(aMouseEvent);
-
-    if (nsevent) {
-        nsevent->PreventBubble();
-    }
-
+    aMouseEvent->StopPropagation();
     aMouseEvent->PreventDefault();
     break;
   }
+  xulDocument->SetTrustedPopupEvent(nsnull);
   return NS_OK;
 }
 
@@ -329,10 +325,10 @@ XULPopupListenerImpl::FireFocusOnTargetContent(nsIDOMNode* aTargetNode)
   rv = aTargetNode->GetOwnerDocument(getter_AddRefs(domDoc));
   if(NS_SUCCEEDED(rv) && domDoc)
   {
-    nsCOMPtr<nsIDocument> tempdoc = do_QueryInterface(domDoc);
+    nsCOMPtr<nsIDocument> doc = do_QueryInterface(domDoc);
 
     // Get nsIDOMElement for targetNode
-    nsIPresShell *shell = tempdoc->GetShellAt(0);
+    nsIPresShell *shell = doc->GetShellAt(0);
     if (!shell)
       return NS_ERROR_FAILURE;
 
@@ -367,39 +363,33 @@ XULPopupListenerImpl::FireFocusOnTargetContent(nsIDOMNode* aTargetNode)
     nsCOMPtr<nsIContent> focusableContent = do_QueryInterface(element);
     nsIEventStateManager *esm = context->EventStateManager();
 
-    if (focusableContent)
+    if (focusableContent) {
+      // Lock to scroll by SetFocus. See bug 309075.
+      nsCOMPtr<nsIFocusController> focusController = nsnull;
+      PRBool isAlreadySuppressed = PR_FALSE;
+      nsCOMPtr<nsPIDOMWindow> ourWindow =
+        do_QueryInterface(doc->GetScriptGlobalObject());
+      if (ourWindow) {
+        focusController = ourWindow->GetRootFocusController();
+        if (focusController) {
+          focusController->GetSuppressFocusScroll(&isAlreadySuppressed);
+          if (!isAlreadySuppressed)
+            focusController->SetSuppressFocusScroll(PR_TRUE);
+        }
+      }
+
       focusableContent->SetFocus(context);
-    else if (!suppressBlur)
+
+      // Unlock scroll if it's needed.
+      if (focusController && !isAlreadySuppressed)
+        focusController->SetSuppressFocusScroll(PR_FALSE);
+    } else if (!suppressBlur)
       esm->SetContentState(nsnull, NS_EVENT_STATE_FOCUS);
 
     esm->SetContentState(focusableContent, NS_EVENT_STATE_ACTIVE);
   }
   return rv;
 }
-
-//
-// ClosePopup
-//
-// Do everything needed to shut down the popup.
-//
-// NOTE: This routine is safe to call even if the popup is already closed.
-//
-void
-XULPopupListenerImpl :: ClosePopup ( )
-{
-  if ( mPopupContent ) {
-    nsCOMPtr<nsIDOMXULElement> popupElement(do_QueryInterface(mPopupContent));
-    nsCOMPtr<nsIBoxObject> boxObject;
-    if (popupElement)
-      popupElement->GetBoxObject(getter_AddRefs(boxObject));
-    nsCOMPtr<nsIPopupBoxObject> popupObject(do_QueryInterface(boxObject));
-    if (popupObject)
-      popupObject->HidePopup();
-
-    mPopupContent = nsnull;  // release the popup
-  }
-
-} // ClosePopup
 
 //
 // LaunchPopup
@@ -583,28 +573,28 @@ XULPopupListenerImpl::LaunchPopup(PRInt32 aClientX, PRInt32 aClientY)
 
   if (domWindow) {
     // Find out if we're anchored.
-    mPopupContent = popupContent.get();
-
     nsAutoString anchorAlignment;
-    mPopupContent->GetAttribute(NS_LITERAL_STRING("popupanchor"), anchorAlignment);
+    popupContent->GetAttribute(NS_LITERAL_STRING("popupanchor"), anchorAlignment);
 
     nsAutoString popupAlignment;
-    mPopupContent->GetAttribute(NS_LITERAL_STRING("popupalign"), popupAlignment);
+    popupContent->GetAttribute(NS_LITERAL_STRING("popupalign"), popupAlignment);
 
     PRInt32 xPos = aClientX, yPos = aClientY;
 
-    ConvertPosition(mPopupContent, anchorAlignment, popupAlignment, yPos);
+    ConvertPosition(popupContent, anchorAlignment, popupAlignment, yPos);
     if (!anchorAlignment.IsEmpty() && !popupAlignment.IsEmpty())
       xPos = yPos = -1;
 
     nsCOMPtr<nsIBoxObject> popupBox;
-    nsCOMPtr<nsIDOMXULElement> xulPopupElt(do_QueryInterface(mPopupContent));
+    nsCOMPtr<nsIDOMXULElement> xulPopupElt(do_QueryInterface(popupContent));
     xulPopupElt->GetBoxObject(getter_AddRefs(popupBox));
     nsCOMPtr<nsIPopupBoxObject> popupBoxObject(do_QueryInterface(popupBox));
-    if (popupBoxObject)
-      popupBoxObject->ShowPopup(mElement, mPopupContent, xPos, yPos, 
+    if (popupBoxObject) {
+      mPopup = popupBoxObject;
+      popupBoxObject->ShowPopup(mElement, popupContent, xPos, yPos, 
                                 type.get(), anchorAlignment.get(), 
                                 popupAlignment.get());
+    }
   }
 
   return NS_OK;

@@ -107,8 +107,12 @@
 
           // uncheck all other group nodes
           var children = this._getRadioChildren();
+          var previousItem = null;
           for (var i = 0; i < children.length; ++i) {
             if (children[i] != val) {
+              if (children[i].getAttribute("selected") == "true")
+                previousItem = children[i];
+
               children[i].removeAttribute("selected");
               children[i].removeAttribute("focused");
             }
@@ -123,6 +127,12 @@
             var myEvent = document.createEvent("Events");
             myEvent.initEvent("RadioStateChange", true, true);
             val.dispatchEvent(myEvent);
+
+            if (previousItem) {
+              myEvent = document.createEvent("Events");
+              myEvent.initEvent("RadioStateChange", true, true);
+              previousItem.dispatchEvent(myEvent);
+            }
           }
 
           return val;
@@ -283,7 +293,7 @@
         <![CDATA[
           //XXXblake this should not be necessary
           //         initEvent was supposed to prevent this from bubbling
-          event.preventBubble();
+          event.stopPropagation();
         ]]>
       </handler>
       <handler event="mousedown">
@@ -304,19 +314,23 @@
       </handler>
       <handler event="keypress" keycode="VK_UP" phase="target">
         this.checkAdjacentElement(false);
-        event.preventBubble();
+        event.stopPropagation();
       </handler>
       <handler event="keypress" keycode="VK_LEFT" phase="target">
-        this.checkAdjacentElement(false);
-        event.preventBubble();
+        // left arrow goes back when we are ltr, forward when we are rtl
+        this.checkAdjacentElement(document.defaultView.getComputedStyle(
+                                    this, "").direction == "rtl");
+        event.stopPropagation();
       </handler>
       <handler event="keypress" keycode="VK_DOWN" phase="target">
         this.checkAdjacentElement(true);
-        event.preventBubble();
+        event.stopPropagation();
       </handler>
       <handler event="keypress" keycode="VK_RIGHT" phase="target">
-        this.checkAdjacentElement(true);
-        event.preventBubble();
+        // right arrow goes forward when we are ltr, back when we are rtl
+        this.checkAdjacentElement(document.defaultView.getComputedStyle(
+                                    this, "").direction == "ltr");
+        event.stopPropagation();
       </handler>
 
       <!-- set a focused attribute on the selected item when the group

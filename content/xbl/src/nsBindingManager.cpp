@@ -103,7 +103,12 @@ public:
   PRInt32 GetInsertionPointCount() { return mElements->Count(); }
 
   nsXBLInsertionPoint* GetInsertionPointAt(PRInt32 i) { return NS_STATIC_CAST(nsXBLInsertionPoint*, mElements->ElementAt(i)); }
-  void RemoveInsertionPointAt(PRInt32 i) { mElements->RemoveElementAt(i); }
+  void RemoveInsertionPointAt(PRInt32 i) {
+    nsXBLInsertionPoint* insertionPoint =
+      NS_STATIC_CAST(nsXBLInsertionPoint*, mElements->SafeElementAt(i));
+    NS_IF_RELEASE(insertionPoint);
+    mElements->RemoveElementAt(i);
+  }
 
 private:
   nsVoidArray* mElements;
@@ -120,16 +125,18 @@ nsAnonymousContentList::nsAnonymousContentList(nsVoidArray* aElements)
   // references). We'll be told when the Anonymous goes away.
 }
 
-static PRBool PR_CALLBACK DeleteInsertionPoint(void* aElement, void* aData)
+PRBool PR_CALLBACK ReleaseInsertionPoint(void* aElement, void* aData)
 {
-  delete NS_STATIC_CAST(nsXBLInsertionPoint*, aElement);
+  nsXBLInsertionPoint* insertionPoint =
+    NS_STATIC_CAST(nsXBLInsertionPoint*, aElement);
+  NS_IF_RELEASE(insertionPoint);
   return PR_TRUE;
 }
 
 nsAnonymousContentList::~nsAnonymousContentList()
 {
   MOZ_COUNT_DTOR(nsAnonymousContentList);
-  mElements->EnumerateForwards(DeleteInsertionPoint, nsnull);
+  mElements->EnumerateForwards(ReleaseInsertionPoint, nsnull);
   delete mElements;
 }
 
@@ -345,6 +352,17 @@ nsBindingManager::SetBinding(nsIContent* aContent, nsXBLBinding* aBinding)
       return NS_ERROR_OUT_OF_MEMORY;
   }
 
+  // After this point, aBinding will be the most-derived binding for aContent.
+  // If we already have a binding for aContent in our table, make sure to
+  // remove it from the attached stack.  Otherwise we might end up firing its
+  // constructor twice (if aBinding inherits from it) or firing its constructor
+  // after aContent has been deleted (if aBinding is null and the content node
+  // dies before we process mAttachedStack).
+  nsXBLBinding* oldBinding = mBindingTable.GetWeak(aContent);
+  if (oldBinding && mAttachedStack.RemoveElement(oldBinding)) {
+    NS_RELEASE(oldBinding);
+  }
+  
   PRBool result = PR_TRUE;
 
   if (aBinding) {
@@ -493,7 +511,11 @@ nsBindingManager::SetContentListFor(nsIContent* aContent, nsVoidArray* aList)
   nsIDOMNodeList* contentList = nsnull;
   if (aList) {
     contentList = new nsAnonymousContentList(aList);
-    if (!contentList) return NS_ERROR_OUT_OF_MEMORY;
+    if (!contentList) {
+      aList->EnumerateForwards(ReleaseInsertionPoint, nsnull);
+      delete aList;
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
   }
 
   return SetOrRemoveObject(mContentListTable, aContent, contentList);
@@ -551,7 +573,11 @@ nsBindingManager::SetAnonymousNodesFor(nsIContent* aContent, nsVoidArray* aList)
   nsIDOMNodeList* contentList = nsnull;
   if (aList) {
     contentList = new nsAnonymousContentList(aList);
-    if (!contentList) return NS_ERROR_OUT_OF_MEMORY;
+    if (!contentList) {
+      aList->EnumerateForwards(ReleaseInsertionPoint, nsnull);
+      delete aList;
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
   
     // If there are any items in aList that are already in aContent's
     // AnonymousNodesList, we need to make sure they don't get deleted as

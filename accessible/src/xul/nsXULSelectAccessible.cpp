@@ -53,6 +53,8 @@
   * Selects, Listboxes and Comboboxes, are made up of a number of different
   *  widgets, some of which are shared between the two. This file contains
   *  all of the widgets for both of the Selects, for XUL only.
+  *  (except nsXULRadioGroupAccessible which inherits
+  *   nsXULSelectableAccessible so that it supports nsIAccessibleSelectable)
   *
   *  Listbox:
   *     - nsXULListboxAccessible
@@ -518,9 +520,15 @@ nsXULSelectableAccessible(aDOMNode, aShell)
 }
 
 /** We are a combobox */
-NS_IMETHODIMP nsXULComboboxAccessible::GetRole(PRUint32 *_retval)
+NS_IMETHODIMP nsXULComboboxAccessible::GetRole(PRUint32 *aRole)
 {
-  *_retval = ROLE_COMBOBOX;
+  nsCOMPtr<nsIContent> content = do_QueryInterface(mDOMNode);
+  if (!content) {
+    return NS_ERROR_FAILURE;
+  }
+  nsAutoString type;
+  content->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::type, type);
+  *aRole = type.EqualsLiteral("autocomplete") ? ROLE_AUTOCOMPLETE : ROLE_COMBOBOX;
   return NS_OK;
 }
 

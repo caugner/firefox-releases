@@ -52,6 +52,12 @@ REQUIRES	= xpcom \
 		  embedcomponents \
 		  $(NULL)
 
+ifdef MINIMO
+# For minimo, we would really like to treat this as a LIBXUL
+# library so that we can get the correct export defines.
+LIBXUL_LIBRARY = 1
+endif
+
 DEFINES += -DMOZILLA_STRICT_API
 
 SDK_HEADERS         = \
@@ -70,6 +76,7 @@ SDK_LIBRARY     =                        \
 
 XPIDLSRCS	    = \
                 nsIWindowCreator2.idl \
+                nsIWindowProvider.idl \
                 $(NULL)
 
 CPPSRCS         = \

@@ -1,5 +1,6 @@
 classic.jar:
 % skin mozapps classic/1.0 %skin/classic/mozapps/
+#ifndef MINIMO
         skin/classic/mozapps/downloads/downloadIcon.png               (downloads/downloadIcon.png)
         skin/classic/mozapps/downloads/downloadCleanup.png            (downloads/downloadCleanup.png)
         skin/classic/mozapps/downloads/downloadCleanupDisabled.png    (downloads/downloadCleanupDisabled.png)
@@ -12,13 +13,15 @@ classic.jar:
         skin/classic/mozapps/extensions/about.css                     (extensions/about.css)
         skin/classic/mozapps/extensions/actionbuttons.png             (extensions/actionbuttons.png)
         skin/classic/mozapps/extensions/extensions.css                (extensions/extensions.css)
+        skin/classic/mozapps/extensions/itemDisabledFader.png         (extensions/itemDisabledFader.png)
+        skin/classic/mozapps/extensions/itemEnabledFader.png          (extensions/itemEnabledFader.png)
+        skin/classic/mozapps/extensions/notifyBadges.png              (extensions/notifyBadges.png)
+        skin/classic/mozapps/extensions/question.png                  (extensions/question.png)
         skin/classic/mozapps/extensions/update.css                    (extensions/update.css)
         skin/classic/mozapps/extensions/themeGeneric.png              (extensions/themeGeneric.png)
+        skin/classic/mozapps/extensions/viewButtons.png               (extensions/viewButtons.png)
         skin/classic/mozapps/plugins/pluginInstallerWizard.css        (plugins/pluginInstallerWizard.css)
-        skin/classic/mozapps/pref/check.gif                           (pref/check.gif)
-        skin/classic/mozapps/pref/dot.gif                             (pref/dot.gif)
-        skin/classic/mozapps/pref/pref.css                            (pref/pref.css)
-        skin/classic/mozapps/profile/profileicon.gif                  (profile/profileicon.gif)
+        skin/classic/mozapps/profile/profileicon.png                  (profile/profileicon.png)
         skin/classic/mozapps/profile/profileSelection.css             (profile/profileSelection.css)
         skin/classic/mozapps/shared/itemFader.png                     (shared/itemFader.png)
         skin/classic/mozapps/shared/itemSelected.png                  (shared/itemSelected.png)
@@ -31,3 +34,4 @@ classic.jar:
         skin/classic/mozapps/update/updates.css                       (update/updates.css)
         skin/classic/mozapps/xpinstall/xpinstallConfirm.css           (xpinstall/xpinstallConfirm.css)
         skin/classic/mozapps/xpinstall/xpinstallItemGeneric.png       (xpinstall/xpinstallItemGeneric.png)
+#endif

@@ -69,16 +69,12 @@ REQUIRES	= xpcom \
 		  mimetype \
 		  unicharutil \
 		  exthandler \
+		  imglib2 \
 		  $(NULL)
 
 ifdef ACCESSIBILITY
 REQUIRES	+= accessibility
 endif
-
-GFX_LCPPSRCS = \
-		nsRepeater.cpp \
-		nsWatchTask.cpp \
-		$(NULL)
 
 CPPSRCS	= nsAppShell.cpp \
 		nsBidiKeyboard.cpp \
@@ -96,10 +92,10 @@ CPPSRCS	= nsAppShell.cpp \
 		nsMacWindow.cpp \
 		nsMenuX.cpp \
 		nsMenuBarX.cpp \
+		nsMenuItemIcon.cpp \
 		nsMenuItemX.cpp \
 		nsMimeMapper.cpp \
 		nsSound.cpp \
-		nsTSMStrategy.cpp \
 		nsToolkitBase.cpp \
 		nsToolkit.cpp \
 		nsWidgetFactory.cpp \
@@ -108,7 +104,6 @@ CPPSRCS	= nsAppShell.cpp \
 		nsStylClipboardUtils.cpp \
 		nsMacControl.cpp \
 		nsNativeScrollbar.cpp \
-		$(GFX_LCPPSRCS) \
 		$(NULL)
 
 XPIDLSRCS  += \
@@ -129,15 +124,10 @@ EXTRA_DSO_LDOPTS += \
 		-lgkgfx \
 		$(NULL)
 
-GARBAGE		+= $(GFX_LCPPSRCS)
-
 include $(topsrcdir)/config/rules.mk
 
 RES_DEST = $(DIST)/bin/libwidget.rsrc
 RES_SRC = $(srcdir)/nsMacWidget.r
-
-export:: $(addprefix $(topsrcdir)/gfx/src/mac/,$(GFX_LCPPSRCS))
-	$(INSTALL) $^ .
 
 $(RES_DEST): $(RES_SRC)
 	/Developer/Tools/Rez -i /Developer/Headers/FlatCarbon -useDF $(RES_SRC) -o $(RES_DEST)

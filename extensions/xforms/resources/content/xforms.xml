@@ -38,77 +38,45 @@
    -
    - ***** END LICENSE BLOCK ***** -->
 
-<!DOCTYPE bindings [
-<!ENTITY % xformsDTD SYSTEM "chrome://xforms/locale/xforms.dtd">
-  %xformsDTD;
-]>
+<!--
+  This file implements the "abstract" UI classes for XForms controls. They
+  all have "pure virtual" functions that they expect to be implemented by
+  concrete application and returned in the getElementControl() call. An example
+  is the controls for XHTML in xforms-xhtml.xml.
+-->
 
 <bindings id="xformsBindings"
-   xmlns="http://www.mozilla.org/xbl"
-   xmlns:html="http://www.w3.org/1999/xhtml"
-   xmlns:xbl="http://www.mozilla.org/xbl"
-   xmlns:xforms="http://www.w3.org/2002/xforms"
-   xmlns:lazy="http://www.mozilla.org/projects/xforms/2005/lazy">
+          xmlns="http://www.mozilla.org/xbl"
+          xmlns:html="http://www.w3.org/1999/xhtml"
+          xmlns:xbl="http://www.mozilla.org/xbl"
+          xmlns:xforms="http://www.w3.org/2002/xforms"
+          xmlns:lazy="http://www.mozilla.org/projects/xforms/2005/lazy">
 
+
+  <!-- LAZY INSTANCE MODEL -->
   <binding id="xforms-lazy-instance">
     <content><xforms:instance lazy:lazy="true"/><children/></content>
   </binding>
 
-  <!-- BASE -->
-  <binding id="xformswidget-base">
-    <content><children/></content>
-    
-    <implementation implements="nsIXFormsUIWidget">
-      <constructor>
-        this.delegate.widgetAttached();
-      </constructor>
 
-      <destructor>
-        this._delegate = null;
-      </destructor>
+  <!-- BASE BINDINGS
+    The next bindings are used as a base for xforms controls implementations.
+  -->
 
-      <field name="_delegate">null</field>
+  <!-- The binding provides utils interface and interface for anonymous content
+    work.
+  -->
+  <binding id="xformswidget-general">
+    <implementation>
 
+    <!-- utils interface -->
       <property name="XFORMS_NS" readonly="true">
         <getter>
           return "http://www.w3.org/2002/xforms";
         </getter>
       </property>
 
-      <property name="delegate" readonly="true">
-        <getter>
-          if (!this._delegate)
-            this._delegate = this.QueryInterface(Components.interfaces.nsIXFormsDelegate);
-          return this._delegate;
-        </getter>
-      </property>
-
-      <property name="stringValue" readonly="true">
-        <getter>
-          var value = this.delegate.value;
-          return value != null ? value : "";
-        </getter>
-      </property>
-
-      <method name="refresh">
-        <body>
-          return true;
-        </body>
-      </method>
-
-      <method name="disable">
-        <parameter name="aDisable"/>
-        <body>
-          return true;
-        </body>
-      </method>
-
-      <method name="focus">
-        <body>
-          return false;
-        </body>
-      </method>
-
+      <!-- Dispatch UI Event to the control itself -->
       <method name="dispatchDOMUIEvent">
         <parameter name="aType"/>
         <body>
@@ -119,440 +87,410 @@
         </body>
       </method>
 
-    </implementation>
-  </binding>
-  
-  <!-- OUTPUT: <DEFAULT> -->
-  <binding id="xformswidget-output"
-           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
-    <content>
-      <children includes="label"/>
-      <html:span anonid="content"></html:span>
-      <children/>
-    </content>
-    
-    <implementation implements="nsIXFormsUIWidget">
-      <method name="refresh">
+      <!--
+        Dispatch an _XForms notification event_ to a node.
+        See http://www.w3.org/TR/xforms/slice4.html#evt-notify
+      -->
+      <method name="dispatchXFormsNotificationEvent">
+        <parameter name="aEventName"/>
+        <parameter name="aTarget"/>
         <body>
-          document.getAnonymousElementByAttribute(this, "anonid", "content").textContent =
-            this.stringValue;
+          var ev = document.createEvent("Events");
+          ev.initEvent(aEventName, true, false);
+          aTarget.dispatchEvent(ev);
           return true;
         </body>
       </method>
-    </implementation>
-  </binding>
 
-  <!-- LABEL: <DEFAULT> -->
-  <binding id="xformswidget-label"
-           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
-    <content>
-      <html:span anonid="content"></html:span>
-      <html:span anonid="anoncontent">
-        <children/>
-      </html:span>
-    </content>
-    <implementation implements="nsIXFormsUIWidget">
-      <method name="refresh">
-        <body>
-          var anoncontent =
-            document.getAnonymousElementByAttribute(this, "anonid", "anoncontent");
+    <!-- interface for anonymous content work -->
 
-          if (this.delegate.hasBoundNode || this.delegate.value != null) {
-            anoncontent.setAttribute("style", "display:none;");
-          } else {
-            anoncontent.removeAttribute("style");
-          }
-
-          document.getAnonymousElementByAttribute(this, "anonid", "content").textContent =
-            this.stringValue;
-          return true;
-        </body>
-      </method>
-    </implementation>
-  </binding>
-  
-  <!-- INPUT: <DEFAULT> -->
-  <binding id="xformswidget-input"
-           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
-    <content>
-      <children includes="label"/>
-      <html:input anonid="control"
-                  onblur="this.parentNode.delegate.value = this.value; this.parentNode.dispatchDOMUIEvent('DOMFocusOut')"
-                  onfocus="this.parentNode.dispatchDOMUIEvent('DOMFocusIn')"
-                  onclick="this.parentNode._change();"
-                  onkeyup="this.parentNode._change();"
-                  onkeypress="if (event.keyCode == event.DOM_VK_RETURN) this.parentNode.dispatchDOMUIEvent('DOMActivate');"
-                  xbl:inherits="accesskey"/>
-      <children/>
-    </content>
-
-    <implementation implements="nsIXFormsUIWidget">
-      <field name="_inputField">null</field>
-
-      <property name="inputField" readonly="true">
+      <!--
+        Return the native control widget that is the object with access for
+        visual representation of this xforms control.
+      -->
+      <property name="control" readonly="true">
         <getter>
-          if (!this._inputField) {
-            this._inputField =
-              document.getAnonymousElementByAttribute(this, "anonid", "control");
-          }
-          return this._inputField;
+          if (!this._control)
+            this._control = this.getControlElement();
+          return this._control;
         </getter>
       </property>
 
-      <method name="_change">
+      <!--
+        Each base binding for xforms widget assumes successors bindings will
+        override the method.
+      -->
+      <method name="getControlElement">
         <body>
-          if (this.getAttribute("incremental") == "true") {
-            this.delegate.value = this.inputField.value;
-          }
-          return true;
+          return null;
         </body>
       </method>
 
-      <method name="refresh">
-        <body>
-          this.inputField.value = this.stringValue;
-          if (this.delegate.isReadonly) {
-            this.inputField.setAttribute("readonly", "readonly");
-          } else {
-            this.inputField.removeAttribute("readonly");
-          }
-          return true;
-        </body>
-      </method>
+    <!-- private -->
+      <destructor>
+        this._control = null;
+      </destructor>
 
-      <method name="focus">
-        <body>
-          this.inputField.focus();
-          return true;
-        </body>
-      </method>
+      <field name="_control">null</field>
     </implementation>
   </binding>
 
-  <!-- INPUT: BOOLEAN -->
-  <binding id="xformswidget-input-boolean"
-           extends="chrome://xforms/content/xforms.xml#xformswidget-input">
+
+  <!-- Base binding is for xforms controls that are able to bind to instance
+    data.
+  -->
+  <binding id="xformswidget-accessors" extends="#xformswidget-general">
     <implementation>
-      <method name="refresh">
-        <body>
-          this.inputField.setAttribute("type","checkbox");
-          var value = this.stringValue;
-          if (value == "true" || value == "1") {
-            this.inputField.setAttribute("checked", "checked");
-          } else {
-            this.inputField.removeAttribute("checked");
-          }
-          
-          this.inputField.value = value;
-          if (this.delegate.isReadonly) {
-            this.inputField.setAttribute("readonly", "readonly");
-          } else {
-            this.inputField.removeAttribute("readonly");
-          }
-
-          <!-- Ignore Enter keypress on checkbox -->
-          this.inputField.removeAttribute("onkeypress");
-
-          return true;
-        </body>
-      </method>
-
-      <method name="_change">
-        <body>
-          if (this.getAttribute("incremental") != "false") {
-            if (this.inputField.checked) {
-              this.delegate.value = "true";
-            } else {
-              this.delegate.value = "false";
-            }
-          }
-        </body>
-      </method>
-    </implementation>
-  </binding>
-
-
-  <!-- SECRET: <DEFAULT> -->
-  <binding id="xformswidget-secret"
-           extends="chrome://xforms/content/xforms.xml#xformswidget-input">
-    <implementation>
-      <method name="refresh">
-        <body>
-          this.inputField.setAttribute("type","password");
-          this.inputField.value = this.stringValue;
-          this.inputField.readonly = this.delegate.isReadonly;
-          return true;
-        </body>
-      </method>
-    </implementation>
-  </binding>
-
-  <!-- TEXTAREA: <DEFAULT> -->
-  <binding id="xformswidget-textarea"
-           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
-    <content>
-      <children includes="label"/>
-      <html:textarea anonid="control"
-                     onblur="this.parentNode.delegate.value = this.value; this.parentNode.dispatchDOMUIEvent('DOMFocusOut')"
-                     onfocus="this.parentNode.dispatchDOMUIEvent('DOMFocusIn')"
-                     onkeyup="this.parentNode._change();"
-                     xbl:inherits="accesskey"/>
-      <children/>
-    </content>
-
-    <implementation implements="nsIXFormsUIWidget">
-      <field name="_controlField">null</field>
-
-      <property name="controlField" readonly="true">
+    <!-- interface -->
+      <property name="accessors" readonly="true">
         <getter>
-          if (!this._controlField) {
-            this._controlField =
-              document.getAnonymousElementByAttribute(this, "anonid", "control");
-          }
-          return this._controlField;
+          <![CDATA[
+          if (!this._accessors && this.delegate)
+            this._accessors = this.delegate.getXFormsAccessors();
+          return this._accessors;
+          ]]>
         </getter>
       </property>
 
-      <method name="refresh">
-        <body>
-          this.controlField.readonly = this.delegate.isReadonly;
-          // If the value has not changed, no need to update the
-          // value of the control, because that makes the textarea widget
-          // to scroll up.
-          if (this.controlField.value != this.stringValue) {
-            this.controlField.value = this.stringValue;
-          }
-          return true;
-        </body>
-      </method>
+      <property name="stringValue" readonly="true">
+        <getter>
+          var value = this.accessors.getValue();
+          return value != null ? value : "";
+        </getter>
+      </property>
 
-      <method name="_change">
-        <body>
-          if (this.getAttribute("incremental") == "true") {
-            this.delegate.value = this.controlField.value;
-          }
-          return true;
-        </body>
-      </method>
-
-      <method name="focus">
-        <body>
-          this.controlField.focus();
-          return true;
-        </body>
-      </method>
-    </implementation>
-  </binding>
-
-  <!-- TRIGGER: <DEFAULT> -->
-  <binding id="xformswidget-trigger"
-           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
-    <content>
-      <html:button anonid="thebutton" xbl:inherits="accesskey" 
-                   onblur="this.parentNode.dispatchDOMUIEvent('DOMFocusOut')"
-                   onfocus="this.parentNode.dispatchDOMUIEvent('DOMFocusIn')">
-        <children/>
-      </html:button>
-    </content>
-
-    <implementation implements="nsIXFormsUIWidget">
-      <method name="disable">
-        <parameter name="aDisable"/>
-        <body>
-          var control =
-            document.getAnonymousElementByAttribute(this, "anonid", "thebutton");
-          if (aDisable) {
-            control.setAttribute("disabled", "disabled");
-          } else {
-            control.removeAttribute("disabled");
-          }
-        </body>
-      </method>
-
-      <method name="focus">
-        <body>
-          document.getAnonymousElementByAttribute(this, "anonid", "thebutton").focus();
-          return true;
-        </body>
-      </method>
-
-    </implementation>
-  </binding>
-
-  <!-- TRIGGER: MINIMAL -->
-  <binding id="xformswidget-trigger-minimal"
-           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
-    <content>
-      <html:span tabindex="0" anonid="thespan" xbl:inherits="accesskey"
-                 onclick="if (!this._disabled) this.parentNode.dispatchDOMUIEvent('DOMActivate');"
-                 onblur="this.parentNode.dispatchDOMUIEvent('DOMFocusOut')"
-                 onfocus="this.parentNode.dispatchDOMUIEvent('DOMFocusIn')">
-        <children/>
-      </html:span>
-    </content>
-
-    <implementation implements="nsIXFormsUIWidget">
-      <field name="_disabled">false</field>
-
-      <method name="disable">
-        <parameter name="aDisable"/>
-        <body>
-          this._disabled = aDisable;
-        </body>
-      </method>
-
-      <method name="focus">
-        <body>
-          document.getAnonymousElementByAttribute(this, "anonid", "thespan").focus();
-          return true;
-        </body>
-      </method>
-    </implementation>
-  </binding>
-
-  <!-- CASE: <DEFAULT> -->
-  <binding id="xformswidget-case">
-    <content>
-      <html:div anonid="container" class="-moz-xforms-case-container">
-        <children/>
-      </html:div>
-    </content>
-
-    <implementation implements="nsIXFormsCaseUIElement">
+    <!-- private -->
       <constructor>
-        this.QueryInterface(Components.interfaces.nsIXFormsCaseElement).widgetAttached();
+        this.delegate.widgetAttached();
       </constructor>
 
-      <field name="_container">null</field>
-      <property name="container" readonly="true">
+      <destructor>
+        this._delegate = null;
+        this._accessors = null;
+      </destructor>
+
+      <property name="delegate" readonly="true">
         <getter>
-          if (!this._container) {
-            this._container =
-              document.getAnonymousElementByAttribute(this, "anonid", "container");
+          if (!this._delegate) {
+            this._delegate =
+              this.QueryInterface(Components.interfaces.nsIXFormsDelegate);
           }
-          return this._container;
+          return this._delegate;
+        </getter>
+      </property>
+
+      <field name="_delegate">null</field>
+      <field name="_accessors">null</field>
+    </implementation>
+  </binding>
+
+
+  <!--
+    Base binding is for xforms controls that implement nsIXFormsUIWidget
+    interface.
+  -->
+  <binding id="xformswidget-base" extends="#xformswidget-accessors">
+    <implementation implements="nsIXFormsUIWidget">
+
+    <!-- nsIXFormsUIWidget interface
+      Following methods are called from XTF part of XForms implementation and
+      thease methods should be overrided by successors bindings.
+    -->
+
+      <!-- Method is called when bound node was changed. -->
+      <method name="refresh">
+        <body>
+          return true;
+        </body>
+      </method>
+
+      <!-- Method is called when control should be disabled. -->
+      <method name="disable">
+        <parameter name="aDisable"/>
+        <body>
+          return true;
+        </body>
+      </method>
+
+      <!-- Method is called when control should be focused -->
+      <method name="focus">
+        <body>
+          return false;
+        </body>
+      </method>
+    </implementation>
+  </binding>
+
+
+  <!-- OUTPUT: <DEFAULT>
+    The output widget assumes successors bindings implement getElementControl()
+    method what returns the object:
+    {
+      set value(); // set "string" value
+    }
+  -->
+  <binding id="xformswidget-output-base"
+           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
+    <implementation implements="nsIXFormsUIWidget">
+      <method name="refresh">
+        <body>
+          this.control.value = this.stringValue;
+          return true;
+        </body>
+      </method>
+    </implementation>
+  </binding>
+
+
+  <!-- LABEL: <DEFAULT>
+    The label widget assumes successors bindings implement getElementControl()
+    method what returns the object:
+    {
+      set value(); // set "string" value
+      get textValue() // return text representing label value
+      get nodeValue() // return document fragment representing label value
+    }
+  -->
+  <binding id="xformswidget-label-base"
+           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
+
+    <implementation implements="nsIXFormsUIWidget">
+      <method name="refresh">
+        <body>
+          this.control.value = this.accessors.getValue();
+          return true;
+        </body>
+      </method>
+
+      <property name="textValue" readonly="true"
+                onget="return this.control.textValue;"/>
+
+      <property name="nodeValue" readonly="true"
+                onget="return this.control.nodeValue;"/>
+    </implementation>
+  </binding>
+
+
+  <!-- TRIGGER: <DEFAULT>
+    The trigger widget assumes successors bindings implement getElementControl()
+    method what returns the object:
+    {
+      set disabled(); // set disabled state
+      focus(); // set focus
+    }
+  -->
+  <binding id="xformswidget-trigger-base"
+           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
+
+    <implementation implements="nsIXFormsUIWidget">
+      <method name="disable">
+        <parameter name="aDisable"/>
+        <body>
+          this.control.disabled = aDisable;
+        </body>
+      </method>
+
+      <method name="focus">
+        <body>
+          this.control.focus();
+          return true;
+        </body>
+      </method>
+
+    </implementation>
+  </binding>
+
+
+  <!-- TRIGGER: MINIMAL
+    We don't need in any special base binding for trigger[appearance="minimal"]
+    widget. All successors bindings should be extended from base binding for
+    default trigger widget.
+  -->
+
+
+  <!-- CASE: <DEFAULT> -->
+  <binding id="xformswidget-case-base" extends="#xformswidget-general">
+    <implementation implements="nsIXFormsCaseUIElement">
+      <constructor>
+        this.QueryInterface(Components.interfaces.nsIXFormsCaseElement).
+          widgetAttached();
+      </constructor>
+
+      <property name="control" readonly="true">
+        <getter>
+          if (!this._control)
+            this._control = this.getControlElement();
+          return this._control;
         </getter>
       </property>
 
       <method name="caseSelected">
         <parameter name="aEnable"/>
         <body>
-          if (aEnable) {
-            this.container.style.display = "inherit";
-          } else {
-            this.container.style.display = "none"
-          }
-
+          this.control.selected = aEnable;
           return true;
         </body>
       </method>
     </implementation>
   </binding>
 
-  <!-- UPLOAD: <DEFAULT> -->
-  <binding id="xformswidget-upload"
+
+  <!-- ALERT: <DEFAULT> -->
+  <binding id="inline-alert"
            extends="chrome://xforms/content/xforms.xml#xformswidget-base">
     <content>
-      <children includes="label"/>
-      <html:input anonid="upload_text_control"
-                  readonly="true"
-                  xbl:inherits="accesskey"/>
-      <html:button anonid="upload_browse_button"
-                   type="button"
-                   onclick="this.parentNode.uploadElem.pickFile();"
-                   onkeypress="if (event.keyCode == event.DOM_VK_RETURN) this.parentNode.dispatchDOMUIEvent('DOMActivate');"
-                   xbl:inherits="accesskey"> &xforms.upload.browsetext; </html:button>
-      <html:button anonid="upload_clear_button"
-                   type="button"
-                   onclick="this.parentNode.uploadElem.clearFile();"
-                   onkeypress="if (event.keyCode == event.DOM_VK_RETURN) this.parentNode.dispatchDOMUIEvent('DOMActivate');"
-                   xbl:inherits="accesskey"> &xforms.upload.cleartext; </html:button>
-      <children/>
+      <html:div anonid="container" class="-moz-xforms-message-container">
+        <html:div anonid="inlineData" style="display: inherit;">
+          <children/>
+        </html:div>
+        <html:div anonid="bindingData" style="display: inherit;"/>
+      </html:div>
     </content>
 
-    <implementation implements="nsIXFormsUIWidget, nsIXFormsUploadUIElement">
-      <destructor>
-        this._uploadElem = null;
-        this._textControl = null;
-        this._browseButton = null;
-        this._clearButton = null;
-      </destructor>
+    <implementation>
 
-      <field name="_uploadElem">null</field>
+      <field name="_inlineData">null</field>
 
-      <property name="uploadElem" readonly="true">
+      <property name="inlineData" readonly="true">
         <getter>
-          if (!this._uploadElem) {
-            this._uploadElem =
-              this.QueryInterface(Components.interfaces.nsIXFormsUploadElement);
+          if (!this._inlineData) {
+            this._inlineData = document.
+              getAnonymousElementByAttribute(this, "anonid", "inlineData");
           }
-          return this._uploadElem;
+          return this._inlineData;
         </getter>
       </property>
 
-      <field name="_textControl">null</field>
-
-      <property name="textControl" readonly="true">
+      <field name="_bindingData">null</field>
+      <property name="bindingData" readonly="true">
         <getter>
-          if (!this._textControl) {
-            this._textControl =
-              document.getAnonymousElementByAttribute(this, "anonid",
-                                                      "upload_text_control");
+          if (!this._bindingData) {
+            this._bindingData = document.
+              getAnonymousElementByAttribute(this, "anonid", "bindingData");
           }
-          return this._textControl;
+          return this._bindingData;
         </getter>
       </property>
 
-      <field name="_browseButton">null</field>
-
-      <property name="browseButton" readonly="true">
-        <getter>
-          if (!this._browseButton) {
-            this._browseButton =
-              document.getAnonymousElementByAttribute(this, "anonid",
-                                                      "upload_browse_button");
-          }
-          return this._browseButton;
-        </getter>
-      </property>
-
-      <field name="_clearButton">null</field>
-
-      <property name="clearButton" readonly="true">
-        <getter>
-          if (!this._clearButton) {
-            this._clearButton =
-              document.getAnonymousElementByAttribute(this, "anonid",
-                                                      "upload_clear_button");
-          }
-          return this._clearButton;
-        </getter>
-      </property>
-
-      <method name="setFieldText">
-        <parameter name="aString"/>
+      <method name="refresh">
         <body>
-          this.textControl.value = aString;
+          if (this.accessors.hasBoundNode()) {
+            this.bindingData.textContent = this.stringValue;
+            this.inlineData.style.display = "none";
+            this.bindingData.style.display = "inherit";
+          } else {
+            this.bindingData.style.display = "none";
+            this.inlineData.style.display = "inherit";
+          }
         </body>
       </method>
     </implementation>
   </binding>
 
-  <!-- UPLOAD: DISABLED -->
-  <binding id="xformswidget-upload-disabled"
-           extends="chrome://xforms/content/xforms.xml#xformswidget-base">
-    <content>
-      <children includes="label"/>
-      <html:input readonly="true"
-                  xbl:inherits="accesskey"/>
-      <html:button type="button"
-                   disabled="true"
-                   xbl:inherits="accesskey"> &xforms.upload.browsetext; </html:button>
-      <html:button type="button"
-                   disabled="true"
-                   xbl:inherits="accesskey"> &xforms.upload.cleartext; </html:button>
-      <children/>
-    </content>
+
+  <!-- MESSAGE: <DEFAULT>, reusing the content of inline-alert -->
+  <binding id="ephemeral-message"
+           extends="chrome://xforms/content/xforms.xml#inline-alert">
+    <implementation implements="nsIXFormsEphemeralMessageUI">
+
+      <field name="_container">null</field>
+
+      <property name="container" readonly="true">
+        <getter>
+          if (!this._container) {
+            this._container = document.
+              getAnonymousElementByAttribute(this, "anonid", "container");
+          }
+          return this._container;
+        </getter>
+      </property>
+
+      <method name="show">
+        <parameter name="x"/>
+        <parameter name="y"/>
+        <body>
+          this.container.style.visibility = "visible";
+          this.container.style.display = "inherit";
+          this.container.style.left = x + "px";
+          this.container.style.top = y + "px";
+          return true;
+        </body>
+      </method>
+
+      <method name="hide">
+        <body>
+          this.container.style.left = "0px";
+          this.container.style.top = "0px";
+          this.container.style.visibility = "hidden";
+          this.container.style.display = "none";
+        </body>
+      </method>
+    </implementation>
+  </binding>
+
+
+  <!-- UPLOAD: <DEFAULT>
+    The upload widget assumes successors bindings implement getElementControl()
+    method what returns the object:
+    {
+      set value(); // set "string" value
+      set readonly(); // set readonly state
+      focus(); // set focus
+    }
+  -->
+  <binding id="xformswidget-upload-base" extends="#xformswidget-base">
+
+    <implementation implements="nsIXFormsUIWidget, nsIXFormsUploadUIElement">
+      <method name="refresh">
+        <body>
+          this.control.readonly = this.accessors.isReadonly();
+        </body>
+      </method>
+
+      <method name="focus">
+        <body>
+          this.control.focus();
+          return true;
+        </body>
+      </method>
+
+      <property name="uploadElement" readonly="true">
+        <getter>
+          if (!this._uploadElement) {
+            this._uploadElement =
+              this.QueryInterface(Components.interfaces.nsIXFormsUploadElement);
+          }
+          return this._uploadElement;
+        </getter>
+      </property>
+      <field name="_uploadElement">null</field>
+
+      <method name="setFieldText">
+        <parameter name="aString"/>
+        <body>
+          this.control.value = aString;
+        </body>
+      </method>
+    </implementation>
+  </binding>
+
+
+  <!-- REPEAT -->
+  <binding id="xformswidget-repeat-base" extends="#xformswidget-accessors">
+
+    <implementation implements="nsIXFormsRepeatUIElement">
+      <property name="anonymousRepeatContent" readonly="true">
+        <getter>
+          if (!this._anonymousRepeatContent) {
+            this._anonymousRepeatContent =
+              document.getAnonymousElementByAttribute(this, "anonid", "insertion");
+          }
+          return this._anonymousRepeatContent;
+
+        </getter>
+      </property>
+      <field name="_anonymousRepeatContent">null</field>
+    </implementation>
   </binding>
 
 </bindings>

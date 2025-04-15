@@ -37,7 +37,12 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsBrowserProfileMigratorUtils.h"
+#ifdef MOZ_PLACES
+#include "nsINavBookmarksService.h"
+#include "nsBrowserCompsCID.h"
+#else
 #include "nsIBookmarksService.h"
+#endif
 #include "nsIFile.h"
 #include "nsIInputStream.h"
 #include "nsILineInputStream.h"
@@ -46,19 +51,31 @@
 
 #include "nsIURI.h"
 #include "nsNetUtil.h"
+#include "nsISupportsPrimitives.h"
 
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsIRDFService.h"
 #include "nsIStringBundle.h"
 #include "nsISupportsArray.h"
 #include "nsXPCOMCID.h"
-#include "nsCRT.h"
 
 #define MIGRATION_BUNDLE "chrome://browser/locale/migration/migration.properties"
 
 static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
 
-void SetProxyPref(const nsACString& aHostPort, const char* aPref, 
+void SetUnicharPref(const char* aPref, const nsAString& aValue,
+                    nsIPrefBranch* aPrefs)
+{
+  nsCOMPtr<nsISupportsString> supportsString =
+    do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID);    
+  if (supportsString) {
+     supportsString->SetData(aValue); 
+     aPrefs->SetComplexValue(aPref, NS_GET_IID(nsISupportsString),
+                             supportsString);
+  }
+}
+
+void SetProxyPref(const nsAString& aHostPort, const char* aPref, 
                   const char* aPortPref, nsIPrefBranch* aPrefs) 
 {
   nsCOMPtr<nsIURI> uri;
@@ -70,47 +87,44 @@ void SetProxyPref(const nsACString& aHostPort, const char* aPref,
       && NS_SUCCEEDED(uri->GetHost(host))
       && !host.IsEmpty()
       && NS_SUCCEEDED(uri->GetPort(&portValue))) {
-    aPrefs->SetCharPref(aPref, host.get());
+    SetUnicharPref(aPref, NS_ConvertUTF8toUTF16(host), aPrefs);
     aPrefs->SetIntPref(aPortPref, portValue);
   }
   else {
-    nsCAutoString hostPort(aHostPort);  
+    nsAutoString hostPort(aHostPort);  
     PRInt32 portDelimOffset = hostPort.RFindChar(':');
     if (portDelimOffset > 0) {
-      host = Substring(hostPort, 0, portDelimOffset);
-      nsCAutoString port(Substring(hostPort, portDelimOffset + 1, 
-                                   hostPort.Length() - (portDelimOffset + 1)));
-    
-      aPrefs->SetCharPref(aPref, host.get());
+      SetUnicharPref(aPref, Substring(hostPort, 0, portDelimOffset), aPrefs);
+      nsAutoString port(Substring(hostPort, portDelimOffset + 1));
       PRInt32 stringErr;
       portValue = port.ToInteger(&stringErr);
       aPrefs->SetIntPref(aPortPref, portValue);
     }
     else
-      aPrefs->SetCharPref(aPref, hostPort.get());
+      SetUnicharPref(aPref, hostPort, aPrefs); 
   }
 }
 
-void ParseOverrideServers(const char* aServers, nsIPrefBranch* aBranch)
+void ParseOverrideServers(const nsAString& aServers, nsIPrefBranch* aBranch)
 {
   // Windows (and Opera) formats its proxy override list in the form:
   // server;server;server where server is a server name or ip address, 
   // or "<local>". Mozilla's format is server,server,server, and <local>
   // must be translated to "localhost,127.0.0.1"
-  nsCAutoString override(aServers);
+  nsAutoString override(aServers);
   PRInt32 left = 0, right = 0;
   for (;;) {
     right = override.FindChar(';', right);
-    const nsACString& host = Substring(override, left, 
-                                       (right < 0 ? override.Length() : right) - left);
-    if (host.Equals("<local>"))
-      override.Replace(left, 7, NS_LITERAL_CSTRING("localhost,127.0.0.1"));
+    const nsAString& host = Substring(override, left, 
+                                      (right < 0 ? override.Length() : right) - left);
+    if (host.EqualsLiteral("<local>"))
+      override.Replace(left, 7, NS_LITERAL_STRING("localhost,127.0.0.1"));
     if (right < 0)
       break;
     left = right + 1;
-    override.Replace(right, 1, NS_LITERAL_CSTRING(","));
+    override.Replace(right, 1, NS_LITERAL_STRING(","));
   }
-  aBranch->SetCharPref("network.proxy.no_proxies_on", override.get());
+  SetUnicharPref("network.proxy.no_proxies_on", override, aBranch); 
 }
 
 void GetMigrateDataFromArray(MigrationData* aDataArray, PRInt32 aDataArrayLength, 
@@ -132,7 +146,7 @@ void GetMigrateDataFromArray(MigrationData* aDataArray, PRInt32 aDataArrayLength
       if (exists)
         *aResult |= cursor->sourceFlag;
     }
-    nsCRT::free(cursor->fileName);
+    NS_Free(cursor->fileName);
     cursor->fileName = nsnull;
   }
 }
@@ -210,6 +224,7 @@ ImportBookmarksHTML(nsIFile* aBookmarksFile,
 {
   nsresult rv;
 
+#ifndef MOZ_PLACES
   nsCOMPtr<nsIBookmarksService> bms = 
     do_GetService("@mozilla.org/browser/bookmarks-service;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -242,6 +257,7 @@ ImportBookmarksHTML(nsIFile* aBookmarksFile,
   rv = rdfs->GetResource(NS_LITERAL_CSTRING("NC:BookmarksRoot"),
                          getter_AddRefs(root));
   NS_ENSURE_SUCCESS(rv, rv);
+#endif // MOZ_PLACES
 
   // Look for the localized name of the bookmarks toolbar
   nsCOMPtr<nsIStringBundleService> bundleService =
@@ -261,6 +277,30 @@ ImportBookmarksHTML(nsIFile* aBookmarksFile,
                                sourceNameStrings, 1, 
                                getter_Copies(importedBookmarksTitle));
 
+#ifdef MOZ_PLACES
+  // Get the bookmarks service
+  nsCOMPtr<nsINavBookmarksService> bms =
+    do_GetService(NS_NAVBOOKMARKSSERVICE_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Get the file:// uri for the bookmarks file.
+  nsCOMPtr<nsIURI> fileURI;
+  rv = NS_NewFileURI(getter_AddRefs(fileURI), aBookmarksFile);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Create an imported bookmarks folder under the bookmarks menu.
+  PRInt64 root;
+  rv = bms->GetBookmarksRoot(&root);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PRInt64 folder;
+  rv = bms->CreateFolder(root, importedBookmarksTitle, -1, &folder);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Import the bookmarks into the folder.
+  rv = bms->ImportBookmarksHTMLToFolder(fileURI, folder);
+  NS_ENSURE_SUCCESS(rv, rv);
+#else
   nsCOMPtr<nsIRDFResource> folder;
   bms->CreateFolderInContainer(importedBookmarksTitle.get(), root, -1,
                                getter_AddRefs(folder));
@@ -280,5 +320,7 @@ ImportBookmarksHTML(nsIFile* aBookmarksFile,
   nsCOMPtr<nsIRDFDataSource> ds = do_QueryInterface(bms, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return ds->DoCommand(sources, importCmd, params);
+  rv = ds->DoCommand(sources, importCmd, params);
+#endif
+  return rv;
 }

@@ -45,6 +45,8 @@
 #include "pldhash.h"
 #include "nsJavaXPTCStub.h"
 #include "nsAutoLock.h"
+#include "nsTHashtable.h"
+#include "nsHashKeys.h"
 
 //#define DEBUG_JAVAXPCOM
 //#define DEBUG_JAVAXPCOM_REFCNT
@@ -55,17 +57,12 @@
 #define LOG(x)  /* nothing */
 #endif
 
-#if defined(XP_WIN) || defined(XP_MAC)
-#define JX_EXPORT   JNIEXPORT
-#else
-#define JX_EXPORT   JNIEXPORT NS_EXPORT
-#endif
-
 
 /*********************
  * Java JNI globals
  *********************/
 
+extern jclass systemClass;
 extern jclass booleanClass;
 extern jclass charClass;
 extern jclass byteClass;
@@ -78,6 +75,8 @@ extern jclass stringClass;
 extern jclass nsISupportsClass;
 extern jclass xpcomExceptionClass;
 extern jclass xpcomJavaProxyClass;
+extern jclass weakReferenceClass;
+extern jclass javaXPCOMUtilsClass;
 
 extern jmethodID hashCodeMID;
 extern jmethodID booleanValueMID;
@@ -99,6 +98,10 @@ extern jmethodID doubleInitMID;
 extern jmethodID createProxyMID;
 extern jmethodID isXPCOMJavaProxyMID;
 extern jmethodID getNativeXPCOMInstMID;
+extern jmethodID weakReferenceConstructorMID;
+extern jmethodID getReferentMID;
+extern jmethodID clearReferentMID;
+extern jmethodID findClassInLoaderMID;
 
 #ifdef DEBUG_JAVAXPCOM
 extern jmethodID getNameMID;
@@ -110,6 +113,8 @@ extern NativeToJavaProxyMap* gNativeToJavaProxyMap;
 class JavaToXPTCStubMap;
 extern JavaToXPTCStubMap* gJavaToXPTCStubMap;
 
+extern nsTHashtable<nsDepCharHashKey>* gJavaKeywords;
+
 // The Java garbage collector runs in a separate thread.  Since it calls the
 // finalizeProxy() function in nsJavaWrapper.cpp, we need to make sure that
 // all the structures touched by finalizeProxy() are multithread aware.
@@ -118,9 +123,9 @@ extern PRLock* gJavaXPCOMLock;
 extern PRBool gJavaXPCOMInitialized;
 
 /**
- * Initialize global structures used by Javaconnect.
+ * Initialize global structures used by JavaXPCOM.
  * @param env   Java environment pointer
- * @return PR_TRUE if Javaconnect is initialized; PR_FALSE if an error occurred
+ * @return PR_TRUE if JavaXPCOM is initialized; PR_FALSE if an error occurred
  */
 PRBool InitializeJavaGlobals(JNIEnv *env);
 
@@ -242,12 +247,12 @@ public:
 
   nsresult Destroy();
 
-  nsresult Add(JNIEnv* env, jobject aJavaObject, nsJavaXPTCStub* aProxy);
+  nsresult Add(jint aJavaObjectHashCode, nsJavaXPTCStub* aProxy);
 
-  nsresult Find(JNIEnv* env, jobject aJavaObject, const nsIID& aIID,
+  nsresult Find(jint aJavaObjectHashCode, const nsIID& aIID,
                 nsJavaXPTCStub** aResult);
 
-  nsresult Remove(JNIEnv* env, jobject aJavaObject);
+  nsresult Remove(jint aJavaObjectHashCode);
 
 protected:
   PLDHashTable* mHashTable;
@@ -265,12 +270,15 @@ protected:
  * @param env           Java environment pointer
  * @param aXPCOMObject  XPCOM object for which to find/create Java object
  * @param aIID          desired interface IID for Java object
+ * @param aObjectLoader Java object whose class loader we use for finding
+ *                      classes; can be null
  * @param aResult       on success, holds reference to Java object
  *
  * @return  NS_OK if succeeded; all other return values are error codes.
  */
 nsresult GetNewOrUsedJavaObject(JNIEnv* env, nsISupports* aXPCOMObject,
-                                const nsIID& aIID, jobject* aResult);
+                                const nsIID& aIID, jobject aObjectLoader,
+                                jobject* aResult);
 
 /**
  * Finds the associated XPCOM object for the given Java object and IID.  If no
@@ -280,14 +288,11 @@ nsresult GetNewOrUsedJavaObject(JNIEnv* env, nsISupports* aXPCOMObject,
  * @param aJavaObject   Java object for which to find/create XPCOM object
  * @param aIID          desired interface IID for XPCOM object
  * @param aResult       on success, holds AddRef'd reference to XPCOM object
- * @param aIsXPTCStub   on success, holds PR_TRUE if aResult points to XPTCStub;
- *                      PR_FALSE if aResult points to native XPCOM object
  *
  * @return  NS_OK if succeeded; all other return values are error codes.
  */
 nsresult GetNewOrUsedXPCOMObject(JNIEnv* env, jobject aJavaObject,
-                                 const nsIID& aIID, nsISupports** aResult,
-                                 PRBool* aIsXPTCStub);
+                                 const nsIID& aIID, nsISupports** aResult);
 
 nsresult GetIIDForMethodParam(nsIInterfaceInfo *iinfo,
                               const nsXPTMethodInfo *methodInfo,
@@ -296,6 +301,35 @@ nsresult GetIIDForMethodParam(nsIInterfaceInfo *iinfo,
                               nsXPTCMiniVariant *dispatchParams,
                               PRBool isFullVariantArray,
                               nsID &result);
+
+/**
+ * Returns the Class object associated with the class or interface with the
+ * given string name, using the class loader of the given object.
+ *
+ * @param env           Java environment pointer
+ * @param aObjectLoader Java object whose class loader is used to load class
+ * @param aClassName    fully qualified name of class to load
+ *
+ * @return java.lang.Class object of requested Class; NULL if the class
+ *         wasn't found
+ *
+ * @see http://java.sun.com/j2se/1.3/docs/guide/jni/jni-12.html#classops
+ */
+inline jclass
+FindClassInLoader(JNIEnv* env, jobject aObjectLoader, const char* aClassName)
+{
+  jclass clazz = nsnull;
+  jstring name = env->NewStringUTF(aClassName);
+  if (name)
+    clazz = (jclass) env->CallStaticObjectMethod(javaXPCOMUtilsClass,
+                                  findClassInLoaderMID, aObjectLoader, name);
+
+#ifdef DEBUG
+  if (!clazz)
+    fprintf(stderr, "WARNING: failed to find class [%s]\n", aClassName);
+#endif
+  return clazz;
+}
 
 
 /*******************************

@@ -50,6 +50,7 @@
 #include "nsIDOMNSDocument.h"
 #include "nsIParser.h"
 #include "nsICharsetAlias.h"
+#include "nsIPrincipal.h"
 
 static NS_DEFINE_CID(kXMLDocumentCID, NS_XMLDOCUMENT_CID);
 
@@ -172,18 +173,27 @@ void txMozillaTextOutput::createResultDocument(nsIDOMDocument* aSourceDocument,
     }
 
     // Reset and set up document
-    nsCOMPtr<nsIChannel> channel;
     nsCOMPtr<nsIDocument> sourceDoc = do_QueryInterface(aSourceDocument);
-    nsCOMPtr<nsILoadGroup> loadGroup = sourceDoc->GetDocumentLoadGroup();
-    nsCOMPtr<nsIIOService> serv = do_GetService(NS_IOSERVICE_CONTRACTID);
-    if (serv) {
-        // Create a temporary channel to get nsIDocument->Reset to
-        // do the right thing. We want the output document to get
-        // much of the input document's characteristics.
-        serv->NewChannelFromURI(sourceDoc->GetDocumentURI(),
-                                getter_AddRefs(channel));
+    nsIPrincipal* sourcePrincipal = sourceDoc->GetPrincipal();
+    if (!sourcePrincipal) {
+        return;
     }
+
+    nsCOMPtr<nsILoadGroup> loadGroup = sourceDoc->GetDocumentLoadGroup();
+    nsCOMPtr<nsIChannel> channel = sourceDoc->GetChannel();
+    if (!channel) {
+        // Need to synthesize one
+        if (NS_FAILED(NS_NewChannel(getter_AddRefs(channel),
+                                    sourceDoc->GetDocumentURI(),
+                                    nsnull,
+                                    loadGroup))) {
+            return;
+        }
+        channel->SetOwner(sourcePrincipal);
+    }
+    // Copy the channel and loadgroup from the source document.
     doc->Reset(channel, loadGroup);
+    doc->SetPrincipal(sourcePrincipal);
     doc->SetBaseURI(sourceDoc->GetBaseURI());
 
     // Set the charset

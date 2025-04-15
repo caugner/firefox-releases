@@ -36,7 +36,7 @@
 #
 # ***** END LICENSE BLOCK *****
 
-## $Id: mozilla.in,v 1.8.8.1 2005/09/20 21:13:06 dbaron%dbaron.org Exp $
+## $Id: mozilla.in,v 1.8.8.7 2006/08/20 22:44:28 ajschult%verizon.net Exp $
 ## 
 ## Usage:
 ##
@@ -95,64 +95,163 @@ moz_pis_startstop_scripts()
 moz_libdir=%MOZAPPDIR%
 MRE_HOME=%MREDIR%
 
-# honor MOZILLA_FIVE_HOME if it's there
-if [ -n "$MOZILLA_FIVE_HOME" ] ; then
-  dist_bin="$MOZILLA_FIVE_HOME"
+# Use run-mozilla.sh in the current dir if it exists
+# If not, then start resolving symlinks until we find run-mozilla.sh
+found=0
+progname="$0"
+curdir=`dirname "$progname"`
+run_moz="$curdir/run-mozilla.sh"
+if test -x "$run_moz"; then
+  dist_bin="$curdir"
+  found=1
 else
-  # Use run-mozilla.sh in the current dir if it exists
-  # If not, then start resolving symlinks until we find run-mozilla.sh
-  found=0
-  progname=$0
-  curdir=`dirname "$progname"`
-  run_moz="$curdir/run-mozilla.sh"
-  if test -x "$run_moz"; then
-    dist_bin=$curdir
-    found=1
-  else
-    here=`/bin/pwd`
-    while [ -h "$progname" ]; do
-      bn=`basename "$progname"`
-      cd `dirname "$progname"`
-      progname=`/bin/ls -l "$bn" |sed -e 's/^.* -> //' `
-      if [ ! -x "$progname" ]; then
-        break
-      fi
-      curdir=`dirname "$progname"`
-      run_moz="$curdir/run-mozilla.sh"
-      if [ -x "$run_moz" ]; then
-        cd "$curdir"
-        dist_bin=`pwd`
-        found=1
-        break
-      fi
-    done
-    cd "$here"
-  fi
-  if [ $found = 0 ]; then
-    # Check default compile-time libdir
-    if [ -x "$moz_libdir/run-mozilla.sh" ]; then
-      dist_bin=$moz_libdir
-    else 
-      echo "Cannot find %MOZ_APP_DISPLAYNAME% runtime directory. Exiting."
-      exit 1
+  here=`/bin/pwd`
+  while [ -h "$progname" ]; do
+    bn=`basename "$progname"`
+    cd `dirname "$progname"`
+    progname=`/bin/ls -l "$bn" | sed -e 's/^.* -> //' `
+    if [ ! -x "$progname" ]; then
+      break
     fi
+    curdir=`dirname "$progname"`
+    run_moz="$curdir/run-mozilla.sh"
+    if [ -x "$run_moz" ]; then
+      cd "$curdir"
+      dist_bin=`pwd`
+      run_moz="$dist_bin/run-mozilla.sh"
+      found=1
+      break
+    fi
+  done
+  cd "$here"
+fi
+if [ $found = 0 ]; then
+  # Check default compile-time libdir
+  if [ -x "$moz_libdir/run-mozilla.sh" ]; then
+    dist_bin="$moz_libdir"
+    run_moz="$moz_libdir/run-mozilla.sh"
+  else 
+    echo "Cannot find %MOZ_APP_DISPLAYNAME% runtime directory. Exiting."
+    exit 1
   fi
 fi
+
+if [ -z "$MOZ_NO_REMOTE" ] && [ $# -lt 5 ]; then
+  mail=0
+  compose=0
+  profile=""
+  extra=""
+  i=1
+  while [ $i -le $# ]; do
+    eval opt=\$$i
+    if [ $mail -eq 1 ] || [ $compose -eq 1 ]; then
+      # look for extra arg for mail/compose
+      # multiply by 2 to prevent us from coming back here
+      mail=`expr $mail \* 2`
+      compose=`expr $compose \* 2`
+      # make sure it's not the next flag
+      if [ `expr "$opt" : '-.*'` -eq 0 ]; then
+        extra=",$opt"
+        i=`expr $i + 1`
+        continue
+      fi
+    fi
+    case "$opt" in
+      -mail)
+        # look for an optional extra arg next pass
+        mail=1
+        ;;
+      -compose)
+        # look for an optional extra arg next pass
+        compose=1
+        ;;
+      -P)
+        # extra arg is required.  look for it now
+        j=`expr $i + 1`
+        eval profile=\$$j
+        # make sure it's not a flag
+        if [ -n "$profile" ] && [ `expr "$profile" : '-.*'` -eq 0 ]; then
+          profile="-p $profile"
+          i=$j
+        else
+          MOZ_NO_REMOTE=1
+          break
+        fi
+        ;;
+      -*)
+        # we don't recognize this flag, so bail
+        MOZ_NO_REMOTE=1
+        break
+        ;;
+      *)
+        if [ $i -eq $# ]; then
+          # If this is the last command line argument and it doesn't begin with 
+          # a '-' it's probably a url.
+          URL="$opt"
+        else
+          # URL must be the last argument.  If it isn't, fallback
+          MOZ_NO_REMOTE=1
+          break
+        fi
+        ;;
+    esac
+    i=`expr $i + 1`
+  done
+
+  MOZ_CLIENT_PROGRAM="$dist_bin/mozilla-xremote-client"
+
+  if [ "$OSTYPE" = "beos" ]; then
+    mimeset -F "$MOZ_CLIENT_PROGRAM"
+  fi
+
+  # Open a new tab/window in an existing instance if we can find one.  Don't try if
+  # there are more than 2 arguments, or the second argument is a flag (like -P)
+  appname="%MOZ_APP_NAME%"
+  if [ -z "$MOZ_NO_REMOTE" ] && 
+     "${run_moz}" "$MOZ_CLIENT_PROGRAM" $profile -a "${appname}" 'ping()' 2>/dev/null >/dev/null; then
+
+    if [ $mail -ne 0 ]; then
+      # -mail was given
+      exec "${run_moz}" "$MOZ_CLIENT_PROGRAM" $profile -a "${appname}" "xfeDoCommand(openInbox${extra})"
+    elif [ $compose -ne 0 ]; then
+      # -compose was given
+      exec "${run_moz}" "$MOZ_CLIENT_PROGRAM" $profile -a "${appname}" "xfeDoCommand(composeMessage${extra})"
+    elif [ -z "$URL" ]; then
+      # No command line args. Open new window.
+      exec "${run_moz}" "$MOZ_CLIENT_PROGRAM" $profile -a "${appname}" "xfeDoCommand(openBrowser)"
+    fi
+
+    # There's a URL.  Try to send it to a running instance.
+    if [ `expr "${URL}" : '.*:/.*'` -eq 0 -a \( -f "${URL}" -o -d "${URL}" \) ]; then
+      # The URL seems to be a local file/directory, so prepend "file://"
+      # First, check if it is absolutely specified (ie. /home/foo/file vs. ./file)
+      # If it is just "relatively" (./file) specified, make it absolutely
+      if [ `expr "${URL}" : '/.*'` -eq 0 ]; then
+        URL="`pwd`/${URL}"
+      fi
+      URL="file://${URL}"
+    fi
+
+    exec "${run_moz}" "$MOZ_CLIENT_PROGRAM" $profile -a "${appname}" "openURL(${URL})"
+  fi
+fi
+
+# Default action - no running instance
 
 script_args=""
 debugging=0
 MOZILLA_BIN="%MOZILLA-BIN%"
 
 if [ "$OSTYPE" = "beos" ]; then
-  mimeset -F $MOZILLA_BIN
+  mimeset -F "$MOZILLA_BIN"
 fi
 
 pass_arg_count=0
 while [ $# -gt $pass_arg_count ]
 do
   case "$1" in
-    -p | -pure)
-      MOZILLA_BIN="%MOZILLA-BIN%.pure"
+    -p | --pure | -pure)
+      MOZILLA_BIN="${MOZILLA_BIN}.pure"
       shift
       ;;
     -g | --debug)

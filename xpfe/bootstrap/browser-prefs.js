@@ -57,6 +57,8 @@ pref("general.open_location.last_window_choice", 0);
 pref("general.smoothScroll", false);
 pref("general.autoScroll", true);
 
+pref("general.warnOnAboutConfig", true);
+
 #expand pref("general.useragent.extra.__MOZ_APP_NAME__", "__MOZ_APP_DISPLAYNAME__/__MOZ_APP_VERSION__");
 
 // 0 = blank, 1 = home (browser.startup.homepage), 2 = last
@@ -100,6 +102,7 @@ pref("browser.download.lastLocation", true);
 // various default search settings
 pref("browser.search.defaulturl", "chrome://navigator-region/locale/region.properties");
 pref("browser.search.opensidebarsearchpanel", true);
+pref("browser.search.opentabforcontextsearch", false);
 pref("browser.search.last_search_category", "NC:SearchCategory?category=urn:search:category:1");
 pref("browser.search.mode", 0);
 // basic search popup constraint: minimum sherlock plugin version displayed
@@ -121,6 +124,8 @@ pref("browser.tabs.loadDivertedInBackground", false);
 pref("browser.tabs.loadInBackground", false);
 pref("browser.tabs.opentabfor.middleclick", false);
 pref("browser.tabs.opentabfor.urlbar", false);
+pref("browser.tabs.tooltippreview.enable", true);
+pref("browser.tabs.tooltippreview.width", 300);
 
 // external link handling in tabbed browsers. values from nsIBrowserDOMWindow.
 // 0=default window, 1=current window/tab, 2=new window, 3=new tab in most recent window
@@ -183,6 +188,13 @@ pref("news.directory",                  "");
 pref("browser.editor.disabled", false);
 pref("spellchecker.dictionary", "");
 
+// this will automatically enable inline spellchecking (if it is available) for
+// editable elements in HTML
+// 0 = spellcheck nothing
+// 1 = check multi-line controls [default]
+// 2 = check multi/single line controls
+pref("layout.spellcheckDefault", 1);
+
 pref("xpinstall.dialog.confirm",        "chrome://communicator/content/xpinstall/institems.xul");
 pref("xpinstall.dialog.progress.chrome","chrome://communicator/content/xpinstall/xpistatus.xul");
 pref("xpinstall.dialog.progress.skin",  "chrome://communicator/content/xpinstall/xpistatus.xul");
@@ -228,6 +240,17 @@ pref("privacy.popups.remove_blacklist",           true);
 // Show XUL error pages instead of alerts for errors
 pref("browser.xul.error_pages.enabled", true);
 
+// Setting this pref to |true| forces BiDi UI menu items and keyboard shortcuts
+// to be exposed. By default, only expose it for bidi-associated system locales.
+pref("bidi.browser.ui", false);
+
+// prevent JS from moving/resizing existing windows
+pref("dom.disable_window_move_resize", true);
+// prevent JS from raising or lowering windows
+pref("dom.disable_window_flip",        true);
+// prevent JS from disabling or replacing context menus
+pref("dom.event.contextmenu.enabled",  true);
+
 #ifdef XP_MACOSX
 // determines the behavior upon starting a download.
 //  0 - open the download manager
@@ -235,6 +258,9 @@ pref("browser.xul.error_pages.enabled", true);
 //  2 - do nothing
 
 pref("browser.downloadmanager.behavior", 1);
+
+// Turn on click-and-hold contextual menus
+pref("ui.click_hold_context_menus", true);
 #endif
 
 #ifndef XP_MACOSX
@@ -251,7 +277,3 @@ pref("browser.backspace_action", 1);
 pref("general.autoScroll", false);
 #endif
 #endif
-
-// Setting this pref to |true| forces BiDi UI menu items and keyboard shortcuts
-// to be exposed. By default, only expose it for bidi-associated system locales.
-pref("bidi.browser.ui", false);

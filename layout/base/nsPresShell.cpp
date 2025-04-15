@@ -1063,7 +1063,7 @@ ReflowCommandHashMatchEntry(PLDHashTable *table, const PLDHashEntryHdr *entry,
 
 struct CantRenderReplacedElementEvent;
 
-class PresShell : public nsIPresShell, public nsIViewObserver,
+class PresShell : public nsIPresShell_MOZILLA_1_8_BRANCH, public nsIViewObserver,
                   public nsStubDocumentObserver,
                   public nsISelectionController, public nsIObserver,
                   public nsSupportsWeakReference
@@ -1630,6 +1630,32 @@ nsIPresShell::GetVerifyReflowFlags()
 #endif
 }
 
+void
+nsIPresShell_MOZILLA_1_8_BRANCH::AddWeakFrame(nsWeakFrame* aWeakFrame)
+{
+  if (aWeakFrame->GetFrame()) {
+    aWeakFrame->GetFrame()->AddStateBits(NS_FRAME_EXTERNAL_REFERENCE);
+  }
+  aWeakFrame->SetPreviousWeakFrame(mWeakFrames);
+  mWeakFrames = aWeakFrame;
+}
+
+void
+nsIPresShell_MOZILLA_1_8_BRANCH::RemoveWeakFrame(nsWeakFrame* aWeakFrame)
+{
+  if (mWeakFrames == aWeakFrame) {
+    mWeakFrames = aWeakFrame->GetPreviousWeakFrame();
+    return;
+  }
+  nsWeakFrame* nextWeak = mWeakFrames;
+  while (nextWeak && nextWeak->GetPreviousWeakFrame() != aWeakFrame) {
+    nextWeak = nextWeak->GetPreviousWeakFrame();
+  }
+  if (nextWeak) {
+    nextWeak->SetPreviousWeakFrame(aWeakFrame->GetPreviousWeakFrame());
+  }
+}
+
 //----------------------------------------------------------------------
 
 nsresult
@@ -1673,8 +1699,8 @@ PresShell::PresShell()
   new (this) nsFrameManager();
 }
 
-NS_IMPL_ISUPPORTS7(PresShell, nsIPresShell, nsIDocumentObserver,
-                   nsIViewObserver, nsISelectionController,
+NS_IMPL_ISUPPORTS8(PresShell, nsIPresShell, nsIPresShell_MOZILLA_1_8_BRANCH,
+                   nsIDocumentObserver, nsIViewObserver, nsISelectionController,
                    nsISelectionDisplay, nsIObserver, nsISupportsWeakReference)
 
 PresShell::~PresShell()
@@ -1949,17 +1975,41 @@ PresShell::Destroy()
     mDocument->DeleteShell(this);
   }
 
+  // Revoke pending events.  We need to do this and cancel reflow commands
+  // before we destroy the frame manager, since apparently frame destruction
+  // sometimes spins the event queue when plug-ins are involved(!).
+  mPostedReplaces = nsnull;
+  mReflowEventQueue = nsnull;
+  nsCOMPtr<nsIEventQueue> eventQueue;
+  mEventQueueService->GetSpecialEventQueue(nsIEventQueueService::UI_THREAD_EVENT_QUEUE,
+                                           getter_AddRefs(eventQueue));
+  eventQueue->RevokeEvents(this);
+
+  CancelAllReflowCommands();
+
   // Destroy the frame manager. This will destroy the frame hierarchy
   mFrameConstructor->WillDestroyFrameTree();
   FrameManager()->Destroy();
 
+  NS_WARN_IF_FALSE(!mWeakFrames, "Weak frames alive after destroying FrameManager");
+  while (mWeakFrames) {
+    mWeakFrames->Clear(this);
+  }
+
   // Let the style set do its cleanup.
   mStyleSet->Shutdown(mPresContext);
 
-  // We hold a reference to the pres context, and it holds a weak link back
-  // to us. To avoid the pres context having a dangling reference, set its 
-  // pres shell to NULL
   if (mPresContext) {
+    // Clear out the prescontext's property table -- since our frame tree is
+    // now dead, we shouldn't be looking up any more properties in that table.
+    // We want to do this before we call SetShell() on the prescontext, so
+    // property destructors can usefully call GetPresShell() on the
+    // prescontext.
+    mPresContext->PropertyTable()->DeleteAllProperties();
+
+    // We hold a reference to the pres context, and it holds a weak link back
+    // to us. To avoid the pres context having a dangling reference, set its 
+    // pres shell to NULL
     mPresContext->SetShell(nsnull);
 
     // Clear the link handler (weak reference) as well
@@ -1970,16 +2020,6 @@ PresShell::Destroy()
     mViewEventListener->SetPresShell((nsIPresShell*)nsnull);
     NS_RELEASE(mViewEventListener);
   }
-
-  // Revoke pending events
-  mPostedReplaces = nsnull;
-  mReflowEventQueue = nsnull;
-  nsCOMPtr<nsIEventQueue> eventQueue;
-  mEventQueueService->GetSpecialEventQueue(nsIEventQueueService::UI_THREAD_EVENT_QUEUE,
-                                           getter_AddRefs(eventQueue));
-  eventQueue->RevokeEvents(this);
-
-  CancelAllReflowCommands();
 
   RemoveDummyLayoutRequest();
   
@@ -2374,7 +2414,15 @@ PresShell::SetPrefNoScriptRule()
 {
   nsresult rv = NS_OK;
 
-  if (mDocument->IsScriptEnabled()) {
+  // also handle the case where print is done from print preview
+  // see bug #342439 for more details
+  PRBool scriptEnabled = mDocument->IsScriptEnabled() ||
+    ((mPresContext->Type() == nsPresContext::eContext_PrintPreview || 
+      mPresContext->Type() == nsPresContext::eContext_Print) &&
+     NS_PTR_TO_INT32(mDocument->GetProperty(
+                       nsLayoutAtoms::scriptEnabledBeforePrintPreview)));
+
+  if (scriptEnabled) {
     if (!mPrefStyleSheet) {
       rv = CreatePreferenceStyleSheet();
       NS_ENSURE_SUCCESS(rv, rv);
@@ -3878,6 +3926,16 @@ PresShell::ClearFrameRefs(nsIFrame* aFrame)
     }
   }
 
+  nsWeakFrame* weakFrame = mWeakFrames;
+  while (weakFrame) {
+    nsWeakFrame* prev = weakFrame->GetPreviousWeakFrame();
+    if (weakFrame->GetFrame() == aFrame) {
+      // This removes weakFrame from mWeakFrames.
+      weakFrame->Clear(this);
+    }
+    weakFrame = prev;
+  }
+
   return NS_OK;
 }
 
@@ -5036,7 +5094,7 @@ PresShell::UnsuppressAndInvalidate()
   // got.
   nsCOMPtr<nsISupports> container = mPresContext->GetContainer();
   nsCOMPtr<nsPIDOMWindow> ourWindow = do_GetInterface(container);
-  nsIFocusController* focusController =
+  nsCOMPtr<nsIFocusController> focusController =
     ourWindow ? ourWindow->GetRootFocusController() : nsnull;
 
   if (ourWindow)

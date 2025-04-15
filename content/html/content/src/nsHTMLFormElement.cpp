@@ -252,14 +252,14 @@ protected:
                             nsIContent* aSubmitElement);
 
   /**
-   * Notify any submit observsers of the submit.
+   * Notify any submit observers of the submit.
    *
    * @param aActionURL the URL being submitted to
    * @param aCancelSubmit out param where submit observers can specify that the
    *        submit should be cancelled.
    */
-  nsresult NotifySubmitObservers(nsIURI* aActionURL, PRBool* aCancelSubmit);
-
+  nsresult NotifySubmitObservers(nsIURI* aActionURL, PRBool* aCancelSubmit,
+                                 PRBool aEarlyNotify);
   //
   // Data members
   //
@@ -275,6 +275,10 @@ protected:
   PRPackedBool mIsSubmitting;
   /** Whether the submission is to be deferred in case a script triggers it */
   PRPackedBool mDeferSubmission;
+  /** Whether we notified NS_FORMSUBMIT_SUBJECT listeners already */
+  PRPackedBool mNotifiedObservers;
+  /** If we notified the listeners early, what was the result? */
+  PRPackedBool mNotifiedObserversResult;
   /** Keep track of what the popup state was when the submit was initiated */
   PopupControlState mSubmitPopupState;
   /** Keep track of whether a submission was user-initiated or not */
@@ -435,6 +439,8 @@ nsHTMLFormElement::nsHTMLFormElement(nsINodeInfo *aNodeInfo)
     mGeneratingReset(PR_FALSE),
     mIsSubmitting(PR_FALSE),
     mDeferSubmission(PR_FALSE),
+    mNotifiedObservers(PR_FALSE),
+    mNotifiedObserversResult(PR_FALSE),
     mSubmitPopupState(openAbused),
     mSubmitInitiatedFromUserInput(PR_FALSE),
     mPendingSubmission(nsnull),
@@ -522,7 +528,11 @@ nsHTMLFormElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
       // the second argument is not playing a role at all.
       FlushPendingSubmission();
     }
+    // Don't forget we've notified the password manager already if the
+    // page sets the action/target in the during submit. (bug 343182)
+    PRBool notifiedObservers = mNotifiedObservers;
     ForgetCurrentSubmission();
+    mNotifiedObservers = notifiedObservers;
   }
   return nsGenericHTMLElement::SetAttr(aNameSpaceID, aName, aPrefix, aValue,
                                        aNotify);
@@ -924,11 +934,24 @@ nsHTMLFormElement::SubmitSubmission(nsPresContext* aPresContext,
   //
   // Notify observers of submit
   //
-  PRBool aCancelSubmit = PR_FALSE;
-  rv = NotifySubmitObservers(actionURI, &aCancelSubmit);
+  PRBool cancelSubmit = PR_FALSE;
+  if (mNotifiedObservers) {
+    cancelSubmit = mNotifiedObserversResult;
+  } else {
+    rv = NotifySubmitObservers(actionURI, &cancelSubmit, PR_TRUE);
+    NS_ENSURE_SUBMIT_SUCCESS(rv);
+  }
+
+  if (cancelSubmit) {
+    mIsSubmitting = PR_FALSE;
+    return NS_OK;
+  }
+
+  cancelSubmit = PR_FALSE;
+  rv = NotifySubmitObservers(actionURI, &cancelSubmit, PR_FALSE);
   NS_ENSURE_SUBMIT_SUCCESS(rv);
 
-  if (aCancelSubmit) {
+  if (cancelSubmit) {
     mIsSubmitting = PR_FALSE;
     return NS_OK;
   }
@@ -974,7 +997,8 @@ nsHTMLFormElement::SubmitSubmission(nsPresContext* aPresContext,
 
 nsresult
 nsHTMLFormElement::NotifySubmitObservers(nsIURI* aActionURL,
-                                         PRBool* aCancelSubmit)
+                                         PRBool* aCancelSubmit,
+                                         PRBool  aEarlyNotify)
 {
   // If this is the first form, bring alive the first form submit
   // category observers
@@ -992,7 +1016,9 @@ nsHTMLFormElement::NotifySubmitObservers(nsIURI* aActionURL,
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsISimpleEnumerator> theEnum;
-  rv = service->EnumerateObservers(NS_FORMSUBMIT_SUBJECT,
+  rv = service->EnumerateObservers(aEarlyNotify ?
+                                   NS_EARLYFORMSUBMIT_SUBJECT :
+                                   NS_FORMSUBMIT_SUBJECT,
                                    getter_AddRefs(theEnum));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1273,6 +1299,27 @@ NS_IMETHODIMP
 nsHTMLFormElement::OnSubmitClickBegin()
 {
   mDeferSubmission = PR_TRUE;
+
+  // Prepare to run NotifySubmitObservers early before the
+  // scripts on the page get to modify the form data, possibly
+  // throwing off any password manager. (bug 257781)
+  nsCOMPtr<nsIURI> actionURI;
+  nsresult rv;
+
+  rv = GetActionURL(getter_AddRefs(actionURI));
+  if (NS_FAILED(rv) || !actionURI)
+    return NS_OK;
+
+  //
+  // Notify observers of submit
+  //
+  PRBool cancelSubmit = PR_FALSE;
+  rv = NotifySubmitObservers(actionURI, &cancelSubmit, PR_TRUE);
+  if (NS_SUCCEEDED(rv)) {
+    mNotifiedObservers = PR_TRUE;
+    mNotifiedObserversResult = cancelSubmit;
+  }
+
   return NS_OK;
 }
 
@@ -1412,6 +1459,7 @@ nsHTMLFormElement::GetLength(PRInt32* aLength)
 void
 nsHTMLFormElement::ForgetCurrentSubmission()
 {
+  mNotifiedObservers = PR_FALSE;
   mIsSubmitting = PR_FALSE;
   mSubmittingRequest = nsnull;
   if (mWebProgress) {
@@ -1560,7 +1608,6 @@ nsHTMLFormElement::GetNextRadioButton(const nsAString& aName,
                                       nsIDOMHTMLInputElement*  aFocusedRadio,
                                       nsIDOMHTMLInputElement** aRadioOut)
 {
-  // Get Next (aGetAdjacentInDir == 1) or previous (-1) radio button.
   // Return the radio button relative to the focused radio button.
   // If no radio is focused, get the radio relative to the selected one.
   *aRadioOut = nsnull;
@@ -1595,8 +1642,10 @@ nsHTMLFormElement::GetNextRadioButton(const nsAString& aName,
 
   PRUint32 numRadios;
   radioGroup->GetLength(&numRadios);
-  PRBool disabled;
+  PRBool disabled = PR_TRUE;
   nsCOMPtr<nsIDOMHTMLInputElement> radio;
+  nsCOMPtr<nsIDOMNode> radioDOMNode;
+  nsCOMPtr<nsIFormControl> formControl;
 
   do {
     if (aPrevious) {
@@ -1607,10 +1656,15 @@ nsHTMLFormElement::GetNextRadioButton(const nsAString& aName,
     else if (++index >= numRadios) {
       index = 0;
     }
-    nsCOMPtr<nsIDOMNode> radioDOMNode;
     radioGroup->Item(index, getter_AddRefs(radioDOMNode));
     radio = do_QueryInterface(radioDOMNode);
-    NS_ASSERTION(radio, "mRadioButtons holding a non-radio button");
+    if (!radio)
+      continue;
+
+    formControl = do_QueryInterface(radio);
+    if (!formControl || formControl->GetType() != NS_FORM_INPUT_RADIO)
+      continue;
+
     radio->GetDisabled(&disabled);
   } while (disabled && radio != currentRadio);
 

@@ -24,6 +24,7 @@
  *   Benjamin Smedberg <benjamin@smedbergs.us>
  *   Ben Goodger <ben@mozilla.org>
  *   Fredrik Holmqvist <thesuckiestemail@yahoo.se>
+ *   Ben Turner <mozilla@songbirdnest.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -124,8 +125,7 @@
 #endif
 
 #ifdef XP_BEOS
-//BeOS has execve in unistd, but it doesn't work well enough.
-//It leaves zombies around until the app that launched Firefox is closed.
+// execv() behaves bit differently in R5 and Zeta, looks unreliable in such situation
 //#include <unistd.h>
 #include <AppKit.h>
 #include <AppFileInfo.h>
@@ -164,6 +164,7 @@
 
 #if defined (XP_MACOSX)
 #include <Processes.h>
+#include <Events.h>
 #endif
 
 extern "C" void ShowOSAlert(const char* aMessage);
@@ -818,9 +819,10 @@ DumpHelp()
   printf("%s-width <value>%sSet width of startup window to <value>.\n",HELP_SPACER_1,HELP_SPACER_2);
   printf("%s-v or -version%sPrint %s version.\n",HELP_SPACER_1,HELP_SPACER_2, gAppData->name);
   printf("%s-P <profile>%sStart with <profile>.\n",HELP_SPACER_1,HELP_SPACER_2);
-  printf("%s-ProfileManager%sStart with profile manager.\n",HELP_SPACER_1,HELP_SPACER_2);
+  printf("%s-ProfileManager%sStart with Profile Manager.\n",HELP_SPACER_1,HELP_SPACER_2);
   printf("%s-UILocale <locale>%sStart with <locale> resources as UI Locale.\n",HELP_SPACER_1,HELP_SPACER_2);
   printf("%s-contentLocale <locale>%sStart with <locale> resources as content Locale.\n",HELP_SPACER_1,HELP_SPACER_2);
+  printf("%s-safe-mode%sDisables extensions and themes for this session.\n",HELP_SPACER_1,HELP_SPACER_2);
 #if defined(XP_WIN) || defined(XP_OS2)
   printf("%s-console%sStart %s with a debugging console.\n",HELP_SPACER_1,HELP_SPACER_2,gAppData->name);
 #endif
@@ -1073,6 +1075,7 @@ XRE_GetBinaryPath(const char* argv0, nsILocalFile* *aResult)
 #elif defined(XP_UNIX)
   struct stat fileStat;
   char exePath[MAXPATHLEN];
+  char tmpPath[MAXPATHLEN];
 
   rv = NS_ERROR_FAILURE;
 
@@ -1115,8 +1118,8 @@ XRE_GetBinaryPath(const char* argv0, nsILocalFile* *aResult)
     char *newStr = pathdup;
     char *token;
     while ( (token = nsCRT::strtok(newStr, ":", &newStr)) ) {
-      sprintf(exePath, "%s/%s", token, argv0);
-      if (stat(exePath, &fileStat) == 0) {
+      sprintf(tmpPath, "%s/%s", token, argv0);
+      if (realpath(tmpPath, exePath) && stat(exePath, &fileStat) == 0) {
         found = PR_TRUE;
         break;
       }
@@ -1185,6 +1188,8 @@ static nsresult LaunchChild(nsINativeAppSupport* aNative,
     gRestartArgv[gRestartArgc] = nsnull;
   }
 
+  PR_SetEnv("MOZ_LAUNCHED_CHILD=1");
+
 #if defined(XP_MACOSX)
   LaunchChildMac(gRestartArgc, gRestartArgv);
 #else
@@ -1206,6 +1211,12 @@ static nsresult LaunchChild(nsINativeAppSupport* aNative,
     return NS_ERROR_FAILURE;
 #elif defined(XP_UNIX)
   if (execv(exePath.get(), gRestartArgv) == -1)
+    return NS_ERROR_FAILURE;
+#elif defined(XP_BEOS)
+  extern char **environ;
+  status_t res;
+  res = resume_thread(load_image(gRestartArgc,(const char **)gRestartArgv,(const char **)environ));
+  if (res != B_OK)
     return NS_ERROR_FAILURE;
 #else
   PRProcess* process = PR_CreateProcess(exePath.get(), gRestartArgv,
@@ -1254,8 +1265,13 @@ ProfileLockedDialog(nsILocalFile* aProfileDir, nsILocalFile* aProfileLocalDir,
     const PRUnichar* params[] = {appName.get(), appName.get()};
 
     nsXPIDLString killMessage;
-    static const PRUnichar kRestartNoUnlocker[] = {'r','e','s','t','a','r','t','M','e','s','s','a','g','e','N','o','U','n','l','o','c','k','e','r','\0'};
-    static const PRUnichar kRestartUnlocker[] = {'r','e','s','t','a','r','t','M','e','s','s','a','g','e','U','n','l','o','c','k','e','r','\0'};
+#ifndef XP_MACOSX
+    static const PRUnichar kRestartNoUnlocker[] = {'r','e','s','t','a','r','t','M','e','s','s','a','g','e','N','o','U','n','l','o','c','k','e','r','\0'}; // "restartMessageNoUnlocker"
+    static const PRUnichar kRestartUnlocker[] = {'r','e','s','t','a','r','t','M','e','s','s','a','g','e','U','n','l','o','c','k','e','r','\0'}; // "restartMessageUnlocker"
+#else
+    static const PRUnichar kRestartNoUnlocker[] = {'r','e','s','t','a','r','t','M','e','s','s','a','g','e','N','o','U','n','l','o','c','k','e','r','M','a','c','\0'}; // "restartMessageNoUnlockerMac"
+    static const PRUnichar kRestartUnlocker[] = {'r','e','s','t','a','r','t','M','e','s','s','a','g','e','U','n','l','o','c','k','e','r','M','a','c','\0'}; // "restartMessageUnlockerMac"
+#endif
 
     sb->FormatStringFromName(aUnlocker ? kRestartUnlocker : kRestartNoUnlocker,
                              params, 2, getter_Copies(killMessage));
@@ -1317,6 +1333,10 @@ ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
     rv |= xpcom.InitEventQueue();
     rv |= xpcom.SetWindowCreator(aNative);
     NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+
+#ifdef XP_MACOSX
+    SetupMacCommandLine(gRestartArgc, gRestartArgv);
+#endif
 
     { //extra scoping is needed so we release these components before xpcom shutdown
       nsCOMPtr<nsIWindowWatcher> windowWatcher
@@ -1394,6 +1414,10 @@ ImportProfiles(nsIToolkitProfileService* aPService,
     if (NS_SUCCEEDED(rv)) {
       xpcom.DoAutoreg();
       xpcom.RegisterProfileService(aPService);
+
+#ifdef XP_MACOSX
+      SetupMacCommandLine(gRestartArgc, gRestartArgv);
+#endif
 
       nsCOMPtr<nsIProfileMigrator> migrator
         (do_GetService(NS_PROFILEMIGRATOR_CONTRACTID));
@@ -1627,7 +1651,8 @@ SelectProfile(nsIProfileLock* *aResult, nsINativeAppSupport* aNative,
 
 static PRBool
 CheckCompatibility(nsIFile* aProfileDir, const nsCString& aVersion,
-                   nsIFile* aXULRunnerDir, nsIFile* aAppDir)
+                   const nsCString& aOSABI, nsIFile* aXULRunnerDir,
+                   nsIFile* aAppDir)
 {
   nsCOMPtr<nsIFile> file;
   aProfileDir->Clone(getter_AddRefs(file));
@@ -1647,6 +1672,13 @@ CheckCompatibility(nsIFile* aProfileDir, const nsCString& aVersion,
     return PR_FALSE;
 
   if (!aVersion.Equals(buf))
+    return PR_FALSE;
+
+  rv = parser.GetString("Compatibility", "LastOSABI", buf);
+  if (NS_FAILED(rv))
+    return PR_FALSE;
+
+  if (!aOSABI.Equals(buf))
     return PR_FALSE;
 
   rv = parser.GetString("Compatibility", "LastPlatformDir", buf);
@@ -1693,7 +1725,8 @@ static void BuildVersion(nsCString &aBuf)
 
 static void
 WriteVersion(nsIFile* aProfileDir, const nsCString& aVersion,
-             nsIFile* aXULRunnerDir, nsIFile* aAppDir)
+             const nsCString& aOSABI, nsIFile* aXULRunnerDir,
+             nsIFile* aAppDir)
 {
   nsCOMPtr<nsIFile> file;
   aProfileDir->Clone(getter_AddRefs(file));
@@ -1722,6 +1755,10 @@ WriteVersion(nsIFile* aProfileDir, const nsCString& aVersion,
 
   PR_Write(fd, kHeader, sizeof(kHeader) - 1);
   PR_Write(fd, aVersion.get(), aVersion.Length());
+
+  static const char kOSABIHeader[] = NS_LINEBREAK "LastOSABI=";
+  PR_Write(fd, kOSABIHeader, sizeof(kOSABIHeader) - 1);
+  PR_Write(fd, aOSABI.get(), aOSABI.Length());
 
   static const char kPlatformDirHeader[] = NS_LINEBREAK "LastPlatformDir=";
 
@@ -1860,6 +1897,20 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   InstallUnixSignalHandlers(argv[0]);
 #endif
 
+#ifdef MOZ_ACCESSIBILITY_ATK
+  // Reset GTK_MODULES, strip atk-bridge if exists
+  // Mozilla will load libatk-bridge.so later if necessary
+  const char* gtkModules = PR_GetEnv("GTK_MODULES");
+  if (gtkModules && *gtkModules) {
+    nsCString gtkModulesStr(gtkModules);
+    gtkModulesStr.ReplaceSubstring("atk-bridge", "");
+    char* expr = PR_smprintf("GTK_MODULES=%s", gtkModulesStr.get());
+    if (expr)
+      PR_SetEnv(expr);
+    // We intentionally leak |expr| here since it is required by PR_SetEnv.
+  }
+#endif
+
   // Unbuffer stdout, needed for tinderbox tests.
   setbuf(stdout, 0);
 
@@ -1890,19 +1941,43 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 
   if (gBinaryPath && !*gBinaryPath)
     gBinaryPath = nsnull;
+
+  if (PR_GetEnv("MOZ_LAUNCHED_CHILD")) {
+    // When the app relaunches, the original process exits.  This causes
+    // the dock tile to stop bouncing, lose the "running" triangle, and
+    // if the tile does not permanently reside in the Dock, even disappear.
+    // This can be confusing to the user, who is expecting the app to launch.
+    // Calling ReceiveNextEvent without requesting any event is enough to
+    // cause a dock tile for the child process to appear.
+    const EventTypeSpec kFakeEventList[] = { { INT_MAX, INT_MAX } };
+    EventRef event;
+    ::ReceiveNextEvent(GetEventTypeCount(kFakeEventList), kFakeEventList,
+                       kEventDurationNoWait, PR_FALSE, &event);
+  }
+
+  if (CheckArg("foreground")) {
+    // The original process communicates that it was in the foreground by
+    // adding this argument.  This new process, which is taking over for
+    // the old one, should make itself the active application.
+    ProcessSerialNumber psn;
+    if (::GetCurrentProcess(&psn) == noErr)
+      ::SetFrontProcess(&psn);
+  }
 #endif
+
+  PR_SetEnv("MOZ_LAUNCHED_CHILD=");
 
   gAppData = aAppData;
 
-  gRestartArgc = argc;
-  gRestartArgv = (char**) malloc(sizeof(char*) * (argc + 1));
+  gRestartArgc = gArgc;
+  gRestartArgv = (char**) malloc(sizeof(char*) * (gArgc + 1));
   if (!gRestartArgv) return 1;
 
   int i;
-  for (i = 0; i < argc; ++i) {
-    gRestartArgv[i] = argv[i];
+  for (i = 0; i < gArgc; ++i) {
+    gRestartArgv[i] = gArgv[i];
   }
-  gRestartArgv[argc] = nsnull;
+  gRestartArgv[gArgc] = nsnull;
 
 #if defined(XP_OS2)
   PRBool StartOS2App(int aArgc, char **aArgv);
@@ -1913,6 +1988,11 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 
   if (CheckArg("safe-mode"))
     gSafeMode = PR_TRUE;
+
+  // Handle -no-remote command line argument. Setup the environment to
+  // better accommodate other components and various restart scenarios.
+  if (CheckArg("no-remote"))
+    PR_SetEnv("MOZ_NO_REMOTE=1");
 
   // Handle -help and -version command line arguments.
   // They should return quickly, so we deal with them here.
@@ -2053,8 +2133,29 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 #endif
 
 #if defined(MOZ_UPDATER)
+  // If this is a XULRunner app then the updater needs to know the base
+  // directory that contains the application.ini file. This should be the
+  // parent of the xulrunner directory on Windows/Linux and it should be the
+  // Contents directory on MacOSX. Just in case someone packaged their app
+  // incorrectly we'll pass the directory here.
+  nsCOMPtr<nsIFile> greDir = dirProvider.GetAppDir();
+  NS_ENSURE_TRUE(greDir, 1);
+
+  nsCOMPtr<nsIFile> appDir;
+  PRBool dummy;
+  rv = dirProvider.GetFile("resource:app",
+                           &dummy,
+                           getter_AddRefs(appDir));
+  if (NS_FAILED(rv)) {
+    // This must not be a XULRunner app
+    appDir = greDir;
+  }
+
   // Check for and process any available updates
-  ProcessUpdates(dirProvider.GetAppDir(), gRestartArgc, gRestartArgv);
+  ProcessUpdates(greDir,
+                 appDir,
+                 gRestartArgc,
+                 gRestartArgv);
 #endif
 
   nsCOMPtr<nsIProfileLock> profileLock;
@@ -2083,10 +2184,17 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   nsCAutoString version;
   BuildVersion(version);
 
+#ifdef TARGET_OS_ABI
+    NS_NAMED_LITERAL_CSTRING(osABI, TARGET_OS_ABI);
+#else
+    // No TARGET_XPCOM_ABI, but at least the OS is known
+    NS_NAMED_LITERAL_CSTRING(osABI, OS_TARGET "_UNKNOWN");
+#endif
+
   // Check for version compatibility with the last version of the app this 
   // profile was started with.  The format of the version stamp is defined
   // by the BuildVersion function.
-  PRBool versionOK = CheckCompatibility(profD, version,
+  PRBool versionOK = CheckCompatibility(profD, version, osABI,
                                         dirProvider.GetAppDir(),
                                         gAppData->directory);
 
@@ -2099,7 +2207,7 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   //
   if (gSafeMode) {
     RemoveComponentRegistries(profD, profLD, PR_FALSE);
-    WriteVersion(profD, NS_LITERAL_CSTRING("Safe Mode"),
+    WriteVersion(profD, NS_LITERAL_CSTRING("Safe Mode"), osABI,
                  dirProvider.GetAppDir(), gAppData->directory);
   }
   else if (versionOK) {
@@ -2124,7 +2232,7 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
     upgraded = PR_TRUE;
 
     // Write out version
-    WriteVersion(profD, version,
+    WriteVersion(profD, version, osABI,
                  dirProvider.GetAppDir(), gAppData->directory);
   }
 
@@ -2167,6 +2275,24 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 
       // So we can open and close windows during startup
       appStartup->EnterLastWindowClosingSurvivalArea();
+
+      if (gDoMigration) {
+        nsCOMPtr<nsIFile> file;
+        dirProvider.GetAppDir()->Clone(getter_AddRefs(file));
+        file->AppendNative(NS_LITERAL_CSTRING("override.ini"));
+        nsINIParser parser;
+        nsCOMPtr<nsILocalFile> localFile(do_QueryInterface(file));
+        nsresult rv = parser.Init(localFile);
+        if (NS_SUCCEEDED(rv)) {
+          nsCAutoString buf;
+          rv = parser.GetString("XRE", "EnableProfileMigrator", buf);
+          if (NS_SUCCEEDED(rv)) {
+            if (buf[0] == '0' || buf[0] == 'f' || buf[0] == 'F') {
+              gDoMigration = PR_FALSE;
+            }
+          }
+        }
+      }
 
       // Profile Migration
       if (gAppData->flags & NS_XRE_ENABLE_PROFILE_MIGRATOR && gDoMigration) {
@@ -2255,8 +2381,7 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
         cmdLine = do_CreateInstance("@mozilla.org/toolkit/command-line;1");
         NS_ENSURE_TRUE(cmdLine, 1);
 
-        rv = InitializeMacCommandLine(gArgc, gArgv);
-        NS_ENSURE_SUCCESS(rv, 1);
+        SetupMacCommandLine(gArgc, gArgv);
 
         rv = cmdLine->Init(gArgc, gArgv,
                            workingDir, nsICommandLine::STATE_INITIAL_LAUNCH);
@@ -2343,6 +2468,10 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
         // resolution for Extensions is different than for the component 
         // registry - major milestone vs. build id. 
         needsRestart = PR_TRUE;
+
+#ifdef XP_MACOSX
+        SetupMacCommandLine(gRestartArgc, gRestartArgv);
+#endif
       }
     }
 

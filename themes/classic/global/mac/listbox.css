@@ -77,13 +77,13 @@ listbox:focus > listitem[selected="true"][current="true"] {
 }
 
 listitem[selected="true"] {
-  background-color: -moz-Dialog;
+  background-color: -moz-mac-secondaryhighlight;
   color: -moz-DialogText;
 }
 
 listbox:focus > listitem[selected="true"] {
-  background-color: Highlight;
-  color: HighlightText;
+  background-color: -moz-mac-alternateprimaryhighlight;
+  color: #FFFFFF;
 }
 
 /* ::::: listheader ::::: */
@@ -99,18 +99,6 @@ listheader {
   background-color: -moz-Dialog;
   color: -moz-DialogText;
   padding: 0 4px;
-}
-
-listheader[sortable="true"]:hover:active {
-  border-top: 2px solid;
-  border-right: 1px solid;
-  border-bottom: 1px solid;
-  border-left: 2px solid;
-  -moz-border-top-colors: ThreeDShadow -moz-Dialog;
-  -moz-border-right-colors: ThreeDShadow;
-  -moz-border-bottom-colors: ThreeDShadow;
-  -moz-border-left-colors: ThreeDShadow -moz-Dialog;
-  padding: 1px 4px 0px 5px;
 }
 
 .listheader-icon {

@@ -96,6 +96,7 @@
 #include "nsContentCreatorFunctions.h"
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
+#include "nsIDOMProcessingInstruction.h"
 
 #ifdef MOZ_SVG
 #include "nsSVGAtoms.h"
@@ -230,6 +231,52 @@ nsXMLContentSink::MaybePrettyPrint()
   return printer->PrettyPrint(mDocument);
 }
 
+static void
+CheckXSLTParamPI(nsIDOMProcessingInstruction* aPi,
+                 nsIDocumentTransformer* aProcessor,
+                 nsIDocument* aDocument)
+{
+  nsAutoString target, data;
+  aPi->GetTarget(target);
+
+  nsCOMPtr<nsIDocumentTransformer_1_8_BRANCH> proc = do_QueryInterface(aProcessor);
+
+  // Check for namespace declarations
+  if (target.EqualsLiteral("xslt-param-namespace")) {
+    aPi->GetData(data);
+    nsAutoString prefix, namespaceAttr;
+    nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::prefix,
+                                           prefix, PR_TRUE);
+    if (!prefix.IsEmpty() &&
+        nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::_namespace,
+                                               namespaceAttr, PR_TRUE)) {
+      proc->AddXSLTParamNamespace(prefix, namespaceAttr);
+    }
+  }
+
+  // Check for actual parameters
+  else if (target.EqualsLiteral("xslt-param")) {
+    aPi->GetData(data);
+    nsAutoString name, namespaceAttr, select, value;
+    nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::name,
+                                           name, PR_TRUE);
+    nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::_namespace,
+                                           namespaceAttr, PR_TRUE);
+    if (!nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::select,
+                                                select, PR_TRUE)) {
+      select.SetIsVoid(PR_TRUE);
+    }
+    if (!nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::value, value,
+                                                PR_TRUE)) {
+      value.SetIsVoid(PR_TRUE);
+    }
+    if (!name.IsEmpty()) {
+      nsCOMPtr<nsIDOMNode> doc = do_QueryInterface(aDocument);
+      proc->AddXSLTParam(name, namespaceAttr, select, value, doc);
+    }
+  }
+}
+
 NS_IMETHODIMP
 nsXMLContentSink::DidBuildModel()
 {
@@ -239,6 +286,21 @@ nsXMLContentSink::DidBuildModel()
   }
 
   if (mXSLTProcessor) {
+
+    // Check for xslt-param and xslt-param-namespace PIs
+    PRUint32 i;
+    nsIContent* child;
+    for (i = 0; (child = mDocument->GetChildAt(i)); ++i) {
+      if (child->IsContentOfType(nsIContent::ePROCESSING_INSTRUCTION)) {
+        nsCOMPtr<nsIDOMProcessingInstruction> pi = do_QueryInterface(child);
+        CheckXSLTParamPI(pi, mXSLTProcessor, mDocument);
+      }
+      else if (child->IsContentOfType(nsIContent::eELEMENT)) {
+        // Only honor PIs in the prolog
+        break;
+      }
+    }
+
     nsCOMPtr<nsIDOMDocument> currentDOMDoc(do_QueryInterface(mDocument));
     mXSLTProcessor->SetSourceContentModel(currentDOMDoc);
     // Since the processor now holds a reference to us we drop our reference
@@ -737,7 +799,7 @@ nsXMLContentSink::FlushText(PRBool aCreateTextNode, PRBool* aDidFlush)
   if (0 != mTextLength) {
     if (aCreateTextNode) {
       nsCOMPtr<nsITextContent> textContent;
-      rv = NS_NewTextNode(getter_AddRefs(textContent));
+      rv = NS_NewTextNode(getter_AddRefs(textContent), mNodeInfoManager);
       NS_ENSURE_SUCCESS(rv, rv);
 
       // Set the text in the text node
@@ -1037,22 +1099,28 @@ nsXMLContentSink::HandleComment(const PRUnichar *aName)
   FlushText();
 
   nsCOMPtr<nsIContent> comment;
-  nsresult result = NS_NewCommentNode(getter_AddRefs(comment));
+  nsresult rv = NS_NewCommentNode(getter_AddRefs(comment), mNodeInfoManager);
   if (comment) {
-    nsCOMPtr<nsIDOMComment> domComment = do_QueryInterface(comment, &result);
+    nsCOMPtr<nsIDOMComment> domComment = do_QueryInterface(comment, &rv);
     if (domComment) {
       domComment->AppendData(nsDependentString(aName));
-      result = AddContentAsLeaf(comment);
+      rv = AddContentAsLeaf(comment);
     }
   }
 
-  return result;
+  return rv;
 }
 
 NS_IMETHODIMP 
 nsXMLContentSink::HandleCDataSection(const PRUnichar *aData, 
                                      PRUint32 aLength)
 {
+  // XSLT doesn't differentiate between text and cdata and wants adjacent
+  // textnodes merged, so add as text.
+  if (mXSLTProcessor) {
+    return AddText(aData, aLength);
+  }
+
   FlushText();
   
   if (mInTitle) {
@@ -1060,16 +1128,16 @@ nsXMLContentSink::HandleCDataSection(const PRUnichar *aData,
   }
   
   nsCOMPtr<nsIContent> cdata;
-  nsresult result = NS_NewXMLCDATASection(getter_AddRefs(cdata));
+  nsresult rv = NS_NewXMLCDATASection(getter_AddRefs(cdata), mNodeInfoManager);
   if (cdata) {
     nsCOMPtr<nsIDOMCDATASection> domCDATA = do_QueryInterface(cdata);
     if (domCDATA) {
       domCDATA->SetData(nsDependentString(aData, aLength));
-      result = AddContentAsLeaf(cdata);
+      rv = AddContentAsLeaf(cdata);
     }
   }
 
-  return result;
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -1092,8 +1160,9 @@ nsXMLContentSink::HandleDoctypeDecl(const nsAString & aSubset,
 
   // Create a new doctype node
   nsCOMPtr<nsIDOMDocumentType> docType;
-  rv = NS_NewDOMDocumentType(getter_AddRefs(docType), name, nsnull, nsnull,
-                             aPublicId, aSystemId, aSubset);
+  rv = NS_NewDOMDocumentType(getter_AddRefs(docType), mNodeInfoManager, nsnull,
+                             name, nsnull, nsnull, aPublicId, aSystemId,
+                             aSubset);
   if (NS_FAILED(rv) || !docType) {
     return rv;
   }
@@ -1104,7 +1173,9 @@ nsXMLContentSink::HandleDoctypeDecl(const nsAString & aSubset,
     nsCOMPtr<nsIURI> uri(do_QueryInterface(aCatalogData));
     if (uri) {
       nsCOMPtr<nsICSSStyleSheet> sheet;
-      mCSSLoader->LoadAgentSheet(uri, getter_AddRefs(sheet));
+      nsCOMPtr<nsICSSLoader_MOZILLA_1_8_BRANCH> loader =
+        do_QueryInterface(mCSSLoader);
+      loader->LoadSheetSync(uri, PR_TRUE, getter_AddRefs(sheet));
       
 #ifdef NS_DEBUG
       nsCAutoString uriStr;
@@ -1141,63 +1212,82 @@ nsXMLContentSink::HandleProcessingInstruction(const PRUnichar *aTarget,
 {
   FlushText();
 
-  nsresult result = NS_OK;
   const nsDependentString target(aTarget);
   const nsDependentString data(aData);
 
   nsCOMPtr<nsIContent> node;
 
-  result = NS_NewXMLProcessingInstruction(getter_AddRefs(node), target, data);
-  if (NS_OK == result) {
-    nsCOMPtr<nsIStyleSheetLinkingElement> ssle(do_QueryInterface(node));
+  nsresult rv = NS_NewXMLProcessingInstruction(getter_AddRefs(node),
+                                               mNodeInfoManager, target,
+                                               data);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    if (ssle) {
-      ssle->InitStyleLinkElement(mParser, PR_FALSE);
-      ssle->SetEnableUpdates(PR_FALSE);
-      mPrettyPrintXML = PR_FALSE;
-    }
+  nsCOMPtr<nsIStyleSheetLinkingElement> ssle(do_QueryInterface(node));
+  if (ssle) {
+    ssle->InitStyleLinkElement(mParser, PR_FALSE);
+    ssle->SetEnableUpdates(PR_FALSE);
+    mPrettyPrintXML = PR_FALSE;
+  }
 
-    result = AddContentAsLeaf(node);
+  rv = AddContentAsLeaf(node);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    if (ssle) {
-      ssle->SetEnableUpdates(PR_TRUE);
-      result = ssle->UpdateStyleSheet(nsnull, nsnull);
+  if (ssle) {
+    ssle->SetEnableUpdates(PR_TRUE);
+    rv = ssle->UpdateStyleSheet(nsnull, nsnull);
 
-      if (NS_FAILED(result)) {
-        if (result == NS_ERROR_HTMLPARSER_BLOCK && mParser) {
-          mParser->BlockParser();
-        }
-        return result;
+    if (NS_FAILED(rv)) {
+      if (rv == NS_ERROR_HTMLPARSER_BLOCK && mParser) {
+        mParser->BlockParser();
       }
-    }
-
-    // If it's not a CSS stylesheet PI...
-    nsAutoString type;
-    nsParserUtils::GetQuotedAttributeValue(data, NS_LITERAL_STRING("type"), type);
-    if (mState == eXMLContentSinkState_InProlog && 
-        target.EqualsLiteral("xml-stylesheet") && 
-        !type.LowerCaseEqualsLiteral("text/css")) {
-      nsAutoString href, title, media, alternate;
-
-      nsParserUtils::GetQuotedAttributeValue(data, NS_LITERAL_STRING("href"), href);
-      // If there was no href, we can't do anything with this PI
-      if (href.IsEmpty()) {
-        return NS_OK;
-      }
-
-      nsParserUtils::GetQuotedAttributeValue(data, NS_LITERAL_STRING("title"), title);
-      title.CompressWhitespace();
-
-      nsParserUtils::GetQuotedAttributeValue(data, NS_LITERAL_STRING("media"), media);
-      ToLowerCase(media);
-
-      nsParserUtils::GetQuotedAttributeValue(data, NS_LITERAL_STRING("alternate"), alternate);
-
-      result = ProcessStyleLink(node, href, alternate.EqualsLiteral("yes"),
-                                title, type, media);
+      return rv;
     }
   }
-  return result;
+
+  // If it's not a CSS stylesheet PI...
+  nsAutoString type;
+  nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::type, type);
+
+  if (mState != eXMLContentSinkState_InProlog ||
+      !target.EqualsLiteral("xml-stylesheet") ||
+      type.LowerCaseEqualsLiteral("text/css")) {
+    return NS_OK;
+  }
+
+  nsAutoString href, title, media;
+  PRBool isAlternate = PR_FALSE;
+  ParsePIData(data, href, title, media, isAlternate);
+
+  // If there was no href, we can't do anything with this PI
+  if (href.IsEmpty()) {
+      return NS_OK;
+  }
+
+  return ProcessStyleLink(node, href, isAlternate, title, type, media);
+}
+
+/* static */
+void
+nsXMLContentSink::ParsePIData(const nsString &aData, nsString &aHref,
+                              nsString &aTitle, nsString &aMedia,
+                              PRBool &aIsAlternate)
+{
+  nsParserUtils::GetQuotedAttributeValue(aData, nsHTMLAtoms::href, aHref);
+
+  // If there was no href, we can't do anything with this PI
+  if (aHref.IsEmpty()) {
+    return;
+  }
+
+  nsParserUtils::GetQuotedAttributeValue(aData, nsHTMLAtoms::title, aTitle);
+
+  nsParserUtils::GetQuotedAttributeValue(aData, nsHTMLAtoms::media, aMedia);
+
+  nsAutoString alternate;
+  nsParserUtils::GetQuotedAttributeValue(aData, nsHTMLAtoms::alternate,
+                                         alternate);
+
+  aIsAlternate = alternate.EqualsLiteral("yes");
 }
 
 NS_IMETHODIMP
@@ -1344,7 +1434,8 @@ nsXMLContentSink::AddText(const PRUnichar* aText,
       amount = aLength;
     }
     if (0 == amount) {
-      if (mConstrainSize) {
+      // XSLT wants adjacent textnodes merged.
+      if (mConstrainSize && !mXSLTProcessor) {
         nsresult rv = FlushText();
         if (NS_OK != rv) {
           return rv;

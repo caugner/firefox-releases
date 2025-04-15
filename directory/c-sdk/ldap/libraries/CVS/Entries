@@ -1,9 +1,9 @@
-/.cvsignore/5.0/Tue Mar 26 21:53:07 2002//TFIREFOX_1_5_RELEASE
-/Makefile.client/5.0/Tue Mar 26 21:53:08 2002//TFIREFOX_1_5_RELEASE
-/Makefile.in/5.0.2.2/Fri Apr  5 03:51:39 2002//TFIREFOX_1_5_RELEASE
-/genMakefile.client/5.0/Tue Mar 26 21:53:09 2002//TFIREFOX_1_5_RELEASE
-/libldap.ex/5.0/Tue Mar 26 21:53:10 2002//TFIREFOX_1_5_RELEASE
-/libldap_ssl.ex/5.0/Tue Mar 26 21:53:10 2002//TFIREFOX_1_5_RELEASE
+/.cvsignore/5.0/Tue Mar 26 21:53:07 2002//TFIREFOX_2_0_RELEASE
+/Makefile.client/5.0.138.1/Fri Feb  3 14:44:41 2006//TFIREFOX_2_0_RELEASE
+/Makefile.in/5.0.2.2.134.1/Fri Feb  3 14:44:41 2006//TFIREFOX_2_0_RELEASE
+/genMakefile.client/5.0.138.1/Fri Feb  3 14:44:41 2006//TFIREFOX_2_0_RELEASE
+/libldap.ex/5.0/Tue Mar 26 21:53:10 2002//TFIREFOX_2_0_RELEASE
+/libldap_ssl.ex/5.0/Tue Mar 26 21:53:10 2002//TFIREFOX_2_0_RELEASE
 D/libiutil////
 D/liblber////
 D/libldap////

@@ -130,6 +130,7 @@ nsImapIncomingServer::nsImapIncomingServer()
   m_userAuthenticated = PR_FALSE;
   m_readPFCName = PR_FALSE;
   m_readRedirectorType = PR_FALSE;
+  m_shuttingDown = PR_FALSE;
 }
 
 nsImapIncomingServer::~nsImapIncomingServer()
@@ -191,6 +192,10 @@ NS_IMETHODIMP nsImapIncomingServer::SetKey(const char * aKey)  // override nsMsg
   if (otherUsersNamespace && PL_strlen(otherUsersNamespace))
       hostSession->SetNamespaceFromPrefForHost(aKey, otherUsersNamespace,
                                                kOtherUsersNamespace);
+  PRInt32 capability;
+  rv = GetCapabilityPref(&capability);
+  NS_ENSURE_SUCCESS(rv, rv);
+  hostSession->SetCapabilityForHost(aKey, capability);
   return rv;
 }
 
@@ -348,6 +353,9 @@ NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, UseIdle,
                         "use_idle")
 //NS_IMPL_SERVERPREF_INT(nsImapIncomingServer, DeleteModel,
 //                       "delete_model")
+
+
+NS_IMPL_GETSET(nsImapIncomingServer, ShuttingDown, PRBool, m_shuttingDown)
 
 NS_IMETHODIMP								   	
 nsImapIncomingServer::GetDeleteModel(PRInt32 *retval)
@@ -2677,43 +2685,6 @@ NS_IMETHODIMP nsImapIncomingServer::OnLogonRedirectionReply(const PRUnichar *pHo
   return rv;
 }
 
-nsresult
-nsImapIncomingServer::SetDelimiterFromHierarchyDelimiter()
-{
-    nsresult rv = NS_OK;
-
-    nsCOMPtr<nsIImapService> imapService = do_GetService(kImapServiceCID, &rv);
-    NS_ENSURE_SUCCESS(rv,rv);
-    if (!imapService) return NS_ERROR_FAILURE;
-    
-    nsCOMPtr<nsIMsgFolder> rootFolder;
-    rv = GetRootFolder(getter_AddRefs(rootFolder));
-    NS_ENSURE_SUCCESS(rv,rv);
-    
-    nsCOMPtr<nsIMsgImapMailFolder> rootMsgFolder = do_QueryInterface(rootFolder, &rv);
-    NS_ENSURE_SUCCESS(rv,rv);
-    if (!rootMsgFolder) return NS_ERROR_FAILURE;
-    
-    PRUnichar delimiter = '/';
-    rv = rootMsgFolder->GetHierarchyDelimiter(&delimiter);
-    NS_ENSURE_SUCCESS(rv,rv);
- 
-#ifdef DEBUG_seth
-    printf("setting delimiter to %c\n",char(delimiter));
-#endif
-    if (delimiter == kOnlineHierarchySeparatorUnknown) {
-        delimiter = '/';
-#ifdef DEBUG_seth
-        printf("..no, override delimiter to %c\n",char(delimiter));
-#endif
-    }
-
-    rv = SetDelimiter(char(delimiter));     
-    NS_ENSURE_SUCCESS(rv,rv);
-    
-    return NS_OK;
-}
-
 NS_IMETHODIMP
 nsImapIncomingServer::StartPopulatingWithUri(nsIMsgWindow *aMsgWindow, PRBool aForceToServer /*ignored*/, const char *uri)
 {
@@ -2728,7 +2699,8 @@ nsImapIncomingServer::StartPopulatingWithUri(nsIMsgWindow *aMsgWindow, PRBool aF
     rv = mInner->StartPopulatingWithUri(aMsgWindow, aForceToServer, uri);
     NS_ENSURE_SUCCESS(rv,rv);
 
-    rv = SetDelimiterFromHierarchyDelimiter();
+    // imap always uses the canonical delimiter form of paths for subscribe ui.
+    rv = SetDelimiter('/');
     NS_ENSURE_SUCCESS(rv,rv);
 
     rv = SetShowFullName(PR_FALSE);
@@ -2768,7 +2740,8 @@ nsImapIncomingServer::StartPopulating(nsIMsgWindow *aMsgWindow, PRBool aForceToS
     rv = mInner->StartPopulating(aMsgWindow, aForceToServer);
     NS_ENSURE_SUCCESS(rv,rv);
 
-    rv = SetDelimiterFromHierarchyDelimiter();
+    // imap always uses the canonical delimiter form of paths for subscribe ui.
+    rv = SetDelimiter('/'); 
     NS_ENSURE_SUCCESS(rv,rv);
 
     rv = SetShowFullName(PR_FALSE);
@@ -3638,6 +3611,17 @@ nsImapIncomingServer::GetShowAttachmentsInline(PRBool *aResult)
   
   prefBranch->GetBoolPref("mail.inline_attachments", aResult);
   return NS_OK; // In case this pref is not set we need to return NS_OK.
+}
+
+NS_IMETHODIMP nsImapIncomingServer::SetSocketType(PRInt32 aSocketType)
+{
+  PRInt32 oldSocketType;
+  nsresult rv = GetSocketType(&oldSocketType);
+  if (NS_SUCCEEDED(rv) && oldSocketType != aSocketType)
+    CloseCachedConnections();
+  nsCAutoString fullPrefName;
+  getPrefName(m_serverKey.get(), "socketType", fullPrefName);
+  return m_prefBranch->SetIntPref(fullPrefName.get(), aSocketType);
 }
 
 NS_IMETHODIMP

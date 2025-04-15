@@ -307,7 +307,7 @@ nc:link="chrome://help/locale/nav_help.xhtml#plugins_and_downloads"/> </rdf:li>
         <rdf:li> <rdf:Description ID="folder-copying" nc:name="Moving or Copying a Folder" nc:link="mail_help.xhtml#moving_or_copying_a_folder"/> </rdf:li>
         <rdf:li> <rdf:Description ID="folder-opening" nc:name="Filing Messages in Folders" nc:link="mail_help.xhtml#filing_messages_in_folders"/> </rdf:li>
         <rdf:li> <rdf:Description ID="folder-sharing" nc:name="Sharing Folders" nc:link="mail_help.xhtml#sharing_folders_with_other_users"/> </rdf:li>
-        <rdf:li> <rdf:Description ID="labeling-messages" nc:name="Labeling Messages" nc:link="mail_help.xhtml#labeling_messages"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="tagging-messages" nc:name="Tagging Messages" nc:link="mail_help.xhtml#tagging_messages"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail-flagging" nc:name="Marking or Flagging Messages" nc:link="mail_help.xhtml#marking_or_flagging_messages"/> </rdf:li>
         <rdf:li> <rdf:Description ID="message-views-using" nc:name="Using Message Views" nc:link="mail_help.xhtml#using_message_views"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail-filters" nc:name="Creating Message Filters" nc:link="mail_help.xhtml#creating_message_filters"/> </rdf:li>
@@ -324,13 +324,13 @@ nc:link="chrome://help/locale/nav_help.xhtml#plugins_and_downloads"/> </rdf:li>
     </nc:subheadings>
   </rdf:Description>
 
-<rdf:Description about="#labeling-messages">
+<rdf:Description about="#tagging-messages">
     <nc:subheadings>
       <rdf:Seq>
-        <rdf:li> <rdf:Description ID="label-apply" nc:name="Applying a Label" nc:link="mail_help.xhtml#applying_a_label"/> </rdf:li>
-        <rdf:li> <rdf:Description ID="label-customize" nc:name="Customizing Labels" nc:link="mail_help.xhtml#customizing_labels"/> </rdf:li>
-        <rdf:li> <rdf:Description ID="label-sort" nc:name="Sorting Messages by Label" nc:link="mail_help.xhtml#sorting_messages_by_label"/> </rdf:li>
-        <rdf:li> <rdf:Description ID="label-remove" nc:name="Removing Labels" nc:link="mail_help.xhtml#removing_labels"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="tag-apply" nc:name="Applying a Tag" nc:link="mail_help.xhtml#applying_a_tag"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="tag-customize" nc:name="Customizing Tags" nc:link="mail_help.xhtml#customizing_tags"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="tag-sort" nc:name="Sorting Messages by Tags" nc:link="mail_help.xhtml#sorting_messages_by_tags"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="tag-remove" nc:name="Removing Tags" nc:link="mail_help.xhtml#removing_tags"/> </rdf:li>
       </rdf:Seq>
     </nc:subheadings>
   </rdf:Description>
@@ -441,6 +441,7 @@ nc:link="chrome://help/locale/nav_help.xhtml#plugins_and_downloads"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail_addressing_settings" nc:name="Composition &amp; Addressing"  nc:link="mail_help.xhtml#addressing"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail-doc-offline-space" nc:name="Offline and Disk Space"  nc:link="mail_help.xhtml#offline_and_disk_space"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail-account-receipts" nc:name="Return Receipts" nc:link="mail_help.xhtml#return_receipts"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="mail-account-junk" nc:name="Junk Settings" nc:link="mail_help.xhtml#junk_settings"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail_security_settings" nc:name="Security"  nc:link="mail_help.xhtml#security"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail_local_folders_settings" nc:name="Local Folders"  nc:link="mail_help.xhtml#local_folders"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail_smtp" nc:name="Outgoing Server (SMTP)"  nc:link="mail_help.xhtml#outgoing_server"/> </rdf:li>
@@ -490,8 +491,10 @@ nc:link="chrome://help/locale/nav_help.xhtml#plugins_and_downloads"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail_prefs_messages" nc:name="Composition" nc:link="mail_help.xhtml#composition"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail_prefs_formatting" nc:name="Send Format" nc:link="mail_help.xhtml#send_format"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail_prefs_addressing" nc:name="Addressing" nc:link="mail_help.xhtml#addressing_preferences"/> </rdf:li>
-        <rdf:li> <rdf:Description ID="mail-prefs-labels" nc:name="Labels" nc:link="mail_help.xhtml#labels"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="mail-prefs-junk" nc:name="Junk Mail" nc:link="mail_help.xhtml#global_junk_settings"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="mail-prefs-tags" nc:name="Tags" nc:link="mail_help.xhtml#tags"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail-prefs-receipts" nc:name="Return Receipts" nc:link="mail_help.xhtml#return_receipts_preferences"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="mail_prefs_character_encoding" nc:name="Character Encoding" nc:link="mail_help.xhtml#character_encoding"/> </rdf:li>
         <rdf:li> <rdf:Description ID="mail_prefs_offline" nc:name="Offline and Disk Space" nc:link="mail_help.xhtml#offline_and_disk_space_preferences"/> </rdf:li>
       </rdf:Seq>
     </nc:subheadings>
@@ -694,6 +697,7 @@ nc:link="chrome://help/locale/nav_help.xhtml#plugins_and_downloads"/> </rdf:li>
         <rdf:li> <rdf:Description ID="cust-tabbed-whatis" nc:name="What is Tabbed Browsing?"  nc:link="customize_help.xhtml#what_is_tabbed_browsing"/> </rdf:li>
         <rdf:li> <rdf:Description ID="cust-tabbed-tabbedsetting" nc:name="Setting up Tabbed Browsing"  nc:link="customize_help.xhtml#setting_up_tabbed_browsing"/> </rdf:li>
         <rdf:li> <rdf:Description ID="cust-tabbed-tabbedopening" nc:name="Opening Tabs"  nc:link="customize_help.xhtml#opening_tabs"/> </rdf:li>
+        <rdf:li> <rdf:Description ID="cust-tabbed-tabbedmoving" nc:name="Moving Tabs"  nc:link="customize_help.xhtml#moving_tabs"/> </rdf:li>
         <rdf:li> <rdf:Description ID="cust-tabbed-tabbedbookmarking" nc:name="Bookmarking Tabs"  nc:link="customize_help.xhtml#bookmarking_tabs"/> </rdf:li>
         <rdf:li> <rdf:Description ID="cust-tabbed-tabbedclosing" nc:name="Closing Tabs"  nc:link="customize_help.xhtml#closing_tabs"/> </rdf:li>
       </rdf:Seq>
@@ -830,7 +834,7 @@ nc:link="chrome://help/locale/nav_help.xhtml#plugins_and_downloads"/> </rdf:li>
         <rdf:li><rdf:Description ID="privacy-doc-visit" nc:name="What Information Does My Browser Give to a Website?"  		nc:link="privacy_help.xhtml#what_information_does_my_browser_give_to_a_web_site"/> </rdf:li>
         <rdf:li><rdf:Description ID="privacy-doc-cookies" nc:name="What Are Cookies, and How Do They Work?"  		nc:link="privacy_help.xhtml#what_are_cookies_and_how_do_they_work"/> </rdf:li>
         <rdf:li><rdf:Description ID="privacy-doc-email" nc:name="How Can I Control Web Pages in Email Messages?"  		nc:link="privacy_help.xhtml#how_can_i_control_web_pages_in_email_messages"/> </rdf:li>
-        <rdf:li><rdf:Description ID="privacy-doc-unauth" nc:name="How Do I Make Sure Unauthorized People Don't Use Information About Me?"  		nc:link="privacy_help.xhtml#how_do_i_make_sure_unauthorized_people_dont_use_information_about_me"/> </rdf:li>
+        <rdf:li><rdf:Description ID="privacy-doc-unauth" nc:name="How Can I Make Sure Unauthorized People Don't Use Information About Me?"  		nc:link="privacy_help.xhtml#how_can_i_make_sure_unauthorized_people_dont_use_information_about_me"/> </rdf:li>
       </rdf:Seq>
     </nc:subheadings>
   </rdf:Description>
@@ -1017,7 +1021,6 @@ nc:link="chrome://help/locale/nav_help.xhtml#plugins_and_downloads"/> </rdf:li>
     <nc:subheadings>
       <rdf:Seq>
         <rdf:li><rdf:Description ID="ssl_prefs" nc:name="SSL Preferences" nc:link="ssl_help.xhtml#privacy_and_security_preferences_ssl"/> </rdf:li>
-        <rdf:li><rdf:Description ID="cipher_help" nc:name="Edit Ciphers" nc:link="ssl_help.xhtml#edit_ciphers"/> </rdf:li>
       </rdf:Seq>
     </nc:subheadings>
   </rdf:Description>
@@ -1168,7 +1171,7 @@ nc:link="chrome://help/locale/nav_help.xhtml#plugins_and_downloads"/> </rdf:li>
 <rdf:Description about="#tools">
     <nc:subheadings>
       <rdf:Seq>
-        <rdf:li><rdf:Description ID="tools-js_console" nc:name="JavaScript Console" nc:link="developer_tools.xhtml#js_console"/> </rdf:li>
+        <rdf:li><rdf:Description ID="tools-js_console" nc:name="Error Console" nc:link="developer_tools.xhtml#js_console"/> </rdf:li>
         <rdf:li><rdf:Description ID="tools-inspector" nc:name="DOM Inspector" nc:link="developer_tools.xhtml#inspector"/> </rdf:li>
         <rdf:li><rdf:Description ID="tools-venkman" nc:name="JavaScript Debugger" nc:link="developer_tools.xhtml#venkman"/> </rdf:li>
       </rdf:Seq>

@@ -22,6 +22,7 @@
 #   Stephen Lamm
 #   Benjamin Smedberg <bsmedberg@covad.net>
 #   Chase Phillips <chase@mozilla.org>
+#   Mark Mentovai <mark@moxienet.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -79,6 +80,8 @@
 # See http://www.mozilla.org/build/ for more information.
 #
 # Options:
+#   MOZ_BUILD_PROJECTS   - Build multiple projects in subdirectories
+#                          of MOZ_OBJDIR
 #   MOZ_OBJDIR           - Destination object directory
 #   MOZ_CO_DATE          - Date tag to use for checkout (default: none)
 #   MOZ_CO_LOCALES_DATE  - Date tag to use for locale checkout
@@ -90,6 +93,12 @@
 #   MOZ_CO_LOCALES       - localizations to pull (MOZ_CO_LOCALES="de-DE,pt-BR")
 #   MOZ_LOCALE_DIRS      - directories which contain localizations
 #   LOCALES_CVSROOT      - CVSROOT to use to pull localizations
+#   MOZ_PREFLIGHT_ALL  } - Makefiles to run before any project in
+#   MOZ_PREFLIGHT      }   MOZ_BUILD_PROJECTS, before each project, after
+#   MOZ_POSTFLIGHT     }   each project, and after all projects; these
+#   MOZ_POSTFLIGHT_ALL }   variables contain space-separated lists
+#   MOZ_UNIFY_BDATE      - Set to use the same bdate for each project in
+#                          MOZ_BUILD_PROJECTS
 #
 
 AVAILABLE_PROJECTS = \
@@ -109,6 +118,7 @@ MODULES_core :=                                 \
   SeaMonkeyAll                                  \
   mozilla/browser/config/version.txt            \
   mozilla/mail/config/version.txt               \
+  mozilla/calendar/sunbird/config/version.txt   \
   mozilla/ipc/ipcd                              \
   mozilla/modules/libpr0n                       \
   mozilla/modules/libmar                        \
@@ -118,6 +128,8 @@ MODULES_core :=                                 \
   mozilla/toolkit                               \
   mozilla/storage                               \
   mozilla/db/sqlite3                            \
+  mozilla/db/morkreader                         \
+  mozilla/tools/test-harness                    \
   $(NULL)
 
 LOCALES_core :=                                 \
@@ -155,6 +167,8 @@ MODULES_browser :=                              \
 LOCALES_browser :=                              \
   $(LOCALES_toolkit)                            \
   browser                                       \
+  extensions/reporter                           \
+  extensions/spellcheck                         \
   other-licenses/branding/firefox               \
   $(NULL)
 
@@ -163,6 +177,11 @@ BOOTSTRAP_browser := mozilla/browser/config/mozconfig
 MODULES_minimo :=                               \
   $(MODULES_toolkit)                            \
   mozilla/minimo                                \
+  $(NULL)
+
+LOCALES_minimo :=                               \
+  $(LOCALES_toolkit)                            \
+  minimo                                        \
   $(NULL)
 
 MODULES_mail :=                                 \
@@ -177,6 +196,7 @@ LOCALES_mail :=                                 \
   mail                                          \
   other-licenses/branding/thunderbird           \
   editor/ui                                     \
+  extensions/spellcheck                         \
   $(NULL)
 
 BOOTSTRAP_mail := mozilla/mail/config/mozconfig
@@ -191,6 +211,14 @@ MODULES_calendar :=                             \
   mozilla/storage                               \
   mozilla/db/sqlite3                            \
   mozilla/calendar                              \
+  mozilla/other-licenses/branding/sunbird       \
+  mozilla/other-licenses/7zstub/sunbird         \
+  $(NULL)
+
+LOCALES_calendar :=                             \
+  $(LOCALES_toolkit)                            \
+  calendar                                      \
+  other-licenses/branding/sunbird               \
   $(NULL)
 
 BOOTSTRAP_calendar := mozilla/calendar/sunbird/config/mozconfig
@@ -229,11 +257,11 @@ MODULES_all :=                                  \
 #
 # For branches, uncomment the MOZ_CO_TAG line with the proper tag,
 # and commit this file on that tag.
-MOZ_CO_TAG           = FIREFOX_1_5_RELEASE
-NSPR_CO_TAG          = FIREFOX_1_5_RELEASE
-NSS_CO_TAG           = FIREFOX_1_5_RELEASE
-LDAPCSDK_CO_TAG      = FIREFOX_1_5_RELEASE
-LOCALES_CO_TAG       = FIREFOX_1_5_RELEASE
+MOZ_CO_TAG           = FIREFOX_2_0_RELEASE
+NSPR_CO_TAG          = FIREFOX_2_0_RELEASE
+NSS_CO_TAG           = FIREFOX_2_0_RELEASE
+LDAPCSDK_CO_TAG      = FIREFOX_2_0_RELEASE
+LOCALES_CO_TAG       = FIREFOX_2_0_RELEASE
 
 BUILD_MODULES = all
 
@@ -279,6 +307,7 @@ SH := /bin/sh
 ifndef MAKE
 MAKE := gmake
 endif
+PERL ?= perl
 
 CONFIG_GUESS_SCRIPT := $(wildcard $(TOPSRCDIR)/build/autoconf/config.guess)
 ifdef CONFIG_GUESS_SCRIPT
@@ -364,13 +393,31 @@ else
   CVS_FLAGS := $(MOZ_CVS_FLAGS)
 endif
 
+ifdef MOZ_BUILD_PROJECTS
+
+ifndef MOZ_OBJDIR
+  $(error When MOZ_BUILD_PROJECTS is set, you must set MOZ_OBJDIR)
+endif
+ifdef MOZ_CURRENT_PROJECT
+  OBJDIR = $(MOZ_OBJDIR)/$(MOZ_CURRENT_PROJECT)
+  MOZ_MAKE = $(MAKE) $(MOZ_MAKE_FLAGS) -C $(OBJDIR)
+  BUILD_PROJECT_ARG = MOZ_BUILD_APP=$(MOZ_CURRENT_PROJECT)
+else
+  OBJDIR = $(error Cannot find the OBJDIR when MOZ_CURRENT_PROJECT is not set.)
+  MOZ_MAKE = $(error Cannot build in the OBJDIR when MOZ_CURRENT_PROJECT is not set.)
+endif
+
+else # MOZ_BUILD_PROJECTS
+
 ifdef MOZ_OBJDIR
-  OBJDIR := $(MOZ_OBJDIR)
-  MOZ_MAKE := $(MAKE) $(MOZ_MAKE_FLAGS) -C $(OBJDIR)
+  OBJDIR = $(MOZ_OBJDIR)
+  MOZ_MAKE = $(MAKE) $(MOZ_MAKE_FLAGS) -C $(OBJDIR)
 else
   OBJDIR := $(TOPSRCDIR)
   MOZ_MAKE := $(MAKE) $(MOZ_MAKE_FLAGS)
 endif
+
+endif # MOZ_BUILD_PROJECTS
 
 ####################################
 # CVS defines for NSS
@@ -669,25 +716,54 @@ ifdef RUN_AUTOCONF_LOCALLY
 	cd $(TOPSRCDIR)/directory/c-sdk && $(AUTOCONF)
 endif
 
-####################################
-# Web configure
+CVSCO_LOGFILE_L10N := $(ROOTDIR)/cvsco-l10n.log
+CVSCO_LOGFILE_L10N := $(shell echo $(CVSCO_LOGFILE_L10N) | sed s%//%/%)
 
-WEBCONFIG_FILE  := $(HOME)/.mozconfig
+l10n-checkout:
+#	@: Backup the last checkout log.
+	@if test -f $(CVSCO_LOGFILE_L10N) ; then \
+	  mv $(CVSCO_LOGFILE_L10N) $(CVSCO_LOGFILE_L10N).old; \
+	else true; \
+	fi
+	@echo "checkout start: "`date` | tee $(CVSCO_LOGFILE_L10N)
+	@echo '$(CVSCO) $(CVS_CO_DATE_FLAGS) mozilla/client.mk $(MOZCONFIG_MODULES)'; \
+        cd $(ROOTDIR) && \
+	$(CVSCO) $(CVS_CO_DATE_FLAGS) mozilla/client.mk $(MOZCONFIG_MODULES)
+	@cd $(ROOTDIR) && $(MAKE) -f mozilla/client.mk real_l10n-checkout
 
-MOZCONFIG2CONFIGURATOR := build/autoconf/mozconfig2configurator
-webconfig:
-	@cd $(TOPSRCDIR); \
-	url=`$(MOZCONFIG2CONFIGURATOR) $(TOPSRCDIR)`; \
-	echo Running mozilla with the following url: ;\
-	echo ;\
-	echo $$url ;\
-	mozilla -remote "openURL($$url)" || \
-	netscape -remote "openURL($$url)" || \
-	mozilla $$url || \
-	netscape $$url ;\
-	echo ;\
-	echo   1. Fill out the form on the browser. ;\
-	echo   2. Save the results to $(WEBCONFIG_FILE)
+EN_US_CO_DIRS := $(sort $(foreach dir,$(LOCALE_DIRS),mozilla/$(dir)/locales)) \
+  $(foreach mod,$(MOZ_PROJECT_LIST),mozilla/$(mod)/config) \
+  mozilla/client.mk        \
+  $(MOZCONFIG_MODULES)     \
+  mozilla/configure        \
+  mozilla/configure.in     \
+  mozilla/allmakefiles.sh  \
+  mozilla/build            \
+  mozilla/config           \
+  $(NULL)
+
+EN_US_CO_FILES_NS :=          \
+  mozilla/toolkit/mozapps/installer \
+  $(NULL)
+
+#	Start the checkout. Split the output to the tty and a log file.
+real_l10n-checkout:
+	@set -e; \
+	cvs_co() { set -e; echo "$$@" ; \
+	  "$$@" 2>&1 | tee -a $(CVSCO_LOGFILE_L10N); }; \
+	cvs_co $(CVS) $(CVS_FLAGS) co $(MODULES_CO_FLAGS) $(CVS_CO_DATE_FLAGS) $(EN_US_CO_DIRS); \
+	cvs_co $(CVS) $(CVS_FLAGS) co $(MODULES_CO_FLAGS) $(CVS_CO_DATE_FLAGS) -l $(EN_US_CO_FILES_NS); \
+	cvs_co $(CVSCO_LOCALES)
+	@echo "checkout finish: "`date` | tee -a $(CVSCO_LOGFILE_L10N)
+#	@: Check the log for conflicts. ;
+	@conflicts=`egrep "^C " $(CVSCO_LOGFILE_L10N)` ;\
+	if test "$$conflicts" ; then \
+	  echo "$(MAKE): *** Conflicts during checkout." ;\
+	  echo "$$conflicts" ;\
+	  echo "$(MAKE): Refer to $(CVSCO_LOGFILE_L10N) for full log." ;\
+	  false; \
+	else true; \
+	fi
 
 #####################################################
 # First Checkout
@@ -701,12 +777,61 @@ else
 #####################################################
 # After First Checkout
 
+#####################################################
+# Build date unification
+
+ifdef MOZ_UNIFY_BDATE
+ifndef MOZ_BUILD_DATE
+ifdef MOZ_BUILD_PROJECTS
+MOZ_BUILD_DATE = $(shell $(PERL) -I$(TOPSRCDIR)/config $(TOPSRCDIR)/config/bdate.pl)
+export MOZ_BUILD_DATE
+endif
+endif
+endif
+
+#####################################################
+# Preflight, before building any project
+
+build profiledbuild alldep preflight_all::
+ifeq (,$(MOZ_CURRENT_PROJECT)$(if $(MOZ_PREFLIGHT_ALL),,1))
+# Don't run preflight_all for individual projects in multi-project builds
+# (when MOZ_CURRENT_PROJECT is set.)
+ifndef MOZ_BUILD_PROJECTS
+# Building a single project, OBJDIR is usable.
+	set -e; \
+	for mkfile in $(MOZ_PREFLIGHT_ALL); do \
+	  $(MAKE) -f $$mkfile preflight_all TOPSRCDIR=$(TOPSRCDIR) OBJDIR=$(OBJDIR) MOZ_OBJDIR=$(MOZ_OBJDIR); \
+	done
+else
+# OBJDIR refers to the project-specific OBJDIR, which is not available at
+# this point when building multiple projects.  Only MOZ_OBJDIR is available.
+	set -e; \
+	for mkfile in $(MOZ_PREFLIGHT_ALL); do \
+	  $(MAKE) -f $$mkfile preflight_all TOPSRCDIR=$(TOPSRCDIR) MOZ_OBJDIR=$(MOZ_OBJDIR) MOZ_BUILD_PROJECTS="$(MOZ_BUILD_PROJECTS)"; \
+	done
+endif
+endif
+
+# If we're building multiple projects, but haven't specified which project,
+# loop through them.
+
+ifeq (,$(MOZ_CURRENT_PROJECT)$(if $(MOZ_BUILD_PROJECTS),,1))
+configure depend build profiledbuild install export libs clean realclean distclean alldep preflight postflight::
+	set -e; \
+	for app in $(MOZ_BUILD_PROJECTS); do \
+	  $(MAKE) -f $(TOPSRCDIR)/client.mk $@ MOZ_CURRENT_PROJECT=$$app; \
+	done
+
+else
+
+# MOZ_CURRENT_PROJECT: either doing a single-project build, or building an
+# individual project in a multi-project build.
 
 ####################################
 # Configure
 
-CONFIG_STATUS := $(wildcard $(OBJDIR)/config.status)
-CONFIG_CACHE  := $(wildcard $(OBJDIR)/config.cache)
+CONFIG_STATUS = $(wildcard $(OBJDIR)/config.status)
+CONFIG_CACHE  = $(wildcard $(OBJDIR)/config.cache)
 
 ifdef RUN_AUTOCONF_LOCALLY
 EXTRA_CONFIG_DEPS := \
@@ -735,20 +860,23 @@ CONFIG_STATUS_DEPS := \
 #   $(TOPSRCDIR) will set @srcdir@ to "."; otherwise, it is set to the full
 #   path of $(TOPSRCDIR).
 ifeq ($(TOPSRCDIR),$(OBJDIR))
-  CONFIGURE := ./configure
+  CONFIGURE = ./configure
 else
-  CONFIGURE := $(TOPSRCDIR)/configure
+  CONFIGURE = $(TOPSRCDIR)/configure
 endif
 
 ifdef MOZ_TOOLS
-  CONFIGURE := $(TOPSRCDIR)/configure
+  CONFIGURE = $(TOPSRCDIR)/configure
 endif
 
-configure:
+configure::
+ifdef MOZ_BUILD_PROJECTS
+	@if test ! -d $(MOZ_OBJDIR); then $(MKDIR) $(MOZ_OBJDIR); else true; fi
+endif
 	@if test ! -d $(OBJDIR); then $(MKDIR) $(OBJDIR); else true; fi
 	@echo cd $(OBJDIR);
 	@echo $(CONFIGURE) $(CONFIGURE_ARGS)
-	@cd $(OBJDIR) && $(CONFIGURE_ENV_ARGS) $(CONFIGURE) $(CONFIGURE_ARGS) \
+	@cd $(OBJDIR) && $(BUILD_PROJECT_ARG) $(CONFIGURE_ENV_ARGS) $(CONFIGURE) $(CONFIGURE_ARGS) \
 	  || ( echo "*** Fix above errors and then restart with\
                \"$(MAKE) -f client.mk build\"" && exit 1 )
 	@touch $(OBJDIR)/Makefile
@@ -756,7 +884,7 @@ configure:
 $(OBJDIR)/Makefile $(OBJDIR)/config.status: $(CONFIG_STATUS_DEPS)
 	@$(MAKE) -f $(TOPSRCDIR)/client.mk configure
 
-ifdef CONFIG_STATUS
+ifneq (,$(CONFIG_STATUS))
 $(OBJDIR)/config/autoconf.mk: $(TOPSRCDIR)/config/autoconf.mk.in
 	cd $(OBJDIR); \
 	  CONFIG_FILES=config/autoconf.mk ./config.status
@@ -768,6 +896,17 @@ endif
 
 depend:: $(OBJDIR)/Makefile $(OBJDIR)/config.status
 	$(MOZ_MAKE) export && $(MOZ_MAKE) depend
+
+####################################
+# Preflight
+
+build profiledbuild alldep preflight::
+ifdef MOZ_PREFLIGHT
+	set -e; \
+	for mkfile in $(MOZ_PREFLIGHT); do \
+	  $(MAKE) -f $$mkfile preflight TOPSRCDIR=$(TOPSRCDIR) OBJDIR=$(OBJDIR) MOZ_OBJDIR=$(MOZ_OBJDIR); \
+	done
+endif
 
 ####################################
 # Build it
@@ -797,11 +936,44 @@ profiledbuild:: $(OBJDIR)/Makefile $(OBJDIR)/config.status
 install export libs clean realclean distclean alldep:: $(OBJDIR)/Makefile $(OBJDIR)/config.status
 	$(MOZ_MAKE) $@
 
+####################################
+# Postflight
+
+build profiledbuild alldep postflight::
+ifdef MOZ_POSTFLIGHT
+	set -e; \
+	for mkfile in $(MOZ_POSTFLIGHT); do \
+	  $(MAKE) -f $$mkfile postflight TOPSRCDIR=$(TOPSRCDIR) OBJDIR=$(OBJDIR) MOZ_OBJDIR=$(MOZ_OBJDIR); \
+	done
+endif
+
+endif # MOZ_CURRENT_PROJECT
+
+####################################
+# Postflight, after building all projects
+
+build profiledbuild alldep postflight_all::
+ifeq (,$(MOZ_CURRENT_PROJECT)$(if $(MOZ_POSTFLIGHT_ALL),,1))
+# Don't run postflight_all for individual projects in multi-project builds
+# (when MOZ_CURRENT_PROJECT is set.)
+ifndef MOZ_BUILD_PROJECTS
+# Building a single project, OBJDIR is usable.
+	set -e; \
+	for mkfile in $(MOZ_POSTFLIGHT_ALL); do \
+	  $(MAKE) -f $$mkfile postflight_all TOPSRCDIR=$(TOPSRCDIR) OBJDIR=$(OBJDIR) MOZ_OBJDIR=$(MOZ_OBJDIR); \
+	done
+else
+# OBJDIR refers to the project-specific OBJDIR, which is not available at
+# this point when building multiple projects.  Only MOZ_OBJDIR is available.
+	set -e; \
+	for mkfile in $(MOZ_POSTFLIGHT_ALL); do \
+	  $(MAKE) -f $$mkfile postflight_all TOPSRCDIR=$(TOPSRCDIR) MOZ_OBJDIR=$(MOZ_OBJDIR) MOZ_BUILD_PROJECTS="$(MOZ_BUILD_PROJECTS)"; \
+	done
+endif
+endif
+
 cleansrcdir:
 	@cd $(TOPSRCDIR); \
-        if [ -f webshell/embed/gtk/Makefile ]; then \
-          $(MAKE) -C webshell/embed/gtk distclean; \
-        fi; \
 	if [ -f Makefile ]; then \
 	  $(MAKE) distclean ; \
 	else \
@@ -818,4 +990,4 @@ endif
 echo_objdir:
 	@echo $(OBJDIR)
 
-.PHONY: checkout real_checkout depend build export libs alldep install clean realclean distclean cleansrcdir pull_all build_all clobber clobber_all pull_and_build_all everything configure
+.PHONY: checkout real_checkout depend build export libs alldep install clean realclean distclean cleansrcdir pull_all build_all clobber clobber_all pull_and_build_all everything configure preflight_all preflight postflight postflight_all

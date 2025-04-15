@@ -69,37 +69,51 @@ function showControls()
 
 function setLabelForNode(aNode, aLabel, aIsLabelFlag)
 {
-  // This is for labels with possible accesskeys
-  var accessKeyIndex;
-  if (/^\&[^\&]/.test(aLabel)) { // access key is at the start
-   accessKeyIndex = 0;
-  } else {
-    accessKeyIndex = aLabel.search(/[^\&]\&[^\&]/) + 1;
-    if (accessKeyIndex == 0) {
-      accessKeyIndex = -1; // magic value for no accesskey
-    }
+  // This is for labels which may contain embedded access keys.
+  // If we end in (&X) where X represents the access key, optionally preceded
+  // by spaces and/or followed by the ':' character, store the access key and
+  // remove the access key placeholder + leading spaces from the label.
+  // Otherwise a character preceded by one but not two &s is the access key.
+  // Store it and remove the &.
+
+  // Note that if you change the following code, see the comment of
+  // nsTextBoxFrame::UpdateAccessTitle.
+  var accessKey = null;
+  if (/ *\(\&([^&])\)(:)?$/.test(aLabel)) {
+    aLabel = RegExp.leftContext + RegExp.$2;
+    accessKey = RegExp.$1;
+  } else if (/^(.*[^&])?\&(([^&]).*$)/.test(aLabel)) {
+    aLabel = RegExp.$1 + RegExp.$2;
+    accessKey = RegExp.$3;
   }
 
-  // If a character has an & before it, then it should become an accesskey
-  if (accessKeyIndex >= 0 && accessKeyIndex < aLabel.length - 1) {
-    // This will also cause the accesskey attribute to be set via xbl
-    aNode.accessKey = aLabel.charAt(accessKeyIndex + 1);
-    // Set the label to the string without the &
-    aLabel = aLabel.substr(0, accessKeyIndex) + 
-             aLabel.substr(accessKeyIndex + 1);
-  }
+  // && is the magic sequence to embed an & in your label.
   aLabel = aLabel.replace(/\&\&/g, "&");
   if (aIsLabelFlag) {    // Set text for <label> element
     aNode.setAttribute("value", aLabel);
   } else {    // Set text for other xul elements
     aNode.label = aLabel;
   }
+
+  // XXXjag bug 325251
+  // Need to set this after aNode.setAttribute("value", aLabel);
+  if (accessKey)
+    aNode.accessKey = accessKey;
 }
 
 function commonDialogOnLoad()
 {
-  // set the document title
-  document.title = gCommonDialogParam.GetString(12);
+  // Set the document title. On Mac, we only care about URI's.
+  if (/Mac/.test(navigator.platform)) {
+    var titleString = gCommonDialogParam.GetString(12);
+    if (/^\w+:\/\/\w/.test(titleString)) {
+      setElementText("info.title", titleString, true);
+      unHideElementById("info.title"); // Show URI inside dialog.
+    }
+  }
+  else {
+    document.title = gCommonDialogParam.GetString(12);
+  }
 
   // set the number of command buttons
   var nButtons = gCommonDialogParam.GetInt(2);
@@ -165,10 +179,11 @@ function commonDialogOnLoad()
   {
     var dlgButtons = ['accept', 'cancel', 'extra1', 'extra2'];
 
-    // Set the default button and focus it
+    // Set the default button
     var dButton = dlgButtons[gCommonDialogParam.GetInt(5)];
     document.documentElement.defaultButton = dButton;
-    document.documentElement.getButton(dButton).focus();
+    if (!/Mac/.test(navigator.platform))
+      document.documentElement.getButton(dButton).focus();
   }
 
   if (gCommonDialogParam.GetInt(6) != 0) // delay button enable

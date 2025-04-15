@@ -1,6 +1,7 @@
-/Makefile.in/1.5/Sat Apr 17 18:32:29 2004//TFIREFOX_1_5_RELEASE
-/palm.html/1.5/Mon May 12 23:33:37 2003//TFIREFOX_1_5_RELEASE
-/palmsync.pkg/1.2/Wed Jan  7 01:21:53 2004//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.5.28.2/Wed Jan 25 05:21:02 2006//TFIREFOX_2_0_RELEASE
+/install.rdf/1.1.2.1/Tue Jan 24 00:35:47 2006//TFIREFOX_2_0_RELEASE
+/palmsync.js/1.1.2.1/Tue Jan 24 00:35:47 2006//TFIREFOX_2_0_RELEASE
+/palmsync.pkg/1.2/Wed Jan  7 01:21:53 2004//TFIREFOX_2_0_RELEASE
 D/build////
 D/conduit////
 D/public////

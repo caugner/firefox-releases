@@ -290,6 +290,7 @@ nsAuthSSPI::GetNextToken(const void *inToken,
                          PRUint32   *outTokenLen)
 {
     SECURITY_STATUS rc;
+    TimeStamp ignored;
 
     DWORD ctxAttr, ctxReq = 0;
     CtxtHandle *ctxIn;
@@ -354,8 +355,12 @@ nsAuthSSPI::GetNextToken(const void *inToken,
                                            &mCtxt,
                                            &obd,
                                            &ctxAttr,
-                                           NULL);
+                                           &ignored);
     if (rc == SEC_I_CONTINUE_NEEDED || rc == SEC_E_OK) {
+        if (!ob.cbBuffer) {
+            nsMemory::Free(ob.pvBuffer);
+            ob.pvBuffer = NULL;
+        }
         *outToken = ob.pvBuffer;
         *outTokenLen = ob.cbBuffer;
 
@@ -389,6 +394,9 @@ nsAuthSSPI::Unwrap(const void *inToken,
     ib[0].BufferType = SECBUFFER_STREAM;
     ib[0].cbBuffer = inTokenLen;
     ib[0].pvBuffer = nsMemory::Alloc(ib[0].cbBuffer);
+    if (!ib[0].pvBuffer)
+        return NS_ERROR_OUT_OF_MEMORY;
+    
     memcpy(ib[0].pvBuffer, inToken, inTokenLen);
 
     // app data
@@ -412,7 +420,10 @@ nsAuthSSPI::Unwrap(const void *inToken,
 
     nsMemory::Free(ib[0].pvBuffer);
 
-    return rc;
+    if (!SEC_SUCCESS(rc))
+        return NS_ERROR_FAILURE;
+
+    return NS_OK;
 }
 
 // utility class used to free memory on exit
@@ -456,7 +467,7 @@ nsAuthSSPI::Wrap(const void *inToken,
          &sizes);
 
     if (!SEC_SUCCESS(rc))  
-        return rc;
+        return NS_ERROR_FAILURE;
     
     ibd.cBuffers = 3;
     ibd.pBuffers = bufs.ib;
@@ -494,20 +505,24 @@ nsAuthSSPI::Wrap(const void *inToken,
 
     if (SEC_SUCCESS(rc)) {
         int len  = bufs.ib[0].cbBuffer + bufs.ib[1].cbBuffer + bufs.ib[2].cbBuffer;
+        char *p = (char *) nsMemory::Alloc(len);
 
-        *outToken = nsMemory::Alloc(len);
-
-        if (!*outToken)
+        if (!p)
             return NS_ERROR_OUT_OF_MEMORY;
+				
+        *outToken = (void *) p;
+        *outTokenLen = len;
 
-        memcpy(outToken, bufs.ib[0].pvBuffer, bufs.ib[0].cbBuffer);
+        memcpy(p, bufs.ib[0].pvBuffer, bufs.ib[0].cbBuffer);
+        p += bufs.ib[0].cbBuffer;
 
-        memcpy(outToken + bufs.ib[0].cbBuffer,
-               bufs.ib[1].pvBuffer, bufs.ib[1].cbBuffer);
+        memcpy(p,bufs.ib[1].pvBuffer, bufs.ib[1].cbBuffer);
+        p += bufs.ib[1].cbBuffer;
 
-        memcpy(outToken + bufs.ib[0].cbBuffer + bufs.ib[1].cbBuffer,
-               bufs.ib[2].pvBuffer, bufs.ib[2].cbBuffer);
+        memcpy(p,bufs.ib[2].pvBuffer, bufs.ib[2].cbBuffer);
+        
+        return NS_OK;
     }
 
-    return rc;
+    return NS_ERROR_FAILURE;
 }

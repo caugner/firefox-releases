@@ -103,8 +103,13 @@ nsPopupBoxObject::HidePopup()
   nsIFrame* ourFrame = GetFrame();
   if (!ourFrame)
     return NS_OK;
+
+  nsCOMPtr<nsIPresShell> shell = GetPresShell();
+  if (!shell) {
+    return NS_OK;
+  }
   
-  nsIFrame* rootFrame = mPresShell->FrameManager()->GetRootFrame();
+  nsIFrame* rootFrame = shell->FrameManager()->GetRootFrame();
   if (!rootFrame)
     return NS_OK;
 
@@ -112,7 +117,8 @@ nsPopupBoxObject::HidePopup()
     rootFrame = rootFrame->GetFirstChild(nsnull);
   }
 
-  nsCOMPtr<nsIRootBox> rootBox(do_QueryInterface(rootFrame));
+  nsIRootBox* rootBox = nsnull;
+  CallQueryInterface(rootFrame, &rootBox);
   if (!rootBox)
     return NS_OK;
 
@@ -121,12 +127,17 @@ nsPopupBoxObject::HidePopup()
   if (!popupSetFrame)
     return NS_OK;
 
-  nsCOMPtr<nsIPopupSetFrame> popupSet(do_QueryInterface(popupSetFrame));
+  nsIPopupSetFrame* popupSet = nsnull;
+  CallQueryInterface(popupSetFrame, &popupSet);
   if (!popupSet)
     return NS_OK;
 
+  nsWeakFrame weakOurFrame(ourFrame);
+  nsWeakFrame weakPopupSetFrame(popupSetFrame);
   popupSet->HidePopup(ourFrame);
-  popupSet->DestroyPopup(ourFrame, PR_TRUE);
+  if (weakOurFrame.IsAlive() && weakPopupSetFrame.IsAlive()) {
+    popupSet->DestroyPopup(ourFrame, PR_TRUE);
+  }
 
   return NS_OK;
 }
@@ -138,7 +149,12 @@ nsPopupBoxObject::ShowPopup(nsIDOMElement* aSrcContent,
                             const PRUnichar *aPopupType, const PRUnichar *anAnchorAlignment, 
                             const PRUnichar *aPopupAlignment)
 {
-  nsIFrame* rootFrame = mPresShell->FrameManager()->GetRootFrame();
+  nsCOMPtr<nsIPresShell> shell = GetPresShell();
+  if (!shell) {
+    return NS_OK;
+  }
+  
+  nsIFrame* rootFrame = shell->FrameManager()->GetRootFrame();
   if (!rootFrame)
     return NS_OK;
 
@@ -146,7 +162,8 @@ nsPopupBoxObject::ShowPopup(nsIDOMElement* aSrcContent,
     rootFrame = rootFrame->GetFirstChild(nsnull);
   }
 
-  nsCOMPtr<nsIRootBox> rootBox(do_QueryInterface(rootFrame));
+  nsIRootBox* rootBox = nsnull;
+  CallQueryInterface(rootFrame, &rootBox);
   if (!rootBox)
     return NS_OK;
 
@@ -155,7 +172,8 @@ nsPopupBoxObject::ShowPopup(nsIDOMElement* aSrcContent,
   if (!popupSetFrame)
     return NS_OK;
 
-  nsCOMPtr<nsIPopupSetFrame> popupSet(do_QueryInterface(popupSetFrame));
+  nsIPopupSetFrame* popupSet = nsnull;
+  CallQueryInterface(popupSetFrame, &popupSet);
   if (!popupSet)
     return NS_OK;
 

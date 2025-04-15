@@ -585,8 +585,25 @@ nsAppStartup::CreateStartupState(PRInt32 aWindowWidth, PRInt32 aWindowHeight,
                                  PRBool *_retval)
 {
   NS_ENSURE_ARG_POINTER(_retval);
+  *_retval = PR_FALSE;
   nsresult rv;
   
+  // If starting up in server mode, then we do things differently.
+  nsCOMPtr<nsINativeAppSupport> nativeApp;
+  rv = GetNativeAppSupport(getter_AddRefs(nativeApp));
+  if (NS_SUCCEEDED(rv)) {
+      PRBool isServerMode = PR_FALSE;
+      nativeApp->GetIsServerMode(&isServerMode);
+      if (isServerMode) {
+          nativeApp->StartServerMode();
+      }
+      PRBool shouldShowUI = PR_TRUE;
+      nativeApp->GetShouldShowUI(&shouldShowUI);
+      if (!shouldShowUI) {
+          return NS_OK;
+      }
+  }  
+
   nsCOMPtr<nsIPrefService> prefService(do_GetService(NS_PREFSERVICE_CONTRACTID));
   if (!prefService)
     return NS_ERROR_FAILURE;
@@ -603,8 +620,8 @@ nsAppStartup::CreateStartupState(PRInt32 aWindowWidth, PRInt32 aWindowHeight,
     
   for (PRUint32 i = 0; i < childCount; i++) {
     PRBool prefValue;
-    startupBranch->GetBoolPref(childArray[i], &prefValue);
-    if (prefValue) {
+    rv = startupBranch->GetBoolPref(childArray[i], &prefValue);
+    if (NS_SUCCEEDED(rv) && prefValue) {
       PRBool windowOpened;
       rv = LaunchTask(childArray[i], aWindowHeight, aWindowWidth, &windowOpened);
       if (NS_SUCCEEDED(rv) && windowOpened)
@@ -622,23 +639,7 @@ NS_IMETHODIMP
 nsAppStartup::Ensure1Window(nsICmdLineService *aCmdLineService)
 {
   nsresult rv;
-
-  // If starting up in server mode, then we do things differently.
-  nsCOMPtr<nsINativeAppSupport> nativeApp;
-  rv = GetNativeAppSupport(getter_AddRefs(nativeApp));
-  if (NS_SUCCEEDED(rv)) {
-      PRBool isServerMode = PR_FALSE;
-      nativeApp->GetIsServerMode(&isServerMode);
-      if (isServerMode) {
-          nativeApp->StartServerMode();
-      }
-      PRBool shouldShowUI = PR_TRUE;
-      nativeApp->GetShouldShowUI(&shouldShowUI);
-      if (!shouldShowUI) {
-          return NS_OK;
-      }
-  }
-  
+ 
   nsCOMPtr<nsIWindowMediator> windowMediator(do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv));
   if (NS_FAILED(rv))
     return rv;
@@ -806,8 +807,6 @@ nsAppStartup::OpenBrowserWindow(PRInt32 height, PRInt32 width)
 
   nsXPIDLCString urlToLoad;
   rv = cmdLine->GetURLToLoad(getter_Copies(urlToLoad));
-  if (NS_FAILED(rv)) return rv;
-
   if (!urlToLoad.IsEmpty()) {
 
 #ifdef DEBUG_CMD_LINE

@@ -132,6 +132,11 @@
 // Printing
 #include "nsIWebBrowserPrint.h"
 
+#include "imgIContainer.h" // image animation mode constants
+
+#include "nsIPrompt.h"
+#include "nsIWindowWatcher.h"
+
 //--------------------------
 // Printing Include
 //---------------------------
@@ -162,16 +167,9 @@ static const char sPrintOptionsContractID[]         = "@mozilla.org/gfx/printset
 #include "nsIDOMHTMLObjectElement.h"
 #include "nsIPluginDocument.h"
 
-// Print Preview
-#include "imgIContainer.h" // image animation mode constants
-
 // Print Progress
 #include "nsIPrintProgress.h"
 #include "nsIPrintProgressParams.h"
-
-// Print error dialog
-#include "nsIPrompt.h"
-#include "nsIWindowWatcher.h"
 
 // Printing 
 #include "nsPrintEngine.h"
@@ -300,6 +298,7 @@ private:
 
 //-------------------------------------------------------------
 class DocumentViewerImpl : public nsIDocumentViewer,
+                           public nsIContentViewer_MOZILLA_1_8_BRANCH,
                            public nsIContentViewerEdit,
                            public nsIContentViewerFile,
                            public nsIMarkupDocumentViewer,
@@ -320,6 +319,7 @@ public:
 
   // nsIContentViewer interface...
   NS_DECL_NSICONTENTVIEWER
+  NS_DECL_NSICONTENTVIEWER_MOZILLA_1_8_BRANCH
 
   // nsIDocumentViewer interface...
   NS_IMETHOD SetUAStyleSheet(nsIStyleSheet* aUAStyleSheet);
@@ -509,8 +509,9 @@ DocumentViewerImpl::DocumentViewerImpl(nsPresContext* aPresContext)
   PrepareToStartLoad();
 }
 
-NS_IMPL_ISUPPORTS7(DocumentViewerImpl,
+NS_IMPL_ISUPPORTS8(DocumentViewerImpl,
                    nsIContentViewer,
+                   nsIContentViewer_MOZILLA_1_8_BRANCH,
                    nsIDocumentViewer,
                    nsIMarkupDocumentViewer,
                    nsIContentViewerFile,
@@ -553,7 +554,7 @@ DocumentViewerImpl::LoadStart(nsISupports *aDoc)
   printf("DocumentViewerImpl::LoadStart\n");
 #endif
 
-  nsresult rv;
+  nsresult rv = NS_OK;
   if (!mDocument) {
     mDocument = do_QueryInterface(aDoc, &rv);
   }
@@ -1094,14 +1095,14 @@ DocumentViewerImpl::PermitUnload(PRBool *aPermitUnload)
   nsBeforePageUnloadEvent event(PR_TRUE, NS_BEFORE_PAGE_UNLOAD);
   nsresult rv = NS_OK;
 
+  // In evil cases we might be destroyed while handling the
+  // onbeforeunload event, don't let that happen. (see also bug#331040)
+  nsRefPtr<DocumentViewerImpl> kungFuDeathGrip(this);
+
   {
     // Never permit popups from the beforeunload handler, no matter
     // how we get here.
     nsAutoPopupStatePusher popupStatePusher(openAbused, PR_TRUE);
-
-    // In evil cases we might be destroyed while handling the
-    // onbeforeunload event, don't let that happen.
-    nsRefPtr<DocumentViewerImpl> kungFuDeathGrip(this);
 
     mInPermitUnload = PR_TRUE;
     rv = global->HandleDOMEvent(mPresContext, &event, nsnull,
@@ -1184,6 +1185,9 @@ DocumentViewerImpl::PageHide(PRBool aIsUnload)
   if (!aIsUnload)
     return NS_OK;
 
+  // if Destroy() was called during OnPageHide(), mDocument is nsnull.
+  NS_ENSURE_STATE(mDocument);
+
   // First, get the script global object from the document...
   nsIScriptGlobalObject *global = mDocument->GetScriptGlobalObject();
 
@@ -1205,8 +1209,52 @@ DocumentViewerImpl::PageHide(PRBool aIsUnload)
                                 NS_EVENT_FLAG_INIT, &status);
 }
 
+static void
+AttachContainerRecurse(nsIDocShell* aShell)
+{
+  nsCOMPtr<nsIContentViewer> viewer;
+  aShell->GetContentViewer(getter_AddRefs(viewer));
+  nsCOMPtr<nsIDocumentViewer> docViewer = do_QueryInterface(viewer);
+  if (docViewer) {
+    nsCOMPtr<nsIDocument> doc;
+    docViewer->GetDocument(getter_AddRefs(doc));
+    if (doc) {
+      doc->SetContainer(aShell);
+    }
+    nsCOMPtr<nsPresContext> pc;
+    docViewer->GetPresContext(getter_AddRefs(pc));
+    if (pc) {
+      pc->SetContainer(aShell);
+      pc->SetLinkHandler(nsCOMPtr<nsILinkHandler>(do_QueryInterface(aShell)));
+    }
+    nsCOMPtr<nsIPresShell> presShell;
+    docViewer->GetPresShell(getter_AddRefs(presShell));
+    if (presShell) {
+      presShell->SetForwardingContainer(nsnull);
+    }
+  }
+
+  // Now recurse through the children
+  nsCOMPtr<nsIDocShellTreeNode> node = do_QueryInterface(aShell);
+  NS_ASSERTION(node, "docshells must implement nsIDocShellTreeNode");
+
+  PRInt32 childCount;
+  node->GetChildCount(&childCount);
+  for (PRInt32 i = 0; i < childCount; ++i) {
+    nsCOMPtr<nsIDocShellTreeItem> childItem;
+    node->GetChildAt(i, getter_AddRefs(childItem));
+    AttachContainerRecurse(nsCOMPtr<nsIDocShell>(do_QueryInterface(childItem)));
+  }
+}
+
 NS_IMETHODIMP
 DocumentViewerImpl::Open(nsISupports *aState)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+DocumentViewerImpl::OpenWithEntry(nsISupports *aState, nsISHEntry *aSHEntry)
 {
   NS_ENSURE_TRUE(mPresShell, NS_ERROR_NOT_INITIALIZED);
 
@@ -1229,6 +1277,16 @@ DocumentViewerImpl::Open(nsISupports *aState)
   if (mPresShell)
     mPresShell->SetForwardingContainer(nsnull);
 
+  // Rehook the child presentations.  The child shells are still in
+  // session history, so get them from there.
+
+  nsCOMPtr<nsIDocShellTreeItem> item;
+  PRInt32 itemIndex = 0;
+  while (NS_SUCCEEDED(aSHEntry->ChildShellAt(itemIndex++,
+                                             getter_AddRefs(item))) && item) {
+    AttachContainerRecurse(nsCOMPtr<nsIDocShell>(do_QueryInterface(item)));
+  }
+  
   SyncParentSubDocMap();
 
   // XXX re-enable image animations once that works correctly
@@ -1294,6 +1352,45 @@ DocumentViewerImpl::Close(nsISHEntry *aSHEntry)
   }
 
   return NS_OK;
+}
+
+static void
+DetachContainerRecurse(nsIDocShell *aShell)
+{
+  // Unhook this docshell's presentation
+  nsCOMPtr<nsIContentViewer> viewer;
+  aShell->GetContentViewer(getter_AddRefs(viewer));
+  nsCOMPtr<nsIDocumentViewer> docViewer = do_QueryInterface(viewer);
+  if (docViewer) {
+    nsCOMPtr<nsIDocument> doc;
+    docViewer->GetDocument(getter_AddRefs(doc));
+    if (doc) {
+      doc->SetContainer(nsnull);
+    }
+    nsCOMPtr<nsPresContext> pc;
+    docViewer->GetPresContext(getter_AddRefs(pc));
+    if (pc) {
+      pc->SetContainer(nsnull);
+      pc->SetLinkHandler(nsnull);
+    }
+    nsCOMPtr<nsIPresShell> presShell;
+    docViewer->GetPresShell(getter_AddRefs(presShell));
+    if (presShell) {
+      presShell->SetForwardingContainer(nsWeakPtr(do_GetWeakReference(aShell)));
+    }
+  }
+
+  // Now recurse through the children
+  nsCOMPtr<nsIDocShellTreeNode> node = do_QueryInterface(aShell);
+  NS_ASSERTION(node, "docshells must implement nsIDocShellTreeNode");
+
+  PRInt32 childCount;
+  node->GetChildCount(&childCount);
+  for (PRInt32 i = 0; i < childCount; ++i) {
+    nsCOMPtr<nsIDocShellTreeItem> childItem;
+    node->GetChildAt(i, getter_AddRefs(childItem));
+    DetachContainerRecurse(nsCOMPtr<nsIDocShell>(do_QueryInterface(childItem)));
+  }
 }
 
 NS_IMETHODIMP
@@ -1375,6 +1472,7 @@ DocumentViewerImpl::Destroy()
     else {
       mSHEntry->SyncPresentationState();
     }
+    nsCOMPtr<nsISHEntry> shEntry = mSHEntry; // we'll need this below
     mSHEntry = nsnull;
 
     // Break the link from the document/presentation to the docshell, so that
@@ -1390,6 +1488,15 @@ DocumentViewerImpl::Destroy()
     }
     if (mPresShell)
       mPresShell->SetForwardingContainer(mContainer);
+
+    // Do the same for our children.  Note that we need to get the child
+    // docshells from the SHEntry now; the docshell will have cleared them.
+    nsCOMPtr<nsIDocShellTreeItem> item;
+    PRInt32 itemIndex = 0;
+    while (NS_SUCCEEDED(shEntry->ChildShellAt(itemIndex++,
+                                              getter_AddRefs(item))) && item) {
+      DetachContainerRecurse(nsCOMPtr<nsIDocShell>(do_QueryInterface(item)));
+    }
 
     return NS_OK;
   }
@@ -1512,6 +1619,18 @@ DocumentViewerImpl::SetDOMDocument(nsIDOMDocument *aDocument)
     nsCOMPtr<nsIScriptGlobalObject> global = do_GetInterface(container);
     if (global) {
       global->SetNewDocument(aDocument, nsnull, PR_TRUE, PR_TRUE);
+    }
+
+    // Clear the list of old child docshells.
+    nsCOMPtr<nsIDocShellTreeNode> node = do_QueryInterface(container);
+    if (node) {
+      PRInt32 count;
+      node->GetChildCount(&count);
+      for (PRInt32 i = 0; i < count; ++i) {
+        nsCOMPtr<nsIDocShellTreeItem> child;
+        node->GetChildAt(0, getter_AddRefs(child));
+        node->RemoveChild(child);
+      }
     }
   }
 
@@ -2465,8 +2584,12 @@ DocumentViewerImpl::Print(PRBool            aSilent,
 NS_IMETHODIMP 
 DocumentViewerImpl::PrintWithParent(nsIDOMWindowInternal *aParentWin, nsIPrintSettings *aThePrintSettings, nsIWebProgressListener *aWPListener)
 {
+#ifdef NS_PRINTING
   mDialogParentWin = aParentWin;
   return Print(aThePrintSettings, aWPListener);
+#else
+  return NS_ERROR_FAILURE;
+#endif
 }
 
 // nsIContentViewerFile interface
@@ -2904,13 +3027,7 @@ NS_IMETHODIMP DocumentViewerImpl::GetBidiCharacterSet(PRUint8* aCharacterSet)
 NS_IMETHODIMP DocumentViewerImpl::SetBidiOptions(PRUint32 aBidiOptions)
 {
   if (mPresContext) {
-#if 1
-    // forcing reflow will cause bug 80352. Temp turn off force reflow and
-    // wait for simon@softel.co.il to find the real solution
-    mPresContext->SetBidi(aBidiOptions, PR_FALSE);
-#else
-    mPresContext->SetBidi(aBidiOptions, PR_TRUE); // force reflow
-#endif
+    mPresContext->SetBidi(aBidiOptions, PR_TRUE); // could cause reflow
   }
   // now set bidi on all children of mContainer
   CallChildren(SetChildBidiOptions, (void*) aBidiOptions);
@@ -3203,7 +3320,9 @@ NS_IMETHODIMP nsDocViewerSelectionListener::NotifySelectionChanged(nsIDOMDocumen
 }
 
 //nsDocViewerFocusListener
-NS_IMPL_ISUPPORTS1(nsDocViewerFocusListener, nsIDOMFocusListener)
+NS_IMPL_ISUPPORTS2(nsDocViewerFocusListener,
+                   nsIDOMFocusListener,
+                   nsIDOMEventListener)
 
 nsDocViewerFocusListener::nsDocViewerFocusListener()
 :mDocViewer(nsnull)
@@ -3233,8 +3352,7 @@ nsDocViewerFocusListener::Focus(nsIDOMEvent* aEvent)
   PRInt16 selectionStatus;
   selCon->GetDisplaySelection(&selectionStatus);
 
-  //if selection was nsISelectionController::SELECTION_OFF, do nothing
-  //otherwise re-enable it.
+  // If selection was disabled, re-enable it.
   if(selectionStatus == nsISelectionController::SELECTION_DISABLED ||
      selectionStatus == nsISelectionController::SELECTION_HIDDEN)
   {
@@ -3259,9 +3377,9 @@ nsDocViewerFocusListener::Blur(nsIDOMEvent* aEvent)
   PRInt16 selectionStatus;
   selCon->GetDisplaySelection(&selectionStatus);
 
-  //if selection was nsISelectionController::SELECTION_OFF, do nothing
-  //otherwise re-enable it.
-  if(selectionStatus == nsISelectionController::SELECTION_ON)
+  // If selection was on, disable it.
+  if(selectionStatus == nsISelectionController::SELECTION_ON ||
+     selectionStatus == nsISelectionController::SELECTION_ATTENTION)
   {
     selCon->SetDisplaySelection(nsISelectionController::SELECTION_DISABLED);
     selCon->RepaintSelection(nsISelectionController::SELECTION_NORMAL);

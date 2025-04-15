@@ -42,7 +42,7 @@
 #include "nsReflowType.h"
 class nsHTMLReflowCommand;
 class nsIAtom;
-class nsINodeInfo;
+class nsNodeInfoManager;
 class nsIContent;
 class nsIContentIterator;
 class nsIDocument;
@@ -89,7 +89,8 @@ NS_NewBlockFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame,
 
 // Special Generated Content Frame
 nsresult
-NS_NewAttributeContent(PRInt32 aNameSpaceID, nsIAtom* aAttrName,
+NS_NewAttributeContent(nsNodeInfoManager *aNodeInfoManager,
+                       PRInt32 aNameSpaceID, nsIAtom* aAttrName,
                        nsIContent** aResult);
 
 // Create a basic area frame but the GetFrameForPoint is overridden to always
@@ -259,4 +260,10 @@ NS_NewHTMLFragmentContentSink(nsIFragmentContentSink** aInstancePtrResult);
 nsresult
 NS_NewHTMLFragmentContentSink2(nsIFragmentContentSink** aInstancePtrResult);
 
+// This strips all but a whitelist of elements and attributes defined
+// in nsContentSink.h
+nsresult
+NS_NewHTMLParanoidFragmentSink(nsIFragmentContentSink** aInstancePtrResult);
+void
+NS_HTMLParanoidFragmentSinkShutdown();
 #endif /* nsHTMLParts_h___ */

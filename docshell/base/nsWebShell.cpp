@@ -528,6 +528,7 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
 
   switch(aVerb) {
     case eLinkVerb_New:
+      NS_ASSERTION(target.IsEmpty(), "Losing window name information");
       target.AssignLiteral("_blank");
       // Fall into replace case
     case eLinkVerb_Undefined:
@@ -696,12 +697,17 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
       //
       // First try keyword fixup
       //
-      if (aStatus == NS_ERROR_UNKNOWN_HOST)  
+      if (aStatus == NS_ERROR_UNKNOWN_HOST && mAllowKeywordFixup)
       {
         PRBool keywordsEnabled = PR_FALSE;
 
         if (mPrefs && NS_FAILED(mPrefs->GetBoolPref("keyword.enabled", &keywordsEnabled)))
             keywordsEnabled = PR_FALSE;
+
+        nsCOMPtr<nsIURIFixup_MOZILLA_1_8_BRANCH> uriFix =
+          do_QueryInterface(sURIFixup);
+        if (!uriFix)
+          keywordsEnabled = PR_FALSE;
 
         nsCAutoString host;
         url->GetHost(host);
@@ -727,7 +733,6 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
 
         if(keywordsEnabled && (kNotFound == dotLoc)) {
           // only send non-qualified hosts to the keyword server
-          nsCAutoString keywordSpec("keyword:");
           //
           // If this string was passed through nsStandardURL by chance, then it
           // may have been converted from UTF-8 to ACE, which would result in a
@@ -745,12 +750,9 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
           if (idnSrv &&
               NS_SUCCEEDED(idnSrv->IsACE(host, &isACE)) && isACE &&
               NS_SUCCEEDED(idnSrv->ConvertACEtoUTF8(host, utf8Host)))
-            keywordSpec.Append(utf8Host);
+            uriFix->KeywordToURI(utf8Host, getter_AddRefs(newURI));
           else
-            keywordSpec.Append(host);
-
-          NS_NewURI(getter_AddRefs(newURI),
-                    keywordSpec, nsnull);
+            uriFix->KeywordToURI(host, getter_AddRefs(newURI));
         } // end keywordsEnabled
       }
 

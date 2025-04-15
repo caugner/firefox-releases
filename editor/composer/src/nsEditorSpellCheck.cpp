@@ -24,6 +24,7 @@
  *      Akkana Peck <akkana@netscape.com>
  *      Charley Manske <cmanske@netscape.com>
  *      Neil Deakin <neil@mozdevgroup.com>
+ *      Brett Wilson <brettw@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -58,7 +59,9 @@
 #include "nsReadableUtils.h"
 #include "nsITextServicesFilter.h"
 
-NS_IMPL_ISUPPORTS1(nsEditorSpellCheck, nsIEditorSpellCheck)
+NS_IMPL_ISUPPORTS2(nsEditorSpellCheck,
+                   nsIEditorSpellCheck,
+                   nsIEditorSpellCheck_MOZILLA_1_8_BRANCH)
 
 nsEditorSpellCheck::nsEditorSpellCheck()
   : mSuggestedWordIndex(0)
@@ -71,6 +74,30 @@ nsEditorSpellCheck::~nsEditorSpellCheck()
   // Make sure we blow the spellchecker away, just in
   // case it hasn't been destroyed already.
   mSpellChecker = nsnull;
+}
+
+// The problem is that if the spell checker does not exist, we can not tell
+// which dictionaries are installed. This function works around the problem,
+// allowing callers to ask if we can spell check without actually doing so (and
+// enabling or disabling UI as necessary). This just creates a spellcheck
+// object if needed and asks it for the dictionary list.
+NS_IMETHODIMP
+nsEditorSpellCheck::CanSpellCheck(PRBool* _retval)
+{
+  nsresult rv;
+  nsCOMPtr<nsISpellChecker> spellChecker;
+  if (! mSpellChecker) {
+    spellChecker = do_CreateInstance(NS_SPELLCHECKER_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+  } else {
+    spellChecker = mSpellChecker;
+  }
+  nsStringArray dictList;
+  rv = spellChecker->GetDictionaryList(&dictList);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *_retval = (dictList.Count() > 0);
+  return NS_OK;
 }
 
 NS_IMETHODIMP    
@@ -156,17 +183,19 @@ nsEditorSpellCheck::InitSpellChecker(nsIEditor* aEditor, PRBool aEnableSelection
   nsCOMPtr<nsIPrefBranch> prefBranch =
     do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
 
+  PRBool hasPreference = PR_FALSE;
   if (NS_SUCCEEDED(rv) && prefBranch) {
     nsCOMPtr<nsISupportsString> prefString;
     rv = prefBranch->GetComplexValue("spellchecker.dictionary",
                                      NS_GET_IID(nsISupportsString),
                                      getter_AddRefs(prefString));
-    if (prefString) {
+    if (NS_SUCCEEDED(rv) && prefString) {
+      hasPreference = PR_TRUE;
       prefString->ToString(getter_Copies(dictName));
     }
   }
 
-  if (NS_FAILED(rv) || dictName.IsEmpty())
+  if (! hasPreference || dictName.IsEmpty())
   {
     // Prefs didn't give us a dictionary name, so just get the current
     // locale and use that as the default dictionary name!
@@ -182,8 +211,29 @@ nsEditorSpellCheck::InitSpellChecker(nsIEditor* aEditor, PRBool aEnableSelection
     }
   }
 
-  if (NS_SUCCEEDED(rv) && !dictName.IsEmpty())
-    SetCurrentDictionary(dictName.get());
+  PRBool setDictionary = PR_FALSE;
+  if (NS_SUCCEEDED(rv) && !dictName.IsEmpty()) {
+    rv = SetCurrentDictionary(dictName.get());
+    if (NS_SUCCEEDED(rv))
+      setDictionary = PR_TRUE;
+  }
+
+  // If there was no preference and setting it to the locale dictionary didn't
+  // work, try to use the first dictionary we find. This helps when the first
+  // dictionary is installed - it will get set as the default. If there was
+  // a preference but we can't set the dictionary to that preference, don't do
+  // anything. If the user's selected dictionary went missing, we don't want to
+  // set it to a random dictionary.
+  if (! hasPreference && ! setDictionary) {
+    nsStringArray dictList;
+    rv = mSpellChecker->GetDictionaryList(&dictList);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (dictList.Count() > 0) {
+      rv = SetCurrentDictionary(dictList[0]->get());
+      if (NS_SUCCEEDED(rv))
+        SaveDefaultDictionary();
+    }
+  }
 
   // If an error was thrown while checking the dictionary pref, just
   // fail silently so that the spellchecker dialog is allowed to come
@@ -199,7 +249,7 @@ NS_IMETHODIMP
 nsEditorSpellCheck::GetNextMisspelledWord(PRUnichar **aNextMisspelledWord)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   nsAutoString nextMisspelledWord;
   
@@ -233,7 +283,7 @@ nsEditorSpellCheck::CheckCurrentWord(const PRUnichar *aSuggestedWord,
                                      PRBool *aIsMisspelled)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   DeleteSuggestedWordList();
   return mSpellChecker->CheckWord(nsDependentString(aSuggestedWord),
@@ -245,7 +295,7 @@ nsEditorSpellCheck::CheckCurrentWordNoSuggest(const PRUnichar *aSuggestedWord,
                                               PRBool *aIsMisspelled)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   return mSpellChecker->CheckWord(nsDependentString(aSuggestedWord),
                                   aIsMisspelled, nsnull);
@@ -257,7 +307,7 @@ nsEditorSpellCheck::ReplaceWord(const PRUnichar *aMisspelledWord,
                                 PRBool           allOccurrences)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   return mSpellChecker->Replace(nsDependentString(aMisspelledWord),
                                 nsDependentString(aReplaceWord), allOccurrences);
@@ -267,7 +317,7 @@ NS_IMETHODIMP
 nsEditorSpellCheck::IgnoreWordAllOccurrences(const PRUnichar *aWord)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   return mSpellChecker->IgnoreAll(nsDependentString(aWord));
 }
@@ -276,7 +326,7 @@ NS_IMETHODIMP
 nsEditorSpellCheck::GetPersonalDictionary()
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
    // We can spell check with any editor type
   mDictionaryList.Clear();
@@ -305,7 +355,7 @@ NS_IMETHODIMP
 nsEditorSpellCheck::AddWordToDictionary(const PRUnichar *aWord)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   return mSpellChecker->AddWordToPersonalDictionary(nsDependentString(aWord));
 }
@@ -314,7 +364,7 @@ NS_IMETHODIMP
 nsEditorSpellCheck::RemoveWordFromDictionary(const PRUnichar *aWord)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   return mSpellChecker->RemoveWordFromPersonalDictionary(nsDependentString(aWord));
 }
@@ -323,7 +373,7 @@ NS_IMETHODIMP
 nsEditorSpellCheck::GetDictionaryList(PRUnichar ***aDictionaryList, PRUint32 *aCount)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   if (!aDictionaryList || !aCount)
     return NS_ERROR_NULL_POINTER;
@@ -382,7 +432,7 @@ NS_IMETHODIMP
 nsEditorSpellCheck::GetCurrentDictionary(PRUnichar **aDictionary)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   if (!aDictionary)
     return NS_ERROR_NULL_POINTER;
@@ -402,7 +452,7 @@ NS_IMETHODIMP
 nsEditorSpellCheck::SetCurrentDictionary(const PRUnichar *aDictionary)
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
   if (!aDictionary)
     return NS_ERROR_NULL_POINTER;
@@ -414,9 +464,25 @@ NS_IMETHODIMP
 nsEditorSpellCheck::UninitSpellChecker()
 {
   if (!mSpellChecker)
-    return NS_NOINTERFACE;
+    return NS_ERROR_NOT_INITIALIZED;
 
-  // Save the last used dictionary to the user's preferences.
+  // we preserve the last selected language, but ignore errors so we continue
+  // to uninitialize
+  nsresult rv = SaveDefaultDictionary();
+  NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "failed to set default dictionary");
+
+  // Cleanup - kill the spell checker
+  DeleteSuggestedWordList();
+  mDictionaryList.Clear();
+  mDictionaryIndex = 0;
+  mSpellChecker = 0;
+  return NS_OK;
+}
+
+// Save the last used dictionary to the user's preferences.
+NS_IMETHODIMP
+nsEditorSpellCheck::SaveDefaultDictionary()
+{
   nsresult rv;
   nsCOMPtr<nsIPrefBranch> prefBranch =
     do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
@@ -424,7 +490,6 @@ nsEditorSpellCheck::UninitSpellChecker()
   if (NS_SUCCEEDED(rv) && prefBranch)
   {
     PRUnichar *dictName = nsnull;
-
     rv = GetCurrentDictionary(&dictName);
 
     if (NS_SUCCEEDED(rv) && dictName && *dictName) {
@@ -438,18 +503,12 @@ nsEditorSpellCheck::UninitSpellChecker()
                                          prefString);
       }
     }
-
     if (dictName)
       nsMemory::Free(dictName);
   }
-
-  // Cleanup - kill the spell checker
-  DeleteSuggestedWordList();
-  mDictionaryList.Clear();
-  mDictionaryIndex = 0;
-  mSpellChecker = 0;
-  return NS_OK;
+  return rv;
 }
+
 
 /* void setFilter (in nsITextServicesFilter filter); */
 NS_IMETHODIMP 

@@ -6,6 +6,11 @@ function Startup()
   // see bug #158711
   var newMailNotificationAlertUI = document.getElementById("newMailNotificationAlert");
   newMailNotificationAlertUI.hidden = !("@mozilla.org/alerts-service;1" in Components.classes);
+  if (!/Mac/.test(navigator.platform))
+    document.getElementById('newMailNotificationBounce').setAttribute("hidden", true);
+  // show tray icon option currently available for Windows only
+  var newMailNotificationTrayIconPref = document.getElementById("newMailNotificationTrayIcon");
+  newMailNotificationTrayIconPref.hidden = !/^Win/.test(navigator.platform);
 }
 
 function PlaySoundCheck()

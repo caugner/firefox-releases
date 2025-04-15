@@ -44,9 +44,12 @@
 #include "nsIMsgImapMailFolder.h"
 #include "nsImapCore.h"
 #include "nsIMsgHdr.h"
+#include "nsIDBFolderInfo.h"
 
 nsMsgQuickSearchDBView::nsMsgQuickSearchDBView()
 {
+  m_usingCachedHits = PR_FALSE;
+  m_cacheEmpty = PR_TRUE;
 }
 
 nsMsgQuickSearchDBView::~nsMsgQuickSearchDBView()
@@ -91,7 +94,6 @@ NS_IMETHODIMP nsMsgQuickSearchDBView::DoCommand(nsMsgViewCommandTypeValue aComma
                                       m_keys.GetSize(), nsnull);
 
     m_db->SetSummaryValid(PR_TRUE);
-    m_db->Commit(nsMsgDBCommitType::kLargeCommit);
     return rv;
   }
   else
@@ -114,7 +116,16 @@ nsresult nsMsgQuickSearchDBView::OnNewHeader(nsIMsgDBHdr *newHdr, nsMsgKey aPare
     if (searchSession)
       searchSession->MatchHdr(newHdr, m_db, &match);
     if (match)
+    {
+      // put the new header in m_origKeys, so that expanding a thread will
+      // show the newly added header.
+      nsMsgKey newKey;
+      (void) newHdr->GetMessageKey(&newKey);
+      nsMsgViewIndex insertIndex = GetInsertIndexHelper(newHdr, &m_origKeys, 
+                      nsMsgViewSortOrder::ascending, nsMsgViewSortType::byId);
+      m_origKeys.InsertAt(insertIndex, newKey);
       nsMsgThreadedDBView::OnNewHeader(newHdr, aParentKey, ensureListed); // do not add a new message if there isn't a match.
+    }
   }
   return NS_OK;
 }
@@ -155,6 +166,46 @@ NS_IMETHODIMP nsMsgQuickSearchDBView::OnHdrChange(nsIMsgDBHdr *aHdrChanged, PRUi
       }
     }
   }
+  else if (m_viewFolder && (aOldFlags & MSG_FLAG_READ) != (aNewFlags & MSG_FLAG_READ))
+  {
+    // if we're displaying a single folder virtual folder for an imap folder,
+    // the search criteria might be on message body, and we might not have the
+    // message body offline, in which case we can't tell if the message 
+    // matched or not. But if the unread flag changed, we need to update the
+    // unread counts. Normally, VirtualFolderChangeListener::OnHdrChange will
+    // handle this, but it won't work for body criteria when we don't have the
+    // body offline.
+    nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(m_viewFolder);
+    if (imapFolder)
+    {
+      nsMsgViewIndex hdrIndex = FindHdr(aHdrChanged);
+      if (hdrIndex != nsMsgViewIndex_None)
+      {
+        nsCOMPtr <nsIMsgSearchSession> searchSession = do_QueryReferent(m_searchSession);
+        if (searchSession)
+        {
+          PRBool oldMatch, newMatch;
+          rv = searchSession->MatchHdr(aHdrChanged, m_db, &newMatch);
+          aHdrChanged->SetFlags(aOldFlags);
+          rv = searchSession->MatchHdr(aHdrChanged, m_db, &oldMatch);
+          aHdrChanged->SetFlags(aNewFlags); 
+          // if it doesn't match the criteria, VirtualFolderChangeListener::OnHdrChange
+          // won't tweak the read/unread counts. So do it here:
+          if (!oldMatch && !newMatch)
+          {
+            nsCOMPtr <nsIMsgDatabase> virtDatabase;
+            nsCOMPtr <nsIDBFolderInfo> dbFolderInfo;
+
+            rv = m_viewFolder->GetDBFolderInfoAndDB(getter_AddRefs(dbFolderInfo), getter_AddRefs(virtDatabase));
+            NS_ENSURE_SUCCESS(rv, rv);
+            dbFolderInfo->ChangeNumUnreadMessages((aOldFlags & MSG_FLAG_READ) ? 1 : -1);
+            m_viewFolder->UpdateSummaryTotals(PR_TRUE); // force update from db.
+            virtDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
+          }
+        }
+      }
+    }
+  }
   return rv;
 }
 
@@ -179,17 +230,59 @@ nsMsgQuickSearchDBView::OnSearchHit(nsIMsgDBHdr* aMsgHdr, nsIMsgFolder *folder)
   NS_ENSURE_ARG(aMsgHdr);
   if (!m_db)
     return NS_ERROR_NULL_POINTER;
+  // remember search hit and when search is done, reconcile cache
+  // with new hits;
+  m_hdrHits.AppendObject(aMsgHdr);
+  nsMsgKey key;
+  aMsgHdr->GetMessageKey(&key);
+  // is FindKey going to be expensive here? A lot of hits could make
+  // it a little bit slow to search through the view for every hit.
+  if (m_cacheEmpty || FindKey(key, PR_FALSE) == nsMsgViewIndex_None)
   return AddHdr(aMsgHdr); 
+  else
+    return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMsgQuickSearchDBView::OnSearchDone(nsresult status)
 {
+  if (m_viewFolder)
+  {
+    nsMsgKeyArray keyArray;
+    nsXPIDLCString searchUri;
+    m_viewFolder->GetURI(getter_Copies(searchUri));
+    PRUint32 count = m_hdrHits.Count();
+    // build up message keys.
+    PRUint32 i;
+    for (i = 0; i < count; i++)
+    {
+      nsMsgKey key;
+      m_hdrHits[i]->GetMessageKey(&key);
+      keyArray.Add(key);
+    }
+    nsMsgKey *staleHits;
+    PRUint32 numBadHits;
+    if (m_db)
+    {
+      m_db->RefreshCache(searchUri, m_hdrHits.Count(), keyArray.GetArray(), &numBadHits, &staleHits);
+      for (i = 0; i < numBadHits; i++)
+      {
+        nsMsgViewIndex staleHitIndex = FindKey(staleHits[i], PR_TRUE);
+        if (staleHitIndex != nsMsgViewIndex_None)
+          RemoveByIndex(staleHitIndex);
+      }
+      delete [] staleHits;
+    }
+  }
   if (m_sortType != nsMsgViewSortType::byThread)//we do not find levels for the results.
   {
     m_sortValid = PR_FALSE;       //sort the results 
     Sort(m_sortType, m_sortOrder);
   }
+  if (m_viewFolder)
+    SetMRUTimeForFolder(m_viewFolder);
+
+  m_hdrHits.Clear();
   return NS_OK;
 }
 
@@ -202,11 +295,41 @@ nsMsgQuickSearchDBView::OnNewSearch()
   m_keys.RemoveAll();
   m_levels.RemoveAll();
   m_flags.RemoveAll();
-
+  m_hdrHits.Clear();
   // this needs to happen after we remove all the keys, since RowCountChanged() will call our GetRowCount()
   if (mTree)
     mTree->RowCountChanged(0, -oldSize);
+  PRUint32 folderFlags = 0;
+  if (m_viewFolder)
+    m_viewFolder->GetFlags(&folderFlags);
+  // check if it's a virtual folder - if so, we should get the cached hits 
+  // from the db, and set a flag saying that we're using cached values.
+  if (folderFlags & MSG_FOLDER_FLAG_VIRTUAL)
+  {
+    nsCOMPtr<nsISimpleEnumerator> cachedHits;
+    nsXPIDLCString searchUri;
+    m_viewFolder->GetURI(getter_Copies(searchUri));
+    m_db->GetCachedHits(searchUri, getter_AddRefs(cachedHits));
+    if (cachedHits)
+    {
+      PRBool hasMore;
 
+      m_usingCachedHits = PR_TRUE;
+      cachedHits->HasMoreElements(&hasMore);
+      m_cacheEmpty = !hasMore;
+      while (hasMore)
+      {
+        nsCOMPtr <nsIMsgDBHdr> pHeader;
+        nsresult rv = cachedHits->GetNext(getter_AddRefs(pHeader));
+        NS_ASSERTION(NS_SUCCEEDED(rv), "nsMsgDBEnumerator broken");
+        if (pHeader && NS_SUCCEEDED(rv))
+          AddHdr(pHeader);
+        else
+          break;
+        cachedHits->HasMoreElements(&hasMore);
+      }
+    }
+  }
   return NS_OK;
 }
 
@@ -254,7 +377,11 @@ nsresult nsMsgQuickSearchDBView::GetFirstMessageHdrToDisplayInThread(nsIMsgThrea
           rv = m_db->GetMsgHdrForKey(parentId, getter_AddRefs(parent));
           if (parent)
           {
+            nsMsgKey saveParentId = parentId;
             parent->GetThreadParent(&parentId);
+            // message is it's own parent - bad, let's break out of here.
+            if (parentId == saveParentId)
+              break;
             level++;
           }
         }
@@ -327,6 +454,8 @@ nsresult nsMsgQuickSearchDBView::SortThreads(nsMsgViewSortTypeValue sortType, ns
         nsMsgKey rootKey;
         PRUint32 rootFlags;
         GetFirstMessageHdrToDisplayInThread(threadHdr, getter_AddRefs(displayRootHdr));
+        if (!displayRootHdr)
+          continue;
         displayRootHdr->GetMessageKey(&rootKey);
         displayRootHdr->GetFlags(&rootFlags);
         rootFlags |= MSG_VIEW_FLAG_ISTHREAD;

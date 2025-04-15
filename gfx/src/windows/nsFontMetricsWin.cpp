@@ -84,7 +84,7 @@ PRBool IsWin95OrWin98()
   }
   return gIsWIN95OR98;
 #else
-  return PR_FALSE;
+  return PR_TRUE;
 #endif
 }
 
@@ -630,13 +630,15 @@ nsFontMetricsWin::FillLogFont(LOGFONT* logFont, PRInt32 aWeight,
   logFont->lfStrikeOut      =
     (mFont.decorations & NS_FONT_DECORATION_LINE_THROUGH)
     ? TRUE : FALSE;
-  logFont->lfCharSet        = mIsUserDefined ? ANSI_CHARSET : DEFAULT_CHARSET;
 #ifndef WINCE
+  logFont->lfCharSet        = mIsUserDefined ? ANSI_CHARSET : DEFAULT_CHARSET;
   logFont->lfOutPrecision   = OUT_TT_PRECIS;
-#else
-  logFont->lfOutPrecision   = OUT_DEFAULT_PRECIS;
-#endif
   logFont->lfClipPrecision  = CLIP_TURNOFF_FONTASSOCIATION;
+#else
+  logFont->lfCharSet        = DEFAULT_CHARSET;
+  logFont->lfOutPrecision   = OUT_DEFAULT_PRECIS;
+  logFont->lfClipPrecision  = CLIP_DEFAULT_PRECIS;
+#endif
   logFont->lfQuality        = DEFAULT_QUALITY;
   logFont->lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
   logFont->lfWeight = aWeight;
@@ -1305,7 +1307,7 @@ static PRUint8 gBitToUnicodeRange[] =
  /* 66 */ kRangeArabic,                 // fe50 - fe6f     Small Form Variants
  /* 67 */ kRangeArabic,                 // fe70 - fefe     Arabic Presen. FormsB
  /* 68 */ kRangeSetCJK,                 // ff00 - ffef     Half/Fullwidth Forms
- /* 69 */ kRangeSetCJK,                 // fff0 - fffd     Specials
+ /* 69 */ kRangeSpecials,               // fff0 - fffd     Specials
  /* 70 */ kRangeTibetan,                // 0f00 - 0fcf     Tibetan
  /* 71 */ kRangeSyriac,                 // 0700 - 074f     Syriac
  /* 72 */ kRangeThaana,                 // 0780 - 07bf     Thaana
@@ -2503,9 +2505,13 @@ nsFontMetricsWin::LoadFont(HDC aDC, const nsString& aName, PRBool aNameQuirks)
         !strcmpi(name, logFont.lfFaceName)) {
       nsFontWin* font = nsnull;
       if (mIsUserDefined) {
+#ifndef WINCE
         font = new nsFontWinNonUnicode(&logFont, hfont, gUserDefinedCCMap,
                                        gUserDefinedConverter);
-      } else {
+#else
+        font = new nsFontWinUnicode(&logFont, hfont, gUserDefinedCCMap);
+#endif
+    } else {
         eFontType fontType = eFontType_Unicode;
         PRBool nameQuirks = aNameQuirks;
         // see if we should override the quirks -- not all fonts are treated as quirks
@@ -2528,7 +2534,11 @@ nsFontMetricsWin::LoadFont(HDC aDC, const nsString& aName, PRBool aNameQuirks)
             nsCOMPtr<nsIUnicodeEncoder> converter;
             if (NS_SUCCEEDED(GetConverter(logFont.lfFaceName, nameQuirks,
                   getter_AddRefs(converter), &isWide)))
-              font = new nsFontWinNonUnicode(&logFont, hfont, ccmap, converter, isWide);
+#ifndef WINCE
+               font = new nsFontWinNonUnicode(&logFont, hfont, ccmap, converter, isWide);
+#else
+               font = new nsFontWinUnicode(&logFont, hfont, ccmap);
+#endif
           }
         }
       }
@@ -2563,7 +2573,11 @@ nsFontMetricsWin::LoadGlobalFont(HDC aDC, nsGlobalFont* aGlobalFont)
       PRBool isWide;
       if (NS_SUCCEEDED(GetConverter(logFont.lfFaceName, PR_FALSE,
             getter_AddRefs(converter), &isWide))) {
+#ifndef WINCE
         font = new nsFontWinNonUnicode(&logFont, hfont, aGlobalFont->ccmap, converter, isWide);
+#else
+        font = new nsFontWinUnicode(&logFont, hfont, aGlobalFont->ccmap);
+#endif
       }
     }
     if (font) {
@@ -2716,6 +2730,9 @@ nsFontMetricsWin::SameAsPreviousMap(int aIndex)
     if (tmp->flags & NS_GLOBALFONT_SKIP) {
       continue;
     }
+    if (!tmp->ccmap) {
+      continue;
+    }
     if (tmp->ccmap == font->ccmap) {
       font->flags |= NS_GLOBALFONT_SKIP;
       return 1;
@@ -2730,6 +2747,24 @@ nsFontMetricsWin::SameAsPreviousMap(int aIndex)
   return 0;
 }
 
+#ifndef WINCE
+static
+void BitFromUnicodeRange(PRUint32 range, DWORD* usb)
+{
+  for (int i = 0, dword = 0; dword < 3; ++dword) {
+    for (int bit = 0; bit < sizeof(DWORD) * 8; ++bit, ++i) {
+      if (range == gBitToUnicodeRange[i]) {
+        usb[dword] |= 1 << bit;
+      }
+    }
+  }
+}
+#endif
+
+#ifdef DEBUG_emk
+static LARGE_INTEGER freq, prev;
+#endif
+
 nsFontWin*
 nsFontMetricsWin::FindGlobalFont(HDC aDC, PRUint32 c)
 {
@@ -2739,6 +2774,12 @@ nsFontMetricsWin::FindGlobalFont(HDC aDC, PRUint32 c)
       return nsnull;
     }
   }
+#ifndef WINCE
+  PRUint32 range = (c <= 0xFFFF) ? FindCharUnicodeRange(c) : kRangeSurrogate;
+  DWORD usb[4];
+  memset(usb, 0, sizeof(usb));
+  BitFromUnicodeRange(range, usb);
+#endif
   int count = gGlobalFonts->Count();
   for (int i = 0; i < count; ++i) {
     nsGlobalFont* font = (nsGlobalFont*)gGlobalFonts->ElementAt(i);
@@ -2746,6 +2787,15 @@ nsFontMetricsWin::FindGlobalFont(HDC aDC, PRUint32 c)
       continue;
     }
     if (!font->ccmap) {
+#ifndef WINCE
+      // bail out if Unicode range indicates the font have no glyph
+      if (font->flags & NS_GLOBALFONT_TRUETYPE &&
+          !(font->signature.fsUsb[0] & usb[0]) &&
+          !(font->signature.fsUsb[1] & usb[1]) &&
+          !(font->signature.fsUsb[2] & usb[2])) {
+        continue;
+      }
+#endif
       // don't adjust here, we just want to quickly get the CMAP. Adjusting
       // is meant to only happen when loading the final font in LoadFont()
       HFONT hfont = ::CreateFontIndirect(&font->logFont);
@@ -2761,14 +2811,28 @@ nsFontMetricsWin::FindGlobalFont(HDC aDC, PRUint32 c)
         font->flags |= NS_GLOBALFONT_SKIP;
         continue;
       }
+#ifdef DEBUG_emk
+      LARGE_INTEGER now;
+      QueryPerformanceCounter(&now);
+      printf("CCMAP loaded: %g sec, %s [%08X][%08X][%08X]\n", (now.QuadPart - prev.QuadPart) / (double)freq.QuadPart,
+        font->logFont.lfFaceName, font->signature.fsUsb[0], font->signature.fsUsb[1], font->signature.fsUsb[2]);
+      prev = now;
+#endif
       if (SameAsPreviousMap(i)) {
         continue;
       }
     }
     if (CCMAP_HAS_CHAR_EXT(font->ccmap, c)) {
+#ifdef DEBUG_emk
+      printf("font found:[%s]\n", font->logFont.lfFaceName);
+      printf("U+%04X (%d)[%08X][%08X][%08X]\n", c, range, usb[0], usb[1], usb[2]);
+#endif
       return LoadGlobalFont(aDC, font);
     }
   }
+#ifdef DEBUG_emk
+  printf("U+%04X (%d)[%08X][%08X][%08X]\n", c, range, usb[0], usb[1], usb[2]);
+#endif
   return nsnull;
 }
 
@@ -3541,6 +3605,11 @@ nsFontMetricsWin::FindPrefFont(HDC aDC, PRUint32 aChar)
 nsFontWin*
 nsFontMetricsWin::FindFont(HDC aDC, PRUint32 aChar)
 {
+#ifdef DEBUG_emk
+  LARGE_INTEGER start, end;
+  QueryPerformanceFrequency(&freq);
+  QueryPerformanceCounter(&start);
+#endif
   // the first font should be for invisible ignorable characters
   if (mLoadedFonts.Count() < 1)
     mLoadedFonts.AppendElement(gFontForIgnorable);
@@ -3555,8 +3624,15 @@ nsFontMetricsWin::FindFont(HDC aDC, PRUint32 aChar)
       if (!font) {
         font = FindPrefFont(aDC, aChar);
         if (!font) {
+#ifdef DEBUG_emk
+          QueryPerformanceCounter(&prev);
+#endif
           font = FindGlobalFont(aDC, aChar);
           if (!font) {
+#ifdef DEBUG_emk
+            QueryPerformanceCounter(&end);
+            printf("%g sec.\n", (end.QuadPart - start.QuadPart) / (double)freq.QuadPart);
+#endif
             font = FindSubstituteFont(aDC, aChar);
           }
         }
@@ -3743,21 +3819,31 @@ nsFontMetricsWin::RealizeFont()
   mMaxAscent = NSToCoordRound(metrics.tmAscent * dev2app);
   mMaxDescent = NSToCoordRound(metrics.tmDescent * dev2app);
   mMaxAdvance = NSToCoordRound(metrics.tmMaxCharWidth * dev2app);
+  // Windows may screw up if we try to measure/draw more than 32767 pixels in
+  // one operation.
+  mMaxStringLength = (PRInt32)floor(32767.0/metrics.tmMaxCharWidth);
+  mMaxStringLength = PR_MAX(1, mMaxStringLength);
+
   mAveCharWidth = PR_MAX(1, NSToCoordRound(metrics.tmAveCharWidth * dev2app));
 
-  // descent position is preferred, but we need to make sure there is enough 
-  // space available. Baseline need to be raised so that underline will stay 
-  // within boundary.
-  // only do this for CJK to minimize possible risk
-  if (IsCJKLangGroupAtom(mLangGroup.get())) {
-    if (gDoingLineheightFixup && 
-        mInternalLeading+mExternalLeading > mUnderlineSize &&
+  if (gDoingLineheightFixup) {
+    if (mInternalLeading + mExternalLeading > mUnderlineSize &&
         descentPos < mUnderlineOffset) {
-      mEmAscent -= mUnderlineSize;
-      mEmDescent += mUnderlineSize;
-      mMaxAscent -= mUnderlineSize;
-      mMaxDescent += mUnderlineSize;
+      // If underline positioned is too near from the text, descent position
+      // is preferred, but we need to make sure there is enough space
+      // available so that underline will stay within boundary.
       mUnderlineOffset = descentPos;
+      nscoord extra = mUnderlineSize - mUnderlineOffset - mMaxDescent;
+      if (extra > 0) {
+        mEmDescent += extra;  
+        mEmHeight += extra;
+        mMaxDescent += extra;
+        mMaxHeight += extra;
+      }
+    } else if (mUnderlineSize - mUnderlineOffset > mMaxDescent) {
+      // If underline positioned is too far from the text, descent position
+      // is preferred so that underline will stay within boundary.
+      mUnderlineOffset = mUnderlineSize - mMaxDescent;
     }
   }
   // Cache the width of a single space.
@@ -3907,6 +3993,12 @@ nsFontMetricsWin::GetAveCharWidth(nscoord &aAveCharWidth)
 {
   aAveCharWidth = mAveCharWidth;
   return NS_OK;
+}
+
+PRInt32
+nsFontMetricsWin::GetMaxStringLength()
+{
+  return mMaxStringLength;
 }
 
 NS_IMETHODIMP
@@ -4478,6 +4570,20 @@ SubstituteChars(PRBool              aDisplayUnicode,
                 nsAutoChar16Buffer& aResult,
                 PRUint32*           aCount)
 {
+
+#ifdef WINCE
+// Unicode backend on WINCE... Substitute nothing.
+
+  if (!aResult.EnsureElemCapacity(aLength))
+    return NS_ERROR_OUT_OF_MEMORY;
+
+  *aCount = aLength;
+  memcpy(aResult.get(), aString, aLength * sizeof(PRUnichar));
+  return NS_OK;
+
+#else
+
+
   nsresult res;
   if (!gFontSubstituteConverter) {
     CallCreateInstance(NS_SAVEASCHARSET_CONTRACTID, &gFontSubstituteConverter);
@@ -4528,6 +4634,7 @@ SubstituteChars(PRBool              aDisplayUnicode,
   }
   *aCount = aLength;
   return NS_OK;
+#endif // WINCE
 }
 
 PRInt32
@@ -4622,27 +4729,40 @@ GenerateSingleByte(nsCharsetInfo* aSelf)
   int i;
 
   memset(map, 0, sizeof(map));
-  memset(mb + 128, 0, 160 - 128);
-  for (i = 0; i < 127; ++i) {
-    mb[i] = i;
-  }
-  mb[145] = 145;
-  mb[146] = 146;
+  if (UseAFunctions()) {
+    // A-functions use this function for TrueType
+    for (i = 0; i <= 255; ++i) {
+      mb[i] = i;
+    }
+  } else {
+    memset(mb + 128, 0, 160 - 128);
+    for (i = 0; i <= 127; ++i) {
+      mb[i] = i;
+    }
+    mb[145] = 145;
+    mb[146] = 146;
 
-  if (aSelf->mCodePage == 1250) {
-    mb[138] = 138;
-    mb[140] = 140;
-    mb[141] = 141;
-    mb[142] = 142;
-    mb[143] = 143;
-    mb[154] = 154;
-    mb[156] = 156;
-    mb[158] = 158;
-    mb[159] = 159;
-  }
+    if (aSelf->mCodePage == 1250) {
+      mb[138] = 138;
+      mb[140] = 140;
+      mb[141] = 141;
+      mb[142] = 142;
+      mb[143] = 143;
+      mb[154] = 154;
+      mb[156] = 156;
+      mb[158] = 158;
+      mb[159] = 159;
+    }
 
-  for (i = 160; i < 255; ++i) {
-    mb[i] = i;
+    for (i = 160; i <= 255; ++i) {
+      mb[i] = i;
+    }
+
+    //win95/98 have problem in some raster fonts (MS Sans Serif and MS Serif) in
+    //rendering 0xb7. So let's skip this in charmap, that will let system resort 
+    //to other fonts.  
+    if (IsWin95OrWin98())
+      mb[0xb7] = 0;
   }
 
   int len = MultiByteToWideChar(aSelf->mCodePage, 0, (char*) mb, 256, wc, 256);
@@ -4651,12 +4771,7 @@ GenerateSingleByte(nsCharsetInfo* aSelf)
     printf("%s: MultiByteToWideChar returned %d\n", aSelf->mName, len);
   }
 #endif
-  for (i = 0; i < 256; ++i) {
-    //win95/98 have problem in some raster fonts (MS Sans Serif and MS Serif) in
-    //rendering 0xb7. So let's skip this in charmap, that will let system resort 
-    //to other fonts.  
-    if ( i == 0x00b7 && IsWin95OrWin98() && !UseAFunctions())
-      continue;
+  for (i = 0; i <= 255; ++i) {
     ADD_GLYPH(map, wc[i]);
   }
   return MapToCCMap(map);
@@ -5594,7 +5709,23 @@ SignatureMatchesLangGroup(FONTSIGNATURE* aSignature,
 static int
 FontMatchesGenericType(nsGlobalFont* aFont, const char* aGeneric)
 {
-  switch (aFont->logFont.lfPitchAndFamily & 0xF0) {
+  PRUint8 family = aFont->logFont.lfPitchAndFamily & 0xF0;
+  PRUint8 pitch = aFont->logFont.lfPitchAndFamily & 0x0F;
+
+  // Japanese 'Mincho' fonts do not belong to FF_MODERN even if
+  // they are fixed pitch because they have variable stroke width.
+  if (family == FF_ROMAN && pitch & FIXED_PITCH) {
+    return !strcmp(aGeneric, "monospace");
+  }
+
+  // Japanese 'Gothic' fonts do not belong to FF_SWISS even if
+  // they are variable pitch because they have constant stroke width.
+  if (family == FF_MODERN && pitch & VARIABLE_PITCH) {
+    return !strcmp(aGeneric, "sans-serif");
+  }
+
+  // All other fonts will be grouped correctly using family...
+  switch (family) {
     case FF_DONTCARE:   return 1;
     case FF_ROMAN:      return !strcmp(aGeneric, "serif");
     case FF_SWISS:      return !strcmp(aGeneric, "sans-serif");

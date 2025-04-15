@@ -61,7 +61,6 @@ REQUIRES = 	\
 		widget \
 		layout \
 		dom \
-		mork \
 		pref \
 		rdf \
 		intl \
@@ -88,6 +87,11 @@ REQUIRES = 	\
 		unicharutil \
 		xuldoc \
 		alerts \
+		mork \
+		morkreader \
+		storage \
+		url-classifier \
+		feeds \
 		$(NULL)
 
 EXPORTS = nsToolkitCompsCID.h
@@ -103,6 +107,8 @@ LOCAL_INCLUDES = \
 	-I$(srcdir)/../startup/src \
 	-I$(srcdir)/../typeaheadfind/src \
 	-I$(srcdir)/../alerts/src \
+	-I$(srcdir)/../url-classifier/src \
+	-I$(srcdir)/../feeds/src \
 	$(NULL)
 
 SHARED_LIBRARY_LIBS = \
@@ -117,17 +123,30 @@ ifdef ALERTS_SERVICE
 SHARED_LIBRARY_LIBS += $(DIST)/lib/$(LIB_PREFIX)alerts_s.$(LIB_SUFFIX)
 endif
 
+SHARED_LIBRARY_LIBS += $(DIST)/lib/$(LIB_PREFIX)fastfind_s.$(LIB_SUFFIX) \
+
 ifndef MOZ_THUNDERBIRD
+ifndef MOZ_PLACES
+SHARED_LIBRARY_LIBS += $(DIST)/lib/$(LIB_PREFIX)history_s.$(LIB_SUFFIX)
+endif
+
 SHARED_LIBRARY_LIBS += \
 		$(DIST)/lib/$(LIB_PREFIX)autocomplete_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)history_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)satchel_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)passwordmgr_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)fastfind_s.$(LIB_SUFFIX) \
 		$(NULL)
 
-EXTRA_DSO_LIBS = gkgfx
 endif # MOZ_THUNDERBIRD
+
+ifdef MOZ_URL_CLASSIFIER
+SHARED_LIBRARY_LIBS += $(DIST)/lib/$(LIB_PREFIX)urlclassifier_s.$(LIB_SUFFIX)
+endif
+
+ifdef MOZ_FEEDS
+SHARED_LIBRARY_LIBS += $(DIST)/lib/$(LIB_PREFIX)feed_s.$(LIB_SUFFIX)
+endif
+
+EXTRA_DSO_LIBS = gkgfx
 
 EXTRA_DSO_LDOPTS += \
 	$(LIBS_DIR) \
@@ -137,8 +156,16 @@ EXTRA_DSO_LDOPTS += \
 	$(MOZ_JS_LIBS) \
 	$(NULL)
 
+ifdef MOZ_MORKREADER
+EXTRA_DSO_LDOPTS += $(DIST)/lib/$(LIB_PREFIX)morkreader_s.$(LIB_SUFFIX)
+endif
+
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 EXTRA_DSO_LDOPTS += $(TK_LIBS)
+endif
+
+ifeq ($(OS_ARCH),WINNT)
+OS_LIBS	+= $(call EXPAND_LIBNAME,shell32 ole32)
 endif
 
 include $(topsrcdir)/config/rules.mk

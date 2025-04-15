@@ -75,6 +75,7 @@ NS_IMPL_ISUPPORTS2(nsAboutCache, nsIAboutModule, nsICacheVisitor)
 NS_IMETHODIMP
 nsAboutCache::NewChannel(nsIURI *aURI, nsIChannel **result)
 {
+    NS_ENSURE_ARG_POINTER(aURI);
     nsresult rv;
     PRUint32 bytesWritten;
 
@@ -169,6 +170,10 @@ nsAboutCache::VisitDevice(const char *deviceID,
 
     if (mDeviceID.IsEmpty() || mDeviceID.Equals(deviceID)) {
 
+        // We need mStream for this
+        if (!mStream)
+          return NS_ERROR_FAILURE;
+
         // Write out the Cache Name
         deviceInfo->GetDescription(getter_Copies(str));
 
@@ -223,6 +228,10 @@ nsAboutCache::VisitEntry(const char *deviceID,
                          nsICacheEntryInfo *entryInfo,
                          PRBool *visitNext)
 {
+    // We need mStream for this
+    if (!mStream)
+      return NS_ERROR_FAILURE;
+
     nsresult        rv;
     PRUint32        bytesWritten;
     nsCAutoString   key;

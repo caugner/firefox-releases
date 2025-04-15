@@ -119,9 +119,10 @@ var folderListener = {
     OnItemPropertyChanged: function(item, property, oldValue, newValue) { },
 
     OnItemIntPropertyChanged: function(item, property, oldValue, newValue) {
-      if (item == msgWindow.openFolder) {
+      if (item == gMsgFolderSelected) {
         if(property.toString() == "TotalMessages" || property.toString() == "TotalUnreadMessages") {
-          UpdateStatusMessageCounts(msgWindow.openFolder);
+          UpdateStatusMessageCounts(gMsgFolderSelected);
+          UpdateLocationBar(item);
         }      
       }
     },
@@ -692,12 +693,13 @@ function OnLoadMessenger()
   ShowHideToolBarButtons();
   verifyAccounts(null);
     
-  HideAccountCentral();
   InitMsgWindow();
   messenger.SetWindow(window, msgWindow);
 
   InitializeDataSources();
   InitPanes();
+  
+  MigrateJunkMailSettings();
 
   accountManager.setSpecialFolders();
   accountManager.loadVirtualFolders();
@@ -754,6 +756,10 @@ function NotifyObservers(aSubject, aTopic, aData)
 
 function Create3PaneGlobals()
 {
+  accountCentralBox = document.getElementById("accountCentralBox");
+  gSearchBox = document.getElementById("searchBox");
+  gSearchBox.collapsed = true;
+  GetMessagePane().collapsed = true;
 }
  
 // because the "open" state persists, we'll call
@@ -822,11 +828,11 @@ function loadStartFolder(initialUri)
 
         var startFolder = startFolderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
 
-        // Perform biff on the server to check for new mail, except for imap
-        // or a pop3 account that is deferred or deferred to,
+        // Perform biff on the server to check for new mail, except for 
+        // a pop3 account that is deferred or deferred to,
         // or the case where initialUri is non-null (non-startup)
         if (!initialUri && isLoginAtStartUpEnabled && gLoadStartFolder
-            && defaultServer.type != "imap" && !defaultServer.isDeferredTo &&
+            && !defaultServer.isDeferredTo &&
             defaultServer.rootFolder == defaultServer.rootMsgFolder)
           defaultServer.PerformBiff(msgWindow);        
 
@@ -889,6 +895,7 @@ function AddToSession()
 function InitPanes()
 {
     OnLoadFolderPane();
+    OnLoadLocationTree();
     OnLoadThreadPane();
     SetupCommandUpdateHandlers();
 }
@@ -897,6 +904,8 @@ function InitializeDataSources()
 {
 	//Setup common mailwindow stuff.
 	AddDataSources();
+
+	SetupMoveCopyMenus('goMenu', accountManagerDataSource, folderDataSource);
 
 	//To threadpane move context menu
 	SetupMoveCopyMenus('threadPaneContext-moveMenu', accountManagerDataSource, folderDataSource);
@@ -1018,6 +1027,63 @@ function UpdateAttachmentCol(aFirstTimeFlag)
     attachmentCol.addEventListener("DOMAttrModified", OnAttachmentColAttrModified, false);
   else
     threadTree.treeBoxObject.clearStyleAndImageCaches();
+}
+
+function OnLocationToolbarAttrModified(event)
+{
+    if (!/collapsed/.test(event.attrName))
+        return;
+    var searchBox = document.getElementById("searchBox");
+    var desiredParent = document.getElementById("msgLocationToolbar");
+    if (desiredParent.getAttribute("collapsed") == "true" ||
+        desiredParent.getAttribute("moz-collapsed") == "true")
+        desiredParent = document.getElementById("searchBoxHolder");
+    if (searchBox.parentNode != desiredParent)
+        desiredParent.appendChild(searchBox);
+}
+
+function OnLoadLocationTree()
+{
+    var locationTree = document.getElementById('locationPopup').tree;
+    locationTree.database.AddDataSource(accountManagerDataSource);
+    locationTree.database.AddDataSource(folderDataSource);
+    locationTree.setAttribute("ref", "msgaccounts:/");
+    var toolbar = document.getElementById("msgLocationToolbar");
+    toolbar.addEventListener("DOMAttrModified", OnLocationToolbarAttrModified, false);
+    OnLocationToolbarAttrModified({attrName:"collapsed"});
+}
+
+function OnLocationTreeSelect(menulist)
+{
+    SelectFolder(menulist.getAttribute('uri'));
+}
+
+function UpdateLocationBar(resource)
+{
+    var tree = GetFolderTree();
+    var folders = document.getElementById('locationFolders');
+    var icon = document.getElementById('locationIcon');
+    var names = ['BiffState', 'NewMessages', 'HasUnreadMessages',
+        'SpecialFolder', 'IsServer', 'IsSecure', 'ServerType', 'NoSelect'];
+    var label = GetFolderAttribute(tree, resource, 'FolderTreeName');
+    folders.setAttribute("label", label);
+    for (var i in names) {
+        var name = names[i];
+        var value = GetFolderAttribute(tree, resource, name);
+        folders.setAttribute(name, value);
+        icon.setAttribute(name, value);
+    }
+    folders.setAttribute('uri', resource.Value);
+}
+
+function goToggleLocationToolbar(toggle)
+{
+    // XXX hidden doesn't work, use collapsed instead
+    var menu = document.getElementById("menu_showLocationToolbar");
+    var toolbar = document.getElementById("msgLocationToolbar");
+    var checked = toolbar.collapsed;
+    menu.setAttribute('checked', checked);
+    toolbar.setAttribute('collapsed', !checked);
 }
 
 function GetFolderDatasource()
@@ -1170,7 +1236,7 @@ function ChangeSelectionWithoutContentLoad(event, tree)
         if(tree.id == "threadTree")
           gThreadPaneCurrentSelectedIndex = row;
     }
-    event.preventBubble();
+    event.stopPropagation();
 }
 
 function TreeOnMouseDown(event)
@@ -1201,7 +1267,7 @@ function FolderPaneOnClick(event)
     if (row.value == -1) {
       if (event.originalTarget.localName == "treecol")
         // clicking on the name column in the folder pane should not sort
-        event.preventBubble();
+        event.stopPropagation();
       return;
     }
 
@@ -1231,7 +1297,7 @@ function FolderPaneOnClick(event)
     }
     else if ((event.originalTarget.localName == "slider") ||
              (event.originalTarget.localName == "scrollbarbutton")) {
-      event.preventBubble();
+      event.stopPropagation();
     }
     else if (event.detail == 2) {
       FolderPaneDoubleClick(row.value, event);
@@ -1254,7 +1320,7 @@ function FolderPaneDoubleClick(folderIndex, event)
         server.performExpand(msgWindow);
       }
     }
-    else 
+    else if (!pref.getBoolPref("mailnews.reuse_thread_window2"))
     {
       // Open a new msg window only if we are double clicking on 
       // folders or newsgroups.
@@ -1263,7 +1329,7 @@ function FolderPaneDoubleClick(folderIndex, event)
       // double clicking should not toggle the open / close state of the
       // folder.  this will happen if we don't prevent the event from
       // bubbling to the default handler in tree.xml
-      event.preventBubble();
+      event.stopPropagation();
     }
 }
 
@@ -1465,7 +1531,7 @@ function SelectFolder(folderUri)
 
 function SelectMessage(messageUri)
 {
-  var msgHdr = messenger.messageServiceFromURI(messageUri).messageURIToMsgHdr(messageUri);
+  var msgHdr = messenger.msgHdrFromURI(messageUri);
   if (msgHdr)
     gDBView.selectMsgByKey(msgHdr.messageKey);
 }
@@ -1522,3 +1588,31 @@ function GetFolderAttribute(tree, source, attribute)
     return target;
 }
 
+// Some of the per account junk mail settings have been
+// converted to global prefs. Let's try to migrate some
+// of those settings from the default account.
+function MigrateJunkMailSettings()
+{
+  var junkMailSettingsVersion = pref.getIntPref("mail.spam.version");
+  if (!junkMailSettingsVersion)
+  {
+    // get the default account, check to see if we have values for our 
+    // globally migrated prefs.
+    var defaultAccount = accountManager.defaultAccount;
+    if (defaultAccount && defaultAccount.incomingServer)
+    {
+      // we only care about
+      var prefix = "mail.server." + defaultAccount.incomingServer.key + ".";
+      if (pref.prefHasUserValue(prefix + "manualMark"))
+        pref.setBoolPref("mail.spam.manualMark", pref.getBoolPref(prefix + "manualMark"));
+      if (pref.prefHasUserValue(prefix + "manualMarkMode"))
+        pref.setIntPref("mail.spam.manualMarkMode", pref.getIntPref(prefix + "manualMarkMode"));
+      if (pref.prefHasUserValue(prefix + "spamLoggingEnabled"))
+        pref.setBoolPref("mail.spam.logging.enabled", pref.getBoolPref(prefix + "spamLoggingEnabled"));
+      if (pref.prefHasUserValue(prefix + "markAsReadOnSpam"))
+        pref.setBoolPref("mail.spam.markAsReadOnSpam", pref.getBoolPref(prefix + "markAsReadOnSpam"));
+    }  
+    // bump the version so we don't bother doing this again.
+    pref.setIntPref("mail.spam.version", 1);
+  }
+}

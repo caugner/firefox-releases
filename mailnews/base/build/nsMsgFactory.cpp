@@ -22,6 +22,7 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *   Seth Spitzer <sspitzer@netscape.com>
+ *   Karsten Düsterloh <mnyromyr@tprac.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -106,13 +107,21 @@
 
 #include "nsMsgProgress.h"
 #include "nsSpamSettings.h"
+#include "nsMsgContentPolicy.h"
 #include "nsCidProtocolHandler.h"
+#include "nsMsgTagService.h"
 
 #ifdef XP_WIN
 #include "nsMessengerWinIntegration.h"
 #endif
 #ifdef XP_OS2
 #include "nsMessengerOS2Integration.h"
+#endif
+#ifdef XP_MACOSX
+#include "nsMessengerOSXIntegration.h"
+#endif
+#if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_GTK2)
+#include "nsMessengerUnixIntegration.h"
 #endif
 
 #include "nsCURILoader.h"
@@ -129,6 +138,9 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMessengerMigrator, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgAccount)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgIdentity)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgFolderDataSource, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgUnreadFoldersDataSource, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgFavoriteFoldersDataSource, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgRecentFoldersDataSource, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgAccountManagerDataSource, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgSearchSession)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgSearchTerm)
@@ -161,13 +173,53 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgOfflineManager)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgProgress)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSpamSettings)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsCidProtocolHandler)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgTagService)
 #ifdef XP_WIN
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMessengerWinIntegration, Init)
 #endif
 #ifdef XP_OS2
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMessengerOS2Integration, Init)
 #endif
+#ifdef XP_MACOSX
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMessengerOSXIntegration, Init)
+#endif
+#if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_GTK2)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMessengerUnixIntegration, Init)
+#endif
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMessengerContentHandler)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgContentPolicy, Init)
+
+static NS_METHOD
+RegisterMailnewsContentPolicy(nsIComponentManager *aCompMgr, nsIFile *aPath,
+                              const char *registryLocation, const char *componentType,
+                              const nsModuleComponentInfo *info)
+{
+  nsresult rv;
+  nsCOMPtr<nsICategoryManager> catman =
+      do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
+  if (NS_FAILED(rv)) return rv;
+  nsXPIDLCString previous;
+  return catman->AddCategoryEntry("content-policy",
+                                  NS_MSGCONTENTPOLICY_CONTRACTID,
+                                  NS_MSGCONTENTPOLICY_CONTRACTID,
+                                  PR_TRUE, PR_TRUE, getter_Copies(previous));
+}
+
+static NS_METHOD
+UnregisterMailnewsContentPolicy(nsIComponentManager *aCompMgr, nsIFile *aPath,
+                        const char *registryLocation,
+                        const nsModuleComponentInfo *info)
+{
+  nsresult rv;
+  nsCOMPtr<nsICategoryManager> catman =
+      do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
+  if (NS_FAILED(rv)) return rv;
+
+  return catman->DeleteCategoryEntry("content-policy",
+                                     NS_MSGCONTENTPOLICY_CONTRACTID,
+                                     PR_TRUE);
+}
+
 
 // The list of components we register
 static const nsModuleComponentInfo gComponents[] = {
@@ -216,6 +268,18 @@ static const nsModuleComponentInfo gComponents[] = {
     { "Mail/News Folder Data Source", NS_MAILNEWSFOLDERDATASOURCE_CID,
       NS_MAILNEWSFOLDERDATASOURCE_CONTRACTID,
       nsMsgFolderDataSourceConstructor,
+    },
+    { "Mail/News Unread Folder Data Source", NS_MAILNEWSUNREADFOLDERDATASOURCE_CID,
+      NS_MAILNEWSUNREADFOLDERDATASOURCE_CONTRACTID,
+      nsMsgUnreadFoldersDataSourceConstructor,
+    },
+    { "Mail/News Favorite Folder Data Source", NS_MAILNEWSFAVORITEFOLDERDATASOURCE_CID,
+      NS_MAILNEWSFAVORITEFOLDERDATASOURCE_CONTRACTID,
+      nsMsgFavoriteFoldersDataSourceConstructor,
+    },
+    { "Mail/News Recent Folder Data Source", NS_MAILNEWSRECENTFOLDERDATASOURCE_CID,
+      NS_MAILNEWSRECENTFOLDERDATASOURCE_CONTRACTID,
+      nsMsgRecentFoldersDataSourceConstructor,
     },
     { "Mail/News Account Manager Data Source", NS_MSGACCOUNTMANAGERDATASOURCE_CID,
       NS_RDF_DATASOURCE_CONTRACTID_PREFIX "msgaccountmanager",
@@ -360,6 +424,10 @@ static const nsModuleComponentInfo gComponents[] = {
       NS_CIDPROTOCOLHANDLER_CONTRACTID,
       nsCidProtocolHandlerConstructor,
     },
+    { "Tag Service", NS_MSGTAGSERVICE_CID,
+      NS_MSGTAGSERVICE_CONTRACTID,
+      nsMsgTagServiceConstructor,
+    },
 #ifdef XP_WIN
     { "Windows OS Integration", NS_MESSENGERWININTEGRATION_CID,
       NS_MESSENGEROSINTEGRATION_CONTRACTID,
@@ -372,11 +440,29 @@ static const nsModuleComponentInfo gComponents[] = {
       nsMessengerOS2IntegrationConstructor,
     },
 #endif
+#ifdef XP_MACOSX
+    { "OSX OS Integration", NS_MESSENGEROSXINTEGRATION_CID,
+      NS_MESSENGEROSINTEGRATION_CONTRACTID,
+      nsMessengerOSXIntegrationConstructor,
+    },
+#endif
+#if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_GTK2)
+    { "Unix OS Integration", NS_MESSENGERUNIXINTEGRATION_CID,
+      NS_MESSENGEROSINTEGRATION_CONTRACTID,
+      nsMessengerUnixIntegrationConstructor,
+    },
+#endif
     { "application/x-message-display content handler",
        NS_MESSENGERCONTENTHANDLER_CID,
        NS_MESSENGERCONTENTHANDLER_CONTRACTID,
        nsMessengerContentHandlerConstructor
     },
+    { "mail content policy enforcer",
+      NS_MSGCONTENTPOLICY_CID,
+      NS_MSGCONTENTPOLICY_CONTRACTID,
+      nsMsgContentPolicyConstructor,
+      RegisterMailnewsContentPolicy, UnregisterMailnewsContentPolicy
+    }
 };
 
 NS_IMPL_NSGETMODULE(nsMsgBaseModule, gComponents)

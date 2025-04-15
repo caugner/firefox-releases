@@ -281,7 +281,7 @@ GARBAGE			+= $(SIMPLE_PROGRAMS:%=%.$(OBJ_SUFFIX))
 endif
 
 ifdef HOST_SIMPLE_PROGRAMS
-GARBAGE			+= $(addprefix host_,$(HOST_SIMPLE_PROGRAMS:%=%.$(OBJ_SUFFIX)))
+GARBAGE			+= $(HOST_SIMPLE_PROGRAMS:%=%.$(OBJ_SUFFIX))
 endif
 
 #
@@ -550,14 +550,6 @@ ifeq ($(OS_TARGET), WINCE)
 OUTOPTION = -Fo# eol
 endif
 
-ifdef GRE_MODULE
-ifndef DISABLE_DIST_GRE
-ifdef GRE_DIRS_ONLY
-_SKIP_OLD_GRE_INSTALL=1
-endif
-endif
-endif
-
 ################################################################################
 
 # The root makefile doesn't want to do a plain export/libs, because
@@ -665,54 +657,25 @@ ifdef MAPS
 endif
 ifdef SHARED_LIBRARY
 ifdef IS_COMPONENT
-ifdef GRE_MODULE
-ifndef DISABLE_DIST_GRE
-	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(GRE_DIST)/components
-	$(ELF_DYNSTR_GC) $(GRE_DIST)/components/$(SHARED_LIBRARY)
-ifdef BEOS_ADDON_WORKAROUND
-	( cd $(GRE_DIST)/components && $(CC) -nostart -o $(SHARED_LIBRARY).stub $(SHARED_LIBRARY) )
-endif
-endif
-endif # GRE_MODULE
-ifndef _SKIP_OLD_GRE_INSTALL
 	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(FINAL_TARGET)/components
 	$(ELF_DYNSTR_GC) $(FINAL_TARGET)/components/$(SHARED_LIBRARY)
 ifdef BEOS_ADDON_WORKAROUND
 	( cd $(FINAL_TARGET)/components && $(CC) -nostart -o $(SHARED_LIBRARY).stub $(SHARED_LIBRARY) )
 endif
-endif # ! _SKIP_OLD_GRE_INSTALL
 else # ! IS_COMPONENT
-ifdef GRE_MODULE
-ifndef DISABLE_DIST_GRE
-	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(GRE_DIST)
-ifdef BEOS_ADDON_WORKAROUND
-	( cd $(GRE_DIST) && $(CC) -nostart -o $(SHARED_LIBRARY).stub $(SHARED_LIBRARY) )
-endif
-endif
-endif # GRE_MODULE
-
 ifneq (,$(filter OS2 WINNT WINCE,$(OS_ARCH)))
 	$(INSTALL) $(IFLAGS2) $(IMPORT_LIBRARY) $(DIST)/lib
 else
 	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(DIST)/lib
 endif
-ifndef _SKIP_OLD_GRE_INSTALL
 	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(FINAL_TARGET)
 ifdef BEOS_ADDON_WORKAROUND
 	( cd $(FINAL_TARGET) && $(CC) -nostart -o $(SHARED_LIBRARY).stub $(SHARED_LIBRARY) )
 endif
-endif # ! _SKIP_OLD_GRE_INSTALL
 endif # IS_COMPONENT
 endif # SHARED_LIBRARY
 ifdef PROGRAM
-ifdef GRE_MODULE
-ifndef DISABLE_DIST_GRE
-	$(INSTALL) $(IFLAGS2) $(PROGRAM) $(GRE_DIST)
-endif
-endif
-ifndef _SKIP_OLD_GRE_INSTALL
 	$(INSTALL) $(IFLAGS2) $(PROGRAM) $(FINAL_TARGET)
-endif
 endif
 ifdef SIMPLE_PROGRAMS
 	$(INSTALL) $(IFLAGS2) $(SIMPLE_PROGRAMS) $(FINAL_TARGET)
@@ -869,7 +832,7 @@ else
 ifeq (WINCE,$(OS_ARCH))
 	$(HOST_LD) -NOLOGO -OUT:$@ $(HOST_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
-ifeq (_WINNT,$(GNU_CC)_$(OS_ARCH))
+ifeq (_WINNT,$(GNU_CC)_$(HOST_OS_ARCH))
 	$(HOST_LD) -NOLOGO -OUT:$@ -PDB:$(PDBFILE) $(HOST_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
 	$(HOST_CC) -o $@ $(HOST_CFLAGS) $(HOST_LDFLAGS) $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
@@ -912,10 +875,18 @@ ifdef MOZ_POST_PROGRAM_COMMAND
 endif
 
 $(HOST_SIMPLE_PROGRAMS): host_%$(HOST_BIN_SUFFIX): host_%.$(OBJ_SUFFIX) $(HOST_LIBS_DEPS) $(HOST_EXTRA_DEPS) Makefile Makefile.in
+ifeq ($(MOZ_OS2_TOOLS),VACPP)
+	$(HOST_LD) -OUT:$@ $< $(LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS) -ST:0x100000
+else
 ifeq (WINCE,$(OS_ARCH))
 	$(HOST_LD) -NOLOGO -OUT:$@ $(WIN32_EXE_LDFLAGS) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
+ifeq (WINNT_,$(HOST_OS_ARCH)_$(GNU_CC))
+	$(HOST_LD) -NOLOGO -OUT:$@ -PDB:$(PDBFILE) $< $(WIN32_EXE_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+else
 	$(HOST_CC) $(OUTOPTION)$@ $(HOST_CFLAGS) $(INCLUDES) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+endif
+endif
 endif
 
 #
@@ -1236,6 +1207,13 @@ $(SDK_PUBLIC) $(PUBLIC)::
 	@if test ! -d $@; then echo Creating $@; rm -rf $@; $(NSINSTALL) -D $@; else true; fi
 endif
 
+ifdef MOZ_JAVAXPCOM
+ifneq ($(XPIDLSRCS)$(SDK_XPIDLSRCS),)
+$(JAVA_DIST_DIR)::
+	$(NSINSTALL) -D $@
+endif
+endif
+
 ifneq ($(XPI_NAME),)
 export::
 	@if test ! -d $(FINAL_TARGET); then echo Creating $(FINAL_TARGET); rm -fr $(FINAL_TARGET); $(NSINSTALL) -D $(FINAL_TARGET); else true; fi
@@ -1263,10 +1241,8 @@ endif
 
 ifneq ($(PREF_JS_EXPORTS),)
 ifdef GRE_MODULE
-PREF_DIST_DIR    = $(GRE_DIST)
 PREF_DIR = greprefs
 else
-PREF_DIST_DIR    = $(FINAL_TARGET)
 ifdef XPI_NAME
 PREF_DIR = defaults/preferences
 else
@@ -1274,7 +1250,7 @@ PREF_DIR = defaults/pref
 endif
 endif
 
-$(FINAL_TARGET)/$(PREF_DIR) $(GRE_DIST)/$(PREF_DIR) $(DESTDIR)$(mozappdir)/$(PREF_DIR):
+$(FINAL_TARGET)/$(PREF_DIR) $(DESTDIR)$(mozappdir)/$(PREF_DIR):
 	@if test ! -d $@; then echo Creating $@; rm -rf $@; $(NSINSTALL) -D $@; else true; fi
 
 # on win32, pref files need CRLF line endings... see bug 206029
@@ -1283,21 +1259,11 @@ PREF_PPFLAGS = --line-endings=crlf
 endif
 
 ifndef NO_DIST_INSTALL
-libs:: $(PREF_JS_EXPORTS) $(PREF_DIST_DIR)/$(PREF_DIR)
-	$(EXIT_ON_ERROR)  \
-	for i in $(PREF_JS_EXPORTS); \
-	do $(PERL) $(topsrcdir)/config/preprocessor.pl $(PREF_PPFLAGS) $(DEFINES) $(ACDEFINES) $$i > $(PREF_DIST_DIR)/$(PREF_DIR)/`basename $$i`; \
-	done
-
-ifdef GRE_MODULE
-ifndef _SKIP_OLD_GRE_INSTALL
 libs:: $(PREF_JS_EXPORTS) $(FINAL_TARGET)/$(PREF_DIR)
 	$(EXIT_ON_ERROR)  \
 	for i in $(PREF_JS_EXPORTS); \
 	do $(PERL) $(topsrcdir)/config/preprocessor.pl $(PREF_PPFLAGS) $(DEFINES) $(ACDEFINES) $$i > $(FINAL_TARGET)/$(PREF_DIR)/`basename $$i`; \
 	done
-endif
-endif
 endif
 
 ifndef NO_INSTALL
@@ -1378,14 +1344,7 @@ endif # XPIDL_MODULE.xpt != XPIDLSRCS
 
 libs:: $(XPIDL_GEN_DIR)/$(XPIDL_MODULE).xpt
 ifndef NO_DIST_INSTALL
-ifdef GRE_MODULE
-ifndef DISABLE_DIST_GRE
-	$(INSTALL) $(IFLAGS1) $(XPIDL_GEN_DIR)/$(XPIDL_MODULE).xpt $(GRE_DIST)/components
-endif
-endif
-ifndef _SKIP_OLD_GRE_INSTALL
 	$(INSTALL) $(IFLAGS1) $(XPIDL_GEN_DIR)/$(XPIDL_MODULE).xpt $(FINAL_TARGET)/components
-endif
 endif
 
 install:: $(XPIDL_GEN_DIR)/$(XPIDL_MODULE).xpt
@@ -1482,6 +1441,48 @@ ifndef NO_INSTALL
 endif
 
 endif # SDK_XPIDLSRCS
+
+
+
+ifdef MOZ_JAVAXPCOM
+ifneq ($(XPIDLSRCS)$(SDK_XPIDLSRCS),)
+
+JAVA_XPIDLSRCS = $(XPIDLSRCS) $(SDK_XPIDLSRCS)
+
+# A single IDL file can contain multiple interfaces, which result in multiple
+# Java interface files.  So use hidden dependency files.
+JAVADEPFILES = $(addprefix $(JAVA_GEN_DIR)/.,$(JAVA_XPIDLSRCS:.idl=.java.pp))
+
+$(JAVA_GEN_DIR):
+	$(NSINSTALL) -D $@
+GARBAGE_DIRS += $(JAVA_GEN_DIR)
+
+# generate .java files into _javagen/[package name dirs]
+_JAVA_GEN_DIR = $(JAVA_GEN_DIR)/$(JAVA_IFACES_PKG_NAME)
+$(_JAVA_GEN_DIR):
+	$(NSINSTALL) -D $@
+
+$(JAVA_GEN_DIR)/.%.java.pp: %.idl $(XPIDL_COMPILE) $(_JAVA_GEN_DIR)
+	$(REPORT_BUILD)
+	$(ELOG) $(XPIDL_COMPILE) -m java -w -I$(srcdir) -I$(IDL_DIR) -o $(_JAVA_GEN_DIR)/$* $(_VPATH_SRCS)
+	@touch $@
+
+# "Install" generated Java interfaces.  We segregate them based on the XPI_NAME.
+# If XPI_NAME is not set, install into the "default" directory.
+ifneq ($(XPI_NAME),)
+JAVA_INSTALL_DIR = $(JAVA_DIST_DIR)/$(XPI_NAME)
+else
+JAVA_INSTALL_DIR = $(JAVA_DIST_DIR)/default
+endif
+
+$(JAVA_INSTALL_DIR):
+	$(NSINSTALL) -D $@
+
+export:: $(JAVA_DIST_DIR) $(JAVADEPFILES) $(JAVA_INSTALL_DIR)
+	cd $(JAVA_GEN_DIR) && tar $(TAR_CREATE_FLAGS) - * | (cd "../$(JAVA_INSTALL_DIR)" && tar -xf -)
+
+endif # XPIDLSRCS || SDK_XPIDLSRCS
+endif # MOZ_JAVAXPCOM
 
 ################################################################################
 # Copy each element of EXTRA_COMPONENTS to $(FINAL_TARGET)/components
@@ -1604,6 +1605,35 @@ endif
 
 ifneq ($(XPI_PKGNAME),)
 libs realchrome::
+ifdef STRIP_XPI
+ifndef MOZ_DEBUG
+	@echo "Stripping $(XPI_PKGNAME) package directory..."
+	@echo $(FINAL_TARGET)
+	@cd $(FINAL_TARGET) && find . ! -type d \
+			! -name "*.js" \
+			! -name "*.xpt" \
+			! -name "*.gif" \
+			! -name "*.jpg" \
+			! -name "*.png" \
+			! -name "*.xpm" \
+			! -name "*.txt" \
+			! -name "*.rdf" \
+			! -name "*.sh" \
+			! -name "*.properties" \
+			! -name "*.dtd" \
+			! -name "*.html" \
+			! -name "*.xul" \
+			! -name "*.css" \
+			! -name "*.xml" \
+			! -name "*.jar" \
+			! -name "*.dat" \
+			! -name "*.tbl" \
+			! -name "*.src" \
+			! -name "*.reg" \
+			$(PLATFORM_EXCLUDE_LIST) \
+			-exec $(STRIP) $(STRIP_FLAGS) {} >/dev/null 2>&1 \;
+endif
+endif
 	@echo "Packaging $(XPI_PKGNAME).xpi..."
 	cd $(FINAL_TARGET) && $(ZIP) -qr ../$(XPI_PKGNAME).xpi *
 endif

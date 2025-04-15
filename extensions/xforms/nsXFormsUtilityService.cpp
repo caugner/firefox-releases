@@ -113,60 +113,33 @@ nsXFormsUtilityService::IsNodeAssocWithModel( nsIDOMNode *aNode,
                                               PRBool     *aModelAssocWithNode)
 {
 
-  nsCOMPtr<nsIDOMElement> element = do_QueryInterface(aNode);
+  nsCOMPtr<nsIDOMNode> modelNode;
 
   nsAutoString namespaceURI;
   aNode->GetNamespaceURI(namespaceURI);
-
   // If the node is in the XForms namespace and XTF based, then it should
   //   be able to be handled by GetModel.  Otherwise it is probably an instance
   //   node in a instance document.
   if (namespaceURI.EqualsLiteral(NS_NAMESPACE_XFORMS)) {
+    nsCOMPtr<nsIDOMElement> element = do_QueryInterface(aNode);
     nsCOMPtr<nsIModelElementPrivate> modelPriv = nsXFormsUtils::GetModel(element);
-    nsCOMPtr<nsIDOMNode> modelNode = do_QueryInterface(modelPriv);
-
-    if (modelNode && (modelNode == aModel)) {
-      *aModelAssocWithNode = PR_TRUE;
-    } else { 
-      *aModelAssocWithNode = PR_FALSE;
-    }
+    modelNode = do_QueryInterface(modelPriv);
   } else { 
     // We are assuming that if the node coming in isn't a proper XForms element,
     //   then it is an instance element in an instance doc.  Now we just have
     //   to determine if the given model contains this instance document.
-    nsCOMPtr<nsIDOMDocument> document;
-    aNode->GetOwnerDocument(getter_AddRefs(document));
-    *aModelAssocWithNode = PR_FALSE;
-
-    // Guess that we'd better make sure that it is a model
-    nsCOMPtr<nsIXFormsModelElement> modelEle = do_QueryInterface(aModel);
-    if (modelEle) {
-      // OK, we know that this is a model element.  So now we have to go
-      //   instance element by instance element and find the associated
-      //   document.  If it is equal to the document that contains aNode,
-      //   then aNode is associated with this aModel element and we can return
-      //   true.
-      nsCOMPtr<nsIModelElementPrivate>model = do_QueryInterface(modelEle);
-      nsCOMPtr<nsIInstanceElementPrivate> instElement;
-      nsCOMPtr<nsIDOMDocument> instDocument;
-
-      nsCOMArray<nsIInstanceElementPrivate> *instList = nsnull;
-      model->GetInstanceList(&instList);
-      NS_ENSURE_TRUE(instList, NS_ERROR_FAILURE);
-
-      for (int i = 0; i < instList->Count(); ++i) {
-        instElement = instList->ObjectAt(i);
-    
-        instElement->GetDocument(getter_AddRefs(instDocument));
-        if (instDocument) {
-          if (instDocument == document) {
-            *aModelAssocWithNode = PR_TRUE;
-            break;
-          }
-        }
-      }
+    nsCOMPtr<nsIDOMNode> instNode;
+    nsresult rv =
+      nsXFormsUtils::GetInstanceNodeForData(aNode, getter_AddRefs(instNode));
+    if (NS_SUCCEEDED(rv) && instNode) {
+      instNode->GetParentNode(getter_AddRefs(modelNode));
     }
+  }
 
+  if (modelNode && (modelNode == aModel)) {
+    *aModelAssocWithNode = PR_TRUE;
+  } else {
+    *aModelAssocWithNode = PR_FALSE;
   }
 
   return NS_OK;
@@ -223,16 +196,24 @@ nsXFormsUtilityService::ValidateString(const nsAString & aValue,
 }
 
 NS_IMETHODIMP
-nsXFormsUtilityService::GetRepeatIndex(nsIDOMNode *aRepeat, PRUint32 *aIndex)
+nsXFormsUtilityService::GetRepeatIndex(nsIDOMNode *aRepeat, PRInt32 *aIndex)
 {
   NS_ASSERTION(aIndex, "no return buffer for index, we'll crash soon");
   *aIndex = 0;
 
   nsCOMPtr<nsIXFormsRepeatElement> repeatEle = do_QueryInterface(aRepeat);
+  if (!repeatEle) {
+    // if aRepeat isn't a repeat element, then setting aIndex to -1 to tell
+    // XPath to return NaN.  Per 7.8.5 in the spec (1.0, 2nd edition)
+    *aIndex = -1;
+  } else {
+    PRUint32 retIndex = 0;
+    nsresult rv = repeatEle->GetIndex(&retIndex);
+    NS_ENSURE_SUCCESS(rv, rv);
+    *aIndex = retIndex;
+  }
 
-  /// 
-  /// @bug This should somehow end up in a NaN per the XForms 1.0 Errata (XXX)
-  return repeatEle ? repeatEle->GetIndex(aIndex) : NS_OK;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -244,7 +225,7 @@ nsXFormsUtilityService::GetMonths(const nsAString & aValue,
   *aMonths = 0;
   nsCOMPtr<nsISchemaDuration> duration;
   nsCOMPtr<nsISchemaValidator> schemaValidator = 
-    do_GetService(NS_SCHEMAVALIDATOR_CONTRACTID);
+    do_CreateInstance(NS_SCHEMAVALIDATOR_CONTRACTID);
   NS_ENSURE_TRUE(schemaValidator, NS_ERROR_FAILURE);
 
   nsresult rv = schemaValidator->ValidateBuiltinTypeDuration(aValue, 
@@ -278,7 +259,7 @@ nsXFormsUtilityService::GetSeconds(const nsAString & aValue,
 {
   nsCOMPtr<nsISchemaDuration> duration;
   nsCOMPtr<nsISchemaValidator> schemaValidator = 
-    do_GetService(NS_SCHEMAVALIDATOR_CONTRACTID);
+    do_CreateInstance(NS_SCHEMAVALIDATOR_CONTRACTID);
   NS_ENSURE_TRUE(schemaValidator, NS_ERROR_FAILURE);
 
   nsresult rv = schemaValidator->ValidateBuiltinTypeDuration(aValue, 
@@ -317,7 +298,7 @@ nsXFormsUtilityService::GetSecondsFromDateTime(const nsAString & aValue,
 {
   PRTime dateTime;
   nsCOMPtr<nsISchemaValidator> schemaValidator = 
-    do_GetService(NS_SCHEMAVALIDATOR_CONTRACTID);
+    do_CreateInstance(NS_SCHEMAVALIDATOR_CONTRACTID);
   NS_ENSURE_TRUE(schemaValidator, NS_ERROR_FAILURE);
 
   nsresult rv = schemaValidator->ValidateBuiltinTypeDateTime(aValue, &dateTime); 
@@ -405,7 +386,7 @@ nsXFormsUtilityService::GetDaysFromDateTime(const nsAString & aValue,
 
   PRTime date;
   nsCOMPtr<nsISchemaValidator> schemaValidator = 
-    do_GetService(NS_SCHEMAVALIDATOR_CONTRACTID);
+    do_CreateInstance(NS_SCHEMAVALIDATOR_CONTRACTID);
   NS_ENSURE_TRUE(schemaValidator, NS_ERROR_FAILURE);
 
   // aValue could be a xsd:date or a xsd:dateTime.  If it is a dateTime, we

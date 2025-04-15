@@ -49,18 +49,8 @@
 
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 
-nsLocalMoveCopyMsgTxn::nsLocalMoveCopyMsgTxn() :
-    m_isMove(PR_FALSE), m_srcIsImap4(PR_FALSE)
+nsLocalMoveCopyMsgTxn::nsLocalMoveCopyMsgTxn()  : m_srcIsImap4(PR_FALSE)
 {
-	Init(nsnull, nsnull, PR_FALSE);
-}
-
-nsLocalMoveCopyMsgTxn::nsLocalMoveCopyMsgTxn(nsIMsgFolder* srcFolder,
-                                             nsIMsgFolder* dstFolder,
-                                             PRBool isMove) :
-    m_isMove(PR_FALSE), m_srcIsImap4(PR_FALSE)
-{
-	Init(srcFolder, dstFolder, isMove);
 }
 
 nsLocalMoveCopyMsgTxn::~nsLocalMoveCopyMsgTxn()
@@ -111,7 +101,7 @@ nsLocalMoveCopyMsgTxn::Init(nsIMsgFolder* srcFolder, nsIMsgFolder* dstFolder,
     {
         m_srcIsImap4 = PR_TRUE;
     }
-    return NS_OK;
+    return nsMsgTxn::Init();
 }
 nsresult 
 nsLocalMoveCopyMsgTxn::GetSrcIsImap(PRBool *isImap)
@@ -349,12 +339,10 @@ nsLocalMoveCopyMsgTxn::UndoTransactionInternal()
               localFolder->MarkMsgsOnPop3Server(srcMessages, POP3_NONE /*deleteMsgs*/);
         }
         srcDB->SetSummaryValid(PR_TRUE);
-        srcDB->Commit(nsMsgDBCommitType::kLargeCommit);
     }
 
     dstDB->DeleteMessages(&m_dstKeyArray, nsnull);
     dstDB->SetSummaryValid(PR_TRUE);
-    dstDB->Commit(nsMsgDBCommitType::kLargeCommit);
 
     return rv;
 }
@@ -410,7 +398,6 @@ nsLocalMoveCopyMsgTxn::RedoTransaction()
         }
     }
     dstDB->SetSummaryValid(PR_TRUE);
-    dstDB->Commit(nsMsgDBCommitType::kLargeCommit);
 
     if (m_isMove)
     {
@@ -434,7 +421,6 @@ nsLocalMoveCopyMsgTxn::RedoTransaction()
 
             rv = srcDB->DeleteMessages(&m_srcKeyArray, nsnull);
             srcDB->SetSummaryValid(PR_TRUE);
-            srcDB->Commit(nsMsgDBCommitType::kLargeCommit);
         }
     }
 

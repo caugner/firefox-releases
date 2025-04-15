@@ -127,6 +127,10 @@ function chooseProfileFolder()
   dirChooser.init(window, gProfileManagerBundle.getString("chooseFolder"),
                   I.nsIFilePicker.modeGetFolder);
   dirChooser.appendFilters(I.nsIFilePicker.filterAll);
+
+  // default to the Profiles folder
+  dirChooser.displayDirectory = gDefaultProfileParent;
+
   dirChooser.show();
   newProfileRoot = dirChooser.file;
 
@@ -150,7 +154,11 @@ function checkCurrentInput(currentInput)
 
   if (!errorMessage) {
     finishText.className = "";
+#ifndef XP_MACOSX
     finishText.firstChild.data = gProfileManagerBundle.getString("profileFinishText");
+#else
+    finishText.firstChild.data = gProfileManagerBundle.getString("profileFinishTextMac");
+#endif
     canAdvance = true;
   }
   else {

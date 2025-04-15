@@ -509,6 +509,10 @@ txCompileObserver::loadURI(const nsAString& aUri,
                            const nsAString& aReferrerUri,
                            txStylesheetCompiler* aCompiler)
 {
+    if (mProcessor->IsLoadDisabled()) {
+        return NS_ERROR_XSLT_LOAD_BLOCKED_ERROR;
+    }
+
     nsCOMPtr<nsIURI> uri;
     nsresult rv = NS_NewURI(getter_AddRefs(uri), aUri);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -692,19 +696,21 @@ handleNode(nsIDOMNode* aNode, txStylesheetCompiler* aCompiler)
 class txSyncCompileObserver : public txACompileObserver
 {
 public:
-    txSyncCompileObserver();
+    txSyncCompileObserver(txMozillaXSLTProcessor* aProcessor);
     virtual ~txSyncCompileObserver();
 
     TX_DECL_ACOMPILEOBSERVER;
 
 protected:
+    nsRefPtr<txMozillaXSLTProcessor> mProcessor;
     nsAutoRefCnt mRefCnt;
 
 private:
     nsCOMPtr<nsISyncLoadDOMService> mLoadService;
 };
 
-txSyncCompileObserver::txSyncCompileObserver()
+txSyncCompileObserver::txSyncCompileObserver(txMozillaXSLTProcessor* aProcessor)
+  : mProcessor(aProcessor)
 {
 }
 
@@ -734,6 +740,10 @@ txSyncCompileObserver::loadURI(const nsAString& aUri,
                                const nsAString& aReferrerUri,
                                txStylesheetCompiler* aCompiler)
 {
+    if (mProcessor->IsLoadDisabled()) {
+        return NS_ERROR_XSLT_LOAD_BLOCKED_ERROR;
+    }
+
     nsCOMPtr<nsIURI> uri;
     nsresult rv = NS_NewURI(getter_AddRefs(uri), aUri);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -762,10 +772,6 @@ txSyncCompileObserver::loadURI(const nsAString& aUri,
 
     nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
     if (httpChannel) {
-        httpChannel->SetRequestHeader(NS_LITERAL_CSTRING("Accept"),
-                                      NS_LITERAL_CSTRING("text/xml,application/xml,application/xhtml+xml,*/*;q=0.1"),
-                                      PR_FALSE);
-
         httpChannel->SetReferrer(referrerUri);
     }
 
@@ -793,25 +799,47 @@ void txSyncCompileObserver::onDoneCompiling(txStylesheetCompiler* aCompiler,
 }
 
 nsresult
-TX_CompileStylesheet(nsIDOMNode* aNode, txStylesheet** aStylesheet)
+TX_CompileStylesheet(nsIDOMNode* aNode, txMozillaXSLTProcessor* aProcessor,
+                     txStylesheet** aStylesheet)
 {
-    nsCOMPtr<nsIDOMDocument> document;
-    aNode->GetOwnerDocument(getter_AddRefs(document));
-    if (!document) {
-        document = do_QueryInterface(aNode);
+    // XXX This would be simpler if GetBaseURI lived on nsINode
+    nsCOMPtr<nsIURI> uri;
+    nsCOMPtr<nsIDocument> doc;
+    nsCOMPtr<nsIContent> cont = do_QueryInterface(aNode);
+    if (cont) {
+        doc = cont->GetOwnerDoc();
+        NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
+
+        uri = cont->GetBaseURI();
+    }
+    else {
+        doc = do_QueryInterface(aNode);
+        NS_ASSERTION(doc, "aNode should be a doc or an element by now");
+
+        uri = doc->GetBaseURI();
     }
 
-    nsCOMPtr<nsIDocument> doc = do_QueryInterface(document);
-    nsIURI *uri = doc->GetBaseURI();
-    nsCAutoString baseURI;
-    uri->GetSpec(baseURI);
+    NS_ENSURE_TRUE(uri, NS_ERROR_FAILURE);
+    
+    nsCAutoString spec;
+    uri->GetSpec(spec);
+    NS_ConvertUTF8toUTF16 baseURI(spec);
 
-    nsRefPtr<txSyncCompileObserver> obs = new txSyncCompileObserver();
+    uri = doc->GetDocumentURI();
+    NS_ENSURE_TRUE(uri, NS_ERROR_FAILURE);
+
+    uri->GetSpec(spec);
+    NS_ConvertUTF8toUTF16 stylesheetURI(spec);
+
+    nsRefPtr<txSyncCompileObserver> obs =
+        new txSyncCompileObserver(aProcessor);
     NS_ENSURE_TRUE(obs, NS_ERROR_OUT_OF_MEMORY);
-    NS_ConvertUTF8toUTF16 base(baseURI);
+
     nsRefPtr<txStylesheetCompiler> compiler =
-        new txStylesheetCompiler(base, obs);
+        new txStylesheetCompiler(stylesheetURI, obs);
     NS_ENSURE_TRUE(compiler, NS_ERROR_OUT_OF_MEMORY);
+
+    compiler->setBaseURI(baseURI);
 
     nsresult rv = handleNode(aNode, compiler);
     if (NS_FAILED(rv)) {

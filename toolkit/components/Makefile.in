@@ -56,12 +56,16 @@ DIRS += \
 	alerts \
 	console \
 	filepicker \
+	typeaheadfind \
 	printing \
 	viewsource \
 	viewconfig \
+	urlformatter \
 	$(NULL)
 
-ifndef MOZ_THUNDERBIRD
+ifdef MOZ_THUNDERBIRD
+DIRS += autocomplete/public
+else
 DIRS +=	\
 	autocomplete \
 	cookie \
@@ -69,12 +73,19 @@ DIRS +=	\
 	history \
 	passwordmgr \
 	satchel \
-	typeaheadfind \
 	$(NULL)
 endif # MOZ_THUNDERBIRD
 
+ifdef MOZ_FEEDS
+DIRS += feeds
+endif
+
 ifdef MOZ_XPINSTALL
 DIRS +=	downloads
+endif
+
+ifdef MOZ_URL_CLASSIFIER
+DIRS += url-classifier
 endif
 
 DIRS += \
@@ -86,5 +97,9 @@ DIRS += \
 EXTRA_PP_COMPONENTS = nsDefaultCLH.js
 
 endif # MOZ_XUL_APP
+
+ifdef MOZ_SUITE
+DIRS += autocomplete/public
+endif
 
 include $(topsrcdir)/config/rules.mk

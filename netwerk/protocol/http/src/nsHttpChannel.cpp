@@ -72,6 +72,7 @@
 #include "nsInt64.h"
 #include "nsIVariant.h"
 #include "nsChannelProperties.h"
+#include "nsIOService.h"
 
 // True if the local cache should be bypassed when processing a request.
 #define BYPASS_LOCAL_CACHE(loadFlags) \
@@ -89,56 +90,6 @@ static NS_METHOD DiscardSegments(nsIInputStream *input,
 {
     *countRead = count;
     return NS_OK;
-}
-
-//
-// From section 2.2 of RFC 2616, a token is defined as:
-//
-//   token          = 1*<any CHAR except CTLs or separators>
-//   CHAR           = <any US-ASCII character (octets 0 - 127)>
-//   separators     = "(" | ")" | "<" | ">" | "@"
-//                  | "," | ";" | ":" | "\" | <">
-//                  | "/" | "[" | "]" | "?" | "="
-//                  | "{" | "}" | SP | HT
-//   CTL            = <any US-ASCII control character
-//                    (octets 0 - 31) and DEL (127)>
-//   SP             = <US-ASCII SP, space (32)>
-//   HT             = <US-ASCII HT, horizontal-tab (9)>
-//
-static const char kValidTokenMap[128] = {
-    0, 0, 0, 0, 0, 0, 0, 0, //   0
-    0, 0, 0, 0, 0, 0, 0, 0, //   8
-    0, 0, 0, 0, 0, 0, 0, 0, //  16
-    0, 0, 0, 0, 0, 0, 0, 0, //  24
-
-    0, 1, 0, 1, 1, 1, 1, 1, //  32
-    0, 0, 1, 1, 0, 1, 1, 0, //  40
-    1, 1, 1, 1, 1, 1, 1, 1, //  48
-    1, 1, 0, 0, 0, 0, 0, 0, //  56
-
-    0, 1, 1, 1, 1, 1, 1, 1, //  64
-    1, 1, 1, 1, 1, 1, 1, 1, //  72
-    1, 1, 1, 1, 1, 1, 1, 1, //  80
-    1, 1, 1, 0, 0, 0, 1, 1, //  88
-
-    1, 1, 1, 1, 1, 1, 1, 1, //  96
-    1, 1, 1, 1, 1, 1, 1, 1, // 104
-    1, 1, 1, 1, 1, 1, 1, 1, // 112
-    1, 1, 1, 0, 1, 0, 1, 0  // 120
-};
-static PRBool IsValidToken(const nsCString &s)
-{
-    const char *start = s.get();
-    const char *end   = start + s.Length();
-
-    if (start == end)
-        return PR_FALSE;
-
-    for (; start != end; ++start)
-        if (((unsigned char) *start) > 127 || !kValidTokenMap[*start])
-            return PR_FALSE;
-
-    return PR_TRUE;
 }
 
 //-----------------------------------------------------------------------------
@@ -160,7 +111,7 @@ nsHttpChannel::nsHttpChannel()
     , mRequestTime(0)
     , mProxyAuthContinuationState(nsnull)
     , mAuthContinuationState(nsnull)
-    , mStartPos(LL_MaxUint())
+    , mStartPos(LL_MAXUINT)
     , mRedirectionLimit(gHttpHandler->RedirectionLimit())
     , mIsPending(PR_FALSE)
     , mApplyConversion(PR_TRUE)
@@ -174,6 +125,7 @@ nsHttpChannel::nsHttpChannel()
     , mAuthRetryPending(PR_FALSE)
     , mSuppressDefensiveAuth(PR_FALSE)
     , mResuming(PR_FALSE)
+    , mOpenedCacheForWriting(PR_FALSE)
 {
     LOG(("Creating nsHttpChannel @%x\n", this));
 
@@ -343,12 +295,27 @@ nsHttpChannel::AsyncCall_EventCleanupFunc(PLEvent *ev)
     delete (nsAsyncCallEvent *) ev;
 }
 
+PRBool
+nsHttpChannel::RequestIsConditional()
+{
+    // Is our consumer issuing a conditional request?
+    return mRequestHead.PeekHeader(nsHttp::If_Modified_Since) ||
+           mRequestHead.PeekHeader(nsHttp::If_None_Match) ||
+           mRequestHead.PeekHeader(nsHttp::If_Unmodified_Since) ||
+           mRequestHead.PeekHeader(nsHttp::If_Match) ||
+           mRequestHead.PeekHeader(nsHttp::If_Range);
+}
+
 nsresult
 nsHttpChannel::Connect(PRBool firstTime)
 {
     nsresult rv;
 
     LOG(("nsHttpChannel::Connect [this=%x]\n", this));
+
+    // ensure that we are using a valid hostname
+    if (!net_IsValidHostName(nsDependentCString(mConnectionInfo->Host())))
+        return NS_ERROR_UNKNOWN_HOST;
 
     // true when called from AsyncOpen
     if (firstTime) {
@@ -652,8 +619,8 @@ nsHttpChannel::SetupTransaction()
                             getter_AddRefs(responseStream));
     if (NS_FAILED(rv)) return rv;
 
-    rv = NS_NewInputStreamPump(getter_AddRefs(mTransactionPump),
-                               responseStream);
+    rv = nsInputStreamPump::Create(getter_AddRefs(mTransactionPump),
+                                   responseStream);
     return rv;
 }
 
@@ -716,6 +683,25 @@ nsHttpChannel::ApplyContentConversions()
     }
 }
 
+static void
+CallTypeSniffers(void *aClosure, const PRUint8 *aData, PRUint32 aCount)
+{
+  nsIChannel *chan = NS_STATIC_CAST(nsIChannel*, aClosure);
+
+  const nsCOMArray<nsIContentSniffer_MOZILLA_1_8_BRANCH>& sniffers =
+    gIOService->GetContentSniffers();
+  PRUint32 length = sniffers.Count();
+  for (PRUint32 i = 0; i < length; ++i) {
+    nsCAutoString newType;
+    nsresult rv =
+      sniffers[i]->GetMIMETypeFromContent(chan, aData, aCount, newType);
+    if (NS_SUCCEEDED(rv) && !newType.IsEmpty()) {
+      chan->SetContentType(newType);
+      break;
+    }
+  }
+}
+
 nsresult
 nsHttpChannel::CallOnStartRequest()
 {
@@ -752,7 +738,17 @@ nsHttpChannel::CallOnStartRequest()
     if (mResponseHead)
         SetPropertyAsInt64(NS_CHANNEL_PROP_CONTENT_LENGTH,
                            mResponseHead->ContentLength());
-    
+
+    // Allow consumers to override our content type
+    if ((mLoadFlags & LOAD_CALL_CONTENT_SNIFFERS) &&
+        gIOService->GetContentSniffers().Count() != 0) {
+        // NOTE: We can have both a txn pump and a cache pump when the cache
+        // content is partial. In that case, we need to read from the cache,
+        // because that's the one that has the initial contents.
+        nsInputStreamPump* pump = mCachePump ? mCachePump : mTransactionPump;
+        pump->PeekStream(CallTypeSniffers, NS_STATIC_CAST(nsIChannel*, this));
+    }
+
     LOG(("  calling mListener->OnStartRequest\n"));
     nsresult rv = mListener->OnStartRequest(this, mListenerContext);
     if (NS_FAILED(rv)) return rv;
@@ -772,11 +768,12 @@ nsHttpChannel::ProcessResponse()
     LOG(("nsHttpChannel::ProcessResponse [this=%x httpStatus=%u]\n",
         this, httpStatus));
 
-    // set cookies, if any exist
-    SetCookie(mResponseHead->PeekHeader(nsHttp::Set_Cookie));
-
     // notify "http-on-examine-response" observers
     gHttpHandler->OnExamineResponse(this);
+
+    // set cookies, if any exist; done after OnExamineResponse to allow those
+    // observers to modify the cookie response headers
+    SetCookie(mResponseHead->PeekHeader(nsHttp::Set_Cookie));
 
     // handle unused username and password in url (see bug 232567)
     if (httpStatus != 401 && httpStatus != 407) {
@@ -903,7 +900,8 @@ nsHttpChannel::ProcessNormal()
     // expiration time (bug 87710).
     if (mCacheEntry) {
         rv = InitCacheEntry();
-        if (NS_FAILED(rv)) return rv; // XXX this early return prevents OnStartRequest from firing!
+        if (NS_FAILED(rv))
+            CloseCacheEntry(NS_BINDING_ABORTED);
     }
 
     // Check that the server sent us what we were asking for
@@ -999,14 +997,10 @@ nsHttpChannel::ReplaceWithProxy(nsIProxyInfo *pi)
         return rv;
 
     // Inform consumers about this fake redirect
-    nsCOMPtr<nsIChannelEventSink> channelEventSink;
-    GetCallback(channelEventSink);
-    if (channelEventSink) {
-        PRUint32 flags = nsIChannelEventSink::REDIRECT_INTERNAL;
-        rv = channelEventSink->OnChannelRedirect(this, newChannel, flags);
-        if (NS_FAILED(rv))
-            return rv;
-    }
+    PRUint32 flags = nsIChannelEventSink::REDIRECT_INTERNAL;
+    rv = gHttpHandler->OnChannelRedirect(this, newChannel, flags);
+    if (NS_FAILED(rv))
+        return rv;
 
     // open new channel
     rv = newChannel->AsyncOpen(mListener, mListenerContext);
@@ -1285,11 +1279,18 @@ nsHttpChannel::OpenCacheEntry(PRBool offline, PRBool *delayed)
         // don't use the cache for other types of requests
         return NS_OK;
     }
-    else if (mRequestHead.PeekHeader(nsHttp::Range)) {
+
+    if (mRequestHead.PeekHeader(nsHttp::Range)) {
         // we don't support caching for byte range requests initiated
         // by our clients or via nsIResumableChannel.
         // XXX perhaps we could munge their byte range into the cache
         // key to make caching sort'a work.
+        return NS_OK;
+    }
+
+    if (RequestIsConditional()) {
+        // don't use the cache if our consumer is making a conditional request
+        // (see bug 331825).
         return NS_OK;
     }
 
@@ -1689,9 +1690,9 @@ nsHttpChannel::ReadFromCache()
     rv = mCacheEntry->OpenInputStream(0, getter_AddRefs(stream));
     if (NS_FAILED(rv)) return rv;
 
-    rv = NS_NewInputStreamPump(getter_AddRefs(mCachePump),
-                               stream, nsInt64(-1), nsInt64(-1), 0, 0,
-                               PR_TRUE);
+    rv = nsInputStreamPump::Create(getter_AddRefs(mCachePump),
+                                   stream, nsInt64(-1), nsInt64(-1), 0, 0,
+                                   PR_TRUE);
     if (NS_FAILED(rv)) return rv;
 
     return mCachePump->AsyncRead(this, mListenerContext);
@@ -1719,6 +1720,7 @@ nsHttpChannel::CloseCacheEntry(nsresult status)
         mCachePump = 0;
         mCacheEntry = 0;
         mCacheAccess = 0;
+        mOpenedCacheForWriting = PR_FALSE;
     }
     return rv;
 }
@@ -1861,6 +1863,8 @@ nsHttpChannel::InstallCacheListener(PRUint32 offset)
     rv = mCacheEntry->OpenOutputStream(offset, getter_AddRefs(out));
     if (NS_FAILED(rv)) return rv;
 
+    mOpenedCacheForWriting = PR_TRUE;
+
     // XXX disk cache does not support overlapped i/o yet
 #if 0
     // Mark entry valid inorder to allow simultaneous reading...
@@ -1875,8 +1879,8 @@ nsHttpChannel::InstallCacheListener(PRUint32 offset)
     rv = tee->Init(mListener, out);
     if (NS_FAILED(rv)) return rv;
 
-    mListener = do_QueryInterface(tee, &rv);
-    return rv;
+    mListener = tee;
+    return NS_OK;
 }
 
 //-----------------------------------------------------------------------------
@@ -2079,23 +2083,22 @@ nsHttpChannel::ProcessRedirection(PRUint32 redirectType)
     if (NS_FAILED(rv)) return rv;
 
     // call out to the event sink to notify it of this redirection.
+    PRUint32 redirectFlags;
+    if (redirectType == 301) // Moved Permanently
+        redirectFlags = nsIChannelEventSink::REDIRECT_PERMANENT;
+    else
+        redirectFlags = nsIChannelEventSink::REDIRECT_TEMPORARY;
+    rv = gHttpHandler->OnChannelRedirect(this, newChannel, redirectFlags);
+    if (NS_FAILED(rv))
+        return rv;
+
+    // And now, the deprecated way
     nsCOMPtr<nsIHttpEventSink> httpEventSink;
     GetCallback(httpEventSink);
     if (httpEventSink) {
         // NOTE: nsIHttpEventSink is only used for compatibility with pre-1.8
         // versions.
         rv = httpEventSink->OnRedirect(this, newChannel);
-        if (NS_FAILED(rv)) return rv;
-    }
-    nsCOMPtr<nsIChannelEventSink> channelEventSink;
-    GetCallback(channelEventSink);
-    if (channelEventSink) {
-        PRUint32 flags;
-        if (redirectType == 301) // Moved Permanently
-            flags = nsIChannelEventSink::REDIRECT_PERMANENT;
-        else
-            flags = nsIChannelEventSink::REDIRECT_TEMPORARY;
-        rv = channelEventSink->OnChannelRedirect(this, newChannel, flags);
         if (NS_FAILED(rv)) return rv;
     }
     // XXX we used to talk directly with the script security manager, but that
@@ -2765,8 +2768,20 @@ nsHttpChannel::PromptForIdentity(const char *scheme,
     {
         NS_NAMED_LITERAL_STRING(proxyText, "EnterUserPasswordForProxy");
         NS_NAMED_LITERAL_STRING(originText, "EnterUserPasswordForRealm");
-        const PRUnichar *text = proxyAuth ? proxyText.get() : originText.get();
- 
+
+        const PRUnichar *text;
+        if (proxyAuth) {
+            text = proxyText.get();
+        } else {
+            text = originText.get();
+
+            // prepend "scheme://"
+            nsAutoString schemeU; 
+            CopyASCIItoUTF16(scheme, schemeU);
+            schemeU.AppendLiteral("://");
+            displayHost.Insert(schemeU, 0);
+        }
+
         const PRUnichar *strings[] = { realmU.get(), displayHost.get() };
 
         rv = bundle->FormatStringFromName(text, strings, 2,
@@ -3081,9 +3096,11 @@ nsHttpChannel::Cancel(nsresult status)
     mStatus = status;
     if (mProxyRequest)
         mProxyRequest->Cancel(status);
-    else if (mTransaction)
+    if (mTransaction)
         gHttpHandler->CancelTransaction(mTransaction, status);
-    else if (mCachePump)
+    if (mTransactionPump)
+        mTransactionPump->Cancel(status);
+    if (mCachePump)
         mCachePump->Cancel(status);
     return NS_OK;
 }
@@ -3342,7 +3359,7 @@ nsHttpChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
         return rv;
 
     // Remember the cookie header that was set, if any
-    const char* cookieHeader = mRequestHead.PeekHeader(nsHttp::Cookie);
+    const char *cookieHeader = mRequestHead.PeekHeader(nsHttp::Cookie);
     if (cookieHeader)
         mUserSetCookieHeader = cookieHeader;
 
@@ -3351,6 +3368,13 @@ nsHttpChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
 
     // notify "http-on-modify-request" observers
     gHttpHandler->OnModifyRequest(this);
+
+    // Adjust mCaps according to our request headers:
+    //  - If "Connection: close" is set as a request header, then do not bother
+    //    trying to establish a keep-alive connection.
+    const char *connHeader = mRequestHead.PeekHeader(nsHttp::Connection);
+    if (PL_strcasestr(connHeader, "close"))
+        mCaps &= ~(NS_HTTP_ALLOW_KEEPALIVE | NS_HTTP_ALLOW_PIPELINING);
     
     mIsPending = PR_TRUE;
 
@@ -3388,7 +3412,7 @@ nsHttpChannel::SetRequestMethod(const nsACString &method)
     const nsCString &flatMethod = PromiseFlatCString(method);
 
     // Method names are restricted to valid HTTP tokens.
-    if (!IsValidToken(flatMethod))
+    if (!nsHttp::IsValidToken(flatMethod))
         return NS_ERROR_INVALID_ARG;
 
     nsHttpAtom atom = nsHttp::ResolveAtom(flatMethod.get());
@@ -3573,7 +3597,7 @@ nsHttpChannel::SetRequestHeader(const nsACString &header,
         this, flatHeader.get(), flatValue.get(), merge));
 
     // Header names are restricted to valid HTTP tokens.
-    if (!IsValidToken(flatHeader))
+    if (!nsHttp::IsValidToken(flatHeader))
         return NS_ERROR_INVALID_ARG;
     
     // Header values MUST NOT contain line-breaks.  RFC 2616 technically
@@ -3970,6 +3994,12 @@ nsHttpChannel::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
     LOG(("nsHttpChannel::OnStartRequest [this=%x request=%x status=%x]\n",
         this, request, mStatus));
 
+    // Make sure things are what we expect them to be...
+    NS_ASSERTION(request == mCachePump || request == mTransactionPump,
+                 "Unexpected request");
+    NS_ASSERTION(!(mTransactionPump && mCachePump) || mCachedContentIsPartial,
+                 "If we have both pumps, the cache content must be partial");
+
     // don't enter this block if we're reading from the cache...
     if (NS_SUCCEEDED(mStatus) && !mCachePump && mTransaction) {
         // grab the security info from the connection object; the transaction
@@ -4094,18 +4124,19 @@ nsHttpChannel::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult st
 
     if (mCacheEntry) {
         nsresult closeStatus = status;
-        if (mCanceled) {
-            // we don't want to discard the cache entry if canceled and
-            // reading from the cache.
-            if (request == mCachePump)
-                closeStatus = NS_OK;
-            // we also don't want to discard the cache entry if the
-            // server supports byte range requests, because we could always
-            // complete the download at a later time.
-            else if (isPartial && mResponseHead && mResponseHead->IsResumable()) {
-                LOG(("keeping partial response that is resumable!\n"));
-                closeStatus = NS_OK; 
-            }
+        // we don't want to discard the cache entry if we're only reading from
+        // the cache.  If the cache entry was newly created, but we haven't
+        // started streaming data to it, then we don't want to keep it around
+        // if the load failed.
+        if ((!mOpenedCacheForWriting && mCacheAccess != nsICache::ACCESS_WRITE) ||
+                request == mCachePump)
+            closeStatus = NS_OK;
+        // we also don't want to discard the cache entry if the server supports
+        // byte range requests, because we could always complete the download
+        // at a later time.
+        else if (isPartial && mResponseHead && mResponseHead->IsResumable()) {
+            LOG(("keeping partial response that is resumable!\n"));
+            closeStatus = NS_OK; 
         }
         CloseCacheEntry(closeStatus);
     }
@@ -4358,7 +4389,7 @@ nsHttpChannel::GetEntityID(nsACString& aEntityID)
         return NS_ERROR_NOT_RESUMABLE;
     }
 
-    PRUint64 size = LL_MaxUint();
+    PRUint64 size = LL_MAXUINT;
     nsCAutoString etag, lastmod;
     if (mResponseHead) {
         size = mResponseHead->TotalEntitySize();

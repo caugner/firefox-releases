@@ -356,9 +356,16 @@ nsSocketTransportService::Poll(PRUint32 *interval)
 
     PRIntervalTime ts = PR_IntervalNow();
 
+    LOG(("    timeout = %i milliseconds\n",
+         PR_IntervalToMilliseconds(pollTimeout)));
     PRInt32 rv = PR_Poll(pollList, pollCount, pollTimeout);
 
-    *interval = PR_IntervalToSeconds(PR_IntervalNow() - ts);
+    PRIntervalTime passedInterval = PR_IntervalNow() - ts;
+
+    LOG(("    ...returned after %i milliseconds\n",
+         PR_IntervalToMilliseconds(passedInterval))); 
+
+    *interval = PR_IntervalToSeconds(passedInterval);
     return rv;
 }
 
@@ -420,8 +427,10 @@ nsSocketTransportService::Init()
         // event object).  if we can't create a pollable event, then we'll
         // have to "busy wait" to implement the socket event queue :-(
         //
-        NS_WARN_IF_FALSE(mThreadEvent,
-                "running socket transport thread without a pollable event");
+        if (!mThreadEvent) {
+            NS_WARNING("running socket transport thread without a pollable event");
+            LOG(("running socket transport thread without a pollable event"));
+        }
     }
 
     nsresult rv = NS_NewThread(&mThread, this, 0, PR_JOINABLE_THREAD);

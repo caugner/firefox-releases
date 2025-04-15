@@ -80,17 +80,34 @@ textbox {
 
 .autocomplete-result-popup,
 .autocomplete-history-popup {
-  border-width: 1px;
-  -moz-border-top-colors: ThreeDDarkShadow;
-  -moz-border-right-colors: ThreeDDarkShadow;
-  -moz-border-bottom-colors: ThreeDDarkShadow;
-  -moz-border-left-colors: ThreeDDarkShadow;
+  -moz-appearance: none !important;
+  border-top: 1px solid ThreeDDarkShadow !important;
   padding: 0;
   background-color: -moz-Field !important;
 }
 
 .autocomplete-history-popup {
-  max-height: 180px;
+  max-height: 25em;
+}
+
+.autocomplete-result-popup > .popup-internal-box,
+.autocomplete-history-popup > .popup-internal-box {
+  padding: 0 !important;
+}
+
+.autocomplete-result-popup[nomatch] > .autocomplete-search-box {
+  border-top: none;
+}
+
+.autocomplete-search-box {
+  border-top: 1px solid ThreeDDarkShadow;
+  background-color: -moz-Dialog;
+  color: ButtonText;
+}
+
+.autocomplete-search-engine[menuactive="true"] {
+  background-color: -moz-mac-alternateprimaryhighlight;
+  color: #FFFFFF;
 }
 
 /* ::::: tree ::::: */
@@ -112,9 +129,13 @@ textbox {
 }
 
 .autocomplete-treebody::-moz-tree-row(menuactive) {
-  background-color: Highlight;
+  background-color: -moz-mac-alternateprimaryhighlight;
 }
 
 .autocomplete-treebody::-moz-tree-cell-text(menuactive)  {
-  color: HighlightText !important;
+  color: #FFFFFF !important;
+}
+
+.autocomplete-treebody::-moz-tree-cell-text(comment) {
+  color: GrayText;
 }

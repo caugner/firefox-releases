@@ -58,7 +58,7 @@ var BookmarksMenu = {
   },
 
   /////////////////////////////////////////////////////////////////////////////
-  // shows the 'Open in Tabs' menu item if validOpenInTabsMenuItem is true -->
+  // shows the 'Open All in Tabs' menu item if validOpenInTabsMenuItem is true -->
   showOpenInTabsMenuItem: function (aTarget)
   {
     if (!this.validOpenInTabsMenuItem(aTarget) ||
@@ -105,7 +105,7 @@ var BookmarksMenu = {
   },
 #else
   /////////////////////////////////////////////////////////////////////////////
-  // hides the 'Open in Tabs' on popuphidden so that we won't duplicate it -->
+  // hides the 'Open All in Tabs' on popuphidden so that we won't duplicate it -->
   hideOpenInTabsMenuItem: function (aTarget)
   {
     BookmarksMenu.realHideOpenInTabsMenuItem(aTarget);
@@ -436,7 +436,7 @@ var BookmarksMenu = {
 
   ///////////////////////////////////////////////////////////////
   // Load a bookmark in menus or toolbar buttons
-  // aTarget may not the aEvent target (see Open in tabs command)
+  // aTarget may not the aEvent target (see Open all in tabs command)
   loadBookmark: function (aEvent, aTarget, aDS)
   {
     if (aTarget.getAttribute("class") == "openintabs-menuitem")
@@ -449,7 +449,7 @@ var BookmarksMenu = {
     var selection = BookmarksUtils.getSelectionFromResource(rSource);
     var browserTarget = whereToOpenLink(aEvent);
     BookmarksCommand.openBookmark(selection, browserTarget, aDS);
-    aEvent.preventBubble();
+    aEvent.stopPropagation();
   },
 
   ////////////////////////////////////////////////
@@ -575,7 +575,7 @@ var BookmarksMenuDNDObserver = {
     }
     if (this.isPlatformNotSupported)
       return;
-    if (this.isTimerSupported)
+    if (this.isTimerSupported || !aDragSession.sourceNode)
       return;
     this.onDragOverCheckTimers();
   },
@@ -699,6 +699,7 @@ var BookmarksMenuDNDObserver = {
 
   springLoadedMenuDelay: 350, // milliseconds
   isPlatformNotSupported: navigator.platform.indexOf("Mac") != -1, // see bug 136524
+  // Needs to be dynamically overridden (to |true|) in the case of an external drag: see bug 232795.
   isTimerSupported: navigator.platform.indexOf("Win") == -1,
 
   mCurrentDragOverTarget: null,
@@ -793,7 +794,7 @@ var BookmarksMenuDNDObserver = {
   {
     if (this.isPlatformNotSupported)
       return;
-    if (this.isTimerSupported) {
+    if (this.isTimerSupported || !aDragSession.sourceNode) {
       var targetToBeLoaded = aTarget;
       clearTimeout(this.loadTimer);
       if (aTarget == aDragSession.sourceNode)
@@ -812,7 +813,7 @@ var BookmarksMenuDNDObserver = {
     if (this.isPlatformNotSupported)
       return;
     var This = this;
-    if (this.isTimerSupported) {
+    if (this.isTimerSupported || !aDragSession.sourceNode) {
       clearTimeout(this.closeTimer)
       this.closeTimer=setTimeout(function () {This.onDragCloseTarget()}, This.springLoadedMenuDelay);
     } else {
@@ -821,7 +822,7 @@ var BookmarksMenuDNDObserver = {
       this.closeTarget = aTarget;
       this.loadTimer = null;
 
-      // If user isn't rearranging within the menu, close it
+      // If the user isn't rearranging within the menu, close it
       // To do so, we exploit a Mac bug: timeout set during
       // drag and drop on Windows and Mac are fired only after that the drop is released.
       // timeouts will pile up, we may have a better approach but for the moment, this one

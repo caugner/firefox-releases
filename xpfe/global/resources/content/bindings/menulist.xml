@@ -289,7 +289,7 @@
         <body>
         <![CDATA[
           if (this.hasAttribute("disableautoselect"))
-            return "";
+            return;
 
           // Find and select the menuitem that matches inputField's "value"
           var arr = null;
@@ -389,6 +389,13 @@
                 onset="if (val) this.setAttribute('disableautoselect','true');
                        else this.removeAttribute('disableautoselect'); return val;"
                 onget="return this.hasAttribute('disableautoselect');"/>
+
+      <property name="editor" readonly="true">
+        <getter><![CDATA[
+          const nsIDOMNSEditableElement = Components.interfaces.nsIDOMNSEditableElement;
+          return this.inputField.QueryInterface(nsIDOMNSEditableElement).editor;
+        ]]></getter>
+      </property>
 
       <method name="select">
         <body>

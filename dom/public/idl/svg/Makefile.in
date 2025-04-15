@@ -104,6 +104,7 @@ XPIDLSRCS	= \
 		nsIDOMSVGSymbolElement.idl \
 		nsIDOMSVGTextContentElement.idl \
 		nsIDOMSVGTextElement.idl \
+		nsIDOMSVGTextPathElement.idl \
 		nsIDOMSVGTextPositionElem.idl \
 		nsIDOMSVGTitleElement.idl \
 		nsIDOMSVGTransform.idl \
@@ -112,6 +113,7 @@ XPIDLSRCS	= \
 		nsIDOMSVGTSpanElement.idl \
 		nsIDOMSVGURIReference.idl \
 		nsIDOMSVGUseElement.idl \
+		nsIDOMSVGViewSpec.idl \
 		nsIDOMSVGZoomAndPan.idl \
 		nsIDOMSVGZoomEvent.idl \
 		$(NULL)

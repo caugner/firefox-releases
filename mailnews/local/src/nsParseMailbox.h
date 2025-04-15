@@ -141,6 +141,7 @@ public:
   struct message_header m_envelope_date;
   struct message_header m_priority;
   struct message_header m_account_key;
+  struct message_header m_keywords;
   // Mdn support
   struct message_header m_mdn_original_recipient;
   struct message_header m_return_path;
@@ -231,7 +232,9 @@ public:
   nsParseNewMailState();
   virtual ~nsParseNewMailState();
   NS_DECL_ISUPPORTS_INHERITED
-  nsresult Init(nsIMsgFolder *rootFolder, nsIMsgFolder *downloadFolder, nsFileSpec &folder, nsIOFileStream *inboxFileStream, nsIMsgWindow *aMsgWindow);
+  nsresult Init(nsIMsgFolder *rootFolder, nsIMsgFolder *downloadFolder, nsFileSpec &folder, 
+                nsIOFileStream *inboxFileStream, nsIMsgWindow *aMsgWindow,
+                PRBool downloadingToTempFile);
   
   virtual void	DoneParsingFolder(nsresult status);
   
@@ -247,7 +250,8 @@ public:
   nsresult AppendMsgFromFile(nsIOFileStream *fileStream, PRInt32 offset, 
                              PRUint32 length, nsFileSpec &destFileSpec);
 
-  virtual void	ApplyFilters(PRBool *pMoved, nsIMsgWindow *msgWindow, PRUint32 msgOffset);
+  virtual void	ApplyFilters(PRBool *pMoved, nsIMsgWindow *msgWindow, 
+                             PRUint32 msgOffset);
   nsresult    ApplyForwardAndReplyFilter(nsIMsgWindow *msgWindow);
 
 protected:
@@ -273,6 +277,7 @@ protected:
   nsIOFileStream  *m_inboxFileStream;
   nsFileSpec    m_inboxFileSpec;
   PRBool        m_disableFilters;
+  PRBool        m_downloadingToTempFile;
   PRUint32      m_ibuffer_fp;
   char          *m_ibuffer;
   PRUint32      m_ibuffer_size;

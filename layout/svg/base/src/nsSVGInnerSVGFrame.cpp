@@ -105,6 +105,7 @@ public:
    * @see nsLayoutAtoms::svgInnerSVGFrame
    */
   virtual nsIAtom* GetType() const;
+  virtual PRBool IsFrameOfType(PRUint32 aFlags) const;
 
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const
@@ -230,7 +231,7 @@ NS_INTERFACE_MAP_BEGIN(nsSVGInnerSVGFrame)
   NS_INTERFACE_MAP_ENTRY(nsISVGChildFrame)
   NS_INTERFACE_MAP_ENTRY(nsISVGContainerFrame)
   NS_INTERFACE_MAP_ENTRY(nsISVGValueObserver)
-  NS_INTERFACE_MAP_ENTRY(nsSupportsWeakReference)
+  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
   NS_INTERFACE_MAP_ENTRY(nsISVGSVGFrame)
 NS_INTERFACE_MAP_END_INHERITING(nsSVGInnerSVGFrameBase)
 
@@ -345,6 +346,12 @@ nsIAtom *
 nsSVGInnerSVGFrame::GetType() const
 {
   return nsLayoutAtoms::svgInnerSVGFrame;
+}
+
+PRBool
+nsSVGInnerSVGFrame::IsFrameOfType(PRUint32 aFlags) const
+{
+  return !(aFlags & ~nsIFrame::eSVG);
 }
 
 //----------------------------------------------------------------------

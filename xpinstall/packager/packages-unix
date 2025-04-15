@@ -114,12 +114,16 @@ bin/components/dom_events.xpt
 bin/components/dom_html.xpt
 bin/components/dom_loadsave.xpt
 bin/components/dom_range.xpt
+bin/components/dom_sidebar.xpt
+bin/components/dom_storage.xpt
 bin/components/dom_stylesheets.xpt
 bin/components/dom_traversal.xpt
 bin/components/dom_views.xpt
 bin/components/dom_xbl.xpt
 bin/components/dom_xpath.xpt
 bin/components/dom_xul.xpt
+bin/components/storage.xpt
+bin/components/libstoragecomps.so
 bin/components/editor.xpt
 bin/components/find.xpt
 bin/components/gfx.xpt
@@ -224,6 +228,7 @@ bin/components/layout_base.xpt
 bin/components/layout_printing.xpt
 bin/components/layout_xul.xpt
 bin/components/layout_xul_tree.xpt
+bin/components/inspector.xpt
 bin/components/xuldoc.xpt
 bin/components/xultmpl.xpt
 bin/components/libnsprefm.so
@@ -231,6 +236,7 @@ bin/components/prefmigr.xpt
 bin/components/profile.xpt
 bin/components/uconv.xpt
 bin/components/util.xpt
+bin/components/xpautocomplete.xpt
 bin/components/xpcom_components.xpt
 bin/components/xpcom_threads.xpt
 bin/components/xml-rpc.xpt
@@ -317,6 +323,7 @@ bin/chrome/chromelist.txt
 ; window icons
 bin/chrome/icons/default/bmPropsWindow*.xpm
 bin/chrome/icons/default/bookmark-window*.xpm
+bin/chrome/icons/default/default*.xpm
 bin/chrome/icons/default/downloadManager*.xpm
 bin/chrome/icons/default/editorWindow*.xpm
 bin/chrome/icons/default/findBookmarkWindow*.xpm
@@ -324,6 +331,7 @@ bin/chrome/icons/default/findHistoryWindow*.xpm
 bin/chrome/icons/default/history-window*.xpm
 bin/chrome/icons/default/jsconsoleWindow*.xpm
 bin/chrome/icons/default/main-window*.xpm
+bin/chrome/icons/default/seamonkey.png
 
 ; all the pref files must be part of base
 ; to prevent migration bugs
@@ -472,19 +480,24 @@ bin/libnss3.so
 bin/libsmime3.so
 bin/libsoftokn3.chk
 bin/libsoftokn3.so
+bin/libfreebl3.chk
+bin/libfreebl3.so
+bin/libfreebl_32fpu_3.chk
+bin/libfreebl_32fpu_3.so
+bin/libfreebl_32int_3.chk
+bin/libfreebl_32int_3.so
+bin/libfreebl_32int64_3.chk
+bin/libfreebl_32int64_3.so
+bin/libfreebl_64fpu_3.chk
+bin/libfreebl_64fpu_3.so
+bin/libfreebl_64int_3.chk
+bin/libfreebl_64int_3.so
 bin/libssl3.so
 bin/chrome/pipnss.jar
 bin/chrome/pippki.jar
-; These are required for solaris 32-bit builds
-bin/libfreebl_pure32_3.chk
-bin/libfreebl_pure32_3.so
-bin/libfreebl_hybrid_3.chk
-bin/libfreebl_hybrid_3.so
 
 [inspector]
 bin/components/inspector-cmdline.js
-bin/components/libinspector.so
-bin/components/inspector.xpt
 bin/chrome/inspector.jar
 bin/defaults/pref/inspector.js
 bin/res/inspector/viewer-registry.rdf
@@ -495,7 +508,7 @@ bin/chrome/icons/default/winInspectorMain*.xpm
 bin/components/libmyspell.so
 bin/components/libspellchecker.so
 bin/components/spellchecker.xpt
-bin/components/myspell/*
+bin/dictionaries/*
 
 [reporter]
 bin/chrome/reporter.jar

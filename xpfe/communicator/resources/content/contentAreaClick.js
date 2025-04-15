@@ -170,7 +170,7 @@
   // should always return true for click to go through
   function contentAreaClick(event) 
   {
-    if (!event.isTrusted) {
+    if (!event.isTrusted || event.getPreventDefault()) {
       return true;
     }
 
@@ -180,7 +180,7 @@
       var href = ceParams.href;
       if (isKeyPress) {
         openNewTabWith(href, true, event.shiftKey);
-        event.preventBubble();
+        event.stopPropagation();
       }
       else {
         handleLinkClick(event, href, ceParams.linkNode);
@@ -193,10 +193,9 @@
     }
 
     if (pref && !isKeyPress && event.button == 1 &&
-        !event.getPreventDefault() &&
         pref.getBoolPref("middlemouse.contentLoadURL")) {
       if (middleMousePaste(event)) {
-        event.preventBubble();
+        event.stopPropagation();
       }
     }
     return true;
@@ -243,14 +242,14 @@
     // should we open it in a new tab?
     if (pref && pref.getBoolPref("browser.tabs.opentabfor.middleclick")) {
       openNewTabWith(href, sendReferrer, event.shiftKey);
-      event.preventBubble();
+      event.stopPropagation();
       return true;
     }
 
     // should we open it in a new window?
     if (pref && pref.getBoolPref("middlemouse.openNewWindow")) {
       openNewWindowWith(href, sendReferrer);
-      event.preventBubble();
+      event.stopPropagation();
       return true;
     }
 
@@ -316,12 +315,32 @@
       return openNewTabOrWindow(event, url, false);
     }
 
-    // If ctrl wasn't down, then just load the url in the current win/tab.
-    if (url != "about:blank") {
-      gURLBar.value = url;
+    // If ctrl wasn't down, then just load the url in the targeted win/tab.
+    var browser = getBrowser();
+    var tab = event.originalTarget;
+    if (tab.localName == "tab" &&
+        tab.parentNode == browser.mTabContainer) {
+      tab.linkedBrowser.userTypedValue = url;
+      if (tab == browser.mCurrentTab && url != "about:blank") {
+          gURLBar.value = url;
+      }
+      tab.linkedBrowser.loadURI(url);
+      if (event.shiftKey != (pref && pref.getBoolPref("browser.tabs.loadInBackground")))
+        browser.selectedTab = tab;
     }
-    loadURI(url);
-    event.preventBubble();
+    else if (tab.ownerDocument == document) {
+      tab = browser.addTab(url);
+      if (event.shiftKey != (pref && pref.getBoolPref("browser.tabs.loadInBackground")))
+        browser.selectedTab = tab;
+    }
+    else {
+      if (url != "about:blank") {
+        gURLBar.value = url;
+      }
+      loadURI(url);
+    }
+
+    event.stopPropagation();
     return true;
   }
 

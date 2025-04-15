@@ -38,9 +38,9 @@
 #ifndef nsStreamUtils_h__
 #define nsStreamUtils_h__
 
-#include "nscore.h"
+#include "nsStringFwd.h"
+#include "nsIInputStream.h"
 
-class nsIInputStream;
 class nsIOutputStream;
 class nsIInputStreamCallback;
 class nsIOutputStreamCallback;
@@ -109,6 +109,33 @@ NS_AsyncCopy(nsIInputStream         *aSource,
              void                   *aCallbackClosure = nsnull);
 
 /**
+ * This function copies all of the available data from the stream (up to at
+ * most aMaxCount bytes) into the given buffer.  The buffer is truncated at
+ * the start of the function.
+ *
+ * If an error occurs while reading from the stream or while attempting to
+ * resize the buffer, then the corresponding error code is returned from this
+ * function, and any data that has already been read will be returned in the
+ * output buffer.  This allows one to use this function with a non-blocking
+ * input stream that may return NS_BASE_STREAM_WOULD_BLOCK if it only has
+ * partial data available.
+ *
+ * @param aSource
+ *        The input stream to read.
+ * @param aMaxCount
+ *        The maximum number of bytes to consume from the stream.  Pass the
+ *        value PR_UINT32_MAX to consume the entire stream.  The number of
+ *        bytes actually read is given by the length of aBuffer upon return.
+ * @param aBuffer
+ *        The string object that will contain the stream data upon return.
+ *        Note: The data copied to the string may contain null bytes and may
+ *        contain non-ASCII values.
+ */
+extern NS_COM nsresult
+NS_ConsumeStream(nsIInputStream *aSource, PRUint32 aMaxCount,
+                 nsACString &aBuffer);
+
+/**
  * This function tests whether or not the input stream is buffered.  A buffered
  * input stream is one that implements readSegments.  The test for this is to
  * simply call readSegments, without actually consuming any data from the
@@ -139,5 +166,64 @@ NS_InputStreamIsBuffered(nsIInputStream *aInputStream);
  */
 extern NS_COM PRBool
 NS_OutputStreamIsBuffered(nsIOutputStream *aOutputStream);
+
+/**
+ * This function is intended to be passed to nsIInputStream::ReadSegments to
+ * copy data from the nsIInputStream into a nsIOutputStream passed as the
+ * aClosure parameter to the ReadSegments function.
+ *
+ * @see nsIInputStream.idl for a description of this function's parameters.
+ */
+extern NS_COM NS_METHOD
+NS_CopySegmentToStream(nsIInputStream *aInputStream, void *aClosure,
+                       const char *aFromSegment, PRUint32 aToOffset,
+                       PRUint32 aCount, PRUint32 *aWriteCount);
+
+/**
+ * This function is intended to be passed to nsIInputStream::ReadSegments to
+ * copy data from the nsIInputStream into a character buffer passed as the
+ * aClosure parameter to the ReadSegments function.  The character buffer
+ * must be at least as large as the aCount parameter passed to ReadSegments.
+ *
+ * @see nsIInputStream.idl for a description of this function's parameters.
+ */
+extern NS_COM NS_METHOD
+NS_CopySegmentToBuffer(nsIInputStream *aInputStream, void *aClosure,
+                       const char *aFromSegment, PRUint32 aToOffset,
+                       PRUint32 aCount, PRUint32 *aWriteCount);
+
+/**
+ * This function is intended to be passed to nsIInputStream::ReadSegments to
+ * discard data from the nsIInputStream.  This can be used to efficiently read
+ * data from the stream without actually copying any bytes.
+ *
+ * @see nsIInputStream.idl for a description of this function's parameters.
+ */
+extern NS_COM NS_METHOD
+NS_DiscardSegment(nsIInputStream *aInputStream, void *aClosure,
+                  const char *aFromSegment, PRUint32 aToOffset,
+                  PRUint32 aCount, PRUint32 *aWriteCount);
+
+/**
+ * This function is intended to be passed to nsIInputStream::ReadSegments to
+ * adjust the aInputStream parameter passed to a consumer's WriteSegmentFun.
+ * The aClosure parameter must be a pointer to a nsWriteSegmentThunk object.
+ * The mStream and mClosure members of that object will be passed to the mFun
+ * function, with the remainder of the parameters being what are passed to
+ * NS_WriteSegmentThunk.
+ *
+ * This function comes in handy when implementing ReadSegments in terms of an
+ * inner stream's ReadSegments.
+ */
+extern NS_COM NS_METHOD
+NS_WriteSegmentThunk(nsIInputStream *aInputStream, void *aClosure,
+                     const char *aFromSegment, PRUint32 aToOffset,
+                     PRUint32 aCount, PRUint32 *aWriteCount);
+
+struct nsWriteSegmentThunk {
+  nsIInputStream    *mStream;
+  nsWriteSegmentFun  mFun;
+  void              *mClosure;
+};
 
 #endif // !nsStreamUtils_h__

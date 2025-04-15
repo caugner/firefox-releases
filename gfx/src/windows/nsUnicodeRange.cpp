@@ -206,7 +206,7 @@ const char *gUnicodeRangeToLangGroupTable[] =
 
 
 
-#define NUM_OF_SUBTABLES      7
+#define NUM_OF_SUBTABLES      9
 #define SUBTABLE_SIZE         16
 
 static PRUint8 gUnicodeSubrangeTable[NUM_OF_SUBTABLES][SUBTABLE_SIZE] = 
@@ -225,7 +225,7 @@ static PRUint8 gUnicodeSubrangeTable[NUM_OF_SUBTABLES][SUBTABLE_SIZE] =
     kRangeTableBase+4,  //uaxxx
     kRangeKorean,       //ubxxx
     kRangeKorean,       //ucxxx
-    kRangeTableBase+5,  //udxxx  
+    kRangeTableBase+5,  //udxxx
     kRangePrivate,      //uexxx
     kRangeTableBase+6   //ufxxx
   },
@@ -235,7 +235,7 @@ static PRUint8 gUnicodeSubrangeTable[NUM_OF_SUBTABLES][SUBTABLE_SIZE] =
     kRangeSetLatin,          //u02xx
     kRangeGreek,             //u03xx     XXX 0300-036f is in fact kRangeCombiningDiacriticalMarks
     kRangeCyrillic,          //u04xx
-    kRangeHebrew,            //u05xx     XXX 0530-058f is in fact kRangeArmenian
+    kRangeTableBase+7,       //u05xx, includes Cyrillic supplement, Hebrew, and Armenian
     kRangeArabic,            //u06xx
     kRangeTertiaryTable,     //u07xx
     kRangeUnassigned,        //u08xx
@@ -245,7 +245,7 @@ static PRUint8 gUnicodeSubrangeTable[NUM_OF_SUBTABLES][SUBTABLE_SIZE] =
     kRangeTertiaryTable,     //u0cxx
     kRangeTertiaryTable,     //u0dxx
     kRangeTertiaryTable,     //u0exx
-    kRangeTertiaryTable,     //u0fxx
+    kRangeTibetan,           //u0fxx
   },
   { //table for 1x--
     kRangeTertiaryTable,     //u10xx
@@ -281,7 +281,7 @@ static PRUint8 gUnicodeSubrangeTable[NUM_OF_SUBTABLES][SUBTABLE_SIZE] =
     kRangeUnassigned,        //u2cxx
     kRangeUnassigned,        //u2dxx
     kRangeSetCJK,            //u2exx
-    kRangeSetCJK,            //u2fxx                      
+    kRangeSetCJK,            //u2fxx
   },
   {  //table for ax--
     kRangeYi,                //ua0xx
@@ -329,8 +329,8 @@ static PRUint8 gUnicodeSubrangeTable[NUM_OF_SUBTABLES][SUBTABLE_SIZE] =
     kRangePrivate,           //uf6xx 
     kRangePrivate,           //uf7xx 
     kRangePrivate,           //uf8xx 
-    kRangeSetCJK,            //uf9xx                      
-    kRangeSetCJK,            //ufaxx                      
+    kRangeSetCJK,            //uf9xx 
+    kRangeSetCJK,            //ufaxx 
     kRangeArabic,            //ufbxx, includes alphabic presentation form
     kRangeArabic,            //ufcxx
     kRangeArabic,            //ufdxx
@@ -338,9 +338,44 @@ static PRUint8 gUnicodeSubrangeTable[NUM_OF_SUBTABLES][SUBTABLE_SIZE] =
                              //                CJK compatibility forms, 
                              //                CJK compatibility forms, 
                              //                small form variants
-    
-    kRangeSetCJK,            //uffxx, halfwidth and fullwidth forms, includes Special
-  }
+    kRangeTableBase+8,       //uffxx, halfwidth and fullwidth forms, includes Specials
+  },
+  { //table for 0x0500 - 0x05ff
+    kRangeCyrillic,          //u050x
+    kRangeCyrillic,          //u051x
+    kRangeCyrillic,          //u052x
+    kRangeArmenian,          //u053x
+    kRangeArmenian,          //u054x
+    kRangeArmenian,          //u055x
+    kRangeArmenian,          //u056x
+    kRangeArmenian,          //u057x
+    kRangeArmenian,          //u058x
+    kRangeHebrew,            //u059x
+    kRangeHebrew,            //u05ax
+    kRangeHebrew,            //u05bx
+    kRangeHebrew,            //u05cx
+    kRangeHebrew,            //u05dx
+    kRangeHebrew,            //u05ex
+    kRangeHebrew,            //u05fx
+  },
+  { //table for 0xff00 - 0xffff
+    kRangeSetCJK,            //uff0x, fullwidth latin
+    kRangeSetCJK,            //uff1x, fullwidth latin
+    kRangeSetCJK,            //uff2x, fullwidth latin
+    kRangeSetCJK,            //uff3x, fullwidth latin
+    kRangeSetCJK,            //uff4x, fullwidth latin
+    kRangeSetCJK,            //uff5x, fullwidth latin
+    kRangeSetCJK,            //uff6x, halfwidth katakana
+    kRangeSetCJK,            //uff7x, halfwidth katakana
+    kRangeSetCJK,            //uff8x, halfwidth katakana
+    kRangeSetCJK,            //uff9x, halfwidth katakana
+    kRangeSetCJK,            //uffax, halfwidth hangul jamo
+    kRangeSetCJK,            //uffbx, halfwidth hangul jamo
+    kRangeSetCJK,            //uffcx, halfwidth hangul jamo
+    kRangeSetCJK,            //uffdx, halfwidth hangul jamo
+    kRangeSetCJK,            //uffex, fullwidth symbols
+    kRangeSpecials,          //ufffx, Specials
+  },
 };
 
 // Most scripts between U+0700 and U+16FF are assigned a chunk of 128 (0x80) 
@@ -388,7 +423,7 @@ static PRUint8 gUnicodeTertiaryRangeTable[TERTIARY_TABLE_SIZE] =
 
 // A two level index is almost enough for locating a range, with the 
 // exception of u03xx and u05xx. Since we don't really care about range for
-// Armenian and combining diacritical marks in our font application, they are 
+// combining diacritical marks in our font application, they are 
 // not discriminated further. But future adoption of this module for other use 
 // should be aware of this limitation. The implementation can be extended if 
 // there is such a need.
@@ -407,9 +442,11 @@ PRUint32 FindCharUnicodeRange(PRUnichar ch)
 
   // otherwise, we have one more table to look at
   range = gUnicodeSubrangeTable[range - kRangeTableBase][(ch & 0x0f00) >> 8];
+  if (range < kRangeTableBase)
+    return range;
   if (range < kRangeTertiaryTable)
-    return range;     
+    return gUnicodeSubrangeTable[range - kRangeTableBase][(ch & 0x00f0) >> 4];
 
   // Yet another table to look at : U+0700 - U+16FF : 128 code point blocks
-  return  gUnicodeTertiaryRangeTable[(ch - 0x0700) >> 7];
+  return gUnicodeTertiaryRangeTable[(ch - 0x0700) >> 7];
 }

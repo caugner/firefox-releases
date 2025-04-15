@@ -37,7 +37,7 @@
 /*
  * Berkeley DB 1.85 Shim code to handle blobs.
  *
- * $Id: dbmshim.c,v 1.11 2005/03/29 18:21:18 nelsonb%netscape.com Exp $
+ * $Id: dbmshim.c,v 1.11.20.1 2006/05/16 01:14:39 kaie%kuix.de Exp $
  */
 #include "mcom_db.h"
 #include "secitem.h"
@@ -406,14 +406,6 @@ dbs_readBlob(DBS *dbsp, DBT *data)
 loser:
     /* preserve the error code */
     error = PR_GetError();
-    if (addr) {
-	if (mapfile) {
-	    PORT_Assert(len != -1);
-	    PR_MemUnmap(addr,len);
-	} else {
-	    PORT_Free(addr);
-	}
-    }
     if (mapfile) {
 	PR_CloseFileMap(mapfile);
     }

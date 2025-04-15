@@ -180,11 +180,6 @@ public:
 
   NS_IMETHOD GetNextElementByTagName(nsIDOMElement *aCurrentElement, const nsAString *aTagName, nsIDOMElement **aReturn);
 
-  /* ------------ nsIEditorIMESupport overrides -------------- */
-  
-  NS_IMETHOD SetCompositionString(const nsAString& aCompositionString, nsIPrivateTextRangeList* aTextRangeList,nsTextEventReply* aReply);
-  NS_IMETHOD GetReconversionString(nsReconversionEventReply* aReply);
-
   /* ------------ nsIEditorStyleSheets methods -------------- */
 
   NS_IMETHOD AddStyleSheet(const nsAString & aURL);
@@ -791,9 +786,15 @@ public:
 protected:
 
   /* ANONYMOUS UTILS */
+  void     RemoveListenerAndDeleteRef(const nsAString& aEvent,
+                                      nsIDOMEventListener* aListener,
+                                      PRBool aUseCapture,
+                                      nsIDOMElement* aElement,
+                                      nsIContent* aParentContent,
+                                      nsIPresShell* aShell);
   void     DeleteRefToAnonymousNode(nsIDOMElement* aElement,
                                     nsIContent * aParentContent,
-                                    nsIDocumentObserver * aDocObserver);
+                                    nsIPresShell* aShell);
   nsresult GetElementOrigin(nsIDOMElement * aElement, PRInt32 & aX, PRInt32 & aY);
   nsresult GetPositionAndDimensions(nsIDOMElement * aElement,
                                     PRInt32 & aX, PRInt32 & aY,

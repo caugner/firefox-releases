@@ -98,6 +98,7 @@ bin/components/dom_events.xpt
 bin/components/dom_loadsave.xpt
 bin/components/dom_html.xpt
 bin/components/dom_range.xpt
+bin/components/dom_sidebar.xpt
 bin/components/dom_stylesheets.xpt
 bin/components/dom_traversal.xpt
 bin/components/dom_views.xpt
@@ -176,6 +177,7 @@ bin/components/prefmigr.xpt
 bin/components/profile.xpt
 bin/components/uconv.xpt
 bin/components/util.xpt
+bin/components/xpautocomplete.xpt
 bin/components/xpcom_components.xpt
 bin/components/xpcom_threads.xpt
 bin/components/xpcom_obsolete.xpt
@@ -344,14 +346,21 @@ bin/libnss3.so
 bin/libsmime3.so
 bin/libsoftokn3.chk
 bin/libsoftokn3.so
+bin/libfreebl3.chk
+bin/libfreebl3.so
+bin/libfreebl_32fpu_3.chk
+bin/libfreebl_32fpu_3.so
+bin/libfreebl_32int_3.chk
+bin/libfreebl_32int_3.so
+bin/libfreebl_32int64_3.so
+bin/libfreebl_32int64_3.chk
+bin/libfreebl_64fpu_3.chk
+bin/libfreebl_64fpu_3.so
+bin/libfreebl_64int_3.chk
+bin/libfreebl_64int_3.so
 bin/libssl3.so
 bin/chrome/pipnss.jar
 bin/chrome/pippki.jar
-; These are required for solaris 32-bit builds
-bin/libfreebl_pure32_3.chk
-bin/libfreebl_pure32_3.so
-bin/libfreebl_hybrid_3.chk
-bin/libfreebl_hybrid_3.so
 
 [inspector]
 bin/components/inspector-cmdline.js

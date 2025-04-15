@@ -372,12 +372,14 @@
 
       <method name="updateTreeSelection">
         <body><![CDATA[
+          this.treeBoxObject.view.selection.selectEventsSuppressed = true;
           this.treeBoxObject.view.selection.clearSelection();
           for (var i=0; i<this._itemToBeToggled.length; ++i) {
             index = this.treeBuilder.getIndexOfResource(this._itemToBeToggled[i]);
             if (index >=0)
               this.treeBoxObject.view.selection.toggleSelect(index);
           }
+          this.treeBoxObject.view.selection.selectEventsSuppressed = false;
         ]]></body>
       </method>
 
@@ -724,8 +726,8 @@
       <!-- context menu -->
       <menupopup onpopupshowing="this.parentNode.createTreeContextMenu(event);"
                  onpopuphidden="if (content) content.focus()"
-                 onclick="event.preventBubble();"
-                 onkeypress="event.preventBubble();"/>
+                 onclick="event.stopPropagation();"
+                 onkeypress="event.stopPropagation();"/>
       <vbox flex="1">
         <tree anonid="bookmarks-tree" flex="1" class="plain" enableColumnDrag="true"
                   datasources="rdf:bookmarks rdf:internetsearch rdf:localsearch" ref="NC:BookmarksTopRoot" flags="dont-build-content"
@@ -840,8 +842,8 @@
       <menupopup xbl:inherits="onpopupshowing"
                  onpopupshowing="this.parentNode.createTreeContextMenu(event);"
                  onpopuphidden="if (content) content.focus()"
-                 onclick="event.preventBubble();"
-                 onkeypress="event.preventBubble();"/>
+                 onclick="event.stopPropagation();"
+                 onkeypress="event.stopPropagation();"/>
       <tree anonid="bookmarks-tree" flex="1" class="plain" hidecolumnpicker="true"
                 datasources="rdf:bookmarks rdf:internetsearch rdf:localsearch" ref="NC:BookmarksRoot" flags="dont-build-content"
                 onselect="this.parentNode.treeBoxObject.view.selectionChanged();" seltype="single">

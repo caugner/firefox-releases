@@ -1,14 +1,14 @@
-/Makefile.in/1.13/Wed May 18 15:34:25 2005//TFIREFOX_1_5_RELEASE
-/nsDOMUtils.h/1.10.28.1/Fri Sep  2 12:36:57 2005//TFIREFOX_1_5_RELEASE
-/nsSOAPTypes.cpp/1.9/Thu Sep 16 10:59:36 2004//TFIREFOX_1_5_RELEASE
-/nsSchema.cpp/1.15/Thu Sep 16 10:59:36 2004//TFIREFOX_1_5_RELEASE
-/nsSchemaAtomList.h/1.2/Tue Mar 22 19:03:42 2005//TFIREFOX_1_5_RELEASE
-/nsSchemaAttributes.cpp/1.9.20.1/Wed Sep 14 21:50:41 2005//TFIREFOX_1_5_RELEASE
-/nsSchemaComplexType.cpp/1.13/Wed Jul 20 14:48:43 2005//TFIREFOX_1_5_RELEASE
-/nsSchemaComponentBase.cpp/1.5/Sun Apr 18 22:14:10 2004//TFIREFOX_1_5_RELEASE
-/nsSchemaLoader.cpp/1.43.2.2/Wed Sep 14 21:50:41 2005//TFIREFOX_1_5_RELEASE
-/nsSchemaLoader.h/1.13.8.1/Wed Sep 14 21:50:41 2005//TFIREFOX_1_5_RELEASE
-/nsSchemaParticles.cpp/1.12.4.1/Wed Sep 14 21:50:41 2005//TFIREFOX_1_5_RELEASE
-/nsSchemaPrivate.h/1.16.4.1/Wed Sep 14 21:50:41 2005//TFIREFOX_1_5_RELEASE
-/nsSchemaSimpleTypes.cpp/1.14/Thu Sep 16 10:59:36 2004//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.13/Wed May 18 15:34:25 2005//TFIREFOX_2_0_RELEASE
+/nsDOMUtils.h/1.10.28.1/Fri Sep  2 12:36:57 2005//TFIREFOX_2_0_RELEASE
+/nsSOAPTypes.cpp/1.9/Thu Sep 16 10:59:36 2004//TFIREFOX_2_0_RELEASE
+/nsSchema.cpp/1.15/Thu Sep 16 10:59:36 2004//TFIREFOX_2_0_RELEASE
+/nsSchemaAtomList.h/1.2.8.1/Thu Aug 17 15:18:16 2006//TFIREFOX_2_0_RELEASE
+/nsSchemaAttributes.cpp/1.9.20.1/Wed Sep 14 21:50:41 2005//TFIREFOX_2_0_RELEASE
+/nsSchemaComplexType.cpp/1.13/Wed Jul 20 14:48:43 2005//TFIREFOX_2_0_RELEASE
+/nsSchemaComponentBase.cpp/1.5/Sun Apr 18 22:14:10 2004//TFIREFOX_2_0_RELEASE
+/nsSchemaLoader.cpp/1.43.2.5/Thu Jun 29 14:55:58 2006//TFIREFOX_2_0_RELEASE
+/nsSchemaLoader.h/1.13.8.2/Mon Jun 26 19:47:35 2006//TFIREFOX_2_0_RELEASE
+/nsSchemaParticles.cpp/1.12.4.1/Wed Sep 14 21:50:41 2005//TFIREFOX_2_0_RELEASE
+/nsSchemaPrivate.h/1.16.4.1/Wed Sep 14 21:50:41 2005//TFIREFOX_2_0_RELEASE
+/nsSchemaSimpleTypes.cpp/1.14.20.1/Fri Aug 18 19:43:06 2006//TFIREFOX_2_0_RELEASE
 D

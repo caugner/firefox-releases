@@ -50,6 +50,7 @@
 #include "nsWeakReference.h" //for service and presshell pointers
 #include "nsIScrollableViewProvider.h"
 #include "nsIPhonetic.h"
+#include "nsContentUtils.h"
 
 class nsISupportsArray;
 class nsIEditor;
@@ -210,6 +211,11 @@ public: //for methods who access nsTextControlFrame directly
   nsresult DOMPointToOffset(nsIDOMNode* aNode, PRInt32 aNodeOffset, PRInt32 *aResult);
   nsresult OffsetToDOMPoint(PRInt32 aOffset, nsIDOMNode** aResult, PRInt32* aPosition);
 
+  void SetHasFocus(PRBool aHasFocus)
+  {
+    mHasFocus = aHasFocus;
+  };
+
   /* called to free up native keybinding services */
   static NS_HIDDEN_(void) ShutDown();
 
@@ -291,7 +297,7 @@ private:
                                 nsIDOMNode *aEndNode, PRInt32 aEndOffset);
   nsresult SelectAllContents();
   nsresult SetSelectionEndPoints(PRInt32 aSelStart, PRInt32 aSelEnd);
-  
+
 private:
   nsCOMPtr<nsIEditor> mEditor;
   nsCOMPtr<nsISelectionController> mSelCon;
@@ -305,7 +311,8 @@ private:
   PRPackedBool mUseEditor;
   PRPackedBool mIsProcessing;
   PRPackedBool mNotifyOnInput;//default this to off to stop any notifications until setup is complete
-  PRPackedBool mDidPreDestroy; // has PreDestroy been called        
+  PRPackedBool mDidPreDestroy; // has PreDestroy been called
+  PRPackedBool mHasFocus;
 
   nsTextInputSelectionImpl *mTextSelImpl;
   nsTextInputListener *mTextListener;

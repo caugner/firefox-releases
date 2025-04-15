@@ -588,7 +588,7 @@
         <xul:spacer flex="1"/>
         <xul:label class="headerName" xbl:inherits="value=label"/>  
       </xul:hbox>
-      <xul:textbox originalclass="headerValue plain" appendoriginalclass="true" keywordrelated="true" class="headerValue plain" anonid="headerValue" flex="1" readonly="true"/>
+      <xul:textbox class="headerValue plain" anonid="headerValue" flex="1" readonly="true"/>
     </content>
 
     <implementation>      
@@ -604,7 +604,7 @@
       <xul:hbox class="headerNameBox" align="start">
         <xul:label class="headerName" xbl:inherits="value=label" flex="1"/>
       </xul:hbox>
-      <xul:textbox originalclass="headerValue plain" appendoriginalclass="true" keywordrelated="true" class="headerValue plain" anonid="headerValue" flex="1" readonly="true"/> 
+      <xul:textbox class="headerValue plain" anonid="headerValue" flex="1" readonly="true"/> 
     </content>
 
     <implementation>      
@@ -617,8 +617,8 @@
       <xul:hbox class="headerNameBox" align="start">
         <xul:label class="headerName" xbl:inherits="value=label" flex="1"/>
       </xul:hbox>
-      <xul:label originalclass="headerValue plain headerValueUrl" onclick="if (!event.button) messenger.launchExternalURL(event.target.value);" 
-                 appendoriginalclass="true" keywordrelated="true" class="headerValue plain headerValueUrl" 
+      <xul:label onclick="if (!event.button) messenger.launchExternalURL(event.target.value);" 
+                 class="headerValue plain headerValueUrl" 
                  anonid="headerValue" flex="1" readonly="true" context="copyUrlPopup"/> 
     </content>
   </binding>
@@ -642,23 +642,24 @@
     <content>
       <xul:hbox class="headerNameBox" align="start" pack="end">
         <xul:image class="addresstwisty" anonid="toggleIcon"
-                   onclick="toggleAddressView();"/>
+                   collapsed="true" onclick="toggleWrap();"/>
         <xul:label class="headerName" xbl:inherits="value=label"/>
-        </xul:hbox>
+      </xul:hbox>
 
+      <xul:hbox class="headerValueBox" anonid="longEmailAddresses" flex="1"
+                onoverflow="this.parentNode.toggleIcon.collapsed = false;"
+                onunderflow="this.parentNode.toggleIcon.collapsed = true;">
         <xul:label class="headerValue" anonid="emailAddresses" flex="1"/>
-        <xul:label class="headerValue" anonid="longEmailAddresses" flex="1" collapsed="true"/>
+      </xul:hbox>
     </content>
 
     <implementation>
       <constructor>
         <![CDATA[
-          this.mLongViewCreated = false;
           this.mAddresses = new Array;
         ]]>
       </constructor>
 
-      <field name="mLongViewCreated"/>
       <field name="mAddresses"/>
       <!-- as a perf optimization we are going to keep a cache of email address nodes which we've
            created around for the lifetime of the widget. mSizeOfAddressCache controls how many of these
@@ -683,10 +684,19 @@
         <parameter name="aAddress"/>
         <body>
           <![CDATA[
-            aEmailNode.setAttribute("label", aAddress.fullAddress);    
-            aEmailNode.setTextAttribute("emailAddress", aAddress.emailAddress);
-            aEmailNode.setTextAttribute("fullAddress", aAddress.fullAddress);  
-            aEmailNode.setTextAttribute("displayName", aAddress.displayName);
+            if (aEmailNode.parentNode.useShortView && aAddress.displayName)
+            {
+              aEmailNode.setAttribute("label", aAddress.displayName);
+              aEmailNode.setAttribute("tooltiptext", aAddress.fullAddress);
+            }
+            else
+            {
+              aEmailNode.setAttribute("label", aAddress.fullAddress || aAddress.displayName);
+              aEmailNode.removeAttribute("tooltiptext");
+            }
+            aEmailNode.setAttribute("emailAddress", aAddress.emailAddress);
+            aEmailNode.setAttribute("fullAddress", aAddress.fullAddress);
+            aEmailNode.setAttribute("displayName", aAddress.displayName);
 
             try
             {
@@ -726,22 +736,22 @@
               {
                 commaNode = aAddressesNode.childNodes[index++];
                 if (commaNode)
-                  commaNode.removeAttribute('collapsed');
+                  commaNode.hidden = false;
               }
 
               // get the node pointed to by index
               emailAddressNode = aAddressesNode.childNodes[index++];
               this.updateEmailAddressNode(emailAddressNode, this.mAddresses[numAddressesAdded]);
-              emailAddressNode.removeAttribute('collapsed');
+              emailAddressNode.hidden = false;
               numAddressesAdded++;
             }
 
             // if we have added all of our elements but we still have more cached items in this address node
-            // then make sure the extra cached copies are collapsed...
+            // then make sure the extra cached copies are hidden...
             numExistingCachedAddresses = aAddressesNode.childNodes.length;  // reset
             while (index < numExistingCachedAddresses)
             {
-              aAddressesNode.childNodes[index++].setAttribute('collapsed', true);
+              aAddressesNode.childNodes[index++].hidden = true;
             }
 
             return this.mAddresses.length - numAddressesAdded;
@@ -793,66 +803,24 @@
       <!-- buildView: public method used by callers when they are done adding all the email addresses to the widget
            aNumAddressesToShow: total # of addresses to show in the short view -->
       <method name="buildViews">
-        <parameter name="aNumAddressesToShow"/>
         <body>
           <![CDATA[
-            // always build the short view...its cheap...
-            this.fillAddressesNode(this.emailAddresses, aNumAddressesToShow);
-            // if we are currently toggled to show all the email addresses, build the long one too...
-            if (this.emailAddresses.collapsed)
-              this.buildLongView();
-
-            // make sure the icon is always visible if we have more than the # of addresses to show     
-            this.toggleIcon.collapsed = this.mAddresses.length <= aNumAddressesToShow;
-          ]]> 
-        </body>
-      </method>
-            
-      <!-- buildLongView: private method used for delayed construction of the long view -->
-      <method name="buildLongView">
-        <body>
-          <![CDATA[
-            if (!this.mLongViewCreated)
-            {
-              this.fillAddressesNode(this.longEmailAddresses, -1);
-              this.mLongViewCreated = true;
-            }
+            this.fillAddressesNode(this.emailAddresses, -1);
           ]]> 
         </body>
       </method>
 
-      <method name="toggleAddressView">
+      <method name="toggleWrap">
         <body>
           <![CDATA[
-          var shortNode = this.emailAddresses;
-          var longNode = this.longEmailAddresses;
-          var imageNode = this.toggleIcon;
-          // test to see which if short is already collapsed...
-          if (shortNode.collapsed)
-          {
-            longNode.collapsed = true;
-            shortNode.collapsed = false;
-            imageNode.removeAttribute("open");
-          }
-          else
-          {
-            this.buildLongView();
-            shortNode.collapsed = true;
-            longNode.collapsed = false;
-            imageNode.setAttribute("open", "true");
-
-            if (!this.mLongViewCreated)
-            {
-              // Need to call UpdateMessageHeaders() because this is the first
-              // time the long view is being built.  This is required in order
-              // to update the addresses of the long view that might contain
-              // extra image info.
-              // It should also only be called from toggleAddressView(), not
-              // from buildView().
-              UpdateMessageHeaders();
+            if (this.toggleIcon.hasAttribute("open")) {
+              this.toggleIcon.removeAttribute("open");
+              this.longEmailAddresses.setAttribute("singleline", "true");
+            } else {
+              this.toggleIcon.setAttribute("open", "true");
+              this.longEmailAddresses.removeAttribute("singleline");
             }
-          }
-          ]]>  
+          ]]>
         </body>
       </method>
       
@@ -881,15 +849,11 @@
           <![CDATA[
             // clear out our local state
             this.mAddresses = new Array; 
-            this.mLongViewCreated = false;
+            this.toggleIcon.removeAttribute("open");
+            this.longEmailAddresses.setAttribute("singleline", "true");
 
             // remove anything inside of each of our labels....
-            var parentLabel = this.emailAddresses;
-            if (parentLabel)
-              this.clearChildNodes(parentLabel);
-            parentLabel = this.longEmailAddresses;
-            if (parentLabel)
-              this.clearChildNodes(parentLabel);             
+            this.clearChildNodes(this.emailAddresses);
           ]]>
         </body>
       </method>       
@@ -922,28 +886,59 @@
           return document.getAnonymousElementByAttribute(this, "anonid", aPartId);
         ]]></body>
       </method>
+    </implementation>
+  </binding>
 
-      <method name="setTextAttribute">
-        <parameter name="attributeName"/>
-        <parameter name="attributeValue"/>
-        <body><![CDATA[
-          this.setAttribute(attributeName, attributeValue);
-          this.getPart("emailImage").setAttribute(attributeName, attributeValue);          
-          this.getPart("emailValue").setAttribute(attributeName, attributeValue);          
-        ]]></body>
-      </method>
+  <!-- Header field for showing the tags associated with a message -->
+  <binding id="mail-headerfield-tags">
+    <content>
+      <xul:hbox class="headerNameBox" align="start">
+        <xul:label class="headerName" xbl:inherits="value=label" flex="1"/>
+      </xul:hbox>
+      <xul:label class="headerValue plain" anonid="headerValue" flex="1"/>
+    </content>
 
-      <method name="getTextAttribute">
-        <parameter name="attributeName"/>
-        <body><![CDATA[   
-          return this.getPart("emailValue").getAttribute(attributeName);
-        ]]></body>
-      </method>
-
-      <method name="GetIconNode">
-        <body><![CDATA[
-          return this.getPart("emailImage");
-        ]]></body>
+    <implementation>
+      <property name="headerValue" onset="return this.buildTags(val);"/>
+      <method name="buildTags">
+        <parameter name="aTags"/>
+        <body>
+          <![CDATA[
+            // aTags contains a list of actual tag names (not the keys), delimited by spaces
+            // each tag name is encoded.
+            
+            // remove any existing tag items we've appended to the list
+            var headerValueNode = document.getAnonymousElementByAttribute(this, 'anonid', 'headerValue');
+            for (var i = headerValueNode.childNodes.length - 1; i >= 0; --i)
+              headerValueNode.removeChild(headerValueNode.childNodes[i]);
+              
+            var tagService = Components.classes["@mozilla.org/messenger/tagservice;1"]
+                             .getService(Components.interfaces.nsIMsgTagService);
+            
+            // tokenize the keywords based on ' '
+            var tagsArray = aTags.split(' ');
+            for (var index = 0; index < tagsArray.length; index++)
+            {
+              // for each tag, create a label, give it the font color that corresponds to the
+              // color of the tag and append it.
+              var tagName;
+              try {
+                // if we got a bad tag name, getTagForKey will throw an exception, skip it 
+                // and go to the next one.
+                tagName = tagService.getTagForKey(tagsArray[index]);
+              } catch (ex) { continue; }
+              
+              var color = tagService.getColorForKey(tagsArray[index]);
+              
+              // now create a label for the tag name, and set the color
+              var label = document.createElement("label");              
+              label.setAttribute('value', tagName);
+              label.style.color = color;
+              label.className = "tagvalue";
+              headerValueNode.appendChild(label);
+            }
+        ]]>
+        </body>
       </method>
     </implementation>
   </binding>
@@ -1226,7 +1221,8 @@
   <!-- searchvalue - a widget which dynamically changes its user interface
        depending on what type of data it's supposed to be showing
        currently handles arbitrary text entry, and menulists for 
-       priority, status, junk status, hasAttachment status, and addressbook
+       priority, status, junk status, tags, hasAttachment status,
+       and addressbook
   -->
   <binding id="searchvalue" name="searchValue">
     <content>
@@ -1268,12 +1264,6 @@
       </xul:menulist>
       <xul:menulist flex="1" class="search-value-menulist">
         <xul:menupopup class="search-value-popup">
-          <xul:menuitem value="0" class="search-value-menuitem"/>
-          <xul:menuitem value="1" class="search-value-menuitem"/>
-          <xul:menuitem value="2" class="search-value-menuitem"/>
-          <xul:menuitem value="3" class="search-value-menuitem"/>
-          <xul:menuitem value="4" class="search-value-menuitem"/>
-          <xul:menuitem value="5" class="search-value-menuitem"/>
         </xul:menupopup>
       </xul:menulist>
       <xul:menulist flex="1" class="search-value-menulist">
@@ -1366,12 +1356,7 @@
               // it's a text search, so show the textbox
               this.setAttribute("selectedIndex", "0");             
             }
-            else if (val == Components.interfaces.nsMsgSearchAttrib.Label)
-            {
-              var children = document.getAnonymousNodes(this);
-              var abs = children[5].getElementsByAttribute("value", "1");
-              if (abs.item(0)) 
-                children[5].selectedItem = abs[0];                 
+            else if (val == Components.interfaces.nsMsgSearchAttrib.Keywords) {
               this.setAttribute("selectedIndex", "5");
             }
             else if (val == Components.interfaces.nsMsgSearchAttrib.JunkStatus) {
@@ -1424,11 +1409,14 @@
             else
               children[0].value = val.str;
           }
-          else if (attrib == nsMsgSearchAttrib.Label)
+          else if (attrib == nsMsgSearchAttrib.Keywords)
           {
-            var labelVal = children[5].getElementsByAttribute("value", val.label);
-            if (labelVal.item(0))
-              children[5].selectedItem = labelVal[0];
+            var keywordVal = children[5].getElementsByAttribute("value", val.str);
+            if (keywordVal.item(0))
+            {
+              children[5].value = val.str;
+              children[5].selectedItem = keywordVal[0];
+            }
           }
           else if (attrib == nsMsgSearchAttrib.JunkStatus) {
             var junkStatus =
@@ -1476,8 +1464,10 @@
               else
                 searchValue.str = children[0].value;
             }
-            else if (searchAttribute == nsMsgSearchAttrib.Label)
-              searchValue.label = children[5].selectedItem.value;
+            else if (searchAttribute == nsMsgSearchAttrib.Keywords)
+            {
+              searchValue.str = children[5].value;
+            }
             else if (searchAttribute == nsMsgSearchAttrib.JunkStatus)
                searchValue.junkStatus = children[6].value;
             else if (searchAttribute == nsMsgSearchAttrib.Size)
@@ -1495,6 +1485,27 @@
           <![CDATA[
             this.internalValue = searchValue;
             this.save();
+          ]]>
+        </body>
+      </method>
+      <method name="fillInTags">
+        <body>
+          <![CDATA[
+            var children = document.getAnonymousNodes(this);
+            var popupMenu = children[5].firstChild;
+            var tagService = Components.classes["@mozilla.org/messenger/tagservice;1"]
+                                       .getService(Components.interfaces.nsIMsgTagService);
+            var tagArray = tagService.getAllTags({});
+            for (var i = 0; i < tagArray.length; ++i)
+            {
+              var taginfo = tagArray[i];
+              var newMenuItem = document.createElement('menuitem');
+              newMenuItem.setAttribute('label', taginfo.tag);
+              newMenuItem.setAttribute('value', taginfo.key);
+              popupMenu.appendChild(newMenuItem);
+              if (!i)
+                children[5].selectedItem = newMenuItem;
+            }
           ]]>
         </body>
       </method>
@@ -1556,18 +1567,14 @@
         // initialize the address book picker
         this.initialize(document.getAnonymousNodes(this)[4], bundle);
 
-        // initialize the label picker....
-        var labelStrings = GetLabelStrings();
-        var children = document.getAnonymousNodes(this)[5].firstChild.childNodes;
-        // set the label string on each label element...
-        for (var index = 0; index < 6; index++)
-          children[index].setAttribute('label', labelStrings[index]);
-
         // initialize the junk status picker
         this.initialize(document.getAnonymousNodes(this)[6], bundle);
 
         // initialize the has attachment status picker
         this.initialize(document.getAnonymousNodes(this)[7], bundle);
+        
+        // initialize the tag list
+        fillInTags();
       ]]>
       </constructor>
     </implementation>
@@ -1754,7 +1761,7 @@
             parentNode: this.parentNode,
             getLastVisibleRow: function getLastVisibleRow(box) {
               var f = box.getFirstVisibleRow();
-              var p = box.getPageCount();
+              var p = box.getPageLength();
               var l = box.view.rowCount;
               return (l < f + p ? l : f + p) - 1;
             },
@@ -1811,6 +1818,12 @@
                   index = box.view.rowCount - 1;
                   break;
                 default:
+                  if (event.charCode > 0 && !event.ctrlKey && !event.metaKey) {
+                    event.preventDefault();
+                    index = tree.keyNavigate(event);
+                    if (index >= 0)
+                      break;
+                  }
                   return;
               }
               box.view.selection.select(index);
@@ -1839,8 +1852,12 @@
                 }
               }
             }
-            var RDF = Components.classes["@mozilla.org/rdf/rdf-service;1"].getService(Components.interfaces.nsIRDFService);
-            var index = this.tree.builderView.getIndexOfResource(RDF.GetResource(this.parentNode.getAttribute("uri")));
+            var index = -1;
+            var uri = this.parentNode.getAttribute("uri");
+            if (uri) {
+              var RDF = Components.classes["@mozilla.org/rdf/rdf-service;1"].getService(Components.interfaces.nsIRDFService);
+              index = view.getIndexOfResource(RDF.GetResource(uri));
+            }
             view.selection.select(index);
             return index;
           ]]>
@@ -1936,7 +1953,7 @@
         </treecols>
         <treechildren class="foldersTreeChildren"/>
         <template>
-          <rule>
+          <rule nc:IsDeferred="false">
             <treechildren>
               <treeitem uri="rdf:*">
                 <treerow sort="rdf:http://home.netscape.com/NC-rdf#FolderTreeName?sort=true">
@@ -1974,4 +1991,134 @@
     </xbl:content>
   </binding>
 
+  <binding id="folderSummary-popup" extends="chrome://global/content/bindings/popup.xml#tooltip">
+    <content>
+      <children>
+        <xul:folderSummary/>
+      </children>
+    </content>
+    <handlers>
+      <handler event="popupshowing">
+        <![CDATA[
+          var folderTree = GetFolderTree();
+          var row = folderTree.treeBoxObject.getRowAt(event.clientX, event.clientY);
+          if (row == -1)
+            return false;
+
+          var msgFolder = GetFolderResource(folderTree, row).QueryInterface(Components.interfaces.nsIMsgFolder);
+          if (!msgFolder || msgFolder.isServer) 
+            return false;
+          var asyncResults = {};
+          return document.getAnonymousNodes(this)[0].parseFolder(msgFolder, null, asyncResults);
+        ]]>
+      </handler>
+
+      <handler event="popuphiding">
+        document.getAnonymousNodes(this)[0].clear();
+      </handler>
+    </handlers>
+  </binding>
+
+  <binding id="folderSummary">
+    <content>
+      <xul:vbox/>
+    </content>
+    
+    <implementation>
+      <field name="mMaxMsgHdrsInPopup">8</field>
+      <property name="hasMessages" readonly="true" onget="return document.getAnonymousNodes(this)[0].hasChildNodes();"/>
+      <method name="parseFolder">
+        <parameter name="aFolder"/>
+        <parameter name="aUrlListener"/>
+        <parameter name="aOutAsync"/>
+        <body>
+          <![CDATA[
+            // from nsMsgFolderFlags.h
+            const kMsgPopupFolderFlagTrash = 0x0100;
+            const kMsgPopupFolderFlagJunk = 0x40000000;
+            // skip servers, Trash and Junk folders
+            if (!aFolder || aFolder.isServer || aFolder.getFlag(kMsgPopupFolderFlagJunk) || aFolder.getFlag(kMsgPopupFolderFlagTrash))
+              return false;
+          
+            // now get the database
+            var msgDatabase = aFolder.getMsgDatabase(null);
+            aFolder.setMsgDatabase(null);
+            var msgKeys = {};
+            var numMsgKeys = {};
+            msgDatabase.getNewList(numMsgKeys, msgKeys);
+
+            if (!numMsgKeys.value)
+              return false;
+
+            // fetchMsgPreviewText forces the previewText property to get generated
+            // for each of the message keys.
+            try {
+              aFolder.fetchMsgPreviewText(msgKeys.value, numMsgKeys.value, false, aUrlListener, aOutAsync);
+              aFolder.setMsgDatabase(null);
+            }
+            catch (ex)
+            {
+              // fetchMsgPreviewText throws an error when we call it on a news folder, we should just not show
+              // the tooltip if this method returns an error.
+              aFolder.setMsgDatabase(null);
+              return false; 
+            }
+
+            // if fetching the preview text is going to be an asynch operation and the caller
+            // is set up to handle that fact, then don't bother filling in any of the fields since 
+            // we'll have to do this all over again when the fetch for the preview text completes.
+            if (aOutAsync.value && aUrlListener)
+              return false; 
+            var unicodeConverter = Components.classes["@mozilla.org/intl/scriptableunicodeconverter"]
+                                  .createInstance(Components.interfaces.nsIScriptableUnicodeConverter);
+            unicodeConverter.charset = "UTF-8";                                  
+            
+            var index = 0;
+            var hdrParser = Components.classes["@mozilla.org/messenger/headerparser;1"].getService(Components.interfaces.nsIMsgHeaderParser);
+            while (document.getAnonymousNodes(this)[0].childNodes.length < this.mMaxMsgHdrsInPopup && index < numMsgKeys.value)
+            {
+              var msgPopup = document.createElementNS("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul", "folderSummaryMessage");
+              var msgHdr = msgDatabase.GetMsgHdrForKey(msgKeys.value[index++]);
+              msgPopup.setAttribute('subject', msgHdr.mime2DecodedSubject);
+              
+              var previewText = msgHdr.getStringProperty('preview');
+              // convert the preview text from utf-8 to unicode          
+              if (previewText)            
+                msgPopup.setAttribute('previewText', unicodeConverter.ConvertToUnicode(previewText));
+
+              var names = {};
+              var emails = {};
+              var numAddresses = hdrParser.parseHeadersWithArray(msgHdr.mime2DecodedAuthor, emails, names, {});
+              msgPopup.setAttribute('sender', ' - ' + (names.value[0] ? names.value[0] : emails.value[0]));
+              document.getAnonymousNodes(this)[0].appendChild(msgPopup);
+            }            
+            return true;
+          ]]>
+        </body>
+      </method>
+
+      <method name="clear">
+        <body>
+          <![CDATA[
+            var containingBox = document.getAnonymousNodes(this)[0];
+            while (containingBox.hasChildNodes()) 
+              containingBox.removeChild(containingBox.lastChild);      
+          ]]>
+        </body>
+      </method>
+    </implementation>
+  </binding>
+
+  <binding id="folderSummary-message">
+    <content>
+      <xul:vbox>
+        <xul:hbox class="folderSummary-message-row">
+          <xul:label flex="1" class="folderSummary-subject" xbl:inherits="value=subject" crop="right"/>
+          <xul:label class="folderSummary-sender" xbl:inherits="value=sender" crop="right"/>
+          <xul:spring flex="100%"/>
+        </xul:hbox>
+        <xul:description class="folderSummary-message-row folderSummary-previewText" xbl:inherits="value=previewText" crop="right"></xul:description>
+      </xul:vbox>
+    </content>
+  </binding>
 </bindings>

@@ -374,6 +374,11 @@ nsHTMLEditor::CreateEventListeners()
 void
 nsHTMLEditor::RemoveEventListeners()
 {
+  if (!mDocWeak)
+  {
+    return;
+  }
+
   nsCOMPtr<nsIDOMEventReceiver> erP = GetDOMEventReceiver();
 
   if (erP)
@@ -1804,6 +1809,13 @@ nsHTMLEditor::RebuildDocumentFromSource(const nsAString& aSourceString)
       res = LoadHTML(body + aSourceString);
     if (NS_FAILED(res)) return res;
 
+    nsCOMPtr<nsIDOMElement> divElement;
+    res = CreateElementWithDefaults(NS_LITERAL_STRING("div"), getter_AddRefs(divElement));
+    if (NS_FAILED(res)) return res;
+
+    res = CloneAttributes(bodyElement, divElement);
+    if (NS_FAILED(res)) return res;
+
     return BeginningOfDocument();
   }
 
@@ -1821,12 +1833,11 @@ nsHTMLEditor::RebuildDocumentFromSource(const nsAString& aSourceString)
   if (!FindInReadable(NS_LITERAL_STRING(">"),beginclosebody,endclosebody))
     return NS_ERROR_FAILURE;
 
-  nsAutoString bodyTag(Substring(beginbody,endclosebody));//<bodyXXXX >
   // Truncate at the end of the body tag
-  
   // Kludge of the year: fool the parser by replacing "body" with "div" so we get a node
-  bodyTag.ReplaceSubstring(NS_LITERAL_STRING("body").get(),
-                           NS_LITERAL_STRING("div").get());
+  nsAutoString bodyTag;
+  bodyTag.AssignLiteral("<div ");
+  bodyTag.Append(Substring(endbody, endclosebody));
 
   nsCOMPtr<nsIDOMRange> range;
   res = selection->GetRangeAt(0, getter_AddRefs(range));
@@ -2398,6 +2409,9 @@ nsHTMLEditor::GetCSSBackgroundColorState(PRBool *aMixed, nsAString &aOutColor, P
     if (!isBlock) {
       blockParent = GetBlockNodeParent(nodeToExamine);
     }
+
+    // Make sure to not walk off onto the Document node
+    nsCOMPtr<nsIDOMElement> element;
     do {
       // retrieve the computed style of background-color for blockParent
       mHTMLCSSUtils->GetComputedProperty(blockParent,
@@ -2405,9 +2419,10 @@ nsHTMLEditor::GetCSSBackgroundColorState(PRBool *aMixed, nsAString &aOutColor, P
                                          aOutColor);
       tmp.swap(blockParent);
       res = tmp->GetParentNode(getter_AddRefs(blockParent));
+      element = do_QueryInterface(blockParent);
       // look at parent if the queried color is transparent and if the node to
       // examine is not the root of the document
-    } while (aOutColor.EqualsLiteral("transparent") && blockParent);
+    } while (aOutColor.EqualsLiteral("transparent") && element);
     if (aOutColor.EqualsLiteral("transparent")) {
       // we have hit the root of the document and the color is still transparent !
       // Grumble... Let's look at the default background color because that's the
@@ -3593,7 +3608,8 @@ nsHTMLEditor::AddOverrideStyleSheet(const nsAString& aURL)
 
   // We MUST ONLY load synchronous local files (no @import)
   nsCOMPtr<nsICSSStyleSheet> sheet;
-  rv = cssLoader->LoadAgentSheet(uaURI, getter_AddRefs(sheet));
+  nsCOMPtr<nsICSSLoader_MOZILLA_1_8_BRANCH> loader = do_QueryInterface(cssLoader);
+  rv = loader->LoadSheetSync(uaURI, PR_TRUE, getter_AddRefs(sheet));
 
   // Synchronous loads should ALWAYS return completed
   if (!sheet)
@@ -4043,139 +4059,6 @@ nsHTMLEditor::DebugUnitTests(PRInt32 *outNumTests, PRInt32 *outNumTestsFailed)
 #else
   return NS_ERROR_NOT_IMPLEMENTED;
 #endif
-}
-
-#ifdef XP_MAC
-#pragma mark -
-#pragma mark  nsIEditorIMESupport overrides 
-#pragma mark -
-#endif
-
-NS_IMETHODIMP
-nsHTMLEditor::SetCompositionString(const nsAString& aCompositionString, nsIPrivateTextRangeList* aTextRangeList,nsTextEventReply* aReply)
-{
-  NS_ASSERTION(aTextRangeList, "null ptr");
-  if (nsnull == aTextRangeList)
-    return NS_ERROR_NULL_POINTER;
-
-  nsCOMPtr<nsICaret>  caretP;
-  
-  // workaround for windows ime bug 23558: we get every ime event twice. 
-  // for escape keypress, this causes an empty string to be passed
-  // twice, which freaks out the editor.  This is to detect and aviod that
-  // situation:
-  if (aCompositionString.IsEmpty() && !mIMETextNode) 
-  {
-    return NS_OK;
-  }
-  
-  nsCOMPtr<nsISelection> selection;
-  nsresult result = GetSelection(getter_AddRefs(selection));
-  if (NS_FAILED(result)) return result;
-
-  mIMETextRangeList = aTextRangeList;
-
-  if (!mPresShellWeak)  
-    return NS_ERROR_NOT_INITIALIZED;
-
-  nsCOMPtr<nsIPresShell> ps = do_QueryReferent(mPresShellWeak);
-  if (!ps) 
-    return NS_ERROR_NOT_INITIALIZED;
-
-  // XXX_kin: BEGIN HACK! HACK! HACK!
-  // XXX_kin:
-  // XXX_kin: This is lame! The IME stuff needs caret coordinates
-  // XXX_kin: synchronously, but the editor could be using async
-  // XXX_kin: updates (reflows and paints) for performance reasons.
-  // XXX_kin: In order to give IME what it needs, we have to temporarily
-  // XXX_kin: switch to sync updating during this call so that the
-  // XXX_kin: nsAutoPlaceHolderBatch can force sync reflows, paints,
-  // XXX_kin: and selection scrolling, so that we get back accurate
-  // XXX_kin: caret coordinates.
-
-  PRUint32 flags = 0;
-  PRBool restoreFlags = PR_FALSE;
-
-  if (NS_SUCCEEDED(GetFlags(&flags)) &&
-     (flags & nsIPlaintextEditor::eEditorUseAsyncUpdatesMask))
-  {
-    if (NS_SUCCEEDED(SetFlags(flags & (~nsIPlaintextEditor::eEditorUseAsyncUpdatesMask))))
-       restoreFlags = PR_TRUE;
-  }
-
-  // XXX_kin: END HACK! HACK! HACK!
-
-  // we need the nsAutoPlaceHolderBatch destructor called before hitting
-  // GetCaretCoordinates so the states in Frame system sync with content
-  // therefore, we put the nsAutoPlaceHolderBatch into an inner block
-  {
-    nsAutoPlaceHolderBatch batch(this, gIMETxnName);
-
-    result = InsertText(aCompositionString);
-
-    mIMEBufferLength = aCompositionString.Length();
-
-    ps->GetCaret(getter_AddRefs(caretP));
-    if (caretP)
-      caretP->SetCaretDOMSelection(selection);
-
-    // second part of 23558 fix:
-    if (aCompositionString.IsEmpty()) 
-    {
-      mIMETextNode = nsnull;
-    }
-  }
-
-  // XXX_kin: BEGIN HACK! HACK! HACK!
-  // XXX_kin:
-  // XXX_kin: Restore the previous set of flags!
-
-  if (restoreFlags)
-    SetFlags(flags);
-
-  // XXX_kin: END HACK! HACK! HACK!
-
-  result = caretP->GetCaretCoordinates(nsICaret::eIMECoordinates, selection,
-              &(aReply->mCursorPosition), &(aReply->mCursorIsCollapsed), nsnull);
-  NS_ASSERTION(NS_SUCCEEDED(result), "cannot get caret position");
-
-  
-  return result;
-}
-
-NS_IMETHODIMP 
-nsHTMLEditor::GetReconversionString(nsReconversionEventReply* aReply)
-{
-  nsresult res;
-
-  nsCOMPtr<nsISelection> selection;
-  res = GetSelection(getter_AddRefs(selection));
-  if (NS_FAILED(res) || !selection)
-    return (res == NS_OK) ? NS_ERROR_FAILURE : res;
-
-  // get the first range in the selection.  Since it is
-  // unclear what to do if reconversion happens with a 
-  // multirange selection, we will ignore any additional ranges.
-  
-  nsCOMPtr<nsIDOMRange> range;
-  res = selection->GetRangeAt(0, getter_AddRefs(range));
-  if (NS_FAILED(res) || !range)
-    return (res == NS_OK) ? NS_ERROR_FAILURE : res;
-  
-  nsAutoString textValue;
-  res = range->ToString(textValue);
-  if (NS_FAILED(res))
-    return res;
-  
-  aReply->mReconversionString = (PRUnichar*) nsMemory::Clone(textValue.get(),
-                                                                (textValue.Length() + 1) * sizeof(PRUnichar));
-  if (!aReply->mReconversionString)
-    return NS_ERROR_OUT_OF_MEMORY;
-
-  // delete the selection
-  res = DeleteSelection(eNone);
-  
-  return res;
 }
 
 #ifdef XP_MAC

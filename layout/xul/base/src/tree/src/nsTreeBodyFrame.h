@@ -24,6 +24,7 @@
  *   Dean Tessman <dean_tessman@hotmail.com>
  *   Brian Ryner <bryner@brianryner.com>
  *   Jan Varga <varga@ku.sk>
+ *   Mark Banner <mark@standard8.demon.co.uk>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -40,7 +41,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsLeafBoxFrame.h"
-#include "nsITreeBoxObject.h"
+#include "nsPITreeBoxObject.h"
 #include "nsITreeView.h"
 #include "nsICSSPseudoComparator.h"
 #include "nsIScrollbarMediator.h"
@@ -53,6 +54,20 @@
 #include "nsTreeColumns.h"
 #include "nsTreeImageListener.h"
 #include "nsAutoPtr.h"
+#include "nsDataHashtable.h"
+#include "imgIRequest.h"
+#include "imgIDecoderObserver.h"
+
+// An entry in the tree's image cache
+struct nsTreeImageCacheEntry
+{
+  nsTreeImageCacheEntry() {}
+  nsTreeImageCacheEntry(imgIRequest *aRequest, imgIDecoderObserver *aListener)
+    : request(aRequest), listener(aListener) {}
+
+  nsCOMPtr<imgIRequest> request;
+  nsCOMPtr<imgIDecoderObserver> listener;
+};
 
 // The actual frame that paints the cells and rows.
 class nsTreeBodyFrame : public nsLeafBoxFrame,
@@ -196,6 +211,11 @@ public:
   friend nsresult NS_NewTreeBodyFrame(nsIPresShell* aPresShell, 
                                           nsIFrame** aNewFrame);
 
+  struct ScrollParts {
+    nsIScrollbarFrame* mVScrollbar;
+    nsIContent*        mVScrollbarContent;
+  };
+
 protected:
   PRInt32 GetLastVisibleRow() {
     return mTopRowIndex + mPageLength;
@@ -235,14 +255,18 @@ protected:
   // the pseudo-styles passed in and place them into the cache.
   nsStyleContext* GetPseudoStyleContext(nsIAtom* aPseudoElement);
 
-  // Makes |mScrollbar| non-null if at all possible, and returns it.
-  nsIFrame* EnsureScrollbar();
+  // Retrieves the scrollbars and scrollview relevant to this treebody. We
+  // traverse the frame tree under our base element, in frame order, looking
+  // for the first relevant vertical scrollbar, horizontal scrollbar, and
+  // scrollable frame (with associated content and scrollable view). These
+  // are all volatile and should not be retained.
+  ScrollParts GetScrollParts();
 
   // Update the curpos of the scrollbar.
-  void UpdateScrollbar();
+  void UpdateScrollbar(const ScrollParts& aParts);
 
   // Update the maxpos of the scrollbar.
-  void InvalidateScrollbar();
+  void InvalidateScrollbar(const ScrollParts& aParts);
 
   // Check vertical overflow.
   void CheckVerticalOverflow();
@@ -251,9 +275,10 @@ protected:
   // Examples include container, open, selected, and focus.
   void PrefillPropertyArray(PRInt32 aRowIndex, nsTreeColumn* aCol);
 
-  // Our internal scroll method, used by all the public scroll methods.
-  nsresult ScrollInternal(PRInt32 aRow);
-  
+  nsresult ScrollInternal(const ScrollParts& aParts, PRInt32 aRow);
+  nsresult ScrollToRowInternal(const ScrollParts& aParts, PRInt32 aRow);
+  nsresult EnsureRowIsVisibleInternal(const ScrollParts& aParts, PRInt32 aRow);
+
   // Convert client pixels into twips in our coordinate space.
   void AdjustClientCoordsToBoxCoordSpace(PRInt32 aX, PRInt32 aY,
                                          nscoord* aResultX, nscoord* aResultY);
@@ -313,7 +338,7 @@ protected: // Data Members
   nsPresContext* mPresContext;
 
   // The cached box object parent.
-  nsCOMPtr<nsITreeBoxObject> mTreeBoxObject;
+  nsCOMPtr<nsPITreeBoxObject> mTreeBoxObject;
 
   // Cached column information.
   nsRefPtr<nsTreeColumns> mColumns;
@@ -328,14 +353,11 @@ protected: // Data Members
   // (the power set of all row properties).
   nsTreeStyleCache mStyleCache;
 
-  // A hashtable that maps from URLs to image requests.  The URL is provided
-  // by the view or by the style context. The style context represents
-  // a resolved :-moz-tree-cell-image (or twisty) pseudo-element.
+  // A hashtable that maps from URLs to image request/listener pairs.  The URL
+  // is provided by the view or by the style context. The style context
+  // represents a resolved :-moz-tree-cell-image (or twisty) pseudo-element.
   // It maps directly to an imgIRequest.
-  nsSupportsHashtable* mImageCache;
-
-  // Our vertical scrollbar.
-  nsIFrame* mScrollbar;
+  nsDataHashtable<nsStringHashKey, nsTreeImageCacheEntry> mImageCache;
 
   // The index of the first visible row and the # of rows visible onscreen.  
   // The tree only examines onscreen rows, starting from
@@ -392,6 +414,9 @@ protected: // Data Members
 
       // Number of lines to be scrolled.
       PRInt16                  mScrollLines;
+
+      // The drag action that was received for this slot
+      PRUint32                 mDragAction;
 
       nsCOMPtr<nsIDragSession> mDragSession;
 

@@ -65,6 +65,7 @@
 #include "nsIMIMEInfo.h"
 #include "nsITimer.h"
 #include "nsIAlertsService.h"
+#include "nsWeakReference.h"
 
 typedef PRInt16 DownloadState;
 typedef PRInt16 DownloadType;
@@ -74,7 +75,8 @@ class nsDownload;
 
 class nsDownloadManager : public nsIDownloadManager,
                           public nsIXPInstallManagerUI,
-                          public nsIObserver
+                          public nsIObserver,
+                          public nsSupportsWeakReference
 {
 public:
   NS_DECL_ISUPPORTS
@@ -193,13 +195,14 @@ private:
   nsCOMPtr<nsIRDFDataSource> mInner;
 };
 
-class nsDownload : public nsIDownload
+class nsDownload : public nsIDownload_MOZILLA_1_8_BRANCH
 {
 public:
   NS_DECL_NSIWEBPROGRESSLISTENER
   NS_DECL_NSIWEBPROGRESSLISTENER2
   NS_DECL_NSITRANSFER
   NS_DECL_NSIDOWNLOAD
+  NS_DECL_NSIDOWNLOAD_MOZILLA_1_8_BRANCH
   NS_DECL_ISUPPORTS
 
   nsDownload();
@@ -223,12 +226,20 @@ protected:
   nsresult SetTarget(nsIURI* aTarget);
   nsresult SetDisplayName(const PRUnichar* aDisplayName);
   nsresult SetSource(nsIURI* aSource);
-  nsresult GetTransferInformation(PRInt32* aCurr, PRInt32* aMax);
   nsresult SetMIMEInfo(nsIMIMEInfo* aMIMEInfo);
   nsresult SetStartTime(PRInt64 aStartTime);
 
   void Pause(PRBool aPaused);
   PRBool IsPaused();
+
+  struct TransferInformation {
+    PRInt64 mCurrBytes, mMaxBytes;
+    TransferInformation(PRInt64 aCurr, PRInt64 aMax) :
+      mCurrBytes(aCurr),
+      mMaxBytes(aMax)
+      {}
+  };
+  TransferInformation GetTransferInformation();
 
   nsDownloadManager* mDownloadManager;
   nsCOMPtr<nsIURI> mTarget;
@@ -251,8 +262,9 @@ private:
   PRInt32 mPercentComplete;
   PRUint64 mCurrBytes;
   PRUint64 mMaxBytes;
-  PRInt64 mStartTime;
+  PRTime mStartTime;
   PRTime mLastUpdate;
+  double mSpeed;
 
   friend class nsDownloadManager;
 };

@@ -222,7 +222,12 @@ protected:
     eAccessKeyProcessingUp,
     eAccessKeyProcessingDown
   } ProcessingAccessKeyState;
-  void HandleAccessKey(nsPresContext* aPresContext, nsKeyEvent* aEvent, nsEventStatus* aStatus, PRInt32 aChildOffset, ProcessingAccessKeyState aAccessKeyState);
+  void HandleAccessKey(nsPresContext* aPresContext,
+                       nsKeyEvent* aEvent,
+                       nsEventStatus* aStatus,
+                       PRInt32 aChildOffset,
+                       ProcessingAccessKeyState aAccessKeyState,
+                       PRInt32 aModifierMask);
 
   //---------------------------------------------
   // DocShell Focus Traversal Methods
@@ -246,12 +251,18 @@ protected:
                                   nsPresContext* aPresContext,
                                   nsIFrame* &targetOuterFrame,
                                   nsPresContext* &presCtxOuter);
+
+  typedef enum {
+    eScrollByPixel,
+    eScrollByLine,
+    eScrollByPage
+  } ScrollQuantity;
   nsresult DoScrollText(nsPresContext* aPresContext,
                         nsIFrame* aTargetFrame,
                         nsInputEvent* aEvent,
                         PRInt32 aNumLines,
                         PRBool aScrollHorizontal,
-                        PRBool aScrollPage);
+                        ScrollQuantity aScrollQuantity);
   void ForceViewUpdate(nsIView* aView);
   void DoScrollHistory(PRInt32 direction);
   void DoScrollTextsize(nsIFrame *aTargetFrame, PRInt32 adjustment);
@@ -325,6 +336,7 @@ protected:
   nsCOMPtr<nsIContent> mLastFocus;
   nsIFrame* mCurrentFocusFrame;
   PRInt32 mCurrentTabIndex;
+  EFocusedWithType mLastFocusedWith;
 
   // DocShell Traversal Data Memebers
   nsCOMPtr<nsIContent> mLastContentFocus;

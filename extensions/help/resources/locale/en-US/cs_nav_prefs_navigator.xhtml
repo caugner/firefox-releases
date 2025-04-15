@@ -177,7 +177,8 @@
 </ol>
 
 <p>The Languages preferences panel allows you to choose the languages and
-  character encoding for displaying web pages:</p>
+  character encoding for displaying web pages and choose if and how your typing
+  is spell checked:</p>
 
 <ul>
   <li><strong>Languages for Web Pages</strong>:
@@ -196,6 +197,12 @@
       <li><strong>Default Character Encoding</strong>: Use the drop-down list
         to select the character encoding you want for displaying web
         pages.</li>
+    </ul>
+  </li>
+  <li><strong>Spelling:</strong>
+    <ul>
+      <li><strong>When typing check my spelling</strong>: Use the drop-down
+        list to select if and how your typing is spell checked.</li>
     </ul>
   </li>
 </ul>
@@ -229,8 +236,6 @@
             selected file type.</li>
           <li><strong>Extension(s)</strong>: Displays the file extension(s) of
             the selected file type.</li>
-          <li><strong>MIME type</strong>: Displays the MIME type of the
-            selected file type.</li>
           <li><strong>When encountered</strong>: Displays what kind of action
             that will be taken when &brandShortName; encounters the selected
             file type.</li>
@@ -376,6 +381,10 @@
       <li><strong>Open the Search tab in the Sidebar when search results are
         available</strong>: Select this to have &brandShortName; open the
         Sidebar and show your search results.</li>
+      <li><strong>Open tab instead of window for a context menu web
+        search</strong>: Select this to have &brandShortName; show your search
+        results in a new tab rather than a new window when you search on
+        selected words in a web page.</li>
     </ul>
   </li>
   <li><strong>Sidebar Search Tab Preference</strong>:
@@ -479,6 +488,25 @@
   </li>
 </ul>
 
+<div class="win">
+  <p>To ensure that &brandShortName; opens a new window, select the Navigator
+    option in <a href= "cs_nav_prefs_appearance.xhtml#appearance">Appearance
+    Preferences - Appearance</a>.</p>
+
+  <p>If you want &brandShortName; to open a new tab instead of a new window when
+    you launch it and it is already running, ensure the following:</p>
+
+  <ul>
+    <li>If you launch &brandShortName; by command line, do not use command-line
+      parameters that open windows.</li>
+    <li>Nothing is set in the
+      <a href= "cs_nav_prefs_appearance.xhtml#appearance">Appearance Preferences
+      - Appearance</a>.</li>
+    <li>Set <q>Links from other applications</q> preference to <q>A new tab in
+      the current window</q>.</li>
+  </ul>
+</div>
+
 <p>[<a href="#navigator_preferences">Return to beginning of section</a>]</p>
 
 <h2 id="downloads">Navigator Preferences - Downloads</h2>
@@ -549,6 +577,9 @@
         a download is completed. Use the Browse button to select the sound file
         in the file locator. To listen to the sound you&apos;ve chosen, click
         Preview.</li>
+      <li><strong>Show an alert</strong>: Select this if you want
+        &brandShortName; to show an alert on the screen when a download is
+        completed.</li>
     </ul>
   </li>
 </ul>
@@ -559,7 +590,7 @@
 
 <p>[<a href="#navigator_preferences">Return to beginning of section</a>]</p>
 
-<p>Copyright &copy; 2003-2005 The Mozilla Foundation.</p>
+<p>Copyright &copy; 2003-2006 The Mozilla Foundation.</p>
 
 </body>
 </html>

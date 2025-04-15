@@ -76,7 +76,9 @@
 #include "nsIHttpChannel.h"
 #include "nsIUploadChannel.h"
 #include "nsIInputStream.h"
+#ifndef MOZ_PLACES
 #include "nsIBookmarksService.h"
+#endif
 #include "nsIStringBundle.h"
 #include "nsIObserverService.h"
 #include "nsIURL.h"
@@ -654,44 +656,41 @@ InternetSearchDataSource::GetSearchEngineToPing(nsIRDFResource **theEngine, nsCS
 	if (NS_FAILED(rv = mUpdateArray->Count(&numEngines)))	return(rv);
 	if (numEngines < 1)	return(NS_OK);
 
-	nsCOMPtr<nsISupports>	isupports = mUpdateArray->ElementAt(0);
+	nsCOMPtr<nsIRDFResource> aRes (do_QueryElementAt(mUpdateArray, 0));
 
 	// note: important to remove element from array
 	mUpdateArray->RemoveElementAt(0);
-	if (isupports)
+
+	if (aRes)
 	{
-		nsCOMPtr<nsIRDFResource> aRes (do_QueryInterface(isupports));
-		if (aRes)
+		if (isSearchCategoryEngineURI(aRes))
 		{
-			if (isSearchCategoryEngineURI(aRes))
-			{
-				nsCOMPtr<nsIRDFResource>	trueEngine;
-				rv = resolveSearchCategoryEngineURI(aRes, getter_AddRefs(trueEngine));
-				if (NS_FAILED(rv) || (rv == NS_RDF_NO_VALUE))	return(rv);
-				if (!trueEngine)	return(NS_RDF_NO_VALUE);
+			nsCOMPtr<nsIRDFResource>	trueEngine;
+			rv = resolveSearchCategoryEngineURI(aRes, getter_AddRefs(trueEngine));
+			if (NS_FAILED(rv) || (rv == NS_RDF_NO_VALUE))	return(rv);
+			if (!trueEngine)	return(NS_RDF_NO_VALUE);
 
-				aRes = trueEngine;
-			}
+			aRes = trueEngine;
+		}
 
-			if (!aRes)	return(NS_OK);
+		if (!aRes)	return(NS_OK);
 
-			*theEngine = aRes.get();
-			NS_ADDREF(*theEngine);
+		*theEngine = aRes.get();
+		NS_ADDREF(*theEngine);
 
-			// get update URL
-			nsCOMPtr<nsIRDFNode>	aNode;
-			if (NS_SUCCEEDED(rv = mInner->GetTarget(aRes, kNC_Update, PR_TRUE, getter_AddRefs(aNode)))
+		// get update URL
+		nsCOMPtr<nsIRDFNode>	aNode;
+		if (NS_SUCCEEDED(rv = mInner->GetTarget(aRes, kNC_Update, PR_TRUE, getter_AddRefs(aNode)))
 				&& (rv != NS_RDF_NO_VALUE))
+		{
+			nsCOMPtr<nsIRDFLiteral>	aLiteral (do_QueryInterface(aNode));
+			if (aLiteral)
 			{
-				nsCOMPtr<nsIRDFLiteral>	aLiteral (do_QueryInterface(aNode));
-				if (aLiteral)
+				const PRUnichar	*updateUni = nsnull;
+				aLiteral->GetValueConst(&updateUni);
+				if (updateUni)
 				{
-					const PRUnichar	*updateUni = nsnull;
-					aLiteral->GetValueConst(&updateUni);
-					if (updateUni)
-					{
-						updateURL.AssignWithConversion(updateUni);
-					}
+					updateURL.AssignWithConversion(updateUni);
 				}
 			}
 		}
@@ -1866,6 +1865,7 @@ InternetSearchDataSource::GetAllCmds(nsIRDFResource* source,
           &isSearchResult);
   if (NS_SUCCEEDED(rv) && isSearchResult)
 	{
+#ifndef MOZ_PLACES
 		nsCOMPtr<nsIRDFDataSource>	datasource;
 		if (NS_SUCCEEDED(rv = gRDFService->GetDataSource("rdf:bookmarks", getter_AddRefs(datasource))))
 		{
@@ -1885,6 +1885,7 @@ InternetSearchDataSource::GetAllCmds(nsIRDFResource* source,
 				}
 			}
 		}
+#endif
 		cmdArray->AppendElement(kNC_SearchCommand_AddQueryToBookmarks);
 		cmdArray->AppendElement(kNC_BookmarkSeparator);
 
@@ -1988,6 +1989,7 @@ InternetSearchDataSource::addToBookmarks(nsIRDFResource *src)
 		}
 	}
 
+#ifndef MOZ_PLACES
 	nsCOMPtr<nsIRDFDataSource>	datasource;
 	if (NS_SUCCEEDED(rv = gRDFService->GetDataSource("rdf:bookmarks", getter_AddRefs(datasource))))
 	{
@@ -2003,6 +2005,7 @@ InternetSearchDataSource::addToBookmarks(nsIRDFResource *src)
 			}
 		}
 	}
+#endif
 
 	return(NS_OK);
 }
@@ -2056,6 +2059,7 @@ InternetSearchDataSource::addQueryToBookmarks(nsIRDFResource *src)
 		}
 	}
 
+#ifndef MOZ_PLACES
 	nsCOMPtr<nsIRDFDataSource>	datasource;
 	if (NS_SUCCEEDED(rv = gRDFService->GetDataSource("rdf:bookmarks", getter_AddRefs(datasource))))
 	{
@@ -2064,6 +2068,7 @@ InternetSearchDataSource::addQueryToBookmarks(nsIRDFResource *src)
 			rv = bookmarks->AddBookmarkImmediately(uriUni, value.get(),
                                              nsIBookmarksService::BOOKMARK_SEARCH_TYPE, nsnull);
 	}
+#endif
 
 	return(NS_OK);
 }
@@ -2225,9 +2230,7 @@ InternetSearchDataSource::filterSite(nsIRDFResource *aResource)
 	if (NS_FAILED(rv = array->Count(&count)))	return(rv);
 	for (PRUint32 loop=0; loop<count; loop++)
 	{
-		nsCOMPtr<nsISupports>	element = array->ElementAt(loop);
-		if (!element)	break;
-		nsCOMPtr<nsIRDFResource> aSearchRoot (do_QueryInterface(element));
+		nsCOMPtr<nsIRDFResource> aSearchRoot (do_QueryElementAt(array, loop));
 		if (!aSearchRoot)	break;
 
 		if (NS_SUCCEEDED(rv = mInner->GetTargets(aSearchRoot, kNC_Child,
@@ -2392,9 +2395,7 @@ InternetSearchDataSource::DoCommand(nsISupportsArray/*<nsIRDFResource>*/* aSourc
 
 	for (loop=((PRInt32)numSources)-1; loop>=0; loop--)
 	{
-		nsCOMPtr<nsISupports>	aSource = aSources->ElementAt(loop);
-		if (!aSource)	return(NS_ERROR_NULL_POINTER);
-		nsCOMPtr<nsIRDFResource> src (do_QueryInterface(aSource));
+		nsCOMPtr<nsIRDFResource> src (do_QueryElementAt(aSources, loop));
 		if (!src)	return(NS_ERROR_NO_INTERFACE);
 
 		if (aCommand == kNC_SearchCommand_AddToBookmarks)
@@ -4065,7 +4066,7 @@ InternetSearchDataSource::DoSearch(nsIRDFResource *source, nsIRDFResource *engin
 		if (input.IsEmpty())				return(NS_ERROR_UNEXPECTED);
 
 		// HTTP Get method support
-		action += NS_LITERAL_STRING("?") + input;
+		action += input;
 	}
 
 	nsCOMPtr<nsIInternetSearchContext>	context;
@@ -4850,22 +4851,24 @@ InternetSearchDataSource::GetInputs(const PRUnichar *dataUni, nsString &engineNa
       rv = defaultBranch->GetComplexValue("browser.search.defaultenginename", 
                                           NS_GET_IID(nsIPrefLocalizedString),
                                           getter_AddRefs(defaultEngineName));
-      defaultEngineName->GetData(getter_Copies(defaultEngineNameStr));
+      if (NS_SUCCEEDED(rv)) {
+        defaultEngineName->GetData(getter_Copies(defaultEngineNameStr));
 
-      nsXPIDLString selectedEngineNameStr;
-      nsCOMPtr<nsIPrefLocalizedString> selectedEngineName;
-      rv = rootBranch->GetComplexValue("browser.search.selectedEngine", 
-                                       NS_GET_IID(nsIPrefLocalizedString),
-                                       getter_AddRefs(selectedEngineName));
-      if (selectedEngineName) {
-        selectedEngineName->GetData(getter_Copies(selectedEngineNameStr));
-        engineIsNotDefault = !defaultEngineNameStr.Equals(selectedEngineNameStr);
-      }
-      else {
-        engineIsNotDefault = PR_FALSE; // The selected engine *is* the default
-                                       // since the user has not changed the
-                                       // selected item in the list causing
-                                       // the selectedEngine pref to be set.
+        nsXPIDLString selectedEngineNameStr;
+        nsCOMPtr<nsIPrefLocalizedString> selectedEngineName;
+        rv = rootBranch->GetComplexValue("browser.search.selectedEngine", 
+                                         NS_GET_IID(nsIPrefLocalizedString),
+                                         getter_AddRefs(selectedEngineName));
+        if (NS_SUCCEEDED(rv) && selectedEngineName) {
+          selectedEngineName->GetData(getter_Copies(selectedEngineNameStr));
+          engineIsNotDefault = !defaultEngineNameStr.Equals(selectedEngineNameStr);
+        }
+        else {
+          engineIsNotDefault = PR_FALSE; // The selected engine *is* the default
+                                         // since the user has not changed the
+                                         // selected item in the list causing
+                                         // the selectedEngine pref to be set.
+        }
       }
     }
 

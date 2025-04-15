@@ -134,10 +134,6 @@
          key="&edit.sortFolder.keybinding;"
          command="cmd_bm_sortfolder" modifiers="accel"/>
 
-    <key id="bm_key_sortFolderByName"
-         key="&edit.sortFolderByName.keybinding;"
-         command="cmd_bm_sortfolderbyname" modifiers="accel"/>
-
     <key id="bm_key_properties"
          key="&edit.properties.keybinding;"
          command="cmd_bm_properties" modifiers="accel"/>
@@ -198,7 +194,6 @@
                     command="cmd_bm_sortfolder"/>
           <menuitem label="&command.sortFolderByName.label;"
                     accesskey="&command.sortFolderByName.accesskey;"
-                    key="bm_key_sortFolderByName"
                     command="cmd_bm_sortfolderbyname"/>
           <menuseparator/>
           <menuitem label="&command.properties.label;"
@@ -213,12 +208,12 @@
           <menuitem id="viewCommandToolbar" type="checkbox" class="menuitem-iconic"
                     label="&menuitem.view.command.toolbar.label;"
                     accesskey="&menuitem.view.command.toolbar.accesskey;"
-                    oncommand="goToggleToolbar('command-toolbar', 'viewCommandToolbar'); event.preventBubble();"
+                    oncommand="goToggleToolbar('command-toolbar', 'viewCommandToolbar'); event.stopPropagation();"
                     checked="true"/>
           <menuitem id="viewCommandSearchbar" type="checkbox" class="menuitem-iconic"
                     label="&menuitem.view.command.searchbar.label;"
                     accesskey="&menuitem.view.command.searchbar.accesskey;"
-                    oncommand="goToggleToolbar('bookmarks-search', 'viewCommandSearchbar'); event.preventBubble();"
+                    oncommand="goToggleToolbar('bookmarks-search', 'viewCommandSearchbar'); event.stopPropagation();"
                     checked="true"/>
           <menu label="&menuitem.view.show_columns.label;"
                 accesskey="&menuitem.view.show_columns.accesskey;">

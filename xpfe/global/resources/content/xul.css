@@ -736,6 +736,14 @@ scrollbar, scrollbarbutton, scrollcorner, slider, thumb {
   -moz-user-select: none;
 }
 
+scrollcorner {
+  display: -moz-box !important;
+}
+
+scrollcorner[hidden="true"] {
+  display: none !important;
+}
+
 scrollbar[value="hidden"] {
   visibility: hidden;
 }
@@ -769,6 +777,10 @@ statusbarpanel {
 
 .statusbarpanel-iconic {
   -moz-binding: url("chrome://global/content/bindings/general.xml#statusbarpanel-iconic");
+}
+
+.statusbarpanel-iconic-text {
+  -moz-binding: url("chrome://global/content/bindings/general.xml#statusbarpanel-iconic-text");
 }
 
 .statusbarpanel-menu-iconic {

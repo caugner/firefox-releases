@@ -55,10 +55,12 @@ class  nsIDocShellTreeOwner;
 class  nsIWebBrowserChrome;
 class  nsString;
 class  nsWatcherWindowEnumerator;
+class  nsIScriptContext;
 struct JSContext;
 struct JSObject;
 struct nsWatcherWindowEntry;
 struct PRLock;
+struct SizeSpec;
 
 class nsWindowWatcher :
       public nsIWindowWatcher,
@@ -84,12 +86,38 @@ private:
   nsWatcherWindowEntry *FindWindowEntry(nsIDOMWindow *aWindow);
   nsresult RemoveWindow(nsWatcherWindowEntry *inInfo);
 
+  // Get the caller tree item.  Look on the JS stack, then fall back
+  // to the parent if there's nothing there.
+  already_AddRefed<nsIDocShellTreeItem>
+    GetCallerTreeItem(nsIDocShellTreeItem* aParentItem);
+  
+  // Unlike GetWindowByName this will look for a caller on the JS
+  // stack, and then fall back on aCurrentWindow if it can't find one.
+  nsresult SafeGetWindowByName(const nsAString& aName,
+                               nsIDOMWindow* aCurrentWindow,
+                               nsIDOMWindow** aResult);
+
+  // Just like OpenWindowJS, but knows whether it got called via OpenWindowJS
+  // (which means called from script) or called via OpenWindow.
+  nsresult OpenWindowJSInternal(nsIDOMWindow *aParent,
+                                const char *aUrl,
+                                const char *aName,
+                                const char *aFeatures,
+                                PRBool aDialog,
+                                PRUint32 argc,
+                                jsval *argv,
+                                PRBool aCalledFromJS,
+                                nsIDOMWindow **_retval);
+
   static JSContext *GetJSContextFromWindow(nsIDOMWindow *aWindow);
   static JSContext *GetJSContextFromCallStack();
   static nsresult   URIfromURL(const char *aURL,
                                nsIDOMWindow *aParent,
                                nsIURI **aURI);
+#ifdef DEBUG
   static void       CheckWindowName(nsString& aName);
+#endif
+  
   static PRUint32   CalculateChromeFlags(const char *aFeatures,
                                          PRBool aFeaturesSpecified,
                                          PRBool aDialog,
@@ -97,20 +125,23 @@ private:
                                          PRBool aHasChromeParent);
   static PRInt32    WinHasOption(const char *aOptions, const char *aName,
                                  PRInt32 aDefault, PRBool *aPresenceFlag);
+  /* Compute the right SizeSpec based on aFeatures */
+  static void       CalcSizeSpec(const char* aFeatures, SizeSpec& aResult);
   static nsresult   ReadyOpenedDocShellItem(nsIDocShellTreeItem *aOpenedItem,
                                             nsIDOMWindow *aParent,
+                                            PRBool aWindowIsNew,
                                             nsIDOMWindow **aOpenedWindow);
   static void       SizeOpenedDocShellItem(nsIDocShellTreeItem *aDocShellItem,
                                            nsIDOMWindow *aParent,
-                                           const char *aFeatures,
-                                           PRUint32 aChromeFlags);
+                                           const SizeSpec & aSizeSpec);
   static nsresult   AttachArguments(nsIDOMWindow *aWindow,
                                     PRUint32 argc, jsval *argv);
   static nsresult   ConvertSupportsTojsvals(nsIDOMWindow *aWindow,
                                             nsISupports *aArgs,
                                             PRUint32 *aArgc, jsval **aArgv,
                                             JSContext **aUsedContext,
-                                            void **aMarkp);
+                                            void **aMarkp,
+                                            nsIScriptContext **aScriptContext);
   static nsresult   AddSupportsTojsvals(nsISupports *aArg,
                                         JSContext *cx, jsval *aArgv);
   static nsresult   AddInterfaceTojsvals(nsISupports *aArg,

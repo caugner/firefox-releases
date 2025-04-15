@@ -172,7 +172,9 @@ NS_IMPL_STRING_ATTR_DEFAULT_VALUE(nsHTMLButtonElement, Type, type, "submit")
 NS_IMETHODIMP
 nsHTMLButtonElement::Blur()
 {
-  SetElementFocus(PR_FALSE);
+  if (ShouldFocus(this)) {
+    SetElementFocus(PR_FALSE);
+  }
 
   return NS_OK;
 }
@@ -418,14 +420,8 @@ nsHTMLButtonElement::HandleDOMEvent(nsPresContext* aPresContext,
       case NS_MOUSE_RIGHT_BUTTON_DOWN:
       case NS_MOUSE_RIGHT_BUTTON_UP:
         {
-          nsCOMPtr<nsIDOMNSEvent> nsevent;
-
           if (aDOMEvent) {
-            nsevent = do_QueryInterface(*aDOMEvent);
-          }
-
-          if (nsevent) {
-            nsevent->PreventBubble();
+            (*aDOMEvent)->StopPropagation();
           } else {
             ret = NS_ERROR_FAILURE;
           }

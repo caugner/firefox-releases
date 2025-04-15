@@ -237,6 +237,7 @@ LAYOUT_ATOM(Unicode, "x-unicode")
 
   // other
 LAYOUT_ATOM(wildcard, "*")
+LAYOUT_ATOM(_moz_target, "_moz_target")
 LAYOUT_ATOM(mozdirty, "_moz_dirty")
 LAYOUT_ATOM(stylesheet, "stylesheet")
 LAYOUT_ATOM(transform, "transform")
@@ -254,6 +255,7 @@ LAYOUT_ATOM(embeddingLevel, "EmbeddingLevel")                  // PRUint8
 LAYOUT_ATOM(endsInDiacritic, "EndsInDiacritic")                // PRUint32
 LAYOUT_ATOM(nextBidi, "NextBidi")                              // nsIFrame*
 LAYOUT_ATOM(charType, "charType")                              // PRUint8
+LAYOUT_ATOM(scriptEnabledBeforePrintPreview, "scriptEnabledBeforePrintPreview") // PRBool
 
 #ifdef MOZ_SVG
   // Alphabetical list of SVG frame types
@@ -283,6 +285,7 @@ LAYOUT_ATOM(svgRadialGradientFrame,"SVGRadialGradientFrame")
 LAYOUT_ATOM(svgRectFrame,"SVGRectFrame")
 LAYOUT_ATOM(svgStopFrame,"SVGStopFrame")
 LAYOUT_ATOM(svgTextFrame,"SVGTextFrame")
+LAYOUT_ATOM(svgTextPathFrame,"SVGTextPathFrame")
 LAYOUT_ATOM(svgTSpanFrame,"SVGTSpanFrame")
 LAYOUT_ATOM(svgUseFrame,"SVGUseFrame")
 #endif // MOZ_SVG

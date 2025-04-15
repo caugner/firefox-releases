@@ -44,7 +44,7 @@
  * netwerk/base/ classes
  */
 
-// service implementing nsIIOService.
+// service implementing nsIIOService and nsIIOService2.
 #define NS_IOSERVICE_CLASSNAME \
     "nsIOService"
 #define NS_IOSERVICE_CONTRACTID \
@@ -733,6 +733,14 @@
     { 0xa6, 0x18, 0x00, 0x10, 0xa4, 0x01, 0xeb, 0x10 } \
 }
 
+/**
+ * General-purpose content sniffer component. Use with CreateInstance.
+ *
+ * Implements nsIContentSniffer_MOZILLA_1_8_BRANCH
+ */
+#define NS_GENERIC_CONTENT_SNIFFER \
+    "@mozilla.org/network/content-sniffer;1"
+
 /******************************************************************************
  * netwerk/streamconv classes
  */
@@ -745,5 +753,61 @@
     0x11d3,                                          \
     {0xa1, 0x6c, 0x00, 0x50, 0x04, 0x1c, 0xaf, 0x44} \
 }
+
+/******************************************************************************
+ * netwerk/system classes
+ */
+
+// service implementing nsINetworkLinkService
+#define NS_NETWORK_LINK_SERVICE_CLASSNAME \
+    "Network Link Status"
+#define NS_NETWORK_LINK_SERVICE_CID                  \
+{ /* 75a500a2-0030-40f7-86f8-63f225b940ae */         \
+    0x75a500a2,                                      \
+    0x0030,                                          \
+    0x40f7,                                          \
+    {0x86, 0xf8, 0x63, 0xf2, 0x25, 0xb9, 0x40, 0xae} \
+}
+
+/******************************************************************************
+ * Contracts that can be implemented by necko users.
+ */
+
+/**
+ * This contract ID will be gotten as a service implementing nsINetworkLinkService
+ * and monitored by IOService for automatic online/offline management.
+ */
+#define NS_NETWORK_LINK_SERVICE_CONTRACTID \
+    "@mozilla.org/network/network-link-service;1"
+
+/******************************************************************************
+ * Categories
+ */
+/**
+ * Services registered in this category will get notified via
+ * nsIChannelEventSink about all redirects that happen and have the opportunity
+ * to veto them. The value of the category entries is interpreted as the
+ * contract ID of the service.
+ */
+#define NS_CHANNEL_EVENT_SINK_CATEGORY "net-channel-event-sinks"
+
+/**
+ * Services in this category will get told about each load that happens and get
+ * the opportunity to override the detected MIME type via
+ * nsIContentSniffer_MOZILLA_1_8_BRANCH.
+ * Services should not set the MIME type on the channel directly, but return the
+ * new type. If getMIMETypeFromContent throws an exception, the type will remain
+ * unchanged.
+ *
+ * Note that only channels with the LOAD_CALL_CONTENT_SNIFFERS flag will call
+ * content sniffers. Also note that there can be security implications about
+ * changing the MIME type -- proxies filtering responses based on their MIME
+ * type might consider certain types to be safe, which these sniffers can
+ * override.
+ *
+ * Not all channels may implement content sniffing. See also
+ * nsIChannel::LOAD_CALL_CONTENT_SNIFFERS.
+ */
+#define NS_CONTENT_SNIFFER_CATEGORY "net-content-sniffers"
 
 #endif // nsNetCID_h__

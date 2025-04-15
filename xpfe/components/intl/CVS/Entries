@@ -1,7 +1,7 @@
-/.cvsignore/1.1/Fri Sep 28 22:31:53 2001//TFIREFOX_1_5_RELEASE
-/Makefile.in/1.8/Fri Mar 18 21:23:47 2005//TFIREFOX_1_5_RELEASE
-/nsCharsetMenu.cpp/1.40/Fri Feb 25 20:46:32 2005//TFIREFOX_1_5_RELEASE
-/nsCharsetMenu.h/1.2/Sat Apr 17 16:51:26 2004//TFIREFOX_1_5_RELEASE
-/nsFontPackageHandler.cpp/1.9/Sat May 22 22:15:21 2004//TFIREFOX_1_5_RELEASE
-/nsFontPackageHandler.h/1.4/Sat Apr 17 16:51:26 2004//TFIREFOX_1_5_RELEASE
+/.cvsignore/1.1/Fri Sep 28 22:31:53 2001//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.8/Fri Mar 18 21:23:47 2005//TFIREFOX_2_0_RELEASE
+/nsCharsetMenu.cpp/1.40/Fri Feb 25 20:46:32 2005//TFIREFOX_2_0_RELEASE
+/nsCharsetMenu.h/1.2/Sat Apr 17 16:51:26 2004//TFIREFOX_2_0_RELEASE
+/nsFontPackageHandler.cpp/1.9/Sat May 22 22:15:21 2004//TFIREFOX_2_0_RELEASE
+/nsFontPackageHandler.h/1.4/Sat Apr 17 16:51:26 2004//TFIREFOX_2_0_RELEASE
 D

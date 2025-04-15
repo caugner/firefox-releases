@@ -41,7 +41,9 @@
 #include "nsIDOMDocument.h"
 #include "nsIDOMHTMLDocument.h"
 #include "nsIDOMHTMLElement.h"
+#include "nsIDOMNSHTMLElement.h"
 #include "nsIDOMEventReceiver.h"
+#include "nsIEventListenerManager.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "nsUnicharUtils.h"
@@ -55,7 +57,6 @@
 #include "nsIDOMNamedNodeMap.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMRange.h"
-#include "nsIDOM3EventTarget.h"
 #include "nsIDOMEventListener.h"
 #include "nsIDOMEventGroup.h"
 #include "nsIDOMMouseListener.h"
@@ -146,6 +147,7 @@ nsEditor::nsEditor()
 ,  mPresShellWeak(nsnull)
 ,  mViewManager(nsnull)
 ,  mUpdateCount(0)
+,  mSpellcheckCheckboxState(eTriUnset)
 ,  mPlaceHolderTxn(nsnull)
 ,  mPlaceHolderName(nsnull)
 ,  mPlaceHolderBatch(0)
@@ -162,10 +164,10 @@ nsEditor::nsEditor()
 ,  mIsIMEComposing(PR_FALSE)
 ,  mNeedRecoverIMEOpenState(PR_FALSE)
 ,  mShouldTxnSetSelection(PR_TRUE)
+,  mDidPreDestroy(PR_FALSE)
 ,  mActionListeners(nsnull)
 ,  mEditorObservers(nsnull)
 ,  mDocDirtyState(-1)
-,  mGotDOMEventReceiver(PR_FALSE)
 ,  mDocWeak(nsnull)
 ,  mPhonetic(nsnull)
 {
@@ -224,9 +226,6 @@ nsEditor::~nsEditor()
   delete mEditorObservers;   // no need to release observers; we didn't addref them
   mEditorObservers = 0;
   
-  if (mInlineSpellChecker)
-    mInlineSpellChecker->Cleanup();
-
   if (mActionListeners)
   {
     PRInt32 i;
@@ -251,7 +250,8 @@ nsEditor::~nsEditor()
   NS_IF_RELEASE(mViewManager);
 }
 
-NS_IMPL_ISUPPORTS4(nsEditor, nsIEditor, nsIEditorIMESupport, nsISupportsWeakReference, nsIPhonetic)
+NS_IMPL_ISUPPORTS5(nsEditor, nsIEditor, nsIEditor_MOZILLA_1_8_BRANCH,
+                   nsIEditorIMESupport, nsISupportsWeakReference, nsIPhonetic)
 
 #ifdef XP_MAC
 #pragma mark -
@@ -334,7 +334,12 @@ nsEditor::Init(nsIDOMDocument *aDoc, nsIPresShell* aPresShell, nsIContent *aRoot
 NS_IMETHODIMP
 nsEditor::PostCreate()
 {
-  nsresult rv = CreateEventListeners();
+  // Set up spellchecking
+  nsresult rv = SyncRealTimeSpell();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Set up listeners
+  rv = CreateEventListeners();
   if (NS_FAILED(rv))
   {
     RemoveEventListeners();
@@ -376,15 +381,19 @@ nsEditor::InstallEventListeners()
 
   nsresult rv = NS_OK;
 
-  // register the event listeners with the DOM event reveiver
-  nsCOMPtr<nsIDOM3EventTarget> dom3Targ(do_QueryInterface(erP));
+  // register the event listeners with the listener manager
   nsCOMPtr<nsIDOMEventGroup> sysGroup;
   erP->GetSystemEventGroup(getter_AddRefs(sysGroup));
+  nsCOMPtr<nsIEventListenerManager> elmP;
+  erP->GetListenerManager(getter_AddRefs(elmP));
 
-  if (sysGroup)
+  if (sysGroup && elmP)
   {
-    rv = dom3Targ->AddGroupedEventListener(NS_LITERAL_STRING("keypress"),
-                                           mKeyListenerP, PR_FALSE, sysGroup);
+    rv = elmP->AddEventListenerByType(mKeyListenerP,
+                                      NS_LITERAL_STRING("keypress"),
+                                      NS_EVENT_FLAG_BUBBLE |
+                                      NS_PRIV_EVENT_UNTRUSTED_PERMITTED,
+                                      sysGroup);
     NS_ASSERTION(NS_SUCCEEDED(rv),
                  "failed to register key listener in system group");
   }
@@ -417,6 +426,11 @@ nsEditor::InstallEventListeners()
 void
 nsEditor::RemoveEventListeners()
 {
+  if (!mDocWeak)
+  {
+    return;
+  }
+
   nsCOMPtr<nsIDOMEventReceiver> erP = GetDOMEventReceiver();
 
   if (erP)
@@ -427,13 +441,15 @@ nsEditor::RemoveEventListeners()
     {
       nsCOMPtr<nsIDOMEventGroup> sysGroup;
       erP->GetSystemEventGroup(getter_AddRefs(sysGroup));
-      if (sysGroup)
+      nsCOMPtr<nsIEventListenerManager> elmP;
+      erP->GetListenerManager(getter_AddRefs(elmP));
+      if (sysGroup && elmP)
       {
-        nsCOMPtr<nsIDOM3EventTarget> dom3Targ(do_QueryInterface(erP));
-
-        dom3Targ->RemoveGroupedEventListener(NS_LITERAL_STRING("keypress"),
-                                             mKeyListenerP, PR_FALSE,
-                                             sysGroup);
+        elmP->RemoveEventListenerByType(mKeyListenerP,
+                                        NS_LITERAL_STRING("keypress"),
+                                        NS_EVENT_FLAG_BUBBLE |
+                                        NS_PRIV_EVENT_UNTRUSTED_PERMITTED,
+                                        sysGroup);
       }
     }
 
@@ -467,24 +483,83 @@ nsEditor::RemoveEventListeners()
                                     NS_GET_IID(nsIDOMDragListener));
     }
   }
+}
 
-  mKeyListenerP = nsnull;
-  mMouseListenerP = nsnull;
-  mFocusListenerP = nsnull;
-  mTextListenerP = nsnull;
-  mCompositionListenerP = nsnull;
-  mDragListenerP = nsnull;
+PRBool
+nsEditor::GetDesiredSpellCheckState()
+{
+  // Check user override on this element
+  if (mSpellcheckCheckboxState != eTriUnset) {
+    return (mSpellcheckCheckboxState == eTriTrue);
+  }
+
+  // Check user preferences
+  nsresult rv;
+  nsCOMPtr<nsIPrefBranch> prefBranch =
+    do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  PRInt32 spellcheckLevel = 1;
+  if (NS_SUCCEEDED(rv) && prefBranch) {
+    prefBranch->GetIntPref("layout.spellcheckDefault", &spellcheckLevel);
+  }
+
+  if (spellcheckLevel == 0) {
+    return PR_FALSE;                    // Spellchecking forced off globally
+  }
+
+  // Check for password/readonly/disabled, which are not spellchecked
+  // regardless of DOM
+  PRUint32 flags;
+  if (NS_SUCCEEDED(GetFlags(&flags)) &&
+      flags & (nsIPlaintextEditor::eEditorPasswordMask |
+               nsIPlaintextEditor::eEditorReadonlyMask |
+               nsIPlaintextEditor::eEditorDisabledMask)) {
+    return PR_FALSE;
+  }
+
+  // Check DOM state
+  nsCOMPtr<nsIContent> content = do_QueryInterface(GetRoot());
+  if (!content) {
+    return PR_FALSE;
+  }
+
+  if (content->IsNativeAnonymous()) {
+    content = content->GetParent();
+  }
+
+  nsCOMPtr<nsIDOMNSHTMLElement_MOZILLA_1_8_BRANCH> element =
+    do_QueryInterface(content);
+  if (!element) {
+    return PR_FALSE;
+  }
+
+  PRBool enable;
+  element->GetSpellcheck(&enable);
+
+  return enable;
 }
 
 NS_IMETHODIMP
 nsEditor::PreDestroy()
 {
+  if (mDidPreDestroy)
+    return NS_OK;
+
+  // Let spellchecker clean up its observers etc. It is important not to
+  // actually free the spellchecker here, since the spellchecker could have
+  // caused flush notifications, which could have gotten here if a textbox
+  // is being removed. Setting the spellchecker to NULL could free the
+  // object that is still in use! It will be freed when the editor is
+  // destroyed.
+  if (mInlineSpellChecker)
+    mInlineSpellChecker->Cleanup();
+
   // tell our listeners that the doc is going away
   NotifyDocumentListeners(eDocumentToBeDestroyed);
 
   // Unregister event listeners
   RemoveEventListeners();
 
+  mDidPreDestroy = PR_TRUE;
   return NS_OK;
 }
 
@@ -499,6 +574,9 @@ NS_IMETHODIMP
 nsEditor::SetFlags(PRUint32 aFlags)
 {
   mFlags = aFlags;
+
+  // Changing the flags can change whether spellchecking is on, so re-sync it
+  SyncRealTimeSpell();
   return NS_OK;
 }
 
@@ -1281,18 +1359,77 @@ nsEditor::MarkNodeDirty(nsIDOMNode* aNode)
 NS_IMETHODIMP nsEditor::GetInlineSpellChecker(nsIInlineSpellChecker ** aInlineSpellChecker)
 {
   NS_ENSURE_ARG_POINTER(aInlineSpellChecker);
-  nsresult rv;
+
+  if (mDidPreDestroy) {
+    // Don't allow people to get or create the spell checker once the editor
+    // is going away.
+    *aInlineSpellChecker = nsnull;
+    return NS_ERROR_NOT_AVAILABLE;
+  }
 
   if (!mInlineSpellChecker) {
+    nsresult rv;
     mInlineSpellChecker = do_CreateInstance(MOZ_INLINESPELLCHECKER_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = mInlineSpellChecker->Init(this);
+    if (NS_FAILED(rv))
+      mInlineSpellChecker = nsnull;
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  NS_IF_ADDREF(*aInlineSpellChecker = mInlineSpellChecker);  
+  NS_IF_ADDREF(*aInlineSpellChecker = mInlineSpellChecker);
+
   return NS_OK;
+}
+
+NS_IMETHODIMP nsEditor::GetInlineSpellCheckerOptionally(PRBool autoCreate,
+                                  nsIInlineSpellChecker ** aInlineSpellChecker)
+{
+  NS_ENSURE_ARG_POINTER(aInlineSpellChecker);
+
+  if (mDidPreDestroy) {
+    // Don't allow people to get or create the spell checker once the editor
+    // is going away.
+    *aInlineSpellChecker = nsnull;
+    return autoCreate ? NS_ERROR_NOT_AVAILABLE : NS_OK;
+  }
+
+  if (!mInlineSpellChecker) {
+    nsresult rv;
+    mInlineSpellChecker = do_CreateInstance(MOZ_INLINESPELLCHECKER_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = mInlineSpellChecker->Init(this);
+    if (NS_FAILED(rv))
+      mInlineSpellChecker = nsnull;
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  NS_IF_ADDREF(*aInlineSpellChecker = mInlineSpellChecker);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsEditor::SyncRealTimeSpell()
+{
+  PRBool enable = GetDesiredSpellCheckState();
+
+  nsCOMPtr<nsIInlineSpellChecker> spellChecker;
+  GetInlineSpellCheckerOptionally(enable, getter_AddRefs(spellChecker));
+
+  if (spellChecker) {
+    spellChecker->SetEnableRealTimeSpell(enable);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsEditor::SetSpellcheckUserOverride(PRBool enable)
+{
+  mSpellcheckCheckboxState = enable ? eTriTrue : eTriFalse;
+
+  return SyncRealTimeSpell();
 }
 
 #ifdef XP_MAC
@@ -3904,7 +4041,15 @@ nsEditor::IsContainer(nsIDOMNode *aNode)
   nsAutoString stringTag;
   nsresult res = aNode->GetNodeName(stringTag);
   if (NS_FAILED(res)) return PR_FALSE;
-  PRInt32 tagEnum = sParserService->HTMLStringTagToId(stringTag);
+
+  PRInt32 tagEnum;
+  // XXX Should this handle #cdata-section too?
+  if (stringTag.EqualsLiteral("#text")) {
+    tagEnum = eHTMLTag_text;
+  }
+  else {
+    tagEnum = sParserService->HTMLStringTagToId(stringTag);
+  }
 
   return mDTD->IsContainer(tagEnum);
 }
@@ -5402,59 +5547,40 @@ nsEditor::HandleInlineSpellCheck(PRInt32 action,
 already_AddRefed<nsIDOMEventReceiver>
 nsEditor::GetDOMEventReceiver()
 {
-  if (mDOMEventReceiver)
+  nsIDOMEventReceiver *erp = mDOMEventReceiver;
+  if (erp)
   {
-    nsIDOMEventReceiver *erp = mDOMEventReceiver;
     NS_ADDREF(erp);
     return erp;
-  }      
-
-  nsIDOMEventReceiver *erp = nsnull;
-  
-  if (!mGotDOMEventReceiver)
-  {
-    // Look for one
-    nsIDOMElement *rootElement = GetRoot();
-
-    // Now hack to make sure we are not anonymous content.
-    // If we are grab the parent of root element for our observer.
-
-    nsCOMPtr<nsIContent> content = do_QueryInterface(rootElement);
-
-    if (content)
-    {
-      nsIContent* parent = content->GetParent();
-      if (parent)
-      {
-        if (parent->IndexOf(content) < 0)
-        {
-          // this will put listener on the form element basically
-          CallQueryInterface(parent, &erp);
-        }
-      }
-    }
   }
 
-  if (!erp)
+  nsIDOMElement *rootElement = GetRoot();
+
+  // Now hack to make sure we are not anonymous content.
+  // If we are grab the parent of root element for our observer.
+
+  nsCOMPtr<nsIContent> content = do_QueryInterface(rootElement);
+
+  if (content && content->IsNativeAnonymous())
+  {
+    mDOMEventReceiver = do_QueryInterface(content->GetParent());
+    erp = mDOMEventReceiver;
+    NS_IF_ADDREF(erp);
+  }
+  else
   {
     // Don't use getDocument here, because we have no way of knowing
     // if Init() was ever called.  So we need to get the document
     // ourselves, if it exists.
-
-    nsCOMPtr<nsIDOMDocument> domdoc = do_QueryReferent(mDocWeak);
-    if (domdoc)
+    if (mDocWeak)
     {
-      CallQueryInterface(domdoc, &erp);
+      CallQueryReferent(mDocWeak.get(), &erp);
+    }
+    else
+    {
+      NS_ERROR("not initialized yet");
     }
   }
-  else
-  {
-    // We got a DOM event receiver from our content.  Cache it.
-    mDOMEventReceiver = erp;
-  }
-
-  // If we found something, make a note of that.
-  mGotDOMEventReceiver = mGotDOMEventReceiver || erp;
 
   return erp;
 }

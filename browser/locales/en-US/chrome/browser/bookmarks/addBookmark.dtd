@@ -4,6 +4,7 @@
 <!ENTITY name.accesskey             "N">
 <!ENTITY keyword.label              "Keyword:">
 <!ENTITY keyword.accesskey          "K">
+<!ENTITY microsummary.label         "Live Titles">
 <!ENTITY url.label                  "Location:">
 <!ENTITY url.accesskey              "L">
 <!ENTITY button.createin.label      "Create In &gt;&gt;">

@@ -11,9 +11,6 @@ $exe_suffix = '.exe';
 
 sub BuildPlatformInstaller
 {
-  print "Making uninstaller...\n";
-  MakeUninstall() && die;
-
   # copy the lean installer to stub\ dir
   print "\n****************************\n";
   print "*                          *\n";
@@ -182,6 +179,146 @@ sub BuildPlatformInstaller
     move("$gDirDistInstall/7z/SetupGeneric.exe", "$gDirDistInstall/sea/$seiFileNameSpecific") ||
       die "move $gDirDistInstall/SetupGeneric.exe $gDirDistInstall/sea/$seiFileNameSpecific";
   }
+
+  # post-mozilla-rel.pl unsets MOZ_INSTALLER_USE_7ZIP so it can make the xpi
+  # files so we only run when MOZ_INSTALLER_USE_7ZIP is set until
+  # post-mozilla-rel.pl is fixed
+  if ($ENV{MOZ_PACKAGE_NSIS} && $ENV{MOZ_INSTALLER_USE_7ZIP}) 
+  {
+    # NSIS Installer - requires 7-Zip Self Extracting Archive
+    print "\n********************************\n";
+    print   "*                              *\n";
+    print   "*  creating NSIS Installer...  *\n";
+    print   "*                              *\n";
+    print   "********************************\n";
+    print "\n $gDirDistInstall/nsis\n";
+    
+    # Make sure this is compiling on a win32 system
+    $win32 = ($^O =~ / ((MS)?win32)|cygwin|os2/i) ? 1 : 0;
+    if (!$win32) {
+        die "ERROR: NSIS installers can currently only be made on the Windows platforms\n";
+    }
+    
+    # Make sure makensis.exe is available
+    $makensis = `which makensis.exe`;
+    if (!defined($makensis) or length($makensis) lt 1) {
+        die "ERROR: makensis.exe not found.  Is NSIS installed and in your $PATH?\n";
+    }
+    
+    # Make sure 7z.exe is available
+    $zip = `which 7z.exe`;
+    if (!defined($zip) or length($zip) lt 1) {
+        die "ERROR: 7z.exe not found.  Is 7-Zip installed and in your $PATH?\n";
+    }
+    
+    # Make sure installer-stage is available
+    if (!(-d "$topobjdir/installer-stage")) {
+        die "ERROR: $topobjdir/installer-stage not found.\n       ".
+            "First make installer-stage in the application's installer ".
+            "directory to stage the files.\n";
+    }
+    
+    # Set up the NSIS stage
+    if(-d "$gDirDistInstall/nsis")
+    {
+      unlink <$gDirDistInstall/nsis/*>;
+    }
+    else 
+    {
+      mkdir ("$gDirDistInstall/nsis",0775);
+    }
+    
+    # Set up the NSIS config directory for inclusion in the SEA
+    if(-d "$topobjdir/installer-stage/config")
+    {
+        die "installer-stage/config shouldn't exist!";
+    }
+
+    mkdir ("$topobjdir/installer-stage/config",0775);
+    
+    # Copy application NSIS installer files
+    copy("$inConfigFiles/instfiles-extra.nsi", "$gDirDistInstall/nsis") ||
+      die "copy $inConfigFiles/instfiles-extra.nsi $gDirDistInstall/nsis: $!\n";
+    copy("$inConfigFiles/SetProgramAccess.nsi", "$gDirDistInstall/nsis") ||
+      die "copy $inConfigFiles/SetProgramAccess.nsi $gDirDistInstall/nsis: $!\n";
+    copy("$inConfigFiles/appLocale.nsi", "$gDirDistInstall/nsis") ||
+      die "copy $inConfigFiles/appLocale.nsi $gDirDistInstall/nsis: $!\n";
+    copy("$gDirDistInstall/license.txt", "$gDirDistInstall/nsis") ||
+      die "copy $gDirDistInstall/license.txt $gDirDistInstall/nsis: $!\n";
+    copy("$inDistPath/branding/wizHeader.bmp", "$gDirDistInstall/nsis") ||
+      die "copy $inDistPath/branding/wizHeader.bmp $gDirDistInstall/nsis: $!\n";
+    copy("$inDistPath/branding/wizWatermark.bmp", "$gDirDistInstall/nsis") ||
+      die "copy $inDistPath/branding/wizWatermark.bmp $gDirDistInstall/nsis: $!\n";
+    
+    # Copy config files used during setip when the installer runs
+    copy("$inConfigFiles/defines.nsi", "$gDirDistInstall/nsis") ||
+      die "copy $inConfigFiles/defines.nsi $gDirDistInstall/nsis: $!\n";
+    
+    # Copy toolkit NSIS installer files
+    copy("$gNGAppsScriptsDir/windows/nsis/common.nsh", "$gDirDistInstall/nsis") ||
+      die "copy $gNGAppsScriptsDir/windows/nsis/common.nsh $gDirDistInstall/nsis: $!\n";
+    copy("$gNGAppsScriptsDir/windows/nsis/installer.nsi", "$gDirDistInstall/nsis") ||
+      die "copy $gNGAppsScriptsDir/windows/nsis/installer.nsi $gDirDistInstall/nsis: $!\n";
+    copy("$gNGAppsScriptsDir/windows/nsis/options.ini", "$gDirDistInstall/nsis") ||
+      die "copy $gNGAppsScriptsDir/windows/nsis/options.ini $gDirDistInstall/nsis: $!\n";
+    copy("$gNGAppsScriptsDir/windows/nsis/shortcuts.ini", "$gDirDistInstall/nsis") ||
+      die "copy $gNGAppsScriptsDir/windows/nsis/shortcuts.ini $gDirDistInstall/nsis: $!\n";
+    copy("$gNGAppsScriptsDir/windows/nsis/ShellLink.dll", "$gDirDistInstall/nsis") ||
+      die "copy $gNGAppsScriptsDir/windows/nsis/ShellLink.dll $gDirDistInstall/nsis: $!\n";
+    copy("$gNGAppsScriptsDir/windows/nsis/version.nsh", "$gDirDistInstall/nsis") ||
+      die "copy $gNGAppsScriptsDir/windows/nsis/version.nsh $gDirDistInstall/nsis: $!\n";
+    copy("$gNGAppsScriptsDir/windows/wizard/setuprsc/setup.ico", "$gDirDistInstall/nsis") ||
+      die "copy $gNGAppsScriptsDir/windows/wizard/setuprsc/setup.ico $gDirDistInstall/nsis: $!\n";
+
+    # Copy toolkit NSIS installer locale files
+    copy("$topsrcdir/toolkit/locales/en-US/installer/windows/commonLocale.nsh", "$gDirDistInstall/nsis") ||
+      die "copy $topsrcdir/toolkit/locales/en-US/installer/windows/commonLocale.nsh $gDirDistInstall/nsis: $!\n";
+    
+    # Create the NSIS installer
+    # makensis.exe commandline options that affect stdout logging
+    # /Vx verbosity where x is 4=all,3=no script,2=no info,1=no warnings,0=none
+    # /Ofile specifies a text file to log compiler output (default is stdout)
+    chdir("$gDirDistInstall/nsis");
+    system("makensis.exe installer.nsi") &&
+      die "Error creating NSIS installer";
+
+    copy("$inConfigFiles/app.tag", "$gDirDistInstall/nsis") ||
+      die "copy $inConfigFiles/app.tag $gDirDistInstall/nsis";
+
+    # Stage files to installer-stage
+    copy("$gDirDistInstall/nsis/setup.exe", "$topobjdir/installer-stage") ||
+      die "copy $gDirDistInstall/nsis $topobjdir/installer-stage: $!";
+    copy("$inConfigFiles/removed-files.log", "$topobjdir/installer-stage/config") ||
+      die "copy $inConfigFiles/removed-files.log $topobjdir/installer-stage/config: $!";
+
+    my $dostopsrcdir = $topsrcdir;
+    my $dosDistInstall = $gDirDistInstall;
+    if ($^O =~ /cygwin/) {
+      $dostopsrcdir = `cygpath --mixed --short-name $topsrcdir`;
+      $dosDistInstall = `cygpath --mixed --short-name $gDirDistInstall`;
+      chomp ($dostopsrcdir, $dosDistInstall);
+    }
+
+    chdir "$topobjdir/installer-stage";
+    system("7z a -r -t7z $dosDistInstall/nsis/app.7z -mx -m0=BCJ2 -m1=LZMA:d24 -m2=LZMA:d19 -m3=LZMA:d19  -mb0:1 -mb0s1:2 -mb0s2:3") &&
+      die "7z failed: $!";
+
+    system("upx --best -o $dosDistInstall/nsis/7zSD.sfx $dostopsrcdir/$ENV{WIZ_sfxModule}") &&
+      die "'upx --best -o $dosDistInstall/nsis/7zSD.sfx $dostopsrcdir/$ENV{WIZ_sfxModule}' failed: $!";
+
+    # Temporary name change to include -nsis before .exe
+    $nsisFileNameSpecific = $seiFileNameSpecific;
+    $nsisFileNameSpecific =~ s/\.exe$/-nsis\.exe/;
+
+    chdir("$gDirDistInstall/nsis");
+
+    # Since we are using a unique temp name for the NSIS installer it is safe
+    # to copy it alongside the xpinstall based installer.
+    print ("cmd /C copy /b 7zSD.sfx+app.tag+app.7z ..\\\\sea\\\\$nsisFileNameSpecific\n");
+
+    system("cmd /C copy /b 7zSD.sfx+app.tag+app.7z ..\\\\sea\\\\$nsisFileNameSpecific") &&
+      die "Final concatenation failed.";
+  }
   print " done!\n\n";
 
   if((!(-e "$topsrcdir/../redist/microsoft/system/msvcrt.dll")) ||
@@ -209,55 +346,6 @@ sub BuildPlatformInstaller
     print "***\n\n";
   }
   return 0;
-}
-
-sub MakeUninstall
-{
-  chdir($inConfigFiles);
-  if(MakeUninstallIniFile())
-  {
-    return(1);
-  }
-
-  # Copy the uninstall files to the dist uninstall directory.
-  copy("uninstall.ini", "$gDirDistInstall") ||
-    die "copy uninstall.ini $gDirDistInstall: $!\n";
-  copy("uninstall.ini", "$gDirDistInstall/uninstall") ||
-    die "copy uninstall.ini $gDirDistInstall/uninstall: $!\n";
-  copy("$gDirDistInstall/uninstall.exe", "$gDirDistInstall/uninstall") ||
-    die "copy $gDirDistInstall/uninstall.exe $gDirDistInstall/uninstall: $!\n";
-
-  # build the self-extracting .exe (uninstaller) file.
-  print "\nbuilding self-extracting uninstaller ($seuFileNameSpecific)...\n";
-  copy("$gDirDistInstall/$seiFileNameGeneric", "$gDirDistInstall/$seuFileNameSpecific") ||
-    die "copy $gDirDistInstall/$seiFileNameGeneric $gDirDistInstall/$seuFileNameSpecific: $!\n";
-
-  $origCwd = cwd();
-  chdir($gDirDistInstall);
-
-  if(system("./nsztool.exe $seuFileNameSpecific uninstall/*.*"))
-  {
-    print "\n Error: ./nsztool.exe $seuFileNameSpecific uninstall/*.*\n";
-    return(1);
-  }
-
-  chdir($origCwd);
-
-  MakeExeZip($gDirDistInstall, $seuFileNameSpecific, $seuzFileNameSpecific);
-  unlink <$gDirDistInstall/$seuFileNameSpecific>;
-  return(0);
-}
-
-sub MakeUninstallIniFile
-{
-  # Make config.ini file
-  chdir($inConfigFiles);
-  if(system("perl $gDirPackager/windows/makeuninstallini.pl uninstall.it $gDefaultProductVersion"))
-  {
-    print "\n Error: perl $gDirPackager/windows/makeuninstallini.pl uninstall.it $gDefaultProductVersion\n";
-    return(1);
-  }
-  return(0);
 }
 
 sub MakeExeZip

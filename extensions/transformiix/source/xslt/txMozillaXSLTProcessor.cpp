@@ -64,6 +64,9 @@
 #include "txXSLTProcessor.h"
 #include "nsIPrincipal.h"
 #include "jsapi.h"
+#include "nsIEventQueueService.h"
+#include "ExprParser.h"
+#include "nsIScriptSecurityManager.h"
 
 static NS_DEFINE_CID(kXMLDocumentCID, NS_XMLDOCUMENT_CID);
 
@@ -247,7 +250,9 @@ NS_IMPL_RELEASE(txMozillaXSLTProcessor)
 NS_INTERFACE_MAP_BEGIN(txMozillaXSLTProcessor)
     NS_INTERFACE_MAP_ENTRY(nsIXSLTProcessor)
     NS_INTERFACE_MAP_ENTRY(nsIXSLTProcessorObsolete)
+    NS_INTERFACE_MAP_ENTRY(nsIXSLTProcessorPrivate)
     NS_INTERFACE_MAP_ENTRY(nsIDocumentTransformer)
+    NS_INTERFACE_MAP_ENTRY(nsIDocumentTransformer_1_8_BRANCH)
     NS_INTERFACE_MAP_ENTRY(nsIDocumentObserver)
     NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIXSLTProcessor)
     NS_INTERFACE_MAP_ENTRY_EXTERNAL_DOM_CLASSINFO(XSLTProcessor)
@@ -256,7 +261,8 @@ NS_INTERFACE_MAP_END
 txMozillaXSLTProcessor::txMozillaXSLTProcessor() : mStylesheetDocument(nsnull),
                                                    mTransformResult(NS_OK),
                                                    mCompileResult(NS_OK),
-                                                   mVariables(PR_TRUE)
+                                                   mVariables(PR_TRUE),
+                                                   mFlags(0)
 {
 }
 
@@ -290,7 +296,8 @@ txMozillaXSLTProcessor::TransformDocument(nsIDOMNode* aSourceDOM,
                    type == nsIDOMNode::DOCUMENT_NODE,
                    NS_ERROR_INVALID_ARG);
 
-    nsresult rv = TX_CompileStylesheet(aStyleDOM, getter_AddRefs(mStylesheet));
+    nsresult rv = TX_CompileStylesheet(aStyleDOM, this, 
+                                       getter_AddRefs(mStylesheet));
     NS_ENSURE_SUCCESS(rv, rv);
 
     mSource = aSourceDOM;
@@ -322,6 +329,178 @@ txMozillaXSLTProcessor::SetSourceContentModel(nsIDOMNode* aSourceDOM)
     return NS_OK;
 }
 
+NS_IMETHODIMP
+txMozillaXSLTProcessor::AddXSLTParamNamespace(const nsString& aPrefix,
+                                              const nsString& aNamespace)
+{
+    nsCOMPtr<nsIAtom> pre = do_GetAtom(aPrefix);
+    return mParamNamespaceMap.mapNamespace(pre, aNamespace);
+}
+
+
+class txXSLTParamContext : public txIParseContext,
+                           public txIEvalContext
+{
+public:
+    txXSLTParamContext(txNamespaceMap *aResolver, txXPathNode& aContext,
+                       txResultRecycler* aRecycler)
+        : mResolver(aResolver),
+          mContext(aContext),
+          mRecycler(aRecycler)
+    {
+    }
+
+    // txIParseContext
+    nsresult resolveNamespacePrefix(nsIAtom* aPrefix, PRInt32& aID)
+    {
+        aID = mResolver->lookupNamespace(aPrefix);
+        return aID == kNameSpaceID_Unknown ? NS_ERROR_DOM_NAMESPACE_ERR :
+                                             NS_OK;
+    }
+    nsresult resolveFunctionCall(nsIAtom* aName, PRInt32 aID,
+                                 FunctionCall*& aFunction)
+    {
+        return NS_ERROR_XPATH_UNKNOWN_FUNCTION;
+    }
+    PRBool caseInsensitiveNameTests()
+    {
+        return PR_FALSE;
+    }
+    void SetErrorOffset(PRUint32 aOffset)
+    {
+    }
+
+    // txIEvalContext
+    nsresult getVariable(PRInt32 aNamespace, nsIAtom* aLName,
+                         txAExprResult*& aResult)
+    {
+        aResult = nsnull;
+        return NS_ERROR_INVALID_ARG;
+    }
+    PRBool isStripSpaceAllowed(const txXPathNode& aNode)
+    {
+        return PR_FALSE;
+    }
+    void* getPrivateContext()
+    {
+        return nsnull;
+    }
+    txResultRecycler* recycler()
+    {
+        return mRecycler;
+    }
+    void receiveError(const nsAString& aMsg, nsresult aRes)
+    {
+    }
+    const txXPathNode& getContextNode()
+    {
+      return mContext;
+    }
+    PRUint32 size()
+    {
+      return 1;
+    }
+    PRUint32 position()
+    {
+      return 1;
+    }
+
+private:
+    txNamespaceMap *mResolver;
+    txXPathNode& mContext;
+    txResultRecycler* mRecycler;
+    
+};
+
+
+NS_IMETHODIMP
+txMozillaXSLTProcessor::AddXSLTParam(const nsString& aName,
+                                     const nsString& aNamespace,
+                                     const nsString& aSelect,
+                                     const nsString& aValue,
+                                     nsIDOMNode* aContext)
+{
+    nsresult rv = NS_OK;
+
+    if (aSelect.IsVoid() == aValue.IsVoid()) {
+        // Ignore if neither or both are specified
+        return NS_ERROR_FAILURE;
+    }
+
+    nsRefPtr<txAExprResult> value;
+    if (!aSelect.IsVoid()) {
+
+        // Set up context
+        nsAutoPtr<txXPathNode> contextNode(
+          txXPathNativeNode::createXPathNode(aContext));
+        NS_ENSURE_TRUE(contextNode, NS_ERROR_OUT_OF_MEMORY);
+
+        if (!mRecycler) {
+            mRecycler = new txResultRecycler;
+            NS_ENSURE_TRUE(mRecycler, NS_ERROR_OUT_OF_MEMORY);
+        }
+
+        txXSLTParamContext paramContext(&mParamNamespaceMap, *contextNode,
+                                        mRecycler);
+
+        // Parse
+        nsAutoPtr<Expr> expr;
+        rv = txExprParser::createExpr(aSelect, &paramContext,
+                                      getter_Transfers(expr));
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        // Evaluate
+        rv = expr->evaluate(&paramContext, getter_AddRefs(value));
+        NS_ENSURE_SUCCESS(rv, rv);
+    }
+    else {
+        value = new StringResult(aValue, nsnull);
+        NS_ENSURE_TRUE(value, NS_ERROR_OUT_OF_MEMORY);
+    }
+
+    nsCOMPtr<nsIAtom> name = do_GetAtom(aName);
+    PRInt32 nsId = txNamespaceManager::getNamespaceID(aNamespace);
+    NS_ENSURE_FALSE(nsId == kNameSpaceID_Unknown, NS_ERROR_FAILURE);
+
+    txExpandedName varName(nsId, name);
+    txVariable* var = (txVariable*)mVariables.get(varName);
+    if (var) {
+        var->setValue(value);
+        
+        return NS_OK;
+    }
+
+    var = new txVariable(value);
+    NS_ENSURE_TRUE(var, NS_ERROR_OUT_OF_MEMORY);
+
+    return mVariables.add(varName, var);
+}
+
+PR_BEGIN_EXTERN_C
+void* PR_CALLBACK
+HandleTransformBlockerEvent(PLEvent *aEvent)
+{
+    txMozillaXSLTProcessor *processor =
+         NS_STATIC_CAST(txMozillaXSLTProcessor*, aEvent->owner);
+    processor->TransformToDoc(nsnull, nsnull);
+
+    return nsnull;
+}
+
+void PR_CALLBACK
+DestroyTransformBlockerEvent(PLEvent *aEvent)
+{
+    txMozillaXSLTProcessor *processor =
+         NS_STATIC_CAST(txMozillaXSLTProcessor*, aEvent->owner);
+    nsCOMPtr<nsIDocument> document =
+        do_QueryInterface(processor->GetSourceContentModel());
+    document->UnblockOnload();
+
+    NS_RELEASE(processor);
+    delete aEvent;
+}
+PR_END_EXTERN_C
+
 nsresult
 txMozillaXSLTProcessor::DoTransform()
 {
@@ -329,7 +508,41 @@ txMozillaXSLTProcessor::DoTransform()
     NS_ENSURE_TRUE(mStylesheet, NS_ERROR_UNEXPECTED);
     NS_ASSERTION(mObserver, "no observer");
 
-    return TransformToDoc(nsnull, nsnull);
+    nsresult rv;
+    nsCOMPtr<nsIDocument> document = do_QueryInterface(mSource, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIEventQueueService> service =
+        do_GetService(NS_EVENTQUEUESERVICE_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIEventQueue> eventQ;
+    rv = service->GetSpecialEventQueue(nsIEventQueueService::UI_THREAD_EVENT_QUEUE,
+                                       getter_AddRefs(eventQ));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    PLEvent* event = new PLEvent();
+    if (!event) {
+        return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    PL_InitEvent(event, this, HandleTransformBlockerEvent,
+                 DestroyTransformBlockerEvent);
+
+    document->BlockOnload();
+
+    // After this point, event destruction will release |this| (in
+    // DestroyTransformBlockerEvent)
+    NS_ADDREF_THIS();
+
+    rv = eventQ->PostEvent(event);
+    if (NS_FAILED(rv)) {
+        // XXX Maybe we should just display the source document in this case?
+        //     Also, set up context information, see bug 204655.
+        reportError(rv, nsnull, nsnull);
+        PL_DestroyEvent(event);
+    }
+
+    return rv;
 }
 
 NS_IMETHODIMP
@@ -351,7 +564,8 @@ txMozillaXSLTProcessor::ImportStylesheet(nsIDOMNode *aStyle)
                    type == nsIDOMNode::DOCUMENT_NODE,
                    NS_ERROR_INVALID_ARG);
 
-    nsresult rv = TX_CompileStylesheet(aStyle, getter_AddRefs(mStylesheet));
+    nsresult rv = TX_CompileStylesheet(aStyle, this,
+                                       getter_AddRefs(mStylesheet));
     // XXX set up exception context, bug 204658
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -409,7 +623,7 @@ txMozillaXSLTProcessor::TransformToDoc(nsIDOMDocument *aOutputDoc,
         sourceDOMDocument = do_QueryInterface(mSource);
     }
 
-    txExecutionState es(mStylesheet);
+    txExecutionState es(mStylesheet, IsLoadDisabled());
 
     // XXX Need to add error observers
 
@@ -460,7 +674,7 @@ txMozillaXSLTProcessor::TransformToFragment(nsIDOMNode *aSource,
         return NS_ERROR_OUT_OF_MEMORY;
     }
 
-    txExecutionState es(mStylesheet);
+    txExecutionState es(mStylesheet, IsLoadDisabled());
 
     // XXX Need to add error observers
 
@@ -644,7 +858,8 @@ txMozillaXSLTProcessor::SetParameter(const nsAString & aNamespaceURI,
 
                 if (NS_FAILED(rv)) {
                     while (i < count) {
-                        NS_RELEASE(values[i++]);
+                        NS_RELEASE(values[i]);
+                        ++i;
                     }
                     nsMemory::Free(array);
 
@@ -734,6 +949,41 @@ txMozillaXSLTProcessor::Reset()
     mEmbeddedStylesheetRoot = nsnull;
     mCompileResult = NS_OK;
     mVariables.clear();
+
+    return NS_OK;
+}
+
+static
+PRBool
+IsCallerChrome()
+{
+  nsCOMPtr<nsIScriptSecurityManager> secman =
+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
+  PRBool is_caller_chrome = PR_FALSE;
+  nsresult rv = secman->SubjectPrincipalIsSystem(&is_caller_chrome);
+  if (NS_FAILED(rv)) {
+    return PR_FALSE;
+  }
+
+  return is_caller_chrome;
+}
+
+NS_IMETHODIMP
+txMozillaXSLTProcessor::SetFlags(PRUint32 aFlags)
+{
+    NS_ENSURE_TRUE(IsCallerChrome(), NS_ERROR_DOM_SECURITY_ERR);
+
+    mFlags = aFlags;
+
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+txMozillaXSLTProcessor::GetFlags(PRUint32* aFlags)
+{
+    NS_ENSURE_TRUE(IsCallerChrome(), NS_ERROR_DOM_SECURITY_ERR);
+
+    *aFlags = mFlags;
 
     return NS_OK;
 }
@@ -907,7 +1157,7 @@ txMozillaXSLTProcessor::ensureStylesheet()
     if (!style) {
         style = do_QueryInterface(mStylesheetDocument);
     }
-    return TX_CompileStylesheet(style, getter_AddRefs(mStylesheet));
+    return TX_CompileStylesheet(style, this, getter_AddRefs(mStylesheet));
 }
 
 NS_IMPL_NSIDOCUMENTOBSERVER_LOAD_STUB(txMozillaXSLTProcessor)

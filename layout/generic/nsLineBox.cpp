@@ -438,11 +438,11 @@ void
 nsLineBox::FreeFloats(nsFloatCacheFreeList& aFreeList)
 {
   NS_ABORT_IF_FALSE(IsInline(), "block line can't have floats");
-  if (IsInline()) {
-    if (mInlineData) {
+  if (IsInline() && mInlineData) {
+    if (mInlineData->mFloats.NotEmpty()) {
       aFreeList.Append(mInlineData->mFloats);
-      MaybeFreeData();
     }
+    MaybeFreeData();
   }
 }
 
@@ -783,7 +783,7 @@ nsLineIterator::FindFrameAt(PRInt32 aLineNumber,
     return NS_OK;
   }
 
-  if (line->mBounds.width == 0)
+  if (line->mBounds.width == 0 && line->mBounds.height == 0)
     return NS_ERROR_FAILURE;
 
   nsIFrame* frame = line->mFirstChild;
@@ -872,6 +872,8 @@ nsFloatCacheList::Tail() const
 void
 nsFloatCacheList::Append(nsFloatCacheFreeList& aList)
 {
+  NS_PRECONDITION(aList.NotEmpty(), "Appending empty list will fail");
+  
   nsFloatCache* tail = Tail();
   if (tail) {
     tail->mNext = aList.mHead;
@@ -915,6 +917,8 @@ nsFloatCacheList::Remove(nsFloatCache* aElement)
 void
 nsFloatCacheFreeList::Append(nsFloatCacheList& aList)
 {
+  NS_PRECONDITION(aList.NotEmpty(), "Appending empty list will fail");
+  
   if (mTail) {
     mTail->mNext = aList.mHead;
   }

@@ -61,6 +61,11 @@ textbox {
   -moz-border-left-colors: ThreeDShadow ThreeDDarkShadow;
 }
 
+.plain > .autocomplete-textbox-container {
+  -moz-appearance: none;
+  border: none;
+}
+
 .textbox-input-box {
   margin: 0 3px;
   -moz-box-align: center;
@@ -104,8 +109,23 @@ textbox {
   background-color: -moz-Field !important;
 }
 
+.autocomplete-result-popup[nomatch] > .autocomplete-search-box {
+  border-top: 1px solid ThreeDHighlight;
+}
+
 .autocomplete-history-popup {
-  max-height: 180px;
+  max-height: 25em;
+}
+
+.autocomplete-search-box {
+  border-top: 2px groove -moz-Dialog;
+  background-color: -moz-Dialog;
+  color: ButtonText;
+}
+
+.autocomplete-search-engine[menuactive="true"] {
+  background-color: Highlight;
+  color: HighlightText;
 }
 
 /* ::::: tree ::::: */
@@ -131,4 +151,8 @@ textbox {
 
 .autocomplete-treebody::-moz-tree-cell-text(menuactive)  {
   color: HighlightText !important;
+}
+
+.autocomplete-treebody::-moz-tree-cell-text(comment) {
+  color: ThreeDShadow;
 }

@@ -444,9 +444,9 @@ public:
   }
 
   /**
-   * Get the channel that was passed to StartDocumentLoad for this
+   * Get the channel that was passed to StartDocumentLoad or Reset for this
    * document.  Note that this may be null in some cases (eg if
-   * StartDocumentLoad was never called)
+   * StartDocumentLoad or Reset were never called)
    */
   virtual nsIChannel* GetChannel() const = 0;
 
@@ -568,7 +568,12 @@ public:
     return mNodeInfoManager;
   }
 
+  /**
+   * Reset the document using the given channel and loadgroup.  This works
+   * like ResetToURI, but also sets the document's channel to aChannel.
+   */
   virtual void Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup) = 0;
+
   /**
    * Reset this document to aURI and aLoadGroup.  aURI must not be null.
    */
@@ -836,6 +841,25 @@ protected:
   PRUint32 mPartID;
 };
 
+// IID for the nsIDocument interface
+#define NS_IDOCUMENT_MOZILLA_1_8_0_BRANCH_IID      \
+{ 0xf7e62f7e, 0x394b, 0x44ad, \
+  { 0x85, 0x51, 0x9c, 0x61, 0x8c, 0xab, 0x80, 0x70 } }
+
+class nsIDocument_MOZILLA_1_8_0_BRANCH : public nsISupports
+{
+public:
+  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IDOCUMENT_MOZILLA_1_8_0_BRANCH_IID)
+
+  /**
+   * Get the object that is used as the scope for all of the content
+   * wrappers whose owner document is this document. Unlike the script global
+   * object, this will only return null when the global object for this
+   * document is truly gone. Use this object when you're trying to find a
+   * content wrapper in XPConnect.
+   */
+  virtual nsIScriptGlobalObject* GetScopeObject() = 0;
+};
 
 /**
  * Helper class to automatically handle batching of document updates.  This
@@ -886,7 +910,7 @@ NS_NewImageDocument(nsIDocument** aInstancePtrResult);
 
 nsresult
 NS_NewDocumentFragment(nsIDOMDocumentFragment** aInstancePtrResult,
-                       nsIDocument* aOwnerDocument);
+                       nsNodeInfoManager *aNodeInfoManager);
 nsresult
 NS_NewDOMDocument(nsIDOMDocument** aInstancePtrResult,
                   const nsAString& aNamespaceURI, 

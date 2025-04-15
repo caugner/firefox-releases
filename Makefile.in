@@ -63,15 +63,6 @@ default alldep all:: $(SUBMAKEFILES)
 	$(MAKE) tier_2
 	$(MAKE) tier_9
 	$(MAKE) tier_50
-ifdef MOZ_EXTENSIONS
-	$(MAKE) tier_94
-endif
-ifdef MOZ_MAIL_NEWS
-	$(MAKE) tier_97
-endif
-ifdef MOZ_CALENDAR
-	$(MAKE) tier_98
-endif
 	$(MAKE) tier_99
 
 # Make sure that the existing rulesets work
@@ -85,16 +76,6 @@ DIRS = \
 
 ifdef GC_LEAK_DETECTOR
 DIRS += gc/boehm
-endif
-
-ifdef MOZ_EXTENSIONS
-DIRS += $(tier_94_dirs)
-endif
-ifdef MOZ_MAIL_NEWS
-DIRS += $(tier_97_dirs)
-endif
-ifdef MOZ_CALENDAR
-DIRS += $(tier_98_dirs)
 endif
 
 DIRS	+= $(tier_99_dirs)
@@ -157,7 +138,12 @@ endif
 tier_9_dirs += \
 		js/src/xpconnect \
 		intl \
+		db \
 		$(NULL)
+
+ifdef MOZ_STORAGE
+tier_9_dirs += storage
+endif
 
 ifdef MOZ_ENABLE_XLIB
 tier_9_dirs	+= gfx/src/xlibrgb widget/src/xlibxtbin
@@ -175,6 +161,10 @@ ifdef MOZ_IPCD
 tier_9_dirs += ipc/ipcd
 endif
 
+ifdef MOZ_JSDEBUGGER
+tier_9_dirs += js/jsd
+endif
+
 tier_9_dirs	+= \
 		modules/libutil \
 		netwerk \
@@ -185,6 +175,7 @@ tier_9_dirs	+= \
 		caps \
 		rdf \
 		parser/expat \
+		parser/xml \
 		parser/htmlparser \
 		gfx \
 		modules/libpr0n \
@@ -240,7 +231,6 @@ tier_50_dirs	+= xpfe/bootstrap/appleevents
 endif
 
 tier_50_dirs	+= \
-	db \
 	xpfe \
 	toolkit/components \
 	$(NULL)
@@ -266,8 +256,8 @@ ifdef MOZ_XPINSTALL
 tier_50_dirs     +=  xpinstall
 endif
 
-ifdef MOZ_JSDEBUGGER
-tier_50_dirs += js/jsd
+ifdef MOZ_JAVAXPCOM
+tier_50_dirs += extensions/java
 endif
 
 ifdef MOZ_ENABLE_LIBXUL
@@ -283,19 +273,19 @@ endif
 
 ifdef MOZ_PSM
 tier_50_dirs	+= security/manager
-endif
-
-ifdef MOZ_STORAGE
-tier_50_dirs += storage
+else
+tier_50_dirs	+= security/manager/boot/public security/manager/ssl/public
 endif
 
 ifdef MOZ_LDAP_XPCOM
 tier_50_dirs	+= directory/xpcom
 endif
 
+ifndef MINIMO
 ifdef MOZ_XUL_APP
 ifdef MOZ_ENABLE_GTK2
 tier_50_dirs    += toolkit/components/gnome
+endif
 endif
 endif
 
@@ -308,24 +298,20 @@ tier_50_dirs	+= tools/codesighs
 endif
 
 #
-# tier 9x - application features
+# tier 99 - application features
 #
 
-ifdef MOZ_EXTENSIONS
-tier_94_dirs	+= extensions
-endif
-
 ifdef MOZ_MAIL_NEWS
-tier_97_dirs	+= mailnews
+tier_99_dirs	+= mailnews
 endif
 
 ifdef MOZ_CALENDAR
-tier_98_dirs	+= calendar
+tier_99_dirs	+= calendar
 endif
 
-#
-# tier 99 - application binaries
-#
+ifdef MOZ_EXTENSIONS
+tier_99_dirs	+= extensions
+endif
 
 # axcontrol
 ifeq ($(OS_ARCH),WINNT)
@@ -379,7 +365,7 @@ tier_99_dirs	+= suite
 endif
 
 ifdef MINIMO
-tier_99_dirs	+= embedding/minimo minimo
+tier_99_dirs	+= minimo
 endif
 
 ifdef MOZ_XUL_APP
@@ -424,6 +410,16 @@ tier_99_dirs += \
 	embedding/config \
 	camino \
 	$(NULL)
+endif
+
+# test harnesses 
+ifdef ENABLE_TESTS
+tier_99_dirs += tools/test-harness
+endif
+
+# This should be built last, after all IDL files in the tree have been processed
+ifdef MOZ_JAVAXPCOM
+tier_99_dirs += extensions/java/xpcom/interfaces
 endif
 
 else
@@ -580,6 +576,7 @@ signnss:
 ifdef MOZILLA_OFFICIAL
 	echo signing NSS libs
 	cd $(DIST)/bin; ./shlibsign.exe -v -i softokn3.dll
+	cd $(DIST)/bin; ./shlibsign.exe -v -i freebl3.dll
 endif # MOZILLA_OFFICIAL
 
 BUILDID = $(shell cat $(DEPTH)/config/build_number)

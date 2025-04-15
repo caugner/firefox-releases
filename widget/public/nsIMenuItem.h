@@ -168,4 +168,26 @@ class nsIMenuItem : public nsISupports {
     NS_IMETHOD GetModifiers(PRUint8 * aModifiers) = 0;
 };
 
+// {58C5DE16-931C-4D31-AB7E-1B5FBDF596C4}
+#define NS_IMENUITEM_MOZILLA_1_8_BRANCH_IID \
+{ 0x58C5DE16, 0x931C, 0x4D31, \
+  { 0xAB, 0x7E, 0x1B, 0x5F, 0xBD, 0xF5, 0x96, 0xC4 } };
+
+class nsIMenuItem_MOZILLA_1_8_BRANCH : public nsIMenuItem  {
+  
+  public:
+    NS_DEFINE_STATIC_IID_ACCESSOR(NS_IMENUITEM_MOZILLA_1_8_BRANCH_IID)
+
+    /**
+     * Sends a DOM event to the menu item's content node 
+     * @return NS_OK if the event was sent properly, otherwise an error code
+     */
+    NS_IMETHOD DispatchDOMEvent(const nsString &eventName, PRBool *preventDefaultCalled) = 0;
+
+   /**
+    * Sets an appropriate icon for the menu item.
+    */
+    NS_IMETHOD SetupIcon() = 0;
+};
+
 #endif

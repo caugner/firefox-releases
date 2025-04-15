@@ -91,45 +91,46 @@ void nsAccessibleHyperText::Shutdown()
 
 PRBool nsAccessibleHyperText::GetAllTextChildren(nsPresContext *aPresContext, nsIFrame *aCurFrame, nsIDOMNode* aNode, PRBool &bSave)
 {
-  if (! aCurFrame)
-    return PR_FALSE;
+  while (aCurFrame) {
 
-  nsIAtom* frameType = aCurFrame->GetType();
-  if (frameType == nsAccessibilityAtoms::blockFrame) {
-    if (bSave)
-      return PR_TRUE;
-  }
-  else {
-    if (frameType == nsAccessibilityAtoms::textFrame) {
-      // Skip the empty text frames that usually only consist of "\n"
-      if (! aCurFrame->GetRect().IsEmpty()) {
-        nsCOMPtr<nsIDOMNode> node(do_QueryInterface(aCurFrame->GetContent()));
-        if (bSave || node == aNode) {
+    nsIAtom* frameType = aCurFrame->GetType();
+    if (frameType == nsAccessibilityAtoms::blockFrame) {
+      if (bSave)
+        return PR_TRUE;
+    }
+    else {
+      if (frameType == nsAccessibilityAtoms::textFrame) {
+        // Skip the empty text frames that usually only consist of "\n"
+        if (! aCurFrame->GetRect().IsEmpty()) {
+          nsCOMPtr<nsIDOMNode> node(do_QueryInterface(aCurFrame->GetContent()));
+          if (bSave || node == aNode) {
 #ifdef DEBUG
-          nsAutoString text;
-          node->GetNodeValue(text);
-          char buf[1024];
-          text.ToCString(buf, sizeof(buf));
+            nsAutoString text;
+            node->GetNodeValue(text);
+            char buf[1024];
+            text.ToCString(buf, sizeof(buf));
 #endif
-          // some long text node may be divided into several frames, 
-          // so we must check whether this node is already in the array
-          PRUint32 index;
-          nsresult rv = mTextChildren->IndexOf(0, node, &index);
-          if (NS_FAILED(rv)) {
-            mTextChildren->AppendElement(node, PR_FALSE);
+            // some long text node may be divided into several frames, 
+            // so we must check whether this node is already in the array
+            PRUint32 index;
+            nsresult rv = mTextChildren->IndexOf(0, node, &index);
+            if (NS_FAILED(rv)) {
+              mTextChildren->AppendElement(node, PR_FALSE);
+            }
+            bSave = PR_TRUE;
           }
-          bSave = PR_TRUE;
         }
       }
+
+      nsIFrame* childFrame = aCurFrame->GetFirstChild(nsnull);
+      if (GetAllTextChildren(aPresContext, childFrame, aNode, bSave))
+        return PR_TRUE;
     }
 
-    nsIFrame* childFrame = aCurFrame->GetFirstChild(nsnull);
-    if (GetAllTextChildren(aPresContext, childFrame, aNode, bSave))
-      return PR_TRUE;
+    nsIFrame* siblingFrame = aCurFrame->GetNextSibling();
+    aCurFrame = siblingFrame;
   }
-
-  nsIFrame* siblingFrame = aCurFrame->GetNextSibling();
-  return GetAllTextChildren(aPresContext, siblingFrame, aNode, bSave);
+  return PR_FALSE;
 }
 
 PRInt32 nsAccessibleHyperText::GetIndex()
@@ -192,6 +193,9 @@ NS_IMETHODIMP nsAccessibleHyperText::GetCaretOffset(PRInt32 *aCaretOffset)
     nsAccessibleText accText(domNode);
     if (NS_SUCCEEDED(accText.GetCaretOffset(&caretOffset))) {
       *aCaretOffset += caretOffset;
+      return NS_OK;
+    } else if (GetLinkNode(domNode) == nsAccessNode::gLastFocusedNode) {
+      //Focus is here
       return NS_OK;
     }
     if (NS_SUCCEEDED(accText.GetCharacterCount(&charCount))) {
@@ -342,14 +346,14 @@ NS_IMETHODIMP nsAccessibleHyperText::GetAttributeRange(PRInt32 aOffset, PRInt32 
   return NS_OK;
 }
 
-/* void getCharacterExtents (in long offset, out long x, out long y, out long length, out long width, in nsAccessibleCoordType coordType); */
-NS_IMETHODIMP nsAccessibleHyperText::GetCharacterExtents(PRInt32 aOffset, PRInt32 *aX, PRInt32 *aY, PRInt32 *aLength, PRInt32 *aWidth, nsAccessibleCoordType aCoordType)
+/* void getCharacterExtents (in long offset, out long x, out long y, out long width, out long height, in nsAccessibleCoordType coordType); */
+NS_IMETHODIMP nsAccessibleHyperText::GetCharacterExtents(PRInt32 aOffset, PRInt32 *aX, PRInt32 *aY, PRInt32 *aWidth, PRInt32 *aHeight, nsAccessibleCoordType aCoordType)
 {
   PRInt32 beforeLength;
   nsIDOMNode* domNode = FindTextNodeByOffset(aOffset, beforeLength);
   if (domNode) {
     nsAccessibleText accText(domNode);
-    return accText.GetCharacterExtents(aOffset - beforeLength, aX, aY, aLength, aWidth, aCoordType);
+    return accText.GetCharacterExtents(aOffset - beforeLength, aX, aY, aWidth, aHeight, aCoordType);
   }
 
   return NS_ERROR_INVALID_ARG;
@@ -391,28 +395,11 @@ NS_IMETHODIMP nsAccessibleHyperText::RemoveSelection(PRInt32 aSelectionNum)
   *aLinks = 0;
 
   PRUint32 index, count;
-  PRInt32 caretOffset;
   mTextChildren->GetLength(&count);
   for (index = 0; index < count; index++) {
     nsCOMPtr<nsIDOMNode> domNode(do_QueryElementAt(mTextChildren, index));
-    nsCOMPtr<nsIDOMNode> parentNode;
-    nsCOMPtr<nsILink> link = nsnull;
-    domNode->GetParentNode(getter_AddRefs(parentNode));
-    while (parentNode) {
-      link = do_QueryInterface(parentNode);
-      if (link)
-        break;
-      nsCOMPtr<nsIDOMNode> temp = parentNode;
-      temp->GetParentNode(getter_AddRefs(parentNode));
-    }
-    if (link)
+    if (GetLinkNode(domNode)) {
       (*aLinks)++;
-    else {
-      nsAccessibleText accText(domNode);
-      if (NS_SUCCEEDED(accText.GetCaretOffset(&caretOffset))) {
-        *aLinks = 0;
-        return NS_OK;
-      }
     }
   }
 
@@ -426,20 +413,8 @@ NS_IMETHODIMP nsAccessibleHyperText::GetLink(PRInt32 aIndex, nsIAccessibleHyperL
   mTextChildren->GetLength(&count);
   for (index = 0; index < count; index++) {
     nsCOMPtr<nsIDOMNode> domNode(do_QueryElementAt(mTextChildren, index));
-    nsCOMPtr<nsIDOMNode> parentNode;
-
-    // text node maybe a child (or grandchild, ...) of a link node
-    nsCOMPtr<nsILink> link;
-    domNode->GetParentNode(getter_AddRefs(parentNode));
-    while (parentNode) {
-      link = do_QueryInterface(parentNode);
-      if (link)
-        break; 
-      nsCOMPtr<nsIDOMNode> temp = parentNode;
-      temp->GetParentNode(getter_AddRefs(parentNode));
-    }
-
-    if (link) {
+    nsIDOMNode* parentNode = GetLinkNode(domNode);
+    if (parentNode) {
       if (linkCount++ == NS_STATIC_CAST(PRUint32, aIndex)) {
         nsCOMPtr<nsIWeakReference> weakShell;
         nsAccessibilityService::GetShellFromNode(parentNode, getter_AddRefs(weakShell));
@@ -481,7 +456,21 @@ NS_IMETHODIMP nsAccessibleHyperText::GetLink(PRInt32 aIndex, nsIAccessibleHyperL
 /* long getLinkIndex (in long charIndex); */
 NS_IMETHODIMP nsAccessibleHyperText::GetLinkIndex(PRInt32 aCharIndex, PRInt32 *aLinkIndex)
 {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  *aLinkIndex = -1;
+  PRInt32 beforeLength_unused;
+  PRUint32 nodeIndex;
+  nsIDOMNode* domNode = FindTextNodeByOffset(aCharIndex, beforeLength_unused);
+  if (GetLinkNode(domNode)
+      && NS_SUCCEEDED(mTextChildren->IndexOf(0, domNode, &nodeIndex))) {
+    (*aLinkIndex)++;
+    for (PRUint32 index = 0; index < nodeIndex; index++) {
+      nsCOMPtr<nsIDOMNode> childNode(do_QueryElementAt(mTextChildren, index));
+      if (GetLinkNode(childNode)) {
+        (*aLinkIndex)++;
+      }
+    }
+  }
+  return NS_OK;
 }
 
 /* long getSelectedLinkIndex (); */
@@ -499,17 +488,9 @@ NS_IMETHODIMP nsAccessibleHyperText::GetSelectedLinkIndex(PRInt32 *aSelectedLink
   PRUint32 index, linkCount = 0;
   for (index = 0; index < count; index++) {
     nsCOMPtr<nsIDOMNode> domNode(do_QueryElementAt(mTextChildren, index));
-    nsCOMPtr<nsIDOMNode> parentNode;
-    nsCOMPtr<nsILink> link;
-    do {
-        // text node maybe a child of a link node
-        domNode->GetParentNode(getter_AddRefs(parentNode));
-        domNode = parentNode;
-        link = do_QueryInterface(parentNode);
-    } while (domNode && link == nsnull);
-
-    if (link) {
-      if (parentNode == nsAccessNode::gLastFocusedNode) {
+    nsIDOMNode* linkNode = GetLinkNode(domNode);
+    if (linkNode) {
+      if (linkNode == nsAccessNode::gLastFocusedNode) {
         *aSelectedLinkIndex = linkCount;
         return NS_OK;
       }
@@ -545,4 +526,19 @@ nsresult nsAccessibleHyperText::GetBounds(nsIWeakReference *aWeakShell, PRInt32 
   *height = unionRectTwips.height;
 
   return NS_OK;
+}
+
+nsIDOMNode* nsAccessibleHyperText::GetLinkNode(nsIDOMNode* aNode)
+{
+  
+  nsCOMPtr<nsIDOMNode> parentNode;
+  nsCOMPtr<nsILink> link;
+  while (aNode && link == nsnull) {
+    // text node maybe a child (or grandchild, ...) of a link node
+    aNode->GetParentNode(getter_AddRefs(parentNode));
+    aNode = parentNode;
+    link = do_QueryInterface(parentNode);
+  }
+  
+  return parentNode;
 }

@@ -216,7 +216,7 @@ nsXFormsLabelElement::LoadExternalLabel(const nsAString& aSrc)
     NS_NewURI(getter_AddRefs(uri), aSrc, doc->GetDocumentCharacterSet().get(),
               doc->GetDocumentURI());
     if (uri) {
-      if (nsXFormsUtils::CheckSameOrigin(doc->GetDocumentURI(), uri)) {
+      if (nsXFormsUtils::CheckConnectionAllowed(mElement, uri)) {
         nsCOMPtr<nsILoadGroup> loadGroup;
         loadGroup = doc->GetDocumentLoadGroup();
         NS_WARN_IF_FALSE(loadGroup, "No load group!");
@@ -233,22 +233,27 @@ nsXFormsLabelElement::LoadExternalLabel(const nsAString& aSrc)
             // URI doesn't exist; report error.
             mChannel = nsnull;
 
-            // XXX Passing |mElement| as |aContext| param to ReportError leads
-            //     to an infinite loop.  Avoid for now.
             const nsPromiseFlatString& flat = PromiseFlatString(aSrc);
-            const PRUnichar *strings[] = { flat.get() };
-            nsXFormsUtils::ReportError(NS_LITERAL_STRING("labelLink1Error"),
-                                       strings, 1, mElement, nsnull);
+            const PRUnichar *strings[] = { flat.get(),
+                                           NS_LITERAL_STRING("label").get() };
+            nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLink1Error"),
+                                       strings, 2, mElement, mElement);
 
             nsCOMPtr<nsIModelElementPrivate> modelPriv =
                                               nsXFormsUtils::GetModel(mElement);
             nsCOMPtr<nsIDOMNode> model = do_QueryInterface(modelPriv);
-            nsXFormsUtils::DispatchEvent(model, eEvent_LinkError);
+            nsXFormsUtils::DispatchEvent(model, eEvent_LinkError, nsnull,
+                                         mElement);
           }
         }
       } else {
-        nsXFormsUtils::ReportError(NS_LITERAL_STRING("labelLinkLoadOrigin"),
-                                   domDoc);
+        const PRUnichar *strings[] = { NS_LITERAL_STRING("label").get() };
+        nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLinkLoadOrigin"),
+                                   strings, 1, mElement, mElement);
+        nsCOMPtr<nsIModelElementPrivate> modelPriv =
+          nsXFormsUtils::GetModel(mElement);
+        nsCOMPtr<nsIDOMNode> model = do_QueryInterface(modelPriv);
+        nsXFormsUtils::DispatchEvent(model, eEvent_LinkError, nsnull, mElement);
       }
     }
   }
@@ -259,7 +264,10 @@ nsXFormsLabelElement::LoadExternalLabel(const nsAString& aSrc)
 NS_IMETHODIMP
 nsXFormsLabelElement::Refresh()
 {
-  nsXFormsDelegateStub::Refresh();
+  nsresult rv = nsXFormsDelegateStub::Refresh();
+  if (NS_FAILED(rv) || rv == NS_OK_XFORMS_NOREFRESH)
+    return rv;
+
   nsCOMPtr<nsIDOMNode> parent;
   mElement->GetParentNode(getter_AddRefs(parent));
 
@@ -375,18 +383,17 @@ nsXFormsLabelElement::OnStopRequest(nsIRequest *aRequest,
     if (aStatusCode == NS_BINDING_ABORTED)
       return NS_OK;
 
-    // XXX Passing |mElement| as |aContext| param to ReportError leads
-    //     to an infinite loop.  Avoid for now.
     nsAutoString src;
     mElement->GetAttribute(NS_LITERAL_STRING("src"), src);
-    const PRUnichar *strings[] = { src.get() };
-    nsXFormsUtils::ReportError(NS_LITERAL_STRING("labelLink2Error"),
-                               strings, 1, mElement, nsnull);
+    const PRUnichar *strings[] = { NS_LITERAL_STRING("label").get(), 
+                                   src.get() };
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLink2Error"),
+                               strings, 2, mElement, mElement);
 
     nsCOMPtr<nsIModelElementPrivate> modelPriv =
       nsXFormsUtils::GetModel(mElement);
     nsCOMPtr<nsIDOMNode> model = do_QueryInterface(modelPriv);
-    nsXFormsUtils::DispatchEvent(model, eEvent_LinkError);
+    nsXFormsUtils::DispatchEvent(model, eEvent_LinkError, nsnull, mElement);
 
     mSrcAttrText.Truncate();
   }

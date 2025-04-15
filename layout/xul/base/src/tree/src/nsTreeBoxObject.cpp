@@ -39,7 +39,7 @@
 #include "nsCOMPtr.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
-#include "nsITreeBoxObject.h"
+#include "nsPITreeBoxObject.h"
 #include "nsITreeView.h"
 #include "nsITreeSelection.h"
 #include "nsBoxObject.h"
@@ -48,8 +48,10 @@
 #include "nsINodeInfo.h"
 #include "nsXULAtoms.h"
 #include "nsChildIterator.h"
+#include "nsContentUtils.h"
+#include "nsDOMError.h"
 
-class nsTreeBoxObject : public nsITreeBoxObject, public nsBoxObject
+class nsTreeBoxObject : public nsPITreeBoxObject, public nsBoxObject
 {
 public:
   NS_DECL_ISUPPORTS_INHERITED
@@ -58,16 +60,26 @@ public:
   nsTreeBoxObject();
   ~nsTreeBoxObject();
 
+  // Override SetPropertyAsSupports for security check
+  NS_IMETHOD SetPropertyAsSupports(const PRUnichar* aPropertyName, nsISupports* aValue);
+
   nsITreeBoxObject* GetTreeBody();
 
   //NS_PIBOXOBJECT interfaces
   NS_IMETHOD Init(nsIContent* aContent, nsIPresShell* aPresShell);
   NS_IMETHOD SetDocument(nsIDocument* aDocument);
   NS_IMETHOD InvalidatePresentationStuff();
+
+  // nsPITreeBoxObject
+  virtual void ClearCachedTreeBody();  
+
+protected:
+  nsITreeBoxObject* mTreeBody;
 };
 
 /* Implementation file */
-NS_IMPL_ISUPPORTS_INHERITED1(nsTreeBoxObject, nsBoxObject, nsITreeBoxObject)
+NS_IMPL_ISUPPORTS_INHERITED2(nsTreeBoxObject, nsBoxObject, nsITreeBoxObject,
+                             nsPITreeBoxObject)
 
 
 NS_IMETHODIMP
@@ -96,13 +108,14 @@ nsTreeBoxObject::SetDocument(nsIDocument* aDocument)
 NS_IMETHODIMP
 nsTreeBoxObject::InvalidatePresentationStuff()
 {
-  SetPropertyAsSupports(NS_LITERAL_STRING("treebody").get(), nsnull);
+  ClearCachedTreeBody();
   SetPropertyAsSupports(NS_LITERAL_STRING("view").get(), nsnull);
 
   return nsBoxObject::InvalidatePresentationStuff();
 }
   
 nsTreeBoxObject::nsTreeBoxObject()
+  : mTreeBody(nsnull)
 {
 }
 
@@ -140,15 +153,11 @@ static void FindBodyElement(nsIContent* aParent, nsIContent** aResult)
   }
 }
 
-inline nsITreeBoxObject*
+nsITreeBoxObject*
 nsTreeBoxObject::GetTreeBody()
 {
-  nsCOMPtr<nsISupports> supp;
-  GetPropertyAsSupports(NS_LITERAL_STRING("treebody").get(), getter_AddRefs(supp));
-
-  if (supp) {
-    nsCOMPtr<nsITreeBoxObject> body(do_QueryInterface(supp));
-    return body;
+  if (mTreeBody) {
+    return mTreeBody;
   }
 
   nsIFrame* frame = GetFrame();
@@ -159,15 +168,18 @@ nsTreeBoxObject::GetTreeBody()
   nsCOMPtr<nsIContent> content;
   FindBodyElement(frame->GetContent(), getter_AddRefs(content));
 
-  mPresShell->GetPrimaryFrameFor(content, &frame);
+  nsCOMPtr<nsIPresShell> shell = GetPresShell();
+  if (!shell) {
+    return nsnull;
+  }
+
+  shell->GetPrimaryFrameFor(content, &frame);
   if (!frame)
      return nsnull;
 
   // It's a frame. Refcounts are irrelevant.
-  nsCOMPtr<nsITreeBoxObject> body;
-  frame->QueryInterface(NS_GET_IID(nsITreeBoxObject), getter_AddRefs(body));
-  SetPropertyAsSupports(NS_LITERAL_STRING("treebody").get(), body);
-  return body;
+  CallQueryInterface(frame, &mTreeBody);
+  return mTreeBody;
 }
 
 NS_IMETHODIMP nsTreeBoxObject::GetView(nsITreeView * *aView)
@@ -178,8 +190,37 @@ NS_IMETHODIMP nsTreeBoxObject::GetView(nsITreeView * *aView)
   return NS_OK;
 }
 
+static PRBool
+CanTrustView(nsISupports* aValue)
+{
+  // Untrusted content is only allowed to specify known-good views
+  if (nsContentUtils::IsCallerTrustedForWrite())
+    return PR_TRUE;
+  nsCOMPtr<nsINativeTreeView> nativeTreeView = do_QueryInterface(aValue);
+  if (!nativeTreeView || NS_FAILED(nativeTreeView->EnsureNative())) {
+    // XXX ERRMSG need a good error here for developers
+    return PR_FALSE;
+  }
+  return PR_TRUE;
+}
+
+NS_IMETHODIMP
+nsTreeBoxObject::SetPropertyAsSupports(const PRUnichar* aPropertyName, nsISupports* aValue)
+{
+  NS_ENSURE_ARG(aPropertyName);
+  
+  if (nsDependentString(aPropertyName).EqualsLiteral("view") &&
+      !CanTrustView(aValue))
+    return NS_ERROR_DOM_SECURITY_ERR;
+
+  return nsBoxObject::SetPropertyAsSupports(aPropertyName, aValue);
+}
+
 NS_IMETHODIMP nsTreeBoxObject::SetView(nsITreeView * aView)
 {
+  if (!CanTrustView(aView))
+    return NS_ERROR_DOM_SECURITY_ERR;
+  
   nsITreeBoxObject* body = GetTreeBody();
   if (body) {
     body->SetView(aView);
@@ -409,6 +450,12 @@ NS_IMETHODIMP nsTreeBoxObject::ClearStyleAndImageCaches()
     return body->ClearStyleAndImageCaches();
   return NS_OK;
 }
+
+void
+nsTreeBoxObject::ClearCachedTreeBody()
+{
+  mTreeBody = nsnull;
+}    
 
 // Creation Routine ///////////////////////////////////////////////////////////////////////
 

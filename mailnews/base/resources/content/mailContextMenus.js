@@ -129,7 +129,7 @@ function fillThreadPaneContextMenu()
   SetupCopyMessageUrlMenuItem("threadPaneContext-copyMessageUrl", numSelected, isNewsgroup, numSelected != 1); 
   SetupCopyMenuItem("threadPaneContext-copyMenu", numSelected, false);
   SetupMoveMenuItem("threadPaneContext-moveMenu", numSelected, isNewsgroup, false);
-  EnableMenuItem("threadPaneContext-labels", (numSelected >= 1));
+  EnableMenuItem("threadPaneContext-tags", (numSelected >= 1));
   EnableMenuItem("threadPaneContext-mark", (numSelected >= 1));
   SetupSaveAsMenuItem("threadPaneContext-saveAs", numSelected, false);
   SetupPrintPreviewMenuItem("threadPaneContext-printpreview", numSelected, false);
@@ -207,7 +207,7 @@ function SetupCopyMenuItem(menuID, numSelected, forceHide)
   EnableMenuItem(menuID, (numSelected > 0));
 }
 
-function SetupLabelsMenuItem(menuID, numSelected, forceHide)
+function SetupTagsMenuItem(menuID, numSelected, forceHide)
 {
   ShowMenuItem(menuID, (numSelected <= 1) && !forceHide);
   EnableMenuItem(menuID, (numSelected == 1));
@@ -467,7 +467,7 @@ function fillMessagePaneContextMenu()
   SetupCopyMessageUrlMenuItem("messagePaneContext-copyMessageUrl", numSelected, isNewsgroup, (numSelected == 0 || hideMailItems)); 
   SetupCopyMenuItem("messagePaneContext-copyMenu", numSelected, (numSelected == 0 || hideMailItems));
   SetupMoveMenuItem("messagePaneContext-moveMenu", numSelected, isNewsgroup, (numSelected == 0 || hideMailItems));
-  SetupLabelsMenuItem("messagePaneContext-labels", numSelected, (numSelected == 0 || hideMailItems));
+  SetupTagsMenuItem("messagePaneContext-tags", numSelected, (numSelected == 0 || hideMailItems));
   SetupMarkMenuItem("messagePaneContext-mark", numSelected, (numSelected == 0 || hideMailItems));
   SetupSaveAsMenuItem("messagePaneContext-saveAs", numSelected, (numSelected == 0 || hideMailItems));
   SetupPrintPreviewMenuItem("messagePaneContext-printpreview", numSelected, (numSelected == 0 || hideMailItems));
@@ -481,17 +481,22 @@ function fillMessagePaneContextMenu()
   SetupAddSenderToABMenuItem("messagePaneContext-addSenderToAddressBook", numSelected, (numSelected == 0 || hideMailItems));
   SetupAddAllToABMenuItem("messagePaneContext-addAllToAddressBook", numSelected, (numSelected == 0 || hideMailItems));
 
+  ShowMenuItem("context-addemail", gContextMenu.onMailtoLink);
+  ShowMenuItem("context-composeemailto", gContextMenu.onMailtoLink);
+  ShowMenuItem("context-createfilterfrom", gContextMenu.onMailtoLink);
+
   //Figure out separators
   ShowMenuItem("messagePaneContext-sep-open", ShowSeparator("messagePaneContext-sep-open"));
   ShowMenuItem("messagePaneContext-sep-reply", ShowSeparator("messagePaneContext-sep-reply"));
-  ShowMenuItem("messagePaneContext-sep-edit", ShowSeparator("messagePaneContext-sep-edit"));
+  ShowMenuItem("messagePaneContext-sep-edit", ShowSeparator("messagePaneContext-sep-edit") || gContextMenu.onMailtoLink);
   ShowMenuItem("messagePaneContext-sep-link", ShowSeparator("messagePaneContext-sep-link"));
   ShowMenuItem("messagePaneContext-sep-image", ShowSeparator("messagePaneContext-sep-image"));
   ShowMenuItem("messagePaneContext-sep-copy", ShowSeparator("messagePaneContext-sep-copy"));
-  ShowMenuItem("messagePaneContext-sep-labels-1", ShowSeparator("messagePaneContext-sep-labels-1"));
-  ShowMenuItem("messagePaneContext-sep-labels-2", ShowSeparator("messagePaneContext-sep-labels-2"));
+  ShowMenuItem("messagePaneContext-sep-tags", ShowSeparator("messagePaneContext-sep-tags"));
+  ShowMenuItem("messagePaneContext-sep-mark", ShowSeparator("messagePaneContext-sep-mark"));
   
-  if (!hideMailItems)
+  // if we are on an non-mailto link, go ahead and hide this separator
+  if (gContextMenu.onLink && !gContextMenu.onMailtoLink)
     ShowMenuItem("messagePaneContext-sep-edit", false);
 }
 
@@ -526,6 +531,68 @@ function IsMenuItemShowing(menuID)
   return false;
 }
 
+// message pane context menu helper methods
+function AddNodeToAddressBook(emailAddressNode)
+{
+  if (emailAddressNode)
+    AddEmailToAddressBook(emailAddressNode.getAttribute("emailAddress"),
+                          emailAddressNode.getAttribute("displayName"));
+}
+
+function AddEmailToAddressBook(primaryEmail, displayName)
+{
+    window.openDialog("chrome://messenger/content/addressbook/abNewCardDialog.xul",
+                      "", "chrome,resizable=no,titlebar,modal,centerscreen",
+                      {primaryEmail:primaryEmail, displayName:displayName});
+}
+
+// SendMailToNode takes the email address title button, extracts
+// the email address we stored in there and opens a compose window
+// with that address
+function SendMailToNode(emailAddressNode)
+{
+  if (emailAddressNode)
+    SendMailTo(emailAddressNode.getAttribute("fullAddress"));
+}
+
+function SendMailTo(fullAddress)
+{
+  var fields = Components.classes["@mozilla.org/messengercompose/composefields;1"].createInstance(Components.interfaces.nsIMsgCompFields);
+  var params = Components.classes["@mozilla.org/messengercompose/composeparams;1"].createInstance(Components.interfaces.nsIMsgComposeParams);
+  if (fields && params)
+  {
+    fields.to = fullAddress;
+    params.type = Components.interfaces.nsIMsgCompType.New;
+    params.format = Components.interfaces.nsIMsgCompFormat.Default;
+    params.identity = accountManager.getFirstIdentityForServer(GetLoadedMsgFolder().server);
+    params.composeFields = fields;
+    msgComposeService.OpenComposeWindowWithParams(null, params);
+  }
+}
+
+// CopyEmailAddress takes the email address title button, extracts
+// the email address we stored in there and copies it to the clipboard
+function CopyEmailAddress(emailAddressNode)
+{
+  if (emailAddressNode)
+    CopyString(emailAddressNode.getAttribute("emailAddress"));
+}
+
+// CreateFilter opens the Message Filters and Filter Rules dialogs.
+//The Filter Rules dialog has focus. The window is prefilled with filtername <email address>
+//Sender condition is selected and the value is prefilled <email address>
+function CreateFilter(emailAddressNode)
+{
+  if (emailAddressNode)
+    CreateFilterFromMail(emailAddressNode.getAttribute("emailAddress"));
+}
+
+function CreateFilterFromMail(emailAddress)
+{
+  if (emailAddress)
+    top.MsgFilters(emailAddress, GetFirstSelectedMsgFolder());
+}
+
 function CopyFolderUrl()
 {
   try 
@@ -534,10 +601,7 @@ function CopyFolderUrl()
     if (folderResource)
     {
       var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
-      var contractid = "@mozilla.org/widget/clipboardhelper;1";
-      var iid = Components.interfaces.nsIClipboardHelper;
-      var clipboard = Components.classes[contractid].getService(iid);
-      clipboard.copyString(msgFolder.folderURL);
+      CopyString(msgFolder.folderURL);
     }
   }
   catch (ex) 
@@ -564,13 +628,16 @@ function CopyMessageUrl()
     url += server.port;
     url += "/";
     url += hdr.messageId;
-
-    var contractid = "@mozilla.org/widget/clipboardhelper;1";
-    var iid = Components.interfaces.nsIClipboardHelper;
-    var clipboard = Components.classes[contractid].getService(iid);
-    clipboard.copyString(url);
+    CopyString(url);
   }
   catch (ex) {
     dump("ex="+ex+"\n");
   }
+}
+
+function CopyString(aString)
+{
+  Components.classes["@mozilla.org/widget/clipboardhelper;1"]
+            .getService(Components.interfaces.nsIClipboardHelper)
+            .copyString(aString);
 }

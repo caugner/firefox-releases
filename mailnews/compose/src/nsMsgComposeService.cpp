@@ -419,7 +419,9 @@ nsMsgComposeService::OpenComposeWindow(const char *msgComposeWindowURL, const ch
     if (NS_SUCCEEDED(rv) && pMsgDraft)
     {
       nsCAutoString uriToOpen(originalMsgURI);
-      uriToOpen.Append("?fetchCompleteMessage=true"); 
+
+      uriToOpen += (uriToOpen.FindChar('?') == kNotFound) ? "?" : "&";
+      uriToOpen.Append("fetchCompleteMessage=true"); 
 
       switch(type)
       {
@@ -475,12 +477,12 @@ nsMsgComposeService::OpenComposeWindow(const char *msgComposeWindowURL, const ch
         else
         {
           pMsgComposeParams->SetOriginalMsgURI(originalMsgURI);
-          if (PL_strstr(originalMsgURI, "?type=application/x-message-display"))
+          if (PL_strstr(originalMsgURI, "type=application/x-message-display"))
           {
             nsCOMPtr <nsIMsgDBHdr> msgHdr;
             if (strncmp(originalMsgURI, "file:", 5))
               rv = GetMsgDBHdrFromURI(originalMsgURI, getter_AddRefs(msgHdr));
-            else if (aMsgWindow)
+            if (aMsgWindow && !msgHdr)
             {
               nsCOMPtr <nsIMsgHeaderSink> headerSink;
               rv = aMsgWindow->GetMsgHeaderSink(getter_AddRefs(headerSink));
@@ -1380,9 +1382,14 @@ nsMsgComposeService::Handle(nsICommandLine* aCmdLine)
   rv = aCmdLine->GetLength(&count);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (count >= found) {
+  if (count > found + 1) {
     aCmdLine->GetArgument(found + 1, uristr);
-    if (StringBeginsWith(uristr, NS_LITERAL_STRING("mailto:"))) {
+    if (StringBeginsWith(uristr, NS_LITERAL_STRING("mailto:"))  ||
+	StringBeginsWith(uristr, NS_LITERAL_STRING("to="))  ||
+	StringBeginsWith(uristr, NS_LITERAL_STRING("cc="))  ||
+	StringBeginsWith(uristr, NS_LITERAL_STRING("subject="))  ||
+	StringBeginsWith(uristr, NS_LITERAL_STRING("body="))  ||
+	StringBeginsWith(uristr, NS_LITERAL_STRING("attachment="))) {
       end++;
       // mailto: URIs are frequently passed with spaces in them. They should be
       // escaped with %20, but we hack around broken clients. See bug 231032.

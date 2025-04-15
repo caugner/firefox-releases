@@ -1,9 +1,10 @@
-/.cvsignore/1.3/Tue Apr 15 04:21:21 2003//TFIREFOX_1_5_RELEASE
-/Makefile.in/1.16/Mon Apr  4 16:59:25 2005//TFIREFOX_1_5_RELEASE
-/nsBookmarkProtocolHandler.js/1.6/Thu Dec  2 00:08:13 2004//TFIREFOX_1_5_RELEASE
-/nsBookmarksFeedHandler.cpp/1.8/Fri Jul 29 22:02:47 2005//TFIREFOX_1_5_RELEASE
-/nsBookmarksService.cpp/1.67.2.3/Fri Nov  4 09:51:41 2005//TFIREFOX_1_5_RELEASE
-/nsBookmarksService.h/1.21.2.1/Sun Aug 28 21:35:30 2005//TFIREFOX_1_5_RELEASE
-/nsForwardProxyDataSource.cpp/1.2/Tue Nov 30 08:22:44 2004//TFIREFOX_1_5_RELEASE
-/nsForwardProxyDataSource.h/1.2/Tue Nov 30 08:22:44 2004//TFIREFOX_1_5_RELEASE
+/.cvsignore/1.3/Tue Apr 15 04:21:21 2003//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.16.8.3/Thu Jun 15 21:59:08 2006//TFIREFOX_2_0_RELEASE
+/nsBookmarkProtocolHandler.js/1.6/Thu Dec  2 00:08:13 2004//TFIREFOX_2_0_RELEASE
+/nsBookmarkTransactionManager.js/1.1.2.3/Sat Aug 26 08:09:56 2006//TFIREFOX_2_0_RELEASE
+/nsBookmarksFeedHandler.cpp/1.8.2.6/Fri Sep 29 05:53:59 2006//TFIREFOX_2_0_RELEASE
+/nsBookmarksService.cpp/1.67.2.23/Wed Sep 13 18:04:55 2006//TFIREFOX_2_0_RELEASE
+/nsBookmarksService.h/1.21.2.5/Tue Aug  8 19:36:58 2006//TFIREFOX_2_0_RELEASE
+/nsForwardProxyDataSource.cpp/1.2/Tue Nov 30 08:22:44 2004//TFIREFOX_2_0_RELEASE
+/nsForwardProxyDataSource.h/1.2/Tue Nov 30 08:22:44 2004//TFIREFOX_2_0_RELEASE
 D

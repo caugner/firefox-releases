@@ -279,7 +279,7 @@ function getContentAreaFrameCount()
 function contentAreaFrameFocus()
 {
   const focusedWindow = document.commandDispatcher.focusedWindow;
-  if (focusedWindow.top == window.content) {
+  if (focusedWindow && focusedWindow.top == window.content) {
     gFocusedURL = focusedWindow.location.href;
     gFocusedDocument = focusedWindow.document;
   }
@@ -331,26 +331,13 @@ function HandleBookmarkIcon(iconURL, addFlag)
 function UpdateInternetSearchResults(event)
 {
   var url = getWebNavigation().currentURI.spec;
-  if (url) {
-    try {
-      var autoOpenSearchPanel = 
-        pref.getBoolPref("browser.search.opensidebarsearchpanel");
+  if (url && isSearchPanelOpen())
+  {
+    if (!gSearchService)
+      gSearchService = Components.classes["@mozilla.org/rdf/datasource;1?name=internetsearch"]
+                                     .getService(Components.interfaces.nsIInternetSearchService);
 
-      if (autoOpenSearchPanel || isSearchPanelOpen())
-      {
-        if (!gSearchService)
-          gSearchService = Components.classes["@mozilla.org/rdf/datasource;1?name=internetsearch"]
-                                         .getService(Components.interfaces.nsIInternetSearchService);
-
-        var searchInProgressFlag = gSearchService.FindInternetSearchResults(url);
-
-        if (searchInProgressFlag) {
-          if (autoOpenSearchPanel)
-            RevealSearchPanel();
-        }
-      }
-    } catch (ex) {
-    }
+    gSearchService.FindInternetSearchResults(url);
   }
 }
 
@@ -382,6 +369,7 @@ function UpdateBackForwardButtons()
 {
   var backBroadcaster = document.getElementById("canGoBack");
   var forwardBroadcaster = document.getElementById("canGoForward");
+  var upBroadcaster = document.getElementById("canGoUp");
   var browser = getBrowser();
 
   // Avoid setting attributes on broadcasters if the value hasn't changed!
@@ -391,6 +379,7 @@ function UpdateBackForwardButtons()
 
   var backDisabled = backBroadcaster.hasAttribute("disabled");
   var forwardDisabled = forwardBroadcaster.hasAttribute("disabled");
+  var upDisabled = upBroadcaster.hasAttribute("disabled");
   if (backDisabled == browser.canGoBack) {
     if (backDisabled)
       backBroadcaster.removeAttribute("disabled");
@@ -402,6 +391,12 @@ function UpdateBackForwardButtons()
       forwardBroadcaster.removeAttribute("disabled");
     else
       forwardBroadcaster.setAttribute("disabled", true);
+  }
+  if (upDisabled != !browser.currentURI.spec.replace(/[#?].*$/, "").match(/\/[^\/]+\/./)) {
+    if (upDisabled)
+      upBroadcaster.removeAttribute("disabled");
+    else
+      upBroadcaster.setAttribute("disabled", true);
   }
 }
 
@@ -438,16 +433,9 @@ function nsBrowserAccess() {
 
 nsBrowserAccess.prototype = {
   openURI: function openURI(aURI, aOpener, aWhere, aContext) {
-    var isExternal = (aContext == nsIBrowserDOMWindow.OPEN_EXTERNAL);
-
-    if (isExternal && aURI && aURI.schemeIs("chrome")) {
-      dump("use -chrome command-line option to load external chrome urls\n");
-      return null;
-    }
-
-    var loadflags = isExternal ?
-                      nsIWebNavigation.LOAD_FLAGS_FROM_EXTERNAL :
-                      nsIWebNavigation.LOAD_FLAGS_NONE;
+    var loadflags = aContext == nsIBrowserDOMWindow.OPEN_EXTERNAL ?
+                    nsIWebNavigation.LOAD_FLAGS_FROM_EXTERNAL :
+                    nsIWebNavigation.LOAD_FLAGS_NONE;
 
     if (aWhere == nsIBrowserDOMWindow.OPEN_DEFAULTWINDOW)
       if (aContext == nsIBrowserDOMWindow.OPEN_EXTERNAL)
@@ -463,9 +451,8 @@ nsBrowserAccess.prototype = {
         return window.openDialog(getBrowserURL(), "_blank", "all,dialog=no",
                                  uri, null, referrer);
       case nsIBrowserDOMWindow.OPEN_NEWTAB:
-        var newTab = gBrowser.addTab("about:blank");
-        if (!pref.getBoolPref("browser.tabs.loadDivertedInBackground"))
-          gBrowser.selectedTab = newTab;
+        var newTab = gBrowser.addTab("about:blank", null, null,
+                                     !pref.getBoolPref("browser.tabs.loadDivertedInBackground"));
         var browser = gBrowser.getBrowserForTab(newTab);
         try {
           browser.loadURIWithFlags(uri, loadflags, referrer);
@@ -476,6 +463,7 @@ nsBrowserAccess.prototype = {
           gBrowser.loadURIWithFlags(uri, loadflags);
           return content;
         }
+        aOpener = aOpener.top;
         try {
           aOpener.QueryInterface(nsIInterfaceRequestor)
                  .getInterface(nsIWebNavigation)
@@ -642,19 +630,12 @@ function Startup()
     browser.popupUrls = [];
     browser.popupFeatures = [];
 
-    try {
-      if (makeURI(uriToLoad).schemeIs("chrome")) {
-        dump("*** Preventing external load of chrome: URI into browser window\n");
-        dump("    Use -chrome <uri> instead\n");
-        window.close();
-        return;
-      }
-    } catch (e) {}
-
     if (uriToLoad != "about:blank") {
       gURLBar.value = uriToLoad;
       browser.userTypedValue = uriToLoad;
-      if ("arguments" in window && window.arguments.length >= 3) {
+      if ("arguments" in window && window.arguments.length >= 4) {
+        loadURI(uriToLoad, window.arguments[2], window.arguments[3]);
+      } else if ("arguments" in window && window.arguments.length == 3) {
         loadURI(uriToLoad, window.arguments[2]);
       } else {
         loadURI(uriToLoad);
@@ -706,10 +687,10 @@ function Startup()
   
   // called when we go into full screen, even if it is 
   // initiated by a web page script
-  addEventListener("fullscreen", onFullScreen, false);
+  addEventListener("fullscreen", onFullScreen, true);
 
-  addEventListener("PopupWindow", onPopupWindow, false);
-  addEventListener("DOMPopupBlocked", onPopupBlocked, false);
+  addEventListener("PopupWindow", onPopupWindow, true);
+  addEventListener("DOMPopupBlocked", onPopupBlocked, true);
 
   // does clicking on the urlbar select its contents?
   gClickSelectsAll = pref.getBoolPref("browser.urlbar.clickSelectsAll");
@@ -910,6 +891,11 @@ function BrowserForward()
   }
 }
 
+function BrowserUp()
+{
+  loadURI(getBrowser().currentURI.spec.replace(/[#?].*$/, "").replace(/\/[^\/]*.$/, "/"));
+}
+
 function BrowserHandleShiftBackspace()
 {
   switch (pref.getIntPref("browser.backspace_action")) {
@@ -1026,10 +1012,11 @@ function addGroupmarkAs()
   BookmarksUtils.addBookmarkForTabBrowser(gBrowser, true);
 }
 
-function updateGroupmarkMenuitem(id)
+function updateGroupmarkCommand()
 {
   const disabled = gBrowser.browsers.length == 1;
-  document.getElementById(id).setAttribute("disabled", disabled);
+  document.getElementById("Browser:AddGroupmarkAs")
+          .setAttribute("disabled", disabled);
 }
 
 function readRDFString(aDS,aRes,aProp)
@@ -1037,7 +1024,6 @@ function readRDFString(aDS,aRes,aProp)
   var n = aDS.GetTarget(aRes, aProp, true);
   return n ? n.QueryInterface(Components.interfaces.nsIRDFLiteral).Value : "";
 }
-
 
 function ensureDefaultEnginePrefs(aRDF,aDS) 
 {
@@ -1095,7 +1081,7 @@ function QualifySearchTerm()
   return "";
 }
 
-function OpenSearch(tabName, searchStr, newWindowFlag)
+function OpenSearch(tabName, searchStr, newWindowOrTabFlag, reverseBackgroundPref)
 {
   //This function needs to be split up someday.
 
@@ -1152,10 +1138,18 @@ function OpenSearch(tabName, searchStr, newWindowFlag)
         } catch (ex) {
         }
 
-        if (!newWindowFlag)
+        if (!newWindowOrTabFlag)
           loadURI(defaultSearchURL);
-        else
+        else if (!pref.getBoolPref("browser.search.opentabforcontextsearch"))
           window.open(defaultSearchURL, "_blank");
+        else {
+          var newTab = gBrowser.addTab(defaultSearchURL);
+          var loadInBackground = pref.getBoolPref("browser.tabs.loadInBackground");
+          if (reverseBackgroundPref)
+            loadInBackground = !loadInBackground;
+          if (!loadInBackground)
+            gBrowser.selectedTab = newTab;
+        }
       }
     }
   }
@@ -1264,7 +1258,25 @@ function BrowserSearchInternet()
 function BrowserOpenWindow()
 {
   //opens a window where users can select a web location to open
-  openDialog("chrome://communicator/content/openLocation.xul", "_blank", "chrome,modal,titlebar", window);
+  var params = { browser: window, action: null, url: "" };
+  openDialog("chrome://communicator/content/openLocation.xul", "_blank", "chrome,modal,titlebar", params);
+  var url = getShortcutOrURI(params.url);
+  switch (params.action) {
+    case "0": // current window
+      loadURI(url, null, nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP);
+      break;
+    case "1": // new window
+      openDialog(getBrowserURL(), "_blank", "all,dialog=no", url, null, null,
+                 nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP);
+      break;
+    case "2": // edit
+      editPage(url);
+      break;
+    case "3": // new tab
+      gBrowser.selectedTab = gBrowser.addTab(url, null, null, false,
+               nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP);
+      break;
+  }
 }
 
 function BrowserOpenTab()
@@ -1302,22 +1314,6 @@ function BrowserOpenTab()
     else
       setTimeout("content.focus();", 0);
   }
-}
-
-/* Called from the openLocation dialog. This allows that dialog to instruct
-   its opener to open a new window and then step completely out of the way.
-   Anything less byzantine is causing horrible crashes, rather believably,
-   though oddly only on Linux. */
-function delayedOpenWindow(chrome,flags,url)
-{
-  setTimeout("openDialog('"+chrome+"','_blank','"+flags+"','"+url+"')", 10);
-}
-
-/* Required because the tab needs time to set up its content viewers and get the load of
-   the URI kicked off before becoming the active content area. */
-function delayedOpenTab(url)
-{
-  setTimeout(function(aTabElt) { getBrowser().selectedTab = aTabElt; }, 0, getBrowser().addTab(url));
 }
 
 /* Show file picker dialog configured for opening a file, and return 
@@ -1377,13 +1373,17 @@ function updateCloseItems()
 {
   var browser = getBrowser();
   if (browser && browser.getStripVisibility()) {
-    document.getElementById('menu_close').setAttribute('label', gNavigatorBundle.getString('tabs.closeTab'));
-    document.getElementById('menu_closeWindow').hidden = false;
     document.getElementById('menu_closeOtherTabs').hidden = false;
-    if (browser.tabContainer.childNodes.length > 1)
+    if (browser.tabContainer.childNodes.length > 1) {
+      document.getElementById('menu_close').setAttribute('label', gNavigatorBundle.getString('tabs.closeTab'));
       document.getElementById('cmd_closeOtherTabs').removeAttribute('disabled');
-    else
+      document.getElementById('menu_closeWindow').hidden = false;
+    }
+    else {
+      document.getElementById('menu_close').setAttribute('label', gNavigatorBundle.getString('tabs.close'));
       document.getElementById('cmd_closeOtherTabs').setAttribute('disabled', 'true');
+      document.getElementById('menu_closeWindow').hidden = true;
+    }
   } else {
     document.getElementById('menu_close').setAttribute('label', gNavigatorBundle.getString('tabs.close'));
     document.getElementById('menu_closeWindow').hidden = true;
@@ -1440,10 +1440,10 @@ function BrowserCloseWindow()
   window.close();
 }
 
-function loadURI(uri, referrer)
+function loadURI(uri, referrer, flags)
 {
   try {
-    getBrowser().loadURI(uri, referrer);
+    getBrowser().loadURIWithFlags(uri, flags, referrer);
   } catch (e) {
   }
 }
@@ -1496,7 +1496,8 @@ function BrowserLoadURL(aTriggeringEvent)
 
       if (openTab) {
         // Open link in new tab
-        var t = browser.addTab(url);
+        var t = browser.addTab(url, null, null, false,
+                        nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP);
 
         // Focus new tab unless shift is pressed
         if (!shiftPressed) {
@@ -1505,7 +1506,8 @@ function BrowserLoadURL(aTriggeringEvent)
         }
       } else {
         // Open a new window with the URL
-        var newWin = openDialog(getBrowserURL(), "_blank", "all,dialog=no", url);
+        var newWin = openDialog(getBrowserURL(), "_blank", "all,dialog=no", url,
+            null, null, nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP);
         // Reset url in the urlbar, copied from handleURLBarRevert()
         var oldURL = browser.currentURI.spec;
         if (oldURL != "about:blank") {
@@ -1542,7 +1544,7 @@ function BrowserLoadURL(aTriggeringEvent)
     } else {
       // No modifier was pressed, load the URL normally and
       // focus the content area
-      loadURI(url);
+      loadURI(url, null, nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP);
       content.focus();
     }
   }
@@ -2408,8 +2410,7 @@ function StatusbarViewPopupManager() {
   catch(ex) { }
   
   // open whitelist with site prefilled to unblock
-  window.openDialog("chrome://communicator/content/permissions/permissionsManager.xul", "",
-                      "chrome,resizable=yes", hostPort);
+  viewPopups(hostPort);
 }
 
 function popupBlockerMenuShowing(event) {
@@ -2589,7 +2590,7 @@ function uploadFile(fileURL)
   var persist = Components.classes["@mozilla.org/embedding/browser/nsWebBrowserPersist;1"]
                           .createInstance(CI.nsIWebBrowserPersist);
 
-  dialog.init(fileURL, targetURI, leafName, null, Date.now()*1000, persist);
+  dialog.init(fileURL, targetURI, leafName, null, Date.now()*1000, null, persist);
   dialog.open(window);
 
   persist.progressListener = dialog;

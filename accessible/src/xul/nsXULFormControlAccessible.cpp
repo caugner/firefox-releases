@@ -138,18 +138,17 @@ NS_IMETHODIMP nsXULButtonAccessible::GetState(PRUint32 *aState)
   }
 
   nsCOMPtr<nsIDOMElement> element(do_QueryInterface(mDOMNode));
-  NS_ASSERTION(element, "No nsIDOMElement for button node!");
   if (element) {
     PRBool isDefault = PR_FALSE;
     element->HasAttribute(NS_LITERAL_STRING("default"), &isDefault) ;
     if (isDefault)
       *aState |= STATE_DEFAULT;
-  }
 
-  nsAutoString type;
-  element->GetAttribute(NS_LITERAL_STRING("type"), type);
-  if (type.EqualsLiteral("menu") || type.EqualsLiteral("menu-button")) {
-    *aState |= STATE_HASPOPUP;
+    nsAutoString type;
+    element->GetAttribute(NS_LITERAL_STRING("type"), type);
+    if (type.EqualsLiteral("menu") || type.EqualsLiteral("menu-button")) {
+      *aState |= STATE_HASPOPUP;
+    }
   }
 
   return NS_OK;
@@ -506,7 +505,7 @@ NS_IMETHODIMP nsXULRadioButtonAccessible::GetState(PRUint32 *_retval)
 
 /** Constructor */
 nsXULRadioGroupAccessible::nsXULRadioGroupAccessible(nsIDOMNode* aNode, nsIWeakReference* aShell):
-nsAccessibleWrap(aNode, aShell)
+nsXULSelectableAccessible(aNode, aShell)
 { 
 }
 

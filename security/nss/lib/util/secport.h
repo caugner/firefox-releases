@@ -37,7 +37,7 @@
 /*
  * secport.h - portability interfaces for security libraries
  *
- * $Id: secport.h,v 1.11.14.1 2005/10/10 23:22:52 wtchang%redhat.com Exp $
+ * $Id: secport.h,v 1.11.14.2 2006/09/01 21:03:20 kaie%kuix.de Exp $
  */
 
 #ifndef _SECPORT_H_
@@ -137,6 +137,7 @@ extern void *PORT_ArenaGrow(PLArenaPool *arena, void *ptr,
 			    size_t oldsize, size_t newsize);
 extern void *PORT_ArenaMark(PLArenaPool *arena);
 extern void PORT_ArenaRelease(PLArenaPool *arena, void *mark);
+extern void PORT_ArenaZRelease(PLArenaPool *arena, void *mark);
 extern void PORT_ArenaUnmark(PLArenaPool *arena, void *mark);
 extern char *PORT_ArenaStrdup(PLArenaPool *arena, const char *str);
 

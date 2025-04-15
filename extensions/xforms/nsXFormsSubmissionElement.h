@@ -49,6 +49,7 @@
 #include "nsIChannelEventSink.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsHashSets.h"
+#include "nsIDocument.h"
 
 
 class nsIMultiplexInputStream;
@@ -80,10 +81,10 @@ public:
   NS_DECL_NSIINTERFACEREQUESTOR
 
   nsXFormsSubmissionElement()
-    : mElement(nsnull)
-    , mSubmissionActive(PR_FALSE)
-    , mIsReplaceInstance(PR_FALSE)
-    , mFormat(0)
+    : mElement(nsnull),
+      mSubmissionActive(PR_FALSE),
+      mIsReplaceInstance(PR_FALSE),
+      mFormat(0)
   {}
 
   // nsIXTFGenericElement overrides
@@ -96,40 +97,68 @@ public:
   NS_HIDDEN_(nsresult) LoadReplaceInstance(nsIChannel *);
   NS_HIDDEN_(nsresult) LoadReplaceAll(nsIChannel *);
   NS_HIDDEN_(nsresult) Submit();
-  NS_HIDDEN_(PRBool)   GetBooleanAttr(const nsAString &attrName, PRBool defaultVal = PR_FALSE);
+  NS_HIDDEN_(PRBool)   GetBooleanAttr(const nsAString &attrName,
+                                      PRBool defaultVal = PR_FALSE);
   NS_HIDDEN_(void)     GetDefaultInstanceData(nsIDOMNode **result);
   NS_HIDDEN_(nsresult) GetBoundInstanceData(nsIDOMNode **result);
-  NS_HIDDEN_(nsresult) GetSelectedInstanceElement(const nsString &aInstance, nsIModelElementPrivate *aModel, nsIInstanceElementPrivate **result);
-  NS_HIDDEN_(nsresult) SerializeData(nsIDOMNode *data, nsCString &uri, nsIInputStream **, nsCString &contentType);
-  NS_HIDDEN_(nsresult) SerializeDataXML(nsIDOMNode *data, nsIInputStream **, nsCString &contentType, SubmissionAttachmentArray *);
-  NS_HIDDEN_(nsresult) CreateSubmissionDoc(nsIDOMNode *source, const nsString &encoding, SubmissionAttachmentArray *, nsIDOMDocument **result);
-  NS_HIDDEN_(nsresult) CopyChildren(nsIDOMNode *source, nsIDOMNode *dest, nsIDOMDocument *destDoc, SubmissionAttachmentArray *, const nsString &cdataElements, PRBool indent, PRUint32 depth);
-  NS_HIDDEN_(nsresult) SerializeDataURLEncoded(nsIDOMNode *data, nsCString &uri, nsIInputStream **, nsCString &contentType);
-  NS_HIDDEN_(void)     AppendURLEncodedData(nsIDOMNode *data, const nsCString &sep, nsCString &buf);
-  NS_HIDDEN_(nsresult) SerializeDataMultipartRelated(nsIDOMNode *data, nsIInputStream **, nsCString &contentType);
-  NS_HIDDEN_(nsresult) SerializeDataMultipartFormData(nsIDOMNode *data, nsIInputStream **, nsCString &contentType);
-  NS_HIDDEN_(nsresult) AppendMultipartFormData(nsIDOMNode *data, const nsCString &boundary, nsCString &buf, nsIMultiplexInputStream *);
-  NS_HIDDEN_(nsresult) AppendPostDataChunk(nsCString &postDataChunk, nsIMultiplexInputStream *multiStream);
-  NS_HIDDEN_(nsresult) GetElementEncodingType(nsIDOMNode *data, PRUint32 *encType);
-  NS_HIDDEN_(nsresult) CreateFileStream(const nsString &absURI, nsIFile **file, nsIInputStream **stream);
-  NS_HIDDEN_(nsresult) SendData(const nsCString &uri, nsIInputStream *stream, const nsCString &contentType);
+  NS_HIDDEN_(nsresult) GetSelectedInstanceElement(const nsAString &aInstance,
+                                                  nsIModelElementPrivate *aModel,
+                                                  nsIInstanceElementPrivate **result);
+  NS_HIDDEN_(nsresult) SerializeData(nsIDOMDocument *data, nsCString &uri,
+                                     nsIInputStream **, nsCString &contentType);
+  NS_HIDDEN_(nsresult) SerializeDataXML(nsIDOMDocument *data, nsIInputStream **,
+                                        nsCString &contentType);
+  NS_HIDDEN_(nsresult) CreatePurgedDoc(nsIDOMNode *source,
+                                       nsIDOMDocument **result);
+  NS_HIDDEN_(nsresult) CopyChildren(nsIModelElementPrivate* model,
+                                    nsIDOMNode *source, nsIDOMNode *dest,
+                                    nsIDOMDocument *destDoc,
+                                    const nsString &cdataElements,
+                                    PRUint32 depth);
+  NS_HIDDEN_(nsresult) SerializeDataURLEncoded(nsIDOMDocument *data,
+                                               nsCString &uri,
+                                               nsIInputStream **,
+                                               nsCString &contentType);
+  NS_HIDDEN_(void)     AppendURLEncodedData(nsIDOMNode *data,
+                                            const nsCString &sep,
+                                            nsCString &buf);
+  NS_HIDDEN_(nsresult) SerializeDataMultipartRelated(nsIDOMDocument *data,
+                                                     nsIInputStream **,
+                                                     nsCString &contentType);
+  NS_HIDDEN_(nsresult) SerializeDataMultipartFormData(nsIDOMDocument *data,
+                                                      nsIInputStream **,
+                                                      nsCString &contentType);
+  NS_HIDDEN_(nsresult) AppendMultipartFormData(nsIDOMNode *data,
+                                               const nsCString &boundary,
+                                               nsCString &buf,
+                                               nsIMultiplexInputStream *);
+  NS_HIDDEN_(nsresult) AppendPostDataChunk(nsCString &postDataChunk,
+                                           nsIMultiplexInputStream *multiStream);
+  NS_HIDDEN_(nsresult) GetElementEncodingType(nsIDOMNode *data,
+                                              PRUint32 *encType,
+                                              nsIModelElementPrivate* aModel = nsnull);
+  NS_HIDDEN_(nsresult) CreateFileStream(const nsString &absURI, nsIFile **file,
+                                        nsIInputStream **stream);
+  NS_HIDDEN_(nsresult) SendData(const nsCString &uri, nsIInputStream *stream,
+                                const nsCString &contentType);
 
 private:
-  nsIDOMElement *mElement;
-  PRPackedBool   mSubmissionActive;
-  PRPackedBool   mIsReplaceInstance; // Valid when mSubmissionActive == PR_TRUE
-  PRUint32       mFormat; // Valid when mSubmissionActive == PR_TRUE
+  nsIDOMElement*                   mElement;
+  PRPackedBool                     mSubmissionActive;
+   // Valid when mSubmissionActive == PR_TRUE
+  PRPackedBool                     mIsReplaceInstance;
+  // Valid when mSubmissionActive == PR_TRUE
+  PRUint32                         mFormat;
   nsCOMPtr<nsIXFormsSubmitElement> mActivator;
 
   // input end of pipe, which contains response data.
-  nsCOMPtr<nsIInputStream> mPipeIn;
+  nsCOMPtr<nsIInputStream>         mPipeIn;
 
   /**
    * @return true if aTestURI has the same origin as aBaseURI or if
    * there is no need for a same origin check.
    */
-  PRBool CheckSameOrigin(nsIURI *aBaseURI, nsIURI *aTestURI);
-  PRBool CheckPermissionManager(nsIURI *aBaseURI);
+  PRBool CheckSameOrigin(nsIDocument *aBaseDocument, nsIURI *aTestURI);
   nsresult AddNameSpaces(nsIDOMElement* aTarget, nsIDOMNode* aSource,
                          nsStringHashSet* aPrefixHash);
   nsresult GetIncludeNSPrefixesAttr(nsStringHashSet** aHash);
@@ -141,6 +170,30 @@ private:
    *
    */
   void EndSubmit(PRBool aSucceeded);
+
+  /**
+   * Create submission document.
+   *
+   * This creates a new document, include namespaces, purges non-relevant
+   * nodes, and checks simple type validity. If a check fails, no document
+   * will be returned.
+   *
+   * @param aRoot             The source node
+   * @param aReturnDoc        The resulting document
+   */
+  nsresult CreateSubmissionDoc(nsIDOMNode *aRoot,
+                               nsIDOMDocument** aReturnDoc);
+
+  /**
+   * Run through document and create attachment ids for xsd:anyURI nodes. This
+   * is used for "multipart/related".
+   *
+   * @param aModel            The model to use
+   * @param aDoc              The document to run through
+   * @param aAttachments      Array of files and attachment ids
+   */
+  nsresult CreateAttachments(nsIModelElementPrivate *aModel, nsIDOMNode *aDoc,
+                             SubmissionAttachmentArray *aAttachments);
 };
 
 NS_HIDDEN_(nsresult)

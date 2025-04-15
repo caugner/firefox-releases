@@ -37,6 +37,7 @@
 
 <!ENTITY toField.label "To: ">
 <!ENTITY fromField.label "From: ">
+<!ENTITY senderField.label "Sender: ">
 <!ENTITY organizationField.label "Organization: ">
 <!ENTITY replyToField.label "Reply-To: ">
 
@@ -47,30 +48,29 @@
 <!ENTITY newsgroupsField.label "Newsgroups: ">
 <!ENTITY followupToField.label "Followup-To: ">
 
+<!ENTITY tagsHdr.label "Tags: ">
 <!ENTITY dateField.label "Date: ">
 <!ENTITY userAgentField.label "User-Agent: ">
 <!ENTITY originalWebsite.label "Website: ">
-<!ENTITY saveAll.label "Save All..">
 
 <!ENTITY editMessage.label "Edit Draft...">
-<!ENTITY attachmentsTree.label "Attachments:">
 
-<!ENTITY openAttachmentCmd.label    "Open">  
-<!ENTITY openAttachmentCmd.accesskey		"O">  
-<!ENTITY saveAsAttachmentCmd.label    "Save As...">  
-<!ENTITY saveAsAttachmentCmd.accesskey		"A"> 
-<!ENTITY printAttachmentCmd.label    ".Print">  
-<!ENTITY printAttachmentCmd.accesskey		"P">  
-<!ENTITY detachAttachmentCmd.label    "Detach ...">  
-<!ENTITY deleteAttachmentCmd.label    "Delete">  
-<!ENTITY saveAllAttachmentsCmd.label    "Save All...">  
-<!ENTITY saveAllAttachmentsCmd.accesskey		"S">  
-<!ENTITY detachAllAttachmentsCmd.label    "Detach All...">  
-<!ENTITY detachAllAttachmentsCmd.accesskey    "D">  
-<!ENTITY deleteAllAttachmentsCmd.label    "Delete All...">  
-<!ENTITY deleteAllAttachmentsCmd.accesskey    "E">  
-
-<!ENTITY copyLinkCmd.label        "Copy Link Location">  
-<!ENTITY copyLinkCmd.accesskey		"C">  
-
-
+<!ENTITY attachmentsTree.label             "Attachments:">
+<!ENTITY openAttachmentCmd.label           "Open">
+<!ENTITY openAttachmentCmd.accesskey       "O">
+<!ENTITY viewAttachmentCmd.label           "View Source">
+<!ENTITY viewAttachmentCmd.accesskey       "V">
+<!ENTITY saveAsAttachmentCmd.label         "Save As...">
+<!ENTITY saveAsAttachmentCmd.accesskey     "A">
+<!ENTITY printAttachmentCmd.label          ".Print">
+<!ENTITY printAttachmentCmd.accesskey      "P">
+<!ENTITY detachAttachmentCmd.label         "Detach...">
+<!ENTITY detachAttachmentCmd.accesskey     "h">
+<!ENTITY deleteAttachmentCmd.label         "Delete">
+<!ENTITY deleteAttachmentCmd.accesskey     "t">
+<!ENTITY saveAllAttachmentsCmd.label       "Save All...">
+<!ENTITY saveAllAttachmentsCmd.accesskey   "S">
+<!ENTITY detachAllAttachmentsCmd.label     "Detach All...">
+<!ENTITY detachAllAttachmentsCmd.accesskey "D">
+<!ENTITY deleteAllAttachmentsCmd.label     "Delete All...">
+<!ENTITY deleteAllAttachmentsCmd.accesskey "e">

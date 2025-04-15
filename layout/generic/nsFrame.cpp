@@ -54,6 +54,7 @@
 #include "nsCRT.h"
 #include "nsGUIEvent.h"
 #include "nsIDOMEvent.h"
+#include "nsPLDOMEvent.h"
 #include "nsStyleConsts.h"
 #include "nsIPresShell.h"
 #include "prlog.h"
@@ -291,47 +292,33 @@ SelectionImageService::~SelectionImageService()
 NS_IMETHODIMP
 SelectionImageService::GetImage(PRInt16 aSelectionValue, imgIContainer **aContainer)
 {
-  nsresult result;
-  if (aSelectionValue != nsISelectionController::SELECTION_ON)
-  {
-    if (!mDisabledContainer)
-    {
-        mDisabledContainer = do_CreateInstance("@mozilla.org/image/container;1",&result);
-        if (NS_FAILED(result))
-          return result;
-        if (mDisabledContainer)
-        {
-          nscolor disabledTextColor = NS_RGB(255, 255, 255);
-          nsCOMPtr<nsILookAndFeel> look;
-          look = do_GetService(kLookAndFeelCID,&result);
-          if (NS_SUCCEEDED(result) && look)
-            look->GetColor(nsILookAndFeel::eColor_TextSelectBackgroundDisabled, disabledTextColor);
-          CreateImage(disabledTextColor, mDisabledContainer);
-        }
-    }
-    *aContainer = mDisabledContainer; 
+  *aContainer = nsnull;
+
+  nsCOMPtr<imgIContainer>* container = &mContainer;
+  nsILookAndFeel::nsColorID colorID;
+  if (aSelectionValue == nsISelectionController::SELECTION_ON) {
+    colorID = nsILookAndFeel::eColor_TextSelectBackground;
+  } else if (aSelectionValue == nsISelectionController::SELECTION_ATTENTION) {
+    colorID = nsILookAndFeel::eColor_TextSelectBackgroundAttention;
+  } else {
+    container = &mDisabledContainer;
+    colorID = nsILookAndFeel::eColor_TextSelectBackgroundDisabled;
   }
-  else
-  {
-    if (!mContainer)
-    {
-        mContainer = do_CreateInstance("@mozilla.org/image/container;1",&result);
-        if (NS_FAILED(result))
-          return result;
-        if (mContainer)
-        {
-          nscolor selectionTextColor = NS_RGB(255, 255, 255);
-          nsCOMPtr<nsILookAndFeel> look;
-          look = do_GetService(kLookAndFeelCID,&result);
-          if (NS_SUCCEEDED(result) && look)
-            look->GetColor(nsILookAndFeel::eColor_TextSelectBackground, selectionTextColor);
-          CreateImage(selectionTextColor, mContainer);
-        }
-    }
-    *aContainer = mContainer; 
+
+  if (!*container) {
+    nsresult result;
+    *container = do_CreateInstance("@mozilla.org/image/container;1", &result);
+    if (NS_FAILED(result))
+      return result;
+
+    nscolor color = NS_RGB(255, 255, 255);
+    nsCOMPtr<nsILookAndFeel> look = do_GetService(kLookAndFeelCID);
+    if (look)
+      look->GetColor(colorID, color);
+    CreateImage(color, *container);
   }
-  if (!*aContainer)
-    return NS_ERROR_OUT_OF_MEMORY;
+
+  *aContainer = *container; 
   NS_ADDREF(*aContainer);
   return NS_OK;
 }
@@ -967,6 +954,19 @@ nsFrame::GetContentForEvent(nsPresContext* aPresContext,
   *aContent = GetContent();
   NS_IF_ADDREF(*aContent);
   return NS_OK;
+}
+
+void
+nsFrame::FireDOMEvent(const nsAString& aDOMEventName, nsIContent *aContent)
+{
+  nsCOMPtr<nsIDOMNode> domNode = do_QueryInterface(aContent ? aContent : mContent);
+  
+  if (domNode) {
+    nsPLDOMEvent *event = new nsPLDOMEvent(domNode, aDOMEventName);
+    if (event && NS_FAILED(event->PostDOMEvent())) {
+      PL_DestroyEvent(event);
+    }
+  }
 }
 
 /**
@@ -1790,9 +1790,64 @@ GetFrameSelectionFor(nsIFrame* aFrame, nsIFrameSelection** aFrameSel, nsISelecti
     NS_IF_ADDREF(*aFrameSel = aFrame->GetPresContext()->GetPresShell()->FrameSelection());
 }
 
-NS_IMETHODIMP nsFrame::HandleRelease(nsPresContext* aPresContext, 
-                                     nsGUIEvent*     aEvent,
-                                     nsEventStatus*  aEventStatus)
+/**
+ * This static method handles part of the nsFrame::HandleRelease in a way
+ * which doesn't rely on the nsFrame object to stay alive.
+ */
+static nsresult
+HandleFrameSelection(nsIFrameSelection* aFrameSelection,
+                     nsIContent*        aContent,
+                     PRInt32            aStartOffset,
+                     PRInt32            aEndOffset,
+                     PRBool             aBeginFrameContent,
+                     PRBool             aHandleTableSel,
+                     PRInt32            aContentOffsetForTableSel,
+                     PRInt32            aTargetForTableSel,
+                     nsGUIEvent*        aEvent,
+                     nsEventStatus*     aEventStatus)
+{
+  if (!aFrameSelection) {
+    return NS_OK;
+  }
+
+  nsresult rv = NS_OK;
+
+  if (nsEventStatus_eConsumeNoDefault != *aEventStatus && aContent) {
+    if (!aHandleTableSel) {
+      nsMouseEvent* me = nsnull;
+      aFrameSelection->GetDelayedCaretData(&me);
+      if (!me) {
+        return NS_ERROR_FAILURE;
+      }
+      // We are doing this to simulate what we would have done on HandlePress
+      aFrameSelection->SetMouseDownState(PR_TRUE);
+      rv = aFrameSelection->HandleClick(aContent, aStartOffset, aEndOffset,
+                                        me->isShift, PR_FALSE,
+                                        aBeginFrameContent);
+      if (NS_FAILED(rv)) {
+        return rv;
+      }
+    } else {
+      aFrameSelection->SetMouseDownState(PR_FALSE);
+      aFrameSelection->HandleTableSelection(aContent,
+                                            aContentOffsetForTableSel,
+                                            aTargetForTableSel,
+                                            (nsMouseEvent *)aEvent);
+      if (NS_FAILED(rv)) {
+        return rv;
+      }
+    }
+    aFrameSelection->SetDelayedCaretData(0);
+  }
+
+  aFrameSelection->SetMouseDownState(PR_FALSE);
+  aFrameSelection->StopAutoScrollTimer();
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsFrame::HandleRelease(nsPresContext* aPresContext,
+                                     nsGUIEvent*    aEvent,
+                                     nsEventStatus* aEventStatus)
 {
   nsIFrame* activeFrame = GetActiveSelectionFrame(this);
 
@@ -1800,110 +1855,96 @@ NS_IMETHODIMP nsFrame::HandleRelease(nsPresContext* aPresContext,
   // we should never be capturing when the mouse button is up
   CaptureMouse(aPresContext, PR_FALSE);
 
-  nsCOMPtr<nsIFrameSelection> frameselection;
+  PRBool selectionOff =
+    (DisplaySelection(aPresContext) == nsISelectionController::SELECTION_OFF);
+
   nsCOMPtr<nsISelectionController> selCon;
-  
+  nsCOMPtr<nsIFrameSelection> frameselection;
+  nsCOMPtr<nsIContent> content;
+  PRInt32 contentOffsetForTableSel = 0;
+  PRInt32 targetForTableSel = 0;
+  PRBool handleTableSelection = PR_TRUE;
+  PRInt32 startOffset = 0;
+  PRInt32 endOffset = 0;
+  PRBool beginFrameContent = PR_FALSE;
+  nsresult rv = NS_OK;
+
+  if (!selectionOff) {
+    GetFrameSelectionFor(this, getter_AddRefs(frameselection), getter_AddRefs(selCon));
+    if (nsEventStatus_eConsumeNoDefault != *aEventStatus && frameselection) {
+      PRBool supportsDelay = PR_FALSE;
+      frameselection->GetDelayCaretOverExistingSelection(&supportsDelay);
+      if (supportsDelay) {
+        // Check if the frameselection recorded the mouse going down.
+        // If not, the user must have clicked in a part of the selection.
+        // Place the caret before continuing!
+        PRBool mouseDown = PR_FALSE;
+        rv = frameselection->GetMouseDownState(&mouseDown);
+        if (NS_FAILED(rv)) {
+          return rv;
+        }
+
+        nsMouseEvent* me = nsnull;
+        rv = frameselection->GetDelayedCaretData(&me);
+
+        if (NS_SUCCEEDED(rv) && !mouseDown && me && me->clickCount < 2) {
+          handleTableSelection = PR_FALSE;
+
+          rv = GetContentAndOffsetsFromPoint(aPresContext, me->point,
+                                             getter_AddRefs(content),
+                                             startOffset, endOffset,
+                                             beginFrameContent);
+          if (NS_FAILED(rv)) {
+            return rv;
+          }
+
+          // do we have CSS that changes selection behaviour?
+          PRBool changeSelection = PR_FALSE;
+          nsCOMPtr<nsIContent> selectContent;
+          PRInt32 newStart = 0, newEnd = 0;
+          nsresult rv2 =
+            frameselection->AdjustOffsetsFromStyle(this, &changeSelection,
+                                                   getter_AddRefs(selectContent),
+                                                   &newStart, &newEnd);
+          if (NS_SUCCEEDED(rv2) && changeSelection) {
+            content = selectContent;
+            startOffset = newStart;
+            endOffset = newEnd;
+          }
+        } else {
+          GetDataForTableSelection(frameselection,
+                                   aPresContext->GetPresShell(),
+                                   (nsMouseEvent *)aEvent,
+                                   getter_AddRefs(content),
+                                   &contentOffsetForTableSel,
+                                   &targetForTableSel);
+        }
+      }
+    }
+  }
+
   // We might be capturing in some other document and the event just happened to
   // trickle down here. Make sure that document's frame selection is notified.
   if (activeFrame != this &&
       NS_STATIC_CAST(nsFrame*, activeFrame)->DisplaySelection(activeFrame->GetPresContext())
         != nsISelectionController::SELECTION_OFF) {
-    GetFrameSelectionFor(activeFrame, getter_AddRefs(frameselection), getter_AddRefs(selCon));
-    frameselection->SetMouseDownState( PR_FALSE );
-    frameselection->StopAutoScrollTimer();
+    nsCOMPtr<nsIFrameSelection> activeSelection;
+    nsCOMPtr<nsISelectionController> activeSelCon;
+    GetFrameSelectionFor(activeFrame, getter_AddRefs(activeSelection),
+                         getter_AddRefs(activeSelCon));
+    activeSelection->SetMouseDownState(PR_FALSE);
+    activeSelection->StopAutoScrollTimer();
   }
 
-  if (DisplaySelection(aPresContext) == nsISelectionController::SELECTION_OFF)
-    return NS_OK;
+  // Do not call any methods of the current object after this point!!!
+  // The object is perhaps dead!
 
-  nsIPresShell *presShell = aPresContext->GetPresShell();
-
-  if (!presShell)
-    return NS_ERROR_FAILURE;
-
-  GetFrameSelectionFor(this, getter_AddRefs(frameselection), getter_AddRefs(selCon));
-
-  nsresult result = NS_OK;
-
-  NS_ENSURE_ARG_POINTER(aEventStatus);
-  if (nsEventStatus_eConsumeNoDefault != *aEventStatus) {
-    PRBool supportsDelay = PR_FALSE;
-
-    frameselection->GetDelayCaretOverExistingSelection(&supportsDelay);
-
-    if (supportsDelay)
-    {
-      // Check if the frameselection recorded the mouse going down.
-      // If not, the user must have clicked in a part of the selection.
-      // Place the caret before continuing!
-
-      PRBool mouseDown = PR_FALSE;
-
-      result = frameselection->GetMouseDownState(&mouseDown);
-
-      if (NS_FAILED(result))
-        return result;
-
-      nsMouseEvent *me = 0;
-
-      result = frameselection->GetDelayedCaretData(&me);
-
-      if (NS_SUCCEEDED(result) && !mouseDown && me && me->clickCount < 2)
-      {
-        // We are doing this to simulate what we would have done on HandlePress
-        result = frameselection->SetMouseDownState( PR_TRUE );
-
-        nsCOMPtr<nsIContent> content;
-        PRInt32 startOffset = 0, endOffset = 0;
-        PRBool  beginFrameContent = PR_FALSE;
-
-        result = GetContentAndOffsetsFromPoint(aPresContext, me->point, getter_AddRefs(content), startOffset, endOffset, beginFrameContent);
-        if (NS_FAILED(result)) return result;
-
-      // do we have CSS that changes selection behaviour?
-      {
-        PRBool    changeSelection;
-        nsCOMPtr<nsIContent>  selectContent;
-        PRInt32   newStart, newEnd;
-        if (NS_SUCCEEDED(frameselection->AdjustOffsetsFromStyle(this, &changeSelection, getter_AddRefs(selectContent), &newStart, &newEnd))
-          && changeSelection)
-        {
-          content = selectContent;
-          startOffset = newStart;
-          endOffset = newEnd;
-        }
-      }
-
-        result = frameselection->HandleClick(content, startOffset , endOffset, me->isShift, PR_FALSE, beginFrameContent);
-        if (NS_FAILED(result)) return result;
-      }
-      else
-      {
-        me = (nsMouseEvent *)aEvent;
-        nsCOMPtr<nsIContent>parentContent;
-        PRInt32  contentOffset;
-        PRInt32 target;
-        result = GetDataForTableSelection(frameselection, presShell, me, getter_AddRefs(parentContent), &contentOffset, &target);
-
-        if (NS_SUCCEEDED(result) && parentContent)
-        {
-          frameselection->SetMouseDownState( PR_FALSE );
-          result = frameselection->HandleTableSelection(parentContent, contentOffset, target, me);
-          if (NS_FAILED(result)) return result;
-        }
-      }
-      result = frameselection->SetDelayedCaretData(0);
-    }
-  }
-
-  // Now handle the normal HandleRelase business.
-
-  if (NS_SUCCEEDED(result) && frameselection) {
-    frameselection->SetMouseDownState( PR_FALSE );
-    frameselection->StopAutoScrollTimer();
-  }
-
-  return NS_OK;
+  return selectionOff
+    ? NS_OK
+    : HandleFrameSelection(frameselection, content, startOffset, endOffset,
+                           beginFrameContent, handleTableSelection,
+                           contentOffsetForTableSel, targetForTableSel,
+                           aEvent, aEventStatus);
 }
 
 
@@ -3336,14 +3377,11 @@ nsFrame::GetNextPrevLineFromeBlockFrame(nsPresContext* aPresContext,
         if (!resultFrame->HasView())
         {
           rect = resultFrame->GetRect();
-          if (!rect.width || !rect.height)
-            result = NS_ERROR_FAILURE;
-          else
-            result = resultFrame->GetContentAndOffsetsFromPoint(context,point,
-                                          getter_AddRefs(aPos->mResultContent),
-                                          aPos->mContentOffset,
-                                          aPos->mContentOffsetEnd,
-                                          aPos->mPreferLeft);
+          result = resultFrame->GetContentAndOffsetsFromPoint(context,point,
+                                        getter_AddRefs(aPos->mResultContent),
+                                        aPos->mContentOffset,
+                                        aPos->mContentOffsetEnd,
+                                        aPos->mPreferLeft);
           if (NS_SUCCEEDED(result))
           {
             PRBool selectable;
@@ -4472,6 +4510,19 @@ GetIBSpecialSibling(nsPresContext* aPresContext,
   return NS_OK;
 }
 
+static PRBool
+IsTablePseudo(nsIAtom* aPseudo)
+{
+  return
+    aPseudo == nsCSSAnonBoxes::tableOuter ||
+    aPseudo == nsCSSAnonBoxes::table ||
+    aPseudo == nsCSSAnonBoxes::tableRowGroup ||
+    aPseudo == nsCSSAnonBoxes::tableRow ||
+    aPseudo == nsCSSAnonBoxes::tableCell ||
+    aPseudo == nsCSSAnonBoxes::tableColGroup ||
+    aPseudo == nsCSSAnonBoxes::tableCol;
+}
+
 /**
  * Get the parent, corrected for the mangled frame tree resulting from
  * having a block within an inline.  The result only differs from the
@@ -4489,17 +4540,22 @@ GetCorrectedParent(nsPresContext* aPresContext, nsIFrame* aFrame,
   nsIFrame *parent = aFrame->GetParent();
   *aSpecialParent = parent;
   if (parent) {
-    nsIAtom* parentPseudo = parent->GetStyleContext()->GetPseudoType();
+    nsIAtom* pseudo = aFrame->GetStyleContext()->GetPseudoType();
 
     // if this frame itself is not scrolled-content, then skip any scrolled-content
     // parents since they're basically anonymous as far as the style system goes
-    if (parentPseudo == nsCSSAnonBoxes::scrolledContent) {
-      nsIAtom* pseudo = aFrame->GetStyleContext()->GetPseudoType();
-      if (pseudo != nsCSSAnonBoxes::scrolledContent) {
-        do {
-          parent = parent->GetParent();
-          parentPseudo = parent->GetStyleContext()->GetPseudoType();
-        } while (parentPseudo == nsCSSAnonBoxes::scrolledContent);
+    if (pseudo != nsCSSAnonBoxes::scrolledContent) {
+      while (parent->GetStyleContext()->GetPseudoType() ==
+             nsCSSAnonBoxes::scrolledContent) {
+        parent = parent->GetParent();
+      }
+    }
+
+    // If the frame is not a table pseudo frame, we want to move up
+    // the tree till we get to a non-table-pseudo frame.
+    if (!IsTablePseudo(pseudo)) {
+      while (IsTablePseudo(parent->GetStyleContext()->GetPseudoType())) {
+        parent = parent->GetParent();
       }
     }
 
@@ -4520,7 +4576,8 @@ nsFrame::DoGetParentStyleContextFrame(nsPresContext* aPresContext,
 {
   *aIsChild = PR_FALSE;
   *aProviderFrame = nsnull;
-  if (mContent && !mContent->GetParent()) {
+  if (mContent && !mContent->GetParent() &&
+      !GetStyleContext()->GetPseudoType()) {
     // we're a frame for the root.  We have no style context parent.
     return NS_OK;
   }

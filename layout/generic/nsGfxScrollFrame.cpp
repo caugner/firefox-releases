@@ -1818,13 +1818,23 @@ void
 nsGfxScrollFrameInner::FireScrollEvent()
 {
   mScrollEventQueue = nsnull;
-  nsIPresShell *presShell = mOuter->GetPresContext()->GetPresShell();
-  if (!presShell)
-    return;
+
   nsScrollbarEvent event(PR_TRUE, NS_SCROLL_EVENT, nsnull);
   nsEventStatus status = nsEventStatus_eIgnore;
-  presShell->HandleEventWithTarget(&event, mOuter, mOuter->GetContent(),
-                                   NS_EVENT_FLAG_INIT, &status);
+  nsIContent* content = mOuter->GetContent();
+  nsPresContext* prescontext = mOuter->GetPresContext();
+  // Fire viewport scroll events at the document (where they
+  // will bubble to the window)
+  if (mIsRoot) {
+    nsIDocument* doc = content->GetCurrentDoc();
+    if (doc) {
+      doc->HandleDOMEvent(prescontext, &event, nsnull,
+                          NS_EVENT_FLAG_INIT, &status);
+    }
+  } else {
+    content->HandleDOMEvent(prescontext, &event, nsnull,
+                            NS_EVENT_FLAG_INIT, &status);
+  }
 }
 
 void
@@ -2360,6 +2370,7 @@ nsGfxScrollFrameInner::LayoutScrollbars(nsBoxLayoutState& aState,
   scrollable->SetLineHeight(fontHeight);
 
   if (mVScrollbarBox) {
+    NS_PRECONDITION(mVScrollbarBox->IsBoxFrame(), "Must be a box frame!");
     if (!mHasVerticalScrollbar) {
       SetAttribute(mVScrollbarBox, nsXULAtoms::curpos, 0);
     }
@@ -2378,6 +2389,7 @@ nsGfxScrollFrameInner::LayoutScrollbars(nsBoxLayoutState& aState,
   }
     
   if (mHScrollbarBox) {
+    NS_PRECONDITION(mHScrollbarBox->IsBoxFrame(), "Must be a box frame!");
     if (!mHasHorizontalScrollbar) {
       SetAttribute(mHScrollbarBox, nsXULAtoms::curpos, 0);
     }
@@ -2397,6 +2409,7 @@ nsGfxScrollFrameInner::LayoutScrollbars(nsBoxLayoutState& aState,
 
   // place the scrollcorner
   if (mScrollCornerBox) {
+    NS_PRECONDITION(mScrollCornerBox->IsBoxFrame(), "Must be a box frame!");
     nsRect r(0, 0, 0, 0);
     if (aContentArea.x != aScrollArea.x) {
       // scrollbar (if any) on left

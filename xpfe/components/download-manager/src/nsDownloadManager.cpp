@@ -66,6 +66,7 @@
 #include "nsIAlertsService.h"
 #endif
 #include "nsEmbedCID.h"
+#include "nsInt64.h"
 
 /* Outstanding issues/todo:
  * 1. Implement pause/resume.
@@ -73,7 +74,8 @@
   
 #define DOWNLOAD_MANAGER_FE_URL "chrome://communicator/content/downloadmanager/downloadmanager.xul"
 #define DOWNLOAD_MANAGER_BUNDLE "chrome://communicator/locale/downloadmanager/downloadmanager.properties"
-#define INTERVAL 500
+
+static const nsInt64 gInterval((PRUint32)(400 * PR_USEC_PER_MSEC));
 
 static nsIRDFResource* gNC_DownloadsRoot = nsnull;
 static nsIRDFResource* gNC_File = nsnull;
@@ -396,9 +398,13 @@ nsDownloadManager::AssertProgressInfoFor(const nsACString& aTargetPath)
   // update transferred
   nsDownload::TransferInformation transferInfo =
                                  internalDownload->GetTransferInformation();
- 
-  nsAutoString currBytes; currBytes.AppendInt(transferInfo.mCurrBytes);
-  nsAutoString maxBytes; maxBytes.AppendInt(transferInfo.mMaxBytes);
+
+  // convert from bytes to kbytes for progress display
+  PRInt64 current = (PRFloat64)transferInfo.mCurrBytes / 1024 + .5;
+  PRInt64 max = (PRFloat64)transferInfo.mMaxBytes / 1024 + .5;
+
+  nsAutoString currBytes; currBytes.AppendInt(current);
+  nsAutoString maxBytes; maxBytes.AppendInt(max);
   const PRUnichar *strings[] = {
     currBytes.get(),
     maxBytes.get()
@@ -488,6 +494,7 @@ nsDownloadManager::AddDownload(nsIURI* aSource,
     targetFile->GetLeafName(displayName);
   }
   internalDownload->SetDisplayName(displayName.get());
+  internalDownload->SetTempFile(aTempFile);
  
   nsCOMPtr<nsIRDFLiteral> nameLiteral;
   gRDFService->GetLiteral(displayName.get(), getter_AddRefs(nameLiteral));
@@ -883,7 +890,8 @@ nsDownloadManager::Observe(nsISupports* aSubject, const char* aTopic, const PRUn
 ///////////////////////////////////////////////////////////////////////////////
 // nsDownload
 
-NS_IMPL_ISUPPORTS5(nsDownload, nsIDownload, nsITransfer, nsIWebProgressListener,
+NS_IMPL_ISUPPORTS6(nsDownload, nsIDownload, nsIDownload_MOZILLA_1_8_BRANCH,
+                   nsITransfer, nsIWebProgressListener,
                    nsIWebProgressListener2, nsIObserver)
 
 nsDownload::nsDownload(nsDownloadManager* aManager,
@@ -896,10 +904,11 @@ nsDownload::nsDownload(nsDownloadManager* aManager,
                          mCancelable(aCancelable),
                          mDownloadState(NOTSTARTED),
                          mPercentComplete(0),
-                         mCurrBytes(0),
-                         mMaxBytes(0),
-                         mStartTime(0),
-                         mLastUpdate(-500)
+                         mCurrBytes(LL_ZERO),
+                         mMaxBytes(LL_ZERO),
+                         mStartTime(LL_ZERO),
+                         mLastUpdate(PR_Now() - (PRUint32)gInterval),
+                         mSpeed(0)
 {
 }
 
@@ -939,6 +948,16 @@ nsDownload::Cancel()
     return rv;
   mDownloadManager->DownloadEnded(path, nsnull);
   
+  // Dump the temp file.  This should really be done when the transfer
+  // is cancelled, but there are other cancellation causes that shouldn't
+  // remove this. We need to improve those bits.
+  if (mTempFile) {
+    PRBool exists;
+    mTempFile->Exists(&exists);
+    if (exists)
+      mTempFile->Remove(PR_FALSE);
+  }
+
   // if there's a progress dialog open for the item,
   // we have to notify it that we're cancelling
   nsCOMPtr<nsIObserver> observer = do_QueryInterface(GetDialog());
@@ -1023,10 +1042,9 @@ nsDownload::OnProgressChange64(nsIWebProgress *aWebProgress,
     mRequest = aRequest; // used for pause/resume
 
   // filter notifications since they come in so frequently
-  PRTime delta;
   PRTime now = PR_Now();
-  LL_SUB(delta, now, mLastUpdate);
-  if (LL_CMP(delta, <, INTERVAL) && aMaxTotalProgress != -1 && aCurTotalProgress < aMaxTotalProgress)
+  nsInt64 delta = now - mLastUpdate;
+  if (delta < gInterval)
     return NS_OK;
 
   mLastUpdate = now;
@@ -1040,13 +1058,28 @@ nsDownload::OnProgressChange64(nsIWebProgress *aWebProgress,
     mDownloadManager->DownloadStarted(path);
   }
 
+  // Calculate the speed using the elapsed delta time and bytes downloaded
+  // during that time for more accuracy.
+  double elapsedSecs = double(delta) / PR_USEC_PER_SEC;
+  if (elapsedSecs > 0) {
+    nsUint64 curTotalProgress = (PRUint64)aCurTotalProgress;
+    nsUint64 diffBytes = curTotalProgress - nsUint64(mCurrBytes);
+    double speed = double(diffBytes) / elapsedSecs;
+    if (LL_IS_ZERO(mCurrBytes))
+      mSpeed = speed;
+    else {
+      // Calculate 'smoothed average' of 10 readings.
+      mSpeed = mSpeed * 0.9 + speed * 0.1;
+    }
+  }
+
   if (aMaxTotalProgress > 0)
     mPercentComplete = aCurTotalProgress * 100 / aMaxTotalProgress;
   else
     mPercentComplete = -1;
 
-  mCurrBytes = ((PRFloat64)aCurTotalProgress / 1024.0 + .5);
-  mMaxBytes = ((PRFloat64)aMaxTotalProgress / 1024 + .5);
+  mCurrBytes = aCurTotalProgress;
+  mMaxBytes = aMaxTotalProgress;
 
   if (mDownloadManager->MustUpdateUI()) {
     nsCOMPtr<nsIDownloadProgressListener> internalListener;
@@ -1192,8 +1225,9 @@ nsDownload::OnStateChange(nsIWebProgress* aWebProgress,
                           nsIRequest* aRequest, PRUint32 aStateFlags,
                           nsresult aStatus)
 {
-  if (aStateFlags & STATE_START)
-    mStartTime = PR_Now();
+  // Record the start time only if it hasn't been set.
+  if (LL_IS_ZERO(mStartTime) && (aStateFlags & STATE_START))
+    SetStartTime(PR_Now());
 
   // When we break the ref cycle with mPersist, we don't want to lose
   // access to out member vars!
@@ -1205,10 +1239,17 @@ nsDownload::OnStateChange(nsIWebProgress* aWebProgress,
   if (aStateFlags & STATE_STOP) {
     if (mDownloadState == DOWNLOADING || mDownloadState == NOTSTARTED) {
       mDownloadState = FINISHED;
+
+      // Set file size at the end of a tranfer (for unknown transfer amounts)
+      if (mMaxBytes == -1)
+        mMaxBytes = mCurrBytes;
+
       // Files less than 1Kb shouldn't show up as 0Kb.
-      if (mMaxBytes==0)
-        mMaxBytes = 1;
-      mCurrBytes = mMaxBytes;
+      if (mMaxBytes < 1024) {
+        mCurrBytes = 1024;
+        mMaxBytes  = 1024;
+      }
+
       mPercentComplete = 100;
 
       // Play a sound or show an alert when the download finishes
@@ -1365,14 +1406,14 @@ nsDownload::GetPercentComplete(PRInt32* aPercentComplete)
 NS_IMETHODIMP
 nsDownload::GetAmountTransferred(PRUint64* aAmountTransferred)
 {
-  *aAmountTransferred = mCurrBytes;
+  *aAmountTransferred = ((PRFloat64)mCurrBytes / 1024.0 + .5);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsDownload::GetSize(PRUint64* aSize)
 {
-  *aSize = mMaxBytes;
+  *aSize = ((PRFloat64)mMaxBytes / 1024 + .5);
   return NS_OK;
 }
 
@@ -1397,4 +1438,18 @@ nsDownload::GetTargetFile(nsILocalFile** aTargetFile)
   if (NS_SUCCEEDED(rv))
     rv = CallQueryInterface(file, aTargetFile);
   return rv;
+}
+
+NS_IMETHODIMP
+nsDownload::GetSpeed(double* aSpeed)
+{
+  *aSpeed = mSpeed;
+  return NS_OK;
+}
+
+nsresult
+nsDownload::SetTempFile(nsILocalFile* aTempFile)
+{
+  mTempFile = aTempFile;
+  return NS_OK;
 }

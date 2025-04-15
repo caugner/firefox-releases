@@ -68,13 +68,6 @@ TARGETS		+= elf-dynstr-gc
 endif
 endif
 
-ifeq ($(OS_ARCH), Darwin)
-# XXX Setting CPP_PROG_LINK is ugly, but it works (it makes nsinstall
-# link with $(CXX)).  asdecode should really be in its own directory.
-CPP_PROG_LINK	= 1
-SIMPLE_PROGRAMS	+= asdecode
-endif
-
 # IMPORTANT: Disable NSBUILDROOT for this directory only, otherwise we have
 # a recursive rule for finding nsinstall and the Perl scripts.
 ifdef NSBUILDROOT
@@ -130,9 +123,6 @@ libs::
 	_ABS_DIST=`$(ABS_DIST)`; \
 	$(MAKE) -C $(DEPTH)/nsprpub real_install prefix=$$_ABS_DIST/sdk exec_prefix=$$_ABS_DIST/sdk bindir=$$_ABS_DIST/sdk/dummy includedir=$$_ABS_DIST/sdk/include libdir=$$_ABS_DIST/sdk/lib datadir=$$_ABS_DIST/sdk/dummy DESTDIR=
 	$(RM) -rf $(DIST)/sdk/dummy
-ifndef DISABLE_DIST_GRE
-	$(INSTALL) $(DIST)/sdk/lib/$(DLL_PREFIX)nspr4$(DLL_SUFFIX) $(DIST)/sdk/lib/$(DLL_PREFIX)plc4$(DLL_SUFFIX) $(DIST)/sdk/lib/$(DLL_PREFIX)plds4$(DLL_SUFFIX) $(GRE_DIST)
-endif
 ifneq (,$(filter OS2 WINNT,$(OS_ARCH)))
 	$(RM) -f $(DIST)/sdk/lib/$(DLL_PREFIX)nspr4$(DLL_SUFFIX) $(DIST)/sdk/lib/$(DLL_PREFIX)plc4$(DLL_SUFFIX) $(DIST)/sdk/lib/$(DLL_PREFIX)plds4$(DLL_SUFFIX)
 	$(RM) -f $(DIST)/sdk/lib/$(LIB_PREFIX)nspr4_s.$(LIB_SUFFIX) $(DIST)/sdk/lib/$(LIB_PREFIX)plc4_s.$(LIB_SUFFIX) $(DIST)/sdk/lib/$(LIB_PREFIX)plds4_s.$(LIB_SUFFIX)

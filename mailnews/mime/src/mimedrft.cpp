@@ -71,6 +71,7 @@
 #include "nsMsgCompCID.h"
 #include "nsIMsgComposeService.h"
 #include "nsMsgI18N.h"
+#include "nsNativeCharsetUtils.h"
 #include "nsSpecialSystemDirectory.h"
 #include "nsIMsgMessageService.h"
 #include "nsMsgUtils.h"
@@ -132,7 +133,8 @@ nsMsgCreateTempFileSpec(const char *tFileName)
   }
   else {
     nsAutoString tempNameUni; 
-    if (NS_FAILED(nsMsgI18NCopyNativeToUTF16(tFileName, tempNameUni))) {
+    if (NS_FAILED(NS_CopyNativeToUnicode(nsDependentCString(tFileName),
+                                         tempNameUni))) {
       tempName = SAFE_TMP_FILENAME;
       goto fallback;
     }
@@ -161,7 +163,7 @@ nsMsgCreateTempFileSpec(const char *tFileName)
         }
       }
     } 
-    rv = nsMsgI18NCopyUTF16ToNative(tempNameUni, tempName);
+    rv = NS_CopyUnicodeToNative(tempNameUni, tempName);
     NS_ASSERTION(NS_SUCCEEDED(rv), "UTF-16 to native filename failed"); 
   }
 
@@ -599,8 +601,15 @@ mime_draft_process_attachments(mime_draft_data *mdd)
       {
         if (tmpFile->real_name)
           NS_MsgSACopy ( &(tmp->real_name), tmpFile->real_name );
-        else
-          NS_MsgSACopy ( &(tmp->real_name), tmpSpec.get() );
+        else {
+          if (PL_strstr(tmpFile->type, MESSAGE_RFC822))
+            // we have the odd case of processing an e-mail that had an unnamed
+            // eml message attached
+            NS_MsgSACopy( &(tmp->real_name), "ForwardedMessage.eml" );
+
+          else
+            NS_MsgSACopy ( &(tmp->real_name), tmpSpec.get() );
+        }
       }
     }
 
@@ -1851,16 +1860,6 @@ mime_decompose_file_init_fn ( void *stream_closure, MimeHeaders *headers )
   mdd->curAttachment = newAttachment;  
   newAttachment->type =  MimeHeaders_get ( headers, HEADER_CONTENT_TYPE, PR_FALSE, PR_FALSE );
 
-  if (PL_strstr(newAttachment->type, MESSAGE_RFC822))
-  {
-    char *newName = PR_smprintf("%s.eml", newAttachment->real_name);
-    if (newName)
-    {
-      PR_Free(newAttachment->real_name);
-      newAttachment->real_name = newName;
-    }
-  }      
-  
   //
   // This is to handle the degenerated Apple Double attachment.
   //
@@ -1964,7 +1963,13 @@ mime_decompose_file_init_fn ( void *stream_closure, MimeHeaders *headers )
     else if (!nsCRT::strcasecmp(newAttachment->encoding, ENCODING_BASE64))
       fn = &MimeB64DecoderInit;
     else if (!nsCRT::strcasecmp(newAttachment->encoding, ENCODING_QUOTED_PRINTABLE))
-      fn = &MimeQPDecoderInit;
+    {
+      mdd->decoder_data = MimeQPDecoderInit (/* The (nsresult (*) ...) cast is to turn the `void' argument into `MimeObject'. */
+                              ((nsresult (*) (const char *, PRInt32, void *))
+                              dummy_file_write), mdd->tmpFileStream);
+      if (!mdd->decoder_data)
+        return MIME_OUT_OF_MEMORY;
+    }
     else if (!nsCRT::strcasecmp(newAttachment->encoding, ENCODING_UUENCODE) ||
              !nsCRT::strcasecmp(newAttachment->encoding, ENCODING_UUENCODE2) ||
              !nsCRT::strcasecmp(newAttachment->encoding, ENCODING_UUENCODE3) ||
@@ -2082,6 +2087,10 @@ mime_bridge_create_draft_stream(
 
   if (NS_SUCCEEDED(aURL->GetSpec(urlString)))
   {
+    PRInt32 typeIndex = urlString.Find("&type=application/x-message-display");
+    if (typeIndex != kNotFound)
+      urlString.Cut(typeIndex, sizeof("&type=application/x-message-display") - 1);
+
     mdd->url_name = ToNewCString(urlString);
     if (!(mdd->url_name))
       goto FAIL;

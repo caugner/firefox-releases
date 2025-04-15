@@ -394,7 +394,10 @@ NS_IMETHODIMP nsXULTreeAccessible::GetCachedTreeitemAccessible(PRInt32 aRow, nsI
   NS_ASSERTION(mAccessNodeCache, "No accessibility cache for tree");
   NS_ASSERTION(mTree && mTreeView, "Can't get mTree or mTreeView!\n");
 
-  nsCOMPtr<nsITreeColumn> col = aColumn;
+  nsCOMPtr<nsITreeColumn> col;
+#ifdef MOZ_ACCESSIBILITY_ATK
+  col = aColumn;
+#endif
   PRInt32 columnIndex = -1;
 
   if (!col && mTree) {
@@ -797,6 +800,36 @@ NS_IMETHODIMP nsXULTreeitemAccessible::TakeFocus()
 
   // focus event will be fired here
   return nsAccessible::TakeFocus();
+}
+
+NS_IMETHODIMP nsXULTreeitemAccessible::GetAccessibleRelated(PRUint32 aRelationType, nsIAccessible **aRelated)
+{
+  //currentlly only for ATK. and in the future, we'll sync MSAA and ATK same. 
+  //that's why ATK specific code shows here
+  *aRelated = nsnull;
+#ifdef MOZ_ACCESSIBILITY_ATK
+  if (aRelationType == RELATION_NODE_CHILD_OF) {
+    PRInt32 columnIndex;
+    if (NS_SUCCEEDED(mColumn->GetIndex(&columnIndex)) && columnIndex == 0) {
+      PRInt32 parentIndex;
+      if (NS_SUCCEEDED(mTreeView->GetParentIndex(mRow, &parentIndex))) {
+        if (parentIndex == -1) {
+          NS_IF_ADDREF(*aRelated = mParent);
+          return NS_OK;
+        } else {
+          nsCOMPtr<nsIAccessibleTreeCache> cache =
+            do_QueryInterface(mParent);
+          return cache->GetCachedTreeitemAccessible(parentIndex, mColumn, aRelated);
+        }
+      }
+    }
+    return NS_OK;
+  } else { 
+#endif
+    return nsAccessible::GetAccessibleRelated(aRelationType, aRelated);
+#ifdef MOZ_ACCESSIBILITY_ATK
+  }
+#endif
 }
 
 // ---------- nsXULTreeColumnsAccessible ----------

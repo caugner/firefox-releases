@@ -99,7 +99,7 @@
         <![CDATA[
           if (!this._suppressOnSelect && this.getAttribute("suppressonselect") != "true") {
             var event = document.createEvent("Events");
-            event.initEvent("select", false, true);
+            event.initEvent("select", true, true);
             this.dispatchEvent(event);
           }
         ]]>
@@ -595,7 +595,7 @@
       <handler event="keypress" phase="target">
       <![CDATA[
          if (!this.disableKeyNavigation && event.charCode > 0 && 
-             !event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey) {
+             !event.altKey && !event.ctrlKey && !event.metaKey) {
            var key = String.fromCharCode(event.charCode);
            key = key.toLowerCase();
            if (event.timeStamp - this._lastKeyTime > 1000)
@@ -819,7 +819,7 @@
           else
             this.removeAttribute('checked');
           var event = document.createEvent('Events');
-          event.initEvent('CheckboxStateChange', false, true);
+          event.initEvent('CheckboxStateChange', true, true);
           this.dispatchEvent(event);
           return val;
         ]]></setter>

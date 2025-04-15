@@ -44,6 +44,7 @@
 #define __mozce_internal_h
 
 #include <windows.h>
+#include <winsock2.h>
 
 #include "mozce_defs.h"
 
@@ -68,7 +69,7 @@
 **                      included a terminating character for the conversion).
 */
 
-int a2w_buffer(LPCSTR inACPString, int inACPChars, LPWSTR outWideString, int inWideChars);
+int a2w_buffer(const char* inACPString, int inACPChars, unsigned short* outWideString, int inWideChars);
 
 /*
 **  Perform the requested conversion using heap memory.
@@ -94,7 +95,7 @@ int a2w_buffer(LPCSTR inACPString, int inACPChars, LPWSTR outWideString, int inW
 **                  NULL on failure.
 */
 
-LPWSTR a2w_malloc(LPCSTR inACPString, int inACPChars, int* outWideChars);
+unsigned short* a2w_malloc(const char* inACPString, int inACPChars, int* outWideChars);
 
 /*
 **  Perform the requested conversion using the buffer provided.
@@ -116,7 +117,7 @@ LPWSTR a2w_malloc(LPCSTR inACPString, int inACPChars, int* outWideChars);
 **                      should the string be terminated (i.e. if inWideChars
 **                      included a terminating character for the conversion).
 */
-int w2a_buffer(LPCWSTR inWideString, int inWideChars, LPSTR outACPString, int inACPChars);
+int w2a_buffer(const unsigned short* inWideString, int inWideChars, char* outACPString, int inACPChars);
 
 /*
 **  Perform the requested conversion using heap memory.
@@ -141,7 +142,7 @@ int w2a_buffer(LPCWSTR inWideString, int inWideChars, LPSTR outACPString, int in
 **                  NULL on failure.
 */
 
-LPSTR w2a_malloc(LPCWSTR inWideString, int inWideChars, int* outACPChars);
+char* w2a_malloc(unsigned short* inWideString, int inWideChars, int* outACPChars);
 
 
 void dumpMemoryInfo();
@@ -154,13 +155,13 @@ void dumpMemoryInfo();
 extern "C" {
 #endif
 
-  MOZCE_SHUNT_API int mozce_printf(const char *, ...);
+	MOZCE_SHUNT_API int mozce_printf(const char *, ...);
 
 #ifdef __cplusplus
 };
 #endif
 
-void nclog (const char *fmt, ...);
+int nclog (const char *fmt, ...);
 void nclograw(const char* data, long length);
 
 //#define MOZCE_PRECHECK                                                     \
@@ -176,6 +177,10 @@ void nclograw(const char* data, long length);
 //    nclograw(buffer, strlen(buffer));                                      \
 //}                                                                          \
 
-#define MOZCE_PRECHECK
+#define MOZCE_PRECHECK                 \
+{                                      \
+    SetLastError(0);                   \
+}
+
 
 #endif /* __mozce_internal_h */

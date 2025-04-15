@@ -37,7 +37,7 @@
 /*
  * CMS recipient list functions
  *
- * $Id: cmsreclist.c,v 1.3 2004/04/25 15:03:16 gerv%gerv.net Exp $
+ * $Id: cmsreclist.c,v 1.3.18.2 2006/08/04 19:10:53 kaie%kuix.de Exp $
  */
 
 #include "cmslocal.h"
@@ -66,21 +66,32 @@ nss_cms_recipients_traverse(NSSCMSRecipientInfo **recipientinfos, NSSCMSRecipien
 	switch (ri->recipientInfoType) {
 	case NSSCMSRecipientInfoID_KeyTrans:
 	    if (recipient_list) {
+		NSSCMSRecipientIdentifier *recipId =
+		   &ri->ri.keyTransRecipientInfo.recipientIdentifier;
+
+		if (recipId->identifierType != NSSCMSRecipientID_IssuerSN &&
+                    recipId->identifierType != NSSCMSRecipientID_SubjectKeyID) {
+		    PORT_SetError(SEC_ERROR_INVALID_ARGS);
+		    return -1;
+		}                
 		/* alloc one & fill it out */
 		rle = (NSSCMSRecipient *)PORT_ZAlloc(sizeof(NSSCMSRecipient));
-		if (rle == NULL)
+		if (!rle)
 		    return -1;
 		
 		rle->riIndex = i;
 		rle->subIndex = -1;
-		switch (ri->ri.keyTransRecipientInfo.recipientIdentifier.identifierType) {
+		switch (recipId->identifierType) {
 		case NSSCMSRecipientID_IssuerSN:
 		    rle->kind = RLIssuerSN;
-		    rle->id.issuerAndSN = ri->ri.keyTransRecipientInfo.recipientIdentifier.id.issuerAndSN;
+		    rle->id.issuerAndSN = recipId->id.issuerAndSN;
 		    break;
 		case NSSCMSRecipientID_SubjectKeyID:
 		    rle->kind = RLSubjKeyID;
-		    rle->id.subjectKeyID = ri->ri.keyTransRecipientInfo.recipientIdentifier.id.subjectKeyID;
+		    rle->id.subjectKeyID = recipId->id.subjectKeyID;
+		    break;
+		default: /* we never get here because of identifierType check
+                            we done before. Leaving it to kill compiler warning */
 		    break;
 		}
 		recipient_list[rlindex++] = rle;
@@ -96,7 +107,7 @@ nss_cms_recipients_traverse(NSSCMSRecipientInfo **recipientinfos, NSSCMSRecipien
 		    rek = ri->ri.keyAgreeRecipientInfo.recipientEncryptedKeys[j];
 		    /* alloc one & fill it out */
 		    rle = (NSSCMSRecipient *)PORT_ZAlloc(sizeof(NSSCMSRecipient));
-		    if (rle == NULL)
+		    if (!rle)
 			return -1;
 		    
 		    rle->riIndex = i;

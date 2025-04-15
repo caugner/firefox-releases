@@ -61,7 +61,6 @@
 #include "nsIPresShell.h"
 #include "nsGUIEvent.h"
 #include "nsPresContext.h"
-#include "nsIBrowserDOMWindow.h"
 #include "nsIDOMCSSStyleDeclaration.h"
 #include "nsIDOMViewCSS.h"
 #include "nsIXBLService.h"
@@ -225,17 +224,10 @@ nsXMLElement::MaybeTriggerAutoLink(nsIDocShell *aShell)
 
         // XXX Should probably do this using atoms 
         if (value.EqualsLiteral("new")) {
-          if (nsContentUtils::GetBoolPref("dom.disable_open_during_load")) {
-            // disabling open during load
-
-            return NS_OK;
-          }
-
-          if (nsContentUtils::GetIntPref("browser.link.open_newwindow",
-                                     nsIBrowserDOMWindow::OPEN_NEWWINDOW) ==
-              nsIBrowserDOMWindow::OPEN_NEWWINDOW) {
-            verb = eLinkVerb_New;
-          }
+          // We should just act like an HTML link with target="_blank" and if
+          // someone diverts or blocks those, that's fine with us.  We don't
+          // care.
+          verb = eLinkVerb_New;
         } else if (value.EqualsLiteral("replace")) {
           // We want to actually stop processing the current document now.
           // We do this by returning the correct value so that the one
@@ -247,28 +239,14 @@ nsXMLElement::MaybeTriggerAutoLink(nsIDocShell *aShell)
         }
 
         // base
-        nsCOMPtr<nsIURI> base = GetBaseURI();
-        if (!base)
-          break;
-
-        // href= ?
-        rv = nsGenericElement::GetAttr(kNameSpaceID_XLink, nsHTMLAtoms::href,
-                                       value);
-        if (rv == NS_CONTENT_ATTR_HAS_VALUE && !value.IsEmpty()) {
-          nsCOMPtr<nsIURI> uri;
-          rv = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(uri),
-                                                         value,
-                                                         GetOwnerDoc(),
-                                                         base);
+        nsCOMPtr<nsIURI> uri = nsContentUtils::GetXLinkURI(this);
+        if (uri) {
+          nsCOMPtr<nsPresContext> pc;
+          rv = DocShellToPresContext(aShell, getter_AddRefs(pc));
           if (NS_SUCCEEDED(rv)) {
-            nsCOMPtr<nsPresContext> pc;
-            rv = DocShellToPresContext(aShell, getter_AddRefs(pc));
-            if (NS_SUCCEEDED(rv)) {
-              rv = TriggerLink(pc, verb, base, uri,
-                               EmptyString(), PR_TRUE, PR_FALSE);
+            rv = TriggerLink(pc, verb, uri, EmptyString(), PR_TRUE, PR_FALSE);
 
-              return SpecialAutoLoadReturn(rv,verb);
-            }
+            return SpecialAutoLoadReturn(rv, verb);
           }
         } // href
       }
@@ -325,20 +303,17 @@ nsXMLElement::HandleDOMEvent(nsPresContext* aPresContext,
 
           // XXX Should probably do this using atoms 
           if (show.EqualsLiteral("new")) {
-            if (nsContentUtils::GetIntPref("browser.link.open_newwindow",
-                                      nsIBrowserDOMWindow::OPEN_NEWWINDOW) ==
-                nsIBrowserDOMWindow::OPEN_NEWWINDOW) {
-              verb = eLinkVerb_New;
-            }
+            verb = eLinkVerb_New;
           } else if (show.EqualsLiteral("replace")) {
             verb = eLinkVerb_Replace;
           } else if (show.EqualsLiteral("embed")) {
             verb = eLinkVerb_Embed;
           }
 
-          nsCOMPtr<nsIURI> baseURI = GetBaseURI();
-          ret = TriggerLink(aPresContext, verb, baseURI, uri,
-                            EmptyString(), PR_TRUE, PR_TRUE);
+          nsAutoString target;
+          GetAttr(kNameSpaceID_XLink, nsLayoutAtoms::_moz_target, target);
+          ret = TriggerLink(aPresContext, verb, uri,
+                            target, PR_TRUE, PR_TRUE);
 
           *aEventStatus = nsEventStatus_eConsumeDoDefault; 
         }
@@ -379,23 +354,9 @@ nsXMLElement::HandleDOMEvent(nsPresContext* aPresContext,
 
     case NS_MOUSE_ENTER_SYNTH:
       {
-        nsAutoString href;
-        nsGenericElement::GetAttr(kNameSpaceID_XLink, nsHTMLAtoms::href,
-                                  href);
-        if (href.IsEmpty()) {
-          *aEventStatus = nsEventStatus_eConsumeDoDefault; 
-          break;
-        }
-
-        nsCOMPtr<nsIURI> baseURI = GetBaseURI();
-
-        nsCOMPtr<nsIURI> uri;
-        ret = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(uri),
-                                                        href,
-                                                        document,
-                                                        baseURI);
-        if (NS_SUCCEEDED(ret)) {
-          ret = TriggerLink(aPresContext, eLinkVerb_Replace, baseURI, uri,
+        nsCOMPtr<nsIURI> uri = nsContentUtils::GetXLinkURI(this);
+        if (uri) {
+          ret = TriggerLink(aPresContext, eLinkVerb_Replace, uri,
                             EmptyString(), PR_FALSE, PR_TRUE);
         }
         

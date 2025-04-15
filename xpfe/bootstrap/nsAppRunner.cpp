@@ -22,6 +22,7 @@
  * Contributor(s):
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *   Fredrik Holmqvist <thesuckiestemail@yahoo.se>
+ *   Masayuki Nakano <masayuki@d-toybox.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -535,12 +536,8 @@ LaunchApplicationWithArgs(const char *commandLineArg,
 
   nsresult rv;
 
-  nsCOMPtr<nsICmdLineService> cmdLine =
-    do_GetService(NS_COMMANDLINESERVICE_CONTRACTID, &rv);
-  if (NS_FAILED(rv)) return rv;
-
   nsCOMPtr <nsICmdLineHandler> handler;
-  rv = cmdLine->GetHandlerForParam(aParam, getter_AddRefs(handler));
+  rv = cmdLineArgs->GetHandlerForParam(aParam, getter_AddRefs(handler));
   if (NS_FAILED(rv)) return rv;
 
   if (!handler) return NS_ERROR_FAILURE;
@@ -570,7 +567,8 @@ LaunchApplicationWithArgs(const char *commandLineArg,
         if (NS_FAILED(rv)) return rv;
 
         if (openWindowWithArgs) {
-          NS_ConvertASCIItoUTF16 cmdArgs(cmdResult);
+          nsAutoString cmdArgs;
+          NS_CopyNativeToUnicode(cmdResult, cmdArgs);
 #ifdef DEBUG_CMD_LINE
           printf("opening %s with %s\n", chromeUrlForTask.get(), "OpenWindow");
 #endif /* DEBUG_CMD_LINE */
@@ -640,7 +638,7 @@ static PRBool IsStartupCommand(const char *arg)
 
 
 // This should be done by app shell enumeration someday
-nsresult DoCommandLines(nsICmdLineService* cmdLineArgs, PRBool heedGeneralStartupPrefs, PRBool *windowOpened)
+nsresult DoCommandLines(nsICmdLineService* cmdLineArgs, PRBool *windowOpened)
 {
   NS_ENSURE_ARG(windowOpened);
   *windowOpened = PR_FALSE;
@@ -661,21 +659,18 @@ nsresult DoCommandLines(nsICmdLineService* cmdLineArgs, PRBool heedGeneralStartu
 	if (NS_SUCCEEDED(rv) && !tempString.IsEmpty())
     PR_sscanf(tempString.get(), "%d", &height);
   
-  if (heedGeneralStartupPrefs) {
-    nsCOMPtr<nsIAppStartup> appStartup(do_GetService(NS_APPSTARTUP_CONTRACTID, &rv));
-    if (NS_FAILED(rv)) return rv;
-    rv = appStartup->CreateStartupState(width, height, windowOpened);
-    if (NS_FAILED(rv)) return rv;
-  }
-  else {
     PRInt32 argc = 0;
     rv = cmdLineArgs->GetArgc(&argc);
-    if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) 
+    return rv;
 
     char **argv = nsnull;
     rv = cmdLineArgs->GetArgv(&argv);
-    if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) 
+    return rv;
 
+  // first apply command line args
+  // if there is any window opened, startup preferences are ignored
     PRInt32 i = 0;
     for (i=1;i<argc;i++) {
 #ifdef DEBUG_CMD_LINE
@@ -700,6 +695,37 @@ nsresult DoCommandLines(nsICmdLineService* cmdLineArgs, PRBool heedGeneralStartu
           return rv;
       }
     }
+   // second if an URL is given in the command line
+   // then open a browser window with the URL
+  nsXPIDLCString urlToLoad;
+  rv = cmdLineArgs->GetURLToLoad(getter_Copies(urlToLoad));
+  if (NS_SUCCEEDED(rv) && !urlToLoad.IsEmpty()) {
+    nsCOMPtr<nsICmdLineHandler> handler(
+      do_GetService("@mozilla.org/commandlinehandler/general-startup;1?type=browser"));
+
+    nsXPIDLCString chromeUrlForTask;
+    rv = handler->GetChromeUrlForTask(getter_Copies(chromeUrlForTask));
+
+    if (NS_SUCCEEDED(rv)) {
+      // convert the cmdLine URL to Unicode
+      nsAutoString url;
+      NS_CopyNativeToUnicode(urlToLoad, url);
+      rv = OpenWindow(chromeUrlForTask, url, width, height);
+    }
+
+    if (NS_SUCCEEDED(rv)) {
+      *windowOpened = PR_TRUE;
+    }
+  }
+
+  // third if no window is opened then apply the startup preferences
+  if (!*windowOpened) {
+    nsCOMPtr<nsIAppStartup> appStartup(do_GetService(NS_APPSTARTUP_CONTRACTID, &rv));
+    if (NS_FAILED(rv))
+      return rv;
+    rv = appStartup->CreateStartupState(width, height, windowOpened);
+    if (NS_FAILED(rv))
+      return rv;
   }
   return NS_OK;
 }
@@ -1153,35 +1179,9 @@ static nsresult main1(int argc, char* argv[], nsISupports *nativeApp )
   NS_TIMELINE_LEAVE("appStartup->CreateHiddenWindow");
 
   // This will go away once Components are handling there own commandlines
-  // if we have no command line arguments, we need to heed the
-  // "general.startup.*" prefs
-  // if we had no command line arguments, argc == 1.
 
   PRBool windowOpened = PR_FALSE;
-  PRBool defaultStartup;
-#if defined(XP_MAC) || defined(XP_MACOSX)
-  // On Mac, nsCommandLineServiceMac may have added synthetic
-  // args. Check this adjusted value instead of the raw value.
-  PRInt32 processedArgc;
-  cmdLineArgs->GetArgc(&processedArgc);
-  defaultStartup = (processedArgc == 1);
-#if defined(XP_MACOSX)
-  // On OSX, we get passed two args if double-clicked from the Finder.
-  // The second is our PSN. Check for this and consider it to be default.
-  if (argc == 2 && processedArgc == 2) {
-    ProcessSerialNumber ourPSN;
-    if (::MacGetCurrentProcess(&ourPSN) == noErr) {
-      char argBuf[64];
-      sprintf(argBuf, "-psn_%ld_%ld", ourPSN.highLongOfPSN, ourPSN.lowLongOfPSN);
-      if (!strcmp(argBuf, argv[1]))
-        defaultStartup = PR_TRUE;
-    }
-  }
-#endif /* XP_MACOSX */
-#else
-  defaultStartup = (argc == 1);
-#endif
-  rv = DoCommandLines(cmdLineArgs, defaultStartup, &windowOpened);
+  rv = DoCommandLines(cmdLineArgs, &windowOpened);
   if (NS_FAILED(rv))
   {
     NS_WARNING("failed to process command line");
@@ -1350,7 +1350,7 @@ static nsresult DumpVersion(char *appname)
   nsresult rv = NS_OK;
   long buildID = NS_BUILD_ID;  // 10-digit number
 
-  printf("%s %s, Copyright (c) 2003-2005 mozilla.org", NS_STRINGIFY(MOZ_APP_DISPLAYNAME), NS_STRINGIFY(MOZ_APP_VERSION));
+  printf("%s %s, Copyright (c) 2003-2006 mozilla.org", NS_STRINGIFY(MOZ_APP_DISPLAYNAME), NS_STRINGIFY(MOZ_APP_VERSION));
 
   if(buildID) {
     printf(", build %u\n", (unsigned int)buildID);
@@ -1568,6 +1568,20 @@ int main(int argc, char* argv[])
 
 #if defined(XP_UNIX) || defined(XP_BEOS)
   InstallUnixSignalHandlers(argv[0]);
+#endif
+
+#ifdef MOZ_ACCESSIBILITY_ATK
+  // Reset GTK_MODULES, strip atk-bridge if exists
+  // Mozilla will load libatk-bridge.so later if necessary
+  const char* gtkModules = PR_GetEnv("GTK_MODULES");
+  if (gtkModules && *gtkModules) {
+    nsCString gtkModulesStr(gtkModules);
+    gtkModulesStr.ReplaceSubstring("atk-bridge", "");
+    char* expr = PR_smprintf("GTK_MODULES=%s", gtkModulesStr.get());
+    if (expr)
+      PR_SetEnv(expr);
+    // We intentionally leak |expr| here since it is required by PR_SetEnv.
+  }
 #endif
 
 #if defined(XP_OS2)

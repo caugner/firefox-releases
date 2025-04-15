@@ -80,7 +80,7 @@
           
           try {
             var isupports = Components.classes['@mozilla.org/consoleservice;1'].getService();
-            this.mCService = isupports.QueryInterface(Components.interfaces.nsIConsoleService);
+            this.mCService = isupports.QueryInterface(Components.interfaces.nsIConsoleService_MOZILLA_1_8_BRANCH);
             this.mCService.registerListener(this.mConsoleListener);
           } catch (ex) {
             appendItem(
@@ -128,8 +128,6 @@
       <method name="appendItem">
         <parameter name="aObject"/>
         <body><![CDATA[
-          if (!aObject.message) return;
-
           try {
             // Try to QI it to a script error to get more info
             var scriptError = aObject.QueryInterface(Components.interfaces.nsIScriptError);
@@ -143,7 +141,10 @@
             try {
               // Try to QI it to a console message
               var msg = aObject.QueryInterface(Components.interfaces.nsIConsoleMessage);
-              this.appendMessage(msg.message);
+              if (msg.message)
+                this.appendMessage(msg.message);
+              else // observed a null/"clear" message
+                this.clearConsole();
             } catch (ex2) {
               // Give up and append the object itself as a string
               this.appendMessage(aObject);
@@ -165,6 +166,7 @@
           row.setAttribute("typetext", this.mStrBundle.getString(typetext));
           row.setAttribute("type", warning ? "warning" : "error");
           row.setAttribute("msg", aObject.errorMessage);
+          row.setAttribute("category", aObject.category);
           if (aObject.lineNumber || aObject.sourceName) {
             row.setAttribute("href", aObject.sourceName);
             row.setAttribute("line", aObject.lineNumber);
@@ -200,12 +202,9 @@
       
       <method name="clear">
         <body><![CDATA[
+          // add a "clear" message (mainly for other listeners)
           this.mCService.logStringMessage(null);
-          this.mCount = 0;
-          
-          var newRows = this.mConsoleRowBox.cloneNode(false);
-          this.mConsoleRowBox.parentNode.replaceChild(newRows, this.mConsoleRowBox);
-          this.mConsoleRowBox = newRows;
+          this.mCService.reset();
         ]]></body>
       </method>
             
@@ -249,6 +248,18 @@
         ]]></body>
       </method>
             
+      <method name="clearConsole">
+        <body><![CDATA[
+          if (this.mCount == 0) // already clear
+            return;
+          this.mCount = 0;
+          
+          var newRows = this.mConsoleRowBox.cloneNode(false);
+          this.mConsoleRowBox.parentNode.replaceChild(newRows, this.mConsoleRowBox);
+          this.mConsoleRowBox = newRows;
+        ]]></body>
+      </method>
+      
       <!-- UTILITY FUNCTIONS -->
       
       <method name="repeatChar">
@@ -298,8 +309,10 @@
             <xul:label class="label" value="&errFile.label;"/>
             <xul:box class="console-error-source" xbl:inherits="href,line"/>
             <spacer flex="1"/>
-            <xul:label class="label" value="&errLine.label;"/>
-            <xul:label class="label" xbl:inherits="value=line" flex="1"/>
+            <xul:hbox class="lineNumberRow" xbl:inherits="line">
+              <xul:label class="label" value="&errLine.label;"/>
+              <xul:label class="label" xbl:inherits="value=line"/>
+            </xul:hbox>
           </xul:box>
           <xul:vbox class="console-row-code" xbl:inherits="selected,hidden=hideCode">
             <xul:label class="monospace console-code" xbl:inherits="value=code" crop="end"/>

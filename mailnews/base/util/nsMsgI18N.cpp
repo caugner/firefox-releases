@@ -150,7 +150,11 @@ nsresult nsMsgI18NConvertToUnicode(const char* aCharset,
   }
   else if (!PL_strcasecmp(aCharset, "UTF-8")) {
     if (IsUTF8(inString)) {
-      CopyUTF8toUTF16(inString, outString);
+      nsAutoString tmp;
+      CopyUTF8toUTF16(inString, tmp);
+      if (!tmp.IsEmpty() && tmp.get()[0] == PRUnichar(0xFEFF))
+        tmp.Cut(0, 1);
+      outString.Assign(tmp);
       return NS_OK;
     }
     NS_WARNING("Invalid UTF-8 string");
@@ -214,6 +218,21 @@ const char * nsMsgI18NFileSystemCharset()
 			fileSystemCharset.Assign("ISO-8859-1");
 	}
 	return fileSystemCharset.get();
+}
+
+// Charset used by the text file.
+void nsMsgI18NTextFileCharset(nsACString& aCharset)
+{
+  nsresult rv;
+  nsCOMPtr <nsIPlatformCharset> platformCharset =
+    do_GetService(NS_PLATFORMCHARSET_CONTRACTID, &rv);
+  if (NS_SUCCEEDED(rv)) {
+    rv = platformCharset->GetCharset(kPlatformCharsetSel_PlainTextInFile,
+                                     aCharset);
+  }
+
+  if (NS_FAILED(rv))
+    aCharset.Assign("ISO-8859-1");
 }
 
 // MIME encoder, output string should be freed by PR_FREE

@@ -148,9 +148,9 @@ static gboolean visibility_notify_event_cb(GtkWidget *widget,
                                            GdkEventVisibility *event);
 static gboolean window_state_event_cb     (GtkWidget *widget,
                                            GdkEventWindowState *event);
-static void     style_set_cb              (GtkWidget *widget,
-                                           GtkStyle *previous_style,
-                                           gpointer data);
+static void     theme_changed_cb          (GtkSettings *settings,
+                                           GParamSpec *pspec,
+                                           nsWindow *data);
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
@@ -199,6 +199,9 @@ PRBool nsWindow::sIsDraggingOutOf = PR_FALSE;
 // This is the time of the last button press event.  The drag service
 // uses it as the time to start drags.
 guint32   nsWindow::mLastButtonPressTime = 0;
+// Time of the last button release event. We use it to detect when the
+// drag ended before we could properly setup drag and drop.
+guint32   nsWindow::mLastButtonReleaseTime = 0;
 
 static NS_DEFINE_IID(kCDragServiceCID,  NS_DRAGSERVICE_CID);
 
@@ -372,6 +375,10 @@ nsWindow::Destroy(void)
     mIsDestroyed = PR_TRUE;
     mCreated = PR_FALSE;
 
+    g_signal_handlers_disconnect_by_func(gtk_settings_get_default(),
+                                         (gpointer)G_CALLBACK(theme_changed_cb),
+                                         this);
+
     // ungrab if required
     nsCOMPtr<nsIWidget> rollupWidget = do_QueryReferent(gRollupWindow);
     if (NS_STATIC_CAST(nsIWidget *, this) == rollupWidget.get()) {
@@ -412,6 +419,11 @@ nsWindow::Destroy(void)
     // the group, destroying it if necessary.  And, if we're a child
     // window this isn't going to harm anything.
     mWindowGroup = nsnull;
+
+    if (mDragMotionTimerID) {
+        gtk_timeout_remove(mDragMotionTimerID);
+        mDragMotionTimerID = 0;
+    }
 
     if (mShell) {
         gtk_widget_destroy(mShell);
@@ -481,10 +493,8 @@ NS_IMETHODIMP
 nsWindow::IsVisible(PRBool & aState)
 {
     aState = mIsVisible;
-    if (mIsTopLevel && mShell && !GTK_WIDGET_MAPPED(mShell)) {
-        /* we do not change mIsVisible to PR_FALSE here so we don't bother
-           to change it back to PR_TRUE when the mShell is mapped again. */
-        aState = PR_FALSE;
+    if (mIsTopLevel && mShell) {
+        aState = GTK_WIDGET_VISIBLE(mShell);
     }
     return NS_OK;
 }
@@ -806,6 +816,55 @@ nsWindow::SetCursor(nsCursor aCursor)
 }
 
 
+static
+PRUint8* Data32BitTo1Bit(PRUint8* aImageData,
+                         PRUint32 aImageBytesPerRow,
+                         PRUint32 aWidth, PRUint32 aHeight)
+{
+  PRUint32 outBpr = (aWidth + 7) / 8;
+  
+  PRUint8* outData = new PRUint8[outBpr * aHeight];
+  if (!outData)
+      return NULL;
+
+  PRUint8 *outRow = outData,
+          *imageRow = aImageData;
+
+  for (PRUint32 curRow = 0; curRow < aHeight; curRow++) {
+      PRUint8 *irow = imageRow;
+      PRUint8 *orow = outRow;
+      PRUint8 imagePixels = 0;
+      PRUint8 offset = 0;
+
+      for (PRUint32 curCol = 0; curCol < aWidth; curCol++) {
+          PRUint8 r = *imageRow++,
+                  g = *imageRow++,
+                  b = *imageRow++;
+               /* a = * */imageRow++;
+
+          if ((r + b + g) < 3 * 128)
+              imagePixels |= (1 << offset);
+
+          if (offset == 7) {
+              *outRow++ = imagePixels;
+              offset = 0;
+              imagePixels = 0;
+          } else {
+              offset++;
+          }
+      }
+      if (offset != 0)
+          *outRow++ = imagePixels;
+
+      imageRow = irow + aImageBytesPerRow;
+      outRow = orow + outBpr;
+  }
+
+  return outData;
+}
+
+
+
 NS_IMETHODIMP
 nsWindow::SetCursor(imgIContainer* aCursor,
                     PRUint32 aHotspotX, PRUint32 aHotspotY)
@@ -827,9 +886,6 @@ nsWindow::SetCursor(imgIContainer* aCursor,
             PR_FindFunctionSymbolAndLibrary("gdk_display_get_default", &lib);
         sPixbufCursorChecked = PR_TRUE;
     }
-    if (!_gdk_cursor_new_from_pixbuf || !_gdk_display_get_default)
-        return NS_ERROR_NOT_IMPLEMENTED;
-
     mCursor = nsCursor(-1);
 
     // Get first image frame
@@ -862,10 +918,47 @@ nsWindow::SetCursor(imgIContainer* aCursor,
         pixbuf = alphaBuf;
     }
 
-    // Now create the cursor
-    GdkCursor* cursor = _gdk_cursor_new_from_pixbuf(_gdk_display_get_default(),
-                                                    pixbuf,
-                                                    aHotspotX, aHotspotY);
+    GdkCursor* cursor;
+    if (!_gdk_cursor_new_from_pixbuf || !_gdk_display_get_default) {
+        // Fallback to a monochrome cursor
+        int width = gdk_pixbuf_get_width(pixbuf);
+        int height = gdk_pixbuf_get_height(pixbuf);
+        GdkPixmap* mask = gdk_pixmap_new(NULL, width, height, 1);
+        if (!mask)
+            return NS_ERROR_OUT_OF_MEMORY;
+
+        PRUint8* data = Data32BitTo1Bit(gdk_pixbuf_get_pixels(pixbuf),
+                                        gdk_pixbuf_get_rowstride(pixbuf),
+                                        width, height);
+        if (!data) {
+            g_object_unref(mask);
+            return NS_ERROR_OUT_OF_MEMORY;
+        }
+
+        GdkPixmap* image = gdk_bitmap_create_from_data(NULL, (const gchar*)data, width,
+                                                       height);
+        delete[] data;
+        if (!image) {
+            g_object_unref(mask);
+            return NS_ERROR_OUT_OF_MEMORY;
+        }
+
+        gdk_pixbuf_render_threshold_alpha(pixbuf, mask, 0, 0, 0, 0, width,
+                                          height, 1);
+
+        GdkColor fg = { 0, 0, 0, 0 }; // Black
+        GdkColor bg = { 0, 0xFFFF, 0xFFFF, 0xFFFF }; // White
+
+        cursor = gdk_cursor_new_from_pixmap(image, mask, &fg, &bg, aHotspotX,
+                                            aHotspotY);
+        g_object_unref(image);
+        g_object_unref(mask);
+    } else {
+        // Now create the cursor
+        cursor = _gdk_cursor_new_from_pixbuf(_gdk_display_get_default(),
+                                             pixbuf,
+                                             aHotspotX, aHotspotY);
+    }
     gdk_pixbuf_unref(pixbuf);
     nsresult rv = NS_ERROR_OUT_OF_MEMORY;
     if (cursor) {
@@ -1420,6 +1513,7 @@ nsWindow::OnDeleteEvent(GtkWidget *aWidget, GdkEventAny *aEvent)
 void
 nsWindow::OnEnterNotifyEvent(GtkWidget *aWidget, GdkEventCrossing *aEvent)
 {
+    // XXXldb Is this the right test for embedding cases?
     if (aEvent->subwindow != NULL)
         return;
 
@@ -1437,6 +1531,7 @@ nsWindow::OnEnterNotifyEvent(GtkWidget *aWidget, GdkEventCrossing *aEvent)
 void
 nsWindow::OnLeaveNotifyEvent(GtkWidget *aWidget, GdkEventCrossing *aEvent)
 {
+    // XXXldb Is this the right test for embedding cases?
     if (aEvent->subwindow != NULL)
         return;
 
@@ -1523,6 +1618,7 @@ nsWindow::OnButtonPressEvent(GtkWidget *aWidget, GdkEventButton *aEvent)
 
     // Always save the time of this event
     mLastButtonPressTime = aEvent->time;
+    mLastButtonReleaseTime = 0;
 
     // check to see if we should rollup
     nsWindow *containerWindow;
@@ -1568,6 +1664,8 @@ void
 nsWindow::OnButtonReleaseEvent(GtkWidget *aWidget, GdkEventButton *aEvent)
 {
     PRUint32      eventType;
+
+    mLastButtonReleaseTime = aEvent->time;
 
     switch (aEvent->button) {
     case 2:
@@ -1922,6 +2020,23 @@ nsWindow::OnDragMotionEvent(GtkWidget *aWidget,
                             gpointer aData)
 {
     LOG(("nsWindow::OnDragMotionSignal\n"));
+
+    if (mLastButtonReleaseTime) {
+      // The drag ended before it was even setup to handle the end of the drag
+      // So, we fake the button getting released again to release the drag
+      GtkWidget *widget = gtk_grab_get_current();
+      GdkEvent event;
+      gboolean retval;
+      memset(&event, 0, sizeof(event));
+      event.type = GDK_BUTTON_RELEASE;
+      event.button.time = mLastButtonReleaseTime;
+      event.button.button = 1;
+      mLastButtonReleaseTime = 0;
+      if (widget) {
+        g_signal_emit_by_name(widget, "button_release_event", &event, &retval);
+        return TRUE;
+      }
+    }
 
     sIsDraggingOutOf = PR_FALSE;
 
@@ -2434,8 +2549,14 @@ nsWindow::NativeCreate(nsIWidget        *aParent,
                          G_CALLBACK(delete_event_cb), NULL);
         g_signal_connect(G_OBJECT(mShell), "window_state_event",
                          G_CALLBACK(window_state_event_cb), NULL);
-        g_signal_connect(G_OBJECT(mShell), "style_set",
-                         G_CALLBACK(style_set_cb), NULL);
+
+        GtkSettings* default_settings = gtk_settings_get_default();
+        g_signal_connect_after(default_settings,
+                               "notify::gtk-theme-name",
+                               G_CALLBACK(theme_changed_cb), this);
+        g_signal_connect_after(default_settings,
+                               "notify::gtk-font-name",
+                               G_CALLBACK(theme_changed_cb), this);
     }
 
     if (mContainer) {
@@ -3916,11 +4037,9 @@ window_state_event_cb (GtkWidget *widget, GdkEventWindowState *event)
 
 /* static */
 void
-style_set_cb (GtkWidget *widget, GtkStyle *previous_style, gpointer data)
+theme_changed_cb (GtkSettings *settings, GParamSpec *pspec, nsWindow *data)
 {
-    nsWindow *window = get_window_for_gtk_widget(widget);
-    if (window)
-        window->ThemeChanged();
+    data->ThemeChanged();
 }
 
 //////////////////////////////////////////////////////////////////////

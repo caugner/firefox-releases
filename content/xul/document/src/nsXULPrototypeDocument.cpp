@@ -226,7 +226,7 @@ nsXULPDGlobalObject_resolve(JSContext *cx, JSObject *obj, jsval id)
 
 JSClass nsXULPDGlobalObject::gSharedGlobalClass = {
     "nsXULPrototypeScript compilation scope",
-    JSCLASS_HAS_PRIVATE | JSCLASS_PRIVATE_IS_NSISUPPORTS,
+    JSCLASS_HAS_PRIVATE | JSCLASS_PRIVATE_IS_NSISUPPORTS | JSCLASS_GLOBAL_FLAGS,
     JS_PropertyStub,  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub,
     JS_EnumerateStub, nsXULPDGlobalObject_resolve,  JS_ConvertStub,
     nsXULPDGlobalObject_finalize
@@ -357,12 +357,7 @@ nsXULPrototypeDocument::Read(nsIObjectInputStream* aStream)
 {
     nsresult rv;
 
-    PRUint32 version;
-    rv = aStream->Read32(&version);
-    if (version != XUL_FASTLOAD_FILE_VERSION)
-        return NS_ERROR_FAILURE;
-
-    rv |= aStream->ReadObject(PR_TRUE, getter_AddRefs(mURI));
+    rv = aStream->ReadObject(PR_TRUE, getter_AddRefs(mURI));
 
     PRUint32 referenceCount;
     nsCOMPtr<nsIURI> referenceURI;
@@ -489,9 +484,7 @@ nsXULPrototypeDocument::Write(nsIObjectOutputStream* aStream)
 {
     nsresult rv;
 
-    rv = aStream->Write32(XUL_FASTLOAD_FILE_VERSION);
-    
-    rv |= aStream->WriteCompoundObject(mURI, NS_GET_IID(nsIURI), PR_TRUE);
+    rv = aStream->WriteCompoundObject(mURI, NS_GET_IID(nsIURI), PR_TRUE);
     
     PRUint32 referenceCount;
     nsCOMPtr<nsIURI> referenceURI;

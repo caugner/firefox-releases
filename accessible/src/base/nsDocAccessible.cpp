@@ -105,8 +105,6 @@ nsDocAccessible::nsDocAccessible(nsIDOMNode *aDOMNode, nsIWeakReference* aShell)
     }
   }
   
-  PutCacheEntry(gGlobalDocAccessibleCache, mWeakShell, this);
-
   // XXX aaronl should we use an algorithm for the initial cache size?
   mAccessNodeCache.Init(kDefaultCacheSize);
 
@@ -439,6 +437,8 @@ NS_IMETHODIMP nsDocAccessible::GetParent(nsIAccessible **aParent)
 
 NS_IMETHODIMP nsDocAccessible::Init()
 {
+  PutCacheEntry(gGlobalDocAccessibleCache, mWeakShell, this);
+
   AddEventListeners();
 
   nsresult rv = nsBlockAccessible::Init();
@@ -448,8 +448,8 @@ NS_IMETHODIMP nsDocAccessible::Init()
       mRoleMapEntry->role != ROLE_ALERT &&
       mRoleMapEntry->role != ROLE_DOCUMENT) {
     // Document accessible can only have certain roles
-    // This was set in nsAccessible::Init() based on xhtml2:role attribute
-    mRoleMapEntry->role = nsnull;
+    // This was set in nsAccessible::Init() based on dynamic role attribute
+    mRoleMapEntry = nsnull; // role attribute is not valid for a document
   }
 
   return rv;
@@ -511,10 +511,12 @@ void nsDocAccessible::GetBoundsRect(nsRect& aBounds, nsIFrame** aRelativeFrame)
       return;
     }
     nsIViewManager* vm = presShell->GetViewManager();
+    if (!vm) {
+      return;
+    }
 
     nsIScrollableView* scrollableView = nsnull;
-    if (vm)
-      vm->GetRootScrollableView(&scrollableView);
+    vm->GetRootScrollableView(&scrollableView);
 
     nsRect viewBounds(0, 0, 0, 0);
     if (scrollableView) {
@@ -765,7 +767,8 @@ nsDocAccessible::AttributeChanged(nsIDocument *aDocument, nsIContent* aContent,
     return;
   }
 
-  if (aNameSpaceID == kNameSpaceID_XHTML2_Unofficial) {
+  if (aNameSpaceID == kNameSpaceID_XHTML2_Unofficial ||
+      aNameSpaceID == kNameSpaceID_XHTML) {
     if (aAttribute == nsAccessibilityAtoms::role) {
       InvalidateCacheSubtree(aContent, nsIAccessibleEvent::EVENT_REORDER);
     }
@@ -809,8 +812,7 @@ nsDocAccessible::AttributeChanged(nsIDocument *aDocument, nsIContent* aContent,
   }
   else if (aNameSpaceID == kNameSpaceID_WAIProperties) {
     // DHTML accessibility attributes
-    if (!aContent->HasAttr(kNameSpaceID_XHTML2_Unofficial,
-                           nsAccessibilityAtoms::role)) {
+    if (!HasRoleAttribute(aContent)) {
       // We don't care about DHTML state changes unless there is
       // a DHTML role set for the element
       return;
@@ -832,10 +834,9 @@ nsDocAccessible::AttributeChanged(nsIDocument *aDocument, nsIContent* aContent,
       // This affects whether the accessible supports nsIAccessibleSelectable.
       // COM says we cannot change what interfaces are supported on-the-fly,
       // so invalidate this object. A new one will be created on demand.
-      if (aContent->HasAttr(kNameSpaceID_XHTML2_Unofficial, 
-                            nsAccessibilityAtoms::role)) {
+      if (HasRoleAttribute(aContent)) {
         // The multiselect and other waistate attributes only take affect
-        // when XHTML2:role is present
+        // when dynamic content role is present
         InvalidateCacheSubtree(aContent, nsIAccessibleEvent::EVENT_REORDER);
       }
     }
@@ -911,12 +912,12 @@ nsresult nsDocAccessible::FireDelayedToolkitEvent(PRUint32 aEvent,
 {
   PRBool isTimerStarted = PR_TRUE;
   PRInt32 numQueuedEvents = mEventsToFire.Count();
-  if (numQueuedEvents == 0) {
     if (!mFireEventTimer) {
       // Do not yet have a timer going for firing another event.
       mFireEventTimer = do_CreateInstance("@mozilla.org/timer;1");
       NS_ENSURE_TRUE(mFireEventTimer, NS_ERROR_OUT_OF_MEMORY);
     }
+  if (numQueuedEvents == 0) {
     isTimerStarted = PR_FALSE;
   }
   else if (!aAllowDupes) {
@@ -926,6 +927,9 @@ nsresult nsDocAccessible::FireDelayedToolkitEvent(PRUint32 aEvent,
     for (PRInt32 index = 0; index < numQueuedEvents; index ++) {
       nsIAccessibleEvent *accessibleEvent = mEventsToFire[index];
       NS_ASSERTION(accessibleEvent, "Array item is not an accessible event");
+      if (!accessibleEvent) {
+        continue;
+      }
       PRUint32 eventType;
       accessibleEvent->GetEventType(&eventType);
       if (eventType == aEvent) {
@@ -1148,25 +1152,31 @@ NS_IMETHODIMP nsDocAccessible::InvalidateCacheSubtree(nsIContent *aChild,
   }
 
   if (aChangeEventType == nsIAccessibleEvent::EVENT_SHOW && aChild) {
-    // Fire EVENT_SHOW, EVENT_MENUPOPUPSTART or EVENT_ALERT event for
-    // newly visible content.
-    nsAutoString role;
-    aChild->GetAttr(kNameSpaceID_XHTML2_Unofficial, nsAccessibilityAtoms::role, role);
-    PRUint32 event = 0;
-    if (StringEndsWith(role, NS_LITERAL_STRING(":alert"), nsCaseInsensitiveStringComparator())) {
-      event = nsIAccessibleEvent::EVENT_ALERT;
-    }
-    else if (StringEndsWith(role, NS_LITERAL_STRING(":menu"), nsCaseInsensitiveStringComparator())) {
-      event = nsIAccessibleEvent::EVENT_MENUPOPUPSTART;
-    }
-
+    // Fire EVENT_SHOW, EVENT_MENUPOPUPSTART for newly visible content.
     // Fire after a short timer, because we want to make sure the view has been
     // updated to make this accessible content visible. If we don't wait,
     // the assistive technology may receive the event and then retrieve
     // STATE_INVISIBLE for the event's accessible object.
     FireDelayedToolkitEvent(nsIAccessibleEvent::EVENT_SHOW, childNode, nsnull);
-    if (event) {
-      FireDelayedToolkitEvent(event, childNode, nsnull);
+    nsAutoString role;
+    if (GetRoleAttribute(aChild, role) &&
+        StringEndsWith(role, NS_LITERAL_STRING(":menu"), nsCaseInsensitiveStringComparator())) {
+      FireDelayedToolkitEvent(nsIAccessibleEvent::EVENT_MENUPOPUPSTART, childNode, nsnull);
+    }
+  }
+
+  // Check to see if change occured inside an alert, and fire an EVENT_ALERT if it did
+  if (aChangeEventType != nsIAccessibleEvent::EVENT_HIDE) {
+    nsIContent *ancestor = aChild;
+    nsAutoString role;
+    while (ancestor) {
+      if (GetRoleAttribute(ancestor, role) &&
+          StringEndsWith(role, NS_LITERAL_STRING(":alert"), nsCaseInsensitiveStringComparator())) {
+        nsCOMPtr<nsIDOMNode> alertNode(do_QueryInterface(ancestor));
+        FireDelayedToolkitEvent(nsIAccessibleEvent::EVENT_ALERT, alertNode, nsnull);
+        break;
+      }
+      ancestor = ancestor->GetParent();
     }
   }
 

@@ -65,43 +65,17 @@ function goToggleToolbar( id, elementID )
   }
 }
 
-// urlPref: lets each application have its own throbber URL. example: "messenger.throbber.url"
-// event: lets shift+click open it in a new window, etc.
-function goClickThrobber( urlPref, e )
-{
-  var url;
-  try {
-    var pref = Components.classes["@mozilla.org/preferences-service;1"]
-                         .getService(Components.interfaces.nsIPrefBranch);
-    url = pref.getComplexValue(urlPref, Components.interfaces.nsIPrefLocalizedString).data;
-  }
-
-  catch(e) {
-    url = null;
-  }
-
-  if ( url )
-    openUILink(url, e);
-}
-
 function getTopWin()
 {
-    var windowManager = Components.classes['@mozilla.org/appshell/window-mediator;1'].getService();
-    var windowManagerInterface = windowManager.QueryInterface( Components.interfaces.nsIWindowMediator);
-    var topWindowOfType = windowManagerInterface.getMostRecentWindow( "navigator:browser" );
-
-    if (topWindowOfType) {
-        return topWindowOfType;
-    }
-    return null;
+  var windowManager = Components.classes['@mozilla.org/appshell/window-mediator;1']
+                                .getService(Components.interfaces.nsIWindowMediator);
+  return windowManager.getMostRecentWindow("navigator:browser");
 }
 
 function openTopWin( url )
 {
-    openUILink(url, {})
+  openUILink(url, {})
 }
-
-
 
 function getBoolPref ( prefname, def )
 {
@@ -114,13 +88,12 @@ function getBoolPref ( prefname, def )
     return def;
   }
 }
-  
 
 // openUILink handles clicks on UI elements that cause URLs to load.
-function openUILink( url, e, ignoreButton, ignoreAlt )
+function openUILink( url, e, ignoreButton, ignoreAlt, allowKeywordFixup, postData )
 {
   var where = whereToOpenLink(e, ignoreButton, ignoreAlt);
-  openUILinkIn(url, where);
+  openUILinkIn(url, where, allowKeywordFixup, postData);
 }
 
 
@@ -150,7 +123,7 @@ function openUILink( url, e, ignoreButton, ignoreAlt )
  */
 function whereToOpenLink( e, ignoreButton, ignoreAlt )
 {
-  if (e == null)
+  if (!e)
     e = { shiftKey:false, ctrlKey:false, metaKey:false, altKey:false, button:0 };
 
   var shift = e.shiftKey;
@@ -193,51 +166,43 @@ function whereToOpenLink( e, ignoreButton, ignoreAlt )
  *  "tabshifted"  same as "tab" but in background if default is to select new tabs, and vice versa
  *  "window"      new window
  *  "save"        save to disk (with no filename hint!)
+ *
+ * allowThirdPartyFixup controls whether third party services such as Google's
+ * I Feel Lucky are allowed to interpret this URL. This parameter may be
+ * undefined, which is treated as false.
  */
-function openUILinkIn( url, where )
+function openUILinkIn( url, where, allowThirdPartyFixup, postData )
 {
-  if (!where)
+  if (!where || !url)
     return;
-
-  if ((url == null) || (url == "")) 
-    return;
-  // xlate the URL if necessary
-  if (url.indexOf("urn:") == 0) {
-      url = xlateURL(url);        // does RDF urn expansion
-  }
-  // avoid loading "", since this loads a directory listing
-  if (url == "") {
-      url = "about:blank";
-  }
 
   if (where == "save") {
     saveURL(url, null, null, true);
     return;
   }
 
-  var w = (where == "window") ? null : getTopWin();
-  if (!w) {
-    openDialog(getBrowserURL(), "_blank", "chrome,all,dialog=no", url);
+  var w = getTopWin();
+
+  if (!w || where == "window") {
+    openDialog(getBrowserURL(), "_blank", "chrome,all,dialog=no", url,
+               null, null, postData, allowThirdPartyFixup);
     return;
   }
-  var browser = w.document.getElementById("content");
+
+  var loadInBackground = getBoolPref("browser.tabs.loadBookmarksInBackground", false);
 
   switch (where) {
   case "current":
-    browser.loadURI(url);
+    w.loadURI(url, null, postData, allowThirdPartyFixup);
     w.content.focus();
     break;
   case "tabshifted":
+    loadInBackground = !loadInBackground;
+    // fall through
   case "tab":
-    var tab = browser.addTab(url);
-
-    // We check the pref here, rather than in whereToOpenLink, because an "open link in tab"
-    // context menu item could call openUILinkwhere directly.
-    if ((where == "tab") ^ getBoolPref("browser.tabs.loadBookmarksInBackground", false)) {
-      browser.selectedTab = tab;
-      w.content.focus();
-    }
-
+    var browser = w.getBrowser();
+    browser.loadOneTab(url, null, null, postData, loadInBackground,
+                       allowThirdPartyFixup || false);
     break;
   }
 }
@@ -246,19 +211,19 @@ function openUILinkIn( url, where )
 // e.g. onclick="checkForMiddleClick(this, event);"
 function checkForMiddleClick(node, event)
 {
+  // We should be using the disabled property here instead of the attribute,
+  // but some elements that this function is used with don't support it (e.g.
+  // menuitem).
+  if (node.getAttribute("disabled") == "true")
+    return; // Do nothing
+
   if (event.button == 1) {
     /* Execute the node's oncommand.
      *
-     * Using eval() because of bug 246720.  Would like to use node.oncommand(event).
-     *
-     * Since we're using eval():
-     *
-     * |event| is correct because the name of this function's formal parameter matches
-     * the automatic name of the formal parameter for oncommand, |event|.
-     *
-     * |this| is incorrect.  To make it correct, we would have to use Function.call.
+     * XXX: we should use node.oncommand(event) once bug 246720 is fixed.
      */
-    eval(node.getAttribute("oncommand"));
+    var fn = new Function("event", node.getAttribute("oncommand"));
+    fn.call(node, event);
 
     // If the middle-click was on part of a menu, close the menu.
     // (Menus close automatically with left-click but not with middle-click.)
@@ -445,7 +410,7 @@ function openReleaseNotes(event)
   var appInfo = Components.classes["@mozilla.org/xre/app-info;1"]
                           .getService(Components.interfaces.nsIXULAppInfo);
   var regionBundle = document.getElementById("bundle_browser_region");
-  var relnotesURL = regionBundle.getFormattedString("releaseNotesURL", [appInfo.version]);
+  var relnotesURL = formatURL("app.releaseNotesURL", true);
   openUILink(relnotesURL, event, false, true);
 }
   
@@ -521,4 +486,3 @@ function buildHelpMenu()
   else
     checkForUpdates.removeAttribute("loading");
 }
-

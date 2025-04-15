@@ -20,6 +20,7 @@
  *
  * Contributor(s):
  *  Ben Goodger <ben@mozilla.org> (Google Inc.)
+ *  Robert Strong <robert.bugzilla@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -364,6 +365,63 @@ interface nsIExtensionManager : nsISupports
    *          The ID of an item to move an item to.
    */
   void moveToIndexOf(in AString movingID, in AString destinationID);
+};
+
+/**
+ * A temporary interface to allow adding new methods without changing existing
+ * interfaces for Gecko 1.8.1. After the 1.8.1 release this interface should
+ * not be used.
+ */
+[scriptable, uuid(0fd5caa9-1ffc-42b1-aea1-3fbe73116070)]
+interface nsIExtensionManager_MOZILLA_1_8_BRANCH : nsIExtensionManager
+{
+  /**
+   * Cancels a pending uninstall of an item
+   * @param   id
+   *          The ID of the item.
+   */
+  void cancelUninstallItem(in AString id);
+
+  /**
+   * Retrieves a list of installed nsIUpdateItems of items that are dependent
+   * on another item.
+   * @param   id
+   *          The ID of the item that other items depend on.
+   * @param   includeDisabled
+   *          Whether to include disabled items in the set returned.
+   * @param   countRef
+   *          The XPCJS reference to the number of items returned.
+   * @returns An array of installed nsIUpdateItems that depend on the item
+   *          specified by the id parameter.
+   */
+  void getDependentItemListForID(in AString id,
+                                 in boolean includeDisabled,
+                                 out unsigned long itemCount,
+                                 [retval, array, size_is(itemCount)] out nsIUpdateItem items);
+
+  /**
+   * Checks for changes to the blocklist using the local blocklist file,
+   * application disables / enables items that have been added / removed from
+   * the blocklist, and if there are additions to the blocklist this will
+   * inform the user by displaying a list of the items added.
+   *
+   * XXXrstrong - this method is not terribly useful and was added so we can
+   * trigger this check from the additional timer used by blocklisting.
+   */
+  void checkForBlocklistChanges();
+
+  /**
+   * Sorts addons of the specified type by the specified property in the
+   * Extensions Datasource container starting from the top of their container.
+   * If the addons are already sorted then no action is performed.
+   * @param   type
+   *          The nsIUpdateItem type of the items to sort.
+   * @param   propertyName
+   *          The RDF property name used for sorting.
+   * @param   isAscending
+   *          true to sort ascending and false to sort descending
+   */
+  void sortTypeByProperty(in unsigned long type, in AString propertyName, in boolean isAscending);
 };
 
 /**

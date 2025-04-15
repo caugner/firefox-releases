@@ -22,6 +22,7 @@
 # Contributor(s):
 #   Ben Goodger <ben@netscape.com> (Original Author)
 #   David Hyatt <hyatt@mozilla.org>
+#   Myk Melez <myk@mozilla.org>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -96,6 +97,7 @@ var gSuggestedKeyword;
 var gRequiredFields = [];
 var gPostData;
 var gArg = window.arguments[0];
+var gResource;
 
 # on windows, sizeToContent is buggy (see bug 227951), we''ll use resizeTo
 # instead and cache the bookmarks tree view size.
@@ -106,7 +108,6 @@ function Startup()
   initServices();
   initBMService();
   gName = document.getElementById("name");
-  gRequiredFields.push(gName);
   gKeywordRow = document.getElementById("keywordRow");
   gKeyword = document.getElementById("keyword");
   gExpander = document.getElementById("expander");
@@ -165,8 +166,14 @@ function Startup()
     gSelectedFolder = RDF.GetResource(gMenulist.selectedItem.id);
   }
   setTimeout(initMenulist, 0);
+
+  // Reset the |id| attribute on the toolbar folder attribute to the URI of the
+  // Bookmarks toolbar folder. 
   var btfMenuItem = document.getElementById("btfMenuItem");
-  btfMenuItem.setAttribute("id", BMSVC.getBookmarksToolbarFolder().Value);
+  btfMenuItem.id = BMSVC.getBookmarksToolbarFolder().Value;
+
+  if (MicrosummaryPicker.enabled)
+    MicrosummaryPicker.init();
 } 
 
 function initTitle()
@@ -193,35 +200,52 @@ function onOK()
 {
   RDFC.Init(BMDS, gSelectedFolder);
   
-  var url, rSource;
+  var url;
   var livemarkFeed = gArg.feedURL;
   if (gArg.bBookmarkAllTabs) {
-    rSource = BMDS.createFolder(gName.value);
+    gResource = BMDS.createFolder(gName.value);
     const groups = gArg.objGroup;
     for (var i = 0; i < groups.length; ++i) {
       url = getNormalizedURL(groups[i].url);
       BMDS.createBookmarkInContainer(groups[i].name, url, gKeyword.value, 
                                      groups[i].description, groups[i].charset, 
-                                     gPostData, rSource, -1);
+                                     gPostData, gResource, -1);
     }
   } else if (livemarkFeed != null) {
     url = getNormalizedURL(gArg.url);
-    rSource = BMDS.createLivemark(gName.value, url, livemarkFeed, 
-                                  gArg.description);
+    gResource = BMDS.createLivemark(gName.value, url, livemarkFeed, 
+                                    gArg.description);
   } else {
     url = getNormalizedURL(gArg.url);
-    rSource = BMDS.createBookmark(gName.value, url, gKeyword.value, 
-                                  gArg.description, gArg.charset, 
-                                  gPostData);
+
+    var name = gName.value;
+
+    // If the microsummary picker is enabled, the value of the name field
+    // won't necessarily contain the user-entered name for the bookmark.
+    // But the first item in the microsummary drop-down menu will always
+    // contain the user-entered name, so get the name from there instead.
+    if (MicrosummaryPicker.enabled) {
+      var menuPopup = document.getElementById("microsummaryMenuPopup");
+      name = menuPopup.childNodes[0].getAttribute("label");
+    }
+
+    gResource = BMDS.createBookmark(name, url, gKeyword.value, 
+                                    gArg.description, gArg.charset, 
+                                    gPostData);
   }
 
-  var selection = BookmarksUtils.getSelectionFromResource(rSource);
+  var selection = BookmarksUtils.getSelectionFromResource(gResource);
   var target    = BookmarksUtils.getTargetFromFolder(gSelectedFolder);
   BookmarksUtils.insertAndCheckSelection("newbookmark", selection, target);
-  
-  if (gArg.bWebPanel && rSource) {
+
+  if (MicrosummaryPicker.enabled) {
+    MicrosummaryPicker.commit();
+    MicrosummaryPicker.destroy();
+  }
+
+  if (gArg.bWebPanel && gResource) {
     // Assert that we're a web panel.
-    BMDS.Assert(rSource, RDF.GetResource(gNC_NS+"WebPanel"),
+    BMDS.Assert(gResource, RDF.GetResource(gNC_NS+"WebPanel"),
                 RDF.GetLiteral("true"), true);
   }
   
@@ -230,6 +254,21 @@ function onOK()
   // We have to flush manually
   var remoteDS = BMDS.QueryInterface(Components.interfaces.nsIRDFRemoteDataSource);
   remoteDS.Flush();
+}
+
+function onCancel()
+{
+  // Destroy the microsummary picker controller to prevent memory leaks,
+  // catching exceptions so we don't prevent the dialog from closing.
+  try {
+    if (MicrosummaryPicker.enabled)
+      MicrosummaryPicker.destroy();
+  }
+  catch(e) {
+    Components.utils.reportError(e);
+  }
+
+  return true;
 }
 
 function getNormalizedURL(url)

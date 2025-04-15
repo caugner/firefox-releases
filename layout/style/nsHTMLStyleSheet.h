@@ -118,6 +118,7 @@ private:
     nscolor             mColor;
   };
 
+
   class GenericTableRule;
   friend class GenericTableRule;
   class GenericTableRule: public nsIStyleRule {

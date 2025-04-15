@@ -244,8 +244,8 @@ var signonsTreeView = {
  };
 var signonsTree;
 
-function Signon(number, host, user, rawuser, password) {
-  this.number = number;
+function Signon(id, host, user, rawuser, password) {
+  this.id = id;
   this.host = host;
   this.user = user;
   this.rawuser = rawuser;
@@ -331,6 +331,18 @@ function DeleteSignon() {
 }
 
 function DeleteAllSignons() {
+  var prompter = Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
+                           .getService(Components.interfaces.nsIPromptService);
+
+  // Confirm the user wants to remove all passwords
+  var dummy = { value: false };
+  if (prompter.confirmEx(window,
+                         kSignonBundle.getString("removeAllPasswordsTitle"),
+                         kSignonBundle.getString("removeAllPasswordsPrompt"),
+                         prompter.STD_YES_NO_BUTTONS + prompter.BUTTON_POS_1_DEFAULT,
+                         null, null, null, null, dummy) == 1) // 1 == "No" button
+    return;
+
   DeleteAllFromTree(signonsTree, signonsTreeView,
                         signons, deletedSignons,
                         "removeSignon", "removeAllSignons");
@@ -436,8 +448,8 @@ var rejectsTreeView = {
  };
 var rejectsTree;
 
-function Reject(number, host) {
-  this.number = number;
+function Reject(id, host) {
+  this.id = id;
   this.host = host;
 }
 
@@ -533,8 +545,8 @@ var nopreviewsTreeView = {
  };
 var nopreviewsTree;
 
-function Nopreview(number, host) {
-  this.number = number;
+function Nopreview(id, host) {
+  this.id = id;
   this.host = host;
 }
 
@@ -588,7 +600,7 @@ function FinalizeNopreviewDeletions() {
   var i;
   var result = "|goneP|";
   for (i=0; i<deletedNopreviews.length; i++) {
-    result += deletedNopreviews[i].number;
+    result += deletedNopreviews[i].id;
     result += ",";
   }
   result += "|";
@@ -638,8 +650,8 @@ var nocapturesTreeView = {
  };
 var nocapturesTree;
 
-function Nocapture(number, host) {
-  this.number = number;
+function Nocapture(id, host) {
+  this.id = id;
   this.host = host;
 }
 
@@ -693,7 +705,7 @@ function FinalizeNocaptureDeletions() {
   var i;
   var result = "|goneC|";
   for (i=0; i<deletedNocaptures.length; i++) {
-    result += deletedNocaptures[i].number;
+    result += deletedNocaptures[i].id;
     result += ",";
   }
   result += "|";

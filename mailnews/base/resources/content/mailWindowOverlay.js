@@ -23,11 +23,12 @@
  * Contributor(s):
  *   timeless
  *   slucy@objectivesw.co.uk
- *   H�kan Waara <hwaara@chello.se>
+ *   Håkan Waara <hwaara@chello.se>
  *   Jan Varga <varga@ku.sk>
  *   Seth Spitzer <sspitzer@netscape.com>
  *   David Bienvenu <bienvenu@netscape.com>
  *   Ian Neal <bugzilla@arlen.demon.co.uk>
+ *   Karsten Düsterloh <mnyromyr@tprac.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -65,8 +66,8 @@ const kAllowRemoteContent = 2;
 const kIsAPhishMessage = 0;
 const kNotAPhishMessage = 1;
 
-const kMsgNotificationJunkBar = 1;
-const kMsgNotificationPhishingBar = 2;
+const kMsgNotificationPhishingBar = 1;
+const kMsgNotificationJunkBar = 2;
 const kMsgNotificationRemoteImages = 3;
 
 var gMessengerBundle;
@@ -228,7 +229,7 @@ function InitViewSortByMenu()
     setSortByMenuItemCheckState("sortByStatusMenuitem", (sortType == nsMsgViewSortType.byStatus));
     setSortByMenuItemCheckState("sortBySubjectMenuitem", (sortType == nsMsgViewSortType.bySubject));
     setSortByMenuItemCheckState("sortByUnreadMenuitem", (sortType == nsMsgViewSortType.byUnread));
-    setSortByMenuItemCheckState("sortByLabelMenuitem", (sortType == nsMsgViewSortType.byLabel));
+    setSortByMenuItemCheckState("sortByTagsMenuitem", (sortType == nsMsgViewSortType.byTags));
     setSortByMenuItemCheckState("sortByJunkStatusMenuitem", (sortType == nsMsgViewSortType.byJunkStatus));
     setSortByMenuItemCheckState("sortBySenderMenuitem", (sortType == nsMsgViewSortType.byAuthor));
     setSortByMenuItemCheckState("sortByRecipientMenuitem", (sortType == nsMsgViewSortType.byRecipient));
@@ -237,8 +238,9 @@ function InitViewSortByMenu()
     var sortOrder = gDBView.sortOrder;
     var sortTypeSupportsGrouping = (sortType == nsMsgViewSortType.byAuthor 
         || sortType == nsMsgViewSortType.byDate || sortType == nsMsgViewSortType.byPriority
-        || sortType == nsMsgViewSortType.bySubject || sortType == nsMsgViewSortType.byLabel
-        || sortType == nsMsgViewSortType.byRecipient);
+        || sortType == nsMsgViewSortType.bySubject || sortType == nsMsgViewSortType.byTags
+        || sortType == nsMsgViewSortType.byRecipient|| sortType == nsMsgViewSortType.byFlagged
+        || sortType == nsMsgViewSortType.byAttachments);
 
     setSortByMenuItemCheckState("sortAscending", (sortOrder == nsMsgViewSortOrder.ascending));
     setSortByMenuItemCheckState("sortDescending", (sortOrder == nsMsgViewSortOrder.descending));
@@ -412,14 +414,14 @@ function InitMessageMenu()
   if(copyMenu)
       copyMenu.setAttribute("disabled", !aMessage);
 
-  // Disable Forward as/Label menu items if no message is selected
+  // Disable Forward as/tag menu items if no message is selected
   var forwardAsMenu = document.getElementById("forwardAsMenu");
   if(forwardAsMenu)
       forwardAsMenu.setAttribute("disabled", !aMessage);
 
-  var labelMenu = document.getElementById("labelMenu");
-  if(labelMenu)
-      labelMenu.setAttribute("disabled", !aMessage);
+  var tagMenu = document.getElementById("tagMenu");
+  if(tagMenu)
+      tagMenu.setAttribute("disabled", !aMessage);
 
   // Disable mark menu when we're not in a folder
   var markMenu = document.getElementById("markMenu");
@@ -519,65 +521,155 @@ function IsImapMessage(messageUri)
 
 function SetMenuItemLabel(menuItemId, customLabel)
 {
-    var menuItem = document.getElementById(menuItemId);
-
-    if(menuItem)
-        menuItem.setAttribute('label', customLabel);
+  var menuItem = document.getElementById(menuItemId);
+  if (menuItem)
+    menuItem.setAttribute('label', customLabel);
 }
 
-function InitMessageLabel(menuType)
+function RemoveAllMessageTags()
 {
-    /* this code gets the label strings and changes the menu labels */
-    var color;
+  var selectedMsgUris = GetSelectedMessages();
+  if (!selectedMsgUris.length)
+    return;
+    
+  for (var i = 0; i < selectedMsgUris.length; ++i)
+  {
+    // remove all tags by removing all their tag keys at once
+    // (using a msgHdr's setStringProperty won't notify the threadPane!)
+    var msgHdr = messenger.msgHdrFromURI(selectedMsgUris[i]);
+    msgHdr.label = 0; // remove legacy label
+    msgHdr.folder.getMsgDatabase(msgWindow)
+          .setStringProperty(msgHdr.messageKey, "keywords", "");
+  }
+  OnTagsChange();
+}
 
-    try
+function ToggleMessageTagKey(index)
+{
+  if (GetNumSelectedMessages() < 1)
+    return;
+  // toggle the tag state based upon that of the first selected message
+  var msgHdr = gDBView.hdrForFirstSelectedMessage;
+  var tagService = Components.classes["@mozilla.org/messenger/tagservice;1"]
+                             .getService(Components.interfaces.nsIMsgTagService);
+  var tagArray = tagService.getAllTags({});
+  for (var i = 0; i < tagArray.length; ++i)
+  {
+    var key = tagArray[i].key;
+    if (!--index) 
     {
-        var isChecked = true;
-        var checkedLabel = gDBView.hdrForFirstSelectedMessage.label;
+      // found the key, now toggle its state
+      var curKeys = msgHdr.getStringProperty("keywords");
+      if (msgHdr.label)
+        curKeys += " $label" + msgHdr.label;
+      var addKey  = (" " + curKeys + " ").indexOf(" " + key + " ") < 0;
+      ToggleMessageTag(key, addKey);
+      return;
     }
-    catch(ex)
+  }
+}
+
+function ToggleMessageTagMenu(target)
+{
+  var key    = target.getAttribute("value");
+  var addKey = target.getAttribute("checked") == "true";
+  ToggleMessageTag(key, addKey);
+}
+
+function ToggleMessageTag(key, addKey)
+{
+  var messages = Components.classes["@mozilla.org/supports-array;1"]
+                           .createInstance(Components.interfaces.nsISupportsArray);
+  var msg = Components.classes["@mozilla.org/supports-array;1"]
+                          .createInstance(Components.interfaces.nsISupportsArray);
+  var selectedMsgUris = GetSelectedMessages();
+  var toggler = addKey ? "addKeywordToMessages" : "removeKeywordFromMessages";
+  var prevHdrFolder = null;
+  // this crudely handles cross-folder virtual folders with selected messages
+  // that spans folders, by coalescing consecutive msgs in the selection
+  // that happen to be in the same folder. nsMsgSearchDBView does this
+  // better, but nsIMsgDBView doesn't handle commands with arguments,
+  // and (un)tag takes a key argument.
+  for (var i = 0; i < selectedMsgUris.length; ++i)
+  {
+    var msgHdr = messenger.msgHdrFromURI(selectedMsgUris[i]);
+    if (msgHdr.label)
     {
-        isChecked = false;
+      // Since we touch all these messages anyway, migrate the label now.
+      // If we don't, the thread tree won't always show the correct tag state,
+      // because resetting a label doesn't update the tree anymore...
+      msg.Clear();
+      msg.AppendElement(msgHdr);
+      msgHdr.folder.addKeywordToMessages(msg, "$label" + msgHdr.label);
+      msgHdr.label = 0; // remove legacy label
     }
-
-    for (var label = 0; label <= 5; label++)
+    if (prevHdrFolder != msgHdr.folder)
     {
-        try
-        {
-            var prefString = gPrefBranch.getComplexValue("mailnews.labels.description." + label,
-                                                         Components.interfaces.nsIPrefLocalizedString);
-            var formattedPrefString = gMessengerBundle.getFormattedString("labelMenuItemFormat" + label,
-                                                                          [prefString], 1); 
-            var menuItemId = menuType + "-labelMenuItem" + label;
-            var menuItem = document.getElementById(menuItemId);
-
-            SetMenuItemLabel(menuItemId, formattedPrefString);
-            if (isChecked && label == checkedLabel)
-              menuItem.setAttribute("checked", "true");
-            else
-              menuItem.setAttribute("checked", "false");
-
-            // commented out for now until UE decides on how to show the Labels menu items.
-            // This code will color either the text or background for the Labels menu items.
-            /*****
-            if (label != 0)
-            {
-                color = gPrefBranch.getCharPref("mailnews.labels.color." + label);
-                // this colors the text of the menuitem only.
-                //menuItem.setAttribute("style", ("color: " + color));
-
-                // this colors the background of the menuitem and
-                // when selected, text becomes white.
-                //menuItem.setAttribute("style", ("color: #FFFFFF"));
-                //menuItem.setAttribute("style", ("background-color: " + color));
-            }
-            ****/
-        }
-        catch(ex)
-        {
-        }
+      if (prevHdrFolder)
+        prevHdrFolder[toggler](messages, key);
+      messages.Clear();
+      prevHdrFolder = msgHdr.folder;
     }
-    document.commandDispatcher.updateCommands('create-menu-label');
+    messages.AppendElement(msgHdr);
+  }
+  if (prevHdrFolder)
+    prevHdrFolder[toggler](messages, key);
+  OnTagsChange();
+}
+
+function SetMessageTagLabel(menuitem, index, name)
+{
+  // if a <key> is defined for this tag, use its key as the accesskey
+  // (the key for the tag at index n needs to have the id key_tag<n>)
+  var shortcutkey = document.getElementById("key_tag" + index);
+  var accesskey = shortcutkey ? shortcutkey.getAttribute("key") : "";
+  if (accesskey)
+    menuitem.setAttribute("accesskey", accesskey);
+  var label = gMessengerBundle.getFormattedString("mailnews.tags.format", 
+                                                  [accesskey, name]);
+  menuitem.setAttribute("label", label);
+}
+
+function InitMessageTags(menuPopup)
+{
+  var tagService = Components.classes["@mozilla.org/messenger/tagservice;1"]
+                             .getService(Components.interfaces.nsIMsgTagService);
+  var tagArray = tagService.getAllTags({});
+  var tagCount = tagArray.length;
+
+  // remove any existing non-static entries...
+  var menuseparator = menuPopup.lastChild.previousSibling;
+  for (var i = menuPopup.childNodes.length; i > 4; --i)
+    menuPopup.removeChild(menuseparator.previousSibling);
+
+  // hide double menuseparator
+  menuseparator.previousSibling.hidden = !tagCount;
+
+  // create label and accesskey for the static remove item
+  var tagRemoveLabel = gMessengerBundle.getString("mailnews.tags.remove");
+  SetMessageTagLabel(menuPopup.firstChild, 0, tagRemoveLabel);
+
+  // now rebuild the list
+  var msgHdr = gDBView.hdrForFirstSelectedMessage;
+  var curKeys = msgHdr.getStringProperty("keywords");
+  if (msgHdr.label)
+    curKeys += " $label" + msgHdr.label;
+  for (var i = 0; i < tagCount; ++i)
+  {
+    var taginfo = tagArray[i];
+    // TODO we want to either remove or "check" the tags that already exist
+    var newMenuItem = document.createElement("menuitem");
+    SetMessageTagLabel(newMenuItem, i + 1, taginfo.tag);
+    newMenuItem.setAttribute("value", taginfo.key);
+    newMenuItem.setAttribute("type", "checkbox");
+    var removeKey = (" " + curKeys + " ").indexOf(" " + taginfo.key + " ") > -1;
+    newMenuItem.setAttribute('checked', removeKey);
+    newMenuItem.setAttribute('oncommand', 'ToggleMessageTagMenu(event.target);');
+    var color = taginfo.color;
+    if (color)
+      newMenuItem.setAttribute("class", "lc-" + color.substr(1));
+    menuPopup.insertBefore(newMenuItem, menuseparator);
+  }
 }
 
 function InitMessageMark()
@@ -898,12 +990,17 @@ function MsgNewMessage(event)
 function MsgReplyMessage(event)
 {
   var loadedFolder = GetLoadedMsgFolder();
-  var server = loadedFolder.server;
+  if (loadedFolder)
+  {
+    var server = loadedFolder.server;
 
-  if(server && server.type == "nntp")
-    MsgReplyGroup(event);
-  else
-    MsgReplySender(event);
+    if (server && server.type == "nntp")
+    {
+      MsgReplyGroup(event);
+      return;
+    }
+  }
+  MsgReplySender(event);
 }
 
 function MsgReplySender(event)
@@ -911,10 +1008,9 @@ function MsgReplySender(event)
   var loadedFolder = GetLoadedMsgFolder();
   var messageArray = GetSelectedMessages();
 
-  if (event && event.shiftKey)
-    ComposeMessage(msgComposeType.ReplyToSender, msgComposeFormat.OppositeOfDefault, loadedFolder, messageArray);
-  else
-    ComposeMessage(msgComposeType.ReplyToSender, msgComposeFormat.Default, loadedFolder, messageArray);
+  ComposeMessage(msgComposeType.ReplyToSender,
+    (event && event.shiftKey) ? msgComposeFormat.OppositeOfDefault : msgComposeFormat.Default,
+    loadedFolder, messageArray);
 }
 
 function MsgReplyGroup(event)
@@ -1159,7 +1255,7 @@ function MsgOpenFromFile()
   var uri = fp.fileURL;
   uri.query = "type=application/x-message-display";
 
-  MsgOpenNewWindowForMessage(uri, null);
+  window.openDialog( "chrome://messenger/content/messageWindow.xul", "_blank", "all,chrome,dialog=no,status,toolbar", uri, null, null );
 }
 
 function MsgOpenNewWindowForMsgHdr(hdr)
@@ -2001,7 +2097,7 @@ function GetMessagesForAccount(aEvent)
   var uri = aEvent.target.id;
   var server = GetServer(uri);
   GetMessagesForInboxOnServer(server);
-  aEvent.preventBubble();
+  aEvent.stopPropagation();
 }
 
 
@@ -2077,7 +2173,7 @@ function HandleJunkStatusChanged(folder)
     // we don't want to show the junk bar (since the message pane is blank)
     var msgHdr = null;
     if (GetNumSelectedMessages() == 1)
-      msgHdr = messenger.messageServiceFromURI(loadedMessage).messageURIToMsgHdr(loadedMessage);
+      msgHdr = messenger.msgHdrFromURI(loadedMessage);
     gMessageNotificationBar.setJunkMsg(msgHdr);
   }
 }
@@ -2088,8 +2184,8 @@ var gMessageNotificationBar =
   // flag bit values for mBarStatus, indexed by kMsgNotificationXXX
   mBarFlagValues: [
                     0, // for no msgNotificationBar
-                    1, // 1 << (kMsgNotificationJunkBar - 1)
-                    2, // 1 << (kMsgNotificationPhishingBar - 1)
+                    1, // 1 << (kMsgNotificationPhishingBar - 1)
+                    2, // 1 << (kMsgNotificationJunkBar - 1)
                     4  // 1 << (kMsgNotificationRemoteImages - 1)
                   ],
 
@@ -2098,7 +2194,6 @@ var gMessageNotificationBar =
   setJunkMsg: function(aMsgHdr)
   {
     var isJunk = false;
-    var isCurrentlyNotJunk = this.mMsgNotificationBar.selectedIndex != kMsgNotificationJunkBar;
   
     if (aMsgHdr) 
     {
@@ -2143,7 +2238,7 @@ var gMessageNotificationBar =
     var status = aSet ? this.mBarStatus | chunk : this.mBarStatus & ~chunk;
     this.mBarStatus = status;
 
-    // the junk message takes precedence over the phishing message
+    // the phishing message takes precedence over the junk message
     // which takes precedence over the remote content message
     this.mMsgNotificationBar.selectedIndex = this.mBarFlagValues.indexOf(status & -status);
 
@@ -2178,7 +2273,7 @@ function setMsgHdrPropertyAndReload(aProperty, aValue)
 
   if (msgURI && !(/type=application\/x-message-display/.test(msgURI)))
   {
-    var msgHdr = messenger.messageServiceFromURI(msgURI).messageURIToMsgHdr(msgURI);
+    var msgHdr = messenger.msgHdrFromURI(msgURI);
     if (msgHdr)
     {
       msgHdr.setUint32Property(aProperty, aValue);
@@ -2196,7 +2291,7 @@ function checkMsgHdrPropertyIsNot(aProperty, aValue)
     
   if (msgURI && !(/type=application\/x-message-display/.test(msgURI)))
   {
-    var msgHdr = messenger.messageServiceFromURI(msgURI).messageURIToMsgHdr(msgURI);
+    var msgHdr = messenger.msgHdrFromURI(msgURI);
     return (msgHdr && msgHdr.getUint32Property(aProperty) != aValue);
   }
   return false;
@@ -2240,7 +2335,7 @@ function OnMsgLoaded(aUrl)
     gNextMessageViewIndexAfterDelete = -2;
 
     if (!(/type=application\/x-message-display/.test(msgURI)))
-      msgHdr = messenger.messageServiceFromURI(msgURI).messageURIToMsgHdr(msgURI);
+      msgHdr = messenger.msgHdrFromURI(msgURI);
 
     gMessageNotificationBar.setJunkMsg(msgHdr);
 
@@ -2249,7 +2344,7 @@ function OnMsgLoaded(aUrl)
     var markReadOnADelay = gPrefBranch.getBoolPref("mailnews.mark_message_read.delay");
     if (msgHdr && !msgHdr.isRead)
     {
-      var wintype = document.firstChild.getAttribute('windowtype');
+      var wintype = document.documentElement.getAttribute('windowtype');
       if (markReadOnADelay && wintype == "mail:3pane") // only use the timer if viewing using the 3-pane preview pane and the user has set the pref
         gMarkViewedMessageAsReadTimer = setTimeout(MarkCurrentMessageAsRead, gPrefBranch.getIntPref("mailnews.mark_message_read.delay.interval") * 1000);
       else
@@ -2323,7 +2418,7 @@ function HandleMDNResponse(aUrl)
   if (SelectedMessagesAreJunk())
     return;
 
-  var msgHdr = messenger.messageServiceFromURI(msgURI).messageURIToMsgHdr(msgURI);
+  var msgHdr = messenger.msgHdrFromURI(msgURI);
   var mimeHdr;
 
   try {
@@ -2377,18 +2472,6 @@ function MsgSearchMessages()
 
   var args = { folder: preselectedFolder };
   OpenOrFocusWindow(args, "mailnews:search", "chrome://messenger/content/SearchDialog.xul");
-}
-
-function MsgJunkMail()
-{
-  MsgJunkMailInfo(true);
-  var preselectedFolder = null;
-  if ("GetFirstSelectedMsgFolder" in window)
-    preselectedFolder = GetFirstSelectedMsgFolder();
-
-  var args = { folder: preselectedFolder };
-  window.openDialog("chrome://messenger/content/junkMail.xul", "",
-                    "chrome,resizable=no,modal,dialog", args);
 }
 
 function MsgJunkMailInfo(aCheckFirstUse)

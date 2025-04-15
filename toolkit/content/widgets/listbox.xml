@@ -99,7 +99,7 @@
         <![CDATA[
           if (!this._suppressOnSelect && this.getAttribute("suppressonselect") != "true") {
             var event = document.createEvent("Events");
-            event.initEvent("select", false, true);
+            event.initEvent("select", true, true);
             this.dispatchEvent(event);
           }
         ]]>
@@ -354,7 +354,7 @@
           } else {
             currentItem = startItem;
           }
-            
+
           while (currentItem) {
             if (currentItem.localName == "listitem")
               this.addItemToSelection(currentItem);
@@ -376,7 +376,7 @@
             this.removeItemFromSelection(currentItem);
 
           this._suppressOnSelect = suppressSelect;
-          
+
           this._fireOnSelect();
         ]]>
         </body>
@@ -527,7 +527,7 @@
               newIndex = 0;
             var numItems = this.getRowCount();
             if (newIndex > numItems - 1)
-              var newIndex = numItems - 1;
+              newIndex = numItems - 1;
             var newItem = this.getItemAtIndex(newIndex);
             if (newItem) {
               this.ensureIndexIsVisible(newIndex);
@@ -602,7 +602,7 @@
       <handler event="keypress" phase="target">
       <![CDATA[
          if (!this.disableKeyNavigation && event.charCode > 0 && 
-             !event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey) {
+             !event.altKey && !event.ctrlKey && !event.metaKey) {
            var key = String.fromCharCode(event.charCode);
            key = key.toLowerCase();
            if (event.timeStamp - this._lastKeyTime > 1000)
@@ -826,7 +826,7 @@
           else
             this.removeAttribute('checked');
           var event = document.createEvent('Events');
-          event.initEvent('CheckboxStateChange', false, true);
+          event.initEvent('CheckboxStateChange', true, true);
           this.dispatchEvent(event);
           return val;
         ]]></setter>

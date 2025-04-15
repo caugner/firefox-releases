@@ -522,7 +522,8 @@ nsXBLPrototypeBinding::AttributeChanged(nsIAtom* aAttribute,
           aChangedElement->GetAttr(aNameSpaceID, aAttribute, value);
           if (!value.IsEmpty()) {
             nsCOMPtr<nsITextContent> textContent;
-            NS_NewTextNode(getter_AddRefs(textContent));
+            NS_NewTextNode(getter_AddRefs(textContent),
+                           realElement->GetNodeInfo()->NodeInfoManager());
             if (!textContent) {
               continue;
             }
@@ -592,7 +593,10 @@ PRBool PR_CALLBACK InstantiateInsertionPoint(nsHashKey* aKey, void* aData, void*
   if (!insertionPoint) {
     // We need to make a new insertion point.
     insertionPoint = new nsXBLInsertionPoint(realContent, index, defContent);
-    points->InsertElementAt(insertionPoint, i);
+    if (insertionPoint) {
+      NS_ADDREF(insertionPoint);
+      points->InsertElementAt(insertionPoint, i);
+    }
   }
 
   return PR_TRUE;
@@ -891,8 +895,10 @@ PRBool PR_CALLBACK SetAttrs(nsHashKey* aKey, void* aData, void* aClosure)
             (realElement->GetNodeInfo()->Equals(nsHTMLAtoms::html,
                                                 kNameSpaceID_XUL) &&
              dst == nsHTMLAtoms::value && !value.IsEmpty())) {
+
           nsCOMPtr<nsITextContent> textContent;
-          NS_NewTextNode(getter_AddRefs(textContent));
+          NS_NewTextNode(getter_AddRefs(textContent),
+                         realElement->GetNodeInfo()->NodeInfoManager());
           if (!textContent) {
             continue;
           }

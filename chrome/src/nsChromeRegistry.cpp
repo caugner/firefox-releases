@@ -665,8 +665,15 @@ nsChromeRegistry::Canonify(nsIURL* aChromeURL)
     }
     aChromeURL->SetPath(path);
   }
-  else if (path.Find(NS_LITERAL_CSTRING("..")) != -1) {
-    return NS_ERROR_DOM_BAD_URI;
+  else {
+    nsCAutoString filePath;
+    rv = aChromeURL->GetFilePath(filePath);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (filePath.Find(NS_LITERAL_CSTRING("..")) != -1 ||
+        filePath.FindChar(':') != -1) {
+      return NS_ERROR_DOM_BAD_URI;
+    }
   }
 
   return NS_OK;
@@ -928,7 +935,7 @@ nsresult nsChromeRegistry::RefreshWindow(nsIDOMWindowInternal* aWindow)
       if (IsChromeURI(uri)) {
         // Reload the sheet.
         nsCOMPtr<nsICSSStyleSheet> newSheet;
-        rv = LoadStyleSheetWithURL(uri, getter_AddRefs(newSheet));
+        rv = LoadStyleSheetWithURL(uri, PR_TRUE, getter_AddRefs(newSheet));
         if (NS_FAILED(rv)) return rv;
         if (newSheet) {
           rv = newAgentSheets.AppendObject(newSheet) ? NS_OK : NS_ERROR_FAILURE;
@@ -980,7 +987,7 @@ nsresult nsChromeRegistry::RefreshWindow(nsIDOMWindowInternal* aWindow)
       // XXX what about chrome sheets that have a title or are disabled?  This
       // only works by sheer dumb luck.
       // XXXbz this should really use the document's CSSLoader!
-      LoadStyleSheetWithURL(uri, getter_AddRefs(newSheet));
+      LoadStyleSheetWithURL(uri, PR_FALSE, getter_AddRefs(newSheet));
       // Even if it's null, we put in in there.
       newSheets.AppendObject(newSheet);
     }
@@ -1050,14 +1057,14 @@ nsChromeRegistry::ReloadChrome()
 }
 
 nsresult
-nsChromeRegistry::LoadStyleSheetWithURL(nsIURI* aURL, nsICSSStyleSheet** aSheet)
+nsChromeRegistry::LoadStyleSheetWithURL(nsIURI* aURL, PRBool aEnableUnsafeRules, nsICSSStyleSheet** aSheet)
 {
   *aSheet = nsnull;
 
-  nsCOMPtr<nsICSSLoader> cssLoader = do_GetService(kCSSLoaderCID);
+  nsCOMPtr<nsICSSLoader_MOZILLA_1_8_BRANCH> cssLoader = do_GetService(kCSSLoaderCID);
   if (!cssLoader) return NS_ERROR_FAILURE;
 
-  return cssLoader->LoadAgentSheet(aURL, aSheet);
+  return cssLoader->LoadSheetSync(aURL, aEnableUnsafeRules, aSheet);
 }
 
 NS_IMETHODIMP

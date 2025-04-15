@@ -45,8 +45,10 @@
 #include "nsIDOMNSXPathExpression.h"
 #include "nsIDOMXPathResult.h"
 #include "nsDeque.h"
-#include "nsIModelElementPrivate.h"
 #include "nsXFormsUtils.h"
+#include "nsDOMError.h"
+#include "nsIDOMElement.h"
+#include "nsXFormsModelElement.h"
 
 #ifdef DEBUG
 //#  define DEBUG_XF_MDG
@@ -63,7 +65,6 @@
 /* ------------------------------------ */
 /* --------- nsXFormsMDGNode ---------- */
 /* ------------------------------------ */
-MOZ_DECL_CTOR_COUNTER(nsXFormsMDGNode)
 
 nsXFormsMDGNode::nsXFormsMDGNode(nsIDOMNode             *aNode,
                                  const ModelItemPropName aType)
@@ -121,7 +122,6 @@ nsXFormsMDGNode::MarkClean()
 /* ------------------------------------ */
 /* -------- nsXFormsMDGEngine --------- */
 /* ------------------------------------ */
-MOZ_DECL_CTOR_COUNTER(nsXFormsMDGEngine)
 
 nsXFormsMDGEngine::nsXFormsMDGEngine()
 : mNodesInGraph(0)
@@ -137,7 +137,7 @@ nsXFormsMDGEngine::~nsXFormsMDGEngine()
 }
 
 nsresult
-nsXFormsMDGEngine::Init(nsIModelElementPrivate *aModel)
+nsXFormsMDGEngine::Init(nsXFormsModelElement *aModel)
 {
   nsresult rv = NS_ERROR_FAILURE;
   if (mNodeStates.Init() && mNodeToMDG.Init()) {
@@ -164,7 +164,7 @@ nsXFormsMDGEngine::AddMIP(ModelItemPropName         aType,
   nsAutoString nodename;
   aContextNode->GetNodeName(nodename);
   printf("nsXFormsMDGEngine::AddMIP(aContextNode=%s, aExpression=%p, aDependencies=|%d|,\n",
-         NS_ConvertUCS2toUTF8(nodename).get(),
+         NS_ConvertUTF16toUTF8(nodename).get(),
          (void*) aExpression,
          aDependencies ? aDependencies->Count() : 0);
   printf("                          aContextPos=%d, aContextSize=%d, aType=%s, aDynFunc=%d)\n",
@@ -228,30 +228,49 @@ nsXFormsMDGEngine::AddMIP(ModelItemPropName         aType,
 nsresult
 nsXFormsMDGEngine::MarkNodeAsChanged(nsIDOMNode* aContextNode)
 {
-  nsXFormsNodeState* ns = GetNCNodeState(aContextNode);
-  NS_ENSURE_TRUE(ns, NS_ERROR_FAILURE);
-
-  ns->Set(kFlags_ALL_DISPATCH, PR_TRUE);
-
-  // Get the node, eMode_type == get any type of node
-  nsXFormsMDGNode* n = GetNode(aContextNode, eModel_type, PR_FALSE);
-  if (n) {
-    while (n) {
-      n->MarkDirty();
-      n = n->mNext;
-    }
-  } else {
-    // Add constraint to trigger validation of node 
-    n = GetNode(aContextNode, eModel_constraint, PR_TRUE);
-    if (!n) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-    n->MarkDirty();
-    NS_ENSURE_TRUE(mGraph.AppendElement(n), NS_ERROR_OUT_OF_MEMORY);
-  }
-
   return mMarkedNodes.AppendObject(aContextNode);
 }
+
+nsresult
+nsXFormsMDGEngine::HandleMarkedNodes(nsCOMArray<nsIDOMNode> *aArray)
+{
+  NS_ENSURE_ARG_POINTER(aArray);
+
+  // Handle nodes marked as changed
+  for (PRInt32 i = 0; i < mMarkedNodes.Count(); ++i) {
+    nsCOMPtr<nsIDOMNode> node = mMarkedNodes.ObjectAt(i);
+    nsXFormsNodeState* ns = GetNCNodeState(node);
+    NS_ENSURE_TRUE(ns, NS_ERROR_FAILURE);
+
+    ns->Set(kFlags_ALL_DISPATCH, PR_TRUE);
+
+    // Get the node, eMode_type == get any type of node
+    nsXFormsMDGNode* n = GetNode(node, eModel_type, PR_FALSE);
+    if (n) {
+      while (n) {
+        n->MarkDirty();
+        n = n->mNext;
+      }
+    } else {
+      // Add constraint to trigger validation of node
+      n = GetNode(node, eModel_constraint, PR_TRUE);
+      if (!n) {
+        return NS_ERROR_OUT_OF_MEMORY;
+      }
+      n->MarkDirty();
+      NS_ENSURE_TRUE(mGraph.AppendElement(n), NS_ERROR_OUT_OF_MEMORY);
+    }
+
+    NS_ENSURE_TRUE(aArray->AppendObjects(mMarkedNodes),
+                   NS_ERROR_OUT_OF_MEMORY);
+
+  }
+
+  mMarkedNodes.Clear();
+
+  return NS_OK;
+}
+
 
 #ifdef DEBUG_beaufour
 #include <sys/types.h>
@@ -274,7 +293,7 @@ nsXFormsMDGEngine::PrintDot(const char* aFile)
       
       if (g->IsDirty()) {
         fprintf(FD, "\t%s [color=red];\n",
-                NS_ConvertUCS2toUTF8(domNodeName).get());
+                NS_ConvertUTF16toUTF8(domNodeName).get());
       }
 
       for (PRInt32 j = 0; j < g->mSuc.Count(); ++j) {
@@ -284,8 +303,8 @@ nsXFormsMDGEngine::PrintDot(const char* aFile)
           nsAutoString sucName;
           sucnode->mContextNode->GetNodeName(sucName);
           fprintf(FD, "\t%s -> %s [label=\"%s\"];\n",
-                  NS_ConvertUCS2toUTF8(sucName).get(),
-                  NS_ConvertUCS2toUTF8(domNodeName).get(),
+                  NS_ConvertUTF16toUTF8(sucName).get(),
+                  NS_ConvertUTF16toUTF8(domNodeName).get(),
                   gMIPNames[sucnode->mType]);
         }
       }
@@ -308,9 +327,10 @@ nsXFormsMDGEngine::Recalculate(nsCOMArray<nsIDOMNode> *aChangedNodes)
          aChangedNodes->Count());
 #endif
 
-  NS_ENSURE_TRUE(aChangedNodes->AppendObjects(mMarkedNodes), NS_ERROR_OUT_OF_MEMORY);
-
-  mMarkedNodes.Clear();
+  // XXX: There's something wrong with the marking of nodes, as we assume that
+  // recalculate will always be called first. bug 338146
+  nsresult rv = HandleMarkedNodes(aChangedNodes);
+  NS_ENSURE_SUCCESS(rv, rv);
   
   PRBool res = PR_TRUE;
 
@@ -324,7 +344,6 @@ nsXFormsMDGEngine::Recalculate(nsCOMArray<nsIDOMNode> *aChangedNodes)
 #endif
   
   // Go through all dirty nodes in the graph
-  nsresult rv;
   nsXFormsMDGNode* g;
   for (PRInt32 i = 0; i < mGraph.Count(); ++i) {
     g = NS_STATIC_CAST(nsXFormsMDGNode*, mGraph[i]);
@@ -344,7 +363,7 @@ nsXFormsMDGEngine::Recalculate(nsCOMArray<nsIDOMNode> *aChangedNodes)
     printf("\tNode #%d: This=%p, Dirty=%d, DynFunc=%d, Type=%d, Count=%d, Suc=%d, CSize=%d, CPos=%d, Next=%p, domnode=%s\n",
            i, (void*) g, g->IsDirty(), g->mDynFunc, g->mType,
            g->mCount, g->mSuc.Count(), g->mContextSize, g->mContextPosition,
-           (void*) g->mNext, NS_ConvertUCS2toUTF8(domNodeName).get());
+           (void*) g->mNext, NS_ConvertUTF16toUTF8(domNodeName).get());
 #endif
 
     // Ignore node if it is not dirty
@@ -556,7 +575,11 @@ nsXFormsMDGEngine::Rebuild()
 #endif
 
   if (mGraph.Count() != mNodesInGraph) {
-    NS_WARNING("XForms: There are loops in the MDG\n");
+    nsCOMPtr<nsIDOMElement> modelElement;
+    if (mModel) {
+      modelElement = mModel->GetDOMElement();
+    }
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("MDGLoopError"), modelElement);
     rv = NS_ERROR_ABORT;
   }
 
@@ -589,58 +612,6 @@ nsXFormsMDGEngine::Clear() {
   
   mNodesInGraph = 0;
 
-  return NS_OK;
-}
-
-nsresult
-nsXFormsMDGEngine::GetNodeValue(nsIDOMNode *aContextNode,
-                                nsAString  &aNodeValue)
-{
-  nsresult rv;
-  nsCOMPtr<nsIDOMNode> childNode;
-
-  PRUint16 nodeType;
-  rv = aContextNode->GetNodeType(&nodeType);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  switch(nodeType) {
-  case nsIDOMNode::ATTRIBUTE_NODE:
-  case nsIDOMNode::TEXT_NODE:
-  case nsIDOMNode::CDATA_SECTION_NODE:
-  case nsIDOMNode::PROCESSING_INSTRUCTION_NODE:
-  case nsIDOMNode::COMMENT_NODE:
-    rv = aContextNode->GetNodeValue(aNodeValue);
-    NS_ENSURE_SUCCESS(rv, rv);
-    break;
-
-  case nsIDOMNode::ELEMENT_NODE:
-    rv = aContextNode->GetFirstChild(getter_AddRefs(childNode));
-    if (NS_FAILED(rv) || !childNode) {
-      // No child
-      aNodeValue.Truncate(0);
-    } else {
-      PRUint16 childType;
-      rv = childNode->GetNodeType(&childType);
-      NS_ENSURE_SUCCESS(rv, rv);
-  
-      if (   childType == nsIDOMNode::TEXT_NODE
-          || childType == nsIDOMNode::CDATA_SECTION_NODE) {
-        rv = childNode->GetNodeValue(aNodeValue);
-        NS_ENSURE_SUCCESS(rv, rv);
-      } else {
-        // Not a text child
-        aNodeValue.Truncate(0);
-      }
-    }
-    break;
-          
-  default:
-    /// Asked for a node which cannot have a text child
-    /// @todo Should return more specific error? (XXX)
-    return NS_ERROR_ILLEGAL_VALUE;
-    break;
-  }
-  
   return NS_OK;
 }
 
@@ -684,8 +655,7 @@ nsXFormsMDGEngine::SetNodeValueInternal(nsIDOMNode       *aContextNode,
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoString oldValue;
-  rv = GetNodeValue(aContextNode, oldValue);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsXFormsUtils::GetNodeValue(aContextNode, oldValue);
   if (oldValue.Equals(aNodeValue)) {
     return NS_OK;
   }
@@ -743,6 +713,137 @@ nsXFormsMDGEngine::SetNodeValueInternal(nsIDOMNode       *aContextNode,
   return NS_OK;
 }
 
+nsresult
+nsXFormsMDGEngine::SetNodeContent(nsIDOMNode       *aContextNode,
+                                  nsIDOMNode       *aContentEnvelope)
+{
+  NS_ENSURE_ARG(aContextNode);
+  NS_ENSURE_ARG(aContentEnvelope);
+
+  // ok, this is tricky.  This function will REPLACE the contents of
+  // aContextNode with the a clone of the contents of aContentEnvelope.  If
+  // aContentEnvelope has no contents, then any contents that aContextNode
+  // has will still be removed.  
+
+  const nsXFormsNodeState* ns = GetNodeState(aContextNode);
+  NS_ENSURE_TRUE(ns, NS_ERROR_FAILURE);
+
+  // If the node is read-only and not set by a @calculate MIP,
+  // ignore the call
+  if (ns->IsReadonly()) {
+    ///
+    /// @todo Better feedback for readonly nodes? (XXX)
+    return NS_OK;
+  }
+
+  PRUint16 nodeType;
+  nsresult rv = aContextNode->GetNodeType(&nodeType);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (nodeType != nsIDOMNode::ELEMENT_NODE) {
+    // got to return something pretty unique that we can check down the road in
+    // order to dispatch any error events
+    return NS_ERROR_DOM_WRONG_TYPE_ERR;
+  }
+
+  // Need to determine if the contents of the context node and content envelope
+  // are already the same.  If so, we can avoid some unnecessary work.
+
+  PRBool hasChildren1, hasChildren2, contentsEqual = PR_FALSE;
+  nsresult rv1 = aContextNode->HasChildNodes(&hasChildren1);
+  nsresult rv2 = aContentEnvelope->HasChildNodes(&hasChildren2);
+  if (NS_SUCCEEDED(rv1) && NS_SUCCEEDED(rv2) && hasChildren1 == hasChildren2) {
+    // First test passed.  Both have the same number of children nodes.
+    if (hasChildren1) {
+      nsCOMPtr<nsIDOMNodeList> children1, children2;
+      PRUint32 childrenLength1, childrenLength2;
+  
+      rv1 = aContextNode->GetChildNodes(getter_AddRefs(children1));
+      rv2 = aContentEnvelope->GetChildNodes(getter_AddRefs(children2));
+
+      if (NS_SUCCEEDED(rv1) && NS_SUCCEEDED(rv2) && children1 && children2) {
+
+        // Both have child nodes.
+        rv1 = children1->GetLength(&childrenLength1);
+        rv2 = children2->GetLength(&childrenLength2);
+        if (NS_SUCCEEDED(rv1) && NS_SUCCEEDED(rv2) && 
+            (childrenLength1 == childrenLength2)) {
+
+          // both have the same number of child nodes.  Now checking to see if
+          // each of the children are equal.
+          for (PRUint32 i = 0; i < childrenLength1; ++i) {
+            nsCOMPtr<nsIDOMNode> child1, child2;
+      
+            rv1 = children1->Item(i, getter_AddRefs(child1));
+            rv2 = children2->Item(i, getter_AddRefs(child2));
+            if (NS_FAILED(rv1) || NS_FAILED(rv2)) {
+              // Unexpected error.  Not as many children in the list as we
+              // were told.
+              return NS_ERROR_UNEXPECTED;
+            }
+      
+            contentsEqual = nsXFormsUtils::AreNodesEqual(child1, child2, PR_TRUE);
+            if (!contentsEqual) {
+              break;
+            }
+          }
+        }
+      }
+    } else {
+      // neither have children
+      contentsEqual = PR_TRUE;
+    }
+  }
+
+  if (contentsEqual) {
+    return NS_OK;
+  }
+
+  // remove any child nodes that aContextNode already contains
+  nsCOMPtr<nsIDOMNode> resultNode;
+  nsCOMPtr<nsIDOMNodeList> childList;
+  rv = aContextNode->GetChildNodes(getter_AddRefs(childList));
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (childList) {
+    PRUint32 length;
+    rv = childList->GetLength(&length);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    for (PRInt32 i = length-1; i >= 0; i--) {
+      nsCOMPtr<nsIDOMNode> childNode;
+      rv = childList->Item(i, getter_AddRefs(childNode));
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = aContextNode->RemoveChild(childNode, getter_AddRefs(resultNode));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+  }
+
+  // add contents of the envelope under aContextNode
+  nsCOMPtr<nsIDOMNode> childNode;
+  rv = aContentEnvelope->GetFirstChild(getter_AddRefs(childNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIDOMDocument> document;
+  rv = aContextNode->GetOwnerDocument(getter_AddRefs(document));
+  NS_ENSURE_STATE(document);
+
+  while (childNode) {
+    nsCOMPtr<nsIDOMNode> importedNode;
+    rv = document->ImportNode(childNode, PR_TRUE, getter_AddRefs(importedNode));
+    NS_ENSURE_STATE(importedNode);
+    rv = aContextNode->AppendChild(importedNode, getter_AddRefs(resultNode));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = childNode->GetNextSibling(getter_AddRefs(resultNode));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    resultNode.swap(childNode);
+  }
+
+  return NS_OK;
+}
+
 const nsXFormsNodeState*
 nsXFormsMDGEngine::GetNodeState(nsIDOMNode *aContextNode)
 {
@@ -768,6 +869,11 @@ nsXFormsMDGEngine::GetNCNodeState(nsIDOMNode *aContextNode)
       return nsnull;
     }    
     aContextNode->AddRef();
+
+    // Do an initial type check, and set the validity state
+    PRBool constraint;
+    mModel->ValidateNode(aContextNode, &constraint);
+    ns->Set(eFlag_CONSTRAINT_SCHEMA, constraint);
   }
   return ns;
 }

@@ -41,7 +41,6 @@
 #include "nsIDOMElement.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIDOM3Node.h"
-#include "nsIDocument.h"
 #include "nsMemory.h"
 #include "nsXFormsAtoms.h"
 #include "nsString.h"
@@ -53,8 +52,9 @@
 
 static const char* kLoadAsData = "loadAsData";
 
-NS_IMPL_ISUPPORTS_INHERITED5(nsXFormsInstanceElement,
+NS_IMPL_ISUPPORTS_INHERITED6(nsXFormsInstanceElement,
                              nsXFormsStubElement,
+                             nsIXFormsNSInstanceElement,
                              nsIInstanceElementPrivate,
                              nsIStreamListener,
                              nsIRequestObserver,
@@ -63,7 +63,7 @@ NS_IMPL_ISUPPORTS_INHERITED5(nsXFormsInstanceElement,
 
 nsXFormsInstanceElement::nsXFormsInstanceElement()
   : mElement(nsnull)
-  , mAddingChildren(PR_FALSE)
+  , mInitialized(PR_FALSE)
   , mLazy(PR_FALSE)
 {
 }
@@ -78,7 +78,7 @@ nsXFormsInstanceElement::OnDestroyed()
     mChannel = nsnull;
   }
   mListener = nsnull;
-  SetDocument(nsnull);
+  SetInstanceDocument(nsnull);
   mElement = nsnull;
   return NS_OK;
 }
@@ -87,7 +87,7 @@ NS_IMETHODIMP
 nsXFormsInstanceElement::AttributeSet(nsIAtom *aName,
                                       const nsAString &aNewValue)
 {
-  if (mAddingChildren || mLazy)
+  if (!mInitialized || mLazy)
     return NS_OK;
 
   if (aName == nsXFormsAtoms::src) {
@@ -100,7 +100,7 @@ nsXFormsInstanceElement::AttributeSet(nsIAtom *aName,
 NS_IMETHODIMP
 nsXFormsInstanceElement::AttributeRemoved(nsIAtom *aName)
 {
-  if (mAddingChildren || mLazy)
+  if (!mInitialized || mLazy)
     return NS_OK;
 
   if (aName == nsXFormsAtoms::src) {
@@ -136,50 +136,12 @@ nsXFormsInstanceElement::AttributeRemoved(nsIAtom *aName)
 }
 
 NS_IMETHODIMP
-nsXFormsInstanceElement::BeginAddingChildren()
-{
-  mAddingChildren = PR_TRUE;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsXFormsInstanceElement::DoneAddingChildren()
-{
-  
-  mElement->HasAttributeNS(NS_LITERAL_STRING(NS_NAMESPACE_MOZ_XFORMS_LAZY),
-                           NS_LITERAL_STRING("lazy"), &mLazy);
-  if (!mLazy) {
-    nsCOMPtr<nsIModelElementPrivate> model = GetModel();
-    NS_ENSURE_TRUE(model, NS_ERROR_FAILURE);
-    model->AddInstanceElement(this);
-
-    // By the time this is called, we should be inserted in the document and
-    // have all of our child elements, so this is our first opportunity to
-    // create the instance document.
-  
-    nsAutoString src;
-    mElement->GetAttribute(NS_LITERAL_STRING("src"), src);
-  
-    if (src.IsEmpty()) {
-      // If we don't have a linked external instance, use our inline data.
-      CloneInlineInstance();
-    } else {
-      LoadExternalInstance(src);
-    }
-  }
-
-  mAddingChildren = PR_FALSE;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsXFormsInstanceElement::OnCreated(nsIXTFGenericElementWrapper *aWrapper)
 {
   aWrapper->SetNotificationMask(nsIXTFElement::NOTIFY_ATTRIBUTE_SET |
                                 nsIXTFElement::NOTIFY_ATTRIBUTE_REMOVED |
-                                nsIXTFElement::NOTIFY_PARENT_CHANGED |
-                                nsIXTFElement::NOTIFY_BEGIN_ADDING_CHILDREN |
-                                nsIXTFElement::NOTIFY_DONE_ADDING_CHILDREN);
+                                nsIXTFElement::NOTIFY_WILL_CHANGE_PARENT |
+                                nsIXTFElement::NOTIFY_PARENT_CHANGED);
 
   nsCOMPtr<nsIDOMElement> node;
   aWrapper->GetElementNode(getter_AddRefs(node));
@@ -191,22 +153,6 @@ nsXFormsInstanceElement::OnCreated(nsIXTFGenericElementWrapper *aWrapper)
   mElement = node;
   NS_ASSERTION(mElement, "Wrapper is not an nsIDOMElement, we'll crash soon");
 
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsXFormsInstanceElement::ParentChanged(nsIDOMElement *aNewParent)
-{
-  if (!aNewParent || mAddingChildren || mLazy)
-    return NS_OK;
-
-  // Once we are set up in the DOM, can find the model and make sure that this
-  // instance is on the list of instance elements that model keeps
-  nsCOMPtr<nsIModelElementPrivate> model = GetModel();
-  if (model) {
-    model->AddInstanceElement(this);
-  }
-  
   return NS_OK;
 }
 
@@ -232,15 +178,11 @@ nsXFormsInstanceElement::OnChannelRedirect(nsIChannel *OldChannel,
   nsCOMPtr<nsIURI> newURI;
   nsresult rv = aNewChannel->GetURI(getter_AddRefs(newURI));
   NS_ENSURE_SUCCESS(rv, rv);
-  
-  NS_ENSURE_STATE(mElement);
-  nsCOMPtr<nsIDOMDocument> domDoc;
-  mElement->GetOwnerDocument(getter_AddRefs(domDoc));
-  nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
-  NS_ENSURE_STATE(doc);
 
-  if (!nsXFormsUtils::CheckSameOrigin(doc->GetDocumentURI(), newURI)) {
-    nsXFormsUtils::ReportError(NS_LITERAL_STRING("instanceLoadOrigin"), domDoc);
+  if (!nsXFormsUtils::CheckConnectionAllowed(mElement, newURI)) {
+    const PRUnichar *strings[] = { NS_LITERAL_STRING("instance").get() };
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLinkLoadOrigin"),
+                               strings, 1, mElement, mElement);
     return NS_ERROR_ABORT;
   }
 
@@ -300,7 +242,7 @@ nsXFormsInstanceElement::OnStopRequest(nsIRequest *request, nsISupports *ctx,
 
   PRBool succeeded = NS_SUCCEEDED(status);
   if (!succeeded) {
-    SetDocument(nsnull);
+    SetInstanceDocument(nsnull);
   }
 
   if (mDocument) {
@@ -315,9 +257,17 @@ nsXFormsInstanceElement::OnStopRequest(nsIRequest *request, nsISupports *ctx,
           namespaceURI.EqualsLiteral("http://www.mozilla.org/newlayout/xml/parsererror.xml")) {
         NS_WARNING("resulting instance document could not be parsed");
         succeeded = PR_FALSE;
-        SetDocument(nsnull);
+        SetInstanceDocument(nsnull);
       }
     }
+  }
+
+  // Replace the principal for the loaded document
+  nsCOMPtr<nsIDocument> iDoc(do_QueryInterface(mDocument));
+  nsresult rv = ReplacePrincipal(iDoc);
+  if (NS_FAILED(rv)) {
+    SetInstanceDocument(nsnull);
+    return rv;
   }
 
   nsCOMPtr<nsIModelElementPrivate> model = GetModel();
@@ -329,17 +279,35 @@ nsXFormsInstanceElement::OnStopRequest(nsIRequest *request, nsISupports *ctx,
   return NS_OK;
 }
 
-// nsIInstanceElementPrivate
+nsresult
+nsXFormsInstanceElement::ReplacePrincipal(nsIDocument *aDocument)
+{
+  if (!aDocument || !mElement)
+    return NS_ERROR_FAILURE;
+
+  // Set Principal
+  nsCOMPtr<nsIDOMDocument> domDoc;
+  mElement->GetOwnerDocument(getter_AddRefs(domDoc));
+  nsCOMPtr<nsIDocument> fromDoc(do_QueryInterface(domDoc));
+  NS_ENSURE_STATE(fromDoc);
+  aDocument->SetPrincipal(fromDoc->GetPrincipal());
+
+  return NS_OK;
+}
+
+// nsIXFormsNSInstanceElement
 
 NS_IMETHODIMP
-nsXFormsInstanceElement::GetDocument(nsIDOMDocument **aDocument)
+nsXFormsInstanceElement::GetInstanceDocument(nsIDOMDocument **aDocument)
 {
   NS_IF_ADDREF(*aDocument = mDocument);
   return NS_OK;
 }
 
+// nsIInstanceElementPrivate
+
 NS_IMETHODIMP
-nsXFormsInstanceElement::SetDocument(nsIDOMDocument *aDocument)
+nsXFormsInstanceElement::SetInstanceDocument(nsIDOMDocument *aDocument)
 {
   nsCOMPtr<nsIDocument> doc(do_QueryInterface(mDocument));
   if (doc) {
@@ -358,6 +326,15 @@ nsXFormsInstanceElement::SetDocument(nsIDOMDocument *aDocument)
     nsCOMPtr<nsISupports> owner(do_QueryInterface(mElement));
     NS_ENSURE_STATE(owner);
     rv = doc->SetProperty(nsXFormsAtoms::instanceDocumentOwner, owner);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Replace the principal of the instance document so it is the same as for
+    // the owning form. Why is this not a security breach? Because we handle
+    // our own whitelist of domains that we trust (see
+    // nsXFormsUtils::CheckSameOrigin()), and if we have gotten this far
+    // (ie. loaded the document) the user has trusted obviously trusted the
+    // source. See also https://bugzilla.mozilla.org/show_bug.cgi?id=338451
+    rv = ReplacePrincipal(doc);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -400,41 +377,26 @@ nsXFormsInstanceElement::BackupOriginalDocument()
 NS_IMETHODIMP
 nsXFormsInstanceElement::RestoreOriginalDocument()
 {
-  nsresult rv = NS_OK;
-
   // This is called when xforms-reset is received by the model.  We assume
   // that the backup of the instance document has been populated and is
-  // loaded into mOriginalDocument.  Get the backup's root node, clone it, and 
-  // insert it into the live copy of the instance document.  This is the magic 
-  // behind getting xforms-reset to work. 
-  if(mDocument && mOriginalDocument) {
-    nsCOMPtr<nsIDOMNode> newNode, instanceRootNode, nodeReturn;
-    nsCOMPtr<nsIDOMElement> instanceRoot;
-
-    // first remove all the old stuff
-    rv = mDocument->GetDocumentElement(getter_AddRefs(instanceRoot));
-    if(NS_SUCCEEDED(rv)) {
-      if(instanceRoot) {
-        rv = mDocument->RemoveChild(instanceRoot, getter_AddRefs(nodeReturn));
-        NS_ENSURE_SUCCESS(rv, rv);
-      }
-    }
-
-    // now all of the garbage is out o' there!  Put the original data back
-    // into mDocument
-    rv = mOriginalDocument->GetDocumentElement(getter_AddRefs(instanceRoot));
-    NS_ENSURE_SUCCESS(rv, rv);
-    NS_ENSURE_TRUE(instanceRoot, NS_ERROR_FAILURE);
-    instanceRootNode = do_QueryInterface(instanceRoot);
-
-    rv = instanceRootNode->CloneNode(PR_TRUE, getter_AddRefs(newNode)); 
-    if(NS_SUCCEEDED(rv)) {
-      rv = mDocument->AppendChild(newNode, getter_AddRefs(nodeReturn));
-      NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), 
-                       "failed to restore original instance document");
-    }
+  // loaded into mOriginalDocument.
+ 
+ if (!mOriginalDocument) {
+    return NS_ERROR_FAILURE;
   }
-  return rv;
+  
+  nsCOMPtr<nsIDOMNode> newDocNode;
+  nsresult rv = mOriginalDocument->CloneNode(PR_TRUE,
+                                             getter_AddRefs(newDocNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIDOMDocument> newDoc(do_QueryInterface(newDocNode));
+  NS_ENSURE_STATE(newDoc);
+  
+  rv = SetInstanceDocument(newDoc);
+  NS_ENSURE_SUCCESS(rv, rv);
+  
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -445,49 +407,81 @@ nsXFormsInstanceElement::GetElement(nsIDOMElement **aElement)
 }
 
 NS_IMETHODIMP
-nsXFormsInstanceElement::InitializeLazyInstance()
+nsXFormsInstanceElement::WillChangeParent(nsIDOMElement *aNewParent)
 {
-  NS_ENSURE_STATE(mElement);
-  if (!mLazy) {
-    mElement->HasAttributeNS(NS_LITERAL_STRING(NS_NAMESPACE_MOZ_XFORMS_LAZY),
-                             NS_LITERAL_STRING("lazy"), &mLazy);
+  if (!aNewParent) {
+    nsCOMPtr<nsIModelElementPrivate> model = GetModel();
+    if (model) {
+      model->RemoveInstanceElement(this);
+    }
   }
 
-  NS_ENSURE_STATE(mLazy);
+  return NS_OK;
+}
 
-  nsCOMPtr<nsIDOMDocument> domDoc;
-  mElement->GetOwnerDocument(getter_AddRefs(domDoc));
-  NS_ENSURE_STATE(domDoc);
+NS_IMETHODIMP
+nsXFormsInstanceElement::ParentChanged(nsIDOMElement *aNewParent)
+{
+  nsCOMPtr<nsIModelElementPrivate> model = GetModel();
+  if (!model) return NS_OK;
 
-  nsCOMPtr<nsIDOMDOMImplementation> domImpl;
-  nsresult rv = domDoc->GetImplementation(getter_AddRefs(domImpl));
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (mInitialized || !mElement) {
+    return NS_OK;
+  }
 
-  nsCOMPtr<nsIDOMDocument> newDoc;
-  rv = domImpl->CreateDocument(EmptyString(), EmptyString(), nsnull,
-                               getter_AddRefs(newDoc));
-  NS_ENSURE_SUCCESS(rv, rv);
+  mInitialized = PR_TRUE;
+  model->AddInstanceElement(this);
 
-  rv = SetDocument(newDoc);
-  NS_ENSURE_SUCCESS(rv, rv);
+  // If model isn't loaded entirely (It means xforms-ready event hasn't been
+  // fired) then the instance will be initialized by model and will be backed up
+  // when xforms-ready event is fired.
+  PRBool isready;
+  model->GetIsReady(&isready);
+  if (!isready)
+    return NS_OK;
 
-  // Lazy authored instance documents have a root named "instanceData"
-  nsCOMPtr<nsIDOMElement> instanceDataElement;
-  nsCOMPtr<nsIDOMNode> childReturn;
-  rv = mDocument->CreateElementNS(EmptyString(), 
-                                  NS_LITERAL_STRING("instanceData"),
-                                  getter_AddRefs(instanceDataElement));
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = mDocument->AppendChild(instanceDataElement, getter_AddRefs(childReturn));
-  NS_ENSURE_SUCCESS(rv, rv);
+  // If the model is loaded and ready then the instance is inserted dynamically.
+  // The instance should create instance document and back it up.
 
-  // I don't know if not being able to create a backup document is worth
-  // failing this function.  Since it probably won't be used often, we'll
-  // let it slide.  But it probably does mean that things are going south
-  // with the browser.
-  domImpl->CreateDocument(EmptyString(), EmptyString(), nsnull,
-                          getter_AddRefs(mOriginalDocument));
+  // Probably dynamic instances should be handled too when model isn't loaded
+  // entirely (for more information see a comment 29 of bug 320081
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=320081#c29).
 
+  nsAutoString src;
+  mElement->GetAttribute(NS_LITERAL_STRING("src"), src);
+
+  if (!src.IsEmpty()) {
+    // XXX: external dynamic instances isn't handled (see a bug 325684
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=325684)
+    return NS_OK;
+  }
+
+  // If we don't have a linked external instance, use our inline data.
+  nsresult rv = CloneInlineInstance();
+  if (NS_FAILED(rv))
+    return rv;
+  return BackupOriginalDocument();
+}
+
+NS_IMETHODIMP
+nsXFormsInstanceElement::Initialize()
+{
+  mElement->HasAttributeNS(NS_LITERAL_STRING(NS_NAMESPACE_MOZ_XFORMS_LAZY),
+                           NS_LITERAL_STRING("lazy"), &mLazy);
+
+  if (mLazy) { // Lazy instance
+    return CreateInstanceDocument(NS_LITERAL_STRING("instanceData"));
+  }
+
+  // Normal instance
+  nsAutoString src;
+  mElement->GetAttribute(NS_LITERAL_STRING("src"), src);
+
+  if (src.IsEmpty()) {
+    return CloneInlineInstance();
+  }
+
+  LoadExternalInstance(src);
   return NS_OK;
 }
 
@@ -497,7 +491,7 @@ nsresult
 nsXFormsInstanceElement::CloneInlineInstance()
 {
   // Clear out our existing instance data
-  nsresult rv = CreateInstanceDocument();
+  nsresult rv = CreateInstanceDocument(EmptyString());
   if (NS_FAILED(rv))
     return rv; // don't warn, we might just not be in the document yet
 
@@ -515,15 +509,49 @@ nsXFormsInstanceElement::CloneInlineInstance()
     temp->GetNextSibling(getter_AddRefs(child));
   }
 
-  if (child) {
-    nsCOMPtr<nsIDOMNode> newNode;
-    rv = mDocument->ImportNode(child, PR_TRUE, getter_AddRefs(newNode));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsCOMPtr<nsIDOMNode> nodeReturn;
-    rv = mDocument->AppendChild(newNode, getter_AddRefs(nodeReturn));
-    NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "failed to append root instance node");
+  // There needs to be a child element, or it is not a valid XML document
+  if (!child) {
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("inlineInstanceNoChildError"),
+                               mElement);
+    nsCOMPtr<nsIModelElementPrivate> model(GetModel());
+    nsCOMPtr<nsIDOMNode> modelNode(do_QueryInterface(model));
+    nsXFormsUtils::DispatchEvent(modelNode, eEvent_LinkException);
+    nsXFormsUtils::HandleFatalError(mElement,
+                                    NS_LITERAL_STRING("XFormsLinkException"));
+    return NS_ERROR_FAILURE;
   }
+
+  // Check for siblings to first child element node. This is an error, since
+  // the inline content is then not a well-formed XML document.
+  nsCOMPtr<nsIDOMNode> sibling;
+  child->GetNextSibling(getter_AddRefs(sibling));
+  while (sibling) {
+    PRUint16 nodeType;
+    sibling->GetNodeType(&nodeType);
+
+    if (nodeType == nsIDOMNode::ELEMENT_NODE) {
+      nsXFormsUtils::ReportError(NS_LITERAL_STRING("inlineInstanceMultipleElementsError"),
+                                 mElement);
+      nsCOMPtr<nsIModelElementPrivate> model(GetModel());
+      nsCOMPtr<nsIDOMNode> modelNode(do_QueryInterface(model));
+      nsXFormsUtils::DispatchEvent(modelNode, eEvent_LinkException);
+      nsXFormsUtils::HandleFatalError(mElement,
+                                      NS_LITERAL_STRING("XFormsLinkException"));
+      return NS_ERROR_FAILURE;
+    }
+
+    temp.swap(sibling);
+    temp->GetNextSibling(getter_AddRefs(sibling));
+  }
+
+  // Clone and insert content into new document
+  nsCOMPtr<nsIDOMNode> newNode;
+  rv = mDocument->ImportNode(child, PR_TRUE, getter_AddRefs(newNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIDOMNode> nodeReturn;
+  rv = mDocument->AppendChild(newNode, getter_AddRefs(nodeReturn));
+  NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "failed to append root instance node");
 
   return rv;
 }
@@ -550,9 +578,7 @@ nsXFormsInstanceElement::LoadExternalInstance(const nsAString &aSrc)
   mElement->GetOwnerDocument(getter_AddRefs(domDoc));
   nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
   if (doc) {
-    nsresult tmp;
-    doc->GetProperty(nsXFormsAtoms::isInstanceDocument, &tmp);
-    if (NS_SUCCEEDED(tmp)) {
+    if (doc->GetProperty(nsXFormsAtoms::isInstanceDocument)) {
       /// Property exists, which means we are an instance document trying
       /// to load an external instance document. We do not allow that.
       const nsPromiseFlatString& flat = PromiseFlatString(aSrc);
@@ -561,14 +587,14 @@ nsXFormsInstanceElement::LoadExternalInstance(const nsAString &aSrc)
                                  strings, 1, mElement, mElement);
     } else {
       // Clear out our existing instance data
-      if (NS_SUCCEEDED(CreateInstanceDocument())) {
+      if (NS_SUCCEEDED(CreateInstanceDocument(EmptyString()))) {
         nsCOMPtr<nsIDocument> newDoc = do_QueryInterface(mDocument);
 
         nsCOMPtr<nsIURI> uri;
         NS_NewURI(getter_AddRefs(uri), aSrc,
                   doc->GetDocumentCharacterSet().get(), doc->GetDocumentURI());
         if (uri) {
-          if (nsXFormsUtils::CheckSameOrigin(doc->GetDocumentURI(), uri)) {
+          if (nsXFormsUtils::CheckConnectionAllowed(mElement, uri)) {
             nsCOMPtr<nsILoadGroup> loadGroup;
             loadGroup = doc->GetDocumentLoadGroup();
             NS_WARN_IF_FALSE(loadGroup, "No load group!");
@@ -590,8 +616,9 @@ nsXFormsInstanceElement::LoadExternalInstance(const nsAString &aSrc)
               }
             }
           } else {
-            nsXFormsUtils::ReportError(NS_LITERAL_STRING("instanceLoadOrigin"),
-                                       domDoc);
+            const PRUnichar *strings[] = {NS_LITERAL_STRING("instance").get()};
+            nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLinkLoadOrigin"),
+                                       strings, 1, mElement, mElement);
           }
         }
       }
@@ -614,7 +641,7 @@ nsXFormsInstanceElement::LoadExternalInstance(const nsAString &aSrc)
 }
 
 nsresult
-nsXFormsInstanceElement::CreateInstanceDocument()
+nsXFormsInstanceElement::CreateInstanceDocument(const nsAString &aQualifiedName)
 {
   nsCOMPtr<nsIDOMDocument> doc;
   nsresult rv = mElement->GetOwnerDocument(getter_AddRefs(doc));
@@ -628,18 +655,18 @@ nsXFormsInstanceElement::CreateInstanceDocument()
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDOMDocument> newDoc;
-  rv = domImpl->CreateDocument(EmptyString(), EmptyString(), nsnull,
+  rv = domImpl->CreateDocument(EmptyString(), aQualifiedName, nsnull,
                                getter_AddRefs(newDoc));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = SetDocument(newDoc);
+  rv = SetInstanceDocument(newDoc);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // I don't know if not being able to create a backup document is worth
   // failing this function.  Since it probably won't be used often, we'll
   // let it slide.  But it probably does mean that things are going south
   // with the browser.
-  domImpl->CreateDocument(EmptyString(), EmptyString(), nsnull,
+  domImpl->CreateDocument(EmptyString(), aQualifiedName, nsnull,
                           getter_AddRefs(mOriginalDocument));
   return rv;
 }

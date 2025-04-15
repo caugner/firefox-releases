@@ -37,7 +37,15 @@
 
     <popup id="contentAreaContextMenu"
            onpopupshowing="if (event.target != this) return true; gContextMenu = new nsContextMenu( this ); return gContextMenu.shouldDisplay;"
-           onpopuphiding="if (event.target == this) gContextMenu = null;">
+           onpopuphiding="if (event.target == this) { gContextMenu = null; }">
+      <menuitem id="spell-no-suggestions"
+                disabled="true"
+                label="&spellNoSuggestions.label;"/>
+      <menuitem id="spell-add-to-dictionary"
+                label="&spellAddToDictionary.label;"
+                accesskey="&spellAddToDictionary.accesskey;"
+                oncommand="InlineSpellCheckerUI.addToDictionary();"/>
+      <menuseparator id="spell-suggestions-separator"/>
       <menuitem id="context-openlink"
                 label="&openLinkCmd.label;"
                 accesskey="&openLinkCmd.accesskey;"
@@ -97,11 +105,10 @@
                 label="&setDesktopBackgroundCmd.label;"
                 accesskey="&setDesktopBackgroundCmd.accesskey;"
                 oncommand="gContextMenu.setDesktopBackground();"/>
-
-<!--XXXBlake XUL sucks! We need autocheck for menuitems. -->
-      <menuitem id="context-blockimage" class="menuitem-iconic"
+      <menuitem id="context-blockimage"
+                type="checkbox"
                 accesskey="&blockImageCmd.accesskey;"
-                oncommand="gContextMenu.toggleImageBlocking(this.getAttribute('checked') != 'true');"/>
+                oncommand="gContextMenu.toggleImageBlocking(this.getAttribute('checked') == 'true');"/>
       <menuitem id="context-back"
                 label="&backCmd.label;"
                 accesskey="&backCmd.accesskey;"
@@ -122,10 +129,14 @@
       <menuitem id="context-bookmarkpage"
                 label="&bookmarkPageCmd.label;"
                 accesskey="&bookmarkPageCmd.accesskey;"
+#ifdef MOZ_PLACES
+                command="Browser:AddBookmarkAs"/>
+#else
                 oncommand="addBookmarkAs(document.getElementById('content'));"/>
+#endif
       <menuitem id="context-savepage"
                 label="&savePageCmd.label;"
-                accesskey="&savePageCmd.accesskey;"
+                accesskey="&savePageCmd.accesskey2;"
                 oncommand="saveDocument(window.content.document);"/>
       <menuitem id="context-sendpage"  
                 label="&sendPageCmd.label;" 
@@ -170,7 +181,7 @@
                 oncommand="AddKeywordForSearchField();"/>
       <menuitem id="context-searchselect"
                 accesskey="&search.accesskey;"
-                oncommand="OpenSearch('internet', gContextMenu.searchSelected(), true);"/>
+                oncommand="BrowserSearch.loadSearch(getBrowserSelection(), true);"/>
       <menuseparator id="frame-sep"/>
       <menu id="frame" label="&thisFrameMenu.label;" accesskey="&thisFrameMenu.accesskey;">
         <menupopup>
@@ -224,6 +235,27 @@
                 label="&metadataCmd.label;"
                 accesskey="&metadataCmd.accesskey;"
                 oncommand="gContextMenu.showMetadata();"/>
+      <menuseparator id="spell-separator"/>
+      <menuitem id="spell-check-enabled"
+                label="&spellEnable.label;"
+                type="checkbox"
+                accesskey="&spellEnable.accesskey;"
+                oncommand="InlineSpellCheckerUI.toggleEnabled();"/>
+      <menuitem id="spell-add-dictionaries-main"
+                label="&spellAddDictionaries.label;"
+                accesskey="&spellAddDictionaries.accesskey;"
+                oncommand="gContextMenu.addDictionaries();"/>
+      <menu id="spell-dictionaries"
+            label="&spellDictionaries.label;"
+            accesskey="&spellDictionaries.accesskey;">
+          <menupopup id="spell-dictionaries-menu">
+              <menuseparator id="spell-language-separator"/>
+              <menuitem id="spell-add-dictionaries"
+                        label="&spellAddDictionaries.label;"
+                        accesskey="&spellAddDictionaries.accesskey;"
+                        oncommand="gContextMenu.addDictionaries();"/>
+          </menupopup>
+      </menu>
       <menuseparator hidden="true" id="context-sep-bidi"/>
       <menuitem hidden="true" id="context-bidi-text-direction-toggle"
                 label="&bidiSwitchTextDirectionItem.label;"
@@ -234,4 +266,3 @@
                 accesskey="&bidiSwitchPageDirectionItem.accesskey;"
                 oncommand="SwitchDocumentDirection(window.content);"/>
     </popup>
-

@@ -72,6 +72,10 @@ pref("mailnews.headers.showUserAgent",       false);
 // is displayed in the message pane or not...
 pref("mailnews.headers.showOrganization",    false);
 
+// If true, delete will use the direction of the sort order
+// in determining the next message to select. 
+pref("mail.delete_matches_sort_order", false);
+
 // mailnews tcp read+write timeout in seconds.
 pref("mailnews.tcptimeout", 60);
 
@@ -83,6 +87,13 @@ pref("mail.auth_login", true);
 
 pref("mail.default_drafts", "");    // empty string use default Drafts name;
 pref("mail.default_templates", ""); // empty string use default Templates name
+
+// set to 0 if you don't want to ignore timestamp differences between
+// local mail folders and the value stored in the corresponding .msf file.
+// 0 was the default up to and including 1.5. I've made the default
+// be greater than one hour so daylight savings time changes don't affect us.
+// We will still always regenerate .msf files if the file size changes.
+pref("mail.db_timestamp_leeway", 4000);
 
 // check all folders for new mail
 pref("mail.check_all_imap_folders_for_new", false);
@@ -105,6 +116,7 @@ pref("mail.imap.mime_parts_on_demand",      true);
 pref("mail.imap.mime_parts_on_demand_max_depth", 15);
 pref("mail.imap.mime_parts_on_demand_threshold", 30000);
 pref("mail.imap.use_literal_plus",          true);
+pref("mail.imap.expunge_after_delete",      false);
 pref("mail.imap.check_deleted_before_expunge", false);
 pref("mail.thread_without_re",	            true);  // if false, only thread by subject if Re:
 pref("mail.strict_threading",               false); // if true, don't thread by suject at all
@@ -115,6 +127,7 @@ pref("mail.check_new_mail",                 false);
 pref("mail.pop3_gets_new_mail",             false);
 pref("mail.check_time",                     10);
 pref("mail.pop_name",                       "");
+pref("mail.pop3.deleteFromServerOnMove",    false);
 pref("mail.remember_password",              false);
 pref("mail.pop_password",                   "");
 pref("mail.fixed_width_messages",           true);
@@ -137,6 +150,12 @@ pref("mail.file_attach_binary",             false);
 pref("mail.show_headers",                   1); // some
 pref("mail.pane_config",                    0);
 pref("mail.addr_book.mapit_url.format", "chrome://messenger-region/locale/region.properties");
+#ifdef MOZ_SUITE
+pref("mail.addr_book.im.onlineCheckAllowed", false);
+pref("messenger.throbber.url","chrome://messenger-region/locale/region.properties");
+pref("compose.throbber.url","chrome://messenger-region/locale/region.properties");
+pref("addressbook.throbber.url","chrome://messenger-region/locale/region.properties");
+#endif
 
 // the format for "mail.addr_book.quicksearchquery.format" is:
 // @V == the escaped value typed in the quick search bar in the addressbook
@@ -157,7 +176,7 @@ pref("mail.html_compose",                   true);
 // this will show up in the address picker in the compose window
 // examples: "X-Face" or "Approved,X-No-Archive"
 pref("mail.compose.other.header",	    "");
-pref("mail.compose.autosave", false);
+pref("mail.compose.autosave", true);
 pref("mail.compose.autosaveinterval", 5); // in minutes
 pref("mail.fcc_folder",                     "");
 pref("mail.encrypt_outgoing_mail",          false);
@@ -174,6 +193,8 @@ pref("mail.request.return_receipt", 2);                // 1: DSN 2: MDN 3: Both
 pref("mail.receipt.request_header_type", 0);           // 0: MDN-DNT header  1: RRT header 2: Both (MC)
 pref("mail.receipt.request_return_receipt_on", false);
 pref("mail.mdn.report.enabled", true);                 // false: Never send true: Send sometimes
+
+pref("mail.showPreviewText", false);
 
 pref("news.default_cc",                     "");
 pref("news.default_fcc",                    ""); // mailbox:URL or Imap://Host/OnlineFolderName
@@ -201,6 +222,8 @@ pref("mailnews.reply_header_ondate",        "chrome://messenger/locale/messenger
 pref("mailnews.reply_header_separator",     ", ");
 pref("mailnews.reply_header_colon",         ":");
 pref("mailnews.reply_header_originalmessage",   "chrome://messenger/locale/messengercompose/composeMsgs.properties");
+
+pref("mailnews.reply_to_self_check_all_ident", false);
 
 pref("mail.purge_threshhold",                100);
 pref("mail.prompt_purge_threshhold",             false);   
@@ -267,17 +290,19 @@ pref("ldap_2.autoComplete.directoryServer", "");
 pref("ldap_2.servers.pab.position",								1);
 pref("ldap_2.servers.pab.description",							"chrome://messenger/locale/addressbook/addressBook.properties");
 pref("ldap_2.servers.pab.dirType",								2);
+pref("ldap_2.servers.pab.filename",                             "abook.mab");
 pref("ldap_2.servers.pab.isOffline",							false);
 
 pref("ldap_2.servers.history.position",							2);
 pref("ldap_2.servers.history.description",						"chrome://messenger/locale/addressbook/addressBook.properties");
 pref("ldap_2.servers.history.dirType",							2);
+pref("ldap_2.servers.history.filename",                         "history.mab");
 pref("ldap_2.servers.history.isOffline",						false);
 
 // default mapping of addressbook properties to ldap attributes
 pref("ldap_2.servers.default.attrmap.FirstName", "givenName");
 pref("ldap_2.servers.default.attrmap.LastName", "sn,surname");
-pref("ldap_2.servers.default.attrmap.DisplayName", "displayName,cn,commonname");
+pref("ldap_2.servers.default.attrmap.DisplayName", "cn,commonname");
 pref("ldap_2.servers.default.attrmap.NickName", "mozillaNickname,xmozillanickname");
 pref("ldap_2.servers.default.attrmap.PrimaryEmail", "mail");
 pref("ldap_2.servers.default.attrmap.SecondEmail", "mozillaSecondEmail,xmozillasecondemail");
@@ -340,6 +365,7 @@ pref("ldap_2.prefs_migrated",      false);
 pref("mailnews.confirm.moveFoldersToTrash", true);
 
 pref("mailnews.reuse_message_window", true);
+pref("mailnews.reuse_thread_window2", false);
 pref("mailnews.open_window_warning", 10); // warn user if they attempt to open more than this many messages at once
 
 pref("mailnews.start_page.url", "chrome://messenger-region/locale/region.properties");
@@ -365,6 +391,7 @@ pref("mail.identity.default.compose_html", true);
 pref("mail.identity.default.valid", true);
 pref("mail.identity.default.fcc",true);
 pref("mail.identity.default.fcc_folder","mailbox://nobody@Local%20Folders/Sent");
+pref("mail.identity.default.fcc_reply_follows_parent", false);
 pref("mail.identity.default.autocompleteToMyDomain", false);
 
 // keep these defaults for backwards compatibility and migration
@@ -451,24 +478,26 @@ pref("mail.server.default.use_idle", true);
 // for spam
 pref("mail.server.default.spamLevel",100);  // 0 off, 100 on.  not doing bool since we might have real levels one day.
 pref("mail.server.default.moveOnSpam",false);
-pref("mail.server.default.markAsReadOnSpam",false);
 pref("mail.server.default.moveTargetMode",0); // 0 == "Junk" on server, 1 == specific folder
 pref("mail.server.default.spamActionTargetAccount","");
 pref("mail.server.default.spamActionTargetFolder","");
 pref("mail.server.default.useWhiteList",true);
 pref("mail.server.default.whiteListAbURI","moz-abmdbdirectory://abook.mab");  // the Personal addressbook.
 pref("mail.server.default.useServerFilter", false);
+pref("mail.server.default.serverFilterName", "SpamAssasin");
 pref("mail.server.default.serverFilterTrustFlags", 1); // 1 == trust positives, 2 == trust negatives, 3 == trust both
 pref("mail.server.default.purgeSpam",false);
 pref("mail.server.default.purgeSpamInterval",14); // 14 days
-pref("mail.server.default.spamLoggingEnabled",false);
-pref("mail.server.default.manualMark",false);
-pref("mail.server.default.manualMarkMode",0); // 0 == "move to junk folder", 1 == "delete"
 
 // the probablilty threshold over which messages are classified as junk
 // this number is divided by 100 before it is used. The classifier can be fine tuned
 // by changing this pref. Typical values are .99, .95, .90, .5, etc. 
 pref("mail.adaptivefilters.junk_threshold", 90); 
+pref("mail.spam.version", 0); // used to determine when to migrate global spam settings
+pref("mail.spam.logging.enabled", false);
+pref("mail.spam.manualMark", false);
+pref("mail.spam.markAsReadOnSpam", false);
+pref("mail.spam.manualMarkMode", 0); // 0 == "move to junk folder", 1 == "delete"
 
 pref("mail.autoComplete.highlightNonMatches", true);
 
@@ -507,12 +536,6 @@ This option is mainly for the UI of html_as.
 pref("mail.forward_message_mode", 0); // 0=default as attachment 2=forward as inline with attachments, (obsolete 4.x value)1=forward as quoted (mapped to 2 in mozilla)
 
 pref("mail.startup.enabledMailCheckOnce", false);
-
-pref("mailnews.max_header_display_length",3); // number of addresses to show
-
-pref("messenger.throbber.url","chrome://messenger-region/locale/region.properties");
-pref("compose.throbber.url","chrome://messenger-region/locale/region.properties");
-pref("addressbook.throbber.url","chrome://messenger-region/locale/region.properties");
 
 pref("mailnews.send_plaintext_flowed", true); // RFC 2646=======
 pref("mailnews.display.disable_format_flowed_support", false);
@@ -553,6 +576,8 @@ pref("mail.biff.play_sound.type",0);
 // otherwise, this needs to be a file url
 pref("mail.biff.play_sound.url","");
 pref("mail.biff.show_alert", true);
+pref("mail.biff.show_tray_icon", true); // currently Windows-only
+pref("mail.biff.animate_dock_icon", false);
 
 pref("mail.content_disposition_type", 0);
 
@@ -560,6 +585,7 @@ pref("mailnews.show_send_progress", true); //Will show a progress dialog when sa
 pref("mail.server.default.retainBy", 1);
 
 pref("mailnews.ui.junk.firstuse", true);
+pref("mailnews.ui.junk.manualMarkAsJunkMarksRead", true);
 
 // for manual upgrades of certain UI features.
 // 1 -> 2 is for the folder pane tree landing, to hide the
@@ -600,18 +626,13 @@ pref("mail.compose.max_recycled_windows", 1);
 // see bug #103010 for details
 pref("news.persist_server_open_state_in_folderpane",false);
 
-// New color prefs for Labels
-pref("mailnews.labels.description.0", "chrome://messenger/locale/messenger.properties");
+// default description and color prefs for tags
+// (we keep the .labels. names for backwards compatibility)
 pref("mailnews.labels.description.1", "chrome://messenger/locale/messenger.properties");
 pref("mailnews.labels.description.2", "chrome://messenger/locale/messenger.properties");
 pref("mailnews.labels.description.3", "chrome://messenger/locale/messenger.properties");
 pref("mailnews.labels.description.4", "chrome://messenger/locale/messenger.properties");
 pref("mailnews.labels.description.5", "chrome://messenger/locale/messenger.properties");
-
-// mailews.labels.color.0 is not defined because there is no color associated with
-// this particular label.  It is defined above (mailnews.lables.description.0) because
-// its description string is required in order to prepend the accesskey '0':
-//   ie: '0 None'.
 pref("mailnews.labels.color.1", "#FF0000"); // default: red
 pref("mailnews.labels.color.2", "#FF9900"); // default: orange
 pref("mailnews.labels.color.3", "#009900"); // default: green
@@ -626,8 +647,10 @@ pref("mailnews.fakeaccount.show", false);
 pref("mailnews.fakeaccount.server", "");
 
 // message display properties
-pref("mailnews.message_display.disable_remote_image", false);
-pref("mailnews.message_display.allow.plugins", true);
+pref("mailnews.message_display.allow.plugins", false);
+pref("mailnews.message_display.disable_remote_image", true);
+pref("mailnews.message_display.disable_remote_images.useWhitelist", true);
+pref("mailnews.message_display.disable_remote_images.whiteListAbURI","moz-abmdbdirectory://abook.mab");
 
 // default msg compose font prefs
 pref("msgcompose.font_face",                "");

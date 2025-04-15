@@ -87,6 +87,9 @@ public:
   NS_IMETHOD DidModifySVGObservable(nsISVGValue *observable,
                                     nsISVGValue::modificationType aModType);
 
+  // nsIContent interface
+  NS_IMETHODIMP_(PRBool) IsAttributeMapped(const nsIAtom* name) const;
+
 protected:
   void GetSrc(nsAString& src);
   
@@ -115,6 +118,7 @@ NS_INTERFACE_MAP_BEGIN(nsSVGImageElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMSVGImageElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMSVGURIReference)
   NS_INTERFACE_MAP_ENTRY(imgIDecoderObserver)
+  NS_INTERFACE_MAP_ENTRY(imgIDecoderObserver_MOZILLA_1_8_BRANCH)
   NS_INTERFACE_MAP_ENTRY(nsIImageLoadingContent)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(SVGImageElement)
 NS_INTERFACE_MAP_END_INHERITING(nsSVGImageElementBase)
@@ -130,6 +134,7 @@ nsSVGImageElement::nsSVGImageElement(nsINodeInfo *aNodeInfo)
 
 nsSVGImageElement::~nsSVGImageElement()
 {
+  DestroyImageLoadingContent();
 }
 
   
@@ -391,3 +396,13 @@ nsSVGImageElement::DidModifySVGObservable(nsISVGValue* aObservable,
   return nsSVGImageElementBase::DidModifySVGObservable(aObservable, aModType);
 }
 
+NS_IMETHODIMP_(PRBool)
+nsSVGImageElement::IsAttributeMapped(const nsIAtom* name) const
+{
+  static const MappedAttributeEntry* const map[] = {
+    sViewportsMap,
+  };
+  
+  return FindAttributeDependence(name, map, NS_ARRAY_LENGTH(map)) ||
+    nsSVGImageElementBase::IsAttributeMapped(name);
+}

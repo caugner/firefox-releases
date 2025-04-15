@@ -44,22 +44,42 @@
 #include "nsAlertsService.h"
 #endif
 
-#ifndef MOZ_THUNDERBIRD
-#include "nsDocShellCID.h"
-#include "nsAutoCompleteController.h"
-#include "nsAutoCompleteMdbResult.h"
 #ifdef MOZ_XPINSTALL
 #include "nsDownloadManager.h"
 #include "nsDownloadProxy.h"
 #endif
-#include "nsFormHistory.h"
-#include "nsFormFillController.h"
-#include "nsGlobalHistory.h"
-#include "nsPasswordManager.h"
-#include "nsSingleSignonPrompt.h"
+
 #include "nsTypeAheadFind.h"
+
+#ifndef MOZ_THUNDERBIRD
+#include "nsDocShellCID.h"
+#include "nsAutoCompleteController.h"
+#ifdef MOZ_MORK
+#include "nsAutoCompleteMdbResult.h"
+#endif
+#include "nsAutoCompleteSimpleResult.h"
+#include "nsFormFillController.h"
+
+// form history (satchel)
+#ifdef MOZ_PLACES
+#include "nsStorageFormHistory.h"
+#else
+#include "nsFormHistory.h"
 #endif
 
+#ifndef MOZ_PLACES
+#include "nsGlobalHistory.h"
+#endif
+#include "nsPasswordManager.h"
+#include "nsSingleSignonPrompt.h"
+#endif
+#ifdef MOZ_URL_CLASSIFIER
+#include "nsUrlClassifierDBService.h"
+#include "nsUrlClassifierStreamUpdater.h"
+#endif
+#ifdef MOZ_FEEDS
+#include "nsScriptableUnescapeHTML.h"
+#endif
 /////////////////////////////////////////////////////////////////////////////
 
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsAppStartup, Init)
@@ -69,28 +89,44 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsUserInfo)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAlertsService)
 #endif
 
-#ifndef MOZ_THUNDERBIRD
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsAutoCompleteController)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsAutoCompleteMdbResult)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsTypeAheadFind)
-NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsFormHistory, nsFormHistory::GetInstance)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsFormFillController)
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsGlobalHistory, Init)
-NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsPasswordManager, nsPasswordManager::GetInstance)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsSingleSignonPrompt)
 #ifdef MOZ_XPINSTALL
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsDownloadManager, Init) 
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDownloadProxy)
 #endif
-#endif
 
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsTypeAheadFind)
+
+#ifndef MOZ_THUNDERBIRD
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsAutoCompleteController)
+#ifdef MOZ_MORK
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsAutoCompleteMdbResult)
+#endif
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsAutoCompleteSimpleResult)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsFormHistory, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsFormFillController)
+#if defined(MOZ_STORAGE) && defined(MOZ_MORKREADER)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsFormHistoryImporter)
+#endif
+#ifndef MOZ_PLACES
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsGlobalHistory, Init)
+#endif
+NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsPasswordManager, nsPasswordManager::GetInstance)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsSingleSignonPrompt)
+#endif
+#ifdef MOZ_URL_CLASSIFIER
+NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsUrlClassifierDBService,
+                                         nsUrlClassifierDBService::GetInstance)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsUrlClassifierStreamUpdater)
+#endif
+#ifdef MOZ_FEEDS
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsScriptableUnescapeHTML)
+#endif
 /////////////////////////////////////////////////////////////////////////////
 //// Module Destructor
 
 static void PR_CALLBACK nsToolkitCompModuleDtor(nsIModule* self)
 {
 #ifndef MOZ_THUNDERBIRD
-  nsFormHistory::ReleaseInstance();
   nsPasswordManager::Shutdown();
 #endif
 }
@@ -114,17 +150,6 @@ static const nsModuleComponentInfo components[] =
     NS_ALERTSERVICE_CONTRACTID,
     nsAlertsServiceConstructor },
 #endif
-#ifndef MOZ_THUNDERBIRD
-  { "AutoComplete Controller",
-    NS_AUTOCOMPLETECONTROLLER_CID, 
-    NS_AUTOCOMPLETECONTROLLER_CONTRACTID,
-    nsAutoCompleteControllerConstructor },
-
-  { "AutoComplete Mdb Result",
-    NS_AUTOCOMPLETEMDBRESULT_CID, 
-    NS_AUTOCOMPLETEMDBRESULT_CONTRACTID,
-    nsAutoCompleteMdbResultConstructor },
-  
 #ifdef MOZ_XPINSTALL
   { "Download Manager",
     NS_DOWNLOADMANAGER_CID,
@@ -134,6 +159,26 @@ static const nsModuleComponentInfo components[] =
     NS_DOWNLOAD_CID,
     NS_TRANSFER_CONTRACTID,
     nsDownloadProxyConstructor },
+#endif
+  { "TypeAheadFind Component", NS_TYPEAHEADFIND_CID,
+    NS_TYPEAHEADFIND_CONTRACTID, nsTypeAheadFindConstructor
+  },
+#ifndef MOZ_THUNDERBIRD
+  { "AutoComplete Controller",
+    NS_AUTOCOMPLETECONTROLLER_CID, 
+    NS_AUTOCOMPLETECONTROLLER_CONTRACTID,
+    nsAutoCompleteControllerConstructor },
+
+  { "AutoComplete Simple Result",
+    NS_AUTOCOMPLETESIMPLERESULT_CID,
+    NS_AUTOCOMPLETESIMPLERESULT_CONTRACTID,
+    nsAutoCompleteSimpleResultConstructor },
+
+#ifdef MOZ_MORK
+  { "AutoComplete Mdb Result",
+    NS_AUTOCOMPLETEMDBRESULT_CID, 
+    NS_AUTOCOMPLETEMDBRESULT_CONTRACTID,
+    nsAutoCompleteMdbResultConstructor },
 #endif
 
   { "HTML Form History",
@@ -151,6 +196,15 @@ static const nsModuleComponentInfo components[] =
     NS_FORMHISTORYAUTOCOMPLETE_CONTRACTID,
     nsFormFillControllerConstructor },
 
+#if defined(MOZ_STORAGE) && defined(MOZ_MORKREADER)
+  { "Form History Importer",
+    NS_FORMHISTORYIMPORTER_CID,
+    NS_FORMHISTORYIMPORTER_CONTRACTID,
+    nsFormHistoryImporterConstructor },
+#endif
+
+#ifndef MOZ_PLACES
+  // "places" replaces global history
   { "Global History",
     NS_GLOBALHISTORY_CID,
     NS_GLOBALHISTORY2_CONTRACTID,
@@ -165,6 +219,7 @@ static const nsModuleComponentInfo components[] =
     NS_GLOBALHISTORY_CID,
     NS_GLOBALHISTORY_AUTOCOMPLETE_CONTRACTID,
     nsGlobalHistoryConstructor },
+#endif
 
   { "Password Manager",
     NS_PASSWORDMANAGER_CID,
@@ -176,11 +231,23 @@ static const nsModuleComponentInfo components[] =
   { "Single Signon Prompt",
     NS_SINGLE_SIGNON_PROMPT_CID,
     "@mozilla.org/wallet/single-sign-on-prompt;1",
-    nsSingleSignonPromptConstructor },
-  
-  { "TypeAheadFind Component", NS_TYPEAHEADFIND_CID,
-    NS_TYPEAHEADFIND_CONTRACTID, nsTypeAheadFindConstructor
-  },
+    nsSingleSignonPromptConstructor }, 
+#endif
+#ifdef MOZ_URL_CLASSIFIER
+  { "Url Classifier DB Service",
+    NS_URLCLASSIFIERDBSERVICE_CID,
+    NS_URLCLASSIFIERDBSERVICE_CONTRACTID,
+    nsUrlClassifierDBServiceConstructor },
+  { "Url Classifier Stream Updater",
+    NS_URLCLASSIFIERSTREAMUPDATER_CID,
+    NS_URLCLASSIFIERSTREAMUPDATER_CONTRACTID,
+    nsUrlClassifierStreamUpdaterConstructor },
+#endif
+#ifdef MOZ_FEEDS
+  { "Unescape HTML",
+    NS_SCRIPTABLEUNESCAPEHTML_CID,
+    NS_SCRIPTABLEUNESCAPEHTML_CONTRACTID,
+    nsScriptableUnescapeHTMLConstructor },
 #endif
 };
 

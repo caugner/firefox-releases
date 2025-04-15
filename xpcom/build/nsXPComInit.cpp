@@ -111,6 +111,8 @@
 
 #include "nsVariant.h"
 
+#include "nsUUIDGenerator.h"
+
 #ifdef GC_LEAK_DETECTOR
 #include "nsLeakDetector.h"
 #endif
@@ -121,6 +123,12 @@
 #if defined(XP_WIN) && !defined(WINCE)
 #include "nsWindowsRegKey.h"
 #endif
+
+#ifdef XP_MACOSX
+#include "nsMacUtilsImpl.h"
+#endif
+
+#include "nsSystemInfo.h"
 
 #include <locale.h>
 
@@ -204,6 +212,14 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsTimelineService)
 #endif
 
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsHashPropertyBag, Init)
+
+#ifdef XP_MACOSX
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsMacUtilsImpl)
+#endif
+
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsUUIDGenerator, Init)
+
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsSystemInfo, Init)
 
 static NS_METHOD
 nsXPTIInterfaceInfoManagerGetSingleton(nsISupports* outer,
@@ -379,7 +395,10 @@ static const nsModuleComponentInfo components[] = {
     COMPONENT(STRINGINPUTSTREAM, nsStringInputStreamConstructor),
     COMPONENT(MULTIPLEXINPUTSTREAM, nsMultiplexInputStreamConstructor),
 
+#ifndef MOZ_NO_FAST_LOAD
     COMPONENT(FASTLOADSERVICE, nsFastLoadService::Create),
+#endif
+
     COMPONENT(VARIANT, nsVariantConstructor),
     COMPONENT(INTERFACEINFOMANAGER_SERVICE, nsXPTIInterfaceInfoManagerGetSingleton),
 
@@ -388,9 +407,17 @@ static const nsModuleComponentInfo components[] = {
 #define NS_HASH_PROPERTY_BAG_CLASSNAME "Hashtable Property Bag"
     COMPONENT(HASH_PROPERTY_BAG, nsHashPropertyBagConstructor),
 
+    COMPONENT(UUID_GENERATOR, nsUUIDGeneratorConstructor),
+
 #if defined(XP_WIN) && !defined(WINCE)
     COMPONENT(WINDOWSREGKEY, nsWindowsRegKeyConstructor),
 #endif
+
+#ifdef XP_MACOSX
+    COMPONENT(MACUTILSIMPL, nsMacUtilsImplConstructor),
+#endif
+
+    COMPONENT(SYSTEMINFO, nsSystemInfoConstructor),
 };
 
 #undef COMPONENT

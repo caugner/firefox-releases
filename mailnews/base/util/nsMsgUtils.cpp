@@ -53,6 +53,8 @@
 #include "nsMsgBaseCID.h"
 #include "nsMsgImapCID.h"
 #include "nsMsgI18N.h"
+#include "nsNativeCharsetUtils.h"
+#include "nsUnicharUtils.h"
 #include "prprf.h"
 #include "nsNetCID.h"
 #include "nsIIOService.h"
@@ -259,6 +261,17 @@ inline PRUint32 StringHash(const nsAutoString& str)
                       str.Length() * 2);
 }
 
+// XXX : this may have other clients, in which case we'd better move it to
+//       xpcom/io/nsNativeCharsetUtils with nsAString in place of nsAutoString
+static PRBool ConvertibleToNative(const nsAutoString& str)
+{
+    nsCAutoString native;
+    nsAutoString roundTripped;
+    NS_CopyUnicodeToNative(str, native);
+    NS_CopyNativeToUnicode(native, roundTripped);
+    return str.Equals(roundTripped);
+}
+
 #if defined(XP_MAC)
   const static PRUint32 MAX_LEN = 25;
 #elif defined(XP_UNIX) || defined(XP_BEOS)
@@ -321,22 +334,25 @@ nsresult NS_MsgHashIfNecessary(nsAutoString &name)
                                   FILE_PATH_SEPARATOR FILE_ILLEGAL_CHARACTERS ILLEGAL_FOLDER_CHARS);
 
   char hashedname[9];
-  if (illegalCharacterIndex == kNotFound) 
+  PRInt32 keptLength = -1;
+  if (illegalCharacterIndex != kNotFound) 
+      keptLength = illegalCharacterIndex;
+  else if (!ConvertibleToNative(name))
+      keptLength = 0;
+  else if (name.Length() > MAX_LEN) 
   {
-    if (name.Length() > MAX_LEN) 
-    {
-      PR_snprintf(hashedname, 9, "%08lx", (unsigned long) StringHash(name));
-      name.Truncate(MAX_LEN - 8); 
-      AppendASCIItoUTF16(hashedname, name);
-    }
+    keptLength = MAX_LEN-8; 
+    // To avoid keeping only the high surrogate of a surrogate pair
+    if (IS_HIGH_SURROGATE(name.CharAt(keptLength-1)))
+        --keptLength;
   }
-  else 
-  {
-      PR_snprintf(hashedname, 9, "%08lx",
-                (unsigned long) StringHash(name));
-      CopyASCIItoUTF16(hashedname, name);
+
+  if (keptLength >= 0) {
+    PR_snprintf(hashedname, 9, "%08lx", (unsigned long) StringHash(name));
+    name.Truncate(keptLength);
+    AppendASCIItoUTF16(hashedname, name);
   }
-  
+
   return NS_OK;
 }
 
@@ -668,10 +684,10 @@ nsresult EscapeFromSpaceLine(nsIFileSpec *pDst, char *start, const char *end)
       // Found a line so check if it's a qualified "From " line.
       if (IsAFromSpaceLine(start, pChar))
         rv = pDst->Write(">", 1, &written);
-
-      rv = pDst->Write(start, pChar-start+2, &written);
+      PRInt32 lineTerminatorCount = (*(pChar + 1) == nsCRT::LF) ? 2 : 1;
+      rv = pDst->Write(start, pChar - start + lineTerminatorCount, &written);
       NS_ENSURE_SUCCESS(rv,rv);
-      pChar += 2;
+      pChar += lineTerminatorCount;
       start = pChar;
     }
     else if (start < end)
@@ -1124,4 +1140,94 @@ void Seconds2PRTime(PRUint32 seconds, PRTime *prTime)
   LL_I2L(microSecondsPerSecond, PR_USEC_PER_SEC);
   LL_UI2L(intermediateResult, seconds);
   LL_MUL((*prTime), intermediateResult, microSecondsPerSecond);
+}
+
+void MsgGenerateNowStr(nsACString &nowStr)
+{
+  char dateBuf[100];
+  dateBuf[0] = '\0';
+  PRExplodedTime exploded;
+  PR_ExplodeTime(PR_Now(), PR_LocalTimeParameters, &exploded);
+  PR_FormatTimeUSEnglish(dateBuf, sizeof(dateBuf), "%a %b %d %H:%M:%S %Y", &exploded);
+  nowStr.Assign(dateBuf);
+}
+
+PRBool MsgFindKeyword(const nsACString &keyword, nsACString &keywords, nsACString::const_iterator &start, nsACString::const_iterator &end)
+{
+  keywords.BeginReading(start);
+  keywords.EndReading(end);
+  if (*start == ' ')
+    start++;
+  nsACString::const_iterator saveStart(start), saveEnd(end);
+  while (PR_TRUE)
+  {
+    if (FindInReadable(keyword, start, end))
+    {
+      PRBool beginMatches = start == saveStart;
+      PRBool endMatches = end == saveEnd;
+      nsACString::const_iterator beforeStart(start);
+      beforeStart--;
+      // start and end point to the beginning and end of the match
+      if (beginMatches && (end == saveEnd || *end == ' ')
+        || (endMatches && *beforeStart == ' ')
+        || *beforeStart == ' ' && *end == ' ')
+      {
+        if (*end == ' ')
+          end++;
+        if (*beforeStart == ' ' && endMatches)
+          start--;
+        return PR_TRUE;
+      }
+      else 
+        start = end; // advance past bogus match.
+    }
+    else
+      break;
+  }
+  return PR_FALSE;
+}
+
+PRBool MsgHostDomainIsTrusted(nsCString &host, nsCString &trustedMailDomains)
+{
+  const char *domain, *domainEnd, *end;
+  PRUint32 hostLen, domainLen;
+  PRBool domainIsTrusted = PR_FALSE;
+  
+  domain = trustedMailDomains.BeginReading();
+  domainEnd = trustedMailDomains.EndReading(); 
+  nsACString::const_iterator hostStart;
+  
+  host.BeginReading(hostStart);
+  hostLen = host.Length();
+  
+  do {
+    // skip any whitespace
+    while (*domain == ' ' || *domain == '\t')
+      ++domain;
+    
+    // find end of this domain in the string
+    end = strchr(domain, ',');
+    if (!end)
+      end = domainEnd;
+    
+    // to see if the hostname is in the domain, check if the domain
+    // matches the end of the hostname.
+    domainLen = end - domain;
+    if (domainLen && hostLen >= domainLen) {
+      const char *hostTail = hostStart.get() + hostLen - domainLen;
+      if (PL_strncasecmp(domain, hostTail, domainLen) == 0) 
+      {
+        // now, make sure either that the hostname is a direct match or
+        // that the hostname begins with a dot.
+        if (hostLen == domainLen || *hostTail == '.' || *(hostTail - 1) == '.')
+        {
+          domainIsTrusted = PR_TRUE;
+          break;
+        }
+      }
+    }
+    
+    domain = end + 1;
+  } while (*end);
+  return domainIsTrusted;
 }

@@ -55,6 +55,9 @@
 #include "nsNSSShutDown.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
+#include "nsIPrompt.h"
+#include "nsIProxyObjectManager.h"
+#include "nsProxiedService.h"
 
 #include "nspr.h"
 extern "C" {
@@ -351,6 +354,10 @@ nsNSSCertificateDB::handleCACertDownload(nsIArray *x509Certs,
     tmpCert = CERT_NewTempCertificate(certdb, &der,
                                       nsnull, PR_FALSE, PR_TRUE);
   }
+  nsMemory::Free(der.data);
+  der.data = nsnull;
+  der.len = 0;
+  
   if (!tmpCert) {
     NS_ERROR("Couldn't create cert from DER blob\n");
     return NS_ERROR_FAILURE;
@@ -359,15 +366,12 @@ nsNSSCertificateDB::handleCACertDownload(nsIArray *x509Certs,
   CERTCertificateCleaner tmpCertCleaner(tmpCert);
 
   if (!CERT_IsCACert(tmpCert, NULL)) {
-    // Should pop up an error dialog.
+    DisplayCertificateAlert(ctx, "NotACACert", certToShow);
     return NS_ERROR_FAILURE;
   }
 
   if (tmpCert->isperm) {
-    nsPSMUITracker tracker;
-    if (!tracker.isUIForbidden()) {
-      dialogs->NotifyCACertExists(ctx);
-    }
+    DisplayCertificateAlert(ctx, "CaCertExists", certToShow);
     return NS_ERROR_FAILURE;
   }
 
@@ -422,6 +426,10 @@ nsNSSCertificateDB::handleCACertDownload(nsIArray *x509Certs,
 
     CERTCertificate *tmpCert2 = 
       CERT_NewTempCertificate(certdb, &der, nsnull, PR_FALSE, PR_TRUE);
+
+    nsMemory::Free(der.data);
+    der.data = nsnull;
+    der.len = 0;
 
     if (!tmpCert2) {
       NS_ASSERTION(0, "Couldn't create temp cert from DER blob\n");
@@ -562,13 +570,6 @@ nsNSSCertificateDB::ImportEmailCertificate(PRUint8 * data, PRUint32 length,
       CERT_AddCertToListTail(certList, cert);
   }
 
-  /* filter out the certs we don't want */
-  srv = CERT_FilterCertListByUsage(certList, certusage, PR_FALSE);
-  if (srv != SECSuccess) {
-    nsrv = NS_ERROR_FAILURE;
-    goto loser;
-  }
-
   /* go down the remaining list of certs and verify that they have
    * valid chains, then import them.
    */
@@ -576,17 +577,33 @@ nsNSSCertificateDB::ImportEmailCertificate(PRUint8 * data, PRUint32 length,
   for (node = CERT_LIST_HEAD(certList);
        !CERT_LIST_END(node,certList);
        node = CERT_LIST_NEXT(node)) {
+
+    bool alert_and_skip = false;
+
+    if (!node->cert) {
+      continue;
+    }
+
     if (CERT_VerifyCert(certdb, node->cert, 
         PR_TRUE, certusage, now, ctx, NULL) != SECSuccess) {
-      continue;
+      alert_and_skip = true;
     }
 
-    CERTCertificateList *certChain = CERT_CertChainFromCert(node->cert, certusage, PR_FALSE);
-    if (!certChain) {
-      continue;
-    }
-
+    CERTCertificateList *certChain = nsnull;
     CERTCertificateListCleaner chainCleaner(certChain);
+
+    if (!alert_and_skip) {
+      CERT_CertChainFromCert(node->cert, certusage, PR_FALSE);
+      if (!certChain) {
+        alert_and_skip = true;
+      }
+    }
+
+    if (alert_and_skip) {    
+      nsCOMPtr<nsIX509Cert> certToShow = new nsNSSCertificate(node->cert);
+      DisplayCertificateAlert(ctx, "NotImportingUnverifiedCert", certToShow);
+      continue;
+    }
 
     /*
      * CertChain returns an array of SECItems, import expects an array of
@@ -755,17 +772,29 @@ nsNSSCertificateDB::ImportValidCACertsInList(CERTCertList *certList, nsIInterfac
   for (node = CERT_LIST_HEAD(certList);
        !CERT_LIST_END(node,certList);
        node = CERT_LIST_NEXT(node)) {
+
+    bool alert_and_skip = false;
+
     if (CERT_VerifyCert(CERT_GetDefaultCertDB(), node->cert, 
         PR_TRUE, certUsageVerifyCA, now, ctx, NULL) != SECSuccess) {
-      continue;
+      alert_and_skip = true;
     }
 
-    CERTCertificateList *certChain = CERT_CertChainFromCert(node->cert, certUsageAnyCA, PR_FALSE);
-    if (!certChain) {
-      continue;
-    }
-
+    CERTCertificateList *certChain = nsnull;
     CERTCertificateListCleaner chainCleaner(certChain);
+
+    if (!alert_and_skip) {    
+      certChain = CERT_CertChainFromCert(node->cert, certUsageAnyCA, PR_FALSE);
+      if (!certChain) {
+        alert_and_skip = true;
+      }
+    }
+
+    if (alert_and_skip) {    
+      nsCOMPtr<nsIX509Cert> certToShow = new nsNSSCertificate(node->cert);
+      DisplayCertificateAlert(ctx, "NotImportingUnverifiedCert", certToShow);
+      continue;
+    }
 
     /*
      * CertChain returns an array of SECItems, import expects an array of
@@ -786,6 +815,50 @@ nsNSSCertificateDB::ImportValidCACertsInList(CERTCertList *certList, nsIInterfac
   }
   
   return NS_OK;
+}
+
+void nsNSSCertificateDB::DisplayCertificateAlert(nsIInterfaceRequestor *ctx, 
+                                                 const char *stringID, 
+                                                 nsIX509Cert *certToShow)
+{
+  nsPSMUITracker tracker;
+  if (!tracker.isUIForbidden()) {
+
+    // This shall be replaced by embedding ovverridable prompts
+    // as discussed in bug 310446, and should make use of certToShow.
+
+    nsresult rv;
+    nsCOMPtr<nsINSSComponent> nssComponent(do_GetService(kNSSComponentCID, &rv));
+    if (NS_SUCCEEDED(rv)) {
+      nsAutoString tmpMessage;
+      nssComponent->GetPIPNSSBundleString(stringID, tmpMessage);
+
+      // The interface requestor object may not be safe, so proxy the call to get
+      // the nsIPrompt.
+
+      nsCOMPtr<nsIInterfaceRequestor> proxiedCallbacks;
+      NS_GetProxyForObject(NS_UI_THREAD_EVENTQ,
+                           NS_GET_IID(nsIInterfaceRequestor),
+                           ctx,
+                           PROXY_SYNC,
+                           getter_AddRefs(proxiedCallbacks));
+    
+      nsCOMPtr<nsIPrompt> prompt (do_GetInterface(proxiedCallbacks));
+      if (!prompt)
+        return;
+    
+      // Finally, get a proxy for the nsIPrompt
+    
+      nsCOMPtr<nsIPrompt> proxyPrompt;
+      NS_GetProxyForObject(NS_UI_THREAD_EVENTQ,
+                           NS_GET_IID(nsIPrompt),
+                           prompt,
+                           PROXY_SYNC,
+                           getter_AddRefs(proxyPrompt));
+    
+      proxyPrompt->Alert(nsnull, tmpMessage.get());
+    }
+  }
 }
 
 
@@ -820,6 +893,8 @@ nsNSSCertificateDB::ImportUserCertificate(PRUint8 *data, PRUint32 length, nsIInt
 
   slot = PK11_KeyForCertExists(cert, NULL, ctx);
   if ( slot == NULL ) {
+    nsCOMPtr<nsIX509Cert> certToShow = new nsNSSCertificate(cert);
+    DisplayCertificateAlert(ctx, "UserCertIgnoredNoPrivateKey", certToShow);
     goto loser;
   }
   PK11_FreeSlot(slot);
@@ -842,6 +917,10 @@ nsNSSCertificateDB::ImportUserCertificate(PRUint8 *data, PRUint32 length, nsIInt
   }
   PK11_FreeSlot(slot);
 
+  {
+    nsCOMPtr<nsIX509Cert> certToShow = new nsNSSCertificate(cert);
+    DisplayCertificateAlert(ctx, "UserCertImported", certToShow);
+  }
   rv = NS_OK;
 
   numCACerts = collectArgs->numcerts - 1;
@@ -1232,9 +1311,12 @@ nsNSSCertificateDB::getCertNames(CERTCertList *certList,
         namestr = node->cert->emailAddr;
       } else {
         namestr = node->cert->nickname;
-        char *sc = strchr(namestr, ':');
-        if (sc) *sc = DELIM;
+        if (namestr) {
+          char *sc = strchr(namestr, ':');
+          if (sc) *sc = DELIM;
+        }
       }
+      if (!namestr) namestr = "";
       nsAutoString certname = NS_ConvertASCIItoUCS2(namestr);
       certstr.Append(PRUnichar(DELIM));
       certstr += certname;
@@ -1585,10 +1667,6 @@ NS_IMETHODIMP nsNSSCertificateDB::AddCertFromBase64(const char *aBase64, const c
   // need to calculate the trust bits from the aTrust string.
   nsresult rv = CERT_DecodeTrustString(trust.GetTrust(), /* this is const, but not declared that way */(char *) aTrust);
   NS_ENSURE_SUCCESS(rv, rv); // if bad trust passed in, return error.
-  trust.SetValidCA();
-  trust.AddCATrust(trust.GetTrust()->sslFlags,
-                   trust.GetTrust()->emailFlags,
-                   trust.GetTrust()->objectSigningFlags);
 
 
   rv = ConstructX509FromBase64(aBase64, getter_AddRefs(newCert));
@@ -1605,6 +1683,9 @@ NS_IMETHODIMP nsNSSCertificateDB::AddCertFromBase64(const char *aBase64, const c
   if (!tmpCert) 
     tmpCert = CERT_NewTempCertificate(certdb, &der,
                                       nsnull, PR_FALSE, PR_TRUE);
+  nsMemory::Free(der.data);
+  der.data = nsnull;
+  der.len = 0;
 
   if (!tmpCert) {
     NS_ASSERTION(0,"Couldn't create cert from DER blob\n");

@@ -19,7 +19,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Rich Walsh <dragtext@e-vertise.com>
+ *   Rich Walsh <dragtext@e-vertise.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -322,6 +322,7 @@ protected:
    virtual PRBool DispatchWindowEvent(nsGUIEvent*event, nsEventStatus &aStatus);
    PRBool  DispatchStandardEvent( PRUint32 aMsg);
    PRBool  DispatchAppCommandEvent(PRUint32 aEventCommand);
+   PRBool  DispatchDragDropEvent(PRUint32 aMsg);
    virtual PRBool DispatchMouseEvent( PRUint32 aEventType, MPARAM mp1, MPARAM mp2);
    virtual PRBool DispatchResizeEvent( PRInt32 aClientX, PRInt32 aClientY);
    void GetNonClientBounds(nsRect &aRect);

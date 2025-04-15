@@ -988,6 +988,7 @@ static void
 LaunchCallbackApp(const char *workingDir, int argc, char **argv)
 {
   putenv("NO_EM_RESTART=");
+  putenv("MOZ_LAUNCHED_CHILD=1");
 
   // Run from the specified working directory (see bug 312360).
   chdir(workingDir);
@@ -1154,6 +1155,12 @@ ActionList::Append(Action *action)
 int
 ActionList::Prepare()
 {
+  // If the action list is empty then we should fail in order to signal that
+  // something has gone wrong. Otherwise we report success when nothing is
+  // actually done. See bug 327140.
+  if (mCount == 0)
+    return UNEXPECTED_ERROR;
+
   Action *a = mFirst;
   while (a) {
     int rv = a->Prepare();

@@ -489,7 +489,7 @@ mime_find_class (const char *content_type, MimeHeaders *hdrs,
   // XXX instead of reading this pref every time, part of mime should be an observer listening to this pref change
   // and updating internal state accordingly. But none of the other prefs in this file seem to be doing that...=(
   if (prefBranch)
-    prefBranch->GetBoolPref("mailnews.display.sanitizeJunkMail", &sanitizeJunkMail);
+    prefBranch->GetBoolPref("mail.spam.display.sanitize", &sanitizeJunkMail);
 
   if (sanitizeJunkMail)
   {
@@ -1160,201 +1160,6 @@ mime_crypto_stamped_p(MimeObject *obj)
 	return PR_FALSE;
 }
 
-
-/* Tells whether the given MimeObject is a message which has been encrypted
-   or signed.  (Helper for MIME_GetMessageCryptoState()). 
- */
-void
-mime_get_crypto_state (MimeObject *obj,
-					   PRBool *signed_ret,
-					   PRBool *encrypted_ret,
-					   PRBool *signed_ok_ret,
-					   PRBool *encrypted_ok_ret)
-{
-  PRBool signed_p, encrypted_p;
-
-  if (signed_ret) *signed_ret = PR_FALSE;
-  if (encrypted_ret) *encrypted_ret = PR_FALSE;
-  if (signed_ok_ret) *signed_ok_ret = PR_FALSE;
-  if (encrypted_ok_ret) *encrypted_ok_ret = PR_FALSE;
-
-  NS_ASSERTION(obj, "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
-  if (!obj) return;
-
-  if (!mime_typep (obj, (MimeObjectClass *) &mimeMessageClass))
-	return;
-
-  signed_p = ((MimeMessage *) obj)->crypto_msg_signed_p;
-  encrypted_p = ((MimeMessage *) obj)->crypto_msg_encrypted_p;
-
-  if (signed_ret)
-	*signed_ret = signed_p;
-  if (encrypted_ret)
-	*encrypted_ret = encrypted_p;
-
-  if ((signed_p || encrypted_p) &&
-	  (signed_ok_ret || encrypted_ok_ret))
-	{
-	  nsICMSMessage *encrypted_ci = 0;
-	  nsICMSMessage *signed_ci = 0;
-	  PRInt32 decode_error = 0, verify_error = 0;
-	  char *addr = mime_part_address(obj);
-
-	  mime_find_security_info_of_part(addr, obj,
-									  &encrypted_ci,
-									  &signed_ci,
-									  0,  /* email_addr */
-									  &decode_error, &verify_error);
-
-	  if (encrypted_p && encrypted_ok_ret)
-		*encrypted_ok_ret = (encrypted_ci && decode_error >= 0);
-
-	  if (signed_p && signed_ok_ret)
-		*signed_ok_ret = (verify_error >= 0 && decode_error >= 0);
-
-	  PR_FREEIF(addr);
-	}
-}
-
-
-/* How the crypto code tells the MimeMessage object what the crypto stamp
-   on it says. */
-void
-mime_set_crypto_stamp(MimeObject *obj, PRBool signed_p, PRBool encrypted_p)
-{
-  if (!obj) return;
-  if (mime_typep (obj, (MimeObjectClass *) &mimeMessageClass))
-	{
-	  MimeMessage *msg = (MimeMessage *) obj;
-	  if (!msg->crypto_msg_signed_p)
-		msg->crypto_msg_signed_p = signed_p;
-	  if (!msg->crypto_msg_encrypted_p)
-		msg->crypto_msg_encrypted_p = encrypted_p;
-
-	  /* If the `decrypt_p' option is on, record whether any decryption has
-		 actually occurred. */
-	  if (encrypted_p &&
-		  obj->options &&
-		  obj->options->decrypt_p &&
-		  obj->options->state)
-		{
-		  /* decrypt_p and write_html_p are incompatible. */
-		  NS_ASSERTION(!obj->options->write_html_p, "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
-		  obj->options->state->decrypted_p = PR_TRUE;
-    }
-
-    return;  /* continue up the tree?  I think that's not a good idea. */
-  }
-
-  if (obj->parent)
-    mime_set_crypto_stamp(obj->parent, signed_p, encrypted_p);
-}
-
-/* Given a part ID, looks through the MimeObject tree for a sub-part whose ID
-   number matches; if one is found, and if it represents a PKCS7-encrypted
-   object, returns information about the security status of that object.
-
-   `part' is not a URL -- it's of the form "1.3.5" and is interpreted relative
-   to the `obj' argument.
-
-   Returned values:
-
-     void **pkcs7_content_info_return
-          this is the SEC_PKCS7ContentInfo* of the object.
-
-     int32 *decode_error_return
-          this is the error code, if any, that the security library returned
-	      while trying to parse the PKCS7 data (if this is negative, then it
-		  probably means the message was corrupt in some way.)
-
-     int32 *verify_error_return
-          this is the error code, if any, that the security library returned
-  	      while trying to decrypt or verify or otherwise validate the data
-		  (if this is negative, it might mean the message was corrupt, or might
-		  mean the signature didn't match, or the cert was expired, or...)
-  */
-void
-mime_find_security_info_of_part(const char *part, MimeObject *obj,
-								nsICMSMessage **pkcs7_encrypted_content_info_return,
-								nsICMSMessage **pkcs7_signed_content_info_return,
-								char **sender_email_addr_return,
-								PRInt32 *decode_error_return,
-								PRInt32 *verify_error_return)
-{
-  obj = mime_address_to_part(part, obj);
-
-  *pkcs7_encrypted_content_info_return = 0;
-  *pkcs7_signed_content_info_return = 0;
-  *decode_error_return = 0;
-  *verify_error_return = 0;
-  if (sender_email_addr_return)
-	*sender_email_addr_return = 0;
-
-  if (!obj)
-	return;
-
-  /* If someone asks for the security info of a message/rfc822 object,
-	 instead give them the security info of its child (the body of the
-	 message.)
-   */
-  if (mime_typep (obj, (MimeObjectClass *) &mimeMessageClass))
-	{
-	  MimeContainer *cont = (MimeContainer *) obj;
-	  if (cont->nchildren >= 1)
-		{
-		  NS_ASSERTION(cont->nchildren == 1, "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
-		  obj = cont->children[0];
-		}
-	}
-
-
-  while (obj &&
-		 (mime_typep(obj, (MimeObjectClass *) &mimeEncryptedCMSClass) ||
-		  mime_typep(obj, (MimeObjectClass *) &mimeMultipartSignedCMSClass)))
-	{
-	  nsICMSMessage *ci = 0;
-	  PRInt32 decode_error = 0, verify_error = 0;
-      PRBool ci_is_encrypted = PR_FALSE;
-	  char *sender = 0;
-
-	  if (mime_typep(obj, (MimeObjectClass *) &mimeEncryptedCMSClass)) {
-		(((MimeEncryptedCMSClass *) (obj->clazz))
-		 ->get_content_info) (obj, &ci, &sender, &decode_error, &verify_error, &ci_is_encrypted);
-      } else if (mime_typep(obj,
-						  (MimeObjectClass *) &mimeMultipartSignedCMSClass)) {
-		(((MimeMultipartSignedCMSClass *) (obj->clazz))
-		 ->get_content_info) (obj, &ci, &sender, &decode_error, &verify_error, &ci_is_encrypted);
-      }
-
-      if (ci) {
-        if (ci_is_encrypted) {
-            *pkcs7_encrypted_content_info_return = ci;
-        } else {
-            *pkcs7_signed_content_info_return = ci;
-        }
-      }
-
-      if (sender_email_addr_return)
-		*sender_email_addr_return = sender;
-	  else
-		PR_FREEIF(sender);
-
-	  if (*decode_error_return >= 0)
-		*decode_error_return = decode_error;
-
-	  if (*verify_error_return >= 0)
-		*verify_error_return = verify_error;
-
-
-	  NS_ASSERTION(mime_typep(obj, (MimeObjectClass *) &mimeContainerClass) &&
-				((MimeContainer *) obj)->nchildren <= 1, "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
-
-	  obj = ((((MimeContainer *) obj)->nchildren > 0)
-			 ? ((MimeContainer *) obj)->children[0]
-			 : 0);
-	}
-}
-
 #endif // ENABLE_SMIME
 
 /* Puts a part-number into a URL.  If append_p is true, then the part number
@@ -1371,6 +1176,16 @@ mime_set_url_part(const char *url, const char *part, PRBool append_p)
   char *result;
 
   if (!url || !part) return 0;
+
+  nsCAutoString urlString(url);
+  PRInt32 typeIndex = urlString.Find("?type=application/x-message-display");
+  if (typeIndex != kNotFound)
+  {
+    urlString.Cut(typeIndex, sizeof("?type=application/x-message-display") - 1);
+    if (urlString.CharAt(typeIndex) == '&')
+      urlString.SetCharAt('?', typeIndex);
+    url = urlString.get();
+  }
 
   for (s = url; *s; s++)
 	{
@@ -1389,7 +1204,7 @@ mime_set_url_part(const char *url, const char *part, PRBool append_p)
 			;
 		  part_end = s;
 		  break;
-		}
+          }
 	}
 
   result = (char *) PR_MALLOC(strlen(url) + strlen(part) + 10);
@@ -1633,26 +1448,26 @@ mime_parse_url_options(const char *url, MimeDisplayOptions *options)
 {
   const char *q;
   MimeHeadersState default_headers = options->headers;
-
+  
   if (!url || !*url) return 0;
   if (!options) return 0;
-
+  
   q = PL_strrchr (url, '?');
   if (! q) return 0;
   q++;
   while (*q)
-	{
-	  const char *end, *value, *name_end;
-	  for (end = q; *end && *end != '&'; end++)
-		;
-	  for (value = q; *value != '=' && value < end; value++)
-		;
-	  name_end = value;
-	  if (value < end) value++;
-	  if (name_end <= q)
-		;
-	  else if (!nsCRT::strncasecmp ("headers", q, name_end - q))
-		{
+  {
+    const char *end, *value, *name_end;
+    for (end = q; *end && *end != '&'; end++)
+      ;
+    for (value = q; *value != '=' && value < end; value++)
+      ;
+    name_end = value;
+    if (value < end) value++;
+    if (name_end <= q)
+      ;
+    else if (!nsCRT::strncasecmp ("headers", q, name_end - q))
+    {
       if (end > value && !nsCRT::strncasecmp ("only", value, end-value))
         options->headers = MimeHeadersOnly;
       else if (end > value && !nsCRT::strncasecmp ("none", value, end-value))
@@ -1669,117 +1484,115 @@ mime_parse_url_options(const char *url, MimeDisplayOptions *options)
         options->headers = MimeHeadersCitation;
       else
         options->headers = default_headers;
-		}
-	  else if (!nsCRT::strncasecmp ("part", q, name_end - q))
-		{
-		  PR_FREEIF (options->part_to_load);
-		  if (end > value)
-			{
-			  options->part_to_load = (char *) PR_MALLOC(end - value + 1);
-			  if (!options->part_to_load)
-				return MIME_OUT_OF_MEMORY;
-			  memcpy(options->part_to_load, value, end-value);
-			  options->part_to_load[end-value] = 0;
-			}
-		}
-	  else if (!nsCRT::strncasecmp ("rot13", q, name_end - q))
-		{
-		  if (end <= value || !nsCRT::strncasecmp ("true", value, end - value))
-			options->rot13_p = PR_TRUE;
-		  else
-			options->rot13_p = PR_FALSE;
-		}
-
-	  q = end;
-	  if (*q)
-		q++;
-	}
-
-
-  /* Compatibility with the "?part=" syntax used in the old (Mozilla 2.0)
+    }
+    else if (!nsCRT::strncasecmp ("part", q, name_end - q) && 
+      options->format_out != nsMimeOutput::nsMimeMessageBodyQuoting)
+    {
+      PR_FREEIF (options->part_to_load);
+      if (end > value)
+      {
+        options->part_to_load = (char *) PR_MALLOC(end - value + 1);
+        if (!options->part_to_load)
+          return MIME_OUT_OF_MEMORY;
+        memcpy(options->part_to_load, value, end-value);
+        options->part_to_load[end-value] = 0;
+      }
+    }
+    else if (!nsCRT::strncasecmp ("rot13", q, name_end - q))
+    {
+      options->rot13_p = end <= value || !nsCRT::strncasecmp ("true", value, end - value);
+    }
+    
+    q = end;
+    if (*q)
+      q++;
+  }
+  
+  
+/* Compatibility with the "?part=" syntax used in the old (Mozilla 2.0)
 	 MIME parser.
+         
+   Basically, the problem is that the old part-numbering code was totally
+   busted: here's a comparison of the old and new numberings with a pair
+   of hypothetical messages (one with a single part, and one with nested
+   containers.)
+   NEW:      OLD:  OR:
+   message/rfc822
+   image/jpeg           1         0     0
+   
+  message/rfc822
+  multipart/mixed      1         0     0
+  text/plain         1.1       1     1
+  image/jpeg         1.2       2     2
+  message/rfc822     1.3       -     3
+  text/plain       1.3.1     3     -
+  message/rfc822     1.4       -     4
+  multipart/mixed  1.4.1     4     -
+  text/plain     1.4.1.1   4.1   -
+  image/jpeg     1.4.1.2   4.2   -
+  text/plain         1.5       5     5
 
-	 Basically, the problem is that the old part-numbering code was totally
-	 busted: here's a comparison of the old and new numberings with a pair
-	 of hypothetical messages (one with a single part, and one with nested
-	 containers.)
-                               NEW:      OLD:  OR:
-         message/rfc822
-           image/jpeg           1         0     0
+ The "NEW" column is how the current code counts.  The "OLD" column is
+ what "?part=" references would do in 3.0b4 and earlier; you'll see that
+ you couldn't directly refer to the child message/rfc822 objects at all!
+ But that's when it got really weird, because if you turned on
+ "Attachments As Links" (or used a URL like "?inline=false&part=...")
+ then you got a totally different numbering system (seen in the "OR"
+ column.)  Gag!
+ 
+ So, the problem is, ClariNet had been using these part numbers in their
+ HTML news feeds, as a sleazy way of transmitting both complex HTML layouts
+ and images using NNTP as transport, without invoking HTTP.
+   
+ The following clause is to provide some small amount of backward
+ compatibility.  By looking at that table, one can see that in the new
+ model, "part=0" has no meaning, and neither does "part=2" or "part=3"
+ and so on.
+     
+ "part=1" is ambiguous between the old and new way, as is any part
+ specification that has a "." in it.
+       
+ So, the compatibility hack we do here is: if the part is "0", then map
+ that to "1".  And if the part is >= "2", then prepend "1." to it (so that
+ we map "2" to "1.2", and "3" to "1.3".)
+ 
+ This leaves the URLs compatible in the cases of:
+ 
+ = single part messages
+ = references to elements of a top-level multipart except the first
+   
+ and leaves them incompatible for:
+     
+ = the first part of a top-level multipart
+ = all elements deeper than the outermost part
+ 
+ Life s#$%s when you don't properly think out things that end up turning
+ into de-facto standards...
+ */
 
-         message/rfc822
-           multipart/mixed      1         0     0
-             text/plain         1.1       1     1
-             image/jpeg         1.2       2     2
-             message/rfc822     1.3       -     3
-               text/plain       1.3.1     3     -
-             message/rfc822     1.4       -     4
-               multipart/mixed  1.4.1     4     -
-                 text/plain     1.4.1.1   4.1   -
-                 image/jpeg     1.4.1.2   4.2   -
-             text/plain         1.5       5     5
-
-	 The "NEW" column is how the current code counts.  The "OLD" column is
-	 what "?part=" references would do in 3.0b4 and earlier; you'll see that
-	 you couldn't directly refer to the child message/rfc822 objects at all!
-	 But that's when it got really weird, because if you turned on
-	 "Attachments As Links" (or used a URL like "?inline=false&part=...")
-	 then you got a totally different numbering system (seen in the "OR"
-	 column.)  Gag!
-
-	 So, the problem is, ClariNet had been using these part numbers in their
-	 HTML news feeds, as a sleazy way of transmitting both complex HTML layouts
-	 and images using NNTP as transport, without invoking HTTP.
-
-	 The following clause is to provide some small amount of backward
-	 compatibility.  By looking at that table, one can see that in the new
-	 model, "part=0" has no meaning, and neither does "part=2" or "part=3"
-	 and so on.
-
-     "part=1" is ambiguous between the old and new way, as is any part
-	 specification that has a "." in it.
-
-	 So, the compatibility hack we do here is: if the part is "0", then map
-	 that to "1".  And if the part is >= "2", then prepend "1." to it (so that
-	 we map "2" to "1.2", and "3" to "1.3".)
-
-	 This leaves the URLs compatible in the cases of:
-
-	   = single part messages
-	   = references to elements of a top-level multipart except the first
-
-     and leaves them incompatible for:
-
-	   = the first part of a top-level multipart
-	   = all elements deeper than the outermost part
-
-	 Life s#$%s when you don't properly think out things that end up turning
-	 into de-facto standards...
-   */
-  if (options->part_to_load &&
-	  !PL_strchr(options->part_to_load, '.'))		/* doesn't contain a dot */
-	{
-	  if (!nsCRT::strcmp(options->part_to_load, "0"))		/* 0 */
-		{
-		  PR_Free(options->part_to_load);
-		  options->part_to_load = nsCRT::strdup("1");
-		  if (!options->part_to_load)
-			return MIME_OUT_OF_MEMORY;
-		}
-	  else if (nsCRT::strcmp(options->part_to_load, "1"))	/* not 1 */
-		{
-		  const char *prefix = "1.";
-		  char *s = (char *) PR_MALLOC(strlen(options->part_to_load) +
-		                               strlen(prefix) + 1);
-		  if (!s) return MIME_OUT_OF_MEMORY;
-		  PL_strcpy(s, prefix);
-		  PL_strcat(s, options->part_to_load);
-		  PR_Free(options->part_to_load);
-		  options->part_to_load = s;
-		}
-	}
-
-
+ if (options->part_to_load &&
+   !PL_strchr(options->part_to_load, '.'))		/* doesn't contain a dot */
+ {
+   if (!nsCRT::strcmp(options->part_to_load, "0"))		/* 0 */
+   {
+     PR_Free(options->part_to_load);
+     options->part_to_load = nsCRT::strdup("1");
+     if (!options->part_to_load)
+       return MIME_OUT_OF_MEMORY;
+   }
+   else if (nsCRT::strcmp(options->part_to_load, "1"))	/* not 1 */
+   {
+     const char *prefix = "1.";
+     char *s = (char *) PR_MALLOC(strlen(options->part_to_load) +
+       strlen(prefix) + 1);
+     if (!s) return MIME_OUT_OF_MEMORY;
+     PL_strcpy(s, prefix);
+     PL_strcat(s, options->part_to_load);
+     PR_Free(options->part_to_load);
+     options->part_to_load = s;
+   }
+ }
+ 
   return 0;
 }
 
@@ -1954,6 +1767,18 @@ mime_get_base_url(const char *url)
     return nsnull;
 
   const char *s = strrchr(url, '?');
+  if (s && !strncmp(s, "?type=application/x-message-display", sizeof("?type=application/x-message-display") - 1))
+  {
+    const char *nextTerm = strchr(s, '&');
+    s = (nextTerm) ? nextTerm : s + strlen(s) - 1;
+  }
+  // we need to keep the ?number part of the url, or we won't know
+  // which local message the part belongs to. 
+  if (s && *s && *(s+1) && !strncmp(s + 1, "number=", sizeof("number=") - 1))
+  {
+    const char *nextTerm = strchr(++s, '&');
+    s = (nextTerm) ? nextTerm : s + strlen(s) - 1;
+  }
   char *result = (char *) PR_MALLOC(strlen(url) + 1);
   NS_ASSERTION(result, "out of memory");
   if (!result)

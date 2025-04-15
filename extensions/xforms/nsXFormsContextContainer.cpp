@@ -39,12 +39,14 @@
 #include "nsIXTFBindableElementWrapper.h"
 
 #include "nsCOMPtr.h"
+#include "nsAutoPtr.h"
 #include "nsString.h"
 
 #include "nsIDOM3Node.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMEvent.h"
+#include "nsIDOMNSEvent.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIDOMSerializer.h"
 #include "nsIDOMXPathResult.h"
@@ -59,6 +61,24 @@
 #ifdef DEBUG
 //#define DEBUG_XF_CONTEXTCONTAINER
 #endif
+
+class nsXFormsContextContainer;
+
+class nsXFormsFocusListener : public nsIDOMEventListener {
+public:
+  nsXFormsFocusListener(nsXFormsContextContainer* aContainer)
+  : mContainer(aContainer) {}
+
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIDOMEVENTLISTENER
+  void Detach()
+  {
+    mContainer = nsnull;
+  }
+protected:
+  nsXFormsContextContainer* mContainer;
+};
+
 
 /**
  * Implementation of \<contextcontainer\>.
@@ -75,6 +95,8 @@ class nsXFormsContextContainer : public nsXFormsBindableControlStub,
                                  public nsIXFormsRepeatItemElement
 {
 protected:
+  /** The handler for the focus event */
+  nsRefPtr<nsXFormsFocusListener> mFocusListener;
 
   /** The context position for the element */
   PRInt32 mContextPosition;
@@ -82,19 +104,25 @@ protected:
   /** The context size for the element */
   PRInt32 mContextSize;
 
+  /** Does this element have the repeat-index? */
+  PRPackedBool mHasIndex;
+
+  /** Has context changed since last bind? */
+  PRPackedBool mContextIsDirty;
+
 public:
   nsXFormsContextContainer()
-    : mContextPosition(1), mContextSize(1) {}
+    : mContextPosition(1), mContextSize(1), mHasIndex(PR_FALSE),
+      mContextIsDirty(PR_FALSE) {}
 
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIXTFElement overrides
   NS_IMETHOD CloneState(nsIDOMElement *aElement);
-  NS_IMETHOD HandleDefault(nsIDOMEvent *aEvent, PRBool *aHandled);
+  NS_IMETHOD DocumentChanged(nsIDOMDocument *aNewDocument);
 
   // nsIXFormsControl
-  NS_IMETHOD Bind();
-  NS_IMETHOD Refresh();
+  NS_IMETHOD Bind(PRBool *aContextChanged);
   NS_IMETHOD SetContext(nsIDOMNode *aContextNode,
                         PRInt32     aContextPosition,
                         PRInt32     aContextSize);
@@ -106,6 +134,8 @@ public:
 
   // nsIXFormsRepeatItemElement
   NS_DECL_NSIXFORMSREPEATITEMELEMENT
+
+  nsresult HandleFocus(nsIDOMEvent *aEvent);
 
 #ifdef DEBUG_smaug
   virtual const char* Name() {
@@ -119,55 +149,108 @@ public:
 #endif
 };
 
+NS_IMPL_ISUPPORTS1(nsXFormsFocusListener, nsIDOMEventListener)
+
+NS_IMETHODIMP
+nsXFormsFocusListener::HandleEvent(nsIDOMEvent* aEvent)
+{
+  return mContainer ? mContainer->HandleFocus(aEvent) : NS_OK;
+}
+
 NS_IMPL_ISUPPORTS_INHERITED1(nsXFormsContextContainer,
                              nsXFormsBindableControlStub,
                              nsIXFormsRepeatItemElement)
 
-
-// nsIXTFElement
-NS_IMETHODIMP
-nsXFormsContextContainer::HandleDefault(nsIDOMEvent *aEvent,
-                                        PRBool      *aHandled)
+nsresult
+nsXFormsContextContainer::HandleFocus(nsIDOMEvent *aEvent)
 {
   if (!aEvent || !mElement)
     return NS_OK;
 
-  nsAutoString type;
-  aEvent->GetType(type);
-  if (!type.EqualsLiteral("focus"))
-    return nsXFormsBindableControlStub::HandleDefault(aEvent, aHandled);
-
   if (!nsXFormsUtils::EventHandlingAllowed(aEvent, mElement))
     return NS_OK;
-  /*
-   * Either we, or an element we contain, has gotten focus, so we need to set
-   * the repeat index. This is done through the \<repeat\> the
-   * nsXFormsContextContainer belongs to.
-   *
-   * Start by finding the \<repeat\> (our grandparent):
-   * <pre>
-   * <repeat> <-- gParent
-   *   <div>
-   *     <contextcontainer\> <-- this
-   *   </div>
-   * </repeat>
-   * </pre>
-   */
-  nsCOMPtr<nsIDOMNode> parent;
-  mElement->GetParentNode(getter_AddRefs(parent));
-  NS_ASSERTION(parent, "how can we get focus without a parent?");
-  
-  nsCOMPtr<nsIDOMNode> gParent;
-  parent->GetParentNode(getter_AddRefs(gParent));
-  nsCOMPtr<nsIXFormsRepeatElement> repeat = do_QueryInterface(gParent);
 
-  if (!repeat)
-    // Not a child to a \<repeat\>
-    return NS_OK;
+  // Need to explicitly create the parent chain. This ensures that this code
+  // works both in 1.8, which has the old event dispatching code, and also in
+  // the later versions of Gecko with the new event dispatching.
+  // See also Bug 331081.
+  nsCOMPtr<nsIDOMNSEvent> event = do_QueryInterface(aEvent);
+  NS_ENSURE_STATE(event);
+  nsCOMPtr<nsIDOMEventTarget> target;
+  event->GetOriginalTarget(getter_AddRefs(target));
+  nsCOMPtr<nsIDOMNode> currentNode = do_QueryInterface(target);
 
-  // Tell \<repeat\> about the new index position
-  PRUint32 tmp = mContextPosition;
-  return repeat->SetIndex(&tmp, PR_FALSE);
+  nsCOMArray<nsIDOMNode> containerStack(4);
+  while (currentNode) {
+    nsCOMPtr<nsIXFormsRepeatItemElement> repeatItem =
+      do_QueryInterface(currentNode);
+    if (repeatItem) {
+      containerStack.AppendObject(currentNode);
+    }
+    nsCOMPtr<nsIDOMNode> parent;
+    currentNode->GetParentNode(getter_AddRefs(parent));
+    currentNode.swap(parent);
+  }
+
+  for (PRInt32 i = containerStack.Count() - 1; i >= 0; --i) {
+    nsCOMPtr<nsIDOMNode> node = containerStack[i];
+    if (node) {
+      // Either we, or an element we contain, has gotten focus, so we need to
+      // set the repeat index. This is done through the <repeat> the
+      // nsXFormsContextContainer belongs to.
+      //
+      // Start by finding the <repeat> (our grandparent):
+      // <repeat> <-- gParent
+      //   <div>
+      //     <contextcontainer\> <-- this
+      //   </div>
+      // </repeat>
+      nsCOMPtr<nsIDOMNode> parent;
+      node->GetParentNode(getter_AddRefs(parent));
+      if (parent) {
+        nsCOMPtr<nsIDOMNode> grandParent;
+        parent->GetParentNode(getter_AddRefs(grandParent));
+        nsCOMPtr<nsIXFormsRepeatElement> repeat =
+          do_QueryInterface(grandParent);
+        nsCOMPtr<nsIXFormsRepeatItemElement> repeatItem =
+          do_QueryInterface(node);
+        if (repeat && repeatItem) {
+          PRInt32 position = 1;
+          repeatItem->GetContextPosition(&position);
+          // Tell <repeat> about the new index position
+          PRUint32 tmp = position;
+          repeat->SetIndex(&tmp, PR_FALSE);
+        }
+      }
+    }
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXFormsContextContainer::DocumentChanged(nsIDOMDocument *aNewDocument)
+{
+  if (mFocusListener) {
+    mFocusListener->Detach();
+    nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mElement);
+    if (target) {
+      target->RemoveEventListener(NS_LITERAL_STRING("focus"), mFocusListener,
+                                  PR_TRUE);
+    }
+    mFocusListener = nsnull;
+  }
+
+  if (aNewDocument) {
+    nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mElement);
+    if (target) {
+      mFocusListener = new nsXFormsFocusListener(this);
+      NS_ENSURE_TRUE(mFocusListener, NS_ERROR_OUT_OF_MEMORY);
+      target->AddEventListener(NS_LITERAL_STRING("focus"), mFocusListener,
+                               PR_TRUE);
+    }
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -193,23 +276,18 @@ nsXFormsContextContainer::SetContext(nsIDOMNode *aContextNode,
                                      PRInt32     aContextPosition,
                                      PRInt32     aContextSize)
 {
-  mBoundNode = aContextNode;
-  mContextPosition = aContextPosition;
-  mContextSize = aContextSize;
+  mContextIsDirty = (mContextIsDirty ||
+                     mBoundNode != aContextNode ||
+                     mContextPosition != aContextPosition ||
+                     mContextSize != aContextSize);
 
-  // Remove from old model (if any)
-  if (mModel) {
-    mModel->RemoveFormControl(this);
+  if (mContextIsDirty) {
+    mBoundNode = aContextNode;
+    mContextPosition = aContextPosition;
+    mContextSize = aContextSize;
   }
 
-  // Add to new model
-  mModel = nsXFormsUtils::GetModel(mElement);
-  if (mModel) {
-    mModel->AddFormControl(this);
-    mModel->SetStates(this, mBoundNode);
-  }
-
-  return NS_OK;
+  return BindToModel();
 }
 
 NS_IMETHODIMP
@@ -233,14 +311,11 @@ nsXFormsContextContainer::GetContext(nsAString      &aModelID,
 // nsIXFormsControl
 
 NS_IMETHODIMP
-nsXFormsContextContainer::Bind()
+nsXFormsContextContainer::Bind(PRBool *aContextChanged)
 {
-  return NS_OK;
-}
-
-nsresult
-nsXFormsContextContainer::Refresh()
-{
+  NS_ENSURE_ARG(aContextChanged);
+  *aContextChanged = mContextIsDirty;
+  mContextIsDirty = PR_FALSE;
   return NS_OK;
 }
 
@@ -260,12 +335,13 @@ NS_IMETHODIMP
 nsXFormsContextContainer::SetIndexState(PRBool aHasIndex)
 {
   if (mElement) {
-    NS_NAMED_LITERAL_STRING(repIndex, "repeat-index");
+    mHasIndex = aHasIndex;
+    NS_NAMED_LITERAL_STRING(classStr, "class");
     if (aHasIndex) {
-      mElement->SetAttribute(repIndex,
-                             NS_LITERAL_STRING("1"));
+      mElement->SetAttribute(classStr,
+                             NS_LITERAL_STRING("xf-repeat-item xf-repeat-index"));
     } else {
-      mElement->RemoveAttribute(repIndex);
+      mElement->SetAttribute(classStr, NS_LITERAL_STRING("xf-repeat-item"));
     }
   }
   return NS_OK;
@@ -273,8 +349,17 @@ nsXFormsContextContainer::SetIndexState(PRBool aHasIndex)
 
 NS_IMETHODIMP
 nsXFormsContextContainer::GetIndexState(PRBool *aHasIndex)
-{  
-  return mElement->HasAttribute(NS_LITERAL_STRING("repeat-index"), aHasIndex);
+{
+  NS_ENSURE_ARG(aHasIndex);
+  *aHasIndex = mHasIndex;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXFormsContextContainer::GetContextPosition(PRInt32 *aContextPosition)
+{
+  *aContextPosition = mContextPosition;
+  return NS_OK;
 }
 
 // Factory

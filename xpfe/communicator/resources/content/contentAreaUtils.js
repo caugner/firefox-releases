@@ -69,13 +69,20 @@ function getContentFrameURI(aFocusedWindow)
   return contentFrame.location.href;
 }
 
+function getContentFrameDocument(aFocusedWindow)
+{
+  var contentFrame = isContentFrame(aFocusedWindow) ?
+                       aFocusedWindow : window.content;
+  return contentFrame.document;
+}
+
 function getReferrer(doc)
 {
   var focusedWindow = doc.commandDispatcher.focusedWindow;
-  var sourceURL = getContentFrameURI(focusedWindow);
+  var sourceDocument = getContentFrameDocument(focusedWindow);
 
   try {
-    return makeURI(sourceURL);
+    return makeURI(sourceDocument.location.href, sourceDocument.characterSet);
   } catch (e) {
     return null;
   }
@@ -89,7 +96,7 @@ function openNewWindowWith(url, sendReferrer)
   // set, then extract the current charset menu setting from the current document and use it to
   // initialize the new browser window...
   var charsetArg = null;
-  var wintype = document.firstChild.getAttribute('windowtype');
+  var wintype = document.documentElement.getAttribute('windowtype');
   if (wintype == "navigator:browser")
     charsetArg = "charset=" + window.content.document.characterSet;
 
@@ -158,7 +165,7 @@ function openNewTabWith(url, sendReferrer, reverseBackgroundPref)
 
   // As in openNewWindowWith(), we want to pass the charset of the
   // current document over to a new tab.
-  var wintype = browserDocument.firstChild.getAttribute('windowtype');
+  var wintype = browserDocument.documentElement.getAttribute('windowtype');
   var originCharset;
   if (wintype == "navigator:browser") {
     originCharset = window.content.document.characterSet;
@@ -301,7 +308,13 @@ function internalSave(aURL, aDocument, aDefaultFileName, aContentDisposition,
   if (aChosenData)
     file = aChosenData.file;
   else {
-    initFileInfo(fileInfo, aURL, aDocument, aContentType, aContentDisposition);
+    var charset = null;
+    if (aDocument)
+      charset = aDocument.characterSet;
+    else if (aReferrer)
+      charset = aReferrer.originCharset;
+    initFileInfo(fileInfo, aURL, charset, aDocument,
+                 aContentType, aContentDisposition);
     var fpParams = {
       fpTitleKey: aFilePickerTitleKey,
       isDocument: isDocument,
@@ -441,19 +454,20 @@ function FileInfo(aSuggestedFileName, aFileName, aFileBaseName, aFileExt, aUri) 
  * for confirmation in the file picker dialog.
  * @param aFI A FileInfo structure into which we'll put the results of this method.
  * @param aURL The String representation of the URL of the document being saved
+ * @param aURLCharset The charset of aURL.
  * @param aDocument The document to be saved
  * @param aContentType The content type we're saving, if it could be
  *        determined by the caller.
  * @param aContentDisposition The content-disposition header for the object
  *        we're saving, if it could be determined by the caller.
  */
-function initFileInfo(aFI, aURL, aDocument, aContentType, aContentDisposition)
+function initFileInfo(aFI, aURL, aURLCharset, aDocument,
+                      aContentType, aContentDisposition)
 {
-  var docCharset = (aDocument ? aDocument.characterSet : null);
   try {
     // Get an nsIURI object from aURL if possible:
     try {
-      aFI.uri = makeURI(aURL, docCharset);
+      aFI.uri = makeURI(aURL, aURLCharset);
       // Assuming nsiUri is valid, calling QueryInterface(...) on it will
       // populate extra object fields (eg filename and file extension).
       var url = aFI.uri.QueryInterface(Components.interfaces.nsIURL);

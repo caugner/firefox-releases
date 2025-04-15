@@ -21,6 +21,7 @@
  * Contributor(s):
  *   Ian McGreer <mcgreer@netscape.com>
  *   Javier Delgadillo <javi@netscape.com>
+ *   Kai Engert <kengert@redhat.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -48,6 +49,7 @@
 #include "nsPKCS12Blob.h"
 #include "nsPK11TokenDB.h"
 #include "nsIX509Cert.h"
+#include "nsIX509Cert3.h"
 #include "nsISMimeCert.h"
 #include "nsNSSASN1Object.h"
 #include "nsString.h"
@@ -64,6 +66,7 @@
 #include "nsNSSCertHelper.h"
 #include "nsISupportsPrimitives.h"
 #include "nsUnicharUtils.h"
+#include "nsCertVerificationThread.h"
 
 #include "nspr.h"
 extern "C" {
@@ -88,7 +91,8 @@ static NS_DEFINE_CID(kNSSComponentCID, NS_NSSCOMPONENT_CID);
 
 /* nsNSSCertificate */
 
-NS_IMPL_THREADSAFE_ISUPPORTS2(nsNSSCertificate, nsIX509Cert,
+NS_IMPL_THREADSAFE_ISUPPORTS3(nsNSSCertificate, nsIX509Cert,
+                                                nsIX509Cert3,
                                                 nsISMimeCert)
 
 nsNSSCertificate*
@@ -860,9 +864,12 @@ nsNSSCertificate::GetRawDER(PRUint32 *aLength, PRUint8 **aArray)
     return NS_ERROR_NOT_AVAILABLE;
 
   if (mCert) {
-    *aArray = (PRUint8 *)mCert->derCert.data;
-    *aLength = mCert->derCert.len;
-    return NS_OK;
+    *aArray = (PRUint8*)nsMemory::Alloc(mCert->derCert.len);
+    if (*aArray) {
+      memcpy(*aArray, mCert->derCert.data, mCert->derCert.len);
+      *aLength = mCert->derCert.len;
+      return NS_OK;
+    }
   }
   *aLength = 0;
   return NS_ERROR_FAILURE;
@@ -904,56 +911,56 @@ nsNSSCertificate::VerifyForUsage(PRUint32 usage, PRUint32 *verificationResult)
 
   NS_ENSURE_ARG(verificationResult);
 
-  SECCertUsage nss_usage;
+  SECCertificateUsage nss_usage;
   
   switch (usage)
   {
     case CERT_USAGE_SSLClient:
-      nss_usage = certUsageSSLClient;
+      nss_usage = certificateUsageSSLClient;
       break;
 
     case CERT_USAGE_SSLServer:
-      nss_usage = certUsageSSLServer;
+      nss_usage = certificateUsageSSLServer;
       break;
 
     case CERT_USAGE_SSLServerWithStepUp:
-      nss_usage = certUsageSSLServerWithStepUp;
+      nss_usage = certificateUsageSSLServerWithStepUp;
       break;
 
     case CERT_USAGE_SSLCA:
-      nss_usage = certUsageSSLCA;
+      nss_usage = certificateUsageSSLCA;
       break;
 
     case CERT_USAGE_EmailSigner:
-      nss_usage = certUsageEmailSigner;
+      nss_usage = certificateUsageEmailSigner;
       break;
 
     case CERT_USAGE_EmailRecipient:
-      nss_usage = certUsageEmailRecipient;
+      nss_usage = certificateUsageEmailRecipient;
       break;
 
     case CERT_USAGE_ObjectSigner:
-      nss_usage = certUsageObjectSigner;
+      nss_usage = certificateUsageObjectSigner;
       break;
 
     case CERT_USAGE_UserCertImport:
-      nss_usage = certUsageUserCertImport;
+      nss_usage = certificateUsageUserCertImport;
       break;
 
     case CERT_USAGE_VerifyCA:
-      nss_usage = certUsageVerifyCA;
+      nss_usage = certificateUsageVerifyCA;
       break;
 
     case CERT_USAGE_ProtectedObjectSigner:
-      nss_usage = certUsageProtectedObjectSigner;
+      nss_usage = certificateUsageProtectedObjectSigner;
       break;
 
     case CERT_USAGE_StatusResponder:
-      nss_usage = certUsageStatusResponder;
+      nss_usage = certificateUsageStatusResponder;
       break;
 
     case CERT_USAGE_AnyCA:
-      nss_usage = certUsageAnyCA;
+      nss_usage = certificateUsageAnyCA;
       break;
 
     default:
@@ -962,8 +969,8 @@ nsNSSCertificate::VerifyForUsage(PRUint32 usage, PRUint32 *verificationResult)
 
   CERTCertDBHandle *defaultcertdb = CERT_GetDefaultCertDB();
 
-  if (CERT_VerifyCertNow(defaultcertdb, mCert, PR_TRUE, 
-                         nss_usage, NULL) == SECSuccess)
+  if (CERT_VerifyCertificateNow(defaultcertdb, mCert, PR_TRUE, 
+                         nss_usage, NULL, NULL) == SECSuccess)
   {
     *verificationResult = VERIFIED_OK;
   }
@@ -1048,6 +1055,26 @@ nsNSSCertificate::GetUsagesArray(PRBool ignoreOcsp,
     return NS_ERROR_OUT_OF_MEMORY;
   *_count = 0;
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNSSCertificate::RequestUsagesArrayAsync(nsICertVerificationListener *aResultListener)
+{
+  if (!aResultListener)
+    return NS_ERROR_FAILURE;
+  
+  nsCertVerificationJob *job = new nsCertVerificationJob;
+  if (!job)
+    return NS_ERROR_OUT_OF_MEMORY;
+
+  job->mCert = this;
+  job->mListener = aResultListener;
+
+  nsresult rv = nsCertVerificationThread::addJob(job);
+  if (NS_FAILED(rv))
+    delete job;
+
+  return rv;
 }
 
 NS_IMETHODIMP

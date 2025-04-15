@@ -45,14 +45,16 @@
 #include "nsIChangeManager.h"
 #include "nsWeakReference.h"
 #include "nsIWidget.h"
+#include "nsAutoPtr.h"
 
 class nsIMenu;
+class nsMenuItemIcon;
 
 /**
  * Native Motif MenuItem wrapper
  */
 
-class nsMenuItemX : public nsIMenuItem,
+class nsMenuItemX : public nsIMenuItem_MOZILLA_1_8_BRANCH,
                     public nsIMenuListener,
                     public nsIChangeObserver,
                     public nsSupportsWeakReference
@@ -85,7 +87,10 @@ public:
   NS_IMETHOD DoCommand();
   NS_IMETHOD SetModifiers(PRUint8 aModifiers);
   NS_IMETHOD GetModifiers(PRUint8 * aModifiers);
-    
+  NS_IMETHOD SetupIcon();
+
+  NS_IMETHOD DispatchDOMEvent(const nsString &eventName, PRBool *preventDefaultCalled);
+ 
   // nsIMenuListener interface
   nsEventStatus MenuItemSelected(const nsMenuEvent & aMenuEvent);
   nsEventStatus MenuSelected(const nsMenuEvent & aMenuEvent);
@@ -110,7 +115,9 @@ protected:
   nsCOMPtr<nsIMenuListener> mXULCommandListener;
   
   nsWeakPtr                 mDocShellWeakRef;     // weak ref to docshell
-  nsCOMPtr<nsIContent>      mContent; 
+  nsCOMPtr<nsIContent>      mContent;
+  nsCOMPtr<nsIContent>      mCommandContent;
+  nsRefPtr<nsMenuItemIcon>  mIcon;
   
   PRUint8           mModifiers;
   PRPackedBool      mIsSeparator;

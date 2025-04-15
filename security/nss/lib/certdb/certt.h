@@ -36,7 +36,7 @@
 /*
  * certt.h - public data structures for the certificate library
  *
- * $Id: certt.h,v 1.30 2005/04/12 02:24:15 alexei.volkov.bugs%sun.com Exp $
+ * $Id: certt.h,v 1.30.14.2 2006/05/15 17:45:14 wtchang%redhat.com Exp $
  */
 #ifndef _CERTT_H_
 #define _CERTT_H_
@@ -301,7 +301,13 @@ struct CERTCertificateStr {
      * XXX - these should be moved into some sort of application specific
      *       data structure.  They are only used by the browser right now.
      */
-    struct SECSocketNode *authsocketlist;
+    union {
+        void* apointer; /* was struct SECSocketNode* authsocketlist */
+        struct {
+            unsigned int hasUnsupportedCriticalExt :1;
+            /* add any new option bits needed here */
+        } bits;
+    } options;
     int series; /* was int authsocketcount; record the series of the pkcs11ID */
 
     /* This is PKCS #11 stuff. */
@@ -521,6 +527,21 @@ typedef enum SECCertTimeValidityEnum {
     secCertTimeUndetermined = 3 /* validity could not be decoded from the
                                    cert, most likely because it was NULL */
 } SECCertTimeValidity;
+
+/*
+ * This is used as return status in functions that compare the validity
+ * periods of two certificates A and B, currently only
+ * CERT_CompareValidityTimes.
+ */
+
+typedef enum CERTCompareValidityStatusEnum
+{
+    certValidityUndetermined = 0, /* the function is unable to select one cert 
+                                     over another */
+    certValidityChooseB = 1,      /* cert B should be preferred */
+    certValidityEqual = 2,        /* both certs have the same validity period */
+    certValidityChooseA = 3       /* cert A should be preferred */
+} CERTCompareValidityStatus;
 
 /*
  * Interface for getting certificate nickname strings out of the database

@@ -111,7 +111,8 @@ _cairo_quartz_surface_acquire_source_image(void *abstract_surface,
                                      32,
                                      rowBytes,
                                      colorSpace,
-                                     kCGImageAlphaPremultipliedFirst,
+                                     kCGImageAlphaPremultipliedFirst |
+                                      kCGBitmapByteOrder32Host,
                                      dataProvider,
                                      NULL,
                                      false, kCGRenderingIntentDefault);

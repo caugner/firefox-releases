@@ -21,6 +21,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Takeshi Ichimaru <ayakawa.m@gmail.com>
+ *   Masayuki Nakano <masayuki@d-toybox.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -340,6 +342,9 @@ nscolor nsCSSRendering::MakeBevelColor(PRIntn whichSide, PRUint8 style,
 // Maximum poly points in any of the polygons we generate below
 #define MAX_POLY_POINTS 4
 
+#define ACTUAL_THICKNESS(outside, inside, frac, tpp) \
+  (NSToCoordRound(((outside) - (inside)) * (frac) / (tpp)) * (tpp))
+
 // a nifty helper function to create a polygon representing a
 // particular side of a border. This helps localize code for figuring
 // mitered edges. It is mainly used by the solid, inset, and outset
@@ -349,17 +354,13 @@ nscolor nsCSSRendering::MakeBevelColor(PRIntn whichSide, PRUint8 style,
 // is one pixel), then a line with two endpoints is returned
 PRIntn nsCSSRendering::MakeSide(nsPoint aPoints[],
                                 nsIRenderingContext& aContext,
-                                PRIntn whichSide,
-                                const nsRect& outside, const nsRect& inside,
+                                PRIntn aWhichSide,
+                                const nsRect& aOutside, const nsRect& aInside,
                                 PRIntn aSkipSides,
-                                PRIntn borderPart, float borderFrac,
-                                nscoord twipsPerPixel)
+                                PRIntn aBorderPart, float aBorderFrac,
+                                nscoord aTwipsPerPixel)
 {
-  float borderRest = 1.0f - borderFrac;
-
-  PRIntn np = 0;
-  nscoord thickness, outsideEdge, insideEdge, outsideTL, insideTL, outsideBR,
-    insideBR;
+  nscoord outsideEdge, insideEdge, outsideTL, insideTL, outsideBR, insideBR;
 
   // Initialize the following six nscoord's:
   // outsideEdge, insideEdge, outsideTL, insideTL, outsideBR, insideBR
@@ -377,52 +378,52 @@ PRIntn nsCSSRendering::MakeSide(nsPoint aPoints[],
   // if we don't want the bevel, we'll get rid of it later by setting
   // outsideXX to insideXX
 
-  switch (whichSide) {
+  switch (aWhichSide) {
   case NS_SIDE_TOP:
     // the TL points are the left end; the BR points are the right end
-    outsideEdge = outside.y;
-    insideEdge = inside.y;
-    outsideTL = outside.x;
-    insideTL = inside.x;
-    insideBR = inside.XMost();
-    outsideBR = outside.XMost();
+    outsideEdge = aOutside.y;
+    insideEdge = aInside.y;
+    outsideTL = aOutside.x;
+    insideTL = aInside.x;
+    insideBR = aInside.XMost();
+    outsideBR = aOutside.XMost();
     break;
 
   case NS_SIDE_BOTTOM:
     // the TL points are the left end; the BR points are the right end
-    outsideEdge = outside.YMost();
-    insideEdge = inside.YMost();
-    outsideTL = outside.x;
-    insideTL = inside.x;
-    insideBR = inside.XMost();
-    outsideBR = outside.XMost();
+    outsideEdge = aOutside.YMost();
+    insideEdge = aInside.YMost();
+    outsideTL = aOutside.x;
+    insideTL = aInside.x;
+    insideBR = aInside.XMost();
+    outsideBR = aOutside.XMost();
     break;
 
   case NS_SIDE_LEFT:
     // the TL points are the top end; the BR points are the bottom end
-    outsideEdge = outside.x;
-    insideEdge = inside.x;
-    outsideTL = outside.y;
-    insideTL = inside.y;
-    insideBR = inside.YMost();
-    outsideBR = outside.YMost();
+    outsideEdge = aOutside.x;
+    insideEdge = aInside.x;
+    outsideTL = aOutside.y;
+    insideTL = aInside.y;
+    insideBR = aInside.YMost();
+    outsideBR = aOutside.YMost();
     break;
 
   default:
-    NS_ASSERTION(whichSide == NS_SIDE_RIGHT, "whichSide is not a valid side");
+    NS_ASSERTION(aWhichSide == NS_SIDE_RIGHT, "aWhichSide is not a valid side");
     // the TL points are the top end; the BR points are the bottom end
-    outsideEdge = outside.XMost();
-    insideEdge = inside.XMost();
-    outsideTL = outside.y;
-    insideTL = inside.y;
-    insideBR = inside.YMost();
-    outsideBR = outside.YMost();
+    outsideEdge = aOutside.XMost();
+    insideEdge = aInside.XMost();
+    outsideTL = aOutside.y;
+    insideTL = aInside.y;
+    insideBR = aInside.YMost();
+    outsideBR = aOutside.YMost();
     break;
   }
 
   // Don't draw the bevels if an adjacent side is skipped
 
-  if ( (whichSide == NS_SIDE_TOP) || (whichSide == NS_SIDE_BOTTOM) ) {
+  if ( (aWhichSide == NS_SIDE_TOP) || (aWhichSide == NS_SIDE_BOTTOM) ) {
     // a top or bottom side
     if ((1<<NS_SIDE_LEFT) & aSkipSides) {
       insideTL = outsideTL;
@@ -440,55 +441,75 @@ PRIntn nsCSSRendering::MakeSide(nsPoint aPoints[],
     }
   }
 
-  // move things around when only drawing part of the border
+  nscoord fullThickness;
+  if (aWhichSide == NS_SIDE_TOP || aWhichSide == NS_SIDE_LEFT)
+    fullThickness = insideEdge - outsideEdge;
+  else
+    fullThickness = outsideEdge - insideEdge;
+  if (fullThickness != 0)
+    fullThickness = NS_MAX(fullThickness, aTwipsPerPixel);
 
-  if (borderPart == BORDER_INSIDE) {
-    outsideEdge = nscoord(outsideEdge * borderFrac + insideEdge * borderRest);
-    outsideTL = nscoord(outsideTL * borderFrac + insideTL * borderRest);
-    outsideBR = nscoord(outsideBR * borderFrac + insideBR * borderRest);
-  } else if (borderPart == BORDER_OUTSIDE ) {
-    insideEdge = nscoord(insideEdge * borderFrac + outsideEdge * borderRest);
-    insideTL = nscoord(insideTL * borderFrac + outsideTL * borderRest);
-    insideBR = nscoord(insideBR * borderFrac + outsideBR * borderRest);
+  nscoord thickness = fullThickness;
+  if (aBorderFrac != 1.0f && fullThickness != 0) {
+    thickness = aTwipsPerPixel *
+      NS_MAX(NSToCoordRound(fullThickness * aBorderFrac / aTwipsPerPixel), 1);
+    if ((aWhichSide == NS_SIDE_TOP) || (aWhichSide == NS_SIDE_LEFT)) {
+      if (aBorderPart == BORDER_INSIDE)
+        outsideEdge = insideEdge - thickness;
+      else if (aBorderPart == BORDER_OUTSIDE)
+        insideEdge = outsideEdge + thickness;
+    } else {
+      if (aBorderPart == BORDER_INSIDE)
+        outsideEdge = insideEdge + thickness;
+      else if (aBorderPart == BORDER_OUTSIDE)
+        insideEdge = outsideEdge - thickness;
+    }
+
+    float actualFrac = (float)thickness / (float)fullThickness;
+    if (aBorderPart == BORDER_INSIDE) {
+      outsideTL = insideTL +
+        ACTUAL_THICKNESS(outsideTL, insideTL, actualFrac, aTwipsPerPixel);
+      outsideBR = insideBR +
+        ACTUAL_THICKNESS(outsideBR, insideBR, actualFrac, aTwipsPerPixel);
+    } else if (aBorderPart == BORDER_OUTSIDE) {
+      insideTL = outsideTL -
+        ACTUAL_THICKNESS(outsideTL, insideTL, actualFrac, aTwipsPerPixel);
+      insideBR = outsideBR -
+        ACTUAL_THICKNESS(outsideBR, insideBR, actualFrac, aTwipsPerPixel);
+    }
   }
 
   // Base our thickness check on the segment being less than a pixel and 1/2
-  twipsPerPixel += twipsPerPixel >> 2;
-
-  // find the thickness of the piece being drawn
-  if ((whichSide == NS_SIDE_TOP) || (whichSide == NS_SIDE_LEFT)) {
-    thickness = insideEdge - outsideEdge;
-  } else {
-    thickness = outsideEdge - insideEdge;
-  }
+  aTwipsPerPixel += aTwipsPerPixel >> 2;
 
   // if returning a line, do it along inside edge for bottom or right borders
   // so that it's in the same place as it would be with polygons (why?)
   // XXX The previous version of the code shortened the right border too.
-  if ( !((thickness >= twipsPerPixel) || (borderPart != BORDER_FULL)) &&
-       ((whichSide == NS_SIDE_BOTTOM) || (whichSide == NS_SIDE_RIGHT))) {
+  if ( !((thickness >= aTwipsPerPixel) || (aBorderPart != BORDER_FULL)) &&
+       ((aWhichSide == NS_SIDE_BOTTOM) || (aWhichSide == NS_SIDE_RIGHT))) {
     outsideEdge = insideEdge;
     }
 
   // return the appropriate line or trapezoid
-  if ((whichSide == NS_SIDE_TOP) || (whichSide == NS_SIDE_BOTTOM)) {
+  PRIntn np = 0;
+  if ((aWhichSide == NS_SIDE_TOP) || (aWhichSide == NS_SIDE_BOTTOM)) {
     // top and bottom borders
     aPoints[np++].MoveTo(outsideTL,outsideEdge);
     aPoints[np++].MoveTo(outsideBR,outsideEdge);
-    // XXX Making this condition only (thickness >= twipsPerPixel) will
+    // XXX Making this condition only (thickness >= aTwipsPerPixel) will
     // improve double borders and some cases of groove/ridge,
     //  but will cause problems with table borders.  See last and third
     // from last tests in test4.htm
     // Doing it this way emulates the old behavior.  It might be worth
     // fixing.
-    if ((thickness >= twipsPerPixel) || (borderPart != BORDER_FULL) ) {
+    if ((thickness >= aTwipsPerPixel) || (aBorderPart != BORDER_FULL)) {
       aPoints[np++].MoveTo(insideBR,insideEdge);
       aPoints[np++].MoveTo(insideTL,insideEdge);
     }
   } else {
     // right and left borders
     // XXX Ditto above
-    if ((thickness >= twipsPerPixel) || (borderPart != BORDER_FULL) )  {
+    if ((thickness >= aTwipsPerPixel) || (aBorderPart != BORDER_FULL))  {
       aPoints[np++].MoveTo(insideEdge,insideBR);
       aPoints[np++].MoveTo(insideEdge,insideTL);
     }
@@ -1803,10 +1824,11 @@ void nsCSSRendering::PaintBorder(nsPresContext* aPresContext,
   for (cnt = 0; cnt < 4; cnt++) {
     PRUint8 side = sideOrder[cnt];
 
-    
-    // If a side needs a double border but will be less than two pixels,
-    // force it to be solid (see bug 1781).
-    if (aBorderStyle.GetBorderStyle(side) == NS_STYLE_BORDER_STYLE_DOUBLE) {
+    // If a side needs a double/groove/ridge border but will be less than two
+    // pixels, force it to be solid (see bug 1781 and bug 310124).
+    if (aBorderStyle.GetBorderStyle(side) == NS_STYLE_BORDER_STYLE_DOUBLE ||
+        aBorderStyle.GetBorderStyle(side) == NS_STYLE_BORDER_STYLE_GROOVE ||
+        aBorderStyle.GetBorderStyle(side) == NS_STYLE_BORDER_STYLE_RIDGE) {
       nscoord widths[] = { border.top, border.right, border.bottom, border.left };
       forceSolid = (widths[side]/twipsPerPixel < 2);
     } else 
@@ -2577,32 +2599,23 @@ FindCanvasBackground(nsPresContext* aPresContext,
   nsIFrame *firstChild = aForFrame->GetFirstChild(nsnull);
   if (firstChild) {
     const nsStyleBackground* result = firstChild->GetStyleBackground();
-  
-    // for printing and print preview.. this should be a pageContentFrame
-    nsStyleContext* parentContext;
+    nsIFrame* topFrame = aForFrame;
 
     if (firstChild->GetType() == nsLayoutAtoms::pageContentFrame) {
-      // we have to find the background style ourselves.. since the 
-      // pageContentframe does not have content
-      while(firstChild){
-        for (nsIFrame* kidFrame = firstChild; nsnull != kidFrame; ) {
-          parentContext = kidFrame->GetStyleContext();
-          result = parentContext->GetStyleBackground();
-          if (!result->IsTransparent()) {
-            *aBackground = kidFrame->GetStyleBackground();
-            return PR_TRUE;
-          } else {
-            kidFrame = kidFrame->GetNextSibling(); 
-          }
-        }
-        firstChild = firstChild->GetFirstChild(nsnull);
+      topFrame = firstChild->GetFirstChild(nsnull);
+      NS_ASSERTION(topFrame,
+                   "nsPageContentFrame is missing a normal flow child");
+      if (!topFrame) {
+        return PR_FALSE;
       }
-      return PR_FALSE;    // nothing found for this
+      NS_ASSERTION(topFrame->GetContent(),
+                   "nsPageContentFrame child without content");
+      result = topFrame->GetStyleBackground();
     }
 
     // Check if we need to do propagation from BODY rather than HTML.
     if (result->IsTransparent()) {
-      nsIContent* content = aForFrame->GetContent();
+      nsIContent* content = topFrame->GetContent();
       if (content) {
         // Use |GetOwnerDoc| so it works during destruction.
         nsIDocument* document = content->GetOwnerDoc();
@@ -2879,7 +2892,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
   image->GetHeight(&imageSize.height);
 
   float p2t;
-  p2t = aPresContext->PixelsToTwips();
+  p2t = aPresContext->ScaledPixelsToTwips();
   imageSize.width = NSIntPixelsToTwips(imageSize.width, p2t);
   imageSize.height = NSIntPixelsToTwips(imageSize.height, p2t);
 
@@ -3590,10 +3603,10 @@ nsCSSRendering::RenderSide(nsFloatPoint aPoints[],nsIRenderingContext& aRenderin
   if (thickness<=aTwipsPerPixel) {
     // NOTHING FANCY JUST DRAW OUR OUTSIDE BORDER
     thecurve.SetPoints(aPoints[0].x,aPoints[0].y,aPoints[1].x,aPoints[1].y,aPoints[2].x,aPoints[2].y);
-    thecurve.SubDivide((nsIRenderingContext*)&aRenderingContext,0,0);
+    thecurve.SubDivide((nsIRenderingContext*)&aRenderingContext,nsnull,nsnull);
     aRenderingContext.DrawLine((nscoord)aPoints[2].x,(nscoord)aPoints[2].y,(nscoord)aPoints[3].x,(nscoord)aPoints[3].y);
     thecurve.SetPoints(aPoints[3].x,aPoints[3].y,aPoints[4].x,aPoints[4].y,aPoints[5].x,aPoints[5].y);
-    thecurve.SubDivide((nsIRenderingContext*)&aRenderingContext,0,0);
+    thecurve.SubDivide((nsIRenderingContext*)&aRenderingContext,nsnull,nsnull);
   } else {
     
     if (!aIsOutline) {
@@ -3968,7 +3981,7 @@ QBCurve::SubDivide(nsIRenderingContext *aRenderingContext,nsPoint aPointArray[],
   QBCurve   curve1,curve2;
   float     fx,fy,smag, oldfx, oldfy, oldsmag;
   
-  if (*aCurIndex >= MAXPOLYPATHSIZE)
+  if (aCurIndex && (*aCurIndex >= MAXPOLYPATHSIZE))
     return;
   
   oldfx = (this->mAnc1.x + this->mAnc2.x)/2.0f - this->mCon.x;

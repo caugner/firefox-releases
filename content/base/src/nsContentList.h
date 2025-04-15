@@ -38,7 +38,7 @@
 #define nsContentList_h___
 
 #include "nsISupports.h"
-#include "nsVoidArray.h"
+#include "nsCOMArray.h"
 #include "nsString.h"
 #include "nsIDOMHTMLCollection.h"
 #include "nsIDOMNodeList.h"
@@ -78,7 +78,7 @@ public:
   static void Shutdown();
 
 protected:
-  nsAutoVoidArray mElements;
+  nsCOMArray<nsIContent> mElements;
 };
 
 
@@ -90,12 +90,6 @@ class nsFormContentList : public nsBaseContentList
 public:
   nsFormContentList(nsIDOMHTMLFormElement *aForm,
                     nsBaseContentList& aContentList);
-  virtual ~nsFormContentList();
-
-  virtual void AppendElement(nsIContent *aContent);
-  virtual void RemoveElement(nsIContent *aContent);
-
-  virtual void Reset();
 };
 
 /**
@@ -146,7 +140,9 @@ protected:
   PRInt32 mMatchNameSpaceId;
   nsIDocument* mDocument;   // Weak ref
   // XXX What if the mRootContent is detached from the doc and _then_
-  // goes away (so we never get notified)?
+  // goes away (so we never get notified)?  Note that we work around
+  // that a little by not caching lists with an mRootContent in
+  // gCachedContentList.  If we fix this, we can remove that check.
   nsIContent* mRootContent; // Weak ref
 };
 
@@ -205,6 +201,8 @@ public:
   virtual void ContentRemoved(nsIDocument *aDocument, nsIContent* aContainer,
                               nsIContent* aChild, PRInt32 aIndexInContainer);
   virtual void DocumentWillBeDestroyed(nsIDocument *aDocument);
+
+  static void OnDocumentDestroy(nsIDocument *aDocument);
 
 protected:
   void Init(nsIDocument *aDocument);

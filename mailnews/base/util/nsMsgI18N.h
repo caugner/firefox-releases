@@ -106,6 +106,13 @@ NS_MSG_BASE const char *nsMsgI18NGetAcceptLanguage(void);
 NS_MSG_BASE const char * nsMsgI18NFileSystemCharset(void);
 
 /**
+ * Return charset name of text file (OS dependent).
+ *
+ * @param aCharset    [OUT] Text file charset name.
+ */
+NS_MSG_BASE void nsMsgI18NTextFileCharset(nsACString& aCharset);
+
+/**
  * Convert from unicode to target charset.
  *
  * @param charset     [IN] Charset name.
@@ -210,30 +217,6 @@ inline nsresult ConvertFromUnicode(const char* charset,
                                    const nsAFlatString &aSrc, nsACString& aDest)
 {
     return nsMsgI18NConvertFromUnicode(charset, aSrc, aDest);
-}
-
-// XXX to be replaced by NS_CopyNativeToUnicode
-inline nsresult nsMsgI18NCopyNativeToUTF16(const nsAFlatCString &aSrc,
-                                           nsAString &aDest)
-{
-  return nsMsgI18NConvertToUnicode(nsMsgI18NFileSystemCharset(), aSrc, aDest);
-}
-
-inline nsresult nsMsgI18NCopyNativeToUTF16(const char* aSrc, nsAString &aDest)
-{
-  return nsMsgI18NCopyNativeToUTF16(nsDependentCString(aSrc), aDest);
-}
-
-// XXX to be replaced by NS_CopyUnicodeToNative
-inline nsresult nsMsgI18NCopyUTF16ToNative(const nsAFlatString &aSrc,
-                                           nsACString &aDest)
-{
-  return nsMsgI18NConvertFromUnicode(nsMsgI18NFileSystemCharset(), aSrc, aDest);
-}
-inline nsresult nsMsgI18NCopyUTF16ToNative(const PRUnichar* aSrc,
-                                           nsACString &aDest)
-{
-  return nsMsgI18NCopyUTF16ToNative(nsDependentString(aSrc), aDest);
 }
 
 #endif /* _nsMsgI18N_H_ */

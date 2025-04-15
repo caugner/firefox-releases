@@ -52,6 +52,9 @@
 #include "nsIXFormsUIWidget.h"
 #include "nsIDocument.h"
 #include "nsNetUtil.h"
+#include "nsXFormsModelElement.h"
+#include "nsXFormsRangeConditionAccessors.h"
+#include "nsIEventStateManager.h"
 
 class nsXFormsSelectElement : public nsXFormsDelegateStub
 {
@@ -65,8 +68,14 @@ public:
   NS_IMETHOD ChildAppended(nsIDOMNode *aChild);
   NS_IMETHOD ChildRemoved(PRUint32 aIndex);
 
-  // nsIXFormsDelegate
-  NS_IMETHOD SetValue(const nsAString& aValue);
+  // nsIXFormsControl
+  NS_IMETHOD Refresh();
+  NS_IMETHOD GetDefaultIntrinsicState(PRInt32 *aState);
+  NS_IMETHOD GetDisabledIntrinsicState(PRInt32 *aState);
+
+  // nsIXFormsDelegate overrides
+  NS_IMETHOD GetXFormsAccessors(nsIXFormsAccessors **aAccessor);
+
 #ifdef DEBUG_smaug
   virtual const char* Name() { return "select"; }
 #endif
@@ -87,6 +96,8 @@ nsXFormsSelectElement::OnCreated(nsIXTFBindableElementWrapper *aWrapper)
                                 nsIXTFElement::NOTIFY_CHILD_REMOVED);
   return NS_OK;
 }
+
+// nsIXTFElement overrides
 
 NS_IMETHODIMP
 nsXFormsSelectElement::ChildInserted(nsIDOMNode *aChild, PRUint32 aIndex)
@@ -109,28 +120,49 @@ nsXFormsSelectElement::ChildRemoved(PRUint32 aIndex)
   return NS_OK;
 }
 
+// nsIXFormsControl
+
 NS_IMETHODIMP
-nsXFormsSelectElement::SetValue(const nsAString& aValue)
+nsXFormsSelectElement::Refresh()
 {
-  if (!mBoundNode || !mModel)
+  PRBool delayRefresh = nsXFormsModelElement::ContainerNeedsPostRefresh(this);
+  if (delayRefresh) {
     return NS_OK;
-
-  PRBool changed;
-  nsresult rv = mModel->SetNodeValue(mBoundNode, aValue, &changed);
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (changed) {
-    nsCOMPtr<nsIDOMNode> model = do_QueryInterface(mModel);
-
-    if (model) {
-      rv = nsXFormsUtils::DispatchEvent(model, eEvent_Recalculate);
-      NS_ENSURE_SUCCESS(rv, rv);
-      rv = nsXFormsUtils::DispatchEvent(model, eEvent_Revalidate);
-      NS_ENSURE_SUCCESS(rv, rv);
-      rv = nsXFormsUtils::DispatchEvent(model, eEvent_Refresh);
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
   }
 
+  return nsXFormsDelegateStub::Refresh();
+}
+
+NS_IMETHODIMP
+nsXFormsSelectElement::GetDefaultIntrinsicState(PRInt32 *aState)
+{
+  NS_ENSURE_ARG_POINTER(aState);
+  nsXFormsDelegateStub::GetDefaultIntrinsicState(aState);
+  *aState |= NS_EVENT_STATE_INRANGE;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXFormsSelectElement::GetDisabledIntrinsicState(PRInt32 *aState)
+{
+  NS_ENSURE_ARG_POINTER(aState);
+  nsXFormsDelegateStub::GetDisabledIntrinsicState(aState);
+  *aState |= NS_EVENT_STATE_INRANGE;
+  return NS_OK;
+}
+
+// nsIXFormsDelegate
+
+NS_IMETHODIMP
+nsXFormsSelectElement::GetXFormsAccessors(nsIXFormsAccessors **aAccessor)
+{
+  if (!mAccessor) {
+    mAccessor = new nsXFormsRangeConditionAccessors(this, mElement);
+    if (!mAccessor) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+  }
+  NS_ADDREF(*aAccessor = mAccessor);
   return NS_OK;
 }
 

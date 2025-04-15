@@ -236,13 +236,38 @@ nsUnknownContentTypeDialog.prototype = {
         result = picker.file;
 
         if (result) {
+          try {
+            // Remove the file so that it's not there when we ensure non-existence later;
+            // this is safe because for the file to exist, the user would have had to
+            // confirm that he wanted the file overwritten.
+            if (result.exists())
+              result.remove(false);
+          }
+          catch (e) { }
           var newDir = result.parent;
           prefs.setComplexValue("browser.download.dir", Components.interfaces.nsILocalFile, newDir);
+          result = this.validateLeafName(newDir, result.leafName, null);
         }
       }
       return result;
     },
-    
+
+    /**
+     * Ensures that a local folder/file combination does not already exist in
+     * the file system (or finds such a combination with a reasonably similar
+     * leaf name), creates the corresponding file, and returns it.
+     *
+     * @param   aLocalFile
+     *          the folder where the file resides
+     * @param   aLeafName
+     *          the string name of the file (may be empty if no name is known,
+     *          in which case a name will be chosen)
+     * @param   aFileExt
+     *          the extension of the file, if one is known; this will be ignored
+     *          if aLeafName is non-empty
+     * @returns nsILocalFile
+     *          the created file
+     */
     validateLeafName: function (aLocalFile, aLeafName, aFileExt)
     {
       if (!aLocalFile || !aLocalFile.exists())
@@ -264,12 +289,14 @@ nsUnknownContentTypeDialog.prototype = {
       return aLocalFile;
     },
 
+    /**
+     * Generates and returns a uniquely-named file from aLocalFile.  If
+     * aLocalFile does not exist, it will be the file returned; otherwise, a
+     * file whose name is similar to that of aLocalFile will be returned.
+     */
     makeFileUnique: function (aLocalFile)
     {
       try {
-        // Since we're automatically downloading, we don't get the file picker's 
-        // logic to check for existing files, so we need to do that here.
-        //
         // Note - this code is identical to that in 
         //   toolkit/content/contentAreaUtils.js.
         // If you are updating this code, update that code too! We can't share code
@@ -393,51 +420,71 @@ nsUnknownContentTypeDialog.prototype = {
       var iconString = "moz-icon://" + fname + "?size=16&contentType=" + this.mLauncher.MIMEInfo.MIMEType;
       this.dialogElement("contentTypeImage").setAttribute("src", iconString);
 
-      this.initAppAndSaveToDiskValues();
-
-      // Initialize "always ask me" box. This should always be disabled
-      // and set to true for the ambiguous type application/octet-stream.
-      // We don't also check for application/x-msdownload here since we
-      // want users to be able to autodownload .exe files. 
-      var rememberChoice = this.dialogElement("rememberChoice");
-
-#if 0
-      // Just because we have a content-type of application/octet-stream 
-      // here doesn't actually mean that the content is of that type. Many 
-      // servers default to sending text/plain for file types they don't know
-      // about. To account for this, the uriloader does some checking to see 
-      // if a file sent as text/plain contains binary characters, and if so (*)
-      // it morphs the content-type into application/octet-stream so that
-      // the file can be properly handled. Since this is not generic binary
-      // data, rather, a data format that the system probably knows about, 
-      // we don't want to use the content-type provided by this dialog's 
-      // opener, as that's the generic application/octet-stream that the 
-      // uriloader has passed, rather we want to ask the External Helper App
-      // Service, which will ask the host OS. This is so we don't needlessly
-      // disable the "autohandle" checkbox. 
-      var mimeService = Components.classes["@mozilla.org/uriloader/external-helper-app-service;1"].getService(Components.interfaces.nsIMIMEService);
-      var type = mimeService.getTypeFromURI(this.mLauncher.source);
-      this.realMIMEInfo = mimeService.getFromTypeAndExtension(type, "");
-
-      if (type == "application/octet-stream") {
-#endif
+      // if always-save and is-executable and no-handler
+      // then set up simple ui
+      var defaultApp = this.mLauncher.MIMEInfo.preferredApplicationHandler;
+      var noDefaultApp = (!defaultApp || !defaultApp.path);
       var mimeType = this.mLauncher.MIMEInfo.MIMEType;
-      if (mimeType == "application/octet-stream" || 
-          mimeType == "application/x-msdownload" ||
-          this.mLauncher.targetFile.isExecutable()) {
-        rememberChoice.checked = false;
-        rememberChoice.disabled = true;
+      var shouldntRememberChoice = (mimeType == "application/octet-stream" || 
+                                    mimeType == "application/x-msdownload" ||
+                                    this.mLauncher.targetFile.isExecutable());
+      if (shouldntRememberChoice && noDefaultApp) {
+        // hide featured choice 
+        this.mDialog.document.getElementById("normalBox").collapsed = true;
+        // show basic choice 
+        this.mDialog.document.getElementById("basicBox").collapsed = false;
+        // change button labels
+        this.mDialog.document.documentElement.getButton("accept").label = this.dialogElement("strings").getString("unknownAccept.label");
+        this.mDialog.document.documentElement.getButton("cancel").label = this.dialogElement("strings").getString("unknownCancel.label");
+        // hide other handler
+        this.mDialog.document.getElementById("openHandler").collapsed = true;
+        // set save as the selected option
+        this.dialogElement("mode").selectedItem = this.dialogElement("save");
       }
       else {
-        rememberChoice.checked = !this.mLauncher.MIMEInfo.alwaysAskBeforeHandling;
-      }
-      this.toggleRememberChoice(rememberChoice);
+        this.initAppAndSaveToDiskValues();
 
-      // XXXben - menulist won't init properly, hack. 
-      var openHandler = this.dialogElement("openHandler");
-      openHandler.parentNode.removeChild(openHandler);
-      var openHandlerBox = this.dialogElement("openHandlerBox");
-      openHandlerBox.appendChild(openHandler);
+        // Initialize "always ask me" box. This should always be disabled
+        // and set to true for the ambiguous type application/octet-stream.
+        // We don't also check for application/x-msdownload here since we
+        // want users to be able to autodownload .exe files. 
+        var rememberChoice = this.dialogElement("rememberChoice");
+
+#if 0
+        // Just because we have a content-type of application/octet-stream 
+        // here doesn't actually mean that the content is of that type. Many 
+        // servers default to sending text/plain for file types they don't know
+        // about. To account for this, the uriloader does some checking to see 
+        // if a file sent as text/plain contains binary characters, and if so (*)
+        // it morphs the content-type into application/octet-stream so that
+        // the file can be properly handled. Since this is not generic binary
+        // data, rather, a data format that the system probably knows about, 
+        // we don't want to use the content-type provided by this dialog's 
+        // opener, as that's the generic application/octet-stream that the 
+        // uriloader has passed, rather we want to ask the External Helper App
+        // Service, which will ask the host OS. This is so we don't needlessly
+        // disable the "autohandle" checkbox. 
+        var mimeService = Components.classes["@mozilla.org/uriloader/external-helper-app-service;1"].getService(Components.interfaces.nsIMIMEService);
+        var type = mimeService.getTypeFromURI(this.mLauncher.source);
+        this.realMIMEInfo = mimeService.getFromTypeAndExtension(type, "");
+
+        if (type == "application/octet-stream") {
+#endif
+        if (shouldntRememberChoice) {
+          rememberChoice.checked = false;
+          rememberChoice.disabled = true;
+        }
+        else {
+          rememberChoice.checked = !this.mLauncher.MIMEInfo.alwaysAskBeforeHandling;
+        }
+        this.toggleRememberChoice(rememberChoice);
+
+        // XXXben - menulist won't init properly, hack. 
+        var openHandler = this.dialogElement("openHandler");
+        openHandler.parentNode.removeChild(openHandler);
+        var openHandlerBox = this.dialogElement("openHandlerBox");
+        openHandlerBox.appendChild(openHandler);
+      }
 
       this.mDialog.setTimeout("dialog.postShowCallback()", 0);
       
@@ -450,9 +497,12 @@ nsUnknownContentTypeDialog.prototype = {
     
     _timer: null,
     notify: function (aTimer) {
-      if (!this._blurred)
-        this.mDialog.document.documentElement.getButton('accept').disabled = false;
+      try { // The user may have already canceled the dialog.
+        if (!this._blurred)
+          this.mDialog.document.documentElement.getButton('accept').disabled = false;
+      } catch (ex) {}
       this._delayExpired = true;
+      this._timer = null; // the timer won't release us, so we have to release it
     },
     
     postShowCallback: function () {

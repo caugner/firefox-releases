@@ -1,4 +1,4 @@
-<?xml version="1.0"?> 
+<?xml version="1.0"?>
 <!-- ***** BEGIN LICENSE BLOCK *****
    - Version: MPL 1.1/GPL 2.0/LGPL 2.1
    -
@@ -184,7 +184,7 @@
              oncommand="addBookmarkAs();"/>
     <command id="Browser:AddGroupmarkAs" label="&addCurTabsAsCmd.label;"
              accesskey="&addCurTabsAsCmd.accesskey;"
-             oncommand="addGroupmarkAs(); event.preventBubble();"/>
+             oncommand="addGroupmarkAs(); event.stopPropagation();"/>
     <command id="Browser:ManageBookmark" label="&manBookmarksCmd.label;" accesskey="&manBookmarksCmd.accesskey;" 
              oncommand="BrowserEditBookmarks();" />
   
@@ -192,6 +192,7 @@
     <command id="Browser:Home"    oncommand="BrowserHome(event);"/>
     <command id="Browser:Back"    oncommand="BrowserBack();"    observes="canGoBack"/>
     <command id="Browser:Forward" oncommand="BrowserForward();" observes="canGoForward"/>
+    <command id="Browser:Up"      oncommand="BrowserUp();"      observes="canGoUp"/>
     <commandset id="viewZoomCommands"/>
     <commandset id="tasksCommands"/>
 
@@ -203,6 +204,7 @@
   <broadcasterset id="navBroadcasters">
     <broadcaster id="canGoBack"    disabled="true"/>
     <broadcaster id="canGoForward" disabled="true"/>
+    <broadcaster id="canGoUp"      disabled="true"/>
     <broadcaster id="Communicator:WorkMode"/>
     <broadcaster id="cmd_viewnavbar" oncommand="goToggleToolbar( 'nav-bar','cmd_viewnavbar');" checked="true"/>
     <broadcaster id="cmd_viewpersonaltoolbar" oncommand="goToggleToolbar('PersonalToolbar','cmd_viewpersonaltoolbar');" checked="true"/>
@@ -214,7 +216,7 @@
   <!-- bookmarks context menu -->
   <popupset id="bookmarksPopupset">
     <popup id="bookmarks-context-menu" 
-           onpopupshowing="BookmarksMenu.createContextMenu(event);"
+           onpopupshowing="return BookmarksMenu.createContextMenu(event);"
            onpopuphidden ="BookmarksMenu.destroyContextMenu(event);"/>
   </popupset>
 
@@ -261,7 +263,7 @@
                      validate="never"
                      rdf:type="http://home.netscape.com/NC-rdf#Folder"
                      label="rdf:http://home.netscape.com/NC-rdf#Name">
-        <menupopup/>
+        <menupopup context="bookmarks-context-menu"/>
       </toolbarbutton>
     </rule>
     <rule parent="hbox">
@@ -271,7 +273,6 @@
                      status="rdf:http://home.netscape.com/WEB-rdf#status"
                      rdf:type="http://home.netscape.com/NC-rdf#Bookmark"
                      statustext="rdf:http://home.netscape.com/NC-rdf#URL"
-                     tooltip="btTooltip"
                      label="rdf:http://home.netscape.com/NC-rdf#Name"/>
     </rule>
     <rule nc:FolderGroup="true" iscontainer="true">
@@ -304,7 +305,7 @@
               validate="never"
               label="rdf:http://home.netscape.com/NC-rdf#Name"
               type="rdf:http://www.w3.org/1999/02/22-rdf-syntax-ns#type">
-          <menupopup />
+          <menupopup context="bookmarks-context-menu"/>
         </menu>
       </menupopup>
     </rule>
@@ -319,7 +320,8 @@
                   src="rdf:http://home.netscape.com/NC-rdf#Icon"
                   validate="never"
                   label="rdf:http://home.netscape.com/NC-rdf#Name" 
-                  status="rdf:http://home.netscape.com/WEB-rdf#status"/>
+                  status="rdf:http://home.netscape.com/WEB-rdf#status"
+                  statustext="rdf:http://home.netscape.com/NC-rdf#URL"/>
       </menupopup>
     </rule>
   </template>
@@ -413,7 +415,7 @@
         <menu label="&useStyleSheetMenu.label;" accesskey="&useStyleSheetMenu.accesskey;" disabled="false" observes="isImage">
           <menupopup onpopupshowing="stylesheetFillPopup(this);"
                      oncommand="stylesheetSwitchAll(window.content, event.target.getAttribute('data')); setStyleDisabled(false);" type="radio">
-            <menuitem label="&useStyleSheetNone.label;" accesskey="&useStyleSheetNone.accesskey;" oncommand="setStyleDisabled(true); event.preventBubble();" type="radio"/>
+            <menuitem label="&useStyleSheetNone.label;" accesskey="&useStyleSheetNone.accesskey;" oncommand="setStyleDisabled(true); event.stopPropagation();" type="radio"/>
             <menuitem label="&useStyleSheetPersistentOnly.label;" accesskey="&useStyleSheetPersistentOnly.accesskey;" type="radio"/>
           </menupopup>
         </menu>
@@ -449,6 +451,7 @@
       <menupopup id="goPopup" onpopupshowing="updateGoMenu(event);">
         <menuitem label="&goBackCmd.label;"    accesskey="&goBackCmd.accesskey;"    key="goBackKb"    command="Browser:Back"/>
         <menuitem label="&goForwardCmd.label;" accesskey="&goForwardCmd.accesskey;" key="goForwardKb" command="Browser:Forward"/>
+        <menuitem label="&goUpCmd.label;"      accesskey="&goUpCmd.accesskey;"      key="goUpKb"      command="Browser:Up"/>
         <menuitem label="&goHomeCmd.label;"    accesskey="&goHomeCmd.accesskey;"    command="Browser:Home" key="goHome"/>
         <menuseparator/>
         <menuitem label="&historyCmd.label;" accesskey="&historyCmd.accesskey;" oncommand="toHistory()" key="key_gotoHistory"/>
@@ -459,20 +462,21 @@
     <menu id="BookmarksMenu" label="&bookmarksMenu.label;" accesskey="&bookmarksMenu.accesskey;" 
           datasources="rdf:bookmarks rdf:files rdf:localsearch rdf:internetsearch" 
           ref="NC:BookmarksRoot" flags="dont-test-empty" template="bookmarksMenuTemplate"
+          tooltip="btTooltip"
           oncommand="BookmarksMenu.loadBookmark(event, this.database)"
           onclick="BookmarksMenu.loadBookmarkMiddleClick(event, this.database)"
           ondraggesture="nsDragAndDrop.startDrag(event, BookmarksMenuDNDObserver)"
-          ondragdrop="nsDragAndDrop.drop(event, BookmarksMenuDNDObserver); event.preventBubble()"
-          ondragenter="nsDragAndDrop.dragEnter(event, BookmarksMenuDNDObserver); event.preventBubble()"
-          ondragexit="nsDragAndDrop.dragExit(event, BookmarksMenuDNDObserver); event.preventBubble()"
-          ondragover="nsDragAndDrop.dragOver(event, BookmarksMenuDNDObserver); event.preventBubble()">
+          ondragdrop="nsDragAndDrop.drop(event, BookmarksMenuDNDObserver); event.stopPropagation()"
+          ondragenter="nsDragAndDrop.dragEnter(event, BookmarksMenuDNDObserver); event.stopPropagation()"
+          ondragexit="nsDragAndDrop.dragExit(event, BookmarksMenuDNDObserver); event.stopPropagation()"
+          ondragover="nsDragAndDrop.dragOver(event, BookmarksMenuDNDObserver); event.stopPropagation()">
       <menupopup id="menu_BookmarksPopup"
-                 onpopupshowing="updateGroupmarkMenuitem('bookmarks_groupmark');">
-        <!-- for some reason these don't work as command="" -->
-        <menuitem key="addBookmarkKb"   observes="Browser:AddBookmark"/>
-        <menuitem key="addBookmarkAsKb" observes="Browser:AddBookmarkAs"/>
-        <menuitem id="bookmarks_groupmark" observes="Browser:AddGroupmarkAs"/>
-        <menuitem key="manBookmarkKb"   observes="Browser:ManageBookmark"/>
+                 context="bookmarks-context-menu"
+                 onpopupshowing="updateGroupmarkCommand();">
+        <menuitem key="addBookmarkKb"   command="Browser:AddBookmark"/>
+        <menuitem key="addBookmarkAsKb" command="Browser:AddBookmarkAs"/>
+        <menuitem                       command="Browser:AddGroupmarkAs"/>
+        <menuitem key="manBookmarkKb"   command="Browser:ManageBookmark"/>
         <menuseparator/>
       </menupopup>
     </menu>
@@ -593,7 +597,7 @@
 
   <menu id="qaMenu" accesskey="Q" label="QA">
     <menupopup id="qaMenuPopup">
-      <menuitem label="Getting Involved" oncommand="loadURI('http://www.mozilla.org/start/');"/>
+      <menuitem label="Getting Involved" oncommand="loadURI('http://www.mozilla.org/projects/seamonkey/start/');"/>
       <menuitem label="Mozilla QA Overview" oncommand="loadURI('http://www.mozilla.org/quality/');"/>
 
       <menuseparator />

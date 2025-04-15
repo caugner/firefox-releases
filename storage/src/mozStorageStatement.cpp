@@ -139,7 +139,10 @@ mozStorageStatement::Initialize(mozIStorageConnection *aDBConnection, const nsAC
 
     for (unsigned int i = 0; i < mResultColumnCount; i++) {
         const void *name = sqlite3_column_name16 (mDBStatement, i);
-        mColumnNames.AppendString(nsDependentString(NS_STATIC_CAST(const PRUnichar*, name)));
+        if (name != nsnull)
+            mColumnNames.AppendString(nsDependentString(NS_STATIC_CAST(const PRUnichar*, name)));
+        else
+            mColumnNames.AppendString(EmptyString());
     }
 
     // doing a sqlite3_prepare sets up the execution engine
@@ -270,20 +273,6 @@ mozStorageStatement::Reset()
     return NS_OK;
 }
 
-/* void bindCStringParameter (in unsigned long aParamIndex, in string aValue); */
-NS_IMETHODIMP
-mozStorageStatement::BindCStringParameter(PRUint32 aParamIndex, const char *aValue)
-{
-    NS_ASSERTION (mDBConnection && mDBStatement, "statement not initialized");
-    if (aParamIndex < 0 || aParamIndex >= mParamCount)
-        return NS_ERROR_FAILURE; // XXXerror
-
-    sqlite3_bind_text (mDBStatement, aParamIndex + 1, aValue, -1, SQLITE_TRANSIENT);
-    // XXX check return value for errors?
-
-    return NS_OK;
-}
-
 /* void bindUTF8StringParameter (in unsigned long aParamIndex, in AUTF8String aValue); */
 NS_IMETHODIMP
 mozStorageStatement::BindUTF8StringParameter(PRUint32 aParamIndex, const nsACString & aValue)
@@ -295,20 +284,6 @@ mozStorageStatement::BindUTF8StringParameter(PRUint32 aParamIndex, const nsACStr
     sqlite3_bind_text (mDBStatement, aParamIndex + 1,
                        nsPromiseFlatCString(aValue).get(), aValue.Length(),
                        SQLITE_TRANSIENT);
-    // XXX check return value for errors?
-
-    return NS_OK;
-}
-
-/* void bindWStringParameter (in unsigned long aParamIndex, in wstring aValue); */
-NS_IMETHODIMP
-mozStorageStatement::BindWStringParameter(PRUint32 aParamIndex, const PRUnichar *aValue)
-{
-    NS_ASSERTION (mDBConnection && mDBStatement, "statement not initialized");
-    if (aParamIndex < 0 || aParamIndex >= mParamCount)
-        return NS_ERROR_FAILURE; // XXXerror
-
-    sqlite3_bind_text16 (mDBStatement, aParamIndex + 1, aValue, -1, SQLITE_TRANSIENT);
     // XXX check return value for errors?
 
     return NS_OK;
@@ -386,9 +361,9 @@ mozStorageStatement::BindNullParameter(PRUint32 aParamIndex)
     return NS_OK;
 }
 
-/* void bindDataParameter (in unsigned long aParamIndex, [array, const, size_is (aValueSize)] in octet aValue, in unsigned long aValueSize); */
+/* void bindBlobParameter (in unsigned long aParamIndex, [array, const, size_is (aValueSize)] in octet aValue, in unsigned long aValueSize); */
 NS_IMETHODIMP
-mozStorageStatement::BindDataParameter(PRUint32 aParamIndex, const PRUint8 *aValue, PRUint32 aValueSize)
+mozStorageStatement::BindBlobParameter(PRUint32 aParamIndex, const PRUint8 *aValue, PRUint32 aValueSize)
 {
     NS_ASSERTION (mDBConnection && mDBStatement, "statement not initialized");
     if (aParamIndex < 0 || aParamIndex >= mParamCount)
@@ -411,15 +386,6 @@ mozStorageStatement::Execute()
     if (NS_FAILED(rv))
         return rv;
     return Reset();
-}
-
-/* mozIStorageDataSet executeDataSet (); */
-NS_IMETHODIMP
-mozStorageStatement::ExecuteDataSet(mozIStorageDataSet **_retval)
-{
-    NS_ASSERTION (mDBConnection && mDBStatement, "statement not initialized");
-
-    return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 /* boolean executeStep (); */
@@ -553,9 +519,9 @@ mozStorageStatement::Recreate()
  *** mozIStorageValueArray
  ***/
 
-/* readonly attribute unsigned long length; */
+/* readonly attribute unsigned long numEntries; */
 NS_IMETHODIMP
-mozStorageStatement::GetNumColumns(PRUint32 *aLength)
+mozStorageStatement::GetNumEntries(PRUint32 *aLength)
 {
     *aLength = mResultColumnCount;
     return NS_OK;
@@ -592,9 +558,9 @@ mozStorageStatement::GetTypeOfIndex(PRUint32 aIndex, PRInt32 *_retval)
     return NS_OK;
 }
 
-/* long getAsInt32 (in unsigned long aIndex); */
+/* long getInt32 (in unsigned long aIndex); */
 NS_IMETHODIMP
-mozStorageStatement::GetAsInt32(PRUint32 aIndex, PRInt32 *_retval)
+mozStorageStatement::GetInt32(PRUint32 aIndex, PRInt32 *_retval)
 {
     NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
     if (!mExecuting)
@@ -605,9 +571,9 @@ mozStorageStatement::GetAsInt32(PRUint32 aIndex, PRInt32 *_retval)
     return NS_OK;
 }
 
-/* long long getAsInt64 (in unsigned long aIndex); */
+/* long long getInt64 (in unsigned long aIndex); */
 NS_IMETHODIMP
-mozStorageStatement::GetAsInt64(PRUint32 aIndex, PRInt64 *_retval)
+mozStorageStatement::GetInt64(PRUint32 aIndex, PRInt64 *_retval)
 {
     NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
     if (!mExecuting)
@@ -618,9 +584,9 @@ mozStorageStatement::GetAsInt64(PRUint32 aIndex, PRInt64 *_retval)
     return NS_OK;
 }
 
-/* double getAsDouble (in unsigned long aIndex); */
+/* double getDouble (in unsigned long aIndex); */
 NS_IMETHODIMP
-mozStorageStatement::GetAsDouble(PRUint32 aIndex, double *_retval)
+mozStorageStatement::GetDouble(PRUint32 aIndex, double *_retval)
 {
     NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
     if (!mExecuting)
@@ -631,64 +597,68 @@ mozStorageStatement::GetAsDouble(PRUint32 aIndex, double *_retval)
     return NS_OK;
 }
 
-/* string getAsCString (in unsigned long aIndex); */
+/* AUTF8String getUTF8String (in unsigned long aIndex); */
 NS_IMETHODIMP
-mozStorageStatement::GetAsCString(PRUint32 aIndex, char **_retval)
+mozStorageStatement::GetUTF8String(PRUint32 aIndex, nsACString & _retval)
 {
     NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
     if (!mExecuting)
         return NS_ERROR_FAILURE;
 
-    int slen = sqlite3_column_bytes (mDBStatement, aIndex);
-    const unsigned char *cstr = sqlite3_column_text (mDBStatement, aIndex);
-    char *str = (char *) nsMemory::Clone (cstr, slen);
-    if (str == NULL)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    *_retval = str;
+    PRInt32 t;
+    nsresult rv = GetTypeOfIndex (aIndex, &t);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (t == VALUE_TYPE_NULL) {
+        // null columns get IsVoid set to distinguish them from empty strings
+        _retval.Truncate(0);
+        _retval.SetIsVoid(PR_TRUE);
+    } else {
+        int slen = sqlite3_column_bytes (mDBStatement, aIndex);
+        const unsigned char *cstr = sqlite3_column_text (mDBStatement, aIndex);
+        _retval.Assign ((char *) cstr, slen);
+    }
     return NS_OK;
 }
 
-/* AUTF8String getAsUTF8String (in unsigned long aIndex); */
+/* AString getString (in unsigned long aIndex); */
 NS_IMETHODIMP
-mozStorageStatement::GetAsUTF8String(PRUint32 aIndex, nsACString & _retval)
+mozStorageStatement::GetString(PRUint32 aIndex, nsAString & _retval)
 {
     NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
     if (!mExecuting)
         return NS_ERROR_FAILURE;
 
-    int slen = sqlite3_column_bytes (mDBStatement, aIndex);
-    const unsigned char *cstr = sqlite3_column_text (mDBStatement, aIndex);
-    _retval.Assign ((char *) cstr, slen);
-
+    PRInt32 t;
+    nsresult rv = GetTypeOfIndex (aIndex, &t);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (t == VALUE_TYPE_NULL) {
+        // null columns get IsVoid set to distinguish them from empty strings
+        _retval.Truncate(0);
+        _retval.SetIsVoid(PR_TRUE);
+    } else {
+        int slen = sqlite3_column_bytes16 (mDBStatement, aIndex);
+        const void *text = sqlite3_column_text16 (mDBStatement, aIndex);
+        const PRUnichar *wstr = NS_STATIC_CAST(const PRUnichar *, text);
+        _retval.Assign (wstr, slen/2);
+    }
     return NS_OK;
 }
 
-/* AString getAsString (in unsigned long aIndex); */
+/* void getBlob (in unsigned long aIndex, out unsigned long aDataSize, [array, size_is (aDataSize)] out octet aData); */
 NS_IMETHODIMP
-mozStorageStatement::GetAsString(PRUint32 aIndex, nsAString & _retval)
-{
-    NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
-    if (!mExecuting)
-        return NS_ERROR_FAILURE;
-
-    int slen = sqlite3_column_bytes16 (mDBStatement, aIndex);
-    const void *text = sqlite3_column_text16 (mDBStatement, aIndex);
-    const PRUnichar *wstr = NS_STATIC_CAST(const PRUnichar *, text);
-    _retval.Assign (wstr, slen/2);
-
-    return NS_OK;
-}
-
-/* void getAsBlob (in unsigned long aIndex, [array, size_is (aDataSize)] out octet aData, out unsigned long aDataSize); */
-NS_IMETHODIMP
-mozStorageStatement::GetAsBlob(PRUint32 aIndex, PRUint8 **aData, PRUint32 *aDataSize)
+mozStorageStatement::GetBlob(PRUint32 aIndex, PRUint32 *aDataSize, PRUint8 **aData)
 {
     NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
     if (!mExecuting)
         return NS_ERROR_FAILURE;
 
     int blobsize = sqlite3_column_bytes (mDBStatement, aIndex);
+    if (blobsize == 0) {
+      // empty column
+      *aData = nsnull;
+      *aDataSize = 0;
+      return NS_OK;
+    }
     const void *blob = sqlite3_column_blob (mDBStatement, aIndex);
 
     void *blobcopy = nsMemory::Clone(blob, blobsize);
@@ -701,64 +671,38 @@ mozStorageStatement::GetAsBlob(PRUint32 aIndex, PRUint8 **aData, PRUint32 *aData
     return NS_OK;
 }
 
-/* [notxpcom] long asInt32 (in unsigned long aIndex); */
-NS_IMETHODIMP_(PRInt32)
-mozStorageStatement::AsInt32(PRUint32 aIndex)
-{
-    NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
-
-    return sqlite3_column_int (mDBStatement, aIndex);
-}
-
-/* [notxpcom] long long asInt64 (in unsigned long aIndex); */
-NS_IMETHODIMP_(PRInt64)
-mozStorageStatement::AsInt64(PRUint32 aIndex)
-{
-    NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
-
-    return sqlite3_column_int64 (mDBStatement, aIndex);
-}
-
-/* [notxpcom] double asDouble (in unsigned long aIndex); */
-NS_IMETHODIMP_(double)
-mozStorageStatement::AsDouble(PRUint32 aIndex)
-{
-    NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
-
-    return sqlite3_column_double (mDBStatement, aIndex);
-}
-
-/* [notxpcom] string asSharedCString (in unsigned long aIndex, out unsigned long aLength); */
-NS_IMETHODIMP_(char *)
-mozStorageStatement::AsSharedCString(PRUint32 aIndex, PRUint32 *aLength)
+/* [noscript] void getSharedUTF8String(in unsigned long aIndex, out unsigned long aLength, [shared,retval] out string aResult); */
+NS_IMETHODIMP
+mozStorageStatement::GetSharedUTF8String(PRUint32 aIndex, PRUint32 *aLength, const char **_retval)
 {
     if (aLength) {
         int slen = sqlite3_column_bytes (mDBStatement, aIndex);
         *aLength = slen;
     }
 
-    return (char *) sqlite3_column_text (mDBStatement, aIndex);
+    *_retval = (const char *) sqlite3_column_text (mDBStatement, aIndex);
+    return NS_OK;
 }
 
-/* [notxpcom] wstring asSharedWString (in unsigned long aIndex, out unsigned long aLength); */
-NS_IMETHODIMP_(PRUnichar *)
-mozStorageStatement::AsSharedWString(PRUint32 aIndex, PRUint32 *aLength)
+/* [noscript] void getSharedString(in unsigned long aIndex, out unsigned long aLength, [shared,retval] out wstring aResult); */
+NS_IMETHODIMP
+mozStorageStatement::GetSharedString(PRUint32 aIndex, PRUint32 *aLength, const PRUnichar **_retval)
 {
     if (aLength) {
         int slen = sqlite3_column_bytes16 (mDBStatement, aIndex);
         *aLength = slen;
     }
 
-    const void *text = sqlite3_column_text16 (mDBStatement, aIndex);
-    return NS_STATIC_CAST(PRUnichar *, NS_CONST_CAST(void *, text));
+    *_retval = (const PRUnichar *) sqlite3_column_text16 (mDBStatement, aIndex);
+    return NS_OK;
 }
 
-/* [noscript] void asSharedBlob (in unsigned long aIndex, [shared] out voidPtr aData, out unsigned long aDataSize); */
+/* [noscript] void getSharedBlob(in unsigned long aIndex, out unsigned long aLength, [shared,retval] out octetPtr aResult); */
 NS_IMETHODIMP
-mozStorageStatement::AsSharedBlob(PRUint32 aIndex, const void * *aData, PRUint32 *aDataSize)
+mozStorageStatement::GetSharedBlob(PRUint32 aIndex, PRUint32 *aDataSize, const PRUint8 **aData)
 {
     *aDataSize = sqlite3_column_bytes (mDBStatement, aIndex);
-    *aData = sqlite3_column_blob (mDBStatement, aIndex);
+    *aData = (const PRUint8*) sqlite3_column_blob (mDBStatement, aIndex);
 
     return NS_OK;
 }
@@ -777,14 +721,4 @@ mozStorageStatement::GetIsNull(PRUint32 aIndex, PRBool *_retval)
         *_retval = PR_FALSE;
 
     return NS_OK;
-}
-
-
-/* [notxpcom] boolean isNull (in unsigned long aIndex); */
-PRBool
-mozStorageStatement::IsNull(PRUint32 aIndex)
-{
-    NS_ASSERTION (aIndex < mResultColumnCount, "aIndex out of range");
-
-    return (sqlite3_column_type (mDBStatement, aIndex) == SQLITE_NULL);
 }

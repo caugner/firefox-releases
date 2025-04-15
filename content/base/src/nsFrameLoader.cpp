@@ -121,28 +121,24 @@ nsFrameLoader::LoadFrame()
   mDocShell->CreateLoadInfo(getter_AddRefs(loadInfo));
   NS_ENSURE_TRUE(loadInfo, NS_ERROR_FAILURE);
 
-  // Check for security
+  // Check for security.  The fun part is trying to figure out what principals
+  // to use.  The way I figure it, if we're doing a LoadFrame() accidentally
+  // (eg someone created a frame/iframe node, we're being parsed, XUL iframes
+  // are being reframed, etc.) then we definitely want to use the node
+  // principal of mOwnerContent for security checks.  If, on the other hand,
+  // someone's setting the src on our owner content, or created it via script,
+  // or whatever, then they can clearly access it... and we should still use
+  // the principal of mOwnerContent.  I don't think that leads to privilege
+  // escalation, and it's reasonably guaranteed to not lead to XSS issues
+  // (since caller can already access mOwnerContent in this case.  So just use
+  // the principal of mOwnerContent no matter what.  If script wants to run
+  // things with its own permissions, which differ from those of mOwnerContent
+  // (which means the script is privileged in some way) it should set
+  // window.location instead.
   nsIScriptSecurityManager *secMan = nsContentUtils::GetSecurityManager();
 
-  // Get referring URL
-  nsCOMPtr<nsIURI> referrer;
-  nsCOMPtr<nsIPrincipal> principal;
-  rv = secMan->GetSubjectPrincipal(getter_AddRefs(principal));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // If we were called from script, get the referring URL from the script
-
-  if (principal) {
-    // Pass the script principal to the docshell
-
-    loadInfo->SetOwner(principal);
-  } else {
-    // We're not being called form script, tell the docshell
-    // to inherit an owner from the current document.
-
-    loadInfo->SetInheritOwner(PR_TRUE);
-    principal = doc->GetPrincipal();
-  }
+  // Get our principal
+  nsIPrincipal* principal = doc->GetPrincipal();
 
   if (!principal) {
     return NS_ERROR_FAILURE;
@@ -155,15 +151,36 @@ nsFrameLoader::LoadFrame()
     return rv; // We're not
   }
 
-  rv = principal->GetURI(getter_AddRefs(referrer));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  loadInfo->SetReferrer(referrer);
-
   // Bail out if this is an infinite recursion scenario
   rv = CheckForRecursiveLoad(uri);
   NS_ENSURE_SUCCESS(rv, rv);
   
+  // Is our principal the system principal?
+  nsCOMPtr<nsIPrincipal> sysPrin;
+  rv = secMan->GetSystemPrincipal(getter_AddRefs(sysPrin));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (principal == sysPrin) {
+    // We're a chrome node.  Belt and braces -- inherit the principal for this
+    // load instead of just forcing the system principal.  That way if we have
+    // something loaded already the principal used will be that of what we
+    // already have loaded.
+    loadInfo->SetInheritOwner(PR_TRUE);
+
+    // Also, in this case we don't set a referrer, just in case.
+  } else {
+    // We'll use our principal, not that of the document loaded inside us.
+    // This is very important; needed to prevent XSS attacks on documents
+    // loaded in subframes!
+    loadInfo->SetOwner(principal);
+
+    nsCOMPtr<nsIURI> referrer;  
+    rv = principal->GetURI(getter_AddRefs(referrer));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    loadInfo->SetReferrer(referrer);
+  }
+
   // Kick off the load...
   rv = mDocShell->LoadURI(uri, loadInfo, nsIWebNavigation::LOAD_FLAGS_NONE,
                           PR_FALSE);
@@ -204,6 +221,21 @@ nsFrameLoader::Destroy()
     mOwnerContent = nsnull;
   }
 
+  // Let the tree owner know we're gone.
+  if (mIsTopLevelContent) {
+    nsCOMPtr<nsIDocShellTreeItem> ourItem = do_QueryInterface(mDocShell);
+    if (ourItem) {
+      nsCOMPtr<nsIDocShellTreeItem> parentItem;
+      ourItem->GetParent(getter_AddRefs(parentItem));
+      nsCOMPtr<nsIDocShellTreeOwner> owner = do_GetInterface(parentItem);
+      nsCOMPtr<nsIDocShellTreeOwner_MOZILLA_1_8_BRANCH> owner2 =
+        do_QueryInterface(owner);
+      if (owner2) {
+        owner2->ContentShellRemoved(ourItem);
+      }
+    }
+  }
+  
   // Let our window know that we are gone
   nsCOMPtr<nsPIDOMWindow> win_private(do_GetInterface(mDocShell));
   if (win_private) {
@@ -278,6 +310,9 @@ nsFrameLoader::EnsureDocShell()
 
   nsCOMPtr<nsIDocShellTreeNode> parentAsNode(do_QueryInterface(parentAsWebNav));
   if (parentAsNode) {
+    // Note: This logic duplicates a lot of logic in
+    // nsSubDocumentFrame::AttributeChanged.  We should fix that.
+
     nsCOMPtr<nsIDocShellTreeItem> parentAsItem =
       do_QueryInterface(parentAsNode);
 
@@ -292,23 +327,12 @@ nsFrameLoader::EnsureDocShell()
     }
 
     // we accept "content" and "content-xxx" values.
-    // at time of writing, we expect "xxx" to be "primary", but
-    // someday it might be an integer expressing priority
+    // at time of writing, we expect "xxx" to be "primary" or "targetable", but
+    // someday it might be an integer expressing priority or something else.
 
-    if (value.Length() >= 7) {
-      // Lowercase the value, ContentShellAdded() further down relies
-      // on it being lowercased.
-      ToLowerCase(value);
-
-      nsAutoString::const_char_iterator start, end;
-      value.BeginReading(start);
-      value.EndReading(end);
-
-      nsAutoString::const_char_iterator iter(start + 7);
-
-      isContent = Substring(start, iter).EqualsLiteral("content") &&
-                  (iter == end || *iter == '-');
-    }
+    isContent = value.LowerCaseEqualsLiteral("content") ||
+      StringBeginsWith(value, NS_LITERAL_STRING("content-"),
+                       nsCaseInsensitiveStringComparator());
 
     if (isContent) {
       // The web shell's type is content.
@@ -324,16 +348,24 @@ nsFrameLoader::EnsureDocShell()
 
     parentAsNode->AddChild(docShellAsItem);
 
-    if (isContent) {
+    if (parentType == nsIDocShellTreeItem::typeChrome && isContent) {
+      mIsTopLevelContent = PR_TRUE;
+      
       // XXXbz why is this in content code, exactly?  We should handle
-      // this some other way.....
+      // this some other way.....  Not sure how yet.
       nsCOMPtr<nsIDocShellTreeOwner> parentTreeOwner;
       parentAsItem->GetTreeOwner(getter_AddRefs(parentTreeOwner));
+      nsCOMPtr<nsIDocShellTreeOwner_MOZILLA_1_8_BRANCH> owner2 =
+        do_QueryInterface(parentTreeOwner);
 
-      if (parentTreeOwner) {
-        PRBool is_primary = parentType == nsIDocShellTreeItem::typeChrome &&
-                            value.EqualsLiteral("content-primary");
+      PRBool is_primary = value.LowerCaseEqualsLiteral("content-primary");
 
+      if (owner2) {
+        PRBool is_targetable = is_primary ||
+          value.LowerCaseEqualsLiteral("content-targetable");
+        owner2->ContentShellAdded2(docShellAsItem, is_primary, is_targetable,
+                                   value);
+      } else if (parentTreeOwner) {
         parentTreeOwner->ContentShellAdded(docShellAsItem, is_primary,
                                            value.get());
       }

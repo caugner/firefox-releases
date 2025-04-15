@@ -132,7 +132,58 @@ JS_BEGIN_EXTERN_C
 #define JSFUN_SETTER            JSPROP_SETTER
 #define JSFUN_BOUND_METHOD      0x40    /* bind this to fun->object's parent */
 #define JSFUN_HEAVYWEIGHT       0x80    /* activation requires a Call object */
+
+#define JSFUN_DISJOINT_FLAGS(f) ((f) & 0x0f)
+#define JSFUN_GSFLAGS(f)        ((f) & (JSFUN_GETTER | JSFUN_SETTER))
+
+#ifdef MOZILLA_1_8_BRANCH
+
+/*
+ * Squeeze three more bits into existing 8-bit flags by taking advantage of
+ * the invalid combination (JSFUN_GETTER | JSFUN_SETTER).
+ */
+#define JSFUN_GETTER_TEST(f)       (JSFUN_GSFLAGS(f) == JSFUN_GETTER)
+#define JSFUN_SETTER_TEST(f)       (JSFUN_GSFLAGS(f) == JSFUN_SETTER)
+#define JSFUN_FLAGS_TEST(f,t)      (JSFUN_GSFLAGS(~(f)) ? (f) & (t) : 0)
+#define JSFUN_BOUND_METHOD_TEST(f) JSFUN_FLAGS_TEST(f, JSFUN_BOUND_METHOD)
+#define JSFUN_HEAVYWEIGHT_TEST(f)  JSFUN_FLAGS_TEST(f, JSFUN_HEAVYWEIGHT)
+
+#define JSFUN_GSFLAG2ATTR(f)       (JSFUN_GETTER_TEST(f) ? JSPROP_GETTER :    \
+                                    JSFUN_SETTER_TEST(f) ? JSPROP_SETTER : 0)
+
+#define JSFUN_THISP_FLAGS(f)    (JSFUN_GSFLAGS(~(f)) ? 0 :                    \
+                                 (f) & JSFUN_THISP_PRIMITIVE)
+#define JSFUN_THISP_TEST(f,t)   ((f) == (t) || (f) == JSFUN_THISP_PRIMITIVE)
+
+#define JSFUN_THISP_STRING      0x30    /* |this| may be a primitive string */
+#define JSFUN_THISP_NUMBER      0x70    /* |this| may be a primitive number */
+#define JSFUN_THISP_BOOLEAN     0xb0    /* |this| may be a primitive boolean */
+#define JSFUN_THISP_PRIMITIVE   0xf0    /* |this| may be any primitive value */
+
 #define JSFUN_FLAGS_MASK        0xf8    /* overlay JSFUN_* attributes */
+
+#else
+
+#define JSFUN_GETTER_TEST(f)       ((f) & JSFUN_GETTER)
+#define JSFUN_SETTER_TEST(f)       ((f) & JSFUN_SETTER)
+#define JSFUN_BOUND_METHOD_TEST(f) ((f) & JSFUN_BOUND_METHOD)
+#define JSFUN_HEAVYWEIGHT_TEST(f)  ((f) & JSFUN_HEAVYWEIGHT)
+
+#define JSFUN_GSFLAG2ATTR(f)       JSFUN_GSFLAGS(f)
+
+#define JSFUN_THISP_FLAGS(f)  (f)
+#define JSFUN_THISP_TEST(f,t) ((f) & t)
+
+#define JSFUN_THISP_STRING    0x0100    /* |this| may be a primitive string */
+#define JSFUN_THISP_NUMBER    0x0200    /* |this| may be a primitive number */
+#define JSFUN_THISP_BOOLEAN   0x0400    /* |this| may be a primitive boolean */
+#define JSFUN_THISP_PRIMITIVE 0x0700    /* |this| may be any primitive value */
+
+#define JSFUN_FLAGS_MASK      0x07f8    /* overlay JSFUN_* attributes --
+                                           note that bit #15 is used internally
+                                           to flag interpreted functions */
+
+#endif
 
 /*
  * Re-use JSFUN_LAMBDA, which applies only to scripted functions, for use in
@@ -390,6 +441,39 @@ JS_SuspendRequest(JSContext *cx);
 extern JS_PUBLIC_API(void)
 JS_ResumeRequest(JSContext *cx, jsrefcount saveDepth);
 
+#ifdef __cplusplus
+JS_END_EXTERN_C
+
+class JSAutoRequest {
+  public:
+    JSAutoRequest(JSContext *cx) : mContext(cx), mSaveDepth(0) {
+        JS_BeginRequest(mContext);
+    }
+    ~JSAutoRequest() {
+        JS_EndRequest(mContext);
+    }
+
+    void suspend() {
+        mSaveDepth = JS_SuspendRequest(mContext);
+    }
+    void resume() {
+        JS_ResumeRequest(mContext, mSaveDepth);
+    }
+
+  protected:
+    JSContext *mContext;
+    jsrefcount mSaveDepth;
+
+#if 0
+  private:
+    static void *operator new(size_t) CPP_THROW_NEW { return 0; };
+    static void operator delete(void *, size_t) { };
+#endif
+};
+
+JS_BEGIN_EXTERN_C
+#endif
+
 #endif /* JS_THREADSAFE */
 
 extern JS_PUBLIC_API(void)
@@ -397,6 +481,9 @@ JS_Lock(JSRuntime *rt);
 
 extern JS_PUBLIC_API(void)
 JS_Unlock(JSRuntime *rt);
+
+extern JS_PUBLIC_API(JSContextCallback)
+JS_SetContextCallback(JSRuntime *rt, JSContextCallback cxCallback);
 
 extern JS_PUBLIC_API(JSContext *)
 JS_NewContext(JSRuntime *rt, size_t stackChunkSize);
@@ -470,6 +557,12 @@ JS_StringToVersion(const char *string);
                                                    called with a null script
                                                    parameter, by native code
                                                    that loops intensively */
+#define JSOPTION_DONT_REPORT_UNCAUGHT \
+                                JS_BIT(8)       /* When returning from the
+                                                   outermost API call, prevent
+                                                   uncaught exceptions from
+                                                   being converted to error
+                                                   reports */
 
 extern JS_PUBLIC_API(uint32)
 JS_GetOptions(JSContext *cx);
@@ -527,6 +620,10 @@ JS_EnumerateStandardClasses(JSContext *cx, JSObject *obj);
 extern JS_PUBLIC_API(JSIdArray *)
 JS_EnumerateResolvedStandardClasses(JSContext *cx, JSObject *obj,
                                     JSIdArray *ida);
+
+extern JS_PUBLIC_API(JSBool)
+JS_GetClassObject(JSContext *cx, JSObject *obj, JSProtoKey key,
+                  JSObject **objp);
 
 extern JS_PUBLIC_API(JSObject *)
 JS_GetScopeChain(JSContext *cx);
@@ -638,6 +735,10 @@ JS_ClearNewbornRoots(JSContext *cx);
  * call to JS_EnterLocalRootScope.  If JS_EnterLocalRootScope fails, you must
  * not make the matching JS_LeaveLocalRootScope call.
  *
+ * JS_LeaveLocalRootScopeWithResult(cx, rval) is an alternative way to leave
+ * a local root scope that protects a result or return value, by effectively
+ * pushing it in the caller's local root scope.
+ *
  * In case a native hook allocates many objects or other GC-things, but the
  * native protects some of those GC-things by storing them as property values
  * in an object that is itself protected, the hook can call JS_ForgetLocalRoot
@@ -659,7 +760,39 @@ extern JS_PUBLIC_API(void)
 JS_LeaveLocalRootScope(JSContext *cx);
 
 extern JS_PUBLIC_API(void)
+JS_LeaveLocalRootScopeWithResult(JSContext *cx, jsval rval);
+
+extern JS_PUBLIC_API(void)
 JS_ForgetLocalRoot(JSContext *cx, void *thing);
+
+#ifdef __cplusplus
+JS_END_EXTERN_C
+
+class JSAutoLocalRootScope {
+  public:
+    JSAutoLocalRootScope(JSContext *cx) : mContext(cx) {
+        JS_EnterLocalRootScope(mContext);
+    }
+    ~JSAutoLocalRootScope() {
+        JS_LeaveLocalRootScope(mContext);
+    }
+
+    void forget(void *thing) {
+        JS_ForgetLocalRoot(mContext, thing);
+    }
+
+  protected:
+    JSContext *mContext;
+
+#if 0
+  private:
+    static void *operator new(size_t) CPP_THROW_NEW { return 0; };
+    static void operator delete(void *, size_t) { };
+#endif
+};
+
+JS_BEGIN_EXTERN_C
+#endif
 
 #ifdef DEBUG
 extern JS_PUBLIC_API(void)
@@ -738,6 +871,14 @@ JS_SetGCCallbackRT(JSRuntime *rt, JSGCCallback cb);
 
 extern JS_PUBLIC_API(JSBool)
 JS_IsAboutToBeFinalized(JSContext *cx, void *thing);
+
+typedef enum JSGCParamKey {
+    JSGC_MAX_BYTES        = 0,  /* maximum nominal heap before last ditch GC */
+    JSGC_MAX_MALLOC_BYTES = 1   /* # of JS_malloc bytes before last ditch GC */
+} JSGCParamKey;
+
+extern JS_PUBLIC_API(void)
+JS_SetGCParameter(JSRuntime *rt, JSGCParamKey key, uint32 value);
 
 /*
  * Add a finalizer for external strings created by JS_NewExternalString (see
@@ -830,11 +971,11 @@ struct JSExtendedClass {
     JSEqualityOp        equality;
     JSObjectOp          outerObject;
     JSObjectOp          innerObject;
-    jsword              reserved0;
-    jsword              reserved1;
-    jsword              reserved2;
-    jsword              reserved3;
-    jsword              reserved4;
+    void                (*reserved0)();
+    void                (*reserved1)();
+    void                (*reserved2)();
+    void                (*reserved3)();
+    void                (*reserved4)();
 };
 
 #define JSCLASS_HAS_PRIVATE             (1<<0)  /* objects have private slot */
@@ -869,6 +1010,33 @@ struct JSExtendedClass {
 
 /* True if JSClass is really a JSExtendedClass. */
 #define JSCLASS_IS_EXTENDED             (1<<(JSCLASS_HIGH_FLAGS_SHIFT+0))
+#define JSCLASS_IS_ANONYMOUS            (1<<(JSCLASS_HIGH_FLAGS_SHIFT+1))
+#define JSCLASS_IS_GLOBAL               (1<<(JSCLASS_HIGH_FLAGS_SHIFT+2))
+
+/*
+ * ECMA-262 requires that most constructors used internally create objects
+ * with "the original Foo.prototype value" as their [[Prototype]] (__proto__)
+ * member initial value.  The "original ... value" verbiage is there because
+ * in ECMA-262, global properties naming class objects are read/write and
+ * deleteable, for the most part.
+ *
+ * Implementing this efficiently requires that global objects have classes
+ * with the following flags.  Failure to use JSCLASS_GLOBAL_FLAGS won't break
+ * anything except the ECMA-262 "original prototype value" behavior, which was
+ * broken for years in SpiderMonkey.  In other words, without these flags you
+ * get backward compatibility.
+ */
+#define JSCLASS_GLOBAL_FLAGS \
+    (JSCLASS_IS_GLOBAL | JSCLASS_HAS_RESERVED_SLOTS(JSProto_LIMIT))
+
+/* Fast access to the original value of each standard class's prototype. */
+#define JSCLASS_CACHED_PROTO_SHIFT      (JSCLASS_HIGH_FLAGS_SHIFT + 8)
+#define JSCLASS_CACHED_PROTO_WIDTH      8
+#define JSCLASS_CACHED_PROTO_MASK       JS_BITMASK(JSCLASS_CACHED_PROTO_WIDTH)
+#define JSCLASS_HAS_CACHED_PROTO(key)   ((key) << JSCLASS_CACHED_PROTO_SHIFT)
+#define JSCLASS_CACHED_PROTO_KEY(clasp) (((clasp)->flags                      \
+                                          >> JSCLASS_CACHED_PROTO_SHIFT)      \
+                                         & JSCLASS_CACHED_PROTO_MASK)
 
 /* Initializer for unused members of statically initialized JSClass structs. */
 #define JSCLASS_NO_OPTIONAL_MEMBERS     0,0,0,0,0,0,0,0
@@ -996,9 +1164,18 @@ struct JSPropertySpec {
 struct JSFunctionSpec {
     const char      *name;
     JSNative        call;
+#ifdef MOZILLA_1_8_BRANCH
     uint8           nargs;
     uint8           flags;
-    uint16          extra;      /* number of arg slots for local GC roots */
+    uint16          extra;
+#else
+    uint16          nargs;
+    uint16          flags;
+    uint32          extra;      /* extra & 0xFFFF:
+                                   number of arg slots for local GC roots
+                                   extra >> 16:
+                                   reserved, must be zero */
+#endif
 };
 
 extern JS_PUBLIC_API(JSObject *)
@@ -1140,6 +1317,10 @@ JS_LookupPropertyWithFlags(JSContext *cx, JSObject *obj, const char *name,
 
 extern JS_PUBLIC_API(JSBool)
 JS_GetProperty(JSContext *cx, JSObject *obj, const char *name, jsval *vp);
+
+extern JS_PUBLIC_API(JSBool)
+JS_GetMethodById(JSContext *cx, JSObject *obj, jsid id, JSObject **objp,
+                 jsval *vp);
 
 extern JS_PUBLIC_API(JSBool)
 JS_GetMethod(JSContext *cx, JSObject *obj, const char *name, JSObject **objp,
@@ -1383,6 +1564,12 @@ JS_GetFunctionId(JSFunction *fun);
  */
 extern JS_PUBLIC_API(uintN)
 JS_GetFunctionFlags(JSFunction *fun);
+
+/*
+ * Return the arity (length) of fun.
+ */
+extern JS_PUBLIC_API(uint16)
+JS_GetFunctionArity(JSFunction *fun);
 
 /*
  * Infallible predicate to test whether obj is a function object (faster than
@@ -1750,16 +1937,55 @@ JS_UndependString(JSContext *cx, JSString *str);
 extern JS_PUBLIC_API(JSBool)
 JS_MakeStringImmutable(JSContext *cx, JSString *str);
 
+/*
+ * Return JS_TRUE if C (char []) strings passed via the API and internally
+ * are UTF-8. The source must be compiled with JS_C_STRINGS_ARE_UTF8 defined
+ * to get UTF-8 support.
+ */
+JS_PUBLIC_API(JSBool)
+JS_CStringsAreUTF8();
+
+/*
+ * Character encoding support.
+ *
+ * For both JS_EncodeCharacters and JS_DecodeBytes, set *dstlenp to the size
+ * of the destination buffer before the call; on return, *dstlenp contains the
+ * number of bytes (JS_EncodeCharacters) or jschars (JS_DecodeBytes) actually
+ * stored.  To determine the necessary destination buffer size, make a sizing
+ * call that passes NULL for dst.
+ *
+ * On errors, the functions report the error. In that case, *dstlenp contains
+ * the number of characters or bytes transferred so far.  If cx is NULL, no
+ * error is reported on failure, and the functions simply return JS_FALSE.
+ *
+ * NB: Neither function stores an additional zero byte or jschar after the
+ * transcoded string.
+ *
+ * If the source has been compiled with the #define JS_C_STRINGS_ARE_UTF8 to
+ * enable UTF-8 interpretation of C char[] strings, then JS_EncodeCharacters
+ * encodes to UTF-8, and JS_DecodeBytes decodes from UTF-8, which may create
+ * addititional errors if the character sequence is malformed.  If UTF-8
+ * support is disabled, the functions deflate and inflate, respectively.
+ */
+JS_PUBLIC_API(JSBool)
+JS_EncodeCharacters(JSContext *cx, const jschar *src, size_t srclen, char *dst,
+                    size_t *dstlenp);
+
+JS_PUBLIC_API(JSBool)
+JS_DecodeBytes(JSContext *cx, const char *src, size_t srclen, jschar *dst,
+               size_t *dstlenp);
+
 /************************************************************************/
 
 /*
- * Locale specific string conversion callback.
+ * Locale specific string conversion and error message callbacks.
  */
 struct JSLocaleCallbacks {
     JSLocaleToUpperCase     localeToUpperCase;
     JSLocaleToLowerCase     localeToLowerCase;
     JSLocaleCompare         localeCompare;
     JSLocaleToUnicode       localeToUnicode;
+    JSErrorCallback         localeGetErrorMessage;
 };
 
 /*

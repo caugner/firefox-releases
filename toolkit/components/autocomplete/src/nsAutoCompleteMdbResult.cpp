@@ -39,10 +39,20 @@
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
 
+static void SwapBytes(PRUnichar* aDest, const PRUnichar* aSrc, PRUint32 aLen)
+{
+  for(PRUint32 i = 0; i < aLen; i++)
+  {
+    PRUnichar aChar = *aSrc++;
+    *aDest++ = (0xff & (aChar >> 8)) | (aChar << 8);
+  }
+}
+
 NS_INTERFACE_MAP_BEGIN(nsAutoCompleteMdbResult)
   NS_INTERFACE_MAP_ENTRY(nsIAutoCompleteResult)
   NS_INTERFACE_MAP_ENTRY(nsIAutoCompleteBaseResult)
   NS_INTERFACE_MAP_ENTRY(nsIAutoCompleteMdbResult)
+  NS_INTERFACE_MAP_ENTRY(nsIAutoCompleteMdbResult2)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIAutoCompleteResult)
 NS_INTERFACE_MAP_END
 
@@ -51,7 +61,8 @@ NS_IMPL_RELEASE(nsAutoCompleteMdbResult)
 
 nsAutoCompleteMdbResult::nsAutoCompleteMdbResult() :
   mDefaultIndex(-1),
-  mSearchResult(nsIAutoCompleteResult::RESULT_IGNORED)
+  mSearchResult(nsIAutoCompleteResult::RESULT_IGNORED),
+  mReverseByteOrder(PR_FALSE)
 {
 }
 
@@ -141,7 +152,7 @@ nsAutoCompleteMdbResult::GetCommentAt(PRInt32 aIndex, nsAString & _retval)
     _retval = NS_ConvertUTF8toUCS2(value);
   }
 
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -216,8 +227,33 @@ nsAutoCompleteMdbResult::RemoveValueAt(PRInt32 aRowIndex, PRBool aRemoveFromDb)
   NS_ENSURE_TRUE(row, NS_ERROR_INVALID_ARG);
 
   if (aRemoveFromDb && mTable && mEnv) {
+    // TODO: share this code with nsGlobalHistory::RemovePageInternal(),
+    // rather than duplicating it here.
+
+    nsIMdbPort *port = nsnull;
+    mTable->GetPort(mEnv, &port);  // note: doesn't addref
+
+    nsCOMPtr<nsIMdbStore> store = do_QueryInterface(port);
+    NS_ENSURE_TRUE(store, NS_ERROR_FAILURE);
+
     mdb_err err = mTable->CutRow(mEnv, row);
     NS_ENSURE_TRUE(!err, NS_ERROR_FAILURE);
+
+    row->CutAllColumns(mEnv);
+
+    // We must do a CompressCommit on the store now.  If we don't,
+    // mork can leave the file in an inconsistent state, which causes it to
+    // be killed the next time it's opened.
+
+    nsCOMPtr<nsIMdbThumb> thumb;
+    err = store->CompressCommit(mEnv, getter_AddRefs(thumb));
+    if (err == 0) {
+      mdb_count total, current;
+      mdb_bool done, broken;
+      do {
+	err = thumb->DoMore(mEnv, &total, &current, &done, &broken);
+      } while ((err == 0) && !broken && !done);
+    }
   }
 
   mResults.RemoveObjectAt(aRowIndex);
@@ -245,9 +281,21 @@ nsAutoCompleteMdbResult::GetRowValue(nsIMdbRow *aRow, mdb_column aCol, nsAString
     return NS_OK;
   
   switch (yarn.mYarn_Form) {
-    case 0: // unicode
-      aValue.Assign((const PRUnichar *)yarn.mYarn_Buf, yarn.mYarn_Fill/sizeof(PRUnichar));
+    case 0: { // unicode
+      PRUint32 len = yarn.mYarn_Fill / sizeof(PRUnichar);
+      if (mReverseByteOrder) {
+        // The mdb file is other-endian, byte-swap the result
+        PRUnichar *swapval = new PRUnichar[len];
+        if (!swapval)
+          return NS_ERROR_OUT_OF_MEMORY;
+        SwapBytes(swapval, (const PRUnichar *)yarn.mYarn_Buf, len);
+        aValue.Assign(swapval, len);
+        delete swapval;
+      }
+      else
+        aValue.Assign((const PRUnichar *)yarn.mYarn_Buf, len);
       break;
+    }
     case 1: // utf 8
       aValue.Assign(NS_ConvertUTF8toUCS2((const char*)yarn.mYarn_Buf, yarn.mYarn_Fill));
       break;
@@ -293,5 +341,22 @@ nsAutoCompleteMdbResult::GetIntRowValue(nsIMdbRow *aRow, mdb_column aCol,
   else
     *aValue = 0;
   
+  return NS_OK;
+}
+
+////////////////////////////////////////////////////////////////////////
+//// nsIAutoCompleteMdbResult2
+
+NS_IMETHODIMP
+nsAutoCompleteMdbResult::GetReverseByteOrder(PRBool *aReverseByteOrder)
+{
+  *aReverseByteOrder = mReverseByteOrder;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAutoCompleteMdbResult::SetReverseByteOrder(PRBool aReverseByteOrder)
+{
+  mReverseByteOrder = aReverseByteOrder;
   return NS_OK;
 }

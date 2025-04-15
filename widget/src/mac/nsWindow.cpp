@@ -63,6 +63,7 @@
 #include "nsMacResources.h"
 #include "nsIRegion.h"
 #include "nsIRollupListener.h"
+#include "nsPIWidgetMac.h"
 
 #include "nsCarbonHelpers.h"
 #include "nsGfxUtils.h"
@@ -98,11 +99,8 @@ static Boolean	gNotificationInstalled = false;
 static CursorSpinner *gCursorSpinner = nsnull;
 static const int kSpinCursorFirstFrame = 200;
 
-// Routines for iterating over the rects of a region. Carbon and pre-Carbon
-// do this differently so provide a way to do both.
-static RegionToRectsUPP sUpdateRectProc = nsnull;
+// Iterates over the rects of a region.
 static RegionToRectsUPP sAddRectToArrayProc = nsnull;
-static RegionToRectsUPP sCountRectProc = nsnull;
 
 #pragma mark -
 
@@ -224,6 +222,18 @@ static void blinkRgn(RgnHandle rgn, PRBool isPaint)
 
 #endif
 
+struct TRectArray
+{
+  TRectArray(Rect* aRectList, PRUint32 aCapacity)
+  : mRectList(aRectList)
+  , mNumRects(0)
+  , mCapacity(aCapacity) { }
+
+  Rect*    mRectList;
+  PRUint32 mNumRects;
+  PRUint32 mCapacity;
+};
+
 #pragma mark -
 
 //-------------------------------------------------------------------------
@@ -262,12 +272,8 @@ nsWindow::nsWindow() : nsBaseWidget() , nsDeleteObserved(this), nsIKBStateContro
 
   AcceptFocusOnClick(PR_TRUE);
   
-  if ( !sUpdateRectProc ) {
-    sUpdateRectProc = NewRegionToRectsUPP ( PaintUpdateRectProc );
-    sAddRectToArrayProc = NewRegionToRectsUPP ( AddRectToArrayProc );
-    sCountRectProc = NewRegionToRectsUPP ( CountRectProc );
-  }
-
+  if (!sAddRectToArrayProc)
+    sAddRectToArrayProc = ::NewRegionToRectsUPP(AddRectToArrayProc);
 }
 
 
@@ -576,7 +582,20 @@ static Boolean we_are_front_process()
 //-------------------------------------------------------------------------
 NS_IMETHODIMP nsWindow::SetFocus(PRBool aRaise)
 {
-	gEventDispatchHandler.SetFocus(this);
+  nsCOMPtr<nsIWidget> top;
+  nsToolkit::GetTopWidget(mWindowPtr, getter_AddRefs(top));
+
+  if (top) {
+    nsCOMPtr<nsPIWidgetMac_MOZILLA_1_8_BRANCH> topMac = do_QueryInterface(top);
+
+    if (topMac) {
+      nsMacEventDispatchHandler* eventDispatchHandler = nsnull;
+      topMac->GetEventDispatchHandler(&eventDispatchHandler);
+
+      if (eventDispatchHandler)
+        eventDispatchHandler->SetFocus(this);
+    }
+  }
 	
 	// Here's where we see if there's a notification we need to remove
 	if (gNotificationInstalled && we_are_front_process())
@@ -685,13 +704,6 @@ NS_METHOD nsWindow::SetCursor(nsCursor aCursor)
 {
   nsBaseWidget::SetCursor(aCursor);
 	
-  // allow the cursor to be set internally if we're in the bg, but
-  // don't actually set it.
-  if ( !nsToolkit::IsAppInForeground() )
-  {
-    return NS_OK;
-  }
-
   if ( gCursorSpinner == nsnull )
   {
       gCursorSpinner = new CursorSpinner();
@@ -1224,7 +1236,21 @@ NS_IMETHODIMP	nsWindow::Update()
     StRegionFromPool saveUpdateRgn;
     if (!saveUpdateRgn)
       return NS_ERROR_OUT_OF_MEMORY;
-    ::GetWindowUpdateRegion(mWindowPtr, saveUpdateRgn);
+    ::GetWindowRegion(mWindowPtr, kWindowUpdateRgn, saveUpdateRgn);
+
+    // Sometimes, the window update region will be larger than the window
+    // itself.  Because we obviously don't redraw anything outside of the
+    // window, redrawnRegion won't include that larger area, and the
+    // larger area will be re-invalidated.  That triggers an endless
+    // sequence of kEventWindowUpdate events.  Avoid that condition by
+    // restricting the update region to the content region.
+    StRegionFromPool windowContentRgn;
+    if (!windowContentRgn)
+      return NS_ERROR_OUT_OF_MEMORY;
+
+    ::GetWindowRegion(mWindowPtr, kWindowContentRgn, windowContentRgn);
+
+    ::SectRgn(saveUpdateRgn, windowContentRgn, saveUpdateRgn);
 
     // draw the widget
     StPortSetter portSetter(mWindowPtr);
@@ -1254,6 +1280,7 @@ NS_IMETHODIMP	nsWindow::Update()
     // figure out the difference between the old update region
     // and what we redrew
     ::DiffRgn(saveUpdateRgn, redrawnRegion, saveUpdateRgn);
+
     // and invalidate it
     ::InvalWindowRgn(mWindowPtr, saveUpdateRgn);
 
@@ -1270,81 +1297,41 @@ NS_IMETHODIMP	nsWindow::Update()
 
 
 //
-// UpdateRect
-//
-// Called once for every rect in the update region. Send a paint event to Gecko to handle
-// this. |refCon| contains the |nsWindow| being updated. 
-//
-OSStatus
-nsWindow::PaintUpdateRectProc (UInt16 message, RgnHandle rgn, const Rect *inDirtyRect, void *refCon)
-{
-  if (message == kQDRegionToRectsMsgParse) {
-    nsWindow* self = NS_REINTERPRET_CAST(nsWindow*, refCon);
-    Rect dirtyRect = *inDirtyRect;
-  
-  	nsCOMPtr<nsIRenderingContext> renderingContext ( dont_AddRef(self->GetRenderingContext()) );
-  	if (renderingContext)
-  	{
-    	nsRect bounds = self->mBounds;
-    	self->LocalToWindowCoordinate(bounds);
-    	
-  		// determine the rect to draw
-  		::OffsetRect(&dirtyRect, -bounds.x, -bounds.y);
-  		nsRect rect ( dirtyRect.left, dirtyRect.top, dirtyRect.right - dirtyRect.left,
-  		                dirtyRect.bottom - dirtyRect.top );
-
-  		// update the widget
-  		self->UpdateWidget(rect, renderingContext);
-    }
-  }
-  
-  return noErr;
-  
-} // PaintUpdateRectProc
-
-
-//
 // AddRectToArrayProc
 //
 // Add each rect to an array so we can post-process them. |inArray| is a
 // pointer to the TRectArray we're adding to.
 //
 OSStatus
-nsWindow::AddRectToArrayProc (UInt16 message, RgnHandle rgn, const Rect *inDirtyRect, void *inArray)
+nsWindow::AddRectToArrayProc(UInt16 message, RgnHandle rgn,
+                             const Rect* inDirtyRect, void* inArray)
 {
   if (message == kQDRegionToRectsMsgParse) {
-    NS_ASSERTION ( inArray, "You better pass an array!" );
+    NS_ASSERTION(inArray, "You better pass an array!");
     TRectArray* rectArray = NS_REINTERPRET_CAST(TRectArray*, inArray);
-  
-    rectArray->mRectList[rectArray->Count()] = *inDirtyRect;
-    ++rectArray->mNumRects;
+
+    if (rectArray->mNumRects == rectArray->mCapacity) {
+      // This should not happen - returning memFullErr below should have
+      // prevented it.
+      return memFullErr;
+    }
+
+    rectArray->mRectList[rectArray->mNumRects++] = *inDirtyRect;
+
+    if (rectArray->mNumRects == rectArray->mCapacity) {
+      // Signal that the array is full and QDRegionToRects should stop.
+      // After returning memFullErr, this proc should not be called with
+      // the same |message| again.
+      return memFullErr;
+    }
   }
-  
+
   return noErr;
 }
 
 
 //
-// CountUpdateRectProc
-// 
-// Used to count the number of rects in a region. |refCon| is a pointer to a
-// counter. We just increment it every time we're called and by the end we'll have
-// the number of rects.
-//
-OSStatus
-nsWindow::CountRectProc (UInt16 message, RgnHandle rgn, const Rect *inDirtyRect, void *refCon)
-{
-  if (message == kQDRegionToRectsMsgParse) {
-    NS_ASSERTION ( refCon, "You better pass a counter!" );
-    (*NS_REINTERPRET_CAST(long*, refCon))++;                  // increment
-  }
-  return noErr;
-}
-
-
-
-//
-// UpdateRect
+// PaintUpdateRect
 //
 // Called once for every rect in the update region. Send a paint event to Gecko to handle
 // this. |inData| contains the |nsWindow| being updated. 
@@ -1371,39 +1358,6 @@ nsWindow::PaintUpdateRect(Rect *inDirtyRect, void* inData)
   }
 
 } // PaintUpdateRect
-
-
-//
-// CountRect
-//
-// Used to count the number of rects in a region. |refCon| is a pointer to a
-// counter. We just increment it every time we're called and by the end we'll have
-// the number of rects.
-//
-void
-nsWindow::CountRect ( Rect *inDirtyRect, void *refCon )
-{
-  NS_ASSERTION ( refCon, "You better pass a counter!" );
-  (*NS_REINTERPRET_CAST(long*, refCon))++;                  // increment
-}
-
-
-//
-// AddRectToArray
-//
-// Add each rect to an array so we can post-process them. |inArray| is a
-// pointer to the TRectArray we're adding to.
-//
-void
-nsWindow::AddRectToArray ( Rect* inDirtyRect, void* inArray )
-{
-  NS_ASSERTION ( inArray, "You better pass an array!" );
-  TRectArray* rectArray = NS_REINTERPRET_CAST(TRectArray*, inArray);
-  
-  rectArray->mRectList[rectArray->Count()] = *inDirtyRect;
-  ++rectArray->mNumRects;
-  
-} // AddRectToArray
 
 
 //-------------------------------------------------------------------------
@@ -1455,61 +1409,60 @@ nsresult nsWindow::HandleUpdateEvent(RgnHandle regionToValidate)
     blinkRgn(updateRgn, PR_TRUE);
 #endif
 
-  if (!::EmptyRgn(updateRgn))
-  {
-    // Ref: http://developer.apple.com/technotes/tn/tn2051.html
-    //      short-circuit QD's implicit LockPortBits()
-    //      Note: MUST unlock before exiting this scope (see below)
-    ::LockPortBits(::GetWindowPort(mWindowPtr));
+  if (!::EmptyRgn(updateRgn)) {
+    // Iterate over each rect in the region, sending a paint event for each.
+    // If the region is very complicated (more than 15 pieces), just use a
+    // bounding box.
 
-    // Iterate over each rect in the region, sending a paint event for each. Carbon
-    // has a routine for this, pre-carbon doesn't so we roll our own. If the region
-    // is very complicated (more than 15 pieces), just use a bounding box.
-    const int kMaxUpdateRects = 15;           // the most rects we'll try to deal with
-    const int kRectsBeforeBoundingBox = 10;   // if we have more than this, just do bounding box
-
-    int numRects = 0;
-
-    QDRegionToRects ( updateRgn, kQDParseRegionFromTopLeft, sCountRectProc, &numRects );
-    if ( numRects <= kMaxUpdateRects ) {
-      Rect rectList[kMaxUpdateRects];
-      TRectArray rectWrapper ( rectList );
-       
-      // compile a list of rectangles 
-      QDRegionToRects ( updateRgn, kQDParseRegionFromTopLeft, sAddRectToArrayProc, &rectWrapper );
+    // The most rects we'll try to deal with:
+    const PRUint32 kMaxUpdateRects = 15;
     
-      // amalgamate adjoining rects into a single rect. This 
-      // may over-draw a little, but will prevent us from going down into
-      // the layout engine for lots of little 1-pixel wide rects.
-      if ( numRects > 1 )
-        CombineRects ( rectWrapper );
-    
-      // now paint 'em! (|numRects| may be invalid now, so check count again). If
-      // we're above a certain threshold, just bail and do bounding box
-      if ( rectWrapper.Count() < kRectsBeforeBoundingBox ) {
-        for ( int i = 0; i < rectWrapper.Count(); ++i )
-          PaintUpdateRectProc (kQDRegionToRectsMsgParse, updateRgn, &rectList[i], this );
+    // If, after combining rects, there are still more than this, just do
+    // a bounding box:
+    const PRUint32 kRectsBeforeBoundingBox = 10;
+
+    // Leave one extra slot in rectList to give AddRectToArrayProc a way to
+    // signal that kMaxUpdateRects has been exceeded.
+    const PRUint32 kRectCapacity = kMaxUpdateRects + 1;
+
+    Rect rectList[kRectCapacity];
+    TRectArray rectWrapper(rectList, kRectCapacity);
+    ::QDRegionToRects(updateRgn, kQDParseRegionFromTopLeft,
+                      sAddRectToArrayProc, &rectWrapper);
+    PRUint32 numRects = rectWrapper.mNumRects;
+
+    PRBool painted = PR_FALSE;
+
+    if (numRects <= kMaxUpdateRects) {
+      if (numRects > 1) {
+        // amalgamate adjoining rects into a single rect. This 
+        // may over-draw a little, but will prevent us from going down into
+        // the layout engine for lots of little 1-pixel wide rects.
+        CombineRects(rectWrapper);
+
+        // |numRects| may be invalid now, so check count again.
+        numRects = rectWrapper.mNumRects;
       }
-      else {
-        Rect boundingBox;
-        ::GetRegionBounds(updateRgn, &boundingBox);
-        PaintUpdateRectProc ( kQDRegionToRectsMsgParse, updateRgn, &boundingBox, this );
+
+      // Now paint 'em!
+      // If we're above a certain threshold, just bail and do bounding box.
+      if (numRects < kRectsBeforeBoundingBox) {
+        painted = PR_TRUE;
+        for (PRUint32 i = 0 ; i < numRects ; i++)
+          PaintUpdateRect(&rectList[i], this);
       }
     }
-    else {
+
+    if (!painted) {
+      // There were too many rects.  Do a bounding box.
       Rect boundingBox;
       ::GetRegionBounds(updateRgn, &boundingBox);
-      PaintUpdateRect ( &boundingBox, this );
+      PaintUpdateRect(&boundingBox, this);
     }
 
     // Copy updateRgn to regionToValidate
     if (regionToValidate)
       ::CopyRgn(updateRgn, regionToValidate);
-
-    // Ref: http://developer.apple.com/technotes/tn/tn2051.html
-    //      short-circuit QD's implicit LockPortBits()
-    //      Note: unlock before exiting (locked above)
-    ::UnlockPortBits(::GetWindowPort(mWindowPtr));
   }
 
   NS_ASSERTION(ValidateDrawingState(), "Bad drawing state");
@@ -1530,7 +1483,7 @@ nsresult nsWindow::HandleUpdateEvent(RgnHandle regionToValidate)
 void
 nsWindow::SortRectsLeftToRight ( TRectArray & inRectArray )
 {
-  PRInt32 numRects = inRectArray.Count();
+  PRInt32 numRects = inRectArray.mNumRects;
   
   for ( int i = 0; i < numRects - 1; ++i ) {
     for ( int j = i+1; j < numRects; ++j ) {
@@ -1573,8 +1526,8 @@ nsWindow::CombineRects ( TRectArray & rectArray )
   //   delete X+1 from array and don't advance X, 
   //    otherwise move along to X+1
   
-  int i = 0;
-  while ( i < rectArray.Count()-1) {
+  PRUint32 i = 0;
+  while (i < rectArray.mNumRects - 1) {
     Rect* curr = &rectArray.mRectList[i];
     Rect* next = &rectArray.mRectList[i+1];
   
@@ -1597,7 +1550,7 @@ nsWindow::CombineRects ( TRectArray & rectArray )
       // make the current rectangle the bounding box and shift everything from 
       // i+2 over.
       *curr = boundingBox;
-      for ( int j = i+1; j < rectArray.Count()-1; ++j )
+      for (PRUint32 j = i + 1 ; j < rectArray.mNumRects - 1 ; ++j)
         rectArray.mRectList[j] = rectArray.mRectList[j+1];
       --rectArray.mNumRects;
       
@@ -2314,7 +2267,7 @@ NS_IMETHODIMP nsWindow::GetAttention(PRInt32 aCycleCount)
 	gNMRec.nmSound  = NULL;   // No alert sound, see bug 307323
 	gNMRec.nmStr    = NULL;   // No alert/window so no text
 	gNMRec.nmResp   = NULL;   // No response proc, use the default behavior
-	gNMRec.nmRefCon = NULL;
+	gNMRec.nmRefCon = 0;
 	if (::NMInstall(&gNMRec) == noErr)
 		gNotificationInstalled = true;
 

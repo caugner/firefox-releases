@@ -104,6 +104,8 @@
 #include "nsCidProtocolHandler.h"
 #include "nsRssIncomingServer.h"
 #include "nsRssService.h"
+#include "nsMsgTagService.h"
+
 #ifdef XP_WIN
 #include "nsMessengerWinIntegration.h"
 #endif
@@ -296,6 +298,9 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMessengerMigrator, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgAccount)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgIdentity)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgFolderDataSource, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgUnreadFoldersDataSource, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgFavoriteFoldersDataSource, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgRecentFoldersDataSource, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgAccountManagerDataSource, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgSearchSession)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgSearchTerm)
@@ -327,6 +332,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgGroupView)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgOfflineManager)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgProgress)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSpamSettings)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgTagService)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsCidProtocolHandler)
 #ifdef XP_WIN
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMessengerWinIntegration, Init)
@@ -671,6 +677,18 @@ static const nsModuleComponentInfo gComponents[] = {
       NS_MAILNEWSFOLDERDATASOURCE_CONTRACTID,
       nsMsgFolderDataSourceConstructor,
     },
+    { "Mail/News Unread Folder Data Source", NS_MAILNEWSUNREADFOLDERDATASOURCE_CID,
+      NS_MAILNEWSUNREADFOLDERDATASOURCE_CONTRACTID,
+      nsMsgUnreadFoldersDataSourceConstructor,
+    },
+    { "Mail/News Favorite Folder Data Source", NS_MAILNEWSFAVORITEFOLDERDATASOURCE_CID,
+      NS_MAILNEWSFAVORITEFOLDERDATASOURCE_CONTRACTID,
+      nsMsgFavoriteFoldersDataSourceConstructor,
+    },
+    { "Mail/News Recent Folder Data Source", NS_MAILNEWSRECENTFOLDERDATASOURCE_CID,
+      NS_MAILNEWSRECENTFOLDERDATASOURCE_CONTRACTID,
+      nsMsgRecentFoldersDataSourceConstructor,
+    },
     { "Mail/News Account Manager Data Source", NS_MSGACCOUNTMANAGERDATASOURCE_CID,
       NS_RDF_DATASOURCE_CONTRACTID_PREFIX "msgaccountmanager",
       nsMsgAccountManagerDataSourceConstructor,
@@ -809,6 +827,10 @@ static const nsModuleComponentInfo gComponents[] = {
     { "Spam Settings", NS_SPAMSETTINGS_CID,
       NS_SPAMSETTINGS_CONTRACTID,
       nsSpamSettingsConstructor,
+    },
+    { "Tag Service", NS_MSGTAGSERVICE_CID,
+      NS_MSGTAGSERVICE_CONTRACTID,
+      nsMsgTagServiceConstructor,
     },
     { "cid protocol", NS_CIDPROTOCOL_CID,
       NS_CIDPROTOCOLHANDLER_CONTRACTID,

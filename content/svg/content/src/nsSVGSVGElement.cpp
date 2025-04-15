@@ -43,6 +43,7 @@
 #include "nsIDOMSVGLocatable.h"
 #include "nsSVGAnimatedLength.h"
 #include "nsSVGLength.h"
+#include "nsSVGAngle.h"
 #include "nsCOMPtr.h"
 #include "nsIPresShell.h"
 #include "nsIDocument.h"
@@ -740,8 +741,7 @@ nsSVGSVGElement::CreateSVGLength(nsIDOMSVGLength **_retval)
 NS_IMETHODIMP
 nsSVGSVGElement::CreateSVGAngle(nsIDOMSVGAngle **_retval)
 {
-  NS_NOTYETIMPLEMENTED("nsSVGSVGElement::CreateSVGAngle");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return NS_NewSVGAngle(_retval);
 }
 
 /* nsIDOMSVGPoint createSVGPoint (); */
@@ -851,7 +851,7 @@ nsSVGSVGElement::GetViewboxToViewportTransform(nsIDOMSVGMatrix **_retval)
     if (align == nsIDOMSVGPreserveAspectRatio::SVG_PRESERVEASPECTRATIO_UNKNOWN)
       align = nsIDOMSVGPreserveAspectRatio::SVG_PRESERVEASPECTRATIO_XMIDYMID;
     if (meetOrSlice == nsIDOMSVGPreserveAspectRatio::SVG_MEETORSLICE_UNKNOWN)
-      align = nsIDOMSVGPreserveAspectRatio::SVG_MEETORSLICE_MEET;
+      meetOrSlice = nsIDOMSVGPreserveAspectRatio::SVG_MEETORSLICE_MEET;
     
     float a, d, e, f;
     a = viewportWidth/viewboxWidth;
@@ -1452,10 +1452,6 @@ NS_IMETHODIMP
 nsSVGSVGElement::WillModifySVGObservable(nsISVGValue* observable,
                                          nsISVGValue::modificationType aModType)
 {
-#ifdef DEBUG
-  printf("viewport/viewbox/preserveAspectRatio will be changed\n");
-#endif
-
   if (mDispatchEvent) {
     // Modification isn't due to calling SetCurrent[Scale]Translate, so if
     // currentScale or currentTranslate is about to change we must record their
@@ -1537,10 +1533,6 @@ nsSVGSVGElement::DidModifySVGObservable (nsISVGValue* observable,
 #endif
   }
   
-  
-#ifdef DEBUG
-  printf("viewport/viewbox/preserveAspectRatio have been changed\n");
-#endif
   return NS_OK;
 }
 

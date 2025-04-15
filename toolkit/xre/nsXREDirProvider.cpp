@@ -253,6 +253,10 @@ nsXREDirProvider::GetFile(const char* aProperty, PRBool* aPersistent,
     else if (!strcmp(aProperty, NS_APP_PROFILE_DIR_STARTUP) && mProfileDir) {
       return mProfileDir->Clone(aFile);
     }
+    else if (!strcmp(aProperty, NS_APP_PROFILE_LOCAL_DIR_STARTUP) &&
+             mProfileLocalDir) {
+      return mProfileLocalDir->Clone(aFile);
+    }
     else if (mProfileNotified) {
       if (!strcmp(aProperty, NS_APP_USER_PROFILE_50_DIR) ||
           !strcmp(aProperty, NS_APP_PREFS_50_DIR)) {
@@ -843,6 +847,11 @@ nsXREDirProvider::GetUserDataDirectory(nsILocalFile** aFile, PRBool aLocal)
 #error dont_know_how_to_get_product_dir_on_your_platform
 #endif
 
+#ifdef DEBUG_jungshik
+  nsCAutoString cwd;
+  localDir->GetNativePath(cwd);
+  printf("nsXREDirProvider::GetUserDataDirectory: %s\n", cwd.get());
+#endif
   rv = EnsureDirectoryExists(localDir);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -857,8 +866,19 @@ nsXREDirProvider::EnsureDirectoryExists(nsIFile* aDirectory)
   PRBool exists;
   nsresult rv = aDirectory->Exists(&exists);
   NS_ENSURE_SUCCESS(rv, rv);
+#ifdef DEBUG_jungshik
+  if (!exists) {
+    nsCAutoString cwd;
+    aDirectory->GetNativePath(cwd);
+    printf("nsXREDirProvider::EnsureDirectoryExists: %s does not\n", cwd.get());
+  }
+#endif
   if (!exists)
     rv = aDirectory->Create(nsIFile::DIRECTORY_TYPE, 0700);
+#ifdef DEBUG_jungshik
+  if (NS_FAILED(rv))
+    NS_WARNING("nsXREDirProvider::EnsureDirectoryExists: create failed");
+#endif
 
   return rv;
 }

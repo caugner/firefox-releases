@@ -86,7 +86,8 @@ function viewChange(aMenuList, val)
    case "4": // label 3
    case "5": // label 4
    case "6": // label 5
-     ViewLabel(parseInt(val) - kLabelOffset);
+     // view the old default labels as keywords. 
+     ViewLabelKeyword("$label" + (val - 1));
      break;
    default:
      LoadCustomMailView(parseInt(val) - kLastDefaultViewIndex);
@@ -218,6 +219,10 @@ function refreshCustomMailViews(aDefaultSelectedIndex)
 function ViewChangeByValue(aValue)
 {
   var viewPicker = document.getElementById('viewPicker');
+
+  if (!viewPicker)
+    return;
+
   if (aValue == -1)
   {
     viewPicker.selectedItem = null;
@@ -252,7 +257,7 @@ function prepareForViewChange()
   ClearMessagePane();
 }
 
-function ViewLabel(labelID)
+function ViewLabelKeyword(keyword)
 {
   prepareForViewChange();
 
@@ -262,11 +267,11 @@ function ViewLabel(labelID)
   var term = gSearchSession.createTerm();
   var value = term.value;
 
-  value.label = labelID;
-  value.attrib = nsMsgSearchAttrib.Label;
+  value.str = keyword;
+  value.attrib = nsMsgSearchAttrib.Keywords;
   term.value = value;
-  term.attrib = nsMsgSearchAttrib.Label;
-  term.op = nsMsgSearchOp.Is;
+  term.attrib = nsMsgSearchAttrib.Keywords;
+  term.op = nsMsgSearchOp.Contains;
   term.booleanAnd = true;
 
   searchTermsArray.AppendElement(term);

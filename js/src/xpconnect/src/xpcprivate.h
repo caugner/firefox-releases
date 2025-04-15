@@ -334,20 +334,10 @@ private:
 
 /************************************************/
 
-class XPCAutoUnlock : public nsAutoLockBase {
+class XPCAutoUnlock : public nsAutoUnlockBase {
 public:
-
-    static XPCLock* NewLock(const char* name)
-                        {return nsAutoMonitor::NewMonitor(name);}
-    static void     DestroyLock(XPCLock* lock)
-                        {nsAutoMonitor::DestroyMonitor(lock);}
-
     XPCAutoUnlock(XPCLock* lock)
-#ifdef DEBUG
-        : nsAutoLockBase(lock ? (void*) lock : (void*) this, eAutoMonitor),
-#else
-        : nsAutoLockBase(lock, eAutoMonitor),
-#endif
+        : nsAutoUnlockBase(lock),
           mLock(lock)
     {
         if(mLock)
@@ -385,6 +375,34 @@ private:
     static void operator delete(void* /*memory*/) {}
 };
 
+// A helper class to deal with temporary JS contexts. It destroys the context
+// when it goes out of scope.
+class XPCAutoJSContext
+{
+public:
+    XPCAutoJSContext(JSContext *aContext, PRBool aGCOnDestroy)
+        : mContext(aContext), mGCOnDestroy(aGCOnDestroy)
+    {
+    }
+
+    ~XPCAutoJSContext()
+    {
+        if(!mContext)
+            return;
+
+        if(mGCOnDestroy)
+            JS_DestroyContext(mContext);
+        else
+            JS_DestroyContextNoGC(mContext);
+    }
+
+    operator JSContext * () {return mContext;}
+
+private:
+    JSContext *mContext;
+    PRBool mGCOnDestroy;
+};
+
 /***************************************************************************
 ****************************************************************************
 *
@@ -398,13 +416,17 @@ private:
 // returned as function call result values they are not addref'd. Exceptions
 // to this rule are noted explicitly.
 
-class nsXPConnect : public nsIXPConnect,
+const PRBool OBJ_IS_GLOBAL = PR_TRUE;
+const PRBool OBJ_IS_NOT_GLOBAL = PR_FALSE;
+
+class nsXPConnect : public nsIXPConnect_MOZILLA_1_8_BRANCH,
                     public nsSupportsWeakReference
 {
 public:
     // all the interface method declarations...
     NS_DECL_ISUPPORTS
     NS_DECL_NSIXPCONNECT
+    NS_DECL_NSIXPCONNECT_MOZILLA_1_8_BRANCH
 
     // non-interface implementation
 public:
@@ -862,6 +884,9 @@ public:
 
     inline void SetRetVal(jsval val);
 
+    inline JSObject* GetCallee() const;
+    inline void SetCallee(JSObject* callee);
+
     void SetName(jsval name);
     void SetArgsAndResultPtr(uintN argc, jsval *argv, jsval *rval);
     void SetCallInfo(XPCNativeInterface* iface, XPCNativeMember* member,
@@ -951,6 +976,12 @@ private:
     void*                           mIDispatchMember;
 #endif
     PRUint16                        mMethodIndex;
+
+    // If not null, this is the function object of the function we're going to
+    // call.  This member only makes sense when CallerTypeIsNative() on our
+    // XPCContext returns true.  We're not responsible for rooting this object;
+    // whoever sets it on us needs to deal with that.
+    JSObject*                       mCallee;
 };
 
 
@@ -1487,7 +1518,7 @@ public:
         {char* name=(char*)mJSClass.base.name; mJSClass.base.name = nsnull;
         return name;}
 
-    void PopulateJSClass();
+    void PopulateJSClass(JSBool isGlobal);
 
     void Mark()       {mFlags.Mark();}
     void Unmark()     {mFlags.Unmark();}
@@ -1506,7 +1537,8 @@ class XPCNativeScriptableInfo
 {
 public:
     static XPCNativeScriptableInfo*
-    Construct(XPCCallContext& ccx, const XPCNativeScriptableCreateInfo* sci);
+    Construct(XPCCallContext& ccx, JSBool isGlobal,
+              const XPCNativeScriptableCreateInfo* sci);
 
     nsIXPCScriptable*
     GetCallback() const {return mCallback;}
@@ -1591,7 +1623,8 @@ public:
                  XPCWrappedNativeScope* Scope,
                  nsIClassInfo* ClassInfo,
                  const XPCNativeScriptableCreateInfo* ScriptableCreateInfo,
-                 JSBool ForceNoSharing);
+                 JSBool ForceNoSharing,
+                 JSBool isGlobal);
 
     XPCWrappedNativeScope*
     GetScope()   const {return mScope;}
@@ -1680,7 +1713,7 @@ protected:
                           PRUint32 ClassInfoFlags,
                           XPCNativeSet* Set);
 
-    JSBool Init(XPCCallContext& ccx,
+    JSBool Init(XPCCallContext& ccx, JSBool isGlobal,
                 const XPCNativeScriptableCreateInfo* scriptableCreateInfo);
 
 private:
@@ -1866,6 +1899,7 @@ public:
                  nsISupports* Object,
                  XPCWrappedNativeScope* Scope,
                  XPCNativeInterface* Interface,
+                 JSBool isGlobal,
                  XPCWrappedNative** wrapper);
 
 public:
@@ -2010,7 +2044,7 @@ protected:
     virtual ~XPCWrappedNative();
 
 private:
-    JSBool Init(XPCCallContext& ccx, JSObject* parent,
+    JSBool Init(XPCCallContext& ccx, JSObject* parent, JSBool isGlobal,
                 const XPCNativeScriptableCreateInfo* sci);
 
     JSBool ExtendSet(XPCCallContext& ccx, XPCNativeInterface* aInterface);
@@ -2023,6 +2057,7 @@ private:
     JSBool InitTearOffJSObject(XPCCallContext& ccx,
                                 XPCWrappedNativeTearOff* to);
 
+public:
     static nsresult GatherScriptableCreateInfo(
                         nsISupports* obj,
                         nsIClassInfo* classInfo,
@@ -2171,7 +2206,7 @@ private:
 // interface on the single underlying (possibly aggregate) JSObject.
 
 class nsXPCWrappedJS : public nsXPTCStubBase,
-                       public nsIXPConnectWrappedJS,
+                       public nsWeakRefToIXPConnectWrappedJS,
                        public nsSupportsWeakReference,
                        public nsIPropertyBag
 {
@@ -2179,7 +2214,8 @@ public:
     NS_DECL_ISUPPORTS
     NS_DECL_NSIXPCONNECTJSOBJECTHOLDER
     NS_DECL_NSIXPCONNECTWRAPPEDJS
-    NS_DECL_NSISUPPORTSWEAKREFERENCE
+    NS_DECL_NSIXPCONNECTWRAPPEDJS_MOZILLA_1_8_BRANCH
+    //NS_DECL_NSISUPPORTSWEAKREFERENCE // methods also on nsIXPConnectWrappedJS
     NS_DECL_NSIPROPERTYBAG
 
     // Note that both nsXPTCStubBase and nsIXPConnectWrappedJS declare
@@ -2318,6 +2354,18 @@ class XPCConvert
 public:
     static JSBool IsMethodReflectable(const nsXPTMethodInfo& info);
 
+    /**
+     * Convert a native object into a jsval.
+     *
+     * @param ccx the context for the whole procedure
+     * @param d [out] the resulting jsval
+     * @param s the native object we're working with
+     * @param type the type of object that s is
+     * @param iid the interface of s that we want
+     * @param scope the default scope to put on the new JSObject's __parent__
+     *        chain
+     * @param pErr [out] relevant error code, if any.
+     */    
     static JSBool NativeData2JS(XPCCallContext& ccx, jsval* d, const void* s,
                                 const nsXPTType& type, const nsID* iid,
                                 JSObject* scope, nsresult* pErr);
@@ -2327,12 +2375,26 @@ public:
                                 JSBool useAllocator, const nsID* iid,
                                 nsresult* pErr);
 
+    /**
+     * Convert a native nsISupports into a JSObject.
+     *
+     * @param ccx the context for the whole procedure
+     * @param dest [out] the resulting JSObject
+     * @param src the native object we're working with
+     * @param iid the interface of src that we want
+     * @param scope the default scope to put on the new JSObject's __parent__
+     *        chain
+     * @param allowNativeWrapper if true, this method may wrap the resulting
+     *        JSObject in an XPCNativeWrapper and return that, as needed.
+     * @param pErr [out] relevant error code, if any.
+     */
     static JSBool NativeInterface2JSObject(XPCCallContext& ccx,
                                            nsIXPConnectJSObjectHolder** dest,
                                            nsISupports* src,
                                            const nsID* iid,
                                            JSObject* scope,
                                            PRBool allowNativeWrapper,
+                                           PRBool isGlobal,
                                            nsresult* pErr);
 
     static JSBool GetNativeInterfaceFromJSObject(XPCCallContext& ccx,
@@ -2345,6 +2407,19 @@ public:
                                            nsISupports* aOuter,
                                            nsresult* pErr);
 
+    /**
+     * Convert a native array into a jsval.
+     *
+     * @param ccx the context for the whole procedure
+     * @param d [out] the resulting jsval
+     * @param s the native array we're working with
+     * @param type the type of objects in the array
+     * @param iid the interface of each object in the array that we want
+     * @param count the number of items in the array
+     * @param scope the default scope to put on the new JSObjects' __parent__
+     *        chain
+     * @param pErr [out] relevant error code, if any.
+     */    
     static JSBool NativeArray2JS(XPCCallContext& ccx,
                                  jsval* d, const void** s,
                                  const nsXPTType& type, const nsID* iid,
@@ -2457,6 +2532,7 @@ private:
 
     static void BuildAndThrowException(JSContext* cx, nsresult rv, const char* sz);
     static JSBool ThrowExceptionObject(JSContext* cx, nsIException* e);
+    static JSBool CheckForPendingException(nsresult result, XPCCallContext &ccx);
 
 private:
     static JSBool sVerbose;
@@ -2785,6 +2861,8 @@ public:
     void MarkAutoRootsBeforeJSFinalize(JSContext* cx);
     void MarkAutoRootsAfterJSFinalize();
 
+    jsuword GetStackLimit() const { return mStackLimit; }
+
     static void InitStatics()
         { gLock = nsnull; gThreads = nsnull; gTLSIndex = BAD_TLS_INDEX; }
 
@@ -2812,6 +2890,8 @@ private:
     nsIException*        mException;
     JSBool               mExceptionManagerNotAvailable;
     AutoMarkingPtr*      mAutoRoots;
+
+    jsuword              mStackLimit;
 
 #ifdef XPC_CHECK_WRAPPER_THREADSAFETY
     JSUint32             mWrappedNativeThreadsafetyReportDepth;
@@ -3106,6 +3186,31 @@ private:
     jsrefcount mDepth;
 };
 
+class AutoJSSuspendRequestWithNoCallContext
+{
+public:
+    AutoJSSuspendRequestWithNoCallContext(JSContext *aCX)
+      : mCX(aCX) {SuspendRequest();}
+    ~AutoJSSuspendRequestWithNoCallContext() {ResumeRequest();}
+
+    void ResumeRequest() {
+        if(mCX) {
+            JS_ResumeRequest(mCX, mDepth);
+            mCX = nsnull;
+        }
+    }
+private:
+    void SuspendRequest() {
+        if(JS_GetContextThread(mCX))
+            mDepth = JS_SuspendRequest(mCX);
+        else
+            mCX = nsnull;
+    }
+private:
+    JSContext* mCX;
+    jsrefcount mDepth;
+};
+
 /*****************************************/
 
 class AutoJSRequestWithNoCallContext
@@ -3374,8 +3479,13 @@ DEFINE_AUTO_MARKING_ARRAY_PTR_TYPE(AutoMarkingNativeInterfacePtrArrayPtr,
 // these and bind them to rooted things so immediately that this just is not
 // needed.
 
-#define AUTO_MARK_JSVAL(ccx, val) \
-    XPCMarkableJSVal _val(val); AutoMarkingJSVal _automarker(ccx, &_val)
+#define AUTO_MARK_JSVAL_HELPER2(tok, line) tok##line
+#define AUTO_MARK_JSVAL_HELPER(tok, line) AUTO_MARK_JSVAL_HELPER2(tok, line)
+
+#define AUTO_MARK_JSVAL(ccx, val)                                            \
+    XPCMarkableJSVal AUTO_MARK_JSVAL_HELPER(_val_,__LINE__)(val);            \
+    AutoMarkingJSVal AUTO_MARK_JSVAL_HELPER(_automarker_,__LINE__)           \
+    (ccx, &AUTO_MARK_JSVAL_HELPER(_val_,__LINE__))
 
 #ifdef XPC_USE_SECURITY_CHECKED_COMPONENT
 /***************************************************************************/
@@ -3412,6 +3522,16 @@ public:
 
     XPCVariant();
 
+    /**
+     * Convert a variant into a jsval.
+     *
+     * @param ccx the context for the whole procedure
+     * @param variant the variant to convert
+     * @param scope the default scope to put on the new JSObject's __parent__
+     *        chain
+     * @param pErr [out] relevant error code, if any.
+     * @param pJSVal [out] the resulting jsval.
+     */    
     static JSBool VariantDataToJS(XPCCallContext& ccx, 
                                   nsIVariant* variant,
                                   JSObject* scope, nsresult* pErr,

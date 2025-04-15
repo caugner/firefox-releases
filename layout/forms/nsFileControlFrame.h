@@ -86,8 +86,6 @@ public:
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
 
-  virtual void RemovedAsPrimaryFrame(nsPresContext* aPresContext);
-
   NS_IMETHOD Destroy(nsPresContext *aPresContext);
 
 #ifdef NS_DEBUG
@@ -170,6 +168,9 @@ public:
 
   NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent) { return NS_OK; }
 
+  // We don't paint our background.
+  virtual PRBool CanPaintBackground() { return PR_FALSE; }
+
 protected:
   virtual PRIntn GetSkipSides() const;
 
@@ -223,16 +224,8 @@ private:
   void SyncAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
                 PRBool aWhichControls);
 
-  /**
-   * We call this when we are being destroyed or removed from the PFM.
-   * @param aPresContext the current pres context
-   */
-  void PreDestroy(nsPresContext* aPresContext);
-
   NS_IMETHOD_(nsrefcnt) AddRef() { return 1; }
   NS_IMETHOD_(nsrefcnt) Release() { return 1; }
-
-  PRBool mDidPreDestroy; // has PreDestroy been called
 };
 
 #endif

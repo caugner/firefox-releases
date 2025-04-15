@@ -113,6 +113,7 @@ bin\components\chardet.xpt
 bin\components\jsconsole.xpt
 bin\components\jsconsole-clhandler.js
 bin\components\layout_xul_tree.xpt
+bin\components\inspector.xpt
 bin\components\mork.dll
 bin\components\mozbrwsr.xpt
 bin\components\mozcomps.xpt
@@ -144,6 +145,7 @@ bin\components\embed_base.xpt
 bin\components\webshell_idls.xpt
 bin\components\widget.xpt
 bin\components\windowds.xpt
+bin\components\xpautocomplete.xpt
 bin\components\wlltvwrs.dll
 bin\components\autoconfig.dll
 bin\components\autoconfig.xpt
@@ -369,8 +371,6 @@ bin\components\talkback.hlp
 
 [inspector]
 bin\components\inspector-cmdline.js
-bin\components\inspector.dll
-bin\components\inspector.xpt
 bin\chrome\inspector.jar
 bin\chrome\icons\default\winInspectorMain.ico
 bin\defaults\pref\inspector.js
@@ -385,7 +385,7 @@ bin\chrome\sroaming.jar
 bin\components\myspell.dll
 bin\components\spellchk.dll
 bin\components\spellchecker.xpt
-bin\components\myspell\*
+bin\dictionaries\*
 
 [reporter]
 bin\chrome\reporter.jar

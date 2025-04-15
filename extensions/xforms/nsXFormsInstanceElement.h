@@ -49,6 +49,7 @@
 #include "nsIChannelEventSink.h"
 #include "nsIInterfaceRequestor.h"
 
+class nsIDocument;
 class nsIDOMElement;
 
 /**
@@ -66,6 +67,7 @@ class nsXFormsInstanceElement : public nsXFormsStubElement,
 public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIREQUESTOBSERVER
+  NS_DECL_NSIXFORMSNSINSTANCEELEMENT
   NS_DECL_NSIINSTANCEELEMENTPRIVATE
   NS_DECL_NSISTREAMLISTENER
   NS_DECL_NSICHANNELEVENTSINK
@@ -75,24 +77,35 @@ public:
   NS_IMETHOD OnDestroyed();
   NS_IMETHOD AttributeSet(nsIAtom *aName, const nsAString &aNewValue);
   NS_IMETHOD AttributeRemoved(nsIAtom *aName);
-  NS_IMETHOD BeginAddingChildren();
-  NS_IMETHOD DoneAddingChildren();
-  NS_IMETHOD OnCreated(nsIXTFGenericElementWrapper *aWrapper);
+  NS_IMETHOD WillChangeParent(nsIDOMElement *aNewParent);
   NS_IMETHOD ParentChanged(nsIDOMElement *aNewParent);
+  NS_IMETHOD OnCreated(nsIXTFGenericElementWrapper *aWrapper);
 
   nsXFormsInstanceElement() NS_HIDDEN;
 
 private:
   NS_HIDDEN_(nsresult) CloneInlineInstance();
   NS_HIDDEN_(void) LoadExternalInstance(const nsAString &aSrc);
-  NS_HIDDEN_(nsresult) CreateInstanceDocument();
+  NS_HIDDEN_(nsresult) CreateInstanceDocument(const nsAString &aQualifiedName);
   NS_HIDDEN_(already_AddRefed<nsIModelElementPrivate>) GetModel();
+
+  /**
+   * Replace principal for document to be the same as for the owning document.
+   *
+   * WARNING: This could lead to a security breach, and should be used with
+   * extreme care!
+   *
+   * @see https://bugzilla.mozilla.org/show_bug.cgi?id=338451
+   *
+   * @param aDoc              The document to replace principal for
+   */
+  nsresult ReplacePrincipal(nsIDocument *aDoc);
 
   nsCOMPtr<nsIDOMDocument>    mDocument;
   nsCOMPtr<nsIDOMDocument>    mOriginalDocument;
   nsIDOMElement              *mElement;
   nsCOMPtr<nsIStreamListener> mListener;
-  PRBool                      mAddingChildren;
+  PRBool                      mInitialized;
   PRBool                      mLazy;
   nsCOMPtr<nsIChannel>        mChannel;
 };

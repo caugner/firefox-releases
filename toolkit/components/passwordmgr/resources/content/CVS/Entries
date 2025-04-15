@@ -1,4 +1,7 @@
-/.cvsignore/1.2/Sat May 22 19:33:10 2004//TFIREFOX_1_5_RELEASE
-/passwordManager.js/1.11/Tue Jun 14 10:19:33 2005//TFIREFOX_1_5_RELEASE
-/passwordManager.xul/1.10/Wed Aug 10 18:15:51 2005//TFIREFOX_1_5_RELEASE
+/.cvsignore/1.2/Sat May 22 19:33:10 2004//TFIREFOX_2_0_RELEASE
+/passwordManager.js/1.11.4.4/Sat Aug 26 15:46:38 2006//TFIREFOX_2_0_RELEASE
+/passwordManager.xul/1.10.2.1/Sat May 27 21:03:59 2006//TFIREFOX_2_0_RELEASE
+/passwordManagerCommon.js/1.1.2.1/Sat May 27 21:03:59 2006//TFIREFOX_2_0_RELEASE
+/passwordManagerExceptions.js/1.1.2.1/Sat May 27 21:03:59 2006//TFIREFOX_2_0_RELEASE
+/passwordManagerExceptions.xul/1.1.2.1/Sat May 27 21:03:59 2006//TFIREFOX_2_0_RELEASE
 D

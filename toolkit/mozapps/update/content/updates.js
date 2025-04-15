@@ -20,6 +20,7 @@
  *
  * Contributor(s):
  *  Ben Goodger <ben@mozilla.org> (Original Author)
+ *  Jeff Walden <jwalden+code@mit.edu>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -45,6 +46,7 @@ const PREF_UPDATE_NAGTIMER_DL       = "app.update.nagTimer.download";
 const PREF_UPDATE_NAGTIMER_RESTART  = "app.update.nagTimer.restart";
 const PREF_APP_UPDATE_LOG_BRANCH    = "app.update.log.";
 const PREF_UPDATE_TEST_LOOP         = "app.update.test.loop";
+const PREF_UPDATE_NEVER_BRANCH      = "app.update.never."
 
 const UPDATE_TEST_LOOP_INTERVAL     = 2000;
 
@@ -122,52 +124,84 @@ var gUpdates = {
    * The <wizard> element
    */
   wiz: null,
+
+  /**
+   * Helper function for setButtons
+   * Resets button to original label & accesskey if string is null.
+   */
+  _setButton: function(button, string) {
+    if (string) {
+      var label = this.strings.getString(string);
+      if (label.indexOf("%S") != -1)
+        label = label.replace(/%S/, this.brandName);
+      button.label = label;
+      button.setAttribute("accesskey",
+                          this.strings.getString(string + ".accesskey"));
+    } else {
+      button.label = button.defaultLabel;
+      button.setAttribute("accesskey", button.defaultAccesskey);
+    }
+  },
   
   /**
    * Set the state for the Wizard's control buttons (labels and disabled
    * state).
-   * @param   backButtonLabel
-   *          The label to put on the Back button, or null for default.
+   * @param   backButtonString
+   *          The property in the stringbundle containing the label
+   *          to put on the Back button, or null for default.
    * @param   backButtonDisabled
    *          true if the Back button should be disabled, false otherwise
-   * @param   nextButtonLabel
-   *          The label to put on the Next button, or null for default.
+   * @param   nextButtonString
+   *          The property in the stringbundle containing the label
+   *          to put on the Next button, or null for default.
    * @param   nextButtonDisabled
    *          true if the Next button should be disabled, false otherwise
-   * @param   finishButtonLabel
-   *          The label to put on the Finish button, or null for default.
+   * @param   finishButtonString
+   *          The property in the stringbundle containing the label
+   *          to put on the Finish button, or null for default.
    * @param   finishButtonDisabled
    *          true if the Finish button should be disabled, false otherwise
-   * @param   cancelButtonLabel
-   *          The label to put on the Cancel button, or null for default.
+   * @param   cancelButtonString
+   *          The property in the stringbundle containing the label
+   *          to put on the Cancel button, or null for default.
    * @param   cancelButtonDisabled
    *          true if the Cancel button should be disabled, false otherwise
    * @param   hideBackAndCancelButtons
    *          true if the Cancel button should be hidden, false otherwise
-   * @param   extraButtonLabel
-   *          The label to put on the Extra button, if present, or null for 
-   *          default.
-   * @param   extraButtonDisabled
-   *          true if the Extra button should be disabled, false otherwise
+   * @param   extraButton1String
+   *          The property in the stringbundle containing the label to put
+   *          on the first Extra button, if present, or null for default.
+   * @param   extraButton1Disabled
+   *          true if the first Extra button should be disabled, 
+   *          false otherwise
+   * @param   extraButton2String
+   *          The property in the stringbundle containing the label to put
+   *          on the second Extra button, if present, or null for default.
+   * @param   extraButton2Disabled
+   *          true if the second Extra button should be disabled, 
+   *          false otherwise
    */
-  setButtons: function(backButtonLabel, backButtonDisabled, 
-                       nextButtonLabel, nextButtonDisabled,
-                       finishButtonLabel, finishButtonDisabled,
-                       cancelButtonLabel, cancelButtonDisabled,
+  setButtons: function(backButtonString, backButtonDisabled,
+                       nextButtonString, nextButtonDisabled,
+                       finishButtonString, finishButtonDisabled,
+                       cancelButtonString, cancelButtonDisabled,
                        hideBackAndCancelButtons,
-                       extraButtonLabel, extraButtonDisabled) {
+                       extraButton1String, extraButton1Disabled,
+                       extraButton2String, extraButton2Disabled) {
     var bb = this.wiz.getButton("back");
     var bn = this.wiz.getButton("next");
     var bf = this.wiz.getButton("finish");
     var bc = this.wiz.getButton("cancel");
-    var be = this.wiz.getButton("extra1");
+    var be1 = this.wiz.getButton("extra1");
+    var be2 = this.wiz.getButton("extra2");
 
-    bb.label    = backButtonLabel   || this._buttonLabel_back;
-    bn.label    = nextButtonLabel   || this._buttonLabel_next;
-    bf.label    = finishButtonLabel || this._buttonLabel_finish;
-    bc.label    = cancelButtonLabel || this._buttonLabel_hide;
-    be.label    = extraButtonLabel || this._buttonLabel_hide;
-    
+    this._setButton(bb, backButtonString);
+    this._setButton(bn, nextButtonString);
+    this._setButton(bf, finishButtonString);
+    this._setButton(bc, cancelButtonString);
+    this._setButton(be1, extraButton1String);
+    this._setButton(be2, extraButton2String);
+
     // update button state using the wizard commands
     this.wiz.canRewind  = !backButtonDisabled;
     // The Finish and Next buttons are never exposed at the same time
@@ -178,17 +212,34 @@ var gUpdates = {
 
     bf.disabled = finishButtonDisabled;
     bc.disabled = cancelButtonDisabled;
-    be.disabled = extraButtonDisabled;
+    be1.disabled = extraButton1Disabled;
+    be2.disabled = extraButton2Disabled;
 
-    // Show or hide the cancel and back buttons, since the Extra 
+    // Show or hide the cancel and back buttons, since the first Extra 
     // button does this job.
     bc.hidden   = hideBackAndCancelButtons;  
     bb.hidden   = hideBackAndCancelButtons;
 
-    // Show or hide the extra button
-    be.hidden = extraButtonLabel == null;
+    // Show or hide the extra buttons
+    be1.hidden = extraButton1String == null;
+    be2.hidden = extraButton2String == null;
   },
   
+  never: function () {
+    // if the user hits "Never", we should not prompt them about this
+    // major version again, unless they manually do "Check for Updates..."
+    // which, will clear the "never" pref for the version presented
+    // so that if they do "Later", we will remind them later.
+    var neverPrefName = PREF_UPDATE_NEVER_BRANCH + gUpdates.update.version;
+    gPref.setBoolPref(neverPrefName, true);
+    this.wiz.cancel();
+  },
+
+  later: function () {
+    // The user said "Later", so close the wizard
+    this.wiz.cancel();
+  },
+
   /**
    * A hash of |pageid| attribute to page object. Can be used to dispatch
    * function calls to the appropriate page. 
@@ -247,6 +298,16 @@ var gUpdates = {
    * readable text, used to initialize the error page.
    */
   errorMessage: "",
+
+  /**
+   * Helper function for onLoad
+   * Saves default button label & accesskey for use by _setButton
+   */
+  _cacheButtonStrings: function (buttonName) {
+    var button = this.wiz.getButton(buttonName);
+    button.defaultLabel = button.label;
+    button.defaultAccesskey = button.getAttribute("accesskey");
+  },
   
   /**
    * Called when the wizard UI is loaded.
@@ -272,12 +333,12 @@ var gUpdates = {
     }
   
     // Cache the standard button labels in case we need to restore them
-    this._buttonLabel_back = this.wiz.getButton("back").label;
-    this._buttonLabel_next = this.wiz.getButton("next").label;
-    this._buttonLabel_finish = this.wiz.getButton("finish").label;
-    this._buttonLabel_cancel = this.wiz.getButton("cancel").label;
-    this._buttonLabel_hide = this.strings.getString("hideButtonLabel");
-    this.wiz.getButton("cancel").label = this._buttonLabel_hide;
+    this._cacheButtonStrings("back");
+    this._cacheButtonStrings("next");
+    this._cacheButtonStrings("finish");
+    this._cacheButtonStrings("cancel");
+    this._cacheButtonStrings("extra1");
+    this._cacheButtonStrings("extra2");
     
     // Advance to the Start page. 
     gUpdates.wiz.currentPage = this.startPage;
@@ -474,8 +535,8 @@ var gCheckingPage = {
    */
   onPageShow: function() {
     gUpdates.setButtons(null, true, null, true, null, true, 
-                        gUpdates._buttonLabel_cancel, false, false, null, 
-                        false);
+                        null, false, false, null, 
+                        false, null, false);
     this._checker = 
       Components.classes["@mozilla.org/updates/update-checker;1"].
       createInstance(Components.interfaces.nsIUpdateChecker);
@@ -539,7 +600,7 @@ var gCheckingPage = {
     /**
      * See nsISupports.idl
      */
-    QueryInterface: function(iid) {
+    QueryInterface: function(aIID) {
       if (!aIID.equals(Components.interfaces.nsIUpdateCheckListener) &&
           !aIID.equals(Components.interfaces.nsISupports))
         throw Components.results.NS_ERROR_NO_INTERFACE;
@@ -556,8 +617,8 @@ var gNoUpdatesPage = {
    * Initialize
    */
   onPageShow: function() {
-    gUpdates.setButtons(null, true, null, true, null, false, null, true, false,
-                        null, false);
+    gUpdates.setButtons(null, true, null, true, null, false, "hideButton",
+                        true, false, null, false, null, false);
     gUpdates.wiz.getButton("finish").focus();
   }
 };
@@ -572,31 +633,78 @@ var gUpdatesAvailablePage = {
    * An array of installed addons incompatible with this update.
    */
   _incompatibleItems: null,
+
+  /**
+   * The <license> binding (which we are also using for the details content)
+   */
+  _updateMoreInfoContent: null,
   
   /**
    * Initialize.
    */
   onPageShow: function() {
+    // disable the "next" button, as we don't want the user to 
+    // be able to progress with the update util we show them the details
+    // which might include a warning about incompatible add-ons
+    // disable the "back" button, as well (note the call to setButtons() 
+    // below does this, too).  This just leaves the cancel button
+    // until we are ready
+    gUpdates.wiz.getButton("next").disabled = true;
+    gUpdates.wiz.getButton("back").disabled = true;
+
+    var update = gUpdates.update.QueryInterface(
+                            Components.interfaces.nsIUpdate_MOZILLA_1_8_BRANCH);
     var updateName = gUpdates.strings.getFormattedString("updateName", 
-      [gUpdates.brandName, gUpdates.update.version]);
+      [gUpdates.brandName, update.version]);
+    if (update.channel == "nightly")
+      updateName = updateName + " nightly (" + update.buildID + ")";
     var updateNameElement = document.getElementById("updateName");
     updateNameElement.value = updateName;
-    var severity = gUpdates.update.isSecurityUpdate ? "minor" : "major";
-    var displayType = gUpdates.strings.getString("updateType_" + severity);
+    var severity = update.type;
     var updateTypeElement = document.getElementById("updateType");
     updateTypeElement.setAttribute("severity", severity);
-    var intro = gUpdates.strings.getFormattedString(
-      "introType_" + severity, [gUpdates.brandName]);
+ 
+    var intro;
+    if (severity == "major") {
+      // for major updates, use the brandName and the version for the intro
+      intro = gUpdates.strings.getFormattedString(
+        "introType_" + severity + "_app_and_version", 
+        [gUpdates.brandName, update.version]);
+
+      this._updateMoreInfoContent = 
+        document.getElementById("updateMoreInfoContent");
+
+      // update_name and update_version need to be set before url
+      // so that when attempting to download the url, we can show
+      // the formatted "Download..." string
+      this._updateMoreInfoContent.update_name = gUpdates.brandName;
+      this._updateMoreInfoContent.update_version = update.version;
+      this._updateMoreInfoContent.url = update.detailsURL;
+    }
+    else {
+      // for minor updates, do not include the version
+      // just use the brandName for the intro
+      intro = gUpdates.strings.getFormattedString(
+        "introType_" + severity + "_app", [gUpdates.brandName]);
+
+      var updateMoreInfoURL = document.getElementById("updateMoreInfoURL");
+      updateMoreInfoURL.href = update.detailsURL; 
+    }
+
+    var updateTitle = gUpdates.strings
+                              .getString("updatesfound_" + severity + ".title");
+    gUpdates.wiz.currentPage.setAttribute("label", updateTitle);
+    // this is necessary to make this change to the label of the current
+    // wizard page show up
+    gUpdates.wiz._adjustWizardHeader();
+
     while (updateTypeElement.hasChildNodes())
       updateTypeElement.removeChild(updateTypeElement.firstChild);
     updateTypeElement.appendChild(document.createTextNode(intro));
     
-    var updateMoreInfoURL = document.getElementById("updateMoreInfoURL");
-    updateMoreInfoURL.href = gUpdates.update.detailsURL;
-    
     var em = Components.classes["@mozilla.org/extensions/manager;1"]
                        .getService(Components.interfaces.nsIExtensionManager);
-    var items = em.getIncompatibleItemList("", gUpdates.update.version,
+    var items = em.getIncompatibleItemList("", update.version,
                                            nsIUpdateItem.TYPE_ADDON, false, 
                                            { });
     if (items.length > 0) {
@@ -604,29 +712,33 @@ var gUpdatesAvailablePage = {
       // warning message.
       var incompatibleWarning = document.getElementById("incompatibleWarning");
       incompatibleWarning.hidden = false;
-      
+
       this._incompatibleItems = items;
     }
     
-    // If we were invoked from a background update check, automatically show 
-    // the additional details the user may need to make this decision since 
-    // they did not consciously make the decision to check. 
-    // if (gUpdates.sourceEvent == SRCEVT_BACKGROUND)
-    // This is ridiculous... always show the additional info.
+    // wait to show the additional details until after we do the check
+    // for add-on incompatibilty
     this.onShowMoreDetails();
-      
+
+    var licenseAccepted;
     try {
-      gUpdates.update.getProperty("licenseAccepted");
+      licenseAccepted = update.getProperty("licenseAccepted");
     }
     catch (e) {
       gUpdates.update.setProperty("licenseAccepted", "false");
+      licenseAccepted = false;
     }
+    
+    // only major updates show EULAs
+    if (gUpdates.update.type == "major" &&
+        gUpdates.update.licenseURL && !licenseAccepted)
+      gUpdates.wiz.currentPage.setAttribute("next", "license");
 
-    var downloadNowLabel = gUpdates.wiz.currentPage.getAttribute("downloadNowLabel");
-    var downloadLaterLabel = gUpdates.wiz.currentPage.getAttribute("downloadLaterLabel");
-    gUpdates.setButtons(null, false, downloadNowLabel, false, null, false,
+    gUpdates.setButtons(null, true, "downloadButton_" + severity, 
+                        false, null, false,
                         null, false, true, 
-                        downloadLaterLabel, false);
+                        "laterButton", false, 
+                        severity == "major" ? "neverButton" : null, false);
     gUpdates.wiz.getButton("next").focus();
   },
   
@@ -634,50 +746,52 @@ var gUpdatesAvailablePage = {
    * User clicked the "More Details..." button
    */
   onShowMoreDetails: function() {
+    var updateTypeElement = document.getElementById("updateType");
+    var moreInfoURL = document.getElementById("moreInfoURL");
+    var moreInfoContent = document.getElementById("moreInfoContent");
+
+    if (updateTypeElement.getAttribute("severity") == "major") {
+      moreInfoURL.hidden = true;
+      moreInfoContent.hidden = false;
+      document.getElementById("updateName").hidden = true;
+      document.getElementById("updateNameSep").hidden = true;
+      document.getElementById("upgradeEvangelism").hidden = true;
+      document.getElementById("upgradeEvangelismSep").hidden = true;
+
+      // clear the "never" pref for this version.  this is to handle the
+      // scenario where the user clicked "never" for a major update
+      // and then at a later point, did "Check for Updates..." 
+      // and then hit "Later".  If we don't clear the "never" pref
+      // "Later" will never happen.
+      var neverPrefName = PREF_UPDATE_NEVER_BRANCH + gUpdates.update.version;
+      gPref.setBoolPref(neverPrefName, false);
+    }
+    else {
+      moreInfoURL.hidden = false;
+      moreInfoContent.hidden = true;
+    }
+
+    // in order to prevent showing the blank xul:browser (<license> binding)
+    // delay setting the selected index of the detailsDeck until after 
+    // we've set everything up.  see bug #352400 for more details.
     var detailsDeck = document.getElementById("detailsDeck");
     detailsDeck.selectedIndex = 1;
   },
-  
+
   /**
-   * User said they wanted to install now, so advance to the License or 
-   * Downloading page, whichever is appropriate.
+   * When the user cancels the wizard or they decline the license
    */
-  onInstallNow: function() {
-    var nextPageID = "downloading";
-    if (gUpdates.update.licenseURL) {
-      try {
-        var licenseAccepted = gUpdates.update.getProperty("licenseAccepted");
-      }
-      catch(e) {
-        // |getProperty| throws NS_ERROR_FAILURE if the property is not
-        // defined on the property bag.
-      }
-      if (licenseAccepted != "true")
-        nextPageID = "license";
+  onWizardCancel: function() {
+    try {
+      // If the _updateMoreInfoContent was downloading, stop it.
+      if (this._updateMoreInfoContent)
+        this._updateMoreInfoContent.stopDownloading();
     }
-    gUpdates.wiz.currentPage = document.getElementById(nextPageID);
+    catch (ex) {
+      dump("XXX _updateMoreInfoContent.stopDownloading() failed: " + ex + "\n");
+    }
   },
-  
-  /**
-   * User said that they would install later. Register a timer to remind them
-   * after a day or so.
-   */
-  onInstallLater: function() {
-    var interval = getPref("getIntPref", PREF_UPDATE_NAGTIMER_DL, 86400000);
-    gUpdates.registerNagTimer("download-nag-timer", interval, 
-                              "showUpdateAvailable");
 
-    // The user said "Later", so stop all update checks for this session
-    // so that we don't bother them again.
-    const nsIUpdateChecker = Components.interfaces.nsIUpdateChecker;
-    var aus = 
-        Components.classes["@mozilla.org/updates/update-service;1"].
-        getService(Components.interfaces.nsIApplicationUpdateService);
-    aus.backgroundChecker.stopChecking(nsIUpdateChecker.CURRENT_SESSION);
-
-    close();
-  },
-  
   /** 
    * Show a list of extensions made incompatible by this update.
    */
@@ -697,19 +811,25 @@ var gLicensePage = {
    * The <license> element
    */
   _licenseContent: null,
-  
+
   /**
    * Initialize
    */
   onPageShow: function() {
     this._licenseContent = document.getElementById("licenseContent");
+
+    // the license radiogroup is disabled until the EULA is downloaded
+    document.getElementById("acceptDeclineLicense").disabled = true;
     
-    var IAgree = gUpdates.strings.getString("IAgreeLabel");
-    var IDoNotAgree = gUpdates.strings.getString("IDoNotAgreeLabel");
-    gUpdates.setButtons(null, true, IAgree, true, null, true, IDoNotAgree, 
-                        false, false, null, false);
+    gUpdates.setButtons(null, true, null, true, null, true, null, 
+                        false, false, null, false, null, false);
 
     this._licenseContent.addEventListener("load", this.onLicenseLoad, false);
+    // update_name and update_version need to be set before url
+    // so that when attempting to download the url, we can show
+    // the formatted "Download..." string
+    this._licenseContent.update_name = gUpdates.brandName;
+    this._licenseContent.update_version = gUpdates.update.version;
     this._licenseContent.url = gUpdates.update.licenseURL;
   },
   
@@ -717,37 +837,53 @@ var gLicensePage = {
    * When the license document has loaded
    */
   onLicenseLoad: function() {
-    // Now that the license text is available, the user is in a position to
-    // agree to it, so enable the Agree button.
-    gUpdates.wiz.getButton("next").disabled = false;
-    gUpdates.wiz.getButton("next").focus();
+    // on the load event, disable or enable the radiogroup based on
+    // the state of the licenseContent.  note, you may get multiple
+    // onLoad events
+    document.getElementById("acceptDeclineLicense").disabled =
+      (gLicensePage._licenseContent.getAttribute("state") == "error");
   },
-  
+
   /**
-   * When the user accepts the license
+   * When the user changes the state of the accept / decline radio group
+   */
+  onAcceptDeclineRadio: function() {
+    var selectedIndex = document.getElementById("acceptDeclineLicense")
+                                .selectedIndex;
+    // 0 == Accept, 1 == Decline
+    var licenseAccepted = (selectedIndex == 0);
+    gUpdates.wiz.getButton("next").disabled = !licenseAccepted;
+    gUpdates.wiz.canAdvance = licenseAccepted;
+  },
+
+  /**
+   * When the user accepts the license by hitting "Next"
    */
   onWizardNext: function() {
-    gUpdates.update.setProperty("licenseAccepted", "true");
-    var um = 
+    try {
+      gUpdates.update.setProperty("licenseAccepted", "true");
+      var um = 
         Components.classes["@mozilla.org/updates/update-manager;1"].
         getService(Components.interfaces.nsIUpdateManager);
-    um.saveUpdates();
+      um.saveUpdates();
+    }
+    catch (ex) {
+      dump("XXX ex " + ex + "\n");
+    }
   },
   
   /**
-   * When the user cancels the wizard
+   * When the user cancels the wizard or they decline the license
    */
   onWizardCancel: function() {
-    // If the license was downloading, stop it.
-    this._licenseContent.stopDownloading();
-    
-    // The user said "Do Not Agree", so stop all update checks for this session
-    // so that we don't bother them again.
-    const nsIUpdateChecker = Components.interfaces.nsIUpdateChecker;
-    var aus = 
-        Components.classes["@mozilla.org/updates/update-service;1"].
-        getService(Components.interfaces.nsIApplicationUpdateService);
-    aus.backgroundChecker.stopChecking(nsIUpdateChecker.CURRENT_SESSION);
+    try {
+      // If the license was downloading, stop it.
+      if (this._licenseContent)
+        this._licenseContent.stopDownloading();
+    }
+    catch (ex) {
+      dump("XXX _licenseContent.stopDownloading() failed: " + ex + "\n");
+    }
   }
 };
 
@@ -1030,6 +1166,7 @@ var gDownloadingPage = {
       return;
     }
     
+    try {
     // Say that this was a foreground download, not a background download, 
     // since the user cared enough to look in on this process.
     gUpdates.update.QueryInterface(Components.interfaces.nsIWritablePropertyBag);
@@ -1056,9 +1193,13 @@ var gDownloadingPage = {
 
     var link = document.getElementById("detailsLink");
     link.href = gUpdates.update.detailsURL;
+    }
+    catch(ex) {
+      LOG("UI:DownloadingPage", "onPageShow: " + ex);
+    }
 
-    gUpdates.setButtons(null, true, null, true, null, true, null, false, false,
-                        null, false);
+    gUpdates.setButtons(null, true, null, true, null, true, "hideButton",
+                        false, false, null, false, null, false);
   },
   
   /** 
@@ -1136,7 +1277,7 @@ var gDownloadingPage = {
   },
   
   /** 
-   * When the user closes the Wizard UI
+   * When the user closes the Wizard UI (including by clicking the Hide button)
    */
   onWizardCancel: function() {
     // Remove ourself as a download listener so that we don't continue to be 
@@ -1162,16 +1303,21 @@ var gDownloadingPage = {
       var ps = Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
                         .getService(Components.interfaces.nsIPromptService);
       var flags = ps.STD_YES_NO_BUTTONS;
+      // focus the software update wizard before prompting.
+      // this will raise the software update wizard if it is minimized
+      // making it more obvious what the prompt is for and will
+      // solve the problem of windows "obscuring" the prompt.
+      // see bug #350299 for more details
+      window.focus();
       var rv = ps.confirmEx(window, title, message, flags, null, null, null, null, { });
       if (rv == 1) {
         downloadInBackground = false;
       }
     }
     if (downloadInBackground) {
-      // Cancel the download and start it again in the background.
-      LOG("UI:DownloadingPage", "onWizardCancel: resuming download in background");
-      updates.pauseDownload();
-      updates.downloadUpdate(gUpdates.update, true);
+      // Continue download in the background at full speed.
+      LOG("UI:DownloadingPage", "onWizardCancel: continuing download in background at full speed");
+      updates.downloadUpdate(gUpdates.update, false);
     }
   },
   
@@ -1346,13 +1492,15 @@ var gErrorsPage = {
    * Initialize
    */
   onPageShow: function() {
-    gUpdates.setButtons(null, true, null, true, null, false, null, true, false, 
-                        null, false);
+    gUpdates.setButtons(null, true, null, true, null, false, "hideButton",
+                        true, false, null, false, null, false);
     gUpdates.wiz.getButton("finish").focus();
     
     var errorReason = document.getElementById("errorReason");
     errorReason.value = gUpdates.update.statusText;
-    var manualURL = getPref("getCharPref", PREF_UPDATE_MANUAL_URL, "");
+    var formatter = Components.classes["@mozilla.org/toolkit/URLFormatterService;1"]
+                              .getService(Components.interfaces.nsIURLFormatter);
+    var manualURL = formatter.formatURLPref(PREF_UPDATE_MANUAL_URL);
     var errorLinkLabel = document.getElementById("errorLinkLabel");
     errorLinkLabel.value = manualURL;
     errorLinkLabel.href = manualURL;
@@ -1366,6 +1514,43 @@ var gErrorsPage = {
     gUpdates.wiz.getButton("cancel").disabled = true;
     gUpdates.wiz.getButton("next").focus();
   },
+
+  /**
+   * Finish button clicked.
+   */
+  onWizardFinish: function() {
+    // XXXjwalden COMPLETE AND TOTAL HACK!!!
+    //
+    // The problem the following code is working around is this: the update
+    // service's API for responding to updates is poor.  Essentially, all
+    // the information we can get is that we've started to request a download or
+    // that the download we've started has finished, with minimal details about
+    // how it finished which aren't described in the API (and which internally
+    // are not entirely useful, either -- mostly unuseful nsresults).  How
+    // do you signal the difference between "this download failed" and "all
+    // downloads failed", particularly if you aim for API compatibility?  The
+    // code in nsApplicationUpdateService only determines the difference *after*
+    // the current request is stopped, and since the subsequent second call to
+    // downloadUpdate doesn't start/stop a request, the download listener is
+    // never notified and whatever code was relying on it just fails without
+    // notification.  The consequence of this is that it's impossible to
+    // properly remove the download listener.
+    //
+    // The code before this patch tried to do the exit after all downloads
+    // failed but was missing a QueryInterface to work; with it, making sure
+    // that the download listener is removed in all cases, including in the case
+    // where the last onStopRequest corresponds to *a* failed download instead
+    // of to *all* failed downloads, simply means that we have to try to remove
+    // that listener in the error page spawned by the update service.  If there
+    // were time and API compat weren't a problem, we'd add an onFinish handler
+    // or something which could signal exactly what happened and not overload
+    // onStopRequest, but there isn't, so we can't.
+    //
+    var updates =
+        Components.classes["@mozilla.org/updates/update-service;1"].
+        getService(Components.interfaces.nsIApplicationUpdateService);
+    updates.removeDownloadListener(gDownloadingPage);
+  }
 };
 
 /**
@@ -1380,11 +1565,8 @@ var gFinishedPage = {
    *          short delay
    */
   onPageShow: function(aDelayRestart) {  
-    var restart = gUpdates.strings.getFormattedString("restartButton",
-      [gUpdates.brandName]);
-    var later = gUpdates.strings.getString("laterButton");
-    gUpdates.setButtons(null, true, null, true, restart, aDelayRestart, later,
-                        false, false, null, false);
+    gUpdates.setButtons(null, true, null, true, "restartButton", aDelayRestart,
+                        "laterButton", false, false, null, false, null, false);
     if (aDelayRestart)
       setTimeout(this._enableRestartButton, 2000);
     else
@@ -1433,7 +1615,19 @@ var gFinishedPage = {
   onWizardFinish: function() {
     // Do the restart
     LOG("UI:FinishedPage" , "onWizardFinish: Restarting Application...");
-    
+
+    // disable the "finish" (Restart) and "cancel" (Later) buttons 
+    // because the Software Update wizard is still up at the point, 
+    // and will remain up until we return and we close the
+    // window with a |window.close()| in wizard.xml 
+    // (it was the firing the "wizardfinish" event that got us here.)
+    // This prevents the user from switching back
+    // to the Software Update dialog and clicking "Restart" or "Later"
+    // when dealing with the "confirm close" prompts.  
+    // See bug #350299 for more details.
+    gUpdates.wiz.getButton("finish").disabled = true;
+    gUpdates.wiz.getButton("cancel").disabled = true;
+
     // This process is *extremely* retarded. There should be some nice 
     // integrated system for determining whether or not windows are allowed
     // to close or not, and what happens when that happens. We need to 
@@ -1481,7 +1675,7 @@ var gFinishedPage = {
   onWizardCancel: function() {
     var ps = Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
                        .getService(Components.interfaces.nsIPromptService);
-    var message = gUpdates.strings.getFormattedString("restartLaterMessage",
+    var message = gUpdates.strings.getFormattedString("restartLaterMsg",
       [gUpdates.brandName]);
     ps.alert(window, gUpdates.strings.getString("restartLaterTitle"), 
              message);
@@ -1515,8 +1709,8 @@ var gInstalledPage = {
     catch (e) {
     }
     
-    this.setButtons(null, true, null, true, null, false, null, true, false, 
-                    null, false);
+    gUpdates.setButtons(null, true, null, true, null, false, "hideButton",
+                        true, false, null, false, null, false);
     gUpdates.wiz.getButton("finish").focus();
   },
 };

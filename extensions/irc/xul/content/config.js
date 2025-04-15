@@ -35,10 +35,8 @@
  * ***** END LICENSE BLOCK ***** */
 
 const MEDIATOR_CONTRACTID   = "@mozilla.org/appshell/window-mediator;1";
-const FILEPICKER_CONTRACTID = "@mozilla.org/filepicker;1";
 
 const nsIWindowMediator     = Components.interfaces.nsIWindowMediator;
-const nsIFilePicker         = Components.interfaces.nsIFilePicker;
 
 const CONFIG_WINDOWTYPE     = "irc:chatzilla:config";
 
@@ -53,6 +51,11 @@ function CIRCNetwork() {}
 function CIRCServer() {}
 function CIRCChannel() {}
 function CIRCChanUser() {}
+function CIRCUser() {}
+function CIRCDCC() {}
+function CIRCDCCUser() {}
+function CIRCDCCChat() {}
+function CIRCDCCFileTransfer() {}
 
 function getObjectDetails(obj)
 {
@@ -100,6 +103,7 @@ function PrefGlobal()
     this.commandManager = new Object();
     this.commandManager.defineCommand = function() {};
     this.entities = new Object();
+    this.hostCompat = new Object();
 }
 PrefGlobal.prototype.TYPE = "PrefGlobal";
 
@@ -585,6 +589,7 @@ function pdata_loadXUL()
                     // We're cheating again here, if it ends "filename" it's 
                     // a local file path.
                     var type = (this.name.match(/filename$/i) ? "file" : "fileurl");
+                    type = (this.name.match(/folder$/i) ? "folder" : type);
                     appendButton(this.box, "onPrefBrowse", 
                                  { label: MSG_PREFS_BROWSE, spec: ext, 
                                    kind: type });
@@ -973,6 +978,9 @@ function pwin_onLoad()
         window.close();
         return;
     }
+
+    // Make sure we know what host we're on.
+    initApplicationCompatibility();
     
     // Kick off the core pref initalisation code.
     initPrefs();
@@ -1346,14 +1354,24 @@ function pwin_onPrefBrowse(button)
     if (button.hasAttribute("spec"))
         spec = button.getAttribute("spec") + " " + spec;
     
-    var rv = pickOpen(MSG_PREFS_BROWSE_TITLE, spec);
-    if (rv.reason != PICK_OK)
+    var type = button.getAttribute("kind");
+    var edit = button.previousSibling.lastChild;
+
+    var rv;
+    if (type == "folder")
+    {
+        var current = getFileFromURLSpec(edit.value);
+        rv = pickGetFolder(MSG_PREFS_BROWSE_TITLE, current);
+    }
+    else
+    {
+        rv = pickOpen(MSG_PREFS_BROWSE_TITLE, spec);
+    }
+
+    if (!rv.ok)
         return;
     
-    var data = { file: rv.file.path, fileurl: rv.picker.fileURL.spec };
-    var edit = button.previousSibling.lastChild;
-    var type = button.getAttribute("kind");
-    edit.value = data[type];
+    edit.value = (type == "file") ? rv.file.path : rv.picker.fileURL.spec;
 },
 
 // Selection changed on listbox.
@@ -1461,7 +1479,7 @@ function pwin_onPrefListAdd(object)
             var spec = "$all";
             
             var rv = pickOpen(MSG_PREFS_BROWSE_TITLE, spec);
-            if (rv.reason == PICK_OK)
+            if (rv.ok)
             {
                 var data = { file: rv.file.path, fileurl: rv.picker.fileURL.spec };
                 var kind = list.getAttribute("kind");

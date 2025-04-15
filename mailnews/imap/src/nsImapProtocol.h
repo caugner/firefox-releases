@@ -368,7 +368,8 @@ private:
   PRBool       m_imapThreadIsRunning;
   void ImapThreadMainLoop(void);
   PRInt32     m_connectionStatus;
-  
+  nsCString   m_connectionType;
+
   PRBool      m_nextUrlReadyToRun;
   nsWeakPtr   m_server;
   
@@ -407,7 +408,7 @@ private:
   void WaitForPotentialListOfMsgsToFetch(PRUint32 **msgIdList, PRUint32 &msgCount);
   void WaitForPotentialListOfBodysToFetch(PRUint32 **msgIdList, PRUint32 &msgCount);
   void HeaderFetchCompleted();
-  void UploadMessageFromFile(nsIFileSpec* fileSpec, const char* mailboxName,
+  void UploadMessageFromFile(nsIFileSpec* fileSpec, const char* mailboxName, PRTime date,
     imapMessageFlagsType flags);
   
   // mailbox name utilities.

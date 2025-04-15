@@ -694,51 +694,6 @@ nsMathMLContainerFrame::PropagateScriptStyleFor(nsIFrame*       aFrame,
  * =============================================================================
  */
 
-// We use this to wrap non-MathML frames so that foreign elements (e.g.,
-// html:img) can mix better with other surrounding MathML markups.
-// Currently we only wrap nsInlineFrames because problems were observed only
-// in the presence of such frames. By construction, a foreign frame wrapper
-// has one and only one child, and the life of the wrapper is bound to the
-// life of that unique child. Not all child list operations are applicable
-// with a wrapper. One must either use the parent (or the unique child)
-// for such operations (@see nsMathMLForeignFrameWrapper).
-nsresult
-nsMathMLContainerFrame::WrapForeignFrames()
-{
-  nsIFrame* next = mFrames.FirstChild();
-  nsPresContext* presContext = GetPresContext();
-  nsFrameManager *frameManager = presContext->FrameManager();
-
-  while (next) {
-    nsIFrame* child = next;
-    next = next->GetNextSibling();
-    nsInlineFrame* inlineFrame;
-    child->QueryInterface(kInlineFrameCID, (void**)&inlineFrame);
-    if (inlineFrame) {
-      // create a new wrapper frame to wrap this child
-      nsIFrame* wrapper;
-      nsresult rv = NS_NewMathMLForeignFrameWrapper(presContext->PresShell(),
-						    &wrapper);
-      if (NS_FAILED(rv)) return rv;
-      nsRefPtr<nsStyleContext> newStyleContext;
-      newStyleContext = presContext->StyleSet()->
-	ResolvePseudoStyleFor(mContent,
-			      nsCSSAnonBoxes::mozAnonymousBlock,
-			      mStyleContext);
-      rv = wrapper->Init(presContext, mContent, this, newStyleContext, nsnull);
-      if (NS_FAILED(rv)) {
-        wrapper->Destroy(presContext);
-        return rv;
-      }
-      mFrames.ReplaceFrame(this, child, wrapper, PR_FALSE);
-      child->SetParent(wrapper);
-      child->SetNextSibling(nsnull);
-      frameManager->ReParentStyleContext(child, newStyleContext);
-      wrapper->SetInitialChildList(presContext, nsnull, child);
-    }
-  }
-  return NS_OK;
-}
 
 NS_IMETHODIMP
 nsMathMLContainerFrame::Paint(nsPresContext*      aPresContext,
@@ -813,22 +768,8 @@ nsMathMLContainerFrame::SetInitialChildList(nsPresContext* aPresContext,
                                             nsIAtom*        aListName,
                                             nsIFrame*       aChildList)
 {
-  // First, let the base class do its job
-  nsresult rv = nsHTMLContainerFrame::SetInitialChildList(aPresContext, aListName, aChildList);
-
-  // Next, since we are an inline frame, and since we are a container, we have to
-  // be very careful with the way we treat our children. Things look okay when
-  // all of our children are only MathML frames. But there are problems if one of
-  // our children happens to be an nsInlineFrame, e.g., from generated content such
-  // as :before { content: open-quote } or :after { content: close-quote }
-  // The code asserts during reflow (in nsLineLayout::BeginSpan)
-  // Also there are problems when our children are hybrid, e.g., from html markups.
-  // In short, the nsInlineFrame class expects a number of *invariants* that are not
-  // met when we mix things.
-
-  // So wrap foreign children in nsMathMLForeignFrameWrapper frames
-  WrapForeignFrames();
-  return rv;
+  // let the base class do its job
+  return nsHTMLContainerFrame::SetInitialChildList(aPresContext, aListName, aChildList);
 
   // ...We will build our automatic MathML data once the entire <math>...</math>
   // tree is constructed.
@@ -864,10 +805,17 @@ nsMathMLContainerFrame::RebuildAutomaticDataForChildren(nsIFrame* aParentFrame)
 /* static */ nsresult
 nsMathMLContainerFrame::ReLayoutChildren(nsIFrame* aParentFrame)
 {
+  if (!aParentFrame)
+    return NS_OK;
+
   // walk-up to the first frame that is a MathML frame, stop if we reach <math>
   PRInt32 parentScriptLevel = 0;
   nsIFrame* frame = aParentFrame;
-  while (frame) {
+  while (1) {
+     nsIFrame* parent = frame->GetParent();
+     if (!parent || !parent->GetContent())
+       break;
+
     // stop if it is a MathML frame
     nsIMathMLFrame* mathMLFrame;
     frame->QueryInterface(NS_GET_IID(nsIMathMLFrame), (void**)&mathMLFrame);
@@ -877,22 +825,20 @@ nsMathMLContainerFrame::ReLayoutChildren(nsIFrame* aParentFrame)
       parentScriptLevel = parentData.scriptLevel;
       break;
     }
+
     // stop if we reach the root <math> tag
     nsIContent* content = frame->GetContent();
     NS_ASSERTION(content, "dangling frame without a content node");
     if (!content)
-      return NS_ERROR_FAILURE;
-
-    if (content->Tag() == nsMathMLAtoms::math) {
       break;
-    }
+    if (content->Tag() == nsMathMLAtoms::math)
+      break;
+
     // mark the frame dirty, and continue to climb up
     frame->AddStateBits(NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN);
-    frame = frame->GetParent();
+
+    frame = parent;
   }
-  NS_ASSERTION(frame, "bad MathML markup - could not find the top <math> element");
-  if (!frame)
-    return NS_OK;
 
   // re-sync the presentation data and embellishment data of our children
   RebuildAutomaticDataForChildren(frame);
@@ -924,19 +870,16 @@ nsMathMLContainerFrame::ReLayoutChildren(nsIFrame* aParentFrame)
 nsresult
 nsMathMLContainerFrame::ChildListChanged(PRInt32 aModType)
 {
-  if (aModType != nsIDOMMutationEvent::REMOVAL) {
-    // wrap any new foreign child that may have crept in
-    WrapForeignFrames();
-  }
-
   // If this is an embellished frame we need to rebuild the
   // embellished hierarchy by walking-up to the parent of the
   // outermost embellished container.
   nsIFrame* frame = this;
   if (mEmbellishData.coreFrame) {
+    nsIFrame* parent = mParent;
     nsEmbellishData embellishData;
-    for (frame = mParent; frame; frame = frame->GetParent()) {
-      GetEmbellishDataFrom(frame, embellishData);
+    for ( ; parent; frame = parent, parent = parent->GetParent()) {
+      frame->AddStateBits(NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN);
+      GetEmbellishDataFrom(parent, embellishData);
       if (embellishData.coreFrame != mEmbellishData.coreFrame)
         break;
     }
@@ -1044,6 +987,78 @@ nsMathMLContainerFrame::ReflowDirtyChild(nsIPresShell* aPresShell, nsIFrame* aCh
   return NS_OK;
 }
 
+nsresult 
+nsMathMLContainerFrame::ReflowChild(nsIFrame*                aChildFrame,
+                                    nsPresContext*           aPresContext,
+                                    nsHTMLReflowMetrics&     aDesiredSize,
+                                    const nsHTMLReflowState& aReflowState,
+                                    nsReflowStatus&          aStatus)
+{
+  aDesiredSize.width = aDesiredSize.height = 0;
+  aDesiredSize.ascent = aDesiredSize.descent = 0;
+  aDesiredSize.mBoundingMetrics.Clear();
+  aDesiredSize.mFlags |= NS_REFLOW_CALC_BOUNDING_METRICS;
+
+  // Having foreign/hybrid children, e.g., from html markups, is not defined by
+  // the MathML spec. But it can happen in practice, e.g., <html:img> allows us
+  // to do some cool demos... or we may have a child that is an nsInlineFrame
+  // from a generated content such as :before { content: open-quote } or 
+  // :after { content: close-quote }. Unfortunately, the other frames out-there
+  // may expect their own invariants that are not met when we mix things.
+  // Hence we do not claim their support, but we will nevertheless attempt to keep
+  // them in the flow, if we can get their desired size. We observed that most
+  // frames may be reflowed generically, but nsInlineFrames need extra care.
+
+  nsInlineFrame* inlineFrame;
+  aChildFrame->QueryInterface(kInlineFrameCID, (void**)&inlineFrame);
+  if (!inlineFrame)
+    return nsHTMLContainerFrame::
+           ReflowChild(aChildFrame, aPresContext, aDesiredSize, aReflowState,
+                       0, 0, NS_FRAME_NO_MOVE_FRAME, aStatus);
+
+  // extra care for an nsInlineFrame
+  return ReflowForeignChild(aChildFrame, aPresContext, aDesiredSize, aReflowState, aStatus);                       
+}
+
+nsresult 
+nsMathMLContainerFrame::ReflowForeignChild(nsIFrame*                aChildFrame,
+                                           nsPresContext*           aPresContext,
+                                           nsHTMLReflowMetrics&     aDesiredSize,
+                                           const nsHTMLReflowState& aReflowState,
+                                           nsReflowStatus&          aStatus)
+{
+  // don't bother trying to span words as if they were non-breaking beyond this point
+  if (aReflowState.mLineLayout)
+    aReflowState.mLineLayout->ForgetWordFrames();
+
+  nsAutoSpaceManager autoSpaceManager(NS_CONST_CAST(nsHTMLReflowState &, aReflowState));
+  nsresult rv = autoSpaceManager.CreateSpaceManagerFor(aPresContext, this);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // provide a local, self-contained linelayout where to reflow the nsInlineFrame
+  nsSize availSize(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
+  nsLineLayout ll(aPresContext, aReflowState.mSpaceManager, aReflowState.parentReflowState,
+                  aDesiredSize.mComputeMEW);
+  ll.BeginLineReflow(0, 0, availSize.width, availSize.height, PR_FALSE, PR_FALSE);
+  PRBool pushedFrame;
+  ll.ReflowFrame(aChildFrame, aStatus, &aDesiredSize, pushedFrame);
+  NS_ASSERTION(!pushedFrame, "unexpected");
+  ll.EndLineReflow();
+
+  // make up the bounding metrics from the reflow metrics.
+  aDesiredSize.mBoundingMetrics.ascent = aDesiredSize.ascent;
+  aDesiredSize.mBoundingMetrics.descent = aDesiredSize.descent;
+  aDesiredSize.mBoundingMetrics.width = aDesiredSize.width;
+  aDesiredSize.mBoundingMetrics.rightBearing = aDesiredSize.width;
+
+  // Note: MathML's vertical & horizontal alignments happen much later in 
+  // Place(), which is ultimately called from within FinalizeReflow().
+
+  aStatus = NS_FRAME_COMPLETE;
+  NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 nsMathMLContainerFrame::Reflow(nsPresContext*          aPresContext,
                                nsHTMLReflowMetrics&     aDesiredSize,
@@ -1074,8 +1089,10 @@ printf("\n");
                       aDesiredSize.mFlags | NS_REFLOW_CALC_BOUNDING_METRICS);
   nsIFrame* childFrame = mFrames.FirstChild();
   while (childFrame) {
+    nsReflowReason reason = (childFrame->GetStateBits() & NS_FRAME_FIRST_REFLOW)
+      ? eReflowReason_Initial : aReflowState.reason;
     nsHTMLReflowState childReflowState(aPresContext, aReflowState,
-                                       childFrame, availSize);
+                                       childFrame, availSize, reason);
     rv = ReflowChild(childFrame, aPresContext, childDesiredSize,
                      childReflowState, childStatus);
     //NS_ASSERTION(NS_FRAME_IS_COMPLETE(childStatus), "bad status");
@@ -1165,6 +1182,12 @@ nsMathMLContainerFrame::GetType() const
 
   // everything else is treated as ordinary (mapped to 'Ord' in TeX)
   return nsMathMLAtoms::ordinaryMathMLFrame;
+}
+
+PRBool
+nsMathMLContainerFrame::IsFrameOfType(PRUint32 aFlags) const
+{
+  return !(aFlags & ~nsIFrame::eMathML);
 }
 
 enum eMathMLFrameType {

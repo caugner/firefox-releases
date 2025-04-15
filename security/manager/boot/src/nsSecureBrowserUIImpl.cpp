@@ -62,6 +62,7 @@
 #include "nsIDocShell.h"
 #include "nsIDocumentViewer.h"
 #include "nsIDocument.h"
+#include "nsIPrincipal.h"
 #include "nsIDOMElement.h"
 #include "nsPIDOMWindow.h"
 #include "nsIContent.h"
@@ -196,10 +197,13 @@ nsSecureBrowserUIImpl::Init(nsIDOMWindow *window)
   nsCOMPtr<nsIStringBundleService> service(do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv));
   if (NS_FAILED(rv)) return rv;
   
-  rv = service->CreateBundle(SECURITY_STRING_BUNDLE_URL,
-                             getter_AddRefs(mStringBundle));
-  if (NS_FAILED(rv)) return rv;
-  
+  // We do not need to test for mStringBundle here...
+  // Anywhere we use it, we will test before using.  Some
+  // embedded users of PSM may want to reuse our
+  // nsSecureBrowserUIImpl implementation without the
+  // bundle.
+  service->CreateBundle(SECURITY_STRING_BUNDLE_URL, getter_AddRefs(mStringBundle));
+
   // hook up to the form post notifications:
   nsCOMPtr<nsIObserverService> svc(do_GetService("@mozilla.org/observer-service;1", &rv));
   if (NS_SUCCEEDED(rv)) {
@@ -268,7 +272,12 @@ nsSecureBrowserUIImpl::GetState(PRUint32* aState)
 NS_IMETHODIMP
 nsSecureBrowserUIImpl::GetTooltipText(nsAString& aText)
 {
-  if (!mInfoTooltip.IsEmpty())
+  if (mPreviousSecurityState == lis_mixed_security)
+  {
+    GetBundleString(NS_LITERAL_STRING("SecurityButtonMixedContentTooltipText").get(),
+                    aText);
+  }
+  else if (!mInfoTooltip.IsEmpty())
   {
     aText = mInfoTooltip;
   }
@@ -351,10 +360,30 @@ nsSecureBrowserUIImpl::Notify(nsIContent* formNode,
   nsCOMPtr<nsIDocument> document = formNode->GetDocument();
   if (!document) return NS_OK;
 
-  nsIURI *formURL = document->GetBaseURI();
+  nsIPrincipal *principal = document->GetPrincipal();
+  
+  if (!principal)
+  {
+    *cancelSubmit = PR_TRUE;
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIURI> formURL;
+  if (NS_FAILED(principal->GetURI(getter_AddRefs(formURL))) ||
+      !formURL)
+  {
+    formURL = document->GetDocumentURI();
+  }
 
   nsCOMPtr<nsIDOMWindow> postingWindow =
     do_QueryInterface(document->GetWindow());
+  // We can't find this document's window, cancel it.
+  if (!postingWindow)
+  {
+    NS_WARNING("If you see this and can explain why it should be allowed, note in Bug 332324");
+    *cancelSubmit = PR_TRUE;
+    return NS_OK;
+  }
 
   PRBool isChild;
   IsChildOfDomWindow(mWindow, postingWindow, &isChild);
@@ -610,11 +639,13 @@ nsSecureBrowserUIImpl::OnStateChange(nsIWebProgress* aWebProgress,
   }
 
 #ifdef PR_LOGGING
-  nsXPIDLCString reqname;
-  aRequest->GetName(reqname);
-  PR_LOG(gSecureDocLog, PR_LOG_DEBUG,
-         ("SecureUI:%p: %p %p OnStateChange %x %s\n", this, aWebProgress, aRequest,
-            aProgressStateFlags, reqname.get()));
+  if (PR_LOG_TEST(gSecureDocLog, PR_LOG_DEBUG)) {
+    nsXPIDLCString reqname;
+    aRequest->GetName(reqname);
+    PR_LOG(gSecureDocLog, PR_LOG_DEBUG,
+           ("SecureUI:%p: %p %p OnStateChange %x %s\n", this, aWebProgress,
+            aRequest, aProgressStateFlags, reqname.get()));
+  }
 #endif
 
   nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest));

@@ -59,7 +59,7 @@
         id="downloadManager" windowtype="Download:Manager"
         orient="vertical" title="&downloads.title;" statictitle="&downloads.title;"
         width="&window.width;" height="&window.height;" screenX="10" screenY="10"
-        persist="width height screenX screenY sizeMode"
+        persist="width height screenX screenY sizemode"
         onload="Startup();" onunload="Shutdown();"
         onclose="return closeWindow(false);">
       
@@ -110,8 +110,14 @@
     <menuitem id="menuitem_openWith" 
               label="&cmd.openWith.label;" accesskey="&cmd.openWith.accesskey;"
               oncommand="fireEventForElement(gDownloadsView.selectedItem, 'openWith');"/>
-    <menuitem id="menuitem_show" 
-              label="&cmd.show.label;" accesskey="&cmd.show.accesskey;"
+    <menuitem id="menuitem_show"
+#ifdef XP_MACOSX
+              label="&cmd.show.labelMac;"
+              accesskey="&cmd.show.accesskeyMac;"
+#else
+              label="&cmd.show.label;"
+              accesskey="&cmd.show.accesskey;"
+#endif
               oncommand="fireEventForElement(gDownloadsView.selectedItem, 'show');"/>
 
     <menuitem id="menuitem_retry" default="true"

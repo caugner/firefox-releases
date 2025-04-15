@@ -141,7 +141,8 @@ typedef PRUint32 NSFastLoadOID;         // nsFastLoadFooter::mObjectMap index
 
 #define MFL_FILE_VERSION_0      0
 #define MFL_FILE_VERSION_1      1000
-#define MFL_FILE_VERSION        4       // fix to note singletons in object map
+#define MFL_FILE_VERSION        5       // rev'ed to defend against unversioned
+                                        // XPCOM JS component fastload files
 
 /**
  * Compute Fletcher's 16-bit checksum over aLength bytes starting at aBuffer,
@@ -296,6 +297,9 @@ class nsFastLoadFileReader
     NS_IMETHODIMP ReadSegments(nsWriteSegmentFun aWriter, void* aClosure,
                                PRUint32 aCount, PRUint32 *aResult);
 
+    // Override SetInputStream so we can update mSeekableInput
+    NS_IMETHOD SetInputStream(nsIInputStream* aInputStream);
+
     nsresult ReadHeader(nsFastLoadHeader *aHeader);
 
     /**
@@ -384,6 +388,9 @@ class nsFastLoadFileReader
     NS_IMETHOD Close();
 
   protected:
+    // Kept in sync with mInputStream to avoid repeated QI
+    nsCOMPtr<nsISeekableStream> mSeekableInput;
+
     nsFastLoadHeader mHeader;
     nsFastLoadFooter mFooter;
 
@@ -446,6 +453,9 @@ class nsFastLoadFileWriter
                                    PRBool aIsStrongRef);
     NS_IMETHOD WriteID(const nsID& aID);
 
+    // Override SetOutputStream so we can update mSeekableOutput
+    NS_IMETHOD SetOutputStream(nsIOutputStream* aOutputStream);
+
     // nsIFastLoadFileControl methods
     NS_DECL_NSIFASTLOADFILECONTROL
 
@@ -498,6 +508,9 @@ class nsFastLoadFileWriter
                            void *aData);
 
   protected:
+    // Kept in sync with mOutputStream to avoid repeated QI
+    nsCOMPtr<nsISeekableStream> mSeekableOutput;
+
     nsFastLoadHeader mHeader;
 
     PLDHashTable mIDMap;
@@ -556,6 +569,9 @@ class nsFastLoadFileUpdater
 
   protected:
     nsCOMPtr<nsIInputStream> mInputStream;
+
+    // Kept in sync with mInputStream to avoid repeated QI
+    nsCOMPtr<nsISeekableStream> mSeekableInput;
 };
 
 NS_COM nsresult

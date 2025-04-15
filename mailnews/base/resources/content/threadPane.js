@@ -77,7 +77,7 @@ function ThreadPaneOnClick(event)
         // double clicking should not toggle the open / close state of the 
         // thread.  this will happen if we don't prevent the event from
         // bubbling to the default handler in tree.xml
-        event.preventBubble();
+        event.stopPropagation();
       }
       else if (col.value.id == "junkStatusCol") {
         MsgJunkMailInfo(true);
@@ -85,7 +85,7 @@ function ThreadPaneOnClick(event)
       else if (col.value.id == "threadCol" && !event.shiftKey &&
           (event.ctrlKey || event.metaKey)) {
         gDBView.ExpandAndSelectThreadByIndex(row.value, true);
-        event.preventBubble();
+        event.stopPropagation();
       }
     }
 }
@@ -104,10 +104,10 @@ nsMsgDBViewCommandUpdater.prototype =
 
   displayMessageChanged : function(aFolder, aSubject, aKeywords)
   {
-    setTitleFromFolder(aFolder, aSubject);
+    if (!gDBView.suppressMsgDisplay)
+      setTitleFromFolder(aFolder, aSubject);
     ClearPendingReadTimer(); // we are loading / selecting a new message so kill the mark as read timer for the currently viewed message
     gHaveLoadedMessage = true;
-    SetKeywords(aKeywords);
     goUpdateCommand("button_junk");
   },
 
@@ -216,9 +216,9 @@ function MsgSortByStatus()
     MsgSortThreadPane(nsMsgViewSortType.byStatus);
 }
 
-function MsgSortByLabel()
+function MsgSortByTags()
 {
-    MsgSortThreadPane(nsMsgViewSortType.byLabel);
+    MsgSortThreadPane(nsMsgViewSortType.byTags);
 }
 
 function MsgSortByJunkStatus()
@@ -359,9 +359,10 @@ function MsgGroupBySort()
 
   var sortTypeSupportsGrouping = (sortType == nsMsgViewSortType.byAuthor 
          || sortType == nsMsgViewSortType.byDate || sortType == nsMsgViewSortType.byPriority
-         || sortType == nsMsgViewSortType.bySubject || sortType == nsMsgViewSortType.byLabel
+         || sortType == nsMsgViewSortType.bySubject || sortType == nsMsgViewSortType.byTags
          || sortType == nsMsgViewSortType.byStatus  || sortType == nsMsgViewSortType.byRecipient
-         || sortType == nsMsgViewSortType.byAccount);
+         || sortType == nsMsgViewSortType.byAccount || sortType == nsMsgViewSortType.byFlagged
+         || sortType == nsMsgViewSortType.byAttachments);
 
   if (!dbview.supportsThreading || !sortTypeSupportsGrouping)
     return; // we shouldn't be trying to group something we don't support grouping for...
@@ -416,17 +417,17 @@ function UpdateSortIndicators(sortType, sortOrder)
 {
   // show the twisties if the view is threaded
   var threadCol = document.getElementById("threadCol");
-  var currCol;
   var sortedColumn;
   // set the sort indicator on the column we are sorted by
   var colID = ConvertSortTypeToColumnID(sortType);
   if (colID)
     sortedColumn = document.getElementById(colID);
 
-  currCol = gDBView.viewFlags & nsMsgViewFlagsType.kGroupBySort 
+  var dbview = GetDBView();
+  var currCol = dbview.viewFlags & nsMsgViewFlagsType.kGroupBySort 
     ? sortedColumn : document.getElementById("subjectCol");
 
-  if (gDBView.viewFlags & nsMsgViewFlagsType.kGroupBySort)
+  if (dbview.viewFlags & nsMsgViewFlagsType.kGroupBySort)
   {
     var threadTree = document.getElementById("threadTree");  
     var subjectCol = document.getElementById("subjectCol");
@@ -443,10 +444,10 @@ function UpdateSortIndicators(sortType, sortOrder)
   }
 
   // clear primary attribute from group column if going to a non-grouped view.
-  if (!(gDBView.viewFlags & nsMsgViewFlagsType.kGroupBySort))
+  if (!(dbview.viewFlags & nsMsgViewFlagsType.kGroupBySort))
     document.getElementById("threadCol").collapsed = false;
 
-  if ((GetDBView().viewFlags & nsMsgViewFlagsType.kThreadedDisplay) && !groupedBySortUsingDummyRow()) {
+  if ((dbview.viewFlags & nsMsgViewFlagsType.kThreadedDisplay) && !groupedBySortUsingDummyRow()) {
     threadCol.setAttribute("sortDirection", "ascending");
     currCol.setAttribute("primary", "true");
   }
@@ -531,7 +532,7 @@ function ThreadPaneOnLoad()
 
 function ThreadPaneSelectionChanged()
 {
-  UpdateStatusMessageCounts(msgWindow.openFolder);
+  UpdateStatusMessageCounts(gMsgFolderSelected);
   if (!gRightMouseButtonDown)
     GetThreadTree().view.selectionChanged();
 }

@@ -813,8 +813,15 @@ HTMLContentSink::AddAttributes(const nsIParserNode& aNode,
 
     // Get value and remove mandatory quotes
     static const char* kWhitespace = "\n\r\t\b";
+
+    // Bug 114997: Don't trim whitespace on <input value="...">:
+    // Using ?: outside the function call would be more efficient, but
+    // we don't trust ?: with references.
     const nsAString& v =
-      nsContentUtils::TrimCharsInSet(kWhitespace, aNode.GetValueAt(i));
+      nsContentUtils::TrimCharsInSet(
+        (nodeType == eHTMLTag_input &&
+          keyAtom == nsHTMLAtoms::value) ?
+        "" : kWhitespace, aNode.GetValueAt(i));
 
     if (nodeType == eHTMLTag_a && keyAtom == nsHTMLAtoms::name) {
       NS_ConvertUCS2toUTF8 cname(v);
@@ -1144,6 +1151,12 @@ SinkContext::OpenContainer(const nsIParserNode& aNode)
                   mStackPos, 
                   mSink);
 
+  if (mStackPos <= 0) {
+    NS_ERROR("container w/o parent");
+
+    return NS_ERROR_FAILURE;
+  }
+
   nsresult rv;
   if (mStackPos + 1 > mStackSize) {
     rv = GrowStack();
@@ -1167,6 +1180,7 @@ SinkContext::OpenContainer(const nsIParserNode& aNode)
   mStack[mStackPos].mContent = content;
   mStack[mStackPos].mNumFlushed = 0;
   mStack[mStackPos].mInsertionPoint = -1;
+  ++mStackPos;
 
   // Make sure to add base tag info, if needed, before setting any other
   // attributes -- what URI attrs do will depend on the base URI.  Only do this
@@ -1200,23 +1214,15 @@ SinkContext::OpenContainer(const nsIParserNode& aNode)
   
   rv = mSink->AddAttributes(aNode, content);
 
-  if (mStackPos <= 0) {
-    NS_ERROR("container w/o parent");
+  nsGenericHTMLElement* parent = mStack[mStackPos - 2].mContent;
 
-    return NS_ERROR_FAILURE;
-  }
-
-  nsGenericHTMLElement* parent = mStack[mStackPos - 1].mContent;
-
-  if (mStack[mStackPos - 1].mInsertionPoint != -1) {
+  if (mStack[mStackPos - 2].mInsertionPoint != -1) {
     parent->InsertChildAt(content,
-                          mStack[mStackPos - 1].mInsertionPoint++,
+                          mStack[mStackPos - 2].mInsertionPoint++,
                           PR_FALSE);
   } else {
     parent->AppendChildTo(content, PR_FALSE);
   }
-
-  mStackPos++;
 
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1495,7 +1501,8 @@ SinkContext::AddComment(const nsIParserNode& aNode)
   }
   
   nsCOMPtr<nsIContent> comment;
-  nsresult rv = NS_NewCommentNode(getter_AddRefs(comment));
+  nsresult rv = NS_NewCommentNode(getter_AddRefs(comment),
+                                  mSink->mNodeInfoManager);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDOMComment> domComment(do_QueryInterface(comment));
@@ -1735,7 +1742,8 @@ SinkContext::FlushText(PRBool* aDidFlush, PRBool aReleaseLast)
       }
     } else {
       nsCOMPtr<nsITextContent> textContent;
-      rv = NS_NewTextNode(getter_AddRefs(textContent));
+      rv = NS_NewTextNode(getter_AddRefs(textContent),
+                          mSink->mNodeInfoManager);
       NS_ENSURE_SUCCESS(rv, rv);
 
       mLastTextNode = textContent;
@@ -3080,7 +3088,7 @@ HTMLContentSink::SetDocumentTitle(const nsAString& aTitle, const nsIParserNode* 
   }
 
   nsCOMPtr<nsITextContent> text;
-  rv = NS_NewTextNode(getter_AddRefs(text));
+  rv = NS_NewTextNode(getter_AddRefs(text), mNodeInfoManager);
   NS_ENSURE_SUCCESS(rv, rv);
 
   text->SetText(title, PR_TRUE);
@@ -4107,7 +4115,7 @@ HTMLContentSink::ProcessSCRIPTTag(const nsIParserNode& aNode)
 
   if (!script.IsEmpty()) {
     nsCOMPtr<nsITextContent> text;
-    rv = NS_NewTextNode(getter_AddRefs(text));
+    rv = NS_NewTextNode(getter_AddRefs(text), mNodeInfoManager);
     NS_ENSURE_SUCCESS(rv, rv);
 
     text->SetText(script, PR_TRUE);
@@ -4244,7 +4252,7 @@ HTMLContentSink::ProcessSTYLETag(const nsIParserNode& aNode)
   if (!content.IsEmpty()) {
     // Create a text node holding the content
     nsCOMPtr<nsITextContent> text;
-    rv = NS_NewTextNode(getter_AddRefs(text));
+    rv = NS_NewTextNode(getter_AddRefs(text), mNodeInfoManager);
     NS_ENSURE_SUCCESS(rv, rv);
 
     text->SetText(content, PR_TRUE);

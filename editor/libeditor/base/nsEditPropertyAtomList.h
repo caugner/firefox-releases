@@ -14,7 +14,7 @@
  * The Original Code is editor atom table.
  *
  * The Initial Developer of the Original Code is
- * Netscape communications Corp.
+ * Netscape Communications Corp.
  * Portions created by the Initial Developer are Copyright (C) 2003
  * the Initial Developer. All Rights Reserved.
  *
@@ -145,6 +145,7 @@ EDITOR_ATOM(cssBorder, "border")
 EDITOR_ATOM(cssBottom, "bottom")
 EDITOR_ATOM(cssCaptionSide, "caption-side")
 EDITOR_ATOM(cssColor, "color")
+EDITOR_ATOM(cssDirection, "direction")
 EDITOR_ATOM(cssFloat, "float")
 EDITOR_ATOM(cssFontFamily, "font-family")
 EDITOR_ATOM(cssFontSize, "font-size")

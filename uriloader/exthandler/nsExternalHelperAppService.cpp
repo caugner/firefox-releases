@@ -108,6 +108,10 @@
 #include "nsIGlobalHistory.h" // to mark downloads as visited
 #include "nsIGlobalHistory2.h" // to mark downloads as visited
 
+#include "nsIDOMWindow.h"
+#include "nsIDOMWindowInternal.h"
+#include "nsIDocShell.h"
+
 #include "nsCRT.h"
 
 #ifdef PR_LOGGING
@@ -1224,6 +1228,46 @@ PRBool nsExternalHelperAppService::promptForScheme(nsIURI* aURI,
   aURI->GetSpec(spec);
   NS_ConvertUTF8toUTF16 uri(spec);
 
+  // The maximum amount of space the URI should take up in the dialog.
+  const PRUint32 maxWidth = 75;
+  const PRUint32 maxLines = 12; // (not counting ellipsis line)
+  const PRUint32 maxLength = maxWidth * maxLines;
+
+  // If the URI seems too long, insert zero-width spaces to make it wrappable
+  // and crop it in the middle (replacing the cropped portion with an ellipsis),
+  // so the dialog doesn't grow so wide or tall it renders buttons off-screen.
+  if (uri.Length() > maxWidth) {
+    PRUint32 charIdx = maxWidth;
+    PRUint32 lineIdx = 1;
+    
+    PRInt32 numCharsToCrop = uri.Length() - maxLength;
+
+    while (charIdx < uri.Length()) {
+      // Don't insert characters in the middle of a surrogate pair.
+      if (IS_LOW_SURROGATE(uri[charIdx]))
+        --charIdx;
+
+      if (numCharsToCrop > 0 && lineIdx == maxLines / 2) {
+        NS_NAMED_LITERAL_STRING(ellipsis, "\n...\n");
+
+        // Don't end the crop in the middle of a surrogate pair.
+        if (IS_HIGH_SURROGATE(uri[charIdx + numCharsToCrop - 1]))
+          ++numCharsToCrop;
+
+        uri.Replace(charIdx, numCharsToCrop, ellipsis);
+        charIdx += ellipsis.Length();
+      }
+      else {
+        // 0x200B is the zero-width breakable space character.
+        uri.Insert(PRUnichar(0x200B), charIdx);
+        charIdx += 1;
+      }
+  
+      charIdx += maxWidth;
+      ++lineIdx;
+    }
+  }
+
   nsCAutoString asciischeme;
   aURI->GetScheme(asciischeme);
   NS_ConvertUTF8toUTF16 scheme(asciischeme);
@@ -1349,6 +1393,7 @@ NS_INTERFACE_MAP_BEGIN(nsExternalAppHandler)
    NS_INTERFACE_MAP_ENTRY(nsIRequestObserver)
    NS_INTERFACE_MAP_ENTRY(nsIHelperAppLauncher)   
    NS_INTERFACE_MAP_ENTRY(nsICancelable)
+   NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
 NS_INTERFACE_MAP_END_THREADSAFE
 
 nsExternalAppHandler::nsExternalAppHandler(nsIMIMEInfo * aMIMEInfo,
@@ -1358,8 +1403,10 @@ nsExternalAppHandler::nsExternalAppHandler(nsIMIMEInfo * aMIMEInfo,
                                            PRUint32 aReason)
 : mMimeInfo(aMIMEInfo)
 , mWindowContext(aWindowContext)
+, mWindowToClose(nsnull)
 , mSuggestedFileName(aSuggestedFilename)
 , mCanceled(PR_FALSE)
+, mShouldCloseWindow(PR_FALSE)
 , mReceivedDispositionInfo(PR_FALSE)
 , mStopRequestIssued(PR_FALSE)
 , mProgressListenerInitialized(PR_FALSE)
@@ -1601,6 +1648,10 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest *request, nsISuppo
 {
   NS_PRECONDITION(request, "OnStartRequest without request?");
 
+  // Set mTimeDownloadStarted here as the download has already started and
+  // we want to record the start time before showing the filepicker.
+  mTimeDownloadStarted = PR_Now();
+
   mRequest = request;
 
   nsCOMPtr<nsIChannel> aChannel = do_QueryInterface(request);
@@ -1617,6 +1668,14 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest *request, nsISuppo
     PRInt32 len;
     aChannel->GetContentLength(&len);
     mContentLength = len;
+  }
+
+  // Determine whether a new window was opened specifically for this request
+  if (props) {
+    PRBool tmp = PR_FALSE;
+    props->GetPropertyAsBool(NS_LITERAL_STRING("docshell.newWindowTarget"),
+                             &tmp);
+    mShouldCloseWindow = tmp;
   }
 
   // Now get the URI
@@ -1642,6 +1701,24 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest *request, nsISuppo
 
   // retarget all load notifications to our docloader instead of the original window's docloader...
   RetargetLoadNotifications(request);
+
+  // Check to see if there is a refresh header on the original channel.
+  if (mOriginalChannel) {
+    nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(mOriginalChannel));
+    if (httpChannel) {
+      nsCAutoString refreshHeader;
+      httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("refresh"),
+                                     refreshHeader);
+      if (!refreshHeader.IsEmpty()) {
+        mShouldCloseWindow = PR_FALSE;
+      }
+    }
+  }
+
+  // Close the underlying DOMWindow if there is no refresh header
+  // and it was opened specifically for the download
+  MaybeCloseWindow();
+
   nsCOMPtr<nsIEncodedChannel> encChannel = do_QueryInterface( aChannel );
   if (encChannel) 
   {
@@ -1680,18 +1757,22 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest *request, nsISuppo
     encChannel->SetApplyConversion( applyConversion );
   }
 
-  mTimeDownloadStarted = PR_Now();
+  // now that the temp file is set up, find out if we need to invoke a dialog
+  // asking the user what they want us to do with this content...
 
-  // now that the temp file is set up, find out if we need to invoke a dialog asking the user what
-  // they want us to do with this content...
+  // We can get here for three reasons: "can't handle", "sniffed type", or
+  // "server sent content-disposition:attachment".  In the first case we want
+  // to honor the user's "always ask" pref; in the other two cases we want to
+  // honor it only if the default action is "save".  Opening attachments in
+  // helper apps by default breaks some websites (especially if the attachment
+  // is one part of a multipart document).  Opening sniffed content in helper
+  // apps by default introduces security holes that we'd rather not have.
+
+  // So let's find out whether the user wants to be prompted.  If he does not,
+  // check mReason and the preferred action to see what we should do.
 
   PRBool alwaysAsk = PR_TRUE;
-  // If we're handling an attachment we want to default to saving but
-  // always ask just in case
-  if (mReason == nsIHelperAppLauncherDialog::REASON_CANTHANDLE)
-  {
-    mMimeInfo->GetAlwaysAskBeforeHandling(&alwaysAsk);
-  }
+  mMimeInfo->GetAlwaysAskBeforeHandling(&alwaysAsk);
   if (alwaysAsk)
   {
     // But we *don't* ask if this mimeInfo didn't come from
@@ -1717,6 +1798,16 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest *request, nsISuppo
     }
   }
 
+  PRInt32 action = nsIMIMEInfo::saveToDisk;
+  mMimeInfo->GetPreferredAction( &action );
+
+  // OK, now check why we're here
+  if (!alwaysAsk && mReason != nsIHelperAppLauncherDialog::REASON_CANTHANDLE) {
+    // Force asking if we're not saving.  See comment back when we fetched the
+    // alwaysAsk boolean for details.
+    alwaysAsk = (action != nsIMIMEInfo::saveToDisk);
+  }
+
   if (alwaysAsk)
   {
     // do this first! make sure we don't try to take an action until the user tells us what they want to do
@@ -1739,8 +1830,6 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest *request, nsISuppo
     mReceivedDispositionInfo = PR_TRUE; // no need to wait for a response from the user
 
     // We need to do the save/open immediately, then.
-    PRInt32 action = nsIMIMEInfo::saveToDisk;
-    mMimeInfo->GetPreferredAction( &action );
 #ifdef XP_WIN
     /* We need to see whether the file we've got here could be
      * executable.  If it could, we had better not try to open it!
@@ -2118,6 +2207,9 @@ nsresult nsExternalAppHandler::CreateProgressListener()
   if (NS_SUCCEEDED(rv))
     InitializeDownload(tr);
 
+  if (tr)
+    tr->OnStateChange(nsnull, mRequest, nsIWebProgressListener::STATE_START, NS_OK);
+
   // note we might not have a listener here if the QI() failed, or if
   // there is no nsITransfer object, but we still call
   // SetWebProgressListener() to make sure our progress state is sane
@@ -2125,9 +2217,6 @@ nsresult nsExternalAppHandler::CreateProgressListener()
   // its observer). This cycle will be broken in Cancel, CloseProgressWindow or
   // OnStopRequest.
   SetWebProgressListener(tr);
-
-  if (tr)
-    tr->OnStateChange(nsnull, mRequest, nsIWebProgressListener::STATE_START, NS_OK);
 
   return rv;
 }
@@ -2481,8 +2570,9 @@ void nsExternalAppHandler::ProcessAnyRefreshTags()
    if (mWindowContext && mOriginalChannel)
    {
      nsCOMPtr<nsIRefreshURI> refreshHandler (do_GetInterface(mWindowContext));
-     if (refreshHandler)
+     if (refreshHandler) {
         refreshHandler->SetupRefreshURI(mOriginalChannel);
+     }
      mOriginalChannel = nsnull;
    }
 }
@@ -2514,6 +2604,49 @@ PRBool nsExternalAppHandler::GetNeverAskFlagFromPref(const char * prefName, cons
   return PR_TRUE;
 }
 
+nsresult nsExternalAppHandler::MaybeCloseWindow()
+{
+  nsCOMPtr<nsIDOMWindow> window(do_GetInterface(mWindowContext));
+  nsCOMPtr<nsIDOMWindowInternal> internalWindow = do_QueryInterface(window);
+  NS_ENSURE_STATE(internalWindow);
+
+  if (mShouldCloseWindow) {
+    // Reset the window context to the opener window so that the dependent
+    // dialogs have a parent
+    nsCOMPtr<nsIDOMWindowInternal> opener;
+    internalWindow->GetOpener(getter_AddRefs(opener));
+
+    PRBool isClosed;
+    if (opener && NS_SUCCEEDED(opener->GetClosed(&isClosed)) && !isClosed) {
+      mWindowContext = do_GetInterface(opener);
+
+      // Now close the old window.  Do it on a timer so that we don't run
+      // into issues trying to close the window before it has fully opened.
+      NS_ASSERTION(!mTimer, "mTimer was already initialized once!");
+      mTimer = do_CreateInstance("@mozilla.org/timer;1");
+      if (!mTimer) {
+        return NS_ERROR_FAILURE;
+      }
+
+      mTimer->InitWithCallback(this, 0, nsITimer::TYPE_ONE_SHOT);
+      mWindowToClose = internalWindow;
+    }
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsExternalAppHandler::Notify(nsITimer* timer)
+{
+  NS_ASSERTION(mWindowToClose, "No window to close after timer fired");
+
+  mWindowToClose->Close();
+  mWindowToClose = nsnull;
+  mTimer = nsnull;
+
+  return NS_OK;
+}
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // The following section contains our nsIMIMEService implementation and related methods.
 //
@@ -2855,4 +2988,3 @@ PRBool nsExternalHelperAppService::GetTypeFromExtras(const nsACString& aExtensio
 
   return PR_FALSE;
 }
-

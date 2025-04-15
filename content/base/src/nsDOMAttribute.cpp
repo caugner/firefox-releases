@@ -46,6 +46,7 @@
 #include "nsDOMString.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
+#include "nsCOMArray.h"
 
 //----------------------------------------------------------------------
 PRBool nsDOMAttribute::sInitialized;
@@ -70,7 +71,10 @@ nsDOMAttribute::~nsDOMAttribute()
     doc->PropertyTable()->DeleteAllPropertiesFor(this);
 
   NS_IF_RELEASE(mChild);
-  NS_IF_RELEASE(mChildList);
+  if (mChildList) {
+    mChildList->DropReference();
+    NS_RELEASE(mChildList);
+  }
 }
 
 
@@ -78,6 +82,7 @@ nsDOMAttribute::~nsDOMAttribute()
 NS_INTERFACE_MAP_BEGIN(nsDOMAttribute)
   NS_INTERFACE_MAP_ENTRY(nsIDOMAttr)
   NS_INTERFACE_MAP_ENTRY(nsIAttribute)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMGCParticipant)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNode)
   NS_INTERFACE_MAP_ENTRY(nsIDOM3Node)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMAttr)
@@ -87,6 +92,29 @@ NS_INTERFACE_MAP_END
 
 NS_IMPL_ADDREF(nsDOMAttribute)
 NS_IMPL_RELEASE(nsDOMAttribute)
+
+// nsIDOMGCParticipant methods
+nsIDOMGCParticipant*
+nsDOMAttribute::GetSCCIndex()
+{
+  nsIContent *owner = GetContentInternal();
+
+  return owner ? owner->GetSCCIndex() : this;
+}
+
+void
+nsDOMAttribute::AppendReachableList(nsCOMArray<nsIDOMGCParticipant>& aArray)
+{
+  NS_ASSERTION(GetContentInternal() == nsnull,
+               "shouldn't be an SCC index if we're in an element");
+
+  // This node is the root of a subtree that's been removed from the
+  // document (since AppendReachableList is only called on SCC index
+  // nodes).  The document is reachable from it (through
+  // .ownerDocument), but it's not reachable from the document.
+  nsCOMPtr<nsIDOMGCParticipant> participant = do_QueryInterface(GetOwnerDoc());
+  aArray.AppendObject(participant);
+}
 
 void
 nsDOMAttribute::SetMap(nsDOMAttributeMap *aMap)
@@ -270,8 +298,8 @@ nsDOMAttribute::GetFirstChild(nsIDOMNode** aFirstChild)
   if (!value.IsEmpty()) {
     if (!mChild) {
       nsCOMPtr<nsITextContent> content;
-
-      result = NS_NewTextNode(getter_AddRefs(content));
+      result = NS_NewTextNode(getter_AddRefs(content),
+                              mNodeInfo->NodeInfoManager());
       if (NS_FAILED(result)) {
         return result;
       }
@@ -425,7 +453,7 @@ nsDOMAttribute::SetPrefix(const nsAString& aPrefix)
     }
   }
 
-  newNodeInfo.swap(mNodeInfo);
+  mNodeInfo.swap(newNodeInfo);
 
   return NS_OK;
 }

@@ -1,5 +1,5 @@
-/Makefile/1.9/Sun Apr 25 15:03:01 2004//TFIREFOX_1_5_RELEASE
-/manifest.mn/1.15/Wed Apr  6 21:35:44 2005//TFIREFOX_1_5_RELEASE
+/Makefile/1.9/Sun Apr 25 15:03:01 2004//TFIREFOX_2_0_RELEASE
+/manifest.mn/1.15.14.1/Fri Feb  3 22:30:32 2006//TFIREFOX_2_0_RELEASE
 D/asn1////
 D/base////
 D/certdb////
@@ -8,7 +8,6 @@ D/ckfw////
 D/crmf////
 D/cryptohi////
 D/dev////
-D/fortcrypt////
 D/freebl////
 D/jar////
 D/nss////

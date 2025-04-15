@@ -139,10 +139,14 @@ NS_IMETHODIMP nsMsgFilterService::CloseFilterList(nsIMsgFilterList *filterList)
 /* save without deleting */
 NS_IMETHODIMP	nsMsgFilterService::SaveFilterList(nsIMsgFilterList *filterList, nsIFileSpec *filterFile)
 {
-	nsresult ret = NS_OK;
+  NS_ENSURE_ARG_POINTER(filterFile);
+  NS_ENSURE_ARG_POINTER(filterList);
+
+  nsresult ret = NS_OK;
   nsCOMPtr <nsIFileSpec> tmpFiltersFile;
   nsCOMPtr <nsIFileSpec> realFiltersFile;
   nsCOMPtr <nsIFileSpec> parentDir;
+
 
   nsSpecialSystemDirectory tmpFile(nsSpecialSystemDirectory::OS_TemporaryDirectory);
   tmpFile += "tmprules.dat";
@@ -390,6 +394,8 @@ nsresult nsMsgFilterAfterTheFact::RunNextFilter()
     m_searchSession->UnregisterListener(this);
   m_searchSession = do_CreateInstance(NS_MSGSEARCHSESSION_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  nsMsgSearchScopeValue searchScope = nsMsgSearchScope::offlineMail;
   PRUint32 termCount;
   searchTerms->Count(&termCount);
   for (PRUint32 termIndex = 0; termIndex < termCount; termIndex++)
@@ -401,13 +407,7 @@ nsresult nsMsgFilterAfterTheFact::RunNextFilter()
     NS_ENSURE_SUCCESS(rv, rv);
   }
   m_searchSession->RegisterListener(this);
-  // get incoming server for folder and get search scope from there.
-  nsCOMPtr <nsIMsgIncomingServer> incomingServer;
-  rv = m_curFolder->GetServer(getter_AddRefs(incomingServer));
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsMsgSearchScopeValue searchScope;
 
-  incomingServer->GetSearchScope(&searchScope);
   rv = m_searchSession->AddScopeTerm(searchScope, m_curFolder);
   NS_ENSURE_SUCCESS(rv, rv);
   // it's possible that this error handling will need to be rearranged when mscott lands the UI for
@@ -647,6 +647,13 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter()
             m_curFolder->SetLabelForMessages(m_searchHitHdrs, filterLabel);
         }
         break;
+      case nsMsgFilterAction::AddTag:
+        {
+            nsXPIDLCString keyword;
+            filterAction->GetStrValue(getter_Copies(keyword));
+            m_curFolder->AddKeywordToMessages(m_searchHitHdrs, keyword.get());
+        }
+        break;
       case nsMsgFilterAction::JunkScore:
       {
         nsCAutoString junkScoreStr;
@@ -752,7 +759,7 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter()
               m_searchHitHdrs->QueryElementAt(msgIndex, NS_GET_IID(nsIMsgDBHdr), getter_AddRefs(msgHdr));
               if (msgHdr)
               {
-	        PRUint32 flags = 0;
+                PRUint32 flags = 0;
                 msgHdr->GetFlags(&flags);
                 if (flags & MSG_FLAG_PARTIAL)
                 {

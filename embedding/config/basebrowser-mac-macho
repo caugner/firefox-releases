@@ -61,6 +61,7 @@ components/docshell.xpt
 ; dom
 components/dom.xpt                      
 components/dom_base.xpt
+components/dom_canvas.xpt
 components/dom_core.xpt
 components/dom_css.xpt
 components/dom_events.xpt
@@ -71,6 +72,7 @@ components/dom_traversal.xpt
 components/dom_views.xpt
 components/dom_xbl.xpt
 components/dom_xul.xpt
+components/dom_storage.xpt
 
 ; editor
 components/libeditor.dylib                   
@@ -164,6 +166,8 @@ libnss3.dylib
 libsmime3.dylib
 libsoftokn3.chk
 libsoftokn3.dylib
+libfreebl3.chk
+libfreebl3.dylib
 libssl3.dylib
 libnssckbi.dylib
 
@@ -249,21 +253,25 @@ res/fonts/fontEncoding.properties
 ;
 ; Optional for MathML
 ;
-;res/mathml.css
-;res/dtd/mathml.dtd
-;res/entityTables/mathml20.properties
-;res/fonts/mathfont.properties
-;res/fonts/mathfontCMEX10.properties
-;res/fonts/mathfontCMSY10.properties
-;res/fonts/mathfontMath1.properties
-;res/fonts/mathfontMath2.properties
-;res/fonts/mathfontMath4.properties
-;res/fonts/mathfontMTExtra.properties
-;res/fonts/mathfontPUA.properties
-;res/fonts/mathfontSymbol.properties
-;Components/ucvmath.dylib
+res/mathml.css
+res/dtd/mathml.dtd
+res/entityTables/mathml20.properties
+res/fonts/mathfont.properties
+res/fonts/mathfontCMEX10.properties
+res/fonts/mathfontCMSY10.properties
+res/fonts/mathfontMath1.properties
+res/fonts/mathfontMath2.properties
+res/fonts/mathfontMath4.properties
+res/fonts/mathfontMTExtra.properties
+res/fonts/mathfontPUA.properties
+res/fonts/mathfontSymbol.properties
+components/libucvmath.dylib
 
 ; p3p
 components/libp3p.dylib
 components/p3p.xpt
 
+; svg
+components/dom_svg.xpt
+components/gksvgrenderer.xpt
+res/svg.css

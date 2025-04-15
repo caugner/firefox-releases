@@ -1,17 +1,17 @@
-/.cvsignore/1.1/Tue Jun 20 20:43:54 2000//TFIREFOX_1_5_RELEASE
-/Makefile.in/1.60/Mon May  2 16:30:03 2005//TFIREFOX_1_5_RELEASE
-/nsCExternalHandlerService.idl/1.6/Fri May 21 00:28:52 2004//TFIREFOX_1_5_RELEASE
-/nsExternalHelperAppService.cpp/1.290.4.2/Wed Aug 24 21:53:37 2005//TFIREFOX_1_5_RELEASE
-/nsExternalHelperAppService.h/1.73/Sun Apr 24 21:16:27 2005//TFIREFOX_1_5_RELEASE
-/nsExternalProtocolHandler.cpp/1.30.18.1/Sat Aug 13 19:34:01 2005//TFIREFOX_1_5_RELEASE
-/nsExternalProtocolHandler.h/1.6/Fri May 21 00:28:52 2004//TFIREFOX_1_5_RELEASE
-/nsHelperAppRDF.h/1.6/Sat Apr 17 16:52:02 2004//TFIREFOX_1_5_RELEASE
-/nsIExternalHelperAppService.idl/1.24/Fri Apr 15 19:41:07 2005//TFIREFOX_1_5_RELEASE
-/nsIExternalProtocolService.idl/1.9/Fri Oct 29 16:48:38 2004//TFIREFOX_1_5_RELEASE
-/nsIHelperAppLauncherDialog.idl/1.10/Sun Mar 13 17:03:44 2005//TFIREFOX_1_5_RELEASE
-/nsIInternetConfigService.idl/1.11/Sat Apr 17 16:52:02 2004//TFIREFOX_1_5_RELEASE
-/nsMIMEInfoImpl.cpp/1.53/Fri Feb 25 09:02:14 2005//TFIREFOX_1_5_RELEASE
-/nsMIMEInfoImpl.h/1.25/Fri Feb 25 09:02:14 2005//TFIREFOX_1_5_RELEASE
+/.cvsignore/1.1/Tue Jun 20 20:43:54 2000//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.60.6.1/Thu Jul  6 20:30:09 2006//TFIREFOX_2_0_RELEASE
+/nsCExternalHandlerService.idl/1.6/Fri May 21 00:28:52 2004//TFIREFOX_2_0_RELEASE
+/nsExternalHelperAppService.cpp/1.290.4.10/Tue Oct  3 20:29:07 2006//TFIREFOX_2_0_RELEASE
+/nsExternalHelperAppService.h/1.73.8.3/Tue Aug  8 18:56:35 2006//TFIREFOX_2_0_RELEASE
+/nsExternalProtocolHandler.cpp/1.30.18.1/Sat Aug 13 19:34:01 2005//TFIREFOX_2_0_RELEASE
+/nsExternalProtocolHandler.h/1.6/Fri May 21 00:28:52 2004//TFIREFOX_2_0_RELEASE
+/nsHelperAppRDF.h/1.6/Sat Apr 17 16:52:02 2004//TFIREFOX_2_0_RELEASE
+/nsIExternalHelperAppService.idl/1.24/Fri Apr 15 19:41:07 2005//TFIREFOX_2_0_RELEASE
+/nsIExternalProtocolService.idl/1.9/Fri Oct 29 16:48:38 2004//TFIREFOX_2_0_RELEASE
+/nsIHelperAppLauncherDialog.idl/1.10/Sun Mar 13 17:03:44 2005//TFIREFOX_2_0_RELEASE
+/nsIInternetConfigService.idl/1.11/Sat Apr 17 16:52:02 2004//TFIREFOX_2_0_RELEASE
+/nsMIMEInfoImpl.cpp/1.53.8.1/Mon May  1 15:41:05 2006//TFIREFOX_2_0_RELEASE
+/nsMIMEInfoImpl.h/1.25/Fri Feb 25 09:02:14 2005//TFIREFOX_2_0_RELEASE
 D/beos////
 D/mac////
 D/os2////

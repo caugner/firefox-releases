@@ -66,8 +66,6 @@ enum PopupControlState {
 enum OpenAllowValue {
   allowNot = 0,     // the window opening is denied
   allowNoAbuse,     // allowed: not a popup
-  allowSelf,        // allowed: it's the same window (_self, _top, et.al.)
-  allowExtant,      // allowed: an already open window
   allowWhitelisted  // allowed: it's whitelisted or popup blocking is disabled
 };
 
@@ -258,6 +256,11 @@ public:
                                                   PRBool aForce) const = 0;
   virtual void PopPopupControlState(PopupControlState state) const = 0;
   virtual PopupControlState GetPopupControlState() const = 0;
+
+  // GetOpenAllow must not be called on a window that no longer has a docshell
+  // This function is deprecated.  It will assume that there is no existing
+  // window with name aName for purposes of its answer.  Expect this function
+  // to get removed soon!
   virtual OpenAllowValue GetOpenAllow(const nsAString &aName) = 0;
 
   // Returns an object containing the window's state.  This also suspends
@@ -329,7 +332,45 @@ protected:
   nsPIDOMWindow         *mOuterWindow;
 };
 
+#define NS_PIDOMWINDOW_MOZILLA_1_8_BRANCH_IID \
+{ 0xa9b7f235, 0x4c98, 0x4257, \
+  { 0xb1, 0x1a, 0xbe, 0x53, 0x39, 0x69, 0xdf, 0x2a } }
 
+class nsPIDOMWindow_MOZILLA_1_8_BRANCH : public nsPIDOMWindow
+{
+public:
+  NS_DEFINE_STATIC_IID_ACCESSOR(NS_PIDOMWINDOW_MOZILLA_1_8_BRANCH_IID)
+
+  /**
+   * Set the opener window.  aOriginalOpener is true if and only if this is the
+   * original opener for the window.  That is, it can only be true at most once
+   * during the life cycle of a window, and then only the first time
+   * SetOpenerWindow is called.  It might never be true, of course, if the
+   * window does not have an opener when it's created.
+   */
+  virtual void SetOpenerWindow(nsIDOMWindowInternal *aOpener,
+                               PRBool aOriginalOpener) = 0;
+
+  /**
+   * Fire any DOM notification events related to things that happened while
+   * the window was frozen.
+   */
+  virtual nsresult FireDelayedDOMEvents() = 0;
+
+  /**
+   * Callback for notifying a window about a modal dialog being
+   * opened/closed with the window as a parent.
+   */
+  virtual void EnterModalState() = 0;
+  virtual void LeaveModalState() = 0;
+
+protected:
+  nsPIDOMWindow_MOZILLA_1_8_BRANCH(nsPIDOMWindow *aOuterWindow)
+    : nsPIDOMWindow(aOuterWindow)
+  {
+  }                                     
+};
+  
 #ifdef _IMPL_NS_LAYOUT
 PopupControlState
 PushPopupControlState(PopupControlState aState, PRBool aForce);

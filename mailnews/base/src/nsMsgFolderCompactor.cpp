@@ -56,7 +56,7 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIMsgLocalMailFolder.h"
 #include "nsIMsgImapMailFolder.h"
-
+#include "nsMailHeaders.h"
 #include "nsMsgI18N.h"
 #include "prprf.h"
 #include "nsMsgLocalFolderHdrs.h"
@@ -399,7 +399,6 @@ nsFolderCompactState::FinishCompact()
   // make sure the new database is valid.
   // Close it so we can rename the .msf file.
   m_db->SetSummaryValid(PR_TRUE);
-  m_db->Commit(nsMsgDBCommitType::kLargeCommit);
   m_db->ForceClosed();
   m_db = nsnull;
 
@@ -462,6 +461,8 @@ nsFolderCompactState::FinishCompact()
 
   if (m_compactAll)
     rv = CompactNextFolder();
+  else 
+    ShowDoneStatus();
       
   return rv;
 }
@@ -484,7 +485,7 @@ void nsFolderCompactState::ShowDoneStatus()
   if (m_folder)
   {
     nsXPIDLString statusString;
-    nsresult rv = m_folder->GetStringWithFolderNameFromBundle("compactingDone", getter_Copies(statusString));
+    nsresult rv = m_folder->GetStringWithFolderNameFromBundle("doneCompacting", getter_Copies(statusString));
     if (statusString && NS_SUCCEEDED(rv))
       ShowStatusMsg(statusString);
   }
@@ -581,6 +582,20 @@ done:
   return rv;
 }
 
+void nsFolderCompactState::AdvanceToNextLine(const char *buffer, PRUint32 &bufferOffset, PRUint32 maxBufferOffset)
+{
+  for (; bufferOffset < maxBufferOffset; bufferOffset++)
+  {
+    if (buffer[bufferOffset] == nsCRT::CR || buffer[bufferOffset] == nsCRT::LF)
+    {
+      bufferOffset++;
+      if (buffer[bufferOffset- 1] == nsCRT::CR && buffer[bufferOffset] == nsCRT::LF)
+        bufferOffset++;
+      break;
+    }
+  }
+}
+
 NS_IMETHODIMP
 nsFolderCompactState::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
                                       nsIInputStream *inStr, 
@@ -591,9 +606,16 @@ nsFolderCompactState::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
 
   nsresult rv = NS_OK;
   PRUint32 msgFlags;
+  PRBool checkForKeyword = m_startOfMsg;
+  PRBool addKeywordHdr = PR_FALSE;
+  PRUint32 needToGrowKeywords = 0;
+  PRUint32 statusOffset;
+  nsXPIDLCString msgHdrKeywords;
+
   if (m_startOfMsg)
   {
     m_statusOffset = 0;
+    m_addedHeaderSize = 0;
     m_messageUri.SetLength(0); // clear the previous message uri
     if (NS_SUCCEEDED(BuildMessageURI(m_baseMessageUri.get(), m_keyArray[m_curIndex],
                                 m_messageUri)))
@@ -603,10 +625,19 @@ nsFolderCompactState::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
       if (m_curSrcHdr)
       {
         (void) m_curSrcHdr->GetFlags(&msgFlags);
-        PRUint32 statusOffset;
         (void) m_curSrcHdr->GetStatusOffset(&statusOffset);
+        
         if (statusOffset == 0)
           m_needStatusLine = PR_TRUE;
+        // x-mozilla-status lines should be at the start of the headers, and the code
+        // below assumes everything will fit in m_dataBuffer - if there's not
+        // room, skip the keyword stuff.
+        if (statusOffset > sizeof(m_dataBuffer) - 1024)
+        {
+          checkForKeyword = PR_FALSE;
+          NS_ASSERTION(PR_FALSE, "status offset past end of read buffer size");
+          
+        }
       }
     }
     m_startOfMsg = PR_FALSE;
@@ -614,10 +645,32 @@ nsFolderCompactState::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
   PRUint32 maxReadCount, readCount, writeCount;
   while (NS_SUCCEEDED(rv) && (PRInt32) count > 0)
   {
-    maxReadCount = count > 4096 ? 4096 : count;
+    maxReadCount = count > sizeof(m_dataBuffer) - 1 ? sizeof(m_dataBuffer) - 1 : count;
+    writeCount = 0;
     rv = inStr->Read(m_dataBuffer, maxReadCount, &readCount);
+    
+    // if status offset is past the number of bytes we read, it's probably bogus,
+    // and we shouldn't do any of the keyword stuff.
+    if (statusOffset + X_MOZILLA_STATUS_LEN > readCount)
+      checkForKeyword = PR_FALSE;
+    
     if (NS_SUCCEEDED(rv))
     {
+      if (checkForKeyword)
+      {
+        // make sure that status offset really points to x-mozilla-status line
+        if  (!strncmp(m_dataBuffer + statusOffset, X_MOZILLA_STATUS, X_MOZILLA_STATUS_LEN))
+        {
+          const char *keywordHdr = PL_strnrstr(m_dataBuffer, HEADER_X_MOZILLA_KEYWORDS, readCount);
+          if (keywordHdr)
+            m_curSrcHdr->GetUint32Property("growKeywords", &needToGrowKeywords);
+          else
+            addKeywordHdr = PR_TRUE;
+          m_curSrcHdr->GetStringProperty("keywords", getter_Copies(msgHdrKeywords));
+        }
+        checkForKeyword = PR_FALSE;
+      }
+      PRUint32 blockOffset = 0;
       if (m_needStatusLine)
       {
         m_needStatusLine = PR_FALSE;
@@ -627,26 +680,16 @@ nsFolderCompactState::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
         // in OnEndCopy).
         if (!strncmp(m_dataBuffer, "From ", 5))
         {
-          PRInt32 charIndex;
-          for (charIndex = 5; charIndex < readCount; charIndex++)
-          {
-            if (m_dataBuffer[charIndex] == nsCRT::CR || m_dataBuffer[charIndex] == nsCRT::LF)
-            {
-              charIndex++;
-              if (m_dataBuffer[charIndex- 1] == nsCRT::CR && m_dataBuffer[charIndex] == nsCRT::LF)
-                charIndex++;
-              break;
-            }
-          }
+          blockOffset = 5;
+          // skip from line
+          AdvanceToNextLine(m_dataBuffer, blockOffset, readCount);
           char statusLine[50];
-          writeCount = m_fileStream->write(m_dataBuffer, charIndex);
-          m_statusOffset = charIndex;
+          writeCount = m_fileStream->write(m_dataBuffer, blockOffset);
+          m_statusOffset = blockOffset;
           PR_snprintf(statusLine, sizeof(statusLine), X_MOZILLA_STATUS_FORMAT MSG_LINEBREAK, msgFlags & 0xFFFF);
-          m_statusLineSize = m_fileStream->write(statusLine, strlen(statusLine));
+          m_addedHeaderSize = m_fileStream->write(statusLine, strlen(statusLine));
           PR_snprintf(statusLine, sizeof(statusLine), X_MOZILLA_STATUS2_FORMAT MSG_LINEBREAK, msgFlags & 0xFFFF0000);
-          m_statusLineSize += m_fileStream->write(statusLine, strlen(statusLine));
-          writeCount += m_fileStream->write(m_dataBuffer + charIndex, readCount - charIndex);
-
+          m_addedHeaderSize += m_fileStream->write(statusLine, strlen(statusLine));
         }
         else
         {
@@ -657,15 +700,110 @@ nsFolderCompactState::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
           if (srcDB)
           {
             srcDB->SetSummaryValid(PR_FALSE);
-            srcDB->Commit(nsMsgDBCommitType::kLargeCommit);
             srcDB->ForceClosed();
           }
         }
       }
-      else
+#define EXTRA_KEYWORD_HDR "                                                                                 "MSG_LINEBREAK
+
+       // if status offset isn't in the first block, this code won't work. There's no good reason
+      // for the status offset not to be at the beginning of the message anyway.
+      if (addKeywordHdr)
       {
-        writeCount = m_fileStream->write(m_dataBuffer, readCount);
+        // if blockOffset is set, we added x-mozilla-status headers so
+        // file pointer is already past them.
+        if (!blockOffset)
+        {
+          blockOffset = statusOffset;
+          // skip x-mozilla-status and status2 lines.
+          AdvanceToNextLine(m_dataBuffer, blockOffset, readCount);
+          AdvanceToNextLine(m_dataBuffer, blockOffset, readCount);
+          // need to rewrite the headers up to and including the x-mozilla-status2 header
+          writeCount = m_fileStream->write(m_dataBuffer, blockOffset);
+        }
+        // we should write out the existing keywords from the msg hdr, if any.
+        if (msgHdrKeywords.IsEmpty())
+        { // no keywords, so write blank header
+          m_addedHeaderSize += m_fileStream->write(X_MOZILLA_KEYWORDS, sizeof(X_MOZILLA_KEYWORDS) - 1);
+        }
+        else
+        {
+          if (msgHdrKeywords.Length() < sizeof(X_MOZILLA_KEYWORDS) - sizeof(HEADER_X_MOZILLA_KEYWORDS) + 10 /* allow some slop */)
+          { // keywords fit in normal blank header, so replace blanks in keyword hdr with keywords
+            nsCAutoString keywordsHdr(X_MOZILLA_KEYWORDS);
+            keywordsHdr.Replace(sizeof(HEADER_X_MOZILLA_KEYWORDS) + 1, msgHdrKeywords.Length(), msgHdrKeywords);
+            m_addedHeaderSize += m_fileStream->write(keywordsHdr.get(), keywordsHdr.Length());
+          }
+          else
+          { // keywords don't fit, so write out keywords on one line and an extra blank line
+            nsCString newKeywordHeader(HEADER_X_MOZILLA_KEYWORDS ": ");
+            newKeywordHeader.Append(msgHdrKeywords);
+            newKeywordHeader.Append(MSG_LINEBREAK EXTRA_KEYWORD_HDR);
+            m_addedHeaderSize += m_fileStream->write(newKeywordHeader.get(), newKeywordHeader.Length());
+          }
+        }
+        addKeywordHdr = PR_FALSE;
       }
+      else if (needToGrowKeywords)
+      {
+        blockOffset = statusOffset;
+        if (!strncmp(m_dataBuffer + blockOffset, X_MOZILLA_STATUS, X_MOZILLA_STATUS_LEN))
+          AdvanceToNextLine(m_dataBuffer, blockOffset, readCount); // skip x-mozilla-status hdr
+        if (!strncmp(m_dataBuffer + blockOffset, X_MOZILLA_STATUS2, X_MOZILLA_STATUS2_LEN))
+          AdvanceToNextLine(m_dataBuffer, blockOffset, readCount); // skip x-mozilla-status2 hdr
+        PRUint32 preKeywordBlockOffset = blockOffset;
+        if (!strncmp(m_dataBuffer + blockOffset, HEADER_X_MOZILLA_KEYWORDS, sizeof(HEADER_X_MOZILLA_KEYWORDS) - 1))
+        {
+          do
+          {
+            // skip x-mozilla-keywords hdr and any existing continuation headers
+            AdvanceToNextLine(m_dataBuffer, blockOffset, readCount);
+          }
+          while (m_dataBuffer[blockOffset] == ' ');
+        }
+        PRInt32 oldKeywordSize = blockOffset - preKeywordBlockOffset;
+
+        // rewrite the headers up to and including the x-mozilla-status2 header
+        writeCount = m_fileStream->write(m_dataBuffer, preKeywordBlockOffset);
+        // let's just rewrite all the keywords on several lines and add a blank line,
+        // instead of worrying about which are missing.
+        PRBool done = PR_FALSE;
+        nsCAutoString keywordHdr(HEADER_X_MOZILLA_KEYWORDS ": ");
+        PRInt32 nextBlankOffset = 0;
+        PRInt32 curHdrLineStart = 0;
+        PRInt32 newKeywordSize = 0;
+        while (!done)
+        {
+          nextBlankOffset = msgHdrKeywords.FindChar(' ', nextBlankOffset);
+          if (nextBlankOffset == kNotFound)
+          {
+            nextBlankOffset = msgHdrKeywords.Length();
+            done = PR_TRUE;
+          }
+          if (nextBlankOffset - curHdrLineStart > 90 || done)
+          {
+            keywordHdr.Append(nsDependentCSubstring(msgHdrKeywords, curHdrLineStart, msgHdrKeywords.Length() - curHdrLineStart));
+            keywordHdr.Append(MSG_LINEBREAK);
+            newKeywordSize += m_fileStream->write(keywordHdr.get(), keywordHdr.Length());
+            curHdrLineStart = nextBlankOffset;
+            keywordHdr.Assign(' ');
+          }
+          nextBlankOffset++;
+        }
+        newKeywordSize += m_fileStream->write(EXTRA_KEYWORD_HDR, sizeof(EXTRA_KEYWORD_HDR) - 1);
+        m_addedHeaderSize += newKeywordSize - oldKeywordSize;
+        m_curSrcHdr->SetUint32Property("growKeywords", 0);
+        needToGrowKeywords = PR_FALSE;
+        writeCount += blockOffset - preKeywordBlockOffset; // fudge writeCount
+
+      }
+      if (readCount <= blockOffset)
+      {
+        NS_ASSERTION(PR_FALSE, "bad block offset");
+        // not sure what to do to handle this.
+      
+      }
+      writeCount += m_fileStream->write(m_dataBuffer + blockOffset, readCount - blockOffset);
       count -= readCount;
       if (writeCount != readCount)
       {
@@ -794,7 +932,6 @@ nsOfflineStoreCompactState::FinishCompact()
   m_folder->GetExpungedBytes(&expungedBytes);
   m_folder->UpdateSummaryTotals(PR_TRUE);
   m_db->SetSummaryValid(PR_TRUE);
-  m_db->Commit(nsMsgDBCommitType::kLargeCommit);
 
     // remove the old folder 
   fileSpec.Delete(PR_FALSE);
@@ -857,12 +994,16 @@ nsFolderCompactState::EndCopy(nsISupports *url, nsresult aStatus)
     m_db->CopyHdrFromExistingHdr(m_startOfNewMsg, m_curSrcHdr, PR_TRUE,
                                getter_AddRefs(newMsgHdr));
   m_curSrcHdr = nsnull;
-  if (newMsgHdr && m_statusOffset != 0)
+  if (newMsgHdr)
   {
-    PRUint32 oldMsgSize;
-    newMsgHdr->SetStatusOffset(m_statusOffset);
-    (void) newMsgHdr->GetMessageSize(&oldMsgSize);
-    newMsgHdr->SetMessageSize(oldMsgSize + m_statusLineSize);
+    if ( m_statusOffset != 0)
+      newMsgHdr->SetStatusOffset(m_statusOffset);
+    if (m_addedHeaderSize != 0)
+    {
+      PRUint32 oldMsgSize;
+      (void) newMsgHdr->GetMessageSize(&oldMsgSize);
+      newMsgHdr->SetMessageSize(oldMsgSize + m_addedHeaderSize);
+    }
   }
 
 //  m_db->Commit(nsMsgDBCommitType::kLargeCommit);  // no sense commiting until the end

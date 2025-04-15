@@ -75,7 +75,8 @@ function Init()
                  RDF.GetResource(gNC_NS+"ShortcutURL"),
                  RDF.GetResource(gNC_NS+"Description"),
                  RDF.GetResource(gNC_NS+"WebPanel"),
-                 RDF.GetResource(gNC_NS+"FeedURL")];
+                 RDF.GetResource(gNC_NS+"FeedURL"),
+                 RDF.GetResource(gNC_NS+"GeneratedTitle")];
 
   var x;
   // Initialize the properties panel by copying the values from the
@@ -93,6 +94,9 @@ function Init()
     else if (value) //make sure were aren't stuffing null into any fields
       field.value = value;
   }
+
+  if (MicrosummaryPicker.enabled)
+    MicrosummaryPicker.init();
 
   var nameNode = document.getElementById("name");
   document.title = document.title.replace(/\*\*bm_title\*\*/gi, nameNode.value);
@@ -152,6 +156,26 @@ function Commit()
 
     // Get the new value as a literal, using 'null' if the value is empty.
     var newValue = field.value;
+
+    if (gFields[i] == "name" && MicrosummaryPicker.enabled) {
+      // If the microsummary picker is enabled, the value of the name field
+      // won't necessarily contain the user-entered name for the bookmark.
+      // But the first item in the microsummary drop-down menu will always
+      // contain the user-entered name, so get the name from there instead.
+      var nameItem = document.getElementById("userEnteredNameItem");
+      newValue = nameItem.getAttribute("label");
+
+      // Make any necessary changes to the microsummary for this bookmark.
+      changed |= MicrosummaryPicker.commit();
+      MicrosummaryPicker.destroy();
+
+      // The rest of the code in this "for" loop will proceed to save changes
+      // to the user-entered name, whether or not the user subsequently chose
+      // to display a microsummary.  Presumably this is the correct behavior,
+      // as we should trust that the user intended to both change the name
+      // and display a microsummary.
+    }
+
     if (gFields[i] == "webpanel")
       newValue = field.checked ? "true" : undefined;
  
@@ -160,9 +184,12 @@ function Commit()
     if (oldValue)
       oldValue = oldValue.QueryInterface(Components.interfaces.nsIRDFLiteral);
 
-    if (newValue && gFields[i] == "shortcut")
+    if (newValue && gFields[i] == "shortcut") {
       // shortcuts are always lowercased internally
       newValue = newValue.toLowerCase();
+      // strip trailing and leading whitespace
+      newValue = newValue.replace(/(^\s+|\s+$)/g, '');
+    }
     else if (newValue && gFields[i] == "url") {
       if (newValue.indexOf(":") < 0)
         // we're dealing with the URL attribute;
@@ -190,6 +217,21 @@ function Commit()
 
   window.arguments[1].ok = true;
   window.close();
+  return true;
+}
+
+function Cancel()
+{
+  // Destroy the microsummary picker controller to prevent memory leaks,
+  // catching exceptions so we don't prevent the dialog from closing.
+  try {
+    if (MicrosummaryPicker.enabled)
+      MicrosummaryPicker.destroy();
+  }
+  catch(e) {
+    Components.utils.reportError(e);
+  }
+
   return true;
 }
 

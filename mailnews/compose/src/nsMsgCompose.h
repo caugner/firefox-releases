@@ -58,6 +58,7 @@
 #include "nsIMimeConverter.h"
 #include "nsIUnicodeDecoder.h"
 #include "nsIEditor.h"
+#include "nsIMsgFolder.h"
 
 // Forward declares
 class QuotingOutputStreamListener;
@@ -91,13 +92,15 @@ private:
                                                      nsIDOMNode * object);
   nsresult                      TagEmbeddedObjects(nsIEditorMailSupport *aMailEditor);
 
-  nsCString                     mQuoteURI;
   nsCString                     mQuoteCharset;
   nsCString                     mOriginalMsgURI; // used so we can mark message disposition flags after we send the message
 
   PRInt32                       mWhatHolder;
 
-  nsresult                      LoadDataFromFile(nsFileSpec& fSpec, nsString &sigData);
+  nsresult                      LoadDataFromFile(nsFileSpec& fSpec,
+                                                 nsString &sigData,
+                                                 PRBool aAllowUTF8 = PR_TRUE,
+                                                 PRBool aAllowUTF16 = PR_TRUE);
 
 /*
   nsresult                      GetCompFields(nsMsgCompFields **aCompFields) 
@@ -155,6 +158,7 @@ private:
   nsCOMPtr<nsISupportsArray>                mStateListeners;		// contents are nsISupports
   PRBool                                    mCharsetOverride;
   PRBool                                    mDeleteDraft;
+  nsMsgDispositionState                     mDraftDisposition;
   nsCOMPtr <nsIMsgDBHdr>                    mOrigMsgHdr;
 
   nsCOMPtr<nsIMsgSendListener>              mExternalSendListener;

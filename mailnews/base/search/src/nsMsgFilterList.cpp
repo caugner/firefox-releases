@@ -53,6 +53,7 @@
 #include "nsIImportService.h"
 #include "nsMsgBaseCID.h"
 #include "nsIMsgFilterService.h"
+#include "nsMsgSearchScopeTerm.h"
 #include "nsISupportsObsolete.h"
 #include "nsNetUtil.h"
 
@@ -258,6 +259,9 @@ nsMsgFilterList::SetLogStream(nsIOutputStream *aLogStream)
   return NS_OK;
 }
 
+#define LOG_HEADER "<head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head>"
+#define LOG_HEADER_LEN (strlen(LOG_HEADER))
+
 NS_IMETHODIMP
 nsMsgFilterList::GetLogStream(nsIOutputStream **aLogStream)
 {
@@ -289,6 +293,22 @@ nsMsgFilterList::GetLogStream(nsIOutputStream **aLogStream)
 
     if (!m_logStream)
       return NS_ERROR_FAILURE;
+
+    PRInt64 fileSize;
+    rv = logFile->GetFileSize(&fileSize);
+    NS_ENSURE_SUCCESS(rv, rv);
+    
+    PRUint32 fileLen;;
+    LL_L2UI(fileLen, fileSize);
+    // write the header at the start
+    if (fileLen == 0)
+    {
+      PRUint32 writeCount;
+      
+      rv = m_logStream->Write(LOG_HEADER, LOG_HEADER_LEN, &writeCount);
+      NS_ENSURE_SUCCESS(rv, rv);
+      NS_ASSERTION(writeCount == LOG_HEADER_LEN, "failed to write out log header");
+    }
   }
  
   NS_ADDREF(*aLogStream = m_logStream);
@@ -303,12 +323,19 @@ nsMsgFilterList::ApplyFiltersToHdr(nsMsgFilterTypeType filterType,
                                    const char *headers,
                                    PRUint32 headersSize,
                                    nsIMsgFilterHitNotify *listener,
-                                   nsIMsgWindow *msgWindow)
+                                   nsIMsgWindow *msgWindow,
+                                   nsILocalFile *aMessageFile)
 {
   nsCOMPtr <nsIMsgFilter>	filter;
   PRUint32		filterCount = 0;
   nsresult		rv = GetFilterCount(&filterCount);
   NS_ENSURE_SUCCESS(rv,rv);
+  
+  nsMsgSearchScopeTerm* scope = new nsMsgSearchScopeTerm(nsnull, nsMsgSearchScope::offlineMail, folder);
+  scope->AddRef();
+  if (!scope) return NS_ERROR_OUT_OF_MEMORY;
+  if (aMessageFile)
+    scope->m_localFile = aMessageFile;
   
   for (PRUint32 filterIndex = 0; filterIndex < filterCount; filterIndex++)
   {
@@ -327,7 +354,9 @@ nsMsgFilterList::ApplyFiltersToHdr(nsMsgFilterTypeType filterType,
         nsresult matchTermStatus = NS_OK;
         PRBool result;
         
+        filter->SetScope(scope);
         matchTermStatus = filter->MatchHdr(msgHdr, folder, db, headers, headersSize, &result);
+        filter->SetScope(nsnull);
         if (NS_SUCCEEDED(matchTermStatus) && result && listener)
         {
           PRBool applyMore = PR_TRUE;
@@ -339,6 +368,7 @@ nsMsgFilterList::ApplyFiltersToHdr(nsMsgFilterTypeType filterType,
       }
     }
   }
+  scope->Release();
   return rv;
 }
 
@@ -651,10 +681,16 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
         }
         else if (type == nsMsgFilterAction::Label)
         {
+          // upgrade label to corresponding tag/keyword
           PRInt32 res;
           PRInt32 labelInt = value.ToInteger(&res, 10);
           if (res == 0)
-            currentFilterAction->SetLabel((nsMsgLabelValue) labelInt);
+          {
+            nsCAutoString keyword("$label");
+            keyword.Append('0' + labelInt);
+            currentFilterAction->SetType(nsMsgFilterAction::AddTag);
+            currentFilterAction->SetStrValue(keyword.get());
+          }
         }
         else if (type == nsMsgFilterAction::JunkScore)
         {
@@ -663,7 +699,8 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
           if (!res)
             currentFilterAction->SetJunkScore(junkScore);
         }
-        else if (type == nsMsgFilterAction::Forward || type == nsMsgFilterAction::Reply)
+        else if (type == nsMsgFilterAction::Forward || type == nsMsgFilterAction::Reply
+          || type == nsMsgFilterAction::AddTag)
         {
           currentFilterAction->SetStrValue(value.get());
         }
@@ -708,11 +745,24 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
 // what about values with close parens and quotes? e.g., (body, isn't, "foo")")
 // I guess interior quotes will need to be escaped - ("foo\")")
 // which will get written out as (\"foo\\")\") and read in as ("foo\")"
+// ALL means match all messages.
 NS_IMETHODIMP nsMsgFilterList::ParseCondition(nsIMsgFilter *aFilter, const char *aCondition)
 {
   PRBool	done = PR_FALSE;
   nsresult	err = NS_OK;
   const char *curPtr = aCondition;
+  if (!strcmp(aCondition, "ALL"))
+  {
+    nsMsgSearchTerm *newTerm = new nsMsgSearchTerm;
+
+    if (newTerm) 
+    {
+      newTerm->m_matchAll = PR_TRUE;
+      aFilter->AppendTerm(newTerm);
+    }
+    return (newTerm) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+  }
+
   while (!done)
   {
     // insert code to save the boolean operator if there is one for this search term....

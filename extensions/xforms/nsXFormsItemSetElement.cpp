@@ -47,7 +47,6 @@
 #include "nsIDocument.h"
 #include "nsXFormsUtils.h"
 #include "nsXFormsModelElement.h"
-#include "nsArray.h"
 #include "nsIXFormsControlBase.h"
 #include "nsIXFormsControl.h"
 #include "nsIXFormsItemSetUIElement.h"
@@ -71,7 +70,7 @@ public:
   NS_IMETHOD DoneAddingChildren();
 
   // nsIXFormsControlBase overrides
-  NS_IMETHOD Bind();
+  NS_IMETHOD Bind(PRBool *aContextChanged);
   NS_IMETHOD Refresh();
 
   // nsIXFormsSelectChild
@@ -191,9 +190,43 @@ nsXFormsItemSetElement::SelectItemByValue(const nsAString &aValue, nsIDOMNode **
 }
 
 NS_IMETHODIMP
-nsXFormsItemSetElement::Bind()
+nsXFormsItemSetElement::SelectItemByNode(nsIDOMNode *aNode,
+                                         nsIDOMNode **aSelected)
 {
+  NS_ENSURE_ARG_POINTER(aSelected);
+  NS_ENSURE_STATE(mElement);
+  *aSelected = nsnull;
+  // nsIXFormsItemSetUIElement is implemented by the XBL binding.
+  nsCOMPtr<nsIXFormsItemSetUIElement> uiItemSet(do_QueryInterface(mElement));
+  NS_ENSURE_STATE(uiItemSet);
+
+  nsCOMPtr<nsIDOMElement> anonContent;
+  uiItemSet->GetAnonymousItemSetContent(getter_AddRefs(anonContent));
+  NS_ENSURE_STATE(anonContent);
+
+  nsCOMPtr<nsIDOMNode> child, tmp;
+  anonContent->GetFirstChild(getter_AddRefs(child));
+  // Trying to select the first possible (generated) \<item\> element.
+  while (child) {
+    nsCOMPtr<nsIXFormsSelectChild> selectChild(do_QueryInterface(child));
+    if (selectChild) {
+      selectChild->SelectItemByNode(aNode, aSelected);
+      if (*aSelected) {
+        return NS_OK;
+      }
+    }
+    tmp.swap(child);
+    tmp->GetNextSibling(getter_AddRefs(child));
+  }
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXFormsItemSetElement::Bind(PRBool *aContextChanged)
+{
+  NS_ENSURE_ARG(aContextChanged);
+  *aContextChanged = PR_FALSE;
+  return BindToModel();
 }
 
 NS_IMETHODIMP
@@ -272,24 +305,21 @@ nsXFormsItemSetElement::Refresh()
                                  getter_AddRefs(itemNode));
     NS_ENSURE_SUCCESS(rv, rv);
 
+    anonContent->AppendChild(itemNode, getter_AddRefs(tmpNode));
+
     // XXX Could we get rid of the <contextcontainer>?
     rv = domDoc->CreateElementNS(NS_LITERAL_STRING(NS_NAMESPACE_XFORMS),
                                  NS_LITERAL_STRING("contextcontainer"),
                                  getter_AddRefs(contextContainer));
 
     NS_ENSURE_SUCCESS(rv, rv);
-
-    nsCOMPtr<nsIDOMElement> modelElement = do_QueryInterface(model);
-    nsAutoString modelID;
-    modelElement->GetAttribute(NS_LITERAL_STRING("id"), modelID);
-
-    contextContainer->SetAttribute(NS_LITERAL_STRING("model"), modelID);
+    itemNode->AppendChild(contextContainer, getter_AddRefs(tmpNode));
 
     nsCOMPtr<nsIXFormsContextControl> ctx(do_QueryInterface(contextContainer));
     if (ctx) {
-      ctx->SetContext(nsCOMPtr<nsIDOMElement>(do_QueryInterface(node)),
-                      i + 1, nodeCount);
+      ctx->SetContext(node, i + 1, nodeCount);
     }
+
     // Clone the template content under the item
     for (PRUint32 j = 0; j < templateNodeCount; ++j) {
       templateNodes->Item(j, getter_AddRefs(templateNode));
@@ -297,15 +327,13 @@ nsXFormsItemSetElement::Refresh()
       contextContainer->AppendChild(cloneNode, getter_AddRefs(templateNode));
     }
 
-    itemNode->AppendChild(contextContainer, getter_AddRefs(tmpNode));
-    anonContent->AppendChild(itemNode, getter_AddRefs(tmpNode));
   }
 
-  // tell parent we appended a child
+  // refresh parent we
   if (parent) {
-    nsCOMPtr<nsIXTFElement> stub = do_QueryInterface(parent);
-    if (stub) {
-      stub->ChildAppended(parent);
+    nsCOMPtr<nsIXFormsControlBase> control = do_QueryInterface(parent);
+    if (control) {
+      control->Refresh();
     }
   }
 

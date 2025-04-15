@@ -210,14 +210,8 @@ nsBrowserStatusHandler.prototype =
       if (aRequest) {
         var msg = "";
         // Get the channel if the request is a channel
-        var channel;
-        try {
-          channel = aRequest.QueryInterface(nsIChannel);
-        }
-        catch(e) { };
-
-        if (channel) {
-          var location = channel.URI.spec;
+        if (aRequest instanceof nsIChannel) {
+          var location = aRequest.URI.spec;
           if (location != "about:blank") {
             const kErrorBindingAborted = 0x804B0002;
             const kErrorNetTimeout = 0x804B000E;
@@ -261,6 +255,22 @@ nsBrowserStatusHandler.prototype =
 
   onLocationChange : function(aWebProgress, aRequest, aLocation)
   {
+    if (gContextMenu) {
+      // Optimise for the common case
+      if (aWebProgress.DOMWindow == content)
+        gContextMenu.menu.hidePopup();
+      else {
+        for (var contextWindow = gContextMenu.target.ownerDocument.defaultView;
+             contextWindow != contextWindow.parent;
+             contextWindow = contextWindow.parent) {
+          if (contextWindow == aWebProgress.DOMWindow) {
+            gContextMenu.menu.hidePopup();
+            break;
+          }
+        }
+      }
+    }
+
     // XXX temporary hack for bug 104532.
     // Depends heavily on setOverLink implementation
     if (!aRequest)
@@ -364,16 +374,20 @@ nsBrowserStatusHandler.prototype =
     switch (aState) {
       case wpl.STATE_IS_SECURE | wpl.STATE_SECURE_HIGH:
         this.securityButton.setAttribute("level", "high");
+        this.urlBar.setAttribute("level", "high");
         break;
       case wpl.STATE_IS_SECURE | wpl.STATE_SECURE_LOW:
         this.securityButton.setAttribute("level", "low");
+        this.urlBar.setAttribute("level", "low");
         break;
       case wpl.STATE_IS_BROKEN:
         this.securityButton.setAttribute("level", "broken");
+        this.urlBar.setAttribute("level", "broken");
         break;
       case wpl.STATE_IS_INSECURE:
       default:
         this.securityButton.removeAttribute("level");
+        this.urlBar.removeAttribute("level");
         break;
     }
 

@@ -274,37 +274,45 @@ int nsRASAutodial::QueryAutodialBehavior()
 #ifdef WINCE
 static nsresult DoPPCConnection()
 {
-    HANDLE    gConnectionHandle = NULL;
+    static HANDLE    gConnectionHandle = NULL;
 
-    GUID gNetworkID;
-    (void) ConnMgrMapURL("http://www.mozilla.org", &gNetworkID, 0);
-
-    DWORD status;
+    // Make the connection to the new network
     CONNMGR_CONNECTIONINFO conn_info;
     memset(&conn_info, 0, sizeof(CONNMGR_CONNECTIONINFO));
 
-    conn_info.cbSize     = sizeof(CONNMGR_CONNECTIONINFO);
-    conn_info.dwParams   = CONNMGR_PARAM_GUIDDESTNET;
-    conn_info.dwPriority = CONNMGR_PRIORITY_USERINTERACTIVE;
-    conn_info.bExclusive = FALSE;
-    conn_info.bDisabled  = FALSE;
+    conn_info.cbSize      = sizeof(CONNMGR_CONNECTIONINFO);
+    conn_info.dwParams    = CONNMGR_PARAM_GUIDDESTNET;
+    conn_info.dwPriority  = CONNMGR_PRIORITY_USERINTERACTIVE;
+    conn_info.guidDestNet = IID_DestNetInternet;
+    conn_info.bExclusive  = FALSE;
+    conn_info.bDisabled   = FALSE;
 
-    conn_info.guidDestNet= gNetworkID;
+    HANDLE tempConnectionHandle;
+    DWORD status;
+    HRESULT result = ConnMgrEstablishConnectionSync(&conn_info, 
+                                                    &tempConnectionHandle, 
+                                                    60000,
+                                                    &status);
 
-    if(ConnMgrEstablishConnectionSync(&conn_info, &gConnectionHandle, 1000, &status) != S_OK &&
-       gNetworkID != IID_DestNetInternet)
+    if (result != S_OK)
     {
-      conn_info.guidDestNet = IID_DestNetInternet;
-      
-      if(ConnMgrEstablishConnectionSync(&conn_info, &gConnectionHandle, 5000, &status) != S_OK)
-      {
-        return NS_ERROR_FAILURE;
-      }
-    }
-    
-    if (status != CONNMGR_STATUS_CONNECTED)
       return NS_ERROR_FAILURE;
-    
+    }
+
+    if (status != CONNMGR_STATUS_CONNECTED)
+    {
+      // could not connect to this network.  release the
+      // temp connection.
+      ConnMgrReleaseConnection(tempConnectionHandle, 0);
+      return NS_ERROR_FAILURE;
+    }
+
+    // At this point, we have a new connection, so release
+    // the old connection
+    if (gConnectionHandle)
+      ConnMgrReleaseConnection(gConnectionHandle, 0);
+      
+    gConnectionHandle = tempConnectionHandle;
     return NS_OK;
 }
 

@@ -154,21 +154,25 @@ GRE_GetGREPathWithProperties(const GREVersionRange *versions,
   // if GRE_HOME is in the environment, use that GRE
   const char* env = getenv("GRE_HOME");
   if (env && *env) {
+    char p[MAXPATHLEN];
+    snprintf(p, sizeof(p), "%s" XPCOM_FILE_PATH_SEPARATOR XPCOM_DLL, env);
+    p[sizeof(p) - 1] = '\0';
+
 #if XP_UNIX
-    if (realpath(env, aBuffer))
+    if (realpath(p, aBuffer))
       return NS_OK;
 #elif XP_WIN
-    if (_fullpath(aBuffer, env, aBufLen))
+    if (_fullpath(aBuffer, p, aBufLen))
       return NS_OK;
 #else
     // hope for the best
     // xxxbsmedberg: other platforms should have a "make absolute" function
 #endif
 
-    if (strlen(env) >= aBufLen)
+    if (strlen(p) >= aBufLen)
       return NS_ERROR_FILE_NAME_TOO_LONG;
 
-    strcpy(aBuffer, env);
+    strcpy(aBuffer, p);
 
     return NS_OK;
   }
@@ -211,11 +215,10 @@ GRE_GetGREPathWithProperties(const GREVersionRange *versions,
           if (CFURLGetFileSystemRepresentation(xpcomurl, PR_TRUE,
                                                (UInt8*) tbuffer,
                                                sizeof(tbuffer)) &&
-              access(tbuffer, R_OK | X_OK) == 0 &&
-              realpath(tbuffer, aBuffer)) {
-            char *lastslash = strrchr(aBuffer, '/');
-            if (lastslash)
-              *lastslash = '\0';
+              access(tbuffer, R_OK | X_OK) == 0) {
+            if (!realpath(tbuffer, aBuffer)) {
+              aBuffer[0] = '\0';
+            }
           }
 
           CFRelease(xpcomurl);
@@ -618,8 +621,9 @@ GRE_GetPathFromRegKey(HKEY aRegKey,
       const GREProperty *propsEnd = properties + propertiesLength;
       for (; ok && props < propsEnd; ++props) {
         pathlen = sizeof(pathbuf);
-        if (!::RegQueryValueEx(subKey, props->property, NULL, &pathtype,
-                               (BYTE*) pathbuf, &pathlen) ||
+
+        if (::RegQueryValueEx(subKey, props->property, NULL, &pathtype,
+                              (BYTE*) pathbuf, &pathlen) != ERROR_SUCCESS ||
             strcmp(pathbuf, props->value))
           ok = PR_FALSE;
       }

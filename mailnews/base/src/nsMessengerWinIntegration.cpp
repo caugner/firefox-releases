@@ -55,7 +55,7 @@
 #include "nsDirectoryServiceDefs.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsIDirectoryService.h"
-
+#include "nsIWindowWatcher.h"
 #include "nsIWindowMediator.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsPIDOMWindow.h"
@@ -93,9 +93,10 @@
 #define MAIL_COMMANDLINE_ARG " -mail"
 #define IDI_MAILBIFF 101
 #define UNREAD_UPDATE_INTERVAL	(20 * 1000)	// 20 seconds
-
+#define ALERT_CHROME_URL "chrome://messenger/content/newmailalert.xul"
 #define NEW_MAIL_ALERT_ICON "chrome://messenger/skin/icons/new-mail-alert.png"
-#define SHOW_ALERT_PREF "mail.biff.show_alert"
+#define SHOW_ALERT_PREF     "mail.biff.show_alert"
+#define SHOW_TRAY_ICON_PREF "mail.biff.show_tray_icon"
 
 // since we are including windows.h in this file, undefine get user name....
 #ifdef GetUserName
@@ -174,15 +175,45 @@ static void openMailWindow(const PRUnichar * aMailWindowName, const char * aFold
   }
 }
 
+static void CALLBACK delayedSingleClick(HWND msgWindow, UINT msg, INT_PTR idEvent, DWORD dwTime)
+{
+  ::KillTimer(msgWindow, idEvent);
+
+#ifdef MOZ_THUNDERBIRD
+  // single clicks on the biff icon should re-open the alert notification
+  nsresult rv = NS_OK;
+  nsCOMPtr<nsIMessengerOSIntegration> integrationService = 
+    do_GetService(NS_MESSENGEROSINTEGRATION_CONTRACTID, &rv);
+  if (NS_SUCCEEDED(rv))
+  {
+    // we know we are dealing with the windows integration object    
+    nsMessengerWinIntegration * winIntegrationService = NS_STATIC_CAST(nsMessengerWinIntegration*, 
+                                                                       NS_STATIC_CAST(nsIMessengerOSIntegration*, integrationService.get()));
+    winIntegrationService->ShowNewAlertNotification(PR_TRUE);
+  }
+#endif
+}
+
 // Window proc.
 static long CALLBACK MessageWindowProc( HWND msgWindow, UINT msg, WPARAM wp, LPARAM lp ) 
 {
-  if (msg == WM_USER && lp == WM_LBUTTONDBLCLK)
+  if (msg == WM_USER)
   {
-    NS_NAMED_LITERAL_STRING(mailName, "mail:3pane");
-    openMailWindow(mailName.get(), nsnull);
+    if (lp == WM_LBUTTONDOWN)
+    {
+      // the only way to tell a single left click 
+      // from a double left click is to fire a timer which gets cleared if we end up getting
+      // a WM_LBUTTONDBLK event.
+      ::SetTimer(msgWindow, 1, GetDoubleClickTime(), (TIMERPROC) delayedSingleClick);
+    } 
+    else if (lp == WM_LBUTTONDBLCLK)
+    {
+      ::KillTimer(msgWindow, 1);
+      NS_NAMED_LITERAL_STRING(mailName, "mail:3pane");
+      openMailWindow(mailName.get(), nsnull);
+    }
   }
-     
+
   return TRUE;
 }
 
@@ -450,6 +481,7 @@ nsresult nsMessengerWinIntegration::GetStringBundle(nsIStringBundle **aBundle)
   return rv;
 }
 
+#ifndef MOZ_THUNDERBIRD
 nsresult nsMessengerWinIntegration::ShowAlertMessage(const PRUnichar * aAlertTitle, const PRUnichar * aAlertText, const char * aFolderURI)
 {
   nsresult rv;
@@ -459,7 +491,7 @@ nsresult nsMessengerWinIntegration::ShowAlertMessage(const PRUnichar * aAlertTit
     return NS_OK; 
 
   nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  PRBool showAlert = PR_TRUE; 
+  PRBool showAlert = PR_TRUE;
   
   if (prefBranch)
     prefBranch->GetBoolPref(SHOW_ALERT_PREF, &showAlert);
@@ -481,16 +513,85 @@ nsresult nsMessengerWinIntegration::ShowAlertMessage(const PRUnichar * aAlertTit
 
   return rv;
 }
+#else
+// Opening Thunderbird's new mail alert notification window
+// aUserInitiated --> true if we are opening the alert notification in response to a user action
+//                    like clicking on the biff icon
+nsresult nsMessengerWinIntegration::ShowNewAlertNotification(PRBool aUserInitiated)
+{
+  nsresult rv;
+
+  // if we are already in the process of showing an alert, don't try to show another....
+  if (mAlertInProgress) 
+    return NS_OK;
+  
+  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+  PRBool showAlert = PR_TRUE;
+  
+  if (prefBranch)
+    prefBranch->GetBoolPref(SHOW_ALERT_PREF, &showAlert);
+  
+  if (showAlert)
+  {
+    nsCOMPtr<nsISupportsArray> argsArray;
+    rv = NS_NewISupportsArray(getter_AddRefs(argsArray));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // pass in the array of folders with unread messages
+    nsCOMPtr<nsISupportsInterfacePointer> ifptr = do_CreateInstance(NS_SUPPORTS_INTERFACE_POINTER_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    ifptr->SetData(mFoldersWithNewMail);
+    ifptr->SetDataIID(&NS_GET_IID(nsISupportsArray));
+    argsArray->AppendElement(ifptr);
+
+    // pass in the observer
+    ifptr = do_CreateInstance(NS_SUPPORTS_INTERFACE_POINTER_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr <nsISupports> supports = do_QueryInterface(NS_STATIC_CAST(nsIMessengerOSIntegration*, this));
+    ifptr->SetData(supports);
+    ifptr->SetDataIID(&NS_GET_IID(nsIObserver));
+    argsArray->AppendElement(ifptr);
+    
+    // pass in the animation flag
+    nsCOMPtr<nsISupportsPRBool> scriptableUserInitiated (do_CreateInstance(NS_SUPPORTS_PRBOOL_CONTRACTID, &rv));
+    NS_ENSURE_SUCCESS(rv, rv);
+    scriptableUserInitiated->SetData(aUserInitiated);
+    argsArray->AppendElement(scriptableUserInitiated);
+
+    nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
+    nsCOMPtr<nsIDOMWindow> newWindow;
+    rv = wwatch->OpenWindow(0, ALERT_CHROME_URL, "_blank",
+                "chrome,dialog=yes,titlebar=no,popup=yes", argsArray,
+                 getter_AddRefs(newWindow));
+
+    mAlertInProgress = PR_TRUE;
+  }
+
+  // if the user has turned off the mail alert, or  openWindow generated an error, 
+  // then go straight to the system tray.
+  if (!showAlert || NS_FAILED(rv)) 
+    AlertFinished();
+
+  return rv;
+}
+#endif
 
 nsresult nsMessengerWinIntegration::AlertFinished()
 {
-  // okay we are done showing the alert....now put an icon in the system tray
-  if (!mSuppressBiffIcon)
+  // okay, we are done showing the alert
+  // now put an icon in the system tray, if allowed
+  PRBool showTrayIcon = !mSuppressBiffIcon;
+  if (showTrayIcon)
+  {
+    nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
+    if (prefBranch)
+      prefBranch->GetBoolPref(SHOW_TRAY_ICON_PREF, &showTrayIcon);
+  }
+  if (showTrayIcon)
   {
     GenericShellNotify(NIM_ADD);
     mBiffIconVisible = PR_TRUE;
   }
-
   mSuppressBiffIcon = PR_FALSE;
   mAlertInProgress = PR_FALSE;
   return NS_OK;
@@ -586,7 +687,11 @@ void nsMessengerWinIntegration::FillToolTipInfo()
 
   if (!mBiffIconVisible)
   {
+#ifndef MOZ_THUNDERBIRD
     ShowAlertMessage(accountName, animatedAlertText.get(), "");
+#else
+    ShowNewAlertNotification(PR_FALSE);
+#endif
   }
   else
    GenericShellNotify( NIM_MODIFY);

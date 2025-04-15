@@ -78,6 +78,10 @@
 #include "nsIAtom.h"
 #include "nsContentUtils.h"
 #include "jscntxt.h"
+#include "jsdbgapi.h"
+#include "nsIDOMGCParticipant.h"
+#include "nsIDocument.h"
+#include "nsIContent.h"
 
 // For locale aware string methods
 #include "plstr.h"
@@ -87,9 +91,14 @@
 #include "nsILocaleService.h"
 #include "nsICollation.h"
 #include "nsCollationCID.h"
+#include "nsDOMClassInfo.h"
 
 #ifdef NS_DEBUG
 #include "jsgc.h"       // for WAY_TOO_MUCH_GC, if defined for GC debugging
+#endif
+
+#ifdef MOZ_JSDEBUGGER
+#include "jsdIDebuggerService.h"
 #endif
 
 static NS_DEFINE_CID(kCollationFactoryCID, NS_COLLATIONFACTORY_CID);
@@ -150,6 +159,7 @@ static PRBool sDidShutdown;
 static PRInt32 sContextCount;
 
 static PRTime sMaxScriptRunTime;
+static PRTime sMaxChromeScriptRunTime;
 
 static nsIScriptSecurityManager *sSecurityManager;
 
@@ -505,6 +515,9 @@ nsJSContext::DOMBranchCallback(JSContext *cx, JSScript *script)
     // script has run
     ctx->mBranchCallbackTime = PR_Now();
 
+    ctx->mIsTrackingChromeCodeTime =
+      ::JS_IsSystemObject(cx, ::JS_GetGlobalObject(cx));
+
     return JS_TRUE;
   }
 
@@ -531,7 +544,8 @@ nsJSContext::DOMBranchCallback(JSContext *cx, JSScript *script)
   LL_SUB(duration, now, callbackTime);
 
   // Check the amount of time this script has been running
-  if (LL_CMP(duration, <, sMaxScriptRunTime)) {
+  if (duration < (ctx->mIsTrackingChromeCodeTime ?
+                  sMaxChromeScriptRunTime : sMaxScriptRunTime)) {
     return JS_TRUE;
   }
 
@@ -552,6 +566,35 @@ nsJSContext::DOMBranchCallback(JSContext *cx, JSScript *script)
   ireq->GetInterface(NS_GET_IID(nsIPrompt), getter_AddRefs(prompt));
   NS_ENSURE_TRUE(prompt, JS_TRUE);
 
+  nsresult rv;
+
+  // Check if we should offer the option to debug
+  PRBool debugPossible = (cx->runtime && cx->runtime->debuggerHandler);
+#ifdef MOZ_JSDEBUGGER
+  // Get the debugger service if necessary.
+  if (debugPossible) {
+    PRBool jsds_IsOn = PR_FALSE;
+    const char jsdServiceCtrID[] = "@mozilla.org/js/jsd/debugger-service;1";
+    nsCOMPtr<jsdIExecutionHook> jsdHook;  
+    nsCOMPtr<jsdIDebuggerService> jsds = do_GetService(jsdServiceCtrID, &rv);
+  
+    // Check if there's a user for the debugger service that's 'on' for us
+    if (NS_SUCCEEDED(rv)) {
+      jsds->GetDebuggerHook(getter_AddRefs(jsdHook));
+      jsds->GetIsOn(&jsds_IsOn);
+      if (jsds_IsOn) { // If this is not true, the next call would start jsd...
+        rv = jsds->OnForRuntime(cx->runtime);
+        jsds_IsOn = NS_SUCCEEDED(rv);
+      }
+    }
+
+    // If there is a debug handler registered for this runtime AND
+    // ((jsd is on AND has a hook) OR (jsd isn't on (something else debugs)))
+    // then something useful will be done with our request to debug.
+    debugPossible = ((jsds_IsOn && (jsdHook != nsnull)) || !jsds_IsOn);
+  }
+#endif
+
   // Get localizable strings
   nsCOMPtr<nsIStringBundleService>
     stringService(do_GetService(NS_STRINGBUNDLE_CONTRACTID));
@@ -562,41 +605,69 @@ nsJSContext::DOMBranchCallback(JSContext *cx, JSScript *script)
   stringService->CreateBundle(kDOMStringBundleURL, getter_AddRefs(bundle));
   if (!bundle)
     return JS_TRUE;
-  
-  nsXPIDLString title, msg, stopButton, waitButton;
 
-  nsresult rv;
+  nsXPIDLString title, msg, stopButton, waitButton, debugButton;
 
-  rv = bundle->GetStringFromName(NS_LITERAL_STRING("KillScriptMessage").get(),
-                                  getter_Copies(msg));
-  rv |= bundle->GetStringFromName(NS_LITERAL_STRING("KillScriptTitle").get(),
+  rv = bundle->GetStringFromName(NS_LITERAL_STRING("KillScriptTitle").get(),
                                   getter_Copies(title));
   rv |= bundle->GetStringFromName(NS_LITERAL_STRING("StopScriptButton").get(),
                                   getter_Copies(stopButton));
   rv |= bundle->GetStringFromName(NS_LITERAL_STRING("WaitForScriptButton").get(),
                                   getter_Copies(waitButton));
 
+  if (debugPossible) {
+    rv |= bundle->GetStringFromName(NS_LITERAL_STRING("DebugScriptButton").get(),
+                                    getter_Copies(debugButton));
+    rv |= bundle->GetStringFromName(NS_LITERAL_STRING("KillScriptWithDebugMessage").get(),
+                                   getter_Copies(msg));
+  }
+  else {
+    rv |= bundle->GetStringFromName(NS_LITERAL_STRING("KillScriptMessage").get(),
+                                   getter_Copies(msg));
+  }
+
   //GetStringFromName can return NS_OK and still give NULL string
-  if (NS_FAILED(rv) || !title || !msg || !stopButton || !waitButton) {
+  if (NS_FAILED(rv) || !title || !msg || !stopButton || !waitButton ||
+      (debugPossible && !debugButton)) {
     NS_ERROR("Failed to get localized strings.");
     return JS_TRUE;
   }
 
   PRInt32 buttonPressed = 1; //In case user exits dialog by clicking X
+  PRUint32 buttonFlags = (nsIPrompt::BUTTON_TITLE_IS_STRING *
+                          (nsIPrompt::BUTTON_POS_0 + nsIPrompt::BUTTON_POS_1));
+
+  // Add a third button if necessary:
+  if (debugPossible)
+    buttonFlags += nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_2;
 
   // Open the dialog.
-  rv = prompt->ConfirmEx(title, msg,
-                         (nsIPrompt::BUTTON_TITLE_IS_STRING *
-                          nsIPrompt::BUTTON_POS_0) +
-                         (nsIPrompt::BUTTON_TITLE_IS_STRING *
-                          nsIPrompt::BUTTON_POS_1),
-                          stopButton, waitButton,
-                          nsnull, nsnull, nsnull, &buttonPressed);
+  rv = prompt->ConfirmEx(title, msg, buttonFlags, stopButton, waitButton,
+                         debugButton, nsnull, nsnull, &buttonPressed);
 
   if (NS_FAILED(rv) || (buttonPressed == 1)) {
     // Allow the script to run this long again
     ctx->mBranchCallbackTime = PR_Now();
     return JS_TRUE;
+  }
+  else if ((buttonPressed == 2) && debugPossible) {
+    // Debug the script
+    jsval rval;
+    switch(cx->runtime->debuggerHandler(cx, script, cx->fp->pc, &rval, 
+                                        cx->runtime->debuggerHandlerData)) {
+      case JSTRAP_RETURN:
+        cx->fp->rval = rval;
+        return JS_TRUE;
+      case JSTRAP_ERROR:
+        cx->throwing = JS_FALSE;
+        return JS_FALSE;
+      case JSTRAP_THROW:
+        JS_SetPendingException(cx, rval);
+        return JS_FALSE;
+      case JSTRAP_CONTINUE:
+      default:
+        return JS_TRUE;
+    }
   }
 
   return JS_FALSE;
@@ -639,37 +710,6 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
   return 0;
 }
 
-static jsuword
-GetThreadStackLimit()
-{
-  // Store the thread stack limit in a static local to ensure that all
-  // contexts get the same stack limit (they're all on the same thread
-  // anyways), and this also helps prevent returning a stack limit
-  // that is beyond the end of the stack if this method is called way
-  // deep on the stack.
-
-  static jsuword sThreadStackLimit;
-
-  if (sThreadStackLimit == 0) {
-    int stackDummy;
-    jsuword currentStackAddr = (jsuword)&stackDummy;
-
-    const jsuword kStackSize = 0x80000;   // 512k
-
-#if JS_STACK_GROWTH_DIRECTION < 0
-    sThreadStackLimit = (currentStackAddr > kStackSize)
-                        ? currentStackAddr - kStackSize
-                        : 0;
-#else
-    sThreadStackLimit = (currentStackAddr + kStackSize > currentStackAddr)
-                        ? currentStackAddr + kStackSize
-                        : (jsuword) -1;
-#endif
-  }
-
-  return sThreadStackLimit;
-}
-
 nsJSContext::nsJSContext(JSRuntime *aRuntime) : mGCOnDestruction(PR_TRUE)
 {
 
@@ -690,8 +730,6 @@ nsJSContext::nsJSContext(JSRuntime *aRuntime) : mGCOnDestruction(PR_TRUE)
   mContext = ::JS_NewContext(aRuntime, gStackSize);
   if (mContext) {
     ::JS_SetContextPrivate(mContext, NS_STATIC_CAST(nsIScriptContext *, this));
-
-    ::JS_SetThreadStackLimit(mContext, GetThreadStackLimit());
 
     // Make sure the new context gets the default context options
     ::JS_SetOptions(mContext, mDefaultJSOptions);
@@ -721,7 +759,8 @@ nsJSContext::nsJSContext(JSRuntime *aRuntime) : mGCOnDestruction(PR_TRUE)
   mScriptsEnabled = PR_TRUE;
   mBranchCallbackCount = 0;
   mBranchCallbackTime = LL_ZERO;
-  mProcessingScriptTag=PR_FALSE;
+  mProcessingScriptTag = PR_FALSE;
+  mIsTrackingChromeCodeTime = PR_FALSE;
 
   InvalidateContextAndWrapperCache();
 }
@@ -1402,6 +1441,49 @@ nsJSContext::CallEventHandler(JSObject *aTarget, JSObject *aHandler,
 
   // check if the event handler can be run on the object in question
   rv = sSecurityManager->CheckFunctionAccess(mContext, aHandler, aTarget);
+  if (NS_SUCCEEDED(rv)) {
+    // We're not done yet!  Some event listeners are confused about their
+    // script context, so check whether we might actually be the wrong script
+    // context.  To be safe, do CheckFunctionAccess checks for both.
+    nsCOMPtr<nsIContent> content;
+    const JSClass *jsClass = JS_GET_CLASS(mContext, aTarget);
+    if (jsClass &&
+        !((~jsClass->flags) & (JSCLASS_HAS_PRIVATE |
+                               JSCLASS_PRIVATE_IS_NSISUPPORTS))) {
+      nsISupports *priv =
+        NS_STATIC_CAST(nsISupports *, JS_GetPrivate(mContext, aTarget));
+      nsCOMPtr<nsIXPConnectWrappedNative> xpcWrapper = do_QueryInterface(priv);
+      if (xpcWrapper) {
+        content = do_QueryWrappedNative(xpcWrapper);
+      }
+    }
+    if (content) {
+      // XXXbz XBL2/sXBL issue
+      nsIDocument* ownerDoc = content->GetOwnerDoc();
+      if (ownerDoc) {
+        nsIScriptGlobalObject* global = ownerDoc->GetScriptGlobalObject();
+        if (global) {
+          nsIScriptContext* context = global->GetContext();
+          if (context && context != this) {
+            JSContext* cx =
+              NS_STATIC_CAST(JSContext*, context->GetNativeContext());
+            rv = stack->Push(cx);
+            if (NS_SUCCEEDED(rv)) {
+              rv = sSecurityManager->CheckFunctionAccess(cx, aHandler,
+                                                         aTarget);
+              // Here we lose no matter what; we don't want to leave the wrong
+              // cx on the stack.  I guess default to leaving mContext, to
+              // cover those cases when we really do have a different context
+              // for the handler and the node.  That's probably safer.
+              if (NS_FAILED(stack->Pop(nsnull))) {
+                return NS_ERROR_FAILURE;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   nsJSContext::TerminationFuncHolder holder(this);
 
@@ -1979,9 +2061,6 @@ nsJSContext::InitClasses(JSObject *aGlobalObj)
   rv = InitializeLiveConnectClasses(aGlobalObj);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = nsDOMClassInfo::InitDOMJSClass(mContext, aGlobalObj);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   // Initialize the options object and set default options in mContext
   JSObject *optionsObj = ::JS_DefineObject(mContext, aGlobalObj, "_options",
                                            &OptionsClass, nsnull, 0);
@@ -2134,12 +2213,10 @@ nsJSContext::ScriptExecuted()
   return NS_OK;
 }
 
-nsresult NS_DOMClassInfo_PreserveWrapper(nsIXPConnectWrappedNative *aWrapper);
-
 NS_IMETHODIMP
 nsJSContext::PreserveWrapper(nsIXPConnectWrappedNative *aWrapper)
 {
-  return NS_DOMClassInfo_PreserveWrapper(aWrapper);
+  return nsDOMClassInfo::PreserveNodeWrapper(aWrapper);
 }
 
 NS_IMETHODIMP
@@ -2254,18 +2331,24 @@ ObjectPrincipalFinder(JSContext *cx, JSObject *obj)
 static int PR_CALLBACK
 MaxScriptRunTimePrefChangedCallback(const char *aPrefName, void *aClosure)
 {
-  // Default limit on script run time to 5 seconds. 0 means let
+  // Default limit on script run time to 10 seconds. 0 means let
   // scripts run forever.
-  PRInt32 time = nsContentUtils::GetIntPref(aPrefName, 5);
+  PRBool isChromePref =
+    strcmp(aPrefName, "dom.max_chrome_script_run_time") == 0;
+  PRInt32 time = nsContentUtils::GetIntPref(aPrefName, isChromePref ? 20 : 10);
 
-  if (time == 0) {
+  PRTime t;
+  if (time <= 0) {
     // Let scripts run for a really, really long time.
-    sMaxScriptRunTime = LL_INIT(0x40000000, 0);
+    t = LL_INIT(0x40000000, 0);
   } else {
-    PRTime usec_per_sec;
-    LL_I2L(usec_per_sec, PR_USEC_PER_SEC);
-    LL_I2L(sMaxScriptRunTime, time);
-    LL_MUL(sMaxScriptRunTime, sMaxScriptRunTime, usec_per_sec);
+    t = time * PR_USEC_PER_SEC;
+  }
+
+  if (isChromePref) {
+    sMaxChromeScriptRunTime = t;
+  } else {
+    sMaxScriptRunTime = t;
   }
 
   return 0;
@@ -2338,6 +2421,12 @@ nsJSEnvironment::Init()
                                        MaxScriptRunTimePrefChangedCallback,
                                        nsnull);
   MaxScriptRunTimePrefChangedCallback("dom.max_script_run_time", nsnull);
+
+  nsContentUtils::RegisterPrefCallback("dom.max_chrome_script_run_time",
+                                       MaxScriptRunTimePrefChangedCallback,
+                                       nsnull);
+  MaxScriptRunTimePrefChangedCallback("dom.max_chrome_script_run_time",
+                                      nsnull);
 
   rv = CallGetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &sSecurityManager);
 

@@ -735,6 +735,12 @@ nsFontMetricsXft::SetRightToLeftText(PRBool aIsRTL)
     return NS_OK;
 }
 
+PRBool
+nsFontMetricsXft::GetRightToLeftText()
+{
+    return PR_FALSE;
+}
+
 nsresult
 nsFontMetricsXft::GetClusterInfo(const PRUnichar *aText,
                                  PRUint32 aLength,
@@ -806,13 +812,12 @@ nsFontMetricsXft::CacheFontMetrics(void)
     f = mDeviceContext->DevUnitsToAppUnits();
     
     // Get our font face
-    FT_Face face;
-    TT_OS2 *os2;
     XftFont *xftFont = mWesternFont->mXftFont;
     NS_ASSERTION(xftFont, "FindFont returned a bad font");
 
-    face = XftLockFace(xftFont);
-    os2 = (TT_OS2 *) FT_Get_Sfnt_Table(face, ft_sfnt_os2);
+    FT_Face face = XftLockFace(xftFont);
+    if (!face)
+        return NS_ERROR_NOT_AVAILABLE;
 
     // mEmHeight (size in pixels of EM height)
     int size;
@@ -847,6 +852,10 @@ nsFontMetricsXft::CacheFontMetrics(void)
 
     // mMaxAdvance
     mMaxAdvance = nscoord(xftFont->max_advance_width * f);
+    // X may screw up if we try to measure/draw more than 32767 pixels in
+    // one operation.
+    mMaxStringLength = (PRInt32)floor(32767.0/xftFont->max_advance_width);
+    mMaxStringLength = PR_MAX(1, mMaxStringLength);
 
     // mSpaceWidth (width of a space)
     gint rawWidth;
@@ -892,6 +901,8 @@ nsFontMetricsXft::CacheFontMetrics(void)
         mUnderlineSize =
             NSToIntRound(PR_MAX(1, floor(0.05 * xftFont->height + 0.5)) * f);
     }
+
+    TT_OS2 *os2 = (TT_OS2 *) FT_Get_Sfnt_Table(face, ft_sfnt_os2);
 
     // mSuperscriptOffset
     if (os2 && os2->ySuperscriptYOffset) {

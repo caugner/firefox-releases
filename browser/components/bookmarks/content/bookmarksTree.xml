@@ -25,6 +25,7 @@
 #   Ben Goodger <ben@netscape.com> (Original Author)
 #   Blake Ross <blaker@nemtscape.com>
 #   Pierre Chanial <chanial@noos.fr> (v 2.0)
+#   Joey Minta <jminta@gmail.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -504,11 +505,30 @@
         <parameter name="aTxn"/>
         <parameter name="aDo"/>
         <body><![CDATA[
-          aTxn = aTxn.wrappedJSObject;
-          var type = aTxn.type;
-          // Skip transactions that aggregates nested "insert" or "remove" transactions.
-          if ((type == "insert") && aDo || (type == "remove") && !aDo)
-            this._itemToBeToggled = aTxn.item;
+          if (aTxn) {
+            aTxn = aTxn.wrappedJSObject;
+            var type = aTxn.type;
+            // Skip transactions that aggregates nested "insert" or "remove" transactions.
+            if ((type == "insert") && aDo || (type == "remove") && !aDo)
+              this._itemToBeToggled = [aTxn.item];
+          } else {
+            var txnList;
+            var bkmkTxnSvc = Components.classes["@mozilla.org/bookmarks/transactionmanager;1"]
+                                       .getService(Components.interfaces.nsIBookmarkTransactionManager);
+            var txmgr = bkmkTxnSvc.transactionManager;
+            if (this.bookmarkTreeTransactionListener.mLastTxnWasDo) {
+              txnList = txmgr.getUndoList();
+            } else {
+              txnList = txmgr.getRedoList();
+            }
+            var items =[];
+            var childList = txnList.getChildListForItem(txnList.numItems-1);
+            for (var i=0; i<childList.numItems; i++) {
+              items.push(childList.getItem(i).wrappedJSObject.item);
+            }
+            this._itemToBeToggled = items;
+          }
+        },
         ]]></body>
       </method>
 
@@ -595,7 +615,7 @@
             this.tree.setAttribute("ref", this.originalRef);
           else
             this.tree.setAttribute("ref",
-                                   "find:datasource=rdf:bookmarks&match=http://home.netscape.com/NC-rdf#Name&method=contains&text=" + encodeURIComponent(aInput));
+                                   "find:datasource=rdf:bookmarks&match=http://home.netscape.com/NC-rdf#Name&method=contains&text=" + encodeURIComponent(aInput));	
         ]]></body>
       </method>
 
@@ -611,6 +631,23 @@
           aXferData.data = BookmarksUtils.getXferDataFromSelection(selection);
           if (aEvent.ctrlKey)
             aDragAction.action = kDSIID.DRAGDROP_ACTION_COPY;
+        },
+        onDragOver: function (aEvent, aFlavour, aDragSession)
+        {
+          // allow dropping of bookmarks below the tree
+          if (aDragSession.sourceNode == this.mOuter)
+            aDragSession.canDrop = true;
+        },
+        // the actual dropping happens in the nsIXULTreeBuilderObserver below
+        onDrop: function (aEvent, aXferData, aDragSession) { },
+        getSupportedFlavours: function ()
+        {
+          var flavourSet = new FlavourSet();
+          flavourSet.appendFlavour("moz/rdfitem");
+          flavourSet.appendFlavour("application/x-moz-file", "nsIFile");
+          flavourSet.appendFlavour("text/x-moz-url");
+          flavourSet.appendFlavour("text/unicode");
+          return flavourSet;
         }
       })
       ]]></field>      
@@ -796,21 +833,28 @@
 
         mOuter: this,
 
+        mLastTxnWasDo: null,
+
         willDo: function (aTxmgr, aTxn) {},
         didDo : function (aTxmgr, aTxn) {
+          this.mLastTxnWasDo = true;
           this.mOuter.preUpdateTreeSelection(aTxn, true);
         },
         willUndo: function (aTxmgr, aTxn) {},
         didUndo : function (aTxmgr, aTxn) {
+          this.mLastTxnWasDo = false;
           this.mOuter.preUpdateTreeSelection(aTxn, false);
         },
         willRedo: function (aTxmgr, aTxn) {},
         didRedo : function (aTxmgr, aTxn) {
+          this.mLastTxnWasDo = true;
           this.mOuter.preUpdateTreeSelection(aTxn, true);
         },
         didMerge       : function (aTxmgr, aTxn) {},
         didBeginBatch  : function (aTxmgr, aTxn) {},
-        didEndBatch    : function (aTxmgr, aTxn) {},
+        didEndBatch    : function (aTxmgr, aTxn) {
+          this.mOuter.preUpdateTreeSelection(aTxn, this.mLastTxnWasDo);
+        },
         willMerge      : function (aTxmgr, aTxn) {},
         willBeginBatch : function (aTxmgr, aTxn) {},
         willEndBatch   : function (aTxmgr, aTxn) {}
@@ -828,8 +872,8 @@
       <!-- context menu -->
       <menupopup onpopupshowing="this.parentNode.createTreeContextMenu(event);"
                  onpopuphidden="if (content) content.focus()"
-                 onclick="event.preventBubble();"
-                 onkeypress="event.preventBubble();"/>
+                 onclick="event.stopPropagation();"
+                 onkeypress="event.stopPropagation();"/>
       <vbox flex="1">
         <tree anonid="bookmarks-tree" flex="1" class="plain" enableColumnDrag="true"
                   datasources="rdf:bookmarks rdf:files rdf:localsearch" ref="NC:BookmarksTopRoot" flags="dont-build-content"
@@ -844,6 +888,22 @@
                 <treeitem uri="rdf:*">
                   <treerow properties="rdf:http://www.w3.org/1999/02/22-rdf-syntax-ns#type separator">
                     <treecell properties="separator" label="rdf:http://home.netscape.com/NC-rdf#Name"/>
+                  </treerow>
+                </treeitem>
+              </treechildren>
+            </rule>
+            <rule rdf:type="http://home.netscape.com/NC-rdf#MicsumBookmark">
+              <treechildren>
+                <treeitem uri="rdf:*">
+                  <treerow properties="rdf:http://www.w3.org/1999/02/22-rdf-syntax-ns#type rdf:http://home.netscape.com/NC-rdf#loading rdf:http://home.netscape.com/WEB-rdf#status">
+                    <treecell src="rdf:http://home.netscape.com/NC-rdf#Icon"
+                              label="rdf:http://home.netscape.com/NC-rdf#GeneratedTitle"/>
+                    <treecell label="rdf:http://home.netscape.com/NC-rdf#URL" />
+                    <treecell label="rdf:http://home.netscape.com/NC-rdf#ShortcutURL" />
+                    <treecell label="rdf:http://home.netscape.com/NC-rdf#Description" />
+                    <treecell label="rdf:http://home.netscape.com/NC-rdf#BookmarkAddDate" />
+                    <treecell label="rdf:http://home.netscape.com/WEB-rdf#LastModifiedDate" />
+                    <treecell label="rdf:http://home.netscape.com/WEB-rdf#LastVisitDate"/>
                   </treerow>
                 </treeitem>
               </treechildren>
@@ -908,10 +968,14 @@
     <implementation>
       <constructor>
         // Adding the transaction listener
-        BMSVC.transactionManager.AddListener(this.bookmarkTreeTransactionListener);
+        var bkmkTxnSvc = Components.classes["@mozilla.org/bookmarks/transactionmanager;1"]
+                                   .getService(Components.interfaces.nsIBookmarkTransactionManager);
+        bkmkTxnSvc.transactionManager.AddListener(this.bookmarkTreeTransactionListener);
       </constructor>  
       <destructor>
-        BMSVC.transactionManager.RemoveListener(this.bookmarkTreeTransactionListener);
+        var bkmkTxnSvc = Components.classes["@mozilla.org/bookmarks/transactionmanager;1"]
+                                   .getService(Components.interfaces.nsIBookmarkTransactionManager);
+        bkmkTxnSvc.transactionManager.RemoveListener(this.bookmarkTreeTransactionListener);
       </destructor>  
       <field name="clickCount">2</field>
     </implementation>
@@ -925,8 +989,8 @@
       <menupopup xbl:inherits="onpopupshowing"
                  onpopupshowing="this.parentNode.createTreeContextMenu(event);"
                  onpopuphidden="if (content) content.focus()"
-                 onclick="event.preventBubble();"
-                 onkeypress="event.preventBubble();"/>
+                 onclick="event.stopPropagation();"
+                 onkeypress="event.stopPropagation();"/>
       <tree anonid="bookmarks-tree" flex="1" class="plain" hidecolumnpicker="true"
                 datasources="rdf:bookmarks rdf:files rdf:localsearch" ref="NC:BookmarksRoot" flags="dont-build-content"
                 onselect="this.parentNode.treeBoxObject.view.selectionChanged();" seltype="single">
@@ -936,6 +1000,16 @@
               <treeitem uri="rdf:*">
                 <treerow properties="rdf:http://www.w3.org/1999/02/22-rdf-syntax-ns#type separator">
                   <treecell properties="separator" label="rdf:http://home.netscape.com/NC-rdf#Name"/>
+                </treerow>
+              </treeitem>
+            </treechildren>
+          </rule>
+          <rule rdf:type="http://home.netscape.com/NC-rdf#MicsumBookmark">
+            <treechildren>
+              <treeitem uri="rdf:*">
+                <treerow properties="rdf:http://www.w3.org/1999/02/22-rdf-syntax-ns#type rdf:http://home.netscape.com/NC-rdf#loading rdf:http://home.netscape.com/WEB-rdf#status">
+                  <treecell src="rdf:http://home.netscape.com/NC-rdf#Icon"
+                            label="rdf:http://home.netscape.com/NC-rdf#GeneratedTitle"/>
                 </treerow>
               </treeitem>
             </treechildren>

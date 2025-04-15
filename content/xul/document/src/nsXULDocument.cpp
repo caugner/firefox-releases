@@ -72,6 +72,7 @@
 #include "nsIScrollableView.h"
 #include "nsIContentViewer.h"
 #include "nsGUIEvent.h"
+#include "nsIDOMNSUIEvent.h"
 #include "nsIDOMXULElement.h"
 #include "nsIPrivateDOMEvent.h"
 #include "nsIRDFNode.h"
@@ -115,6 +116,7 @@
 #include "nsContentCreatorFunctions.h"
 #include "nsContentUtils.h"
 #include "nsIParser.h"
+#include "nsIParserService.h"
 #include "nsICSSStyleSheet.h"
 #include "nsIScriptError.h"
 
@@ -148,6 +150,8 @@ const nsForwardReference::Phase nsForwardReference::kPasses[] = {
     nsForwardReference::eDone
 };
 
+const PRUint32 kMaxAttrNameLength = 512;
+const PRUint32 kMaxAttributeLength = 4096;
 
 //----------------------------------------------------------------------
 //
@@ -376,16 +380,7 @@ nsXULDocument::~nsXULDocument()
     // Notify our observers here, we can't let the nsDocument
     // destructor do that for us since some of the observers are
     // deleted by the time we get there.
-
-    PRInt32 i;
-    for (i = mObservers.Count() - 1; i >= 0; --i) {
-        // XXX Should this be a kungfudeathgrip?!!!!
-        nsIDocumentObserver* observer =
-            NS_STATIC_CAST(nsIDocumentObserver *, mObservers.ElementAt(i));
-
-        observer->DocumentWillBeDestroyed(this);
-    }
-
+    NS_DOCUMENT_NOTIFY_OBSERVERS(DocumentWillBeDestroyed, (this));
     mObservers.Clear();
 
     // In case we failed somewhere early on and the forward observer
@@ -482,6 +477,8 @@ NS_INTERFACE_MAP_BEGIN(nsXULDocument)
     NS_INTERFACE_MAP_ENTRY(nsIXULDocument)
     NS_INTERFACE_MAP_ENTRY(nsIDOMXULDocument)
     NS_INTERFACE_MAP_ENTRY(nsIStreamLoaderObserver)
+    NS_INTERFACE_MAP_ENTRY(nsIDOMXULDocument2)
+    NS_INTERFACE_MAP_ENTRY(nsIDOMXULDocument_MOZILLA_1_8_BRANCH)
     NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(XULDocument)
 NS_INTERFACE_MAP_END_INHERITING(nsXMLDocument)
 
@@ -535,23 +532,20 @@ nsXULDocument::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
 
     mChannel = aChannel;
 
-    nsresult rv = aChannel->GetOriginalURI(getter_AddRefs(mDocumentURI));
-    NS_ENSURE_SUCCESS(rv, rv);
-    
+    // Get the URI.  Note that this should match nsDocShell::OnLoadingSite
     // XXXbz this code is repeated from nsDocument::Reset; we
     // really need to refactor this part better.
-    PRBool isAbout = PR_FALSE;
-    PRBool isChrome = PR_FALSE;
-    PRBool isRes = PR_FALSE;
-    rv = mDocumentURI->SchemeIs("chrome", &isChrome);
-    rv |= mDocumentURI->SchemeIs("resource", &isRes);
-    rv |= mDocumentURI->SchemeIs("about", &isAbout);
-
-    if (NS_SUCCEEDED(rv) && !isChrome && !isRes && !isAbout) {
-        rv = aChannel->GetURI(getter_AddRefs(mDocumentURI));
-        NS_ENSURE_SUCCESS(rv, rv);
+    nsLoadFlags loadFlags = 0;
+    nsresult rv = aChannel->GetLoadFlags(&loadFlags);
+    if (NS_SUCCEEDED(rv)) {
+        if (loadFlags & nsIChannel::LOAD_REPLACE) {
+            rv = aChannel->GetURI(getter_AddRefs(mDocumentURI));
+        } else {
+            rv = aChannel->GetOriginalURI(getter_AddRefs(mDocumentURI));
+        }
     }
-
+    NS_ENSURE_SUCCESS(rv, rv);
+    
     rv = ResetStylesheetsToURI(mDocumentURI);
     if (NS_FAILED(rv)) return rv;
 
@@ -1132,11 +1126,9 @@ nsXULDocument::AttributeChanged(nsIContent* aElement, PRInt32 aNameSpaceID,
     }
 
     // Now notify external observers
-    for (PRInt32 i = mObservers.Count() - 1; i >= 0; --i) {
-        nsIDocumentObserver*  observer = (nsIDocumentObserver*)mObservers[i];
-        observer->AttributeChanged(this, aElement, aNameSpaceID, aAttribute,
-                                   aModType);
-    }
+    NS_DOCUMENT_NOTIFY_OBSERVERS(AttributeChanged,
+                                 (this, aElement, aNameSpaceID,
+                                  aAttribute, aModType));
 
     // See if there is anything we need to persist in the localstore.
     //
@@ -1425,7 +1417,7 @@ nsXULDocument::GetElementsByAttribute(const nsAString& aAttribute,
                                             nsnull,
                                             PR_TRUE,
                                             attrAtom,
-                                            kNameSpaceID_None);
+                                            kNameSpaceID_Unknown);
     NS_ENSURE_TRUE(list, NS_ERROR_OUT_OF_MEMORY);
 
     NS_ADDREF(*aReturn = list);
@@ -1465,6 +1457,23 @@ nsXULDocument::Persist(const nsAString& aID,
         nameSpaceID = ni->NamespaceID();
     }
     else {
+        // Make sure that this QName is going to be valid.
+        nsIParserService *parserService =
+            nsContentUtils::GetParserServiceWeakRef();
+        NS_ASSERTION(parserService, "Running scripts during shutdown?");
+
+        const PRUnichar *colon;
+        rv = parserService->CheckQName(PromiseFlatString(aAttr), PR_TRUE, &colon);
+        if (NS_FAILED(rv)) {
+            // There was an invalid character or it was malformed.
+            return NS_ERROR_INVALID_ARG;
+        }
+
+        if (colon) {
+            // We don't really handle namespace qualifiers in attribute names.
+            return NS_ERROR_NOT_IMPLEMENTED;
+        }
+
         tag = do_GetAtom(aAttr);
         NS_ENSURE_TRUE(tag, NS_ERROR_OUT_OF_MEMORY);
 
@@ -1504,6 +1513,14 @@ nsXULDocument::Persist(nsIContent* aElement, PRInt32 aNameSpaceID,
     rv = aAttribute->GetUTF8String(&attrstr);
     if (NS_FAILED(rv)) return rv;
 
+    // Don't bother with unreasonable attributes. We clamp long values,
+    // but truncating attribute names turns it into a different attribute
+    // so there's no point in persisting anything at all
+    if (!attrstr || strlen(attrstr) > kMaxAttrNameLength) {
+        NS_WARNING("Can't persist, Attribute name too long");
+        return NS_ERROR_ILLEGAL_VALUE;
+    }
+
     nsCOMPtr<nsIRDFResource> attr;
     rv = gRDFService->GetResource(nsDependentCString(attrstr),
                                   getter_AddRefs(attr));
@@ -1513,6 +1530,14 @@ nsXULDocument::Persist(nsIContent* aElement, PRInt32 aNameSpaceID,
     nsAutoString valuestr;
     rv = aElement->GetAttr(kNameSpaceID_None, aAttribute, valuestr);
     if (NS_FAILED(rv)) return rv;
+
+    // prevent over-long attributes that choke the parser (bug 319846)
+    // (can't simply Truncate without testing, it's implemented
+    // using SetLength and will grow a short string)
+    if (valuestr.Length() > kMaxAttributeLength) {
+        NS_WARNING("Truncating persisted attribute value");
+        valuestr.Truncate(kMaxAttributeLength);
+    }
 
     PRBool novalue = (rv != NS_CONTENT_ATTR_HAS_VALUE);
 
@@ -1596,7 +1621,11 @@ nsXULDocument::GetPixelDimensions(nsIPresShell* aShell, PRInt32* aWidth,
 
     FlushPendingNotifications(Flush_Layout);
 
-    result = aShell->GetPrimaryFrameFor(mRootContent, &frame);
+    if (mRootContent) {
+        result = aShell->GetPrimaryFrameFor(mRootContent, &frame);
+    } else {
+        frame = nsnull;
+    }
     if (NS_SUCCEEDED(result) && frame) {
         nsIView* view = frame->GetView();
         // If we have a view check if it's scrollable. If not,
@@ -1681,14 +1710,8 @@ nsXULDocument::GetHeight(PRInt32* aHeight)
 NS_IMETHODIMP
 nsXULDocument::GetPopupNode(nsIDOMNode** aNode)
 {
-    nsresult rv;
-
-    // get focus controller
-    nsCOMPtr<nsIFocusController> focusController;
-    GetFocusController(getter_AddRefs(focusController));
-    NS_ENSURE_TRUE(focusController, NS_ERROR_FAILURE);
-    // get popup node
-    rv = focusController->GetPopupNode(aNode); // addref happens here
+    // Get popup node.
+    nsresult rv = TrustedGetPopupNode(aNode); // addref happens here
 
     if (NS_SUCCEEDED(rv) && *aNode && !nsContentUtils::CanCallerAccess(*aNode)) {
         NS_RELEASE(*aNode);
@@ -1696,6 +1719,18 @@ nsXULDocument::GetPopupNode(nsIDOMNode** aNode)
     }
 
     return rv;
+}
+
+NS_IMETHODIMP
+nsXULDocument::TrustedGetPopupNode(nsIDOMNode** aNode)
+{
+    // Get the focus controller.
+    nsCOMPtr<nsIFocusController> focusController;
+    GetFocusController(getter_AddRefs(focusController));
+    NS_ENSURE_TRUE(focusController, NS_ERROR_FAILURE);
+
+    // Get the popup node.
+    return focusController->GetPopupNode(aNode); // addref happens here
 }
 
 NS_IMETHODIMP
@@ -1714,6 +1749,92 @@ nsXULDocument::SetPopupNode(nsIDOMNode* aNode)
 }
 
 NS_IMETHODIMP
+nsXULDocument::GetTrustedPopupEvent(nsIDOMEvent** aEvent)
+{
+    nsresult rv;
+
+    nsCOMPtr<nsIFocusController> focusController;
+    GetFocusController(getter_AddRefs(focusController));
+    NS_ENSURE_TRUE(focusController, NS_ERROR_FAILURE);
+
+    nsCOMPtr<nsIFocusController_MOZILLA_1_8_BRANCH> focusControllerBranch =
+        do_QueryInterface(focusController, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = focusControllerBranch->GetPopupEvent(aEvent);
+
+    return rv;
+}
+
+NS_IMETHODIMP
+nsXULDocument::SetTrustedPopupEvent(nsIDOMEvent* aEvent)
+{
+    nsresult rv;
+
+    nsCOMPtr<nsIFocusController> focusController;
+    GetFocusController(getter_AddRefs(focusController));
+    NS_ENSURE_TRUE(focusController, NS_ERROR_FAILURE);
+
+    nsCOMPtr<nsIFocusController_MOZILLA_1_8_BRANCH> focusControllerBranch =
+        do_QueryInterface(focusController, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = focusControllerBranch->SetPopupEvent(aEvent);
+
+    return rv;
+}
+
+// Returns the rangeOffset element from the popupEvent. This is for chrome
+// callers only.
+NS_IMETHODIMP
+nsXULDocument::GetPopupRangeParent(nsIDOMNode** aRangeParent)
+{
+    NS_ENSURE_ARG_POINTER(aRangeParent);
+    *aRangeParent = nsnull;
+
+    nsCOMPtr<nsIDOMEvent> event;
+    nsresult rv = GetTrustedPopupEvent(getter_AddRefs(event));
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (! event)
+        return NS_ERROR_UNEXPECTED; // no event active
+
+    nsCOMPtr<nsIDOMNSUIEvent> uiEvent = do_QueryInterface(event, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = uiEvent->GetRangeParent(aRangeParent); // addrefs
+
+    if (NS_SUCCEEDED(rv) && *aRangeParent &&
+            !nsContentUtils::CanCallerAccess(*aRangeParent)) {
+        NS_RELEASE(*aRangeParent);
+        return NS_ERROR_DOM_SECURITY_ERR;
+    }
+    return rv;
+}
+
+// Returns the rangeOffset element from the popupEvent. We check the rangeParent
+// to determine if the caller has rights to access to the data.
+NS_IMETHODIMP
+nsXULDocument::GetPopupRangeOffset(PRInt32* aRangeOffset)
+{
+    NS_ENSURE_ARG_POINTER(aRangeOffset);
+
+    nsCOMPtr<nsIDOMEvent> event;
+    nsresult rv = GetTrustedPopupEvent(getter_AddRefs(event));
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (! event)
+        return NS_ERROR_UNEXPECTED; // no event active
+
+    nsCOMPtr<nsIDOMNSUIEvent> uiEvent = do_QueryInterface(event, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIDOMNode> parent;
+    rv = uiEvent->GetRangeParent(getter_AddRefs(parent));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (parent && !nsContentUtils::CanCallerAccess(parent))
+        return NS_ERROR_DOM_SECURITY_ERR;
+
+    return uiEvent->GetRangeOffset(aRangeOffset);
+}
+
+NS_IMETHODIMP
 nsXULDocument::GetTooltipNode(nsIDOMNode** aNode)
 {
     if (mTooltipNode && !nsContentUtils::CanCallerAccess(mTooltipNode)) {
@@ -1721,6 +1842,13 @@ nsXULDocument::GetTooltipNode(nsIDOMNode** aNode)
     }
     *aNode = mTooltipNode;
     NS_IF_ADDREF(*aNode);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXULDocument::TrustedGetTooltipNode(nsIDOMNode** aNode)
+{
+    NS_IF_ADDREF(*aNode = mTooltipNode);
     return NS_OK;
 }
 
@@ -2168,20 +2296,64 @@ nsXULDocument::MatchAttribute(nsIContent* aContent,
 {
     NS_PRECONDITION(aContent, "Must have content node to work with!");
   
-    // Getting attrs is expensive, so use HasAttr() first.
-    if (!aContent->HasAttr(aNamespaceID, aAttrName)) {
-        return PR_FALSE;
+    if (aNamespaceID != kNameSpaceID_Unknown) {
+        // Getting attrs is expensive, so use HasAttr() first.
+        if (!aContent->HasAttr(aNamespaceID, aAttrName)) {
+            return PR_FALSE;
+        }
+
+        if (aAttrValue.EqualsLiteral("*")) {
+            // Wildcard.  We already know we have this attr, so we match
+            return PR_TRUE;
+        }
+
+        nsAutoString value;
+        nsresult rv = aContent->GetAttr(aNamespaceID, aAttrName, value);
+
+        return NS_SUCCEEDED(rv) && value.Equals(aAttrValue);
     }
 
-    if (aAttrValue.EqualsLiteral("*")) {
-        // Wildcard.  We already know we have this attr, so we match
-        return PR_TRUE;
+
+    // Qualified name match. This takes more work.
+
+    PRUint32 count = aContent->GetAttrCount();
+    for (PRUint32 i = 0; i < count; ++i) {
+        PRInt32 namespaceID;
+        nsCOMPtr<nsIAtom> name;
+        nsCOMPtr<nsIAtom> prefix;
+
+#ifdef DEBUG
+        nsresult rv =
+#endif
+        aContent->GetAttrNameAt(i, &namespaceID, getter_AddRefs(name),
+                                getter_AddRefs(prefix));
+        NS_ASSERTION(NS_SUCCEEDED(rv), "GetAttrCount lied?");
+        
+        PRBool nameMatch;
+        if (!prefix) {
+            nameMatch = name == aAttrName;
+        } else {
+            nsAutoString nameStr;
+            nsAutoString prefixStr;
+            name->ToString(nameStr);
+            prefix->ToString(prefixStr);
+            nameMatch = aAttrName->Equals(prefixStr + NS_LITERAL_STRING(":") +
+                                          nameStr);
+        }
+
+        if (nameMatch) {
+            if (aAttrValue.EqualsLiteral("*")) {
+                return PR_TRUE;
+            }
+
+            nsAutoString value;
+            nsresult rv = aContent->GetAttr(namespaceID, name, value);
+
+            return NS_SUCCEEDED(rv) && value.Equals(aAttrValue);
+        }
     }
 
-    nsAutoString value;
-    nsresult rv = aContent->GetAttr(aNamespaceID, aAttrName, value);
-
-    return NS_SUCCEEDED(rv) && value.Equals(aAttrValue);
+    return PR_FALSE;
 }
 
 nsresult
@@ -2299,7 +2471,10 @@ nsXULDocument::ApplyPersistentAttributes()
             continue;
 
         nsAutoString id;
-        nsXULContentUtils::MakeElementID(this, NS_ConvertASCIItoUCS2(uri), id);
+        nsXULContentUtils::MakeElementID(this, nsDependentCString(uri), id);
+
+        if (id.IsEmpty())
+            continue;
 
         // This will clear the array if there are no elements.
         GetElementsForID(id, elements);
@@ -2673,8 +2848,8 @@ nsXULDocument::LoadOverlay(const nsAString& aURL, nsIObserver* aObserver)
     }
     PRBool shouldReturn;
     rv = LoadOverlayInternal(uri, PR_TRUE, &shouldReturn);
-    if (NS_FAILED(rv))
-      mOverlayLoadObservers.Remove(uri); // remove the observer if LoadOverlayInternal generated an error
+    if (NS_FAILED(rv) && mOverlayLoadObservers.IsInitialized())
+        mOverlayLoadObservers.Remove(uri); // remove the observer if LoadOverlayInternal generated an error
     return rv;
 }
 
@@ -2986,7 +3161,8 @@ nsXULDocument::ResumeWalk()
                     NS_ASSERTION(element, "no element on context stack");
 
                     nsCOMPtr<nsITextContent> text;
-                    rv = NS_NewTextNode(getter_AddRefs(text));
+                    rv = NS_NewTextNode(getter_AddRefs(text),
+                                        mNodeInfoManager);
                     NS_ENSURE_SUCCESS(rv, rv);
 
                     nsXULPrototypeText* textproto =
@@ -3165,17 +3341,21 @@ nsXULDocument::ResumeWalk()
     // XXXldb This is where we should really be setting the chromehidden
     // attribute.
 
-    PRBool didInitialReflow = PR_TRUE;
-    nsIPresShell *shell = GetShellAt(0);
-    if (shell)
-        shell->GetDidInitialReflow(&didInitialReflow);
-
-    if (!didInitialReflow) {
-        // Everything after this point we only want to do once we're
-        // certain that we've been embedded in a presentation shell.
+    if (!mDocumentLoaded) {
+        // Make sure we don't reenter here from StartLayout().  Note that
+        // setting mDocumentLoaded to true here means that if StartLayout()
+        // causes ResumeWalk() to be reentered, we'll take the other branch of
+        // the |if (!mDocumentLoaded)| check above and since
+        // mInitialLayoutComplete will be false will follow the else branch
+        // there too.  See the big comment there for how such reentry can
+        // happen.
+        mDocumentLoaded = PR_TRUE;
 
         nsAutoString title;
-        mRootContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::title, title);
+        if (mRootContent) {
+            mRootContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::title,
+                                  title);
+        }
         SetTitle(title);
 
         StartLayout();
@@ -3183,10 +3363,7 @@ nsXULDocument::ResumeWalk()
         if (mIsWritingFastLoad && IsChromeURI(mDocumentURI))
             gXULCache->WritePrototype(mMasterPrototype);
 
-        for (PRInt32 i = mObservers.Count() - 1; i >= 0; --i) {
-            nsIDocumentObserver* observer = (nsIDocumentObserver*) mObservers[i];
-            observer->EndLoad(this);
-        }
+        NS_DOCUMENT_NOTIFY_OBSERVERS(EndLoad, (this));
 
         DispatchContentLoadedEvents();
 
@@ -3235,6 +3412,8 @@ nsXULDocument::ResumeWalk()
                 // whether or not the overlay prototype is in the XUL cache. The
                 // most likely effect of this bug is odd UI initialization due to
                 // methods and properties that do not work.
+                // XXXbz really, we shouldn't be firing binding constructors
+                // until after StartLayout returns!
 
                 NS_ENSURE_TRUE(mPendingOverlayLoadNotifications.IsInitialized() || mPendingOverlayLoadNotifications.Init(), 
                                NS_ERROR_OUT_OF_MEMORY);
@@ -3834,6 +4013,10 @@ nsXULDocument::OverlayForwardReference::Resolve()
 
     if (id.IsEmpty()) {
         // overlay had no id, use the root element
+        if (!mDocument->mRootContent) {
+            return eResolve_Error;
+        }
+
         mDocument->InsertElement(mDocument->mRootContent, mOverlay, notify);
         mResolved = PR_TRUE;
         return eResolve_Succeeded;

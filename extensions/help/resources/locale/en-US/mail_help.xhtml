@@ -52,7 +52,8 @@
       Started with &brandShortName; Mail &amp; Newsgroups</a></li>
     <li><a href="#reading_messages">Reading Messages</a></li>
     <li><a href="#sending_messages">Sending Messages</a></li>
-    <li><a href="#creating_html_mail_messages">Creating HTML Mail Messages</a></li>
+    <li><a href="#creating_html_mail_messages">Creating HTML Mail
+      Messages</a></li>
     <li><a href="#using_attachments">Using Attachments</a></li>
     <li><a href="#deleting_messages">Deleting Messages</a></li>
     <li><a href="#using_address_books">Using Address Books</a></li>
@@ -63,7 +64,8 @@
     <li><a href="#getting_started_with_newsgroups">Getting Started with
       Newsgroups</a></li>
     <li><a href="#working_offline">Working Offline</a></li>
-    <li><a href="mail_sec_help.xhtml">Signing &amp; Encrypting Messages</a></li>
+    <li><a href="mail_sec_help.xhtml">Signing &amp; Encrypting
+      Messages</a></li>
     <li><a href="#mail_and_newsgroups_account_settings">Mail &amp; Newsgroups
       Account Settings</a></li>
     <li><a href="#mail_and_newsgroup_preferences">Mail &amp; Newsgroups
@@ -151,7 +153,8 @@
       <li>If you want this account to be a part of the Local Folders Global
         Inbox account, keep the <q>Use Global Inbox</q> box checked. Mail for
         this account will then be stored in your Local Folders. Otherwise, if
-        the checkbox is unchecked, mail will be stored in its own directory.</li>
+        the checkbox is unchecked, mail will be stored in its own
+        directory.</li>
       <li>Enter the name of your outgoing mail server (SMTP).
 
         <p><strong>Note</strong>: You need to specify only one outgoing mail
@@ -312,7 +315,8 @@
       the Mail Window</a></li>
     <li><a href="#sorting_and_threading_messages">Sorting and Threading
       Messages</a></li>
-    <li><a href="#saving_and_printing_messages">Saving and Printing Messages</a></li>
+    <li><a href="#saving_and_printing_messages">Saving and Printing
+      Messages</a></li>
     <li><a href="#controlling_images_scripts_and_plug-ins">Controlling Images,
       Scripts, and Plug-ins</a></li>
   </ul>
@@ -374,7 +378,7 @@
         Newsgroups checks for new mail, but doesn&apos;t download new messages
         until you click Get Msgs or unless you choose <q>Automatically download
         any new messages</q>.</li>
-      <li><strong>Check for new messages every ___ minutes</strong>: Select
+      <li><strong>Check for new messages every [__] minutes</strong>: Select
         this checkbox if you want to specify the number of minutes between mail
         checks. You can also check for new messages at any time by clicking Get
         Msgs in the Mail window.</li>
@@ -542,9 +546,9 @@
 <h2 id="controlling_images_scripts_and_plug-ins">Controlling Images, Scripts,
   and Plug-ins</h2>
 
-<p>By default, remote images and other remote content are displayed in
-  messages you receive. To avoid downloading images and other content
-  embedded in web pages sent as message attachments:</p>
+<p>By default, images and other content, that is hosted remotely, will not
+  display in messages you receive, except from senders in your Personal
+  Address Book. To change these settings:</p>
 
 <ol>
   <li>Open the <span class="mac">&brandShortName;</span>
@@ -552,24 +556,36 @@
   <li>Under the Mail &amp; Newsgroups category, click Message Display. (If
     no subcategories are visible, double-click Mail &amp; Newsgroups to
     expand the list.)</li>
-  <li>Uncheck <q>Allow messages to load and display remote images and other
-    content</q>.</li>
+  <li>In the General section, do one of the following:
+    <ul>
+      <li>To allow all remote content, uncheck <q>Block images and other
+        content from remote sources</q>.</li>
+      <li>To block all remote content, uncheck <q>but allow if the sender is in
+        this address book:</q>.</li>
+      <li>To change which address book you use for people who send messages
+        that are allowed to display remote content, then select the correct
+        address book from the drop down.</li>
+    </ul>
+  </li>
   <li>Click OK to have your change take affect.</li>
 </ol>
 
-<p>By default, JavaScript is not enabled and plug-ins are enabled for mail
-  messages you receive. To change these settings:</p>
+<p>By default, JavaScript and plug-ins are not enabled for mail messages you
+  receive. To change these settings:</p>
 
 <ol>
   <li>Open the <span class="mac">&brandShortName;</span>
     <span class="noMac">Edit</span> menu and choose Preferences.</li>
   <li>Under the Advanced category, click Scripts &amp; Plug-ins. (If no
     subcategories are visible, double-click Advanced to expand the
-    list.)</li>
-  <li>Under <q>Enable JavaScript for</q>, check <q>Mail &amp; Newsgroups</q> to
-    enable JavaScript for web pages viewed in mail messages.</li>
-  <li>Under <q>Enable Plug-ins for</q>, uncheck <q>Mail &amp; Newsgroups</q> to
-    disable plug-ins.</li>
+    list.)
+    <ul>
+      <li>Under <q>Enable JavaScript for</q>, check <q>Mail &amp;
+        Newsgroups</q> to enable JavaScript.</li>
+      <li>Under <q>Enable Plug-ins for</q>, check <q>Mail &amp; Newsgroups</q>
+        to enable plug-ins.</li>
+    </ul>
+  </li>
   <li>Click OK to have your changes take affect.</li>
 </ol>
 
@@ -785,6 +801,8 @@
     before you send it. You can also click Spell.</li>
   <li><strong>Spellcheck As You Type:</strong> Choose this option to have the
     spelling of the message text checked as you type.</li>
+  <li><strong>Quote Message:</strong> Choose this option to have the selection
+    of the message text shown as quoted text.</li>
   <li><strong>Rewrap:</strong> If you are composing a message using the
     plain-text editor, you can use the Rewrap command to rewrap long lines of
     quoted text to fit the Compose window. This command rewraps selected quoted
@@ -820,6 +838,8 @@
     <span class="noMac">Edit</span> menu.</li>
   <li><strong>Priority:</strong> Choose a priority to indicate whether the
     message has lowest, low, normal, high, or highest priority.</li>
+  <li><strong>Character Encoding:</strong> Choose a character encoding used for
+    this message.</li>
   <li><strong>Send a Copy To:</strong> Choose this if you want to file an
     additional copy of the sent message in a different folder than your default
     Sent folder. Then select the folder you want.</li>
@@ -1465,12 +1485,7 @@
 <p>By default, the Collected Address Book automatically collects the email
   addresses contained in outgoing mail messages. Addresses from outgoing
   messages are stored in the Collected Address Book as soon as you click
-  Send. The Collected Address Book can also save the sender&apos;s address
-  in each incoming message. To enable this feature, you must change the
-  <a href="#addressing_preferences">preferences for email address
-  collection</a>. The preferences also let you choose which types of
-  addresses you want to collect (only addresses from mail messages or
-  addresses from both mail and newsgroup messages).</p>
+  Send.</p>
 
 <h4>LDAP Directory (if available)</h4>
 
@@ -1489,14 +1504,11 @@
   <li>Under the Mail &amp; Newsgroups category, click Addressing. (If no
     subcategories are visible, double-click Mail &amp; Newsgroups to expand the
     list.)</li>
-  <li>Under Email Address Collection, choose whether you want to:
+  <li>Under Email Address Collection, select <q>Add email addresses to my</q>
+    and choose whether you want:
     <ul>
-      <li>Use this feature for incoming or outgoing messages, or both.</li>
-      <li>Use this feature for newsgroup messages.</li>
-      <li>Limit the size of the Collected Address book. The default size is
-        700 cards. If you add a new card that exceeds the limit, the oldest
-        card is removed and the new card is added, keeping the total number
-        of cards the same.</li>
+      <li>Personal Address Book.</li>
+      <li>Collected Addresses.</li>
     </ul>
   </li>
   <li>Click OK.</li>
@@ -1640,7 +1652,8 @@
           Clicking the Get Map button displays a web page that contains a map
           to the address.</p>
       </li>
-      <li><strong>Other</strong>: Store any additional information you want.</li>
+      <li><strong>Other</strong>: Store any additional information you
+        want.</li>
     </ul>
   </li>
 </ol>
@@ -1650,7 +1663,8 @@
   drop-down list. The New Card dialog box appears where you can complete the
   information.</p>
 
-<h3 id="viewing_or_editing_card_properties">Viewing or Editing Card Properties</h3>
+<h3 id="viewing_or_editing_card_properties">Viewing or Editing Card
+  Properties</h3>
 
 <p>To view or edit the properties for an individual card:</p>
 
@@ -1764,7 +1778,8 @@
     results appear in lower part of the dialog box.</li>
   <li>To sort the entries in a different order, click the column that you want
     to sort by.</li>
-  <li>To view the card for an entry, select the entry and click Properties.</li>
+  <li>To view the card for an entry, select the entry and click
+    Properties.</li>
   <li>To compose a message to selected recipients, select one or more entries
     and click Compose.</li>
 </ol>
@@ -1881,7 +1896,8 @@
         </ul>
       </li>
       <li><strong>Search filter</strong>: Enter the search filter to apply to
-        matching results that are within the specified scope of the search.</li>
+        matching results that are within the specified scope of the
+        search.</li>
     </ul>
   </li>
   <li>Click OK to close the Directory Server Properties dialog box.</li>
@@ -1973,16 +1989,19 @@
   <ul>
     <li><a href="#creating_a_folder">Creating a Folder</a></li>
     <li><a href="#renaming_a_folder">Renaming a Folder</a></li>
-    <li><a href="#moving_or_copying_a_folder">Moving or Copying a Folder</a></li>
-    <li><a href="#filing_messages_in_folders">Filing Messages in Folders</a></li>
+    <li><a href="#moving_or_copying_a_folder">Moving or Copying a
+      Folder</a></li>
+    <li><a href="#filing_messages_in_folders">Filing Messages in
+      Folders</a></li>
     <li><a href="#sharing_folders_with_other_users">Sharing Folders With Other
       Users (IMAP Only)</a></li>
-    <li><a href="#labeling_messages">Labeling Messages</a></li>
+    <li><a href="#tagging_messages">Tagging Messages</a></li>
     <li><a href="#marking_or_flagging_messages">Marking or Flagging
       Messages</a></li>
     <li><a href="#using_message_views">Using Message Views</a></li>
     <li><a href="#creating_message_filters">Creating Message Filters</a></li>
-    <li><a href="#searching_through_messages">Searching Through Messages</a></li>
+    <li><a href="#searching_through_messages">Searching Through
+      Messages</a></li>
   </ul>
 </div>
 
@@ -2164,102 +2183,107 @@
 
 <p>[<a href="#organizing_your_messages">Return to beginning of section</a>]</p>
 
-<h2 id="labeling_messages">Labeling Messages</h2>
+<h2 id="tagging_messages">Tagging Messages</h2>
 
-<p>You can apply labels to messages to help you organize and prioritize them.
-  You can apply a standard color and text label to messages, or you can
-  customize the label colors or label text to suit your needs.</p>
+<p>You can apply tags to messages to help you organize and prioritize them.
+  You can apply a standard color and tag text to messages, or you can create
+  your own color and tag text to suit your needs.</p>
 
-<p>One powerful way to use labels is to set up a message filter to
-  automatically label incoming messages from a specific sender. For example,
+<p>One powerful way to use tags is to set up a message filter to
+  automatically tag incoming messages from a specific sender. For example,
   you can set up a message filter so that incoming messages from your boss are
-  labeled <q>Important</q> and appear in red. See
+  tagged <q>Important</q> and appear in red. See
   <a href="#creating_message_filters">Creating Message Filters</a> for more
   information.</p>
 
-<h3 id="applying_a_label">Applying a Label</h3>
+<h3 id="applying_a_tag">Applying a Tag</h3>
 
-<p>To apply a label to a message, begin from the Mail window:</p>
+<p>To apply a tag to a message, begin from the Mail window:</p>
 
 <ol>
-  <li>Select the message you want to label.</li>
-  <li>Open the Message menu, and choose Label.</li>
-  <li>Choose the label you want to apply from the list.</li>
+  <li>Select the message you want to tag.</li>
+  <li>Open the Message menu, and choose Tag.</li>
+  <li>Choose the tag you want to apply from the list.</li>
 </ol>
 
-<p>The message header changes to the label color you chose. To see the label
-  text, you must display the Label column in the Mail window.</p>
+<p>The message summary row changes to the color of the tag with the topmost
+  priority. To see the tag text, you must display the Tags column in the Mail
+  window.</p>
 
-<p><strong>Tip</strong>: To quickly label messages or remove a label, select
-  one or more messages and press 1, 2, 3, 4, or 5 on your keyboard. Press 0 to
-  remove a label.</p>
+<p><strong>Tip</strong>: To quickly tag messages or remove a tag, select
+  one or more messages and press one of the number keys 1-9 on your keyboard.
+  Press 0 to remove all tags.</p>
 
-<p>To display the Label column, begin from the Mail window:</p>
+<p>To display the Tags column, begin from the Mail window:</p>
 
 <ul>
   <li>Click the Show/Hide Columns icon <img src="images/columns.png" alt=""/>
-    and select Label from the list.</li>
+    and select Tags from the list.</li>
 </ul>
 
-<p><strong>Note</strong>: Message labels apply on a per-account basis. For
-  example, if you move or copy a labeled message to another mail account, the
-  label is not preserved. Similarly, if you forward a labeled message to
-  another recipient, the label is not preserved. For IMAP mail accounts, if
-  your IMAP server supports user-defined keywords, message labels will persist
+<p><strong>Note</strong>: Message tags apply on a per-account basis. For
+  example, if you move or copy a tagged message to another mail account, the
+  tags are not preserved. Similarly, if you forward a tagged message to
+  another recipient, the tags are not preserved. For IMAP mail accounts, if
+  your IMAP server supports user-defined keywords, message tags will persist
   when you log in to your mail account from a different location.</p>
 
 <p>[<a href="#organizing_your_messages">Return to beginning of section</a>]</p>
 
-<h3 id="customizing_labels">Customizing Labels</h3>
+<h3 id="customizing_tags">Customizing Tags</h3>
 
-<p>You can customize label colors or text to suit your needs.</p>
+<p>You can customize tag colors and text and their order to suit your needs.</p>
 
-<p>To customize labels, begin from the Mail window:</p>
+<p>To customize tags, begin from the Mail window:</p>
 
 <ol>
   <li>Open the <span class="mac">&brandShortName;</span>
     <span class="noMac">Edit</span> menu and choose Preferences. You see the
     Preferences dialog box.</li>
-  <li>Under the Mail &amp; Newsgroups category, click Labels. (If no
+  <li>Under the Mail &amp; Newsgroups category, click Tags. (If no
     subcategories are visible, double-click Mail &amp; Newsgroups to expand the
     list.)</li>
-  <li>Edit the label text, or replace it with your own label text. The label
+  <li>Edit the tag text, or replace it with your own tag text. The tag
     can be up to 32 characters long.</li>
-  <li>To change the label color, click the color block next to that label and
+  <li>To change the tag color, click the color block next to that tag and
     select a new color.</li>
+  <li>Click the the Move Up and Move Down buttons to reorder the tags. Tags at
+    the top will have higher priority when coloring messages.</li>
   <li>Click OK.</li>
 </ol>
 
-<p>Your changes are immediately applied to all labeled messages in all your
+<p>Your changes are immediately applied to all tagged messages in all your
   mail accounts.</p>
 
-<p><strong>Tip</strong>: To restore the default label text and colors, follow
-  the steps above to display the label settings, and click Restore Defaults.</p>
+<p><strong>Tip</strong>: To undo all customizations and restore just the
+  default tags' text and colors, follow the steps above to display the tag
+  settings, and click Restore Defaults.</p>
 
 <p>[<a href="#organizing_your_messages">Return to beginning of section</a>]</p>
 
-<h3 id="sorting_messages_by_label">Sorting Messages by Label</h3>
+<h3 id="sorting_messages_by_tags">Sorting Messages by Tags</h3>
 
-<p>To sort messages by label, begin from the Mail window:</p>
+<p>To sort messages by tags, begin from the Mail window:</p>
 
 <ol>
-  <li>To display the Label column if it is hidden, click the Show/Hide Columns
-    icon <img src="images/columns.png" alt=""/> and select Label from the
+  <li>To display the Tags column if it is hidden, click the Show/Hide Columns
+    icon <img src="images/columns.png" alt=""/> and select Tags from the
     list.</li>
-  <li>Click the Label column to sort messages by label, and within each label
+  <li>Click the Tags column to sort messages by tags, and within each tag
     type, to sort messages by date.</li>
 </ol>
 
 <p>[<a href="#organizing_your_messages">Return to beginning of section</a>]</p>
 
-<h3 id="removing_labels">Removing Labels</h3>
+<h3 id="removing_tags">Removing Tags</h3>
 
-<p>To remove a message label, begin from the Mail window:</p>
+<p>To remove a message tag, begin from the Mail window:</p>
 
 <ol>
-  <li>Select one or more labeled messages.</li>
-  <li>Open the Message menu, and choose Label.</li>
-  <li>Choose <q>None</q> for the message label.</li>
+  <li>Select one or more tagged messages.</li>
+  <li>Open the Message menu, and choose Tag.</li>
+  <li>Choose the tag you want to remove or <q>None</q> to remove all tags
+    from this message.</li>
 </ol>
 
 <p>[<a href="#organizing_your_messages">Return to beginning of section</a>]</p>
@@ -2328,8 +2352,8 @@
   <li><strong>All</strong>: Choose this option to view all messages.</li>
   <li><strong>Unread</strong>: Choose this option to view only unread
     messages.</li>
-  <li><strong>Labels</strong>: Choose a <a href="#labeling_messages">label</a>
-    to view labelled messages.</li>
+  <li><strong>Tags</strong>: Choose a <a href="#tagging_messages">tag</a>
+    to view tagged messages.</li>
   <li><strong>Custom views</strong>: Choose a custom view. By default you have
     four preset views: <q>People I Know</q>, <q>Recent Mail</q>, <q>Last 5
     Days</q>, and <q>Not Junk</q>.</li>
@@ -2423,12 +2447,12 @@
       header correctly, since Mail will only find entries that exactly match
       what you type.</p>
   </li>
-  <li>Click More to add criteria and Fewer to remove them.</li>
+  <li>Click <q>+</q> to add criteria and <q>-</q> to remove them.</li>
   <li>Use the list to choose the action you want the filter to perform on the
     messages (for example, Move to Folder).
 
-    <p><strong>Tip</strong>: To automatically label incoming messages, choose
-      <q>Label the message</q> from the drop-down list.</p>
+    <p><strong>Tip</strong>: To automatically tag incoming messages, choose
+      <q>Tag the message</q> from the drop-down list.</p>
   </li>
   <li>Choose a destination folder in which to store the messages, or create a
     new folder.</li>
@@ -2556,6 +2580,12 @@
     folder through which you want to search.</li>
   <li>Select <q>Search subfolders</q> to include all subfolders in the
     search.</li>
+  <li>Select <q>Search local system</q> to search only messages from newsgroups
+    or IMAP accounts that have been saved locally.
+
+    <p><strong>Note</strong>: The checkbox will be disabled if it&apos;s not
+      possible to search remotely stored messages.</p>
+  </li>
   <li>Select which matching option Mail &amp; Newsgroups will use to search for
     messages that match all or at least one of the conditions (criteria) that
     you choose.</li>
@@ -2595,6 +2625,8 @@
 
 <p>[<a href="#organizing_your_messages">Return to beginning of section</a>]</p>
 
+
+
 <h1 id="controlling_junk_mail">Controlling Junk Mail</h1>
 
 <p>This section describes how to use &brandShortName;&apos;s Junk Mail Controls
@@ -2608,6 +2640,7 @@ to filter unwanted mail.</p>
       Filters</a></li>
   </ul>
 </div>
+
 
 <h2 id="using_junk_mail_controls">Using Junk Mail Controls</h2>
 
@@ -2641,10 +2674,16 @@ to filter unwanted mail.</p>
       in the Junk status column to indicate the junk status of the selected
       message.</p>
   </li>
-  <li>Open the Tools menu and choose <q>Junk Mail Controls...</q>. Enable the
-    feature for your mail account, and &brandShortName; will automatically
-    classify incoming messages. (See
-    <a href="#junk_controls_options">Junk Mail Controls Options</a>.)</li>
+  
+  <li>Open the Edit menu, and choose Mail &amp; Newsgroups Account Settings.
+    You see the Mail &amp; Newsgroups Account Settings dialog box.</li>
+  <li>Click the Junk Settings category for your mail account.</li>
+  <li>Enable the feature and &brandShortName; will automatically classify
+    incoming messages. (See
+    <a href="#junk_controls_options">Junk Mail Controls Options</a>.
+    Details on the other settings there can be found in the 
+    <a href="#junk_settings">Junk Settings</a> preference panel description.)
+  </li>
   <li>If you have trained it on virus mail, consider disabling the white
     listing (many mail viruses send bulk messages to people in the address book
     of the infected computer).</li>
@@ -2661,50 +2700,17 @@ to filter unwanted mail.</p>
 
 <p>[<a href="#controlling_junk_mail">Return to beginning of section</a>]</p>
 
+
 <h2 id="junk_controls_options">Junk Mail Controls Options</h2>
 
-<p>To fine-tune how Junk Mail Controls work, open the Tools menu and choose
-  <q>Junk Mail Controls...</q>:</p>
-
-<ul>
-  <li><strong>Account</strong>: Choose a mail account to change the Junk Mail
-    Controls settings for that account. (Note: all accounts share the same Junk
-    training database.)</li>
-  <li><strong>Junk Mail Log</strong>: Click the button to open a dialog showing
-    you the history of Junk mail detections. You can disable Junk Mail Log from
-    the dialog.</li>
-  <li><strong>Enable Junk Mail Controls</strong>: Toggle this option to
-    activate or deactivate junk mail classification.</li>
-  <li><strong>Do not mark messages as junk mail if the sender is in my address
-    book</strong>: Choose this option to prevent messages from people you know
-    inadvertently classified as junk mail.</li>
-  <li><strong>Move incoming messages determined to be junk mail to</strong>:
-    Check this option to automatically move messages flagged as Junk to a
-    special folder.
-    <ul>
-      <li><strong><q>Junk</q> folder on [account]</strong>: select this to use
-        the default Junk folder.</li>
-      <li><strong>Other: [account]</strong>: select this to choose your own
-        custom-named junk folder.</li>
-      <li><strong>Automatically delete junk messages older than __ days from
-        this folder</strong>: If you are confident old messages classified as
-        junk are indeed junk mail, check this option to automatically delete
-        old junk messages after a grace period.</li>
-    </ul>
-  </li>
-  <li><strong>When I manually mark messages as Junk</strong>: Choose this to
-    set what you want &brandShortName; to do when you manually mark messages
-    as Junk.
-    <ul>
-      <li><strong>Move them to the <q>Junk</q> folder</strong>: Choose this to
-        move manually-marked Junk messages to the Junk folder.</li>
-      <li><strong>Delete them</strong>: Choose this to move manually-marked 
-        Junk messages to the trash folder.</li>
-    </ul>
-  </li>
-</ul>
+<p>To fine-tune how Junk Mail Controls work, use the 
+  <a href="#global_junk_settings">global Junk Mail preference panel</a> for
+  account-independent settings and the account manager's 
+  <a href="#junk_settings">Junk Settings</a> for settings of a specific mail
+  account.</p>
 
 <p>[<a href="#controlling_junk_mail">Return to beginning of section</a>]</p>
+
 
 <h2 id="junk_controls_and_filters">Junk Mail Controls and Filters</h2>
 
@@ -2715,6 +2721,8 @@ to filter unwanted mail.</p>
   subscribe to newsletters or if you are on a moderated mailing list).</p>
 
 <p>[<a href="#controlling_junk_mail">Return to beginning of section</a>]</p>
+
+
 
 <h1 id="importing_mail_from_other_programs">Importing Mail from Other
   Programs</h1>
@@ -2767,8 +2775,10 @@ to filter unwanted mail.</p>
 <div class="contentsBox">In this section:
   <ul>
     <li><a href="#subscribing_to_newsgroups">Subscribing to Newsgroups</a></li>
-    <li><a href="#reading_newsgroup_messages">Reading Newsgroup Messages</a></li>
-    <li><a href="#posting_newsgroup_messages">Posting Newsgroup Messages</a></li>
+    <li><a href="#reading_newsgroup_messages">Reading Newsgroup
+      Messages</a></li>
+    <li><a href="#posting_newsgroup_messages">Posting Newsgroup
+      Messages</a></li>
     <li><a href="#contributing_to_ongoing_discussions">Contributing to Ongoing
       Discussions</a></li>
     <li><a href="#monitoring_threads">Monitoring Threads</a></li>
@@ -3026,9 +3036,9 @@ to filter unwanted mail.</p>
   <li>Check the box labeled <q>Make the messages in my Inbox available when I
     am working offline</q>.</li>
   <li>Click OK.</li>
-  <li>In the folder pane, under the name of the account you want to use offline,
-    click any folder other than the Inbox. For example, click the Sent or the
-    Drafts folder. Then click the Inbox folder to start downloading its
+  <li>In the folder pane, under the name of the account you want to use
+    offline, click any folder other than the Inbox. For example, click the Sent
+    or the Drafts folder. Then click the Inbox folder to start downloading its
     messages.</li>
   <li>Once downloading is complete, click the Online/Offline indicator
     <img src="images/online.png" alt=""/> in the lower right corner of the
@@ -3196,7 +3206,8 @@ to filter unwanted mail.</p>
 <p>You can download (replicate) the entries in a directory server to your
   computer so that they are available when you work offline. Once you&apos;ve
   downloaded directory entries, you can use the same procedure to update your
-  local copy of the entries with the latest entries on the directory server.</p>
+  local copy of the entries with the latest entries on the directory
+  server.</p>
 
 <p>To download or update an address book LDAP directory for offline use:</p>
 
@@ -3249,7 +3260,8 @@ to filter unwanted mail.</p>
       below for information on setting offline and disk space preferences for
       <a href="#offline_and_disk_space_settings_imap">IMAP</a>,
       <a href="#disk_space_settings">POP</a>, and
-      <a href="#offline_and_disk_space_settings_nntp">Newsgroup</a> accounts.</p>
+      <a href="#offline_and_disk_space_settings_nntp">Newsgroup</a>
+      accounts.</p>
 
     <p><strong>Tip</strong>: To set the Offline &amp; Disk Space preferences
       for the current account, open the File menu, choose Offline, and then
@@ -3432,6 +3444,7 @@ to filter unwanted mail.</p>
     <li><a href="#copies_and_folders">Copies &amp; Folders</a></li>
     <li><a href="#addressing">Composition &amp; Addressing</a></li>
     <li><a href="#offline_and_disk_space">Offline &amp; Disk Space</a></li>
+    <li><a href="#junk_settings">Junk Settings</a></li>
     <li><a href="#return_receipts">Return Receipts</a></li>
     <li><a href="#security">Security</a></li>
     <li><a href="#local_folders">Local Folders</a></li>
@@ -3565,7 +3578,7 @@ to filter unwanted mail.</p>
   <li><strong>Check for new mail at startup</strong>: Choose this setting if
     you want Mail &amp; Newsgroups to automatically check this account for new
     messages whenever you start Mail &amp; Newsgroups.</li>
-  <li><strong>Check for new messages every ___ minutes</strong>: Choose this
+  <li><strong>Check for new messages every [__] minutes</strong>: Choose this
     setting to automatically check for new messages, and then specify the
     number of minutes between mail checks. If you do not select this setting,
     you can check for new messages at any time by clicking Get Msgs in the Mail
@@ -3659,7 +3672,7 @@ to filter unwanted mail.</p>
     messages whenever you start Mail &amp; Newsgroups. For POP accounts, Mail
     &amp; Newsgroups doesn&apos;t download the new messages until you click Get
     Msgs on the Mail toolbar.</li>
-  <li><strong>Check for new messages every ___ minutes</strong>: Choose this
+  <li><strong>Check for new messages every [__] minutes</strong>: Choose this
     setting to automatically check for new messages, and then specify the
     number of minutes between mail checks. If you do not select this setting,
     you can check for new messages at any time by clicking Get Msgs in the Mail
@@ -3676,7 +3689,7 @@ to filter unwanted mail.</p>
     copy of messages on the mail server in addition to downloading them to your
     computer.
     <ul>
-      <li><strong>For at most ___ days</strong>: Choose this setting to remove
+      <li><strong>For at most [__] days</strong>: Choose this setting to remove
         messages from the server automatically after the number of days you
         enter here.</li>
       <li><strong>Until I delete or move them from Inbox</strong>: Choose this
@@ -3721,14 +3734,14 @@ to filter unwanted mail.</p>
   <li><strong>Use secure connection (SSL)</strong>: Choose this setting if your
     news server is configured to send and receive encrypted messages. If you
     are unsure, contact your service provider or system administrator.</li>
-  <li><strong>Check for new messages every ___ minutes</strong>: Choose this
+  <li><strong>Check for new messages every [__] minutes</strong>: Choose this
     setting to automatically check for new messages, and then specify the
     number of minutes between mail checks. If you do not select this setting,
     you can check for new messages at any time by clicking Get Msgs in the Mail
     window.</li>
-  <li><strong>Ask me before downloading more than ___ messages</strong>: Choose
-    this setting to conserve disk space and download time, by setting a limit
-    for the number of messages you can retrieve at one time.</li>
+  <li><strong>Ask me before downloading more than [__] messages</strong>:
+    Choose this setting to conserve disk space and download time, by setting a
+    limit for the number of messages you can retrieve at one time.</li>
   <li><strong>Always request authentication when connecting to this
     server</strong>: Some servers allow you to talk to them without logging in,
     but will silently hide all the <em>private</em> groups/postings unless you
@@ -3920,7 +3933,7 @@ to filter unwanted mail.</p>
     folders that you want to make available for offline use. See
     <a href="#selecting_items_for_offline_viewing">Selecting Items for Offline
     Viewing</a> for more information.</li>
-  <li><strong>Messages larger than ___ KB</strong>: Select this option to
+  <li><strong>Messages larger than [__] KB</strong>: Select this option to
     conserve disk space by preventing large messages from being downloaded.
     Enter the maximum size for downloaded messages.</li>
 </ul>
@@ -3946,7 +3959,7 @@ to filter unwanted mail.</p>
 </ol>
 
 <ul>
-  <li><strong>Messages larger than ___ KB</strong>: Select this option to
+  <li><strong>Messages larger than [__] KB</strong>: Select this option to
     conserve disk space by preventing large messages from being downloaded.
     Enter the maximum size for downloaded messages.</li>
 </ul>
@@ -3979,10 +3992,10 @@ to filter unwanted mail.</p>
 <ul>
   <li><strong>Read messages</strong>: Select this option to only download
     message bodies from messages you haven&apos;t already read.</li>
-  <li><strong>Messages larger than ___ KB</strong>: Select this option to
+  <li><strong>Messages larger than [__] KB</strong>: Select this option to
     conserve disk space by preventing large messages from being downloaded.
     Enter the maximum size for downloaded messages.</li>
-  <li><strong>Messages more than ___ days old</strong>: Select this option to
+  <li><strong>Messages more than [__] days old</strong>: Select this option to
     only download messages that are not older than the number of days you enter
     here.</li>
 </ul>
@@ -3994,10 +4007,10 @@ to filter unwanted mail.</p>
 <ul>
   <li><strong>All messages</strong>: Keep all messages. Never delete messages 
     automatically.</li>
-  <li><strong>The newest ___ messages</strong>: Enter the number of messages
+  <li><strong>The newest [__] messages</strong>: Enter the number of messages
     to keep. With this setting only messages older than these messages are
     deleted.</li>
-  <li><strong>Messages which have arrived within the last ___ days</strong>:
+  <li><strong>Messages which have arrived within the last [__] days</strong>:
     Keep all messages that arrived within the given number of days.</li>
 </ul>
 
@@ -4008,9 +4021,56 @@ to filter unwanted mail.</p>
 <ul>
   <li><strong>Only unread messages</strong>: Select this option to deny
     &brandShortName; the deletion of unread messages.</li>
-  <li><strong>Only message bodies less than ___ days old</strong>: Select this
+  <li><strong>Only message bodies less than [__] days old</strong>: Select this
     option to deny &brandShortName; the deletion of messages that are newer
     than the number of days you specify here.</li>
+</ul>
+
+<p>[<a href="#mail_and_newsgroups_account_settings">Return to beginning of
+  section</a>]</p>
+
+<h2 id="junk_settings">Mail &amp; Newsgroups Account Settings - Junk
+  Settings</h2>
+  
+<p>This section describes how to use the account junk settings. If
+  you are not currently viewing the Junk Settings, follow these steps:</p>
+
+<ol>
+  <li>Open the Edit menu, and choose Mail &amp; Newsgroups Account Settings.
+    You see the Mail &amp; Newsgroups Account Settings dialog box.</li>
+  <li>Click the Junk Settings category for your mail account.</li>
+</ol>
+
+<p>You use the Junk Settings panel to define your account-specific settings
+  for the adaptive mail filter. Global junk settings are changed under
+  <a href="#global_junk_settings">Mail &amp; Newsgroups Preferences -
+  Junk Mail</a>.</p>
+  
+<ul>  
+  <li><strong>Enable adaptive junk mail controls for this account</strong>:
+    Toggle this option to activate or deactivate junk mail classification.</li>
+  <li><strong>Do not mark mail as junk if the sender is in [the address
+    book chosen from all your address books available in the drop down
+    box]</strong>:
+    Choose this option to prevent messages from people you know inadvertently
+    classified as junk mail.</li>
+  <li><strong>Trust junk mail headers set by [an external junk filter
+    like Spam Assassin or Spam Pal]</strong>: Choose this option if you want to
+    trust the junk classification of external filter programs.</li>
+  <li><strong>Move new junk messages to</strong>:
+    Check this option to automatically move messages flagged as Junk to a
+    special folder.
+    <ul>
+      <li><strong><q>Junk</q> folder on [account]</strong>: Select this to use
+        the default Junk folder.</li>
+      <li><strong>Other: [account]</strong>: Select this to choose your own
+        custom-named junk folder.</li>
+      <li><strong>Automatically delete junk messages older than [__] days from
+        this folder</strong>: If you are confident old messages classified as
+        junk are indeed junk mail, check this option to automatically delete
+        old junk messages after a grace period.</li>
+    </ul>
+  </li>
 </ul>
 
 <p>[<a href="#mail_and_newsgroups_account_settings">Return to beginning of
@@ -4124,13 +4184,13 @@ to filter unwanted mail.</p>
   panel</a> to specify how you want to sign your email messages:</p>
 
 <ul>
-  <li><strong>Digitally sign messages:</strong> Select this checkbox if you
-    want to digitally sign all the messages you send. (A personal certificate
-    must be specified below before you can select this checkbox.)</li>
   <li><strong>Use this certificate to digitally sign messages you
     send:</strong> If this field is empty or if it displays the wrong
     certificate, click Select to choose from the certificates you have on
     file.</li>
+  <li><strong>Digitally sign messages:</strong> Select this checkbox if you
+    want to digitally sign all the messages you send. (A personal certificate
+    must be specified below before you can select this checkbox.)</li>
 </ul>
 
 <p>Regardless of whether the <q>Digitally sign messages</q> checkbox is
@@ -4151,16 +4211,16 @@ to filter unwanted mail.</p>
   messages:</p>
 
 <ul>
+  <li><strong>Use this certificate to encrypt &amp; decrypt messages sent to
+    you:</strong> If this field is empty or if it displays the wrong
+    certificate, click Select to choose from the certificates you have on
+    file.</li>
   <li><strong>Never:</strong> Select this option if you never want to use
     encryption, or only occasionally.</li>
   <li><strong>Required:</strong> Select this option if you always want to use
     encryption. If you don&apos;t have all the necessary certificates, the
     message won&apos;t be sent unless you explicitly turn off encryption for
     that message only.</li>
-  <li><strong>Use this certificate to encrypt &amp; decrypt messages sent to
-    you:</strong> If this field is empty or if it displays the wrong
-    certificate, click Select to choose from the certificates you have on
-    file.</li>
 </ul>
 
 <p>Regardless of which encryption option you select, you can change your mind
@@ -4275,8 +4335,10 @@ to filter unwanted mail.</p>
     <li><a href="#composition">Composition</a></li>
     <li><a href="#send_format">Send Format</a></li>
     <li><a href="#addressing_preferences">Addressing</a></li>
-    <li><a href="#labels">Labels</a></li>
+    <li><a href="#global_junk_settings">Junk Mail</a></li>
+    <li><a href="#tags">Tags</a></li>
     <li><a href="#return_receipts_preferences">Return Receipts</a></li>
+    <li><a href="#character_encoding">Character Encoding</a></li>
     <li><a href="#offline_and_disk_space_preferences">Offline &amp; Disk Space
       Preferences</a></li>
   </ul>
@@ -4350,11 +4412,13 @@ to filter unwanted mail.</p>
   <li><strong>When opening messages, display them in</strong>: Here you can
     choose if you want to reuse a message window for the next mail or if you
     want to open a new one for each.</li>
-  <li><strong>Allow messages to load and display remote images and other
-    content</strong>: Deselect this checkbox if you want to avoid downloading
-    images and other content embedded in web pages sent as message attachments.
-    (This checkbox is selected by default.)</li>
-  <li><strong>Wait ___ seconds before marking a message as read</strong>:
+  <li><strong>Block images and other content from remote sources</strong>:
+    Select this checkbox if you do not want to display remote images and other
+    content in received messages. (This checkbox is selected by default.)</li>
+  <li><strong>but allow if the sender is in this address book</strong>: Select
+    this checkbox if you want to allow remote content in messages from senders
+    in the chosen address book. (This checkbox is selected by default.)</li>
+  <li><strong>Wait [__] seconds before marking a message as read</strong>:
     Choose this option if you do not want a message to be marked as read when
     you are only taking a brief look at it. Enter the number of seconds you
     want a message to be displayed before it gets marked as read automatically.
@@ -4362,20 +4426,6 @@ to filter unwanted mail.</p>
     <p><strong>Tip</strong>: If you do not want Mail &amp; Newsgroups to mark
       your messages as read automatically at all, you can select this option
       and enter a very large number of seconds.</p>
-  </li>
-  <li><strong>Default Character Encoding</strong>: Click this drop-down list to
-    select the character encoding you want Mail &amp; Newsgroups to use as the
-    default for incoming mail and newsgroup messages. This is recommended if
-    it&apos;s likely you might receive messages in which the character encoding
-    (MIME charset) is not indicated, such as when reading messages in
-    international newsgroups.</li>
-  <li><strong>Apply default to all messages</strong>: Select this to apply the
-    default character encoding to all messages.
-
-    <p><strong>Tip</strong>: You can later view or change the character
-      encoding for a specific folder. In the Mail window, select a folder from
-      the list of Mail folders. Open the View menu, and choose Character
-      Encoding.</p>
   </li>
   <li><strong>Plain Text Messages</strong>: Select the font you prefer for
     viewing plain-text messages: fixed width or variable width. Choosing a font
@@ -4472,6 +4522,22 @@ to filter unwanted mail.</p>
       continue to work even after you close the Mail window (as long as another
       &brandShortName; application is running).</p>
   </li>
+
+  <li class="win"><strong>Show a tray icon</strong>: Select this if you want
+    &brandShortName; Mail &amp; Newsgroups to display an icon in your system
+    tray (which is usually found in the lower right corner of your screen) when
+    new messages arrive. This icon will stay in the system tray until you have
+    visited one of your folders with new mail or checked for new messages
+    manually.
+    <p style="text-indent: 20px"><img src="images/mail_newmail_trayicon.png"
+      alt=""/>&nbsp;&nbsp;<strong>New mail tray icon</strong></p>
+    <p>When the icon appears, double-clicking it will open the &brandShortName;
+      Mail &amp; Newsgroups main window.</p>
+  </li>
+
+  <li class="mac"><strong>Animate the Dock icon</strong>: Select this if you
+    want Mail &amp; Newsgroups to bounce the &brandShortName; Dock icon when
+    new messages arrive.</li>
   <li><strong>Play a sound</strong>: Select this if you want &brandShortName; 
     Mail &amp; Newsgroups to play a sound when new messages arrive. You can
     choose between the default system sound and a custom sound in WAV format.
@@ -4515,37 +4581,27 @@ to filter unwanted mail.</p>
   <li><strong>Forward Messages</strong>: Choose how you want forwarded
     message text to appear: as an attachment or <em>inline</em> (in the body
     of your message).</li>
-  <li><strong>Automatically save the message every ___ minutes</strong>: Choose
-    this option if you want Mail &amp; Newsgroups to save the message you are
-    currently composing automatically at the given interval. After a computer
-    crash or program failure you can find the latest saved version of the
-    message in your Drafts folder.</li>
+  <li><strong>Automatically save the message every [__] minutes</strong>:
+    Choose this option if you want Mail &amp; Newsgroups to save the message
+    you are currently composing automatically at the given interval. After a
+    computer crash or program failure you can find the latest saved version of
+    the message in your Drafts folder.</li>
+  <li><strong>Confirm when using keyboard shortcut to send message</strong>:
+    Check this option if want to be asked if you&apos;re sure to be ready to
+    send the message when you&apos;re pressing Ctrl+Return in message editor.
+    This may help you avoid accidentally sending the message if you enter the
+    keyboard shortcut by mistake when composing a message.</li>
+  <li><strong>Wrap plain text messages at [__] characters</strong>: Enter a
+    number to set the right margin for text in the message area.</li>
   <li><strong>Check spelling before sending</strong>: Select this option to
     have Mail &amp; Newsgroups always check the spelling of your message before
     you send it.</li>
   <li><strong>Check spelling as you type</strong>: Select this option to have
     Mail &amp; Newsgroups always check the spelling of your message as you type
     it.</li>
-  <li><strong>For messages that contain 8-bit characters, use &apos;quoted
-    printable&apos; MIME encoding</strong>: Choose to have Mail &amp;
-    Newsgroups use <q>quoted printable</q> MIME encoding when sending regular
-    messages that use an 8-bit character encoding (for example, Latin
-    ISO-8859-3).</li>
-  <li><strong>Confirm when using keyboard shortcut to send message</strong>:
-    Check this option if want to be asked if you&apos;re sure to be ready to
-    send the message when you&apos;re pressing Ctrl+Return in message editor.
-    This may help you avoid accidentally sending the message if you enter the
-    keyboard shortcut by mistake when composing a message.</li>
-  <li><strong>Wrap plain text messages at ___ characters</strong>: Enter a
-    number to set the right margin for text in the message area.</li>
-  <li><strong>Default Character Encoding</strong>: Select the character
-    encoding you want Mail &amp; Newsgroups to use as the default for outgoing
-    mail and newsgroup messages. Note that this character encoding is
-    <strong>not</strong> used when replying to a message. Instead, the
-    character encoding of the message being replied to is used by default.
-    Choose <strong>Always use this default character encoding in
-    replies</strong> to use the default character encoding for outgoing
-    messages even when replying.</li>
+  <li><strong>Language</strong>: Use the drop-down list to select the language
+    you want to use to check the spelling in your messages or to download more
+    dictionaries.</li>
   <li><strong>Defaults for HTML Messages</strong>: Here you can define what the
     defaults are for font, size, text and background color if you choose to
     send mails in HTML format.</li>
@@ -4678,27 +4734,69 @@ to filter unwanted mail.</p>
 <p>[<a href="#mail_and_newsgroup_preferences">Return to beginning of
   section</a>]</p>
 
-<h2 id="labels">Mail &amp; Newsgroups Preferences - Labels</h2>
+<h2 id="global_junk_settings">Mail &amp; Newsgroups Preferences - 
+  Junk Mail</h2>
 
-<p>This section describes how to use the Labels preferences panel. You use the
-  Labels preferences to define the label text and colors for message labels. If
-  you are not currently viewing the panel, follow these steps:</p>
+<p>This section describes how to use the Junk Mail preferences panel. If
+  you are not currently viewing the Junk Mail panel, follow these steps:</p>
 
 <ol>
   <li>Open the <span class="mac">&brandShortName;</span>
     <span class="noMac">Edit</span> menu and choose Preferences.</li>
-  <li>Under the Mail &amp; Newsgroups category, select Labels. (If no options
+  <li>Under the Mail &amp; Newsgroups category, select Junk Mail. (If no
+    subcategories are visible, double-click Mail &amp; Newsgroups to expand the
+    list.)</li>
+</ol>
+
+<ul>
+  <li><strong>When I manually mark messages as junk</strong>: Choose this to
+    set what you want &brandShortName; to do when you manually mark messages
+    as Junk.
+    <ul>
+      <li><strong>Move them to the account's <q>Junk</q> folder</strong>:
+        Choose this to move manually-marked Junk messages to the Junk folder.
+      </li>
+      <li><strong>Delete them</strong>: Choose this to move manually-marked 
+        Junk messages to the trash folder.</li>
+    </ul>
+  </li>
+  <li><strong>Mark messages determined to be junk as read</strong>: Select this
+    option to mark junk messages as read, so they will not show up as new.</li>
+  <li><strong>Enable junk filter logging</strong>: Select this option to allow
+    logging the history of Junk mail detections. Click the <strong>Show log
+    </strong> button to open a dialog showing this log.</li>
+  <li><strong>Reset training data</strong>: Click this button to clear the
+    training data of the adaptive junk filter. Since this will effectively
+    destroy your personal junk profile, you will be asked for confirmation.
+  </li>
+</ul>
+
+<p>[<a href="#mail_and_newsgroup_preferences">Return to beginning of
+  section</a>]</p>
+
+<h2 id="tags">Mail &amp; Newsgroups Preferences - Tags</h2>
+
+<p>This section describes how to use the Tags preferences panel. You use the
+  Tags preferences to define the tag text, colors and order for message tags.
+  If you are not currently viewing the panel, follow these steps:</p>
+
+<ol>
+  <li>Open the <span class="mac">&brandShortName;</span>
+    <span class="noMac">Edit</span> menu and choose Preferences.</li>
+  <li>Under the Mail &amp; Newsgroups category, select Tags. (If no options
     are visible, double-click the Mail &amp; Newsgroups category to expand the
     list.)</li>
 </ol>
 
 <ul>
-  <li><strong>Customize Labels</strong>: Specifies the label text and the color
-    for each label. You can edit or replace the default label text with your
-    own text (up to 32 characters). To change the label color, click the color
-    chip next to that label and select a new color.</li>
-  <li><strong>Restore Defaults</strong>: Restores the default label text and
-    colors.</li>
+  <li><strong>Customize Tags</strong>: Specifies name, color and importance of
+    each tag. You can change a tag's name, but all tag names must be different.
+    To change the tag color, click the colorpicker chip next to the tag name
+    and select a new color. Use the Raise Importance and Lower Importance
+    buttons to order your tags by descending importance. Messages with multiple
+    tags will be colored according to their most important tag.</li>
+  <li><strong>Restore Defaults</strong>: Removes all customized tags and
+    restores just the default tag names and colors.</li>
 </ul>
 
 <p>[<a href="#mail_and_newsgroup_preferences">Return to beginning of
@@ -4752,6 +4850,56 @@ to filter unwanted mail.</p>
 <p>[<a href="#mail_and_newsgroup_preferences">Return to beginning of
   section</a>]</p>
 
+<h2 id="character_encoding">Mail &amp; Newsgroups Preferences - Character
+  Encoding</h2>
+
+<p>Character encoding preferences allow you to choose how messages are encoded
+  when being displayed or created in all accounts. If you are not already
+  viewing the Character Encoding settings, follow these steps:</p>
+
+<ol>
+  <li>Open the <span class="mac">&brandShortName;</span>
+    <span class="noMac">Edit</span> menu and choose Preferences. You see the
+    Preferences dialog box.</li>
+  <li>Under the Mail &amp; Newsgroups category, click Character Encoding. (If
+    no subcategories are visible, double-click Mail &amp; Newsgroups to expand
+    the list.)</li>
+</ol>
+
+<ul>
+  <li><strong>Default Character Encoding</strong>: Click this drop-down list to
+    select the character encoding you want Mail &amp; Newsgroups to use as the
+    default for incoming mail and newsgroup messages. This is recommended if
+    it&apos;s likely you might receive messages in which the character encoding
+    (MIME charset) is not indicated, such as when reading messages in
+    international newsgroups.</li>
+  <li><strong>Always use this default character encoding when messages are
+    displayed</strong>: Select this to apply the default character encoding to
+    all messages.
+
+    <p><strong>Tip</strong>: You can later view or change the character
+      encoding for a specific folder. In the Mail window, select a folder from
+      the list of Mail folders. Open the View menu, and choose Character
+      Encoding.</p>
+  </li>
+  <li><strong>For messages that contain 8-bit characters, use &apos;quoted
+    printable&apos; MIME encoding</strong>: Choose to have Mail &amp;
+    Newsgroups use <q>quoted printable</q> MIME encoding when sending regular
+    messages that use an 8-bit character encoding (for example, Latin
+    ISO-8859-3).</li>
+  <li><strong>Default Character Encoding</strong>: Select the character
+    encoding you want Mail &amp; Newsgroups to use as the default for outgoing
+    mail and newsgroup messages. Note that this character encoding is
+    <strong>not</strong> used when replying to a message. Instead, the
+    character encoding of the message being replied to is used by default.
+    Choose <strong>Always use this default character encoding in
+    replies</strong> to use the default character encoding for outgoing
+    messages even when replying.</li>
+</ul>
+
+<p>[<a href="#mail_and_newsgroup_preferences">Return to beginning of
+  section</a>]</p>
+
 <h2 id="offline_and_disk_space_preferences">Mail &amp; Newsgroups Preferences -
   Offline &amp; Disk Space</h2>
 
@@ -4783,7 +4931,7 @@ to filter unwanted mail.</p>
 <p>[<a href="#mail_and_newsgroup_preferences">Return to beginning of
   section</a>]</p>
 
-<p>Copyright &copy; 2003-2005 The Mozilla Foundation.</p>
+<p>Copyright &copy; 2003-2006 The Mozilla Foundation.</p>
 
 </body>
 </html>

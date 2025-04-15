@@ -81,7 +81,7 @@ function searchOnLoad()
 
   gSearchBundle = document.getElementById("bundle_search");
   gSearchStopButton.setAttribute("label", gSearchBundle.getString("labelForSearchButton"));
-  gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("accesskeyForSearchButton"));
+  gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("labelForSearchButton.accesskey"));
   gAddressBookBundle = document.getElementById("bundle_addressBook");
   gSearchSession = Components.classes[searchSessionContractID].createInstance(Components.interfaces.nsIMsgSearchSession);
 
@@ -114,6 +114,8 @@ function initializeSearchWindowWidgets()
   gPropertiesButton = document.getElementById("propertiesButton");
   gComposeButton = document.getElementById("composeButton");
   gStatusText = document.getElementById('statusText');
+  // matchAll doesn't make sense for address book search
+  hideMatchAllItem();
 }
 
 function onSearchStop() 

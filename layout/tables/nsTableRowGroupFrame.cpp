@@ -20,6 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Mats Palmgren <mats.palmgren@bredband.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -152,6 +153,18 @@ PRInt32 nsTableRowGroupFrame::GetStartRowIndex()
   return result;
 }
 
+void  nsTableRowGroupFrame::AdjustRowIndices(PRInt32 aRowIndex,
+                                             PRInt32 anAdjustment)
+{
+  nsIFrame* rowFrame = GetFirstChild(nsnull);
+  for ( ; rowFrame; rowFrame = rowFrame->GetNextSibling()) {
+    if (NS_STYLE_DISPLAY_TABLE_ROW==rowFrame->GetStyleDisplay()->mDisplay) {
+      PRInt32 index = ((nsTableRowFrame*)rowFrame)->GetRowIndex();
+      if (index >= aRowIndex)
+        ((nsTableRowFrame *)rowFrame)->SetRowIndex(index+anAdjustment);
+    }
+  }
+}
 nsresult
 nsTableRowGroupFrame::InitRepeatedFrame(nsPresContext*       aPresContext,
                                         nsTableRowGroupFrame* aHeaderFooterFrame)
@@ -849,9 +862,12 @@ nsTableRowGroupFrame::CreateContinuingRowFrame(nsPresContext& aPresContext,
   // XXX what is the row index?
   if (!aContRowFrame) {NS_ASSERTION(PR_FALSE, "bad call"); return;}
   // create the continuing frame which will create continuing cell frames
-  aPresContext.PresShell()->FrameConstructor()->
+  nsresult rv = aPresContext.PresShell()->FrameConstructor()->
     CreateContinuingFrame(&aPresContext, &aRowFrame, this, aContRowFrame);
-  if (!*aContRowFrame) return;
+  if (NS_FAILED(rv)) {
+    *aContRowFrame = nsnull;
+    return;
+  }
 
   // Add the continuing row frame to the child list
   nsIFrame* nextRow;
@@ -978,6 +994,8 @@ nsTableRowGroupFrame::SplitRowGroup(nsPresContext*          aPresContext,
                                     nsTableFrame*            aTableFrame,
                                     nsReflowStatus&          aStatus)
 {
+  NS_PRECONDITION(aPresContext->IsPaginated(), "SplitRowGroup currently supports only paged media");
+
   nsresult rv = NS_OK;
   nsTableRowFrame* prevRowFrame = nsnull;
   aDesiredSize.height = 0;
@@ -993,9 +1011,6 @@ nsTableRowGroupFrame::SplitRowGroup(nsPresContext*          aPresContext,
   PRBool  borderCollapse = ((nsTableFrame*)aTableFrame->GetFirstInFlow())->IsBorderCollapse();
   nscoord cellSpacingY   = aTableFrame->GetCellSpacingY();
   
-  NS_ASSERTION(aPresContext->IsPaginated(), "SplitRowGroup currently supports only paged media"); 
-  if (!aPresContext->IsPaginated())
-    return  NS_ERROR_NOT_IMPLEMENTED;
   // get the page height
   nsRect actualRect;
   nsRect adjRect;
@@ -1264,9 +1279,11 @@ nsTableRowGroupFrame::Reflow(nsPresContext*          aPresContext,
       haveDesiredHeight = PR_TRUE;
     }
 
-    // See if all the frames fit
-    if ((NS_FRAME_NOT_COMPLETE == aStatus) || splitDueToPageBreak || 
-        (aDesiredSize.height > aReflowState.availableHeight)) {
+    // See if all the frames fit. Do not try to split anything if we're
+    // not paginated ... we can't split across columns yet.
+    if (aPresContext->IsPaginated() &&
+        (NS_FRAME_NOT_COMPLETE == aStatus || splitDueToPageBreak || 
+         aDesiredSize.height > aReflowState.availableHeight)) {
       // Nope, find a place to split the row group 
       PRBool specialReflow = (PRBool)aReflowState.mFlags.mSpecialHeightReflow;
       ((nsHTMLReflowState::ReflowStateFlags&)aReflowState.mFlags).mSpecialHeightReflow = PR_FALSE;

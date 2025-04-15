@@ -1,7 +1,7 @@
-/.cvsignore/1.2/Sat May 12 00:53:26 2001//TFIREFOX_1_5_RELEASE
-/Makefile.in/1.14.2.9/Wed Apr 28 00:33:02 2004//TFIREFOX_1_5_RELEASE
-/configure/1.78.2.108.4.3/Thu Sep 15 22:37:51 2005//TFIREFOX_1_5_RELEASE
-/configure.in/1.83.2.106.4.3/Thu Sep 15 22:37:52 2005//TFIREFOX_1_5_RELEASE
+/.cvsignore/1.2/Sat May 12 00:53:26 2001//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.14.2.9.32.1/Fri Apr 28 20:01:40 2006//TFIREFOX_2_0_RELEASE
+/configure/1.78.2.108.4.12/Fri Jul 14 22:26:34 2006//TFIREFOX_2_0_RELEASE
+/configure.in/1.83.2.106.4.12/Fri Jul 14 22:26:34 2006//TFIREFOX_2_0_RELEASE
 D/admin////
 D/build////
 D/config////

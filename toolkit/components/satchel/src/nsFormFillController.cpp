@@ -39,8 +39,13 @@
 
 #include "nsFormFillController.h"
 
+#ifdef MOZ_PLACES
+#include "nsStorageFormHistory.h"
+#include "nsIAutoCompleteSimpleResult.h"
+#else
 #include "nsFormHistory.h"
 #include "nsIAutoCompleteResultTypes.h"
+#endif
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsIServiceManager.h"
@@ -75,6 +80,7 @@
 NS_INTERFACE_MAP_BEGIN(nsFormFillController)
   NS_INTERFACE_MAP_ENTRY(nsIFormFillController)
   NS_INTERFACE_MAP_ENTRY(nsIAutoCompleteInput)
+  NS_INTERFACE_MAP_ENTRY(nsIAutoCompleteInput_MOZILLA_1_8_BRANCH)
   NS_INTERFACE_MAP_ENTRY(nsIAutoCompleteSearch)
   NS_INTERFACE_MAP_ENTRY(nsIDOMFocusListener)
   NS_INTERFACE_MAP_ENTRY(nsIDOMKeyListener)
@@ -82,6 +88,7 @@ NS_INTERFACE_MAP_BEGIN(nsFormFillController)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMouseListener)
   NS_INTERFACE_MAP_ENTRY(nsIDOMLoadListener)
   NS_INTERFACE_MAP_ENTRY(nsIDOMCompositionListener)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMContextMenuListener)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIFormFillController)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsIDOMEventListener, nsIDOMFocusListener)
 NS_INTERFACE_MAP_END
@@ -142,7 +149,9 @@ GetScreenOrigin(nsIDOMElement* aElement)
         scale = presContext->TwipsToPixels();
 
         nsIFrame* frame;
-        nsresult rv = presShell->GetPrimaryFrameFor(content, &frame);
+        presShell->GetPrimaryFrameFor(content, &frame);
+        if (!frame)
+          return rect;
 
         nsIView* view;
         nsPoint offset;
@@ -237,12 +246,27 @@ nsFormFillController::SetPopupOpen(PRBool aPopupOpen)
 {
   if (mFocusedPopup) {
     if (aPopupOpen) {
+      // make sure input field is visible before showing popup (bug 320938)
+      nsCOMPtr<nsIContent> content = do_QueryInterface(mFocusedInput);
+      NS_ENSURE_STATE(content);
+      nsCOMPtr<nsIDocShell> docShell = GetDocShellForInput(mFocusedInput);
+      NS_ENSURE_STATE(docShell);
+      nsCOMPtr<nsIPresShell> presShell;
+      docShell->GetPresShell(getter_AddRefs(presShell));
+      NS_ENSURE_STATE(presShell);
+      nsIFrame *frame = nsnull;
+      presShell->GetPrimaryFrameFor(content.get(), &frame);
+      if (frame)
+        presShell->ScrollFrameIntoView(frame,
+                                       NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,
+                                       NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE);
+
       nsRect popupRect = GetScreenOrigin(mFocusedInput);
       mFocusedPopup->OpenPopup(this, popupRect.x, popupRect.y+popupRect.height, popupRect.width);
     } else
       mFocusedPopup->ClosePopup();
   }
-    
+
   return NS_OK;
 }
 
@@ -478,6 +502,16 @@ nsFormFillController::OnTextReverted(PRBool *_retval)
 }
 
 ////////////////////////////////////////////////////////////////////////
+//// nsIAutoCompleteInput_MOZILLA_1_8_BRANCH
+
+NS_IMETHODIMP
+nsFormFillController::GetConsumeRollupEvent(PRBool *aConsumeRollupEvent)
+{
+  *aConsumeRollupEvent = PR_FALSE;
+  return NS_OK;
+}
+
+////////////////////////////////////////////////////////////////////////
 //// nsIAutoCompleteSearch
 
 
@@ -486,17 +520,25 @@ nsFormFillController::StartSearch(const nsAString &aSearchString, const nsAStrin
                                   nsIAutoCompleteResult *aPreviousResult, nsIAutoCompleteObserver *aListener)
 {
   nsCOMPtr<nsIAutoCompleteResult> result;
-  nsCOMPtr<nsIAutoCompleteMdbResult> mdbResult = do_QueryInterface(aPreviousResult);
+
+#ifdef MOZ_PLACES
+  // This assumes that FormHistory uses nsIAutoCompleteSimpleResult,
+  // while PasswordManager does not.
+  nsCOMPtr<nsIAutoCompleteSimpleResult> historyResult;
+#else
+  nsCOMPtr<nsIAutoCompleteMdbResult2> historyResult;
+#endif
+  historyResult = do_QueryInterface(aPreviousResult);
 
   nsPasswordManager* passMgr = nsPasswordManager::GetInstance();
   if (!passMgr)
     return NS_ERROR_OUT_OF_MEMORY;
 
   // Only hand off a previous result to the password manager if it's
-  // a password manager result (i.e. not an nsIAutoCompleteMdbResult).
+  // a password manager result (i.e. not an nsIAutoCompleteMdb/SimpleResult).
 
   if (!passMgr->AutoCompleteSearch(aSearchString,
-                                   mdbResult ? nsnull : aPreviousResult,
+                                   historyResult ? nsnull : aPreviousResult,
                                    mFocusedInput,
                                    getter_AddRefs(result)))
   {
@@ -504,9 +546,8 @@ nsFormFillController::StartSearch(const nsAString &aSearchString, const nsAStrin
     if (history) {
       history->AutoCompleteSearch(aSearchParam,
                                   aSearchString,
-                                  mdbResult,
+                                  historyResult,
                                   getter_AddRefs(result));
-      NS_RELEASE(history);
     }
   }
   NS_RELEASE(passMgr);
@@ -608,21 +649,26 @@ nsFormFillController::KeyPress(nsIDOMEvent* aEvent)
   keyEvent->GetKeyCode(&k);
   switch (k) {
   case nsIDOMKeyEvent::DOM_VK_DELETE:
+#ifndef XP_MACOSX
+    mController->HandleDelete(&cancel);
+    break;
+  case nsIDOMKeyEvent::DOM_VK_BACK_SPACE:
+    mController->HandleText(PR_FALSE);
+    break;
+#else
+  case nsIDOMKeyEvent::DOM_VK_BACK_SPACE:
     {
       PRBool isShift = PR_FALSE;
       keyEvent->GetShiftKey(&isShift);
 
-      if (isShift) {
+      if (isShift)
         mController->HandleDelete(&cancel);
+      else
+        mController->HandleText(PR_FALSE);
 
-        break;
-      }
-
-      // fall through
+      break;
     }
-  case nsIDOMKeyEvent::DOM_VK_BACK_SPACE:
-    mController->HandleText(PR_FALSE);
-    break;
+#endif
   case nsIDOMKeyEvent::DOM_VK_UP:
     mController->HandleKeyNavigation(nsIAutoCompleteController::KEY_UP, &cancel);
     break;
@@ -880,6 +926,14 @@ nsFormFillController::Error(nsIDOMEvent *aLoadEvent)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsFormFillController::ContextMenu(nsIDOMEvent* aContextMenuEvent)
+{
+  if (mFocusedPopup)
+    mFocusedPopup->ClosePopup();
+  return NS_OK;
+}
+
 ////////////////////////////////////////////////////////////////////////
 //// nsFormFillController
 
@@ -899,9 +953,9 @@ nsFormFillController::AddWindowListeners(nsIDOMWindow *aWindow)
   if (!target)
     return;
 
-    target->AddEventListener(NS_LITERAL_STRING("focus"),
-                             NS_STATIC_CAST(nsIDOMFocusListener *, this),
-                             PR_TRUE);
+  target->AddEventListener(NS_LITERAL_STRING("focus"),
+                           NS_STATIC_CAST(nsIDOMFocusListener *, this),
+                           PR_TRUE);
 
   target->AddEventListener(NS_LITERAL_STRING("blur"),
                            NS_STATIC_CAST(nsIDOMFocusListener *, this),
@@ -930,6 +984,10 @@ nsFormFillController::AddWindowListeners(nsIDOMWindow *aWindow)
   target->AddEventListener(NS_LITERAL_STRING("compositionend"),
                            NS_STATIC_CAST(nsIDOMCompositionListener *, this),
                            PR_TRUE);
+
+  target->AddEventListener(NS_LITERAL_STRING("contextmenu"),
+                           NS_STATIC_CAST(nsIDOMContextMenuListener *, this),
+                           PR_TRUE);
 }
 
 void
@@ -941,7 +999,7 @@ nsFormFillController::RemoveWindowListeners(nsIDOMWindow *aWindow)
   StopControllingInput();
   
   nsCOMPtr<nsPIDOMWindow> privateDOMWindow(do_QueryInterface(aWindow));
-  nsIChromeEventHandler* chromeEventHandler;
+  nsIChromeEventHandler* chromeEventHandler = nsnull;
   if (privateDOMWindow)
     chromeEventHandler = privateDOMWindow->GetChromeEventHandler();
   
@@ -951,8 +1009,8 @@ nsFormFillController::RemoveWindowListeners(nsIDOMWindow *aWindow)
     return;
 
   target->RemoveEventListener(NS_LITERAL_STRING("focus"),
-                            NS_STATIC_CAST(nsIDOMFocusListener *, this),
-                            PR_TRUE);
+                              NS_STATIC_CAST(nsIDOMFocusListener *, this),
+                              PR_TRUE);
 
   target->RemoveEventListener(NS_LITERAL_STRING("blur"),
                               NS_STATIC_CAST(nsIDOMFocusListener *, this),
@@ -981,6 +1039,10 @@ nsFormFillController::RemoveWindowListeners(nsIDOMWindow *aWindow)
   target->RemoveEventListener(NS_LITERAL_STRING("compositionend"),
                               NS_STATIC_CAST(nsIDOMCompositionListener *, this),
                               PR_TRUE);
+
+  target->RemoveEventListener(NS_LITERAL_STRING("contextmenu"),
+                              NS_STATIC_CAST(nsIDOMContextMenuListener *, this),
+                              PR_TRUE);
 }
 
 void
@@ -988,7 +1050,7 @@ nsFormFillController::AddKeyListener(nsIDOMHTMLInputElement *aInput)
 {
   if (!aInput)
     return;
-    
+
     nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(aInput);
 
     target->AddEventListener(NS_LITERAL_STRING("keypress"),
@@ -1054,7 +1116,7 @@ nsFormFillController::GetDocShellForInput(nsIDOMHTMLInputElement *aInput)
   nsCOMPtr<nsIDOMDocument> domDoc;
   aInput->GetOwnerDocument(getter_AddRefs(domDoc));
   nsCOMPtr<nsIDocument> doc = do_QueryInterface(domDoc);
-  
+  NS_ENSURE_TRUE(doc, nsnull);
   nsCOMPtr<nsIWebNavigation> webNav = do_GetInterface(doc->GetScriptGlobalObject());
   nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(webNav);
   return docShell;

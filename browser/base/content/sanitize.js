@@ -1,26 +1,28 @@
 # -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+# ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
-# 
+#
 # The contents of this file are subject to the Mozilla Public License Version
 # 1.1 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
 # http://www.mozilla.org/MPL/
-# 
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is the Firefox Sanitizer.
-# 
-# The Initial Developer of the Original Code is Ben Goodger.
+#
+# The Initial Developer of the Original Code is
+# Ben Goodger.
 # Portions created by the Initial Developer are Copyright (C) 2005
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
 #   Ben Goodger <ben@mozilla.org>
 #   Giorgio Maone <g.maone@informaction.com>
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -32,7 +34,7 @@
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
-# 
+#
 # ***** END LICENSE BLOCK *****
 
 function Sanitizer() {}
@@ -96,50 +98,9 @@ Sanitizer.prototype = {
         const ci = Components.interfaces;
         var cacheService = cc["@mozilla.org/network/cache-service;1"]
                              .getService(ci.nsICacheService);
-
-        // Here we play dirty, trying to brutally wipe out all the cache files 
-        // even if the disk cache device has gone away (if it is still with us,
-        // our removal attempt will fail because the directory is locked,
-        // and we fall back to the "nice" way below)
-        
-        var cacheDir;
-        // Look at nsCacheProfilePrefObserver::ReadPrefs()
-        // and nsDiskCacheDevice::SetCacheParentDirectory()
-        // for details on how we guess the cache directory
         try {
-          cacheDir = cc["@mozilla.org/preferences-service;1"]
-                       .getService(ci.nsIPrefBranch)
-                       .getComplexValue("browser.cache.disk.parent_directory",
-                                        ci.nsILocalFile);
-        } catch(er) {
-          const dirServ = cc["@mozilla.org/file/directory_service;1"]
-                            .getService(ci.nsIProperties);
-          try {
-            cacheDir = dirServ.get("cachePDir",ci.nsILocalFile);
-          } catch(er) {
-            cacheDir = dirServ.get("ProfLD",ci.nsILocalFile);
-          }
-        }
-        
-        if (cacheDir) {
-          // Here we try to prevent the "phantom Cache.Trash" issue
-          // reported in bug #296256
-          cacheDir.append("Cache.Trash");
-          try {
-            cacheDir.remove(true);
-          } catch(er) {}
-          cacheDir = cacheDir.parent;
-          cacheDir.append("Cache");
-          try {
-           cacheDir.remove(true);
-          } catch(er) {}
-        }
-        
-        try {
-          // The "nice" way
           cacheService.evictEntries(ci.nsICache.STORE_ANYWHERE);
         } catch(er) {}
-        
       },
       
       get canClear()
@@ -158,9 +119,7 @@ Sanitizer.prototype = {
       
       get canClear()
       {
-        var cookieMgr = Components.classes["@mozilla.org/cookiemanager;1"]
-                                  .getService(Components.interfaces.nsICookieManager);
-        return cookieMgr.enumerator.hasMoreElements();
+        return true;
       }
     },
     
@@ -181,25 +140,38 @@ Sanitizer.prototype = {
       
       get canClear()
       {
-        var globalHistory = Components.classes["@mozilla.org/browser/global-history;2"]
-                                      .getService(Components.interfaces.nsIBrowserHistory);
-        return globalHistory.count != 0;
+        // bug 347231: Always allow clearing history due to dependencies on
+        // the browser:purge-session-history notification. (like error console)
+        return true;
       }
     },
     
     formdata: {
       clear: function ()
       {
+        //Clear undo history of all searchBars
+        var windowManager = Components.classes['@mozilla.org/appshell/window-mediator;1'].getService();
+        var windowManagerInterface = windowManager.QueryInterface(Components.interfaces.nsIWindowMediator);
+        var windows = windowManagerInterface.getEnumerator("navigator:browser");
+        while (windows.hasMoreElements()) {
+          var searchBar = windows.getNext().document.getElementById("searchbar");
+          if (searchBar) {
+            searchBar.value = "";
+            searchBar.textbox.editor.enableUndo(false);
+            searchBar.textbox.editor.enableUndo(true);
+          }
+        }
+
         var formHistory = Components.classes["@mozilla.org/satchel/form-history;1"]
-                                    .getService(Components.interfaces.nsIFormHistory);
+                                    .getService(Components.interfaces.nsIFormHistory2);
         formHistory.removeAllEntries();
       },
       
       get canClear()
       {
         var formHistory = Components.classes["@mozilla.org/satchel/form-history;1"]
-                                    .getService(Components.interfaces.nsIFormHistory);
-        return formHistory.rowCount != 0;
+                                    .getService(Components.interfaces.nsIFormHistory2);
+        return formHistory.hasEntries;
       }
     },
     

@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Benjamin Smedberg <bsmedberg@covad.net>
+ *   Benjamin Smedberg <bsmedberg@covad.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -53,6 +53,9 @@ pref("general.useragent.locale", "chrome://navigator/locale/navigator.properties
 pref("general.useragent.contentlocale", "chrome://navigator-region/locale/region.properties");
 
 pref("general.config.obscure_value", 13); // for MCD .cfg files
+
+// maximum number of dated backups to keep at any time
+pref("browser.bookmarks.max_backups",       5);
 
 pref("browser.cache.disk.enable",           true);
 pref("browser.cache.disk.capacity",         51200);
@@ -126,11 +129,16 @@ pref("accessibility.accesskeycausesactivation", true);
 // Type Ahead Find
 pref("accessibility.typeaheadfind", true);
 pref("accessibility.typeaheadfind.autostart", true);
+// casesensitive: controls the find bar's case-sensitivity
+//     0 - "never"  (case-insensitive)
+//     1 - "always" (case-sensitive)
+// other - "auto"   (case-sensitive for mixed-case input, insensitive otherwise)
+pref("accessibility.typeaheadfind.casesensitive", 0);
 pref("accessibility.typeaheadfind.linksonly", true);
 pref("accessibility.typeaheadfind.startlinksonly", false);
 pref("accessibility.typeaheadfind.timeout", 4000);
 pref("accessibility.typeaheadfind.enabletimeout", true);
-pref("accessibility.typeaheadfind.soundURL", "default");
+pref("accessibility.typeaheadfind.soundURL", "beep");
 pref("accessibility.typeaheadfind.enablesound", true);
 
 pref("browser.history_expire_days", 9);
@@ -147,8 +155,13 @@ pref("browser.tabs.autoHide", true);
 pref("browser.tabs.forceHide", false);
 pref("browser.tabs.warnOnClose", true);
 pref("browser.tabs.warnOnCloseOther", true);
+pref("browser.tabs.warnOnOpen", true);
+pref("browser.tabs.maxOpenBeforeWarn", 15);
 // 0 = append, 1 = replace
 pref("browser.tabs.loadGroup", 1);
+
+pref("toolkit.scrollbox.scrollIncrement", 20);
+pref("toolkit.scrollbox.clickToScroll.scrollDelay", 150);
 
 // lets new tab/window load something different than first window
 // -1 - use navigator startup preference
@@ -170,6 +183,10 @@ pref("nglayout.debug.enable_xbl_forms", false);
 
 // size of scrollbar snapping region
 pref("slider.snapMultiplier", 6);
+
+// Default to using the system filepicker if possible, but allow
+// toggling to use the XUL filepicker
+pref("ui.allow_platform_file_picker", true);
 
 // option to choose plug-in finder
 pref("application.use_ns_plugin_finder", false);
@@ -221,6 +238,10 @@ pref("print.print_edge_left", 0); // 1/100 of an inch
 pref("print.print_edge_right", 0); // 1/100 of an inch
 pref("print.print_edge_bottom", 0); // 1/100 of an inch
 
+// Pref used by the spellchecker extension to control the 
+// maximum number of misspelled words that will be underlined
+// in a document.
+pref("extensions.spellcheck.inline.max-misspellings", 500);
 
 // Prefs used by libeditor. Prefs specific to seamonkey composer
 // belong in mozilla/editor/ui/composer.js
@@ -256,12 +277,10 @@ pref("capability.policy.default.History.next", "UniversalBrowserRead");
 pref("capability.policy.default.History.previous", "UniversalBrowserRead");
 pref("capability.policy.default.History.toString", "UniversalBrowserRead");
 
-pref("capability.policy.default.HTMLDocument.close.get", "allAccess");
 pref("capability.policy.default.HTMLDocument.open.get", "allAccess");
 
 pref("capability.policy.default.Location.hash.set", "allAccess");
 pref("capability.policy.default.Location.href.set", "allAccess");
-pref("capability.policy.default.Location.reload.get", "allAccess");
 pref("capability.policy.default.Location.replace.get", "allAccess");
 
 pref("capability.policy.default.Navigator.preference", "allAccess");
@@ -270,19 +289,22 @@ pref("capability.policy.default.Navigator.preferenceinternal.set", "UniversalPre
 
 pref("capability.policy.default.Window.blur.get", "allAccess");
 pref("capability.policy.default.Window.close.get", "allAccess");
-pref("capability.policy.default.Window.closed", "allAccess");
+pref("capability.policy.default.Window.closed.get", "allAccess");
 pref("capability.policy.default.Window.Components", "allAccess");
-pref("capability.policy.default.Window.document", "allAccess");
+pref("capability.policy.default.Window.document.get", "allAccess");
 pref("capability.policy.default.Window.focus.get", "allAccess");
-pref("capability.policy.default.Window.frames", "allAccess");
-pref("capability.policy.default.Window.history", "allAccess");
-pref("capability.policy.default.Window.length", "allAccess");
+pref("capability.policy.default.Window.frames.get", "allAccess");
+pref("capability.policy.default.Window.history.get", "allAccess");
+pref("capability.policy.default.Window.length.get", "allAccess");
 pref("capability.policy.default.Window.location", "allAccess");
-pref("capability.policy.default.Window.opener", "allAccess");
-pref("capability.policy.default.Window.parent", "allAccess");
-pref("capability.policy.default.Window.self", "allAccess");
-pref("capability.policy.default.Window.top", "allAccess");
-pref("capability.policy.default.Window.window", "allAccess");
+pref("capability.policy.default.Window.opener.get", "allAccess");
+pref("capability.policy.default.Window.parent.get", "allAccess");
+pref("capability.policy.default.Window.self.get", "allAccess");
+pref("capability.policy.default.Window.top.get", "allAccess");
+pref("capability.policy.default.Window.window.get", "allAccess");
+
+pref("capability.policy.default.Selection.addSelectionListener", "UniversalXPConnect");
+pref("capability.policy.default.Selection.removeSelectionListener", "UniversalXPConnect");
 
 // Restrictions on the DOM for mail/news - see bugs 66938 and 84545
 pref("capability.policy.mailnews.sites", "mailbox: imap: news:");
@@ -328,6 +350,7 @@ pref("capability.policy.mailnews.Window.screenY.set", "noAccess");
 pref("capability.policy.mailnews.Window.sizeToContent", "noAccess");
 pref("capability.policy.mailnews.document.load", "noAccess");
 pref("capability.policy.mailnews.XMLHttpRequest.channel", "noAccess");
+pref("capability.policy.mailnews.XMLHttpRequest.getInterface", "noAccess");
 pref("capability.policy.mailnews.XMLHttpRequest.responseXML", "noAccess");
 pref("capability.policy.mailnews.XMLHttpRequest.responseText", "noAccess");
 pref("capability.policy.mailnews.XMLHttpRequest.status", "noAccess");
@@ -395,6 +418,7 @@ pref("capability.policy.mailnews.WebServiceProxyFactory.onError", "noAccess");
 
 // XMLExtras
 pref("capability.policy.default.XMLHttpRequest.channel", "noAccess");
+pref("capability.policy.default.XMLHttpRequest.getInterface", "noAccess");
 pref("capability.policy.default.DOMParser.parseFromStream", "noAccess");
 
 // Clipboard
@@ -425,6 +449,8 @@ pref("dom.disable_open_during_load",                false);
 pref("dom.popup_maximum",                           20);
 pref("dom.popup_allowed_events", "change click dblclick mouseup reset submit");
 pref("dom.disable_open_click_delay", 1000);
+
+pref("dom.storage.enabled", true);
 
 // Disable popups from plugins by default
 //   0 = openAllowed
@@ -585,6 +611,7 @@ pref("network.IDN.whitelist.fi", true);
 pref("network.IDN.whitelist.gr", true);
 pref("network.IDN.whitelist.hu", true);
 pref("network.IDN.whitelist.io", true);
+pref("network.IDN.whitelist.is", true);
 pref("network.IDN.whitelist.jp", true);
 pref("network.IDN.whitelist.kr", true);
 pref("network.IDN.whitelist.li", true);
@@ -598,6 +625,8 @@ pref("network.IDN.whitelist.tw", true);
 pref("network.IDN.whitelist.vn", true);
 
 // non-ccTLDs
+pref("network.IDN.whitelist.biz", true);
+pref("network.IDN.whitelist.cat", true);
 pref("network.IDN.whitelist.info", true);
 pref("network.IDN.whitelist.museum", true);
 pref("network.IDN.whitelist.org", true);
@@ -688,7 +717,6 @@ pref("network.hosts.nntp_server",           "news.mozilla.org");
 
 pref("permissions.default.image",           1); // 1-Accept, 2-Deny, 3-dontAcceptForeign
 pref("network.image.warnAboutImages",       false);
-pref("network.proxy.autoconfig_url",        "");
 pref("network.proxy.type",                  0);
 pref("network.proxy.ftp",                   "");
 pref("network.proxy.ftp_port",              0);
@@ -711,6 +739,14 @@ pref("network.cookie.lifetimePolicy",       0); // accept normally, 1-askBeforeA
 pref("network.cookie.alwaysAcceptSessionCookies", false);
 pref("network.cookie.prefsMigrated",        false);
 pref("network.cookie.lifetime.days",        90);
+
+// The PAC file to load.  Ignored unless network.proxy.type is 2.
+pref("network.proxy.autoconfig_url", "");
+
+// If we cannot load the PAC file, then try again (doubling from interval_min
+// until we reach interval_max or the PAC file is successfully loaded).
+pref("network.proxy.autoconfig_retry_interval_min", 5);    // 5 seconds
+pref("network.proxy.autoconfig_retry_interval_max", 300);  // 5 minutes
 
 // The following default value is for p3p medium mode.
 // See xpfe/components/permissions/content/cookieP3P.xul for the definitions of low/medium/hi
@@ -764,8 +800,14 @@ pref("security.dialog_enable_delay", 2000);
 // menu access key = alt, accelerator key = control.
 // Use 17 for Ctrl, 18 for Alt, 224 for Meta, 0 for none. Mac settings in macprefs.js
 pref("ui.key.accelKey", 17);
-pref("ui.key.generalAccessKey", 18);
 pref("ui.key.menuAccessKey", 18);
+pref("ui.key.generalAccessKey", -1);
+
+// If generalAccessKey is -1, use the following two prefs instead.
+// Use 0 for disabled, 1 for Shift, 2 for Ctrl, 4 for Alt, 8 for Meta
+// (values can be combined, e.g. 5 for Alt+Shift)
+pref("ui.key.chromeAccess", 4);
+pref("ui.key.contentAccess", 5);
 
 pref("ui.key.menuAccessKeyFocuses", false); // overridden below
 pref("ui.key.saveLink.shift", true); // true = shift, false = meta
@@ -925,6 +967,12 @@ pref("bidi.characterset", 1);
 pref("layout.word_select.eat_space_to_next_word", false);
 pref("layout.word_select.stop_at_punctuation", true);
 
+// controls caret style during text selection
+// 0 = use platform default
+// 1 = caret moves and blinks as when there is no selection
+// 2 = caret moves to selection edge and is not visible during selection
+pref("layout.selection.caret_style", 0);
+
 // pref to control whether or not to replace backslashes with Yen signs
 // in documents encoded in one of Japanese legacy encodings (EUC-JP, 
 // Shift_JIS, ISO-2022-JP)
@@ -932,6 +980,9 @@ pref("layout.enable_japanese_specific_transform", false);
 
 // pref to force frames to be resizable
 pref("layout.frames.force_resizability", false);
+
+// pref to report CSS errors to the error console
+pref("layout.css.report_errors", true);
 
 // pref to permit users to make verified SOAP calls by default
 pref("capability.policy.default.SOAPCall.invokeVerifySourceHeader", "allAccess");
@@ -979,7 +1030,8 @@ pref("config.use_system_prefs.accessibility", false);
 pref("editor.resizing.preserve_ratio",       true);
 pref("editor.positioning.offset",            0);
 
-pref("dom.max_script_run_time", 5);
+pref("dom.max_chrome_script_run_time", 20);
+pref("dom.max_script_run_time", 10);
 
 pref("svg.enabled", true);
 
@@ -1319,6 +1371,7 @@ pref("intl.keyboard.per_window_layout", false);
 // Mac specific preference defaults
 pref("browser.drag_out_of_frame_style", 1);
 pref("ui.key.saveLink.shift", false); // true = shift, false = meta
+pref("ui.click_hold_context_menus", false);
 
 // default font name (in UTF8)
 
@@ -1474,8 +1527,6 @@ pref("font.size.fixed.zh-HK", 16);
 
 pref("browser.urlbar.clickAtEndSelects", false);
 
-pref("accessibility.typeaheadfind.soundURL", "beep");
-
 // Override the Windows settings: no menu key, meta accelerator key. ctrl for general access key in HTML/XUL
 // Use 17 for Ctrl, 18 for Option, 224 for Cmd, 0 for none
 pref("ui.key.menuAccessKey", 0);
@@ -1484,7 +1535,13 @@ pref("ui.key.accelKey", 224);
 // suggests to use command on mac, but this really sucks (imagine someone having a "q"
 // as an access key and not letting you quit the app!). As a result, we've made a 
 // command decision 1 day before tree lockdown to change it to the control key.
-pref("ui.key.generalAccessKey", 17);
+pref("ui.key.generalAccessKey", -1);
+
+// If generalAccessKey is -1, use the following two prefs instead.
+// Use 0 for disabled, 1 for Shift, 2 for Ctrl, 4 for Alt, 8 for Cmd
+// (values can be combined, e.g. 3 for Ctrl+Shift)
+pref("ui.key.chromeAccess", 2);
+pref("ui.key.contentAccess", 2);
 
 // print_extra_margin enables platforms to specify an extra gap or margin
 // around the content of the page for Print Preview only
@@ -1505,7 +1562,7 @@ pref("network.dns.disableIPv6", true);
 #if XP_OS2
 
 pref("ui.key.menuAccessKeyFocuses", true);
-pref("browser.display.screen_resolution", 0); // System setting
+pref("layout.css.dpi", -1); // max(96dpi, System setting)
 
 /* Fonts only needs lists if we have a default that might not be available. */
 /* Tms Rmn, Helv and Courier are ALWAYS available on OS/2 */
@@ -1693,6 +1750,8 @@ pref("network.dns.disableIPv6", true);
 
 #if XP_BEOS
 
+pref("layout.css.dpi", -1); // max(96dpi, System setting
+
 pref("intl.font_charset", "");
 pref("intl.font_spec_list", "");
 pref("mail.signature_date", 0);
@@ -1760,11 +1819,17 @@ pref("font.size.fixed.zh-HK", 16);
 /**
  * Set default accelKey to "Alt", which is the default under BeOS.
  * The generalAccessKey is used for shortcuts on web pages, set to
- * Ctrl. The menuAccessKey is now the "windows" key.
+ * Ctrl+Shift. The menuAccessKey is now the "windows" key.
  */
 pref("ui.key.accelKey", 18);
-pref("ui.key.generalAccessKey", 17);
 pref("ui.key.menuAccessKey", 17);
+pref("ui.key.generalAccessKey", -1);
+
+// If generalAccessKey is -1, use the following two prefs instead.
+// Use 0 for disabled, 1 for Shift, 2 for Ctrl, 4 for Alt, 8 for Meta
+// (values can be combined, e.g. 3 for Ctrl+Shift)
+pref("ui.key.chromeAccess", 2);
+pref("ui.key.contentAccess", 3);
 
 // xxx toolkit?
 pref("browser.download.dir", "/boot/home/Downloads");
@@ -1778,7 +1843,7 @@ pref("browser.download.dir", "/boot/home/Downloads");
 pref("network.hosts.smtp_server", "localhost");
 pref("network.hosts.pop_server", "pop");
 pref("network.protocol-handler.warn-external.file", false);
-pref("browser.display.screen_resolution", 0); // System setting
+pref("layout.css.dpi", -1); // max(96dpi, System setting)
 pref("browser.drag_out_of_frame_style", 1);
 pref("editor.singleLine.pasteNewlines", 0);
 
@@ -1797,9 +1862,6 @@ pref("browser.urlbar.clickSelectsAll", false);
 // 1 focuses text controls, 2 focuses other form elements, 4 adds links.
 // Leave this at the default, 7, to match mozilla1.0-era user expectations.
 // pref("accessibility.tabfocus", 1);
-
-// Beep instead of playing sound in Linux, at least until nsISound is fixed:
-pref("accessibility.typeaheadfind.soundURL", "beep");
 
 // override double-click word selection behavior.
 pref("layout.word_select.stop_at_punctuation", false);

@@ -722,12 +722,17 @@ public:
   void ComputeExtraJustificationSpacing(nsIRenderingContext& aRenderingContext,
                                         TextStyle& aTextStyle,
                                         PRUnichar* aBuffer, PRInt32 aLength, PRInt32 aNumJustifiableCharacter);
-
+ 
+  /**
+   * @param aRightToLeftText whether the rendering context is reversing text
+   *                         using its native right-to-left capability
+   */
   void PaintTextDecorations(nsIRenderingContext& aRenderingContext,
                             nsStyleContext* aStyleContext,
                             nsPresContext* aPresContext,
                             TextPaintStyle& aStyle,
                             nscoord aX, nscoord aY, nscoord aWidth,
+                            PRBool aRightToLeftText,
                             PRUnichar* aText = nsnull,
                             SelectionDetails *aDetails = nsnull,
                             PRUint32 aIndex = 0,
@@ -742,10 +747,15 @@ public:
 
   // The passed-in rendering context must have its color set to the color the
   // text should be rendered in.
+  /**
+   * @param aRightToLeftText whether the rendering context is reversing text
+   *                         using its native right-to-left capability
+   */
   void RenderString(nsIRenderingContext& aRenderingContext,
                     nsStyleContext* aStyleContext,
                     nsPresContext* aPresContext,
                     TextPaintStyle& aStyle,
+                    PRBool aRightToLeftText,
                     PRUnichar* aBuffer, PRInt32 aLength, PRBool aIsEndOfFrame,
                     nscoord aX, nscoord aY,
                     nscoord aWidth,
@@ -807,6 +817,23 @@ public:
                       TextPaintStyle& aStyle,
                       nscoord dx, nscoord dy);
 
+ /**
+  * ComputeTotalWordDimensions and ComputeWordFragmentDimensions work
+  * together to measure a text that spans multiple frames, e.g., as in
+  *   "baseText<b>moreText<i>moreDeepText</i></b>moreAlsoHere"
+  * where the total text shoudn't be broken (or the joined pieces should be
+  * passed to the linebreaker for examination, especially in i18n cases).
+  *
+  * ComputeTotalWordDimensions will loop over ComputeWordFragmentDimensions
+  * to look-ahead and accumulate the joining fragments.
+  *
+  * @param aNextFrame is the first textFrame after the baseText's textFrame.
+  *
+  * @param aBaseDimensions is the dimension of baseText.
+  *
+  * @param aCanBreakBefore is false when it is not possible to break before
+  * the baseText (e.g., when this is the first word on the line).
+  */
   nsTextDimensions ComputeTotalWordDimensions(nsPresContext* aPresContext,
                                 nsILineBreaker* aLineBreaker,
                                 nsLineLayout& aLineLayout,
@@ -818,6 +845,19 @@ public:
                                 PRUint32   aWordBufSize,
                                 PRBool     aCanBreakBefore);
 
+ /**
+  * @param aNextFrame is the textFrame following the current fragment.
+  *
+  * @param aMoreSize plays a double role. The process should continue
+  * normally when it is zero. But when it returns -1, it means that there is
+  * no more fragment of interest and the look-ahead should be stopped. When
+  * it returns a positive value, it means that the current buffer (aWordBuf 
+  * of size aWordBufSize) is not big enough to accumulate the current fragment. 
+  * The returned positive value is the shortfall. 
+  *
+  * @param aWordBufLen is the accumulated length of the fragments that have
+  * been accounted for so far.
+  */
   nsTextDimensions ComputeWordFragmentDimensions(nsPresContext* aPresContext,
                                    nsILineBreaker* aLineBreaker,
                                    nsLineLayout& aLineLayout,
@@ -825,7 +865,7 @@ public:
                                    nsIFrame* aNextFrame,
                                    nsIContent* aContent,
                                    nsITextContent* aText,
-                                   PRBool* aStop,
+                                   PRInt32* aMoreSize,
                                    const PRUnichar* aWordBuf,
                                    PRUint32 &aWordBufLen,
                                    PRUint32 aWordBufSize,
@@ -869,7 +909,7 @@ protected:
 #ifdef ACCESSIBILITY
 NS_IMETHODIMP nsTextFrame::GetAccessible(nsIAccessible** aAccessible)
 {
-  if (mRect.width > 0 || mRect.height > 0) {
+  if (mRect.width > 0 || mRect.height > 0 || GetNextInFlow()) {
 
     nsCOMPtr<nsIAccessibilityService> accService = do_GetService("@mozilla.org/accessibilityService;1");
 
@@ -1734,12 +1774,9 @@ nsTextFrame::PrepareUnicodeText(nsTextTransformer& aTX,
     aTX.GetNextWord(PR_FALSE, &wordLen, &contentLen, &isWhitespace, &wasTransformed);
     // we trip this assertion in bug 31053, but I think it's unnecessary
     //NS_ASSERTION(isWhitespace, "mState and content are out of sync");
-#ifdef IBMBIDI
-    if (mState & NS_FRAME_IS_BIDI
-        && contentLen > mContentLength) {
-      contentLen = mContentLength;
+    if (contentLen > n) {
+      contentLen = n;
     }
-#endif // IBMBIDI
 
     if (isWhitespace) {
       if (nsnull != indexp) {
@@ -1781,25 +1818,21 @@ nsTextFrame::PrepareUnicodeText(nsTextTransformer& aTX,
     // Get the next word
     bp = aTX.GetNextWord(inWord, &wordLen, &contentLen, &isWhitespace, &wasTransformed);
     if (nsnull == bp) {
-#ifdef IBMBIDI
-      if (indexp && (mState & NS_FRAME_IS_BIDI) ) {
+      if (indexp) {
         while (--n >= 0) {
-          *indexp++ = strInx++;
+          *indexp++ = strInx;
         }
       }
-#endif // IBMBIDI
       break;
     }
-    // for ::first-letter or bidi, the content may be chopped
-    if (mState & (TEXT_FIRST_LETTER | NS_FRAME_IS_BIDI)) {
-      // XXX: doesn't support the case where the first-letter expands, e.g.,
-      // with text-transform:capitalize, the German szlig; becomes SS.
-      if (contentLen > n) {
-        contentLen = n;
-      }
-      if (wordLen > n) {
-        wordLen = n;
-      }
+    // the frame may not map the entire word
+    // XXX: doesn't support the case where the first-letter expands, e.g.,
+    // with text-transform:capitalize, the German szlig; becomes SS.
+    if (contentLen > n) {
+      contentLen = n;
+    }
+    if (wordLen > n) {
+      wordLen = n;
     }
     inWord = PR_FALSE;
     if (isWhitespace) {
@@ -1995,6 +2028,7 @@ nsTextFrame::PaintTextDecorations(nsIRenderingContext& aRenderingContext,
                                   nsPresContext* aPresContext,
                                   TextPaintStyle& aTextStyle,
                                   nscoord aX, nscoord aY, nscoord aWidth,
+                                  PRBool aRightToLeftText,
                                   PRUnichar *aText, /*=nsnull*/
                                   SelectionDetails *aDetails,/*= nsnull*/
                                   PRUint32 aIndex,  /*= 0*/
@@ -2145,12 +2179,30 @@ nsTextFrame::PaintTextDecorations(nsIRenderingContext& aRenderingContext,
               aTextStyle.mNormalFont->GetUnderline(offset, size);
               aRenderingContext.SetLineStyle(nsLineStyle_kDotted);
               aRenderingContext.SetColor(NS_RGB(255,0,0));
-              aRenderingContext.DrawLine(aX + startOffset, aY + baseline - offset, aX + startOffset + textWidth, aY + baseline - offset);
+              /*
+               * If the rendering context is drawing text from right to left,
+               * reverse the coordinates of the underline to match.
+               */
+              if (aRightToLeftText) {
+                nscoord rightEdge = aX + aWidth;
+                aRenderingContext.DrawLine(rightEdge - textWidth - startOffset,
+                                           aY + baseline - offset,
+                                           rightEdge - startOffset,
+                                           aY + baseline - offset);
+              }
+              else {
+                aRenderingContext.DrawLine(aX + startOffset,
+                                           aY + baseline - offset,
+                                           aX + startOffset + textWidth,
+                                           aY + baseline - offset);
+              }
                                 }break;
 
 #ifdef NO_INVERT
            case nsISelectionController::SELECTION_IME_SELECTEDRAWTEXT:
            case nsISelectionController::SELECTION_IME_SELECTEDCONVERTEDTEXT:{
+              NS_ASSERTION(!aRightToLeftText, 
+                           "Right-to-left text in IME not handled");
               aTextStyle.mNormalFont->GetUnderline(offset, size);
               aRenderingContext.SetColor(IME_SELECTED_UNDERLINECOLOR);
 #ifdef XP_MACOSX // underline thickness is 2 pixel
@@ -2161,6 +2213,8 @@ nsTextFrame::PaintTextDecorations(nsIRenderingContext& aRenderingContext,
                                 }break;
            case nsISelectionController::SELECTION_IME_RAWINPUT:
            case nsISelectionController::SELECTION_IME_CONVERTEDTEXT:{
+              NS_ASSERTION(!aRightToLeftText, 
+                           "Right-to-left text in IME not handled");
               aTextStyle.mNormalFont->GetUnderline(offset, size);
               aRenderingContext.SetColor(IME_UNDERLINECOLOR);
 #ifdef XP_MACOSX // underline thicness is 2 pixel
@@ -2173,6 +2227,8 @@ nsTextFrame::PaintTextDecorations(nsIRenderingContext& aRenderingContext,
 
 #else             
            case nsISelectionController::SELECTION_IME_SELECTEDRAWTEXT:{
+              NS_ASSERTION(!aRightToLeftText, 
+                           "Right-to-left text in IME not handled");
 #ifdef USE_INVERT_FOR_SELECTION
               aRenderingContext.SetColor(NS_RGB(255,255,255));
               aRenderingContext.InvertRect(aX + startOffset, aY, textWidth, rect.height);
@@ -2185,11 +2241,15 @@ nsTextFrame::PaintTextDecorations(nsIRenderingContext& aRenderingContext,
               aRenderingContext.FillRect(aX + startOffset+size, aY + baseline - offset, textWidth-2*size, size);
                                 }break;
           case nsISelectionController::SELECTION_IME_RAWINPUT:{
+              NS_ASSERTION(!aRightToLeftText, 
+                           "Right-to-left text in IME not handled");
               aTextStyle.mNormalFont->GetUnderline(offset, size);
               aRenderingContext.SetColor(IME_RAW_COLOR);
               aRenderingContext.FillRect(aX + startOffset+size, aY + baseline - offset, textWidth-2*size, size);
                                 }break;
           case nsISelectionController::SELECTION_IME_SELECTEDCONVERTEDTEXT:{
+              NS_ASSERTION(!aRightToLeftText, 
+                           "Right-to-left text in IME not handled");
 #ifdef USE_INVERT_FOR_SELECTION
               aRenderingContext.SetColor(NS_RGB(255,255,255));
               aRenderingContext.InvertRect(aX + startOffset, aY, textWidth, rect.height);
@@ -2202,6 +2262,8 @@ nsTextFrame::PaintTextDecorations(nsIRenderingContext& aRenderingContext,
               aRenderingContext.FillRect(aX + startOffset+size, aY + baseline - offset, textWidth-2*size, size);
                                 }break;
           case nsISelectionController::SELECTION_IME_CONVERTEDTEXT:{
+              NS_ASSERTION(!aRightToLeftText, 
+                           "Right-to-left text in IME not handled");
               aTextStyle.mNormalFont->GetUnderline(offset, size);
               aRenderingContext.SetColor(IME_CONVERTED_COLOR);
               aRenderingContext.FillRect(aX + startOffset+size, aY + baseline - offset, textWidth-2*size, size);
@@ -2579,7 +2641,7 @@ nsTextFrame::PaintUnicodeText(nsPresContext* aPresContext,
       aRenderingContext.SetColor(nsCSSRendering::TransformColor(aTextStyle.mColor->mColor,canDarkenColor));
       aRenderingContext.DrawString(text, PRUint32(textLength), dx, dy + mAscent);
       PaintTextDecorations(aRenderingContext, aStyleContext, aPresContext,
-                           aTextStyle, dx, dy, width);
+                           aTextStyle, dx, dy, width, PR_FALSE);
     }
     else 
     { //we draw according to selection rules
@@ -2647,7 +2709,7 @@ nsTextFrame::PaintUnicodeText(nsPresContext* aPresContext,
 #endif
         sdptr = sdptr->mNext;
       }
-      if (!hideStandardSelection) {
+      if (!hideStandardSelection || displaySelection) {
       /*
        * Text is drawn by drawing the entire string every time, but
        * using clip regions to control which part of the text is shown
@@ -2711,7 +2773,6 @@ nsTextFrame::PaintUnicodeText(nsPresContext* aPresContext,
                   aRenderingContext.SetColor(currentBKColor);
                   aRenderingContext.FillRect(currentX, dy, newWidth, mRect.height);
                 }
-                currentFGColor = EnsureDifferentColors(currentFGColor, currentBKColor);
              }
             }
             else {
@@ -2752,8 +2813,9 @@ nsTextFrame::PaintUnicodeText(nsPresContext* aPresContext,
       }
       }
       PaintTextDecorations(aRenderingContext, aStyleContext, aPresContext,
-                           aTextStyle, dx, dy, width, text, details, 0,
-                           (PRUint32)textLength);
+                           aTextStyle, dx, dy, width,
+                           isRightToLeftOnBidiPlatform, text, details, 0,
+                           (PRUint32)textLength, nsnull);
       sdptr = details;
       if (details){
         while ((sdptr = details->mNext) != nsnull) {
@@ -2921,6 +2983,7 @@ nsTextFrame::RenderString(nsIRenderingContext& aRenderingContext,
                           nsStyleContext* aStyleContext,
                           nsPresContext* aPresContext,
                           TextPaintStyle& aTextStyle,
+                          PRBool aRightToLeftText,
                           PRUnichar* aBuffer, PRInt32 aLength, PRBool aIsEndOfFrame,
                           nscoord aX, nscoord aY,
                           nscoord aWidth, 
@@ -2992,7 +3055,8 @@ nsTextFrame::RenderString(nsIRenderingContext& aRenderingContext,
         // Note: use aY not small-y so that decorations are drawn with
         // respect to the normal-font not the current font.
         PaintTextDecorations(aRenderingContext, aStyleContext, aPresContext,
-                             aTextStyle, aX, aY, width, runStart, aDetails,
+                             aTextStyle, aX, aY, width,
+                             aRightToLeftText, runStart, aDetails,
                              countSoFar, pendingCount, spacing ? sp0 : nsnull);
         countSoFar += pendingCount;
         aWidth -= width;
@@ -3072,7 +3136,8 @@ nsTextFrame::RenderString(nsIRenderingContext& aRenderingContext,
     // Note: use aY not small-y so that decorations are drawn with
     // respect to the normal-font not the current font.
     PaintTextDecorations(aRenderingContext, aStyleContext, aPresContext,
-                         aTextStyle, aX, aY, aWidth, runStart, aDetails,
+                         aTextStyle, aX, aY, aWidth,
+                         aRightToLeftText, runStart, aDetails,
                          countSoFar, pendingCount, spacing ? sp0 : nsnull);
   }
   aTextStyle.mLastFont = lastFont;
@@ -3348,7 +3413,7 @@ nsTextFrame::PaintTextSlowly(nsPresContext* aPresContext,
       // simplest rendering approach
       aRenderingContext.SetColor(nsCSSRendering::TransformColor(aTextStyle.mColor->mColor,canDarkenColor));
       RenderString(aRenderingContext, aStyleContext, aPresContext, aTextStyle,
-                   text, textLength, PR_TRUE, dx, dy, width);
+                   PR_FALSE, text, textLength, PR_TRUE, dx, dy, width);
     }
     else 
     {
@@ -3418,7 +3483,7 @@ nsTextFrame::PaintTextSlowly(nsPresContext* aPresContext,
             if (isRightToLeftOnBidiPlatform)
               currentX -= newDimensions.width;
 #endif
-            if (isSelection)
+            if (isSelection && !isPaginated)
             {//DRAW RECT HERE!!!
               if (!isCurrentBKColorTransparent) {
                 aRenderingContext.SetColor(currentBKColor);
@@ -3430,12 +3495,14 @@ nsTextFrame::PaintTextSlowly(nsPresContext* aPresContext,
           if (isPaginated && !iter.IsBeforeOrAfter()) {
             aRenderingContext.SetColor(nsCSSRendering::TransformColor(aTextStyle.mColor->mColor, canDarkenColor));
             RenderString(aRenderingContext, aStyleContext, aPresContext,
-                         aTextStyle, currenttext, currentlength, isEndOfFrame,
+                         aTextStyle, isRightToLeftOnBidiPlatform, 
+                         currenttext, currentlength, isEndOfFrame,
                          currentX, dy, newDimensions.width, details);
           } else if (!isPaginated) {
             aRenderingContext.SetColor(nsCSSRendering::TransformColor(currentFGColor, canDarkenColor));
             RenderString(aRenderingContext,aStyleContext, aPresContext,
-                         aTextStyle, currenttext, currentlength, isEndOfFrame,
+                         aTextStyle, isRightToLeftOnBidiPlatform, 
+                         currenttext, currentlength, isEndOfFrame,
                          currentX, dy, newDimensions.width, details);
           }
 
@@ -3453,8 +3520,8 @@ nsTextFrame::PaintTextSlowly(nsPresContext* aPresContext,
       {
         aRenderingContext.SetColor(nsCSSRendering::TransformColor(aTextStyle.mColor->mColor,canDarkenColor));
         RenderString(aRenderingContext, aStyleContext, aPresContext,
-                     aTextStyle, text, PRUint32(textLength), PR_TRUE,
-                     dx, dy, width, details);
+                     aTextStyle, isRightToLeftOnBidiPlatform, text, 
+                     PRUint32(textLength), PR_TRUE, dx, dy, width, details);
       }
       sdptr = details;
       if (details){
@@ -3604,7 +3671,7 @@ nsTextFrame::PaintAsciiText(nsPresContext* aPresContext,
       aRenderingContext.SetColor(nsCSSRendering::TransformColor(aTextStyle.mColor->mColor,canDarkenColor));
       aRenderingContext.DrawString(text, PRUint32(textLength), dx, dy + mAscent);
       PaintTextDecorations(aRenderingContext, aStyleContext,
-                           aPresContext, aTextStyle, dx, dy, width);
+                           aPresContext, aTextStyle, dx, dy, width, PR_FALSE);
     }
     else {
       SelectionDetails *details;
@@ -3717,7 +3784,7 @@ nsTextFrame::PaintAsciiText(nsPresContext* aPresContext,
       }
 
       PaintTextDecorations(aRenderingContext, aStyleContext, aPresContext,
-                           aTextStyle, dx, dy, width,
+                           aTextStyle, dx, dy, width, PR_FALSE,
                            unicodePaintBuffer.mBuffer,
                            details, 0, textLength);
       sdptr = details;
@@ -3853,11 +3920,6 @@ nsTextFrame::GetPosition(nsPresContext*  aPresContext,
       // no need to worry about justification, that's always on the slow path
       PrepareUnicodeText(tx, &indexBuffer, &paintBuffer, &textLength);
 
-      if (textLength <=0) {
-        //invalid frame to get position on
-        return NS_ERROR_FAILURE;
-      }
-
       nsPoint origin;
       nsIView * view;
       GetOffsetFromView(origin, &view);
@@ -3883,7 +3945,11 @@ nsTextFrame::GetPosition(nsPresContext*  aPresContext,
         }
       }
 
-      if (!outofstylehandled) //then we need to track based on the X coord only
+      if (textLength <= 0) {
+        aContentOffset = mContentOffset;
+        aContentOffsetEnd = aContentOffset;
+      }
+      else if (!outofstylehandled) //then we need to track based on the X coord only
       {
 //END STYLE IF
         PRInt32* ip = indexBuffer.mBuffer;
@@ -6208,20 +6274,19 @@ nsTextFrame::ComputeTotalWordDimensions(nsPresContext* aPresContext,
 
     nsCOMPtr<nsITextContent> tc(do_QueryInterface(content));
     if (tc) {
-      PRBool stop = PR_FALSE;
+      PRInt32 moreSize = 0;
       nsTextDimensions moreDimensions;
       moreDimensions = ComputeWordFragmentDimensions(aPresContext,
                                                      aLineBreaker,
                                                      aLineLayout,
                                                      aReflowState,
                                                      aNextFrame, content, tc,
-                                                     &stop,
+                                                     &moreSize,
                                                      newWordBuf,
                                                      aWordLen,
                                                      newWordBufSize,
                                                      aCanBreakBefore);
-      if (moreDimensions.width < 0) {
-        PRUint32 moreSize = -moreDimensions.width;
+      if (moreSize > 0) {
         //Oh, wordBuf is too small, we have to grow it
         newWordBufSize += moreSize;
         if (newWordBuf != aWordBuf) {
@@ -6239,13 +6304,13 @@ nsTextFrame::ComputeTotalWordDimensions(nsPresContext* aPresContext,
           moreDimensions =
             ComputeWordFragmentDimensions(aPresContext, aLineBreaker,
                                           aLineLayout, aReflowState,
-                                          aNextFrame, content, tc, &stop,
+                                          aNextFrame, content, tc, &moreSize,
                                           newWordBuf, aWordLen, newWordBufSize,
                                           aCanBreakBefore);
-          NS_ASSERTION((moreDimensions.width >= 0),
-                       "ComputeWordFragmentWidth is returning negative");
+          NS_ASSERTION((moreSize <= 0),
+                       "ComputeWordFragmentDimensions is asking more buffer");
         } else {
-          stop = PR_TRUE;
+          moreSize = -1;
           moreDimensions.Clear();
         }  
       }
@@ -6255,7 +6320,7 @@ nsTextFrame::ComputeTotalWordDimensions(nsPresContext* aPresContext,
       printf("  moreWidth=%d (addedWidth=%d) stop=%c\n", moreDimensions.width,
              addedDimensions.width, stop?'T':'F');
 #endif
-      if (stop) {
+      if (moreSize == -1) {
         goto done;
       }
     }
@@ -6289,7 +6354,7 @@ nsTextFrame::ComputeWordFragmentDimensions(nsPresContext* aPresContext,
                                       nsIFrame* aNextFrame,
                                       nsIContent* aContent,
                                       nsITextContent* aText,
-                                      PRBool* aStop,
+                                      PRInt32* aMoreSize,
                                       const PRUnichar* aWordBuf,
                                       PRUint32& aRunningWordLen,
                                       PRUint32 aWordBufSize,
@@ -6309,6 +6374,7 @@ nsTextFrame::ComputeWordFragmentDimensions(nsPresContext* aPresContext,
     wordLen = -1;
   }
 #endif // IBMBIDI
+  *aMoreSize = 0;
   PRUnichar* bp = tx.GetNextWord(PR_TRUE, &wordLen, &contentLen, &isWhitespace, &wasTransformed);
   if (!bp) {
     //empty text node, but we need to continue lookahead measurement
@@ -6320,17 +6386,18 @@ nsTextFrame::ComputeWordFragmentDimensions(nsPresContext* aPresContext,
 
   if (isWhitespace) {
     // Don't bother measuring nothing
-    *aStop = PR_TRUE;
+    *aMoreSize = -1; // flag that we should stop now
     return dimensions; // 0
   }
 
-  // We need to adjust the length by look at the two pieces together
-  // but if we have to grow aWordBuf, ask caller do it by return a negative value of size
+  // We need to adjust the length by looking at the two pieces together. But if
+  // we have to grow aWordBuf, ask the caller to do it by returning the shortfall
   if ((wordLen + aRunningWordLen) > aWordBufSize) {
-    dimensions.width = aWordBufSize - wordLen - aRunningWordLen; 
-    return dimensions;
+    *aMoreSize = wordLen + aRunningWordLen - aWordBufSize; 
+    return dimensions; // 0
   }
-  *aStop = contentLen < tx.GetContentLength();
+  if (contentLen < tx.GetContentLength())
+    *aMoreSize = -1;
 
   // Convert any spaces in the current word back to nbsp's. This keeps
   // the breaking logic happy.
@@ -6354,14 +6421,14 @@ nsTextFrame::ComputeWordFragmentDimensions(nsPresContext* aPresContext,
               wordLen = breakP - aRunningWordLen; 
               if(wordLen < 0)
                   wordLen = 0;
-              *aStop = PR_TRUE;
+              *aMoreSize = -1;
             } 
         }
       
       // if we don't stop, we need to extend the buf so the next one can
       // see this part otherwise, it does not matter since we will stop
       // anyway
-      if(! *aStop) 
+      if (*aMoreSize != -1)
         aRunningWordLen += wordLen;
     }
   }
@@ -6372,11 +6439,11 @@ nsTextFrame::ComputeWordFragmentDimensions(nsPresContext* aPresContext,
     nsresult lres = aLineBreaker->BreakInBetween(aWordBuf, aRunningWordLen, bp, wordLen, &canBreak);
     if (NS_SUCCEEDED(lres) && canBreak) {
       wordLen = 0;
-      *aStop = PR_TRUE;
+      *aMoreSize = -1;
     }
   }
 
-  if((*aStop) && (wordLen == 0))
+  if ((*aMoreSize == -1) && (wordLen == 0))
     return dimensions; // 0;
 
   nsStyleContext* sc = aNextFrame->GetStyleContext();
@@ -6413,7 +6480,7 @@ nsTextFrame::ComputeWordFragmentDimensions(nsPresContext* aPresContext,
     return dimensions;
   }
 
-  *aStop = PR_TRUE;
+  *aMoreSize = -1;
   return dimensions; // 0
 }
 

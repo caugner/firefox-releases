@@ -44,7 +44,6 @@
 #include "nsIDOMNSHTMLElement.h"
 #include "nsIDocument.h"
 #include "nsINameSpaceManager.h"
-#include "nsINodeInfo.h"
 #include "nsIDOMNodeList.h"
 #include "nsIXFormsXPathEvaluator.h"
 #include "nsIDOMXPathResult.h"
@@ -62,7 +61,9 @@
 #include "nsIAttribute.h"
 #include "nsXFormsAtoms.h"
 #include "nsIXFormsRepeatElement.h"
-
+#include "nsIContentPolicy.h"
+#include "nsContentUtils.h"
+#include "nsContentPolicyUtils.h"
 #include "nsIXFormsContextControl.h"
 #include "nsIDOMDocumentEvent.h"
 #include "nsIDOMEvent.h"
@@ -74,7 +75,6 @@
 #include "nsXFormsXPathParser.h"
 #include "nsXFormsXPathNode.h"
 #include "nsIDOMNSXPathExpression.h"
-#include "nsArray.h"
 
 #include "nsIScriptSecurityManager.h"
 #include "nsIPermissionManager.h"
@@ -89,6 +89,18 @@
 #include "nsIPrivateDOMEvent.h"
 #include "nsIDOMNamedNodeMap.h"
 #include "nsIParserService.h"
+
+#include "nsIPrefBranch.h"
+#include "nsIPrefService.h"
+#include "nsIDOMDocumentView.h"
+#include "nsIDOMAbstractView.h"
+#include "nsPIDOMWindow.h"
+
+#include "nsIDOMDocumentType.h"
+#include "nsIDOMEntity.h"
+#include "nsIDOMNotation.h"
+#include "nsIEventStateManager.h"
+#include "nsXFormsModelElement.h"
 
 #define CANCELABLE 0x01
 #define BUBBLES    0x02
@@ -174,6 +186,25 @@ static const EventData sEventDefaultsEntries[] = {
 static nsDataHashtable<nsStringHashKey,PRUint32> sXFormsEvents;
 static nsDataHashtable<nsStringHashKey,PRUint32> sEventDefaults;
 
+const PRInt32 kDefaultIntrinsicState =
+  NS_EVENT_STATE_ENABLED |
+  NS_EVENT_STATE_VALID |
+  NS_EVENT_STATE_OPTIONAL |
+  NS_EVENT_STATE_MOZ_READWRITE;
+
+const PRInt32 kDisabledIntrinsicState =
+  NS_EVENT_STATE_DISABLED |
+  NS_EVENT_STATE_VALID |
+  NS_EVENT_STATE_OPTIONAL |
+  NS_EVENT_STATE_MOZ_READWRITE;
+
+struct EventItem
+{
+  nsXFormsEvent           event;
+  nsCOMPtr<nsIDOMNode>    eventTarget;
+  nsCOMPtr<nsIDOMElement> srcElement;
+};
+
 /* static */ nsresult
 nsXFormsUtils::Init()
 {
@@ -255,6 +286,7 @@ nsXFormsUtils::GetNodeContext(nsIDOMElement           *aElement,
                               nsIModelElementPrivate **aModel,
                               nsIDOMElement          **aBindElement,
                               PRBool                  *aOuterBind,
+                              nsIXFormsControl       **aParentControl,
                               nsIDOMNode             **aContextNode,
                               PRInt32                 *aContextPosition,
                               PRInt32                 *aContextSize)
@@ -264,6 +296,8 @@ nsXFormsUtils::GetNodeContext(nsIDOMElement           *aElement,
   NS_ENSURE_ARG_POINTER(aContextNode);
   NS_ENSURE_ARG_POINTER(aBindElement);
   *aBindElement = nsnull;
+  if (aParentControl)
+    *aParentControl = nsnull;
 
   // Set default context size and position
   if (aContextSize)
@@ -321,6 +355,7 @@ nsXFormsUtils::GetNodeContext(nsIDOMElement           *aElement,
     // Search for a parent setting context for us
     nsresult rv = FindParentContext(aElement,
                                     aModel,
+                                    aParentControl,
                                     aContextNode,
                                     aContextPosition,
                                     aContextSize);
@@ -352,8 +387,10 @@ nsXFormsUtils::GetNodeContext(nsIDOMElement           *aElement,
 }
 
 /* static */ already_AddRefed<nsIModelElementPrivate>
-nsXFormsUtils::GetModel(nsIDOMElement  *aElement,
-                        PRUint32        aElementFlags)
+nsXFormsUtils::GetModel(nsIDOMElement     *aElement,
+                        nsIXFormsControl **aParentControl,
+                        PRUint32           aElementFlags,
+                        nsIDOMNode       **aContextNode)
 
 {
   nsCOMPtr<nsIModelElementPrivate> model;
@@ -366,40 +403,42 @@ nsXFormsUtils::GetModel(nsIDOMElement  *aElement,
                  getter_AddRefs(model),
                  getter_AddRefs(bind),
                  &outerbind,
+                 aParentControl,
                  getter_AddRefs(contextNode));
 
   NS_ENSURE_TRUE(model, nsnull);
 
+  if (aContextNode) {
+    NS_IF_ADDREF(*aContextNode = contextNode);
+  }
+
   nsIModelElementPrivate *result = nsnull;
   if (model)
-    CallQueryInterface(model, &result);  // addrefs
+    NS_ADDREF(result = model);
   return result;
 }
 
-/* static */ already_AddRefed<nsIDOMXPathResult>
+/* static */ nsresult
 nsXFormsUtils::EvaluateXPath(const nsAString        &aExpression,
                              nsIDOMNode             *aContextNode,
                              nsIDOMNode             *aResolverNode,
                              PRUint16                aResultType,
+                             nsIDOMXPathResult     **aResult,
                              PRInt32                 aContextPosition,
                              PRInt32                 aContextSize,
                              nsCOMArray<nsIDOMNode> *aSet,
                              nsStringArray          *aIndexesUsed)
 {
-  nsCOMPtr<nsIDOMDocument> doc;
-  aContextNode->GetOwnerDocument(getter_AddRefs(doc));
-  NS_ENSURE_TRUE(doc, nsnull);
+  NS_ENSURE_ARG_POINTER(aResult);
+  *aResult = nsnull;
 
   nsCOMPtr<nsIXFormsXPathEvaluator> eval = 
            do_CreateInstance("@mozilla.org/dom/xforms-xpath-evaluator;1");
-  NS_ENSURE_TRUE(eval, nsnull);
+  NS_ENSURE_STATE(eval);
 
   nsCOMPtr<nsIDOMNSXPathExpression> expression;
-  eval->CreateExpression(aExpression,
-                         aResolverNode,
+  nsresult rv = eval->CreateExpression(aExpression, aResolverNode,
                          getter_AddRefs(expression));
-
-  nsIDOMXPathResult *result = nsnull;
   PRBool throwException = PR_FALSE;
   if (!expression) {
     const nsPromiseFlatString& flat = PromiseFlatString(aExpression);
@@ -409,12 +448,12 @@ nsXFormsUtils::EvaluateXPath(const nsAString        &aExpression,
     throwException = PR_TRUE;
   } else {
     nsCOMPtr<nsISupports> supResult;
-    nsresult rv = expression->EvaluateWithContext(aContextNode,
-                                                  aContextPosition,
-                                                  aContextSize,
-                                                  aResultType,
-                                                  nsnull,
-                                                  getter_AddRefs(supResult));
+    rv = expression->EvaluateWithContext(aContextNode,
+                                         aContextPosition,
+                                         aContextSize,
+                                         aResultType,
+                                         nsnull,
+                                         getter_AddRefs(supResult));
 
     if (NS_SUCCEEDED(rv) && supResult) {
       /// @todo beaufour: This is somewhat "hackish". Hopefully, this will
@@ -430,14 +469,19 @@ nsXFormsUtils::EvaluateXPath(const nsAString        &aExpression,
                               &aExpression,
                               aSet,
                               aContextPosition,
-                              aContextSize);
-        NS_ENSURE_SUCCESS(rv, nsnull);
+                              aContextSize,
+                              aResultType == nsIDOMXPathResult::STRING_TYPE);
+        NS_ENSURE_SUCCESS(rv, rv);
 
         if (aIndexesUsed)
           *aIndexesUsed = analyzer.IndexesUsed();
       }
-      CallQueryInterface(supResult, &result);  // addrefs
-    } else if (rv == NS_ERROR_XFORMS_CALCUATION_EXCEPTION) {
+
+      CallQueryInterface(supResult, aResult);  // addrefs
+      return NS_OK;
+    }
+
+    if (rv == NS_ERROR_XFORMS_CALCUATION_EXCEPTION) {
       const nsPromiseFlatString& flat = PromiseFlatString(aExpression);
       const PRUnichar *strings[] = { flat.get() };
       nsXFormsUtils::ReportError(NS_LITERAL_STRING("exprEvaluateError"),
@@ -451,10 +495,10 @@ nsXFormsUtils::EvaluateXPath(const nsAString        &aExpression,
     nsCOMPtr<nsIDOMElement> resolverElement = do_QueryInterface(aResolverNode);
     nsCOMPtr<nsIModelElementPrivate> modelPriv = nsXFormsUtils::GetModel(resolverElement);
     nsCOMPtr<nsIDOMNode> model = do_QueryInterface(modelPriv);
-    DispatchEvent(model, eEvent_ComputeException);
+    DispatchEvent(model, eEvent_ComputeException, nsnull, resolverElement);
   }
 
-  return result;
+  return rv;
 }
 
 /* static */ nsresult
@@ -465,15 +509,18 @@ nsXFormsUtils::EvaluateNodeBinding(nsIDOMElement           *aElement,
                                    PRUint16                 aResultType,
                                    nsIModelElementPrivate **aModel,
                                    nsIDOMXPathResult      **aResult,
+                                   PRBool                  *aUsesModelBind,
+                                   nsIXFormsControl       **aParentControl,
                                    nsCOMArray<nsIDOMNode>  *aDeps,
                                    nsStringArray           *aIndexesUsed)
 {
-  if (!aElement || !aModel || !aResult) {
-    return NS_OK;
+  if (!aElement || !aModel || !aResult || !aUsesModelBind) {
+    return NS_ERROR_FAILURE;
   }
 
   *aModel = nsnull;
   *aResult = nsnull;
+  *aUsesModelBind = PR_FALSE;
 
   nsCOMPtr<nsIDOMNode>    contextNode;
   nsCOMPtr<nsIDOMElement> bindElement;
@@ -485,6 +532,7 @@ nsXFormsUtils::EvaluateNodeBinding(nsIDOMElement           *aElement,
                                aModel,
                                getter_AddRefs(bindElement),
                                &outerBind,
+                               aParentControl,
                                getter_AddRefs(contextNode),
                                &contextPosition,
                                &contextSize);
@@ -495,41 +543,55 @@ nsXFormsUtils::EvaluateNodeBinding(nsIDOMElement           *aElement,
     return NS_OK;   // this will happen if the doc is still loading
   }
 
-  nsAutoString expr;
+  ////////////////////
+  // STEP 1: Handle @bind'ings
   if (bindElement) {
-    if (!outerBind) {
-      // "When you refer to @id on a nested bind it returns an emtpy nodeset
-      // because it has no meaning. The XForms WG will assign meaning in the
-      // future."
-      // @see http://www.w3.org/MarkUp/Group/2004/11/f2f/2004Nov11#resolution6
+    if (outerBind) {
+      // If there is an outer bind element, we retrieve its nodeset.
+      nsCOMPtr<nsIContent> content(do_QueryInterface(bindElement));
+      NS_ASSERTION(content, "nsIDOMElement not implementing nsIContent?!");
 
+      NS_IF_ADDREF(*aResult =
+                   NS_STATIC_CAST(nsIDOMXPathResult*,
+                                  content->GetProperty(nsXFormsAtoms::bind)));
+      *aUsesModelBind = PR_TRUE;
       return NS_OK;
-    } else {
-      // If there is a (outer) bind element, we retrive its nodeset.
-      bindElement->GetAttribute(NS_LITERAL_STRING("nodeset"), expr);
     }
-  } else {
-    // If there's no bind element, we expect there to be a |aBindingAttr| attribute.
-    aElement->GetAttribute(aBindingAttr, expr);
 
-    if (expr.IsEmpty())
-    {
-      if (aDefaultRef.IsEmpty())
-        return NS_OK;
+    // References to inner binds are not defined.
+    // "When you refer to @id on a nested bind it returns an emtpy nodeset
+    // because it has no meaning. The XForms WG will assign meaning in the
+    // future."
+    // @see http://www.w3.org/MarkUp/Group/2004/11/f2f/2004Nov11#resolution6
+    nsXFormsUtils::ReportError(NS_LITERAL_STRING("innerBindRefError"),
+                               aElement);
+    return NS_ERROR_FAILURE;
+  }
 
-      expr.Assign(aDefaultRef);
-    }
+
+  ////////////////////
+  // STEP 2: No bind attribute
+  // If there's no bind attribute, we expect there to be a |aBindingAttr|
+  // attribute.
+  nsAutoString expr;
+  aElement->GetAttribute(aBindingAttr, expr);
+  if (expr.IsEmpty()) {
+    // if there's no default binding, bail out
+    if (aDefaultRef.IsEmpty())
+      return NS_OK;
+
+    expr.Assign(aDefaultRef);
   }
 
   // Evaluate |expr|
-  nsCOMPtr<nsIDOMXPathResult> res = EvaluateXPath(expr,
-                                                  contextNode,
-                                                  aElement,
-                                                  aResultType,
-                                                  contextPosition,
-                                                  contextSize,
-                                                  aDeps,
-                                                  aIndexesUsed);
+  nsCOMPtr<nsIDOMXPathResult> res;
+  rv  = EvaluateXPath(expr, contextNode, aElement, aResultType,
+                      getter_AddRefs(res), contextPosition, contextSize,
+                      aDeps, aIndexesUsed);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  ////////////////////
+  // STEP 3: Check for lazy binding
 
   // If the evaluation failed because the node wasn't there and we should be
   // lazy authoring, then create it (if the situation qualifies, of course).
@@ -566,12 +628,12 @@ nsXFormsUtils::EvaluateNodeBinding(nsIDOMElement           *aElement,
               }
 
               if (NS_SUCCEEDED(rv)) {
-                nsCOMArray<nsIInstanceElementPrivate> *instList = nsnull;
-                (*aModel)->GetInstanceList(&instList);
-                nsCOMPtr<nsIInstanceElementPrivate> instance = 
-                  instList->ObjectAt(0);
+                nsCOMPtr<nsIInstanceElementPrivate> instance;
+                rv = (*aModel)->FindInstanceElement(EmptyString(),
+                                                    getter_AddRefs(instance));
+                NS_ENSURE_SUCCESS(rv, rv);
                 nsCOMPtr<nsIDOMDocument> domdoc;
-                instance->GetDocument(getter_AddRefs(domdoc));
+                instance->GetInstanceDocument(getter_AddRefs(domdoc));
                 nsCOMPtr<nsIDOMElement> instanceDataEle;
                 nsCOMPtr<nsIDOMNode> childReturn;
                 rv = domdoc->CreateElementNS(namespaceURI, expr,
@@ -586,10 +648,14 @@ nsXFormsUtils::EvaluateNodeBinding(nsIDOMElement           *aElement,
 
               // now that we inserted the lazy authored node, try to bind
               // again
-              res = EvaluateXPath(expr, contextNode, aElement, aResultType,
-                                  contextPosition, contextSize, aDeps,
-                                  aIndexesUsed);
+              rv = EvaluateXPath(expr, contextNode, aElement, aResultType,
+                                 getter_AddRefs(res), contextPosition,
+                                 contextSize, aDeps, aIndexesUsed);
+              NS_ENSURE_SUCCESS(rv, rv);
             } else {
+                const PRUnichar *strings[] = { expr.get() };
+                nsXFormsUtils::ReportError(NS_LITERAL_STRING("invalidQName"),
+                                           strings, 1, aElement, aElement);
               nsXFormsUtils::DispatchEvent(aElement, eEvent_BindingException);
             }
           }
@@ -608,13 +674,15 @@ nsXFormsUtils::GetNodeValue(nsIDOMNode* aDataNode, nsAString& aNodeValue)
 {
   PRUint16 nodeType;
   aDataNode->GetNodeType(&nodeType);
+  aNodeValue = EmptyString();
 
   switch(nodeType) {
   case nsIDOMNode::ATTRIBUTE_NODE:
   case nsIDOMNode::TEXT_NODE:
+  case nsIDOMNode::CDATA_SECTION_NODE:
     // "Returns the string-value of the node."
     aDataNode->GetNodeValue(aNodeValue);
-    return;
+    break;
 
   case nsIDOMNode::ELEMENT_NODE:
     {
@@ -635,9 +703,10 @@ nsXFormsUtils::GetNodeValue(nsIDOMNode* aDataNode, nsAString& aNodeValue)
           NS_ASSERTION(child, "DOMNodeList length is wrong!");
 
           child->GetNodeType(&nodeType);
-          if (nodeType == nsIDOMNode::TEXT_NODE) {
+          if (nodeType == nsIDOMNode::TEXT_NODE ||
+              nodeType == nsIDOMNode::CDATA_SECTION_NODE) {
             child->GetNodeValue(aNodeValue);
-            return;
+            break;
           }
         }
       }
@@ -646,112 +715,20 @@ nsXFormsUtils::GetNodeValue(nsIDOMNode* aDataNode, nsAString& aNodeValue)
     }
     break;
           
-  default:
-    // namespace, processing instruction, comment, XPath root node
-    NS_WARNING("String value for this node type is not defined");
-  }
-
-  aNodeValue.Truncate(0);
-}
-
-/* static */ void
-nsXFormsUtils::SetNodeValue(nsIDOMNode* aDataNode, const nsString& aNodeValue)
-{
-  PRUint16 nodeType;
-  aDataNode->GetNodeType(&nodeType);
-
-  switch(nodeType) {
-  case nsIDOMNode::ATTRIBUTE_NODE:
-    // "The string-value of the attribute is replaced with a string
-    // corresponding to the new value."
-    aDataNode->SetNodeValue(aNodeValue);
+  case nsIDOMNode::ENTITY_REFERENCE_NODE:
+  case nsIDOMNode::ENTITY_NODE:
+  case nsIDOMNode::PROCESSING_INSTRUCTION_NODE:
+  case nsIDOMNode::COMMENT_NODE:
+  case nsIDOMNode::DOCUMENT_NODE:
+  case nsIDOMNode::DOCUMENT_TYPE_NODE:
+  case nsIDOMNode::DOCUMENT_FRAGMENT_NODE:
+  case nsIDOMNode::NOTATION_NODE:
+    // String value for these node types is not defined, ie. return the empty
+    // string.
     break;
 
-  case nsIDOMNode::TEXT_NODE:
-    // "The text node is replaced with a new one corresponding to the new
-    // value".
-    {
-      nsCOMPtr<nsIDOMDocument> document;
-      aDataNode->GetOwnerDocument(getter_AddRefs(document));
-      if (!document)
-        break;
-
-      nsCOMPtr<nsIDOMText> textNode;
-      document->CreateTextNode(aNodeValue, getter_AddRefs(textNode));
-      if (!textNode)
-        break;
-
-      nsCOMPtr<nsIDOMNode> parentNode;
-      aDataNode->GetParentNode(getter_AddRefs(parentNode));
-      if (parentNode) {
-        nsCOMPtr<nsIDOMNode> childReturn;
-        parentNode->ReplaceChild(textNode, aDataNode,
-                                 getter_AddRefs(childReturn));
-      }
-
-      break;
-    }
-
-  case nsIDOMNode::ELEMENT_NODE:
-    {
-      // "If the element has any child text nodes, the first text node is
-      // replaced with one corresponding to the new value."
-
-      // Start by creating a text node for the new value.
-      nsCOMPtr<nsIDOMDocument> document;
-      aDataNode->GetOwnerDocument(getter_AddRefs(document));
-      if (!document)
-        break;
-
-      nsCOMPtr<nsIDOMText> textNode;
-      document->CreateTextNode(aNodeValue, getter_AddRefs(textNode));
-      if (!textNode)
-        break;
-
-      // Now find the first child text node.
-      nsCOMPtr<nsIDOMNodeList> childNodes;
-      aDataNode->GetChildNodes(getter_AddRefs(childNodes));
-
-      if (!childNodes)
-        break;
-
-      nsCOMPtr<nsIDOMNode> child, childReturn;
-      PRUint32 childCount;
-      childNodes->GetLength(&childCount);
-
-      for (PRUint32 i = 0; i < childCount; ++i) {
-        childNodes->Item(i, getter_AddRefs(child));
-        NS_ASSERTION(child, "DOMNodeList length is wrong!");
-
-        child->GetNodeType(&nodeType);
-        if (nodeType == nsIDOMNode::TEXT_NODE) {
-          // We found one, replace it with our new text node.
-          aDataNode->ReplaceChild(textNode, child,
-                                  getter_AddRefs(childReturn));
-          return;
-        }
-      }
-
-      // "If no child text nodes are present, a text node is created,
-      // corresponding to the new value, and appended as the first child node."
-
-      // XXX This is a bit vague since "appended as the first child node"
-      // implies that there are no child nodes at all, but all we've
-      // established is that there are no child _text_nodes.
-      // Taking this to mean "inserted as the first child node" until this is
-      // clarified.
-
-      aDataNode->GetFirstChild(getter_AddRefs(child));
-      if (child)
-        aDataNode->InsertBefore(textNode, child, getter_AddRefs(childReturn));
-      else
-        aDataNode->AppendChild(textNode, getter_AddRefs(childReturn));
-
-    }
-    break;
-          
   default:
-    NS_WARNING("Trying to set node value for unsupported node type");
+    NS_ASSERTION(PR_FALSE, "Huh? New node type added to Gecko?!");
   }
 }
 
@@ -764,6 +741,7 @@ nsXFormsUtils::GetSingleNodeBinding(nsIDOMElement* aElement,
     return PR_FALSE;
   nsCOMPtr<nsIModelElementPrivate> model;
   nsCOMPtr<nsIDOMXPathResult> result;
+  PRBool usesModelBind;
   
   nsresult rv = EvaluateNodeBinding(aElement,
                                     nsXFormsUtils::ELEMENT_WITH_MODEL_ATTR,
@@ -771,13 +749,18 @@ nsXFormsUtils::GetSingleNodeBinding(nsIDOMElement* aElement,
                                     EmptyString(),
                                     nsIDOMXPathResult::FIRST_ORDERED_NODE_TYPE,
                                     getter_AddRefs(model),
-                                    getter_AddRefs(result));
+                                    getter_AddRefs(result),
+                                    &usesModelBind);
 
   if (NS_FAILED(rv) || !result)
     return PR_FALSE;
 
   nsCOMPtr<nsIDOMNode> singleNode;
-  result->GetSingleNodeValue(getter_AddRefs(singleNode));
+  if (usesModelBind) {
+    result->SnapshotItem(0, getter_AddRefs(singleNode));
+  } else {
+    result->GetSingleNodeValue(getter_AddRefs(singleNode));
+  }
   if (!singleNode)
     return PR_FALSE;
 
@@ -801,69 +784,12 @@ nsXFormsUtils::GetSingleNodeBindingValue(nsIDOMElement* aElement,
   return PR_FALSE;
 }
 
-/* static */ PRBool
-nsXFormsUtils::SetSingleNodeBindingValue(nsIDOMElement *aElement,
-                                         const nsAString &aValue,
-                                         PRBool *aChanged)
+nsresult
+DispatchXFormsEvent(nsIDOMNode* aTarget, nsXFormsEvent aEvent,
+                    PRBool *aDefaultActionEnabled)
 {
-  *aChanged = PR_FALSE;
-  nsCOMPtr<nsIDOMNode> node;
-  nsCOMPtr<nsIModelElementPrivate> model;
-  if (GetSingleNodeBinding(aElement, getter_AddRefs(node),
-                           getter_AddRefs(model)))
-  {
-    nsresult rv = model->SetNodeValue(node, aValue, aChanged);
-    if (NS_SUCCEEDED(rv))
-      return PR_TRUE;
-  }
-  return PR_FALSE;
-}
-
-/* static */ nsresult
-nsXFormsUtils::DispatchEvent(nsIDOMNode* aTarget, nsXFormsEvent aEvent,
-                             PRBool *aDefaultActionEnabled)
-{
-  if (!aTarget)
-    return NS_ERROR_FAILURE;
-
-  nsCOMPtr<nsIXFormsControl> control = do_QueryInterface(aTarget);
-  if (control) {
-    switch (aEvent) {
-      case eEvent_Previous:
-      case eEvent_Next:
-      case eEvent_Focus:
-      case eEvent_Help:
-      case eEvent_Hint:
-      case eEvent_DOMActivate:
-      case eEvent_ValueChanged:
-      case eEvent_Valid:
-      case eEvent_Invalid:
-      case eEvent_DOMFocusIn:
-      case eEvent_DOMFocusOut:
-      case eEvent_Readonly:
-      case eEvent_Readwrite:
-      case eEvent_Required:
-      case eEvent_Optional:
-      case eEvent_Enabled:
-      case eEvent_Disabled:
-      case eEvent_InRange:
-      case eEvent_OutOfRange:
-        {
-          PRBool acceptableEventTarget = PR_FALSE;
-          control->IsEventTarget(&acceptableEventTarget);
-          if (!acceptableEventTarget) {
-            return NS_OK;
-          }
-          break;
-        }
-      default:
-        break;
-    }
-  }
-
   nsCOMPtr<nsIDOMDocument> domDoc;
   aTarget->GetOwnerDocument(getter_AddRefs(domDoc));
-
   nsCOMPtr<nsIDOMDocumentEvent> doc = do_QueryInterface(domDoc);
   NS_ENSURE_STATE(doc);
   
@@ -878,7 +804,7 @@ nsXFormsUtils::DispatchEvent(nsIDOMNode* aTarget, nsXFormsEvent aEvent,
   nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(aTarget);
   NS_ENSURE_STATE(target);
 
-  SetEventTrusted(event, aTarget);
+  nsXFormsUtils::SetEventTrusted(event, aTarget);
 
   PRBool defaultActionEnabled = PR_TRUE;
   nsresult rv = target->DispatchEvent(event, &defaultActionEnabled);
@@ -886,7 +812,272 @@ nsXFormsUtils::DispatchEvent(nsIDOMNode* aTarget, nsXFormsEvent aEvent,
   if (NS_SUCCEEDED(rv) && aDefaultActionEnabled)
     *aDefaultActionEnabled = defaultActionEnabled;
 
+  // if this is a fatal error, then display the fatal error dialog if desired
+  switch (aEvent) {
+  case eEvent_LinkException:
+    {
+      nsCOMPtr<nsIDOMElement> targetEle(do_QueryInterface(aTarget));
+      nsXFormsUtils::HandleFatalError(targetEle,
+                                      NS_LITERAL_STRING("XFormsLinkException"));
+      break;
+    }
+  case eEvent_ComputeException:
+    {
+      nsCOMPtr<nsIDOMElement> targetEle(do_QueryInterface(aTarget));
+      nsXFormsUtils::HandleFatalError(targetEle,
+                                      NS_LITERAL_STRING("XFormsComputeException"));
+      break;
+    }
+  case eEvent_BindingException:
+    {
+      nsCOMPtr<nsIDOMElement> targetEle(do_QueryInterface(aTarget));
+      nsXFormsUtils::HandleFatalError(targetEle,
+                                      NS_LITERAL_STRING("XFormsBindingException"));
+      break;
+    }
+  default:
+    break;
+  }
+
   return rv;
+}
+
+static void
+DeleteVoidArray(void    *aObject,
+                nsIAtom *aPropertyName,
+                void    *aPropertyValue,
+                void    *aData)
+{
+  nsVoidArray *array = NS_STATIC_CAST(nsVoidArray *, aPropertyValue);
+  PRInt32 count = array->Count();
+  for (PRInt32 i = 0; i < count; i++) {
+    EventItem *item = (EventItem *)array->ElementAt(i);
+    delete item;
+  }
+
+  array->Clear();
+  delete array;
+}
+
+nsresult
+DeferDispatchEvent(nsIDOMNode* aTarget, nsXFormsEvent aEvent,
+                   nsIDOMElement *aSrcElement)
+{
+  nsCOMPtr<nsIDOMDocument> domDoc;
+  if (aTarget) {
+    aTarget->GetOwnerDocument(getter_AddRefs(domDoc));
+  } else {
+    if (aSrcElement) {
+      aSrcElement->GetOwnerDocument(getter_AddRefs(domDoc));
+    }
+  }
+
+  nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
+  NS_ENSURE_STATE(doc);
+
+  nsVoidArray *eventList =
+    NS_STATIC_CAST(nsVoidArray *,
+                   doc->GetProperty(nsXFormsAtoms::deferredEventListProperty));
+  if (!eventList) {
+    eventList = new nsVoidArray(16);
+    if (!eventList)
+      return NS_ERROR_OUT_OF_MEMORY;
+    doc->SetProperty(nsXFormsAtoms::deferredEventListProperty, eventList,
+                     DeleteVoidArray);
+  }
+
+  EventItem *deferredEvent = new EventItem;
+  NS_ENSURE_TRUE(deferredEvent, NS_ERROR_OUT_OF_MEMORY);
+  deferredEvent->event = aEvent;
+  deferredEvent->eventTarget = aTarget;
+  deferredEvent->srcElement = aSrcElement;
+  eventList->AppendElement(deferredEvent);
+
+  return NS_OK;
+}
+
+/* static */ nsresult
+nsXFormsUtils::DispatchEvent(nsIDOMNode* aTarget, nsXFormsEvent aEvent,
+                             PRBool *aDefaultActionEnabled,
+                             nsIDOMElement *aSrcElement)
+{
+  // it is valid to have aTarget be null if this is an event that must be
+  // targeted at a model per spec and aSrcElement is non-null.  Basically we
+  // are trying to make sure that we can handle the case where an event needs to
+  // be sent to the model that doesn't exist, yet (like if the model is
+  // located at the end of the document and the parser hasn't reached that
+  // far).  In those cases, we'll defer the event dispatch until the model
+  // exists.
+
+  switch (aEvent) {
+    case eEvent_Previous:
+    case eEvent_Next:
+    case eEvent_Focus:
+    case eEvent_Help:
+    case eEvent_Hint:
+    case eEvent_DOMActivate:
+    case eEvent_ValueChanged:
+    case eEvent_Valid:
+    case eEvent_Invalid:
+    case eEvent_DOMFocusIn:
+    case eEvent_DOMFocusOut:
+    case eEvent_Readonly:
+    case eEvent_Readwrite:
+    case eEvent_Required:
+    case eEvent_Optional:
+    case eEvent_Enabled:
+    case eEvent_Disabled:
+    case eEvent_InRange:
+    case eEvent_OutOfRange:
+      {
+        if (!aTarget) {
+          return NS_ERROR_FAILURE;
+        }
+
+        nsCOMPtr<nsIXFormsControl> control = do_QueryInterface(aTarget);
+        if (control) {
+          PRBool acceptableEventTarget = PR_FALSE;
+          control->IsEventTarget(&acceptableEventTarget);
+          if (!acceptableEventTarget) {
+            return NS_OK;
+          }
+        }
+        break;
+      }
+    case eEvent_LinkError:
+    case eEvent_LinkException:
+    case eEvent_ComputeException:
+      {
+        // these events target only models.  Verifying that the target
+        // exists or at least that we have enough information to find the
+        // model later when the DOM is finished loading
+        if (!aTarget) {
+          if (aSrcElement) {
+            DeferDispatchEvent(aTarget, aEvent, aSrcElement);
+            return NS_OK;
+          }
+          return NS_ERROR_FAILURE;
+        }
+
+        nsCOMPtr<nsIModelElementPrivate> modelPriv(do_QueryInterface(aTarget));
+        NS_ENSURE_STATE(modelPriv);
+
+        PRBool safeToSendEvent = PR_FALSE;
+        modelPriv->GetHasDOMContentFired(&safeToSendEvent);
+        if (!safeToSendEvent) {
+          DeferDispatchEvent(aTarget, aEvent, nsnull);
+          return NS_OK;
+        }
+      
+        break;
+      }
+    case eEvent_BindingException:
+      {
+        if (!aTarget) {
+          return NS_ERROR_FAILURE;
+        }
+
+        // we only need special handling for binding exceptions that are
+        // targeted at bind elements and even then, only if the containing
+        // model hasn't gotten a DOMContentLoaded, yet.  If this is the case,
+        // we'll defer the notification until XMLEvent handlers are attached.
+        if (!IsXFormsElement(aTarget, NS_LITERAL_STRING("bind"))) {
+          break;
+        }
+
+        // look up bind's parent chain looking for the containing model.  If
+        // not found, that is not goodness.  Not taking the immediate parent
+        // in case the form uses nested binds (which is ok on some processors
+        // for XForms 1.0 and should be ok for all processors in XForms 1.1)
+        nsCOMPtr<nsIDOMNode> parent, temp = aTarget;
+        nsCOMPtr<nsIModelElementPrivate> modelPriv;
+        do {
+          nsresult rv = temp->GetParentNode(getter_AddRefs(parent));
+          NS_ENSURE_SUCCESS(rv, rv);
+
+          modelPriv = do_QueryInterface(parent);
+          if (modelPriv) {
+            break;
+          }
+          temp = parent;
+        } while (temp);
+
+        NS_ENSURE_STATE(modelPriv);
+
+        PRBool safeToSendEvent = PR_FALSE;
+        modelPriv->GetHasDOMContentFired(&safeToSendEvent);
+        if (!safeToSendEvent) {
+          DeferDispatchEvent(aTarget, aEvent, nsnull);
+          return NS_OK;
+        }
+      
+        break;
+      }
+    default:
+      break;
+  }
+
+  return DispatchXFormsEvent(aTarget, aEvent, aDefaultActionEnabled);
+
+}
+
+/* static */ nsresult
+nsXFormsUtils::DispatchDeferredEvents(nsIDOMDocument* aDocument)
+{
+  nsCOMPtr<nsIDocument> doc(do_QueryInterface(aDocument));
+  NS_ENSURE_STATE(doc);
+
+  nsVoidArray *eventList =
+    NS_STATIC_CAST(nsVoidArray *,
+                   doc->GetProperty(nsXFormsAtoms::deferredEventListProperty));
+  if (!eventList) {
+    return NS_OK;
+  }
+
+  PRInt32 count = eventList->Count();
+  for (PRInt32 i = 0; i < count; i++) {
+    EventItem *item = (EventItem *)eventList->ElementAt(i);
+
+    nsCOMPtr<nsIDOMDocument> objCurrDoc;
+    if (item->eventTarget) {
+      item->eventTarget->GetOwnerDocument(getter_AddRefs(objCurrDoc));
+    } else {
+      if (item->srcElement) {
+        item->srcElement->GetOwnerDocument(getter_AddRefs(objCurrDoc));
+      }
+    }
+
+    if (!objCurrDoc || (objCurrDoc != aDocument))
+    {
+      // well the event target or our way to find the event target aren't in
+      // the document anymore so we probably shouldn't bother to send out the
+      // event.  They are probably on a path to destruction.
+      delete item;
+
+      continue;
+    }
+
+    if (!item->eventTarget) {
+      // item doesn't have an event target AND it has a srcElement.  This
+      // should only happen in the case where we wanted to dispatch an event to
+      // a model element that hasn't been parsed, yet.  Since
+      // DispatchDeferredEvents gets called after DOMContentLoaded is
+      // received by the model, then this should no longer be a problem.
+      // Go ahead and grab the model from srcElement and make that the
+      // event target.
+      if (item->srcElement) {
+        nsCOMPtr<nsIModelElementPrivate> modelPriv =
+          nsXFormsUtils::GetModel(item->srcElement);
+        item->eventTarget = do_QueryInterface(modelPriv);
+      }
+      NS_ENSURE_STATE(item->eventTarget);
+    }
+
+    DispatchXFormsEvent(item->eventTarget, item->event, nsnull);
+  }
+
+  doc->DeleteProperty(nsXFormsAtoms::deferredEventListProperty);
+  return NS_OK;
 }
 
 /* static */ nsresult
@@ -944,7 +1135,7 @@ nsXFormsUtils::EventHandlingAllowed(nsIDOMEvent* aEvent, nsIDOMNode* aTarget)
       }
     }
   }
-  NS_WARN_IF_FALSE(allow, "Event handling not allowed!");
+  NS_ASSERTION(allow, "Event handling not allowed!");
   return allow;
 }
 
@@ -1005,6 +1196,7 @@ nsXFormsUtils::CloneScriptingInterfaces(const nsIID *aIIDList,
 /* static */ nsresult
 nsXFormsUtils::FindParentContext(nsIDOMElement           *aElement,
                                  nsIModelElementPrivate **aModel,
+                                 nsIXFormsControl       **aParentControl,
                                  nsIDOMNode             **aContextNode,
                                  PRInt32                 *aContextPosition,
                                  PRInt32                 *aContextSize)
@@ -1053,6 +1245,15 @@ nsXFormsUtils::FindParentContext(nsIDOMElement           *aElement,
           *aContextSize = cSize;
         if (aContextPosition)
           *aContextPosition = cPosition;
+        // We QI from nsIXFormsContextControl to nsIXFormsControl here. This
+        // will always suceed when needed, as the only element not
+        // implementing both is the model element, and no children of model
+        // need to register with the model (which is what aParentControl is
+        // needed for).
+        if (aParentControl) {
+          CallQueryInterface(contextControl, aParentControl); // addrefs
+        }
+
         break;
       }
     }
@@ -1102,17 +1303,60 @@ nsXFormsUtils::FindParentContext(nsIDOMElement           *aElement,
 }
 
 /* static */ PRBool
-nsXFormsUtils::CheckSameOrigin(nsIURI *aBaseURI, nsIURI *aTestURI)
+nsXFormsUtils::CheckConnectionAllowed(nsIDOMElement *aElement,
+                                      nsIURI        *aTestURI,
+                                      ConnectionType aType)
+{
+  if (!aElement || !aTestURI)
+    return PR_FALSE;
+
+  nsresult rv;
+
+  nsCOMPtr<nsIDOMDocument> domDoc;
+  aElement->GetOwnerDocument(getter_AddRefs(domDoc));
+  nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
+  if (!doc)
+    return PR_FALSE;
+
+  // Start by checking UniversalBrowserRead, which overrides everything.
+  nsIPrincipal *basePrincipal = doc->GetPrincipal();
+  PRBool res;
+  rv = basePrincipal->IsCapabilityEnabled("UniversalBrowserRead", nsnull, &res);
+  if (NS_SUCCEEDED(rv) && res)
+    return PR_TRUE;
+
+  // Check same origin
+  res = CheckSameOrigin(doc, aTestURI, aType);
+  if (!res || aType == kXFormsActionSend)
+    return res;
+
+  // Check content policy
+  return CheckContentPolicy(aElement, doc, aTestURI);
+}
+
+/* static */ PRBool
+nsXFormsUtils::CheckSameOrigin(nsIDocument   *aBaseDocument,
+                               nsIURI        *aTestURI,
+                               ConnectionType aType)
 {
   nsresult rv;
 
-  // check to see if we're allowed to load this URI
+  NS_ASSERTION(aBaseDocument && aTestURI, "Got null parameters?!");
+
+  // check the security manager and do a same original check on the principal
+  nsIPrincipal* basePrincipal = aBaseDocument->GetPrincipal();
   nsCOMPtr<nsIScriptSecurityManager> secMan =
-      do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
   if (secMan) {
-    rv = secMan->CheckSameOriginURI(aBaseURI, aTestURI);
-    if (NS_SUCCEEDED(rv))
-      return PR_TRUE;
+    // get a principal for the uri we are testing
+    nsCOMPtr<nsIPrincipal> testPrincipal;
+    rv = secMan->GetCodebasePrincipal(aTestURI, getter_AddRefs(testPrincipal));
+
+    if (NS_SUCCEEDED(rv)) {
+      rv = secMan->CheckSameOriginPrincipal(basePrincipal, testPrincipal);
+      if (NS_SUCCEEDED(rv))
+        return PR_TRUE;
+    }
   }
 
   // else, check with the permission manager to see if this host is
@@ -1120,12 +1364,47 @@ nsXFormsUtils::CheckSameOrigin(nsIURI *aBaseURI, nsIURI *aTestURI)
 
   nsCOMPtr<nsIPermissionManager> permMgr =
       do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
-  PRUint32 perm;
-  rv = permMgr->TestPermission(aBaseURI, "xforms-load", &perm);
-  if (NS_SUCCEEDED(rv) && perm == nsIPermissionManager::ALLOW_ACTION)
-    return PR_TRUE; 
+  NS_ENSURE_TRUE(permMgr, PR_FALSE);
+
+  nsCOMPtr<nsIURI> principalURI;
+  rv = basePrincipal->GetURI(getter_AddRefs(principalURI));
+
+  if (NS_SUCCEEDED(rv)) {
+    PRUint32 perm;
+    rv = permMgr->TestPermission(principalURI, "xforms-xd", &perm);
+
+    if (NS_SUCCEEDED(rv) && perm != nsIPermissionManager::UNKNOWN_ACTION) {
+      // Safe cast, as we only have few ConnectionTypes.
+      PRInt32 permSigned = perm;
+      if (permSigned == kXFormsActionLoadSend || permSigned == aType)
+        return PR_TRUE;
+    }
+  }
 
   return PR_FALSE;
+}
+
+/* static */ PRBool
+nsXFormsUtils::CheckContentPolicy(nsIDOMElement *aElement,
+                                  nsIDocument   *aDoc,
+                                  nsIURI        *aURI)
+{
+  NS_ASSERTION(aElement && aDoc && aURI, "Got null parameters?!");
+
+  nsIURI *docURI = aDoc->GetDocumentURI();
+  NS_ENSURE_TRUE(docURI, PR_FALSE);
+
+  PRInt16 decision = nsIContentPolicy::ACCEPT;
+  nsresult rv = NS_CheckContentLoadPolicy(nsIContentPolicy::TYPE_OTHER,
+                                          aURI,
+                                          docURI,
+                                          aElement,        // context
+                                          EmptyCString(),  // mime guess
+                                          nsnull,          // extra
+                                          &decision);
+  NS_ENSURE_SUCCESS(rv, PR_FALSE);
+
+  return NS_CP_ACCEPTED(decision);
 }
 
 /*static*/ PRBool
@@ -1230,67 +1509,26 @@ nsXFormsUtils::GetInstanceNodeForData(nsIDOMNode             *aInstanceDataNode,
 }
 
 /* static */ nsresult
-nsXFormsUtils::ParseTypeFromNode(nsIDOMNode *aInstanceData,
-                                 nsAString &aType, nsAString &aNSPrefix)
+nsXFormsUtils::ParseTypeFromNode(nsIDOMNode             *aInstanceData,
+                                 nsAString              &aType,
+                                 nsAString              &aNSUri)
 {
-  nsresult rv = NS_OK;
+  nsresult rv;
 
-  // aInstanceData could be an instance data node or it could be an attribute
-  // on an instance data node (basically the node that a control is bound to).
+  // Find the model for the instance data node
+  nsCOMPtr<nsIDOMNode> instanceNode;
+  rv = nsXFormsUtils::GetInstanceNodeForData(aInstanceData,
+                                             getter_AddRefs(instanceNode));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  nsAutoString *typeVal = nsnull;
+  nsCOMPtr<nsIDOMNode> modelNode;
+  rv = instanceNode->GetParentNode(getter_AddRefs(modelNode));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // Get type stored directly on instance node
-  nsAutoString typeAttribute;
-  nsCOMPtr<nsIDOMElement> nodeElem(do_QueryInterface(aInstanceData));
-  if (nodeElem) {
-    nodeElem->GetAttributeNS(NS_LITERAL_STRING(NS_NAMESPACE_XML_SCHEMA_INSTANCE),
-                             NS_LITERAL_STRING("type"), typeAttribute);
-    if (!typeAttribute.IsEmpty()) {
-      typeVal = &typeAttribute;
-    }
-  }
+  nsCOMPtr<nsIModelElementPrivate> model(do_QueryInterface(modelNode));
+  NS_ENSURE_STATE(model);
 
-  if (!typeVal) {
-    // Get MIP type bound to node
-    nsCOMPtr<nsIContent> nodeContent(do_QueryInterface(aInstanceData));
-    if (nodeContent) {
-      typeVal =
-        NS_STATIC_CAST(nsAutoString*,
-                       nodeContent->GetProperty(nsXFormsAtoms::type, &rv));
-    } else {
-      nsCOMPtr<nsIAttribute> nodeAttribute(do_QueryInterface(aInstanceData));
-      if (!nodeAttribute)
-        // node is neither content or attribute!
-        return NS_ERROR_FAILURE;
-
-      typeVal =
-        NS_STATIC_CAST(nsAutoString*,
-                       nodeAttribute->GetProperty(nsXFormsAtoms::type, &rv));
-    }
-  }
-
-  if (NS_FAILED(rv) || !typeVal) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-
-  // split type (ns:type) into namespace and type.
-  PRInt32 separator = typeVal->FindChar(':');
-  if ((PRUint32) separator == (typeVal->Length() - 1)) {
-    const PRUnichar *strings[] = { typeVal->get() };
-    // XXX: get an element from the document this came from
-    ReportError(NS_LITERAL_STRING("missingTypeName"), strings, 1, nsnull, nsnull);
-    return NS_ERROR_UNEXPECTED;
-  } else if (separator == kNotFound) {
-    // no namespace prefix, which is valid;
-    aNSPrefix.AssignLiteral("");
-    aType.Assign(*typeVal);
-  } else {
-    aNSPrefix.Assign(Substring(*typeVal, 0, separator));
-    aType.Assign(Substring(*typeVal, ++separator, typeVal->Length()));
-  }
-
-  return NS_OK;
+  return model->GetTypeFromNode(aInstanceData, aType, aNSUri);
 }
 
 /* static */ void
@@ -1331,7 +1569,7 @@ nsXFormsUtils::ReportError(const nsString& aMessageName, const PRUnichar **aPara
   if (msg.IsEmpty()) {
 #ifdef DEBUG
     printf("nsXFormsUtils::ReportError() Failed to get message string for message id '%s'!\n",
-           NS_ConvertUCS2toUTF8(aMessageName).get());
+           NS_ConvertUTF16toUTF8(aMessageName).get());
 #endif
     return;
   }
@@ -1394,9 +1632,9 @@ nsXFormsUtils::ReportError(const nsString& aMessageName, const PRUnichar **aPara
   }
 
 
-  // Log the message to JavaScript Console
+  // Log the message to Error Console
 #ifdef DEBUG
-  printf("ERR: %s\n", NS_ConvertUCS2toUTF8(msg).get());
+  printf("ERR: %s\n", NS_ConvertUTF16toUTF8(msg).get());
 #endif
   nsresult rv = errorObject->Init(msg.get(), srcFile.get(), srcLine.get(),
                                   0, 0, aErrorFlag, "XForms");
@@ -1408,6 +1646,8 @@ nsXFormsUtils::ReportError(const nsString& aMessageName, const PRUnichar **aPara
 /* static */ PRBool
 nsXFormsUtils::IsDocumentReadyForBind(nsIDOMDocument *aDocument)
 {
+  NS_ENSURE_ARG(aDocument);
+
   nsCOMPtr<nsIDocument> doc = do_QueryInterface(aDocument);
 
   nsIDocument *test = NS_STATIC_CAST(nsIDocument *,
@@ -1546,5 +1786,446 @@ nsXFormsUtils::GetElementById(nsIDOMDocument   *aDoc,
   NS_ENSURE_STATE(element);
   NS_ADDREF(*aElement = element);
 
+  return NS_OK;
+}
+
+
+/* static */
+PRBool
+nsXFormsUtils::HandleFatalError(nsIDOMElement    *aElement,
+                                const nsAString  &aName)
+{
+  if (!aElement) {
+    return PR_FALSE;
+  }
+  nsCOMPtr<nsIDOMDocument> doc;
+  aElement->GetOwnerDocument(getter_AddRefs(doc));
+
+  nsCOMPtr<nsIDocument> iDoc(do_QueryInterface(doc));
+  if (!iDoc) {
+    return PR_FALSE;
+  }
+
+  // check for fatalError property, enforcing that only one fatal error will
+  // be shown to the user
+  if (iDoc->GetProperty(nsXFormsAtoms::fatalError)) {
+    return PR_FALSE;
+  }
+  iDoc->SetProperty(nsXFormsAtoms::fatalError, iDoc);
+
+  // Check for preference, disabling this popup
+  PRBool disablePopup = PR_FALSE;
+  nsresult rv;
+  nsCOMPtr<nsIPrefBranch> pref = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  if (NS_SUCCEEDED(rv) && pref) {
+    PRBool val;
+    if (NS_SUCCEEDED(pref->GetBoolPref("xforms.disablePopup", &val)))
+      disablePopup = val;
+  }
+  if (disablePopup)
+    return PR_FALSE;
+
+  // Get nsIDOMWindowInternal
+  nsCOMPtr<nsIDOMWindowInternal> internal;
+  rv = nsXFormsUtils::GetWindowFromDocument(doc, getter_AddRefs(internal));
+  if (NS_FAILED(rv) || !internal) {
+    return PR_FALSE;
+  }
+
+
+  // Show popup
+  nsCOMPtr<nsIDOMWindow> messageWindow;
+  rv = internal->OpenDialog(NS_LITERAL_STRING("chrome://xforms/content/bindingex.xul"),
+                            aName,
+                            NS_LITERAL_STRING("modal,dialog,chrome,dependent"),
+                            nsnull,
+                            getter_AddRefs(messageWindow));
+  return NS_SUCCEEDED(rv);
+}
+
+/* static */
+PRBool
+nsXFormsUtils::AreEntitiesEqual(nsIDOMNamedNodeMap *aEntities1,
+                                nsIDOMNamedNodeMap *aEntities2)
+{
+  if (!aEntities1 && !aEntities2) {
+    return PR_TRUE;
+  }
+
+  if (!aEntities1 || !aEntities2) {
+    return PR_FALSE;
+  }
+
+  PRUint32 entLength1, entLength2;
+  nsresult rv1 = aEntities1->GetLength(&entLength1);
+  nsresult rv2 = aEntities2->GetLength(&entLength2);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || entLength1 != entLength2) {
+    return PR_FALSE;
+  }
+
+  nsAutoString buffer1, buffer2;
+  for (PRUint32 i = 0; i < entLength1; ++i) {
+    nsCOMPtr<nsIDOMNode> entNode1, entNode2;
+
+    rv1 = aEntities1->Item(i, getter_AddRefs(entNode1));
+    rv2 = aEntities2->Item(i, getter_AddRefs(entNode2));
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !entNode1 || !entNode2) {
+      return PR_FALSE;
+    }
+
+    nsCOMPtr<nsIDOMEntity> ent1, ent2;
+    ent1 = do_QueryInterface(entNode1);
+    ent2 = do_QueryInterface(entNode2);
+    if (!ent1 || !ent2) {
+      return PR_FALSE;
+    }
+
+    rv1 = ent1->GetPublicId(buffer1);
+    rv2 = ent2->GetPublicId(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+
+    rv1 = ent1->GetSystemId(buffer1);
+    rv2 = ent2->GetSystemId(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+
+    rv1 = ent1->GetNotationName(buffer1);
+    rv2 = ent2->GetNotationName(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+
+    // XXX: These will need to be uncommented when Mozilla supports these from
+    // DOM3
+#if 0
+    rv1 = ent1->GetInputEncoding(buffer1);
+    rv2 = ent2->GetInputEncoding(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+
+    rv1 = ent1->GetXmlEncoding(buffer1);
+    rv2 = ent2->GetXmlEncoding(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+    rv1 = ent1->GetXmlVersion(buffer1);
+    rv2 = ent2->GetXmlVersion(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+#endif
+
+  }
+  return PR_TRUE;
+}
+
+/* static */ PRBool
+nsXFormsUtils::AreNotationsEqual(nsIDOMNamedNodeMap *aNotations1,
+                                 nsIDOMNamedNodeMap *aNotations2)
+{
+  if (!aNotations1 && !aNotations2) {
+    return PR_TRUE;
+  }
+
+  if (!aNotations1 || !aNotations2) {
+    return PR_FALSE;
+  }
+
+  PRUint32 notLength1, notLength2;
+  nsresult rv1 = aNotations1->GetLength(&notLength1);
+  nsresult rv2 = aNotations2->GetLength(&notLength2);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || notLength1 != notLength2) {
+    return PR_FALSE;
+  }
+
+  nsAutoString buffer1, buffer2;
+  for (PRUint32 j = 0; j < notLength1; ++j) {
+    nsCOMPtr<nsIDOMNode> notNode1, notNode2;
+
+    rv1 = aNotations1->Item(j, getter_AddRefs(notNode1));
+    rv2 = aNotations2->Item(j, getter_AddRefs(notNode2));
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !notNode1 || !notNode2) {
+      return PR_FALSE;
+    }
+
+    nsCOMPtr<nsIDOMNotation> notation1, notation2;
+    notation1 = do_QueryInterface(notNode1);
+    notation2 = do_QueryInterface(notNode2);
+    if (!notation1 || !notation2) {
+      return PR_FALSE;
+    }
+
+    rv1 = notation1->GetPublicId(buffer1);
+    rv2 = notation2->GetPublicId(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+
+    rv1 = notation1->GetSystemId(buffer1);
+    rv2 = notation2->GetSystemId(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+  }
+
+  return PR_TRUE;
+}
+
+/* static */ PRBool
+nsXFormsUtils::AreNodesEqual(nsIDOMNode *aFirstNode, nsIDOMNode *aSecondNode,
+                             PRBool aAlreadyNormalized)
+{
+  if (!aFirstNode || !aSecondNode) {
+    return PR_FALSE;
+  }
+
+  nsresult rv1, rv2;
+  PRUint16 firstType, secondType;
+  rv1 = aFirstNode->GetNodeType(&firstType);
+  rv2 = aSecondNode->GetNodeType(&secondType);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || firstType != secondType) {
+    return PR_FALSE;
+  }
+
+  nsAutoString buffer1, buffer2;
+  if (firstType == nsIDOMNode::DOCUMENT_TYPE_NODE) {
+    nsCOMPtr<nsIDOMDocumentType> doc1 = do_QueryInterface(aFirstNode);
+    nsCOMPtr<nsIDOMDocumentType> doc2 = do_QueryInterface(aSecondNode);
+    if (!doc1 || !doc2) {
+      return PR_FALSE;
+    }
+
+    rv1 = doc1->GetName(buffer1);
+    rv2 = doc2->GetName(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+
+    rv1 = doc1->GetPublicId(buffer1);
+    rv2 = doc2->GetPublicId(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+
+    rv1 = doc1->GetSystemId(buffer1);
+    rv2 = doc2->GetSystemId(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+
+    rv1 = doc1->GetInternalSubset(buffer1);
+    rv2 = doc2->GetInternalSubset(buffer2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+      return PR_FALSE;
+    }
+
+    nsCOMPtr<nsIDOMNamedNodeMap> map1, map2;
+    rv1 = doc1->GetEntities(getter_AddRefs(map1));
+    rv2 = doc2->GetEntities(getter_AddRefs(map2));
+
+    // XXX need to handle the case where neither has entities?
+    if (NS_FAILED(rv1) || NS_FAILED(rv2)) {
+      return PR_FALSE;
+    }
+
+    PRBool equal = nsXFormsUtils::AreEntitiesEqual(map1, map2);
+    if (!equal) {
+      return PR_FALSE;
+    }
+
+    rv1 = doc1->GetNotations(getter_AddRefs(map1));
+    rv2 = doc2->GetNotations(getter_AddRefs(map2));
+    if (NS_FAILED(rv1) || NS_FAILED(rv2)) {
+      return PR_FALSE;
+    }
+
+    equal = nsXFormsUtils::AreNotationsEqual(map1, map2);
+    if (!equal) {
+      return PR_FALSE;
+    }
+
+  }
+
+  rv1 = aFirstNode->GetNodeName(buffer1);
+  rv2 = aSecondNode->GetNodeName(buffer2);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+    return PR_FALSE;
+  }
+
+  rv1 = aFirstNode->GetLocalName(buffer1);
+  rv2 = aSecondNode->GetLocalName(buffer2);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+    return PR_FALSE;
+  }
+
+  rv1 = aFirstNode->GetNamespaceURI(buffer1);
+  rv2 = aSecondNode->GetNamespaceURI(buffer2);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+    return PR_FALSE;
+  }
+
+  rv1 = aFirstNode->GetPrefix(buffer1);
+  rv2 = aSecondNode->GetPrefix(buffer2);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+    return PR_FALSE;
+  }
+
+  rv1 = aFirstNode->GetNodeValue(buffer1);
+  rv2 = aSecondNode->GetNodeValue(buffer2);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+    return PR_FALSE;
+  }
+
+  PRBool hasAttr1, hasAttr2;
+  rv1 = aFirstNode->HasAttributes(&hasAttr1);
+  rv2 = aSecondNode->HasAttributes(&hasAttr2);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || hasAttr1 != hasAttr2) {
+    return PR_FALSE;
+  }
+
+  if (hasAttr1) {
+    nsCOMPtr<nsIDOMNamedNodeMap> attrs1, attrs2;
+    PRUint32 attrLength1, attrLength2;
+
+    rv1 = aFirstNode->GetAttributes(getter_AddRefs(attrs1));
+    rv2 = aSecondNode->GetAttributes(getter_AddRefs(attrs2));
+    if (NS_FAILED(rv1) || NS_FAILED(rv2)) {
+      return PR_FALSE;
+    }
+
+    rv1 = attrs1->GetLength(&attrLength1);
+    rv2 = attrs2->GetLength(&attrLength2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || attrLength1 != attrLength2) {
+      return PR_FALSE;
+    }
+
+    // the order of the attributes on the two nodes doesn't matter.  But
+    // every attribute on node1 must exist on node2 (and no more)
+    for (PRUint32 i = 0; i < attrLength1; ++i) {
+      nsCOMPtr<nsIDOMNode> attr1, attr2;
+      rv1 = attrs1->Item(i, getter_AddRefs(attr1));
+      if (!attr1) {
+        return PR_FALSE;
+      }
+
+      attr1->GetLocalName(buffer1);
+      attr1->GetNamespaceURI(buffer2);
+      attrs2->GetNamedItemNS(buffer2, buffer1, getter_AddRefs(attr2));
+      if (!attr2) {
+        return PR_FALSE;
+      }
+
+      rv1 = attr1->GetNodeValue(buffer1);
+      rv2 = attr2->GetNodeValue(buffer2);
+      if (NS_FAILED(rv1) || NS_FAILED(rv2) || !buffer1.Equals(buffer2)) {
+        return PR_FALSE;
+      }
+    }
+  }
+
+  // now looking at the child nodes.  They have to be 'equal' and at the same
+  // index inside each of the parent nodes.
+  PRBool hasChildren1, hasChildren2;
+  rv1 = aFirstNode->HasChildNodes(&hasChildren1);
+  rv2 = aSecondNode->HasChildNodes(&hasChildren2);
+  if (NS_FAILED(rv1) || NS_FAILED(rv2) || hasChildren1 != hasChildren2) {
+    return PR_FALSE;
+  }
+
+  if (hasChildren1) {
+    nsCOMPtr<nsIDOMNodeList> children1, children2;
+    PRUint32 childrenLength1, childrenLength2;
+
+    rv1 = aFirstNode->GetChildNodes(getter_AddRefs(children1));
+    rv2 = aSecondNode->GetChildNodes(getter_AddRefs(children2));
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || !children1 || !children2) {
+      return PR_FALSE;
+    }
+
+    rv1 = children1->GetLength(&childrenLength1);
+    rv2 = children2->GetLength(&childrenLength2);
+    if (NS_FAILED(rv1) || NS_FAILED(rv2) || childrenLength1 != childrenLength2) {
+      return PR_FALSE;
+    }
+
+    nsCOMPtr<nsIDOMNode> clone1, clone2;
+    if (!aAlreadyNormalized) {
+      // well we avoided this as long as we can.  If we haven't already
+      // normalized all children, now is the time to do it.  We'll have to clone
+      // nodes since the normalization process actually changes the DOM.
+     
+      rv1 = aFirstNode->CloneNode(PR_TRUE, getter_AddRefs(clone1));
+      if (NS_FAILED(rv1) || !clone1) {
+        return PR_FALSE;
+      }
+      rv2 = aSecondNode->CloneNode(PR_TRUE, getter_AddRefs(clone2));
+      if (NS_FAILED(rv2) || !clone2) {
+        return PR_FALSE;
+      }
+
+      rv1 = clone1->Normalize();
+      rv2 = clone2->Normalize();
+      if (NS_FAILED(rv1) || NS_FAILED(rv2)) {
+        return PR_FALSE;
+      }
+
+      // since this already worked once on the original nodes, won't bother
+      // checking the results for the clones
+      clone1->GetChildNodes(getter_AddRefs(children1));
+      clone2->GetChildNodes(getter_AddRefs(children2));
+
+      // get length again since normalizing may have eliminated some text nodes
+      rv1 = children1->GetLength(&childrenLength1);
+      rv2 = children2->GetLength(&childrenLength2);
+      if (NS_FAILED(rv1) || NS_FAILED(rv2) || childrenLength1 != childrenLength2) {
+        return PR_FALSE;
+      }
+    }
+
+    for (PRUint32 i = 0; i < childrenLength1; ++i) {
+      nsCOMPtr<nsIDOMNode> child1, child2;
+
+      rv1 = children1->Item(i, getter_AddRefs(child1));
+      rv2 = children2->Item(i, getter_AddRefs(child2));
+      if (NS_FAILED(rv1) || NS_FAILED(rv2)) {
+        return PR_FALSE;
+      }
+
+      PRBool areEqual = nsXFormsUtils::AreNodesEqual(child1, child2, PR_TRUE);
+      if (!areEqual) {
+        return PR_FALSE;
+      }
+    }
+  }
+
+  return PR_TRUE;
+
+}
+
+
+/* static */
+nsresult
+nsXFormsUtils::GetWindowFromDocument(nsIDOMDocument         *aDoc,
+                                     nsIDOMWindowInternal  **aWindow)
+{
+  NS_ENSURE_ARG(aDoc);
+  NS_ENSURE_ARG_POINTER(aWindow);
+  *aWindow = nsnull;
+
+  // Get nsIDOMWindowInternal
+  nsCOMPtr<nsIDOMDocumentView> dview(do_QueryInterface(aDoc));
+  NS_ENSURE_STATE(dview);
+
+  nsCOMPtr<nsIDOMAbstractView> aview;
+  dview->GetDefaultView(getter_AddRefs(aview));
+
+  nsCOMPtr<nsIDOMWindowInternal> internal(do_QueryInterface(aview));
+  NS_ENSURE_STATE(internal);
+
+  NS_ADDREF(*aWindow = internal);
   return NS_OK;
 }

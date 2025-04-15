@@ -36,7 +36,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: softoken.h,v 1.7 2005/03/29 18:21:18 nelsonb%netscape.com Exp $ */
+/* $Id: softoken.h,v 1.7.20.2 2006/08/04 19:10:54 kaie%kuix.de Exp $ */
 
 #ifndef _SOFTOKEN_H_
 #define _SOFTOKEN_H_
@@ -81,7 +81,7 @@ extern unsigned char *RSA_FormatOneBlock(unsigned int modulusLen,
 /*
  * convenience wrappers for doing single RSA operations. They create the
  * RSA context internally and take care of the formatting
- * requirements. Blinding happens automagically within RSA_SignHash and
+ * requirements. Blinding happens automagically within RSA_Sign and
  * RSA_DecryptBlock.
  */
 extern
@@ -89,9 +89,19 @@ SECStatus RSA_Sign(NSSLOWKEYPrivateKey *key, unsigned char *output,
 		       unsigned int *outputLen, unsigned int maxOutputLen,
 		       unsigned char *input, unsigned int inputLen);
 extern
+SECStatus RSA_HashSign(SECOidTag hashOid,
+			NSSLOWKEYPrivateKey *key, unsigned char *sig,
+			unsigned int *sigLen, unsigned int maxLen,
+			unsigned char *hash, unsigned int hashLen);
+extern
 SECStatus RSA_CheckSign(NSSLOWKEYPublicKey *key, unsigned char *sign,
 			    unsigned int signLength, unsigned char *hash,
 			    unsigned int hashLength);
+extern
+SECStatus RSA_HashCheckSign(SECOidTag hashOid,
+			    NSSLOWKEYPublicKey *key, unsigned char *sig,
+			    unsigned int sigLen, unsigned char *digest,
+			    unsigned int digestLen);
 extern
 SECStatus RSA_CheckSignRecover(NSSLOWKEYPublicKey *key, unsigned char *data,
     			    unsigned int *data_len,unsigned int max_output_len, 
@@ -131,6 +141,14 @@ SECStatus RSA_DecryptRaw(NSSLOWKEYPrivateKey *key, unsigned char *output,
 			     unsigned int *output_len,
     			     unsigned int max_output_len,
 			     unsigned char *input, unsigned int input_len);
+#ifdef NSS_ENABLE_ECC
+/*
+** pepare an ECParam structure from DEREncoded params
+ */
+extern SECStatus EC_FillParams(PRArenaPool *arena,
+                               const SECItem *encodedParams, ECParams *params);
+#endif
+
 
 /*
 ** Prepare a buffer for DES encryption, growing to the appropriate boundary,
@@ -158,6 +176,18 @@ extern CK_RV sftk_fipsPowerUpSelfTest( void );
 ** make known fixed PKCS #11 key types to their sizes in bytes
 */	
 unsigned long sftk_MapKeySize(CK_KEY_TYPE keyType);
+
+/*
+** FIPS 140-2 auditing
+*/
+extern PRBool sftk_audit_enabled;
+
+extern void sftk_LogAuditMessage(NSSAuditSeverity severity, const char *msg);
+
+/*
+** FIPS 140-2 Error state
+*/
+extern PRBool sftk_fatalError;
 
 SEC_END_PROTOS
 

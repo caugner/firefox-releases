@@ -56,7 +56,6 @@
 #include "nsCarbonHelpers.h"
 
 #include "nsFilePicker.h"
-#include "nsWatchTask.h"
 
 #include "nsIInternetConfigService.h"
 #include "nsIMIMEInfo.h"
@@ -259,6 +258,22 @@ pascal void nsFilePicker::FileDialogEventHandlerProc(NavEventCallbackMessage msg
       menuItem.menuCreator = self->mSelectedType + self->mTypeOffset;
       menuItem.menuItemName[0] = 0;
       (void)::NavCustomControl(cbRec->context, kNavCtlSelectCustomType, &menuItem);
+
+      // Set the directory to mDisplayDirectory if available
+      if (self->mDisplayDirectory != nsnull) {
+        nsCOMPtr<nsILocalFileMac> localDisplay = do_QueryInterface(self->mDisplayDirectory);
+        if (localDisplay) {
+          FSRef displayFSRef;
+          if (NS_SUCCEEDED(localDisplay->GetFSRef(&displayFSRef))) {
+            AEDesc desc;
+            OSErr status = ::AECreateDesc(typeFSRef, &displayFSRef, sizeof(displayFSRef), &desc);
+            if (status == noErr) {
+              (void)::NavCustomControl(cbRec->context, kNavCtlSetLocation, &desc);
+              (void)::AEDisposeDesc(&desc);
+            }
+          }
+        }
+      }
     }
     break;
     
@@ -403,9 +418,7 @@ nsFilePicker::GetLocalFiles(const nsString& inTitle, PRBool inAllowMultiple, nsC
                                   &dialog);
   if (anErr == noErr)
   {
-    nsWatchTask::GetTask().Suspend();
     anErr = ::NavDialogRun(dialog);
-    nsWatchTask::GetTask().Resume();
 
     if (anErr == noErr)
     {
@@ -505,9 +518,7 @@ nsFilePicker::GetLocalFolder(const nsString& inTitle, nsILocalFile** outFile)
 
   if (anErr == noErr)
   {
-    nsWatchTask::GetTask().Suspend();  
     anErr = ::NavDialogRun(dialog);
-    nsWatchTask::GetTask().Resume();  
     if (anErr == noErr)
     {
     	NavReplyRecord reply;
@@ -603,9 +614,7 @@ nsFilePicker::PutLocalFile(const nsString& inTitle, const nsString& inDefaultNam
 
   if (anErr == noErr)
   {
-    nsWatchTask::GetTask().Suspend();  
     anErr = ::NavDialogRun(dialog);
-    nsWatchTask::GetTask().Resume();  
 
     if (anErr == noErr)
     {

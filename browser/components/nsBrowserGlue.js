@@ -63,6 +63,13 @@ BrowserGlue.prototype = {
       case "final-ui-startup":
         this._onProfileStartup();
         break;
+      case "browser:purge-session-history":
+        // reset the console service's error buffer
+        const cs = Components.classes["@mozilla.org/consoleservice;1"]
+                             .getService(Components.interfaces.nsIConsoleService_MOZILLA_1_8_BRANCH);
+        cs.logStringMessage(null); // clear the console (in case it's open)
+        cs.reset();
+        break;
     }
   }
 , 
@@ -75,6 +82,7 @@ BrowserGlue.prototype = {
     osvr.addObserver(this, "profile-change-teardown", false);
     osvr.addObserver(this, "xpcom-shutdown", false);
     osvr.addObserver(this, "final-ui-startup", false);
+    osvr.addObserver(this, "browser:purge-session-history", false);
   },
 
   // cleanup (called on application shutdown)
@@ -86,11 +94,29 @@ BrowserGlue.prototype = {
     osvr.removeObserver(this, "profile-change-teardown");
     osvr.removeObserver(this, "xpcom-shutdown");
     osvr.removeObserver(this, "final-ui-startup");
+    osvr.removeObserver(this, "browser:purge-session-history");
   },
 
   // profile startup handler (contains profile initialization routines)
   _onProfileStartup: function() 
   {
+    // check to see if the EULA must be shown on startup
+    try {
+      var mustDisplayEULA = true;
+      var prefService = Components.classes["@mozilla.org/preferences-service;1"]
+                                  .getService(Components.interfaces.nsIPrefBranch);
+      var EULAVersion = prefService.getIntPref("browser.EULA.version");
+      mustDisplayEULA = !prefService.getBoolPref("browser.EULA." + EULAVersion + ".accepted");
+    } catch(ex) {
+    }
+
+    if (mustDisplayEULA) {
+      var ww2 = Components.classes["@mozilla.org/embedcomp/window-watcher;1"]
+                         .getService(Components.interfaces.nsIWindowWatcher);
+      ww2.openWindow(null, "chrome://browser/content/EULA.xul", 
+                     "_blank", "chrome,centerscreen,modal,resizable=yes", null);
+    }
+
     this.Sanitizer.onStartup();
     // check if we're in safe mode
     var app = Components.classes["@mozilla.org/xre/app-info;1"].getService(Components.interfaces.nsIXULAppInfo)
@@ -205,7 +231,7 @@ var Module = {
       const catman = Components.classes['@mozilla.org/categorymanager;1']
                                .getService(Components.interfaces.nsICategoryManager);
       var len = kServiceCats.length;
-      for (var j = 0;  j < len; ++j) {
+      for (var j = 0; j < len; j++) {
         catman.addCategoryEntry(kServiceCats[j],
           kServiceCtrId, kServiceCtrId, true, true, null);
       }
@@ -220,7 +246,7 @@ var Module = {
     const catman = Components.classes['@mozilla.org/categorymanager;1']
                              .getService(Components.interfaces.nsICategoryManager);
     var len = kServiceCats.length;
-    for (var j = 0;  j < len; ++j) {
+    for (var j = 0; j < len; j++) {
       catman.deleteCategoryEntry(kServiceCats[j], kServiceCtrId, true);
     }
   },

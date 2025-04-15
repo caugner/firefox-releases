@@ -952,7 +952,7 @@ nsObjectFrame::GetDesiredSize(nsPresContext* aPresContext,
   aMetrics.ascent = aMetrics.height;
 
   if (aMetrics.mComputeMEW) {
-    aMetrics.mMaxElementWidth = aMetrics.width;
+    aMetrics.SetMEWToActualWidth(aReflowState.mStylePosition->mWidth.GetUnit());
   }
 }
 
@@ -1505,10 +1505,11 @@ nsPoint nsObjectFrame::GetWindowOriginInPixels(PRBool aWindowless)
   if (aWindowless && parentWithView) {
     nsIViewManager* parentVM = parentWithView->GetViewManager();
 
-    // Walk up all the views and add up their positions. This will give us our
-    // absolute position which is what we want to give the plugin
+    // Walk up all the views and add up their positions until we
+    // reach the first view with a window (non-null widget). This will give us our
+    // position relative to the containing window which is what we want to give the plugin
     nsIView* theView = parentWithView;
-    while (theView) {
+    while (theView && !theView->GetWidget()) {
       if (theView->GetViewManager() != parentVM)
         break;
 
@@ -1563,7 +1564,7 @@ nsObjectFrame::CreateDefaultFrames(nsPresContext *aPresContext,
                         getter_AddRefs(img));
 
   nsCOMPtr<nsITextContent> text;
-  rv |= NS_NewTextNode(getter_AddRefs(text));
+  rv |= NS_NewTextNode(getter_AddRefs(text), doc->NodeInfoManager());
 
   if (NS_FAILED(rv))
     return;
@@ -1941,7 +1942,7 @@ nsObjectFrame::Paint(nsPresContext*       aPresContext,
 
     // we need the native printer device context to pass to plugin
     // On Windows, this will be the HDC
-    PRUint32 pDC = 0;
+    void *pDC = 0;
     aRenderingContext.RetrieveCurrentNativeGraphicData(&pDC);
 
     if (!pDC)
@@ -1988,8 +1989,9 @@ nsObjectFrame::Paint(nsPresContext*       aPresContext,
         PRBool doupdatewindow = PR_FALSE;
 
         // check if we need to update hdc
-        PRUint32 hdc;
-        aRenderingContext.RetrieveCurrentNativeGraphicData(&hdc);
+        void *data;
+        aRenderingContext.RetrieveCurrentNativeGraphicData((void**)&data);
+        PRUint32 hdc = (PRUint32) data;
         if (NS_REINTERPRET_CAST(PRUint32, window->window) != hdc) {
           window->window = NS_REINTERPRET_CAST(nsPluginPort*, hdc);
           doupdatewindow = PR_TRUE;
@@ -2019,47 +2021,38 @@ nsObjectFrame::Paint(nsPresContext*       aPresContext,
         // if our location or visible area has changed, we need to tell the plugin
         if (doupdatewindow) {
 #ifdef XP_WIN    // Windowless plugins on windows need a special event to update their location, see bug 135737
+           // bug 271442: note, the rectangle we send is now purely the bounds of the plugin
+           // relative to the window it is contained in, which is useful for the plugin to correctly translate mouse coordinates
+           //
+           // this does not mesh with the comments for bug 135737 which imply that the rectangle
+           // must be clipped in some way to prevent the plugin attempting to paint over areas it shouldn't;
+           //
+           // since the two uses of the rectangle are mutually exclusive in some cases,
+           // and since I don't see any incorrect painting (at least with Flash and ViewPoint - the originator of 135737),
+           // it seems that windowless plugins are not relying on information here for clipping their drawing,
+           // and we can safely use this message to tell the plugin exactly where it is in all cases.
 
-          // first, lets find out how big the window is, in pixels
-          nsIViewManager* vm = aPresContext->GetViewManager();
-            if (vm) {
-              nsIView* view;
-              vm->GetRootView(view);
-              if (view) {
-                nsIWidget* win = view->GetWidget();
-                if (win) {
-                  nsRect visibleRect;
-                  win->GetBounds(visibleRect);         
-                    
-                  // next, get our plugin's rect so we can intersect it with the visible rect so we
-                  // can tell the plugin where and how much to paint
-                  origin = GetWindowOriginInPixels(window->type);
-                  nsRect winlessRect = nsRect(origin, nsSize(window->width, window->height));
-                  winlessRect.IntersectRect(winlessRect, visibleRect);
+           origin = GetWindowOriginInPixels(PR_TRUE);
+           nsRect winlessRect = nsRect(origin, nsSize(window->width, window->height));
+           if (mWindowlessRect != winlessRect) {
+             mWindowlessRect = winlessRect;
 
-                  // now check our cached window and only update plugin if something has changed
-                  if (mWindowlessRect != winlessRect) {
-                    mWindowlessRect = winlessRect;
+             WINDOWPOS winpos;
+             memset(&winpos, 0, sizeof(winpos));
+             winpos.x = mWindowlessRect.x;
+             winpos.y = mWindowlessRect.y;
+             winpos.cx = mWindowlessRect.width;
+             winpos.cy = mWindowlessRect.height;
 
-                    WINDOWPOS winpos;
-                    memset(&winpos, 0, sizeof(winpos));
-                    winpos.x = mWindowlessRect.x;
-                    winpos.y = mWindowlessRect.y;
-                    winpos.cx = mWindowlessRect.width;
-                    winpos.cy = mWindowlessRect.height;
+             // finally, update the plugin by sending it a WM_WINDOWPOSCHANGED event
+             nsPluginEvent pluginEvent;
+             pluginEvent.event = WM_WINDOWPOSCHANGED;
+             pluginEvent.wParam = 0;
+             pluginEvent.lParam = (uint32)&winpos;
+             PRBool eventHandled = PR_FALSE;
 
-                    // finally, update the plugin by sending it a WM_WINDOWPOSCHANGED event
-                    nsPluginEvent pluginEvent;
-                    pluginEvent.event = 0x0047;
-                    pluginEvent.wParam = 0;
-                    pluginEvent.lParam = (uint32)&winpos;
-                    PRBool eventHandled = PR_FALSE;
-
-                    inst->HandleEvent(&pluginEvent, &eventHandled);
-                  }
-                }
-              }
-            }
+             inst->HandleEvent(&pluginEvent, &eventHandled);
+          }
 #endif
 
           inst->SetWindow(window);        
@@ -2120,8 +2113,8 @@ nsresult nsObjectFrame::GetPluginInstance(nsIPluginInstance*& aPluginInstance)
 {
   aPluginInstance = nsnull;
 
-  if (mInstanceOwner == nsnull)
-    return NS_ERROR_NULL_POINTER;
+  if (!mInstanceOwner)
+    return NS_OK;
   
   return mInstanceOwner->GetInstance(aPluginInstance);
 }
@@ -2341,7 +2334,7 @@ nsPluginInstanceOwner::~nsPluginInstanceOwner()
   }
 
   if (mTagText) {
-    nsCRT::free(mTagText);
+    NS_Free(mTagText);
     mTagText = nsnull;
   }
 
@@ -2654,15 +2647,44 @@ NS_IMETHODIMP nsPluginInstanceOwner::GetValue(nsPluginInstancePeerVariable varia
       // get the view manager from the pres shell, not from the view!
       // we may not have a view if we are hidden
       if (mContext) {
+        void** pvalue = (void**)value;
+#if defined(XP_WIN)
+        // This property is provided to allow a "windowless" plugin to determine the window it is drawing
+        // in, so it can translate mouse coordinates it receives directly from the operating system
+        // to coordinates relative to itself.
+        
+        // The original code (outside this #if) returns the document's window, which is OK if the window the "windowless" plugin
+        // is drawing into has the same origin as the document's window, but this is not the case for "windowless" plugins inside of scrolling DIVs etc
+
+        // To make sure "windowless" plugins always get the right origin for translating mouse coordinates, this code
+        // determines the window handle of the mozilla window containing the "windowless" plugin.
+
+        // Given that this HWND may not be that of the document's window, there is a slight risk
+        // of confusing a plugin that is using this HWND for illicit purposes, but since the documentation
+        // does not suggest this HWND IS that of the document window, rather that of the window
+        // the plugin is drawn in, this seems like a safe fix.
+         
+        // we only attempt to get the nearest window if this really is a "windowless" plugin so as not
+        // to change any behaviour for the much more common windowed plugins,
+        // though why this method would even be being called for a windowed plugin escapes me.
+        if (mPluginWindow && mPluginWindow->type == nsPluginWindowType_Drawable) {
+          if (mOwner) {
+            nsIWidget* win = mOwner->GetWindow();
+            if (win) {
+              *pvalue = (void*)win->GetNativeData(NS_NATIVE_WINDOW);
+              if (*pvalue) {
+                return NS_OK;
+              }
+            }
+          }
+        }
+#endif
         nsIViewManager* vm = mContext->GetViewManager();
           if (vm) {
             nsCOMPtr<nsIWidget> widget;
             rv = vm->GetWidget(getter_AddRefs(widget));            
             if (widget) {
-
-              void** pvalue = (void**)value;
               *pvalue = (void*)widget->GetNativeData(NS_NATIVE_WINDOW);
-
             } else NS_ASSERTION(widget, "couldn't get doc's widget in getting doc's window handle");
           } else NS_ASSERTION(vm, "couldn't get view manager in getting doc's window handle");
       } else NS_ASSERTION(mContext, "plugin owner has no pres context in getting doc's window handle");
@@ -3091,14 +3113,19 @@ nsObjectFrame::PluginNotAvailable(const char *aMimeType)
   // found event and mark this plugin as broken.
   if (!IsSupportedImage(type) &&
       !IsSupportedDocument(mContent, type)) {
-    FirePluginNotFoundEvent(mContent);
-
     mIsBrokenPlugin = PR_TRUE;
 
     mState |= NS_FRAME_HAS_DIRTY_CHILDREN;
 
     GetParent()->ReflowDirtyChild(mContent->GetDocument()->GetShellAt(0),
                                   this);
+
+    // Make sure to fire the event AFTER we've finished touching out members.
+
+    // Hold a strong ref to our content across this event dispatch.
+    nsCOMPtr<nsIContent> kungFuDeathGrip(mContent);
+    
+    FirePluginNotFoundEvent(mContent);
   }
 }
 
@@ -3482,12 +3509,7 @@ nsresult nsPluginInstanceOwner::DispatchFocusToPlugin(nsIDOMEvent* aFocusEvent)
       nsEventStatus rv = ProcessEvent(focusEvent);
       if (nsEventStatus_eConsumeNoDefault == rv) {
         aFocusEvent->PreventDefault();
-
-        nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aFocusEvent));
-
-        if (nsevent) {
-          nsevent->PreventBubble();
-        }
+        aFocusEvent->StopPropagation();
       }
     }
     else NS_ASSERTION(PR_FALSE, "nsPluginInstanceOwner::DispatchFocusToPlugin failed, focusEvent null");   
@@ -3503,10 +3525,7 @@ nsresult nsPluginInstanceOwner::DragEnter(nsIDOMEvent* aMouseEvent)
   if (mInstance) {
     // Let the plugin handle drag events.
     aMouseEvent->PreventDefault();
-    nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
-    if (nsevent) {
-      nsevent->PreventBubble();
-    }
+    aMouseEvent->StopPropagation();
   }
 
   return NS_OK;
@@ -3517,10 +3536,7 @@ nsresult nsPluginInstanceOwner::DragOver(nsIDOMEvent* aMouseEvent)
   if (mInstance) {
     // Let the plugin handle drag events.
     aMouseEvent->PreventDefault();
-    nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
-    if (nsevent) {
-      nsevent->PreventBubble();
-    }
+    aMouseEvent->StopPropagation();
   }
 
   return NS_OK;
@@ -3531,10 +3547,7 @@ nsresult nsPluginInstanceOwner::DragExit(nsIDOMEvent* aMouseEvent)
   if (mInstance) {
     // Let the plugin handle drag events.
     aMouseEvent->PreventDefault();
-    nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
-    if (nsevent) {
-      nsevent->PreventBubble();
-    }
+    aMouseEvent->StopPropagation();
   }
 
   return NS_OK;
@@ -3545,10 +3558,7 @@ nsresult nsPluginInstanceOwner::DragDrop(nsIDOMEvent* aMouseEvent)
   if (mInstance) {
     // Let the plugin handle drag events.
     aMouseEvent->PreventDefault();
-    nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
-    if (nsevent) {
-      nsevent->PreventBubble();
-    }
+    aMouseEvent->StopPropagation();
   }
 
   return NS_OK;
@@ -3559,10 +3569,7 @@ nsresult nsPluginInstanceOwner::DragGesture(nsIDOMEvent* aMouseEvent)
   if (mInstance) {
     // Let the plugin handle drag events.
     aMouseEvent->PreventDefault();
-    nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
-    if (nsevent) {
-      nsevent->PreventBubble();
-    }
+    aMouseEvent->StopPropagation();
   }
 
   return NS_OK;
@@ -3619,10 +3626,7 @@ nsresult nsPluginInstanceOwner::KeyPress(nsIDOMEvent* aKeyEvent)
     // If this event is going to the plugin, we want to kill it.
     // Not actually sending keypress to the plugin, since we didn't before.
     aKeyEvent->PreventDefault();
-    nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aKeyEvent));
-    if (nsevent) {
-      nsevent->PreventBubble();
-    }
+    aKeyEvent->StopPropagation();
   }
   return NS_OK;
 #endif
@@ -3645,12 +3649,7 @@ nsresult nsPluginInstanceOwner::DispatchKeyToPlugin(nsIDOMEvent* aKeyEvent)
         nsEventStatus rv = ProcessEvent(*keyEvent);
         if (nsEventStatus_eConsumeNoDefault == rv) {
           aKeyEvent->PreventDefault();
-
-          nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aKeyEvent));
-
-          if (nsevent) {
-            nsevent->PreventBubble();
-          }
+          aKeyEvent->StopPropagation();
         }
       }
       else NS_ASSERTION(PR_FALSE, "nsPluginInstanceOwner::DispatchKeyToPlugin failed, keyEvent null");   
@@ -3787,12 +3786,7 @@ nsresult nsPluginInstanceOwner::DispatchMouseToPlugin(nsIDOMEvent* aMouseEvent)
       nsEventStatus rv = ProcessEvent(*mouseEvent);
       if (nsEventStatus_eConsumeNoDefault == rv) {
         aMouseEvent->PreventDefault();
-
-        nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
-
-        if (nsevent) {
-          nsevent->PreventBubble();
-        }
+        aMouseEvent->StopPropagation();
       }
     }
     else NS_ASSERTION(PR_FALSE, "nsPluginInstanceOwner::DispatchMouseToPlugin failed, mouseEvent null");   

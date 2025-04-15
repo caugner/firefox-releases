@@ -1,8 +1,8 @@
-/.cvsignore/1.1/Tue Mar 26 15:42:01 2002//TFIREFOX_1_5_RELEASE
-/Makefile.in/1.6/Wed Jun  8 16:48:44 2005//TFIREFOX_1_5_RELEASE
-/downloadmanager.js/1.41/Fri Oct 22 18:33:54 2004//TFIREFOX_1_5_RELEASE
-/downloadmanager.xul/1.25/Fri Oct 22 18:33:54 2004//TFIREFOX_1_5_RELEASE
-/jar.mn/1.4/Sat Apr  2 13:12:21 2005//TFIREFOX_1_5_RELEASE
+/.cvsignore/1.1/Tue Mar 26 15:42:01 2002//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.6/Wed Jun  8 16:48:44 2005//TFIREFOX_2_0_RELEASE
+/downloadmanager.js/1.41/Fri Oct 22 18:33:54 2004//TFIREFOX_2_0_RELEASE
+/downloadmanager.xul/1.25/Fri Oct 22 18:33:54 2004//TFIREFOX_2_0_RELEASE
+/jar.mn/1.4/Sat Apr  2 13:12:21 2005//TFIREFOX_2_0_RELEASE
 D/locale////
 D/mac////
 D/unix////

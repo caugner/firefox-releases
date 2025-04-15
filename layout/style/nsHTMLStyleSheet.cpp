@@ -85,6 +85,7 @@ nsHTMLStyleSheet::HTMLColorRule::List(FILE* out, PRInt32 aIndent) const
 }
 #endif
 
+ 
 NS_IMPL_ISUPPORTS1(nsHTMLStyleSheet::GenericTableRule, nsIStyleRule)
 
 NS_IMETHODIMP
@@ -357,7 +358,6 @@ nsHTMLStyleSheet::Init()
   if (!mTableTHRule)
     return NS_ERROR_OUT_OF_MEMORY;
   NS_ADDREF(mTableTHRule);
-
   return NS_OK;
 }
 

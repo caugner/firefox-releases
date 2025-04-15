@@ -157,7 +157,6 @@ NS_IMPL_THREADSAFE_ISUPPORTS5(nsMsgAccountManager,
 
 nsMsgAccountManager::nsMsgAccountManager() :
   m_accountsLoaded(PR_FALSE),
-  m_folderCacheNeedsClearing(PR_FALSE),
   m_emptyTrashInProgress(PR_FALSE),
   m_cleanupInboxInProgress(PR_FALSE),
   m_haveShutdown(PR_FALSE),
@@ -227,12 +226,7 @@ nsresult nsMsgAccountManager::Shutdown()
       msgDBService->UnregisterPendingListener(m_virtualFolderListeners[i]);
   }
   if(m_msgFolderCache)
-  {
-    if (m_folderCacheNeedsClearing)
-      m_msgFolderCache->Clear();
-    m_folderCacheNeedsClearing = PR_FALSE;
     WriteToFolderCache(m_msgFolderCache);
-  }
   (void)ShutdownServers();
   (void)UnloadAccounts();
   
@@ -1029,7 +1023,10 @@ PRBool PR_CALLBACK nsMsgAccountManager::cleanupOnExit(nsHashKey *aKey, void *aDa
   server->GetEmptyTrashOnExit(&emptyTrashOnExit);
   nsCOMPtr <nsIImapIncomingServer> imapserver = do_QueryInterface(server);
   if (imapserver)
+  {
     imapserver->GetCleanupInboxOnExit(&cleanupInboxOnExit);
+    imapserver->SetShuttingDown(PR_TRUE);
+  }
   if (emptyTrashOnExit || cleanupInboxOnExit)
   {
     nsCOMPtr<nsIMsgFolder> root;
@@ -1111,7 +1108,16 @@ PRBool PR_CALLBACK nsMsgAccountManager::cleanupOnExit(nsHashKey *aKey, void *aDa
                  PR_CWait(folder, PR_MicrosecondsToInterval(1000UL));
                  PR_CExitMonitor(folder);
                  if (eventQueue)
-                   eventQueue->ProcessPendingEvents();
+                 {
+                   PLEvent *event;
+                   do
+                   {
+                     eventQueue->GetEvent(&event);
+                     if (event)
+                       eventQueue->HandleEvent(event);
+                   }
+                   while (event);
+                 }
                }
              }
              if (emptyTrashOnExit)
@@ -1124,7 +1130,16 @@ PRBool PR_CALLBACK nsMsgAccountManager::cleanupOnExit(nsHashKey *aKey, void *aDa
                  PR_CWait(folder, PR_MicrosecondsToInterval(1000UL));
                  PR_CExitMonitor(folder);
                  if (eventQueue)
-                   eventQueue->ProcessPendingEvents();
+                 {
+                   PLEvent *event;
+                   do
+                   {
+                     eventQueue->GetEvent(&event);
+                     if (event)
+                       eventQueue->HandleEvent(event);
+                   }
+                   while (event);
+                 }
                }
              }
            } 
@@ -1549,8 +1564,13 @@ nsMsgAccountManager::SetSpecialFolders()
       if (folderUri && NS_SUCCEEDED(rdf->GetResource(folderUri, getter_AddRefs(res))))
       {
         folder = do_QueryInterface(res, &rv);
-        if (NS_SUCCEEDED(rv))
-          rv = folder->SetFlag(MSG_FOLDER_FLAG_DRAFTS);
+        nsCOMPtr <nsIMsgFolder> parent;
+        if (folder && NS_SUCCEEDED(rv))
+        {
+          rv = folder->GetParent(getter_AddRefs(parent));
+          if (NS_SUCCEEDED(rv) && parent)
+            rv = folder->SetFlag(MSG_FOLDER_FLAG_DRAFTS);
+        }
       }
       thisIdentity->GetStationeryFolder(getter_Copies(folderUri));
       if (folderUri && NS_SUCCEEDED(rdf->GetResource(folderUri, getter_AddRefs(res))))
@@ -2639,7 +2659,10 @@ nsresult VirtualFolderChangeListener::Init()
     rv = tempFilter->GetSearchTerms(getter_AddRefs(searchTerms));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    m_searchSession->AddScopeTerm(nsMsgSearchScope::offlineMail, m_folderWatching);
+    // we add the search scope right before we match the header,
+    // because we don't want the search scope caching the body input
+    // stream, because that holds onto the mailbox file, breaking
+    // compaction.
 
     // add each item in termsArray to the search session
     PRUint32 numTerms;
@@ -2666,19 +2689,22 @@ NS_IMETHODIMP VirtualFolderChangeListener::OnHdrChange(nsIMsgDBHdr *aHdrChanged,
 
   nsresult rv = m_folderWatching->GetMsgDatabase(nsnull, getter_AddRefs(msgDB));
   PRBool oldMatch = PR_FALSE, newMatch = PR_FALSE;
+  // we don't want any early returns from this function, until we've 
+  // called ClearScopes 0n the search session.
+  m_searchSession->AddScopeTerm(nsMsgSearchScope::offlineMail, m_folderWatching);
   rv = m_searchSession->MatchHdr(aHdrChanged, msgDB, &newMatch);
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (m_searchOnMsgStatus)
+  if (NS_SUCCEEDED(rv) && m_searchOnMsgStatus)
   {
     // if status is a search criteria, check if the header matched before
     // it changed, in order to determine if we need to bump the counts. 
     aHdrChanged->SetFlags(aOldFlags);
     rv = m_searchSession->MatchHdr(aHdrChanged, msgDB, &oldMatch);
     aHdrChanged->SetFlags(aNewFlags); // restore new flags even on match failure.
-    NS_ENSURE_SUCCESS(rv, rv);
   }
   else
     oldMatch = newMatch;
+  m_searchSession->ClearScopes();
+  NS_ENSURE_SUCCESS(rv, rv);
   // we don't want to change the total counts if this virtual folder is open in a view,
   // because we won't remove the header from view while it's open. On the other hand,
   // it's hard to fix the count when the user clicks away to another folder, w/o re-running
@@ -2724,6 +2750,13 @@ NS_IMETHODIMP VirtualFolderChangeListener::OnHdrChange(nsIMsgDBHdr *aHdrChanged,
       if (numNewMessages == 1)
         m_virtualFolder->SetHasNewMessages(PR_FALSE);
     }
+    if (totalDelta)
+    {
+      nsXPIDLCString searchUri;
+      m_virtualFolder->GetURI(getter_Copies(searchUri));
+      msgDB->UpdateHdrInCache(searchUri, aHdrChanged, totalDelta == 1);
+    }
+
     m_virtualFolder->UpdateSummaryTotals(PR_TRUE); // force update from db.
     virtDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
   }
@@ -2737,7 +2770,9 @@ NS_IMETHODIMP VirtualFolderChangeListener::OnHdrDeleted(nsIMsgDBHdr *aHdrDeleted
   nsresult rv = m_folderWatching->GetMsgDatabase(nsnull, getter_AddRefs(msgDB));
   NS_ENSURE_SUCCESS(rv, rv);
   PRBool match = PR_FALSE;
+  m_searchSession->AddScopeTerm(nsMsgSearchScope::offlineMail, m_folderWatching);
   rv = m_searchSession->MatchHdr(aHdrDeleted, msgDB, &match);
+  m_searchSession->ClearScopes();
   if (match)
   {
     nsCOMPtr <nsIMsgDatabase> virtDatabase;
@@ -2759,6 +2794,10 @@ NS_IMETHODIMP VirtualFolderChangeListener::OnHdrDeleted(nsIMsgDBHdr *aHdrDeleted
       if (numNewMessages == 1)
         m_virtualFolder->SetHasNewMessages(PR_FALSE);
     }
+    nsXPIDLCString searchUri;
+    m_virtualFolder->GetURI(getter_Copies(searchUri));
+    msgDB->UpdateHdrInCache(searchUri, aHdrDeleted, PR_FALSE);
+
     m_virtualFolder->UpdateSummaryTotals(PR_TRUE); // force update from db.
     virtDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
   }
@@ -2772,7 +2811,9 @@ NS_IMETHODIMP VirtualFolderChangeListener::OnHdrAdded(nsIMsgDBHdr *aNewHdr, nsMs
   nsresult rv = m_folderWatching->GetMsgDatabase(nsnull, getter_AddRefs(msgDB));
   NS_ENSURE_SUCCESS(rv, rv);
   PRBool match = PR_FALSE;
+  m_searchSession->AddScopeTerm(nsMsgSearchScope::offlineMail, m_folderWatching);
   rv = m_searchSession->MatchHdr(aNewHdr, msgDB, &match);
+  m_searchSession->ClearScopes();
   if (match)
   {
     nsCOMPtr <nsIMsgDatabase> virtDatabase;
@@ -2792,6 +2833,9 @@ NS_IMETHODIMP VirtualFolderChangeListener::OnHdrAdded(nsIMsgDBHdr *aNewHdr, nsMs
       m_virtualFolder->SetHasNewMessages(PR_TRUE);
       m_virtualFolder->SetNumNewMessages(numNewMessages + 1);
     }
+    nsXPIDLCString searchUri;
+    m_virtualFolder->GetURI(getter_Copies(searchUri));
+    msgDB->UpdateHdrInCache(searchUri, aNewHdr, PR_TRUE);
     dbFolderInfo->ChangeNumMessages(1);
     m_virtualFolder->UpdateSummaryTotals(true); // force update from db.
     virtDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
@@ -2940,20 +2984,8 @@ NS_IMETHODIMP nsMsgAccountManager::LoadVirtualFolders()
           // and we have to add a pending listener for each of them.
           if (buffer.Length())
           {
-            nsCStringArray folderUris;
             dbFolderInfo->SetCharPtrProperty("searchFolderUri", buffer.get());
-            folderUris.ParseString(buffer.get(), "|");
-            for (PRInt32 i = 0; i < folderUris.Count(); i++)
-            {
-              rdf->GetResource(*(folderUris[i]), getter_AddRefs(resource));
-              nsCOMPtr <nsIMsgFolder> realFolder = do_QueryInterface(resource);
-              VirtualFolderChangeListener *dbListener = new VirtualFolderChangeListener();
-              m_virtualFolderListeners.AppendObject(dbListener);
-              dbListener->m_virtualFolder = virtualFolder;
-              dbListener->m_folderWatching = realFolder;
-              dbListener->Init();
-              msgDBService->RegisterPendingListener(realFolder, dbListener);
-            }
+            AddVFListenersForVF(virtualFolder, buffer.get(), rdf, msgDBService);
           }
           else // this folder is useless
           {
@@ -3062,6 +3094,30 @@ nsresult nsMsgAccountManager::WriteLineToOutputStream(const char *prefix, const 
   return NS_OK;
 }
 
+nsresult nsMsgAccountManager::AddVFListenersForVF(nsIMsgFolder *virtualFolder, 
+                                                  const char *srchFolderUris,
+                                                  nsIRDFService *rdf,
+                                                  nsIMsgDBService *msgDBService)
+{
+  nsCStringArray folderUris;
+  folderUris.ParseString(srchFolderUris, "|");
+  nsCOMPtr <nsIRDFResource> resource;
+
+  for (PRInt32 i = 0; i < folderUris.Count(); i++)
+  {
+    rdf->GetResource(*(folderUris[i]), getter_AddRefs(resource));
+    nsCOMPtr <nsIMsgFolder> realFolder = do_QueryInterface(resource);
+    VirtualFolderChangeListener *dbListener = new VirtualFolderChangeListener();
+    NS_ENSURE_TRUE(dbListener, NS_ERROR_OUT_OF_MEMORY);
+    m_virtualFolderListeners.AppendObject(dbListener);
+    dbListener->m_virtualFolder = virtualFolder;
+    dbListener->m_folderWatching = realFolder;
+    dbListener->Init();
+    msgDBService->RegisterPendingListener(realFolder, dbListener);
+  }
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsMsgAccountManager::OnItemAdded(nsIRDFResource *parentItem, nsISupports *item)
 {
   nsCOMPtr<nsIMsgFolder> folder = do_QueryInterface(item);
@@ -3078,23 +3134,14 @@ NS_IMETHODIMP nsMsgAccountManager::OnItemAdded(nsIRDFResource *parentItem, nsISu
     nsCOMPtr<nsIMsgDBService> msgDBService = do_GetService(NS_MSGDB_SERVICE_CONTRACTID, &rv);
     if (msgDBService)
     {
-      VirtualFolderChangeListener *dbListener = new VirtualFolderChangeListener();
-      dbListener->m_virtualFolder = folder;
       nsCOMPtr <nsIMsgDatabase> virtDatabase;
       nsCOMPtr <nsIDBFolderInfo> dbFolderInfo;
-      m_virtualFolderListeners.AppendObject(dbListener);
       rv = folder->GetDBFolderInfoAndDB(getter_AddRefs(dbFolderInfo), getter_AddRefs(virtDatabase));
       NS_ENSURE_SUCCESS(rv, rv);
       nsXPIDLCString srchFolderUri;
       dbFolderInfo->GetCharPtrProperty("searchFolderUri", getter_Copies(srchFolderUri));
-      // if we supported cross folder virtual folders, we'd have a list of folders uris,
-      // and we'd have to add a pending listener for each of them.
-      rv = GetExistingFolder(srchFolderUri.get(), getter_AddRefs(dbListener->m_folderWatching));
-      if (dbListener->m_folderWatching)
-      {
-        dbListener->Init();
-        msgDBService->RegisterPendingListener(dbListener->m_folderWatching, dbListener);
-      }
+      nsCOMPtr<nsIRDFService> rdf(do_GetService("@mozilla.org/rdf/rdf-service;1", &rv));
+      AddVFListenersForVF(folder, srchFolderUri, rdf, msgDBService);
     }
     rv = SaveVirtualFolders();
   }
@@ -3107,7 +3154,6 @@ NS_IMETHODIMP nsMsgAccountManager::OnItemRemoved(nsIRDFResource *parentItem, nsI
   // just kick out with a success code if the item in question is not a folder
   if (!folder)
     return NS_OK;
-  m_folderCacheNeedsClearing = PR_TRUE;
   nsresult rv = NS_OK;
   PRUint32 folderFlags;
   folder->GetFlags(&folderFlags);

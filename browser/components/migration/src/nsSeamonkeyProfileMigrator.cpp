@@ -313,6 +313,11 @@ nsSeamonkeyProfileMigrator::FillProfileDataFromSeamonkeyRegistry()
   
   seamonkeyRegistry->Append(NS_LITERAL_STRING(".mozilla"));
   seamonkeyRegistry->Append(NS_LITERAL_STRING("appreg"));
+#elif defined(XP_BEOS)
+   fileLocator->Get(NS_BEOS_SETTINGS_DIR, NS_GET_IID(nsILocalFile), getter_AddRefs(seamonkeyRegistry));
+
+   seamonkeyRegistry->Append(NS_LITERAL_STRING("Mozilla"));
+   seamonkeyRegistry->Append(NS_LITERAL_STRING("appreg"));
 #elif defined(XP_OS2)
   fileLocator->Get(NS_OS2_HOME_DIR, NS_GET_IID(nsILocalFile), getter_AddRefs(seamonkeyRegistry));
   
@@ -385,7 +390,6 @@ nsSeamonkeyProfileMigrator::PrefTransform gTransforms[] = {
   MAKESAMETYPEPREFTRANSFORM("browser.underline_anchors",                Bool),
   MAKESAMETYPEPREFTRANSFORM("browser.display.use_system_colors",        Bool),
   MAKESAMETYPEPREFTRANSFORM("browser.display.use_document_colors",      Bool),
-  MAKESAMETYPEPREFTRANSFORM("browser.display.screen_resolution",        Int),
   MAKESAMETYPEPREFTRANSFORM("browser.display.use_document_fonts",       Bool),
   MAKESAMETYPEPREFTRANSFORM("intl.charset.default",                     String),
   MAKESAMETYPEPREFTRANSFORM("intl.accept_languages",                    String),
@@ -485,6 +489,9 @@ nsSeamonkeyProfileMigrator::TransformPreferences(const nsAString& aSourcePrefFil
   targetPrefsFile->Append(aTargetPrefFileName);
   psvc->SavePrefFile(targetPrefsFile);
 
+  psvc->ResetPrefs();
+  psvc->ReadUserPrefs(nsnull);
+
   return NS_OK;
 }
 
@@ -563,7 +570,7 @@ nsSeamonkeyProfileMigrator::WriteFontsBranch(nsIPrefService* aPrefService,
     switch (pref->type) {
     case nsIPrefBranch::PREF_STRING:
       rv = branch->SetCharPref(pref->prefName, pref->stringValue);
-      nsCRT::free(pref->stringValue);
+      PL_strfree(pref->stringValue);
       pref->stringValue = nsnull;
       break;
     case nsIPrefBranch::PREF_BOOL:
@@ -578,11 +585,11 @@ nsSeamonkeyProfileMigrator::WriteFontsBranch(nsIPrefService* aPrefService,
       rv = branch->SetComplexValue(pref->prefName, 
                                    NS_GET_IID(nsIPrefLocalizedString),
                                    pls);
-      nsCRT::free(pref->wstringValue);
+      NS_Free(pref->wstringValue);
       pref->wstringValue = nsnull;
       break;
     }
-    nsCRT::free(pref->prefName);
+    NS_Free(pref->prefName);
     pref->prefName = nsnull;
     delete pref;
     pref = nsnull;

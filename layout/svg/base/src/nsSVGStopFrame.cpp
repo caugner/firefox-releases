@@ -51,7 +51,7 @@
 // events and propogate them to the parent.  Most of the heavy lifting is done
 // within the nsSVGGradientFrame, which is the parent for this frame
 
-typedef nsContainerFrame  nsSVGStopFrameBase;
+typedef nsFrame  nsSVGStopFrameBase;
 
 class nsSVGStopFrame : public nsSVGStopFrameBase,
                        public nsISVGValueObserver,
@@ -68,6 +68,7 @@ class nsSVGStopFrame : public nsSVGStopFrameBase,
    * @see nsLayoutAtoms::svgStopFrame
    */
   virtual nsIAtom* GetType() const;
+  virtual PRBool IsFrameOfType(PRUint32 aFlags) const;
 
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const
@@ -107,7 +108,7 @@ private:
 
 NS_INTERFACE_MAP_BEGIN(nsSVGStopFrame)
   NS_INTERFACE_MAP_ENTRY(nsISVGValueObserver)
-  NS_INTERFACE_MAP_ENTRY(nsSupportsWeakReference)
+  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
 NS_INTERFACE_MAP_END_INHERITING(nsSVGStopFrameBase)
 
 //----------------------------------------------------------------------
@@ -132,6 +133,12 @@ nsIAtom *
 nsSVGStopFrame::GetType() const
 {
   return nsLayoutAtoms::svgStopFrame;
+}
+
+PRBool
+nsSVGStopFrame::IsFrameOfType(PRUint32 aFlags) const
+{
+  return !(aFlags & ~nsIFrame::eSVG);
 }
 
 NS_IMETHODIMP

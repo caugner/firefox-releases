@@ -95,7 +95,7 @@ class nsIDOMEventReceiver;
  *  manager, event interfaces. the idea for the event interfaces is to have them 
  *  delegate the actual commands to the editor independent of the XPFE implementation.
  */
-class nsEditor : public nsIEditor,
+class nsEditor : public nsIEditor_MOZILLA_1_8_BRANCH,
                  public nsIEditorIMESupport,
                  public nsSupportsWeakReference,
                  public nsIPhonetic
@@ -146,6 +146,7 @@ public:
 
   /* ------------ nsIEditor methods -------------- */
   NS_DECL_NSIEDITOR
+  NS_DECL_NSIEDITOR_MOZILLA_1_8_BRANCH
   /* ------------ nsIEditorIMESupport methods -------------- */
   NS_DECL_NSIEDITORIMESUPPORT
   
@@ -341,6 +342,11 @@ protected:
 
   // unregister and release our event listeners
   virtual void RemoveEventListeners();
+
+  /**
+   * Return true if spellchecking should be enabled for this editor.
+   */
+  PRBool GetDesiredSpellCheckState();
 
 public:
 
@@ -590,7 +596,15 @@ protected:
   nsWeakPtr       mSelConWeak;   // weak reference to the nsISelectionController
   nsIViewManager *mViewManager;
   PRInt32         mUpdateCount;
-  nsCOMPtr<nsIInlineSpellChecker> mInlineSpellChecker;  // used for real-time spellchecking
+
+  // Spellchecking
+  enum Tristate {
+    eTriUnset,
+    eTriFalse,
+    eTriTrue
+  }                 mSpellcheckCheckboxState;
+  nsCOMPtr<nsIInlineSpellChecker> mInlineSpellChecker;
+
   nsCOMPtr<nsITransactionManager> mTxnMgr;
   nsWeakPtr         mPlaceHolderTxn;     // weak reference to placeholder for begin/end batch purposes
   nsIAtom          *mPlaceHolderName;    // name of placeholder transaction
@@ -613,18 +627,15 @@ protected:
   PRPackedBool                  mNeedRecoverIMEOpenState;   // Need IME open state change on blur.
 
   PRPackedBool                  mShouldTxnSetSelection;  // turn off for conservative selection adjustment by txns
+  PRPackedBool                  mDidPreDestroy;    // whether PreDestroy has been called
   // various listeners
   nsVoidArray*                  mActionListeners;  // listens to all low level actions on the doc
-  nsVoidArray*                  mEditorObservers;   // just notify once per high level change
+  nsVoidArray*                  mEditorObservers;  // just notify once per high level change
   nsCOMPtr<nsISupportsArray>    mDocStateListeners;// listen to overall doc state (dirty or not, just created, etc)
 
   PRInt8                        mDocDirtyState;		// -1 = not initialized
-  PRPackedBool                  mGotDOMEventReceiver;  // True if we've gotten our DOMEventReceiver once
   nsWeakPtr        mDocWeak;  // weak reference to the nsIDOMDocument
-  // When mGotDOMEventReceiver is set, a null mDOMEventReceiver means we didn't
-  // find one (and hence should be using the document).  We cache the event
-  // receiver when we get it off anonymous content because during document
-  // teardown the anonymous content can get unhooked before we get unhooked.
+  // The form field as an event receiver
   nsCOMPtr<nsIDOMEventReceiver> mDOMEventReceiver;
   nsCOMPtr<nsIDTD> mDTD;
 

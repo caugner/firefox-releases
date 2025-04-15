@@ -66,60 +66,44 @@ nsXFormsSetValueElement::HandleAction(nsIDOMEvent* aEvent,
     return NS_OK;
   
   nsCOMPtr<nsIModelElementPrivate> modelPriv;
-  nsCOMPtr<nsIDOMXPathResult> result;
-  nsresult rv =
-    nsXFormsUtils:: EvaluateNodeBinding(mElement,
-                                        nsXFormsUtils::ELEMENT_WITH_MODEL_ATTR,
-                                        NS_LITERAL_STRING("ref"),
-                                        EmptyString(),
-                                        nsIDOMXPathResult::FIRST_ORDERED_NODE_TYPE,
-                                        getter_AddRefs(modelPriv),
-                                        getter_AddRefs(result));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!result | !modelPriv)
-    return NS_OK;
-
   nsCOMPtr<nsIDOMNode> singleNode;
-  result->GetSingleNodeValue(getter_AddRefs(singleNode));
-  if (!singleNode)
+  PRBool succeeded =
+    nsXFormsUtils::GetSingleNodeBinding(mElement,
+                                        getter_AddRefs(singleNode),
+                                        getter_AddRefs(modelPriv));
+
+  if (!succeeded | !modelPriv | !singleNode)
     return NS_OK;
 
   nsAutoString value;
   nsAutoString valueAttr;
+  nsresult rv;
   mElement->GetAttribute(NS_LITERAL_STRING("value"), valueAttr);
 
-  if(!valueAttr.IsEmpty()) {
+  if (!valueAttr.IsEmpty()) {
     // According to the XForms Errata, the context node for the XPath expression
     //   stored in @value should be the node that setvalue is bound to.
-    nsCOMPtr<nsIDOMXPathResult> xpResult =
-      nsXFormsUtils::EvaluateXPath(valueAttr, singleNode, mElement,
-                                   nsIDOMXPathResult::STRING_TYPE);
+    nsCOMPtr<nsIDOMXPathResult> xpResult;
+    rv = nsXFormsUtils::EvaluateXPath(valueAttr, singleNode, mElement,
+                                      nsIDOMXPathResult::STRING_TYPE,
+                                      getter_AddRefs(xpResult));
+    NS_ENSURE_SUCCESS(rv, rv);
     if (!xpResult)
       return NS_OK;
     xpResult->GetStringValue(value);
-  }
-  else {
+  } else {
     nsCOMPtr<nsIDOM3Node> n3(do_QueryInterface(mElement));
     n3->GetTextContent(value);
   }
 
   PRBool changed;
-  rv = modelPriv->SetNodeValue(singleNode, value, &changed);
+  rv = modelPriv->SetNodeValue(singleNode, value, !aParentAction, &changed);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (changed) {
-    nsCOMPtr<nsIDOMNode> model = do_QueryInterface(modelPriv);
-    NS_ENSURE_STATE(model);
-    if (aParentAction) {
-      aParentAction->SetRecalculate(model, PR_TRUE);
-      aParentAction->SetRevalidate(model, PR_TRUE);
-      aParentAction->SetRefresh(model, PR_TRUE);
-    } else {
-      nsXFormsUtils::DispatchEvent(model, eEvent_Recalculate);
-      nsXFormsUtils::DispatchEvent(model, eEvent_Revalidate);
-      nsXFormsUtils::DispatchEvent(model, eEvent_Refresh);
-    }
+  if (changed && aParentAction) {
+    aParentAction->SetRecalculate(modelPriv, PR_TRUE);
+    aParentAction->SetRevalidate(modelPriv, PR_TRUE);
+    aParentAction->SetRefresh(modelPriv, PR_TRUE);
   }
 
   return NS_OK;

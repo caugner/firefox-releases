@@ -37,11 +37,13 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: ldvector.c,v 1.8 2004/04/27 23:04:36 gerv%gerv.net Exp $ */
+/* $Id: ldvector.c,v 1.8.18.2 2006/05/15 17:45:31 wtchang%redhat.com Exp $ */
 
 #include "loader.h"
+#include "alghmac.h"
 
-static const struct FREEBLVectorStr vector = {
+static const struct FREEBLVectorStr vector = 
+{
 
     sizeof vector,
     FREEBL_VERSION,
@@ -185,12 +187,57 @@ static const struct FREEBLVectorStr vector = {
     ECDSA_SignDigestWithSeed,
 
     /* End of Version 3.006. */
-};
+    /* End of Version 3.007. */
 
+    AES_InitContext,
+    AESKeyWrap_InitContext,
+    DES_InitContext,
+    RC2_InitContext,
+    RC4_InitContext,
+
+    AES_AllocateContext,
+    AESKeyWrap_AllocateContext,
+    DES_AllocateContext,
+    RC2_AllocateContext,
+    RC4_AllocateContext,
+
+    MD2_Clone,
+    MD5_Clone,
+    SHA1_Clone,
+    SHA256_Clone,
+    SHA384_Clone,
+    SHA512_Clone,
+
+    TLS_PRF,
+    HASH_GetRawHashObject,
+
+    HMAC_Create,
+    HMAC_Init,
+    HMAC_Begin,
+    HMAC_Update,
+    HMAC_Clone,
+    HMAC_Finish,
+    HMAC_Destroy,
+
+    RNG_SystemInfoForRNG,
+
+    /* End of Version 3.008. */
+
+    FIPS186Change_GenerateX,
+    FIPS186Change_ReduceModQForDSA,
+
+    /* End of Version 3.009. */
+};
 
 const FREEBLVector * 
 FREEBL_GetVector(void)
 {
-  return &vector;
+    extern const char __nss_freebl_rcsid[];
+    extern const char __nss_freebl_sccsid[];
+
+    /* force a reference that won't get optimized away */
+    volatile char c = __nss_freebl_rcsid[0] + __nss_freebl_sccsid[0]; 
+
+    return &vector;
 }
 

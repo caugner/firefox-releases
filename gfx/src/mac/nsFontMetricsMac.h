@@ -83,6 +83,7 @@ public:
   NS_IMETHOD  GetLangGroup(nsIAtom** aLangGroup);
   NS_IMETHOD  GetFontHandle(nsFontHandle& aHandle);
   NS_IMETHOD  GetSpaceWidth(nscoord& aSpaceCharWidth);
+  virtual PRInt32 GetMaxStringLength();
 
   nsUnicodeFontMappingMac* GetUnicodeFontMapping();
 	
@@ -102,6 +103,7 @@ protected:
   nscoord           mAveCharWidth;
   nscoord           mSpaceWidth;
   nscoord           mXHeight;
+  PRInt32           mMaxStringLength;
   nsCOMPtr<nsIAtom> mLangGroup;
   nsIDeviceContext  *mContext;
 };

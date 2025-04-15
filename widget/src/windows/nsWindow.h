@@ -417,7 +417,7 @@ public:
   virtual PRBool          DispatchMouseEvent(PRUint32 aEventType, WPARAM wParam = NULL, nsPoint* aPoint = nsnull);
 #ifdef ACCESSIBILITY
   virtual PRBool          DispatchAccessibleEvent(PRUint32 aEventType, nsIAccessible** aAccessible, nsPoint* aPoint = nsnull);
-  nsIAccessible*          GetRootAccessible();
+  already_AddRefed<nsIAccessible> GetRootAccessible();
 #endif
   virtual PRBool          AutoErase();
   nsPoint*                GetLastPoint() { return &mLastPoint; }
@@ -443,6 +443,7 @@ protected:
   static void             RegisterSpecialDropdownHooks();
   static void             UnregisterSpecialDropdownHooks();
 
+  static void             PostSleepWakeNotification(const char* aNotification);
 #endif
   static BOOL             DealWithPopups (HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLParam, LRESULT* outResult);
 
@@ -519,6 +520,8 @@ protected:
   void GetTextRangeList(PRUint32* textRangeListLengthResult, nsTextRangeArray* textRangeListResult);
 
   void ConstrainZLevel(HWND *aAfter);
+
+  PRBool CanTakeFocus();
 
 private:
 
@@ -620,7 +623,7 @@ protected:
   // Drag & Drop
   nsNativeDragTarget * mNativeDragTarget;
 
-  // Enumeration of the methods which are accessable on the "main GUI thread"
+  // Enumeration of the methods which are accessible on the "main GUI thread"
   // via the CallMethod(...) mechanism...
   // see nsSwitchToUIThread
   enum {

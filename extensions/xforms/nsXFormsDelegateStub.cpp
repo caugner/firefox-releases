@@ -54,11 +54,10 @@
 #include "nsXFormsUtils.h"
 #include "nsIServiceManager.h"
 #include "nsXFormsModelElement.h"
-#include "nsIContent.h"
-#include "nsIEventStateManager.h"
 
-NS_IMPL_ISUPPORTS_INHERITED1(nsXFormsDelegateStub,
+NS_IMPL_ISUPPORTS_INHERITED2(nsXFormsDelegateStub,
                              nsXFormsBindableControlStub,
+                             nsIDelegateInternal,
                              nsIXFormsDelegate)
 
 
@@ -82,7 +81,6 @@ nsXFormsDelegateStub::OnCreated(nsIXTFBindableElementWrapper *aWrapper)
   nsresult rv = nsXFormsBindableControlStub::OnCreated(aWrapper);
   NS_ENSURE_SUCCESS(rv, rv);
   aWrapper->SetNotificationMask(kStandardNotificationMask |
-                                nsIXTFElement::NOTIFY_WILL_CHANGE_DOCUMENT |
                                 nsIXTFElement::NOTIFY_WILL_CHANGE_PARENT);
   return rv;
 }
@@ -91,6 +89,9 @@ NS_IMETHODIMP
 nsXFormsDelegateStub::OnDestroyed()
 {
   nsXFormsModelElement::CancelPostRefresh(this);
+  if (mAccessor) {
+    mAccessor->Destroy();
+  }
   return nsXFormsBindableControlStub::OnDestroyed();
 }
 
@@ -100,21 +101,22 @@ NS_IMETHODIMP
 nsXFormsDelegateStub::Refresh()
 {
   if (mRepeatState == eType_Template)
-    return NS_OK;
+    return NS_OK_XFORMS_NOREFRESH;
 
   const nsVoidArray* list = nsPostRefresh::PostRefreshList();
   if (list && list->IndexOf(this) >= 0) {
     // This control will be refreshed later.
-    return NS_OK;
+    return NS_OK_XFORMS_NOREFRESH;
   }
+
+  nsresult rv = nsXFormsBindableControlStub::Refresh();
+  NS_ENSURE_SUCCESS(rv, rv);
 
   SetMozTypeAttribute();
 
   nsCOMPtr<nsIXFormsUIWidget> widget = do_QueryInterface(mElement);
-  if (!widget)
-    return NS_OK;
 
-  return widget->Refresh();
+  return widget ? widget->Refresh() : NS_OK;
 }
 
 NS_IMETHODIMP
@@ -151,77 +153,49 @@ nsXFormsDelegateStub::SetValue(const nsAString& aValue)
     return NS_OK;
 
   PRBool changed;
-  nsresult rv = mModel->SetNodeValue(mBoundNode, aValue, &changed);
+  nsresult rv = mModel->SetNodeValue(mBoundNode, aValue, PR_TRUE, &changed);
   NS_ENSURE_SUCCESS(rv, rv);
-  if (changed) {
-    nsCOMPtr<nsIDOMNode> model = do_QueryInterface(mModel);
- 
-    if (model) {
-      rv = nsXFormsUtils::DispatchEvent(model, eEvent_Recalculate);
-      NS_ENSURE_SUCCESS(rv, rv);
-      rv = nsXFormsUtils::DispatchEvent(model, eEvent_Revalidate);
-      NS_ENSURE_SUCCESS(rv, rv);
-      rv = nsXFormsUtils::DispatchEvent(model, eEvent_Refresh);
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
-  }
 
   return NS_OK;
-}
-
-nsresult
-nsXFormsDelegateStub::GetState(PRInt32 aState, PRBool *aStateVal)
-{
-  NS_ENSURE_ARG_POINTER(aStateVal);
-  *aStateVal = PR_FALSE;
-  nsCOMPtr<nsIContent> content(do_QueryInterface(mElement));
-  if (content && (content->IntrinsicState() & aState)) {
-    *aStateVal = PR_TRUE;
-  }  
-  return NS_OK;
-}
-
-// XXXbeaufour search for "enabled", "disabled", HasAttribute() and SetAttribute()
-
-NS_IMETHODIMP
-nsXFormsDelegateStub::GetIsReadonly(PRBool *aStateVal)
-{
-  return GetState(NS_EVENT_STATE_MOZ_READONLY, aStateVal);
-}
-
-NS_IMETHODIMP
-nsXFormsDelegateStub::GetIsEnabled(PRBool *aStateVal)
-{
-  return GetState(NS_EVENT_STATE_ENABLED, aStateVal);
-}
-
-NS_IMETHODIMP
-nsXFormsDelegateStub::GetIsRequired(PRBool *aStateVal)
-{
-  return GetState(NS_EVENT_STATE_REQUIRED, aStateVal);
-}
-
-NS_IMETHODIMP
-nsXFormsDelegateStub::GetIsValid(PRBool *aStateVal)
-{
-  return GetState(NS_EVENT_STATE_VALID, aStateVal);
 }
 
 NS_IMETHODIMP
 nsXFormsDelegateStub::GetHasBoundNode(PRBool *aHasBoundNode)
 {
+  NS_ENSURE_ARG_POINTER(aHasBoundNode);
   *aHasBoundNode = mBoundNode ? PR_TRUE : PR_FALSE;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXFormsDelegateStub::ReportError(const nsAString& aErrorMsg)
+{
+  const nsPromiseFlatString& flat = PromiseFlatString(aErrorMsg);
+  nsXFormsUtils::ReportError(flat, mElement);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsXFormsDelegateStub::WidgetAttached()
 {
-  if (UpdateRepeatState() != eType_Template)
-    nsXFormsModelElement::NeedsPostRefresh(this);
+  if (UpdateRepeatState() == eType_Template)
+    return NS_OK;
 
+  if (HasBindingAttribute()) {
+    // If control is bounded to instance data then we should ask for refresh
+    // only when model is loaded entirely. The reason is control is refreshed
+    // by model when it get loaded.
+    nsCOMPtr<nsIDOMDocument> domDoc;
+    mElement->GetOwnerDocument(getter_AddRefs(domDoc));
+    if (!nsXFormsUtils::IsDocumentReadyForBind(domDoc))
+      return NS_OK;
+  }
+
+  nsXFormsModelElement::NeedsPostRefresh(this);
   return NS_OK;
 }
+
+// nsXFormsDelegateStub
 
 nsRepeatState
 nsXFormsDelegateStub::UpdateRepeatState()
@@ -235,6 +209,10 @@ nsXFormsDelegateStub::UpdateRepeatState()
       break;
     }
     if (nsXFormsUtils::IsXFormsElement(parent, NS_LITERAL_STRING("repeat"))) {
+      mRepeatState = eType_Template;
+      break;
+    }
+    if (nsXFormsUtils::IsXFormsElement(parent, NS_LITERAL_STRING("itemset"))) {
       mRepeatState = eType_Template;
       break;
     }
@@ -264,4 +242,17 @@ nsXFormsDelegateStub::SetMozTypeAttribute()
   } else {
     mElement->RemoveAttributeNS(mozTypeNs, mozType);
   }
+}
+
+NS_IMETHODIMP
+nsXFormsDelegateStub::GetXFormsAccessors(nsIXFormsAccessors **aAccessor)
+{
+  if (!mAccessor) {
+    mAccessor = new nsXFormsAccessors(this, mElement);
+    if (!mAccessor) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+  }
+  NS_ADDREF(*aAccessor = mAccessor);
+  return NS_OK;
 }

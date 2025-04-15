@@ -81,6 +81,8 @@
 #include "nsIContent.h"
 #include "nsAutoPtr.h"
 #include "nsAboutProtocolUtils.h"
+#include "nsIURIFixup.h"
+#include "nsCDefaultURIFixup.h"
 
 static NS_DEFINE_CID(kZipReaderCID, NS_ZIPREADER_CID);
 
@@ -323,10 +325,14 @@ nsScriptSecurityManager::SecurityCompareURIs(nsIURI* aSourceURI,
                 // If the port comparison failed, see if either URL has a
                 // port of -1. If so, replace -1 with the default port
                 // for that scheme.
-                if (!*result && (sourcePort == -1 || targetPort == -1))
+                if (NS_SUCCEEDED(rv) && !*result &&
+                    (sourcePort == -1 || targetPort == -1))
                 {
                     NS_ENSURE_STATE(sIOService);
 
+                    NS_ASSERTION(targetScheme.Equals(sourceScheme),
+                                 "Schemes should be equal here");
+                    
                     PRInt32 defaultPort;
                     nsCOMPtr<nsIProtocolHandler> protocolHandler;
                     rv = sIOService->GetProtocolHandler(sourceScheme.get(),
@@ -905,6 +911,12 @@ nsScriptSecurityManager::CheckSameOriginDOMProp(nsIPrincipal* aSubject,
         return NS_OK;
 
     /*
+    * Content can't ever touch chrome (we check for UniversalXPConnect later)
+    */
+    if (aObject == mSystemPrincipal)
+        return NS_ERROR_DOM_PROP_ACCESS_DENIED;
+
+    /*
     * If we failed the origin tests it still might be the case that we
     * are a signed script and have permissions to do this operation.
     * Check for that here.
@@ -1204,7 +1216,8 @@ nsScriptSecurityManager::GetBaseURIScheme(nsIURI* aURI,
             path.EqualsLiteral("license") ||
             path.EqualsLiteral("licence") ||
             path.EqualsLiteral("credits") ||
-            path.EqualsLiteral("neterror"))
+            path.EqualsLiteral("neterror") ||
+            path.EqualsLiteral("feeds")) // FIXME: make this list extendable
         {
             aScheme = NS_LITERAL_CSTRING("about safe");
             return NS_OK;
@@ -1273,12 +1286,6 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
     rv = GetBaseURIScheme(aTargetURI, targetScheme);
     if (NS_FAILED(rv)) return rv;
 
-    if (nsCRT::strcasecmp(targetScheme.get(), sourceScheme.get()) == 0)
-    {
-        // every scheme can access another URI from the same scheme
-        return NS_OK;
-    }
-
     //-- Some callers do not allow loading javascript: or data: URLs
     if (((aFlags & (nsIScriptSecurityManager::DISALLOW_SCRIPT |
                     nsIScriptSecurityManager::DISALLOW_SCRIPT_OR_DATA)) &&
@@ -1287,6 +1294,12 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
          targetScheme.Equals("data")))
     {
        return NS_ERROR_DOM_BAD_URI;
+    }
+
+    if (nsCRT::strcasecmp(targetScheme.get(), sourceScheme.get()) == 0)
+    {
+        // every scheme can access another URI from the same scheme
+        return NS_OK;
     }
 
     //-- If the schemes don't match, the policy is specified in this table.
@@ -1450,11 +1463,41 @@ nsScriptSecurityManager::CheckLoadURIStr(const nsACString& aSourceURIStr,
     nsresult rv = NS_NewURI(getter_AddRefs(source), aSourceURIStr,
                             nsnull, nsnull, sIOService);
     NS_ENSURE_SUCCESS(rv, rv);
+
     nsCOMPtr<nsIURI> target;
     rv = NS_NewURI(getter_AddRefs(target), aTargetURIStr,
                    nsnull, nsnull, sIOService);
     NS_ENSURE_SUCCESS(rv, rv);
-    return CheckLoadURI(source, target, aFlags);
+
+    rv = CheckLoadURI(source, target, aFlags);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Now start testing fixup -- since aTargetURIStr is a string, not
+    // an nsIURI, we may well end up fixing it up before loading.
+    // Note: This needs to stay in sync with the nsIURIFixup api.
+    nsCOMPtr<nsIURIFixup> fixup = do_GetService(NS_URIFIXUP_CONTRACTID);
+    if (!fixup) {
+        return rv;
+    }
+
+    PRUint32 flags[] = {
+        nsIURIFixup::FIXUP_FLAG_NONE,
+        nsIURIFixup::FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP,
+        nsIURIFixup::FIXUP_FLAGS_MAKE_ALTERNATE_URI,
+        nsIURIFixup::FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP |
+        nsIURIFixup::FIXUP_FLAGS_MAKE_ALTERNATE_URI
+    };
+
+    for (PRUint32 i = 0; i < NS_ARRAY_LENGTH(flags); ++i) {
+        rv = fixup->CreateFixupURI(aTargetURIStr, flags[i],
+                                   getter_AddRefs(target));
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        rv = CheckLoadURI(source, target, aFlags);
+        NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    return rv;
 }
 
 NS_IMETHODIMP
@@ -1555,6 +1598,13 @@ nsScriptSecurityManager::CanExecuteScripts(JSContext* cx,
     //-- See if the current window allows JS execution
     nsIScriptContext *scriptContext = GetScriptContext(cx);
     if (!scriptContext) return NS_ERROR_FAILURE;
+
+    if (!scriptContext->GetScriptsEnabled()) {
+        // No scripting on this context, folks
+        *result = PR_FALSE;
+        return NS_OK;
+    }
+    
     nsIScriptGlobalObject *globalObject = scriptContext->GetGlobalObject();
     if (!globalObject) return NS_ERROR_FAILURE;
 
@@ -1594,7 +1644,8 @@ nsScriptSecurityManager::CanExecuteScripts(JSContext* cx,
         nsCAutoString spec;
         principalURI->GetSpec(spec);
         if (spec.EqualsLiteral("about:") ||
-            StringBeginsWith(spec, NS_LITERAL_CSTRING("about:neterror?")))
+            StringBeginsWith(spec, NS_LITERAL_CSTRING("about:neterror?")) ||
+            spec.EqualsLiteral("about:feeds")) // FIXME: make this list extendable
         {
             *result = PR_TRUE;
             return NS_OK;              
@@ -3304,8 +3355,14 @@ nsScriptSecurityManager::InitDomainPolicy(JSContext* cx,
 
         // If this is the wildcard class (class '*'), save it in mWildcardPolicy
         // (we leave it stored in the hashtable too to take care of the cleanup)
-        if ((*start == '*') && (end == start + 1))
+        if ((*start == '*') && (end == start + 1)) {
             aDomainPolicy->mWildcardPolicy = cpolicy;
+
+            // Make sure that cpolicy knows about aDomainPolicy so it can reset
+            // the mWildcardPolicy pointer as needed if it gets moved in the
+            // hashtable.
+            cpolicy->mDomainWeAreWildcardFor = aDomainPolicy;
+        }
 
         // Get the property name
         start = end + 1;

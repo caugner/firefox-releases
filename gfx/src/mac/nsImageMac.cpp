@@ -127,7 +127,8 @@ nsImageMac::~nsImageMac()
 }
 
 
-NS_IMPL_ISUPPORTS2(nsImageMac, nsIImage, nsIImageMac)
+NS_IMPL_ISUPPORTS3(nsImageMac, nsIImage, nsIImageMac,
+                   nsIImageMac_MOZILLA_1_8_BRANCH)
 
 
 nsresult
@@ -579,9 +580,17 @@ nsImageMac::LockImagePixels(PRBool aMaskPixels)
           PRUint8 alpha = *tmp++;
           mAlphaBits[alphaRowStart + x] = alpha;
           PRUint32 offset = rowStart + COMPS_PER_PIXEL * x;
-          mImageBits[offset + 1] = ((PRUint32) *tmp++) * 255 / alpha;
-          mImageBits[offset + 2] = ((PRUint32) *tmp++) * 255 / alpha;
-          mImageBits[offset + 3] = ((PRUint32) *tmp++) * 255 / alpha;
+          if (alpha) {
+            mImageBits[offset + 1] = ((PRUint32) *tmp++) * 255 / alpha;
+            mImageBits[offset + 2] = ((PRUint32) *tmp++) * 255 / alpha;
+            mImageBits[offset + 3] = ((PRUint32) *tmp++) * 255 / alpha;
+          }
+          else {
+            tmp += 3;
+            mImageBits[offset + 1] =
+             mImageBits[offset + 2] =
+             mImageBits[offset + 3] = 0;
+          }
         }
       }
       break;
@@ -783,6 +792,17 @@ nsImageMac::ConvertFromPICT(PicHandle inPicture)
 {
   NS_WARNING("ConvertFromPICT is not implemented.");
   return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+
+NS_IMETHODIMP
+nsImageMac::GetCGImageRef(CGImageRef* aCGImageRef)
+{
+  nsresult rv = EnsureCachedImage();
+  if (NS_FAILED(rv)) return rv;
+
+  *aCGImageRef = mImage;
+  return NS_OK;
 }
 
 

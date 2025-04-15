@@ -29,6 +29,7 @@
  *   Blake Ross <blaker@netscape.com>
  *   Pierre Chanial <pierrechanial@netscape.net>
  *   Rene Pronk <r.pronk@its.tudelft.nl>
+ *   Mark Banner <mark@standard8.demon.co.uk>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -106,18 +107,12 @@
 static NS_DEFINE_CID(kWidgetCID, NS_CHILD_CID);
 
 // Enumeration function that cancels all the image requests in our cache
-PR_STATIC_CALLBACK(PRBool)
-CancelImageRequest(nsHashKey* aKey, void* aData, void* aClosure)
+PR_STATIC_CALLBACK(PLDHashOperator)
+CancelImageRequest(const nsAString& aKey,
+                   nsTreeImageCacheEntry aEntry, void* aData)
 {
-  nsISupports* supports = NS_STATIC_CAST(nsISupports*, aData);
-  nsCOMPtr<imgIRequest> request = do_QueryInterface(supports);
-  nsCOMPtr<imgIDecoderObserver> observer;
-  request->GetDecoderObserver(getter_AddRefs(observer));
-  NS_ASSERTION(observer, "No observer?  We're leaking!");
-  request->Cancel(NS_ERROR_FAILURE);
-  imgIDecoderObserver* observer2 = observer;
-  NS_RELEASE(observer2);  // Balance out the addref from GetImage()
-  return PR_TRUE;
+  aEntry.request->Cancel(NS_BINDING_ABORTED);
+  return PL_DHASH_NEXT;
 }
 
 //
@@ -156,8 +151,8 @@ NS_INTERFACE_MAP_END_INHERITING(nsLeafBoxFrame)
 
 // Constructor
 nsTreeBodyFrame::nsTreeBodyFrame(nsIPresShell* aPresShell)
-:nsLeafBoxFrame(aPresShell), mPresContext(nsnull), mTreeBoxObject(nsnull), mImageCache(nsnull),
- mScrollbar(nsnull), mTopRowIndex(0), mRowHeight(0), mIndentation(0), mStringWidth(-1),
+:nsLeafBoxFrame(aPresShell), mPresContext(nsnull),
+ mTopRowIndex(0), mRowHeight(0), mIndentation(0), mStringWidth(-1),
  mFocused(PR_FALSE), mHasFixedRowCount(PR_FALSE),
  mVerticalOverflow(PR_FALSE), mReflowCallbackPosted(PR_FALSE),
  mUpdateBatchNest(0), mRowCount(0), mSlots(nsnull)
@@ -169,10 +164,7 @@ nsTreeBodyFrame::nsTreeBodyFrame(nsIPresShell* aPresShell)
 // Destructor
 nsTreeBodyFrame::~nsTreeBodyFrame()
 {
-  if (mImageCache) {
-    mImageCache->Enumerate(CancelImageRequest);
-    delete mImageCache;
-  }
+  mImageCache.EnumerateRead(CancelImageRequest, nsnull);
   delete mSlots;
 }
 
@@ -186,26 +178,6 @@ NS_IMETHODIMP_(nsrefcnt)
 nsTreeBodyFrame::Release(void)
 {
   return NS_OK;
-}
-
-static nsIFrame* InitScrollbarFrame(nsPresContext* aPresContext, nsIFrame* aCurrFrame, nsIScrollbarMediator* aSM)
-{
-  // Check ourselves
-  nsCOMPtr<nsIScrollbarFrame> sf(do_QueryInterface(aCurrFrame));
-  if (sf) {
-    sf->SetScrollbarMediator(aSM);
-    return aCurrFrame;
-  }
-
-  nsIFrame* child = aCurrFrame->GetFirstChild(nsnull);
-  while (child) {
-    nsIFrame* result = InitScrollbarFrame(aPresContext, child, aSM);
-    if (result)
-      return result;
-    child = child->GetNextSibling();
-  }
-
-  return nsnull;
 }
 
 static void
@@ -236,6 +208,7 @@ nsTreeBodyFrame::Init(nsPresContext* aPresContext, nsIContent* aContent,
   mIndentation = GetIndentation();
   mRowHeight = GetRowHeight();
 
+  NS_ENSURE_TRUE(mImageCache.Init(16), NS_ERROR_OUT_OF_MEMORY);
   return rv;
 }
 
@@ -348,8 +321,7 @@ nsTreeBodyFrame::Destroy(nsPresContext* aPresContext)
     }
 
     // Always null out the cached tree body frame.
-    nsAutoString treeBody(NS_LITERAL_STRING("treebody"));
-    box->RemoveProperty(treeBody.get());
+    mTreeBoxObject->ClearCachedTreeBody();
 
     mTreeBoxObject = nsnull; // Drop our ref here.
   }
@@ -395,12 +367,14 @@ nsTreeBodyFrame::EnsureView()
     nsCOMPtr<nsIBoxObject> box = do_QueryInterface(mTreeBoxObject);
     if (box) {
       nsCOMPtr<nsISupports> suppView;
-      box->GetPropertyAsSupports(NS_LITERAL_STRING("view").get(), getter_AddRefs(suppView));
+      box->GetPropertyAsSupports(NS_LITERAL_STRING("view").get(),
+                                 getter_AddRefs(suppView));
       nsCOMPtr<nsITreeView> treeView(do_QueryInterface(suppView));
 
       if (treeView) {
         nsXPIDLString rowStr;
-        box->GetProperty(NS_LITERAL_STRING("topRow").get(), getter_Copies(rowStr));
+        box->GetProperty(NS_LITERAL_STRING("topRow").get(),
+                         getter_Copies(rowStr));
         nsAutoString rowStr2(rowStr);
         PRInt32 error;
         PRInt32 rowIndex = rowStr2.ToInteger(&error);
@@ -468,16 +442,13 @@ nsTreeBodyFrame::ReflowFinished(nsIPresShell* aPresShell, PRBool* aFlushFlag)
   if (mView) {
     CalcInnerBox();
     if (!mHasFixedRowCount) {
-#ifdef DEBUG_roc
-      printf("*** SETTING mPageLength in ReflowFinished, mInnerBox=%d,%d,%d,%d\n",
-             mInnerBox.x, mInnerBox.y, mInnerBox.width, mInnerBox.height);
-#endif
       mPageLength = mInnerBox.height / mRowHeight;
     }
 
     PRInt32 lastPageTopRow = PR_MAX(0, mRowCount - mPageLength);
+    ScrollParts parts = GetScrollParts();
     if (mTopRowIndex > lastPageTopRow)
-      ScrollToRow(lastPageTopRow);
+      ScrollToRowInternal(parts, lastPageTopRow);
 
     // make sure that the current selected item is still
     // visible after the tree changes size.
@@ -487,10 +458,10 @@ nsTreeBodyFrame::ReflowFinished(nsIPresShell* aPresShell, PRBool* aFlushFlag)
       PRInt32 currentIndex;
       sel->GetCurrentIndex(&currentIndex);
       if (currentIndex != -1)
-        EnsureRowIsVisible(currentIndex);
+        EnsureRowIsVisibleInternal(parts, currentIndex);
     }
 
-    InvalidateScrollbar();
+    InvalidateScrollbar(parts);
     CheckVerticalOverflow();
   }
 
@@ -514,7 +485,7 @@ NS_IMETHODIMP nsTreeBodyFrame::SetView(nsITreeView * aView)
   EnsureBoxObject();
   nsCOMPtr<nsIBoxObject> box = do_QueryInterface(mTreeBoxObject);
   
-  nsAutoString view(NS_LITERAL_STRING("view"));
+  NS_NAMED_LITERAL_STRING(view, "view");
   
   if (mView) {
     nsCOMPtr<nsITreeSelection> sel;
@@ -536,6 +507,11 @@ NS_IMETHODIMP nsTreeBodyFrame::SetView(nsITreeView * aView)
   // necessarily entail a full invalidation of the tree.
   Invalidate();
  
+  nsIContent *treeContent = GetBaseElement();
+  if (treeContent) {
+    FireDOMEvent(NS_LITERAL_STRING("TreeViewChanged"), treeContent);
+  }
+
   if (mView) {
     // Give the view a new empty selection object to play with, but only if it
     // doesn't have one already.
@@ -555,11 +531,12 @@ NS_IMETHODIMP nsTreeBodyFrame::SetView(nsITreeView * aView)
  
     box->SetPropertyAsSupports(view.get(), mView);
 
+    ScrollParts parts = GetScrollParts();
     // The scrollbar will need to be updated.
-    InvalidateScrollbar();
+    InvalidateScrollbar(parts);
 
     // Reset scrollbar position.
-    UpdateScrollbar();
+    UpdateScrollbar(parts);
 
     CheckVerticalOverflow();
   }
@@ -729,35 +706,62 @@ nsTreeBodyFrame::InvalidateRange(PRInt32 aStart, PRInt32 aEnd)
   return NS_OK;
 }
 
-nsIFrame*
-nsTreeBodyFrame::EnsureScrollbar()
+static void
+FindScrollParts(nsIFrame* aCurrFrame, nsTreeBodyFrame::ScrollParts* aResult)
 {
-  if (!mScrollbar) {
-    // Try to find it.
-    nsIContent* parContent = GetBaseElement();
-    nsIFrame* treeFrame;
-
-    mPresContext->PresShell()->GetPrimaryFrameFor(parContent, &treeFrame);
-    if (treeFrame)
-      mScrollbar = InitScrollbarFrame(mPresContext, treeFrame, this);
+  nsIScrollbarFrame *sf = nsnull;
+  CallQueryInterface(aCurrFrame, &sf);
+  if (sf) {
+    PRBool isHorizontal = PR_FALSE;
+    if (NS_SUCCEEDED(aCurrFrame->GetOrientation(isHorizontal))) {
+      if (!isHorizontal) {
+        if (!aResult->mVScrollbar) {
+          aResult->mVScrollbar = sf;
+        }
+      }
+    }
+    // don't bother searching inside a scrollbar
+    return;
   }
 
-  NS_ASSERTION(mScrollbar, "no scroll bar");
-  return mScrollbar;
+  nsIFrame* child = aCurrFrame->GetFirstChild(nsnull);
+  while (child && !aResult->mVScrollbar) {
+    FindScrollParts(child, aResult);
+    child = child->GetNextSibling();
+  }
+}
+
+nsTreeBodyFrame::ScrollParts nsTreeBodyFrame::GetScrollParts()
+{
+  nsPresContext* presContext = GetPresContext();
+  ScrollParts result = { nsnull, nsnull };
+  nsIFrame* treeFrame = nsnull;
+  presContext->PresShell()->GetPrimaryFrameFor(GetBaseElement(), &treeFrame);
+  if (treeFrame) {
+    // The way we do this, searching through the entire frame subtree, is pretty
+    // dumb! We should know where these frames are.
+    FindScrollParts(treeFrame, &result);
+    if (result.mVScrollbar) {
+      result.mVScrollbar->SetScrollbarMediator(this);
+      nsIFrame* f;
+      CallQueryInterface(result.mVScrollbar, &f);
+      result.mVScrollbarContent = f->GetContent();
+    }
+  }
+  return result;
 }
 
 void
-nsTreeBodyFrame::UpdateScrollbar()
+nsTreeBodyFrame::UpdateScrollbar(const ScrollParts& aParts)
 {
-  // Update the scrollbar.
-  if (!EnsureScrollbar())
-    return;
   float t2p = mPresContext->TwipsToPixels();
   nscoord rowHeightAsPixels = NSToCoordRound((float)mRowHeight*t2p);
 
-  nsAutoString curPos;
-  curPos.AppendInt(mTopRowIndex*rowHeightAsPixels);
-  mScrollbar->GetContent()->SetAttr(kNameSpaceID_None, nsXULAtoms::curpos, curPos, PR_TRUE);
+  if (aParts.mVScrollbar) {
+    nsAutoString curPos;
+    curPos.AppendInt(mTopRowIndex*rowHeightAsPixels);
+    aParts.mVScrollbarContent->SetAttr(kNameSpaceID_None, nsXULAtoms::curpos, curPos, PR_TRUE);
+  }
 }
 
 void
@@ -785,27 +789,29 @@ nsTreeBodyFrame::CheckVerticalOverflow()
 }
 
 void
-nsTreeBodyFrame::InvalidateScrollbar()
+nsTreeBodyFrame::InvalidateScrollbar(const ScrollParts& aParts)
 {
-  if (mUpdateBatchNest || !mView || mRowCount <= mPageLength || !EnsureScrollbar())
+  if (mUpdateBatchNest || !mView || mRowCount <= mPageLength)
     return;
 
-  nsIContent* scrollbar = mScrollbar->GetContent();
+  if (aParts.mVScrollbar) {
+    // Do Vertical Scrollbar
+    nsIContent* scrollbar = aParts.mVScrollbarContent;
+    nsAutoString maxposStr;
 
-  nsAutoString maxposStr;
+    float t2p = GetPresContext()->TwipsToPixels();
+    nscoord rowHeightAsPixels = NSToCoordRound((float)mRowHeight*t2p);
 
-  float t2p = mPresContext->TwipsToPixels();
-  nscoord rowHeightAsPixels = NSToCoordRound((float)mRowHeight*t2p);
+    PRInt32 size = rowHeightAsPixels * (mRowCount > mPageLength ? mRowCount - mPageLength : 0);
+    maxposStr.AppendInt(size);
+    scrollbar->SetAttr(kNameSpaceID_None, nsXULAtoms::maxpos, maxposStr, PR_TRUE);
 
-  PRInt32 size = rowHeightAsPixels*(mRowCount-mPageLength);
-  maxposStr.AppendInt(size);
-  scrollbar->SetAttr(kNameSpaceID_None, nsXULAtoms::maxpos, maxposStr, PR_TRUE);
-
-  // Also set our page increment and decrement.
-  nscoord pageincrement = mPageLength*rowHeightAsPixels;
-  nsAutoString pageStr;
-  pageStr.AppendInt(pageincrement);
-  scrollbar->SetAttr(kNameSpaceID_None, nsXULAtoms::pageincrement, pageStr, PR_TRUE);
+    // Also set our page increment and decrement.
+    nscoord pageincrement = mPageLength*rowHeightAsPixels;
+    nsAutoString pageStr;
+    pageStr.AppendInt(pageincrement);
+    scrollbar->SetAttr(kNameSpaceID_None, nsXULAtoms::pageincrement, pageStr, PR_TRUE);
+  }
 }
 
 
@@ -1416,9 +1422,11 @@ NS_IMETHODIMP nsTreeBodyFrame::RowCountChanged(PRInt32 aIndex, PRInt32 aCount)
   if (aIndex >= mTopRowIndex && aIndex <= last)
     InvalidateRange(aIndex, last);
 
+  ScrollParts parts = GetScrollParts();
+
   if (mTopRowIndex == 0) {    
     // Just update the scrollbar and return.
-    InvalidateScrollbar();
+    InvalidateScrollbar(parts);
     CheckVerticalOverflow();
     MarkDirtyIfSelect();
     return NS_OK;
@@ -1429,7 +1437,7 @@ NS_IMETHODIMP nsTreeBodyFrame::RowCountChanged(PRInt32 aIndex, PRInt32 aCount)
     if (mTopRowIndex > aIndex) {
       // Rows came in above us.  Augment the top row index.
       mTopRowIndex += aCount;
-      UpdateScrollbar();
+      UpdateScrollbar(parts);
     }
   }
   else if (aCount < 0) {
@@ -1437,19 +1445,19 @@ NS_IMETHODIMP nsTreeBodyFrame::RowCountChanged(PRInt32 aIndex, PRInt32 aCount)
       // No need to invalidate. The remove happened
       // completely above us (offscreen).
       mTopRowIndex -= count;
-      UpdateScrollbar();
+      UpdateScrollbar(parts);
     }
     else if (mTopRowIndex >= aIndex) {
       // This is a full-blown invalidate.
       if (mTopRowIndex + mPageLength > mRowCount - 1) {
         mTopRowIndex = PR_MAX(0, mRowCount - 1 - mPageLength);
-        UpdateScrollbar();
+        UpdateScrollbar(parts);
       }
       Invalidate();
     }
   }
 
-  InvalidateScrollbar();
+  InvalidateScrollbar(parts);
   CheckVerticalOverflow();
   MarkDirtyIfSelect();
 
@@ -1473,11 +1481,13 @@ NS_IMETHODIMP nsTreeBodyFrame::EndUpdateBatch()
       PRInt32 countBeforeUpdate = mRowCount;
       mView->GetRowCount(&mRowCount);
       if (countBeforeUpdate != mRowCount) {
+        ScrollParts parts = GetScrollParts();
+
         if (mTopRowIndex + mPageLength > mRowCount - 1) {
           mTopRowIndex = PR_MAX(0, mRowCount - 1 - mPageLength);
-          UpdateScrollbar();
+          UpdateScrollbar(parts);
         }
-        InvalidateScrollbar();
+        InvalidateScrollbar(parts);
         CheckVerticalOverflow();
       }
     }
@@ -1623,29 +1633,27 @@ nsTreeBodyFrame::GetImage(PRInt32 aRowIndex, nsTreeColumn* aCol, PRBool aUseCont
     uri->GetSpec(spec);
     CopyUTF8toUTF16(spec, imageSrc);
   }
-  nsStringKey key(imageSrc);
 
-  if (mImageCache) {
-    // Look the image up in our cache.
-    nsCOMPtr<imgIRequest> imgReq = getter_AddRefs(NS_STATIC_CAST(imgIRequest*, mImageCache->Get(&key)));
-    if (imgReq) {
-      // Find out if the image has loaded.
-      PRUint32 status;
-      imgReq->GetImageStatus(&status);
-      imgReq->GetImage(aResult); // We hand back the image here.  The GetImage call addrefs *aResult.
-      PRUint32 numFrames = 1;
-      if (*aResult)
-        (*aResult)->GetNumFrames(&numFrames);
+  // Look the image up in our cache.
+  nsTreeImageCacheEntry entry;
+  if (mImageCache.Get(imageSrc, &entry)) {
+    // Find out if the image has loaded.
+    PRUint32 status;
+    imgIRequest *imgReq = entry.request;
+    imgReq->GetImageStatus(&status);
+    imgReq->GetImage(aResult); // We hand back the image here.  The GetImage call addrefs *aResult.
+    PRUint32 numFrames = 1;
+    if (*aResult)
+      (*aResult)->GetNumFrames(&numFrames);
 
-      if ((!(status & imgIRequest::STATUS_LOAD_COMPLETE)) || numFrames > 1) {
-        // We either aren't done loading, or we're animating. Add our row as a listener for invalidations.
-        nsCOMPtr<imgIDecoderObserver> obs;
-        imgReq->GetDecoderObserver(getter_AddRefs(obs));
-        nsCOMPtr<nsITreeImageListener> listener(do_QueryInterface(obs));
-        if (listener)
-          listener->AddCell(aRowIndex, aCol);
-        return NS_OK;
-      }
+    if ((!(status & imgIRequest::STATUS_LOAD_COMPLETE)) || numFrames > 1) {
+      // We either aren't done loading, or we're animating. Add our row as a listener for invalidations.
+      nsCOMPtr<imgIDecoderObserver> obs;
+      imgReq->GetDecoderObserver(getter_AddRefs(obs));
+      nsCOMPtr<nsITreeImageListener> listener(do_QueryInterface(obs));
+      if (listener)
+        listener->AddCell(aRowIndex, aCol);
+      return NS_OK;
     }
   }
 
@@ -1696,15 +1704,8 @@ nsTreeBodyFrame::GetImage(PRInt32 aRowIndex, nsTreeColumn* aCol, PRBool aUseCont
 
     // In a case it was already cached.
     imageRequest->GetImage(aResult);
-
-    if (!mImageCache) {
-      mImageCache = new nsSupportsHashtable(16);
-      if (!mImageCache)
-        return NS_ERROR_OUT_OF_MEMORY;
-    }
-    mImageCache->Put(&key, imageRequest);
-    imgIDecoderObserver* decoderObserverPtr = imgDecoderObserver;
-    NS_ADDREF(decoderObserverPtr);  // Will get released when we remove the cache entry.
+    nsTreeImageCacheEntry cacheEntry(imageRequest, imgDecoderObserver);
+    mImageCache.Put(imageSrc, cacheEntry);
   }
   return NS_OK;
 }
@@ -1893,9 +1894,13 @@ nsTreeBodyFrame::HandleEvent(nsPresContext* aPresContext,
     // Cache the drag session.
     nsCOMPtr<nsIDragService> dragService = 
              do_GetService("@mozilla.org/widget/dragservice;1");
-    nsCOMPtr<nsIDragSession> dragSession;
     dragService->GetCurrentSession(getter_AddRefs(mSlots->mDragSession));
     NS_ASSERTION(mSlots->mDragSession, "can't get drag session");
+
+    if (mSlots->mDragSession)
+      mSlots->mDragSession->GetDragAction(&mSlots->mDragAction);
+    else
+      mSlots->mDragAction = 0;
   }
   else if (aEvent->message == NS_DRAGDROP_OVER) {
     // The mouse is hovering over this tree. If we determine things are
@@ -1914,6 +1919,11 @@ nsTreeBodyFrame::HandleEvent(nsPresContext* aPresContext,
     PRInt32 lastDropRow = mSlots->mDropRow;
     PRInt16 lastDropOrient = mSlots->mDropOrient;
     PRInt16 lastScrollLines = mSlots->mScrollLines;
+
+    // Find out the current drag action
+    PRUint32 lastDragAction = mSlots->mDragAction;
+    if (mSlots->mDragSession)
+      mSlots->mDragSession->GetDragAction(&mSlots->mDragAction);
 
     // Compute the row mouse is over and the above/below/on state.
     // Below we'll use this to see if anything changed.
@@ -1949,7 +1959,10 @@ nsTreeBodyFrame::HandleEvent(nsPresContext* aPresContext,
 
     // If changed from last time, invalidate primary cell at the old location and if allowed, 
     // invalidate primary cell at the new location. If nothing changed, just bail.
-    if (mSlots->mDropRow != lastDropRow || mSlots->mDropOrient != lastDropOrient) {
+    if (mSlots->mDropRow != lastDropRow ||
+        mSlots->mDropOrient != lastDropOrient ||
+        mSlots->mDragAction != lastDragAction) {
+
       // Invalidate row at the old location.
       if (mSlots->mDropAllowed) {
         mSlots->mDropAllowed = PR_FALSE;
@@ -1990,7 +2003,7 @@ nsTreeBodyFrame::HandleEvent(nsPresContext* aPresContext,
         }
       }
     }
-  
+
     // Alert the drag session we accept the drop. We have to do this every time
     // since the |canDrop| attribute is reset before we're called.
     if (mSlots->mDropAllowed && mSlots->mDragSession)
@@ -3162,6 +3175,11 @@ nsTreeBodyFrame::PaintBackgroundLayer(nsStyleContext*      aStyleContext,
 // Scrolling
 NS_IMETHODIMP nsTreeBodyFrame::EnsureRowIsVisible(PRInt32 aRow)
 {
+  return EnsureRowIsVisibleInternal(GetScrollParts(), aRow);
+}
+
+nsresult nsTreeBodyFrame::EnsureRowIsVisibleInternal(const ScrollParts& aParts, PRInt32 aRow)
+{
   if (!mView)
     return NS_OK;
 
@@ -3169,11 +3187,11 @@ NS_IMETHODIMP nsTreeBodyFrame::EnsureRowIsVisible(PRInt32 aRow)
     return NS_OK;
 
   if (aRow < mTopRowIndex)
-    ScrollToRow(aRow);
+    ScrollToRowInternal(aParts, aRow);
   else {
     // Bring it just on-screen.
     PRInt32 distance = aRow - (mTopRowIndex+mPageLength)+1;
-    ScrollToRow(mTopRowIndex+distance);
+    ScrollToRowInternal(aParts, mTopRowIndex+distance);
   }
 
   return NS_OK;
@@ -3181,15 +3199,22 @@ NS_IMETHODIMP nsTreeBodyFrame::EnsureRowIsVisible(PRInt32 aRow)
 
 NS_IMETHODIMP nsTreeBodyFrame::ScrollToRow(PRInt32 aRow)
 {
-  ScrollInternal(aRow);
-  UpdateScrollbar();
+  return ScrollToRowInternal(GetScrollParts(), aRow);
+}
+
+nsresult nsTreeBodyFrame::ScrollToRowInternal(const ScrollParts& aParts, PRInt32 aRow)
+{
+  ScrollInternal(aParts, aRow);
+  UpdateScrollbar(aParts);
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
   // mac can't process the event loop during a drag, so if we're dragging,
   // grab the scroll widget and make it paint synchronously. This is
   // sorta slow (having to paint the entire tree), but it works.
-  if (mSlots && mSlots->mDragSession) {
-    nsIWidget* scrollWidget = mScrollbar->GetWindow();
+  if (mSlots && mSlots->mDragSession && aParts.mVScrollbar) {
+    nsIFrame* frame;
+    CallQueryInterface(aParts.mVScrollbar, &frame);
+    nsIWidget* scrollWidget = frame->GetWindow();
     if (scrollWidget)
       scrollWidget->Invalidate(PR_TRUE);
   }
@@ -3235,7 +3260,7 @@ NS_IMETHODIMP nsTreeBodyFrame::ScrollByPages(PRInt32 aNumPages)
 }
 
 nsresult
-nsTreeBodyFrame::ScrollInternal(PRInt32 aRow)
+nsTreeBodyFrame::ScrollInternal(const ScrollParts& aParts, PRInt32 aRow)
 {
   if (!mView)
     return NS_OK;
@@ -3284,24 +3309,30 @@ nsTreeBodyFrame::ScrollbarButtonPressed(nsISupports* aScrollbar, PRInt32 aOldInd
 NS_IMETHODIMP
 nsTreeBodyFrame::PositionChanged(nsISupports* aScrollbar, PRInt32 aOldIndex, PRInt32& aNewIndex)
 {
-  if (!EnsureScrollbar())
-    return NS_ERROR_UNEXPECTED;
+  ScrollParts parts = GetScrollParts();
 
-  float t2p = mPresContext->TwipsToPixels();
-  nscoord rh = NSToCoordRound((float)mRowHeight*t2p);
+  nsIScrollbarFrame* sf = nsnull;
+  CallQueryInterface(aScrollbar, &sf);
+  NS_ASSERTION(sf, "scrollbar has no frame");
 
-  nscoord oldrow = aOldIndex/rh;
-  nscoord newrow = aNewIndex/rh;
+  // Vertical Scrollbar
+  if (parts.mVScrollbar == sf) {
+    float t2p = mPresContext->TwipsToPixels();
+    nscoord rh = NSToCoordRound((float)mRowHeight*t2p);
 
-  if (oldrow != newrow)
-    ScrollInternal(newrow);
+    nscoord oldrow = aOldIndex/rh;
+    nscoord newrow = aNewIndex/rh;
 
-  // Go exactly where we're supposed to
-  // Update the scrollbar.
-  nsAutoString curPos;
-  curPos.AppendInt(aNewIndex);
-  mScrollbar->GetContent()->SetAttr(kNameSpaceID_None,
-                                    nsXULAtoms::curpos, curPos, PR_TRUE);
+    if (oldrow != newrow)
+      ScrollInternal(parts, newrow);
+
+    // Go exactly where we're supposed to
+    // Update the scrollbar.
+    nsAutoString curPos;
+    curPos.AppendInt(aNewIndex);
+    parts.mVScrollbarContent->SetAttr(kNameSpaceID_None,
+                                      nsXULAtoms::curpos, curPos, PR_TRUE);
+  }
 
   return NS_OK;
 }
@@ -3366,12 +3397,8 @@ NS_IMETHODIMP
 nsTreeBodyFrame::ClearStyleAndImageCaches()
 {
   mStyleCache.Clear();
-  if (mImageCache) {
-    mImageCache->Enumerate(CancelImageRequest);
-    delete mImageCache;
-  }
-  mImageCache = nsnull;
-  mScrollbar = nsnull;
+  mImageCache.EnumerateRead(CancelImageRequest, nsnull);
+  mImageCache.Clear();
   return NS_OK;
 }
 

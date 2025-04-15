@@ -49,8 +49,11 @@
  *          If null, there will be no referrer header and no security check.
  * @param postData Form POST data, or null.
  * @param event The triggering event (for the purpose of determining whether to open in the background), or null
+ * @param allowThirdPartyFixup if true, then we allow the URL text to be sent to third party
+ * services (e.g., Google's I Feel Lucky) for interpretation. This parameter may be undefined in
+ * which case it is treated as false.
  */ 
-function openNewTabWith(href, sourceURL, postData, event)
+function openNewTabWith(href, sourceURL, postData, event, allowThirdPartyFixup)
 {
   if (sourceURL)
     urlSecurityCheck(href, sourceURL);
@@ -82,10 +85,11 @@ function openNewTabWith(href, sourceURL, postData, event)
 
   var referrerURI = sourceURL ? makeURI(sourceURL) : null;
 
-  browser.loadOneTab(href, referrerURI, originCharset, postData, loadInBackground);
+  browser.loadOneTab(href, referrerURI, originCharset, postData, loadInBackground,
+                     allowThirdPartyFixup || false);
 }
 
-function openNewWindowWith(href, sourceURL, postData)
+function openNewWindowWith(href, sourceURL, postData, allowThirdPartyFixup)
 {
   if (sourceURL)
     urlSecurityCheck(href, sourceURL);
@@ -100,40 +104,40 @@ function openNewWindowWith(href, sourceURL, postData)
 
   var referrerURI = sourceURL ? makeURI(sourceURL) : null;
 
-  window.openDialog(getBrowserURL(), "_blank", "chrome,all,dialog=no", href, charsetArg, referrerURI, postData);
+  window.openDialog(getBrowserURL(), "_blank", "chrome,all,dialog=no",
+                    href, charsetArg, referrerURI, postData, allowThirdPartyFixup);
 }
 
 /**
- * urlSecurityCheck: JavaScript wrapper for CheckLoadURI.
+ * urlSecurityCheck: JavaScript wrapper for CheckLoadURIStr.
  * If |sourceURL| is not allowed to link to |url|, this function throws with an error message.
  *
  * @param url The URL a page has linked to.
  * @param sourceURL The URL of the document from which the URL came.
+ * @param flags Flags to be passed to checkLoadURIStr. If undefined,
+ *              nsIScriptSecurityManager.STANDARD will be passed to checkLoadURIStr.
  */
-function urlSecurityCheck(url, sourceURL)
+function urlSecurityCheck(url, sourceURL, flags)
 {
-  var sourceURI = makeURI(sourceURL);
-  var destURI = makeURI(url);
-
   const nsIScriptSecurityManager = Components.interfaces.nsIScriptSecurityManager;
   var secMan = Components.classes["@mozilla.org/scriptsecuritymanager;1"]
                          .getService(nsIScriptSecurityManager);
+  if (flags === undefined)
+    flags = nsIScriptSecurityManager.STANDARD;
+
   try {
-    secMan.checkLoadURI(sourceURI, destURI, nsIScriptSecurityManager.STANDARD);
+    secMan.checkLoadURIStr(sourceURL, url, flags);
   } catch (e) {
     throw "Load of " + url + " from " + sourceURL + " denied.";
   }
 }
 
 function webPanelSecurityCheck(aSourceURL, aDestURL) {
-  var sourceURI = makeURI(aSourceURL);
-  var destURI = makeURI(aDestURL);
-
   const nsIScriptSecurityManager = Components.interfaces.nsIScriptSecurityManager;
   var secMan = Components.classes["@mozilla.org/scriptsecuritymanager;1"]
                          .getService(nsIScriptSecurityManager);
   try {
-    secMan.checkLoadURI(sourceURI, destURI, nsIScriptSecurityManager.STANDARD);
+    secMan.checkLoadURIStr(aSourceURL, aDestURL, nsIScriptSecurityManager.STANDARD);
   } catch (e) {
     return false;
   }
@@ -282,7 +286,13 @@ function internalSave(aURL, aDocument, aDefaultFileName, aContentDisposition,
   if (aChosenData)
     file = aChosenData.file;
   else {
-    initFileInfo(fileInfo, aURL, aDocument, aContentType, aContentDisposition);
+    var charset = null;
+    if (aDocument)
+      charset = aDocument.characterSet;
+    else if (aReferrer)
+      charset = aReferrer.originCharset;
+    initFileInfo(fileInfo, aURL, charset, aDocument,
+                 aContentType, aContentDisposition);
     var fpParams = {
       fpTitleKey: aFilePickerTitleKey,
       isDocument: isDocument,
@@ -422,19 +432,20 @@ function FileInfo(aSuggestedFileName, aFileName, aFileBaseName, aFileExt, aUri) 
  * for confirmation in the file picker dialog.
  * @param aFI A FileInfo structure into which we'll put the results of this method.
  * @param aURL The String representation of the URL of the document being saved
+ * @param aURLCharset The charset of aURL.
  * @param aDocument The document to be saved
  * @param aContentType The content type we're saving, if it could be
  *        determined by the caller.
  * @param aContentDisposition The content-disposition header for the object
  *        we're saving, if it could be determined by the caller.
  */
-function initFileInfo(aFI, aURL, aDocument, aContentType, aContentDisposition)
+function initFileInfo(aFI, aURL, aURLCharset, aDocument,
+                      aContentType, aContentDisposition)
 {
-  var docCharset = (aDocument ? aDocument.characterSet : null);
   try {
     // Get an nsIURI object from aURL if possible:
     try {
-      aFI.uri = makeURI(aURL, docCharset);
+      aFI.uri = makeURI(aURL, aURLCharset);
       // Assuming nsiUri is valid, calling QueryInterface(...) on it will
       // populate extra object fields (eg filename and file extension).
       var url = aFI.uri.QueryInterface(Components.interfaces.nsIURL);

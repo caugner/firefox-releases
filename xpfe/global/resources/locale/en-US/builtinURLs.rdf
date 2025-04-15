@@ -58,14 +58,14 @@
 
   <RDF:Description about='urn:clienturl:viewmenu:intlwebcontent'>
     <NC:title>International Languages and Web Content</NC:title>
-    <NC:content>http://www.mozilla.org/projects/l10n/mlp_status.html#contrib</NC:content>
+    <NC:content>http://www.mozilla.org/projects/seamonkey/releases/#l10n</NC:content>
   </RDF:Description>
 
   <!-- Composer -->
 
   <RDF:Description about='urn:clienturl:composer:spellcheckers'>
     <NC:title>Spellcheckers</NC:title>
-    <NC:content>http://dictionaries.mozdev.org/installation.html</NC:content>
+    <NC:content>https://addons.mozilla.org/en-US/seamonkey/1.1/dictionaries/</NC:content>
   </RDF:Description>
 
 </RDF:RDF>

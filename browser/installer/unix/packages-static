@@ -26,6 +26,7 @@ bin/defaults/profile/search.rdf
 bin/defaults/profile/mimeTypes.rdf
 bin/defaults/profile/chrome/*
 bin/updater.ini
+bin/dictionaries/*
 
 [xpcom]
 bin/libmozjs.so
@@ -58,6 +59,8 @@ bin/components/autocomplete.xpt
 bin/components/autoconfig.xpt
 bin/components/bookmarks.xpt
 bin/components/browsercompsbase.xpt
+bin/components/browsersearch.xpt
+bin/components/browser-feeds.xpt
 bin/components/caps.xpt
 bin/components/chardet.xpt
 bin/components/chrome.xpt
@@ -81,6 +84,8 @@ bin/components/dom_css.xpt
 bin/components/dom_events.xpt
 bin/components/dom_html.xpt
 bin/components/dom_range.xpt
+bin/components/dom_sidebar.xpt
+bin/components/dom_storage.xpt
 bin/components/dom_stylesheets.xpt
 bin/components/dom_traversal.xpt
 bin/components/dom_views.xpt
@@ -93,6 +98,7 @@ bin/components/editor.xpt
 bin/components/embed_base.xpt
 bin/components/exthandler.xpt
 bin/components/fastfind.xpt
+bin/components/feeds.xpt
 bin/components/filepicker.xpt
 bin/components/find.xpt
 bin/components/gfx.xpt
@@ -110,8 +116,10 @@ bin/components/layout_base.xpt
 bin/components/layout_printing.xpt
 bin/components/layout_xul_tree.xpt
 bin/components/layout_xul.xpt
+bin/components/inspector.xpt
 bin/components/locale.xpt
 bin/components/lwbrk.xpt
+bin/components/microsummaries.xpt
 bin/components/migration.xpt
 bin/components/mimetype.xpt
 bin/components/mozbrwsr.xpt
@@ -132,6 +140,7 @@ bin/components/necko_viewsource.xpt
 bin/components/necko.xpt
 bin/components/oji.xpt
 bin/components/passwordmgr.xpt
+bin/components/places.xpt
 bin/components/plugin.xpt
 bin/components/prefetch.xpt
 bin/components/pref.xpt
@@ -140,9 +149,10 @@ bin/components/proxyObjInst.xpt
 bin/components/toolkitremote.xpt
 bin/components/rdf.xpt
 bin/components/satchel.xpt
+bin/components/saxparser.xpt
 bin/components/search.xpt
 bin/components/shistory.xpt
-bin/components/sidebar.xpt
+bin/components/storage.xpt
 bin/components/profile.xpt
 bin/components/toolkitprofile.xpt
 bin/components/txtsvc.xpt
@@ -174,9 +184,16 @@ bin/components/xuldoc.xpt
 bin/components/xultmpl.xpt
 bin/components/shellservice.xpt
 ; JavaScript components
+bin/components/FeedProcessor.js
+bin/components/FeedConverter.js
+bin/components/FeedWriter.js
+bin/components/WebContentConverter.js
 bin/components/nsBrowserContentHandler.js
 bin/components/nsBrowserGlue.js
 bin/components/nsSetDefaultBrowser.js
+bin/components/nsMicrosummaryService.js
+bin/components/nsSearchService.js
+bin/components/nsSearchSuggestions.js
 bin/components/jsconsole-clhandler.js
 bin/components/nsCloseAllWindows.js
 bin/components/nsDictionary.js
@@ -193,6 +210,20 @@ bin/components/nsExtensionManager.js
 bin/components/nsUpdateService.js
 bin/components/extensions.xpt
 bin/components/update.xpt
+bin/components/nsBookmarkTransactionManager.js
+bin/components/nsSessionStartup.js
+bin/components/nsSessionStore.js
+bin/components/sessionstore.xpt
+bin/components/nsURLFormatter.js
+bin/components/urlformatter.xpt
+
+; Safe Browsing
+bin/components/nsSafebrowsingApplication.js
+bin/components/safebrowsing.xpt
+bin/components/nsUrlClassifierListManager.js
+bin/components/nsUrlClassifierLib.js
+bin/components/nsUrlClassifierTable.js
+bin/components/url-classifier.xpt
 
 ; Kerberos NegotiateAuth
 bin/components/libauth.so
@@ -223,6 +254,7 @@ bin/icons/*.png
 ; [Default Preferences]
 ; All the pref files must be part of base to prevent migration bugs
 bin/defaults/pref/firefox.js
+bin/defaults/pref/firefox-branding.js
 bin/defaults/pref/channel-prefs.js
 bin/greprefs/all.js
 bin/greprefs/security-prefs.js
@@ -278,6 +310,11 @@ bin/res/entityTables/*
 bin/res/svg.css
 bin/components/dom_svg.xpt
 
+; spellchecker (may not be present)
+bin/components/libmyspell.so
+bin/components/spellchecker.xpt
+bin/components/libspellchecker.so
+
 ; [Personal Security Manager]
 ;
 bin/libnssckbi.so
@@ -288,6 +325,8 @@ bin/libnss3.so
 bin/libsmime3.so
 bin/libsoftokn3.chk
 bin/libsoftokn3.so
+bin/libfreebl3.chk
+bin/libfreebl3.so
 bin/libssl3.so
 bin/chrome/pipnss.jar
 bin/chrome/pippki.jar
@@ -306,8 +345,6 @@ bin/components/libauth.so
 [adt]
 bin/extensions/inspector@mozilla.org/install.rdf
 bin/extensions/inspector@mozilla.org/components/inspector-cmdline.js
-bin/extensions/inspector@mozilla.org/components/libinspector.so
-bin/extensions/inspector@mozilla.org/components/inspector.xpt
 bin/extensions/inspector@mozilla.org/chrome.manifest
 bin/extensions/inspector@mozilla.org/chrome/inspector.jar
 bin/extensions/inspector@mozilla.org/defaults/preferences/inspector.js
@@ -318,6 +355,7 @@ bin/extensions/inspector@mozilla.org/defaults/preferences/inspector.js
 [talkback]
 bin/README.txt,bin/readme.txt
 bin/extensions/talkback@mozilla.org/install.rdf
+bin/extensions/talkback@mozilla.org/chrome.manifest
 bin/extensions/talkback@mozilla.org/components/libqfaservices.so
 bin/extensions/talkback@mozilla.org/components/qfaservices.xpt
 bin/extensions/talkback@mozilla.org/components/talkback/*

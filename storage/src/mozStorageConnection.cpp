@@ -21,6 +21,7 @@
  *
  * Contributor(s):
  *   Vladimir Vukicevic <vladimir.vukicevic@oracle.com>
+ *   Brett Wilson <brettw@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -39,12 +40,12 @@
 #include <stdio.h>
 
 #include "nsError.h"
-#include "nsArray.h"
 #include "nsIFile.h"
 
 #include "mozIStorageFunction.h"
 
 #include "mozStorageConnection.h"
+#include "mozStorageService.h"
 #include "mozStorageStatement.h"
 #include "mozStorageValueArray.h"
 
@@ -57,8 +58,9 @@ PRLogModuleInfo* gStorageLog = nsnull;
 
 NS_IMPL_ISUPPORTS1(mozStorageConnection, mozIStorageConnection)
 
-mozStorageConnection::mozStorageConnection()
-    : mDBConn(nsnull), mTransactionInProgress(PR_FALSE)
+mozStorageConnection::mozStorageConnection(mozIStorageService* aService)
+    : mDBConn(nsnull), mTransactionInProgress(PR_FALSE),
+      mStorageService(aService)
 {
     
 }
@@ -70,7 +72,31 @@ mozStorageConnection::~mozStorageConnection()
         if (srv != SQLITE_OK) {
             NS_WARNING("sqlite3_close failed.  There are probably outstanding statements!");
         }
+
+        // make sure it really got closed
+        ((mozStorageService*)(mStorageService.get()))->FlushAsyncIO();
     }
+}
+
+// convert a sqlite srv to an nsresult
+static nsresult
+ConvertResultCode (int srv)
+{
+    switch (srv) {
+        case SQLITE_OK:
+            return NS_OK;
+        case SQLITE_CORRUPT:
+        case SQLITE_NOTADB:
+            return NS_ERROR_FILE_CORRUPTED;
+        case SQLITE_PERM:
+        case SQLITE_CANTOPEN:
+            return NS_ERROR_FILE_ACCESS_DENIED;
+        case SQLITE_BUSY:
+            return NS_ERROR_FILE_IS_LOCKED;
+    }
+
+    // generic error
+    return NS_ERROR_FAILURE;
 }
 
 #ifdef PR_LOGGING
@@ -80,27 +106,33 @@ void tracefunc (void *closure, const char *stmt)
 }
 #endif
 
+/**
+ * Actually creates the connection from the DB. Called by mozStorageService.
+ * You can pass a NULL database file in to get an sqlite in-memory database.
+ */
 NS_IMETHODIMP
 mozStorageConnection::Initialize(nsIFile *aDatabaseFile)
 {
-    NS_ENSURE_ARG_POINTER(aDatabaseFile);
-
     NS_ASSERTION (!mDBConn, "Initialize called on already opened database!");
 
     int srv;
     nsresult rv;
 
-    rv = aDatabaseFile->GetNativeLeafName(mDatabaseName);
-    NS_ENSURE_SUCCESS(rv, rv);
+    mDatabaseFile = aDatabaseFile;
 
-    nsCAutoString nativePath;
-    rv = aDatabaseFile->GetNativePath(nativePath);
-    NS_ENSURE_SUCCESS(rv, rv);
+    if (aDatabaseFile) {
+        nsAutoString path;
+        rv = aDatabaseFile->GetPath(path);
+        NS_ENSURE_SUCCESS(rv, rv);
 
-    srv = sqlite3_open (nativePath.get(), &mDBConn);
+        srv = sqlite3_open (NS_ConvertUTF16toUTF8(path).get(), &mDBConn);
+    } else {
+        // in memory database requested, sqlite uses a magic file name
+        srv = sqlite3_open (":memory:", &mDBConn);
+    }
     if (srv != SQLITE_OK) {
         mDBConn = nsnull;
-        return NS_ERROR_FAILURE; // XXX error code
+        return ConvertResultCode(srv);
     }
 
 #ifdef PR_LOGGING
@@ -110,7 +142,36 @@ mozStorageConnection::Initialize(nsIFile *aDatabaseFile)
     sqlite3_trace (mDBConn, tracefunc, nsnull);
 #endif
 
-    rv = NS_NewArray(getter_AddRefs(mFunctions));
+    /* Execute a dummy statement to force the db open, and to verify
+     * whether it's valid or not
+     */
+    sqlite3_stmt *stmt = nsnull;
+    nsCString query("SELECT * FROM sqlite_master");
+    srv = sqlite3_prepare (mDBConn, query.get(), query.Length(), &stmt, nsnull);
+ 
+    if (srv == SQLITE_OK) {
+        srv = sqlite3_step(stmt);
+ 
+        if (srv == SQLITE_DONE || srv == SQLITE_ROW)
+            srv = SQLITE_OK;
+    } else {
+        stmt = nsnull;
+    }
+
+    if (stmt != nsnull)
+        sqlite3_finalize (stmt);
+ 
+    if (srv != SQLITE_OK) {
+        sqlite3_close (mDBConn);
+        mDBConn = nsnull;
+
+        // make sure it really got closed
+        ((mozStorageService*)(mStorageService.get()))->FlushAsyncIO();
+
+        return ConvertResultCode(srv);
+    }
+
+    mFunctions = do_CreateInstance(NS_ARRAY_CONTRACTID, &rv);
     if (NS_FAILED(rv)) return rv;
 
     return NS_OK;
@@ -132,11 +193,11 @@ mozStorageConnection::GetConnectionReady(PRBool *aConnectionReady)
 }
 
 NS_IMETHODIMP
-mozStorageConnection::GetDatabaseName(nsACString& aDatabaseName)
+mozStorageConnection::GetDatabaseFile(nsIFile **aFile)
 {
     NS_ASSERTION(mDBConn, "connection not initialized");
 
-    aDatabaseName = mDatabaseName;
+    NS_IF_ADDREF(*aFile = mDatabaseFile);
 
     return NS_OK;
 }
@@ -190,7 +251,7 @@ mozStorageConnection::CreateStatement(const nsACString& aSQLStatement,
     nsresult rv = statement->Initialize (this, aSQLStatement);
     if (NS_FAILED(rv)) {
         NS_RELEASE(statement);
-        return NS_ERROR_FAILURE; // XXX error code
+        return rv;
     }
 
     *_retval = statement;
@@ -206,7 +267,7 @@ mozStorageConnection::ExecuteSimpleSQL(const nsACString& aSQLStatement)
                             NULL, NULL, NULL);
     if (srv != SQLITE_OK) {
         HandleSqliteError(nsPromiseFlatCString(aSQLStatement).get());
-        return NS_ERROR_FAILURE; // XXX error code
+        return ConvertResultCode(srv);
     }
 
     return NS_OK;
@@ -225,7 +286,7 @@ mozStorageConnection::TableExists(const nsACString& aSQLStatement, PRBool *_retv
     int srv = sqlite3_prepare (mDBConn, query.get(), query.Length(), &stmt, nsnull);
     if (srv != SQLITE_OK) {
         HandleSqliteError(query.get());
-        return NS_ERROR_FAILURE; // XXX error code
+        return ConvertResultCode(srv);
     }
 
     PRBool exists = PR_FALSE;
@@ -247,12 +308,48 @@ mozStorageConnection::TableExists(const nsACString& aSQLStatement, PRBool *_retv
     return NS_OK;
 }
 
+NS_IMETHODIMP
+mozStorageConnection::IndexExists(const nsACString& aIndexName, PRBool* _retval)
+{
+    NS_ENSURE_ARG_POINTER(mDBConn);
+
+    nsCString query("SELECT name FROM sqlite_master WHERE type = 'index' AND name ='");
+    query.Append(aIndexName);
+    query.AppendLiteral("'");
+
+    sqlite3_stmt *stmt = nsnull;
+    int srv = sqlite3_prepare(mDBConn, query.get(), query.Length(), &stmt, nsnull);
+    if (srv != SQLITE_OK) {
+        HandleSqliteError(query.get());
+        return ConvertResultCode(srv);
+    }
+
+    PRBool exists = PR_FALSE;
+
+    srv = sqlite3_step(stmt);
+    // we just care about the return value from step
+    sqlite3_finalize(stmt);
+
+    if (srv == SQLITE_ROW) {
+        exists = PR_TRUE;
+    } else if (srv == SQLITE_DONE) {
+        exists = PR_FALSE;
+    } else if (srv == SQLITE_ERROR) {
+        HandleSqliteError("IndexExists finalize");
+        return NS_ERROR_FAILURE;
+    }
+
+    *_retval = exists;
+    return NS_OK;
+}
+
+
 /**
  ** Transactions
  **/
 
 NS_IMETHODIMP
-mozStorageConnection::GetTransactionInProgress(PRInt32 *_retval)
+mozStorageConnection::GetTransactionInProgress(PRBool *_retval)
 {
     *_retval = mTransactionInProgress;
     return NS_OK;
@@ -268,6 +365,30 @@ mozStorageConnection::BeginTransaction()
     if (NS_SUCCEEDED(rv))
         mTransactionInProgress = PR_TRUE;
     return rv;
+}
+
+NS_IMETHODIMP
+mozStorageConnection::BeginTransactionAs(PRInt32 aTransactionType)
+{
+    if (mTransactionInProgress)
+        return NS_ERROR_FAILURE; // XXX error code
+    nsresult rv;
+    switch(aTransactionType) {
+        case TRANSACTION_DEFERRED:
+            rv = ExecuteSimpleSQL(NS_LITERAL_CSTRING("BEGIN DEFERRED"));
+            break;
+        case TRANSACTION_IMMEDIATE:
+            rv = ExecuteSimpleSQL(NS_LITERAL_CSTRING("BEGIN IMMEDIATE"));
+            break;
+        case TRANSACTION_EXCLUSIVE:
+            rv = ExecuteSimpleSQL(NS_LITERAL_CSTRING("BEGIN EXCLUSIVE"));
+            break;
+        default:
+            return NS_ERROR_ILLEGAL_VALUE;
+    }
+    if (NS_SUCCEEDED(rv))
+        mTransactionInProgress = PR_TRUE;
+    return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -312,14 +433,11 @@ mozStorageConnection::CreateTable(/*const nsID& aID,*/
 
     PR_smprintf_free(buf);
 
-    if (srv != SQLITE_OK) {
-        return NS_ERROR_FAILURE; // XXX SQL_ERROR_TABLE_EXISTS
-    }
-    return NS_OK;
+    return ConvertResultCode(srv);
 }
 
 /**
- ** Functions and Triggers
+ ** Functions
  **/
 
 static void
@@ -327,8 +445,6 @@ mozStorageSqlFuncHelper (sqlite3_context *ctx,
                          int argc,
                          sqlite3_value **argv)
 {
-    fprintf (stderr, "mozStorageSqlFuncHelper: %p %d %p\n", ctx, argc, argv);
-
     void *userData = sqlite3_user_data (ctx);
     // We don't want to QI here, because this will be called a -lot-
     mozIStorageFunction *userFunction = NS_STATIC_CAST(mozIStorageFunction *, userData);
@@ -366,7 +482,7 @@ mozStorageConnection::CreateFunction(const char *aFunctionName,
                                        nsnull);
     if (srv != SQLITE_OK) {
         HandleSqliteError(nsnull);
-        return NS_ERROR_FAILURE;
+        return ConvertResultCode(srv);
     }
 
     rv = mFunctions->AppendElement (aFunction, PR_FALSE);
@@ -375,66 +491,15 @@ mozStorageConnection::CreateFunction(const char *aFunctionName,
     return NS_OK;
 }
 
-NS_IMETHODIMP
-mozStorageConnection::CreateTrigger(const char *aTriggerName,
-                                    PRInt32 aTriggerType,
-                                    const char *aTableName,
-                                    const char *aTriggerFunction,
-                                    const char *aParameters)
+/**
+ * Mozilla-specific sqlite function to preload the DB into the cache. See the
+ * IDL and sqlite3.h
+ */
+nsresult
+mozStorageConnection::Preload()
 {
-#if 0
-    nsresult rv;
-
-    /* We don't need to split this until we need to generate
-     * our own IPC trigger
-     */
-    nsCStringArray *cstr = new nsCStringArray();
-    if (!cstr)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    rv = cstr->ParseString (aParameters, ",");
-    if (NS_FAILED(rv)) return rv;
-#endif
-
-    char *event = nsnull;
-    if (aTriggerType == TRIGGER_EVENT_DELETE)
-        event = "DELETE";
-    else if (aTriggerType == TRIGGER_EVENT_INSERT)
-        event = "INSERT";
-    else if (aTriggerType == TRIGGER_EVENT_UPDATE)
-        event = "UPDATE";
-    else
-        return NS_ERROR_FAILURE;
-
-    char *sql = PR_sprintf_append
-        (nsnull,
-         "CREATE TEMPORARY TRIGGER %s AFTER %s ON %s FOR EACH ROW BEGIN SELECT %s(%s); END;",
-         aTriggerName,
-         event,
-         aTableName,
-         aTriggerFunction,
-         aParameters);
-    if (!sql)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    /* Now create the trigger */
-    int srv = sqlite3_exec (mDBConn,
-                            sql,
-                            nsnull,
-                            nsnull,
-                            nsnull);
-    if (srv != SQLITE_OK) {
-        HandleSqliteError(nsnull);
-        return NS_ERROR_FAILURE;
-    }
-
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-mozStorageConnection::RemoveTrigger(const char *aTriggerName)
-{
-    return NS_ERROR_NOT_IMPLEMENTED;
+  int srv = sqlite3Preload(mDBConn);
+  return ConvertResultCode(srv);
 }
 
 /**

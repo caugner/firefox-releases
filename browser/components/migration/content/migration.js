@@ -49,7 +49,8 @@ var MigrationWizard = {
 
   init: function ()
   {
-    var os = Components.classes["@mozilla.org/observer-service;1"].getService(Components.interfaces.nsIObserverService);
+    var os = Components.classes["@mozilla.org/observer-service;1"]
+                       .getService(Components.interfaces.nsIObserverService);
     os.addObserver(this, "Migration:Started", false);
     os.addObserver(this, "Migration:ItemBeforeMigrate", false);
     os.addObserver(this, "Migration:ItemAfterMigrate", false);
@@ -75,7 +76,8 @@ var MigrationWizard = {
 
   uninit: function ()
   {
-    var os = Components.classes["@mozilla.org/observer-service;1"].getService(Components.interfaces.nsIObserverService);
+    var os = Components.classes["@mozilla.org/observer-service;1"]
+                       .getService(Components.interfaces.nsIObserverService);
     os.removeObserver(this, "Migration:Started");
     os.removeObserver(this, "Migration:ItemBeforeMigrate");
     os.removeObserver(this, "Migration:ItemAfterMigrate");
@@ -85,14 +87,14 @@ var MigrationWizard = {
   // 1 - Import Source
   onImportSourcePageShow: function ()
   {
-    //XXXquark This function is called before init, so check for bookmarks here
-    if("arguments" in window && window.arguments[0] == "bookmarks")
-    {
-      this._bookmarks = true;
-    }
+    // Reference to the "From File" radio button 
+    var fromfile = null;
 
-    if(this._bookmarks) {
-      var fromfile = document.getElementById("fromfile");
+    //XXXquark This function is called before init, so check for bookmarks here
+    if ("arguments" in window && window.arguments[0] == "bookmarks") {
+      this._bookmarks = true;
+
+      fromfile = document.getElementById("fromfile");
       fromfile.hidden = false;
 
       var importBookmarks = document.getElementById("importBookmarks");
@@ -103,7 +105,11 @@ var MigrationWizard = {
     }
 
     this._wiz.canRewind = false;
-    
+
+    // The migrator to select. If the "fromfile" migrator is available, use it
+    // as the default in case we have no other migrators.
+    var selectedMigrator = fromfile;
+
     // Figure out what source apps are are available to import from:
     var group = document.getElementById("importSourceGroup");
     for (var i = 0; i < group.childNodes.length; ++i) {
@@ -117,29 +123,31 @@ var MigrationWizard = {
           dump("*** invalid contractID =" + contractID + "\n");
           return;
         }
-        if (!migrator.sourceExists || (suffix == "phoenix" && !this._autoMigrate))
+
+        if (migrator.sourceExists &&
+            !(suffix == "phoenix" && !this._autoMigrate)) {
+          // Save this as the first selectable item, if we don't already have
+          // one, or if it is the migrator that was passed to us.
+          if (!selectedMigrator || this._source == suffix)
+            selectedMigrator = group.childNodes[i];
+        } else {
+          // Hide this option
           group.childNodes[i].hidden = true;
-      }
-    }
-    
-    var firstSelectable = null;
-    for (var i = 0; i < group.childNodes.length; ++i) {
-      if (!group.childNodes[i].disabled && !group.childNodes[i].hidden) {
-        firstSelectable = group.childNodes[i];
-        break;
+        }
       }
     }
 
-    if (this._source) {
-      // Somehow the Profile Migrator got confused, and gave us a migrate source
-      // that doesn't actually exist. This could be because of a bogus registry
-      // state. Set the _source property to null so the first visible item in
-      // the list is selected instead. 
-      var source = document.getElementById(this._source);
-      if (source.hidden)
-        this._source = null;
+    if (selectedMigrator)
+      group.selectedItem = selectedMigrator;
+    else {
+      // We didn't find a migrator, notify the user
+      document.getElementById("noSources").hidden = false;
+
+      this._wiz.canAdvance = false;
+
+      document.getElementById("importBookmarks").hidden = true;
+      document.getElementById("importAll").hidden = true;
     }
-    group.selectedItem = !this._source ? firstSelectable : document.getElementById(this._source);
   },
   
   onImportSourcePageAdvanced: function ()
@@ -249,7 +257,7 @@ var MigrationWizard = {
       }
     }
   },
-  
+
   onImportItemsPageRewound: function ()
   {
     this._wiz.canAdvance = true;
@@ -462,29 +470,22 @@ var MigrationWizard = {
       if (this._autoMigrate) {
         if (this._newHomePage) {
           try {
-            var prefSvc2 = Components.classes["@mozilla.org/preferences-service;1"]
-                                     .getService(Components.interfaces.nsIPrefService);
-
-            const nsIDirectoryServiceContractID = "@mozilla.org/file/directory_service;1";
-            const nsIProperties = Components.interfaces.nsIProperties;
-            var directoryService =  Components.classes[nsIDirectoryServiceContractID]
-                                          .getService(nsIProperties);
-            var prefFile = directoryService.get("ProfDS", Components.interfaces.nsIFile);
-            prefFile.append("prefs.js");
-
-            prefSvc2.resetPrefs();
-            prefSvc2.readUserPrefs(prefFile);
-
             // set homepage properly
             var prefSvc = Components.classes["@mozilla.org/preferences-service;1"]
-                                    .getService(Components.interfaces.nsIPrefBranch);
+                                    .getService(Components.interfaces.nsIPrefService);
+            var prefBranch = prefSvc.getBranch(null);
             var str = Components.classes["@mozilla.org/supports-string;1"]
                                 .createInstance(Components.interfaces.nsISupportsString);
             str.data = this._newHomePage;
-            prefSvc.setComplexValue("browser.startup.homepage",
-                                    Components.interfaces.nsISupportsString, str);
-            prefSvc2.savePrefFile(prefFile);
+            prefBranch.setComplexValue("browser.startup.homepage",
+                                       Components.interfaces.nsISupportsString,
+                                       str);
 
+            var dirSvc = Components.classes["@mozilla.org/file/directory_service;1"]
+                                   .getService(Components.interfaces.nsIProperties);
+            var prefFile = dirSvc.get("ProfDS", Components.interfaces.nsIFile);
+            prefFile.append("prefs.js");
+            prefSvc.savePrefFile(prefFile);
           } catch(ex) { 
             dump(ex); 
           }

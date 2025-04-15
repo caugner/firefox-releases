@@ -21,6 +21,7 @@
  *
  * Contributor(s):
  *  Darin Fisher <darin@meer.net>
+ *  Ben Turner <mozilla@songbirdnest.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -50,6 +51,11 @@
 #include "nsPrintfCString.h"
 #include "prproces.h"
 #include "prlog.h"
+
+#ifdef XP_MACOSX
+#include "nsILocalFileMac.h"
+#include "nsCommandLineServiceMac.h"
+#endif
 
 #if defined(XP_WIN)
 # include <direct.h>
@@ -119,6 +125,48 @@ GetCurrentWorkingDir(char *buf, size_t size)
 #endif
   return NS_OK;
 }
+
+#if defined(MOZ_XULRUNNER) && defined(XP_MACOSX)
+
+// This is a copy of OS X's XRE_GetBinaryPath from nsAppRunner.cpp with the
+// gBinaryPath check removed so that the updater can reload the stub executable
+// instead of xulrunner-bin. See bug 349737.
+static nsresult
+GetXULRunnerStubPath(const char* argv0, nsILocalFile* *aResult)
+{
+  nsresult rv;
+  nsCOMPtr<nsILocalFile> lf;
+
+  NS_NewNativeLocalFile(EmptyCString(), PR_TRUE, getter_AddRefs(lf));
+  nsCOMPtr<nsILocalFileMac> lfm (do_QueryInterface(lf));
+  if (!lfm)
+    return NS_ERROR_FAILURE;
+
+  // Works even if we're not bundled.
+  CFBundleRef appBundle = CFBundleGetMainBundle();
+  if (!appBundle)
+    return NS_ERROR_FAILURE;
+
+  CFURLRef bundleURL = CFBundleCopyExecutableURL(appBundle);
+  if (!bundleURL)
+    return NS_ERROR_FAILURE;
+
+  FSRef fileRef;
+  if (!CFURLGetFSRef(bundleURL, &fileRef)) {
+    CFRelease(bundleURL);
+    return NS_ERROR_FAILURE;
+  }
+
+  rv = lfm->InitWithFSRef(&fileRef);
+  CFRelease(bundleURL);
+
+  if (NS_FAILED(rv))
+    return rv;
+
+  NS_ADDREF(*aResult = lf);
+  return NS_OK;
+}
+#endif /* MOZ_XULRUNNER && XP_MACOSX */
 
 PR_STATIC_CALLBACK(int)
 ScanDirComparator(nsIFile *a, nsIFile *b, void *unused)
@@ -257,7 +305,7 @@ CopyUpdaterIntoUpdateDir(nsIFile *appDir, nsIFile *updateDir,
     if (NS_FAILED(rv))
       return PR_FALSE;
     rv = file->CopyToNative(updateDir, EmptyCString());
-    if (NS_FAILED(rv))
+    if (*leafName != kUpdaterINI && NS_FAILED(rv))
       return PR_FALSE;
   }
   
@@ -277,16 +325,16 @@ CopyUpdaterIntoUpdateDir(nsIFile *appDir, nsIFile *updateDir,
 }
 
 static void
-ApplyUpdate(nsIFile *appDir, nsIFile *updateDir, nsILocalFile *statusFile,
-            int appArgc, char **appArgv)
+ApplyUpdate(nsIFile *greDir, nsIFile *updateDir, nsILocalFile *statusFile,
+            nsIFile *appDir, int appArgc, char **appArgv)
 {
   // Steps:
   //  - mark update as 'applying'
   //  - copy updater into update dir
-  //  - run updater w/ app dir as the current working dir
+  //  - run updater w/ appDir as the current working dir
 
   nsCOMPtr<nsIFile> updater;
-  if (!CopyUpdaterIntoUpdateDir(appDir, updateDir, updater)) {
+  if (!CopyUpdaterIntoUpdateDir(greDir, updateDir, updater)) {
     LOG(("failed copying updater\n"));
     return;
   }
@@ -294,7 +342,15 @@ ApplyUpdate(nsIFile *appDir, nsIFile *updateDir, nsILocalFile *statusFile,
   // We need to use the value returned from XRE_GetBinaryPath when attempting
   // to restart the running application.
   nsCOMPtr<nsILocalFile> appFile;
+
+#if defined(MOZ_XULRUNNER) && defined(XP_MACOSX)
+  // On OS X we need to pass the location of the xulrunner-stub executable
+  // rather than xulrunner-bin. See bug 349737.
+  GetXULRunnerStubPath(appArgv[0], getter_AddRefs(appFile));
+#else
   XRE_GetBinaryPath(appArgv[0], getter_AddRefs(appFile));
+#endif
+
   if (!appFile)
     return;
   nsCAutoString appFilePath;
@@ -307,10 +363,11 @@ ApplyUpdate(nsIFile *appDir, nsIFile *updateDir, nsILocalFile *statusFile,
   if (NS_FAILED(rv))
     return;
 
-  nsCAutoString appDirPath;
+  // Get the directory to which the update will be applied. On Mac OSX we need
+  // to apply the update to the Foo.app directory which is the parent of the
+  // parent of the appDir. On other platforms we will just apply to the appDir.
+  nsCAutoString applyToDir;
 #if defined(XP_MACOSX)
-  // On Mac OSX, we need to apply the update to the Contents directory
-  // which is the parent of the parent of the appDir.
   {
     nsCOMPtr<nsIFile> parentDir1, parentDir2;
     rv = appDir->GetParent(getter_AddRefs(parentDir1));
@@ -319,10 +376,10 @@ ApplyUpdate(nsIFile *appDir, nsIFile *updateDir, nsILocalFile *statusFile,
     rv = parentDir1->GetParent(getter_AddRefs(parentDir2));
     if (NS_FAILED(rv))
       return;
-    rv = parentDir2->GetNativePath(appDirPath);
+    rv = parentDir2->GetNativePath(applyToDir);
   }
 #else
-  rv = appDir->GetNativePath(appDirPath);
+  rv = appDir->GetNativePath(applyToDir);
 #endif
   if (NS_FAILED(rv))
     return;
@@ -352,7 +409,8 @@ ApplyUpdate(nsIFile *appDir, nsIFile *updateDir, nsILocalFile *statusFile,
   pid.AppendInt((PRInt32) getpid());
 #endif
 
-  char **argv = new char*[5 + appArgc];
+  int argc = appArgc + 4;
+  char **argv = new char*[argc + 1];
   if (!argv)
     return;
   argv[0] = (char*) updaterPath.get();
@@ -366,15 +424,16 @@ ApplyUpdate(nsIFile *appDir, nsIFile *updateDir, nsILocalFile *statusFile,
     argv[4 + appArgc] = nsnull;
   } else {
     argv[3] = nsnull;
+    argc = 3;
   }
 
   LOG(("spawning updater process [%s]\n", updaterPath.get()));
 
 #if defined(USE_EXECV)
-  chdir(appDirPath.get());
+  chdir(applyToDir.get());
   execv(updaterPath.get(), argv);
 #elif defined(XP_WIN)
-  _chdir(appDirPath.get());
+  _chdir(applyToDir.get());
 
   if (!WinLaunchChild(updaterPath.get(), appArgc + 4, argv))
     return;
@@ -387,9 +446,13 @@ ApplyUpdate(nsIFile *appDir, nsIFile *updateDir, nsILocalFile *statusFile,
   if (!attr)
     goto end;
 
-  status = PR_ProcessAttrSetCurrentDirectory(attr, appDirPath.get());
+  status = PR_ProcessAttrSetCurrentDirectory(attr, applyToDir.get());
   if (status != PR_SUCCESS)
     goto end;
+
+#ifdef XP_MACOSX
+  SetupMacCommandLine(argc, argv);
+#endif
 
   PR_CreateProcessDetached(updaterPath.get(), argv, nsnull, attr);
   exit(0);
@@ -401,12 +464,12 @@ end:
 }
 
 nsresult
-ProcessUpdates(nsIFile *appDir, int argc, char **argv)
+ProcessUpdates(nsIFile *greDir, nsIFile *appDir, int argc, char **argv)
 {
   nsresult rv;
 
   nsCOMPtr<nsIFile> updatesDir;
-  rv = appDir->Clone(getter_AddRefs(updatesDir));
+  rv = greDir->Clone(getter_AddRefs(updatesDir));
   if (NS_FAILED(rv))
     return rv;
   rv = updatesDir->AppendNative(NS_LITERAL_CSTRING("updates"));
@@ -429,7 +492,7 @@ ProcessUpdates(nsIFile *appDir, int argc, char **argv)
   for (int i = 0; i < dirEntries.Count(); ++i) {
     nsCOMPtr<nsILocalFile> statusFile;
     if (GetStatusFile(dirEntries[i], statusFile) && IsPending(statusFile)) {
-      ApplyUpdate(appDir, dirEntries[i], statusFile, argc, argv);
+      ApplyUpdate(greDir, dirEntries[i], statusFile, appDir, argc, argv);
       break;
     }
   }

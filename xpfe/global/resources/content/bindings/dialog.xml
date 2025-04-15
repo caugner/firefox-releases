@@ -21,7 +21,7 @@
                 xbl:inherits="pack=buttonpack,align=buttonalign,dir=buttondir,orient=buttonorient">
         <xul:button dlgtype="extra2" class="dialog-button" hidden="true" label="" xbl:inherits="label=buttonlabelextra2,accesskey=buttonaccesskeyextra2"/>
         <xul:spacer xbl:inherits="flex=spacerflex"/>
-        <xul:button dlgtype="accept" class="dialog-button" xbl:inherits="label=buttonlabelaccept,accesskey=buttonaccesskeyaccept"/>
+        <xul:button dlgtype="accept" class="dialog-button" xbl:inherits="label=buttonlabelaccept,accesskey=buttonaccesskeyaccept,disabled=buttondisabledaccept"/>
         <xul:button dlgtype="extra1" class="dialog-button" hidden="true" label="" xbl:inherits="label=buttonlabelextra1,accesskey=buttonaccesskeyextra1"/>
         <xul:button dlgtype="cancel" class="dialog-button" xbl:inherits="label=buttonlabelcancel,accesskey=buttonaccesskeycancel"/>
         <xul:button dlgtype="help" class="dialog-button" hidden="true" xbl:inherits="label=buttonlabelhelp,accesskey=buttonaccesskeyhelp"/>
@@ -145,22 +145,29 @@
         <parameter name="aEvent"/>
         <body>
         <![CDATA[
-          var focusInit = 
-            function() {
-              // give focus to the first focusable element in the dialog
-              if (!document.commandDispatcher.focusedElement) {
-                document.commandDispatcher.advanceFocusIntoSubtree(document.documentElement);
-                var focusedElt = document.commandDispatcher.focusedElement;
-                if (focusedElt && focusedElt.localName == 'tab') {
-                  // We don't want to focus on anonymous OK, Cancel, etc. buttons
+          function focusInit() {
+            // give focus to the first focusable element in the dialog
+            if (!document.commandDispatcher.focusedElement) {
+              document.commandDispatcher.advanceFocusIntoSubtree(document.documentElement);
+              var focusedElt = document.commandDispatcher.focusedElement;
+              if (focusedElt) {
+                if (focusedElt.localName == 'tab') {
+                  // Move focus into the tab
                   document.commandDispatcher.advanceFocusIntoSubtree(focusedElt);
                   if (document.commandDispatcher.focusedElement.hasAttribute("dlgtype")) {
-                    // Prefer to keep focus on label rather than focus a dialog button
+                    // We don't want to focus on anonymous OK, Cancel, etc. buttons,
+                    // so return focus to the tab itself
                     focusedElt.focus();
                   }
+                } else if (!/Mac/.test(navigator.platform)) {
+                  const dialog = document.documentElement;
+                  const defaultButton = dialog.getButton(dialog.defaultButton);
+                  if (focusedElt.hasAttribute("dlgtype") && focusedElt != defaultButton)
+                    defaultButton.focus();
                 }
               }
-            };
+            }
+          }
 
           // Give focus after onload completes, see bug 103197.
           setTimeout(focusInit, 0);
@@ -299,7 +306,7 @@
         <body>
         <![CDATA[
           var event = document.createEvent("Events");
-          event.initEvent("dialog"+aDlgType, false, true);
+          event.initEvent("dialog"+aDlgType, true, true);
           
           // handle dom event handlers
           var noCancel = this.dispatchEvent(event);
@@ -342,6 +349,13 @@
       <handler event="keypress" keycode="VK_ESCAPE" group="system">
         if (!event.getPreventDefault())
           this.cancelDialog();
+      </handler>
+      <handler event="focus" phase="capturing">
+      <![CDATA[
+        var btn = this.getButton(this.defaultButton);
+        if (btn && !/Mac/.test(navigator.platform))
+          btn.setAttribute("default", event.originalTarget == btn || !(event.originalTarget instanceof Components.interfaces.nsIDOMXULButtonElement));
+      ]]>
       </handler>
     </handlers>
 

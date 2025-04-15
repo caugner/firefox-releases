@@ -22,6 +22,7 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *   Seth Spitzer <sspitzer@netscape.com>
+ *   Howard Chu <hyc@symas.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -49,7 +50,6 @@
 #include "nsMsgLocalSearch.h"
 #include "nsMsgSearchTerm.h"
 #include "nsXPIDLString.h"
-#include "nsMsgSearchScopeTerm.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgIncomingServer.h"
 #include "nsMsgSearchValue.h"
@@ -59,10 +59,12 @@
 #include "nsIImportService.h"
 #include "nsISupportsObsolete.h"
 #include "nsIOutputStream.h"
-#include "nsEscape.h"
+#include "nsIStringBundle.h"
+#include "nsDateTimeFormatCID.h"
 
 static const char *kImapPrefix = "//imap:";
 static const char *kWhitespace = "\b\t\r\n ";
+static NS_DEFINE_CID(kDateTimeFormatCID,    NS_DATETIMEFORMAT_CID);
 
 nsMsgRuleAction::nsMsgRuleAction()
 {
@@ -170,7 +172,8 @@ nsMsgRuleAction::GetStrValue(char **aStrValue)
 nsMsgFilter::nsMsgFilter():
     m_temporary(PR_FALSE),
     m_unparseable(PR_FALSE),
-    m_filterList(nsnull)
+    m_filterList(nsnull),
+    m_expressionTree(nsnull)
 {
   NS_NewISupportsArray(getter_AddRefs(m_termList));
   NS_NewISupportsArray(getter_AddRefs(m_actionList));
@@ -180,6 +183,7 @@ nsMsgFilter::nsMsgFilter():
 
 nsMsgFilter::~nsMsgFilter()
 {
+  delete m_expressionTree;
 }
 
 NS_IMPL_ISUPPORTS1(nsMsgFilter, nsIMsgFilter)
@@ -243,7 +247,8 @@ NS_IMETHODIMP nsMsgFilter::AddTerm(
 NS_IMETHODIMP nsMsgFilter::AppendTerm(nsIMsgSearchTerm * aTerm)
 {
     NS_ENSURE_TRUE(aTerm, NS_ERROR_NULL_POINTER);
-    
+    // invalidate expression tree if we're changing the terms
+    delete m_expressionTree;
     return m_termList->AppendElement(NS_STATIC_CAST(nsISupports*,aTerm));
 }
 
@@ -391,6 +396,7 @@ NS_IMETHODIMP nsMsgFilter::GetSearchTerms(nsISupportsArray **aResult)
 
 NS_IMETHODIMP nsMsgFilter::SetSearchTerms(nsISupportsArray *aSearchList)
 {
+    delete m_expressionTree;
     m_termList = aSearchList;
     return NS_OK;
 }
@@ -421,59 +427,95 @@ NS_IMETHODIMP nsMsgFilter::LogRuleHit(nsIMsgRuleAction *aFilterAction, nsIMsgDBH
     NS_ENSURE_SUCCESS(rv,rv);
   
     PRTime date;
-    char dateStr[40];	/* 30 probably not enough */
     nsMsgRuleActionType actionType;
     
-    nsXPIDLCString author;
-    nsXPIDLCString subject;
+    nsXPIDLString authorValue;
+    nsXPIDLString subjectValue;
     nsXPIDLString filterName;
+    nsXPIDLString dateValue;
 
     GetFilterName(getter_Copies(filterName));
     aFilterAction->GetType(&actionType);
-    rv = aMsgHdr->GetDate(&date);
+    (void)aMsgHdr->GetDate(&date);
     PRExplodedTime exploded;
     PR_ExplodeTime(date, PR_LocalTimeParameters, &exploded);
-    // XXX Temporary until logging is fully localized
-    PR_FormatTimeUSEnglish(dateStr, sizeof(dateStr), "%Y-%m-%d %H:%M:%S", &exploded);
 
-    aMsgHdr->GetAuthor(getter_Copies(author));
-    aMsgHdr->GetSubject(getter_Copies(subject));
+    if (!mDateFormatter)
+    {
+      mDateFormatter = do_CreateInstance(kDateTimeFormatCID, &rv);
+      NS_ENSURE_SUCCESS(rv, rv);
+      if (!mDateFormatter)
+      {
+        return NS_ERROR_FAILURE;
+      }
+    }
+    mDateFormatter->FormatPRExplodedTime(nsnull, kDateFormatShort,
+                                         kTimeFormatSeconds, &exploded, 
+                                         dateValue);
+  
+    (void)aMsgHdr->GetMime2DecodedAuthor(getter_Copies(authorValue));
+    (void)aMsgHdr->GetMime2DecodedSubject(getter_Copies(subjectValue));
 
     nsCString buffer;
     // this is big enough to hold a log entry.  
     // do this so we avoid growing and copying as we append to the log.
     buffer.SetCapacity(512);  
     
-    buffer = "Applied filter \"";
-    AppendUTF16toUTF8(filterName, buffer);
-    buffer +=  "\" to message from ";
-    buffer +=  (const char*)author;
-    buffer +=  " - ";
-    buffer +=  (const char *)subject;
-    buffer +=  " at ";
-    buffer +=  dateStr;
+    nsCOMPtr<nsIStringBundleService> bundleService =
+      do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    
+    nsCOMPtr<nsIStringBundle> bundle;
+    rv = bundleService->CreateBundle("chrome://messenger/locale/filter.properties",
+      getter_AddRefs(bundle));
+    NS_ENSURE_SUCCESS(rv, rv);
+    
+    const PRUnichar *filterLogDetectFormatStrings[4] = { filterName.get(), authorValue.get(), subjectValue.get(), dateValue.get() };
+    nsXPIDLString filterLogDetectStr;
+    rv = bundle->FormatStringFromName(
+      NS_LITERAL_STRING("filterLogDetectStr").get(),
+      filterLogDetectFormatStrings, 4,
+      getter_Copies(filterLogDetectStr));
+    NS_ENSURE_SUCCESS(rv, rv);
+    
+    buffer += NS_ConvertUTF16toUTF8(filterLogDetectStr);
     buffer +=  "\n";
-    const char *actionStr = GetActionStr(actionType);
-    buffer +=  "Action = ";
-    buffer +=  actionStr;
-    buffer +=  " ";
         
     if (actionType == nsMsgFilterAction::MoveToFolder ||
-        actionType == nsMsgFilterAction::CopyToFolder) {
+        actionType == nsMsgFilterAction::CopyToFolder)
+    {
       nsXPIDLCString actionFolderUri;
       aFilterAction->GetTargetFolderUri(getter_Copies(actionFolderUri));
-      buffer += actionFolderUri.get();
-    } 
+      NS_ConvertASCIItoUTF16 actionFolderUriValue(actionFolderUri);
          
-    buffer += "\n";
-    if (actionType == nsMsgFilterAction::MoveToFolder ||
-        actionType == nsMsgFilterAction::CopyToFolder) {
       nsXPIDLCString msgId;
       aMsgHdr->GetMessageId(getter_Copies(msgId));
-      buffer += " id = ";
-      buffer += (const char*)msgId;
-      buffer += "\n";
+      NS_ConvertASCIItoUTF16 msgIdValue(msgId);
+
+      const PRUnichar *logMoveFormatStrings[2] = { msgIdValue.get(), actionFolderUriValue.get() };
+      nsXPIDLString logMoveStr;
+      rv = bundle->FormatStringFromName(
+        (actionType == nsMsgFilterAction::MoveToFolder) ?
+          NS_LITERAL_STRING("logMoveStr").get() :
+          NS_LITERAL_STRING("logCopyStr").get(),
+        logMoveFormatStrings, 2,
+        getter_Copies(logMoveStr));
+      NS_ENSURE_SUCCESS(rv, rv);
+      
+      buffer += NS_ConvertUTF16toUTF8(logMoveStr);
     }
+    else 
+    {
+      nsXPIDLString actionValue;
+      nsAutoString filterActionID;
+      filterActionID = NS_LITERAL_STRING("filterAction");
+      filterActionID.AppendInt(actionType);
+      rv = bundle->GetStringFromName(filterActionID.get(), getter_Copies(actionValue));
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      buffer += NS_ConvertUTF16toUTF8(actionValue);
+    }
+    buffer += "\n";
     
     PRUint32 writeCount;
 
@@ -500,19 +542,17 @@ NS_IMETHODIMP nsMsgFilter::LogRuleHit(nsIMsgRuleAction *aFilterAction, nsIMsgDBH
     return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFilter::MatchHdr(nsIMsgDBHdr	*msgHdr, nsIMsgFolder *folder, nsIMsgDatabase *db, 
-									const char *headers, PRUint32 headersSize, PRBool *pResult)
+NS_IMETHODIMP 
+nsMsgFilter::MatchHdr(nsIMsgDBHdr *msgHdr, nsIMsgFolder *folder, 
+                      nsIMsgDatabase *db, const char *headers, 
+                      PRUint32 headersSize, PRBool *pResult)
 {
   NS_ENSURE_ARG_POINTER(folder);
   // use offlineMail because
-  nsMsgSearchScopeTerm* scope = new nsMsgSearchScopeTerm(nsnull, nsMsgSearchScope::offlineMail, folder);
-  if (!scope) return NS_ERROR_OUT_OF_MEMORY;
-  
   nsXPIDLCString folderCharset;
   folder->GetCharset(getter_Copies(folderCharset));
   nsresult rv = nsMsgSearchOfflineMail::MatchTermsForFilter(msgHdr, m_termList,
-                  folderCharset.get(),  scope,  db,  headers,  headersSize, pResult);
-  delete scope;
+                  folderCharset.get(),  m_scope,  db,  headers,  headersSize, &m_expressionTree, pResult);
   return rv;
 }
 
@@ -728,6 +768,7 @@ nsresult nsMsgFilter::SaveRule(nsIOFileStream *aStream)
         err = filterList->WriteIntAttr(nsIMsgFilterList::attribActionValue, junkScore, aStream);
       }
       break;
+      case nsMsgFilterAction::AddTag:
       case nsMsgFilterAction::Reply:
       case nsMsgFilterAction::Forward:
       {
@@ -747,33 +788,40 @@ nsresult nsMsgFilter::SaveRule(nsIOFileStream *aStream)
   PRUint32 count;
   m_termList->Count(&count);
   for (searchIndex = 0; searchIndex < count && NS_SUCCEEDED(err);
-  searchIndex++)
+        searchIndex++)
   {
     nsCAutoString	stream;
-    
+  
     nsCOMPtr<nsIMsgSearchTerm> term;
     m_termList->QueryElementAt(searchIndex, NS_GET_IID(nsIMsgSearchTerm),
       (void **)getter_AddRefs(term));
     if (!term)
       continue;
-    
+  
     if (condition.Length() > 1)
       condition += ' ';
-    
+  
     PRBool booleanAnd;
+    PRBool matchAll;
     term->GetBooleanAnd(&booleanAnd);
-    if (booleanAnd)
+    term->GetMatchAll(&matchAll);
+    if (matchAll)
+    {
+      condition += "ALL";
+      break;
+    }
+    else if (booleanAnd)
       condition += "AND (";
     else
       condition += "OR (";
-    
+  
     nsresult searchError = term->GetTermAsString(stream);
     if (NS_FAILED(searchError))
     {
       err = searchError;
       break;
     }
-    
+  
     condition += stream;
     condition += ')';
   }
@@ -809,6 +857,7 @@ static struct RuleActionsTableEntry ruleActionsTable[] =
   { nsMsgFilterAction::LeaveOnPop3Server, nsMsgFilterType::Inbox,   0, "Leave on Pop3 server"},
   { nsMsgFilterAction::JunkScore, nsMsgFilterType::All,   0, "JunkScore"},
   { nsMsgFilterAction::FetchBodyFromPop3Server, nsMsgFilterType::Inbox,   0, "Fetch body from Pop3Server"},
+  { nsMsgFilterAction::AddTag,          nsMsgFilterType::All,   0,  "AddTag"},
 };
 
 const char *nsMsgFilter::GetActionStr(nsMsgRuleActionType action)

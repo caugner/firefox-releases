@@ -41,7 +41,7 @@
 #include "necko-config.h"
 
 #include "nsString.h"
-#include "nsIIOService.h"
+#include "nsIIOService2.h"
 #include "nsVoidArray.h"
 #include "nsPISocketTransportService.h" 
 #include "nsPIDNSService.h" 
@@ -55,6 +55,10 @@
 #include "nsIObserver.h"
 #include "nsWeakReference.h"
 #include "nsINetUtil.h"
+#include "nsIChannelEventSink.h"
+#include "nsIContentSniffer.h"
+#include "nsCategoryCache.h"
+#include "nsINetworkLinkService.h"
 
 #define NS_N(x) (sizeof(x)/sizeof(*x))
 
@@ -65,12 +69,13 @@
 #endif
 #define NS_NECKO_15_MINS (15 * 60)
 
-static const char *gScheme[] = {"chrome", "file", "http", "jar", "resource"};
+static const char gScheme[][sizeof("resource")] =
+    {"chrome", "file", "http", "jar", "resource"};
 
 class nsIPrefBranch;
 class nsIPrefBranch2;
 
-class nsIOService : public nsIIOService
+class nsIOService : public nsIIOService2
                   , public nsIObserver
                   , public nsINetUtil
                   , public nsSupportsWeakReference
@@ -78,18 +83,40 @@ class nsIOService : public nsIIOService
 public:
     NS_DECL_ISUPPORTS
     NS_DECL_NSIIOSERVICE
+    NS_DECL_NSIIOSERVICE2
     NS_DECL_NSIOBSERVER
     NS_DECL_NSINETUTIL
 
-    nsIOService() NS_HIDDEN;
-    ~nsIOService() NS_HIDDEN;
+    // Gets the singleton instance of the IO Service, creating it as needed
+    // Returns nsnull on out of memory or failure to initialize.
+    // Returns an addrefed pointer.
+    static nsIOService* GetInstance();
 
     NS_HIDDEN_(nsresult) Init();
     NS_HIDDEN_(nsresult) NewURI(const char* aSpec, nsIURI* aBaseURI,
                                 nsIURI* *result,
                                 nsIProtocolHandler* *hdlrResult);
 
-protected:
+    // Called by channels before a redirect happens. This notifies the global
+    // redirect observers.
+    nsresult OnChannelRedirect(nsIChannel* oldChan, nsIChannel* newChan,
+                               PRUint32 flags);
+
+    // Gets the array of registered content sniffers
+    const nsCOMArray<nsIContentSniffer_MOZILLA_1_8_BRANCH>&
+    GetContentSniffers() const {
+      return mContentSniffers.GetEntries();
+    }
+
+private:
+    // These shouldn't be called directly:
+    // - construct using GetInstance
+    // - destroy using Release
+    nsIOService() NS_HIDDEN;
+    ~nsIOService() NS_HIDDEN;
+
+    NS_HIDDEN_(nsresult) TrackNetworkLinkStatusForOffline();
+
     NS_HIDDEN_(nsresult) GetCachedProtocolHandler(const char *scheme,
                                                   nsIProtocolHandler* *hdlrResult,
                                                   PRUint32 start=0,
@@ -102,16 +129,22 @@ protected:
     NS_HIDDEN_(void) GetPrefBranch(nsIPrefBranch2 **);
     NS_HIDDEN_(void) ParsePortList(nsIPrefBranch *prefBranch, const char *pref, PRBool remove);
 
-protected:
+private:
     PRPackedBool                         mOffline;
     PRPackedBool                         mOfflineForProfileChange;
+    PRPackedBool                         mManageOfflineStatus;
     nsCOMPtr<nsPISocketTransportService> mSocketTransportService;
     nsCOMPtr<nsPIDNSService>             mDNSService;
     nsCOMPtr<nsIProtocolProxyService>    mProxyService;
     nsCOMPtr<nsIEventQueueService>       mEventQueueService;
+    nsCOMPtr<nsINetworkLinkService>      mNetworkLinkService;
     
     // Cached protocol handlers
     nsWeakPtr                            mWeakHandler[NS_N(gScheme)];
+
+    // cached categories
+    nsCategoryCache<nsIChannelEventSink> mChannelEventSinks;
+    nsCategoryCache<nsIContentSniffer_MOZILLA_1_8_BRANCH> mContentSniffers;
 
     nsVoidArray                          mRestrictedPortList;
 
@@ -120,5 +153,10 @@ public:
     // allocates.
     static nsIMemory *gBufferCache;
 };
+
+/**
+ * Reference to the IO service singleton. May be null.
+ */
+extern nsIOService* gIOService;
 
 #endif // nsIOService_h__

@@ -43,6 +43,7 @@
 #include "nsAccessibleWrap.h"
 #include "nsAppRootAccessible.h"
 #include "nsString.h"
+#include "prprf.h"
 
 #include "nsMaiInterfaceComponent.h"
 #include "nsMaiInterfaceAction.h"
@@ -145,7 +146,7 @@ G_END_DECLS
 
 static GType GetMaiAtkType(const PRUint32 & interfaceCount,
                            MaiInterface **interfaces);
-static const char * GetUniqueMaiAtkTypeName(void);
+static const char * GetUniqueMaiAtkTypeName(MaiInterface **interfaces);
 
 static gpointer parent_class = NULL;
 
@@ -230,9 +231,11 @@ NS_IMETHODIMP nsAccessibleWrap::GetNativeInterface(void **aOutAccessible)
 
     if (!mMaiAtkObject) {
         CreateMaiInterfaces();
+        GType type = GetMaiAtkType(mInterfaceCount, mInterfaces);
+        NS_ENSURE_TRUE(type, NS_ERROR_FAILURE);
         mMaiAtkObject =
             NS_REINTERPRET_CAST(AtkObject *,
-                                g_object_new(GetMaiAtkType(mInterfaceCount, mInterfaces), NULL));
+                                g_object_new(type, NULL));
         NS_ENSURE_TRUE(mMaiAtkObject, NS_ERROR_OUT_OF_MEMORY);
 
         atk_object_initialize(mMaiAtkObject, this);
@@ -418,9 +421,31 @@ GetMaiAtkType(const PRUint32 & interfaceCount, MaiInterface **interfaces)
     if (interfaceCount == 0)
         return MAI_TYPE_ATK_OBJECT;
 
-    type = g_type_register_static(MAI_TYPE_ATK_OBJECT,
-                                  GetUniqueMaiAtkTypeName(),
-                                  &tinfo, GTypeFlags(0));
+    /*
+     * The members we used to register a GType are MaiInterface::GetAtkType()
+     * and MaiInterface::GetInterfaceInfo(), which is the same with different
+     * MaiInterface objects. So we can reuse the registered GType when having
+     * the same MaiInterface types.
+     */
+    const char *atkTypeName = GetUniqueMaiAtkTypeName(interfaces);
+    type = g_type_from_name(atkTypeName);
+    if (type) {
+        return type;
+    }
+
+    /*
+     * gobject limits the number of types that can directly derive from any
+     * given object type to 4095.
+     */
+    static PRUint16 typeRegCount = 0;
+    if (typeRegCount++ < 4095) {
+        type = g_type_register_static(MAI_TYPE_ATK_OBJECT,
+                                      atkTypeName,
+                                      &tinfo, GTypeFlags(0));
+    }
+    else {
+        return 0;
+    }
 
     for (int index = 0; index < MAI_INTERFACE_NUM; index++) {
         if (!interfaces[index])
@@ -433,15 +458,19 @@ GetMaiAtkType(const PRUint32 & interfaceCount, MaiInterface **interfaces)
 }
 
 static const char *
-GetUniqueMaiAtkTypeName(void)
+GetUniqueMaiAtkTypeName(MaiInterface **interfaces)
 {
-#define MAI_ATK_TYPE_NAME_LEN (30)     /* 10+sizeof(gulong)*8/4+1 < 30 */
+#define MAI_ATK_TYPE_NAME_LEN (30)     /* 10+sizeof(PRUint16)*8/4+1 < 30 */
 
-    static PRUint32 atkTypeNameIndex = 0;
+    PRUint16 atkTypeNameId = 0;
     static gchar namePrefix[] = "MaiAtkType";   /* size = 10 */
     static gchar name[MAI_ATK_TYPE_NAME_LEN + 1];
 
-    sprintf(name, "%s%x", namePrefix, atkTypeNameIndex++);
+    for (int index = 0; index < MAI_INTERFACE_NUM; index++) {
+        if (interfaces[index])
+            atkTypeNameId |= 1 << index;
+    }
+    PR_snprintf(name, MAI_ATK_TYPE_NAME_LEN, "%s%x", namePrefix, atkTypeNameId);
     name[MAI_ATK_TYPE_NAME_LEN] = '\0';
 
     MAI_LOG_DEBUG(("MaiWidget::LastedTypeName=%s\n", name));
@@ -534,12 +563,12 @@ nsAccessibleWrap::TranslateStates(PRUint32 aState, PRUint32 aExtState, void *aAt
     if (aState & nsIAccessible::STATE_INVALID)
         atk_state_set_add_state (state_set, ATK_STATE_INVALID);
 
-#ifdef MAI_HAS_ATK_STATE_DEFAULT
+#ifdef ATK_STATE_DEFAULT
     if (aState & nsIAccessible::STATE_DEFAULT)
         atk_state_set_add_state (state_set, ATK_STATE_DEFAULT);
 #endif
 
-#ifdef MAI_HAS_ATK_STATE_REQUIRED
+#ifdef ATK_STATE_REQUIRED
     if (aState & nsIAccessible::STATE_REQUIRED)
         atk_state_set_add_state (state_set, ATK_STATE_REQUIRED);
 #endif
@@ -573,7 +602,7 @@ nsAccessibleWrap::TranslateStates(PRUint32 aState, PRUint32 aExtState, void *aAt
     if (aExtState & nsIAccessible::EXT_STATE_VERTICAL)
         atk_state_set_add_state (state_set, ATK_STATE_VERTICAL);
 
-    if (aState & nsIAccessible::EXT_STATE_EDITABLE)
+    if (aExtState & nsIAccessible::EXT_STATE_EDITABLE)
         atk_state_set_add_state (state_set, ATK_STATE_EDITABLE);
 }
 
@@ -798,6 +827,16 @@ getRoleCB(AtkObject *aAtkObj)
             }
             accRole = linkRole;
         }
+#ifndef ATK_ROLE_AUTOCOMPLETE
+        else if (accRole == nsIAccessible::ROLE_AUTOCOMPLETE) {
+			accRole = ATK_ROLE_COMBO_BOX;
+		}
+#endif
+#ifndef ATK_ROLE_CAPTION
+        else if (accRole == nsIAccessible::ROLE_CAPTION) {
+			accRole = ATK_ROLE_LABEL;
+		}
+#endif
         aAtkObj->role = NS_STATIC_CAST(AtkRole, accRole);
     }
     return aAtkObj->role;
@@ -916,10 +955,11 @@ refRelationSetCB(AtkObject *aAtkObj)
     AtkObject *accessible_array[1];
     AtkRelation* relation;
     
-    PRUint32 relationType[2] = {nsIAccessible::RELATION_LABELLED_BY,
-                                nsIAccessible::RELATION_LABEL_FOR};
+    PRUint32 relationType[] = {nsIAccessible::RELATION_LABELLED_BY,
+                               nsIAccessible::RELATION_LABEL_FOR,
+                               nsIAccessible::RELATION_NODE_CHILD_OF};
 
-    for (PRUint32 i = 0; i <= 1; i++) { 
+    for (PRUint32 i = 0; i < NS_ARRAY_LENGTH(relationType); i++) { 
       if (!atk_relation_set_contains(relation_set, NS_STATIC_CAST(AtkRelationType, relationType[i]))) {
           nsIAccessible* accRelated;
           nsresult rv = accWrap->GetAccessibleRelated(relationType[i], &accRelated);

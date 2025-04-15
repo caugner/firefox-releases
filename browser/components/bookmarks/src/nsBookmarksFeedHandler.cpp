@@ -20,6 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Masayuki Nakano <masayuki@d-toybox.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -51,6 +52,7 @@
 #include "rdf.h"
 #include "nsUnicharUtils.h"
 #include "nsInt64.h"
+#include "nsStringStream.h"
 
 #include "nsIScriptSecurityManager.h"
 
@@ -65,6 +67,18 @@
 #include "nsIDOMElement.h"
 #include "nsIDOMCharacterData.h"
 #include "nsIDOMNodeList.h"
+#include "nsIDOM3Node.h"
+#include "nsIDOMDocumentTraversal.h"
+#include "nsIDOMTreeWalker.h"
+#include "nsIDOMNodeFilter.h"
+#include "nsIDOMDocumentFragment.h"
+#include "nsIParser.h"
+#include "nsParserCIID.h"
+#include "nsIFragmentContentSink.h"
+#include "nsIContentSink.h"
+#include "nsIDocument.h"
+
+static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
 
 /* These are defined in nsBookmarksService.cpp */
 extern nsIRDFResource       *kRDF_type;
@@ -145,8 +159,9 @@ protected:
     // helpers
     NS_METHOD HandleRDFItem (nsIRDFDataSource *aDS, nsIRDFResource *itemResource,
                              nsIRDFResource *aLinkResource, nsIRDFResource *aTitleResource);
-    NS_METHOD FindTextInNode (nsIDOMNode *aParentNode, nsAString &aString);
-
+    NS_METHOD FindTextInChildNodes (nsIDOMNode *aNode, nsAString &aString);
+    NS_METHOD ParseHTMLFragment(nsAString &aFragString, nsIDocument* aTargetDocument, nsIDOMNode **outNode);
+    
     PRBool IsLinkValid(const PRUnichar *aURI);
 
     nsBookmarksService *mBMSVC;
@@ -374,8 +389,23 @@ nsFeedLoadListener::TryParseAsRDF ()
     nsCOMPtr<nsIRDFDataSource> ds(do_CreateInstance(kRDFInMemoryDataSourceCID, &rv));
     if (NS_FAILED(rv)) return rv;
 
-    rv = rdfparser->ParseString (ds, mURI, mBody);
+    nsCOMPtr<nsIStreamListener> listener;
+    rv = rdfparser->ParseAsync(ds, mURI, getter_AddRefs(listener));
     if (NS_FAILED(rv)) return rv;
+    if (!listener) return NS_ERROR_FAILURE;
+
+    nsCOMPtr<nsIInputStream> stream;
+    rv = NS_NewCStringInputStream(getter_AddRefs(stream), mBody);
+    if (NS_FAILED(rv)) return rv;
+
+    nsCOMPtr<nsIChannel> channel;
+    rv = NS_NewInputStreamChannel(getter_AddRefs(channel), mURI,
+                                  stream, NS_LITERAL_CSTRING("text/xml"));
+    if (NS_FAILED(rv)) return rv;
+
+    listener->OnStartRequest(channel, nsnull);
+    listener->OnDataAvailable(channel, nsnull, stream, 0, mBody.Length());
+    listener->OnStopRequest(channel, nsnull, NS_OK);
 
     // Grab the (only) thing that's a channel
     // We try RSS 1.0 first, then RSS 0.9, and set up the remaining
@@ -461,44 +491,79 @@ nsFeedLoadListener::TryParseAsRDF ()
     return NS_OK;
 }
 
-//
-// find the first node below aParentNode that is a TEXT_NODE,
-// and return it
-//
 nsresult
-nsFeedLoadListener::FindTextInNode (nsIDOMNode *aParentNode, nsAString &aString)
+nsFeedLoadListener::ParseHTMLFragment(nsAString &aFragString,  
+                                      nsIDocument* aTargetDocument,
+                                      nsIDOMNode **outNode)
 {
-    NS_ENSURE_ARG(aParentNode);
+    NS_ENSURE_ARG(aTargetDocument);
 
     nsresult rv;
 
-    nsCOMPtr<nsIDOMNode> childNode;
-    rv = aParentNode->GetFirstChild(getter_AddRefs(childNode));
-    if (!childNode) return NS_OK;
+    nsCOMPtr<nsIParser> parser;
+    parser = do_CreateInstance(kCParserCID, &rv);
+    if (NS_FAILED(rv)) return rv;
+       
+    // create the html fragment sink
+    nsCOMPtr<nsIContentSink> sink;
+    sink = do_CreateInstance(NS_HTMLFRAGMENTSINK2_CONTRACTID);
+    NS_ENSURE_TRUE(sink, NS_ERROR_FAILURE);
+    nsCOMPtr<nsIFragmentContentSink> fragSink(do_QueryInterface(sink));
+    NS_ENSURE_TRUE(fragSink, NS_ERROR_FAILURE);
+
+    fragSink->SetTargetDocument(aTargetDocument);
+
+    // parse the fragment
+    parser->SetContentSink(sink);
+    parser->Parse(aFragString, (void*)0, NS_LITERAL_CSTRING("text/html"), PR_FALSE, PR_TRUE, eDTDMode_fragment);
+    // get the fragment node
+    nsCOMPtr<nsIDOMDocumentFragment> contextfrag;
+    rv = fragSink->GetFragment(getter_AddRefs(contextfrag));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = CallQueryInterface (contextfrag, outNode);
+
+    return rv;
+}
+
+
+// find all of the text and CDATA nodes below aNode and return them as a string
+nsresult
+nsFeedLoadListener::FindTextInChildNodes (nsIDOMNode *aNode, nsAString &aString)
+{
+    NS_ENSURE_ARG(aNode);
+
+    nsresult rv;
+
+    nsCOMPtr<nsIDOMDocument> aDoc;
+    aNode->GetOwnerDocument(getter_AddRefs(aDoc));
+    nsCOMPtr<nsIDOMDocumentTraversal> trav = do_QueryInterface(aDoc, &rv);
     if (NS_FAILED(rv)) return rv;
 
-    PRUint16 nodeType = 0;
-    do {
-        rv = childNode->GetNodeType(&nodeType);
-        if (nodeType == nsIDOMNode::TEXT_NODE ||
-            nodeType == nsIDOMNode::CDATA_SECTION_NODE)
-            break;
+    nsCOMPtr<nsIDOMTreeWalker> walker;
+    rv = trav->CreateTreeWalker(aNode, 
+                                nsIDOMNodeFilter::SHOW_TEXT | nsIDOMNodeFilter::SHOW_CDATA_SECTION,
+                                nsnull, PR_TRUE, getter_AddRefs(walker));
+    if (NS_FAILED(rv)) return rv;
 
-        nsCOMPtr<nsIDOMNode> temp;
-        rv = childNode->GetNextSibling(getter_AddRefs(temp));
-        if (NS_FAILED(rv)) return rv;
-        childNode = temp;
-    } while (childNode);
-
-    if (nodeType == nsIDOMNode::TEXT_NODE ||
-        nodeType == nsIDOMNode::CDATA_SECTION_NODE)
-    {
-        nsCOMPtr<nsIDOMCharacterData> charTextNode = do_QueryInterface(childNode);
-        if (charTextNode)
-            return charTextNode->GetData(aString);
+    nsCOMPtr<nsIDOMNode> currentNode;
+    walker->GetCurrentNode(getter_AddRefs(currentNode));
+    nsCOMPtr<nsIDOMCharacterData> charTextNode;
+    nsAutoString tempString;
+    while (currentNode) {
+        charTextNode = do_QueryInterface(currentNode);
+        if (charTextNode) { 
+            charTextNode->GetData(tempString);
+            aString.Append(tempString);
+        }
+        walker->NextNode(getter_AddRefs(currentNode));
     }
 
-    return NS_ERROR_FAILURE;
+    if (aString.IsEmpty()) {
+        return NS_ERROR_FAILURE;
+    } else {
+        return NS_OK;
+    }
 }
 
 nsresult
@@ -562,6 +627,7 @@ nsFeedLoadListener::TryParseAsSimpleRSS ()
     if (NS_FAILED(rv)) return rv;
 
     nsCOMPtr<nsIDOMDocument> xmldoc;
+    parser->SetBaseURI(mURI);
     rv = parser->ParseFromBuffer ((const PRUint8*) mBody.get(), mBody.Length(), "text/xml", getter_AddRefs(xmldoc));
     if (NS_FAILED(rv)) return rv;
 
@@ -670,14 +736,63 @@ nsFeedLoadListener::TryParseAsSimpleRSS ()
                         rv = childNode->GetNodeName (childNname);
 
                         if (childNname.Equals(NS_LITERAL_STRING("title"))) {
-                            rv = FindTextInNode (childNode, titleStr);
+                            if (isAtom) {
+                                /* Atom titles can contain HTML, so we need to find and remove it */
+                                nsCOMPtr<nsIDOMElement> titleElem = do_QueryInterface(childNode);
+                                if (!titleElem) break; // out of while(childNode) loop
+
+                                nsAutoString titleMode; // Atom 0.3 only
+                                nsAutoString titleType;
+                                titleElem->GetAttribute(NS_LITERAL_STRING("type"), titleType);
+                                titleElem->GetAttribute(NS_LITERAL_STRING("mode"), titleMode);
+
+                                /*  No one does this in <title> except standards pedants making test feeds, 
+                                 *  Atom 0.3 is deprecated, and RFC 4287 doesn't allow it
+                                 */
+                                if (titleMode.EqualsLiteral("base64")) {
+                                    break; // out of while(childNode) loop
+                                }
+
+                                /* Cover Atom 0.3 and RFC 4287 together */
+                                if (titleType.EqualsLiteral("text") ||
+                                    titleType.EqualsLiteral("text/plain") ||
+                                    titleType.IsEmpty())
+                                {
+                                    rv = FindTextInChildNodes(childNode, titleStr);
+                                } else if (titleType.EqualsLiteral("html") || // RFC 4287
+                                           (titleType.EqualsLiteral("text/html") && // Atom 0.3
+                                            !titleMode.EqualsLiteral("xml")) ||
+                                           titleMode.EqualsLiteral("escaped")) // Atom 0.3
+                                {
+                                    nsAutoString escapedHTMLStr;
+                                    rv = FindTextInChildNodes(childNode, escapedHTMLStr);
+                                    if (NS_FAILED(rv)) break;  // out of while(childNode) loop
+
+                                    nsCOMPtr<nsIDOMNode> newNode;
+                                    nsCOMPtr<nsIDocument> doc = do_QueryInterface(xmldoc);
+                                    ParseHTMLFragment(escapedHTMLStr, doc, getter_AddRefs(newNode));
+                                    rv = FindTextInChildNodes(newNode, titleStr);                   
+
+                                }else if (titleType.EqualsLiteral("xhtml") || // RFC 4287
+                                          titleType.EqualsLiteral("application/xhtml") || // Atom 0.3
+                                          titleMode.EqualsLiteral("xml")) // Atom 0.3
+                                {
+                                    rv = FindTextInChildNodes(childNode, titleStr);
+                                } else {
+                                    break; // out of while(childNode) loop
+                                }
+                            } else {
+                                rv = FindTextInChildNodes(childNode, titleStr);
+                            }
                             if (NS_FAILED(rv)) break;
-                        } else if (childNname.Equals(NS_LITERAL_STRING("pubDate")) ||
-                                   childNname.Equals(NS_LITERAL_STRING("updated")))
+                        } else if (dateStr.IsEmpty() &&
+                                   (childNname.Equals(NS_LITERAL_STRING("pubDate")) ||
+                                    childNname.Equals(NS_LITERAL_STRING("updated"))))
                         {
-                            rv = FindTextInNode (childNode, dateStr);
+                            rv = FindTextInChildNodes (childNode, dateStr);
                             if (NS_FAILED(rv)) break;
-                        } else if (!isAtom && childNname.Equals(NS_LITERAL_STRING("guid"))) {
+                        } else if (!isAtom && childNname.Equals(NS_LITERAL_STRING("guid")) &&
+                                   linkStr.IsEmpty()) {
                             nsCOMPtr<nsIDOMElement> linkElem = do_QueryInterface(childNode);
                             if (!linkElem) break; // out of while(childNode) loop
                             
@@ -686,7 +801,7 @@ nsFeedLoadListener::TryParseAsSimpleRSS ()
                             // Ignore failures. isPermaLink defaults to true.
                             if (!isPermaLink.Equals(NS_LITERAL_STRING("false"))) {
                                 // in node's TEXT
-                                rv = FindTextInNode (childNode, linkStr);
+                                rv = FindTextInChildNodes (childNode, linkStr);
                                 if (NS_FAILED(rv)) break;
                             }
                         } else if (childNname.Equals(NS_LITERAL_STRING("link"))) {
@@ -702,15 +817,33 @@ nsFeedLoadListener::TryParseAsSimpleRSS ()
                                 {
                                     rv = linkElem->GetAttribute(NS_LITERAL_STRING("href"), linkStr);
                                     if (NS_FAILED(rv)) break; // out of while(childNode) loop
+                                    
+                                    nsCOMPtr<nsIDOM3Node> linkElem3 = do_QueryInterface(childNode);
+                                    if (linkElem3) {
+                                        // get the BaseURI (as string)
+                                        nsAutoString base;
+                                        rv = linkElem3->GetBaseURI(base);
+                                        if (NS_SUCCEEDED(rv) && !base.IsEmpty()) {
+                                            // convert a baseURI (string) to a nsIURI
+                                            nsCOMPtr<nsIURI> baseURI;
+                                            rv = NS_NewURI(getter_AddRefs(baseURI), base);
+                                            if (baseURI) {
+                                                nsString absLinkStr;
+                                                if (NS_SUCCEEDED(NS_MakeAbsoluteURI(absLinkStr, linkStr, baseURI)))
+                                                    linkStr = absLinkStr;
+                                            }
+                                        }
+                                    }
                                 }
                             } else if (linkStr.IsEmpty()) {
                                 // in node's TEXT
-                                rv = FindTextInNode (childNode, linkStr);
+                                rv = FindTextInChildNodes (childNode, linkStr);
                                 if (NS_FAILED(rv)) break;
                             }
                         }
                     }
 
+                    
                     if (!titleStr.IsEmpty() && !linkStr.IsEmpty())
                         break;
 
@@ -719,7 +852,12 @@ nsFeedLoadListener::TryParseAsSimpleRSS ()
                     childNode = temp;
                     if (!childNode || NS_FAILED(rv)) break;
                 }
-
+                
+                // Clean up whitespace
+                titleStr.CompressWhitespace();
+                linkStr.Trim("\b\t\r\n ");
+                dateStr.CompressWhitespace();
+                
                 if (titleStr.IsEmpty() && !dateStr.IsEmpty())
                     titleStr.Assign(dateStr);
 
@@ -752,7 +890,10 @@ nsFeedLoadListener::TryParseAsSimpleRSS ()
         return NS_OK;
     }
 
-    return NS_ERROR_FAILURE;
+    // not finding any items would amount to NS_ERROR_FAILURE if we had 
+    // another parser to try, but could just be an empty feed
+    // so returning NS_OK lets it pick up the default '(Empty)' item
+    return NS_OK;
 }
 
 
@@ -836,7 +977,8 @@ nsBookmarksService::UpdateLivemarkChildren(nsIRDFResource* aSource)
     if (rv == NS_RDF_NO_VALUE)
         return NS_OK;
 
-    nsCOMPtr<nsIRDFLiteral> feedUrlLiteral = do_QueryInterface(feedUrlNode);
+    nsCOMPtr<nsIRDFLiteral> feedUrlLiteral = do_QueryInterface(feedUrlNode, &rv);
+    if (NS_FAILED(rv)) return rv;
     const PRUnichar *feedUrl = nsnull;
     rv = feedUrlLiteral->GetValueConst(&feedUrl);
     if (NS_FAILED(rv)) return rv;

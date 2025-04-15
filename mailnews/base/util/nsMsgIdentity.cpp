@@ -474,6 +474,7 @@ NS_IMPL_IDPREF_BOOL(DoFcc, "fcc")
 
 NS_IMPL_FOLDERPREF_STR(FccFolder, "fcc_folder")
 NS_IMPL_IDPREF_STR(FccFolderPickerMode, "fcc_folder_picker_mode")
+NS_IMPL_IDPREF_BOOL(FccReplyFollowsParent, "fcc_reply_follows_parent")
 NS_IMPL_IDPREF_STR(DraftsFolderPickerMode, "drafts_folder_picker_mode")
 NS_IMPL_IDPREF_STR(TmplFolderPickerMode, "tmpl_folder_picker_mode")
 
@@ -617,6 +618,13 @@ nsMsgIdentity::getFolderPref(const char *prefname, char **retval, PRBool mustHav
       PR_Free(*retval);
       if (NS_SUCCEEDED(rv))
         return msgFolder->GetURI(retval);
+    }
+    else // if the server doesn't exist, fall back to the default pref.
+    {
+      PR_FREEIF(*retval);	// free the empty string
+      rv = getDefaultCharPref(prefname, retval);
+      if (NS_SUCCEEDED(rv) && *retval)
+        rv = setFolderPref(prefname, (const char *)*retval);
     }
   }
   return rv;
@@ -798,6 +806,8 @@ nsMsgIdentity::Copy(nsIMsgIdentity *identity)
     COPY_IDENTITY_WSTR_VALUE(identity,GetOrganization,SetOrganization)
     COPY_IDENTITY_STR_VALUE(identity,GetDraftFolder,SetDraftFolder)
     COPY_IDENTITY_STR_VALUE(identity,GetFccFolder,SetFccFolder)
+    COPY_IDENTITY_BOOL_VALUE(identity,GetFccReplyFollowsParent,
+                             SetFccReplyFollowsParent)
     COPY_IDENTITY_STR_VALUE(identity,GetStationeryFolder,SetStationeryFolder)
     COPY_IDENTITY_BOOL_VALUE(identity,GetAttachSignature,SetAttachSignature)
     COPY_IDENTITY_FILE_VALUE(identity,GetSignature,SetSignature)

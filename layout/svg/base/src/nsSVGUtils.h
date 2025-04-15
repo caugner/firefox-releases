@@ -45,6 +45,9 @@ class nsIContent;
 class nsStyleCoord;
 class nsIFrame;
 struct nsStyleSVGPaint;
+class nsIDOMSVGRect;
+class nsFrameList;
+class nsIDOMSVGLength;
 
 class nsSVGUtils
 {
@@ -75,6 +78,23 @@ public:
    */
   static nsresult GetPaintType(PRUint16 *aPaintType, const nsStyleSVGPaint& aPaint, 
                                nsIContent *aContent, nsIPresShell *aPresShell);
+
+  /*
+   * Creates a bounding box by walking the children and doing union.
+   */
+  static nsresult GetBBox(nsFrameList *aFrames, nsIDOMSVGRect **_retval);
+
+  /* enum for specifying coordinate direction for ObjectSpace/UserSpace */
+  enum ctxDirection { X, Y, XY };
+
+  /* Computes the input length in terms of user space coordinates.
+     Input: content - object to be used for determining user space
+            length - length to be converted
+            direction - direction of length
+  */
+  static float UserSpace(nsIContent *content,
+                         nsIDOMSVGLength *length,
+                         ctxDirection direction);
 };
 
 #endif

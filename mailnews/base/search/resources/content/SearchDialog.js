@@ -83,6 +83,7 @@ var nsSearchResultsController =
         case "file_message_button":
         case "goto_folder_button":
         case "saveas_vf_button":
+        case "cmd_selectAll":
             return true;
         default:
             return false;
@@ -111,6 +112,8 @@ var nsSearchResultsController =
           case "saveas_vf_button":
               // need someway to see if there are any search criteria...
               return true;
+          case "cmd_selectAll":
+            return GetDBView() != null;              
           default:
             if (GetNumSelectedMessages() <= 0)
               enabled = false;
@@ -142,6 +145,13 @@ var nsSearchResultsController =
         case "saveas_vf_button":
             saveAsVirtualFolder();
             return true;
+
+        case "cmd_selectAll":
+            // move the focus to the search results pane
+            GetThreadTree().focus();
+            GetDBView().doCommand(nsMsgViewCommandType.selectAll)
+            return true;
+                            
         default:
             return false;
         }
@@ -188,7 +198,7 @@ var gSearchNotificationListener =
     onSearchDone: function(status)
     {
         gSearchStopButton.setAttribute("label", gSearchBundle.getString("labelForSearchButton"));
-        gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("accesskeyForSearchButton"));
+        gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("labelForSearchButton.accesskey"));
         gStatusFeedback._stopMeteors();
         SetAdvancedSearchStatusText(gSearchView.QueryInterface(Components.interfaces.nsITreeView).rowCount);
     },
@@ -196,7 +206,7 @@ var gSearchNotificationListener =
     onNewSearch: function()
     {
       gSearchStopButton.setAttribute("label", gSearchBundle.getString("labelForStopButton"));
-      gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("accesskeyForStopButton"));
+      gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("labelForStopButton.accesskey"));
       UpdateMailSearch("new-search");	
       gStatusFeedback._startMeteors();
       gStatusFeedback.showStatusString(gSearchBundle.getString("searchingMessage"));
@@ -256,7 +266,7 @@ function searchOnLoad()
 
   gSearchBundle = document.getElementById("bundle_search");
   gSearchStopButton.setAttribute("label", gSearchBundle.getString("labelForSearchButton"));
-  gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("accesskeyForSearchButton"));
+  gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("labelForSearchButton.accesskey"));
   gMessengerBundle = document.getElementById("bundle_messenger");
   setupDatasource();
   setupSearchListener();
@@ -304,7 +314,8 @@ function initializeSearchWindowWidgets()
     gFolderPicker = document.getElementById("searchableFolders");
     gSearchStopButton = document.getElementById("search-button");
     gStatusBar = document.getElementById('statusbar-icon');
-
+    hideMatchAllItem();
+    
     msgWindow = Components.classes[msgWindowContractID].createInstance(nsIMsgWindow);
     msgWindow.statusFeedback = gStatusFeedback;
     msgWindow.SetDOMWindow(window);

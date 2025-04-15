@@ -51,7 +51,6 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefBranch2.h"
 #include "nsIIDNService.h"
-#include "nsIPlatformCharset.h"
 #include "nsNetUtil.h"
 #include "prlog.h"
 #include "nsAutoPtr.h"
@@ -477,7 +476,7 @@ nsStandardURL::BuildNormalizedSpec(const char *spec)
     // escape each URL segment, if necessary, and calculate approximate normalized
     // spec length.
     //
-    PRInt32 approxLen = 3; // includes room for "://"
+    PRUint32 approxLen = 3; // includes room for "://"
 
     // the scheme is already ASCII
     if (mScheme.mLen > 0)
@@ -514,7 +513,8 @@ nsStandardURL::BuildNormalizedSpec(const char *spec)
     //
     // generate the normalized URL string
     //
-    mSpec.SetLength(approxLen + 32);
+    if (!EnsureStringLength(mSpec, approxLen + 32))
+        return NS_ERROR_OUT_OF_MEMORY;
     char *buf;
     mSpec.BeginWriting(buf);
     PRUint32 i = 0;
@@ -626,6 +626,7 @@ nsStandardURL::BuildNormalizedSpec(const char *spec)
         CoalescePath(coalesceFlag, buf + mDirectory.mPos);
     }
     mSpec.SetLength(strlen(buf));
+    NS_ASSERTION(mSpec.Length() <= approxLen+32, "We've overflowed the mSpec buffer!");
     return NS_OK;
 }
 
@@ -864,10 +865,24 @@ nsStandardURL::ACEtoDisplayIDN(const nsCSubstring &host, nsCString &result)
 /* static */ nsresult
 nsStandardURL::UTF8toDisplayIDN(const nsCSubstring &host, nsCString &result)
 {
-    if (gShowPunycode || !IsInWhitelist(host))
+    // We have to normalize the hostname before testing against the domain
+    // whitelist.  See bug 315411.
+
+    nsCAutoString temp;
+    if (gShowPunycode || NS_FAILED(gIDN->Normalize(host, temp)))
         return gIDN->ConvertUTF8toACE(host, result);
 
-    return gIDN->Normalize(host, result);
+    PRBool isACE = PR_FALSE;
+    gIDN->IsACE(temp, &isACE);
+
+    // If host is converted to ACE by the normalizer, then the host may contain
+    // unsafe characters.  See bug 283016, bug 301694, and bug 309311.
+ 
+    if (!isACE && !IsInWhitelist(temp))
+        return gIDN->ConvertUTF8toACE(temp, result);
+
+    result = temp;
+    return NS_OK;
 }
 
 /* static */ PRBool
@@ -875,6 +890,8 @@ nsStandardURL::IsInWhitelist(const nsCSubstring &host)
 {
     PRInt32 pos; 
     PRBool safe;
+
+    // XXX This code uses strings inefficiently.
 
     if (gIDNWhitelistPrefBranch && 
         (pos = nsCAutoString(host).RFind(".")) != kNotFound &&
@@ -2423,7 +2440,6 @@ nsStandardURL::GetFile(nsIFile **result)
     if (NS_FAILED(rv))
         return rv;
 
-
 #if defined(PR_LOGGING)
     if (LOG_ENABLED()) {
         nsCAutoString path;
@@ -2455,14 +2471,9 @@ nsStandardURL::SetFile(nsIFile *file)
     rv = net_GetURLSpecFromFile(file, url);
     if (NS_FAILED(rv)) return rv;
 
-    // We should always set the charset until bug 278161 is fixed.
-    nsCOMPtr <nsIPlatformCharset> platformCharset =
-        do_GetService(NS_PLATFORMCHARSET_CONTRACTID);
-    nsCAutoString charset;
-    if (platformCharset)
-        platformCharset->GetCharset(kPlatformCharsetSel_FileName, charset);
+    SetSpec(url);
 
-    rv = Init(mURLType, mDefaultPort, url, charset.get(), nsnull);
+    rv = Init(mURLType, mDefaultPort, url, nsnull, nsnull);
 
     // must clone |file| since its value is not guaranteed to remain constant
     if (NS_SUCCEEDED(rv)) {

@@ -38,7 +38,7 @@
 #
 # ***** END LICENSE BLOCK *****
 #
-#ident	"$Id: Makefile.com,v 1.7 2005/02/26 02:20:40 christophe.ravel.bugs%sun.com Exp $"
+#ident	"$Id: Makefile.com,v 1.7.18.1 2006/05/15 17:45:54 wtchang%redhat.com Exp $"
 #
 
 MACH = $(shell mach)
@@ -57,6 +57,7 @@ FILES = $(DATAFILES) pkginfo prototype
 PACKAGE = $(shell basename `pwd`)
 
 PRODUCT_VERSION = $(shell grep NSS_VERSION $(CORE_DEPTH)/../dist/public/nss/nss.h \
+	| head -1 \
 	| sed -e 's/"$$//' -e 's/.*"//' -e 's/ .*//')
 
 LN = /usr/bin/ln

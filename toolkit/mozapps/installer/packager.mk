@@ -101,6 +101,9 @@ else
 _APPNAME	= $(MOZ_APP_DISPLAYNAME).app
 endif
 endif
+ifndef _BINPATH
+_BINPATH	= /$(_APPNAME)/Contents/MacOS
+endif # _BINPATH
 PKG_SUFFIX	= .dmg
 PKG_DMG_FLAGS	=
 ifneq (,$(MOZ_PKG_MAC_DSSTORE))
@@ -119,8 +122,11 @@ ifneq (,$(MOZ_PKG_MAC_EXTRA))
 PKG_DMG_FLAGS += $(MOZ_PKG_MAC_EXTRA)
 endif
 _ABS_TOPSRCDIR = $(shell cd $(topsrcdir) && pwd)
+ifdef UNIVERSAL_BINARY
+STAGEPATH = universal/
+endif
 MAKE_PACKAGE	= $(_ABS_TOPSRCDIR)/build/package/mac_osx/pkg-dmg \
-  --source "$(MOZ_PKG_APPNAME)" --target "$(PACKAGE)" \
+  --source "$(STAGEPATH)$(MOZ_PKG_APPNAME)" --target "$(PACKAGE)" \
   --volname "$(MOZ_APP_DISPLAYNAME)" $(PKG_DMG_FLAGS)
 UNMAKE_PACKAGE	= \
   set -ex; \
@@ -155,19 +161,33 @@ endif
 
 # dummy macro if we don't have PSM built
 SIGN_NSS		=
-ifndef CROSS_COMPILE
+ifneq (1_,$(if $(CROSS_COMPILE),1,0)_$(UNIVERSAL_BINARY))
 ifdef MOZ_PSM
 SIGN_NSS		= @echo signing nss libraries;
 
+ifdef UNIVERSAL_BINARY
+NATIVE_ARCH	= $(shell uname -p | sed -e s/powerpc/ppc/)
+NATIVE_DIST	= $(DIST)/../../$(NATIVE_ARCH)/dist
+SIGN_CMD	= $(NATIVE_DIST)/bin/run-mozilla.sh $(NATIVE_DIST)/bin/shlibsign -v -i
+else
 SIGN_CMD	= $(DIST)/bin/run-mozilla.sh $(DIST)/bin/shlibsign -v -i
+endif
 
-SOFTOKN		= $(DIST)/$(MOZ_PKG_APPNAME)/$(DLL_PREFIX)softokn3$(DLL_SUFFIX)
-FREEBL_HYBRID	= $(DIST)/$(MOZ_PKG_APPNAME)/$(DLL_PREFIX)freebl_hybrid_3$(DLL_SUFFIX)
-FREEBL_PURE	= $(DIST)/$(MOZ_PKG_APPNAME)/$(DLL_PREFIX)freebl_pure32_3$(DLL_SUFFIX)
+SOFTOKN		= $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME)$(_BINPATH)/$(DLL_PREFIX)softokn3$(DLL_SUFFIX)
+FREEBL		= $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME)$(_BINPATH)/$(DLL_PREFIX)freebl3$(DLL_SUFFIX)
+FREEBL_32FPU	= $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME)$(_BINPATH)/$(DLL_PREFIX)freebl_32fpu_3$(DLL_SUFFIX)
+FREEBL_32INT	= $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME)$(_BINPATH)/$(DLL_PREFIX)freebl_32int_3$(DLL_SUFFIX)
+FREEBL_32INT64	= $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME)$(_BINPATH)/$(DLL_PREFIX)freebl_32int64_3$(DLL_SUFFIX)
+FREEBL_64FPU	= $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME)$(_BINPATH)/$(DLL_PREFIX)freebl_64fpu_3$(DLL_SUFFIX)
+FREEBL_64INT	= $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME)$(_BINPATH)/$(DLL_PREFIX)freebl_64int_3$(DLL_SUFFIX)
 
 SIGN_NSS	+= $(SIGN_CMD) $(SOFTOKN); \
-        if test -f $(FREEBL_HYBRID); then $(SIGN_CMD) $(FREEBL_HYBRID); fi; \
-        if test -f $(FREEBL_PURE); then $(SIGN_CMD) $(FREEBL_PURE); fi;
+	if test -f $(FREEBL); then $(SIGN_CMD) $(FREEBL); fi; \
+	if test -f $(FREEBL_32FPU); then $(SIGN_CMD) $(FREEBL_32FPU); fi; \
+	if test -f $(FREEBL_32INT); then $(SIGN_CMD) $(FREEBL_32INT); fi; \
+	if test -f $(FREEBL_32INT64); then $(SIGN_CMD) $(FREEBL_32INT64); fi; \
+	if test -f $(FREEBL_64FPU); then $(SIGN_CMD) $(FREEBL_64FPU); fi; \
+	if test -f $(FREEBL_64INT); then $(SIGN_CMD) $(FREEBL_64INT); fi;
 
 endif # MOZ_PSM
 endif # !CROSS_COMPILE
@@ -202,12 +222,14 @@ NO_PKG_FILES += \
 	chrome/overlayinfo \
 	components/compreg.dat \
 	components/xpti.dat \
+	content_unit_tests \
+	necko_unit_tests \
 	$(NULL)
 
 # browser/locales/Makefile uses this makefile for it's variable defs, but
 # doesn't want the libs:: rule.
 ifndef PACKAGER_NO_LIBS
-libs:: $(PACKAGE)
+libs:: make-package
 endif
 
 DEFINES += -DDLL_PREFIX=$(DLL_PREFIX) -DDLL_SUFFIX=$(DLL_SUFFIX)
@@ -220,12 +242,6 @@ $(MOZ_PKG_REMOVALS_GEN): $(MOZ_PKG_REMOVALS) Makefile Makefile.in
 endif
 
 GARBAGE		+= $(DIST)/$(PACKAGE) $(PACKAGE)
-
-ifdef USE_SHORT_LIBNAME
-MOZILLA_BIN	= $(DIST)/bin/$(MOZ_PKG_APPNAME)$(BIN_SUFFIX)
-else
-MOZILLA_BIN	= $(DIST)/bin/$(MOZ_PKG_APPNAME)-bin
-endif
 
 ifeq ($(OS_ARCH),IRIX)
 STRIP_FLAGS	= -f
@@ -246,7 +262,41 @@ else
 PKGCP_OS = unix
 endif
 
-$(PACKAGE): $(MOZILLA_BIN) $(MOZ_PKG_MANIFEST) $(MOZ_PKG_REMOVALS_GEN)
+# The following target stages files into three directories: one directory for
+# locale-independent files, one for locale-specific files, and one for optional
+# extensions based on the information in the MOZ_PKG_MANIFEST file and the
+# following vars:
+# MOZ_NONLOCALIZED_PKG_LIST
+# MOZ_LOCALIZED_PKG_LIST
+# MOZ_OPTIONAL_PKG_LIST
+
+PKG_ARG = , "$(pkg)"
+
+installer-stage: $(MOZ_PKG_MANIFEST)
+ifndef MOZ_PKG_MANIFEST
+	$(error MOZ_PKG_MANIFEST unspecified!)
+endif
+	@rm -rf $(DEPTH)/installer-stage $(DIST)/xpt
+	@echo "Staging installer files..."
+	@$(NSINSTALL) -D $(DEPTH)/installer-stage/nonlocalized
+	@$(NSINSTALL) -D $(DEPTH)/installer-stage/localized
+	@$(NSINSTALL) -D $(DEPTH)/installer-stage/optional
+	@$(NSINSTALL) -D $(DIST)/xpt
+	$(PERL) -I$(topsrcdir)/xpinstall/packager -e 'use Packager; \
+	  Packager::Copy("$(DIST)", "$(DEPTH)/installer-stage/nonlocalized", \
+	                 "$(MOZ_PKG_MANIFEST)", "$(PKGCP_OS)", 1, 0, 1 \
+	    $(foreach pkg,$(MOZ_NONLOCALIZED_PKG_LIST),$(PKG_ARG)) );'
+	$(PERL) -I$(topsrcdir)/xpinstall/packager -e 'use Packager; \
+	  Packager::Copy("$(DIST)", "$(DEPTH)/installer-stage/localized", \
+	                 "$(MOZ_PKG_MANIFEST)", "$(PKGCP_OS)", 1, 0, 1 \
+	    $(foreach pkg,$(MOZ_LOCALIZED_PKG_LIST),$(PKG_ARG)) );'
+	$(PERL) -I$(topsrcdir)/xpinstall/packager -e 'use Packager; \
+	  Packager::Copy("$(DIST)", "$(DEPTH)/installer-stage/optional", \
+	                 "$(MOZ_PKG_MANIFEST)", "$(PKGCP_OS)", 1, 0, 1 \
+	    $(foreach pkg,$(MOZ_OPTIONAL_PKG_LIST),$(PKG_ARG)) );'
+	$(PERL) $(topsrcdir)/xpinstall/packager/xptlink.pl -s $(DIST) -d $(DIST)/xpt -f $(DEPTH)/installer-stage/nonlocalized/components -v
+
+stage-package: $(MOZ_PKG_MANIFEST) $(MOZ_PKG_REMOVALS_GEN)
 	@rm -rf $(DIST)/$(MOZ_PKG_APPNAME) $(DIST)/$(PKG_BASENAME).tar $(DIST)/$(PKG_BASENAME).dmg $@ $(EXCLUDE_LIST)
 # NOTE: this must be a tar now that dist links into the tree so that we
 # do not strip the binaries actually in the tree.
@@ -260,14 +310,18 @@ ifdef MOZ_PKG_MANIFEST
 	$(PERL) $(topsrcdir)/xpinstall/packager/xptlink.pl -s $(DIST) -d $(DIST)/xpt -f $(DIST)/$(MOZ_PKG_APPNAME)/components -v
 else # !MOZ_PKG_MANIFEST
 ifeq ($(MOZ_PKG_FORMAT),DMG)
+# If UNIVERSAL_BINARY, the package will be made from an already-prepared
+# STAGEPATH
+ifndef UNIVERSAL_BINARY
 	@cd $(DIST) && rsync -auv --copy-unsafe-links $(_APPNAME) $(MOZ_PKG_APPNAME)
+endif
 else
 	@cd $(DIST)/bin && tar $(TAR_CREATE_FLAGS) - * | (cd ../$(MOZ_PKG_APPNAME); tar -xf -)
 endif # DMG
 endif # MOZ_PKG_MANIFEST
 ifndef PKG_SKIP_STRIP
 	@echo "Stripping package directory..."
-	@cd $(DIST)/$(MOZ_PKG_APPNAME); find . ! -type d \
+	@cd $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME); find . ! -type d \
 			! -name "*.js" \
 			! -name "*.xpt" \
 			! -name "*.gif" \
@@ -293,16 +347,13 @@ ifndef PKG_SKIP_STRIP
 	$(SIGN_NSS)
 endif
 	@echo "Removing unpackaged files..."
-ifeq ($(MOZ_PKG_FORMAT),DMG)
-	cd $(DIST)/$(MOZ_PKG_APPNAME)/$(_APPNAME)/Contents/MacOS; rm -rf $(NO_PKG_FILES)
-ifdef MOZ_PKG_REMOVALS
-	$(SYSINSTALL) $(MOZ_PKG_REMOVALS_GEN) $(DIST)/$(MOZ_PKG_APPNAME)/$(_APPNAME)/Contents/MacOS
-endif # MOZ_PKG_REMOVALS
-else
-	cd $(DIST)/$(MOZ_PKG_APPNAME); rm -rf $(NO_PKG_FILES)
-ifdef MOZ_PKG_REMOVALS
-	$(SYSINSTALL) $(MOZ_PKG_REMOVALS_GEN) $(DIST)/$(MOZ_PKG_APPNAME)
-endif # MOZ_PKG_REMOVALS
+ifdef NO_PKG_FILES
+	cd $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME)$(_BINPATH); rm -rf $(NO_PKG_FILES)
 endif
+ifdef MOZ_PKG_REMOVALS
+	$(SYSINSTALL) $(MOZ_PKG_REMOVALS_GEN) $(DIST)/$(STAGEPATH)$(MOZ_PKG_APPNAME)$(_BINPATH)
+endif # MOZ_PKG_REMOVALS
+
+make-package: stage-package
 	@echo "Compressing..."
 	cd $(DIST); $(MAKE_PACKAGE)

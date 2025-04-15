@@ -156,6 +156,7 @@ protected:
 
   nsSVGGradientFrame                     *mNextGrad;
   PRBool                                  mLoopFlag;
+  nsCOMPtr<nsIContent>                    mSourceContent;
 
 private:
   // Cached values
@@ -293,7 +294,7 @@ NS_INTERFACE_MAP_BEGIN(nsSVGGradientFrame)
   NS_INTERFACE_MAP_ENTRY(nsISVGValue)
   NS_INTERFACE_MAP_ENTRY(nsISVGGradient)
   NS_INTERFACE_MAP_ENTRY(nsISVGValueObserver)
-  NS_INTERFACE_MAP_ENTRY(nsSupportsWeakReference)
+  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsISVGValue)
 NS_INTERFACE_MAP_END_INHERITING(nsSVGGradientFrameBase)
 
@@ -537,6 +538,15 @@ nsSVGGradientFrame::GetGradientTransform(nsIDOMSVGMatrix **aGradientTransform,
       NS_NewSVGMatrix(getter_AddRefs(bboxTransform),
                       width, 0, 0, height, x, y);
     }
+  } else if (aSource) {
+    nsIFrame *frame = nsnull;
+    CallQueryInterface(aSource, &frame);
+
+    nsIAtom *callerType = frame->GetType();
+    if (callerType == nsLayoutAtoms::svgGlyphFrame)
+      mSourceContent = frame->GetContent()->GetParent();
+    else
+      mSourceContent = frame->GetContent();
   }
 
   if (!bboxTransform)
@@ -621,6 +631,10 @@ nsSVGGradientFrame::PrivateGetSpreadMethod(nsIDOMSVGAnimatedEnumeration * *aEnum
 NS_IMETHODIMP
 nsSVGGradientFrame::GetNextGradient(nsISVGGradient * *aNextGrad, PRUint32 aType) {
   PRUint32 nextType;
+  if (!mNextGrad) {
+    *aNextGrad = nsnull;
+    return NS_ERROR_FAILURE;
+  }
   mNextGrad->GetGradientType(&nextType);
   if (nextType == aType) {
     *aNextGrad = mNextGrad;
@@ -862,7 +876,13 @@ nsSVGLinearGradientFrame::GetX1(float *aX1)
       return NS_ERROR_FAILURE;
     NS_ADD_SVGVALUE_OBSERVER(mX1);
   }
-  mX1->GetValue(aX1);
+  PRUint16 bbox;
+  GetGradientUnits(&bbox);
+  if (bbox == nsIDOMSVGGradientElement::SVG_GRUNITS_OBJECTBOUNDINGBOX) {
+    mX1->GetValue(aX1);
+  } else {
+    *aX1 = nsSVGUtils::UserSpace(mSourceContent, mX1, nsSVGUtils::X);
+  }
   return NS_OK;
 }
 
@@ -875,7 +895,13 @@ nsSVGLinearGradientFrame::GetY1(float *aY1)
       return NS_ERROR_FAILURE;
     NS_ADD_SVGVALUE_OBSERVER(mY1);
   }
-  mY1->GetValue(aY1);
+  PRUint16 bbox;
+  GetGradientUnits(&bbox);
+  if (bbox == nsIDOMSVGGradientElement::SVG_GRUNITS_OBJECTBOUNDINGBOX) {
+    mY1->GetValue(aY1);
+  } else {
+    *aY1 = nsSVGUtils::UserSpace(mSourceContent, mY1, nsSVGUtils::Y);
+  }
   return NS_OK;
 }
 
@@ -888,7 +914,13 @@ nsSVGLinearGradientFrame::GetX2(float *aX2)
       return NS_ERROR_FAILURE;
     NS_ADD_SVGVALUE_OBSERVER(mX2);
   }
-  mX2->GetValue(aX2);
+  PRUint16 bbox;
+  GetGradientUnits(&bbox);
+  if (bbox == nsIDOMSVGGradientElement::SVG_GRUNITS_OBJECTBOUNDINGBOX) {
+    mX2->GetValue(aX2);
+  } else {
+    *aX2 = nsSVGUtils::UserSpace(mSourceContent, mX2, nsSVGUtils::X);
+  }
   return NS_OK;
 }
 
@@ -901,7 +933,13 @@ nsSVGLinearGradientFrame::GetY2(float *aY2)
       return NS_ERROR_FAILURE;
     NS_ADD_SVGVALUE_OBSERVER(mY2);
   }
-  mY2->GetValue(aY2);
+  PRUint16 bbox;
+  GetGradientUnits(&bbox);
+  if (bbox == nsIDOMSVGGradientElement::SVG_GRUNITS_OBJECTBOUNDINGBOX) {
+    mY2->GetValue(aY2);
+  } else {
+    *aY2 = nsSVGUtils::UserSpace(mSourceContent, mY2, nsSVGUtils::Y);
+  }
   return NS_OK;
 }
 
@@ -1098,7 +1136,13 @@ nsSVGRadialGradientFrame::GetFx(float *aFx)
       return NS_ERROR_FAILURE;
     NS_ADD_SVGVALUE_OBSERVER(mFx);
   }
-  mFx->GetValue(aFx);
+  PRUint16 bbox;
+  GetGradientUnits(&bbox);
+  if (bbox == nsIDOMSVGGradientElement::SVG_GRUNITS_OBJECTBOUNDINGBOX) {
+    mFx->GetValue(aFx);
+  } else {
+    *aFx = nsSVGUtils::UserSpace(mSourceContent, mFx, nsSVGUtils::X);
+  }
   return NS_OK;
 }
 
@@ -1111,7 +1155,13 @@ nsSVGRadialGradientFrame::GetFy(float *aFy)
       return NS_ERROR_FAILURE;
     NS_ADD_SVGVALUE_OBSERVER(mFy);
   }
-  mFy->GetValue(aFy);
+  PRUint16 bbox;
+  GetGradientUnits(&bbox);
+  if (bbox == nsIDOMSVGGradientElement::SVG_GRUNITS_OBJECTBOUNDINGBOX) {
+    mFy->GetValue(aFy);
+  } else {
+    *aFy = nsSVGUtils::UserSpace(mSourceContent, mFy, nsSVGUtils::Y);
+  }
   return NS_OK;
 }
 
@@ -1124,7 +1174,13 @@ nsSVGRadialGradientFrame::GetCx(float *aCx)
       return NS_ERROR_FAILURE;
     NS_ADD_SVGVALUE_OBSERVER(mCx);
   }
-  mCx->GetValue(aCx);
+  PRUint16 bbox;
+  GetGradientUnits(&bbox);
+  if (bbox == nsIDOMSVGGradientElement::SVG_GRUNITS_OBJECTBOUNDINGBOX) {
+    mCx->GetValue(aCx);
+  } else {
+    *aCx = nsSVGUtils::UserSpace(mSourceContent, mCx, nsSVGUtils::X);
+  }
   return NS_OK;
 }
 
@@ -1137,7 +1193,13 @@ nsSVGRadialGradientFrame::GetCy(float *aCy)
       return NS_ERROR_FAILURE;
     NS_ADD_SVGVALUE_OBSERVER(mCy);
   }
-  mCy->GetValue(aCy);
+  PRUint16 bbox;
+  GetGradientUnits(&bbox);
+  if (bbox == nsIDOMSVGGradientElement::SVG_GRUNITS_OBJECTBOUNDINGBOX) {
+    mCy->GetValue(aCy);
+  } else {
+    *aCy = nsSVGUtils::UserSpace(mSourceContent, mCy, nsSVGUtils::Y);
+  }
   return NS_OK;
 }
 
@@ -1150,7 +1212,13 @@ nsSVGRadialGradientFrame::GetR(float *aR)
       return NS_ERROR_FAILURE;
     NS_ADD_SVGVALUE_OBSERVER(mR);
   }
-  mR->GetValue(aR);
+  PRUint16 bbox;
+  GetGradientUnits(&bbox);
+  if (bbox == nsIDOMSVGGradientElement::SVG_GRUNITS_OBJECTBOUNDINGBOX) {
+    mR->GetValue(aR);
+  } else {
+    *aR = nsSVGUtils::UserSpace(mSourceContent, mR, nsSVGUtils::XY);
+  }
   return NS_OK;
 }
 

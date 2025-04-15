@@ -257,6 +257,15 @@ nsMenuBarX :: AquifyMenuBar ( )
     // so we can invoke its command later.
     HideItem ( domDoc, NS_LITERAL_STRING("menu_PrefsSeparator"), nsnull );
     HideItem ( domDoc, NS_LITERAL_STRING("menu_preferences"), getter_AddRefs(mPrefItemContent) );
+    if (mPrefItemContent)
+      ::EnableMenuCommand(NULL, kHICommandPreferences);
+
+    // Cocoa menus compatibility - hide items that we use for the Application menu in Cocoa menus.
+    // This way, a menu setup for the Cocoa application menu will also work for Carbon menus.
+    HideItem(domDoc, NS_LITERAL_STRING("menu_mac_services"), nsnull);
+    HideItem(domDoc, NS_LITERAL_STRING("menu_mac_hide_app"), nsnull);
+    HideItem(domDoc, NS_LITERAL_STRING("menu_mac_hide_others"), nsnull);
+    HideItem(domDoc, NS_LITERAL_STRING("menu_mac_show_all"), nsnull);
   }
       
 } // AquifyMenuBar
@@ -277,9 +286,15 @@ nsMenuBarX :: InstallCommandEventHandler ( )
   WindowRef myWindow = NS_REINTERPRET_CAST(WindowRef, mParent->GetNativeData(NS_NATIVE_DISPLAY));
   NS_ASSERTION ( myWindow, "Can't get WindowRef to install command handler!" );
   if ( myWindow && sCommandEventHandler ) {
-    const EventTypeSpec commandEventList[] = { {kEventClassCommand, kEventCommandProcess},
-                                               {kEventClassCommand, kEventCommandUpdateStatus} };
-    err = ::InstallWindowEventHandler ( myWindow, sCommandEventHandler, 2, commandEventList, this, NULL );
+    const EventTypeSpec commandEventList[] = {
+     {kEventClassCommand, kEventCommandProcess},
+    };
+    err = ::InstallWindowEventHandler(myWindow,
+                                      sCommandEventHandler,
+                                      GetEventTypeCount(commandEventList),
+                                      commandEventList,
+                                      this,
+                                      NULL);
     NS_ASSERTION ( err == noErr, "Uh oh, command handler not installed" );
   }
 
@@ -291,7 +306,7 @@ nsMenuBarX :: InstallCommandEventHandler ( )
 //
 // CommandEventHandler
 //
-// Processes Command carbon events from enabling/selecting of items in the menu.
+// Processes Command carbon events from selecting of items in the menu.
 //
 pascal OSStatus
 nsMenuBarX :: CommandEventHandler ( EventHandlerCallRef inHandlerChain, EventRef inEvent, void* userData )
@@ -303,94 +318,59 @@ nsMenuBarX :: CommandEventHandler ( EventHandlerCallRef inHandlerChain, EventRef
                                         NULL, sizeof(HICommand), NULL, &command );	
   if ( err1 )
     return handled;
-    
+
+  NS_ASSERTION(::GetEventKind(inEvent) == kEventCommandProcess,
+               "CommandEventHandler asked to handle unknown event kind");
+
   nsMenuBarX* self = NS_REINTERPRET_CAST(nsMenuBarX*, userData);
-  switch ( ::GetEventKind(inEvent) ) {
-    // user selected a menu item. See if it's one we handle.
-    case kEventCommandProcess:
-    {
-      switch ( command.commandID ) {
-        case kHICommandPreferences:
-        {
-          nsEventStatus status = self->ExecuteCommand(self->mPrefItemContent);
-          if ( status == nsEventStatus_eConsumeNoDefault )    // event handled, no other processing
-            handled = noErr;
-          break;
-        }
-        
-        case kHICommandQuit:
-        {
-          nsEventStatus status = self->ExecuteCommand(self->mQuitItemContent);
-          if ( status == nsEventStatus_eConsumeNoDefault )    // event handled, no other processing
-            handled = noErr;
-          break;
-        }
-        
-        case kHICommandAbout:
-        {
-          // the 'about' command is special because we don't have a
-          // nsIMenu or nsIMenuItem for the apple menu. Grovel for the
-          // content node with an id of "aboutName" and call it
-          // directly.
-          nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(self->mDocument);
-	        if ( domDoc ) {
-      	    nsCOMPtr<nsIDOMElement> domElement;
-      	    domDoc->GetElementById(NS_LITERAL_STRING("aboutName"),
-                                   getter_AddRefs(domElement));
-      	    nsCOMPtr<nsIContent> aboutContent ( do_QueryInterface(domElement) );
-      	    self->ExecuteCommand(aboutContent);
-          }
-          handled = noErr;
-          break;
-        }
-
-#if !XP_MACOSX
-        case 'SHMN':
-        { // Shared menu support
-          MenuItemIndex index = command.menu.menuItemIndex;
-          if (index)
-          {
-            (void)SharedMenuHit(GetMenuID(command.menu.menuRef), command.menu.menuItemIndex);
-            ::HiliteMenu(0);
-            handled = noErr;
-          }
-          break;
-        }
-#endif
-
-        default:
-        {
-          // given the commandID, look it up in our hashtable and dispatch to
-          // that content node. Recall that we store weak pointers to the content
-          // nodes in the hash table.
-          nsPRUint32Key key ( command.commandID );
-          nsIMenuItem* content = NS_REINTERPRET_CAST(nsIMenuItem*, self->mObserverTable.Get(&key));
-          if ( content ) {
-            content->DoCommand();
-            handled = noErr;
-          }        
-          break; 
-        }        
-
-      } // switch on commandID
+  switch (command.commandID) {
+    case kHICommandPreferences: {
+      nsEventStatus status = self->ExecuteCommand(self->mPrefItemContent);
+      if (status == nsEventStatus_eConsumeNoDefault)
+        // event handled, no other processing
+        handled = noErr;
       break;
     }
-    
-    // enable/disable menu id's
-    case kEventCommandUpdateStatus:
-    {
-      // only enable the preferences item in the app menu if we found a pref
-      // item DOM node in this menubar.
-      if ( command.commandID == kHICommandPreferences ) {
-        if ( self->mPrefItemContent )
-          ::EnableMenuCommand ( nsnull, kHICommandPreferences );
-        else
-          ::DisableMenuCommand ( nsnull, kHICommandPreferences );
+
+    case kHICommandQuit: {
+      nsEventStatus status = self->ExecuteCommand(self->mQuitItemContent);
+      if (status == nsEventStatus_eConsumeNoDefault)
+        // event handled, no other processing
+        handled = noErr;
+      break;
+    }
+
+    case kHICommandAbout: {
+      // the 'about' command is special because we don't have a
+      // nsIMenu or nsIMenuItem for the apple menu. Grovel for the
+      // content node with an id of "aboutName" and call it
+      // directly.
+      nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(self->mDocument);
+      if (domDoc) {
+        nsCOMPtr<nsIDOMElement> domElement;
+      	domDoc->GetElementById(NS_LITERAL_STRING("aboutName"),
+                               getter_AddRefs(domElement));
+      	nsCOMPtr<nsIContent> aboutContent (do_QueryInterface(domElement));
+        self->ExecuteCommand(aboutContent);
+      }
+      handled = noErr;
+      break;
+    }
+
+    default: {
+      // given the commandID, look it up in our hashtable and dispatch to
+      // that content node. Recall that we store weak pointers to the content
+      // nodes in the hash table.
+      nsPRUint32Key key(command.commandID);
+      nsIMenuItem* content = NS_REINTERPRET_CAST(nsIMenuItem*,
+                                               self->mObserverTable.Get(&key));
+      if (content) {
+        content->DoCommand();
         handled = noErr;
       }
       break;
     }
-  } // switch on event type
+  }
   
   return handled;
   
@@ -572,22 +552,18 @@ NS_METHOD nsMenuBarX::AddMenu(nsIMenu * aMenu)
   MenuRef menuRef = nsnull;
   aMenu->GetNativeData((void**)&menuRef);
 
-  PRBool helpMenu;
-  aMenu->IsHelpMenu(&helpMenu);
-  if(!helpMenu) {
-    nsCOMPtr<nsIContent> menu;
-    aMenu->GetMenuContent(getter_AddRefs(menu));
-    nsAutoString menuHidden;
-    menu->GetAttr(kNameSpaceID_None, nsWidgetAtoms::hidden, menuHidden);
-    if(!menuHidden.EqualsLiteral("true") && menu->GetChildCount() > 0) {
-    	// make sure we only increment |mNumMenus| if the menu is visible, since
-    	// we use it as an index of where to insert the next menu.
-      mNumMenus++;
-      
-      ::InsertMenuItem(mRootMenu, "\pPlaceholder", mNumMenus);
-      OSStatus status = ::SetMenuItemHierarchicalMenu(mRootMenu, mNumMenus, menuRef);
-      NS_ASSERTION(status == noErr, "nsMenuBarX::AddMenu: SetMenuItemHierarchicalMenu failed.");
-    }
+  nsCOMPtr<nsIContent> menu;
+  aMenu->GetMenuContent(getter_AddRefs(menu));
+  nsAutoString menuHidden;
+  menu->GetAttr(kNameSpaceID_None, nsWidgetAtoms::hidden, menuHidden);
+  if(!menuHidden.EqualsLiteral("true") && menu->GetChildCount() > 0) {
+    // make sure we only increment |mNumMenus| if the menu is visible, since
+    // we use it as an index of where to insert the next menu.
+    mNumMenus++;
+    
+    ::InsertMenuItem(mRootMenu, "\pPlaceholder", mNumMenus);
+    OSStatus status = ::SetMenuItemHierarchicalMenu(mRootMenu, mNumMenus, menuRef);
+    NS_ASSERTION(status == noErr, "nsMenuBarX::AddMenu: SetMenuItemHierarchicalMenu failed.");
   }
 
   return NS_OK;
@@ -778,7 +754,7 @@ nsMenuBarX::AttributeChanged( nsIDocument * aDocument, nsIContent * aContent,
   nsCOMPtr<nsIChangeObserver> obs;
   Lookup ( aContent, getter_AddRefs(obs) );
   if ( obs )
-    obs->AttributeChanged ( aDocument, aNameSpaceID, aAttribute );
+    obs->AttributeChanged(aDocument, aNameSpaceID, aContent, aAttribute);
 }
 
 void
@@ -970,27 +946,12 @@ MenuHelpersX::DispatchCommandTo(nsIWeakReference* aDocShellWeakRef,
   MenuHelpersX::DocShellToPresContext(docShell, getter_AddRefs(presContext));
 
   nsEventStatus status = nsEventStatus_eConsumeNoDefault;
-  nsMouseEvent event(PR_TRUE, NS_XUL_COMMAND, nsnull, nsMouseEvent::eReal);
+  nsXULCommandEvent event(PR_TRUE, NS_XUL_COMMAND, nsnull);
 
   // FIXME: Should probably figure out how to init this with the actual
   // pressed keys, but this is a big old edge case anyway. -dwh
 
-  // See if we have a command element.  If so, we execute on the
-  // command instead of on our content element.
-  nsAutoString command;
-  aTargetContent->GetAttr(kNameSpaceID_None, nsWidgetAtoms::command, command);
-  if (!command.IsEmpty()) {
-    nsCOMPtr<nsIDOMDocument> domDoc(do_QueryInterface(aTargetContent->GetDocument()));
-    nsCOMPtr<nsIDOMElement> commandElt;
-    domDoc->GetElementById(command, getter_AddRefs(commandElt));
-    nsCOMPtr<nsIContent> commandContent(do_QueryInterface(commandElt));
-    if (commandContent)
-      commandContent->HandleDOMEvent(presContext, &event, nsnull,
-                                     NS_EVENT_FLAG_INIT, &status);
-  }
-  else
-    aTargetContent->HandleDOMEvent(presContext, &event, nsnull,
-                                   NS_EVENT_FLAG_INIT, &status);
-
+  aTargetContent->HandleDOMEvent(presContext, &event, nsnull,
+                                 NS_EVENT_FLAG_INIT, &status);
   return status;
 }

@@ -83,24 +83,24 @@ void DemangleSymbol(const char * aSymbol,
 }
 
 
-#if defined(linux) && defined(__GLIBC__) && (defined(__i386) || defined(PPC)) // i386 or PPC Linux stackwalking code
+#if defined(linux) && defined(__GNUC__) && (defined(__i386) || defined(PPC) || defined(__x86_64__)) // i386 or PPC Linux stackwalking code
 
-#include <setjmp.h>
-//
 
 void DumpStackToFile(FILE* aStream)
 {
-  jmp_buf jb;
-  setjmp(jb);
-
   // Stack walking code courtesy Kipp's "leaky".
 
-  // Get the frame pointer out of the jmp_buf
-  void **bp = (void**)
+  // Get the frame pointer
+  void **bp;
 #if defined(__i386) 
-    (jb[0].__jmpbuf[JB_BP]);
-#elif defined(PPC)
-    (jb[0].__jmpbuf[JB_GPR1]);
+  __asm__( "movl %%ebp, %0" : "=g"(bp));
+#elif defined(__x86_64__)
+  __asm__( "movq %%rbp, %0" : "=g"(bp));
+#else
+  // It would be nice if this worked uniformly, but at least on i386 and
+  // x86_64, it stopped working with gcc 4.1, because it points to the
+  // end of the saved registers instead of the start.
+  bp = (void**) __builtin_frame_address(0);
 #endif
 
   int skip = 2;

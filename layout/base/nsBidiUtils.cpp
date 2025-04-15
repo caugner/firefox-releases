@@ -277,6 +277,8 @@ nsresult ArabicShaping(const PRUnichar* aString, PRUint32 aLen,
                        PRBool aInputLogical, PRBool aOutputLogical)
 {
   nsAutoString tempString(aString, aLen);
+  if (tempString.Length() != aLen)
+    return NS_ERROR_OUT_OF_MEMORY;
   PRUnichar *tempBuf = tempString.BeginWriting();
   if (aInputLogical) {
     ReverseString(tempBuf, aLen);
@@ -348,7 +350,9 @@ nsresult ArabicShaping(const PRUnichar* aString, PRUint32 aLen,
       }
       if(! done)
         *lDest++ = *lSrc++; 
-    } 
+    } else if (0x200C == *lSrc || 0x200D == *lSrc)
+    // Strip zero-width joining controls ZWJ and ZWNJ from the shaped text
+      lSrc++;
     else 
       *lDest++ = *lSrc++; 
 

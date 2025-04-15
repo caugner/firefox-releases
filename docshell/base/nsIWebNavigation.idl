@@ -118,10 +118,9 @@ interface nsIWebNavigation : nsISupports
 
   /**
    * This flag specifies that the load should have the semantics of an HTML
-   * Meta-refresh tag (i.e., that the cache should be bypassed).  This flag
-   * is only applicable to loadURI.
+   * META refresh (i.e., that the cache should be validated).  This flag is
+   * only applicable to loadURI.
    * XXX the meaning of this flag is poorly defined.
-   * XXX no one uses this, so we should probably deprecate and remove it.
    */
   const unsigned long LOAD_FLAGS_IS_REFRESH      = 0x0010;
 
@@ -175,6 +174,21 @@ interface nsIWebNavigation : nsISupports
    * A hint this load was prompted by an external program: take care!
    */
   const unsigned long LOAD_FLAGS_FROM_EXTERNAL   = 0x1000;
+  
+  /**
+   * This flag specifies that the URI may be submitted to a third-party
+   * server for correction. This should only be applied to non-sensitive
+   * URIs entered by users.
+   */
+  const unsigned long LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP = 0x2000;
+
+  /**
+   * This flag specifies that this is the first load in this object.
+   * Set with care, since setting incorrectly can cause us to assume that
+   * nothing was actually loaded in this object if the load ends up being
+   * handled by an external application.
+   */
+  const unsigned long LOAD_FLAGS_FIRST_LOAD = 0x4000;
 
   /**
    * Loads a given URI.  This will give priority to loading the requested URI

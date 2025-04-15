@@ -132,12 +132,16 @@ bin/components/dom_events.xpt
 bin/components/dom_html.xpt
 bin/components/dom_loadsave.xpt
 bin/components/dom_range.xpt
+bin/components/dom_sidebar.xpt
+bin/components/dom_storage.xpt
 bin/components/dom_stylesheets.xpt
 bin/components/dom_traversal.xpt
 bin/components/dom_views.xpt
 bin/components/dom_xbl.xpt
 bin/components/dom_xpath.xpt
 bin/components/dom_xul.xpt
+bin/components/storage.xpt
+bin/components/strgcmps.dll
 bin/components/editor.xpt
 bin/components/editor.dll
 ;bin/components/evntloop.dll
@@ -168,6 +172,7 @@ bin/components/layout_base.xpt
 bin/components/layout_printing.xpt
 bin/components/layout_xul.xpt
 bin/components/layout_xul_tree.xpt
+bin/components/inspector.xpt
 bin/components/locale.xpt
 bin/components/i18n.dll
 bin/components/mork.dll
@@ -234,6 +239,7 @@ bin/components/windowwatcher.xpt
 bin/components/windowds.xpt
 bin/components/wlltvwrs.dll
 ;bin/components/xpc3250.dll
+bin/components/xpautocomplete.xpt
 bin/components/xpconect.dll
 bin/components/xpcom_base.xpt
 bin/components/xpcom_components.xpt
@@ -289,10 +295,6 @@ bin/components/websrvcs.xpt
 
 bin/components/xulappinfo.js
 bin/components/xulappinfo.xpt
-
-; Roaming
-bin/components/sroaming.dll
-bin/chrome/sroaming.jar
 
 ; LDAP components need to be in the browser for AutoConfig
 bin/components/mozldap.dll
@@ -470,15 +472,14 @@ bin/nss3.dll
 bin/smime3.dll
 bin/softokn3.chk
 bin/softokn3.dll
+bin/freebl3.chk
+bin/freebl3.dll
 bin/ssl3.dll
 bin/chrome/pipnss.jar
 bin/chrome/pippki.jar
 
 [inspector]
 bin/components/inspector-cmdline.js
-;bin/components/inspector.dll
-bin/components/inspectr.dll
-bin/components/inspector.xpt
 bin/chrome/inspector.jar
 bin/chrome/icons/default/winInspectorMain.ico
 bin/defaults/pref/inspector.js
@@ -489,10 +490,14 @@ bin/res/inspector/search-registry.rdf
 bin/components/myspell.dll
 bin/components/spellchk.dll
 bin/components/spellchecker.xpt
-bin/components/myspell/*
+bin/dictionaries/*
 
 [reporter]
 bin/chrome/reporter.jar
+
+[sroaming]
+bin/components/sroaming.dll
+bin/chrome/sroaming.jar
 
 ;Things that aren't packaged and why (or not why)
 ;accproxy.dll - I don't know

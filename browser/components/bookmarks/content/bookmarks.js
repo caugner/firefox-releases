@@ -21,6 +21,7 @@
 #
 # Contributor(s):
 #   Ben Goodger <ben@netscape.com> (Original Author)
+#   Joey Minta <jminta@gmail.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -41,6 +42,8 @@ const ADD_BM_DIALOG_FEATURES = "centerscreen,chrome,dialog,resizable,modal";
 #else
 const ADD_BM_DIALOG_FEATURES = "centerscreen,chrome,dialog,resizable,dependent";
 #endif
+
+const kBATCH_LIMIT = 4;
 
 var gNC_NS, gWEB_NS, gRDF_NS, gXUL_NS, gNC_NS_CMD;
 
@@ -83,7 +86,12 @@ var kIOContractID;
 var kIOIID;
 var IOSVC;
 
+var kMICSUMContractID;
+var kMICSUMIID;
+var MICSUMSVC;
+
 var gBmProperties;
+var gBkmkTxnSvc;
 
 // should be moved in a separate file
 function initServices()
@@ -129,12 +137,21 @@ function initServices()
   kIOIID            = Components.interfaces.nsIIOService;
   IOSVC             = Components.classes[kIOContractID].getService(kIOIID);
   
+  kMICSUMContractID = "@mozilla.org/microsummary/service;1";
+  kMICSUMIID        = Components.interfaces.nsIMicrosummaryService;
+  MICSUMSVC         = Components.classes[kMICSUMContractID].getService(kMICSUMIID);
+  
   gBmProperties     = [RDF.GetResource(gNC_NS+"Name"),
                        RDF.GetResource(gNC_NS+"URL"),
                        RDF.GetResource(gNC_NS+"ShortcutURL"),
                        RDF.GetResource(gNC_NS+"Description"),
                        RDF.GetResource(gNC_NS+"WebPanel"),
-                       RDF.GetResource(gNC_NS+"FeedURL")];
+                       RDF.GetResource(gNC_NS+"FeedURL"),
+                       RDF.GetResource(gNC_NS+"MicsumGenURI"),
+                       RDF.GetResource(gNC_NS+"MicsumExpiration"),
+                       RDF.GetResource(gNC_NS+"GeneratedTitle")];
+  gBkmkTxnSvc = Components.classes["@mozilla.org/bookmarks/transactionmanager;1"]
+                          .getService(Components.interfaces.nsIBookmarkTransactionManager);
 }
 
 function initBMService()
@@ -142,8 +159,6 @@ function initBMService()
   kBMSVCIID = Components.interfaces.nsIBookmarksService;
   BMDS  = RDF.GetDataSource("rdf:bookmarks");
   BMSVC = BMDS.QueryInterface(kBMSVCIID);
-  BookmarkTransaction.prototype.RDFC = RDFC;
-  BookmarkTransaction.prototype.BMDS = BMDS;
 }
 
 /**
@@ -304,6 +319,7 @@ var BookmarksCommand = {
     // delete
     // ---------------------
     // bm_refreshlivemark
+    // bm_refreshmicrosummary
     // bm_sortbyname
     // ---------------------
     // bm_properties
@@ -322,6 +338,10 @@ var BookmarksCommand = {
                   "delete", "bm_separator",
                   "bm_sortbyname", "bm_separator",
                   "bm_properties"];
+      // If this bookmark has a microsummary, add a command for refreshing it
+      // right before the "sort by name" (bm_sortbyname) command.
+      if (MICSUMSVC.hasMicrosummary(aNodeID))
+        commands.splice(14, 0, "bm_refreshmicrosummary");
       break;
     case "Folder":
     case "PersonalToolbarFolder":
@@ -415,14 +435,14 @@ var BookmarksCommand = {
 
   undoBookmarkTransaction: function ()
   {
-    BMSVC.transactionManager.undoTransaction();
+    gBkmkTxnSvc.undo();
     BookmarksUtils.refreshSearch();
     BookmarksUtils.flushDataSource();
   },
 
   redoBookmarkTransaction: function ()
   {
-    BMSVC.transactionManager.redoTransaction();
+    gBkmkTxnSvc.redo();
     BookmarksUtils.refreshSearch();
     BookmarksUtils.flushDataSource();
   },
@@ -456,11 +476,11 @@ var BookmarksCommand = {
       sBookmarkItem += aSelection.item[i].Value + "\n";
 
       // save the selection property into text string that we will use later in paste function
-      // and in BookmarkInsertTransaction
+      // and in INSERT tranasactions
       // (if the selection is folder or livemark save all childs property)
       var aType = BookmarksUtils.resolveType(aSelection.item[i]);
       if (aType == "Livemark") {
-        sBookmarkItem += "\n\n\n\n\n\n"; // don't change livemark properties
+        sBookmarkItem += "\n\n\n\n\n\n\n\n\n"; // don't change livemark properties
       } else {
          for (var j = 0; j < gBmProperties.length; ++j) {
             var itemValue = BMDS.GetTarget(aSelection.item[i], gBmProperties[j], true);
@@ -487,13 +507,19 @@ var BookmarksCommand = {
       tmpBmItem.push(childCount +  "\n" + sBookmarkItem);
       sBookmarkItem = "";
 
+      var url;
+      if (aType == "Livemark")
+        url = BookmarksUtils.getProperty(aSelection.item[i], gNC_NS+"FeedURL");
+      else
+        url = BookmarksUtils.getProperty(aSelection.item[i], gNC_NS+"URL");
 
-      var url  = BookmarksUtils.getProperty(aSelection.item[i], gNC_NS+"URL" );
       var name = BookmarksUtils.getProperty(aSelection.item[i], gNC_NS+"Name");
 
       sTextUnicode += url + "\n";
       sTextHTML += "<A HREF=\"" + url + "\">" + name + "</A>";
     }
+    sTextUnicode = sTextUnicode.replace(/\n$/,"");
+    
     // generate unique separator and combine the array to one string 
     var bmSeparator = "]-[", extrarSeparator = "@";
     for (var i = 0; i < tmpBmItem.length; ++i) {
@@ -565,13 +591,13 @@ var BookmarksCommand = {
         items[i] = RDF.GetResource(childs[0]);
         var propArray = [];
         for (var k = 0; k < childCount; ++k) {
-          var props = [RDF.GetResource(childs[p*k]), null, null, null, null, null, null];
           for (var j = 1; j < p; ++j) {
              var prop = childs[p*k+j];
              if (prop)
-                 props[j] = RDF.GetLiteral(prop);
+                 propArray.push(RDF.GetLiteral(prop));
+             else
+                 propArray.push(null);
           }
-          propArray.push(props);
         }
         removedProps.push(propArray);
       }
@@ -582,8 +608,8 @@ var BookmarksCommand = {
       items = data.substring(0, ix != -1 ? ix : data.length);
       name  = data.substring(ix);
       // XXX: we should infer the best charset
-      BookmarksUtils.createBookmark(null, items, null, name, null);
-      items = [items];
+      var createdBookmarkResource = BookmarksUtils.createBookmark(null, items, null, name, null);
+      items = [createdBookmarkResource];
       break;
     default: 
       return;
@@ -620,6 +646,14 @@ var BookmarksCommand = {
   {
     if (!aTargetBrowser)
       return;
+
+    // in this case, we can just use |aSelection.length| as "Open in Tabs"
+    // is only available when you are only selecting multiple bookmarks
+    // if you selected a folder of bookmarks, we check the number of tabs in
+    // openGroupBookmark()
+    if (aTargetBrowser == "tab" && !this._confirmOpenTabs(aSelection.length))
+      return;
+
     for (var i=0; i<aSelection.length; ++i) {
       var type = aSelection.type[i];
       if (aTargetBrowser == "save") {
@@ -687,6 +721,46 @@ var BookmarksCommand = {
     openUILinkIn(url, aTargetBrowser);
   },
 
+  _confirmOpenTabs: function(numTabsToOpen) 
+  {
+    var reallyOpen = true;
+
+    const kWarnOnOpenPref = "browser.tabs.warnOnOpen";
+    if (PREF.getBoolPref(kWarnOnOpenPref))
+    {
+      if (numTabsToOpen >= PREF.getIntPref("browser.tabs.maxOpenBeforeWarn"))
+      {
+        var promptService = 
+            Components.classes["@mozilla.org/embedcomp/prompt-service;1"].
+            getService(Components.interfaces.nsIPromptService);
+ 
+        // default to true: if it were false, we wouldn't get this far
+        var warnOnOpen = { value: true };
+ 
+        var messageKey = "tabs.openWarningMultipleBranded";
+        var openKey = "tabs.openButtonMultiple";
+
+        var buttonPressed = promptService.confirmEx(window,
+            BookmarksUtils.getLocaleString("tabs.openWarningTitle"),
+            BookmarksUtils.getLocaleString(messageKey, 
+              [numTabsToOpen, BookmarksUtils._brandShortName]),
+            (promptService.BUTTON_TITLE_IS_STRING * promptService.BUTTON_POS_0)
+            + (promptService.BUTTON_TITLE_CANCEL * promptService.BUTTON_POS_1),
+            BookmarksUtils.getLocaleString(openKey),
+            null, null,
+            BookmarksUtils.getLocaleString("tabs.openWarningPromptMeBranded",
+               [BookmarksUtils._brandShortName]),
+            warnOnOpen);
+
+         reallyOpen = (buttonPressed == 0);
+         // don't set the pref unless they press OK and it's false
+         if (reallyOpen && !warnOnOpen.value)
+           PREF.setBoolPref(kWarnOnOpenPref, false);
+       }
+    }
+    return reallyOpen;
+  },
+
   openGroupBookmark: function (aURI, aTargetBrowser)
   {
     var w = getTopWin();
@@ -698,7 +772,27 @@ var BookmarksCommand = {
     var urlArc   = RDF.GetResource(gNC_NS+"URL");
     RDFC.Init(BMDS, resource);
     var containerChildren = RDFC.GetElements();
+    var numTabsToOpen = 0;
 
+    // we can't just use |RDFC.GetCount()| as that might include
+    // folders, separators, deleted bookmarks, etc.
+    while (containerChildren.hasMoreElements()) {
+      var res = containerChildren.getNext().QueryInterface(kRDFRSCIID);
+      var type = BookmarksUtils.resolveType(res);
+      // these are the types in getCommands() that support the 
+      // "bm_openinnewwindow" and "bm_openinnewtab" commands
+      if (type == "Bookmark" || type == "LivemarkBookmark" || 
+          type == "ImmutableBookmark" || type == "IEFavorite" ||
+          type == "FileSystemObject")
+        numTabsToOpen++;
+    }
+
+    if (!this._confirmOpenTabs(numTabsToOpen))
+      return;
+
+    // counting the number of tabs to open modified the 
+    // containerChildren enumerator, so we need to reset it.
+    containerChildren = RDFC.GetElements();
     if (aTargetBrowser == "current" || aTargetBrowser == "tab") {
       var browser  = w.document.getElementById("content");
       var tabPanels = browser.browsers;
@@ -710,12 +804,16 @@ var BookmarksCommand = {
         index0 = 0;
       else {
         for (index0=tabCount-1; index0>=0; --index0)
-          if (browser.browsers[index0].webNavigation.currentURI.spec != "about:blank")
+        {
+          var tab = tabPanels[index0];
+          if (tab.webNavigation.currentURI.spec != "about:blank" ||
+              tab.webProgress.isLoadingDocument)
             break;
+        }
         ++index0;
       }
 
-      var index  = index0;
+      var index = index0;
       while (containerChildren.hasMoreElements()) {
         var res = containerChildren.getNext().QueryInterface(kRDFRSCIID);
         var target = BMDS.GetTarget(res, urlArc, true);
@@ -723,8 +821,14 @@ var BookmarksCommand = {
           var uri = target.QueryInterface(kRDFLITIID).Value;
           if (index < tabCount)
             tabPanels[index].loadURI(uri);
-          else
+          else {
+            // This is not a modal sub-action of a given tab/document within a window
+            // since opening a bookmarks group replaces all existing tabs in the window,
+            // closing extras. If this ever changes to be augmentative, this code will
+            // have to change to probably just use <tabbrowser>.loadTabs() which figures
+            // out whether or not owner should be set. 
             browser.addTab(uri);
+          }
           ++index;
         }
       }
@@ -847,15 +951,17 @@ var BookmarksCommand = {
     this.doBookmarksCommand(rTarget, gNC_NS_CMD+"import", args);
     var countAfter = parseInt(BookmarksUtils.getProperty(rTarget, gRDF_NS+"nextVal"));
 
-    var transaction = new BookmarkImportTransaction("import");
+    if (countAfter - countBefore > 1)
+      gBkmkTxnSvc.startBatch();
     for (var index = countBefore; index < countAfter; index++) {
       var nChildArc = RDFCU.IndexToOrdinalResource(index);
       var rChild    = BMDS.GetTarget(rTarget, nChildArc, true);
-      transaction.item   .push(rChild);
-      transaction.parent .push(rTarget);
-      transaction.index  .push(index);
+      gBkmkTxnSvc.createAndCommitTxn(gBkmkTxnSvc.IMPORT, "IMPORT", rChild, index,
+                                    rTarget, 0, null);
     }
-    BMSVC.transactionManager.doTransaction(transaction);
+    if (countAfter - countBefore > 1)
+      gBkmkTxnSvc.endBatch();
+
     BookmarksUtils.flushDataSource();
   },
 
@@ -906,6 +1012,14 @@ var BookmarksCommand = {
     }
   },
 
+  refreshMicrosummary: function (aSelection)
+  {
+    for (var i = 0; i < aSelection.length; i++) {
+      rsrc = RDF.GetResource(aSelection.item[i].Value);
+      MICSUMSVC.refreshMicrosummary(rsrc);
+    }
+  },
+
   sortByName: function (aSelection)
   {
     // do the real sorting in a timeout, to make sure that
@@ -924,7 +1038,7 @@ var BookmarksCommand = {
     if (aSelection.length != 1)
       return;
 
-    var selType = BookmarksUtils.resolveType (aSelection.item[0]);
+    var selType = BookmarksUtils.resolveType(aSelection.item[0]);
     if (selType == "Folder" || selType == "Bookmark" ||
         selType == "PersonalToolbarFolder" || selType == "Livemark")
     {
@@ -1031,6 +1145,7 @@ var BookmarksController = {
     case "cmd_bm_export":
     case "cmd_bm_movebookmark":
     case "cmd_bm_refreshlivemark":
+    case "cmd_bm_refreshmicrosummary":
     case "cmd_bm_sortbyname":
       isCommandSupported = true;
       break;
@@ -1058,10 +1173,10 @@ var BookmarksController = {
     switch(aCommand) {
     case "cmd_undo":
     case "cmd_bm_undo":
-      return BMSVC.transactionManager.numberOfUndoItems > 0;
+      return gBkmkTxnSvc.canUndo();
     case "cmd_redo":
     case "cmd_bm_redo":
-      return BMSVC.transactionManager.numberOfRedoItems > 0;
+      return gBkmkTxnSvc.canRedo();
     case "cmd_paste":
       if (ptype0 == "Livemark" || (aTarget && !BookmarksUtils.isValidTargetContainer(aTarget.parent)))
         return false;
@@ -1137,6 +1252,12 @@ var BookmarksController = {
     case "cmd_bm_refreshlivemark":
       for (i=0; i<length; ++i) {
         if (aSelection.type[i] != "Livemark")
+          return false;
+      }
+      return length > 0;
+    case "cmd_bm_refreshmicrosummary":
+      for (i=0; i<length; ++i) {
+        if (!MICSUMSVC.hasMicrosummary(aSelection.item[i]))
           return false;
       }
       return length > 0;
@@ -1234,6 +1355,9 @@ var BookmarksController = {
     case "cmd_bm_refreshlivemark":
       BookmarksCommand.refreshLivemark(aSelection);
       break;
+    case "cmd_bm_refreshmicrosummary":
+      BookmarksCommand.refreshMicrosummary(aSelection);
+      break;
     case "cmd_bm_sortbyname":
       BookmarksCommand.sortByName(aSelection);
       break;
@@ -1249,7 +1373,8 @@ var BookmarksController = {
                     "cmd_undo", "cmd_redo", "cmd_bm_properties", "cmd_bm_rename", 
                     "cmd_copy", "cmd_paste", "cmd_cut", "cmd_delete",
                     "cmd_bm_setpersonaltoolbarfolder", "cmd_bm_movebookmark",
-                    "cmd_bm_openfolder", "cmd_bm_managefolder", "cmd_bm_refreshlivemark", "cmd_bm_sortbyname"];
+                    "cmd_bm_openfolder", "cmd_bm_managefolder", "cmd_bm_refreshlivemark",
+                    "cmd_bm_refreshmicrosummary", "cmd_bm_sortbyname"];
     for (var i = 0; i < commands.length; ++i) {
       var enabled = this.isCommandEnabled(commands[i], aSelection, aTarget);
       var commandNode = document.getElementById(commands[i]);
@@ -1359,6 +1484,10 @@ var BookmarksUtils = {
       if (aResource == BMSVC.getBookmarksToolbarFolder())
         type = "PersonalToolbarFolder";
     }
+    // Treat microsummary bookmarks like regular bookmarks, since they behave
+    // like regular bookmarks in almost every regard.
+    if (type == "MicsumBookmark")
+      type = "Bookmark";
 
     if (type == "") {
       // we're not sure what type it is.  figure out if it's a container.
@@ -1491,11 +1620,11 @@ var BookmarksUtils = {
 
   removeSelection: function (aAction, aSelection)
   {
-    var transaction    = new BookmarkRemoveTransaction(aAction);
-    transaction.item   = [];
-    transaction.parent = [];
-    transaction.index  = [];
-    transaction.removedProp = [];
+    if (aSelection.length > 1)
+      gBkmkTxnSvc.startBatch();
+    if (aSelection.length > this.BATCH_LIMIT && aAction != "move")
+      BMDS.beginUpdateBatch();
+
     for (var i = 0; i < aSelection.length; ++i) {
       // try to put back aSelection.parent[i] if it's null, so we can delete after searching
       if (aSelection.parent[i] == null)
@@ -1503,32 +1632,37 @@ var BookmarksUtils = {
 
       if (aSelection.parent[i]) {
         RDFC.Init(BMDS, aSelection.parent[i]);
-        transaction.item  .push(aSelection.item[i]);
-        transaction.parent.push(aSelection.parent[i]);
-        transaction.index .push(RDFC.IndexOf(aSelection.item[i]));
 
-        // save the selection property into array that uses later in BookmarkRemoveTransaction
+        // save the selection property into array that is used later in
+        // when performing the REMOVE transaction
         // (if the selection is folder save all childs property)
+        var propArray;
         if (aAction != "move") {
-            var propArray = [];
-            propArray.push([aSelection.item[i], null, null, null, null, null, null]);
+            propArray = new Array(gBmProperties.length);
             var aType = BookmarksUtils.resolveType(aSelection.item[i]);            
             if (aType != "Livemark") {// don't change livemark properties
                for (var j = 0; j < gBmProperties.length; ++j) {
                   var oldValue = BMDS.GetTarget(aSelection.item[i], gBmProperties[j], true);
                   if (oldValue)
-                      propArray[0][j+1] = oldValue.QueryInterface(kRDFLITIID);
+                      propArray[j] = oldValue.QueryInterface(kRDFLITIID);
                }
             }
             if (aType == "Folder" || aType == "Livemark")
                 BookmarksUtils.getAllChildren(aSelection.item[i], propArray);
-            transaction.removedProp.push(propArray);
-        } else {
-            transaction.removedProp.push(null);
         }
+
+        var proplength = propArray ? propArray.length : 0;
+        gBkmkTxnSvc.createAndCommitTxn(gBkmkTxnSvc.REMOVE, aAction, 
+                                       aSelection.item[i], 
+                                       RDFC.IndexOf(aSelection.item[i]),
+                                       aSelection.parent[i], 
+                                       proplength, propArray);
       }
     }
-    BMSVC.transactionManager.doTransaction(transaction);
+    if (aSelection.length > 1)
+      gBkmkTxnSvc.endBatch();
+    if (aSelection.length > this.BATCH_LIMIT && aAction != "move")
+      BMDS.beginUpdateBatch();
     return true;
   },
 
@@ -1543,13 +1677,13 @@ var BookmarksUtils = {
       if (child instanceof Components.interfaces.nsIRDFResource){
          var aType = BookmarksUtils.resolveType(child);
          var childResource = child.QueryInterface(kRDFRSCIID);
-         var props = [childResource, null, null, null, null, null, null];
+         var props = new Array(gBmProperties.length);
          // don't change livemark properties
          if (aType != "Livemark") {
             for (var j = 0; j < gBmProperties.length; ++j) {
                var oldValue = BMDS.GetTarget(childResource, gBmProperties[j], true);
                if (oldValue)
-                   props[(j+1)] = oldValue.QueryInterface(kRDFLITIID);
+                   props[(j)] = oldValue.QueryInterface(kRDFLITIID);
             }
          }
          propArray.push(props);
@@ -1588,20 +1722,22 @@ var BookmarksUtils = {
 
   insertSelection: function (aAction, aSelection, aTarget, aTargetIndex)
   {
-    var transaction    = new BookmarkInsertTransaction(aAction);
-    transaction.item   = new Array(aSelection.length);
-    transaction.parent = new Array(aSelection.length);
-    transaction.index  = new Array(aSelection.length);
-    transaction.removedProp = new Array(aSelection.length);
+    var item, removedProps;
     var index = aTarget.index;
+    var brokenIndex = aTarget.index;
+
+    if (aSelection.length > 1)
+      gBkmkTxnSvc.startBatch();
+    if (aSelection.length > this.BATCH_LIMIT && aAction != "move")
+      BMDS.beginUpdateBatch();
+
     for (var i=0; i<aSelection.length; ++i) {
       var rSource = aSelection.item[i];
       if (BMSVC.isBookmarkedResource(rSource))
         rSource = BMSVC.cloneResource(rSource);
-      transaction.item  [i] = rSource;
-      transaction.parent[i] = aTarget.parent;
+      item = rSource;
       // we only have aSelection.prop if insertSelection call by paste action we don't use it for move
-      transaction.removedProp[i] = aSelection.prop ? aSelection.prop[i] : null;
+      removedProps = aSelection.prop ? aSelection.prop[i] : null;
       // Broken Insert Code attempts to always insert items in the
       // right place (i.e. after the selected item).  However, because
       // of RDF Container suckyness, this code gets very confused, due
@@ -1610,19 +1746,25 @@ var BookmarksUtils = {
       // The -1 is there to handle inserting into the persontal toolbar
       // folder via right-click on the PTF.
       if (aTarget.index == -1) {
-        transaction.index[i] = -1;
+        index = -1;
       } else {
 #ifdef BROKEN_INSERT_CODE
         if (aTargetIndex == -1)
-          transaction.index [i] = (++index);
+          index = (++brokenIndex);
         else
-          transaction.index [i] = (index++);
+          index = (brokenIndex++);
 #else
-      transaction.index [i] = index++;
+      index = brokenIndex++;
 #endif
       }
+      var proplength = removedProps ? removedProps.length : 0;
+      gBkmkTxnSvc.createAndCommitTxn(gBkmkTxnSvc.INSERT, aAction, item, index,
+                                     aTarget.parent, proplength, removedProps);
     }
-    BMSVC.transactionManager.doTransaction(transaction);
+    if (aSelection.length > 1)
+      gBkmkTxnSvc.endBatch();
+    if (aSelection.length > this.BATCH_LIMIT && aAction != "move")
+      BMDS.endUpdateBatch();
   },
 
   moveAndCheckSelection: function (aAction, aSelection, aTarget)
@@ -1640,8 +1782,15 @@ var BookmarksUtils = {
 
   moveSelection: function (aAction, aSelection, aTarget)
   {
-    var txn = new BookmarkMoveTransaction(aAction, aSelection, aTarget);
-    BMSVC.transactionManager.doTransaction(txn);
+    if (aSelection.length > kBATCH_LIMIT)
+      BMDS.beginUpdateBatch();
+
+    gBkmkTxnSvc.startBatch();
+    BookmarksUtils.removeSelection("move", aSelection);
+    BookmarksUtils.insertSelection("move", aSelection, aTarget);
+    gBkmkTxnSvc.endBatch();
+    if (aSelection.length > kBATCH_LIMIT)
+      BMDS.endUpdateBatch();
   }, 
 
   // returns true if this selection should be copied instead of moved,
@@ -1790,7 +1939,6 @@ var BookmarksUtils = {
     setTimeout(function () {remoteDS.Flush()}, 100);
   },
 
-  // should update the caller, aShowDialog is no more necessary
   addBookmark: function (aURL, aTitle, aCharset, aIsWebPanel, aDescription)
   {
     var dArgs = {
@@ -1862,297 +2010,8 @@ var BookmarksUtils = {
   }
 }
 
-function BookmarkTransaction()
-{
-}
-
-BookmarkTransaction.prototype = {
-  BATCH_LIMIT : 4,
-  RDFC        : null,
-  BMDS        : null,
-
-  QueryInterface: function (iid)
-  {
-    if (!iid.equals(Components.interfaces.nsITransaction) &&
-        !iid.equals(Components.interfaces.nsISupports))
-      throw Components.results.NS_ERROR_NO_INTERFACE;
-
-    return this;
-  },
-
-  beginUpdateBatch: function()
-  {
-    if (this.item.length > this.BATCH_LIMIT) {
-      this.BMDS.beginUpdateBatch();
-    }
-  },
-
-  endUpdateBatch: function()
-  {
-    if (this.item.length > this.BATCH_LIMIT) {
-      this.BMDS.endUpdateBatch();
-    }
-  },
-  merge               : function (aTxn)   {return false},
-  getHelperForLanguage: function (aCount) {return null},
-  getInterfaces       : function (aCount) {return null},
-  canCreateWrapper    : function (aIID)   {return "AllAccess"}
-}
-
-function BookmarkInsertTransaction (aAction)
-{
-  this.wrappedJSObject = this;
-  this.type    = "insert";
-  this.action  = aAction;
-  this.item    = null;
-  this.parent  = null;
-  this.index   = null;
-  this.removedProp = null;
-  this.Properties = gBmProperties;
-  // move container declaration to her so it can be recognize if
-  // undoTransaction is call after the BM manager is close and reopen.
-  this.container = Components.classes[kRDFCContractID].createInstance(kRDFCIID);
-}
-
-BookmarkInsertTransaction.prototype =
-{
-  __proto__: BookmarkTransaction.prototype,
-
-  isTransient: false,
-
-  doTransaction: function ()
-  {
-    this.beginUpdateBatch();
-    for (var i=0; i<this.item.length; ++i) {
-      this.RDFC.Init(this.BMDS, this.parent[i]);
-      // if the index is -1, we use appendElement, and then update the
-      // index so that undoTransaction can still function
-      if (this.index[i] == -1) {
-        this.RDFC.AppendElement(this.item[i]);
-        this.index[i] = this.RDFC.GetCount();
-      } else {
-#ifdef BROKEN_INSERT_CODE
-        try {
-          this.RDFC.InsertElementAt(this.item[i], this.index[i], true);
-        } catch (e if e.result == Components.results.NS_ERROR_ILLEGAL_VALUE) {
-          // if this failed, then we assume that we really want to append,
-          // because things are out of whack until we renumber.
-          this.RDFC.AppendElement(this.item[i]);
-          // and then fix up the index so undo works
-          this.index[i] = this.RDFC.GetCount();
-        }
-#else
-        this.RDFC.InsertElementAt(this.item[i], this.index[i], true);
-#endif
-      }
-
-      // insert back all the properties
-      var props = this.removedProp[i];
-      if (props) {
-         for (var k = 0; k < props.length; ++k) {
-            for (var j = 0; j < this.Properties.length; ++j) {
-               var oldValue = this.BMDS.GetTarget(props[k][0], this.Properties[j], true);
-               // must check, if paste call after copy the oldvalue didn't remove.
-               if (!oldValue) {
-                  var newValue = props[k][j+1];
-                  if (newValue)
-                      this.BMDS.Assert(props[k][0], this.Properties[j], newValue, true);
-               }
-            }
-         }
-      }
-
-    }
-    this.endUpdateBatch();
-  },
-
-  undoTransaction: function ()
-  {
-    this.beginUpdateBatch();
-    // XXXvarga Can't use |RDFC| here because it's being "reused" elsewhere.
-    for (var i = this.item.length-1; i >= 0; i--) {
-      this.container.Init(this.BMDS, this.parent[i]);
-
-      // remove all properties befor we remove the element so nsLocalSearchService
-      // don't return deleted element in Search
-      var props = this.removedProp[i];
-      if (props){
-         for (var k = 0; k < props.length; ++k) {
-            for (var j = 0; j < this.Properties.length; ++j) {
-               var oldValue = props[k][j+1];
-               if (oldValue)
-                   this.BMDS.Unassert(props[k][0], this.Properties[j], oldValue);
-            }
-         }
-      }
-
-      this.container.RemoveElementAt(this.index[i], true);
-    }
-    this.endUpdateBatch();
-  },
-   
-  redoTransaction: function ()
-  {
-    this.doTransaction();
-  }
-}
-
-function BookmarkRemoveTransaction (aAction)
-{
-  this.wrappedJSObject = this;
-  this.type    = "remove";
-  this.action  = aAction;
-  this.item    = null;
-  this.parent  = null;
-  this.index   = null;
-  this.removedProp = null;
-  this.Properties = gBmProperties;
-}
-
-BookmarkRemoveTransaction.prototype =
-{
-  __proto__: BookmarkTransaction.prototype,
-
-  isTransient: false,
-
-  doTransaction: function ()
-  {
-    this.beginUpdateBatch();
-    for (var i=0; i<this.item.length; ++i) {
-      this.RDFC.Init(this.BMDS, this.parent[i]);
-
-      // remove all properties befor we remove the element so nsLocalSearchService
-      // don't return deleted element in Search
-      var props = this.removedProp[i];
-      if (props) {
-         for (var k = 0; k < props.length; ++k) {
-            for (var j = 0; j < this.Properties.length; ++j) {
-               var oldValue = props[k][j+1];
-               if (oldValue)
-                   this.BMDS.Unassert(props[k][0], this.Properties[j], oldValue);
-            }
-         }
-      }
-
-      this.RDFC.RemoveElementAt(this.index[i], false);
-    }
-    this.endUpdateBatch();
-  },
-
-  undoTransaction: function ()
-  {
-    this.beginUpdateBatch();
-    for (var i=this.item.length-1; i>=0; i--) {
-      this.RDFC.Init(this.BMDS, this.parent[i]);
-      this.RDFC.InsertElementAt(this.item[i], this.index[i], false);
-
-      // insert back all the properties
-      var props = this.removedProp[i];
-      if (props) {
-         for (var k = 0; k < props.length; ++k) {
-            for (var j = 0; j < this.Properties.length; ++j) {
-               var newValue = props[k][j+1];
-               if (newValue)
-                   this.BMDS.Assert(props[k][0], this.Properties[j], newValue, true);
-            }
-         }
-      }
-
-    }
-    this.endUpdateBatch();
-  },
-   
-  redoTransaction: function ()
-  {
-    this.doTransaction();
-  }
-}
-
-function BookmarkMoveTransaction (aAction, aSelection, aTarget)
-{
-  this.wrappedJSObject = this;
-  this.type      = "move";
-  this.action    = aAction;
-  this.selection = aSelection;
-  this.target    = aTarget;
-}
-
-BookmarkMoveTransaction.prototype =
-{
-  __proto__: BookmarkTransaction.prototype,
-
-  isTransient: false,
-
-  beginUpdateBatch: function()
-  {
-    if (this.selection.length > this.BATCH_LIMIT) {
-      this.BMDS.beginUpdateBatch();
-    }
-  },
-
-  endUpdateBatch: function()
-  {
-    if (this.selection.length > this.BATCH_LIMIT) {
-      this.BMDS.endUpdateBatch();
-    }
-  },
-
-  doTransaction: function ()
-  {
-    this.beginUpdateBatch();
-    BookmarksUtils.removeSelection("move", this.selection);
-    BookmarksUtils.insertSelection("move", this.selection, this.target);
-    this.endUpdateBatch();
-  },
-
-  undoTransaction: function () {},
-  redoTransaction: function () {}
-}
-
-function BookmarkImportTransaction (aAction)
-{
-  this.wrappedJSObject = this;
-  this.type    = "import";
-  this.action  = aAction;
-  this.item    = [];
-  this.parent  = [];
-  this.index   = [];
-}
-
-BookmarkImportTransaction.prototype =
-{
-  __proto__: BookmarkTransaction.prototype,
-
-  isTransient: false,
-
-  doTransaction: function ()
-  {
-  },
-
-  undoTransaction: function ()
-  {
-    this.beginUpdateBatch();
-    for (var i=this.item.length-1; i>=0; i--) {
-      this.RDFC.Init(this.BMDS, this.parent[i]);
-      this.RDFC.RemoveElementAt(this.index[i], true);
-    }
-    this.endUpdateBatch();
-  },
-   
-  redoTransaction: function ()
-  {
-    this.beginUpdateBatch();
-    for (var i=0; i<this.item.length; ++i) {
-      this.RDFC.Init(this.BMDS, this.parent[i]);
-      this.RDFC.InsertElementAt(this.item[i], this.index[i], true);
-    }
-    this.endUpdateBatch();
-  }
-}
-
 var BookmarkEditMenuTxnListener =
 {
-
   didDo: function (aTxmgr, aTxn)
   {
     this.updateMenuItem(aTxmgr, aTxn);
@@ -2170,7 +2029,9 @@ var BookmarkEditMenuTxnListener =
 
   didMerge       : function (aTxmgr, aTxn) {},
   didBeginBatch  : function (aTxmgr, aTxn) {},
-  didEndBatch    : function (aTxmgr, aTxn) {},
+  didEndBatch    : function (aTxmgr, aTxn) {
+    this.updateMenuItem(aTxmgr, aTxn);
+  },
   willDo         : function (aTxmgr, aTxn) {},
   willUndo       : function (aTxmgr, aTxn) {},
   willRedo       : function (aTxmgr, aTxn) {},
@@ -2178,34 +2039,43 @@ var BookmarkEditMenuTxnListener =
   willBeginBatch : function (aTxmgr, aTxn) {},
   willEndBatch   : function (aTxmgr, aTxn) {},
 
-  updateMenuItem: function (aTxmgr, aTxn) {
-    if (aTxn) {
-      aTxn = aTxn.wrappedJSObject;
-      if ((aTxn.type == "remove" || aTxn.type == "insert") && aTxn.action == "move")
-      return;
-    }
-    var node, transactionNumber, transactionList, transactionLabel, action;
+  updateMenuItem: function bkmkMenuListenerUpdate(aTxmgr, aTxn) {
+    var node, transactionNumber, transactionList, transactionLabel, action, item;
     node = document.getElementById("cmd_undo");
     transactionNumber = aTxmgr.numberOfUndoItems;
-    dump("N UNDO: "+transactionNumber+"\n")
+    dump("N UNDO: "+transactionNumber+"\n");
     if (transactionNumber == 0) {
       transactionLabel = BookmarksUtils.getLocaleString("cmd_bm_undo");
     } else {
       transactionList  = aTxmgr.getUndoList();
-      action           = transactionList.getItem(transactionNumber-1).wrappedJSObject.action;
-      transactionLabel = BookmarksUtils.getLocaleString("cmd_bm_"+action+"_undo")
+      if (!transactionList.itemIsBatch(transactionNumber-1)) {
+        item = transactionList.getItem(transactionNumber-1);
+        action = item.wrappedJSObject.action;
+      } else {
+        var childList = transactionList.getChildListForItem(transactionNumber-1);
+        item = childList.getItem(0);
+        action = item.wrappedJSObject.action;
+      }
+      transactionLabel = BookmarksUtils.getLocaleString("cmd_bm_"+action+"_undo");
     }
     node.setAttribute("label", transactionLabel);
       
     node = document.getElementById("cmd_redo");
     transactionNumber = aTxmgr.numberOfRedoItems;
-    dump("N REDO: "+transactionNumber+"\n")
+    dump("N REDO: "+transactionNumber+"\n");
     if (transactionNumber == 0) {
       transactionLabel = BookmarksUtils.getLocaleString("cmd_bm_redo");
     } else {
       transactionList  = aTxmgr.getRedoList();
-      action           = transactionList.getItem(transactionNumber-1).wrappedJSObject.action;
-      transactionLabel = BookmarksUtils.getLocaleString("cmd_bm_"+action+"_redo")
+      if (!transactionList.itemIsBatch(transactionNumber-1)) {
+        item = transactionList.getItem(transactionNumber-1);
+        action = item.wrappedJSObject.action;
+      } else {
+        var childList = transactionList.getChildListForItem(transactionNumber-1);
+        item = childList.getItem(0);
+        action = item.wrappedJSObject.action;
+      }
+      transactionLabel = BookmarksUtils.getLocaleString("cmd_bm_"+action+"_redo");
     }
     node.setAttribute("label", transactionLabel);
   }

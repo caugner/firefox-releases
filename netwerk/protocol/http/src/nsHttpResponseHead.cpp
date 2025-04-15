@@ -204,10 +204,17 @@ nsHttpResponseHead::ParseHeaderLine(char *line)
     char *val;
 
     mHeaders.ParseHeaderLine(line, &hdr, &val);
+    // leading and trailing LWS has been removed from |val|
 
     // handle some special case headers...
-    if (hdr == nsHttp::Content_Length)
-        PR_sscanf(val, "%lld", &mContentLength);
+    if (hdr == nsHttp::Content_Length) {
+        PRInt64 len;
+        // permit only a single value here.
+        if (nsHttp::ParseInt64(val, &len))
+            mContentLength = len;
+        else
+            LOG(("invalid content-length!\n"));
+    }
     else if (hdr == nsHttp::Content_Type) {
         LOG(("ParseContentType [type=%s]\n", val));
         PRBool dummy;
@@ -301,8 +308,11 @@ nsHttpResponseHead::ComputeFreshnessLifetime(PRUint32 *result)
     if (NS_SUCCEEDED(GetLastModifiedValue(&date2))) {
         LOG(("using last-modified to determine freshness-lifetime\n"));
         LOG(("last-modified = %u, date = %u\n", date2, date));
-        *result = (date - date2) / 10;
-        return NS_OK;
+        if (date2 <= date) {
+            // this only makes sense if last-modified is actually in the past
+            *result = (date - date2) / 10;
+            return NS_OK;
+        }
     }
 
     // These responses can be cached indefinitely.
@@ -440,7 +450,6 @@ nsHttpResponseHead::UpdateHeaders(nsHttpHeaderArray &headers)
             header == nsHttp::Content_Location    ||
             header == nsHttp::Content_MD5         ||
             header == nsHttp::ETag                ||
-            header == nsHttp::Last_Modified       ||
         // Assume Cache-Control: "no-transform"
             header == nsHttp::Content_Encoding    ||
             header == nsHttp::Content_Range       ||
@@ -471,7 +480,7 @@ nsHttpResponseHead::Reset()
 
     mVersion = NS_HTTP_VERSION_1_1;
     mStatus = 200;
-    mContentLength = LL_MaxUint();
+    mContentLength = LL_MAXUINT;
     mCacheControlNoStore = PR_FALSE;
     mCacheControlNoCache = PR_FALSE;
     mPragmaNoCache = PR_FALSE;
@@ -568,9 +577,8 @@ nsHttpResponseHead::TotalEntitySize()
         return -1;
 
     PRInt64 size;
-    PRInt32 items = PR_sscanf(slash, "%lld", &size);
-    if (items <= 0)
-        size = LL_MaxUint();
+    if (!nsHttp::ParseInt64(slash, &size))
+        size = LL_MAXUINT;
     return size;
 }
 

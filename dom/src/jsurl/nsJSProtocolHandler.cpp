@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* vim: set ts=2 sw=4 et tw=80: */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set ts=4 sw=4 et tw=78: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -70,6 +70,7 @@
 #include "nsIWebNavigation.h"
 #include "nsIDocShell.h"
 #include "nsIContentViewer.h"
+#include "nsIStringStream.h"
 
 static NS_DEFINE_CID(kSimpleURICID, NS_SIMPLEURI_CID);
 static NS_DEFINE_CID(kWindowMediatorCID, NS_WINDOWMEDIATOR_CID);
@@ -115,6 +116,18 @@ nsresult nsJSThunk::Init(nsIURI* uri)
 
     mURI = uri;
     return NS_OK;
+}
+
+static PRBool
+IsISO88591(const nsString& aString)
+{
+    for (nsString::const_char_iterator c = aString.BeginReading(),
+                                   c_end = aString.EndReading();
+         c < c_end; ++c) {
+        if (*c > 255)
+            return PR_FALSE;
+    }
+    return PR_TRUE;
 }
 
 nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel)
@@ -170,7 +183,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel)
         return NS_ERROR_FAILURE;
     }
 
-    // If mURI is just "javascript:", we bring up the JavaScript console
+    // If mURI is just "javascript:", we bring up the Error console
     // and return NS_ERROR_DOM_RETVAL_UNDEFINED.
     if (script.IsEmpty()) {
         rv = BringUpConsole(domWindow);
@@ -263,6 +276,10 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel)
         if (principal) {
             nsCOMPtr<nsIURI> uri;
             rv = principal->GetURI(getter_AddRefs(uri));
+            if (!uri) {
+                rv = NS_ERROR_NOT_AVAILABLE;
+            }
+            
             if (NS_SUCCEEDED(rv)) {
                 nsCAutoString spec;
                 uri->GetSpec(spec);
@@ -303,9 +320,35 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel)
         rv = NS_ERROR_DOM_RETVAL_UNDEFINED;
     }
     else {
-        // NS_NewStringInputStream calls ToNewCString
-        // XXXbe this should not decimate! pass back UCS-2 to necko
-        rv = NS_NewStringInputStream(getter_AddRefs(mInnerStream), result);
+        char *bytes;
+        PRUint32 bytesLen;
+        NS_NAMED_LITERAL_CSTRING(isoCharset, "ISO-8859-1");
+        NS_NAMED_LITERAL_CSTRING(utf8Charset, "UTF-8");
+        const nsCString *charset;
+        if (IsISO88591(result)) {
+            // For compatibility, if the result is ISO-8859-1, we use
+            // ISO-8859-1, so that people can compatibly create images
+            // using javascript: URLs.
+            bytes = ToNewCString(result);
+            bytesLen = result.Length();
+            charset = &isoCharset;
+        }
+        else {
+            bytes = ToNewUTF8String(result, &bytesLen);
+            charset = &utf8Charset;
+        }
+        aChannel->SetContentCharset(*charset);
+        if (bytes) {
+            rv = NS_NewByteInputStream(getter_AddRefs(mInnerStream),
+                                       bytes, bytesLen);
+            if (mInnerStream) {
+                nsCOMPtr<nsIStringInputStream> sis
+                    = do_QueryInterface(mInnerStream);
+                sis->AdoptData(bytes, bytesLen); // Previous call was |ShareData|
+            }
+        }
+        else
+            rv = NS_ERROR_OUT_OF_MEMORY;
     }
     return rv;
 }

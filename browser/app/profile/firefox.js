@@ -48,19 +48,16 @@
 #endif
 #endif
 
-pref("startup.homepage_override_url","chrome://browser-region/locale/region.properties");
 pref("general.startup.browser", true);
 
 pref("browser.chromeURL","chrome://browser/content/");
 pref("browser.hiddenWindowChromeURL", "chrome://browser/content/hiddenWindow.xul");
 pref("xpinstall.dialog.confirm", "chrome://mozapps/content/xpinstall/xpinstallConfirm.xul");
-pref("xpinstall.dialog.progress.skin", "chrome://mozapps/content/extensions/extensions.xul?type=themes");
-pref("xpinstall.dialog.progress.chrome", "chrome://mozapps/content/extensions/extensions.xul?type=extensions");
-pref("xpinstall.dialog.progress.type.skin", "Extension:Manager-themes");
-pref("xpinstall.dialog.progress.type.chrome", "Extension:Manager-extensions");
+pref("xpinstall.dialog.progress.skin", "chrome://mozapps/content/extensions/extensions.xul");
+pref("xpinstall.dialog.progress.chrome", "chrome://mozapps/content/extensions/extensions.xul");
+pref("xpinstall.dialog.progress.type.skin", "Extension:Manager");
+pref("xpinstall.dialog.progress.type.chrome", "Extension:Manager");
 
-pref("extensions.getMoreExtensionsURL", "chrome://mozapps/locale/extensions/extensions.properties");
-pref("extensions.getMoreThemesURL", "chrome://mozapps/locale/extensions/extensions.properties");
 // Developers can set this to |true| if they are constantly changing files in their 
 // extensions directory so that the extension system does not constantly think that
 // their extensions are being updated and thus reregistered every time the app is
@@ -68,6 +65,17 @@ pref("extensions.getMoreThemesURL", "chrome://mozapps/locale/extensions/extensio
 pref("extensions.ignoreMTimeChanges", false);
 // Enables some extra Extension System Logging (can reduce performance)
 pref("extensions.logging.enabled", false);
+// Hides the install button in the add-ons mgr
+pref("extensions.hideInstallButton", true);
+
+// Blocklist preferences
+pref("extensions.blocklist.enabled", true);
+pref("extensions.blocklist.interval", 86400);
+pref("extensions.blocklist.url", "https://addons.mozilla.org/blocklist/1/%APP_ID%/%APP_VERSION%/");
+pref("extensions.blocklist.detailsURL", "http://%LOCALE%.www.mozilla.com/%LOCALE%/blocklist/");
+
+// Dictionary download preference
+pref("browser.dictionaries.download.url", "https://%LOCALE%.add-ons.mozilla.com/%LOCALE%/firefox/%VERSION%/dictionaries/");
 
 // App-specific update preferences
 
@@ -94,13 +102,9 @@ pref("app.update.mode", 1);
 pref("app.update.silent", false);
 
 // Update service URL:
-pref("app.update.url", "https://aus2.mozilla.org/update/1/%PRODUCT%/%VERSION%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/update.xml");
-// URL user can browse to manually if for some reason all update installation
-// attempts fail.  TODO: Change this URL
-pref("app.update.url.manual", "http://www.mozilla.org/products/firefox/");
-// A default value for the "More information about this update" link
-// supplied in the "An update is available" page of the update wizard. 
-pref("app.update.url.details", "chrome://browser-region/locale/region.properties");
+pref("app.update.url", "https://aus2.mozilla.org/update/2/%PRODUCT%/%VERSION%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/update.xml");
+// app.update.url.manual is in branding section
+// app.update.url.details is in branding section
 
 // User-settable override to app.update.url for testing purposes.
 //pref("app.update.url.override", "");
@@ -142,10 +146,10 @@ pref("app.update.incompatible.mode", 0);
 pref("extensions.update.enabled", true);
 pref("extensions.update.url", "chrome://mozapps/locale/extensions/extensions.properties");
 pref("extensions.update.interval", 86400);  // Check for updates to Extensions and 
-                                            // Themes every week
+                                            // Themes every day
 // Non-symmetric (not shared by extensions) extension-specific [update] preferences
-pref("extensions.getMoreExtensionsURL", "chrome://mozapps/locale/extensions/extensions.properties");
-pref("extensions.getMoreThemesURL", "chrome://mozapps/locale/extensions/extensions.properties");
+pref("extensions.getMoreExtensionsURL", "http://%LOCALE%.add-ons.mozilla.com/%LOCALE%/%APP%/%VERSION%/extensions/");
+pref("extensions.getMoreThemesURL", "http://%LOCALE%.add-ons.mozilla.com/%LOCALE%/%APP%/%VERSION%/themes/");
 pref("extensions.dss.enabled", false);          // Dynamic Skin Switching                                               
 pref("extensions.dss.switchPending", false);    // Non-dynamic switch pending after next
                                                 // restart.
@@ -154,11 +158,11 @@ pref("xpinstall.whitelist.add", "update.mozilla.org");
 pref("xpinstall.whitelist.add.103", "addons.mozilla.org");
 
 pref("keyword.enabled", true);
-pref("keyword.URL", "http://www.google.com/search?btnI=I%27m+Feeling+Lucky&ie=UTF-8&oe=UTF-8&q=");
+pref("keyword.URL", "chrome://browser-region/locale/region.properties");
 
 pref("general.useragent.locale", "@AB_CD@");
 pref("general.skins.selectedSkin", "classic/1.0");
-pref("general.useragent.extra.firefox", "Firefox/@APP_VERSION@");
+pref("general.useragent.extra.firefox", "@APP_UA_NAME@/@APP_VERSION@");
 
 pref("general.smoothScroll", false);
 #ifdef UNIX_BUT_NOT_MAC
@@ -171,14 +175,16 @@ pref("general.autoScroll", true);
 // is the default browser.
 pref("browser.shell.checkDefaultBrowser", true);
 
-// 0 = blank, 1 = home (browser.startup.homepage), 2 = last
-// XXXBlake Remove this stupid pref
+// 0 = blank, 1 = home (browser.startup.homepage), 2 = last visited page, 3 = resume previous browser session
+// The behavior of option 3 is detailed at: http://wiki.mozilla.org/Session_Restore
 pref("browser.startup.page",                1);
 pref("browser.startup.homepage",	          "resource:/browserconfig.properties");
 
 pref("browser.cache.disk.capacity",         50000);
 pref("browser.enable_automatic_image_resizing", true);
+pref("browser.urlbar.autoFill", false);
 pref("browser.urlbar.matchOnlyTyped", false);
+pref("browser.urlbar.hideGoButton", false);
 pref("browser.chrome.site_icons", true);
 pref("browser.chrome.favicons", true);
 pref("browser.formfill.enable", true);
@@ -199,10 +205,15 @@ pref("browser.download.manager.openDelay", 0);
 pref("browser.download.manager.focusWhenStarting", false);
 pref("browser.download.manager.flashCount", 2);
 
+// search engines URL
+pref("browser.search.searchEnginesURL",      "https://%LOCALE%.add-ons.mozilla.com/%LOCALE%/firefox/%VERSION%/search-engines/");
+
 // pointer to the default engine name
 pref("browser.search.defaultenginename",      "chrome://browser-region/locale/region.properties");
-// pointer to the Web Search url (content area context menu)
-pref("browser.search.defaulturl",             "chrome://browser-region/locale/region.properties");
+
+// disable logging for the search service by default
+pref("browser.search.log", false);
+
 // Ordering of Search Engines in the Engine list. 
 pref("browser.search.order.1",                "chrome://browser-region/locale/region.properties");
 pref("browser.search.order.2",                "chrome://browser-region/locale/region.properties");
@@ -213,12 +224,20 @@ pref("browser.search.order.Yahoo.1",          "chrome://branding/content/searchc
 pref("browser.search.order.Yahoo.2",          "chrome://branding/content/searchconfig.properties");
 pref("browser.search.order.Yahoo",            "chrome://branding/content/searchconfig.properties");
 
-// basic search popup constraint: minimum sherlock plugin version displayed
-// (note: must be a string representation of a float or it'll default to 0.0)
-pref("browser.search.basic.min_ver", "0.0");
+// search bar results always open in a new tab
+pref("browser.search.openintab", false);
 
 // send ping to the server to update
 pref("browser.search.update", true);
+
+// disable logging for the search service update system by default
+pref("browser.search.update.log", false);
+
+// Check whether we need to perform engine updates every 6 hours
+pref("browser.search.updateinterval", 6);
+
+// enable search suggestions by default
+pref("browser.search.suggest.enabled", true);
 
 pref("browser.history.grouping", "day");
 pref("browser.sessionhistory.max_entries", 50);
@@ -228,7 +247,7 @@ pref("browser.sessionhistory.max_entries", 50);
 pref("browser.link.open_external", 3);
 
 // handle links targeting new windows
-pref("browser.link.open_newwindow", 2);
+pref("browser.link.open_newwindow", 3);
 
 // 0: no restrictions - divert everything
 // 1: don't divert window.open at all
@@ -239,16 +258,24 @@ pref("browser.link.open_newwindow.restriction", 2);
 pref("browser.tabs.loadInBackground", true);
 pref("browser.tabs.loadFolderAndReplace", true);
 pref("browser.tabs.opentabfor.middleclick", true);
-pref("browser.tabs.opentabfor.urlbar", true);
 pref("browser.tabs.loadDivertedInBackground", false);
 pref("browser.tabs.loadBookmarksInBackground", false);
+pref("browser.tabs.tabMinWidth", 100);
+pref("browser.tabs.tabClipWidth", 140);
 
-// Smart Browsing prefs
-pref("browser.related.enabled", true);
-pref("browser.related.autoload", 1);  // 0 = Always, 1 = After first use, 2 = Never
-pref("browser.related.provider", "http://www-rl.netscape.com/wtgn?");
-pref("browser.related.disabledForDomains", "");
-pref("browser.goBrowsing.enabled", true);
+// Where to show tab close buttons:
+// 0  on active tab only
+// 1  on all tabs until tabClipWidth is reached, then active tab only
+// 2  no close buttons at all
+// 3  at the end of the tabstrip
+pref("browser.tabs.closeButtons", 1);
+
+// When tabs opened by links in other tabs via a combination of 
+// browser.link.open_newwindow being set to 3 and target="_blank" etc are
+// closed:
+// true   return to the tab that opened this tab (its owner)
+// false  return to the adjacent tab (old default)
+pref("browser.tabs.selectOwnerOnClose", true);
 
 // Default bookmark sorting
 pref("browser.bookmarks.sort.direction", "descending");
@@ -268,9 +295,7 @@ pref("dom.disable_window_status_change",          true);
 // allow JS to move and resize existing windows
 pref("dom.disable_window_move_resize",            false);
 // prevent JS from monkeying with window focus, etc
-pref("dom.disable_window_flip",                   false);
- 
-pref("browser.trim_user_and_password",            true);
+pref("dom.disable_window_flip",                   true);
 
 // popups.policy 1=allow,2=reject
 pref("privacy.popups.policy",               1);
@@ -294,7 +319,6 @@ pref("network.proxy.share_proxy_settings",  false); // use the same proxy settin
 
 pref("network.cookie.cookieBehavior",       0); // cookies enabled
 pref("network.cookie.enableForCurrentSessionOnly", false);
-pref("network.cookie.denyRemovedCookies", false);
 
 // l12n and i18n
 pref("intl.accept_languages", "chrome://global/locale/intl.properties");
@@ -319,24 +343,34 @@ pref("intl.menuitems.insertseparatorbeforeaccesskeys","chrome://global/locale/in
 // On OS X, if the wheel has one axis only, shift+wheel comes through as a
 // horizontal scroll event. Thus, we can't assign anything other than normal
 // scrolling to shift+wheel.
-pref("mousewheel.withmetakey.action",3);
+pref("mousewheel.withshiftkey.action",0);
+pref("mousewheel.withshiftkey.sysnumlines",true);
+pref("mousewheel.withshiftkey.numlines",1);
+pref("mousewheel.withaltkey.action",2);
+pref("mousewheel.withaltkey.sysnumlines",false);
+pref("mousewheel.withaltkey.numlines",1);
+pref("mousewheel.withmetakey.action",0);
 pref("mousewheel.withmetakey.sysnumlines",false);
-pref("mousewheel.withcontrolkey.action",2);
-pref("mousewheel.withcontrolkey.sysnumlines",false);
+pref("mousewheel.withmetakey.numlines",1);
 #else
-pref("mousewheel.withcontrolkey.action",3);
-pref("mousewheel.withcontrolkey.sysnumlines",false);
 pref("mousewheel.withshiftkey.action",2);
 pref("mousewheel.withshiftkey.sysnumlines",false);
-#endif
+pref("mousewheel.withshiftkey.numlines",1);
 pref("mousewheel.withaltkey.action",0);
 pref("mousewheel.withaltkey.sysnumlines",false);
+pref("mousewheel.withaltkey.numlines",1);
+pref("mousewheel.withmetakey.action",0);
+pref("mousewheel.withmetakey.sysnumlines",true);
+pref("mousewheel.withmetakey.numlines",1);
+#endif
+pref("mousewheel.withcontrolkey.action",3);
+pref("mousewheel.withcontrolkey.sysnumlines",false);
+pref("mousewheel.withcontrolkey.numlines",1);
 
 pref("profile.allow_automigration", false);   // setting to false bypasses automigration in the profile code
 
 // Customizable toolbar stuff
 pref("custtoolbar.personal_toolbar_folder", "");
-pref("browser.throbber.url","chrome://browser-region/locale/region.properties");
 
 // pref to control the alert notification 
 pref("alerts.slideIncrement", 1);
@@ -405,9 +439,6 @@ pref("browser.preferences.animateFadeIn", true);
 #else
 pref("browser.preferences.animateFadeIn", false);
 #endif
-#ifndef XP_OS2
-pref("browser.display.screen_resolution", 96);
-#endif
 
 pref("browser.download.show_plugins_in_list", true);
 pref("browser.download.hide_plugins_without_extensions", true);
@@ -415,3 +446,84 @@ pref("browser.download.hide_plugins_without_extensions", true);
 // Setting this pref to |true| forces BiDi UI menu items and keyboard shortcuts
 // to be exposed. By default, only expose it for bidi-associated system locales.
 pref("bidi.browser.ui", false);
+
+// Backspace and Shift+Backspace behavior
+// 0 goes Back/Forward
+// 1 act like PgUp/PgDown
+// 2 and other values, nothing
+#ifdef UNIX_BUT_NOT_MAC
+pref("browser.backspace_action", 1);
+#else
+pref("browser.backspace_action", 0);
+#endif
+
+// this will automatically enable inline spellchecking (if it is available) for
+// editable elements in HTML
+// 0 = spellcheck nothing
+// 1 = check multi-line controls [default]
+// 2 = check multi/single line controls
+pref("layout.spellcheckDefault", 1);
+
+pref("view_source.editor.path", "");
+pref("view_source.editor.external", false);
+
+#ifdef MOZ_FEEDS
+pref("browser.contentHandlers.types.0.title", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.0.uri", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.0.type", "application/vnd.mozilla.maybe.feed");
+pref("browser.contentHandlers.types.1.title", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.1.uri", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.1.type", "application/vnd.mozilla.maybe.feed");
+pref("browser.contentHandlers.types.2.title", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.2.uri", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.2.type", "application/vnd.mozilla.maybe.feed");
+pref("browser.contentHandlers.types.3.title", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.3.uri", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.3.type", "application/vnd.mozilla.maybe.feed");
+pref("browser.contentHandlers.types.4.title", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.4.uri", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.4.type", "application/vnd.mozilla.maybe.feed");
+pref("browser.contentHandlers.types.5.title", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.5.uri", "chrome://browser-region/locale/region.properties");
+pref("browser.contentHandlers.types.5.type", "application/vnd.mozilla.maybe.feed");
+
+pref("browser.feeds.handler", "ask");
+#endif
+
+#ifdef MOZ_SAFE_BROWSING
+// Safe browsing does nothing unless both these prefs are set.
+pref("browser.safebrowsing.enabled", true);
+pref("browser.safebrowsing.remoteLookups", false);
+
+// Non-enhanced mode (local url lists) URL list to check for updates
+pref("browser.safebrowsing.provider.0.updateURL", "http://sb.google.com/safebrowsing/update?client={moz:client}&mozver={moz:version}-{moz:buildid}&");
+
+pref("browser.safebrowsing.dataProvider", 0);
+
+// Does the provider name need to be localizable?
+pref("browser.safebrowsing.provider.0.name", "Google");
+pref("browser.safebrowsing.provider.0.lookupURL", "http://sb.google.com/safebrowsing/lookup?sourceid=firefox-antiphish&features=TrustRank&client={moz:client}&mozver={moz:version}-{moz:buildid}&");
+pref("browser.safebrowsing.provider.0.keyURL", "https://sb-ssl.google.com/safebrowsing/getkey?client={moz:client}&");
+pref("browser.safebrowsing.provider.0.reportURL", "http://sb.google.com/safebrowsing/report?");
+
+// privacy policy -- Both url and fallbackurl must exist, although they may
+// point to the same file.  fallbackurl must be a chrome url
+pref("browser.safebrowsing.provider.0.privacy.url", "http://www.google.com/tools/firefox/firefox_privacy.html?hl=%LOCALE%");
+pref("browser.safebrowsing.provider.0.privacy.fallbackurl", "chrome://browser/content/preferences/phishEULA.xhtml");
+
+// HTML report pages
+pref("browser.safebrowsing.provider.0.reportGenericURL", "http://{moz:locale}.phish-generic.mozilla.com/?hl={moz:locale}");
+pref("browser.safebrowsing.provider.0.reportErrorURL", "http://{moz:locale}.phish-error.mozilla.com/?hl={moz:locale}");
+pref("browser.safebrowsing.provider.0.reportPhishURL", "http://{moz:locale}.phish-report.mozilla.com/?hl={moz:locale}");
+
+// FAQ URL
+pref("browser.safebrowsing.warning.infoURL", "http://%LOCALE%.www.mozilla.com/%LOCALE%/firefox/phishing-protection/");
+#endif
+
+// defaults to true
+pref("browser.EULA.2.accepted", true);
+
+// if we rev the EULA again, we should bump this so users agree to the new EULA
+pref("browser.EULA.version", 2);
+
+

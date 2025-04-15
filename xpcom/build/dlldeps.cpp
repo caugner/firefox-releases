@@ -41,6 +41,7 @@
 #include <windows.h>
 #include "nsXPCOMGlue.h"
 #include "nsVoidArray.h"
+#include "nsTArray.h"
 #include "nsValueArray.h"
 #include "nsIAtom.h"
 #include "nsIByteArrayInputStream.h"
@@ -93,6 +94,7 @@
 #include "nsHashPropertyBag.h"
 #include "nsStringAPI.h"
 #include "nsStringBuffer.h"
+#include "nsCategoryCache.h"
 
 #ifndef WINCE
 #include "nsWindowsRegKey.h"
@@ -106,6 +108,15 @@ void XXXNeverCalled()
     nsTextFormatter::smprintf_free(nsnull);
     nsVoidArray();
     nsSmallVoidArray();
+    {
+      nsTArray<PRBool> array1(1), array2(1);
+      PRBool a, b, c;
+      a = b = c = PR_FALSE;
+      array1.AppendElement(a);
+      array2.InsertElementAt(b, 0);
+      array2.InsertElementAt(c, 0);
+      array1.AppendElements(array2);
+    }
     nsStringHashSet();
     nsCStringHashSet();
     nsInt32HashSet();
@@ -119,8 +130,16 @@ void XXXNeverCalled()
     NS_NewInputStreamReadyEvent(nsnull, nsnull, nsnull);
     NS_NewOutputStreamReadyEvent(nsnull, nsnull, nsnull);
     NS_AsyncCopy(nsnull, nsnull, nsnull, NS_ASYNCCOPY_VIA_READSEGMENTS, 0, nsnull, nsnull);
+    {
+      nsCString temp;
+      NS_ConsumeStream(nsnull, 0, temp);
+    }
     NS_InputStreamIsBuffered(nsnull);
     NS_OutputStreamIsBuffered(nsnull);
+    NS_CopySegmentToStream(nsnull, nsnull, nsnull, 0, 0, nsnull);
+    NS_CopySegmentToBuffer(nsnull, nsnull, nsnull, 0, 0, nsnull);
+    NS_DiscardSegment(nsnull, nsnull, nsnull, 0, 0, nsnull);
+    NS_WriteSegmentThunk(nsnull, nsnull, nsnull, 0, 0, 0);
     PL_DHashStubEnumRemove(nsnull, nsnull, nsnull, nsnull);
     nsIDHashKey::HashKey(nsnull);
     nsFixedSizeAllocator a;
@@ -232,6 +251,9 @@ void XXXNeverCalled()
     NS_StringCloneData(str1);
     NS_UTF16ToCString(str1, NS_CSTRING_ENCODING_ASCII, str2);
     NS_CStringToUTF16(str2, NS_CSTRING_ENCODING_ASCII, str1);
+
+    nsCategoryObserver catobs(nsnull, nsnull);
+    nsCategoryCache<nsILocalFile> catcache(nsnull);
 
     // nsStringBuffer.h
     {

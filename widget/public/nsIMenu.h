@@ -194,4 +194,35 @@ class nsIMenu : public nsISupports {
     
 };
 
+// {FF2CE8E5-9755-4DFA-86A3-FBB558093C04}
+#define NS_IMENU_MOZILLA_1_8_BRANCH_IID \
+{ 0xFF2CE8E5, 0x9755, 0x4DFA, \
+  { 0x86, 0xA3, 0xFB, 0xB5, 0x58, 0x09, 0xC3, 0x04 } };
+
+class nsIMenu_MOZILLA_1_8_BRANCH : public nsIMenu
+{
+  public:
+    NS_DEFINE_STATIC_IID_ACCESSOR(NS_IMENU_MOZILLA_1_8_BRANCH_IID)
+
+   /**
+    * Enable/disable native widget for a particular nsIMenuItem
+    *
+    */
+    NS_IMETHOD ChangeNativeEnabledStatusForMenuItem(nsIMenuItem* aMenuItem,
+                                                    PRBool aEnabled) = 0;
+
+   /**
+    * Retrieve the native menu and the index of the item within that menu.
+    *
+    */
+    NS_IMETHOD GetMenuRefAndItemIndexForMenuItem(nsISupports* aMenuItem,
+                                                 void**       aMenuRef,
+                                                 PRUint16*    aMenuItemIndex) = 0;
+
+   /**
+    * Sets an appropriate icon for the menu.
+    */
+    NS_IMETHOD SetupIcon() = 0;
+};
+
 #endif

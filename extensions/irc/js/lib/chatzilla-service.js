@@ -55,14 +55,6 @@ const CLINE_SERVICE_CONTRACTID =
     "@mozilla.org/commandlinehandler/general-startup;1?type=chat";
 const CLINE_SERVICE_CID =
     Components.ID("{38a95514-1dd2-11b2-97e7-9da958640f2c}");
-const IRCCONTENT_LISTENER_CONTRACTID =
-    "@mozilla.org/uriloader/irc-external-content-listener;1";
-const IRCSCONTENT_LISTENER_CONTRACTID =
-    "@mozilla.org/uriloader/ircs-external-content-listener;1";
-const IRCCONTENT_LISTENER_CID =
-    Components.ID("{0e339944-6f43-47e2-a6b5-989b1b5dd84c}");
-const IRCSCONTENT_LISTENER_CID =
-    Components.ID("{0e339944-6f43-47e2-a6b5-989b1b5dd84d}");
 const IRCPROT_HANDLER_CONTRACTID =
     "@mozilla.org/network/protocol;1?name=irc";
 const IRCSPROT_HANDLER_CONTRACTID =
@@ -88,7 +80,7 @@ const ASS_CONTRACTID =
 const RDFS_CONTRACTID =
     "@mozilla.org/rdf/rdf-service;1";
 
-/* interafces used in this file */
+/* interfaces used in this file */
 const nsIWindowMediator  = Components.interfaces.nsIWindowMediator;
 const nsICmdLineHandler  = Components.interfaces.nsICmdLineHandler;
 const nsICategoryManager = Components.interfaces.nsICategoryManager;
@@ -104,66 +96,14 @@ const nsIAppShellService = Components.interfaces.nsIAppShellService;
 const nsISupports        = Components.interfaces.nsISupports;
 const nsISupportsWeakReference = Components.interfaces.nsISupportsWeakReference;
 const nsIRDFService      = Components.interfaces.nsIRDFService;
+const nsICommandLineHandler = Components.interfaces.nsICommandLineHandler;
+const nsICommandLine     = Components.interfaces.nsICommandLine;
 
-/* Command Line handler service */
-function CLineService()
-{}
 
-CLineService.prototype.commandLineArgument = "-chat";
-CLineService.prototype.prefNameForStartup = "general.startup.chat";
-CLineService.prototype.chromeUrlForTask = "chrome://chatzilla/content";
-CLineService.prototype.helpText = "Start with an IRC chat client";
-CLineService.prototype.handlesArgs = false;
-CLineService.prototype.defaultArgs = "";
-CLineService.prototype.openWindowWithArgs = false;
-
-/* factory for command line handler service (CLineService) */
-var CLineFactory = new Object();
-
-CLineFactory.createInstance =
-function (outer, iid)
-{
-    if (outer != null)
-        throw Components.results.NS_ERROR_NO_AGGREGATION;
-
-    if (!iid.equals(nsICmdLineHandler) && !iid.equals(nsISupports))
-        throw Components.results.NS_ERROR_INVALID_ARG;
-
-    return new CLineService();
-}
-
-/* content listener */
-function IRCContentListener(isSecure)
-{
-    this.isSecure = isSecure;
-}
-
-IRCContentListener.prototype.QueryInterface =
-function irccl_QueryInterface(iid)
-{
-    if (!iid.equals(nsIURIContentListener) &&
-        !iid.equals(nsISupportsWeakReference) &&
-        !iid.equals(nsISupports))
-    {
-        throw Components.results.NS_ERROR_NO_INTERFACE;
-    }
-
-    return this;
-}
-
-IRCContentListener.prototype.loadCookie = null;
-IRCContentListener.prototype.parentContentListener = null;
-
-IRCContentListener.prototype.onStartURIOpen =
-function irccl_onStartURIOpen(uri)
-{
-}
-
-IRCContentListener.prototype.doContent =
-function irccl_doContent(contentType, preferred, request, contentHandler, count)
+// ChatZilla launcher method
+function spawnChatZilla(uri, count)
 {
     var e;
-    var channel = request.QueryInterface(nsIChannel);
 
     var wmClass = Components.classes[MEDIATOR_CONTRACTID];
     var windowManager = wmClass.getService(nsIWindowMediator);
@@ -201,9 +141,9 @@ function irccl_doContent(contentType, preferred, request, contentHandler, count)
             //dump("cz-service: **** Try: " + count + ", delay: " + (new Date() - hiddenWin.ChatZillaStarting) + "\n");
 
             // We have a ChatZilla window, but we're still loading.
-            hiddenWin.setTimeout(function wrapper(t, count) {
-                    t.doContent(contentType, preferred, request, contentHandler, count + 1);
-                }, 250, this, count);
+            hiddenWin.setTimeout(function wrapper(count) {
+                    spawnChatZilla(uri, count + 1);
+                }, 250, count);
             return true;
         }
     }
@@ -214,14 +154,14 @@ function irccl_doContent(contentType, preferred, request, contentHandler, count)
         dump("cz-service: Existing, fully loaded window. Using.\n");
         // Window is working and initialized ok. Use it.
         w.focus();
-        w.gotoIRCURL(channel.URI.spec);
+        w.gotoIRCURL(uri);
         return true;
     }
 
     dump("cz-service: No windows, starting new one.\n");
     // Ok, no available window, loading or otherwise, so start ChatZilla.
     var args = new Object();
-    args.url = channel.URI.spec;
+    args.url = uri;
 
     hiddenWin.ChatZillaStarting = new Date();
     hiddenWin.openDialog("chrome://chatzilla/content/chatzilla.xul", "_blank",
@@ -231,54 +171,79 @@ function irccl_doContent(contentType, preferred, request, contentHandler, count)
     return true;
 }
 
-IRCContentListener.prototype.isPreferred =
-function irccl_isPreferred(contentType, desiredContentType)
+
+/* Command Line handler service */
+function CLineService()
+{}
+
+/* nsISupports */
+CLineService.prototype.QueryInterface =
+function handler_QI(iid)
 {
-    return (contentType == (this.isSecure ? IRCS_MIMETYPE : IRC_MIMETYPE));
+    if (iid.equals(nsISupports))
+        return this;
+
+    if (nsICmdLineHandler && iid.equals(nsICmdLineHandler))
+        return this;
+
+    if (nsICommandLineHandler && iid.equals(nsICommandLineHandler))
+        return this;
+
+    throw Components.results.NS_ERROR_NO_INTERFACE;
 }
 
-IRCContentListener.prototype.canHandleContent =
-function irccl_canHandleContent(contentType, isContentPreferred, desiredContentType)
+/* nsICmdLineHandler */
+CLineService.prototype.commandLineArgument = "-chat";
+CLineService.prototype.prefNameForStartup = "general.startup.chat";
+CLineService.prototype.chromeUrlForTask = "chrome://chatzilla/content";
+CLineService.prototype.helpText = "Start with an IRC chat client";
+CLineService.prototype.handlesArgs = true;
+CLineService.prototype.defaultArgs = "";
+CLineService.prototype.openWindowWithArgs = true;
+
+/* nsICommandLineHandler */
+CLineService.prototype.handle =
+function handler_handle(cmdLine)
 {
-    return (contentType == (this.isSecure ? IRCS_MIMETYPE : IRC_MIMETYPE));
+    var args;
+    try
+    {
+        var uristr = cmdLine.handleFlagWithParam("chat", false);
+        if (uristr)
+        {
+            args = new Object();
+            args.url = uristr;
+        }
+    }
+    catch (e)
+    {
+    }
+
+    if (args || cmdLine.handleFlag("chat", false))
+    {
+        var assClass = Components.classes[ASS_CONTRACTID];
+        var ass = assClass.getService(nsIAppShellService);
+        var hWin = ass.hiddenDOMWindow;
+        hWin.openDialog("chrome://chatzilla/content/", "_blank",
+                        "chrome,menubar,toolbar,status,resizable,dialog=no",
+                        args);
+        cmdLine.preventDefault = true;
+    }
 }
 
-/* protocol handler factory object (IRCContentListener) */
-var IRCContentListenerFactory = new Object();
+CLineService.prototype.helpInfo =
+ "  -chat [<ircurl>]  Start with an IRC chat client.\n"
 
-IRCContentListenerFactory.createInstance =
-function ircclf_createInstance(outer, iid)
+/* factory for command line handler service (CLineService) */
+var CLineFactory = new Object();
+
+CLineFactory.createInstance =
+function (outer, iid)
 {
     if (outer != null)
         throw Components.results.NS_ERROR_NO_AGGREGATION;
 
-    if (!iid.equals(nsIURIContentListener) &&
-        !iid.equals(nsISupportsWeakReference) &&
-        !iid.equals(nsISupports))
-    {
-        throw Components.results.NS_ERROR_INVALID_ARG;
-    }
-
-    return new IRCContentListener(false);
-}
-
-/* secure protocol handler factory object (IRCContentListener) */
-var IRCSContentListenerFactory = new Object();
-
-IRCSContentListenerFactory.createInstance =
-function ircclf_createInstance(outer, iid)
-{
-    if (outer != null)
-        throw Components.results.NS_ERROR_NO_AGGREGATION;
-
-    if (!iid.equals(nsIURIContentListener) &&
-        !iid.equals(nsISupportsWeakReference) &&
-        !iid.equals(nsISupports))
-    {
-        throw Components.results.NS_ERROR_INVALID_ARG;
-    }
-
-    return new IRCContentListener(true);
+    return new CLineService().QueryInterface(iid);
 }
 
 /* irc protocol handler component */
@@ -314,9 +279,7 @@ function ircph_newChannel(URI)
     if (!ios.allowPort(URI.port, URI.scheme))
         throw Components.results.NS_ERROR_FAILURE;
 
-    var bogusChan = new BogusChannel(URI, this.isSecure);
-    bogusChan.contentType = (this.isSecure ? IRCS_MIMETYPE : IRC_MIMETYPE);
-    return bogusChan;
+    return new BogusChannel(URI, this.isSecure);
 }
 
 /* protocol handler factory object (IRCProtocolHandler) */
@@ -361,6 +324,7 @@ function BogusChannel(URI, isSecure)
     this.URI = URI;
     this.originalURI = URI;
     this.isSecure = isSecure;
+    this.contentType = (this.isSecure ? IRCS_MIMETYPE : IRC_MIMETYPE);
 }
 
 BogusChannel.prototype.QueryInterface =
@@ -382,21 +346,17 @@ BogusChannel.prototype.notificationCallbacks = null;
 BogusChannel.prototype.securityInfo = null;
 
 BogusChannel.prototype.open =
-function bc_open()
-{
-    throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
-}
-
 BogusChannel.prototype.asyncOpen =
-function bc_asyncOpen(observer, ctxt)
+function bc_open(observer, ctxt)
 {
-    observer.onStartRequest(this, ctxt);
+    spawnChatZilla(this.URI.spec);
+    throw Components.results.NS_ERROR_NO_CONTENT;
 }
 
 BogusChannel.prototype.asyncRead =
 function bc_asyncRead(listener, ctxt)
 {
-    return listener.onStartRequest(this, ctxt);
+    throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
 }
 
 /* nsIRequest */
@@ -438,24 +398,9 @@ function cz_mod_registerSelf(compMgr, fileSpec, location, type)
     catman.addCategoryEntry("command-line-argument-handlers",
                             "chatzilla command line handler",
                             CLINE_SERVICE_CONTRACTID, true, true);
-
-    debug("*** Registering content listener.\n");
-    compMgr.registerFactoryLocation(IRCCONTENT_LISTENER_CID,
-                                    "IRC content listener",
-                                    IRCCONTENT_LISTENER_CONTRACTID,
-                                    fileSpec, location, type);
-    catman.addCategoryEntry("external-uricontentlisteners",
-                            IRC_MIMETYPE,
-                            IRCCONTENT_LISTENER_CONTRACTID, true, true);
-
-    debug("*** Registering secure content listener.\n");
-    compMgr.registerFactoryLocation(IRCSCONTENT_LISTENER_CID,
-                                    "IRC content listener",
-                                    IRCSCONTENT_LISTENER_CONTRACTID,
-                                    fileSpec, location, type);
-    catman.addCategoryEntry("external-uricontentlisteners",
-                            IRCS_MIMETYPE,
-                            IRCSCONTENT_LISTENER_CONTRACTID, true, true);
+    catman.addCategoryEntry("command-line-handler",
+                            "m-irc",
+                            CLINE_SERVICE_CONTRACTID, true, true);
 
     debug("*** Registering irc protocol handler.\n");
     compMgr.registerFactoryLocation(IRCPROT_HANDLER_CID,
@@ -480,7 +425,9 @@ function cz_mod_unregisterSelf(compMgr, fileSpec, location)
     var catman = Components.classes["@mozilla.org/categorymanager;1"]
         .getService(nsICategoryManager);
     catman.deleteCategoryEntry("command-line-argument-handlers",
-                               CLINE_SERVICE_CONTRACTID, true);
+                               "chatzilla command line handler", true);
+    catman.deleteCategoryEntry("command-line-handler",
+                               "m-irc", true);
 }
 
 ChatzillaModule.getClassObject =
@@ -501,12 +448,6 @@ function cz_mod_getClassObject(compMgr, cid, iid)
 
     if (cid.equals(CLINE_SERVICE_CID))
         return CLineFactory;
-
-    if (cid.equals(IRCCONTENT_LISTENER_CID))
-        return IRCContentListenerFactory;
-
-    if (cid.equals(IRCSCONTENT_LISTENER_CID))
-        return IRCSContentListenerFactory;
 
     if (cid.equals(IRCPROT_HANDLER_CID))
         return IRCProtocolHandlerFactory;

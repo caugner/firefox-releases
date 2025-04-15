@@ -1074,6 +1074,25 @@ public:
    */
   virtual nsIAtom* GetType() const = 0;
   
+
+  /**
+   * Bit-flags to pass to IsFrameOfType()
+   */
+  enum {
+    eMathML =           1 << 0,
+    eSVG =              1 << 1,
+    eSVGForeignObject = 1 << 2
+  };
+
+  /**
+   * API for doing a quick check if a frame is of a given
+   * type. Returns true if the frame matches ALL flags passed in.
+   */
+  virtual PRBool IsFrameOfType(PRUint32 aFlags) const
+  {
+    return !aFlags;
+  }
+
   /**
    * Is this frame a containing block for non-positioned elements?
    */
@@ -1494,6 +1513,90 @@ protected:
 private:
   NS_IMETHOD_(nsrefcnt) AddRef(void) = 0;
   NS_IMETHOD_(nsrefcnt) Release(void) = 0;
+};
+
+/**
+ * nsWeakFrame can be used to keep a reference to a nsIFrame in a safe way.
+ * Whenever an nsIFrame object is deleted, the nsWeakFrames pointing
+ * to it will be cleared.
+ *
+ * Create nsWeakFrame object when it is sure that nsIFrame object
+ * is alive and after some operations which may destroy the nsIFrame
+ * (for example any DOM modifications) use IsAlive() or GetFrame() methods to
+ * check whether it is safe to continue to use the nsIFrame object.
+ *
+ * @note The usage of this class should be kept to a minimum.
+ */
+
+class nsWeakFrame {
+public:
+  nsWeakFrame(nsIFrame* aFrame) : mPrev(nsnull), mFrame(nsnull)
+  {
+    Init(aFrame);
+  }
+
+  nsWeakFrame& operator=(nsWeakFrame& aOther) {
+    Init(aOther.GetFrame());
+    return *this;
+  }
+
+  nsWeakFrame& operator=(nsIFrame* aFrame) {
+    Init(aFrame);
+    return *this;
+  }
+
+  nsIFrame* operator->()
+  {
+    return mFrame;
+  }
+
+  operator nsIFrame*()
+  {
+    return mFrame;
+  }
+
+  void Clear(nsIPresShell_MOZILLA_1_8_BRANCH* aShell) {
+    if (aShell) {
+      aShell->RemoveWeakFrame(this);
+    }
+    mFrame = nsnull;
+    mPrev = nsnull;
+  }
+
+  PRBool IsAlive() { return !!mFrame; }
+
+  nsIFrame* GetFrame() { return mFrame; }
+
+  nsWeakFrame* GetPreviousWeakFrame() { return mPrev; }
+
+  void SetPreviousWeakFrame(nsWeakFrame* aPrev) { mPrev = aPrev; }
+
+  ~nsWeakFrame()
+  {
+    nsCOMPtr<nsIPresShell_MOZILLA_1_8_BRANCH> shell18 =
+      do_QueryInterface(mFrame ? mFrame->GetPresContext()->GetPresShell() : nsnull);
+    Clear(shell18);
+  }
+private:
+  void Init(nsIFrame* aFrame)
+  {
+    nsCOMPtr<nsIPresShell_MOZILLA_1_8_BRANCH> shell18 =
+      do_QueryInterface(mFrame ? mFrame->GetPresContext()->GetPresShell() : nsnull);
+    Clear(shell18);
+    mFrame = aFrame;
+    if (mFrame) {
+      shell18 = do_QueryInterface(mFrame->GetPresContext()->GetPresShell());
+      NS_WARN_IF_FALSE(shell18, "Null PresShell in nsWeakFrame!");
+      if (shell18) {
+        shell18->AddWeakFrame(this);
+      } else {
+        mFrame = nsnull;
+      }
+    }
+  }
+
+  nsWeakFrame*  mPrev;
+  nsIFrame*     mFrame;
 };
 
 #endif /* nsIFrame_h___ */

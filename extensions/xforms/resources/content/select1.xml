@@ -50,7 +50,7 @@
     
     <!-- The strange indentation is because of the whitespace nodes.-->
     <content>
-      <children includes="label"/>
+      <children includes="label|hint"/>
       <html:div class="-moz-xforms-select1-popup" anonid="popup"
                 onmouseover="this.parentNode.shouldHandleBlur = false;
                              this.parentNode.mouseOver(event);"
@@ -60,8 +60,9 @@
       </html:div>
       <html:span class="-moz-select1-container"
                  anonid="container"><html:input
-                 class="-moz-xforms-select1-input"
+                 class="-moz-xforms-select1-input xf-value"
                  anonid="control"
+                 xbl:inherits="accesskey"
                  onfocus="this.parentNode.parentNode.dispatchDOMUIEvent('DOMFocusIn')"
                  onblur="this.parentNode.parentNode.handleBlur(); this.parentNode.parentNode.dispatchDOMUIEvent('DOMFocusOut');"
                  onclick="this.parentNode.parentNode.handleControlClick();"
@@ -87,8 +88,10 @@
       <!-- This is either an nsIXFormsItemElement or null. -->
       <field name="_selected">null</field>
       <field name="_tmpSelected">null</field>
+      <field name="_lastSelectedItem">null</field>
       <field name="popupOpen">false</field>
       <field name="shouldHandleBlur">true</field>
+      <field name="_outOfRange">false</field>
 
       <property name="selectionOpen" readonly="true">
         <getter>
@@ -136,6 +139,21 @@
         </getter>
       </property>
 
+      <property name="incremental" readonly="true">
+        <getter>
+        <![CDATA[
+          // default is true
+          var incremental = true;
+
+          if (this.getAttribute("incremental") == "false") {
+            incremental = false;
+          }
+
+          return incremental;
+        ]]>
+        </getter>
+      </property>
+
       <method name="updateInputField">
         <body>
           <![CDATA[
@@ -151,10 +169,8 @@
         <parameter name="aEvent"/>
         <body>
           <![CDATA[
-          if (this.selectionOpen && !this._selected) {
-            if (this.getAttribute("incremental") != "false") {
-              this.delegate.value = this.inputField.value;
-            }
+          if (this.selectionOpen && !this._selected && this.incremental) {
+            this._handleSelection(false);
           } else {
             this.togglePopup();
           }
@@ -172,7 +188,11 @@
               this.togglePopup();
               if (open && this._selected) {
                 this.updateInputField();
-                this.delegate.value = this._selected.value;
+                if (this.incremental) {
+                  this._handleSelection(true);
+                } else {
+                  this.dispatchSelectEvents();
+                }
               }
             } else if (key == aEvent.DOM_VK_UP ||
                        key == aEvent.DOM_VK_DOWN) {
@@ -183,14 +203,12 @@
                   el.scrollIntoView(false);
                 }
               }
-              
-              if (!this.popupOpen && this.getAttribute("incremental") != "false") {
+
+              if (!this.popupOpen && this.incremental) {
                 if (this._selected) {
                   this.updateInputField();
-                  this.delegate.value = this._selected.value;
-                } else if (this.selectionOpen) {
-                  this.delegate.value = this.inputField.value;
                 }
+                this._handleSelection(true);
               }
             } else if (key == aEvent.DOM_VK_TAB) {
               // Hiding popup when user uses keyboard to focus out
@@ -230,8 +248,8 @@
                 this._selected.setActive(false);
                 this._selected = null;
               }
-              if (this.getAttribute("incremental") != "false") {
-                this.delegate.value = this.inputField.value;
+              if (this.incremental) {
+                this._handleSelection(false);
               }
             }
 
@@ -323,7 +341,7 @@
         <body>
           <![CDATA[
             var label = null;
-            var next = null;
+            var next = null, nextItem = null;
             var node = this.firstChild;
             while (node) {
               if (node.namespaceURI == this.XFORMS_NS &&
@@ -345,12 +363,14 @@
             next = this.findNextSelectable(node, aDown);
             if (next) {
               if (this._selected) {
+                this._lastSelected = this._selected;
                 this._selected.setActive(false);
                 this._selected = null;
               }
 
-              this._selected = next.QueryInterface(Components.interfaces.nsIXFormsItemElement);
-              if (this._selected) {
+              nextItem = next.QueryInterface(Components.interfaces.nsIXFormsItemElement);
+              if (nextItem) {
+                this._selected = nextItem;
                 this._selected.setActive(true);
                 this.updateInputField();
               }
@@ -391,8 +411,11 @@
 
             if (this._selected) {
               this.updateInputField();
-              this.delegate.value =
-                this._selected.value;
+              if (this.incremental) {
+                this._handleSelection(true);
+              } else {
+                this.dispatchSelectEvents();
+              }
             }
             this.inputField.focus();
           ]]>
@@ -461,7 +484,7 @@
       <method name="togglePopup">
         <body>
           <![CDATA[
-          if (!this.popupOpen && !this.delegate.isReadonly) {
+          if (!this.popupOpen && !this.accessors.isReadonly()) {
             // Calculating the size and position of the popup.
             var style = "";
             var containerBox = document.getBoxObjectFor(this.container);
@@ -545,32 +568,133 @@
         <body>
           <![CDATA[
           try {
-            var newValue = this.stringValue;
+            var nodeValue = null, newValue = null;
+            var boundNode = this.accessors.getBoundNode();
+            var outOfRange = false;
+            if (boundNode && boundNode.hasChildNodes()) {
+              // Since this is a select1, there should normally be just one
+              // child node here.  But no guarantee that a select1 generated
+              // the value coming in.  So we'll look for text node with 
+              // non-whitespace characters to compare with an item's xf:value.
+              // Any other node that we encounter we look to match with an
+              // item's xf:copy.  If more than one of either of these exists
+              // in the instance data, we need to generate a xforms-out-of-range
+              // event and style the select1 as out-of-range since by
+              // definition a select1 can not select more than one item.
+              var child = boundNode.firstChild;
+              while (child) {
+                var type = child.nodeType;
+                if (type == Node.TEXT_NODE) {
+                  // if child is a text node completely filled with
+                  // whitespace let's ignore it and get the next node
+                  var string = child.nodeValue;
+                  var nonWhitespace = false;
+                  if (string) {
+                    // this regexp tests whether only whitespace is contained
+                    // between the beginning and ending of the string.
+                    nonWhitespace = !(/^\s*$/.test(string));
+                  }
+                  if (nonWhitespace) {
+                    if (newValue || nodeValue) {
+                      // oh oh!  We've already found a selectable node in the
+                      // instance data and now we have another.  That shouldn't
+                      // happen.
+                      outOfRange = true;
+                    }
+                    newValue = string;
+                  }
+                } else {
+                  // if it's not a text node, we'll assume that we are looking at
+                  // a node worth comparing.  As such, look for an
+                  // item with a copy element that might match this node.
+                  if (newValue || nodeValue) {
+                    // oh oh!  We've already found a selectable node in the
+                    // instance data and now we have another.  That shouldn't
+                    // happen.
+                    outOfRange = true;
+                  }
+                  nodeValue = child;
+                }
 
-            if (!this.selectionOpen || this.delegate.isReadonly) {
+                if (child == boundNode.lastChild) {
+                  break;
+                }
+                child = child.nextSibling;
+              }
+            }
+
+            if (outOfRange) {
+              // a control can't be out of range (or in range for that matter)
+              // if there is no selected value, so make sure that there is a
+              // bound node first.
+              if ((outOfRange != this._outOfRange) && boundNode) {
+                this._outOfRange = outOfRange;
+                this.accessors.setInRange(false);
+              }
+
+              // can't possibly work, no sense continuing.
+              this.inputField.value = "";
+              this._selected.setActive(false);
+              this._selected = null;
+              this.refreshWidth();
+              return false;
+            }
+
+            if (!this.selectionOpen || this.accessors.isReadonly()) {
               this.inputField.setAttribute("readonly", "readonly");
             } else {
               this.inputField.removeAttribute("readonly");
             }
 
-            if (this._selected) {
-              if (newValue ==
-                  this._selected.value) {
-                return true;
+            if (this._selected && !this._selected.isCopyItem) {
+              var envelope = this._getSelectedValue();
+              if (envelope) {
+                var textNode = null;
+                if (envelope.nodeType == Node.ELEMENT_NODE) {
+                  textNode = envelope.firstChild;
+                  if (newValue == textNode.nodeValue) {
+                    // Value in instance data already selected. Need to only
+                    // refresh the width.
+                    this.refreshWidth();
+                    return true;
+                  }
+                } else {
+                  if (newValue == envelope.nodeValue) {
+                    // Value in instance data already selected. Need to only
+                    // refresh the width.
+                    this.refreshWidth();
+                    return true;
+                  }
+                }
               }
               this._selected.setActive(false);
               this._selected = null;
+              this._lastSelectedItem = null;
             }
 
-            this.selectItemByValue(newValue);
-            
+            if (newValue) {
+              this.selectItemByValue(newValue);
+            } else if (nodeValue) {
+              this.selectItemByNode(nodeValue);
+            }
+
+            outOfRange = false;
             if (this._selected) {
               this.updateInputField();
+              this._lastSelectedItem = this._selected;
             } else if (this.selectionOpen) {
               this.inputField.value = newValue;
             } else {
-              // @todo out-of-range (XXX)
               this.inputField.value = "";
+              outOfRange = true;
+            }
+
+            // a control can't be out of range (or in range for that matter)
+            // if there is no selected value, so make sure that there is a
+            // bound node first.
+            if ((outOfRange != this._outOfRange) && boundNode) {
+              this._outOfRange = outOfRange;
+              this.accessors.setInRange(!outOfRange);
             }
             this.refreshWidth();
           } catch (ex) {}
@@ -596,11 +720,51 @@
             item = null;
             try {
               if (node.nodeType == document.ELEMENT_NODE &&
-                  node.namespaceURI == this.XFORMS_NS && node.localName != "label") {
+                  node.namespaceURI == this.XFORMS_NS &&
+                  node.localName != "label") {
 
                 item = node.QueryInterface(Components.interfaces.nsIXFormsSelectChild);
                 if (item) {
                   item = item.selectItemByValue(aValue);
+                  if (item) {
+                    if (this._selected) {
+                      this._selected.setActive(false);
+                      this._selected = null;
+                    }
+                    this._selected = item.QueryInterface(Components.interfaces.nsIXFormsItemElement);
+                    if (this._selected) {
+                      this._selected.setActive(true);
+                      return;
+                    }
+                  }
+                }
+              }
+            } catch (ex) {}
+            node = node.nextSibling;
+          }
+          ]]>
+        </body>
+      </method>
+
+      <method name="selectItemByNode">
+        <parameter name="aNode"/>
+        <body>
+          <![CDATA[
+
+          // select the copyItem in this select1 whose copyNode equals aNode
+
+          var node = this.firstChild;
+          var item;
+          while (node) {
+            item = null;
+            try {
+              if (node.nodeType == document.ELEMENT_NODE &&
+                  node.namespaceURI == this.XFORMS_NS &&
+                  node.localName != "label") {
+
+                item = node.QueryInterface(Components.interfaces.nsIXFormsSelectChild);
+                if (item) {
+                  item = item.selectItemByNode(aNode);
                   if (item) {
                     if (this._selected) {
                       this._selected.setActive(false);
@@ -640,14 +804,227 @@
               return;
             }
 
-            if (this.selectionOpen && !this._selected) {
-              this.delegate.value = this.inputField.value;
-            } else if (this._selected) {
+            if (this._selected) {
               this.updateInputField();
-              this.delegate.value = this._selected.value;
             }
+
+            this._handleSelection(false, true);
           }
           ]]>
+        </body>
+      </method>
+
+      <!-- _handleSelection updates the bound node with the value from the
+            currently selected item's value element or copy element. -->
+      <method name="_handleSelection">
+        <parameter name="aDispatchSelectEvents"/>
+        <parameter name="aInBlur"/>
+        <body>
+          <![CDATA[
+          // if aDispatchSelectEvents is true, then we need to make sure to
+          // dispatch the xforms-deselect and xforms-select events before we
+          // change the value of the bound node otherwise we'll get the
+          // event ordering wrong.  Similar with setting out of/in range (must
+          // happen after dispatch select/deselect).  aDispatchSelectEvents is
+          // a REQUIRED parameter, whether it be true or false.
+
+          // aInBlur is not a required parameter.  It is true if handleSelection
+          // was called from the blur handler.
+
+          var boundNode = this.accessors.getBoundNode();
+          if (!boundNode) {
+            return;
+          }
+
+          if (this.selectionOpen && !this._selected) {
+            if (aDispatchSelectEvents == true) {
+              this.dispatchSelectEvents();
+            }
+            this.accessors.setValue(this.inputField.value);
+
+            // open selection can't be out of range
+            this._outOfRange = false;
+            this.accessors.setInRange(true);
+            return;
+          }
+
+          if (!this._selected) {
+            // no reason to continue
+            return;
+          }
+
+          if (aInBlur && aInBlur == true) {
+            // if _handleSelection is called due to a blur, we only really care
+            // about making sure the bound node is in sync if @incremental is
+            // false.  Otherwise the bound node is already up to date so might
+            // as well return.
+            if (this.incremental) {
+              return;
+            }
+          }
+
+          if (boundNode.nodeType != boundNode.ELEMENT_NODE) {
+            // if the boundNode type isn't an ELEMENT_NODE, then contentEnvelope
+            // isn't an ELEMENT_NODE (since it is a clone of the bound node).
+            // So if contentEnvelope has a value, it will be the nodeValue.
+            var envelope = this._getSelectedValue();
+            if (envelope) {
+              if (aDispatchSelectEvents == true) {
+                this.dispatchSelectEvents();
+              }
+              this.accessors.setValue(envelope.nodeValue);
+              this._outOfRange = false;
+              this.accessors.setInRange(true);
+              return;
+            }
+
+            // not allowed to copy a node under a non ELEMENT node, so
+            // generating a binding exception per spec.
+            var ev = document.createEvent("Events");
+            ev.initEvent("xforms-binding-exception", true, false);
+            this.dispatchEvent(ev);
+
+            // well, whatever we had selected isn't going to cut it.  But the
+            // user did choose to deselect the previous item in favor of this
+            // this item, so we really shouldn't go back to what
+            // was there before.  So we'll go to nothing.  Make sure bound
+            // node reflects this.  Seems to be consistent with what Novell
+            // and formsPlayer does, too.
+            this._selected.setActive(false);
+            this._selected = null;
+            this.inputField.value = "";
+
+            if (aDispatchSelectEvents == true) {
+              this.dispatchSelectEvents();
+            }
+
+            this.accessors.setValue("");
+            this._outOfRange = true;
+            this.accessors.setInRange(false);
+            return;
+          }
+
+          var contentEnvelope = this._getSelectedValue();
+          var copyInvolved = this._selected.isCopyItem;
+          if (!copyInvolved && this._lastSelectedItem) {
+            copyInvolved = this._lastSelectedItem.isCopyItem;
+          }
+          if (!copyInvolved) {
+            // Since we aren't selecting a copyItem nor causing a copyItem to
+            // be deselected, no sense using setContent.  Too expensive.
+            if (aDispatchSelectEvents == true) {
+              this.dispatchSelectEvents();
+            }
+            this.accessors.setValue(contentEnvelope.textContent);
+            this._outOfRange = false;
+            this.accessors.setInRange(true);
+          } else {
+            if (aDispatchSelectEvents == true) {
+              this.dispatchSelectEvents();
+            }
+            this.accessors.setContent(contentEnvelope, true);
+            this._outOfRange = false;
+            this.accessors.setInRange(true);
+          }
+
+          }
+          ]]>
+        </body>
+      </method>
+
+      <method name="dispatchSelectEvents">
+        <body>
+          <![CDATA[
+          if (this._lastSelectedItem != this._selected) {
+            if (this._lastSelectedItem) {
+              this.dispatchSelectEvent(this._lastSelectedItem, "xforms-deselect");
+            }
+  
+            if (this._selected) {
+              this.dispatchSelectEvent(this._selected, "xforms-select");
+            }
+
+            this._lastSelectedItem = this._selected;
+          }
+          ]]>
+        </body>
+      </method>
+
+      <method name="dispatchSelectEvent">
+        <parameter name="aElement"/>
+        <parameter name="aName"/>
+        <body>
+        <![CDATA[
+          var ev = document.createEvent("Events");
+          ev.initEvent(aName, true, false);
+
+          var elm = aElement;
+
+          // per http://www.w3.org/TR/2005/PER-xforms-20051006/index-all.html#evt-select
+          // we send the event to the itemset if it is a parent.
+          if (elm.parentNode && elm.parentNode.localName == "itemset")
+            elm = elm.parentNode;
+
+          elm.dispatchEvent(ev);
+          return true;
+	]]>
+        </body>
+      </method>
+
+      <method name="_getSelectedValue">
+        <body>
+        <![CDATA[
+          // The purpose of this function is to return the select1's currently
+          // selected item's value in a contentEnvelope.  It achieves this by
+          // cloning the bound node to create the contentEnvelope which will be
+          // returned.  If the contentEnvelope is an element node, the contents
+          // of the selected item's value will be inserted as a child of the
+          // contentEnvelope.  If it is a textnode, the selected item value will
+          // be put in the contentEnvelope.nodeValue.
+
+          if (!this._selected) {
+            // this will probably only happen if there was an exception
+            // somewhere else first.  But no sense continuing below and adding
+            // more exceptions to the console.
+            return null;
+          }
+
+          var boundNode = this.accessors.getBoundNode();
+          if (!boundNode)  {
+            return null;
+          }
+
+          var contentEnvelope = boundNode.cloneNode(false);
+          if (!contentEnvelope) {
+            return null;
+          }
+
+          if (contentEnvelope.nodeType == Node.ELEMENT_NODE) { 
+            var contentNode = null;
+            if (this._selected.isCopyItem) {
+              var copyNode = this._selected.copyNode;
+              if (copyNode) {
+                contentNode = copyNode.cloneNode(true);
+              }
+            } else {
+              contentNode = document.createTextNode(this._selected.value);
+            }
+
+            contentEnvelope.appendChild(contentNode);
+          } else {
+            // if the selected item is not a copyItem, then we'll just put the
+            // item's value in the nodeValue for the contentEnvelope.  Otherwise
+            // we are stuck trying to stick an element node under a non-element
+            // node and that ainna gonna work.
+            if (!this._selected.isCopyItem) {
+              contentEnvelope.nodeValue = this._selected.value;
+            } else {
+              contentEnvelope = null;
+            }
+          }
+
+          return contentEnvelope;
+        ]]>
         </body>
       </method>
     </implementation>

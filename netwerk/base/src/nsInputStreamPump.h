@@ -62,6 +62,29 @@ public:
     nsInputStreamPump(); 
     ~nsInputStreamPump();
 
+    static NS_HIDDEN_(nsresult)
+                      Create(nsInputStreamPump  **result,
+                             nsIInputStream      *stream,
+                             PRInt64              streamPos = -1,
+                             PRInt64              streamLen = -1,
+                             PRUint32             segsize = 0,
+                             PRUint32             segcount = 0,
+                             PRBool               closeWhenDone = PR_FALSE);
+
+    typedef void (*PeekSegmentFun)(void *closure, const PRUint8 *buf,
+                                   PRUint32 bufLen);
+    /**
+     * Peek into the first chunk of data that's in the stream. Note that this
+     * method will not call the callback when there is no data in the stream.
+     * The callback will be called at most once.
+     *
+     * The data from the stream will not be consumed, i.e. the pump's listener
+     * can still read all the data.
+     *
+     * Do not call before asyncRead. Do not call after onStopRequest.
+     */
+    NS_HIDDEN_(void) PeekStream(PeekSegmentFun callback, void *closure);
+
 protected:
 
     enum {

@@ -212,7 +212,7 @@
         <![CDATA[      
           try {
             var event = document.createEvent("Events");
-            event.initEvent(aEventName, false, true);
+            event.initEvent(aEventName, true, true);
             var cancel = !aTarget.dispatchEvent(event);
             if (aTarget.hasAttribute("on" + aEventName)) {
               var fn = new Function ("event", aTarget.getAttribute("on" + aEventName));
@@ -314,7 +314,7 @@
             aCell.setAttribute("hover", "true");
             this.mHoverCell = aCell;
             var event = document.createEvent('Events');
-            event.initEvent('DOMMenuItemActive', false, true);
+            event.initEvent('DOMMenuItemActive', true, true);
             aCell.dispatchEvent(event);
           }
         ]]></body>
@@ -434,7 +434,8 @@
         <xul:popup class="colorpicker-button-menupopup" anonid="colorpopup"
                    onmousedown="event.stopPropagation()"
                    onpopupshowing="this._colorPicker.onPopupShowing()"
-                   onpopuphiding="this._colorPicker.onPopupHiding()">
+                   onpopuphiding="this._colorPicker.onPopupHiding()"
+                   onselect="this._colorPicker.pickerChange()">
            <xul:colorpicker xbl:inherits="palettename,disabled" allowevents="true" anonid="colorpicker"/>
          </xul:popup>
        </xul:popupset>
@@ -482,7 +483,7 @@
         <![CDATA[      
           try {
             var event = document.createEvent("Events");
-            event.initEvent(aEventName, false, true);
+            event.initEvent(aEventName, true, true);
             var cancel = !aTarget.dispatchEvent(event);
             if (aTarget.hasAttribute("on" + aEventName)) {
               var fn = new Function ("event", aTarget.getAttribute("on" + aEventName));
@@ -571,9 +572,6 @@
         this.showPopup();
       ]]></handler>
       
-      <handler event="select">
-        this.pickerChange();
-      </handler>
     </handlers>
   </binding>
 

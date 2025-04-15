@@ -38,7 +38,7 @@
  * Support for ENcoding ASN.1 data based on BER/DER (Basic/Distinguished
  * Encoding Rules).
  *
- * $Id: secasn1e.c,v 1.19.14.1 2005/10/10 23:22:52 wtchang%redhat.com Exp $
+ * $Id: secasn1e.c,v 1.19.14.2 2006/05/15 17:45:45 wtchang%redhat.com Exp $
  */
 
 #include "secasn1.h"
@@ -1639,7 +1639,7 @@ SEC_ASN1EncodeInteger(PRArenaPool *poolp, SECItem *dest, long value)
 }
 
 
-extern SECItem *
+SECItem *
 SEC_ASN1EncodeUnsignedInteger(PRArenaPool *poolp,
 			      SECItem *dest, unsigned long value)
 {

@@ -2,14 +2,40 @@
 var gPrefInt = null;
 var gCurrentDirectory = null;
 var gCurrentDirectoryString = null;
+var gReplicationBundle = null;
+var gReplicationService =
+  Components.classes["@mozilla.org/addressbook/ldap-replication-service;1"].
+             getService(Components.interfaces.nsIAbLDAPReplicationService);
+var gReplicationCancelled = false;
+var gProgressText;
+var gProgressMeter;
+var gDownloadInProgress = false;
 
 const kDefaultMaxHits = 100;
 const kDefaultLDAPPort = 389;
 const kDefaultSecureLDAPPort = 636;
 const kLDAPDirectory = 0;  // defined in nsDirPrefs.h
 
+var ldapOfflineObserver = {
+  observe: function(subject, topic, state)
+  {
+    // sanity checks
+    if (topic != "network:offline-status-changed") return;
+    setDownloadOfflineOnlineState(state == "offline");
+  }
+}
+
 function Startup()
 {
+  gPrefInt = Components.classes["@mozilla.org/preferences-service;1"]
+    .getService(Components.interfaces.nsIPrefBranch);
+  gReplicationBundle = document.getElementById("bundle_replication");
+
+  document.getElementById("download").label =
+    gReplicationBundle.getString("downloadButton");
+  document.getElementById("download").accessKey =
+    gReplicationBundle.getString("downloadButtonAccessKey");
+
   if ( "arguments" in window && window.arguments[0] ) {
     gCurrentDirectory = window.arguments[0].selectedDirectory;
     gCurrentDirectoryString = window.arguments[0].selectedDirectoryString;
@@ -19,26 +45,138 @@ function Startup()
       dump("pref-directory-add.js:Startup(): fillSettings() exception: " 
            + ex + "\n");
     }
+
+    // Only set up the download button for online/offline status toggling
+    // if the pref isn't locked to disable the button.
+    if (!gPrefInt.prefIsLocked(gCurrentDirectoryString + ".disable_button_download")) {
+      // Now connect to the offline/online observer
+      var observerService = Components.classes["@mozilla.org/observer-service;1"]
+                                      .getService(Components.interfaces.nsIObserverService);
+      observerService.addObserver(ldapOfflineObserver,
+                                  "network:offline-status-changed", false);
+
+      // Now set the initial offline/online state.
+      var ioService = Components.classes["@mozilla.org/network/io-service;1"]
+                                .getService(Components.interfaces.nsIIOService);
+      // And update the state
+      setDownloadOfflineOnlineState(ioService.offline);
+    }
   } else {
     fillDefaultSettings();
+    // Don't add observer here as it doesn't make any sense.
   }
 }
 
+function onUnload()
+{
+  if ("arguments" in window && 
+      window.arguments[0] &&
+      !gPrefInt.prefIsLocked(gCurrentDirectoryString + ".disable_button_download")) {
+    // Remove the observer that we put in on dialog startup
+    var observerService = Components.classes["@mozilla.org/observer-service;1"]
+                                    .getService(Components.interfaces.nsIObserverService);
+    observerService.removeObserver(ldapOfflineObserver,
+                                   "network:offline-status-changed");
+  }
+}
+
+var progressListener = {
+  onStateChange: function(aWebProgress, aRequest, aStateFlags, aStatus)
+  {
+    if (aStateFlags & Components.interfaces.nsIWebProgressListener.STATE_START) {
+      // start the spinning
+      gProgressMeter.setAttribute("mode", "undetermined");
+      gProgressText.value = gReplicationBundle.getString(aStatus ?
+                                                         "replicationStarted" :
+                                                         "changesStarted");
+      gDownloadInProgress = true;
+      document.getElementById("download").label =
+        gReplicationBundle.getString("cancelDownloadButton");
+      document.getElementById("download").accessKey =
+        gReplicationBundle.getString("cancelDownloadButtonAccessKey");
+    }
+    
+    if (aStateFlags & Components.interfaces.nsIWebProgressListener.STATE_STOP) {
+      EndDownload(aStatus);
+    }
+  },
+  onProgressChange: function(aWebProgress, aRequest, aCurSelfProgress, aMaxSelfProgress, aCurTotalProgress, aMaxTotalProgress)
+  {
+    gProgressText.value = gReplicationBundle.getFormattedString("currentCount",
+                                                                [aCurSelfProgress]);
+  },
+  onLocationChange: function(aWebProgress, aRequest, aLocation)
+  {
+  },
+  onStatusChange: function(aWebProgress, aRequest, aStatus, aMessage)
+  {
+  },
+  onSecurityChange: function(aWebProgress, aRequest, state)
+  {
+  },
+  QueryInterface : function(iid)
+  {
+    if (iid.equals(Components.interfaces.nsIWebProgressListener) || 
+        iid.equals(Components.interfaces.nsISupportsWeakReference) || 
+        iid.equals(Components.interfaces.nsISupports))
+      return this;
+    throw Components.results.NS_NOINTERFACE;
+  }
+};
+
 function DownloadNow()
 {
-  var args = {dirName: gCurrentDirectory, prefName: gCurrentDirectoryString};
+  if (!gDownloadInProgress) {
+    gProgressText = document.getElementById("replicationProgressText");
+    gProgressMeter = document.getElementById("replicationProgressMeter");
 
-  window.opener.openDialog("chrome://messenger/content/addressbook/replicationProgress.xul", "", "chrome,resizable,status,centerscreen,dialog=no", args);
+    gProgressText.hidden = false;
+    gProgressMeter.hidden = false;
+    gReplicationCancelled = false;
 
+    try {
+      gReplicationService.startReplication(gCurrentDirectoryString,
+                                           progressListener);
+    }
+    catch (ex) {
+      EndDownload(false);
+    }
+  } else {
+    gReplicationCancelled = true;
+    try {
+      gReplicationService.cancelReplication(gCurrentDirectoryString);
+    }
+    catch (ex) {
+      // XXX todo
+      // perhaps replication hasn't started yet?  This can happen if you hit cancel after attempting to replication when offline 
+      dump("unexpected failure while cancelling.  ex=" + ex + "\n");
+    }
+  }
+}
+
+function EndDownload(aStatus)
+{
+  document.getElementById("download").label =
+    gReplicationBundle.getString("downloadButton");
+  document.getElementById("download").accessKey =
+    gReplicationBundle.getString("downloadButtonAccessKey");
+
+  // stop the spinning
+  gProgressMeter.setAttribute("mode", "normal");
+  gProgressMeter.setAttribute("value", "100");
+  gProgressMeter.hidden = true;
+
+  gDownloadInProgress = false;
+  gProgressText.value =
+    gReplicationBundle.getString(aStatus ? "replicationSucceeded" :
+                                 gReplicationCancelled ? "replicationCancelled" :
+                                  "replicationFailed");
 }
 
 // fill the settings panel with the data from the preferences. 
 //
 function fillSettings()
 {
-  gPrefInt = Components.classes["@mozilla.org/preferences-service;1"]
-    .getService(Components.interfaces.nsIPrefBranch);
-
   var ldapUrl = Components.classes["@mozilla.org/network/ldap-url;1"];
   ldapUrl = ldapUrl.createInstance().
     QueryInterface(Components.interfaces.nsILDAPURL);
@@ -132,6 +270,13 @@ function fillDefaultSettings()
   document.getElementById("results").value = kDefaultMaxHits;
   var sub = document.getElementById("sub");
   sub.radioGroup.selectedItem = sub;
+
+  // Disable the download button and add some text indicating why.
+  document.getElementById("download").disabled = true;
+  document.getElementById("downloadWarningMsg").hidden = false;
+  document.getElementById("downloadWarningMsg").textContent = document.
+                                      getElementById("bundle_addressBook").
+                                      getString("abReplicationSaveSettings");
 }
 
 function hasOnlyWhitespaces(string)
@@ -249,12 +394,20 @@ function onAccept()
       window.opener.gUpdate = true; 
     } else {
       var addressBookBundle = document.getElementById("bundle_addressBook");
-      var errorMsg = addressBookBundle.getString(errorValue);
-      alert(errorMsg);
+
+      var promptService = Components.
+                          classes["@mozilla.org/embedcomp/prompt-service;1"].
+                          getService(Components.interfaces.nsIPromptService);
+
+      promptService.alert(window,
+                          document.title,
+                          addressBookBundle.getString(errorValue));
+      return false;
     }
   } catch (outer) {
     dump("Internal error in pref-directory-add.js:onAccept() " + outer + "\n");
   }
+  return true;
 }
 
 function onCancel()
@@ -267,4 +420,19 @@ function onCancel()
 function doHelpButton()
 {
   openHelp("mail-ldap-properties");
+}
+
+// Sets the download button state for offline or online.
+// This function should only be called for ldap edit dialogs.
+function setDownloadOfflineOnlineState(isOffline)
+{
+  if (isOffline)
+  {
+    // Disable the download button and add some text indicating why.
+    document.getElementById("downloadWarningMsg").textContent = document.
+      getElementById("bundle_addressBook").
+      getString("abReplicationOfflineWarning");
+  }
+  document.getElementById("downloadWarningMsg").hidden = !isOffline;
+  document.getElementById("download").disabled = isOffline;
 }

@@ -154,8 +154,20 @@ ShouldBypassNativeWrapper(JSContext *cx, JSObject *obj)
   jsval flags;
 
   ::JS_GetReservedSlot(cx, obj, 0, &flags);
-  return !HAS_FLAGS(flags, FLAG_EXPLICIT) &&
-         !(::JS_GetTopScriptFilenameFlags(cx, nsnull) & JSFILENAME_SYSTEM);
+  if (HAS_FLAGS(flags, FLAG_EXPLICIT))
+    return JS_FALSE;
+
+  // Check what the script calling us looks like
+  JSScript *script = nsnull;
+  JSStackFrame *fp = cx->fp;
+  while(!script && fp) {
+    script = fp->script;
+    fp = fp->down;
+  }
+
+  // If there's no script, bypass for now because that's what the old code did.
+  // XXX FIXME: bug 341477 covers figuring out what we _should_ do.
+  return !script || !(::JS_GetScriptFilenameFlags(script) & JSFILENAME_SYSTEM);
 }
 
 #define XPC_NW_BYPASS_BASE(cx, obj, code)                                     \
@@ -820,6 +832,9 @@ XPC_NW_NewResolve(JSContext *cx, JSObject *obj, jsval id, uintN flags,
     return ThrowException(NS_ERROR_XPC_BAD_CONVERT_JS, cx);
   }
 
+  // Make sure memberval doesn't go away while we mess with it.
+  AUTO_MARK_JSVAL(ccx, memberval);
+  
   JSString *str = JSVAL_TO_STRING(id);
   if (!str) {
     return ThrowException(NS_ERROR_UNEXPECTED, cx);
@@ -848,6 +863,8 @@ XPC_NW_NewResolve(JSContext *cx, JSObject *obj, jsval id, uintN flags,
     if (!funobj) {
       return JS_FALSE;
     }
+
+    AUTO_MARK_JSVAL(ccx, OBJECT_TO_JSVAL(funobj));
 
 #ifdef DEBUG_XPCNativeWrapper
     printf("Wrapping function object for %s\n",
@@ -932,9 +949,42 @@ JS_STATIC_DLL_CALLBACK(JSBool)
 XPC_NW_Construct(JSContext *cx, JSObject *obj, uintN argc, jsval *argv,
                  jsval *rval)
 {
+  // The object given to us by the JS engine is actually a stub object (the
+  // "new" object). This isn't any help to us, so instead use the function
+  // object of the constructor that we're calling (which is the native
+  // wrapper).
+  obj = JSVAL_TO_OBJECT(argv[-2]);
+
   XPC_NW_BYPASS_TEST(cx, obj, construct, (cx, obj, argc, argv, rval));
 
-  return JS_TRUE;
+  XPCWrappedNative *wrappedNative =
+    XPCNativeWrapper::GetWrappedNative(cx, obj);
+  if (!wrappedNative) {
+    return JS_TRUE;
+  }
+
+  JSBool retval = JS_TRUE;
+
+  if (!NATIVE_HAS_FLAG(wrappedNative, WantConstruct)) {
+    return ThrowException(NS_ERROR_INVALID_ARG, cx);
+  }
+
+  nsresult rv = wrappedNative->GetScriptableInfo()->
+    GetCallback()->Construct(wrappedNative, cx, obj, argc, argv, rval,
+                             &retval);
+  if (NS_FAILED(rv)) {
+    return ThrowException(rv, cx);
+  }
+
+  if (!retval) {
+    return JS_FALSE;
+  }
+
+  if (JSVAL_IS_PRIMITIVE(*rval)) {
+    return ThrowException(NS_ERROR_ILLEGAL_VALUE, cx);
+  }
+
+  return RewrapIfDeepWrapper(cx, obj, *rval, rval);
 }
 
 JS_STATIC_DLL_CALLBACK(JSBool)
@@ -1006,6 +1056,15 @@ XPCNativeWrapperCtor(JSContext *cx, JSObject *obj, uintN argc, jsval *argv,
       = XPCWrappedNative::GetWrappedNativeOfJSObject(cx, nativeObj);
 
     if (!wrappedNative) {
+      return ThrowException(NS_ERROR_INVALID_ARG, cx);
+    }
+
+    // Prevent wrapping a double-wrapped JS object in an
+    // XPCNativeWrapper!
+    nsCOMPtr<nsIXPConnectWrappedJS> xpcwrappedjs =
+      do_QueryWrappedNative(wrappedNative);
+
+    if (xpcwrappedjs) {
       return ThrowException(NS_ERROR_INVALID_ARG, cx);
     }
   }
@@ -1175,10 +1234,6 @@ XPC_NW_Equality(JSContext *cx, JSObject *obj, jsval v, JSBool *bp)
   return JS_TRUE;
 }
 
-extern JSBool JS_DLL_CALLBACK
-XPC_WN_Shared_ToString(JSContext *cx, JSObject *obj,
-                       uintN argc, jsval *argv, jsval *vp);
-
 JS_STATIC_DLL_CALLBACK(JSBool)
 XPC_NW_toString(JSContext *cx, JSObject *obj, uintN argc, jsval *argv,
                 jsval *rval)
@@ -1197,6 +1252,10 @@ XPC_NW_toString(JSContext *cx, JSObject *obj, uintN argc, jsval *argv,
     return JS_FALSE;
 
   jsid id = rt->GetStringID(XPCJSRuntime::IDX_TO_STRING);
+  jsval idAsVal;
+  if (!::JS_IdToValue(cx, id, &idAsVal)) {
+    return JS_FALSE;
+  }
 
   XPCWrappedNative *wrappedNative =
     XPCNativeWrapper::GetWrappedNative(cx, obj);
@@ -1213,48 +1272,70 @@ XPC_NW_toString(JSContext *cx, JSObject *obj, uintN argc, jsval *argv,
     return JS_TRUE;
   }
 
+  // Someone is trying to call toString on our wrapped object.
   JSObject *wn_obj = wrappedNative->GetFlatJSObject();
+  XPCCallContext ccx(JS_CALLER, cx, wn_obj, nsnull, idAsVal);
+  if (!ccx.IsValid()) {
+    // Shouldn't really happen.
+    return ThrowException(NS_ERROR_FAILURE, cx);
+  }
+
+  XPCNativeInterface *iface = ccx.GetInterface();
+  XPCNativeMember *member = ccx.GetMember();
+  JSBool overridden = JS_FALSE;
   jsval toStringVal;
 
-  // Check whether toString has been overridden from its XPCWrappedNative
-  // default native method.
-  if (!OBJ_GET_PROPERTY(cx, wn_obj, id, &toStringVal)) {
-    return JS_FALSE;
+  // First, try to see if the object declares a toString in its IDL. If it does,
+  // then we need to defer to that.
+  if (iface && member) {
+    if (!member->GetValue(ccx, iface, &toStringVal)) {
+      return JS_FALSE;
+    }
+
+    overridden = member->IsMethod();
   }
 
-  JSBool overridden = JS_TypeOfValue(cx, toStringVal) != JSTYPE_FUNCTION;
-  if (!overridden) {
-    JSObject *toStringFunObj = JSVAL_TO_OBJECT(toStringVal);
-    JSFunction *toStringFun = (JSFunction*) ::JS_GetPrivate(cx, toStringFunObj);
-
-    overridden =
-      ::JS_GetFunctionNative(cx, toStringFun) != XPC_WN_Shared_ToString;
-  }
-
-  JSString* str;
+  JSString* str = nsnull;
   if (overridden) {
-    // Something overrides XPCWrappedNative.prototype.toString, we
-    // should defer to it.
+    // Defer to the IDL-declared toString.
 
-    str = ::JS_ValueToString(cx, OBJECT_TO_JSVAL(wn_obj));
-  } else {
+    AUTO_MARK_JSVAL(ccx, toStringVal);
+
+    JSObject *funobj = xpc_CloneJSFunction(ccx, JSVAL_TO_OBJECT(toStringVal),
+                                           wn_obj);
+    if (!funobj) {
+      return JS_FALSE;
+    }
+
+    jsval v;
+    if (!::JS_CallFunctionValue(cx, wn_obj, OBJECT_TO_JSVAL(funobj), argc, argv,
+                                &v)) {
+      return JS_FALSE;
+    }
+
+    if (JSVAL_IS_STRING(v)) {
+      str = JSVAL_TO_STRING(v);
+    }
+  }
+
+  if (!str) {
     // Ok, we do no damage, and add value, by returning our own idea
     // of what toString() should be.
+    // Note: We can't just call JS_ValueToString on the wrapped object. Instead,
+    // we need to call the wrapper's ToString in order to safely convert our
+    // object to a string.
 
     nsAutoString resultString;
     resultString.AppendLiteral("[object XPCNativeWrapper");
 
-    if (wrappedNative) {
-      JSString *str = ::JS_ValueToString(cx, OBJECT_TO_JSVAL(wn_obj));
-      if (!str) {
-        return JS_FALSE;
-      }
-
-      resultString.Append(' ');
-      resultString.Append(NS_REINTERPRET_CAST(PRUnichar *,
-                                              ::JS_GetStringChars(str)),
-                          ::JS_GetStringLength(str));
+    char *wrapperStr = wrappedNative->ToString(ccx);
+    if (!wrapperStr) {
+      return JS_FALSE;
     }
+
+    resultString.Append(' ');
+    resultString.AppendASCII(wrapperStr);
+    JS_smprintf_free(wrapperStr);
 
     resultString.Append(']');
 
@@ -1302,6 +1383,16 @@ XPCNativeWrapper::AttachNewConstructorObject(XPCCallContext &ccx,
 JSObject *
 XPCNativeWrapper::GetNewOrUsed(JSContext *cx, XPCWrappedNative *wrapper)
 {
+  // Prevent wrapping a double-wrapped JS object in an
+  // XPCNativeWrapper!
+  nsCOMPtr<nsIXPConnectWrappedJS> xpcwrappedjs(do_QueryWrappedNative(wrapper));
+
+  if (xpcwrappedjs) {
+    XPCThrower::Throw(NS_ERROR_INVALID_ARG, cx);
+
+    return nsnull;
+  }
+
   JSObject *obj = wrapper->GetNativeWrapper();
   if (obj) {
     return obj;

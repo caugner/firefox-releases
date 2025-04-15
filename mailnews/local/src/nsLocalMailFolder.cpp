@@ -88,7 +88,7 @@
 #include "nsIFileSpec.h"
 #include "nsIMessenger.h"
 #include "nsMsgBaseCID.h"
-#include "nsMsgI18N.h"
+#include "nsNativeCharsetUtils.h"
 #include "nsIDocShell.h"
 #include "nsIPrompt.h"
 #include "nsIInterfaceRequestor.h"
@@ -109,6 +109,7 @@
 #include "nsIFileStreams.h"
 #include "nsAutoPtr.h"
 #include "nsIRssIncomingServer.h"
+#include "nsNetUtil.h"
 
 
 static NS_DEFINE_CID(kMailboxServiceCID,          NS_MAILBOXSERVICE_CID);
@@ -492,7 +493,26 @@ NS_IMETHODIMP nsMsgLocalMailFolder::GetDatabaseWOReparse(nsIMsgDatabase **aDatab
     {
       rv = msgDBService->OpenFolderDB(this, PR_FALSE, PR_TRUE, (nsIMsgDatabase **) getter_AddRefs(mDatabase));
       if (mDatabase && NS_SUCCEEDED(rv))
+      {
         mDatabase->AddListener(this);
+        PRBool hasNewMessages = PR_FALSE;
+        for (PRUint32 keyIndex = 0; keyIndex < m_newMsgs.GetSize(); keyIndex++)
+        {
+          PRBool containsKey = PR_FALSE;
+          mDatabase->ContainsKey(m_newMsgs[keyIndex], &containsKey);
+          if (!containsKey)
+            continue;
+          PRBool isRead = PR_FALSE;
+          nsresult rv2 = mDatabase->IsRead(m_newMsgs[keyIndex], &isRead);
+          if (NS_SUCCEEDED(rv2) && !isRead)
+          {
+            hasNewMessages = PR_TRUE;
+            mDatabase->AddToNewList(m_newMsgs[keyIndex]);
+          }
+        }
+        SetHasNewMessages(hasNewMessages);
+
+      }
     }
   }
   *aDatabase = mDatabase;
@@ -566,7 +586,11 @@ NS_IMETHODIMP nsMsgLocalMailFolder::GetDatabaseWithReparse(nsIUrlListener *aRepa
           && rv != NS_MSG_ERROR_FOLDER_SUMMARY_MISSING && rv != NS_MSG_ERROR_FOLDER_SUMMARY_OUT_OF_DATE)
           return rv;
         else if (transferInfo && mDatabase)
-           SetDBTransferInfo(transferInfo);
+        {
+          transferInfo->SetNumMessages(0);
+          transferInfo->SetNumUnreadMessages(0);
+          SetDBTransferInfo(transferInfo);
+        }
       }
       
     }
@@ -660,7 +684,6 @@ nsMsgLocalMailFolder::UpdateFolder(nsIMsgWindow *aWindow)
     if (NS_SUCCEEDED(rv) && valid)
     {
       NotifyFolderEvent(mFolderLoadedAtom);
-      rv = AutoCompact(aWindow);
       NS_ENSURE_SUCCESS(rv,rv);
     }
     else if (mCopyState)
@@ -784,7 +807,7 @@ nsMsgLocalMailFolder::CreateSubfolder(const PRUnichar *folderName, nsIMsgWindow 
   nsAutoString safeFolderName(folderName);
   NS_MsgHashIfNecessary(safeFolderName);
   nsCAutoString nativeFolderName;
-  rv = nsMsgI18NCopyUTF16ToNative(safeFolderName, nativeFolderName);
+  rv = NS_CopyUnicodeToNative(safeFolderName, nativeFolderName);
   if (NS_FAILED(rv) || nativeFolderName.IsEmpty()) {
     ThrowAlertMsg("folderCreationFailed", msgWindow);
     // I'm returning this value so the dialog stays up
@@ -1147,7 +1170,7 @@ NS_IMETHODIMP nsMsgLocalMailFolder::Rename(const PRUnichar *aNewName, nsIMsgWind
   nsAutoString safeName(aNewName);
   NS_MsgHashIfNecessary(safeName);
   nsCAutoString newDiskName;
-  if (NS_FAILED(nsMsgI18NCopyUTF16ToNative(safeName, newDiskName)))
+  if (NS_FAILED(NS_CopyUnicodeToNative(safeName, newDiskName)))
     return NS_ERROR_FAILURE;
   
   nsXPIDLCString oldLeafName;
@@ -1222,6 +1245,8 @@ NS_IMETHODIMP nsMsgLocalMailFolder::Rename(const PRUnichar *aNewName, nsIMsgWind
       if (cnt > 0)
         newFolder->RenameSubFolders(msgWindow, this);
       
+      // the newFolder should have the same flags
+      newFolder->SetFlags(mFlags);
       if (parentFolder)
       {
         SetParent(nsnull);
@@ -1484,7 +1509,12 @@ nsMsgLocalMailFolder::DeleteMessages(nsISupportsArray *messages,
   nsresult rv = messages->Count(&messageCount);
   if (!messageCount)
     return rv;
-
+    
+  // shift delete case - (delete to trash is handled in EndMove)
+  // this is also the case when applying retention settings.
+  if (deleteStorage && !isMove)
+    MarkMsgsOnPop3Server(messages, POP3_DELETE);
+  
   PRBool isTrashFolder = mFlags & MSG_FOLDER_FLAG_TRASH;
   if (!deleteStorage && !isTrashFolder)
   {
@@ -1508,28 +1538,31 @@ nsMsgLocalMailFolder::DeleteMessages(nsISupportsArray *messages,
       rv = GetDatabaseWOReparse(getter_AddRefs(msgDB));
       if(NS_SUCCEEDED(rv))
       {
-          nsCOMPtr<nsISupports> msgSupport;
-          MarkMsgsOnPop3Server(messages, POP3_DELETE);
+        if (deleteStorage && isMove && GetDeleteFromServerOnMove())
+            MarkMsgsOnPop3Server(messages, POP3_DELETE);
 
-          rv = EnableNotifications(allMessageCountNotifications, PR_FALSE, PR_TRUE /*dbBatching*/);
-          if (NS_SUCCEEDED(rv))
+        nsCOMPtr<nsISupports> msgSupport;
+        rv = EnableNotifications(allMessageCountNotifications, PR_FALSE, PR_TRUE /*dbBatching*/);
+        if (NS_SUCCEEDED(rv))
+        {
+          for(PRUint32 i = 0; i < messageCount; i++)
           {
-            for(PRUint32 i = 0; i < messageCount; i++)
-            {
-              msgSupport = getter_AddRefs(messages->ElementAt(i));
-              if (msgSupport)
-                DeleteMessage(msgSupport, msgWindow, PR_TRUE, PR_FALSE);
-            }
+            msgSupport = getter_AddRefs(messages->ElementAt(i));
+            if (msgSupport)
+              DeleteMessage(msgSupport, msgWindow, PR_TRUE, PR_FALSE);
           }
-          else if (rv == NS_MSG_FOLDER_BUSY)
-            ThrowAlertMsg("deletingMsgsFailed", msgWindow);
+        }
+        else if (rv == NS_MSG_FOLDER_BUSY)
+          ThrowAlertMsg("deletingMsgsFailed", msgWindow);
 
-          // we are the source folder here for a move or shift delete
-          //enable notifications because that will close the file stream
-          // we've been caching, mark the db as valid, and commit it.
-          EnableNotifications(allMessageCountNotifications, PR_TRUE, PR_TRUE /*dbBatching*/);
-          if(!isMove)
-            NotifyFolderEvent(NS_SUCCEEDED(rv) ? mDeleteOrMoveMsgCompletedAtom : mDeleteOrMoveMsgFailedAtom);
+        // we are the source folder here for a move or shift delete
+        //enable notifications because that will close the file stream
+        // we've been caching, mark the db as valid, and commit it.
+        EnableNotifications(allMessageCountNotifications, PR_TRUE, PR_TRUE /*dbBatching*/);
+        if(!isMove)
+          NotifyFolderEvent(NS_SUCCEEDED(rv) ? mDeleteOrMoveMsgCompletedAtom : mDeleteOrMoveMsgFailedAtom);
+        if (msgWindow)
+          AutoCompact(msgWindow);
       }
   }
   return rv;
@@ -1688,7 +1721,14 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder, nsISupportsArray*
 
   (void) WarnIfLocalFileTooBig(msgWindow, &mailboxTooLarge);
   if (mailboxTooLarge)
+  {
+    if (isMove)
+      srcFolder->NotifyFolderEvent(mDeleteOrMoveMsgFailedAtom);
     return OnCopyCompleted(srcSupport, PR_FALSE);
+  }
+
+  if (!(mFlags & (MSG_FOLDER_FLAG_TRASH|MSG_FOLDER_FLAG_JUNK)))
+    SetMRUTime();
 
   nsXPIDLCString uri;
   rv = srcFolder->GetURI(getter_Copies(uri));
@@ -1725,7 +1765,11 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder, nsISupportsArray*
   
   rv = InitCopyState(srcSupport, messages, isMove, listener, msgWindow, isFolder, allowUndo);
   if (NS_FAILED(rv))
-    return OnCopyCompleted(srcSupport, PR_FALSE);
+  {
+    ThrowAlertMsg("operationFailedFolderBusy", msgWindow);
+    (void) OnCopyCompleted(srcSupport, PR_FALSE);
+    return rv;
+  }
 
   if (!protocolType.LowerCaseEqualsLiteral("mailbox"))
   {
@@ -1746,15 +1790,16 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder, nsISupportsArray*
   {
     nsLocalMoveCopyMsgTxn* msgTxn = nsnull;
     
-    msgTxn = new nsLocalMoveCopyMsgTxn(srcFolder, this, isMove);
+    msgTxn = new nsLocalMoveCopyMsgTxn;
     
-    if (msgTxn)
-      rv =
-      msgTxn->QueryInterface(NS_GET_IID(nsLocalMoveCopyMsgTxn),
-      getter_AddRefs(mCopyState->m_undoMsgTxn));
+    if (msgTxn && NS_SUCCEEDED(msgTxn->Init(srcFolder, this, isMove)))
+      rv = msgTxn->QueryInterface(NS_GET_IID(nsLocalMoveCopyMsgTxn),
+                                  getter_AddRefs(mCopyState->m_undoMsgTxn));
     else
+    {
+      delete msgTxn;
       rv = NS_ERROR_OUT_OF_MEMORY;
-    
+    }
     if (NS_FAILED(rv))
     {
       (void) OnCopyCompleted(srcSupport, PR_FALSE);
@@ -1934,6 +1979,9 @@ nsMsgLocalMailFolder::CopyFolderLocal(nsIMsgFolder *srcFolder,
       ConfirmFolderDeletion(msgWindow, &okToDelete);
       if (!okToDelete)
         return NS_MSG_ERROR_COPY_FOLDER_ABORTED;
+      // if we are moving a favorite folder to trash, we should clear the favorites flag
+      // so it gets removed from the view.
+      srcFolder->ClearFlag(MSG_FOLDER_FLAG_FAVORITE);
     }
 
     PRBool match = PR_FALSE;
@@ -2269,14 +2317,10 @@ nsresult nsMsgLocalMailFolder::WriteStartOfNewMessage()
   if (mCopyState->m_dummyEnvelopeNeeded)
   {
     nsCString result;
-    char timeBuffer[128];
-    PRExplodedTime now;
-    PR_ExplodeTime(PR_Now(), PR_LocalTimeParameters, &now);
-    PR_FormatTimeUSEnglish(timeBuffer, sizeof(timeBuffer),
-                           "%a %b %d %H:%M:%S %Y",
-                           &now);
+    nsCAutoString nowStr;
+    MsgGenerateNowStr(nowStr);
     result.Append("From - ");
-    result.Append(timeBuffer);
+    result.Append(nowStr);
     result.Append(MSG_LINEBREAK);
 
     // *** jt - hard code status line for now; come back later
@@ -2484,11 +2528,13 @@ keepGoing:
 
 void nsMsgLocalMailFolder::CopyPropertiesToMsgHdr(nsIMsgDBHdr *destHdr, nsIMsgDBHdr *srcHdr)
 {
-  nsXPIDLCString sourceJunkScore;
-  srcHdr->GetStringProperty("junkscore", getter_Copies(sourceJunkScore));
-  destHdr->SetStringProperty("junkscore", sourceJunkScore);
-  srcHdr->GetStringProperty("junkscoreorigin", getter_Copies(sourceJunkScore));
-  destHdr->SetStringProperty("junkscoreorigin", sourceJunkScore);
+  nsXPIDLCString sourceString;
+  srcHdr->GetStringProperty("junkscore", getter_Copies(sourceString));
+  destHdr->SetStringProperty("junkscore", sourceString);
+  srcHdr->GetStringProperty("junkscoreorigin", getter_Copies(sourceString));
+  destHdr->SetStringProperty("junkscoreorigin", sourceString);
+  srcHdr->GetStringProperty("keywords", getter_Copies(sourceString));
+  destHdr->SetStringProperty("junkscoreorigin", sourceString);
   
   nsMsgLabelValue label = 0;
   srcHdr->GetLabel(&label);
@@ -2526,11 +2572,12 @@ NS_IMETHODIMP nsMsgLocalMailFolder::EndCopy(PRBool copySucceeded)
     return NS_OK;
   }
   
-  nsCOMPtr<nsLocalMoveCopyMsgTxn> localUndoTxn;
+  nsRefPtr<nsLocalMoveCopyMsgTxn> localUndoTxn;
   PRBool multipleCopiesFinished = (mCopyState->m_curCopyIndex >= mCopyState->m_totalMsgCount);
   
   if (mCopyState->m_undoMsgTxn)
-    localUndoTxn = do_QueryInterface(mCopyState->m_undoMsgTxn);
+    mCopyState->m_undoMsgTxn->QueryInterface(NS_GET_IID(nsLocalMoveCopyMsgTxn), getter_AddRefs(localUndoTxn));
+
   
   if (mCopyState)
   {
@@ -2670,6 +2717,24 @@ NS_IMETHODIMP nsMsgLocalMailFolder::EndCopy(PRBool copySucceeded)
   return rv;
 }
 
+static PRBool gGotGlobalPrefs;
+static PRBool gDeleteFromServerOnMove;
+
+PRBool nsMsgLocalMailFolder::GetDeleteFromServerOnMove()
+{
+  PRBool deleteFromServerOnMove = PR_FALSE;
+  if (!gGotGlobalPrefs)
+  {
+    nsCOMPtr<nsIPrefBranch> pPrefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
+    if (pPrefBranch)
+    {
+      pPrefBranch->GetBoolPref("mail.pop3.deleteFromServerOnMove", &gDeleteFromServerOnMove);
+      gGotGlobalPrefs = PR_TRUE;
+    }   
+  }
+  return gDeleteFromServerOnMove;
+}
+
 NS_IMETHODIMP nsMsgLocalMailFolder::EndMove(PRBool moveSucceeded)
 {
   nsresult result = NS_OK;
@@ -2701,6 +2766,21 @@ NS_IMETHODIMP nsMsgLocalMailFolder::EndMove(PRBool moveSucceeded)
     nsCOMPtr<nsIMsgFolder> srcFolder = do_QueryInterface(mCopyState->m_srcSupport);
     if(srcFolder)
     {
+      nsCOMPtr <nsIMsgLocalMailFolder> localSrcFolder = do_QueryInterface(srcFolder);
+      if (localSrcFolder)
+      {
+        // if we are the trash and a local msg is being moved to us, mark the source
+        // for delete from server, if so configured.
+        if (mFlags & MSG_FOLDER_FLAG_TRASH)
+        {
+          // if we're deleting on all moves, we'll mark this message for deletion when
+          // we call DeleteMessages on the source folder. So don't mark it for deletion
+          // here, in that case.
+          if (!GetDeleteFromServerOnMove())
+            localSrcFolder->MarkMsgsOnPop3Server(mCopyState->m_messages, POP3_DELETE);
+        }
+
+      }
       // lets delete these all at once - much faster that way
       result = srcFolder->DeleteMessages(mCopyState->m_messages, mCopyState->m_msgWindow, PR_TRUE, PR_TRUE, nsnull, mCopyState->m_allowUndo);
       srcFolder->NotifyFolderEvent(NS_SUCCEEDED(result) ? mDeleteOrMoveMsgCompletedAtom : mDeleteOrMoveMsgFailedAtom);
@@ -2732,14 +2812,14 @@ NS_IMETHODIMP nsMsgLocalMailFolder::StartMessage()
 // just finished the current message.
 NS_IMETHODIMP nsMsgLocalMailFolder::EndMessage(nsMsgKey key)
 {
-  nsCOMPtr<nsLocalMoveCopyMsgTxn> localUndoTxn;
+  nsRefPtr<nsLocalMoveCopyMsgTxn> localUndoTxn;
   nsCOMPtr<nsIMsgWindow> msgWindow;
   nsresult rv;
   
   if (mCopyState->m_undoMsgTxn)
   {
-    localUndoTxn = do_QueryInterface(mCopyState->m_undoMsgTxn, &rv);
-    if (NS_SUCCEEDED(rv))
+    rv = mCopyState->m_undoMsgTxn->QueryInterface(NS_GET_IID(nsLocalMoveCopyMsgTxn), getter_AddRefs(localUndoTxn));
+    if (localUndoTxn)
       localUndoTxn->GetMsgWindow(getter_AddRefs(msgWindow));
   }
   
@@ -3368,8 +3448,8 @@ nsresult nsMsgLocalMailFolder::DisplayMoveCopyStatusMsg()
 
       if (mCopyState->m_undoMsgTxn)
       {
-        nsCOMPtr<nsLocalMoveCopyMsgTxn> localUndoTxn;
-        localUndoTxn = do_QueryInterface(mCopyState->m_undoMsgTxn, &rv);
+        nsRefPtr<nsLocalMoveCopyMsgTxn> localUndoTxn;
+        rv = mCopyState->m_undoMsgTxn->QueryInterface(NS_GET_IID(nsLocalMoveCopyMsgTxn), getter_AddRefs(localUndoTxn));
         if (NS_SUCCEEDED(rv))
           localUndoTxn->GetMsgWindow(getter_AddRefs(msgWindow));
       NS_ASSERTION(msgWindow, "no msg window");
@@ -3705,6 +3785,7 @@ nsMsgLocalMailFolder::GetUidlFromFolder(nsLocalFolderScanState *aState,
       size = aState->m_header.Length();
       if (!size)
         break;
+      // this isn't quite right - need to account for line endings
       len -= size;
       // account key header will always be before X_UIDL header
       if (!accountKey)
@@ -3715,7 +3796,8 @@ nsMsgLocalMailFolder::GetUidlFromFolder(nsLocalFolderScanState *aState,
           accountKey += strlen(HEADER_X_MOZILLA_ACCOUNT_KEY) + 2;
           aState->m_accountKey = accountKey;
         }
-      } else
+      }
+      else
       {
         aState->m_uidl = strstr(aState->m_header.get(), X_UIDL);
         if (aState->m_uidl)
@@ -3762,22 +3844,24 @@ nsMsgLocalMailFolder::AddMessage(const char *aMessage)
   else
     return NS_MSG_FOLDER_BUSY;
 
-
   rv = newMailParser->Init(rootFolder, this, 
-                           fileSpec, &outFileStream, nsnull);
+                           fileSpec, &outFileStream, nsnull, PR_FALSE);
+                           
+  if (!mGettingNewMessages)
+  	newMailParser->DisableFilters();
+  	
   if (NS_SUCCEEDED(rv))
   {
-
-//  in_server->SetServerBusy(PR_TRUE);
-
     outFileStream << aMessage;
     newMailParser->BufferInput(aMessage, strlen(aMessage));
 
     outFileStream.flush();
+    newMailParser->SetDBFolderStream(&outFileStream); 
     newMailParser->OnStopRequest(nsnull, nsnull, NS_OK);
     newMailParser->SetDBFolderStream(nsnull); // stream is going away
     if (outFileStream.is_open())
         outFileStream.close();
+    newMailParser->EndMsgDownload();
   }
   ReleaseSemaphore(NS_STATIC_CAST(nsIMsgLocalMailFolder*, this));
   return rv;
@@ -3806,3 +3890,183 @@ nsMsgLocalMailFolder::WarnIfLocalFileTooBig(nsIMsgWindow *aWindow, PRBool *aTooB
   return NS_OK;
 }
 
+NS_IMETHODIMP nsMsgLocalMailFolder::FetchMsgPreviewText(nsMsgKey *aKeysToFetch, PRUint32 aNumKeys,
+                                                 PRBool aLocalOnly, nsIUrlListener *aUrlListener, 
+                                                 PRBool *aAsyncResults)
+{
+  NS_ENSURE_ARG_POINTER(aKeysToFetch);
+  NS_ENSURE_ARG_POINTER(aAsyncResults);
+
+  *aAsyncResults = PR_FALSE;
+  nsXPIDLCString nativePath;
+  mPath->GetNativePath(getter_Copies(nativePath));
+
+  nsCOMPtr <nsILocalFile> localStore;
+  nsCOMPtr <nsIInputStream> inputStream;
+
+  nsresult rv = NS_NewNativeLocalFile(nativePath, PR_TRUE, getter_AddRefs(localStore));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = NS_NewLocalFileInputStream(getter_AddRefs(inputStream), localStore);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  for (PRUint32 i = 0; i < aNumKeys; i++)
+  {
+    nsCOMPtr <nsIMsgDBHdr> msgHdr;
+    nsXPIDLCString prevBody;
+    rv = GetMessageHeader(aKeysToFetch[i], getter_AddRefs(msgHdr));
+    NS_ENSURE_SUCCESS(rv, rv);
+    // ignore messages that already have a preview body.
+    msgHdr->GetStringProperty("preview", getter_Copies(prevBody));
+    if (!prevBody.IsEmpty())
+      continue;
+    PRUint32 messageOffset;
+
+    msgHdr->GetMessageOffset(&messageOffset);
+    nsCOMPtr <nsISeekableStream> seekableStream = do_QueryInterface(inputStream);
+    if (seekableStream)
+      rv = seekableStream->Seek(nsISeekableStream::NS_SEEK_CUR, messageOffset);
+    NS_ENSURE_SUCCESS(rv,rv);
+    rv = GetMsgPreviewTextFromStream(msgHdr, inputStream);
+
+  }
+  return rv;
+}
+
+NS_IMETHODIMP nsMsgLocalMailFolder::AddKeywordToMessages(nsISupportsArray *aMessages, const char *aKeyword)
+{
+  return ChangeKeywordForMessages(aMessages, aKeyword, PR_TRUE /* add */);
+}
+nsresult nsMsgLocalMailFolder::ChangeKeywordForMessages(nsISupportsArray *aMessages, const char *aKeyword, PRBool add)
+{
+  nsresult rv = (add) ? nsMsgDBFolder::AddKeywordToMessages(aMessages, aKeyword)
+                      : nsMsgDBFolder::RemoveKeywordFromMessages(aMessages, aKeyword);
+
+  if (NS_SUCCEEDED(rv))
+  {
+    rv = GetDatabase(nsnull);
+    NS_ENSURE_SUCCESS(rv, rv);
+    // this will fail if the folder is locked.
+    rv = mDatabase->StartBatch();
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsIOFileStream *fileStream;
+    rv = mDatabase->GetFolderStream(&fileStream);
+    NS_ENSURE_SUCCESS(rv, rv);
+    PRUint32 count;
+    NS_ENSURE_ARG(aMessages);
+    nsresult rv = aMessages->Count(&count);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsXPIDLCString keywords;
+    nsCAutoString keywordToWrite(" ");
+    keywordToWrite.Append(aKeyword);
+    // for each message, we seek to the beginning of the x-mozilla-status header, and 
+    // start reading lines, looking for x-mozilla-keys: headers; If we're adding
+    // the keyword and we find
+    // a header with the desired keyword already in it, we don't need to 
+    // do anything. Likewise, if removing keyword and we don't find it,
+    // we don't need to do anything. Otherwise, if adding, we need to 
+    // see if there's an x-mozilla-keys
+    // header with room for the new keyword. If so, we replace the 
+    // corresponding number of spaces with the keyword. If no room,
+    // we can't do anything until the folder is compacted and another
+    // x-mozilla-keys header is added. In that case, we set a property
+    // on the header, which the compaction code will check.
+
+    // don't return out of the for loop - otherwise, we won't call EndBatch();
+    for(PRUint32 i = 0; i < count; i++) // for each message
+    {
+      char lineBuff[500];
+
+      nsCOMPtr<nsIMsgDBHdr> message = do_QueryElementAt(aMessages, i, &rv);
+      NS_ENSURE_SUCCESS(rv, rv);
+      PRUint32 messageOffset;
+      PRUint32 len = 0;
+      nsCAutoString header;
+      nsCAutoString keywords;
+      message->GetMessageOffset(&messageOffset);
+      PRBool done = PR_FALSE;
+      PRUint32 statusOffset = 0;
+      (void)message->GetStatusOffset(&statusOffset);
+      PRUint32 desiredOffset = messageOffset + statusOffset;
+      fileStream->seek(PR_SEEK_SET, desiredOffset);
+      PRBool inKeywordHeader = PR_FALSE;
+      PRBool foundKeyword = PR_FALSE;
+      PRUint32 offsetToAddKeyword = 0;
+      message->GetMessageSize(&len);
+      // loop through 
+      while (!done)
+      {
+        lineBuff[0] = '\0';
+        PRInt32 lineStartPos = fileStream->tell();
+        // readLine won't return line termination chars.
+        if (fileStream->readline(lineBuff, sizeof(lineBuff)))
+        {
+          if (EMPTY_MESSAGE_LINE(lineBuff))
+            break; // passed headers; no x-mozilla-keywords header; give up.
+          nsCString keywordHeaders;
+          if (!strncmp(lineBuff, HEADER_X_MOZILLA_KEYWORDS, sizeof(HEADER_X_MOZILLA_KEYWORDS) - 1))
+          {
+            inKeywordHeader = PR_TRUE;
+            keywordHeaders = lineBuff;
+          }
+          else if (inKeywordHeader && (lineBuff[0] == ' ' || lineBuff[0] == '\t'))
+            keywordHeaders = lineBuff;
+          else if (inKeywordHeader)
+            break;
+          else
+            continue;
+
+          PRInt32 keywordHdrLength = keywordHeaders.Length();
+          nsACString::const_iterator start, end;
+          nsACString::const_iterator keywordHdrStart;
+          keywordHeaders.BeginReading(keywordHdrStart);
+          // check if we have the keyword
+          if (MsgFindKeyword(nsDependentCString(aKeyword), keywordHeaders, start, end))
+          {
+            foundKeyword = PR_TRUE;
+            if (!add) // if we're removing, remove it, and break;
+            {
+              PRInt32 keywordStartOffset = Distance(keywordHdrStart, start);
+              keywordHeaders.Cut(keywordStartOffset, Distance(start, end));
+              for (PRInt32 i = Distance(start, end); i > 0; i--)
+                keywordHeaders.Append(' ');
+              fileStream->seek(PR_SEEK_SET, lineStartPos);
+              fileStream->write(keywordHeaders.get(), keywordHeaders.Length());
+            }
+            offsetToAddKeyword = 0;
+            // if adding and we already have the keyword, done
+            done = PR_TRUE;
+            break;
+          }
+          // argh, we need to check all the lines to see if we already have the
+          // keyword, but if we don't find it, we want to remember the line and
+          // position where we have room to add the keyword.
+          if (add)
+          {
+            nsCAutoString curKeywordHdr(lineBuff);
+            // strip off line ending spaces.
+            curKeywordHdr.Trim(" ", PR_FALSE, PR_TRUE);
+            if (!offsetToAddKeyword && curKeywordHdr.Length() + keywordToWrite.Length() < keywordHdrLength)
+              offsetToAddKeyword = lineStartPos + curKeywordHdr.Length();
+          }
+        }
+      }
+      if (add && !foundKeyword)
+      {
+        if (!offsetToAddKeyword)
+         message->SetUint32Property("growKeywords", 1);
+        else
+        {
+          fileStream->seek(PR_SEEK_SET, offsetToAddKeyword);
+          fileStream->write(keywordToWrite.get(), keywordToWrite.Length());
+        }
+      }
+    }
+    mDatabase->EndBatch();
+  }
+  return rv;
+}
+
+NS_IMETHODIMP nsMsgLocalMailFolder::RemoveKeywordFromMessages(nsISupportsArray *aMessages, const char *aKeyword)
+{
+  return ChangeKeywordForMessages(aMessages, aKeyword, PR_FALSE /* remove */);
+}

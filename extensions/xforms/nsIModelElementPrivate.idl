@@ -42,17 +42,12 @@ interface nsIXFormsControl;
 interface nsISchemaType;
 interface nsIInstanceElementPrivate;
 interface nsIDOMNode;
-%{C++
-  #include "nsCOMArray.h"
-%}
-
-[ptr] native nsCOMArrayPtr(nsCOMArray<nsIInstanceElementPrivate>);
 
 /**
  * Private interface implemented by the model element for other
  * elements to use.
  */
-[uuid(b21b65d3-3305-4ce0-a604-3648cff61aca)]
+[uuid(74238f22-d112-4bed-a8dc-cc228df52c2e)]
 interface nsIModelElementPrivate : nsIXFormsModelElement
 {
   /**
@@ -60,7 +55,7 @@ interface nsIModelElementPrivate : nsIXFormsModelElement
    * this model.  These form controls will be refreshed when refresh() is
    * called on the model.
    */
-  void addFormControl(in nsIXFormsControl control);
+  void addFormControl(in nsIXFormsControl control, in nsIXFormsControl parent);
   void removeFormControl(in nsIXFormsControl control);
 
   /**
@@ -80,7 +75,7 @@ interface nsIModelElementPrivate : nsIXFormsModelElement
 
   /**
    * Notification that an instance element has started or finished loading
-   * its instance data.  Model contstruction cannot complete until all of
+   * its instance data.  Model construction cannot complete until all of
    * the instances have loaded their data.
    */
   void instanceLoadStarted();
@@ -93,16 +88,35 @@ interface nsIModelElementPrivate : nsIXFormsModelElement
 
   /**
    * Set the value of an instance node.
+   *
+   * If doRefresh is true, the function will request xforms-recalculate,
+   * xforms-revalidate, and xforms-refresh to be dispatched to the model.
+   *
+   * @param instanceNode      The node to set the value for
+   * @param nodeValue         The value to set
+   * @param doRefresh         Request value-changed event sequence
+   * @param nodeChanged       Return whether the node was actually changed
    */
-  void setNodeValue(in nsIDOMNode contextNode,
+  void setNodeValue(in nsIDOMNode instanceNode,
                     in AString nodeValue,
+                    in boolean doRefresh,
                     out boolean nodeChanged);
 
   /**
-   * Get the value of an instance node.
+   * Insert a set of nodes underneath an instance node.
+   *
+   * If doRebuild is true, the function will request
+   * xforms-rebuild, xforms-recalculate, xforms-revalidate, and
+   * xforms-refresh to be dispatched to the model.
+   *
+   * @param node               The instance node
+   * @param content            Node that holds the contents to insert under
+   *                           the instance node
+   * @param doRebuild          Request rebuild event sequence
    */
-  void getNodeValue(in nsIDOMNode contextNode,
-                    out AString  nodeValue);
+  void setNodeContent(in nsIDOMNode node,
+                      in nsIDOMNode content,
+                      in boolean doRebuild);
 
   /**
    * Validates the instance node against the schemas loaded by the model.
@@ -126,19 +140,79 @@ interface nsIModelElementPrivate : nsIXFormsModelElement
   void setStates(in nsIXFormsControl aControl, in nsIDOMNode aBoundNode);
 
   /**
-   * The list of instance elements held by this model.  Includes lazy-authored
-   * instance elements
-   */
-  readonly attribute nsCOMArrayPtr instanceList;
-
-  /**
    * Add an instance element to the model's instance list
    * @param aInstanceElement        The instance element to add to the list
    */
   void addInstanceElement(in nsIInstanceElementPrivate aInstanceElement);
 
   /**
+   * Remove an instance element from the model's instance list
+   * @param aInstanceElement        The instance element to remove from the list
+   */
+  void removeInstanceElement(in nsIInstanceElementPrivate aInstanceElement);
+
+  /**
    * This attribute is set when the model's instance was lazy authored
    */
   readonly attribute boolean lazyAuthored;
+
+  /**
+   * This attribute is set when the model handled xforms-ready event
+   */
+  readonly attribute boolean isReady;
+
+  /**
+   * Retrieves the type for an instance data node
+   *
+   * @param aInstanceData     The instance data node
+   * @param aType             The type of the node
+   * @param aNSURI            The namespace of the type
+   */
+  void getTypeFromNode(in nsIDOMNode aInstanceData, out AString aType,
+                       out AString aNSUri);
+
+  /**
+   * Notification that all of the external message loads have finished loading.
+   * Model contstruction cannot complete until all of the external messages
+   * have loaded their data.
+   */
+  void messageLoadFinished();
+
+  /**
+   * Request an xforms-rebuild.
+   *
+   * If a previous request (of this or one of the 3 following events) is
+   * already being handled, the event will be queued, and sent after that. If
+   * multiple events are queued, they will be dispatched FIFO order.
+   */
+  void requestRebuild();
+
+  /**
+   * Request an xforms-recalculate
+   */
+  void requestRecalculate();
+
+  /**
+   * Request an xforms-revalidate
+   */
+  void requestRevalidate();
+
+  /**
+   * Request an xforms-refresh
+   */
+  void requestRefresh();
+
+  /**
+   * Returns true when the model has been notified that the DOMContentLoaded
+   * event has been fired on the XForms document.
+   */
+  readonly attribute boolean hasDOMContentFired;
+
+  /**
+   * Force rebinding (and refreshing) of a control. Also handles rebinding and
+   * refreshing of child controls, if necessary.
+   *
+   * @param control           The control to rebind.
+   */
+  void forceRebind(in nsIXFormsControl control);
 };

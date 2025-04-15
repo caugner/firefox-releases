@@ -120,12 +120,15 @@ $SUBDIR = "$aMozAppName-installer";
 if (-e $ROOT)
 {
     if (-w $ROOT) 
-        { system("rm -rf $ROOT"); }
+        { system("rm -rf $STAGE $RAW $XPI $BLOB $STUB"); }
     else 
         { die "--- deliver.pl: check perms on $ROOT: $!"; }
 }
+else
+{
+    mkdir($ROOT, 0777)  || die "--- deliver.pl: couldn't mkdir root: $!";
+}
 
-mkdir($ROOT, 0777)  || die "--- deliver.pl: couldn't mkdir root: $!";
 mkdir($STAGE, 0777) || die "--- deliver.pl: couldn't mkdir stage: $!";
 mkdir($RAW, 0777)   || die "--- deliver.pl: couldn't mkdir raw: $!";
 mkdir($XPI, 0777)   || die "--- deliver.pl: couldn't mkdir xpi: $!";
@@ -176,13 +179,29 @@ spew("Completed stripping libs in $STAGE");
 
 #// regenerate the NSS .chk files
 system("$topobjdir/dist/bin/run-mozilla.sh $topobjdir/dist/bin/shlibsign -v -i $STAGE/psm/bin/libsoftokn3.so");
-if(-e "$STAGE/psm/bin/libfreebl_pure32_3.so")
+if(-e "$STAGE/psm/bin/libfreebl3.so")
 {
-  system("$topobjdir/dist/bin/run-mozilla.sh $topobjdir/dist/bin/shlibsign -v -i $STAGE/psm/bin/libfreebl_pure32_3.so");
+  system("$topobjdir/dist/bin/run-mozilla.sh $topobjdir/dist/bin/shlibsign -v -i $STAGE/psm/bin/libfreebl3.so");
 }
-if(-e "$STAGE/psm/bin/libfreebl_hybrid_3.so")
+if(-e "$STAGE/psm/bin/libfreebl_32fpu_3.so")
 {
-  system("$topobjdir/dist/bin/run-mozilla.sh $topobjdir/dist/bin/shlibsign -v -i $STAGE/psm/bin/libfreebl_hybrid_3.so");
+  system("$topobjdir/dist/bin/run-mozilla.sh $topobjdir/dist/bin/shlibsign -v -i $STAGE/psm/bin/libfreebl_32fpu_3.so");
+}
+if(-e "$STAGE/psm/bin/libfreebl_32int_3.so")
+{
+  system("$topobjdir/dist/bin/run-mozilla.sh $topobjdir/dist/bin/shlibsign -v -i $STAGE/psm/bin/libfreebl_32int_3.so");
+}
+if(-e "$STAGE/psm/bin/libfreebl_32int64_3.so")
+{
+  system("$topobjdir/dist/bin/run-mozilla.sh $topobjdir/dist/bin/shlibsign -v -i $STAGE/psm/bin/libfreebl_32int64_3.so");
+}
+if(-e "$STAGE/psm/bin/libfreebl_64fpu_3.so")
+{
+  system("$topobjdir/dist/bin/run-mozilla.sh $topobjdir/dist/bin/shlibsign -v -i $STAGE/psm/bin/libfreebl_64fpu_3.so");
+}
+if(-e "$STAGE/psm/bin/libfreebl_64int_3.so")
+{
+  system("$topobjdir/dist/bin/run-mozilla.sh $topobjdir/dist/bin/shlibsign -v -i $STAGE/psm/bin/libfreebl_64int_3.so");
 }
 spew("Completed signing NSS libraries");
 

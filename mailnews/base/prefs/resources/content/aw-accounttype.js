@@ -69,13 +69,20 @@ function setupWizardPanels() {
     }
 
     var pageData = parent.GetPageData();
+  
+    // We default this to false, even though we could set it to true if we
+    // are going to display the page. However as the accname page will set
+    // it to true for us, we'll just default it to false and not work it out
+    // twice.
+    setPageData(pageData, "accname", "userset", false);
 
     // If we need to skip wizardpanels, set the wizard to jump to the
     // summary page i.e., last page. Otherwise, set the flow based
     // on type of account (mail or news) user is creating.
     var skipPanels = "";
     try {
-      skipPanels = gCurrentAccountData.wizardSkipPanels.toString().toLowerCase();
+      if (gCurrentAccountData.wizardSkipPanels)
+        skipPanels = gCurrentAccountData.wizardSkipPanels.toString().toLowerCase();
     } catch(ex) {}
 
       // "done" is the only required panel for all accounts. We used to require an identity panel but not anymore.
@@ -90,7 +97,7 @@ function setupWizardPanels() {
         wizardPanels = new Array("identitypage", "newsserver", "accnamepage");
 
       // Create a hash table of the panels to skip
-      skipArray  = skipPanels.split(",");
+      var skipArray = skipPanels.split(",");
       var skipHash = new Array();
       for (i = 0; i < skipArray.length; i++)
         skipHash[skipArray[i]] = skipArray[i];
@@ -103,13 +110,13 @@ function setupWizardPanels() {
         else
           i++;
       }
-     
+
       wizardPanels.push("done");
 
       // Set up order of panels
       for (i = 0; i < (wizardPanels.length-1); i++)
         setNextPage(wizardPanels[i], wizardPanels[i+1]);
-    
+
       // make the account type page go to the very first of our approved wizard panels...this is usually going to
       // be accounttype --> identitypage unless we were configured to skip the identity page
       setNextPage("accounttype",wizardPanels[0]);
@@ -119,7 +126,7 @@ function initializeIspData()
 {
     if (!document.getElementById("mailaccount").selected) {
       parent.SetCurrentAccountData(null);
-    }    
+    }
 
     // now reflect the datasource up into the parent
     var accountSelection = document.getElementById("acctyperadio");
@@ -127,7 +134,7 @@ function initializeIspData()
     var ispName = accountSelection.selectedItem.id;
 
     dump("initializing ISP data for " + ispName + "\n");
-    
+
     if (!ispName || ispName == "") return;
 
     parent.PrefillAccountForIsp(ispName);

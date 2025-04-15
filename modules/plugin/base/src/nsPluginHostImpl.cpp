@@ -2992,7 +2992,7 @@ NS_IMETHODIMP nsPluginHostImpl::PostURL(nsISupports* pluginInst,
                                 (const char*)dataToPost, isFile, postDataLen,
                                 postHeaders, postHeadersLength);
       if (isFile) {
-        nsCRT::free(dataToPost);
+        NS_Free(dataToPost);
       }
   }
 
@@ -4102,10 +4102,11 @@ static int CompareExtensions(const char *aExtensionList, const char *aExtension)
   if(pComma == nsnull)
     return PL_strcasecmp(pExt, aExtension);
 
+  int extlen = strlen(aExtension);
   while(pComma != nsnull)
   {
     int length = pComma - pExt;
-    if(0 == PL_strncasecmp(aExtension, pExt, length))
+    if(length == extlen && 0 == PL_strncasecmp(aExtension, pExt, length))
       return 0;
 
     pComma++;
@@ -4198,7 +4199,8 @@ static nsresult DoCharsetConversion(nsIUnicodeDecoder *aUnicodeDecoder,
   nsAutoString buffer;
   rv = aUnicodeDecoder->GetMaxLength(aANSIString, numberOfBytes, &outUnicodeLen);
   NS_ENSURE_SUCCESS(rv, rv);
-  buffer.SetCapacity(outUnicodeLen);
+  if (!EnsureStringLength(buffer, outUnicodeLen))
+    return NS_ERROR_OUT_OF_MEMORY;
   rv = aUnicodeDecoder->Convert(aANSIString, &numberOfBytes, buffer.BeginWriting(), &outUnicodeLen);
   NS_ENSURE_SUCCESS(rv, rv);
   buffer.SetLength(outUnicodeLen);
@@ -4448,18 +4450,33 @@ nsPluginHostImpl::FindPluginEnabledForType(const char* aMimeType,
 #include <sys/fcntl.h>
 #include <unistd.h>
 
-inline PRBool is_directory(const char* path)
+static inline PRBool is_directory(const char* path)
 {
   struct stat sb;
-  if (stat(path, &sb) == 0 && (sb.st_mode & S_IFDIR)) {
-    return PR_TRUE;
-  }
-  return PR_FALSE;
+  return ::stat(path, &sb) == 0 && S_ISDIR(sb.st_mode);
+}
+
+static inline PRBool is_symbolic_link(const char* path)
+{
+  struct stat sb;
+  return ::lstat(path, &sb) == 0 && S_ISLNK(sb.st_mode);
 }
 
 static int open_executable(const char* path)
 {
   int fd = 0;
+  char resolvedPath[PATH_MAX] = "\0";
+
+  // If the root of the bundle as referred to by path is a symbolic link,
+  // CFBundleCopyExecutableURL will not return an absolute URL, but will
+  // instead only return the executable name, such as "MRJPlugin".  Work
+  // around that by always using a fully-resolved absolute pathname.
+  if (is_symbolic_link(path)) {
+    path = realpath(path, resolvedPath);
+    if (!path)
+      return fd;
+  }
+
   // if this is a directory, it must be a bundle, so get the true path using CFBundle...
   if (is_directory(path)) {
     CFBundleRef bundle = NULL;
@@ -4866,19 +4883,18 @@ nsresult nsPluginHostImpl::ScanPluginsDirectory(nsIFile * pluginsDir,
     if (NS_FAILED(rv))
       continue;
 
-    if (nsPluginsDir::IsPluginFile(dirEntry)) {
-      pluginFileinDirectory * item = new pluginFileinDirectory();
-      if (!item)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-      // Get file mod time
-      PRInt64 fileModTime = LL_ZERO;
-      dirEntry->GetLastModifiedTime(&fileModTime);
-
-      item->mModTime = fileModTime;
-      item->mFilename = filePath;
-      pluginFilesArray.AppendElement(item);
-    }
+    pluginFileinDirectory * item = new pluginFileinDirectory();
+    if (!item)
+      return NS_ERROR_OUT_OF_MEMORY;
+    
+    // Get file mod time
+    PRInt64 fileModTime = LL_ZERO;
+    dirEntry->GetLastModifiedTime(&fileModTime);
+    
+    item->mModTime = fileModTime;
+    item->mFilename = filePath;
+    pluginFilesArray.AppendElement(item);
+   
   } // end round of up of plugin files
 
   // now sort the array by file modification time or by filename, if equal
@@ -4918,8 +4934,14 @@ nsresult nsPluginHostImpl::ScanPluginsDirectory(nsIFile * pluginsDir,
       }
     }
     else {
-      // plugin file was added, flag this fact
-      *aPluginsChanged = PR_TRUE;
+      if (nsPluginsDir::IsPluginFile(localfile)) {
+        // plugin file was added, flag this fact
+        *aPluginsChanged = PR_TRUE;
+      }
+      else {
+        // It's a non-plugin, so keep looping.
+        continue;
+      }
     }
 
     // if we are not creating the list, just continue the loop

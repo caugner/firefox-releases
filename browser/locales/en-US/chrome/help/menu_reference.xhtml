@@ -30,7 +30,7 @@ Contributors:
       <li><a href="#file">File</a></li>
       <li><a href="#edit">Edit</a></li>
       <li><a href="#view">View</a></li>
-      <li><a href="#go">Go</a></li>
+      <li><a href="#go">History</a></li>
       <li><a href="#bookmarks">Bookmarks</a></li>
       <li><a href="#tools">Tools</a></li>
       <li class="mac"><a href="#window">Window</a></li>
@@ -53,7 +53,7 @@ Contributors:
       &brandShortName; completely. If you happen to select this menu item with
       more than one tab or window open, &brandShortName; will ask you to confirm
       your choice to prevent accidental exits. You can switch off this warning
-      by deselecting the <em>Warn when closing multiple tabs</em> checkbox in
+      by deselecting the <em>Warn me when closing multiple tabs</em> checkbox in
       the <em>Tabs</em> panel of &pref.menuPath;. &brandShortName; will also
       warn you if you are currently downloading any files.</p>
 </div>
@@ -125,7 +125,7 @@ Contributors:
     &brandShortName; completely. If you happen to select this menu item with
     more than one tab or window open, &brandShortName; will ask you to confirm
     your choice to prevent accidental exits. You can switch off this warning
-    by deselecting the <em>Warn when closing multiple tabs</em> checkbox in
+    by deselecting the <em>Warn me when closing multiple tabs</em> checkbox in
     the <em>Tabs</em> panel of &pref.menuPath;. &brandShortName; will also
     warn you if you are currently downloading any files.</p>
 </div>
@@ -265,9 +265,10 @@ Contributors:
       hidden, you can always restore the window anyway by pressing
       <kbd>F11</kbd>.</p>
   </div>
-<h2 id="go">Go</h2>
+<h2 id="go">History</h2>
 
-  <p>The Go menu contains a list of the most recently visited web sites.</p>
+  <p>The History menu contains a list of the most recently visited web sites and
+    closed tabs.</p>
 
   <h3 id="back">Back</h3>
   <p>Navigates back one page in history. This is the same as clicking on the
@@ -280,11 +281,17 @@ Contributors:
   <h3 id="home">Home</h3>
   <p>Displays your home page. This is the same as clicking on the
     <em>Home</em> button on the navigation toolbar. To change the home page,
-    select &pref.menuPath; and open the <em>General</em> panel. You
+    select &pref.menuPath; and open the <em>Main</em> panel.  You
     can specify to use a blank page, the current page (or tab group), a
     bookmark, or a manually entered address.</p>
 
-  <h3 id="go_history">History</h3>
+  <h3 id="closed_tabs">Recently Closed Tabs</h3>
+  <p>Allows you to restore a tab you closed recently in the current window by
+    selecting it from the list. See the <a href=
+    "tabbed_browsing.xhtml#closing_tabs">Closing and Restoring Tabs</a> topic
+    for more information.</p>
+
+  <h3 id="go_history">Show in Sidebar</h3>
   <p>Displays the History Sidebar, which keeps track of the sites you have
     visited. To change how many days a site should be remembered, select
     &pref.menuPath; and select the <em>Privacy</em> panel.</p>
@@ -297,14 +304,22 @@ Contributors:
   <p>Adds the current page to your bookmarks. A dialog will be displayed,
     allowing you to choose a title for the bookmark and specify where you
     want it to be stored.</p>
-  
+
+  <h3 id="subscribe">Subscribe to This Page...</h3>
+  <p>Shows a preview of the <a href="glossary.xhtml#feed">feed</a> offered by
+    the current site. From the preview page, you can subscribe to the feed using
+    a <a href="glossary.xhtml#live_bookmark">Live Bookmark</a>, a feed reader
+    on your computer, or a web service. If you have chosen to always subscribe
+    using a Live Bookmark or a feed reader in the <em>Feeds</em> panel of
+    &pref.menuPath;, the preview page will be skipped.</p>
+
   <h3 id="bookmark_all_tabs">Bookmark All Tabs...</h3>
   <p>Adds all the tabs in the current window to a new bookmark folder. A dialog
     will be displayed, allowing you to choose the name of the folder and specify
     where you want it to be stored.</p>
 
-  <h3 id="manage_bookmarks">Manage Bookmarks...</h3>
-  <p>Displays the Bookmark Manager, a window where you can modify your
+  <h3 id="organize_bookmarks">Organize Bookmarks...</h3>
+  <p>Displays the Bookmarks Manager, a window where you can modify your
     bookmarks. You can sort, rename and change the properties for your
     bookmarks as well as add, remove, and move them.</p>
 
@@ -314,31 +329,17 @@ Contributors:
   <p>Highlights the Web Search box. You can then type in the terms you
     wish to find on the Web.</p>
 
-  <h3 id="read_mail">Read Mail</h3>
-  <p>Opens up your email program so you can read your email.</p>
-
-  <h3 id="new_message">New Message...</h3>
-  <p>Opens an email composition window using your computer's default email program
-    so you can send a email message to somebody.</p>
-
   <h3 id="downloads">Downloads</h3>
   <p>Opens the Download Manager, where you can see the current, as well as
     finished downloads.</p>
 
-  <h3 id="extensions">Extensions</h3>
-  <p>Opens the Extension Manager, where you can see all extensions installed
-    on this version of &brandShortName;. You can also choose to uninstall
-    extensions from this dialog. For more information, see the
-    <a href="customization.xhtml#extensions">Extensions</a> help topic.</p>
+  <h3 id="add_ons">Add-ons</h3>
+  <p>Opens the Add-ons manager, where you can view, install, configure, update,
+    and uninstall your extensions and themes. For more information, see the
+    <a href="customization.xhtml#add_ons">Add-ons</a> help topic.</p>
 
-  <h3 id="themes">Themes</h3>
-  <p>Opens the Theme Manager. From here, you can switch the current theme that
-    &brandShortName; is using. You can also install and uninstall themes from
-    this dialog. For more information, see the
-    <a href="customization.xhtml#themes">Themes</a> help topic.</p>
-
-  <h3 id="javascript_console">JavaScript Console</h3>
-  <p>Opens the JavaScript Console, which tracks problems with JavaScript code.
+  <h3 id="javascript_console">Error Console</h3>
+  <p>Opens the Error Console, which tracks problems with JavaScript code.
     JavaScript is a scripting language commonly used to construct web pages.
     Programmers use JavaScript to make web pages more interactive; JavaScript
     is often used to dynamically validate forms and select buttons.</p>
@@ -394,10 +395,19 @@ Contributors:
   <p>Allows you to report web sites that do not work correctly in
     &brandShortName; to the &brandShortName; developers.</p>
 
+  <h3 id="web_forgery">Report Web Forgery...</h3>
+  <p>Allows you to report what you believe are forged or "phishing" sites.  
+    Phishing Protection in &brandShortName; is powered by Google, and the 
+    information you submit will be sent to Google and used to improve this 
+    feature. Your report will be anonymous in accordance with Google's 
+    privacy policy. This feature requires an active Internet connection.</p>
+
   <h3 id="check_for_updates">Check for Updates...</h3>
-  <p>Checks for updates to &brandShortName; and any extensions you have
-    installed.  If updates are available &brandShortName; will display a list of
-    them, and you can then install the updates you want.</p>
+  <p>Displays a dialog which checks for updates to &brandShortName; and asks
+    you whether you want to download updates if any are available. After an
+    update has been downloaded, the dialog asks you to restart &brandShortName;
+    so that the update can be installed. Note that the name of this menu item
+    will change when an update is being downloaded or is ready to be installed.</p>
 
   <div class="noMac">
     <h3 id="about_mozilla_firebird">About &brandFullName;</h3>
@@ -405,8 +415,8 @@ Contributors:
       the current version and a brief list of credits.</p>
   </div>
 
-<div class="contentsBox"><em>14 August 2005</em></div>
-<p>Copyright &copy; 2003-2005 Contributors to the Mozilla Help Viewer Project.</p>
+<div class="contentsBox"><em>12 September 2006</em></div>
+<p>Copyright &copy; 2003-2006 Contributors to the Mozilla Help Viewer Project.</p>
 
 </body>
 </html>

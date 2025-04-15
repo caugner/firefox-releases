@@ -50,9 +50,9 @@
 
 #include "nsXFormsTypes.h"
 #include "nsXFormsNodeState.h"
-#include "nsIModelElementPrivate.h"
 
 class nsIDOMNSXPathExpression;
+class nsXFormsModelElement;
 
 /**
  * Data structure for nodes in the graph.
@@ -174,7 +174,7 @@ protected:
   nsVoidArray mGraph;
 
   /** The model that created the MDG */
-  nsIModelElementPrivate *mModel;
+  nsXFormsModelElement *mModel;
   
   /**
    * Nodes that are marked as changed, and should be included in recalculation
@@ -326,6 +326,15 @@ protected:
                                 PRBool           aMarkNode = PR_TRUE,
                                 PRBool           aIsCalculate = PR_FALSE,
                                 PRBool          *aNodeChanged = nsnull);
+
+  /**
+   * Handle nodes nodes marked as dirty, and insert into "changed nodes
+   * array".
+   *
+   * @param aArray            The "changed nodes array" to insert into
+   */
+  nsresult HandleMarkedNodes(nsCOMArray<nsIDOMNode> *aArray);
+
 public:
   /**
    * Constructor
@@ -342,7 +351,7 @@ public:
    *
    * @param aModel           The model that created this MDGEngine instance.
    */
-  nsresult Init(nsIModelElementPrivate *aModel);
+  nsresult Init(nsXFormsModelElement *aModel);
 
   /**
    * Insert new MIP (Model Item Property) into graph.
@@ -411,13 +420,14 @@ public:
                         PRBool          *aNodeChanged = nsnull);
 
   /**
-   * Get the value of a node. (used by nsXFormsMDG)
-
-   * @param aContextNode     The node to get the value for
-   * @param aNodeValue       The value of the node
+   * Set the contents of a node
+   *
+   * @param aContextNode     The node to set the contents of
+   * @param aContentEnvelope The container of the contents that need to be
+   *                         moved under aContextNode
    */
-  nsresult GetNodeValue(nsIDOMNode *aContextNode,
-                        nsAString  &aNodeValue);
+  nsresult SetNodeContent(nsIDOMNode      *aContextNode,
+                          nsIDOMNode      *aContentEnvelope);
 
   /**
    * External interface of GetNCNodeState(), returns const pointer to the node

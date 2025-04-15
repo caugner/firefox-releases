@@ -39,13 +39,32 @@
 #define nsParserUtils_h__
 
 #include "nsString.h"
+class nsIAtom;
 
 class nsParserUtils {
 public:
+  /**
+   * This will parse aSource, to extract the value of the pseudo attribute
+   * with the name specified in aName. See
+   * http://www.w3.org/TR/xml-stylesheet/#NT-StyleSheetPI for the specification
+   * which is used to parse aSource.
+   *
+   * NOTE: if aComplyWithSpec is PR_FALSE (the default), the parsing of the
+   *       value will not be following the specification: we won't treat < and &
+   *       as illegal and we won't expand entities. aComplyWithSpec is only for
+   *       backwards compatibility with Gecko <= 1.8, it won't be available in
+   *       Gecko 1.9.
+   *
+   * @param aSource the string to parse
+   * @param aName the name of the attribute to get the value for
+   * @param aValue [out] the value for the attribute with name specified in
+   *                     aAttribute. Empty if the attribute isn't present.
+   * @param aComplyWithSpec If PR_TRUE we'll treat < and & as illegal and
+   *                        expand entities.
+   */
   static PRBool
-  GetQuotedAttributeValue(const nsAString& aSource,
-                          const nsAString& aAttribute,
-                          nsAString& aValue);
+  GetQuotedAttributeValue(const nsString& aSource, nsIAtom *aName,
+                          nsAString& aValue, PRBool aComplyWithSpec = PR_FALSE);
 
   static PRBool
   IsJavaScriptLanguage(const nsString& aName, const char* *aVersion);

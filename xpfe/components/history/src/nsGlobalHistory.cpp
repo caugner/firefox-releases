@@ -111,6 +111,11 @@ nsIPrefBranch* nsGlobalHistory::gPrefBranch = nsnull;
 
 #define FIND_BY_AGEINDAYS_PREFIX "find:datasource=history&match=AgeInDays&method="
 
+// see bug #319004 -- clamp title and URL to generously-large but not too large
+// length
+#define HISTORY_URI_LENGTH_MAX 65536
+#define HISTORY_TITLE_LENGTH_MAX 4096
+
 // sync history every 10 seconds
 #define HISTORY_SYNC_TIMEOUT (10 * PR_MSEC_PER_SEC)
 //#define HISTORY_SYNC_TIMEOUT 3000 // every 3 seconds - testing only!
@@ -589,6 +594,9 @@ nsGlobalHistory::AddURI(nsIURI *aURI, PRBool aRedirect, PRBool aTopLevel, nsIURI
   rv = aURI->GetSpec(URISpec);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  if (URISpec.Length() > HISTORY_URI_LENGTH_MAX)
+     return NS_OK;
+
   nsCAutoString referrerSpec;
   if (aReferrer) {
     rv = aReferrer->GetSpec(referrerSpec);
@@ -606,10 +614,25 @@ nsGlobalHistory::AddURI(nsIURI *aURI, PRBool aRedirect, PRBool aTopLevel, nsIURI
   rv = gRDFService->GetDateLiteral(now, getter_AddRefs(date));
   if (NS_FAILED(rv)) return rv;
 
+  PRBool isJavascript;
+  rv = aURI->SchemeIs("javascript", &isJavascript);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsCOMPtr<nsIMdbRow> row;
   rv = FindRow(kToken_URLColumn, URISpec.get(), getter_AddRefs(row));
 
   if (NS_SUCCEEDED(rv)) {
+
+    // If this is not a JS url, not a redirected URI and not in a frame, 
+    // unhide it since URIs are added hidden if they are redirected, in a 
+    // frame or typed.
+    PRBool wasTyped = HasCell(mEnv, row, kToken_TypedColumn);
+    if (wasTyped) {
+      mTypedHiddenURIs.Remove(URISpec);
+    }
+    if ((!isJavascript && !aRedirect && aTopLevel) || wasTyped) {
+      row->CutColumn(mEnv, kToken_HiddenColumn);
+    }
 
     // update the database, and get the old info back
     PRTime oldDate;
@@ -647,16 +670,12 @@ nsGlobalHistory::AddURI(nsIURI *aURI, PRBool aRedirect, PRBool aTopLevel, nsIURI
     NS_ASSERTION(NS_SUCCEEDED(rv), "AddNewPageToDatabase failed; see bug 88961");
     if (NS_FAILED(rv)) return rv;
     
-    PRBool isJavascript;
-    rv = aURI->SchemeIs("javascript", &isJavascript);
-    NS_ENSURE_SUCCESS(rv, rv);
-
     if (isJavascript || aRedirect || !aTopLevel) {
       // if this is a JS url, or a redirected URI or in a frame, hide it in
       // global history so that it doesn't show up in the autocomplete
-      // dropdown. AddExistingPageToDatabase has logic to override this
-      // behavior for URIs which were typed. See bug 197127 and bug 161531
-      // for details.
+      // dropdown. We'll unhide non-JS urls later if we visit the URI not as 
+      // part of a redirect and not in a frame. See bug 197127, bug 161531 and
+      // bug 322106 for details.
       rv = SetRowValue(row, kToken_HiddenColumn, 1);
       NS_ENSURE_SUCCESS(rv, rv);
     }
@@ -706,17 +725,6 @@ nsGlobalHistory::AddExistingPageToDatabase(nsIMdbRow *row,
   nsresult rv;
   nsCAutoString oldReferrer;
   
-  // if the page was typed, unhide it now because it's
-  // known to be valid
-  if (HasCell(mEnv, row, kToken_TypedColumn)) {
-    nsCAutoString URISpec;
-    rv = GetRowValue(row, kToken_URLColumn, URISpec);
-    NS_ENSURE_SUCCESS(rv, rv);
-    
-    mTypedHiddenURIs.Remove(URISpec);
-    row->CutColumn(mEnv, kToken_HiddenColumn);
-  }
-
   // Update last visit date.
   // First get the old date so we can update observers...
   rv = GetRowValue(row, kToken_LastVisitDateColumn, aOldDate);
@@ -1033,7 +1041,7 @@ nsGlobalHistory::SetPageTitle(nsIURI *aURI, const nsAString& aTitle)
   nsresult rv;
   NS_ENSURE_ARG_POINTER(aURI);
 
-  const nsAFlatString& titleString = PromiseFlatString(aTitle);
+  nsAutoString titleString(StringHead(aTitle, HISTORY_TITLE_LENGTH_MAX));
 
   // skip about: URIs to avoid reading in the db (about:blank, especially)
   PRBool isAbout;
@@ -1333,6 +1341,9 @@ nsGlobalHistory::HidePage(nsIURI *aURI)
   rv = aURI->GetSpec(URISpec);
   NS_ENSURE_SUCCESS(rv, rv);
   
+  if (URISpec.Length() > HISTORY_URI_LENGTH_MAX)
+     return NS_OK;
+
   nsCOMPtr<nsIMdbRow> row;
 
   rv = FindRow(kToken_URLColumn, URISpec.get(), getter_AddRefs(row));
@@ -1365,6 +1376,9 @@ nsGlobalHistory::MarkPageAsTyped(nsIURI *aURI)
   nsCAutoString spec;
   nsresult rv = aURI->GetSpec(spec);
   if (NS_FAILED(rv)) return rv;
+
+  if (spec.Length() > HISTORY_URI_LENGTH_MAX)
+     return NS_OK;
 
   nsCOMPtr<nsIMdbRow> row;
   rv = FindRow(kToken_URLColumn, spec.get(), getter_AddRefs(row));

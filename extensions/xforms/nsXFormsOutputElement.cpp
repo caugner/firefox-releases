@@ -61,10 +61,15 @@
 #include "nsXFormsAtoms.h"
 #include "nsXFormsUtils.h"
 #include "nsIXFormsUIWidget.h"
+#include "nsXFormsModelElement.h"
 
 
 /**
  * Implementation of the XForms \<output\> element.
+ *
+ * \<output\> is not really that different from \<input\>
+ * (ie. nsXFormsDelegateStub), except that it has an "value" attribute that
+ * must be handled seperately because it is evaluated to a string result.
  *
  * @see http://www.w3.org/TR/xforms/slice8.html#ui-output
  */
@@ -72,110 +77,126 @@ class nsXFormsOutputElement : public nsXFormsDelegateStub
 {
 public:
   // nsIXFormsControl
-  NS_IMETHOD Bind();
+  NS_IMETHOD Bind(PRBool* aContextChanged);
   NS_IMETHOD Refresh();
+  NS_IMETHOD GetBoundNode(nsIDOMNode **aBoundNode);
 
   // nsIXFormsDelegate
-  NS_IMETHOD GetValue(nsAString& aValue); 
+  NS_IMETHOD GetValue(nsAString& aValue);
+  NS_IMETHOD SetValue(const nsAString& aValue);
+  NS_IMETHOD GetHasBoundNode(PRBool *aHasBoundNode);
 
-  nsXFormsOutputElement() :
-    nsXFormsDelegateStub(NS_LITERAL_STRING("output")) {}
-
+  nsXFormsOutputElement();
 
 private:
-  PRBool   mHasBinding;
-  nsString mValue;
+  // The value of the "value" attribute (if any). Updated by Bind()
+  nsString       mValue;
+
+  // Use the "value" attribute
+  PRBool         mUseValueAttribute;
 };
+
+nsXFormsOutputElement::nsXFormsOutputElement()
+  : nsXFormsDelegateStub(NS_LITERAL_STRING("output")),
+    mUseValueAttribute(PR_FALSE)
+{
+}
 
 // nsIXFormsControl
 
 nsresult
-nsXFormsOutputElement::Bind()
+nsXFormsOutputElement::Bind(PRBool *aContextChanged)
 {
-  // Clear existing bound node, etc.
-  mBoundNode = nsnull;
-  mDependencies.Clear();
-  RemoveIndexListeners();
+  SetDOMStringToNull(mValue);
+  mUseValueAttribute = PR_FALSE;
 
-  if (!mHasParent)
-    return NS_OK;
-  
-  nsresult rv = mElement->HasAttribute(NS_LITERAL_STRING("ref"), &mHasBinding);
+  nsresult rv = nsXFormsDelegateStub::Bind(aContextChanged);
   NS_ENSURE_SUCCESS(rv, rv);
-  if (!mHasBinding) {
-    rv = mElement->HasAttribute(NS_LITERAL_STRING("bind"), &mHasBinding);
+
+  if (!mHasParent || !mElement || rv == NS_OK_XFORMS_DEFERRED)
+    return NS_OK;
+
+  // Besides the standard single node binding (SNB) attributes, \<output\>
+  // also has a "value" attribute, which is used when there are not other SNB
+  // attributes.
+  if (!HasBindingAttribute()) {
+    mUseValueAttribute = PR_TRUE;
+  } else {
+    PRBool hasAttr;
+    rv = mElement->HasAttribute(NS_LITERAL_STRING("ref"), &hasAttr);
     NS_ENSURE_SUCCESS(rv, rv);
+    if (!hasAttr) {
+      rv = mElement->HasAttribute(NS_LITERAL_STRING("bind"), &hasAttr);
+      NS_ENSURE_SUCCESS(rv, rv);
+      mUseValueAttribute = !hasAttr;
+    }
   }
 
+  if (!mUseValueAttribute)
+    return NS_OK;
+
+  // Bind to model and set mBoundNode . The bound node is used for setting
+  // context for our children (our parent's context in the case of @value),
+  // and the call to ProcessNodeBinding() will not set it.
+  rv = BindToModel(PR_TRUE);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Process node binding
   nsCOMPtr<nsIDOMXPathResult> result;
-  if (mHasBinding) {
-    rv = ProcessNodeBinding(NS_LITERAL_STRING("ref"),
-                            nsIDOMXPathResult::FIRST_ORDERED_NODE_TYPE,
-                            getter_AddRefs(result));
-  } else {
-    rv = ProcessNodeBinding(NS_LITERAL_STRING("value"),
-                            nsIDOMXPathResult::STRING_TYPE,
-                            getter_AddRefs(result));
-  }
-  
-  if (NS_FAILED(rv)) {
-    nsXFormsUtils::ReportError(NS_LITERAL_STRING("controlBindError"), mElement);
-    return rv;
+  rv = ProcessNodeBinding(NS_LITERAL_STRING("value"),
+                          nsIDOMXPathResult::STRING_TYPE,
+                          getter_AddRefs(result));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (rv == NS_OK_XFORMS_DEFERRED) {
+    return NS_OK;
   }
 
   if (result) {
-    result->GetSingleNodeValue(getter_AddRefs(mBoundNode));
+    rv = result->GetStringValue(mValue);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  if (mBoundNode && mModel) {
-    mModel->SetStates(this, mBoundNode);
-  }
-
-  return rv;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 nsXFormsOutputElement::Refresh()
 {
-  if (mRepeatState == eType_Template)
-    return NS_OK;
+  return nsXFormsDelegateStub::Refresh();
+}
 
-  nsresult rv = NS_OK;
-  SetDOMStringToNull(mValue);
+NS_IMETHODIMP
+nsXFormsOutputElement::GetBoundNode(nsIDOMNode **aBoundNode)
+{
+  return !mUseValueAttribute ? nsXFormsDelegateStub::GetBoundNode(aBoundNode)
+                             : NS_OK;
+}
 
-  if (mModel) {
-    if (mHasBinding) {
-      if (mBoundNode) {
-        nsXFormsUtils::GetNodeValue(mBoundNode, mValue);
-      }
-    } else {
-      nsCOMPtr<nsIDOMXPathResult> result;
-      rv = ProcessNodeBinding(NS_LITERAL_STRING("value"),
-                              nsIDOMXPathResult::STRING_TYPE,
-                              getter_AddRefs(result));
-      NS_ENSURE_SUCCESS(rv, rv);
-  
-      if (result) {
-        rv = result->GetStringValue(mValue);
-        NS_ENSURE_SUCCESS(rv, rv);
-      }
-    }
-  }
-
-  SetMozTypeAttribute();
-
-  nsCOMPtr<nsIXFormsUIWidget> widget = do_QueryInterface(mElement);
-  if (widget)
-    widget->Refresh();
-
-  return rv;
+NS_IMETHODIMP
+nsXFormsOutputElement::GetHasBoundNode(PRBool *aHasBoundNode)
+{
+  NS_ENSURE_ARG_POINTER(aHasBoundNode);
+  *aHasBoundNode = (mBoundNode && !mUseValueAttribute) ? PR_TRUE : PR_FALSE;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 nsXFormsOutputElement::GetValue(nsAString& aValue)
 {
-  aValue = mValue;
-  return NS_OK;
+  if (mUseValueAttribute) {
+    aValue = mValue;
+    return NS_OK;
+  }
+
+  return nsXFormsDelegateStub::GetValue(aValue);
+}
+
+NS_IMETHODIMP
+nsXFormsOutputElement::SetValue(const nsAString& aValue)
+{
+  // Setting the value on an output controls seems wrong semantically.
+  return NS_ERROR_NOT_AVAILABLE;
 }
 
 NS_HIDDEN_(nsresult)

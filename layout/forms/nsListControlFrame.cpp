@@ -2134,23 +2134,22 @@ nsListControlFrame::ToggleOptionSelectedFromFrame(PRInt32 aIndex)
 
 
 // Dispatch event and such
-NS_IMETHODIMP
+PRBool
 nsListControlFrame::UpdateSelection()
 {
-  nsresult rv = NS_OK;
-
   if (mIsAllFramesHere) {
     // if it's a combobox, display the new text
     if (mComboboxFrame) {
-      rv = mComboboxFrame->RedisplaySelectedText();
+      mComboboxFrame->RedisplaySelectedText();
     }
     // if it's a listbox, fire on change
     else if (mIsAllContentHere) {
-      rv = FireOnChange();
+      nsWeakFrame weakFrame(this);
+      FireOnChange();
+      return weakFrame.IsAlive();
     }
   }
-
-  return rv;
+  return PR_TRUE;
 }
 
 NS_IMETHODIMP
@@ -2478,13 +2477,7 @@ nsListControlFrame::MouseUp(nsIDOMEvent* aMouseEvent)
     if (IsInDropDownMode()) {
       if (!IgnoreMouseEventForSelection(aMouseEvent)) {
         aMouseEvent->PreventDefault();
-
-        nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
-
-        if (nsevent) {
-          nsevent->PreventCapture();
-          nsevent->PreventBubble();
-        }
+        aMouseEvent->StopPropagation();
       } else {
         CaptureMouseEvents(GetPresContext(), PR_FALSE);
         return NS_OK;
@@ -2528,14 +2521,7 @@ nsListControlFrame::MouseUp(nsIDOMEvent* aMouseEvent)
       IsOptionDisabled(selectedIndex, isDisabled);
       if (isDisabled) {
         aMouseEvent->PreventDefault();
-
-        nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
-
-        if (nsevent) {
-          nsevent->PreventCapture();
-          nsevent->PreventBubble();
-        }
-
+        aMouseEvent->StopPropagation();
         CaptureMouseEvents(GetPresContext(), PR_FALSE);
         return NS_ERROR_FAILURE;
       }
@@ -2646,21 +2632,7 @@ nsListControlFrame::FireMenuItemActiveEvent()
     return;
   }
 
-  nsCOMPtr<nsIDOMEvent> event;
-  nsCOMPtr<nsIEventListenerManager> manager;
-  mContent->GetListenerManager(getter_AddRefs(manager));
-  nsPresContext* presContext = GetPresContext();
-  if (manager &&
-      NS_SUCCEEDED(manager->CreateEvent(presContext, nsnull, NS_LITERAL_STRING("Events"), getter_AddRefs(event)))) {
-    event->InitEvent(NS_LITERAL_STRING("DOMMenuItemActive"), PR_TRUE, PR_TRUE);
-
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(event));
-    privateEvent->SetTrusted(PR_TRUE);
-
-    PRBool defaultActionEnabled;
-    presContext->EventStateManager()->DispatchNewEvent(optionContent, event,
-                                                       &defaultActionEnabled);
-  }
+  FireDOMEvent(NS_LITERAL_STRING("DOMMenuItemActive"), optionContent);
 }
 #endif
 
@@ -2764,13 +2736,7 @@ nsListControlFrame::MouseDown(nsIDOMEvent* aMouseEvent)
     if (IsInDropDownMode()) {
       if (!IgnoreMouseEventForSelection(aMouseEvent)) {
         aMouseEvent->PreventDefault();
-
-        nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aMouseEvent));
-
-        if (nsevent) {
-          nsevent->PreventCapture();
-          nsevent->PreventBubble();
-        }
+        aMouseEvent->StopPropagation();
       } else {
         return NS_OK;
       }
@@ -3317,7 +3283,10 @@ nsListControlFrame::KeyPress(nsIDOMEvent* aKeyEvent)
                                  nsCaseInsensitiveStringComparator())) {
               PRBool wasChanged = PerformSelection(index, isShift, isControl);
               if (wasChanged) {
-                UpdateSelection(); // dispatch event, update combobox, etc.
+                // dispatch event, update combobox, etc.
+                if (!UpdateSelection()) {
+                  return NS_OK;
+                }
               }
               break;
             }
@@ -3351,7 +3320,10 @@ nsListControlFrame::KeyPress(nsIDOMEvent* aKeyEvent)
       wasChanged = PerformSelection(newIndex, isShift, isControl);
     }
     if (wasChanged) {
-      UpdateSelection(); // dispatch event, update combobox, etc.
+       // dispatch event, update combobox, etc.
+      if (!UpdateSelection()) {
+        return NS_OK;
+      }
     }
 #ifdef ACCESSIBILITY
     if (charcode != ' ') {

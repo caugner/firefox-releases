@@ -1,25 +1,27 @@
 # -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+# ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
-# 
+#
 # The contents of this file are subject to the Mozilla Public License Version
 # 1.1 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
 # http://www.mozilla.org/MPL/
-# 
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is the Firefox Preferences System.
-# 
-# The Initial Developer of the Original Code is Ben Goodger.
+#
+# The Initial Developer of the Original Code is
+# Ben Goodger.
 # Portions created by the Initial Developer are Copyright (C) 2005
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
 #   Ben Goodger <ben@mozilla.org>
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -31,7 +33,7 @@
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
-# 
+#
 # ***** END LICENSE BLOCK *****
 
 const nsICookie = Components.interfaces.nsICookie;
@@ -185,7 +187,7 @@ var gCookiesWindow = {
     this._view._rowCount += rowCountImpact;
     this._tree.treeBoxObject.rowCountChanged(oldRowCount - 1, rowCountImpact);
 
-    document.getElementById("removeAllCookies").disabled = this._view._filtered || (this._view.rowCount == 0);
+    document.getElementById("removeAllCookies").disabled = this._view._filtered;
   },
   
   _view: {
@@ -512,9 +514,7 @@ var gCookiesWindow = {
   _updateCookieData: function (aItem)
   {
     var seln = this._view.selection;
-    var ids = ["nameLabel", "name", "valueLabel", "value", "isDomain", "host", 
-               "pathLabel", "path", "isSecureLabel", "isSecure", "expiresLabel", 
-               "expires"];
+    var ids = ["name", "value", "host", "path", "isSecure", "expires"];
     var properties;
     
     if (aItem && !aItem.container && seln.count > 0) {
@@ -571,7 +571,7 @@ var gCookiesWindow = {
     var stringKey = selectedCookieCount == 1 ? "removeCookie" : "removeCookies";
     document.getElementById("removeCookie").label = this._bundle.getString(stringKey);
     
-    document.getElementById("removeAllCookies").disabled = this._view._filtered || (this._view.rowCount == 0);
+    document.getElementById("removeAllCookies").disabled = this._view._filtered;
     document.getElementById("removeCookie").disabled = !(seln.count > 0);
   },
   
@@ -793,6 +793,7 @@ var gCookiesWindow = {
 
     document.getElementById("cookiesIntro").value = this._bundle.getString("cookiesAll");
     document.getElementById("clearFilter").disabled = true;
+    document.getElementById("filter").focus();
   },
   
   _cookieMatchesFilter: function (aCookie)

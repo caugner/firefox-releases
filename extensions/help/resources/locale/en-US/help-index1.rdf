@@ -192,7 +192,8 @@
        <rdf:Description ID="Composer"
          nc:name="Composer"
          nc:link="composer_help.xhtml"/>
-     </rdf:li><rdf:li>
+     </rdf:li>
+     <rdf:li>
        <rdf:Description ID="Cookie_Manager"
          nc:name="Cookie Manager"
          nc:link="using_priv_help.xhtml#using_the_cookie_manager"/>
@@ -534,6 +535,11 @@
        <rdf:Description ID="encryption"
          nc:name="encryption"
          nc:link="mail_sec_help.xhtml#signing_and_encrypting_messages"/>
+     </rdf:li>
+     <rdf:li>
+       <rdf:Description ID="JSConsole"
+         nc:name="error console"
+         nc:link="developer_tools.xhtml#js_console"/>
      </rdf:li></rdf:Seq>
    </nc:subheadings>
 </rdf:Description>
@@ -579,11 +585,6 @@
        <rdf:Description ID="encryption:status_of_web_page"
          nc:name="security of a web page"
          nc:link="using_certs_help.xhtml#checking_security_for_a_web_page"/>
-     </rdf:li>
-     <rdf:li>
-       <rdf:Description ID="encryption:technologies"
-         nc:name="cipher technologies"
-         nc:link="ssl_help.xhtml#edit_ciphers"/>
      </rdf:li></rdf:Seq>
    </nc:subheadings>
 </rdf:Description>
@@ -887,11 +888,6 @@
          nc:name="JavaScript"/>
      </rdf:li>
      <rdf:li>
-       <rdf:Description ID="JSConsole"
-         nc:name="JavaScript Console"
-         nc:link="developer_tools.xhtml#js_console"/>
-     </rdf:li>
-     <rdf:li>
        <rdf:Description ID="Venkman"
          nc:name="JavaScript Debugger"
          nc:link="developer_tools.xhtml#venkman"/>
@@ -962,11 +958,6 @@
 <rdf:Description about="help-indexAZ.rdf#l">
    <nc:subheadings>
      <rdf:Seq><rdf:li>
-       <rdf:Description ID="Labels"
-         nc:name="Labels"
-         nc:link="mail_help.xhtml#labeling_messages"/>
-     </rdf:li>
-     <rdf:li>
        <rdf:Description ID="languages"
          nc:name="languages"
          nc:link="nav_help.xhtml#using_languages_and_international_content"/>
@@ -980,16 +971,6 @@
        <rdf:Description ID="lock_icon"
          nc:name="lock icon"
          nc:link="using_certs_help.xhtml#checking_security_for_a_web_page"/>
-     </rdf:li></rdf:Seq>
-   </nc:subheadings>
-</rdf:Description>
-
-<rdf:Description about="#Labels">
-   <nc:subheadings>
-     <rdf:Seq><rdf:li>
-       <rdf:Description ID="Labels:general_preferences"
-         nc:name="label preferences"
-         nc:link="mail_help.xhtml#labels"/>
      </rdf:li></rdf:Seq>
    </nc:subheadings>
 </rdf:Description>
@@ -1095,6 +1076,11 @@
        <rdf:Description ID="Mail_and_Newsgroups:changing_account_settings"
          nc:name="changing account settings"
          nc:link="mail_help.xhtml#changing_the_settings_for_an_account"/>
+     </rdf:li>
+     <rdf:li>
+       <rdf:Description ID="Mail_and_Newsgroups:Character_Encoding"
+         nc:name="Character Encoding"
+         nc:link="mail_help.xhtml#character_encoding"/>
      </rdf:li>
      <rdf:li>
        <rdf:Description ID="Mail_and_Newsgroups:Compose_window"
@@ -2072,11 +2058,6 @@
 <rdf:Description about="#SSL">
    <nc:subheadings>
      <rdf:Seq><rdf:li>
-       <rdf:Description ID="SSL:ciphers"
-         nc:name="edit ciphers"
-         nc:link="ssl_help.xhtml#edit_ciphers"/>
-     </rdf:li>
-     <rdf:li>
        <rdf:Description ID="SSL:preferences"
          nc:name="SSL preferences"
          nc:link="ssl_help.xhtml#privacy_and_security_preferences_ssl"/>
@@ -2100,6 +2081,11 @@
        <rdf:Description ID="Tabbed_Browsing"
          nc:name="Tabbed Browsing"
          nc:link="customize_help.xhtml#tabbed_browsing"/>
+     </rdf:li>
+     <rdf:li>
+       <rdf:Description ID="Tags"
+         nc:name="Tags"
+         nc:link="mail_help.xhtml#tagging_messages"/>
      </rdf:li>
      <rdf:li>
        <rdf:Description ID="themes"
@@ -2131,6 +2117,11 @@
          nc:link="nav_help.xhtml#using_tabbed_browsing"/>
      </rdf:li>
      <rdf:li>
+       <rdf:Description ID="Tabbed_Browsing:moving_tabs"
+         nc:name="moving tabs"
+         nc:link="customize_help.xhtml#moving_tabs"/>
+     </rdf:li>
+     <rdf:li>
        <rdf:Description ID="Tabbed_Browsing:opening_tabs"
          nc:name="opening tabs"
          nc:link="customize_help.xhtml#opening_tabs"/>
@@ -2144,6 +2135,16 @@
        <rdf:Description ID="Tabbed_Browsing:what_is"
          nc:name="what is tabbed browsing"
          nc:link="customize_help.xhtml#what_is_tabbed_browsing"/>
+     </rdf:li></rdf:Seq>
+   </nc:subheadings>
+</rdf:Description>
+
+<rdf:Description about="#Tags">
+   <nc:subheadings>
+     <rdf:Seq><rdf:li>
+       <rdf:Description ID="Tags:general_preferences"
+         nc:name="tag preferences"
+         nc:link="mail_help.xhtml#tags"/>
      </rdf:li></rdf:Seq>
    </nc:subheadings>
 </rdf:Description>

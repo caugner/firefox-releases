@@ -20,6 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Mats Palmgren <mats.palmgren@bredband.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -48,6 +49,7 @@
 #include "nsIDOMRange.h"
 #include "nsIFrameSelection.h"
 #include "nsISelection.h"
+#include "nsISelection2.h"
 #include "nsISelectionPrivate.h"
 #include "nsISelectionListener.h"
 #include "nsIComponentManager.h"
@@ -63,6 +65,7 @@
 #include "nsITableCellLayout.h"
 #include "nsIDOMNodeList.h"
 #include "nsITextContent.h"
+#include "nsTArray.h"
 
 #include "nsISelectionListener.h"
 #include "nsIContentIterator.h"
@@ -182,7 +185,16 @@ struct CachedOffsetForFrame {
   PRPackedBool mCanCacheFrameOffset;    // cached frame offset is valid?
 };
 
-class nsTypedSelection : public nsISelection,
+struct RangeData
+{
+  RangeData(nsIDOMRange* aRange, PRInt32 aEndIndex) :
+    mRange(aRange), mEndIndex(aEndIndex) {}
+
+  nsCOMPtr<nsIDOMRange> mRange;
+  PRInt32 mEndIndex; // index into mRangeEndings of this item
+};
+
+class nsTypedSelection : public nsISelection2,
                          public nsISelectionPrivate,
                          public nsSupportsWeakReference
 {
@@ -193,6 +205,7 @@ public:
   
   NS_DECL_ISUPPORTS
   NS_DECL_NSISELECTION
+  NS_DECL_NSISELECTION2
   NS_DECL_NSISELECTIONPRIVATE
 
   // utility methods for scrolling the selection into view
@@ -208,8 +221,8 @@ public:
   NS_IMETHOD    ScrollIntoView(SelectionRegion aRegion=nsISelectionController::SELECTION_FOCUS_REGION, PRBool aIsSynchronous=PR_TRUE);
   nsresult      AddItem(nsIDOMRange *aRange);
   nsresult      RemoveItem(nsIDOMRange *aRange);
-
   nsresult      Clear(nsPresContext* aPresContext);
+
   // methods for convenience. Note, these don't addref
   nsIDOMNode*  FetchAnchorNode();  //where did the selection begin
   PRInt32      FetchAnchorOffset();
@@ -253,6 +266,8 @@ public:
 
   nsresult     NotifySelectionListeners();
 
+  void DetachFromPresentation();
+
 private:
   friend class nsSelectionIterator;
   friend struct nsScrollSelectionIntoViewEvent;
@@ -268,7 +283,58 @@ private:
   NS_IMETHOD   FixupSelectionPoints(nsIDOMRange *aRange, nsDirection *aDir, PRBool *aFixupState);
 #endif //OLD_SELECTION
 
-  nsCOMArray<nsIDOMRange> mRangeArray;
+  // These are the ranges inside this selection. They are kept sorted in order
+  // of DOM position of start and end, respectively (both of these arrays
+  // should have the same contents, but possibly in different orders).
+  //
+  // This data structure is sorted by the range beginnings and the range
+  // endings. When searching for a range, we can discard ranges whose ends
+  // are before the point in question, or whose beginnings are after. We can
+  // find these two sets of ranges on O(log n) time.
+  //
+  // Merging these two result sets takes O(n) time, so a a full query is O(log
+  // n + n) time. This looks worse than brute force O(n) searching, but in
+  // practice it is much faster. The DOM comparisons used in a brute force
+  // search are VERY expensive because they actually walk the DOM tree. We only
+  // do log(n) of these comparisons.
+  //
+  // Our O(n) merging step uses very fast integer comparisons, and, since
+  // we store the range ending index in the structure, we have to merge at
+  // most half of the results. Timing shows that this algorithm is nearly
+  // twice as fast doing intersections for 9 ranges, and 18 times faster for
+  // 250 ranges.
+  //
+  // An interval tree would give us O(log n) time lookups, which would be
+  // better. However, this approach gets us most of the way, and doesn't
+  // require rebalancing and other  overhead. If this algorithm is found to be
+  // a bottleneck, it should be replaced with an interval tree.
+  //
+  // It has been discussed requiring selections to be disjoint in the future.
+  // If this requirement is added, the current design makes the most sense, we
+  // can just remove the array sorted by endings.
+
+  nsTArray<RangeData> mRanges;
+  nsTArray<PRInt32> mRangeEndings;    // references info mRanges
+#ifdef DEBUG
+  PRBool ValidateRanges();
+#endif
+
+  nsresult FindInsertionPoint(
+      const nsTArray<PRInt32>* aRemappingArray,
+      nsIDOMNode* aPointNode, PRInt32 aPointOffset,
+      nsresult (*aComparator)(nsIDOMNode*,PRInt32,nsIDOMRange*,PRInt32*),
+      PRInt32* aInsertionPoint);
+  nsresult MoveIndexToFirstMatch(PRInt32* aIndex, nsIDOMNode* aNode,
+                                 PRInt32 aOffset,
+                                 const nsTArray<PRInt32>* aArray,
+                                 PRBool aUseBeginning);
+  nsresult MoveIndexToNextMismatch(PRInt32* aIndex, nsIDOMNode* aNode,
+                                   PRInt32 aOffset,
+                                   const nsTArray<PRInt32>* aRemappingArray,
+                                   PRBool aUseBeginning);
+  PRBool FindRangeGivenPoint(nsIDOMNode* aBeginNode, PRInt32 aBeginOffset,
+                             nsIDOMNode* aEndNode, PRInt32 aEndOffset,
+                             PRInt32 aStartSearchingHere);
 
   nsCOMPtr<nsIDOMRange> mAnchorFocusRange;
   nsCOMPtr<nsIDOMRange> mOriginalAnchorRange; //used as a point with range gravity for security
@@ -395,6 +461,14 @@ private:
                          PRUint32 aKeycode,
                          HINT aHint);
   void BidiLevelFromClick(nsIContent *aNewFocus, PRUint32 aContentOffset);
+  NS_IMETHOD GetPrevNextBidiLevels(nsPresContext *aPresContext,
+                                   nsIContent *aNode,
+                                   PRUint32 aContentOffset,
+                                   HINT aHint,
+                                   nsIFrame **aPrevFrame,
+                                   nsIFrame **aNextFrame,
+                                   PRUint8 *aPrevLevel,
+                                   PRUint8 *aNextLevel);  
 #ifdef VISUALSELECTION
   NS_IMETHOD VisualSelectFrames(nsPresContext* aContext,
                                 nsIFrame* aCurrentFrame,
@@ -799,7 +873,7 @@ NS_IMETHODIMP
 nsSelectionIterator::Next()
 {
   mIndex++;
-  PRInt32 cnt = mDomSelection->mRangeArray.Count();
+  PRInt32 cnt = mDomSelection->mRanges.Length();
   if (mIndex < cnt)
     return NS_OK;
   return NS_ERROR_FAILURE;
@@ -834,7 +908,7 @@ nsSelectionIterator::Last()
 {
   if (!mDomSelection)
     return NS_ERROR_NULL_POINTER;
-  mIndex = mDomSelection->mRangeArray.Count() - 1;
+  mIndex = mDomSelection->mRanges.Length() - 1;
   return NS_OK;
 }
 
@@ -846,11 +920,11 @@ nsSelectionIterator::CurrentItem(nsISupports **aItem)
   if (!aItem)
     return NS_ERROR_NULL_POINTER;
 
-  if (mIndex < 0 || mIndex >= mDomSelection->mRangeArray.Count()) {
+  if (mIndex < 0 || mIndex >= (PRInt32)mDomSelection->mRanges.Length()) {
     return NS_ERROR_FAILURE;
   }
 
-  return CallQueryInterface(mDomSelection->mRangeArray[mIndex],
+  return CallQueryInterface(mDomSelection->mRanges[mIndex].mRange,
                             aItem);
 }
 
@@ -860,11 +934,11 @@ nsSelectionIterator::CurrentItem(nsIDOMRange **aItem)
 {
   if (!aItem)
     return NS_ERROR_NULL_POINTER;
-  if (mIndex < 0 || mIndex >= mDomSelection->mRangeArray.Count()) {
+  if (mIndex < 0 || mIndex >= (PRInt32)mDomSelection->mRanges.Length()) {
     return NS_ERROR_FAILURE;
   }
 
-  *aItem = mDomSelection->mRangeArray[mIndex];
+  *aItem = mDomSelection->mRanges[mIndex].mRange;
   NS_IF_ADDREF(*aItem);
   return NS_OK;
 }
@@ -874,7 +948,7 @@ nsSelectionIterator::CurrentItem(nsIDOMRange **aItem)
 NS_IMETHODIMP
 nsSelectionIterator::IsDone()
 {
-  PRInt32 cnt = mDomSelection->mRangeArray.Count();
+  PRInt32 cnt = mDomSelection->mRanges.Length();
   if (mIndex >= 0 && mIndex < cnt) {
     return NS_ENUMERATOR_FALSE;
   }
@@ -942,7 +1016,10 @@ nsSelection::~nsSelection()
 {
   PRInt32 i;
   for (i = 0;i<nsISelectionController::NUM_SELECTIONTYPES;i++){
-    NS_IF_RELEASE(mDomSelections[i]);
+    if (mDomSelections[i]) {
+      mDomSelections[i]->DetachFromPresentation();
+      NS_RELEASE(mDomSelections[i]);
+    }
   }
 }
 
@@ -1317,10 +1394,46 @@ nsSelection::MoveCaret(PRUint32 aKeycode, PRBool aContinueSelection, nsSelection
     SetDesiredX(desiredX);
   }
 
-  nsCOMPtr<nsICaret> caret;
-  result = mShell->GetCaret(getter_AddRefs(caret));
-  if (NS_FAILED(result) || !caret)
-    return 0;
+  PRInt32 caretStyle = nsContentUtils::GetIntPref("layout.selection.caret_style", 0);
+#ifdef XP_MACOSX
+  if (caretStyle == 0) {
+    caretStyle = 2; // put caret at the selection edge in the |aKeycode| direction
+  }
+#endif
+
+  if (!isCollapsed && !aContinueSelection && caretStyle == 2) {
+    switch (aKeycode){
+      case nsIDOMKeyEvent::DOM_VK_LEFT  :
+      case nsIDOMKeyEvent::DOM_VK_UP    :
+          if (mDomSelections[index]->GetDirection() == eDirPrevious) { //f,a
+            offsetused = mDomSelections[index]->FetchFocusOffset();
+            weakNodeUsed = mDomSelections[index]->FetchFocusNode();
+          }
+          else {
+            offsetused = mDomSelections[index]->FetchAnchorOffset();
+            weakNodeUsed = mDomSelections[index]->FetchAnchorNode();
+          }
+          result = mDomSelections[index]->Collapse(weakNodeUsed, offsetused);
+          mDomSelections[index]->ScrollIntoView();
+          mHint = HINTRIGHT;
+          return NS_OK;
+
+      case nsIDOMKeyEvent::DOM_VK_RIGHT :
+      case nsIDOMKeyEvent::DOM_VK_DOWN  :
+          if (mDomSelections[index]->GetDirection() == eDirPrevious) { //f,a
+            offsetused = mDomSelections[index]->FetchAnchorOffset();
+            weakNodeUsed = mDomSelections[index]->FetchAnchorNode();
+          }
+          else {
+            offsetused = mDomSelections[index]->FetchFocusOffset();
+            weakNodeUsed = mDomSelections[index]->FetchFocusNode();
+          }
+          result = mDomSelections[index]->Collapse(weakNodeUsed, offsetused);
+          mDomSelections[index]->ScrollIntoView();
+          mHint = HINTLEFT;
+          return NS_OK;
+    }
+  }
 
   offsetused = mDomSelections[index]->FetchFocusOffset();
   weakNodeUsed = mDomSelections[index]->FetchFocusNode();
@@ -1392,29 +1505,24 @@ nsSelection::MoveCaret(PRUint32 aKeycode, PRBool aContinueSelection, nsSelection
       GetFrameForNodeOffset(pos.mResultContent, pos.mContentOffset, tHint, &theFrame, &currentOffset);
       theFrame->GetOffsets(frameStart, frameEnd);
 
-      // the hint might have been reversed by an RTL frame, so make sure of it
-      if (nsIDOMKeyEvent::DOM_VK_HOME == aKeycode)
-        pos.mPreferLeft = PR_TRUE;
-      else if (nsIDOMKeyEvent::DOM_VK_END == aKeycode)
-        pos.mPreferLeft = PR_FALSE;
       tHint = (HINT)pos.mPreferLeft;
       if (frameStart !=0 || frameEnd !=0) // Otherwise the frame is not a text frame, so nothing more to do
       {
         switch (aKeycode) {
           case nsIDOMKeyEvent::DOM_VK_HOME:
           case nsIDOMKeyEvent::DOM_VK_END:
-
+    
             // force the offset to the logical beginning (for HOME) or end (for END) of the frame
             // (if it is an RTL frame it will be at the visual beginning or end, which we don't want in this case)
             if (nsIDOMKeyEvent::DOM_VK_HOME == aKeycode)
               pos.mContentOffset = frameStart;
             else
               pos.mContentOffset = frameEnd;
-
+    
             // set the cursor Bidi level to the paragraph embedding level
             mShell->SetCaretBidiLevel(NS_GET_BASE_LEVEL(theFrame));
             break;
-
+    
           default:
             // If the current position is not a frame boundary, it's enough just to take the Bidi level of the current frame
             if ((pos.mContentOffset != frameStart && pos.mContentOffset != frameEnd)
@@ -1556,6 +1664,8 @@ nsTypedSelection::ToStringWithFormat(const char * aFormatType, PRUint32 aFlags,
 NS_IMETHODIMP
 nsTypedSelection::SetInterlinePosition(PRBool aHintRight)
 {
+  if (!mFrameSelection)
+    return NS_ERROR_NOT_INITIALIZED; // Can't do selection
   nsIFrameSelection::HINT hint;
   if (aHintRight)
     hint = nsIFrameSelection::HINTRIGHT;
@@ -1567,6 +1677,8 @@ nsTypedSelection::SetInterlinePosition(PRBool aHintRight)
 NS_IMETHODIMP
 nsTypedSelection::GetInterlinePosition(PRBool *aHintRight)
 {
+  if (!mFrameSelection)
+    return NS_ERROR_NOT_INITIALIZED; // Can't do selection
   nsIFrameSelection::HINT hint;
   nsresult rv = mFrameSelection->GetHint(&hint);
   if (hint == nsIFrameSelection::HINTRIGHT)
@@ -1988,6 +2100,20 @@ nsSelection::GetPrevNextBidiLevels(nsPresContext *aPresContext,
                                    PRUint8 *aPrevLevel,
                                    PRUint8 *aNextLevel)
 {
+  return GetPrevNextBidiLevels(aPresContext, aNode, aContentOffset, mHint,
+                               aPrevFrame, aNextFrame, aPrevLevel, aNextLevel);
+}
+
+NS_IMETHODIMP
+nsSelection::GetPrevNextBidiLevels(nsPresContext *aPresContext,
+                                   nsIContent *aNode,
+                                   PRUint32 aContentOffset,
+                                   HINT aHint,
+                                   nsIFrame **aPrevFrame,
+                                   nsIFrame **aNextFrame,
+                                   PRUint8 *aPrevLevel,
+                                   PRUint8 *aNextLevel)
+{
   if (!aPrevFrame || !aNextFrame)
     return NS_ERROR_NULL_POINTER;
   // Get the level of the frames on each side
@@ -1999,7 +2125,7 @@ nsSelection::GetPrevNextBidiLevels(nsPresContext *aPresContext,
 
   *aPrevLevel = *aNextLevel = 0;
 
-  result = GetFrameForNodeOffset(aNode, aContentOffset, mHint, &currentFrame, &currentOffset);
+  result = GetFrameForNodeOffset(aNode, aContentOffset, aHint, &currentFrame, &currentOffset);
   if (NS_FAILED(result))
     return result;
   currentFrame->GetOffsets(frameStart, frameEnd);
@@ -2264,7 +2390,7 @@ void nsSelection::BidiLevelFromMove(nsPresContext* aContext,
     // Right and Left: the new cursor Bidi level is the level of the character moved over
     case nsIDOMKeyEvent::DOM_VK_RIGHT:
     case nsIDOMKeyEvent::DOM_VK_LEFT:
-      GetPrevNextBidiLevels(aContext, aNode, aContentOffset, &firstFrame, &secondFrame, &firstLevel, &secondLevel);
+      GetPrevNextBidiLevels(aContext, aNode, aContentOffset, aHint, &firstFrame, &secondFrame, &firstLevel, &secondLevel);
       if (HINTLEFT == aHint)
         aPresShell->SetCaretBidiLevel(firstLevel);
       else
@@ -2622,27 +2748,11 @@ nsSelection::LookUpSelection(nsIContent *aContent, PRInt32 aContentOffset, PRInt
 
   STATUS_CHECK_RETURN_MACRO();
 
-
   *aReturnDetails = nsnull;
 
-  // if any of the additional selections are set, always do a slow check. The
-  // issue is that the NS_FRAME_SELECTED_CONTENT bit is set when any of the
-  // selections are used, and the 'non-slow' code assumes that this means that
-  // there exists something selected for all selection types.
-  PRInt8 j;
-  for (j = (PRInt8) 1; j < (PRInt8)nsISelectionController::NUM_SELECTIONTYPES; j++){
-    if (mDomSelections[j]){
-      PRBool iscollapsed;
-      mDomSelections[j]->GetIsCollapsed(&iscollapsed);
-      if (!iscollapsed){
-        aSlowCheck = PR_TRUE;
-      }
-    }
-  }
-
-  for (j = (PRInt8) 0; j < (PRInt8)nsISelectionController::NUM_SELECTIONTYPES; j++){
+  for (PRInt32 j = 0; j < nsISelectionController::NUM_SELECTIONTYPES; j++) {
     if (mDomSelections[j])
-     mDomSelections[j]->LookUpSelection(aContent, aContentOffset, aContentLength, aReturnDetails, (SelectionType)(1<<j), aSlowCheck);
+      mDomSelections[j]->LookUpSelection(aContent, aContentOffset, aContentLength, aReturnDetails, (SelectionType)(1<<j), aSlowCheck);
   }
   return NS_OK;
 }
@@ -3922,41 +4032,7 @@ nsTypedSelection::addTableCellRange(nsIDOMRange *aRange, PRBool *aDidAddRange)
   if (mFrameSelection->mSelectingTableCellMode == TABLESELECTION_NONE)
     mFrameSelection->mSelectingTableCellMode = tableMode;
 
-  PRInt32 count = mRangeArray.Count();
-
-  if (count > 0)
-  {
-    // Adding a cell range to existing list of cell ranges
-    PRInt32 index;
-    PRInt32 row, col;
-    // Insert range at appropriate location
-    for (index = 0; index < count; index++)
-    {
-      nsIDOMRange* range = mRangeArray[index];
-      if (!range) return NS_ERROR_FAILURE;
-
-      PRInt32 selectionMode;
-      result = getTableCellLocationFromRange(range, &selectionMode, &row, &col);
-      if (NS_FAILED(result)) return result;
-
-      // Don't proceed if range not a table cell
-      if (selectionMode != nsISelectionPrivate::TABLESELECTION_CELL)
-        return NS_OK;
-
-      if (row > newRow ||
-          (row == newRow && col > newCol))
-      {
-        // Existing selected cell is after cell to add,
-        //  so insert at this index
-        *aDidAddRange = mRangeArray.InsertObjectAt(aRange, index);
-        return (*aDidAddRange) ? NS_OK : NS_ERROR_FAILURE;
-      }
-    }          
-  }
-  // If here, we are adding a selected cell range 
-  //   to end of range array or it's the first selected range 
-  *aDidAddRange = mRangeArray.AppendObject(aRange);
-  return (*aDidAddRange) ? NS_OK : NS_ERROR_FAILURE;
+  return AddItem(aRange);
 }
 
 //TODO: Figure out TABLESELECTION_COLUMN and TABLESELECTION_ALLCELLS
@@ -4235,10 +4311,8 @@ nsSelection::SetDelayedCaretData(nsMouseEvent *aMouseEvent)
     mDelayedMouseEventValid = PR_TRUE;
     mDelayedMouseEvent      = *aMouseEvent;
 
-    // XXX: Hmmm, should we AddRef mDelayedMouseEvent->widget?
-    //      Doing so might introduce a leak if things in the app
-    //      are not released in the correct order though, so for now
-    //      don't do anything.
+    // Don't cache the widget.  We don't need it and it could go away.
+    mDelayedMouseEvent.widget = nsnull;
   }
   else
     mDelayedMouseEventValid = PR_FALSE;
@@ -4320,6 +4394,10 @@ nsTypedSelection::nsTypedSelection()
 
 nsTypedSelection::~nsTypedSelection()
 {
+  DetachFromPresentation();
+}
+  
+void nsTypedSelection::DetachFromPresentation() {
   setAnchorFocusRange(-1);
 
   if (mAutoScrollTimer) {
@@ -4332,13 +4410,19 @@ nsTypedSelection::~nsTypedSelection()
     mScrollEventPosted = PR_FALSE;
   }
 
-  delete mCachedOffsetForFrame;
+  if (mCachedOffsetForFrame) {
+    delete mCachedOffsetForFrame;
+    mCachedOffsetForFrame = nsnull;
+  }
+
+  mFrameSelection = nsnull;
 }
 
 
 // QueryInterface implementation for nsRange
 NS_INTERFACE_MAP_BEGIN(nsTypedSelection)
   NS_INTERFACE_MAP_ENTRY(nsISelection)
+  NS_INTERFACE_MAP_ENTRY(nsISelection2)
   NS_INTERFACE_MAP_ENTRY(nsISelectionPrivate)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsISelection)
@@ -4439,14 +4523,14 @@ NS_IMETHODIMP nsTypedSelection::GetFocusOffset(PRInt32* aFocusOffset)
 
 void nsTypedSelection::setAnchorFocusRange(PRInt32 indx)
 {
-  if (indx >= mRangeArray.Count())
+  if (indx >= (PRInt32)mRanges.Length())
     return;
   if (indx < 0) //release all
   {
     mAnchorFocusRange = nsnull;
   }
   else{
-    mAnchorFocusRange = mRangeArray[indx];
+    mAnchorFocusRange = mRanges[indx].mRange;
   }
 }
 
@@ -4565,44 +4649,619 @@ nsTypedSelection::FetchEndOffset(nsIDOMRange *aRange)
   return 0;
 }
 
+static nsresult
+CompareToRangeStart(nsIDOMNode* aCompareNode, PRInt32 aCompareOffset,
+                    nsIDOMRange* aRange, PRInt32* cmp)
+{
+  nsCOMPtr<nsIDOMNode> startNode;
+  nsresult rv = aRange->GetStartContainer(getter_AddRefs(startNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PRInt32 startOffset;
+  rv = aRange->GetStartOffset(&startOffset);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *cmp = nsRange::ComparePoints(aCompareNode, aCompareOffset,
+                                startNode, startOffset);
+  return NS_OK;
+}
+
+static nsresult
+CompareToRangeEnd(nsIDOMNode* aCompareNode, PRInt32 aCompareOffset,
+                  nsIDOMRange* aRange, PRInt32* cmp)
+{
+  nsCOMPtr<nsIDOMNode> endNode;
+  nsresult rv = aRange->GetEndContainer(getter_AddRefs(endNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PRInt32 endOffset;
+  rv = aRange->GetEndOffset(&endOffset);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *cmp = nsRange::ComparePoints(aCompareNode, aCompareOffset,
+                                endNode, endOffset);
+  return NS_OK;
+}
+
+#ifdef DEBUG
+// checks the indices to make sure the range bookkeeping is up-to-date, useful
+// for debugging to make sure everything is consistent
+PRBool
+nsTypedSelection::ValidateRanges()
+{
+  if (mRanges.Length() != mRangeEndings.Length()) {
+    NS_NOTREACHED("Lengths don't match");
+    return PR_FALSE;
+  }
+
+  // check the main array and make sure they refer to the correct sorted ones
+  PRUint32 i;
+  for (i = 0; i < mRanges.Length(); i ++) {
+    if (mRanges[i].mEndIndex < 0 ||
+        mRanges[i].mEndIndex >= (PRInt32)mRangeEndings.Length()) {
+      NS_NOTREACHED("Sorted index is out of bounds");
+      return PR_FALSE;
+    }
+    if (mRangeEndings[mRanges[i].mEndIndex] != (PRInt32)i) {
+      NS_NOTREACHED("Beginning or ending isn't correct");
+      return PR_FALSE;
+    }
+  }
+
+  // check the other array to make sure they all refer to valid indices
+  for (i = 0; i < mRangeEndings.Length(); i ++) {
+    if (mRangeEndings[i] < 0 ||
+        mRangeEndings[i] >= (PRInt32)mRanges.Length()) {
+      NS_NOTREACHED("Ending refers to invalid index");
+      return PR_FALSE;
+    }
+  }
+
+  return PR_TRUE;
+}
+#endif
+
+// nsTypedSelection::FindInsertionPoint
+//
+//    Binary searches the sorted array of ranges for the insertion point for
+//    the given node/offset. The given comparator is used, and the index where
+//    the point should appear in the array is placed in *aInsertionPoint;
+//
+//    If the remapping array is given, we'll find the position in that array
+//    for the insertion, where that array contains indices that reference
+//    the range array. This can be NULL to not use a remapping array.
+//
+//    If there is item(s) in the array equal to the input point, we will return
+//    a random index between or adjacent to this item(s).
+
+nsresult
+nsTypedSelection::FindInsertionPoint(
+    const nsTArray<PRInt32>* aRemappingArray,
+    nsIDOMNode* aPointNode, PRInt32 aPointOffset,
+    nsresult (*aComparator)(nsIDOMNode*,PRInt32,nsIDOMRange*,PRInt32*),
+    PRInt32* aInsertionPoint)
+{
+  nsresult rv;
+  NS_ASSERTION(!aRemappingArray || aRemappingArray->Length() == mRanges.Length(),
+               "Remapping array must have the same entries as the range array");
+
+  PRInt32 beginSearch = 0;
+  PRInt32 endSearch = mRanges.Length(); // one beyond what to check
+  while (endSearch - beginSearch > 0) {
+    PRInt32 center = (endSearch - beginSearch) / 2 + beginSearch;
+
+    nsIDOMRange* range;
+    if (aRemappingArray)
+      range = mRanges[(*aRemappingArray)[center]].mRange;
+    else
+      range = mRanges[center].mRange;
+
+    PRInt32 cmp;
+    rv = aComparator(aPointNode, aPointOffset, range, &cmp);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (cmp < 0) {        // point < cur
+      endSearch = center;
+    } else if (cmp > 0) { // point > cur
+      beginSearch = center + 1;
+    } else {              // found match, done
+      beginSearch = center;
+      break;
+    }
+  }
+  *aInsertionPoint = beginSearch;
+  return NS_OK;
+}
+
 nsresult
 nsTypedSelection::AddItem(nsIDOMRange *aItem)
 {
+  nsresult rv;
   if (!aItem)
     return NS_ERROR_NULL_POINTER;
-  return mRangeArray.AppendObject(aItem) ? NS_OK : NS_ERROR_FAILURE;
+
+  NS_ASSERTION(ValidateRanges(), "Ranges out of sync");
+
+  // a common case is that we have no ranges yet
+  if (mRanges.Length() == 0) {
+    if (! mRanges.AppendElement(RangeData(aItem, 0)))
+      return NS_ERROR_OUT_OF_MEMORY;
+    if (! mRangeEndings.AppendElement(0)) {
+      mRanges.Clear();
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIDOMNode> beginNode;
+  PRInt32 beginOffset;
+  rv = aItem->GetStartContainer(getter_AddRefs(beginNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = aItem->GetStartOffset(&beginOffset);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PRInt32 beginInsertionPoint;
+  rv = FindInsertionPoint(nsnull, beginNode, beginOffset,
+                          CompareToRangeStart, &beginInsertionPoint);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // XXX Performance: 99% of the time, the beginning array and the ending array
+  // will be the same because the ranges do not overlap. We could save a few
+  // compares (which can be expensive) in this common case by special casing
+  // this.
+
+  nsCOMPtr<nsIDOMNode> endNode;
+  PRInt32 endOffset;
+  rv = aItem->GetEndContainer(getter_AddRefs(endNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = aItem->GetEndOffset(&endOffset);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // make sure that this range is not already in the selection
+  if (FindRangeGivenPoint(beginNode, beginOffset, endNode, endOffset,
+                          beginInsertionPoint)) {
+    // silently succeed, this range is already in the selection
+    return NS_OK;
+  }
+
+  PRInt32 endInsertionPoint;
+  rv = FindInsertionPoint(&mRangeEndings, endNode, endOffset,
+                          CompareToRangeEnd, &endInsertionPoint);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // insert the range, being careful to revert everything on error to keep
+  // consistency
+  if (! mRanges.InsertElementAt(beginInsertionPoint,
+        RangeData(aItem, endInsertionPoint))) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  if (! mRangeEndings.InsertElementAt(endInsertionPoint, beginInsertionPoint)) {
+    mRanges.RemoveElementAt(beginInsertionPoint);
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+
+  // adjust the end indices that point to the main list
+  PRUint32 i;
+  for (i = 0; i < mRangeEndings.Length(); i ++) {
+    if (mRangeEndings[i] >= beginInsertionPoint)
+      mRangeEndings[i] ++;
+  }
+
+  // the last loop updated the inserted index as well, so we need to put it
+  // back (this saves a comparison in that loop)
+  mRangeEndings[endInsertionPoint] = beginInsertionPoint;
+
+  // adjust the begin/end indices
+  for (i = endInsertionPoint + 1; i < mRangeEndings.Length(); i ++)
+    mRanges[mRangeEndings[i]].mEndIndex = i;
+
+  NS_ASSERTION(ValidateRanges(), "Ranges out of sync");
+  return NS_OK;
 }
-
-
 
 nsresult
 nsTypedSelection::RemoveItem(nsIDOMRange *aItem)
 {
   if (!aItem)
     return NS_ERROR_NULL_POINTER;
-  mRangeArray.RemoveObject(aItem);
-  return  NS_OK;
-}
+  NS_ASSERTION(ValidateRanges(), "Ranges out of sync");
 
+  // Find the range's index & remove it. We could use FindInsertionPoint to
+  // get O(log n) time, but that requires many expensive DOM comparisons.
+  // For even several thousand items, this is probably faster because the
+  // comparisons are so fast.
+  PRInt32 idx = -1;
+  PRUint32 i;
+  for (i = 0; i < mRanges.Length(); i ++) {
+    if (mRanges[i].mRange == aItem) {
+      idx = (PRInt32)i;
+      break;
+    }
+  }
+  if (idx < 0)
+    return NS_ERROR_INVALID_ARG;
+  mRanges.RemoveElementAt(idx);
+
+  // need to update the range ending list to reflect the removed item
+  PRInt32 endingIndex = -1;
+  for (i = 0; i < mRangeEndings.Length(); i ++) {
+    if (mRangeEndings[i] == idx)
+      endingIndex = i;
+    if (mRangeEndings[i] > idx)
+      mRangeEndings[i] --;
+  }
+  NS_ASSERTION(endingIndex >= 0 && endingIndex < (PRInt32)mRangeEndings.Length(),
+               "Index not found in ending list");
+
+  // remove from the sorted lists
+  mRangeEndings.RemoveElementAt(endingIndex);
+
+  // adjust indices of the RangeData structures
+  for (i = endingIndex; i < mRangeEndings.Length(); i ++)
+    mRanges[mRangeEndings[i]].mEndIndex = i;
+
+  NS_ASSERTION(ValidateRanges(), "Ranges out of sync");
+  return NS_OK;
+}
 
 
 nsresult
 nsTypedSelection::Clear(nsPresContext* aPresContext)
 {
   setAnchorFocusRange(-1);
-  // Get an iterator
-  while (PR_TRUE)
-  {
-    PRInt32 cnt = mRangeArray.Count();
-    if (cnt == 0)
-      break;
-    nsCOMPtr<nsIDOMRange> range = mRangeArray[0];
-    mRangeArray.RemoveObjectAt(0);
-    selectFrames(aPresContext, range, 0);
-  }
+
+  for (PRInt32 i = 0; i < (PRInt32)mRanges.Length(); i ++)
+    selectFrames(aPresContext, mRanges[i].mRange, 0);
+  mRanges.Clear();
+  mRangeEndings.Clear();
+
   // Reset direction so for more dependable table selection range handling
   SetDirection(eDirNext);
+
+  // If this was an ATTENTION selection, change it back to normal now
+  PRInt16 displayresult = nsISelectionController::SELECTION_OFF;
+  mFrameSelection->GetDisplaySelection(&displayresult);
+  if (displayresult == nsISelectionController::SELECTION_ATTENTION) {
+    mFrameSelection->SetDisplaySelection(nsISelectionController::SELECTION_ON);
+  }
+
   return NS_OK;
+}
+
+// nsTypedSelection::MoveIndexToFirstMatch
+//
+//    This adjusts the given index backwards in the range array so that it
+//    points to the first match of (node,offset). There might be any number
+//    of identical sequencial items in the array and the index can initially
+//    point to any one of them. When complete, the index will be moved to
+//    point to the first one of these. If the index does not point to a
+//    match of (node,offset) or there is only one match, the index will be
+//    untouched.
+//
+//    If there are multiple ranges beginning at the requested position, we'll
+//    get a random index in between those from FindInsertionPoint. We want the
+//    index to be at the first match in the array.
+//
+//    If the remapping array (sorted list containing indices into mRanges)
+//    is given, we'll use that for sorting and consider the index into
+//    that array. If NULL, we'll just use mRanges directly.
+//
+//    If aUseBeginning is set we'll compare to the range beginnings in the
+//    selection. If false, we'll compare to range endings.
+
+nsresult
+nsTypedSelection::MoveIndexToFirstMatch(PRInt32* aIndex, nsIDOMNode* aNode,
+                                        PRInt32 aOffset,
+                                        const nsTArray<PRInt32>* aRemappingArray,
+                                        PRBool aUseBeginning)
+{
+  nsresult rv;
+  nsCOMPtr<nsIDOMNode> curNode;
+  PRInt32 curOffset;
+  while (*aIndex > 0) {
+    nsIDOMRange* range;
+    if (aRemappingArray)
+      range = mRanges[(*aRemappingArray)[(*aIndex) - 1]].mRange;
+    else
+      range = mRanges[(*aIndex) - 1].mRange;
+
+    if (aUseBeginning) {
+      rv = range->GetStartContainer(getter_AddRefs(curNode));
+      NS_ENSURE_SUCCESS(rv, rv);
+      rv = range->GetStartOffset(&curOffset);
+      NS_ENSURE_SUCCESS(rv, rv);
+    } else {
+      rv = range->GetEndContainer(getter_AddRefs(curNode));
+      NS_ENSURE_SUCCESS(rv, rv);
+      rv = range->GetEndOffset(&curOffset);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    if (curNode != aNode)
+      break; // not a match
+    if (curOffset != aOffset)
+      break; // not a match
+
+    // the previous node matches, go back one
+    (*aIndex) --;
+  }
+  return NS_OK;
+}
+
+// nsTypedSelection::MoveIndexToNextMismatch
+//
+//    The same as MoveIndexToFirstMatch but increments the index until it
+//    points to something that doesn't match (node,offset).
+//
+//    If there is one or more range ending at the requested position, we
+//    want to start checking the first one that ends inside the range. This
+//    moves the given index to point to the first index inside the range.
+//    It may be one past the last item in the array.
+//
+//    If the requested DOM position is '9', and the caller got index 3
+//    from FindInsertionPoint with points in the range array:
+//       6  8  9  9  9  13  19
+//                ^
+//                input
+//    The input point will point to a random '9' in the array, or possibly
+//    the '13', which are all valid points for a new '9' to live in this array.
+//    This function will move the index to point to the '13' in this case,
+//    which is the first offset not matching the input position.
+//
+//    See MoveIndexToFirstMatch for the meaning of aRemappingArray and
+//    aUseBeginning.
+
+nsresult
+nsTypedSelection::MoveIndexToNextMismatch(PRInt32* aIndex, nsIDOMNode* aNode,
+                                          PRInt32 aOffset,
+                                          const nsTArray<PRInt32>* aRemappingArray,
+                                          PRBool aUseBeginning)
+{
+  nsresult rv;
+  nsCOMPtr<nsIDOMNode> curNode;
+  PRInt32 curOffset;
+  while (*aIndex < (PRInt32)mRanges.Length()) {
+    nsIDOMRange* range;
+    if (aRemappingArray)
+      range = mRanges[(*aRemappingArray)[*aIndex]].mRange;
+    else
+      range = mRanges[*aIndex].mRange;
+
+    if (aUseBeginning) {
+      rv = range->GetStartContainer(getter_AddRefs(curNode));
+      NS_ENSURE_SUCCESS(rv, rv);
+      rv = range->GetStartOffset(&curOffset);
+      NS_ENSURE_SUCCESS(rv, rv);
+    } else {
+      rv = range->GetEndContainer(getter_AddRefs(curNode));
+      NS_ENSURE_SUCCESS(rv, rv);
+      rv = range->GetEndOffset(&curOffset);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    if (curNode != aNode)
+      break; // mismatch
+    if (curOffset != aOffset)
+      break; // mismatch
+
+    // this node matches, go to the next one
+    (*aIndex) ++;
+  }
+  return NS_OK;
+}
+
+// nsTypedSelection::GetRangesForInterval
+//
+//    XPCOM wrapper for the COMArray version
+
+NS_IMETHODIMP
+nsTypedSelection::GetRangesForInterval(nsIDOMNode* aBeginNode, PRInt32 aBeginOffset,
+                                       nsIDOMNode* aEndNode, PRInt32 aEndOffset,
+                                       PRBool aAllowAdjacent,
+                                       PRUint32 *aResultCount,
+                                       nsIDOMRange ***aResults)
+{
+  nsresult rv;
+  *aResultCount = 0;
+  *aResults = nsnull;
+  if (! aBeginNode || ! aEndNode || ! aResultCount || ! aResults)
+    return NS_ERROR_NULL_POINTER;
+
+  nsCOMArray<nsIDOMRange> results;
+  rv = GetRangesForIntervalCOMArray(aBeginNode, aBeginOffset,
+                                    aEndNode, aEndOffset,
+                                    aAllowAdjacent,
+                                    &results);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (results.Count() == 0)
+    return NS_OK;
+
+  *aResults = NS_STATIC_CAST(nsIDOMRange**,
+      nsMemory::Alloc(sizeof(nsIDOMRange*) * results.Count()));
+  NS_ENSURE_TRUE(*aResults, NS_ERROR_OUT_OF_MEMORY);
+
+  *aResultCount = results.Count();
+  for (PRInt32 i = 0; i < results.Count(); i ++)
+    NS_ADDREF((*aResults)[i] = results[i]);
+  return NS_OK;
+}
+
+// nsTypedSelection::GetRangesForIntervalCOMArray
+//
+//    Fills a COM array with the ranges overlapping the range specified by
+//    the given endpoints. Ranges in the selection exactly adjacent to the
+//    input range are not returned unless aAllowAdjacent is set.
+
+NS_IMETHODIMP
+nsTypedSelection::GetRangesForIntervalCOMArray(nsIDOMNode* aBeginNode, PRInt32 aBeginOffset,
+                                               nsIDOMNode* aEndNode, PRInt32 aEndOffset,
+                                               PRBool aAllowAdjacent,
+                                               nsCOMArray<nsIDOMRange>* aRanges)
+{
+  nsresult rv;
+  NS_ASSERTION(ValidateRanges(), "Ranges out of sync");
+  aRanges->Clear();
+  if (mRanges.Length() == 0)
+    return NS_OK;
+
+  // Ranges that begin after the checked range, and ranges that end before
+  // the checked range can be discarded. The beginning index is the offset
+  // into the beginning array of the first item we DON'T have to check.
+
+  // ...index into the beginning array that is the FIRST ITEM OUTSIDE
+  //    OUR RANGE
+  PRInt32 beginningIndex;
+  rv = FindInsertionPoint(nsnull, aEndNode, aEndOffset,
+                          &CompareToRangeStart, &beginningIndex);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (beginningIndex == 0)
+    return NS_OK; // optimization: all ranges are after us
+
+  // ...index into the ending array that is the FIRST ITEM WE WANT TO CHECK
+  PRInt32 endingIndex;
+  rv = FindInsertionPoint(&mRangeEndings, aBeginNode, aBeginOffset,
+                          &CompareToRangeEnd, &endingIndex);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (endingIndex == (PRInt32)mRangeEndings.Length())
+    return NS_OK; // optimization: all ranges are before us
+
+  // adjust the indices in case of exact matches, FindInsertionPoint will
+  // give us a random index that would still be sorted if there is a match
+  if (aAllowAdjacent) {
+    // include adjacent points
+    //
+    // Recall that we want all things in mRangeEndings (indexed by endingIndex)
+    // before the requested beginning, and everything in mRanges (indexed by
+    // beginningIndex) after the requested ending.
+    //
+    // 1 3 5 5 5 8 9 10 10 10 11 12  <-- imaginary DOM positions of ranges
+    //       ^          ^            <-- we have this
+    //     ^                  ^      <-- compute this range
+    //  endingIndex   beginningIndex
+    rv = MoveIndexToFirstMatch(&endingIndex, aBeginNode, aBeginOffset,
+                               &mRangeEndings, PR_FALSE);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = MoveIndexToNextMismatch(&beginningIndex, aEndNode, aEndOffset,
+                                 nsnull, PR_TRUE);
+    NS_ENSURE_SUCCESS(rv, rv);
+  } else {
+    // exclude adjacent points, see previous case
+    // 1 3 5 5 5 8 9 10 10 10 11 12  <-- imaginary DOM positions of ranges
+    //       ^          ^            <-- we have this
+    //           ^   ^               <-- compute this range
+    // endingIndex   beginningIndex
+    rv = MoveIndexToNextMismatch(&endingIndex, aBeginNode, aBeginOffset,
+                                 &mRangeEndings, PR_FALSE);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = MoveIndexToFirstMatch(&beginningIndex, aEndNode, aEndOffset,
+                               nsnull, PR_TRUE);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // check for overlaps in the two ranges by linearly searching the smallest
+  // set of matches
+  if (beginningIndex > (PRInt32)mRangeEndings.Length() - endingIndex) {
+    // check ending array because its smaller
+    for (PRInt32 i = endingIndex; i < (PRInt32)mRangeEndings.Length(); i ++) {
+      if (mRangeEndings[i] < beginningIndex) {
+        if (! aRanges->AppendObject(mRanges[mRangeEndings[i]].mRange))
+          return NS_ERROR_OUT_OF_MEMORY;
+      }
+    }
+  } else {
+    for (PRInt32 i = 0; i < beginningIndex; i ++) {
+      if (mRanges[i].mEndIndex >= endingIndex) {
+        if (! aRanges->AppendObject(mRanges[i].mRange))
+          return NS_ERROR_OUT_OF_MEMORY;
+      }
+    }
+  }
+  return NS_OK;
+}
+
+// RangeMatches*Point
+//
+//    Compares the range beginning or ending point, and returns true if it
+//    exactly matches the given DOM point.
+
+static PRBool
+RangeMatchesBeginPoint(nsIDOMRange* aRange, nsIDOMNode* aNode, PRInt32 aOffset)
+{
+  PRInt32 offset;
+  nsresult rv = aRange->GetStartOffset(&offset);
+  if (NS_FAILED(rv) || offset != aOffset)
+    return PR_FALSE;
+
+  nsCOMPtr<nsIDOMNode> node;
+  rv = aRange->GetStartContainer(getter_AddRefs(node));
+  if (NS_FAILED(rv) || node != aNode)
+    return PR_FALSE;
+
+  return PR_TRUE;
+}
+
+static PRBool
+RangeMatchesEndPoint(nsIDOMRange* aRange, nsIDOMNode* aNode, PRInt32 aOffset)
+{
+  PRInt32 offset;
+  nsresult rv = aRange->GetEndOffset(&offset);
+  if (NS_FAILED(rv) || offset != aOffset)
+    return PR_FALSE;
+
+  nsCOMPtr<nsIDOMNode> node;
+  rv = aRange->GetEndContainer(getter_AddRefs(node));
+  if (NS_FAILED(rv) || node != aNode)
+    return PR_FALSE;
+
+  return PR_TRUE;
+}
+
+
+// nsTypedSelection::FindRangeGivenPoint
+//
+//    Searches for the range matching the exact given range points. We search
+//    in the array of beginnings, and start from the given index. This index
+//    should be the result of FindInsertionPoint, which will return any index
+//    within a range of identical ones.
+//
+//    Therefore, this function searches backwards and forwards from that point
+//    of all matching beginning points, and then compares the ending points to
+//    find a match. Returns true if a match was found, false if not.
+
+PRBool
+nsTypedSelection::FindRangeGivenPoint(
+    nsIDOMNode* aBeginNode, PRInt32 aBeginOffset,
+    nsIDOMNode* aEndNode, PRInt32 aEndOffset,
+    PRInt32 aStartSearchingHere)
+{
+  PRInt32 i;
+  NS_ASSERTION(aStartSearchingHere >= 0 && aStartSearchingHere <= (PRInt32)mRanges.Length(),
+               "Input searching seed is not in range.");
+
+  // search backwards for a begin match
+  for (i = aStartSearchingHere; i >= 0 && i < (PRInt32)mRanges.Length(); i --) {
+    if (RangeMatchesBeginPoint(mRanges[i].mRange, aBeginNode, aBeginOffset)) {
+      if (RangeMatchesEndPoint(mRanges[i].mRange, aEndNode, aEndOffset))
+        return PR_TRUE;
+    } else {
+      // done with matches going backwards
+      break;
+    }
+  }
+
+  // search forwards for a begin match
+  for (i = aStartSearchingHere + 1; i < (PRInt32)mRanges.Length(); i ++) {
+    if (RangeMatchesBeginPoint(mRanges[i].mRange, aBeginNode, aBeginOffset)) {
+      if (RangeMatchesEndPoint(mRanges[i].mRange, aEndNode, aEndOffset))
+        return PR_TRUE;
+    } else {
+      // done with matches going forwards
+      break;
+    }
+  }
+
+  // match not found
+  return PR_FALSE;
 }
 
 //utility method to get the primary frame of node or use the offset to get frame of child node
@@ -4678,20 +5337,30 @@ nsTypedSelection::GetPrimaryFrameForFocusNode(nsIFrame **aReturnFrame, PRInt32 *
   if (!aReturnFrame)
     return NS_ERROR_NULL_POINTER;
   
+  nsCOMPtr<nsIContent> content = do_QueryInterface(FetchFocusNode());
+  if (!content || !mFrameSelection)
+    return NS_ERROR_FAILURE;
+  
+  nsIPresShell *presShell = mFrameSelection->GetShell();
+
+  nsCOMPtr<nsICaret> caret;
+  nsresult result = presShell->GetCaret(getter_AddRefs(caret));
+  if (NS_FAILED(result) || !caret)
+    return NS_ERROR_FAILURE;
+
   PRInt32 frameOffset = 0;
   *aReturnFrame = 0;
   if (!aOffsetUsed)
     aOffsetUsed = &frameOffset;
-    
 
-  nsCOMPtr<nsIContent> content = do_QueryInterface(FetchFocusNode());
-  if (content && mFrameSelection)
-  {
-    nsIFrameSelection::HINT hint;
-    mFrameSelection->GetHint(&hint);
-    return mFrameSelection->GetFrameForNodeOffset(content, FetchFocusOffset(),hint,aReturnFrame, aOffsetUsed);
-  }
-  return NS_ERROR_FAILURE;
+  nsIFrameSelection::HINT hint;
+  mFrameSelection->GetHint(&hint);
+  
+  PRUint8 caretBidiLevel;
+  presShell->GetCaretBidiLevel(&caretBidiLevel);
+
+  return caret->GetCaretFrameForNodeOffset(content, FetchFocusOffset(), hint, caretBidiLevel,
+                                           aReturnFrame, aOffsetUsed);
 }
 
 
@@ -4878,141 +5547,117 @@ nsTypedSelection::selectFrames(nsPresContext* aPresContext, nsIDOMRange *aRange,
   return result;
 }
 
+// nsTypedSelection::LookUpSelection
+//
+//    This function is called when a node wants to know where the selection is
+//    over itself.
+//
+//    Usually, this is called when we already know there is a selection over
+//    the node in question, and we only need to find the boundaries of it on
+//    that node. This is when slowCheck is false--a strict test is not needed.
+//    Other times, the caller has no idea, and wants us to test everything,
+//    so we are supposed to determine whether there is a selection over the
+//    node at all.
+//
+//    A previous version of this code used this flag to do less work when
+//    inclusion was already known (slowCheck=false). However, our tree
+//    structure allows us to quickly determine ranges overlapping the node,
+//    so we just ignore the slowCheck flag and do the full test every time.
+//
+//    PERFORMANCE: a common case is that we are doing a fast check with exactly
+//    one range in the selection. In this case, this function is slower than
+//    brute force because of the overhead of checking the tree. We can optimize
+//    this case to make it faster by doing the same thing the previous version
+//    of this function did in the case of 1 range. This would also mean that
+//    the aSlowCheck flag would have meaning again.
 
 NS_IMETHODIMP
-nsTypedSelection::LookUpSelection(nsIContent *aContent, PRInt32 aContentOffset, PRInt32 aContentLength,
-                           SelectionDetails **aReturnDetails, SelectionType aType, PRBool aSlowCheck)
+nsTypedSelection::LookUpSelection(nsIContent *aContent, PRInt32 aContentOffset,
+                                  PRInt32 aContentLength,
+                                  SelectionDetails **aReturnDetails,
+                                  SelectionType aType, PRBool aSlowCheck)
 {
-  PRInt32 cnt;
-  nsresult rv = GetRangeCount(&cnt);
-  if (NS_FAILED(rv)) 
-    return rv;
-  PRInt32 i;
+  nsresult rv;
+  if (! aContent || ! aReturnDetails)
+    return NS_ERROR_NULL_POINTER;
 
-  nsCOMPtr<nsIDOMNode> passedInNode;
-  passedInNode = do_QueryInterface(aContent);
-  if (!passedInNode)
-    return NS_ERROR_FAILURE;
+  // it is common to have no ranges, to optimize that
+  if (mRanges.Length() == 0)
+    return NS_OK;
 
-  SelectionDetails *details = nsnull;
-  SelectionDetails *newDetails = details;
+  nsCOMPtr<nsIDOMNode> node = do_QueryInterface(aContent, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  for (i =0; i<cnt; i++){
-    nsCOMPtr<nsIDOMRange> range = mRangeArray[i];
-    if (range){
-      nsCOMPtr<nsIDOMNode> startNode;
-      nsCOMPtr<nsIDOMNode> endNode;
-      PRInt32 startOffset;
-      PRInt32 endOffset;
-      range->GetStartContainer(getter_AddRefs(startNode));
-      range->GetStartOffset(&startOffset);
-      range->GetEndContainer(getter_AddRefs(endNode));
-      range->GetEndOffset(&endOffset);
-      if (passedInNode == startNode && passedInNode == endNode){
-        if (startOffset < (aContentOffset + aContentLength)  &&
-            endOffset > aContentOffset){
-          if (!details){
-            details = new SelectionDetails;
+  nsCOMArray<nsIDOMRange> overlappingRanges;
+  rv = GetRangesForIntervalCOMArray(node, aContentOffset,
+                                    node, aContentOffset + aContentLength,
+                                    PR_FALSE,
+                                    &overlappingRanges);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (overlappingRanges.Count() == 0)
+    return NS_OK;
 
-            newDetails = details;
-          }
-          else{
-            newDetails->mNext = new SelectionDetails;
-            newDetails = newDetails->mNext;
-          }
-          if (!newDetails)
-            return NS_ERROR_OUT_OF_MEMORY;
-          newDetails->mNext = nsnull;
-          newDetails->mStart = PR_MAX(0,startOffset - aContentOffset);
-          newDetails->mEnd = PR_MIN(aContentLength, endOffset - aContentOffset);
-          newDetails->mType = aType;
-        }
+  for (PRInt32 i = 0; i < overlappingRanges.Count(); i ++) {
+    nsCOMPtr<nsIDOMNode> startNode, endNode;
+    PRInt32 startOffset, endOffset;
+    nsIDOMRange* range = overlappingRanges[i];
+    range->GetStartContainer(getter_AddRefs(startNode));
+    range->GetStartOffset(&startOffset);
+    range->GetEndContainer(getter_AddRefs(endNode));
+    range->GetEndOffset(&endOffset);
+
+    PRInt32 start = -1, end = -1;
+    if (startNode == node && endNode == node) {
+      if (startOffset < (aContentOffset + aContentLength)  &&
+          endOffset > aContentOffset) {
+        // this range is totally inside the requested content range
+        start = PR_MAX(0, startOffset - aContentOffset);
+        end = PR_MIN(aContentLength, endOffset - aContentOffset);
       }
-      else if (passedInNode == startNode){ //are we at the beginning?
-        if (startOffset < (aContentOffset + aContentLength)){
-          if (!details){
-            details = new SelectionDetails;
-            newDetails = details;
-          }
-          else{
-            newDetails->mNext = new SelectionDetails;
-            newDetails = newDetails->mNext;
-          }
-          if (!newDetails)
-            return NS_ERROR_OUT_OF_MEMORY;
-          newDetails->mNext = nsnull;
-          newDetails->mStart = PR_MAX(0,startOffset - aContentOffset);
-          newDetails->mEnd = aContentLength;
-          newDetails->mType = aType;
-        }
+      // otherwise, range is inside the requested node, but does not intersect
+      // the requested content range, so ignore it
+    } else if (startNode == node) {
+      if (startOffset < (aContentOffset + aContentLength)) {
+        // the beginning of the range is inside the requested node, but the
+        // end is outside, select everything from there to the end
+        start = PR_MAX(0, startOffset - aContentOffset);
+        end = aContentLength;
       }
-      else if (passedInNode == endNode){//are we at the end?
-        if (endOffset > aContentOffset){
-          if (!details){
-            details = new SelectionDetails;
-            newDetails = details;
-          }
-          else{
-            newDetails->mNext = new SelectionDetails;
-            newDetails = newDetails->mNext;
-          }
-          if (!newDetails)
-            return NS_ERROR_OUT_OF_MEMORY;
-          newDetails->mNext = nsnull;
-          newDetails->mStart = 0;
-          newDetails->mEnd = PR_MIN(aContentLength, endOffset - aContentOffset);
-          newDetails->mType = aType;
-        }
+    } else if (endNode == node) {
+      if (endOffset > aContentOffset) {
+        // the end of the range is inside the requested node, but the beginning
+        // is outside, select everything from the beginning to there
+        start = 0;
+        end = PR_MIN(aContentLength, endOffset - aContentOffset);
       }
-      else { //then we MUST be completely selected! unless someone needs us to check to make sure with slowcheck
-
-        if (cnt > 1 || aSlowCheck){ //if more than 1 selection or we need to do
-                                    //slow check see if farther than start or
-                                    //less than end.
-          //we only have to look at start offset because anything else would
-          //have been in the range
-          PRInt32 resultnum = nsRange::ComparePoints(startNode,
-                                                     startOffset,
-                                                     passedInNode,
-                                                     aContentOffset);
-          if (resultnum > 0)
-            continue; 
-          resultnum = nsRange::ComparePoints(endNode, endOffset,
-                                             passedInNode, aContentOffset);
-          if (resultnum <0)
-            continue;
-        }
-
-        if (!details){
-          details = new SelectionDetails;
-          newDetails = details;
-        }
-        else{
-          newDetails->mNext = new SelectionDetails;
-          newDetails = newDetails->mNext;
-        }
-        if (!newDetails)
-          return NS_ERROR_OUT_OF_MEMORY;
-        newDetails->mNext = nsnull;
-        newDetails->mStart = 0;
-        newDetails->mEnd = aContentLength;
-        newDetails->mType = aType;
-     }
+    } else {
+      // this range does not begin or end in the requested node, but since
+      // GetRangesForInterval returned this range, we know it overlaps.
+      // Therefore, this node is enclosed in the range, and we select all
+      // of it.
+      start = 0;
+      end = aContentLength;
     }
-    else
-      continue;
-  }
-  if (*aReturnDetails && newDetails)
-    newDetails->mNext = *aReturnDetails;
-  if (details)
+    if (start < 0)
+      continue; // the ranges do not overlap the input range
+
+    SelectionDetails* details = new SelectionDetails;
+    if (! details)
+      return NS_ERROR_OUT_OF_MEMORY;
+
+    details->mNext = *aReturnDetails;
+    details->mStart = start;
+    details->mEnd = end;
+    details->mType = aType;
     *aReturnDetails = details;
+  }
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsTypedSelection::Repaint(nsPresContext* aPresContext)
 {
-  PRInt32 arrCount = mRangeArray.Count();
+  PRInt32 arrCount = (PRInt32)mRanges.Length();
 
   if (arrCount < 1)
     return NS_OK;
@@ -5022,7 +5667,7 @@ nsTypedSelection::Repaint(nsPresContext* aPresContext)
   
   for (i = 0; i < arrCount; i++)
   {
-    range = mRangeArray[i];
+    range = mRanges[i].mRange;
 
     if (!range)
       return NS_ERROR_UNEXPECTED;
@@ -5577,19 +6222,73 @@ nsTypedSelection::AddRange(nsIDOMRange* aRange)
   return mFrameSelection->NotifySelectionListeners(GetType());
 }
 
+// nsTypedSelection::RemoveRange
+//
+//    Removes the given range from the selection. The tricky part is updating
+//    the flags on the frames that indicate whether they have a selection or
+//    not. There could be several selection ranges on the frame, and clearing
+//    the bit would cause the selection to not be drawn, even when there is
+//    another range on the frame (bug 346185).
+//
+//    We therefore find any ranges that intersect the same nodes as the range
+//    being removed, and cause them to set the selected bits back on their
+//    selected frames after we've cleared the bit from ours.
+
 NS_IMETHODIMP
 nsTypedSelection::RemoveRange(nsIDOMRange* aRange)
 {
   if (!aRange)
     return NS_ERROR_INVALID_ARG;
-  RemoveItem(aRange);
-  
+  nsresult rv = RemoveItem(aRange);
+  if (NS_FAILED(rv))
+    return rv;
+
+  nsCOMPtr<nsIDOMNode> beginNode, endNode;
+  rv = aRange->GetStartContainer(getter_AddRefs(beginNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = aRange->GetEndContainer(getter_AddRefs(endNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // find out the length of the end node, so we can select all of it
+  PRInt32 beginOffset, endOffset;
+  PRUint16 endNodeType = nsIDOMNode::ELEMENT_NODE;
+  endNode->GetNodeType(&endNodeType);
+  if (endNodeType == nsIDOMNode::TEXT_NODE) {
+    // Get the length of the text. We can't just use the offset because
+    // another range could be touching this text node but not intersect our
+    // range.
+    beginOffset = 0;
+    nsAutoString endNodeValue;
+    endNode->GetNodeValue(endNodeValue);
+    endOffset = endNodeValue.Length();
+  } else {
+    // For non-text nodes, the given offsets should be sufficient.
+    aRange->GetStartOffset(&beginOffset);
+    aRange->GetEndOffset(&endOffset);
+  }
+
+  // clear the selected bit from the removed range's frames
   nsCOMPtr<nsPresContext>  presContext;
   GetPresContext(getter_AddRefs(presContext));
-  selectFrames(presContext, aRange, PR_FALSE);        
-  if (aRange == mAnchorFocusRange.get())
+  selectFrames(presContext, aRange, PR_FALSE);
+
+  // add back the selected bit for each range touching our nodes
+  nsCOMArray<nsIDOMRange> affectedRanges;
+  rv = GetRangesForIntervalCOMArray(beginNode, beginOffset,
+                                    endNode, endOffset,
+                                    PR_TRUE, &affectedRanges);
+  NS_ENSURE_SUCCESS(rv, rv);
+  for (PRInt32 i = 0; i < affectedRanges.Count(); i ++)
+    selectFrames(presContext, affectedRanges[i], PR_TRUE);
+
+  // When the selection is user-created it makes sense to scroll the range
+  // into view. The spell-check selection, however, is created and destroyed
+  // in the background. We don't want to scroll in this case or the view
+  // might appear to be moving randomly (bug 337871).
+  if (mType != nsISelectionController::SELECTION_SPELLCHECK &&
+      aRange == mAnchorFocusRange.get())
   {
-    PRInt32 cnt = mRangeArray.Count();
+    PRInt32 cnt = mRanges.Length();
     if (cnt > 0)
     {
       setAnchorFocusRange(cnt - 1);//reset anchor to LAST range.
@@ -5611,6 +6310,8 @@ nsTypedSelection::Collapse(nsIDOMNode* aParentNode, PRInt32 aOffset)
 {
   if (!aParentNode)
     return NS_ERROR_INVALID_ARG;
+  if (!mFrameSelection)
+    return NS_ERROR_NOT_INITIALIZED; // Can't do selection
   mFrameSelection->InvalidateDesiredX();
   if (!IsValidSelectionPoint(mFrameSelection, aParentNode))
     return NS_ERROR_FAILURE;
@@ -5649,7 +6350,7 @@ nsTypedSelection::Collapse(nsIDOMNode* aParentNode, PRInt32 aOffset)
 
     const char *tagString;
     content->Tag()->GetUTF8String(&tagString);
-    printf ("Sel. Collapse to %p %s %d\n", content, tagString, aOffset);
+    printf ("Sel. Collapse to %p %s %d\n", content.get(), tagString, aOffset);
   }
   else {
     printf ("Sel. Collapse set to null parent.\n");
@@ -5680,7 +6381,7 @@ nsTypedSelection::CollapseToStart()
     return NS_ERROR_FAILURE;
 
   // Get the first range
-  nsIDOMRange* firstRange = mRangeArray[0];
+  nsIDOMRange* firstRange = mRanges[0].mRange;
   if (!firstRange)
     return NS_ERROR_FAILURE;
 
@@ -5714,7 +6415,7 @@ nsTypedSelection::CollapseToEnd()
     return NS_ERROR_FAILURE;
 
   // Get the last range
-  nsIDOMRange* lastRange = mRangeArray[cnt-1];
+  nsIDOMRange* lastRange = mRanges[cnt-1].mRange;
   if (!lastRange)
     return NS_ERROR_FAILURE;
 
@@ -5744,7 +6445,7 @@ nsTypedSelection::GetIsCollapsed(PRBool* aIsCollapsed)
   if (!aIsCollapsed)
     return NS_ERROR_NULL_POINTER;
 
-  PRInt32 cnt = mRangeArray.Count();;
+  PRInt32 cnt = (PRInt32)mRanges.Length();;
   if (cnt == 0)
   {
     *aIsCollapsed = PR_TRUE;
@@ -5757,7 +6458,7 @@ nsTypedSelection::GetIsCollapsed(PRBool* aIsCollapsed)
     return NS_OK;
   }
   
-  return mRangeArray[0]->GetCollapsed(aIsCollapsed);
+  return mRanges[0].mRange->GetCollapsed(aIsCollapsed);
 }
 
 NS_IMETHODIMP
@@ -5766,7 +6467,8 @@ nsTypedSelection::GetRangeCount(PRInt32* aRangeCount)
   if (!aRangeCount) 
     return NS_ERROR_NULL_POINTER;
 
-  *aRangeCount = mRangeArray.Count();
+  *aRangeCount = (PRInt32)mRanges.Length();
+  NS_ASSERTION(ValidateRanges(), "Ranges out of sync");
 
   return NS_OK;
 }
@@ -5776,12 +6478,13 @@ nsTypedSelection::GetRangeAt(PRInt32 aIndex, nsIDOMRange** aReturn)
 {
   if (!aReturn)
     return NS_ERROR_NULL_POINTER;
+  NS_ASSERTION(ValidateRanges(), "Ranges out of sync");
 
-  PRInt32 cnt = mRangeArray.Count();
+  PRInt32 cnt = (PRInt32)mRanges.Length();
   if (aIndex < 0 || aIndex >= cnt)
     return NS_ERROR_INVALID_ARG;
 
-  *aReturn = mRangeArray[aIndex];
+  *aReturn = mRanges[aIndex].mRange;
   NS_IF_ADDREF(*aReturn);
 
   return NS_OK;
@@ -6128,6 +6831,9 @@ nsTypedSelection::Extend(nsIDOMNode* aParentNode, PRInt32 aOffset)
   if (!mAnchorFocusRange)
     return NS_ERROR_NOT_INITIALIZED;
 
+  if (!mFrameSelection)
+    return NS_ERROR_NOT_INITIALIZED; // Can't do selection
+
   nsresult res;
   if (!IsValidSelectionPoint(mFrameSelection, aParentNode))
     return NS_ERROR_FAILURE;
@@ -6437,7 +7143,7 @@ nsTypedSelection::Extend(nsIDOMNode* aParentNode, PRInt32 aOffset)
 
     const char *tagString;
     content->Tag()->GetUTF8String(&tagString);
-    printf ("Sel. Extend to %p %s %d\n", content, tagString, aOffset);
+    printf ("Sel. Extend to %p %s %d\n", content.get(), tagString, aOffset);
   }
   else {
     printf ("Sel. Extend set to null parent.\n");
@@ -6492,56 +7198,65 @@ nsTypedSelection::SelectAllChildren(nsIDOMNode* aParentNode)
 }
 
 NS_IMETHODIMP
-nsTypedSelection::ContainsNode(nsIDOMNode* aNode, PRBool aRecursive, PRBool* aYes)
+nsTypedSelection::ContainsNode(nsIDOMNode* aNode, PRBool aAllowPartial,
+                               PRBool* aYes)
 {
+  nsresult rv;
   if (!aYes)
     return NS_ERROR_NULL_POINTER;
+  NS_ASSERTION(ValidateRanges(), "Ranges out of sync");
   *aYes = PR_FALSE;
 
-  // Iterate over the ranges in the selection checking for the content:
-  PRInt32 cnt = mRangeArray.Count();
-  for (PRInt32 i = 0; i < cnt; ++i)
-  {
-    nsIDOMRange* range = mRangeArray[i];
-    if (!range)
-      return NS_ERROR_UNEXPECTED;
+  if (mRanges.Length() == 0 || !aNode)
+    return NS_OK;
 
-    nsCOMPtr<nsIContent> content (do_QueryInterface(aNode));
-    if (content)
-    {
-      if (nsRange::IsNodeIntersectsRange(content, range))
-      {
-        // If recursive, then we're done -- IsNodeIntersectsRange does the right thing
-        if (aRecursive)
-        {
-          *aYes = PR_TRUE;
-          return NS_OK;
-        }
+  PRUint16 nodeType;
+  aNode->GetNodeType(&nodeType);
+  PRUint32 nodeLength;
+  if (nodeType == nsIDOMNode::TEXT_NODE) {
+    nsAutoString nodeValue;
+    rv = aNode->GetNodeValue(nodeValue);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nodeLength = nodeValue.Length();
+  } else {
+    nsCOMPtr<nsIDOMNodeList> aChildNodes;
+    rv = aNode->GetChildNodes(getter_AddRefs(aChildNodes));
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = aChildNodes->GetLength(&nodeLength);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
-        // else not recursive -- node itself must be contained,
-        // so we need to do more checking
-        PRBool nodeStartsBeforeRange, nodeEndsAfterRange;
-        if (NS_SUCCEEDED(nsRange::CompareNodeToRange(content, range,
-                                                     &nodeStartsBeforeRange,
-                                                     &nodeEndsAfterRange)))
-        {
-#ifdef DEBUG_ContainsNode
-          nsAutoString name, value;
-          aNode->GetNodeName(name);
-          aNode->GetNodeValue(value);
-          printf("%s [%s]: %d, %d\n", NS_LossyConvertUCS2toASCII(name).get(),
-                 NS_LossyConvertUCS2toASCII(value).get(),
-                 nodeStartsBeforeRange, nodeEndsAfterRange);
-#endif
-          PRUint16 nodeType;
-          aNode->GetNodeType(&nodeType);
-          if ((!nodeStartsBeforeRange && !nodeEndsAfterRange)
-              || (nodeType == nsIDOMNode::TEXT_NODE))
-          {
-            *aYes = PR_TRUE;
-            return NS_OK;
-          }
-        }
+  nsCOMArray<nsIDOMRange> overlappingRanges;
+  rv = GetRangesForIntervalCOMArray(aNode, 0, aNode, nodeLength,
+                                    PR_FALSE, &overlappingRanges);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (overlappingRanges.Count() == 0)
+    return NS_OK; // no ranges overlap
+
+  // if the caller said partial intersections are OK, we're done
+  if (aAllowPartial) {
+    *aYes = PR_TRUE;
+    return NS_OK;
+  }
+
+  // text nodes always count as inside
+  if (nodeType == nsIDOMNode::TEXT_NODE) {
+    *aYes = PR_TRUE;
+    return NS_OK;
+  }
+
+  // The caller wants to know if the node is entirely within the given range,
+  // so we have to check all intersecting ranges.
+  nsCOMPtr<nsIContent> content (do_QueryInterface(aNode, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+  for (PRInt32 i = 0; i < overlappingRanges.Count(); i ++) {
+    PRBool nodeStartsBeforeRange, nodeEndsAfterRange;
+    if (NS_SUCCEEDED(nsRange::CompareNodeToRange(content, overlappingRanges[i],
+                                                 &nodeStartsBeforeRange,
+                                                 &nodeEndsAfterRange))) {
+      if (!nodeStartsBeforeRange && !nodeEndsAfterRange) {
+        *aYes = PR_TRUE;
+        return NS_OK;
       }
     }
   }
@@ -7331,6 +8046,8 @@ nsTypedSelection::DeleteFromDocument()
 NS_IMETHODIMP
 nsTypedSelection::SelectionLanguageChange(PRBool aLangRTL)
 {
+  if (!mFrameSelection)
+    return NS_ERROR_NOT_INITIALIZED; // Can't do selection
   nsresult result;
   nsCOMPtr<nsIDOMNode>  focusNode;
   nsCOMPtr<nsIContent> focusContent;
@@ -7401,6 +8118,11 @@ nsTypedSelection::SelectionLanguageChange(PRBool aLangRTL)
     else
       shell->SetCaretBidiLevel(levelAfter);
   }
+  
+  // The caret might have moved, so invalidate the desired X position
+  // for future usages of up-arrow or down-arrow
+  mFrameSelection->InvalidateDesiredX();
+  
   return NS_OK;
 }
 

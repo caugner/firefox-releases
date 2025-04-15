@@ -8,7 +8,9 @@
       xmlns:nc="http://home.netscape.com/NC-rdf#"
       xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
       onload="onLoad();"
-      headertitle="&pane.title;">
+      headertitle="&pref.addressing.title;">
+
+  <stringbundle id="bundle_addressBook" src="chrome://messenger/locale/addressbook/addressBook.properties"/>
 
   <script type="application/x-javascript" src="chrome://messenger/content/addressbook/pref-directory.js"/>
   <script type="application/x-javascript">
@@ -22,7 +24,7 @@
 
   function onLoad()
   {
-    createDirectoriesList(true);
+    createDirectoriesList();
     parent.initPanel('chrome://messenger/content/addressbook/pref-addressing.xul');   
   }
 
@@ -87,7 +89,7 @@
                   preftype="string" 
                   prefstring="ldap_2.autoComplete.directoryServer">
           <menupopup id="directoriesListPopup" 
-            onpopupshowing="createDirectoriesList(true);">
+            onpopupshowing="createDirectoriesList();">
           </menupopup>
        </menulist>
        <button id="editButton" label="&editDirectories.label;" 

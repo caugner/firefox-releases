@@ -39,8 +39,18 @@
 #include "nsIGenericFactory.h"
 
 #include "nsBrowserCompsCID.h"
+#ifdef MOZ_PLACES
+#include "nsAnnoProtocolHandler.h"
+#include "nsAnnotationService.h"
+#include "nsNavHistory.h"
+#include "nsNavBookmarks.h"
+#include "nsFaviconService.h"
+#include "nsLivemarkService.h"
+#include "nsMorkHistoryImporter.h"
+#else
 #include "nsBookmarksService.h"
 #include "nsForwardProxyDataSource.h"
+#endif
 #ifdef XP_WIN
 #include "nsWindowsShellService.h"
 #elif defined(XP_MACOSX)
@@ -67,11 +77,30 @@
 #include "nsICabProfileMigrator.h"
 #endif
 #include "rdf.h"
+#ifdef MOZ_FEEDS
+#include "nsFeedSniffer.h"
+#include "nsAboutFeeds.h"
+#include "nsIAboutModule.h"
+#endif
+#ifdef MOZ_SAFE_BROWSING
+#include "nsDocNavStartProgressListener.h"
+#endif
 
 /////////////////////////////////////////////////////////////////////////////
 
+#ifdef MOZ_PLACES
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsNavHistory, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsNavHistoryResultTreeViewer)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsAnnoProtocolHandler)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsAnnotationService, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsNavBookmarks, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsFaviconService, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsLivemarkService, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsMorkHistoryImporter)
+#else
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsBookmarksService, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsForwardProxyDataSource, Init)
+#endif
 #ifdef XP_WIN
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsWindowsShellService)
 #elif defined(XP_MACOSX)
@@ -97,6 +126,13 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsMacIEProfileMigrator)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsCaminoProfileMigrator)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsICabProfileMigrator)
 #endif
+#ifdef MOZ_FEEDS
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsFeedSniffer)
+#endif
+#ifdef MOZ_SAFE_BROWSING
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDocNavStartProgressListener)
+#endif
+
 /////////////////////////////////////////////////////////////////////////////
 
 static const nsModuleComponentInfo components[] =
@@ -115,6 +151,60 @@ static const nsModuleComponentInfo components[] =
     nsGNOMEShellServiceConstructor },
 
 #endif
+
+#if defined(MOZ_PLACES)
+  { "Browser Navigation History",
+    NS_NAVHISTORYSERVICE_CID,
+    NS_NAVHISTORYSERVICE_CONTRACTID,
+    nsNavHistoryConstructor },
+
+  { "Browser Navigation History",
+    NS_NAVHISTORYSERVICE_CID,
+    "@mozilla.org/browser/global-history;2",
+    nsNavHistoryConstructor },
+
+  { "Browser Navigation History",
+    NS_NAVHISTORYSERVICE_CID,
+    "@mozilla.org/autocomplete/search;1?name=history",
+    nsNavHistoryConstructor },
+
+  { "History tree view",
+    NS_NAVHISTORYRESULTTREEVIEWER_CID,
+    NS_NAVHISTORYRESULTTREEVIEWER_CONTRACTID,
+    nsNavHistoryResultTreeViewerConstructor },
+
+  { "Page Annotation Service",
+    NS_ANNOTATIONSERVICE_CID,
+    NS_ANNOTATIONSERVICE_CONTRACTID,
+    nsAnnotationServiceConstructor },
+
+  { "Annotation Protocol Handler",
+    NS_ANNOPROTOCOLHANDLER_CID,
+    NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "moz-anno",
+    nsAnnoProtocolHandlerConstructor },
+
+  { "Browser Bookmarks Service",
+    NS_NAVBOOKMARKSSERVICE_CID,
+    NS_NAVBOOKMARKSSERVICE_CONTRACTID,
+    nsNavBookmarksConstructor },
+
+  { "Favicon Service",
+    NS_FAVICONSERVICE_CID,
+    NS_FAVICONSERVICE_CONTRACTID,
+    nsFaviconServiceConstructor },
+
+  { "Livemark Service",
+    NS_LIVEMARKSERVICE_CID,
+    NS_LIVEMARKSERVICE_CONTRACTID,
+    nsLivemarkServiceConstructor },
+
+  { "Mork History Importer",
+    NS_MORKHISTORYIMPORTER_CID,
+    NS_MORKHISTORYIMPORTER_CONTRACTID,
+    nsMorkHistoryImporterConstructor },
+
+#else
+
   { "Bookmarks",
     NS_BOOKMARKS_SERVICE_CID,
     NS_BOOKMARKS_SERVICE_CONTRACTID,
@@ -125,10 +215,38 @@ static const nsModuleComponentInfo components[] =
     NS_BOOKMARKS_DATASOURCE_CONTRACTID,
     nsBookmarksServiceConstructor },
 
+  { "Bookmarks",
+    NS_BOOKMARKS_SERVICE_CID,
+    "@mozilla.org/embeddor.implemented/bookmark-charset-resolver;1",
+    nsBookmarksServiceConstructor },
+
   { "Bookmarks Forward Proxy Inference Data Source",
     NS_RDF_FORWARDPROXY_INFER_DATASOURCE_CID,
     NS_RDF_INFER_DATASOURCE_CONTRACTID_PREFIX "forward-proxy",
     nsForwardProxyDataSourceConstructor },
+
+#endif
+
+#ifdef MOZ_FEEDS
+  { "Feed Sniffer",
+    NS_FEEDSNIFFER_CID,
+    NS_FEEDSNIFFER_CONTRACTID,
+    nsFeedSnifferConstructor,
+    nsFeedSniffer::Register },
+
+  { "about:feeds Page",
+    NS_ABOUTFEEDS_CID,
+    NS_ABOUT_MODULE_CONTRACTID_PREFIX "feeds",
+    nsAboutFeeds::Create
+  },
+#endif
+
+#ifdef MOZ_SAFE_BROWSING
+  { "Safe browsing document nav start progress listener",
+    NS_DOCNAVSTARTPROGRESSLISTENER_CID,
+    NS_DOCNAVSTARTPROGRESSLISTENER_CONTRACTID,
+    nsDocNavStartProgressListenerConstructor },
+#endif
 
   { "Profile Migrator",
     NS_FIREFOX_PROFILEMIGRATOR_CID,
@@ -197,8 +315,6 @@ static const nsModuleComponentInfo components[] =
     NS_SEAMONKEYPROFILEMIGRATOR_CID,
     NS_BROWSERPROFILEMIGRATOR_CONTRACTID_PREFIX "seamonkey",
     nsSeamonkeyProfileMigratorConstructor }
-
-
 };
 
 NS_IMPL_NSGETMODULE(nsBrowserCompsModule, components)

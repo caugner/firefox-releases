@@ -858,8 +858,7 @@ NS_IMETHODIMP nsInlineFrame::GetAccessible(nsIAccessible** aAccessible)
   *aAccessible = nsnull;
   nsIAtom *tagAtom = mContent->Tag();
   if ((tagAtom == nsHTMLAtoms::img || tagAtom == nsHTMLAtoms::input || 
-       tagAtom == nsHTMLAtoms::label || tagAtom == nsHTMLAtoms::hr) &&
-      mContent->IsContentOfType(nsIContent::eHTML)) {
+       tagAtom == nsHTMLAtoms::label) && mContent->IsContentOfType(nsIContent::eHTML)) {
     // Only get accessibility service if we're going to use it
     nsCOMPtr<nsIAccessibilityService> accService(do_GetService("@mozilla.org/accessibilityService;1"));
     if (!accService)
@@ -870,8 +869,6 @@ NS_IMETHODIMP nsInlineFrame::GetAccessible(nsIAccessible** aAccessible)
       return accService->CreateHTMLImageAccessible(NS_STATIC_CAST(nsIFrame*, this), aAccessible);
     else if (tagAtom == nsHTMLAtoms::label)  // Creat accessible for <label>
       return accService->CreateHTMLLabelAccessible(NS_STATIC_CAST(nsIFrame*, this), aAccessible);
-    // Create accessible for <hr>
-    return accService->CreateHTMLHRAccessible(NS_STATIC_CAST(nsIFrame*, this), aAccessible);
   }
 
   return NS_ERROR_FAILURE;
@@ -884,14 +881,15 @@ NS_IMETHODIMP nsInlineFrame::GetAccessible(nsIAccessible** aAccessible)
 
 static void
 ReParentChildListStyle(nsPresContext* aPresContext,
-                       nsStyleContext* aParentStyleContext,
-                       nsFrameList& aFrameList)
+                       nsFrameList& aFrameList,
+                       nsIFrame* aParentFrame)
 {
   nsFrameManager *frameManager = aPresContext->FrameManager();
 
   for (nsIFrame* kid = aFrameList.FirstChild(); kid;
        kid = kid->GetNextSibling()) {
-    frameManager->ReParentStyleContext(kid, aParentStyleContext);
+    NS_ASSERTION(kid->GetParent() == aParentFrame, "Bogus parentage");
+    frameManager->ReParentStyleContext(kid);
   }
 }
 
@@ -947,7 +945,8 @@ nsFirstLineFrame::PullOneFrame(nsPresContext* aPresContext, InlineReflowState& i
   if (frame && !mPrevInFlow) {
     // We are a first-line frame. Fixup the child frames
     // style-context that we just pulled.
-    aPresContext->FrameManager()->ReParentStyleContext(frame, mStyleContext);
+    NS_ASSERTION(frame->GetParent() == this, "Incorrect parent?");
+    aPresContext->FrameManager()->ReParentStyleContext(frame);
   }
   return frame;
 }
@@ -970,7 +969,7 @@ nsFirstLineFrame::Reflow(nsPresContext* aPresContext,
       nsFrameList frames(prevOverflowFrames);
       
       mFrames.InsertFrames(this, nsnull, prevOverflowFrames);
-      ReParentChildListStyle(aPresContext, mStyleContext, frames);
+      ReParentChildListStyle(aPresContext, frames, this);
     }
   }
 
@@ -981,7 +980,7 @@ nsFirstLineFrame::Reflow(nsPresContext* aPresContext,
     nsFrameList frames(overflowFrames);
 
     mFrames.AppendFrames(nsnull, overflowFrames);
-    ReParentChildListStyle(aPresContext, mStyleContext, frames);
+    ReParentChildListStyle(aPresContext, frames, this);
   }
 
   // Set our own reflow state (additional state above and beyond
@@ -1042,7 +1041,7 @@ nsFirstLineFrame::Reflow(nsPresContext* aPresContext,
           SetStyleContext(aPresContext, newSC);
 
           // Re-resolve all children
-          ReParentChildListStyle(aPresContext, mStyleContext, mFrames);
+          ReParentChildListStyle(aPresContext, mFrames, this);
         }
       }
     }

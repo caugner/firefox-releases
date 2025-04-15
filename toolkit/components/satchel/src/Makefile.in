@@ -62,16 +62,25 @@ REQUIRES =	\
 		content \
 		view \
 		locale \
-		mork \
 		unicharutil \
 		intl \
 		pref \
 		$(NULL)
 
 CPPSRCS = nsFormFillController.cpp \
-          nsFormHistory.cpp \
           $(NULL)
 
-LOCAL_INCLUDES = -I$(srcdir)/../../passwordmgr/base
+ifdef MOZ_PLACES
+REQUIRES += storage morkreader
+CPPSRCS += nsStorageFormHistory.cpp
+else
+REQUIRES += mork
+CPPSRCS += nsFormHistory.cpp
+endif
+
+LOCAL_INCLUDES = \
+		-I$(srcdir)/../../passwordmgr/base \
+		-I$(srcdir)/../../build \
+		$(NULL)
 
 include $(topsrcdir)/config/rules.mk

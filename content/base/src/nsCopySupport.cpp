@@ -114,7 +114,7 @@ nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 
   if (NS_FAILED(rv)) 
     return rv;
 
-  nsAutoString buffer, parents, info, shortcut, textBuffer, plaintextBuffer;
+  nsAutoString buffer, parents, info, textBuffer, plaintextBuffer;
 
   rv = docEncoder->EncodeToString(textBuffer);
   if (NS_FAILED(rv)) 
@@ -135,7 +135,8 @@ nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 
 
     nsCOMPtr<nsISupportsString> ConvertedData;
     PRUint32 ConvertedLen;
-    htmlConverter->Convert(kHTMLMime, plainHTML, textBuffer.Length() * 2, kUnicodeMime, getter_AddRefs(ConvertedData), &ConvertedLen);
+    rv = htmlConverter->Convert(kHTMLMime, plainHTML, textBuffer.Length() * 2, kUnicodeMime, getter_AddRefs(ConvertedData), &ConvertedLen);
+    NS_ENSURE_SUCCESS(rv, rv);
 
     ConvertedData->GetData(plaintextBuffer);
 
@@ -144,17 +145,14 @@ nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 
     flags = 0;
 
     rv = docEncoder->Init(aDoc, mimeType, flags);
-    if (NS_FAILED(rv)) 
-      return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
+
     rv = docEncoder->SetSelection(aSel);
-    if (NS_FAILED(rv)) 
-      return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
 
     // encode the selection as html with contextual info
     rv = docEncoder->EncodeToStringWithContext(buffer, parents, info);
-    if (NS_FAILED(rv)) 
-      return rv;
-
+    NS_ENSURE_SUCCESS(rv, rv);
   }
   
   // Get the Clipboard
@@ -172,18 +170,6 @@ nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 
       {
         // set up the data converter
         trans->SetConverter(htmlConverter);
-
-        // Try and get source URI of the items that are being dragged
-        nsIURI *uri = aDoc->GetDocumentURI();
-
-        nsCAutoString spec;
-        uri->GetSpec(spec);
-
-        AppendUTF8toUTF16(spec, shortcut);
-        shortcut.Append(PRUnichar('\n'));
-
-        // and get document title
-        shortcut.Append(aDoc->GetDocumentTitle());
 
         if (!buffer.IsEmpty())
         {
@@ -213,14 +199,26 @@ nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 
           rv = AppendString(trans, plaintextBuffer, kUnicodeMime);
           NS_ENSURE_SUCCESS(rv, rv);
         }
-        // url
-        if (!shortcut.IsEmpty())
-        {
-          // Add the URL DataFlavor to the transferable
-          rv = AppendString(trans, shortcut, kURLMime);
-          NS_ENSURE_SUCCESS(rv, rv);
-        }
 
+        // Try and get source URI of the items that are being dragged
+        nsIURI *uri = aDoc->GetDocumentURI();
+        if (uri) {
+          nsCAutoString spec;
+          uri->GetSpec(spec);
+          if (!spec.IsEmpty()) {
+            nsAutoString shortcut;
+            AppendUTF8toUTF16(spec, shortcut);
+
+            // Add the URL DataFlavor to the transferable. Don't use kURLMime,
+            // as it will cause an unnecessary UniformResourceLocator to be
+            // added which confuses some apps eg. Outlook 2000 - (See Bug
+            // 315370). Don't use kURLDataMime, as it will cause a bogus
+            // 'url ' flavor to show up on the Mac clipboard, confusing other
+            // apps, like Terminal (see Bug 336012)
+            rv = AppendString(trans, shortcut, kURLPrivateMime);
+            NS_ENSURE_SUCCESS(rv, rv);
+          }
+        }
       }
       else
       {

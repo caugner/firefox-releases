@@ -67,8 +67,6 @@ ifneq ($(DIRS)$(TOOL_DIRS),)
 SUBMAKEFILES		:= $(addsuffix /Makefile, $(TOOL_DIRS) $(filter-out $(STATIC_MAKEFILES), $(DIRS)))
 endif
 
-GRE_DIST	= $(DIST)/gre
-
 # FINAL_TARGET specifies the location into which we copy end-user-shipped
 # build products (typelibs, components, chrome).
 #
@@ -137,39 +135,6 @@ OS_CONFIG	:= $(OS_ARCH)$(OS_RELEASE)
 FINAL_LINK_LIBS = $(DEPTH)/config/final-link-libs
 FINAL_LINK_COMPS = $(DEPTH)/config/final-link-comps
 FINAL_LINK_COMP_NAMES = $(DEPTH)/config/final-link-comp-names
-
-# 
-# NSS libs needed for final link in static build
-# 
-
-NSS_LIBS	= \
-	$(LIBS_DIR) \
-	$(DIST)/lib/$(LIB_PREFIX)crmf.$(LIB_SUFFIX) \
-	-lsmime3 \
-	-lssl3 \
-	-lnss3 \
-	-lsoftokn3 \
-	$(NULL)
-
-ifneq (,$(filter OS2 WINNT WINCE, $(OS_ARCH)))
-ifndef GNU_CC
-NSS_LIBS	= \
-	$(DIST)/lib/$(LIB_PREFIX)crmf.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)smime3.$(IMPORT_LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)ssl3.$(IMPORT_LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)nss3.$(IMPORT_LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)softokn3.$(IMPORT_LIB_SUFFIX) \
-	$(NULL)
-endif
-endif
-
-NSS_DEP_LIBS	= \
-	$(DIST)/lib/$(LIB_PREFIX)crmf.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(DLL_PREFIX)smime3$(DLL_SUFFIX) \
-	$(DIST)/lib/$(DLL_PREFIX)ssl3$(DLL_SUFFIX) \
-	$(DIST)/lib/$(DLL_PREFIX)nss3$(DLL_SUFFIX) \
-	$(DIST)/lib/$(DLL_PREFIX)softokn3$(DLL_SUFFIX) \
-	$(NULL)
 
 MOZ_UNICHARUTIL_LIBS = $(DIST)/lib/$(LIB_PREFIX)unicharutil_s.$(LIB_SUFFIX)
 MOZ_REGISTRY_LIBS          = $(DIST)/lib/$(LIB_PREFIX)mozreg_s.$(LIB_SUFFIX)
@@ -459,6 +424,27 @@ endif
 endif
 endif
 
+ifdef MINIMO
+ifdef LIBXUL_LIBRARY
+DEFINES += \
+		-D_IMPL_NS_COM \
+		-DEXPORT_XPT_API \
+		-DEXPORT_XPTC_API \
+		-DEXPORT_XPTI_API \
+		-D_IMPL_NS_COM_OBSOLETE \
+		-D_IMPL_NS_GFX \
+		-D_IMPL_NS_WIDGET \
+		-DIMPL_XULAPI \
+		-DIMPL_NS_NET \
+		$(NULL)
+endif
+
+ifdef WINCE
+DEFINES += -D_NSPR_BUILD_
+endif
+
+endif
+
 # Force _all_ exported methods to be |_declspec(dllexport)| when we're
 # building them into the executable.
 
@@ -530,6 +516,11 @@ XPIDL_COMPILE 	= $(CYGWIN_WRAPPER) $(DIST)/bin/xpidl$(BIN_SUFFIX)
 XPIDL_LINK	= $(CYGWIN_WRAPPER) $(DIST)/bin/xpt_link$(BIN_SUFFIX)
 endif
 
+# Java macros
+JAVA_GEN_DIR  = _javagen
+JAVA_DIST_DIR = $(DEPTH)/$(JAVA_GEN_DIR)
+JAVA_IFACES_PKG_NAME = org/mozilla/xpcom
+
 REQ_INCLUDES	= $(foreach d,$(REQUIRES),-I$(DIST)/include/$d)
 
 INCLUDES	= $(LOCAL_INCLUDES) $(REQ_INCLUDES) -I$(PUBLIC) -I$(DIST)/include $(OS_INCLUDES)
@@ -592,17 +583,12 @@ ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_)
 #//
 #//------------------------------------------------------------------------
 ifdef USE_STATIC_LIBS
-ifeq (,$(filter-out 1200 1300 1310,$(_MSC_VER)))
-RTL_FLAGS=-ML          # Statically linked non-multithreaded LIBC RTL
-ifneq (,$(MOZ_DEBUG)$(NS_TRACE_MALLOC))
-RTL_FLAGS=-MLd         # Statically linked non-multithreaded LIBC debug RTL
-endif # MOZ_DEBUG || NS_TRACE_MALLOC
-else
 RTL_FLAGS=-MT          # Statically linked multithreaded RTL
 ifneq (,$(MOZ_DEBUG)$(NS_TRACE_MALLOC))
+ifndef MOZ_NO_DEBUG_RTL
 RTL_FLAGS=-MTd         # Statically linked multithreaded MSVC4.0 debug RTL
+endif
 endif # MOZ_DEBUG || NS_TRACE_MALLOC
-endif # _MSC_VER
 
 else # !USE_STATIC_LIBS
 
@@ -618,6 +604,7 @@ endif # WINNT && !GNU_CC
 
 COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(XCFLAGS) $(PROFILER_CFLAGS) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(CFLAGS) $(RTL_FLAGS) $(OS_COMPILE_CFLAGS)
 COMPILE_CXXFLAGS = $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(XCFLAGS) $(PROFILER_CFLAGS) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS)  $(CXXFLAGS) $(RTL_FLAGS) $(OS_COMPILE_CXXFLAGS)
+HOST_CFLAGS += $(RTL_FLAGS)
 
 #
 # Name of the binary code directories
@@ -680,10 +667,17 @@ ifdef USE_PREBINDING
 export LD_PREBIND=1
 export LD_SEG_ADDR_TABLE=$(shell cd $(topsrcdir); pwd)/config/prebind-address-table
 endif # USE_PREBINDING
+ifdef NEXT_ROOT
+export NEXT_ROOT
 PBBUILD = NEXT_ROOT= $(PBBUILD_BIN)
+else # NEXT_ROOT
+PBBUILD = $(PBBUILD_BIN)
+endif # NEXT_ROOT
 PBBUILD_SETTINGS = GCC_VERSION="$(GCC_VERSION)" SYMROOT=build
+ifdef CROSS_COMPILE
+PBBUILD_SETTINGS += ARCHS="$(OS_TEST)"
+endif # CROSS_COMPILE
 ifdef MACOS_SDK_DIR
-export NEXT_ROOT=$(MACOS_SDK_DIR)
 PBBUILD_SETTINGS += SDKROOT="$(MACOS_SDK_DIR)"
 endif # MACOS_SDK_DIR
 ifdef MACOSX_DEPLOYMENT_TARGET
@@ -877,4 +871,15 @@ DEFINES += -DBUILD_ID=$(BUILD_ID)
 
 ifeq (,$(filter WINCE WINNT OS2,$(OS_ARCH)))
 RUN_TEST_PROGRAM = $(DIST)/bin/run-mozilla.sh
+endif
+
+#
+# Java macros
+#
+
+# Make sure any compiled classes work with at least JVM 1.4
+JAVAC_FLAGS += -source 1.4
+
+ifdef MOZ_DEBUG
+JAVAC_FLAGS += -g
 endif

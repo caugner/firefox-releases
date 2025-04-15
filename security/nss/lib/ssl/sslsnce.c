@@ -36,7 +36,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: sslsnce.c,v 1.33 2005/04/06 21:35:45 nelsonb%netscape.com Exp $ */
+/* $Id: sslsnce.c,v 1.33.14.3 2006/08/04 19:10:54 kaie%kuix.de Exp $ */
 
 /* Note: ssl_FreeSID() in sslnonce.c gets used for both client and server 
  * cache sids!
@@ -146,17 +146,15 @@ struct sidCacheEntryStr {
 /*  2 */    ssl3CipherSuite  cipherSuite;
 /*  2 */    PRUint16    compression; 	/* SSL3CompressionMethod */
 
-/*122 */    ssl3SidKeys keys;	/* keys and ivs, wrapped as needed. */
-/*  1 */    PRUint8     hasFortezza;
-/*  1 */    PRUint8     resumable;
+/*100 */    ssl3SidKeys keys;	/* keys and ivs, wrapped as needed. */
 
 /*  4 */    PRUint32    masterWrapMech; 
 /*  4 */    SSL3KEAType exchKeyType;
 /*  4 */    PRInt32     certIndex;
-/*140 */} ssl3;
-#if defined(LINUX)
+/*116 */} ssl3;
+#if defined(LINUX)                      /* XXX Why only on Linux ? */
 	struct {
-	    PRUint8     filler[144];	
+	    PRUint8     filler[144];	/* XXX why this number ? */
 	} forceSize;
 #endif
     } u;
@@ -441,8 +439,6 @@ ConvertFromSID(sidCacheEntry *to, sslSessionID *from)
 
 	to->u.ssl3.cipherSuite      = from->u.ssl3.cipherSuite;
 	to->u.ssl3.compression      = (uint16)from->u.ssl3.compression;
-	to->u.ssl3.resumable        = from->u.ssl3.resumable;
-	to->u.ssl3.hasFortezza      = from->u.ssl3.hasFortezza;
 	to->u.ssl3.keys             = from->u.ssl3.keys;
 	to->u.ssl3.masterWrapMech   = from->u.ssl3.masterWrapMech;
 	to->u.ssl3.exchKeyType      = from->u.ssl3.exchKeyType;
@@ -517,8 +513,6 @@ ConvertToSID(sidCacheEntry *from, certCacheEntry *pcce,
 	to->u.ssl3.sessionIDLength  = from->sessionIDLength;
 	to->u.ssl3.cipherSuite      = from->u.ssl3.cipherSuite;
 	to->u.ssl3.compression      = (SSL3CompressionMethod)from->u.ssl3.compression;
-	to->u.ssl3.resumable        = from->u.ssl3.resumable;
-	to->u.ssl3.hasFortezza      = from->u.ssl3.hasFortezza;
 	to->u.ssl3.keys             = from->u.ssl3.keys;
 	to->u.ssl3.masterWrapMech   = from->u.ssl3.masterWrapMech;
 	to->u.ssl3.exchKeyType      = from->u.ssl3.exchKeyType;
@@ -530,7 +524,7 @@ ConvertToSID(sidCacheEntry *from, certCacheEntry *pcce,
 	 */
 	to->u.ssl3.clientWriteKey   = NULL;
 	to->u.ssl3.serverWriteKey   = NULL;
-	to->u.ssl3.tek              = NULL;
+
 	to->urlSvrName              = NULL;
 
 	to->u.ssl3.masterModuleID   = (SECMODModuleID)-1; /* invalid value */
@@ -543,8 +537,6 @@ ConvertToSID(sidCacheEntry *from, certCacheEntry *pcce,
 	to->u.ssl3.clAuthSlotID     = (CK_SLOT_ID)-1;     /* invalid value */
 	to->u.ssl3.clAuthSeries     = 0;
 	to->u.ssl3.clAuthValid      = PR_FALSE;
-
-	to->u.ssl3.clientWriteSaveLen = 0;
 
 	if (from->u.ssl3.certIndex != -1 && pcce) {
 	    SECItem          derCert;
@@ -758,12 +750,14 @@ ServerSessionIDCache(sslSessionID *sid)
     if (sid->cached == never_cached || sid->cached == invalid_cache) {
 	PRUint32 set;
 
-	PORT_Assert(sid->creationTime != 0 && sid->expirationTime != 0);
+	PORT_Assert(sid->creationTime != 0);
 	if (!sid->creationTime)
 	    sid->lastAccessTime = sid->creationTime = ssl_Time();
 	if (version < SSL_LIBRARY_VERSION_3_0) {
-	    if (!sid->expirationTime)
-		sid->expirationTime = sid->creationTime + ssl_sid_timeout;
+	    /* override caller's expiration time, which uses client timeout
+	     * duration, not server timeout duration.
+	     */
+	    sid->expirationTime = sid->creationTime + cache->ssl2Timeout;
 	    SSL_TRC(8, ("%d: SSL: CacheMT: cached=%d addr=0x%08x%08x%08x%08x time=%x "
 			"cipher=%d", myPid, sid->cached,
 			sid->addr.pr_s6_addr32[0], sid->addr.pr_s6_addr32[1],
@@ -777,8 +771,10 @@ ServerSessionIDCache(sslSessionID *sid)
 			  sid->u.ssl2.cipherArg.len));
 
 	} else {
-	    if (!sid->expirationTime)
-		sid->expirationTime = sid->creationTime + ssl3_sid_timeout;
+	    /* override caller's expiration time, which uses client timeout
+	     * duration, not server timeout duration.
+	     */
+	    sid->expirationTime = sid->creationTime + cache->ssl3Timeout;
 	    SSL_TRC(8, ("%d: SSL: CacheMT: cached=%d addr=0x%08x%08x%08x%08x time=%x "
 			"cipherSuite=%d", myPid, sid->cached,
 			sid->addr.pr_s6_addr32[0], sid->addr.pr_s6_addr32[1],
@@ -896,7 +892,8 @@ CloseCache(cacheDesc *cache)
 	** be) in use by multiple processes.  We do not wish to destroy
 	** the mutexes while they are still in use.  
 	*/
-	if (PR_FALSE == cache->sharedCache->everInherited) {
+	if (cache->sharedCache &&
+            PR_FALSE == cache->sharedCache->everInherited) {
 	    sidCacheLock *pLock = cache->sidCacheLocks;
 	    for (; locks_initialized > 0; --locks_initialized, ++pLock ) {
 		sslMutex_Destroy(&pLock->mutex);
@@ -929,6 +926,11 @@ InitCache(cacheDesc *cache, int maxCacheEntries, PRUint32 ssl2_timeout,
     int           locks_to_initialize = 0;
     PRUint32      init_time;
 
+    if ( (!cache) || (maxCacheEntries < 0) || (!directory) ) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+        return SECFailure;
+    }
+
     if (cache->cacheMem) {
 	/* Already done */
 	return SECSuccess;
@@ -939,6 +941,12 @@ InitCache(cacheDesc *cache, int maxCacheEntries, PRUint32 ssl2_timeout,
     cache->cacheMem    = cacheMem    = NULL;
     cache->cacheMemMap = cacheMemMap = NULL;
     cache->sharedCache = (cacheDesc *)0;
+
+    cache->numSIDCacheLocksInitialized = 0;
+    cache->nextCertCacheEntry = 0;
+    cache->stopPolling = PR_FALSE;
+    cache->everInherited = PR_FALSE;
+    cache->poller = NULL;
 
     cache->numSIDCacheEntries = maxCacheEntries ? maxCacheEntries 
                                                 : DEF_SID_CACHE_ENTRIES;

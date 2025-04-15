@@ -43,6 +43,7 @@
 #include "nsString.h"
 #include "nsString.h"
 #include "nsCRT.h"
+#include "nsServiceManagerUtils.h"
 
 
 nsJavaXPTCStub::nsJavaXPTCStub(jobject aJavaObject, nsIInterfaceInfo *aIInfo)
@@ -52,15 +53,18 @@ nsJavaXPTCStub::nsJavaXPTCStub(jobject aJavaObject, nsIInterfaceInfo *aIInfo)
   , mWeakRefCnt(0)
 {
   JNIEnv* env = GetJNIEnv();
-  mJavaWeakRef = env->NewWeakGlobalRef(aJavaObject);
+  jobject weakref = env->NewObject(weakReferenceClass,
+                                   weakReferenceConstructorMID, aJavaObject);
+  mJavaWeakRef = env->NewGlobalRef(weakref);
+  mJavaRefHashCode = env->CallStaticIntMethod(systemClass, hashCodeMID,
+                                              aJavaObject);
 
 #ifdef DEBUG_JAVAXPCOM
   nsIID* iid;
   mIInfo->GetInterfaceIID(&iid);
   char* iid_str = iid->ToString();
   LOG(("+ nsJavaXPTCStub (Java=%08x | XPCOM=%08x | IID=%s)\n",
-       (PRUint32) env->CallIntMethod(aJavaObject, hashCodeMID),
-       (PRUint32) this, iid_str));
+      (PRUint32) mJavaRefHashCode, (PRUint32) this, iid_str));
   PR_Free(iid_str);
   nsMemory::Free(iid);
 #endif
@@ -76,7 +80,11 @@ nsJavaXPTCStub::AddRefInternal()
   // If this is the first AddRef call, we create a strong global ref to the
   // Java object to keep it from being garbage collected.
   if (mRefCnt == 0) {
-    mJavaStrongRef = GetJNIEnv()->NewGlobalRef(mJavaWeakRef);
+    JNIEnv* env = GetJNIEnv();
+    jobject referent = env->CallObjectMethod(mJavaWeakRef, getReferentMID);
+    if (!env->IsSameObject(referent, NULL)) {
+      mJavaStrongRef = env->NewGlobalRef(referent);
+    }
     NS_ASSERTION(mJavaStrongRef != nsnull, "Failed to acquire strong ref");
   }
 
@@ -114,18 +122,14 @@ nsJavaXPTCStub::ReleaseInternal()
   --mRefCnt;
   NS_LOG_RELEASE(this, mRefCnt, "nsJavaXPTCStub");
   if (mRefCnt == 0) {
+    // delete strong ref; allows Java object to be garbage collected
+    DeleteStrongRef();
+
     // If we have a weak ref, we don't delete this object.
-    JNIEnv* env = GetJNIEnv();
     if (mWeakRefCnt == 0) {
       mRefCnt = 1; /* stabilize */
       Destroy();
-
-      // delete strong ref; allows Java object to be garbage collected
-      env->DeleteGlobalRef(mJavaStrongRef);
       delete this;
-    } else {
-      // delete strong ref; allows Java object to be garbage collected
-      env->DeleteGlobalRef(mJavaStrongRef);
     }
     return 0;
   }
@@ -159,10 +163,8 @@ nsJavaXPTCStub::Destroy()
   nsIID* iid;
   mIInfo->GetInterfaceIID(&iid);
   char* iid_str = iid->ToString();
-  jobject javaObject = env->NewLocalRef(mJavaWeakRef);
   LOG(("- nsJavaXPTCStub (Java=%08x | XPCOM=%08x | IID=%s)\n",
-       (PRUint32) env->CallIntMethod(javaObject, hashCodeMID),
-       (PRUint32) this, iid_str));
+      (PRUint32) mJavaRefHashCode, (PRUint32) this, iid_str));
   PR_Free(iid_str);
   nsMemory::Free(iid);
 #endif
@@ -173,12 +175,16 @@ nsJavaXPTCStub::Destroy()
       delete (nsJavaXPTCStub*) mChildren[i];
     }
 
+    // Since we are destroying this stub, also remove the mapping.
+    // It is possible for mJavaStrongRef to be NULL here.  That is why we
+    // store the hash code value earlier.
     if (gJavaXPCOMInitialized) {
-      gJavaToXPTCStubMap->Remove(env, mJavaStrongRef);
+      gJavaToXPTCStubMap->Remove(mJavaRefHashCode);
     }
   }
 
-  env->DeleteWeakGlobalRef(mJavaWeakRef);
+  env->CallVoidMethod(mJavaWeakRef, clearReferentMID);
+  env->DeleteGlobalRef(mJavaWeakRef);
 }
 
 void
@@ -203,6 +209,9 @@ nsJavaXPTCStub::ReleaseWeakRef()
 void
 nsJavaXPTCStub::DeleteStrongRef()
 {
+  if (mJavaStrongRef == nsnull)
+    return;
+
   GetJNIEnv()->DeleteGlobalRef(mJavaStrongRef);
   mJavaStrongRef = nsnull;
 }
@@ -210,6 +219,8 @@ nsJavaXPTCStub::DeleteStrongRef()
 NS_IMETHODIMP
 nsJavaXPTCStub::QueryInterface(const nsID &aIID, void **aInstancePtr)
 {
+  nsresult rv;
+
   LOG(("JavaStub::QueryInterface()\n"));
   *aInstancePtr = nsnull;
   nsJavaXPTCStub *master = mMaster ? mMaster : this;
@@ -252,7 +263,7 @@ nsJavaXPTCStub::QueryInterface(const nsID &aIID, void **aInstancePtr)
 
   // Query Java object
   LOG(("\tCalling Java object queryInterface\n"));
-  jobject javaObject = env->NewLocalRef(mJavaWeakRef);
+  jobject javaObject = env->CallObjectMethod(mJavaWeakRef, getReferentMID);
 
   jmethodID qiMID = 0;
   jclass clazz = env->GetObjectClass(javaObject);
@@ -290,8 +301,9 @@ nsJavaXPTCStub::QueryInterface(const nsID &aIID, void **aInstancePtr)
 
   // Get interface info for new java object
   nsCOMPtr<nsIInterfaceInfoManager> iim = XPTI_GetInterfaceInfoManager();
+
   nsCOMPtr<nsIInterfaceInfo> iinfo;
-  nsresult rv = iim->GetInfoForIID(&aIID, getter_AddRefs(iinfo));
+  rv = iim->GetInfoForIID(&aIID, getter_AddRefs(iinfo));
   if (NS_FAILED(rv))
     return rv;
 
@@ -384,8 +396,7 @@ nsJavaXPTCStub::CallMethod(PRUint16 aMethodIndex,
 
   nsresult rv = NS_OK;
   JNIEnv* env = GetJNIEnv();
-
-  jobject javaObject = env->NewLocalRef(mJavaWeakRef);
+  jobject javaObject = env->CallObjectMethod(mJavaWeakRef, getReferentMID);
 
   nsCAutoString methodSig("(");
 
@@ -441,6 +452,10 @@ nsJavaXPTCStub::CallMethod(PRUint16 aMethodIndex,
       methodName.AppendASCII(aMethodInfo->GetName());
       methodName.SetCharAt(tolower(methodName[0]), 0);
     }
+    // If it's a Java keyword, then prepend an underscore
+    if (gJavaKeywords->GetEntry(methodName.get())) {
+      methodName.Insert('_', 0);
+    }
 
     jclass clazz = env->GetObjectClass(javaObject);
     if (clazz)
@@ -459,24 +474,29 @@ nsJavaXPTCStub::CallMethod(PRUint16 aMethodIndex,
       switch (retvalInfo->GetType().TagPart())
       {
         case nsXPTType::T_I8:
-        case nsXPTType::T_U8:
           retval.b = env->CallByteMethodA(javaObject, mid, java_params);
           break;
 
         case nsXPTType::T_I16:
-        case nsXPTType::T_U16:
+        case nsXPTType::T_U8:
           retval.s = env->CallShortMethodA(javaObject, mid, java_params);
           break;
 
         case nsXPTType::T_I32:
-        case nsXPTType::T_U32:
+        case nsXPTType::T_U16:
           retval.i = env->CallIntMethodA(javaObject, mid, java_params);
+          break;
+
+        case nsXPTType::T_I64:
+        case nsXPTType::T_U32:
+          retval.j = env->CallLongMethodA(javaObject, mid, java_params);
           break;
 
         case nsXPTType::T_FLOAT:
           retval.f = env->CallFloatMethodA(javaObject, mid, java_params);
           break;
 
+        case nsXPTType::T_U64:
         case nsXPTType::T_DOUBLE:
           retval.d = env->CallDoubleMethodA(javaObject, mid, java_params);
           break;
@@ -503,7 +523,7 @@ nsJavaXPTCStub::CallMethod(PRUint16 aMethodIndex,
           break;
 
         case nsXPTType::T_VOID:
-          retval.i = env->CallIntMethodA(javaObject, mid, java_params);
+          retval.j = env->CallLongMethodA(javaObject, mid, java_params);
           break;
 
         default:
@@ -515,10 +535,6 @@ nsJavaXPTCStub::CallMethod(PRUint16 aMethodIndex,
     // Check for exception from called Java function
     jthrowable exp = env->ExceptionOccurred();
     if (exp) {
-#ifdef DEBUG
-      env->ExceptionDescribe();
-#endif
-
       // If the exception is an instance of XPCOMException, then get the
       // nsresult from the exception instance.  Else, default to
       // NS_ERROR_FAILURE.
@@ -563,8 +579,13 @@ nsJavaXPTCStub::CallMethod(PRUint16 aMethodIndex,
   if (java_params)
     delete [] java_params;
 
-  LOG(("<--- (Java) %s::%s()\n", ifaceName, aMethodInfo->GetName()));
+#ifdef DEBUG
+  if (env->ExceptionCheck())
+    env->ExceptionDescribe();
+#endif
   env->ExceptionClear();
+
+  LOG(("<--- (Java) %s::%s()\n", ifaceName, aMethodInfo->GetName()));
   return rv;
 }
 
@@ -838,7 +859,7 @@ nsJavaXPTCStub::SetupJavaParams(const nsXPTParamInfo &aParamInfo,
         iid = *variant;
       }
 
-      jobject str;
+      jobject str = nsnull;
       if (iid) {
         char* iid_str = iid->ToString();
         if (iid_str) {
@@ -849,8 +870,6 @@ nsJavaXPTCStub::SetupJavaParams(const nsXPTParamInfo &aParamInfo,
           break;
         }
         PR_Free(iid_str);
-      } else {
-        str = nsnull;
       }
 
       if (!aParamInfo.IsOut()) {  // 'in'
@@ -892,6 +911,7 @@ nsJavaXPTCStub::SetupJavaParams(const nsXPTParamInfo &aParamInfo,
       // get name of interface
       char* iface_name = nsnull;
       nsCOMPtr<nsIInterfaceInfoManager> iim = XPTI_GetInterfaceInfoManager();
+
       rv = iim->GetNameForIID(&iid, &iface_name);
       if (NS_FAILED(rv) || !iface_name)
         break;
@@ -899,7 +919,8 @@ nsJavaXPTCStub::SetupJavaParams(const nsXPTParamInfo &aParamInfo,
       jobject java_stub = nsnull;
       if (xpcom_obj) {
         // Get matching Java object for given xpcom object
-        rv = GetNewOrUsedJavaObject(env, xpcom_obj, iid, &java_stub);
+        jobject objLoader = env->CallObjectMethod(mJavaWeakRef, getReferentMID);
+        rv = GetNewOrUsedJavaObject(env, xpcom_obj, iid, objLoader, &java_stub);
         if (NS_FAILED(rv))
           break;
       }
@@ -1011,26 +1032,26 @@ nsJavaXPTCStub::SetupJavaParams(const nsXPTParamInfo &aParamInfo,
     }
     break;
 
-    // Pass the 'void*' address as an integer
+    // Pass the 'void*' address as a long
     case nsXPTType::T_VOID:
     {
       if (!aParamInfo.IsOut()) {  // 'in'
-        aJValue.i = (jint) aVariant.val.p;
-        aMethodSig.Append('I');
+        aJValue.j = NS_REINTERPRET_CAST(jlong, aVariant.val.p);
+        aMethodSig.Append('J');
       } else {  // 'inout' & 'out'
         if (aVariant.val.p) {
-          jintArray array = env->NewIntArray(1);
+          jlongArray array = env->NewLongArray(1);
           if (!array) {
             rv = NS_ERROR_OUT_OF_MEMORY;
             break;
           }
 
-          env->SetIntArrayRegion(array, 0, 1, (jint*) aVariant.val.p);
+          env->SetLongArrayRegion(array, 0, 1, (jlong*) aVariant.val.p);
           aJValue.l = array;
         } else {
           aJValue.l = nsnull;
         }
-        aMethodSig.AppendLiteral("[I");
+        aMethodSig.AppendLiteral("[J");
       }
     }
     break;
@@ -1119,6 +1140,7 @@ nsJavaXPTCStub::GetRetvalSig(const nsXPTParamInfo* aParamInfo,
       // get name of interface
       char* iface_name = nsnull;
       nsCOMPtr<nsIInterfaceInfoManager> iim = XPTI_GetInterfaceInfoManager();
+
       rv = iim->GetNameForIID(&iid, &iface_name);
       if (NS_FAILED(rv) || !iface_name)
         break;
@@ -1135,7 +1157,7 @@ nsJavaXPTCStub::GetRetvalSig(const nsXPTParamInfo* aParamInfo,
       break;
 
     case nsXPTType::T_VOID:
-      aRetvalSig.Append('I');
+      aRetvalSig.Append('J');
       break;
 
     case nsXPTType::T_ARRAY:
@@ -1462,7 +1484,7 @@ nsJavaXPTCStub::FinalizeJavaParams(const nsXPTParamInfo &aParamInfo,
         java_obj = env->GetObjectArrayElement((jobjectArray) aJValue.l, 0);
       }
 
-      nsISupports** variant = NS_STATIC_CAST(nsISupports**, aVariant.val.p);
+      nsISupports* xpcom_obj = nsnull;
       if (java_obj) {
         // Get IID for this param
         nsID iid;
@@ -1483,61 +1505,39 @@ nsJavaXPTCStub::FinalizeJavaParams(const nsXPTParamInfo &aParamInfo,
           isWeakRef = PR_FALSE;
         }
 
-        nsISupports* xpcom_obj;
-        PRBool isXPTCStub;
-        rv = GetNewOrUsedXPCOMObject(env, java_obj, iid, &xpcom_obj,
-                                     &isXPTCStub);
+        rv = GetNewOrUsedXPCOMObject(env, java_obj, iid, &xpcom_obj);
         if (NS_FAILED(rv))
           break;
 
         // If the function expects a weak reference, then we need to
         // create it here.
         if (isWeakRef) {
-          if (isXPTCStub) {
-            nsJavaXPTCStub* stub = NS_STATIC_CAST(nsJavaXPTCStub*,
-                                                 NS_STATIC_CAST(nsXPTCStubBase*,
-                                                                xpcom_obj));
-            nsJavaXPTCStubWeakRef* weakref;
-            weakref = new nsJavaXPTCStubWeakRef(java_obj, stub);
-            if (!weakref) {
-              rv = NS_ERROR_OUT_OF_MEMORY;
-              break;
-            }
+          nsCOMPtr<nsISupportsWeakReference> supportsweak =
+                                                 do_QueryInterface(xpcom_obj);
+          if (supportsweak) {
+            nsWeakPtr weakref;
+            supportsweak->GetWeakReference(getter_AddRefs(weakref));
             NS_RELEASE(xpcom_obj);
             xpcom_obj = weakref;
             NS_ADDREF(xpcom_obj);
-          } else { // if is native XPCOM object
-            nsCOMPtr<nsISupportsWeakReference> supportsweak =
-                                                   do_QueryInterface(xpcom_obj);
-            if (supportsweak) {
-              nsWeakPtr weakref;
-              supportsweak->GetWeakReference(getter_AddRefs(weakref));
-              NS_RELEASE(xpcom_obj);
-              xpcom_obj = weakref;
-              NS_ADDREF(xpcom_obj);
-            } else {
-              xpcom_obj = nsnull;
-            }
+          } else {
+            xpcom_obj = nsnull;
           }
-
-        } else if (!isXPTCStub) { // if is native XPCOM object
-          xpcom_obj->Release();
         }
-
-//        } else if (isXPTCStub) {
-          // nothing to do
-
-        if (*variant && !aParamInfo.IsRetval()) {
-          NS_RELEASE(*variant);
-        }
-        *variant = xpcom_obj;
-      } else {
-        // If were passed in an object, release it now, and set to null.
-        if (*variant && !aParamInfo.IsRetval()) {
-          NS_RELEASE(*variant);
-        }
-        *variant = nsnull;
       }
+
+      // For 'inout' params, if the resulting xpcom value is different than the
+      // one passed in, then we must release the incoming xpcom value.
+      nsISupports** variant = NS_STATIC_CAST(nsISupports**, aVariant.val.p);
+      if (aParamInfo.IsIn() && *variant) {
+        nsCOMPtr<nsISupports> in = do_QueryInterface(*variant);
+        nsCOMPtr<nsISupports> out = do_QueryInterface(xpcom_obj);
+        if (in != out) {
+          NS_RELEASE(*variant);
+        }
+      }
+
+      *variant = xpcom_obj;
     }
     break;
 
@@ -1566,7 +1566,7 @@ nsJavaXPTCStub::FinalizeJavaParams(const nsXPTParamInfo &aParamInfo,
           string->Assign(wchar_ptr);
         } else {
           // If the argument that was passed in was null, then we need to
-          // create a new nsID.
+          // create a new string.
           nsString* embedStr = new nsString(wchar_ptr);
           if (embedStr) {
             *variant = embedStr;
@@ -1640,10 +1640,10 @@ nsJavaXPTCStub::FinalizeJavaParams(const nsXPTParamInfo &aParamInfo,
     case nsXPTType::T_VOID:
     {
       if (aParamInfo.IsRetval()) {  // 'retval'
-        *((PRUint32 *) aVariant.val.p) = aJValue.i;
+        aVariant.val.p = NS_REINTERPRET_CAST(void*, aJValue.j);
       } else if (aJValue.l) {  // 'inout' & 'out'
-        env->GetIntArrayRegion((jintArray) aJValue.l, 0, 1,
-                               (jint*) aVariant.val.p);
+        env->GetLongArrayRegion((jlongArray) aJValue.l, 0, 1,
+                                (jlong*) aVariant.val.p);
       }
     }
     break;
@@ -1667,7 +1667,8 @@ nsJavaXPTCStub::GetWeakReference(nsIWeakReference** aInstancePtr)
   if (!aInstancePtr)
     return NS_ERROR_NULL_POINTER;
 
-  jobject javaObject = GetJNIEnv()->NewLocalRef(mJavaWeakRef);
+  jobject javaObject = GetJNIEnv()->CallObjectMethod(mJavaWeakRef,
+                                                     getReferentMID);
   nsJavaXPTCStubWeakRef* weakref;
   weakref = new nsJavaXPTCStubWeakRef(javaObject, this);
   if (!weakref)
@@ -1684,15 +1685,14 @@ jobject
 nsJavaXPTCStub::GetJavaObject()
 {
   JNIEnv* env = GetJNIEnv();
-  jobject javaObject = env->NewLocalRef(mJavaWeakRef);
+  jobject javaObject = env->CallObjectMethod(mJavaWeakRef, getReferentMID);
 
 #ifdef DEBUG_JAVAXPCOM
   nsIID* iid;
   mIInfo->GetInterfaceIID(&iid);
   char* iid_str = iid->ToString();
   LOG(("< nsJavaXPTCStub (Java=%08x | XPCOM=%08x | IID=%s)\n",
-       (PRUint32) env->CallIntMethod(javaObject, hashCodeMID),
-       (PRUint32) this, iid_str));
+       (PRUint32) mJavaRefHashCode, (PRUint32) this, iid_str));
   PR_Free(iid_str);
   nsMemory::Free(iid);
 #endif

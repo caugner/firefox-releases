@@ -51,7 +51,6 @@
 #include "nsIDOMAbstractView.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIStringBundle.h"
-#include "nsIDOM3Node.h"
 #include "nsAutoBuffer.h"
 #include "nsIEventStateManager.h"
 #include "prmem.h"
@@ -122,7 +121,8 @@ nsXFormsUploadElement::Refresh()
   // type 'anyURI', 'base64Binary', or 'hexBinary'.
 
   nsresult rv = nsXFormsDelegateStub::Refresh();
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv) || rv == NS_OK_XFORMS_NOREFRESH)
+    return rv;
 
   if (!mBoundNode)
     return NS_OK;
@@ -147,26 +147,19 @@ nsBoundType
 nsXFormsUploadElement::GetBoundType()
 {
   nsBoundType result = TYPE_DEFAULT;
+  if (!mModel)
+    return result;
 
   // get type bound to node
-  nsAutoString type, prefix, nsuri;
-  nsresult rv = nsXFormsUtils::ParseTypeFromNode(mBoundNode, type, prefix);
-
-  if (NS_SUCCEEDED(rv)) {
-    // get the namespace url from the prefix
-    nsCOMPtr<nsIDOM3Node> domNode3 = do_QueryInterface(mElement, &rv);
-    if (NS_SUCCEEDED(rv)) {
-      rv = domNode3->LookupNamespaceURI(prefix, nsuri);
-
-      if (NS_SUCCEEDED(rv) && nsuri.EqualsLiteral(NS_NAMESPACE_XML_SCHEMA)) {
-        if (type.EqualsLiteral("anyURI")) {
-          result = TYPE_ANYURI;
-        } else if (type.EqualsLiteral("base64Binary")) {
-          result = TYPE_BASE64;
-        } else if (type.EqualsLiteral("hexBinary")) {
-          result = TYPE_HEX;
-        }
-      }
+  nsAutoString type, nsuri;
+  nsresult rv = mModel->GetTypeFromNode(mBoundNode, type, nsuri);
+  if (NS_SUCCEEDED(rv) && nsuri.EqualsLiteral(NS_NAMESPACE_XML_SCHEMA)) {
+    if (type.EqualsLiteral("anyURI")) {
+      result = TYPE_ANYURI;
+    } else if (type.EqualsLiteral("base64Binary")) {
+      result = TYPE_BASE64;
+    } else if (type.EqualsLiteral("hexBinary")) {
+      result = TYPE_HEX;
     }
   }
 
@@ -208,12 +201,9 @@ nsXFormsUploadElement::PickFile()
 
   // get nsIDOMWindowInternal
   nsCOMPtr<nsIDOMDocument> doc;
+  nsCOMPtr<nsIDOMWindowInternal> internal;
   mElement->GetOwnerDocument(getter_AddRefs(doc));
-  nsCOMPtr<nsIDOMDocumentView> dview = do_QueryInterface(doc);
-  NS_ENSURE_STATE(dview);
-  nsCOMPtr<nsIDOMAbstractView> aview;
-  dview->GetDefaultView(getter_AddRefs(aview));
-  nsCOMPtr<nsIDOMWindowInternal> internal = do_QueryInterface(aview);
+  rv = nsXFormsUtils::GetWindowFromDocument(doc, getter_AddRefs(internal));
   NS_ENSURE_STATE(internal);
 
   // init filepicker
@@ -283,7 +273,8 @@ nsXFormsUploadElement::SetFile(nsILocalFile *aFile)
   if (!aFile) {
     // clear instance data
     content->DeleteProperty(nsXFormsAtoms::uploadFileProperty);
-    rv = mModel->SetNodeValue(mBoundNode, EmptyString(), &dataChanged);
+    rv = mModel->SetNodeValue(mBoundNode, EmptyString(), PR_FALSE,
+                              &dataChanged);
   } else {
     // set file into instance data
 
@@ -293,14 +284,14 @@ nsXFormsUploadElement::SetFile(nsILocalFile *aFile)
       nsCAutoString spec;
       NS_GetURLSpecFromFile(aFile, spec);
       rv = mModel->SetNodeValue(mBoundNode, NS_ConvertUTF8toUTF16(spec),
-                                &dataChanged);
+                                PR_FALSE, &dataChanged);
     } else if (type == TYPE_BASE64 || type == TYPE_HEX) {
       // encode file contents in base64/hex and set into instance data node
       PRUnichar *fileData;
       rv = EncodeFileContents(aFile, type, &fileData);
       if (NS_SUCCEEDED(rv)) {
         rv = mModel->SetNodeValue(mBoundNode, nsDependentString(fileData),
-                                  &dataChanged);
+                                  PR_FALSE, &dataChanged);
         nsMemory::Free(fileData);
       }
     } else {
@@ -327,16 +318,12 @@ nsXFormsUploadElement::SetFile(nsILocalFile *aFile)
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (dataChanged || childrenChanged) {
-    nsCOMPtr<nsIDOMNode> model = do_QueryInterface(mModel);
-
-    if (model) {
-      rv = nsXFormsUtils::DispatchEvent(model, eEvent_Recalculate);
-      NS_ENSURE_SUCCESS(rv, rv);
-      rv = nsXFormsUtils::DispatchEvent(model, eEvent_Revalidate);
-      NS_ENSURE_SUCCESS(rv, rv);
-      rv = nsXFormsUtils::DispatchEvent(model, eEvent_Refresh);
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
+    rv = mModel->RequestRecalculate();
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = mModel->RequestRevalidate();
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = mModel->RequestRefresh();
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   return NS_OK;
@@ -346,9 +333,9 @@ nsresult
 nsXFormsUploadElement::HandleChildElements(nsILocalFile *aFile,
                                            PRBool *aChanged)
 {
-  if (!aChanged) {
-    return NS_ERROR_NULL_POINTER;
-  }
+  NS_ENSURE_ARG_POINTER(aChanged);
+  NS_ENSURE_STATE(mModel);
+
   *aChanged = PR_FALSE;
 
   // return immediately if we have no children
@@ -391,12 +378,12 @@ nsXFormsUploadElement::HandleChildElements(nsILocalFile *aFile,
       nsAutoString filename;
       rv = aFile->GetLeafName(filename);
       if (!filename.IsEmpty()) {
-        rv = nsXFormsUtils::SetSingleNodeBindingValue(filenameElem, filename,
-                                                      &filenameChanged);
+        rv = mModel->SetNodeValue(filenameElem, filename, PR_FALSE,
+                                  &filenameChanged);
       }
     } else {
-      rv = nsXFormsUtils::SetSingleNodeBindingValue(filenameElem, EmptyString(),
-                                                    &filenameChanged);
+      rv = mModel->SetNodeValue(filenameElem, EmptyString(),
+                                PR_FALSE, &filenameChanged);
     }
     NS_ENSURE_SUCCESS(rv, rv);
   }
@@ -414,12 +401,13 @@ nsXFormsUploadElement::HandleChildElements(nsILocalFile *aFile,
         if (NS_FAILED(rv)) {
           contentType.AssignLiteral("application/octet-stream");
         }
-        rv = nsXFormsUtils::SetSingleNodeBindingValue(mediatypeElem,
-                        NS_ConvertUTF8toUTF16(contentType), &mediatypechanged);
+        rv = mModel->SetNodeValue(mediatypeElem,
+                                  NS_ConvertUTF8toUTF16(contentType),
+                                  PR_FALSE, &mediatypechanged);
       }
     } else {
-      rv = nsXFormsUtils::SetSingleNodeBindingValue(mediatypeElem,
-                        EmptyString(), &mediatypechanged);
+      rv = mModel->SetNodeValue(mediatypeElem, EmptyString(),
+                                PR_FALSE, &mediatypechanged);
     }
   }
 

@@ -49,14 +49,22 @@ include $(DEPTH)/config/autoconf.mk
 MODULE		= xforms
 LIBRARY_NAME	= xforms
 IS_COMPONENT	= 1
+ifndef MINIMO
 # Do not set EXPORT_LIBRARY as we do not want xforms in the static libs list
 #EXPORT_LIBRARY	= 1
 FORCE_SHARED_LIB = 1
+else
+MODULE_NAME	= xforms
+EXPORT_LIBRARY	= 1
+endif
 MOZILLA_INTERNAL_API = 1
 
 # Also build schema-validation
 DIRS			= ../schema-validation \
 		  	  $(NULL)
+
+ifndef MINIMO
+ifdef MOZ_XUL_APP
 # XPI settings
 # XPI_NAME is exported to include schema-validation in xforms package
 export XPI_NAME	       = xforms
@@ -64,17 +72,24 @@ XPI_PKGNAME            = xforms
 USE_EXTENSION_MANIFEST = 1
 NO_JAR_AUTO_REG        = 1
 INSTALL_EXTENSION_ID   = {cf2812dc-6a7c-4402-b639-4d277dac4c36}
-PACKAGE_VERSION        = 0.2
+PACKAGE_VERSION        = 0.6
+
+# We want to strip the XPI
+STRIP_XPI = 1
 
 XULAPP_DEFINES = \
 	-DFIREFOX_VERSION=$(FIREFOX_VERSION) \
-	-DMOZILLA_VERSION_U=$(MOZILLA_VERSION) \
+	-DMOZILLA_VERSION_U=$(MOZILLA_VERSION_U) \
+	-DSEAMONKEY_VERSION=$(SEAMONKEY_VERSION) \
+	-DBUILD_ID=$(BUILD_ID) \
 	-DPACKAGE_VERSION=$(PACKAGE_VERSION) \
 	-DID=${INSTALL_EXTENSION_ID} \
 	$(NULL)
 
 # Include these in the XPI
 DIST_FILES = install.rdf install.js
+endif
+endif
 
 # XForms depends
 REQUIRES	= \
@@ -103,8 +118,10 @@ REQUIRES	= \
 # XForms IDLs
 XPIDLSRCS	= \
 		nsIXFormsModelElement.idl \
-		nsIInstanceElementPrivate.idl \
+		nsIXFormsNSModelElement.idl \
 		nsIModelElementPrivate.idl \
+		nsIXFormsNSInstanceElement.idl \
+		nsIInstanceElementPrivate.idl \
 		nsIXFormsControl.idl \
 		nsIXFormsContextControl.idl \
 		nsIXFormsActionElement.idl \
@@ -120,12 +137,19 @@ XPIDLSRCS	= \
 		nsIXFormsSubmissionElement.idl \
 		nsIXFormsControlBase.idl \
 		nsIXFormsDelegate.idl \
+		nsIDelegateInternal.idl \
 		nsIXFormsUIWidget.idl \
 		nsIXFormsItemElement.idl \
 		nsIXFormsLabelElement.idl \
 		nsIXFormsItemSetUIElement.idl \
+		nsIXFormsRepeatUIElement.idl \
+		nsIXFormsAccessors.idl \
+		nsIXFormsRangeAccessors.idl \
 		nsIXFormsUploadElement.idl \
 		nsIXFormsUploadUIElement.idl \
+		nsIXFormsCopyElement.idl \
+		nsIXFormsEphemeralMessageUI.idl \
+		nsIXFormsRangeConditionAccessors.idl \
 		$(NULL)
 
 # XForms source files
@@ -181,6 +205,11 @@ CPPSRCS		= \
 		nsXFormsControlStub.cpp \
 		nsXFormsUtilityService.cpp \
 		nsXFormsDelegateStub.cpp \
+		nsXFormsRangeElement.cpp \
+		nsXFormsAccessors.cpp \
+		nsXFormsRangeAccessors.cpp \
+		nsXFormsCopyElement.cpp \
+		nsXFormsRangeConditionAccessors.cpp \
 		$(NULL)
 
 # Standard Mozilla make rules

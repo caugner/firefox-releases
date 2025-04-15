@@ -42,7 +42,7 @@
 #include "nsMsgRDFDataSource.h"
 
 #include "nsITransactionManager.h"
-
+#include "nsCOMArray.h"
 /**
  * The mail data source.
  */
@@ -202,7 +202,7 @@ protected:
   nsresult CreateUnreadMessagesNameString(PRInt32 unreadMessages, nsAutoString &nameString);
   nsresult CreateArcsOutEnumerator();
 
-  nsresult OnItemAddedOrRemoved(nsIRDFResource *parentItem, nsISupports *item, PRBool added);
+  virtual nsresult OnItemAddedOrRemoved(nsIRDFResource *parentItem, nsISupports *item, PRBool added);
 
   nsresult OnUnreadMessagePropertyChanged(nsIRDFResource *folderResource, PRInt32 oldValue, PRInt32 newValue);
   nsresult OnTotalMessagePropertyChanged(nsIRDFResource *folderResource, PRInt32 oldValue, PRInt32 newValue);
@@ -214,6 +214,8 @@ protected:
   nsresult GetNumMessagesNode(PRInt32 numMessages, nsIRDFNode **node);
   nsresult GetFolderSizeNode(PRInt32 folderSize, nsIRDFNode **node);
   nsresult CreateLiterals(nsIRDFService *rdf);
+
+  virtual nsresult GetFolderDisplayName(nsIMsgFolder *folder, PRUnichar **folderName);
 
   static nsIRDFResource* kNC_Child;
   static nsIRDFResource* kNC_Folder;
@@ -254,7 +256,9 @@ protected:
   static nsIRDFResource* kNC_CanSearchMessages;
   static nsIRDFResource* kNC_VirtualFolder;
   static nsIRDFResource* kNC_InVFEditSearchScope;
-
+  static nsIRDFResource* kNC_UnreadFolders; // maybe should be in nsMsgFlatFolderDataSource?
+  static nsIRDFResource* kNC_FavoriteFolders; // maybe should be in nsMsgFlatFolderDataSource?
+  static nsIRDFResource* kNC_RecentFolders; // maybe should be in nsMsgFlatFolderDataSource?
   // commands
   static nsIRDFResource* kNC_Delete;
   static nsIRDFResource* kNC_ReallyDelete;
@@ -295,4 +299,78 @@ protected:
 
 };
 
+
+class nsMsgFlatFolderDataSource : public nsMsgFolderDataSource
+{
+public:
+  // constructor could take a filter to filter out folders.
+  nsMsgFlatFolderDataSource();
+  virtual ~nsMsgFlatFolderDataSource();
+  virtual nsresult Init();
+  virtual void Cleanup();
+
+  NS_IMETHOD GetURI(char* *uri);
+  NS_IMETHOD GetTargets(nsIRDFResource* source,
+                        nsIRDFResource* property,    
+                        PRBool tv,
+                        nsISimpleEnumerator** targets);
+  NS_IMETHOD GetTarget(nsIRDFResource* source,
+                       nsIRDFResource* property,
+                       PRBool tv,
+                       nsIRDFNode** target);
+
+  NS_IMETHOD HasAssertion(nsIRDFResource* source,
+                            nsIRDFResource* property,
+                            nsIRDFNode* target,
+                            PRBool tv,
+                            PRBool* hasAssertion);
+protected:
+  virtual nsresult GetFolderDisplayName(nsIMsgFolder *folder, PRUnichar **folderName);
+  virtual PRBool WantsThisFolder(nsIMsgFolder *folder);
+          PRBool ResourceIsOurRoot(nsIRDFResource *resource);
+  virtual nsresult OnItemAddedOrRemoved(nsIRDFResource *parentItem, nsISupports *item, PRBool added);
+
+  nsCOMArray <nsIMsgFolder> m_folders;
+  nsCOMPtr<nsIRDFResource>  m_rootResource; // the resource for our root
+  nsCString m_dsName;
+};
+
+
+class nsMsgUnreadFoldersDataSource : public nsMsgFlatFolderDataSource
+{
+public:
+  nsMsgUnreadFoldersDataSource() {m_dsName = "mailnewsunreadfolders";}
+  virtual ~nsMsgUnreadFoldersDataSource() {}
+  virtual nsresult NotifyPropertyChanged(nsIRDFResource *resource, 
+                    nsIRDFResource *propertyResource, nsIRDFNode *newNode, 
+                    nsIRDFNode *oldNode = nsnull);
+protected:
+  virtual PRBool WantsThisFolder(nsIMsgFolder *folder);
+};
+
+class nsMsgFavoriteFoldersDataSource : public nsMsgFlatFolderDataSource
+{
+public:
+  nsMsgFavoriteFoldersDataSource() {m_dsName = "mailnewsfavefolders";}
+  virtual ~nsMsgFavoriteFoldersDataSource() {}
+protected:
+  virtual PRBool WantsThisFolder(nsIMsgFolder *folder);
+};
+
+class nsMsgRecentFoldersDataSource : public nsMsgFlatFolderDataSource
+{
+public:
+  nsMsgRecentFoldersDataSource() {m_dsName = "mailnewsrecentfolders"; m_builtRecentFolders = PR_FALSE;
+                                  m_cutOffDate = 0; m_maxNumFolders = 15;}
+  virtual ~nsMsgRecentFoldersDataSource() {}
+  nsresult NotifyPropertyChanged(nsIRDFResource *resource, 
+                    nsIRDFResource *property, nsIRDFNode *newNode, 
+                    nsIRDFNode *oldNode);
+  virtual void Cleanup();
+protected:
+  PRBool m_builtRecentFolders;
+  virtual PRBool WantsThisFolder(nsIMsgFolder *folder);
+  PRUint32 m_cutOffDate;
+  PRInt32 m_maxNumFolders;
+};
 

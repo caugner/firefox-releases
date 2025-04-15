@@ -1,7 +1,8 @@
-/Makefile.in/1.16/Thu Jul 21 13:33:41 2005//TFIREFOX_1_5_RELEASE
-/dlldeps-xul.cpp/1.1.8.1/Tue Oct 18 18:20:20 2005//TFIREFOX_1_5_RELEASE
-/dlldeps-zlib.cpp/1.2/Thu Dec  9 19:28:30 2004//TFIREFOX_1_5_RELEASE
-/nsDllMain.cpp/1.2/Mon Feb 21 20:54:15 2005//TFIREFOX_1_5_RELEASE
-/nsGFXDeps.cpp/1.1/Thu Dec  9 19:28:30 2004//TFIREFOX_1_5_RELEASE
-/nsStaticXULComponents.cpp/1.10/Thu Jul 21 13:33:41 2005//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.16.2.6/Thu Jul 20 05:12:54 2006//TFIREFOX_2_0_RELEASE
+/dlldeps-xul.cpp/1.1.8.2/Mon Jan  9 19:03:08 2006//TFIREFOX_2_0_RELEASE
+/dlldeps-zlib.cpp/1.2/Thu Dec  9 19:28:30 2004//TFIREFOX_2_0_RELEASE
+/nsDllMain.cpp/1.2/Mon Feb 21 20:54:15 2005//TFIREFOX_2_0_RELEASE
+/nsGFXDeps.cpp/1.1/Thu Dec  9 19:28:30 2004//TFIREFOX_2_0_RELEASE
+/nsStaticXULComponents.cpp/1.10.2.2/Tue Feb 21 17:01:05 2006//TFIREFOX_2_0_RELEASE
+/xulrunner.rc/1.1.6.2/Thu Feb 16 20:27:28 2006//TFIREFOX_2_0_RELEASE
 D

@@ -23,6 +23,7 @@
 #
 # Contributor(s):
 #   Ben Goodger <ben@netscape.com> (Original Author)
+#   Myk Melez <myk@mozilla.org>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -55,6 +56,7 @@
         xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
         ondialogextra2="newFolder()"
         ondialogaccept="return onOK(event)"
+        ondialogcancel="return onCancel(event)"
         buttons="accept,cancel" 
         buttonlabelextra2="&button.newfolder.label;" buttonaccesskeyextra2="&button.newfolder.accesskey;"
 #ifdef XP_UNIX
@@ -69,6 +71,7 @@
    
   <script type="application/x-javascript" src="chrome://global/content/globalOverlay.js"/>
   <script type="application/x-javascript" src="chrome://browser/content/bookmarks/bookmarks.js"/>
+  <script type="application/x-javascript" src="chrome://browser/content/bookmarks/microsummaryPicker.js"/>
   <script type="application/x-javascript" src="chrome://browser/content/bookmarks/addBookmark2.js"/>
 
   <stringbundle id="bookmarksBundle" 
@@ -85,7 +88,16 @@
     <rows>
       <row align="center">
         <label value="&name.label;" accesskey="&name.accesskey;" control="name"/>
-        <textbox id="name" oninput="onFieldInput();"/>
+        <menulist id="name" editable="true" droppable="false"
+                  oninput="onFieldInput(); MicrosummaryPicker.onInput(event);">
+          <menupopup id="microsummaryMenuPopup">
+            <menuitem id="userEnteredNameItem"/>
+            <menuitem disabled="true">
+              <menuseparator flex="1"/>
+              <label value="&microsummary.label;"/>
+            </menuitem>
+          </menupopup>
+        </menulist>
       </row>
       <row align="center" id="keywordRow">
         <label value="&keyword.label;" accesskey="&keyword.accesskey;" control="keyword"/>

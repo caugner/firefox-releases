@@ -26,6 +26,9 @@
  *   Mitch Stoltz <mstoltz@netscape.com>
  *   Brian Ryner <bryner@brianryner.com>
  *   Kai Engert <kaie@netscape.com>
+ *   Vipul Gupta <vipul.gupta@sun.com>
+ *   Douglas Stebila <douglas@stebila.ca>
+ *   Kai Engert <kengert@redhat.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -44,6 +47,8 @@
 #include "nsNSSComponent.h"
 #include "nsNSSCallbacks.h"
 #include "nsNSSIOLayer.h"
+#include "nsSSLThread.h"
+#include "nsCertVerificationThread.h"
 #include "nsNSSEvent.h"
 
 #include "nsNetUtil.h"
@@ -204,14 +209,6 @@ static PRIntn PR_CALLBACK certHashtable_clearEntry(PLHashEntry *he, PRIntn /*ind
   return HT_ENUMERATE_NEXT;
 }
 
-static PRBool PR_CALLBACK crlHashTable_clearEntry(nsHashKey * aKey, void * aData, void* aClosure)
-{
-  if (aKey != nsnull) {
-    delete (nsStringKey *)aKey;
-  }
-  return PR_TRUE;
-}
-
 struct CRLDownloadEvent : PLEvent {
   nsCAutoString *urlString;
   nsIStreamListener *psmDownloader;
@@ -291,15 +288,38 @@ nsNSSComponent::nsNSSComponent()
   mTimer = nsnull;
   mCrlTimerLock = nsnull;
   mObserversRegistered = PR_FALSE;
+
+  nsSSLIOLayerHelpers::Init();
   
   NS_ASSERTION( (0 == mInstanceCount), "nsNSSComponent is a singleton, but instantiated multiple times!");
   ++mInstanceCount;
   hashTableCerts = nsnull;
   mShutdownObjectList = nsNSSShutDownList::construct();
+  mIsNetworkDown = PR_FALSE;
+  mSSLThread = new nsSSLThread();
+  if (mSSLThread)
+    mSSLThread->startThread();
+  mCertVerificationThread = new nsCertVerificationThread();
+  if (mCertVerificationThread)
+    mCertVerificationThread->startThread();
 }
 
 nsNSSComponent::~nsNSSComponent()
 {
+  if (mSSLThread)
+  {
+    mSSLThread->requestExit();
+    delete mSSLThread;
+    mSSLThread = nsnull;
+  }
+  
+  if (mCertVerificationThread)
+  {
+    mCertVerificationThread->requestExit();
+    delete mCertVerificationThread;
+    mCertVerificationThread = nsnull;
+  }
+
   PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("nsNSSComponent::dtor\n"));
 
   if(mUpdateTimerInitialized == PR_TRUE){
@@ -311,7 +331,6 @@ nsNSSComponent::~nsNSSComponent()
     PR_Unlock(mCrlTimerLock);
     PR_DestroyLock(mCrlTimerLock);
     if(crlsScheduledForDownload != nsnull){
-      crlsScheduledForDownload->Enumerate(crlHashTable_clearEntry);
       crlsScheduledForDownload->Reset();
       delete crlsScheduledForDownload;
     }
@@ -322,7 +341,7 @@ nsNSSComponent::~nsNSSComponent()
   // All cleanup code requiring services needs to happen in xpcom_shutdown
 
   ShutdownNSS();
-  nsSSLIOLayerFreeTLSIntolerantSites();
+  nsSSLIOLayerHelpers::Cleanup();
   --mInstanceCount;
   delete mShutdownObjectList;
 
@@ -487,14 +506,6 @@ nsNSSComponent::DispatchEventToWindow(nsIDOMWindow *domWin,
   return rv;
 }
 
-
-#ifdef XP_MAC
-#ifdef DEBUG
-#define LOADABLE_CERTS_MODULE NS_LITERAL_CSTRING("NSSckbiDebug.shlb")
-#else
-#define LOADABLE_CERTS_MODULE NS_LITERAL_CSTRING("NSSckbi.shlb")
-#endif /*DEBUG*/ 
-#endif /*XP_MAC*/
 
 static void setOCSPOptions(nsIPrefBranch * pref);
 
@@ -689,40 +700,42 @@ nsNSSComponent::InstallLoadableRoots()
 
     const char *possible_ckbi_locations[] = {
       NS_GRE_DIR,
-      NS_XPCOM_CURRENT_PROCESS_DIR
+      NS_XPCOM_CURRENT_PROCESS_DIR,
+      0 // This special value means: 
+        //   search for ckbi in the directories on the shared
+        //   library/DLL search path
     };
-    
+
     for (size_t il = 0; il < sizeof(possible_ckbi_locations)/sizeof(const char*); ++il) {
       nsCOMPtr<nsILocalFile> mozFile;
-      directoryService->Get( possible_ckbi_locations[il],
-                             NS_GET_IID(nsILocalFile), 
-                             getter_AddRefs(mozFile));
+      char *fullModuleName = nsnull;
+
+      if (!possible_ckbi_locations[il])
+      {
+        fullModuleName = PR_GetLibraryName(nsnull, "nssckbi");
+      }
+      else
+      {
+        directoryService->Get( possible_ckbi_locations[il],
+                               NS_GET_IID(nsILocalFile), 
+                               getter_AddRefs(mozFile));
     
-      if (!mozFile) {
-        continue;
+        if (!mozFile) {
+          continue;
+        }
+
+        nsCAutoString processDir;
+        mozFile->GetNativePath(processDir);
+        fullModuleName = PR_GetLibraryName(processDir.get(), "nssckbi");
       }
 
-      char *fullModuleName = nsnull;
-#ifdef XP_MAC
-      nsCAutoString nativePath;
-      mozFile->AppendNative(NS_LITERAL_CSTRING("Essential Files"));
-      mozFile->AppendNative(LOADABLE_CERTS_MODULE);
-      mozFile->GetNativePath(nativePath);    
-      fullModuleName = (char *) nativePath.get();
-#else
-      nsCAutoString processDir;
-      mozFile->GetNativePath(processDir);
-      fullModuleName = PR_GetLibraryName(processDir.get(), "nssckbi");
-#endif
       /* If a module exists with the same name, delete it. */
       NS_ConvertUCS2toUTF8 modNameUTF8(modName);
       int modType;
       SECMOD_DeleteModule(NS_CONST_CAST(char*, modNameUTF8.get()), &modType);
       SECStatus rv_add = 
         SECMOD_AddNewModule(NS_CONST_CAST(char*, modNameUTF8.get()), fullModuleName, 0, 0);
-#ifndef XP_MAC
-      PR_Free(fullModuleName); // allocated by NSPR
-#endif
+      PR_FreeLibraryName(fullModuleName); // allocated by NSPR
       if (SECSuccess == rv_add) {
         // found a module, no need to try other directories
         break;
@@ -850,6 +863,26 @@ static CipherPref CipherPrefs[] = {
  {"security.ssl3.rsa_aes_256_sha", TLS_RSA_WITH_AES_256_CBC_SHA}, // 256-bit AES encryption with RSA and a SHA1 MAC
    /* TLS_DHE_DSS_WITH_RC4_128_SHA // 128-bit RC4 encryption with DSA, DHE, and a SHA1 MAC
       If this cipher gets included at a later time, it should get added at this position */
+ {"security.ssl3.ecdhe_ecdsa_aes_256_sha", TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA}, // 256-bit AES encryption with ECDHE-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdhe_ecdsa_aes_128_sha", TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with ECDHE-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdhe_ecdsa_des_ede3_sha", TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with ECDHE-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdhe_ecdsa_rc4_128_sha", TLS_ECDHE_ECDSA_WITH_RC4_128_SHA}, // 128-bit RC4 encryption with ECDHE-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdhe_ecdsa_null_sha", TLS_ECDHE_ECDSA_WITH_NULL_SHA}, // No encryption with ECDHE-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdhe_rsa_aes_256_sha", TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA}, // 256-bit AES encryption with ECDHE-RSA and a SHA1 MAC
+ {"security.ssl3.ecdhe_rsa_aes_128_sha", TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with ECDHE-RSA and a SHA1 MAC
+ {"security.ssl3.ecdhe_rsa_des_ede3_sha", TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with ECDHE-RSA and a SHA1 MAC
+ {"security.ssl3.ecdhe_rsa_rc4_128_sha", TLS_ECDHE_RSA_WITH_RC4_128_SHA}, // 128-bit RC4 encryption with ECDHE-RSA and a SHA1 MAC
+ {"security.ssl3.ecdhe_rsa_null_sha", TLS_ECDHE_RSA_WITH_NULL_SHA}, // No encryption with ECDHE-RSA and a SHA1 MAC
+ {"security.ssl3.ecdh_ecdsa_aes_256_sha", TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA}, // 256-bit AES encryption with ECDH-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdh_ecdsa_aes_128_sha", TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with ECDH-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdh_ecdsa_des_ede3_sha", TLS_ECDH_ECDSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with ECDH-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdh_ecdsa_rc4_128_sha", TLS_ECDH_ECDSA_WITH_RC4_128_SHA}, // 128-bit RC4 encryption with ECDH-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdh_ecdsa_null_sha", TLS_ECDH_ECDSA_WITH_NULL_SHA}, // No encryption with ECDH-ECDSA and a SHA1 MAC
+ {"security.ssl3.ecdh_rsa_aes_256_sha", TLS_ECDH_RSA_WITH_AES_256_CBC_SHA}, // 256-bit AES encryption with ECDH-RSA and a SHA1 MAC
+ {"security.ssl3.ecdh_rsa_aes_128_sha", TLS_ECDH_RSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with ECDH-RSA and a SHA1 MAC
+ {"security.ssl3.ecdh_rsa_des_ede3_sha", TLS_ECDH_RSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with ECDH-RSA and a SHA1 MAC
+ {"security.ssl3.ecdh_rsa_rc4_128_sha", TLS_ECDH_RSA_WITH_RC4_128_SHA}, // 128-bit RC4 encryption with ECDH-RSA and a SHA1 MAC
+ {"security.ssl3.ecdh_rsa_null_sha", TLS_ECDH_RSA_WITH_NULL_SHA}, // No encryption with ECDH-RSA and a SHA1 MAC
  {"security.ssl3.dhe_rsa_aes_128_sha", TLS_DHE_RSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with RSA, DHE, and a SHA1 MAC
  {"security.ssl3.dhe_dss_aes_128_sha", TLS_DHE_DSS_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with DSA, DHE, and a SHA1 MAC
  {"security.ssl3.rsa_aes_128_sha", TLS_RSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with RSA and a SHA1 MAC
@@ -946,8 +979,8 @@ nsNSSComponent::DownloadCRLDirectly(nsAutoString url, nsAutoString key)
 nsresult nsNSSComponent::DownloadCrlSilently()
 {
   //Add this attempt to the hashtable
-  nsStringKey *hashKey = new nsStringKey(mCrlUpdateKey.get());
-  crlsScheduledForDownload->Put(hashKey,(void *)nsnull);
+  nsStringKey hashKey(mCrlUpdateKey.get());
+  crlsScheduledForDownload->Put(&hashKey,(void *)nsnull);
     
   //Set up the download handler
   PSMContentDownloader *psmDownloader = new PSMContentDownloader(PSMContentDownloader::PKCS7_CRL);
@@ -1145,7 +1178,6 @@ nsNSSComponent::StopCRLUpdateTimer()
   //If it is at all running. 
   if(mUpdateTimerInitialized == PR_TRUE){
     if(crlsScheduledForDownload != nsnull){
-      crlsScheduledForDownload->Enumerate(crlHashTable_clearEntry);
       crlsScheduledForDownload->Reset();
       delete crlsScheduledForDownload;
       crlsScheduledForDownload = nsnull;
@@ -1176,7 +1208,7 @@ nsNSSComponent::InitializeCRLUpdateTimer()
     if(NS_FAILED(rv)){
       return rv;
     }
-    crlsScheduledForDownload = new nsHashtable(PR_TRUE);
+    crlsScheduledForDownload = new nsHashtable(16, PR_TRUE);
     mCrlTimerLock = PR_NewLock();
     DefineNextTimer();
     mUpdateTimerInitialized = PR_TRUE;  
@@ -1432,6 +1464,7 @@ nsNSSComponent::InitializeNSS(PRBool showWarningBox)
       PRBool enabled;
       mPrefBranch->GetBoolPref("security.enable_ssl2", &enabled);
       SSL_OptionSetDefault(SSL_ENABLE_SSL2, enabled);
+      SSL_OptionSetDefault(SSL_V2_COMPATIBLE_HELLO, enabled);
       mPrefBranch->GetBoolPref("security.enable_ssl3", &enabled);
       SSL_OptionSetDefault(SSL_ENABLE_SSL3, enabled);
       mPrefBranch->GetBoolPref("security.enable_tls", &enabled);
@@ -1463,6 +1496,9 @@ nsNSSComponent::InitializeNSS(PRBool showWarningBox)
 
       // Set up OCSP //
       setOCSPOptions(mPrefBranch);
+
+      mHttpForNSS.initTable();
+      mHttpForNSS.registerHttpClient();
 
       InstallLoadableRoots();
 
@@ -1508,6 +1544,7 @@ nsNSSComponent::ShutdownNSS()
     mNSSInitialized = PR_FALSE;
 
     PK11_SetPasswordFunc((PK11PasswordFunc)nsnull);
+    mHttpForNSS.unregisterHttpClient();
 
     if (mPrefBranch) {
       nsCOMPtr<nsIPrefBranch2> pbi = do_QueryInterface(mPrefBranch);
@@ -1539,6 +1576,14 @@ nsNSSComponent::Init()
   nsresult rv = NS_OK;
 
   PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("Beginning NSS initialization\n"));
+
+  if (!mutex || !mShutdownObjectList || 
+      !mSSLThread || !mCertVerificationThread)
+  {
+    PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("NSS init, out of memory in constructor\n"));
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+
   rv = InitializePIPNSSBundle();
   if (NS_FAILED(rv)) {
     PR_LOG(gPIPNSSLog, PR_LOG_ERROR, ("Unable to create pipnss bundle.\n"));
@@ -1581,12 +1626,13 @@ nsNSSComponent::Init()
 }
 
 /* nsISupports Implementation for the class */
-NS_IMPL_THREADSAFE_ISUPPORTS5(nsNSSComponent,
+NS_IMPL_THREADSAFE_ISUPPORTS6(nsNSSComponent,
                               nsISignatureVerifier,
                               nsIEntropyCollector,
                               nsINSSComponent,
                               nsIObserver,
-                              nsISupportsWeakReference)
+                              nsISupportsWeakReference,
+                              nsITimerCallback)
 
 
 /* Callback functions for decoder. For now, use empty/default functions. */
@@ -1752,13 +1798,8 @@ nsNSSComponent::RandomUpdate(void *entropy, PRInt32 bufLen)
   return NS_OK;
 }
 
-#define DEBUG_PSM_PROFILE
-
-#ifdef DEBUG_PSM_PROFILE
 #define PROFILE_CHANGE_NET_TEARDOWN_TOPIC "profile-change-net-teardown"
 #define PROFILE_CHANGE_NET_RESTORE_TOPIC "profile-change-net-restore"
-#endif
-
 #define PROFILE_APPROVE_CHANGE_TOPIC "profile-approve-change"
 #define PROFILE_CHANGE_TEARDOWN_TOPIC "profile-change-teardown"
 #define PROFILE_CHANGE_TEARDOWN_VETO_TOPIC "profile-change-teardown-veto"
@@ -1770,10 +1811,6 @@ NS_IMETHODIMP
 nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic, 
                         const PRUnichar *someData)
 {
-#ifdef DEBUG
-  static PRBool isNetworkDown = PR_FALSE;
-#endif
-
   if (nsCRT::strcmp(aTopic, PROFILE_APPROVE_CHANGE_TOPIC) == 0) {
     if (mShutdownObjectList->isUIActive()) {
       ShowAlert(ai_crypto_ui_active);
@@ -1809,9 +1846,7 @@ nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic,
   }
   else if (nsCRT::strcmp(aTopic, PROFILE_BEFORE_CHANGE_TOPIC) == 0) {
     PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("receiving profile change topic\n"));
-#ifdef DEBUG
-    NS_ASSERTION(isNetworkDown, "nsNSSComponent relies on profile manager to wait for synchronous shutdown of all network activity");
-#endif
+    NS_ASSERTION(mIsNetworkDown, "nsNSSComponent relies on profile manager to wait for synchronous shutdown of all network activity");
 
     PRBool needsCleanup = PR_TRUE;
 
@@ -1906,6 +1941,7 @@ nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic,
     if (prefName.Equals("security.enable_ssl2")) {
       mPrefBranch->GetBoolPref("security.enable_ssl2", &enabled);
       SSL_OptionSetDefault(SSL_ENABLE_SSL2, enabled);
+      SSL_OptionSetDefault(SSL_V2_COMPATIBLE_HELLO, enabled);
     } else if (prefName.Equals("security.enable_ssl3")) {
       mPrefBranch->GetBoolPref("security.enable_ssl3", &enabled);
       SSL_OptionSetDefault(SSL_ENABLE_SSL3, enabled);
@@ -1925,17 +1961,26 @@ nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic,
       }
     }
   }
-
-#ifdef DEBUG
   else if (nsCRT::strcmp(aTopic, PROFILE_CHANGE_NET_TEARDOWN_TOPIC) == 0) {
     PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("receiving network teardown topic\n"));
-    isNetworkDown = PR_TRUE;
+    if (mSSLThread)
+      mSSLThread->requestExit();
+    if (mCertVerificationThread)
+      mCertVerificationThread->requestExit();
+    mIsNetworkDown = PR_TRUE;
   }
   else if (nsCRT::strcmp(aTopic, PROFILE_CHANGE_NET_RESTORE_TOPIC) == 0) {
     PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("receiving network restore topic\n"));
-    isNetworkDown = PR_FALSE;
+    delete mSSLThread;
+    mSSLThread = new nsSSLThread();
+    if (mSSLThread)
+      mSSLThread->startThread();
+    delete mCertVerificationThread;
+    mCertVerificationThread = new nsCertVerificationThread();
+    if (mCertVerificationThread)
+      mCertVerificationThread->startThread();
+    mIsNetworkDown = PR_FALSE;
   }
-#endif
 
   return NS_OK;
 }
@@ -2026,10 +2071,8 @@ nsNSSComponent::RegisterObservers()
     observerService->AddObserver(this, PROFILE_BEFORE_CHANGE_TOPIC, PR_FALSE);
     observerService->AddObserver(this, PROFILE_AFTER_CHANGE_TOPIC, PR_FALSE);
     observerService->AddObserver(this, SESSION_LOGOUT_TOPIC, PR_FALSE);
-#ifdef DEBUG
     observerService->AddObserver(this, PROFILE_CHANGE_NET_TEARDOWN_TOPIC, PR_FALSE);
     observerService->AddObserver(this, PROFILE_CHANGE_NET_RESTORE_TOPIC, PR_FALSE);
-#endif
   }
   return NS_OK;
 }
@@ -2377,8 +2420,8 @@ PSMContentDownloader::OnDataAvailable(nsIRequest* request,
   do {
     err = aIStream->Read(mByteData+mBufferOffset,
                          aLength, &amt);
-    if (amt == 0) break;
     if (NS_FAILED(err)) return err;
+    if (amt == 0) break;
     
     aLength -= amt;
     mBufferOffset += amt;

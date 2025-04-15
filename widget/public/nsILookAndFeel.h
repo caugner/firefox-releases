@@ -124,6 +124,7 @@ public:
     eColor__moz_mac_focusring,				//ring around text fields and lists
     eColor__moz_mac_menuselect,				//colour used when mouse is over a menu item
     eColor__moz_mac_menushadow,				//colour used to do shadows on menu items
+    eColor__moz_mac_menutextdisable,                    // color used to display text for disabled menu items
     eColor__moz_mac_menutextselect,			//colour used to display text while mouse is over a menu item
 
   	//all of the accent colours
@@ -134,6 +135,10 @@ public:
     eColor__moz_mac_accentregularshadow,
     eColor__moz_mac_accentdarkshadow,
     eColor__moz_mac_accentdarkestshadow,
+    
+    //new in 10.2
+    eColor__moz_mac_alternateprimaryhighlight, //active list highlight
+    eColor__moz_mac_secondaryhighlight,        //inactive light hightlight
   
     // keep this one last, please
     eColor_LAST_COLOR
@@ -169,6 +174,7 @@ public:
     eMetric_SelectTextfieldsOnKeyFocus,                   // select textfields when focused via tab/accesskey?
     eMetric_SubmenuDelay,                                 // delay before submenus open
     eMetric_MenusCanOverlapOSBar,                         // can popups overlap menu/task bar?
+    eMetric_SkipNavigatingDisabledMenuItem,               // skip navigating to disabled menu item?
     eMetric_DragFullWindow,                               // show window contents while dragging?
     eMetric_DragThresholdX,                               // begin a drag if the mouse is moved further than the threshold while the button is down
     eMetric_DragThresholdY,

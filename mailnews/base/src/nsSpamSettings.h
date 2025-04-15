@@ -43,10 +43,11 @@
 
 #include "nsCOMPtr.h"
 #include "nsISpamSettings.h"
-#include "nsIFileSpec.h"
+#include "nsString.h"
 #include "nsIOutputStream.h"
 #include "nsIMsgIncomingServer.h"
 #include "nsIUrlListener.h"
+#include "nsIDateTimeFormat.h"
 
 class nsSpamSettings : public nsISpamSettings, public nsIUrlListener
 {
@@ -59,32 +60,31 @@ public:
   NS_DECL_NSIURLLISTENER
 
 private:
-  nsCOMPtr <nsIMsgIncomingServer> mServer;  // make a weak ref?
   nsCOMPtr <nsIOutputStream> mLogStream;
+  nsCOMPtr<nsIFile> mLogFile;
 
-  PRInt32 mManualMarkMode;
   PRInt32 mLevel; 
   PRInt32 mPurgeInterval;
   PRInt32 mMoveTargetMode;
 
-  PRBool mManualMark;
-  PRBool mLoggingEnabled;
   PRBool mPurge;
   PRBool mUseWhiteList;
   PRBool mMoveOnSpam;
-  PRBool mMarkAsReadOnSpam;
   PRBool mUseServerFilter;
   
   nsCString mActionTargetAccount;
   nsCString mActionTargetFolder;
   nsCString mWhiteListAbURI;
-  nsCString mLogURL;
+  nsCString mCurrentJunkFolderURI; // used to detect changes to the spam folder in ::initialize
 
   nsCString mServerFilterName;
   PRInt32  mServerFilterTrustFlags;
 
-  nsresult GetLogFileSpec(nsIFileSpec **aFileSpec);
-  nsresult TruncateLog();
+  nsCOMPtr<nsIDateTimeFormat> mDateFormatter;
+
+  // helper routine used by Initialize which unsets the junk flag on the previous junk folder
+  // for this account, and sets it on the new junk folder.
+  nsresult UpdateJunkFolderState();
 };
 
 #endif /* nsSpamSettings_h__ */

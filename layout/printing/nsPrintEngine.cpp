@@ -48,6 +48,7 @@
 #include "nsIDocShell.h"
 #include "nsIURI.h"
 #include "nsINodeInfo.h"
+#include "nsContentErrors.h"
 
 // Print Options
 #include "nsIPrintSettings.h"
@@ -76,6 +77,7 @@ static const char sPrintOptionsContractID[]         = "@mozilla.org/gfx/printset
 #include "nsIDOMHTMLFrameSetElement.h"
 #include "nsIDOMHTMLIFrameElement.h"
 #include "nsIDOMHTMLObjectElement.h"
+#include "nsIDOMHTMLEmbedElement.h"
 
 // Print Preview
 #include "imgIContainer.h" // image animation mode constants
@@ -1952,8 +1954,10 @@ nsPrintEngine::MapContentForPO(nsPrintObject*   aRootObject,
               do_QueryInterface(aContent);
             nsCOMPtr<nsIDOMHTMLIFrameElement> iFrame =
               do_QueryInterface(aContent);
+            nsCOMPtr<nsIDOMHTMLEmbedElement> embedElement =
+              do_QueryInterface(aContent);
 
-            if (iFrame || objElement) {
+            if (iFrame || objElement || embedElement) {
               po->mFrameType = eIFrame;
               po->mPrintAsIs = PR_TRUE;
               if (po->mParent) {
@@ -2513,46 +2517,6 @@ nsPrintEngine::ReflowDocList(nsPrintObject* aPO, PRBool aSetPixelScale, PRBool a
   return NS_OK;
 }
 
-PR_STATIC_CALLBACK(void *)
-HandleBarrierEvent(PLEvent *aEvent)
-{
-  PRBool *b = NS_STATIC_CAST(PRBool *, PL_GetEventOwner(aEvent));
-  *b = PR_TRUE;
-  return nsnull;
-}
-
-PR_STATIC_CALLBACK(void)
-DestroyBarrierEvent(PLEvent *aEvent)
-{
-}
-
-static void
-FlushEventQueue()
-{
-  PRBool hitBarrier = PR_FALSE;
-  nsCOMPtr<nsIEventQueue> eventQ;
-  nsresult rv = NS_GetMainEventQ(getter_AddRefs(eventQ));
-  if (NS_FAILED(rv))
-    return;
-
-  PLEvent evt;
-
-  PL_InitEvent(&evt, &hitBarrier, HandleBarrierEvent, DestroyBarrierEvent);
-
-  if (NS_FAILED(eventQ->PostEvent(&evt)))
-    return;
-
-  while (!hitBarrier) {
-    PLEvent *next;
-    eventQ->GetEvent(&next);
-    if (!next) {
-      NS_ERROR("barrier event not found!");
-      return;
-    }
-    eventQ->HandleEvent(next);
-  }
-}
-
 //-------------------------------------------------------
 // Reflow a nsPrintObject
 nsresult
@@ -2608,6 +2572,10 @@ nsPrintEngine::ReflowPrintObject(nsPrintObject * aPO, PRBool aDoCalcShrink)
     delete aPO->mStyleSet;
     return rv;
   }
+
+  // Don't paint selection stuff for images while printing.
+  // XXXbz should we be painting it for text, even?
+  aPO->mPresShell->SetSelectionFlags(nsISelectionDisplay::DISPLAY_TEXT);
 
   aPO->mStyleSet->EndUpdate();
   
@@ -2763,7 +2731,6 @@ nsPrintEngine::ReflowPrintObject(nsPrintObject * aPO, PRBool aDoCalcShrink)
 
   aPO->mPresContext->SetPageDim(adjRect);
   rv = aPO->mPresShell->InitialReflow(width, height);
-  FlushEventQueue();
   if (NS_SUCCEEDED(rv)) {
     // Transfer Selection Ranges to the new Print PresShell
     nsCOMPtr<nsISelection> selection;
@@ -3006,9 +2973,9 @@ nsPrintEngine::PrintDocContent(nsPrintObject* aPO, nsresult& aStatus)
     }
   }
 
-  // If |aPO->mPrintAsIs| is true, the kids are processed in |PrintPage|
-  // instead of here.
-  if (!aPO->mInvisible && !aPO->mPrintAsIs) {
+  // If |aPO->mPrintAsIs| and |aPO->mHasBeenPrinted| are true,
+  // the kids frames are already processed in |PrintPage|.
+  if (!aPO->mInvisible && !(aPO->mPrintAsIs && aPO->mHasBeenPrinted)) {
     for (PRInt32 i=0;i<aPO->mKids.Count();i++) {
       nsPrintObject* po = (nsPrintObject*)aPO->mKids[i];
       PRBool printed = PrintDocContent(po, aStatus);
@@ -4425,12 +4392,30 @@ nsPrintEngine::TurnScriptingOn(PRBool aDoTurnOn)
   for (PRInt32 i=0;i<prt->mPrintDocList->Count();i++) {
     nsPrintObject* po = (nsPrintObject*)prt->mPrintDocList->ElementAt(i);
     NS_ASSERTION(po, "nsPrintObject can't be null!");
+
+    nsIDocument* doc = po->mDocument;
     
     // get the script global object
-    nsIScriptGlobalObject *scriptGlobalObj = po->mDocument->GetScriptGlobalObject();
+    nsIScriptGlobalObject *scriptGlobalObj = doc->GetScriptGlobalObject();
     if (scriptGlobalObj) {
       nsIScriptContext *scx = scriptGlobalObj->GetContext();
       NS_ASSERTION(scx, "Can't get nsIScriptContext");
+      if (aDoTurnOn) {
+        doc->DeleteProperty(nsLayoutAtoms::scriptEnabledBeforePrintPreview);
+      } else {
+        // Have to be careful, because people call us over and over again with
+        // aDoTurnOn == PR_FALSE.  So don't set the property if it's already
+        // set, since in that case we'd set it to the wrong value.
+        nsresult propThere;
+        doc->GetProperty(nsLayoutAtoms::scriptEnabledBeforePrintPreview,
+                         &propThere);
+        if (propThere == NS_PROPTABLE_PROP_NOT_THERE) {
+          // Stash the current value of IsScriptEnabled on the document, so
+          // that layout code running in print preview doesn't get confused.
+          doc->SetProperty(nsLayoutAtoms::scriptEnabledBeforePrintPreview,
+                           NS_INT32_TO_PTR(doc->IsScriptEnabled()));
+        }
+      }
       scx->SetScriptsEnabled(aDoTurnOn, PR_TRUE);
     }
   }

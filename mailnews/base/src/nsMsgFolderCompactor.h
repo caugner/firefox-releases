@@ -48,6 +48,8 @@
 #include "nsIStringBundle.h"
 #include "nsIMsgMessageService.h"
 
+#define COMPACTOR_READ_BUFF_SIZE 16384
+
 class nsFolderCompactState : public nsIMsgFolderCompactor, public nsIStreamListener, public nsICopyMessageStreamListener, public nsIUrlListener
 {
 public:
@@ -79,6 +81,7 @@ protected:
   void     ShowCompactingStatusMsg();
   void     ShowDoneStatus();
   nsresult CompactNextFolder();
+  void     AdvanceToNextLine(const char *buffer, PRUint32 &bufferOffset, PRUint32 maxBufferOffset);
   
 
   nsCString m_baseMessageUri; // base message uri
@@ -91,7 +94,7 @@ protected:
   PRInt32 m_size; // size of the message key array
   PRInt32 m_curIndex; // index of the current copied message key in key array
   nsMsgKey m_startOfNewMsg; // offset in mailbox of new message
-  char m_dataBuffer[4096 + 1]; // temp data buffer for copying message
+  char m_dataBuffer[COMPACTOR_READ_BUFF_SIZE + 1]; // temp data buffer for copying message
   nsresult m_status; // the status of the copying operation
   nsCOMPtr <nsIMsgMessageService> m_messageService; // message service for copying 
   nsCOMPtr<nsISupportsArray> m_folderArray; // to store all the folders in case of compact all
@@ -106,7 +109,7 @@ protected:
   PRBool m_needStatusLine;
   PRBool m_startOfMsg;
   PRInt32 m_statusOffset;
-  PRInt32 m_statusLineSize;
+  PRInt32 m_addedHeaderSize;
   nsCOMPtr <nsISupportsArray> m_offlineFolderArray;
 
 };

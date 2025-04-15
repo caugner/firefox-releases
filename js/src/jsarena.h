@@ -70,7 +70,6 @@ struct JSArenaStats {
     char        *name;          /* name for debugging */
     uint32      narenas;        /* number of arenas in pool */
     uint32      nallocs;        /* number of JS_ARENA_ALLOCATE() calls */
-    uint32      nreclaims;      /* number of reclaims from freeArenas */
     uint32      nmallocs;       /* number of malloc() calls */
     uint32      ndeallocs;      /* number of lifetime deallocations */
     uint32      ngrows;         /* number of JS_ARENA_GROW() calls */
@@ -113,10 +112,12 @@ struct JSArenaPool {
     JS_ARENA_ALLOCATE_CAST(p, void *, pool, nb)
 
 #define JS_ARENA_ALLOCATE_TYPE(p, type, pool)                                 \
-    JS_ARENA_ALLOCATE_CAST(p, type *, pool, sizeof(type))
+    JS_ARENA_ALLOCATE_COMMON(p, type *, pool, sizeof(type), 0)
+
+#define JS_ARENA_ALLOCATE_CAST(p, type, pool, nb)                             \
+    JS_ARENA_ALLOCATE_COMMON(p, type, pool, nb, _nb > _a->limit)
 
 /*
- *
  * NB: In JS_ARENA_ALLOCATE_CAST and JS_ARENA_GROW_CAST, always subtract _nb
  * from a->limit rather than adding _nb to _p, to avoid overflowing a 32-bit
  * address space (possible when running a 32-bit program on a 64-bit system
@@ -126,12 +127,12 @@ struct JSArenaPool {
  * Thanks to Juergen Kreileder <jk@blackdown.de>, who brought this up in
  * https://bugzilla.mozilla.org/show_bug.cgi?id=279273.
  */
-#define JS_ARENA_ALLOCATE_CAST(p, type, pool, nb)                             \
+#define JS_ARENA_ALLOCATE_COMMON(p, type, pool, nb, guard)                    \
     JS_BEGIN_MACRO                                                            \
         JSArena *_a = (pool)->current;                                        \
         size_t _nb = JS_ARENA_ALIGN(pool, nb);                                \
         jsuword _p = _a->avail;                                               \
-        if (_p > _a->limit - _nb)                                             \
+        if ((guard) || _p > _a->limit - _nb)                                  \
             _p = (jsuword)JS_ArenaAllocate(pool, _nb);                        \
         else                                                                  \
             _a->avail = _p + _nb;                                             \
@@ -148,7 +149,7 @@ struct JSArenaPool {
         if (_a->avail == (jsuword)(p) + JS_ARENA_ALIGN(pool, size)) {         \
             size_t _nb = (size) + (incr);                                     \
             _nb = JS_ARENA_ALIGN(pool, _nb);                                  \
-            if ((jsuword)(p) <= _a->limit - _nb) {                            \
+            if (_a->limit >= _nb && (jsuword)(p) <= _a->limit - _nb) {        \
                 _a->avail = (jsuword)(p) + _nb;                               \
                 JS_ArenaCountInplaceGrowth(pool, size, incr);                 \
             } else if ((jsuword)(p) == _a->base) {                            \
@@ -232,22 +233,13 @@ extern JS_PUBLIC_API(void)
 JS_FinishArenaPool(JSArenaPool *pool);
 
 /*
- * Finish using arenas, freeing all memory associated with them except for
- * any locks needed for thread safety.
+ * Deprecated do-nothing function.
  */
 extern JS_PUBLIC_API(void)
 JS_ArenaFinish(void);
 
 /*
- * Free any locks or other memory needed for thread safety, just before
- * shutting down.  At that point, we must be called by a single thread.
- *
- * After shutting down, the next thread to call JS_InitArenaPool must not
- * race with any other thread.  Once a pool has been initialized, threads
- * may safely call jsarena.c functions on thread-local pools.  The upshot
- * is that pools are per-thread, but the underlying global freelist is
- * thread-safe, provided that both the first pool initialization and the
- * shut-down call are single-threaded.
+ * Deprecated do-nothing function.
  */
 extern JS_PUBLIC_API(void)
 JS_ArenaShutDown(void);

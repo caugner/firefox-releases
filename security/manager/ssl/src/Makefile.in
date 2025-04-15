@@ -57,6 +57,9 @@ MOZILLA_INTERNAL_API = 1
 PACKAGE_FILE = pipnss.pkg
 
 CPPSRCS = 				\
+	nsPSMBackgroundThread.cpp       \
+	nsSSLThread.cpp                 \
+	nsCertVerificationThread.cpp    \
 	nsCipherInfo.cpp \
 	nsNSSCallbacks.cpp		\
 	nsNSSComponent.cpp		\
@@ -90,6 +93,8 @@ CPPSRCS = 				\
   nsNSSEvent.cpp \
   nsSmartCardMonitor.cpp \
   nsSmartCardEvent.cpp \
+  nsStreamCipher.cpp \
+  nsKeyModule.cpp \
 	$(NULL)
 
 ifdef MOZ_XUL
@@ -121,10 +126,11 @@ REQUIRES	= nspr \
 
 EXTRA_DEPS = $(NSS_DEP_LIBS)
 
+DEFINES += -DNSS_ENABLE_ECC
+
 # Use local includes because they are inserted before INCLUDES
 # so that Mozilla's nss.h is used, not glibc's
-LOCAL_INCLUDES += -I$(DIST)/public/nss \
-                  $(NULL)
+LOCAL_INCLUDES += $(NSS_CFLAGS)
 
 EXTRA_DSO_LDOPTS += \
 		$(MOZ_UNICHARUTIL_LIBS) \

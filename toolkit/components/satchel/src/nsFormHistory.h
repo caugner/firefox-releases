@@ -47,15 +47,17 @@
 #include "nsIPrefBranch.h"
 #include "nsWeakReference.h"
 #include "mdb.h"
+#include "nsIServiceManager.h"
+#include "nsToolkitCompsCID.h"
 
-class nsFormHistory : public nsIFormHistory,
+class nsFormHistory : public nsIFormHistory2,
                       public nsIObserver,
                       public nsIFormSubmitObserver,
                       public nsSupportsWeakReference
 {
 public:
   NS_DECL_ISUPPORTS
-  NS_DECL_NSIFORMHISTORY
+  NS_DECL_NSIFORMHISTORY2
   NS_DECL_NSIOBSERVER
   
   // nsIFormSubmitObserver
@@ -65,11 +67,16 @@ public:
   virtual ~nsFormHistory();
   nsresult Init();
 
-  static nsFormHistory *GetInstance();
-  static void ReleaseInstance(void);
+  static nsFormHistory *GetInstance()
+    {
+      if (!gFormHistory) {
+        nsCOMPtr<nsIFormHistory2> fh = do_GetService(NS_FORMHISTORY_CONTRACTID);
+      }
+      return gFormHistory;
+    }
 
   nsresult AutoCompleteSearch(const nsAString &aInputName, const nsAString &aInputValue,
-                              nsIAutoCompleteMdbResult *aPrevResult, nsIAutoCompleteResult **aNewResult);
+                              nsIAutoCompleteMdbResult2 *aPrevResult, nsIAutoCompleteResult **aNewResult);
 
   static mdb_column kToken_ValueColumn;
   static mdb_column kToken_NameColumn;
@@ -98,6 +105,10 @@ protected:
 
   nsresult RemoveEntriesInternal(const nsAString *aName);
 
+  nsresult InitByteOrder(PRBool aForce);
+  nsresult GetByteOrder(nsAString& aByteOrder);
+  nsresult SaveByteOrder(const nsAString& aByteOrder);
+
   static PRBool FormHistoryEnabled();
 
   static nsFormHistory *gFormHistory;
@@ -111,10 +122,13 @@ protected:
   nsIMdbStore* mStore;
   nsIMdbTable* mTable;
   PRInt64 mFileSizeOnDisk;
+  nsCOMPtr<nsIMdbRow> mMetaRow;
+  PRPackedBool mReverseByteOrder;
   
   // database tokens
   mdb_scope kToken_RowScope;
   mdb_kind kToken_Kind;
+  mdb_column kToken_ByteOrder;
 };
 
 #endif // __nsFormHistory__

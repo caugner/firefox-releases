@@ -54,8 +54,6 @@
 
 #include <FixMath.h>
 
-#define BAD_FONT_NUM -1
-#define BAD_SCRIPT 0x7F
 #define STACK_TRESHOLD 1000
 
 static NS_DEFINE_CID(kSaveAsCharsetCID, NS_SAVEASCHARSET_CID);
@@ -281,8 +279,9 @@ PRBool nsUnicodeRenderingToolkit::TECFallbackGetBoundingMetrics(
             ::TextFont(scriptFallbackFonts[fallbackScript]);
             GetScriptTextBoundingMetrics(buf, outLen, fallbackScript, oBoundingMetrics);
             ::TextFont(fontNum);
+            return PR_TRUE;
         }
-        return PR_TRUE;
+        return PR_FALSE;
     }
     
     for(fallbackScript = 0; fallbackScript < 32; fallbackScript++)
@@ -349,8 +348,8 @@ PRBool nsUnicodeRenderingToolkit :: TECFallbackDrawChar(
         ::TextFont(scriptFallbackFonts[fallbackScript]);
         DrawScriptText(buf, outLen, x, y, oWidth);
         ::TextFont(origFontNum);
+        return PR_TRUE;
     }
-    return PR_TRUE;
   }
   return PR_FALSE;
 }
@@ -1235,7 +1234,7 @@ nsUnicodeRenderingToolkit::GetTextSegmentDimensions(
       nsTextDimensions& oDim)
 {
   oDim.Clear();
-  if(aLength == 0) 
+  if(aLength == 0 || fontNum == IGNORABLE_FONT_NUM) 
     return NS_OK;
   NS_PRECONDITION(BAD_FONT_NUM != fontNum, "illegal font num");
   PRUint32 processLen = 0;
@@ -1421,7 +1420,7 @@ nsUnicodeRenderingToolkit::GetTextSegmentBoundingMetrics(
       nsBoundingMetrics& oBoundingMetrics)
 {
   oBoundingMetrics.Clear();
-  if(aLength == 0) 
+  if(aLength == 0 || fontNum == IGNORABLE_FONT_NUM) 
     return NS_OK;
   NS_PRECONDITION(BAD_FONT_NUM != fontNum, "illegal font num");
   PRBool firstTime = PR_TRUE;
@@ -1566,7 +1565,7 @@ nsresult nsUnicodeRenderingToolkit :: DrawTextSegment(
 			short fontNum, nsUnicodeFontMappingMac& fontMapping, 
 			PRInt32 x, PRInt32 y, PRUint32& oWidth)
 {
-	if(aLength == 0) {
+	if(aLength == 0 || fontNum == IGNORABLE_FONT_NUM) {
 		oWidth = 0;
 		return NS_OK;
 	}	

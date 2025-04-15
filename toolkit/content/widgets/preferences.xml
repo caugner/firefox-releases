@@ -48,10 +48,8 @@
           // Value changed, synthesize an event
           try {
             var event = document.createEvent("Events");
-            event.initEvent("change", false, true);
+            event.initEvent("change", true, true);
             aPreference.dispatchEvent(event);
-            if (aPreference.hasAttribute("onchange"))
-              (new Function ("event", aPreference.getAttribute("onchange")))(event);
           }
           catch (e) {
             dump(e);
@@ -90,9 +88,20 @@
         if (document.documentElement.type == "child" && 
             !this.instantApply && window.opener) {
           var pdoc = window.opener.document;
-          var lastStatePref = pdoc.getElementById(window.location.href + "#" + this.id);
-          this._setValue(lastStatePref ? lastStatePref.value 
-                                       : this.valueFromPreferences, false);
+
+          // Try to find a preference element for the same preference.
+          var preference = null;
+          var parentPreferences = pdoc.getElementsByTagName("preferences");
+          for (var k = 0; (k < parentPreferences.length && !preference); ++k) {
+            var parentPrefs = parentPreferences[k]
+                                    .getElementsByAttribute("name", this.name);
+            for (var l = 0; (l < parentPrefs.length && !preference); ++l) {
+              if (parentPrefs[l].localName == "preference")
+                preference = parentPrefs[l];
+            }
+          }
+          this._setValue(preference ? preference.value 
+                                    : this.valueFromPreferences, false);
         }
         else
           this._setValue(this.valueFromPreferences, false);
@@ -170,6 +179,9 @@
           else
             this.removeAttribute("disabled");
 
+          if (!this.id)
+            return val;
+
           var elements = document.getElementsByAttribute("preference", this.id);
           for (var i = 0; i < elements.length; ++i) {
             elements[i].disabled = val;
@@ -194,6 +206,9 @@
             this.setAttribute("tabindex", val);
           else
             this.removeAttribute("tabindex");
+
+          if (!this.id)
+            return val;
 
           var elements = document.getElementsByAttribute("preference", this.id);
           for (var i = 0; i < elements.length; ++i) {
@@ -252,12 +267,11 @@
             case "bool":
               var val = this._branch.getBoolPref(this.name);
               return this.inverted ? !val : val;
-            case "string":
-              return this._branch.getCharPref(this.name);
             case "wstring":
               return this._branch
                          .getComplexValue(this.name, Components.interfaces.nsIPrefLocalizedString)
                          .data;
+            case "string":
             case "unichar":
               var pref = Components.classes["@mozilla.org/preferences;1"] 
                                    .getService(Components.interfaces.nsIPref);
@@ -285,9 +299,6 @@
           case "bool":
             this.preferences.rootBranch.setBoolPref(this.name, this.inverted ? !val : val);
             break;
-          case "string":
-            this.preferences.rootBranch.setCharPref(this.name, val);
-            break;
           case "wstring":
             var pls = Components.classes["@mozilla.org/pref-localizedstring;1"]
                                 .createInstance(Components.interfaces.nsIPrefLocalizedString);
@@ -295,6 +306,7 @@
             this.preferences.rootBranch
                 .setComplexValue(this.name, Components.interfaces.nsIPrefLocalizedString, pls);
             break;
+          case "string":
           case "unichar":
             var pref = Components.classes["@mozilla.org/preferences;1"] 
                                  .getService(Components.interfaces.nsIPref);
@@ -337,7 +349,7 @@
             // Value changed, synthesize an event
             try {
               var event = document.createEvent("Events");
-              event.initEvent("syncfrompreference", false, true);
+              event.initEvent("syncfrompreference", true, true);
               var f = new Function ("event", 
                                     aElement.getAttribute("onsyncfrompreference"));
               rv = f(event);
@@ -386,7 +398,7 @@
             // Value changed, synthesize an event
             try {
               var event = document.createEvent("Events");
-              event.initEvent("synctopreference", false, true);
+              event.initEvent("synctopreference", true, true);
               var f = new Function ("event", 
                                     aElement.getAttribute("onsynctopreference"));
               var rv = f(event);
@@ -450,6 +462,9 @@
       <method name="updateElements">
         <body>
         <![CDATA[
+          if (!this.id)
+            return;
+
           // This "change" event handler tracks changes made to preferences by 
           // sources other than the user in this window. 
           var elements = document.getElementsByAttribute("preference", this.id);
@@ -472,16 +487,16 @@
     <resources>
       <stylesheet src="chrome://global/skin/preferences.css"/>
     </resources>
-    <content xul:dlgbuttons="accept,cancel" xul:persist="lastSelected screenX screenY"
-             xul:closebuttonlabel="&preferencesCloseButton.label;"
-             xul:closebuttonaccesskey="&preferencesCloseButton.accesskey;"
+    <content dlgbuttons="accept,cancel" persist="lastSelected screenX screenY"
+             closebuttonlabel="&preferencesCloseButton.label;"
+             closebuttonaccesskey="&preferencesCloseButton.accesskey;"
              xmlns:xhtml2="http://www.w3.org/TR/xhtml2"
              xmlns:wairole="http://www.w3.org/2005/01/wai-rdf/GUIRoleTaxonomy#"
              xhtml2:role="wairole:dialog"
 #ifdef XP_WIN
-             xul:title="&preferencesDefaultTitleWin.title;">
+             title="&preferencesDefaultTitleWin.title;">
 #else
-             xul:title="&preferencesDefaultTitleMac.title;">
+             title="&preferencesDefaultTitleMac.title;">
 #endif
       <xul:radiogroup anonid="selector" orient="horizontal" class="paneSelector chromeclass-toolbar"
                       xhtml2:role="wairole:list"/> <!-- Expose to accessibility APIs as a list -->
@@ -514,9 +529,6 @@
       <xul:hbox>
         <children/>
       </xul:hbox>
-      <xul:keyset>
-        <xul:key anonid="keyClose" key="&windowClose.key;" modifiers="accel" oncommand="window.close();"/>
-      </xul:keyset>
     </content>
     <implementation implements="nsITimerCallback">
       <constructor>
@@ -543,16 +555,6 @@
             cancelButton.accesskey = docElt.getAttribute("closebuttonaccesskey");
 #endif
           }
-          else {
-            // No Cmd+W in non-instant-apply preferences windows
-            var keyClose = document.getAnonymousElementByAttribute(this, "anonid", "keyClose");
-            keyClose.parentNode.removeChild(keyClose);
-          }
-        }
-        else {
-          // No Cmd+W in child dialogs
-          var keyClose = document.getAnonymousElementByAttribute(this, "anonid", "keyClose");
-          keyClose.parentNode.removeChild(keyClose);          
         }
         var panes = this.preferencePanes;
 
@@ -565,8 +567,10 @@
         }
 
         var paneToLoad;
-        if ("arguments" in window && window.arguments[0] && document.getElementById(window.arguments[0]))
+        if ("arguments" in window && window.arguments[0] && document.getElementById(window.arguments[0]) && document.getElementById(window.arguments[0]).nodeName == "prefpane") {
           paneToLoad = document.getElementById(window.arguments[0]);
+          this.lastSelected = paneToLoad.id;
+        }
         else if (lastPane)
           paneToLoad = lastPane;
         else
@@ -585,6 +589,20 @@
           this._selector.setAttribute("collapsed", "true");
       ]]>
       </constructor>
+
+      <destructor>
+      <![CDATA[
+        // Release timers to avoid reference cycles.
+        if (this._animateTimer) {
+          this._animateTimer.cancel();
+          this._animateTimer = null;
+        }
+        if (this._fadeTimer) {
+          this._fadeTimer.cancel();
+          this._fadeTimer = null;
+        }
+      ]]>
+      </destructor>
 
       <field name="instantApply">false</field>
       
@@ -661,7 +679,7 @@
           // Panel loaded, synthesize a load event. 
           try {
             var event = document.createEvent("Events");
-            event.initEvent(aEventName, false, true);
+            event.initEvent(aEventName, true, true);
             var cancel = !aTarget.dispatchEvent(event);
             if (aTarget.hasAttribute("on" + aEventName)) {
               var fn = new Function ("event", aTarget.getAttribute("on" + aEventName));
@@ -698,6 +716,11 @@
               this._paneDeck.setAttribute("selectedIndex", i);
               
               if (this.type != "child") {
+                // Don't let the new pane content flex to the current window
+                // height if we're animating
+                if (this._shouldAnimate)
+                  aPaneElement.removeAttribute("flex");
+
                 var oldPane = this.lastSelected ? document.getElementById(this.lastSelected) : this.preferencePanes[0];
                 oldPane.selected = !(aPaneElement.selected = true);
                 if (!this._initialized || oldPane.id != aPaneElement.id) {
@@ -728,7 +751,16 @@
         <![CDATA[
           var psvc = Components.classes["@mozilla.org/preferences-service;1"]
                                .getService(Components.interfaces.nsIPrefBranch);
-          return psvc.getBoolPref("browser.preferences.animateFadeIn");
+#ifdef XP_MACOSX
+          var animate = true;
+#else
+          var animate = false;
+#endif
+          try {
+            animate = psvc.getBoolPref("browser.preferences.animateFadeIn");
+          }
+          catch (e) { }
+          return animate;
         ]]>
         </getter>
       </property>
@@ -786,10 +818,10 @@
               this._setUpFadeTimer();
             }
           } else if (aTimer == this._fadeTimer) {
-            var lastSelectedPane = document.getElementById(this.lastSelected);
             var elt = document.getElementById(this.lastSelected);
-            if (parseFloat(window.getComputedStyle(lastSelectedPane, "").opacity) < (1.0 - this._fadeIncrement))
-              elt.style.opacity = parseFloat(window.getComputedStyle(elt, "").opacity) + this._fadeIncrement;
+            var newOpacity = parseFloat(window.getComputedStyle(elt, "").opacity) + this._fadeIncrement;
+            if (newOpacity < 1.0)
+              elt.style.opacity = newOpacity;
             else {
               aTimer.cancel();
               elt.style.opacity = 1.0;
@@ -978,19 +1010,28 @@
               for (var i = 0; i < panes.length; ++i) {
                 var preferences = panes[i].preferences;
                 for (var j = 0; j < preferences.length; ++j) {
-                  var prefID = window.location.href + "#" + preferences[j].id;
-                  var preference = pdoc.getElementById(prefID);
+                  // Try to find a preference element for the same preference.
+                  var preference = null;
+                  var parentPreferences = pdoc.getElementsByTagName("preferences");
+                  for (var k = 0; (k < parentPreferences.length && !preference); ++k) {
+                    var parentPrefs = parentPreferences[k]
+                                         .getElementsByAttribute("name", preferences[j].name);
+                    for (var l = 0; (l < parentPrefs.length && !preference); ++l) {
+                      if (parentPrefs[l].localName == "preference")
+                        preference = parentPrefs[l];
+                    }
+                  }
                   if (!preference) {
-                    var preference = pdoc.createElement("preference");
+                    // No matching preference in the parent window.
+                    preference = pdoc.createElement("preference");
                     childPrefs.appendChild(preference);
-                    preference.id       = prefID;
                     preference.name     = preferences[j].name;
                     preference.type     = preferences[j].type;
                     preference.inverted = preferences[j].inverted;
                     preference.readonly = preferences[j].readonly;
                     preference.disabled = preferences[j].disabled;
                   }
-                  preference.value    = preferences[j].value;
+                  preference.value = preferences[j].value;
                 }
               }
             }
@@ -1012,6 +1053,11 @@
           var pane = document.getElementById(event.originalTarget.getAttribute("pane"));
           event.originalTarget.parentNode.parentNode.showPane(pane);
         }
+      </handler>
+
+      <handler event="keypress" key="&windowClose.key;" modifiers="accel" phase="capturing">
+        if (this.instantApply)
+          window.close();
       </handler>
     </handlers>
   </binding>
@@ -1196,28 +1242,30 @@
 </bindings>
 
 # -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+# ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
-# 
+#
 # The contents of this file are subject to the Mozilla Public License Version
 # 1.1 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
 # http://www.mozilla.org/MPL/
-# 
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is the Preferences System.
-# 
-# The Initial Developer of the Original Code is Ben Goodger.
+#
+# The Initial Developer of the Original Code is
+# Ben Goodger.
 # Portions created by the Initial Developer are Copyright (C) 2005
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
 #   Ben Goodger <ben@mozilla.org>
 #   Josh Aas <joshmoz@gmail.com>
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -1229,7 +1277,7 @@
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
-# 
+#
 # ***** END LICENSE BLOCK *****
 
 #

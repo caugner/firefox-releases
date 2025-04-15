@@ -116,7 +116,8 @@ nsSHistoryObserver::Observe(nsISupports *aSubject, const char *aTopic,
     }
 
     nsSHistory::EvictGlobalContentViewer();
-  } else if (!strcmp(aTopic, NS_CACHESERVICE_EMPTYCACHE_TOPIC_ID)) {
+  } else if (!strcmp(aTopic, NS_CACHESERVICE_EMPTYCACHE_TOPIC_ID) ||
+             !strcmp(aTopic, "memory-pressure")) {
     nsSHistory::EvictAllContentViewers();
   }
 
@@ -249,13 +250,16 @@ nsSHistory::Startup()
       branch->AddObserver(PREF_SHISTORY_MAX_TOTAL_VIEWERS,
                           obs, PR_FALSE);
 
-      // Observe empty-cache notifications so that clearing the disk/memory
-      // cache will also evict all content viewers.
       nsCOMPtr<nsIObserverService> obsSvc =
         do_GetService("@mozilla.org/observer-service;1");
       if (obsSvc) {
+        // Observe empty-cache notifications so tahat clearing the disk/memory
+        // cache will also evict all content viewers.
         obsSvc->AddObserver(obs,
                             NS_CACHESERVICE_EMPTYCACHE_TOPIC_ID, PR_FALSE);
+
+        // Same for memory-pressure notifications
+        obsSvc->AddObserver(obs, "memory-pressure", PR_FALSE);
       }
     }
   }
@@ -304,8 +308,14 @@ nsSHistory::AddEntry(nsISHEntry * aSHEntry, PRBool aPersist)
       nsCOMPtr<nsIURI> uri;
       nsCOMPtr<nsIHistoryEntry> hEntry(do_QueryInterface(aSHEntry));
       if (hEntry) {
+        PRInt32 currentIndex = mIndex;
         hEntry->GetURI(getter_AddRefs(uri));
         listener->OnHistoryNewEntry(uri);
+
+        // If a listener has changed mIndex, we need to get currentTxn again,
+        // otherwise we'll be left at an inconsistent state (see bug 320742)
+        if (currentIndex != mIndex)
+          GetTransactionAtIndex(mIndex, getter_AddRefs(currentTxn));
       }
     }
   }
@@ -324,7 +334,7 @@ nsSHistory::AddEntry(nsISHEntry * aSHEntry, PRBool aPersist)
   if(!mListRoot)
     mListRoot = txn;
 
-  //Purge History list if it is too long
+  // Purge History list if it is too long
   if ((gHistoryMaxSize >= 0) && (mLength > gHistoryMaxSize))
     PurgeHistory(mLength-gHistoryMaxSize);
   

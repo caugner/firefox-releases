@@ -53,17 +53,18 @@
 #include "nsIDOMDocument.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMEventTarget.h"
-#include "nsIDOMHTMLDivElement.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMXPathResult.h"
 
 #include "nsXFormsControlStub.h"
 #include "nsIXFormsContextControl.h"
 #include "nsIXFormsRepeatElement.h"
+#include "nsIXFormsRepeatUIElement.h"
 #include "nsIXFormsRepeatItemElement.h"
 #include "nsXFormsAtoms.h"
 #include "nsXFormsModelElement.h"
 #include "nsXFormsUtils.h"
+#include "nsXFormsDelegateStub.h"
 
 #ifdef DEBUG
 //#define DEBUG_XF_REPEAT
@@ -83,14 +84,13 @@
  *
  * 1) Creates a new \<contextcontainer\> (nsXFormsContextContainer)
  *
- * 2) Clones all its children (that is children of its nsIXTFXMLVisualWrapper)
+ * 2) Clones all its children (that is children of its mElement)
  *    and appends them as children to the nsXFormsContextContainer
  * 
  * 3) Sets the context node and size for the nsXFormsContextContainer, so
  *    that children can retrieve this through nsIXFormsContextControl.
  *
- * 4) Inserts the nsXFormsContextContainer into its visual content node
- *    (mHTMLElement).
+ * 4) Inserts the nsXFormsContextContainer into its visual content node.
  *
  * For example, this instance data:
  * <pre>
@@ -112,14 +112,14 @@
  * will be expanded to:
  * <pre>
  * <repeat nodeset="n">
- *   (anonymous content)
+ *   (anonymous content)          (XBL)
  *     <contextcontainer>         (contextNode == "n[0]" and contextPosition == 1)
  *       Val: <output ref="."/>   (that is: 'val1')
  *     </contextcontainer>
  *     <contextcontainer>         (contextNode == "n[1]" and contextPosition == 2)
  *       Val: <output ref="."/>   (that is: 'val2')
  *     </contextcontainer>
- *   (/anonymous content)
+ *   (/anonymous content)         (XBL)
  * </repeat>
  * </pre>
  *
@@ -188,16 +188,10 @@
  *       display."
  *       @see https://bugzilla.mozilla.org/show_bug.cgi?id=302026
  */
-class nsXFormsRepeatElement : public nsXFormsControlStub,
+class nsXFormsRepeatElement : public nsXFormsDelegateStub,
                               public nsIXFormsRepeatElement
 {
 protected:
-  /** The HTML representation for the node */
-  nsCOMPtr<nsIDOMHTMLDivElement> mHTMLElement;
-
-  /** True while children are being added */
-  PRBool mAddingChildren;
-
   /**
    * The current repeat-index, 0 if no row is selected (can happen for nested
    * repeats) or there are no rows at all.
@@ -221,11 +215,21 @@ protected:
    * ResetInnerRepeats().
    */
   PRUint32 mLevel;
+
+  /**
+   * The number of "repeat rows" the repeat currently have unrolled.
+   */
+  PRUint32 mCurrentRowCount;
   
+  /**
+   * True while children are being added
+   */
+  PRPackedBool mAddingChildren;
+
   /**
    * Are we a parent for nested repeats
    */
-  PRBool mIsParent;
+  PRPackedBool mIsParent;
 
   /**
    * The currently selected repeat (nested repeats)
@@ -281,39 +285,47 @@ protected:
    */
   nsresult CloneNode(nsIDOMNode *aSrc, nsIDOMNode **aTarget);
 
-  /**
-   * If this attribute name is bind, model or nodeset, then remove the repeat
-   * control from the list of controls that the model keeps.
-   */
-  void MaybeRemoveFromModel(nsIAtom *aName);
+  PRBool IsBindingAttribute(const nsIAtom *aAttr) const;
 
   /**
-   * If this attribute name is bind, model or nodeset, then try to Bind and
-   * Refresh to keep the repeat element current
+   * Make sure that an index value is inside the valid index range.
+   *
+   * @param aIndex            The index value to sanitize
+   * @param aIsScroll         Send scroll events if first or last index?
    */
-  void MaybeBindAndRefresh(nsIAtom *aName);
+  void SanitizeIndex(PRUint32 *aIndex, PRBool aIsScroll = PR_FALSE);
 
+  /**
+   * Unroll the template content into the visual rows by cloning template
+   * content and inserting into contextcontainers.
+   */
+  nsresult UnrollRows(nsIDOMXPathResult *aNodeset);
+
+  /**
+   * Returns either the anonymous content of the repeat or null;
+   */
+  already_AddRefed<nsIDOMElement> GetAnonymousContent();
+
+  /**
+   * Insert the template content for a repeat node into the given node.
+   *
+   * @param aNode             The node to insert content into.
+   */
+  nsresult InsertTemplateContent(nsIDOMNode *aNode);
 
 public:
   NS_DECL_ISUPPORTS_INHERITED
 
-  // nsIXTFXMLVisual overrides
-  NS_IMETHOD OnCreated(nsIXTFXMLVisualWrapper *aWrapper);
-  
-  // nsIXTFVisual overrides
-  NS_IMETHOD GetVisualContent(nsIDOMElement **aElement);
+  // nsIXTFBindableElement overrides
+  NS_IMETHOD OnCreated(nsIXTFBindableElementWrapper *aWrapper);
 
   // nsIXTFElement overrides
   NS_IMETHOD OnDestroyed();
-  NS_IMETHOD WillSetAttribute(nsIAtom *aName, const nsAString &aValue);
-  NS_IMETHOD AttributeSet(nsIAtom *aName, const nsAString &aValue);
-  NS_IMETHOD WillRemoveAttribute(nsIAtom *aName);
-  NS_IMETHOD AttributeRemoved(nsIAtom *aName);
   NS_IMETHOD BeginAddingChildren();
   NS_IMETHOD DoneAddingChildren();
 
   // nsIXFormsControl
-  NS_IMETHOD Bind();
+  NS_IMETHOD Bind(PRBool *aContextChanged);
   NS_IMETHOD Refresh();
   NS_IMETHOD TryFocus(PRBool* aOK);
   NS_IMETHOD IsEventTarget(PRBool *aOK);
@@ -323,10 +335,11 @@ public:
 
   // nsXFormsRepeatElement
   nsXFormsRepeatElement() :
-    mAddingChildren(PR_FALSE),
     mCurrentIndex(0),
     mMaxIndex(0),
     mLevel(1),
+    mCurrentRowCount(0),
+    mAddingChildren(PR_FALSE),
     mIsParent(PR_FALSE)
     {}
 
@@ -336,40 +349,20 @@ public:
 };
 
 NS_IMPL_ISUPPORTS_INHERITED1(nsXFormsRepeatElement,
-                             nsXFormsControlStub,
+                             nsXFormsDelegateStub,
                              nsIXFormsRepeatElement)
 
 // nsIXTFXMLVisual
 NS_IMETHODIMP
-nsXFormsRepeatElement::OnCreated(nsIXTFXMLVisualWrapper *aWrapper)
+nsXFormsRepeatElement::OnCreated(nsIXTFBindableElementWrapper *aWrapper)
 {
-  nsresult rv = nsXFormsControlStub::OnCreated(aWrapper);
+  nsresult rv = nsXFormsDelegateStub::OnCreated(aWrapper);
   NS_ENSURE_SUCCESS(rv, rv);
 
   aWrapper->SetNotificationMask(kStandardNotificationMask |
                                 nsIXTFElement::NOTIFY_BEGIN_ADDING_CHILDREN |
                                 nsIXTFElement::NOTIFY_DONE_ADDING_CHILDREN);
 
-  nsCOMPtr<nsIDOMDocument> domDoc;
-  rv = mElement->GetOwnerDocument(getter_AddRefs(domDoc));
-  NS_ENSURE_SUCCESS(rv, rv);
-  
-  // Create UI element
-  nsCOMPtr<nsIDOMElement> domElement;
-  rv = domDoc->CreateElementNS(NS_LITERAL_STRING("http://www.w3.org/1999/xhtml"),
-                               NS_LITERAL_STRING("div"),
-                               getter_AddRefs(domElement));
-  NS_ENSURE_SUCCESS(rv, rv);
-  mHTMLElement = do_QueryInterface(domElement);
-  NS_ENSURE_TRUE(mHTMLElement, NS_ERROR_FAILURE);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsXFormsRepeatElement::GetVisualContent(nsIDOMElement **aElement)
-{
-  NS_IF_ADDREF(*aElement = mHTMLElement);
   return NS_OK;
 }
 
@@ -377,38 +370,9 @@ nsXFormsRepeatElement::GetVisualContent(nsIDOMElement **aElement)
 NS_IMETHODIMP
 nsXFormsRepeatElement::OnDestroyed()
 {
-  mHTMLElement = nsnull;
   mIndexUsers.Clear();
 
-  return nsXFormsControlStub::OnDestroyed();
-}
-
-NS_IMETHODIMP
-nsXFormsRepeatElement::WillSetAttribute(nsIAtom *aName, const nsAString &aValue)
-{
-  MaybeRemoveFromModel(aName);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsXFormsRepeatElement::AttributeSet(nsIAtom *aName, const nsAString &aValue)
-{
-  MaybeBindAndRefresh(aName);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsXFormsRepeatElement::WillRemoveAttribute(nsIAtom *aName)
-{
-  MaybeRemoveFromModel(aName);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsXFormsRepeatElement::AttributeRemoved(nsIAtom *aName)
-{
-  MaybeBindAndRefresh(aName);
-  return NS_OK;
+  return nsXFormsDelegateStub::OnDestroyed();
 }
 
 NS_IMETHODIMP
@@ -424,8 +388,6 @@ nsXFormsRepeatElement::DoneAddingChildren()
 {
   mAddingChildren = PR_FALSE;
 
-  Refresh();
-  
   return NS_OK;
 }
 
@@ -445,32 +407,29 @@ nsXFormsRepeatElement::SetIndex(PRUint32 *aIndex,
 
   // Set repeat-index
   if (mIsParent) {
-    NS_ASSERTION(mCurrentRepeat, "How can we be a repeat parent without a child?");
+    NS_ASSERTION(mCurrentRepeat,
+                 "How can we be a repeat parent without a child?");
     // We're the parent of nested repeats, set through the correct repeat
     return mCurrentRepeat->SetIndex(aIndex, aIsRefresh);
   }
   
   // Do nothing if we are not showing anything
-  if (mMaxIndex == 0)
+  if (mMaxIndex == 0) {
+    SanitizeIndex(aIndex, PR_TRUE);
+    mCurrentIndex = *aIndex;
     return NS_OK;
+  }
 
   if (aIsRefresh && !mCurrentIndex) {
     // If we are refreshing, get existing index value from parent
-    NS_ASSERTION(mParent, "SetIndex with aIsRefresh == PR_TRUE for a non-nested repeat?!");
+    NS_ASSERTION(mParent,
+                 "SetIndex with aIsRefresh == PR_TRUE for a non-nested repeat?!");
     rv = mParent->GetIndex(aIndex);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // Check min. and max. value
-  if (*aIndex < 1) {
-    *aIndex = 1;
-    if (!aIsRefresh)
-      nsXFormsUtils::DispatchEvent(mElement, eEvent_ScrollFirst);
-  } else if (*aIndex > mMaxIndex) {
-    *aIndex = mMaxIndex;
-    if (!aIsRefresh)
-      nsXFormsUtils::DispatchEvent(mElement, eEvent_ScrollLast);
-  }
+  SanitizeIndex(aIndex, PR_TRUE);
 
   // Do nothing if setting to existing value
   if (!aIsRefresh && mCurrentIndex && *aIndex == mCurrentIndex)
@@ -490,7 +449,9 @@ nsXFormsRepeatElement::SetIndex(PRUint32 *aIndex,
   if (mCurrentIndex) {
     // We had the previous selection, unset directly
     SetChildIndex(mCurrentIndex, PR_FALSE, aIsRefresh);
-  } if (mParent) {
+  }
+  
+  if (mParent) {
     // Selection is in another repeat, inform parent (it will inform the
     // previous owner of its new state)
     rv = mParent->SetCurrentRepeat(this, *aIndex);
@@ -510,8 +471,12 @@ NS_IMETHODIMP
 nsXFormsRepeatElement::GetIndex(PRUint32 *aIndex)
 {
   NS_ENSURE_ARG(aIndex);
-  if (mParent) {
-    return mParent->GetIndex(aIndex);
+  if (mIsParent) {
+    if (!mCurrentRepeat) {
+      *aIndex = 0;
+      return NS_OK;
+    }
+    return mCurrentRepeat->GetIndex(aIndex);
   }
 
   *aIndex = mCurrentIndex;
@@ -534,17 +499,16 @@ nsXFormsRepeatElement::Deselect(void)
 NS_IMETHODIMP
 nsXFormsRepeatElement::GetStartingIndex(PRUint32 *aRes)
 {
+  NS_ENSURE_ARG(aRes);
+
   nsresult rv = GetIntAttr(NS_LITERAL_STRING("startindex"),
                            (PRInt32*) aRes,
                            nsISchemaBuiltinType::BUILTIN_TYPE_POSITIVEINTEGER);
   if (NS_FAILED(rv)) {
     *aRes = 1;
   }
-  if (*aRes < 1) {
-    *aRes = 1;
-  } else if (*aRes > mMaxIndex) {
-    *aRes = mMaxIndex;
-  }
+  SanitizeIndex(aRes);
+
   return NS_OK;
 }
 
@@ -577,9 +541,11 @@ nsXFormsRepeatElement::GetCurrentRepeatRow(nsIDOMNode **aRow)
     return mCurrentRepeat->GetCurrentRepeatRow(aRow);
   }
 
+  nsCOMPtr<nsIDOMElement> anon = GetAnonymousContent();
+  NS_ENSURE_STATE(anon);
+
   nsCOMPtr<nsIDOMNodeList> children;
-  NS_ENSURE_STATE(mHTMLElement);
-  mHTMLElement->GetChildNodes(getter_AddRefs(children));
+  anon->GetChildNodes(getter_AddRefs(children));
   NS_ENSURE_STATE(children);
 
   nsCOMPtr<nsIDOMNode> child;
@@ -608,6 +574,7 @@ nsXFormsRepeatElement::RemoveIndexUser(nsIXFormsControl *aControl)
 NS_IMETHODIMP
 nsXFormsRepeatElement::IndexHasChanged()
 {
+  NS_ENSURE_STATE(mModel);
   ///
   /// @bug We need to handle \<bind\> elements too (XXX)
 
@@ -615,10 +582,11 @@ nsXFormsRepeatElement::IndexHasChanged()
   // they are rebound and refreshed().
   nsCOMArray<nsIXFormsControl> indexes(mIndexUsers);
 
+  nsresult rv;
   for (PRInt32 i = 0; i < indexes.Count(); ++i) {
     nsCOMPtr<nsIXFormsControl> control = indexes[i];
-    control->Bind();
-    control->Refresh();
+    rv = mModel->ForceRebind(control);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   return NS_OK;
@@ -628,6 +596,7 @@ nsXFormsRepeatElement::IndexHasChanged()
 NS_IMETHODIMP
 nsXFormsRepeatElement::GetIsParent(PRBool *aIsParent)
 {
+  NS_ENSURE_ARG(aIsParent);
   *aIsParent = mIsParent;
   return NS_OK;
 }
@@ -674,50 +643,233 @@ nsXFormsRepeatElement::GetLevel(PRUint32 *aLevel)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsXFormsRepeatElement::HandleNodeInsert(nsIDOMNode *aNode)
+{
+  nsCOMPtr<nsIDOMElement> anon = GetAnonymousContent();
+  if (!anon) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIDOM3Node> node(do_QueryInterface(aNode));
+  NS_ENSURE_STATE(node);
+
+  // XXX, badness^2: If it is a insert we have to refresh before we can
+  // figure out whether the node is in our nodeset... refactor this so
+  // repeat actually gets the nodeset in Bind() and then uses it refresh,
+  // then we can "just" re-evaluate the nodeset, and only refresh if the
+  // node actually hits this repeat
+
+  // XXX, moreover it is also wrong to refresh at this point. It will happen
+  // in insert processing (and possibly deferred...)
+  nsresult rv = Refresh();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIDOMNode> child;
+  anon->GetFirstChild(getter_AddRefs(child));
+
+  PRUint32 index = 1;
+  while (child) {
+    nsCOMPtr<nsIXFormsContextControl> context(do_QueryInterface(child));
+    NS_ASSERTION(context,
+                 "repeat child not implementing nsIXFormsContextControl?!");
+
+    nsAutoString modelID;
+    PRInt32 position, size;
+    nsCOMPtr<nsIDOMNode> boundNode;
+    rv = context->GetContext(modelID, getter_AddRefs(boundNode), &position,
+                             &size);
+    NS_ENSURE_SUCCESS(rv, rv);
+    PRBool sameNode = PR_FALSE;
+    node->IsSameNode(boundNode, &sameNode);
+    if (sameNode) {
+      rv = SetIndex(&index, PR_FALSE);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      break;
+    }
+
+    nsCOMPtr<nsIDOMNode> tmp;
+    child->GetNextSibling(getter_AddRefs(tmp));
+    child.swap(tmp);
+    ++index;
+  }
+
+  return NS_OK;
+}
+
 // nsXFormsControl
 
 NS_IMETHODIMP
-nsXFormsRepeatElement::Bind()
+nsXFormsRepeatElement::Bind(PRBool *aContextChanged)
 {
-  if (mAddingChildren)
+  NS_ENSURE_ARG(aContextChanged);
+
+  nsCOMPtr<nsIDOMDocument> domDoc;
+  mElement->GetOwnerDocument(getter_AddRefs(domDoc));
+  if (!nsXFormsUtils::IsDocumentReadyForBind(domDoc)) {
+    nsXFormsModelElement::DeferElementBind(domDoc, this);
+    *aContextChanged = PR_FALSE;
+    return NS_OK_XFORMS_DEFERRED;
+  }
+
+  nsresult rv = BindToModel();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *aContextChanged = PR_TRUE;
+  return NS_OK;
+}
+
+nsresult
+nsXFormsRepeatElement::InsertTemplateContent(nsIDOMNode *aNode)
+{
+  NS_ENSURE_ARG(aNode);
+
+  nsCOMPtr<nsIDOMNode> child;
+  nsresult rv = mElement->GetFirstChild(getter_AddRefs(child));
+  NS_ENSURE_SUCCESS(rv, rv);
+  while (child) {
+    nsCOMPtr<nsIDOMNode> childClone;
+    rv = CloneNode(child, getter_AddRefs(childClone));
+    NS_ENSURE_SUCCESS(rv, rv);
+    
+    nsCOMPtr<nsIDOMNode> newNode;
+    rv = aNode->AppendChild(childClone, getter_AddRefs(newNode));
+    NS_ENSURE_SUCCESS(rv, rv);
+  
+    rv = child->GetNextSibling(getter_AddRefs(newNode));
+    NS_ENSURE_SUCCESS(rv, rv);
+    child = newNode;
+  }
+
+  return NS_OK;
+}
+
+nsresult
+nsXFormsRepeatElement::UnrollRows(nsIDOMXPathResult *aNodeset)
+{
+#ifdef DEBUG_XF_REPEAT
+  printf("nsXFormsRepeatElement::UnrollRows()\n");
+#endif
+  NS_ENSURE_STATE(mElement);
+
+  nsCOMPtr<nsIDOMElement> anon = GetAnonymousContent();
+  if (!anon) {
     return NS_OK;
+  }
 
-  mModel = nsXFormsUtils::GetModel(mElement);
-  if (mModel)
-    mModel->AddFormControl(this);
+  nsresult rv;
+  if (!aNodeset || !mModel) {
+    mMaxIndex = 0;
+  } else {
+    PRUint32 contextSize;
+    rv = aNodeset->GetSnapshotLength(&contextSize);
+    NS_ENSURE_SUCCESS(rv, rv);
+    mMaxIndex = contextSize;
+  }
 
+#ifdef DEBUG_XF_REPEAT
+  printf("\tmMaxIndex: %d, mCurrentRowCount: %d\n",
+         mMaxIndex, mCurrentRowCount);
+#endif
+
+  // STEP 1: Remove rows
+  nsCOMPtr<nsIDOMNode> tmp;
+  if (mMaxIndex < mCurrentRowCount) {
+    for (PRUint32 i = mMaxIndex; i < mCurrentRowCount; ++i) {
+      nsCOMPtr<nsIDOMNode> lastChild;
+      rv = anon->GetLastChild(getter_AddRefs(lastChild));
+      NS_ENSURE_SUCCESS(rv, rv);
+    
+      rv = anon->RemoveChild(lastChild, getter_AddRefs(tmp));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+  } else if (mMaxIndex > mCurrentRowCount) {
+    // STEP 2: Add rows
+    nsCOMPtr<nsIDOMDocument> domDoc;
+    rv = anon->GetOwnerDocument(getter_AddRefs(domDoc));
+    NS_ENSURE_SUCCESS(rv, rv);
+    for (PRUint32 i = mCurrentRowCount; i < mMaxIndex; ++i) {
+      // Create <contextcontainer>
+      nsCOMPtr<nsIDOMElement> container;
+      rv = domDoc->CreateElementNS(NS_LITERAL_STRING(NS_NAMESPACE_XFORMS),
+                                   NS_LITERAL_STRING("contextcontainer"),
+                                   getter_AddRefs(container));
+      NS_ENSURE_SUCCESS(rv, rv);
+  
+      container->SetAttribute(NS_LITERAL_STRING("class"),
+                              NS_LITERAL_STRING("xf-repeat-item"));
+
+      rv = anon->AppendChild(container, getter_AddRefs(tmp));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+  }
+
+  // Repeat has no content
+  if (!mMaxIndex) {
+    mCurrentRowCount = 0;
+    return NS_OK;
+  }
+  
+  // STEP 3: Update context on rows
+  nsCOMPtr<nsIDOMNode> child;
+  rv = anon->GetFirstChild(getter_AddRefs(child));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  for (PRUint32 i = 0; i < mMaxIndex; ++i) {
+    NS_ASSERTION(child, "Unrolled content does not match index size?!");
+    // Get context node
+    nsCOMPtr<nsIDOMNode> contextNode;
+    rv = aNodeset->SnapshotItem(i, getter_AddRefs(contextNode));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Set context node, position, and size
+    nsCOMPtr<nsIXFormsContextControl> childContext = do_QueryInterface(child);
+    NS_ASSERTION(childContext,
+                 "content child not implementing nsIXFormsContextControl?!");
+
+    rv = childContext->SetContext(contextNode, i + 1, mMaxIndex);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Next child
+    rv = child->GetNextSibling(getter_AddRefs(tmp));
+    NS_ENSURE_SUCCESS(rv, rv);
+    tmp.swap(child);
+  }
+
+  // Rows deleted, nothing more to do
+  if (mCurrentRowCount >= mMaxIndex) {
+    mCurrentRowCount = mMaxIndex;
+    return NS_OK;
+  }
+
+  // STEP 4: Insert template content into newly created rows
+  nsCOMPtr<nsIDOMNodeList> containerList;
+  rv = anon->GetChildNodes(getter_AddRefs(containerList));
+  NS_ENSURE_SUCCESS(rv, rv);
+  for (PRUint32 j = mCurrentRowCount; j < mMaxIndex; ++j) {
+    nsCOMPtr<nsIDOMNode> container;
+    rv = containerList->Item(j, getter_AddRefs(container));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = InsertTemplateContent(container);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  
+  mCurrentRowCount = mMaxIndex;
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsXFormsRepeatElement::Refresh()
 {
-  if (!mHTMLElement || mAddingChildren || mIsParent)
+  if (mAddingChildren || mIsParent)
     return NS_OK;
+
   nsPostRefresh postRefresh = nsPostRefresh();
 
-  nsresult rv;
+  PRUint32 oldIndex = mCurrentIndex;
 
-  // Clear any existing children
-  nsCOMPtr<nsIDOMNode> cNode;
-  mHTMLElement->GetFirstChild(getter_AddRefs(cNode));
-  while (cNode) {
-    nsCOMPtr<nsIDOMNode> retNode;
-    mHTMLElement->RemoveChild(cNode, getter_AddRefs(retNode));
-    mHTMLElement->GetFirstChild(getter_AddRefs(cNode));
-  }
-
-  // Get the nodeset we are bound to
-  nsCOMPtr<nsIDOMXPathResult> result;
-  nsCOMPtr<nsIModelElementPrivate> model;
-  rv = ProcessNodeBinding(NS_LITERAL_STRING("nodeset"),
-                          nsIDOMXPathResult::ORDERED_NODE_SNAPSHOT_TYPE,
-                          getter_AddRefs(result),
-                          getter_AddRefs(model));
-
-  if (NS_FAILED(rv) | !result | !model)
-    return rv;
-                                         
   /// @todo The spec says: "This node-set must consist of contiguous child
   /// element nodes, with the same local name and namespace name of a common
   /// parent node. The behavior of element repeat with respect to
@@ -725,91 +877,69 @@ nsXFormsRepeatElement::Refresh()
   /// @see http://www.w3.org/TR/xforms/slice9.html#ui-repeat
   ///
   /// Can/should we check this somehow? (XXX)
-  
-  PRUint32 contextSize;
-  rv = result->GetSnapshotLength(&contextSize);
+
+
+  // Get the nodeset we are bound to
+  nsresult rv;
+  nsCOMPtr<nsIDOMXPathResult> result;
+  rv = ProcessNodeBinding(NS_LITERAL_STRING("nodeset"),
+                          nsIDOMXPathResult::ORDERED_NODE_SNAPSHOT_TYPE,
+                          getter_AddRefs(result));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!contextSize)
-    return NS_OK;
-  
-  // Get model ID
-  nsCOMPtr<nsIDOMElement> modelElement = do_QueryInterface(model);
-  NS_ENSURE_TRUE(modelElement, NS_ERROR_FAILURE);
-  nsAutoString modelID;
-  modelElement->GetAttribute(NS_LITERAL_STRING("id"), modelID);
-
-  // Get DOM document
-  nsCOMPtr<nsIDOMDocument> domDoc;
-  rv = mHTMLElement->GetOwnerDocument(getter_AddRefs(domDoc));
+  // Unroll the repeat rows
+  rv = UnrollRows(result);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  mMaxIndex = contextSize;
-  for (PRUint32 i = 1; i < mMaxIndex + 1; ++i) {
-    // Create <contextcontainer>
-    nsCOMPtr<nsIDOMElement> riElement;
-    rv = domDoc->CreateElementNS(NS_LITERAL_STRING("http://www.w3.org/2002/xforms"),
-                                 NS_LITERAL_STRING("contextcontainer"),
-                                 getter_AddRefs(riElement));
-    NS_ENSURE_SUCCESS(rv, rv);
-      
-    // Set model as attribute
-    if (!modelID.IsEmpty()) {
-      riElement->SetAttribute(NS_LITERAL_STRING("model"), modelID);
-    }  
-
-    // Get context node
-    nsCOMPtr<nsIXFormsContextControl> riContext = do_QueryInterface(riElement);
-    NS_ENSURE_TRUE(riContext, NS_ERROR_FAILURE);
-
-    nsCOMPtr<nsIDOMNode> contextNode;
-    rv = result->SnapshotItem(i - 1, getter_AddRefs(contextNode));
-    NS_ENSURE_SUCCESS(rv, rv);
-        
-    nsCOMPtr<nsIDOMElement> contextElement = do_QueryInterface(contextNode);
-    NS_ENSURE_TRUE(contextElement, NS_ERROR_FAILURE);
-
-    // Set context node, position, and size
-    rv = riContext->SetContext(contextElement, i, contextSize);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // Iterate over template children, clone them, and append them to <contextcontainer>
-    nsCOMPtr<nsIDOMNode> child;
-    rv = mElement->GetFirstChild(getter_AddRefs(child));
-    NS_ENSURE_SUCCESS(rv, rv);
-    while (child) {
-      nsCOMPtr<nsIDOMNode> childClone;
-      rv = CloneNode(child, getter_AddRefs(childClone));
-      NS_ENSURE_SUCCESS(rv, rv);
-        
-      nsCOMPtr<nsIDOMNode> newNode;
-      rv = riElement->AppendChild(childClone, getter_AddRefs(newNode));
-      NS_ENSURE_SUCCESS(rv, rv);
-        
-      rv = child->GetNextSibling(getter_AddRefs(newNode));
-      NS_ENSURE_SUCCESS(rv, rv);
-      child = newNode;
-    }
-
-    // Append node
-    nsCOMPtr<nsIDOMNode> domNode;
-    rv = mHTMLElement->AppendChild(riElement, getter_AddRefs(domNode));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // There is an awfull lot of evaluating being done by all the
-    // children, as they are created and inserted into the different
-    // places in the DOM, the only refresh necessary is the one when they
-    // are appended in mHTMLElement.
-  }
-
-  if (!mParent && !mCurrentIndex && mMaxIndex) {
+  // Maintain the index
+  if (mCurrentIndex || !mMaxIndex) {
+    // Somebody might have been fooling around with our children since last
+    // refresh (either using delete or through script). Or we might have an
+    // empty nodeset. So fix the index value.
+    SanitizeIndex(&mCurrentIndex);
+  } else if (mMaxIndex) {
     // repeat-index has not been initialized, set it.
-    GetStartingIndex(&mCurrentIndex);
+    if (!mParent) {
+      GetStartingIndex(&mCurrentIndex);
+      // Inform listeners of initial index value
+      IndexHasChanged();
+    } else if (mLevel > 1) {
+      // Set repeat-index for inner repeats. If parent <contextcontainer/>
+      // element is selected then mCurrentIndex is setted on starting index.
+
+      nsCOMPtr<nsIDOMNode> temp = mElement;
+      nsCOMPtr<nsIDOMNode> parent;
+      nsCOMPtr<nsIXFormsRepeatItemElement> context;
+
+      while (!context) {
+        rv = temp->GetParentNode(getter_AddRefs(parent));
+        NS_ENSURE_SUCCESS(rv, rv);
+        if (!parent)
+          break;
+        context = do_QueryInterface(parent);
+        temp.swap(parent);
+      }
+
+      if (context) {
+        PRBool hasIndex = PR_FALSE;
+        context->GetIndexState(&hasIndex);
+        if (hasIndex) {
+          PRUint32 index = 0;
+          GetStartingIndex(&index);
+          SetIndex(&index, PR_FALSE);
+        }
+      }
+      return NS_OK;
+    }
   }
 
   // If we have the repeat-index, set it.
-  if (mCurrentIndex) { 
+  if (mCurrentIndex) {
     SetChildIndex(mCurrentIndex, PR_TRUE, PR_TRUE);
+  }
+
+  if (mCurrentIndex != oldIndex) {
+    mParent ? mParent->IndexHasChanged() : IndexHasChanged();
   }
 
   return NS_OK;
@@ -827,18 +957,22 @@ nsXFormsRepeatElement::SetChildIndex(PRUint32 aPosition,
          aPosition, aState, aIsRefresh);
 #endif
 
-  if (!mHTMLElement)
+  nsCOMPtr<nsIDOMElement> anon = GetAnonymousContent();
+  if (!anon)
     return NS_OK;
 
   nsCOMPtr<nsIDOMNodeList> children;
-  mHTMLElement->GetChildNodes(getter_AddRefs(children));
+  anon->GetChildNodes(getter_AddRefs(children));
   NS_ENSURE_STATE(children);
 
+  PRUint32 index = aPosition - 1; // Indexes are 1-based, the DOM is 0-based;
+
   nsCOMPtr<nsIDOMNode> child;
-  children->Item(aPosition - 1, // Indexes are 1-based, the DOM is 0-based
+  children->Item(index,
                  getter_AddRefs(child));
-  nsCOMPtr<nsIXFormsRepeatItemElement> repeatItem = do_QueryInterface(child);
-  NS_ENSURE_STATE(repeatItem);
+  nsCOMPtr<nsIXFormsRepeatItemElement> repeatItem(do_QueryInterface(child));
+  NS_ASSERTION(repeatItem,
+               "repeat child not implementing nsIXFormsRepeatItemElement?!");
 
   nsresult rv;
   PRBool curState;
@@ -859,6 +993,30 @@ nsXFormsRepeatElement::SetChildIndex(PRUint32 aPosition,
   return NS_OK;
 }
 
+void
+nsXFormsRepeatElement::SanitizeIndex(PRUint32 *aIndex, PRBool aIsScroll)
+{
+  if (!aIndex)
+    return;
+#ifdef DEBUG_XF_REPEAT
+  printf("nsXFormsRepeatElement::SanitizeIndex()\n");
+  printf("\tCurrent index: %d\n", *aIndex);
+#endif
+  if (*aIndex < 1) {
+    *aIndex = mMaxIndex ? 1 : 0;
+    if (aIsScroll)
+      nsXFormsUtils::DispatchEvent(mElement, eEvent_ScrollFirst);
+  } else if (*aIndex > mMaxIndex) {
+    *aIndex = mMaxIndex;
+    if (aIsScroll)
+      nsXFormsUtils::DispatchEvent(mElement, eEvent_ScrollLast);
+  }
+
+#ifdef DEBUG_XF_REPEAT
+  printf("\tNew index: %d\n", *aIndex);
+#endif
+}
+
 nsresult
 nsXFormsRepeatElement::ResetInnerRepeats(nsIDOMNode *aNode,
                                          PRBool      aIsRefresh)
@@ -875,6 +1033,10 @@ nsXFormsRepeatElement::ResetInnerRepeats(nsIDOMNode *aNode,
 
   nsCOMPtr<nsIDOMNodeList> nodeList;
   nsresult rv;
+
+  nsCOMPtr<nsIDOMElement> anon = GetAnonymousContent();
+  NS_ENSURE_STATE(anon);
+
   rv = element->GetElementsByTagNameNS(NS_LITERAL_STRING(NS_NAMESPACE_XFORMS),
                                        NS_LITERAL_STRING("repeat"),
                                        getter_AddRefs(nodeList));
@@ -981,13 +1143,17 @@ nsXFormsRepeatElement::TryFocus(PRBool *aOK)
     return NS_OK;
   }
 
+  nsCOMPtr<nsIDOMElement> anon = GetAnonymousContent();
+  if (!anon)
+    return NS_OK;
+
  /**
   * "Setting focus to a repeating structure sets the focus to
   *  the repeat item represented by the repeat index."
   *  @see http://www.w3.org/TR/xforms/slice10.html#action-setfocus
   */
   nsCOMPtr<nsIDOMNodeList> children;
-  mHTMLElement->GetChildNodes(getter_AddRefs(children));
+  anon->GetChildNodes(getter_AddRefs(children));
   NS_ENSURE_STATE(children);
 
   nsCOMPtr<nsIDOMNode> child;
@@ -1060,28 +1226,29 @@ nsXFormsRepeatElement::GetIntAttr(const nsAString &aName,
   return rv;
 }
 
-void nsXFormsRepeatElement::MaybeBindAndRefresh(nsIAtom *aName)
+PRBool
+nsXFormsRepeatElement::IsBindingAttribute(const nsIAtom *aAttr) const
 {
-  if (aName == nsXFormsAtoms::bind ||
-      aName == nsXFormsAtoms::nodeset ||
-      aName == nsXFormsAtoms::model) {
-
-    Bind();
-    Refresh();
+  if (aAttr == nsXFormsAtoms::bind ||
+      aAttr == nsXFormsAtoms::nodeset  ||
+      aAttr == nsXFormsAtoms::model) {
+    return PR_TRUE;
   }
+  
+  return PR_FALSE;
 }
 
-void nsXFormsRepeatElement::MaybeRemoveFromModel(nsIAtom *aName)
+already_AddRefed<nsIDOMElement>
+nsXFormsRepeatElement::GetAnonymousContent()
 {
-  if (aName == nsXFormsAtoms::bind ||
-      aName == nsXFormsAtoms::nodeset ||
-      aName == nsXFormsAtoms::model) {
-    if (mModel) {
-      mModel->RemoveFormControl(this);
-    }
+  nsIDOMElement* anon = nsnull;
+  nsCOMPtr<nsIXFormsRepeatUIElement> uiElement(do_QueryInterface(mElement));
+  if (uiElement) {
+    // addrefs
+    uiElement->GetAnonymousRepeatContent(&anon);
   }
+  return anon;
 }
-
 
 // Factory
 NS_HIDDEN_(nsresult)

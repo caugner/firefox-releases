@@ -46,12 +46,13 @@
 #include "nsXMLProcessingInstruction.h"
 #include "nsUnicharUtils.h"
 #include "nsParserUtils.h"
+#include "nsHTMLAtoms.h"
 
 class nsXMLStylesheetPI : public nsXMLProcessingInstruction,
                           public nsStyleLinkElement
 {
 public:
-  nsXMLStylesheetPI(const nsAString& aData, nsIDocument *aDocument);
+  nsXMLStylesheetPI(nsNodeInfoManager *aNodeInfoManager, const nsAString& aData);
   virtual ~nsXMLStylesheetPI();
 
   // nsISupports
@@ -92,10 +93,10 @@ NS_IMPL_ADDREF_INHERITED(nsXMLStylesheetPI, nsXMLProcessingInstruction)
 NS_IMPL_RELEASE_INHERITED(nsXMLStylesheetPI, nsXMLProcessingInstruction)
 
 
-nsXMLStylesheetPI::nsXMLStylesheetPI(const nsAString& aData,
-                                     nsIDocument *aDocument) :
-  nsXMLProcessingInstruction(NS_LITERAL_STRING("xml-stylesheet"), aData,
-                             aDocument)
+nsXMLStylesheetPI::nsXMLStylesheetPI(nsNodeInfoManager *aNodeInfoManager,
+                                     const nsAString& aData)
+  : nsXMLProcessingInstruction(aNodeInfoManager, NS_LITERAL_STRING("xml-stylesheet"),
+                               aData)
 {
 }
 
@@ -147,7 +148,7 @@ nsXMLStylesheetPI::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   nsAutoString data;
   GetData(data);
 
-  nsXMLStylesheetPI *pi = new nsXMLStylesheetPI(data, nsnull);
+  nsXMLStylesheetPI *pi = new nsXMLStylesheetPI(mNodeInfoManager, data);
   if (!pi) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -162,11 +163,7 @@ nsXMLStylesheetPI::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
 NS_IMETHODIMP
 nsXMLStylesheetPI::GetCharset(nsAString& aCharset)
 {
-  if (!GetAttrValue(NS_LITERAL_STRING("charset"), aCharset)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  return NS_OK;
+  return GetAttrValue(nsHTMLAtoms::charset, aCharset) ? NS_OK : NS_ERROR_FAILURE;
 }
 
 void
@@ -177,7 +174,7 @@ nsXMLStylesheetPI::GetStyleSheetURL(PRBool* aIsInline,
   *aURI = nsnull;
 
   nsAutoString href;
-  GetAttrValue(NS_LITERAL_STRING("href"), href);
+  GetAttrValue(nsHTMLAtoms::href, href);
   if (href.IsEmpty()) {
     return;
   }
@@ -211,31 +208,29 @@ nsXMLStylesheetPI::GetStyleSheetInfo(nsAString& aTitle,
     return;
   }
 
-  nsAutoString title, type, media, alternate;
+  nsAutoString data;
+  GetData(data);
 
-  GetAttrValue(NS_LITERAL_STRING("title"), title);
-  title.CompressWhitespace();
-  aTitle.Assign(title);
+  nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::title, aTitle);
 
-  GetAttrValue(NS_LITERAL_STRING("alternate"), alternate);
+  nsAutoString alternate;
+  nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::alternate, alternate);
 
   // if alternate, does it have title?
   if (alternate.EqualsLiteral("yes")) {
     if (aTitle.IsEmpty()) { // alternates must have title
       return;
-    } else {
-      *aIsAlternate = PR_TRUE;
     }
+
+    *aIsAlternate = PR_TRUE;
   }
 
-  GetAttrValue(NS_LITERAL_STRING("media"), media);
-  aMedia.Assign(media);
-  ToLowerCase(aMedia); // case sensitivity?
+  nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::media, aMedia);
 
-  GetAttrValue(NS_LITERAL_STRING("type"), type);
+  nsAutoString type;
+  nsParserUtils::GetQuotedAttributeValue(data, nsHTMLAtoms::type, type);
 
-  nsAutoString mimeType;
-  nsAutoString notUsed;
+  nsAutoString mimeType, notUsed;
   nsParserUtils::SplitMimeType(type, mimeType, notUsed);
   if (!mimeType.IsEmpty() && !mimeType.LowerCaseEqualsLiteral("text/css")) {
     aType.Assign(type);
@@ -251,17 +246,19 @@ nsXMLStylesheetPI::GetStyleSheetInfo(nsAString& aTitle,
 
 nsresult
 NS_NewXMLStylesheetProcessingInstruction(nsIContent** aInstancePtrResult,
-                                         const nsAString& aData,
-                                         nsIDocument *aOwnerDocument)
+                                         nsNodeInfoManager *aNodeInfoManager,
+                                         const nsAString& aData)
 {
+  NS_PRECONDITION(aNodeInfoManager, "Missing nodeinfo manager");
+
   *aInstancePtrResult = nsnull;
   
-  nsCOMPtr<nsIContent> instance = new nsXMLStylesheetPI(aData, nsnull);
+  nsXMLStylesheetPI *instance = new nsXMLStylesheetPI(aNodeInfoManager, aData);
   if (!instance) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  instance.swap(*aInstancePtrResult);
+  NS_ADDREF(*aInstancePtrResult = instance);
 
   return NS_OK;
 }

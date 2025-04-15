@@ -409,9 +409,17 @@ nsParser::~nsParser() {
   }
 #endif
 
-  //don't forget to add code here to delete 
-  //what may be several contexts...
-  delete mParserContext;
+#ifdef DEBUG
+  if (mParserContext && mParserContext->mPrevContext) {
+    NS_WARNING("Extra parser contexts still on the parser stack");
+  }
+#endif
+
+  while (mParserContext) {
+    CParserContext *pc = mParserContext->mPrevContext;
+    delete mParserContext;
+    mParserContext = pc;
+  }
 
   if (mFlags & NS_PARSER_FLAG_PENDING_CONTINUE_EVENT) {
     NS_ASSERTION(mEventQueue != nsnull,"Event queue is null"); 
@@ -1715,6 +1723,11 @@ nsParser::Parse(const nsAString& aSourceBuffer,
 
   nsresult result=NS_OK;
 
+  // Don't bother if we're never going to parse this.
+  if (mInternalState == NS_ERROR_HTMLPARSER_STOPPARSING) {
+    return result;
+  }
+
   if(!aLastCall && aSourceBuffer.IsEmpty()) {
     // Nothing is being passed to the parser so return
     // immediately. mUnusedInput will get processed when
@@ -2185,12 +2198,11 @@ nsresult nsParser::OnStartRequest(nsIRequest *request, nsISupports* aContext) {
   nsresult rv;
   nsCAutoString contentType;
   nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
-  NS_ASSERTION(channel, "parser needs a channel to find a dtd");
-
-  rv = channel->GetContentType(contentType);
-  if (NS_SUCCEEDED(rv))
-  {
-    mParserContext->SetMimeType(contentType);
+  if (channel) {
+    rv = channel->GetContentType(contentType);
+    if (NS_SUCCEEDED(rv)) {
+      mParserContext->SetMimeType(contentType);
+    }
   }
 
 #ifdef rickgdebug

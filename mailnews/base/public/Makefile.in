@@ -70,11 +70,13 @@ XPIDLSRCS	= \
 		nsIMsgMailSession.idl \
 		nsIMsgMessageService.idl \
 		nsIMsgSignature.idl \
+		nsIMsgTagService.idl \
 		nsIMsgThread.idl \
 		nsIUrlListener.idl \
 		nsIUrlListenerManager.idl \
 		nsIMsgBiffManager.idl \
-    nsIMsgPurgeService.idl \
+		nsIStatusBarBiffManager.idl \
+		nsIMsgPurgeService.idl \
 		nsIMsgCopyService.idl \
 		nsIMsgCopyServiceListener.idl \
 		nsIMsgStatusFeedback.idl \
@@ -96,6 +98,7 @@ XPIDLSRCS	= \
 		nsIMsgMdnGenerator.idl	        \
 		nsISpamSettings.idl	        \
 		nsIMapiRegistry.idl \
+        nsIMsgCustomColumnHandler.idl \
 		$(NULL)
 
 include $(topsrcdir)/config/rules.mk

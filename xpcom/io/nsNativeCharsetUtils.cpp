@@ -65,6 +65,12 @@ NS_CopyUnicodeToNative(const nsAString  &input, nsACString &output)
     return NS_OK;
 }
 
+NS_COM PRBool
+NS_IsNativeUTF8()
+{
+    return PR_TRUE;
+}
+
 void
 NS_StartupNativeCharsetUtils()
 {
@@ -134,6 +140,7 @@ utf16_to_isolatin1(const PRUnichar **input, PRUint32 *inputLeft, char **output, 
 #include <langinfo.h> // nl_langinfo
 #include <iconv.h>    // iconv_open, iconv, iconv_close
 #include <errno.h>
+#include "plstr.h"
 
 #if defined(HAVE_ICONV_WITH_CONST_INPUT)
 #define ICONV_INPUT(x) (x)
@@ -295,6 +302,7 @@ public:
 
     static void GlobalInit();
     static void GlobalShutdown();
+    static PRBool IsNativeUTF8();
 
 private:
     static iconv_t gNativeToUnicode;
@@ -307,6 +315,7 @@ private:
 #endif
     static PRLock *gLock;
     static PRBool  gInitialized;
+    static PRBool  gIsNativeUTF8;
 
     static void LazyInit();
 
@@ -324,6 +333,7 @@ iconv_t nsNativeCharsetConverter::gUTF8ToUnicode   = INVALID_ICONV_T;
 #endif
 PRLock *nsNativeCharsetConverter::gLock            = nsnull;
 PRBool  nsNativeCharsetConverter::gInitialized     = PR_FALSE;
+PRBool  nsNativeCharsetConverter::gIsNativeUTF8    = PR_FALSE;
 
 void
 nsNativeCharsetConverter::LazyInit()
@@ -338,6 +348,11 @@ nsNativeCharsetConverter::LazyInit()
     }
     else
         native_charset_list[0] = native_charset;
+
+    // Most, if not all, Unixen supporting UTF-8 and nl_langinfo(CODESET) 
+    // return 'UTF-8' (or 'utf-8')
+    if (!PL_strcasecmp(native_charset, "UTF-8"))
+        gIsNativeUTF8 = PR_TRUE;
 
     gNativeToUnicode = xp_iconv_open(UTF_16_NAMES, native_charset_list);
     gUnicodeToNative = xp_iconv_open(native_charset_list, UTF_16_NAMES);
@@ -616,6 +631,18 @@ nsNativeCharsetConverter::UnicodeToNative(const PRUnichar **input,
     return NS_OK;
 }
 
+PRBool
+nsNativeCharsetConverter::IsNativeUTF8()
+{
+    if (!gInitialized) {
+        Lock();
+        if (!gInitialized)
+           LazyInit();
+        Unlock();
+    }
+    return gIsNativeUTF8; 
+}
+
 #endif // USE_ICONV
 
 //-----------------------------------------------------------------------------
@@ -638,6 +665,7 @@ public:
 
     static void GlobalInit();
     static void GlobalShutdown() { }
+    static PRBool IsNativeUTF8();
 
 private:
     static PRBool gWCharIsUnicode;
@@ -766,6 +794,13 @@ nsNativeCharsetConverter::UnicodeToNative(const PRUnichar **input,
     return NS_OK;
 }
 
+// XXX : for now, return false
+PRBool
+nsNativeCharsetConverter::IsNativeUTF8()
+{
+    return PR_FALSE;
+}
+
 #endif // USE_STDCONV
 
 //-----------------------------------------------------------------------------
@@ -789,7 +824,8 @@ NS_CopyNativeToUnicode(const nsACString &input, nsAString &output)
     // this will generally result in a larger allocation, but that seems
     // better than an extra buffer copy.
     //
-    output.SetLength(inputLen);
+    if (!EnsureStringLength(output, inputLen))
+        return NS_ERROR_OUT_OF_MEMORY;
     nsAString::iterator out_iter;
     output.BeginWriting(out_iter);
 
@@ -837,6 +873,12 @@ NS_CopyUnicodeToNative(const nsAString &input, nsACString &output)
     return NS_OK;
 }
 
+NS_COM PRBool
+NS_IsNativeUTF8()
+{
+    return nsNativeCharsetConverter::IsNativeUTF8();
+}
+
 void
 NS_StartupNativeCharsetUtils()
 {
@@ -866,6 +908,7 @@ NS_ShutdownNativeCharsetUtils()
 
 #include <windows.h>
 #include "nsAString.h"
+#include "nsReadableUtils.h"
 
 NS_COM nsresult
 NS_CopyNativeToUnicode(const nsACString &input, nsAString &output)
@@ -884,7 +927,8 @@ NS_CopyNativeToUnicode(const nsACString &input, nsAString &output)
         resultLen += n;
 
     // allocate sufficient space
-    output.SetLength(resultLen);
+    if (!EnsureStringLength(output, resultLen))
+        return NS_ERROR_OUT_OF_MEMORY;
     if (resultLen > 0) {
         nsAString::iterator out_iter;
         output.BeginWriting(out_iter);
@@ -914,7 +958,8 @@ NS_CopyUnicodeToNative(const nsAString  &input, nsACString &output)
         resultLen += n;
 
     // allocate sufficient space
-    output.SetLength(resultLen);
+    if (!EnsureStringLength(output, resultLen))
+        return NS_ERROR_OUT_OF_MEMORY;
     if (resultLen > 0) {
         nsACString::iterator out_iter;
         output.BeginWriting(out_iter);
@@ -931,14 +976,46 @@ NS_CopyUnicodeToNative(const nsAString  &input, nsACString &output)
     return NS_OK;
 }
 
-void
-NS_StartupNativeCharsetUtils()
+NS_COM PRBool
+NS_IsNativeUTF8()
 {
+    return PR_FALSE;
 }
 
-void
-NS_ShutdownNativeCharsetUtils()
+// moved from widget/src/windows/nsToolkit.cpp
+NS_COM PRInt32 
+NS_ConvertAtoW(const char *aStrInA, int aBufferSize, PRUnichar *aStrOutW)
 {
+    return MultiByteToWideChar(CP_ACP, 0, aStrInA, -1, aStrOutW, aBufferSize);
+}
+
+NS_COM PRInt32 
+NS_ConvertWtoA(const PRUnichar *aStrInW, int aBufferSizeOut, char *aStrOutA,
+               const char *aDefault)
+{
+    if ((!aStrInW) || (!aStrOutA) || (aBufferSizeOut <= 0))
+        return 0;
+
+    int numCharsConverted = WideCharToMultiByte(CP_ACP, 0, aStrInW, -1, 
+                                                aStrOutA, aBufferSizeOut,
+                                                aDefault, NULL);
+
+    if (!numCharsConverted) {
+        if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+            // Overflow, add missing null termination but return 0
+            aStrOutA[aBufferSizeOut-1] = '\0';
+        }
+        else {
+            // Other error, clear string and return 0
+            aStrOutA[0] = '\0';
+        }
+    }
+    else if (numCharsConverted < aBufferSizeOut) {
+        // Add 2nd null (really necessary?)
+        aStrOutA[numCharsConverted] = '\0';
+    }
+
+    return numCharsConverted;
 }
 
 //-----------------------------------------------------------------------------
@@ -950,6 +1027,7 @@ NS_ShutdownNativeCharsetUtils()
 #include <os2.h>
 #include <uconv.h>
 #include "nsAString.h"
+#include "nsReadableUtils.h"
 #include <ulserrno.h>
 #include "nsNativeCharsetUtils.h"
 
@@ -966,7 +1044,8 @@ NS_CopyNativeToUnicode(const nsACString &input, nsAString  &output)
 
     // determine length of result
     PRUint32 resultLen = inputLen;
-    output.SetLength(resultLen);
+    if (!EnsureStringLength(output, resultLen))
+        return NS_ERROR_OUT_OF_MEMORY;
 
     nsAString::iterator out_iter;
     output.BeginWriting(out_iter);
@@ -1006,7 +1085,8 @@ NS_CopyUnicodeToNative(const nsAString &input, nsACString &output)
     // maximum length of unicode string of length x converted to native
     // codepage is x*2
     size_t resultLen = inputLen * 2;
-    output.SetLength(resultLen);
+    if (!EnsureStringLength(output, resultLen))
+        return NS_ERROR_OUT_OF_MEMORY;
 
     nsACString::iterator out_iter;
     output.BeginWriting(out_iter);
@@ -1032,6 +1112,12 @@ NS_CopyUnicodeToNative(const nsAString &input, nsACString &output)
     // written.
     output.Truncate(resultLen - resultLeft);
     return NS_OK;
+}
+
+NS_COM PRBool
+NS_IsNativeUTF8()
+{
+    return PR_FALSE;
 }
 
 void
@@ -1073,6 +1159,7 @@ NS_ShutdownNativeCharsetUtils()
 #include <Script.h>
 #include <MacErrors.h>
 #include "nsAString.h"
+#include "nsReadableUtils.h"
 
 class nsFSStringConversionMac {
 public:
@@ -1237,6 +1324,12 @@ NS_CopyUnicodeToNative(const nsAString  &input, nsACString &output)
     return nsFSStringConversionMac::UCSToFS(input, output);
 }
 
+NS_COM PRBool
+NS_IsNativeUTF8()
+{
+    return PR_FALSE;
+}
+
 void
 NS_StartupNativeCharsetUtils()
 {
@@ -1267,6 +1360,12 @@ NS_CopyUnicodeToNative(const nsAString  &input, nsACString &output)
 {
     CopyUCS2toASCII(input, output);
     return NS_OK;
+}
+
+NS_COM PRBool
+NS_IsNativeUTF8()
+{
+    return PR_FALSE;
 }
 
 void

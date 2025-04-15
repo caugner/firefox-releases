@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sw=4 et tw=78:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
@@ -208,6 +209,7 @@ XPCWrappedNative::GetNewOrUsed(XPCCallContext& ccx,
                                nsISupports* Object,
                                XPCWrappedNativeScope* Scope,
                                XPCNativeInterface* Interface,
+                               JSBool isGlobal,
                                XPCWrappedNative** resultWrapper)
 {
     nsresult rv;
@@ -273,26 +275,38 @@ XPCWrappedNative::GetNewOrUsed(XPCCallContext& ccx,
     // It is possible that we will then end up forwarding this entire call
     // to this same function but with a different scope.
 
-    nsCOMPtr<nsIClassInfo> info(do_QueryInterface(identity));
-#ifdef XPC_IDISPATCH_SUPPORT
-    // If this is an IDispatch wrapper and it didn't give us a class info
-    // we'll provide a default one
-    if(isIDispatch && !info)
-    {
-        info = already_AddRefed<nsIClassInfo>(XPCIDispatchClassInfo::GetSingleton());
-    }
-#endif
-
     // If we are making a wrapper for the nsIClassInfo interface then
     // We *don't* want to have it use the prototype meant for instances
     // of that class.
     JSBool isClassInfo = Interface->GetIID()->Equals(NS_GET_IID(nsIClassInfo));
 
+    nsCOMPtr<nsIClassInfo> info;
+
+    if(!isClassInfo)
+        info = do_QueryInterface(identity);
+
+#ifdef XPC_IDISPATCH_SUPPORT
+    // If this is an IDispatch wrapper and it didn't give us a class info
+    // we'll provide a default one
+    if(isIDispatch && !info)
+    {
+        info = dont_AddRef(NS_STATIC_CAST(nsIClassInfo*,
+                                          XPCIDispatchClassInfo::GetSingleton()));
+    }
+#endif
+
     XPCNativeScriptableCreateInfo sciProto;
     XPCNativeScriptableCreateInfo sciWrapper;
 
-    if(NS_FAILED(GatherScriptableCreateInfo(identity,
-                                            isClassInfo ? nsnull : info.get(),
+    // Gather scriptable create info if we are wrapping something
+    // other than an nsIClassInfo object. We need to not do this for
+    // nsIClassInfo objects because often nsIClassInfo implementations
+    // are also nsIXPCScriptable helper implmentations, but the helper
+    // code is obviously intended for the implementation of the class
+    // described by the nsIClassInfo, not for the class info object
+    // itself.
+    if(!isClassInfo &&
+       NS_FAILED(GatherScriptableCreateInfo(identity, info.get(),
                                             &sciProto, &sciWrapper)))
         return NS_ERROR_FAILURE;
 
@@ -319,7 +333,7 @@ XPCWrappedNative::GetNewOrUsed(XPCCallContext& ccx,
                 XPCWrappedNativeScope::FindInJSObjectScope(ccx, parent);
             if(betterScope != Scope)
                 return GetNewOrUsed(ccx, identity, betterScope, Interface,
-                                    resultWrapper);
+                                    isGlobal, resultWrapper);
 
             newParentVal = OBJECT_TO_JSVAL(parent);
         }
@@ -360,7 +374,7 @@ XPCWrappedNative::GetNewOrUsed(XPCCallContext& ccx,
     if(info && !isClassInfo)
     {
         proto = XPCWrappedNativeProto::GetNewOrUsed(ccx, Scope, info, &sciProto,
-                                                    JS_FALSE);
+                                                    JS_FALSE, isGlobal);
         if(!proto)
             return NS_ERROR_FAILURE;
 
@@ -388,7 +402,7 @@ XPCWrappedNative::GetNewOrUsed(XPCCallContext& ccx,
     NS_ASSERTION(!XPCNativeWrapper::IsNativeWrapper(ccx, parent),
                  "XPCNativeWrapper being used to parent XPCWrappedNative?");
     
-    if(!wrapper->Init(ccx, parent, &sciWrapper))
+    if(!wrapper->Init(ccx, parent, isGlobal, &sciWrapper))
     {
         NS_RELEASE(wrapper);
         return NS_ERROR_FAILURE;
@@ -448,8 +462,18 @@ XPCWrappedNative::GetNewOrUsed(XPCCallContext& ccx,
         XPCNativeScriptableInfo* si = wrapper->GetScriptableInfo();
         if(si && si->GetFlags().WantPostCreate())
         {
-            si->GetCallback()->
-                PostCreate(wrapper, ccx, wrapper->GetFlatJSObject());
+            rv = si->GetCallback()->
+                     PostCreate(wrapper, ccx, wrapper->GetFlatJSObject());
+            if(NS_FAILED(rv))
+            {
+                {   // scoped lock
+                    XPCAutoLock lock(mapLock);
+                    map->Remove(wrapper);
+                }
+
+                wrapper->Release();
+                return rv;
+            }
         }
     }
 
@@ -710,7 +734,7 @@ XPCWrappedNative::GatherScriptableCreateInfo(
 }
 
 JSBool
-XPCWrappedNative::Init(XPCCallContext& ccx, JSObject* parent,
+XPCWrappedNative::Init(XPCCallContext& ccx, JSObject* parent, JSBool isGlobal,
                        const XPCNativeScriptableCreateInfo* sci)
 {
     // setup our scriptable info...
@@ -726,7 +750,7 @@ XPCWrappedNative::Init(XPCCallContext& ccx, JSObject* parent,
         if(!mScriptableInfo)
         {
             mScriptableInfo =
-                XPCNativeScriptableInfo::Construct(ccx, sci);
+                XPCNativeScriptableInfo::Construct(ccx, isGlobal, sci);
 
             if(!mScriptableInfo)
                 return JS_FALSE;
@@ -1041,12 +1065,14 @@ XPCWrappedNative::ReparentWrapperIfFound(XPCCallContext& ccx,
         if(wrapper->HasProto())
         {
             oldProto = wrapper->GetProto();
-            XPCNativeScriptableCreateInfo ci(*oldProto->GetScriptableInfo());
+            XPCNativeScriptableInfo *info = oldProto->GetScriptableInfo();
+            XPCNativeScriptableCreateInfo ci(*info);
             newProto =
                 XPCWrappedNativeProto::GetNewOrUsed(ccx, aNewScope,
                                                     oldProto->GetClassInfo(),
                                                     &ci,
-                                                    !oldProto->IsShared());
+                                                    !oldProto->IsShared(),
+                                                    (info->GetJSClass()->flags & JSCLASS_IS_GLOBAL));
             if(!newProto)
             {
                 NS_RELEASE(wrapper);
@@ -1108,7 +1134,8 @@ XPCWrappedNative::ReparentWrapperIfFound(XPCCallContext& ccx,
                 wrapper->mScriptableInfo = newProto->GetScriptableInfo();
             }
 
-            NS_ASSERTION(!newMap->Find(wrapper), "wrapper already in new scope!");
+            NS_ASSERTION(!newMap->Find(wrapper->GetIdentityObject()),
+                         "wrapper already in new scope!");
 
             (void) newMap->Add(wrapper);
         }
@@ -1197,7 +1224,7 @@ return_wrapper:
                 (XPCWrappedNative*) JS_GetPrivate(cx, cur);
             if(proto && proto != wrapper->GetProto() &&
                (proto->GetScope() != wrapper->GetScope() ||
-                !protoClassInfo ||
+                !protoClassInfo || !wrapper->GetProto() ||
                 protoClassInfo != wrapper->GetProto()->GetClassInfo()))
                 continue;
             if(pobj2)
@@ -1212,7 +1239,7 @@ return_tearoff:
                 (XPCWrappedNative*) JS_GetPrivate(cx, JS_GetParent(cx,cur));
             if(proto && proto != wrapper->GetProto() &&
                (proto->GetScope() != wrapper->GetScope() ||
-                !protoClassInfo ||
+                !protoClassInfo || !wrapper->GetProto() ||
                 protoClassInfo != wrapper->GetProto()->GetClassInfo()))
                 continue;
             if(pobj2)
@@ -1697,6 +1724,9 @@ JSBool
 XPCWrappedNative::CallMethod(XPCCallContext& ccx,
                              CallMode mode /*= CALL_METHOD */)
 {
+    NS_ASSERTION(ccx.GetXPCContext()->CallerTypeIsJavaScript(),
+                 "Native caller for XPCWrappedNative::CallMethod?");
+    
     nsresult rv = ccx.CanCallNow();
     if(NS_FAILED(rv))
     {
@@ -2163,7 +2193,8 @@ XPCWrappedNative::CallMethod(XPCCallContext& ccx,
 
         const nsXPTType& type = paramInfo.GetType();
         nsXPTCVariant* dp = &dispatchParams[i];
-        jsval v;
+        jsval v = JSVAL_NULL;
+        AUTO_MARK_JSVAL(ccx, &v);
         JSUint32 array_count;
         nsXPTType datum_type;
         PRBool isArray = type.IsArray();
@@ -2429,11 +2460,14 @@ NS_IMETHODIMP XPCWrappedNative::RefreshPrototype()
     AutoMarkingWrappedNativeProtoPtr newProto(ccx);
     
     oldProto = GetProto();
-    XPCNativeScriptableCreateInfo ci(*oldProto->GetScriptableInfo());
+
+    XPCNativeScriptableInfo *info = oldProto->GetScriptableInfo();
+    XPCNativeScriptableCreateInfo ci(*info);
     newProto = XPCWrappedNativeProto::GetNewOrUsed(ccx, oldProto->GetScope(),
                                                    oldProto->GetClassInfo(),
                                                    &ci,
-                                                   !oldProto->IsShared());
+                                                   !oldProto->IsShared(),
+                                                   (info->GetJSClass()->flags & JSCLASS_IS_GLOBAL));
     if(!newProto)
         return UnexpectedFailure(NS_ERROR_FAILURE);
 

@@ -39,6 +39,7 @@
 #define nsMenuX_h__
 
 #include "nsCOMPtr.h"
+#include "nsAutoPtr.h"
 #include "nsIMenu.h"
 #include "nsSupportsArray.h"
 #include "nsIMenuListener.h"
@@ -52,6 +53,7 @@
 
 class nsIMenuBar;
 class nsIMenuListener;
+class nsMenuItemIcon;
 
 
 //static PRInt16      mMacMenuIDCount;    // use GetUniqueMenuID()
@@ -70,7 +72,7 @@ public:
         
         ~nsInstanceCounter()
         {
-          printf("%s %ld\n", mDescription, mInstanceCount);
+          printf("%s %d\n", mDescription, mInstanceCount);
         }
 
         nsInstanceCounter& operator ++()          // prefix
@@ -93,7 +95,7 @@ protected:
 };
 #endif
 
-class nsMenuX : public nsIMenu,
+class nsMenuX : public nsIMenu_MOZILLA_1_8_BRANCH,
                 public nsIMenuListener,
                 public nsIChangeObserver,
                 public nsSupportsWeakReference
@@ -140,9 +142,13 @@ public:
     NS_IMETHOD GetEnabled(PRBool* aIsEnabled);
     NS_IMETHOD IsHelpMenu(PRBool* aIsEnabled);
 
-    // 
     NS_IMETHOD AddMenuItem(nsIMenuItem * aMenuItem);
     NS_IMETHOD AddMenu(nsIMenu * aMenu);
+    NS_IMETHOD ChangeNativeEnabledStatusForMenuItem(nsIMenuItem* aMenuItem, PRBool aEnabled);
+    NS_IMETHOD GetMenuRefAndItemIndexForMenuItem(nsISupports* aMenuItem,
+                                                 void**       aMenuRef,
+                                                 PRUint16*    aMenuItemIndex);
+    NS_IMETHOD SetupIcon();
 
 protected:
       // Determines how many menus are visible among the siblings that are before me.
@@ -167,9 +173,6 @@ protected:
     void LoadSubMenu ( nsIMenu * pParentMenu, nsIContent* menuitemContent );
     void LoadSeparator ( nsIContent* menuitemContent );
 
-    nsEventStatus HelpMenuConstruct( const nsMenuEvent & aMenuEvent, nsIWidget* aParentWindow, 
-                                      void* unused, void* aDocShell);
-
     MenuHandle NSStringNewMenu(short menuID, nsString& menuTitle);
 
 protected:
@@ -182,12 +185,11 @@ protected:
     nsWeakPtr                   mDocShellWeakRef;       // weak ref to docshell
     nsCOMPtr<nsIContent>        mMenuContent;           // the |menu| tag, strong ref
     nsCOMPtr<nsIMenuListener>   mListener;              // strong ref
+    nsRefPtr<nsMenuItemIcon>    mIcon;
 
     // MacSpecific
     PRInt16                     mMacMenuID;
     MenuHandle                  mMacMenuHandle;
-    PRInt16                     mHelpMenuOSItemsCount;
-    PRPackedBool                mIsHelpMenu;
     PRPackedBool                mIsEnabled;
     PRPackedBool                mDestroyHandlerCalled;
     PRPackedBool                mNeedsRebuild;

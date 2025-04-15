@@ -21,6 +21,8 @@
 <!ENTITY goBackCmd.accesskey          "B">
 <!ENTITY goForwardCmd.label           "Forward">
 <!ENTITY goForwardCmd.accesskey       "F">
+<!ENTITY goUpCmd.label                "Up">
+<!ENTITY goUpCmd.accesskey            "U">
 <!ENTITY reloadCmd.label              "Reload">
 <!ENTITY reloadCmd.accesskey          "R">
 <!ENTITY reloadCmd.commandkey         "r">
@@ -95,4 +97,12 @@
 <!ENTITY bidiSwitchPageDirectionItem.accesskey    "g">
 <!ENTITY bidiSwitchTextDirectionItem.label        "Switch Text Direction">
 <!ENTITY bidiSwitchTextDirectionItem.accesskey    "w">
-
+<!ENTITY spellAddToDictionary.label     "Add to dictionary">
+<!ENTITY spellAddToDictionary.accesskey "t">
+<!ENTITY spellEnable.label              "Spell check this field">
+<!ENTITY spellEnable.accesskey          "S">
+<!ENTITY spellNoSuggestions.label       "(No spelling suggestions)">
+<!ENTITY spellDictionaries.label        "Languages">
+<!ENTITY spellDictionaries.accesskey    "L">
+<!ENTITY spellAddDictionaries.label     "Download more dictionaries...">
+<!ENTITY spellAddDictionaries.accesskey "D">

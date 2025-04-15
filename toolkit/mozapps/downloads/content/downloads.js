@@ -24,6 +24,7 @@
 #   Ben Goodger <ben@bengoodger.com> (v2.0)
 #   Dan Mosedale <dmose@mozilla.org>
 #   Fredrik Holmqvist <thesuckiestemail@yahoo.se>
+#   Josh Aas <josh@mozilla.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -59,7 +60,11 @@ var gActiveDownloads  = [];
 // opened by the xpinstall manager prevents the window from being closed after
 // each download completes (because xpinstall downloads are done sequentially, 
 // not concurrently) 
-var gCanAutoClose     = true;
+var gCanAutoClose   = true;
+
+// If the user has interacted with the window in a significant way, we should
+// not auto-close the window. Tough UI decisions about what is "significant."
+var gUserInteracted = false;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Utility Functions 
@@ -182,14 +187,12 @@ function autoClose(aDownload)
     // For the moment, just use the simple heuristic that if this window was
     // opened by the download process, rather than by the user, it should auto-close
     // if the pref is set that way. If the user opened it themselves, it should
-    // not close until they explicitly close it. 
-    // We may like to revisit this in a bit more detail later, perhaps we want
-    // to keep it up if the user messes with it in a significant way.
+    // not close until they explicitly close it.
     var pref = Components.classes["@mozilla.org/preferences-service;1"]
                         .getService(Components.interfaces.nsIPrefBranch);
     var autoClose = pref.getBoolPref(PREF_BDM_CLOSEWHENDONE)
     if (autoClose && (!window.opener || window.opener.location.href == window.location.href) &&
-        gCanAutoClose)
+        gCanAutoClose && !gUserInteracted)
       gCloseDownloadManager();
   }
 }
@@ -422,6 +425,7 @@ function onDownloadOpenWith(aEvent)
 
 function onDownloadProperties(aEvent)
 {
+  gUserInteracted = true;
   window.openDialog("chrome://mozapps/content/downloads/downloadProperties.xul",
                     "_blank", "modal,centerscreen,chrome,resizable=no", aEvent.target.id);
 }
@@ -754,20 +758,6 @@ var gDownloadViewController = {
   }
 };
 
-function onDownloadShowOptions()
-{
-  var windowManager = Components.classes['@mozilla.org/appshell/window-mediator;1'].getService();
-  var windowManagerInterface = windowManager.QueryInterface(Components.interfaces.nsIWindowMediator);
-  var topWindow = windowManagerInterface.getMostRecentWindow("Browser:Options");
-  if (topWindow) {
-    topWindow.focus();
-    topWindow.switchPage("catDownloadsButton");
-  }
-  else
-    openDialog("chrome://browser/content/pref/pref.xul", "PrefWindow",
-              "chrome,titlebar,resizable,modal", "catDownloadsButton");
-}
-
 function onDownloadShowInfo()
 {
   if (gDownloadsView.selectedItem)
@@ -788,19 +778,21 @@ function initAutoDownloadDisplay()
 
     function getSpecialFolderKey(aFolderType) 
     {
+    if (aFolderType == "Desktop")
+      return "Desk";
+
+    if (aFolderType != "Downloads")
+      throw "ASSERTION FAILED: folder type should be 'Desktop' or 'Downloads'";
+
 #ifdef XP_WIN
-      return aFolderType == "Desktop" ? "DeskP" : "Pers";
-#endif
+    return "Pers";
+#else
 #ifdef XP_MACOSX
-      return aFolderType == "Desktop" ? "UsrDsk" : "UsrDocs";
+    return "UsrDocs";
+#else
+    return "Home";
 #endif
-#ifdef XP_OS2
-      return aFolderType == "Desktop" ? "Desk" : "Home";
 #endif
-#ifdef XP_BEOS
-      return aFolderType == "Desktop" ? "Desk" : "Home";
-#endif
-      return "Home";
     }
     
     function getDownloadsFolder(aFolder)

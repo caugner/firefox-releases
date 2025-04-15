@@ -35,33 +35,21 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-#include "nsXBLAtoms.h"                 // to addref/release table
-#include "nsCSSPseudoElements.h"        // to addref/release table
-#include "nsCSSPseudoClasses.h"         // to addref/release table
-#include "nsCSSAnonBoxes.h"             // to addref/release table
-#include "nsCSSKeywords.h"              // to addref/release table
-#include "nsCSSProps.h"                 // to addref/release table
-#include "nsColorNames.h"               // to addref/release table
+
+#include "nsLayoutStatics.h"
 #include "nsContentCID.h"
 #include "nsContentHTTPStartup.h"
 #include "nsContentDLF.h"
 #include "nsContentPolicyUtils.h"
-#include "nsContentUtils.h"
 #include "nsDataDocumentContentPolicy.h"
-#include "nsLayoutStylesheetCache.h"
 #include "nsDOMCID.h"
 #include "nsCSSOMFactory.h"
 #include "nsInspectorCSSUtils.h"
-#include "nsEventListenerManager.h"
-#include "nsGenericElement.h"
-#include "nsHTMLAtoms.h"
-#include "nsHTMLAtoms.h"
 #include "nsHTMLContentSerializer.h"
 #include "nsHTMLParts.h"
 #include "nsGenericHTMLElement.h"
 #include "nsICSSLoader.h"
 #include "nsICSSParser.h"
-#include "nsCSSScanner.h"
 #include "nsICSSStyleSheet.h"
 #include "nsICategoryManager.h"
 #include "nsIComponentManager.h"
@@ -98,60 +86,53 @@
 #include "nsISelection.h"
 #include "nsIXBLService.h"
 #include "nsICaret.h"
-#include "nsJSEnvironment.h"
-#include "nsLayoutAtoms.h"
 #include "nsPlainTextSerializer.h"
 #include "mozSanitizingSerializer.h"
-#include "nsRange.h"
-#include "nsComputedDOMStyle.h"
 #include "nsXMLContentSerializer.h"
 #include "nsRuleNode.h"
 #include "nsWyciwygProtocolHandler.h"
 #include "nsContentAreaDragDrop.h"
 #include "nsContentList.h"
 #include "nsISyncLoadDOMService.h"
-#include "nsCSSFrameConstructor.h"
-#include "nsRepeatService.h"
-#include "nsSprocketLayout.h"
-#include "nsStackLayout.h"
 #include "nsBox.h"
-#include "nsSpaceManager.h"
-#include "nsTextTransformer.h"
 #include "nsIFrameTraversal.h"
 #include "nsISelectionImageService.h"
-#include "nsCSSLoader.h"
-#include "nsXULAtoms.h"
 #include "nsLayoutCID.h"
-#include "nsStyleSet.h"
-#include "nsImageFrame.h"
-#include "nsILanguageAtomService.h"
-#include "nsTextControlFrame.h"
 #include "nsStyleSheetService.h"
+#include "nsNoDataProtocolContentPolicy.h"
+
+#include "nsDOMParser.h"
+#include "nsDOMSerializer.h"
+#include "nsXMLHttpRequest.h"
 
 // view stuff
 #include "nsViewsCID.h"
 #include "nsViewManager.h"
 #include "nsContentCreatorFunctions.h"
-#include "nsFrame.h"
-#include "nsXBLWindowKeyHandler.h"
 
 // DOM includes
 #include "nsDOMException.h"
 #include "nsGlobalWindowCommands.h"
 #include "nsIControllerCommandTable.h"
 #include "nsJSProtocolHandler.h"
-#include "nsGlobalWindow.h"
-#include "nsDOMClassInfo.h"
 #include "nsScriptNameSpaceManager.h"
 #include "nsIControllerContext.h"
 #include "nsDOMScriptObjectFactory.h"
-#include "nsAutoCopyListener.h"
-#include "nsDOMAttribute.h"
+#include "nsDOMStorage.h"
 
 #include "nsHTMLCanvasFrame.h"
 
 #ifdef MOZ_ENABLE_CANVAS
 #include "nsIDOMCanvasRenderingContext2D.h"
+#endif
+
+#ifndef MOZ_NO_INSPECTOR_APIS
+#include "inDOMView.h"
+#include "inDeepTreeWalker.h"
+#include "inFlasher.h"
+#include "inCSSValueSearch.h"
+#include "inFileSearch.h"
+#include "inDOMUtils.h"
 #endif
 
 class nsIDocumentLoaderFactory;
@@ -175,14 +156,13 @@ class nsIDocumentLoaderFactory;
 static NS_DEFINE_CID(kWindowCommandTableCID, NS_WINDOWCOMMANDTABLE_CID);
 
 #ifdef MOZ_XUL
+#include "nsIBoxObject.h"
 #include "nsIXULDocument.h"
 #include "nsIXULPopupListener.h"
 #include "nsIXULPrototypeCache.h"
 #include "nsIXULPrototypeDocument.h"
 #include "nsIXULPrototypeDocument.h"
 #include "nsIXULSortService.h"
-#include "nsXULContentUtils.h"
-#include "nsXULElement.h"
 
 NS_IMETHODIMP
 NS_NewXULContentBuilder(nsISupports* aOuter, REFNSIID aIID, void** aResult);
@@ -194,22 +174,16 @@ NS_NewXULTreeBuilder(nsISupports* aOuter, REFNSIID aIID, void** aResult);
 PR_STATIC_CALLBACK(nsresult) Initialize(nsIModule* aSelf);
 static void Shutdown();
 
-#ifdef MOZ_MATHML
-#include "nsMathMLAtoms.h"
-#include "nsMathMLOperators.h"
-#endif
-
 #ifdef MOZ_XTF
 #include "nsIXTFService.h"
 #include "nsIXMLContentBuilder.h"
 #endif
 
 #ifdef MOZ_SVG
-#include "nsSVGAtoms.h"
-#include "nsSVGTypeCIDs.h"
 #include "nsISVGRenderer.h"
 #include "nsSVGRect.h"
 #include "nsSVGUtils.h"
+#include "nsSVGTypeCIDs.h"
 
 #ifdef MOZ_SVG_RENDERER_LIBART
 void NS_InitSVGRendererLibartGlobals();
@@ -219,7 +193,11 @@ void NS_FreeSVGRendererLibartGlobals();
 void NS_InitSVGRendererGDIPlusGlobals();
 void NS_FreeSVGRendererGDIPlusGlobals();
 #endif
-#endif
+#endif // MOZ_SVG
+
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDOMSerializer)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsXMLHttpRequest)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDOMParser)
 
 //-----------------------------------------------------------------------------
 
@@ -265,76 +243,11 @@ Initialize(nsIModule* aSelf)
 
   gInitialized = PR_TRUE;
 
-  nsJSEnvironment::Startup();
-  nsresult rv = nsContentUtils::Init();
+  nsresult rv = nsLayoutStatics::Initialize();
   if (NS_FAILED(rv)) {
-    NS_ERROR("Could not initialize nsContentUtils");
-
     Shutdown();
-
     return rv;
   }
-  rv = nsAttrValue::Init();
-  if (NS_FAILED(rv)) {
-    NS_ERROR("Could not initialize nsAttrValue");
-
-    Shutdown();
-
-    return rv;
-  }
-
-  // Register all of our atoms once
-  nsCSSAnonBoxes::AddRefAtoms();
-  nsCSSPseudoClasses::AddRefAtoms();
-  nsCSSPseudoElements::AddRefAtoms();
-  nsCSSKeywords::AddRefTable();
-  nsCSSProps::AddRefTable();
-  nsColorNames::AddRefTable();
-  nsHTMLAtoms::AddRefAtoms();
-  nsXBLAtoms::AddRefAtoms();
-  nsLayoutAtoms::AddRefAtoms();
-  nsXULAtoms::AddRefAtoms();
-
-#ifdef MOZ_XUL
-  rv = nsXULContentUtils::Init();
-  if (NS_FAILED(rv)) {
-    NS_ERROR("Could not initialize nsXULContentUtils");
-
-    Shutdown();
-
-    return rv;
-  }
-#endif
-
-#ifdef MOZ_MATHML
-  nsMathMLOperators::AddRefTable();
-  nsMathMLAtoms::AddRefAtoms();
-#endif
-
-#ifdef MOZ_SVG
-  if (nsSVGUtils::SVGEnabled())
-    nsContentDLF::RegisterSVG();
-  nsSVGAtoms::AddRefAtoms();
-#ifdef MOZ_SVG_RENDERER_LIBART
-  NS_InitSVGRendererLibartGlobals();
-#endif
-#ifdef MOZ_SVG_RENDERER_GDIPLUS
-  NS_InitSVGRendererGDIPlusGlobals();
-#endif
-#endif
-
-#ifdef DEBUG
-  nsFrame::DisplayReflowStartup();
-#endif
-  rv = nsTextTransformer::Initialize();
-  if (NS_FAILED(rv)) {
-    NS_ERROR("Could not initialize nsTextTransformer");
-
-    Shutdown();
-
-    return rv;
-  }
-  nsDOMAttribute::Initialize();
 
   // Add our shutdown observer.
   nsCOMPtr<nsIObserverService> observerService =
@@ -370,68 +283,7 @@ Shutdown()
 
   gInitialized = PR_FALSE;
 
-  nsDOMAttribute::Shutdown();
-  nsRange::Shutdown();
-  nsGenericElement::Shutdown();
-  nsEventListenerManager::Shutdown();
-  nsContentList::Shutdown();
-  nsComputedDOMStyle::Shutdown();
-  CSSLoaderImpl::Shutdown();
-#ifdef DEBUG
-  nsFrame::DisplayReflowShutdown();
-#endif
-
-  // Release all of our atoms
-  nsColorNames::ReleaseTable();
-  nsCSSProps::ReleaseTable();
-  nsCSSKeywords::ReleaseTable();
-  nsRepeatService::Shutdown();
-  nsStackLayout::Shutdown();
-  nsBox::Shutdown();
-
-#ifdef MOZ_XUL
-  nsXULContentUtils::Finish();
-  nsXULElement::ReleaseGlobals();
-  nsXULPrototypeElement::ReleaseGlobals();
-  nsXULPrototypeScript::ReleaseGlobals();
-  nsSprocketLayout::Shutdown();
-#endif
-
-#ifdef MOZ_MATHML
-  nsMathMLOperators::ReleaseTable();
-#endif
-
-#ifdef MOZ_SVG
-#ifdef MOZ_SVG_RENDERER_LIBART
-  NS_FreeSVGRendererLibartGlobals();
-#endif
-#ifdef MOZ_SVG_RENDERER_GDIPLUS
-  NS_FreeSVGRendererGDIPlusGlobals();
-#endif
-#endif
-
-  nsCSSFrameConstructor::ReleaseGlobals();
-  nsTextTransformer::Shutdown();
-  nsSpaceManager::Shutdown();
-  nsImageFrame::ReleaseGlobals();
-
-  nsCSSScanner::ReleaseGlobals();
-
-  NS_IF_RELEASE(nsContentDLF::gUAStyleSheet);
-  NS_IF_RELEASE(nsRuleNode::gLangService);
-  nsGenericHTMLElement::Shutdown();
-
-  nsAttrValue::Shutdown();
-  nsContentUtils::Shutdown();
-  nsLayoutStylesheetCache::Shutdown();
-  NS_NameSpaceManagerShutdown();
-  nsStyleSet::FreeGlobals();
-
-  nsGlobalWindow::ShutDown();
-  nsDOMClassInfo::ShutDown();
-  nsTextControlFrame::ShutDown();
-  nsXBLWindowKeyHandler::ShutDown();
-  nsAutoCopyListener::Shutdown();
+  nsLayoutStatics::Release();
 }
 
 #ifdef NS_DEBUG
@@ -571,8 +423,10 @@ MAKE_CTOR(CreateHTMLContentSerializer,    nsIContentSerializer,        NS_NewHTM
 MAKE_CTOR(CreatePlainTextSerializer,      nsIContentSerializer,        NS_NewPlainTextSerializer)
 MAKE_CTOR(CreateHTMLFragmentSink,         nsIFragmentContentSink,      NS_NewHTMLFragmentContentSink)
 MAKE_CTOR(CreateHTMLFragmentSink2,        nsIFragmentContentSink,      NS_NewHTMLFragmentContentSink2)
+MAKE_CTOR(CreateHTMLParanoidFragmentSink, nsIFragmentContentSink,      NS_NewHTMLParanoidFragmentSink)
 MAKE_CTOR(CreateXMLFragmentSink,          nsIFragmentContentSink,      NS_NewXMLFragmentContentSink)
 MAKE_CTOR(CreateXMLFragmentSink2,         nsIFragmentContentSink,      NS_NewXMLFragmentContentSink2)
+MAKE_CTOR(CreateXHTMLParanoidFragmentSink,nsIFragmentContentSink,      NS_NewXHTMLParanoidFragmentSink)
 MAKE_CTOR(CreateSanitizingHTMLSerializer, nsIContentSerializer,        NS_NewSanitizingHTMLSerializer)
 MAKE_CTOR(CreateXBLService,               nsIXBLService,               NS_NewXBLService)
 MAKE_CTOR(CreateContentPolicy,            nsIContentPolicy,            NS_NewContentPolicy)
@@ -600,8 +454,18 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsInspectorCSSUtils)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsWyciwygProtocolHandler)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsContentAreaDragDrop)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDataDocumentContentPolicy)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsNoDataProtocolContentPolicy)
 MAKE_CTOR(CreateSyncLoadDOMService,       nsISyncLoadDOMService,       NS_NewSyncLoadDOMService)
 MAKE_CTOR(CreatePluginDocument,           nsIDocument,                 NS_NewPluginDocument)
+
+#ifndef MOZ_NO_INSPECTOR_APIS
+NS_GENERIC_FACTORY_CONSTRUCTOR(inDOMView)
+NS_GENERIC_FACTORY_CONSTRUCTOR(inDeepTreeWalker)
+NS_GENERIC_FACTORY_CONSTRUCTOR(inFlasher)
+NS_GENERIC_FACTORY_CONSTRUCTOR(inCSSValueSearch)
+NS_GENERIC_FACTORY_CONSTRUCTOR(inFileSearch)
+NS_GENERIC_FACTORY_CONSTRUCTOR(inDOMUtils)
+#endif
 
 #ifdef MOZ_ENABLE_CANVAS
 MAKE_CTOR(CreateCanvasRenderingContext2D, nsIDOMCanvasRenderingContext2D, NS_NewCanvasRenderingContext2D)
@@ -779,6 +643,44 @@ UnregisterDataDocumentContentPolicy(nsIComponentManager *aCompMgr,
 }
 
 static NS_METHOD
+RegisterNoDataProtocolContentPolicy(nsIComponentManager *aCompMgr,
+                                    nsIFile* aPath,
+                                    const char* aRegistryLocation,
+                                    const char* aComponentType,
+                                    const nsModuleComponentInfo* aInfo)
+{
+  nsresult rv;
+  nsCOMPtr<nsICategoryManager> catman =
+    do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  nsXPIDLCString previous;
+  return catman->AddCategoryEntry("content-policy",
+                                  NS_NODATAPROTOCOLCONTENTPOLICY_CONTRACTID,
+                                  NS_NODATAPROTOCOLCONTENTPOLICY_CONTRACTID,
+                                  PR_TRUE, PR_TRUE, getter_Copies(previous));
+}
+
+static NS_METHOD
+UnregisterNoDataProtocolContentPolicy(nsIComponentManager *aCompMgr,
+                                      nsIFile *aPath,
+                                      const char *registryLocation,
+                                      const nsModuleComponentInfo *info)
+{
+  nsresult rv;
+  nsCOMPtr<nsICategoryManager> catman =
+    do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  
+  return catman->DeleteCategoryEntry("content-policy",
+                                     NS_NODATAPROTOCOLCONTENTPOLICY_CONTRACTID,
+                                     PR_TRUE);
+}
+
+static NS_METHOD
 CreateWindowCommandTableConstructor(nsISupports *aOuter,
                                     REFNSIID aIID, void **aResult)
 {
@@ -923,6 +825,40 @@ static const nsModuleComponentInfo gComponents[] = {
     NS_TREEBOXOBJECT_CID,
     "@mozilla.org/layout/xul-boxobject-tree;1",
     CreateNewTreeBoxObject },
+
+#endif // MOZ_XUL
+
+#ifndef MOZ_NO_INSPECTOR_APIS
+
+  { "DOM View",
+    IN_DOMVIEW_CID, 
+    "@mozilla.org/inspector/dom-view;1",
+    inDOMViewConstructor },
+
+  { "Deep Tree Walker", 
+    IN_DEEPTREEWALKER_CID, 
+    "@mozilla.org/inspector/deep-tree-walker;1",
+    inDeepTreeWalkerConstructor },
+
+  { "Flasher", 
+    IN_FLASHER_CID, 
+    "@mozilla.org/inspector/flasher;1", 
+    inFlasherConstructor },
+
+  { "CSS Value Search", 
+    IN_CSSVALUESEARCH_CID, 
+    "@mozilla.org/inspector/search;1?type=cssvalue", 
+    inCSSValueSearchConstructor },
+
+  { "File Search", 
+    IN_FILESEARCH_CID, 
+    "@mozilla.org/inspector/search;1?type=file", 
+    inFileSearchConstructor },
+
+  { "DOM Utils", 
+    IN_DOMUTILS_CID, 
+    "@mozilla.org/inspector/dom-utils;1", 
+    inDOMUtilsConstructor },
 
 #endif
 
@@ -1160,6 +1096,11 @@ static const nsModuleComponentInfo gComponents[] = {
     NS_HTMLFRAGMENTSINK2_CONTRACTID,
     CreateHTMLFragmentSink2 },
 
+  { "html paranoid fragment sink",
+    NS_HTMLPARANOIDFRAGMENTSINK_CID,
+    NS_HTMLPARANOIDFRAGMENTSINK_CONTRACTID,
+    CreateHTMLParanoidFragmentSink },
+
   { "HTML sanitizing content serializer",
     MOZ_SANITIZINGHTMLSERIALIZER_CID,
     MOZ_SANITIZINGHTMLSERIALIZER_CONTRACTID,
@@ -1174,6 +1115,11 @@ static const nsModuleComponentInfo gComponents[] = {
     NS_XMLFRAGMENTSINK2_CID,
     NS_XMLFRAGMENTSINK2_CONTRACTID,
     CreateXMLFragmentSink2 },
+
+  { "xhtml paranoid fragment sink",
+    NS_XHTMLPARANOIDFRAGMENTSINK_CID,
+    NS_XHTMLPARANOIDFRAGMENTSINK_CONTRACTID,
+    CreateXHTMLParanoidFragmentSink },
 
   { "XBL Service",
     NS_XBLSERVICE_CID,
@@ -1191,6 +1137,13 @@ static const nsModuleComponentInfo gComponents[] = {
     nsDataDocumentContentPolicyConstructor,
     RegisterDataDocumentContentPolicy,
     UnregisterDataDocumentContentPolicy },
+
+  { "No data protocol content policy",
+    NS_NODATAPROTOCOLCONTENTPOLICY_CID,
+    NS_NODATAPROTOCOLCONTENTPOLICY_CONTRACTID,
+    nsNoDataProtocolContentPolicyConstructor,
+    RegisterNoDataProtocolContentPolicy,
+    UnregisterNoDataProtocolContentPolicy },
 
   { "DOM CSS Computed Style Declaration",
     NS_COMPUTEDDOMSTYLE_CID,
@@ -1330,7 +1283,27 @@ static const nsModuleComponentInfo gComponents[] = {
   { "Style sheet service",
     NS_STYLESHEETSERVICE_CID,
     NS_STYLESHEETSERVICE_CONTRACTID,
-    nsStyleSheetServiceConstructor }
+    nsStyleSheetServiceConstructor },
+
+  { "XML Serializer",
+    NS_XMLSERIALIZER_CID,
+    NS_XMLSERIALIZER_CONTRACTID,
+    nsDOMSerializerConstructor },
+
+  { "XMLHttpRequest",
+    NS_XMLHTTPREQUEST_CID,
+    NS_XMLHTTPREQUEST_CONTRACTID,
+    nsXMLHttpRequestConstructor },
+
+  { "DOM Parser",
+    NS_DOMPARSER_CID,
+    NS_DOMPARSER_CONTRACTID,
+    nsDOMParserConstructor },
+
+  { "DOM Storage",
+    NS_DOMSTORAGE_CID,
+    "@mozilla.org/dom/storage;1",
+    NS_NewDOMStorage }
 };
 
 NS_IMPL_NSGETMODULE_WITH_CTOR(nsLayoutModule, gComponents, Initialize)

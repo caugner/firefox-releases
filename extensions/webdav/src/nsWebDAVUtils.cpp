@@ -60,7 +60,7 @@ NS_WD_GetElementByTagName(nsIDOMElement *parentElt, const nsAString &tagName,
     nsresult rv;
 
     nsCOMPtr<nsIDOMNodeList> list;
-    rv = parentElt->GetElementsByTagName(tagName, getter_AddRefs(list));
+    rv = parentElt->GetElementsByTagNameNS(NS_LITERAL_STRING("DAV:"), tagName, getter_AddRefs(list));
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIDOMNode> node;
@@ -68,7 +68,7 @@ NS_WD_GetElementByTagName(nsIDOMElement *parentElt, const nsAString &tagName,
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (!node) {
-        return NS_CONTENT_ATTR_NO_VALUE;
+        return NS_OK;
     }
 
     return CallQueryInterface(node, elt);

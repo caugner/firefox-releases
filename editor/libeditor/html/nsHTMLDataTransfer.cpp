@@ -391,7 +391,8 @@ nsHTMLEditor::InsertHTMLWithContext(const nsAString & aInputString,
                                  streamEndParent, streamEndOffset);
   NS_ENSURE_SUCCESS(res, res);
 
-  NS_ASSERTION(nodeList.Count() > 0, "We should have at least one node here.");
+  if (nodeList.Count() == 0)
+    return NS_OK;
 
   // walk list of nodes; perform surgery on nodes (relativize) with _mozattr
   res = RelativizeURIInFragmentList(nodeList, aFlavor, aSourceDoc, targetNode);
@@ -1469,7 +1470,7 @@ NS_IMETHODIMP nsHTMLEditor::InsertFromTransferable(nsITransferable *transferable
       }
     }
   }
-  nsCRT::free(bestFlavor);
+  NS_Free(bestFlavor);
       
   // Try to scroll the selection into view if the paste/drop succeeded
   if (NS_SUCCEEDED(rv))
@@ -2135,7 +2136,7 @@ NS_IMETHODIMP nsHTMLEditor::PasteAsPlaintextQuotation(PRInt32 aSelectionType)
         rv = InsertAsPlaintextQuotation(stuffToPaste, PR_TRUE, 0);
       }
     }
-    nsCRT::free(flav);
+    NS_Free(flav);
   }
 
   return rv;
@@ -2664,7 +2665,7 @@ void nsHTMLEditor::FreeTagStackStrings(nsVoidArray &tagStack)
   {
     PRUnichar* str = (PRUnichar*)tagStack.ElementAt(i);
     if (str) {
-      nsCRT::free(str);
+      NS_Free(str);
     }
   }
 }

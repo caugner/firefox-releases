@@ -119,8 +119,9 @@ private:
                               jvalue &aJValue);
   nsresult SetXPCOMRetval();
 
-  jweak                       mJavaWeakRef;
+  jobject                     mJavaWeakRef;
   jobject                     mJavaStrongRef;
+  jint                        mJavaRefHashCode;
   nsCOMPtr<nsIInterfaceInfo>  mIInfo;
 
   nsVoidArray     mChildren; // weak references (cleared by the children)

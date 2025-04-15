@@ -68,18 +68,19 @@ public:
 #endif
 
     static nsAppRootAccessible *Create();
+    static void Unload();
 
 public:
     nsAppRootAccessible();
 
-    /* virtual functions from nsAccessibleNode */
+    /* virtual function from nsAccessNode */
     NS_IMETHOD Init();
-    NS_IMETHOD Shutdown();
 
     /* virtual functions from nsAccessible */
     NS_IMETHOD GetName(nsAString & aName);
     NS_IMETHOD GetDescription(nsAString & aDescription);
     NS_IMETHOD GetRole(PRUint32 *aRole);
+    NS_IMETHOD GetFinalRole(PRUint32 *aFinalRole);
     NS_IMETHOD GetParent(nsIAccessible * *aParent);
     NS_IMETHOD GetNextSibling(nsIAccessible * *aNextSibling);
     NS_IMETHOD GetPreviousSibling(nsIAccessible **aPreviousSibling);
