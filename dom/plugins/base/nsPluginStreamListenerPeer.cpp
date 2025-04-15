@@ -695,7 +695,8 @@ nsPluginStreamListenerPeer::RequestRead(NPByteRange* rangeList)
                        nsILoadInfo::SEC_NORMAL,
                        nsIContentPolicy::TYPE_OTHER,
                        loadGroup,
-                       callbacks);
+                       callbacks,
+                       nsIChannel::LOAD_BYPASS_SERVICE_WORKER);
   }
   else {
     // in this else branch we really don't know where the load is coming
@@ -709,7 +710,8 @@ nsPluginStreamListenerPeer::RequestRead(NPByteRange* rangeList)
                        nsILoadInfo::SEC_NORMAL,
                        nsIContentPolicy::TYPE_OTHER,
                        loadGroup,
-                       callbacks);
+                       callbacks,
+                       nsIChannel::LOAD_BYPASS_SERVICE_WORKER);
   }
 
   if (NS_FAILED(rv))
@@ -735,12 +737,7 @@ nsPluginStreamListenerPeer::RequestRead(NPByteRange* rangeList)
   } else {
     nsWeakPtr weakpeer =
     do_GetWeakReference(static_cast<nsISupportsWeakReference*>(this));
-    nsPluginByteRangeStreamListener *brrListener =
-    new nsPluginByteRangeStreamListener(weakpeer);
-    if (brrListener)
-      converter = brrListener;
-    else
-      return NS_ERROR_OUT_OF_MEMORY;
+    converter = new nsPluginByteRangeStreamListener(weakpeer);
   }
 
   mPendingRequests += numRequests;
