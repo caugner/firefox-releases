@@ -44,6 +44,7 @@ user_pref("browser.panorama.experienced_first_run", true); // Assume experienced
 user_pref("dom.w3c_touch_events.enabled", 1);
 user_pref("dom.undo_manager.enabled", true);
 user_pref("dom.webcomponents.enabled", true);
+user_pref("dom.animations-api.core.enabled", true);
 // Set a future policy version to avoid the telemetry prompt.
 user_pref("toolkit.telemetry.prompted", 999);
 user_pref("toolkit.telemetry.notifiedOptOut", 999);
@@ -81,6 +82,7 @@ user_pref("urlclassifier.updateinterval", 172800);
 // Point the url-classifier to the local testing server for fast failures
 user_pref("browser.safebrowsing.gethashURL", "http://%(server)s/safebrowsing-dummy/gethash");
 user_pref("browser.safebrowsing.updateURL", "http://%(server)s/safebrowsing-dummy/update");
+user_pref("browser.safebrowsing.appRepURL", "http://%(server)s/safebrowsing-dummy/update");
 // Point update checks to the local testing server for fast failures
 user_pref("extensions.update.url", "http://%(server)s/extensions-dummy/updateURL");
 user_pref("extensions.update.background.url", "http://%(server)s/extensions-dummy/updateBackgroundURL");
@@ -145,11 +147,6 @@ user_pref("network.http.bypass-cachelock-threshold", 200000);
 user_pref("dom.gamepad.enabled", true);
 user_pref("dom.gamepad.non_standard_events.enabled", true);
 
-// Enable Web Audio legacy APIs
-user_pref("media.webaudio.legacy.BiquadFilterNode", true);
-user_pref("media.webaudio.legacy.PannerNode", true);
-user_pref("media.webaudio.legacy.OscillatorNode", true);
-
 // Always use network provider for geolocation tests
 // so we bypass the OSX dialog raised by the corelocation provider
 user_pref("geo.provider.testing", true);
@@ -182,9 +179,6 @@ user_pref("general.useragent.updates.enabled", false);
 // Disable webapp updates.  Yes, it is supposed to be an integer.
 user_pref("browser.webapps.checkForUpdates", 0);
 
-// Do not turn HTTP cache v2 for our infra tests (some tests are failing)
-user_pref("browser.cache.use_new_backend_temp", false);
-
 // Don't connect to Yahoo! for RSS feed tests.
 // en-US only uses .types.0.uri, but set all of them just to be sure.
 user_pref('browser.contentHandlers.types.0.uri', 'http://test1.example.org/rss?url=%%s')
@@ -201,3 +195,13 @@ user_pref('toolkit.telemetry.server', 'https://%(server)s/telemetry-dummy/');
 // actually need a functioning FxA server, so just set it to something that
 // resolves and accepts requests, even if they all fail.
 user_pref('identity.fxaccounts.auth.uri', 'https://%(server)s/fxa-dummy/');
+
+// Enable logging of APZ test data (see bug 961289).
+user_pref('apz.test.logging_enabled', true);
+
+// Make sure Translation won't hit the network.
+user_pref("browser.translation.bing.authURL", "http://%(server)s/browser/browser/components/translation/test/bing.sjs");
+user_pref("browser.translation.bing.translateArrayURL", "http://%(server)s/browser/browser/components/translation/test/bing.sjs");
+
+// Make sure we don't try to load snippets from the network.
+user_pref("browser.aboutHomeSnippets.updateUrl", "nonexistent://test");

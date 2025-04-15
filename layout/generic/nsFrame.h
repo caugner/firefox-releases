@@ -141,23 +141,13 @@ public:
   NS_DECL_FRAMEARENA_HELPERS
 
   // nsIFrame
-  virtual void Init(nsIContent*      aContent,
-                    nsIFrame*        aParent,
-                    nsIFrame*        asPrevInFlow) MOZ_OVERRIDE;
-  virtual nsresult  SetInitialChildList(ChildListID  aListID,
-                                        nsFrameList& aChildList) MOZ_OVERRIDE;
-  virtual nsresult  AppendFrames(ChildListID     aListID,
-                                 nsFrameList&    aFrameList) MOZ_OVERRIDE;
-  virtual nsresult  InsertFrames(ChildListID     aListID,
-                                 nsIFrame*       aPrevFrame,
-                                 nsFrameList&    aFrameList) MOZ_OVERRIDE;
-  virtual nsresult  RemoveFrame(ChildListID     aListID,
-                                nsIFrame*       aOldFrame) MOZ_OVERRIDE;
+  virtual void Init(nsIContent*       aContent,
+                    nsContainerFrame* aParent,
+                    nsIFrame*         aPrevInFlow) MOZ_OVERRIDE;
   virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
   virtual nsStyleContext* GetAdditionalStyleContext(int32_t aIndex) const MOZ_OVERRIDE;
   virtual void SetAdditionalStyleContext(int32_t aIndex,
                                          nsStyleContext* aStyleContext) MOZ_OVERRIDE;
-  virtual void SetParent(nsIFrame* aParent) MOZ_OVERRIDE;
   virtual nscoord GetBaseline() const MOZ_OVERRIDE;
   virtual const nsFrameList& GetChildList(ChildListID aListID) const MOZ_OVERRIDE;
   virtual void GetChildLists(nsTArray<ChildList>* aLists) const MOZ_OVERRIDE;
@@ -295,7 +285,7 @@ public:
   nscoord ShrinkWidthToFit(nsRenderingContext *aRenderingContext,
                            nscoord aWidthInCB);
 
-  virtual nsresult  WillReflow(nsPresContext* aPresContext) MOZ_OVERRIDE;
+  virtual void WillReflow(nsPresContext* aPresContext) MOZ_OVERRIDE;
   /**
    * Calculates the size of this frame after reflowing (calling Reflow on, and
    * updating the size and position of) its children, as necessary.  The
@@ -318,13 +308,13 @@ public:
    * Note: if it's only the overflow rect(s) of a frame that need to be
    * updated, then UpdateOverflow should be called instead of Reflow.
    */
-  virtual nsresult  Reflow(nsPresContext*           aPresContext,
-                           nsHTMLReflowMetrics&     aDesiredSize,
-                           const nsHTMLReflowState& aReflowState,
-                           nsReflowStatus&          aStatus) MOZ_OVERRIDE;
-  virtual nsresult  DidReflow(nsPresContext*           aPresContext,
-                              const nsHTMLReflowState* aReflowState,
-                              nsDidReflowStatus        aStatus) MOZ_OVERRIDE;
+  virtual void Reflow(nsPresContext*           aPresContext,
+                      nsHTMLReflowMetrics&     aDesiredSize,
+                      const nsHTMLReflowState& aReflowState,
+                      nsReflowStatus&          aStatus) MOZ_OVERRIDE;
+  virtual void DidReflow(nsPresContext*           aPresContext,
+                         const nsHTMLReflowState* aReflowState,
+                         nsDidReflowStatus        aStatus) MOZ_OVERRIDE;
 
   /**
    * NOTE: aStatus is assumed to be already-initialized. The reflow statuses of
@@ -341,6 +331,20 @@ public:
                                       const nsHTMLReflowState& aReflowState,
                                       nsReflowStatus&          aStatus,
                                       bool                     aConstrainHeight = true);
+
+  /*
+   * If this frame is dirty, marks all absolutely-positioned children of this
+   * frame dirty. If this frame isn't dirty, or if there are no
+   * absolutely-positioned children, does nothing.
+   *
+   * It's necessary to use PushDirtyBitToAbsoluteFrames() when you plan to
+   * reflow this frame's absolutely-positioned children after the dirty bit on
+   * this frame has already been cleared, which prevents nsHTMLReflowState from
+   * propagating the dirty bit normally. This situation generally only arises
+   * when a multipass layout algorithm is used.
+   */
+  void PushDirtyBitToAbsoluteFrames();
+
   virtual bool CanContinueTextRun() const MOZ_OVERRIDE;
 
   virtual bool UpdateOverflow() MOZ_OVERRIDE;
@@ -603,6 +607,8 @@ public:
       aFrame->GetType() == nsGkAtoms::blockFrame;
   }
 
+  virtual nsILineIterator* GetLineIterator() MOZ_OVERRIDE;
+
 protected:
 
   // Test if we are selecting a table object:
@@ -629,26 +635,23 @@ protected:
   virtual void GetBoxName(nsAutoString& aName) MOZ_OVERRIDE;
 #endif
 
-  void InitBoxMetrics(bool aClear);
   nsBoxLayoutMetrics* BoxMetrics() const;
 
   // Fire DOM event. If no aContent argument use frame's mContent.
   void FireDOMEvent(const nsAString& aDOMEventName, nsIContent *aContent = nullptr);
 
 private:
-  nsresult BoxReflow(nsBoxLayoutState& aState,
-                     nsPresContext*    aPresContext,
-                     nsHTMLReflowMetrics&     aDesiredSize,
-                     nsRenderingContext* aRenderingContext,
-                     nscoord aX,
-                     nscoord aY,
-                     nscoord aWidth,
-                     nscoord aHeight,
-                     bool aMoveFrame = true);
+  void BoxReflow(nsBoxLayoutState& aState,
+                 nsPresContext*    aPresContext,
+                 nsHTMLReflowMetrics&     aDesiredSize,
+                 nsRenderingContext* aRenderingContext,
+                 nscoord aX,
+                 nscoord aY,
+                 nscoord aWidth,
+                 nscoord aHeight,
+                 bool aMoveFrame = true);
 
   NS_IMETHODIMP RefreshSizeCache(nsBoxLayoutState& aState);
-
-  virtual nsILineIterator* GetLineIterator() MOZ_OVERRIDE;
 
 #ifdef DEBUG_FRAME_DUMP
 public:

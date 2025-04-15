@@ -180,7 +180,7 @@ def generate_pkcs12(db_dir, dest_dir, der_cert_filename, key_pem_filename,
 def init_nss_db(db_dir):
     """
     Remove the current nss database in the specified directory and create a new
-    nss database with the cert8 format.
+    nss database with the sql format.
     Arguments
       db_dir -- the desired location of the new database
     output
@@ -190,7 +190,7 @@ def init_nss_db(db_dir):
      pwd_file   -- the patch to the secret file used for the database.
                    this file should be empty.
     """
-    nss_db_files = ["cert8.db", "key3.db", "secmod.db", "noise", "pwdfile"]
+    nss_db_files = ["cert9.db", "key4.db", "pkcs11.txt"]
     for file in nss_db_files:
         if os.path.isfile(file):
             os.remove(file)
@@ -205,8 +205,49 @@ def init_nss_db(db_dir):
     pf.write("\n")
     pf.close()
     # create nss db
-    os.system("certutil -d " + db_dir + " -N -f " + pwd_file);
+    os.system("certutil -d sql:" + db_dir + " -N -f " + pwd_file);
     return [noise_file, pwd_file]
+
+def generate_self_signed_cert(db_dir, dest_dir, noise_file, name, version, do_bc, is_ca):
+    """
+    Creates a new self-signed certificate in an sql NSS database and as a der file
+    Arguments:
+      db_dir     -- the location of the nss database (in sql format)
+      dest_dir   -- the location of for the output file
+      noise_file -- the location of a noise file.
+      name       -- the nickname of the new certificate in the database and the
+                    common name of the certificate
+      version    -- the version number of the certificate (valid certs must use
+                    3)
+      do_bc      -- if the certificate should include the basic constraints
+                    (valid ca's should be true)
+      is_ca      -- mark the extenstion true or false
+    output:
+      outname    -- the location of the der file.
+    """
+    out_name = dest_dir + "/" + name + ".der"
+    base_exec_string = ("certutil -S -z " + noise_file + " -g 2048 -d sql:" +
+                        db_dir + "/ -n " + name + " -v 120 -s 'CN=" + name +
+                        ",O=PSM Testing,L=Mountain View,ST=California,C=US'" +
+                        " -t C,C,C -x --certVersion=" + str(int(version)))
+    if (do_bc):
+        child = pexpect.spawn(base_exec_string + " -2")
+        child.logfile = sys.stdout
+        child.expect('Is this a CA certificate \[y/N\]?')
+        if (is_ca):
+          child.sendline('y')
+        else:
+          child.sendline('N')
+        child.expect('Enter the path length constraint, enter to skip \[<0 for unlimited path\]: >')
+        child.sendline('')
+        child.expect('Is this a critical extension \[y/N\]?')
+        child.sendline('')
+        child.expect(pexpect.EOF)
+    else:
+        os.system(base_exec_string)
+    os.system("certutil -d sql:" + db_dir + "/ -L -n " + name + " -r > " +
+              out_name)
+    return out_name
 
 def generate_ca_cert(db_dir, dest_dir, noise_file, name, version, do_bc):
     """
@@ -224,26 +265,8 @@ def generate_ca_cert(db_dir, dest_dir, noise_file, name, version, do_bc):
     output:
       outname    -- the location of the der file.
     """
-    out_name = dest_dir + "/" + name + ".der"
-    base_exec_string = ("certutil -S -z " + noise_file + " -g 2048 -d " +
-                        db_dir + "/ -n " + name + " -v 120 -s 'CN=" + name +
-                        ",O=PSM Testing,L=Mountain View,ST=California,C=US'" +
-                        " -t C,C,C -x --certVersion=" + str(int(version)))
-    if (do_bc):
-        child = pexpect.spawn(base_exec_string + " -2")
-        child.logfile = sys.stdout
-        child.expect('Is this a CA certificate \[y/N\]?')
-        child.sendline('y')
-        child.expect('Enter the path length constraint, enter to skip \[<0 for unlimited path\]: >')
-        child.sendline('')
-        child.expect('Is this a critical extension \[y/N\]?')
-        child.sendline('')
-        child.expect(pexpect.EOF)
-    else:
-        os.system(base_exec_string)
-    os.system("certutil -d " + db_dir + "/ -L -n " + name + " -r > " +
-              out_name)
-    return out_name
+    return generate_self_signed_cert(db_dir, dest_dir, noise_file, name, version, do_bc, True)
+
 
 def generate_child_cert(db_dir, dest_dir, noise_file, name, ca_nick, version,
                         do_bc, is_ee, ocsp_url):
@@ -268,7 +291,7 @@ def generate_child_cert(db_dir, dest_dir, noise_file, name, ca_nick, version,
     """
 
     out_name = dest_dir + "/" + name + ".der"
-    base_exec_string = ("certutil -S -z " + noise_file + " -g 2048 -d " +
+    base_exec_string = ("certutil -S -z " + noise_file + " -g 2048 -d sql:" +
                         db_dir + "/ -n " + name + " -v 120 -m " +
                         str(random.randint(100, 40000000)) + " -s 'CN=" + name +
                         ",O=PSM Testing,L=Mountain View,ST=California,C=US'" +
@@ -305,7 +328,7 @@ def generate_child_cert(db_dir, dest_dir, noise_file, name, ca_nick, version,
         child.expect(pexpect.EOF)
     else:
         os.system(base_exec_string)
-    os.system("certutil -d " + db_dir + "/ -L -n " + name + " -r > " +
+    os.system("certutil -d sql:" + db_dir + "/ -L -n " + name + " -r > " +
               out_name)
     return out_name
 

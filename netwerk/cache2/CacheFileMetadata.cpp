@@ -11,6 +11,7 @@
 #include "CacheFileChunk.h"
 #include "CacheFileUtils.h"
 #include "nsILoadContextInfo.h"
+#include "nsICacheEntry.h" // for nsICacheEntryMetaDataVisitor
 #include "../cache/nsCacheUtils.h"
 #include "nsIFile.h"
 #include "mozilla/Telemetry.h"
@@ -184,11 +185,17 @@ CacheFileMetadata::ReadMetadata(CacheFileMetadataListener *aListener)
     return NS_OK;
   }
 
-  // round offset to 4k blocks
-  int64_t offset = (size / kAlignSize) * kAlignSize;
+  // Set offset so that we read at least kMinMetadataRead if the file is big
+  // enough.
+  int64_t offset;
+  if (size < kMinMetadataRead) {
+    offset = 0;
+  } else {
+    offset = size - kMinMetadataRead;
+  }
 
-  if (size - offset < kMinMetadataRead && offset > kAlignSize)
-    offset -= kAlignSize;
+  // round offset to kAlignSize blocks
+  offset = (offset / kAlignSize) * kAlignSize;
 
   mBufSize = size - offset;
   mBuf = static_cast<char *>(moz_xmalloc(mBufSize));
@@ -253,33 +260,26 @@ CacheFileMetadata::WriteMetadata(uint32_t aOffset,
   NetworkEndian::writeUint32(p, aOffset);
   p += sizeof(uint32_t);
 
-  char * writeBuffer;
+  char * writeBuffer = mWriteBuf;
   if (aListener) {
     mListener = aListener;
-    writeBuffer = mWriteBuf;
   } else {
-    // We are not going to pass |this| as callback to CacheFileIOManager::Write
-    // so we must allocate a new buffer that will be released automatically when
-    // write is finished.  This is actually better than to let
-    // CacheFileMetadata::OnDataWritten do the job, since when dispatching the
-    // result from some reason fails during shutdown, we would unnecessarily leak
-    // both this object and the buffer.
-    writeBuffer = static_cast<char *>(moz_xmalloc(p - mWriteBuf));
-    memcpy(mWriteBuf, writeBuffer, p - mWriteBuf);
+    // We are not going to pass |this| as a callback so the buffer will be
+    // released by CacheFileIOManager. Just null out mWriteBuf here.
+    mWriteBuf = nullptr;
   }
 
-  rv = CacheFileIOManager::Write(mHandle, aOffset, writeBuffer, p - mWriteBuf,
+  rv = CacheFileIOManager::Write(mHandle, aOffset, writeBuffer, p - writeBuffer,
                                  true, aListener ? this : nullptr);
   if (NS_FAILED(rv)) {
     LOG(("CacheFileMetadata::WriteMetadata() - CacheFileIOManager::Write() "
          "failed synchronously. [this=%p, rv=0x%08x]", this, rv));
 
     mListener = nullptr;
-    if (writeBuffer != mWriteBuf) {
-      free(writeBuffer);
+    if (mWriteBuf) {
+      free(mWriteBuf);
+      mWriteBuf = nullptr;
     }
-    free(mWriteBuf);
-    mWriteBuf = nullptr;
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -304,7 +304,10 @@ CacheFileMetadata::SyncReadMetadata(nsIFile *aFile)
 
   int64_t fileSize;
   rv = aFile->GetFileSize(&fileSize);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    // Don't bloat the console
+    return rv;
+  }
 
   PRFileDesc *fd;
   rv = aFile->OpenNSPRFileDesc(PR_RDONLY, 0600, &fd);
@@ -429,6 +432,28 @@ CacheFileMetadata::SetElement(const char *aKey, const char *aValue)
   // Update value
   memcpy(pos, aValue, valueSize);
   mElementsSize = newSize;
+
+  return NS_OK;
+}
+
+nsresult
+CacheFileMetadata::Visit(nsICacheEntryMetaDataVisitor *aVisitor)
+{
+  const char *data = mBuf;
+  const char *limit = mBuf + mElementsSize;
+
+  while (data < limit) {
+    // Point to the value part
+    const char *value = data + strlen(data) + 1;
+    MOZ_ASSERT(value < limit, "Metadata elements corrupted");
+
+    aVisitor->OnMetaDataElement(data, value);
+
+    // Skip value part
+    data = value + strlen(value) + 1;
+  }
+
+  MOZ_ASSERT(data == limit, "Metadata elements corrupted");
 
   return NS_OK;
 }

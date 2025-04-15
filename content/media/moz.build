@@ -6,6 +6,7 @@
 
 PARALLEL_DIRS += [
   'encoder',
+  'gmp',
   'mediasource',
   'ogg',
   'webaudio',
@@ -48,6 +49,8 @@ if CONFIG['MOZ_OMX_DECODER']:
     PARALLEL_DIRS += ['omx/mediaresourcemanager']
 
 PARALLEL_DIRS += ['webspeech']
+
+PARALLEL_DIRS += ['eme']
 
 TEST_DIRS += [
     'test',
@@ -92,6 +95,7 @@ EXPORTS += [
     'SharedBuffer.h',
     'SharedThreadPool.h',
     'StreamBuffer.h',
+    'ThreadPoolCOMListener.h',
     'TimeVarying.h',
     'TrackUnionStream.h',
     'VideoFrameContainer.h',
@@ -153,6 +157,9 @@ UNIFIED_SOURCES += [
     'WebVTTListener.cpp',
 ]
 
+if CONFIG['OS_TARGET'] == 'WINNT':
+  SOURCES += [ 'ThreadPoolCOMListener.cpp' ]
+
 # DecoderTraits.cpp needs to be built separately because of Mac OS X headers.
 # Latency.cpp needs to be built separately because it forces NSPR logging.
 SOURCES += [
@@ -188,3 +195,5 @@ DEFINES['MOZILLA_INTERNAL_API'] = True
 if CONFIG['MOZ_OMX_DECODER']:
     DEFINES['MOZ_OMX_DECODER'] = True
 
+if CONFIG['ANDROID_VERSION'] > '15':
+    DEFINES['MOZ_OMX_WEBM_DECODER'] = True
