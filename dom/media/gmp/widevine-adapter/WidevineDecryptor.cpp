@@ -9,6 +9,7 @@
 #include "WidevineUtils.h"
 #include "WidevineFileIO.h"
 #include <stdarg.h>
+#include "base/time.h"
 
 using namespace cdm;
 using namespace std;
@@ -238,11 +239,7 @@ WidevineDecryptor::SetTimer(int64_t aDelayMs, void* aContext)
 Time
 WidevineDecryptor::GetCurrentWallTime()
 {
-  GMPTimestamp gmpTime = 0;
-  GMPGetCurrentTime(&gmpTime);
-  double t = (double)gmpTime / 1e3;
-  CDM_LOG("Decryptor::GetCurrentWallTime()= %lf", t);
-  return t;
+  return base::Time::Now().ToDoubleT();
 }
 
 void
@@ -414,11 +411,7 @@ WidevineDecryptor::OnExpirationChange(const char* aSessionId,
     return;
   }
   CDM_LOG("Decryptor::OnExpirationChange(sid=%s) t=%lf", aSessionId, aNewExpiryTime);
-  GMPTimestamp expiry = ToGMPTime(aNewExpiryTime);
-  if (aNewExpiryTime == 0) {
-    return;
-  }
-  mCallback->ExpirationChange(aSessionId, aSessionIdSize, expiry);
+  mCallback->ExpirationChange(aSessionId, aSessionIdSize, ToGMPTime(aNewExpiryTime));
 }
 
 void

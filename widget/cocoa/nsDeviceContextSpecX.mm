@@ -70,10 +70,7 @@ NS_IMETHODIMP nsDeviceContextSpecX::Init(nsIWidget *aWidget,
   bool toPrinter = !toFile && !aIsPrintPreview;
   if (!toPrinter) {
     double width, height;
-    settings->GetEffectivePageSize(&width, &height);
-    width /= TWIPS_PER_POINT_FLOAT;
-    height /= TWIPS_PER_POINT_FLOAT;
-
+    settings->GetFilePageSize(&width, &height);
     settings->SetCocoaPaperSize(width, height);
   }
 
@@ -243,8 +240,10 @@ void nsDeviceContextSpecX::GetPaperRect(double* aTop, double* aLeft, double* aBo
     PMRect paperRect;
     ::PMGetAdjustedPaperRect(mPageFormat, &paperRect);
 
-    *aTop = paperRect.top, *aLeft = paperRect.left;
-    *aBottom = paperRect.bottom, *aRight = paperRect.right;
+    *aTop = paperRect.top;
+    *aLeft = paperRect.left;
+    *aBottom = paperRect.bottom;
+    *aRight = paperRect.right;
 
     NS_OBJC_END_TRY_ABORT_BLOCK;
 }
