@@ -23,6 +23,7 @@
  *
  * Contributor(s):
  *   Scott MacGregor <mscott@netscape.com>
+ *   Dan Mosedale <dmose@mozilla.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -51,16 +52,12 @@
 #include "nsIStringBundle.h"
 #include "nsIPrefService.h"
 #include "nsIPrompt.h"
-#include "nsEventQueueUtils.h"
 #include "nsNetUtil.h"
+#include "nsExternalHelperAppService.h"
 
 // used to dispatch urls to default protocol handlers
 #include "nsCExternalHandlerService.h"
 #include "nsIExternalProtocolService.h"
-
-static NS_DEFINE_CID(kSimpleURICID, NS_SIMPLEURI_CID);
-
-
 
 ////////////////////////////////////////////////////////////////////////
 // a stub channel implemenation which will map calls to AsyncRead and OpenInputStream
@@ -70,7 +67,6 @@ static NS_DEFINE_CID(kSimpleURICID, NS_SIMPLEURI_CID);
 class nsExtProtocolChannel : public nsIChannel
 {
 public:
-
     NS_DECL_ISUPPORTS
     NS_DECL_NSICHANNEL
     NS_DECL_NSIREQUEST
@@ -82,11 +78,14 @@ public:
 
 private:
     nsresult OpenURL();
-
+    void Finish(nsresult aResult);
+    
     nsCOMPtr<nsIURI> mUrl;
     nsCOMPtr<nsIURI> mOriginalURI;
     nsresult mStatus;
-
+    nsLoadFlags mLoadFlags;
+    PRBool mWasOpened;
+    
     nsCOMPtr<nsIInterfaceRequestor> mCallbacks;
     nsCOMPtr<nsILoadGroup> mLoadGroup;
 };
@@ -100,7 +99,8 @@ NS_INTERFACE_MAP_BEGIN(nsExtProtocolChannel)
    NS_INTERFACE_MAP_ENTRY(nsIRequest)
 NS_INTERFACE_MAP_END_THREADSAFE
 
-nsExtProtocolChannel::nsExtProtocolChannel() : mStatus(NS_OK)
+nsExtProtocolChannel::nsExtProtocolChannel() : mStatus(NS_OK), 
+                                               mWasOpened(PR_FALSE)
 {
 }
 
@@ -163,7 +163,7 @@ nsresult nsExtProtocolChannel::SetURI(nsIURI* aURI)
   mUrl = aURI;
   return NS_OK; 
 }
- 
+
 nsresult nsExtProtocolChannel::OpenURL()
 {
   nsresult rv = NS_ERROR_FAILURE;
@@ -179,38 +179,51 @@ nsresult nsExtProtocolChannel::OpenURL()
     NS_ASSERTION(haveHandler, "Why do we have a channel for this url if we don't support the protocol?");
 #endif
 
-    // get an nsIPrompt from the channel if we can
-    nsCOMPtr<nsIPrompt> prompt;
-    NS_QueryNotificationCallbacks(mCallbacks, mLoadGroup, prompt);
-    rv = extProtService->LoadURI(mUrl, prompt);
+    nsCOMPtr<nsIInterfaceRequestor> aggCallbacks;
+    rv = NS_NewNotificationCallbacksAggregation(mCallbacks, mLoadGroup,
+                                                getter_AddRefs(aggCallbacks));
+    if (NS_FAILED(rv)) {
+      goto finish;
+    }
+                                                
+    rv = extProtService->LoadURI(mUrl, aggCallbacks);
+    if (NS_SUCCEEDED(rv)) {
+        // despite success, we need to abort this channel, at the very least 
+        // to make it clear to the caller that no on{Start,Stop}Request
+        // should be expected.
+        rv = NS_ERROR_NO_CONTENT;
+    }
   }
 
-  // Drop notification callbacks to prevent cycles.
+finish:
   mCallbacks = 0;
-
   return rv;
 }
 
 NS_IMETHODIMP nsExtProtocolChannel::Open(nsIInputStream **_retval)
 {
-  OpenURL();
-  return NS_ERROR_NO_CONTENT; // force caller to abort.
+  return OpenURL();
 }
 
 NS_IMETHODIMP nsExtProtocolChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctxt)
 {
-  OpenURL();
-  return NS_ERROR_NO_CONTENT; // force caller to abort.
+  NS_ENSURE_ARG_POINTER(listener);
+  NS_ENSURE_TRUE(!mWasOpened, NS_ERROR_ALREADY_OPENED);
+
+  mWasOpened = PR_TRUE;
+
+  return OpenURL();
 }
 
 NS_IMETHODIMP nsExtProtocolChannel::GetLoadFlags(nsLoadFlags *aLoadFlags)
 {
-  *aLoadFlags = 0;
+  *aLoadFlags = mLoadFlags;
   return NS_OK;
 }
 
 NS_IMETHODIMP nsExtProtocolChannel::SetLoadFlags(nsLoadFlags aLoadFlags)
 {
+  mLoadFlags = aLoadFlags;
   return NS_OK;
 }
 
@@ -265,13 +278,12 @@ NS_IMETHODIMP nsExtProtocolChannel::SetOwner(nsISupports * aPrincipal)
 
 NS_IMETHODIMP nsExtProtocolChannel::GetName(nsACString &result)
 {
-  NS_NOTREACHED("nsExtProtocolChannel::GetName");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return mUrl->GetSpec(result);
 }
 
 NS_IMETHODIMP nsExtProtocolChannel::IsPending(PRBool *result)
 {
-  *result = PR_TRUE;
+  *result = PR_FALSE;
   return NS_OK; 
 }
 
@@ -306,7 +318,6 @@ NS_IMETHODIMP nsExtProtocolChannel::Resume()
 nsExternalProtocolHandler::nsExternalProtocolHandler()
 {
   m_schemeName = "default";
-  m_extProtService = do_GetService(NS_EXTERNALPROTOCOLSERVICE_CONTRACTID);
 }
 
 
@@ -343,15 +354,15 @@ nsExternalProtocolHandler::AllowPort(PRInt32 port, const char *scheme, PRBool *_
     return NS_OK;
 }
 // returns TRUE if the OS can handle this protocol scheme and false otherwise.
-PRBool nsExternalProtocolHandler::HaveProtocolHandler(nsIURI * aURI)
+PRBool nsExternalProtocolHandler::HaveExternalProtocolHandler(nsIURI * aURI)
 {
   PRBool haveHandler = PR_FALSE;
   if (aURI)
   {
     nsCAutoString scheme;
     aURI->GetScheme(scheme);
-    if (m_extProtService)
-      m_extProtService->ExternalProtocolHandlerExists(scheme.get(), &haveHandler);
+    if (gExtProtSvc)
+      gExtProtSvc->ExternalProtocolHandlerExists(scheme.get(), &haveHandler);
   }
 
   return haveHandler;
@@ -360,7 +371,8 @@ PRBool nsExternalProtocolHandler::HaveProtocolHandler(nsIURI * aURI)
 NS_IMETHODIMP nsExternalProtocolHandler::GetProtocolFlags(PRUint32 *aUritype)
 {
     // Make it norelative since it is a simple uri
-    *aUritype = URI_NORELATIVE;
+    *aUritype = URI_NORELATIVE | URI_NOAUTH | URI_LOADABLE_BY_ANYONE |
+        URI_NON_PERSISTABLE | URI_DOES_NOT_RETURN_DATA;
     return NS_OK;
 }
 
@@ -370,7 +382,7 @@ NS_IMETHODIMP nsExternalProtocolHandler::NewURI(const nsACString &aSpec,
                                                 nsIURI **_retval)
 {
   nsresult rv;
-  nsCOMPtr<nsIURI> uri = do_CreateInstance(kSimpleURICID, &rv);
+  nsCOMPtr<nsIURI> uri = do_CreateInstance(NS_SIMPLEURI_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
   
   rv = uri->SetSpec(aSpec);
@@ -382,10 +394,12 @@ NS_IMETHODIMP nsExternalProtocolHandler::NewURI(const nsACString &aSpec,
 
 NS_IMETHODIMP nsExternalProtocolHandler::NewChannel(nsIURI *aURI, nsIChannel **_retval)
 {
-  // only try to return a channel if we have a protocol handler for the url
-
-  PRBool haveHandler = HaveProtocolHandler(aURI);
-  if (haveHandler)
+  // Only try to return a channel if we have a protocol handler for the url.
+  // nsOSHelperAppService::LoadUriInternal relies on this to check trustedness
+  // for some platforms at least.  (win uses ::ShellExecute and unix uses
+  // gnome_url_show.)
+  PRBool haveExternalHandler = HaveExternalProtocolHandler(aURI);
+  if (haveExternalHandler)
   {
     nsCOMPtr<nsIChannel> channel;
     NS_NEWXPCOM(channel, nsExtProtocolChannel);
@@ -410,23 +424,11 @@ NS_IMETHODIMP nsExternalProtocolHandler::NewChannel(nsIURI *aURI, nsIChannel **_
 //////////////////////////////////////////////////////////////////////
 NS_IMETHODIMP nsExternalProtocolHandler::ExternalAppExistsForScheme(const nsACString& aScheme, PRBool *_retval)
 {
-  if (m_extProtService)
-    return m_extProtService->ExternalProtocolHandlerExists(PromiseFlatCString(aScheme).get(), _retval);
+  if (gExtProtSvc)
+    return gExtProtSvc->ExternalProtocolHandlerExists(
+      PromiseFlatCString(aScheme).get(), _retval);
 
   // In case we don't have external protocol service.
   *_retval = PR_FALSE;
   return NS_OK;
-}
-
-nsBlockedExternalProtocolHandler::nsBlockedExternalProtocolHandler()
-{
-    m_schemeName = "default-blocked";
-}
-
-NS_IMETHODIMP
-nsBlockedExternalProtocolHandler::NewChannel(nsIURI *aURI,
-                                             nsIChannel **_retval)
-{
-    *_retval = nsnull;
-    return NS_ERROR_UNKNOWN_PROTOCOL;
 }

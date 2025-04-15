@@ -35,6 +35,10 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * A class for handing out nodeinfos and ensuring sharing of them as needed.
+ */
+
 #include "nsNodeInfoManager.h"
 #include "nsNodeInfo.h"
 #include "nsCOMPtr.h"
@@ -43,11 +47,22 @@
 #include "nsIDocument.h"
 #include "nsIPrincipal.h"
 #include "nsIURI.h"
-#include "nsArray.h"
 #include "nsContentUtils.h"
 #include "nsReadableUtils.h"
+#include "nsGkAtoms.h"
+#include "nsComponentManagerUtils.h"
+#include "nsLayoutStatics.h"
+#include "nsBindingManager.h"
 
-PRUint32 nsNodeInfoManager::gNodeManagerCount;
+#ifdef MOZ_LOGGING
+// so we can get logging even in release builds
+#define FORCE_PR_LOG 1
+#endif
+#include "prlog.h"
+
+#ifdef PR_LOGGING
+static PRLogModuleInfo* gNodeInfoManagerLeakPRLog;
+#endif
 
 PLHashNumber
 nsNodeInfoManager::GetNodeInfoInnerHashValue(const void *key)
@@ -55,7 +70,7 @@ nsNodeInfoManager::GetNodeInfoInnerHashValue(const void *key)
   NS_ASSERTION(key, "Null key passed to nsNodeInfo::GetHashValue!");
 
   const nsINodeInfo::nsNodeInfoInner *node =
-    NS_REINTERPRET_CAST(const nsINodeInfo::nsNodeInfoInner *, key);
+    reinterpret_cast<const nsINodeInfo::nsNodeInfoInner *>(key);
 
   // Is this an acceptable hash value?
   return (PLHashNumber(NS_PTR_TO_INT32(node->mName)) & 0xffff) >> 8;
@@ -68,9 +83,9 @@ nsNodeInfoManager::NodeInfoInnerKeyCompare(const void *key1, const void *key2)
   NS_ASSERTION(key1 && key2, "Null key passed to NodeInfoInnerKeyCompare!");
 
   const nsINodeInfo::nsNodeInfoInner *node1 =
-    NS_REINTERPRET_CAST(const nsINodeInfo::nsNodeInfoInner *, key1);
+    reinterpret_cast<const nsINodeInfo::nsNodeInfoInner *>(key1);
   const nsINodeInfo::nsNodeInfoInner *node2 =
-    NS_REINTERPRET_CAST(const nsINodeInfo::nsNodeInfoInner *, key2);
+    reinterpret_cast<const nsINodeInfo::nsNodeInfoInner *>(key2);
 
   return (node1->mName == node2->mName &&
           node1->mPrefix == node2->mPrefix &&
@@ -78,35 +93,48 @@ nsNodeInfoManager::NodeInfoInnerKeyCompare(const void *key1, const void *key2)
 }
 
 
-nsNodeInfoManager::nsNodeInfoManager() : mDocument(nsnull)
+nsNodeInfoManager::nsNodeInfoManager()
+  : mDocument(nsnull),
+    mPrincipal(nsnull),
+    mTextNodeInfo(nsnull),
+    mCommentNodeInfo(nsnull),
+    mDocumentNodeInfo(nsnull),
+    mBindingManager(nsnull)
 {
-  ++gNodeManagerCount;
+  nsLayoutStatics::AddRef();
+
+#ifdef PR_LOGGING
+  if (!gNodeInfoManagerLeakPRLog)
+    gNodeInfoManagerLeakPRLog = PR_NewLogModule("NodeInfoManagerLeak");
+
+  if (gNodeInfoManagerLeakPRLog)
+    PR_LOG(gNodeInfoManagerLeakPRLog, PR_LOG_DEBUG,
+           ("NODEINFOMANAGER %p created", this));
+#endif
 
   mNodeInfoHash = PL_NewHashTable(32, GetNodeInfoInnerHashValue,
                                   NodeInfoInnerKeyCompare,
                                   PL_CompareValues, nsnull, nsnull);
-
-#ifdef DEBUG_jst
-  printf ("Creating NodeInfoManager, gcount = %d\n", gNodeManagerCount);
-#endif
 }
 
 
 nsNodeInfoManager::~nsNodeInfoManager()
 {
-  --gNodeManagerCount;
-
   if (mNodeInfoHash)
     PL_HashTableDestroy(mNodeInfoHash);
 
+  // Note: mPrincipal may be null here if we never got inited correctly
+  NS_IF_RELEASE(mPrincipal);
 
-  if (gNodeManagerCount == 0) {
-    nsNodeInfo::ClearCache();
-  }
+  NS_IF_RELEASE(mBindingManager);
 
-#ifdef DEBUG_jst
-  printf ("Removing NodeInfoManager, gcount = %d\n", gNodeManagerCount);
+#ifdef PR_LOGGING
+  if (gNodeInfoManagerLeakPRLog)
+    PR_LOG(gNodeInfoManagerLeakPRLog, PR_LOG_DEBUG,
+           ("NODEINFOMANAGER %p destroyed", this));
 #endif
+
+  nsLayoutStatics::Release();
 }
 
 
@@ -136,15 +164,41 @@ nsNodeInfoManager::Release()
   return count;
 }
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsNodeInfoManager)
+NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(nsNodeInfoManager, AddRef)
+NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(nsNodeInfoManager, Release)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_NATIVE_0(nsNodeInfoManager)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_BEGIN(nsNodeInfoManager)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mBindingManager)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
 nsresult
 nsNodeInfoManager::Init(nsIDocument *aDocument)
 {
   NS_ENSURE_TRUE(mNodeInfoHash, NS_ERROR_OUT_OF_MEMORY);
 
-  mDocument = aDocument;
+  NS_PRECONDITION(!mPrincipal,
+                  "Being inited when we already have a principal?");
+  nsresult rv = CallCreateInstance("@mozilla.org/nullprincipal;1",
+                                   &mPrincipal);
+  NS_ENSURE_TRUE(mPrincipal, rv);
+
   if (aDocument) {
-    mPrincipal = nsnull;
+    mBindingManager = new nsBindingManager(aDocument);
+    NS_ENSURE_TRUE(mBindingManager, NS_ERROR_OUT_OF_MEMORY);
+
+    NS_ADDREF(mBindingManager);
   }
+
+  mDefaultPrincipal = mPrincipal;
+
+  mDocument = aDocument;
+
+#ifdef PR_LOGGING
+  if (gNodeInfoManagerLeakPRLog)
+    PR_LOG(gNodeInfoManagerLeakPRLog, PR_LOG_DEBUG,
+           ("NODEINFOMANAGER %p Init document=%p", this, aDocument));
+#endif
 
   return NS_OK;
 }
@@ -152,17 +206,10 @@ nsNodeInfoManager::Init(nsIDocument *aDocument)
 void
 nsNodeInfoManager::DropDocumentReference()
 {
-  if (mDocument) {
-    // If the document has a uri we'll ask for it's principal. Otherwise we'll
-    // consider this document 'anonymous'. We don't want to call GetPrincipal
-    // on a document that doesn't have a URI since that'll give an assertion
-    // that we're creating a principal without having a uri.
-    // This happens in a few cases where a document is created and then
-    // immediately dropped without ever getting a URI.
-    if (mDocument->GetDocumentURI()) {
-      mPrincipal = mDocument->GetPrincipal();
-    }
+  if (mBindingManager) {
+    mBindingManager->DropDocumentReference();
   }
+
   mDocument = nsnull;
 }
 
@@ -180,7 +227,7 @@ nsNodeInfoManager::GetNodeInfo(nsIAtom *aName, nsIAtom *aPrefix,
   void *node = PL_HashTableLookup(mNodeInfoHash, &tmpKey);
 
   if (node) {
-    *aNodeInfo = NS_STATIC_CAST(nsINodeInfo *, node);
+    *aNodeInfo = static_cast<nsINodeInfo *>(node);
 
     NS_ADDREF(*aNodeInfo);
 
@@ -249,7 +296,7 @@ nsNodeInfoManager::GetNodeInfo(const nsAString& aQualifiedName,
   PRInt32 nsid = kNameSpaceID_None;
 
   if (!aNamespaceURI.IsEmpty()) {
-    nsresult rv = nsContentUtils::GetNSManagerWeakRef()->
+    nsresult rv = nsContentUtils::NameSpaceManager()->
       RegisterNameSpace(aNamespaceURI, nsid);
     NS_ENSURE_SUCCESS(rv, rv);
   }
@@ -257,46 +304,81 @@ nsNodeInfoManager::GetNodeInfo(const nsAString& aQualifiedName,
   return GetNodeInfo(nameAtom, prefixAtom, nsid, aNodeInfo);
 }
 
-nsIPrincipal*
-nsNodeInfoManager::GetDocumentPrincipal()
+already_AddRefed<nsINodeInfo>
+nsNodeInfoManager::GetTextNodeInfo()
 {
-  NS_ASSERTION(!mDocument || !mPrincipal,
-               "how'd we end up with both a document and a principal?");
-
-  if (mDocument) {
-    // If the document has a uri we'll ask for it's principal. Otherwise we'll
-    // consider this document 'anonymous'
-    if (!mDocument->GetDocumentURI()) {
-      return nsnull;
-    }
-
-    return mDocument->GetPrincipal();
+  if (!mTextNodeInfo) {
+    GetNodeInfo(nsGkAtoms::textTagName, nsnull, kNameSpaceID_None,
+                &mTextNodeInfo);
+  }
+  else {
+    NS_ADDREF(mTextNodeInfo);
   }
 
-  return mPrincipal;
+  return mTextNodeInfo;
+}
+
+already_AddRefed<nsINodeInfo>
+nsNodeInfoManager::GetCommentNodeInfo()
+{
+  if (!mCommentNodeInfo) {
+    GetNodeInfo(nsGkAtoms::commentTagName, nsnull, kNameSpaceID_None,
+                &mCommentNodeInfo);
+  }
+  else {
+    NS_ADDREF(mCommentNodeInfo);
+  }
+
+  return mCommentNodeInfo;
+}
+
+already_AddRefed<nsINodeInfo>
+nsNodeInfoManager::GetDocumentNodeInfo()
+{
+  if (!mDocumentNodeInfo) {
+    GetNodeInfo(nsGkAtoms::documentNodeName, nsnull, kNameSpaceID_None,
+                &mDocumentNodeInfo);
+  }
+  else {
+    NS_ADDREF(mDocumentNodeInfo);
+  }
+
+  return mDocumentNodeInfo;
 }
 
 void
 nsNodeInfoManager::SetDocumentPrincipal(nsIPrincipal *aPrincipal)
 {
-  NS_ASSERTION(!mDocument,
-               "Don't set a principal, we already have a document.");
-  if (!mDocument) {
-    mPrincipal = aPrincipal;
+  NS_RELEASE(mPrincipal);
+  if (!aPrincipal) {
+    aPrincipal = mDefaultPrincipal;
   }
+
+  NS_ASSERTION(aPrincipal, "Must have principal by this point!");
+  
+  NS_ADDREF(mPrincipal = aPrincipal);
 }
 
 void
 nsNodeInfoManager::RemoveNodeInfo(nsNodeInfo *aNodeInfo)
 {
-  NS_WARN_IF_FALSE(aNodeInfo, "Trying to remove null nodeinfo from manager!");
+  NS_PRECONDITION(aNodeInfo, "Trying to remove null nodeinfo from manager!");
 
-  if (aNodeInfo) {
-#ifdef DEBUG
-    PRBool ret =
-#endif
-    PL_HashTableRemove(mNodeInfoHash, &aNodeInfo->mInner);
-
-    NS_WARN_IF_FALSE(ret, "Can't find nsINodeInfo to remove!!!");
+  // Drop weak reference if needed
+  if (aNodeInfo == mTextNodeInfo) {
+    mTextNodeInfo = nsnull;
   }
+  else if (aNodeInfo == mCommentNodeInfo) {
+    mCommentNodeInfo = nsnull;
+  }
+  else if (aNodeInfo == mDocumentNodeInfo) {
+    mDocumentNodeInfo = nsnull;
+  }
+
+#ifdef DEBUG
+  PRBool ret =
+#endif
+  PL_HashTableRemove(mNodeInfoHash, &aNodeInfo->mInner);
+
+  NS_POSTCONDITION(ret, "Can't find nsINodeInfo to remove!!!");
 }

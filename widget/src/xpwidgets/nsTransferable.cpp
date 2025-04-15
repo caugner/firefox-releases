@@ -224,7 +224,7 @@ DataStruct::WriteCache(nsISupports* aData, PRUint32 aDataLen)
     nsPrimitiveHelpers::CreateDataFromPrimitive ( mFlavor.get(), aData, &buff, aDataLen );
     if ( buff ) {
       PRUint32 ignored;
-      outStr->Write(NS_REINTERPRET_CAST(char*, buff), aDataLen, &ignored);
+      outStr->Write(reinterpret_cast<char*>(buff), aDataLen, &ignored);
       nsMemory::Free(buff);
       return NS_OK;
     }
@@ -345,7 +345,7 @@ nsTransferable::GetTransferDataFlavors(nsISupportsArray ** aDataFlavorList)
 //
 // Returns the data of the requested flavor, obtained from either having the data on hand or
 // using a converter to get it. The data is wrapped in a nsISupports primitive so that it is
-// accessable from JS.
+// accessible from JS.
 //
 NS_IMETHODIMP
 nsTransferable::GetTransferData(const char *aFlavor, nsISupports **aData, PRUint32 *aDataLen)
@@ -366,7 +366,7 @@ nsTransferable::GetTransferData(const char *aFlavor, nsISupports **aData, PRUint
         if (dataProvider) {
           rv = dataProvider->GetFlavorData(this, aFlavor, aData, aDataLen);
           if (NS_FAILED(rv))
-            break;    // the provider failed. fall into the conveter code below.
+            break;    // the provider failed. fall into the converter code below.
         }
       }
       if (*aData && *aDataLen > 0)

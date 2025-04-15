@@ -48,11 +48,11 @@ FORCE_STATIC_LIB = 1
 LIBXUL_LIBRARY = 1
 
 REQUIRES	= xpcom \
+		  string \
 		  uconv \
 		  $(NULL)
 
 CPPSRCS		= \
-		nsUEscapeToUnicode.cpp \
 		nsAsciiToUnicode.cpp \
 		nsISO88592ToUnicode.cpp \
 		nsISO88593ToUnicode.cpp \
@@ -113,7 +113,6 @@ CPPSRCS		= \
 		nsUTF32ToUnicode.cpp \
 		nsT61ToUnicode.cpp \
 		nsUserDefinedToUnicode.cpp \
-		nsUnicodeToUEscape.cpp \
 		nsUnicodeToAscii.cpp \
 		nsUnicodeToISO88592.cpp \
 		nsUnicodeToISO88593.cpp \
@@ -179,13 +178,6 @@ CPPSRCS		= \
 		nsUnicodeToAdobeEuro.cpp \
 		nsUnicodeToTSCII.cpp \
 		$(NULL)
-
-ifdef MOZ_EXTRA_X11CONVERTERS
-CPPSRCS		+= \
-		nsUnicodeToLangBoxArabic8.cpp \
-		nsUnicodeToLangBoxArabic16.cpp \
-		$(NULL)
-endif
 
 EXPORTS		= nsUCvLatinCID.h
 

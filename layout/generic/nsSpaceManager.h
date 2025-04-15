@@ -35,6 +35,12 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/*
+ * class that manages regions of 2-D space, originally designed
+ * generally but actually specific to space occupied by floats
+ */
+
 #ifndef nsSpaceManager_h___
 #define nsSpaceManager_h___
 
@@ -43,10 +49,10 @@
 #include "nsISupports.h"
 #include "nsCoord.h"
 #include "nsRect.h"
+#include "nsVoidArray.h"
 
 class nsIPresShell;
 class nsIFrame;
-class nsVoidArray;
 struct nsSize;
 struct nsHTMLReflowState;
 class nsPresContext;
@@ -63,16 +69,10 @@ class nsPresContext;
  * </ul>
  */
 struct nsBandTrapezoid {
-  enum State {Available, Occupied, OccupiedMultiple};
-
   nscoord   mTopY, mBottomY;            // top and bottom y-coordinates
   nscoord   mTopLeftX, mBottomLeftX;    // left edge x-coordinates
   nscoord   mTopRightX, mBottomRightX;  // right edge x-coordinates
-  State     mState;                     // state of the space
-  union {
-    nsIFrame*          mFrame;  // single frame occupying the space
-    const nsVoidArray* mFrames; // list of frames occupying the space
-  };
+  const nsSmallVoidArray* mFrames; // list of frames occupying the space
 
   // Get the height of the trapezoid
   nscoord GetHeight() const {return mBottomY - mTopY;}
@@ -82,9 +82,6 @@ struct nsBandTrapezoid {
 
   // Set the trapezoid from a rectangle
   inline void operator=(const nsRect& aRect);
-
-  // Do these trapezoids have the same geometry, frame, and state?
-  inline PRBool Equals(const nsBandTrapezoid& aTrap) const;
 
   // Do these trapezoids have the same geometry?
   inline PRBool EqualGeometry(const nsBandTrapezoid& aTrap) const;
@@ -96,7 +93,7 @@ struct nsBandTrapezoid {
       mBottomLeftX(0),
       mTopRightX(0),
       mBottomRightX(0),
-      mFrame(nsnull)
+      mFrames(nsnull)
   {
   }
 };
@@ -118,20 +115,6 @@ inline void nsBandTrapezoid::operator=(const nsRect& aRect)
   mTopRightX = mBottomRightX = aRect.XMost();
   mTopY = aRect.y;
   mBottomY = aRect.YMost();
-}
-
-inline PRBool nsBandTrapezoid::Equals(const nsBandTrapezoid& aTrap) const
-{
-  return (
-    mTopLeftX == aTrap.mTopLeftX &&
-    mBottomLeftX == aTrap.mBottomLeftX &&
-    mTopRightX == aTrap.mTopRightX &&
-    mBottomRightX == aTrap.mBottomRightX &&
-    mTopY == aTrap.mTopY &&
-    mBottomY == aTrap.mBottomY &&
-    mState == aTrap.mState &&
-    mFrame == aTrap.mFrame    
-  );
 }
 
 inline PRBool nsBandTrapezoid::EqualGeometry(const nsBandTrapezoid& aTrap) const
@@ -276,6 +259,21 @@ protected:
   nsresult RemoveRegion(nsIFrame* aFrame);
 
 public:
+  // Structure that stores the current state of a frame manager for
+  // Save/Restore purposes.
+  struct SavedState {
+  private:
+    nsIFrame *mLastFrame;
+    nscoord mX, mY;
+    nscoord mLowestTop;
+    nscoord mMaximalLeftYMost;
+    nscoord mMaximalRightYMost;
+    PRPackedBool mHaveCachedLeftYMost;
+    PRPackedBool mHaveCachedRightYMost;
+    
+    friend class nsSpaceManager;
+  };
+
   /**
    * Clears the list of regions representing the unavailable space.
    */
@@ -303,21 +301,19 @@ public:
   }
 
   /**
-   * Pushes the current state of the space manager onto a state stack.
+   * Saves the current state of the space manager into aState.
    */
-  void PushState();
+  void PushState(SavedState* aState);
 
   /**
-   * Restores the space manager to the state at the top of the state stack,
-   * then pops this state off the stack.
+   * Restores the space manager to the saved state.
+   * 
+   * These states must be managed using stack discipline. PopState can only
+   * be used after PushState has been used to save the state, and it can only
+   * be used once --- although it can be omitted; saved states can be ignored.
+   * States must be popped in the reverse order they were pushed. 
    */
-  void PopState();
-
-  /**
-   * Pops the state off the stack without restoring it. Useful for speculative
-   * reflow where we're not sure if we're going to keep the result.
-   */
-  void DiscardState();
+  void PopState(SavedState* aState);
 
   /**
    * Get the top of the last region placed into the space manager, to
@@ -353,32 +349,19 @@ protected:
 #endif
   };
 
-  // Structure that stores the current state of a frame manager for
-  // Save/Restore purposes.
-  struct SpaceManagerState {
-    nscoord mX, mY;
-    nsIFrame *mLastFrame;
-    nscoord mLowestTop;
-    SpaceManagerState *mNext;
-  };
-
 public:
   // Doubly linked list of band rects
   struct BandRect : PRCListStr {
     nscoord   mLeft, mTop;
     nscoord   mRight, mBottom;
-    PRInt32   mNumFrames;    // number of frames occupying this rect
-    union {
-      nsIFrame*    mFrame;   // single frame occupying the space
-      nsVoidArray* mFrames;  // list of frames occupying the space
-    };
+    nsSmallVoidArray mFrames;  // list of frames occupying the space
 
     BandRect(nscoord aLeft, nscoord aTop,
              nscoord aRight, nscoord aBottom,
-             nsIFrame*);
+             nsIFrame* aFrame);
     BandRect(nscoord aLeft, nscoord aTop,
              nscoord aRight, nscoord aBottom,
-             nsVoidArray*);
+             nsSmallVoidArray& frames);
     ~BandRect();
 
     // List operations
@@ -403,9 +386,18 @@ public:
     BandRect* SplitHorizontally(nscoord aRight);
 
     // Accessor functions
-    PRBool  IsOccupiedBy(const nsIFrame*) const;
-    void    AddFrame(const nsIFrame*);
-    void    RemoveFrame(const nsIFrame*);
+    PRBool  IsOccupiedBy(const nsIFrame* aFrame) const {
+      return (mFrames.IndexOf((void*)aFrame) != -1);
+    }
+    void    AddFrame(const nsIFrame* aFrame) {
+      mFrames.AppendElement((void*)aFrame);
+    }
+    void    RemoveFrame(const nsIFrame* aFrame) {
+      mFrames.RemoveElement((void*)aFrame);
+    }
+    nsIFrame * FrameAt(PRInt32 index) {
+      return static_cast<nsIFrame*>(mFrames.FastElementAt(index));
+    }
     PRBool  HasSameFrameList(const BandRect* aBandRect) const;
     PRInt32 Length() const;
   };
@@ -433,9 +425,20 @@ protected:
   nscoord         mLowestTop;  // the lowest *top*
   FrameInfo*      mFrameInfoMap;
   nsIntervalSet   mFloatDamage;
-
-  SpaceManagerState *mSavedStates;
-  SpaceManagerState mAutoState;
+  PRPackedBool    mHaveCachedLeftYMost; // If true, mMaximalLeftYMost is set
+  PRPackedBool    mHaveCachedRightYMost; // If true, mMaximalRightYMost is set
+  nscoord         mMaximalLeftYMost;  // The maximal YMost of our FrameInfo
+                                      // rects for left floats.  Only makes
+                                      // sense when mHaveCachedLeftYMost is
+                                      // true.
+  nscoord         mMaximalRightYMost; // The maximal YMost of our FrameInfo
+                                      // rects for right floats.  Only makes
+                                      // sense when mHaveCachedLeftYMost is
+                                      // true.
+  // We keep track of the last BandRect* we worked with so that we can
+  // make use of locality of reference in situations where people want
+  // to do a bunch of operations in a row.
+  BandRect*       mCachedBandPosition;
 
 protected:
   FrameInfo* GetFrameInfoFor(nsIFrame* aFrame);
@@ -446,6 +449,7 @@ protected:
   void       ClearBandRects();
 
   BandRect*  GetNextBand(const BandRect* aBandRect) const;
+  BandRect*  GetPrevBand(const BandRect* aBandRect) const;
   void       DivideBand(BandRect* aBand, nscoord aBottom);
   PRBool     CanJoinBands(BandRect* aBand, BandRect* aPrevBand);
   PRBool     JoinBands(BandRect* aBand, BandRect* aPrevBand);
@@ -456,6 +460,22 @@ protected:
                                    nscoord         aY,
                                    const nsSize&   aMaxSize,
                                    nsBandData&     aAvailableSpace) const;
+
+  // Return a band guaranteed to have its top at or above aYOffset or the first
+  // band if there is no band with its top above aYOffset.  This method will
+  // use mCachedBandPosition to maybe get such a band that's not too far up.
+  // This function should not be called if there are no bands.
+  // This function never returns null.
+  BandRect*  GuessBandWithTopAbove(nscoord aYOffset) const;
+
+  void SetCachedBandPosition(BandRect* aBandRect) {
+    NS_ASSERTION(!aBandRect ||
+                 aBandRect == mBandList.Head() ||
+                 aBandRect->Prev()->mBottom != aBandRect->mBottom,
+                 "aBandRect should be first rect within its band");
+    mCachedBandPosition = aBandRect;
+  }
+
 
 private:
   static PRInt32 sCachedSpaceManagerCount;

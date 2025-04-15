@@ -37,7 +37,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #ifdef DEBUG
-static const char CVS_ID[] = "@(#) $RCSfile: staticobj.c,v $ $Revision: 1.1.6.2 $ $Date: 2006/02/03 22:31:00 $""; @(#) $RCSfile: staticobj.c,v $ $Revision: 1.1.6.2 $ $Date: 2006/02/03 22:31:00 $";
+static const char CVS_ID[] = "@(#) $RCSfile: staticobj.c,v $ $Revision: 1.1 $ $Date: 2005/11/04 02:05:04 $""; @(#) $RCSfile: staticobj.c,v $ $Revision: 1.1 $ $Date: 2005/11/04 02:05:04 $";
 #endif /* DEBUG */
 
 #ifndef CKCAPI_H

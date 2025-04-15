@@ -38,7 +38,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: preenc.h,v 1.5.14.1 2006/02/03 22:31:45 wtchang%redhat.com Exp $ */
+/* $Id: preenc.h,v 1.6 2005/08/16 03:42:26 nelsonb%netscape.com Exp $ */
 
 /* Fortezza support is removed.
  * This file remains so that old programs will continue to compile,

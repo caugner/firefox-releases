@@ -43,46 +43,84 @@ VPATH   = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-# These component dirs are built for all apps (including seamonkey)
+# These component dirs are built for all apps (including suite)
 
 ifdef MOZ_ENABLE_XREMOTE
 DIRS += remote
 endif
+DIRS += \
+        urlformatter \
+        contentprefs \
+        microformats \
+        places \
+        $(NULL)
 
 # These component dirs are built only for XUL apps
 
 ifdef MOZ_XUL_APP
 DIRS += \
-	alerts \
-	console \
+	apppicker \
 	filepicker \
-	typeaheadfind \
-	printing \
-	viewsource \
+	console \
+	exthelper \
 	viewconfig \
-	urlformatter \
+	typeaheadfind \
+	parentalcontrols \
 	$(NULL)
 
-ifdef MOZ_THUNDERBIRD
-DIRS += autocomplete/public
+ifneq (,$(filter cocoa, $(MOZ_WIDGET_TOOLKIT)))
+TOOL_DIRS += alerts
 else
-DIRS +=	\
-	autocomplete \
-	cookie \
-	help \
-	history \
-	passwordmgr \
-	satchel \
-	$(NULL)
-endif # MOZ_THUNDERBIRD
+DIRS += alerts
+endif
 
 ifdef MOZ_FEEDS
 DIRS += feeds
 endif
 
-ifdef MOZ_XPINSTALL
+ifdef MOZ_HELP_VIEWER
+DIRS += help
+endif
+
+ifdef NS_PRINTING
+DIRS +=	printing
+endif
+
+ifdef MOZ_VIEW_SOURCE
+DIRS +=	viewsource
+endif
+
+ifdef MOZ_THUNDERBIRD
+DIRS += autocomplete/public
+else
+DIRS +=	\
+	cookie \
+	$(NULL)
+
+ifdef MOZ_XUL
+DIRS += \
+	autocomplete \
+	satchel \
+	$(NULL)
+endif # MOZ_XUL
+
+ifdef MOZ_SUITE
+# Suite can't use passwordmgr because mail still depends on wallet (bug 239131)
+DIRS += passwordmgr/public
+else
+DIRS += passwordmgr
+ifndef MOZ_PLACES
+DIRS +=	history
+endif # MOZ_PLACES
+endif # MOZ_SUITE
+endif # MOZ_THUNDERBIRD
+
+ifndef MOZ_SUITE
+# XXX Suite doesn't want these just yet
+ifdef MOZ_RDF
 DIRS +=	downloads
 endif
+endif # MOZ_SUITE
 
 ifdef MOZ_URL_CLASSIFIER
 DIRS += url-classifier
@@ -98,8 +136,9 @@ EXTRA_PP_COMPONENTS = nsDefaultCLH.js
 
 endif # MOZ_XUL_APP
 
-ifdef MOZ_SUITE
+ifeq ($(MOZ_BUILD_APP),camino)
 DIRS += autocomplete/public
+DIRS += downloads/public
 endif
 
 include $(topsrcdir)/config/rules.mk

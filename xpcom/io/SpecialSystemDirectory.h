@@ -44,7 +44,7 @@
 #include "nscore.h"
 #include "nsILocalFile.h"
 
-#if defined(XP_MAC) || defined(XP_MACOSX)
+#ifdef XP_MACOSX
 #include <Types.h>
 #include "nsILocalFileMac.h"
 #include "prenv.h"
@@ -109,12 +109,20 @@ enum SystemDirectories {
   Win_Cookies               =   227, 
   Win_LocalAppdata          =   228,
   Win_ProgramFiles          =   229,
+  Win_Downloads             =   230,
   
   Unix_LocalDirectory       =   301,   
   Unix_LibDirectory         =   302,   
   Unix_HomeDirectory        =   303,
-  Unix_DesktopDirectory     =   304,
-  
+  Unix_XDG_Desktop          =   304,
+  Unix_XDG_Documents        =   305,
+  Unix_XDG_Download         =   306,
+  Unix_XDG_Music            =   307,
+  Unix_XDG_Pictures         =   308,
+  Unix_XDG_PublicShare      =   309,
+  Unix_XDG_Templates        =   310,
+  Unix_XDG_Videos           =   311,
+
   BeOS_SettingsDirectory    =   401,   
   BeOS_HomeDirectory        =   402,   
   BeOS_DesktopDirectory     =   403,   
@@ -129,7 +137,7 @@ enum SystemDirectories {
 nsresult
 GetSpecialSystemDirectory(SystemDirectories aSystemSystemDirectory,
                           nsILocalFile** aFile);
-#if defined(XP_MACOSX)
+#ifdef XP_MACOSX
 nsresult
 GetOSXFolderType(short aDomain, OSType aFolderType, nsILocalFile **localFile);
 #endif

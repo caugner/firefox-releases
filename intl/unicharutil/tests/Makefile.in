@@ -42,9 +42,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-PROGRAM		= UnicharSelfTest$(BIN_SUFFIX)
-MOZILLA_INTERNAL_API = 1
-
 REQUIRES	= xpcom \
 		  string \
 		  unicharutil \
@@ -52,9 +49,14 @@ REQUIRES	= xpcom \
 		  uconv \
 		  $(NULL)
 
-CPPSRCS		= UnicharSelfTest.cpp 
+CPPSRCS		= UnicharSelfTest.cpp \
+		  NormalizationTest.cpp \
+		  $(NULL)
+
+SIMPLE_PROGRAMS	= $(CPPSRCS:.cpp=$(BIN_SUFFIX))
 
 LIBS		= \
+		$(DIST)/lib/$(LIB_PREFIX)xpcomglue_s.$(LIB_SUFFIX) \
 		$(XPCOM_LIBS) \
 		$(NSPR_LIBS) \
 		$(NULL)

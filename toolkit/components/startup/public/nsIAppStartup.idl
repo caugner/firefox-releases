@@ -41,7 +41,7 @@
 
 interface nsICmdLineService;
 
-[scriptable, uuid(e9b0f89b-0529-4d96-98a8-eb5b2b9a8383)]
+[scriptable, uuid(6799abed-4721-4f51-9304-d1a2ea1df5d5)]
 interface nsIAppStartup : nsISupports
 {
     /**
@@ -50,8 +50,16 @@ interface nsIAppStartup : nsISupports
     void createHiddenWindow();
 
     /**
+     * Destroys the hidden window. This will have no effect if the hidden window
+     * has not yet been created.
+     */
+    void destroyHiddenWindow();
+
+    /**
      * Runs an application event loop: normally the main event pump which
-     * defines the lifetime of the application.
+     * defines the lifetime of the application. If there are no windows open
+     * and no outstanding calls to enterLastWindowClosingSurvivalArea this
+     * method will exit immediately.
      *
      * @returnCode NS_SUCCESS_RESTART_APP
      *             This return code indicates that the application should be
@@ -60,12 +68,10 @@ interface nsIAppStartup : nsISupports
     void run();
 
     /**
-     * During application startup (and at other times!) we may temporarily
-     * encounter a situation where all application windows will be closed
-     * but we don't want to take this as a signal to quit the app. Bracket
-     * the code where the last window could close with these.
-     * (And at application startup, on platforms that don't normally quit
-     * when the last window has closed, call Enter once, but not Exit)
+     * There are situations where all application windows will be
+     * closed but we don't want to take this as a signal to quit the
+     * app. Bracket the code where the last window could close with
+     * these.
      */
     void enterLastWindowClosingSurvivalArea();
     void exitLastWindowClosingSurvivalArea();

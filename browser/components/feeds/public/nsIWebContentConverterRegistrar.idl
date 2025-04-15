@@ -1,46 +1,47 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
-* Version: MPL 1.1/GPL 2.0/LGPL 2.1
-*
-* The contents of this file are subject to the Mozilla Public License Version
-* 1.1 (the "License"); you may not use this file except in compliance with
-* the License. You may obtain a copy of the License at
-* http://www.mozilla.org/MPL/
-*
-* Software distributed under the License is distributed on an "AS IS" basis,
-* WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-* for the specific language governing rights and limitations under the
-* License.
-*
-* The Original Code is the Web Content Converter Registrar.
-*
-* The Initial Developer of the Original Code is Google Inc.
-* Portions created by the Initial Developer are Copyright (C) 2006
-* the Initial Developer. All Rights Reserved.
-*
-* Contributor(s):
-*   Ben Goodger <beng@google.com>
-*
-* Alternatively, the contents of this file may be used under the terms of
-* either the GNU General Public License Version 2 or later (the "GPL"), or
-* the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-* in which case the provisions of the GPL or the LGPL are applicable instead
-* of those above. If you wish to allow use of your version of this file only
-* under the terms of either the GPL or the LGPL, and not to allow others to
-* use your version of this file under the terms of the MPL, indicate your
-* decision by deleting the provisions above and replace them with the notice
-* and other provisions required by the GPL or the LGPL. If you do not delete
-* the provisions above, a recipient may use your version of this file under
-* the terms of any one of the MPL, the GPL or the LGPL.
-*
-* ***** END LICENSE BLOCK ***** */
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is the Web Content Converter Registrar.
+ *
+ * The Initial Developer of the Original Code is Google Inc.
+ * Portions created by the Initial Developer are Copyright (C) 2006
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Ben Goodger <beng@google.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
-#include "nsISupports.idl"
+#include "nsIMIMEInfo.idl"
+#include "nsIWebContentHandlerRegistrar.idl"
 
 interface nsIRequest;
 
-[scriptable, uuid(2bd97d63-e928-4d52-9fd4-34061349a9a6)]
-interface nsIWebContentHandlerInfo : nsISupports
+[scriptable, uuid(eb361098-5158-4b21-8f98-50b445f1f0b2)]
+interface nsIWebContentHandlerInfo : nsIHandlerApp
 {
   /**
    * The content type handled by the handler
@@ -53,11 +54,6 @@ interface nsIWebContentHandlerInfo : nsISupports
    */
   readonly attribute AString uri;
 
-  /**
-   * A human readable title of the handler.
-   */
-  readonly attribute AString name;
-
   /** 
    * Gets the service URL Spec, with the loading document URI encoded in it.
    * @param   uri
@@ -66,19 +62,10 @@ interface nsIWebContentHandlerInfo : nsISupports
    *          it.
    */
   AString getHandlerURI(in AString uri);
-
-  /**
-   * Determines if this handler object is equivalent to another.
-   * @param   other
-   *          The other handler info object
-   * @returns true if the two objects are equivalent (same content type, 
-   *          same uri).
-   */
-  boolean equals(in nsIWebContentHandlerInfo other);
 };
 
-[scriptable, uuid(632b16a8-5c6b-4dc5-a8db-01771af7a79d)]
-interface nsIWebContentConverterService : nsISupports
+[scriptable, uuid(de7cc06e-e778-45cb-b7db-7a114e1e75b1)]
+interface nsIWebContentConverterService : nsIWebContentHandlerRegistrar
 {
   /**
    * Specifies the handler to be used to automatically handle all links of a
@@ -140,30 +127,6 @@ interface nsIWebContentConverterService : nsISupports
    *          The uri of the service handler to remove
    */
   void removeContentHandler(in AString contentType, in AString uri);
-
-  /**
-   * Registers a protocol handler for a web service
-   * @param   protocol
-   *          The protocol scheme to register a service handler for
-   * @param   uri
-   *          The uri of the service handler to register
-   * @param   title
-   *          The human readable title of the service
-   */
-  void registerProtocolHandler(in AString scheme, in AString uri, 
-                               in AString title);
-
-  /**
-   * Registers a content handler for a web service
-   * @param   contentType
-   *          The content type to register a service handler for
-   * @param   uri
-   *          The uri of the service handler to register
-   * @param   title
-   *          The human readable title of the service
-   */
-  void registerContentHandler(in AString contentType, in AString uri,
-                              in AString title);
 
   /**
    * Gets the list of content handlers for a particular type.

@@ -34,7 +34,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: nsPKCS12Blob.cpp,v 1.42.20.3 2006/01/31 12:50:31 kaie%kuix.de Exp $ */
+/* $Id: nsPKCS12Blob.cpp,v 1.49 2007/09/05 07:13:46 jwalden%mit.edu Exp $ */
 
 #include "prmem.h"
 #include "prprf.h"
@@ -47,6 +47,7 @@
 #include "nsIWindowWatcher.h"
 #include "nsIPrompt.h"
 #include "nsProxiedService.h"
+#include "nsThreadUtils.h"
 
 #include "nsNSSComponent.h"
 #include "nsNSSHelper.h"
@@ -294,7 +295,7 @@ nsPKCS12Blob::LoadCerts(const PRUnichar **certNames, int numCerts)
   }
   /* Add the certs */
   for (int i=0; i<numCerts; i++) {
-    strcpy(namecpy, NS_ConvertUCS2toUTF8(certNames[i]));
+    strcpy(namecpy, NS_ConvertUTF16toUTF8(certNames[i]));
     CERTCertificate *nssCert = PK11_FindCertFromNickname(namecpy, NULL);
     if (!nssCert) {
       if (!handleError())
@@ -392,8 +393,7 @@ nsPKCS12Blob::ExportToFile(nsILocalFile *file,
     if (NS_FAILED(nrv)) goto finish;
 #endif
   for (i=0; i<numCerts; i++) {
-//    nsNSSCertificate *cert = NS_REINTREPRET_POINTER_CAST(nsNSSCertificate *,
-//                                                         certs[i]);
+//    nsNSSCertificate *cert = reinterpret_cast<nsNSSCertificate *>(certs[i]);
     nsNSSCertificate *cert = (nsNSSCertificate *)certs[i];
     // get it as a CERTCertificate XXX
     CERTCertificate *nssCert = NULL;
@@ -648,7 +648,7 @@ OSErr ConvertMacPathToUnixPath(const char *macPath, char **unixPath)
 SECStatus PR_CALLBACK
 nsPKCS12Blob::digest_open(void *arg, PRBool reading)
 {
-  nsPKCS12Blob *cx = NS_REINTERPRET_POINTER_CAST(nsPKCS12Blob *, arg);
+  nsPKCS12Blob *cx = reinterpret_cast<nsPKCS12Blob *>(arg);
   NS_ENSURE_TRUE(cx, SECFailure);
   
   if (reading) {
@@ -683,7 +683,7 @@ nsPKCS12Blob::digest_open(void *arg, PRBool reading)
 SECStatus PR_CALLBACK
 nsPKCS12Blob::digest_close(void *arg, PRBool remove_it)
 {
-  nsPKCS12Blob *cx = NS_REINTERPRET_POINTER_CAST(nsPKCS12Blob *, arg);
+  nsPKCS12Blob *cx = reinterpret_cast<nsPKCS12Blob *>(arg);
   NS_ENSURE_TRUE(cx, SECFailure);
 
   delete cx->mDigestIterator;
@@ -702,7 +702,7 @@ nsPKCS12Blob::digest_close(void *arg, PRBool remove_it)
 int PR_CALLBACK
 nsPKCS12Blob::digest_read(void *arg, unsigned char *buf, unsigned long len)
 {
-  nsPKCS12Blob *cx = NS_REINTERPRET_POINTER_CAST(nsPKCS12Blob *, arg);
+  nsPKCS12Blob *cx = reinterpret_cast<nsPKCS12Blob *>(arg);
   NS_ENSURE_TRUE(cx, SECFailure);
   NS_ENSURE_TRUE(cx->mDigest, SECFailure);
 
@@ -725,15 +725,15 @@ nsPKCS12Blob::digest_read(void *arg, unsigned char *buf, unsigned long len)
 int PR_CALLBACK
 nsPKCS12Blob::digest_write(void *arg, unsigned char *buf, unsigned long len)
 {
-  nsPKCS12Blob *cx = NS_REINTERPRET_POINTER_CAST(nsPKCS12Blob *, arg);
+  nsPKCS12Blob *cx = reinterpret_cast<nsPKCS12Blob *>(arg);
   NS_ENSURE_TRUE(cx, SECFailure);
   NS_ENSURE_TRUE(cx->mDigest, SECFailure);
 
   // make sure we are in write mode, read iterator has not yet been allocated
   NS_ENSURE_FALSE(cx->mDigestIterator, SECFailure);
   
-  cx->mDigest->Append(NS_REINTERPRET_CAST(char *, buf),
-                     NS_STATIC_CAST(PRUint32, len));
+  cx->mDigest->Append(reinterpret_cast<char *>(buf),
+                     static_cast<PRUint32>(len));
   
   return len;
 }
@@ -784,7 +784,7 @@ nsPKCS12Blob::nickname_collision(SECItem *oldNick, PRBool *cancel, void *wincx)
       nickname = nickFromPropC;
     }
     CERTCertificate *cert = CERT_FindCertByNickname(CERT_GetDefaultCertDB(),
-                                           NS_CONST_CAST(char*,nickname.get()));
+                                           const_cast<char*>(nickname.get()));
     if (!cert) {
       break;
     }
@@ -843,18 +843,15 @@ nsPKCS12Blob::handleError(int myerr)
   PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("PKCS12: I called(%d)", myerr));
   nsCOMPtr<nsINSSComponent> nssComponent(do_GetService(kNSSComponentCID, &rv));
   if (NS_FAILED(rv)) return PR_FALSE;
-  nsCOMPtr<nsIProxyObjectManager> proxyman(
-                                      do_GetService(NS_XPCOMPROXY_CONTRACTID));
-  if (!proxyman) return PR_FALSE;
   nsCOMPtr<nsIPrompt> errPrompt;
   nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
   if (wwatch) {
     wwatch->GetNewPrompter(0, getter_AddRefs(errPrompt));
     if (errPrompt) {
       nsCOMPtr<nsIPrompt> proxyPrompt;
-      proxyman->GetProxyForObject(NS_UI_THREAD_EVENTQ, NS_GET_IID(nsIPrompt),
-                                  errPrompt, PROXY_SYNC, 
-                                  getter_AddRefs(proxyPrompt));
+      NS_GetProxyForObject(NS_PROXY_TO_MAIN_THREAD,
+                           NS_GET_IID(nsIPrompt), errPrompt,
+                           NS_PROXY_SYNC, getter_AddRefs(proxyPrompt));
       if (!proxyPrompt) return PR_FALSE;
     } else {
       return PR_FALSE;

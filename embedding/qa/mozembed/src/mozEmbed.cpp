@@ -319,7 +319,7 @@ nsresult InitializeWindowCreator()
     WindowCreator *creatorCallback = new WindowCreator();
     if (creatorCallback)
     {
-        nsCOMPtr<nsIWindowCreator> windowCreator(NS_STATIC_CAST(nsIWindowCreator *, creatorCallback));
+        nsCOMPtr<nsIWindowCreator> windowCreator(static_cast<nsIWindowCreator *>(creatorCallback));
         if (windowCreator)
         {
             nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService("@mozilla.org/embedcomp/window-watcher;1"));
@@ -627,7 +627,7 @@ BOOL CALLBACK BrowserDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lPar
                 GetDlgItemText(hwndDlg, IDC_ADDRESS, szURL,
                     sizeof(szURL) / sizeof(szURL[0]) - 1);
                 webNavigation->LoadURI(
-                    NS_ConvertASCIItoUCS2(szURL).get(),
+                    NS_ConvertASCIItoUTF16(szURL).get(),
                     nsIWebNavigation::LOAD_FLAGS_NONE,
                     nsnull,
                     nsnull,
@@ -1433,7 +1433,7 @@ nsQABrowserUIGlue::LoadURL(const char * aURL)
   mBrowserView->GetWebBrowser(getter_AddRefs(newBrowser));
   nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(newBrowser, &rv));
   if (webNav)
-    return webNav->LoadURI(NS_ConvertASCIItoUCS2(aURL).get(),
+    return webNav->LoadURI(NS_ConvertASCIItoUTF16(aURL).get(),
                            nsIWebNavigation::LOAD_FLAGS_NONE,
                            nsnull,
                            nsnull,

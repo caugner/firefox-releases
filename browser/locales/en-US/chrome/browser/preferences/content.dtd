@@ -1,16 +1,16 @@
 <!ENTITY  blockPopups.label           "Block pop-up windows">
 <!ENTITY  blockPopups.accesskey       "B">
-<!ENTITY  popupExceptions.label       "Exceptions...">
+<!ENTITY  popupExceptions.label       "Exceptions…">
 <!ENTITY  popupExceptions.accesskey   "E">
 
 <!ENTITY  loadImages.label            "Load images automatically">
 <!ENTITY  loadImages.accesskey        "I">
-<!ENTITY  exceptions.label            "Exceptions...">
+<!ENTITY  exceptions.label            "Exceptions…">
 <!ENTITY  exceptions.accesskey        "x">
 
 <!ENTITY  enableJavaScript.label      "Enable JavaScript">
 <!ENTITY  enableJavaScript.accesskey  "J">
-<!ENTITY  advancedJS.label            "Advanced...">
+<!ENTITY  advancedJS.label            "Advanced…">
 <!ENTITY  advancedJS.accesskey        "v">
 
 <!ENTITY  enableJava.label            "Enable Java">
@@ -19,34 +19,19 @@
 
 <!ENTITY  fontsAndColors.label        "Fonts &amp; Colors">
 
-<!ENTITY  defaultFont.label                       "Default font:">
-<!ENTITY  defaultFont.accesskey                   "D">
-<!ENTITY  defaultSize.label                       "Size:">
-<!ENTITY  defaultSize.accesskey                   "i">
+<!ENTITY  defaultFont.label           "Default font:">
+<!ENTITY  defaultFont.accesskey       "D">
+<!ENTITY  defaultSize.label           "Size:">
+<!ENTITY  defaultSize.accesskey       "S">
 
-<!ENTITY  advancedFonts.label         "Advanced...">
-<!ENTITY  advancedFonts.accesskey     "d">
+<!ENTITY  advancedFonts.label         "Advanced…">
+<!ENTITY  advancedFonts.accesskey     "A">
 
-<!ENTITY  colors.label                "Colors...">
+<!ENTITY  colors.label                "Colors…">
 <!ENTITY  colors.accesskey            "C">
 
 
-<!ENTITY  feeds.label                 "Feeds">
-
-<!ENTITY  feedReader.label            "Feed Reader:">
-<!ENTITY  feedReader.accesskey        "F">
-
-<!ENTITY  feedClick.label             "When I click on a web feed:">
-<!ENTITY  ask.label                   "Ask me what to use">
-<!ENTITY  ask.accesskey               "A">
-<!ENTITY  subLiveBookmark.label       "Always subscribe with a Live Bookmark">
-<!ENTITY  subLiveBookmark.accesskey   "L">
-<!ENTITY  subReader.label             "Always subscribe using the Feed Reader">
-<!ENTITY  subReader.accesskey         "R">
-
-
-<!ENTITY fileTypes.label              "File Types">
-
-<!ENTITY configureFileTypes.label     "Configure how &brandShortName; handles certain types of files">
-<!ENTITY manage.label                 "Manage...">
-<!ENTITY manage.accesskey             "M">
+<!ENTITY languages.label              "Languages">
+<!ENTITY chooseLanguage.label         "Choose your preferred language for displaying pages">
+<!ENTITY chooseButton.label           "Choose…">
+<!ENTITY chooseButton.accesskey       "o">

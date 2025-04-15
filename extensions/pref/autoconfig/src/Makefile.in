@@ -1,5 +1,3 @@
-# Version: NPL 1.1/GPL 2.0/LGPL 2.1
-#
 # ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
@@ -53,7 +51,7 @@ endif
 EXPORT_LIBRARY   = 1
 IS_COMPONENT     = 1
 MODULE_NAME      = nsAutoConfigModule
-MOZILLA_INTERNAL_API = 1
+LIBXUL_LIBRARY   = 1
 
 PACKAGE_FILE     = autoconfig.pkg
 

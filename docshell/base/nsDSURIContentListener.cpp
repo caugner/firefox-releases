@@ -66,7 +66,7 @@ nsDSURIContentListener::Init()
 {
     nsresult rv;
     mNavInfo = do_GetService(NS_WEBNAVIGATION_INFO_CONTRACTID, &rv);
-    NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "Failed to get webnav info");
+    NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to get webnav info");
     return rv;
 }
 
@@ -91,6 +91,14 @@ NS_INTERFACE_MAP_END
 NS_IMETHODIMP
 nsDSURIContentListener::OnStartURIOpen(nsIURI* aURI, PRBool* aAbortOpen)
 {
+    // If mDocShell is null here, that means someone's starting a load
+    // in our docshell after it's already been destroyed.  Don't let
+    // that happen.
+    if (!mDocShell) {
+        *aAbortOpen = PR_TRUE;
+        return NS_OK;
+    }
+    
     nsCOMPtr<nsIURIContentListener> parentListener;
     GetParentContentListener(getter_AddRefs(parentListener));
     if (parentListener)
@@ -134,7 +142,7 @@ nsDSURIContentListener::DoContent(const char* aContentType,
     }
 
     if (loadFlags & nsIChannel::LOAD_RETARGETED_DOCUMENT_URI) {
-        nsCOMPtr<nsIDOMWindowInternal> domWindow = do_GetInterface(NS_STATIC_CAST(nsIDocShell*, mDocShell));
+        nsCOMPtr<nsIDOMWindowInternal> domWindow = do_GetInterface(static_cast<nsIDocShell*>(mDocShell));
         NS_ENSURE_TRUE(domWindow, NS_ERROR_FAILURE);
         domWindow->Focus();
     }

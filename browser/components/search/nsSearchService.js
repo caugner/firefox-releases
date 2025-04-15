@@ -57,6 +57,12 @@ const NS_APP_USER_SEARCH_DIR  = "UsrSrchPlugns";
 const NS_APP_SEARCH_DIR       = "SrchPlugns";
 const NS_APP_USER_PROFILE_50_DIR = "ProfD";
 
+// Search engine "locations". If this list is changed, be sure to update
+// the engine's _isDefault function accordingly.
+const SEARCH_APP_DIR = 1;
+const SEARCH_PROFILE_DIR = 2;
+const SEARCH_IN_EXTENSION = 3;
+
 // See documentation in nsIBrowserSearchService.idl.
 const SEARCH_ENGINE_TOPIC        = "browser-search-engine-modified";
 const QUIT_APPLICATION_TOPIC     = "quit-application";
@@ -78,6 +84,9 @@ const SEARCH_DATA_TEXT           = Ci.nsISearchEngine.DATA_TEXT;
 const XML_FILE_EXT      = "xml";
 const SHERLOCK_FILE_EXT = "src";
 
+// Delay for lazy serialization (ms)
+const LAZY_SERIALIZE_DELAY = 100;
+
 const ICON_DATAURL_PREFIX = "data:image/x-icon;base64,";
 
 // Supported extensions for Sherlock plugin icons
@@ -94,7 +103,6 @@ const MAX_ICON_SIZE   = 10000;
 const DEFAULT_QUERY_CHARSET = "ISO-8859-1";
 
 const SEARCH_BUNDLE = "chrome://browser/locale/search.properties";
-const SIDEBAR_BUNDLE = "chrome://browser/locale/sidebar/sidebar.properties";
 const BRAND_BUNDLE = "chrome://branding/locale/brand.properties";
 
 const OPENSEARCH_NS_10  = "http://a9.com/-/spec/opensearch/1.0/";
@@ -150,6 +158,7 @@ const OS_PARAM_OUTPUT_ENCODING = /\{outputEncoding\??\}/g;
 // Default values
 const OS_PARAM_LANGUAGE_DEF         = "*";
 const OS_PARAM_OUTPUT_ENCODING_DEF  = "UTF-8";
+const OS_PARAM_INPUT_ENCODING_DEF   = "UTF-8";
 
 // "Unsupported" OpenSearch parameters. For example, we don't support
 // page-based results, so if the engine requires that we send the "page index"
@@ -164,7 +173,7 @@ const OS_PARAM_START_INDEX_DEF  = "1";  // start at 1st result
 const OS_PARAM_START_PAGE_DEF   = "1";  // 1st page
 
 // Optional parameter
-const OS_PARAM_OPTIONAL     = /\{\w+\?\}/g;
+const OS_PARAM_OPTIONAL     = /\{(?:\w+:)?\w+\?\}/g;
 
 // A array of arrays containing parameters that we don't fully support, and
 // their default values. We will only send values for these parameters if
@@ -192,10 +201,21 @@ function isUsefulLine(aLine) {
 const SEARCH_LOG_PREFIX = "*** Search: ";
 
 /**
- * Outputs aText to the JavaScript console as well as to stdout, if the search
- * logging pref (browser.search.log) is set to true.
+ * Outputs aText to the JavaScript console as well as to stdout.
  */
-function LOG(aText) {
+function DO_LOG(aText) {
+  dump(SEARCH_LOG_PREFIX + aText + "\n");
+  var consoleService = Cc["@mozilla.org/consoleservice;1"].
+                       getService(Ci.nsIConsoleService);
+  consoleService.logStringMessage(aText);
+}
+
+#ifdef DEBUG
+/**
+ * In debug builds, use a live, pref-based (browser.search.log) LOG function
+ * to allow enabling/disabling without a restart.
+ */
+function PREF_LOG(aText) {
   var prefB = Cc["@mozilla.org/preferences-service;1"].
               getService(Ci.nsIPrefBranch);
   var shouldLog = false;
@@ -204,12 +224,20 @@ function LOG(aText) {
   } catch (ex) {}
 
   if (shouldLog) {
-    dump(SEARCH_LOG_PREFIX + aText + "\n");
-    var consoleService = Cc["@mozilla.org/consoleservice;1"].
-                         getService(Ci.nsIConsoleService);
-    consoleService.logStringMessage(aText);
+    DO_LOG(aText);
   }
 }
+var LOG = PREF_LOG;
+
+#else
+
+/**
+ * Otherwise, don't log at all by default. This can be overridden at startup
+ * by the pref, see SearchService's _init method.
+ */
+var LOG = function(){};
+
+#endif
 
 function ERROR(message, resultCode) {
   NS_ASSERT(false, SEARCH_LOG_PREFIX + message);
@@ -263,45 +291,6 @@ function ENSURE_ARG(assertion, message) {
   ENSURE(assertion, message, Cr.NS_ERROR_INVALID_ARG);
 }
 
-// FIXME: Bug 326854: no btoa for components, use our own
-/**
- * Encodes an array of bytes into a string using the base 64 encoding scheme.
- * @param aBytes
- *        An array of bytes to encode.
- */
-function b64(aBytes) {
-  const B64_CHARS =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  var out = "", bits, i, j;
-
-  while (aBytes.length >= 3) {
-    bits = 0;
-    for (i = 0; i < 3; i++) {
-      bits <<= 8;
-      bits |= aBytes[i];
-    }
-    for (j = 18; j >= 0; j -= 6)
-      out += B64_CHARS[(bits>>j) & 0x3F];
-
-    aBytes.splice(0, 3);
-  }
-
-  switch (aBytes.length) {
-    case 2:
-      out += B64_CHARS[(aBytes[0]>>2) & 0x3F];
-      out += B64_CHARS[((aBytes[0] & 0x03) << 4) | ((aBytes[1] >> 4) & 0x0F)];
-      out += B64_CHARS[((aBytes[1] & 0x0F) << 2)];
-      out += "=";
-      break;
-    case 1:
-      out += B64_CHARS[(aBytes[0]>>2) & 0x3F];
-      out += B64_CHARS[(aBytes[0] & 0x03) << 4];
-      out += "==";
-      break;
-  }
-  return out;
-}
-
 function loadListener(aChannel, aEngine, aCallback) {
   this._channel = aChannel;
   this._bytes = [];
@@ -321,7 +310,8 @@ loadListener.prototype = {
         aIID.equals(Ci.nsIStreamListener)     ||
         aIID.equals(Ci.nsIChannelEventSink)   ||
         aIID.equals(Ci.nsIInterfaceRequestor) ||
-        aIID.equals(Ci.nsIBadCertListener)    ||
+        aIID.equals(Ci.nsIBadCertListener2)   ||
+        aIID.equals(Ci.nsISSLErrorListener)   ||
         // See FIXME comment below
         aIID.equals(Ci.nsIHttpEventSink)      ||
         aIID.equals(Ci.nsIProgressEventSink)  ||
@@ -377,22 +367,14 @@ loadListener.prototype = {
     return this.QueryInterface(aIID);
   },
 
-  // nsIBadCertListener
-  confirmUnknownIssuer: function SRCH_load_CUI(aSocketInfo, aCert,
-                                               aCertAddType) {
-    return false;
+  // nsIBadCertListener2
+  notifyCertProblem: function SRCH_certProblem(socketInfo, status, targetSite) {
+    return true;
   },
 
-  confirmMismatchDomain: function SRCH_load_CMD(aSocketInfo, aTargetURL,
-                                                aCert) {
-    return false;
-  },
-
-  confirmCertExpired: function SRCH_load_CCE(aSocketInfo, aCert) {
-    return false;
-  },
-
-  notifyCrlNextupdate: function SRCH_load_NCN(aSocketInfo, aTargetURL, aCert) {
+  // nsISSLErrorListener
+  notifySSLError: function SRCH_SSLError(socketInfo, error, targetSite) {
+    return true;
   },
 
   // FIXME: bug 253127
@@ -629,6 +611,23 @@ function getLocalizedPref(aPrefName, aDefault) {
 }
 
 /**
+ * Wrapper for nsIPrefBranch::setComplexValue.
+ * @param aPrefName
+ *        The name of the pref to set.
+ */
+function setLocalizedPref(aPrefName, aValue) {
+  var prefB = Cc["@mozilla.org/preferences-service;1"].
+              getService(Ci.nsIPrefBranch);
+  const nsIPLS = Ci.nsIPrefLocalizedString;
+  try {
+    var pls = Components.classes["@mozilla.org/pref-localizedstring;1"]
+                        .createInstance(Ci.nsIPrefLocalizedString);
+    pls.data = aValue;
+    prefB.setComplexValue(aPrefName, nsIPLS, pls);
+  } catch (ex) {}
+}
+
+/**
  * Wrapper for nsIPrefBranch::getBoolPref.
  * @param aPrefName
  *        The name of the pref to get.
@@ -746,9 +745,9 @@ function ParamSubstitution(aParamValue, aSearchTerms, aEngine) {
   }
   catch (ex) { }
 
-  // Custom search parameters. These are only available to app-shipped search
+  // Custom search parameters. These are only available to default search
   // engines.
-  if (aEngine._isInAppDir) {
+  if (aEngine._isDefault) {
     value = value.replace(MOZ_PARAM_LOCALE, getLocale());
     value = value.replace(MOZ_PARAM_DIST_ID, distributionID);
     value = value.replace(MOZ_PARAM_OFFICIAL, MOZ_OFFICIAL);
@@ -993,14 +992,17 @@ Engine.prototype = {
   // Whether to set this as the current engine as soon as it is loaded.  This
   // is only used when the engine is first added to the list.
   _useNow: true,
-  // Whether the search engine file is in the app dir.
-  __isInAppDir: null,
+  // Where the engine was loaded from. Can be one of: SEARCH_APP_DIR,
+  // SEARCH_PROFILE_DIR, SEARCH_IN_EXTENSION.
+  __installLocation: null,
   // The number of days between update checks for new versions
   _updateInterval: null,
   // The url to check at for a new update
   _updateURL: null,
   // The url to check for a new icon
   _iconUpdateURL: null,
+  // A reference to the timer used for lazily serializing the engine to file
+  _serializeTimer: null,
 
   /**
    * Retrieves the data from the engine's file. If the engine's dataType is
@@ -1020,7 +1022,6 @@ Engine.prototype = {
 
     switch (this._dataType) {
       case SEARCH_DATA_XML:
-
         var domParser = Cc["@mozilla.org/xmlextras/domparser;1"].
                         createInstance(Ci.nsIDOMParser);
         var doc = domParser.parseFromStream(fileInStream, "UTF-8",
@@ -1094,12 +1095,12 @@ Engine.prototype = {
   _confirmAddEngine: function SRCH_SVC_confirmAddEngine() {
     var sbs = Cc["@mozilla.org/intl/stringbundle;1"].
               getService(Ci.nsIStringBundleService);
-    var stringBundle = sbs.createBundle(SIDEBAR_BUNDLE);
+    var stringBundle = sbs.createBundle(SEARCH_BUNDLE);
     var titleMessage = stringBundle.GetStringFromName("addEngineConfirmTitle");
 
     // Display only the hostname portion of the URL.
     var dialogMessage =
-        stringBundle.formatStringFromName("addEngineConfirmText",
+        stringBundle.formatStringFromName("addEngineConfirmation",
                                           [this._name, this._uri.host], 2);
     var checkboxMessage = stringBundle.GetStringFromName("addEngineUseNowText");
     var addButtonLabel =
@@ -1142,7 +1143,6 @@ Engine.prototype = {
         LOG("updating " + aEngine._engineToUpdate.name + " failed");
         return;
       }
-
       var sbs = Cc["@mozilla.org/intl/stringbundle;1"].
                 getService(Ci.nsIStringBundleService);
 
@@ -1177,12 +1177,9 @@ Engine.prototype = {
 
     switch (aEngine._dataType) {
       case SEARCH_DATA_XML:
-        var dataString = bytesToString(aBytes, "UTF-8");
-        ENSURE(dataString, "_onLoad: Couldn't convert byte array!",
-               Cr.NS_ERROR_FAILURE);
         var parser = Cc["@mozilla.org/xmlextras/domparser;1"].
                      createInstance(Ci.nsIDOMParser);
-        var doc = parser.parseFromString(dataString, "text/xml");
+        var doc = parser.parseFromBuffer(aBytes, aBytes.length, "text/xml");
         aEngine._data = doc.documentElement;
         break;
       case SEARCH_DATA_TEXT:
@@ -1314,7 +1311,7 @@ Engine.prototype = {
               return;
             }
 
-            var str = b64(aByteArray);
+            var str = btoa(String.fromCharCode.apply(null, aByteArray));
             aEngine._iconURI = makeURI(ICON_DATAURL_PREFIX + str);
 
             // The engine might not have a file yet, if it's being downloaded,
@@ -1380,6 +1377,10 @@ Engine.prototype = {
         this._type = SEARCH_TYPE_SHERLOCK;
         this._parseAsSherlock();
     }
+
+    // No need to keep a ref to our data (which in some cases can be a document
+    // element) past this point
+    this._data = null;
   },
 
   /**
@@ -1395,7 +1396,7 @@ Engine.prototype = {
     this._urls.push(new EngineURL("text/html", aMethod, aTemplate));
 
     this._name = aName;
-    this._alias = aAlias;
+    this.alias = aAlias;
     this._description = aDescription;
     this._setIcon(aIconURL, true);
 
@@ -1435,8 +1436,8 @@ Engine.prototype = {
           LOG("_parseURL: Url element has an invalid param");
         }
       } else if (param.localName == "MozParam" &&
-                 // We only support MozParams for appdir-shipped search engines
-                 this._isInAppDir) {
+                 // We only support MozParams for default search engines
+                 this._isDefault) {
         var value;
         switch (param.getAttribute("condition")) {
           case "defaultEngine":
@@ -1498,6 +1499,9 @@ Engine.prototype = {
   _parseAsOpenSearch: function SRCH_ENG_parseAsOS() {
     var doc = this._data;
 
+    // The OpenSearch spec sets a default value for the input encoding.
+    this._queryCharset = OS_PARAM_INPUT_ENCODING_DEF;
+
     for (var i = 0; i < doc.childNodes.length; ++i) {
       var child = doc.childNodes[i];
       switch (child.localName) {
@@ -1522,9 +1526,6 @@ Engine.prototype = {
           break;
 
         // Non-OpenSearch elements
-        case "Alias":
-          this._alias = child.textContent;
-          break;
         case "SearchForm":
           this._searchForm = child.textContent;
           break;
@@ -1901,7 +1902,6 @@ Engine.prototype = {
       }
     }
 
-    appendTextNode(MOZSEARCH_NS_10, "Alias", this.alias);
     appendTextNode(MOZSEARCH_NS_10, "UpdateInterval", this._updateInterval);
     appendTextNode(MOZSEARCH_NS_10, "UpdateUrl", this._updateURL);
     appendTextNode(MOZSEARCH_NS_10, "IconUpdateUrl", this._iconUpdateURL);
@@ -1912,6 +1912,30 @@ Engine.prototype = {
     docElem.appendChild(doc.createTextNode("\n"));
 
     return doc;
+  },
+
+  _lazySerializeToFile: function SRCH_ENG_serializeToFile() {
+    if (this._serializeTimer) {
+      // Reset the timer
+      this._serializeTimer.delay = LAZY_SERIALIZE_DELAY;
+    } else {
+      this._serializeTimer = Cc["@mozilla.org/timer;1"].
+                             createInstance(Ci.nsITimer);
+      var timerCallback = {
+        self: this,
+        notify: function SRCH_ENG_notify(aTimer) {
+          try {
+            this.self._serializeToFile();
+          } catch (ex) {
+            LOG("Serialization from timer callback failed:\n" + ex);
+          }
+          this.self._serializeTimer = null;
+        }
+      };
+      this._serializeTimer.initWithCallback(timerCallback,
+                                            LAZY_SERIALIZE_DELAY,
+                                            Ci.nsITimer.TYPE_ONE_SHOT);
+    }
   },
 
   /**
@@ -2018,7 +2042,7 @@ Engine.prototype = {
   get _id() {
     ENSURE_WARN(this._file, "No _file for id!", Cr.NS_ERROR_FAILURE);
 
-    if (this._file.parent.equals(getDir(NS_APP_USER_SEARCH_DIR)))
+    if (this._isInProfile)
       return "[profile]/" + this._file.leafName;
 
     if (this._isInAppDir)
@@ -2029,13 +2053,35 @@ Engine.prototype = {
     return this._file.path;
   },
 
-  get _isInAppDir() {
+  get _installLocation() {
     ENSURE_WARN(this._file && this._file.exists(),
-                "_isInAppDir: engine has no file!",
+                "_installLocation: engine has no file!",
                 Cr.NS_ERROR_FAILURE);
-    if (this.__isInAppDir === null)
-      this.__isInAppDir = this._file.parent.equals(getDir(NS_APP_SEARCH_DIR));
-    return this.__isInAppDir;
+
+    if (this.__installLocation === null) {
+      if (this._file.parent.equals(getDir(NS_APP_SEARCH_DIR)))
+        this.__installLocation = SEARCH_APP_DIR;
+      else if (this._file.parent.equals(getDir(NS_APP_USER_SEARCH_DIR)))
+        this.__installLocation = SEARCH_PROFILE_DIR;
+      else
+        this.__installLocation = SEARCH_IN_EXTENSION;
+    }
+
+    return this.__installLocation;
+  },
+
+  get _isInAppDir() {
+    return this._installLocation == SEARCH_APP_DIR;
+  },
+  get _isInProfile() {
+    return this._installLocation == SEARCH_PROFILE_DIR;
+  },
+
+  get _isDefault() {
+    // For now, our concept of a "default engine" is "one that is not in the
+    // user's profile directory", which is currently equivalent to "is app- or
+    // extension-shipped".
+    return !this._isInProfile;
   },
 
   get _hasUpdates() {
@@ -2085,6 +2131,9 @@ Engine.prototype = {
            Cr.NS_ERROR_FAILURE);
 
     url.addParam(aName, aValue);
+
+    // Serialize the changes to file lazily
+    this._lazySerializeToFile();
   },
 
   // from nsISearchEngine
@@ -2167,6 +2216,18 @@ SearchService.prototype = {
   _needToSetOrderPrefs: false,
 
   _init: function() {
+    var prefB = Cc["@mozilla.org/preferences-service;1"].
+                getService(Ci.nsIPrefBranch);
+    var shouldLog = false;
+    try {
+      shouldLog = prefB.getBoolPref(BROWSER_SEARCH_PREF + "log");
+    } catch (ex) {}
+
+    if (shouldLog) {
+      // Replace the empty LOG function with the useful one
+      LOG = DO_LOG;
+    }
+
     engineMetadataService.init();
     engineUpdateService.init();
 
@@ -2503,7 +2564,7 @@ SearchService.prototype = {
         bStream.close();
 
         // Convert the byte array to a base64-encoded string
-        var str = b64(bytes);
+        var str = btoa(String.fromCharCode.apply(null, bytes));
 
         aEngine._iconURI = makeURI(ICON_DATAURL_PREFIX + str);
         LOG("_importSherlockEngine: Set sherlock iconURI to: \"" +
@@ -2569,20 +2630,46 @@ SearchService.prototype = {
   },
 
   getDefaultEngines: function SRCH_SVC_getDefault(aCount) {
-    function isDefault (engine) {
-      return engine._isInAppDir;
+    function isDefault(engine) {
+      return engine._isDefault;
     };
     var engines = this._sortedEngines.filter(isDefault);
     var engineOrder = {};
+    var engineName;
     var i = 1;
 
-    while (true) {
-      var name = getLocalizedPref(BROWSER_SEARCH_PREF + "order." + i);
-      if (!name)
+    // Build a list of engines which we have ordering information for.
+    // We're rebuilding the list here because _sortedEngines contain the
+    // current order, but we want the original order.
+
+    // First, look at the "browser.search.order.extra" branch.
+    try {
+      var prefB = Cc["@mozilla.org/preferences-service;1"].
+                  getService(Ci.nsIPrefBranch);
+      var extras = prefB.getChildList(BROWSER_SEARCH_PREF + "order.extra.",
+                                      {});
+
+      for each (var prefName in extras) {
+        engineName = prefB.getCharPref(prefName);
+
+        if (!(engineName in engineOrder))
+          engineOrder[engineName] = i++;
+      }
+    } catch (e) {
+      LOG("Getting extra order prefs failed: " + e);
+    }
+
+    // Now look through the "browser.search.order" branch.
+    for (var j = 1; ; j++) {
+      engineName = getLocalizedPref(BROWSER_SEARCH_PREF + "order." + j);
+      if (!engineName)
         break;
 
-      engineOrder[name] = i++;
+      if (!(engineName in engineOrder))
+        engineOrder[engineName] = i++;
     }
+
+    LOG("getDefaultEngines: engineOrder: " + engineOrder.toSource());
 
     function compareEngines (a, b) {
       var aIdx = engineOrder[a.name];
@@ -2662,9 +2749,17 @@ SearchService.prototype = {
       this._currentEngine = null;
 
     if (engineToRemove._readOnly) {
-      // Just hide it (the "hidden" setter will notify)
+      // Just hide it (the "hidden" setter will notify) and remove its alias to
+      // avoid future conflicts with other engines.
       engineToRemove.hidden = true;
+      engineToRemove.alias = null;
     } else {
+      // Cancel the lazy serialization timer if it's running
+      if (engineToRemove._serializeTimer) {
+        engineToRemove._serializeTimer.cancel();
+        engineToRemove._serializeTimer = null;
+      }
+
       // Remove the engine file from disk (this might throw)
       engineToRemove._remove();
       engineToRemove._file = null;
@@ -2736,8 +2831,8 @@ SearchService.prototype = {
 
   restoreDefaultEngines: function SRCH_SVC_resetDefaultEngines() {
     for each (var e in this._engines) {
-      // Unhide all appdir-installed engines
-      if (e.hidden && e._isInAppDir)
+      // Unhide all default engines
+      if (e.hidden && e._isDefault)
         e.hidden = false;
     }
   },
@@ -2777,7 +2872,7 @@ SearchService.prototype = {
         prefB.clearUserPref(currentEnginePref);
     }
     else {
-      prefB.setCharPref(currentEnginePref, this._currentEngine.name);
+      setLocalizedPref(currentEnginePref, this._currentEngine.name);
     }
 
     notifyAction(this._currentEngine, SEARCH_ENGINE_CURRENT);
@@ -2835,7 +2930,17 @@ var engineMetadataService = {
     file.append("search.sqlite");
     var dbService = Cc["@mozilla.org/storage/service;1"].
                     getService(Ci.mozIStorageService);
-    this.mDB = dbService.openDatabase(file);
+    try {
+        this.mDB = dbService.openDatabase(file);
+    } catch (ex) {
+        if (ex.result == 0x8052000b) { /* NS_ERROR_FILE_CORRUPTED */
+            // delete and try again
+            file.remove(false);
+            this.mDB = dbService.openDatabase(file);
+        } else {
+            throw ex;
+        }
+    }
 
     try {
       this.mDB.createTable("engine_data", engineDataTable);
@@ -3008,17 +3113,20 @@ var engineUpdateService = {
       ULOG(engine.name + " has expired");
 
       var testEngine = null;
-      if (updateURL) {
+
+      var updateURI = makeURI(updateURL);
+      if (updateURI) {
         var dataType = engineMetadataService.getAttr(engine, "updatedatatype")
         if (!dataType) {
           ULOG("No loadtype to update engine!");
           continue;
         }
 
-        testEngine = new Engine(makeURI(updateURL), dataType, false);
+        testEngine = new Engine(updateURI, dataType, false);
         testEngine._engineToUpdate = engine;
         testEngine._initFromURI();
-      }
+      } else
+        ULOG("invalid updateURI");
 
       if (iconUpdateURL) {
         // If we're updating the engine too, use the new engine object,
@@ -3028,6 +3136,7 @@ var engineUpdateService = {
 
       // Schedule the next update
       this.scheduleNextUpdate(engine);
+
     } // end engine iteration
   }
 };

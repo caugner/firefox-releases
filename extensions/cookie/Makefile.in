@@ -48,7 +48,7 @@ EXPORT_LIBRARY = 1
 IS_COMPONENT	= 1
 MODULE_NAME	= nsCookieModule
 GRE_MODULE	= 1
-MOZILLA_INTERNAL_API = 1
+LIBXUL_LIBRARY = 1
 
 PACKAGE_FILE = cookie.pkg
 
@@ -56,16 +56,18 @@ REQUIRES	= xpcom \
 		  string \
 		  necko \
 		  dom \
-		  widget \
 		  content \
+		  widget \
 		  pref \
 		  windowwatcher \
 		  docshell \
 		  appshell \
+		  caps \
+		  storage \
 		  $(NULL)
 
 CPPSRCS		= \
-		nsModuleFactory.cpp \
+		nsCookieModule.cpp \
 		nsPermission.cpp \
 		nsPermissionManager.cpp \
 		nsPopupWindowManager.cpp \
@@ -74,7 +76,6 @@ CPPSRCS		= \
 		$(NULL)
 
 XPIDLSRCS	= \
-		nsIPermission.idl \
 		nsICookieAcceptDialog.idl \
 		nsICookiePromptService.idl \
 		$(NULL)
@@ -85,6 +86,10 @@ EXTRA_DSO_LDOPTS = \
 
 ifdef MOZ_MAIL_NEWS
 DEFINES += -DMOZ_MAIL_NEWS
+endif
+
+ifdef ENABLE_TESTS
+TOOL_DIRS		+= test
 endif
 
 include $(topsrcdir)/config/rules.mk

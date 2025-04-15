@@ -44,31 +44,19 @@
 
 #include "nsScrollbarFrame.h"
 #include "nsScrollbarButtonFrame.h"
-#include "nsXULAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsIScrollableFrame.h"
-#include "nsIView.h"
-#include "nsIViewManager.h"
-
+#include "nsIScrollbarMediator.h"
 
 //
 // NS_NewToolbarFrame
 //
-// Creates a new Toolbar frame and returns it in |aNewFrame|
+// Creates a new Toolbar frame and returns it
 //
-nsresult
-NS_NewScrollbarFrame ( nsIPresShell* aPresShell, nsIFrame** aNewFrame )
+nsIFrame*
+NS_NewScrollbarFrame (nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsScrollbarFrame* it = new (aPresShell) nsScrollbarFrame (aPresShell);
-  if (nsnull == it)
-    return NS_ERROR_OUT_OF_MEMORY;
-
-  *aNewFrame = it;
-  return NS_OK;
-  
+  return new (aPresShell) nsScrollbarFrame (aPresShell, aContext);
 } // NS_NewScrollbarFrame
 
 //
@@ -80,16 +68,11 @@ NS_INTERFACE_MAP_END_INHERITING(nsBoxFrame)
 
 
 NS_IMETHODIMP
-nsScrollbarFrame::Init(nsPresContext*  aPresContext,
-              nsIContent*      aContent,
-              nsIFrame*        aParent,
-              nsStyleContext*  aContext,
-              nsIFrame*        aPrevInFlow)
+nsScrollbarFrame::Init(nsIContent* aContent,
+                       nsIFrame*   aParent,
+                       nsIFrame*   aPrevInFlow)
 {
-  nsresult  rv = nsBoxFrame::Init(aPresContext, aContent, aParent, aContext, aPrevInFlow);
-  CreateViewForFrame(aPresContext,this,aContext,PR_TRUE);
-  nsIView* view = GetView();
-  view->GetViewManager()->SetViewContentTransparency(view, PR_TRUE);
+  nsresult  rv = nsBoxFrame::Init(aContent, aParent, aPrevInFlow);
 
   // We want to be a reflow root since we use reflows to move the
   // slider.  Any reflow inside the scrollbar frame will be a reflow to
@@ -129,18 +112,23 @@ nsScrollbarFrame::IsContainingBlock() const
   return PR_TRUE;
 }
 
+nsIAtom*
+nsScrollbarFrame::GetType() const
+{
+  return nsGkAtoms::scrollbarFrame;
+}
+
 NS_IMETHODIMP
-nsScrollbarFrame::AttributeChanged(nsIContent* aChild,
-                                   PRInt32 aNameSpaceID,
+nsScrollbarFrame::AttributeChanged(PRInt32 aNameSpaceID,
                                    nsIAtom* aAttribute,
                                    PRInt32 aModType)
 {
-  nsresult rv = nsBoxFrame::AttributeChanged(aChild, aNameSpaceID,
-                                             aAttribute, aModType);
+  nsresult rv = nsBoxFrame::AttributeChanged(aNameSpaceID, aAttribute,
+                                             aModType);
 
   // if the current position changes, notify any nsGfxScrollFrame
   // parent we may have
-  if (aAttribute != nsXULAtoms::curpos)
+  if (aAttribute != nsGkAtoms::curpos)
     return rv;
 
   nsIFrame* parent = GetParent();
@@ -152,7 +140,7 @@ nsScrollbarFrame::AttributeChanged(nsIContent* aChild,
   if (!scrollable)
     return rv;
 
-  scrollable->CurPosAttributeChanged(aChild, aModType);
+  scrollable->CurPosAttributeChanged(mContent, aModType);
   return rv;
 }
 
@@ -188,3 +176,33 @@ nsScrollbarFrame::HandleRelease(nsPresContext* aPresContext,
   return NS_OK;
 }
 
+void
+nsScrollbarFrame::SetScrollbarMediatorContent(nsIContent* aMediator)
+{
+  mScrollbarMediator = aMediator;
+}
+
+nsIScrollbarMediator*
+nsScrollbarFrame::GetScrollbarMediator()
+{
+  if (!mScrollbarMediator)
+    return nsnull;
+  nsIFrame* f =
+    PresContext()->PresShell()->GetPrimaryFrameFor(mScrollbarMediator);
+  if (!f)
+    return nsnull;
+
+  // check if the frame is a scroll frame. If so, get the scrollable frame
+  // inside it.
+  nsIScrollableFrame* scrollFrame;
+  CallQueryInterface(f, &scrollFrame);
+  if (scrollFrame) {
+    f = scrollFrame->GetScrolledFrame();
+    if (!f)
+      return nsnull;
+  }
+
+  nsIScrollbarMediator* sbm;
+  CallQueryInterface(f, &sbm);
+  return sbm;
+}

@@ -141,7 +141,7 @@ mozSqlService::Init()
   nsCOMPtr<nsIRDFXMLSink> sink = do_QueryInterface(mInner);
   if (sink) {
     nsCOMPtr<nsIAtom> prefix = do_GetAtom("SQL");
-    sink->AddNameSpace(prefix, NS_ConvertASCIItoUCS2(SQL_NAMESPACE_URI));
+    sink->AddNameSpace(prefix, NS_ConvertASCIItoUTF16(SQL_NAMESPACE_URI));
   }
 
   return gRDFService->RegisterDataSource(this, PR_FALSE);
@@ -374,7 +374,7 @@ mozSqlService::GetConnection(nsIRDFResource* aAlias, mozISqlConnection **_retval
   nsCOMPtr<mozISqlConnection> conn;
 
   if (mConnectionCache) {
-    weakRef = getter_AddRefs(NS_STATIC_CAST(nsIWeakReference*, mConnectionCache->Get(&key)));
+    weakRef = getter_AddRefs(static_cast<nsIWeakReference*>(mConnectionCache->Get(&key)));
     if (weakRef) {
       conn = do_QueryReferent(weakRef);
       if (conn)

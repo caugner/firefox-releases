@@ -38,9 +38,9 @@
 
 /*
  *  XPCOM XML-RPC Client, interface definition.
- *  Version: $Revision: 1.6.28.1 $
+ *  Version: $Revision: 1.8 $
  *
- *  $Id: nsIXmlRpcClient.idl,v 1.6.28.1 2006/08/06 22:30:02 samuel%sieb.net Exp $
+ *  $Id: nsIXmlRpcClient.idl,v 1.8 2006/02/20 04:04:47 samuel%sieb.net Exp $
  */
 
 #include "nsISupports.idl"

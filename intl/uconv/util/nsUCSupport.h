@@ -41,9 +41,8 @@
 #include "nsCOMPtr.h"
 #include "nsIUnicodeEncoder.h"
 #include "nsIUnicodeDecoder.h"
-#include "nsIUnicodeEncodeHelper.h"
-#include "nsIUnicodeDecodeHelper.h"
 #include "nsICharRepresentable.h"
+#include "uconvutil.h"
 
 #define ONE_BYTE_TABLE_SIZE 256
 
@@ -58,13 +57,17 @@
 
 class nsIBasicDecoder : public nsISupports {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IBASICDECODER_IID);
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IBASICDECODER_IID)
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIBasicDecoder, NS_IBASICDECODER_IID)
 
 class nsIBasicEncoder : public nsISupports {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IBASICENCODER_IID);
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IBASICENCODER_IID)
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIBasicEncoder, NS_IBASICENCODER_IID)
 
 #endif
 
@@ -182,7 +185,7 @@ public:
   /**
    * Class constructor.
    */
-  nsTableDecoderSupport(uShiftTable * aShiftTable, 
+  nsTableDecoderSupport(uScanClassID aScanClass, uShiftInTable * aShiftInTable,
       uMappingTable * aMappingTable, PRUint32 aMaxLengthFactor);
 
   /**
@@ -192,8 +195,8 @@ public:
 
 protected:
 
-  nsIUnicodeDecodeHelper    * mHelper;      // decoder helper object
-  uShiftTable               * mShiftTable;
+  uScanClassID              mScanClass;
+  uShiftInTable             * mShiftInTable;
   uMappingTable             * mMappingTable;
 
   //--------------------------------------------------------------------
@@ -220,7 +223,7 @@ public:
    * Class constructor.
    */
   nsMultiTableDecoderSupport(PRInt32 aTableCount, const uRange * aRangeArray, 
-                             uShiftTable ** aShiftTable,
+                             uScanClassID * aScanClassArray,
                              uMappingTable ** aMappingTable,
                              PRUint32 aMaxLengthFactor);
 
@@ -231,10 +234,9 @@ public:
 
 protected:
 
-  nsIUnicodeDecodeHelper    * mHelper;      // decoder helper object
   PRInt32                   mTableCount;
   const uRange              * mRangeArray;
-  uShiftTable               ** mShiftTable;
+  uScanClassID              * mScanClassArray;
   uMappingTable             ** mMappingTable;
 
   //--------------------------------------------------------------------
@@ -260,8 +262,7 @@ public:
   /**
    * Class constructor.
    */
-  nsOneByteDecoderSupport(uShiftTable * aShiftTable, 
-      uMappingTable * aMappingTable);
+  nsOneByteDecoderSupport(uMappingTable * aMappingTable);
 
   /**
    * Class destructor.
@@ -270,10 +271,9 @@ public:
 
 protected:
 
-  nsIUnicodeDecodeHelper    * mHelper;      // decoder helper object
-  uShiftTable               * mShiftTable;
   uMappingTable             * mMappingTable;
   PRUnichar                 mFastTable[ONE_BYTE_TABLE_SIZE];
+  PRBool                    mFastTableCreated;
 
   //--------------------------------------------------------------------
   // Subclassing of nsBasicDecoderSupport class [declaration]
@@ -410,9 +410,14 @@ class nsTableEncoderSupport : public nsEncoderSupport
 public:
 
   /**
-   * Class constructor.
+   * Class constructors.
    */
-  nsTableEncoderSupport(uShiftTable * aShiftTable, 
+  nsTableEncoderSupport(uScanClassID  aScanClass,
+                        uShiftOutTable * aShiftOutTable,
+                        uMappingTable  * aMappingTable,
+                        PRUint32 aMaxLengthFactor);
+
+  nsTableEncoderSupport(uScanClassID  aScanClass,
                         uMappingTable  * aMappingTable,
                         PRUint32 aMaxLengthFactor);
 
@@ -424,8 +429,8 @@ public:
 
 protected:
 
-  nsIUnicodeEncodeHelper    * mHelper;      // encoder helper object
-  uShiftTable               * mShiftTable;
+  uScanClassID              mScanClass;
+  uShiftOutTable            * mShiftOutTable;
   uMappingTable             * mMappingTable;
 
   //--------------------------------------------------------------------
@@ -452,7 +457,8 @@ public:
    * Class constructor.
    */
   nsMultiTableEncoderSupport(PRInt32 aTableCount,
-                             uShiftTable ** aShiftTable,
+                             uScanClassID * aScanClassArray,
+                             uShiftOutTable ** aShiftOutTable,
                              uMappingTable  ** aMappingTable,
                              PRUint32 aMaxLengthFactor);
 
@@ -464,9 +470,9 @@ public:
 
 protected:
 
-  nsIUnicodeEncodeHelper    * mHelper;      // encoder helper object
   PRInt32                   mTableCount;
-  uShiftTable               ** mShiftTable;
+  uScanClassID              * mScanClassArray;
+  uShiftOutTable            ** mShiftOutTable;
   uMappingTable             ** mMappingTable;
 
   //--------------------------------------------------------------------

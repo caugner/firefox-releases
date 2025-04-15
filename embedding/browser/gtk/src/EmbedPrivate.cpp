@@ -14,7 +14,7 @@
  * The Original Code is mozilla.org code.
  *
  * The Initial Developer of the Original Code is
- * Christopher Blizzard. Portions created by Christopher Blizzard are Copyright (C) Christopher Blizzard.  All Rights Reserved.
+ * Christopher Blizzard.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
@@ -35,47 +35,43 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include <nsIDocShell.h>
-#include <nsIWebProgress.h>
+#include "nsIDocShell.h"
+#include "nsIWebProgress.h"
 #include "nsIWidget.h"
 #include "nsCRT.h"
 #include "nsNetUtil.h"
 #include "nsIWebBrowserStream.h"
 #include "nsIWebBrowserFocus.h"
-
-// for NS_APPSHELL_CID
-#include <nsWidgetsCID.h>
+#include "nsIDirectoryService.h"
+#include "nsAppDirectoryServiceDefs.h"
 
 // for do_GetInterface
-#include <nsIInterfaceRequestor.h>
+#include "nsIInterfaceRequestor.h"
 // for do_CreateInstance
-#include <nsIComponentManager.h>
+#include "nsIComponentManager.h"
 
 // for initializing our window watcher service
-#include <nsIWindowWatcher.h>
+#include "nsIWindowWatcher.h"
 
-#include <nsILocalFile.h>
-#include <nsEmbedAPI.h>
+#include "nsILocalFile.h"
+
+#include "nsXULAppAPI.h"
 
 // all of the crap that we need for event listeners
 // and when chrome windows finish loading
-#include <nsIDOMWindow.h>
-#include <nsPIDOMWindow.h>
-#include <nsIDOMWindowInternal.h>
-#include <nsIChromeEventHandler.h>
+#include "nsIDOMWindow.h"
+#include "nsPIDOMWindow.h"
+#include "nsIDOMWindowInternal.h"
 
 // For seting scrollbar visibilty
-#include <nsIDOMBarProp.h>
+#include "nsIDOMBarProp.h"
 
 // for the focus hacking we need to do
-#include <nsIFocusController.h>
-
-// for profiles
-#include <nsProfileDirServiceProvider.h>
+#include "nsIFocusController.h"
 
 // app component registration
-#include <nsIGenericFactory.h>
-#include <nsIComponentRegistrar.h>
+#include "nsIGenericFactory.h"
+#include "nsIComponentRegistrar.h"
 
 // all of our local includes
 #include "EmbedPrivate.h"
@@ -84,11 +80,7 @@
 #include "EmbedContentListener.h"
 #include "EmbedEventListener.h"
 #include "EmbedWindowCreator.h"
-#ifdef MOZ_WIDGET_GTK2
 #include "GtkPromptService.h"
-#else
-#include "nsNativeCharsetUtils.h"
-#endif
 
 #ifdef MOZ_ACCESSIBILITY_ATK
 #include "nsIAccessibilityService.h"
@@ -96,28 +88,80 @@
 #include "nsIDOMDocument.h"
 #endif
 
-static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
-
 PRUint32     EmbedPrivate::sWidgetCount = 0;
+
+char        *EmbedPrivate::sPath        = nsnull;
 char        *EmbedPrivate::sCompPath    = nsnull;
-nsIAppShell *EmbedPrivate::sAppShell    = nsnull;
 nsVoidArray *EmbedPrivate::sWindowList  = nsnull;
-char        *EmbedPrivate::sProfileDir  = nsnull;
-char        *EmbedPrivate::sProfileName = nsnull;
-nsIPref     *EmbedPrivate::sPrefs       = nsnull;
+nsILocalFile *EmbedPrivate::sProfileDir  = nsnull;
+nsISupports  *EmbedPrivate::sProfileLock = nsnull;
 GtkWidget   *EmbedPrivate::sOffscreenWindow = 0;
 GtkWidget   *EmbedPrivate::sOffscreenFixed  = 0;
+
 nsIDirectoryServiceProvider *EmbedPrivate::sAppFileLocProvider = nsnull;
-nsProfileDirServiceProvider *EmbedPrivate::sProfileDirServiceProvider = nsnull;
+
+class GTKEmbedDirectoryProvider : public nsIDirectoryServiceProvider2
+{
+public:
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_NSIDIRECTORYSERVICEPROVIDER
+  NS_DECL_NSIDIRECTORYSERVICEPROVIDER2
+};
+
+static const GTKEmbedDirectoryProvider kDirectoryProvider;
+
+NS_IMPL_QUERY_INTERFACE2(GTKEmbedDirectoryProvider,
+                         nsIDirectoryServiceProvider,
+                         nsIDirectoryServiceProvider2)
+
+NS_IMETHODIMP_(nsrefcnt)
+GTKEmbedDirectoryProvider::AddRef()
+{
+  return 1;
+}
+
+NS_IMETHODIMP_(nsrefcnt)
+GTKEmbedDirectoryProvider::Release()
+{
+  return 1;
+}
+
+NS_IMETHODIMP
+GTKEmbedDirectoryProvider::GetFile(const char *aKey, PRBool *aPersist,
+                                   nsIFile* *aResult)
+{
+  if (EmbedPrivate::sAppFileLocProvider) {
+    nsresult rv = EmbedPrivate::sAppFileLocProvider->GetFile(aKey, aPersist,
+                                                             aResult);
+    if (NS_SUCCEEDED(rv))
+      return rv;
+  }
+
+  if (EmbedPrivate::sProfileDir && !strcmp(aKey, NS_APP_USER_PROFILE_50_DIR)) {
+    *aPersist = PR_TRUE;
+    return EmbedPrivate::sProfileDir->Clone(aResult);
+  }
+
+  return NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+GTKEmbedDirectoryProvider::GetFiles(const char *aKey,
+                                    nsISimpleEnumerator* *aResult)
+{
+  nsCOMPtr<nsIDirectoryServiceProvider2>
+    dp2(do_QueryInterface(EmbedPrivate::sAppFileLocProvider));
+
+  if (!dp2)
+    return NS_ERROR_FAILURE;
+
+  return dp2->GetFiles(aKey, aResult);
+}
 
 #define NS_PROMPTSERVICE_CID \
  {0x95611356, 0xf583, 0x46f5, {0x81, 0xff, 0x4b, 0x3e, 0x01, 0x62, 0xc6, 0x19}}
 
-#ifdef MOZ_WIDGET_GTK2
 NS_GENERIC_FACTORY_CONSTRUCTOR(GtkPromptService)
-#endif
-
-#ifdef MOZ_WIDGET_GTK2
 
 static const nsModuleComponentInfo defaultAppComps[] = {
   {
@@ -130,13 +174,6 @@ static const nsModuleComponentInfo defaultAppComps[] = {
 
 const nsModuleComponentInfo *EmbedPrivate::sAppComps = defaultAppComps;
 int   EmbedPrivate::sNumAppComps = sizeof(defaultAppComps) / sizeof(nsModuleComponentInfo);
-
-#else
-
-const nsModuleComponentInfo *EmbedPrivate::sAppComps = nsnull;
-int   EmbedPrivate::sNumAppComps = 0;
-
-#endif
 
 EmbedPrivate::EmbedPrivate(void)
 {
@@ -179,30 +216,29 @@ EmbedPrivate::Init(GtkMozEmbed *aOwningWidget)
   // initialize it.  It is assumed that this window will be destroyed
   // when we go out of scope.
   mWindow = new EmbedWindow();
-  mWindowGuard = NS_STATIC_CAST(nsIWebBrowserChrome *, mWindow);
+  mWindowGuard = static_cast<nsIWebBrowserChrome *>(mWindow);
   mWindow->Init(this);
 
   // Create our progress listener object, make an owning reference,
   // and initialize it.  It is assumed that this progress listener
   // will be destroyed when we go out of scope.
   mProgress = new EmbedProgress();
-  mProgressGuard = NS_STATIC_CAST(nsIWebProgressListener *,
-				       mProgress);
+  mProgressGuard = static_cast<nsIWebProgressListener *>
+                                (mProgress);
   mProgress->Init(this);
 
   // Create our content listener object, initialize it and attach it.
   // It is assumed that this will be destroyed when we go out of
   // scope.
   mContentListener = new EmbedContentListener();
-  mContentListenerGuard = NS_STATIC_CAST(nsISupports*, NS_STATIC_CAST(nsIURIContentListener*, mContentListener));
+  mContentListenerGuard = static_cast<nsISupports*>(static_cast<nsIURIContentListener*>(mContentListener));
   mContentListener->Init(this);
 
   // Create our key listener object and initialize it.  It is assumed
   // that this will be destroyed before we go out of scope.
   mEventListener = new EmbedEventListener();
   mEventListenerGuard =
-    NS_STATIC_CAST(nsISupports *, NS_STATIC_CAST(nsIDOMKeyListener *,
-						 mEventListener));
+    static_cast<nsISupports *>(static_cast<nsIDOMKeyListener *>(mEventListener));
   mEventListener->Init(this);
 
   // has the window creator service been set up?
@@ -216,7 +252,7 @@ EmbedPrivate::Init(GtkMozEmbed *aOwningWidget)
     // create our local object
     EmbedWindowCreator *creator = new EmbedWindowCreator();
     nsCOMPtr<nsIWindowCreator> windowCreator;
-    windowCreator = NS_STATIC_CAST(nsIWindowCreator *, creator);
+    windowCreator = static_cast<nsIWindowCreator *>(creator);
 
     // Attach it via the watcher service
     nsCOMPtr<nsIWindowWatcher> watcher = do_GetService(NS_WINDOWWATCHER_CONTRACTID);
@@ -235,7 +271,7 @@ EmbedPrivate::Realize(PRBool *aAlreadyRealized)
   // create the offscreen window if we have to
   EnsureOffscreenWindow();
 
-  // Have we ever been initialized before?  If so then just reparetn
+  // Have we ever been initialized before?  If so then just reparent
   // from the offscreen window.
   if (mMozWindowWidget) {
     gtk_widget_reparent(mMozWindowWidget, GTK_WIDGET(mOwningWidget));
@@ -265,7 +301,7 @@ EmbedPrivate::Realize(PRBool *aAlreadyRealized)
   nsCOMPtr<nsIWeakReference> weakRef;
   supportsWeak->GetWeakReference(getter_AddRefs(weakRef));
   webBrowser->AddWebBrowserListener(weakRef,
-				    nsIWebProgressListener::GetIID());
+				    NS_GET_IID(nsIWebProgressListener));
 
   // set ourselves as the parent uri content listener
   nsCOMPtr<nsIURIContentListener> uriListener;
@@ -277,14 +313,14 @@ EmbedPrivate::Realize(PRBool *aAlreadyRealized)
   mWindow->mBaseWindow->GetMainWidget(getter_AddRefs(mozWidget));
   // get the native drawing area
   GdkWindow *tmp_window =
-    NS_STATIC_CAST(GdkWindow *,
+    static_cast<GdkWindow *>(
 		   mozWidget->GetNativeData(NS_NATIVE_WINDOW));
   // and, thanks to superwin we actually need the parent of that.
   tmp_window = gdk_window_get_parent(tmp_window);
   // save the widget ID - it should be the mozarea of the window.
   gpointer data = nsnull;
   gdk_window_get_user_data(tmp_window, &data);
-  mMozWindowWidget = NS_STATIC_CAST(GtkWidget *, data);
+  mMozWindowWidget = static_cast<GtkWidget *>(data);
 
   // Apply the current chrome mask
   ApplyChromeMask();
@@ -350,7 +386,7 @@ EmbedPrivate::Destroy(void)
   nsCOMPtr<nsIWeakReference> weakRef;
   supportsWeak->GetWeakReference(getter_AddRefs(weakRef));
   webBrowser->RemoveWebBrowserListener(weakRef,
-				       nsIWebProgressListener::GetIID());
+				       NS_GET_IID(nsIWebProgressListener));
   weakRef = nsnull;
   supportsWeak = nsnull;
 
@@ -366,8 +402,8 @@ EmbedPrivate::Destroy(void)
 
   // detach our event listeners and release the event receiver
   DetachListeners();
-  if (mEventReceiver)
-    mEventReceiver = nsnull;
+  if (mEventTarget)
+    mEventTarget = nsnull;
 
   // destroy our child window
   mWindow->ReleaseChildren();
@@ -386,15 +422,7 @@ EmbedPrivate::Destroy(void)
 void
 EmbedPrivate::SetURI(const char *aURI)
 {
-#ifdef MOZ_WIDGET_GTK
-  // XXX: Even though NS_CopyNativeToUnicode is not designed for non-filenames,
-  // we know that it will do "the right thing" on UNIX.
-  NS_CopyNativeToUnicode(nsDependentCString(aURI), mURI);
-#endif
-
-#ifdef MOZ_WIDGET_GTK2
-  CopyUTF8toUTF16(aURI, mURI);
-#endif
+  mURI.Assign(aURI);
 }
 
 void
@@ -406,7 +434,7 @@ EmbedPrivate::LoadCurrentURI(void)
 
     nsAutoPopupStatePusher popupStatePusher(piWin, openAllowed);
 
-    mNavigation->LoadURI(mURI.get(),                        // URI string
+    mNavigation->LoadURI(NS_ConvertUTF8toUTF16(mURI).get(), // URI string
                          nsIWebNavigation::LOAD_FLAGS_NONE, // Load flags
                          nsnull,                            // Referring URI
                          nsnull,                            // Post data
@@ -475,44 +503,45 @@ EmbedPrivate::PushStartup(void)
   // if this is the first widget, fire up xpcom
   if (sWidgetCount == 1) {
     nsresult rv;
-    nsCOMPtr<nsILocalFile> binDir;
 
+    nsCOMPtr<nsILocalFile> binDir;
     if (sCompPath) {
       rv = NS_NewNativeLocalFile(nsDependentCString(sCompPath), 1, getter_AddRefs(binDir));
       if (NS_FAILED(rv))
 	return;
     }
 
-    rv = NS_InitEmbedding(binDir, sAppFileLocProvider);
+    const char *grePath = sPath;
+
+    if (!grePath)
+      grePath = getenv("MOZILLA_FIVE_HOME");
+
+    if (!grePath)
+      return;
+
+    nsCOMPtr<nsILocalFile> greDir;
+    rv = NS_NewNativeLocalFile(nsDependentCString(grePath), PR_TRUE,
+                               getter_AddRefs(greDir));
     if (NS_FAILED(rv))
       return;
 
-    // we no longer need a reference to the DirectoryServiceProvider
-    if (sAppFileLocProvider) {
-      NS_RELEASE(sAppFileLocProvider);
-      sAppFileLocProvider = nsnull;
+    if (sProfileDir && !sProfileLock) {
+      rv = XRE_LockProfileDirectory(sProfileDir,
+                                    &sProfileLock);
+      if (NS_FAILED(rv)) return;
     }
 
-    rv = StartupProfile();
-    NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "Warning: Failed to start up profiles.\n");
+    rv = XRE_InitEmbedding(greDir, binDir,
+                           const_cast<GTKEmbedDirectoryProvider*>(&kDirectoryProvider),
+                           nsnull, nsnull);
+    if (NS_FAILED(rv))
+      return;
+
+    if (sProfileDir)
+      XRE_NotifyProfile();
 
     rv = RegisterAppComponents();
-    NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "Warning: Failed to register app components.\n");
-
-    // XXX startup appshell service?
-    // XXX create offscreen window for appshell service?
-    // XXX remove X prop from offscreen window?
-
-    nsCOMPtr<nsIAppShell> appShell;
-    appShell = do_CreateInstance(kAppShellCID);
-    if (!appShell) {
-      NS_WARNING("Failed to create appshell in EmbedPrivate::PushStartup!\n");
-      return;
-    }
-    sAppShell = appShell.get();
-    NS_ADDREF(sAppShell);
-    sAppShell->Create(0, nsnull);
-    sAppShell->Spinup();
+    NS_ASSERTION(NS_SUCCEEDED(rv), "Warning: Failed to register app components.\n");
   }
 }
 
@@ -526,19 +555,29 @@ EmbedPrivate::PopStartup(void)
     // destroy the offscreen window
     DestroyOffscreenWindow();
 
-    // shut down the profiles
-    ShutdownProfile();
-
-    if (sAppShell) {
-      // Shutdown the appshell service.
-      sAppShell->Spindown();
-      NS_RELEASE(sAppShell);
-      sAppShell = 0;
+    // we no longer need a reference to the DirectoryServiceProvider
+    if (sAppFileLocProvider) {
+      NS_RELEASE(sAppFileLocProvider);
+      sAppFileLocProvider = nsnull;
     }
 
     // shut down XPCOM/Embedding
-    NS_TermEmbedding();
+    XRE_TermEmbedding();
+
+    NS_IF_RELEASE(sProfileLock);
+    NS_IF_RELEASE(sProfileDir);
   }
+}
+
+/* static */
+void EmbedPrivate::SetPath(const char *aPath)
+{
+  if (sPath)
+    free(sPath);
+  if (aPath)
+    sPath = strdup(aPath);
+  else
+    sPath = nsnull;
 }
 
 /* static */
@@ -567,20 +606,41 @@ void
 EmbedPrivate::SetProfilePath(const char *aDir, const char *aName)
 {
   if (sProfileDir) {
-    nsMemory::Free(sProfileDir);
-    sProfileDir = nsnull;
+    if (sWidgetCount) {
+      NS_ERROR("Cannot change profile directory during run.");
+      return;
+    }
+
+    NS_RELEASE(sProfileDir);
+    NS_RELEASE(sProfileLock);
   }
 
-  if (sProfileName) {
-    nsMemory::Free(sProfileName);
-    sProfileName = nsnull;
+  nsresult rv =
+    NS_NewNativeLocalFile(nsDependentCString(aDir), PR_TRUE, &sProfileDir);
+
+  if (NS_SUCCEEDED(rv) && aName)
+    rv = sProfileDir->AppendNative(nsDependentCString(aName));
+
+  if (NS_SUCCEEDED(rv)) {
+    PRBool exists = PR_FALSE;
+    rv = sProfileDir->Exists(&exists);
+    if (!exists)
+      rv = sProfileDir->Create(nsIFile::DIRECTORY_TYPE, 0700);
+    rv = XRE_LockProfileDirectory(sProfileDir, &sProfileLock);
   }
 
-  if (aDir)
-    sProfileDir = (char *)nsMemory::Clone(aDir, strlen(aDir) + 1);
+  if (NS_SUCCEEDED(rv)) {
+    if (sWidgetCount)
+      XRE_NotifyProfile();
 
-  if (aName)
-    sProfileName = (char *)nsMemory::Clone(aName, strlen(aName) + 1);
+    return;
+  }
+
+  NS_WARNING("Failed to lock profile.");
+
+  // Failed
+  NS_IF_RELEASE(sProfileDir);
+  NS_IF_RELEASE(sProfileLock);
 }
 
 void
@@ -654,10 +714,10 @@ EmbedPrivate::FindPrivateForBrowser(nsIWebBrowserChrome *aBrowser)
   // creating a new window ) so it's OK to walk the list of open
   // windows.
   for (int i = 0; i < count; i++) {
-    EmbedPrivate *tmpPrivate = NS_STATIC_CAST(EmbedPrivate *,
+    EmbedPrivate *tmpPrivate = static_cast<EmbedPrivate *>(
 					      sWindowList->ElementAt(i));
     // get the browser object for that window
-    nsIWebBrowserChrome *chrome = NS_STATIC_CAST(nsIWebBrowserChrome *,
+    nsIWebBrowserChrome *chrome = static_cast<nsIWebBrowserChrome *>(
 						 tmpPrivate->mWindow);
     if (chrome == aBrowser)
       return tmpPrivate;
@@ -676,7 +736,7 @@ EmbedPrivate::ContentStateChange(void)
 
   GetListener();
 
-  if (!mEventReceiver)
+  if (!mEventTarget)
     return;
 
   AttachListeners();
@@ -714,50 +774,12 @@ EmbedPrivate::ContentFinishedLoading(void)
   }
 }
 
-#ifdef MOZ_WIDGET_GTK
-// handle focus in and focus out events
-void
-EmbedPrivate::TopLevelFocusIn(void)
-{
-  if (mIsDestroyed)
-    return;
-
-  nsCOMPtr<nsPIDOMWindow> piWin;
-  GetPIDOMWindow(getter_AddRefs(piWin));
-
-  if (!piWin)
-    return;
-
-  nsIFocusController *focusController = piWin->GetRootFocusController();
-  if (focusController)
-    focusController->SetActive(PR_TRUE);
-}
-
-void
-EmbedPrivate::TopLevelFocusOut(void)
-{
-  if (mIsDestroyed)
-    return;
-
-  nsCOMPtr<nsPIDOMWindow> piWin;
-  GetPIDOMWindow(getter_AddRefs(piWin));
-
-  if (!piWin)
-    return;
-
-  nsIFocusController *focusController = piWin->GetRootFocusController();
-  if (focusController)
-    focusController->SetActive(PR_FALSE);
-}
-#endif /* MOZ_WIDGET_GTK */
-
 void
 EmbedPrivate::ChildFocusIn(void)
 {
   if (mIsDestroyed)
     return;
 
-#ifdef MOZ_WIDGET_GTK2
   nsresult rv;
   nsCOMPtr<nsIWebBrowser> webBrowser;
   rv = mWindow->GetWebBrowser(getter_AddRefs(webBrowser));
@@ -769,17 +791,6 @@ EmbedPrivate::ChildFocusIn(void)
     return;
   
   webBrowserFocus->Activate();
-#endif /* MOZ_WIDGET_GTK2 */
-
-#ifdef MOZ_WIDGET_GTK
-  nsCOMPtr<nsPIDOMWindow> piWin;
-  GetPIDOMWindow(getter_AddRefs(piWin));
-
-  if (!piWin)
-    return;
-
-  piWin->Activate();
-#endif /* MOZ_WIDGET_GTK */
 }
 
 void
@@ -788,7 +799,6 @@ EmbedPrivate::ChildFocusOut(void)
   if (mIsDestroyed)
     return;
 
-#ifdef MOZ_WIDGET_GTK2
   nsresult rv;
   nsCOMPtr<nsIWebBrowser> webBrowser;
   rv = mWindow->GetWebBrowser(getter_AddRefs(webBrowser));
@@ -800,23 +810,6 @@ EmbedPrivate::ChildFocusOut(void)
 	  return;
   
   webBrowserFocus->Deactivate();
-#endif /* MOZ_WIDGET_GTK2 */
-
-#ifdef MOZ_WIDGET_GTK
-  nsCOMPtr<nsPIDOMWindow> piWin;
-  GetPIDOMWindow(getter_AddRefs(piWin));
-
-  if (!piWin)
-    return;
-
-  piWin->Deactivate();
-
-  // but the window is still active until the toplevel gets a focus
-  // out
-  nsIFocusController *focusController = piWin->GetRootFocusController();
-  if (focusController)
-    focusController->SetActive(PR_TRUE);
-#endif /* MOZ_WIDGET_GTK */
 }
 
 // Get the event listener for the chrome event handler.
@@ -824,7 +817,7 @@ EmbedPrivate::ChildFocusOut(void)
 void
 EmbedPrivate::GetListener(void)
 {
-  if (mEventReceiver)
+  if (mEventTarget)
     return;
 
   nsCOMPtr<nsPIDOMWindow> piWin;
@@ -833,7 +826,7 @@ EmbedPrivate::GetListener(void)
   if (!piWin)
     return;
 
-  mEventReceiver = do_QueryInterface(piWin->GetChromeEventHandler());
+  mEventTarget = do_QueryInterface(piWin->GetChromeEventHandler());
 }
 
 // attach key and mouse event listeners
@@ -841,30 +834,29 @@ EmbedPrivate::GetListener(void)
 void
 EmbedPrivate::AttachListeners(void)
 {
-  if (!mEventReceiver || mListenersAttached)
+  if (!mEventTarget || mListenersAttached)
     return;
 
   nsIDOMEventListener *eventListener =
-    NS_STATIC_CAST(nsIDOMEventListener *,
-		   NS_STATIC_CAST(nsIDOMKeyListener *, mEventListener));
+    static_cast<nsIDOMEventListener *>(static_cast<nsIDOMKeyListener *>(mEventListener));
 
   // add the key listener
   nsresult rv;
-  rv = mEventReceiver->AddEventListenerByIID(eventListener,
+  rv = mEventTarget->AddEventListenerByIID(eventListener,
 					     NS_GET_IID(nsIDOMKeyListener));
   if (NS_FAILED(rv)) {
     NS_WARNING("Failed to add key listener\n");
     return;
   }
 
-  rv = mEventReceiver->AddEventListenerByIID(eventListener,
+  rv = mEventTarget->AddEventListenerByIID(eventListener,
 					     NS_GET_IID(nsIDOMMouseListener));
   if (NS_FAILED(rv)) {
     NS_WARNING("Failed to add mouse listener\n");
     return;
   }
 
-  rv = mEventReceiver->AddEventListenerByIID(eventListener,
+  rv = mEventTarget->AddEventListenerByIID(eventListener,
                                              NS_GET_IID(nsIDOMUIListener));
   if (NS_FAILED(rv)) {
     NS_WARNING("Failed to add UI listener\n");
@@ -878,15 +870,14 @@ EmbedPrivate::AttachListeners(void)
 void
 EmbedPrivate::DetachListeners(void)
 {
-  if (!mListenersAttached || !mEventReceiver)
+  if (!mListenersAttached || !mEventTarget)
     return;
 
   nsIDOMEventListener *eventListener =
-    NS_STATIC_CAST(nsIDOMEventListener *,
-		   NS_STATIC_CAST(nsIDOMKeyListener *, mEventListener));
+    static_cast<nsIDOMEventListener *>(static_cast<nsIDOMKeyListener *>(mEventListener));
 
   nsresult rv;
-  rv = mEventReceiver->RemoveEventListenerByIID(eventListener,
+  rv = mEventTarget->RemoveEventListenerByIID(eventListener,
 						NS_GET_IID(nsIDOMKeyListener));
   if (NS_FAILED(rv)) {
     NS_WARNING("Failed to remove key listener\n");
@@ -894,14 +885,14 @@ EmbedPrivate::DetachListeners(void)
   }
 
   rv =
-    mEventReceiver->RemoveEventListenerByIID(eventListener,
+    mEventTarget->RemoveEventListenerByIID(eventListener,
 					     NS_GET_IID(nsIDOMMouseListener));
   if (NS_FAILED(rv)) {
     NS_WARNING("Failed to remove mouse listener\n");
     return;
   }
 
-  rv = mEventReceiver->RemoveEventListenerByIID(eventListener,
+  rv = mEventTarget->RemoveEventListenerByIID(eventListener,
 						NS_GET_IID(nsIDOMUIListener));
   if (NS_FAILED(rv)) {
     NS_WARNING("Failed to remove UI listener\n");
@@ -969,61 +960,6 @@ EmbedPrivate::GetAtkObjectForCurrentDocument()
   return nsnull;
 }
 #endif /* MOZ_ACCESSIBILITY_ATK */
-
-/* static */
-nsresult
-EmbedPrivate::StartupProfile(void)
-{
-  // initialize profiles
-  if (sProfileDir && sProfileName) {
-    nsresult rv;
-    nsCOMPtr<nsILocalFile> profileDir;
-    NS_NewNativeLocalFile(nsDependentCString(sProfileDir), PR_TRUE,
-                          getter_AddRefs(profileDir));
-    if (!profileDir)
-      return NS_ERROR_FAILURE;
-    rv = profileDir->AppendNative(nsDependentCString(sProfileName));
-    if (NS_FAILED(rv))
-      return NS_ERROR_FAILURE;
-
-    nsCOMPtr<nsProfileDirServiceProvider> locProvider;
-    NS_NewProfileDirServiceProvider(PR_TRUE, getter_AddRefs(locProvider));
-    if (!locProvider)
-      return NS_ERROR_FAILURE;
-    rv = locProvider->Register();
-    if (NS_FAILED(rv))
-      return rv;
-    rv = locProvider->SetProfileDir(profileDir);
-    if (NS_FAILED(rv))
-      return rv;
-    // Keep a ref so we can shut it down.
-    NS_ADDREF(sProfileDirServiceProvider = locProvider);
-
-    // get prefs
-    nsCOMPtr<nsIPref> pref;
-    pref = do_GetService(NS_PREF_CONTRACTID);
-    if (!pref)
-      return NS_ERROR_FAILURE;
-    sPrefs = pref.get();
-    NS_ADDREF(sPrefs);
-  }
-  return NS_OK;
-}
-
-/* static */
-void
-EmbedPrivate::ShutdownProfile(void)
-{
-  if (sProfileDirServiceProvider) {
-    sProfileDirServiceProvider->Shutdown();
-    NS_RELEASE(sProfileDirServiceProvider);
-    sProfileDirServiceProvider = 0;
-  }
-  if (sPrefs) {
-    NS_RELEASE(sPrefs);
-    sPrefs = 0;
-  }
-}
 
 /* static */
 nsresult

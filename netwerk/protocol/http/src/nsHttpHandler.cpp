@@ -75,12 +75,23 @@
 #include "nsNetUtil.h"
 #include "nsIOService.h"
 
+#include "nsIXULAppInfo.h"
+
 #if defined(XP_UNIX) || defined(XP_BEOS)
 #include <sys/utsname.h>
 #endif
 
 #if defined(XP_WIN)
 #include <windows.h>
+#endif
+
+#if defined(XP_MACOSX)
+#include <Carbon/Carbon.h>
+#endif
+
+#if defined(XP_OS2)
+#define INCL_DOSMISC
+#include <os2.h>
 #endif
 
 #ifdef DEBUG
@@ -92,7 +103,6 @@ static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
 static NS_DEFINE_CID(kStreamConverterServiceCID, NS_STREAMCONVERTERSERVICE_CID);
 static NS_DEFINE_CID(kCookieServiceCID, NS_COOKIESERVICE_CID);
 static NS_DEFINE_CID(kCacheServiceCID, NS_CACHESERVICE_CID);
-static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 static NS_DEFINE_CID(kSocketProviderServiceCID, NS_SOCKETPROVIDERSERVICE_CID);
 
 #define UA_PREF_PREFIX          "general.useragent."
@@ -158,8 +168,10 @@ nsHttpHandler::nsHttpHandler()
     , mMaxPipelinedRequests(2)
     , mRedirectionLimit(10)
     , mPhishyUserPassLength(1)
+    , mPipeliningOverSSL(PR_FALSE)
     , mLastUniqueID(NowInSeconds())
     , mSessionStartTime(0)
+    , mProduct("Gecko")
     , mUserAgentIsDirty(PR_TRUE)
     , mUseCache(PR_TRUE)
     , mSendSecureXSiteReferrer(PR_TRUE)
@@ -254,10 +266,15 @@ nsHttpHandler::Init()
     rv = InitConnectionMgr();
     if (NS_FAILED(rv)) return rv;
 
+    nsCOMPtr<nsIXULAppInfo> appInfo =
+        do_GetService("@mozilla.org/xre/app-info;1");
+    if (appInfo)
+        appInfo->GetPlatformBuildID(mProductSub);
+
     // Startup the http category
     // Bring alive the objects in the http-protocol-startup category
     NS_CreateServicesFromCategory(NS_HTTP_STARTUP_CATEGORY,
-                                  NS_STATIC_CAST(nsISupports*,NS_STATIC_CAST(void*,this)),
+                                  static_cast<nsISupports*>(static_cast<void*>(this)),
                                   NS_HTTP_STARTUP_TOPIC);    
     
     mObserverService = do_GetService("@mozilla.org/observer-service;1");
@@ -326,8 +343,6 @@ nsHttpHandler::AddStandardRequestHeaders(nsHttpHeaderArray *request,
 {
     nsresult rv;
 
-    LOG(("nsHttpHandler::AddStandardRequestHeaders\n"));
-
     // Add the "User-Agent" header
     rv = request->SetHeader(nsHttp::User_Agent, UserAgent());
     if (NS_FAILED(rv)) return rv;
@@ -392,7 +407,7 @@ nsHttpHandler::IsAcceptableEncoding(const char *enc)
     if (!PL_strncasecmp(enc, "x-", 2))
         enc += 2;
     
-    return PL_strcasestr(mAcceptEncodings.get(), enc) != nsnull;
+    return nsHttp::FindToken(mAcceptEncodings.get(), enc, HTTP_LWS ",") != nsnull;
 }
 
 nsresult
@@ -405,46 +420,39 @@ nsHttpHandler::GetCacheSession(nsCacheStoragePolicy storagePolicy,
     if (!mUseCache)
         return NS_ERROR_NOT_AVAILABLE;
 
-    if (!mCacheSession_ANY) {
-        nsCOMPtr<nsICacheService> serv = do_GetService(kCacheServiceCID, &rv);
-        if (NS_FAILED(rv)) return rv;
+    // We want to get the pointer to the cache service each time we're called,
+    // because it's possible for some add-ons (such as Google Gears) to swap
+    // in new cache services on the fly, and we want to pick them up as
+    // appropriate.
+    nsCOMPtr<nsICacheService> serv = do_GetService(NS_CACHESERVICE_CONTRACTID,
+                                                   &rv);
+    if (NS_FAILED(rv)) return rv;
 
-        rv = serv->CreateSession("HTTP",
-                                 nsICache::STORE_ANYWHERE,
-                                 nsICache::STREAM_BASED,
-                                 getter_AddRefs(mCacheSession_ANY));
-        if (NS_FAILED(rv)) return rv;
-
-        rv = mCacheSession_ANY->SetDoomEntriesIfExpired(PR_FALSE);
-        if (NS_FAILED(rv)) return rv;
-
-        rv = serv->CreateSession("HTTP-memory-only",
-                                 nsICache::STORE_IN_MEMORY,
-                                 nsICache::STREAM_BASED,
-                                 getter_AddRefs(mCacheSession_MEM));
-        if (NS_FAILED(rv)) return rv;
-
-        rv = mCacheSession_MEM->SetDoomEntriesIfExpired(PR_FALSE);
-        if (NS_FAILED(rv)) return rv;
+    const char *sessionName = "HTTP";
+    switch (storagePolicy) {
+    case nsICache::STORE_IN_MEMORY:
+        sessionName = "HTTP-memory-only";
+        break;
+    case nsICache::STORE_OFFLINE:
+        sessionName = "HTTP-offline";
+        break;
+    default:
+        break;
     }
 
-    if (storagePolicy == nsICache::STORE_IN_MEMORY)
-        NS_ADDREF(*result = mCacheSession_MEM);
-    else
-        NS_ADDREF(*result = mCacheSession_ANY);
+    nsCOMPtr<nsICacheSession> cacheSession;
+    rv = serv->CreateSession(sessionName,
+                             storagePolicy,
+                             nsICache::STREAM_BASED,
+                             getter_AddRefs(cacheSession));
+    if (NS_FAILED(rv)) return rv;
+
+    rv = cacheSession->SetDoomEntriesIfExpired(PR_FALSE);
+    if (NS_FAILED(rv)) return rv;
+
+    NS_ADDREF(*result = cacheSession);
 
     return NS_OK;
-}
-
-nsresult
-nsHttpHandler::GetCurrentEventQ(nsIEventQueue **result)
-{
-    if (!mEventQueueService) {
-        nsresult rv;
-        mEventQueueService = do_GetService(kEventQueueServiceCID, &rv);
-        if (NS_FAILED(rv)) return rv;
-    }
-    return mEventQueueService->ResolveEventQueue(NS_CURRENT_EVENTQ, result);
 }
 
 nsresult
@@ -675,14 +683,6 @@ nsHttpHandler::InitUserAgentComponents()
                     PR_smprintf_free(buf);
                 }
             }
-        } else if (info.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS &&
-                   info.dwMajorVersion == 4) {
-            if (info.dwMinorVersion == 90)
-                mOscpu.AssignLiteral("Win 9x 4.90");  // Windows Me
-            else if (info.dwMinorVersion > 0)
-                mOscpu.AssignLiteral("Win98");
-            else
-                mOscpu.AssignLiteral("Win95");
         } else {
             char *buf = PR_smprintf("Windows %ld.%ld",
                                     info.dwMajorVersion,
@@ -693,10 +693,17 @@ nsHttpHandler::InitUserAgentComponents()
             }
         }
     }
-#elif defined (XP_MACOSX) && defined(__ppc__)
-    mOscpu.AssignLiteral("PPC Mac OS X Mach-O");
-#elif defined (XP_MACOSX) && defined(__i386__)
+#elif defined (XP_MACOSX)
+#if defined(__ppc__)
+    mOscpu.AssignLiteral("PPC Mac OS X");
+#elif defined(__i386__)
     mOscpu.AssignLiteral("Intel Mac OS X");
+#endif
+    long majorVersion, minorVersion;
+    if ((::Gestalt(gestaltSystemVersionMajor, &majorVersion) == noErr) &&
+        (::Gestalt(gestaltSystemVersionMinor, &minorVersion) == noErr)) {
+        mOscpu += nsPrintfCString(" %ld.%ld", majorVersion, minorVersion);
+    }
 #elif defined (XP_UNIX) || defined (XP_BEOS)
     struct utsname name;
     
@@ -738,8 +745,8 @@ nsHttpHandler::InitUserAgentComponents()
 
 static int StringCompare(const void* s1, const void* s2, void*)
 {
-    return nsCRT::strcmp(*NS_STATIC_CAST(const char *const *, s1),
-                         *NS_STATIC_CAST(const char *const *, s2));
+    return nsCRT::strcmp(*static_cast<const char *const *>(s1),
+                         *static_cast<const char *const *>(s2));
 }
 
 void
@@ -822,16 +829,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     }
 
     // Gather product values.
-    if (PREF_CHANGED(UA_PREF("product"))) {
-        prefs->GetCharPref(UA_PREF_PREFIX "product",
-            getter_Copies(mProduct));
-        mUserAgentIsDirty = PR_TRUE;
-    }
-    if (PREF_CHANGED(UA_PREF("productSub"))) {
-        prefs->GetCharPref(UA_PREF("productSub"),
-            getter_Copies(mProductSub));
-        mUserAgentIsDirty = PR_TRUE;
-    }
     if (PREF_CHANGED(UA_PREF("productComment"))) {
         prefs->GetCharPref(UA_PREF("productComment"),
             getter_Copies(mProductComment));
@@ -1023,6 +1020,12 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
         }
     }
 
+    if (PREF_CHANGED(HTTP_PREF("pipelining.ssl"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("pipelining.ssl"), &cVar);
+        if (NS_SUCCEEDED(rv))
+            mPipeliningOverSSL = cVar;
+    }
+
     if (PREF_CHANGED(HTTP_PREF("proxy.pipelining"))) {
         rv = prefs->GetBoolPref(HTTP_PREF("proxy.pipelining"), &cVar);
         if (NS_SUCCEEDED(rv)) {
@@ -1059,11 +1062,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
         rv = prefs->GetBoolPref(HTTP_PREF("use-cache"), &cVar);
         if (NS_SUCCEEDED(rv)) {
             mUseCache = cVar;
-            if (!mUseCache) {
-                // release our references to the cache
-                mCacheSession_ANY = 0;
-                mCacheSession_MEM = 0;
-            }
         }
     }
 
@@ -1117,7 +1115,7 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             nsXPIDLString uval;
             pls->ToString(getter_Copies(uval));
             if (uval)
-                SetAcceptLanguages(NS_ConvertUCS2toUTF8(uval).get());
+                SetAcceptLanguages(NS_ConvertUTF16toUTF8(uval).get());
         } 
     }
 
@@ -1130,7 +1128,7 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             nsXPIDLString uval;
             pls->ToString(getter_Copies(uval));
             if (uval)
-                SetAcceptCharsets(NS_ConvertUCS2toUTF8(uval).get());
+                SetAcceptCharsets(NS_ConvertUTF16toUTF8(uval).get());
         } 
     }
 
@@ -1417,7 +1415,8 @@ nsHttpHandler::GetDefaultPort(PRInt32 *result)
 NS_IMETHODIMP
 nsHttpHandler::GetProtocolFlags(PRUint32 *result)
 {
-    *result = URI_STD | ALLOWS_PROXY | ALLOWS_PROXY_HTTP;
+    *result = URI_STD | ALLOWS_PROXY | ALLOWS_PROXY_HTTP |
+        URI_LOADABLE_BY_ANYONE;
     return NS_OK;
 }
 
@@ -1503,6 +1502,10 @@ nsHttpHandler::NewProxiedChannel(nsIURI *uri,
         caps = mCapabilities;
 
     if (https) {
+        // enable pipelining over SSL if requested
+        if (mPipeliningOverSSL)
+            caps |= NS_HTTP_ALLOW_PIPELINING;
+
         // HACK: make sure PSM gets initialized on the main thread.
         nsCOMPtr<nsISocketProviderService> spserv =
                 do_GetService(kSocketProviderServiceCID);
@@ -1688,7 +1691,7 @@ nsHttpHandler::Observe(nsISupports *subject,
     if (strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0) {
         nsCOMPtr<nsIPrefBranch> prefBranch = do_QueryInterface(subject);
         if (prefBranch)
-            PrefsChanged(prefBranch, NS_ConvertUCS2toUTF8(data).get());
+            PrefsChanged(prefBranch, NS_ConvertUTF16toUTF8(data).get());
     }
     else if (strcmp(topic, "profile-change-net-teardown")    == 0 ||
              strcmp(topic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)    == 0) {

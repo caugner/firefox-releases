@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -73,7 +74,7 @@ TODO:
 
 class nsMathMLmsqrtFrame : public nsMathMLContainerFrame {
 public:
-  friend nsresult NS_NewMathMLmsqrtFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmsqrtFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
   virtual void
   SetAdditionalStyleContext(PRInt32          aIndex, 
@@ -82,24 +83,21 @@ public:
   GetAdditionalStyleContext(PRInt32 aIndex) const;
 
   NS_IMETHOD
-  Init(nsPresContext*  aPresContext,
-       nsIContent*      aContent,
-       nsIFrame*        aParent,
-       nsStyleContext*  aContext,
-       nsIFrame*        aPrevInFlow);
+  Init(nsIContent* aContent,
+       nsIFrame*   aParent,
+       nsIFrame*   aPrevInFlow);
 
-  NS_IMETHOD
-  Reflow(nsPresContext*          aPresContext,
-         nsHTMLReflowMetrics&     aDesiredSize,
-         const nsHTMLReflowState& aReflowState,
-         nsReflowStatus&          aStatus);
+  virtual nsresult
+  Place(nsIRenderingContext& aRenderingContext,
+        PRBool               aPlaceOrigin,
+        nsHTMLReflowMetrics& aDesiredSize);
 
-  NS_IMETHOD 
-  Paint(nsPresContext*      aPresContext,
-        nsIRenderingContext& aRenderingContext,
-        const nsRect&        aDirtyRect,
-        nsFramePaintLayer    aWhichLayer,
-        PRUint32             aFlags = 0);
+  virtual nscoord
+  GetIntrinsicWidth(nsIRenderingContext* aRenderingContext);
+
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
 
   NS_IMETHOD
   InheritAutomaticData(nsIFrame* aParent);
@@ -115,10 +113,14 @@ public:
   FixInterFrameSpacing(nsHTMLReflowMetrics& aDesiredSize);
 
 protected:
-  nsMathMLmsqrtFrame();
+  nsMathMLmsqrtFrame(nsStyleContext* aContext);
   virtual ~nsMathMLmsqrtFrame();
   
   virtual PRIntn GetSkipSides() const { return 0; }
+
+  virtual nsresult
+  MeasureChildFrames(nsIRenderingContext& aRenderingContext,
+                     nsHTMLReflowMetrics& aDesiredSize);
 
   nsMathMLChar mSqrChar;
   nsRect       mBarRect;

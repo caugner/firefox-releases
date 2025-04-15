@@ -49,17 +49,16 @@ DIRS		= \
 		base \
 		generic \
 		forms \
-		printing \
 		tables \
 		xul \
 		$(NULL)
 
-ifdef MOZ_MATHML
-DIRS           += mathml
+ifdef NS_PRINTING
+DIRS           += printing
 endif
 
-ifdef MOZ_XTF
-DIRS           += xtf
+ifdef MOZ_MATHML
+DIRS           += mathml
 endif
 
 ifdef MOZ_SVG
@@ -73,6 +72,8 @@ endif
 DIRS           += build
 
 ifdef ENABLE_TESTS
+TOOL_DIRS      += tools/reftest
+DIRS           += tools/pageloader
 ifndef MOZ_ENABLE_LIBXUL
 TOOL_DIRS	+= html/tests
 endif

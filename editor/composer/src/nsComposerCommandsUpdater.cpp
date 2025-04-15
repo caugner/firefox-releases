@@ -39,25 +39,22 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsIDOMWindow.h"
+#include "nsPIDOMWindow.h"
 #include "nsComposerCommandsUpdater.h"
 #include "nsComponentManagerUtils.h"
 #include "nsIDOMDocument.h"
 #include "nsISelection.h"
-#include "nsIScriptGlobalObject.h"
 
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsString.h"
 
 #include "nsICommandManager.h"
-#include "nsPICommandUpdater.h"
 
 #include "nsIDocShell.h"
 #include "nsITransactionManager.h"
 
 nsComposerCommandsUpdater::nsComposerCommandsUpdater()
 :  mDOMWindow(nsnull)
-,  mDocShell(nsnull)
 ,  mDirtyState(eStateUninitialized)
 ,  mSelectionCollapsed(eStateUninitialized)
 ,  mFirstDoOfFirstUndo(PR_TRUE)
@@ -86,7 +83,7 @@ nsComposerCommandsUpdater::NotifyDocumentCreated()
 NS_IMETHODIMP
 nsComposerCommandsUpdater::NotifyDocumentWillBeDestroyed()
 {
-  // cancel any outstanding udpate timer
+  // cancel any outstanding update timer
   if (mUpdateTimer)
   {
     mUpdateTimer->Cancel();
@@ -246,10 +243,10 @@ nsComposerCommandsUpdater::Init(nsIDOMWindow* aDOMWindow)
   NS_ENSURE_ARG(aDOMWindow);
   mDOMWindow = aDOMWindow;
 
-  nsCOMPtr<nsIScriptGlobalObject> scriptObject(do_QueryInterface(aDOMWindow));
-  if (scriptObject)
+  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(aDOMWindow));
+  if (window)
   {
-    mDocShell = scriptObject->GetDocShell();
+    mDocShell = do_GetWeakReference(window->GetDocShell());
   }
   return NS_OK;
 }
@@ -265,7 +262,7 @@ nsComposerCommandsUpdater::PrimeUpdateTimer()
   }
 
   const PRUint32 kUpdateTimerDelay = 150;
-  return mUpdateTimer->InitWithCallback(NS_STATIC_CAST(nsITimerCallback*, this),
+  return mUpdateTimer->InitWithCallback(static_cast<nsITimerCallback*>(this),
                                         kUpdateTimerDelay,
                                         nsITimer::TYPE_ONE_SHOT);
 }
@@ -302,10 +299,7 @@ nsComposerCommandsUpdater::UpdateDirtyState(PRBool aNowDirty)
 nsresult
 nsComposerCommandsUpdater::UpdateCommandGroup(const nsAString& aCommandGroup)
 {
-  if (!mDocShell) return NS_ERROR_FAILURE;
-
-  nsCOMPtr<nsICommandManager> commandManager = do_GetInterface(mDocShell);
-  nsCOMPtr<nsPICommandUpdater> commandUpdater = do_QueryInterface(commandManager);
+  nsCOMPtr<nsPICommandUpdater> commandUpdater = GetCommandUpdater();
   if (!commandUpdater) return NS_ERROR_FAILURE;
 
   
@@ -359,10 +353,7 @@ nsComposerCommandsUpdater::UpdateCommandGroup(const nsAString& aCommandGroup)
 nsresult
 nsComposerCommandsUpdater::UpdateOneCommand(const char *aCommand)
 {
-  if (!mDocShell) return NS_ERROR_FAILURE;
-  
-  nsCOMPtr<nsICommandManager>  	commandManager = do_GetInterface(mDocShell);
-  nsCOMPtr<nsPICommandUpdater>	commandUpdater = do_QueryInterface(commandManager);
+  nsCOMPtr<nsPICommandUpdater> commandUpdater = GetCommandUpdater();
   if (!commandUpdater) return NS_ERROR_FAILURE;
 
   commandUpdater->CommandStatusChanged(aCommand);
@@ -386,6 +377,18 @@ nsComposerCommandsUpdater::SelectionIsCollapsed()
   NS_WARNING("nsComposerCommandsUpdater::SelectionIsCollapsed - no domSelection");
 
   return PR_FALSE;
+}
+
+already_AddRefed<nsPICommandUpdater>
+nsComposerCommandsUpdater::GetCommandUpdater()
+{
+  nsCOMPtr<nsIDocShell> docShell = do_QueryReferent(mDocShell);
+  NS_ENSURE_TRUE(docShell, nsnull);
+  nsCOMPtr<nsICommandManager> manager = do_GetInterface(docShell);
+  nsCOMPtr<nsPICommandUpdater> updater = do_QueryInterface(manager);
+  nsPICommandUpdater* retVal = nsnull;
+  updater.swap(retVal);
+  return retVal;
 }
 
 #if 0

@@ -146,10 +146,8 @@ function syncTreeView (treeContent, treeView, cb)
             throw "tantrum";
         
         treeContent.treeBoxObject.view = treeView;
-        if (treeView.selection)
-        {
+        if (treeView && treeView.selection)
             treeView.selection.tree = treeContent.treeBoxObject;
-        }
     }
     catch (ex)
     {
@@ -493,7 +491,10 @@ function bv_getcx(cx)
 console.views.breaks.getCellProperties =
 function bv_cellprops (index, col, properties)
 {
-    if (col.id == "breaks:col-0")
+    if (typeof col == "object")
+        col = col.id;
+
+    if (col == "breaks:col-0")
     {
         var row = this.childData.locateChildByVisualRow(index);
         if (row.type == "future")
@@ -543,6 +544,9 @@ function lv_init ()
                            enabledif: "has('jsdValue') && " +
                                       "cx.jsdValue.jsType == TYPE_OBJECT"}],
          ["-"],
+         ["inspect", {visibleif: "isDOMIInstalled()",
+                      enabledif: "has('jsdValue') && " + 
+                                 "isDOMThing(cx.jsdValue.getWrappedValue())"}],
          ["find-creator",
                  {enabledif: "cx.target instanceof ValueRecord && " +
                   "cx.target.jsType == jsdIValue.TYPE_OBJECT  && " +
@@ -565,6 +569,7 @@ function lv_init ()
     };
 
     this.caption = MSG_VIEW_LOCALS;
+    this.childData.isRootRecord = true;
 
     this.jsdFrame = null;
     this.savedStates = new Object();
@@ -612,8 +617,10 @@ function lv_renit (jsdFrame)
     
     if (jsdFrame.scope)
     {
-        this.scopeRecord = new ValueRecord (jsdFrame.scope, MSG_VAL_SCOPE, "");
+        this.scopeRecord = new ValueRecord(jsdFrame.scope, MSG_VAL_SCOPE, "",
+                                           jsdFrame);
         this.scopeRecord.onPreRefresh = null;
+        this.scopeRecord.isRootRecord = true;
         this.childData.appendChild(this.scopeRecord);
         if (!state && jsdFrame.scope.propertyCount <
             console.prefs["localsView.autoOpenMax"])
@@ -627,6 +634,7 @@ function lv_renit (jsdFrame)
         this.scopeRecord = new XTLabelRecord ("locals:col-0", MSV_VAL_SCOPE,
                                               ["locals:col-1", "locals:col-2",
                                                "locals:col-3"]);
+        this.scopeRecord.isRootRecord = true;
         this.scopeRecord.property = ValueRecord.prototype.atomObject;
         this.childData.appendChild(this.scopeRecord);
     }
@@ -634,7 +642,7 @@ function lv_renit (jsdFrame)
     if (jsdFrame.thisValue)
     {
         this.thisRecord = new ValueRecord (jsdFrame.thisValue, MSG_VAL_THIS,
-                                           "");
+                                           "", jsdFrame);
         this.thisRecord.onPreRefresh = null;
         this.childData.appendChild(this.thisRecord);
         if (!state && jsdFrame.thisValue.propertyCount < 
@@ -771,7 +779,10 @@ function lv_rowcommand(rec)
 console.views.locals.getCellProperties =
 function lv_cellprops (index, col, properties)
 {
-    if (col.id != "locals:col-0")
+    if (typeof col == "object")
+        col = col.id;
+
+    if (col != "locals:col-0")
         return null;
     
     var row = this.childData.locateChildByVisualRow(index);
@@ -799,30 +810,7 @@ function lv_getcx(cx)
         if (i == 0)
         {
             cx.jsdValue = rec.value;
-            var items = new Array();
-            items.unshift(rec.displayName);
-            
-            if ("value" in rec.parentRecord)
-            {
-                cx.parentValue = rec.parentRecord.value;
-                var cur = rec.parentRecord;
-                while (cur != locals.childData &&
-                       cur != locals.scopeRecord)
-                {
-                    if ("isECMAProto" in cur)
-                        items.unshift("__proto__");
-                    else if ("isECMAParent" in cur)
-                        items.unshift("__parent__");
-                    else
-                        items.unshift(cur.displayName);
-                    cur = cur.parentRecord;
-                }
-            }
-            else
-            {
-                cx.parentValue = null;
-            }
-            cx.expression = makeExpression(items);
+            cx.expression = rec.expression;
             cx.propertyName = rec.displayName;
         }
         else
@@ -1092,7 +1080,7 @@ function scv_hookChromeFilter(e)
                         if ("parentRecord" in rec)
                             continue;
                         //dd ("cmdChromeFilter: append " +
-                        //    tov_formatRecord(rec, ""));
+                        //    xtv_formatRecord(rec, ""));
                         nodes.appendChild(rec);
                     }
                 }
@@ -1265,7 +1253,9 @@ function scv_click (e)
         var treeBox = console.views.scripts.tree;
         treeBox.getCellAt(e.clientX, e.clientY, rowIndex, col, childElt);
         var prop;
-        switch (col.value.id)
+        if (typeof col.value == "object")
+            col.value = col.value.id;
+        switch (col.value)
         {
             case "scripts:col-0":
                 prop = "functionName";
@@ -1315,7 +1305,10 @@ function scv_setmode (flag)
 console.views.scripts.getCellProperties =
 function scv_cellprops (index, col, properties)
 {
-    if (col.id != "scripts:col-0")
+    if (typeof col == "object")
+        col = col.id;
+
+    if (col != "scripts:col-0")
         return null;
     
     var row = this.childData.locateChildByVisualRow(index);
@@ -1649,7 +1642,7 @@ function ss_hookDisplay (e)
     if (sessionView.messageCount == console.prefs["sessionView.maxHistory"])
         sessionView.outputTBody.removeChild(sessionView.outputTBody.firstChild);
     
-    sessionView.outputTBody.appendChild(msgRow);
+    sessionView.outputTBody.appendChild(sessionView.adoptNode(msgRow));
     sessionView.scrollDown();
 }
 
@@ -1749,7 +1742,9 @@ function ss_syncframe ()
     if (this.outputTable.firstChild)
         this.outputTable.removeChild (this.outputTable.firstChild);
 
-    this.outputTable.appendChild (this.outputTBody);
+    // Make sure the entire table body belongs to the right document.
+    this.adoptNode(this.outputTBody, this.outputDocument);
+    this.outputTable.appendChild(this.outputTBody);
     this.scrollDown();
 }
 
@@ -1758,6 +1753,33 @@ function ss_scroll()
 {
     if (this.outputWindow)
         this.outputWindow.scrollTo(0, this.outputDocument.height);
+}
+
+console.views.session.adoptNode =
+function ss_adoptnode(node, doc)
+{
+    // Assume the node is about to added as a session message, so use that doc.
+    if (typeof doc == "undefined")
+        doc = this.outputTBody.ownerDocument;
+
+    try
+    {
+        doc.adoptNode(node);
+    }
+    catch(ex)
+    {
+        dd(formatException(ex));
+        var err = ex.name;
+        // TypeError from before adoptNode was added; NOT_IMPL after.
+        if ((err == "TypeError") || (err == "NS_ERROR_NOT_IMPLEMENTED"))
+            console.views.session.adoptNode = ss_adoptnode_noop;
+    }
+    return node;
+}
+
+function ss_adoptnode_noop(node, doc)
+{
+    return node;
 }
 
 console.views.session.onShow =
@@ -2183,7 +2205,10 @@ function sv_getcx(cx)
 console.views.stack.getCellProperties =
 function sv_cellprops (index, col, properties)
 {
-    if (col.id != "stack:col-0")
+    if (typeof col == "object")
+        col = col.id;
+
+    if (col != "stack:col-0")
         return;
 
     var row = this.childData.locateChildByVisualRow(index);
@@ -2212,7 +2237,8 @@ function ss_init ()
 {
     var prefs =
         [
-         ["source2View.maxTabs", 5],
+         ["source2View.maxTabs", 10],
+         ["source2View.alertMaxTabs", true],
          ["source2View.showCloseButton", true],
          ["source2View.middleClickClose", false]
         ];
@@ -2924,7 +2950,7 @@ function s2v_cleardeck ()
         while (i > 0)
             this.deck.removeChild (this.deck.childNodes[--i]);
 
-        var bloke = document.createElement ("tab");
+        var bloke = this.tabs.ownerDocument.createElement("tab");
         bloke.setAttribute ("id", "source2-bloke");
         bloke.setAttribute ("hidden", "true");
         this.tabs.appendChild (bloke);
@@ -3066,10 +3092,21 @@ function s2v_addsource (sourceText)
         return this.sourceTabList[index];
     }
     
-    if (this.sourceTabList.length < console.prefs["source2View.maxTabs"])
+    var maxSourceTabs = console.prefs["source2View.maxTabs"];
+    if (!maxSourceTabs || (this.sourceTabList.length < maxSourceTabs))
+    {
         index = this.sourceTabList.length;
+    }
     else
+    {
         index = 0;
+        if (console.prefs["source2View.alertMaxTabs"])
+        {
+            var rv = alertCheck(getMsg(MSN_MAXTABS_REACHED, maxSourceTabs),
+                                MSG_MAXTABS_ALERT, true);
+            console.prefs["source2View.alertMaxTabs"] = rv;
+        }
+    }
 
     return this.loadSourceTextAtIndex (sourceText, index);
 }
@@ -3269,6 +3306,9 @@ function s2v_statechange (webProgress, request, stateFlags, status)
     const nsIWebProgressListener = Components.interfaces.nsIWebProgressListener;
     const START = nsIWebProgressListener.STATE_START;
     const STOP = nsIWebProgressListener.STATE_STOP;
+    const NETWORK = nsIWebProgressListener.STATE_IS_NETWORK;
+    const WINDOW = nsIWebProgressListener.STATE_IS_WINDOW;
+    const STOPNETWIN = (STOP | WINDOW | NETWORK);
 
     //dd ("state change " + stateFlags + ", " + status);
     
@@ -3286,7 +3326,7 @@ function s2v_statechange (webProgress, request, stateFlags, status)
 
         sourceTab.tab.setAttribute ("loading", "true");
     }
-    else if (stateFlags == 786448)
+    else if ((stateFlags & STOPNETWIN) == STOPNETWIN)
     {
         /*
         dd ("stop load " + stateFlags + " " + 
@@ -3678,7 +3718,10 @@ function sv_click (e)
         if (row.value == -1)
           return;
         
-        colID = col.value.id;
+        if (typeof col.value == "object")
+            colID = col.value.id;
+        else
+            colID = col.value;
         row = row.value;
         
         if (colID == "source:col-0")
@@ -3974,7 +4017,10 @@ function sv_cellprops (row, col, properties)
     if (!line)
         return;
     
-    if (col.id == "source:col-0")
+    if (typeof col == "object")
+        col = col.id;
+
+    if (col == "source:col-0")
     {
         if ("lineMap" in this.childData && row in this.childData.lineMap)
         {
@@ -4023,7 +4069,10 @@ function sv_getcelltext (row, col)
         row < 0 || row > this.childData.lines.length)
         return "";
     
-    var ary = col.id.match (/:(.*)/);
+    if (typeof col == "object")
+        col = col.id;
+
+    var ary = col.match (/:(.*)/);
     if (ary)
         col = ary[1];
     
@@ -4059,6 +4108,7 @@ function wv_init()
          ["remove-watch",   cmdUnwatch,            CMD_CONSOLE],
          ["save-watches",   cmdSaveWatches,        CMD_CONSOLE],
          ["watch-property", cmdWatchProperty,      0],
+         ["copy-qual-name", cmdCopyQualName,       0],
         ];
 
     console.menuSpecs["context:watches"] = {
@@ -4066,6 +4116,7 @@ function wv_init()
         items:
         [
          ["change-value", {enabledif: "cx.parentValue"}],
+         ["copy-qual-name", {enabledif: "has('expression')"}],
          ["-"],
          ["watch-expr"],
          ["remove-watch"],
@@ -4076,6 +4127,9 @@ function wv_init()
                            enabledif: "has('jsdValue') && " +
                                       "cx.jsdValue.jsType == TYPE_OBJECT"}],
          ["-"],
+         ["inspect", {visibleif: "isDOMIInstalled()",
+                      enabledif: "has('jsdValue') && " + 
+                                 "isDOMThing(cx.jsdValue.getWrappedValue())"}],
          ["find-creator",
                  {enabledif: "cx.target instanceof ValueRecord && " +
                   "cx.target.jsType == jsdIValue.TYPE_OBJECT  && " +
@@ -4098,6 +4152,7 @@ function wv_init()
     };
 
     this.caption = MSG_VIEW_WATCHES;
+    this.childData.isRootRecord = true;
 
 }
 
@@ -4137,7 +4192,10 @@ function onHide()
 console.views.watches.getCellProperties =
 function wv_cellprops (index, col, properties)
 {
-    if (col.id != "watches:col-0")
+    if (typeof col == "object")
+        col = col.id;
+
+    if (col != "watches:col-0")
         return null;
     
     var row = this.childData.locateChildByVisualRow(index);
@@ -4156,6 +4214,8 @@ function wv_cellprops (index, col, properties)
 console.views.watches.getContext =
 function wv_getcx(cx)
 {
+    var watches = console.views.watches;
+
     cx.jsdValueList = new Array();
     cx.indexList    = new Array();
 
@@ -4166,24 +4226,43 @@ function wv_getcx(cx)
             if (i == 0)
             {
                 cx.jsdValue = rec.value;
+                var items = new Array();
+                items.unshift(rec.displayName);
+
                 if ("value" in rec.parentRecord)
+                {
                     cx.parentValue = rec.parentRecord.value;
+                    var cur = rec.parentRecord;
+                    while (!("isRootRecord" in cur) || !cur.isRootRecord)
+                    {
+                        if ("isECMAProto" in cur)
+                            items.unshift("__proto__");
+                        else if ("isECMAParent" in cur)
+                            items.unshift("__parent__");
+                        else
+                            items.unshift(cur.displayName);
+                        cur = cur.parentRecord;
+                    }
+                }
                 else
+                {
                     cx.parentValue = null;
+                }
+                cx.expression = makeExpression(items);
                 cx.propertyName = rec.displayName;
-                if (rec.parentRecord == console.views.watches.childData)
+                if (rec.parentRecord == watches.childData)
                     cx.index = rec.childIndex;
             }
             else
             {
                 cx.jsdValueList.push(rec.value);
-                if (rec.parentRecord == console.views.watches.childData)
+                if (rec.parentRecord == watches.childData)
                     cx.indexList.push(rec.childIndex);
             }
         }
     };
     
-    return getTreeContext (console.views.watches, cx, recordContextGetter);
+    return getTreeContext (watches, cx, recordContextGetter);
 }
 
 console.views.watches.refresh =
@@ -4259,7 +4338,7 @@ function cmdWatchExpr (e)
 {
     var watches = console.views.watches;
     
-    if (!e.expression)
+    if (!e.watchExpression)
     {
         if ("isInteractive" in e && e.isInteractive)
         {
@@ -4288,8 +4367,8 @@ function cmdWatchExpr (e)
         else
             parent = window;
             
-        e.expression = prompt(MSG_ENTER_WATCH, "", parent);
-        if (!e.expression)
+        e.watchExpression = prompt(MSG_ENTER_WATCH, "", parent);
+        if (!e.watchExpression)
             return null;
     }
     
@@ -4304,20 +4383,32 @@ function cmdWatchExpr (e)
 
         refresher = function () {
                         if ("frames" in console)
-                            this.value = evalInTargetScope(e.expression, true);
+                        {
+                            this.jsdFrame = getCurrentFrame();
+                            this.value = evalInTargetScope(e.watchExpression,
+                                                           true);
+                        }
                         else
+                        {
+                            /* This is a security protection; leaving the
+                             * object open allows access to child items when
+                             * we have no frame to safely eval them on.
+                             */
+                            this.close();
                             throw MSG_VAL_NA;
+                        }
                     };
     }
     else
     {
         refresher = function () {
-                        var rv = evalInDebuggerScope(e.expression, true);
+                        var rv = evalInDebuggerScope(e.watchExpression, true);
                         this.value = console.jsds.wrapValue(rv);
                     };
     }
     
-    var rec = new ValueRecord(console.jsds.wrapValue(null), e.expression, 0);
+    var rec = new ValueRecord(console.jsds.wrapValue(null),
+                              e.watchExpression, 0);
     rec.onPreRefresh = refresher;
     rec.refresh();
     watches.childData.appendChild(rec);
@@ -4461,7 +4552,10 @@ function winv_hide ()
 console.views.windows.getCellProperties =
 function winv_cellprops (index, col, properties)
 {
-    if (col.id == "windows:col-0")
+    if (typeof col == "object")
+        col = col.id;
+
+    if (col == "windows:col-0")
     {
         var row = this.childData.locateChildByVisualRow(index);
         if (row)

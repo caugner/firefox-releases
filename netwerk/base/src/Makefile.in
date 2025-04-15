@@ -56,10 +56,11 @@ REQUIRES	= xpcom \
 		  $(NULL)
 
 CPPSRCS		= \
-		nsIOThreadPool.cpp \
 		nsTransportUtils.cpp \
 		nsAsyncStreamCopier.cpp \
-		nsAsyncStreamListener.cpp \
+		nsAuthInformationHolder.cpp \
+		nsBaseChannel.cpp \
+		nsBaseContentStream.cpp \
 		nsBufferedStreams.cpp \
 		nsDirectoryIndexStream.cpp \
 		nsDownloader.cpp \
@@ -77,6 +78,7 @@ CPPSRCS		= \
 		nsRequestObserverProxy.cpp \
 		nsSimpleStreamListener.cpp \
 		nsSimpleURI.cpp \
+		nsSimpleNestedURI.cpp \
 		nsStandardURL.cpp \
 		nsSocketTransport2.cpp \
 		nsSocketTransportService2.cpp \
@@ -89,6 +91,8 @@ CPPSRCS		= \
 		nsURLHelper.cpp \
 		nsURLParsers.cpp \
 		nsNetStrings.cpp \
+		nsBase64Encoder.cpp \
+		nsSerializationHelper.cpp \
 		$(NULL)
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),os2)
@@ -96,9 +100,10 @@ ifeq ($(MOZ_WIDGET_TOOLKIT),os2)
 else
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 	CPPSRCS += nsURLHelperWin.cpp
+ifneq ($(OS_ARCH), WINCE)
 	CPPSRCS += nsNativeConnectionHelper.cpp
 	CPPSRCS += nsAutodialWin.cpp
-
+endif
 else
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 	CPPSRCS += nsURLHelperOSX.cpp

@@ -1,6 +1,8 @@
-/README/1.2/Fri Nov  1 21:03:24 2002//TFIREFOX_2_0_RELEASE
+/README/1.2/Fri Nov  1 21:03:24 2002//TFIREFOX_3_0rc3_RELEASE
 D/aes_cbc////
 D/aes_ecb////
+D/camellia_cbc////
+D/camellia_ecb////
 D/des3_cbc////
 D/des3_ecb////
 D/des_cbc////

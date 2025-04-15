@@ -48,66 +48,47 @@
 #include "nsBoxLayoutState.h"
 #include "nsGridLayout2.h"
 
-nsresult
-NS_NewGridRowGroupFrame ( nsIPresShell* aPresShell, nsIFrame** aNewFrame, PRBool aIsRoot, nsIBoxLayout* aLayoutManager)
+nsIFrame*
+NS_NewGridRowGroupFrame (nsIPresShell* aPresShell,
+                         nsStyleContext* aContext,
+                         PRBool aIsRoot,
+                         nsIBoxLayout* aLayoutManager)
 {
-    NS_PRECONDITION(aNewFrame, "null OUT ptr");
-    if (nsnull == aNewFrame) {
-        return NS_ERROR_NULL_POINTER;
-    }
-    nsGridRowGroupFrame* it = new (aPresShell) nsGridRowGroupFrame (aPresShell, aIsRoot, aLayoutManager);
-    if (nsnull == it)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    *aNewFrame = it;
-    return NS_OK;
-
+  return
+    new (aPresShell) nsGridRowGroupFrame (aPresShell, aContext, aIsRoot, aLayoutManager);
 } 
 
-nsGridRowGroupFrame::nsGridRowGroupFrame(nsIPresShell* aPresShell, PRBool aIsRoot, nsIBoxLayout* aLayoutManager)
-:nsBoxFrame(aPresShell, aIsRoot, aLayoutManager)
-{
 
-}
 
 /**
  * This is redefined because row groups have a funny property. If they are flexible
  * then their flex must be equal to the sum of their children's flexes.
  */
-NS_IMETHODIMP
-nsGridRowGroupFrame::GetFlex(nsBoxLayoutState& aState, nscoord& aFlex)
+nscoord
+nsGridRowGroupFrame::GetFlex(nsBoxLayoutState& aState)
 {
   // if we are flexible out flexibility is determined by our columns.
   // so first get the our flex. If not 0 then our flex is the sum of
   // our columns flexes.
 
-  if (!DoesNeedRecalc(mFlex)) {
-     aFlex = mFlex;
-     return NS_OK;
-  }
+  if (!DoesNeedRecalc(mFlex))
+     return mFlex;
 
-  nsBoxFrame::GetFlex(aState, aFlex);
-
-
-  if (aFlex == 0)
-    return NS_OK;
+  if (nsBoxFrame::GetFlex(aState) == 0)
+    return 0;
 
   // ok we are flexible add up our children
   nscoord totalFlex = 0;
-  nsIBox* child = nsnull;
-  GetChildBox(&child);
+  nsIBox* child = GetChildBox();
   while (child)
   {
-    PRInt32 flex = 0;
-    child->GetFlex(aState, flex);
-    totalFlex += flex;;
-    child->GetNextBox(&child);
+    totalFlex += child->GetFlex(aState);
+    child = child->GetNextBox();
   }
 
-  aFlex = totalFlex;
-  mFlex = aFlex;
+  mFlex = totalFlex;
 
-  return NS_OK;
+  return totalFlex;
 }
 
 

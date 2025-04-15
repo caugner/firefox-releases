@@ -51,24 +51,17 @@ DIRS		+= base/src
 
 ifndef MINIMO
 
-ifneq (,$(filter gtk gtk2 xlib ,$(MOZ_WIDGET_TOOLKIT)))
+ifneq (,$(filter gtk2 ,$(MOZ_WIDGET_TOOLKIT)))
 TOOL_DIRS += samples/unixprinting
 endif
 
 # These subdirs rely on GTK libraries and header files, it is not
 #  buildable on other non-GTK unix builds
 
-ifdef MOZ_ENABLE_GTK
-TOOL_DIRS += samples/default/unix
-
-ifdef ENABLE_TESTS
-TOOL_DIRS += samples/simple
-endif
-
-endif
-
 ifdef MOZ_ENABLE_GTK2
 TOOL_DIRS += samples/default/unix
+endif
+
 endif
 
 ifeq ($(OS_ARCH),WINNT)
@@ -77,6 +70,9 @@ endif
 
 ifeq ($(OS_ARCH),OS2)
 TOOL_DIRS += samples/default/os2
+ifdef MOZ_OJI
+TOOL_DIRS += os2wrapper
+endif
 ifdef ENABLE_TESTS
 TOOL_DIRS += tools/tester/common tools/tester/os2
 endif
@@ -91,8 +87,6 @@ ifneq (,$(filter WINNT Darwin Linux,$(OS_ARCH)))
 TOOL_DIRS += tools/sdk
 endif
 endif
-
-endif # MINIMO
 
 endif # MOZ_PLUGINS
 

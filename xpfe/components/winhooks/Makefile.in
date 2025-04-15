@@ -49,7 +49,7 @@ MOZILLA_INTERNAL_API = 1
 
 XPIDLSRCS	= nsIWindowsHooks.idl
 
-CPPSRCS		= nsWindowsHooks.cpp
+CPPSRCS		= nsWindowsHooks.cpp nsWindowsHooksUtil.cpp
 
 REQUIRES	= \
 		  xpcom \
@@ -64,6 +64,7 @@ REQUIRES	= \
 		  widget \
 		  imglib2 \
 		  gfx \
+		  thebes \
 		  locale \
 		  xulapp \
 		  embed_base \

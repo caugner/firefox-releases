@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -56,35 +57,27 @@
 class nsMathMLmactionFrame : public nsMathMLContainerFrame,
                              public nsIDOMMouseListener {
 public:
-  friend nsresult NS_NewMathMLmactionFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmactionFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
   NS_DECL_ISUPPORTS_INHERITED
 
   NS_IMETHOD
-  Init(nsPresContext*  aPresContext,
-       nsIContent*      aContent,
+  Init(nsIContent*      aContent,
        nsIFrame*        aParent,
-       nsStyleContext*  aContext,
        nsIFrame*        aPrevInFlow);
 
   NS_IMETHOD
-  SetInitialChildList(nsPresContext* aPresContext,
-                      nsIAtom*        aListName,
+  SetInitialChildList(nsIAtom*        aListName,
                       nsIFrame*       aChildList);
 
-  NS_IMETHOD
-  GetFrameForPoint(const nsPoint&    aPoint,
-                   nsFramePaintLayer aWhichLayer,
-                   nsIFrame**        aFrame);
+  virtual nsresult
+  ChildListChanged(PRInt32 aModType);
 
-  NS_IMETHOD
-  Paint(nsPresContext*      aPresContext,
-        nsIRenderingContext& aRenderingContext,
-        const nsRect&        aDirtyRect,
-        nsFramePaintLayer    aWhichLayer,
-        PRUint32             aFlags = 0);
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
 
-  NS_IMETHOD
+  virtual nsresult
   Place(nsIRenderingContext& aRenderingContext,
         PRBool               aPlaceOrigin,
         nsHTMLReflowMetrics& aDesiredSize);
@@ -107,19 +100,17 @@ public:
   NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent)  { MOUSE(event); return NS_OK; }
 
 protected:
-  nsMathMLmactionFrame();
+  nsMathMLmactionFrame(nsStyleContext* aContext) : nsMathMLContainerFrame(aContext) {}
   virtual ~nsMathMLmactionFrame();
   
   virtual PRIntn GetSkipSides() const { return 0; }
 
 private:
-  nsPresContext* mPresContext;
   PRInt32         mActionType;
   PRInt32         mChildCount;
   PRInt32         mSelection;
   nsIFrame*       mSelectedFrame;
   nsString        mRestyle;
-  PRBool          mWasRestyled;
 
   // helper to return the frame for the attribute selection="number"
   nsIFrame* 

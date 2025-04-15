@@ -38,9 +38,11 @@
 #ifndef nsPIBoxObject_h___
 #define nsPIBoxObject_h___
 
-// {9580E69B-8FD6-414e-80CD-3A1821017646}
+// {2b8bb262-1b0f-4572-ba87-5d4ae4954445}
 #define NS_PIBOXOBJECT_IID \
-{ 0x9580e69b, 0x8fd6, 0x414e, { 0x80, 0xcd, 0x3a, 0x18, 0x21, 0x1, 0x76, 0x46 } }
+{ 0x2b8bb262, 0x1b0f, 0x4572, \
+  { 0xba, 0x87, 0x5d, 0x4a, 0xe4, 0x95, 0x44, 0x45 } }
+
 
 class nsIPresShell;
 class nsIContent;
@@ -49,13 +51,19 @@ class nsIDocument;
 class nsPIBoxObject : public nsIBoxObject
 {
 public:
-  NS_DEFINE_STATIC_CID_ACCESSOR(NS_PIBOXOBJECT_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_PIBOXOBJECT_IID)
 
-  NS_IMETHOD Init(nsIContent* aContent, nsIPresShell* aShell) = 0;
-  NS_IMETHOD SetDocument(nsIDocument* aDocument) = 0;
+  virtual nsresult Init(nsIContent* aContent) = 0;
 
-  NS_IMETHOD InvalidatePresentationStuff() = 0;
+  // Drop the weak ref to the content node as needed
+  virtual void Clear() = 0;
+
+  // The values cached by the implementation of this interface should be
+  // cleared when this method is called.
+  virtual void ClearCachedValues() = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsPIBoxObject, NS_PIBOXOBJECT_IID)
 
 #endif
 

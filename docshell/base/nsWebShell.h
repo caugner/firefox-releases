@@ -46,12 +46,10 @@
 #include "nsICommandManager.h"
 #include "nsIIOService.h"
 #include "nsCRT.h"
-#include "nsIDocumentLoader.h"
 
-class nsIEventQueue;
 class nsIController;
 struct PRThread;
-struct OnLinkClickEvent;
+class OnLinkClickEvent;
 
 typedef enum {
     eCharsetReloadInit,
@@ -83,13 +81,11 @@ public:
 
     // nsILinkHandler
     NS_IMETHOD OnLinkClick(nsIContent* aContent,
-        nsLinkVerb aVerb,
         nsIURI* aURI,
         const PRUnichar* aTargetSpec,
         nsIInputStream* aPostDataStream = 0,
         nsIInputStream* aHeadersDataStream = 0);
     NS_IMETHOD OnLinkClickSync(nsIContent* aContent,
-        nsLinkVerb aVerb,
         nsIURI* aURI,
         const PRUnichar* aTargetSpec,
         nsIInputStream* aPostDataStream = 0,
@@ -104,14 +100,11 @@ public:
 
     NS_IMETHOD Create();
 
-  // nsWebShell
-    nsresult GetEventQueue(nsIEventQueue **aQueue);
-
     static nsEventStatus PR_CALLBACK HandleEvent(nsGUIEvent *aEvent);
 
     // NS_IMETHOD SetURL(const PRUnichar* aURL);
 
-    friend struct OnLinkClickEvent;
+    friend class OnLinkClickEvent;
 
 protected:
     void InitFrameData();
@@ -129,8 +122,6 @@ protected:
     virtual nsresult EndPageLoad(nsIWebProgress *aProgress,
         nsIChannel* channel,
         nsresult aStatus);
-
-    PRThread *mThread;
 
     eCharsetReloadState mCharsetReloadState;
 

@@ -38,7 +38,8 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nscore.h"  // needed for 'nsnull'
-#include "nsToolkit.h"
+#include "nsGTKToolkit.h"
+#include "nsWidgetAtoms.h"
 
 //
 // Static thread local storage index of the Toolkit 
@@ -51,9 +52,10 @@ static PRUintn gToolkitTLSIndex = 0;
 // constructor
 //
 //-------------------------------------------------------------------------
-nsToolkit::nsToolkit()
+nsGTKToolkit::nsGTKToolkit()
 {
     mSharedGC = nsnull;
+    mFocusTimestamp = 0;
 }
 
 //-------------------------------------------------------------------------
@@ -61,7 +63,7 @@ nsToolkit::nsToolkit()
 // destructor
 //
 //-------------------------------------------------------------------------
-nsToolkit::~nsToolkit()
+nsGTKToolkit::~nsGTKToolkit()
 {
     if (mSharedGC) {
         gdk_gc_unref(mSharedGC);
@@ -77,9 +79,9 @@ nsToolkit::~nsToolkit()
 //
 //-------------------------------------------------------------------------
 
-NS_IMPL_ISUPPORTS1(nsToolkit, nsIToolkit)
+NS_IMPL_ISUPPORTS1(nsGTKToolkit, nsIToolkit)
 
-void nsToolkit::CreateSharedGC(void)
+void nsGTKToolkit::CreateSharedGC(void)
 {
     GdkPixmap *pixmap;
 
@@ -91,7 +93,7 @@ void nsToolkit::CreateSharedGC(void)
     gdk_pixmap_unref(pixmap);
 }
 
-GdkGC *nsToolkit::GetSharedGC(void)
+GdkGC *nsGTKToolkit::GetSharedGC(void)
 {
     return gdk_gc_ref(mSharedGC);
 }
@@ -100,9 +102,11 @@ GdkGC *nsToolkit::GetSharedGC(void)
 //
 //
 //-------------------------------------------------------------------------
-NS_IMETHODIMP nsToolkit::Init(PRThread *aThread)
+NS_IMETHODIMP nsGTKToolkit::Init(PRThread *aThread)
 {
     CreateSharedGC();
+
+    nsWidgetAtoms::RegisterAtoms();
 
     return NS_OK;
 }
@@ -135,7 +139,7 @@ NS_METHOD NS_GetCurrentToolkit(nsIToolkit* *aResult)
         // Create a new toolkit for this thread...
         //
         if (!toolkit) {
-            toolkit = new nsToolkit();
+            toolkit = new nsGTKToolkit();
 
             if (!toolkit) {
                 rv = NS_ERROR_OUT_OF_MEMORY;

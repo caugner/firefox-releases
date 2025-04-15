@@ -53,7 +53,6 @@ REQUIRES	= xpcom \
 			content \
 			content_xul \
 			gfx \
-			gfxwin \
 			necko \
 			pref \
 			plugin \
@@ -67,7 +66,11 @@ REQUIRES	= xpcom \
 			xuldoc \
 			view \
 			imglib2 \
+			uriloader \
+			webbrowserpersist \
 			unicharutil \
+			thebes \
+			cairo \
 			$(NULL)
 
 CPPSRCS		= \
@@ -76,11 +79,23 @@ CPPSRCS		= \
 	nsAppShell.cpp       \
 	nsLookAndFeel.cpp    \
 	nsToolkit.cpp        \
+	nsKeyboardLayout.cpp \
 	nsDataObj.cpp  \
 	nsDataObjCollection.cpp  \
 	nsClipboard.cpp      \
+	nsNativeThemeWin.cpp \
 	nsFilePicker.cpp     \
+	nsScreenWin.cpp	\
+	nsScreenManagerWin.cpp \
 	$(NULL)
+
+ifdef NS_PRINTING
+CPPSRCS		+= \
+	nsPrintOptionsWin.cpp \
+	nsPrintSettingsWin.cpp \
+	nsDeviceContextSpecWin.cpp \
+	$(NULL)
+endif
 
 ifneq ($(OS_ARCH), WINCE)
 CPPSRCS += \
@@ -90,6 +105,7 @@ CPPSRCS += \
 	nsImageClipboard.cpp \
 	nsBidiKeyboard.cpp   \
 	nsSound.cpp          \
+	nsIdleServiceWin.cpp    \
 	$(NULL)
 endif
 
@@ -103,7 +119,11 @@ endif # BUILD_STATIC_LIBS
 
 EXPORTS		= nsdefs.h
 
-LOCAL_INCLUDES	= -I. -I$(srcdir)/../xpwidgets -I$(srcdir)
+LOCAL_INCLUDES	= \
+		-I. \
+		-I$(srcdir)/../xpwidgets \
+		-I$(srcdir) \
+		$(NULL)
 
 FORCE_STATIC_LIB = 1
 

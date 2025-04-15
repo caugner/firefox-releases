@@ -76,26 +76,6 @@ enum eHTMLTokenTypes {
   eToken_last //make sure this stays the last token...
 };
 
-enum eHTMLCategory {
-  eHTMLCategory_unknown=0,
-  eHTMLCategory_inline,
-  eHTMLCategory_block,
-  eHTMLCategory_blockAndInline,
-  eHTMLCategory_list,
-  eHTMLCategory_table,
-  eHTMLCategory_tablepart,
-  eHTMLCategory_tablerow,
-  eHTMLCategory_tabledata,
-  eHTMLCategory_head,
-  eHTMLCategory_html,
-  eHTMLCategory_body,
-  eHTMLCategory_form,
-  eHTMLCategory_options,
-  eHTMLCategory_frameset,
-  eHTMLCategory_text
-};
-
-
 nsresult      ConsumeQuotedString(PRUnichar aChar,nsString& aString,nsScanner& aScanner);
 nsresult      ConsumeAttributeText(PRUnichar aChar,nsString& aString,nsScanner& aScanner);
 const PRUnichar* GetTagName(PRInt32 aTag);
@@ -291,8 +271,7 @@ public:
                     nsScannerIterator& aEnd);
   virtual void Bind(const nsAString& aStr);
 
-  nsresult ConsumeCharacterData(PRBool aConservativeConsume,
-                                PRBool aIgnoreComments,
+  nsresult ConsumeCharacterData(PRBool aIgnoreComments,
                                 nsScanner& aScanner,
                                 const nsAString& aEndTagName,
                                 PRInt32 aFlag,
@@ -376,16 +355,12 @@ public:
   virtual void BindKey(nsScanner* aScanner, nsScannerIterator& aStart,
                        nsScannerIterator& aEnd);
   const nsSubstring& GetValue(void) {return mTextValue.str();}
-  virtual void SanitizeKey();
   virtual const nsSubstring& GetStringValue(void);
   virtual void GetSource(nsString& anOutputString);
   virtual void AppendSourceTo(nsAString& anOutputString);
 
   PRPackedBool mHasEqualWithoutValue;
 protected:
-#ifdef DEBUG
-  PRPackedBool mLastAttribute;
-#endif
   nsScannerSharedSubstring mTextValue;
   nsScannerSubstring mTextKey;
 };

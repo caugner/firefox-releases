@@ -55,7 +55,8 @@
 #include "nsGfxCIID.h"
 #include "nsIMenuBar.h"
 #include "nsToolkit.h"
-#include "nsIPref.h"
+#include "nsIPrefBranch.h"
+#include "nsIPrefService.h"
 
 #include "nsClipboard.h"
 #include "nsIRollupListener.h"
@@ -165,7 +166,7 @@ void nsWindow::DestroyNativeChildren(void)
   for(PtWidget_t *w=PtWidgetChildFront( mWidget ); w; w=PtWidgetBrotherBehind( w )) 
   {
 	  if( w->flags & Pt_DESTROYED ) continue;
-	  nsWindow *childWindow = NS_STATIC_CAST(nsWindow *, GetInstance(w) );
+	  nsWindow *childWindow = static_cast<nsWindow *>(GetInstance(w));
 		if( childWindow && !childWindow->mIsDestroying) childWindow->Destroy();
   }
 }
@@ -186,7 +187,7 @@ NS_IMETHODIMP nsWindow::CaptureRollupEvents( nsIRollupListener * aListener, PRBo
 		/* Menus+submenus have the same parent. If the parent has mLastMenu set and realized, then use its region as "infront" */
 		/* If not, then this widget ( mWidget ) becomes the mLastMenu and gets recorded into the parent */
 		/* Different windows have different mLastMenu's */
-		if( mWindowType == eWindowType_popup && !( PtWidgetFlags( gMenuRegion ) & Pt_REALIZED ) ) {
+		if( mWindowType == eWindowType_popup && !( PtWidgetFlags( gMenuRegion ) & Pt_REALIZED ) && mParent ) {
 
 			PtWidget_t *pw = ((nsWindow*)mParent)->mLastMenu;
 
@@ -606,8 +607,8 @@ NS_IMETHODIMP nsWindow::Resize(PRInt32 aWidth, PRInt32 aHeight, PRBool aRepaint)
 		
 		sevent.windowSize = new nsRect (0, 0, aWidth, aHeight); 	
 		
-		sevent.point.x = 0;
-		sevent.point.y = 0;
+		sevent.refPoint.x = 0;
+		sevent.refPoint.y = 0;
 		sevent.mWinWidth = aWidth;
 		sevent.mWinHeight = aHeight;
 		// XXX fix this
@@ -638,8 +639,8 @@ int nsWindow::WindowWMHandler( PtWidget_t *widget, void *data, PtCallbackInfo_t 
 			  event.widget  = win;
 			  
 			  event.time = 0;
-			  event.point.x = 0;
-			  event.point.y = 0;
+			  event.refPoint.x = 0;
+			  event.refPoint.y = 0;
 			  
 			  win->DispatchEvent(&event, status);
 			  
@@ -650,13 +651,13 @@ int nsWindow::WindowWMHandler( PtWidget_t *widget, void *data, PtCallbackInfo_t 
 		case Ph_WM_CONSWITCH:
 			gConsoleRectValid = PR_FALSE; /* force a call tp PhWindowQueryVisible() next time, since we might have moved this window into a different console */
       /* rollup the menus */
-      if( gRollupWidget && gRollupListener ) gRollupListener->Rollup();
+      if( gRollupWidget && gRollupListener ) gRollupListener->Rollup(nsnull);
 			break;
 
 		case Ph_WM_FOCUS:
 			if( we->event_state == Ph_WM_EVSTATE_FOCUSLOST ) {
       	/* rollup the menus */
-      	if( gRollupWidget && gRollupListener ) gRollupListener->Rollup();
+      	if( gRollupWidget && gRollupListener ) gRollupListener->Rollup(nsnull);
 
 				if( sFocusWidget ) sFocusWidget->DispatchStandardEvent(NS_DEACTIVATE);
 				}
@@ -686,7 +687,7 @@ void nsWindow::RawDrawFunc( PtWidget_t * pWidget, PhTile_t * damage )
 		PtWidgetOffset(pWidget, &offset);
 		/* Build a List of Tiles that might be in front of me.... */
 		PhTile_t *new_damage, *clip_tiles, *intersect;
-		/* Intersect the Damage tile list w/ the clipped out list and see whats left! */
+		/* Intersect the Damage tile list w/ the clipped out list and see what's left! */
 		new_damage = PhRectsToTiles(&damage->rect, 1);
 		PhDeTranslateTiles(new_damage, &offset);
 		clip_tiles = GetWindowClipping( pWidget );
@@ -717,15 +718,15 @@ void nsWindow::RawDrawFunc( PtWidget_t * pWidget, PhTile_t * damage )
 
 			/* Re-Setup Paint Event */
 			pWin->InitEvent(pev, NS_PAINT);
-			pev.point.x = nsDmg.x;
-			pev.point.y = nsDmg.y;
+			pev.refPoint.x = nsDmg.x;
+			pev.refPoint.y = nsDmg.y;
 			pev.rect = &nsDmg;
 			pev.region = nsnull;
 
 			if( pev.renderingContext ) {
 				nsIRegion *ClipRegion = pWin->GetRegion( );
 				ClipRegion->SetTo( nsDmg.x, nsDmg.y, nsDmg.width, nsDmg.height );
-				pev.renderingContext->SetClipRegion( NS_STATIC_CAST(const nsIRegion &, *(ClipRegion)), nsClipCombine_kReplace );
+				pev.renderingContext->SetClipRegion( static_cast<const nsIRegion &>(*(ClipRegion)), nsClipCombine_kReplace );
 
 				NS_RELEASE( ClipRegion );
 				
@@ -790,21 +791,19 @@ int nsWindow::ResizeHandler( PtWidget_t *widget, void *data, PtCallbackInfo_t *c
 }
 
 
-static NS_DEFINE_CID(kWindowMediatorCID, NS_WINDOWMEDIATOR_CID);
-
 /* catch an Ph_EV_INFO event when the graphics mode has changed */
 int nsWindow::EvInfo( PtWidget_t *widget, void *data, PtCallbackInfo_t *cbinfo ) {
 
 	if( cbinfo->event && cbinfo->event->type == Ph_EV_INFO && cbinfo->event->subtype == Ph_OFFSCREEN_INVALID ) {
 		nsresult rv;
 		
-		nsCOMPtr<nsIPref> pPrefs = do_GetService(NS_PREF_CONTRACTID, &rv);
+		nsCOMPtr<nsIPrefBranch> pPrefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
 		if (NS_SUCCEEDED(rv)) {
 			 PRBool displayInternalChange = PR_FALSE;
 			 pPrefs->GetBoolPref("browser.display.internaluse.graphics_changed", &displayInternalChange);
 			 pPrefs->SetBoolPref("browser.display.internaluse.graphics_changed", !displayInternalChange);
-		 }
-		nsCOMPtr<nsIWindowMediator> windowMediator(do_GetService(kWindowMediatorCID));
+		}
+		nsCOMPtr<nsIWindowMediator> windowMediator(do_GetService(NS_WINDOWMEDIATOR_CONTRACTID));
 		NS_ENSURE_TRUE(windowMediator, NS_ERROR_FAILURE);
 
 		nsCOMPtr<nsISimpleEnumerator> windowEnumerator;
@@ -903,7 +902,7 @@ NS_METHOD nsWindow::Move( PRInt32 aX, PRInt32 aY ) {
 int nsWindow::MenuRegionCallback( PtWidget_t *widget, void *data, PtCallbackInfo_t *cbinfo ) {
 	if( gRollupWidget && gRollupListener ) {
 		/* rollup the menu */
-		gRollupListener->Rollup();
+		gRollupListener->Rollup(nsnull);
 		}
 	return Pt_CONTINUE;
 	}

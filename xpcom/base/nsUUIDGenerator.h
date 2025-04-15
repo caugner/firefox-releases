@@ -45,19 +45,21 @@
 class nsUUIDGenerator : public nsIUUIDGenerator {
 public:
     nsUUIDGenerator();
-    virtual ~nsUUIDGenerator();
 
     NS_DECL_ISUPPORTS
 
     NS_DECL_NSIUUIDGENERATOR
 
     nsresult Init();
-  
+
+private:
+    ~nsUUIDGenerator();
+
 protected:
 
     PRLock* mLock;
 #if !defined(XP_WIN) && !defined(XP_MACOSX)
-    char mState[32];
+    char mState[128];
     char *mSavedState;
     PRUint8 mRBytes;
 #endif

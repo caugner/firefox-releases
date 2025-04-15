@@ -149,7 +149,10 @@ nsExceptionManager *nsExceptionService::firstThread = nsnull;
 PRInt32 nsExceptionService::totalInstances = 0;
 #endif
 
-NS_IMPL_THREADSAFE_ISUPPORTS2(nsExceptionService, nsIExceptionService, nsIObserver)
+NS_IMPL_THREADSAFE_ISUPPORTS3(nsExceptionService,
+                              nsIExceptionService,
+                              nsIExceptionManager,
+                              nsIObserver)
 
 nsExceptionService::nsExceptionService()
   : mProviders(4, PR_TRUE) /* small, thread-safe hashtable */
@@ -163,14 +166,14 @@ nsExceptionService::nsExceptionService()
   if (tlsIndex == BAD_TLS_INDEX) {
     PRStatus status;
     status = PR_NewThreadPrivateIndex( &tlsIndex, ThreadDestruct );
-    NS_WARN_IF_FALSE(status==0, "ScriptErrorService could not allocate TLS storage.");
+    NS_ASSERTION(status==0, "ScriptErrorService could not allocate TLS storage.");
   }
   lock = PR_NewLock();
-  NS_WARN_IF_FALSE(lock, "Error allocating ExceptionService lock");
+  NS_ASSERTION(lock, "Error allocating ExceptionService lock");
 
   // observe XPCOM shutdown.
   nsCOMPtr<nsIObserverService> observerService = do_GetService("@mozilla.org/observer-service;1");
-  NS_WARN_IF_FALSE(observerService, "Could not get observer service!");
+  NS_ASSERTION(observerService, "Could not get observer service!");
   if (observerService)
     observerService->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, PR_FALSE);
 }

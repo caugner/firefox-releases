@@ -38,7 +38,7 @@
 #define PKITM_H
 
 #ifdef DEBUG
-static const char PKITM_CVS_ID[] = "@(#) $RCSfile: pkitm.h,v $ $Revision: 1.13.18.1 $ $Date: 2006/02/03 22:31:43 $";
+static const char PKITM_CVS_ID[] = "@(#) $RCSfile: pkitm.h,v $ $Revision: 1.15 $ $Date: 2007/11/16 05:29:27 $";
 #endif /* DEBUG */
 
 /*
@@ -99,10 +99,8 @@ struct nssDecodedCertStr {
 
 struct NSSUsageStr {
     PRBool anyUsage;
-#ifdef NSS_3_4_CODE
     SECCertUsage nss3usage;
     PRBool nss3lookingForCA;
-#endif
 };
 
 typedef struct nssPKIObjectCollectionStr nssPKIObjectCollection;

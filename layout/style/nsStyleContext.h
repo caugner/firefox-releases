@@ -37,6 +37,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* the interface (to internal code) for retrieving computed style data */
+
 #ifndef _nsStyleContext_h_
 #define _nsStyleContext_h_
 
@@ -105,11 +107,9 @@ public:
   FindChildWithRules(const nsIAtom* aPseudoTag, nsRuleNode* aRules);
 
   NS_HIDDEN_(PRBool)    Equals(const nsStyleContext* aOther) const;
-  PRBool    HasTextDecorations() { return mBits & NS_STYLE_HAS_TEXT_DECORATIONS; };
+  PRBool    HasTextDecorations() { return !!(mBits & NS_STYLE_HAS_TEXT_DECORATIONS); }
 
-  NS_HIDDEN_(void) GetBorderPaddingFor(nsStyleBorderPadding& aBorderPadding);
-
-  NS_HIDDEN_(void) SetStyle(nsStyleStructID aSID, nsStyleStruct* aStruct);
+  NS_HIDDEN_(void) SetStyle(nsStyleStructID aSID, void* aStruct);
 
   nsRuleNode* GetRuleNode() { return mRuleNode; }
   void AddStyleBit(const PRUint32& aBit) { mBits |= aBit; }
@@ -134,11 +134,8 @@ public:
    *
    * The typesafe functions below are preferred to the use of this
    * function.
-   *
-   * See also |nsIFrame::GetStyleData| and the other global
-   * |GetStyleData| in nsIFrame.h.
    */
-  NS_HIDDEN_(const nsStyleStruct*) NS_FASTCALL GetStyleData(nsStyleStructID aSID);
+  NS_HIDDEN_(const void*) NS_FASTCALL GetStyleData(nsStyleStructID aSID);
 
   /**
    * Define typesafe getter functions for each style struct by
@@ -149,19 +146,14 @@ public:
    */
 
   #define STYLE_STRUCT(name_, checkdata_cb_, ctor_args_)                      \
-    const nsStyle##name_ * GetStyle##name_() {                                \
-      return NS_STATIC_CAST(const nsStyle##name_*,                            \
-                            GetStyleData(eStyleStruct_##name_));              \
-    }
+    NS_HIDDEN_(const nsStyle##name_ *) NS_FASTCALL GetStyle##name_();
   #include "nsStyleStructList.h"
   #undef STYLE_STRUCT
 
 
-  NS_HIDDEN_(const nsStyleStruct*) PeekStyleData(nsStyleStructID aSID);
+  NS_HIDDEN_(const void*) PeekStyleData(nsStyleStructID aSID);
 
-  NS_HIDDEN_(nsStyleStruct*) GetUniqueStyleData(const nsStyleStructID& aSID);
-
-  NS_HIDDEN_(void) ClearStyleData(nsPresContext* aPresContext);
+  NS_HIDDEN_(void*) GetUniqueStyleData(const nsStyleStructID& aSID);
 
   NS_HIDDEN_(nsChangeHint) CalcStyleDifference(nsStyleContext* aOther);
 
@@ -173,14 +165,16 @@ public:
 #endif
 
 protected:
-  NS_HIDDEN_(void) AppendChild(nsStyleContext* aChild);
+  NS_HIDDEN_(void) AddChild(nsStyleContext* aChild);
   NS_HIDDEN_(void) RemoveChild(nsStyleContext* aChild);
 
   NS_HIDDEN_(void) ApplyStyleFixups(nsPresContext* aPresContext);
 
   nsStyleContext* mParent;
 
-  // children are maintained in two circular doubly-linked lists,
+  // Children are kept in two circularly-linked lists.  The list anchor
+  // is not part of the list (null for empty), and we point to the first
+  // child.
   // mEmptyChild for children whose rule node is the root rule node, and
   // mChild for other children.  The order of children is not
   // meaningful.

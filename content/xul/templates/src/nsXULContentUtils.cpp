@@ -69,7 +69,6 @@
 #include "nsINameSpaceManager.h"
 #include "nsIRDFService.h"
 #include "nsIServiceManager.h"
-#include "nsITextContent.h"
 #include "nsIURL.h"
 #include "nsXULContentUtils.h"
 #include "nsIXULPrototypeCache.h"
@@ -78,7 +77,7 @@
 #include "nsRDFCID.h"
 #include "nsString.h"
 #include "nsXPIDLString.h"
-#include "nsXULAtoms.h"
+#include "nsGkAtoms.h"
 #include "prlog.h"
 #include "prtime.h"
 #include "rdf.h"
@@ -86,9 +85,11 @@
 #include "nsIDateTimeFormat.h"
 #include "nsDateTimeFormatCID.h"
 #include "nsIScriptableDateFormat.h"
-#include "nsIDOMXULElement.h"
+#include "nsICollation.h"
+#include "nsCollationCID.h"
+#include "nsILocale.h"
+#include "nsILocaleService.h"
 
-static NS_DEFINE_CID(kDateTimeFormatCID,    NS_DATETIMEFORMAT_CID);
 static NS_DEFINE_CID(kRDFServiceCID,        NS_RDFSERVICE_CID);
 
 //------------------------------------------------------------------------
@@ -96,6 +97,7 @@ static NS_DEFINE_CID(kRDFServiceCID,        NS_RDFSERVICE_CID);
 nsrefcnt nsXULContentUtils::gRefCnt;
 nsIRDFService* nsXULContentUtils::gRDF;
 nsIDateTimeFormat* nsXULContentUtils::gFormat;
+nsICollation *nsXULContentUtils::gCollation;
 
 #define XUL_RESOURCE(ident, uri) nsIRDFResource* nsXULContentUtils::ident
 #define XUL_LITERAL(ident, val) nsIRDFLiteral* nsXULContentUtils::ident
@@ -132,7 +134,7 @@ nsXULContentUtils::Init()
 #undef XUL_RESOURCE
 #undef XUL_LITERAL
 
-        rv = CallCreateInstance(kDateTimeFormatCID, &gFormat);
+        rv = CallCreateInstance(NS_DATETIMEFORMAT_CONTRACTID, &gFormat);
         if (NS_FAILED(rv)) {
             return rv;
         }
@@ -155,14 +157,43 @@ nsXULContentUtils::Finish()
 #undef XUL_LITERAL
 
         NS_IF_RELEASE(gFormat);
+        NS_IF_RELEASE(gCollation);
     }
 
     return NS_OK;
 }
 
+nsICollation*
+nsXULContentUtils::GetCollation()
+{
+    if (!gCollation) {
+        nsresult rv;
+
+        // get a locale service 
+        nsCOMPtr<nsILocaleService> localeService =
+            do_GetService(NS_LOCALESERVICE_CONTRACTID, &rv);
+        if (NS_SUCCEEDED(rv)) {
+            nsCOMPtr<nsILocale> locale;
+            rv = localeService->GetApplicationLocale(getter_AddRefs(locale));
+            if (NS_SUCCEEDED(rv) && locale) {
+                nsCOMPtr<nsICollationFactory> colFactory =
+                    do_CreateInstance(NS_COLLATIONFACTORY_CONTRACTID);
+                if (colFactory) {
+                    rv = colFactory->CreateCollation(locale, &gCollation);
+                    NS_ASSERTION(NS_SUCCEEDED(rv),
+                                 "couldn't create collation instance");
+                } else
+                    NS_ERROR("couldn't create instance of collation factory");
+            } else
+                NS_ERROR("unable to get application locale");
+        } else
+            NS_ERROR("couldn't get locale factory");
+    }
+
+    return gCollation;
+}
 
 //------------------------------------------------------------------------
-// nsIXULContentUtils methods
 
 nsresult
 nsXULContentUtils::FindChildByTag(nsIContent* aElement,
@@ -175,17 +206,11 @@ nsXULContentUtils::FindChildByTag(nsIContent* aElement,
     for (PRUint32 i = 0; i < count; ++i) {
         nsIContent *kid = aElement->GetChildAt(i);
 
-        if (kid->GetNameSpaceID() != aNameSpaceID)
-            continue; // wrong namespace
+        if (kid->NodeInfo()->Equals(aTag, aNameSpaceID)) {
+            NS_ADDREF(*aResult = kid);
 
-        nsINodeInfo *ni = kid->GetNodeInfo();
-
-        if (!ni || !ni->Equals(aTag))
-            continue;
-
-        *aResult = kid;
-        NS_ADDREF(*aResult);
-        return NS_OK;
+            return NS_OK;
+        }
     }
 
     *aResult = nsnull;
@@ -203,11 +228,10 @@ nsXULContentUtils::GetElementResource(nsIContent* aElement, nsIRDFResource** aRe
     PRUnichar buf[128];
     nsFixedString id(buf, NS_ARRAY_LENGTH(buf), 0);
 
-    rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::id, id);
-    NS_ASSERTION(NS_SUCCEEDED(rv), "severe error retrieving attribute");
-    if (NS_FAILED(rv)) return rv;
-
-    if (rv != NS_CONTENT_ATTR_HAS_VALUE)
+    // Whoa.  Why the "id" attribute?  What if it's not even a XUL
+    // element?  This is totally bogus!
+    aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::id, id);
+    if (id.IsEmpty())
         return NS_ERROR_FAILURE;
 
     // Since the element will store its ID attribute as a document-relative value,
@@ -222,52 +246,6 @@ nsXULContentUtils::GetElementResource(nsIContent* aElement, nsIRDFResource** aRe
 
     return NS_OK;
 }
-
-
-nsresult
-nsXULContentUtils::GetElementRefResource(nsIContent* aElement, nsIRDFResource** aResult)
-{
-    *aResult = nsnull;
-    // Perform a reverse mapping from an element in the content model
-    // to an RDF resource. Check for a "ref" attribute first, then
-    // fallback on an "id" attribute.
-    nsresult rv;
-    PRUnichar buf[128];
-    nsFixedString uri(buf, NS_ARRAY_LENGTH(buf), 0);
-
-    rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::ref, uri);
-    NS_ASSERTION(NS_SUCCEEDED(rv), "severe error retrieving attribute");
-    if (NS_FAILED(rv)) return rv;
-
-    if (rv != NS_CONTENT_ATTR_HAS_VALUE) {
-        rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::id, uri);
-    }
-
-    if (rv == NS_CONTENT_ATTR_HAS_VALUE) {
-        // We'll use rdf_MakeAbsolute() to translate this to a URL.
-        nsCOMPtr<nsIDocument> doc = aElement->GetOwnerDoc();
-
-        nsIURI *url = doc->GetDocumentURI();
-        NS_ASSERTION(url != nsnull, "document has no uri");
-        if (! url)
-            return NS_ERROR_UNEXPECTED;
-
-        // N.B. that if this fails (e.g., because necko doesn't grok
-        // the protocol), uriStr will be untouched.
-        NS_MakeAbsoluteURI(uri, uri, url);
-
-        rv = gRDF->GetUnicodeResource(uri, aResult);
-    }
-    else {
-        nsCOMPtr<nsIDOMXULElement> xulElem(do_QueryInterface(aElement, &rv));
-        if (xulElem) {
-            rv = xulElem->GetResource(aResult);
-        }
-    }
-
-    return rv;
-}
-
 
 
 /*
@@ -442,7 +420,7 @@ nsXULContentUtils::GetResource(PRInt32 aNameSpaceID, const nsAString& aAttribute
     PRUnichar buf[256];
     nsFixedString uri(buf, NS_ARRAY_LENGTH(buf), 0);
     if (aNameSpaceID != kNameSpaceID_Unknown && aNameSpaceID != kNameSpaceID_None) {
-        rv = nsContentUtils::GetNSManagerWeakRef()->GetNameSpaceURI(aNameSpaceID, uri);
+        rv = nsContentUtils::NameSpaceManager()->GetNameSpaceURI(aNameSpaceID, uri);
         // XXX ignore failure; treat as "no namespace"
     }
 
@@ -491,15 +469,14 @@ nsXULContentUtils::SetCommandUpdater(nsIDocument* aDocument, nsIContent* aElemen
         return NS_ERROR_UNEXPECTED;
 
     nsAutoString events;
-    rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::events, events);
-
-    if (rv != NS_CONTENT_ATTR_HAS_VALUE)
+    aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::events, events);
+    if (events.IsEmpty())
         events.AssignLiteral("*");
 
     nsAutoString targets;
-    rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::targets, targets);
+    aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::targets, targets);
 
-    if (rv != NS_CONTENT_ATTR_HAS_VALUE)
+    if (targets.IsEmpty())
         targets.AssignLiteral("*");
 
     nsCOMPtr<nsIDOMElement> domelement = do_QueryInterface(aElement);
@@ -512,5 +489,3 @@ nsXULContentUtils::SetCommandUpdater(nsIDocument* aDocument, nsIContent* aElemen
 
     return NS_OK;
 }
-
-

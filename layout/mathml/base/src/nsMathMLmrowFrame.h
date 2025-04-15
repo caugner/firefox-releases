@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -48,13 +49,18 @@
 
 class nsMathMLmrowFrame : public nsMathMLContainerFrame {
 public:
-  friend nsresult NS_NewMathMLmrowFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmrowFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
+
+  NS_IMETHOD
+  AttributeChanged(PRInt32  aNameSpaceID,
+                   nsIAtom* aAttribute,
+                   PRInt32  aModType);
 
   NS_IMETHOD
   InheritAutomaticData(nsIFrame* aParent);
 
 protected:
-  nsMathMLmrowFrame();
+  nsMathMLmrowFrame(nsStyleContext* aContext) : nsMathMLContainerFrame(aContext) {}
   virtual ~nsMathMLmrowFrame();
 
   virtual PRIntn GetSkipSides() const { return 0; }

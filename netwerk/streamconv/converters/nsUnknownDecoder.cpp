@@ -56,16 +56,11 @@
 #include "nsIMIMEService.h"
 
 #include "nsIViewSourceChannel.h"
+#include "nsIHttpChannel.h"
+#include "nsNetCID.h"
 
-#include "prcpucfg.h" // To get IS_LITTLE_ENDIAN / IS_BIG_ENDIAN
 
 #define MAX_BUFFER_SIZE 1024
-
-#if defined WORDS_BIGENDIAN || defined IS_BIG_ENDIAN
-#define LITTLE_TO_NATIVE16(x) ((((x) & 0xFF) << 8) | ((x) >> 8))
-#else
-#define LITTLE_TO_NATIVE16(x) x
-#endif
 
 nsUnknownDecoder::nsUnknownDecoder()
   : mBuffer(nsnull)
@@ -101,7 +96,7 @@ NS_INTERFACE_MAP_BEGIN(nsUnknownDecoder)
    NS_INTERFACE_MAP_ENTRY(nsIStreamConverter)
    NS_INTERFACE_MAP_ENTRY(nsIStreamListener)
    NS_INTERFACE_MAP_ENTRY(nsIRequestObserver)
-   NS_INTERFACE_MAP_ENTRY(nsIContentSniffer_MOZILLA_1_8_BRANCH)
+   NS_INTERFACE_MAP_ENTRY(nsIContentSniffer)
    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIStreamListener)
 NS_INTERFACE_MAP_END
 
@@ -187,8 +182,6 @@ nsUnknownDecoder::OnDataAvailable(nsIRequest* request,
 
       DetermineContentType(request);
 
-      NS_ASSERTION(!mContentType.IsEmpty(), 
-                   "Content type should be known by now.");
       rv = FireListenerNotifications(request, aCtxt);
     }
   }
@@ -246,8 +239,6 @@ nsUnknownDecoder::OnStopRequest(nsIRequest* request, nsISupports *aCtxt,
   if (mContentType.IsEmpty()) {
     DetermineContentType(request);
 
-    NS_ASSERTION(!mContentType.IsEmpty(), 
-                 "Content type should be known by now.");
     rv = FireListenerNotifications(request, aCtxt);
 
     if (NS_FAILED(rv)) {
@@ -272,14 +263,14 @@ nsUnknownDecoder::GetMIMETypeFromContent(nsIRequest* aRequest,
                                          PRUint32 aLength,
                                          nsACString& type)
 {
-  mBuffer = NS_CONST_CAST(char*, NS_REINTERPRET_CAST(const char*, aData));
+  mBuffer = const_cast<char*>(reinterpret_cast<const char*>(aData));
   mBufferLen = aLength;
   DetermineContentType(aRequest);
   mBuffer = nsnull;
   mBufferLen = 0;
   type.Assign(mContentType);
   mContentType.Truncate();
-  return NS_OK;
+  return type.IsEmpty() ? NS_ERROR_NOT_AVAILABLE : NS_OK;
 }
 
 
@@ -360,33 +351,45 @@ void nsUnknownDecoder::DetermineContentType(nsIRequest* aRequest)
                    "Must have either a type string or a function to set the type");
       NS_ASSERTION(sSnifferEntries[i].mMimeType == nsnull ||
                    sSnifferEntries[i].mContentTypeSniffer == nsnull,
-                   "Both at type string and a type sniffing function set;"
+                   "Both a type string and a type sniffing function set;"
                    " using type string");
       if (sSnifferEntries[i].mMimeType) {
         mContentType = sSnifferEntries[i].mMimeType;
+        NS_ASSERTION(!mContentType.IsEmpty(), 
+                     "Content type should be known by now.");
         return;
       }
-      else if ((this->*(sSnifferEntries[i].mContentTypeSniffer))(aRequest)) {
+      if ((this->*(sSnifferEntries[i].mContentTypeSniffer))(aRequest)) {
+        NS_ASSERTION(!mContentType.IsEmpty(), 
+                     "Content type should be known by now.");
         return;
       }        
     }
   }
 
   if (TryContentSniffers(aRequest)) {
+    NS_ASSERTION(!mContentType.IsEmpty(), 
+                 "Content type should be known by now.");
     return;
   }
 
   if (SniffForHTML(aRequest)) {
+    NS_ASSERTION(!mContentType.IsEmpty(), 
+                 "Content type should be known by now.");
     return;
   }
   
   // We don't know what this is yet.  Before we just give up, try
   // the URI from the request.
   if (SniffURI(aRequest)) {
+    NS_ASSERTION(!mContentType.IsEmpty(), 
+                 "Content type should be known by now.");
     return;
   }
   
   LastDitchSniff(aRequest);
+  NS_ASSERTION(!mContentType.IsEmpty(), 
+               "Content type should be known by now.");
 }
 
 PRBool nsUnknownDecoder::TryContentSniffers(nsIRequest* aRequest)
@@ -417,24 +420,13 @@ PRBool nsUnknownDecoder::TryContentSniffers(nsIRequest* aRequest)
       continue;
     }
 
-    nsCOMPtr<nsISupports> sniffer(do_GetService(contractid.get()));
+    nsCOMPtr<nsIContentSniffer> sniffer(do_GetService(contractid.get()));
     if (!sniffer) {
       continue;
     }
 
-    nsCOMPtr<nsIContentSniffer> sniffer1(do_QueryInterface(sniffer));
-    nsCOMPtr<nsIContentSniffer_MOZILLA_1_8_BRANCH> sniffer2 =
-      do_QueryInterface(sniffer);
-    if (sniffer2) {
-      rv = sniffer2->GetMIMETypeFromContent(aRequest, (const PRUint8*)mBuffer,
-                                            mBufferLen, mContentType);
-    } else if (sniffer1) {
-      rv = sniffer1->GetMIMETypeFromContent((const PRUint8*)mBuffer,
-                                            mBufferLen, mContentType);
-    } else {
-      continue;
-    }
-
+    rv = sniffer->GetMIMETypeFromContent(aRequest, (const PRUint8*)mBuffer,
+                                         mBufferLen, mContentType);
     if (NS_SUCCEEDED(rv)) {
       return PR_TRUE;
     }
@@ -611,24 +603,28 @@ nsresult nsUnknownDecoder::FireListenerNotifications(nsIRequest* request,
 
   if (!mNextListener) return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIViewSourceChannel> viewSourceChannel = do_QueryInterface(request);
-  if (viewSourceChannel) {
-    rv = viewSourceChannel->SetOriginalContentType(mContentType);
-  } else {
-    nsCOMPtr<nsIChannel> channel = do_QueryInterface(request, &rv);
-    if (NS_SUCCEEDED(rv)) {
-      // Set the new content type on the channel...
-      rv = channel->SetContentType(mContentType);
+  if (!mContentType.IsEmpty()) {
+    nsCOMPtr<nsIViewSourceChannel> viewSourceChannel =
+      do_QueryInterface(request);
+    if (viewSourceChannel) {
+      rv = viewSourceChannel->SetOriginalContentType(mContentType);
+    } else {
+      nsCOMPtr<nsIChannel> channel = do_QueryInterface(request, &rv);
+      if (NS_SUCCEEDED(rv)) {
+        // Set the new content type on the channel...
+        rv = channel->SetContentType(mContentType);
+      }
     }
-  }
 
-  NS_ASSERTION(NS_SUCCEEDED(rv), "Unable to set content type on channel!");
-  if (NS_FAILED(rv)) {
-    // Cancel the request to make sure it has the correct status if
-    // mNextListener looks at it.
-    request->Cancel(rv);
-    mNextListener->OnStartRequest(request, aCtxt);
-    return rv;
+    NS_ASSERTION(NS_SUCCEEDED(rv), "Unable to set content type on channel!");
+
+    if (NS_FAILED(rv)) {
+      // Cancel the request to make sure it has the correct status if
+      // mNextListener looks at it.
+      request->Cancel(rv);
+      mNextListener->OnStartRequest(request, aCtxt);
+      return rv;
+    }
   }
 
   // Fire the OnStartRequest(...)
@@ -675,9 +671,69 @@ nsresult nsUnknownDecoder::FireListenerNotifications(nsIRequest* request,
 void
 nsBinaryDetector::DetermineContentType(nsIRequest* aRequest)
 {
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aRequest);
+  if (!httpChannel) {
+    return;
+  }
+
+  // It's an HTTP channel.  Check for the text/plain mess
+  nsCAutoString contentTypeHdr;
+  httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("Content-Type"),
+                                 contentTypeHdr);
+  nsCAutoString contentType;
+  httpChannel->GetContentType(contentType);
+
+  // Make sure to do a case-sensitive exact match comparison here.  Apache
+  // 1.x just sends text/plain for "unknown", while Apache 2.x sends
+  // text/plain with a ISO-8859-1 charset.  Debian's Apache version, just to
+  // be different, sends text/plain with iso-8859-1 charset.  For extra fun,
+  // FC7, RHEL4, and Ubuntu Feisty send charset=UTF-8.  Don't do general
+  // case-insensitive comparison, since we really want to apply this crap as
+  // rarely as we can.
+  if (!contentType.EqualsLiteral("text/plain") ||
+      (!contentTypeHdr.EqualsLiteral("text/plain") &&
+       !contentTypeHdr.EqualsLiteral("text/plain; charset=ISO-8859-1") &&
+       !contentTypeHdr.EqualsLiteral("text/plain; charset=iso-8859-1") &&
+       !contentTypeHdr.EqualsLiteral("text/plain; charset=UTF-8"))) {
+    return;
+  }
+
+  // Check whether we have content-encoding.  If we do, don't try to
+  // detect the type.
+  // XXXbz we could improve this by doing a local decompress if we
+  // wanted, I'm sure.  
+  nsCAutoString contentEncoding;
+  httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("Content-Encoding"),
+                                 contentEncoding);
+  if (!contentEncoding.IsEmpty()) {
+    return;
+  }
+  
   LastDitchSniff(aRequest);
   if (mContentType.Equals(APPLICATION_OCTET_STREAM)) {
     // We want to guess at it instead
     mContentType = APPLICATION_GUESS_FROM_EXT;
+  } else {
+    // Let the text/plain type we already have be, so that other content
+    // sniffers can also get a shot at this data.
+    mContentType.Truncate();
   }
+}
+
+NS_METHOD
+nsBinaryDetector::Register(nsIComponentManager* compMgr, nsIFile* path, 
+                           const char* registryLocation,
+                           const char* componentType, 
+                           const nsModuleComponentInfo *info)
+{
+  nsresult rv;
+  nsCOMPtr<nsICategoryManager> catman =
+    do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
+  if (NS_FAILED(rv)) 
+     return rv;
+ 
+  return catman->AddCategoryEntry(NS_CONTENT_SNIFFER_CATEGORY,
+                                  "Binary Detector", 
+                                  NS_BINARYDETECTOR_CONTRACTID,
+                                  PR_TRUE, PR_TRUE, nsnull);
 }

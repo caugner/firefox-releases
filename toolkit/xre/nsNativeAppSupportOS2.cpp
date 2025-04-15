@@ -38,6 +38,11 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#ifdef MOZ_OS2_HIGH_MEMORY
+// os2safe.h has to be included before os2.h, needed for high mem
+#include <os2safe.h>
+#endif
+
 #define INCL_PM
 #define INCL_GPI
 #define INCL_DOS
@@ -55,20 +60,17 @@
 #include "nsXPIDLString.h"
 #include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
-#include "nsIDOMWindow.h"
+#include "nsPIDOMWindow.h"
 #include "nsIDOMChromeWindow.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
 #include "nsISupportsArray.h"
 #include "nsIWindowWatcher.h"
-#include "nsIDOMWindowInternal.h"
-#include "nsIScriptGlobalObject.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIBaseWindow.h"
 #include "nsIWidget.h"
 #include "nsIAppShellService.h"
-#include "nsIProfileInternal.h"
 #include "nsIXULWindow.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -77,10 +79,6 @@
 #include "nsNetUtil.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
-//#include "nsXPCOM.h"
-#ifdef MOZ_PHOENIX
-#include "nsIShellService.h"
-#endif
 
 // These are needed to load a URL in a browser window.
 #include "nsIDOMLocation.h"
@@ -677,9 +675,24 @@ struct MessageWindow {
             return NS_ERROR_FAILURE;
 
         ULONG ulSize = sizeof(COPYDATASTRUCT)+strlen(cmd)+1+CCHMAXPATH;
+#ifdef MOZ_OS2_HIGH_MEMORY
+        APIRET rc = DosAllocSharedMem( &pvData, NULL, ulSize,
+                                       PAG_COMMIT | PAG_READ | PAG_WRITE | OBJ_GETTABLE | OBJ_ANY);
+        if (rc != NO_ERROR) { // Did the kernel handle OBJ_ANY?
+            // Try again without OBJ_ANY and if the first failure was not caused
+            // by OBJ_ANY then we will get the same failure, else we have taken
+            // care of pre-FP13 systems where the kernel couldn't handle it.
+            rc = DosAllocSharedMem( &pvData, NULL, ulSize,
+                                    PAG_COMMIT | PAG_READ | PAG_WRITE | OBJ_GETTABLE);
+            if (rc != NO_ERROR) {
+                return NS_ERROR_OUT_OF_MEMORY;
+            }
+        }
+#else
         if (DosAllocSharedMem( &pvData, NULL, ulSize,
-                               (PAG_COMMIT|PAG_READ|PAG_WRITE|OBJ_GETTABLE)))
+                               PAG_COMMIT | PAG_READ | PAG_WRITE | OBJ_GETTABLE | OBJ_ANY))
             return NS_ERROR_OUT_OF_MEMORY;
+#endif
 
         // We used to set dwData to zero, when we didn't send the
         // working dir.  Now we're using it as a version number.
@@ -1168,7 +1181,7 @@ nsNativeAppSupportOS2::HandleDDENotification( ULONG idInst,     // DDEML instanc
                             break;
                         }
                         // Convert that to internal interface.
-                        nsCOMPtr<nsIDOMWindowInternal> internalContent( do_QueryInterface( content ) );
+                        nsCOMPtr<nsPIDOMWindow> internalContent( do_QueryInterface( content ) );
                         if ( !internalContent ) {
                             break;
                         }
@@ -1186,14 +1199,11 @@ nsNativeAppSupportOS2::HandleDDENotification( ULONG idInst,     // DDEML instanc
                         // Escape any double-quotes.
                         escapeQuotes( url );
 
-                        // Now for the title; first, get the "window" script global object.
-                        nsCOMPtr<nsIScriptGlobalObject> scrGlobalObj( do_QueryInterface( internalContent ) );
-                        if ( !scrGlobalObj ) {
-                            break;
-                        }
-                        // Then from its doc shell get the base window...
+                        // Now for the title...
+
+                        // Get the base window from the doc shell...
                         nsCOMPtr<nsIBaseWindow> baseWindow =
-                          do_QueryInterface( scrGlobalObj->GetDocShell() );
+                          do_QueryInterface( internalContent->GetDocShell() );
                         if ( !baseWindow ) {
                             break;
                         }
@@ -1211,12 +1221,12 @@ nsNativeAppSupportOS2::HandleDDENotification( ULONG idInst,     // DDEML instanc
                         nsCAutoString   outpt( NS_LITERAL_CSTRING("\"") );
                         // Now copy the URL converting the Unicode string
                         // to a single-byte ASCII string
-                        outpt.Append( NS_LossyConvertUCS2toASCII( url ) );
+                        outpt.Append( NS_LossyConvertUTF16toASCII( url ) );
                         // Add the "," used to separate the URL and the page
                         // title
                         outpt.Append( NS_LITERAL_CSTRING("\",\"") );
                         // Now copy the current page title to the return string
-                        outpt.Append( NS_LossyConvertUCS2toASCII( title.get() ));
+                        outpt.Append( NS_LossyConvertUTF16toASCII( title.get() ));
                         // Fill out the return string with the remainin ",""
                         outpt.Append( NS_LITERAL_CSTRING( "\",\"\"" ));
 
@@ -1619,13 +1629,13 @@ nsNativeAppSupportOS2::OpenWindow( const char*urlstr, const char *args ) {
 }
 
 HWND hwndForDOMWindow( nsISupports *window ) {
-    nsCOMPtr<nsIScriptGlobalObject> ppScriptGlobalObj( do_QueryInterface(window) );
-    if ( !ppScriptGlobalObj ) {
+    nsCOMPtr<nsPIDOMWindow> pidomwindow( do_QueryInterface(window) );
+    if ( !pidomwindow ) {
         return 0;
     }
 
     nsCOMPtr<nsIBaseWindow> ppBaseWindow =
-        do_QueryInterface( ppScriptGlobalObj->GetDocShell() );
+        do_QueryInterface( pidomwindow->GetDocShell() );
     if ( !ppBaseWindow ) {
         return 0;
     }

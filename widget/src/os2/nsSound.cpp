@@ -51,9 +51,10 @@
 #include "nsSound.h"
 #include "nsIURL.h"
 #include "nsNetUtil.h"
-#include "nsIPref.h"
 
 #include "nsDirectoryServiceDefs.h"
+
+#include "nsNativeCharsetUtils.h"
 
 NS_IMPL_ISUPPORTS2(nsSound, nsISound, nsIStreamLoaderObserver)
 
@@ -218,15 +219,17 @@ NS_IMETHODIMP nsSound::Init()
   return NS_OK;
 }
 
-NS_IMETHODIMP nsSound::PlaySystemSound(const char *aSoundAlias)
+NS_IMETHODIMP nsSound::PlaySystemSound(const nsAString &aSoundAlias)
 {
   /* We don't have a default mail sound on OS/2, so just beep */
   /* Also just beep if MMPM isn't installed */
-  if ((strcmp("_moz_mailbeep", aSoundAlias) == 0) || (!gMMPMInstalled)) {
+  if (aSoundAlias.EqualsLiteral("_moz_mailbeep") || (!gMMPMInstalled)) {
     Beep();
   }
   else {
-    HOBJECT hobject = WinQueryObject(aSoundAlias);
+    nsCAutoString nativeSoundAlias;
+    NS_CopyUnicodeToNative(aSoundAlias, nativeSoundAlias);
+    HOBJECT hobject = WinQueryObject(nativeSoundAlias.get());
     if (hobject)
       WinSetObjectData(hobject, "OPEN=DEFAULT");
     else 

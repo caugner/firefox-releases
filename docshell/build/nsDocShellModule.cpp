@@ -46,12 +46,16 @@
 #include "nsDefaultURIFixup.h"
 #include "nsWebNavigationInfo.h"
 
+#include "nsAboutRedirector.h"
+
 // uriloader
 #include "nsURILoader.h"
 #include "nsDocLoader.h"
 #include "nsOSHelperAppService.h"
 #include "nsExternalProtocolHandler.h"
 #include "nsPrefetchService.h"
+#include "nsOfflineCacheUpdate.h"
+#include "nsLocalHandlerApp.h"
 
 // session history
 #include "nsSHEntry.h"
@@ -61,6 +65,9 @@
 // global history
 #include "nsGlobalHistoryAdapter.h"
 #include "nsGlobalHistory2Adapter.h"
+
+// download history
+#include "nsDownloadHistory.h"
 
 static PRBool gInitialized = PR_FALSE;
 
@@ -76,12 +83,16 @@ Initialize(nsIModule* aSelf)
   gInitialized = PR_TRUE;
 
   nsresult rv = nsSHistory::Startup();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = nsSHEntry::Startup();
   return rv;
 }
 
 PR_STATIC_CALLBACK(void)
 Shutdown(nsIModule* aSelf)
 {
+  nsSHEntry::Shutdown();
   gInitialized = PR_FALSE;
 }
 
@@ -89,14 +100,18 @@ Shutdown(nsIModule* aSelf)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsWebShell, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDefaultURIFixup)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsWebNavigationInfo, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsClassifierCallback)
 
 // uriloader
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsURILoader)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsDocLoader, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsOSHelperAppService, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsExternalProtocolHandler)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsBlockedExternalProtocolHandler)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPrefetchService, Init)
+NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsOfflineCacheUpdateService,
+                                         nsOfflineCacheUpdateService::GetInstance)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsOfflineCacheUpdate)
+NS_GENERIC_FACTORY_CONSTRUCTOR(PlatformLocalHandlerApp_t)
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
 #include "nsInternetConfigService.h"
@@ -107,6 +122,9 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsInternetConfigService)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSHEntry)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSHTransaction)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSHistory)
+
+// download history
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDownloadHistory)
 
 // Currently no-one is instantiating docshell's directly because
 // nsWebShell is still our main "shell" class. nsWebShell is a subclass
@@ -132,6 +150,71 @@ static const nsModuleComponentInfo gDocShellModuleInfo[] = {
       NS_WEBNAVIGATION_INFO_CONTRACTID,
       nsWebNavigationInfoConstructor
     },
+    {
+      "Channel classifier",
+      NS_CHANNELCLASSIFIER_CID,
+      NS_CHANNELCLASSIFIER_CONTRACTID,
+      nsClassifierCallbackConstructor
+    },
+
+    // about redirector
+    { "about:config",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "config",
+      nsAboutRedirector::Create
+    },
+#ifdef MOZ_CRASHREPORTER
+    { "about:crashes",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "crashes",
+      nsAboutRedirector::Create
+    },
+#endif
+    { "about:credits",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "credits",
+      nsAboutRedirector::Create
+    },
+    { "about:plugins",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "plugins",
+      nsAboutRedirector::Create
+    },
+    { "about:mozilla",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "mozilla",
+      nsAboutRedirector::Create
+    },
+    { "about:logo",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "logo",
+      nsAboutRedirector::Create
+    },
+    { "about:buildconfig",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "buildconfig",
+      nsAboutRedirector::Create
+    },
+    { "about:license",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "license",
+      nsAboutRedirector::Create
+    },
+    { "about:licence",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "licence",
+      nsAboutRedirector::Create
+    },
+    { "about:about",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "about",
+      nsAboutRedirector::Create
+    },
+    { "about:neterror",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "neterror",
+      nsAboutRedirector::Create
+    },
 
     // uriloader
   { "Netscape URI Loader Service", NS_URI_LOADER_CID, NS_URI_LOADER_CONTRACTID, nsURILoaderConstructor, },
@@ -145,15 +228,20 @@ static const nsModuleComponentInfo gDocShellModuleInfo[] = {
      nsOSHelperAppServiceConstructor, },
   { "Netscape Default Protocol Handler", NS_EXTERNALPROTOCOLHANDLER_CID, NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"default", 
      nsExternalProtocolHandlerConstructor, },
-  { "Netscape Default Blocked Protocol Handler", NS_BLOCKEDEXTERNALPROTOCOLHANDLER_CID, NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"default-blocked", 
-     nsBlockedExternalProtocolHandlerConstructor, },
   {  NS_PREFETCHSERVICE_CLASSNAME, NS_PREFETCHSERVICE_CID, NS_PREFETCHSERVICE_CONTRACTID,
      nsPrefetchServiceConstructor, },
+  { NS_OFFLINECACHEUPDATESERVICE_CLASSNAME, NS_OFFLINECACHEUPDATESERVICE_CID, NS_OFFLINECACHEUPDATESERVICE_CONTRACTID,
+    nsOfflineCacheUpdateServiceConstructor, },
+  { NS_OFFLINECACHEUPDATE_CLASSNAME, NS_OFFLINECACHEUPDATE_CID, NS_OFFLINECACHEUPDATE_CONTRACTID,
+    nsOfflineCacheUpdateConstructor, },
+  { "Local Application Handler App", NS_LOCALHANDLERAPP_CID, 
+    NS_LOCALHANDLERAPP_CONTRACTID, PlatformLocalHandlerApp_tConstructor, },
+
 #if defined(XP_MAC) || defined(XP_MACOSX)
   { "Internet Config Service", NS_INTERNETCONFIGSERVICE_CID, NS_INTERNETCONFIGSERVICE_CONTRACTID,
     nsInternetConfigServiceConstructor, },
 #endif
-    
+        
     // session history
    { "nsSHEntry", NS_SHENTRY_CID,
       NS_SHENTRY_CONTRACTID, nsSHEntryConstructor },
@@ -172,7 +260,12 @@ static const nsModuleComponentInfo gDocShellModuleInfo[] = {
       nsGlobalHistoryAdapter::RegisterSelf },
     { "nsGlobalHistory2Adapter", NS_GLOBALHISTORY2ADAPTER_CID,
       nsnull, nsGlobalHistory2Adapter::Create,
-      nsGlobalHistory2Adapter::RegisterSelf }
+      nsGlobalHistory2Adapter::RegisterSelf },
+    
+    // download history
+    { "nsDownloadHistory", NS_DOWNLOADHISTORY_CID,
+      nsnull, nsDownloadHistoryConstructor,
+      nsDownloadHistory::RegisterSelf }
 };
 
 // "docshell provider" to illustrate that this thing really *should*

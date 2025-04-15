@@ -34,7 +34,6 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-#define IDC_SELECTANCHOR                4100
 #define IDC_GRAB                        4101
 #define IDC_GRABBING                    4102
 #define IDC_CELL                        4103
@@ -46,3 +45,4 @@
 #define IDC_ROWRESIZE                   4109
 #define IDC_VERTICALTEXT                4110
 #define IDC_DUMMY_CE_MENUBAR            4111
+#define IDC_NONE                        4112

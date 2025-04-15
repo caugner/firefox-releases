@@ -57,26 +57,29 @@
 
 #include "nsISupports.h"
 #include "nsIAtom.h"
-#include "nsAString.h"
-#include "nsDOMString.h"
 #include "nsINameSpaceManager.h"
+#include "nsNodeInfoManager.h"
 #include "nsCOMPtr.h"
+
+#ifdef MOZILLA_INTERNAL_API
+#include "nsDOMString.h"
+#endif
 
 // Forward declarations
 class nsIDocument;
 class nsIURI;
 class nsIPrincipal;
-class nsNodeInfoManager;
 
 // IID for the nsINodeInfo interface
+// 35e53115-b884-4cfc-aa95-bdf0aa5152cf
 #define NS_INODEINFO_IID      \
-{ 0x290ecd20, 0xb3cb, 0x11d8, \
-  { 0xb2, 0x67, 0x00, 0x0a, 0x95, 0xdc, 0x23, 0x4c } }
+{ 0x35e53115, 0xb884, 0x4cfc, \
+ { 0xaa, 0x95, 0xbd, 0xf0, 0xaa, 0x51, 0x52, 0xcf } }
 
 class nsINodeInfo : public nsISupports
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_INODEINFO_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_INODEINFO_IID)
 
   nsINodeInfo()
     : mInner(nsnull, nsnull, kNameSpaceID_None),
@@ -127,6 +130,7 @@ public:
    */
   virtual void GetLocalName(nsAString& aLocalName) const = 0;
 
+#ifdef MOZILLA_INTERNAL_API
   /*
    * Get the prefix from this node as a string.
    *
@@ -141,6 +145,7 @@ public:
       SetDOMStringToNull(aPrefix);
     }
   }
+#endif
 
   /*
    * Get the prefix from this node as an atom.
@@ -258,20 +263,38 @@ public:
   virtual PRBool Equals(const nsAString& aName, const nsAString& aPrefix,
                         PRInt32 aNamespaceID) const = 0;
   virtual PRBool NamespaceEquals(const nsAString& aNamespaceURI) const = 0;
-  // switch to UTF8 - this allows faster access for consumers
-  virtual PRBool QualifiedNameEquals(const nsACString& aQualifiedName) const = 0;
+
+  PRBool QualifiedNameEquals(nsIAtom* aNameAtom) const
+  {
+    NS_PRECONDITION(aNameAtom, "Must have name atom");
+    if (!GetPrefixAtom())
+      return Equals(aNameAtom);
+
+    const char* utf8;
+    aNameAtom->GetUTF8String(&utf8);
+    return QualifiedNameEqualsInternal(nsDependentCString(utf8));
+  }
+
+  PRBool QualifiedNameEquals(const nsACString& aQualifiedName) const
+  {
+    if (!GetPrefixAtom())
+      return mInner.mName->EqualsUTF8(aQualifiedName);
+
+    return QualifiedNameEqualsInternal(aQualifiedName);    
+  }
 
   /*
    * Retrieve a pointer to the document that owns this node info.
    */
-  virtual nsIDocument* GetDocument() const = 0;
-
-  /*
-   * Retrieve a pointer to the principal for the document of this node info.
-   */
-  virtual nsIPrincipal *GetDocumentPrincipal() const = 0;
+  nsIDocument* GetDocument() const
+  {
+    return mOwnerManager->GetDocument();
+  }
 
 protected:
+  virtual PRBool
+    QualifiedNameEqualsInternal(const nsACString& aQualifiedName) const = 0;
+
   /*
    * nsNodeInfoInner is used for two things:
    *
@@ -307,5 +330,7 @@ protected:
   nsCOMPtr<nsIAtom> mIDAttributeAtom;
   nsNodeInfoManager* mOwnerManager; // Strong reference!
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsINodeInfo, NS_INODEINFO_IID)
 
 #endif /* nsINodeInfo_h___ */

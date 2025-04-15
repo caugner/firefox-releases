@@ -56,7 +56,6 @@
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIDOMWindowInternal.h"
-#include "nsIEventQueueService.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIWidget.h"
@@ -92,7 +91,7 @@ public:
    NS_DECL_NSIXULWINDOW
    NS_DECL_NSIBASEWINDOW
 
-   NS_DEFINE_STATIC_IID_ACCESSOR(NS_XULWINDOW_IMPL_CID)
+   NS_DECLARE_STATIC_IID_ACCESSOR(NS_XULWINDOW_IMPL_CID)
 
    void LockUntilChromeLoad() { mLockedUntilChromeLoad = PR_TRUE; }
    PRBool IsLocked() const { return mLockedUntilChromeLoad; }
@@ -128,7 +127,7 @@ protected:
    NS_IMETHOD GetWindowDOMElement(nsIDOMElement** aDOMElement);
    NS_IMETHOD GetDOMElementById(char* aID, nsIDOMElement** aDOMElement);
 
-  // See nsIDocShellTreeOwner_MOZILLA_1_8_BRANCH for docs on next two methods
+   // See nsIDocShellTreeOwner for docs on next two methods
    NS_HIDDEN_(nsresult) ContentShellAdded(nsIDocShellTreeItem* aContentShell,
                                           PRBool aPrimary, PRBool aTargetable,
                                           const nsAString& aID);
@@ -149,7 +148,6 @@ protected:
    void       SetContentScrollbarVisibility(PRBool aVisible);
    PRBool     GetContentScrollbarVisibility();
    void       PersistentAttributesDirty(PRUint32 aDirtyFlags);
-   nsresult   ApplyChromeFlags();
 
    nsChromeTreeOwner*      mChromeTreeOwner;
    nsContentTreeOwner*     mContentTreeOwner;
@@ -182,6 +180,8 @@ protected:
    nsCOMArray<nsIWeakReference> mTargetableShells; // targetable shells only
 };
 
+NS_DEFINE_STATIC_IID_ACCESSOR(nsXULWindow, NS_XULWINDOW_IMPL_CID)
+
 // nsContentShellInfo
 // Used (in an nsVoidArray) to map shell IDs to nsIDocShellTreeItems.
 
@@ -195,22 +195,6 @@ public:
 public:
    nsAutoString id; // The identifier of the content shell
    nsWeakPtr child; // content shell (weak reference to nsIDocShellTreeItem)
-};
-
-// nsEventQueueStack
-// a little utility object to push an event queue and pop it when it
-// goes out of scope. should probably be in a file of utility functions.
-class nsEventQueueStack
-{
-public:
-   nsEventQueueStack();
-   ~nsEventQueueStack();
-
-   nsresult Success();
-
-protected:
-   nsCOMPtr<nsIEventQueueService>   mService;
-   nsCOMPtr<nsIEventQueue>          mQueue;
 };
 
 #endif /* nsXULWindow_h__ */

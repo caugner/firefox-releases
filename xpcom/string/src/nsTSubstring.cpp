@@ -36,6 +36,23 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+nsTSubstring_CharT::nsTSubstring_CharT( char_type *data, size_type length,
+                                        PRUint32 flags)
+#ifdef MOZ_V1_STRING_ABI
+  : abstract_string_type(data, length, flags)
+#else
+  : mData(data),
+    mLength(length),
+    mFlags(flags)
+#endif
+  {
+    if (flags & F_OWNED) {
+      STRING_STAT_INCREMENT(Adopt);
+#ifdef NS_BUILD_REFCNT_LOGGING
+      NS_LogCtor(mData, "StringAdopt", 1);
+#endif
+    }
+  }
 
   /**
    * helper function for down-casting a nsTSubstring to a nsTFixedString.
@@ -43,7 +60,7 @@
 inline const nsTFixedString_CharT*
 AsFixedString( const nsTSubstring_CharT* s )
   {
-    return NS_STATIC_CAST(const nsTFixedString_CharT*, s);
+    return static_cast<const nsTFixedString_CharT*>(s);
   }
 
 
@@ -79,8 +96,10 @@ nsTSubstring_CharT::MutatePrep( size_type capacity, char_type** oldData, PRUint3
 
     if (curCapacity != size_type(-1))
       {
-        if (capacity <= curCapacity)
+        if (capacity <= curCapacity) {
+          mFlags &= ~F_VOIDED;  // mutation clears voided flag
           return PR_TRUE;
+        }
 
         if (curCapacity > 0)
           {
@@ -119,6 +138,7 @@ nsTSubstring_CharT::MutatePrep( size_type capacity, char_type** oldData, PRUint3
 
             hdr = newHdr;
             mData = (char_type*) hdr->Data();
+            mFlags &= ~F_VOIDED;  // mutation clears voided flag
             return PR_TRUE;
           }
       }
@@ -269,19 +289,38 @@ nsTSubstring_CharT::Capacity() const
     return capacity;
   }
 
-void
-nsTSubstring_CharT::EnsureMutable()
+PRBool
+nsTSubstring_CharT::EnsureMutable( size_type newLen )
   {
-    if (mFlags & (F_FIXED | F_OWNED))
-      return;
-    if ((mFlags & F_SHARED) && !nsStringBuffer::FromData(mData)->IsReadonly())
-      return;
+    if (newLen == size_type(-1) || newLen == mLength)
+      {
+        if (mFlags & (F_FIXED | F_OWNED))
+          return PR_TRUE;
+        if ((mFlags & F_SHARED) && !nsStringBuffer::FromData(mData)->IsReadonly())
+          return PR_TRUE;
 
-    // promote to a shared string buffer
-    Assign(string_type(mData, mLength));
+        // promote to a shared string buffer
+        char_type* prevData = mData;
+        Assign(string_type(mData, mLength));
+        return mData != prevData;
+      }
+    else
+      {
+        SetLength(newLen);
+        return mLength == newLen;
+      }
   }
 
 // ---------------------------------------------------------------------------
+
+  // This version of Assign is optimized for single-character assignment.
+void
+nsTSubstring_CharT::Assign( char_type c )
+  {
+    if (ReplacePrep(0, mLength, 1))
+      *mData = c;
+  }
+
 
 void
 nsTSubstring_CharT::Assign( const char_type* data, size_type length )
@@ -413,11 +452,27 @@ nsTSubstring_CharT::Adopt( char_type* data, size_type length )
         SetDataFlags(F_TERMINATED | F_OWNED);
 
         STRING_STAT_INCREMENT(Adopt);
+#ifdef NS_BUILD_REFCNT_LOGGING
+        // Treat this as construction of a "StringAdopt" object for leak
+        // tracking purposes.        
+        NS_LogCtor(mData, "StringAdopt", 1);
+#endif // NS_BUILD_REFCNT_LOGGING
       }
     else
       {
         SetIsVoid(PR_TRUE);
       }
+  }
+
+
+  // This version of Replace is optimized for single-character replacement.
+void
+nsTSubstring_CharT::Replace( index_type cutStart, size_type cutLength, char_type c )
+  {
+    cutStart = PR_MIN(cutStart, Length());
+
+    if (ReplacePrep(cutStart, cutLength, 1))
+      mData[cutStart] = c;
   }
 
 
@@ -506,7 +561,7 @@ nsTSubstring_CharT::SetCapacity( size_type capacity )
     if (capacity == 0)
       {
         ::ReleaseData(mData, mFlags);
-        mData = NS_CONST_CAST(char_type*, char_traits::sEmptyBuffer);
+        mData = const_cast<char_type*>(char_traits::sEmptyBuffer);
         mLength = 0;
         SetDataFlags(F_TERMINATED);
       }
@@ -542,6 +597,11 @@ nsTSubstring_CharT::SetCapacity( size_type capacity )
 void
 nsTSubstring_CharT::SetLength( size_type length )
   {
+    if (mLength == length) {
+      mFlags &= ~F_VOIDED;  // mutation clears voided flag
+      return;
+    }
+
     SetCapacity(length);
 
     // XXX(darin): SetCapacity may fail, but it doesn't give us a way to find

@@ -46,41 +46,21 @@
 #include "nsCSSRendering.h"
 #include "nsIContent.h"
 #include "nsPresContext.h"
-#include "nsHTMLAtoms.h"
-#include "nsXULAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsINameSpaceManager.h"
 #include "nsCOMPtr.h"
 #include "nsBoxLayoutState.h"
+#include "nsIReflowCallback.h"
 //
 // NS_NewToolbarFrame
 //
-// Creates a new Toolbar frame and returns it in |aNewFrame|
+// Creates a new Toolbar frame and returns it
 //
-nsresult
-NS_NewProgressMeterFrame ( nsIPresShell* aPresShell, nsIFrame** aNewFrame )
+nsIFrame*
+NS_NewProgressMeterFrame (nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsProgressMeterFrame* it = new (aPresShell) nsProgressMeterFrame(aPresShell);
-  if (nsnull == it)
-    return NS_ERROR_OUT_OF_MEMORY;
-
-  *aNewFrame = it;
-  return NS_OK;
-  
+  return new (aPresShell) nsProgressMeterFrame(aPresShell, aContext);
 } // NS_NewProgressMeterFrame
-
-//
-// nsProgressMeterFrame cntr
-//
-// Init, if necessary
-//
-nsProgressMeterFrame :: nsProgressMeterFrame (nsIPresShell* aPresShell)
-:nsBoxFrame(aPresShell)
-{
-}
 
 //
 // nsProgressMeterFrame dstr
@@ -91,38 +71,66 @@ nsProgressMeterFrame :: ~nsProgressMeterFrame ( )
 {
 }
 
+class nsAsyncProgressMeterInit : public nsIReflowCallback
+{
+public:
+  nsAsyncProgressMeterInit(nsIFrame* aFrame) : mWeakFrame(aFrame) {}
+
+  virtual PRBool ReflowFinished()
+  {
+    PRBool shouldFlush = PR_FALSE;
+    nsIFrame* frame = mWeakFrame.GetFrame();
+    if (frame) {
+      frame->AttributeChanged(kNameSpaceID_None, nsGkAtoms::value, 0);
+      shouldFlush = PR_TRUE;
+    }
+    delete this;
+    return shouldFlush;
+  }
+
+  virtual void ReflowCallbackCanceled()
+  {
+    delete this;
+  }
+
+  nsWeakFrame mWeakFrame;
+};
+
 NS_IMETHODIMP
-nsProgressMeterFrame::SetInitialChildList(nsPresContext* aPresContext,
-                                     nsIAtom*        aListName,
-                                     nsIFrame*       aChildList)
-{ 
-  // Set up our initial flexes.
-  nsresult rv = nsBoxFrame::SetInitialChildList(aPresContext, aListName, aChildList);
-  AttributeChanged(mContent, kNameSpaceID_None, nsHTMLAtoms::value, 0);
-  return rv;
+nsProgressMeterFrame::DoLayout(nsBoxLayoutState& aState)
+{
+  if (mNeedsReflowCallback) {
+    nsIReflowCallback* cb = new nsAsyncProgressMeterInit(this);
+    if (cb) {
+      PresContext()->PresShell()->PostReflowCallback(cb);
+    }
+    mNeedsReflowCallback = PR_FALSE;
+  }
+  return nsBoxFrame::DoLayout(aState);
 }
 
 NS_IMETHODIMP
-nsProgressMeterFrame::AttributeChanged(nsIContent* aChild,
-                                       PRInt32 aNameSpaceID,
+nsProgressMeterFrame::AttributeChanged(PRInt32 aNameSpaceID,
                                        nsIAtom* aAttribute,
                                        PRInt32 aModType)
 {
-  nsresult rv = nsBoxFrame::AttributeChanged(aChild, aNameSpaceID,
-                                             aAttribute, aModType);
+  nsresult rv = nsBoxFrame::AttributeChanged(aNameSpaceID, aAttribute,
+                                             aModType);
   if (NS_OK != rv) {
     return rv;
   }
 
   // did the progress change?
-  if (nsHTMLAtoms::value == aAttribute) {
+  if (nsGkAtoms::value == aAttribute) {
     nsIFrame* barChild = GetFirstChild(nsnull);
     if (!barChild) return NS_OK;
     nsIFrame* remainderChild = barChild->GetNextSibling();
     if (!remainderChild) return NS_OK;
+    nsCOMPtr<nsIContent> remainderContent = remainderChild->GetContent();
+    if (!remainderContent) return NS_OK;
 
     nsAutoString value;
-    mContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::value, value);
+    mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::value, value);
 
     PRInt32 error;
     PRInt32 flex = value.ToInteger(&error);
@@ -134,11 +142,14 @@ nsProgressMeterFrame::AttributeChanged(nsIContent* aChild,
     nsAutoString leftFlex, rightFlex;
     leftFlex.AppendInt(flex);
     rightFlex.AppendInt(remainder);
-    barChild->GetContent()->SetAttr(kNameSpaceID_None, nsXULAtoms::flex, leftFlex, PR_TRUE);
-    remainderChild->GetContent()->SetAttr(kNameSpaceID_None, nsXULAtoms::flex, rightFlex, PR_TRUE);
+    nsWeakFrame weakFrame(this);
+    barChild->GetContent()->SetAttr(kNameSpaceID_None, nsGkAtoms::flex, leftFlex, PR_TRUE);
+    remainderContent->SetAttr(kNameSpaceID_None, nsGkAtoms::flex, rightFlex, PR_TRUE);
 
-    nsBoxLayoutState state(GetPresContext());
-    MarkDirty(state);
+    if (weakFrame.IsAlive()) {
+      PresContext()->PresShell()->
+        FrameNeedsReflow(this, nsIPresShell::eTreeChange, NS_FRAME_IS_DIRTY);
+    }
   }
   return NS_OK;
 }

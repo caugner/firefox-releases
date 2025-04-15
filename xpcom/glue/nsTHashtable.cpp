@@ -37,6 +37,7 @@
 
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
+#include "prbit.h"
 
 PRUint32
 HashString( const nsAString& aStr )
@@ -54,7 +55,7 @@ HashString( const nsAString& aStr )
 #endif
 
   while (begin != end) {
-    code = (code>>28) ^ (code<<4) ^ PRUint32(*begin);
+    code = PR_ROTATE_LEFT32(code, 4) ^ PRUint32(*begin);
     ++begin;
   }
 
@@ -77,7 +78,7 @@ HashString( const nsACString& aStr )
 #endif
 
   while (begin != end) {
-    code = (code>>28) ^ (code<<4) ^ PRUint32(*begin);
+    code = PR_ROTATE_LEFT32(code, 4) ^ PRUint32(*begin);
     ++begin;
   }
 
@@ -85,19 +86,32 @@ HashString( const nsACString& aStr )
 }
 
 PRUint32
-HashCString(const char *str)
+HashString(const char *str)
 {
   PRUint32 code = 0;
 
   while (*str) {
-    code = (code>>28) ^ (code<<4) ^ PRUint32(*str);
+    code = PR_ROTATE_LEFT32(code, 4) ^ PRUint32(*str);
     ++str;
   }
 
   return code;
 }
 
-PR_IMPLEMENT(PLDHashOperator)
+PRUint32
+HashString(const PRUnichar *str)
+{
+  PRUint32 code = 0;
+
+  while (*str) {
+    code = PR_ROTATE_LEFT32(code, 4) ^ PRUint32(*str);
+    ++str;
+  }
+
+  return code;
+}
+
+PLDHashOperator
 PL_DHashStubEnumRemove(PLDHashTable    *table,
                                        PLDHashEntryHdr *entry,
                                        PRUint32         ordinal,
@@ -111,11 +125,11 @@ PRUint32 nsIDHashKey::HashKey(const nsID* id)
   PRUint32 h = id->m0;
   PRUint32 i;
 
-  h = (h>>28) ^ (h<<4) ^ id->m1;
-  h = (h>>28) ^ (h<<4) ^ id->m2;
+  h = PR_ROTATE_LEFT32(h, 4) ^ id->m1;
+  h = PR_ROTATE_LEFT32(h, 4) ^ id->m2;
 
   for (i = 0; i < 8; i++)
-    h = (h>>28) ^ (h<<4) ^ id->m3[i];
+    h = PR_ROTATE_LEFT32(h, 4) ^ id->m3[i];
 
   return h;
 }

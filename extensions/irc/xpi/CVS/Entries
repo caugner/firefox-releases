@@ -1,5 +1,5 @@
-/.cvsignore/1.1.20.1/Mon Jun 26 19:09:57 2006//TFIREFOX_2_0_RELEASE
-/makelocalexpi.sh/1.1.14.1/Mon Jun 26 19:09:57 2006//TFIREFOX_2_0_RELEASE
-/makexpi.sh/1.2.18.2/Mon Jun 26 19:09:57 2006//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.2/Tue Jan 31 17:41:50 2006//TFIREFOX_3_0rc3_RELEASE
+/makelocalexpi.sh/1.4/Sat Feb 16 12:40:43 2008//TFIREFOX_3_0rc3_RELEASE
+/makexpi.sh/1.15/Fri Dec 21 15:17:08 2007//TFIREFOX_3_0rc3_RELEASE
 D/locale-resources////
 D/resources////

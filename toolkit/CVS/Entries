@@ -1,11 +1,16 @@
-/.cvsignore/1.1/Sun Aug  4 05:44:24 2002//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.28/Wed Jul 27 21:46:38 2005//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sun Aug  4 05:44:24 2002//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.33/Tue Jan 29 18:38:15 2008//TFIREFOX_3_0rc3_RELEASE
+/empty-file/1.1/Mon Aug  7 16:06:01 2006//TFIREFOX_3_0rc3_RELEASE
+/toolkit-makefiles.sh/1.22/Fri May  2 22:13:32 2008//TFIREFOX_3_0rc3_RELEASE
+/toolkit-tiers.mk/1.15/Wed Mar 12 11:13:10 2008//TFIREFOX_3_0rc3_RELEASE
 D/components////
 D/content////
+D/crashreporter////
 D/library////
 D/locales////
 D/mozapps////
 D/obsolete////
 D/profile////
+D/system////
 D/themes////
 D/xre////

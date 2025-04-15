@@ -54,7 +54,6 @@ SDK_XPIDLSRCS   = \
 XPIDLSRCS	= \
 		nsICookieService.idl \
 		nsICookie2.idl \
-		nsICookieConsent.idl \
 		nsICookieManager2.idl \
 		nsICookiePermission.idl \
 		$(NULL)

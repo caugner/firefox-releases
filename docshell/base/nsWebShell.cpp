@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim:set ts=2 sw=2 sts=2 cin et: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -39,11 +40,10 @@
 
 #include "nsDocShell.h"
 #include "nsWebShell.h"
-#include "nsIWebBrowserChrome.h"
+#include "nsIWebBrowserChrome2.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIWebProgress.h"
-#include "nsIDocumentLoader.h"
 #include "nsIContentViewer.h"
 #include "nsIDocumentViewer.h"
 #include "nsIMarkupDocumentViewer.h"
@@ -53,17 +53,13 @@
 #include "nsIPrompt.h"
 #include "nsNetUtil.h"
 #include "nsIRefreshURI.h"
-#include "nsIScriptGlobalObject.h"
-#include "nsIScriptGlobalObjectOwner.h"
 #include "nsIDOMEvent.h"
 #include "nsPresContext.h"
 #include "nsIComponentManager.h"
-#include "nsIEventQueueService.h"
 #include "nsCRT.h"
 #include "nsVoidArray.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
-#include "plevent.h"
 #include "prprf.h"
 #include "nsIPluginHost.h"
 #include "nsplugin.h"
@@ -89,6 +85,7 @@
 #include "nsIDocShellTreeNode.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsCURILoader.h"
+#include "nsURILoader.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsEscape.h"
 #include "nsIPlatformCharset.h"
@@ -103,15 +100,17 @@
 #include "nsISHistoryInternal.h"
 
 #include "nsIHttpChannel.h"
+#include "nsIHttpChannelInternal.h"
 #include "nsIUploadChannel.h"
 #include "nsISeekableStream.h"
+#include "nsStreamUtils.h"
+#include "nsThreadUtils.h"
 
 #include "nsILocaleService.h"
 #include "nsIStringBundle.h"
 
 #include "nsICachingChannel.h"
 
-//XXX for nsIPostData; this is wrong; we shouldn't see the nsIDocument type
 #include "nsIDocument.h"
 #include "nsITextToSubURI.h"
 
@@ -119,6 +118,14 @@
 #include "nsCExternalHandlerService.h"
 
 #include "nsIIDNService.h"
+
+#include "nsIPrefBranch.h"
+#include "nsIPrefService.h"
+#include "nsITimer.h"
+#include "nsIScriptSecurityManager.h"
+#include "nsContentPolicyUtils.h"
+
+#include "nsIURIClassifier.h"
 
 #ifdef NS_DEBUG
 /**
@@ -144,16 +151,392 @@ static PRLogModuleInfo* gLogModule = PR_NewLogModule("webshell");
 #define WEB_TRACE(_bit,_args)
 #endif
 
-//----------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+
+#define PREF_PINGS_ENABLED           "browser.send_pings"
+#define PREF_PINGS_MAX_PER_LINK      "browser.send_pings.max_per_link"
+#define PREF_PINGS_REQUIRE_SAME_HOST "browser.send_pings.require_same_host"
+
+// Check prefs to see if pings are enabled and if so what restrictions might
+// be applied.
+//
+// @param maxPerLink
+//   This parameter returns the number of pings that are allowed per link click
+//
+// @param requireSameHost
+//   This parameter returns PR_TRUE if pings are restricted to the same host as
+//   the document in which the click occurs.  If the same host restriction is
+//   imposed, then we still allow for pings to cross over to different
+//   protocols and ports for flexibility and because it is not possible to send
+//   a ping via FTP.
+//
+// @returns
+//   PR_TRUE if pings are enabled and PR_FALSE otherwise.
+//
+static PRBool
+PingsEnabled(PRInt32 *maxPerLink, PRBool *requireSameHost)
+{
+  PRBool allow = PR_FALSE;
+
+  *maxPerLink = 1;
+  *requireSameHost = PR_TRUE;
+
+  nsCOMPtr<nsIPrefBranch> prefs =
+      do_GetService(NS_PREFSERVICE_CONTRACTID);
+  if (prefs) {
+    PRBool val;
+    if (NS_SUCCEEDED(prefs->GetBoolPref(PREF_PINGS_ENABLED, &val)))
+      allow = val;
+    if (allow) {
+      prefs->GetIntPref(PREF_PINGS_MAX_PER_LINK, maxPerLink);
+      prefs->GetBoolPref(PREF_PINGS_REQUIRE_SAME_HOST, requireSameHost);
+    }
+  }
+
+  return allow;
+}
 
 static PRBool
-IsOffline()
+CheckPingURI(nsIURI* uri, nsIContent* content)
 {
-    PRBool offline = PR_TRUE;
-    nsCOMPtr<nsIIOService> ios(do_GetIOService());
-    if (ios)
-        ios->GetOffline(&offline);
-    return offline;
+  if (!uri)
+    return PR_FALSE;
+
+  // Check with nsIScriptSecurityManager
+  nsCOMPtr<nsIScriptSecurityManager> ssmgr =
+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
+  NS_ENSURE_TRUE(ssmgr, PR_FALSE);
+
+  nsresult rv =
+    ssmgr->CheckLoadURIWithPrincipal(content->NodePrincipal(), uri,
+                                     nsIScriptSecurityManager::STANDARD);
+  if (NS_FAILED(rv)) {
+    return PR_FALSE;
+  }
+
+  // Ignore non-HTTP(S)
+  PRBool match;
+  if ((NS_FAILED(uri->SchemeIs("http", &match)) || !match) &&
+      (NS_FAILED(uri->SchemeIs("https", &match)) || !match)) {
+    return PR_FALSE;
+  }
+
+  // Check with contentpolicy
+  PRInt16 shouldLoad = nsIContentPolicy::ACCEPT;
+  rv = NS_CheckContentLoadPolicy(nsIContentPolicy::TYPE_PING,
+                                 uri,
+                                 content->NodePrincipal(),
+                                 content,
+                                 EmptyCString(), // mime hint
+                                 nsnull, //extra
+                                 &shouldLoad);
+  return NS_SUCCEEDED(rv) && NS_CP_ACCEPTED(shouldLoad);
+}
+
+typedef void (* ForEachPingCallback)(void *closure, nsIContent *content,
+                                     nsIURI *uri, nsIIOService *ios);
+
+static void
+ForEachPing(nsIContent *content, ForEachPingCallback callback, void *closure)
+{
+  // NOTE: Using nsIDOMNSHTMLAnchorElement2::GetPing isn't really worth it here
+  //       since we'd still need to parse the resulting string.  Instead, we
+  //       just parse the raw attribute.  It might be nice if the content node
+  //       implemented an interface that exposed an enumeration of nsIURIs.
+
+  // Make sure we are dealing with either an <A> or <AREA> element in the HTML
+  // or XHTML namespace.
+  if (!content->IsNodeOfType(nsINode::eHTML))
+    return;
+  nsIAtom *nameAtom = content->Tag();
+  if (!nameAtom->EqualsUTF8(NS_LITERAL_CSTRING("a")) &&
+      !nameAtom->EqualsUTF8(NS_LITERAL_CSTRING("area")))
+    return;
+
+  nsCOMPtr<nsIAtom> pingAtom = do_GetAtom("ping");
+  if (!pingAtom)
+    return;
+
+  nsAutoString value;
+  content->GetAttr(kNameSpaceID_None, pingAtom, value);
+  if (value.IsEmpty())
+    return;
+
+  nsCOMPtr<nsIIOService> ios = do_GetIOService();
+  if (!ios)
+    return;
+
+  nsIDocument *doc = content->GetOwnerDoc();
+  if (!doc)
+    return;
+
+  // value contains relative URIs split on spaces (U+0020)
+  const PRUnichar *start = value.BeginReading();
+  const PRUnichar *end   = value.EndReading();
+  const PRUnichar *iter  = start;
+  for (;;) {
+    if (iter < end && *iter != ' ') {
+      ++iter;
+    } else {  // iter is pointing at either end or a space
+      while (*start == ' ' && start < iter)
+        ++start;
+      if (iter != start) {
+        nsCOMPtr<nsIURI> uri, baseURI = content->GetBaseURI();
+        ios->NewURI(NS_ConvertUTF16toUTF8(Substring(start, iter)),
+                    doc->GetDocumentCharacterSet().get(),
+                    baseURI, getter_AddRefs(uri));
+        if (CheckPingURI(uri, content)) {
+          callback(closure, content, uri, ios);
+        }
+      }
+      start = iter = iter + 1;
+      if (iter >= end)
+        break;
+    }
+  }
+}
+
+//----------------------------------------------------------------------
+
+// We wait this many milliseconds before killing the ping channel...
+#define PING_TIMEOUT 10000
+
+static void
+OnPingTimeout(nsITimer *timer, void *closure)
+{
+  nsILoadGroup *loadGroup = static_cast<nsILoadGroup *>(closure);
+  loadGroup->Cancel(NS_ERROR_ABORT);
+  loadGroup->Release();
+}
+
+// Check to see if two URIs have the same host or not
+static PRBool
+IsSameHost(nsIURI *uri1, nsIURI *uri2)
+{
+  nsCAutoString host1, host2;
+  uri1->GetAsciiHost(host1);
+  uri2->GetAsciiHost(host2);
+  return host1.Equals(host2);
+}
+
+class nsPingListener : public nsIStreamListener
+                     , public nsIInterfaceRequestor
+                     , public nsIChannelEventSink
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIREQUESTOBSERVER
+  NS_DECL_NSISTREAMLISTENER
+  NS_DECL_NSIINTERFACEREQUESTOR
+  NS_DECL_NSICHANNELEVENTSINK
+
+  nsPingListener(PRBool requireSameHost, nsIContent* content)
+    : mRequireSameHost(requireSameHost),
+      mContent(content)
+  {}
+
+private:
+  PRBool mRequireSameHost;
+  nsCOMPtr<nsIContent> mContent;
+};
+
+NS_IMPL_ISUPPORTS4(nsPingListener, nsIStreamListener, nsIRequestObserver,
+                   nsIInterfaceRequestor, nsIChannelEventSink)
+
+NS_IMETHODIMP
+nsPingListener::OnStartRequest(nsIRequest *request, nsISupports *context)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsPingListener::OnDataAvailable(nsIRequest *request, nsISupports *context,
+                                nsIInputStream *stream, PRUint32 offset,
+                                PRUint32 count)
+{
+  PRUint32 result;
+  return stream->ReadSegments(NS_DiscardSegment, nsnull, count, &result);
+}
+
+NS_IMETHODIMP
+nsPingListener::OnStopRequest(nsIRequest *request, nsISupports *context,
+                              nsresult status)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsPingListener::GetInterface(const nsIID &iid, void **result)
+{
+  if (iid.Equals(NS_GET_IID(nsIChannelEventSink))) {
+    NS_ADDREF_THIS();
+    *result = (nsIChannelEventSink *) this;
+    return NS_OK;
+  }
+
+  return NS_ERROR_NO_INTERFACE;
+}
+
+NS_IMETHODIMP
+nsPingListener::OnChannelRedirect(nsIChannel *oldChan, nsIChannel *newChan,
+                                  PRUint32 flags)
+{
+  nsCOMPtr<nsIURI> newURI;
+  newChan->GetURI(getter_AddRefs(newURI));
+
+  if (!CheckPingURI(newURI, mContent))
+    return NS_ERROR_ABORT;
+
+  if (!mRequireSameHost)
+    return NS_OK;
+
+  nsCOMPtr<nsIURI> oldURI;
+  oldChan->GetURI(getter_AddRefs(oldURI));
+  NS_ENSURE_STATE(oldURI && newURI);
+
+  if (!IsSameHost(oldURI, newURI))
+    return NS_ERROR_ABORT;
+
+  return NS_OK;
+}
+
+struct SendPingInfo {
+  PRInt32 numPings;
+  PRInt32 maxPings;
+  PRBool  requireSameHost;
+  nsIURI *referrer;
+};
+
+static void
+SendPing(void *closure, nsIContent *content, nsIURI *uri, nsIIOService *ios)
+{
+  SendPingInfo *info = static_cast<SendPingInfo *>(closure);
+  if (info->numPings >= info->maxPings)
+    return;
+
+  if (info->requireSameHost) {
+    // Make sure the referrer and the given uri share the same origin.  We
+    // only require the same hostname.  The scheme and port may differ.
+    if (!IsSameHost(uri, info->referrer))
+      return;
+  }
+
+  nsIDocument *doc = content->GetOwnerDoc();
+  if (!doc)
+    return;
+
+  nsCOMPtr<nsIChannel> chan;
+  ios->NewChannelFromURI(uri, getter_AddRefs(chan));
+  if (!chan)
+    return;
+
+  // Don't bother caching the result of this URI load.
+  chan->SetLoadFlags(nsIRequest::INHIBIT_CACHING);
+
+  nsCOMPtr<nsIHttpChannel> httpChan = do_QueryInterface(chan);
+  if (!httpChan)
+    return;
+
+  // This is needed in order for 3rd-party cookie blocking to work.
+  nsCOMPtr<nsIHttpChannelInternal> httpInternal = do_QueryInterface(httpChan);
+  if (httpInternal)
+    httpInternal->SetDocumentURI(doc->GetDocumentURI());
+
+  if (info->referrer)
+    httpChan->SetReferrer(info->referrer);
+
+  httpChan->SetRequestMethod(NS_LITERAL_CSTRING("POST"));
+
+  // Remove extraneous request headers (to reduce request size)
+  httpChan->SetRequestHeader(NS_LITERAL_CSTRING("accept"),
+                             EmptyCString(), PR_FALSE);
+  httpChan->SetRequestHeader(NS_LITERAL_CSTRING("accept-language"),
+                             EmptyCString(), PR_FALSE);
+  httpChan->SetRequestHeader(NS_LITERAL_CSTRING("accept-charset"),
+                             EmptyCString(), PR_FALSE);
+  httpChan->SetRequestHeader(NS_LITERAL_CSTRING("accept-encoding"),
+                             EmptyCString(), PR_FALSE);
+
+  nsCOMPtr<nsIUploadChannel> uploadChan = do_QueryInterface(httpChan);
+  if (!uploadChan)
+    return;
+
+  // To avoid sending an unnecessary Content-Type header, we encode the
+  // closing portion of the headers in the POST body.
+  NS_NAMED_LITERAL_CSTRING(uploadData, "Content-Length: 0\r\n\r\n");
+
+  nsCOMPtr<nsIInputStream> uploadStream;
+  NS_NewPostDataStream(getter_AddRefs(uploadStream), PR_FALSE,
+                       uploadData, 0);
+  if (!uploadStream)
+    return;
+
+  uploadChan->SetUploadStream(uploadStream, EmptyCString(), -1);
+
+  // The channel needs to have a loadgroup associated with it, so that we can
+  // cancel the channel and any redirected channels it may create.
+  nsCOMPtr<nsILoadGroup> loadGroup =
+      do_CreateInstance(NS_LOADGROUP_CONTRACTID);
+  if (!loadGroup)
+    return;
+  chan->SetLoadGroup(loadGroup);
+
+  // Construct a listener that merely discards any response.  If successful at
+  // opening the channel, then it is not necessary to hold a reference to the
+  // channel.  The networking subsystem will take care of that for us.
+  nsCOMPtr<nsIStreamListener> listener =
+      new nsPingListener(info->requireSameHost, content);
+  if (!listener)
+    return;
+
+  // Observe redirects as well:
+  nsCOMPtr<nsIInterfaceRequestor> callbacks = do_QueryInterface(listener);
+  NS_ASSERTION(callbacks, "oops");
+  loadGroup->SetNotificationCallbacks(callbacks);
+
+  chan->AsyncOpen(listener, nsnull);
+
+  // Even if AsyncOpen failed, we still count this as a successful ping.  It's
+  // possible that AsyncOpen may have failed after triggering some background
+  // process that may have written something to the network.
+  info->numPings++;
+
+  // Prevent ping requests from stalling and never being garbage collected...
+  nsCOMPtr<nsITimer> timer =
+      do_CreateInstance(NS_TIMER_CONTRACTID);
+  if (timer) {
+    nsresult rv = timer->InitWithFuncCallback(OnPingTimeout, loadGroup,
+                                              PING_TIMEOUT,
+                                              nsITimer::TYPE_ONE_SHOT);
+    if (NS_SUCCEEDED(rv)) {
+      // When the timer expires, the callback function will release this
+      // reference to the loadgroup.
+      static_cast<nsILoadGroup *>(loadGroup.get())->AddRef();
+      loadGroup = 0;
+    }
+  }
+  
+  // If we failed to setup the timer, then we should just cancel the channel
+  // because we won't be able to ensure that it goes away in a timely manner.
+  if (loadGroup)
+    chan->Cancel(NS_ERROR_ABORT);
+}
+
+// Spec: http://whatwg.org/specs/web-apps/current-work/#ping
+static void
+DispatchPings(nsIContent *content, nsIURI *referrer)
+{
+  SendPingInfo info;
+
+  if (!PingsEnabled(&info.maxPings, &info.requireSameHost))
+    return;
+  if (info.maxPings == 0)
+    return;
+
+  info.numPings = 0;
+  info.referrer = referrer;
+
+  ForEachPing(content, SendPing, &info);
 }
 
 //----------------------------------------------------------------------
@@ -166,10 +549,9 @@ nsWebShell::nsWebShell() : nsDocShell()
   ++gNumberOfWebShells;
 #endif
 #ifdef DEBUG
-    printf("++WEBSHELL == %ld\n", gNumberOfWebShells);
+    printf("++WEBSHELL %p == %ld\n", (void*) this, gNumberOfWebShells);
 #endif
 
-  mThread = nsnull;
   InitFrameData();
   mItemType = typeContent;
   mCharsetReloadState = eCharsetReloadInit;
@@ -183,7 +565,6 @@ nsWebShell::~nsWebShell()
              // recursively if the refcount is allowed to remain 0
 
   mContentViewer=nsnull;
-  mDeviceContext=nsnull;
 
   InitFrameData();
 
@@ -192,7 +573,7 @@ nsWebShell::~nsWebShell()
   --gNumberOfWebShells;
 #endif
 #ifdef DEBUG
-  printf("--WEBSHELL == %ld\n", gNumberOfWebShells);
+  printf("--WEBSHELL %p == %ld\n", (void*) this, gNumberOfWebShells);
 #endif
 }
 
@@ -213,7 +594,7 @@ nsWebShell::EnsureCommandHandler()
     nsCOMPtr<nsPICommandUpdater>       commandUpdater = do_QueryInterface(mCommandManager);
     if (!commandUpdater) return NS_ERROR_FAILURE;
     
-    nsCOMPtr<nsIDOMWindow> domWindow = do_GetInterface(NS_STATIC_CAST(nsIInterfaceRequestor *, this));
+    nsCOMPtr<nsIDOMWindow> domWindow = do_GetInterface(static_cast<nsIInterfaceRequestor *>(this));
 #ifdef DEBUG
     nsresult rv =
 #endif
@@ -327,115 +708,80 @@ nsWebShell::SetRendering(PRBool aRender)
 
 // WebShell link handling
 
-struct OnLinkClickEvent : public PLEvent {
+class OnLinkClickEvent : public nsRunnable {
+public:
   OnLinkClickEvent(nsWebShell* aHandler, nsIContent* aContent,
-                   nsLinkVerb aVerb, nsIURI* aURI,
-                   const PRUnichar* aTargetSpec, nsIInputStream* aPostDataStream = 0, 
+                   nsIURI* aURI,
+                   const PRUnichar* aTargetSpec,
+                   nsIInputStream* aPostDataStream = 0, 
                    nsIInputStream* aHeadersDataStream = 0);
-  ~OnLinkClickEvent();
 
-  void HandleEvent() {
+  NS_IMETHOD Run() {
     nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mHandler->mScriptGlobal));
     nsAutoPopupStatePusher popupStatePusher(window, mPopupState);
 
-    mHandler->OnLinkClickSync(mContent, mVerb, mURI,
+    mHandler->OnLinkClickSync(mContent, mURI,
                               mTargetSpec.get(), mPostDataStream,
                               mHeadersDataStream,
                               nsnull, nsnull);
+    return NS_OK;
   }
 
-  nsWebShell*              mHandler;
+private:
+  nsRefPtr<nsWebShell>     mHandler;
   nsCOMPtr<nsIURI>         mURI;
   nsString                 mTargetSpec;
   nsCOMPtr<nsIInputStream> mPostDataStream;
   nsCOMPtr<nsIInputStream> mHeadersDataStream;
   nsCOMPtr<nsIContent>     mContent;
-  nsLinkVerb               mVerb;
   PopupControlState        mPopupState;
 };
 
-static void PR_CALLBACK HandlePLEvent(OnLinkClickEvent* aEvent)
-{
-  aEvent->HandleEvent();
-}
-
-static void PR_CALLBACK DestroyPLEvent(OnLinkClickEvent* aEvent)
-{
-  delete aEvent;
-}
-
 OnLinkClickEvent::OnLinkClickEvent(nsWebShell* aHandler,
                                    nsIContent *aContent,
-                                   nsLinkVerb aVerb,
                                    nsIURI* aURI,
                                    const PRUnichar* aTargetSpec,
                                    nsIInputStream* aPostDataStream,
                                    nsIInputStream* aHeadersDataStream)
+  : mHandler(aHandler)
+  , mURI(aURI)
+  , mTargetSpec(aTargetSpec)
+  , mPostDataStream(aPostDataStream)
+  , mHeadersDataStream(aHeadersDataStream)
+  , mContent(aContent)
 {
-  mHandler = aHandler;
-  NS_ADDREF(aHandler);
-  mURI = aURI;
-  mTargetSpec.Assign(aTargetSpec);
-  mPostDataStream = aPostDataStream;
-  mHeadersDataStream = aHeadersDataStream;
-  mContent = aContent;
-  mVerb = aVerb;
-
   nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mHandler->mScriptGlobal));
 
   mPopupState = window->GetPopupControlState();
-
-  PL_InitEvent(this, nsnull,
-               (PLHandleEventProc) ::HandlePLEvent,
-               (PLDestroyEventProc) ::DestroyPLEvent);
-
-  nsCOMPtr<nsIEventQueue> eventQueue;
-  aHandler->GetEventQueue(getter_AddRefs(eventQueue));
-  NS_ASSERTION(eventQueue, "no event queue");
-  if (eventQueue)
-    eventQueue->PostEvent(this);
-}
-
-OnLinkClickEvent::~OnLinkClickEvent()
-{
-  NS_IF_RELEASE(mHandler);
 }
 
 //----------------------------------------
 
 NS_IMETHODIMP
 nsWebShell::OnLinkClick(nsIContent* aContent,
-                        nsLinkVerb aVerb,
                         nsIURI* aURI,
                         const PRUnichar* aTargetSpec,
                         nsIInputStream* aPostDataStream,
                         nsIInputStream* aHeadersDataStream)
 {
-  OnLinkClickEvent* ev;
+  NS_ASSERTION(NS_IsMainThread(), "wrong thread");
 
-  ev = new OnLinkClickEvent(this, aContent, aVerb, aURI,
-                            aTargetSpec, aPostDataStream, aHeadersDataStream);
-  if (!ev) {
-    return NS_ERROR_OUT_OF_MEMORY;
+  if (!IsOKToLoadURI(aURI)) {
+    return NS_OK;
   }
-  return NS_OK;
-}
 
-nsresult
-nsWebShell::GetEventQueue(nsIEventQueue **aQueue)
-{
-  NS_ENSURE_ARG_POINTER(aQueue);
-  *aQueue = 0;
+  if (aContent->IsEditable()) {
+    return NS_OK;
+  }
 
-  nsCOMPtr<nsIEventQueueService> eventService(do_GetService(NS_EVENTQUEUESERVICE_CONTRACTID));
-  if (eventService)
-    eventService->GetThreadEventQueue(mThread, aQueue);
-  return *aQueue ? NS_OK : NS_ERROR_FAILURE;
+  nsCOMPtr<nsIRunnable> ev =
+      new OnLinkClickEvent(this, aContent, aURI, aTargetSpec,
+                           aPostDataStream, aHeadersDataStream);
+  return NS_DispatchToCurrentThread(ev);
 }
 
 NS_IMETHODIMP
 nsWebShell::OnLinkClickSync(nsIContent *aContent,
-                            nsLinkVerb aVerb,
                             nsIURI* aURI,
                             const PRUnichar* aTargetSpec,
                             nsIInputStream* aPostDataStream,
@@ -443,6 +789,22 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
                             nsIDocShell** aDocShell,
                             nsIRequest** aRequest)
 {
+  // Initialize the DocShell / Request
+  if (aDocShell) {
+    *aDocShell = nsnull;
+  }
+  if (aRequest) {
+    *aRequest = nsnull;
+  }
+
+  if (!IsOKToLoadURI(aURI)) {
+    return NS_OK;
+  }
+
+  if (aContent->IsEditable()) {
+    return NS_OK;
+  }
+
   {
     // defer to an external protocol handler if necessary...
     nsCOMPtr<nsIExternalProtocolService> extProtService = do_GetService(NS_EXTERNALPROTOCOLSERVICE_CONTRACTID);
@@ -455,7 +817,7 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
         PRBool isExposed;
         nsresult rv = extProtService->IsExposedProtocol(scheme.get(), &isExposed);
         if (NS_SUCCEEDED(rv) && !isExposed) {
-          return extProtService->LoadUrl(aURI);
+          return extProtService->LoadURI(aURI, this); 
         }
       }
     }
@@ -464,19 +826,15 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
   nsCOMPtr<nsIDOMNode> node(do_QueryInterface(aContent));
   NS_ENSURE_TRUE(node, NS_ERROR_UNEXPECTED);
 
-  PRBool isJS = PR_FALSE;
-  PRBool isData = PR_FALSE;
-
-  aURI->SchemeIs("javascript", &isJS);
-  aURI->SchemeIs("data", &isData);
-
-  if (isJS || isData) {
+  PRBool inherit;
+  nsresult rv = URIInheritsSecurityContext(aURI, &inherit);
+  if (NS_FAILED(rv) || inherit) {
     nsCOMPtr<nsIDocument> sourceDoc = aContent->GetDocument();
 
     if (!sourceDoc) {
       // The source is in a 'zombie' document, or not part of a
-      // document any more. Don't let it execute any javascript in the
-      // new document.
+      // document any more. Don't let it perform loads in this docshell.
+      // XXXbz why only for the inherit case?
 
       return NS_OK;
     }
@@ -486,8 +844,8 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
     NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
 
     if (presShell->GetDocument() != sourceDoc) {
-      // The source is not in the current document, don't let it
-      // execute any javascript in the current document.
+      // The source is not in the current document, don't let it load anything
+      // that would inherit the principals of the current document.
 
       return NS_OK;
     }
@@ -504,7 +862,7 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
   nsCOMPtr<nsIDocument> refererDoc(do_QueryInterface(refererOwnerDoc));
   NS_ENSURE_TRUE(refererDoc, NS_ERROR_UNEXPECTED);
 
-  nsIURI *referer = refererDoc->GetDocumentURI();
+  nsCOMPtr<nsIURI> referer = refererDoc->GetDocumentURI();
 
   // referer could be null here in some odd cases, but that's ok,
   // we'll just load the link w/o sending a referer in those cases.
@@ -518,45 +876,23 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
     anchor->GetType(typeHint);
   }
   
-  // Initialize the DocShell / Request
-  if (aDocShell) {
-    *aDocShell = nsnull;
+  rv = InternalLoad(aURI,               // New URI
+                    referer,            // Referer URI
+                    nsnull,             // No onwer
+                    INTERNAL_LOAD_FLAGS_INHERIT_OWNER, // Inherit owner from document
+                    target.get(),       // Window target
+                    NS_LossyConvertUTF16toASCII(typeHint).get(),
+                    aPostDataStream,    // Post data stream
+                    aHeadersDataStream, // Headers stream
+                    LOAD_LINK,          // Load type
+                    nsnull,             // No SHEntry
+                    PR_TRUE,            // first party site
+                    aDocShell,          // DocShell out-param
+                    aRequest);          // Request out-param
+  if (NS_SUCCEEDED(rv)) {
+    DispatchPings(aContent, referer);
   }
-  if (aRequest) {
-    *aRequest = nsnull;
-  }
-
-  switch(aVerb) {
-    case eLinkVerb_New:
-      NS_ASSERTION(target.IsEmpty(), "Losing window name information");
-      target.AssignLiteral("_blank");
-      // Fall into replace case
-    case eLinkVerb_Undefined:
-      // Fall through, this seems like the most reasonable action
-    case eLinkVerb_Replace:
-      {
-        return InternalLoad(aURI,               // New URI
-                            referer,            // Referer URI
-                            nsnull,             // No onwer
-                            INTERNAL_LOAD_FLAGS_INHERIT_OWNER, // Inherit owner from document
-                            target.get(),       // Window target
-                            NS_LossyConvertUCS2toASCII(typeHint).get(),
-                            aPostDataStream,    // Post data stream
-                            aHeadersDataStream, // Headers stream
-                            LOAD_LINK,          // Load type
-                            nsnull,             // No SHEntry
-                            PR_TRUE,            // first party site
-                            aDocShell,          // DocShell out-param
-                            aRequest);          // Request out-param
-      }
-      break;
-    case eLinkVerb_Embed:
-      // XXX TODO Should be similar to the HTML IMG ALT attribute handling
-      //          in NS 4.x
-    default:
-      NS_ABORT_IF_FALSE(0,"unexpected link verb");
-      return NS_ERROR_UNEXPECTED;
-  }
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -564,27 +900,44 @@ nsWebShell::OnOverLink(nsIContent* aContent,
                        nsIURI* aURI,
                        const PRUnichar* aTargetSpec)
 {
-  nsCOMPtr<nsIWebBrowserChrome> browserChrome(do_GetInterface(mTreeOwner));
+  if (aContent->IsEditable()) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIWebBrowserChrome2> browserChrome2 = do_GetInterface(mTreeOwner);
   nsresult rv = NS_ERROR_FAILURE;
 
-  if (browserChrome)  {
-    nsCOMPtr<nsITextToSubURI> textToSubURI = do_GetService(NS_ITEXTTOSUBURI_CONTRACTID, &rv);
-    if (NS_FAILED(rv)) return rv;
+  nsCOMPtr<nsIWebBrowserChrome> browserChrome;
+  if (!browserChrome2) {
+    browserChrome = do_GetInterface(mTreeOwner);
+    if (!browserChrome)
+      return rv;
+  }
 
-    // use url origin charset to unescape the URL
-    nsCAutoString charset;
-    rv = aURI->GetOriginCharset(charset);
-    NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsITextToSubURI> textToSubURI =
+      do_GetService(NS_ITEXTTOSUBURI_CONTRACTID, &rv);
+  if (NS_FAILED(rv))
+    return rv;
 
-    nsCAutoString spec;
-    rv = aURI->GetSpec(spec);
-    NS_ENSURE_SUCCESS(rv, rv);
+  // use url origin charset to unescape the URL
+  nsCAutoString charset;
+  rv = aURI->GetOriginCharset(charset);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    nsAutoString uStr;
-    rv = textToSubURI->UnEscapeURIForUI(charset, spec, uStr);    
+  nsCAutoString spec;
+  rv = aURI->GetSpec(spec);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    if (NS_SUCCEEDED(rv))
-      rv = browserChrome->SetStatus(nsIWebBrowserChrome::STATUS_LINK, uStr.get());
+  nsAutoString uStr;
+  rv = textToSubURI->UnEscapeURIForUI(charset, spec, uStr);    
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (browserChrome2) {
+    nsCOMPtr<nsIDOMElement> element = do_QueryInterface(aContent);
+    rv = browserChrome2->SetStatusWithContext(nsIWebBrowserChrome::STATUS_LINK,
+                                              uStr, element);
+  } else {
+    rv = browserChrome->SetStatus(nsIWebBrowserChrome::STATUS_LINK, uStr.get());
   }
   return rv;
 }
@@ -671,18 +1024,22 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
   //
   // If the page load failed, then deal with the error condition...
   // Errors are handled as follows:
-  //   1. Check to see if it a file not found error.
+  //   1. Check to see if it's a file not found error or bad content
+  //      encoding error.
   //   2. Send the URI to a keyword server (if enabled)
   //   3. If the error was DNS failure, then add www and .com to the URI
   //      (if appropriate).
   //   4. Throw an error dialog box...
   //
 
-  if(url && NS_FAILED(aStatus)) {
-    if (aStatus == NS_ERROR_FILE_NOT_FOUND) {
+  if (url && NS_FAILED(aStatus))
+  {
+    if (aStatus == NS_ERROR_FILE_NOT_FOUND ||
+        aStatus == NS_ERROR_INVALID_CONTENT_ENCODING)
+    {
       DisplayLoadError(aStatus, url, nsnull, channel);
       return NS_OK;
-    }  
+    }
 
     if (sURIFixup)
     {
@@ -703,11 +1060,6 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
 
         if (mPrefs && NS_FAILED(mPrefs->GetBoolPref("keyword.enabled", &keywordsEnabled)))
             keywordsEnabled = PR_FALSE;
-
-        nsCOMPtr<nsIURIFixup_MOZILLA_1_8_BRANCH> uriFix =
-          do_QueryInterface(sURIFixup);
-        if (!uriFix)
-          keywordsEnabled = PR_FALSE;
 
         nsCAutoString host;
         url->GetHost(host);
@@ -750,9 +1102,9 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
           if (idnSrv &&
               NS_SUCCEEDED(idnSrv->IsACE(host, &isACE)) && isACE &&
               NS_SUCCEEDED(idnSrv->ConvertACEtoUTF8(host, utf8Host)))
-            uriFix->KeywordToURI(utf8Host, getter_AddRefs(newURI));
+            sURIFixup->KeywordToURI(utf8Host, getter_AddRefs(newURI));
           else
-            uriFix->KeywordToURI(host, getter_AddRefs(newURI));
+            sURIFixup->KeywordToURI(host, getter_AddRefs(newURI));
         } // end keywordsEnabled
       }
 
@@ -807,11 +1159,7 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
         {
           nsCAutoString newSpec;
           newURI->GetSpec(newSpec);
-          NS_ConvertUTF8toUCS2 newSpecW(newSpec);
-
-          // This seems evil, since it is modifying the original URL
-          rv = url->SetSpec(newSpec);
-          if (NS_FAILED(rv)) return rv;
+          NS_ConvertUTF8toUTF16 newSpecW(newSpec);
 
           return LoadURI(newSpecW.get(),      // URI string
                          LOAD_FLAGS_NONE, // Load flags
@@ -840,7 +1188,11 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
              aStatus == NS_ERROR_REDIRECT_LOOP ||
              aStatus == NS_ERROR_UNKNOWN_SOCKET_TYPE ||
              aStatus == NS_ERROR_NET_INTERRUPT ||
-             aStatus == NS_ERROR_NET_RESET) {
+             aStatus == NS_ERROR_NET_RESET ||
+             aStatus == NS_ERROR_MALWARE_URI ||
+             aStatus == NS_ERROR_PHISHING_URI ||
+             aStatus == NS_ERROR_UNSAFE_CONTENT_TYPE ||
+             NS_ERROR_GET_MODULE(aStatus) == NS_ERROR_MODULE_SECURITY) {
       DisplayLoadError(aStatus, url, nsnull, channel);
     }
     else if (aStatus == NS_ERROR_DOCUMENT_NOT_CACHED) {
@@ -855,104 +1207,91 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
       nsCAutoString method;
       if (httpChannel)
         httpChannel->GetRequestMethod(method);
-      if (method.Equals("POST") && !IsOffline()) {
-        nsCOMPtr<nsIPrompt> prompter;
+      if (method.Equals("POST") && !NS_IsOffline()) {
         PRBool repost;
-        nsCOMPtr<nsIStringBundle> stringBundle;
-        GetPromptAndStringBundle(getter_AddRefs(prompter), 
-                                  getter_AddRefs(stringBundle));
-   
-        if (stringBundle && prompter) {
-          nsXPIDLString messageStr;
-          nsresult rv = stringBundle->GetStringFromName(NS_LITERAL_STRING("repost").get(), 
-                                                        getter_Copies(messageStr));
-            
-          if (NS_SUCCEEDED(rv) && messageStr) {
-            prompter->Confirm(nsnull, messageStr, &repost);
-            /* If the user pressed cancel in the dialog, return. Don't
-             * try to load the page with out the post data.
-             */
-            if (!repost)
-              return NS_OK;
+        rv = ConfirmRepost(&repost);
+        if (NS_FAILED(rv)) return rv;
+        // If the user pressed cancel in the dialog, return. Don't try to load
+        // the page without the post data.
+        if (!repost)
+          return NS_OK;
 
-            // The user wants to repost the data to the server. 
-            // If the page was loaded due to a back/forward/go
-            // operation, update the session history index.
-            // This is similar to the updating done in 
-            // nsDocShell::OnNewURI() for regular pages          
-            nsCOMPtr<nsISHistory> rootSH=mSessionHistory;
-            if (!mSessionHistory) {
-              nsCOMPtr<nsIDocShellTreeItem> root;
-              //Get the root docshell
-              GetSameTypeRootTreeItem(getter_AddRefs(root));
-              if (root) {
-                // QI root to nsIWebNavigation
-                nsCOMPtr<nsIWebNavigation> rootAsWebnav(do_QueryInterface(root));
-                if (rootAsWebnav) {
-                 // Get the handle to SH from the root docshell          
-                 rootAsWebnav->GetSessionHistory(getter_AddRefs(rootSH));             
-                }
-              }
-            }  // mSessionHistory
+        // The user wants to repost the data to the server.
+        // If the page was loaded due to a back/forward/go
+        // operation, update the session history index.
+        // This is similar to the updating done in
+        // nsDocShell::OnNewURI() for regular pages
+        nsCOMPtr<nsISHistory> rootSH=mSessionHistory;
+        if (!mSessionHistory) {
+          nsCOMPtr<nsIDocShellTreeItem> root;
+          //Get the root docshell
+          GetSameTypeRootTreeItem(getter_AddRefs(root));
+          if (root) {
+            // QI root to nsIWebNavigation
+            nsCOMPtr<nsIWebNavigation> rootAsWebnav(do_QueryInterface(root));
+            if (rootAsWebnav) {
+            // Get the handle to SH from the root docshell
+            rootAsWebnav->GetSessionHistory(getter_AddRefs(rootSH));
+            }
+          }
+        }  // mSessionHistory
 
-            if (rootSH && (mLoadType & LOAD_CMD_HISTORY)) {
-              nsCOMPtr<nsISHistoryInternal> shInternal(do_QueryInterface(rootSH));
-              if (shInternal) {
-                rootSH->GetIndex(&mPreviousTransIndex);
-                shInternal->UpdateIndex();
-                rootSH->GetIndex(&mLoadedTransIndex);
+        if (rootSH && (mLoadType & LOAD_CMD_HISTORY)) {
+          nsCOMPtr<nsISHistoryInternal> shInternal(do_QueryInterface(rootSH));
+          if (shInternal) {
+            rootSH->GetIndex(&mPreviousTransIndex);
+            shInternal->UpdateIndex();
+            rootSH->GetIndex(&mLoadedTransIndex);
 #ifdef DEBUG_PAGE_CACHE
-                printf("Previous index: %d, Loaded index: %d\n\n",
-                       mPreviousTransIndex, mLoadedTransIndex);
+            printf("Previous index: %d, Loaded index: %d\n\n",
+                  mPreviousTransIndex, mLoadedTransIndex);
 #endif
-              }
-            }
-
-            // Make it look like we really did honestly finish loading the
-            // history page we were loading, since the "reload" load we're
-            // about to kick off will reload our current history entry.  This
-            // is a bit of a hack, and if the force-load fails I think we'll
-            // end up being confused about what page we're on... but we would
-            // anyway, since we've updated the session history index above.
-            SetHistoryEntry(&mOSHE, loadingSHE);
-            
-            /* The user does want to repost the data to the server.
-             * Initiate a new load again.
-             */
-            /* Get the postdata if any from the channel */
-            nsCOMPtr<nsIInputStream> inputStream;
-            nsCOMPtr<nsIURI> referrer;
-            if (channel) {
-              nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
-   
-              if(httpChannel) {
-                httpChannel->GetReferrer(getter_AddRefs(referrer));
-                nsCOMPtr<nsIUploadChannel> uploadChannel(do_QueryInterface(channel));
-                if (uploadChannel) {
-                  uploadChannel->GetUploadStream(getter_AddRefs(inputStream));
-                }
-              }
-            }
-            nsCOMPtr<nsISeekableStream> postDataSeekable(do_QueryInterface(inputStream));
-            if (postDataSeekable)
-            {
-               postDataSeekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
-            }
-            InternalLoad(url,                               // URI
-                         referrer,                          // Referring URI
-                         nsnull,                            // Owner
-                         INTERNAL_LOAD_FLAGS_INHERIT_OWNER, // Inherit owner
-                         nsnull,                            // No window target
-                         nsnull,                            // No type hint
-                         inputStream,                       // Post data stream
-                         nsnull,                            // No headers stream
-                         LOAD_RELOAD_BYPASS_PROXY_AND_CACHE,// Load type
-                         nsnull,                            // No SHEntry
-                         PR_TRUE,                           // first party site
-                         nsnull,                            // No nsIDocShell
-                         nsnull);                           // No nsIRequest
           }
         }
+
+        // Make it look like we really did honestly finish loading the
+        // history page we were loading, since the "reload" load we're
+        // about to kick off will reload our current history entry.  This
+        // is a bit of a hack, and if the force-load fails I think we'll
+        // end up being confused about what page we're on... but we would
+        // anyway, since we've updated the session history index above.
+        SetHistoryEntry(&mOSHE, loadingSHE);
+
+        // The user does want to repost the data to the server.
+        // Initiate a new load again.
+
+        // Get the postdata if any from the channel.
+        nsCOMPtr<nsIInputStream> inputStream;
+        nsCOMPtr<nsIURI> referrer;
+        if (channel) {
+          nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
+
+          if(httpChannel) {
+            httpChannel->GetReferrer(getter_AddRefs(referrer));
+            nsCOMPtr<nsIUploadChannel> uploadChannel(do_QueryInterface(channel));
+            if (uploadChannel) {
+              uploadChannel->GetUploadStream(getter_AddRefs(inputStream));
+            }
+          }
+        }
+        nsCOMPtr<nsISeekableStream> postDataSeekable(do_QueryInterface(inputStream));
+        if (postDataSeekable)
+        {
+          postDataSeekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
+        }
+        InternalLoad(url,                               // URI
+                    referrer,                          // Referring URI
+                    nsnull,                            // Owner
+                    INTERNAL_LOAD_FLAGS_INHERIT_OWNER, // Inherit owner
+                    nsnull,                            // No window target
+                    nsnull,                            // No type hint
+                    inputStream,                       // Post data stream
+                    nsnull,                            // No headers stream
+                    LOAD_RELOAD_BYPASS_PROXY_AND_CACHE,// Load type
+                    nsnull,                            // No SHEntry
+                    PR_TRUE,                           // first party site
+                    nsnull,                            // No nsIDocShell
+                    nsnull);                           // No nsIRequest
       }
       else {
         DisplayLoadError(aStatus, url, nsnull, channel);
@@ -1131,14 +1470,6 @@ NS_IMETHODIMP nsWebShell::Create()
     return NS_OK;
   }
   
-  // Remember the current thread (in current and forseeable implementations,
-  // it'll just be the unique UI thread)
-  //
-  // Since this call must be made on the UI thread, we know the Event Queue
-  // will be associated with the current thread...
-  //
-  mThread = PR_GetCurrentThread();
-
   WEB_TRACE(WEB_TRACE_CALLS,
             ("nsWebShell::Init: this=%p", this));
 

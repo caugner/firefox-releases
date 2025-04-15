@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -41,7 +42,6 @@
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
 #include "nsPresContext.h"
-#include "nsUnitConversion.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
 #include "nsIRenderingContext.h"
@@ -70,23 +70,10 @@
 
 static const PRUnichar kSlashChar = PRUnichar('/');
 
-nsresult
-NS_NewMathMLmfracFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
+nsIFrame*
+NS_NewMathMLmfracFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsMathMLmfracFrame* it = new (aPresShell) nsMathMLmfracFrame;
-  if (nsnull == it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  *aNewFrame = it;
-  return NS_OK;
-}
-
-nsMathMLmfracFrame::nsMathMLmfracFrame()
-{
+  return new (aPresShell) nsMathMLmfracFrame(aContext);
 }
 
 nsMathMLmfracFrame::~nsMathMLmfracFrame()
@@ -101,44 +88,38 @@ PRBool
 nsMathMLmfracFrame::IsBevelled()
 {
   nsAutoString value;
-  if (NS_CONTENT_ATTR_HAS_VALUE == 
-      GetAttribute(mContent, mPresentationData.mstyle,
-                   nsMathMLAtoms::bevelled_, value)) {
-    if (value.EqualsLiteral("true")) {
-      return PR_TRUE;
-    }
-  }
-  return PR_FALSE;
+  GetAttribute(mContent, mPresentationData.mstyle, nsGkAtoms::bevelled_,
+               value);
+  return value.EqualsLiteral("true");
 }
 
 NS_IMETHODIMP
-nsMathMLmfracFrame::Init(nsPresContext*  aPresContext,
-                         nsIContent*      aContent,
+nsMathMLmfracFrame::Init(nsIContent*      aContent,
                          nsIFrame*        aParent,
-                         nsStyleContext*  aContext,
                          nsIFrame*        aPrevInFlow)
 {
-  nsresult rv = nsMathMLContainerFrame::Init(aPresContext, aContent, aParent, aContext, aPrevInFlow);
-  if (NS_FAILED(rv)) return rv;
+  nsresult rv = nsMathMLContainerFrame::Init(aContent, aParent, aPrevInFlow);
 
   if (IsBevelled()) {
     // enable the bevelled rendering
     mSlashChar = new nsMathMLChar();
     if (mSlashChar) {
+      nsPresContext* presContext = PresContext();
+    
       nsAutoString slashChar; slashChar.Assign(kSlashChar);
-      mSlashChar->SetData(aPresContext, slashChar);
-      ResolveMathMLCharStyle(aPresContext, mContent, mStyleContext, mSlashChar, PR_TRUE);
+      mSlashChar->SetData(presContext, slashChar);
+      ResolveMathMLCharStyle(presContext, mContent, mStyleContext, mSlashChar, PR_TRUE);
     }
   }
 
   return rv;
 }
 
-nsIAtom*
-nsMathMLmfracFrame::GetType() const
+eMathMLFrameType
+nsMathMLmfracFrame::GetMathMLFrameType()
 {
   // frac is "inner" in TeXBook, Appendix G, rule 15e. See also page 170.
-  return nsMathMLAtoms::innerMathMLFrame;
+  return eMathMLFrameType_Inner;
 }
 
 NS_IMETHODIMP
@@ -149,13 +130,14 @@ nsMathMLmfracFrame::TransmitAutomaticData()
   //    false increments scriptlevel by 1, within numerator and denominator.
   // 2. The TeXbook (Ch 17. p.141) says the numerator inherits the compression
   //    while the denominator is compressed
-  PRInt32 increment =
-     NS_MATHML_IS_DISPLAYSTYLE(mPresentationData.flags) ? 0 : 1;
-  mInnerScriptLevel = mPresentationData.scriptLevel + increment;
-  UpdatePresentationDataFromChildAt(0, -1, increment,
+  PRBool increment = !NS_MATHML_IS_DISPLAYSTYLE(mPresentationData.flags);
+  SetIncrementScriptLevel(0, increment);
+  SetIncrementScriptLevel(1, increment);
+
+  UpdatePresentationDataFromChildAt(0, -1,
     ~NS_MATHML_DISPLAYSTYLE,
      NS_MATHML_DISPLAYSTYLE);
-  UpdatePresentationDataFromChildAt(1,  1, 0,
+  UpdatePresentationDataFromChildAt(1,  1,
      NS_MATHML_COMPRESSED,
      NS_MATHML_COMPRESSED);
 
@@ -225,31 +207,22 @@ nsMathMLmfracFrame::CalcLineThickness(nsPresContext*  aPresContext,
 }
 
 NS_IMETHODIMP
-nsMathMLmfracFrame::Paint(nsPresContext*      aPresContext,
-                          nsIRenderingContext& aRenderingContext,
-                          const nsRect&        aDirtyRect,
-                          nsFramePaintLayer    aWhichLayer,
-                          PRUint32             aFlags)
+nsMathMLmfracFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                                     const nsRect&           aDirtyRect,
+                                     const nsDisplayListSet& aLists)
 {
   /////////////
   // paint the numerator and denominator
-  nsresult rv = nsMathMLContainerFrame::Paint(aPresContext, aRenderingContext,
-                                              aDirtyRect, aWhichLayer);
+  nsresult rv = nsMathMLContainerFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
+  NS_ENSURE_SUCCESS(rv, rv);
+  
   /////////////
   // paint the fraction line
   if (mSlashChar) {
     // bevelled rendering
-    mSlashChar->Paint(aPresContext, aRenderingContext,
-                      aDirtyRect, aWhichLayer, this);
-  }
-  else if ((NS_FRAME_PAINT_LAYER_FOREGROUND == aWhichLayer) &&
-           mStyleContext->GetStyleVisibility()->IsVisible() &&
-           !NS_MATHML_HAS_ERROR(mPresentationData.flags) &&
-           !mLineRect.IsEmpty()) {
-    // paint the fraction line with the current text color
-    aRenderingContext.SetColor(GetStyleColor()->mColor);
-    aRenderingContext.FillRect(mLineRect.x, mLineRect.y, 
-                               mLineRect.width, mLineRect.height);
+    rv = mSlashChar->Display(aBuilder, this, aLists);
+  } else {
+    rv = DisplayBar(aBuilder, this, mLineRect, aLists);
   }
 
   return rv;
@@ -273,6 +246,20 @@ nsMathMLmfracFrame::Reflow(nsPresContext*          aPresContext,
                                         aReflowState, aStatus);
 }
 
+/* virtual */ nscoord
+nsMathMLmfracFrame::GetIntrinsicWidth(nsIRenderingContext* aRenderingContext)
+{
+  if (mSlashChar) {
+    // bevelled rendering
+    return nsMathMLmfencedFrame::doGetIntrinsicWidth(aRenderingContext, this,
+                                                     nsnull, nsnull,
+                                                     mSlashChar, 1);
+  }
+
+  // default rendering
+  return nsMathMLContainerFrame::GetIntrinsicWidth(aRenderingContext);  
+}
+
 nscoord
 nsMathMLmfracFrame::FixInterFrameSpacing(nsHTMLReflowMetrics& aDesiredSize)
 {
@@ -291,7 +278,7 @@ nsMathMLmfracFrame::FixInterFrameSpacing(nsHTMLReflowMetrics& aDesiredSize)
   return gap;
 }
 
-NS_IMETHODIMP
+/* virtual */ nsresult
 nsMathMLmfracFrame::Place(nsIRenderingContext& aRenderingContext,
                           PRBool               aPlaceOrigin,
                           nsHTMLReflowMetrics& aDesiredSize)
@@ -299,8 +286,8 @@ nsMathMLmfracFrame::Place(nsIRenderingContext& aRenderingContext,
   ////////////////////////////////////
   // Get the children's desired sizes
   nsBoundingMetrics bmNum, bmDen;
-  nsHTMLReflowMetrics sizeNum (nsnull);
-  nsHTMLReflowMetrics sizeDen (nsnull);
+  nsHTMLReflowMetrics sizeNum;
+  nsHTMLReflowMetrics sizeDen;
   nsIFrame* frameDen = nsnull;
   nsIFrame* frameNum = mFrames.FirstChild();
   if (frameNum) 
@@ -316,8 +303,8 @@ nsMathMLmfracFrame::Place(nsIRenderingContext& aRenderingContext,
   //////////////////
   // Get shifts
 
-  nsPresContext* presContext = GetPresContext();
-  nscoord onePixel = presContext->IntScaledPixelsToTwips(1);
+  nsPresContext* presContext = PresContext();
+  nscoord onePixel = nsPresContext::CSSPixelsToAppUnits(1);
 
   aRenderingContext.SetFont(GetStyleFont()->mFont, nsnull);
   nsCOMPtr<nsIFontMetrics> fm;
@@ -330,7 +317,7 @@ nsMathMLmfracFrame::Place(nsIRenderingContext& aRenderingContext,
   // by default, leave at least one-pixel padding at either end, or use
   // lspace & rspace that may come from <mo> if we are an embellished container
   // (we fetch values from the core since they may use units that depend
-  // on style data, and style changes could have occured in the core since
+  // on style data, and style changes could have occurred in the core since
   // our last visit there)
   nsEmbellishData coreData;
   GetEmbellishDataFrom(mEmbellishData.coreFrame, coreData);
@@ -339,7 +326,7 @@ nsMathMLmfracFrame::Place(nsIRenderingContext& aRenderingContext,
 
   // see if the linethickness attribute is there 
   nsAutoString value;
-  GetAttribute(mContent, mPresentationData.mstyle, nsMathMLAtoms::linethickness_, value);
+  GetAttribute(mContent, mPresentationData.mstyle, nsGkAtoms::linethickness_, value);
   mLineRect.height = CalcLineThickness(presContext, mStyleContext, value,
                                        onePixel, defaultRuleThickness);
   nscoord numShift = 0;
@@ -423,21 +410,20 @@ nsMathMLmfracFrame::Place(nsIRenderingContext& aRenderingContext,
   width += leftSpace + rightSpace;
 
   // see if the numalign attribute is there 
-  if (NS_CONTENT_ATTR_HAS_VALUE == GetAttribute(mContent, mPresentationData.mstyle, 
-                   nsMathMLAtoms::numalign_, value)) {
-    if (value.EqualsLiteral("left"))
-      dxNum = leftSpace;
-    else if (value.EqualsLiteral("right"))
-      dxNum = width - rightSpace - sizeNum.width;
-  }
+  GetAttribute(mContent, mPresentationData.mstyle, nsGkAtoms::numalign_,
+               value);
+  if (value.EqualsLiteral("left"))
+    dxNum = leftSpace;
+  else if (value.EqualsLiteral("right"))
+    dxNum = width - rightSpace - sizeNum.width;
+
   // see if the denomalign attribute is there 
-  if (NS_CONTENT_ATTR_HAS_VALUE == GetAttribute(mContent, mPresentationData.mstyle, 
-                   nsMathMLAtoms::denomalign_, value)) {
-    if (value.EqualsLiteral("left"))
-      dxDen = leftSpace;
-    else if (value.EqualsLiteral("right"))
-      dxDen = width - rightSpace - sizeDen.width;
-  }
+  GetAttribute(mContent, mPresentationData.mstyle, nsGkAtoms::denomalign_,
+               value);
+  if (value.EqualsLiteral("left"))
+    dxDen = leftSpace;
+  else if (value.EqualsLiteral("right"))
+    dxDen = width - rightSpace - sizeDen.width;
 
   mBoundingMetrics.rightBearing =
     PR_MAX(dxNum + bmNum.rightBearing, dxDen + bmDen.rightBearing);
@@ -452,8 +438,8 @@ nsMathMLmfracFrame::Place(nsIRenderingContext& aRenderingContext,
   mBoundingMetrics.width = width;
 
   aDesiredSize.ascent = sizeNum.ascent + numShift;
-  aDesiredSize.descent = sizeDen.descent + denShift;
-  aDesiredSize.height = aDesiredSize.ascent + aDesiredSize.descent;
+  aDesiredSize.height = aDesiredSize.ascent +
+                        sizeDen.height - sizeDen.ascent + denShift;
   aDesiredSize.width = mBoundingMetrics.width;
   aDesiredSize.mBoundingMetrics = mBoundingMetrics;
 
@@ -477,12 +463,11 @@ nsMathMLmfracFrame::Place(nsIRenderingContext& aRenderingContext,
 }
 
 NS_IMETHODIMP
-nsMathMLmfracFrame::AttributeChanged(nsIContent*     aContent,
-                                     PRInt32         aNameSpaceID,
+nsMathMLmfracFrame::AttributeChanged(PRInt32         aNameSpaceID,
                                      nsIAtom*        aAttribute,
                                      PRInt32         aModType)
 {
-  if (nsMathMLAtoms::bevelled_ == aAttribute) {
+  if (nsGkAtoms::bevelled_ == aAttribute) {
     if (!IsBevelled()) {
       // disable the bevelled rendering
       if (mSlashChar) {
@@ -495,7 +480,7 @@ nsMathMLmfracFrame::AttributeChanged(nsIContent*     aContent,
       if (!mSlashChar) {
         mSlashChar = new nsMathMLChar();
         if (mSlashChar) {
-          nsPresContext* presContext = GetPresContext();
+          nsPresContext* presContext = PresContext();
           nsAutoString slashChar; slashChar.Assign(kSlashChar);
           mSlashChar->SetData(presContext, slashChar);
           ResolveMathMLCharStyle(presContext, mContent, mStyleContext, mSlashChar, PR_TRUE);
@@ -504,59 +489,12 @@ nsMathMLmfracFrame::AttributeChanged(nsIContent*     aContent,
     }
   }
   return nsMathMLContainerFrame::
-         AttributeChanged(aContent, aNameSpaceID,
-                          aAttribute, aModType);
-}
-
-NS_IMETHODIMP
-nsMathMLmfracFrame::UpdatePresentationData(PRInt32         aScriptLevelIncrement,
-                                           PRUint32        aFlagsValues,
-                                           PRUint32        aFlagsToUpdate)
-{
-  // mfrac is special... The REC says:
-  // The <mfrac> element sets displaystyle to "false", or if it was already
-  // false increments scriptlevel by 1, within numerator and denominator.
-  // @see similar peculiarities for <mover>, <munder>, <munderover>
-
-  // This means that
-  // 1. If our displaystyle is being changed from true to false, we have
-  //    to propagate an inner scriptlevel increment to our children
-  // 2. If the displaystyle is changed from false to true, we have to undo
-  //    any incrementation that was done on the inner scriptlevel
-
-  if (NS_MATHML_IS_DISPLAYSTYLE(aFlagsToUpdate)) {
-    if (mInnerScriptLevel > mPresentationData.scriptLevel) {
-      // we get here if our displaystyle is currently false
-      NS_ASSERTION(!NS_MATHML_IS_DISPLAYSTYLE(mPresentationData.flags), "out of sync");
-      if (NS_MATHML_IS_DISPLAYSTYLE(aFlagsValues)) {
-        // ...and is being set to true, so undo the inner increment now
-        mInnerScriptLevel = mPresentationData.scriptLevel;
-        UpdatePresentationDataFromChildAt(0, -1, -1, 0, 0);
-      }
-    }
-    else {
-      // case of mInnerScriptLevel == mPresentationData.scriptLevel, our
-      // current displaystyle is true; we increment the inner scriptlevel if
-      // our displaystyle is about to be set to false; since mInnerScriptLevel
-      // is changed, we can only get here once
-      NS_ASSERTION(NS_MATHML_IS_DISPLAYSTYLE(mPresentationData.flags), "out of sync");
-      if (!NS_MATHML_IS_DISPLAYSTYLE(aFlagsValues)) {
-        mInnerScriptLevel = mPresentationData.scriptLevel + 1;
-        UpdatePresentationDataFromChildAt(0, -1, 1, 0, 0);
-      }
-    }
-  }
-
-  mInnerScriptLevel += aScriptLevelIncrement;
-  return nsMathMLContainerFrame::
-    UpdatePresentationData(aScriptLevelIncrement, aFlagsValues,
-                           aFlagsToUpdate);
+         AttributeChanged(aNameSpaceID, aAttribute, aModType);
 }
 
 NS_IMETHODIMP
 nsMathMLmfracFrame::UpdatePresentationDataFromChildAt(PRInt32         aFirstIndex,
                                                       PRInt32         aLastIndex,
-                                                      PRInt32         aScriptLevelIncrement,
                                                       PRUint32        aFlagsValues,
                                                       PRUint32        aFlagsToUpdate)
 {
@@ -576,7 +514,7 @@ nsMathMLmfracFrame::UpdatePresentationDataFromChildAt(PRInt32         aFirstInde
 #endif
   return nsMathMLContainerFrame::
     UpdatePresentationDataFromChildAt(aFirstIndex, aLastIndex,
-      aScriptLevelIncrement, aFlagsValues, aFlagsToUpdate);
+      aFlagsValues, aFlagsToUpdate);
 }
 
 // ----------------------

@@ -40,8 +40,8 @@
 #define __nsSchemaValidatorUtils_h__
 
 #include "nsCOMPtr.h"
-#include "nsString.h"
-#include "nsISchema.h"
+#include "nsStringAPI.h"
+#include "nsISVSchema.h"
 #include "nsIDOMNode.h"
 #include "nsCOMArray.h"
 #include "nsIServiceManager.h"
@@ -124,7 +124,7 @@ public:
 } ;
 
 struct nsSchemaDerivedSimpleType {
-  nsISchemaSimpleType* mBaseType;
+  nsISVSchemaSimpleType* mBaseType;
 
   nsSchemaIntFacet length;
   nsSchemaIntFacet minLength;
@@ -157,7 +157,7 @@ struct nsSchemaTime {
   PRUint8 hour;
   PRUint8 minute;
   PRUint8 second;
-  PRUint32 milisecond;
+  PRUint32 millisecond;
   PRBool tzIsNegative;
   PRUint8 tzhour;
   PRUint8 tzminute;
@@ -182,7 +182,9 @@ public:
 
   static PRBool ParseDateTime(const nsAString & aNodeValue,
                               nsSchemaDateTime *aResult);
-  static PRBool ParseSchemaDate(const nsAString & aStrValue, nsSchemaDate *aDate);
+  static PRBool ParseSchemaDate(const nsAString & aStrValue,
+                                PRBool aAllowTimeZone,
+                                nsSchemaDate *aDate);
   static PRBool ParseSchemaTime(const nsAString & aStrValue, nsSchemaTime *aTime);
 
   static PRBool ParseSchemaTimeZone(const nsAString & aStrValue, 
@@ -218,6 +220,14 @@ public:
   static PRBool IsValidSchemaNormalizedString(const nsAString & aStrValue);
   static PRBool IsValidSchemaToken(const nsAString & aStrValue);
   static PRBool IsValidSchemaLanguage(const nsAString & aStrValue);
+  static PRBool IsValidSchemaName(const nsAString & aStrValue);
+  static PRBool IsValidSchemaNCName(const nsAString & aStrValue);
+  static PRBool IsValidSchemaNMToken(const nsAString & aStrValue);
+  static PRBool IsValidSchemaNMTokens(const nsAString & aStrValue);
+  static PRBool IsValidSchemaID(const nsAString & aStrValue);
+  static PRBool IsValidSchemaIDRef(const nsAString & aStrValue);
+  static PRBool IsValidSchemaIDRefs(const nsAString & aStrValue);
+  static PRBool IsWhitespace(PRUnichar aChar);
 
   static PRBool HandleEnumeration(const nsAString &aStrValue,
                                   const nsStringArray &aEnumerationList);
@@ -225,12 +235,21 @@ public:
   static void RemoveLeadingZeros(nsAString & aString);
   static void RemoveTrailingZeros(nsAString & aString);
 
-  static nsresult GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
+  static nsresult GetDerivedSimpleType(nsISVSchemaSimpleType *aSimpleType,
                                        nsSchemaDerivedSimpleType *aDerived);
   static void CopyDerivedSimpleType(nsSchemaDerivedSimpleType *aDerivedDest,
                                     nsSchemaDerivedSimpleType *aDerivedSrc);
 
   static void SetToNullOrElement(nsIDOMNode *aNode, nsIDOMNode **aResultNode);
+  static PRInt32 FindCharInSet(const nsAString & aString, const char *aSet,
+                               PRInt32 aOffset = 0);
+  /**
+   * Determine if an xsd:date, xsd:dateTime, or xsd:time string
+   * represents a GMT (aka UTC) time. This function assumes the
+   * aDateTime string has already been validated.
+   */
+  static PRBool IsGMT(const nsAString & aDateTime);
+
 private:
   nsSchemaValidatorUtils();
   ~nsSchemaValidatorUtils();

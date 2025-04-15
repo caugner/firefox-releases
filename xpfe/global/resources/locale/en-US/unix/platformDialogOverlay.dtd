@@ -1,12 +1,6 @@
 <!-- unix -->
 
 <!-- OK Cancel Buttons -->
-<!ENTITY okButton.label			"OK"> 
-<!ENTITY cancelButton.label		"Cancel"> 
-<!ENTITY helpButton.label		"Help">
-
-<!-- Key labels, for mousewheel prefs -->
-<!ENTITY ctrlKey.label			"Control">
-<!ENTITY altKey.label			"Alt">
-<!ENTITY shiftKey.label			"Shift">
-
+<!ENTITY okButton.label         "OK"> 
+<!ENTITY cancelButton.label     "Cancel"> 
+<!ENTITY helpButton.label       "Help">

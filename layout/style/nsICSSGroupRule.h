@@ -34,29 +34,36 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/*
+ * internal interface representing CSS style rules that contain other
+ * rules, such as @media rules
+ */
+
 #ifndef nsICSSGroupRule_h___
 #define nsICSSGroupRule_h___
 
 #include "nsICSSRule.h"
-#include "nsISupportsArray.h"
+#include "nsCOMArray.h"
 
 class nsIAtom;
 class nsPresContext;
 
-// IID for the nsICSSGroupRule interface {5af048aa-1af0-11d3-9d83-0060088f9ff7}
+// IID for the nsICSSGroupRule interface {67b8492e-6d8d-43a5-8037-71eb269f24fe}
 #define NS_ICSS_GROUP_RULE_IID     \
-{0x5af048aa, 0x1af0, 0x11d3, {0x9d, 0x83, 0x00, 0x60, 0x08, 0x8f, 0x9f, 0xf7}}
+{0x67b8492e, 0x6d8d, 0x43a5, {0x80, 0x37, 0x71, 0xeb, 0x26, 0x9f, 0x24, 0xfe}}
 
 class nsICSSGroupRule : public nsICSSRule {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICSS_GROUP_RULE_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICSS_GROUP_RULE_IID)
 
   NS_IMETHOD  AppendStyleRule(nsICSSRule* aRule) = 0;
 
   NS_IMETHOD  StyleRuleCount(PRInt32& aCount) const = 0;
   NS_IMETHOD  GetStyleRuleAt(PRInt32 aIndex, nsICSSRule*& aRule) const = 0;
 
-  NS_IMETHOD  EnumerateRulesForwards(nsISupportsArrayEnumFunc aFunc, void * aData) const = 0;
+  typedef nsCOMArray<nsICSSRule>::nsCOMArrayEnumFunc RuleEnumFunc;
+  NS_IMETHOD_(PRBool) EnumerateRulesForwards(RuleEnumFunc aFunc, void * aData) const = 0;
 
   /*
    * The next three methods should never be called unless you have first
@@ -64,11 +71,14 @@ public:
    * called, DidDirty() needs to be called on the sheet.
    */
   NS_IMETHOD  DeleteStyleRuleAt(PRUint32 aIndex) = 0;
-  NS_IMETHOD  InsertStyleRulesAt(PRUint32 aIndex, nsISupportsArray* aRules) = 0;
+  NS_IMETHOD  InsertStyleRulesAt(PRUint32 aIndex,
+                                 nsCOMArray<nsICSSRule>& aRules) = 0;
   NS_IMETHOD  ReplaceStyleRule(nsICSSRule* aOld, nsICSSRule* aNew) = 0;
 
   NS_IMETHOD_(PRBool) UseForPresentation(nsPresContext* aPresContext) = 0;
    
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsICSSGroupRule, NS_ICSS_GROUP_RULE_IID)
 
 #endif /* nsICSSGroupRule_h___ */

@@ -43,7 +43,6 @@
 
 var dialog;
 var printService       = null;
-var printOptions       = null;
 var gOriginalNumCopies = 1;
 
 var paramBlock;
@@ -61,22 +60,22 @@ function initDialog()
   dialog.propertiesButton = document.getElementById("properties");
   dialog.descText         = document.getElementById("descText");
 
-  dialog.printrangeGroup = document.getElementById("printrangeGroup");
-  dialog.allpagesRadio   = document.getElementById("allpagesRadio");
+  dialog.printRangeGroup = document.getElementById("printRangeGroup");
+  dialog.allPagesRadio   = document.getElementById("allPagesRadio");
   dialog.rangeRadio      = document.getElementById("rangeRadio");
   dialog.selectionRadio  = document.getElementById("selectionRadio");
-  dialog.frompageInput   = document.getElementById("frompageInput");
-  dialog.frompageLabel   = document.getElementById("frompageLabel");
-  dialog.topageInput     = document.getElementById("topageInput");
-  dialog.topageLabel     = document.getElementById("topageLabel");
+  dialog.fromPageInput   = document.getElementById("fromPageInput");
+  dialog.fromPageLabel   = document.getElementById("fromPageLabel");
+  dialog.toPageInput     = document.getElementById("toPageInput");
+  dialog.toPageLabel     = document.getElementById("toPageLabel");
 
   dialog.numCopiesInput  = document.getElementById("numCopiesInput");  
 
-  dialog.printframeGroup      = document.getElementById("printframeGroup");
-  dialog.aslaidoutRadio       = document.getElementById("aslaidoutRadio");
-  dialog.selectedframeRadio   = document.getElementById("selectedframeRadio");
-  dialog.eachframesepRadio    = document.getElementById("eachframesepRadio");
-  dialog.printframeGroupLabel = document.getElementById("printframeGroupLabel");
+  dialog.printFrameGroup      = document.getElementById("printFrameGroup");
+  dialog.asLaidOutRadio       = document.getElementById("asLaidOutRadio");
+  dialog.selectedFrameRadio   = document.getElementById("selectedFrameRadio");
+  dialog.eachFrameSepRadio    = document.getElementById("eachFrameSepRadio");
+  dialog.printFrameGroupLabel = document.getElementById("printFrameGroupLabel");
 
   dialog.fileCheck       = document.getElementById("fileCheck");
   dialog.printerLabel    = document.getElementById("printerLabel");
@@ -148,49 +147,46 @@ listElement.prototype =
     appendPrinterNames: 
       function (aDataObject) 
         { 
-          var list = document.getElementById("printerList"); 
-          var strDefaultPrinterName = "";
-          var printerName;
-
-          // build popup menu from printer names
-          while (aDataObject.hasMoreElements()) {
-            printerName = aDataObject.getNext();
-            printerName = printerName.QueryInterface(Components.interfaces.nsISupportsString);
-            var printerNameStr = printerName.toString();
-            if (strDefaultPrinterName == "")
-               strDefaultPrinterName = printerNameStr;
-
-            list.appendItem(printerNameStr, printerNameStr, getPrinterDescription(printerNameStr));
-          }
-          if (strDefaultPrinterName != "") {
-            this.listElement.removeAttribute("disabled");
-          } else {
+          if ((null == aDataObject) || !aDataObject.hasMore()) {
+            // disable dialog
             var stringBundle = srGetStrBundle("chrome://global/locale/printing.properties");
-            this.listElement.setAttribute("value", strDefaultPrinterName);
+            this.listElement.setAttribute("value", "");
             this.listElement.setAttribute("label", stringBundle.GetStringFromName("noprinter"));
 
-            // disable dialog
             this.listElement.setAttribute("disabled", "true");
             dialog.printerLabel.setAttribute("disabled","true");
             dialog.propertiesButton.setAttribute("disabled","true");
             dialog.fileCheck.setAttribute("disabled","true");
             dialog.printButton.setAttribute("disabled","true");
           }
-
-          return strDefaultPrinterName;
+          else {
+            // build popup menu from printer names
+            var list = document.getElementById("printerList"); 
+            do {
+              printerNameStr = aDataObject.getNext();
+              list.appendItem(printerNameStr, printerNameStr, getPrinterDescription(printerNameStr));
+            } while (aDataObject.hasMore());
+            this.listElement.removeAttribute("disabled");
+          }
         } 
   };
 
 //---------------------------------------------------
 function getPrinters()
 {
-  var printerEnumerator = printOptions.availablePrinters();
-
   var selectElement = new listElement(dialog.printerList);
   selectElement.clearList();
-  var strDefaultPrinterName = selectElement.appendPrinterNames(printerEnumerator);
 
-  selectElement.listElement.value = strDefaultPrinterName;
+  var printerEnumerator;
+  try {
+    printerEnumerator =
+        Components.classes["@mozilla.org/gfx/printerenumerator;1"]
+                  .getService(Components.interfaces.nsIPrinterEnumerator)
+                  .printerNameList;
+  } catch(e) { printerEnumerator = null; }
+
+  selectElement.appendPrinterNames(printerEnumerator);
+  selectElement.listElement.value = printService.defaultPrinterName;
 
   // make sure we load the prefs for the initially selected printer
   setPrinterDefaultsForSelectedPrinter();
@@ -236,15 +232,15 @@ function displayPropertiesDialog()
 function doPrintRange(inx)
 {
   if (inx == 1) {
-    dialog.frompageInput.removeAttribute("disabled");
-    dialog.frompageLabel.removeAttribute("disabled");
-    dialog.topageInput.removeAttribute("disabled");
-    dialog.topageLabel.removeAttribute("disabled");
+    dialog.fromPageInput.removeAttribute("disabled");
+    dialog.fromPageLabel.removeAttribute("disabled");
+    dialog.toPageInput.removeAttribute("disabled");
+    dialog.toPageLabel.removeAttribute("disabled");
   } else {
-    dialog.frompageInput.setAttribute("disabled","true");
-    dialog.frompageLabel.setAttribute("disabled","true");
-    dialog.topageInput.setAttribute("disabled","true");
-    dialog.topageLabel.setAttribute("disabled","true");
+    dialog.fromPageInput.setAttribute("disabled","true");
+    dialog.fromPageLabel.setAttribute("disabled","true");
+    dialog.toPageInput.setAttribute("disabled","true");
+    dialog.toPageLabel.setAttribute("disabled","true");
   }
 }
 
@@ -265,12 +261,11 @@ function loadDialog()
       printService = printService.getService();
       if (printService) {
         printService = printService.QueryInterface(Components.interfaces.nsIPrintSettingsService);
-        printOptions = printService.QueryInterface(Components.interfaces.nsIPrintOptions);
       }
     }
   } catch(e) {}
 
-  // Note: getPrinters sets up the PrintToFile radio buttons and initalises gPrintSettings
+  // Note: getPrinters sets up the PrintToFile control
   getPrinters();
 
   if (gPrintSettings) {
@@ -291,15 +286,15 @@ function loadDialog()
     dump("selection_radio_enabled "+print_selection_radio_enabled+"\n");
   }
 
-  dialog.printrangeGroup.selectedItem = dialog.allpagesRadio;
+  dialog.printRangeGroup.selectedItem = dialog.allPagesRadio;
   if (print_selection_radio_enabled) {
     dialog.selectionRadio.removeAttribute("disabled");
   } else {
     dialog.selectionRadio.setAttribute("disabled","true");
   }
   doPrintRange(dialog.rangeRadio.selected);
-  dialog.frompageInput.value  = 1;
-  dialog.topageInput.value    = 1;
+  dialog.fromPageInput.value  = 1;
+  dialog.toPageInput.value    = 1;
   dialog.numCopiesInput.value = print_copies;
 
   if (doDebug) {
@@ -308,30 +303,30 @@ function loadDialog()
 
   // print frame
   if (print_howToEnableUI == gPrintSetInterface.kFrameEnableAll) {
-    dialog.aslaidoutRadio.removeAttribute("disabled");
+    dialog.asLaidOutRadio.removeAttribute("disabled");
 
-    dialog.selectedframeRadio.removeAttribute("disabled");
-    dialog.eachframesepRadio.removeAttribute("disabled");
-    dialog.printframeGroupLabel.removeAttribute("disabled");
+    dialog.selectedFrameRadio.removeAttribute("disabled");
+    dialog.eachFrameSepRadio.removeAttribute("disabled");
+    dialog.printFrameGroupLabel.removeAttribute("disabled");
 
     // initialize radio group
-    dialog.printframeGroup.selectedItem = dialog.selectedframeRadio;
+    dialog.printFrameGroup.selectedItem = dialog.selectedFrameRadio;
 
   } else if (print_howToEnableUI == gPrintSetInterface.kFrameEnableAsIsAndEach) {
-    dialog.aslaidoutRadio.removeAttribute("disabled");       //enable
+    dialog.asLaidOutRadio.removeAttribute("disabled");       //enable
 
-    dialog.selectedframeRadio.setAttribute("disabled","true"); // disable
-    dialog.eachframesepRadio.removeAttribute("disabled");       // enable
-    dialog.printframeGroupLabel.removeAttribute("disabled");    // enable
+    dialog.selectedFrameRadio.setAttribute("disabled","true"); // disable
+    dialog.eachFrameSepRadio.removeAttribute("disabled");       // enable
+    dialog.printFrameGroupLabel.removeAttribute("disabled");    // enable
 
     // initialize
-    dialog.printframeGroup.selectedItem = dialog.eachframesepRadio;
+    dialog.printFrameGroup.selectedItem = dialog.eachFrameSepRadio;
 
   } else {
-    dialog.aslaidoutRadio.setAttribute("disabled","true");
-    dialog.selectedframeRadio.setAttribute("disabled","true");
-    dialog.eachframesepRadio.setAttribute("disabled","true");
-    dialog.printframeGroupLabel.setAttribute("disabled","true");
+    dialog.asLaidOutRadio.setAttribute("disabled","true");
+    dialog.selectedFrameRadio.setAttribute("disabled","true");
+    dialog.eachFrameSepRadio.setAttribute("disabled","true");
+    dialog.printFrameGroupLabel.setAttribute("disabled","true");
   }
 }
 
@@ -369,24 +364,24 @@ function onAccept()
       if (!chooseFile())
         return false;
 
-    if (dialog.allpagesRadio.selected) {
+    if (dialog.allPagesRadio.selected) {
       gPrintSettings.printRange = gPrintSetInterface.kRangeAllPages;
     } else if (dialog.rangeRadio.selected) {
       gPrintSettings.printRange = gPrintSetInterface.kRangeSpecifiedPageRange;
     } else if (dialog.selectionRadio.selected) {
       gPrintSettings.printRange = gPrintSetInterface.kRangeSelection;
     }
-    gPrintSettings.startPageRange = dialog.frompageInput.value;
-    gPrintSettings.endPageRange   = dialog.topageInput.value;
+    gPrintSettings.startPageRange = dialog.fromPageInput.value;
+    gPrintSettings.endPageRange   = dialog.toPageInput.value;
     gPrintSettings.numCopies      = dialog.numCopiesInput.value;
 
     var frametype = gPrintSetInterface.kNoFrames;
     if (print_howToEnableUI != gPrintSetInterface.kFrameEnableNone) {
-      if (dialog.aslaidoutRadio.selected) {
+      if (dialog.asLaidOutRadio.selected) {
         frametype = gPrintSetInterface.kFramesAsIs;
-      } else if (dialog.selectedframeRadio.selected) {
+      } else if (dialog.selectedFrameRadio.selected) {
         frametype = gPrintSetInterface.kSelectedFrame;
-      } else if (dialog.eachframesepRadio.selected) {
+      } else if (dialog.eachFrameSepRadio.selected) {
         frametype = gPrintSetInterface.kEachFrameSep;
       } else {
         frametype = gPrintSetInterface.kSelectedFrame;
@@ -410,12 +405,9 @@ function onAccept()
   saveToPrefs = gPrefs.getBoolPref("print.save_print_settings");
 
   if (saveToPrefs && printService != null) {
-    var flags = gPrintSetInterface.kInitSavePaperSizeType  | 
-                gPrintSetInterface.kInitSavePaperSizeUnit  |
-                gPrintSetInterface.kInitSavePaperWidth     | 
-                gPrintSetInterface.kInitSavePaperHeight    |
-                gPrintSetInterface.kInitSavePaperName      | 
+    var flags = gPrintSetInterface.kInitSavePaperSize      | 
                 gPrintSetInterface.kInitSaveColorSpace     |
+                gPrintSetInterface.kInitSaveEdges          |
                 gPrintSetInterface.kInitSaveInColor        |
                 gPrintSetInterface.kInitSaveResolutionName |
                 gPrintSetInterface.kInitSaveDownloadFonts  |

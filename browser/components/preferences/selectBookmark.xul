@@ -5,6 +5,8 @@
 <?xml-stylesheet href="chrome://global/skin/"?>
 <?xml-stylesheet href="chrome://browser/skin/places/places.css"?>
 
+<?xul-overlay href="chrome://browser/content/places/placesOverlay.xul"?>
+
 <!DOCTYPE dialog SYSTEM "chrome://browser/locale/preferences/selectBookmark.dtd">
 
 <dialog id="selectBookmarkDialog"
@@ -13,21 +15,19 @@
         persist="screenX screenY width height" screenX="24" screenY="24"      
         onload="SelectBookmarkDialog.init();" 
         ondialogaccept="SelectBookmarkDialog.accept();">
-  
-  <script type="application/x-javascript"
-          src="chrome://browser/content/places/controller.js"/>
+
   <script type="application/x-javascript"
           src="chrome://browser/content/preferences/selectBookmark.js"/>
   
   <description>&selectBookmark.label;</description>
-  
+
   <separator class="thin"/>
-  
+
   <tree id="bookmarks" flex="1" type="places" 
         style="height: 15em;" 
-        place="place:&amp;folder=1&amp;group=3"
-        hidecolumnpicker="true" seltype="single"
-        ondblclick="SelectBookmarkDialog.linkChosen();"
+        hidecolumnpicker="true"
+        seltype="single"
+        ondblclick="SelectBookmarkDialog.onItemDblClick();"
         onselect="SelectBookmarkDialog.selectionChanged();">
     <treecols>
       <treecol id="title" flex="1" primary="true" hideheader="true"/>
@@ -38,4 +38,3 @@
   <separator class="thin"/>
 
 </dialog>
-

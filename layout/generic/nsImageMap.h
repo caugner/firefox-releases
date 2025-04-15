@@ -34,13 +34,16 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* code for HTML client-side image maps */
+
 #ifndef nsImageMap_h___
 #define nsImageMap_h___
 
 #include "nsISupports.h"
 #include "nsCoord.h"
 #include "nsVoidArray.h"
-#include "nsStubDocumentObserver.h"
+#include "nsStubMutationObserver.h"
 #include "nsIDOMFocusListener.h"
 #include "nsIFrame.h"
 #include "nsIImageMap.h"
@@ -53,7 +56,7 @@ class nsIURI;
 class nsString;
 class nsIDOMEvent;
 
-class nsImageMap : public nsStubDocumentObserver, public nsIDOMFocusListener,
+class nsImageMap : public nsStubMutationObserver, public nsIDOMFocusListener,
                    public nsIImageMap
 {
 public:
@@ -81,16 +84,11 @@ public:
   // nsISupports
   NS_DECL_ISUPPORTS
 
-  // nsIDocumentObserver
-  virtual void AttributeChanged(nsIDocument* aDocument, nsIContent* aContent,
-                                PRInt32 aNameSpaceID, nsIAtom* aAttribute,
-                                PRInt32 aModType);
-  virtual void ContentAppended(nsIDocument* aDocument, nsIContent* aContainer,
-                               PRInt32 aNewIndexInContainer);
-  virtual void ContentInserted(nsIDocument* aDocument, nsIContent* aContainer,
-                               nsIContent* aChild, PRInt32 aIndexInContainer);
-  virtual void ContentRemoved(nsIDocument* aDocument, nsIContent* aContainer,
-                              nsIContent* aChild, PRInt32 aIndexInContainer);
+  // nsIMutationObserver
+  NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTECHANGED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTAPPENDED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTINSERTED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
 
   //nsIDOMFocusListener
   NS_IMETHOD Focus(nsIDOMEvent* aEvent);
@@ -108,7 +106,8 @@ protected:
   void FreeAreas();
 
   nsresult UpdateAreas();
-  nsresult UpdateAreasForBlock(nsIContent* aParent, PRBool* aFoundAnchor);
+  nsresult SearchForAreas(nsIContent* aParent, PRBool& aFoundArea,
+                         PRBool& aFoundAnchor);
 
   nsresult AddArea(nsIContent* aArea);
  
@@ -118,7 +117,6 @@ protected:
 
   nsIPresShell* mPresShell; // WEAK - owns the frame that owns us
   nsIFrame* mImageFrame;  // the frame that owns us
-  nsIDocument* mDocument; // WEAK - the imagemap will not outlive the document
   nsCOMPtr<nsIContent> mMap;
   nsAutoVoidArray mAreas; // almost always has some entries
   PRBool mContainsBlockContents;

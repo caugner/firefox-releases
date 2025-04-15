@@ -113,13 +113,18 @@ void AppLauncherDlg::OnInitDialog()
         mHelperAppLauncher->GetSource(getter_AddRefs(uri));
         uri->GetSpec(url);
     }
-    nsMIMEInfoHandleAction prefAction = nsIMIMEInfo::saveToDisk;
+    nsHandlerInfoAction prefAction = nsIMIMEInfo::saveToDisk;
     nsAutoString appName;
     nsCAutoString contentType;
     if (mimeInfo)
     {
         mimeInfo->GetPreferredAction(&prefAction);
-        mimeInfo->GetApplicationDescription(appName);
+        nsCOMPtr<nsIHandlerApp> handlerApp;
+        mimeInfo->GetPreferredApplicationHandler(getter_AddRefs(handlerApp));
+        if (handlerApp)
+        {
+            handlerApp->GetName(appName);
+        }
         mimeInfo->GetMIMEType(contentType);
     }
     if (prefAction == nsIMIMEInfo::saveToDisk)
@@ -189,7 +194,7 @@ AppLauncherDlg::LaunchProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam
     if (uMsg == WM_INITDIALOG)
     {
         pThis = (AppLauncherDlg *) lParam;
-        NS_WARN_IF_FALSE(pThis, "need a pointer to this!");
+        NS_ASSERTION(pThis, "need a pointer to this!");
         pThis->mHwndDlg = hwndDlg;
         SetWindowLong(hwndDlg, DWL_USER, lParam);
     }
@@ -205,7 +210,7 @@ AppLauncherDlg::LaunchProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam
     case WM_COMMAND:
         if (HIWORD(wParam) == BN_CLICKED)
         {
-            NS_WARN_IF_FALSE(pThis, "Should be non-null!");
+            NS_ASSERTION(pThis, "Should be non-null!");
             switch (LOWORD(wParam))
             {
             case IDC_CHOOSE:
@@ -348,13 +353,13 @@ ProgressDlg::ProgressProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     switch (uMsg)
     {
     case WM_INITDIALOG:
-        NS_WARN_IF_FALSE(pThis, "Should be non-null!");
+        NS_ASSERTION(pThis, "Should be non-null!");
         pThis->OnInitDialog();
         return TRUE;
     case WM_COMMAND:
         if (HIWORD(wParam) == BN_CLICKED)
         {
-            NS_WARN_IF_FALSE(pThis, "Should be non-null!");
+            NS_ASSERTION(pThis, "Should be non-null!");
             switch (LOWORD(wParam))
             {
             case IDCANCEL:
@@ -469,6 +474,7 @@ CHelperAppLauncherDlg::PromptForSaveToFile(nsIHelperAppLauncher *aLauncher,
                                            nsISupports *aWindowContext, 
                                            const PRUnichar *aDefaultFile, 
                                            const PRUnichar *aSuggestedFileExtension, 
+                                           PRBool aForcePrompt, 
                                            nsILocalFile **_retval)
 {
     NS_ENSURE_ARG_POINTER(_retval);

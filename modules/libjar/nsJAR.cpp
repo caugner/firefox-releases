@@ -25,6 +25,7 @@
  *   Samir Gehani <sgehani@netscape.com>
  *   Mitch Stoltz <mstoltz@netsape.com>
  *   Pierre Phaneuf <pp@ludusdesign.com>
+ *   Jeff Walden <jwalden+code@mit.edu>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -43,60 +44,15 @@
 #include "nsJARInputStream.h"
 #include "nsJAR.h"
 #include "nsILocalFile.h"
-#include "nsXPIDLString.h"
-#include "nsReadableUtils.h"
-#include "nsIServiceManager.h"
-#include "plbase64.h"
 #include "nsIConsoleService.h"
-#include "nscore.h"
-#include "nsCRT.h"
 #include "nsICryptoHash.h"
+#include "prprf.h"
 
 #ifdef XP_UNIX
   #include <sys/stat.h>
 #elif defined (XP_WIN) || defined(XP_OS2)
   #include <io.h>
 #endif
-
-//----------------------------------------------
-// Errors and other utility definitions
-//----------------------------------------------
-#ifndef __gen_nsIFile_h__
-#define NS_ERROR_FILE_UNRECOGNIZED_PATH         NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 1)
-#define NS_ERROR_FILE_UNRESOLVABLE_SYMLINK      NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 2)
-#define NS_ERROR_FILE_EXECUTION_FAILED          NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 3)
-#define NS_ERROR_FILE_UNKNOWN_TYPE              NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 4)
-#define NS_ERROR_FILE_DESTINATION_NOT_DIR       NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 5)
-#define NS_ERROR_FILE_TARGET_DOES_NOT_EXIST     NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 6)
-#define NS_ERROR_FILE_COPY_OR_MOVE_FAILED       NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 7)
-#define NS_ERROR_FILE_ALREADY_EXISTS            NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 8)
-#define NS_ERROR_FILE_INVALID_PATH              NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 9)
-#define NS_ERROR_FILE_DISK_FULL                 NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 10)
-#define NS_ERROR_FILE_CORRUPTED                 NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 11)
-#endif
-
-static nsresult
-ziperr2nsresult(PRInt32 ziperr)
-{
-  switch (ziperr) {
-    case ZIP_OK:                return NS_OK;
-    case ZIP_ERR_MEMORY:        return NS_ERROR_OUT_OF_MEMORY;
-    case ZIP_ERR_DISK:          return NS_ERROR_FILE_DISK_FULL;
-    case ZIP_ERR_CORRUPT:       return NS_ERROR_FILE_CORRUPTED;
-    case ZIP_ERR_PARAM:         return NS_ERROR_ILLEGAL_VALUE;
-    case ZIP_ERR_FNF:           return NS_ERROR_FILE_TARGET_DOES_NOT_EXIST;
-    case ZIP_ERR_UNSUPPORTED:   return NS_ERROR_NOT_IMPLEMENTED;
-    default:                    return NS_ERROR_FAILURE;
-  }
-}
-
-//-- PR_Free doesn't null the pointer. 
-//   This macro takes care of that.
-#define JAR_NULLFREE(_ptr) \
-  {                        \
-    PR_FREEIF(_ptr);       \
-    _ptr = nsnull;         \
-  }
 
 //----------------------------------------------
 // nsJARManifestItem declaration
@@ -140,7 +96,7 @@ public:
 //-------------------------------------------------
 nsJARManifestItem::nsJARManifestItem(): mType(JAR_INTERNAL),
                                         entryVerified(PR_FALSE),
-                                        status(nsIJAR::NOT_SIGNED),
+                                        status(JAR_NOT_SIGNED),
                                         calculatedSectionDigest(nsnull),
                                         storedEntryDigest(nsnull)
 {
@@ -166,20 +122,18 @@ DeleteManifestEntry(nsHashKey* aKey, void* aData, void* closure)
 
 // The following initialization makes a guess of 10 entries per jarfile.
 nsJAR::nsJAR(): mManifestData(nsnull, nsnull, DeleteManifestEntry, nsnull, 10),
-                mParsedManifest(PR_FALSE), mGlobalStatus(nsIJAR::NOT_SIGNED),
+                mParsedManifest(PR_FALSE),
+                mGlobalStatus(JAR_MANIFEST_NOT_PARSED),
                 mReleaseTime(PR_INTERVAL_NO_TIMEOUT), 
                 mCache(nsnull), 
                 mLock(nsnull),
-                mTotalItemsInManifest(0),
-                mFd(nsnull)
+                mTotalItemsInManifest(0)
 {
 }
 
 nsJAR::~nsJAR()
 {
   Close();
-  if (mLock) 
-    PR_DestroyLock(mLock);
 }
 
 NS_IMPL_THREADSAFE_QUERY_INTERFACE2(nsJAR, nsIZipReader, nsIJAR)
@@ -211,11 +165,21 @@ nsrefcnt nsJAR::Release(void)
 //----------------------------------------------
 
 NS_IMETHODIMP
-nsJAR::Init(nsIFile* zipFile)
+nsJAR::Open(nsIFile* zipFile)
 {
+  if (mLock) return NS_ERROR_FAILURE; // Already open!
+
   mZipFile = zipFile;
   mLock = PR_NewLock();
-  return mLock ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+  NS_ENSURE_TRUE(mLock, NS_ERROR_OUT_OF_MEMORY);
+
+  PRFileDesc *fd = OpenFile();
+  NS_ENSURE_TRUE(fd, NS_ERROR_FAILURE);
+
+  nsresult rv = mZip.OpenArchive(fd);
+  if (NS_FAILED(rv)) Close();
+
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -227,41 +191,24 @@ nsJAR::GetFile(nsIFile* *result)
 }
 
 NS_IMETHODIMP
-nsJAR::Open()
-{
-  nsresult rv;
-  nsCOMPtr<nsILocalFile> localFile = do_QueryInterface(mZipFile, &rv);
-  if (NS_FAILED(rv)) return rv;
-
-  rv = localFile->OpenNSPRFileDesc(PR_RDONLY, 0000, &mFd);
-  if (NS_FAILED(rv)) return rv;
-
-  PRInt32 err = mZip.OpenArchiveWithFileDesc(mFd);
-  
-  return ziperr2nsresult(err);
-}
-
-NS_IMETHODIMP
 nsJAR::Close()
 {
-#ifdef STANDALONE
-  // nsZipReadState::CloseArchive closes the file descriptor
-#else
-  if (mFd)
-    PR_Close(mFd);
-#endif
-  mFd = nsnull;
-  PRInt32 err = mZip.CloseArchive();
-  return ziperr2nsresult(err);
+  if (mLock) {
+    PR_DestroyLock(mLock);
+    mLock = nsnull;
+  }
+
+  mParsedManifest = PR_FALSE;
+  mGlobalStatus = JAR_MANIFEST_NOT_PARSED;
+  mTotalItemsInManifest = 0;
+
+  return mZip.CloseArchive();
 }
 
 NS_IMETHODIMP
 nsJAR::Test(const char *aEntryName)
 {
-  NS_ASSERTION(mFd, "File isn't open!");
-
-  PRInt32 err = mZip.Test(aEntryName, mFd);
-  return ziperr2nsresult(err);
+  return mZip.Test(aEntryName);
 }
 
 NS_IMETHODIMP
@@ -275,109 +222,141 @@ nsJAR::Extract(const char *zipEntry, nsIFile* outFile)
   nsCOMPtr<nsILocalFile> localFile = do_QueryInterface(outFile, &rv);
   if (NS_FAILED(rv)) return rv;
 
-  nsZipItem *item = 0;
-  PRInt32 err = mZip.GetItem(zipEntry, &item);
-  if (err != ZIP_OK)
-    return ziperr2nsresult(err);
+  nsZipItem *item = mZip.GetItem(zipEntry);
+  NS_ENSURE_TRUE(item, NS_ERROR_FILE_TARGET_DOES_NOT_EXIST);
 
-  // Remove existing file so we set permissions correctly.
-  localFile->Remove(PR_FALSE);
+  // Remove existing file or directory so we set permissions correctly.
+  // If it's a directory that already exists and contains files, throw
+  // an exception and return.
 
-  PRFileDesc* fd;
-  rv = localFile->OpenNSPRFileDesc(PR_WRONLY | PR_CREATE_FILE, item->mode, &fd);
-  if (NS_FAILED(rv)) return NS_ERROR_FILE_ACCESS_DENIED;
+  //XXX Bug 332139:
+  //XXX If we guarantee that rv in the case of a non-empty directory
+  //XXX is always FILE_DIR_NOT_EMPTY, we can remove
+  //XXX |rv == NS_ERROR_FAILURE| - bug 322183 needs to be completely
+  //XXX fixed before that can happen
+  rv = localFile->Remove(PR_FALSE);
+  if (rv == NS_ERROR_FILE_DIR_NOT_EMPTY ||
+      rv == NS_ERROR_FAILURE)
+    return rv;
 
-  err = mZip.ExtractItemToFileDesc(item, fd, mFd);
-  PR_Close(fd);
-
-  if (err != ZIP_OK)
-    outFile->Remove(PR_FALSE);
+  if (item->isDirectory)
+  {
+    rv = localFile->Create(nsIFile::DIRECTORY_TYPE, item->mode);
+    //XXX Do this in nsZipArchive?  It would be nice to keep extraction
+    //XXX code completely there, but that would require a way to get a
+    //XXX PRDir from localFile.
+  }
   else
   {
-#if defined(XP_UNIX)
-    if (item->isSymlink) 
-    {
-      nsCAutoString path;
-      rv = outFile->GetNativePath(path);
-      if (NS_SUCCEEDED(rv)) 
-      {
-        err = mZip.ResolveSymlink(path.get(),item);
-      }
-    }
-#endif
+    PRFileDesc* fd;
+    rv = localFile->OpenNSPRFileDesc(PR_WRONLY | PR_CREATE_FILE, item->mode, &fd);
+    if (NS_FAILED(rv)) return rv;
 
-    PRTime prtime = item->GetModTime();
-    // nsIFile needs usecs.
-    PRTime conversion = LL_ZERO;
-    PRTime newTime = LL_ZERO;
-    LL_I2L(conversion, PR_USEC_PER_MSEC);
-    LL_DIV(newTime, prtime, conversion);
-    // non-fatal if this fails, ignore errors
-    outFile->SetLastModifiedTime(newTime);
+    // ExtractFile also closes the fd handle and resolves the symlink if needed
+    nsCAutoString path;
+    rv = outFile->GetNativePath(path);
+    if (NS_FAILED(rv)) return rv;
+
+    rv = mZip.ExtractFile(item, path.get(), fd);
   }
+  if (NS_FAILED(rv)) return rv;
 
-  return ziperr2nsresult(err);
-}
+  PRTime prtime = GetModTime(item->date, item->time);
+  // nsIFile needs milliseconds, while prtime is in microseconds.
+  PRTime conversion = LL_ZERO;
+  PRTime newTime = LL_ZERO;
+  LL_I2L(conversion, PR_USEC_PER_MSEC);
+  LL_DIV(newTime, prtime, conversion);
+  // non-fatal if this fails, ignore errors
+  outFile->SetLastModifiedTime(newTime);
 
-NS_IMETHODIMP    
-nsJAR::GetEntry(const char *zipEntry, nsIZipEntry* *result)
-{
-  nsZipItem* zipItem;
-  PRInt32 err = mZip.GetItem(zipEntry, &zipItem);
-  if (err != ZIP_OK) return ziperr2nsresult(err);
-
-  nsJARItem* jarItem = new nsJARItem();
-  if (jarItem == nsnull)
-    return NS_ERROR_OUT_OF_MEMORY;
-  NS_ADDREF(jarItem);
-  jarItem->Init(zipItem);
-  *result = jarItem;
   return NS_OK;
 }
 
 NS_IMETHODIMP    
-nsJAR::FindEntries(const char *aPattern, nsISimpleEnumerator **result)
+nsJAR::GetEntry(const char *aEntryName, nsIZipEntry* *result)
 {
-  if (!result)
-    return NS_ERROR_INVALID_POINTER;
-    
-  nsZipFind *find = mZip.FindInit(aPattern);
-  if (!find)
-    return NS_ERROR_OUT_OF_MEMORY;
+  nsZipItem* zipItem = mZip.GetItem(aEntryName);
+  NS_ENSURE_TRUE(zipItem, NS_ERROR_FILE_TARGET_DOES_NOT_EXIST);
 
-  nsISimpleEnumerator *zipEnum = new nsJAREnumerator(find);
-  if (!zipEnum)
-    return NS_ERROR_OUT_OF_MEMORY;
-  NS_ADDREF( zipEnum );
+  nsJARItem* jarItem = new nsJARItem(zipItem);
+  NS_ENSURE_TRUE(jarItem, NS_ERROR_OUT_OF_MEMORY);
 
-  *result = zipEnum;
+  NS_ADDREF(*result = jarItem);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsJAR::HasEntry(const nsACString &aEntryName, PRBool *result)
+{
+  *result = mZip.GetItem(PromiseFlatCString(aEntryName).get()) != nsnull;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsJAR::FindEntries(const char *aPattern, nsIUTF8StringEnumerator **result)
+{
+  NS_ENSURE_ARG_POINTER(result);
+
+  nsZipFind *find;
+  nsresult rv = mZip.FindInit(aPattern, &find);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsIUTF8StringEnumerator *zipEnum = new nsJAREnumerator(find);
+  if (!zipEnum) {
+    delete find;
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+
+  NS_ADDREF(*result = zipEnum);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsJAR::GetInputStream(const char* aFilename, nsIInputStream** result)
 {
-  // nsZipArchive and zlib are not thread safe
-  // we need to use a lock to prevent bug #51267
-  nsAutoLock lock(mLock);
+  return GetInputStreamWithSpec(EmptyCString(), aFilename, result);
+}
 
+NS_IMETHODIMP
+nsJAR::GetInputStreamWithSpec(const nsACString& aJarDirSpec, 
+                          const char* aEntryName, nsIInputStream** result)
+{
+  NS_ENSURE_ARG_POINTER(aEntryName);
   NS_ENSURE_ARG_POINTER(result);
-  nsJARInputStream* jis = new nsJARInputStream();
-  if (!jis) return NS_ERROR_FAILURE;
 
-  // addref now so we can delete if the Init() fails
-  *result = NS_STATIC_CAST(nsIInputStream*,jis);
-  NS_ADDREF(*result);
-  
-  nsresult rv;
-  rv = jis->Init(this, aFilename);
-  
+  // Watch out for the jar:foo.zip!/ (aDir is empty) top-level special case!
+  nsZipItem *item = nsnull;
+  if (*aEntryName) {
+    // First check if item exists in jar
+    item = mZip.GetItem(aEntryName);
+    if (!item) return NS_ERROR_FILE_TARGET_DOES_NOT_EXIST;
+  }
+  nsJARInputStream* jis = new nsJARInputStream();
+  // addref now so we can call InitFile/InitDirectory()
+  NS_ENSURE_TRUE(jis, NS_ERROR_OUT_OF_MEMORY);
+  NS_ADDREF(*result = jis);
+
+  nsresult rv = NS_OK;
+  if (!item || item->isDirectory) {
+    rv = jis->InitDirectory(&mZip, aJarDirSpec, aEntryName);
+  } else {
+    // Open jarfile, to get its own filedescriptor for the stream
+    // XXX The file may have been overwritten, so |item| might not be
+    // valid.  We really want to work from inode rather than file name.
+    PRFileDesc *fd = nsnull;
+    fd = OpenFile();
+    if (fd) {
+      rv = jis->InitFile(&mZip, item, fd);
+      // |jis| now owns |fd|
+    } else {
+      rv = NS_ERROR_FAILURE;
+    }
+  }
   if (NS_FAILED(rv)) {
     NS_RELEASE(*result);
-    return NS_ERROR_FAILURE;
   }
-
-  return NS_OK;
+  return rv;
 }
 
 //----------------------------------------------
@@ -402,7 +381,7 @@ nsJAR::GetCertificatePrincipal(const char* aFilename, nsIPrincipal** aPrincipal)
   //-- Parse the manifest
   rv = ParseManifest(verifier);
   if (NS_FAILED(rv)) return rv;
-  if (mGlobalStatus == nsIJAR::NO_MANIFEST)
+  if (mGlobalStatus == JAR_NO_MANIFEST)
     return NS_OK;
 
   PRInt16 requestedStatus;
@@ -410,7 +389,7 @@ nsJAR::GetCertificatePrincipal(const char* aFilename, nsIPrincipal** aPrincipal)
   {
     //-- Find the item
     nsCStringKey key(aFilename);
-    nsJARManifestItem* manItem = NS_STATIC_CAST(nsJARManifestItem*, mManifestData.Get(&key));
+    nsJARManifestItem* manItem = static_cast<nsJARManifestItem*>(mManifestData.Get(&key));
     if (!manItem)
       return NS_OK;
     //-- Verify the item against the manifest
@@ -420,7 +399,7 @@ nsJAR::GetCertificatePrincipal(const char* aFilename, nsIPrincipal** aPrincipal)
       PRUint32 entryDataLen;
       rv = LoadEntry(aFilename, getter_Copies(entryData), &entryDataLen);
       if (NS_FAILED(rv)) return rv;
-      rv = VerifyEntry(verifier, manItem, entryData, entryDataLen);
+      rv = VerifyEntry(manItem, entryData, entryDataLen);
       if (NS_FAILED(rv)) return rv;
     }
     requestedStatus = manItem->status;
@@ -428,7 +407,7 @@ nsJAR::GetCertificatePrincipal(const char* aFilename, nsIPrincipal** aPrincipal)
   else // User wants identity of signer w/o verifying any entries
     requestedStatus = mGlobalStatus;
 
-  if (requestedStatus != nsIJAR::VALID)
+  if (requestedStatus != JAR_VALID_MANIFEST)
     ReportError(aFilename, requestedStatus);
   else // Valid signature
   {
@@ -443,6 +422,14 @@ nsJAR::GetManifestEntriesCount(PRUint32* count)
 {
   *count = mTotalItemsInManifest;
   return NS_OK;
+}
+
+nsresult
+nsJAR::GetJarPath(nsACString& aResult)
+{
+  NS_ENSURE_ARG_POINTER(mZipFile);
+
+  return mZipFile->GetNativePath(aResult);
 }
 
 PRFileDesc*
@@ -539,39 +526,42 @@ nsJAR::ParseManifest(nsISignatureVerifier* verifier)
   if (mParsedManifest)
     return NS_OK;
   //-- (1)Manifest (MF) file
-  nsresult rv;
-  nsCOMPtr<nsISimpleEnumerator> files;
-  rv = FindEntries(JAR_MF_SEARCH_STRING, getter_AddRefs(files));
+  nsCOMPtr<nsIUTF8StringEnumerator> files;
+  nsresult rv = FindEntries(JAR_MF_SEARCH_STRING, getter_AddRefs(files));
   if (!files) rv = NS_ERROR_FAILURE;
   if (NS_FAILED(rv)) return rv;
 
   //-- Load the file into memory
-  nsCOMPtr<nsJARItem> file;
-  rv = files->GetNext(getter_AddRefs(file));
-  if (NS_FAILED(rv)) return rv;
-  if (!file)
+  PRBool more;
+  rv = files->HasMore(&more);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!more)
   {
-    mGlobalStatus = nsIJAR::NO_MANIFEST;
+    mGlobalStatus = JAR_NO_MANIFEST;
     mParsedManifest = PR_TRUE;
     return NS_OK;
   }
-  PRBool more;
-  rv = files->HasMoreElements(&more);
+
+  nsCAutoString manifestFilename;
+  rv = files->GetNext(manifestFilename);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Check if there is more than one manifest, if so then error!
+  rv = files->HasMore(&more);
   if (NS_FAILED(rv)) return rv;
   if (more)
   {
     mParsedManifest = PR_TRUE;
     return NS_ERROR_FILE_CORRUPTED; // More than one MF file
   }
-  nsXPIDLCString manifestFilename;
-  rv = file->GetName(getter_Copies(manifestFilename));
-  if (!manifestFilename || NS_FAILED(rv)) return rv;
+
   nsXPIDLCString manifestBuffer;
-  rv = LoadEntry(manifestFilename, getter_Copies(manifestBuffer));
+  PRUint32 manifestLen;
+  rv = LoadEntry(manifestFilename.get(), getter_Copies(manifestBuffer), &manifestLen);
   if (NS_FAILED(rv)) return rv;
 
   //-- Parse it
-  rv = ParseOneFile(verifier, manifestBuffer, JAR_MF);
+  rv = ParseOneFile(manifestBuffer, JAR_MF);
   if (NS_FAILED(rv)) return rv;
 
   //-- (2)Signature (SF) file
@@ -580,23 +570,22 @@ nsJAR::ParseManifest(nsISignatureVerifier* verifier)
   if (!files) rv = NS_ERROR_FAILURE;
   if (NS_FAILED(rv)) return rv;
   //-- Get an SF file
-  rv = files->GetNext(getter_AddRefs(file));
+  rv = files->HasMore(&more);
   if (NS_FAILED(rv)) return rv;
-  if (!file)
+  if (!more)
   {
-    mGlobalStatus = nsIJAR::NO_MANIFEST;
+    mGlobalStatus = JAR_NO_MANIFEST;
     mParsedManifest = PR_TRUE;
     return NS_OK;
   }
-  rv = file->GetName(getter_Copies(manifestFilename));
+  rv = files->GetNext(manifestFilename);
   if (NS_FAILED(rv)) return rv;
 
-  PRUint32 manifestLen;
-  rv = LoadEntry(manifestFilename, getter_Copies(manifestBuffer), &manifestLen);
+  rv = LoadEntry(manifestFilename.get(), getter_Copies(manifestBuffer), &manifestLen);
   if (NS_FAILED(rv)) return rv;
   
   //-- Get its corresponding signature file
-  nsCAutoString sigFilename( NS_STATIC_CAST(const char*, manifestFilename) );
+  nsCAutoString sigFilename(manifestFilename);
   PRInt32 extension = sigFilename.RFindChar('.') + 1;
   NS_ASSERTION(extension != 0, "Manifest Parser: Missing file extension.");
   (void)sigFilename.Cut(extension, 2);
@@ -613,7 +602,7 @@ nsJAR::ParseManifest(nsISignatureVerifier* verifier)
   }
   if (NS_FAILED(rv))
   {
-    mGlobalStatus = nsIJAR::NO_MANIFEST;
+    mGlobalStatus = JAR_NO_MANIFEST;
     mParsedManifest = PR_TRUE;
     return NS_OK;
   }
@@ -624,25 +613,24 @@ nsJAR::ParseManifest(nsISignatureVerifier* verifier)
                                  &verifyError, getter_AddRefs(mPrincipal));
   if (NS_FAILED(rv)) return rv;
   if (mPrincipal && verifyError == 0)
-    mGlobalStatus = nsIJAR::VALID;
+    mGlobalStatus = JAR_VALID_MANIFEST;
   else if (verifyError == nsISignatureVerifier::VERIFY_ERROR_UNKNOWN_CA)
-    mGlobalStatus = nsIJAR::INVALID_UNKNOWN_CA;
+    mGlobalStatus = JAR_INVALID_UNKNOWN_CA;
   else
-    mGlobalStatus = nsIJAR::INVALID_SIG;
+    mGlobalStatus = JAR_INVALID_SIG;
 
   //-- Parse the SF file. If the verification above failed, principal
   // is null, and ParseOneFile will mark the relevant entries as invalid.
   // if ParseOneFile fails, then it has no effect, and we can safely 
   // continue to the next SF file, or return. 
-  ParseOneFile(verifier, manifestBuffer, JAR_SF);
+  ParseOneFile(manifestBuffer, JAR_SF);
   mParsedManifest = PR_TRUE;
 
   return NS_OK;
 }
 
 nsresult
-nsJAR::ParseOneFile(nsISignatureVerifier* verifier,
-                    const char* filebuf, PRInt16 aFileType)
+nsJAR::ParseOneFile(const char* filebuf, PRInt16 aFileType)
 {
   //-- Check file header
   const char* nextLineStart = filebuf;
@@ -691,13 +679,13 @@ nsJAR::ParseOneFile(nsISignatureVerifier* verifier,
             curItemMF->mType = JAR_INVALID;
           else 
           {
-            if (curItemMF->mType == JAR_INTERNAL)
-            {
             //-- If it's an internal item, it must correspond 
             //   to a valid jar entry
-              nsIZipEntry* entry;
-              PRInt32 result = GetEntry(curItemName.get(), &entry);
-              if (result != ZIP_OK || !entry)
+            if (curItemMF->mType == JAR_INTERNAL)
+            {
+              PRBool exists;
+              PRInt32 result = HasEntry(curItemName, &exists);
+              if (result != ZIP_OK || !exists)
                 curItemMF->mType = JAR_INVALID;
             }
             //-- Check for duplicates
@@ -736,18 +724,18 @@ nsJAR::ParseOneFile(nsISignatureVerifier* verifier,
           curItemSF = (nsJARManifestItem*)mManifestData.Get(&key);
           if(curItemSF)
           {
-            NS_ASSERTION(curItemSF->status == nsJAR::NOT_SIGNED,
+            NS_ASSERTION(curItemSF->status == JAR_NOT_SIGNED,
                          "SECURITY ERROR: nsJARManifestItem not correctly initialized");
             curItemSF->status = mGlobalStatus;
-            if (curItemSF->status == nsIJAR::VALID)
+            if (curItemSF->status == JAR_VALID_MANIFEST)
             { // Compare digests
               if (storedSectionDigest.IsEmpty())
-                curItemSF->status = nsIJAR::NOT_SIGNED;
+                curItemSF->status = JAR_NOT_SIGNED;
               else
               {
                 if (!storedSectionDigest.Equals((const char*)curItemSF->calculatedSectionDigest))
-                  curItemSF->status = nsIJAR::INVALID_MANIFEST;
-                JAR_NULLFREE(curItemSF->calculatedSectionDigest)
+                  curItemSF->status = JAR_INVALID_MANIFEST;
+                PR_FREEIF(curItemSF->calculatedSectionDigest)
                 storedSectionDigest = "";
               }
             } // (aPrincipal != nsnull)
@@ -828,24 +816,23 @@ nsJAR::ParseOneFile(nsISignatureVerifier* verifier,
 } //ParseOneFile()
 
 nsresult
-nsJAR::VerifyEntry(nsISignatureVerifier* verifier,
-                   nsJARManifestItem* aManItem, const char* aEntryData,
+nsJAR::VerifyEntry(nsJARManifestItem* aManItem, const char* aEntryData,
                    PRUint32 aLen)
 {
-  if (aManItem->status == nsIJAR::VALID)
+  if (aManItem->status == JAR_VALID_MANIFEST)
   {
     if(!aManItem->storedEntryDigest)
       // No entry digests in manifest file. Entry is unsigned.
-      aManItem->status = nsIJAR::NOT_SIGNED;
+      aManItem->status = JAR_NOT_SIGNED;
     else
     { //-- Calculate and compare digests
       char* calculatedEntryDigest;
       nsresult rv = CalculateDigest(aEntryData, aLen, &calculatedEntryDigest);
       if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
       if (PL_strcmp(aManItem->storedEntryDigest, calculatedEntryDigest) != 0)
-        aManItem->status = nsIJAR::INVALID_ENTRY;
-      JAR_NULLFREE(calculatedEntryDigest)
-      JAR_NULLFREE(aManItem->storedEntryDigest)
+        aManItem->status = JAR_INVALID_ENTRY;
+      PR_FREEIF(calculatedEntryDigest)
+      PR_FREEIF(aManItem->storedEntryDigest)
     }
   }
   aManItem->entryVerified = PR_TRUE;
@@ -864,20 +851,23 @@ void nsJAR::ReportError(const char* aFilename, PRInt16 errorCode)
   message.AppendLiteral(" is invalid because ");
   switch(errorCode)
   {
-  case nsIJAR::NOT_SIGNED:
+  case JAR_NOT_SIGNED:
     message.AppendLiteral("the archive did not contain a valid PKCS7 signature.");
     break;
-  case nsIJAR::INVALID_SIG:
-    message.Append(NS_LITERAL_STRING("the digital signature (*.RSA) file is not a valid signature of the signature instruction file (*.SF)."));
+  case JAR_INVALID_SIG:
+    message.AppendLiteral("the digital signature (*.RSA) file is not a valid signature of the signature instruction file (*.SF).");
     break;
-  case nsIJAR::INVALID_UNKNOWN_CA:
+  case JAR_INVALID_UNKNOWN_CA:
     message.AppendLiteral("the certificate used to sign this file has an unrecognized issuer.");
     break;
-  case nsIJAR::INVALID_MANIFEST:
-    message.Append(NS_LITERAL_STRING("the signature instruction file (*.SF) does not contain a valid hash of the MANIFEST.MF file."));
+  case JAR_INVALID_MANIFEST:
+    message.AppendLiteral("the signature instruction file (*.SF) does not contain a valid hash of the MANIFEST.MF file.");
     break;
-  case nsIJAR::INVALID_ENTRY:
+  case JAR_INVALID_ENTRY:
     message.AppendLiteral("the MANIFEST.MF file does not contain a valid hash of the file being verified.");
+    break;
+  case JAR_NO_MANIFEST:
+    message.AppendLiteral("the archive did not contain a manifest.");
     break;
   default:
     message.AppendLiteral("of an unknown problem.");
@@ -923,85 +913,23 @@ nsresult nsJAR::CalculateDigest(const char* aInBuf, PRUint32 aLen,
   return *digest ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsJAREnumerator, nsIUTF8StringEnumerator)
+  
 //----------------------------------------------
-// Debugging functions
-//----------------------------------------------
-#if 0
-PR_STATIC_CALLBACK(PRBool)
-PrintManItem(nsHashKey* aKey, void* aData, void* closure)
-{
-  nsJARManifestItem* manItem = (nsJARManifestItem*)aData;
-    if (manItem)
-    {
-      nsCStringKey* key2 = (nsCStringKey*)aKey;
-      char* name = ToNewCString(key2->GetString());
-      if (!(PL_strcmp(name, "") == 0))
-        printf("%s s=%i\n",name, manItem->status);
-    }
-    return PR_TRUE;
-}
-#endif
-
-void nsJAR::DumpMetadata(const char* aMessage)
-{
-#if 0
-  printf("### nsJAR::DumpMetadata at %s ###\n", aMessage);
-  if (mPrincipal)
-  {
-    char* toStr;
-    mPrincipal->ToString(&toStr);
-    printf("Principal: %s.\n", toStr);
-    PR_FREEIF(toStr);
-  }
-  else
-    printf("No Principal. \n");
-  mManifestData.Enumerate(PrintManItem);
-  printf("\n");
-#endif
-} 
-
-//----------------------------------------------
-// nsJAREnumerator constructor and destructor
-//----------------------------------------------
-nsJAREnumerator::nsJAREnumerator(nsZipFind *aFind)
-: mFind(aFind),
-  mCurr(nsnull),
-  mIsCurrStale(PR_TRUE)
-{
-    mArchive = mFind->GetArchive();
-}
-
-nsJAREnumerator::~nsJAREnumerator()
-{
-    mArchive->FindFree(mFind);
-}
-
-NS_IMPL_ISUPPORTS1(nsJAREnumerator, nsISimpleEnumerator)
-
-//----------------------------------------------
-// nsJAREnumerator::HasMoreElements
+// nsJAREnumerator::HasMore
 //----------------------------------------------
 NS_IMETHODIMP
-nsJAREnumerator::HasMoreElements(PRBool* aResult)
+nsJAREnumerator::HasMore(PRBool* aResult)
 {
-    PRInt32 err;
-
-    if (!mFind)
-        return NS_ERROR_NOT_INITIALIZED;
-
     // try to get the next element
-    if (mIsCurrStale)
-    {
-        err = mArchive->FindNext( mFind, &mCurr );
-        if (err == ZIP_ERR_FNF)
-        {
-            *aResult = PR_FALSE;
+    if (!mCurr) {
+        NS_ASSERTION(mFind, "nsJAREnumerator: Missing zipFind.");
+        nsresult rv = mFind->FindNext( &mCurr );
+        if (rv == NS_ERROR_FILE_TARGET_DOES_NOT_EXIST) {
+            *aResult = PR_FALSE;                    // No more matches available
             return NS_OK;
         }
-        if (err != ZIP_OK)
-            return NS_ERROR_FAILURE; // no error translation
-
-        mIsCurrStale = PR_FALSE;
+        NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);    // no error translation
     }
 
     *aResult = PR_TRUE;
@@ -1012,134 +940,116 @@ nsJAREnumerator::HasMoreElements(PRBool* aResult)
 // nsJAREnumerator::GetNext
 //----------------------------------------------
 NS_IMETHODIMP
-nsJAREnumerator::GetNext(nsISupports** aResult)
+nsJAREnumerator::GetNext(nsACString& aResult)
 {
-    nsresult rv;
-    PRBool   bMore;
-
     // check if the current item is "stale"
-    if (mIsCurrStale)
-    {
-        rv = HasMoreElements( &bMore );
-        if (NS_FAILED(rv))
-            return rv;
-        if (bMore == PR_FALSE)
-        {
-            *aResult = nsnull;  // null return value indicates no more elements
-            return NS_OK;
-        }
+    if (!mCurr) {
+        PRBool   bMore;
+        nsresult rv = HasMore(&bMore);
+        if (NS_FAILED(rv) || !bMore)
+            return NS_ERROR_FAILURE; // no error translation
     }
-
-    // pack into an nsIJARItem
-    nsJARItem* jarItem = new nsJARItem();
-    if(jarItem)
-    {
-      NS_ADDREF(jarItem);
-      jarItem->Init(mCurr);
-      *aResult = jarItem;
-      mIsCurrStale = PR_TRUE; // we just gave this one away
-      return NS_OK;
-    }
-    else
-      return NS_ERROR_OUT_OF_MEMORY;
-}
-
-//-------------------------------------------------
-// nsJARItem constructors and destructor
-//-------------------------------------------------
-nsJARItem::nsJARItem()
-{
-}
-
-nsJARItem::~nsJARItem()
-{
-}
-
-NS_IMPL_ISUPPORTS1(nsJARItem, nsIZipEntry)
-
-void nsJARItem::Init(nsZipItem* aZipItem)
-{
-  mZipItem = aZipItem;
-}
-
-//------------------------------------------
-// nsJARItem::GetName
-//------------------------------------------
-NS_IMETHODIMP
-nsJARItem::GetName(char * *aName)
-{
-    char *namedup;
-
-    if ( !aName )
-        return NS_ERROR_NULL_POINTER;
-    if ( !mZipItem->name )
-        return NS_ERROR_FAILURE;
-
-    namedup = PL_strdup( mZipItem->name );
-    if ( !namedup )
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    *aName = namedup;
+    aResult = mCurr;
+    mCurr = 0; // we just gave this one away
     return NS_OK;
+}
+
+
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsJARItem, nsIZipEntry)
+
+nsJARItem::nsJARItem(nsZipItem* aZipItem)
+    : mSize(aZipItem->size),
+      mRealsize(aZipItem->realsize),
+      mCrc32(aZipItem->crc32),
+      mDate(aZipItem->date),
+      mTime(aZipItem->time),
+      mCompression(aZipItem->compression),
+      mIsDirectory(aZipItem->isDirectory),
+      mIsSynthetic(aZipItem->isSynthetic)
+{
 }
 
 //------------------------------------------
 // nsJARItem::GetCompression
 //------------------------------------------
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsJARItem::GetCompression(PRUint16 *aCompression)
 {
-    if (!aCompression)
-        return NS_ERROR_NULL_POINTER;
-    if (!mZipItem->compression)
-        return NS_ERROR_FAILURE;
+    NS_ENSURE_ARG_POINTER(aCompression);
 
-    *aCompression = mZipItem->compression;
+    *aCompression = mCompression;
     return NS_OK;
 }
 
 //------------------------------------------
 // nsJARItem::GetSize
 //------------------------------------------
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsJARItem::GetSize(PRUint32 *aSize)
 {
-    if (!aSize)
-        return NS_ERROR_NULL_POINTER;
-    if (!mZipItem->size)
-        return NS_ERROR_FAILURE;
+    NS_ENSURE_ARG_POINTER(aSize);
 
-    *aSize = mZipItem->size;
+    *aSize = mSize;
     return NS_OK;
 }
 
 //------------------------------------------
 // nsJARItem::GetRealSize
 //------------------------------------------
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsJARItem::GetRealSize(PRUint32 *aRealsize)
 {
-    if (!aRealsize)
-        return NS_ERROR_NULL_POINTER;
-    if (!mZipItem->realsize)
-        return NS_ERROR_FAILURE;
+    NS_ENSURE_ARG_POINTER(aRealsize);
 
-    *aRealsize = mZipItem->realsize;
+    *aRealsize = mRealsize;
     return NS_OK;
 }
 
 //------------------------------------------
 // nsJARItem::GetCrc32
 //------------------------------------------
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsJARItem::GetCRC32(PRUint32 *aCrc32)
 {
-    if (!aCrc32)
-        return NS_ERROR_NULL_POINTER;
-    if (!mZipItem->crc32)
-        return NS_ERROR_FAILURE;
+    NS_ENSURE_ARG_POINTER(aCrc32);
 
-    *aCrc32 = mZipItem->crc32;
+    *aCrc32 = mCrc32;
+    return NS_OK;
+}
+
+//------------------------------------------
+// nsJARItem::GetIsDirectory
+//------------------------------------------
+NS_IMETHODIMP
+nsJARItem::GetIsDirectory(PRBool *aIsDirectory)
+{
+    NS_ENSURE_ARG_POINTER(aIsDirectory);
+
+    *aIsDirectory = mIsDirectory;
+    return NS_OK;
+}
+
+//------------------------------------------
+// nsJARItem::GetIsSynthetic
+//------------------------------------------
+NS_IMETHODIMP
+nsJARItem::GetIsSynthetic(PRBool *aIsSynthetic)
+{
+    NS_ENSURE_ARG_POINTER(aIsSynthetic);
+
+    *aIsSynthetic = mIsSynthetic;
+    return NS_OK;
+}
+
+//------------------------------------------
+// nsJARItem::GetLastModifiedTime
+//------------------------------------------
+NS_IMETHODIMP
+nsJARItem::GetLastModifiedTime(PRTime* aLastModTime)
+{
+    NS_ENSURE_ARG_POINTER(aLastModTime);
+
+    *aLastModTime = GetModTime(mDate, mTime);
     return NS_OK;
 }
 
@@ -1217,7 +1127,7 @@ nsZipReaderCache::GetZip(nsIFile* zipFile, nsIZipReader* *result)
   if (NS_FAILED(rv)) return rv;
 
   nsCStringKey key(path);
-  nsJAR* zip = NS_STATIC_CAST(nsJAR*, NS_STATIC_CAST(nsIZipReader*,mZips.Get(&key))); // AddRefs
+  nsJAR* zip = static_cast<nsJAR*>(static_cast<nsIZipReader*>(mZips.Get(&key))); // AddRefs
   if (zip) {
 #ifdef ZIP_CACHE_HIT_RATE
     mZipCacheHits++;
@@ -1231,18 +1141,13 @@ nsZipReaderCache::GetZip(nsIFile* zipFile, nsIZipReader* *result)
     NS_ADDREF(zip);
     zip->SetZipReaderCache(this);
 
-    rv = zip->Init(zipFile);
-    if (NS_FAILED(rv)) {
-      NS_RELEASE(zip);
-      return rv;
-    }
-    rv = zip->Open();
+    rv = zip->Open(zipFile);
     if (NS_FAILED(rv)) {
       NS_RELEASE(zip);
       return rv;
     }
 
-    PRBool collision = mZips.Put(&key, NS_STATIC_CAST(nsIZipReader*, zip)); // AddRefs to 2
+    PRBool collision = mZips.Put(&key, static_cast<nsIZipReader*>(zip)); // AddRefs to 2
     NS_ASSERTION(!collision, "horked");
   }
   *result = zip;
@@ -1289,15 +1194,15 @@ nsZipReaderCache::ReleaseZip(nsJAR* zip)
   // case is where one thread Releases the zip and discovers that the ref
   // count has gone to one. Before it can call this ReleaseZip method
   // another thread calls our GetZip method. The ref count goes to two. That
-  // second thread then Releases the zip and the ref coutn goes to one. It
-  // Then tries to enter this ReleaseZip method and blocks while the first
+  // second thread then Releases the zip and the ref count goes to one. It
+  // then tries to enter this ReleaseZip method and blocks while the first
   // thread is still here. The first thread continues and remove the zip from 
   // the cache and calls its Release method sending the ref count to 0 and
   // deleting the zip. However, the second thread is still blocked at the
   // start of ReleaseZip, but the 'zip' param now hold a reference to a
   // deleted zip!
   // 
-  // So, we are going to try safegaurding here by searching our hashtable while
+  // So, we are going to try safeguarding here by searching our hashtable while
   // locked here for the zip. We return fast if it is not found. 
 
   ZipFindData find_data = {zip, PR_FALSE};
@@ -1332,12 +1237,8 @@ nsZipReaderCache::ReleaseZip(nsJAR* zip)
   oldest->SetZipReaderCache(nsnull);
 
   // remove from hashtable
-  nsCOMPtr<nsIFile> zipFile;
-  rv = oldest->GetFile(getter_AddRefs(zipFile));
-  if (NS_FAILED(rv)) return rv;
-
   nsCAutoString path;
-  rv = zipFile->GetNativePath(path);
+  rv = oldest->GetJarPath(path);
   if (NS_FAILED(rv)) return rv;
 
   nsCStringKey key(path);
@@ -1386,6 +1287,29 @@ nsZipReaderCache::Observe(nsISupports *aSubject,
     mZips.Reset();
   }
   return NS_OK;
+}
+
+PRTime GetModTime(PRUint16 aDate, PRUint16 aTime)
+{
+  PRExplodedTime time;
+
+  time.tm_usec = 0;
+  
+  time.tm_hour = (aTime >> 11) & 0x1F;
+  time.tm_min = (aTime >> 5) & 0x3F;
+  time.tm_sec = (aTime & 0x1F) * 2;
+
+  time.tm_year = (aDate >> 9) + 1980;
+  time.tm_month = ((aDate >> 5) & 0x0F)-1;
+  time.tm_mday = aDate & 0x1F;
+  
+  time.tm_params.tp_gmt_offset = 0;
+  time.tm_params.tp_dst_offset = 0;
+  
+  PR_NormalizeTime(&time, PR_GMTParameters);
+  time.tm_params = PR_LocalTimeParameters(&time);
+  
+  return PR_ImplodeTime(&time);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

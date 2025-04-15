@@ -50,7 +50,9 @@ LIBXUL_LIBRARY = 1
 REQUIRES	= content \
 		  docshell \
 		  dom \
+		  editor \
 		  gfx \
+		  thebes \
 		  intl \
 		  layout \
 		  locale \
@@ -71,6 +73,7 @@ CPPSRCS = \
   nsXULFormControlAccessible.cpp \
   nsXULMenuAccessible.cpp \
   nsXULSelectAccessible.cpp \
+  nsXULSliderAccessible.cpp \
   nsXULTabAccessible.cpp \
   nsXULTextAccessible.cpp \
   nsXULTreeAccessible.cpp \

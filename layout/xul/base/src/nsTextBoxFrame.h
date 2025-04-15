@@ -41,6 +41,7 @@
 #include "nsLeafBoxFrame.h"
 
 class nsAccessKeyInfo;
+class nsAsyncAccesskeyUpdate;
 
 typedef nsLeafBoxFrame nsTextBoxFrameSuper;
 class nsTextBoxFrame : public nsTextBoxFrameSuper
@@ -48,26 +49,23 @@ class nsTextBoxFrame : public nsTextBoxFrameSuper
 public:
 
   // nsIBox
-  NS_IMETHOD GetPrefSize(nsBoxLayoutState& aBoxLayoutState, nsSize& aSize);
-  NS_IMETHOD GetMinSize(nsBoxLayoutState& aBoxLayoutState, nsSize& aSize);
-  NS_IMETHOD GetAscent(nsBoxLayoutState& aBoxLayoutState, nscoord& aAscent);
+  virtual nsSize GetPrefSize(nsBoxLayoutState& aBoxLayoutState);
+  virtual nsSize GetMinSize(nsBoxLayoutState& aBoxLayoutState);
+  virtual nscoord GetBoxAscent(nsBoxLayoutState& aBoxLayoutState);
   NS_IMETHOD DoLayout(nsBoxLayoutState& aBoxLayoutState);
-  NS_IMETHOD NeedsRecalc();
+  virtual void MarkIntrinsicWidthsDirty();
 
   enum CroppingStyle { CropNone, CropLeft, CropRight, CropCenter };
 
-  friend nsresult NS_NewTextBoxFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewTextBoxFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
-  NS_IMETHOD  Init(nsPresContext*  aPresContext,
-                   nsIContent*      aContent,
+  NS_IMETHOD  Init(nsIContent*      aContent,
                    nsIFrame*        aParent,
-                   nsStyleContext*  aContext,
                    nsIFrame*        asPrevInFlow);
 
-  NS_IMETHOD Destroy(nsPresContext* aPresContext);
+  virtual void Destroy();
 
-  NS_IMETHOD AttributeChanged(nsIContent*     aChild,
-                              PRInt32         aNameSpaceID,
+  NS_IMETHOD AttributeChanged(PRInt32         aNameSpaceID,
                               nsIAtom*        aAttribute,
                               PRInt32         aModType);
 
@@ -75,52 +73,50 @@ public:
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
 #endif
 
-  virtual void UpdateAttributes(nsPresContext*  aPresContext,
-                                nsIAtom*         aAttribute,
-                                PRBool&          aResize,
-                                PRBool&          aRedraw);
+  void UpdateAttributes(nsIAtom*         aAttribute,
+                        PRBool&          aResize,
+                        PRBool&          aRedraw);
 
-
-  NS_IMETHOD Paint(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext,
-                   const nsRect&        aDirtyRect,
-                   nsFramePaintLayer    aWhichLayer,
-                   PRUint32             aFlags = 0);
-
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
 
   virtual ~nsTextBoxFrame();
-protected:
 
+  void PaintTitle(nsIRenderingContext& aRenderingContext,
+                  const nsRect&        aDirtyRect,
+                  nsPoint              aPt);
+
+protected:
+  friend class nsAsyncAccesskeyUpdate;
+  // Should be called only by nsAsyncAccesskeyUpdate.
+  // Returns PR_TRUE if accesskey was updated.
+  PRBool UpdateAccesskey(nsWeakFrame& aWeakThis);
   void UpdateAccessTitle();
   void UpdateAccessIndex();
 
-  NS_IMETHOD PaintTitle(nsPresContext*      aPresContext,
-                        nsIRenderingContext& aRenderingContext,
-                        const nsRect&        aDirtyRect,
-                        const nsRect&        aRect);
+  // REVIEW: SORRY! Couldn't resist devirtualizing these
+  void LayoutTitle(nsPresContext*      aPresContext,
+                   nsIRenderingContext& aRenderingContext,
+                   const nsRect&        aRect);
 
-  virtual void LayoutTitle(nsPresContext*      aPresContext,
-                           nsIRenderingContext& aRenderingContext,
-                           const nsRect&        aRect);
+  void CalculateUnderline(nsIRenderingContext& aRenderingContext);
 
-  virtual void CalculateUnderline(nsIRenderingContext& aRenderingContext);
+  void CalcTextSize(nsBoxLayoutState& aBoxLayoutState);
 
-  virtual void CalcTextSize(nsBoxLayoutState& aBoxLayoutState);
+  nsTextBoxFrame(nsIPresShell* aShell, nsStyleContext* aContext);
 
-  nsTextBoxFrame(nsIPresShell* aShell);
+  void CalculateTitleForWidth(nsPresContext*      aPresContext,
+                              nsIRenderingContext& aRenderingContext,
+                              nscoord              aWidth);
 
-  virtual void CalculateTitleForWidth(nsPresContext*      aPresContext,
-                                      nsIRenderingContext& aRenderingContext,
-                                      nscoord              aWidth);
+  void GetTextSize(nsPresContext*      aPresContext,
+                   nsIRenderingContext& aRenderingContext,
+                   const nsString&      aString,
+                   nsSize&              aSize,
+                   nscoord&             aAscent);
 
-  virtual void GetTextSize(nsPresContext*      aPresContext,
-                           nsIRenderingContext& aRenderingContext,
-                           const nsString&      aString,
-                           nsSize&              aSize,
-                           nscoord&             aAscent);
-
-  nsresult RegUnregAccessKey(nsPresContext* aPresContext,
-                             PRBool          aDoReg);
+  nsresult RegUnregAccessKey(PRBool aDoReg);
 
 private:
 
@@ -133,7 +129,8 @@ private:
   nsString mAccessKey;
   nscoord mTitleWidth;
   nsAccessKeyInfo* mAccessKeyInfo;
-  PRBool mNeedsRecalc;
+  PRPackedBool mNeedsRecalc;
+  PRPackedBool mNeedsReflowCallback;
   nsSize mTextSize;
   nscoord mAscent;
 

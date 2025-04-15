@@ -34,6 +34,9 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* rendering object for list-item bullets */
+
 #ifndef nsBulletFrame_h___
 #define nsBulletFrame_h___
 
@@ -50,18 +53,16 @@ class gfxIImageFrame;
  */
 class nsBulletFrame : public nsFrame {
 public:
-  nsBulletFrame();
+  nsBulletFrame(nsStyleContext* aContext) : nsFrame(aContext) {}
   virtual ~nsBulletFrame();
 
   // nsIFrame
-  NS_IMETHOD Destroy(nsPresContext* aPresContext);
-  NS_IMETHOD Paint(nsPresContext*      aCX,
-                   nsIRenderingContext& aRenderingContext,
-                   const nsRect&        aDirtyRect,
-                   nsFramePaintLayer    aWhichLayer,
-                   PRUint32             aFlags = 0);
+  virtual void Destroy();
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
   virtual nsIAtom* GetType() const;
-  NS_IMETHOD DidSetStyleContext(nsPresContext* aPresContext);
+  NS_IMETHOD DidSetStyleContext();
 #ifdef NS_DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
 #endif
@@ -71,6 +72,8 @@ public:
                     nsHTMLReflowMetrics& aMetrics,
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus& aStatus);
+  virtual nscoord GetMinWidth(nsIRenderingContext *aRenderingContext);
+  virtual nscoord GetPrefWidth(nsIRenderingContext *aRenderingContext);
 
   // nsBulletFrame
   PRInt32 SetListItemOrdinal(PRInt32 aNextOrdinal, PRBool* aChanged);
@@ -95,10 +98,16 @@ public:
   /* get list item text, with '.' */
   PRBool GetListItemText(const nsStyleList& aStyleList,
                          nsString& aResult);
+                         
+  void PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
+                   const nsRect& aDirtyRect);
+  
+  virtual PRBool IsEmpty();
+  virtual PRBool IsSelfEmpty();
 
 protected:
   void GetDesiredSize(nsPresContext* aPresContext,
-                      const nsHTMLReflowState& aReflowState,
+                      nsIRenderingContext *aRenderingContext,
                       nsHTMLReflowMetrics& aMetrics);
 
   void GetLoadGroup(nsPresContext *aPresContext, nsILoadGroup **aLoadGroup);
@@ -110,6 +119,7 @@ protected:
 
   nsSize mIntrinsicSize;
   nsSize mComputedSize;
+  PRBool mTextIsRTL;
 };
 
 #endif /* nsBulletFrame_h___ */

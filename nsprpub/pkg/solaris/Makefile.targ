@@ -38,7 +38,7 @@
 #
 # ***** END LICENSE BLOCK *****
 #
-#ident	"$Id: Makefile.targ,v 1.2.2.6 2005/03/08 02:17:36 wtchang%redhat.com Exp $"
+#ident	"$Id: Makefile.targ,v 1.6 2005/02/25 20:20:52 christophe.ravel.bugs%sun.com Exp $"
 #
 
 include $(srcdir)/../proto64.mk

@@ -39,11 +39,14 @@
 #define nsDragService_h__
 
 #include "nsBaseDragService.h"
+#include <windows.h>
+#include <shlobj.h>
 
 struct IDropSource;
 struct IDataObject;
 class  nsNativeDragTarget;
 class  nsDataObjCollection;
+class  nsString;
 
 /**
  * Native Win32 DragService wrapper
@@ -65,7 +68,7 @@ public:
   NS_IMETHOD GetData(nsITransferable * aTransferable, PRUint32 anItem);
   NS_IMETHOD GetNumDropItems(PRUint32 * aNumItems);
   NS_IMETHOD IsDataFlavorSupported(const char *aDataFlavor, PRBool *_retval);
-  NS_IMETHOD EndDragSession();
+  NS_IMETHOD EndDragSession(PRBool aDoneDrag);
 
   // native impl.
   NS_IMETHOD SetIDataObject(IDataObject * aDataObj);
@@ -78,6 +81,14 @@ protected:
   // determine if we have a single data object or one of our private
   // collections
   PRBool IsCollectionObject(IDataObject* inDataObj);
+
+  // gets shell version
+  PRUint64 GetShellVersion();
+
+  // Create a bitmap for drag operations
+  PRBool CreateDragImage(nsIDOMNode *aDOMNode,
+                         nsIScriptableRegion *aRegion,
+                         SHDRAGIMAGE *psdi);
 
   IDropSource * mNativeDragSrc;
   nsNativeDragTarget * mNativeDragTarget;

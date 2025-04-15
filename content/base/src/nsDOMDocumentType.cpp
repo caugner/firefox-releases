@@ -35,15 +35,22 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * Implementation of DOM Core's nsIDOMDocumentType node.
+ */
+
 #include "nsDOMDocumentType.h"
 #include "nsDOMAttributeMap.h"
 #include "nsIDOMNamedNodeMap.h"
-#include "nsLayoutAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
 #include "nsDOMString.h"
 #include "nsIDOM3Node.h"
 #include "nsNodeInfoManager.h"
+#include "nsIDocument.h"
+#include "nsIXPConnect.h"
+#include "nsIDOMDocument.h"
 
 nsresult
 NS_NewDOMDocumentType(nsIDOMDocumentType** aDocType,
@@ -77,7 +84,12 @@ NS_NewDOMDocumentType(nsIDOMDocumentType** aDocType,
     nimgr->SetDocumentPrincipal(aPrincipal);
   }
 
-  *aDocType = new nsDOMDocumentType(nimgr, aName, aEntities, aNotations,
+  nsCOMPtr<nsINodeInfo> ni;
+  rv = nimgr->GetNodeInfo(nsGkAtoms::documentTypeNodeName, nsnull,
+                          kNameSpaceID_None, getter_AddRefs(ni));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *aDocType = new nsDOMDocumentType(ni, aName, aEntities, aNotations,
                                     aPublicId, aSystemId, aInternalSubset);
   if (!*aDocType) {
     return NS_ERROR_OUT_OF_MEMORY;
@@ -88,14 +100,14 @@ NS_NewDOMDocumentType(nsIDOMDocumentType** aDocType,
   return NS_OK;
 }
 
-nsDOMDocumentType::nsDOMDocumentType(nsNodeInfoManager *aNodeInfoManager,
+nsDOMDocumentType::nsDOMDocumentType(nsINodeInfo *aNodeInfo,
                                      nsIAtom *aName,
                                      nsIDOMNamedNodeMap *aEntities,
                                      nsIDOMNamedNodeMap *aNotations,
                                      const nsAString& aPublicId,
                                      const nsAString& aSystemId,
                                      const nsAString& aInternalSubset) :
-  nsGenericDOMDataNode(aNodeInfoManager),
+  nsGenericDOMDataNode(aNodeInfo),
   mName(aName),
   mEntities(aEntities),
   mNotations(aNotations),
@@ -112,19 +124,30 @@ nsDOMDocumentType::~nsDOMDocumentType()
 
 // QueryInterface implementation for nsDOMDocumentType
 NS_INTERFACE_MAP_BEGIN(nsDOMDocumentType)
-  NS_INTERFACE_MAP_ENTRY(nsIContent)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMGCParticipant)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNode)
   NS_INTERFACE_MAP_ENTRY(nsIDOMDocumentType)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIContent)
-  NS_INTERFACE_MAP_ENTRY_TEAROFF(nsIDOM3Node, new nsNode3Tearoff(this))
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(DocumentType)
-NS_INTERFACE_MAP_END
+NS_INTERFACE_MAP_END_INHERITING(nsGenericDOMDataNode)
 
 
-NS_IMPL_ADDREF(nsDOMDocumentType)
-NS_IMPL_RELEASE(nsDOMDocumentType)
+NS_IMPL_ADDREF_INHERITED(nsDOMDocumentType, nsGenericDOMDataNode)
+NS_IMPL_RELEASE_INHERITED(nsDOMDocumentType, nsGenericDOMDataNode)
 
+PRBool
+nsDOMDocumentType::IsNodeOfType(PRUint32 aFlags) const
+{
+  // Don't claim to be eDATA_NODE since we're just inheriting
+  // nsGenericDOMDataNode for convinience. Doctypes aren't really
+  // data nodes (they have a null .nodeValue and don't implement
+  // nsIDOMCharacterData)
+  return !(aFlags & ~eCONTENT);
+}
+
+const nsTextFragment*
+nsDOMDocumentType::GetText()
+{
+  return nsnull;
+}
 
 NS_IMETHODIMP    
 nsDOMDocumentType::GetName(nsAString& aName)
@@ -181,12 +204,6 @@ nsDOMDocumentType::GetInternalSubset(nsAString& aInternalSubset)
   return NS_OK;
 }
 
-nsIAtom *
-nsDOMDocumentType::Tag() const
-{
-  return mName;
-}
-
 NS_IMETHODIMP
 nsDOMDocumentType::GetNodeName(nsAString& aNodeName)
 {
@@ -215,18 +232,66 @@ nsDOMDocumentType::GetNodeType(PRUint16* aNodeType)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsDOMDocumentType::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
+nsGenericDOMDataNode*
+nsDOMDocumentType::CloneDataNode(nsINodeInfo *aNodeInfo, PRBool aCloneText) const
 {
-  nsDOMDocumentType* it = new nsDOMDocumentType(mNodeInfoManager, mName,
-                                                mEntities,
-                                                mNotations,
-                                                mPublicId,
-                                                mSystemId,
-                                                mInternalSubset);
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
+  return new nsDOMDocumentType(aNodeInfo, mName, mEntities, mNotations,
+                               mPublicId, mSystemId, mInternalSubset);
+}
+
+nsresult
+nsDOMDocumentType::BindToTree(nsIDocument *aDocument, nsIContent *aParent,
+                              nsIContent *aBindingParent,
+                              PRBool aCompileEventHandlers)
+{
+  if (!HasSameOwnerDoc(NODE_FROM(aParent, aDocument))) {
+    NS_ASSERTION(!GetOwnerDoc(), "Need to adopt or import first!");
+
+    // DocumentType nodes are the only nodes that can have a null ownerDocument
+    // according to the DOM spec, so we need to give them a new nodeinfo in that
+    // case.
+    // XXX We may want to move this to nsDOMImplementation::CreateDocument if
+    //     we want to rely on the nodeinfo and wrappers being right before
+    //     getting into doReplaceOrInsertBefore or doInsertChildAt. That would
+    //     break inserting DOMDocumentType nodes through other DOM methods
+    //     though.
+    nsNodeInfoManager *nimgr = aParent ?
+                               aParent->NodeInfo()->NodeInfoManager() :
+                               aDocument->NodeInfoManager();
+    nsCOMPtr<nsINodeInfo> newNodeInfo;
+    nsresult rv = nimgr->GetNodeInfo(mNodeInfo->NameAtom(),
+                                     mNodeInfo->GetPrefixAtom(),
+                                     mNodeInfo->NamespaceID(),
+                                     getter_AddRefs(newNodeInfo));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    mNodeInfo.swap(newNodeInfo);
+
+    nsCOMPtr<nsIDocument> oldOwnerDoc =
+      do_QueryInterface(nsContentUtils::GetDocumentFromContext());
+    nsIDocument *newOwnerDoc = nimgr->GetDocument();
+    if (oldOwnerDoc && newOwnerDoc) {
+      nsIXPConnect *xpc = nsContentUtils::XPConnect();
+
+      JSContext *cx = nsnull;
+      JSObject *oldScope = nsnull, *newScope = nsnull;
+      rv = nsContentUtils::GetContextAndScopes(oldOwnerDoc, newOwnerDoc, &cx,
+                                               &oldScope, &newScope);
+      if (cx && xpc) {
+        nsISupports *node = NS_ISUPPORTS_CAST(nsIContent*, this);
+        nsCOMPtr<nsIXPConnectJSObjectHolder> oldWrapper;
+        rv = xpc->ReparentWrappedNativeIfFound(cx, oldScope, newScope, node,
+                                               getter_AddRefs(oldWrapper));
+      }
+
+      if (NS_FAILED(rv)) {
+        mNodeInfo.swap(newNodeInfo);
+
+        return rv;
+      }
+    }
   }
 
-  return CallQueryInterface(it, aReturn);
+  return nsGenericDOMDataNode::BindToTree(aDocument, aParent, aBindingParent,
+                                          aCompileEventHandlers);
 }

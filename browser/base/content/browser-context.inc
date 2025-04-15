@@ -20,6 +20,7 @@
 # the Initial Developer. All Rights Reserved.
 #
 # Contributor(s):
+#   Ehsan Akhgari <ehsan.akhgari@gmail.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -35,9 +36,6 @@
 #
 # ***** END LICENSE BLOCK *****
 
-    <popup id="contentAreaContextMenu"
-           onpopupshowing="if (event.target != this) return true; gContextMenu = new nsContextMenu( this ); return gContextMenu.shouldDisplay;"
-           onpopuphiding="if (event.target == this) { gContextMenu = null; }">
       <menuitem id="spell-no-suggestions"
                 disabled="true"
                 label="&spellNoSuggestions.label;"/>
@@ -56,10 +54,9 @@
                 oncommand="gContextMenu.openLinkInTab();"/>
       <menuseparator id="context-sep-open"/>
       <menuitem id="context-bookmarklink"
-                label="&bookmarkLinkCmd.label;"
-                accesskey="&bookmarkLinkCmd.accesskey;"
-                oncommand="BookmarksUtils.addBookmark(gContextMenu.linkURL,
-                                                      gContextMenu.linkText());"/>
+                label="&bookmarkThisLinkCmd.label;"
+                accesskey="&bookmarkThisLinkCmd.accesskey;"
+                oncommand="gContextMenu.bookmarkLink();"/>
       <menuitem id="context-savelink"
                 label="&saveLinkCmd.label;"
                 accesskey="&saveLinkCmd.accesskey;"
@@ -75,8 +72,12 @@
       <menuitem id="context-copylink"
                 label="&copyLinkCmd.label;"
                 accesskey="&copyLinkCmd.accesskey;"
-                command="cmd_copyLink"/>
+                oncommand="goDoCommand('cmd_copyLink');"/>
       <menuseparator id="context-sep-copylink"/>
+      <menuitem id="context-showimage"
+                label="&showImageCmd.label;"
+                accesskey="&showImageCmd.accesskey;"
+                oncommand="gContextMenu.showImage();"/>
       <menuitem id="context-viewimage"
                 label="&viewImageCmd.label;"
                 accesskey="&viewImageCmd.accesskey;"
@@ -86,12 +87,12 @@
       <menuitem id="context-copyimage-contents"
                 label="&copyImageContentsCmd.label;"
                 accesskey="&copyImageContentsCmd.accesskey;"
-                command="cmd_copyImageContents"/>
+                oncommand="goDoCommand('cmd_copyImageContents');"/>
 #endif
       <menuitem id="context-copyimage"
                 label="&copyImageCmd.label;"
                 accesskey="&copyImageCmd.accesskey;"
-                command="cmd_copyImageLocation"/>
+                oncommand="goDoCommand('cmd_copyImageLocation');"/>
       <menuseparator id="context-sep-copyimage"/>
       <menuitem id="context-saveimage"
                 label="&saveImageCmd.label;"
@@ -112,10 +113,12 @@
       <menuitem id="context-back"
                 label="&backCmd.label;"
                 accesskey="&backCmd.accesskey;"
+                chromedir="&locale.dir;"
                 command="Browser:Back"/>
       <menuitem id="context-forward"
                 label="&forwardCmd.label;"
                 accesskey="&forwardCmd.accesskey;"
+                chromedir="&locale.dir;"
                 command="Browser:Forward"/>
       <menuitem id="context-reload"
                 label="&reloadCmd.label;"
@@ -127,21 +130,17 @@
                 command="Browser:Stop"/>
       <menuseparator id="context-sep-stop"/>
       <menuitem id="context-bookmarkpage"
-                label="&bookmarkPageCmd.label;"
-                accesskey="&bookmarkPageCmd.accesskey;"
-#ifdef MOZ_PLACES
-                command="Browser:AddBookmarkAs"/>
-#else
-                oncommand="addBookmarkAs(document.getElementById('content'));"/>
-#endif
+                label="&bookmarkPageCmd2.label;"
+                accesskey="&bookmarkPageCmd2.accesskey;"
+                oncommand="gContextMenu.bookmarkThisPage();"/>
       <menuitem id="context-savepage"
                 label="&savePageCmd.label;"
                 accesskey="&savePageCmd.accesskey2;"
-                oncommand="saveDocument(window.content.document);"/>
+                oncommand="gContextMenu.savePageAs();"/>
       <menuitem id="context-sendpage"  
                 label="&sendPageCmd.label;" 
                 accesskey="&sendPageCmd.accesskey;" 
-                command="Browser:SendLink"/>
+                oncommand="gContextMenu.sendPage();"/>
       <menuseparator id="context-sep-viewbgimage"/>  
       <menuitem id="context-viewbgimage"
                 label="&viewBGImageCmd.label;"
@@ -185,48 +184,65 @@
       <menuseparator id="frame-sep"/>
       <menu id="frame" label="&thisFrameMenu.label;" accesskey="&thisFrameMenu.accesskey;">
         <menupopup>
-          <menuitem label="&showOnlyThisFrameCmd.label;"
+          <menuitem id="context-showonlythisframe"
+                    label="&showOnlyThisFrameCmd.label;"
                     accesskey="&showOnlyThisFrameCmd.accesskey;"
                     oncommand="gContextMenu.showOnlyThisFrame();"/>
-          <menuitem label="&openFrameCmd.label;"
+          <menuitem id="context-openframe"
+                    label="&openFrameCmd.label;"
                     accesskey="&openFrameCmd.accesskey;"
                     oncommand="gContextMenu.openFrame();"/>
-          <menuitem label="&openFrameCmdInTab.label;"
+          <menuitem id="context-openframeintab"
+                    label="&openFrameCmdInTab.label;"
                     accesskey="&openFrameCmdInTab.accesskey;"
                     oncommand="gContextMenu.openFrameInTab();"/>
           <menuseparator/>
-          <menuitem label="&reloadFrameCmd.label;"
+          <menuitem id="context-reloadframe"
+                    label="&reloadFrameCmd.label;"
                     accesskey="&reloadFrameCmd.accesskey;"
                     oncommand="gContextMenu.reloadFrame();"/>
           <menuseparator/>
-          <menuitem label="&bookmarkFrameCmd.label;"
-                    accesskey="&bookmarkFrameCmd.accesskey;"
+          <menuitem id="context-bookmarkframe"
+                    label="&bookmarkThisFrameCmd.label;"
+                    accesskey="&bookmarkThisFrameCmd.accesskey;"
                     oncommand="gContextMenu.addBookmarkForFrame();"/>
-          <menuitem label="&saveFrameCmd.label;"
+          <menuitem id="context-saveframe"
+                    label="&saveFrameCmd.label;"
                     accesskey="&saveFrameCmd.accesskey;"
                     oncommand="saveDocument(gContextMenu.target.ownerDocument);"/>
           <menuseparator/>
-          <menuitem label="&viewFrameSourceCmd.label;"
+          <menuitem id="context-printframe"
+                    label="&printFrameCmd.label;"
+                    accesskey="&printFrameCmd.accesskey;"
+                    oncommand="gContextMenu.printFrame();"/>
+          <menuseparator/>
+          <menuitem id="context-viewframesource"
+                    label="&viewFrameSourceCmd.label;"
                     accesskey="&viewFrameSourceCmd.accesskey;"
-                    oncommand="gContextMenu.viewFrameSource();"/>
-          <menuitem label="&viewFrameInfoCmd.label;"
+                    oncommand="gContextMenu.viewFrameSource();"
+                    observes="isFrameImage"/>
+          <menuitem id="context-viewframeinfo"
+                    label="&viewFrameInfoCmd.label;"
                     accesskey="&viewFrameInfoCmd.accesskey;"
-                    oncommand="gContextMenu.viewFrameInfo();"/>        
+                    oncommand="gContextMenu.viewFrameInfo();"/>
         </menupopup>
       </menu>
       <menuseparator id="context-sep-properties"/>
       <menuitem id="context-viewpartialsource-selection"
                 label="&viewPartialSourceForSelectionCmd.label;"
                 accesskey="&viewPartialSourceCmd.accesskey;"
-                oncommand="gContextMenu.viewPartialSource('selection');"/>
+                oncommand="gContextMenu.viewPartialSource('selection');"
+                observes="isImage"/>
       <menuitem id="context-viewpartialsource-mathml"
                 label="&viewPartialSourceForMathMLCmd.label;"
                 accesskey="&viewPartialSourceCmd.accesskey;"
-                oncommand="gContextMenu.viewPartialSource('mathml');"/>
+                oncommand="gContextMenu.viewPartialSource('mathml');"
+                observes="isImage"/>
       <menuitem id="context-viewsource"
                 label="&viewPageSourceCmd.label;"
                 accesskey="&viewPageSourceCmd.accesskey;"
-                oncommand="BrowserViewSourceOfDocument(content.document);"/>
+                oncommand="BrowserViewSourceOfDocument(gContextMenu.browser.contentDocument);"
+                observes="isImage"/>
       <menuitem id="context-viewinfo"
                 label="&viewPageInfoCmd.label;"
                 accesskey="&viewPageInfoCmd.accesskey;"
@@ -237,9 +253,9 @@
                 oncommand="gContextMenu.showMetadata();"/>
       <menuseparator id="spell-separator"/>
       <menuitem id="spell-check-enabled"
-                label="&spellEnable.label;"
+                label="&spellCheckEnable.label;"
                 type="checkbox"
-                accesskey="&spellEnable.accesskey;"
+                accesskey="&spellCheckEnable.accesskey;"
                 oncommand="InlineSpellCheckerUI.toggleEnabled();"/>
       <menuitem id="spell-add-dictionaries-main"
                 label="&spellAddDictionaries.label;"
@@ -264,5 +280,4 @@
       <menuitem hidden="true" id="context-bidi-page-direction-toggle"
                 label="&bidiSwitchPageDirectionItem.label;"
                 accesskey="&bidiSwitchPageDirectionItem.accesskey;"
-                oncommand="SwitchDocumentDirection(window.content);"/>
-    </popup>
+                oncommand="gContextMenu.switchPageDirection();"/>

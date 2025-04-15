@@ -39,14 +39,16 @@
 #define nsCopySupport_h__
 
 #include "nscore.h"
-#include "nsCOMPtr.h"
 
 class nsISelection;
 class nsIDocument;
 class nsIImageLoadingContent;
 class nsIContent;
 class nsITransferable;
- 
+class nsACString;
+class nsAString;
+class nsIDOMNode;
+
 class nsCopySupport
 {
   // class of static helper functions for copy support
@@ -63,6 +65,11 @@ class nsCopySupport
     
     static nsresult ImageCopy(nsIImageLoadingContent* aImageElement,
                               PRInt32 aCopyFlags);
+
+    // Given the current selection, find the target that
+    // before[copy,cut,paste] and [copy,cut,paste] events will fire on.
+    static nsresult GetClipboardEventTarget(nsISelection *aSel,
+                                            nsIDOMNode **aEventTarget);
 };
 
 #endif

@@ -109,12 +109,13 @@ public:
 
 #include "nsCOMPtr.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 #include "nsNetUtil.h"
 
 #include "nsIContent.h"
 #include "nsIURI.h"
 #include "nsIDocument.h"
+#include "nsIScriptObjectPrincipal.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMDocument.h"
@@ -168,7 +169,7 @@ END_COM_MAP()
         // Get the DOM window
         nsCOMPtr<nsIDOMWindow> domWindow;
         NPN_GetValue(mData->pPluginInstance, NPNVDOMWindow, 
-                     NS_STATIC_CAST(nsIDOMWindow **, getter_AddRefs(domWindow)));
+                     static_cast<nsIDOMWindow **>(getter_AddRefs(domWindow)));
         if (!domWindow)
         {
             return E_FAIL;
@@ -800,7 +801,7 @@ END_COM_MAP()
 
         nsCOMPtr<nsIDOMWindow> domWindow;
         NPN_GetValue(mData->pPluginInstance, NPNVDOMWindow, 
-                     NS_STATIC_CAST(nsIDOMWindow **, getter_AddRefs(domWindow)));
+                     static_cast<nsIDOMWindow **>(getter_AddRefs(domWindow)));
         if (!domWindow)
         {
             return E_UNEXPECTED;
@@ -824,7 +825,7 @@ END_COM_MAP()
         if (!scriptContext)
             return E_UNEXPECTED;
 
-        nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDocument));
+        nsCOMPtr<nsIScriptObjectPrincipal> doc(do_QueryInterface(domDocument));
         if (!doc)
             return E_UNEXPECTED;
 
@@ -947,7 +948,7 @@ public:
 
         // Get the DOM document
         NPN_GetValue(mData->pPluginInstance, NPNVDOMElement, 
-                     NS_STATIC_CAST(nsIDOMElement **, getter_AddRefs(mDOMElement)));
+                     static_cast<nsIDOMElement **>(getter_AddRefs(mDOMElement)));
         if (mDOMElement)
         {
             mDOMElement->GetOwnerDocument(getter_AddRefs(mDOMDocument));
@@ -955,7 +956,7 @@ public:
 
         // Get the DOM window
         NPN_GetValue(mData->pPluginInstance, NPNVDOMWindow, 
-                     NS_STATIC_CAST(nsIDOMWindow **, getter_AddRefs(mDOMWindow)));
+                     static_cast<nsIDOMWindow **>(getter_AddRefs(mDOMWindow)));
         if (mDOMWindow)
         {
             nsCOMPtr<nsIDOMWindowInternal> windowInternal = do_QueryInterface(mDOMWindow);
@@ -1841,8 +1842,10 @@ END_COM_MAP()
 
                         nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMElement));
 
-                        lh->OnLinkClick(content, eLinkVerb_Replace,
-                            uri, szTargetFrame ? szTargetFrame : mUseTarget);
+                        // XXX Not checking whether content is editable,
+                        //     should we?
+                        lh->OnLinkClick(content, uri,
+                                        szTargetFrame ? szTargetFrame : mUseTarget);
                     }
                 }
                 hr = S_OK;

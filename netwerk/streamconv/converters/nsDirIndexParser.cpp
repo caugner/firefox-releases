@@ -56,10 +56,10 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefLocalizedString.h"
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(nsDirIndexParser,
-                              nsIRequestObserver,
-                              nsIStreamListener,
-                              nsIDirIndexParser)
+NS_IMPL_ISUPPORTS3(nsDirIndexParser,
+                   nsIRequestObserver,
+                   nsIStreamListener,
+                   nsIDirIndexParser)
 
 nsDirIndexParser::nsDirIndexParser() {
 }
@@ -302,7 +302,7 @@ nsDirIndexParser::ParseData(nsIDirIndex *aIdx, char* aDataStr) {
               aIdx->SetDescription(result);
             success = PR_TRUE;
           }
-          Recycle(result);
+          NS_Free(result);
         } else {
           NS_WARNING("UnEscapeAndConvert error");
         }
@@ -315,14 +315,14 @@ nsDirIndexParser::ParseData(nsIDirIndex *aIdx, char* aDataStr) {
         // when can we fail to get the service, anyway? - bbaetz
         aIdx->SetLocation(filename.get());
         if (!mHasDescription) {
-          aIdx->SetDescription(NS_ConvertUTF8toUCS2(value).get());
+          aIdx->SetDescription(NS_ConvertUTF8toUTF16(value).get());
         }
       }
     }
       break;
     case FIELD_DESCRIPTION:
       nsUnescape(value);
-      aIdx->SetDescription(NS_ConvertUTF8toUCS2(value).get());
+      aIdx->SetDescription(NS_ConvertUTF8toUTF16(value).get());
       break;
     case FIELD_CONTENTLENGTH:
       {

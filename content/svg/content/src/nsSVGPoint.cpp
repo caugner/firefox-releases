@@ -78,6 +78,12 @@ NS_NewSVGPoint(nsIDOMSVGPoint** result, float x, float y)
   return NS_OK;
 }
 
+nsresult
+NS_NewSVGPoint(nsIDOMSVGPoint** result, const gfxPoint& point)
+{
+  return NS_NewSVGPoint(result, float(point.x), float(point.y));
+}
+
 nsSVGPoint::nsSVGPoint(float x, float y)
     : mX(x), mY(y)
 {
@@ -107,6 +113,8 @@ NS_IMETHODIMP nsSVGPoint::GetX(float *aX)
 }
 NS_IMETHODIMP nsSVGPoint::SetX(float aX)
 {
+  NS_ENSURE_FINITE(aX, NS_ERROR_ILLEGAL_VALUE);
+
   WillModify();
   mX = aX;
   DidModify();
@@ -122,6 +130,8 @@ NS_IMETHODIMP nsSVGPoint::GetY(float *aY)
 }
 NS_IMETHODIMP nsSVGPoint::SetY(float aY)
 {
+  NS_ENSURE_FINITE(aY, NS_ERROR_ILLEGAL_VALUE);
+
   WillModify();
   mY = aY;
   DidModify();
@@ -177,7 +187,7 @@ public:
   nsSVGReadonlyPoint(float x, float y)
     : nsSVGPoint(x, y)
   {
-  };
+  }
 
   // override setters to make the whole object readonly
   NS_IMETHODIMP SetX(float) { return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR; }
@@ -194,3 +204,4 @@ NS_NewSVGReadonlyPoint(nsIDOMSVGPoint** result, float x, float y)
   NS_ADDREF(*result);
   return NS_OK;
 }
+

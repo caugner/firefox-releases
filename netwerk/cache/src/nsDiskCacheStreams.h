@@ -93,14 +93,13 @@ private:
     void        Close();
     nsresult    OpenCacheFile(PRIntn flags, PRFileDesc ** fd);
     nsresult    ReadCacheBlocks();
-    nsresult    FlushBufferToFile(PRBool  clearBuffer); // XXX clearBuffer is always PR_TRUE
-    PRUint32    WriteToBuffer(const char * buffer, PRUint32 count);
-    nsresult    UpdateFileSize();
+    nsresult    FlushBufferToFile();
+    void        UpdateFileSize();
     void        DeleteBuffer();
     nsresult    Flush();
 
 
-    nsDiskCacheBinding *        mBinding;
+    nsDiskCacheBinding *        mBinding;       // not an owning reference
     nsDiskCacheDevice *         mDevice;
     nsDiskCacheOutputStream *   mOutStream;     // not an owning reference
     PRInt32                     mInStreamCount;

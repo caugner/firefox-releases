@@ -35,107 +35,36 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* class for maintaining a linked list of child frames */
+
 #include "nsFrameList.h"
 #ifdef NS_DEBUG
 #include "nsIFrameDebug.h"
 #endif
-#include "nsVoidArray.h"
 #include "nsLayoutUtils.h"
 
 #ifdef IBMBIDI
 #include "nsCOMPtr.h"
-#include "nsLayoutAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsILineIterator.h"
-
-/**
- * Helper class for comparing the location of frames. Used by
- * GetPrevVisualFor() and GetNextVisualFor()
- */
-#define LINE_MIN 0
-#define XCOORD_MIN 0x80000000
-#define MY_LINE_MAX 0x7fffffff
-#define XCOORD_MAX 0x7fffffff
-class nsFrameOrigin {
-public:
-  // default constructor
-  nsFrameOrigin() {
-    mLine = 0;
-    mXCoord = 0;
-    mDirection = NS_STYLE_DIRECTION_LTR;
-  }
-
-  nsFrameOrigin(PRInt32 line, nscoord xCoord, PRUint8 direction) {
-    mLine = line;
-    mXCoord = xCoord;
-    mDirection = direction;
-  }
-
-  // copy constructor
-  nsFrameOrigin(const nsFrameOrigin& aFrameOrigin) {
-    mLine = aFrameOrigin.mLine;
-    mXCoord = aFrameOrigin.mXCoord;
-    mDirection = aFrameOrigin.mDirection;
-  }
-
-  ~nsFrameOrigin() {
-  }
-
-  nsFrameOrigin& operator=(const nsFrameOrigin& aFrameOrigin) { 
-    mLine = aFrameOrigin.mLine;
-    mXCoord = aFrameOrigin.mXCoord;
-    mDirection = aFrameOrigin.mDirection;
-    return *this;
-  }
-
-  PRBool operator<(const nsFrameOrigin& aFrameOrigin) {
-    if (mLine < aFrameOrigin.mLine) {
-      return PR_TRUE;
-    }
-    if (mLine > aFrameOrigin.mLine) {
-      return PR_FALSE;
-    }
-    if (mDirection == NS_STYLE_DIRECTION_LTR && mXCoord < aFrameOrigin.mXCoord ||
-        mDirection == NS_STYLE_DIRECTION_RTL && mXCoord > aFrameOrigin.mXCoord) {
-      return PR_TRUE;
-    }
-    return PR_FALSE;
-  }
-  
-  PRBool operator>(const nsFrameOrigin& aFrameOrigin) {
-    if (mLine > aFrameOrigin.mLine) {
-      return PR_TRUE;
-    }
-    if (mLine < aFrameOrigin.mLine) {
-      return PR_FALSE;
-    }
-    if (mDirection == NS_STYLE_DIRECTION_LTR && mXCoord > aFrameOrigin.mXCoord ||
-        mDirection == NS_STYLE_DIRECTION_RTL && mXCoord < aFrameOrigin.mXCoord) {
-      return PR_TRUE;
-    }
-    return PR_FALSE;
-  }
-
-  PRBool operator==(const nsFrameOrigin& aFrameOrigin) {
-    if (aFrameOrigin.mLine == mLine && aFrameOrigin.mXCoord == mXCoord) {
-      return PR_TRUE;
-    }
-    return PR_FALSE;
-  }
-
-protected:
-  PRInt32 mLine;
-  nscoord mXCoord;
-  PRUint8 mDirection;
-};
+#include "nsBidiPresUtils.h"
 #endif // IBMBIDI
 
 void
-nsFrameList::DestroyFrames(nsPresContext* aPresContext)
+nsFrameList::Destroy()
+{
+  DestroyFrames();
+  delete this;
+}
+
+void
+nsFrameList::DestroyFrames()
 {
   nsIFrame* next;
   for (nsIFrame* frame = mFirstChild; frame; frame = next) {
     next = frame->GetNextSibling();
-    frame->Destroy(aPresContext);
+    frame->Destroy();
     mFirstChild = next;
   }
 }
@@ -226,11 +155,11 @@ nsFrameList::RemoveFirstChild()
 }
 
 PRBool
-nsFrameList::DestroyFrame(nsPresContext* aPresContext, nsIFrame* aFrame)
+nsFrameList::DestroyFrame(nsIFrame* aFrame)
 {
   NS_PRECONDITION(nsnull != aFrame, "null ptr");
   if (RemoveFrame(aFrame)) {
-    aFrame->Destroy(aPresContext);
+    aFrame->Destroy();
     return PR_TRUE;
   }
   return PR_FALSE;
@@ -243,17 +172,22 @@ nsFrameList::InsertFrame(nsIFrame* aParent,
 {
   NS_PRECONDITION(nsnull != aNewFrame, "null ptr");
   if (nsnull != aNewFrame) {
+    if (aParent) {
+      aNewFrame->SetParent(aParent);
+    }
     if (nsnull == aPrevSibling) {
       aNewFrame->SetNextSibling(mFirstChild);
       mFirstChild = aNewFrame;
     }
     else {
+      NS_ASSERTION(aNewFrame->GetParent() == aPrevSibling->GetParent(),
+                   "prev sibling has different parent");
       nsIFrame* nextFrame = aPrevSibling->GetNextSibling();
+      NS_ASSERTION(!nextFrame ||
+                   aNewFrame->GetParent() == nextFrame->GetParent(),
+                   "next sibling has different parent");
       aPrevSibling->SetNextSibling(aNewFrame);
       aNewFrame->SetNextSibling(nextFrame);
-    }
-    if (aParent) {
-      aNewFrame->SetParent(aParent);
     }
   }
 #ifdef DEBUG
@@ -289,7 +223,12 @@ nsFrameList::InsertFrames(nsIFrame* aParent,
       mFirstChild = aFrameList;
     }
     else {
+      NS_ASSERTION(aFrameList->GetParent() == aPrevSibling->GetParent(),
+                   "prev sibling has different parent");
       nsIFrame* nextFrame = aPrevSibling->GetNextSibling();
+      NS_ASSERTION(!nextFrame ||
+                   aFrameList->GetParent() == nextFrame->GetParent(),
+                   "next sibling has different parent");
       aPrevSibling->SetNextSibling(aFrameList);
       lastNewFrame->SetNextSibling(nextFrame);
     }
@@ -297,58 +236,6 @@ nsFrameList::InsertFrames(nsIFrame* aParent,
 #ifdef DEBUG
   CheckForLoops();
 #endif
-}
-
-PRBool
-nsFrameList::DoReplaceFrame(nsIFrame* aParent,
-                            nsIFrame* aOldFrame,
-                            nsIFrame* aNewFrame)
-{
-  NS_PRECONDITION(aOldFrame, "null ptr");
-  NS_PRECONDITION(aNewFrame, "null ptr");
-  if (!aOldFrame || !aNewFrame) {
-    return PR_FALSE;
-  }
-  
-  nsIFrame* nextFrame = aOldFrame->GetNextSibling();
-  if (aOldFrame == mFirstChild) {
-    mFirstChild = aNewFrame;
-  }
-  else {
-    nsIFrame* prevSibling = GetPrevSiblingFor(aOldFrame);
-    if (!prevSibling) {
-      NS_WARNING("nsFrameList::ReplaceFrame: aOldFrame not found in list");
-      return PR_FALSE;
-    }
-    prevSibling->SetNextSibling(aNewFrame);
-  }
-
-  aNewFrame->SetNextSibling(nextFrame);
-  
-  if (aParent) {
-    aNewFrame->SetParent(aParent);
-  }
-#ifdef DEBUG
-  CheckForLoops();
-#endif
-  return PR_TRUE;
-}
-
-PRBool
-nsFrameList::ReplaceFrame(nsIFrame* aParent,
-                          nsIFrame* aOldFrame,
-                          nsIFrame* aNewFrame,
-                          PRBool aDestroy)
-{
-  NS_PRECONDITION(aOldFrame, "null ptr");
-  NS_PRECONDITION(aNewFrame, "null ptr");
-  if (DoReplaceFrame(aParent, aOldFrame, aNewFrame)) {
-    if (aDestroy) {
-      aOldFrame->Destroy(aOldFrame->GetPresContext());
-    }
-    return PR_TRUE;
-  }
-  return PR_FALSE;
 }
 
 PRBool
@@ -365,37 +252,6 @@ nsFrameList::Split(nsIFrame* aAfterFrame, nsIFrame** aNextFrameResult)
     return PR_TRUE;
   }
   return PR_FALSE;
-}
-
-nsIFrame*
-nsFrameList::PullFrame(nsIFrame* aParent,
-                       nsIFrame* aLastChild,
-                       nsFrameList& aFromList)
-{
-  NS_PRECONDITION(nsnull != aParent, "null ptr");
-
-  nsIFrame* pulledFrame = nsnull;
-  if (nsnull != aParent) {
-    pulledFrame = aFromList.FirstChild();
-    if (nsnull != pulledFrame) {
-      // Take frame off old list
-      aFromList.RemoveFirstChild();
-
-      // Put it on the end of this list
-      if (nsnull == aLastChild) {
-        NS_ASSERTION(nsnull == mFirstChild, "bad aLastChild");
-        mFirstChild = pulledFrame;
-      }
-      else {
-        aLastChild->SetNextSibling(pulledFrame);
-      }
-      pulledFrame->SetParent(aParent);
-    }
-  }
-#ifdef DEBUG
-  CheckForLoops();
-#endif
-  return pulledFrame;
 }
 
 nsIFrame*
@@ -440,6 +296,23 @@ nsFrameList::ContainsFrame(const nsIFrame* aFrame) const
   return PR_FALSE;
 }
 
+PRBool
+nsFrameList::ContainsFrameBefore(const nsIFrame* aFrame, const nsIFrame* aEnd) const
+{
+  NS_PRECONDITION(nsnull != aFrame, "null ptr");
+  nsIFrame* frame = mFirstChild;
+  while (frame) {
+    if (frame == aEnd) {
+      return PR_FALSE;
+    }
+    if (frame == aFrame) {
+      return PR_TRUE;
+    }
+    frame = frame->GetNextSibling();
+  }
+  return PR_FALSE;
+}
+
 PRInt32
 nsFrameList::GetLength() const
 {
@@ -455,8 +328,8 @@ nsFrameList::GetLength() const
 static int PR_CALLBACK CompareByContentOrder(const void* aF1, const void* aF2,
                                              void* aDummy)
 {
-  const nsIFrame* f1 = NS_STATIC_CAST(const nsIFrame*, aF1);
-  const nsIFrame* f2 = NS_STATIC_CAST(const nsIFrame*, aF2);
+  const nsIFrame* f1 = static_cast<const nsIFrame*>(aF1);
+  const nsIFrame* f2 = static_cast<const nsIFrame*>(aF2);
   if (f1->GetContent() != f2->GetContent()) {
     return nsLayoutUtils::CompareTreePosition(f1->GetContent(), f2->GetContent());
   }
@@ -495,9 +368,9 @@ nsFrameList::SortByContentOrder()
     array.AppendElement(f);
   }
   array.Sort(CompareByContentOrder, nsnull);
-  f = mFirstChild = NS_STATIC_CAST(nsIFrame*, array.FastElementAt(0));
+  f = mFirstChild = static_cast<nsIFrame*>(array.FastElementAt(0));
   for (PRInt32 i = 1; i < array.Count(); ++i) {
-    nsIFrame* ff = NS_STATIC_CAST(nsIFrame*, array.FastElementAt(i));
+    nsIFrame* ff = static_cast<nsIFrame*>(array.FastElementAt(i));
     f->SetNextSibling(ff);
     f = ff;
   }
@@ -535,14 +408,14 @@ nsFrameList::VerifyParent(nsIFrame* aParent) const
 
 #ifdef NS_DEBUG
 void
-nsFrameList::List(nsPresContext* aPresContext, FILE* out) const
+nsFrameList::List(FILE* out) const
 {
   fputs("<\n", out);
   for (nsIFrame* frame = mFirstChild; frame;
        frame = frame->GetNextSibling()) {
     nsIFrameDebug*  frameDebug;
     if (NS_SUCCEEDED(frame->QueryInterface(NS_GET_IID(nsIFrameDebug), (void**)&frameDebug))) {
-      frameDebug->List(aPresContext, out, 1);
+      frameDebug->List(out, 1);
     }
   }
   fputs(">\n", out);
@@ -553,132 +426,157 @@ nsFrameList::List(nsPresContext* aPresContext, FILE* out) const
 nsIFrame*
 nsFrameList::GetPrevVisualFor(nsIFrame* aFrame) const
 {
-  NS_PRECONDITION(nsnull != aFrame, "null ptr");
-  nsILineIterator* iter;
+  nsCOMPtr<nsILineIterator> iter;
 
-  if (aFrame->GetType() == nsLayoutAtoms::blockFrame)
-    return GetPrevSiblingFor(aFrame);
+  if (!mFirstChild)
+    return nsnull;
+  
+  nsIFrame* parent = mFirstChild->GetParent();
+  if (!parent)
+    return aFrame ? GetPrevSiblingFor(aFrame) : LastChild();
 
-  nsIFrame* frame;
-  nsIFrame* furthestFrame = nsnull;
+  nsBidiLevel baseLevel = nsBidiPresUtils::GetFrameBaseLevel(mFirstChild);  
+  nsBidiPresUtils* bidiUtils = mFirstChild->PresContext()->GetBidiUtils();
 
-  frame = mFirstChild;
-
-  nsIFrame* blockFrame = aFrame->GetParent();
-  if (!blockFrame)
-    return GetPrevSiblingFor(aFrame);
-
-  PRUint8 direction = blockFrame->GetStyleVisibility()->mDirection;
-
-  nsresult result = blockFrame->QueryInterface(NS_GET_IID(nsILineIterator), (void**)&iter);
-  if (NS_FAILED(result) || !iter) { // If the parent is not a block frame, just check all the siblings
-
-    nsFrameOrigin maxOrig(0, direction == NS_STYLE_DIRECTION_LTR ? XCOORD_MIN : XCOORD_MAX, direction);
-    nsFrameOrigin limOrig(0, aFrame->GetRect().x, direction);
-    
-    while (frame) {
-      nsFrameOrigin testOrig(0, frame->GetRect().x, direction);
-      if (testOrig > maxOrig && testOrig < limOrig) { // we are looking for the highest value less than the current one
-        maxOrig = testOrig;
-        furthestFrame = frame;
+  nsresult result = parent->QueryInterface(NS_GET_IID(nsILineIterator), getter_AddRefs(iter));
+  if (NS_FAILED(result) || !iter) { 
+    // Parent is not a block Frame
+    if (parent->GetType() == nsGkAtoms::lineFrame) {
+      // Line frames are not bidi-splittable, so need to consider bidi reordering
+      if (baseLevel == NSBIDI_LTR) {
+        return bidiUtils->GetFrameToLeftOf(aFrame, mFirstChild, -1);
+      } else { // RTL
+        return bidiUtils->GetFrameToRightOf(aFrame, mFirstChild, -1);
       }
-      frame = frame->GetNextSibling();
+    } else {
+      // Just get the next or prev sibling, depending on block and frame direction.
+      nsBidiLevel frameEmbeddingLevel = nsBidiPresUtils::GetFrameEmbeddingLevel(mFirstChild);
+      if ((frameEmbeddingLevel & 1) == (baseLevel & 1)) {
+        return aFrame ? GetPrevSiblingFor(aFrame) : LastChild();
+      } else {
+        return aFrame ? aFrame->GetNextSibling() : mFirstChild;
+      }    
     }
-    return furthestFrame;
-
   }
 
-  // Otherwise use the LineIterator to check the siblings on this line and the previous line
-  if (!blockFrame || !iter)
-    return nsnull;
+  // Parent is a block frame, so use the LineIterator to find the previous visual 
+  // sibling on this line, or the last one on the previous line.
 
-  nsFrameOrigin maxOrig(LINE_MIN, direction == NS_STYLE_DIRECTION_LTR ? XCOORD_MIN : XCOORD_MAX, direction);
-  PRInt32 testLine, thisLine;
-
-  result = iter->FindLineContaining(aFrame, &thisLine);
-  if (NS_FAILED(result) || thisLine < 0)
-    return nsnull;
-
-  nsFrameOrigin limOrig(thisLine, aFrame->GetRect().x, direction);
-
-  while (frame) {
-    if (NS_SUCCEEDED(iter->FindLineContaining(frame, &testLine))
-        && testLine >= 0
-        && (testLine == thisLine || testLine == thisLine - 1)) {
-      nsFrameOrigin testOrig(testLine, frame->GetRect().x, direction);
-      if (testOrig > maxOrig && testOrig < limOrig) { // we are looking for the highest value less than the current one
-        maxOrig = testOrig;
-        furthestFrame = frame;
-      }
-    }
-    frame = frame->GetNextSibling();
+  PRInt32 thisLine;
+  if (aFrame) {
+    result = iter->FindLineContaining(aFrame, &thisLine);
+    if (NS_FAILED(result) || thisLine < 0)
+      return nsnull;
+  } else {
+    iter->GetNumLines(&thisLine);
   }
-  return furthestFrame;
+
+  nsIFrame* frame = nsnull;
+  nsIFrame* firstFrameOnLine;
+  PRInt32 numFramesOnLine;
+  nsRect lineBounds;
+  PRUint32 lineFlags;
+
+  if (aFrame) {
+    iter->GetLine(thisLine, &firstFrameOnLine, &numFramesOnLine, lineBounds, &lineFlags);
+
+    if (baseLevel == NSBIDI_LTR) {
+      frame = bidiUtils->GetFrameToLeftOf(aFrame, firstFrameOnLine, numFramesOnLine);
+    } else { // RTL
+      frame = bidiUtils->GetFrameToRightOf(aFrame, firstFrameOnLine, numFramesOnLine);
+    }
+  }
+
+  if (!frame && thisLine > 0) {
+    // Get the last frame of the previous line
+    iter->GetLine(thisLine - 1, &firstFrameOnLine, &numFramesOnLine, lineBounds, &lineFlags);
+
+    if (baseLevel == NSBIDI_LTR) {
+      frame = bidiUtils->GetFrameToLeftOf(nsnull, firstFrameOnLine, numFramesOnLine);
+    } else { // RTL
+      frame = bidiUtils->GetFrameToRightOf(nsnull, firstFrameOnLine, numFramesOnLine);
+    }
+  }
+  return frame;
 }
 
 nsIFrame*
 nsFrameList::GetNextVisualFor(nsIFrame* aFrame) const
 {
-  NS_PRECONDITION(nsnull != aFrame, "null ptr");
-  nsILineIterator* iter;
+  nsCOMPtr<nsILineIterator> iter;
 
-  if (aFrame->GetType() == nsLayoutAtoms::blockFrame) {
-    return aFrame->GetNextSibling();
-  }
-
-  nsIFrame* frame;
-  nsIFrame* nearestFrame = nsnull;
-
-  frame = mFirstChild;
-
-  nsIFrame* blockFrame = aFrame->GetParent();
-  if (!blockFrame)
-    return GetPrevSiblingFor(aFrame);
-
-  PRUint8 direction = blockFrame->GetStyleVisibility()->mDirection;
+  if (!mFirstChild)
+    return nsnull;
   
-  nsresult result = blockFrame->QueryInterface(NS_GET_IID(nsILineIterator), (void**)&iter);
-  if (NS_FAILED(result) || !iter) { // If the parent is not a block frame, just check all the siblings
+  nsIFrame* parent = mFirstChild->GetParent();
+  if (!parent)
+    return aFrame ? GetPrevSiblingFor(aFrame) : mFirstChild;
 
-    nsFrameOrigin minOrig(0, direction == NS_STYLE_DIRECTION_LTR ? XCOORD_MAX : XCOORD_MIN, direction);
-    nsFrameOrigin limOrig(0, aFrame->GetRect().x, direction);
-    while (frame) {
-      nsFrameOrigin testOrig(0, frame->GetRect().x, direction);
-      if (testOrig < minOrig && testOrig > limOrig) { // we are looking for the lowest value greater than the current one
-        minOrig = testOrig;
-        nearestFrame = frame;
+  nsBidiLevel baseLevel = nsBidiPresUtils::GetFrameBaseLevel(mFirstChild);
+  nsBidiPresUtils* bidiUtils = mFirstChild->PresContext()->GetBidiUtils();
+  
+  nsresult result = parent->QueryInterface(NS_GET_IID(nsILineIterator), getter_AddRefs(iter));
+  if (NS_FAILED(result) || !iter) { 
+    // Parent is not a block Frame
+    if (parent->GetType() == nsGkAtoms::lineFrame) {
+      // Line frames are not bidi-splittable, so need to consider bidi reordering
+      if (baseLevel == NSBIDI_LTR) {
+        return bidiUtils->GetFrameToRightOf(aFrame, mFirstChild, -1);
+      } else { // RTL
+        return bidiUtils->GetFrameToLeftOf(aFrame, mFirstChild, -1);
       }
-      frame = frame->GetNextSibling();
-    }
-    return nearestFrame;
-  }
-
-  // Otherwise use the LineIterator to check the siblings on this line and the previous line
-  if (!blockFrame || !iter)
-    return nsnull;
-
-  nsFrameOrigin minOrig(MY_LINE_MAX, direction == NS_STYLE_DIRECTION_LTR ? XCOORD_MAX : XCOORD_MIN, direction);
-  PRInt32 testLine, thisLine;
-
-  result = iter->FindLineContaining(aFrame, &thisLine);
-  if (NS_FAILED(result) || thisLine < 0)
-    return nsnull;
-
-  nsFrameOrigin limOrig(thisLine, aFrame->GetRect().x, direction);
-
-  while (frame) {
-    if (NS_SUCCEEDED(iter->FindLineContaining(frame, &testLine))
-        && testLine >= 0
-        && (testLine == thisLine || testLine == thisLine + 1)) {
-      nsFrameOrigin testOrig(testLine, frame->GetRect().x, direction);
-      if (testOrig < minOrig && testOrig > limOrig) { // we are looking for the lowest value greater than the current one
-        minOrig = testOrig;
-        nearestFrame = frame;
+    } else {
+      // Just get the next or prev sibling, depending on block and frame direction.
+      nsBidiLevel frameEmbeddingLevel = nsBidiPresUtils::GetFrameEmbeddingLevel(mFirstChild);
+      if ((frameEmbeddingLevel & 1) == (baseLevel & 1)) {
+        return aFrame ? aFrame->GetNextSibling() : mFirstChild;
+      } else {
+        return aFrame ? GetPrevSiblingFor(aFrame) : LastChild();
       }
     }
-    frame = frame->GetNextSibling();
   }
-  return nearestFrame;
+
+  // Parent is a block frame, so use the LineIterator to find the next visual 
+  // sibling on this line, or the first one on the next line.
+  
+  PRInt32 thisLine;
+  if (aFrame) {
+    result = iter->FindLineContaining(aFrame, &thisLine);
+    if (NS_FAILED(result) || thisLine < 0)
+      return nsnull;
+  } else {
+    thisLine = -1;
+  }
+
+  nsIFrame* frame = nsnull;
+  nsIFrame* firstFrameOnLine;
+  PRInt32 numFramesOnLine;
+  nsRect lineBounds;
+  PRUint32 lineFlags;
+
+  if (aFrame) {
+    iter->GetLine(thisLine, &firstFrameOnLine, &numFramesOnLine, lineBounds, &lineFlags);
+    
+    if (baseLevel == NSBIDI_LTR) {
+      frame = bidiUtils->GetFrameToRightOf(aFrame, firstFrameOnLine, numFramesOnLine);
+    } else { // RTL
+      frame = bidiUtils->GetFrameToLeftOf(aFrame, firstFrameOnLine, numFramesOnLine);
+    }
+  }
+  
+  PRInt32 numLines;
+  iter->GetNumLines(&numLines);
+  if (!frame && thisLine < numLines - 1) {
+    // Get the first frame of the next line
+    iter->GetLine(thisLine + 1, &firstFrameOnLine, &numFramesOnLine, lineBounds, &lineFlags);
+    
+    if (baseLevel == NSBIDI_LTR) {
+      frame = bidiUtils->GetFrameToRightOf(nsnull, firstFrameOnLine, numFramesOnLine);
+    } else { // RTL
+      frame = bidiUtils->GetFrameToLeftOf(nsnull, firstFrameOnLine, numFramesOnLine);
+    }
+  }
+  return frame;
 }
 #endif
 

@@ -21,6 +21,7 @@
  * 
  * Contributor(s): 
  *   Roger B. Sidje <rbs@maths.uq.edu.au>
+ *   Karl Tomlinson <karlt+@karlt.net>, Mozilla Corporation
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -39,60 +40,65 @@
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
 #include "nsPresContext.h"
-#include "nsUnitConversion.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
 #include "nsIRenderingContext.h"
 #include "nsIFontMetrics.h"
-
-#include "nsIDOMText.h"
-#include "nsITextContent.h"
-#include "nsFrameManager.h"
-#include "nsLayoutAtoms.h"
-#include "nsStyleChangeList.h"
-#include "nsINameSpaceManager.h"
-
+#include "nsContentUtils.h"
+#include "nsCSSFrameConstructor.h"
 #include "nsMathMLTokenFrame.h"
 
-nsresult
-NS_NewMathMLTokenFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
+nsIFrame*
+NS_NewMathMLTokenFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsMathMLTokenFrame* it = new (aPresShell) nsMathMLTokenFrame;
-  if (nsnull == it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  *aNewFrame = it;  
-  return NS_OK;
+  return new (aPresShell) nsMathMLTokenFrame(aContext);
 }
-
-nsMathMLTokenFrame::nsMathMLTokenFrame()
-{
-}
-
 nsMathMLTokenFrame::~nsMathMLTokenFrame()
 {
 }
 
-nsIAtom*
-nsMathMLTokenFrame::GetType() const
+eMathMLFrameType
+nsMathMLTokenFrame::GetMathMLFrameType()
 {
   // treat everything other than <mi> as ordinary...
-  if (mContent->Tag() != nsMathMLAtoms::mi_) {
-    return nsMathMLAtoms::ordinaryMathMLFrame;
+  if (mContent->Tag() != nsGkAtoms::mi_) {
+    return eMathMLFrameType_Ordinary;
   }
 
   // for <mi>, distinguish between italic and upright...
-  nsAutoString value;
-  mContent->GetAttr(kNameSpaceID_None, nsMathMLAtoms::MOZfontstyle, value);
+  // Don't use nsMathMLFrame::GetAttribute for mathvariant or fontstyle as
+  // default values are not inherited.
+  nsAutoString style;
+  // mathvariant overrides fontstyle
+  // http://www.w3.org/TR/2003/REC-MathML2-20031021/chapter3.html#presm.deprecatt
+  mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::MOZfontstyle, style) ||
+    mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::mathvariant_, style) ||
+    mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::fontstyle_, style);
 
-  // treat invariant the same as italic to inherit its inter-space properties
-  return value.EqualsLiteral("normal")
-    ? nsMathMLAtoms::uprightIdentifierMathMLFrame
-    : nsMathMLAtoms::italicIdentifierMathMLFrame;
+  if (style.EqualsLiteral("italic") || style.EqualsLiteral("bold-italic") ||
+      style.EqualsLiteral("script") || style.EqualsLiteral("bold-script") ||
+      style.EqualsLiteral("sans-serif-italic") ||
+      style.EqualsLiteral("sans-serif-bold-italic")) {
+    return eMathMLFrameType_ItalicIdentifier;
+  }
+  else if(style.EqualsLiteral("invariant")) {
+    nsAutoString data;
+    nsContentUtils::GetNodeTextContent(mContent, PR_FALSE, data);
+    eMATHVARIANT variant = nsMathMLOperators::LookupInvariantChar(data);
+
+    switch (variant) {
+    case eMATHVARIANT_italic:
+    case eMATHVARIANT_bold_italic:
+    case eMATHVARIANT_script:
+    case eMATHVARIANT_bold_script:
+    case eMATHVARIANT_sans_serif_italic:
+    case eMATHVARIANT_sans_serif_bold_italic:
+      return eMathMLFrameType_ItalicIdentifier;
+    default:
+      ; // fall through to upright
+    }
+  }
+  return eMathMLFrameType_UprightIdentifier;
 }
 
 static void
@@ -100,21 +106,19 @@ CompressWhitespace(nsIContent* aContent)
 {
   PRUint32 numKids = aContent->GetChildCount();
   for (PRUint32 kid = 0; kid < numKids; kid++) {
-    nsCOMPtr<nsITextContent> tc(do_QueryInterface(aContent->GetChildAt(kid)));
-    if (tc && tc->IsContentOfType(nsIContent::eTEXT)) {
+    nsIContent* cont = aContent->GetChildAt(kid);
+    if (cont && cont->IsNodeOfType(nsINode::eTEXT)) {
       nsAutoString text;
-      tc->AppendTextTo(text);
+      cont->AppendTextTo(text);
       text.CompressWhitespace();
-      tc->SetText(text, PR_FALSE); // not meant to be used if notify is needed
+      cont->SetText(text, PR_FALSE); // not meant to be used if notify is needed
     }
   }
 }
 
 NS_IMETHODIMP
-nsMathMLTokenFrame::Init(nsPresContext*  aPresContext,
-                         nsIContent*      aContent,
+nsMathMLTokenFrame::Init(nsIContent*      aContent,
                          nsIFrame*        aParent,
-                         nsStyleContext*  aContext,
                          nsIFrame*        aPrevInFlow)
 {
   // leading and trailing whitespace doesn't count -- bug 15402
@@ -123,31 +127,20 @@ nsMathMLTokenFrame::Init(nsPresContext*  aPresContext,
   CompressWhitespace(aContent);
 
   // let the base class do its Init()
-  return nsMathMLContainerFrame::Init(aPresContext, aContent, aParent, aContext, aPrevInFlow);
+  return nsMathMLContainerFrame::Init(aContent, aParent, aPrevInFlow);
 }
 
 NS_IMETHODIMP
-nsMathMLTokenFrame::SetInitialChildList(nsPresContext* aPresContext,
-                                        nsIAtom*        aListName,
+nsMathMLTokenFrame::SetInitialChildList(nsIAtom*        aListName,
                                         nsIFrame*       aChildList)
 {
   // First, let the base class do its work
-  nsresult rv = nsMathMLContainerFrame::SetInitialChildList(aPresContext, aListName, aChildList);
+  nsresult rv = nsMathMLContainerFrame::SetInitialChildList(aListName, aChildList);
   if (NS_FAILED(rv))
     return rv;
 
-  // Safety measure to cater for math fonts with metrics that sometimes
-  // cause glyphs in the text frames to protrude outside. Without this,
-  // such glyphs may be clipped at the painting stage
-  mState |= NS_FRAME_OUTSIDE_CHILDREN;
-  nsIFrame* childFrame = mFrames.FirstChild();
-  while (childFrame) {
-    childFrame->AddStateBits(NS_FRAME_OUTSIDE_CHILDREN);
-    childFrame = childFrame->GetNextSibling();
-  }
-
-  SetQuotes(aPresContext);
-  ProcessTextData(aPresContext);
+  SetQuotes();
+  ProcessTextData();
   return rv;
 }
 
@@ -159,64 +152,34 @@ nsMathMLTokenFrame::Reflow(nsPresContext*          aPresContext,
 {
   nsresult rv = NS_OK;
 
-  // See if this is an incremental reflow
-  if (aReflowState.reason == eReflowReason_Incremental) {
-#ifdef MATHML_NOISY_INCREMENTAL_REFLOW
-printf("nsMathMLContainerFrame::ReflowTokenFor:IncrementalReflow received by: ");
-nsFrame::ListTag(stdout, aFrame);
-printf("\n");
-#endif
-  }
-
   // initializations needed for empty markup like <mtag></mtag>
   aDesiredSize.width = aDesiredSize.height = 0;
-  aDesiredSize.ascent = aDesiredSize.descent = 0;
+  aDesiredSize.ascent = 0;
   aDesiredSize.mBoundingMetrics.Clear();
 
-  // ask our children to compute their bounding metrics
-  nsHTMLReflowMetrics childDesiredSize(aDesiredSize.mComputeMEW,
-                      aDesiredSize.mFlags | NS_REFLOW_CALC_BOUNDING_METRICS);
-  nsSize availSize(aReflowState.mComputedWidth, aReflowState.mComputedHeight);
-  PRInt32 count = 0;
+  nsSize availSize(aReflowState.ComputedWidth(), NS_UNCONSTRAINEDSIZE);
   nsIFrame* childFrame = GetFirstChild(nsnull);
   while (childFrame) {
-    nsReflowReason reason = (childFrame->GetStateBits() & NS_FRAME_FIRST_REFLOW)
-      ? eReflowReason_Initial : aReflowState.reason;
+    // ask our children to compute their bounding metrics
+    nsHTMLReflowMetrics childDesiredSize(aDesiredSize.mFlags
+                                         | NS_REFLOW_CALC_BOUNDING_METRICS);
     nsHTMLReflowState childReflowState(aPresContext, aReflowState,
-                                       childFrame, availSize, reason);
+                                       childFrame, availSize);
     rv = ReflowChild(childFrame, aPresContext, childDesiredSize,
                      childReflowState, aStatus);
     //NS_ASSERTION(NS_FRAME_IS_COMPLETE(aStatus), "bad status");
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv)) {
+      // Call DidReflow() for the child frames we successfully did reflow.
+      DidReflowChildren(GetFirstChild(nsnull), childFrame);
+      return rv;
+    }
 
-    // origins are used as placeholders to store the child's ascent and descent.
-    childFrame->SetRect(nsRect(childDesiredSize.descent, childDesiredSize.ascent,
-                               childDesiredSize.width, childDesiredSize.height));
-    // compute and cache the bounding metrics
-    if (0 == count)
-      aDesiredSize.mBoundingMetrics  = childDesiredSize.mBoundingMetrics;
-    else
-      aDesiredSize.mBoundingMetrics += childDesiredSize.mBoundingMetrics;
+    SaveReflowAndBoundingMetricsFor(childFrame, childDesiredSize,
+                                    childDesiredSize.mBoundingMetrics);
 
-    count++;
     childFrame = childFrame->GetNextSibling();
   }
 
-  if (aDesiredSize.mComputeMEW) {
-    aDesiredSize.mMaxElementWidth = childDesiredSize.mMaxElementWidth;
-  }
-
-  FinishAndStoreOverflow(&aDesiredSize);
-  // Act as if there is overflow no matter what. This is a 
-  // safety measure to cater for math fonts with metrics that sometimes
-  // cause glyphs in the text frames to protrude outside. Without this,
-  // such glyphs may be clipped at the painting stage
-  // This flag has already been set on the children as well in 
-  // SetInitialChildList()
-  mState |= NS_FRAME_OUTSIDE_CHILDREN;
-
-  // cache the frame's mBoundingMetrics
-  mBoundingMetrics = aDesiredSize.mBoundingMetrics;
 
   // place and size children
   FinalizeReflow(*aReflowState.rendContext, aDesiredSize);
@@ -229,13 +192,25 @@ printf("\n");
 // For token elements, mBoundingMetrics is computed at the ReflowToken
 // pass, it is not computed here because our children may be text frames
 // that do not implement the GetBoundingMetrics() interface.
-nsresult
+/* virtual */ nsresult
 nsMathMLTokenFrame::Place(nsIRenderingContext& aRenderingContext,
                           PRBool               aPlaceOrigin,
                           nsHTMLReflowMetrics& aDesiredSize)
 {
+  mBoundingMetrics.Clear();
+  nsIFrame* childFrame = GetFirstChild(nsnull);
+  while (childFrame) {
+    nsHTMLReflowMetrics childSize;
+    GetReflowAndBoundingMetricsFor(childFrame, childSize,
+                                   childSize.mBoundingMetrics, nsnull);
+    // compute and cache the bounding metrics
+    mBoundingMetrics += childSize.mBoundingMetrics;
+
+    childFrame = childFrame->GetNextSibling();
+  }
+
   nsCOMPtr<nsIFontMetrics> fm =
-    GetPresContext()->GetMetricsFor(GetStyleFont()->mFont);
+    PresContext()->GetMetricsFor(GetStyleFont()->mFont);
   nscoord ascent, descent;
   fm->GetMaxAscent(ascent);
   fm->GetMaxDescent(descent);
@@ -243,22 +218,21 @@ nsMathMLTokenFrame::Place(nsIRenderingContext& aRenderingContext,
   aDesiredSize.mBoundingMetrics = mBoundingMetrics;
   aDesiredSize.width = mBoundingMetrics.width;
   aDesiredSize.ascent = PR_MAX(mBoundingMetrics.ascent, ascent);
-  aDesiredSize.descent = PR_MAX(mBoundingMetrics.descent, descent);
-  aDesiredSize.height = aDesiredSize.ascent + aDesiredSize.descent;
+  aDesiredSize.height = aDesiredSize.ascent +
+                        PR_MAX(mBoundingMetrics.descent, descent);
 
   if (aPlaceOrigin) {
     nscoord dy, dx = 0;
     nsIFrame* childFrame = GetFirstChild(nsnull);
     while (childFrame) {
-      nsRect rect = childFrame->GetRect();
-      nsHTMLReflowMetrics childSize(nsnull);
-      childSize.width = rect.width;
-      childSize.height = aDesiredSize.height; //rect.height;
+      nsHTMLReflowMetrics childSize;
+      GetReflowAndBoundingMetricsFor(childFrame, childSize,
+                                     childSize.mBoundingMetrics);
 
       // place and size the child; (dx,0) makes the caret happy - bug 188146
-      dy = rect.IsEmpty() ? 0 : aDesiredSize.ascent - rect.y;
-      FinishReflowChild(childFrame, GetPresContext(), nsnull, childSize, dx, dy, 0);
-      dx += rect.width;
+      dy = childSize.height == 0 ? 0 : aDesiredSize.ascent - childSize.ascent;
+      FinishReflowChild(childFrame, PresContext(), nsnull, childSize, dx, dy, 0);
+      dx += childSize.width;
       childFrame = childFrame->GetNextSibling();
     }
   }
@@ -268,95 +242,130 @@ nsMathMLTokenFrame::Place(nsIRenderingContext& aRenderingContext,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsMathMLTokenFrame::ReflowDirtyChild(nsIPresShell* aPresShell,
-                                     nsIFrame*     aChild)
+/* virtual */ void
+nsMathMLTokenFrame::MarkIntrinsicWidthsDirty()
 {
-  // if we get this, it means it was called by the nsTextFrame beneath us, and
-  // this means something changed in the text content. So re-process our text
+  // this could be called due to changes in the nsTextFrame beneath us
+  // when something changed in the text content. So re-process our text
+  ProcessTextData();
 
-  ProcessTextData(aPresShell->GetPresContext());
-
-  mState |= NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN;
-  return mParent->ReflowDirtyChild(aPresShell, this);
+  nsMathMLContainerFrame::MarkIntrinsicWidthsDirty();
 }
 
 NS_IMETHODIMP
-nsMathMLTokenFrame::AttributeChanged(nsIContent*     aContent,
-                                     PRInt32         aNameSpaceID,
+nsMathMLTokenFrame::AttributeChanged(PRInt32         aNameSpaceID,
                                      nsIAtom*        aAttribute,
                                      PRInt32         aModType)
 {
-  if (nsMathMLAtoms::lquote_ == aAttribute ||
-      nsMathMLAtoms::rquote_ == aAttribute) {
-    SetQuotes(GetPresContext());
+  if (nsGkAtoms::lquote_ == aAttribute ||
+      nsGkAtoms::rquote_ == aAttribute) {
+    SetQuotes();
   }
 
   return nsMathMLContainerFrame::
-         AttributeChanged(aContent, aNameSpaceID,
-                          aAttribute, aModType);
+         AttributeChanged(aNameSpaceID, aAttribute, aModType);
 }
 
 void
-nsMathMLTokenFrame::ProcessTextData(nsPresContext* aPresContext)
+nsMathMLTokenFrame::ProcessTextData()
 {
-  SetTextStyle(aPresContext);
+  // see if the style changes from normal to italic or vice-versa
+  if (!SetTextStyle())
+    return;
+
+  // explicitly request a re-resolve to pick up the change of style
+  PresContext()->PresShell()->FrameConstructor()->
+    PostRestyleEvent(mContent, eReStyle_Self, NS_STYLE_HINT_NONE);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 // For <mi>, if the content is not a single character, turn the font to
 // normal (this function will also query attributes from the mstyle hierarchy)
+// Returns PR_TRUE if there is a style change.
+//
+// http://www.w3.org/TR/2003/REC-MathML2-20031021/chapter3.html#presm.commatt
+//
+//  "It is important to note that only certain combinations of
+//   character data and mathvariant attribute values make sense.
+//   ...
+//   By design, the only cases that have an unambiguous
+//   interpretation are exactly the ones that correspond to SMP Math
+//   Alphanumeric Symbol characters, which are enumerated in Section
+//   6.2.3 Mathematical Alphanumeric Symbols Characters. In all other
+//   cases, it is suggested that renderers ignore the value of the
+//   mathvariant attribute if it is present."
+//
+// There are no corresponding characters for mathvariant=normal, suggesting
+// that this value should be ignored, but this (from the same section of
+// Chapter 3) implies that font-style should not be inherited, but set to
+// normal for mathvariant=normal:
+//
+//  "In particular, inheritance of the mathvariant attribute does not follow
+//   the CSS model. The default value for this attribute is "normal"
+//   (non-slanted) for all tokens except mi. ... (The deprecated fontslant
+//   attribute also behaves this way.)"
 
-void
-nsMathMLTokenFrame::SetTextStyle(nsPresContext* aPresContext)
+PRBool
+nsMathMLTokenFrame::SetTextStyle()
 {
-  if (mContent->Tag() != nsMathMLAtoms::mi_)
-    return;
+  if (mContent->Tag() != nsGkAtoms::mi_)
+    return PR_FALSE;
 
   if (!mFrames.FirstChild())
-    return;
+    return PR_FALSE;
 
   // Get the text content that we enclose and its length
-  // our content can include comment-nodes, attribute-nodes, text-nodes...
-  // we use the DOM to make sure that we are only looking at text-nodes...
   nsAutoString data;
-  PRUint32 numKids = mContent->GetChildCount();
-  for (PRUint32 kid = 0; kid < numKids; kid++) {
-    nsCOMPtr<nsIDOMText> kidText(do_QueryInterface(mContent->GetChildAt(kid)));
-    if (kidText) {
-      nsAutoString kidData;
-      kidText->GetData(kidData);
-      data += kidData;
-    }
-  }
-
+  nsContentUtils::GetNodeTextContent(mContent, PR_FALSE, data);
   PRInt32 length = data.Length();
   if (!length)
-    return;
+    return PR_FALSE;
 
-  // attributes may override the default behavior
   nsAutoString fontstyle;
-  GetAttribute(mContent, mPresentationData.mstyle, nsMathMLAtoms::fontstyle_, fontstyle);
-  if (1 == length && nsMathMLOperators::LookupInvariantChar(data[0])) {
+  PRBool isSingleCharacter =
+    length == 1 ||
+    (length == 2 && NS_IS_HIGH_SURROGATE(data[0]));
+  if (isSingleCharacter &&
+      nsMathMLOperators::LookupInvariantChar(data) != eMATHVARIANT_NONE) {
     // bug 65951 - a non-stylable character has its own intrinsic appearance
     fontstyle.AssignLiteral("invariant");
   }
-  if (fontstyle.IsEmpty()) {
-    fontstyle.AssignASCII((1 == length) ? "italic" : "normal"); 
+  else {
+    // Attributes override the default behavior.
+    if (!(mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::mathvariant_) ||
+          mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::fontstyle_))) {
+      if (!isSingleCharacter) {
+        fontstyle.AssignLiteral("normal");
+      }
+      else if (length == 1 && // BMP
+               !nsMathMLOperators::
+                TransformVariantChar(data[0], eMATHVARIANT_italic).
+                Equals(data)) {
+        // Transformation exists.  Try to make the BMP character look like the
+        // styled character using the style system until bug 114365 is resolved.
+        fontstyle.AssignLiteral("italic");
+      }
+      // else single character but there is no corresponding Math Alphanumeric
+      // Symbol character: "ignore the value of the [default] mathvariant
+      // attribute".
+    }
   }
 
   // set the -moz-math-font-style attribute without notifying that we want a reflow
-  mContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::MOZfontstyle, fontstyle, PR_FALSE);
+  if (fontstyle.IsEmpty()) {
+    if (mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::MOZfontstyle)) {
+      mContent->UnsetAttr(kNameSpaceID_None, nsGkAtoms::MOZfontstyle, PR_FALSE);
+      return PR_TRUE;
+    }
+  }
+  else if (!mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::MOZfontstyle,
+                                  fontstyle, eCaseMatters)) {
+    mContent->SetAttr(kNameSpaceID_None, nsGkAtoms::MOZfontstyle,
+                      fontstyle, PR_FALSE);
+    return PR_TRUE;
+  }
 
-  // then, re-resolve the style contexts in our subtree
-  nsFrameManager *fm = aPresContext->FrameManager();
-  nsStyleChangeList changeList;
-  fm->ComputeStyleChangeFor(this, &changeList, NS_STYLE_HINT_NONE);
-#ifdef DEBUG
-  // Use the parent frame to make sure we catch in-flows and such
-  nsIFrame* parentFrame = GetParent();
-  fm->DebugVerifyStyleTree(parentFrame ? parentFrame : this);
-#endif
+  return PR_FALSE;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -374,8 +383,7 @@ nsMathMLTokenFrame::SetTextStyle(nsPresContext* aPresContext)
 // We also check that we are not relying on null pointers...
 
 static void
-SetQuote(nsPresContext* aPresContext, 
-         nsIFrame*       aFrame, 
+SetQuote(nsIFrame*       aFrame, 
          nsString&       aValue)
 {
   nsIFrame* textFrame;
@@ -383,29 +391,23 @@ SetQuote(nsPresContext* aPresContext,
     // walk down the hierarchy of first children because they could be wrapped
     textFrame = aFrame->GetFirstChild(nsnull);
     if (textFrame) {
-      if (textFrame->GetType() == nsLayoutAtoms::textFrame)
+      if (textFrame->GetType() == nsGkAtoms::textFrame)
         break;
     }
     aFrame = textFrame;
   } while (textFrame);
   if (textFrame) {
     nsIContent* quoteContent = textFrame->GetContent();
-    if (quoteContent) {
-      nsCOMPtr<nsIDOMText> domText(do_QueryInterface(quoteContent));
-      if (domText) {
-        nsCOMPtr<nsITextContent> tc(do_QueryInterface(quoteContent));
-        if (tc) {
-          tc->SetText(aValue, PR_FALSE); // no notify since we don't want a reflow yet
-        }
-      }
+    if (quoteContent && quoteContent->IsNodeOfType(nsINode::eTEXT)) {
+      quoteContent->SetText(aValue, PR_FALSE); // no notify since we don't want a reflow yet
     }
   }
 }
 
 void
-nsMathMLTokenFrame::SetQuotes(nsPresContext* aPresContext)
+nsMathMLTokenFrame::SetQuotes()
 {
-  if (mContent->Tag() != nsMathMLAtoms::ms_)
+  if (mContent->Tag() != nsGkAtoms::ms_)
     return;
 
   nsIFrame* rightFrame = nsnull;
@@ -420,13 +422,13 @@ nsMathMLTokenFrame::SetQuotes(nsPresContext* aPresContext)
 
   nsAutoString value;
   // lquote
-  if (NS_CONTENT_ATTR_NOT_THERE != GetAttribute(mContent, mPresentationData.mstyle,
-                   nsMathMLAtoms::lquote_, value)) {
-    SetQuote(aPresContext, leftFrame, value);
+  if (GetAttribute(mContent, mPresentationData.mstyle,
+                   nsGkAtoms::lquote_, value)) {
+    SetQuote(leftFrame, value);
   }
   // rquote
-  if (NS_CONTENT_ATTR_NOT_THERE != GetAttribute(mContent, mPresentationData.mstyle,
-                   nsMathMLAtoms::rquote_, value)) {
-    SetQuote(aPresContext, rightFrame, value);
+  if (GetAttribute(mContent, mPresentationData.mstyle,
+                   nsGkAtoms::rquote_, value)) {
+    SetQuote(rightFrame, value);
   }
 }

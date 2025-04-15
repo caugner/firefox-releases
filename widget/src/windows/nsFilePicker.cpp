@@ -49,9 +49,7 @@
 #include "nsFilePicker.h"
 #include "nsILocalFile.h"
 #include "nsIURL.h"
-#include "nsIFileURL.h"
 #include "nsIStringBundle.h"
-#include "nsNativeCharsetUtils.h"
 #include "nsEnumeratorUtils.h"
 #include "nsCRT.h"
 #include <windows.h>
@@ -66,11 +64,9 @@
 #include "nsString.h"
 #include "nsToolkit.h"
 
-static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
-
 NS_IMPL_ISUPPORTS1(nsFilePicker, nsIFilePicker)
 
-nsString nsFilePicker::mLastUsedUnicodeDirectory;
+PRUnichar *nsFilePicker::mLastUsedUnicodeDirectory;
 char nsFilePicker::mLastUsedDirectory[MAX_PATH+1] = { 0 };
 
 #define MAX_EXTENSION_LENGTH 10
@@ -98,6 +94,10 @@ nsFilePicker::nsFilePicker()
 //-------------------------------------------------------------------------
 nsFilePicker::~nsFilePicker()
 {
+  if (mLastUsedUnicodeDirectory) {
+    NS_Free(mLastUsedUnicodeDirectory);
+    mLastUsedUnicodeDirectory = nsnull;
+  }
 }
 
 //-------------------------------------------------------------------------
@@ -111,12 +111,11 @@ int CALLBACK BrowseCallbackProc(HWND hwnd, UINT uMsg, LPARAM lParam, LPARAM lpDa
 {
   if (uMsg == BFFM_INITIALIZED)
   {
-    char * filePath = (char *) lpData;
+    PRUnichar * filePath = (PRUnichar *) lpData;
     if (filePath)
-    {
-      ::SendMessage(hwnd, BFFM_SETSELECTION, TRUE /* true because lpData is a path string */, lpData);
-      nsCRT::free(filePath);
-    }
+      ::SendMessageW(hwnd, BFFM_SETSELECTIONW,
+                     TRUE /* true because lpData is a path string */,
+                     lpData);
   }
   return 0;
 }
@@ -129,7 +128,7 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
   // suppress blur events
   if (mParentWidget) {
     nsIWidget *tmp = mParentWidget;
-    nsWindow *parent = NS_STATIC_CAST(nsWindow *, tmp);
+    nsWindow *parent = static_cast<nsWindow *>(tmp);
     parent->SuppressBlurEvents(PR_TRUE);
   }
 
@@ -164,11 +163,11 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
     browserInfo.pszDisplayName = (LPWSTR)dirBuffer;
     browserInfo.lpszTitle      = mTitle.get();
     browserInfo.ulFlags        = BIF_USENEWUI | BIF_RETURNONLYFSDIRS;
-    if (initialDir.Length()) // convert folder path to native, the strdup copy will be released in BrowseCallbackProc
+    if (initialDir.Length())
     {
-      nsCAutoString nativeFolderPath;
-      NS_CopyUnicodeToNative(initialDir, nativeFolderPath);
-      browserInfo.lParam       = (LPARAM) nsCRT::strdup(nativeFolderPath.get()); 
+      // the dialog is modal so that |initialDir.get()| will be valid in 
+      // BrowserCallbackProc. Thus, we don't need to clone it.
+      browserInfo.lParam       = (LPARAM) initialDir.get();
       browserInfo.lpfn         = &BrowseCallbackProc;
     }
     else
@@ -178,10 +177,9 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
     }
     browserInfo.iImage         = nsnull;
 
-    // XXX UNICODE support is needed here --> DONE
-    LPITEMIDLIST list = nsToolkit::mSHBrowseForFolder(&browserInfo);
+    LPITEMIDLIST list = ::SHBrowseForFolderW(&browserInfo);
     if (list != NULL) {
-      result = nsToolkit::mSHGetPathFromIDList(list, (LPWSTR)fileBuffer);
+      result = ::SHGetPathFromIDListW(list, (LPWSTR)fileBuffer);
       if (result) {
           mUnicodeFile.Assign(fileBuffer);
       }
@@ -196,9 +194,7 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
 
     OPENFILENAMEW ofn;
     memset(&ofn, 0, sizeof(ofn));
-
     ofn.lStructSize = sizeof(ofn);
-
     nsString filterBuffer = mFilterList;
                                   
     if (!initialDir.IsEmpty()) {
@@ -247,11 +243,11 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
       if (mMode == modeOpen) {
         // FILE MUST EXIST!
         ofn.Flags |= OFN_FILEMUSTEXIST;
-        result = nsToolkit::mGetOpenFileName(&ofn);
+        result = ::GetOpenFileNameW(&ofn);
       }
       else if (mMode == modeOpenMultiple) {
         ofn.Flags |= OFN_FILEMUSTEXIST | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
-        result = nsToolkit::mGetOpenFileName(&ofn);
+        result = ::GetOpenFileNameW(&ofn);
       }
       else if (mMode == modeSave) {
         ofn.Flags |= OFN_NOREADONLYRETURN;
@@ -266,7 +262,7 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
             StringEndsWith(ext, NS_LITERAL_CSTRING(".url")))
           ofn.Flags |= OFN_NODEREFERENCELINKS;
 
-        result = nsToolkit::mGetSaveFileName(&ofn);
+        result = ::GetSaveFileNameW(&ofn);
         if (!result) {
           // Error, find out what kind.
           if (::GetLastError() == ERROR_INVALID_PARAMETER ||
@@ -274,7 +270,7 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
             // probably the default file name is too long or contains illegal characters!
             // Try again, without a starting file name.
             ofn.lpstrFile[0] = 0;
-            result = nsToolkit::mGetSaveFileName(&ofn);
+            result = ::GetSaveFileNameW(&ofn);
           }
         }
       }
@@ -366,10 +362,15 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
     if (NS_SUCCEEDED(file->GetParent(getter_AddRefs(dir)))) {
       mDisplayDirectory = do_QueryInterface(dir);
       if (mDisplayDirectory) {
+        if (mLastUsedUnicodeDirectory) {
+          NS_Free(mLastUsedUnicodeDirectory);
+          mLastUsedUnicodeDirectory = nsnull;
+        }
+
         nsAutoString newDir;
         mDisplayDirectory->GetPath(newDir);
         if(!newDir.IsEmpty())
-          mLastUsedUnicodeDirectory.Assign(newDir);
+          mLastUsedUnicodeDirectory = ToNewUnicode(newDir);
       }
     }
 
@@ -389,7 +390,7 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
   }
   if (mParentWidget) {
     nsIWidget *tmp = mParentWidget;
-    nsWindow *parent = NS_STATIC_CAST(nsWindow *, tmp);
+    nsWindow *parent = static_cast<nsWindow *>(tmp);
     parent->SuppressBlurEvents(PR_FALSE);
   }
 
@@ -404,6 +405,7 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *aReturnVal)
 NS_IMETHODIMP nsFilePicker::GetFile(nsILocalFile **aFile)
 {
   NS_ENSURE_ARG_POINTER(aFile);
+  *aFile = nsnull;
 
   if (mUnicodeFile.IsEmpty())
       return NS_OK;
@@ -420,20 +422,15 @@ NS_IMETHODIMP nsFilePicker::GetFile(nsILocalFile **aFile)
 }
 
 //-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::GetFileURL(nsIFileURL **aFileURL)
+NS_IMETHODIMP nsFilePicker::GetFileURL(nsIURI **aFileURL)
 {
-  nsCOMPtr<nsILocalFile> file(do_CreateInstance("@mozilla.org/file/local;1"));
-  NS_ENSURE_TRUE(file, NS_ERROR_FAILURE);
-  file->InitWithPath(mUnicodeFile);
+  *aFileURL = nsnull;
+  nsCOMPtr<nsILocalFile> file;
+  nsresult rv = GetFile(getter_AddRefs(file));
+  if (!file)
+    return rv;
 
-  nsCOMPtr<nsIURI> uri;
-  NS_NewFileURI(getter_AddRefs(uri), file);
-  nsCOMPtr<nsIFileURL> fileURL(do_QueryInterface(uri));
-  NS_ENSURE_TRUE(fileURL, NS_ERROR_FAILURE);
-
-  NS_ADDREF(*aFileURL = fileURL);
-
-  return NS_OK;
+  return NS_NewFileURI(aFileURL, file);
 }
 
 NS_IMETHODIMP nsFilePicker::GetFiles(nsISimpleEnumerator **aFiles)

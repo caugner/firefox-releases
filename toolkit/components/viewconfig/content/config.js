@@ -19,22 +19,23 @@
 # Portions created by the Initial Developer are Copyright (C) 2002
 # the Initial Developer. All Rights Reserved.
 #
-# Contributors:
+# Contributor(s):
 #   Chip Clark <chipc@netscape.com>
 #   Seth Spitzer <sspitzer@netscape.com>
 #   Neil Rashbrook <neil@parkwaycc.co.uk>
+#   Mats Palmgren <mats.palmgren@bredband.net>.
 #
 # Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or 
+# either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
 # in which case the provisions of the GPL or the LGPL are applicable instead
 # of those above. If you wish to allow use of your version of this file only
 # under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the NPL, indicate your
+# use your version of this file under the terms of the MPL, indicate your
 # decision by deleting the provisions above and replace them with the notice
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
-# the terms of any one of the NPL, the GPL or the LGPL.
+# the terms of any one of the MPL, the GPL or the LGPL.
 #
 # ***** END LICENSE BLOCK *****
 
@@ -156,6 +157,7 @@ var view = {
   selectionChanged : function() {},
   cycleCell: function(row, col) {},
   isEditable: function(row, col) {return false; },
+  isSelectable: function(row, col) {return false; },
   setCellValue: function(row, col, value) {},
   setCellText: function(row, col, value) {},
   performAction: function(action) {},
@@ -321,6 +323,17 @@ function onConfigLoad()
   gTypeStrs[nsIPrefBranch.PREF_INT] = gConfigBundle.getString("int");
   gTypeStrs[nsIPrefBranch.PREF_BOOL] = gConfigBundle.getString("bool");
 
+  var showWarning = gPrefBranch.getBoolPref("general.warnOnAboutConfig");
+
+  if (showWarning)
+    document.getElementById("warningButton").focus();
+  else
+    ShowPrefs();
+}
+
+// Unhide the warning message
+function ShowPrefs()
+{
   var prefCount = { value: 0 };
   var prefArray = gPrefBranch.getChildList("", prefCount);
 
@@ -351,33 +364,58 @@ function onConfigLoad()
   
   gPrefBranch.addObserver("", gPrefListener, false);
 
-  document.getElementById("configTree").view = view;
-  
+  var configTree = document.getElementById("configTree");
+  configTree.view = view;
+  configTree.controllers.insertControllerAt(0, configController);
+
+  document.getElementById("configDeck").setAttribute("selectedIndex", 1);
+  if (!document.getElementById("showWarningNextTime").checked)
+    gPrefBranch.setBoolPref("general.warnOnAboutConfig", false);
+
   document.getElementById("textbox").focus();
 }
 
 function onConfigUnload()
 {
-  gPrefBranch.removeObserver("", gPrefListener);
-  document.getElementById("configTree").view = null;
+  if (document.getElementById("configDeck").getAttribute("selectedIndex") == 1) {
+    gPrefBranch.removeObserver("", gPrefListener);
+    var configTree = document.getElementById("configTree");
+    configTree.view = null;
+    configTree.controllers.removeController(configController);
+  }
 }
 
 function FilterPrefs()
 {
-  var substring = document.getElementById("textbox").value.toLowerCase();
+  var substring = document.getElementById("textbox").value;
+  var rex;
+  // Check for "/regex/[i]"
+  if (substring.charAt(0) == '/') {
+    var r = substring.match(/^\/(.*)\/(i?)$/);
+    try {
+      rex = RegExp(r[1], r[2]);
+    }
+    catch (e) {
+      return; // Do nothing on incomplete or bad RegExp
+    }
+  }
+
   var prefCol = view.selection.currentIndex < 0 ? null : gPrefView[view.selection.currentIndex].prefCol;
-  var array = gPrefView;
+  var oldlen = gPrefView.length;
   gPrefView = gPrefArray;
   if (substring) {
     gPrefView = [];
+    if (!rex)
+      rex = RegExp(substring.replace(/([^* \w])/g, "\\$1").replace(/^\*+/, "")
+                            .replace(/\*+/g, ".*"), "i");
     for (var i = 0; i < gPrefArray.length; ++i)
-      if (gPrefArray[i].prefCol.toLowerCase().indexOf(substring) >= 0)
+      if (rex.test(gPrefArray[i].prefCol + ";" + gPrefArray[i].valueCol))
         gPrefView.push(gPrefArray[i]);
     if (gFastIndex < gPrefArray.length)
       gPrefView.sort(gSortFunction);
   }
   view.treebox.invalidate();
-  view.treebox.rowCountChanged(array.length, gPrefView.length - array.length);
+  view.treebox.rowCountChanged(oldlen, gPrefView.length - oldlen);
   gotoPref(prefCol);
   document.getElementById("button").disabled = !substring;
 }
@@ -430,20 +468,38 @@ const gSortFunctions =
   valueCol: valueColSortFunction
 };
 
+const configController = {
+  supportsCommand: function supportsCommand(command) {
+    return command == "cmd_copy";
+  },
+  isCommandEnabled: function isCommandEnabled(command) {
+    return view.selection && view.selection.currentIndex >= 0;
+  },
+  doCommand: function doCommand(command) {
+    copyPref();
+  },
+  onEvent: function onEvent(event) {
+  }
+}
+
 function updateContextMenu()
 {
   var lockCol = PREF_IS_LOCKED;
   var typeCol = nsIPrefBranch.PREF_STRING;
   var valueCol = "";
   var copyDisabled = true;
+  var prefSelected = view.selection.currentIndex >= 0;
 
-  if (view.selection.currentIndex >= 0) {
+  if (prefSelected) {
     var prefRow = gPrefView[view.selection.currentIndex];
     lockCol = prefRow.lockCol;
     typeCol = prefRow.typeCol;
     valueCol = prefRow.valueCol;
     copyDisabled = false;
   }
+
+  var copyPref = document.getElementById("copyPref");
+  copyPref.setAttribute("disabled", copyDisabled);
 
   var copyName = document.getElementById("copyName");
   copyName.setAttribute("disabled", copyDisabled);
@@ -455,23 +511,22 @@ function updateContextMenu()
   resetSelected.setAttribute("disabled", lockCol != PREF_IS_USER_SET);
 
   var canToggle = typeCol == nsIPrefBranch.PREF_BOOL && valueCol != "";
+  // indicates that a pref is locked or no pref is selected at all
+  var isLocked = lockCol == PREF_IS_LOCKED;
 
   var modifySelected = document.getElementById("modifySelected");
-  modifySelected.setAttribute("disabled", lockCol == PREF_IS_LOCKED);
+  modifySelected.setAttribute("disabled", isLocked);
   modifySelected.hidden = canToggle;
 
   var toggleSelected = document.getElementById("toggleSelected");
-  toggleSelected.setAttribute("disabled", lockCol == PREF_IS_LOCKED);
+  toggleSelected.setAttribute("disabled", isLocked);
   toggleSelected.hidden = !canToggle;
-  
-  var entry = gPrefView[view.selection.currentIndex];
-  var isLocked = gPrefBranch.prefIsLocked(entry.prefCol);
+}
 
-  // These might not exist (bug 289136)
-  try {
-    document.getElementById("lockSelected").hidden = isLocked;
-    document.getElementById("unlockSelected").hidden = !isLocked;
-  } catch (ex) {}
+function copyPref()
+{
+  var pref = gPrefView[view.selection.currentIndex];
+  gClipboardHelper.copyString(pref.prefCol + ';' + pref.valueCol);
 }
 
 function copyName()
@@ -539,39 +594,28 @@ function ModifyPref(entry)
     if (!entry.valueCol && !gPromptService.select(window, title, entry.prefCol, 2, [false, true], check))
       return false;
     gPrefBranch.setBoolPref(entry.prefCol, check.value);
-  } else {
+  }
+  else if (entry.typeCol == nsIPrefBranch.PREF_INT) {
+    var params = { windowTitle: title,
+                   label: entry.prefCol,
+                   value: entry.valueCol,
+                   cancelled: true };
+    window.openDialog("chrome://global/content/configIntValue.xul", "_blank",
+                      "chrome,titlebar,centerscreen,modal", params);
+    if (params.cancelled)
+      return false;
+    gPrefBranch.setIntPref(entry.prefCol, params.value);
+  }
+  else {
     var result = { value: entry.valueCol };
     var dummy = { value: 0 };
     if (!gPromptService.prompt(window, title, entry.prefCol, result, null, dummy))
       return false;
-    if (entry.typeCol == nsIPrefBranch.PREF_INT) {
-      gPrefBranch.setIntPref(entry.prefCol, parseInt(result.value, 10));
-    } else {
-      var supportsString = Components.classes[nsSupportsString_CONTRACTID].createInstance(nsISupportsString);
-      supportsString.data = result.value;
-      gPrefBranch.setComplexValue(entry.prefCol, nsISupportsString, supportsString);
-    }
+    var supportsString = Components.classes[nsSupportsString_CONTRACTID].createInstance(nsISupportsString);
+    supportsString.data = result.value;
+    gPrefBranch.setComplexValue(entry.prefCol, nsISupportsString, supportsString);
   }
-  
-  gPrefService.savePrefFile(null);
-  
-  // Fire event for accessibility
-  var event = document.createEvent('Events');
-  event.initEvent('NameChange', false, true);
-  document.getElementById("configTree").dispatchEvent(event);
 
+  gPrefService.savePrefFile(null);
   return true;
 }
-
-function LockSelected()
-{
-  var entry = gPrefView[view.selection.currentIndex];
-  gPrefBranch.lockPref(entry.prefCol);
-}
-
-function UnlockSelected()
-{
-  var entry = gPrefView[view.selection.currentIndex];
-  gPrefBranch.unlockPref(entry.prefCol);
-}
-

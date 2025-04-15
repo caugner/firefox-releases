@@ -1,5 +1,7 @@
-/Makefile.in/1.6/Fri Apr  8 04:59:36 2005//TFIREFOX_2_0_RELEASE
-/nsGTKRemoteService.cpp/1.2.8.3/Fri Jan  6 03:19:20 2006//TFIREFOX_2_0_RELEASE
-/nsGTKRemoteService.h/1.2/Mon Apr  4 23:11:42 2005//TFIREFOX_2_0_RELEASE
-/nsIRemoteService.idl/1.1/Mon Apr  4 19:08:52 2005//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.12/Tue Dec 18 22:00:51 2007//TFIREFOX_3_0rc3_RELEASE
+/nsGTKRemoteService.cpp/1.9/Sun Jul  8 07:08:44 2007//TFIREFOX_3_0rc3_RELEASE
+/nsGTKRemoteService.h/1.3/Fri Feb  9 01:33:26 2007//TFIREFOX_3_0rc3_RELEASE
+/nsIRemoteService.idl/1.2/Sat Oct  6 12:08:44 2007//TFIREFOX_3_0rc3_RELEASE
+/nsPhRemoteService.cpp/1.1/Tue Dec 18 22:00:51 2007//TFIREFOX_3_0rc3_RELEASE
+/nsPhRemoteService.h/1.1/Tue Dec 18 22:00:51 2007//TFIREFOX_3_0rc3_RELEASE
 D

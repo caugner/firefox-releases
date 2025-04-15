@@ -95,8 +95,9 @@ nsSound::~nsSound()
 {
     /* see above comment */
     if (esdref != -1) {
-        EsdCloseType EsdClose = (EsdCloseType) PR_FindSymbol(elib, "esd_close");
-        (*EsdClose)(esdref);
+        EsdCloseType EsdClose = (EsdCloseType) PR_FindFunctionSymbol(elib, "esd_close");
+        if (EsdClose)
+            (*EsdClose)(esdref);
         esdref = -1;
     }
 }
@@ -117,7 +118,7 @@ nsSound::Init()
     elib = PR_LoadLibrary("libesd.so.0");
     if (!elib) return NS_ERROR_FAILURE;
 
-    EsdOpenSound = (EsdOpenSoundType) PR_FindSymbol(elib, "esd_open_sound");
+    EsdOpenSound = (EsdOpenSoundType) PR_FindFunctionSymbol(elib, "esd_open_sound");
 
     if (!EsdOpenSound)
         return NS_ERROR_FAILURE;
@@ -130,6 +131,15 @@ nsSound::Init()
     mInited = PR_TRUE;
 
     return NS_OK;
+}
+
+/* static */ void
+nsSound::Shutdown()
+{
+    if (elib) {
+        PR_UnloadLibrary(elib);
+        elib = nsnull;
+    }
 }
 
 #define GET_WORD(s, i) (s[i+1] << 8) | s[i]
@@ -170,6 +180,11 @@ NS_IMETHODIMP nsSound::OnStreamComplete(nsIStreamLoader *aLoader,
     PRUint16 format, channels = 1, bits_per_sample = 0;
     const PRUint8 *audio = nsnull;
     size_t audio_len = 0;
+
+    if (dataLen < 4) {
+        NS_WARNING("Sound stream too short to determine its type");
+        return NS_ERROR_FAILURE;
+    }
 
     if (memcmp(data, "RIFF", 4)) {
 #ifdef DEBUG
@@ -259,9 +274,10 @@ NS_IMETHODIMP nsSound::OnStreamComplete(nsIStreamLoader *aLoader,
 
     /* open up connection to esd */  
     EsdPlayStreamType EsdPlayStream = 
-        (EsdPlayStreamType) PR_FindSymbol(elib, 
-                                          "esd_play_stream");
-    // XXX what if that fails? (Bug 241738)
+        (EsdPlayStreamType) PR_FindFunctionSymbol(elib, 
+                                                  "esd_play_stream");
+    if (!EsdPlayStream)
+        return NS_ERROR_FAILURE;
 
     mask = ESD_PLAY | ESD_STREAM;
 
@@ -298,9 +314,13 @@ NS_IMETHODIMP nsSound::OnStreamComplete(nsIStreamLoader *aLoader,
     if (fd < 0) {
       int *esd_audio_format = (int *) PR_FindSymbol(elib, "esd_audio_format");
       int *esd_audio_rate = (int *) PR_FindSymbol(elib, "esd_audio_rate");
-      EsdAudioOpenType EsdAudioOpen = (EsdAudioOpenType) PR_FindSymbol(elib, "esd_audio_open");
-      EsdAudioWriteType EsdAudioWrite = (EsdAudioWriteType) PR_FindSymbol(elib, "esd_audio_write");
-      EsdAudioCloseType EsdAudioClose = (EsdAudioCloseType) PR_FindSymbol(elib, "esd_audio_close");
+      EsdAudioOpenType EsdAudioOpen = (EsdAudioOpenType) PR_FindFunctionSymbol(elib, "esd_audio_open");
+      EsdAudioWriteType EsdAudioWrite = (EsdAudioWriteType) PR_FindFunctionSymbol(elib, "esd_audio_write");
+      EsdAudioCloseType EsdAudioClose = (EsdAudioCloseType) PR_FindFunctionSymbol(elib, "esd_audio_close");
+
+      if (!esd_audio_format || !esd_audio_rate ||
+          !EsdAudioOpen || !EsdAudioWrite || !EsdAudioClose)
+          return NS_ERROR_FAILURE;
 
       *esd_audio_format = mask;
       *esd_audio_rate = samples_per_sec;
@@ -347,12 +367,9 @@ NS_METHOD nsSound::Play(nsIURL *aURL)
     return rv;
 }
 
-NS_IMETHODIMP nsSound::PlaySystemSound(const char *aSoundAlias)
+NS_IMETHODIMP nsSound::PlaySystemSound(const nsAString &aSoundAlias)
 {
-    if (!aSoundAlias)
-        return NS_ERROR_FAILURE;
-
-    if (strcmp(aSoundAlias, "_moz_mailbeep") == 0) {
+    if (aSoundAlias.EqualsLiteral("_moz_mailbeep")) {
         return Beep();
     }
 
@@ -361,8 +378,8 @@ NS_IMETHODIMP nsSound::PlaySystemSound(const char *aSoundAlias)
 
     // create a nsILocalFile and then a nsIFileURL from that
     nsCOMPtr <nsILocalFile> soundFile;
-    rv = NS_NewNativeLocalFile(nsDependentCString(aSoundAlias), PR_TRUE, 
-                               getter_AddRefs(soundFile));
+    rv = NS_NewLocalFile(aSoundAlias, PR_TRUE, 
+                         getter_AddRefs(soundFile));
     NS_ENSURE_SUCCESS(rv,rv);
 
     rv = NS_NewFileURI(getter_AddRefs(fileURI), soundFile);

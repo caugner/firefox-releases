@@ -35,9 +35,9 @@
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsIDOMHTMLLIElement.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsGenericHTMLElement.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"
 #include "nsMappedAttributes.h"
@@ -54,7 +54,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMNODE(nsGenericHTMLElement::)
 
   // nsIDOMElement
   NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
@@ -65,11 +65,13 @@ public:
   // nsIDOMHTMLLIElement
   NS_DECL_NSIDOMHTMLLIELEMENT
 
-  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
+  virtual PRBool ParseAttribute(PRInt32 aNamespaceID,
+                                nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult);
   NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
   virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 };
 
 
@@ -91,13 +93,12 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLLIElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLLIElement
-NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLLIElement, nsGenericHTMLElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLLIElement)
-  NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLLIElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLLIElement, nsGenericHTMLElement)
+  NS_INTERFACE_TABLE_INHERITED1(nsHTMLLIElement, nsIDOMHTMLLIElement)
+NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLLIElement)
 
 
-NS_IMPL_DOM_CLONENODE(nsHTMLLIElement)
+NS_IMPL_ELEMENT_CLONE(nsHTMLLIElement)
 
 
 NS_IMPL_STRING_ATTR(nsHTMLLIElement, Type, type)
@@ -122,29 +123,34 @@ static const nsAttrValue::EnumTable kOrderedListItemTypeTable[] = {
 };
 
 PRBool
-nsHTMLLIElement::ParseAttribute(nsIAtom* aAttribute,
+nsHTMLLIElement::ParseAttribute(PRInt32 aNamespaceID,
+                                nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult)
 {
-  if (aAttribute == nsHTMLAtoms::type) {
-    return aResult.ParseEnumValue(aValue, kOrderedListItemTypeTable, PR_TRUE) ||
-           aResult.ParseEnumValue(aValue, kUnorderedListItemTypeTable);
-  }
-  if (aAttribute == nsHTMLAtoms::value) {
-    return aResult.ParseIntWithBounds(aValue, 0);
+  if (aNamespaceID == kNameSpaceID_None) {
+    if (aAttribute == nsGkAtoms::type) {
+      return aResult.ParseEnumValue(aValue, kOrderedListItemTypeTable,
+                                    PR_TRUE) ||
+             aResult.ParseEnumValue(aValue, kUnorderedListItemTypeTable);
+    }
+    if (aAttribute == nsGkAtoms::value) {
+      return aResult.ParseIntWithBounds(aValue, 0);
+    }
   }
 
-  return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
+  return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
+                                              aResult);
 }
 
 static void
 MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
                       nsRuleData* aData)
 {
-  if (aData->mSID == eStyleStruct_List) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(List)) {
     if (aData->mListData->mType.GetUnit() == eCSSUnit_Null) {
       // type: enum
-      const nsAttrValue* value = aAttributes->GetAttr(nsHTMLAtoms::type);
+      const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::type);
       if (value && value->Type() == nsAttrValue::eEnum)
         aData->mListData->mType.SetIntValue(value->GetEnumValue(), eCSSUnit_Enumerated);
     }
@@ -157,7 +163,7 @@ NS_IMETHODIMP_(PRBool)
 nsHTMLLIElement::IsAttributeMapped(const nsIAtom* aAttribute) const
 {
   static const MappedAttributeEntry attributes[] = {
-    { &nsHTMLAtoms::type },
+    { &nsGkAtoms::type },
     { nsnull },
   };
 

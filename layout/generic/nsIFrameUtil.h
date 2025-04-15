@@ -34,6 +34,9 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* utilities for regression tests based on frame tree comparison */
+
 #ifndef nsIFrameUtil_h___
 #define nsIFrameUtil_h___
 
@@ -49,7 +52,7 @@
  */
 class nsIFrameUtil : public nsISupports {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IFRAME_UTIL_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IFRAME_UTIL_IID)
   /**
    * Compare two regression data dumps. The return status will be NS_OK
    * if the trees compare favoribly, otherwise the return will indicate
@@ -68,5 +71,7 @@ public:
    */
   NS_IMETHOD DumpRegressionData(FILE* aInputFile, FILE* aOutputFile) = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIFrameUtil, NS_IFRAME_UTIL_IID)
 
 #endif /* nsIFrameUtil_h___ */

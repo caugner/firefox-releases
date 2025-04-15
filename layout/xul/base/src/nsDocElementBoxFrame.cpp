@@ -39,115 +39,113 @@
 #include "nsCSSRendering.h"
 #include "nsIDocument.h"
 #include "nsPresContext.h"
-#include "nsViewsCID.h"
-#include "nsIView.h"
-#include "nsIViewManager.h"
 #include "nsIWidget.h"
 #include "nsPageFrame.h"
 #include "nsIRenderingContext.h"
 #include "nsGUIEvent.h"
 #include "nsIDOMEvent.h"
 #include "nsStyleConsts.h"
-#include "nsIViewManager.h"
-#include "nsHTMLAtoms.h"
-#include "nsXULAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsIEventStateManager.h"
 #include "nsIDeviceContext.h"
-#include "nsIScrollableView.h"
-#include "nsLayoutAtoms.h"
 #include "nsIPresShell.h"
 #include "nsBoxFrame.h"
 #include "nsStackLayout.h"
-#include "nsIRootBox.h"
 #include "nsIAnonymousContentCreator.h"
 #include "nsINodeInfo.h"
 #include "nsIServiceManager.h"
-#include "nsISupportsArray.h"
 #include "nsNodeInfoManager.h"
 #include "nsContentCreatorFunctions.h"
-
-// Interface IDs
+#include "nsContentUtils.h"
 
 //#define DEBUG_REFLOW
 
-class nsDocElementBoxFrame : public nsBoxFrame, public nsIAnonymousContentCreator {
+class nsDocElementBoxFrame : public nsBoxFrame,
+                             public nsIAnonymousContentCreator
+{
 public:
+  virtual void Destroy();
 
-  friend nsresult NS_NewBoxFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewBoxFrame(nsIPresShell* aPresShell,
+                                  nsStyleContext* aContext);
 
-  nsDocElementBoxFrame(nsIPresShell* aShell);
+  nsDocElementBoxFrame(nsIPresShell* aShell, nsStyleContext* aContext)
+    :nsBoxFrame(aShell, aContext, PR_TRUE) {}
 
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIAnonymousContentCreator
-  NS_IMETHOD CreateAnonymousContent(nsPresContext* aPresContext,
-                                    nsISupportsArray& aAnonymousItems);
-  NS_IMETHOD CreateFrameFor(nsPresContext*   aPresContext,
-                            nsIContent *      aContent,
-                            nsIFrame**        aFrame) { if (aFrame) *aFrame = nsnull; return NS_ERROR_FAILURE; }
+  virtual nsresult CreateAnonymousContent(nsTArray<nsIContent*>& aElements);
+
+  virtual PRBool IsFrameOfType(PRUint32 aFlags) const
+  {
+    // Override nsBoxFrame.
+    if (aFlags & (nsIFrame::eReplacedContainsBlock | nsIFrame::eReplaced))
+      return PR_FALSE;
+    return nsBoxFrame::IsFrameOfType(aFlags);
+  }
 
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
 #endif
+private:
+  nsCOMPtr<nsIContent> mPopupgroupContent;
+  nsCOMPtr<nsIContent> mTooltipContent;
 };
 
 //----------------------------------------------------------------------
 
+nsIFrame*
+NS_NewDocElementBoxFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
+{
+  return new (aPresShell) nsDocElementBoxFrame (aPresShell, aContext);
+}
+
+void
+nsDocElementBoxFrame::Destroy()
+{
+  nsContentUtils::DestroyAnonymousContent(&mPopupgroupContent);
+  nsContentUtils::DestroyAnonymousContent(&mTooltipContent);
+  nsBoxFrame::Destroy();
+}
+
 nsresult
-NS_NewDocElementBoxFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
-{
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsDocElementBoxFrame* it = new (aPresShell) nsDocElementBoxFrame (aPresShell);
-  if (nsnull == it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  *aNewFrame = it;
-
-  return NS_OK;
-}
-
-nsDocElementBoxFrame::nsDocElementBoxFrame(nsIPresShell* aShell):nsBoxFrame(aShell, PR_TRUE)
-{
-}
-
-NS_IMETHODIMP
-nsDocElementBoxFrame::CreateAnonymousContent(nsPresContext* aPresContext,
-                                       nsISupportsArray& aAnonymousItems)
+nsDocElementBoxFrame::CreateAnonymousContent(nsTArray<nsIContent*>& aElements)
 {
   nsIDocument* doc = mContent->GetDocument();
-  if (!doc)
+  if (!doc) {
     // The page is currently being torn down.  Why bother.
     return NS_ERROR_FAILURE;
+  }
   nsNodeInfoManager *nodeInfoManager = doc->NodeInfoManager();
 
   // create the top-secret popupgroup node. shhhhh!
   nsCOMPtr<nsINodeInfo> nodeInfo;
-  nsresult rv = nodeInfoManager->GetNodeInfo(nsXULAtoms::popupgroup,
+  nsresult rv = nodeInfoManager->GetNodeInfo(nsGkAtoms::popupgroup,
                                              nsnull, kNameSpaceID_XUL,
                                              getter_AddRefs(nodeInfo));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIContent> content;
-  rv = NS_NewXULElement(getter_AddRefs(content), nodeInfo);
+  rv = NS_NewXULElement(getter_AddRefs(mPopupgroupContent), nodeInfo);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  aAnonymousItems.AppendElement(content);
+  if (!aElements.AppendElement(mPopupgroupContent))
+    return NS_ERROR_OUT_OF_MEMORY;
 
   // create the top-secret default tooltip node. shhhhh!
-  rv = nodeInfoManager->GetNodeInfo(nsXULAtoms::tooltip, nsnull,
+  rv = nodeInfoManager->GetNodeInfo(nsGkAtoms::tooltip, nsnull,
                                     kNameSpaceID_XUL, getter_AddRefs(nodeInfo));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = NS_NewXULElement(getter_AddRefs(content), nodeInfo);
+  rv = NS_NewXULElement(getter_AddRefs(mTooltipContent), nodeInfo);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  content->SetAttr(nsnull, nsXULAtoms::defaultz, NS_LITERAL_STRING("true"), PR_FALSE);
-  aAnonymousItems.AppendElement(content);
-  
+  mTooltipContent->SetAttr(nsnull, nsGkAtoms::_default,
+                           NS_LITERAL_STRING("true"), PR_FALSE);
+
+  if (!aElements.AppendElement(mTooltipContent))
+    return NS_ERROR_OUT_OF_MEMORY;
+
   return NS_OK;
 }
 

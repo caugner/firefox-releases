@@ -57,7 +57,7 @@
 class IFoo : public nsISupports
   {
 		public:
-			NS_DEFINE_STATIC_IID_ACCESSOR(NS_IFOO_IID)
+			NS_DECLARE_STATIC_IID_ACCESSOR(NS_IFOO_IID)
 
 		public:
       IFoo();
@@ -76,6 +76,8 @@ class IFoo : public nsISupports
       static unsigned int total_constructions_;
       static unsigned int total_destructions_;
   };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(IFoo, NS_IFOO_IID)
 
 class IBar;
 
@@ -153,24 +155,21 @@ IFoo::AddRef()
 nsrefcnt
 IFoo::Release()
   {
-    int wrap_message = (refcount_ == 1);
-    if ( wrap_message )
+    int newcount = --refcount_;
+    if ( newcount == 0 )
       printf(">>");
-      
-    --refcount_;
+
     printf("IFoo@%p::Release(), refcount --> %d\n",
            STATIC_CAST(void*, this), refcount_);
 
-    if ( !refcount_ )
+    if ( newcount == 0 )
       {
         printf("  delete IFoo@%p\n", STATIC_CAST(void*, this));
+        printf("<<IFoo@%p::Release()\n", STATIC_CAST(void*, this));
         delete this;
       }
 
-    if ( wrap_message )
-      printf("<<IFoo@%p::Release()\n", STATIC_CAST(void*, this));
-
-    return refcount_;
+    return newcount;
   }
 
 nsresult
@@ -242,7 +241,7 @@ return_a_IFoo()
 class IBar : public IFoo
   {
   	public:
-  		NS_DEFINE_STATIC_IID_ACCESSOR(NS_IBAR_IID)
+  		NS_DECLARE_STATIC_IID_ACCESSOR(NS_IBAR_IID)
 
     public:
       IBar();
@@ -250,6 +249,8 @@ class IBar : public IFoo
 
       NS_IMETHOD QueryInterface( const nsIID&, void** );
   };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(IBar, NS_IBAR_IID)
 
 IBar::IBar()
   {
@@ -626,6 +627,15 @@ main()
 
 
 		{
+    	printf("\n### setup for Test 24\n");
+			nsCOMPtr<IFoo> fooP( do_QueryInterface(new IFoo) );
+
+			printf("### Test 24: does |forget| avoid an AddRef/Release when assigning to another nsCOMPtr?\n");
+      nsCOMPtr<IFoo> fooP2( fooP.forget() );
+		}
+    printf("### End Test 24\n");
+
+		{
 			nsCOMPtr<IFoo> fooP;
 
 			AnIFooPtrPtrContext( getter_AddRefs(fooP) );
@@ -642,7 +652,7 @@ main()
 		}
 
 
-    printf("\n### Test 24: will a static |nsCOMPtr| |Release| before program termination?\n");
+    printf("\n### Test 25: will a static |nsCOMPtr| |Release| before program termination?\n");
     gFoop = do_QueryInterface(new IFoo);
     
     printf("<<main()\n");

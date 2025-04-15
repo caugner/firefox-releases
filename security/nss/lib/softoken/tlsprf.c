@@ -35,7 +35,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: tlsprf.c,v 1.5.20.1 2006/02/03 22:31:44 wtchang%redhat.com Exp $ */
+/* $Id: tlsprf.c,v 1.6 2005/08/06 09:27:28 nelsonb%netscape.com Exp $ */
 
 #include "pkcs11i.h"
 #include "blapi.h"

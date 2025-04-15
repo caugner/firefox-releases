@@ -34,6 +34,12 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/*
+ * interface for rendering objects for replaced elements containing a
+ * document, such as <frame>, <iframe>, and some <object>s
+ */
+
 #ifndef nsIFrameFrame_h___
 #define nsIFrameFrame_h___
 
@@ -46,10 +52,11 @@ class nsIDocShell;
 class nsIFrameFrame : public nsISupports
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IFRAMEFRAME_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IFRAMEFRAME_IID)
 
   NS_IMETHOD GetDocShell(nsIDocShell **aDocShell) = 0;
 };
 
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIFrameFrame, NS_IFRAMEFRAME_IID)
 
 #endif

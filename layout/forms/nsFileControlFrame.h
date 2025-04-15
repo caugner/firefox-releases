@@ -45,133 +45,95 @@
 #include "nsCOMPtr.h"
 
 #include "nsTextControlFrame.h"
-#include "nsFormControlHelper.h"
 typedef   nsTextControlFrame nsNewFrame;
-
-class nsISupportsArray;
 
 class nsFileControlFrame : public nsAreaFrame,
                            public nsIFormControlFrame,
-                           public nsIDOMMouseListener,
                            public nsIAnonymousContentCreator
 {
 public:
-  nsFileControlFrame();
+  nsFileControlFrame(nsStyleContext* aContext);
   virtual ~nsFileControlFrame();
 
-  // XXX Hack so we can squirrel away the pres context pointer
-  NS_IMETHOD Init(nsPresContext*  aPresContext,
-                  nsIContent*      aContent,
-                  nsIFrame*        aParent,
-                  nsStyleContext*  aContext,
-                  nsIFrame*        aPrevInFlow) {
-    mPresContext = aPresContext;
-    return nsAreaFrame::Init(aPresContext, aContent, aParent, aContext, aPrevInFlow);
-  }
+  NS_IMETHOD Init(nsIContent* aContent,
+                  nsIFrame*   aParent,
+                  nsIFrame*   aPrevInFlow);
 
-  NS_IMETHOD Paint(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext,
-                   const nsRect&        aDirtyRect,
-                   nsFramePaintLayer    aWhichLayer,
-                   PRUint32             aFlags = 0);
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
 
-      // nsIFormControlFrame
-  NS_IMETHOD SetProperty(nsPresContext* aPresContext, nsIAtom* aName, const nsAString& aValue);
-  NS_IMETHOD GetProperty(nsIAtom* aName, nsAString& aValue); 
   NS_IMETHOD QueryInterface(const nsIID& aIID, void** aInstancePtr);
-  NS_IMETHOD OnContentReset();
+  
+  // nsIFormControlFrame
+  virtual nsresult SetFormProperty(nsIAtom* aName, const nsAString& aValue);
+  virtual nsresult GetFormProperty(nsIAtom* aName, nsAString& aValue) const;
+  virtual void SetFocus(PRBool aOn, PRBool aRepaint);
 
+  virtual nscoord GetMinWidth(nsIRenderingContext *aRenderingContext);
+  
   NS_IMETHOD Reflow(nsPresContext*          aCX,
                     nsHTMLReflowMetrics&     aDesiredSize,
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
 
-  NS_IMETHOD Destroy(nsPresContext *aPresContext);
+  virtual void Destroy();
 
 #ifdef NS_DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
 #endif
-  NS_IMETHOD SetSuggestedSize(nscoord aWidth, nscoord aHeight) { return NS_OK; };
-  NS_IMETHOD GetFrameForPoint(const nsPoint& aPoint, nsFramePaintLayer aWhichLayer, nsIFrame** aFrame);
-  NS_IMETHOD AttributeChanged(nsIContent*     aChild,
-                              PRInt32         aNameSpaceID,
+
+  NS_IMETHOD AttributeChanged(PRInt32         aNameSpaceID,
                               nsIAtom*        aAttribute,
                               PRInt32         aModType);
   virtual PRBool IsLeaf() const;
 
-  NS_IMETHOD     GetName(nsAString* aName);
-  NS_IMETHOD_(PRInt32) GetFormControlType() const;
-  void           SetFocus(PRBool aOn, PRBool aRepaint);
-  void           ScrollIntoView(nsPresContext* aPresContext);
-
-  NS_IMETHOD GetFormContent(nsIContent*& aContent) const;
-  virtual nscoord GetVerticalInsidePadding(nsPresContext* aPresContext,
-                                           float aPixToTwip,
-                                           nscoord aInnerHeight) const;
-  virtual nscoord GetHorizontalInsidePadding(nsPresContext* aPresContext,
-                                             float aPixToTwip, 
-                                             nscoord aInnerWidth,
-                                             nscoord aCharWidth) const;
-
-  // from nsIAnonymousContentCreator
-  NS_IMETHOD CreateAnonymousContent(nsPresContext* aPresContext,
-                                    nsISupportsArray& aChildList);
-  NS_IMETHOD CreateFrameFor(nsPresContext*   aPresContext,
-                            nsIContent *      aContent,
-                            nsIFrame**        aFrame) { if (aFrame) *aFrame = nsnull; return NS_ERROR_FAILURE; }
 
 
-  // mouse events when out browse button is pressed
-  /**
-  * Processes a mouse down event
-  * @param aMouseEvent @see nsIDOMEvent.h 
-  * @returns whether the event was consumed or ignored. @see nsresult
-  */
-  NS_IMETHOD MouseDown(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+  // nsIAnonymousContentCreator
+  virtual nsresult CreateAnonymousContent(nsTArray<nsIContent*>& aElements);
 
-  /**
-   * Processes a mouse up event
-   * @param aMouseEvent @see nsIDOMEvent.h 
-   * @returns whether the event was consumed or ignored. @see nsresult
-   */
-  NS_IMETHOD MouseUp(nsIDOMEvent* aMouseEvent) { return NS_OK; }
-
-  /**
-   * Processes a mouse click event
-   * @param aMouseEvent @see nsIDOMEvent.h 
-   * @returns whether the event was consumed or ignored. @see nsresult
-   *
-   */
-  NS_IMETHOD MouseClick(nsIDOMEvent* aMouseEvent); // we only care when the button is clicked
-
-  /**
-   * Processes a mouse click event
-   * @param aMouseEvent @see nsIDOMEvent.h 
-   * @returns whether the event was consumed or ignored. @see nsresult
-   *
-   */
-  NS_IMETHOD MouseDblClick(nsIDOMEvent* aMouseEvent) { return NS_OK; }
-
-  /**
-   * Processes a mouse enter event
-   * @param aMouseEvent @see nsIDOMEvent.h 
-   * @returns whether the event was consumed or ignored. @see nsresult
-   */
-  NS_IMETHOD MouseOver(nsIDOMEvent* aMouseEvent) { return NS_OK; }
-
-  /**
-   * Processes a mouse leave event
-   * @param aMouseEvent @see nsIDOMEvent.h 
-   * @returns whether the event was consumed or ignored. @see nsresult
-   */
-  NS_IMETHOD MouseOut(nsIDOMEvent* aMouseEvent) { return NS_OK; }
-
-  NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent) { return NS_OK; }
-
-  // We don't paint our background.
-  virtual PRBool CanPaintBackground() { return PR_FALSE; }
+#ifdef ACCESSIBILITY
+  NS_IMETHOD GetAccessible(nsIAccessible** aAccessible);
+#endif
 
 protected:
+  class MouseListener;
+  friend class MouseListener;
+  class MouseListener : public nsIDOMMouseListener {
+  public:
+    NS_DECL_ISUPPORTS
+    
+    MouseListener(nsFileControlFrame* aFrame) :
+      mFrame(aFrame)
+    {}
+
+    void ForgetFrame() {
+      mFrame = nsnull;
+    }
+    
+    // We just want to capture the click events on our browse button
+    // and textfield.
+    NS_IMETHOD MouseDown(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+    NS_IMETHOD MouseUp(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+    NS_IMETHOD MouseClick(nsIDOMEvent* aMouseEvent);
+    NS_IMETHOD MouseDblClick(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+    NS_IMETHOD MouseOver(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+    NS_IMETHOD MouseOut(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+    NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent) { return NS_OK; }
+
+  private:
+    nsFileControlFrame* mFrame;
+  };
+  
+  nsresult MouseClick(nsIDOMEvent* aMouseEvent);
+
+  virtual PRBool IsFrameOfType(PRUint32 aFlags) const
+  {
+    return nsAreaFrame::IsFrameOfType(aFlags &
+      ~(nsIFrame::eReplaced | nsIFrame::eReplacedContainsBlock));
+  }
+
   virtual PRIntn GetSkipSides() const;
 
   /**
@@ -194,11 +156,11 @@ protected:
    * file frame is there but the input frame is not.
    */
   nsString*           mCachedState;
+
   /**
-   * The current pres context.
-   * XXX Hack: pres context needed by function MouseClick() and SetFocus()
+   * Our mouse listener.  This makes sure we don't get used after destruction.
    */
-  nsPresContext*     mPresContext;  // weak reference
+  nsRefPtr<MouseListener> mMouseListener;
 
 private:
   /**

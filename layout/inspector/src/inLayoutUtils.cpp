@@ -43,17 +43,13 @@
 #include "nsIDocument.h"
 #include "nsIContent.h"
 #include "nsIContentViewer.h"
-#include "nsIScriptGlobalObject.h"
 #include "nsPIDOMWindow.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIWebNavigation.h"
 #include "nsIPresShell.h"
-#include "nsIViewManager.h"
 #include "nsIWidget.h"
 #include "nsPresContext.h"
-#include "nsXULAtoms.h"
-#include "nsHTMLAtoms.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -82,10 +78,10 @@ inLayoutUtils::GetWindowFor(nsIDOMDocument* aDoc)
 nsIPresShell* 
 inLayoutUtils::GetPresShellFor(nsISupports* aThing)
 {
-  nsCOMPtr<nsIScriptGlobalObject> so = do_QueryInterface(aThing);
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aThing);
 
   nsCOMPtr<nsIPresShell> presShell;
-  so->GetDocShell()->GetPresShell(getter_AddRefs(presShell));
+  window->GetDocShell()->GetPresShell(getter_AddRefs(presShell));
 
   return presShell;
 }
@@ -95,18 +91,7 @@ nsIFrame*
 inLayoutUtils::GetFrameFor(nsIDOMElement* aElement, nsIPresShell* aShell)
 {
   nsCOMPtr<nsIContent> content = do_QueryInterface(aElement);
-  nsIFrame* frame = nsnull;
-  aShell->GetPrimaryFrameFor(content, &frame);
-
-  return frame;
-}
-
-already_AddRefed<nsIRenderingContext>
-inLayoutUtils::GetRenderingContextFor(nsIPresShell* aShell)
-{
-  nsCOMPtr<nsIWidget> widget;
-  aShell->GetViewManager()->GetWidget(getter_AddRefs(widget));
-  return widget->GetRenderingContext(); // AddRefs
+  return aShell->GetPrimaryFrameFor(content);
 }
 
 nsIEventStateManager*
@@ -123,102 +108,13 @@ inLayoutUtils::GetEventStateManagerFor(nsIDOMElement *aElement)
     return nsnull;
   }
 
-  nsIPresShell *shell = doc->GetShellAt(0);
+  nsIPresShell *shell = doc->GetPrimaryShell();
   NS_ASSERTION(shell, "No pres shell");
 
   return shell->GetPresContext()->EventStateManager();
 }
 
-nsPoint
-inLayoutUtils::GetClientOrigin(nsIFrame* aFrame)
-{
-  nsPoint result(0,0);
-  nsIView* view;
-  aFrame->GetOffsetFromView(result, &view);
-  nsIView* rootView = nsnull;
-  if (view) {
-      nsIViewManager* viewManager = view->GetViewManager();
-      NS_ASSERTION(viewManager, "View must have a viewmanager");
-      viewManager->GetRootView(rootView);
-  }
-  while (view) {
-    result += view->GetPosition();
-    if (view == rootView) {
-      break;
-    }
-    view = view->GetParent();
-  }
-  return result;
-}
-
-nsRect& 
-inLayoutUtils::GetScreenOrigin(nsIDOMElement* aElement)
-{
-  nsRect* rect = new nsRect(0,0,0,0);
- 
-  nsCOMPtr<nsIContent> content = do_QueryInterface(aElement);
-  nsCOMPtr<nsIDocument> doc = content->GetDocument();
-
-  if (doc) {
-    // Get Presentation shell 0
-    nsIPresShell *presShell = doc->GetShellAt(0);
-
-    if (presShell) {
-      // Flush all pending notifications so that our frames are uptodate
-      doc->FlushPendingNotifications(Flush_Layout);
-
-      nsPresContext *presContext = presShell->GetPresContext();
-      
-      if (presContext) {
-        nsIFrame* frame = nsnull;
-        presShell->GetPrimaryFrameFor(content, &frame);
-        
-        PRInt32 offsetX = 0;
-        PRInt32 offsetY = 0;
-        nsIWidget* widget = nsnull;
-        
-        while (frame) {
-          // Look for a widget so we can get screen coordinates
-          nsIView* view = frame->GetViewExternal();
-          if (view) {
-            widget = view->GetWidget();
-            if (widget)
-              break;
-          }
-          
-          // No widget yet, so count up the coordinates of the frame 
-          nsPoint origin = frame->GetPosition();
-          offsetX += origin.x;
-          offsetY += origin.y;
-      
-          frame = frame->GetParent();
-        }
-        
-        if (widget) {
-          // Get the widget's screen coordinates
-          nsRect oldBox(0,0,0,0);
-          widget->WidgetToScreen(oldBox, *rect);
-
-          // Get the scale from that Presentation Context
-          float p2t;
-          p2t = presContext->PixelsToTwips();
-
-          // Convert screen rect to twips
-          rect->x = NSIntPixelsToTwips(rect->x, p2t);
-          rect->y = NSIntPixelsToTwips(rect->y, p2t);
-
-          //  Add the offset we've counted
-          rect->x += offsetX;
-          rect->y += offsetY;
-        }
-      }
-    }
-  }
-  
-  return *rect;
-}
-
-nsIBindingManager* 
+nsBindingManager* 
 inLayoutUtils::GetBindingManagerFor(nsIDOMNode* aNode)
 {
   nsCOMPtr<nsIDOMDocument> domdoc;

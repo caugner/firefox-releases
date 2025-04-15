@@ -52,6 +52,7 @@ REQUIRES	= xpcom \
 		  necko \
 		  content \
 		  htmlparser \
+		  xpconnect \
 		  unicharutil \
 		  $(NULL)
 
@@ -65,7 +66,6 @@ CPPSRCS		= \
 		nsRDFContentSink.cpp \
 		nsRDFContainer.cpp \
 		nsRDFContainerUtils.cpp \
-		nsRDFParserUtils.cpp \
 		nsRDFService.cpp \
 		nsRDFXMLDataSource.cpp \
 		nsRDFXMLParser.cpp \

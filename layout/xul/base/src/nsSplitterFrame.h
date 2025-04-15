@@ -48,13 +48,13 @@
 class nsISupportsArray;
 class nsSplitterFrameInner;
 
-nsresult NS_NewSplitterFrame(nsIPresShell* aPresShell, nsIFrame** aResult) ;
+nsIFrame* NS_NewSplitterFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
 class nsSplitterFrame : public nsBoxFrame
 {
 public:
-  nsSplitterFrame(nsIPresShell* aPresShell);
-  virtual ~nsSplitterFrame();
+  nsSplitterFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
+  virtual void Destroy();
 
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const {
@@ -63,15 +63,12 @@ public:
 #endif
 
   // nsIFrame overrides
-  NS_IMETHOD AttributeChanged(nsIContent* aChild,
-                              PRInt32 aNameSpaceID,
+  NS_IMETHOD AttributeChanged(PRInt32 aNameSpaceID,
                               nsIAtom* aAttribute,
                               PRInt32 aModType);
 
-  NS_IMETHOD Init(nsPresContext*  aPresContext,
-                  nsIContent*      aContent,
+  NS_IMETHOD Init(nsIContent*      aContent,
                   nsIFrame*        aParent,
-                  nsStyleContext*  aContext,
                   nsIFrame*        aPrevInFlow);
 
   NS_IMETHOD GetCursor(const nsPoint&    aPoint,
@@ -103,9 +100,9 @@ public:
                          nsGUIEvent* aEvent,
                          nsEventStatus* aEventStatus);
 
-  NS_IMETHOD GetFrameForPoint(const nsPoint& aPoint,
-                              nsFramePaintLayer aWhichLayer,    
-                              nsIFrame**     aFrame);
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
 
   virtual void GetInitialOrientation(PRBool& aIsHorizontal); 
 
@@ -115,8 +112,6 @@ private:
 
   friend class nsSplitterFrameInner;
   nsSplitterFrameInner* mInner;
-  // XXX Hack
-  nsPresContext* mPresContext;  // weak reference
 
 }; // class nsSplitterFrame
 

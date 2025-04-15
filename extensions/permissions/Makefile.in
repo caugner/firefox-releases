@@ -47,7 +47,7 @@ SHORT_LIBNAME	= perms
 EXPORT_LIBRARY	= 1
 IS_COMPONENT	= 1
 MODULE_NAME	= nsPermissionsModule
-MOZILLA_INTERNAL_API = 1
+LIBXUL_LIBRARY = 1
 
 #PACKAGE_FILE	= permissions.pkg
 
@@ -57,8 +57,12 @@ REQUIRES	= xpcom \
 		  dom \
 		  widget \
 		  content \
+		  layout \
 		  pref \
 		  docshell \
+		  caps \
+		  xpconnect \
+		  js \
 		  $(NULL)
 
 CPPSRCS		= \

@@ -50,7 +50,6 @@
 #include "nsString.h"
 #include "nsUnicharUtils.h"
 #include "nsReadableUtils.h"
-#include "nsIContent.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMHTMLFormElement.h"
 #include "nsIDOMHTMLInputElement.h"
@@ -72,6 +71,10 @@ static void SwapBytes(PRUnichar* aDest, const PRUnichar* aSrc, PRUint32 aLen)
 
 #define PREF_FORMFILL_BRANCH "browser.formfill."
 #define PREF_FORMFILL_ENABLE "enable"
+
+// upper bounds on saved form data, more isn't useful.
+#define FORMFILL_NAME_MAX_LEN  1000
+#define FORMFILL_VALUE_MAX_LEN 4000
 
 static const char *kFormHistoryFileName = "formhistory.dat";
 
@@ -229,7 +232,7 @@ nsFormHistory::Observe(nsISupports *aSubject, const char *aTopic, const PRUnicha
 //// nsIFormSubmitObserver
 
 NS_IMETHODIMP
-nsFormHistory::Notify(nsIContent* aFormNode, nsIDOMWindowInternal* aWindow, nsIURI* aActionURL, PRBool* aCancelSubmit)
+nsFormHistory::Notify(nsIDOMHTMLFormElement* formElt, nsIDOMWindowInternal* aWindow, nsIURI* aActionURL, PRBool* aCancelSubmit)
 {
   if (!FormHistoryEnabled())
     return NS_OK;
@@ -237,9 +240,6 @@ nsFormHistory::Notify(nsIContent* aFormNode, nsIDOMWindowInternal* aWindow, nsIU
   nsresult rv = OpenDatabase(); // lazily ensure that the database is open
   NS_ENSURE_SUCCESS(rv, rv);
   
-  nsCOMPtr<nsIDOMHTMLFormElement> formElt = do_QueryInterface(aFormNode);
-  NS_ENSURE_TRUE(formElt, NS_ERROR_FAILURE);
-
   nsCOMPtr<nsIDOMHTMLCollection> elts;
   formElt->GetElements(getter_AddRefs(elts));
   
@@ -347,11 +347,10 @@ nsFormHistory::OpenDatabase()
   nsCOMPtr <nsIFile> historyFile;
   nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(historyFile));
   NS_ENSURE_SUCCESS(rv, rv);
-  historyFile->Append(NS_ConvertUTF8toUCS2(kFormHistoryFileName));
+  historyFile->Append(NS_ConvertUTF8toUTF16(kFormHistoryFileName));
 
   // Get an Mdb Factory
-  static NS_DEFINE_CID(kMorkCID, NS_MORK_CID);
-  nsCOMPtr<nsIMdbFactoryFactory> mdbFactory = do_CreateInstance(kMorkCID, &rv);
+  nsCOMPtr <nsIMdbFactoryService> mdbFactory = do_GetService(NS_MORK_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
   rv = mdbFactory->GetMdbFactory(getter_AddRefs(mMdbFactory));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -618,7 +617,11 @@ nsFormHistory::AppendRow(const nsAString &aName, const nsAString &aValue, nsIMdb
   if (!mTable)
     return NS_ERROR_NOT_INITIALIZED;
 
-  PRBool exists;
+  if (aName.Length() > FORMFILL_NAME_MAX_LEN ||
+      aValue.Length() > FORMFILL_VALUE_MAX_LEN)
+    return NS_ERROR_INVALID_ARG;
+
+  PRBool exists = PR_TRUE;
   EntryExists(aName, aValue, &exists);
   if (exists)
     return NS_OK;

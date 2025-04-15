@@ -42,10 +42,13 @@
 #include "nsIPresShell.h"
 #include "nsPresContext.h"
 #include "nsIFrame.h"
+#include "nsISelectionPrivate.h"
+#include "nsFrameSelection.h"
 
 // Test for distance between caret and text that will be deleted
 nsresult
-nsTextEditRules::CheckBidiLevelForDeletion(nsIDOMNode           *aSelNode, 
+nsTextEditRules::CheckBidiLevelForDeletion(nsISelection         *aSelection,
+                                           nsIDOMNode           *aSelNode, 
                                            PRInt32               aSelOffset, 
                                            nsIEditor::EDirection aAction,
                                            PRBool               *aCancel)
@@ -71,92 +74,41 @@ nsTextEditRules::CheckBidiLevelForDeletion(nsIDOMNode           *aSelNode,
   if (!content)
     return NS_ERROR_NULL_POINTER;
 
-  if (content->IsContentOfType(nsIContent::eELEMENT))
-  {
-    content = content->GetChildAt(aSelOffset);    
-    if (!content)
-      return NS_ERROR_FAILURE;
-    aSelOffset = 0;
-  }    
-  
-  nsIFrame *primaryFrame;
-  res = shell->GetPrimaryFrameFor(content, &primaryFrame);
-  if (NS_FAILED(res))
-    return res;
-  if (!primaryFrame)
-    return NS_ERROR_NULL_POINTER;
-  
-  nsIFrame *frameBefore;
-  nsIFrame *frameAfter;
-  PRInt32 frameOffset;
-
-  res = primaryFrame->GetChildFrameContainingOffset(aSelOffset, PR_FALSE, &frameOffset, &frameBefore);
-  if (NS_FAILED(res))
-    return res;
-  if (!frameBefore)
-    return NS_ERROR_NULL_POINTER;
-  
+  PRUint8 levelBefore;
   PRUint8 levelAfter;
-  nsCOMPtr<nsIAtom> embeddingLevel = do_GetAtom("EmbeddingLevel");
 
-  // Get the bidi level of the frame before the caret
-  PRUint8 levelBefore =
-    NS_PTR_TO_INT32(frameBefore->GetPropertyExternal(embeddingLevel, nsnull));
-
-  // If the caret is at the end of the frame, get the bidi level of the
-  // frame after the caret
-  PRInt32 start, end;
-  frameBefore->GetOffsets(start, end);
-  if (aSelOffset == end
-     || aSelOffset == -1)
-  {
-    res = primaryFrame->GetChildFrameContainingOffset(aSelOffset, PR_TRUE, &frameOffset, &frameAfter);
-    if (NS_FAILED(res))
-      return res;
-    if (!frameAfter)
-      return NS_ERROR_NULL_POINTER;
+  nsCOMPtr<nsISelectionPrivate> privateSelection(do_QueryInterface(aSelection));
+  if (!privateSelection)
+    return NS_ERROR_NULL_POINTER;
+  
+  nsCOMPtr<nsFrameSelection> frameSelection;
+  privateSelection->GetFrameSelection(getter_AddRefs(frameSelection));
+  if (!frameSelection)
+    return NS_ERROR_NULL_POINTER;
+  
+  nsPrevNextBidiLevels levels = frameSelection->
+    GetPrevNextBidiLevels(content, aSelOffset, PR_TRUE);
     
-    if (frameBefore==frameAfter)
-    {
-      // there was no frameAfter, i.e. the caret is at the end of the
-      // document -- use the base paragraph level
-      nsCOMPtr<nsIAtom> baseLevel = do_GetAtom("BaseLevel");
-      levelAfter =
-        NS_PTR_TO_INT32(frameBefore->GetPropertyExternal(baseLevel, nsnull));
-    }
-    else
-    {
-      levelAfter =
-        NS_PTR_TO_INT32(frameAfter->GetPropertyExternal(embeddingLevel, nsnull));
-    }
-  }
-  else
-  {
-    levelAfter = levelBefore;
-  }
-  PRUint8 currentCursorLevel;
-  res = shell->GetCaretBidiLevel(&currentCursorLevel);
-  if (NS_FAILED(res))
-    return res;
+  levelBefore = levels.mLevelBefore;
+  levelAfter = levels.mLevelAfter;
+
+  PRUint8 currentCaretLevel = frameSelection->GetCaretBidiLevel();
 
   PRUint8 levelOfDeletion;
   levelOfDeletion = (nsIEditor::eNext==aAction) ? levelAfter : levelBefore;
 
-  if (currentCursorLevel == levelOfDeletion)
+  if (currentCaretLevel == levelOfDeletion)
     ; // perform the deletion
   else
   {
-    if ((levelBefore==levelAfter)
-        && (levelBefore & 1) == (currentCursorLevel & 1))
+    if (mDeleteBidiImmediately || levelBefore == levelAfter)
       ; // perform the deletion
     else
       *aCancel = PR_TRUE;
 
     // Set the bidi level of the caret to that of the
     // character that will be (or would have been) deleted
-    res = shell->SetCaretBidiLevel(levelOfDeletion);
-    if (NS_FAILED(res))
-      return res;
+    frameSelection->SetCaretBidiLevel(levelOfDeletion);
   }
   return NS_OK;
 }

@@ -35,6 +35,12 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/*
+ * representation of CSS style rules (selectors+declaration) and CSS
+ * selectors
+ */
+
 #ifndef nsICSSStyleRule_h___
 #define nsICSSStyleRule_h___
 
@@ -154,7 +160,7 @@ private:
   void AppendNegationToString(nsAString& aString);
   void ToStringInternal(nsAString& aString, nsICSSStyleSheet* aSheet,
                         PRBool aIsPseudoElem,
-                        PRIntn aNegatedIndex) const;
+                        PRBool aIsNegated) const;
 
 public:
   PRInt32         mNameSpace;
@@ -185,12 +191,13 @@ struct nsCSSSelectorList {
   ~nsCSSSelectorList(void);
 
   /**
-   * Push a copy of |aSelector| on to the beginning of |mSelectors|,
-   * setting its |mNext| to the current value of |mSelectors|.
+   * Push the selector pointed to by |aSelector| on to the beginning of
+   * |mSelectors|, setting its |mNext| to the current value of |mSelectors|.
+   * This nulls out aSelector.
    *
    * The caller is responsible for updating |mWeight|.
    */
-  void AddSelector(const nsCSSSelector& aSelector);
+  void AddSelector(nsAutoPtr<nsCSSSelector>& aSelector);
 
   /**
    * Should be used only on the first in the list
@@ -219,7 +226,7 @@ private:
 
 class nsICSSStyleRule : public nsICSSRule {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICSS_STYLE_RULE_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICSS_STYLE_RULE_IID)
 
   // null for style attribute
   virtual nsCSSSelectorList* Selector(void) = 0;
@@ -251,6 +258,8 @@ public:
   virtual nsresult GetSelectorText(nsAString& aSelectorText) = 0;
   virtual nsresult SetSelectorText(const nsAString& aSelectorText) = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsICSSStyleRule, NS_ICSS_STYLE_RULE_IID)
 
 nsresult
 NS_NewCSSStyleRule(nsICSSStyleRule** aInstancePtrResult,

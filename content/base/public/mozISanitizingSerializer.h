@@ -99,7 +99,8 @@
 #define _mozISanitizingSerializer_h__
 
 #include "nsISupports.h"
-#include "nsAString.h"
+
+class nsAString;
 
 #define MOZ_SANITIZINGHTMLSERIALIZER_CONTRACTID "@mozilla.org/layout/htmlsanitizer;1"
 
@@ -113,12 +114,15 @@
 class mozISanitizingHTMLSerializer : public nsISupports {
  public: 
 
-  NS_DEFINE_STATIC_IID_ACCESSOR(MOZ_ISANITIZINGHTMLSERIALIZER_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(MOZ_ISANITIZINGHTMLSERIALIZER_IID)
 
   NS_IMETHOD Initialize(nsAString* aOutString,
                         PRUint32 aFlags,
                         const nsAString& allowedTags) = 0;
   // This function violates string ownership rules, see impl.
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(mozISanitizingHTMLSerializer,
+                              MOZ_ISANITIZINGHTMLSERIALIZER_IID)
 
 #endif

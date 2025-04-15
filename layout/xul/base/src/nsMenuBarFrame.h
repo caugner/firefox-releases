@@ -49,84 +49,74 @@
 #include "nsIAtom.h"
 #include "nsCOMPtr.h"
 #include "nsBoxFrame.h"
+#include "nsMenuFrame.h"
 #include "nsMenuBarListener.h"
-#include "nsMenuListener.h"
 #include "nsIMenuParent.h"
 #include "nsIWidget.h"
 
 class nsIContent;
-class nsIMenuFrame;
 
-nsresult NS_NewMenuBarFrame(nsIPresShell* aPresShell, nsIFrame** aResult) ;
+nsIFrame* NS_NewMenuBarFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
 class nsMenuBarFrame : public nsBoxFrame, public nsIMenuParent
 {
 public:
-  nsMenuBarFrame(nsIPresShell* aShell);
-  virtual ~nsMenuBarFrame();
-
-  NS_DECL_ISUPPORTS
+  nsMenuBarFrame(nsIPresShell* aShell, nsStyleContext* aContext);
 
   // nsIMenuParentInterface
-  virtual nsIMenuFrame* GetCurrentMenuItem();
-  NS_IMETHOD SetCurrentMenuItem(nsIMenuFrame* aMenuItem);
-  virtual nsIMenuFrame* GetNextMenuItem(nsIMenuFrame* aStart);
-  virtual nsIMenuFrame* GetPreviousMenuItem(nsIMenuFrame* aStart);
+  virtual nsMenuFrame* GetCurrentMenuItem();
+  NS_IMETHOD SetCurrentMenuItem(nsMenuFrame* aMenuItem);
+  virtual void CurrentMenuIsBeingDestroyed();
+  NS_IMETHOD ChangeMenuItem(nsMenuFrame* aMenuItem, PRBool aSelectFirstItem);
+
   NS_IMETHOD SetActive(PRBool aActiveFlag); 
-  NS_IMETHOD GetIsActive(PRBool& isActive) { isActive = IsActive(); return NS_OK; };
-  NS_IMETHOD IsMenuBar(PRBool& isMenuBar) { isMenuBar = PR_TRUE; return NS_OK; };
-  NS_IMETHOD ConsumeOutsideClicks(PRBool& aConsumeOutsideClicks) \
-    {aConsumeOutsideClicks = PR_FALSE; return NS_OK;};
-  NS_IMETHOD ClearRecentlyRolledUp();
-  NS_IMETHOD RecentlyRolledUp(nsIMenuFrame *aMenuFrame, PRBool *aJustRolledUp);
 
-  NS_IMETHOD SetIsContextMenu(PRBool aIsContextMenu) { return NS_OK; };
-  NS_IMETHOD GetIsContextMenu(PRBool& aIsContextMenu) { aIsContextMenu = PR_FALSE; return NS_OK; }; 
-  
-  NS_IMETHOD IsActive() { return mIsActive; };
+  virtual PRBool IsMenuBar() { return PR_TRUE; }
+  virtual PRBool IsContextMenu() { return PR_FALSE; }
+  virtual PRBool IsActive() { return mIsActive; }
+  virtual PRBool IsMenu() { return PR_FALSE; }
+  virtual PRBool IsOpen() { return PR_TRUE; } // menubars are considered always open
 
-  NS_IMETHOD IsOpen();
-  NS_IMETHOD KillPendingTimers();
+  PRBool IsMenuOpen() { return mCurrentMenu && mCurrentMenu->IsOpen(); }
 
-  // Closes up the chain of open cascaded menus.
-  NS_IMETHOD DismissChain();
+  void InstallKeyboardNavigator();
+  void RemoveKeyboardNavigator();
 
-  // Hides the chain of cascaded menus without closing them up.
-  NS_IMETHOD HideChain();
-
-  NS_IMETHOD InstallKeyboardNavigator();
-  NS_IMETHOD RemoveKeyboardNavigator();
-
-  NS_IMETHOD GetWidget(nsIWidget **aWidget);
-  // The dismissal listener gets created and attached to the window.
-  NS_IMETHOD CreateDismissalListener();
-
-  NS_IMETHOD Init(nsPresContext*  aPresContext,
-                  nsIContent*      aContent,
+  NS_IMETHOD Init(nsIContent*      aContent,
                   nsIFrame*        aParent,
-                  nsStyleContext*  aContext,
                   nsIFrame*        aPrevInFlow);
 
-  NS_IMETHOD Destroy(nsPresContext* aPresContext);
+  virtual void Destroy();
+
+  virtual nsIAtom* GetType() const { return nsGkAtoms::menuBarFrame; }
 
 // Non-interface helpers
 
-  // Called when a menu on the menu bar is clicked on.
-  void ToggleMenuActiveState();
-  
-  // Used to move up, down, left, and right in menus.
-  NS_IMETHOD KeyboardNavigation(PRUint32 aKeyCode, PRBool& aHandledFlag);
-  NS_IMETHOD ShortcutNavigation(nsIDOMKeyEvent* aKeyEvent, PRBool& aHandledFlag);
-  // Called when the ESC key is held down to close levels of menus.
-  NS_IMETHOD Escape(PRBool& aHandledFlag);
-  // Called to execute a menu item.
-  NS_IMETHOD Enter();
+  void
+  SetStayActive(PRBool aStayActive) { mStayActive = aStayActive; }
+
+  // Called when a menu on the menu bar is clicked on. Returns a menu if one
+  // needs to be closed.
+  nsMenuFrame* ToggleMenuActiveState();
+
+  // indicate that a menu on the menubar was closed. Returns true if the caller
+  // may deselect the menuitem.
+  virtual PRBool MenuClosed();
+
+  // Called when Enter is pressed while the menubar is focused. If the current
+  // menu is open, let the child handle the key.
+  nsMenuFrame* Enter();
 
   // Used to handle ALT+key combos
-  nsIMenuFrame* FindMenuWithShortcut(nsIDOMKeyEvent* aKeyEvent);
+  nsMenuFrame* FindMenuWithShortcut(nsIDOMKeyEvent* aKeyEvent);
 
-  PRBool IsValidItem(nsIContent* aContent);
-  PRBool IsDisabled(nsIContent* aContent);
+  virtual PRBool IsFrameOfType(PRUint32 aFlags) const
+  {
+    // Override bogus IsFrameOfType in nsBoxFrame.
+    if (aFlags & (nsIFrame::eReplacedContainsBlock | nsIFrame::eReplaced))
+      return PR_FALSE;
+    return nsBoxFrame::IsFrameOfType(aFlags);
+  }
 
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const
@@ -137,22 +127,17 @@ public:
 
 protected:
   nsMenuBarListener* mMenuBarListener; // The listener that tells us about key and mouse events.
-  nsMenuListener* mKeyboardNavigator;
 
-  PRBool mIsActive; // Whether or not the menu bar is active (a menu item is highlighted or shown).
-  nsIMenuFrame* mCurrentMenu; // The current menu that is active.
+  // flag that is temporarily set when switching from one menu on the menubar to another
+  // to indicate that the menubar should not be deactivated.
+  PRPackedBool mStayActive;
 
-  // Can contain a menu that was rolled up via nsIMenuDismissalListener::Rollup()
-  // if nothing has happened since the last click. Otherwise, contains nsnull.
-  nsIMenuFrame* mRecentRollupMenu; 
+  PRPackedBool mIsActive; // Whether or not the menu bar is active (a menu item is highlighted or shown).
+  // The current menu that is active (highlighted), which may not be open. This will
+  // be null if no menu is active.
+  nsMenuFrame* mCurrentMenu;
 
-  nsIDOMEventReceiver* mTarget;
-
-  // XXX Hack
-  nsPresContext* mPresContext;  // weak reference
-
-private:
-  PRBool mCaretWasVisible;
+  nsIDOMEventTarget* mTarget;
 
 }; // class nsMenuBarFrame
 

@@ -39,7 +39,7 @@
 #define nsICharsetAlias_h___
 
 #include "nscore.h"
-#include "nsString.h"
+#include "nsStringGlue.h"
 #include "nsISupports.h"
 
 /* 0b4028d6-7473-4958-9b3c-4dee46bf68cb */
@@ -61,10 +61,12 @@
 class nsICharsetAlias : public nsISupports
 {
 public:
-   NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICHARSETALIAS_IID)
+   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICHARSETALIAS_IID)
 
    NS_IMETHOD GetPreferred(const nsACString& aAlias, nsACString& aResult) = 0;
    NS_IMETHOD Equals(const nsACString& aCharset1, const nsACString& aCharset2, PRBool* aResult) = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsICharsetAlias, NS_ICHARSETALIAS_IID)
 
 #endif /* nsICharsetAlias_h___ */

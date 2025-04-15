@@ -59,33 +59,33 @@ REQUIRES	= xpcom \
 		  unicharutil \
 		  webshell \
 		  imglib2 \
-		  intl \
-		  windowwatcher \
 		  js \
 		  xpconnect \
 		  docshell \
+		  thebes \
 		  $(NULL)
 
 CPPSRCS		= \
-		nsSVGCircleFrame.cpp \
+		nsSVGAFrame.cpp \
 		nsSVGClipPathFrame.cpp \
-		nsSVGDefsFrame.cpp \
-		nsSVGEllipseFrame.cpp \
+		nsSVGContainerFrame.cpp \
+		nsSVGFilterFrame.cpp \
 		nsSVGGFrame.cpp \
 		nsSVGGenericContainerFrame.cpp \
+		nsSVGGeometryFrame.cpp \
 		nsSVGGlyphFrame.cpp \
 		nsSVGGradientFrame.cpp \
 		nsSVGImageFrame.cpp \
 		nsSVGInnerSVGFrame.cpp \
-		nsSVGLineFrame.cpp \
+		nsSVGLeafFrame.cpp \
 		nsSVGMarkerFrame.cpp \
+		nsSVGMaskFrame.cpp \
 		nsSVGOuterSVGFrame.cpp \
-		nsSVGPathFrame.cpp \
+		nsSVGPaintServerFrame.cpp \
 		nsSVGPathGeometryFrame.cpp \
-		nsSVGPolygonFrame.cpp \
-		nsSVGPolylineFrame.cpp \
-		nsSVGRectFrame.cpp \
+		nsSVGPatternFrame.cpp \
 		nsSVGStopFrame.cpp \
+		nsSVGTextContainerFrame.cpp \
 		nsSVGTextFrame.cpp \
 		nsSVGTextPathFrame.cpp \
 		nsSVGTSpanFrame.cpp \
@@ -102,7 +102,11 @@ include $(topsrcdir)/config/config.mk
 # we don't want the shared lib, but we want to force the creation of a static lib.
 FORCE_STATIC_LIB = 1
 
-EXPORTS = nsSVGUtils.h
+EXPORTS = \
+	nsSVGUtils.h \
+	nsSVGFilterInstance.h \
+        nsSVGForeignObjectFrame.h \
+	$(NULL)
 
 include $(topsrcdir)/config/rules.mk
 
@@ -112,6 +116,7 @@ LOCAL_INCLUDES	= \
 		-I$(srcdir)/../../../style \
 		-I$(srcdir)/../../../xul/base/src \
 		-I$(srcdir)/../../../../content/svg/content/src \
+		-I$(srcdir)/../../../../content/base/src \
 		$(NULL)
 
 libs::

@@ -127,7 +127,7 @@ NS_IMETHODIMP nsPrintProgress::OpenProgressDialog(nsIDOMWindowInternal *parent,
       do_CreateInstance(NS_SUPPORTS_INTERFACE_POINTER_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
     
-    ifptr->SetData(NS_STATIC_CAST(nsIPrintProgress*, this));
+    ifptr->SetData(static_cast<nsIPrintProgress*>(this));
     ifptr->SetDataIID(&NS_GET_IID(nsIPrintProgress));
 
     array->AppendElement(ifptr);
@@ -136,7 +136,7 @@ NS_IMETHODIMP nsPrintProgress::OpenProgressDialog(nsIDOMWindowInternal *parent,
 
     // Open the dialog.
     nsCOMPtr<nsIDOMWindow> newWindow;
-    rv = parent->OpenDialog(NS_ConvertASCIItoUCS2(dialogURL),
+    rv = parent->OpenDialog(NS_ConvertASCIItoUTF16(dialogURL),
                             NS_LITERAL_STRING("_blank"),
                             NS_LITERAL_STRING("chrome,titlebar,dependent,centerscreen"),
                             array, getter_AddRefs(newWindow));

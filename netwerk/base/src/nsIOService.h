@@ -45,11 +45,10 @@
 #include "nsVoidArray.h"
 #include "nsPISocketTransportService.h" 
 #include "nsPIDNSService.h" 
-#include "nsIProtocolProxyService.h"
+#include "nsIProtocolProxyService2.h"
 #include "nsCOMPtr.h"
 #include "nsURLHelper.h"
 #include "nsWeakPtr.h"
-#include "nsIEventQueueService.h"
 #include "nsIURLParser.h"
 #include "nsSupportsArray.h"
 #include "nsIObserver.h"
@@ -103,10 +102,11 @@ public:
                                PRUint32 flags);
 
     // Gets the array of registered content sniffers
-    const nsCOMArray<nsIContentSniffer_MOZILLA_1_8_BRANCH>&
-    GetContentSniffers() const {
+    const nsCOMArray<nsIContentSniffer>& GetContentSniffers() {
       return mContentSniffers.GetEntries();
     }
+
+    PRBool IsOffline() { return mOffline; }
 
 private:
     // These shouldn't be called directly:
@@ -135,8 +135,7 @@ private:
     PRPackedBool                         mManageOfflineStatus;
     nsCOMPtr<nsPISocketTransportService> mSocketTransportService;
     nsCOMPtr<nsPIDNSService>             mDNSService;
-    nsCOMPtr<nsIProtocolProxyService>    mProxyService;
-    nsCOMPtr<nsIEventQueueService>       mEventQueueService;
+    nsCOMPtr<nsIProtocolProxyService2>   mProxyService;
     nsCOMPtr<nsINetworkLinkService>      mNetworkLinkService;
     
     // Cached protocol handlers
@@ -144,7 +143,7 @@ private:
 
     // cached categories
     nsCategoryCache<nsIChannelEventSink> mChannelEventSinks;
-    nsCategoryCache<nsIContentSniffer_MOZILLA_1_8_BRANCH> mContentSniffers;
+    nsCategoryCache<nsIContentSniffer>   mContentSniffers;
 
     nsVoidArray                          mRestrictedPortList;
 

@@ -59,12 +59,17 @@ public:
   PRUnichar * mDocTitle;
   PRUnichar * mDocURL;
 
-  nsRect      mReflowRect;
+  nsSize      mReflowSize;
   nsMargin    mReflowMargin;
-  nsSize      mShadowSize;       // shadow of page in PrintPreview
-  nsMargin    mDeadSpaceMargin;  // Extra dead space around outside of Page in PrintPreview
-  nsMargin    mExtraMargin;      // Extra Margin between the printable area and the edge of the page
-  nsMargin    mEdgePaperMargin;  // In twips, gap between the Margin and edge of page
+  // shadow of page in PrintPreview; drawn around bottom and right edges
+  nsSize      mShadowSize;
+  // Extra Margin between the device area and the edge of the page;
+  // approximates unprintable area
+  nsMargin    mExtraMargin;
+  // Margin for headers and footers; it defaults to 4/100 of an inch on UNIX 
+  // and 0 elsewhere; I think it has to do with some inconsistency in page size
+  // computations
+  nsMargin    mEdgePaperMargin;
 
   nsCOMPtr<nsIPrintSettings> mPrintSettings;
   nsCOMPtr<nsIPrintOptions> mPrintOptions;
@@ -77,30 +82,28 @@ public:
 class nsSimplePageSequenceFrame : public nsContainerFrame,
                                   public nsIPageSequenceFrame {
 public:
-  friend nsresult NS_NewSimplePageSequenceFrame(nsIPresShell* aPresShell, nsIFrame** aResult);
+  friend nsIFrame* NS_NewSimplePageSequenceFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
   // nsISupports
   NS_IMETHOD  QueryInterface(const nsIID& aIID, void** aInstancePtr);
 
-  // nsIFrameReflow
+  // nsIFrame
   NS_IMETHOD  Reflow(nsPresContext*      aPresContext,
                      nsHTMLReflowMetrics& aDesiredSize,
                      const nsHTMLReflowState& aMaxSize,
                      nsReflowStatus&      aStatus);
 
-  NS_IMETHOD  Paint(nsPresContext*      aPresContext,
-                    nsIRenderingContext& aRenderingContext,
-                    const nsRect&        aDirtyRect,
-                    nsFramePaintLayer    aWhichLayer);
+  NS_IMETHOD  BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                               const nsRect&           aDirtyRect,
+                               const nsDisplayListSet& aLists);
 
   // nsIPageSequenceFrame
-  NS_IMETHOD SetOffsets(nscoord aStartOffset, nscoord aEndOffset);
   NS_IMETHOD SetPageNo(PRInt32 aPageNo) { return NS_OK;}
   NS_IMETHOD SetSelectionHeight(nscoord aYOffset, nscoord aHeight) { mYSelOffset = aYOffset; mSelectionHeight = aHeight; return NS_OK; }
   NS_IMETHOD SetTotalNumPages(PRInt32 aTotal) { mTotalPages = aTotal; return NS_OK; }
 
   // Gets the dead space (the gray area) around the Print Preview Page
-  NS_IMETHOD GetDeadSpaceValue(nscoord* aValue) { *aValue = NS_INCHES_TO_TWIPS(0.25); return NS_OK; };
+  NS_IMETHOD GetDeadSpaceValue(nscoord* aValue) { *aValue = NS_INCHES_TO_TWIPS(0.25); return NS_OK; }
   
   // For Shrink To Fit
   NS_IMETHOD GetSTFPercent(float& aSTFPercent);
@@ -110,23 +113,17 @@ public:
                         nsIPrintSettings* aPrintSettings,
                         PRUnichar*        aDocTitle,
                         PRUnichar*        aDocURL);
-  NS_IMETHOD PrintNextPage(nsPresContext*  aPresContext);
+  NS_IMETHOD PrintNextPage();
   NS_IMETHOD GetCurrentPageNum(PRInt32* aPageNum);
   NS_IMETHOD GetNumPages(PRInt32* aNumPages);
   NS_IMETHOD IsDoingPrintRange(PRBool* aDoing);
   NS_IMETHOD GetPrintRange(PRInt32* aFromPage, PRInt32* aToPage);
-  NS_IMETHOD SkipPageBegin() { mSkipPageBegin = PR_TRUE; return NS_OK; }
-  NS_IMETHOD SkipPageEnd() { mSkipPageEnd = PR_TRUE; return NS_OK; }
-  NS_IMETHOD DoPageEnd(nsPresContext*  aPresContext);
-  NS_IMETHOD GetPrintThisPage(PRBool*  aPrintThisPage) { *aPrintThisPage = mPrintThisPage; return NS_OK; }
-  NS_IMETHOD SetOffset(nscoord aX, nscoord aY) { mOffsetX = aX; mOffsetY = aY; return NS_OK; }
-  NS_IMETHOD SuppressHeadersAndFooters(PRBool aDoSup);
-  NS_IMETHOD SetClipRect(nsPresContext* aPresContext, nsRect* aSize);
+  NS_IMETHOD DoPageEnd();
 
   /**
    * Get the "type" of the frame
    *
-   * @see nsLayoutAtoms::sequenceFrame
+   * @see nsGkAtoms::sequenceFrame
    */
   virtual nsIAtom* GetType() const;
   
@@ -134,9 +131,12 @@ public:
   NS_IMETHOD  GetFrameName(nsAString& aResult) const;
 #endif
 
+  void PaintPageSequence(nsIRenderingContext& aRenderingContext,
+                         const nsRect&        aDirtyRect,
+                         nsPoint              aPt);
 
 protected:
-  nsSimplePageSequenceFrame();
+  nsSimplePageSequenceFrame(nsStyleContext* aContext);
   virtual ~nsSimplePageSequenceFrame();
 
   nsresult CreateContinuingPageFrame(nsPresContext* aPresContext,
@@ -148,17 +148,9 @@ protected:
   // SharedPageData Helper methods
   void SetDateTimeStr(PRUnichar * aDateTimeStr);
   void SetPageNumberFormat(PRUnichar * aFormatStr, PRBool aForPageNumOnly);
-  void SetPageSizes(const nsRect& aRect, const nsMargin& aMarginRect);
-
-  void GetEdgePaperMarginCoord(char* aPrefName, nscoord& aCoord);
-  void GetEdgePaperMargin(nsMargin& aMargin);
 
   NS_IMETHOD_(nsrefcnt) AddRef(void) {return nsContainerFrame::AddRef();}
   NS_IMETHOD_(nsrefcnt) Release(void) {return nsContainerFrame::Release();}
-
-
-  nscoord  mStartOffset;
-  nscoord  mEndOffset;
 
   nsMargin mMargin;
   PRBool   mIsPrintingSelection;
@@ -166,19 +158,12 @@ protected:
   // Asynch Printing
   PRInt32      mPageNum;
   PRInt32      mTotalPages;
-  PRInt32      mPrintedPageNum;
   nsIFrame *   mCurrentPageFrame;
   PRPackedBool mDoingPageRange;
   PRInt32      mPrintRangeType;
   PRInt32      mFromPageNum;
   PRInt32      mToPageNum;
-  PRPackedBool mSkipPageBegin;
-  PRPackedBool mSkipPageEnd;
   PRPackedBool mPrintThisPage;
-
-  PRPackedBool mSupressHF;
-  nscoord      mOffsetX;
-  nscoord      mOffsetY;
 
   nsSize       mSize;
   nsSharedPageData* mPageData; // data shared by all the nsPageFrames
@@ -189,9 +174,6 @@ protected:
 
   // I18N date formatter service which we'll want to cache locally.
   nsCOMPtr<nsIDateTimeFormat> mDateFormatter;
-
-private:
-  void CacheBackground(nsPresContext* aPresContext);
 
 };
 

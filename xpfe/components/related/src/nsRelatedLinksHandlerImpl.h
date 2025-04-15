@@ -44,9 +44,10 @@
 #include "nsIRDFResource.h"
 #include "nsCOMPtr.h"
 #include "nsIRDFDataSource.h"
+#include "nsCycleCollectionParticipant.h"
 
 ////////////////////////////////////////////////////////////////////////
-// RelatedLinksHanlderImpl
+// RelatedLinksHandlerImpl
 
 class RelatedLinksHandlerImpl : public nsIRelatedLinksHandler,
 				public nsIRDFDataSource
@@ -71,7 +72,9 @@ public:
 	nsresult	Init();
 
 
-	NS_DECL_ISUPPORTS
+        NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+        NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(RelatedLinksHandlerImpl,
+                                                 nsIRelatedLinksHandler)
 	NS_DECL_NSIRELATEDLINKSHANDLER
 	NS_DECL_NSIRDFDATASOURCE
 };

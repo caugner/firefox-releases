@@ -46,6 +46,8 @@
 #include "jspubtd.h"
 #include "nsIWindowCreator.h" // for stupid compilers
 #include "nsIWindowWatcher.h"
+#include "nsIPromptFactory.h"
+#include "nsIAuthPromptAdapterFactory.h"
 #include "nsPIWindowWatcher.h"
 #include "nsVoidArray.h"
 
@@ -64,7 +66,9 @@ struct SizeSpec;
 
 class nsWindowWatcher :
       public nsIWindowWatcher,
-      public nsPIWindowWatcher
+      public nsPIWindowWatcher,
+      public nsIPromptFactory,
+      public nsIAuthPromptAdapterFactory
 {
 friend class nsWatcherWindowEnumerator;
 
@@ -78,6 +82,8 @@ public:
 
   NS_DECL_NSIWINDOWWATCHER
   NS_DECL_NSPIWINDOWWATCHER
+  NS_DECL_NSIPROMPTFACTORY
+  NS_DECL_NSIAUTHPROMPTADAPTERFACTORY
 
 private:
   PRBool AddEnumerator(nsWatcherWindowEnumerator* inEnumerator);
@@ -104,8 +110,7 @@ private:
                                 const char *aName,
                                 const char *aFeatures,
                                 PRBool aDialog,
-                                PRUint32 argc,
-                                jsval *argv,
+                                nsIArray *argv,
                                 PRBool aCalledFromJS,
                                 nsIDOMWindow **_retval);
 
@@ -134,18 +139,6 @@ private:
   static void       SizeOpenedDocShellItem(nsIDocShellTreeItem *aDocShellItem,
                                            nsIDOMWindow *aParent,
                                            const SizeSpec & aSizeSpec);
-  static nsresult   AttachArguments(nsIDOMWindow *aWindow,
-                                    PRUint32 argc, jsval *argv);
-  static nsresult   ConvertSupportsTojsvals(nsIDOMWindow *aWindow,
-                                            nsISupports *aArgs,
-                                            PRUint32 *aArgc, jsval **aArgv,
-                                            JSContext **aUsedContext,
-                                            void **aMarkp,
-                                            nsIScriptContext **aScriptContext);
-  static nsresult   AddSupportsTojsvals(nsISupports *aArg,
-                                        JSContext *cx, jsval *aArgv);
-  static nsresult   AddInterfaceTojsvals(nsISupports *aArg,
-                                      JSContext *cx, jsval *aArgv);
   static void       GetWindowTreeItem(nsIDOMWindow *inWindow,
                                       nsIDocShellTreeItem **outTreeItem);
   static void       GetWindowTreeOwner(nsIDOMWindow *inWindow,

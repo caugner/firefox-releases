@@ -34,10 +34,14 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* base class #2 for rendering objects that have child lists */
+
 #ifndef nsHTMLContainerFrame_h___
 #define nsHTMLContainerFrame_h___
 
 #include "nsContainerFrame.h"
+#include "gfxPoint.h"
 class nsString;
 class nsAbsoluteFrame;
 class nsPlaceholderFrame;
@@ -45,6 +49,7 @@ struct nsStyleDisplay;
 struct nsStylePosition;
 struct nsHTMLReflowMetrics;
 struct nsHTMLReflowState;
+class nsLineBox;
 
 // Some macros for container classes to do sanity checking on
 // width/height/x/y values computed during reflow.
@@ -58,15 +63,12 @@ struct nsHTMLReflowState;
 #define CRAZY_HEIGHT(_y) (((_y) < -CRAZY_H) || ((_y) > CRAZY_H))
 #endif
 
+class nsDisplayTextDecoration;
+
 // Base class for html container frames that provides common
 // functionality.
 class nsHTMLContainerFrame : public nsContainerFrame {
 public:
-  NS_IMETHOD  Paint(nsPresContext*      aPresContext,
-                    nsIRenderingContext& aRenderingContext,
-                    const nsRect&        aDirtyRect,
-                    nsFramePaintLayer    aWhichLayer,
-                    PRUint32             aFlags = 0);
 
   /**
    * Helper method to create next-in-flows if necessary. If aFrame
@@ -106,40 +108,32 @@ public:
                                         nsIFrame*       aOldParentFrame,
                                         nsIFrame*       aNewParentFrame);
 
+  /**
+   * Displays the standard border, background and outline for the frame
+   * and calls DisplayTextDecorationsAndChildren. This is suitable for
+   * inline frames or frames that behave like inlines.
+   */
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
+                              
+  nsresult DisplayTextDecorations(nsDisplayListBuilder* aBuilder,
+                                  nsDisplayList* aBelowTextDecorations,
+                                  nsDisplayList* aAboveTextDecorations,
+                                  nsLineBox* aLine);
+
 protected:
-  virtual PRIntn GetSkipSides() const = 0;
-
-  void PaintSelf(nsPresContext*      aPresContext,
-                 nsIRenderingContext& aRenderingContext,
-                 const nsRect&        aDirtyRect) {
-    nsContainerFrame::PaintSelf(aPresContext, aRenderingContext,
-                                aDirtyRect, GetSkipSides());
-  }
+  nsHTMLContainerFrame(nsStyleContext *aContext) : nsContainerFrame(aContext) {}
 
   /**
-   * To be called *instead* of |PaintChildren| by frames that paint text
-   * decorations (block and inline frames).  It will paint the
-   * decorations before and after the call to PaintChildren.
+   * Displays the below-children decorations, then the children, then
+   * the above-children decorations, with the decorations going in the
+   * Content() list. This is suitable for inline elements and elements
+   * that behave like inline elements (e.g. MathML containers).
    */
-  void PaintDecorationsAndChildren(nsPresContext*      aPresContext,
-                                   nsIRenderingContext& aRenderingContext,
-                                   const nsRect&        aDirtyRect,
-                                   nsFramePaintLayer    aWhichLayer,
-                                   PRBool               aIsBlock,
-                                   PRUint32             aFlags = 0);
-
-  /**
-   * Helper function to paint text decorations for this frame. This
-   * function attempts to be general; hopefully particular frames can
-   * get away with overriding PaintTextDecorationLines.  The function
-   * should be called for one text-decoration at the time. This is so
-   * line-through can be painted in front of children, while the other
-   * decorations can be drawn behind.
-   */
-  void PaintTextDecorations(nsIRenderingContext& aRenderingContext,
-                            nsIFontMetrics* aFontMetrics,
-                            PRUint8 aDecoration,
-                            nscolor aColor);
+  nsresult DisplayTextDecorationsAndChildren(nsDisplayListBuilder* aBuilder, 
+                                             const nsRect& aDirtyRect,
+                                             const nsDisplayListSet& aLists);
 
   /**
    * Fetch the text decorations for this frame. 
@@ -167,7 +161,8 @@ protected:
   /** 
    * Function that does the actual drawing of the textdecoration. 
    *   input:
-   *    @param aRenderingContext.
+   *    @param aRenderingContext
+   *    @param aLine              the line, or nsnull if this is an inline frame
    *    @param aColor             the color of the text-decoration
    *    @param aAscent            ascent of the font from which the
    *                                text-decoration was derived. 
@@ -176,13 +171,21 @@ protected:
    *                                i.e. negative offsets draws *below*
    *                                the baseline.
    *    @param aSize              the thickness of the line
+   *    @param aDecoration        which line will be painted
+   *                                i.e., NS_STYLE_TEXT_DECORATION_UNDERLINE or
+   *                                      NS_STYLE_TEXT_DECORATION_OVERLINE or
+   *                                      NS_STYLE_TEXT_DECORATION_LINE_THROUGH.
    */
-  virtual void PaintTextDecorationLines(nsIRenderingContext& aRenderingContext,
-                                        nscolor aColor,
-                                        nscoord aOffset,
-                                        nscoord aAscent,
-                                        nscoord aSize);
+  virtual void PaintTextDecorationLine(nsIRenderingContext& aRenderingContext,
+                                       const nsPoint& aPt,
+                                       nsLineBox* aLine,
+                                       nscolor aColor,
+                                       gfxFloat aOffset,
+                                       gfxFloat aAscent,
+                                       gfxFloat aSize,
+                                       const PRUint8 aDecoration);
 
+  friend class nsDisplayTextDecoration;
 };
 
 #endif /* nsHTMLContainerFrame_h___ */

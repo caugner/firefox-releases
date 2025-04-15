@@ -35,46 +35,33 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-/*
-
-  An XUL-specific extension to nsIDocument. Includes methods for
-  setting the root resource of the document content model, a factory
-  method for constructing the children of a node, etc.
-
-  XXX This should really be called nsIXULDocument.
-
- */
-
 #ifndef nsIXULDocument_h___
 #define nsIXULDocument_h___
 
 #include "nsISupports.h"
 #include "nsString.h"
+#include "nsCOMArray.h"
 
-class nsForwardReference;
-class nsIAtom;
-class nsIDOMElement;
-class nsIPrincipal;
-class nsIRDFResource;
-class nsISupportsArray;
-class nsIXULPrototypeDocument;
 class nsIXULTemplateBuilder;
-class nsIURI;
 class nsIContent;
-class nsIRDFDataSource;
+class nsIScriptGlobalObjectOwner;
 
-// {954F0811-81DC-11d2-B52A-000000000000}
+
+// {57314526-f749-4cf0-b6b6-3723eba21480}
 #define NS_IXULDOCUMENT_IID \
-{ 0x954f0811, 0x81dc, 0x11d2, { 0xb5, 0x2a, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 } }
+{ 0x57314526, 0xf749, 0x4cf0, \
+  { 0xb6, 0xb6, 0x37, 0x23, 0xeb, 0xa2, 0x14, 0x80 } }
 
-/**
- * XUL extensions to nsIDocument
+
+/*
+ * An XUL-specific extension to nsIDocument. Includes methods for
+ * setting the root resource of the document content model, a factory
+ * method for constructing the children of a node, etc.
  */
-
 class nsIXULDocument : public nsISupports
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IXULDOCUMENT_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IXULDOCUMENT_IID)
 
   // The resource-to-element map is a one-to-many mapping of RDF
   // resources to content elements.
@@ -91,36 +78,15 @@ public:
 
   /**
    * Get the elements for a particular resource in the resource-to-element
-   * map. The nsISupportsArray will be truncated and filled in with
+   * map. The nsCOMArray will be truncated and filled in with
    * nsIContent pointers.
    */
-  NS_IMETHOD GetElementsForID(const nsAString& aID, nsISupportsArray* aElements) = 0;
+  NS_IMETHOD GetElementsForID(const nsAString& aID, nsCOMArray<nsIContent>& aElements) = 0;
 
   /**
-   * Add a "forward declaration" of a XUL observer. Such declarations
-   * will be resolved when document loading completes.
+   * Get the nsIScriptGlobalObjectOwner for this document.
    */
-  NS_IMETHOD AddForwardReference(nsForwardReference* aForwardReference) = 0;
-
-  /**
-   * Resolve the all of the document's forward references.
-   */
-  NS_IMETHOD ResolveForwardReferences() = 0;
-
-  /**
-   * Set the master prototype.
-   */
-  NS_IMETHOD SetMasterPrototype(nsIXULPrototypeDocument* aDocument) = 0;
-
-  /**
-   * Get the master prototype.
-   */
-  NS_IMETHOD GetMasterPrototype(nsIXULPrototypeDocument** aPrototypeDocument) = 0;
-
-  /**
-   * Set the current prototype
-   */
-  NS_IMETHOD SetCurrentPrototype(nsIXULPrototypeDocument* aDocument) = 0;
+  NS_IMETHOD GetScriptGlobalObjectOwner(nsIScriptGlobalObjectOwner** aGlobalOwner) = 0;
 
   /**
    * Notify the XUL document that a subtree has been added
@@ -134,7 +100,7 @@ public:
 
   /**
    * Attach a XUL template builder to the specified content node.
-   * @param aBuilder the tmeplate builder to attach, or null if
+   * @param aBuilder the template builder to attach, or null if
    *   the builder is to be removed.
    */
   NS_IMETHOD SetTemplateBuilderFor(nsIContent* aContent, nsIXULTemplateBuilder* aBuilder) = 0;
@@ -146,17 +112,24 @@ public:
   NS_IMETHOD GetTemplateBuilderFor(nsIContent* aContent, nsIXULTemplateBuilder** aResult) = 0;
 
   /**
-   * Callback notifying this document when its XUL prototype document load
-   * completes.  The prototype load was initiated by another document load
-   * request than the one whose document is being notified here.
+   * This is invoked whenever the prototype for this document is loaded
+   * and should be walked, regardless of whether the XUL cache is
+   * disabled, whether the protototype was loaded, whether the
+   * prototype was loaded from the cache or created by parsing the
+   * actual XUL source, etc.
+   *
+   * @param aResumeWalk whether this should also call ResumeWalk().
+   * Sometimes the caller of OnPrototypeLoadDone resumes the walk itself
    */
-  NS_IMETHOD OnPrototypeLoadDone() = 0;
+  NS_IMETHOD OnPrototypeLoadDone(PRBool aResumeWalk) = 0;
 
   /**
-   * Notify the XUL document that it's being hidden
+   * Callback notifying when a document could not be parsed properly.
    */
-  NS_IMETHOD OnHide() = 0;
+  virtual PRBool OnDocumentParserError() = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIXULDocument, NS_IXULDOCUMENT_IID)
 
 // factory functions
 nsresult NS_NewXULDocument(nsIXULDocument** result);

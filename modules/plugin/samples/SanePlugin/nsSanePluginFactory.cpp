@@ -94,19 +94,19 @@ nsSanePluginFactoryImpl::QueryInterface(const nsIID &aIID,
         return NS_ERROR_NULL_POINTER;
 
     if (aIID.Equals(kISupportsIID)) {
-        *aInstancePtr = NS_STATIC_CAST(nsISupports*,this);
+        *aInstancePtr = static_cast<nsISupports*>(this);
     } else if (aIID.Equals(kIFactoryIID)) {
-        *aInstancePtr = NS_STATIC_CAST(nsISupports*,
-                                       NS_STATIC_CAST(nsIFactory*,this));
+        *aInstancePtr = static_cast<nsISupports*>
+                                   (static_cast<nsIFactory*>(this));
     } else if (aIID.Equals(kIPluginIID)) {
-        *aInstancePtr = NS_STATIC_CAST(nsISupports*,
-                                       NS_STATIC_CAST(nsIPlugin*,this));
+        *aInstancePtr = static_cast<nsISupports*>
+                                   (static_cast<nsIPlugin*>(this));
     } else {
         *aInstancePtr = nsnull;
         return NS_ERROR_NO_INTERFACE;
     }
 
-    NS_ADDREF(NS_REINTERPRET_CAST(nsISupports*,*aInstancePtr));
+    NS_ADDREF(reinterpret_cast<nsISupports*>(*aInstancePtr));
 
     return NS_OK;
 }
@@ -285,19 +285,10 @@ NSRegisterSelf( nsISupports* aServMgr, const char* aPath )
                                     aPath, PR_TRUE, PR_TRUE );
   
     // Register the plugin portion.
-    nsString contractID;
-    contractID.AssignWithConversion( NS_INLINE_PLUGIN_CONTRACTID_PREFIX );
-
-    contractID.AppendWithConversion(PLUGIN_MIME_TYPE);
-    buf = ( char * )calloc( 2000, sizeof( char ) );
-    contractID.ToCString( buf, 1999 );
-  
     rv = compMgr->RegisterComponent( knsSanePluginInst,
                                      "SANE Plugin Component",
-                                     buf,
+                                     NS_INLINE_PLUGIN_CONTRACTID_PREFIX PLUGIN_MIME_TYPE
                                      aPath, PR_TRUE, PR_TRUE);
-    free( buf );
-  
     if ( NS_FAILED( rv ) )
         return rv;
   

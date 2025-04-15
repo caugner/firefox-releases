@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -85,7 +86,7 @@ element.
 
 class nsMathMLmfracFrame : public nsMathMLContainerFrame {
 public:
-  friend nsresult NS_NewMathMLmfracFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmfracFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
   virtual void
   SetAdditionalStyleContext(PRInt32          aIndex, 
@@ -93,19 +94,16 @@ public:
   virtual nsStyleContext*
   GetAdditionalStyleContext(PRInt32 aIndex) const;
 
-  virtual nsIAtom* GetType() const;
+  virtual eMathMLFrameType GetMathMLFrameType();
 
   NS_IMETHOD
-  AttributeChanged(nsIContent*     aChild,
-                   PRInt32         aNameSpaceID,
+  AttributeChanged(PRInt32         aNameSpaceID,
                    nsIAtom*        aAttribute,
                    PRInt32         aModType);
 
   NS_IMETHOD
-  Init(nsPresContext*  aPresContext,
-       nsIContent*      aContent,
+  Init(nsIContent*      aContent,
        nsIFrame*        aParent,
-       nsStyleContext*  aContext,
        nsIFrame*        aPrevInFlow);
 
   NS_IMETHOD
@@ -114,30 +112,24 @@ public:
          const nsHTMLReflowState& aReflowState,
          nsReflowStatus&          aStatus);
 
-  NS_IMETHOD
+  virtual nscoord
+  GetIntrinsicWidth(nsIRenderingContext* aRenderingContext);
+
+  virtual nsresult
   Place(nsIRenderingContext& aRenderingContext,
         PRBool               aPlaceOrigin,
         nsHTMLReflowMetrics& aDesiredSize);
 
-  NS_IMETHOD 
-  Paint(nsPresContext*      aPresContext,
-        nsIRenderingContext& aRenderingContext,
-        const nsRect&        aDirtyRect,
-        nsFramePaintLayer    aWhichLayer,
-        PRUint32             aFlags = 0);
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
 
   NS_IMETHOD
   TransmitAutomaticData();
 
   NS_IMETHOD
-  UpdatePresentationData(PRInt32         aScriptLevelIncrement,
-                         PRUint32        aFlagsValues,
-                         PRUint32        aFlagsToUpdate);
-
-  NS_IMETHOD
   UpdatePresentationDataFromChildAt(PRInt32         aFirstIndex,
                                     PRInt32         aLastIndex,
-                                    PRInt32         aScriptLevelIncrement,
                                     PRUint32        aFlagsValues,
                                     PRUint32        aFlagsToUpdate);
 
@@ -154,7 +146,7 @@ public:
                     nscoord          aDefaultRuleThickness);
 
 protected:
-  nsMathMLmfracFrame();
+  nsMathMLmfracFrame(nsStyleContext* aContext) : nsMathMLContainerFrame(aContext) {}
   virtual ~nsMathMLmfracFrame();
   
   virtual PRIntn GetSkipSides() const { return 0; }
@@ -162,7 +154,6 @@ protected:
   PRBool
   IsBevelled();
 
-  PRInt32 mInnerScriptLevel;
   nsRect  mLineRect;
   nsMathMLChar* mSlashChar;
 };

@@ -458,14 +458,32 @@ function SelectLanguage()
       gLastSelectedLang = item;
     }
     else {
-      opener.open(GetPrefs().getComplexValue("editor.spellcheckers.url",
-                  Components.interfaces.nsIPrefLocalizedString).data);
+      var dictionaryUrl = getDictionaryURL();
+                      
+      var ioService = Components.classes["@mozilla.org/network/io-service;1"]
+                                .getService(Components.interfaces.nsIIOService);
+      uri = ioService.newURI(dictionaryUrl, null, null);
+      var protocolSvc = Components.classes["@mozilla.org/uriloader/external-protocol-service;1"]
+                                  .getService(Components.interfaces.nsIExternalProtocolService);
+      if (protocolSvc.isExposedProtocol(uri.scheme))
+        opener.openDialog(getBrowserURL(), "_blank", "all,dialog=no", dictionaryUrl);
+      else
+        protocolSvc.loadUrl(uri);
+
       if (gLastSelectedLang)
         gDialog.LanguageMenulist.selectedItem = gLastSelectedLang;
     }
   } catch (ex) {
     dump(ex);
   }
+}
+
+function getDictionaryURL()
+{
+  var formatter = Components.classes["@mozilla.org/toolkit/URLFormatterService;1"]
+                  .getService(Components.interfaces.nsIURLFormatter);
+                  
+  return formatter.formatURLPref("spellchecker.dictionaries.download.url");
 }
 
 function Recheck()
@@ -550,7 +568,7 @@ function SetReplaceEnable()
 function doDefault()
 {
   if (gDialog.ReplaceButton.getAttribute("default") == "true")
-    Replace();
+    Replace(gDialog.ReplaceWordInput.value);
   else if (gDialog.IgnoreButton.getAttribute("default") == "true")
     Ignore();
   else if (gDialog.CloseButton.getAttribute("default") == "true")
@@ -568,16 +586,15 @@ function ExitSpellChecker()
       var curLang = gSpellChecker.GetCurrentDictionary();
       gSpellChecker.UninitSpellChecker();
       if ("@mozilla.org/spellchecker;1" in Components.classes) {
-        var spellChecker = Components.classes["@mozilla.org/spellchecker/myspell;1"]
+        var spellChecker = Components.classes["@mozilla.org/spellchecker/engine;1"]
                                      .getService(Components.interfaces.mozISpellCheckingEngine);
         spellChecker.dictionary = curLang;
       }
       // now check the document over again with the new dictionary
       // if we have an inline spellchecker
-      if (("InlineSpellChecker" in window.opener) &&
-          ("inlineSpellChecker" in window.opener.InlineSpellChecker))
-        if (window.opener.InlineSpellChecker.inlineSpellChecker.enableRealTimeSpell)
-          window.opener.InlineSpellChecker.checkDocument(window.opener.content.document);
+      if (("InlineSpellCheckerUI" in window.opener) &&
+          window.opener.InlineSpellCheckerUI.enabled)
+        window.opener.InlineSpellCheckerUI.mInlineSpellChecker.spellCheckRange(null);
     }
     finally
     {

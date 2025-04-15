@@ -42,28 +42,21 @@
 
 #include "prtypes.h"
 #include "nsID.h"
-#include "nscore.h"
+#include "xrecore.h"
 #include "nsXPCOM.h"
-
-// XXXbsmedberg - eventually we're going to freeze the XULAPI
-// symbols, and we don't want every consumer to define MOZ_ENABLE_LIBXUL.
-// Reverse the logic so that those who aren't using libxul have to do the
-// work.
-#ifdef MOZ_ENABLE_LIBXUL
-#ifdef IMPL_XULAPI
-#define XULAPI NS_EXPORT
-#else
-#define XULAPI NS_IMPORT
-#endif
-#else
-#define XULAPI
-#endif
+#include "nsISupports.h"
 
 /**
  * Application-specific data needed to start the apprunner.
  *
- * @status UNDER_REVIEW - This API is under review to be frozen, but isn't
- *                        frozen yet. Use with caution.
+ * @status FROZEN - This API is stable. Additional fields may be added to the
+ *                  end of the structure in the future. Runtime detection
+ *                  of the version of nsXREAppData can be determined by
+ *                  examining the "size" field.
+ *
+ * @note When this structure is allocated and manipulated by XRE_CreateAppData,
+ *       string fields will be allocated with NS_Alloc, and interface pointers
+ *       are strong references.
  */
 struct nsXREAppData
 {
@@ -101,7 +94,7 @@ struct nsXREAppData
    */
   const char *version;
 
-  /** 
+  /**
    * The application's build identifier, e.g. "2004051604"
    */
   const char *buildID;
@@ -128,6 +121,40 @@ struct nsXREAppData
    * Combination of NS_XRE_ prefixed flags (defined below).
    */
   PRUint32 flags;
+
+  /**
+   * The location of the XRE. XRE_main may not be able to figure this out
+   * programatically.
+   */
+  nsILocalFile* xreDirectory;
+
+  /**
+   * The minimum/maximum compatible XRE version.
+   */
+  const char *minVersion;
+  const char *maxVersion;
+
+  /**
+   * The server URL to send crash reports to.
+   */
+  const char *crashReporterURL;
+
+  /**
+   * The profile directory that will be used. Optional (may be null). Must not
+   * be the empty string, must be ASCII. The path is split into components
+   * along the path separator characters '/' and '\'.
+   *
+   * The application data directory ("UAppData", see below) is normally
+   * composed as follows, where $HOME is platform-specific:
+   *
+   *   UAppData = $HOME[/$vendor]/$name
+   *
+   * If present, the 'profile' string will be used instead of the combination of
+   * vendor and name as follows:
+   *
+   *   UAppData = $HOME/$profile
+   */
+  const char *profile;
 };
 
 /**
@@ -143,17 +170,44 @@ struct nsXREAppData
 #define NS_XRE_ENABLE_EXTENSION_MANAGER (1 << 2)
 
 /**
+ * Indicates whether or not to use Breakpad crash reporting.
+ */
+#define NS_XRE_ENABLE_CRASH_REPORTER (1 << 3)
+
+/**
  * The contract id for the nsIXULAppInfo service.
  */
 #define XULAPPINFO_SERVICE_CONTRACTID \
   "@mozilla.org/xre/app-info;1"
 
 /**
- * A directory service key which provides the platform-correct
- * "application data" directory.
- * Windows: Documents and Settings\<User>\Application Data\<Vendor>\<Application>
- * Unix: ~/.<vendor>/<application>
- * Mac: ~/Library/Application Supports/<Application>
+ * A directory service key which provides the platform-correct "application
+ * data" directory as follows, where $name and $vendor are as defined above and
+ * $vendor is optional:
+ *
+ * Windows:
+ *   HOME = Documents and Settings\$USER\Application Data
+ *   UAppData = $HOME[\$vendor]\$name
+ *
+ * Unix:
+ *   HOME = ~
+ *   UAppData = $HOME/.[$vendor/]$name
+ *
+ * Mac:
+ *   HOME = ~
+ *   UAppData = $HOME/Library/Application Support/$name
+ *
+ * Note that the "profile" member above will change the value of UAppData as
+ * follows:
+ *
+ * Windows:
+ *   UAppData = $HOME\$profile
+ *
+ * Unix:
+ *   UAppData = $HOME/.$profile
+ *
+ * Mac:
+ *   UAppData = $HOME/Library/Application Support/$profile
  */
 #define XRE_USER_APP_DATA_DIR "UAppData"
 
@@ -175,34 +229,76 @@ struct nsXREAppData
 #define XRE_EXECUTABLE_FILE "XREExeF"
 
 /**
+ * A directory service key which specifies the profile
+ * directory. Unlike the NS_APP_USER_PROFILE_50_DIR key, this key may
+ * be available when the profile hasn't been "started", or after is
+ * has been shut down. If the application is running without a
+ * profile, such as when showing the profile manager UI, this key will
+ * not be available. This key is provided by the XUL apprunner or by
+ * the aAppDirProvider object passed to XRE_InitEmbedding.
+ */
+#define NS_APP_PROFILE_DIR_STARTUP "ProfDS"
+
+/**
+ * A directory service key which specifies the profile
+ * directory. Unlike the NS_APP_USER_PROFILE_LOCAL_50_DIR key, this key may
+ * be available when the profile hasn't been "started", or after is
+ * has been shut down. If the application is running without a
+ * profile, such as when showing the profile manager UI, this key will
+ * not be available. This key is provided by the XUL apprunner or by
+ * the aAppDirProvider object passed to XRE_InitEmbedding.
+ */
+#define NS_APP_PROFILE_LOCAL_DIR_STARTUP "ProfLDS"
+
+/**
+ * A directory service key which specifies the system extension
+ * parent directory containing platform-specific extensions.
+ * This key may not be available on all platforms.
+ */
+#define XRE_SYS_LOCAL_EXTENSION_PARENT_DIR "XRESysLExtPD"
+
+/**
+ * A directory service key which specifies the system extension
+ * parent directory containing platform-independent extensions.
+ * This key may not be available on all platforms.
+ * Additionally, the directory may be equal to that returned by
+ * XRE_SYS_LOCAL_EXTENSION_PARENT_DIR on some platforms.
+ */
+#define XRE_SYS_SHARE_EXTENSION_PARENT_DIR "XRESysSExtPD"
+
+/**
+ * A directory service key which specifies the user system extension
+ * parent directory.
+ */
+#define XRE_USER_SYS_EXTENSION_DIR "XREUSysExt"
+
+/**
  * Begin an XUL application. Does not return until the user exits the
  * application.
  *
- * @param argc/argv Command-line parameters to pass to the application. These
- *                  are in the "native" character set.
+ * @param argc/argv Command-line parameters to pass to the application. On
+ *                  Windows, these should be in UTF8. On unix-like platforms
+ *                  these are in the "native" character set.
  *
  * @param aAppData  Information about the application to be run.
  *
  * @return         A native result code suitable for returning from main().
  *
- * @note           If the binary is linked against the  standalone XPCOM glue,
+ * @note           If the binary is linked against the standalone XPCOM glue,
  *                 XPCOMGlueStartup() should be called before this method.
  *
- * @note           XXXbsmedberg Nobody uses the glue yet, but there is a
- *                 potential problem: on windows, the standalone glue calls
- *                 SetCurrentDirectory, and relative paths on the command line
- *                 won't be correct.
  */
-extern "C" XULAPI int
-XRE_main(int argc, char* argv[],
-         const nsXREAppData* aAppData);
+XRE_API(int,
+        XRE_main, (int argc, char* argv[], const nsXREAppData* sAppData))
 
 /**
  * Given a path relative to the current working directory (or an absolute
  * path), return an appropriate nsILocalFile object.
+ *
+ * @note Pass UTF8 strings on Windows... native charset on other platforms.
  */
-extern "C" XULAPI nsresult
-XRE_GetFileFromPath(const char *aPath, nsILocalFile* *aResult);
+XRE_API(nsresult,
+        XRE_GetFileFromPath, (const char *aPath, nsILocalFile* *aResult))
 
 /**
  * Get the path of the running application binary and store it in aResult.
@@ -210,15 +306,26 @@ XRE_GetFileFromPath(const char *aPath, nsILocalFile* *aResult);
  *                used on *nix, and only when other methods of determining
  *                the binary path have failed.
  */
-extern "C" XULAPI nsresult
-XRE_GetBinaryPath(const char *argv0, nsILocalFile* *aResult);
+XRE_API(nsresult,
+        XRE_GetBinaryPath, (const char *argv0, nsILocalFile* *aResult))
 
 /**
  * Get the static components built in to libxul.
  */
-extern "C" XULAPI void
-XRE_GetStaticComponents(nsStaticModuleInfo const **aStaticComponents,
-                        PRUint32 *aComponentCount);
+XRE_API(void,
+        XRE_GetStaticComponents, (nsStaticModuleInfo const **aStaticComponents,
+                                  PRUint32 *aComponentCount))
+
+/**
+ * Lock a profile directory using platform-specific semantics.
+ *
+ * @param aDirectory  The profile directory to lock.
+ * @param aLockObject An opaque lock object. The directory will remain locked
+ *                    as long as the XPCOM reference is held.
+ */
+XRE_API(nsresult,
+        XRE_LockProfileDirectory, (nsILocalFile* aDirectory,
+                                   nsISupports* *aLockObject))
 
 /**
  * Initialize libXUL for embedding purposes.
@@ -227,7 +334,8 @@ XRE_GetStaticComponents(nsStaticModuleInfo const **aStaticComponents,
  *                           was found.
  * @param aAppDirectory      The directory in which the application components
  *                           and resources can be found. This will map to
- *                           the "resource:app" directory service key.
+ *                           the NS_OS_CURRENT_PROCESS_DIR directory service
+ *                           key.
  * @param aAppDirProvider    A directory provider for the application. This
  *                           provider will be aggregated by a libxul provider
  *                           which will provide the base required GRE keys.
@@ -245,14 +353,75 @@ XRE_GetStaticComponents(nsStaticModuleInfo const **aStaticComponents,
  * resources allocated by XRE_InitEmbedding.
  */
 
-extern "C" XULAPI nsresult
-XRE_InitEmbedding(nsILocalFile *aLibXULDirectory,
-                  nsILocalFile *aAppDirectory,
-                  nsIDirectoryServiceProvider *aAppDirProvider = nsnull,
-                  nsStaticModuleInfo const *aStaticComponents = nsnull,
-                  PRUint32 aStaticComponentCount = 0);
+XRE_API(nsresult,
+        XRE_InitEmbedding, (nsILocalFile *aLibXULDirectory,
+                            nsILocalFile *aAppDirectory,
+                            nsIDirectoryServiceProvider *aAppDirProvider,
+                            nsStaticModuleInfo const *aStaticComponents,
+                            PRUint32 aStaticComponentCount))
 
-extern "C" XULAPI void
-XRE_TermEmbedding();
+/**
+ * Fire notifications to inform the toolkit about a new profile. This
+ * method should be called after XRE_InitEmbedding if the embedder
+ * wishes to run with a profile. Normally the embedder should call
+ * XRE_LockProfileDirectory to lock the directory before calling this
+ * method.
+ *
+ * @note There are two possibilities for selecting a profile:
+ *
+ * 1) Select the profile before calling XRE_InitEmbedding. The aAppDirProvider
+ *    object passed to XRE_InitEmbedding should provide the
+ *    NS_APP_USER_PROFILE_50_DIR key, and may also provide the following keys:
+ *    - NS_APP_USER_PROFILE_LOCAL_50_DIR
+ *    - NS_APP_PROFILE_DIR_STARTUP
+ *    - NS_APP_PROFILE_LOCAL_DIR_STARTUP
+ *    In this scenario XRE_NotifyProfile should be called immediately after
+ *    XRE_InitEmbedding. Component registration information will be stored in
+ *    the profile and JS components may be stored in the fastload cache.
+ *
+ * 2) Select a profile some time after calling XRE_InitEmbedding. In this case
+ *    the embedder must install a directory service provider which provides
+ *    NS_APP_USER_PROFILE_50_DIR and optionally
+ *    NS_APP_USER_PROFILE_LOCAL_50_DIR. Component registration information
+ *    will be stored in the application directory and JS components will not
+ *    fastload.
+ */
+XRE_API(void,
+        XRE_NotifyProfile, ())
+
+/**
+ * Terminate embedding started with XRE_InitEmbedding or XRE_InitEmbedding2
+ */
+XRE_API(void,
+        XRE_TermEmbedding, ())
+
+/**
+ * Create a new nsXREAppData structure from an application.ini file.
+ *
+ * @param aINIFile The application.ini file to parse.
+ * @param aAppData A newly-allocated nsXREAppData structure. The caller is
+ *                 responsible for freeing this structure using
+ *                 XRE_FreeAppData.
+ */
+XRE_API(nsresult,
+        XRE_CreateAppData, (nsILocalFile* aINIFile,
+                            nsXREAppData **aAppData))
+
+/**
+ * Parse an INI file (application.ini or override.ini) into an existing
+ * nsXREAppData structure.
+ *
+ * @param aINIFile The INI file to parse
+ * @param aAppData The nsXREAppData structure to fill.
+ */
+XRE_API(nsresult,
+        XRE_ParseAppData, (nsILocalFile* aINIFile,
+                           nsXREAppData *aAppData))
+
+/**
+ * Free a nsXREAppData structure that was allocated with XRE_CreateAppData.
+ */
+XRE_API(void,
+        XRE_FreeAppData, (nsXREAppData *aAppData))
 
 #endif // _nsXULAppAPI_h__

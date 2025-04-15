@@ -36,7 +36,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsGenericElement.h"
-#include "nsLayoutAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsUnicharUtils.h"
 #include "nsXMLProcessingInstruction.h"
 #include "nsParserUtils.h"
@@ -57,8 +57,15 @@ NS_NewXMLProcessingInstruction(nsIContent** aInstancePtrResult,
 
   *aInstancePtrResult = nsnull;
 
+  nsCOMPtr<nsINodeInfo> ni;
+  nsresult rv =
+    aNodeInfoManager->GetNodeInfo(nsGkAtoms::processingInstructionTagName,
+                                  nsnull, kNameSpaceID_None,
+                                  getter_AddRefs(ni));
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsXMLProcessingInstruction *instance =
-    new nsXMLProcessingInstruction(aNodeInfoManager, aTarget, aData);
+    new nsXMLProcessingInstruction(ni, aTarget, aData);
   if (!instance) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -68,13 +75,15 @@ NS_NewXMLProcessingInstruction(nsIContent** aInstancePtrResult,
   return NS_OK;
 }
 
-nsXMLProcessingInstruction::nsXMLProcessingInstruction(nsNodeInfoManager *aNodeInfoManager,
+nsXMLProcessingInstruction::nsXMLProcessingInstruction(nsINodeInfo *aNodeInfo,
                                                        const nsAString& aTarget,
                                                        const nsAString& aData)
-  : nsGenericDOMDataNode(aNodeInfoManager),
+  : nsGenericDOMDataNode(aNodeInfo),
     mTarget(aTarget)
 {
-  nsGenericDOMDataNode::SetData(aData);
+  SetTextInternal(0, mText.GetLength(),
+                  aData.BeginReading(), aData.Length(),
+                  PR_FALSE);  // Don't notify (bug 420429).
 }
 
 nsXMLProcessingInstruction::~nsXMLProcessingInstruction()
@@ -123,16 +132,10 @@ nsXMLProcessingInstruction::GetAttrValue(nsIAtom *aName, nsAString& aValue)
   return nsParserUtils::GetQuotedAttributeValue(data, aName, aValue);
 }
 
-nsIAtom *
-nsXMLProcessingInstruction::Tag() const
-{
-  return nsLayoutAtoms::processingInstructionTagName;
-}
-
 PRBool
-nsXMLProcessingInstruction::IsContentOfType(PRUint32 aFlags) const
+nsXMLProcessingInstruction::IsNodeOfType(PRUint32 aFlags) const
 {
-  return !(aFlags & ~ePROCESSING_INSTRUCTION);
+  return !(aFlags & ~(eCONTENT | ePROCESSING_INSTRUCTION | eDATA_NODE));
 }
 
 // virtual
@@ -168,29 +171,20 @@ nsXMLProcessingInstruction::GetNodeType(PRUint16* aNodeType)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsXMLProcessingInstruction::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
+nsGenericDOMDataNode*
+nsXMLProcessingInstruction::CloneDataNode(nsINodeInfo *aNodeInfo,
+                                          PRBool aCloneText) const
 {
   nsAutoString data;
-  GetData(data);
+  nsGenericDOMDataNode::GetData(data);
 
-  nsXMLProcessingInstruction *pi =
-    new nsXMLProcessingInstruction(mNodeInfoManager, mTarget, data);
-  if (!pi) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  NS_ADDREF(*aReturn = pi);
-
-  return NS_OK;
+  return new nsXMLProcessingInstruction(aNodeInfo, mTarget, data);
 }
 
 #ifdef DEBUG
 void
 nsXMLProcessingInstruction::List(FILE* out, PRInt32 aIndent) const
 {
-  NS_PRECONDITION(IsInDoc(), "bad content");
-
   PRInt32 index;
   for (index = aIndent; --index >= 0; ) fputs("  ", out);
 
@@ -199,7 +193,7 @@ nsXMLProcessingInstruction::List(FILE* out, PRInt32 aIndent) const
   nsAutoString tmp;
   ToCString(tmp, 0, mText.GetLength());
   tmp.Insert(mTarget.get(), 0);
-  fputs(NS_LossyConvertUCS2toASCII(tmp).get(), out);
+  fputs(NS_LossyConvertUTF16toASCII(tmp).get(), out);
 
   fputs(">\n", out);
 }

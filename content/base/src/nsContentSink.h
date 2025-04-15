@@ -35,6 +35,11 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * Base class for the XML and HTML content sinks, which construct a
+ * DOM based on information from the parser.
+ */
+
 #ifndef _nsContentSink_h_
 #define _nsContentSink_h_
 
@@ -47,9 +52,17 @@
 #include "nsCOMArray.h"
 #include "nsString.h"
 #include "nsAutoPtr.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
+#include "nsITimer.h"
+#include "nsStubDocumentObserver.h"
+#include "nsIParserService.h"
+#include "nsIContentSink.h"
+#include "prlog.h"
+#include "nsIRequest.h"
+#include "nsTimer.h"
+#include "nsCycleCollectionParticipant.h"
 
 class nsIDocument;
 class nsIURI;
@@ -62,16 +75,76 @@ class nsIChannel;
 class nsIContent;
 class nsIViewManager;
 class nsNodeInfoManager;
+class nsScriptLoader;
+
+#ifdef NS_DEBUG
+
+extern PRLogModuleInfo* gContentSinkLogModuleInfo;
+
+#define SINK_TRACE_CALLS              0x1
+#define SINK_TRACE_REFLOW             0x2
+#define SINK_ALWAYS_REFLOW            0x4
+
+#define SINK_LOG_TEST(_lm, _bit) (PRIntn((_lm)->level) & (_bit))
+
+#define SINK_TRACE(_lm, _bit, _args) \
+  PR_BEGIN_MACRO                     \
+    if (SINK_LOG_TEST(_lm, _bit)) {  \
+      PR_LogPrint _args;             \
+    }                                \
+  PR_END_MACRO
+
+#else
+#define SINK_TRACE(_lm, _bit, _args)
+#endif
+
+#undef SINK_NO_INCREMENTAL
+
+//----------------------------------------------------------------------
+
+// 1/2 second fudge factor for window creation
+#define NS_DELAY_FOR_WINDOW_CREATION  500000
+
+// 200 determined empirically to provide good user response without
+// sampling the clock too often.
+#define NS_MAX_TOKENS_DEFLECTED_IN_LOW_FREQ_MODE 200
 
 class nsContentSink : public nsICSSLoaderObserver,
                       public nsIScriptLoaderObserver,
-                      public nsSupportsWeakReference
+                      public nsSupportsWeakReference,
+                      public nsStubDocumentObserver,
+                      public nsITimerCallback
 {
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsContentSink,
+                                           nsIScriptLoaderObserver)
   NS_DECL_NSISCRIPTLOADEROBSERVER
-  
+
+    // nsITimerCallback
+  NS_DECL_NSITIMERCALLBACK
+
   // nsICSSLoaderObserver
-  NS_IMETHOD StyleSheetLoaded(nsICSSStyleSheet* aSheet, PRBool aNotify);
+  NS_IMETHOD StyleSheetLoaded(nsICSSStyleSheet* aSheet, PRBool aWasAlternate,
+                              nsresult aStatus);
+
+  nsresult ProcessMETATag(nsIContent* aContent);
+
+  // nsIContentSink implementation helpers
+  NS_HIDDEN_(nsresult) WillInterruptImpl(void);
+  NS_HIDDEN_(nsresult) WillResumeImpl(void);
+  NS_HIDDEN_(nsresult) DidProcessATokenImpl(void);
+  NS_HIDDEN_(void) WillBuildModelImpl(void);
+  NS_HIDDEN_(void) DidBuildModelImpl(void);
+  NS_HIDDEN_(void) DropParserAndPerfHint(void);
+  NS_HIDDEN_(nsresult) WillProcessTokensImpl(void);
+
+  void NotifyAppend(nsIContent* aContent, PRUint32 aStartIndex);
+
+  // nsIDocumentObserver
+  virtual void BeginUpdate(nsIDocument *aDocument, nsUpdateType aUpdateType);
+  virtual void EndUpdate(nsIDocument *aDocument, nsUpdateType aUpdateType);
+
+  virtual void UpdateChildCounts() = 0;
 
 protected:
   nsContentSink();
@@ -96,17 +169,63 @@ protected:
                                     const nsSubstring& aType,
                                     const nsSubstring& aMedia);
 
-  nsresult ProcessMETATag(nsIContent* aContent);
+  void PrefetchHref(const nsAString &aHref, nsIContent *aSource,
+                    PRBool aExplicit);
+  void ProcessOfflineManifest(nsIContent *aElement);
 
-  void PrefetchHref(const nsAString &aHref, PRBool aExplicit);
-
-  PRBool ScrollToRef(PRBool aReallyScroll);
+  // Tries to scroll to the URI's named anchor. Once we've successfully
+  // done that, further calls to this method will be ignored.
+  void ScrollToRef();
   nsresult RefreshIfEnabled(nsIViewManager* vm);
-  void StartLayout(PRBool aIsFrameset);
+
+  // Start layout.  If aIgnorePendingSheets is true, this will happen even if
+  // we still have stylesheet loads pending.  Otherwise, we'll wait until the
+  // stylesheets are all done loading.
+  void StartLayout(PRBool aIgnorePendingSheets);
+
+  PRBool IsTimeToNotify();
+
+  void
+  FavorPerformanceHint(PRBool perfOverStarvation, PRUint32 starvationDelay);
+
+  inline PRInt32 GetNotificationInterval()
+  {
+    if (mDynamicLowerValue) {
+      return 1000;
+    }
+
+    return mNotificationInterval;
+  }
+
+  inline PRInt32 GetMaxTokenProcessingTime()
+  {
+    if (mDynamicLowerValue) {
+      return 3000;
+    }
+
+    return mMaxTokenProcessingTime;
+  }
 
   // Overridable hooks into script evaluation
-  virtual void PreEvaluateScript()  {return;}
-  virtual void PostEvaluateScript() {return;}
+  virtual void PreEvaluateScript()                            {return;}
+  virtual void PostEvaluateScript(nsIScriptElement *aElement) {return;}
+
+  virtual nsresult FlushTags() = 0;
+
+  // Later on we might want to make this more involved somehow
+  // (e.g. stop waiting after some timeout or whatnot).
+  PRBool WaitForPendingSheets() { return mPendingSheetCount > 0; }
+
+private:
+  // People shouldn't be allocating this class directly.  All subclasses should
+  // be allocated using a zeroing operator new.
+  void* operator new(size_t sz) CPP_THROW_NEW;  // Not to be implemented
+
+protected:
+
+  void ContinueInterruptedParsingAsync();
+  void ContinueInterruptedParsingIfEnabled();
+  void ContinueInterruptedParsing();
 
   nsCOMPtr<nsIDocument>         mDocument;
   nsCOMPtr<nsIParser>           mParser;
@@ -115,169 +234,78 @@ protected:
   nsCOMPtr<nsIDocShell>         mDocShell;
   nsCOMPtr<nsICSSLoader>        mCSSLoader;
   nsRefPtr<nsNodeInfoManager>   mNodeInfoManager;
+  nsRefPtr<nsScriptLoader>      mScriptLoader;
 
   nsCOMArray<nsIScriptElement> mScriptElements;
 
   nsCString mRef; // ScrollTo #ref
-  PRBool mNeedToBlockParser;
+
+  // back off timer notification after count
+  PRInt32 mBackoffCount;
+
+  // Notification interval in microseconds
+  PRInt32 mNotificationInterval;
+
+  // Time of last notification
+  // Note: mLastNotificationTime is only valid once mLayoutStarted is true.
+  PRTime mLastNotificationTime;
+
+  // Timer used for notification
+  nsCOMPtr<nsITimer> mNotificationTimer;
+
+  // The number of tokens that have been processed while in the low
+  // frequency parser interrupt mode without falling through to the
+  // logic which decides whether to switch to the high frequency
+  // parser interrupt mode.
+  PRUint8 mDeflectedCount;
+
+  // Do we notify based on time?
+  PRPackedBool mNotifyOnTimer;
+
+  // Have we already called BeginUpdate for this set of content changes?
+  PRUint8 mBeganUpdate : 1;
+  PRUint8 mLayoutStarted : 1;
+  PRUint8 mScrolledToRefAlready : 1;
+  PRUint8 mCanInterruptParser : 1;
+  PRUint8 mDynamicLowerValue : 1;
+  PRUint8 mParsing : 1;
+  PRUint8 mDroppedTimer : 1;
+  PRUint8 mInTitle : 1;
+  PRUint8 mChangeScrollPosWhenScrollingToRef : 1;
+  // If true, we deferred starting layout until sheets load
+  PRUint8 mDeferredLayoutStart : 1;
+  // If true, we deferred notifications until sheets load
+  PRUint8 mDeferredFlushTags : 1;
+  
+  // -- Can interrupt parsing members --
+  PRUint32 mDelayTimerStart;
+
+  // Interrupt parsing during token procesing after # of microseconds
+  PRInt32 mMaxTokenProcessingTime;
+
+  // Switch between intervals when time is exceeded
+  PRInt32 mDynamicIntervalSwitchThreshold;
+
+  PRInt32 mBeginLoadTime;
+
+  // Last mouse event or keyboard event time sampled by the content
+  // sink
+  PRUint32 mLastSampledUserEventTime;
+
+  PRInt32 mInMonolithicContainer;
+
+  PRInt32 mInNotification;
+  PRUint32 mUpdatesInNotification;
+
+  PRUint32 mPendingSheetCount;
+
+  // Measures content model creation time for current document
+  MOZ_TIMER_DECLARE(mWatch)
 };
 
-// these two lists are used by the sanitizing fragment serializers
-static nsIAtom** const kDefaultAllowedTags [] = {
-  &nsHTMLAtoms::a,
-  &nsHTMLAtoms::abbr,
-  &nsHTMLAtoms::acronym,
-  &nsHTMLAtoms::address,
-  &nsHTMLAtoms::area,
-  &nsHTMLAtoms::b,
-  &nsHTMLAtoms::big,
-  &nsHTMLAtoms::blockquote,
-  &nsHTMLAtoms::br,
-  &nsHTMLAtoms::button,
-  &nsHTMLAtoms::caption,
-  &nsHTMLAtoms::center,
-  &nsHTMLAtoms::cite,
-  &nsHTMLAtoms::code,
-  &nsHTMLAtoms::col,
-  &nsHTMLAtoms::colgroup,
-  &nsHTMLAtoms::dd,
-  &nsHTMLAtoms::del,
-  &nsHTMLAtoms::dfn,
-  &nsHTMLAtoms::dir,
-  &nsHTMLAtoms::div,
-  &nsHTMLAtoms::dl,
-  &nsHTMLAtoms::dt,
-  &nsHTMLAtoms::em,
-  &nsHTMLAtoms::fieldset,
-  &nsHTMLAtoms::font,
-  &nsHTMLAtoms::form,
-  &nsHTMLAtoms::h1,
-  &nsHTMLAtoms::h2,
-  &nsHTMLAtoms::h3,
-  &nsHTMLAtoms::h4,
-  &nsHTMLAtoms::h5,
-  &nsHTMLAtoms::h6,
-  &nsHTMLAtoms::hr,
-  &nsHTMLAtoms::i,
-  &nsHTMLAtoms::img,
-  &nsHTMLAtoms::input,
-  &nsHTMLAtoms::ins,
-  &nsHTMLAtoms::kbd,
-  &nsHTMLAtoms::label,
-  &nsHTMLAtoms::legend,
-  &nsHTMLAtoms::li,
-  &nsHTMLAtoms::map,
-  &nsHTMLAtoms::menu,
-  &nsHTMLAtoms::ol,
-  &nsHTMLAtoms::optgroup,
-  &nsHTMLAtoms::option,
-  &nsHTMLAtoms::p,
-  &nsHTMLAtoms::pre,
-  &nsHTMLAtoms::q,
-  &nsHTMLAtoms::s,
-  &nsHTMLAtoms::samp,
-  &nsHTMLAtoms::select,
-  &nsHTMLAtoms::small,
-  &nsHTMLAtoms::span,
-  &nsHTMLAtoms::strike,
-  &nsHTMLAtoms::strong,
-  &nsHTMLAtoms::sub,
-  &nsHTMLAtoms::sup,
-  &nsHTMLAtoms::table,
-  &nsHTMLAtoms::tbody,
-  &nsHTMLAtoms::td,
-  &nsHTMLAtoms::textarea,
-  &nsHTMLAtoms::tfoot,
-  &nsHTMLAtoms::th,
-  &nsHTMLAtoms::thead,
-  &nsHTMLAtoms::tr,
-  &nsHTMLAtoms::tt,
-  &nsHTMLAtoms::u,
-  &nsHTMLAtoms::ul
-};
+// sanitizing content sink whitelists
+extern PRBool IsAttrURI(nsIAtom *aName);
+extern nsIAtom** const kDefaultAllowedTags [];
+extern nsIAtom** const kDefaultAllowedAttributes [];
 
-static nsIAtom** const kDefaultAllowedAttributes [] = {
-  &nsHTMLAtoms::accept,
-  &nsHTMLAtoms::acceptcharset,
-  &nsHTMLAtoms::accesskey,
-  &nsHTMLAtoms::action,
-  &nsHTMLAtoms::align,
-  &nsHTMLAtoms::alt,
-  &nsHTMLAtoms::axis,
-  &nsHTMLAtoms::border,
-  &nsHTMLAtoms::cellpadding,
-  &nsHTMLAtoms::cellspacing,
-  &nsHTMLAtoms::_char,
-  &nsHTMLAtoms::charoff,
-  &nsHTMLAtoms::charset,
-  &nsHTMLAtoms::checked,
-  &nsHTMLAtoms::cite,
-  &nsHTMLAtoms::kClass,
-  &nsHTMLAtoms::clear,
-  &nsHTMLAtoms::cols,
-  &nsHTMLAtoms::colspan,
-  &nsHTMLAtoms::color,
-  &nsHTMLAtoms::compact,
-  &nsHTMLAtoms::coords,
-  &nsHTMLAtoms::datetime,
-  &nsHTMLAtoms::dir,
-  &nsHTMLAtoms::disabled,
-  &nsHTMLAtoms::enctype,
-  &nsHTMLAtoms::_for,
-  &nsHTMLAtoms::frame,
-  &nsHTMLAtoms::headers,
-  &nsHTMLAtoms::height,
-  &nsHTMLAtoms::href,
-  &nsHTMLAtoms::hreflang,
-  &nsHTMLAtoms::hspace,
-  &nsHTMLAtoms::id,
-  &nsHTMLAtoms::ismap,
-  &nsHTMLAtoms::label,
-  &nsHTMLAtoms::lang,
-  &nsHTMLAtoms::longdesc,
-  &nsHTMLAtoms::maxlength,
-  &nsHTMLAtoms::media,
-  &nsHTMLAtoms::method,
-  &nsHTMLAtoms::multiple,
-  &nsHTMLAtoms::name,
-  &nsHTMLAtoms::nohref,
-  &nsHTMLAtoms::noshade,
-  &nsHTMLAtoms::nowrap,
-  &nsHTMLAtoms::prompt,
-  &nsHTMLAtoms::readonly,
-  &nsHTMLAtoms::rel,
-  &nsHTMLAtoms::rev,
-  &nsHTMLAtoms::rows,
-  &nsHTMLAtoms::rowspan,
-  &nsHTMLAtoms::rules,
-  &nsHTMLAtoms::scope,
-  &nsHTMLAtoms::selected,
-  &nsHTMLAtoms::shape,
-  &nsHTMLAtoms::size,
-  &nsHTMLAtoms::span,
-  &nsHTMLAtoms::src,
-  &nsHTMLAtoms::start,
-  &nsHTMLAtoms::summary,
-  &nsHTMLAtoms::tabindex,
-  &nsHTMLAtoms::target,
-  &nsHTMLAtoms::title,
-  &nsHTMLAtoms::type,
-  &nsHTMLAtoms::usemap,
-  &nsHTMLAtoms::valign,
-  &nsHTMLAtoms::value,
-  &nsHTMLAtoms::vspace,
-  &nsHTMLAtoms::width
-};
-
-// URIs action, href, src, longdesc, usemap, cite
-static
-PRBool IsAttrURI(nsIAtom *aName)
-{
-  return (aName == nsHTMLAtoms::action ||
-          aName == nsHTMLAtoms::href ||
-          aName == nsHTMLAtoms::src ||
-          aName == nsHTMLAtoms::longdesc ||
-          aName == nsHTMLAtoms::usemap ||
-          aName == nsHTMLAtoms::cite);
-}
 #endif // _nsContentSink_h_

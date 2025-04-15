@@ -421,7 +421,7 @@ NS_IMETHODIMP nsRegistry::Open( nsIFile *regFile ) {
    
     if (mCurRegID != nsIRegistry::None && mCurRegID != nsIRegistry::ApplicationCustomRegistry)
     {
-        // Cant open another registry without closing explictly.
+        // Can't open another registry without closing explictly.
         return NS_ERROR_INVALID_ARG;
     }
 
@@ -444,7 +444,7 @@ NS_IMETHODIMP nsRegistry::Open( nsIFile *regFile ) {
 
     // Open specified registry.
     PR_Lock(mregLock);
-    err = NR_RegOpen(NS_CONST_CAST(char*,regPath.get()), &mReg);
+    err = NR_RegOpen(const_cast<char*>(regPath.get()), &mReg);
     PR_Unlock(mregLock);
 
     mCurRegID = nsIRegistry::ApplicationCustomRegistry;
@@ -464,7 +464,7 @@ EnsureDefaultRegistryDirectory() {
 
     /* The default registry on the unix system is $HOME/.mozilla/registry per
      * vr_findGlobalRegName(). vr_findRegFile() will create the registry file
-     * if it doesn't exist. But it wont create directories.
+     * if it doesn't exist. But it won't create directories.
      *
      * Hence we need to create the directory if it doesn't exist already.
      *
@@ -472,7 +472,7 @@ EnsureDefaultRegistryDirectory() {
      * ------------------------------------------
      * The app cannot create the directory in main() as most of the registry
      * and initialization happens due to use of static variables.
-     * And we dont want to be dependent on the order in which
+     * And we don't want to be dependent on the order in which
      * these static stuff happen.
      *
      * Permission for the $HOME/.mozilla will be Read,Write,Execute
@@ -519,7 +519,7 @@ NS_IMETHODIMP nsRegistry::OpenWellKnownRegistry( nsWellKnownRegistry regid )
 
     if (mCurRegID != nsIRegistry::None && mCurRegID != regid)
     {
-        // Cant open another registry without closing explictly.
+        // Can't open another registry without closing explictly.
         return NS_ERROR_INVALID_ARG;
     }
 
@@ -572,7 +572,7 @@ NS_IMETHODIMP nsRegistry::OpenWellKnownRegistry( nsWellKnownRegistry regid )
 #endif /* DEBUG_dp */
 
     PR_Lock(mregLock);
-    err = NR_RegOpen(NS_CONST_CAST(char*, regFile.get()), &mReg );
+    err = NR_RegOpen(const_cast<char*>(regFile.get()), &mReg );
     PR_Unlock(mregLock);
 
     // Store the registry that was opened for optimizing future opens.
@@ -639,7 +639,7 @@ NS_IMETHODIMP nsRegistry::AddKey( nsRegistryKey baseKey, const PRUnichar *keynam
     if ( !keyname ) 
         return NS_ERROR_NULL_POINTER;
 
-    return AddSubtree( baseKey, NS_ConvertUCS2toUTF8(keyname).get(), _retval );
+    return AddSubtree( baseKey, NS_ConvertUTF16toUTF8(keyname).get(), _retval );
 }
 
 /*--------------------------- nsRegistry::GetKey -------------------------------
@@ -650,7 +650,7 @@ NS_IMETHODIMP nsRegistry::GetKey(nsRegistryKey baseKey, const PRUnichar *keyname
     if ( !keyname || !_retval ) 
         return NS_ERROR_NULL_POINTER;
 
-    return GetSubtree( baseKey, NS_ConvertUCS2toUTF8(keyname).get(), _retval );
+    return GetSubtree( baseKey, NS_ConvertUTF16toUTF8(keyname).get(), _retval );
 }
 
 /*--------------------------- nsRegistry::RemoveKey ----------------------------
@@ -661,7 +661,7 @@ NS_IMETHODIMP nsRegistry::RemoveKey(nsRegistryKey baseKey, const PRUnichar *keyn
     if ( !keyname ) 
         return NS_ERROR_NULL_POINTER;
 
-    return RemoveSubtree( baseKey, NS_ConvertUCS2toUTF8(keyname).get() );
+    return RemoveSubtree( baseKey, NS_ConvertUTF16toUTF8(keyname).get() );
 }
 
 NS_IMETHODIMP nsRegistry::GetString(nsRegistryKey baseKey, const PRUnichar *valname, PRUnichar **_retval)
@@ -674,7 +674,7 @@ NS_IMETHODIMP nsRegistry::GetString(nsRegistryKey baseKey, const PRUnichar *valn
     *_retval = nsnull;
     nsXPIDLCString tmpstr;
 
-    nsresult rv = GetStringUTF8( baseKey, NS_ConvertUCS2toUTF8(valname).get(), getter_Copies(tmpstr) );
+    nsresult rv = GetStringUTF8( baseKey, NS_ConvertUTF16toUTF8(valname).get(), getter_Copies(tmpstr) );
 
     if (NS_SUCCEEDED(rv))
     {
@@ -692,8 +692,8 @@ NS_IMETHODIMP nsRegistry::SetString(nsRegistryKey baseKey, const PRUnichar *valn
         return NS_ERROR_NULL_POINTER;
 
     return SetStringUTF8( baseKey,
-                          NS_ConvertUCS2toUTF8(valname).get(),
-                          NS_ConvertUCS2toUTF8(value).get() );
+                          NS_ConvertUTF16toUTF8(valname).get(),
+                          NS_ConvertUTF16toUTF8(value).get() );
 }
 
 /*--------------------------- nsRegistry::GetString ----------------------------
@@ -832,7 +832,7 @@ NS_IMETHODIMP nsRegistry::GetBytesUTF8( nsRegistryKey baseKey, const char *path,
             // Attempt to get string into our fixed buffer
             PR_Lock(mregLock);
             uint32 length2 = sizeof regStr;
-            err = NR_RegGetEntry( mReg,(RKEY)baseKey,NS_CONST_CAST(char*,path), regStr, &length2);
+            err = NR_RegGetEntry( mReg,(RKEY)baseKey,const_cast<char*>(path), regStr, &length2);
             PR_Unlock(mregLock);
 
             if ( err == REGERR_OK )
@@ -856,13 +856,13 @@ NS_IMETHODIMP nsRegistry::GetBytesUTF8( nsRegistryKey baseKey, const char *path,
                 // See if that worked.
                 if( rv == NS_OK ) 
                 {
-                    *result = NS_REINTERPRET_CAST(PRUint8*,nsMemory::Alloc( *length ));
+                    *result = reinterpret_cast<PRUint8*>(nsMemory::Alloc( *length ));
                     if( *result ) 
                     {
                         // Get bytes from registry into result field.
                         PR_Lock(mregLock);
                         length2 = *length;
-                        err = NR_RegGetEntry( mReg,(RKEY)baseKey,NS_CONST_CAST(char*,path), *result, &length2);
+                        err = NR_RegGetEntry( mReg,(RKEY)baseKey,const_cast<char*>(path), *result, &length2);
                         *length = length2;
                         PR_Unlock(mregLock);
                         // Convert status.
@@ -870,7 +870,7 @@ NS_IMETHODIMP nsRegistry::GetBytesUTF8( nsRegistryKey baseKey, const char *path,
                         if ( rv != NS_OK )
                         {
                             // Didn't get result, free buffer
-                            nsCRT::free( NS_REINTERPRET_CAST(char*, *result) );
+                            nsCRT::free( reinterpret_cast<char*>(*result) );
                             *result = 0;
                             *length = 0;
                         }
@@ -909,7 +909,7 @@ nsRegistry::GetBytesUTF8IntoBuffer( nsRegistryKey baseKey, const char *path,
 
     // Attempt to get bytes into our fixed buffer
     PR_Lock(mregLock);
-    err = NR_RegGetEntry( mReg,(RKEY)baseKey,NS_CONST_CAST(char*,path),
+    err = NR_RegGetEntry( mReg,(RKEY)baseKey,const_cast<char*>(path),
                           buf, (uint32 *)length );
     PR_Unlock(mregLock);
 

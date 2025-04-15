@@ -38,17 +38,15 @@
 #define nsgnomeshellservice_h____
 
 #include "nsIShellService.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 
-class nsGNOMEShellService : public nsIShellService,
-                            public nsIShellService_MOZILLA_1_8_BRANCH
+class nsGNOMEShellService : public nsIShellService
 {
 public:
   nsGNOMEShellService() : mCheckedThisSession(PR_FALSE) { }
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSISHELLSERVICE
-  NS_DECL_NSISHELLSERVICE_MOZILLA_1_8_BRANCH
 
   nsresult Init() NS_HIDDEN;
 

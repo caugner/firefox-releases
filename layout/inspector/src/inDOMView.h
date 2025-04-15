@@ -43,7 +43,7 @@
 
 #include "nsITreeView.h"
 #include "nsITreeSelection.h"
-#include "nsIDocumentObserver.h"
+#include "nsStubMutationObserver.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMDocument.h"
 #include "nsVoidArray.h"
@@ -54,7 +54,7 @@ class inDOMViewNode;
 
 class inDOMView : public inIDOMView,
                   public nsITreeView,
-                  public nsIDocumentObserver
+                  public nsStubMutationObserver
 {
 public:
   NS_DECL_ISUPPORTS
@@ -64,8 +64,12 @@ public:
   inDOMView();
   virtual ~inDOMView();
 
-  // nsIDocumentObserver
-  NS_DECL_NSIDOCUMENTOBSERVER
+  // nsIMutationObserver
+  NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTECHANGED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTAPPENDED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTINSERTED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
+  NS_DECL_NSIMUTATIONOBSERVER_NODEWILLBEDESTROYED
 
   static void InitAtoms();
 
@@ -83,6 +87,7 @@ protected:
   static nsIAtom* kDocumentTypeNodeAtom;
   static nsIAtom* kDocumentFragmentNodeAtom;
   static nsIAtom* kNotationNodeAtom;
+  static nsIAtom* kAccessibleNodeAtom;
 
   static const nsStaticAtom Atoms_info[]; 
 
@@ -93,6 +98,7 @@ protected:
   PRPackedBool mShowAnonymous;
   PRPackedBool mShowSubDocuments;
   PRPackedBool mShowWhitespaceNodes;
+  PRPackedBool mShowAccessibleNodes;
   PRUint32 mWhatToShow;
 
   nsCOMPtr<nsIDOMNode> mRootNode;
@@ -102,6 +108,7 @@ protected:
 
   inDOMViewNode* GetNodeAt(PRInt32 aIndex);
   PRInt32 GetRowCount();
+  PRInt32 NodeToRow(inDOMViewNode* aNode);
   PRBool RowOutOfBounds(PRInt32 aRow, PRInt32 aCount);
   inDOMViewNode* CreateNode(nsIDOMNode* aNode, inDOMViewNode* aParent);
   void AppendNode(inDOMViewNode* aNode);

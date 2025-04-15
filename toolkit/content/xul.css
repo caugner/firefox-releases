@@ -3,7 +3,7 @@
 	For example style definitions for navigator can be found in navigator.css
 
    THIS FILE IS LOCKED DOWN.  YOU ARE NOT ALLOWED TO MODIFY IT WITHOUT FIRST HAVING YOUR
-   CHANGES REVIEWED BY mconnor@steelgryphon.com
+   CHANGES REVIEWED BY enndeakin@sympatico.ca
 **/
 
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"); /* set default namespace to XUL */
@@ -14,6 +14,10 @@
   -moz-user-focus: ignore;
   -moz-user-select: -moz-none;
   display: -moz-box;
+}
+
+:root {
+  text-rendering: optimizeLegibility;
 }
 
 /* hide the content and destroy the frame */
@@ -49,8 +53,7 @@ window[chromehidden~="toolbar"] .chromeclass-toolbar-additional
    :: or URI elements
    ::::: */
 
-textbox.uri-element,
-menulist.uri-element
+.uri-element
 {
   direction: ltr !important;
 }
@@ -73,6 +76,7 @@ treechildren, treeitem, treeseparator, treerow, treecell {
 button,
 checkbox,
 colorpicker[type="button"],
+datepicker[type="grid"],
 menulist,
 radiogroup,
 tree,
@@ -82,7 +86,7 @@ iframe {
   -moz-user-focus: normal;
 }
 
-menulist[editable] {
+menulist[editable="true"] {
   -moz-user-focus: ignore;
 }
 
@@ -110,6 +114,10 @@ button {
   -moz-binding: url("chrome://global/content/bindings/button.xml#button");
 }
 
+button[type="repeat"] {
+  -moz-binding: url("chrome://global/content/bindings/button.xml#button-repeat");
+}
+
 button[type="menu"] {
   -moz-binding: url("chrome://global/content/bindings/button.xml#menu");
 }
@@ -132,10 +140,6 @@ toolbarbutton[type="menu-button"] {
   -moz-binding: url("chrome://global/content/bindings/toolbarbutton.xml#menu-button");
 }
 
-dropmarker[type="menu-button"] {
-  -moz-binding: url("chrome://global/content/bindings/toolbarbutton.xml#dropmarker");
-}
-
 /******** browser, editor, iframe ********/
 
 browser,
@@ -146,10 +150,6 @@ iframe {
 
 browser {
   -moz-binding: url("chrome://global/content/bindings/browser.xml#browser");
-}
-
-tabbrowser {
-  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser");
 }
 
 editor {
@@ -236,13 +236,11 @@ toolbarseparator {
 
 toolbarspacer {
   -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbardecoration");
-  display: inline;
 }
 
 toolbarspring {
   -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbardecoration");
   -moz-box-flex: 1000;
-  display: inline;
 }
 
 toolbarpaletteitem {
@@ -278,7 +276,7 @@ menu.menu-iconic {
   -moz-binding: url("chrome://global/content/bindings/menu.xml#menu-iconic");
 }
 
-menu:empty {
+menubar > menu:empty {
   visibility: collapse;
 }
 
@@ -305,6 +303,17 @@ menuitem.menuitem-non-iconic {
   -moz-binding: url("chrome://global/content/bindings/menu.xml#menubutton-item");
 }
 
+%ifdef MOZ_WIDGET_GTK2
+/********* detection of system setting to use icons in menus ***********/
+menuitem:not([type]):not(:-moz-system-metric(images-in-menus)) > .menu-iconic-left {
+  visibility: hidden;
+}
+
+menu:not(:-moz-system-metric(images-in-menus)) > .menu-iconic-left {
+  visibility: hidden;
+}
+%endif
+
 /********* menuseparator ***********/
 
 menuseparator {
@@ -319,24 +328,25 @@ popup,
 menupopup {
   -moz-binding: url("chrome://global/content/bindings/popup.xml#popup");
   -moz-box-orient: vertical;
-  display: none;
+}
+
+panel {
+  -moz-binding: url("chrome://global/content/bindings/popup.xml#panel");
+  -moz-box-orient: vertical;
 }
 
 popup,
 menupopup,
+panel,
 tooltip {
-  z-index: 2147483647; 
-}
-
-menupopup[menugenerated="true"],
-popup[menugenerated="true"],
-tooltip[menugenerated="true"] {
   display: -moz-popup;
+  z-index: 2147483647; 
 }
 
 tooltip {
   -moz-binding: url("chrome://global/content/bindings/popup.xml#tooltip");
-  display: -moz-popup;
+  -moz-box-orient: vertical;
+  white-space: pre-wrap;
   margin-top: 21px;
 }
 
@@ -412,10 +422,6 @@ column {
 
 listbox {
   -moz-binding: url("chrome://global/content/bindings/listbox.xml#listbox");
-}
-
-listcols, listcol {
-  -moz-binding: url("chrome://global/content/bindings/listbox.xml#listbox-base");
 }
 
 listhead {
@@ -551,7 +557,6 @@ treecolpicker {
 
 tree {
   -moz-box-orient: vertical;
-  -moz-user-select: none;
   min-width: 0px;
   min-height: 0px;
   width: 10px;
@@ -569,6 +574,11 @@ treecol {
 treecol[hidden="true"] {
   visibility: collapse;
   display: -moz-box;
+}
+
+.tree-scrollable-columns {
+  /* Yes, Virginia, this makes it scrollable */
+  overflow: hidden;
 }
 
 /********** deck & stack *********/
@@ -611,42 +621,9 @@ tab {
   -moz-box-pack: center;
 }
 
-.tabbrowser-tabs {
-  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-tabs");
-}
-
-.tabbrowser-tabs > .tabbrowser-tab {
-  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-tab");
-}
-
-.tabbrowser-tabs > .tabbrowser-tab > .tab-close-button,
-.tabs-closebutton-box > .tabs-closebutton {
-  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-close-tab-button");
-}
-
-.tabbrowser-arrowscrollbox {
-  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-arrowscrollbox");
-}
-
-.tab-close-button {
-  display: none;
-}
-
-.tabbrowser-tabs:not([closebuttons="noclose"]):not([closebuttons="closeatend"]) > .tabbrowser-tab[selected="true"] > .tab-close-button {
-  display: -moz-box;
-}
-
-.tabbrowser-tabs[closebuttons="alltabs"] > .tabbrowser-tab > .tab-close-button {
-  display: -moz-box;
-}
-
 tabpanels {
   -moz-binding: url("chrome://global/content/bindings/tabbox.xml#tabpanels");
   display: -moz-deck;
-}
-
-.tabs-alltabs-popup {
-  -moz-binding: url("chrome://global/content/bindings/tabbrowser.xml#tabbrowser-alltabs-popup");
 }
 
 /********** progressmeter **********/
@@ -666,10 +643,6 @@ progressmeter {
 }
 
 /********** label **********/
-
-spacer {
-  display: inline;
-}
 
 description {
   -moz-binding: url("chrome://global/content/bindings/text.xml#text-base");
@@ -716,8 +689,16 @@ html|*.textbox-textarea {
   -moz-binding: url("chrome://global/content/bindings/textbox.xml#input-box");
 }
 
+.textbox-input-box[spellcheck="true"] {
+  -moz-binding: url("chrome://global/content/bindings/textbox.xml#input-box-spell");
+}
+
 textbox[type="timed"] {
   -moz-binding: url("chrome://global/content/bindings/textbox.xml#timed-textbox");
+}
+
+textbox[type="number"] {
+  -moz-binding: url("chrome://global/content/bindings/numberbox.xml#numberbox");
 }
 
 /********** autocomplete textbox **********/
@@ -728,6 +709,8 @@ textbox[type="timed"] {
 %define AUTOCOMPLETE_OLD_STYLE
 %elifdef MOZ_STANDALONE_COMPOSER
 %define AUTOCOMPLETE_OLD_STYLE
+%elifdef MOZ_SUITE
+%define AUTOCOMPLETE_OLD_STYLE
 %endif
 
 %ifdef AUTOCOMPLETE_OLD_STYLE
@@ -736,7 +719,7 @@ textbox[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete");
 }
 
-.autocomplete-result-popup {
+panel[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete-result-popup");
 }
 
@@ -744,16 +727,8 @@ textbox[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete-history-popup");
 }
 
-.autocomplete-tree {
-  -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete-tree");
-}
-
 .autocomplete-treebody {
   -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete-treebody");
-}
-
-.autocomplete-treerows {
-  -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete-treerows");
 }
 
 .autocomplete-history-dropmarker {
@@ -766,17 +741,37 @@ textbox[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#autocomplete");
 }
 
-popup[type="autocomplete"] {
+panel[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#autocomplete-result-popup");
-  display: -moz-popup !important;
+}
+
+panel[type="autocomplete-richlistbox"] {
+  -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#autocomplete-rich-result-popup");
 }
 
 .autocomplete-tree {
   -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#autocomplete-tree");
+  -moz-user-focus: ignore;
 }
 
 .autocomplete-treebody {
   -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#autocomplete-treebody");
+}
+
+.autocomplete-richlistbox {
+  -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#autocomplete-richlistbox");
+  -moz-user-focus: ignore;
+  -moz-appearance: none;
+}
+
+.autocomplete-richlistbox > scrollbox {
+  overflow-x: hidden !important;
+}
+
+.autocomplete-richlistitem {
+  -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#autocomplete-richlistitem");
+  -moz-box-orient: vertical;
+  overflow: -moz-hidden-unscrollable;
 }
 
 .autocomplete-treerows {
@@ -792,13 +787,9 @@ popup[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#history-dropmarker");
 }
 
-/* To be overridden by themes that use a background for the dropmarker (e.g. winstripe): */
-.autocomplete-dropmarker-bkgnd {
-  background-image: none;
-  list-style-image: none;
-}
-
 %endif
+
+
 
 /* the C++ implementation of widgets is too eager to make popups visible.
    this causes problems (bug 120155 and others), thus this workaround: */
@@ -836,7 +827,7 @@ menulist {
   -moz-binding: url("chrome://global/content/bindings/menulist.xml#menulist");
 }
 
-menulist[editable] {
+menulist[editable="true"] {
   -moz-binding: url("chrome://global/content/bindings/menulist.xml#menulist-editable");
 }
 
@@ -846,13 +837,14 @@ menulist[type="description"] {
 
 html|*.menulist-editable-input {
   -moz-appearance: none !important;
+  background: transparent ! important;
 }
 
 menulist > menupopup > menuitem {
   -moz-binding: url("chrome://global/content/bindings/menu.xml#menuitem-iconic-noaccel");
 }
 
-dropmarker[type="menu"] {
+dropmarker {
   -moz-binding: url("chrome://global/content/bindings/general.xml#dropmarker");
 }
 
@@ -881,13 +873,16 @@ scrollbar {
   direction: ltr;
 }
 
-thumb 
-{
+thumb {
   -moz-binding: url(chrome://global/content/bindings/scrollbar.xml#thumb);
   display: -moz-box !important;
 }
 
-scrollbar, scrollbarbutton, scrollcorner, slider, thumb {
+.scale-thumb {
+  -moz-binding: url(chrome://global/content/bindings/scale.xml#scalethumb);
+}
+
+scrollbar, scrollbarbutton, scrollcorner, slider, thumb, scale {
   -moz-user-select: none;
 }
 
@@ -901,6 +896,26 @@ scrollcorner[hidden="true"] {
 
 scrollbar[value="hidden"] {
   visibility: hidden;
+}
+
+scale {
+  -moz-binding: url(chrome://global/content/bindings/scale.xml#scale);
+}
+
+.scale-slider {
+  -moz-binding: url(chrome://global/content/bindings/scale.xml#scaleslider);
+  -moz-user-focus: normal;
+}
+
+scrollbarbutton[sbattr="scrollbar-up-top"]:not(:-moz-system-metric(scrollbar-start-backward)),
+scrollbarbutton[sbattr="scrollbar-down-top"]:not(:-moz-system-metric(scrollbar-start-forward)),
+scrollbarbutton[sbattr="scrollbar-up-bottom"]:not(:-moz-system-metric(scrollbar-end-backward)),
+scrollbarbutton[sbattr="scrollbar-down-bottom"]:not(:-moz-system-metric(scrollbar-end-forward)) {
+  display: none;
+}
+
+thumb[sbattr="scrollbar-thumb"]:-moz-system-metric(scrollbar-thumb-proportional) {
+  -moz-box-flex: 1;
 }
 
 /******** scrollbox ********/
@@ -953,6 +968,10 @@ statusbarpanel {
 
 spinbuttons {
   -moz-binding: url("chrome://global/content/bindings/spinbuttons.xml#spinbuttons");
+}
+
+.spinbuttons-button {
+  -moz-user-focus: ignore;
 }
 
 /********** stringbundle **********/
@@ -1017,18 +1036,6 @@ prefwindow {
 prefpane {
   -moz-binding: url("chrome://global/content/bindings/preferences.xml#prefpane");  
   -moz-box-orient: vertical;
-  opacity: 0.0;
-}
-
-prefpane[selected="true"] {
-  opacity: 0.0;
-}
-
-prefwindow[animate="off"] > prefpane,
-prefwindow[animate="off"] > prefpane[selected="true"],
-prefwindow[type="child"] > prefpane,
-prefwindow[type="child"] > prefpane[selected="true"] {
-  opacity: 1.0;
 }
 
 prefwindow > .paneDeckContainer {
@@ -1037,6 +1044,10 @@ prefwindow > .paneDeckContainer {
 
 prefpane > .content-box {
   overflow: hidden;
+}
+
+prefwindow[type="child"] > .paneDeckContainer {
+  overflow: -moz-hidden-unscrollable;
 }
 
 prefwindow[type="child"] > prefpane > .content-box {
@@ -1080,9 +1091,37 @@ richlistbox {
   -moz-binding: url('chrome://global/content/bindings/richlistbox.xml#richlistbox');
   -moz-user-focus: normal;
   -moz-appearance: listbox;
+  -moz-box-orient: vertical;
 }
 
 richlistitem {
   -moz-binding: url('chrome://global/content/bindings/richlistbox.xml#richlistitem');
 }
 
+richlistbox > listheader {
+  -moz-box-ordinal-group: 1;
+}
+
+/********** datepicker and timepicker ********/
+
+datepicker {
+  -moz-binding: url('chrome://global/content/bindings/datetimepicker.xml#datepicker');
+}
+
+datepicker[type="popup"] {
+  -moz-binding: url('chrome://global/content/bindings/datetimepicker.xml#datepicker-popup');
+}
+
+datepicker[type="grid"] {
+  -moz-binding: url('chrome://global/content/bindings/datetimepicker.xml#datepicker-grid');
+}
+
+timepicker {
+  -moz-binding: url('chrome://global/content/bindings/datetimepicker.xml#timepicker');
+}
+
+
+/*********** findbar ************/
+findbar {
+  -moz-binding: url('chrome://global/content/bindings/findbar.xml#findbar');
+}

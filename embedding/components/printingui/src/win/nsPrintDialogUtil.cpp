@@ -74,9 +74,8 @@ WIN_LIBS=                                       \
 #include "nsIWidget.h"
 #include "nsIPrintSettings.h"
 #include "nsIPrintSettingsWin.h"
-#include "nsUnitConversion.h"
 #include "nsIPrintOptions.h"
-#include "nsGfxCIID.h"
+#include "nsWidgetsCID.h"
 static NS_DEFINE_IID(kPrinterEnumeratorCID, NS_PRINTER_ENUMERATOR_CID);
 
 #include "nsRect.h"
@@ -98,8 +97,6 @@ static NS_DEFINE_IID(kPrinterEnumeratorCID, NS_PRINTER_ENUMERATOR_CID);
 
 // This is for extending the dialog
 #include <dlgs.h>
-
-static NS_DEFINE_CID(kStringBundleServiceCID,  NS_STRINGBUNDLESERVICE_CID);
 
 // For PrintDlgEx
 // needed because there are unicode/ansi versions of this routine
@@ -371,7 +368,7 @@ GetLocalizedBundle(const char * aPropFileName, nsIStringBundle** aStrBundle)
 
   // Create bundle
   nsCOMPtr<nsIStringBundleService> stringService = 
-    do_GetService(kStringBundleServiceCID, &rv);
+    do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
   if (NS_SUCCEEDED(rv) && stringService) {
     rv = stringService->CreateBundle(aPropFileName, aStrBundle);
   }
@@ -763,7 +760,7 @@ static HGLOBAL CreateGlobalDevModeAndInit(LPCTSTR aPrintName, nsIPrintSettings* 
   nsresult rv = NS_ERROR_FAILURE;
   HANDLE hPrinter = NULL;
   // const cast kludge for silly Win32 api's
-  LPTSTR printName = NS_CONST_CAST(char*, aPrintName);
+  LPTSTR printName = const_cast<char*>(aPrintName);
   BOOL status = ::OpenPrinter(printName, &hPrinter, NULL);
   if (status) {
 
@@ -887,7 +884,7 @@ ShowNativePrintDialog(HWND              aHWnd,
     HANDLE hPrinter = NULL;
     nsCAutoString printerNameNative;
     NS_CopyUnicodeToNative(nsDependentString(printerName), printerNameNative);
-    LPTSTR tempPrinterName = NS_CONST_CAST(char*, printerNameNative.get());
+    LPTSTR tempPrinterName = const_cast<char*>(printerNameNative.get());
     if(!::OpenPrinter(tempPrinterName, &hPrinter, NULL)) {
       // If the last used printer is not found, we should use default printer.
       printerName = GetDefaultPrinterNameFromGlobalPrinters();
@@ -1003,7 +1000,7 @@ ShowNativePrintDialog(HWND              aHWnd,
     if (prntdlg.Flags & PD_PRINTTOFILE) {
       char* fileName = &(((char *)devnames)[devnames->wOutputOffset]);
       NS_ASSERTION(strcmp(fileName, "FILE:") == 0, "FileName must be `FILE:`");
-      aPrintSettings->SetToFileName(NS_ConvertASCIItoUCS2(fileName).get());
+      aPrintSettings->SetToFileName(NS_ConvertASCIItoUTF16(fileName).get());
       aPrintSettings->SetPrintToFile(PR_TRUE);
     } else {
       // clear "print to file" info
@@ -1343,7 +1340,7 @@ ShowNativePrintDialogEx(HWND              aHWnd,
     if (prntdlg.Flags & PD_PRINTTOFILE) {
       char* fileName = &(((char *)devnames)[devnames->wOutputOffset]);
       NS_ASSERTION(strcmp(fileName, "FILE:") == 0, "FileName must be `FILE:`");
-      aPrintSettings->SetToFileName(NS_ConvertASCIItoUCS2(fileName).get());
+      aPrintSettings->SetToFileName(NS_ConvertASCIItoUTF16(fileName).get());
       aPrintSettings->SetPrintToFile(PR_TRUE);
     } else {
       // clear "print to file" info

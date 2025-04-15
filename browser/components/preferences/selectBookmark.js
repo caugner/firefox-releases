@@ -48,15 +48,13 @@
  */ 
 var SelectBookmarkDialog = {
   init: function SBD_init() {
+    document.getElementById("bookmarks").place =
+      "place:queryType=1&folder=" + PlacesUIUtils.allBookmarksFolderId;
+
     // Initial update of the OK button.
     this.selectionChanged();
-    
-    var bookmarks = document.getElementById("bookmarks");
-    bookmarks.excludeItems = false;
-    bookmarks.excludeQueries = true;
-    bookmarks.place = bookmarks.place;
   },
-  
+
   /** 
    * Update the disabled state of the OK button as the user changes the 
    * selection within the view. 
@@ -64,20 +62,26 @@ var SelectBookmarkDialog = {
   selectionChanged: function SBD_selectionChanged() {
     var accept = document.documentElement.getButton("accept");
     var bookmarks = document.getElementById("bookmarks");
-    accept.disabled = !bookmarks.hasSelection;
+    var disableAcceptButton = true;
+    if (bookmarks.hasSelection) {
+      if (!PlacesUtils.nodeIsSeparator(bookmarks.selectedNode))
+        disableAcceptButton = false;
+    }
+    accept.disabled = disableAcceptButton;
   },
-  
-  /**
-   * The user has double clicked on a tree row that is a link. Take this to
-   * mean that they want that link to be their homepage, and close the dialog.
-   */
-  linkChosen: function SBD_linkChosen() {
+
+  onItemDblClick: function SBD_onItemDblClick() {
     var bookmarks = document.getElementById("bookmarks");
-    if (bookmarks.hasSingleSelection && 
-        PlacesController.nodeIsURI(bookmarks.selectedNode))
+    var selectedNode = bookmarks.selectedNode;
+    if (selectedNode && PlacesUtils.nodeIsURI(selectedNode)) {
+      /**
+       * The user has double clicked on a tree row that is a link. Take this to
+       * mean that they want that link to be their homepage, and close the dialog.
+       */
       document.documentElement.getButton("accept").click();
+    }
   },
-  
+
   /**
    * User accepts their selection. Set all the selected URLs or the contents
    * of the selected folder as the list of homepages.
@@ -89,28 +93,22 @@ var SelectBookmarkDialog = {
     var urls = [];
     var names = [];
     var selectedNode = bookmarks.selectedNode;
-    if (bookmarks.hasSingleSelection && 
-        PlacesController.nodeIsFolder(selectedNode)) {
-      var contents = PlacesController.getFolderContents(asFolder(selectedNode).folderId);
+    if (PlacesUtils.nodeIsFolder(selectedNode)) {
+      var contents = PlacesUtils.getFolderContents(selectedNode.itemId).root;
       var cc = contents.childCount;
       for (var i = 0; i < cc; ++i) {
         var node = contents.getChild(i);
-        if (PlacesController.nodeIsURI(node)) {
+        if (PlacesUtils.nodeIsURI(node)) {
           urls.push(node.uri);
           names.push(node.title);
         }
       }
     }
     else {
-      var nodes = bookmarks.getSelectionNodes();
-      for (i = 0; i < nodes.length; ++i) {
-        urls.push(nodes[i].uri);
-        names.push(nodes[i].title);
-      }
+      urls.push(selectedNode.uri);
+      names.push(selectedNode.title);
     }
     window.arguments[0].urls = urls;
     window.arguments[0].names = names;
   }
 };
-
-#include ../../../toolkit/content/debug.js

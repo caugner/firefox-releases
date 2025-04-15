@@ -46,143 +46,12 @@
 #include "EmbedWindow.h"
 
 // so we can do our get_nsIWebBrowser later...
-#include <nsIWebBrowser.h>
-
-// for strings
-#include <nsXPIDLString.h>
-#include <nsReadableUtils.h>
-
-#ifdef MOZ_WIDGET_GTK2
+#include "nsIWebBrowser.h"
 
 #include "gtkmozembedmarshal.h"
 
 #define NEW_TOOLKIT_STRING(x) g_strdup(NS_ConvertUTF16toUTF8(x).get())
 #define GET_OBJECT_CLASS_TYPE(x) G_OBJECT_CLASS_TYPE(x)
-
-#endif /* MOZ_WIDGET_GTK2 */
-
-#ifdef MOZ_WIDGET_GTK
-
-// so we can get callbacks from the mozarea
-#include <gtkmozarea.h>
-
-// so we get the right marshaler for gtk 1.2
-#define gtkmozembed_VOID__INT_UINT \
-  gtk_marshal_NONE__INT_INT
-#define gtkmozembed_VOID__STRING_INT_INT \
-  gtk_marshal_NONE__POINTER_INT_INT
-#define gtkmozembed_VOID__STRING_INT_UINT \
-  gtk_marshal_NONE__POINTER_INT_INT
-#define gtkmozembed_VOID__POINTER_INT_POINTER \
-  gtk_marshal_NONE__POINTER_INT_POINTER
-#define gtkmozembed_BOOL__STRING \
-  gtk_marshal_BOOL__POINTER
-
-#define G_SIGNAL_TYPE_STATIC_SCOPE 0
-
-#define NEW_TOOLKIT_STRING(x) g_strdup(NS_LossyConvertUTF16toASCII(x).get())
-#define GET_OBJECT_CLASS_TYPE(x) (GTK_OBJECT_CLASS(x)->type)
-
-// Some "massaged" enum information for the GTK Type System
-static GtkFlagValue gtk_moz_embed_progress_flags_values[] = {
-  { GTK_MOZ_EMBED_FLAG_START,
-    "GTK_MOZ_EMBED_FLAG_START", "start" },
-  { GTK_MOZ_EMBED_FLAG_REDIRECTING,
-    "GTK_MOZ_EMBED_FLAG_REDIRECTING", "redirecting" },
-  { GTK_MOZ_EMBED_FLAG_TRANSFERRING,
-    "GTK_MOZ_EMBED_FLAG_TRANSFERRING", "transferring" },
-  { GTK_MOZ_EMBED_FLAG_NEGOTIATING,
-    "GTK_MOZ_EMBED_FLAG_NEGOTIATING", "negotiating" },
-  { GTK_MOZ_EMBED_FLAG_STOP,
-    "GTK_MOZ_EMBED_FLAG_STOP", "stop" },
-  { GTK_MOZ_EMBED_FLAG_IS_REQUEST,
-    "GTK_MOZ_EMBED_FLAG_IS_REQUEST", "is-request" },
-  { GTK_MOZ_EMBED_FLAG_IS_DOCUMENT,
-    "GTK_MOZ_EMBED_FLAG_IS_DOCUMENT", "is-document" },
-  { GTK_MOZ_EMBED_FLAG_IS_NETWORK,
-    "GTK_MOZ_EMBED_FLAG_IS_NETWORK", "is-network" },
-  { GTK_MOZ_EMBED_FLAG_IS_WINDOW,
-    "GTK_MOZ_EMBED_FLAG_IS_WINDOW", "is-window" },
-  { GTK_MOZ_EMBED_FLAG_RESTORING,
-    "GTK_MOZ_EMBED_FLAG_RESTORING", "restoring" },
-  { 0,
-    NULL, NULL }
-};
-
-static GtkEnumValue gtk_moz_embed_status_enums_values[] = {
-  { GTK_MOZ_EMBED_STATUS_FAILED_DNS,
-    "GTK_MOZ_EMBED_STATUS_FAILED_DNS", "failed-dns" },
-  { GTK_MOZ_EMBED_STATUS_FAILED_CONNECT,
-    "GTK_MOZ_EMBED_STATUS_FAILED_CONNECT", "failed-connect" },
-  { GTK_MOZ_EMBED_STATUS_FAILED_TIMEOUT,
-    "GTK_MOZ_EMBED_STATUS_FAILED_TIMEOUT", "failed-timeout" },
-  { GTK_MOZ_EMBED_STATUS_FAILED_USERCANCELED,
-    "GTK_MOZ_EMBED_STATUS_FAILED_USERCANCELED", "failed-usercanceled" },
-  { 0,
-    NULL, NULL }
-};
-
-static GtkFlagValue gtk_moz_embed_reload_flags_values[] = {
-  { GTK_MOZ_EMBED_FLAG_RELOADNORMAL,
-    "GTK_MOZ_EMBED_FLAG_RELOADNORMAL", "reloadnormal" },
-  { GTK_MOZ_EMBED_FLAG_RELOADBYPASSCACHE,
-    "GTK_MOZ_EMBED_FLAG_RELOADBYPASSCACHE", "reloadbypasscache" },
-  { GTK_MOZ_EMBED_FLAG_RELOADBYPASSPROXY,
-    "GTK_MOZ_EMBED_FLAG_RELOADBYPASSPROXY", "reloadbypassproxy" },
-  { GTK_MOZ_EMBED_FLAG_RELOADBYPASSPROXYANDCACHE,
-    "GTK_MOZ_EMBED_FLAG_RELOADBYPASSPROXYANDCACHE",
-    "reloadbypassproxyandcache" },
-  { GTK_MOZ_EMBED_FLAG_RELOADCHARSETCHANGE,
-    "GTK_MOZ_EMBED_FLAG_RELOADCHARSETCHANGE", "reloadcharset" },
-  { 0,
-    NULL, NULL }
-};
-
-static GtkFlagValue gtk_moz_embed_chrome_flags_values[] = {
-  { GTK_MOZ_EMBED_FLAG_DEFAULTCHROME, 
-    "GTK_MOZ_EMBED_FLAG_DEFAULTCHROME", "defaultchrome" },
-  { GTK_MOZ_EMBED_FLAG_WINDOWBORDERSON, 
-    "GTK_MOZ_EMBED_FLAG_WINDOWBORDERSON", "windowborderson" },
-  { GTK_MOZ_EMBED_FLAG_WINDOWCLOSEON,
-    "GTK_MOZ_EMBED_FLAG_WINDOWCLOSEON", "windowcloseon" },
-  { GTK_MOZ_EMBED_FLAG_WINDOWRESIZEON,
-    "GTK_MOZ_EMBED_FLAG_WINDOWRESIZEON", "windowresizeon" },
-  { GTK_MOZ_EMBED_FLAG_MENUBARON, 
-    "GTK_MOZ_EMBED_FLAG_MENUBARON", "menubaron" },
-  { GTK_MOZ_EMBED_FLAG_TOOLBARON,
-    "GTK_MOZ_EMBED_FLAG_TOOLBARON", "toolbaron" },
-  { GTK_MOZ_EMBED_FLAG_LOCATIONBARON,
-    "GTK_MOZ_EMBED_FLAG_LOCATIONBARON", "locationbaron" },
-  { GTK_MOZ_EMBED_FLAG_STATUSBARON,
-    "GTK_MOZ_EMBED_FLAG_STATUSBARON", "statusbaron" },
-  { GTK_MOZ_EMBED_FLAG_PERSONALTOOLBARON,
-    "GTK_MOZ_EMBED_FLAG_PERSONALTOOLBARON", "personaltoolbaron" },
-  { GTK_MOZ_EMBED_FLAG_SCROLLBARSON,
-    "GTK_MOZ_EMBED_FLAG_SCROLLBARSON", "scrollbarson" },
-  { GTK_MOZ_EMBED_FLAG_TITLEBARON, 
-    "GTK_MOZ_EMBED_FLAG_TITLEBARON", "titlebaron" },
-  { GTK_MOZ_EMBED_FLAG_EXTRACHROMEON,
-    "GTK_MOZ_EMBED_FLAG_EXTRACHROMEON", "extrachromeon" },
-  { GTK_MOZ_EMBED_FLAG_ALLCHROME, 
-    "GTK_MOZ_EMBED_FLAG_ALLCHROME", "allchrome" },
-  { GTK_MOZ_EMBED_FLAG_WINDOWRAISED, 
-    "GTK_MOZ_EMBED_FLAG_WINDOWRAISED", "windowraised" },
-  { GTK_MOZ_EMBED_FLAG_WINDOWLOWERED,
-    "GTK_MOZ_EMBED_FLAG_WINDOWLOWERED", "windowlowered" },
-  { GTK_MOZ_EMBED_FLAG_CENTERSCREEN,
-    "GTK_MOZ_EMBED_FLAG_CENTERSCREEN", "centerscreen" },
-  { GTK_MOZ_EMBED_FLAG_DEPENDENT,
-    "GTK_MOZ_EMBED_FLAG_DEPENDENT", "dependent" },
-  { GTK_MOZ_EMBED_FLAG_MODAL,
-    "GTK_MOZ_EMBED_FLAG_MODAL", "modal" },
-  { GTK_MOZ_EMBED_FLAG_OPENASDIALOG,
-    "GTK_MOZ_EMBED_FLAG_OPENASDIALOG", "openasdialog" },
-  { GTK_MOZ_EMBED_FLAG_OPENASCHROME, 
-    "GTK_MOZ_EMBED_FLAG_OPENASCHROME", "openaschrome" },
-  { 0,
-    NULL, NULL }
-};
-#endif /* MOZ_WIDGET_GTK */
 
 class nsIDirectoryServiceProvider;
 
@@ -230,18 +99,6 @@ handle_child_focus_out(GtkWidget     *aWidget,
 		       GdkEventFocus *aGdkFocusEvent,
 		       GtkMozEmbed   *aEmbed);
 
-#ifdef MOZ_WIDGET_GTK
-// signal handlers for tracking the focus in and and focus out events
-// on the toplevel window.
-
-static void
-handle_toplevel_focus_in (GtkMozArea    *aArea,
-			  GtkMozEmbed   *aEmbed);
-static void
-handle_toplevel_focus_out(GtkMozArea    *aArea,
-			  GtkMozEmbed   *aEmbed);
-#endif /* MOZ_WIDGET_GTK */
-
 // globals for this type of widget
 
 static GtkBinClass *embed_parent_class;
@@ -250,24 +107,29 @@ guint moz_embed_signals[EMBED_LAST_SIGNAL] = { 0 };
 
 // GtkObject + class-related functions
 
-GtkType
+GType
 gtk_moz_embed_get_type(void)
 {
-  static GtkType moz_embed_type = 0;
-  if (!moz_embed_type)
+  static GType moz_embed_type = 0;
+  if (moz_embed_type == 0)
   {
-    static const GtkTypeInfo moz_embed_info =
+    const GTypeInfo our_info =
     {
-      "GtkMozEmbed",
-      sizeof(GtkMozEmbed),
       sizeof(GtkMozEmbedClass),
-      (GtkClassInitFunc)gtk_moz_embed_class_init,
-      (GtkObjectInitFunc)gtk_moz_embed_init,
-      0,
-      0,
-      0
+      NULL, /* base_init */
+      NULL, /* base_finalize */
+      (GClassInitFunc)gtk_moz_embed_class_init,
+      NULL,
+      NULL, /* class_data */
+      sizeof(GtkMozEmbed),
+      0, /* n_preallocs */
+      (GInstanceInitFunc)gtk_moz_embed_init,
     };
-    moz_embed_type = gtk_type_unique(GTK_TYPE_BIN, &moz_embed_info);
+
+    moz_embed_type = g_type_register_static(GTK_TYPE_BIN,
+                                            "GtkMozEmbed",
+                                            &our_info,
+                                            (GTypeFlags)0);
   }
 
   return moz_embed_type;
@@ -279,7 +141,7 @@ gtk_moz_embed_class_init(GtkMozEmbedClass *klass)
   GtkContainerClass  *container_class;
   GtkWidgetClass     *widget_class;
   GtkObjectClass     *object_class;
-  
+
   container_class = GTK_CONTAINER_CLASS(klass);
   widget_class    = GTK_WIDGET_CLASS(klass);
   object_class    = GTK_OBJECT_CLASS(klass);
@@ -297,223 +159,247 @@ gtk_moz_embed_class_init(GtkMozEmbedClass *klass)
 #endif
 
   object_class->destroy = gtk_moz_embed_destroy;
-  
+
   // set up our signals
 
-  moz_embed_signals[LINK_MESSAGE] = 
-    gtk_signal_new ("link_message",
-		    GTK_RUN_FIRST,
-		    GET_OBJECT_CLASS_TYPE(klass),
-		    GTK_SIGNAL_OFFSET(GtkMozEmbedClass, link_message),
-		    gtk_marshal_NONE__NONE,
-		    GTK_TYPE_NONE, 0);
+  moz_embed_signals[LINK_MESSAGE] =
+    g_signal_new("link_message",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, link_message),
+                 NULL, NULL,
+                 gtk_marshal_NONE__NONE,
+                 G_TYPE_NONE, 0);
   moz_embed_signals[JS_STATUS] =
-    gtk_signal_new ("js_status",
-		    GTK_RUN_FIRST,
-		    GET_OBJECT_CLASS_TYPE(klass),
-		    GTK_SIGNAL_OFFSET(GtkMozEmbedClass, js_status),
-		    gtk_marshal_NONE__NONE,
-		    GTK_TYPE_NONE, 0);
+    g_signal_new("js_status",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, js_status),
+                 NULL, NULL,
+                 gtk_marshal_NONE__NONE,
+                 G_TYPE_NONE, 0);
   moz_embed_signals[LOCATION] =
-    gtk_signal_new ("location",
-		    GTK_RUN_FIRST,
-		    GET_OBJECT_CLASS_TYPE(klass),
-		    GTK_SIGNAL_OFFSET(GtkMozEmbedClass, location),
-		    gtk_marshal_NONE__NONE,
-		    GTK_TYPE_NONE, 0);
-  moz_embed_signals[TITLE] = 
-    gtk_signal_new("title",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, title),
-		   gtk_marshal_NONE__NONE,
-		   GTK_TYPE_NONE, 0);
+    g_signal_new("location",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, location),
+                 NULL, NULL,
+                 gtk_marshal_NONE__NONE,
+                 G_TYPE_NONE, 0);
+  moz_embed_signals[TITLE] =
+    g_signal_new("title",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, title),
+                 NULL, NULL,
+                 gtk_marshal_NONE__NONE,
+                 G_TYPE_NONE, 0);
   moz_embed_signals[PROGRESS] =
-    gtk_signal_new("progress",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, progress),
-		   gtk_marshal_NONE__INT_INT,
-		   GTK_TYPE_NONE, 2, GTK_TYPE_INT, GTK_TYPE_INT);
-  moz_embed_signals[PROGRESS_ALL] = 
-    gtk_signal_new("progress_all",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, progress_all),
-		   gtkmozembed_VOID__STRING_INT_INT,
-		   GTK_TYPE_NONE, 3,
-		   GTK_TYPE_STRING | G_SIGNAL_TYPE_STATIC_SCOPE,
-		   GTK_TYPE_INT, GTK_TYPE_INT);
+    g_signal_new("progress",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, progress),
+                 NULL, NULL,
+                 gtk_marshal_NONE__INT_INT,
+                 G_TYPE_NONE, 2, G_TYPE_INT, G_TYPE_INT);
+  moz_embed_signals[PROGRESS_ALL] =
+    g_signal_new("progress_all",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, progress_all),
+                 NULL, NULL,
+                 gtkmozembed_VOID__STRING_INT_INT,
+                 G_TYPE_NONE, 3,
+                 G_TYPE_STRING | G_SIGNAL_TYPE_STATIC_SCOPE,
+                 G_TYPE_INT, G_TYPE_INT);
   moz_embed_signals[NET_STATE] =
-    gtk_signal_new("net_state",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, net_state),
-		   gtkmozembed_VOID__INT_UINT,
-		   GTK_TYPE_NONE, 2, GTK_TYPE_INT, GTK_TYPE_UINT);
+    g_signal_new("net_state",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, net_state),
+                 NULL, NULL,
+                 gtkmozembed_VOID__INT_UINT,
+                 G_TYPE_NONE, 2, G_TYPE_INT, G_TYPE_UINT);
   moz_embed_signals[NET_STATE_ALL] =
-    gtk_signal_new("net_state_all",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, net_state_all),
-		   gtkmozembed_VOID__STRING_INT_UINT,
-		   GTK_TYPE_NONE, 3,
-		   GTK_TYPE_STRING | G_SIGNAL_TYPE_STATIC_SCOPE,
-		   GTK_TYPE_INT, GTK_TYPE_UINT);
+    g_signal_new("net_state_all",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, net_state_all),
+                 NULL, NULL,
+                 gtkmozembed_VOID__STRING_INT_UINT,
+                 G_TYPE_NONE, 3,
+                 G_TYPE_STRING | G_SIGNAL_TYPE_STATIC_SCOPE,
+                 G_TYPE_INT, G_TYPE_UINT);
   moz_embed_signals[NET_START] =
-    gtk_signal_new("net_start",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, net_start),
-		   gtk_marshal_NONE__NONE,
-		   GTK_TYPE_NONE, 0);
+    g_signal_new("net_start",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, net_start),
+                 NULL, NULL,
+                 gtk_marshal_NONE__NONE,
+                 G_TYPE_NONE, 0);
   moz_embed_signals[NET_STOP] =
-    gtk_signal_new("net_stop",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, net_stop),
-		   gtk_marshal_NONE__NONE,
-		   GTK_TYPE_NONE, 0);
+    g_signal_new("net_stop",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, net_stop),
+                 NULL, NULL,
+                 gtk_marshal_NONE__NONE,
+                 G_TYPE_NONE, 0);
   moz_embed_signals[NEW_WINDOW] =
-    gtk_signal_new("new_window",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, new_window),
-		   gtk_marshal_NONE__POINTER_UINT,
-		   GTK_TYPE_NONE, 2, GTK_TYPE_POINTER, GTK_TYPE_UINT);
+    g_signal_new("new_window",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, new_window),
+                 NULL, NULL,
+                 gtk_marshal_NONE__POINTER_UINT,
+                 G_TYPE_NONE, 2, G_TYPE_POINTER, G_TYPE_UINT);
   moz_embed_signals[VISIBILITY] =
-    gtk_signal_new("visibility",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, visibility),
-		   gtk_marshal_NONE__BOOL,
-		   GTK_TYPE_NONE, 1, GTK_TYPE_BOOL);
+    g_signal_new("visibility",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, visibility),
+                 NULL, NULL,
+                 gtk_marshal_NONE__BOOL,
+                 G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
   moz_embed_signals[DESTROY_BROWSER] =
-    gtk_signal_new("destroy_browser",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, destroy_brsr),
-		   gtk_marshal_NONE__NONE,
-		   GTK_TYPE_NONE, 0);
-  moz_embed_signals[OPEN_URI] = 
-    gtk_signal_new("open_uri",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, open_uri),
-		   gtkmozembed_BOOL__STRING,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_STRING |
-		                     G_SIGNAL_TYPE_STATIC_SCOPE);
+    g_signal_new("destroy_browser",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, destroy_brsr),
+                 NULL, NULL,
+                 gtk_marshal_NONE__NONE,
+                 G_TYPE_NONE, 0);
+  moz_embed_signals[OPEN_URI] =
+    g_signal_new("open_uri",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, open_uri),
+                 NULL, NULL,
+                 gtkmozembed_BOOL__STRING,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_STRING |
+                 G_SIGNAL_TYPE_STATIC_SCOPE);
   moz_embed_signals[SIZE_TO] =
-    gtk_signal_new("size_to",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, size_to),
-		   gtk_marshal_NONE__INT_INT,
-		   GTK_TYPE_NONE, 2, GTK_TYPE_INT, GTK_TYPE_INT);
+    g_signal_new("size_to",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, size_to),
+                 NULL, NULL,
+                 gtk_marshal_NONE__INT_INT,
+                 G_TYPE_NONE, 2, G_TYPE_INT, G_TYPE_INT);
   moz_embed_signals[DOM_KEY_DOWN] =
-    gtk_signal_new("dom_key_down",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_key_down),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_key_down",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_key_down),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_KEY_PRESS] =
-    gtk_signal_new("dom_key_press",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_key_press),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_key_press",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_key_press),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_KEY_UP] =
-    gtk_signal_new("dom_key_up",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_key_up),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_key_up",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_key_up),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_MOUSE_DOWN] =
-    gtk_signal_new("dom_mouse_down",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_mouse_down),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_mouse_down",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_mouse_down),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_MOUSE_UP] =
-    gtk_signal_new("dom_mouse_up",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_mouse_up),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_mouse_up",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_mouse_up),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_MOUSE_CLICK] =
-    gtk_signal_new("dom_mouse_click",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_mouse_click),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_mouse_click",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_mouse_click),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_MOUSE_DBL_CLICK] =
-    gtk_signal_new("dom_mouse_dbl_click",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_mouse_dbl_click),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_mouse_dbl_click",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_mouse_dbl_click),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_MOUSE_OVER] =
-    gtk_signal_new("dom_mouse_over",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_mouse_over),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_mouse_over",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_mouse_over),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_MOUSE_OUT] =
-    gtk_signal_new("dom_mouse_out",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_mouse_out),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_mouse_out",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_mouse_out),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[SECURITY_CHANGE] =
-    gtk_signal_new("security_change",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, security_change),
-		   gtk_marshal_NONE__POINTER_UINT,
-		   GTK_TYPE_NONE, 2, GTK_TYPE_POINTER, GTK_TYPE_UINT);
+    g_signal_new("security_change",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, security_change),
+                 NULL, NULL,
+                 gtk_marshal_NONE__POINTER_UINT,
+                 G_TYPE_NONE, 2, G_TYPE_POINTER, G_TYPE_UINT);
   moz_embed_signals[STATUS_CHANGE] =
-    gtk_signal_new("status_change",
-		   GTK_RUN_LAST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, status_change),
-		   gtkmozembed_VOID__POINTER_INT_POINTER,
-		   GTK_TYPE_NONE, 3,
-		   GTK_TYPE_POINTER, GTK_TYPE_INT, GTK_TYPE_POINTER);
+    g_signal_new("status_change",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, status_change),
+                 NULL, NULL,
+                 gtkmozembed_VOID__POINTER_INT_POINTER,
+                 G_TYPE_NONE, 3,
+                 G_TYPE_POINTER, G_TYPE_INT, G_TYPE_POINTER);
   moz_embed_signals[DOM_ACTIVATE] =
-    gtk_signal_new("dom_activate",
-                   GTK_RUN_LAST,
-                   GET_OBJECT_CLASS_TYPE(klass),
-                   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_activate),
-                   gtk_marshal_BOOL__POINTER,
-                   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_activate",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_activate),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_FOCUS_IN] =
-    gtk_signal_new("dom_focus_in",
-                   GTK_RUN_LAST,
-                   GET_OBJECT_CLASS_TYPE(klass),
-                   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_focus_in),
-                   gtk_marshal_BOOL__POINTER,
-                   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+    g_signal_new("dom_focus_in",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_focus_in),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
   moz_embed_signals[DOM_FOCUS_OUT] =
-    gtk_signal_new("dom_focus_out",
-                   GTK_RUN_LAST,
-                   GET_OBJECT_CLASS_TYPE(klass),
-                   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_focus_out),
-                   gtk_marshal_BOOL__POINTER,
-                   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
-#ifdef MOZ_WIDGET_GTK
-  gtk_object_class_add_signals(object_class, moz_embed_signals,
-			       EMBED_LAST_SIGNAL);
-#endif /* MOZ_WIDGET_GTK */
-
+    g_signal_new("dom_focus_out",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 G_STRUCT_OFFSET(GtkMozEmbedClass, dom_focus_out),
+                 NULL, NULL,
+                 gtk_marshal_BOOL__POINTER,
+                 G_TYPE_BOOLEAN, 1, G_TYPE_POINTER);
 }
 
 static void
@@ -523,15 +409,13 @@ gtk_moz_embed_init(GtkMozEmbed *embed)
   embed->data = priv;
   gtk_widget_set_name(GTK_WIDGET(embed), "gtkmozembed");
 
-#ifdef MOZ_WIDGET_GTK2
   GTK_WIDGET_UNSET_FLAGS(GTK_WIDGET(embed), GTK_NO_WINDOW);
-#endif
 }
 
 GtkWidget *
 gtk_moz_embed_new(void)
 {
-  return GTK_WIDGET(gtk_type_new(gtk_moz_embed_get_type()));
+  return GTK_WIDGET(g_object_new(GTK_TYPE_MOZ_EMBED, NULL));
 }
 
 // GtkObject methods
@@ -615,32 +499,16 @@ gtk_moz_embed_realize(GtkWidget *widget)
 
   // connect to the focus out event for the child
   GtkWidget *child_widget = GTK_BIN(widget)->child;
-  gtk_signal_connect_while_alive(GTK_OBJECT(child_widget),
-				 "focus_out_event",
-				 GTK_SIGNAL_FUNC(handle_child_focus_out),
-				 embed,
-				 GTK_OBJECT(child_widget));
-  gtk_signal_connect_while_alive(GTK_OBJECT(child_widget),
-				 "focus_in_event",
-				 GTK_SIGNAL_FUNC(handle_child_focus_in),
-				 embed,
-				 GTK_OBJECT(child_widget));
-
-#ifdef MOZ_WIDGET_GTK
-  // connect to the toplevel focus out events for the child
-  GtkMozArea *mozarea = GTK_MOZAREA(child_widget);
-  gtk_signal_connect_while_alive(GTK_OBJECT(mozarea),
-				 "toplevel_focus_in",
-				 GTK_SIGNAL_FUNC(handle_toplevel_focus_in),
-				 embed,
-				 GTK_OBJECT(mozarea));
-
-  gtk_signal_connect_while_alive(GTK_OBJECT(mozarea),
-				 "toplevel_focus_out",
-				 GTK_SIGNAL_FUNC(handle_toplevel_focus_out),
-				 embed,
-				 GTK_OBJECT(mozarea));
-#endif /* MOZ_WIDGET_GTK */
+  g_signal_connect_object(G_OBJECT(child_widget),
+                          "focus_out_event",
+                          GTK_SIGNAL_FUNC(handle_child_focus_out),
+                          embed,
+                          G_CONNECT_AFTER);
+  g_signal_connect_object(G_OBJECT(child_widget),
+                          "focus_in_event",
+                          GTK_SIGNAL_FUNC(handle_child_focus_in),
+                          embed,
+                          G_CONNECT_AFTER);
 }
 
 static void
@@ -734,7 +602,7 @@ gtk_moz_embed_get_accessible (GtkWidget *widget)
 
   GtkMozEmbed  *embed = GTK_MOZ_EMBED(widget);;
   EmbedPrivate *embedPrivate = (EmbedPrivate *)embed->data;
-  return NS_STATIC_CAST(AtkObject *,
+  return static_cast<AtkObject *>(
                         embedPrivate->GetAtkObjectForCurrentDocument());
 }
 #endif /* MOZ_ACCESSIBILITY_ATK */
@@ -767,28 +635,6 @@ handle_child_focus_out(GtkWidget     *aWidget,
   return FALSE;
 }
 
-#ifdef MOZ_WIDGET_GTK
-void
-handle_toplevel_focus_in (GtkMozArea    *aArea,
-			  GtkMozEmbed   *aEmbed)
-{
-  EmbedPrivate   *embedPrivate;
-  embedPrivate = (EmbedPrivate *)aEmbed->data;
-
-  embedPrivate->TopLevelFocusIn();
-}
-
-void
-handle_toplevel_focus_out(GtkMozArea    *aArea,
-			  GtkMozEmbed   *aEmbed)
-{
-  EmbedPrivate   *embedPrivate;
-  embedPrivate = (EmbedPrivate *)aEmbed->data;
-
-  embedPrivate->TopLevelFocusOut();
-}
-#endif /* MOZ_WIDGET_GTK */
-
 // Widget methods
 
 void
@@ -801,6 +647,12 @@ void
 gtk_moz_embed_pop_startup(void)
 {
   EmbedPrivate::PopStartup();
+}
+
+void
+gtk_moz_embed_set_path(const char *aPath)
+{
+  EmbedPrivate::SetPath(aPath);
 }
 
 void
@@ -1040,7 +892,7 @@ gtk_moz_embed_get_location(GtkMozEmbed *embed)
   embedPrivate = (EmbedPrivate *)embed->data;
   
   if (!embedPrivate->mURI.IsEmpty())
-    retval = NEW_TOOLKIT_STRING(embedPrivate->mURI);
+    retval = g_strdup(embedPrivate->mURI.get());
 
   return retval;
 }
@@ -1108,58 +960,6 @@ gtk_moz_embed_get_chrome_mask(GtkMozEmbed *embed)
 
   return embedPrivate->mChromeMask;
 }
-
-#ifdef MOZ_WIDGET_GTK
-
-GtkType
-gtk_moz_embed_progress_flags_get_type(void)
-{
-  static GtkType progress_flags_type = 0;
-    
-  if (!progress_flags_type)
-    progress_flags_type =
-      gtk_type_register_flags("GtkMozEmbedReloadFlags",
-			      gtk_moz_embed_progress_flags_values);
-  return progress_flags_type;
-}
-
-GtkType
-gtk_moz_embed_status_enums_get_type(void)
-{
-  static GtkType status_enum_type = 0;
-
-  if (!status_enum_type)
-    status_enum_type =
-      gtk_type_register_enum("GtkMozEmbedStatusFlags",
-			     gtk_moz_embed_status_enums_values);
-  return status_enum_type;
-}
-
-GtkType
-gtk_moz_embed_reload_flags_get_type(void)
-{
-  static GtkType reload_flags_type = 0;
-
-  if (!reload_flags_type)
-    reload_flags_type =
-      gtk_type_register_flags("GtkMozEmbedReloadFlags",
-			      gtk_moz_embed_reload_flags_values);
-  return reload_flags_type;
-}
-
-GtkType
-gtk_moz_embed_chrome_flags_get_type(void)
-{
-  static GtkType chrome_flags_type = 0;
-
-  if (!chrome_flags_type)
-    chrome_flags_type = 
-      gtk_type_register_flags("GtkMozEmbedChromeFlags",
-			      gtk_moz_embed_chrome_flags_values);
-  return chrome_flags_type;
-}
-
-#endif /* MOZ_WIDGET_GTK */
 
 void
 gtk_moz_embed_get_nsIWebBrowser  (GtkMozEmbed *embed, nsIWebBrowser **retval)
@@ -1246,25 +1046,29 @@ guint moz_embed_single_signals[SINGLE_LAST_SIGNAL] = { 0 };
 
 // GtkObject + class-related functions
 
-GtkType
+GType
 gtk_moz_embed_single_get_type(void)
 {
-  static GtkType moz_embed_single_type = 0;
-  if (!moz_embed_single_type)
+  static GType moz_embed_single_type = 0;
+  if (moz_embed_single_type == 0)
   {
-    static const GtkTypeInfo moz_embed_single_info =
+    const GTypeInfo our_info =
     {
-      "GtkMozEmbedSingle",
-      sizeof(GtkMozEmbedSingle),
-      sizeof(GtkMozEmbedSingleClass),
-      (GtkClassInitFunc)gtk_moz_embed_single_class_init,
-      (GtkObjectInitFunc)gtk_moz_embed_single_init,
-      0,
-      0,
-      0
+      sizeof(GtkMozEmbedClass),
+      NULL, /* base_init */
+      NULL, /* base_finalize */
+      (GClassInitFunc)gtk_moz_embed_single_class_init,
+      NULL,
+      NULL, /* class_data */
+      sizeof(GtkMozEmbed),
+      0, /* n_preallocs */
+      (GInstanceInitFunc)gtk_moz_embed_single_init,
     };
-    moz_embed_single_type = gtk_type_unique(GTK_TYPE_OBJECT,
-					    &moz_embed_single_info);
+
+    moz_embed_single_type = g_type_register_static(GTK_TYPE_OBJECT,
+                                                   "GtkMozEmbedSingle",
+                                                   &our_info,
+                                                   (GTypeFlags)0);
   }
 
   return moz_embed_single_type;
@@ -1280,18 +1084,14 @@ gtk_moz_embed_single_class_init(GtkMozEmbedSingleClass *klass)
   // set up our signals
 
   moz_embed_single_signals[NEW_WINDOW_ORPHAN] =
-    gtk_signal_new("new_window_orphan",
-		   GTK_RUN_FIRST,
-		   GET_OBJECT_CLASS_TYPE(klass),
-		   GTK_SIGNAL_OFFSET(GtkMozEmbedSingleClass,
-				     new_window_orphan),
-		   gtk_marshal_NONE__POINTER_UINT,
-		   GTK_TYPE_NONE, 2, GTK_TYPE_POINTER, GTK_TYPE_UINT);
-  
-#ifdef MOZ_WIDGET_GTK
-  gtk_object_class_add_signals(object_class, moz_embed_single_signals,
-			       SINGLE_LAST_SIGNAL);
-#endif /* MOZ_WIDGET_GTK */
+    g_signal_new("new_window_orphan",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_FIRST,
+                 G_STRUCT_OFFSET(GtkMozEmbedSingleClass, new_window_orphan),
+                 NULL, NULL,
+                 gtk_marshal_NONE__POINTER_UINT,
+                 G_TYPE_NONE, 2, G_TYPE_POINTER, G_TYPE_UINT);
+
 }
 
 static void
@@ -1305,7 +1105,7 @@ gtk_moz_embed_single_init(GtkMozEmbedSingle *embed)
 GtkMozEmbedSingle *
 gtk_moz_embed_single_new(void)
 {
-  return (GtkMozEmbedSingle *)gtk_type_new(gtk_moz_embed_single_get_type());
+  return (GtkMozEmbedSingle *)g_object_new(GTK_TYPE_MOZ_EMBED_SINGLE, NULL);
 }
 
 GtkMozEmbedSingle *
@@ -1332,8 +1132,8 @@ gtk_moz_embed_single_create_window(GtkMozEmbed **aNewEmbed,
   if (!single)
     return;
 
-  gtk_signal_emit(GTK_OBJECT(single),
-		  moz_embed_single_signals[NEW_WINDOW_ORPHAN],
-		  aNewEmbed, aChromeFlags);
+  g_signal_emit(G_OBJECT(single),
+                moz_embed_single_signals[NEW_WINDOW_ORPHAN], 0,
+                aNewEmbed, aChromeFlags);
 
 }

@@ -64,7 +64,12 @@ REQUIRES	= gfx \
 		  plugin \
 		  docshell \
 		  webbrowserpersist \
-     		  imglib2 \
+		  content \
+		  imglib2 \
+		  unicharutil \
+		  layout \
+		  cairo \
+		  thebes \
 		  $(NULL)
 
 ifdef BUILD_STATIC_LIBS
@@ -78,15 +83,23 @@ CPPSRCS		= \
 		nsFilePicker.cpp \
 		nsFrameWindow.cpp \
 		nsLookAndFeel.cpp \
+		nsOS2Uni.cpp \
+		nsPrintOS2.cpp \
 		nsSound.cpp \
 		nsToolkit.cpp \
 		nsWidgetFactory.cpp \
 		nsWindow.cpp \
 		nsDragService.cpp \
+		nsScreenOS2.cpp	\
+		nsScreenManagerOS2.cpp \
+		nsDeviceContextSpecOS2.cpp \
+		nsPrintOptionsOS2.cpp \
+		nsRwsService.cpp \
+		nsIdleServiceOS2.cpp \
 		$(NULL)
 
 SHARED_LIBRARY_LIBS = \
-	$(DIST)/lib/$(LIB_PREFIX)xpwidgets_s.$(LIB_SUFFIX) \
+	../xpwidgets/$(LIB_PREFIX)xpwidgets_s.$(LIB_SUFFIX) \
 	$(NULL)
 
 EXTRA_DSO_LIBS	= gkgfx
@@ -95,6 +108,8 @@ EXTRA_DSO_LDOPTS = \
 		$(EXTRA_DSO_LIBS) \
 		$(MOZ_UNICHARUTIL_LIBS) \
 		$(MOZ_COMPONENT_LIBS) \
+		-lthebes \
+		$(LCMS_LIBS) \
 		$(NULL)
 
 ifdef ENABLE_TESTS
@@ -105,6 +120,10 @@ include $(topsrcdir)/config/rules.mk
 
 DEFINES		+= -D_IMPL_NS_WIDGET
 
+DEFINES += -DUSE_OS2_TOOLKIT_HEADERS
+
+DEFINES += -DMOZ_APP_DISPLAYNAME=\"$(MOZ_APP_DISPLAYNAME)\"
+
 LOCAL_INCLUDES	= -I. -I$(srcdir)/../xpwidgets -I$(srcdir)
 
 export::
@@ -112,3 +131,5 @@ export::
 	test -f ./res/aliasb.ptr || cp $(srcdir)/res/*.* ./res
 
 ADD_TO_DEF_FILE = cat < $(srcdir)/extradefs.os2 >>$(DEF_FILE)
+
+

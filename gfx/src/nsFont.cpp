@@ -44,7 +44,9 @@ nsFont::nsFont(const char* aName, PRUint8 aStyle, PRUint8 aVariant,
                PRUint16 aWeight, PRUint8 aDecoration, nscoord aSize,
                float aSizeAdjust)
 {
-  name.AssignWithConversion(aName);
+  NS_ASSERTION(aName && IsASCII(nsDependentCString(aName)),
+               "Must only pass ASCII names here");
+  name.AssignASCII(aName);
   style = aStyle;
   systemFont = PR_FALSE;
   variant = aVariant;
@@ -91,17 +93,25 @@ nsFont::~nsFont()
 {
 }
 
-PRBool nsFont::Equals(const nsFont& aOther) const
+PRBool nsFont::BaseEquals(const nsFont& aOther) const
 {
   if ((style == aOther.style) &&
       (systemFont == aOther.systemFont) &&
-      (variant == aOther.variant) &&
       (familyNameQuirks == aOther.familyNameQuirks) &&
       (weight == aOther.weight) &&
-      (decorations == aOther.decorations) &&
       (size == aOther.size) &&
       (sizeAdjust == aOther.sizeAdjust) &&
       name.Equals(aOther.name, nsCaseInsensitiveStringComparator())) {
+    return PR_TRUE;
+  }
+  return PR_FALSE;
+}
+
+PRBool nsFont::Equals(const nsFont& aOther) const
+{
+  if (BaseEquals(aOther) &&
+      (variant == aOther.variant) &&
+      (decorations == aOther.decorations)) {
     return PR_TRUE;
   }
   return PR_FALSE;

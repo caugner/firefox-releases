@@ -11,6 +11,8 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
+ * The Original Code is mozilla.org code.
+ *
  * The Initial Developer of the Original Code is Google Inc.
  * Portions created by the Initial Developer are Copyright (C) 2006
  * the Initial Developer. All Rights Reserved.
@@ -70,7 +72,7 @@ nsStreamCipher::InitWithIV_(nsIKeyObject *aKey, SECItem* aIV)
   rv = aKey->GetKeyObj(&keyObj);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  PK11SymKey *symkey = NS_REINTERPRET_CAST(PK11SymKey*, keyObj);
+  PK11SymKey *symkey = reinterpret_cast<PK11SymKey*>(keyObj);
   if (!symkey)
     return NS_ERROR_FAILURE;
 

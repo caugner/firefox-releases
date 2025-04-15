@@ -89,7 +89,6 @@ DEFINES += -DMOZILLA_INTERNAL_API=1
 # when building the mozcomps meta component
 ifneq (,$(filter mozcomps,$(MOZ_META_COMPONENTS)))
 BUILD_STATIC_LIBS=
-BUILD_SHARED_LIBS=1
 endif
 
 ifdef BUILD_STATIC_LIBS
@@ -128,6 +127,11 @@ EXTRA_DSO_LDOPTS += $(MOZ_GTK_LDFLAGS)
 include $(topsrcdir)/config/rules.mk
 
 CXXFLAGS        += $(MOZ_GTK_CFLAGS)
+
+ifneq ($(QCONF_OVERRIDE),)
+include $(QCONF_OVERRIDE)
+CXXFLAGS        += -I$(if $(USE_INSTALL_ROOT),$(INSTALL_ROOT_nto),$(USE_ROOT_nto))/usr/include
+endif
 
 ifdef BUILD_STATIC_LIBS
 

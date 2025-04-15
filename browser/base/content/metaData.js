@@ -58,6 +58,12 @@ var onTable  = false;
 var onTitle  = false;
 var onLang   = false;
 
+// Interface for image loading content
+const nsIImageLoadingContent = Components.interfaces.nsIImageLoadingContent;
+
+const prefs = Components.classes["@mozilla.org/preferences-service;1"].
+              getService(Components.interfaces.nsIPrefBranch);
+
 const nsICacheService = Components.interfaces.nsICacheService;
 const cacheService = Components.classes["@mozilla.org/network/cache-service;1"]
                      .getService(nsICacheService);
@@ -66,6 +72,60 @@ httpCacheSession.doomEntriesIfExpired = false;
 var ftpCacheSession = cacheService.createSession("FTP", 0, true);
 ftpCacheSession.doomEntriesIfExpired = false;
 
+const PREF_PINGS_ENABLED = "browser.send_pings";
+const PREF_PINGS_MAX_PER_LINK = "browser.send_pings.max_per_link";
+const PREF_PINGS_REQUIRE_SAME_HOST = "browser.send_pings.require_same_host";
+
+/**
+ * This function generates an array of pings that will be sent if the given
+ * anchor element is clicked.  It basically duplicates the pref checking logic
+ * found in nsWebShell.cpp.  It might be nice to expose that functionality on
+ * some interface that both of these sections of code could share.
+ *
+ * @param elem
+ *   An anchor or area element
+ * @return 
+ *   An array of URL strings corresponding to the pings that would occur if
+ *   the element's href were loaded.
+ */
+function getPings(elem)
+{
+  var result = [];
+
+  var enabled = prefs.getBoolPref(PREF_PINGS_ENABLED);
+  if (!enabled)
+    return result;
+  var maxPings = prefs.getIntPref(PREF_PINGS_MAX_PER_LINK);
+  if (maxPings == 0)
+    return result;
+  var requireSameHost = prefs.getBoolPref(PREF_PINGS_REQUIRE_SAME_HOST);
+
+  const ios =
+      Components.classes["@mozilla.org/network/io-service;1"].
+      getService(Components.interfaces.nsIIOService);
+
+  var doc = elem.ownerDocument;
+  var docURI = ios.newURI(doc.documentURI, doc.characterSet, null);
+
+  // The URL strings returned by elem.ping are absolute URLs.
+  var pings = elem.ping;
+  if (!pings)
+    return result;
+  pings = pings.split(" ");
+  for (var i = 0; i < pings.length; ++i) {
+    if (requireSameHost) {
+      var uri = ios.newURI(pings[i], doc.characterSet, null);
+      if (uri.asciiHost == docURI.asciiHost)
+        result.push(pings[i]);
+    } else {
+      result.push(pings[i]);
+    }
+    if (result.length == maxPings)
+      break;
+  }
+
+  return result;
+}
 
 function onLoad()
 {
@@ -197,14 +257,35 @@ function checkForImage(elem, htmllocalname)
     } else {
       setInfo("image-filesize", gMetadataBundle.getString("imageSizeUnknown"));
     }
-    if ("width" in img && img.width != "") {
-      setInfo("image-width", gMetadataBundle.getFormattedString("imageWidth", [ img.width ]));
-      setInfo("image-height", gMetadataBundle.getFormattedString("imageHeight", [ img.height ]));
+
+    var imageRequest = img.QueryInterface(nsIImageLoadingContent)
+                          .getRequest(nsIImageLoadingContent.CURRENT_REQUEST);
+    var image = imageRequest && imageRequest.image;
+    var imageType = "";
+    if (imageRequest) {
+      imageType = imageRequest.mimeType;
+      var imageMimeType = /^image\/(.*)/.exec(imageType);
+      if (imageMimeType) {
+        imageType = imageMimeType[1].toUpperCase();
+        if (image && image.numFrames > 1)
+          imageType = gMetadataBundle.getFormattedString("animatedImageType",
+                                                         [imageType, image.numFrames]);
+        else
+          imageType = gMetadataBundle.getFormattedString("imageType", [imageType]);
+      }
     }
-    else {
-      setInfo("image-width", "");
-      setInfo("image-height", "");
+    setInfo("image-type", imageType);
+
+    var imageSize = "";
+    if (img.width) {
+      if (image && (image.width != img.width || image.height != img.height))
+        imageSize = gMetadataBundle.getFormattedString("imageDimensionsScaled",
+                                                       [image.width, image.height,
+                                                        img.width,   img.height]);
+      else
+        imageSize = gMetadataBundle.getFormattedString("imageDimensions", [img.width, img.height]);
     }        
+    setInfo("image-size", imageSize);
      
     if (imgType == "img") {
       setInfo("image-desc", img.longDesc);
@@ -234,6 +315,7 @@ function checkForLink(elem, htmllocalname)
     setInfo("link-type", elem.getAttribute("type"));
     setInfo("link-rel",  elem.getAttribute("rel"));
     setInfo("link-rev",  elem.getAttribute("rev"));
+    setInfo("link-ping", getPings(elem).join('\n'));
 
     var target = elem.target;
 
@@ -245,7 +327,11 @@ function checkForLink(elem, htmllocalname)
       setInfo("link-target", gMetadataBundle.getString("parentFrameText"));
       break;
     case "_blank":
-      setInfo("link-target", gMetadataBundle.getString("newWindowText"));
+      var where = "Window";
+      var newWindowPref = prefs.getIntPref("browser.link.open_newwindow");
+      if (newWindowPref == 3)
+        where = "Tab";
+      setInfo("link-target", gMetadataBundle.getString("new" + where + "Text"));
       break;
     case "":
     case "_self":
@@ -278,6 +364,7 @@ function checkForLink(elem, htmllocalname)
     setInfo("link-type", "");
     setInfo("link-rel", "");
     setInfo("link-rev", "");
+    setInfo("link-ping", "");
 
     switch (elem.getAttributeNS(XLinkNS,"show")) {
     case "embed":
@@ -487,7 +574,7 @@ function convertLanguageCode(abbr)
     // and the rest as strings.
     try
     {
-      language = gLangBundle.getString(tokens[0]);
+      language = gLangBundle.getString(tokens[0].toLowerCase());
     }
     catch (e) 
     {

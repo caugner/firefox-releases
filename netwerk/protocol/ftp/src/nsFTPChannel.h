@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim:set ts=4 sw=4 sts=4 et cindent: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -20,6 +21,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Doug Turner <dougt@meer.net> (original author)
+ *   Darin Fisher <darin@meer.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -35,10 +38,10 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-// ftp implementation header
-
 #ifndef nsFTPChannel_h___
 #define nsFTPChannel_h___
+
+#include "nsBaseChannel.h"
 
 #include "nsIIOService.h"
 #include "nsIURI.h"
@@ -53,18 +56,12 @@
 #include "netCore.h"
 #include "nsIStreamListener.h"
 #include "nsAutoLock.h"
-#include "nsIPrompt.h"
-#include "nsIAuthPrompt.h"
 #include "nsIFTPChannel.h"
 #include "nsIUploadChannel.h"
 #include "nsIProxyInfo.h"
+#include "nsIProxiedChannel.h"
 #include "nsIResumableChannel.h"
 #include "nsHashPropertyBag.h"
-
-#include "nsICacheService.h"
-#include "nsICacheEntryDescriptor.h"
-#include "nsICacheListener.h"
-#include "nsICacheSession.h"
 
 #define FTP_COMMAND_CHANNEL_SEG_SIZE 64
 #define FTP_COMMAND_CHANNEL_SEG_COUNT 8
@@ -72,94 +69,65 @@
 #define FTP_DATA_CHANNEL_SEG_SIZE  (4*1024)
 #define FTP_DATA_CHANNEL_SEG_COUNT 8
 
-#define FTP_CACHE_CONTROL_CONNECTION 1
-
-class nsFTPChannel : public nsHashPropertyBag,
+class nsFtpChannel : public nsBaseChannel,
                      public nsIFTPChannel,
                      public nsIUploadChannel,
-                     public nsIInterfaceRequestor,
-                     public nsIProgressEventSink,
-                     public nsIStreamListener, 
-                     public nsICacheListener,
-                     public nsIResumableChannel
+                     public nsIResumableChannel,
+                     public nsIProxiedChannel
 {
 public:
     NS_DECL_ISUPPORTS_INHERITED
-    NS_DECL_NSIREQUEST
-    NS_DECL_NSICHANNEL
     NS_DECL_NSIUPLOADCHANNEL
-    NS_DECL_NSIFTPCHANNEL
-    NS_DECL_NSIINTERFACEREQUESTOR
-    NS_DECL_NSIPROGRESSEVENTSINK
-    NS_DECL_NSISTREAMLISTENER
-    NS_DECL_NSIREQUESTOBSERVER
-    NS_DECL_NSICACHELISTENER
     NS_DECL_NSIRESUMABLECHANNEL
+    NS_DECL_NSIPROXIEDCHANNEL
     
-    // nsFTPChannel methods:
-    nsFTPChannel();
-    virtual ~nsFTPChannel();
-    
-    // initializes the channel. 
-    nsresult Init(nsIURI* uri,
-                  nsIProxyInfo* proxyInfo,
-                  nsICacheSession* session);
+    nsFtpChannel(nsIURI *uri, nsIProxyInfo *pi)
+        : mProxyInfo(pi)
+        , mStartPos(0)
+        , mResumeRequested(PR_FALSE)
+    {
+        SetURI(uri);
+    }
 
-    nsresult SetupState(PRUint64 startPos, const nsACString& entityID);
-    nsresult GenerateCacheKey(nsACString &cacheKey);
-    
-    nsresult AsyncOpenAt(nsIStreamListener *listener, nsISupports *ctxt,
-                         PRUint64 startPos, const nsACString& entityID);
+    nsIProxyInfo *ProxyInfo() {
+        return mProxyInfo;
+    }
 
-    // Helper function to simplify getting notification callbacks.
-    template <class T>
-    void GetCallback(nsCOMPtr<T> &aResult) {
-        GetInterface(NS_GET_IID(T), getter_AddRefs(aResult));
+    // Were we asked to resume a download?
+    PRBool ResumeRequested() { return mResumeRequested; }
+
+    // Download from this byte offset
+    PRUint64 StartPos() { return mStartPos; }
+
+    // ID of the entity to resume downloading
+    const nsCString &EntityID() {
+        return mEntityID;
+    }
+    void SetEntityID(const nsCSubstring &entityID) {
+        mEntityID = entityID;
+    }
+
+    // Data stream to upload
+    nsIInputStream *UploadStream() {
+        return mUploadStream;
     }
 
     // Helper function for getting the nsIFTPEventSink.
     void GetFTPEventSink(nsCOMPtr<nsIFTPEventSink> &aResult);
 
 protected:
-    void InitProgressSink();
+    virtual ~nsFtpChannel() {}
+    virtual nsresult OpenContentStream(PRBool async, nsIInputStream **result);
+    virtual PRBool GetStatusArg(nsresult status, nsString &statusArg);
+    virtual void OnCallbacksChanged();
 
-protected:
-    nsCOMPtr<nsIURI>                mOriginalURI;
-    nsCOMPtr<nsIURI>                mURL;
-    
-    nsCOMPtr<nsIInputStream>        mUploadStream;
-
-    // various callback interfaces
-    nsCOMPtr<nsIProgressEventSink>  mProgressSink;
-    nsCOMPtr<nsIFTPEventSink>       mFTPEventSink;
-    nsCOMPtr<nsIInterfaceRequestor> mCallbacks;
-
-    PRBool                          mIsPending;
-    PRUint32                        mLoadFlags;
-
-    PRUint32                        mSourceOffset;
-    PRInt32                         mAmount;
-    nsCOMPtr<nsILoadGroup>          mLoadGroup;
-    nsCString                       mContentType;
-    nsCString                       mContentCharset;
-    PRInt32                         mContentLength;
-    nsCOMPtr<nsISupports>           mOwner;
-
-    nsCOMPtr<nsIStreamListener>     mListener;
-
-    nsFtpState*                     mFTPState;   
-
-    nsCOMPtr<nsISupports>           mUserContext;
-    nsresult                        mStatus;
-    PRPackedBool                    mCanceled;
-
-    nsCOMPtr<nsIIOService>          mIOService;
-
-    nsCOMPtr<nsICacheSession>         mCacheSession;
-    nsCOMPtr<nsICacheEntryDescriptor> mCacheEntry;
-    nsCOMPtr<nsIProxyInfo>            mProxyInfo;
-    nsCString                         mEntityID;
-    PRUint64                          mStartPos;
+private:
+    nsCOMPtr<nsIProxyInfo>    mProxyInfo; 
+    nsCOMPtr<nsIFTPEventSink> mFTPEventSink;
+    nsCOMPtr<nsIInputStream>  mUploadStream;
+    PRUint64                  mStartPos;
+    nsCString                 mEntityID;
+    PRPackedBool              mResumeRequested;
 };
 
 #endif /* nsFTPChannel_h___ */

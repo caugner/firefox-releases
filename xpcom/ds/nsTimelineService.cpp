@@ -192,7 +192,7 @@ static TimelineThreadData *GetThisThreadData()
         if (new_data->timers==NULL)
             goto done;
         new_data->initTime = PR_Now();
-        NS_WARN_IF_FALSE(!gTimelineDisabled,
+        NS_ASSERTION(!gTimelineDisabled,
                          "Why are we creating new state when disabled?");
         new_data->disabled = PR_FALSE;
         data = new_data;
@@ -202,7 +202,7 @@ static TimelineThreadData *GetThisThreadData()
 done:
     if (new_data) // eeek - error during creation!
         delete new_data;
-    NS_WARN_IF_FALSE(data, "TimelineService could not get thread-local data");
+    NS_ASSERTION(data, "TimelineService could not get thread-local data");
     return data;
 }
 
@@ -226,27 +226,28 @@ PRStatus TimelineInit(void)
 {
     char *timeStr;
     char *fileName;
+    const char *timelineEnable;
     PRInt32 secs, msecs;
     PRFileDesc *fd;
     PRInt64 tmp1, tmp2;
 
     PRStatus status = PR_NewThreadPrivateIndex( &gTLSIndex, ThreadDestruct );
-    NS_WARN_IF_FALSE(status==0, "TimelineService could not allocate TLS storage.");
+    NS_ASSERTION(status==0, "TimelineService could not allocate TLS storage.");
 
     timeStr = PR_GetEnv("NS_TIMELINE_INIT_TIME");
-
     // NS_TIMELINE_INIT_TIME only makes sense for the main thread, so if it
     // exists, set it there.  If not, let normal thread management code take
     // care of setting the init time.
-    if (timeStr != NULL && 2 == PR_sscanf(timeStr, "%d.%d", &secs, &msecs)) {
+    if (timeStr && *timeStr && (2 == PR_sscanf(timeStr, "%d.%d", &secs, &msecs))) {
         PRTime &initTime = GetThisThreadData()->initTime;
         LL_MUL(tmp1, (PRInt64)secs, 1000000);
         LL_MUL(tmp2, (PRInt64)msecs, 1000);
         LL_ADD(initTime, tmp1, tmp2);
     }
+
     // Get the log file.
     fileName = PR_GetEnv("NS_TIMELINE_LOG_FILE");
-    if (fileName != NULL
+    if (fileName && *fileName
         && (fd = PR_Open(fileName, PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE,
                          0666)) != NULL) {
         timelineFD = fd;
@@ -256,7 +257,8 @@ PRStatus TimelineInit(void)
     }
 
     // Runtime disable of timeline
-    if (PR_GetEnv("NS_TIMELINE_ENABLE"))
+    timelineEnable = PR_GetEnv("NS_TIMELINE_ENABLE");
+    if (timelineEnable && *timelineEnable)
         gTimelineDisabled = PR_FALSE;
     return PR_SUCCESS;
 }

@@ -36,13 +36,16 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * style sheet and style rule processor representing style attributes
+ * and some additional overrides
+ */
+
 #include "nsIHTMLCSSStyleSheet.h"
 #include "nsCRT.h"
 #include "nsIAtom.h"
 #include "nsIURL.h"
-#include "nsISupportsArray.h"
 #include "nsCSSPseudoElements.h"
-#include "nsIStyledContent.h"
 #include "nsIStyleRule.h"
 #include "nsIFrame.h"
 #include "nsICSSStyleRule.h"
@@ -141,7 +144,7 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
    */
 
   // Disable 'unicode-bidi'.
-  if (aData->mSID == eStyleStruct_TextReset) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(TextReset)) {
     nsCSSValue normal(eCSSUnit_Normal);
     aData->mTextData->mUnicodeBidi = normal;
   }
@@ -149,15 +152,14 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
   // NOTE: 'text-align', 'text-indent', and 'white-space' should not be
   // handled by the frames so we don't need to bother.
 
-  // Disable everything in the nsRuleDataDisplay struct except 'float'
-  // and 'clear'.
-  if (aData->mSID == eStyleStruct_Visibility) {
+  // Disable everything in the nsRuleDataDisplay struct except 'float'.
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Visibility)) {
     nsCSSValue inherit(eCSSUnit_Inherit);
     aData->mDisplayData->mVisibility = inherit;
     aData->mDisplayData->mDirection = inherit;
   }
 
-  if (aData->mSID == eStyleStruct_Display) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Display)) {
     nsCSSValue none(eCSSUnit_None);
     aData->mDisplayData->mAppearance = none;
 
@@ -182,6 +184,8 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
     aData->mDisplayData->mOverflowX = visible;
     aData->mDisplayData->mOverflowY = visible;
 
+    aData->mDisplayData->mClear = none;
+
     // Nobody will care about 'break-before' or 'break-after', since
     // they only apply to blocks (assuming we implement them correctly).
   }
@@ -191,7 +195,7 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
   // nsCSSSVG, so don't bother.
 
   // Disable everything in the position struct.
-  if (aData->mSID == eStyleStruct_Position) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Position)) {
     nsCSSValue autovalue(eCSSUnit_Auto);
     nsCSSValue none(eCSSUnit_None);
     nsCSSValue zero(0.0f, eCSSUnit_Point);
@@ -211,7 +215,7 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
   }
 
   // Disable everything in the Content struct.
-  if (aData->mSID == eStyleStruct_Content) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Content)) {
     // Don't bother resetting 'content'.
 
     aData->mContentData->mCounterIncrement = &mNoneCounter;
@@ -221,12 +225,12 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
     aData->mContentData->mMarkerOffset = autovalue;
   }
 
-  if (aData->mSID == eStyleStruct_Quotes) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Quotes)) {
     aData->mContentData->mQuotes = &mInheritQuotes;
   }
 
   // Disable everything in the UserInterface struct.
-  if (aData->mSID == eStyleStruct_UserInterface) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(UserInterface)) {
     nsCSSValue inherit(eCSSUnit_Inherit);
     aData->mUserInterfaceData->mUserInput = inherit;
     aData->mUserInterfaceData->mUserModify = inherit;
@@ -234,7 +238,7 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
     aData->mUserInterfaceData->mCursor = &mInheritList;
   }
 
-  if (aData->mSID == eStyleStruct_UIReset) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(UIReset)) {
     nsCSSValue autovalue(eCSSUnit_Auto);
     nsCSSValue none(eCSSUnit_None);
     // Don't bother with '-moz-force-broken-image-icon' since it's only
@@ -244,7 +248,7 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
   }
 
   // Disable all outline properties.
-  if (aData->mSID == eStyleStruct_Outline) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Outline)) {
     nsCSSValue none(NS_STYLE_BORDER_STYLE_NONE, eCSSUnit_Enumerated);
     aData->mMarginData->mOutlineStyle = none;
   }
@@ -255,24 +259,26 @@ NS_IMETHODIMP
 CSSFirstLineRule::MapRuleInfoInto(nsRuleData* aData)
 {
   /*
-   * See CSS2 section 5.12.1, which says that the properties that apply
+   * See CSS2.1 section 5.12.1, which says that the properties that apply
    * to :first-line are: font properties, color properties, background
    * properties, 'word-spacing', 'letter-spacing', 'text-decoration',
-   * 'vertical-align', 'text-transform', 'line-height', 'text-shadow',
-   * and 'clear'.
+   * 'vertical-align', 'text-transform', and 'line-height'.
+   *
+   * We also allow 'text-shadow', which was listed in CSS2 (where the
+   * property existed).
    */
 
   CommonMapRuleInfoInto(aData);
 
   // Disable 'float'.
-  if (aData->mSID == eStyleStruct_Display) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Display)) {
     nsCSSValue none(eCSSUnit_None);
     aData->mDisplayData->mFloat = none;
   }
 
   // Disable border properties, margin properties, and padding
   // properties.
-  if (aData->mSID == eStyleStruct_Border) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Border)) {
     nsCSSValue none(NS_STYLE_BORDER_STYLE_NONE, eCSSUnit_Enumerated);
     aData->mMarginData->mBorderStyle.mTop = none;
     aData->mMarginData->mBorderStyle.mRight = none;
@@ -280,7 +286,7 @@ CSSFirstLineRule::MapRuleInfoInto(nsRuleData* aData)
     aData->mMarginData->mBorderStyle.mLeft = none;
   }
 
-  if (aData->mSID == eStyleStruct_Margin) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Margin)) {
     nsCSSValue zero(0.0f, eCSSUnit_Point);
     aData->mMarginData->mMargin.mTop = zero;
     aData->mMarginData->mMargin.mRight = zero;
@@ -288,7 +294,7 @@ CSSFirstLineRule::MapRuleInfoInto(nsRuleData* aData)
     aData->mMarginData->mMargin.mLeft = zero;
   }
 
-  if (aData->mSID == eStyleStruct_Padding) {
+  if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Padding)) {
     nsCSSValue zero(0.0f, eCSSUnit_Point);
     aData->mMarginData->mPadding.mTop = zero;
     aData->mMarginData->mPadding.mRight = zero;
@@ -303,21 +309,15 @@ NS_IMETHODIMP
 CSSFirstLetterRule::MapRuleInfoInto(nsRuleData* aData)
 {
   /*
-   * See CSS2 5.12.2, which says that the properties that apply to
-   * :first-letter are: font properties, color properties, background
-   * properties, 'text-decoration', 'vertical-align' (only if 'float' is
-   * 'none'), 'text-transform', 'line-height', margin properties,
-   * padding properties, border properties, 'float', 'text-shadow', and
-   * 'clear'.
+   * See CSS2.1 section 5.12.2, which says that the properties that
+   * apply to :first-letter are: font properties, 'text-decoration',
+   * 'text-transform', 'letter-spacing', 'word-spacing' (when
+   * appropriate), 'line-height', 'float', 'vertical-align' (only if
+   * 'float' is 'none'), margin properties, padding properties, border
+   * properties, 'color', and background properties.
    */
 
   CommonMapRuleInfoInto(aData);
-
-  if (aData->mSID == eStyleStruct_Text) {
-    nsCSSValue inherit(eCSSUnit_Inherit);
-    aData->mTextData->mWordSpacing = inherit;
-    aData->mTextData->mLetterSpacing = inherit;
-  }
 
   // NOTE:  'vertical-align' is only supposed to be relevant if 'float'
   // is 'none', but we don't do anything with it if 'float' is not none,
@@ -415,11 +415,11 @@ NS_IMPL_ISUPPORTS3(HTMLCSSStyleSheetImpl,
 NS_IMETHODIMP
 HTMLCSSStyleSheetImpl::RulesMatching(ElementRuleProcessorData* aData)
 {
-  nsIStyledContent* styledContent = aData->mStyledContent;
+  nsIContent* content = aData->mContent;
   
-  if (styledContent) {
+  if (content) {
     // just get the one and only style rule from the content's STYLE attribute
-    nsICSSStyleRule* rule = styledContent->GetInlineStyleRule();
+    nsICSSStyleRule* rule = content->GetInlineStyleRule();
     if (rule)
       aData->mRuleWalker->Forward(rule);
   }

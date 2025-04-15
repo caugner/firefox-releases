@@ -1,14 +1,11 @@
-/.cvsignore/1.1/Fri Jan 22 06:33:29 1999//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.18/Fri Jun 24 19:44:46 2005//TFIREFOX_2_0_RELEASE
-/nsEncoderDecoderUtils.h/1.1/Wed Jun 11 18:14:51 2003//TFIREFOX_2_0_RELEASE
-/nsICharRepresentable.h/1.9/Sun Apr 18 14:21:09 2004//TFIREFOX_2_0_RELEASE
-/nsICharsetAlias.h/1.17/Sun Apr 18 14:21:09 2004//TFIREFOX_2_0_RELEASE
-/nsIMappingCache.h/1.6/Sun Apr 18 14:21:09 2004//TFIREFOX_2_0_RELEASE
-/nsIPlatformCharset.h/1.23.28.1/Mon Apr 10 15:30:13 2006//TFIREFOX_2_0_RELEASE
-/nsIUnicodeDecodeHelper.h/1.14/Sun Apr 18 14:21:09 2004//TFIREFOX_2_0_RELEASE
-/nsIUnicodeDecoder.h/1.18/Sun Apr 18 14:21:09 2004//TFIREFOX_2_0_RELEASE
-/nsIUnicodeEncodeHelper.h/1.16/Sun Apr 18 14:21:09 2004//TFIREFOX_2_0_RELEASE
-/nsIUnicodeEncoder.h/1.18/Sun Apr 18 14:21:09 2004//TFIREFOX_2_0_RELEASE
-/nsUConvCID.h/1.1/Thu Jun 12 21:57:49 2003//TFIREFOX_2_0_RELEASE
-/uconvutil.h/1.17/Sun Apr 18 14:21:09 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Fri Jan 22 06:33:29 1999//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.21/Wed May 17 11:11:21 2006//TFIREFOX_3_0rc3_RELEASE
+/nsEncoderDecoderUtils.h/1.1/Wed Jun 11 18:14:51 2003//TFIREFOX_3_0rc3_RELEASE
+/nsICharRepresentable.h/1.10/Fri Nov 11 14:36:03 2005//TFIREFOX_3_0rc3_RELEASE
+/nsICharsetAlias.h/1.21/Mon Nov 13 17:52:59 2006//TFIREFOX_3_0rc3_RELEASE
+/nsIPlatformCharset.h/1.28/Mon Nov 13 17:52:59 2006//TFIREFOX_3_0rc3_RELEASE
+/nsIUnicodeDecoder.h/1.19/Fri Nov 11 14:36:03 2005//TFIREFOX_3_0rc3_RELEASE
+/nsIUnicodeEncoder.h/1.20/Mon Mar 12 09:59:12 2007//TFIREFOX_3_0rc3_RELEASE
+/nsUConvCID.h/1.1/Thu Jun 12 21:57:49 2003//TFIREFOX_3_0rc3_RELEASE
+/uconvutil.h/1.20/Wed Dec  6 02:49:51 2006//TFIREFOX_3_0rc3_RELEASE
 D

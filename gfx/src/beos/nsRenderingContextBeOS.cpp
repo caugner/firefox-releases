@@ -47,6 +47,8 @@
 #include <Polygon.h>
 #include <math.h>
 
+static const pattern NS_BEOS_DASHED = { {0xc7, 0x8f, 0x1f, 0x3e, 0x7c, 0xf8, 0xf1, 0xe3} };
+static const pattern NS_BEOS_DOTTED = { {0x55, 0xaa, 0x55, 0xaa, 0x55, 0xaa, 0x55, 0xaa} };
 
 NS_IMPL_ISUPPORTS1(nsRenderingContextBeOS, nsIRenderingContext)
 
@@ -64,6 +66,7 @@ nsRenderingContextBeOS::nsRenderingContextBeOS()
 	mCurrentColor = NS_RGB(255, 255, 255);
 	mCurrentBFont = nsnull;
 	mCurrentLineStyle = nsLineStyle_kSolid;
+	mCurrentLinePattern = B_SOLID_HIGH;
 	mP2T = 1.0f;
 	mTranMatrix = nsnull;
 
@@ -348,7 +351,7 @@ bool nsRenderingContextBeOS::LockAndUpdateView()
 		if (mCurrentBFont == nsnull)
 		{ 
 			if (mFontMetrics)
-				mFontMetrics->GetFontHandle((nsFontHandle)mCurrentBFont);
+				mFontMetrics->GetFontHandle((nsFontHandle&)mCurrentBFont);
 
 			if (mCurrentBFont)
 				mView->SetFont(mCurrentBFont);
@@ -521,8 +524,20 @@ NS_IMETHODIMP nsRenderingContextBeOS::SetFont(nsIFontMetrics *aFontMetrics)
 
 NS_IMETHODIMP nsRenderingContextBeOS::SetLineStyle(nsLineStyle aLineStyle)
 {
-	// TODO: BeOS Line Style. Maybe using patterns.
-	mCurrentLineStyle = aLineStyle;
+	switch(aLineStyle)
+	{
+		case nsLineStyle_kDashed:
+			mCurrentLinePattern = NS_BEOS_DASHED;
+			break;
+		case nsLineStyle_kDotted:
+			mCurrentLinePattern = NS_BEOS_DOTTED;
+			break;
+		case nsLineStyle_kSolid:
+		default:
+			mCurrentLinePattern = B_SOLID_HIGH;
+		break;
+	}
+	mCurrentLineStyle = aLineStyle ;
 	return NS_OK;
 }
 
@@ -617,7 +632,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawLine(nscoord aX0, nscoord aY0, nscoord
 	
 	if (LockAndUpdateView())
 	{
-		mView->StrokeLine(BPoint(aX0, aY0), BPoint(aX1 - diffX, aY1 - diffY));
+		mView->StrokeLine(BPoint(aX0, aY0), BPoint(aX1 - diffX, aY1 - diffY), mCurrentLinePattern);
 		UnlockView();
 	}
 	return NS_OK;
@@ -659,16 +674,16 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawPolyline(const nsPoint aPoints[], PRIn
 		{
 			if (1 == h) 
 			{
-				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left + w - 1, r.top));
+				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left + w - 1, r.top), mCurrentLinePattern);
 			}
 			else if (1 == w)
 			{
-				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left, r.top + h -1));
+				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left, r.top + h -1), mCurrentLinePattern);
 			}
 			else
 			{
 				poly.MapTo(r,BRect(r.left, r.top, r.left + w -1, r.top + h - 1));
-				mView->StrokePolygon(&poly, false);
+				mView->StrokePolygon(&poly, false, mCurrentLinePattern);
 			}
 			UnlockView();
 		}		
@@ -705,9 +720,9 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawRect(nscoord aX, nscoord aY, nscoord a
 		{
 			// FIXME: add line style
 			if (1 == h)
-				mView->StrokeLine(BPoint(x, y), BPoint(x + w - 1, y));
+				mView->StrokeLine(BPoint(x, y), BPoint(x + w - 1, y), mCurrentLinePattern);
 			else
-				mView->StrokeRect(BRect(x, y, x + w - 1, y + h - 1));
+				mView->StrokeRect(BRect(x, y, x + w - 1, y + h - 1), mCurrentLinePattern);
 			UnlockView();
 		}
 	}
@@ -813,16 +828,16 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawPolygon(const nsPoint aPoints[], PRInt
 		{
 			if (1 == h)
 			{
-				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left + w - 1, r.top));
+				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left + w - 1, r.top), mCurrentLinePattern);
 			}
 			else if (1 == w)
 			{
-				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left, r.top + h -1));
+				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left, r.top + h -1), mCurrentLinePattern);
 			}
 			else
 			{
 				poly.MapTo(r,BRect(r.left, r.top, r.left + w -1, r.top + h - 1));
-				mView->StrokePolygon(&poly, true, B_SOLID_HIGH);
+				mView->StrokePolygon(&poly, true, mCurrentLinePattern);
 			}
 			UnlockView();
 		}		
@@ -897,7 +912,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawEllipse(nscoord aX, nscoord aY, nscoor
 	
 	if (LockAndUpdateView())
 	{
-		mView->StrokeEllipse(BRect(x, y, x + w - 1, y + h - 1));
+		mView->StrokeEllipse(BRect(x, y, x + w - 1, y + h - 1), mCurrentLinePattern);
 		UnlockView();
 	}
 	return NS_OK;
@@ -941,7 +956,8 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawArc(nscoord aX, nscoord aY, nscoord aW
 	if (LockAndUpdateView())
 	{
 		// FIXME: add line style
-		mView->StrokeArc(BRect(x, y, x + w - 1, y + h - 1), aStartAngle, aEndAngle - aStartAngle);
+		mView->StrokeArc(BRect(x, y, x + w - 1, y + h - 1), 
+						aStartAngle, aEndAngle - aStartAngle, mCurrentLinePattern);
 		UnlockView();
 	}
 	return NS_OK;
@@ -1341,17 +1357,25 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawString(const char *aString, PRUint32 a
 
 	nscoord xx = aX, yy = aY, y=aY;
 	
-	// Subtract xFontStruct ascent since drawing specifies baseline
-	
 	if (LockAndUpdateView())  
 	{
-		// XXX: the following maybe isn't  most efficient for text rendering,
-		// but it's the easy way to render antialiased text correctly
-		mView->SetDrawingMode(B_OP_OVER);
+		PRBool doEmulateBold = PR_FALSE;
+		
+		if (mFontMetrics) 
+		{
+			doEmulateBold = ((nsFontMetricsBeOS *)mFontMetrics)->IsBold() && !(mCurrentBFont->Face() & B_BOLD_FACE);
+		}
+		// XXX: B_OP_OVER isn't  most efficient for text rendering,
+		// but it's the only way to render antialiased text correctly on arbitrary background
+		PRBool offscreen;
+		mSurface->IsOffscreen(&offscreen);
+		mView->SetDrawingMode( offscreen ? B_OP_OVER : B_OP_COPY);
 		if (nsnull == aSpacing || utf8_char_len((uchar)aString[0])==aLength) 
 		{
 			mTranMatrix->TransformCoord(&xx, &yy);
 			mView->DrawString(aString, aLength, BPoint(xx, yy));
+			if (doEmulateBold)
+				mView->DrawString(aString, aLength, BPoint(xx + 1.0, yy));
 		}
 		else 
 		{
@@ -1365,7 +1389,9 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawString(const char *aString, PRUint32 a
 				yy = y;
 				mTranMatrix->TransformCoord(&xx, &yy);
 				// yy++; DrawString quirk!
-				mView->DrawString((char *)(wpoint), ch_len, BPoint(xx, yy)); 
+				mView->DrawString((char *)(wpoint), ch_len, BPoint(xx, yy));
+				if (doEmulateBold)
+					mView->DrawString((char *)(wpoint), ch_len, BPoint(xx + 1.0, yy));
 				position += aSpacing[unichnum++];
 			}
 		}
@@ -1419,7 +1445,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::CopyOffScreenBits(nsIDrawingSurface* aSrcS
 	srcsurf->AcquireView(&srcview);
 	srcsurf->AcquireBitmap(&srcbitmap);
 	
-			
+	// XXX - No more use for that, should be removed in future
 	if (aCopyFlags & NS_COPYBITS_TO_BACK_BUFFER) 
 	{
 		NS_ASSERTION(nsnull != mSurface, "no back buffer");
@@ -1475,9 +1501,15 @@ NS_IMETHODIMP nsRenderingContextBeOS::CopyOffScreenBits(nsIDrawingSurface* aSrcS
 
 	if (aCopyFlags & NS_COPYBITS_USE_SOURCE_CLIP_REGION) 
 	{
-		BRegion r;
-		srcview->GetClippingRegion(&r);
-		destview->ConstrainClippingRegion(&r);
+		BRegion *region = nsnull;
+		if(mClipRegion && mSurface == aSrcSurf)
+			mClipRegion->GetNativeRegion((void *&)region);
+		// Following else-code has sense only if srcview and destview frames
+		// are equal and is incompatible with #define NOBBCACHE.
+		// Keeping it here for fallback case.
+		else if(srcview->Bounds() == destview->Bounds())
+			srcview->GetClippingRegion(region);
+		destview->ConstrainClippingRegion(region);
 	}
 				
 				// Draw to destination synchronously to make sure srcbitmap doesn't change
@@ -1497,13 +1529,6 @@ NS_IMETHODIMP nsRenderingContextBeOS::CopyOffScreenBits(nsIDrawingSurface* aSrcS
 	srcsurf->ReleaseView();
 	return NS_OK;
 }
-
-NS_IMETHODIMP nsRenderingContextBeOS::RetrieveCurrentNativeGraphicData(void** ngd)
-{
-	return NS_OK;
-}
-
-
 
 #ifdef MOZ_MATHML
   /**

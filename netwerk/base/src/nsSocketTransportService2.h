@@ -1,3 +1,4 @@
+/* vim:set ts=4 sw=4 sts=4 ci et: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -39,14 +40,15 @@
 #define nsSocketTransportService2_h__
 
 #include "nsPISocketTransportService.h"
-#include "nsIEventTarget.h"
-#include "nsIRunnable.h"
-#include "nsIThread.h"
+#include "nsIThreadInternal.h"
+#include "nsThreadUtils.h"
+#include "nsEventQueue.h"
 #include "nsCOMPtr.h"
 #include "pldhash.h"
 #include "prinrval.h"
 #include "prlog.h"
 #include "prio.h"
+#include "nsASocketHandler.h"
 
 //-----------------------------------------------------------------------------
 
@@ -65,66 +67,10 @@ extern PRLogModuleInfo *gSocketTransportLog;
 #define NS_SOCKET_POLL_TIMEOUT PR_INTERVAL_NO_TIMEOUT
 
 //-----------------------------------------------------------------------------
-// socket handler: methods are only called on the socket thread.
-
-class nsASocketHandler : public nsISupports
-{
-public:
-    nsASocketHandler()
-        : mCondition(NS_OK)
-        , mPollFlags(0)
-        , mPollTimeout(PR_UINT16_MAX)
-        {}
-
-    //
-    // this condition variable will be checked to determine if the socket
-    // handler should be detached.  it must only be accessed on the socket
-    // thread.
-    //
-    nsresult mCondition;
-
-    //
-    // these flags can only be modified on the socket transport thread.
-    // the socket transport service will check these flags before calling
-    // PR_Poll.
-    //
-    PRUint16 mPollFlags;
-
-    //
-    // this value specifies the maximum amount of time in seconds that may be
-    // spent waiting for activity on this socket.  if this timeout is reached,
-    // then OnSocketReady will be called with outFlags = -1.
-    //
-    // the default value for this member is PR_UINT16_MAX, which disables the
-    // timeout error checking.  (i.e., a timeout value of PR_UINT16_MAX is
-    // never reached.)
-    //
-    PRUint16 mPollTimeout;
-
-    //
-    // called to service a socket
-    // 
-    // params:
-    //   socketRef - socket identifier
-    //   fd        - socket file descriptor
-    //   outFlags  - value of PR_PollDesc::out_flags after PR_Poll returns
-    //               or -1 if a timeout occured
-    //
-    virtual void OnSocketReady(PRFileDesc *fd, PRInt16 outFlags) = 0;
-
-    //
-    // called when a socket is no longer under the control of the socket
-    // transport service.  the socket handler may close the socket at this
-    // point.  after this call returns, the handler will no longer be owned
-    // by the socket transport service.
-    //
-    virtual void OnSocketDetached(PRFileDesc *fd) = 0;
-};
-
-//-----------------------------------------------------------------------------
 
 class nsSocketTransportService : public nsPISocketTransportService
                                , public nsIEventTarget
+                               , public nsIThreadObserver
                                , public nsIRunnable
 {
 public:
@@ -132,6 +78,7 @@ public:
     NS_DECL_NSPISOCKETTRANSPORTSERVICE
     NS_DECL_NSISOCKETTRANSPORTSERVICE
     NS_DECL_NSIEVENTTARGET
+    NS_DECL_NSITHREADOBSERVER
     NS_DECL_NSIRUNNABLE
 
     nsSocketTransportService();
@@ -143,25 +90,9 @@ public:
     // AttachSocket will fail if the limit is exceeded.  consumers should
     // call CanAttachSocket and check the result before creating a socket.
     //
-    PRBool CanAttachSocket() { return mActiveCount + mIdleCount < NS_SOCKET_MAX_COUNT; }
-
-    //
-    // if the number of sockets is at the limit, then consumers can be notified
-    // when the number of sockets becomes less than the limit.  the notification
-    // is asynchronous, delivered via the given PLEvent instance on the socket
-    // transport thread.
-    //
-    nsresult NotifyWhenCanAttachSocket(PLEvent *);
-
-    //
-    // add a new socket to the list of controlled sockets.  returns a socket
-    // reference for the newly attached socket that can be used with other
-    // methods to control the socket.
-    //
-    // NOTE: this function may only be called from an event dispatch on the
-    //       socket thread.
-    //
-    nsresult AttachSocket(PRFileDesc *fd, nsASocketHandler *);
+    PRBool CanAttachSocket() {
+        return mActiveCount + mIdleCount < NS_SOCKET_MAX_COUNT;
+    }
 
 protected:
 
@@ -173,25 +104,30 @@ private:
     // misc (any thread)
     //-------------------------------------------------------------------------
 
-    PRBool      mInitialized;
-    nsIThread  *mThread;
+    nsCOMPtr<nsIThread> mThread;    // protected by mLock
     PRFileDesc *mThreadEvent;
-
-    // pref to control autodial code
+                            // protected by mLock.  mThreadEvent may change
+                            // if the old pollable event is broken.  only
+                            // the socket thread may change mThreadEvent;
+                            // it needs to lock mLock only when it changes
+                            // mThreadEvent.  other threads don't change
+                            // mThreadEvent; they need to lock mLock
+                            // whenever they access mThreadEvent.
     PRBool      mAutodialEnabled;
+                            // pref to control autodial code
+
+    // Returns mThread, protecting the get-and-addref with mLock
+    already_AddRefed<nsIThread> GetThreadSafely();
 
     //-------------------------------------------------------------------------
-    // misc (socket thread only)
-    //-------------------------------------------------------------------------
-    // indicates whether we are currently in the process of shutting down
-    PRBool      mShuttingDown;
-
-    //-------------------------------------------------------------------------
-    // event queue (any thread)
+    // initialization and shutdown (any thread)
     //-------------------------------------------------------------------------
 
-    PRCList  mEventQ; // list of PLEvent objects
-    PRLock  *mEventQLock;
+    PRLock       *mLock;
+    PRPackedBool  mInitialized;
+    PRPackedBool  mShuttingDown;
+                            // indicates whether we are currently in the
+                            // process of shutting down
 
     //-------------------------------------------------------------------------
     // socket lists (socket thread only)
@@ -225,9 +161,6 @@ private:
     void MoveToIdleList(SocketContext *sock);
     void MoveToPollList(SocketContext *sock);
     
-    // returns PR_FALSE to stop processing the main loop
-    PRBool ServiceEventQ();
-
     //-------------------------------------------------------------------------
     // poll list (socket thread only)
     //
@@ -238,7 +171,10 @@ private:
     PRPollDesc mPollList[ NS_SOCKET_MAX_COUNT + 1 ];
 
     PRIntervalTime PollTimeout();            // computes ideal poll timeout
-    PRInt32        Poll(PRUint32 *interval); // calls PR_Poll.  the out param
+    nsresult       DoPollIteration(PRBool wait);
+                                             // perfoms a single poll iteration
+    PRInt32        Poll(PRBool wait, PRUint32 *interval);
+                                             // calls PR_Poll.  the out param
                                              // interval indicates the poll
                                              // duration in seconds.
 
@@ -246,7 +182,7 @@ private:
     // pending socket queue - see NotifyWhenCanAttachSocket
     //-------------------------------------------------------------------------
 
-    PRCList mPendingSocketQ; // list of PLEvent objects
+    nsEventQueue mPendingSocketQ; // queue of nsIRunnable objects
 };
 
 extern nsSocketTransportService *gSocketTransportService;

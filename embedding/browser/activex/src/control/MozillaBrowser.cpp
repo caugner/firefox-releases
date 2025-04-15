@@ -61,12 +61,15 @@
 #include "nsIWebBrowserPersist.h"
 #include "nsIClipboardCommands.h"
 #include "nsIProfile.h"
-#include "nsIPrintOptions.h"
-#include "nsIWebBrowserPrint.h"
 #include "nsIWidget.h"
 #include "nsIWebBrowserFocus.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsIComponentRegistrar.h"
+
+#ifdef NS_PRINTING
+#include "nsIPrintOptions.h"
+#include "nsIWebBrowserPrint.h"
+#endif
 
 #include "nsIDOMWindow.h"
 #include "nsIDOMHTMLAnchorElement.h"
@@ -89,6 +92,7 @@ static HANDLE s_hHackedNonReentrancy = NULL;
 static NS_DEFINE_CID(kPromptServiceCID, NS_PROMPTSERVICE_CID);
 static NS_DEFINE_CID(kHelperAppLauncherDialogCID, NS_HELPERAPPLAUNCHERDIALOG_CID);
 
+#ifdef NS_PRINTING
 class PrintListener : public nsIWebProgressListener
 {
     PRBool mComplete;
@@ -101,6 +105,7 @@ public:
 
     void WaitForComplete();
 };
+#endif
 
 class SimpleDirectoryProvider :
     public nsIDirectoryServiceProvider
@@ -181,7 +186,7 @@ CMozillaBrowser::CMozillaBrowser()
     mBrowserHelperListCount = 0;
 
     // Name of the default profile to use
-    mProfileName.AssignLiteral("MozillaControl");
+    mProfileName.Assign(NS_LITERAL_STRING("MozillaControl"));
 
     // Initialise the web browser
     Initialize();
@@ -443,10 +448,17 @@ LRESULT CMozillaBrowser::OnCreate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL&
                 ios->GetProtocolHandler(kDesignModeScheme, getter_AddRefs(ph));
                 if (ph &&
                     NS_SUCCEEDED(ph->GetScheme(phScheme)) &&
-                    phScheme.LowerCaseEqualsASCII(kDesignModeScheme))
+                    phScheme.Equals(NS_LITERAL_CSTRING(kDesignModeScheme)))
                 {
                     Navigate(const_cast<BSTR>(kDesignModeURL), NULL, NULL, NULL, NULL);
                 }
+            }
+        }
+        else
+        {
+            if (mInitialSrc.Length() > 0)
+            {
+                Navigate(mInitialSrc, NULL, NULL, NULL, NULL);
             }
         }
     }
@@ -566,6 +578,7 @@ LRESULT CMozillaBrowser::OnPageSetup(WORD wNotifyCode, WORD wID, HWND hWndCtl, B
     NG_TRACE_METHOD(CMozillaBrowser::OnPageSetup);
 
 
+#ifdef NS_PRINTING
     nsCOMPtr<nsIWebBrowserPrint> print(do_GetInterface(mWebBrowser));
     nsCOMPtr<nsIPrintSettings> printSettings;
     if(!print ||
@@ -577,6 +590,7 @@ LRESULT CMozillaBrowser::OnPageSetup(WORD wNotifyCode, WORD wID, HWND hWndCtl, B
     // show the page setup dialog
     CPageSetupDlg dlg(printSettings);
     dlg.DoModal();
+#endif
 
     return 0;
 }
@@ -779,8 +793,8 @@ LRESULT CMozillaBrowser::OnViewSource(WORD wNotifyCode, WORD wID, HWND hWndCtl, 
     nsCAutoString aURI;
     uri->GetSpec(aURI);
 
-    nsAutoString strURI(NS_LITERAL_STRING("view-source:"));
-    AppendUTF8toUTF16(aURI, strURI);
+    NS_ConvertUTF8toUTF16 strURI(aURI);
+    strURI.Insert(NS_LITERAL_STRING("view-source:"), 0);
 
     // Ask the client to create a window to view the source in
     CIPtr(IDispatch) spDispNew;
@@ -925,18 +939,27 @@ LRESULT CMozillaBrowser::OnLinkCopyShortcut(WORD wNotifyCode, WORD wID, HWND hWn
     {
         EmptyClipboard();
 
+        NS_ConvertUTF16toUTF8 curi(uri);
+        const char *stringText;
+        PRUint32 stringLen = NS_CStringGetData(curi,
+                                               &stringText);
+
         // CF_TEXT
-        HGLOBAL hmemText = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, uri.Length() + 1);
+        HGLOBAL hmemText = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT,
+                                       stringLen + 1);
         char *pszText = (char *) GlobalLock(hmemText);
-        uri.ToCString(pszText, uri.Length() + 1);
+        strncpy(pszText, stringText, stringLen);
+        pszText[stringLen] = '\0';
         GlobalUnlock(hmemText);
         SetClipboardData(CF_TEXT, hmemText);
 
         // UniformResourceLocator - CFSTR_SHELLURL
         const UINT cfShellURL = RegisterClipboardFormat(CFSTR_SHELLURL);
-        HGLOBAL hmemURL = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, uri.Length() + 1);
+        HGLOBAL hmemURL = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT,
+                                      stringLen + 1);
         char *pszURL = (char *) GlobalLock(hmemURL);
-        uri.ToCString(pszURL, uri.Length() + 1);
+        strncpy(pszText, stringText, stringLen);
+        pszText[stringLen] = '\0';
         GlobalUnlock(hmemURL);
         SetClipboardData(cfShellURL, hmemURL);
 
@@ -1065,7 +1088,7 @@ HRESULT CMozillaBrowser::Initialize()
         // create our local object
         CWindowCreator *creator = new CWindowCreator();
         nsCOMPtr<nsIWindowCreator> windowCreator;
-        windowCreator = NS_STATIC_CAST(nsIWindowCreator *, creator);
+        windowCreator = static_cast<nsIWindowCreator *>(creator);
 
         // Attach it via the watcher service
         nsCOMPtr<nsIWindowWatcher> watcher =
@@ -1190,12 +1213,12 @@ HRESULT CMozillaBrowser::CreateBrowser()
     mWebBrowserContainer->AddRef();
 
     // Set up the browser with its chrome
-    mWebBrowser->SetContainerWindow(NS_STATIC_CAST(nsIWebBrowserChrome*, mWebBrowserContainer));
+    mWebBrowser->SetContainerWindow(static_cast<nsIWebBrowserChrome*>(mWebBrowserContainer));
     mWebBrowser->SetParentURIContentListener(mWebBrowserContainer);
 
     // Subscribe for progress notifications
     nsCOMPtr<nsIWeakReference> listener(
-        do_GetWeakReference(NS_STATIC_CAST(nsIWebProgressListener*, mWebBrowserContainer)));
+        do_GetWeakReference(static_cast<nsIWebProgressListener*>(mWebBrowserContainer)));
     mWebBrowser->AddWebBrowserListener(listener, NS_GET_IID(nsIWebProgressListener));
 
     // Visible
@@ -1268,7 +1291,8 @@ HRESULT CMozillaBrowser::SetEditorMode(BOOL bEnabled)
     if (NS_FAILED(rv))
         return E_FAIL;
 
-    rv = mEditingSession->MakeWindowEditable(domWindow, "html", PR_FALSE);
+    rv = mEditingSession->MakeWindowEditable(domWindow, "html", PR_FALSE,
+                                             PR_TRUE, PR_FALSE);
  
     return S_OK;
 }
@@ -1482,6 +1506,7 @@ HRESULT CMozillaBrowser::UnloadBrowserHelpers()
 // Print document
 HRESULT CMozillaBrowser::PrintDocument(BOOL promptUser)
 {
+#ifdef NS_PRINTING
     // Print the contents
     nsCOMPtr<nsIWebBrowserPrint> browserAsPrint = do_GetInterface(mWebBrowser);
     NS_ASSERTION(browserAsPrint, "No nsIWebBrowserPrint!");
@@ -1516,7 +1541,7 @@ HRESULT CMozillaBrowser::PrintDocument(BOOL promptUser)
         printSettings->SetPrintSilent(oldPrintSilent);
     }
     mPrefBranch->SetBoolPref(kShowPrintProgressPref, oldShowPrintProgress);
-
+#endif
     return S_OK;
 }
 
@@ -1894,7 +1919,6 @@ HRESULT STDMETHODCALLTYPE CMozillaBrowser::put_RegisterAsDropTarget(VARIANT_BOOL
     return S_OK;
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // Ole Command Handlers
 
@@ -2033,15 +2057,15 @@ NS_IMETHODIMP SimpleDirectoryProvider::GetFile(const char *prop, PRBool *persist
     nsCOMPtr<nsILocalFile> localFile;
     nsresult rv = NS_ERROR_FAILURE;
 
-    if (nsCRT::strcmp(prop, NS_APP_APPLICATION_REGISTRY_DIR) == 0)
+    if (strcmp(prop, NS_APP_APPLICATION_REGISTRY_DIR) == 0)
     {
         localFile = mApplicationRegistryDir;
     }
-    else if (nsCRT::strcmp(prop, NS_APP_APPLICATION_REGISTRY_FILE) == 0)
+    else if (strcmp(prop, NS_APP_APPLICATION_REGISTRY_FILE) == 0)
     {
         localFile = mApplicationRegistryFile;
     }
-    else if (nsCRT::strcmp(prop, NS_APP_USER_PROFILES_ROOT_DIR) == 0)
+    else if (strcmp(prop, NS_APP_USER_PROFILES_ROOT_DIR) == 0)
     {
         localFile = mUserProfileDir;
     }
@@ -2056,6 +2080,8 @@ NS_IMETHODIMP SimpleDirectoryProvider::GetFile(const char *prop, PRBool *persist
 ///////////////////////////////////////////////////////////////////////////////
 // PrintListener implementation
 
+
+#ifdef NS_PRINTING
 
 NS_IMPL_ISUPPORTS1(PrintListener, nsIWebProgressListener)
 
@@ -2138,3 +2164,4 @@ NS_IMETHODIMP PrintListener::OnSecurityChange(nsIWebProgress *aWebProgress, nsIR
 {
     return NS_OK;
 }
+#endif

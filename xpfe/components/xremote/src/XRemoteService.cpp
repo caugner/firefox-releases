@@ -17,7 +17,7 @@
  * The Original Code is mozilla.org code.
  *
  * The Initial Developer of the Original Code is
- * Christopher Blizzard <blizzard@mozilla.org>.  Portions created by Christopher Blizzard are Copyright (C) Christopher Blizzard.  All Rights Reserved.
+ * Christopher Blizzard <blizzard@mozilla.org>.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
@@ -43,15 +43,15 @@
 
 #include <nsIGenericFactory.h>
 #include <nsIWebNavigation.h>
-#include <nsIDOMWindowInternal.h>
+#include <nsPIDOMWindow.h>
 #include <nsIDOMChromeWindow.h>
 #include <nsIDocShell.h>
-#include <nsIScriptGlobalObject.h>
 #include <nsIBaseWindow.h>
 #include <nsIServiceManager.h>
 #include <nsString.h>
 #include <nsCRT.h>
-#include <nsIPref.h>
+#include <nsIPrefBranch.h>
+#include <nsIPrefService.h>
 #include <nsIWindowWatcher.h>
 #include <nsXPCOM.h>
 #include <nsISupportsPrimitives.h>
@@ -333,12 +333,11 @@ nsresult
 XRemoteService::GetBrowserLocation(char **_retval)
 {
   // get the browser chrome URL
-  nsCOMPtr<nsIPref> prefs;
-  prefs = do_GetService(NS_PREF_CONTRACTID);
+  nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
   if (!prefs)
     return NS_ERROR_FAILURE;
   
-  prefs->CopyCharPref("browser.chromeURL", _retval);
+  prefs->GetCharPref("browser.chromeURL", _retval);
 
   // fallback
   if (!*_retval)
@@ -351,21 +350,7 @@ nsresult
 XRemoteService::GetMailLocation(char **_retval)
 {
   // get the mail chrome URL
-  nsCOMPtr<nsIPref> prefs;
-  prefs = do_GetService(NS_PREF_CONTRACTID);
-  if (!prefs)
-    return NS_ERROR_FAILURE;
-  
-  PRInt32 retval = 0;
-  nsresult rv;
-  rv = prefs->GetIntPref("mail.pane_config", &retval);
-  if (NS_FAILED(rv))
-    return NS_ERROR_FAILURE;
-
-  if (!retval)
-    *_retval = nsCRT::strdup("chrome://messenger/content/messenger.xul");
-  else
-    *_retval = nsCRT::strdup("chrome://messenger/content/mail3PaneWindowVertLayout.xul");
+  *_retval = nsCRT::strdup("chrome://messenger/content/");
 
   return NS_OK;
   
@@ -384,12 +369,11 @@ nsresult
 XRemoteService::GetCalendarLocation(char **_retval)
 {
   // get the calendar chrome URL
-  nsCOMPtr<nsIPref> prefs;
-  prefs = do_GetService(NS_PREF_CONTRACTID);
+  nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
   if (!prefs)
     return NS_ERROR_FAILURE;
 
-  prefs->CopyCharPref("calendar.chromeURL", _retval);
+  prefs->GetCharPref("calendar.chromeURL", _retval);
 
   // fallback
   if (!*_retval)
@@ -545,8 +529,8 @@ XRemoteService::OpenURL(nsCString &aArgument,
     // we own it
     NS_ADDREF(listener);
     nsCOMPtr<nsISupports> listenerRef;
-    listenerRef = do_QueryInterface(NS_STATIC_CAST(nsIURIContentListener *,
-						   listener));
+    listenerRef = do_QueryInterface(static_cast<nsIURIContentListener *>
+                                               (listener));
     // now the listenerref is the only reference
     NS_RELEASE(listener);
 
@@ -591,14 +575,13 @@ XRemoteService::OpenURL(nsCString &aArgument,
   else { // non-browser URLs
     // find the primary content shell for the window that we've been
     // asked to load into.
-    nsCOMPtr<nsIScriptGlobalObject> scriptObject;
-    scriptObject = do_QueryInterface(finalWindow);
-    if (!scriptObject) {
+    nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(finalWindow));
+    if (!win) {
       NS_WARNING("Failed to get script object for browser instance");
       return NS_ERROR_FAILURE;
     }
 
-    nsCOMPtr<nsIDocShell> docShell = scriptObject->GetDocShell();
+    nsCOMPtr<nsIDocShell> docShell = win->GetDocShell();
     if (!docShell) {
       NS_WARNING("Failed to get docshell object for browser instance");
       return NS_ERROR_FAILURE;
@@ -664,7 +647,7 @@ XRemoteService::XfeDoCommand(nsCString &aArgument,
     return rv;
   
   // pass the second argument as parameter
-  arg->SetData(NS_ConvertUTF8toUCS2(restArgument));
+  arg->SetData(NS_ConvertUTF8toUTF16(restArgument));
 
   // someone requested opening mail/news
   if (aArgument.LowerCaseEqualsLiteral("openinbox")) {

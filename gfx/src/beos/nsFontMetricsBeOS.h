@@ -45,7 +45,6 @@
 #include "nsIFontEnumerator.h" 
 #include "nsFont.h"
 #include "nsString.h"
-#include "nsUnitConversion.h"
 #include "nsIDeviceContext.h"
 #include "nsCRT.h"
 #include "nsCOMPtr.h"
@@ -91,7 +90,8 @@ public:
 
   NS_IMETHOD  GetSpaceWidth(nscoord &aSpaceWidth); 
  
-  static nsresult FamilyExists(const nsString& aFontName); 
+  static nsresult FamilyExists(const nsString& aFontName);
+  inline PRBool   IsBold() { return mIsBold; } 
   static int FontMatchesGenericType(font_family family, uint32 flags, const char* aGeneric,  const char* aLangGroup);
   nsCOMPtr<nsIAtom>   mLangGroup; 
   static int MatchesLangGroup(font_family family,  const char* aLangGroup);
@@ -124,6 +124,7 @@ protected:
   PRUint16            mPixelSize; 
   PRUint8             mStretchIndex; 
   PRUint8             mStyleIndex;
+  PRBool              mIsBold;
   nsDataHashtable<nsUint32HashKey, float>         mFontWidthCache; 
 }; 
  

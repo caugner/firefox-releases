@@ -66,11 +66,13 @@ REQUIRES	= xpcom \
 		  docshell \
 		  windowwatcher \
 		  content \
+		  layout \
 		  $(NULL)
 
 CPPSRCS		= \
 		nsPrincipal.cpp \
 		nsSystemPrincipal.cpp \
+		nsNullPrincipal.cpp \
 		nsJSPrincipals.cpp \
 		nsScriptSecurityManager.cpp \
 		nsSecurityManagerFactory.cpp \

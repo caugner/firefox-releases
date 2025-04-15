@@ -38,7 +38,6 @@
 #define nsIStringCharsetDetector_h__
 
 #include "nsISupports.h"
-#include "nsString.h"
 #include "nsDetectionConfident.h"
 
 // {12BB8F15-2389-11d3-B3BF-00805F8A6670}
@@ -58,7 +57,7 @@
 class nsIStringCharsetDetector : public nsISupports {
 public:  
 
-   NS_DEFINE_STATIC_IID_ACCESSOR(NS_ISTRINGCHARSETDETECTOR_IID)
+   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ISTRINGCHARSETDETECTOR_IID)
   /*
      Perform the charset detection
     
@@ -70,4 +69,8 @@ public:
   NS_IMETHOD DoIt(const char* aBytesArray, PRUint32 aLen, 
                     const char** oCharset, nsDetectionConfident &oConfident) = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIStringCharsetDetector,
+                              NS_ISTRINGCHARSETDETECTOR_IID)
+
 #endif /* nsIStringCharsetDetector_h__ */

@@ -1,4 +1,6 @@
-/.cvsignore/1.1/Sat Dec  5 09:03:03 1998//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.4/Sat Apr 17 21:52:15 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Dec  5 09:03:03 1998//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.5/Tue Jan 30 05:48:22 2007//TFIREFOX_3_0rc3_RELEASE
+D/crashtests////
 D/public////
 D/src////
+D/test////

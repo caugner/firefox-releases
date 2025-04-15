@@ -48,7 +48,6 @@
 #include "nsString.h"
 #include "nsUnicharUtils.h"
 #include "nsReadableUtils.h"
-#include "nsIContent.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMHTMLFormElement.h"
 #include "nsIDOMHTMLInputElement.h"
@@ -102,6 +101,8 @@ public:
   { return mResult->GetCommentAt(aIndex, _result); }
   NS_IMETHOD GetStyleAt(PRInt32 aIndex, nsAString &_result)
   { return mResult->GetStyleAt(aIndex, _result); }
+  NS_IMETHOD GetImageAt(PRInt32 aIndex, nsAString &_result)
+  { return mResult->GetImageAt(aIndex, _result); }
   NS_IMETHOD RemoveValueAt(PRInt32 aRowIndex, PRBool aRemoveFromDB);
   NS_FORWARD_NSIAUTOCOMPLETESIMPLERESULT(mResult->)
 
@@ -228,7 +229,7 @@ nsFormHistory::AddEntry(const nsAString &aName, const nsAString &aValue)
 
   mozStorageTransaction transaction(mDBConn, PR_FALSE);
 
-  PRBool exists;
+  PRBool exists = PR_TRUE;
   EntryExists(aName, aValue, &exists);
   if (!exists) {
     mozStorageStatementScoper scope(mDBInsertNameValue);
@@ -314,6 +315,21 @@ nsFormHistory::RemoveAllEntries()
                                          getter_AddRefs(dbDeleteAll));
   NS_ENSURE_SUCCESS(rv,rv);
 
+  // privacy cleanup, if there's an old mork formhistory around, just delete it
+  nsCOMPtr<nsIFile> oldFormHistoryFile;
+  rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,
+                              getter_AddRefs(oldFormHistoryFile));
+  if (NS_FAILED(rv)) return rv;
+
+  rv = oldFormHistoryFile->Append(NS_LITERAL_STRING("formhistory.dat"));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PRBool fileExists;
+  if (NS_SUCCEEDED(oldFormHistoryFile->Exists(&fileExists)) && fileExists) {
+    rv = oldFormHistoryFile->Remove(PR_FALSE);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
   return dbDeleteAll->Execute();
 }
 
@@ -334,19 +350,20 @@ nsFormHistory::Observe(nsISupports *aSubject, const char *aTopic, const PRUnicha
 //// nsIFormSubmitObserver
 
 NS_IMETHODIMP
-nsFormHistory::Notify(nsIContent* aFormNode, nsIDOMWindowInternal* aWindow, nsIURI* aActionURL, PRBool* aCancelSubmit)
+nsFormHistory::Notify(nsIDOMHTMLFormElement* formElt, nsIDOMWindowInternal* aWindow, nsIURI* aActionURL, PRBool* aCancelSubmit)
 {
   if (!FormHistoryEnabled())
     return NS_OK;
 
-  nsCOMPtr<nsIDOMHTMLFormElement> formElt = do_QueryInterface(aFormNode);
-  NS_ENSURE_TRUE(formElt, NS_ERROR_FAILURE);
+  NS_NAMED_LITERAL_STRING(kAutoComplete, "autocomplete");
+  nsAutoString autocomplete;
+  formElt->GetAttribute(kAutoComplete, autocomplete);
+  if (autocomplete.LowerCaseEqualsLiteral("off"))
+    return NS_OK;
 
   nsCOMPtr<nsIDOMHTMLCollection> elts;
   formElt->GetElements(getter_AddRefs(elts));
-  
-  const char *textString = "text";
-  
+
   PRUint32 length;
   elts->GetLength(&length);
   for (PRUint32 i = 0; i < length; ++i) {
@@ -354,10 +371,18 @@ nsFormHistory::Notify(nsIContent* aFormNode, nsIDOMWindowInternal* aWindow, nsIU
     elts->Item(i, getter_AddRefs(node));
     nsCOMPtr<nsIDOMHTMLInputElement> inputElt = do_QueryInterface(node);
     if (inputElt) {
-      // Filter only inputs that are of type "text"
+      // Filter only inputs that are of type "text" without autocomplete="off"
       nsAutoString type;
       inputElt->GetType(type);
-      if (type.EqualsIgnoreCase(textString)) {
+      if (!type.LowerCaseEqualsLiteral("text"))
+        continue;
+
+      // TODO: If Login Manager marked this input, don't save it. The login
+      // manager will deal with remembering it.
+
+      nsAutoString autocomplete;
+      inputElt->GetAttribute(kAutoComplete, autocomplete);
+      if (!autocomplete.LowerCaseEqualsLiteral("off")) {
         // If this input has a name/id and value, add it to the database
         nsAutoString value;
         inputElt->GetValue(value);
@@ -366,7 +391,6 @@ nsFormHistory::Notify(nsIContent* aFormNode, nsIDOMWindowInternal* aWindow, nsIU
           inputElt->GetName(name);
           if (name.IsEmpty())
             inputElt->GetId(name);
-          
           if (!name.IsEmpty())
             AddEntry(name, value);
         }
@@ -388,6 +412,12 @@ nsFormHistory::OpenDatabase()
   rv = GetDatabaseFile(getter_AddRefs(formHistoryFile));
   NS_ENSURE_SUCCESS(rv, rv);
   rv = mStorageService->OpenDatabase(formHistoryFile, getter_AddRefs(mDBConn));
+  if (rv == NS_ERROR_FILE_CORRUPTED) {
+    // delete the db and try opening again
+    rv = formHistoryFile->Remove(PR_FALSE);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = mStorageService->OpenDatabase(formHistoryFile, getter_AddRefs(mDBConn));
+  }
   NS_ENSURE_SUCCESS(rv, rv);
 
   // We execute many statements before the database cache is started to create
@@ -529,10 +559,6 @@ nsFormHistory::StartCache()
   rv = mDummyConnection->ExecuteSimpleSQL(cacheSizePragma);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // preload the cache
-  rv = mDummyConnection->Preload();
-  NS_ENSURE_SUCCESS(rv, rv);
-
   return NS_OK;
 }
 
@@ -589,7 +615,7 @@ nsFormHistory::AutoCompleteSearch(const nsAString &aInputName,
     NS_ENSURE_TRUE(fhResult, NS_ERROR_OUT_OF_MEMORY);
     nsresult rv = fhResult->Init();
     NS_ENSURE_SUCCESS(rv, rv);
-    NS_REINTERPRET_CAST(nsCOMPtr<nsIAutoCompleteSimpleResult>*, &fhResult)->swap(result);
+    reinterpret_cast<nsCOMPtr<nsIAutoCompleteSimpleResult>*>(&fhResult)->swap(result);
 
     result->SetSearchString(aInputValue);
 
@@ -607,7 +633,7 @@ nsFormHistory::AutoCompleteSearch(const nsAString &aInputName,
       // filters out irrelevant results
       if(StringBeginsWith(entryString, aInputValue,
                           nsCaseInsensitiveStringComparator())) {
-        result->AppendMatch(entryString, EmptyString());
+        result->AppendMatch(entryString, EmptyString(), EmptyString(), EmptyString());
         ++count;
       }
     }
@@ -679,8 +705,8 @@ nsFormHistoryImporter::AddToFormHistoryCB(const nsCSubstring &aRowID,
                                           const nsTArray<nsCString> *aValues,
                                           void *aData)
 {
-  FormHistoryImportClosure *data = NS_STATIC_CAST(FormHistoryImportClosure*,
-                                                  aData);
+  FormHistoryImportClosure *data = static_cast<FormHistoryImportClosure*>
+                                              (aData);
   const nsMorkReader *reader = data->reader;
   nsCString values[kColumnCount];
   const PRUnichar* valueStrings[kColumnCount];
@@ -713,11 +739,11 @@ nsFormHistoryImporter::AddToFormHistoryCB(const nsCSubstring &aRowID,
 
       // Swap the bytes in the unicode characters if necessary.
       if (data->swapBytes) {
-        SwapBytes(NS_REINTERPRET_CAST(PRUnichar*, values[i].BeginWriting()));
+        SwapBytes(reinterpret_cast<PRUnichar*>(values[i].BeginWriting()));
       }
       bytes = values[i].get();
     }
-    valueStrings[i] = NS_REINTERPRET_CAST(const PRUnichar*, bytes);
+    valueStrings[i] = reinterpret_cast<const PRUnichar*>(bytes);
     valueLengths[i] = length;
   }
 

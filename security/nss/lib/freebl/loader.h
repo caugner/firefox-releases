@@ -37,14 +37,14 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: loader.h,v 1.12.18.2 2006/05/15 17:45:31 wtchang%redhat.com Exp $ */
+/* $Id: loader.h,v 1.21 2007/11/13 03:12:48 wtc%google.com Exp $ */
 
 #ifndef _LOADER_H_
 #define _LOADER_H_ 1
 
 #include "blapi.h"
 
-#define FREEBL_VERSION 0x0309
+#define FREEBL_VERSION 0x030A
 
 struct FREEBLVectorStr {
 
@@ -458,6 +458,39 @@ struct FREEBLVectorStr {
                                                 unsigned char *xj);
 
   /* Version 3.009 came to here */
+
+ SECStatus (* p_Camellia_InitContext)(CamelliaContext *cx,
+				 const unsigned char *key, 
+				 unsigned int keylen, 
+				 const unsigned char *iv, 
+				 int mode, 
+				 unsigned int encrypt,
+				 unsigned int unused);
+
+ CamelliaContext *(*p_Camellia_AllocateContext)(void);
+ CamelliaContext * (* p_Camellia_CreateContext)(const unsigned char *key, 
+						const unsigned char *iv, 
+						int mode, int encrypt,
+						unsigned int keylen);
+ void (* p_Camellia_DestroyContext)(CamelliaContext *cx, PRBool freeit);
+
+ SECStatus (* p_Camellia_Encrypt)(CamelliaContext *cx, unsigned char *output,
+				  unsigned int *outputLen,
+				  unsigned int maxOutputLen,
+				  const unsigned char *input,
+				  unsigned int inputLen);
+
+ SECStatus (* p_Camellia_Decrypt)(CamelliaContext *cx, unsigned char *output,
+				  unsigned int *outputLen,
+				  unsigned int maxOutputLen,
+				  const unsigned char *input,
+				  unsigned int inputLen);
+
+ void (* p_PQG_DestroyParams)(PQGParams *params);
+
+ void (* p_PQG_DestroyVerify)(PQGVerify *vfy);
+
+  /* Version 3.010 came to here */
 };
 
 typedef struct FREEBLVectorStr FREEBLVector;

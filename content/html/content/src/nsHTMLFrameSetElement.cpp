@@ -35,9 +35,9 @@
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsIDOMHTMLFrameSetElement.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsGenericHTMLElement.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"
 #include "nsIFrameSetElement.h"
@@ -56,7 +56,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMNODE(nsGenericHTMLElement::)
 
   // nsIDOMElement
   NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
@@ -82,11 +82,15 @@ public:
   NS_IMETHOD GetRowSpec(PRInt32 *aNumValues, const nsFramesetSpec** aSpecs);
   NS_IMETHOD GetColSpec(PRInt32 *aNumValues, const nsFramesetSpec** aSpecs);
 
-  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
+  virtual PRBool ParseAttribute(PRInt32 aNamespaceID,
+                                nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult);
   virtual nsChangeHint GetAttributeChangeHint(const nsIAtom* aAttribute,
                                               PRInt32 aModType) const;
+
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
+
 private:
   nsresult ParseRowCol(const nsAString& aValue,
                        PRInt32&         aNumSpecs,
@@ -134,15 +138,15 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLFrameSetElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLFrameSetElement
-NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLFrameSetElement,
-                                    nsGenericHTMLElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLFrameSetElement)
-  NS_INTERFACE_MAP_ENTRY(nsIFrameSetElement)
-  NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLFrameSetElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLFrameSetElement,
+                                      nsGenericHTMLElement)
+  NS_INTERFACE_TABLE_INHERITED2(nsHTMLFrameSetElement,
+                                nsIDOMHTMLFrameSetElement,
+                                nsIFrameSetElement)
+NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLFrameSetElement)
 
 
-NS_IMPL_DOM_CLONENODE(nsHTMLFrameSetElement)
+NS_IMPL_ELEMENT_CLONE(nsHTMLFrameSetElement)
 
 
 NS_IMPL_STRING_ATTR(nsHTMLFrameSetElement, Cols, cols)
@@ -164,14 +168,14 @@ nsHTMLFrameSetElement::SetAttr(PRInt32 aNameSpaceID,
    *  Once nsGenericHTMLElement::SetAttr returns, we want to go back to our
    *  normal hint, which is NS_STYLE_HINT_REFLOW.
    */
-  if (aAttribute == nsHTMLAtoms::rows && aNameSpaceID == kNameSpaceID_None) {
+  if (aAttribute == nsGkAtoms::rows && aNameSpaceID == kNameSpaceID_None) {
     PRInt32 oldRows = mNumRows;
     ParseRowCol(aValue, mNumRows, getter_Transfers(mRowSpecs));
     
     if (mNumRows != oldRows) {
       mCurrentRowColHint = NS_STYLE_HINT_FRAMECHANGE;
     }
-  } else if (aAttribute == nsHTMLAtoms::cols &&
+  } else if (aAttribute == nsGkAtoms::cols &&
              aNameSpaceID == kNameSpaceID_None) {
     PRInt32 oldCols = mNumCols;
     ParseRowCol(aValue, mNumCols, getter_Transfers(mColSpecs));
@@ -198,7 +202,7 @@ nsHTMLFrameSetElement::GetRowSpec(PRInt32 *aNumValues,
   *aSpecs = nsnull;
   
   if (!mRowSpecs) {
-    const nsAttrValue* value = GetParsedAttr(nsHTMLAtoms::rows);
+    const nsAttrValue* value = GetParsedAttr(nsGkAtoms::rows);
     if (value && value->Type() == nsAttrValue::eString) {
       nsresult rv = ParseRowCol(value->GetStringValue(), mNumRows,
                                 getter_Transfers(mRowSpecs));
@@ -232,7 +236,7 @@ nsHTMLFrameSetElement::GetColSpec(PRInt32 *aNumValues,
   *aSpecs = nsnull;
 
   if (!mColSpecs) {
-    const nsAttrValue* value = GetParsedAttr(nsHTMLAtoms::cols);
+    const nsAttrValue* value = GetParsedAttr(nsGkAtoms::cols);
     if (value && value->Type() == nsAttrValue::eString) {
       nsresult rv = ParseRowCol(value->GetStringValue(), mNumCols,
                                 getter_Transfers(mColSpecs));
@@ -258,21 +262,25 @@ nsHTMLFrameSetElement::GetColSpec(PRInt32 *aNumValues,
 
 
 PRBool
-nsHTMLFrameSetElement::ParseAttribute(nsIAtom* aAttribute,
+nsHTMLFrameSetElement::ParseAttribute(PRInt32 aNamespaceID,
+                                      nsIAtom* aAttribute,
                                       const nsAString& aValue,
                                       nsAttrValue& aResult)
 {
-  if (aAttribute == nsHTMLAtoms::bordercolor) {
-    return aResult.ParseColor(aValue, GetOwnerDoc());
-  } 
-  if (aAttribute == nsHTMLAtoms::frameborder) {
-    return nsGenericHTMLElement::ParseFrameborderValue(aValue, aResult);
-  } 
-  if (aAttribute == nsHTMLAtoms::border) {
-    return aResult.ParseIntWithBounds(aValue, 0, 100);
+  if (aNamespaceID == kNameSpaceID_None) {
+    if (aAttribute == nsGkAtoms::bordercolor) {
+      return aResult.ParseColor(aValue, GetOwnerDoc());
+    }
+    if (aAttribute == nsGkAtoms::frameborder) {
+      return nsGenericHTMLElement::ParseFrameborderValue(aValue, aResult);
+    }
+    if (aAttribute == nsGkAtoms::border) {
+      return aResult.ParseIntWithBounds(aValue, 0, 100);
+    }
   }
-
-  return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
+  
+  return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
+                                              aResult);
 }
 
 nsChangeHint
@@ -281,8 +289,8 @@ nsHTMLFrameSetElement::GetAttributeChangeHint(const nsIAtom* aAttribute,
 {
   nsChangeHint retval =
     nsGenericHTMLElement::GetAttributeChangeHint(aAttribute, aModType);
-  if (aAttribute == nsHTMLAtoms::rows ||
-      aAttribute == nsHTMLAtoms::cols) {
+  if (aAttribute == nsGkAtoms::rows ||
+      aAttribute == nsGkAtoms::cols) {
     NS_UpdateHint(retval, mCurrentRowColHint);
   }
   return retval;
@@ -328,12 +336,7 @@ nsHTMLFrameSetElement::ParseRowCol(const nsAString & aValue,
   }
 
   // Pre-grab the compat mode; we may need it later in the loop.
-  nsCompatibility mode = eCompatibility_FullStandards;
-  nsCOMPtr<nsIHTMLDocument> htmlDocument =
-    do_QueryInterface(GetOwnerDoc());
-  if (htmlDocument) {
-    mode = htmlDocument->GetCompatibilityMode();
-  }
+  PRBool isInQuirks = InNavQuirksMode(GetOwnerDoc());
       
   // Parse each comma separated token
 
@@ -390,7 +393,7 @@ nsHTMLFrameSetElement::ParseRowCol(const nsAString & aValue,
       }
 
       // Treat 0* as 1* in quirks mode (bug 40383)
-      if (eCompatibility_NavQuirks == mode) {
+      if (isInQuirks) {
         if ((eFramesetUnit_Relative == specs[i].mUnit) &&
           (0 == specs[i].mValue)) {
           specs[i].mValue = 1;
@@ -401,7 +404,7 @@ nsHTMLFrameSetElement::ParseRowCol(const nsAString & aValue,
       // Nav resized absolute and relative frames to "1" and
       // percent frames to an even percentage of the width
       //
-      //if ((eCompatibility_NavQuirks == aMode) && (specs[i].mValue <= 0)) {
+      //if (isInQuirks && (specs[i].mValue <= 0)) {
       //  if (eFramesetUnit_Percent == specs[i].mUnit) {
       //    specs[i].mValue = 100 / count;
       //  } else {

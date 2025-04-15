@@ -42,7 +42,6 @@
 #include "nsHTMLButtonControlFrame.h"
 #include "nsCOMPtr.h"
 #include "nsIAnonymousContentCreator.h"
-#include "nsITextContent.h"
 
 #ifdef ACCESSIBILITY
 class nsIAccessible;
@@ -57,15 +56,9 @@ class nsGfxButtonControlFrame : public nsHTMLButtonControlFrame,
                                 public nsIAnonymousContentCreator
 {
 public:
-  nsGfxButtonControlFrame();
+  nsGfxButtonControlFrame(nsStyleContext* aContext);
 
-     //nsIFrame
-  NS_IMETHOD Reflow(nsPresContext*          aCX,
-                    nsHTMLReflowMetrics&     aDesiredSize,
-                    const nsHTMLReflowState& aReflowState,
-                    nsReflowStatus&          aStatus);
-  virtual const nsIID& GetCID();
-  virtual const nsIID& GetIID();
+  virtual void Destroy();
 
   NS_IMETHOD HandleEvent(nsPresContext* aPresContext, 
                          nsGUIEvent* aEvent,
@@ -78,31 +71,29 @@ public:
 
   virtual nsIAtom* GetType() const;
 
-   // nsFormControlFrame
-  NS_IMETHOD SetSuggestedSize(nscoord aWidth, nscoord aHeight);
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
 #endif
   NS_IMETHOD QueryInterface(const nsIID& aIID, void** aInstancePtr);
 
- 
-  // nsIAnonymousContentCreator
-  NS_IMETHOD CreateAnonymousContent(nsPresContext* aPresContext,
-                                    nsISupportsArray& aChildList);
-  NS_IMETHOD CreateFrameFor(nsPresContext*   aPresContext,
-                            nsIContent *      aContent,
-                            nsIFrame**        aFrame);
 
-  NS_IMETHOD AttributeChanged(nsIContent*     aChild,
-                              PRInt32         aNameSpaceID,
+  // nsIAnonymousContentCreator
+  virtual nsresult CreateAnonymousContent(nsTArray<nsIContent*>& aElements);
+  virtual nsIFrame* CreateFrameFor(nsIContent* aContent);
+
+  // nsIFormControlFrame
+  virtual nsresult GetFormProperty(nsIAtom* aName, nsAString& aValue) const; 
+
+
+  NS_IMETHOD AttributeChanged(PRInt32         aNameSpaceID,
                               nsIAtom*        aAttribute,
                               PRInt32         aModType);
 
   virtual PRBool IsLeaf() const;
-  
+
+  virtual nsIFrame* GetContentInsertionFrame();
+
 protected:
-  NS_IMETHOD AddComputedBorderPaddingToDesiredSize(nsHTMLReflowMetrics& aDesiredSize,
-                                                   const nsHTMLReflowState& aSuggestedReflowState);
   nsresult GetDefaultLabel(nsXPIDLString& aLabel);
 
   nsresult GetLabel(nsXPIDLString& aLabel);
@@ -113,9 +104,8 @@ private:
   NS_IMETHOD_(nsrefcnt) AddRef() { return NS_OK; }
   NS_IMETHOD_(nsrefcnt) Release() { return NS_OK; }
 
-  nscoord mSuggestedWidth;
-  nscoord mSuggestedHeight;
-  nsCOMPtr<nsITextContent> mTextContent;
+  nsSize mSuggestedSize;
+  nsCOMPtr<nsIContent> mTextContent;
 };
 
 

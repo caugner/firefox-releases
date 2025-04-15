@@ -20,6 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Mats Palmgren <mats.palmgren@bredband.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -36,16 +37,15 @@
  * ***** END LICENSE BLOCK ***** */
 #include "nsIDOMHTMLLegendElement.h"
 #include "nsIDOMHTMLFormElement.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsGenericHTMLElement.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"
 #include "nsIForm.h"
 #include "nsIFormControl.h"
 #include "nsIEventStateManager.h"
 #include "nsIFocusController.h"
-#include "nsIScriptGlobalObject.h"
 #include "nsIDocument.h"
 #include "nsPIDOMWindow.h"
 
@@ -61,7 +61,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLFormElement::)
+  NS_FORWARD_NSIDOMNODE(nsGenericHTMLFormElement::)
 
   // nsIDOMElement
   NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLFormElement::)
@@ -85,7 +85,8 @@ public:
   virtual void UnbindFromTree(PRBool aDeep = PR_TRUE,
                               PRBool aNullParent = PR_TRUE);
   virtual void SetFocus(nsPresContext* aPresContext);
-  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
+  virtual PRBool ParseAttribute(PRInt32 aNamespaceID,
+                                nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult);
   virtual nsChangeHint GetAttributeChangeHint(const nsIAtom* aAttribute,
@@ -100,6 +101,11 @@ public:
                            PRBool aNotify);
   virtual nsresult UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
                              PRBool aNotify);
+
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
+
+protected:
+  PRPackedBool mInSetFocus;
 };
 
 
@@ -108,6 +114,7 @@ NS_IMPL_NS_NEW_HTML_ELEMENT(Legend)
 
 nsHTMLLegendElement::nsHTMLLegendElement(nsINodeInfo *aNodeInfo)
   : nsGenericHTMLFormElement(aNodeInfo)
+  , mInSetFocus(PR_FALSE)
 {
 }
 
@@ -121,17 +128,16 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLLegendElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLLegendElement
-NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLLegendElement,
-                                    nsGenericHTMLFormElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLLegendElement)
-  NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLLegendElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLLegendElement,
+                                     nsGenericHTMLFormElement)
+  NS_INTERFACE_TABLE_INHERITED1(nsHTMLLegendElement, nsIDOMHTMLLegendElement)
+NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLLegendElement)
 
 
 // nsIDOMHTMLLegendElement
 
 
-NS_IMPL_DOM_CLONENODE(nsHTMLLegendElement)
+NS_IMPL_ELEMENT_CLONE(nsHTMLLegendElement)
 
 
 NS_IMETHODIMP
@@ -155,15 +161,17 @@ static const nsAttrValue::EnumTable kAlignTable[] = {
 };
 
 PRBool
-nsHTMLLegendElement::ParseAttribute(nsIAtom* aAttribute,
+nsHTMLLegendElement::ParseAttribute(PRInt32 aNamespaceID,
+                                    nsIAtom* aAttribute,
                                     const nsAString& aValue,
                                     nsAttrValue& aResult)
 {
-  if (aAttribute == nsHTMLAtoms::align) {
+  if (aAttribute == nsGkAtoms::align && aNamespaceID == kNameSpaceID_None) {
     return aResult.ParseEnumValue(aValue, kAlignTable);
   }
 
-  return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
+  return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
+                                              aResult);
 }
 
 nsChangeHint
@@ -172,7 +180,7 @@ nsHTMLLegendElement::GetAttributeChangeHint(const nsIAtom* aAttribute,
 {
   nsChangeHint retval =
       nsGenericHTMLFormElement::GetAttributeChangeHint(aAttribute, aModType);
-  if (aAttribute == nsHTMLAtoms::align) {
+  if (aAttribute == nsGkAtoms::align) {
     NS_UpdateHint(retval, NS_STYLE_HINT_REFLOW);
   }
   return retval;
@@ -183,7 +191,7 @@ nsHTMLLegendElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
                              nsIAtom* aPrefix, const nsAString& aValue,
                              PRBool aNotify)
 {
-  PRBool accesskey = (aAttribute == nsHTMLAtoms::accesskey &&
+  PRBool accesskey = (aAttribute == nsGkAtoms::accesskey &&
                       aNameSpaceID == kNameSpaceID_None);
   if (accesskey) {
     RegUnRegAccessKey(PR_FALSE);
@@ -203,7 +211,7 @@ nsresult
 nsHTMLLegendElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
                                PRBool aNotify)
 {
-  if (aAttribute == nsHTMLAtoms::accesskey &&
+  if (aAttribute == nsGkAtoms::accesskey &&
       aNameSpaceID == kNameSpaceID_None) {
     RegUnRegAccessKey(PR_FALSE);
   }
@@ -248,26 +256,28 @@ void
 nsHTMLLegendElement::SetFocus(nsPresContext* aPresContext)
 {
   nsIDocument *document = GetCurrentDoc();
-  if (!aPresContext || !document) {
+  if (!aPresContext || !document || mInSetFocus) {
     return;
   }
 
-  nsCOMPtr<nsIEventStateManager> esm = aPresContext->EventStateManager();
+  mInSetFocus = PR_TRUE;
   if (IsFocusable()) {
-    esm->SetContentState(this, NS_EVENT_STATE_FOCUS);
+    nsGenericHTMLFormElement::SetFocus(aPresContext);
   } else {
     // If the legend isn't focusable (no tabindex) we focus whatever is
     // focusable following the legend instead, bug 81481.
-    nsCOMPtr<nsPIDOMWindow> ourWindow = do_QueryInterface(document->GetScriptGlobalObject());
+    nsCOMPtr<nsPIDOMWindow> ourWindow = document->GetWindow();
     if (ourWindow) {
-      nsIFocusController* focusController = ourWindow->GetRootFocusController();
-      nsIDOMElement* domElement = nsnull;
-      CallQueryInterface(this, &domElement);
+      nsIFocusController* focusController =
+        ourWindow->GetRootFocusController();
+      nsCOMPtr<nsIDOMElement> domElement =
+        do_QueryInterface(static_cast<nsIContent *>(this));
       if (focusController && domElement) {
         focusController->MoveFocus(PR_TRUE, domElement);
       }
     }
   }
+  mInSetFocus = PR_FALSE;
 }
 
 NS_IMETHODIMP

@@ -34,6 +34,9 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* a presentation of a document, part 1 */
+
 #ifndef nsPresContext_h___
 #define nsPresContext_h___
 
@@ -41,12 +44,10 @@
 #include "nsColor.h"
 #include "nsCoord.h"
 #include "nsAString.h"
-#include "nsCompatibility.h"
 #include "nsCOMPtr.h"
 #include "nsIPresShell.h"
 #include "nsRect.h"
 #include "nsIDeviceContext.h"
-#include "nsHashtable.h"
 #include "nsFont.h"
 #include "nsIWeakReference.h"
 #include "nsITheme.h"
@@ -56,6 +57,14 @@
 #include "nsCRT.h"
 #include "nsIPrintSettings.h"
 #include "nsPropertyTable.h"
+#include "nsGkAtoms.h"
+#include "nsIDocument.h"
+#include "nsInterfaceHashtable.h"
+#include "nsCycleCollectionParticipant.h"
+#include "nsChangeHint.h"
+// XXX we need only gfxTypes.h, but we cannot include it directly.
+#include "gfxPoint.h"
+class nsImageLoader;
 #ifdef IBMBIDI
 class nsBidiPresUtils;
 #endif // IBMBIDI
@@ -65,7 +74,6 @@ struct nsRect;
 class imgIRequest;
 
 class nsIContent;
-class nsIDocument;
 class nsIFontMetrics;
 class nsIFrame;
 class nsFrameManager;
@@ -78,16 +86,13 @@ class nsIURI;
 class nsILookAndFeel;
 class nsICSSPseudoComparator;
 class nsIAtom;
-struct nsStyleStruct;
 struct nsStyleBackground;
+template <class T> class nsRunnableMethod;
+class nsIRunnable;
 
 #ifdef MOZ_REFLOW_PERF
 class nsIRenderingContext;
 #endif
-
-#define NS_IPRESCONTEXT_IID   \
-{ 0x96e4bc06, 0x8e72, 0x4941, \
-  {0xa6, 0x6c, 0x70, 0xee, 0x7d, 0x1b, 0x58, 0x21} }
 
 enum nsWidgetType {
   eWidgetType_Button  	= 1,
@@ -103,41 +108,58 @@ enum nsLanguageSpecificTransformType {
 };
 
 // supported values for cached bool types
-const PRUint32 kPresContext_UseDocumentColors = 0x01;
-const PRUint32 kPresContext_UseDocumentFonts = 0x02;
-const PRUint32 kPresContext_UnderlineLinks = 0x03;
+enum nsPresContext_CachedBoolPrefType {
+  kPresContext_UseDocumentColors = 1,
+  kPresContext_UseDocumentFonts,
+  kPresContext_UnderlineLinks
+};
 
 // supported values for cached integer pref types
-const PRUint32 kPresContext_MinimumFontSize = 0x01;
+enum nsPresContext_CachedIntPrefType {
+  kPresContext_MinimumFontSize = 1,
+  kPresContext_ScrollbarSide,
+  kPresContext_BidiDirection
+};
 
 // IDs for the default variable and fixed fonts (not to be changed, see nsFont.h)
 // To be used for Get/SetDefaultFont(). The other IDs in nsFont.h are also supported.
 const PRUint8 kPresContext_DefaultVariableFont_ID = 0x00; // kGenericFont_moz_variable
 const PRUint8 kPresContext_DefaultFixedFont_ID    = 0x01; // kGenericFont_moz_fixed
 
+#ifdef DEBUG
+struct nsAutoLayoutPhase;
+
+enum nsLayoutPhase {
+  eLayoutPhase_Paint,
+  eLayoutPhase_Reflow,
+  eLayoutPhase_FrameC,
+  eLayoutPhase_COUNT
+};
+#endif
+
+/* Used by nsPresContext::HasAuthorSpecifiedRules */
+#define NS_AUTHOR_SPECIFIED_BACKGROUND      (1 << 0)
+#define NS_AUTHOR_SPECIFIED_BORDER          (1 << 1)
+#define NS_AUTHOR_SPECIFIED_PADDING         (1 << 2)
+
 // An interface for presentation contexts. Presentation contexts are
 // objects that provide an outer context for a presentation shell.
 
-// hack to make egcs / gcc 2.95.2 happy
-class nsPresContext_base : public nsIObserver
-{
+class nsPresContext : public nsIObserver {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IPRESCONTEXT_IID)
-};
-
-class nsPresContext : public nsPresContext_base {
-public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_NSIOBSERVER
   NS_DECL_AND_IMPL_ZEROING_OPERATOR_NEW
+  NS_DECL_CYCLE_COLLECTION_CLASS(nsPresContext)
 
   enum nsPresContextType {
     eContext_Galley,       // unpaginated screen presentation
     eContext_PrintPreview, // paginated screen presentation
-    eContext_Print         // paginated printer presentation
+    eContext_Print,        // paginated printer presentation
+    eContext_PageLayout    // paginated & editable.
   };
 
-  nsPresContext(nsPresContextType aType) NS_HIDDEN;
+  nsPresContext(nsIDocument* aDocument, nsPresContextType aType) NS_HIDDEN;
 
   /**
    * Initialize the presentation context from a particular device.
@@ -164,7 +186,18 @@ public:
 
   nsIPresShell* GetPresShell() const { return mShell; }
 
-  nsIDocument* GetDocument() { return GetPresShell()->GetDocument(); } 
+  // Find the prescontext for the root of the view manager hierarchy that contains
+  // this prescontext.
+  nsPresContext* RootPresContext();
+
+  nsIDocument* Document() const
+  {
+      NS_ASSERTION(!mShell || !mShell->GetDocument() ||
+                   mShell->GetDocument() == mDocument,
+                   "nsPresContext doesn't have the same document as nsPresShell!");
+      return mDocument;
+  }
+
   nsIViewManager* GetViewManager() { return GetPresShell()->GetViewManager(); } 
 #ifdef _IMPL_NS_LAYOUT
   nsStyleSet* StyleSet() { return GetPresShell()->StyleSet(); }
@@ -173,19 +206,26 @@ public:
     { return GetPresShell()->FrameManager(); } 
 #endif
 
+  void RebuildAllStyleData(nsChangeHint aExtraHint);
+  void PostRebuildAllStyleDataEvent();
+
   /**
-   * Access compatibility mode for this context
-   *
-   * All users must explicitly set the compatibility mode rather than
-   * relying on a default.
+   * Access compatibility mode for this context.  This is the same as
+   * our document's compatibility mode.
    */
-  nsCompatibility CompatibilityMode() const { return mCompatibilityMode; }
-  NS_HIDDEN_(void) SetCompatibilityMode(nsCompatibility aMode);
+  nsCompatibility CompatibilityMode() const {
+    return Document()->GetCompatibilityMode();
+  }
+  /**
+   * Notify the context that the document's compatibility mode has changed
+   */
+  NS_HIDDEN_(void) CompatibilityModeChanged();
 
   /**
    * Access the image animation mode for this context
    */
   PRUint16     ImageAnimationMode() const { return mImageAnimationMode; }
+  void RestoreImageAnimationMode() { SetImageAnimationMode(mImageAnimationModePref); }
   virtual NS_HIDDEN_(void) SetImageAnimationModeExternal(PRUint16 aMode);
   NS_HIDDEN_(void) SetImageAnimationModeInternal(PRUint16 aMode);
 #ifdef _IMPL_NS_LAYOUT
@@ -206,11 +246,6 @@ public:
    * Get medium of presentation
    */
   nsIAtom* Medium() { return mMedium; }
-
-  /**
-   * Clear style data from the root frame downwards, and reflow.
-   */
-  NS_HIDDEN_(void) ClearStyleDataAndReflow();
 
   void* AllocateFromShell(size_t aSize)
   {
@@ -241,8 +276,21 @@ public:
 #endif
 
   /**
-   * Get the default font correponding to the given ID.  This object is
+   * Get the default font corresponding to the given ID.  This object is
    * read-only, you must copy the font to modify it.
+   * 
+   * When aFontID is kPresContext_DefaultVariableFontID or
+   * kPresContext_DefaultFixedFontID (which equals
+   * kGenericFont_moz_fixed, which is used for the -moz-fixed generic),
+   * the nsFont returned has its name as a CSS generic family (serif or
+   * sans-serif for the former, monospace for the latter), and its size
+   * as the default font size for variable or fixed fonts for the pres
+   * context's language group.
+   *
+   * For aFontID corresponds to a CSS Generic, the nsFont returned has
+   * its name as the name or names of the fonts in the user's
+   * preferences for the given generic and the pres context's language
+   * group, and its size set to the default variable font size.
    */
   virtual NS_HIDDEN_(const nsFont*) GetDefaultFontExternal(PRUint8 aFontID) const;
   NS_HIDDEN_(const nsFont*) GetDefaultFontInternal(PRUint8 aFontID) const;
@@ -256,7 +304,7 @@ public:
 
   /** Get a cached boolean pref, by its type */
   // *  - initially created for bugs 31816, 20760, 22963
-  PRBool GetCachedBoolPref(PRUint32 aPrefType) const
+  PRBool GetCachedBoolPref(nsPresContext_CachedBoolPrefType aPrefType) const
   {
     // If called with a constant parameter, the compiler should optimize
     // this switch statement away.
@@ -276,13 +324,17 @@ public:
 
   /** Get a cached integer pref, by its type */
   // *  - initially created for bugs 30910, 61883, 74186, 84398
-  PRInt32 GetCachedIntPref(PRUint32 aPrefType) const
+  PRInt32 GetCachedIntPref(nsPresContext_CachedIntPrefType aPrefType) const
   {
     // If called with a constant parameter, the compiler should optimize
     // this switch statement away.
     switch (aPrefType) {
     case kPresContext_MinimumFontSize:
       return mMinimumFontSize;
+    case kPresContext_ScrollbarSide:
+      return mPrefScrollbarSide;
+    case kPresContext_BidiDirection:
+      return mPrefBidiDirection;
     default:
       NS_ERROR("invalid arg passed to GetCachedIntPref");
     }
@@ -329,13 +381,13 @@ public:
 
   NS_HIDDEN_(void) SetContainer(nsISupports* aContainer);
 
-  virtual NS_HIDDEN_(already_AddRefed<nsISupports>) GetContainerExternal();
-  NS_HIDDEN_(already_AddRefed<nsISupports>) GetContainerInternal();
+  virtual NS_HIDDEN_(already_AddRefed<nsISupports>) GetContainerExternal() const;
+  NS_HIDDEN_(already_AddRefed<nsISupports>) GetContainerInternal() const;
 #ifdef _IMPL_NS_LAYOUT
-  already_AddRefed<nsISupports> GetContainer()
+  already_AddRefed<nsISupports> GetContainer() const
   { return GetContainerInternal(); }
 #else
-  already_AddRefed<nsISupports> GetContainer()
+  already_AddRefed<nsISupports> GetContainer() const
   { return GetContainerExternal(); }
 #endif
 
@@ -362,6 +414,9 @@ public:
    * context.
    */
   PRBool IsPaginated() const { return mPaginated; }
+  
+  PRBool GetRenderedPositionVaryingContent() const { return mRenderedPositionVaryingContent; }
+  void SetRenderedPositionVaryingContent() { mRenderedPositionVaryingContent = PR_TRUE; }
 
   /**
    * Sets whether the presentation context can scroll for a paginated
@@ -376,62 +431,119 @@ public:
   PRBool HasPaginatedScrolling() const { return mCanPaginatedScroll; }
 
   /**
-   * Gets the rect for the page dimensions,
-   * this includes X,Y Offsets which are used to determine 
-   * the inclusion of margins
-   * Also, indicates whether the size has been overridden
-   *
-   * @param aActualRect returns the size of the actual device/surface
-   * @param aRect returns the adjusted size 
+   * Get/set the size of a page
    */
-  NS_HIDDEN_(void) GetPageDim(nsRect* aActualRect, nsRect* aAdjRect);
+  nsSize GetPageSize() { return mPageSize; }
+  void SetPageSize(nsSize aSize) { mPageSize = aSize; }
 
   /**
-   * Sets the "adjusted" rect for the page Dimimensions, 
-   * this includes X,Y Offsets which are used to determine 
-   * the inclusion of margins
-   *
-   * @param aRect returns the adjusted size 
+   * Get/set whether this document should be treated as having real pages
+   * XXX This raises the obvious question of why a document that isn't a page
+   *     is paginated; there isn't a good reason except history
    */
-  NS_HIDDEN_(void) SetPageDim(const nsRect& aRect);
+  PRBool IsRootPaginatedDocument() { return mIsRootPaginatedDocument; }
+  void SetIsRootPaginatedDocument(PRBool aIsRootPaginatedDocument)
+    { mIsRootPaginatedDocument = aIsRootPaginatedDocument; }
 
-  float PixelsToTwips() const { return mDeviceContext->DevUnitsToAppUnits(); }
+  /**
+  * Get/set the print scaling level; used by nsPageFrame to scale up
+  * pages.  Set safe to call before reflow, get guaranteed to be set
+  * properly after reflow.
+  */
 
-  float TwipsToPixels() const { return mDeviceContext->AppUnitsToDevUnits(); }
+  float GetPageScale() { return mPageScale; }
+  void SetPageScale(float aScale) { mPageScale = aScale; }
 
-  NS_HIDDEN_(float) TwipsToPixelsForFonts() const;
-
-  //XXX this is probably not an ideal name. MMP
-  /** 
-   * Do pixels to twips conversion taking into account
-   * differing size of a "pixel" from device to device.
-   */
-  NS_HIDDEN_(float) ScaledPixelsToTwips() const;
-
-  /* Convenience method for converting one pixel value to twips */
-  nscoord IntScaledPixelsToTwips(nscoord aPixels) const
-  { return NSIntPixelsToTwips(aPixels, ScaledPixelsToTwips()); }
-
-  /* Set whether twip scaling is used */
-  void SetScalingOfTwips(PRBool aOn) { mDoScaledTwips = aOn; }
+  /**
+  * Get/set the scaling facor to use when rendering the pages for print preview.
+  * Only safe to get after print preview set up; safe to set anytime.
+  * This is a scaling factor for the display of the print preview.  It
+  * does not affect layout.  It only affects the size of the onscreen pages
+  * in print preview.
+  * XXX Temporary: see http://wiki.mozilla.org/Gecko:PrintPreview
+  */
+  float GetPrintPreviewScale() { return mPPScale; }
+  void SetPrintPreviewScale(float aScale) { mPPScale = aScale; }
 
   nsIDeviceContext* DeviceContext() { return mDeviceContext; }
   nsIEventStateManager* EventStateManager() { return mEventManager; }
   nsIAtom* GetLangGroup() { return mLangGroup; }
 
   float TextZoom() { return mTextZoom; }
-  void SetTextZoomInternal(float aZoom) {
+  void SetTextZoom(float aZoom) {
     mTextZoom = aZoom;
-    ClearStyleDataAndReflow();
+    RebuildAllStyleData(NS_STYLE_HINT_REFLOW);
   }
-  virtual NS_HIDDEN_(void) SetTextZoomExternal(float aZoom);
-#ifdef _IMPL_NS_LAYOUT
-  void SetTextZoom(float aZoom) { SetTextZoomInternal(aZoom); }
-#else
-  void SetTextZoom(float aZoom) { SetTextZoomExternal(aZoom); }
-#endif
 
+  float GetFullZoom() { return mFullZoom; }
+  void SetFullZoom(float aZoom);
 
+  nscoord GetAutoQualityMinFontSize() {
+    return DevPixelsToAppUnits(mAutoQualityMinFontSizePixelsPref);
+  }
+  
+  static PRInt32 AppUnitsPerCSSPixel() { return nsIDeviceContext::AppUnitsPerCSSPixel(); }
+  PRInt32 AppUnitsPerDevPixel() const  { return mDeviceContext->AppUnitsPerDevPixel(); }
+  PRInt32 AppUnitsPerInch() const      { return mDeviceContext->AppUnitsPerInch(); }
+
+  static nscoord CSSPixelsToAppUnits(PRInt32 aPixels)
+  { return NSIntPixelsToAppUnits(aPixels,
+                                 nsIDeviceContext::AppUnitsPerCSSPixel()); }
+
+  static nscoord CSSPixelsToAppUnits(float aPixels)
+  { return NSFloatPixelsToAppUnits(aPixels,
+                                   nsIDeviceContext::AppUnitsPerCSSPixel()); }
+
+  static PRInt32 AppUnitsToIntCSSPixels(nscoord aAppUnits)
+  { return NSAppUnitsToIntPixels(aAppUnits,
+                                 nsIDeviceContext::AppUnitsPerCSSPixel()); }
+
+  static float AppUnitsToFloatCSSPixels(nscoord aAppUnits)
+  { return NSAppUnitsToFloatPixels(aAppUnits,
+                                   nsIDeviceContext::AppUnitsPerCSSPixel()); }
+
+  static gfxFloat AppUnitsToGfxCSSPixels(nscoord aAppUnits)
+  { return nsIDeviceContext::AppUnitsToGfxCSSPixels(aAppUnits); }
+
+  nscoord DevPixelsToAppUnits(PRInt32 aPixels) const
+  { return NSIntPixelsToAppUnits(aPixels,
+                                 mDeviceContext->AppUnitsPerDevPixel()); }
+
+  PRInt32 AppUnitsToDevPixels(nscoord aAppUnits) const
+  { return NSAppUnitsToIntPixels(aAppUnits,
+                                 mDeviceContext->AppUnitsPerDevPixel()); }
+
+  // If there is a remainder, it is rounded to nearest app units.
+  nscoord GfxUnitsToAppUnits(gfxFloat aGfxUnits) const
+  { return mDeviceContext->GfxUnitsToAppUnits(aGfxUnits); }
+
+  gfxFloat AppUnitsToGfxUnits(nscoord aAppUnits) const
+  { return mDeviceContext->AppUnitsToGfxUnits(aAppUnits); }
+
+  nscoord TwipsToAppUnits(PRInt32 aTwips) const
+  { return NSToCoordRound(NS_TWIPS_TO_INCHES(aTwips) *
+                          mDeviceContext->AppUnitsPerInch()); }
+
+  // Margin-specific version, since they often need TwipsToAppUnits
+  nsMargin TwipsToAppUnits(const nsMargin &marginInTwips) const
+  { return nsMargin(TwipsToAppUnits(marginInTwips.left), 
+                    TwipsToAppUnits(marginInTwips.top),
+                    TwipsToAppUnits(marginInTwips.right),
+                    TwipsToAppUnits(marginInTwips.bottom)); }
+
+  PRInt32 AppUnitsToTwips(nscoord aTwips) const
+  { return NS_INCHES_TO_TWIPS((float)aTwips /
+                              mDeviceContext->AppUnitsPerInch()); }
+
+  nscoord PointsToAppUnits(float aPoints) const
+  { return NSToCoordRound(aPoints * mDeviceContext->AppUnitsPerInch() /
+                          POINTS_PER_INCH_FLOAT); }
+  float AppUnitsToPoints(nscoord aAppUnits) const
+  { return (float)aAppUnits / mDeviceContext->AppUnitsPerInch() *
+      POINTS_PER_INCH_FLOAT; }
+
+  nscoord RoundAppUnitsToNearestDevPixels(nscoord aAppUnits) const
+  { return DevPixelsToAppUnits(AppUnitsToDevPixels(aAppUnits)); }
 
   /**
    * Get the language-specific transform type for the current document.
@@ -464,7 +576,7 @@ public:
   }
 
   /**
-   * Set and get methods for controling the background drawing
+   * Set and get methods for controlling the background drawing
   */
   PRBool GetBackgroundImageDraw() const { return mDrawImageBackground; }
   void   SetBackgroundImageDraw(PRBool aCanDraw)
@@ -541,12 +653,14 @@ public:
    * Set the Bidi options for the presentation context
    */  
   NS_HIDDEN_(void) SetBidi(PRUint32 aBidiOptions,
-                           PRBool aForceReflow = PR_FALSE);
+                           PRBool aForceRestyle = PR_FALSE);
 
   /**
    * Get the Bidi options for the presentation context
+   * Not inline so consumers of nsPresContext are not forced to
+   * include nsIDocument.
    */  
-  NS_HIDDEN_(PRUint32) GetBidi() const { return mBidi; }
+  NS_HIDDEN_(PRUint32) GetBidi() const;
 
   /**
    * Set the Bidi capabilities of the system
@@ -614,10 +728,7 @@ public:
   
 #ifdef MOZ_REFLOW_PERF
   NS_HIDDEN_(void) CountReflows(const char * aName,
-                                PRUint32 aType, nsIFrame * aFrame);
-  NS_HIDDEN_(void) PaintCount(const char * aName,
-                              nsIRenderingContext* aRendingContext,
-                              nsIFrame * aFrame, PRUint32 aColor);
+                                nsIFrame * aFrame);
 #endif
 
   /**
@@ -626,7 +737,29 @@ public:
    */
   const nscoord* GetBorderWidthTable() { return mBorderWidthTable; }
 
+  PRBool IsDynamic() { return (mType == eContext_PageLayout || mType == eContext_Galley); }
+  PRBool IsScreen() { return (mMedium == nsGkAtoms::screen ||
+                              mType == eContext_PageLayout ||
+                              mType == eContext_PrintPreview); }
+
+  // Is this presentation in a chrome docshell?
+  PRBool IsChrome() const;
+
+  // Public API for native theme code to get style internals.
+  virtual PRBool HasAuthorSpecifiedRules(nsIFrame *aFrame, PRUint32 ruleTypeMask) const;
+
+  // Is it OK to let the page specify colors and backgrounds?
+  PRBool UseDocumentColors() const {
+    return GetCachedBoolPref(kPresContext_UseDocumentColors) || IsChrome();
+  }
+
+  PRBool           SupressingResizeReflow() const { return mSupressResizeReflow; }
+
 protected:
+  friend class nsRunnableMethod<nsPresContext>;
+  NS_HIDDEN_(void) ThemeChangedInternal();
+  NS_HIDDEN_(void) SysColorChangedInternal();
+  
   NS_HIDDEN_(void) SetImgAnimations(nsIContent *aParent, PRUint16 aMode);
   NS_HIDDEN_(void) GetDocumentColorPreferences();
 
@@ -647,6 +780,7 @@ protected:
   
   nsPresContextType     mType;
   nsIPresShell*         mShell;         // [WEAK]
+  nsCOMPtr<nsIDocument> mDocument;
   nsIDeviceContext*     mDeviceContext; // [STRONG] could be weak, but
                                         // better safe than sorry.
                                         // Cannot reintroduce cycles
@@ -660,10 +794,14 @@ protected:
   nsILinkHandler*       mLinkHandler;   // [WEAK]
   nsIAtom*              mLangGroup;     // [STRONG]
 
-  nsSupportsHashtable   mImageLoaders;
+  nsInterfaceHashtable<nsVoidPtrHashKey, nsImageLoader> mImageLoaders;
   nsWeakPtr             mContainer;
 
   float                 mTextZoom;      // Text zoom, defaults to 1.0
+  float                 mFullZoom;      // Page zoom, defaults to 1.0
+
+  PRInt32               mCurAppUnitsPerDevPixel;
+  PRInt32               mAutoQualityMinFontSizePixelsPref;
 
 #ifdef IBMBIDI
   nsBidiPresUtils*      mBidiUtils;
@@ -681,7 +819,9 @@ protected:
   nscoord               mMinimumFontSize;
 
   nsRect                mVisibleArea;
-  nsRect                mPageDim;
+  nsSize                mPageSize;
+  float                 mPageScale;
+  float                 mPPScale;
 
   nscolor               mDefaultColor;
   nscolor               mBackgroundColor;
@@ -696,7 +836,6 @@ protected:
   ScrollbarStyles       mViewportStyleOverflow;
   PRUint8               mFocusRingWidth;
 
-  nsCompatibility       mCompatibilityMode;
   PRUint16              mImageAnimationMode;
   PRUint16              mImageAnimationModePref;
 
@@ -724,11 +863,22 @@ protected:
   unsigned              mCanPaginatedScroll : 1;
   unsigned              mDoScaledTwips : 1;
   unsigned              mEnableJapaneseTransform : 1;
+  unsigned              mIsRootPaginatedDocument : 1;
+  unsigned              mPrefBidiDirection : 1;
+  unsigned              mPrefScrollbarSide : 2;
+  unsigned              mPendingSysColorChanged : 1;
+  unsigned              mPendingThemeChanged : 1;
+  unsigned              mPrefChangePendingNeedsReflow : 1;
+  unsigned              mRenderedPositionVaryingContent : 1;
+
+  // resize reflow is supressed when the only change has been to zoom
+  // the document rather than to change the document's dimensions
+  unsigned              mSupressResizeReflow : 1;
+
 #ifdef IBMBIDI
   unsigned              mIsVisual : 1;
   unsigned              mIsBidiSystem : 1;
 
-  PRUint32              mBidi;
 #endif
 #ifdef DEBUG
   PRBool                mInitialized;
@@ -751,6 +901,16 @@ protected:
     eDefaultFont_COUNT
   };
 
+#ifdef DEBUG
+private:
+  friend struct nsAutoLayoutPhase;
+  PRUint32 mLayoutPhaseCount[eLayoutPhase_COUNT];
+public:
+  PRUint32 LayoutPhaseCount(nsLayoutPhase aPhase) {
+    return mLayoutPhaseCount[aPhase];
+  }
+#endif
+
 };
 
 // Bit values for StartLoadImage's aImageStatus
@@ -758,26 +918,100 @@ protected:
 #define NS_LOAD_IMAGE_STATUS_SIZE       0x2
 #define NS_LOAD_IMAGE_STATUS_BITS       0x4
 
+#ifdef DEBUG
+
+struct nsAutoLayoutPhase {
+  nsAutoLayoutPhase(nsPresContext* aPresContext, nsLayoutPhase aPhase)
+    : mPresContext(aPresContext), mPhase(aPhase), mCount(0)
+  {
+    Enter();
+  }
+
+  ~nsAutoLayoutPhase()
+  {
+    Exit();
+    NS_ASSERTION(mCount == 0, "imbalanced");
+  }
+
+  void Enter()
+  {
+    switch (mPhase) {
+      case eLayoutPhase_Paint:
+        NS_ASSERTION(mPresContext->mLayoutPhaseCount[eLayoutPhase_Paint] == 0,
+                     "recurring into paint");
+        NS_ASSERTION(mPresContext->mLayoutPhaseCount[eLayoutPhase_Reflow] == 0,
+                     "painting in the middle of reflow");
+        NS_ASSERTION(mPresContext->mLayoutPhaseCount[eLayoutPhase_FrameC] == 0,
+                     "painting in the middle of frame construction");
+        break;
+      case eLayoutPhase_Reflow:
+        NS_ASSERTION(mPresContext->mLayoutPhaseCount[eLayoutPhase_Paint] == 0,
+                     "reflowing in the middle of a paint");
+        NS_ASSERTION(mPresContext->mLayoutPhaseCount[eLayoutPhase_Reflow] == 0,
+                     "recurring into reflow");
+        NS_ASSERTION(mPresContext->mLayoutPhaseCount[eLayoutPhase_FrameC] == 0,
+                     "reflowing in the middle of frame construction");
+        break;
+      case eLayoutPhase_FrameC:
+        NS_ASSERTION(mPresContext->mLayoutPhaseCount[eLayoutPhase_Paint] == 0,
+                     "constructing frames in the middle of a paint");
+        NS_ASSERTION(mPresContext->mLayoutPhaseCount[eLayoutPhase_Reflow] == 0,
+                     "constructing frames in the middle of reflow");
+        // The nsXBLService::LoadBindings call in ConstructFrameInternal
+        // makes us hit this one too often to be an NS_ASSERTION,
+        // despite how scary it is.
+        NS_WARN_IF_FALSE(mPresContext->mLayoutPhaseCount[eLayoutPhase_FrameC] == 0,
+                         "recurring into frame construction");
+        break;
+      default:
+        break;
+    }
+    ++(mPresContext->mLayoutPhaseCount[mPhase]);
+    ++mCount;
+  }
+
+  void Exit()
+  {
+    NS_ASSERTION(mCount > 0 && mPresContext->mLayoutPhaseCount[mPhase] > 0,
+                 "imbalanced");
+    --(mPresContext->mLayoutPhaseCount[mPhase]);
+    --mCount;
+  }
+
+private:
+  nsPresContext *mPresContext;
+  nsLayoutPhase mPhase;
+  PRUint32 mCount;
+};
+
+#define AUTO_LAYOUT_PHASE_ENTRY_POINT(pc_, phase_) \
+  nsAutoLayoutPhase autoLayoutPhase((pc_), (eLayoutPhase_##phase_))
+#define LAYOUT_PHASE_TEMP_EXIT() \
+  PR_BEGIN_MACRO \
+    autoLayoutPhase.Exit(); \
+  PR_END_MACRO
+#define LAYOUT_PHASE_TEMP_REENTER() \
+  PR_BEGIN_MACRO \
+    autoLayoutPhase.Enter(); \
+  PR_END_MACRO
+
+#else
+
+#define AUTO_LAYOUT_PHASE_ENTRY_POINT(pc_, phase_) \
+  PR_BEGIN_MACRO PR_END_MACRO
+#define LAYOUT_PHASE_TEMP_EXIT() \
+  PR_BEGIN_MACRO PR_END_MACRO
+#define LAYOUT_PHASE_TEMP_REENTER() \
+  PR_BEGIN_MACRO PR_END_MACRO
+
+#endif
+
 #ifdef MOZ_REFLOW_PERF
 
-#define DO_GLOBAL_REFLOW_COUNT(_name, _type) \
-  aPresContext->CountReflows((_name), (_type), (nsIFrame*)this); 
+#define DO_GLOBAL_REFLOW_COUNT(_name) \
+  aPresContext->CountReflows((_name), (nsIFrame*)this); 
 #else
-#define DO_GLOBAL_REFLOW_COUNT(_name, _type)
+#define DO_GLOBAL_REFLOW_COUNT(_name)
 #endif // MOZ_REFLOW_PERF
-
-#if defined(MOZ_REFLOW_PERF_DSP) && defined(MOZ_REFLOW_PERF)
-#define DO_GLOBAL_REFLOW_COUNT_DSP(_name, _rend) \
-  if (NS_FRAME_PAINT_LAYER_FOREGROUND == aWhichLayer) { \
-    aPresContext->PaintCount((_name), (_rend), (nsIFrame*)this, 0); \
-  }
-#define DO_GLOBAL_REFLOW_COUNT_DSP_J(_name, _rend, _just) \
-  if (NS_FRAME_PAINT_LAYER_FOREGROUND == aWhichLayer) { \
-    aPresContext->PaintCount((_name), (_rend), (nsIFrame*)this, (_just)); \
-  }
-#else
-#define DO_GLOBAL_REFLOW_COUNT_DSP(_name, _rend)
-#define DO_GLOBAL_REFLOW_COUNT_DSP_J(_name, _rend, _just)
-#endif // MOZ_REFLOW_PERF_DSP
 
 #endif /* nsPresContext_h___ */

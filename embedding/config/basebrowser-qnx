@@ -47,10 +47,7 @@ components/xpconnect.xpt
 ; 
 
 libgkgfx.so 
-libxlibrgb.so
 libgfxpsshar.so
-components/libgfxps.so
-components/libgfxxprint.so
 components/gfx.xpt 
 components/widget.xpt
 
@@ -123,8 +120,8 @@ components/shistory.xpt
 
 ; optional typeaheadfind 
 ; (docs at http://www.mozilla.org/projects/ui/accessibility/typeaheadfind.html)
-;components/libtypeaheadfind.so
-;components/typeaheadfind.xpt
+;components/libsuitetypeaheadfind.so
+;components/suitetypeaheadfind.xpt
 
 ; rdf
 components/librdf.so
@@ -148,6 +145,7 @@ components/dom_core.xpt
 components/dom_css.xpt
 components/dom_events.xpt
 components/dom_html.xpt
+components/dom_offline.xpt
 components/dom_range.xpt
 components/dom_stylesheets.xpt
 components/dom_traversal.xpt
@@ -167,7 +165,6 @@ components/txtsvc.xpt
 components/libnecko.so                    
 components/necko.xpt                    
 components/necko_about.xpt              
-components/necko_data.xpt               
 components/necko_dns.xpt                
 components/necko_http.xpt               
 components/necko_res.xpt                
@@ -177,7 +174,6 @@ components/necko_strconv.xpt
 components/necko_cache.xpt
 
 ; optional for FTP support
-components/libnecko2.so                   
 components/necko_ftp.xpt                
 
 ; plugins
@@ -205,6 +201,7 @@ components/libpipnss.so
 components/pipnss.xpt
 chrome/pipnss.jar
 defaults/pref/security-prefs.js
+libnssutil3.so
 libnss3.so
 libsmime3.so
 libsoftokn3.chk
@@ -214,9 +211,8 @@ libfreebl3.so
 libssl3.so
 libnssckbi.so
 
-; xmlextras, optional for XMLHttpRequest support
+; xmlextras, optional for XPointer support
 components/libxmlextras.so
-components/xmlextras.xpt
 
 res/language.properties
 res/langGroups.properties
@@ -242,6 +238,8 @@ res/viewsource.css
 res/hiddenWindow.html
 res/ua.css
 res/forms.css
+res/contenteditable.css
+res/designmode.css
 res/arrow.gif
 res/arrowd.gif
 res/loading-image.gif
@@ -268,8 +266,3 @@ res/entityTables/transliterate.properties
 ;res/fonts/mathfontPUA.properties
 ;res/fonts/mathfontSymbol.properties
 ;components/libucvmath.so
-
-; p3p
-components/libp3p.so
-components/p3p.xpt
-

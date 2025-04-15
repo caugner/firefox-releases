@@ -58,7 +58,6 @@
 #include "nsIProxyObjectManager.h"
 #include "nsIStreamConverterService.h"
 #include "nsICacheSession.h"
-#include "nsIEventQueueService.h"
 #include "nsICookieService.h"
 #include "nsIIDNService.h"
 #include "nsITimer.h"
@@ -107,7 +106,7 @@ public:
     nsIIDNService *IDNConverter()            { return mIDNConverter; }
     PRUint32       PhishyUserPassLength()    { return mPhishyUserPassLength; }
     
-    PRBool         IsPersistentHttpsCachingEnabled() { return mEnablePersistentHttpsCaching; }
+    PRBool         CanCacheAllSSLContent()   { return mEnablePersistentHttpsCaching; }
 
     nsHttpAuthCache     *AuthCache() { return &mAuthCache; }
     nsHttpConnectionMgr *ConnMgr()   { return mConnMgr; }
@@ -161,16 +160,15 @@ public:
         return mConnMgr->ProcessPendingQ(cinfo);
     }
 
-    nsresult GetSocketThreadEventTarget(nsIEventTarget **target)
+    nsresult GetSocketThreadTarget(nsIEventTarget **target)
     {
-        return mConnMgr->GetSocketThreadEventTarget(target);
+        return mConnMgr->GetSocketThreadTarget(target);
     }
 
     //
     // The HTTP handler caches pointers to specific XPCOM services, and
     // provides the following helper routines for accessing those services:
     //
-    nsresult GetCurrentEventQ(nsIEventQueue **);
     nsresult GetStreamConverterService(nsIStreamConverterService **);
     nsresult GetIOService(nsIIOService** service);
     nsICookieService * GetCookieService(); // not addrefed
@@ -221,7 +219,6 @@ private:
 
     // cached services
     nsCOMPtr<nsIIOService>              mIOService;
-    nsCOMPtr<nsIEventQueueService>      mEventQueueService;
     nsCOMPtr<nsIStreamConverterService> mStreamConvSvc;
     nsCOMPtr<nsIObserverService>        mObserverService;
     nsCOMPtr<nsICookieService>          mCookieService;
@@ -262,6 +259,8 @@ private:
     // the userpass field of the URL to obscure the actual origin server.
     PRUint8  mPhishyUserPassLength;
 
+    PRPackedBool mPipeliningOverSSL;
+
     nsCString mAccept;
     nsCString mAcceptLanguages;
     nsCString mAcceptEncodings;
@@ -270,8 +269,6 @@ private:
     nsXPIDLCString mDefaultSocketType;
 
     // cache support
-    nsCOMPtr<nsICacheSession> mCacheSession_ANY;
-    nsCOMPtr<nsICacheSession> mCacheSession_MEM;
     PRUint32                  mLastUniqueID;
     PRUint32                  mSessionStartTime;
 
@@ -286,7 +283,7 @@ private:
     nsXPIDLCString mVendor;
     nsXPIDLCString mVendorSub;
     nsXPIDLCString mVendorComment;
-    nsXPIDLCString mProduct;
+    nsCString      mProduct;
     nsXPIDLCString mProductSub;
     nsXPIDLCString mProductComment;
     nsCString      mExtraUA;

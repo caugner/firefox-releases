@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -48,6 +49,7 @@
 #include "nsIMathMLFrame.h"
 #include "nsFrame.h"
 #include "nsCSSValue.h"
+#include "nsMathMLElement.h"
 
 class nsMathMLChar;
 
@@ -95,19 +97,13 @@ public:
     return NS_OK;
   }
 
+  virtual eMathMLFrameType GetMathMLFrameType();
+
   NS_IMETHOD
   Stretch(nsIRenderingContext& aRenderingContext,
           nsStretchDirection   aStretchDirection,
           nsBoundingMetrics&   aContainerSize,
           nsHTMLReflowMetrics& aDesiredStretchSize)
-  {
-    return NS_OK;
-  }
-
-  NS_IMETHOD
-  Place(nsIRenderingContext& aRenderingContext,
-        PRBool               aPlaceOrigin,
-        nsHTMLReflowMetrics& aDesiredSize)
   {
     return NS_OK;
   }
@@ -146,22 +142,14 @@ public:
   }
 
   NS_IMETHOD
-  UpdatePresentationData(PRInt32         aScriptLevelIncrement,
-                         PRUint32        aFlagsValues,
+  UpdatePresentationData(PRUint32        aFlagsValues,
                          PRUint32        aFlagsToUpdate);
 
   NS_IMETHOD
   UpdatePresentationDataFromChildAt(PRInt32         aFirstIndex,
                                     PRInt32         aLastIndex,
-                                    PRInt32         aScriptLevelIncrement,
                                     PRUint32        aFlagsValues,
                                     PRUint32        aFlagsToUpdate)
-  {
-    return NS_OK;
-  }
-
-  NS_IMETHOD
-  ReResolveScriptStyle(PRInt32 aParentScriptLevel)
   {
     return NS_OK;
   }
@@ -202,12 +190,16 @@ public:
                           nsPresentationData& aPresentationData,
                           PRBool              aClimbTree = PR_TRUE);
 
+  // helper used by <mstyle> and <mtable> to see if they have a displaystyle attribute 
+  static void
+  FindAttrDisplaystyle(nsIContent*         aContent,
+                       nsPresentationData& aPresentationData);
+
   // helper to check if a content has an attribute. If content is nsnull or if
   // the attribute is not there, check if the attribute is on the mstyle hierarchy
-  // @return NS_CONTENT_ATTR_HAS_VALUE --if attribute has non-empty value, attr="value"
-  //         NS_CONTENT_ATTR_NO_VALUE  --if attribute has empty value, attr=""
-  //         NS_CONTENT_ATTR_NOT_THERE --if attribute is not there
-  static nsresult
+  // @return PR_TRUE  --if attribute exists
+  //         PR_FALSE --if attribute doesn't exist
+  static PRBool
   GetAttribute(nsIContent* aContent,
                nsIFrame*   aMathMLmstyleFrame,          
                nsIAtom*    aAttributeAtom,
@@ -216,8 +208,12 @@ public:
   // utilities to parse and retrieve numeric values in CSS units
   // All values are stored in twips.
   static PRBool
-  ParseNumericValue(nsString&   aString,
-                    nsCSSValue& aCSSValue);
+  ParseNumericValue(const nsString& aString,
+                    nsCSSValue&     aCSSValue) {
+    return nsMathMLElement::ParseNumericValue(aString, aCSSValue,
+            nsMathMLElement::PARSE_ALLOW_NEGATIVE |
+            nsMathMLElement::PARSE_ALLOW_UNITLESS);
+  }
 
   static nscoord 
   CalcLength(nsPresContext*   aPresContext,
@@ -228,6 +224,18 @@ public:
   ParseNamedSpaceValue(nsIFrame*   aMathMLmstyleFrame,
                        nsString&   aString,
                        nsCSSValue& aCSSValue);
+
+  static eMathMLFrameType
+  GetMathMLFrameTypeFor(nsIFrame* aFrame)
+  {
+    if (aFrame->IsFrameOfType(nsIFrame::eMathML)) {
+      nsIMathMLFrame* mathMLFrame;
+      CallQueryInterface(aFrame, &mathMLFrame);
+      if (mathMLFrame)
+        return mathMLFrame->GetMathMLFrameType();
+    }
+    return eMathMLFrameType_UNKNOWN;
+  }
 
   // estimate of the italic correction
   static void
@@ -261,7 +269,7 @@ public:
                       nscoord&        aSubDrop) 
   {
     const nsStyleFont* font = aChild->GetStyleFont();
-    nsCOMPtr<nsIFontMetrics> fm = aChild->GetPresContext()->GetMetricsFor(
+    nsCOMPtr<nsIFontMetrics> fm = aChild->PresContext()->GetMetricsFor(
                                                               font->mFont);
     GetSubDrop(fm, aSubDrop);
   }
@@ -271,7 +279,7 @@ public:
                       nscoord&        aSupDrop) 
   {
     const nsStyleFont* font = aChild->GetStyleFont();
-    nsCOMPtr<nsIFontMetrics> fm = aChild->GetPresContext()->GetMetricsFor(
+    nsCOMPtr<nsIFontMetrics> fm = aChild->PresContext()->GetMetricsFor(
                                                               font->mFont);
     GetSupDrop(fm, aSupDrop);
   }
@@ -414,17 +422,22 @@ public:
                 nsIFontMetrics*      aFontMetrics,
                 nscoord&             aAxisHeight);
 
-  // ================
-  // helpers to map attributes into CSS rules (work-around to bug 69409 which
-  // is not scheduled to be fixed anytime soon)
-  static PRInt32
-  MapAttributesIntoCSS(nsPresContext* aPresContext,
-                       nsIContent*     aContent);
-  static PRInt32
-  MapAttributesIntoCSS(nsPresContext* aPresContext,
-                       nsIFrame*       aFrame);
-
 protected:
+#if defined(NS_DEBUG) && defined(SHOW_BOUNDING_BOX)
+  nsresult DisplayBoundingMetrics(nsDisplayListBuilder* aBuilder,
+                                  nsIFrame* aFrame, const nsPoint& aPt,
+                                  const nsBoundingMetrics& aMetrics,
+                                  const nsDisplayListSet& aLists);
+#endif
+
+  /**
+   * Display a solid rectangle in the frame's text color. Used for drawing
+   * fraction separators and root/sqrt overbars.
+   */
+  nsresult DisplayBar(nsDisplayListBuilder* aBuilder,
+                      nsIFrame* aFrame, const nsRect& aRect,
+                      const nsDisplayListSet& aLists);
+
   // information about the presentation policy of the frame
   nsPresentationData mPresentationData;
 

@@ -1,7 +1,3 @@
-# ###### BEGIN LICENSE BLOCK ######
-# Version: NPL 1.1/GPL 2.0/LGPL 2.1
-#
-#
 # ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
@@ -23,7 +19,7 @@
 # the Initial Developer. All Rights Reserved.
 #
 # Contributor(s):
-#   Original Author: Bolian Yin (bolian.yin@sun.com)
+#   Bolian Yin <bolian.yin@sun.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -48,8 +44,7 @@ include $(DEPTH)/config/autoconf.mk
 
 MODULE = system-pref
 LIBRARY_NAME = system-pref
-GRE_MODULE	= 1
-MOZILLA_INTERNAL_API = 1
+LIBXUL_LIBRARY = 1
 
 REQUIRES        = pref \
 		  string \
@@ -62,7 +57,7 @@ CPPSRCS =   \
 	nsSystemPrefFactory.cpp \
 	$(NULL)
 
-SHARED_LIBRARY_LIBS = $(DIST)/lib/libsystem-pref_s.a
+SHARED_LIBRARY_LIBS = ../libsystem-pref_s.a
 
 EXTRA_DSO_LDOPTS = \
 		-L$(DIST)/bin \
@@ -87,3 +82,5 @@ LOCAL_INCLUDES = -I$(srcdir)/..
 
 export::
 	$(INSTALL) $(srcdir)/../nsSystemPrefFactory.cpp .
+
+GARBAGE += nsSystemPrefFactory.cpp

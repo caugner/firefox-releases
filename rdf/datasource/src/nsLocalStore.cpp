@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set cindent tabstop=4 expandtab shiftwidth=4: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -62,7 +63,10 @@
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
 #include "nsWeakReference.h"
+#include "nsCRTGlue.h"
 #include "nsCRT.h"
+#include "nsEnumeratorUtils.h"
+#include "nsCycleCollectionParticipant.h"
 
 ////////////////////////////////////////////////////////////////////////
 
@@ -78,18 +82,18 @@ protected:
     LocalStoreImpl();
     virtual ~LocalStoreImpl();
     nsresult Init();
+    nsresult CreateLocalStore(nsIFile* aFile);
     nsresult LoadData();
 
     friend NS_IMETHODIMP
     NS_NewLocalStore(nsISupports* aOuter, REFNSIID aIID, void** aResult);
 
-    nsCOMPtr<nsISupportsArray> mObservers;
-
-    static nsWeakPtr gRDF;
+    nsCOMPtr<nsIRDFService>    mRDFService;
 
 public:
     // nsISupports interface
-    NS_DECL_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(LocalStoreImpl, nsILocalStore)
 
     // nsILocalStore interface
 
@@ -161,23 +165,11 @@ public:
     }
 
     NS_IMETHOD AddObserver(nsIRDFObserver* aObserver) {
-        // Observers are _never_ notified, but we still have to play
-        // nice.
-        if (! mObservers) {
-            nsresult rv;
-            rv = NS_NewISupportsArray(getter_AddRefs(mObservers));
-            if (NS_FAILED(rv)) return rv;
-        }
-
-        mObservers->AppendElement(aObserver);
-        return NS_OK;
+        return NS_ERROR_NOT_IMPLEMENTED;
     }
 
     NS_IMETHOD RemoveObserver(nsIRDFObserver* aObserver) {
-        if (mObservers) {
-            mObservers->RemoveElement(aObserver);
-        }
-        return NS_OK;
+        return NS_ERROR_NOT_IMPLEMENTED;
     }
 
     NS_IMETHOD HasArcIn(nsIRDFNode *aNode, nsIRDFResource *aArc, PRBool *_retval) {
@@ -223,17 +215,14 @@ public:
     }
 
     NS_IMETHOD GetLoaded(PRBool* _result);
-	NS_IMETHOD Init(const char *uri);
-	NS_IMETHOD Flush();
-	NS_IMETHOD FlushTo(const char *aURI);
-	NS_IMETHOD Refresh(PRBool sync);
-	
-	// nsIObserver
-	NS_DECL_NSIOBSERVER
+    NS_IMETHOD Init(const char *uri);
+    NS_IMETHOD Flush();
+    NS_IMETHOD FlushTo(const char *aURI);
+    NS_IMETHOD Refresh(PRBool sync);
+
+    // nsIObserver
+    NS_DECL_NSIOBSERVER
 };
-
-nsWeakPtr LocalStoreImpl::gRDF;
-
 
 ////////////////////////////////////////////////////////////////////////
 
@@ -244,9 +233,8 @@ LocalStoreImpl::LocalStoreImpl(void)
 
 LocalStoreImpl::~LocalStoreImpl(void)
 {
-    nsCOMPtr<nsIRDFService> rdf = do_QueryReferent(gRDF);
-    if (rdf)
-        rdf->UnregisterDataSource(this);
+    if (mRDFService)
+        mRDFService->UnregisterDataSource(this);
 }
 
 
@@ -278,50 +266,20 @@ NS_NewLocalStore(nsISupports* aOuter, REFNSIID aIID, void** aResult)
     return rv;
 }
 
+NS_IMPL_CYCLE_COLLECTION_1(LocalStoreImpl, mInner)
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(LocalStoreImpl, nsILocalStore)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(LocalStoreImpl, nsILocalStore)
 
-// nsISupports interface
-
-NS_IMPL_ADDREF(LocalStoreImpl)
-NS_IMPL_RELEASE(LocalStoreImpl)
-
-NS_IMETHODIMP
-LocalStoreImpl::QueryInterface(REFNSIID aIID, void** aResult)
-{
-static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
-
-    NS_PRECONDITION(aResult != nsnull, "null ptr");
-    if (! aResult)
-        return NS_ERROR_NULL_POINTER;
-
-    if (aIID.Equals(kISupportsIID) ||
-        aIID.Equals(NS_GET_IID(nsILocalStore))) {
-        *aResult = NS_STATIC_CAST(nsILocalStore*, this);
-    }
-    else if (aIID.Equals(NS_GET_IID(nsIRDFDataSource))) {
-        *aResult = NS_STATIC_CAST(nsIRDFDataSource *, this);
-    }
-    else if (aIID.Equals(NS_GET_IID(nsIRDFRemoteDataSource))) {
-        *aResult = NS_STATIC_CAST(nsIRDFRemoteDataSource *, this);
-    }
-    else if (aIID.Equals(NS_GET_IID(nsIObserver))) {
-        *aResult = NS_STATIC_CAST(nsIObserver *, this);
-    }
-    else if (aIID.Equals(NS_GET_IID(nsISupportsWeakReference))) {
-        *aResult = NS_STATIC_CAST(nsISupportsWeakReference *, this);
-    }
-    else {
-        *aResult = nsnull;
-        return NS_NOINTERFACE;
-    }
-
-    NS_ADDREF(this);
-    return NS_OK;
-}
-
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(LocalStoreImpl)
+    NS_INTERFACE_MAP_ENTRY(nsILocalStore)
+    NS_INTERFACE_MAP_ENTRY(nsIRDFDataSource)
+    NS_INTERFACE_MAP_ENTRY(nsIRDFRemoteDataSource)
+    NS_INTERFACE_MAP_ENTRY(nsIObserver)
+    NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
+    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsILocalStore)
+NS_INTERFACE_MAP_END
 
 // nsILocalStore interface
-
-
 
 // nsIRDFDataSource interface
 
@@ -347,7 +305,11 @@ NS_IMETHODIMP
 LocalStoreImpl::Flush()
 {
 	nsCOMPtr<nsIRDFRemoteDataSource> remote = do_QueryInterface(mInner);
-    NS_ASSERTION(remote != nsnull, "not an nsIRDFRemoteDataSource");
+    // FIXME Bug 340242: Temporarily make this a warning rather than an
+    // assertion until we sort out the ordering of how we write
+    // everything to the localstore, flush it, and disconnect it when
+    // we're getting profile-change notifications.
+    NS_WARN_IF_FALSE(remote != nsnull, "not an nsIRDFRemoteDataSource");
 	if (! remote)
         return NS_ERROR_UNEXPECTED;
 
@@ -381,14 +343,10 @@ LocalStoreImpl::Init()
     if (NS_FAILED(rv)) return rv;
 
     // register this as a named data source with the RDF service
-    nsCOMPtr<nsIRDFService> rdf = do_GetService(NS_RDF_CONTRACTID "/rdf-service;1", &rv);
+    mRDFService = do_GetService(NS_RDF_CONTRACTID "/rdf-service;1", &rv);
     if (NS_FAILED(rv)) return rv;
 
-    // for later
-    if (!gRDF)
-        gRDF = do_GetWeakReference(rdf);
-
-    rdf->RegisterDataSource(this, PR_FALSE);
+    mRDFService->RegisterDataSource(this, PR_FALSE);
 
     // Register as an observer of profile changes
     nsCOMPtr<nsIObserverService> obs =
@@ -398,6 +356,43 @@ LocalStoreImpl::Init()
         obs->AddObserver(this, "profile-before-change", PR_TRUE);
         obs->AddObserver(this, "profile-do-change", PR_TRUE);
     }
+
+    return NS_OK;
+}
+
+nsresult
+LocalStoreImpl::CreateLocalStore(nsIFile* aFile)
+{
+    nsresult rv;
+
+    rv = aFile->Create(nsIFile::NORMAL_FILE_TYPE, 0666);
+    if (NS_FAILED(rv)) return rv;
+
+    nsCOMPtr<nsIOutputStream> outStream;
+    rv = NS_NewLocalFileOutputStream(getter_AddRefs(outStream), aFile);
+    if (NS_FAILED(rv)) return rv;
+
+    const char defaultRDF[] = 
+        "<?xml version=\"1.0\"?>\n" \
+        "<RDF:RDF xmlns:RDF=\"" RDF_NAMESPACE_URI "\"\n" \
+        "         xmlns:NC=\""  NC_NAMESPACE_URI "\">\n" \
+        "  <!-- Empty -->\n" \
+        "</RDF:RDF>\n";
+
+    PRUint32 count;
+    rv = outStream->Write(defaultRDF, sizeof(defaultRDF)-1, &count);
+    if (NS_FAILED(rv)) return rv;
+
+    if (count != sizeof(defaultRDF)-1)
+        return NS_ERROR_UNEXPECTED;
+
+    // Okay, now see if the file exists _for real_. If it's still
+    // not there, it could be that the profile service gave us
+    // back a read-only directory. Whatever.
+    PRBool fileExistsFlag = PR_FALSE;
+    aFile->Exists(&fileExistsFlag);
+    if (!fileExistsFlag)
+        return NS_ERROR_UNEXPECTED;
 
     return NS_OK;
 }
@@ -418,35 +413,8 @@ LocalStoreImpl::LoadData()
     (void)aFile->Exists(&fileExistsFlag);
     if (!fileExistsFlag) {
         // if file doesn't exist, create it
-        (void)aFile->Create(nsIFile::NORMAL_FILE_TYPE, 0666);
-
-        nsCOMPtr<nsIOutputStream> outStream;
-        rv = NS_NewLocalFileOutputStream(getter_AddRefs(outStream), aFile);
-        if (NS_FAILED(rv))
-            return rv;
-
-        const char defaultRDF[] = 
-            "<?xml version=\"1.0\"?>\n" \
-            "<RDF:RDF xmlns:RDF=\"" RDF_NAMESPACE_URI "\"\n" \
-            "         xmlns:NC=\""  NC_NAMESPACE_URI "\">\n" \
-            "  <!-- Empty -->\n" \
-            "</RDF:RDF>\n";
-
-        PRUint32 count;
-        rv = outStream->Write(defaultRDF, sizeof(defaultRDF)-1, &count);
-        if (NS_FAILED(rv))
-            return rv;
-
-        if (count != sizeof(defaultRDF)-1)
-            return NS_ERROR_UNEXPECTED;
-
-        // Okay, now see if the file exists _for real_. If it's still
-        // not there, it could be that the profile service gave us
-        // back a read-only directory. Whatever.
-        fileExistsFlag = PR_FALSE;
-        (void)aFile->Exists(&fileExistsFlag);
-        if (!fileExistsFlag)
-            return NS_ERROR_UNEXPECTED;
+        rv = CreateLocalStore(aFile);
+        if (NS_FAILED(rv)) return rv;
     }
 
     mInner = do_CreateInstance(NS_RDF_DATASOURCE_CONTRACTID_PREFIX "xml-datasource", &rv);
@@ -467,7 +435,18 @@ LocalStoreImpl::LoadData()
     if (NS_FAILED(rv)) return rv;
 
     // Read the datasource synchronously.
-    return remote->Refresh(PR_TRUE);
+    rv = remote->Refresh(PR_TRUE);
+    
+    if (NS_FAILED(rv)) {
+        // Load failed, delete and recreate a fresh localstore
+        aFile->Remove(PR_TRUE);
+        rv = CreateLocalStore(aFile);
+        if (NS_FAILED(rv)) return rv;
+        
+        rv = remote->Refresh(PR_TRUE);
+    }
+
+    return rv;
 }
 
 
@@ -478,7 +457,7 @@ LocalStoreImpl::GetURI(char* *aURI)
     if (! aURI)
         return NS_ERROR_NULL_POINTER;
 
-    *aURI = nsCRT::strdup("rdf:local-store");
+    *aURI = NS_strdup("rdf:local-store");
     if (! *aURI)
         return NS_ERROR_OUT_OF_MEMORY;
 
@@ -529,7 +508,7 @@ LocalStoreImpl::Observe(nsISupports *aSubject, const char *aTopic, const PRUnich
         // profile-less.
         mInner = do_CreateInstance(NS_RDF_DATASOURCE_CONTRACTID_PREFIX "in-memory-datasource");
 
-        if (!nsCRT::strcmp(NS_ConvertUCS2toUTF8(someData).get(), "shutdown-cleanse")) {
+        if (!nsCRT::strcmp(NS_ConvertUTF16toUTF8(someData).get(), "shutdown-cleanse")) {
             nsCOMPtr<nsIFile> aFile;
             rv = NS_GetSpecialDirectory(NS_APP_LOCALSTORE_50_FILE, getter_AddRefs(aFile));
             if (NS_SUCCEEDED(rv))

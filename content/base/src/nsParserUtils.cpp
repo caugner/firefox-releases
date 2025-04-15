@@ -35,6 +35,10 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * Namespace class for some static parsing-related methods.
+ */
+
 #include "nsParserUtils.h"
 #include "nsIParser.h" // for kQuote et. al.
 #include "jsapi.h"
@@ -43,25 +47,23 @@
 #include "nsContentUtils.h"
 #include "nsIParserService.h"
 
-#define SKIP_WHITESPACE(iter, end_iter)                          \
+#define SKIP_WHITESPACE(iter, end_iter, end_res)                 \
   while ((iter) != (end_iter) && nsCRT::IsAsciiSpace(*(iter))) { \
     ++(iter);                                                    \
   }                                                              \
-  if ((iter) == (end_iter))                                      \
-    break
+  if ((iter) == (end_iter)) {                                    \
+    return (end_res);                                            \
+  }
 
 #define SKIP_ATTR_NAME(iter, end_iter)                            \
   while ((iter) != (end_iter) && !nsCRT::IsAsciiSpace(*(iter)) && \
          *(iter) != '=') {                                        \
     ++(iter);                                                     \
-  }                                                               \
-  if ((iter) == (end_iter))                                       \
-    break
+  }
 
 PRBool
 nsParserUtils::GetQuotedAttributeValue(const nsString& aSource, nsIAtom *aName,
-                                       nsAString& aValue,
-                                       PRBool aComplyWithSpec)
+                                       nsAString& aValue)
 {
   aValue.Truncate();
 
@@ -70,29 +72,33 @@ nsParserUtils::GetQuotedAttributeValue(const nsString& aSource, nsIAtom *aName,
   const PRUnichar *iter;
   
   while (start != end) {
-    SKIP_WHITESPACE(start, end);
+    SKIP_WHITESPACE(start, end, PR_FALSE)
     iter = start;
-    SKIP_ATTR_NAME(iter, end);
+    SKIP_ATTR_NAME(iter, end)
+
+    if (start == iter) {
+      return PR_FALSE;
+    }
 
     // Remember the attr name.
     const nsDependentSubstring & attrName = Substring(start, iter);
 
     // Now check whether this is a valid name="value" pair.
     start = iter;
-    SKIP_WHITESPACE(start, end);
+    SKIP_WHITESPACE(start, end, PR_FALSE)
     if (*start != '=') {
       // No '=', so this is not a name="value" pair.  We don't know
       // what it is, and we have no way to handle it.
-      break;
+      return PR_FALSE;
     }
     
     // Have to skip the value.
     ++start;
-    SKIP_WHITESPACE(start, end);
+    SKIP_WHITESPACE(start, end, PR_FALSE)
     PRUnichar q = *start;
     if (q != kQuote && q != kApostrophe) {
       // Not a valid quoted value, so bail.
-      break;
+      return PR_FALSE;
     }
     
     ++start;  // Point to the first char of the value.
@@ -104,21 +110,14 @@ nsParserUtils::GetQuotedAttributeValue(const nsString& aSource, nsIAtom *aName,
 
     if (iter == end) {
       // Oops, unterminated quoted string.
-      break;
+      return PR_FALSE;
     }
 
     // At this point attrName holds the name of the "attribute" and
     // the value is between start and iter.
     
     if (aName->Equals(attrName)) {
-      if (!aComplyWithSpec) {
-        aValue.Append(start, iter - start);
-
-        return PR_TRUE;
-      }
-
-      nsCOMPtr<nsIParserService_MOZILLA_1_8_BRANCH> parserService =
-        do_QueryInterface(nsContentUtils::GetParserServiceWeakRef());
+      nsIParserService* parserService = nsContentUtils::GetParserService();
       NS_ENSURE_TRUE(parserService, PR_FALSE);
 
       // We'll accumulate as many characters as possible (until we hit either
@@ -172,13 +171,79 @@ nsParserUtils::GetQuotedAttributeValue(const nsString& aSource, nsIAtom *aName,
   return PR_FALSE;
 }
 
+PRBool
+nsParserUtils::GetQuotedAttrNameAt(const nsString& aSource, PRUint32 aIndex,
+                                   nsAString& aName)
+{
+  aName.Truncate();
 
-// XXX Stolen from nsHTMLContentSink. Needs to be shared.
-// XXXbe share also with nsRDFParserUtils.cpp and nsHTMLContentSink.cpp
+  const PRUnichar *start = aSource.get();
+  const PRUnichar *end = start + aSource.Length();
+  const PRUnichar *iter;
+  PRUint32 currIndex = 0;
+  
+  for (;;) {
+    SKIP_WHITESPACE(start, end, PR_TRUE)
+
+    iter = start;
+    SKIP_ATTR_NAME(iter, end)
+
+    if (start == iter) {
+      return PR_FALSE;
+    }
+
+    // Remember the attr name.
+    const nsDependentSubstring & attrName = Substring(start, iter);
+
+    // Now check whether this is a valid name="value" pair.
+    start = iter;
+    SKIP_WHITESPACE(start, end, PR_FALSE);
+    if (*start != '=') {
+      // No '=', so this is not a name="value" pair.  We don't know
+      // what it is, and we have no way to handle it.
+      return PR_FALSE;
+    }
+    
+    // Have to skip the value.
+    ++start;
+    SKIP_WHITESPACE(start, end, PR_FALSE);
+    PRUnichar q = *start;
+    if (q != kQuote && q != kApostrophe) {
+      // Not a valid quoted value, so bail.
+      return PR_FALSE;
+    }
+    
+    // Scan to the end of the value.
+    do {
+      ++start;
+    } while (start != end && *start != q);
+
+    if (start == end) {
+      // Oops, unterminated quoted string.
+      return PR_FALSE;
+    }
+
+    // At this point attrName holds the name of the "attribute"
+    
+    if (aIndex == currIndex) {
+      aName = attrName;
+
+      return PR_TRUE;
+    }
+
+    // Resume scanning after the end of the attribute value (past the quote
+    // char).
+    ++start;
+    ++currIndex;
+  }
+
+  return PR_TRUE;
+}
+
 // Returns PR_TRUE if the language name is a version of JavaScript and
 // PR_FALSE otherwise
 PRBool
-nsParserUtils::IsJavaScriptLanguage(const nsString& aName, const char* *aVersion)
+nsParserUtils::IsJavaScriptLanguage(const nsString& aName, PRUint32 *aFlags)
 {
   JSVersion version = JSVERSION_UNKNOWN;
 
@@ -211,9 +276,12 @@ nsParserUtils::IsJavaScriptLanguage(const nsString& aName, const char* *aVersion
   else if (aName.LowerCaseEqualsLiteral("javascript1.7")) {
     version = JSVERSION_1_7;
   }
+  else if (aName.LowerCaseEqualsLiteral("javascript1.8")) {
+    version = JSVERSION_1_8;
+  }
   if (version == JSVERSION_UNKNOWN)
     return PR_FALSE;
-  *aVersion = JS_VersionToString(version);
+  *aFlags = version;
   return PR_TRUE;
 }
 

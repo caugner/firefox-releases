@@ -42,7 +42,7 @@
 
 #include "nsISupports.h"
 #include "nscore.h"
-#include "nsString.h"
+#include "nsStringGlue.h"
 #include "nsILocale.h"
 #include "nsIScriptableDateFormat.h"
 #include "prtime.h"
@@ -60,35 +60,37 @@
 class nsIDateTimeFormat : public nsISupports {
 
 public: 
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IDATETIMEFORMAT_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IDATETIMEFORMAT_IID)
 
   // performs a locale sensitive date formatting operation on the time_t parameter
   NS_IMETHOD FormatTime(nsILocale* locale, 
                         const nsDateFormatSelector  dateFormatSelector, 
                         const nsTimeFormatSelector timeFormatSelector, 
                         const time_t  timetTime,
-                        nsString& stringOut) = 0; 
+                        nsAString& stringOut) = 0; 
 
   // performs a locale sensitive date formatting operation on the struct tm parameter
   NS_IMETHOD FormatTMTime(nsILocale* locale, 
                           const nsDateFormatSelector  dateFormatSelector, 
                           const nsTimeFormatSelector timeFormatSelector, 
                           const struct tm*  tmTime, 
-                          nsString& stringOut) = 0; 
+                          nsAString& stringOut) = 0; 
 
   // performs a locale sensitive date formatting operation on the PRTime parameter
   NS_IMETHOD FormatPRTime(nsILocale* locale, 
                           const nsDateFormatSelector  dateFormatSelector, 
                           const nsTimeFormatSelector timeFormatSelector, 
                           const PRTime  prTime, 
-                          nsString& stringOut) = 0;
+                          nsAString& stringOut) = 0;
 
   // performs a locale sensitive date formatting operation on the PRExplodedTime parameter
   NS_IMETHOD FormatPRExplodedTime(nsILocale* locale, 
                                   const nsDateFormatSelector  dateFormatSelector, 
                                   const nsTimeFormatSelector timeFormatSelector, 
                                   const PRExplodedTime*  explodedTime, 
-                                  nsString& stringOut) = 0; 
+                                  nsAString& stringOut) = 0; 
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIDateTimeFormat, NS_IDATETIMEFORMAT_IID)
 
 #endif  /* nsIDateTimeFormat_h__ */

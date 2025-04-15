@@ -38,7 +38,7 @@
 #
 # ***** END LICENSE BLOCK *****
 #
-#ident  "$Id: proto64.mk,v 1.2.2.2 2005/03/08 02:17:36 wtchang%redhat.com Exp $"
+#ident  "$Id: proto64.mk,v 1.3 2005/02/25 20:20:52 christophe.ravel.bugs%sun.com Exp $"
 #
 
 ifeq ($(USE_64), 1)

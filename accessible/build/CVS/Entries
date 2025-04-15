@@ -1,5 +1,5 @@
-/.cvsignore/1.5/Tue Apr 15 08:45:29 2003//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.32/Fri Jun 24 22:30:55 2005//TFIREFOX_2_0_RELEASE
-/accessibility.pkg/1.2/Wed Jan  7 01:21:14 2004//TFIREFOX_2_0_RELEASE
-/nsAccessibilityFactory.cpp/1.12/Sat Apr 17 21:50:18 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.5/Tue Apr 15 08:45:29 2003//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.40/Fri Feb 29 23:24:54 2008//TFIREFOX_3_0rc3_RELEASE
+/accessibility.pkg/1.4/Thu Mar  1 20:24:37 2007//TFIREFOX_3_0rc3_RELEASE
+/nsAccessibilityFactory.cpp/1.12/Sat Apr 17 21:50:18 2004//TFIREFOX_3_0rc3_RELEASE
 D

@@ -33,7 +33,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: mpi_sparc.c,v 1.6.20.1 2006/05/15 17:45:33 wtchang%redhat.com Exp $ */
+/* $Id: mpi_sparc.c,v 1.7 2006/01/22 08:43:57 nelsonb%netscape.com Exp $ */
 
 /* Multiplication performance enhancements for sparc v8+vis CPUs. */
 

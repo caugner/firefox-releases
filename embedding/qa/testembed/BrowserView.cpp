@@ -220,7 +220,7 @@ HRESULT CBrowserView::CreateBrowser()
 	mpBrowserImpl->Init(mpBrowserFrameGlue, mWebBrowser);
 	mpBrowserImpl->AddRef();
 
-    mWebBrowser->SetContainerWindow(NS_STATIC_CAST(nsIWebBrowserChrome*, mpBrowserImpl));
+    mWebBrowser->SetContainerWindow(static_cast<nsIWebBrowserChrome*>(mpBrowserImpl));
 
 	rv = NS_OK;
     nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(mWebBrowser, &rv);
@@ -257,7 +257,7 @@ HRESULT CBrowserView::CreateBrowser()
 	// These callbacks will be used to update the status/progress bars
 
 /*		// from WinEmbed.cpp
-	nsCOMPtr<nsIWebProgressListener> listener(NS_STATIC_CAST(nsIWebProgressListener*, this));
+	nsCOMPtr<nsIWebProgressListener> listener(static_cast<nsIWebProgressListener*>(this));
     nsCOMPtr<nsIWeakReference> thisListener(do_GetWeakReference(listener));
     (void)mWebBrowser->AddWebBrowserListener(thisListener, 
        NS_GET_IID(nsIWebProgressListener));
@@ -289,7 +289,7 @@ HRESULT CBrowserView::DestroyBrowser()
 	}
 /*
 	nsWeakPtr weakling(
-    do_GetWeakReference(NS_STATIC_CAST(nsIWebProgressListener*, mpBrowserImpl)));
+    do_GetWeakReference(static_cast<nsIWebProgressListener*>(mpBrowserImpl)));
 	nsresult rv;
     rv = mWebBrowser->RemoveWebBrowserListener(weakling, NS_GET_IID(nsIWebProgressListener));
 	if (NS_FAILED(rv))
@@ -709,7 +709,7 @@ void CBrowserView::OnFileSaveAs()
 
 void CBrowserView::OpenURL(const char* pUrl)
 {
-    OpenURL(NS_ConvertASCIItoUCS2(pUrl).get());
+    OpenURL(NS_ConvertASCIItoUTF16(pUrl).get());
 }
 
 void CBrowserView::OpenURL(const PRUnichar* pUrl)
@@ -773,7 +773,9 @@ void CBrowserView::OnCopyLinkLocation()
 	if(!pszClipData)
 		return;
 
-	mCtxMenuLinkUrl.ToCString(pszClipData, mCtxMenuLinkUrl.Length() + 1);
+	nsFixedCString clipDataStr(pszClipData, mCtxMenuLinkUrl.Length() + 1);
+	LossyCopyUTF16toASCII(mCtxMenuLinkUrl, clipDataStr);
+	NS_ASSERTION(clipDataStr.get() == pszClipData, "buffer too small");
 
 	GlobalUnlock(hClipData);
 

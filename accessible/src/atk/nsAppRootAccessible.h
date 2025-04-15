@@ -2,28 +2,28 @@
 /* vim:expandtab:shiftwidth=4:tabstop=4:
  */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Sun Microsystems, Inc.
- * Portions created by Sun Microsystems are Copyright (C) 2002 Sun
- * Microsystems, Inc. All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Sun Microsystems, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 2002
+ * the Initial Developer. All Rights Reserved.
  *
- * Original Author: Bolian Yin (bolian.yin@sun.com)
- *
- * Contributor(s): 
+ * Contributor(s):
+ *   Bolian Yin (bolian.yin@sun.com)
+ *   Ginn Chen (ginn.chen@sun.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -31,72 +31,38 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #ifndef __NS_APP_ROOT_ACCESSIBLE_H__
 #define __NS_APP_ROOT_ACCESSIBLE_H__
 
-#include "nsArray.h"
-#include "nsIAccessibleDocument.h"
-#include "nsAccessibilityService.h"
-#include "nsAccessibleWrap.h"
-#include "nsRootAccessibleWrap.h"
+#include "nsApplicationAccessible.h"
 
-#define MAI_TYPE_APP_ROOT (MAI_TYPE_ATK_OBJECT)
-
-/* nsAppRootAccessible is for the whole application of Mozilla.
- * Only one instance of nsAppRootAccessible exists for one Mozilla instance.
- * And this one should be created when Mozilla Startup (if accessibility
- * feature has been enabled) and destroyed when Mozilla Shutdown.
- *
- * All the accessibility objects for toplevel windows are direct children of
- * the nsAppRootAccessible instance.
- */
-class nsAppRootAccessible;
-class nsAppRootAccessible: public nsAccessibleWrap
+class nsApplicationAccessibleWrap: public nsApplicationAccessible
 {
 public:
-    virtual ~nsAppRootAccessible();
-#ifdef MAI_LOGGING
-    //    virtual void DumpMaiObjectInfo(int aDepth);
-#endif
-
-    static nsAppRootAccessible *Create();
     static void Unload();
+    static void PreCreate();
 
 public:
-    nsAppRootAccessible();
+    nsApplicationAccessibleWrap();
+    virtual ~nsApplicationAccessibleWrap();
 
-    /* virtual function from nsAccessNode */
+    // nsPIAccessNode
     NS_IMETHOD Init();
-
-    /* virtual functions from nsAccessible */
-    NS_IMETHOD GetName(nsAString & aName);
-    NS_IMETHOD GetDescription(nsAString & aDescription);
-    NS_IMETHOD GetRole(PRUint32 *aRole);
-    NS_IMETHOD GetFinalRole(PRUint32 *aFinalRole);
-    NS_IMETHOD GetParent(nsIAccessible * *aParent);
-    NS_IMETHOD GetNextSibling(nsIAccessible * *aNextSibling);
-    NS_IMETHOD GetPreviousSibling(nsIAccessible **aPreviousSibling);
-    NS_IMETHOD GetChildAt(PRInt32 aChildNum, nsIAccessible **aChild);
-
-    NS_IMETHOD GetFirstChild(nsIAccessible * *aFirstChild);
-    NS_IMETHOD GetChildCount(PRInt32 *aAccChildCount);
 
     // return the atk object for app root accessible
     NS_IMETHOD GetNativeInterface(void **aOutAccessible);
 
-    nsresult AddRootAccessible(nsRootAccessibleWrap *aRootAccWrap);
-    nsresult RemoveRootAccessible(nsRootAccessibleWrap *aRootAccWrap);
-private:
-    nsCOMPtr<nsIMutableArray> mChildren;
-    PRBool mInitialized;
+    // nsApplicationAccessible
+    virtual nsresult AddRootAccessible(nsIAccessible *aRootAccWrap);
+    virtual nsresult RemoveRootAccessible(nsIAccessible *aRootAccWrap);
 };
 
 #endif   /* __NS_APP_ROOT_ACCESSIBLE_H__ */

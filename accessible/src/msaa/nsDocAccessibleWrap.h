@@ -59,8 +59,6 @@ public:
     STDMETHODIMP_(ULONG) Release();
     STDMETHODIMP      QueryInterface(REFIID, void**);
 
-    static PRInt32 GetChildIDFor(nsIAccessible* aAccessible);
-
     void GetXPAccessibleFor(const VARIANT& varChild, nsIAccessible **aXPAccessible);
 
     // ISimpleDOMDocument
@@ -89,16 +87,12 @@ public:
         /* [in] */ VARIANT varChild,
         /* [retval][out] */ IDispatch __RPC_FAR *__RPC_FAR *ppdispChild);
 
-    NS_IMETHOD Shutdown();
-    NS_IMETHOD FireToolkitEvent(PRUint32 aEvent, nsIAccessible* aAccessible, void* aData);
-    NS_IMETHOD FireDocLoadingEvent(PRBool isFinished);
-    NS_IMETHOD FireAnchorJumpEvent();
+    // Override get_accValue to provide URL when no other value is available
+    virtual /* [id][propget] */ HRESULT STDMETHODCALLTYPE get_accValue( 
+        /* [optional][in] */ VARIANT varChild,
+        /* [retval][out] */ BSTR __RPC_FAR *pszValue);
 
-private:
-    static void DocLoadCallback(nsITimer *aTimer, void *aClosure);
-    already_AddRefed<nsIAccessible> GetFirstLeafAccessible(nsIDOMNode *aStartNode);
-    nsCOMPtr<nsITimer> mDocLoadTimer;
-    PRPackedBool mWasAnchor;
+    NS_IMETHOD FireAnchorJumpEvent();
 };
 
 #endif

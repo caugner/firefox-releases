@@ -43,9 +43,10 @@
 #include "nsCOMPtr.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsServiceManagerUtils.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
+#include "nsMemory.h"
 
 
 #include "XPCBrowser.h"
@@ -64,7 +65,7 @@ HRESULT IEBrowser::Init(PluginInstanceData *pData)
     mData = pData;
     // Get the location URL
     NPN_GetValue(mData->pPluginInstance, NPNVDOMWindow, 
-        NS_STATIC_CAST(nsIDOMWindow **,getter_AddRefs(mDOMWindow)));
+        static_cast<nsIDOMWindow **>(getter_AddRefs(mDOMWindow)));
     if (mDOMWindow)
     {
         mWebNavigation  = do_GetInterface(mDOMWindow);

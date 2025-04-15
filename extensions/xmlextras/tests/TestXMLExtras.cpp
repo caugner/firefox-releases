@@ -39,8 +39,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include <nsCOMPtr.h>
-#include <nsString.h>
-#include <nsCRT.h>
+#include <nsStringAPI.h>
 #include <nsIURI.h>
 #include <nsIChannel.h>
 #include <nsIInputStream.h>
@@ -56,7 +55,8 @@
 #include <nsIDOMEventListener.h>
 #include <nsIDOMLoadListener.h>
 #include "nsContentCID.h"
-#include "nsReadableUtils.h"
+#include "nsNativeCharsetUtils.h"
+
 static NS_DEFINE_CID( kXMLDocumentCID, NS_XMLDOCUMENT_CID );
 
 #if 0
@@ -104,7 +104,7 @@ void nsMyListener::Start(const char *arg2)
         if (NS_SUCCEEDED( rv )) {
           nsCOMPtr<nsIDOMNSDocument> pDOMNSDocument = do_QueryInterface( doc, &rv );
           if (NS_SUCCEEDED( rv )) {
-            rv = pDOMNSDocument->Load( NS_ConvertASCIItoUCS2(arg2) );
+            rv = pDOMNSDocument->Load( NS_ConvertASCIItoUTF16(arg2) );
           }
         }
       }
@@ -129,6 +129,15 @@ void usage( ) {
   return;
 }
 
+static void
+strtolower(char* str)
+{
+  for (; *str; ++str) {
+    char ch = *str;
+    if (ch >= 'A' && ch <= 'Z')
+      *str = ch + 'a' - 'A';
+  }
+}
 
 int main (int argc, char* argv[]) 
 {
@@ -147,12 +156,15 @@ int main (int argc, char* argv[])
   if (NS_FAILED(rv)) return rv;
 
   if (argc > 2) {
-    if (nsCRT::strcasecmp( argv[1], "parsestr" ) == 0) {
+    strtolower(argv[1]);
+    if (strcmp(argv[1], "parsestr") == 0) {
       pDOMParser = do_CreateInstance( NS_DOMPARSER_CONTRACTID,
                                      &rv );
 
       if (NS_SUCCEEDED( rv )) {
-        nsString str; str.AssignWithConversion(argv[2]);
+        nsString str;
+        NS_CStringToUTF16(nsDependentCString(argv[2]),
+                          NS_CSTRING_ENCODING_NATIVE_FILESYSTEM, str);
         rv = pDOMParser->ParseFromString(str.get(), "application/xml",
                                           getter_AddRefs( pDOMDocument ) );
 
@@ -166,7 +178,7 @@ int main (int argc, char* argv[])
       else {
         printf( "do_CreateInstance of DOMParser failed for %s - %08X\n", argv[2], rv );
       }
-    } else if (nsCRT::strcasecmp( argv[1], "parse" ) == 0) {
+    } else if (strcmp(argv[1], "parse") == 0) {
       // DOM Parser
       rv = NS_NewURI( getter_AddRefs( pURI ),
                       argv[2] );
@@ -188,7 +200,7 @@ int main (int argc, char* argv[])
                                              &rv );
 
               if (NS_SUCCEEDED( rv )) {
-                pDOMParser->SetBaseURI(pURI);
+                pDOMParser->Init(nsnull, pURI, nsnull, nsnull);
 
                 rv = pDOMParser->ParseFromStream( pInputStream,
                                                   "UTF-8",
@@ -222,7 +234,7 @@ int main (int argc, char* argv[])
         printf( "NS_NewURI failed for %s - %08X\n", argv[2], rv );
       }
     }
-    else if (nsCRT::strcasecmp( argv[1], "syncread" ) == 0) {
+    else if (strcmp(argv[1], "syncread") == 0) {
       // Synchronous Read
       pXMLHttpRequest = do_CreateInstance( NS_XMLHTTPREQUEST_CONTRACTID,
                                           &rv );
@@ -265,7 +277,7 @@ int main (int argc, char* argv[])
       }
     }
 #if 0
-    else if (nsCRT::strcasecmp( argv[1], "load" ) == 0) {
+    else if (strcmp(argv[1], "load") == 0) {
       nsMyListener * listener = new nsMyListener();
       listener->Start(argv[2]);
     }
@@ -283,9 +295,7 @@ int main (int argc, char* argv[])
     pDOMDocument->GetDocumentElement(getter_AddRefs(element));
     nsAutoString tagName;
     if (element) element->GetTagName(tagName);
-    char *s = ToNewCString(tagName);
-    printf("Document element=\"%s\"\n",s);
-    nsCRT::free(s);
+    printf("Document element=\"%s\"\n", NS_ConvertUTF16toUTF8(tagName).get());
     nsCOMPtr<nsIDocument> doc = do_QueryInterface(pDOMDocument);
     if (doc) {
       nsCAutoString spec;

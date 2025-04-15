@@ -37,7 +37,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: rsawrapr.c,v 1.8.20.2 2006/08/04 19:10:53 kaie%kuix.de Exp $ */
+/* $Id: rsawrapr.c,v 1.11 2006/10/23 21:24:38 wtchang%redhat.com Exp $ */
 
 #include "blapi.h"
 #include "softoken.h"
@@ -145,6 +145,7 @@ oaep_xor_with_h1(unsigned char *data, unsigned int datalen,
 	end_octet++;
     }
 
+    SHA1_DestroyContext (sha1cx, PR_TRUE);
     return SECSuccess;
 }
 

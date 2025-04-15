@@ -1,6 +1,5 @@
-/.cvsignore/1.1/Sat Feb 16 01:31:39 2002//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.5/Mon May  2 16:30:01 2005//TFIREFOX_2_0_RELEASE
-/nsIProgressDialog.idl/1.14/Sun Apr 24 21:16:22 2005//TFIREFOX_2_0_RELEASE
-/nsProgressDialog.js/1.45/Wed Jul  6 23:12:19 2005//TFIREFOX_2_0_RELEASE
-/nsProgressDialog.xul/1.10/Sat Apr 17 00:58:23 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Feb 16 01:31:39 2002//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.6/Fri Aug 17 23:05:27 2007//TFIREFOX_3_0rc3_RELEASE
+/nsProgressDialog.js/1.48/Thu Jul  5 19:31:45 2007//TFIREFOX_3_0rc3_RELEASE
+/nsProgressDialog.xul/1.10/Sat Apr 17 00:58:23 2004//TFIREFOX_3_0rc3_RELEASE
 D

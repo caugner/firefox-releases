@@ -1105,23 +1105,8 @@ nsString::EqualsIgnoreCase( const char* aString, PRInt32 aCount ) const
   }
 
   /**
-   * ToCString, ToFloat, ToInteger
+   * nsTString::ToFloat
    */
-
-char*
-nsString::ToCString( char* aBuf, PRUint32 aBufLength, PRUint32 aOffset ) const
-  {
-      // because the old implementation checked aBuf
-    if (!(aBuf && aBufLength > 0 && aOffset <= mLength))
-      return nsnull;
-
-    PRUint32 maxCount = NS_MIN(aBufLength-1, mLength - aOffset);
-
-    LossyConvertEncoding<PRUnichar, char> converter(aBuf);
-    converter.write(mData + aOffset, maxCount);
-    converter.write_terminator();
-    return aBuf;
-  }
 
 float
 nsCString::ToFloat(PRInt32* aErrorCode) const
@@ -1149,25 +1134,7 @@ nsCString::ToFloat(PRInt32* aErrorCode) const
 float
 nsString::ToFloat(PRInt32* aErrorCode) const
   {
-    float res = 0.0f;
-    char buf[100];
-    if (mLength > 0 && mLength < sizeof(buf))
-      {
-        char *conv_stopped;
-        const char *str = ToCString(buf, sizeof(buf));
-        // Use PR_strtod, not strtod, since we don't want locale involved.
-        res = (float)PR_strtod(str, &conv_stopped);
-        if (conv_stopped == str+mLength)
-          *aErrorCode = (PRInt32) NS_OK;
-        else // Not all the string was scanned
-          *aErrorCode = (PRInt32) NS_ERROR_ILLEGAL_VALUE;
-      }
-    else
-      {
-        // The string was too short (0 characters) or too long (sizeof(buf))
-        *aErrorCode = (PRInt32) NS_ERROR_ILLEGAL_VALUE;
-      }
-    return res;
+    return NS_LossyConvertUTF16toASCII(*this).ToFloat(aErrorCode);
   }
 
 
@@ -1294,7 +1261,7 @@ nsString::AppendInt( PRInt64 aInteger, PRInt32 aRadix )
    */
 
 void
-nsCString::AppendFloat( double aFloat )
+nsCString::AppendFloat( float aFloat )
   {
     char buf[40];
     // Use Modified_cnvtf, which is locale-insensitive, instead of the
@@ -1304,12 +1271,32 @@ nsCString::AppendFloat( double aFloat )
   }
 
 void
-nsString::AppendFloat( double aFloat )
+nsString::AppendFloat( float aFloat )
   {
     char buf[40];
     // Use Modified_cnvtf, which is locale-insensitive, instead of the
     // locale-sensitive PR_snprintf or sprintf(3)
     Modified_cnvtf(buf, sizeof(buf), 6, aFloat);
+    AppendWithConversion(buf);
+  }
+
+void
+nsCString::AppendFloat( double aFloat )
+  {
+    char buf[40];
+    // Use Modified_cnvtf, which is locale-insensitive, instead of the
+    // locale-sensitive PR_snprintf or sprintf(3)
+    Modified_cnvtf(buf, sizeof(buf), 15, aFloat);
+    Append(buf);
+  }
+
+void
+nsString::AppendFloat( double aFloat )
+  {
+    char buf[40];
+    // Use Modified_cnvtf, which is locale-insensitive, instead of the
+    // locale-sensitive PR_snprintf or sprintf(3)
+    Modified_cnvtf(buf, sizeof(buf), 15, aFloat);
     AppendWithConversion(buf);
   }
 

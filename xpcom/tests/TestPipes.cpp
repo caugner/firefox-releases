@@ -41,6 +41,7 @@
 #include "nsIInputStream.h"
 #include "nsIOutputStream.h"
 #include "nsIServiceManager.h"
+#include "nsThreadUtils.h"
 #include "prprf.h"
 #include "prinrval.h"
 #include "plstr.h"
@@ -134,7 +135,7 @@ TestPipe(nsIInputStream* in, nsIOutputStream* out)
     if (receiver == nsnull) return NS_ERROR_OUT_OF_MEMORY;
     NS_ADDREF(receiver);
 
-    rv = NS_NewThread(&thread, receiver, 0, PR_JOINABLE_THREAD);
+    rv = NS_NewThread(&thread, receiver);
     if (NS_FAILED(rv)) return rv;
 
     PRUint32 total = 0;
@@ -160,7 +161,7 @@ TestPipe(nsIInputStream* in, nsIOutputStream* out)
 
     PRIntervalTime end = PR_IntervalNow();
 
-    thread->Join();
+    thread->Shutdown();
 
     printf("wrote %d bytes, time = %dms\n", total,
            PR_IntervalToMilliseconds(end - start));
@@ -247,7 +248,7 @@ TestShortWrites(nsIInputStream* in, nsIOutputStream* out)
     if (receiver == nsnull) return NS_ERROR_OUT_OF_MEMORY;
     NS_ADDREF(receiver);
 
-    rv = NS_NewThread(&thread, receiver, 0, PR_JOINABLE_THREAD);
+    rv = NS_NewThread(&thread, receiver);
     if (NS_FAILED(rv)) return rv;
 
     PRUint32 total = 0;
@@ -274,7 +275,7 @@ TestShortWrites(nsIInputStream* in, nsIOutputStream* out)
     rv = out->Close();
     if (NS_FAILED(rv)) return rv;
 
-    thread->Join();
+    thread->Shutdown();
     printf("wrote %d bytes\n", total);
 
     NS_RELEASE(thread);
@@ -282,126 +283,6 @@ TestShortWrites(nsIInputStream* in, nsIOutputStream* out)
 
     return NS_OK;
 }
-
-////////////////////////////////////////////////////////////////////////////////
-
-#if 0
-
-class nsPipeObserver : public nsIInputStreamObserver, 
-                       public nsIOutputStreamObserver
-{
-public:
-    NS_DECL_ISUPPORTS
-
-    NS_IMETHOD OnFull(nsIOutputStream *outStr) {
-        printf("OnFull outStr=%p\n", outStr);
-        return NS_OK;
-    }
-
-    NS_IMETHOD OnWrite(nsIOutputStream *outStr, PRUint32 amount) {
-        printf("OnWrite outStr=%p amount=%d\n", outStr, amount);
-        return NS_OK;
-    }
-
-    NS_IMETHOD OnEmpty(nsIInputStream* inStr) {
-        printf("OnEmpty inStr=%p\n", inStr);
-        return NS_OK;
-    }
-
-    NS_IMETHOD OnClose(nsIInputStream* inStr) {
-        printf("OnClose inStr=%p\n", inStr);
-        return NS_OK;
-    }
-
-    nsPipeObserver() { }
-
-private:
-    ~nsPipeObserver() {}
-};
-
-NS_IMPL_ISUPPORTS2(nsPipeObserver, nsIInputStreamObserver, nsIOutputStreamObserver)
-
-nsresult
-TestPipeObserver()
-{
-    nsresult rv;
-    nsPipeObserver* obs = new nsPipeObserver();
-    if (obs == nsnull) return NS_ERROR_OUT_OF_MEMORY;
-    NS_ADDREF(obs);
-
-    printf("TestPipeObserver: OnWrite and OnFull should be called once, OnEmpty should be called twice.\n");
-    nsIInputStream* in;
-    nsIOutputStream* out;
-    rv = NS_NewPipe(&in, &out, 18, 36, PR_TRUE, PR_TRUE);
-    if (NS_FAILED(rv)) return rv;
-
-    nsCOMPtr<nsIObservableInputStream> observableIn(do_QueryInterface(in, &rv));
-    if (NS_FAILED(rv)) return rv;
-    nsCOMPtr<nsIObservableInputStream> observableOut(do_QueryInterface(out, &rv));
-    if (NS_FAILED(rv)) return rv;
-
-    rv = observableIn->SetObserver(obs);
-    if (NS_FAILED(rv)) return rv;
-    rv = observableOut->SetObserver(obs);
-    if (NS_FAILED(rv)) return rv;
-
-    char buf[] = "puirt a beul: a style of Gaelic vocal music intended for dancing.";
-    PRUint32 cnt;
-    printf("> should see OnWrite message:\n");
-    rv = out->Write(buf, 20, &cnt);
-    if (NS_FAILED(rv)) return rv;
-    NS_ASSERTION(cnt == 20, "Write failed");
-
-    printf("> should see OnWrite message followed by OnFull message:\n");
-    rv = out->Write(buf + 20, 20, &cnt);
-    if (NS_FAILED(rv)) return rv;
-    NS_ASSERTION(cnt == 16, "Write failed");
-
-    rv = in->Available(&cnt);
-    if (NS_FAILED(rv)) return rv;
-    printf("available = %u\n", cnt);
-    NS_ASSERTION(cnt == 36, "Available failed");
-
-    char buf2[40];
-    printf("> should see OnEmpty message:\n");
-    rv = in->Read(buf2, 40, &cnt);
-    if (NS_FAILED(rv)) return rv;
-    printf("cnt = %u\n", cnt);
-    NS_ASSERTION(cnt == 36, "Read failed");
-    NS_ASSERTION(nsCRT::strncmp(buf, buf2, 36) == 0, "Read wrong stuff");
-
-    rv = in->Available(&cnt);
-    if (NS_FAILED(rv)) return rv;
-    printf("available = %u\n", cnt);
-    NS_ASSERTION(cnt == 0, "Available failed");
-
-    printf("> should see OnEmpty message:\n");
-    rv = in->Read(buf2, 2, &cnt);
-    if (NS_FAILED(rv) && rv != NS_BASE_STREAM_WOULD_BLOCK) return rv;
-    NS_ASSERTION(cnt == 0 && rv == NS_BASE_STREAM_WOULD_BLOCK, "Read failed");
-
-    printf("> should see OnWrite message:\n");
-    rv = out->Write(buf, 20, &cnt);
-    if (NS_FAILED(rv)) return rv;
-    NS_ASSERTION(cnt == 20, "Write failed");
-
-    rv = in->Available(&cnt);
-    if (NS_FAILED(rv)) return rv;
-    printf("available = %u\n", cnt);
-    NS_ASSERTION(cnt == 20, "Available failed");
-
-    printf("> should see OnEmpty message:\n");
-    rv = in->Read(buf2, 20, &cnt);
-    if (NS_FAILED(rv)) return rv;
-    NS_ASSERTION(cnt == 20, "Read failed");
-
-    printf("> should see OnClose message:\n");
-    NS_RELEASE(obs);
-    NS_RELEASE(in);
-    NS_RELEASE(out);
-    return NS_OK;
-}
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -472,7 +353,7 @@ TestChainedPipes()
     if (pump == nsnull) return NS_ERROR_OUT_OF_MEMORY;
     NS_ADDREF(pump);
 
-    rv = NS_NewThread(&thread, pump, 0, PR_JOINABLE_THREAD);
+    rv = NS_NewThread(&thread, pump);
     if (NS_FAILED(rv)) return rv;
 
     nsIThread* receiverThread;
@@ -480,7 +361,7 @@ TestChainedPipes()
     if (receiver == nsnull) return NS_ERROR_OUT_OF_MEMORY;
     NS_ADDREF(receiver);
 
-    rv = NS_NewThread(&receiverThread, receiver, 0, PR_JOINABLE_THREAD);
+    rv = NS_NewThread(&receiverThread, receiver);
     if (NS_FAILED(rv)) return rv;
 
     PRUint32 total = 0;
@@ -504,8 +385,8 @@ TestChainedPipes()
     rv = out1->Close();
     if (NS_FAILED(rv)) return rv;
 
-    thread->Join();
-    receiverThread->Join();
+    thread->Shutdown();
+    receiverThread->Shutdown();
 
     NS_RELEASE(thread);
     NS_RELEASE(pump);

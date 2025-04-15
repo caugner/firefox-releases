@@ -42,9 +42,10 @@
 #include "nsIXMLContentSink.h"
 #include "nsIExpatSink.h"
 #include "nsIDocumentTransformer.h"
-#include "nsCOMArray.h"
+#include "nsTArray.h"
 #include "nsCOMPtr.h"
-
+#include "nsCRT.h"
+#include "nsCycleCollectionParticipant.h"
 
 class nsIDocument;
 class nsIURI;
@@ -59,6 +60,11 @@ typedef enum {
   eXMLContentSinkState_InEpilog
 } XMLContentSinkState;
 
+struct StackNode {
+  nsCOMPtr<nsIContent> mContent;
+  PRUint32 mNumFlushed;
+};
+
 class nsXMLContentSink : public nsContentSink,
                          public nsIXMLContentSink,
                          public nsITransformObserver,
@@ -68,6 +74,8 @@ public:
   nsXMLContentSink();
   virtual ~nsXMLContentSink();
 
+  NS_DECL_AND_IMPL_ZEROING_OPERATOR_NEW
+
   nsresult Init(nsIDocument* aDoc,
                 nsIURI* aURL,
                 nsISupports* aContainer,
@@ -76,32 +84,41 @@ public:
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_NO_UNLINK(nsXMLContentSink,
+                                                     nsContentSink)
+
   NS_DECL_NSIEXPATSINK
 
   // nsIContentSink
+  NS_IMETHOD WillTokenize(void);
   NS_IMETHOD WillBuildModel(void);
   NS_IMETHOD DidBuildModel(void);
   NS_IMETHOD WillInterrupt(void);
   NS_IMETHOD WillResume(void);
   NS_IMETHOD SetParser(nsIParser* aParser);  
-  virtual void FlushPendingNotifications(mozFlushType aType) { }
+  virtual void FlushPendingNotifications(mozFlushType aType);
   NS_IMETHOD SetDocumentCharset(nsACString& aCharset);
   virtual nsISupports *GetTarget();
 
   // nsITransformObserver
-  NS_IMETHOD OnDocumentCreated(nsIDOMDocument *aResultDocument);
-  NS_IMETHOD OnTransformDone(nsresult aResult, nsIDOMDocument *aResultDocument);
+  NS_IMETHOD OnDocumentCreated(nsIDocument *aResultDocument);
+  NS_IMETHOD OnTransformDone(nsresult aResult, nsIDocument *aResultDocument);
 
+  // nsICSSLoaderObserver
+  NS_IMETHOD StyleSheetLoaded(nsICSSStyleSheet* aSheet, PRBool aWasAlternate,
+                              nsresult aStatus);
   static void ParsePIData(const nsString &aData, nsString &aHref,
                           nsString &aTitle, nsString &aMedia,
                           PRBool &aIsAlternate);
 
 protected:
-  void StartLayout();
+  // Start layout.  If aIgnorePendingSheets is true, this will happen even if
+  // we still have stylesheet loads pending.  Otherwise, we'll wait until the
+  // stylesheets are all done loading.
+  virtual void MaybeStartLayout(PRBool aIgnorePendingSheets);
 
   virtual nsresult AddAttributes(const PRUnichar** aNode, nsIContent* aContent);
   nsresult AddText(const PRUnichar* aString, PRInt32 aLength);
-  nsresult ProcessEndSCRIPTTag(nsIContent* aContent, nsIContent* aParent);
 
   virtual PRBool OnOpenContainer(const PRUnichar **aAtts, 
                                  PRUint32 aAttsCount, 
@@ -120,20 +137,30 @@ protected:
 
   // aParent is allowed to be null here if this is the root content
   // being closed
-  virtual nsresult CloseElement(nsIContent* aContent, nsIContent* aParent,
-                                PRBool* aAppendContent);
+  virtual nsresult CloseElement(nsIContent* aContent);
 
-  virtual nsresult FlushText(PRBool aCreateTextNode=PR_TRUE,
-                             PRBool* aDidFlush=nsnull);
+  virtual nsresult FlushText();
 
   nsresult AddContentAsLeaf(nsIContent *aContent);
 
   nsIContent* GetCurrentContent();
-  PRInt32 PushContent(nsIContent *aContent);
-  already_AddRefed<nsIContent> PopContent();
+  StackNode & GetCurrentStackNode();
+  nsresult PushContent(nsIContent *aContent);
+  void PopContent();
+  PRBool HaveNotifiedForCurrentContent() const;
 
   nsresult ProcessBASETag(nsIContent* aContent);
 
+  nsresult FlushTags();
+
+  void UpdateChildCounts();
+
+  void DidAddContent()
+  {
+    if (IsTimeToNotify()) {
+      FlushTags();	
+    }
+  }
   
   // nsContentSink override
   virtual nsresult ProcessStyleLink(nsIContent* aElement,
@@ -145,9 +172,22 @@ protected:
 
   nsresult LoadXSLStyleSheet(nsIURI* aUrl);
 
+  PRBool CanStillPrettyPrint();
+
   nsresult MaybePrettyPrint();
   
+  PRBool IsMonolithicContainer(nsINodeInfo* aNodeInfo);
+
+  nsresult HandleStartElement(const PRUnichar *aName, const PRUnichar **aAtts, 
+                              PRUint32 aAttsCount, PRInt32 aIndex, 
+                              PRUint32 aLineNumber,
+                              PRBool aInterruptable);
+  nsresult HandleEndElement(const PRUnichar *aName, PRBool aInterruptable);
+  nsresult HandleCharacterData(const PRUnichar *aData, PRUint32 aLength,
+                               PRBool aInterruptable);
+
   nsIContent*      mDocElement;
+  nsCOMPtr<nsIContent> mCurrentHead;  // When set, we're in an XHTML <haed>
   PRUnichar*       mText;
 
   XMLContentSinkState mState;
@@ -156,18 +196,21 @@ protected:
   
   PRInt32 mTextLength;
   PRInt32 mTextSize;
-  PRUint32 mScriptLineNo;
   
+  PRInt32 mNotifyLevel;
+
   PRUint8 mConstrainSize : 1;
-  PRUint8 mInTitle : 1;
   PRUint8 mPrettyPrintXML : 1;
   PRUint8 mPrettyPrintHasSpecialRoot : 1;
   PRUint8 mPrettyPrintHasFactoredElements : 1;
   PRUint8 mHasProcessedBase : 1;
   PRUint8 mAllowAutoXLinks : 1;
-  PRUint8 unused : 1;  // bit available if someone needs one
+  PRUint8 mPrettyPrinting : 1;  // True if we called PrettyPrint() and it
+                                // decided we should in fact prettyprint.
+  PRUint8 unused : 1;  // bits available if someone needs one
   
-  nsCOMArray<nsIContent>           mContentStack;
+  nsTArray<StackNode>              mContentStack;
+
   nsCOMPtr<nsIDocumentTransformer> mXSLTProcessor;
 };
 

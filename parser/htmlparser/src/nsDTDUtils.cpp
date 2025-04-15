@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=2 sw=2 et tw=80: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -46,11 +47,6 @@
 #include "nsIServiceManager.h"
 #include "nsUnicharUtils.h"
 
-MOZ_DECL_CTOR_COUNTER(nsEntryStack)
-MOZ_DECL_CTOR_COUNTER(nsDTDContext)
-MOZ_DECL_CTOR_COUNTER(nsTokenAllocator)
-MOZ_DECL_CTOR_COUNTER(CNodeRecycler)
- 
 /**************************************************************************************
   A few notes about how residual style handling is performed:
    
@@ -103,10 +99,10 @@ nsEntryStack::~nsEntryStack() {
 void 
 nsEntryStack::ReleaseAll(nsNodeAllocator* aNodeAllocator)
 {
-  NS_WARN_IF_FALSE(aNodeAllocator,"no allocator? - potential leak!");
+  NS_ASSERTION(aNodeAllocator,"no allocator? - potential leak!");
 
   if(aNodeAllocator) {
-    NS_WARN_IF_FALSE(mCount >= 0,"count should not be negative");
+    NS_ASSERTION(mCount >= 0,"count should not be negative");
     while(mCount > 0) {
       nsCParserNode* node=this->Pop();
       IF_FREE(node,aNodeAllocator);
@@ -163,12 +159,21 @@ void nsEntryStack::Push(nsCParserNode* aNode,
     mEntries[mCount].mTag = (eHTMLTags)aNode->GetNodeType();
     if (aRefCntNode) {
       aNode->mUseCount++;
-      mEntries[mCount].mNode = NS_CONST_CAST(nsCParserNode*,aNode);
+      mEntries[mCount].mNode = const_cast<nsCParserNode*>(aNode);
       IF_HOLD(mEntries[mCount].mNode);
     }
     mEntries[mCount].mParent=aStyleStack;
     mEntries[mCount++].mStyles=0;
   }
+}
+
+void nsEntryStack::PushTag(eHTMLTags aTag)
+{
+  EnsureCapacityFor(mCount + 1);
+  mEntries[mCount].mTag = aTag;
+  mEntries[mCount].mParent = nsnull;
+  mEntries[mCount].mStyles = nsnull;
+  ++mCount;
 }
 
 
@@ -194,7 +199,7 @@ void nsEntryStack::PushFront(nsCParserNode* aNode,
     mEntries[0].mTag = (eHTMLTags)aNode->GetNodeType();
     if (aRefCntNode) {
       aNode->mUseCount++;
-      mEntries[0].mNode = NS_CONST_CAST(nsCParserNode*,aNode);
+      mEntries[0].mNode = const_cast<nsCParserNode*>(aNode);
       IF_HOLD(mEntries[0].mNode);
     }
     mEntries[0].mParent=aStyleStack;
@@ -255,24 +260,33 @@ nsCParserNode* nsEntryStack::Remove(PRInt32 anIndex,
       //now we have to tell the residual style stack where this tag
       //originated that it's no longer in use.
       PRUint32 scount = theStyleStack->mCount;
-      PRUint32 sindex = 0;
-      nsTagEntry *theStyleEntry=theStyleStack->mEntries;
-      for (sindex=scount-1;sindex>0;--sindex){            
-        if (theStyleEntry->mTag==aTag) {
-          theStyleEntry->mParent=0;  //this tells us that the style is not open at any level
+#ifdef DEBUG_mrbkap
+      NS_ASSERTION(scount != 0, "RemoveStyles has a bad style stack");
+#endif
+      nsTagEntry *theStyleEntry = theStyleStack->mEntries;
+      for (PRUint32 sindex = scount-1;; --sindex) {            
+        if (theStyleEntry->mTag == aTag) {
+          // This tells us that the style is not open at any level.
+          theStyleEntry->mParent = nsnull;
+          break;
+        }
+        if (sindex == 0) {
+#ifdef DEBUG_mrbkap
+          NS_ERROR("Couldn't find the removed style on its parent stack");
+#endif
           break;
         }
         ++theStyleEntry;
-      } //for
+      }
     }
   }
   return result;
 }
 
 /**
- * 
- * @update  harishd 04/04/99
- * @update  gess 04/21/99
+ * Pops an entry from this style stack. If the entry has a parent stack, it
+ * updates the entry so that we know not to try to remove it from the parent
+ * stack since it's no longer open.
  */
 nsCParserNode* nsEntryStack::Pop(void)
 {
@@ -283,7 +297,7 @@ nsCParserNode* nsEntryStack::Pop(void)
       result->mUseCount--;
     mEntries[mCount].mNode = 0;
     mEntries[mCount].mStyles = 0;
-    nsEntryStack* theStyleStack=mEntries[mCount].mParent;
+    nsEntryStack* theStyleStack = mEntries[mCount].mParent;
     if (theStyleStack) {
       //now we have to tell the residual style stack where this tag
       //originated that it's no longer in use.
@@ -291,18 +305,26 @@ nsCParserNode* nsEntryStack::Pop(void)
 
       // XXX If this NS_ENSURE_TRUE fails, it means that the style stack was
       //     empty before we were removed.
+#ifdef DEBUG_mrbkap
+      NS_ASSERTION(scount != 0, "preventing a potential crash.");
+#endif
       NS_ENSURE_TRUE(scount != 0, result);
 
-      PRUint32 sindex = 0;
-      nsTagEntry *theStyleEntry=theStyleStack->mEntries;
-
-      for (sindex=scount-1;sindex>0;--sindex){            
-        if (theStyleEntry->mTag==mEntries[mCount].mTag) {
-          theStyleEntry->mParent=0;  //this tells us that the style is not open at any level
+      nsTagEntry *theStyleEntry = theStyleStack->mEntries;
+      for (PRUint32 sindex = scount - 1;; --sindex) {
+        if (theStyleEntry->mTag == mEntries[mCount].mTag) {
+          // This tells us that the style is not open at any level
+          theStyleEntry->mParent = nsnull;
+          break;
+        }
+        if (sindex == 0) {
+#ifdef DEBUG_mrbkap
+          NS_ERROR("Couldn't find the removed style on its parent stack");
+#endif
           break;
         }
         ++theStyleEntry;
-      } //for
+      }
     }
   }
   return result;
@@ -427,15 +449,13 @@ void nsEntryStack::PushEntry(nsTagEntry* aEntry,
  * 
  * @update	gess 04.21.2000
  */
-nsDTDContext::nsDTDContext() : mStack(), mEntities(0){
-
+nsDTDContext::nsDTDContext() : mStack()
+{
   MOZ_COUNT_CTOR(nsDTDContext);
   mResidualStyleCount=0;
   mContextTopIndex=-1;
-  mTableStates=0;
   mTokenAllocator=0;
   mNodeAllocator=0;
-  mAllBits=0;
 
 #ifdef DEBUG
   memset(mXTags,0,sizeof(mXTags));
@@ -446,15 +466,9 @@ nsDTDContext::nsDTDContext() : mStack(), mEntities(0){
  * 
  * @update	gess9/10/98
  */
-nsDTDContext::~nsDTDContext() {
+nsDTDContext::~nsDTDContext()
+{
   MOZ_COUNT_DTOR(nsDTDContext);
-
-  while(mTableStates) {
-    //pop the current state and restore it's predecessor, if any...
-    CTableState *theState=mTableStates;      
-    mTableStates=theState->mPrevious;
-    delete theState;
-  }
 }
 
 
@@ -483,6 +497,17 @@ void nsDTDContext::Push(nsCParserNode* aNode,
 #endif
     mStack.Push(aNode, aStyleStack, aRefCntNode);
   }
+}
+
+void nsDTDContext::PushTag(eHTMLTags aTag)
+{
+#ifdef NS_DEBUG
+  if (mStack.mCount < eMaxTags) {
+    mXTags[mStack.mCount] = aTag;
+  }
+#endif
+
+  mStack.PushTag(aTag);
 }
 
 nsTagEntry*
@@ -523,7 +548,9 @@ nsDTDContext::MoveEntries(nsDTDContext& aDest,
     while (aCount) {
       aDest.PushEntry(&mStack.mEntries[--mStack.mCount], PR_FALSE);
 #ifdef  NS_DEBUG
-      mXTags[mStack.mCount] = eHTMLTag_unknown;
+      if (mStack.mCount < eMaxTags) {
+        mXTags[mStack.mCount] = eHTMLTag_unknown;
+      }
 #endif
       --aCount;
     }
@@ -548,9 +575,7 @@ nsCParserNode* nsDTDContext::Pop(nsEntryStack *&aChildStyleStack) {
 
 
     nsTagEntry* theEntry=mStack.EntryAt(mStack.mCount-1);
-    if(theEntry) {
-      aChildStyleStack=theEntry->mStyles;
-    }
+    aChildStyleStack=theEntry->mStyles;
 
     result=mStack.Pop();
     theEntry->mParent=0;
@@ -970,7 +995,7 @@ nsCParserNode* nsNodeAllocator::CreateNode(CToken* aToken,
     int x=10; //this is very BAD!
   }
 #endif
-  result = NS_STATIC_CAST(nsCParserNode*,mSharedNodes.Pop());
+  result = static_cast<nsCParserNode*>(mSharedNodes.Pop());
   if (result) {
     result->Init(aToken, aTokenAllocator,this);
   }
@@ -978,7 +1003,7 @@ nsCParserNode* nsNodeAllocator::CreateNode(CToken* aToken,
     result = nsCParserNode::Create(aToken, aTokenAllocator,this);
 #ifdef DEBUG_TRACK_NODES
     ++mCount;
-    AddNode(NS_STATIC_CAST(nsCParserNode*,result));
+    AddNode(static_cast<nsCParserNode*>(result));
 #endif
     IF_HOLD(result);
   }
@@ -1045,7 +1070,7 @@ nsObserverEntry::Notify(nsIParserNode* aNode,
       PRInt32   theCharsetSource;
       nsCAutoString      charset;
       aParser->GetDocumentCharset(charset,theCharsetSource);
-      NS_ConvertASCIItoUCS2 theCharsetValue(charset);
+      NS_ConvertASCIItoUTF16 theCharsetValue(charset);
 
       PRInt32 theAttrCount = aNode->GetAttributeCount(); 
       PRInt32 theObserversCount = theObservers->Count(); 
@@ -1078,7 +1103,7 @@ nsObserverEntry::Notify(nsIParserNode* aNode,
         aParser->GetChannel(getter_AddRefs(channel));
 
         for (index=0;index<theObserversCount;++index) {
-          nsIElementObserver* observer = NS_STATIC_CAST(nsIElementObserver*,theObservers->ElementAt(index));
+          nsIElementObserver* observer = static_cast<nsIElementObserver*>(theObservers->ElementAt(index));
           if (observer) {
             result = observer->Notify(aWebShell, channel,
                                       nsHTMLTags::GetStringValue(theTag),

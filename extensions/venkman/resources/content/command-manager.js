@@ -232,7 +232,7 @@ function cmgr_instkeys (document, commands)
     {
         parentElem = document.createElement("keyset");
         parentElem.setAttribute ("id", "dynamic-keys");
-        document.firstChild.appendChild (parentElem);
+        document.documentElement.appendChild (parentElem);
     }
 
     if (!commands)
@@ -263,7 +263,7 @@ function cmgr_instkey (parentElem, command)
         return;
     }
     
-    var key = document.createElement ("key");
+    var key = parentElem.ownerDocument.createElement ("key");
     key.setAttribute ("id", "key:" + command.name);
     key.setAttribute ("oncommand", "dispatch('" + command.name +
                       "', {isInteractive: true});");

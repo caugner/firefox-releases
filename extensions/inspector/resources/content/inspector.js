@@ -20,6 +20,8 @@
  *
  * Contributor(s):
  *   Joe Hewitt <hewitt@netscape.com> (original author)
+ *   Jason Barnabe <jason_barnabe@fastmail.fm>
+ *   Shawn Wilsher <me@shawnwilsher.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -46,12 +48,17 @@ var inspector;
 
 //////////// global constants ////////////////////
 
-const kSearchRegURL        = "resource:///res/inspector/search-registry.rdf";
-
-const kWindowDataSourceCID = "@mozilla.org/rdf/datasource;1?name=window-mediator";
 const kClipboardHelperCID  = "@mozilla.org/widget/clipboardhelper;1";
 const kPromptServiceCID    = "@mozilla.org/embedcomp/prompt-service;1";
+const kFOStreamCID         = "@mozilla.org/network/file-output-stream;1";
+const kEncoderCIDbase      = "@mozilla.org/layout/documentEncoder;1?type=";
+const kSerializerCID       = "@mozilla.org/xmlextras/xmlserializer;1";
 const nsIWebNavigation     = Components.interfaces.nsIWebNavigation;
+const nsIDocShellTreeItem  = Components.interfaces.nsIDocShellTreeItem;
+const nsIDocShell          = Components.interfaces.nsIDocShell;
+const nsIFileOutputStream  = Components.interfaces.nsIFileOutputStream;
+const nsIDocumentEncoder   = Components.interfaces.nsIDocumentEncoder;
+const nsIDOMSerializer     = Components.interfaces.nsIDOMSerializer;
 
 //////////////////////////////////////////////////
 
@@ -75,6 +82,12 @@ function InspectorApp_initialize()
     }
   }
   inspector.initialize(initNode, initURI);
+
+  // Disables the Mac Specific VK_BACK for delete key for non-mac systems
+  if (!/Mac/.test(navigator.platform)) {
+    document.getElementById("keyEditDeleteMac")
+            .setAttribute("disabled", "true");
+  }
 }
 
 function InspectorApp_destroy()
@@ -94,26 +107,21 @@ InspectorApp.prototype =
   ////////////////////////////////////////////////////////////////////////////
   //// Initialization
 
-  mSearchService: null,
   mShowBrowser: false,
   mClipboardHelper: null,
   mPromptService: null,
   
   get document() { return this.mDocPanel.viewer.subject },
-  get searchRegistry() { return this.mSearchService },
   get panelset() { return this.mPanelSet; },
   
   initialize: function(aTarget, aURI)
   {
     this.mInitTarget = aTarget;
     
-    //this.initSearch();
-
     var el = document.getElementById("bxBrowser");
     el.addEventListener("pageshow", BrowserPageShowListener, true);
 
     this.setBrowser(false, true);
-    //this.setSearch(false, true);
 
     this.mClipboardHelper = XPCU.getService(kClipboardHelperCID, "nsIClipboardHelper");
     this.mPromptService = XPCU.getService(kPromptServiceCID, "nsIPromptService");
@@ -121,6 +129,13 @@ InspectorApp.prototype =
     this.mPanelSet = document.getElementById("bxPanelSet");
     this.mPanelSet.addObserver("panelsetready", this, false);
     this.mPanelSet.initialize();
+
+    // check if accessibility service is available
+    var cmd = document.getElementById("cmd:toggleAccessibleNodes");
+    if (cmd) {
+      if (!("@mozilla.org/accessibleRetrieval;1" in Components.classes))
+        cmd.setAttribute("disabled", "true");
+    }
 
     if (aURI) {
       this.gotoURL(aURI);
@@ -163,12 +178,39 @@ InspectorApp.prototype =
         if (aEvent.target == this.mDocPanel.viewer &&
             aEvent.subject && "location" in aEvent.subject) {
           this.locationText = aEvent.subject.location; // display document url
+
+          var docTitle = aEvent.subject.title || aEvent.subject.location; 
+          if (/Mac/.test(navigator.platform)) {
+            document.title = docTitle;
+          } else {
+            document.title = docTitle + " - " + 
+              document.documentElement.getAttribute("title");
+          }
+
+          this.updateCommand("cmdSave");
         }
+        break;
     }
   },
   
   ////////////////////////////////////////////////////////////////////////////
   //// UI Commands
+
+  updateCommand: function inspector_updateCommand(aCommand)
+  {
+    var command = document.getElementById(aCommand);
+    
+    var disabled = false;
+    switch (aCommand) {
+      case "cmdSave":
+        var doc = this.mDocPanel.subject;
+        disabled = !((kEncoderCIDbase + doc.contentType) in Components.classes ||
+                    (kSerializerCID in Components.classes));
+        break;
+    }
+
+    command.setAttribute("disabled", disabled);
+  },
 
   doViewerCommand: function(aCommand)
   {
@@ -207,20 +249,6 @@ InspectorApp.prototype =
     cmd.setAttribute("checked", aValue);
   },
 
-  toggleSearch: function(aToggleSplitter)
-  {
-    this.setSearch(!this.mShowSearch, aToggleSplitter);
-  },
-
-  setSearch: function(aValue, aToggleSplitter)
-  {
-    this.mShowSearch = aValue;
-    if (aToggleSplitter)
-      this.openSplitter("Search", aValue);
-    var cmd = document.getElementById("cmdToggleSearch");
-    cmd.setAttribute("checked", aValue);
-  },
-
   openSplitter: function(aName, aTruth)
   {
     var splitter = document.getElementById("spl" + aName);
@@ -230,92 +258,49 @@ InspectorApp.prototype =
       splitter.close();
   },
 
-/*
-  XXXcaa
-  The following code needs to evaluated.  What does it do?  Why does nobody
-  call it?  If deemed necessary, turn it back on with the right callers,
-  and localize it.
- */
-/*
-  runSearch: function()
+ /**
+  * Saves the current document state in the inspector.
+  */
+  save: function save()
   {
-    var path = null; // TODO: should persist last path chosen in a pref
-    var file = FilePickerUtils.pickFile("Find Search File", path, ["filterXML"], "Open");
-    if (file) {
-      var ioService = XPCU.getService("@mozilla.org/network/io-service;1","nsIIOService");
-      var fileHandler = XPCU.QI(ioService.getProtocolHandler("file"), "nsIFileProtocolHandler");
+    var picker = Components.classes["@mozilla.org/filepicker;1"]
+                           .createInstance(nsIFilePicker);
+    var title = document.getElementById("mi-save").label;
+    picker.init(window, title, picker.modeSave)
+    picker.appendFilters(picker.filterHTML | picker.filterXML |
+                         picker.filterXUL);
+    if (picker.show() == picker.returnCancel)
+      return;
 
-      var url = fileHandler.getURLSpecFromFile(file);
+    var fos = Components.classes[kFOStreamCID]
+                        .createInstance(nsIFileOutputStream);
+    const flags = 0x02 | 0x08 | 0x20; // write, create, truncate
 
-      this.startSearchModule(url);
+    var doc = this.mDocPanel.subject;
+    if ((kEncoderCIDbase + doc.contentType) in Components.classes) {
+      // first we try to use the document encoder for that content type.  If
+      // that fails, we move on to the xml serializer.
+      var encoder = Components.classes[kEncoderCIDbase + doc.contentType]
+                              .createInstance(nsIDocumentEncoder);
+      encoder.init(doc, doc.contentType, encoder.OutputRaw);
+      encoder.setCharset(doc.characterSet);
+      fos.init(picker.file, flags, 0666, 0); 
+      try {
+        encoder.encodeToStream(fos);
+      } finally {
+        fos.close();
+      }
+    } else {
+      var serializer = Components.classes[kSerializerCID]
+                                 .createInstance(nsIDOMSerializer);
+      fos.init(picker.file, flags, 0666, 0); 
+      try {
+        serializer.serializeToStream(doc, fos);
+      } finally {
+        fos.close();
+      }
     }
   },
-
-  viewSearchItem: function()
-  {
-    if (this.mCurrentSearch.canViewItems)
-      window.openDialog("chrome://inspector/content/utilWindow.xul", "viewItem", "chrome,resizable");
-  },
-
-  doViewSearchItem: function(aWindow)
-  {
-    var idx = this.getSelectedSearchIndex();
-    var el = this.mCurrentSearch.viewItemAt(idx);
-
-    aWindow.document.title = this.mCurrentSearch.getItemDescription(idx);
-    aWindow.document.getElementById("bxCenter").appendChild(el);
-  },
-
-  editSearchItem: function()
-  {
-  },
-  
-  onSearchTreeClick: function(aEvent)
-  {
-    if (aEvent.detail == 2) { // double click
-      this.viewSearchItem();
-    }
-  },
-
-  copySearchItemLine: function()
-  {
-    var mod = this.mSearchService.currentModule;
-    var idx = this.mSearchService.getSelectedIndex(0);
-    var text = mod.getItemText(idx);
-    this.mClipboardHelper.copyString(text);
-  },
-
-  // XXX what is this?  It doesn't seem to get called from anywhere?
-  copySearchItemAll: function()
-  {
-    var text = this.getAllSearchItemText();
-    this.mClipboardHelper.copyString(text);
-  },
-
-  saveSearchItemText: function()
-  {
-    var target = FilePickerUtils.pickFile("Save Results As", null, ["filterAll", "filterText"], "Save");
-
-    var text = this.getAllSearchItemText();
-
-    var file = new File(target.path);
-    file.open('w');
-    file.write(text);
-    file.close();
-  },
-
-  getAllSearchItemText: function()
-  {
-    var mod = this.mSearchService.currentModule;
-    var len = mod.resultCount;
-    var text = "";
-    for (var i = 0; i < len; i++) {
-      text += mod.getItemText(i) + "\r";
-    }
-
-    return text;
-  },
-*/
 
   exit: function()
   {
@@ -351,25 +336,106 @@ InspectorApp.prototype =
     }
   },
 
-  goToWindow: function(aMenuitem)
+ /** 
+  * Creates the submenu for Inspect Content/Chrome Document
+  */
+  showInspectDocumentList: function showInspectDocumentList(aEvent, aChrome)
   {
-    this.setTargetWindowById(aMenuitem.id);
+    const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
+    var menu = aEvent.target;
+    var ww = Components.classes["@mozilla.org/appshell/window-mediator;1"]
+                       .getService(Components.interfaces.nsIWindowMediator);
+    var windows = ww.getXULWindowEnumerator(null);
+    var docs = [];
+
+    while (windows.hasMoreElements()) {
+      try {
+        // Get the window's main docshell
+        var windowDocShell = windows.getNext()
+                            .QueryInterface(Components.interfaces.nsIXULWindow)
+                            .docShell;
+        this.appendContainedDocuments(docs, windowDocShell,
+                                      aChrome ? nsIDocShellTreeItem.typeChrome
+                                              : nsIDocShellTreeItem.typeContent);
+      }
+      catch (ex) {
+        // We've failed with this window somehow, but we're catching the error
+        // so the others will still work
+        Components.utils.reportError(ex);
+      }
+    }
+
+    // Clear out any previous menu
+    this.emptyChildren(menu);
+
+    // Now add what we found to the menu
+    if (!docs.length) {
+      var noneMenuItem = document.createElementNS(XULNS, "menuitem");
+      noneMenuItem.setAttribute("label",
+                                this.mPanelSet.stringBundle
+                                    .getString("inspectWindow.noDocuments.message"));
+      noneMenuItem.setAttribute("disabled", true);
+      menu.appendChild(noneMenuItem);
+    } else {
+      for (var i = 0; i < docs.length; i++)
+        this.addInspectDocumentMenuItem(menu, docs[i], i + 1);
+    }
   },
 
-  setTargetWindowById: function(aResId)
+ /** 
+  * Appends to the array the documents contained in docShell (including the passed
+  * docShell itself).
+  *
+  * @param array the array to append to
+  * @param docShell the docshell to look for documents in
+  * @param type one of the types defined in nsIDocShellTreeItem
+  */
+  appendContainedDocuments: function appendContainedDocuments(array, docShell, type)
   {
-    var windowManager = XPCU.getService(kWindowDataSourceCID, "nsIWindowDataSource");
-    var win = windowManager.getWindowForResource(aResId);
+    // Load all the window's content docShells
+    var containedDocShells = docShell.getDocShellEnumerator(type, 
+                                      nsIDocShell.ENUMERATE_FORWARDS);
+    while (containedDocShells.hasMoreElements()) {
+      try {
+        // Get the corresponding document for this docshell
+        var childDoc = containedDocShells.getNext().QueryInterface(nsIDocShell)
+                                         .contentViewer.DOMDocument;
 
-    if (win) {
-      this.setTargetWindow(win);
-      this.setBrowser(false, true);
-    } else {
-      var bundle = this.mPanelSet.stringBundle;
-      var msg = bundle.getString("inspectWindow.error.message");
-      var title = bundle.getString("inspectWindow.error.title");
-      this.mPromptService.alert(window, title, msg);
+        // Ignore the DOM Insector's browser docshell if it's not being used
+        if (docShell.contentViewer.DOMDocument.location.href != document.location.href ||
+            childDoc.location.href != "about:blank") {
+          array.push(childDoc);
+        }
+      }
+      catch (ex) {
+        // We've failed with this document somehow, but we're catching the error so
+        // the others will still work
+        dump(ex + "\n");
+      }
     }
+  },
+
+ /** 
+  * Creates a menu item for Inspect Document.
+  *
+  * @param doc document related to this menu item
+  * @param docNumber the position of the document
+  */
+  addInspectDocumentMenuItem: function addInspectDocumentMenuItem(parent, doc, docNumber)
+  {
+    const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
+    var menuItem = document.createElementNS(XULNS, "menuitem");
+    menuItem.doc = doc;
+    // Use the URL if there's no title
+    var title = doc.title || doc.location.href;
+    // The first ten items get numeric access keys
+    if (docNumber < 10) {
+      menuItem.setAttribute("label", docNumber + " " + title);
+      menuItem.setAttribute("accesskey", docNumber);
+    } else {
+      menuItem.setAttribute("label", title);
+    }
+    parent.appendChild(menuItem);
   },
 
   setTargetWindow: function(aWindow)
@@ -400,17 +466,6 @@ InspectorApp.prototype =
   get progress() { return document.getElementById("pmStatus").value; },
   set progress(aPct) { document.getElementById("pmStatus").value = aPct; },
 
-/*
-  XXXcaa -- What is this?
-
-
-  get searchTitle(aTitle) { return document.getElementById("splSearch").label; },
-  set searchTitle(aTitle)
-  {
-    var splitter = document.getElementById("splSearch");
-    splitter.setAttribute("label", "Search" + (aTitle ? " - " + aTitle : ""));
-  },
-*/
   ////////////////////////////////////////////////////////////////////////////
   //// Document Loading 
 
@@ -430,66 +485,6 @@ InspectorApp.prototype =
     this.mPendingURL = null;
     this.mPendingNoSave = null;
   },
-
-  ////////////////////////////////////////////////////////////////////////////
-  //// Search 
-/*
-  initSearch: function()
-  {
-    var ss = new inSearchService();
-    this.mSearchService = ss;
-    
-    ss.addSearchObserver(this);
-    ss.resultsTree = document.getElementById("trSearch");
-    ss.contextMenu = document.getElementById("ppSearchResults");
-    ss.contextMenuInsertPt = document.getElementById("ppSearchResults-insertion");
-    ss.contextMenuInsert = inSearchService.INSERT_BEFORE;
-  },
-
-  startSearchModule: function(aModuleURL)
-  {
-    this.mSearchService.startModule(aModuleURL);
-  },
-  
-  clearSearchResults: function()
-  {
-    this.searchTitle = null;
-    this.statusText = "";
-    this.progress = 0;
-    
-    this.mSearchService.clearSearch();
-  },
-  
-  ////////////////////////////////////////////////////////////////////////////
-  //// interface inISearchObserver
-
-  onSearchStart: function(aModule) 
-  {
-    this.searchTitle = aModule.title;
-    this.toggleSearch(true, true);
-  },
-
-  onSearchResult: function(aModule)
-  {
-    if (aModule.isPastMilestone) {
-      this.statusText = "Searching - " + aModule.resultCount + " results found."; // XXX localize
-      this.progress = aModule.progressPercent;
-    }
-  },
-
-  onSearchEnd: function(aModule, aResult)
-  {
-    var diff = Math.round(aModule.elapsed / 100) / 10;
-    this.progress = 100;
-    this.statusText = "Search complete - " + aModule.resultCount + " results found ("+diff+"s)"; // XXX localize
-  },
-
-  onSearchError: function(aModule, aMessage)
-  {
-    alert("Unable to complete this search due to the following error:\n" + aMessage);
-  },
-
-*/
 
   ////////////////////////////////////////////////////////////////////////////
   //// History 
@@ -550,17 +545,15 @@ InspectorApp.prototype =
 
   emptyChildren: function(aNode)
   {
-    while (aNode.childNodes.length > 0) {
+    while (aNode.hasChildNodes()) {
       aNode.removeChild(aNode.lastChild);
     }
   },
-  
+
   onSplitterOpen: function(aSplitter)
   {
     if (aSplitter.id == "splBrowser") {
       this.setBrowser(aSplitter.isOpened, false);
-    } else if (aSplitter.id == "splSearch") {
-      this.setSearch(aSplitter.isOpened, false);
     }
   },
   

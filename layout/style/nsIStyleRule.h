@@ -34,6 +34,12 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/*
+ * internal abstract interface for objects providing immutable style
+ * information
+ */
+
 #ifndef nsIStyleRule_h___
 #define nsIStyleRule_h___
 
@@ -83,12 +89,13 @@ struct nsRuleData;
 
 class nsIStyleRule : public nsISupports {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ISTYLE_RULE_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ISTYLE_RULE_IID)
 
   /**
    * |nsIStyleRule::MapRuleInfoInto| is a request to copy all stylistic
    * data represented by the rule that:
-   *   + are relevant for |aRuleData->mSID| (the style struct ID)
+   *   + are relevant for any structs in |aRuleData->mSIDs| (style
+   *     struct ID bits)
    *   + are not already filled into the data struct
    * into the appropriate data struct in |aRuleData|.  It is important
    * that only empty data are filled in, since the rule tree is walked
@@ -103,5 +110,6 @@ public:
 #endif
 };
 
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIStyleRule, NS_ISTYLE_RULE_IID)
 
 #endif /* nsIStyleRule_h___ */

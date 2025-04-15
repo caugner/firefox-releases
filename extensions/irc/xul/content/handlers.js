@@ -24,6 +24,7 @@
  *   Robert Ginda, rginda@netscape.com, original author
  *   Samuel Sieb, samuel@sieb.net
  *   Chiaki Koufugata chiaki@mozilla.gr.jp UI i18n
+ *   Shawn Wilsher <me@shawnwilsher.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -141,6 +142,23 @@ function onClose()
 function onUnload()
 {
     dd("Shutting down ChatZilla.");
+
+    // Close all dialogs.
+    for (var net in client.networks)
+    {
+        if ("joinDialog" in client.networks[net])
+            client.networks[net].joinDialog.close();
+    }
+    if ("configWindow" in client)
+        client.configWindow.close();
+
+    // We don't trust anybody.
+    client.hiddenDocument = null;
+    // Log client stop and shut down CEIP.
+    client.ceip.logEvent({type: "client", event: "stop"});
+    client.ceip.destroy();
+    uninitOfflineIcon();
+    uninitIdleAutoAway(client.prefs["awayIdleTime"]);
     destroy();
 }
 
@@ -187,26 +205,41 @@ function onMessageViewClick(e)
         return true;
 
     var cx = getMessagesContext(null, e.target);
-    var command;
+    var command = getEventCommand(e);
+    if (!client.commandManager.isCommandSatisfied(cx, command))
+        return false;
 
-    if (e.which == 2)
-        command = client.prefs["messages.middleClick"];
-    else if (e.metaKey || e.altKey)
-        command = client.prefs["messages.metaClick"];
-    else if (e.ctrlKey)
-        command = client.prefs["messages.ctrlClick"];
-    else
-        command = client.prefs["messages.click"];
+    dispatch(command, cx);
+    dispatch("focus-input");
+    e.preventDefault();
+    return true;
+}
 
-    if (client.commandManager.isCommandSatisfied(cx, command))
+function onMessageViewMouseDown(e)
+{
+    if ((typeof startScrolling != "function") ||
+        ((e.which != 1) && (e.which != 2)))
     {
-        dispatch(command, cx);
-        dispatch("focus-input");
-        e.preventDefault();
         return true;
     }
+        
+    var cx = getMessagesContext(null, e.target);
+    var command = getEventCommand(e);
+    if (!client.commandManager.isCommandSatisfied(cx, command))
+        startScrolling(e);
+    return true;
+}
 
-    return false;
+function getEventCommand(e)
+{
+    if (e.which == 2)
+        return client.prefs["messages.middleClick"];
+    if (e.metaKey || e.altKey)
+        return client.prefs["messages.metaClick"];
+    if (e.ctrlKey)
+        return client.prefs["messages.ctrlClick"];
+    
+    return client.prefs["messages.click"];
 }
 
 function onMouseOver (e)
@@ -220,41 +253,14 @@ function onMouseOver (e)
         {
             status = target.getAttribute("href");
             if (!status)
-                status = target.getAttribute ("statusText");
+                status = target.getAttribute("statusText");
         }
         ++i;
         target = target.parentNode;
     }
 
-    if (status)
-    {
-        client.status = status;
-    }
-    else
-    {
-        if (client && "defaultStatus" in client)
-            client.status = client.defaultStatus;
-    }
-}
-
-function onSortCol(sortColName)
-{
-    var node = document.getElementById(sortColName);
-    if (!node)
-        return false;
-
-    // determine column resource to sort on
-    var sortResource = node.getAttribute("resource");
-    var sortDirection = node.getAttribute("sortDirection");
-
-    if (sortDirection == "ascending")
-        sortDirection = "descending";
-    else
-        sortDirection = "ascending";
-
-    sortUserList(node, sortDirection);
-
-    return false;
+    // Setting client.status to "" will revert it to the default automatically.
+    client.status = status;
 }
 
 function onSecurityIconDblClick(e)
@@ -335,22 +341,29 @@ function onInputKeyPress (e)
                 onTabCompleteRequest(e);
                 e.preventDefault();
             }
-            break;
+            return;
+
+        case 77: /* Hackaround for carbon on mac sending us this instead of 13
+                  * for ctrl+enter. 77 = "M", and ctrl+M was originally used
+                  * to send a CR in a terminal. */
+            // Fallthrough if ctrl was pressed, otherwise break out to default:
+            if (!e.ctrlKey)
+                break;
 
         case 13: /* CR */
             e.line = e.target.value;
             e.target.value = "";
-            if (e.ctrlKey)
-                e.line = client.COMMAND_CHAR + "say " + e.line;
             if (e.line.search(/\S/) == -1)
                 return;
+            if (e.ctrlKey)
+                e.line = client.COMMAND_CHAR + "say " + e.line;
             onInputCompleteLine (e);
-            break;
+            return;
 
         case 37: /* left */
-             if (e.altKey && e.metaKey)
-                 cycleView(-1);
-             break;
+            if (e.altKey && e.metaKey)
+                cycleView(-1);
+            return;
 
         case 38: /* up */
             if (e.ctrlKey || e.metaKey)
@@ -373,12 +386,12 @@ function onInputKeyPress (e)
                 }
             }
             e.preventDefault();
-            break;
+            return;
 
         case 39: /* right */
-             if (e.altKey && e.metaKey)
-                 cycleView(+1);
-             break;
+            if (e.altKey && e.metaKey)
+                cycleView(+1);
+            return;
 
         case 40: /* down */
             if (client.lastHistoryReferenced > 0)
@@ -395,14 +408,10 @@ function onInputKeyPress (e)
                 e.target.value = client.incompleteLine;
             }
             e.preventDefault();
-            break;
-
-        default:
-            client.lastHistoryReferenced = -1;
-            client.incompleteLine = e.target.value;
-            break;
+            return;
     }
-
+    client.lastHistoryReferenced = -1;
+    client.incompleteLine = e.target.value;
 }
 
 function onTabCompleteRequest (e)
@@ -420,6 +429,9 @@ function onTabCompleteRequest (e)
     {
         if ("defaultCompletion" in client.currentObject)
             singleInput.value = client.currentObject.defaultCompletion;
+        // If there was nothing to complete, help the user:
+        if (!singleInput.value)
+            display(MSG_LEAVE_INPUTBOX, MT_INFO);
         return;
     }
 
@@ -441,6 +453,13 @@ function onTabCompleteRequest (e)
         wordEnd = line.length;
     else
         wordEnd += selStart;
+
+    // Double tab on nothing, inform user how to get out of the input box
+    if (wordEnd == wordStart)
+    {
+        display(MSG_LEAVE_INPUTBOX, MT_INFO);
+        return;
+    }
 
     if ("performTabMatch" in client.currentObject)
     {
@@ -530,27 +549,6 @@ function onWindowKeyPress (e)
             }
             break;
 
-        case 112: /* F1 */
-        case 113: /* ... */
-        case 114:
-        case 115:
-        case 116:
-        case 117:
-        case 118:
-        case 119:
-        case 120:
-        case 121: /* F10 */
-            if (e.ctrlKey || e.shiftKey || e.Altkey || e.metaKey)
-                break;
-            var idx = code - 112;
-            if ((idx in client.viewsArray) && client.viewsArray[idx].source)
-            {
-                var newView = client.viewsArray[idx].source;
-                dispatch("set-current-view", { view: newView });
-            }
-            e.preventDefault();
-            break;
-
         case 33: /* pgup */
             if (e.ctrlKey)
             {
@@ -590,6 +588,64 @@ function onWindowKeyPress (e)
                 w.scrollTo (w.pageXOffset, (w.innerHeight + w.pageYOffset));
             e.preventDefault();
             break;
+
+        case 117: /* F6 */
+            advanceKeyboardFocus(e.shiftKey ? -1 : 1);
+            e.preventDefault();
+            break;
+    }
+
+    // Code is zero if we have an alphanumeric being given to us in the event.
+    if (code != 0)
+      return;
+
+    // The following code is copied from:
+    //   /mozilla/browser/base/content/browser.js
+    //   Revision: 1.748
+    //   Lines: 1397-1421
+
+    // \d in a RegExp will find any Unicode character with the "decimal digit"
+    // property (Nd)
+    var regExp = /\d/;
+    if (!regExp.test(String.fromCharCode(e.charCode)))
+        return;
+
+    // Some Unicode decimal digits are in the range U+xxx0 - U+xxx9 and some are
+    // in the range U+xxx6 - U+xxxF. Find the digit 1 corresponding to our
+    // character.
+    var digit1 = (e.charCode & 0xFFF0) | 1;
+    if (!regExp.test(String.fromCharCode(digit1)))
+      digit1 += 6;
+
+    var idx = e.charCode - digit1;
+
+    const isMac     = client.platform == "Mac";
+    const isLinux   = client.platform == "Linux";
+    const isWindows = client.platform == "Windows";
+    const isOS2     = client.platform == "OS/2";
+    const isUnknown = !(isMac || isLinux || isWindows || isOS2);
+    const isSuite   = client.host == "Mozilla";
+
+    if ((0 <= idx) && (idx <= 8))
+    {
+        if ((!isSuite && isMac && e.metaKey) ||
+            (!isSuite && (isLinux || isOS2) && e.altKey) ||
+            (!isSuite && (isWindows || isUnknown) && e.ctrlKey) ||
+            (isSuite && e.altKey))
+        {
+            // Pressing 1-8 takes you to that tab, while pressing 9 takes you
+            // to the last tab always.
+            if (idx == 8)
+                idx = client.viewsArray.length - 1;
+
+            if ((idx in client.viewsArray) && client.viewsArray[idx].source)
+            {
+                var newView = client.viewsArray[idx].source;
+                dispatch("set-current-view", { view: newView });
+            }
+            e.preventDefault();
+            return;
+        }
     }
 }
 
@@ -625,7 +681,7 @@ function onInputCompleteLine(e)
         /* color codes */
         if (client.prefs["outgoing.colorCodes"])
             e.line = replaceColorCodes(e.line);
-        client.sayToCurrentTarget (e.line);
+        client.sayToCurrentTarget(e.line, true);
     }
 }
 
@@ -750,26 +806,21 @@ function onInputKeyPressCallback (el)
         doPopup(null);
 }
 
-/* 'private' function, should only be used from inside */
-CIRCChannel.prototype._addUserToGraph =
-function my_addtograph (user)
+function onUserDoubleClick(event)
 {
-    if (!user.TYPE)
-        dd (getStackTrace());
-
-    client.rdf.Assert (this.getGraphResource(), client.rdf.resChanUser,
-                       user.getGraphResource(), true);
-
-}
-
-/* 'private' function, should only be used from inside */
-CIRCChannel.prototype._removeUserFromGraph =
-function my_remfgraph (user)
-{
-
-    client.rdf.Unassert (this.getGraphResource(), client.rdf.resChanUser,
-                         user.getGraphResource());
-
+    if ((event.button != 0) ||
+        event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+    {
+        return;
+    }
+    var userList = document.getElementById("user-list");
+    if (!userList.view || !userList.view.selection)
+        return;
+    var currentIndex = userList.view.selection.currentIndex;
+    if (currentIndex < 0)
+        return;
+    var nickname = getNicknameForUserlistRow(currentIndex);
+    dispatch("query", {nickname: nickname});
 }
 
 CIRCChannel.prototype._updateConferenceMode =
@@ -936,9 +987,9 @@ function my_unknown (e)
             var args = [msg, e.channel.unicodeName,
                         "knock " + e.channel.unicodeName];
             msg = getMsg("msg.irc." + e.code + ".knock", args, "");
-            client.munger.entries[".inline-buttons"].enabled = true;
+            client.munger.getRule(".inline-buttons").enabled = true;
             targetDisplayObj.display(msg);
-            client.munger.entries[".inline-buttons"].enabled = false;
+            client.munger.getRule(".inline-buttons").enabled = false;
         }
         else
         {
@@ -1021,12 +1072,38 @@ function my_showtonet (e)
                 // This makes sure we have the *right* me object.
                 this.primServ.me.rehome(this.primServ);
             }
+
             // Update the list of ignored users from the prefs:
             var ignoreAry = this.prefs["ignoreList"];
             for (var j = 0; j < ignoreAry.length; ++j)
                 this.ignoreList[ignoreAry[j]] = getHostmaskParts(ignoreAry[j]);
 
-            // After rehoming it is now safe for the user's commands.
+            // Update everything.
+            // Welcome to history.
+            if (client.globalHistory)
+                client.globalHistory.addPage(this.getURL());
+            updateTitle(this);
+            this.updateHeader();
+            client.updateHeader();
+            updateSecurityIcon();
+            updateStalkExpression(this);
+
+            client.ident.removeNetwork(this);
+
+            // Figure out what nick we *really* want:
+            if (this.prefs["away"] && this.prefs["awayNick"])
+                this.preferredNick = this.prefs["awayNick"];
+            else
+                this.preferredNick = this.prefs["nickname"];
+
+            // Pretend this never happened.
+            delete this.pendingNickChange;
+
+            str = e.decodeParam(2);
+
+            break;
+
+        case "251": /* users */
             var cmdary = this.prefs["autoperform"];
             for (var i = 0; i < cmdary.length; ++i)
             {
@@ -1036,6 +1113,7 @@ function my_showtonet (e)
                     this.dispatch(cmdary[i]);
             }
 
+            this.isIdleAway = client.isIdleAway;
             if (this.prefs["away"])
                 this.dispatch("away", { reason: this.prefs["away"] });
 
@@ -1053,24 +1131,14 @@ function my_showtonet (e)
 
             if ("pendingURLs" in this)
             {
-                var url = this.pendingURLs.pop();
-                while (url)
+                var target = this.pendingURLs.pop();
+                while (target)
                 {
-                    gotoIRCURL(url);
-                    url = this.pendingURLs.pop();
+                    gotoIRCURL(target.url, target.e);
+                    target = this.pendingURLs.pop();
                 }
                 delete this.pendingURLs;
             }
-
-            // Update everything.
-            // Welcome to history.
-            if (client.globalHistory)
-                client.globalHistory.addPage(this.getURL());
-            updateTitle(this);
-            this.updateHeader();
-            client.updateHeader();
-            updateSecurityIcon();
-            updateStalkExpression(this);
 
             // Do this after the JOINs, so they are quicker.
             // This is not time-critical code.
@@ -1086,21 +1154,20 @@ function my_showtonet (e)
                 setTimeout(delayFn, 1000 * Math.random(), this);
             }
 
-            client.ident.removeNetwork(this);
-
             // Had some collision during connect.
-            if (this.primServ.me.unicodeName != this.prefs["nickname"])
+            if (this.primServ.me.unicodeName != this.preferredNick)
             {
                 this.reclaimLeft = this.RECLAIM_TIMEOUT;
                 this.reclaimName();
             }
 
-            str = e.decodeParam(2);
             if ("onLogin" in this)
             {
                 ev = new CEvent("network", "login", this, "onLogin");
                 client.eventPump.addEvent(ev);
             }
+
+            str = e.decodeParam(e.params.length - 1);
             break;
 
         case "376": /* end of MOTD */
@@ -1122,7 +1189,6 @@ function my_showtonet (e)
     }
 
     this.displayHere(p + str, e.code.toUpperCase());
-
 }
 
 CIRCNetwork.prototype.onUnknownCTCPReply =
@@ -1135,9 +1201,19 @@ function my_ctcprunk (e)
 }
 
 CIRCNetwork.prototype.onNotice =
-function my_notice (e)
+function my_notice(e)
 {
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
     this.display(e.decodeParam(2), "NOTICE", this, e.server.me);
+    client.munger.getRule(".mailto").enabled = false;
+}
+
+CIRCNetwork.prototype.onPrivmsg =
+function my_privmsg(e)
+{
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
+    this.display(e.decodeParam(2), "PRIVMSG", this, e.server.me);
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 /* userhost reply */
@@ -1247,7 +1323,11 @@ function my_305(e)
 CIRCNetwork.prototype.on306 =
 function my_306(e)
 {
-    this.display(getMsg(MSG_AWAY_ON, this.prefs["away"]));
+    var idleMsgParams = [this.prefs["away"], client.prefs["awayIdleTime"]];
+    if (!this.isIdleAway)
+        this.display(getMsg(MSG_AWAY_ON, this.prefs["away"]));
+    else
+        this.display(getMsg(MSG_IDLE_AWAY_ON, idleMsgParams));
 
     return true;
 }
@@ -1269,7 +1349,7 @@ function my_263 (e)
         this._list.done = true;
         this._list.error = e.decodeParam(2);
         // Return early for this one if we're saving it.
-        if ("saveTo" in this._list)
+        if ("file" in this._list)
             return true;
     }
 
@@ -1281,7 +1361,13 @@ function my_263 (e)
 CIRCNetwork.prototype.isRunningList =
 function my_running_list()
 {
-    return (("_list" in this) && !this._list.done && !this._list.cancelled);
+    /* The list is considered "running" when a cancel is effective. This means
+     * that even if _list.done is true (finished recieving data), we will still
+     * be "running" whilst we have undisplayed items.
+     */
+    return (("_list" in this) &&
+            (!this._list.done || (this._list.length > this._list.displayed)) &&
+            !this._list.cancelled);
 }
 
 CIRCNetwork.prototype.list =
@@ -1308,7 +1394,7 @@ function my_list(word, file)
         this._list.file = new LocalFile(lfile.localFile, ">");
     }
 
-    if (word instanceof RegExp)
+    if (isinstance(word, RegExp))
     {
         this._list.regexp = word;
         this._list.string = "";
@@ -1400,7 +1486,7 @@ function my_list_init ()
         this._list.count = 0;
     }
 
-    if (!("saveTo" in this._list))
+    if (!("file" in this._list))
     {
         this._list.displayed = 0;
         if (client.currentObject != this)
@@ -1422,7 +1508,7 @@ function my_321 (e)
 {
     this.listInit();
 
-    if (!("saveTo" in this._list))
+    if (!("file" in this._list))
         this.displayHere (e.params[2] + " " + e.params[3], "321");
 }
 
@@ -1489,7 +1575,16 @@ function my_401 (e)
     }
     else
     {
-        display(toUnicode(e.params[3], this));
+        if (this.whoisList && (target in this.whoisList))
+        {
+            // if this is from a whois, send a whowas and don't display anything
+            this.primServ.whowas(target, 1);
+            this.whoisList[target] = false;
+        }
+        else
+        {
+            display(toUnicode(e.params[3], this));
+        }
     }
 }
 
@@ -1526,10 +1621,14 @@ function my_315 (e)
 
     if ("whoUpdates" in this)
     {
+        var userlist = document.getElementById("user-list");
         for (var c in this.whoUpdates)
         {
             for (var i = 0; i < this.whoUpdates[c].length; i++)
-                this.whoUpdates[c][i].updateGraphResource();
+            {
+                var index = this.whoUpdates[c][i].chanListEntry.childIndex;
+                userlist.treeBoxObject.invalidateRow(index);
+            }
             this.primServ.channels[c].updateUsers(this.whoUpdates[c]);
         }
         delete this.whoUpdates;
@@ -1582,6 +1681,17 @@ function my_352 (e)
     }
 }
 
+CIRCNetwork.prototype.on301 = /* user away message */
+function my_301(e)
+{
+    if (e.user.awayMessage != e.user.lastShownAwayMessage)
+    {
+        var params = [e.user.unicodeName, e.user.awayMessage];
+        e.user.display(getMsg(MSG_WHOIS_AWAY, params), e.code);
+        e.user.lastShownAwayMessage = e.user.awayMessage;
+    }
+}
+
 CIRCNetwork.prototype.on311 = /* whois name */
 CIRCNetwork.prototype.on319 = /* whois channels */
 CIRCNetwork.prototype.on312 = /* whois server */
@@ -1592,7 +1702,11 @@ function my_whoisreply (e)
 {
     var text = "egads!";
     var nick = e.params[2];
+    var lowerNick = this.primServ.toLowerCase(nick);
     var user;
+
+    if (this.whoisList && (e.code != 318) && (lowerNick in this.whoisList))
+        this.whoisList[lowerNick] = true;
 
     if (e.user)
     {
@@ -1603,6 +1717,10 @@ function my_whoisreply (e)
     switch (Number(e.code))
     {
         case 311:
+            // Clear saved away message so it appears and can be reset.
+            if (e.user)
+                e.user.lastShownAwayMessage = "";
+
             text = getMsg(MSG_WHOIS_NAME,
                           [nick, e.params[3], e.params[4],
                            e.decodeParam(6)]);
@@ -1625,6 +1743,17 @@ function my_whoisreply (e)
             break;
 
         case 318:
+            // If the user isn't here, then we sent a whowas in on401.
+            // Don't display the "end of whois" message.
+            if (this.whoisList && (lowerNick in this.whoisList) &&
+                !this.whoisList[lowerNick])
+            {
+                delete this.whoisList[lowerNick];
+                return;
+            }
+            if (this.whoisList)
+                delete this.whoisList[lowerNick];
+
             text = getMsg(MSG_WHOIS_END, nick);
             if (user)
                 user.updateHeader();
@@ -1661,9 +1790,14 @@ function my_341 (e)
 CIRCNetwork.prototype.onInvite = /* invite message */
 function my_invite (e)
 {
+    client.munger.getRule(".inline-buttons").enabled = true;
     this.display(getMsg(MSG_INVITE_YOU, [e.user.unicodeName, e.user.name,
-                                         e.user.host, e.channel.unicodeName]),
+                                         e.user.host,
+                                         e.channel.unicodeName,
+                                         e.channel.unicodeName,
+                                         e.channel.getURL()]),
                  "INVITE");
+    client.munger.getRule(".inline-buttons").enabled = false;
 
     if ("messages" in e.channel)
         e.channel.join();
@@ -1684,7 +1818,7 @@ function my_433 (e)
     {
         // Force a number, thanks.
         var nickIndex = 1 * arrayIndexOf(this.prefs["nicknameList"], nick);
-        var newnick;
+        var newnick = null;
 
         dd("433: failed with " + nick + " (" + nickIndex + ")");
 
@@ -1718,15 +1852,23 @@ function my_433 (e)
             if (!("_firstNick" in this))
                 this._firstNick = nickIndex;
         }
-        else
+        else if (this.NICK_RETRIES > 0)
         {
             newnick = this.INITIAL_NICK + "_";
+            this.NICK_RETRIES--;
             dd("     trying " + newnick);
         }
 
-        this.INITIAL_NICK = newnick;
-        this.display(getMsg(MSG_RETRY_NICK, [nick, newnick]), "433");
-        this.primServ.sendData("NICK " + fromUnicode(newnick, this) + "\n");
+        if (newnick)
+        {
+            this.INITIAL_NICK = newnick;
+            this.display(getMsg(MSG_RETRY_NICK, [nick, newnick]), "433");
+            this.primServ.changeNick(newnick);
+        }
+        else
+        {
+            this.display(getMsg(MSG_NICK_IN_USE, nick), "433");
+        }
     }
     else
     {
@@ -1742,8 +1884,11 @@ function my_sconnect (e)
     if ("_firstNick" in this)
         delete this._firstNick;
 
+    client.munger.getRule(".inline-buttons").enabled = true;
     this.display(getMsg(MSG_CONNECTION_ATTEMPT,
-                        [this.getURL(), e.server.getURL()]), "INFO");
+                        [this.getURL(), e.server.getURL(), this.unicodeName,
+                         "cancel"]), "INFO");
+    client.munger.getRule(".inline-buttons").enabled = false;
 
     if (this.prefs["identd.enabled"])
     {
@@ -1752,6 +1897,8 @@ function my_sconnect (e)
         else
             display(MSG_IDENT_SERVER_NOT_POSSIBLE, MT_WARN);
     }
+
+    this.NICK_RETRIES = this.prefs["nicknameList"].length + 3;
 }
 
 CIRCNetwork.prototype.onError =
@@ -1847,6 +1994,29 @@ function my_netdisconnect (e)
                               e.server.getURL()]);
                 break;
 
+            case NS_ERROR_UNKNOWN_PROXY_HOST:
+                msg = getMsg(MSG_UNKNOWN_PROXY_HOST,
+                             [this.getURL(), e.server.getURL()]);
+                break;
+
+            case NS_ERROR_PROXY_CONNECTION_REFUSED:
+                msg = MSG_PROXY_CONNECTION_REFUSED;
+                break;
+
+            case NS_ERROR_ABORT:
+                if (client.iosvc.offline)
+                {
+                    msg = getMsg(MSG_CONNECTION_ABORT_OFFLINE,
+                                 [this.getURL(), e.server.getURL()]);
+                }
+                else
+                {
+                    msg = getMsg(MSG_CONNECTION_ABORT_UNKNOWN,
+                                 [this.getURL(), e.server.getURL(),
+                                  formatException(e.exception)]);
+                }
+                break;
+
             default:
                 msg = getMsg(MSG_CLOSE_STATUS,
                              [this.getURL(), e.server.getURL(),
@@ -1864,7 +2034,17 @@ function my_netdisconnect (e)
     if (e.quitting)
     {
         msgType = "DISCONNECT";
-        msg = getMsg(MSG_CONNECTION_QUIT, [this.getURL(), e.server.getURL()]);
+        msg = getMsg(MSG_CONNECTION_QUIT,
+                     [this.getURL(), e.server.getURL(), this.unicodeName,
+                      "reconnect"]);
+        msgNetwork = msg;
+    }
+    // We won't reconnect if the error was really bad, or if the user doesn't
+    // want us to do so.
+    else if (((typeof e.disconnectStatus != "undefined") &&
+              (e.disconnectStatus == NS_ERROR_ABORT)) ||
+             !this.stayingPower)
+    {
         msgNetwork = msg;
     }
     else
@@ -1872,19 +2052,23 @@ function my_netdisconnect (e)
         var delayStr = formatDateOffset(this.getReconnectDelayMs() / 1000);
         if (this.MAX_CONNECT_ATTEMPTS == -1)
         {
-            msgNetwork = getMsg(MSG_RECONNECTING_IN, [msg, delayStr]);
+            msgNetwork = getMsg(MSG_RECONNECTING_IN,
+                                [msg, delayStr, this.unicodeName, "cancel"]);
         }
         else if (this.connectAttempt < this.MAX_CONNECT_ATTEMPTS)
         {
             var left = this.MAX_CONNECT_ATTEMPTS - this.connectAttempt;
             if (left == 1)
             {
-                msgNetwork = getMsg(MSG_RECONNECTING_IN_LEFT1, [msg, delayStr]);
+                msgNetwork = getMsg(MSG_RECONNECTING_IN_LEFT1,
+                                    [msg, delayStr, this.unicodeName,
+                                     "cancel"]);
             }
             else
             {
                 msgNetwork = getMsg(MSG_RECONNECTING_IN_LEFT,
-                                    [msg, left, delayStr]);
+                                    [msg, left, delayStr, this.unicodeName,
+                                     "cancel"]);
             }
         }
         else
@@ -1896,6 +2080,7 @@ function my_netdisconnect (e)
     /* If we were connected ok, put an error on all tabs. If we were only
      * /trying/ to connect, and failed, just put it on the network tab. 
      */
+    client.munger.getRule(".inline-buttons").enabled = true;
     if (this.state == NET_ONLINE)
     {
         for (var v in client.viewsArray)
@@ -1924,12 +2109,12 @@ function my_netdisconnect (e)
             this.displayHere(msgNetwork, msgType);
         }
     }
+    client.munger.getRule(".inline-buttons").enabled = false;
 
     for (var c in this.primServ.channels)
     {
         var channel = this.primServ.channels[c];
-        client.rdf.clearTargets(channel.getGraphResource(),
-                                client.rdf.resChanUser);
+        channel._clearUserList();
     }
 
     dispatch("sync-header");
@@ -1990,6 +2175,14 @@ function my_cnick (e)
     if (!ASSERT(userIsMe(e.user), "network nick event for third party"))
         return;
 
+    if (("pendingNickChange" in this) &&
+        (this.pendingNickChange == e.user.unicodeName))
+    {
+        this.prefs["nickname"] = e.user.unicodeName;
+        this.preferredNick = e.user.unicodeName;
+        delete this.pendingNickChange;
+    }
+
     if (getTabForObject(this))
     {
         this.displayHere(getMsg(MSG_NEWNICK_YOU, e.user.unicodeName),
@@ -2012,6 +2205,25 @@ function my_netpong (e)
     this.updateHeader(this);
 }
 
+CIRCNetwork.prototype.onWallops =
+function my_netwallops(e)
+{
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
+    if (e.user)
+        this.display(e.msg, "WALLOPS/WALLOPS", e.user, this);
+    else
+        this.display(e.msg, "WALLOPS/WALLOPS", undefined, this);
+    client.munger.getRule(".mailto").enabled = false;
+}
+
+/* unknown command reply */
+CIRCNetwork.prototype.on421 =
+function my_421(e)
+{
+    this.display(getMsg(MSG_ERR_UNKNOWN_COMMAND, e.params[2]), MT_ERROR);
+    return true;
+}
+
 CIRCNetwork.prototype.reclaimName =
 function my_reclaimname()
 {
@@ -2028,7 +2240,7 @@ function my_reclaimname()
     if ((this.state != NET_ONLINE) || !this.primServ)
         return false;
 
-    if (this.primServ.me.unicodeName == this.prefs["nickname"])
+    if (this.primServ.me.unicodeName == this.preferredNick)
         return false;
 
     this.reclaimLeft -= this.RECLAIM_WAIT;
@@ -2037,7 +2249,7 @@ function my_reclaimname()
         return false;
 
     this.pendingReclaimCheck = true;
-    this.primServ.sendData("NICK " + fromUnicode(this.prefs["nickname"], this) + "\n");
+    this.primServ.changeNick(this.preferredNick);
 
     setTimeout(callback, this.RECLAIM_WAIT);
 
@@ -2093,32 +2305,38 @@ CIRCChannel.prototype.onPrivmsg =
 function my_cprivmsg (e)
 {
     var msg = e.decodeParam(2);
+    var msgtype = "PRIVMSG";
+    if ("msgPrefix" in e)
+        msgtype += "/" + e.msgPrefix.symbol;
 
-    this.display (msg, "PRIVMSG", e.user, this);
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
+    this.display (msg, msgtype, e.user, this);
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 /* end of names */
 CIRCChannel.prototype.on366 =
 function my_366 (e)
 {
-    if (client.currentObject == this)
-        /* hide the tree while we add (possibly tons) of nodes */
-        client.rdf.setTreeRoot("user-list", client.rdf.resNullChan);
+    // First clear up old users:
+    var removals = new Array();
+    while (this.userList.childData.childData.length > 0)
+    {
+        var userToRemove = this.userList.childData.childData[0]._userObj;
+        this.removeFromList(userToRemove);
+        removals.push(userToRemove);
+    }
+    this.removeUsers(removals);
 
-    client.rdf.clearTargets(this.getGraphResource(), client.rdf.resChanUser);
-
-    var updates = new Array();
+    var entries = new Array(), updates = new Array();
     for (var u in this.users)
     {
-        this.users[u].updateGraphResource();
-        this._addUserToGraph (this.users[u]);
+        entries.push(new UserEntry(this.users[u], this.userListShare));
         updates.push(this.users[u]);
     }
     this.addUsers(updates);
 
-    if (client.currentObject == this)
-        /* redisplay the tree */
-        client.rdf.setTreeRoot("user-list", this.getGraphResource());
+    this.userList.childData.appendChildren(entries);
 
     if (this.pendingNamesReply)
     {
@@ -2135,7 +2353,7 @@ CIRCChannel.prototype.onTopic = /* user changed topic */
 CIRCChannel.prototype.on332 = /* TOPIC reply */
 function my_topic (e)
 {
-
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
     if (e.code == "TOPIC")
         this.display (getMsg(MSG_TOPIC_CHANGED, [this.topicBy, this.topic]),
                       "TOPIC");
@@ -2156,7 +2374,7 @@ function my_topic (e)
 
     this.updateHeader();
     updateTitle(this);
-
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 CIRCChannel.prototype.on333 = /* Topic setter information */
@@ -2187,9 +2405,9 @@ function my_bans(e)
     if (this.iAmHalfOp() || this.iAmOp())
         msg += " " + getMsg(MSG_BANLIST_BUTTON, "mode -b " + e.ban);
 
-    client.munger.entries[".inline-buttons"].enabled = true;
+    client.munger.getRule(".inline-buttons").enabled = true;
     this.display(msg, "BAN");
-    client.munger.entries[".inline-buttons"].enabled = false;
+    client.munger.getRule(".inline-buttons").enabled = false;
 }
 
 CIRCChannel.prototype.on368 =
@@ -2212,9 +2430,9 @@ function my_excepts(e)
     if (this.iAmHalfOp() || this.iAmOp())
         msg += " " + getMsg(MSG_EXCEPTLIST_BUTTON, "mode -e " + e.except);
 
-    client.munger.entries[".inline-buttons"].enabled = true;
+    client.munger.getRule(".inline-buttons").enabled = true;
     this.display(msg, "EXCEPT");
-    client.munger.entries[".inline-buttons"].enabled = false;
+    client.munger.getRule(".inline-buttons").enabled = false;
 }
 
 CIRCChannel.prototype.on349 =
@@ -2238,13 +2456,21 @@ function my_needops(e)
 CIRCChannel.prototype.onNotice =
 function my_notice (e)
 {
-    this.display(e.decodeParam(2), "NOTICE", e.user, this);
+    var msgtype = "NOTICE";
+    if ("msgPrefix" in e)
+        msgtype += "/" + e.msgPrefix.symbol;
+
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
+    this.display(e.decodeParam(2), msgtype, e.user, this);
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 CIRCChannel.prototype.onCTCPAction =
 function my_caction (e)
 {
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
     this.display (e.CTCPData, "ACTION", e.user, this);
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 CIRCChannel.prototype.onUnknownCTCP =
@@ -2266,6 +2492,11 @@ function my_cjoin (e)
         var params = [e.user.unicodeName, e.channel.unicodeName];
         this.display(getMsg(MSG_YOU_JOINED, params), "JOIN",
                      e.server.me, this);
+        /* Tell the user that conference mode is on, lest they forget (if it
+         * subsequently turns itself off, they'll get a message anyway).
+         */
+        if (this.prefs["conference.enabled"])
+            this.display(MSG_CONF_MODE_STAYON);
         if (client.globalHistory)
             client.globalHistory.addPage(this.getURL());
 
@@ -2301,21 +2532,22 @@ function my_cjoin (e)
         this._updateConferenceMode();
     }
 
-    this._addUserToGraph(e.user);
     /* We don't want to add ourself here, since the names reply we'll be
      * getting right after the join will include us as well! (FIXME)
      */
     if (!userIsMe(e.user))
+    {
         this.addUsers([e.user]);
-    if (client.currentObject == this)
-        updateUserList();
+        var entry = new UserEntry(e.user, this.userListShare);
+        this.userList.childData.appendChild(entry);
+        this.userList.childData.reSort();
+    }
     this.updateHeader();
 }
 
 CIRCChannel.prototype.onPart =
 function my_cpart (e)
 {
-    this._removeUserFromGraph(e.user);
     this.removeUsers([e.user]);
     this.updateHeader();
 
@@ -2323,13 +2555,7 @@ function my_cpart (e)
     {
         var params = [e.user.unicodeName, e.channel.unicodeName];
         this.display (getMsg(MSG_YOU_LEFT, params), "PART", e.user, this);
-
-        if (client.currentObject == this)
-            /* hide the tree while we remove (possibly tons) of nodes */
-            client.rdf.setTreeRoot("user-list", client.rdf.resNullChan);
-
-        client.rdf.clearTargets(this.getGraphResource(),
-                                client.rdf.resChanUser, true);
+        this._clearUserList();
 
         if ("partTimer" in this)
         {
@@ -2338,10 +2564,6 @@ function my_cpart (e)
             this.busy = false;
             updateProgress();
         }
-
-        if (client.currentObject == this)
-            /* redisplay the tree */
-            client.rdf.setTreeRoot("user-list", this.getGraphResource());
 
         if (this.deleteWhenDone)
             this.dispatch("delete-view");
@@ -2365,6 +2587,8 @@ function my_cpart (e)
                                       e.reason]),
                          "PART", e.user, this);
         }
+
+        this.removeFromList(e.user);
     }
 }
 
@@ -2388,6 +2612,7 @@ function my_ckick (e)
                           "KICK", (void 0), this);
         }
 
+        this._clearUserList();
         /* Try 1 re-join attempt if allowed. */
         if (this.prefs["autoRejoin"])
             this.join(this.mode.key);
@@ -2415,11 +2640,23 @@ function my_ckick (e)
                             [e.lamer.unicodeName, e.channel.unicodeName,
                              enforcerProper, e.reason]),
                      "KICK", e.user, this);
+
+        this.removeFromList(e.lamer);
     }
 
-    this._removeUserFromGraph(e.lamer);
     this.removeUsers([e.lamer]);
     this.updateHeader();
+}
+
+CIRCChannel.prototype.removeFromList =
+function my_removeFromList(user)
+{
+    // Remove the user from the list and 'disconnect' the user from their entry:
+    var idx = user.chanListEntry.childIndex;
+    this.userList.childData.removeChildAtIndex(idx);
+
+    delete user.chanListEntry._userObj;
+    delete user.chanListEntry;
 }
 
 CIRCChannel.prototype.onChanMode =
@@ -2445,13 +2682,9 @@ function my_cmode (e)
         view.display(getMsg(MSG_MODE_ALL, [this.unicodeName, msg]), "MODE");
         delete this.pendingModeReply;
     }
-
     var updates = new Array();
     for (var u in e.usersAffected)
-    {
-        e.usersAffected[u].updateGraphResource();
         updates.push(e.usersAffected[u]);
-    }
     this.updateUsers(updates);
 
     this.updateHeader();
@@ -2479,7 +2712,6 @@ function my_cnick (e)
                      "NICK", e.user, this);
     }
 
-    e.user.updateGraphResource();
     this.updateUsers([e.user]);
     if (client.currentObject == this)
         updateUserList();
@@ -2493,6 +2725,7 @@ function my_cquit (e)
         /* I dont think this can happen */
         var pms = [e.user.unicodeName, e.server.parent.unicodeName, e.reason];
         this.display (getMsg(MSG_YOU_QUIT, pms),"QUIT", e.user, this);
+        this._clearUserList();
     }
     else
     {
@@ -2508,15 +2741,36 @@ function my_cquit (e)
         }
     }
 
-    this._removeUserFromGraph(e.user);
     this.removeUsers([e.user]);
+    this.removeFromList(e.user);
+
     this.updateHeader();
+}
+
+CIRCChannel.prototype._clearUserList =
+function _my_clearuserlist()
+{
+    if (this.userList && this.userList.childData &&
+        this.userList.childData.childData)
+    {
+        this.userList.freeze();
+        var len = this.userList.childData.childData.length;
+        while (len > 0)
+        {
+            var entry = this.userList.childData.childData[--len];
+            this.userList.childData.removeChildAtIndex(len);
+            delete entry._userObj.chanListEntry;
+            delete entry._userObj;
+        }
+        this.userList.thaw();
+    }
 }
 
 CIRCUser.prototype.onInit =
 function user_oninit ()
 {
     this.logFile = null;
+    this.lastShownAwayMessage = "";
 }
 
 CIRCUser.prototype.onPrivmsg =
@@ -2529,7 +2783,9 @@ function my_cprivmsg(e)
             openQueryTab(e.server, e.user.unicodeName);
     }
 
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
     this.display(e.decodeParam(2), "PRIVMSG", e.user, e.server.me);
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 CIRCUser.prototype.onNick =
@@ -2556,19 +2812,24 @@ CIRCUser.prototype.onNotice =
 function my_notice (e)
 {
     var msg = e.decodeParam(2);
+    var displayMailto = client.prefs["munger.mailto"];
 
-    var ary = msg.match(/^\[(\S+)\]\s+/);
+    var ary = msg.match(/^\[([^ ]+)\]\s+/);
     if (ary)
     {
         var channel = e.server.getChannel(ary[1]);
         if (channel)
         {
+            client.munger.getRule(".mailto").enabled = displayMailto;
             channel.display(msg, "NOTICE", this, e.server.me);
+            client.munger.getRule(".mailto").enabled = false;
             return;
         }
     }
 
+    client.munger.getRule(".mailto").enabled = displayMailto;
     this.display(msg, "NOTICE", this, e.server.me);
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 CIRCUser.prototype.onCTCPAction =
@@ -2581,7 +2842,9 @@ function my_uaction(e)
             openQueryTab(e.server, e.user.unicodeName);
     }
 
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
     this.display(e.CTCPData, "ACTION", this, e.server.me);
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 CIRCUser.prototype.onUnknownCTCP =
@@ -2667,10 +2930,10 @@ function my_dccchat(e)
         }
     }
 
-    client.munger.entries[".inline-buttons"].enabled = true;
+    client.munger.getRule(".inline-buttons").enabled = true;
     this.parent.parent.display(getMsg(str, c._getParams().concat(cmds)),
                                "DCC-CHAT");
-    client.munger.entries[".inline-buttons"].enabled = false;
+    client.munger.getRule(".inline-buttons").enabled = false;
 
     // Pass the event over to the DCC Chat object.
     e.set = "dcc-chat";
@@ -2713,12 +2976,12 @@ function my_dccsend(e)
         }
     }
 
-    client.munger.entries[".inline-buttons"].enabled = true;
+    client.munger.getRule(".inline-buttons").enabled = true;
     this.parent.parent.display(getMsg(str,[e.user.unicodeName,
                                            e.host, e.port, e.file,
                                            getSISize(e.size)].concat(cmds)),
                                "DCC-FILE");
-    client.munger.entries[".inline-buttons"].enabled = false;
+    client.munger.getRule(".inline-buttons").enabled = false;
 
     // Pass the event over to the DCC File object.
     e.set = "dcc-file";
@@ -2754,13 +3017,17 @@ function my_dccgetparams()
 CIRCDCCChat.prototype.onPrivmsg =
 function my_dccprivmsg(e)
 {
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
     this.displayHere(toUnicode(e.line, this), "PRIVMSG", e.user, "ME!");
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 CIRCDCCChat.prototype.onCTCPAction =
 function my_uaction(e)
 {
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
     this.displayHere(e.CTCPData, "ACTION", e.user, "ME!");
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 CIRCDCCChat.prototype.onUnknownCTCP =
@@ -2802,7 +3069,6 @@ CIRCDCCFileTransfer.prototype.onInit =
 function my_dccfileinit(e)
 {
     this.busy = false;
-    this.progress = -1;
     updateProgress();
 }
 
@@ -2826,7 +3092,6 @@ function my_dccfileconnect(e)
 {
     this.displayHere(getMsg(MSG_DCCFILE_OPENED, this._getParams()), "DCC-FILE");
     this.busy = true;
-    this.progress = 0;
     this.speed = 0;
     updateProgress();
     this._lastUpdate = new Date();
@@ -2838,17 +3103,17 @@ CIRCDCCFileTransfer.prototype.onProgress =
 function my_dccfileprogress(e)
 {
     var now = new Date();
-    var pcent = Math.floor(100 * this.position / this.size);
+    var pcent = this.progress;
+
+    var tab = getTabForObject(this);
 
     // If we've moved 100KiB or waited 10s, update the progress bar.
     if ((this.position > this._lastPosition + 102400) ||
         (now - this._lastUpdate > 10000))
     {
-        this.progress = pcent;
         updateProgress();
         updateTitle();
 
-        var tab = getTabForObject(this);
         if (tab)
             tab.setAttribute("label", this.viewName + " (" + pcent + "%)");
 
@@ -2867,12 +3132,14 @@ function my_dccfileprogress(e)
     // If it's also been 10s or more since we last displayed a msg...
     if (now - this._lastUpdate > 10000)
     {
-        this.displayHere(getMsg(MSG_DCCFILE_PROGRESS,
-                                [pcent, getSISize(this.position),
-                                 getSISize(this.size), getSISpeed(this.speed)]),
-                         "DCC-FILE");
-
         this._lastUpdate = now;
+
+        var args = [pcent, getSISize(this.position), getSISize(this.size),
+                    getSISpeed(this.speed)];
+
+        // We supress this message if the view is hidden.
+        if (tab)
+            this.displayHere(getMsg(MSG_DCCFILE_PROGRESS, args), "DCC-FILE");
     }
 }
 
@@ -2881,6 +3148,7 @@ function my_dccfileabort(e)
 {
     this.busy = false;
     updateProgress();
+    updateTitle();
     this.display(getMsg(MSG_DCCFILE_ABORTED, this._getParams()), "DCC-FILE");
 }
 
@@ -2889,6 +3157,7 @@ function my_dccfilefail(e)
 {
     this.busy = false;
     updateProgress();
+    updateTitle();
     this.display(getMsg(MSG_DCCFILE_FAILED, this._getParams()), "DCC-FILE");
 }
 
@@ -2898,6 +3167,7 @@ function my_dccfiledisconnect(e)
     this.busy = false;
     updateProgress();
     this.updateHeader();
+    updateTitle();
 
     var msg, tab = getTabForObject(this);
     if (tab)
@@ -2917,6 +3187,14 @@ function my_dccfiledisconnect(e)
 
 var CopyPasteHandler = new Object();
 
+CopyPasteHandler.allowDrop =
+CopyPasteHandler.allowStartDrag =
+CopyPasteHandler.onCopyOrDrag =
+function phand_bogus()
+{
+    return true;
+}
+
 CopyPasteHandler.onPasteOrDrop =
 function phand_onpaste(e, data)
 {
@@ -2933,10 +3211,19 @@ function phand_onpaste(e, data)
     str.value.QueryInterface(Components.interfaces.nsISupportsString);
     str.value.data = str.value.data.replace(/(^\s*[\r\n]+|[\r\n]+\s*$)/g, "");
 
-    if (str.value.data.indexOf("\n") == -1)
+    // XXX part of what follows is a very ugly hack to make links (with a title)
+    // not open the multiline box. We 'should' be able to ask the transferable
+    // what flavours it supports, but testing showed that by the time we can ask
+    // for that info, it's forgotten about everything apart from text/unicode.
+    var lines = str.value.data.split("\n");
+    var m = lines[0].match(client.linkRE);
+
+    if ((str.value.data.indexOf("\n") == -1) ||
+        (m && (m[0] == lines[0]) && (lines.length == 2)))
     {
         // If, after stripping leading/trailing empty lines, the string is a
-        // single line, put it back in the transferable and return.
+        // single line, or it's a link with a title, put it back in
+        // the transferable and return.
         data.setTransferData("text/unicode", str.value,
                              str.value.data.length * 2);
         return true;
@@ -2962,3 +3249,62 @@ function phand_qi(iid)
 
     throw Components.results.NS_ERROR_NO_INTERFACE;
 }
+
+function UserEntry(userObj, channelListShare)
+{
+    var self = this;
+    function getUName()
+    {
+        return userObj.unicodeName;
+    };
+    function getSortFn()
+    {
+        if (client.prefs["sortUsersByMode"])
+            return ule_sortByMode;
+        return ule_sortByName;
+    };
+
+    // This object is used to represent a user in the userlist. To work with our
+    // JS tree view, it needs a bunch of stuff that is set through the
+    // constructor and the prototype (see also a couple of lines down). Here we
+    // call the original constructor to do some work for us:
+    XULTreeViewRecord.call(this, channelListShare);
+
+    // This magic function means the unicodeName is used for display:
+    this.setColumnPropertyName("usercol", getUName);
+
+    // We need this for sorting by mode (op, hop, voice, etc.)
+    this._userObj = userObj;
+
+    // When the user leaves, we need to have the entry so we can remove it:
+    userObj.chanListEntry = this;
+
+    // Gross hack: we set up the sort function by getter so we don't have to go
+    // back (array sort -> xpc -> our pref lib -> xpc -> pref interfaces) for
+    // every bloody compare. Now it will be a function that doesn't need prefs
+    // after being retrieved, which is much much faster.
+    this.__defineGetter__("sortCompare", getSortFn);
+}
+
+// See explanation in the constructor.
+UserEntry.prototype = XULTreeViewRecord.prototype;
+
+function ule_sortByName(a, b)
+{
+    if (a._userObj.unicodeName == b._userObj.unicodeName)
+        return 0;
+    var aName = a._userObj.unicodeName.toLowerCase();
+    var bName = b._userObj.unicodeName.toLowerCase();
+    return (aName < bName ? -1 : 1);
+}
+
+function ule_sortByMode(a, b)
+{
+    if (a._userObj.sortName == b._userObj.sortName)
+        return 0;
+    var aName = a._userObj.sortName.toLowerCase();
+    var bName = b._userObj.sortName.toLowerCase();
+    return (aName < bName ? -1 : 1);
+}
+
+

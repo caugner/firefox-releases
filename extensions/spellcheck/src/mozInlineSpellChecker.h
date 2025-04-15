@@ -48,6 +48,7 @@
 #include "nsIDOMTreeWalker.h"
 #include "nsWeakReference.h"
 #include "nsIEditor.h"
+#include "nsIDOMFocusListener.h"
 #include "nsIDOMMouseListener.h"
 #include "nsIDOMKeyListener.h"
 #include "nsWeakReference.h"
@@ -55,7 +56,6 @@
 
 class nsIDOMDocumentRange;
 class nsIDOMMouseEventListener;
-class nsIEventQueueService;
 class mozInlineSpellWordUtil;
 class mozInlineSpellChecker;
 class mozInlineSpellResume;
@@ -139,7 +139,7 @@ protected:
                                     nsIDOMRange** aRange);
 };
 
-class mozInlineSpellChecker : public nsIInlineSpellChecker, nsIEditActionListener, nsIDOMMouseListener, nsIDOMKeyListener,
+class mozInlineSpellChecker : public nsIInlineSpellChecker, nsIEditActionListener, nsIDOMFocusListener, nsIDOMMouseListener, nsIDOMKeyListener,
                                      nsSupportsWeakReference
 {
 private:
@@ -175,9 +175,6 @@ private:
   // Set when we have spellchecked after the last edit operation. See the
   // commment at the top of the .cpp file for more info.
   PRBool mNeedsCheckAfterNavigation;
-
-  // lazily created, may be NULL
-  nsCOMPtr<nsIEventQueueService> mEventQueueService;
 
   // TODO: these should be defined somewhere so that they don't have to be copied
   // from editor!
@@ -228,6 +225,11 @@ public:
   // returns true if it looks likely that we can enable real-time spell checking
   static PRBool CanEnableInlineSpellChecking();
 
+  /*BEGIN implementations of focus event handler interface*/
+  NS_IMETHOD Focus(nsIDOMEvent* aEvent);
+  NS_IMETHOD Blur(nsIDOMEvent* aEvent);
+  /*END implementations of focus event handler interface*/
+
   /*BEGIN implementations of mouseevent handler interface*/
   NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent);
   NS_IMETHOD MouseDown(nsIDOMEvent* aMouseEvent);
@@ -247,15 +249,12 @@ public:
   mozInlineSpellChecker();
   virtual ~mozInlineSpellChecker();
 
-  // re-spellcheck the currently marked ranges
-  nsresult SpellCheckSelection();
-
   // spell checks all of the words between two nodes
   nsresult SpellCheckBetweenNodes(nsIDOMNode *aStartNode,
                                   PRInt32 aStartOffset,
                                   nsIDOMNode *aEndNode,
                                   PRInt32 aEndOffset);
-  
+
   // examines the dom node in question and returns true if the inline spell
   // checker should skip the node (i.e. the text is inside of a block quote
   // or an e-mail signature...)
@@ -302,7 +301,7 @@ public:
   nsresult GetSpellCheckSelection(nsISelection ** aSpellCheckSelection);
   nsresult SaveCurrentSelectionPosition();
 
-  nsresult ResumeCheck(mozInlineSpellStatus* resume);
+  nsresult ResumeCheck(mozInlineSpellStatus* aStatus);
 };
 
 #endif /* __mozinlinespellchecker_h__ */

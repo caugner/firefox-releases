@@ -1,189 +1,508 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Places Browser Integration
- *
- * The Initial Developer of the Original Code is Google Inc.
- * Portions created by the Initial Developer are Copyright (C) 2006
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Ben Goodger <beng@google.com>
- *   Annie Sullivan <annie.sullivan@gmail.com>
- *   Joe Hughes <joe@retrovirus.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
+#
+# The Original Code is the Places Browser Integration
+#
+# The Initial Developer of the Original Code is Google Inc.
+# Portions created by the Initial Developer are Copyright (C) 2006
+# the Initial Developer. All Rights Reserved.
+#
+# Contributor(s):
+#   Ben Goodger <beng@google.com>
+#   Annie Sullivan <annie.sullivan@gmail.com>
+#   Joe Hughes <joe@retrovirus.com>
+#   Asaf Romano <mano@mozilla.com>
+#
+# Alternatively, the contents of this file may be used under the terms of
+# either the GNU General Public License Version 2 or later (the "GPL"), or
+# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
-/**
- * A BookmarkAllTabs command for the BrowserController in browser.js
- */
-function BookmarkAllTabsCommand() {
-}
-BookmarkAllTabsCommand.prototype = {
-  /**
-   * true if the command is enabled, false otherwise.
-   */
-  get enabled() {
-    return getBrowser().tabContainer.childNodes.length > 1;
+
+var StarUI = {
+  _itemId: -1,
+  uri: null,
+  _batching: false,
+
+  // nsISupports
+  QueryInterface: function SU_QueryInterface(aIID) {
+    if (aIID.equals(Ci.nsIDOMEventListener) ||
+        aIID.equals(Ci.nsISupports))
+      return this;
+
+    throw Cr.NS_NOINTERFACE;
   },
-  
+
+  _element: function(aID) {
+    return document.getElementById(aID);
+  },
+
+  // Edit-bookmark panel
+  get panel() {
+    delete this.panel;
+    var element = this._element("editBookmarkPanel");
+    // initially the panel is hidden
+    // to avoid impacting startup / new window performance
+    element.hidden = false;
+    element.addEventListener("popuphidden", this, false);
+    element.addEventListener("keypress", this, true);
+    return this.panel = element;
+  },
+
+  // list of command elements (by id) to disable when the panel is opened
+  _blockedCommands: ["cmd_close", "cmd_closeWindow"],
+  _blockCommands: function SU__blockCommands() {
+    for each(var key in this._blockedCommands) {
+      var elt = this._element(key);
+      // make sure not to permanently disable this item (see bug 409155)
+      if (elt.hasAttribute("wasDisabled"))
+        continue;
+      if (elt.getAttribute("disabled") == "true")
+        elt.setAttribute("wasDisabled", "true");
+      else {
+        elt.setAttribute("wasDisabled", "false");
+        elt.setAttribute("disabled", "true");
+      }
+    }
+  },
+
+  _restoreCommandsState: function SU__restoreCommandsState() {
+    for each(var key in this._blockedCommands) {
+      var elt = this._element(key);
+      if (elt.getAttribute("wasDisabled") != "true")
+        elt.removeAttribute("disabled");
+      elt.removeAttribute("wasDisabled");
+    }
+  },
+
+  // nsIDOMEventListener
+  handleEvent: function SU_handleEvent(aEvent) {
+    switch (aEvent.type) {
+      case "popuphidden":
+        if (aEvent.originalTarget == this.panel) {
+          if (!this._element("editBookmarkPanelContent").hidden)
+            this.quitEditMode();
+          this._restoreCommandsState();
+          this._itemId = -1;
+          this._uri = null;
+          if (this._batching) {
+            PlacesUIUtils.ptm.endBatch();
+            this._batching = false;
+          }
+        }
+        break;
+      case "keypress":
+        if (aEvent.keyCode == KeyEvent.DOM_VK_ESCAPE) {
+          // In edit mode, if we're not editing a folder, the ESC key is mapped
+          // to the cancel button
+          if (!this._element("editBookmarkPanelContent").hidden) {
+            var elt = aEvent.target;
+            if (elt.localName != "tree" ||
+                (elt.localName == "tree" && !elt.hasAttribute("editing")))
+              this.cancelButtonOnCommand();
+          }
+        }
+        else if (aEvent.keyCode == KeyEvent.DOM_VK_RETURN) {
+          // hide the panel unless the folder tree is focused
+          if (aEvent.target.localName != "tree")
+            this.panel.hidePopup();
+        }
+        break;
+    }
+  },
+
+  _overlayLoaded: false,
+  _overlayLoading: false,
+  showEditBookmarkPopup:
+  function SU_showEditBookmarkPopup(aItemId, aAnchorElement, aPosition) {
+    // Performance: load the overlay the first time the panel is opened
+    // (see bug 392443).
+    if (this._overlayLoading)
+      return;
+
+    if (this._overlayLoaded) {
+      this._doShowEditBookmarkPanel(aItemId, aAnchorElement, aPosition);
+      return;
+    }
+
+    var loadObserver = {
+      _self: this,
+      _itemId: aItemId,
+      _anchorElement: aAnchorElement,
+      _position: aPosition,
+      observe: function (aSubject, aTopic, aData) {
+        this._self._overlayLoading = false;
+        this._self._overlayLoaded = true;
+        this._self._doShowEditBookmarkPanel(this._itemId, this._anchorElement,
+                                            this._position);
+      }
+    };
+    this._overlayLoading = true;
+    document.loadOverlay("chrome://browser/content/places/editBookmarkOverlay.xul",
+                         loadObserver);
+  },
+
+  _doShowEditBookmarkPanel:
+  function SU__doShowEditBookmarkPanel(aItemId, aAnchorElement, aPosition) {
+    this._blockCommands(); // un-done in the popuphiding handler
+
+    var bundle = this._element("bundle_browser");
+
+    // Set panel title:
+    // if we are batching, i.e. the bookmark has been added now,
+    // then show Page Bookmarked, else if the bookmark did already exist,
+    // we are about editing it, then use Edit This Bookmark.
+    this._element("editBookmarkPanelTitle").value =
+      this._batching ?
+        bundle.getString("editBookmarkPanel.pageBookmarkedTitle") :
+        bundle.getString("editBookmarkPanel.editBookmarkTitle");
+
+    // No description; show the Done, Cancel;
+    // hide the Edit, Undo buttons
+    this._element("editBookmarkPanelDescription").textContent = "";
+    this._element("editBookmarkPanelBottomButtons").hidden = false;
+    this._element("editBookmarkPanelContent").hidden = false;
+    this._element("editBookmarkPanelEditButton").hidden = true;
+    this._element("editBookmarkPanelUndoRemoveButton").hidden = true;
+
+    // The remove button is shown only if we're not already batching, i.e.
+    // if the cancel button/ESC does not remove the bookmark.
+    this._element("editBookmarkPanelRemoveButton").hidden = this._batching;
+
+    // unset the unstarred state, if set
+    this._element("editBookmarkPanelStarIcon").removeAttribute("unstarred");
+
+    this._itemId = aItemId !== undefined ? aItemId : this._itemId;
+    this.beginBatch();
+
+    // XXXmano hack: We push a no-op transaction on the stack so it's always
+    // safe for the Cancel button to call undoTransaction after endBatch.
+    // Otherwise, if no changes were done in the edit-item panel, the last
+    // transaction on the undo stack may be the initial createItem transaction,
+    // or worse, the batched editing of some other item.
+    PlacesUIUtils.ptm.doTransaction({ doTransaction: function() { },
+                                      undoTransaction: function() { },
+                                      redoTransaction: function() { },
+                                      isTransient: false,
+                                      merge: function() { return false; } });
+
+    if (this.panel.state == "closed") {
+      // Consume dismiss clicks, see bug 400924
+      this.panel.popupBoxObject
+          .setConsumeRollupEvent(Ci.nsIPopupBoxObject.ROLLUP_CONSUME);
+      this.panel.openPopup(aAnchorElement, aPosition, -1, -1);
+    }
+    else {
+      var namePicker = this._element("editBMPanel_namePicker");
+      namePicker.focus();
+      namePicker.editor.selectAll();
+    }
+
+    gEditItemOverlay.initPanel(this._itemId,
+                               { hiddenRows: ["description", "location",
+                                              "loadInSidebar", "keyword"] });
+  },
+
+  panelShown:
+  function SU_panelShown(aEvent) {
+    if (aEvent.target == this.panel) {
+      if (!this._element("editBookmarkPanelContent").hidden) {
+        var namePicker = this._element("editBMPanel_namePicker");
+        namePicker.focus();
+        namePicker.editor.selectAll();
+      }
+      else
+        this.panel.focus();
+    }
+  },
+
+  showPageBookmarkedNotification:
+  function PCH_showPageBookmarkedNotification(aItemId, aAnchorElement, aPosition) {
+    this._blockCommands(); // un-done in the popuphiding handler
+
+    var bundle = this._element("bundle_browser");
+    var brandBundle = this._element("bundle_brand");
+    var brandShortName = brandBundle.getString("brandShortName");
+
+    // "Page Bookmarked" title
+    this._element("editBookmarkPanelTitle").value =
+      bundle.getString("editBookmarkPanel.pageBookmarkedTitle");
+
+    // description
+    this._element("editBookmarkPanelDescription").textContent =
+      bundle.getFormattedString("editBookmarkPanel.pageBookmarkedDescription",
+                                [brandShortName]);
+
+    // show the "Edit.." button and the Remove Bookmark button, hide the
+    // undo-remove-bookmark button.
+    this._element("editBookmarkPanelEditButton").hidden = false;
+    this._element("editBookmarkPanelRemoveButton").hidden = false;
+    this._element("editBookmarkPanelUndoRemoveButton").hidden = true;
+
+    // unset the unstarred state, if set
+    this._element("editBookmarkPanelStarIcon").removeAttribute("unstarred");
+
+    this._itemId = aItemId !== undefined ? aItemId : this._itemId;
+    if (this.panel.state == "closed") {
+      // Consume dismiss clicks, see bug 400924
+      this.panel.popupBoxObject
+          .setConsumeRollupEvent(Ci.nsIPopupBoxObject.ROLLUP_CONSUME);
+      this.panel.openPopup(aAnchorElement, aPosition, -1, -1);
+    }
+    else
+      this.panel.focus();
+  },
+
+  quitEditMode: function SU_quitEditMode() {
+    this._element("editBookmarkPanelContent").hidden = true;
+    this._element("editBookmarkPanelBottomButtons").hidden = true;
+    gEditItemOverlay.uninitPanel(true);
+  },
+
+  editButtonCommand: function SU_editButtonCommand() {
+    this.showEditBookmarkPopup();
+  },
+
+  cancelButtonOnCommand: function SU_cancelButtonOnCommand() {
+    // The order here is important! We have to hide the panel first, otherwise
+    // changes done as part of Undo may change the panel contents and by
+    // that force it to commit more transactions
+    this.panel.hidePopup();
+    this.endBatch();
+    PlacesUIUtils.ptm.undoTransaction();
+  },
+
+  removeBookmarkButtonCommand: function SU_removeBookmarkButtonCommand() {
+#ifdef ADVANCED_STARRING_UI
+    // In minimal mode ("page bookmarked" notification), the bookmark
+    // is removed and the panel is hidden immediately. In full edit mode,
+    // a "Bookmark Removed" notification along with an Undo button is
+    // shown
+    if (this._batching) {
+      PlacesUIUtils.ptm.endBatch();
+      PlacesUIUtils.ptm.beginBatch(); // allow undo from within the notification
+      var bundle = this._element("bundle_browser");
+
+      // "Bookmark Removed" title (the description field is already empty in
+      // this mode)
+      this._element("editBookmarkPanelTitle").value =
+        bundle.getString("editBookmarkPanel.bookmarkedRemovedTitle");
+
+      // hide the edit panel
+      this.quitEditMode();
+
+      // Hide the remove bookmark button, show the undo-remove-bookmark
+      // button.
+      this._element("editBookmarkPanelUndoRemoveButton").hidden = false;
+      this._element("editBookmarkPanelRemoveButton").hidden = true;
+      this._element("editBookmarkPanelStarIcon").setAttribute("unstarred", "true");
+      this.panel.focus();
+    }
+#endif
+
+    // cache its uri so we can get the new itemId in the case of undo
+    this._uri = PlacesUtils.bookmarks.getBookmarkURI(this._itemId);
+
+    // remove all bookmarks for the bookmark's url, this also removes
+    // the tags for the url
+    var itemIds = PlacesUtils.getBookmarksForURI(this._uri);
+    for (var i=0; i < itemIds.length; i++) {
+      var txn = PlacesUIUtils.ptm.removeItem(itemIds[i]);
+      PlacesUIUtils.ptm.doTransaction(txn);
+    }
+
+#ifdef ADVANCED_STARRING_UI
+    // hidePopup resets our itemId, thus we call it only after removing
+    // the bookmark
+    if (!this._batching)
+#endif
+      this.panel.hidePopup();
+  },
+
+  undoRemoveBookmarkCommand: function SU_undoRemoveBookmarkCommand() {
+    // restore the bookmark by undoing the last transaction and go back
+    // to the edit state
+    this.endBatch();
+    PlacesUIUtils.ptm.undoTransaction();
+    this._itemId = PlacesUtils.getMostRecentBookmarkForURI(this._uri);
+    this.showEditBookmarkPopup();
+  },
+
+  beginBatch: function SU_beginBatch() {
+    if (!this._batching) {
+      PlacesUIUtils.ptm.beginBatch();
+      this._batching = true;
+    }
+  },
+
+  endBatch: function SU_endBatch() {
+    if (this._batching) {
+      PlacesUIUtils.ptm.endBatch();
+      this._batching = false;
+    }
+  }
+}
+
+var PlacesCommandHook = {
   /**
-   * Performs the command (bookmarking all tabs).
+   * Adds a bookmark to the page loaded in the given browser.
+   *
+   * @param aBrowser
+   *        a <browser> element.
+   * @param [optional] aParent
+   *        The folder in which to create a new bookmark if the page loaded in
+   *        aBrowser isn't bookmarked yet, defaults to the unfiled root.
+   * @param [optional] aShowEditUI
+   *        whether or not to show the edit-bookmark UI for the bookmark item
+   */  
+  bookmarkPage: function PCH_bookmarkPage(aBrowser, aParent, aShowEditUI) {
+    var uri = aBrowser.currentURI;
+    var itemId = PlacesUtils.getMostRecentBookmarkForURI(uri);
+    if (itemId == -1) {
+      // Copied over from addBookmarkForBrowser:
+      // Bug 52536: We obtain the URL and title from the nsIWebNavigation
+      // associated with a <browser/> rather than from a DOMWindow.
+      // This is because when a full page plugin is loaded, there is
+      // no DOMWindow (?) but information about the loaded document
+      // may still be obtained from the webNavigation.
+      var webNav = aBrowser.webNavigation;
+      var url = webNav.currentURI;
+      var title;
+      var description;
+      var charset;
+      try {
+        title = webNav.document.title || url.spec;
+        description = PlacesUIUtils.getDescriptionFromDocument(webNav.document);
+        charset = webNav.document.characterSet;
+      }
+      catch (e) { }
+
+      if (aShowEditUI) {
+        // If we bookmark the page here (i.e. page was not "starred" already)
+        // but open right into the "edit" state, start batching here, so
+        // "Cancel" in that state removes the bookmark.
+        StarUI.beginBatch();
+      }
+
+      var parent = aParent != undefined ?
+                   aParent : PlacesUtils.unfiledBookmarksFolderId;
+      var descAnno = { name: DESCRIPTION_ANNO, value: description };
+      var txn = PlacesUIUtils.ptm.createItem(uri, parent, -1,
+                                             title, null, [descAnno]);
+      PlacesUIUtils.ptm.doTransaction(txn);
+      // Set the character-set
+      if (charset)
+        PlacesUtils.history.setCharsetForURI(uri, charset);
+      itemId = PlacesUtils.getMostRecentBookmarkForURI(uri);
+    }
+
+    // Revert the contents of the location bar
+    handleURLBarRevert();
+
+    // dock the panel to the star icon when possible, otherwise dock
+    // it to the content area
+    if (aBrowser.contentWindow == window.content) {
+      var starIcon = aBrowser.ownerDocument.getElementById("star-button");
+      if (starIcon && isElementVisible(starIcon)) {
+        if (aShowEditUI)
+          StarUI.showEditBookmarkPopup(itemId, starIcon, "after_end");
+#ifdef ADVANCED_STARRING_UI
+        else
+          StarUI.showPageBookmarkedNotification(itemId, starIcon, "after_end");
+#endif
+        return;
+      }
+    }
+
+    StarUI.showEditBookmarkPopup(itemId, aBrowser, "overlap");
+  },
+
+  /**
+   * Adds a bookmark to the page loaded in the current tab. 
    */
-  execute: function BATC_execute() {
-    var tabURIs = this._getUniqueTabInfo(getBrowser());
-    PlacesController.showAddMultiBookmarkUI(tabURIs);
+  bookmarkCurrentPage: function PCH_bookmarkCurrentPage(aShowEditUI, aParent) {
+    this.bookmarkPage(getBrowser().selectedBrowser, aParent, aShowEditUI);
+  },
+
+  /**
+   * Adds a bookmark to the page targeted by a link.
+   * @param aParent
+   *        The folder in which to create a new bookmark if aURL isn't
+   *        bookmarked.
+   * @param aURL (string)
+   *        the address of the link target
+   * @param aTitle
+   *        The link text
+   */
+  bookmarkLink: function PCH_bookmarkLink(aParent, aURL, aTitle) {
+    var linkURI = makeURI(aURL);
+    var itemId = PlacesUtils.getMostRecentBookmarkForURI(linkURI);
+    if (itemId == -1) {
+      StarUI.beginBatch();
+      var txn = PlacesUIUtils.ptm.createItem(linkURI, aParent, -1, aTitle);
+      PlacesUIUtils.ptm.doTransaction(txn);
+      itemId = PlacesUtils.getMostRecentBookmarkForURI(linkURI);
+    }
+
+    StarUI.showEditBookmarkPopup(itemId, getBrowser(), "overlap");
   },
 
   /**
    * This function returns a list of nsIURI objects characterizing the
-   * tabs currently open in the given browser.  The URIs will appear in the
+   * tabs currently open in the browser.  The URIs will appear in the
    * list in the order in which their corresponding tabs appeared.  However,
    * only the first instance of each URI will be returned.
    *
-   * @param   tabBrowser
-   *          the tabBrowser to get the contents of
    * @returns a list of nsIURI objects representing unique locations open
    */
-  _getUniqueTabInfo: function BATC__getUniqueTabInfo(tabBrowser) {
+  _getUniqueTabInfo: function BATC__getUniqueTabInfo() {
     var tabList = [];
     var seenURIs = [];
 
-    const activeBrowser = tabBrowser.selectedBrowser;
-    const browsers = tabBrowser.browsers;
+    var browsers = getBrowser().browsers;
     for (var i = 0; i < browsers.length; ++i) {
       var webNav = browsers[i].webNavigation;
-       var uri = webNav.currentURI;
+      var uri = webNav.currentURI;
 
-       // skip redundant entries
-       if (uri.spec in seenURIs)
-         continue;
+      // skip redundant entries
+      if (uri.spec in seenURIs)
+        continue;
 
-       // add to the set of seen URIs
-       seenURIs[uri.spec] = true;
-
-       tabList.push(uri);
+      // add to the set of seen URIs
+      seenURIs[uri.spec] = true;
+      tabList.push(uri);
     }
     return tabList;
-  }
-};
-BookmarkAllTabsCommand.NAME = "Browser:BookmarkAllTabs";
+  },
 
-// Tell the BrowserController about this command.
-BrowserController.commands[BookmarkAllTabsCommand.NAME] = 
-  new BookmarkAllTabsCommand();
-BrowserController.events[BrowserController.EVENT_TABCHANGE] = 
-  [BookmarkAllTabsCommand.NAME];
-
-var PlacesCommandHook = {
-
-  /**
-   * Keeps a reference to the places popup window when it is open
-   */
-  _placesPopup: null,
-  
-  /**
-   * Shows the places popup
-   * @param event
-   *        DOMEvent for the button command that opens the popup.
-   */
-  showPlacesPopup: function PCH_showPlacesPopup(event) {
-    if (!this._placesPopup) {
-      // XXX - the button might not exist, need to handle this case.
-      var button = document.getElementById("bookmarksBarShowPlaces");
-      var top = button.boxObject.screenY;
-#ifndef XP_MACOSX
-      top += button.boxObject.height;
-#endif
-      var left = button.boxObject.screenX;
-      var openArguments = "chrome,dependent,";
-      openArguments += "top=" + top + ",left=" + left;
-      openArguments += ",titlebar=no"
-      this._placesPopup = window.openDialog("chrome://browser/content/places/placesPopup.xul", "placesPopup", openArguments, ORGANIZER_ROOT_BOOKMARKS);
-    }
-  },
-  
-  /**
-   * Hides the places popup
-   * @param event
-   *        DOMEvent for the button command that closes the popup.
-   */
-  hidePlacesPopup: function PCH_hidePlacesPopup(event) {
-    if (this._placesPopup) {
-      this._placesPopup.close();
-      this._placesPopup = null;
-    }
-  },
-  
-  /**
-   * Toggles the places popup
-   * @param event
-   *        DOMEvent for the button command that opens the popup.
-   */
-  togglePlacesPopup: function PCH_togglePlacesPopup(event) {
-    if (this._placesPopup)
-      this.hidePlacesPopup();
-    else
-      this.showPlacesPopup();
-  },
-  
-  /**
-   * Adds a bookmark to the page loaded in the current tab. 
-   */
-  bookmarkCurrentPage: function PCH_bookmarkCurrentPage() {
-    var selectedBrowser = getBrowser().selectedBrowser;
-    PlacesController.showAddBookmarkUI(selectedBrowser.currentURI);
-  },
-  
   /**
    * Adds a folder with bookmarks to all of the currently open tabs in this 
    * window.
    */
   bookmarkCurrentPages: function PCH_bookmarkCurrentPages() {
+    var tabURIs = this._getUniqueTabInfo();
+    PlacesUIUtils.showMinimalAddMultiBookmarkUI(tabURIs);
   },
 
-  /**
-   * Get the description associated with a document, as specified in a <META> 
-   * element.
-   * @param   doc
-   *          A DOM Document to get a description for
-   * @returns A description string if a META element was discovered with a 
-   *          "description" or "httpequiv" attribute, empty string otherwise.
-   */
-  _getDescriptionFromDocument: function PCH_getDescriptionFromDocument(doc) {
-    var metaElements = doc.getElementsByTagName("META");
-    for (var i = 0; i < metaElements.length; ++i) {
-      if (metaElements[i].localName.toLowerCase() == "description" || 
-          metaElements[i].httpEquiv.toLowerCase() == "description") {
-        return metaElements[i].content;
-        break;
-      }
-    }
-    return "";
-  },
   
   /**
    * Adds a Live Bookmark to a feed associated with the current page. 
@@ -192,8 +511,7 @@ var PlacesCommandHook = {
    * @title     title
    *            The title of the feed. Optional.
    * @subtitle  subtitle
-   *            A short description of the feed. Optional. 
-   *            Not yet used. TODO: implement description annotation
+   *            A short description of the feed. Optional.
    */
   addLiveBookmark: function PCH_addLiveBookmark(url, feedTitle, feedSubtitle) {
     var ios = 
@@ -201,99 +519,72 @@ var PlacesCommandHook = {
         getService(Ci.nsIIOService);
     var feedURI = ios.newURI(url, null, null);
     
-    var browser = gBrowser.selectedBrowser;
-   
-    var title = (arguments.length > 1) ? feedTitle :
-                                         browser.contentDocument.title;
+    var doc = gBrowser.contentDocument;
+    var title = (arguments.length > 1) ? feedTitle : doc.title;
  
-    // TODO: implement description annotation
-#if 0
     var description;
     if (arguments.length > 2)
       description = feedSubtitle;
     else
-      description = BookmarksUtils.getDescriptionFromDocument(doc);
-#endif
+      description = PlacesUIUtils.getDescriptionFromDocument(doc);
 
-    // TODO: add dialog for filing/confirmation
-    var bms = PlacesController.bookmarks;
-    var livemarks = PlacesController.livemarks;
-    livemarks.createLivemark(bms.toolbarRoot, title, browser.currentURI, 
-                             feedURI, -1);
+    var toolbarIP =
+      new InsertionPoint(PlacesUtils.bookmarks.toolbarFolder, -1);
+    PlacesUIUtils.showMinimalAddLivemarkUI(feedURI, gBrowser.currentURI,
+                                           title, description, toolbarIP, true);
   },
 
   /**
    * Opens the Places Organizer. 
-   * @param   place
-   *          The place to select in the organizer window (a place: URI) 
+   * @param   aLeftPaneRoot
+   *          The query to select in the organizer window - options
+   *          are: History, AllBookmarks, BookmarksMenu, BookmarksToolbar,
+   *          UnfiledBookmarks and Tags.
    */
-  showPlacesOrganizer: function PCH_showPlacesOrganizer(place) {
-    var wm = 
-        Cc["@mozilla.org/appshell/window-mediator;1"].
-        getService(Ci.nsIWindowMediator);
+  showPlacesOrganizer: function PCH_showPlacesOrganizer(aLeftPaneRoot) {
+    var wm = Cc["@mozilla.org/appshell/window-mediator;1"].
+             getService(Ci.nsIWindowMediator);
     var organizer = wm.getMostRecentWindow("Places:Organizer");
     if (!organizer) {
       // No currently open places window, so open one with the specified mode.
       openDialog("chrome://browser/content/places/places.xul", 
-                 "", "chrome,toolbar=yes,dialog=no,resizable", place);
+                 "", "chrome,toolbar=yes,dialog=no,resizable", aLeftPaneRoot);
     }
     else {
-      // Set the mode on an existing places window. 
-      organizer.selectPlaceURI(place);
+      organizer.PlacesOrganizer.selectLeftPaneQuery(aLeftPaneRoot);
       organizer.focus();
     }
   },
-  
-  /**
-   * Update the state of the tagging icon, depending on whether or not the 
-   * current page is bookmarked. 
-   */
-  updateTagButton: function PCH_updateTagButton() {
-    var bookmarkButton = document.getElementById("places-bookmark");
-    if (!bookmarkButton) 
-      return;
-      
-    var strings = document.getElementById("placeBundle");
-    var currentLocation = getBrowser().selectedBrowser.webNavigation.currentURI;
-    if (PlacesController.bookmarks.isBookmarked(currentLocation)) {
-      bookmarkButton.label = strings.getString("locationStatusBookmarked");
-      bookmarkButton.setAttribute("bookmarked", "true");
-    } else {
-      bookmarkButton.label = strings.getString("locationStatusNotBookmarked");
-      bookmarkButton.removeAttribute("bookmarked");
-    }
-  },
 
-  /**
-   * This method should be called when the bookmark button is clicked.
-   */
-  onBookmarkButtonClick: function PCH_onBookmarkButtonClick() {
-    var currentURI = getBrowser().selectedBrowser.webNavigation.currentURI;
-    PlacesController.showAddBookmarkUI(currentURI);
+  deleteButtonOnCommand: function PCH_deleteButtonCommand() {
+    PlacesUtils.bookmarks.removeItem(gEditItemOverlay.itemId);
+
+    // remove all tags for the associated url
+    PlacesUtils.tagging.untagURI(gEditItemOverlay._uri, null);
+
+    this.panel.hidePopup();
   }
 };
 
 // Functions for the history menu.
 var HistoryMenu = {
-
   /**
-   * Updates the history menu with the session history of the current tab.
-   * This function is called every time the history menu is shown.
-   * @param menu 
-   *        XULNode for the history menu
+   * popupshowing handler for the history menu.
+   * @param aMenuPopup
+   *        XULNode for the history menupopup
    */
-  update: function PHM_update(menu) {
-    FillHistoryMenu(menu, "history", document.getElementById("endTabHistorySeparator"));
-  },
+  onPopupShowing: function PHM_onPopupShowing(aMenuPopup) {
+    var resultNode = aMenuPopup.getResultNode();
+    var wasOpen = resultNode.containerOpen;
+    resultNode.containerOpen = true;
+    document.getElementById("endHistorySeparator").hidden =
+      resultNode.childCount == 0;
 
-  /**
-   * Shows the places search page.
-   * (Will be fully implemented when there is a places search page.)
-   */
-  showPlacesSearch: function PHM_showPlacesSearch() {
-    // XXX The places view needs to be updated before this
-    // does something different than show history.
-    PlacesCommandHook.showPlacesOrganizer(ORGANIZER_ROOT_HISTORY);
+    if (!wasOpen)
+      resultNode.containerOpen = false;
+
+    // HistoryMenu.toggleRecentlyClosedTabs is defined in browser.js
+    this.toggleRecentlyClosedTabs();
   }
 };
 
@@ -304,99 +595,181 @@ var BookmarksEventHandler = {
   /**
    * Handler for click event for an item in the bookmarks toolbar or menu.
    * Menus and submenus from the folder buttons bubble up to this handler.
-   * Only handle middle-click; left-click is handled in the onCommand function.
-   * When items are middle-clicked, open them in tabs.
+   * Left-click is handled in the onCommand function.
+   * When items are middle-clicked (or clicked with modifier), open in tabs.
    * If the click came through a menu, close the menu.
-   * @param event DOMEvent for the click
+   * @param aEvent
+   *        DOMEvent for the click
    */
-  onClick: function BT_onClick(event) {
-    // Only handle middle-clicks.
-    if (event.button != 1)
+  onClick: function BT_onClick(aEvent) {
+    // Only handle middle-click or left-click with modifiers.
+#ifdef XP_MACOSX
+    var modifKey = aEvent.metaKey || aEvent.shiftKey;
+#else
+    var modifKey = aEvent.ctrlKey || aEvent.shiftKey;
+#endif
+    if (aEvent.button == 2 || (aEvent.button == 0 && !modifKey))
       return;
-    
-    PlacesController.openLinksInTabs();
-    
-    // If this event bubbled up from a menu or menuitem,
-    // close the menus.
-    if (event.target.localName == "menu" ||
-        event.target.localName == "menuitem") {
-      var node = event.target.parentNode;
-      while (node && 
-             (node.localName == "menu" || 
-              node.localName == "menupopup")) {
+
+    var target = aEvent.originalTarget;
+    // If this event bubbled up from a menu or menuitem, close the menus.
+    // Do this before opening tabs, to avoid hiding the open tabs confirm-dialog.
+    if (target.localName == "menu" || target.localName == "menuitem") {
+      for (node = target.parentNode; node; node = node.parentNode) {
         if (node.localName == "menupopup")
           node.hidePopup();
-        
-        node = node.parentNode;
+        else if (node.localName != "menu")
+          break;
       }
     }
+
+    if (target.node && PlacesUtils.nodeIsContainer(target.node)) {
+      // Don't open the root folder in tabs when the empty area on the toolbar
+      // is middle-clicked or when a non-bookmark item except for Open in Tabs)
+      // in a bookmarks menupopup is middle-clicked.
+      if (target.localName == "menu" || target.localName == "toolbarbutton")
+        PlacesUIUtils.openContainerNodeInTabs(target.node, aEvent);
+    }
+    else if (aEvent.button == 1) {
+      // left-clicks with modifier are already served by onCommand
+      this.onCommand(aEvent);
+    }
   },
-  
+
   /**
    * Handler for command event for an item in the bookmarks toolbar.
    * Menus and submenus from the folder buttons bubble up to this handler.
    * Opens the item.
-   * @param event 
+   * @param aEvent 
    *        DOMEvent for the command
    */
-  onCommand: function BM_onCommand(event) {
-    // If this is the special "Open in Tabs" menuitem, load all the menuitems in tabs.
-    if (event.target.hasAttribute("openInTabs"))
-      PlacesController.openLinksInTabs();
-    else if (event.target.hasAttribute("siteURI"))
-      openUILink(event.target.getAttribute("siteURI"), event);
-    // If this is a normal bookmark, just load the bookmark's URI.
-    else
-      PlacesController.mouseLoadURI(event);
+  onCommand: function BM_onCommand(aEvent) {
+    var target = aEvent.originalTarget;
+    if (target.node)
+      PlacesUIUtils.openNodeWithEvent(target.node, aEvent);
   },
-  
+
   /**
    * Handler for popupshowing event for an item in bookmarks toolbar or menu.
-   * If the item isn't the main bookmarks menu, add an "Open in Tabs" menuitem
-   * to the bottom of the popup.
+   * If the item isn't the main bookmarks menu, add an "Open All in Tabs"
+   * menuitem to the bottom of the popup.
    * @param event 
    *        DOMEvent for popupshowing
    */
   onPopupShowing: function BM_onPopupShowing(event) {
-    var target = event.target;
+    var target = event.originalTarget;
+    if (!target.hasAttribute("placespopup"))
+      return;
 
-    if (target.localName == "menupopup" && target.id != "bookmarksMenuPopup") {
-      // Show "Open in Tabs" menuitem if there are at least
-      // two menuitems with places result nodes.
-      var numNodes = 0;
-      var currentChild = target.firstChild;
-      while (currentChild && numNodes < 2) {
-        if (currentChild.node && currentChild.localName == "menuitem")
-          numNodes++;
-        currentChild = currentChild.nextSibling;
-      }
-      if (numNodes >= 2) {
-        var separator = document.createElement("menuseparator");
-        target.appendChild(separator);
-
-        var strings = document.getElementById("placeBundle");
-
-        var button = target.parentNode;
-        if (button.getAttribute("livemark") == "true") {
-          // Live bookmarks aren't required to have site URIs
-          if (button.hasAttribute("siteURI")) {
-            var openHomePage = document.createElement("menuitem");
-            openHomePage.setAttribute(
-                "siteURI", button.getAttribute("siteURI"));
-            openHomePage.setAttribute(
-                "label",
-                strings.getFormattedString("menuOpenLivemarkOrigin.label",
-                                           [button.getAttribute("label")]));
-            target.appendChild(openHomePage);
-          }
+    // Check if the popup contains at least 2 menuitems with places nodes
+    var numNodes = 0;
+    var hasMultipleURIs = false;
+    var currentChild = target.firstChild;
+    while (currentChild) {
+      if (currentChild.localName == "menuitem" && currentChild.node) {
+        if (++numNodes == 2) {
+          hasMultipleURIs = true;
+          break;
         }
-
-        var openInTabs = document.createElement("menuitem");
-        openInTabs.setAttribute("openInTabs", "true");
-        openInTabs.setAttribute("label", strings.getString("menuOpenInTabs.label"));
-        target.appendChild(openInTabs);
       }
+      currentChild = currentChild.nextSibling;
     }
+
+    var itemId = target._resultNode.itemId;
+    var siteURIString = "";
+    if (itemId != -1 && PlacesUtils.livemarks.isLivemark(itemId)) {
+      var siteURI = PlacesUtils.livemarks.getSiteURI(itemId);
+      if (siteURI)
+        siteURIString = siteURI.spec;
+    }
+
+    if (!siteURIString && target._endOptOpenSiteURI) {
+        target.removeChild(target._endOptOpenSiteURI);
+        target._endOptOpenSiteURI = null;
+    }
+
+    if (!hasMultipleURIs && target._endOptOpenAllInTabs) {
+      target.removeChild(target._endOptOpenAllInTabs);
+      target._endOptOpenAllInTabs = null;
+    }
+
+    if (!(hasMultipleURIs || siteURIString)) {
+      // we don't have to show any option
+      if (target._endOptSeparator) {
+        target.removeChild(target._endOptSeparator);
+        target._endOptSeparator = null;
+        target._endMarker = -1;
+      }
+      return;
+    }
+
+    if (!target._endOptSeparator) {
+      // create a separator before options
+      target._endOptSeparator = document.createElement("menuseparator");
+      target._endOptSeparator.setAttribute("builder", "end");
+      target._endMarker = target.childNodes.length;
+      target.appendChild(target._endOptSeparator);
+    }
+
+    if (siteURIString && !target._endOptOpenSiteURI) {
+      // Add "Open (Feed Name)" menuitem if it's a livemark with a siteURI
+      target._endOptOpenSiteURI = document.createElement("menuitem");
+      target._endOptOpenSiteURI.setAttribute("siteURI", siteURIString);
+      target._endOptOpenSiteURI.setAttribute("oncommand",
+          "openUILink(this.getAttribute('siteURI'), event);");
+      // If a user middle-clicks this item we serve the oncommand event
+      // We are using checkForMiddleClick because of Bug 246720
+      // Note: stopPropagation is needed to avoid serving middle-click 
+      // with BT_onClick that would open all items in tabs
+      target._endOptOpenSiteURI.setAttribute("onclick",
+          "checkForMiddleClick(this, event); event.stopPropagation();");
+      target._endOptOpenSiteURI.setAttribute("label",
+          PlacesUIUtils.getFormattedString("menuOpenLivemarkOrigin.label",
+          [target.parentNode.getAttribute("label")]));
+      target.appendChild(target._endOptOpenSiteURI);
+    }
+
+    if (hasMultipleURIs && !target._endOptOpenAllInTabs) {
+        // Add the "Open All in Tabs" menuitem if there are
+        // at least two menuitems with places result nodes.
+        target._endOptOpenAllInTabs = document.createElement("menuitem");
+        target._endOptOpenAllInTabs.setAttribute("oncommand",
+            "PlacesUIUtils.openContainerNodeInTabs(this.parentNode._resultNode, event);");
+        target._endOptOpenAllInTabs.setAttribute("onclick",
+            "checkForMiddleClick(this, event); event.stopPropagation();");
+        target._endOptOpenAllInTabs.setAttribute("label",
+            gNavigatorBundle.getString("menuOpenAllInTabs.label"));
+        target.appendChild(target._endOptOpenAllInTabs);
+    }
+  },
+
+  fillInBTTooltip: function(aTipElement) {
+    // Fx2XP: Don't show tooltips for bookmarks under sub-folders
+    if (aTipElement.localName != "toolbarbutton")
+      return false;
+
+    // Fx2XP: Only show tooltips for URL items
+    if (!PlacesUtils.nodeIsURI(aTipElement.node))
+      return false;
+
+    var url = aTipElement.node.uri;
+    if (!url) 
+      return false;
+
+    var tooltipUrl = document.getElementById("btUrlText");
+    tooltipUrl.value = url;
+
+    var title = aTipElement.label;
+    var tooltipTitle = document.getElementById("btTitleText");
+    if (title && title != url) {
+      tooltipTitle.hidden = false;
+      tooltipTitle.value = title;
+    }
+    else
+      tooltipTitle.hidden = true;
+
+    // show tooltip
+    return true;
   }
 };
 
@@ -420,12 +793,9 @@ var BookmarksMenuDropHandler = {
    * @returns a FlavourSet object per nsDragAndDrop parlance.
    */
   getSupportedFlavours: function BMDH_getSupportedFlavours() {
-    var flavorSet = new FlavourSet();
     var view = document.getElementById("bookmarksMenuPopup");
-    for (var i = 0; i < view.peerDropTypes.length; ++i)
-      flavorSet.appendFlavour(view.peerDropTypes[i]);
-    return flavorSet;
-  }, 
+    return view.getSupportedFlavours();
+  },
 
   /**
    * Determine whether or not the user can drop on the Bookmarks Menu.
@@ -437,10 +807,10 @@ var BookmarksMenuDropHandler = {
    *          otherwise.
    */
   canDrop: function BMDH_canDrop(event, session) {
-    var view = document.getElementById("bookmarksMenuPopup");
-    return PlacesControllerDragHelper.canDrop(view, -1);
+    var ip = new InsertionPoint(PlacesUtils.bookmarksMenuFolderId, -1);  
+    return ip && PlacesControllerDragHelper.canDrop(ip);
   },
-  
+
   /**
    * Called when the user drops onto the top level Bookmarks Menu item.
    * @param   event
@@ -451,13 +821,9 @@ var BookmarksMenuDropHandler = {
    *          The active DragSession
    */
   onDrop: function BMDH_onDrop(event, data, session) {
-    var view = document.getElementById("bookmarksMenuPopup");
-    PlacesController.activeView = view;
-    // The insertion point for a menupopup view should be -1 during a drag
-    // & drop operation.
-    NS_ASSERT(view.insertionPoint.index == -1, "Insertion point for an menupopup view during a drag must be -1!");
-    PlacesControllerDragHelper.onDrop(null, view, view.insertionPoint, 1);
-    view._rebuild();
+    // Put the item at the end of bookmark menu
+    var ip = new InsertionPoint(PlacesUtils.bookmarksMenuFolderId, -1);
+    PlacesControllerDragHelper.onDrop(ip);
   }
 };
 
@@ -466,18 +832,6 @@ var BookmarksMenuDropHandler = {
  * Toolbar and Bookmarks Menu.
  */
 var PlacesMenuDNDController = {
-  
-  /**
-   * Attach a special context menu hiding listener that ensures that popups 
-   * are properly closed after a context menu is hidden. See bug 332845 for 
-   * why we have to do this.
-   */
-  init: function PMDC_init() {
-    var placesContext = document.getElementById("placesContext");
-    var self = this;
-    placesContext.addEventListener("popuphidden", function () { self._closePopups() }, false);
-  },
-
   _springLoadDelay: 350, // milliseconds
 
   /**
@@ -496,21 +850,6 @@ var PlacesMenuDNDController = {
     
     this._setDragTimer("loadTime", this._openBookmarksMenu, 
                        this._springLoadDelay, [event]);
-  },
-  
-  /**
-   * When the user drags out of the Bookmarks Menu or Toolbar, set a timer to 
-   * manually close the popup chain that was dragged out of. We need to do this
-   * since the global popup dismissal listener does not handle multiple extant
-   * popup chains well. See bug 332845 for more information.
-   */
-  onDragExit: function PMDC_onDragExit(event) {
-    // Ensure that we don't set multiple timers if there's one already set.
-    if ("closeTime" in this._timers)
-      return;
-      
-    this._setDragTimer("closeTime", this._closePopups, 
-                       this._springLoadDelay, [event.target]);
   },
   
   /**
@@ -550,8 +889,6 @@ var PlacesMenuDNDController = {
     var timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
     timer.initWithCallback(new Callback(this, callback, args), delay, 
                            timer.TYPE_ONE_SHOT);
-    timer.QueryInterface(Ci.nsITimerInternal);
-    timer.idle = false;
     this._timers[id] = timer;
   },
   
@@ -566,36 +903,6 @@ var PlacesMenuDNDController = {
   },
   
   /**
-   * Close all pieces of toplevel menu UI in the browser window. Called in 
-   * circumstances where there may be multiple chains of menupopups, e.g. 
-   * during drag and drop operations between menus, and in context menu-on-
-   * menu situations.
-   */
-  _closePopups: function PMDC__closePopups(target) {
-    if (PlacesControllerDragHelper.draggingOverChildNode(target))
-      return;
-
-    if ("closeTime" in this._timers)
-      delete this._timers.closeTime;
-    
-    // Close the bookmarks menu
-    var bookmarksMenu = document.getElementById("bookmarksMenu");
-    bookmarksMenu.firstChild.hidePopupAndChildPopups();
-
-    var bookmarksBar = document.getElementById("bookmarksBarContent");
-    // Close the overflow chevron menu and all its children
-    bookmarksBar._chevron.firstChild.hidePopupAndChildPopups();
-    
-    // Close all popups on the bookmarks toolbar
-    var toolbarItems = bookmarksBar.childNodes;
-    for (var i = 0; i < toolbarItems.length; ++i) {
-      var item = toolbarItems[i]
-      if (this._isContainer(item))
-        item.firstChild.hidePopupAndChildPopups();
-    }
-  },
-  
-  /**
    * Opens the Bookmarks Menu when it is dragged over. (This is special-cased, 
    * since the toplevel Bookmarks <menu> is not a member of an existing places
    * container, as folders on the personal toolbar or submenus are. 
@@ -607,6 +914,7 @@ var PlacesMenuDNDController = {
       delete this._timers.loadTime;
     if (event.target.id == "bookmarksMenu") {
       // If this is the bookmarks menu, tell its menupopup child to show.
+      event.target.lastChild.setAttribute("autoopened", "true");
       event.target.lastChild.showPopup(event.target.lastChild);
     }  
   },
@@ -614,8 +922,144 @@ var PlacesMenuDNDController = {
   // Whether or not drag and drop to menus is supported on this platform
   // Dragging in menus is disabled on OS X due to various repainting issues.
 #ifdef XP_MACOSX
-  _dragSupported: false,
+  _dragSupported: false
 #else
-  _dragSupported: true,
+  _dragSupported: true
 #endif
 };
+
+var PlacesStarButton = {
+  init: function PSB_init() {
+    PlacesUtils.bookmarks.addObserver(this, false);
+  },
+
+  uninit: function PSB_uninit() {
+    PlacesUtils.bookmarks.removeObserver(this);
+  },
+
+  QueryInterface: function PSB_QueryInterface(aIID) {
+    if (aIID.equals(Ci.nsINavBookmarkObserver) ||
+        aIID.equals(Ci.nsISupports))
+      return this;
+
+    throw Cr.NS_NOINTERFACE;
+  },
+
+  _starred: false,
+  _batching: false,
+
+  updateState: function PSB_updateState() {
+    var starIcon = document.getElementById("star-button");
+    if (!starIcon)
+      return;
+
+    var browserBundle = document.getElementById("bundle_browser");
+    var uri = getBrowser().currentURI;
+    this._starred = uri && (PlacesUtils.getMostRecentBookmarkForURI(uri) != -1 ||
+                            PlacesUtils.getMostRecentFolderForFeedURI(uri) != -1);
+    if (this._starred) {
+      starIcon.setAttribute("starred", "true");
+      starIcon.setAttribute("tooltiptext", browserBundle.getString("starButtonOn.tooltip"));
+    }
+    else {
+      starIcon.removeAttribute("starred");
+      starIcon.setAttribute("tooltiptext", browserBundle.getString("starButtonOff.tooltip"));
+    }
+  },
+
+  onClick: function PSB_onClick(aEvent) {
+    if (aEvent.button == 0)
+      PlacesCommandHook.bookmarkCurrentPage(this._starred);
+
+    // don't bubble to the textbox so that the address won't be selected
+    aEvent.stopPropagation();
+  },
+
+  // nsINavBookmarkObserver  
+  onBeginUpdateBatch: function PSB_onBeginUpdateBatch() {
+    this._batching = true;
+  },
+
+  onEndUpdateBatch: function PSB_onEndUpdateBatch() {
+    this.updateState();
+    this._batching = false;
+  },
+  
+  onItemAdded: function PSB_onItemAdded(aItemId, aFolder, aIndex) {
+    if (!this._batching && !this._starred)
+      this.updateState();
+  },
+
+  onItemRemoved: function PSB_onItemRemoved(aItemId, aFolder, aIndex) {
+    if (!this._batching)
+      this.updateState();
+  },
+
+  onItemChanged: function PSB_onItemChanged(aItemId, aProperty,
+                                            aIsAnnotationProperty, aValue) {
+    if (!this._batching && aProperty == "uri")
+      this.updateState();
+  },
+
+  onItemVisited: function() { },
+  onItemMoved: function() { }
+};
+
+/**
+ * Various migration tasks.
+ */
+function placesMigrationTasks() {
+  // bug 398914 - move all post-data annotations from URIs to bookmarks
+  // XXX - REMOVE ME FOR BETA 3 (bug 391419)
+  if (gPrefService.getBoolPref("browser.places.migratePostDataAnnotations")) {
+    const annosvc = PlacesUtils.annotations;
+    var bmsvc = PlacesUtils.bookmarks;
+    const oldPostDataAnno = "URIProperties/POSTData";
+    var pages = annosvc.getPagesWithAnnotation(oldPostDataAnno, {});
+    for (let i = 0; i < pages.length; i++) {
+      try {
+        let uri = pages[i];
+        var postData = annosvc.getPageAnnotation(uri, oldPostDataAnno);
+        // We can't know which URI+keyword combo this postdata was for, but
+        // it's very likely that if this URI is bookmarked and has a keyword
+        // *and* the URI has postdata, then this bookmark was using the
+        // postdata. Propagate the annotation to all bookmarks for this URI
+        // just to be safe.
+        let bookmarks = bmsvc.getBookmarkIdsForURI(uri, {});
+        for (let i = 0; i < bookmarks.length; i++) {
+          var keyword = bmsvc.getKeywordForBookmark(bookmarks[i]);
+          if (keyword)
+            annosvc.setItemAnnotation(bookmarks[i], POST_DATA_ANNO, postData, 0, annosvc.EXPIRE_NEVER); 
+        }
+        // Remove the old annotation.
+        annosvc.removePageAnnotation(uri, oldPostDataAnno);
+      } catch(ex) {}
+    }
+    gPrefService.setBoolPref("browser.places.migratePostDataAnnotations", false);
+  }
+
+  if (gPrefService.getBoolPref("browser.places.updateRecentTagsUri")) {
+    var oldUriSpec = "place:folder=TAGS&group=3&queryType=1" +
+                     "&applyOptionsToContainers=1&sort=12&maxResults=10";
+
+    var maxResults = 10;
+    var newUriSpec = "place:type=" + 
+                     Ci.nsINavHistoryQueryOptions.RESULTS_AS_TAG_QUERY +
+                     "&sort=" + 
+                     Ci.nsINavHistoryQueryOptions.SORT_BY_LASTMODIFIED_DESCENDING +
+                     "&maxResults=" + maxResults;
+                     
+    var ios = Cc["@mozilla.org/network/io-service;1"].
+              getService(Ci.nsIIOService);
+
+    var oldUri = ios.newURI(oldUriSpec, null, null);
+    var newUri = ios.newURI(newUriSpec, null, null);
+
+    let bmsvc = PlacesUtils.bookmarks;
+    let bookmarks = bmsvc.getBookmarkIdsForURI( oldUri, {});
+    for (let i = 0; i < bookmarks.length; i++) {
+      bmsvc.changeBookmarkURI( bookmarks[i], newUri);
+    }
+    gPrefService.setBoolPref("browser.places.updateRecentTagsUri", false);
+  }
+}

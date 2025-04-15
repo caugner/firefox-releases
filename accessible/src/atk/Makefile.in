@@ -50,6 +50,7 @@ REQUIRES	= content \
 		  dom \
 		  editor \
 		  gfx \
+		  thebes \
 		  intl \
 		  layout \
 		  locale \
@@ -68,13 +69,6 @@ CPPSRCS = \
   nsDocAccessibleWrap.cpp \
   nsRootAccessibleWrap.cpp \
   nsAppRootAccessible.cpp \
-  nsAccessibleText.cpp \
-  nsAccessibleHyperText.cpp \
-  nsHTMLFormControlAccessibleWrap.cpp \
-  nsHTMLLinkAccessibleWrap.cpp \
-  nsHTMLTableAccessibleWrap.cpp \
-  nsHTMLBlockAccessible.cpp \
-  nsMaiInterface.cpp \
   nsMaiInterfaceComponent.cpp \
   nsMaiInterfaceAction.cpp \
   nsMaiInterfaceText.cpp \
@@ -83,15 +77,17 @@ CPPSRCS = \
   nsMaiInterfaceValue.cpp \
   nsMaiHyperlink.cpp \
   nsMaiInterfaceHypertext.cpp \
+  nsMaiInterfaceHyperlinkImpl.cpp \
   nsMaiInterfaceTable.cpp \
+  nsMaiInterfaceDocument.cpp \
+  nsMaiInterfaceImage.cpp \
   $(NULL)
 
-#ifdef MOZ_XUL
+ifdef MOZ_XUL
 CPPSRCS += \
-  nsXULFormControlAccessibleWrap.cpp \
   nsXULTreeAccessibleWrap.cpp \
   $(NULL)
-#endif
+endif
 
 EXPORTS = \
   nsAccessNodeWrap.h \
@@ -101,7 +97,10 @@ EXPORTS = \
   nsTextAccessibleWrap.h \
   nsXULMenuAccessibleWrap.h \
   nsXULTreeAccessibleWrap.h \
-  nsAccessibleText.h \
+  nsHyperTextAccessibleWrap.h \
+  nsHTMLImageAccessibleWrap.h \
+  nsHTMLTableAccessibleWrap.h \
+  nsAccessibleRelationWrap.h \
   $(NULL)
 
 # we want to force the creation of a static lib.
@@ -119,4 +118,5 @@ LOCAL_INCLUDES += \
   -I$(srcdir)/../base \
   -I$(srcdir)/../html \
   -I$(srcdir)/../xul \
+  -I$(topsrcdir)/other-licenses/atk-1.0 \
   $(NULL)

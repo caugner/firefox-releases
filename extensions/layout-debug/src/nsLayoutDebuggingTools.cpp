@@ -42,8 +42,7 @@
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeNode.h"
 #include "nsIDocShellTreeItem.h"
-#include "nsIDOMWindow.h"
-#include "nsIScriptGlobalObject.h"
+#include "nsPIDOMWindow.h"
 #include "nsIDocumentViewer.h"
 
 #include "nsIServiceManager.h"
@@ -150,10 +149,10 @@ NS_IMETHODIMP
 nsLayoutDebuggingTools::Init(nsIDOMWindow *aWin)
 {
     {
-        nsCOMPtr<nsIScriptGlobalObject> global = do_QueryInterface(aWin);
-        if (!global)
+        nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aWin);
+        if (!window)
             return NS_ERROR_UNEXPECTED;
-        mDocShell = global->GetDocShell();
+        mDocShell = window->GetDocShell();
     }
 
     mPrefs = do_GetService(NS_PREF_CONTRACTID);
@@ -349,11 +348,11 @@ static void DumpAWebShell(nsIDocShellTreeItem* aShellItem, FILE* out, PRInt32 aI
     for (i = aIndent; --i >= 0; )
         fprintf(out, "  ");
 
-    fprintf(out, "%p '", NS_STATIC_CAST(void*, aShellItem));
+    fprintf(out, "%p '", static_cast<void*>(aShellItem));
     aShellItem->GetName(getter_Copies(name));
     aShellItem->GetSameTypeParent(getter_AddRefs(parent));
-    fputs(NS_LossyConvertUCS2toASCII(name).get(), out);
-    fprintf(out, "' parent=%p <\n", NS_STATIC_CAST(void*, parent));
+    fputs(NS_LossyConvertUTF16toASCII(name).get(), out);
+    fprintf(out, "' parent=%p <\n", static_cast<void*>(parent));
 
     ++aIndent;
     nsCOMPtr<nsIDocShellTreeNode> shellAsNode(do_QueryInterface(aShellItem));
@@ -385,7 +384,7 @@ DumpContentRecur(nsIDocShell* aDocShell, FILE* out)
 {
 #ifdef DEBUG
     if (nsnull != aDocShell) {
-        fprintf(out, "docshell=%p \n", NS_STATIC_CAST(void*, aDocShell));
+        fprintf(out, "docshell=%p \n", static_cast<void*>(aDocShell));
         nsCOMPtr<nsIDocument> doc(document(aDocShell));
         if (doc) {
             nsIContent *root = doc->GetRootContent();
@@ -423,14 +422,14 @@ static void
 DumpFramesRecur(nsIDocShell* aDocShell, FILE* out)
 {
     if (nsnull != aDocShell) {
-        fprintf(out, "webshell=%p \n", NS_STATIC_CAST(void*, aDocShell));
+        fprintf(out, "webshell=%p \n", static_cast<void*>(aDocShell));
         nsCOMPtr<nsIPresShell> shell(pres_shell(aDocShell));
         if (shell) {
             nsIFrame* root = shell->GetRootFrame();
             if (root) {
                 nsIFrameDebug* fdbg;
                 if (NS_SUCCEEDED(CallQueryInterface(root, &fdbg))) {
-                    fdbg->List(shell->GetPresContext(), out, 0);
+                    fdbg->List(out, 0);
                 }
             }
         }
@@ -466,7 +465,7 @@ DumpViewsRecur(nsIDocShell* aDocShell, FILE* out)
 {
 #ifdef DEBUG
     if (aDocShell) {
-        fprintf(out, "docshell=%p \n", NS_STATIC_CAST(void*, aDocShell));
+        fprintf(out, "docshell=%p \n", static_cast<void*>(aDocShell));
         nsCOMPtr<nsIViewManager> vm(view_manager(aDocShell));
         if (vm) {
             nsIView* root;

@@ -86,6 +86,10 @@
 #include "nsIObserverService.h"
 #include "nsITextToSubURI.h"
 
+#include "nsIGenericFactory.h"
+#include "nsToolkitCompsCID.h"
+#include "nsDocShellCID.h"
+
 PRInt32 nsGlobalHistory::gRefCnt;
 nsIRDFService* nsGlobalHistory::gRDFService;
 nsIRDFResource* nsGlobalHistory::kNC_Page;
@@ -132,7 +136,6 @@ nsIPrefBranch* nsGlobalHistory::gPrefBranch = nsnull;
 // CIDs
 
 static NS_DEFINE_CID(kRDFServiceCID,        NS_RDFSERVICE_CID);
-static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
 
 // closure structures for RemoveMatchingRows
 struct matchExpiration_t {
@@ -544,14 +547,29 @@ nsGlobalHistory::~nsGlobalHistory()
 //
 //   nsISupports methods
 
-NS_IMPL_ISUPPORTS7(nsGlobalHistory,
-                   nsIGlobalHistory2,
-                   nsIBrowserHistory,
-                   nsIObserver,
-                   nsISupportsWeakReference,
-                   nsIRDFDataSource,
-                   nsIRDFRemoteDataSource,
-                   nsIAutoCompleteSearch)
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsGlobalHistory)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalHistory)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mObservers)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsGlobalHistory)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mObservers)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsGlobalHistory, nsIBrowserHistory)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsGlobalHistory, nsIBrowserHistory)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsGlobalHistory)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsIGlobalHistory2, nsIGlobalHistory3)
+  NS_INTERFACE_MAP_ENTRY(nsIGlobalHistory3)
+  NS_INTERFACE_MAP_ENTRY(nsIBrowserHistory)
+  NS_INTERFACE_MAP_ENTRY(nsIObserver)
+  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
+  NS_INTERFACE_MAP_ENTRY(nsIRDFDataSource)
+  NS_INTERFACE_MAP_ENTRY(nsIRDFRemoteDataSource)
+  NS_INTERFACE_MAP_ENTRY(nsIAutoCompleteSearch)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIBrowserHistory)
+NS_INTERFACE_MAP_END
 
 //----------------------------------------------------------------------
 //
@@ -919,10 +937,10 @@ nsGlobalHistory::SetRowValue(nsIMdbRow *aRow, mdb_column aCol,
   PRInt32 len = (nsCRT::strlen(aValue) * sizeof(PRUnichar));
   PRUnichar *swapval = nsnull;
 
-  // eventually turn this on when we're confident in mork's abilitiy
+  // eventually turn this on when we're confident in mork's ability
   // to handle yarn forms properly
 #if 0
-  NS_ConvertUCS2toUTF8 utf8Value(aValue);
+  NS_ConvertUTF16toUTF8 utf8Value(aValue);
   printf("Storing utf8 value %s\n", utf8Value.get());
   mdbYarn yarn = { (void *)utf8Value.get(), utf8Value.Length(), utf8Value.Length(), 0, 1, nsnull };
 #else
@@ -1006,7 +1024,7 @@ nsGlobalHistory::GetRowValue(nsIMdbRow *aRow, mdb_column aCol,
 
     // eventually we'll be supporting this in SetRowValue()
   case 1:                       // UTF8
-    aResult.Assign(NS_ConvertUTF8toUCS2((const char*)yarn.mYarn_Buf, yarn.mYarn_Fill));
+    aResult.Assign(NS_ConvertUTF8toUTF16((const char*)yarn.mYarn_Buf, yarn.mYarn_Fill));
     break;
 
   default:
@@ -1119,6 +1137,9 @@ nsGlobalHistory::SetPageTitle(nsIURI *aURI, const nsAString& aTitle)
   NS_ENSURE_ARG_POINTER(aURI);
 
   nsAutoString titleString(StringHead(aTitle, HISTORY_TITLE_LENGTH_MAX));
+  if (titleString.Length() < aTitle.Length() &&
+      NS_IS_HIGH_SURROGATE(titleString.Last()))
+    titleString.Truncate(titleString.Length()-1);
 
   // skip about: URIs to avoid reading in the db (about:blank, especially)
   PRBool isAbout;
@@ -1191,11 +1212,8 @@ nsGlobalHistory::RemovePagesFromHost(const nsACString &aHost, PRBool aEntireDoma
   hostInfo.history = this;
   hostInfo.entireDomain = aEntireDomain;
   hostInfo.host = host.get();
-  
-  nsresult rv = RemoveMatchingRows(matchHostCallback, (void *)&hostInfo, PR_TRUE);
-  if (NS_FAILED(rv)) return rv;
 
-  return Commit(kCompressCommit);
+  return RemoveMatchingRows(matchHostCallback, (void *)&hostInfo, PR_TRUE);
 }
 
 PRBool
@@ -1328,7 +1346,10 @@ nsGlobalHistory::RemoveMatchingRows(rowMatchCallback aMatchFunc,
 
   EndUpdateBatch();
 
-  return ( err == 0) ? NS_OK : NS_ERROR_FAILURE;
+  if (err != 0)
+    return NS_ERROR_FAILURE;
+
+  return Commit(kCompressCommit);
 }
 
 NS_IMETHODIMP
@@ -1479,6 +1500,56 @@ nsGlobalHistory::MarkPageAsTyped(nsIURI *aURI)
   return SetRowValue(row, kToken_TypedColumn, 1);
 }
 
+NS_IMETHODIMP
+nsGlobalHistory::AddDocumentRedirect(nsIChannel *aOldChannel,
+                                     nsIChannel *aNewChannel,
+                                     PRInt32 aFlags,
+                                     PRBool aTopLevel)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsGlobalHistory::SetURIGeckoFlags(nsIURI *aURI, PRUint32 aFlags)
+{
+  NS_ENSURE_ARG_POINTER(aURI);
+  nsCAutoString spec;
+  nsresult rv = aURI->GetSpec(spec);
+  if (NS_FAILED(rv))
+    return rv;
+
+  nsCOMPtr<nsIMdbRow> row;
+  rv = FindRow(kToken_URLColumn, spec.get(), getter_AddRefs(row));
+  if (NS_FAILED(rv))
+    return rv;
+
+  return SetRowValue(row, kToken_GeckoFlagsColumn, (PRInt32)aFlags);
+}
+
+NS_IMETHODIMP
+nsGlobalHistory::GetURIGeckoFlags(nsIURI *aURI, PRUint32* aFlags)
+{
+  NS_ENSURE_ARG_POINTER(aURI);
+  nsCAutoString spec;
+  nsresult rv = aURI->GetSpec(spec);
+  if (NS_FAILED(rv))
+    return rv;
+
+  nsCOMPtr<nsIMdbRow> row;
+  rv = FindRow(kToken_URLColumn, spec.get(), getter_AddRefs(row));
+  if (NS_FAILED(rv))
+    return rv;
+
+  if (!HasCell(mEnv, row, kToken_GeckoFlagsColumn))
+    return NS_ERROR_FAILURE;
+
+  PRInt32 val;
+  mdb_err err = GetRowValue(row, kToken_GeckoFlagsColumn, &val);
+  NS_ENSURE_TRUE(err == 0, NS_ERROR_FAILURE);
+  *aFlags = val;
+  return NS_OK;
+}
+
 //----------------------------------------------------------------------
 //
 // nsGlobalHistory
@@ -1524,7 +1595,7 @@ nsGlobalHistory::GetSource(nsIRDFResource* aProperty,
     // XXX We could be more forgiving here, and check for literal
     // values as well.
     nsCOMPtr<nsIRDFResource> target = do_QueryInterface(aTarget);
-    if (IsURLInHistory(target))
+    if (target && IsURLInHistory(target))
       return CallQueryInterface(aTarget, aSource);
     
   }
@@ -1749,7 +1820,7 @@ nsGlobalHistory::GetTarget(nsIRDFResource* aSource,
     if (aProperty == kNC_URL && !IsFindResource(aSource)) {
       
       nsCOMPtr<nsIRDFLiteral> uriLiteral;
-      rv = gRDFService->GetLiteral(NS_ConvertUTF8toUCS2(uri).get(), getter_AddRefs(uriLiteral));
+      rv = gRDFService->GetLiteral(NS_ConvertUTF8toUTF16(uri).get(), getter_AddRefs(uriLiteral));
       if (NS_FAILED(rv))    return(rv);
       *aTarget = uriLiteral;
       NS_ADDREF(*aTarget);
@@ -1769,10 +1840,10 @@ nsGlobalHistory::GetTarget(nsIRDFResource* aSource,
         nsCOMPtr<nsIRDFLiteral> literal; 
 
         for (PRInt32 i = 0; i < tokenList.Count(); ++i) {
-          tokenPair* token = NS_STATIC_CAST(tokenPair*, tokenList[i]);
+          tokenPair* token = static_cast<tokenPair*>(tokenList[i]);
 
           if (!strncmp(token->tokenName, "text", token->tokenNameLength)) {
-            rv = gRDFService->GetLiteral(NS_ConvertUTF8toUCS2(Substring(token->tokenValue, token->tokenValue + token->tokenValueLength)).get(),
+            rv = gRDFService->GetLiteral(NS_ConvertUTF8toUTF16(Substring(token->tokenValue, token->tokenValue + token->tokenValueLength)).get(),
                                          getter_AddRefs(literal));
             // We don't break out of the loop here because there could be other text tokens in the string.
             // The last one is the most specific so wait and see if we've got one...
@@ -1878,7 +1949,7 @@ nsGlobalHistory::GetTarget(nsIRDFResource* aSource,
         if (NS_FAILED(rv)) return rv;
         
         // assume the url is in UTF8
-        title = NS_ConvertUTF8toUCS2(filename);
+        title = NS_ConvertUTF8toUTF16(filename);
       }
       if (NS_FAILED(rv)) return rv;
 
@@ -2234,12 +2305,7 @@ nsGlobalHistory::AddObserver(nsIRDFObserver* aObserver)
   if (! aObserver)
     return NS_ERROR_NULL_POINTER;
 
-  if (! mObservers) {
-    nsresult rv;
-    rv = NS_NewISupportsArray(getter_AddRefs(mObservers));
-    if (NS_FAILED(rv)) return rv;
-  }
-  mObservers->AppendElement(aObserver);
+  mObservers.AppendObject(aObserver);
   return NS_OK;
 }
 
@@ -2250,10 +2316,7 @@ nsGlobalHistory::RemoveObserver(nsIRDFObserver* aObserver)
   if (! aObserver)
     return NS_ERROR_NULL_POINTER;
 
-  if (! mObservers)
-    return NS_OK;
-
-  mObservers->RemoveElement(aObserver);
+  mObservers.RemoveObject(aObserver);
 
   return NS_OK;
 }
@@ -2425,25 +2488,9 @@ nsGlobalHistory::BeginUpdateBatch()
 
   ++mBatchesInProgress;
   
-  // we could call mObservers->EnumerateForwards() here
-  // to save the addref/release on each observer, but
-  // it's unlikely that anyone but the tree builder
-  // is observing us
-  if (mObservers) {
-    PRUint32 count;
-    rv = mObservers->Count(&count);
-    if (NS_FAILED(rv)) return rv;
-
-    for (PRInt32 i = 0; i < PRInt32(count); ++i) {
-      nsIRDFObserver* observer = NS_STATIC_CAST(nsIRDFObserver*, mObservers->ElementAt(i));
-
-      NS_ASSERTION(observer != nsnull, "null ptr");
-      if (! observer)
-        continue;
-
-      rv = observer->OnBeginUpdateBatch(this);
-      NS_RELEASE(observer);
-    }
+  PRUint32 i = mObservers.Count();
+  while (i > 0) {
+    rv = mObservers[--i]->OnBeginUpdateBatch(this);
   }
   return rv;
 }
@@ -2455,25 +2502,9 @@ nsGlobalHistory::EndUpdateBatch()
 
   --mBatchesInProgress;
 
-  // we could call mObservers->EnumerateForwards() here
-  // to save the addref/release on each observer, but
-  // it's unlikely that anyone but the tree builder
-  // is observing us
-  if (mObservers) {
-    PRUint32 count;
-    rv = mObservers->Count(&count);
-    if (NS_FAILED(rv)) return rv;
-
-    for (PRInt32 i = 0; i < PRInt32(count); ++i) {
-      nsIRDFObserver* observer = NS_STATIC_CAST(nsIRDFObserver*, mObservers->ElementAt(i));
-
-      NS_ASSERTION(observer != nsnull, "null ptr");
-      if (! observer)
-        continue;
-
-      rv = observer->OnEndUpdateBatch(this);
-      NS_RELEASE(observer);
-    }
+  PRUint32 i = mObservers.Count();
+  while (i > 0) {
+    rv = mObservers[--i]->OnEndUpdateBatch(this);
   }
   return rv;
 }
@@ -2579,7 +2610,7 @@ nsGlobalHistory::Init()
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIStringBundleService> bundleService =
-    do_GetService(kStringBundleServiceCID, &rv);
+    do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
   
   if (NS_SUCCEEDED(rv)) {
     rv = bundleService->CreateBundle("chrome://global/locale/history/history.properties", getter_AddRefs(mBundle));
@@ -2609,10 +2640,7 @@ nsGlobalHistory::OpenDB()
   nsCOMPtr <nsIFile> historyFile;
   rv = NS_GetSpecialDirectory(NS_APP_HISTORY_50_FILE, getter_AddRefs(historyFile));
   NS_ENSURE_SUCCESS(rv, rv);
-
-  static NS_DEFINE_CID(kMorkCID, NS_MORK_CID);
-  nsCOMPtr<nsIMdbFactoryFactory> factoryfactory =
-      do_CreateInstance(kMorkCID, &rv);
+  nsCOMPtr <nsIMdbFactoryService> factoryfactory = do_GetService(NS_MORK_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = factoryfactory->GetMdbFactory(&gMdbFactory);
@@ -2962,6 +2990,9 @@ nsGlobalHistory::CreateTokens()
   err = mStore->StringToToken(mEnv, "Typed", &kToken_TypedColumn);
   if (err != 0) return NS_ERROR_FAILURE;
 
+  err = mStore->StringToToken(mEnv, "GeckoFlags", &kToken_GeckoFlagsColumn);
+  if (err != 0) return NS_ERROR_FAILURE;
+
   // meta-data tokens
   err = mStore->StringToToken(mEnv, "LastPageVisited", &kToken_LastPageVisited);
   err = mStore->StringToToken(mEnv, "ByteOrder", &kToken_ByteOrder);
@@ -3145,23 +3176,9 @@ nsGlobalHistory::NotifyAssert(nsIRDFResource* aSource,
                               nsIRDFResource* aProperty,
                               nsIRDFNode* aValue)
 {
-  nsresult rv;
-
-  if (mObservers) {
-    PRUint32 count;
-    rv = mObservers->Count(&count);
-    if (NS_FAILED(rv)) return rv;
-
-    for (PRInt32 i = 0; i < PRInt32(count); ++i) {
-      nsIRDFObserver* observer = NS_STATIC_CAST(nsIRDFObserver*, mObservers->ElementAt(i));
-
-      NS_ASSERTION(observer != nsnull, "null ptr");
-      if (! observer)
-        continue;
-
-      rv = observer->OnAssert(this, aSource, aProperty, aValue);
-      NS_RELEASE(observer);
-    }
+  PRUint32 i = mObservers.Count();
+  while (i > 0) {
+    mObservers[--i]->OnAssert(this, aSource, aProperty, aValue);
   }
 
   return NS_OK;
@@ -3173,23 +3190,9 @@ nsGlobalHistory::NotifyUnassert(nsIRDFResource* aSource,
                                 nsIRDFResource* aProperty,
                                 nsIRDFNode* aValue)
 {
-  nsresult rv;
-
-  if (mObservers) {
-    PRUint32 count;
-    rv = mObservers->Count(&count);
-    if (NS_FAILED(rv)) return rv;
-
-    for (PRInt32 i = 0; i < PRInt32(count); ++i) {
-      nsIRDFObserver* observer = NS_STATIC_CAST(nsIRDFObserver*, mObservers->ElementAt(i));
-
-      NS_ASSERTION(observer != nsnull, "null ptr");
-      if (! observer)
-        continue;
-
-      rv = observer->OnUnassert(this, aSource, aProperty, aValue);
-      NS_RELEASE(observer);
-    }
+  PRUint32 i = mObservers.Count();
+  while (i > 0) {
+    mObservers[--i]->OnUnassert(this, aSource, aProperty, aValue);
   }
 
   return NS_OK;
@@ -3203,23 +3206,9 @@ nsGlobalHistory::NotifyChange(nsIRDFResource* aSource,
                               nsIRDFNode* aOldValue,
                               nsIRDFNode* aNewValue)
 {
-  nsresult rv;
-
-  if (mObservers) {
-    PRUint32 count;
-    rv = mObservers->Count(&count);
-    if (NS_FAILED(rv)) return rv;
-
-    for (PRInt32 i = 0; i < PRInt32(count); ++i) {
-      nsIRDFObserver* observer = NS_STATIC_CAST(nsIRDFObserver*, mObservers->ElementAt(i));
-
-      NS_ASSERTION(observer != nsnull, "null ptr");
-      if (! observer)
-        continue;
-
-      rv = observer->OnChange(this, aSource, aProperty, aOldValue, aNewValue);
-      NS_RELEASE(observer);
-    }
+  PRUint32 i = mObservers.Count();
+  while (i > 0) {
+    mObservers[--i]->OnChange(this, aSource, aProperty, aOldValue, aNewValue);
   }
 
   return NS_OK;
@@ -3687,11 +3676,11 @@ nsGlobalHistory::GetFindUriName(const char *aURL, nsIRDFNode **aResult)
   nsAutoString stringName(NS_LITERAL_STRING("finduri-"));
 
   // property
-  stringName.Append(NS_ConvertASCIItoUCS2(term->property));
+  stringName.Append(NS_ConvertASCIItoUTF16(term->property));
   stringName.Append(PRUnichar('-'));
 
   // and now the method, such as "is" or "isgreater"
-  stringName.Append(NS_ConvertASCIItoUCS2(term->method));
+  stringName.Append(NS_ConvertASCIItoUTF16(term->method));
 
   // try adding -<text> to see if there's a match
   // for example, to match
@@ -3889,7 +3878,7 @@ nsGlobalHistory::GetFindUriPrefix(const searchQuery& aQuery,
     aResult.Append(term->method);
 
     aResult.Append("&text=");
-    aResult.Append(NS_ConvertUCS2toUTF8(term->text));
+    aResult.Append(NS_ConvertUTF16toUTF8(term->text));
   }
 
   if (aQuery.groupBy == 0) return;
@@ -4224,8 +4213,8 @@ nsGlobalHistory::StartSearch(const nsAString &aSearchString,
     
     // perform the actual search here
     nsresult rv = AutoCompleteSearch(filtered, &exclude,
-                                     NS_STATIC_CAST(nsIAutoCompleteMdbResult2 *,
-                                                    aPreviousResult),
+                                     static_cast<nsIAutoCompleteMdbResult2 *>
+                                                (aPreviousResult),
                                      getter_AddRefs(result));
     NS_ENSURE_SUCCESS(rv, rv);
   }
@@ -4356,7 +4345,7 @@ nsGlobalHistory::AutoCompleteSearch(const nsAString &aSearchString,
       nsCAutoString url;
       GetRowValue(row, kToken_URLColumn, url);
 
-      NS_ConvertUTF8toUCS2 utf8Url(url);
+      NS_ConvertUTF8toUTF16 utf8Url(url);
       if (AutoCompleteCompare(utf8Url, aSearchString, aExclude))
         resultArray.AppendObject(row);
     } while (row);
@@ -4384,7 +4373,7 @@ nsGlobalHistory::AutoCompleteSearch(const nsAString &aSearchString,
     closure.prefixes[5] = &prefixFStr;
 
     // sort it
-    resultArray.Sort(AutoCompleteSortComparison, NS_STATIC_CAST(void*, &closure));
+    resultArray.Sort(AutoCompleteSortComparison, static_cast<void*>(&closure));
 
     // place the sorted array into the autocomplete results
     PRUint32 count = resultArray.Count();
@@ -4518,7 +4507,7 @@ nsGlobalHistory::AutoCompleteSortComparison(nsIMdbRow *row1, nsIMdbRow *row2,
   //
   // cast our function parameters back into their real form
   AutoCompleteSortClosure* closure = 
-      NS_STATIC_CAST(AutoCompleteSortClosure*, closureVoid);
+      static_cast<AutoCompleteSortClosure*>(closureVoid);
 
   // get visit counts - we're ignoring all errors from GetRowValue(), 
   // and relying on default values
@@ -4629,3 +4618,25 @@ nsGlobalHistory::AutoCompleteSortComparison(nsIMdbRow *row1, nsIMdbRow *row2,
   }
   return 0;
 }
+
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsGlobalHistory, Init)
+
+static const nsModuleComponentInfo components[] =
+{
+  { "Global History",
+    NS_GLOBALHISTORY_CID,
+    NS_GLOBALHISTORY2_CONTRACTID,
+    nsGlobalHistoryConstructor },
+    
+  { "Global History",
+    NS_GLOBALHISTORY_CID,
+    NS_GLOBALHISTORY_DATASOURCE_CONTRACTID,
+    nsGlobalHistoryConstructor },
+    
+  { "Global History",
+    NS_GLOBALHISTORY_CID,
+    NS_GLOBALHISTORY_AUTOCOMPLETE_CONTRACTID,
+    nsGlobalHistoryConstructor }
+};
+
+NS_IMPL_NSGETMODULE(nsToolkitHistory, components)

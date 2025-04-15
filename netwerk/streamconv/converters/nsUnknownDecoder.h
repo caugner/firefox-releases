@@ -41,6 +41,7 @@
 #include "nsIStreamConverter.h"
 #include "nsIChannel.h"
 #include "nsIContentSniffer.h"
+#include "nsIGenericFactory.h"
 
 #include "nsCOMPtr.h"
 #include "nsString.h"
@@ -54,8 +55,7 @@
 }
 
 
-class nsUnknownDecoder : public nsIStreamConverter
-                       , public nsIContentSniffer_MOZILLA_1_8_BRANCH
+class nsUnknownDecoder : public nsIStreamConverter, public nsIContentSniffer
 {
 public:
   // nsISupports methods
@@ -71,7 +71,7 @@ public:
   NS_DECL_NSIREQUESTOBSERVER
 
   // nsIContentSniffer methods
-  NS_DECL_NSICONTENTSNIFFER_MOZILLA_1_8_BRANCH
+  NS_DECL_NSICONTENTSNIFFER
 
   nsUnknownDecoder();
 
@@ -159,6 +159,12 @@ protected:
  */
 class nsBinaryDetector : public nsUnknownDecoder
 {
+public:
+  static NS_METHOD Register(nsIComponentManager* compMgr, nsIFile* path, 
+                            const char* registryLocation,
+                            const char* componentType, 
+                            const nsModuleComponentInfo *info);
+  
 protected:
   virtual void DetermineContentType(nsIRequest* aRequest);
 };

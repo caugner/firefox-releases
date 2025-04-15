@@ -205,7 +205,8 @@ static PRBool _pr_ipv6_v6only_on_by_default;
 #define _PRSelectFdSetArg_t void *
 #elif defined(IRIX) || (defined(AIX) && !defined(AIX4_1)) \
     || defined(OSF1) || defined(SOLARIS) \
-    || defined(HPUX10_30) || defined(HPUX11) || defined(LINUX) \
+    || defined(HPUX10_30) || defined(HPUX11) \
+    || defined(LINUX) || defined(__GNU__) || defined(__GLIBC__) \
     || defined(FREEBSD) || defined(NETBSD) || defined(OPENBSD) \
     || defined(BSDI) || defined(VMS) || defined(NTO) || defined(DARWIN) \
     || defined(UNIXWARE) || defined(RISCOS)
@@ -289,7 +290,7 @@ static PRBool IsValidNetAddrLen(const PRNetAddr *addr, PRInt32 addr_len)
  * most current systems.
  */
 #if defined(HAVE_SOCKLEN_T) \
-    || (defined(LINUX) && defined(__GLIBC__) && __GLIBC__ >= 2)
+    || (defined(__GLIBC__) && __GLIBC__ >= 2)
 typedef socklen_t pt_SockLen;
 #elif (defined(AIX) && !defined(AIX4_1)) \
     || defined(VMS)
@@ -1071,6 +1072,15 @@ static PRBool pt_solaris_sendfile_cont(pt_Continuation *op, PRInt16 revents)
             return PR_TRUE;
         }
         count = xferred;
+    } else if (count == 0) {
+        /* 
+         * We are now at EOF. The file was truncated. Solaris sendfile is
+         * supposed to return 0 and no error in this case, though some versions
+         * may return -1 and EINVAL .
+         */
+        op->result.code = -1;
+        op->syserrno = 0; /* will be treated as EOF */
+        return PR_TRUE;
     }
     PR_ASSERT(count <= op->nbytes_to_send);
     
@@ -1219,7 +1229,7 @@ PR_IMPLEMENT(PRFileDesc*) PR_GetSpecialFD(PRSpecialFD osfd)
 
 static PRBool pt_TestAbort(void)
 {
-    PRThread *me = PR_CurrentThread();
+    PRThread *me = PR_GetCurrentThread();
     if(_PT_THREAD_INTERRUPTED(me))
     {
         PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
@@ -2419,6 +2429,14 @@ static PRInt32 pt_SolarisSendFile(PRFileDesc *sd, PRSendFileData *sfd,
                 || syserrno == EAGAIN || syserrno == EWOULDBLOCK) {
             count = xferred;
         }
+    } else if (count == 0) {
+        /*
+         * We are now at EOF. The file was truncated. Solaris sendfile is
+         * supposed to return 0 and no error in this case, though some versions
+         * may return -1 and EINVAL .
+         */
+        count = -1;
+        syserrno = 0;  /* will be treated as EOF */
     }
 
     if (count != -1 && count < nbytes_to_send) {
@@ -3230,7 +3248,8 @@ static PRIOMethods _pr_socketpollfd_methods = {
 };
 
 #if defined(HPUX) || defined(OSF1) || defined(SOLARIS) || defined (IRIX) \
-    || defined(AIX) || defined(LINUX) || defined(FREEBSD) || defined(NETBSD) \
+    || defined(LINUX) || defined(__GNU__) || defined(__GLIBC__) \
+    || defined(AIX) || defined(FREEBSD) || defined(NETBSD) \
     || defined(OPENBSD) || defined(BSDI) || defined(VMS) || defined(NTO) \
     || defined(DARWIN) || defined(UNIXWARE) || defined(RISCOS)
 #define _PR_FCNTL_FLAGS O_NONBLOCK
@@ -3375,7 +3394,7 @@ failed:
 #if !defined(_PR_INET6) || defined(_PR_INET6_PROBE)
 PR_EXTERN(PRStatus) _pr_push_ipv6toipv4_layer(PRFileDesc *fd);
 #if defined(_PR_INET6_PROBE)
-PR_EXTERN(PRBool) _pr_ipv6_is_present;
+extern PRBool _pr_ipv6_is_present(void);
 PR_IMPLEMENT(PRBool) _pr_test_ipv6_socket()
 {
 PRInt32 osfd;
@@ -3434,12 +3453,8 @@ PR_IMPLEMENT(PRFileDesc*) PR_Socket(PRInt32 domain, PRInt32 type, PRInt32 proto)
 		return fd;
 	}
 #if defined(_PR_INET6_PROBE)
-	if (PR_AF_INET6 == domain) {
-		if (_pr_ipv6_is_present == PR_FALSE) 
-			domain = AF_INET;
-		else
-			domain = AF_INET6;
-	}
+	if (PR_AF_INET6 == domain)
+		domain = _pr_ipv6_is_present() ? AF_INET6 : AF_INET;
 #elif defined(_PR_INET6) 
 	if (PR_AF_INET6 == domain)
 		domain = AF_INET6;
@@ -3463,7 +3478,7 @@ PR_IMPLEMENT(PRFileDesc*) PR_Socket(PRInt32 domain, PRInt32 type, PRInt32 proto)
         fd = pt_SetMethods(osfd, ftype, PR_FALSE, PR_FALSE);
         if (fd == NULL) close(osfd);
     }
-#ifdef _PR_STRICT_ADDR_LEN
+#ifdef _PR_NEED_SECRET_AF
     if (fd != NULL) fd->secret->af = domain;
 #endif
 #if defined(_PR_INET6_PROBE) || !defined(_PR_INET6)
@@ -3706,7 +3721,10 @@ PR_IMPLEMENT(PRDir*) PR_OpenDir(const char *name)
     else
     {
         dir = PR_NEWZAP(PRDir);
-        dir->md.d = osdir;
+        if (dir)
+            dir->md.d = osdir;
+        else
+            (void)closedir(osdir);
     }
     return dir;
 }  /* PR_OpenDir */
@@ -4451,7 +4469,7 @@ PR_IMPLEMENT(PRFileDesc*) PR_ImportTCPSocket(PRInt32 osfd)
     if (!_pr_initialized) _PR_ImplicitInitialization();
     fd = pt_SetMethods(osfd, PR_DESC_SOCKET_TCP, PR_FALSE, PR_TRUE);
     if (NULL == fd) close(osfd);
-#ifdef _PR_STRICT_ADDR_LEN
+#ifdef _PR_NEED_SECRET_AF
     if (NULL != fd) fd->secret->af = PF_INET;
 #endif
     return fd;
@@ -4727,7 +4745,8 @@ PR_IMPLEMENT(PRInt32) PR_FD_NISSET(PRInt32 fd, PR_fd_set *set)
 
 #include <sys/types.h>
 #include <sys/time.h>
-#if !defined(SUNOS4) && !defined(HPUX) && !defined(LINUX)
+#if !defined(SUNOS4) && !defined(HPUX) \
+    && !defined(LINUX) && !defined(__GNU__) && !defined(__GLIBC__)
 #include <sys/select.h>
 #endif
 

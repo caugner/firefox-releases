@@ -40,9 +40,8 @@
  * ***** END LICENSE BLOCK ***** */
 
 /* ECC code moved here from ssl3con.c */
-/* $Id: ssl3ecc.c,v 1.4.2.6 2006/09/01 21:03:19 kaie%kuix.de Exp $ */
+/* $Id: ssl3ecc.c,v 1.22 2008/03/10 00:01:28 wtc%google.com Exp $ */
 
-#include "nssrenam.h"
 #include "nss.h"
 #include "cert.h"
 #include "ssl.h"
@@ -63,7 +62,6 @@
 
 #include "pk11func.h"
 #include "secmod.h"
-#include "nsslocks.h"
 #include "ec.h"
 #include "blapi.h"
 
@@ -80,45 +78,12 @@
     (ss->serverCerts[type].serverKeyPair ? \
     ss->serverCerts[type].serverKeyPair->pubKey : NULL)
 
-#define SSL_IS_CURVE_NEGOTIATED(ss, curveName) \
+#define SSL_IS_CURVE_NEGOTIATED(curvemsk, curveName) \
     ((curveName > ec_noName) && \
      (curveName < ec_pastLastName) && \
-     ((1UL << curveName) & ss->ssl3.hs.negotiatedECCurves) != 0)
+     ((1UL << curveName) & curvemsk) != 0)
 
-/* Types and names of elliptic curves used in TLS */
-typedef enum { ec_type_explicitPrime      = 1,
-	       ec_type_explicitChar2Curve = 2,
-	       ec_type_named
-} ECType;
 
-typedef enum { ec_noName     = 0,
-	       ec_sect163k1  = 1, 
-	       ec_sect163r1  = 2, 
-	       ec_sect163r2  = 3,
-	       ec_sect193r1  = 4, 
-	       ec_sect193r2  = 5, 
-	       ec_sect233k1  = 6,
-	       ec_sect233r1  = 7, 
-	       ec_sect239k1  = 8, 
-	       ec_sect283k1  = 9,
-	       ec_sect283r1  = 10, 
-	       ec_sect409k1  = 11, 
-	       ec_sect409r1  = 12,
-	       ec_sect571k1  = 13, 
-	       ec_sect571r1  = 14, 
-	       ec_secp160k1  = 15,
-	       ec_secp160r1  = 16, 
-	       ec_secp160r2  = 17, 
-	       ec_secp192k1  = 18,
-	       ec_secp192r1  = 19, 
-	       ec_secp224k1  = 20, 
-	       ec_secp224r1  = 21,
-	       ec_secp256k1  = 22, 
-	       ec_secp256r1  = 23, 
-	       ec_secp384r1  = 24,
-	       ec_secp521r1  = 25,
-	       ec_pastLastName
-} ECName;
 
 static SECStatus ssl3_CreateECDHEphemeralKeys(sslSocket *ss, ECName ec_curve);
 
@@ -222,15 +187,15 @@ static const Bits2Curve bits2curve [] = {
 
 typedef struct ECDHEKeyPairStr {
     ssl3KeyPair *  pair;
-    PRInt32        flag;
+    int            error;  /* error code of the call-once function */
     PRCallOnceType once;
 } ECDHEKeyPair;
 
 /* arrays of ECDHE KeyPairs */
 static ECDHEKeyPair gECDHEKeyPairs[ec_pastLastName];
 
-static SECStatus 
-ecName2params(PRArenaPool * arena, ECName curve, SECKEYECParams * params)
+SECStatus 
+ssl3_ECName2Params(PRArenaPool * arena, ECName curve, SECKEYECParams * params)
 {
     SECOidData *oidData = NULL;
 
@@ -346,6 +311,10 @@ ssl3_SendECDHClientKeyExchange(sslSocket * ss, SECKEYPublicKey * svrPubKey)
     isTLS = (PRBool)(ss->ssl3.pwSpec->version > SSL_LIBRARY_VERSION_3_0);
 
     /* Generate ephemeral EC keypair */
+    if (svrPubKey->keyType != ecKey) {
+	PORT_SetError(SEC_ERROR_BAD_KEY);
+	goto loser;
+    }
     /* XXX SHOULD CALL ssl3_CreateECDHEphemeralKeys here, instead! */
     privKey = SECKEY_CreateECPrivateKey(&svrPubKey->u.ec.DEREncodedParams, 
 	                                &pubKey, NULL);
@@ -466,6 +435,22 @@ ssl3_HandleECDHClientKeyExchange(sslSocket *ss, SSL3Opaque *b,
     return SECSuccess;
 }
 
+ECName
+ssl3_GetCurveWithECKeyStrength(PRUint32 curvemsk, int requiredECCbits)
+{
+    int    i;
+    
+    for ( i = 0; bits2curve[i].curve != ec_noName; i++) {
+	if (bits2curve[i].bits < requiredECCbits)
+	    continue;
+    	if (SSL_IS_CURVE_NEGOTIATED(curvemsk, bits2curve[i].curve)) {
+	    return bits2curve[i].curve;
+	}
+    }
+    PORT_SetError(SSL_ERROR_NO_CYPHER_OVERLAP);
+    return ec_noName;
+}
+
 /* find the "weakest link".  Get strength of signature key and of sym key.
  * choose curve for the weakest of those two.
  */
@@ -476,13 +461,12 @@ ssl3_GetCurveNameForServerSocket(sslSocket *ss)
     ECName ec_curve = ec_noName;
     int    signatureKeyStrength = 521;
     int    requiredECCbits = ss->sec.secretKeyBits * 2;
-    int    i;
 
     if (ss->ssl3.hs.kea_def->kea == kea_ecdhe_ecdsa) {
 	svrPublicKey = SSL_GET_SERVER_PUBLIC_KEY(ss, kt_ecdh);
 	if (svrPublicKey)
 	    ec_curve = params2ecName(&svrPublicKey->u.ec.DEREncodedParams);
-	if (!SSL_IS_CURVE_NEGOTIATED(ss, ec_curve)) {
+	if (!SSL_IS_CURVE_NEGOTIATED(ss->ssl3.hs.negotiatedECCurves, ec_curve)) {
 	    PORT_SetError(SSL_ERROR_NO_CYPHER_OVERLAP);
 	    return ec_noName;
 	}
@@ -505,30 +489,14 @@ ssl3_GetCurveNameForServerSocket(sslSocket *ss)
         /* convert to strength in bits */
         serverKeyStrengthInBits *= BPB;
  
-        if (serverKeyStrengthInBits <= 1024) {
-            signatureKeyStrength = 160;
-        } else if (serverKeyStrengthInBits <= 2048) {
-            signatureKeyStrength = 224;
-        } else if (serverKeyStrengthInBits <= 3072) {
-            signatureKeyStrength = 256;
-        } else if (serverKeyStrengthInBits <= 7168) {
-            signatureKeyStrength = 384;
-        } else  {
-            signatureKeyStrength = 521;
-        }
+        signatureKeyStrength =
+	    SSL_RSASTRENGTH_TO_ECSTRENGTH(serverKeyStrengthInBits);
     }
     if ( requiredECCbits > signatureKeyStrength ) 
          requiredECCbits = signatureKeyStrength;
 
-    for ( i = 0; bits2curve[i].curve != ec_noName; i++) {
-	if (bits2curve[i].bits < requiredECCbits)
-	    continue;
-    	if (SSL_IS_CURVE_NEGOTIATED(ss, bits2curve[i].curve)) {
-	    return bits2curve[i].curve;
-	}
-    }
-    PORT_SetError(SSL_ERROR_NO_CYPHER_OVERLAP);
-    return ec_noName;
+    return ssl3_GetCurveWithECKeyStrength(ss->ssl3.hs.negotiatedECCurves,
+					  requiredECCbits);
 }
 
 /* function to clear out the lists */
@@ -550,9 +518,12 @@ ssl3_ShutdownECDHECurves(void *appData, void *nssData)
 static PRStatus
 ssl3_ECRegister(void)
 {
-   SECStatus rv;
-   rv = NSS_RegisterShutdown(ssl3_ShutdownECDHECurves, gECDHEKeyPairs);
-   return (PRStatus)rv;
+    SECStatus rv;
+    rv = NSS_RegisterShutdown(ssl3_ShutdownECDHECurves, gECDHEKeyPairs);
+    if (rv != SECSuccess) {
+	gECDHEKeyPairs[ec_noName].error = PORT_GetError();
+    }
+    return (PRStatus)rv;
 }
 
 /* CallOnce function, called once for each named curve. */
@@ -568,7 +539,8 @@ ssl3_CreateECDHEphemeralKeyPair(void * arg)
     PORT_Assert(gECDHEKeyPairs[ec_curve].pair == NULL);
 
     /* ok, no one has generated a global key for this curve yet, do so */
-    if (ecName2params(NULL, ec_curve, &ecParams) != SECSuccess) {
+    if (ssl3_ECName2Params(NULL, ec_curve, &ecParams) != SECSuccess) {
+	gECDHEKeyPairs[ec_curve].error = PORT_GetError();
 	return PR_FAILURE;
     }
 
@@ -583,6 +555,7 @@ ssl3_CreateECDHEphemeralKeyPair(void * arg)
 	    SECKEY_DestroyPublicKey(pubKey);
 	}
 	ssl_MapLowLevelError(SEC_ERROR_KEYGEN_FAIL);
+	gECDHEKeyPairs[ec_curve].error = PORT_GetError();
 	return PR_FAILURE;
     }
 
@@ -610,12 +583,14 @@ ssl3_CreateECDHEphemeralKeys(sslSocket *ss, ECName ec_curve)
 
 	status = PR_CallOnce(&gECDHEKeyPairs[ec_noName].once, ssl3_ECRegister);
         if (status != PR_SUCCESS) {
+	    PORT_SetError(gECDHEKeyPairs[ec_noName].error);
 	    return SECFailure;
     	}
 	status = PR_CallOnceWithArg(&gECDHEKeyPairs[ec_curve].once,
 	                            ssl3_CreateECDHEphemeralKeyPair,
 				    (void *)ec_curve);
         if (status != PR_SUCCESS) {
+	    PORT_SetError(gECDHEKeyPairs[ec_curve].error);
 	    return SECFailure;
     	}
     }
@@ -731,7 +706,7 @@ ssl3_HandleECDHServerKeyExchange(sslSocket *ss, SSL3Opaque *b, PRUint32 length)
     peerKey->keyType               = ecKey;
 
     /* set up EC parameters in peerKey */
-    if (ecName2params(arena, ec_params.data[2], 
+    if (ssl3_ECName2Params(arena, ec_params.data[2], 
 	    &peerKey->u.ec.DEREncodedParams) != SECSuccess) {
 	/* we should never get here since we already 
 	 * checked that we are dealing with a supported curve
@@ -1070,7 +1045,7 @@ static const PRUint8 ECPtFmt[6] = {
  * which says that we support all TLS-defined named curves.
  */
 PRInt32
-ssl3_SendSupportedEllipticCurvesExtension(
+ssl3_SendSupportedCurvesXtn(
 			sslSocket * ss,
 			PRBool      append,
 			PRUint32    maxBytes)
@@ -1079,6 +1054,13 @@ ssl3_SendSupportedEllipticCurvesExtension(
     	return 0;
     if (append && maxBytes >= (sizeof EClist)) {
 	SECStatus rv = ssl3_AppendHandshake(ss, EClist, (sizeof EClist));
+	if (rv != SECSuccess)
+	    return -1;
+	if (!ss->sec.isServer) {
+	    TLSExtensionData *xtnData = &ss->xtnData;
+	    xtnData->advertised[xtnData->numAdvertised++] =
+		elliptic_curves_xtn;
+	}
     }
     return (sizeof EClist);
 }
@@ -1087,7 +1069,7 @@ ssl3_SendSupportedEllipticCurvesExtension(
  * which says that we only support uncompressed points.
  */
 PRInt32
-ssl3_SendSupportedPointFormatsExtension(
+ssl3_SendSupportedPointFormatsXtn(
 			sslSocket * ss,
 			PRBool      append,
 			PRUint32    maxBytes)
@@ -1096,6 +1078,13 @@ ssl3_SendSupportedPointFormatsExtension(
     	return 0;
     if (append && maxBytes >= (sizeof ECPtFmt)) {
 	SECStatus rv = ssl3_AppendHandshake(ss, ECPtFmt, (sizeof ECPtFmt));
+	if (rv != SECSuccess)
+	    return -1;
+	if (!ss->sec.isServer) {
+	    TLSExtensionData *xtnData = &ss->xtnData;
+	    xtnData->advertised[xtnData->numAdvertised++] =
+		ec_point_formats_xtn;
+	}
     }
     return (sizeof ECPtFmt);
 }
@@ -1103,9 +1092,9 @@ ssl3_SendSupportedPointFormatsExtension(
 /* Just make sure that the remote client supports uncompressed points,
  * Since that is all we support.  Disable ECC cipher suites if it doesn't.
  */
-static SECStatus
-ssl3_HandleSupportedPointFormatsExtension(sslSocket * ss, PRUint16 ex_type, 
-                                          SECItem *data)
+SECStatus
+ssl3_HandleSupportedPointFormatsXtn(sslSocket *ss, PRUint16 ex_type,
+                                    SECItem *data)
 {
     int i;
 
@@ -1119,7 +1108,7 @@ ssl3_HandleSupportedPointFormatsExtension(sslSocket * ss, PRUint16 ex_type,
 	    /* indicate that we should send a reply */
 	    SECStatus rv;
 	    rv = ssl3_RegisterServerHelloExtensionSender(ss, ex_type,
-			      &ssl3_SendSupportedPointFormatsExtension);
+			      &ssl3_SendSupportedPointFormatsXtn);
 	    return rv;
 	}
     }
@@ -1150,9 +1139,8 @@ ECName ssl3_GetSvrCertCurveName(sslSocket *ss)
 /* Ensure that the curve in our server cert is one of the ones suppored
  * by the remote client, and disable all ECC cipher suites if not.
  */
-static SECStatus
-ssl3_HandleSupportedEllipticCurvesExtension(sslSocket * ss, PRUint16 ex_type, 
-                                            SECItem *data)
+SECStatus
+ssl3_HandleSupportedCurvesXtn(sslSocket *ss, PRUint16 ex_type, SECItem *data)
 {
     PRInt32  list_len;
     PRUint32 peerCurves   = 0;
@@ -1203,176 +1191,3 @@ loser:
 }
 
 #endif /* NSS_ENABLE_ECC */
-
-/* Format an SNI extension, using the name from the socket's URL,
- * unless that name is a dotted decimal string.
- */
-PRInt32 
-ssl3_SendServerNameIndicationExtension(
-			sslSocket * ss,
-			PRBool      append,
-			PRUint32    maxBytes)
-{
-    PRUint32 len, span;
-    /* must have a hostname */
-    if (!ss || !ss->url || !ss->url[0])
-    	return 0;
-    /* must have at lest one character other than [0-9\.] */
-    len  = PORT_Strlen(ss->url);
-    span = strspn(ss->url, "0123456789.");
-    if (len == span) {
-    	/* is a dotted decimal IP address */
-	return 0;
-    }
-    if (append && maxBytes >= len + 9) {
-	SECStatus rv;
-	/* extension_type */
-	rv = ssl3_AppendHandshakeNumber(ss,       0, 2); 
-	if (rv != SECSuccess) return 0;
-	/* length of extension_data */
-	rv = ssl3_AppendHandshakeNumber(ss, len + 5, 2); 
-	if (rv != SECSuccess) return 0;
-	/* length of server_name_list */
-	rv = ssl3_AppendHandshakeNumber(ss, len + 3, 2);
-	if (rv != SECSuccess) return 0;
-	/* Name Type (host_name) */
-	rv = ssl3_AppendHandshake(ss,       "\0",    1);
-	if (rv != SECSuccess) return 0;
-	/* HostName (length and value) */
-	rv = ssl3_AppendHandshakeVariable(ss, ss->url, len, 2);
-	if (rv != SECSuccess) return 0;
-    }
-    return len + 9;
-}
-
-/* handle an incoming SNI extension, by ignoring it. */
-SECStatus
-ssl3_HandleServerNameIndicationExtension(sslSocket * ss, PRUint16 ex_type, 
-                                         SECItem *data)
-{
-    /* For now, we ignore this, as if we didn't understand it. :-)  */
-    return SECSuccess;
-}
-
-/* Table of handlers for received TLS hello extensions, one per extension.
- * In the second generation, this table will be dynamic, and functions
- * will be registered here.
- */
-static const ssl3HelloExtensionHandler handlers[] = {
-    {  0, &ssl3_HandleServerNameIndicationExtension    },
-#ifdef NSS_ENABLE_ECC
-    { 10, &ssl3_HandleSupportedEllipticCurvesExtension },
-    { 11, &ssl3_HandleSupportedPointFormatsExtension   },
-#endif
-    { -1, NULL }
-};
-
-/* Table of functions to format TLS hello extensions, one per extension.
- * This static table is for the formatting of client hello extensions.
- * The server's table of hello senders is dynamic, in the socket struct,
- * and sender functions are registered there.
- */
-static const 
-ssl3HelloExtensionSender clientHelloSenders[MAX_EXTENSION_SENDERS] = {
-    {  0, &ssl3_SendServerNameIndicationExtension    },
-#ifdef NSS_ENABLE_ECC
-    { 10, &ssl3_SendSupportedEllipticCurvesExtension },
-    { 11, &ssl3_SendSupportedPointFormatsExtension   },
-#else
-    { -1, NULL }
-#endif
-};
-
-/* go through hello extensions in buffer "b".
- * For each one, find the extension handler in the table above, and 
- * if present, invoke that handler.  
- * ignore any extensions with unknown extension types.
- */
-SECStatus 
-ssl3_HandleClientHelloExtensions(sslSocket *ss, 
-                                 SSL3Opaque **b, 
-				 PRUint32 *length)
-{
-    while (*length) {
-	const ssl3HelloExtensionHandler * handler;
-	SECStatus rv;
-	PRInt32   extension_type;
-	SECItem   extension_data;
-
-	/* Get the extension's type field */
-	extension_type = ssl3_ConsumeHandshakeNumber(ss, 2, b, length);
-	if (extension_type < 0)  /* failure to decode extension_type */
-	    return SECFailure;   /* alert already sent */
-
-	/* get the data for this extension, so we can pass it or skip it. */
-	rv = ssl3_ConsumeHandshakeVariable(ss, &extension_data, 2, b, length);
-	if (rv != SECSuccess)
-	    return rv;
-
-	/* find extension_type in table of Client Hello Extension Handlers */
-	for (handler = handlers; handler->ex_type >= 0; handler++) {
-	    if (handler->ex_type == extension_type)
-	        break;
-	}
-
-	/* if found,  Call this handler */
-	if (handler->ex_type == extension_type) {
-	    rv = (*handler->ex_handler)(ss, (PRUint16)extension_type, 
-	                                             &extension_data);
-	    /* Ignore this result */
-	    /* Essentially, treat all bad extensions as unrecognized types. */
-	}
-    }
-    return SECSuccess;
-}
-
-/* Add a callback function to the table of senders of server hello extensions.
- */
-SECStatus 
-ssl3_RegisterServerHelloExtensionSender(sslSocket *ss, PRUint16 ex_type,
-				        ssl3HelloExtensionSenderFunc cb)
-{
-    int i;
-    ssl3HelloExtensionSender *sender = &ss->serverExtensionSenders[0];
-
-    for (i = 0; i < MAX_EXTENSION_SENDERS; ++i, ++sender) {
-        if (!sender->ex_sender) {
-	    sender->ex_type   = ex_type;
-	    sender->ex_sender = cb;
-	    return SECSuccess;
-	}
-	/* detect duplicate senders */
-	PORT_Assert(sender->ex_type != ex_type);
-	if (sender->ex_type == ex_type) {
-	    /* duplicate */
-	    break;
-	}
-    }
-    PORT_Assert(i < MAX_EXTENSION_SENDERS); /* table needs to grow */
-    PORT_SetError(SEC_ERROR_LIBRARY_FAILURE);
-    return SECFailure;
-}
-
-/* call each of the extension senders and return the accumulated length */
-PRInt32
-ssl3_CallHelloExtensionSenders(sslSocket *ss, PRBool append, PRUint32 maxBytes,
-                               const ssl3HelloExtensionSender *sender)
-{
-    PRInt32 total_exten_len = 0;
-    int i;
-
-    if (!sender)
-    	sender = &clientHelloSenders[0];
-
-    for (i = 0; i < MAX_EXTENSION_SENDERS; ++i, ++sender) {
-	if (sender->ex_sender) {
-	    PRInt32 extLen = (*sender->ex_sender)(ss, append, maxBytes);
-	    if (extLen < 0)
-	    	return -1;
-	    maxBytes        -= extLen;
-	    total_exten_len += extLen;
-	}
-    }
-    return total_exten_len;
-}
-

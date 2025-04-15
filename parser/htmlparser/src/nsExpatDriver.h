@@ -45,6 +45,8 @@
 #include "nsIDTD.h"
 #include "nsITokenizer.h"
 #include "nsIInputStream.h"
+#include "nsIParser.h"
+#include "nsCycleCollectionParticipant.h"
 
 class nsIExpatSink;
 class nsIExtendedExpatSink;
@@ -54,9 +56,10 @@ class nsExpatDriver : public nsIDTD,
                       public nsITokenizer
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_NSIDTD
   NS_DECL_NSITOKENIZER
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsExpatDriver, nsIDTD)
 
   nsExpatDriver();
   virtual ~nsExpatDriver();
@@ -103,10 +106,33 @@ private:
                                           nsIInputStream** aStream,
                                           nsAString& aAbsURL);
 
-  nsresult ParseBuffer(const char* aBuffer, PRUint32 aLength, PRBool aIsFinal);
+  /**
+   * Pass a buffer to Expat. If Expat is blocked aBuffer should be null and
+   * aLength should be 0. The result of the call will be stored in
+   * mInternalState. Expat will parse as much of the buffer as it can and store
+   * the rest in its internal buffer.
+   *
+   * @param aBuffer the buffer to pass to Expat. May be null.
+   * @param aLength the length of the buffer to pass to Expat (in number of
+   *                PRUnichar's). Must be 0 if aBuffer is null and > 0 if
+   *                aBuffer is not null.
+   * @param aIsFinal whether there will definitely not be any more new buffers
+   *                 passed in to ParseBuffer
+   * @param aConsumed [out] the number of PRUnichars that Expat consumed. This
+   *                        doesn't include the PRUnichars that Expat stored in
+   *                        its buffer but didn't parse yet.
+   */
+  void ParseBuffer(const PRUnichar *aBuffer, PRUint32 aLength, PRBool aIsFinal,
+                   PRUint32 *aConsumed);
   nsresult HandleError();
-  void GetLine(const char* aSourceBuffer, PRUint32 aLength, PRUint32 aOffset,
-               nsString& aLine);
+
+  void MaybeStopParser(nsresult aState);
+
+  PRBool BlockedOrInterrupted()
+  {
+    return mInternalState == NS_ERROR_HTMLPARSER_BLOCK ||
+           mInternalState == NS_ERROR_HTMLPARSER_INTERRUPTED;
+  }
 
   XML_Parser       mExpatParser;
   nsString         mLastLine;
@@ -120,18 +146,19 @@ private:
   PRPackedBool     mInInternalSubset;
   PRPackedBool     mInExternalDTD;
 
-  // Number of bytes parsed in the current buffer.
-  PRInt32          mBytePosition;
+  // Whether we're sure that we won't be getting more buffers to parse from
+  // Necko
+  PRPackedBool     mIsFinalChunk;
+
   nsresult         mInternalState;
 
-  // Total number of bytes parsed.
-  PRUint32         mBytesParsed;
+  // The length of the data in Expat's buffer (in number of PRUnichars).
+  PRUint32         mExpatBuffered;
+
   nsCOMPtr<nsIExpatSink> mSink;
   nsCOMPtr<nsIExtendedExpatSink> mExtendedSink;
   const nsCatalogData* mCatalogData; // weak
   nsString         mURISpec;
 };
-
-nsresult NS_NewExpatDriver(nsIDTD** aDriver);
 
 #endif

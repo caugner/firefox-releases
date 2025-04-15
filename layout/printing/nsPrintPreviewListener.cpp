@@ -116,7 +116,7 @@ nsPrintPreviewListener::RemoveListeners()
 //
 // GetActionForEvent
 //
-// Helper function to let certain key events thru
+// Helper function to let certain key events through
 //
 enum eEventAction {
   eEventAction_Tab,       eEventAction_ShiftTab,
@@ -171,7 +171,7 @@ nsPrintPreviewListener::HandleEvent(nsIDOMEvent* aEvent)
   if (nsEvent)
     nsEvent->GetOriginalTarget(getter_AddRefs(target));
   nsCOMPtr<nsIContent> content(do_QueryInterface(target));
-  if (content && !content->IsContentOfType(nsIContent::eXUL)) {
+  if (content && !content->IsNodeOfType(nsINode::eXUL)) {
     eEventAction action = ::GetActionForEvent(aEvent);
     switch (action) {
       case eEventAction_Tab:
@@ -188,7 +188,7 @@ nsPrintPreviewListener::HandleEvent(nsIDOMEvent* aEvent)
           nsIDocument* parentDoc = doc->GetParentDocument();
           NS_ASSERTION(parentDoc, "no parent document");
           nsIEventStateManager* esm =
-            parentDoc->GetShellAt(0)->GetPresContext()->EventStateManager();
+            parentDoc->GetPrimaryShell()->GetPresContext()->EventStateManager();
           if (esm) {
             esm->SetContentState(nsnull, NS_EVENT_STATE_FOCUS);
             PRBool forward = (action == eEventAction_Tab);

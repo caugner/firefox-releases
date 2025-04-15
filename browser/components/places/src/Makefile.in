@@ -21,6 +21,7 @@
 #
 # Contributor(s):
 #   Brett Wilson <brettw@gmail.com>
+#   Dietrich Ayala <dietrich@mozilla.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -43,58 +44,31 @@ VPATH = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = places
-LIBRARY_NAME  = places_s
-MOZILLA_INTERNAL_API = 1
+MODULE = browserplaces
+LIBRARY_NAME  = browserplaces_s
 FORCE_STATIC_LIB = 1
+FORCE_USE_PIC = 1
+ifndef MOZ_MEMORY
+USE_STATIC_LIBS = 1
+endif
 
-REQUIRES = xpcom \
-           string \
-           history \
-           docshell \
-           rdf \
-           dom \
-           morkreader \
-           pref \
-           necko \
-           intl \
-           layout \
-           locale \
-           unicharutil \
-           autocomplete \
-           storage \
-           uconv \
-           htmlparser \
-           content \
-           txmgr \
-           xmlextras \
-           caps \
-           xpconnect \
-           js \
-           nkcache \
-           widget \
-           url-classifier \
-           microsummaries \
-           $(NULL)
+REQUIRES	= \
+		  xpcom \
+		  string \
+		  necko \
+		  browsercomps \
+		  toolkitcomps \
+		  unicharutil \
+		  htmlparser \
+		  content \
+		  places \
+		  microsummaries \
+		  $(NULL)
 
-LOCAL_INCLUDES = -I$(srcdir)/../../build
+CPPSRCS = nsPlacesImportExportService.cpp
 
-CPPSRCS = \
-          nsAnnoProtocolHandler.cpp \
-          nsAnnotationService.cpp \
-          nsBookmarksHTML.cpp \
-          nsFaviconService.cpp \
-          nsNavHistory.cpp \
-          nsNavHistoryAutoComplete.cpp \
-          nsNavHistoryExpire.cpp \
-          nsNavHistoryQuery.cpp \
-          nsNavHistoryResult.cpp \
-          nsNavBookmarks.cpp \
-          nsLivemarkService.cpp \
-          nsBookmarksFeedHandler.cpp \
-          nsMaybeWeakPtr.cpp \
-          nsMorkHistoryImporter.cpp \
-          $(NULL)
+EXTRA_COMPONENTS = nsPlacesTransactionsService.js
 
 include $(topsrcdir)/config/rules.mk
 
+XPIDL_FLAGS += -I$(topsrcdir)/browser/components

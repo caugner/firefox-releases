@@ -49,10 +49,8 @@ SIMPLE_PROGRAMS	= TestInterfaceInfo$(BIN_SUFFIX)
 CPPSRCS		= TestInterfaceInfo.cpp
 
 LIBS		= \
-		$(XPCOM_LIBS) \
+		$(XPCOM_GLUE_LDOPTS) \
 		$(NSPR_LIBS) \
 		$(NULL)
 
 include $(topsrcdir)/config/rules.mk
-
-DEFINES += -DEXPORT_XPTI_API

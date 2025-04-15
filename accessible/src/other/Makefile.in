@@ -50,6 +50,7 @@ REQUIRES	= content \
 		  dom \
 		  editor \
 		  gfx \
+		  thebes \
 		  htmlparser \
 		  intl \
 		  layout \
@@ -69,7 +70,6 @@ REQUIRES	= content \
 CPPSRCS = \
   nsAccessNodeWrap.cpp \
   nsAccessibleWrap.cpp \
-  nsDocAccessibleWrap.cpp \
   nsRootAccessibleWrap.cpp \
   $(NULL)
 
@@ -79,9 +79,13 @@ EXPORTS = \
   nsAccessibleWrap.h \
   nsDocAccessibleWrap.h \
   nsRootAccessibleWrap.h \
-  nsHTMLFormControlAccessibleWrap.h \
   nsXULMenuAccessibleWrap.h \
   nsXULTreeAccessibleWrap.h \
+  nsHyperTextAccessibleWrap.h \
+  nsHTMLImageAccessibleWrap.h \
+  nsHTMLTableAccessibleWrap.h \
+  nsAccessibleRelationWrap.h \
+  nsApplicationAccessibleWrap.h \
   $(NULL)
 
 # we don't want the shared lib, but we want to force the creation of a static lib.

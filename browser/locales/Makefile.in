@@ -65,11 +65,14 @@ AB = $(firstword $(subst -, ,$(AB_CD)))
 
 APP_VERSION := $(shell cat $(srcdir)/../config/version.txt)
 
+PWD := $(shell pwd)
+core_abspath = $(if $(findstring :,$(1)),$(1),$(if $(filter /%,$(1)),$(1),$(PWD)/$(1)))
+
 DEFINES += \
 	-DAB_CD=$(AB_CD) \
 	-DMOZ_LANGPACK_EID=langpack-$(AB_CD)@firefox.mozilla.org \
 	-DMOZ_APP_VERSION=$(MOZ_APP_VERSION) \
-	-DLOCALE_SRCDIR=$(LOCALE_SRCDIR) \
+	-DLOCALE_SRCDIR=$(call core_abspath,$(LOCALE_SRCDIR)) \
 	-DPKG_BASENAME=$(PKG_BASENAME) \
 	$(NULL)
 
@@ -85,6 +88,17 @@ PREF_JS_EXPORTS = $(LOCALE_SRCDIR)/firefox-l10n.js
 
 include $(topsrcdir)/config/rules.mk
 
+libs::
+	@if test -f "$(LOCALE_SRCDIR)/existing-profile-defaults.js"; then \
+	  $(PERL) $(topsrcdir)/config/preprocessor.pl $(PREF_PPFLAGS) $(DEFINES) $(ACDEFINES) $(XULPPFLAGS) \
+	    $(LOCALE_SRCDIR)/existing-profile-defaults.js > $(FINAL_TARGET)/defaults/existing-profile-defaults.js; \
+	fi
+install::
+	@if test -f "$(LOCALE_SRCDIR)/existing-profile-defaults.js"; then \
+	  $(PERL) $(topsrcdir)/config/preprocessor.pl $(PREF_PPFLAGS) $(DEFINES) $(ACDEFINES) $(XULPPFLAGS) \
+	    $(LOCALE_SRCDIR)/existing-profile-defaults.js > $(DESTDIR)$(mozappdir)/defaults/existing-profile-defaults.js; \
+	fi
+
 ifeq ($(OS_ARCH),OS2)
 README_FILES = \
 	os2/README.txt \
@@ -98,7 +112,6 @@ endif
 PROFILE_FILES = \
 	bookmarks.html \
 	localstore.rdf \
-	search.rdf \
 	$(NULL)
 
 ifeq ($(OS_ARCH),WINNT)
@@ -114,13 +127,20 @@ endif
 PROFILE_CHROME = userChrome-example.css userContent-example.css
 
 libs:: $(addprefix $(LOCALE_SRCDIR)/,$(README_FILES))
-	$(INSTALL) $^ $(FINAL_TARGET)
+ifeq ($(OS_ARCH),WINNT)
+	$(EXIT_ON_ERROR) \
+	for file in $^; do \
+	  $(PERL) -pe 's/(?<!\r)\n/\r\n/g;' < $$file > $(FINAL_TARGET)/`basename $$file`; \
+	done
+else
+	$(SYSINSTALL) $(IFLAGS1) $^ $(FINAL_TARGET)
+endif
 
 libs:: $(addprefix $(LOCALE_SRCDIR)/profile/,$(PROFILE_FILES))
-	$(INSTALL) $^ $(FINAL_TARGET)/defaults/profile
+	$(SYSINSTALL) $(IFLAGS1) $^ $(FINAL_TARGET)/defaults/profile
 
 libs:: $(addprefix $(LOCALE_SRCDIR)/profile/chrome/,$(PROFILE_CHROME))
-	$(INSTALL) $^ $(FINAL_TARGET)/defaults/profile/chrome
+	$(SYSINSTALL) $(IFLAGS1) $^ $(FINAL_TARGET)/defaults/profile/chrome
 
 install:: $(addprefix $(LOCALE_SRCDIR)/profile/,$(PROFILE_FILES))
 	$(SYSINSTALL) $(IFLAGS1) $^ $(DESTDIR)$(mozappdir)/defaults/profile
@@ -131,7 +151,7 @@ install:: $(addprefix $(LOCALE_SRCDIR)/profile/chrome/,$(PROFILE_CHROME))
 SEARCH_PLUGINS = $(shell cat $(LOCALE_SRCDIR)/searchplugins/list.txt)
 
 libs:: $(addsuffix .xml,$(SEARCH_PLUGINS))
-	$(INSTALL) $^ $(FINAL_TARGET)/searchplugins
+	$(SYSINSTALL) $(IFLAGS1) $^ $(FINAL_TARGET)/searchplugins
 
 install:: $(addsuffix .xml,$(SEARCH_PLUGINS))
 	$(SYSINSTALL) $(IFLAGS1) $^ $(DESTDIR)$(mozappdir)/searchplugins
@@ -142,7 +162,7 @@ MICROSUMMARY_GENERATOR_PREFIX = $(addprefix $(LOCALE_SRCDIR)/microsummary-genera
 libs::
 ifneq (,$(strip $(MICROSUMMARY_GENERATORS)))
         $(addsuffix .xml,$(MICROSUMMARY_GENERATOR_PREFIX))
-	$(INSTALL) $^ $(FINAL_TARGET)/microsummary-generators
+	$(SYSINSTALL) $(IFLAGS1) $^ $(FINAL_TARGET)/microsummary-generators
 endif
 
 install::
@@ -165,6 +185,7 @@ MOZ_PKG_MAC_DSSTORE=$(_ABS_DIST)/branding/dsstore
 MOZ_PKG_MAC_BACKGROUND=$(_ABS_DIST)/branding/background.png
 MOZ_PKG_MAC_ICON=$(_ABS_DIST)/branding/disk.icns
 MOZ_PKG_MAC_RSRC=$(_ABS_DIST)/branding/license.r
+MOZ_PKG_MAC_EXTRA=--symlink "/Applications:/ "
 endif
 
 PACKAGER_NO_LIBS = 1
@@ -173,6 +194,10 @@ include $(call EXPAND_LOCALE_SRCDIR,toolkit/locales)/installer/windows/charset.m
 
 repackage-win32-installer: WIN32_INSTALLER_OUT=$(_ABS_DIST)/install/sea/$(PKG_BASENAME).installer.exe
 repackage-win32-installer: $(WIN32_INSTALLER_IN) $(SUBMAKEFILES)
+ifneq (en-US,$(AB_CD))
+	@echo "Verifying $(AB_CD) installer variable usage"
+	@$(PERL) $(topsrcdir)/toolkit/mozapps/installer/windows/nsis/check-locales.pl $(LOCALE_SRCDIR)/installer
+endif
 	@echo "Repackaging $(WIN32_INSTALLER_IN) into $(WIN32_INSTALLER_OUT)."
 ifdef MOZ_BRANDING_DIRECTORY
 	$(MAKE) -C $(DEPTH)/$(MOZ_BRANDING_DIRECTORY) export
@@ -193,7 +218,7 @@ endif
 	$(MAKE) -C ../installer/windows CONFIG_DIR=l10ngen l10ngen/setup.exe l10ngen/7zSD.sfx
 	cp ../installer/windows/l10ngen/setup.exe l10n-stage
 	$(NSINSTALL) -D l10n-stage/localized/uninstall
-	cp ../installer/windows/l10ngen/uninst.exe l10n-stage/localized/uninstall
+	cp ../installer/windows/l10ngen/helper.exe l10n-stage/localized/uninstall
 	rm -f app.7z
 	cd l10n-stage && \
 	  $(CYGWIN_WRAPPER) 7z a -r -t7z ../app.7z -mx -m0=BCJ2 -m1=LZMA:d24 -m2=LZMA:d19 -m3=LZMA:d19 -mb0:1 -mb0s1:2 -mb0s2:3
@@ -232,7 +257,7 @@ repackage-zip: $(ZIP_IN)
 ifeq (WINNT,$(OS_ARCH))
 	$(RM) -r $(STAGEDIST)/uninstall
 	$(NSINSTALL) -D $(STAGEDIST)/uninstall
-	cp ../installer/windows/l10ngen/uninst.exe $(STAGEDIST)/uninstall
+	cp ../installer/windows/l10ngen/helper.exe $(STAGEDIST)/uninstall
 endif
 	$(RM) -r $(DIST)/xpi-stage/locale-$(AB_CD)/chrome/$(AB_CD)
 	cd $(DIST)/xpi-stage/locale-$(AB_CD) && \
@@ -255,6 +280,7 @@ langpack-%: AB_CD=$*
 langpack-%: XPI_NAME=locale-$*
 langpack-%:
 	@echo "Making langpack $(LANGPACK_FILE)"
+	$(NSINSTALL) -D $(DIST)/install
 	@$(RM) -rf $(DIST)/xpi-stage/locale-$(AB_CD)
 	@$(MAKE) libs-$(AB_CD) USE_EXTENSION_MANIFEST=1
 	$(PERL) $(topsrcdir)/config/preprocessor.pl $(DEFINES) $(ACDEFINES) -I$(call EXPAND_LOCALE_SRCDIR,toolkit/locales)/defines.inc -I$(LOCALE_SRCDIR)/defines.inc $(srcdir)/generic/install.rdf > $(FINAL_TARGET)/install.rdf
@@ -280,12 +306,18 @@ endif
 ifdef MOZ_UPDATER
 libs:: $(addprefix $(LOCALE_SRCDIR)/,updater/updater.ini)
 ifeq ($(OS_ARCH),WINNT)
-	iconv -f UTF-8 -t $(WIN_INSTALLER_CHARSET) $< > $(FINAL_TARGET)/updater.ini
+	cat $< $(srcdir)/../installer/windows/nsis/updater_append.ini | \
+	  iconv -f UTF-8 -t $(WIN_INSTALLER_CHARSET) > $(FINAL_TARGET)/updater.ini
 else
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
-	$(INSTALL) $^ $(FINAL_TARGET)/updater.app/Contents/MacOS
+	$(SYSINSTALL) $(IFLAGS1) $^ $(FINAL_TARGET)/updater.app/Contents/MacOS
 else
-	$(INSTALL) $^ $(FINAL_TARGET)
+	$(SYSINSTALL) $(IFLAGS1) $^ $(FINAL_TARGET)
 endif
 endif
+endif
+
+ifdef MOZ_CRASHREPORTER
+libs:: $(addprefix $(LOCALE_SRCDIR)/,crashreporter/crashreporter-override.ini)
+	$(SYSINSTALL) $(IFLAGS1) $^ $(FINAL_TARGET)
 endif

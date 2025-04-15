@@ -1272,7 +1272,7 @@ NPP_SetWindow(NPP instance, NPWindow* window)
 // NPP_NewStream:
 // Notifies an instance of a new data stream and returns an error value. 
 //
-// Create a stream peer and stream.  If succesful, save
+// Create a stream peer and stream.  If successful, save
 // the stream peer in NPStream's pdata.
 //+++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -2504,7 +2504,9 @@ CPluginInputStream::~CPluginInputStream(void)
     NS_IF_RELEASE(mStreamInfo);
 }
 
-NS_IMPL_ISUPPORTS1(CPluginInputStream, nsIPluginInputStream)
+NS_IMPL_ISUPPORTS2(CPluginInputStream,
+                   nsIPluginInputStream,
+                   nsIInputStream)
 
 NS_METHOD
 CPluginInputStream::Close(void)

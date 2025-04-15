@@ -52,7 +52,10 @@
 #include "nsIDOMWindowInternal.h"
 #include "nsFocusController.h"
 #include "nsString.h"
-#include "nsDOMClassInfo.h"
+#include "nsEventDispatcher.h"
+#include "nsIProgrammingLanguage.h"
+
+#include "nsCycleCollectionParticipant.h"
 
 static NS_DEFINE_CID(kEventListenerManagerCID,    NS_EVENTLISTENERMANAGER_CID);
 
@@ -64,10 +67,10 @@ nsWindowRoot::nsWindowRoot(nsIDOMWindow* aWindow)
   nsFocusController::Create(getter_AddRefs(mFocusController));
 
   nsCOMPtr<nsIDOMFocusListener> focusListener(do_QueryInterface(mFocusController));
-  ++mRefCnt;
+  mRefCnt.incr(static_cast<nsIDOMEventTarget*>(this));
   AddEventListener(NS_LITERAL_STRING("focus"), focusListener, PR_TRUE);
   AddEventListener(NS_LITERAL_STRING("blur"), focusListener, PR_TRUE);
-  --mRefCnt;
+  mRefCnt.decr(static_cast<nsIDOMEventTarget*>(this));
 }
 
 nsWindowRoot::~nsWindowRoot()
@@ -77,20 +80,19 @@ nsWindowRoot::~nsWindowRoot()
   }
 }
 
-NS_INTERFACE_MAP_BEGIN(nsWindowRoot)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMEventReceiver)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMEventReceiver)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMGCParticipant)
-  NS_INTERFACE_MAP_ENTRY(nsIChromeEventHandler)
+NS_IMPL_CYCLE_COLLECTION_2(nsWindowRoot, mListenerManager, mFocusController)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsWindowRoot)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMEventTarget)
+  NS_INTERFACE_MAP_ENTRY(nsPIDOMEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsPIWindowRoot)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOM3EventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSEventTarget)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(WindowRoot) // XXX right name?
 NS_INTERFACE_MAP_END
 
-NS_IMPL_ADDREF(nsWindowRoot)
-NS_IMPL_RELEASE(nsWindowRoot)
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsWindowRoot, nsIDOMEventTarget)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsWindowRoot, nsIDOMEventTarget)
 
 NS_IMETHODIMP
 nsWindowRoot::AddEventListener(const nsAString& aType, nsIDOMEventListener* aListener, PRBool aUseCapture)
@@ -107,25 +109,22 @@ nsWindowRoot::RemoveEventListener(const nsAString& aType, nsIDOMEventListener* a
 NS_IMETHODIMP
 nsWindowRoot::DispatchEvent(nsIDOMEvent* aEvt, PRBool *_retval)
 {
-  // Obtain a presentation context
-  nsCOMPtr<nsIDOMDocument> domDoc;
-  mWindow->GetDocument(getter_AddRefs(domDoc));
-  if (!domDoc)
-    return NS_OK;
-  nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
-  
-  PRInt32 count = doc->GetNumberOfShells();
-  if (count == 0)
-    return NS_OK;
+  nsEventStatus status = nsEventStatus_eIgnore;
+  nsresult rv =  nsEventDispatcher::DispatchDOMEvent(
+    static_cast<nsPIDOMEventTarget*>(this), nsnull, aEvt, nsnull, &status);
+  *_retval = (status != nsEventStatus_eConsumeNoDefault);
+  return rv;
+}
 
-  nsIPresShell *shell = doc->GetShellAt(0);
-  
-  // Retrieve the context
-  nsCOMPtr<nsPresContext> aPresContext = shell->GetPresContext();
-
-  return aPresContext->EventStateManager()->
-    DispatchNewEvent(NS_STATIC_CAST(nsIDOMEventReceiver*, this),
-                     aEvt, _retval);
+nsresult
+nsWindowRoot::DispatchDOMEvent(nsEvent* aEvent,
+                               nsIDOMEvent* aDOMEvent,
+                               nsPresContext* aPresContext,
+                               nsEventStatus* aEventStatus)
+{
+  return nsEventDispatcher::DispatchDOMEvent(static_cast<nsPIDOMEventTarget*>(this),
+                                             aEvent, aDOMEvent,
+                                             aPresContext, aEventStatus);
 }
 
 NS_IMETHODIMP
@@ -134,7 +133,7 @@ nsWindowRoot::AddGroupedEventListener(const nsAString & aType, nsIDOMEventListen
 {
   nsCOMPtr<nsIEventListenerManager> manager;
 
-  if (NS_SUCCEEDED(GetListenerManager(getter_AddRefs(manager)))) {
+  if (NS_SUCCEEDED(GetListenerManager(PR_TRUE, getter_AddRefs(manager)))) {
     PRInt32 flags = aUseCapture ? NS_EVENT_FLAG_CAPTURE : NS_EVENT_FLAG_BUBBLE;
     manager->AddEventListenerByType(aListener, aType, flags, aEvtGrp);
     return NS_OK;
@@ -172,7 +171,7 @@ nsWindowRoot::AddEventListener(const nsAString& aType,
                                PRBool aUseCapture, PRBool aWantsUntrusted)
 {
   nsCOMPtr<nsIEventListenerManager> manager;
-  nsresult rv = GetListenerManager(getter_AddRefs(manager));
+  nsresult rv = GetListenerManager(PR_TRUE, getter_AddRefs(manager));
   NS_ENSURE_SUCCESS(rv, rv);
 
   PRInt32 flags = aUseCapture ? NS_EVENT_FLAG_CAPTURE : NS_EVENT_FLAG_BUBBLE;
@@ -184,11 +183,11 @@ nsWindowRoot::AddEventListener(const nsAString& aType,
   return manager->AddEventListenerByType(aListener, aType, flags, nsnull);
 }
 
-NS_IMETHODIMP
+nsresult
 nsWindowRoot::AddEventListenerByIID(nsIDOMEventListener *aListener, const nsIID& aIID)
 {
   nsCOMPtr<nsIEventListenerManager> manager;
-  GetListenerManager(getter_AddRefs(manager));
+  GetListenerManager(PR_TRUE, getter_AddRefs(manager));
   if (manager) {
     manager->AddEventListenerByIID(aListener, aIID, NS_EVENT_FLAG_BUBBLE);
     return NS_OK;
@@ -196,11 +195,11 @@ nsWindowRoot::AddEventListenerByIID(nsIDOMEventListener *aListener, const nsIID&
   return NS_ERROR_FAILURE;
 }
   
-NS_IMETHODIMP
+nsresult
 nsWindowRoot::RemoveEventListenerByIID(nsIDOMEventListener *aListener, const nsIID& aIID)
 {
   nsCOMPtr<nsIEventListenerManager> manager;
-  GetListenerManager(getter_AddRefs(manager));
+  GetListenerManager(PR_TRUE, getter_AddRefs(manager));
   if (manager) {
     manager->RemoveEventListenerByIID(aListener, aIID, NS_EVENT_FLAG_BUBBLE);
     return NS_OK;
@@ -208,15 +207,20 @@ nsWindowRoot::RemoveEventListenerByIID(nsIDOMEventListener *aListener, const nsI
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP
-nsWindowRoot::GetListenerManager(nsIEventListenerManager** aResult)
+nsresult
+nsWindowRoot::GetListenerManager(PRBool aCreateIfNotFound,
+                                 nsIEventListenerManager** aResult)
 {
   if (!mListenerManager) {
+    if (!aCreateIfNotFound) {
+      *aResult = nsnull;
+      return NS_OK;
+    }
     nsresult rv;
     mListenerManager = do_CreateInstance(kEventListenerManagerCID, &rv);
     if (NS_FAILED(rv)) return rv;
     mListenerManager->SetListenerTarget(
-      NS_STATIC_CAST(nsIDOMEventReceiver*, this));
+      static_cast<nsPIDOMEventTarget*>(this));
   }
 
   *aResult = mListenerManager;
@@ -224,89 +228,32 @@ nsWindowRoot::GetListenerManager(nsIEventListenerManager** aResult)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsWindowRoot::HandleEvent(nsIDOMEvent *aEvent)
-{
-  PRBool defaultActionEnabled;
-  return DispatchEvent(aEvent, &defaultActionEnabled);
-}
-
-NS_IMETHODIMP
+nsresult
 nsWindowRoot::GetSystemEventGroup(nsIDOMEventGroup **aGroup)
 {
   nsCOMPtr<nsIEventListenerManager> manager;
-  if (NS_SUCCEEDED(GetListenerManager(getter_AddRefs(manager))) && manager) {
+  if (NS_SUCCEEDED(GetListenerManager(PR_TRUE, getter_AddRefs(manager))) &&
+    manager) {
     return manager->GetSystemEventGroupLM(aGroup);
   }
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP
-nsWindowRoot::HandleChromeEvent(nsPresContext* aPresContext, nsEvent* aEvent,
-                                nsIDOMEvent** aDOMEvent, PRUint32 aFlags, 
-                                nsEventStatus* aEventStatus)
+
+nsresult
+nsWindowRoot::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
 {
-  // Make sure to tell the event that dispatch has started.
-  NS_MARK_EVENT_DISPATCH_STARTED(aEvent);
-
-  // Prevent the world from going
-  // away until after we've finished handling the event.
-  nsCOMPtr<nsIDOMWindow> kungFuDeathGrip(mWindow);
-
-  nsresult ret = NS_OK;
-  nsIDOMEvent* domEvent = nsnull;
-
-  // We're at the top, so there's no bubbling or capturing here.
-  if (NS_EVENT_FLAG_INIT & aFlags) {
-    aDOMEvent = &domEvent;
-    aEvent->flags = aFlags;
-    aFlags &= ~(NS_EVENT_FLAG_CANT_BUBBLE | NS_EVENT_FLAG_CANT_CANCEL);
-  }
-
-  //Local handling stage
-  if (mListenerManager && !(aEvent->flags & NS_EVENT_FLAG_STOP_DISPATCH)) {
-    aEvent->flags |= aFlags;
-    mListenerManager->HandleEvent(aPresContext, aEvent, aDOMEvent, this, aFlags, aEventStatus);
-    aEvent->flags &= ~aFlags;
-  }
-
-  if (NS_EVENT_FLAG_INIT & aFlags) {
-    // We're leaving the DOM event loop so if we created a DOM event,
-    // release here.
-    if (nsnull != *aDOMEvent) {
-      nsrefcnt rc;
-      NS_RELEASE2(*aDOMEvent, rc);
-      if (0 != rc) {
-        // Okay, so someone in the DOM loop (a listener, JS object)
-        // still has a ref to the DOM Event but the internal data
-        // hasn't been malloc'd.  Force a copy of the data here so the
-        // DOM Event is still valid.
-        nsIPrivateDOMEvent *privateEvent;
-        if (NS_OK == (*aDOMEvent)->QueryInterface(NS_GET_IID(nsIPrivateDOMEvent), (void**)&privateEvent)) {
-          privateEvent->DuplicatePrivateData();
-          NS_RELEASE(privateEvent);
-        }
-      }
-    }
-    aDOMEvent = nsnull;
-
-    // Now that we're done with this event, remove the flag that says
-    // we're in the process of dispatching this event.
-    NS_MARK_EVENT_DISPATCH_DONE(aEvent);
-  }
-
-  return ret;
+  aVisitor.mCanHandle = PR_TRUE;
+  aVisitor.mForceContentDispatch = PR_TRUE; //FIXME! Bug 329119
+  // To keep mWindow alive
+  aVisitor.mItemData = mWindow;
+  return NS_OK;
 }
 
-nsIDOMGCParticipant*
-nsWindowRoot::GetSCCIndex()
+nsresult
+nsWindowRoot::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
 {
-  return this;
-}
-
-void
-nsWindowRoot::AppendReachableList(nsCOMArray<nsIDOMGCParticipant>& aArray)
-{
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -317,10 +264,30 @@ nsWindowRoot::GetFocusController(nsIFocusController** aResult)
   return NS_OK;
 }
 
+nsIDOMWindow*
+nsWindowRoot::GetWindow()
+{
+  return mWindow;
+}
+
+NS_IMETHODIMP
+nsWindowRoot::GetScriptTypeID(PRUint32 *aScriptType)
+{
+    NS_ERROR("No default script type here - ask some element");
+    return nsIProgrammingLanguage::UNKNOWN;
+}
+
+NS_IMETHODIMP
+nsWindowRoot::SetScriptTypeID(PRUint32 aScriptType)
+{
+    NS_ERROR("Can't change default script type for a document");
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////
 
 nsresult
-NS_NewWindowRoot(nsIDOMWindow* aWindow, nsIChromeEventHandler** aResult)
+NS_NewWindowRoot(nsIDOMWindow* aWindow, nsPIDOMEventTarget** aResult)
 {
   *aResult = new nsWindowRoot(aWindow);
   if (!*aResult)

@@ -34,6 +34,9 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* internal interface for implementing complex pseudo-classes */
+
 #ifndef nsICSSPseudoComparator_h___
 #define nsICSSPseudoComparator_h___
 
@@ -46,9 +49,12 @@ struct nsCSSSelector;
 
 class nsICSSPseudoComparator: public nsISupports {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICSS_PSEUDO_COMPARATOR_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICSS_PSEUDO_COMPARATOR_IID)
 
   NS_IMETHOD  PseudoMatches(nsIAtom* aTag, nsCSSSelector* aSelector, PRBool* aResult)=0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsICSSPseudoComparator,
+                              NS_ICSS_PSEUDO_COMPARATOR_IID)
 
 #endif /* nsICSSPseudoComparator_h___ */

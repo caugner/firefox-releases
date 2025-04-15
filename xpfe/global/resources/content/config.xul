@@ -57,6 +57,7 @@
 <stringbundle id="configBundle" src="chrome://global/locale/config.properties"/>
 
 <popup id="configContext" onpopupshowing="if (event.target == this) updateContextMenu();">
+  <menuitem id="copyPref" label="&copyPref.label;" accesskey="&copyPref.accesskey;" oncommand="copyPref();"/>
   <menuitem id="copyName" label="&copyName.label;" accesskey="&copyName.accesskey;" oncommand="copyName();"/>
   <menuitem id="copyValue" label="&copyValue.label;" accesskey="&copyValue.accesskey;" oncommand="copyValue();"/>
   <menu label="&new.label;" accesskey="&new.accesskey;">
@@ -81,11 +82,11 @@
     <hbox id="warningBox" align="top">
       <image id="exclam" class="alert-icon"/>
       <vbox id="warningInnerBox" flex="1">
-        <label id="warningTitle">&scaryWarningTitle.label;</label>
-        <label id="warningText">&scaryWarningText.label;</label>
-        <checkbox id="showWarningNextTime" label="&scaryWarningCheckbox.label;" checked="true"/>
+        <label id="warningTitle">&aboutWarningTitle.label;</label>
+        <label id="warningText">&aboutWarningText.label;</label>
+        <checkbox id="showWarningNextTime" label="&aboutWarningCheckbox.label;" checked="true"/>
         <hbox pack="center">
-          <button id="warningButton" oncommand="ShowPrefs();" label="&scaryWarningButton.label;"/>
+          <button id="warningButton" oncommand="ShowPrefs();" label="&aboutWarningButton.label;"/>
         </hbox>
       </vbox>
     </hbox>
@@ -99,6 +100,7 @@
     </hbox>
   
     <tree id="configTree" flex="1" class="plain focusring" seltype="single"
+          onselect="updateCommands('select');"
           enableColumnDrag="true" context="configContext">
       <treecols>
         <treecol id="prefCol" label="&prefColumn.label;" flex="7"

@@ -203,6 +203,25 @@ sub foreignPlatformFile
    return 0;
 }
 
+sub foreignPlatformPath
+{
+   my ($jarpath) = @_;
+   
+   if (!$win32 && index($jarpath, "-platform/win") != -1) {
+     return 1;
+   }
+   
+   if (!$unix && index($jarpath, "-platform/unix") != -1) {
+     return 1; 
+   }
+
+   if (!$macos && index($jarpath, "-platform/mac") != -1) {
+     return 1;
+   }
+
+   return 0;
+}
+
 sub zipErrorCheck($$)
 {
     my ($err,$lockfile) = @_;
@@ -225,6 +244,8 @@ sub JarIt
     }
 
     #print "cd $destPath/$jarfile\n";
+    my $argOpt = "-X";
+    $argOpt = "-uX" if ( -e $jarchive);
 
     my $lockfile = "../$jarfile.lck";
 
@@ -245,13 +266,13 @@ sub JarIt
 
             #print "$zipprog $zipmoveopt -uX $jarchive $subargs\n";
             #print "Length of subargs: " . length($subargs) . "\n";
-            system("$zipprog $zipmoveopt -uX $jarchive $subargs") == 0 or
+            system("$zipprog $zipmoveopt $argOpt $jarchive $subargs") == 0 or
                 $err = $? >> 8;
             zipErrorCheck($err,$lockfile);
         }
         #print "Length of args: " . length($args) . "\n";
         #print "$zipprog $zipmoveopt -uX $jarchive $args\n";
-        system("$zipprog $zipmoveopt -uX $jarchive $args") == 0 or
+        system("$zipprog $zipmoveopt $argOpt $jarchive $args") == 0 or
             $err = $? >> 8;
         zipErrorCheck($err,$lockfile);
     }
@@ -425,7 +446,7 @@ sub EnsureFileInDir
         #print "copying $destPath, from $srcPath\n";
         my $dir = "";
         my $file;
-        if ($destPath =~ /([\w\d.\-\_\\\/\+]+)[\\\/]([\w\d.\-\_]+)/) {
+        if ($destPath =~ /(.+)[\\\/]([\w\d.\-\_]+)/) {
             $dir = $1;
             $file = $2;
         }
@@ -451,7 +472,7 @@ sub EnsureFileInDir
         unlink $destPath;       # in case we had a symlink on unix
         if ($preproc) {
             my $preproc_flags = '';
-            if ($srcFile =~ /\.css$/o) {
+            if ($srcPath =~ /\.css$/o) {
                 $preproc_flags = '--marker=%';
             }
 
@@ -515,7 +536,7 @@ start:
                 my $srcPath = defined($2) ? substr($2, 1, -1) : $2;
                 EnsureFileInDir("$chromeDir/$jarfile", $baseFilesDir, $dest, $srcPath, 0, 0);
                 $args = "$args$dest ";
-                if (!foreignPlatformFile($jarfile)  && $autoreg &&
+                if (!foreignPlatformFile($jarfile) && !foreignPlatformPath($dest) && $autoreg &&
                     $dest =~ /([\w\d.\-\_\+]+)\/([\w\d.\-\_\\\/]+)contents.rdf/)
                 {
                     my $chrome_type = $1;
@@ -527,7 +548,8 @@ start:
                 my $srcPath = defined($2) ? substr($2, 1, -1) : $2;
                 EnsureFileInDir("$chromeDir/$jarfile", $baseFilesDir, $dest, $srcPath, 1, 0);
                 $overrides = "$overrides$dest ";
-                if (!foreignPlatformFile($jarfile)  && $autoreg && $dest =~ /([\w\d.\-\_\+]+)\/([\w\d.\-\_\\\/]+)contents.rdf/)
+                if (!foreignPlatformFile($jarfile) && !foreignPlatformPath($dest) && $autoreg &&
+                    $dest =~ /([\w\d.\-\_\+]+)\/([\w\d.\-\_\\\/]+)contents.rdf/)
                 {
                     my $chrome_type = $1;
                     my $pkg_name = $2;
@@ -539,7 +561,8 @@ start:
                 my $srcPath = defined($2) ? substr($2, 1, -1) : $2;
                 EnsureFileInDir("$chromeDir/$jarfile", $baseFilesDir, $dest, $srcPath, 1, 1);
                 $overrides = "$overrides$dest ";
-                if (!foreignPlatformFile($jarfile)  && $autoreg && $dest =~ /([\w\d.\-\_\+]+)\/([\w\d.\-\_\\\/]+)contents.rdf/)
+                if (!foreignPlatformFile($jarfile) && !foreignPlatformPath($dest) && $autoreg &&
+                    $dest =~ /([\w\d.\-\_\+]+)\/([\w\d.\-\_\\\/]+)contents.rdf/)
                 {
                     my $chrome_type = $1;
                     my $pkg_name = $2;

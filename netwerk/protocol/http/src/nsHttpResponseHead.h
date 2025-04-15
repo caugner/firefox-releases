@@ -56,6 +56,7 @@ public:
                          , mContentLength(LL_MAXUINT)
                          , mCacheControlNoStore(PR_FALSE)
                          , mCacheControlNoCache(PR_FALSE)
+                         , mCacheControlPublic(PR_FALSE)
                          , mPragmaNoCache(PR_FALSE) {}
    ~nsHttpResponseHead() 
     {
@@ -71,6 +72,7 @@ public:
     const nsAFlatCString &ContentCharset() { return mContentCharset; }
     PRBool                NoStore()        { return mCacheControlNoStore; }
     PRBool                NoCache()        { return (mCacheControlNoCache || mPragmaNoCache); }
+    PRBool                CacheControlPublic() { return mCacheControlPublic; }
     /**
      * Full length of the entity. For byte-range requests, this may be larger
      * than ContentLength(), which will only represent the requested part of the
@@ -83,6 +85,9 @@ public:
     nsresult GetHeader(nsHttpAtom h, nsACString &v) { return mHeaders.GetHeader(h, v); }
     void     ClearHeader(nsHttpAtom h)              { mHeaders.ClearHeader(h); }
     void     ClearHeaders()                         { mHeaders.Clear(); }
+
+    const char *FindHeaderValue(nsHttpAtom h, const char *v) { return mHeaders.FindHeaderValue(h, v); }
+    PRBool      HasHeaderValue(nsHttpAtom h, const char *v) { return mHeaders.HasHeaderValue(h, v); }
 
     void     SetContentType(const nsACString &s)    { mContentType = s; }
     void     SetContentCharset(const nsACString &s) { mContentCharset = s; }
@@ -145,6 +150,7 @@ private:
     nsCString         mContentCharset;
     PRPackedBool      mCacheControlNoStore;
     PRPackedBool      mCacheControlNoCache;
+    PRPackedBool      mCacheControlPublic;
     PRPackedBool      mPragmaNoCache;
 };
 

@@ -37,7 +37,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: sslt.h,v 1.8.14.1 2006/02/03 22:31:45 wtchang%redhat.com Exp $ */
+/* $Id: sslt.h,v 1.11 2008/03/06 20:16:22 wtc%google.com Exp $ */
 
 #ifndef __sslt_h_
 #define __sslt_h_
@@ -59,6 +59,12 @@ typedef struct SSL3StatisticsStr {
     long hch_sid_cache_hits;
     long hch_sid_cache_misses;
     long hch_sid_cache_not_ok;
+
+    /* statistics related to stateless resume */
+    long sch_sid_stateless_resumes;
+    long hsh_sid_stateless_resumes;
+    long hch_sid_stateless_resumes;
+    long hch_sid_ticket_parse_failures;
 } SSL3Statistics;
 
 /* Key Exchange algorithm values */
@@ -106,7 +112,8 @@ typedef enum {
     ssl_calg_3des     = 4,
     ssl_calg_idea     = 5,
     ssl_calg_fortezza = 6,      /* deprecated, now unused */
-    ssl_calg_aes      = 7       /* coming soon */
+    ssl_calg_aes      = 7,      /* coming soon */
+    ssl_calg_camellia = 8
 } SSLCipherAlgorithm;
 
 typedef enum { 

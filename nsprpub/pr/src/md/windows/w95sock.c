@@ -46,15 +46,104 @@
 #define CONNECT_FD  3
 
 static PRInt32 socket_io_wait(
-    PRInt32 osfd, 
+    PROsfd osfd, 
     PRInt32 fd_type,
     PRIntervalTime timeout);
 
 
 /* --- SOCKET IO --------------------------------------------------------- */
 
+/*
+ * we only want to call WSAIoctl() on Vista and later
+ * so don't pay for it at build time (and avoid including winsock2.h)
+ */
 
-PRInt32
+/* from ws2def.h */
+#define IOC_IN                      0x80000000      /* copy in parameters */
+#define IOC_VENDOR                  0x18000000
+#define _WSAIOW(x,y)                (IOC_IN|(x)|(y))
+/* from MSWSockDef.h */
+#define SIO_SET_COMPATIBILITY_MODE  _WSAIOW(IOC_VENDOR,300)
+
+typedef enum _WSA_COMPATIBILITY_BEHAVIOR_ID {
+    WsaBehaviorAll = 0,
+    WsaBehaviorReceiveBuffering,
+    WsaBehaviorAutoTuning
+} WSA_COMPATIBILITY_BEHAVIOR_ID, *PWSA_COMPATIBILITY_BEHAVIOR_ID;
+
+/* from sdkddkver.h */
+#define NTDDI_LONGHORN                      0x06000000
+
+/* from winsock2.h */
+#define WSAEVENT                HANDLE
+
+#define WSAOVERLAPPED           OVERLAPPED
+typedef struct _OVERLAPPED *    LPWSAOVERLAPPED;
+
+typedef void (CALLBACK * LPWSAOVERLAPPED_COMPLETION_ROUTINE)(
+    IN DWORD dwError,
+    IN DWORD cbTransferred,
+    IN LPWSAOVERLAPPED lpOverlapped,
+    IN DWORD dwFlags
+);
+
+typedef int (__stdcall * WSAIOCTLPROC) (
+    SOCKET s,
+    DWORD dwIoControlCode,
+    LPVOID lpvInBuffer,
+    DWORD cbInBuffer,
+    LPVOID lpvOutBuffer,
+    DWORD cbOutBuffer,
+    LPDWORD lpcbBytesReturned,
+    LPWSAOVERLAPPED lpOverlapped,
+    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
+);
+
+typedef struct _WSA_COMPATIBILITY_MODE {
+    WSA_COMPATIBILITY_BEHAVIOR_ID BehaviorId;
+    ULONG TargetOsVersion;
+} WSA_COMPATIBILITY_MODE, *PWSA_COMPATIBILITY_MODE;
+
+static HMODULE libWinsock2 = NULL;
+static WSAIOCTLPROC wsaioctlProc = NULL;
+static PRBool socketSetCompatMode = PR_FALSE;
+
+void _PR_MD_InitSockets(void)
+{
+    OSVERSIONINFO osvi;
+
+    memset(&osvi, 0, sizeof(osvi));
+    osvi.dwOSVersionInfoSize = sizeof(osvi);
+    GetVersionEx(&osvi);
+
+    /* if Vista or later... */
+    if (osvi.dwMajorVersion >= 6)
+    {
+        libWinsock2 = LoadLibrary("Ws2_32.dll");
+        if (libWinsock2)
+        {
+            wsaioctlProc = (WSAIOCTLPROC)GetProcAddress(libWinsock2, 
+                                                        "WSAIoctl");
+            if (wsaioctlProc)
+            {
+                socketSetCompatMode = PR_TRUE;
+            }
+        }
+    }
+}
+
+void _PR_MD_CleanupSockets(void)
+{
+    socketSetCompatMode = PR_FALSE;
+    wsaioctlProc = NULL;
+    if (libWinsock2)
+    {
+        FreeLibrary(libWinsock2);
+        libWinsock2 = NULL;
+    }
+}
+
+PROsfd
 _PR_MD_SOCKET(int af, int type, int flags)
 {
     SOCKET sock;
@@ -65,7 +154,7 @@ _PR_MD_SOCKET(int af, int type, int flags)
     if (sock == INVALID_SOCKET ) 
     {
         _PR_MD_MAP_SOCKET_ERROR(WSAGetLastError());
-        return (PRInt32)sock;
+        return (PROsfd)sock;
     }
 
     /*
@@ -78,7 +167,30 @@ _PR_MD_SOCKET(int af, int type, int flags)
         return -1;
     }
 
-    return (PRInt32)sock;
+    if ((af == AF_INET || af == AF_INET6) && 
+        type == SOCK_STREAM && socketSetCompatMode)
+    {
+        WSA_COMPATIBILITY_MODE mode;
+        char dummy[4];
+        int ret_dummy;
+
+        mode.BehaviorId = WsaBehaviorAutoTuning;
+        mode.TargetOsVersion = NTDDI_LONGHORN;
+        if (wsaioctlProc(sock, SIO_SET_COMPATIBILITY_MODE,  
+                         (char *)&mode, sizeof(mode),
+                         dummy, 4, &ret_dummy, 0, NULL) == SOCKET_ERROR)
+        {
+            int err = WSAGetLastError();
+            PR_LOG(_pr_io_lm, PR_LOG_DEBUG, ("WSAIoctl() failed with %d", err));
+
+            /* SIO_SET_COMPATIBILITY_MODE may not be supported.
+            ** If the call to WSAIoctl() fails with WSAEOPNOTSUPP,
+            ** don't close the socket.
+            */ 
+        }
+    }
+
+    return (PROsfd)sock;
 }
 
 /*
@@ -86,7 +198,7 @@ _PR_MD_SOCKET(int af, int type, int flags)
 **
 */
 PRInt32
-_MD_CloseSocket(PRInt32 osfd)
+_MD_CloseSocket(PROsfd osfd)
 {
     PRInt32 rv;
 
@@ -109,23 +221,24 @@ _MD_SocketAvailable(PRFileDesc *fd)
     return result;
 }
 
-PRInt32 _MD_Accept(
+PROsfd _MD_Accept(
     PRFileDesc *fd, 
     PRNetAddr *raddr, 
     PRUint32 *rlen,
     PRIntervalTime timeout )
 {
-    PRInt32 osfd = fd->secret->md.osfd;
+    PROsfd osfd = fd->secret->md.osfd;
+    SOCKET sock;
     PRInt32 rv, err;
 
-    while ((rv = accept(osfd, (struct sockaddr *) raddr, rlen)) == -1) 
+    while ((sock = accept(osfd, (struct sockaddr *) raddr, rlen)) == -1) 
     {
         err = WSAGetLastError();
         if ((err == WSAEWOULDBLOCK) && (!fd->secret->nonblocking))
         {
             if ((rv = socket_io_wait(osfd, READ_FD, timeout)) < 0)
             {
-                return(-1);
+                break;
             }
         }
         else
@@ -134,14 +247,14 @@ PRInt32 _MD_Accept(
             break;
         }
     }
-    return(rv);
+    return(sock);
 } /* end _MD_accept() */
 
 PRInt32
 _PR_MD_CONNECT(PRFileDesc *fd, const PRNetAddr *addr, PRUint32 addrlen, 
                PRIntervalTime timeout)
 {
-    PRInt32 osfd = fd->secret->md.osfd;
+    PROsfd osfd = fd->secret->md.osfd;
     PRInt32 rv;
     int     err;
 
@@ -201,7 +314,7 @@ PRInt32
 _PR_MD_RECV(PRFileDesc *fd, void *buf, PRInt32 amount, PRIntn flags, 
             PRIntervalTime timeout)
 {
-    PRInt32 osfd = fd->secret->md.osfd;
+    PROsfd osfd = fd->secret->md.osfd;
     PRInt32 rv, err;
     int osflags;
 
@@ -235,7 +348,7 @@ PRInt32
 _PR_MD_SEND(PRFileDesc *fd, const void *buf, PRInt32 amount, PRIntn flags,
             PRIntervalTime timeout)
 {
-    PRInt32 osfd = fd->secret->md.osfd;
+    PROsfd osfd = fd->secret->md.osfd;
     PRInt32 rv, err;
     PRInt32 bytesSent = 0;
 
@@ -279,7 +392,7 @@ PRInt32
 _PR_MD_SENDTO(PRFileDesc *fd, const void *buf, PRInt32 amount, PRIntn flags,
               const PRNetAddr *addr, PRUint32 addrlen, PRIntervalTime timeout)
 {
-    PRInt32 osfd = fd->secret->md.osfd;
+    PROsfd osfd = fd->secret->md.osfd;
     PRInt32 rv, err;
     PRInt32 bytesSent = 0;
 
@@ -324,7 +437,7 @@ PRInt32
 _PR_MD_RECVFROM(PRFileDesc *fd, void *buf, PRInt32 amount, PRIntn flags,
                 PRNetAddr *addr, PRUint32 *addrlen, PRIntervalTime timeout)
 {
-    PRInt32 osfd = fd->secret->md.osfd;
+    PROsfd osfd = fd->secret->md.osfd;
     PRInt32 rv, err;
 
     while ((rv = recvfrom( osfd, buf, amount, 0, (struct sockaddr *) addr,
@@ -469,7 +582,7 @@ _MD_MakeNonblock(PRFileDesc *f)
 #define _PR_INTERRUPT_CHECK_INTERVAL_SECS 5
 
 static PRInt32 socket_io_wait(
-    PRInt32 osfd, 
+    PROsfd osfd, 
     PRInt32 fd_type,
     PRIntervalTime timeout)
 {
@@ -500,13 +613,13 @@ static PRInt32 socket_io_wait(
                 switch( fd_type )
                 {
                     case READ_FD:
-                        rv = _MD_SELECT(osfd + 1, &rd_wr, NULL, NULL, &tv);
+                        rv = _MD_SELECT(0, &rd_wr, NULL, NULL, &tv);
                         break;
                     case WRITE_FD:
-                        rv = _MD_SELECT(osfd + 1, NULL, &rd_wr, NULL, &tv);
+                        rv = _MD_SELECT(0, NULL, &rd_wr, NULL, &tv);
                         break;
                     case CONNECT_FD:
-                        rv = _MD_SELECT(osfd + 1, NULL, &rd_wr, &ex, &tv);
+                        rv = _MD_SELECT(0, NULL, &rd_wr, &ex, &tv);
                         break;
                     default:
                         PR_ASSERT(0);
@@ -580,13 +693,13 @@ static PRInt32 socket_io_wait(
                 switch( fd_type )
                 {
                     case READ_FD:
-                        rv = _MD_SELECT(osfd + 1, &rd_wr, NULL, NULL, &tv);
+                        rv = _MD_SELECT(0, &rd_wr, NULL, NULL, &tv);
                         break;
                     case WRITE_FD:
-                        rv = _MD_SELECT(osfd + 1, NULL, &rd_wr, NULL, &tv);
+                        rv = _MD_SELECT(0, NULL, &rd_wr, NULL, &tv);
                         break;
                     case CONNECT_FD:
-                        rv = _MD_SELECT(osfd + 1, NULL, &rd_wr, &ex, &tv);
+                        rv = _MD_SELECT(0, NULL, &rd_wr, &ex, &tv);
                         break;
                     default:
                         PR_ASSERT(0);

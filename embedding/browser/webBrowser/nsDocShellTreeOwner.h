@@ -52,8 +52,7 @@
 #include "nsIWebBrowserChrome.h"
 #include "nsIDOMMouseListener.h"
 #include "nsIDOMDocument.h"
-#include "nsIChromeEventHandler.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsIEmbeddingSiteWindow.h"
 #include "nsIWebProgressListener.h"
 #include "nsWeakReference.h"
@@ -67,7 +66,7 @@
 #include "nsITooltipTextProvider.h"
 #include "nsCTooltipTextProvider.h"
 #include "nsIDragDropHandler.h"
-
+#include "nsPIDOMEventTarget.h"
 #include "nsCommandHandler.h"
 
 class nsWebBrowser;
@@ -87,9 +86,11 @@ class ChromeContextMenuListener;
 class nsICDocShellTreeOwner : public nsISupports
 {
 public:
-    NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICDOCSHELLTREEOWNER_IID)
+    NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICDOCSHELLTREEOWNER_IID)
 };
 
+NS_DEFINE_STATIC_IID_ACCESSOR(nsICDocShellTreeOwner,
+                              NS_ICDOCSHELLTREEOWNER_IID)
 
 class nsDocShellTreeOwner : public nsIDocShellTreeOwner,
                             public nsIBaseWindow,
@@ -200,7 +201,7 @@ public:
 
     // nsIDOMMouseMotionListener
   NS_IMETHOD MouseMove(nsIDOMEvent* aMouseEvent);
-  NS_IMETHOD DragMove(nsIDOMEvent* aMouseEvent) { return NS_OK; };
+  NS_IMETHOD DragMove(nsIDOMEvent* aMouseEvent) { return NS_OK; }
 
     // nsIDOMKeyListener
   NS_IMETHOD KeyDown(nsIDOMEvent* aKeyEvent) ;
@@ -227,7 +228,7 @@ private:
   NS_IMETHOD HideTooltip ( ) ;
 
   nsWebBrowser* mWebBrowser;
-  nsCOMPtr<nsIDOMEventReceiver> mEventReceiver;
+  nsCOMPtr<nsPIDOMEventTarget> mEventTarget;
   nsCOMPtr<nsITooltipTextProvider> mTooltipTextProvider;
   
     // This must be a strong ref in order to make sure we can hide the tooltip
@@ -294,7 +295,7 @@ private:
   PRPackedBool mContextMenuListenerInstalled;
 
   nsWebBrowser* mWebBrowser;
-  nsCOMPtr<nsIDOMEventReceiver> mEventReceiver;
+  nsCOMPtr<nsPIDOMEventTarget> mEventTarget;
   nsCOMPtr<nsIWebBrowserChrome> mWebBrowserChrome;
 
 }; // class ChromeContextMenuListener

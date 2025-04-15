@@ -36,6 +36,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* atom list for CSS anonymous boxes */
+
 /*
  * This file contains the list of nsIAtoms and their values for CSS
  * pseudo-element-ish things used internally for anonymous boxes.  It is
@@ -54,8 +56,9 @@ CSS_ANON_BOX(mozNonElement, ":-moz-non-element")
 
 CSS_ANON_BOX(mozAnonymousBlock, ":-moz-anonymous-block")
 CSS_ANON_BOX(mozAnonymousPositionedBlock, ":-moz-anonymous-positioned-block")
+CSS_ANON_BOX(mozMathMLAnonymousBlock, ":-moz-mathml-anonymous-block")
+CSS_ANON_BOX(mozXULAnonymousBlock, ":-moz-xul-anonymous-block")
 
-CSS_ANON_BOX(mozFirstLineFixup, ":-moz-first-line-fixup")
 CSS_ANON_BOX(mozLineFrame, ":-moz-line-frame")
 
 CSS_ANON_BOX(buttonContent, ":-moz-button-content")
@@ -67,8 +70,8 @@ CSS_ANON_BOX(framesetBlank, ":-moz-frameset-blank")
 CSS_ANON_BOX(radio, ":-moz-radio")
 CSS_ANON_BOX(check, ":-moz-checkbox")
 CSS_ANON_BOX(mozDisplayComboboxControlFrame, ":-moz-display-comboboxcontrol-frame")
-CSS_ANON_BOX(dummyOption, ":-moz-dummy-option")
 
+CSS_ANON_BOX(inlineTable, ":-moz-inline-table")
 CSS_ANON_BOX(table, ":-moz-table")
 CSS_ANON_BOX(tableCell, ":-moz-table-cell")
 CSS_ANON_BOX(tableColGroup, ":-moz-table-column-group")
@@ -88,7 +91,6 @@ CSS_ANON_BOX(scrolledPageSequence, ":-moz-scrolled-page-sequence")
 CSS_ANON_BOX(columnContent, ":-moz-column-content")
 CSS_ANON_BOX(viewport, ":-moz-viewport")
 CSS_ANON_BOX(viewportScroll, ":-moz-viewport-scroll")
-CSS_ANON_BOX(selectScrolledContent, ":-moz-select-scrolled-content")
 
 #ifdef MOZ_XUL
 CSS_ANON_BOX(moztreecolumn, ":-moz-tree-column")
@@ -109,4 +111,8 @@ CSS_ANON_BOX(moztreedropfeedback, ":-moz-tree-drop-feedback")
 CSS_ANON_BOX(mozMathStretchy, ":-moz-math-stretchy")
 CSS_ANON_BOX(mozMathAnonymous, ":-moz-math-anonymous")
 CSS_ANON_BOX(mozMathInline, ":-moz-math-inline")
+#endif
+
+#ifdef MOZ_SVG
+CSS_ANON_BOX(mozSVGForeignContent, ":-moz-svg-foreign-content")
 #endif

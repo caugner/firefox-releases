@@ -101,7 +101,6 @@ jar:resource:///chrome/modern.jar!/skin/modern/communicator/sidebar/sidebar.css
 jar:resource:///chrome/modern.jar!/skin/modern/global/global.css
 jar:resource:///chrome/modern.jar!/skin/modern/communicator/brand.css
 jar:resource:///chrome/modern.jar!/skin/modern/communicator/button.css
-jar:resource:///chrome/modern.jar!/skin/modern/communicator/formatting.css
 jar:resource:///chrome/modern.jar!/skin/modern/communicator/toolbar.css
 jar:resource:///chrome/modern.jar!/skin/modern/communicator/bookmarks/bookmarksToolbar.css
 jar:resource:///chrome/en-US.jar!/locale/en-US/global/intl.css
@@ -134,15 +133,14 @@ jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/contentAreaCommands.
 jar:resource:///chrome/en-US.jar!/locale/en-US/messenger/mailNavigatorOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/messenger/mailOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/editor/editorNavigatorOverlay.dtd
-jar:resource:///chrome/US.jar!/locale/US/global-region/region.dtd
+jar:resource:///chrome/en-US.jar!/locale/en-US/global-region/region.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/utilityOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/help/helpMenuOverlay.dtd
-jar:resource:///chrome/en-win.jar!/locale/en-US/global-platform/platformGlobalOverlay.dtd
+jar:resource:///chrome/en-US.jar!/locale/en-US/global-platform/win/platformGlobalOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/viewZoomOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/tasksOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/messenger/mailTasksOverlay.dtd
 jar:resource:///chrome/venkman.jar!/locale/en-US/venkman/venkman-overlay.dtd
-jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/permissions/cookieTasksOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/wallet/walletTasksOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/global/charsetOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/navigator/linkToolbar.dtd
@@ -151,7 +149,6 @@ jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/permissions/imageCon
 jar:resource:///chrome/en-US.jar!/locale/en-US/wallet/walletContextOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/securityOverlay.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/bookmarks/bookmarksOverlay.dtd
-jar:resource:///chrome/en-US.jar!/locale/en-US/global/tabbrowser.dtd
 jar:resource:///chrome/en-US.jar!/locale/en-US/global/textcontext.dtd
 jar:resource:///chrome/comm.jar!/content/navigator/navigator.xul
 jar:resource:///chrome/comm.jar!/content/wallet/walletNavigatorOverlay.xul
@@ -167,7 +164,6 @@ jar:resource:///chrome/comm.jar!/content/communicator/viewZoomOverlay.xul
 jar:resource:///chrome/comm.jar!/content/communicator/tasksOverlay.xul
 jar:resource:///chrome/messenger.jar!/content/messenger/mailTasksOverlay.xul
 jar:resource:///chrome/venkman.jar!/content/venkman/venkman-overlay.xul
-jar:resource:///chrome/comm.jar!/content/communicator/permissions/cookieTasksOverlay.xul
 jar:resource:///chrome/comm.jar!/content/wallet/walletTasksOverlay.xul
 jar:resource:///chrome/toolkit.jar!/content/global/charsetOverlay.xul
 jar:resource:///chrome/comm.jar!/content/navigator/platformNavigationBindings.xul
@@ -178,7 +174,6 @@ jar:resource:///chrome/comm.jar!/content/communicator/contentAreaContextOverlay.
 jar:resource:///chrome/comm.jar!/content/communicator/permissions/imageContextOverlay.xul
 jar:resource:///chrome/comm.jar!/content/wallet/walletContextOverlay.xul
 jar:resource:///chrome/comm.jar!/content/communicator/securityOverlay.xul
-jar:resource:///chrome/comm.jar!/content/communicator/communicatorOverlay.xul
 jar:resource:///chrome/comm.jar!/content/communicator/bookmarks/bookmarksOverlay.xul
 jar:resource:///chrome/toolkit.jar!/content/global/bindings/scrollbar.xml
 jar:resource:///chrome/toolkit.jar!/content/global/bindings/general.xml
@@ -189,7 +184,6 @@ jar:resource:///chrome/toolkit.jar!/content/global/bindings/popup.xml
 jar:resource:///chrome/toolkit.jar!/content/global/bindings/toolbar.xml
 jar:resource:///chrome/toolkit.jar!/content/global/bindings/splitter.xml
 jar:resource:///chrome/modern.jar!/skin/modern/communicator/sidebar/sidebarBindings.xml
-jar:resource:///chrome/toolkit.jar!/content/global/bindings/tabbrowser.xml
 jar:resource:///chrome/toolkit.jar!/content/global/bindings/toolbarbutton.xml
 jar:resource:///chrome/toolkit.jar!/content/global/bindings/text.xml
 jar:resource:///chrome/toolkit.jar!/content/global/bindings/progressmeter.xml
@@ -204,12 +198,12 @@ jar:resource:///chrome/toolkit.jar!/content/global/autocomplete.xml
 jar:resource:///chrome/toolkit.jar!/content/global/bindings/textbox.xml
 jar:resource:///chrome/toolkit.jar!/content/global/bindings/outliner.xml
 jar:resource:///chrome/en-US.jar!/locale/en-US/navigator/navigator.properties
-jar:resource:///chrome/en-win.jar!/locale/en-US/navigator-platform/navigator.properties
+jar:resource:///chrome/en-US.jar!/locale/en-US/navigator-platform/win/navigator.properties
 jar:resource:///chrome/en-US.jar!/locale/en-US/necko/necko.properties
 jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/bookmarks/bookmarks.properties
-jar:resource:///chrome/en-win.jar!/locale/en-US/global-platform/platformKeys.properties
+jar:resource:///chrome/en-US.jar!/locale/en-US/global-platform/win/platformKeys.properties
 jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/utilityOverlay.properties
-jar:resource:///chrome/US.jar!/locale/US/navigator-region/region.properties
+jar:resource:///chrome/en-US.jar!/locale/en-US/navigator-region/region.properties
 jar:resource:///chrome/en-US.jar!/locale/en-US/communicator/viewZoomOverlay.properties
-jar:resource:///chrome/US.jar!/locale/US/communicator-region/region.properties
-jar:resource:///chrome/US.jar!/locale/US/global-region/builtinURLs.rdf
+jar:resource:///chrome/en-US.jar!/locale/en-US/communicator-region/region.properties
+jar:resource:///chrome/en-US.jar!/locale/en-US/global-region/builtinURLs.rdf

@@ -37,27 +37,28 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* representation of one line within a block frame, a CSS line box */
+
 #include "nsLineBox.h"
 #include "nsSpaceManager.h"
 #include "nsLineLayout.h"
 #include "prprf.h"
 #include "nsBlockFrame.h"
-#include "nsITextContent.h"
-#include "nsLayoutAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsFrameManager.h"
+#ifdef IBMBIDI
+#include "nsBidiPresUtils.h"
+#endif
 
 #ifdef DEBUG
 static PRInt32 ctorCount;
 PRInt32 nsLineBox::GetCtorCount() { return ctorCount; }
 #endif
 
-MOZ_DECL_CTOR_COUNTER(nsLineBox)
-
 nsLineBox::nsLineBox(nsIFrame* aFrame, PRInt32 aCount, PRBool aIsBlock)
   : mFirstChild(aFrame),
     mBounds(0, 0, 0, 0),
-    mMaxElementWidth(0),
-    mMaximumWidth(-1),
     mData(nsnull)
 {
   MOZ_COUNT_CTOR(nsLineBox);
@@ -66,7 +67,7 @@ nsLineBox::nsLineBox(nsIFrame* aFrame, PRInt32 aCount, PRBool aIsBlock)
   NS_ASSERTION(!aIsBlock || aCount == 1, "Blocks must have exactly one child");
   nsIFrame* f = aFrame;
   for (PRInt32 n = aCount; n > 0; f = f->GetNextSibling(), --n) {
-    NS_ASSERTION(aIsBlock == f->GetStyleDisplay()->IsBlockLevel(),
+    NS_ASSERTION(aIsBlock == f->GetStyleDisplay()->IsBlockOutside(),
                  "wrong kind of child frame");
   }
 #endif
@@ -141,24 +142,24 @@ ListFloats(FILE* out, PRInt32 aIndent, const nsFloatCacheList& aFloats)
   while (fc) {
     nsFrame::IndentBy(out, aIndent);
     nsPlaceholderFrame* ph = fc->mPlaceholder;
-    if (nsnull != ph) {
-      fprintf(out, "placeholder@%p ", NS_STATIC_CAST(void*, ph));
+    if (ph) {
+      fprintf(out, "placeholder@%p ", static_cast<void*>(ph));
       nsIFrame* frame = ph->GetOutOfFlowFrame();
-      if (nsnull != frame) {
+      if (frame) {
         nsIFrameDebug*  frameDebug;
 
         if (NS_SUCCEEDED(frame->QueryInterface(NS_GET_IID(nsIFrameDebug), (void**)&frameDebug))) {
           frameDebug->GetFrameName(frameName);
-          fputs(NS_LossyConvertUCS2toASCII(frameName).get(), out);
+          fputs(NS_LossyConvertUTF16toASCII(frameName).get(), out);
         }
       }
-      fprintf(out, " %s region={%d,%d,%d,%d} combinedArea={%d,%d,%d,%d}",
-              fc->mIsCurrentLineFloat ? "cl" : "bcl",
+      fprintf(out, " region={%d,%d,%d,%d}",
               fc->mRegion.x, fc->mRegion.y,
-              fc->mRegion.width, fc->mRegion.height,
-              fc->mCombinedArea.x, fc->mCombinedArea.y,
-              fc->mCombinedArea.width, fc->mCombinedArea.height);
+              fc->mRegion.width, fc->mRegion.height);
 
+      if (!frame) {
+        fputs("\n###!!! NULL out-of-flow frame", out);
+      }
       fprintf(out, "\n");
     }
     fc = fc->Next();
@@ -201,20 +202,17 @@ nsLineBox::StateToString(char* aBuf, PRInt32 aBufSize) const
 }
 
 void
-nsLineBox::List(nsPresContext* aPresContext, FILE* out, PRInt32 aIndent) const
+nsLineBox::List(FILE* out, PRInt32 aIndent) const
 {
   PRInt32 i;
 
   for (i = aIndent; --i >= 0; ) fputs("  ", out);
   char cbuf[100];
   fprintf(out, "line %p: count=%d state=%s ",
-          NS_STATIC_CAST(const void*, this), GetChildCount(),
+          static_cast<const void*>(this), GetChildCount(),
           StateToString(cbuf, sizeof(cbuf)));
   if (IsBlock() && !GetCarriedOutBottomMargin().IsZero()) {
     fprintf(out, "bm=%d ", GetCarriedOutBottomMargin().get());
-  }
-  if (0 != mMaxElementWidth) {
-    fprintf(out, "mew=%d ", mMaxElementWidth);
   }
   fprintf(out, "{%d,%d,%d,%d} ",
           mBounds.x, mBounds.y, mBounds.width, mBounds.height);
@@ -231,7 +229,7 @@ nsLineBox::List(nsPresContext* aPresContext, FILE* out, PRInt32 aIndent) const
     nsIFrameDebug*  frameDebug;
 
     if (NS_SUCCEEDED(frame->QueryInterface(NS_GET_IID(nsIFrameDebug), (void**)&frameDebug))) {
-      frameDebug->List(aPresContext, out, aIndent + 1);
+      frameDebug->List(out, aIndent + 1);
     }
     frame = frame->GetNextSibling();
   }
@@ -307,7 +305,24 @@ nsLineBox::CachedIsEmpty()
     return mFlags.mEmptyCacheState;
   }
 
-  PRBool result = IsEmpty();
+  PRBool result;
+  if (IsBlock()) {
+    result = mFirstChild->CachedIsEmpty();
+  } else {
+    PRInt32 n;
+    nsIFrame *kid;
+    result = PR_TRUE;
+    for (n = GetChildCount(), kid = mFirstChild;
+         n > 0;
+         --n, kid = kid->GetNextSibling())
+      {
+        if (!kid->CachedIsEmpty()) {
+          result = PR_FALSE;
+          break;
+        }
+      }
+  }
+
   mFlags.mEmptyCacheValid = PR_TRUE;
   mFlags.mEmptyCacheState = result;
   return result;
@@ -322,7 +337,7 @@ nsLineBox::DeleteLineList(nsPresContext* aPresContext, nsLineList& aLines)
     // view.
     for (nsIFrame* child = aLines.front()->mFirstChild; child; ) {
       nsIFrame* nextChild = child->GetNextSibling();
-      child->Destroy(aPresContext);
+      child->Destroy();
       child = nextChild;
     }
 
@@ -472,6 +487,7 @@ nsLineBox::RemoveFloat(nsIFrame* aFrame)
       // Note: the placeholder is part of the line's child list
       // and will be removed later.
       mInlineData->mFloats.Remove(fc);
+      delete fc;
       MaybeFreeData();
       return PR_TRUE;
     }
@@ -664,98 +680,29 @@ nsLineIterator::CheckLineOrder(PRInt32                  aLine,
                                nsIFrame                 **aFirstVisual,
                                nsIFrame                 **aLastVisual)
 {
-  PRInt32   currentLine, saveLine, testLine;
-  nscoord   saveX;
-  nsIFrame  *checkFrame;
-  nsIFrame  *firstFrame;
-  nsIFrame  *leftmostFrame;
-  nsIFrame  *rightmostFrame;
-  nscoord   minX, maxX;
-  PRInt32   lineFrameCount;
-  PRUint32  lineFlags;
+  NS_ASSERTION (aLine >= 0 && aLine < mNumLines, "aLine out of range!");
+  nsLineBox* line = mLines[aLine];
 
-  nsresult  result = NS_OK;
-
-  // an RTL paragraph is always considered as reordered
-  // in an LTR paragraph, find out by examining the coordinates of each frame in the line
-  if (mRightToLeft)
-    *aIsReordered = PR_TRUE;
-  else {
+  if (!line->mFirstChild) { // empty line
     *aIsReordered = PR_FALSE;
-
-    // Check the preceding and following line, since we might be moving into them
-    for (currentLine = PR_MAX(0, aLine-1); currentLine < aLine+1; currentLine++) {
-
-      nsLineBox* line = mLines[currentLine];
-      if (!line)
-        break;
-
-      checkFrame = line->mFirstChild;
-
-      result = FindLineContaining(checkFrame, &saveLine);
-      if (NS_FAILED(result))
-        return result;
-      saveX = checkFrame->GetRect().x;
-      lineFrameCount = line->GetChildCount();
-
-      for (; checkFrame; checkFrame = checkFrame->GetNextSibling()) {
-        result = FindLineContaining(checkFrame, &testLine);
-        if (NS_FAILED(result))
-          return result;
-        if (testLine != saveLine) {
-          *aIsReordered = PR_TRUE;
-          break;
-        }
-
-        nsRect checkRect = checkFrame->GetRect();
-        // If the origin of any frame is less than the previous frame, the line is reordered
-        if (checkRect.x < saveX) {
-          *aIsReordered = PR_TRUE;
-          break;
-        }
-        saveX = checkRect.x;
-        lineFrameCount--;
-        if (0 == lineFrameCount)
-          break;
-      }
-      if (*aIsReordered)
-        break;
-    }
+    *aFirstVisual = nsnull;
+    *aLastVisual = nsnull;
+    return NS_OK;
   }
+  
+  nsPresContext* presContext = line->mFirstChild->PresContext();
 
-  // If the line is reordered, identify the first and last frames on the line
-  if (*aIsReordered) {
-    nsRect nonUsedRect;
-    result = GetLine(aLine, &firstFrame, &lineFrameCount, nonUsedRect, &lineFlags);
-    if (NS_FAILED(result))
-      return result;
+  nsBidiPresUtils* bidiUtils = presContext->GetBidiUtils();
 
-    leftmostFrame = rightmostFrame = firstFrame;
-    maxX = minX = firstFrame->GetRect().x;
+  nsIFrame* leftmostFrame;
+  nsIFrame* rightmostFrame;
+  *aIsReordered = bidiUtils->CheckLineOrder(line->mFirstChild, line->GetChildCount(), &leftmostFrame, &rightmostFrame);
 
-    for (;lineFrameCount > 1;lineFrameCount--) {
-      firstFrame = firstFrame->GetNextSibling();
+  // map leftmost/rightmost to first/last according to paragraph direction
+  *aFirstVisual = mRightToLeft ? rightmostFrame : leftmostFrame;
+  *aLastVisual = mRightToLeft ? leftmostFrame : rightmostFrame;
 
-      nsRect checkRect = firstFrame->GetRect();
-      if (checkRect.x > maxX) {
-        maxX = checkRect.x;
-        rightmostFrame = firstFrame;
-      }
-      if (checkRect.x < minX) {
-        minX = checkRect.x;
-        leftmostFrame = firstFrame;
-      }
-    }
-    if (mRightToLeft) {
-      *aFirstVisual = rightmostFrame;
-      *aLastVisual = leftmostFrame;
-    }
-    else {
-      *aFirstVisual = leftmostFrame;
-      *aLastVisual = rightmostFrame;
-    }
-  }
-  return result;
+  return NS_OK;
 }
 #endif // IBMBIDI
 
@@ -845,13 +792,28 @@ nsLineIterator::GetNextSiblingOnLine(nsIFrame*& aFrame, PRInt32 aLineNumber)
 
 //----------------------------------------------------------------------
 
+#ifdef NS_BUILD_REFCNT_LOGGING
+nsFloatCacheList::nsFloatCacheList() :
+  mHead(nsnull)
+{
+  MOZ_COUNT_CTOR(nsFloatCacheList);
+}
+#endif
+
 nsFloatCacheList::~nsFloatCacheList()
 {
-  nsFloatCache* fc = mHead;
-  while (fc) {
-    nsFloatCache* next = fc->mNext;
-    delete fc;
-    fc = next;
+  DeleteAll();
+  MOZ_COUNT_DTOR(nsFloatCacheList);
+}
+
+void
+nsFloatCacheList::DeleteAll()
+{
+  nsFloatCache* c = mHead;
+  while (c) {
+    nsFloatCache* next = c->Next();
+    delete c;
+    c = next;
   }
   mHead = nsnull;
 }
@@ -876,9 +838,11 @@ nsFloatCacheList::Append(nsFloatCacheFreeList& aList)
   
   nsFloatCache* tail = Tail();
   if (tail) {
+    NS_ASSERTION(!tail->mNext, "Bogus!");
     tail->mNext = aList.mHead;
   }
   else {
+    NS_ASSERTION(!mHead, "Bogus!");
     mHead = aList.mHead;
   }
   aList.mHead = nsnull;
@@ -898,35 +862,72 @@ nsFloatCacheList::Find(nsIFrame* aOutOfFlowFrame)
   return fc;
 }
 
-void
-nsFloatCacheList::Remove(nsFloatCache* aElement)
+nsFloatCache*
+nsFloatCacheList::RemoveAndReturnPrev(nsFloatCache* aElement)
 {
-  nsFloatCache** fcp = &mHead;
-  nsFloatCache* fc;
-  while (nsnull != (fc = *fcp)) {
+  nsFloatCache* fc = mHead;
+  nsFloatCache* prev = nsnull;
+  while (fc) {
     if (fc == aElement) {
-      *fcp = fc->mNext;
-      break;
+      if (prev) {
+        prev->mNext = fc->mNext;
+      } else {
+        mHead = fc->mNext;
+      }
+      return prev;
     }
-    fcp = &fc->mNext;
+    prev = fc;
+    fc = fc->mNext;
   }
+  return nsnull;
 }
 
 //----------------------------------------------------------------------
 
+#ifdef NS_BUILD_REFCNT_LOGGING
+nsFloatCacheFreeList::nsFloatCacheFreeList() :
+  mTail(nsnull)
+{
+  MOZ_COUNT_CTOR(nsFloatCacheFreeList);
+}
+
+nsFloatCacheFreeList::~nsFloatCacheFreeList()
+{
+  MOZ_COUNT_DTOR(nsFloatCacheFreeList);
+}
+#endif
+  
 void
 nsFloatCacheFreeList::Append(nsFloatCacheList& aList)
 {
   NS_PRECONDITION(aList.NotEmpty(), "Appending empty list will fail");
   
   if (mTail) {
+    NS_ASSERTION(!mTail->mNext, "Bogus");
     mTail->mNext = aList.mHead;
   }
   else {
+    NS_ASSERTION(!mHead, "Bogus");
     mHead = aList.mHead;
   }
   mTail = aList.Tail();
   aList.mHead = nsnull;
+}
+
+void
+nsFloatCacheFreeList::Remove(nsFloatCache* aElement)
+{
+  nsFloatCache* prev = nsFloatCacheList::RemoveAndReturnPrev(aElement);
+  if (mTail == aElement) {
+    mTail = prev;
+  }
+}
+
+void
+nsFloatCacheFreeList::DeleteAll()
+{
+  nsFloatCacheList::DeleteAll();
+  mTail = nsnull;
 }
 
 nsFloatCache*
@@ -951,26 +952,23 @@ nsFloatCacheFreeList::Alloc()
 void
 nsFloatCacheFreeList::Append(nsFloatCache* aFloat)
 {
+  NS_ASSERTION(!aFloat->mNext, "Bogus!");
   aFloat->mNext = nsnull;
   if (mTail) {
+    NS_ASSERTION(!mTail->mNext, "Bogus!");
     mTail->mNext = aFloat;
     mTail = aFloat;
   }
   else {
+    NS_ASSERTION(!mHead, "Bogus!");
     mHead = mTail = aFloat;
   }
 }
 
 //----------------------------------------------------------------------
 
-MOZ_DECL_CTOR_COUNTER(nsFloatCache)
-
 nsFloatCache::nsFloatCache()
   : mPlaceholder(nsnull),
-    mIsCurrentLineFloat(PR_TRUE),
-    mMargins(0, 0, 0, 0),
-    mOffsets(0, 0, 0, 0),
-    mCombinedArea(0, 0, 0, 0),
     mNext(nsnull)
 {
   MOZ_COUNT_CTOR(nsFloatCache);

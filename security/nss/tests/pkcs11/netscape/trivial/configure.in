@@ -35,7 +35,7 @@ dnl the terms of any one of the MPL, the GPL or the LGPL.
 dnl
 dnl ***** END LICENSE BLOCK *****
 
-dnl My revision info: "@(#) $RCSfile: configure.in,v $ $Revision: 1.2.18.1 $ $Date: 2006/02/03 14:41:20 $"
+dnl My revision info: "@(#) $RCSfile: configure.in,v $ $Revision: 1.3 $ $Date: 2006/03/02 22:48:55 $"
 dnl Don't use AC_REVISION; it's broken
 
 AC_INIT(trivial.c)

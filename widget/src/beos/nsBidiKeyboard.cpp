@@ -16,7 +16,7 @@
  * The Original Code is IBM code.
  *
  * The Initial Developer of the Original Code is
- * IBM. Portions created by IBM are Copyright (C) International Business Machines Corporation, 2000.  All Rights Reserved.
+ * IBM.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
@@ -53,11 +53,11 @@ NS_IMETHODIMP nsBidiKeyboard::IsLangRTL(PRBool *aIsRTL)
 {
   *aIsRTL = PR_FALSE;
   // XXX Insert platform specific code to determine keyboard direction
-  return NS_OK;
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP nsBidiKeyboard::SetLangFromBidiLevel(PRUint8 aLevel)
 {
   // XXX Insert platform specific code to set keyboard language
-  return NS_OK;
+  return NS_ERROR_NOT_IMPLEMENTED;
 }

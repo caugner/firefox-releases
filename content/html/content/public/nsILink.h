@@ -57,7 +57,7 @@ class nsIURI;
  */
 class nsILink : public nsISupports {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ILINK_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ILINK_IID)
 
   /**
    * Get the cached state of the link.  If the state is unknown, 
@@ -87,19 +87,21 @@ public:
   NS_IMETHOD GetHrefURI(nsIURI** aURI) = 0;
 
   /**
-   * Dispatch a LinkAdded event to the nsIChromeEventHandler for this document.
+   * Dispatch a LinkAdded event to the chrome event handler for this document.
    * This is used to notify the chrome listeners when restoring a page
    * presentation.  Currently, this only applies to HTML <link> elements.
    */
   NS_IMETHOD LinkAdded() = 0;
 
   /**
-   * Dispatch a LinkRemoved event to the nsIChromeEventHandler for this
+   * Dispatch a LinkRemoved event to the chrome event handler for this
    * document.  This is used to notify the chrome listeners when saving a page
    * presentation (since the document is not torn down).  Currently, this only
    * applies to HTML <link> elements.
    */
   NS_IMETHOD LinkRemoved() = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsILink, NS_ILINK_IID)
 
 #endif /* nsILink_h___ */

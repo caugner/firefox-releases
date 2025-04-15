@@ -35,7 +35,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: dsa.c,v 1.13.14.2 2006/02/03 22:31:09 wtchang%redhat.com Exp $ */
+/* $Id: dsa.c,v 1.18 2005/10/12 00:48:25 wtchang%redhat.com Exp $ */
 
 #include "secerr.h"
 

@@ -50,6 +50,7 @@
 #include "nsProxyInfo.h"
 #include "nsNetCID.h"
 #include "nsAutoLock.h"
+#include "nsAutoPtr.h"
 #include "nsCOMPtr.h"
 #include "netCore.h"
 #include "nsInt64.h"
@@ -65,7 +66,10 @@
 #include "nsISocketProviderService.h"
 #include "nsISocketProvider.h"
 #include "nsISSLSocketControl.h"
+#include "nsINSSErrorsService.h"
 #include "nsIPipe.h"
+#include "nsIProgrammingLanguage.h"
+#include "nsIClassInfoImpl.h"
 
 #if defined(XP_WIN)
 #include "nsNativeConnectionHelper.h"
@@ -78,37 +82,26 @@ static NS_DEFINE_CID(kDNSServiceCID, NS_DNSSERVICE_CID);
 
 //-----------------------------------------------------------------------------
 
-class nsSocketEvent : public PLEvent
+class nsSocketEvent : public nsRunnable
 {
 public:
     nsSocketEvent(nsSocketTransport *transport, PRUint32 type,
                   nsresult status = NS_OK, nsISupports *param = nsnull)
-        : mType(type)
+        : mTransport(transport)
+        , mType(type)
         , mStatus(status)
         , mParam(param)
-    {
-        NS_ADDREF(transport);
-        PL_InitEvent(this, transport, HandleEvent, DestroyEvent);
-    }
+    {}
 
-    PR_STATIC_CALLBACK(void*)
-    HandleEvent(PLEvent *event)
+    NS_IMETHOD Run()
     {
-        nsSocketTransport *trans = (nsSocketTransport *) event->owner; 
-        nsSocketEvent *se = (nsSocketEvent *) event;
-        trans->OnSocketEvent(se->mType, se->mStatus, se->mParam);
-        return nsnull;
-    }
-
-    PR_STATIC_CALLBACK(void)
-    DestroyEvent(PLEvent *event)
-    {
-        nsSocketTransport *trans = (nsSocketTransport *) event->owner; 
-        NS_RELEASE(trans);
-        delete (nsSocketEvent *) event;
+        mTransport->OnSocketEvent(mType, mStatus, mParam);
+        return NS_OK;
     }
 
 private:
+    nsRefPtr<nsSocketTransport> mTransport;
+
     PRUint32              mType;
     nsresult              mStatus;
     nsCOMPtr<nsISupports> mParam;
@@ -123,7 +116,7 @@ static PRErrorCode RandomizeConnectError(PRErrorCode code)
 {
     //
     // To test out these errors, load http://www.yahoo.com/.  It should load
-    // correctly despite the random occurance of these errors.
+    // correctly despite the random occurrence of these errors.
     //
     int n = rand();
     if (n > RAND_MAX/2) {
@@ -155,10 +148,30 @@ static PRErrorCode RandomizeConnectError(PRErrorCode code)
 
 //-----------------------------------------------------------------------------
 
+static PRBool
+IsNSSErrorCode(PRErrorCode code)
+{
+  return 
+    ((code >= nsINSSErrorsService::NSS_SEC_ERROR_BASE) && 
+      (code < nsINSSErrorsService::NSS_SEC_ERROR_LIMIT))
+    ||
+    ((code >= nsINSSErrorsService::NSS_SSL_ERROR_BASE) && 
+      (code < nsINSSErrorsService::NSS_SSL_ERROR_LIMIT));
+}
+
+// this logic is duplicated from the implementation of
+// nsINSSErrorsService::getXPCOMFromNSSError
+// It might have been better to implement that interface here...
+static nsresult
+GetXPCOMFromNSSError(PRErrorCode code)
+{
+    return NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_SECURITY, -1 * code);
+}
+
 static nsresult
 ErrorAccordingToNSPR(PRErrorCode errorCode)
 {
-    nsresult rv;
+    nsresult rv = NS_ERROR_FAILURE;
     switch (errorCode) {
     case PR_WOULD_BLOCK_ERROR:
         rv = NS_BASE_STREAM_WOULD_BLOCK;
@@ -185,7 +198,9 @@ ErrorAccordingToNSPR(PRErrorCode errorCode)
         rv = NS_ERROR_NET_TIMEOUT;
         break;
     default:
-        rv = NS_ERROR_FAILURE;
+        if (IsNSSErrorCode(errorCode))
+            rv = GetXPCOMFromNSSError(errorCode);
+        break;
     }
     LOG(("ErrorAccordingToNSPR [in=%d out=%x]\n", errorCode, rv));
     return rv;
@@ -282,7 +297,7 @@ nsSocketInputStream::Available(PRUint32 *avail)
 
         fd = mTransport->GetFD_Locked();
         if (!fd)
-            return NS_BASE_STREAM_WOULD_BLOCK;
+            return NS_OK;
     }
 
     // cannot hold lock while calling NSPR.  (worried about the fact that PSM
@@ -301,7 +316,7 @@ nsSocketInputStream::Available(PRUint32 *avail)
         else {
             PRErrorCode code = PR_GetError();
             if (code == PR_WOULD_BLOCK_ERROR)
-                return NS_BASE_STREAM_WOULD_BLOCK;
+                return NS_OK;
             mCondition = ErrorAccordingToNSPR(code);
         }
         rv = mCondition;
@@ -414,10 +429,14 @@ nsSocketInputStream::AsyncWait(nsIInputStreamCallback *callback,
 {
     LOG(("nsSocketInputStream::AsyncWait [this=%x]\n", this));
 
+    // This variable will be non-null when we want to call the callback
+    // directly from this function, but outside the lock.
+    // (different from callback when target is not null)
+    nsCOMPtr<nsIInputStreamCallback> directCallback;
     {
         nsAutoLock lock(mTransport->mLock);
 
-        if (target) {
+        if (callback && target) {
             //
             // build event proxy
             //
@@ -433,9 +452,16 @@ nsSocketInputStream::AsyncWait(nsIInputStreamCallback *callback,
         else
             mCallback = callback;
 
-        mCallbackFlags = flags;
+        if (NS_FAILED(mCondition))
+            directCallback.swap(mCallback);
+        else
+            mCallbackFlags = flags;
     }
-    mTransport->OnInputPending();
+    if (directCallback)
+        directCallback->OnInputStreamReady(this);
+    else
+        mTransport->OnInputPending();
+
     return NS_OK;
 }
 
@@ -648,7 +674,7 @@ nsSocketOutputStream::AsyncWait(nsIOutputStreamCallback *callback,
     {
         nsAutoLock lock(mTransport->mLock);
 
-        if (target) {
+        if (callback && target) {
             //
             // build event proxy
             //
@@ -854,15 +880,11 @@ nsSocketTransport::PostEvent(PRUint32 type, nsresult status, nsISupports *param)
     LOG(("nsSocketTransport::PostEvent [this=%p type=%u status=%x param=%p]\n",
         this, type, status, param));
 
-    PLEvent *event = new nsSocketEvent(this, type, status, param);
+    nsCOMPtr<nsIRunnable> event = new nsSocketEvent(this, type, status, param);
     if (!event)
         return NS_ERROR_OUT_OF_MEMORY;
 
-    nsresult rv = gSocketTransportService->PostEvent(event);
-    if (NS_FAILED(rv))
-        PL_DestroyEvent(event);
-
-    return rv;
+    return gSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
 }
 
 void
@@ -1061,13 +1083,11 @@ nsSocketTransport::InitiateSocket()
     // 194402 for more info.
     //
     if (!gSocketTransportService->CanAttachSocket()) {
-        PLEvent *event = new nsSocketEvent(this, MSG_RETRY_INIT_SOCKET);
+        nsCOMPtr<nsIRunnable> event =
+                new nsSocketEvent(this, MSG_RETRY_INIT_SOCKET);
         if (!event)
             return NS_ERROR_OUT_OF_MEMORY;
-        rv = gSocketTransportService->NotifyWhenCanAttachSocket(event);
-        if (NS_FAILED(rv))
-            PL_DestroyEvent(event);
-        return rv;
+        return gSocketTransportService->NotifyWhenCanAttachSocket(event);
     }
 
     //
@@ -1226,7 +1246,7 @@ nsSocketTransport::RecoverFromError()
         }
     }
 
-#if defined(XP_WIN)
+#if defined(XP_WIN) && !defined(WINCE)
     // If not trying next address, try to make a connection using dialup. 
     // Retry if that connection is made.
     if (!tryAgain) {
@@ -1312,8 +1332,6 @@ nsSocketTransport::OnSocketConnected()
     mPollTimeout = mTimeouts[TIMEOUT_READ_WRITE];
     mState = STATE_TRANSFERRING;
 
-    SendStatus(STATUS_CONNECTED_TO);
-
     // assign mFD (must do this within the transport lock), but take care not
     // to trample over mFDref if mFD is already set.
     {
@@ -1322,6 +1340,8 @@ nsSocketTransport::OnSocketConnected()
         NS_ASSERTION(mFDref == 1, "wrong socket ref count");
         mFDconnected = PR_TRUE;
     }
+
+    SendStatus(STATUS_CONNECTED_TO);
 }
 
 PRFileDesc *
@@ -1386,7 +1406,7 @@ nsSocketTransport::OnSocketEvent(PRUint32 type, nsresult status, nsISupports *pa
         LOG(("  MSG_DNS_LOOKUP_COMPLETE\n"));
         mDNSRequest = 0;
         if (param) {
-            mDNSRecord = NS_STATIC_CAST(nsIDNSRecord *, param);
+            mDNSRecord = static_cast<nsIDNSRecord *>(param);
             mDNSRecord->GetNextAddr(SocketPort(), &mNetAddr);
         }
         // status contains DNS lookup status
@@ -1562,7 +1582,8 @@ nsSocketTransport::OnSocketDetached(PRFileDesc *fd)
         secCtrl->SetNotificationCallbacks(nsnull);
 
     // finally, release our reference to the socket (must do this within
-    // the transport lock) possibly closing the socket.
+    // the transport lock) possibly closing the socket. Also release our
+    // listeners to break potential refcount cycles.
     {
         nsAutoLock lock(mLock);
         if (mFD) {
@@ -1571,16 +1592,23 @@ nsSocketTransport::OnSocketDetached(PRFileDesc *fd)
             // acquiring a reference to mFD.
             mFDconnected = PR_FALSE;
         }
+        mCallbacks = nsnull;
+        mEventSink = nsnull;
     }
 }
 
 //-----------------------------------------------------------------------------
 // xpcom api
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(nsSocketTransport,
+NS_IMPL_THREADSAFE_ISUPPORTS4(nsSocketTransport,
                               nsISocketTransport,
                               nsITransport,
-                              nsIDNSListener)
+                              nsIDNSListener,
+                              nsIClassInfo)
+NS_IMPL_CI_INTERFACE_GETTER3(nsSocketTransport,
+                             nsISocketTransport,
+                             nsITransport,
+                             nsIDNSListener)
 
 NS_IMETHODIMP
 nsSocketTransport::OpenInputStream(PRUint32 flags,
@@ -1853,6 +1881,61 @@ nsSocketTransport::OnLookupComplete(nsICancelable *request,
 
     return NS_OK;
 }
+
+NS_IMETHODIMP
+nsSocketTransport::GetInterfaces(PRUint32 *count, nsIID * **array)
+{
+    return NS_CI_INTERFACE_GETTER_NAME(nsSocketTransport)(count, array);
+}
+
+NS_IMETHODIMP
+nsSocketTransport::GetHelperForLanguage(PRUint32 language, nsISupports **_retval)
+{
+    *_retval = nsnull;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::GetContractID(char * *aContractID)
+{
+    *aContractID = nsnull;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::GetClassDescription(char * *aClassDescription)
+{
+    *aClassDescription = nsnull;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::GetClassID(nsCID * *aClassID)
+{
+    *aClassID = nsnull;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::GetImplementationLanguage(PRUint32 *aImplementationLanguage)
+{
+    *aImplementationLanguage = nsIProgrammingLanguage::CPLUSPLUS;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::GetFlags(PRUint32 *aFlags)
+{
+    *aFlags = nsIClassInfo::THREADSAFE;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::GetClassIDNoAlloc(nsCID *aClassIDNoAlloc)
+{
+    return NS_ERROR_NOT_AVAILABLE;
+}
+
 
 #ifdef ENABLE_SOCKET_TRACING
 

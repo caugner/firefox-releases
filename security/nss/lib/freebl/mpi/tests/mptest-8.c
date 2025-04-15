@@ -38,7 +38,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: mptest-8.c,v 1.4.20.1 2006/05/15 17:45:34 wtchang%redhat.com Exp $ */
+/* $Id: mptest-8.c,v 1.5 2006/03/15 19:13:12 rrelyea%redhat.com Exp $ */
 
 #include <stdio.h>
 #include <stdlib.h>

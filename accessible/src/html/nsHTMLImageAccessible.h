@@ -41,25 +41,61 @@
 
 #include "nsBaseWidgetAccessible.h"
 #include "nsIDOMHTMLMapElement.h"
+#include "nsIAccessibleImage.h"
 
 /* Accessible for supporting images
  * supports:
  * - gets name, role
  * - support basic state
  */
-class nsHTMLImageAccessible : public nsLinkableAccessible
+class nsHTMLImageAccessible : public nsLinkableAccessible,
+                              public nsIAccessibleImage
 {
 
+  NS_DECL_ISUPPORTS_INHERITED
+
 public:
+  //action0 may exist depends on whether an onclick is associated with it
+  enum { eAction_ShowLongDescription = 1 };
+
   nsHTMLImageAccessible(nsIDOMNode* aDomNode, nsIWeakReference* aShell);
+
+  // nsIAccessible
   NS_IMETHOD GetName(nsAString& _retval); 
-  NS_IMETHOD GetState(PRUint32 *_retval); 
-  NS_IMETHOD GetRole(PRUint32 *_retval); 
+  NS_IMETHOD GetState(PRUint32 *aState, PRUint32 *aExtraState);
+  NS_IMETHOD GetRole(PRUint32 *_retval);
+  NS_IMETHOD DoAction(PRUint8 index);
+
+  // nsIAccessibleHyperLink
+  NS_IMETHOD GetAnchorCount(PRInt32 *aAnchorCount);
+  NS_IMETHOD GetURI(PRInt32 aIndex, nsIURI **aURI);
+  NS_IMETHOD GetAnchor(PRInt32 aIndex, nsIAccessible **aAccessible);
+
+  // nsPIAccessNode
+  NS_IMETHOD Shutdown();
+
+  // nsIAccessibleImage
+  NS_DECL_NSIACCESSIBLEIMAGE
+
+  // nsAccessible
+  virtual nsresult GetAttributesInternal(nsIPersistentProperties *aAttributes);
 
 protected:
-  virtual void CacheChildren(PRBool aWalkAnonContent);
-  already_AddRefed<nsIAccessible> CreateAreaAccessible(PRInt32 areaNum);
+  // nsAccessible
+  virtual void CacheChildren();
+
+  already_AddRefed<nsIDOMHTMLCollection> GetAreaCollection();
+  already_AddRefed<nsIAccessible>
+    GetAreaAccessible(nsIDOMHTMLCollection* aAreaNodes, PRInt32 aAreaNum);
+
+  // Reference on linked map element if any.
   nsCOMPtr<nsIDOMHTMLMapElement> mMapElement;
+
+  // Cache of area accessibles. We do not use common cache because images can
+  // share area elements but we need to have separate area accessibles for
+  // each image accessible.
+  nsAccessNodeHashtable *mAccessNodeCache;
 };
 
-#endif  
+#endif
+

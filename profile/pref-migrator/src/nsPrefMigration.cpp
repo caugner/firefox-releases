@@ -43,7 +43,7 @@
 #include "nsIComponentManager.h"
 #include "nsIPromptService.h"
 #include "nsIServiceManager.h"
-#include "nsIScriptGlobalObject.h"
+#include "nsPIDOMWindow.h"
 #include "nsIScriptContext.h"
 #include "nsILocalFile.h"
 #include "nsDirectoryServiceUtils.h"
@@ -55,7 +55,7 @@
 #include "prio.h"
 #include "prerror.h"
 #include "prmem.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
 #include "plstr.h"
 #include "prprf.h"
 #include "nsXPIDLString.h"
@@ -75,11 +75,6 @@
 #include "nsIWebBrowserChrome.h"
 #include "nsIWindowWatcher.h"
 #include "nsEmbedCID.h"
-
-#if defined(XP_MAC) && !defined(DEBUG)
-//lower silly optimization level which takes an age for this file.
-#pragma optimization_level 1
-#endif
 
 #ifdef DEBUG_seth
 #define DEBUG_UTF8_CONVERSION 1
@@ -113,7 +108,7 @@
 #define PSM_CERT7_DB "cert7.db"
 #define PSM_KEY3_DB "key3.db"
 #define PSM_SECMODULE_DB "secmodule.db"
-#elif defined(XP_MAC) || defined(XP_MACOSX)
+#elif defined(XP_MACOSX)
 #define MAC_RULES_FILE_ENDING_STRING_IN_4X " Rules"
 #define IMAP_MAIL_FILTER_FILE_NAME_IN_4x "<hostname> Rules"
 #define POP_MAIL_FILTER_FILE_NAME_IN_4x "Filter Rules"
@@ -155,7 +150,6 @@
 #endif /* XP_UNIX */
 
 #define PREMIGRATION_PREFIX "premigration."
-#define ADDRBOOK_FILE_EXTENSION_IN_4X  ".na2"
 
 // this is for the hidden preference setting in mozilla/modules/libpref/src/init/mailnews.js
 // pref("mail.migration.copyMailFiles", true);
@@ -234,21 +228,14 @@ typedef struct
  * + 17 leap years * 86,400 additional sec/leapyear =     1,468,800 seconds
  *                                                  = 2,208,988,800 seconds
  */
-#if defined(XP_MAC) || defined(XP_MACOSX)
+#if defined(XP_MACOSX)
 #define NEED_TO_FIX_4X_COOKIES 1
 #define SECONDS_BETWEEN_1900_AND_1970 2208988800UL
-#endif /* XP_MAC */
+#endif /* XP_MACOSX */
 
 /*-----------------------------------------------------------------
  * Globals
  *-----------------------------------------------------------------*/
-static NS_DEFINE_IID(kProxyObjectManagerCID, NS_PROXYEVENT_MANAGER_CID);
-
-static NS_DEFINE_CID(kPrefServiceCID, NS_PREF_CID);
-
-static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
-static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
-
 nsPrefMigration* nsPrefMigration::mInstance = nsnull;
 
 nsPrefMigration *
@@ -292,19 +279,12 @@ nsPrefMigration::getPrefService()
   // get the prefs service
   nsresult rv = NS_OK;
 
-  nsCOMPtr<nsIPref> pIMyService(do_GetService(kPrefServiceCID, &rv));
+  nsCOMPtr<nsIPrefBranch> pIMyService(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   if(NS_FAILED(rv)) return rv;
 
-  nsCOMPtr<nsIProxyObjectManager> pIProxyObjectManager = 
-           do_GetService(kProxyObjectManagerCID, &rv);
-  if(NS_FAILED(rv))
-    return rv;
-  
-  return pIProxyObjectManager->GetProxyForObject(NS_UI_THREAD_EVENTQ, 
-                                            NS_GET_IID(nsIPref), 
-                                            pIMyService, 
-                                            PROXY_SYNC,
-                                            getter_AddRefs(m_prefs));
+  return NS_GetProxyForObject(NS_PROXY_TO_MAIN_THREAD, NS_GET_IID(nsIPrefBranch),
+                              pIMyService, NS_PROXY_SYNC,
+                              getter_AddRefs(m_prefBranch));
 
 }
 
@@ -388,14 +368,6 @@ extern "C" void ProfileMigrationController(void *data)
       return;
     }
 
-    nsCOMPtr<nsIProxyObjectManager> pIProxyObjectManager = 
-             do_GetService(kProxyObjectManagerCID, &rv);
-    if(NS_FAILED(rv))
-    {
-      migrator->mErrorCode = rv;
-      return;
-    }
-  
     nsCOMPtr<nsIPrefMigration> migratorInterface = do_QueryInterface(interfaceM, &rv);
     if (NS_FAILED(rv))
     {
@@ -405,11 +377,10 @@ extern "C" void ProfileMigrationController(void *data)
 
     if (!prefProxy)
     {
-        rv = pIProxyObjectManager->GetProxyForObject(NS_UI_THREAD_EVENTQ, 
-                                                   NS_GET_IID(nsIPrefMigration), 
-                                                   migratorInterface, 
-                                                   PROXY_SYNC,
-                                                   getter_AddRefs(prefProxy));
+        rv = NS_GetProxyForObject(NS_PROXY_TO_MAIN_THREAD,
+                                  NS_GET_IID(nsIPrefMigration),
+                                  migratorInterface, NS_PROXY_SYNC,
+                                  getter_AddRefs(prefProxy));
         if (NS_FAILED(rv))
         {
           migrator->mErrorCode = rv;
@@ -442,11 +413,11 @@ extern "C" void ProfileMigrationController(void *data)
 NS_IMETHODIMP
 nsPrefMigration::WindowCloseCallback()
 {
-  nsCOMPtr<nsIScriptGlobalObject> scriptGO(do_QueryInterface(mPMProgressWindow));
-  if (!scriptGO) return NS_ERROR_FAILURE;
+  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mPMProgressWindow));
+  if (!window) return NS_ERROR_FAILURE;
 
   nsCOMPtr<nsIDocShellTreeItem> treeItem =
-    do_QueryInterface(scriptGO->GetDocShell());
+    do_QueryInterface(window->GetDocShell());
   if (!treeItem) return NS_ERROR_FAILURE;
   nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
   treeItem->GetTreeOwner(getter_AddRefs(treeOwner));
@@ -466,7 +437,7 @@ NS_IMETHODIMP
 nsPrefMigration::ShowSpaceDialog(PRInt32 *choice)
 {
   nsresult rv;
-  nsCOMPtr<nsIStringBundleService> bundleService = do_GetService(kStringBundleServiceCID, &rv);
+  nsCOMPtr<nsIStringBundleService> bundleService = do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
   if (NS_FAILED(rv)) return rv;
 
   nsCOMPtr<nsIStringBundle> bundle;
@@ -659,11 +630,13 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
   rv = m_prefsFile->AppendNative(NS_LITERAL_CSTRING(PREF_FILE_NAME_IN_4x));
   if (NS_FAILED(rv)) return rv;
 
+  nsCOMPtr<nsIPrefService> psvc(do_QueryInterface(m_prefBranch));
+
   //Clear the prefs in case a previous set was read in.
-  m_prefs->ResetPrefs();
+  psvc->ResetPrefs();
 
   //Now read the prefs from the prefs file in the system directory
-  m_prefs->ReadUserPrefs(m_prefsFile);
+  psvc->ReadUserPrefs(m_prefsFile);
 
   //
   // Start computing the sizes required for migration
@@ -671,11 +644,12 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
   rv = GetSizes(oldProfileSpec, PR_FALSE, &totalProfileSize);
   profileDrive = newProfileSpec.GetDiskSpaceAvailable();
 
-  rv = m_prefs->GetIntPref(PREF_MAIL_SERVER_TYPE, &serverType);
+  rv = m_prefBranch->GetIntPref(PREF_MAIL_SERVER_TYPE, &serverType);
   if (NS_FAILED(rv)) return rv;
 
   // get the migration mode for mail
-  rv = m_prefs->GetBoolPref(PREF_MIGRATION_MODE_FOR_MAIL, &copyMailFileInMigration);
+  rv = m_prefBranch->GetBoolPref(PREF_MIGRATION_MODE_FOR_MAIL,
+                                 &copyMailFileInMigration);
   if (NS_FAILED(rv))
     return rv;
 
@@ -895,11 +869,13 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
       NS_FileSpecToIFile(&newPOPMailPathSpec,
                          getter_AddRefs(newPOPMailPathFile));
       
-      rv = m_prefs->SetFileXPref(PREF_MAIL_DIRECTORY, newPOPMailPathFile); 
+      rv = m_prefBranch->SetComplexValue(PREF_MAIL_DIRECTORY,
+                                         NS_GET_IID(nsILocalFile),
+                                         newPOPMailPathFile);
       if (NS_FAILED(rv)) return rv;
     }
 
-    m_prefs->CopyCharPref(PREF_NETWORK_HOSTS_POP_SERVER, &popServerName);
+    m_prefBranch->GetCharPref(PREF_NETWORK_HOSTS_POP_SERVER, &popServerName);
 
     nsCAutoString popServerNamewithoutPort(popServerName);
     PRInt32 colonPos = popServerNamewithoutPort.FindChar(':');
@@ -950,7 +926,9 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
       NS_FileSpecToIFile(&newIMAPLocalMailPathSpec,
                          getter_AddRefs(newIMAPLocalMailPathFile));
       
-      rv = m_prefs->SetFileXPref(PREF_MAIL_DIRECTORY, newIMAPLocalMailPathFile); 
+      rv = m_prefBranch->SetComplexValue(PREF_MAIL_DIRECTORY,
+                                         NS_GET_IID(nsILocalFile),
+                                         newIMAPLocalMailPathFile);
       if (NS_FAILED(rv)) return rv;
     }
 
@@ -990,7 +968,9 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
       NS_FileSpecToIFile(&newIMAPMailPathSpec,
                          getter_AddRefs(newIMAPMailPathFile));
       
-      rv = m_prefs->SetFileXPref(PREF_MAIL_IMAP_ROOT_DIR, newIMAPMailPathFile);
+      rv = m_prefBranch->SetComplexValue(PREF_MAIL_IMAP_ROOT_DIR,
+                                         NS_GET_IID(nsILocalFile),
+                                         newIMAPMailPathFile);
       if (NS_FAILED(rv)) return rv;
     }
    }
@@ -1005,7 +985,9 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
       NS_FileSpecToIFile(&oldIMAPLocalMailPathSpec,
                          getter_AddRefs(oldIMAPLocalMailPathFile));
 
-      rv = m_prefs->SetFileXPref(PREF_MAIL_DIRECTORY, oldIMAPLocalMailPathFile);
+      rv = m_prefBranch->SetComplexValue(PREF_MAIL_DIRECTORY,
+                                         NS_GET_IID(nsILocalFile),
+                                         oldIMAPLocalMailPathFile);
       if (NS_FAILED(rv)) return rv;
     }
     {
@@ -1017,7 +999,9 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
       NS_FileSpecToIFile(&oldIMAPMailPathSpec,
                          getter_AddRefs(oldIMAPMailPathFile));
 
-      rv = m_prefs->SetFileXPref(PREF_MAIL_IMAP_ROOT_DIR, oldIMAPMailPathFile);
+      rv = m_prefBranch->SetComplexValue(PREF_MAIL_IMAP_ROOT_DIR,
+                                         NS_GET_IID(nsILocalFile),
+                                         oldIMAPMailPathFile);
       if (NS_FAILED(rv)) return rv;
     }
    }
@@ -1052,7 +1036,9 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
       NS_FileSpecToIFile(&newMOVEMAILPathSpec,
                          getter_AddRefs(newMOVEMAILPathFile));
       
-      rv = m_prefs->SetFileXPref(PREF_MAIL_DIRECTORY, newMOVEMAILPathFile); 
+      rv = m_prefBranch->SetComplexValue(PREF_MAIL_DIRECTORY,
+                                         NS_GET_IID(nsILocalFile),
+                                         newMOVEMAILPathFile); 
       if (NS_FAILED(rv)) return rv;
     }
 
@@ -1103,7 +1089,9 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
     NS_FileSpecToIFile(&newNewsPathSpec,
                        getter_AddRefs(newNewsPathFile));
     
-    rv = m_prefs->SetFileXPref(PREF_NEWS_DIRECTORY, newNewsPathFile); 
+    rv = m_prefBranch->SetComplexValue(PREF_NEWS_DIRECTORY,
+                                       NS_GET_IID(nsILocalFile),
+                                       newNewsPathFile); 
     if (NS_FAILED(rv)) return rv;
   }
 
@@ -1127,7 +1115,7 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
   if (NS_FAILED(rv)) return rv;
   rv = DoTheCopy(oldProfilePath, newProfilePath, BOOKMARKS_FILE_NAME_IN_4x);
   if (NS_FAILED(rv)) return rv;
-#if defined(XP_MAC) || defined(XP_MACOSX)
+#if defined(XP_MACOSX)
   rv = DoTheCopy(oldProfilePath, newProfilePath, SECURITY_PATH, PR_TRUE);
   if (NS_FAILED(rv)) return rv;
 #else
@@ -1137,13 +1125,9 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
   if (NS_FAILED(rv)) return rv;
   rv = DoTheCopy(oldProfilePath, newProfilePath, PSM_SECMODULE_DB);
   if (NS_FAILED(rv)) return rv;
-#endif /* XP_MAC */
+#endif /* XP_MACOSX */
 
-  // Copy the addrbook files.
-  rv = CopyFilesByPattern(oldProfilePath, newProfilePath, ADDRBOOK_FILE_EXTENSION_IN_4X);
-  NS_ENSURE_SUCCESS(rv,rv);
-
-#if defined(XP_MAX) || defined(XP_MACOSX)
+#if defined(XP_MACOSX)
   // Copy the Mac filter rule files which sits at the top level dir of a 4.x profile.
   if(serverType == IMAP_4X_MAIL_TYPE) {
     rv = CopyFilesByPattern(oldProfilePath, newProfilePath, MAC_RULES_FILE_ENDING_STRING_IN_4X);
@@ -1220,7 +1204,7 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
   
   // Don't inherit the 4.x cache file location for mozilla!
   // The cache pref later gets set with a default in nsAppRunner::InitCachePrefs().
-  m_prefs->ClearUserPref(PREF_BROWSER_CACHE_DIRECTORY);
+  m_prefBranch->ClearUserPref(PREF_BROWSER_CACHE_DIRECTORY);
 
   rv = DoSpecialUpdates(newProfilePath);
   if (NS_FAILED(rv)) return rv;
@@ -1234,9 +1218,9 @@ nsPrefMigration::ProcessPrefsCallback(const char* oldProfilePathStr, const char 
   rv = newPrefsFile->AppendNative(NS_LITERAL_CSTRING(PREF_FILE_NAME_IN_5x));
   if (NS_FAILED(rv)) return rv;
 
-  rv=m_prefs->SavePrefFile(newPrefsFile);
+  rv=psvc->SavePrefFile(newPrefsFile);
   if (NS_FAILED(rv)) return rv;
-  rv=m_prefs->ResetPrefs();
+  rv=psvc->ResetPrefs();
   if (NS_FAILED(rv)) return rv;
 
   PRBool flagExists = PR_FALSE;
@@ -1344,7 +1328,7 @@ nsPrefMigration::GetDirFromPref(nsIFileSpec * oldProfilePath, nsIFileSpec * newP
   
   nsCOMPtr <nsIFileSpec> oldPrefPath;
   nsXPIDLCString oldPrefPathStr;
-  rv = m_prefs->CopyCharPref(pref,getter_Copies(oldPrefPathStr));
+  rv = m_prefBranch->GetCharPref(pref, getter_Copies(oldPrefPathStr));
   if (NS_FAILED(rv)) return rv;
   
   // the default on the mac was "".  doing GetFileXPref on that would return
@@ -1355,7 +1339,8 @@ nsPrefMigration::GetDirFromPref(nsIFileSpec * oldProfilePath, nsIFileSpec * newP
   if (NS_FAILED(rv)) return rv;
   
   nsCOMPtr <nsILocalFile> oldPrefPathFile;
-  rv = m_prefs->GetFileXPref(pref, getter_AddRefs(oldPrefPathFile));
+  rv = m_prefBranch->GetComplexValue(pref, NS_GET_IID(nsILocalFile),
+                                     getter_AddRefs(oldPrefPathFile));
   if (NS_FAILED(rv)) return rv;
   
   // convert nsILocalFile to nsIFileSpec
@@ -1479,17 +1464,14 @@ nsCStringStartsWith(nsCString& name, const char *starting)
 nsresult
 nsPrefMigration::GetSizes(nsFileSpec inputPath, PRBool readSubdirs, PRUint32 *sizeTotal)
 {
-  char* folderName;
   nsCAutoString fileOrDirNameStr;
 
   for (nsDirectoryIterator dir(inputPath, PR_FALSE); dir.Exists(); dir++)
   {
     nsFileSpec fileOrDirName = dir.Spec();
-    folderName = fileOrDirName.GetLeafName();
+    char* folderName = fileOrDirName.GetLeafName();
     fileOrDirNameStr.Assign(folderName);
-    if (nsCStringEndsWith(fileOrDirNameStr, MAIL_SUMMARY_SUFFIX_IN_4x) || nsCStringEndsWith(fileOrDirNameStr, NEWS_SUMMARY_SUFFIX_IN_4x) || nsCStringEndsWith(fileOrDirNameStr, SUMMARY_SUFFIX_IN_5x)) /* Don't copy the summary files */
-      continue;
-    else
+    if (!nsCStringEndsWith(fileOrDirNameStr, MAIL_SUMMARY_SUFFIX_IN_4x) && !nsCStringEndsWith(fileOrDirNameStr, NEWS_SUMMARY_SUFFIX_IN_4x) && !nsCStringEndsWith(fileOrDirNameStr, SUMMARY_SUFFIX_IN_5x)) /* Don't copy the summary files */
     {
       if (fileOrDirName.IsDirectory())
       {
@@ -1497,12 +1479,11 @@ nsPrefMigration::GetSizes(nsFileSpec inputPath, PRBool readSubdirs, PRUint32 *si
         {
           GetSizes(fileOrDirName, PR_TRUE, sizeTotal); /* re-enter the GetSizes function */
         }
-        else
-          continue;
       }
       else
         *sizeTotal += fileOrDirName.GetFileSize();
     }
+    nsCRT::free(folderName);
   }
 
   return NS_OK;
@@ -1549,7 +1530,6 @@ nsPrefMigration::CopyAndRenameNewsrcFiles(nsIFileSpec * newPathSpec)
   nsCOMPtr <nsIFileSpec>oldPathSpec;
   nsFileSpec oldPath;
   nsFileSpec newPath;
-  char* folderName = nsnull;
   nsCAutoString fileOrDirNameStr;
 
   rv = GetPremigratedFilePref(PREF_NEWS_DIRECTORY, getter_AddRefs(oldPathSpec));
@@ -1562,7 +1542,8 @@ nsPrefMigration::CopyAndRenameNewsrcFiles(nsIFileSpec * newPathSpec)
   for (nsDirectoryIterator dir(oldPath, PR_FALSE); dir.Exists(); dir++)
   {
     nsFileSpec fileOrDirName = dir.Spec(); //set first file or dir to a nsFileSpec
-    folderName = fileOrDirName.GetLeafName();    //get the filename without the full path
+    //get the filename without the full path
+    char* folderName = fileOrDirName.GetLeafName();
     fileOrDirNameStr.Assign(folderName);
 
     if (nsCStringStartsWith(fileOrDirNameStr, NEWSRC_PREFIX_IN_4x) || nsCStringStartsWith(fileOrDirNameStr, SNEWSRC_PREFIX_IN_4x)) {
@@ -1577,6 +1558,7 @@ nsPrefMigration::CopyAndRenameNewsrcFiles(nsIFileSpec * newPathSpec)
         newFile += fileOrDirNameStr.get();
         newFile.Rename(folderName + 1); /* rename .newsrc-news to newsrc-news, no need to keep it hidden anymore */
     }
+    nsCRT::free(folderName);
   }
 
   return NS_OK;
@@ -1608,7 +1590,6 @@ nsresult
 nsPrefMigration::DoTheCopyAndRename(nsIFileSpec * oldPathSpec, nsIFileSpec *newPathSpec, PRBool readSubdirs, PRBool needToRenameFiles, const char *oldName, const char *newName)
 {
   nsresult rv;
-  char* folderName = nsnull;
   nsCAutoString fileOrDirNameStr;
   nsFileSpec oldPath;
   nsFileSpec newPath;
@@ -1621,12 +1602,11 @@ nsPrefMigration::DoTheCopyAndRename(nsIFileSpec * oldPathSpec, nsIFileSpec *newP
   for (nsDirectoryIterator dir(oldPath, PR_FALSE); dir.Exists(); dir++)
   {
     nsFileSpec fileOrDirName = dir.Spec(); //set first file or dir to a nsFileSpec
-    folderName = fileOrDirName.GetLeafName();    //get the filename without the full path
+    //get the filename without the full path
+    char* folderName = fileOrDirName.GetLeafName();
     fileOrDirNameStr.Assign(folderName);
 
-    if (nsCStringEndsWith(fileOrDirNameStr, MAIL_SUMMARY_SUFFIX_IN_4x) || nsCStringEndsWith(fileOrDirNameStr, NEWS_SUMMARY_SUFFIX_IN_4x) || nsCStringEndsWith(fileOrDirNameStr, SUMMARY_SUFFIX_IN_5x)) /* Don't copy the summary files */
-      continue;
-    else
+    if (!nsCStringEndsWith(fileOrDirNameStr, MAIL_SUMMARY_SUFFIX_IN_4x) && !nsCStringEndsWith(fileOrDirNameStr, NEWS_SUMMARY_SUFFIX_IN_4x) && !nsCStringEndsWith(fileOrDirNameStr, SUMMARY_SUFFIX_IN_5x)) /* Don't copy the summary files */
     {
       if (fileOrDirName.IsDirectory())
       {
@@ -1641,8 +1621,6 @@ nsPrefMigration::DoTheCopyAndRename(nsIFileSpec * oldPathSpec, nsIFileSpec *newP
           rv = NS_NewFileSpecWithSpec(fileOrDirName, getter_AddRefs(fileOrDirNameSpec));
           DoTheCopyAndRename(fileOrDirNameSpec, newPathExtended, PR_TRUE, needToRenameFiles, oldName, newName); /* re-enter the DoTheCopyAndRename function */
         }
-        else
-          continue;
       }
       else {
         // copy the file
@@ -1659,6 +1637,7 @@ nsPrefMigration::DoTheCopyAndRename(nsIFileSpec * oldPathSpec, nsIFileSpec *newP
         }
       }
     }
+    nsCRT::free(folderName);
   }  
   
   return NS_OK;
@@ -2000,7 +1979,7 @@ nsPrefMigration::DoSpecialUpdates(nsIFileSpec  * profilePath)
   if (NS_FAILED(rv)) return rv;
     
   /* Create the new mail directory from the setting in prefs.js or a default */
-  rv = m_prefs->GetIntPref(PREF_MAIL_SERVER_TYPE, &serverType);
+  rv = m_prefBranch->GetIntPref(PREF_MAIL_SERVER_TYPE, &serverType);
   if (NS_FAILED(rv)) return rv; 
   if (serverType == POP_4X_MAIL_TYPE) {
 	rv = RenameAndMove4xPopFilterFile(profilePath);
@@ -2054,7 +2033,7 @@ nsPrefMigration::RenameAndMove4xPopFile(nsIFileSpec * profilePath, const char *f
   nsFileSpec migratedPopDirectory;
   rv = profilePath->GetFileSpec(&migratedPopDirectory);
   migratedPopDirectory += NEW_MAIL_DIR_NAME;
-  m_prefs->CopyCharPref(PREF_NETWORK_HOSTS_POP_SERVER, &popServerName);
+  m_prefBranch->GetCharPref(PREF_NETWORK_HOSTS_POP_SERVER, &popServerName);
   migratedPopDirectory += popServerName;
   PR_FREEIF(popServerName);
 
@@ -2123,7 +2102,7 @@ nsPrefMigration::RenameAndMove4xImapFilterFiles(nsIFileSpec * profilePath)
   nsresult rv;
   char *hostList=nsnull;
 
-  rv = m_prefs->CopyCharPref(PREF_4X_NETWORK_HOSTS_IMAP_SERVER, &hostList);
+  rv = m_prefBranch->GetCharPref(PREF_4X_NETWORK_HOSTS_IMAP_SERVER, &hostList);
   if (NS_FAILED(rv)) return rv;
 
   if (!hostList || !*hostList) return NS_OK; 
@@ -2188,7 +2167,9 @@ nsPrefMigration::GetPremigratedFilePref(const char *pref_name, nsIFileSpec **pat
 #ifdef DEBUG_seth
         printf("getting %s (into a nsFileSpec)\n", premigration_pref);
 #endif
-        rv = m_prefs->GetFilePref((const char *)premigration_pref, path);
+        rv = m_prefBranch->GetComplexValue((const char *)premigration_pref,
+                                           NS_GET_IID(nsIFileSpec),
+                                           (void **)path);
         return rv;
 }
 
@@ -2226,8 +2207,9 @@ nsPrefMigration::SetPremigratedFilePref(const char *pref_name, nsIFileSpec *path
   NS_ASSERTION(exists, "the path does not exist.  see bug #55444");
   if (!exists) return NS_OK;
   
-	rv = m_prefs->SetFileXPref((const char *)premigration_pref, pathFile);
-	return rv;
+  rv = m_prefBranch->SetComplexValue((const char *)premigration_pref,
+                                     NS_GET_IID(nsILocalFile), pathFile);
+  return rv;
 }
 
 nsresult 
@@ -2243,7 +2225,7 @@ nsPrefMigration::DetermineOldPath(nsIFileSpec *profilePath, const char *oldPathN
 	if (NS_FAILED(rv)) return rv;
 	
 	/* get the string bundle, and get the appropriate localized string out of it */
-	nsCOMPtr<nsIStringBundleService> bundleService = do_GetService(kStringBundleServiceCID, &rv);
+	nsCOMPtr<nsIStringBundleService> bundleService = do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
 	if (NS_FAILED(rv)) return rv;
 
     nsCOMPtr<nsIStringBundle> bundle;
@@ -2333,7 +2315,7 @@ ConvertStringToUTF8(const char* aCharset, const char* inString, char** outString
   nsresult rv;
   // convert result to unicode
   nsCOMPtr<nsICharsetConverterManager> ccm = 
-           do_GetService(kCharsetConverterManagerCID, &rv);
+           do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
 
   if(NS_SUCCEEDED(rv)) {
     nsCOMPtr <nsIUnicodeDecoder> decoder; // this may be cached
@@ -2368,7 +2350,7 @@ ConvertStringToUTF8(const char* aCharset, const char* inString, char** outString
 }
 
 nsresult
-ConvertPrefToUTF8(const char *prefname, nsIPref *prefs, const char* charSet)
+ConvertPrefToUTF8(const char *prefname, nsIPrefBranch *prefs, const char* charSet)
 {
     nsresult rv;
 
@@ -2379,7 +2361,7 @@ ConvertPrefToUTF8(const char *prefname, nsIPref *prefs, const char* charSet)
     
     nsXPIDLCString prefval;
 
-    rv = prefs->CopyCharPref(prefname, getter_Copies(prefval));
+    rv = prefs->GetCharPref(prefname, getter_Copies(prefval));
     if (NS_FAILED(rv)) return rv;
 
     if (prefval.IsEmpty()) {
@@ -2418,10 +2400,8 @@ static PRBool charEndsWith(const char *str, const char *endStr)
 }
 
 static
-void fontPrefEnumerationFunction(const char *name, void *data)
+void fontPrefEnumerationFunction(const char *name, nsCStringArray *arr)
 {
-  nsCStringArray *arr;
-  arr = (nsCStringArray *)data;
 #ifdef DEBUG_UTF8_CONVERSION
   printf("fontPrefEnumerationFunction: %s\n", name);
 #endif 
@@ -2433,10 +2413,8 @@ void fontPrefEnumerationFunction(const char *name, void *data)
 }
 
 static
-void ldapPrefEnumerationFunction(const char *name, void *data)
+void ldapPrefEnumerationFunction(const char *name, nsCStringArray *arr)
 {
-  nsCStringArray *arr;
-  arr = (nsCStringArray *)data;
 #ifdef DEBUG_UTF8_CONVERSION
   printf("ldapPrefEnumerationFunction: %s\n", name);
 #endif 
@@ -2449,10 +2427,8 @@ void ldapPrefEnumerationFunction(const char *name, void *data)
 }
 
 static
-void vCardPrefEnumerationFunction(const char *name, void *data)
+void vCardPrefEnumerationFunction(const char *name, nsCStringArray *arr)
 {
-  nsCStringArray *arr;
-  arr = (nsCStringArray *)data;
 #ifdef DEBUG_UTF8_CONVERSION
   printf("vCardPrefEnumerationFunction: %s\n", name);
 #endif 
@@ -2464,7 +2440,7 @@ void vCardPrefEnumerationFunction(const char *name, void *data)
 
 
 typedef struct {
-    nsIPref *prefs;
+    nsIPrefBranch *prefs;
     const char* charSet;
 } PrefEnumerationClosure;
 
@@ -2485,7 +2461,7 @@ nsPrefConverter::ConvertPrefsToUTF8()
 
   nsCStringArray prefsToMigrate;
 
-  nsCOMPtr<nsIPref> prefs(do_GetService(kPrefServiceCID, &rv));
+  nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   if(NS_FAILED(rv)) return rv;
   if (!prefs) return NS_ERROR_FAILURE;
 
@@ -2494,14 +2470,36 @@ nsPrefConverter::ConvertPrefsToUTF8()
   
   if (NS_FAILED(rv)) return rv;
 
-  for (PRUint32 i = 0; prefsToConvert[i]; i++) {
+  PRUint32 i;
+
+  for (i = 0; prefsToConvert[i]; i++) {
     nsCString prefnameStr( prefsToConvert[i] );
     prefsToMigrate.AppendCString(prefnameStr);
   }
 
-  prefs->EnumerateChildren("intl.font",fontPrefEnumerationFunction,(void *)(&prefsToMigrate));
-  prefs->EnumerateChildren("ldap_2.servers",ldapPrefEnumerationFunction,(void *)(&prefsToMigrate));
-  prefs->EnumerateChildren("mail.identity.vcard",vCardPrefEnumerationFunction,(void *)(&prefsToMigrate));
+  PRUint32 count;
+  char **childArray;
+
+  if (NS_SUCCEEDED(prefs->GetChildList("intl.font.", &count, &childArray))) {
+    for (i = 0; i < count; i++)
+      fontPrefEnumerationFunction(childArray[i], &prefsToMigrate);
+
+    NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(count, childArray);
+  }
+
+  if (NS_SUCCEEDED(prefs->GetChildList("ldap_2.servers.", &count, &childArray))) {
+    for (i = 0; i < count; i++)
+      ldapPrefEnumerationFunction(childArray[i], &prefsToMigrate);
+
+    NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(count, childArray);
+  }
+
+  if (NS_SUCCEEDED(prefs->GetChildList("mail.identity.vcard.", &count, &childArray))) {
+    for (i = 0; i < count; i++)
+      vCardPrefEnumerationFunction(childArray[i], &prefsToMigrate);
+
+    NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(count, childArray);
+  }
 
   PrefEnumerationClosure closure;
 
@@ -2510,7 +2508,7 @@ nsPrefConverter::ConvertPrefsToUTF8()
 
   prefsToMigrate.EnumerateForwards((nsCStringArrayEnumFunc)convertPref, (void *)(&closure));
 
-  rv = prefs->SetBoolPref("prefs.converted-to-utf8",PR_TRUE);
+  rv = prefs->SetBoolPref("prefs.converted-to-utf8", PR_TRUE);
   return NS_OK;
 }
 

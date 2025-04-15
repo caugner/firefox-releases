@@ -38,7 +38,7 @@
 #ifndef nsIPlatformCharset_h__
 #define nsIPlatformCharset_h__
 
-#include "nsString.h"
+#include "nsStringGlue.h"
 #include "nsISupports.h"
 
 // Interface ID for our nsIPlatformCharset interface
@@ -70,12 +70,14 @@ class nsIPlatformCharset : public nsISupports
 {
 public:
  
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IPLATFORMCHARSET_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IPLATFORMCHARSET_IID)
 
   NS_IMETHOD GetCharset(nsPlatformCharsetSel selector, nsACString& oResult) = 0;
 
   NS_IMETHOD GetDefaultCharsetForLocale(const nsAString& localeName, nsACString& oResult) = 0;
 
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIPlatformCharset, NS_IPLATFORMCHARSET_IID)
 
 #endif /* nsIPlatformCharset_h__ */

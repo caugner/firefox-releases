@@ -40,12 +40,11 @@
 #define nsRDFConInstanceTestNode_h__
 
 #include "nscore.h"
-#include "nsRDFTestNode.h"
 #include "nsFixedSizeAllocator.h"
+#include "nsRDFTestNode.h"
 #include "nsIRDFResource.h"
 #include "nsIRDFDataSource.h"
-class nsConflictSet;
-class nsResourceSet;
+#include "nsXULTemplateQueryProcessorRDF.h"
 
 /**
  * Rule network node that tests if a resource is an RDF container, or
@@ -56,17 +55,14 @@ class nsRDFConInstanceTestNode : public nsRDFTestNode
 public:
     enum Test { eFalse, eTrue, eDontCare };
 
-    nsRDFConInstanceTestNode(InnerNode* aParent,
-                             nsConflictSet& aConflictSet,
-                             nsIRDFDataSource* aDataSource,
-                             const nsResourceSet& aMembershipProperties,
-                             PRInt32 aContainerVariable,
+    nsRDFConInstanceTestNode(TestNode* aParent,
+                             nsXULTemplateQueryProcessorRDF* aProcessor,
+                             nsIAtom* aContainerVariable,
                              Test aContainer,
                              Test aEmpty);
 
-    virtual nsresult FilterInstantiations(InstantiationSet& aInstantiations, void* aClosure) const;
-
-    virtual nsresult GetAncestorVariables(VariableSet& aVariables) const;
+    virtual nsresult FilterInstantiations(InstantiationSet& aInstantiations,
+                                          PRBool* aCantHandleYet) const;
 
     virtual PRBool
     CanPropagate(nsIRDFResource* aSource,
@@ -77,9 +73,7 @@ public:
     virtual void
     Retract(nsIRDFResource* aSource,
             nsIRDFResource* aProperty,
-            nsIRDFNode* aTarget,
-            nsTemplateMatchSet& aFirings,
-            nsTemplateMatchSet& aRetractions) const;
+            nsIRDFNode* aTarget) const;
 
 
     class Element : public MemoryElement {
@@ -101,15 +95,15 @@ public:
         virtual ~Element() { MOZ_COUNT_DTOR(nsRDFConInstanceTestNode::Element); }
 
         static Element*
-        Create(nsFixedSizeAllocator& aPool, nsIRDFResource* aContainer,
+        Create(nsIRDFResource* aContainer,
                Test aContainerTest, Test aEmptyTest) {
-            void* place = aPool.Alloc(sizeof(Element));
+            void* place = MemoryElement::gPool.Alloc(sizeof(Element));
             return place ? ::new (place) Element(aContainer, aContainerTest, aEmptyTest) : nsnull; }
 
-        static void
-        Destroy(nsFixedSizeAllocator& aPool, Element* aElement) {
-            aElement->~Element();
-            aPool.Free(aElement, sizeof(*aElement)); }
+        void Destroy() {
+            this->~Element();
+            MemoryElement::gPool.Free(this, sizeof(Element));
+        }
 
         virtual const char* Type() const {
             return "nsRDFConInstanceTestNode::Element"; }
@@ -121,16 +115,12 @@ public:
 
         virtual PRBool Equals(const MemoryElement& aElement) const {
             if (aElement.Type() == Type()) {
-                const Element& element = NS_STATIC_CAST(const Element&, aElement);
+                const Element& element = static_cast<const Element&>(aElement);
                 return mContainer == element.mContainer
                     && mContainerTest == element.mContainerTest
                     && mEmptyTest == element.mEmptyTest;
             }
             return PR_FALSE; }
-
-        virtual MemoryElement* Clone(void* aPool) const {
-            return Create(*NS_STATIC_CAST(nsFixedSizeAllocator*, aPool),
-                          mContainer, mContainerTest, mEmptyTest); }
 
     protected:
         nsCOMPtr<nsIRDFResource> mContainer;
@@ -139,10 +129,8 @@ public:
     };
 
 protected:
-    nsConflictSet& mConflictSet;
-    nsCOMPtr<nsIRDFDataSource> mDataSource;
-    const nsResourceSet& mMembershipProperties;
-    PRInt32 mContainerVariable;
+    nsXULTemplateQueryProcessorRDF* mProcessor;
+    nsCOMPtr<nsIAtom> mContainerVariable;
     Test mContainer;
     Test mEmpty;
 };

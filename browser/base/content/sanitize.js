@@ -123,6 +123,28 @@ Sanitizer.prototype = {
       }
     },
     
+    offlineApps: {
+      clear: function ()
+      {
+        const Cc = Components.classes;
+        const Ci = Components.interfaces;
+        var cacheService = Cc["@mozilla.org/network/cache-service;1"].
+                           getService(Ci.nsICacheService);
+        try {
+          cacheService.evictEntries(Ci.nsICache.STORE_OFFLINE);
+        } catch(er) {}
+
+        var storageManagerService = Cc["@mozilla.org/dom/storagemanager;1"].
+                                    getService(Ci.nsIDOMStorageManager);
+        storageManagerService.clearOfflineApps();
+      },
+
+      get canClear()
+      {
+          return true;
+      }
+    },
+
     history: {
       clear: function ()
       {
@@ -134,6 +156,14 @@ Sanitizer.prototype = {
           var os = Components.classes["@mozilla.org/observer-service;1"]
                              .getService(Components.interfaces.nsIObserverService);
           os.notifyObservers(null, "browser:purge-session-history", "");
+        }
+        catch (e) { }
+        
+        // Clear last URL of the Open Web Location dialog
+        var prefs = Components.classes["@mozilla.org/preferences-service;1"]
+                              .getService(Components.interfaces.nsIPrefBranch2);
+        try {
+          prefs.clearUserPref("general.open_location.last_url");
         }
         catch (e) { }
       },
@@ -157,8 +187,7 @@ Sanitizer.prototype = {
           var searchBar = windows.getNext().document.getElementById("searchbar");
           if (searchBar) {
             searchBar.value = "";
-            searchBar.textbox.editor.enableUndo(false);
-            searchBar.textbox.editor.enableUndo(true);
+            searchBar.textbox.editor.transactionManager.clear();
           }
         }
 
@@ -194,24 +223,17 @@ Sanitizer.prototype = {
     passwords: {
       clear: function ()
       {
-        var pwmgr = Components.classes["@mozilla.org/passwordmanager;1"]
-                              .getService(Components.interfaces.nsIPasswordManager);
-        var e = pwmgr.enumerator;
-        var passwds = [];
-        while (e.hasMoreElements()) {
-          var passwd = e.getNext().QueryInterface(Components.interfaces.nsIPassword);
-          passwds.push(passwd);
-        }
-        
-        for (var i = 0; i < passwds.length; ++i)
-          pwmgr.removeUser(passwds[i].host, passwds[i].user);
+        var pwmgr = Components.classes["@mozilla.org/login-manager;1"]
+                              .getService(Components.interfaces.nsILoginManager);
+        pwmgr.removeAllLogins();
       },
       
       get canClear()
       {
-        var pwmgr = Components.classes["@mozilla.org/passwordmanager;1"]
-                              .getService(Components.interfaces.nsIPasswordManager);
-        return pwmgr.enumerator.hasMoreElements();
+        var pwmgr = Components.classes["@mozilla.org/login-manager;1"]
+                              .getService(Components.interfaces.nsILoginManager);
+        var count = pwmgr.countLogins("", "", ""); // count all logins
+        return (count > 0);
       }
     },
     

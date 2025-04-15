@@ -1,6 +1,9 @@
-/.cvsignore/1.1/Sat Dec 29 03:50:19 2001//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.7/Sun Apr 18 22:14:02 2004//TFIREFOX_2_0_RELEASE
-/venkman.pkg/1.2/Wed Jan  7 01:21:32 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Dec 29 03:50:19 2001//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.9/Wed Jan 16 20:45:32 2008//TFIREFOX_3_0rc3_RELEASE
+/makefiles.sh/1.2/Wed Jan 16 20:43:42 2008//TFIREFOX_3_0rc3_RELEASE
+/venkman.pkg/1.2/Wed Jan  7 01:21:32 2004//TFIREFOX_3_0rc3_RELEASE
+/version.txt/1.4/Sat Mar  8 08:29:39 2008//TFIREFOX_3_0rc3_RELEASE
 D/js////
+D/locales////
 D/resources////
 D/xpi////

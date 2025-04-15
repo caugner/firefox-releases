@@ -44,55 +44,112 @@
 #include "nsICacheEntryDescriptor.h"
 #include "nsIStorageStream.h"
 #include "nsNetUtil.h"
+#include "nsAutoPtr.h"
+#include "prprf.h"
 #include "prtime.h"
 #include "nsEscape.h"
 
-//-----------------------------------------------------------------------------
-// nsISupports implementation
-//-----------------------------------------------------------------------------
+#define HEXDUMP_MAX_ROWS 16
 
-NS_IMPL_ISUPPORTS4(nsAboutCacheEntry,
-                   nsIAboutModule,
-                   nsIChannel,
-                   nsIRequest,
-                   nsICacheListener)
-
-//-----------------------------------------------------------------------------
-// nsIAboutModule implementation
-//-----------------------------------------------------------------------------
-
-NS_IMETHODIMP
-nsAboutCacheEntry::NewChannel(nsIURI *aURI, nsIChannel **result)
+static void
+HexDump(PRUint32 *state, const char *buf, PRInt32 n, nsCString &result)
 {
-    NS_ENSURE_ARG_POINTER(aURI);
-    nsresult rv;
+  char temp[16];
 
-    nsCOMPtr<nsIChannel> chan;
-    rv = NS_NewInputStreamChannel(getter_AddRefs(chan), aURI, nsnull,
-                                  NS_LITERAL_CSTRING("application/xhtml+xml"),
-                                  NS_LITERAL_CSTRING("utf-8"));
-    if (NS_FAILED(rv)) return rv;
+  const unsigned char *p;
+  while (n) {
+    PR_snprintf(temp, sizeof(temp), "%08x:  ", *state);
+    result.Append(temp);
+    *state += HEXDUMP_MAX_ROWS;
 
-    mStreamChannel = do_QueryInterface(chan, &rv);
-    if (NS_FAILED(rv)) return rv;
+    p = (const unsigned char *) buf;
 
-    return CallQueryInterface((nsIAboutModule *) this, result);
+    PRInt32 i, row_max = PR_MIN(HEXDUMP_MAX_ROWS, n);
+
+    // print hex codes:
+    for (i = 0; i < row_max; ++i) {
+      PR_snprintf(temp, sizeof(temp), "%02x  ", *p++);
+      result.Append(temp);
+    }
+    for (i = row_max; i < HEXDUMP_MAX_ROWS; ++i) {
+      result.AppendLiteral("    ");
+    }
+
+    // print ASCII glyphs if possible:
+    p = (const unsigned char *) buf;
+    for (i = 0; i < row_max; ++i, ++p) {
+      switch (*p) {
+      case '<':
+        result.AppendLiteral("&lt;");
+        break;
+      case '>':
+        result.AppendLiteral("&gt;");
+        break;
+      case '&':
+        result.AppendLiteral("&amp;");
+        break;
+      default:
+        if (*p < 0x7F && *p > 0x1F) {
+          result.Append(*p);
+        } else {
+          result.Append('.');
+        }
+      }
+    }
+
+    result.Append('\n');
+
+    buf += row_max;
+    n -= row_max;
+  }
 }
 
 //-----------------------------------------------------------------------------
-// nsICacheListener implementation
+// nsAboutCacheEntry::nsISupports
+
+NS_IMPL_ISUPPORTS2(nsAboutCacheEntry,
+                   nsIAboutModule,
+                   nsICacheMetaDataVisitor)
+
 //-----------------------------------------------------------------------------
+// nsAboutCacheEntry::nsIAboutModule
 
 NS_IMETHODIMP
-nsAboutCacheEntry::OnCacheEntryAvailable(nsICacheEntryDescriptor *descriptor,
-                                         nsCacheAccessMode accessGranted,
-                                         nsresult status)
+nsAboutCacheEntry::NewChannel(nsIURI *uri, nsIChannel **result)
+{
+    NS_ENSURE_ARG_POINTER(uri);
+    nsresult rv;
+
+    nsCOMPtr<nsIInputStream> stream;
+    rv = GetContentStream(uri, getter_AddRefs(stream));
+    if (NS_FAILED(rv)) return rv;
+
+    return NS_NewInputStreamChannel(result, uri, stream,
+                                    NS_LITERAL_CSTRING("application/xhtml+xml"),
+                                    NS_LITERAL_CSTRING("utf-8"));
+}
+
+NS_IMETHODIMP
+nsAboutCacheEntry::GetURIFlags(nsIURI *aURI, PRUint32 *result)
+{
+    *result = 0;
+    return NS_OK;
+}
+
+//-----------------------------------------------------------------------------
+// nsAboutCacheEntry
+
+nsresult
+nsAboutCacheEntry::GetContentStream(nsIURI *uri, nsIInputStream **result)
 {
     nsCOMPtr<nsIStorageStream> storageStream;
     nsCOMPtr<nsIOutputStream> outputStream;
     PRUint32 n;
     nsCString buffer;
     nsresult rv;
+
+    nsCOMPtr<nsICacheEntryDescriptor> descriptor;
+    OpenCacheEntry(uri, getter_AddRefs(descriptor));
 
     // Init: (block size, maximum length)
     rv = NS_NewStorageStream(256, PRUint32(-1), getter_AddRefs(storageStream));
@@ -112,10 +169,10 @@ nsAboutCacheEntry::OnCacheEntryAvailable(nsICacheEntryDescriptor *descriptor,
                   "  line-height: 0.8em;\n}\n</style>\n</head>\n<body>\n");
     outputStream->Write(buffer.get(), buffer.Length(), &n);
 
-    if (NS_SUCCEEDED(status))
+    if (descriptor)
         rv = WriteCacheEntryDescription(outputStream, descriptor);
     else
-        rv = WriteCacheEntryUnavailable(outputStream, status);
+        rv = WriteCacheEntryUnavailable(outputStream);
     if (NS_FAILED(rv)) return rv;
 
     buffer.AssignLiteral("</body>\n</html>\n");
@@ -127,225 +184,35 @@ nsAboutCacheEntry::OnCacheEntryAvailable(nsICacheEntryDescriptor *descriptor,
     rv = storageStream->GetLength(&size);
     if (NS_FAILED(rv)) return rv;
 
-    rv = storageStream->NewInputStream(0, getter_AddRefs(inStr));
-    if (NS_FAILED(rv)) return rv;
-
-    rv = mStreamChannel->SetContentStream(inStr);
-    if (NS_FAILED(rv)) return rv;
-
-    return mStreamChannel->AsyncOpen(mListener, mListenerContext);
+    return storageStream->NewInputStream(0, result);
 }
 
-//-----------------------------------------------------------------------------
-// nsIRequest implementation
-//-----------------------------------------------------------------------------
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetName(nsACString &result)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetName(result);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::IsPending(PRBool *result)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->IsPending(result);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetStatus(nsresult *result)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetStatus(result);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::Cancel(nsresult status)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->Cancel(status);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::Suspend()
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->Suspend();
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::Resume()
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->Resume();
-}
-
-//-----------------------------------------------------------------------------
-// nsIChannel implementation
-//-----------------------------------------------------------------------------
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetOriginalURI(nsIURI **value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetOriginalURI(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::SetOriginalURI(nsIURI *value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->SetOriginalURI(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetURI(nsIURI **value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetURI(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetOwner(nsISupports **value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetOwner(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::SetOwner(nsISupports *value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->SetOwner(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetLoadGroup(nsILoadGroup **value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetLoadGroup(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::SetLoadGroup(nsILoadGroup *value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->SetLoadGroup(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetLoadFlags(PRUint32 *value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetLoadFlags(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::SetLoadFlags(PRUint32 value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->SetLoadFlags(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetNotificationCallbacks(nsIInterfaceRequestor **value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetNotificationCallbacks(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::SetNotificationCallbacks(nsIInterfaceRequestor *value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->SetNotificationCallbacks(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetSecurityInfo(nsISupports **value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetSecurityInfo(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetContentType(nsACString &value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetContentType(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::SetContentType(const nsACString &value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->SetContentType(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetContentCharset(nsACString &value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetContentCharset(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::SetContentCharset(const nsACString &value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->SetContentCharset(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::GetContentLength(PRInt32 *value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->GetContentLength(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::SetContentLength(PRInt32 value)
-{
-    NS_ENSURE_TRUE(mStreamChannel, NS_ERROR_NOT_INITIALIZED);
-    return mStreamChannel->SetContentLength(value);
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::Open(nsIInputStream **result)
-{
-    NS_NOTREACHED("nsAboutCacheEntry::Open");
-    return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-nsAboutCacheEntry::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
+nsresult
+nsAboutCacheEntry::OpenCacheEntry(nsIURI *uri, nsICacheEntryDescriptor **result)
 {
     nsresult rv;
     nsCAutoString clientID, key;
     PRBool streamBased = PR_TRUE;
 
-    rv = ParseURI(clientID, streamBased, key);
+    rv = ParseURI(uri, clientID, streamBased, key);
     if (NS_FAILED(rv)) return rv;
 
     nsCOMPtr<nsICacheService> serv =
         do_GetService(NS_CACHESERVICE_CONTRACTID, &rv);
     if (NS_FAILED(rv)) return rv;
 
+    nsCOMPtr<nsICacheSession> session;
     rv = serv->CreateSession(clientID.get(),
                              nsICache::STORE_ANYWHERE,
                              streamBased,
-                             getter_AddRefs(mCacheSession));
+                             getter_AddRefs(session));
     if (NS_FAILED(rv)) return rv;
 
-    rv = mCacheSession->SetDoomEntriesIfExpired(PR_FALSE);
+    rv = session->SetDoomEntriesIfExpired(PR_FALSE);
     if (NS_FAILED(rv)) return rv;
 
-    mListener = listener;
-    mListenerContext = context;
-
-    return mCacheSession->AsyncOpenCacheEntry(key, nsICache::ACCESS_READ, this);
+    rv = session->OpenCacheEntry(key, nsICache::ACCESS_READ, PR_FALSE, result);
+    return rv;
 }
 
 
@@ -463,8 +330,9 @@ nsAboutCacheEntry::WriteCacheEntryDescription(nsIOutputStream *outputStream,
 
     // Data Size
     s.Truncate();
-    descriptor->GetDataSize(&u);
-    s.AppendInt((PRInt32)u);     // XXX nsICacheEntryInfo interfaces should be fixed.
+    PRUint32 dataSize;
+    descriptor->GetDataSize(&dataSize);
+    s.AppendInt((PRInt32)dataSize);     // XXX nsICacheEntryInfo interfaces should be fixed.
     APPEND_ROW("Data size", s);
 
     // Storage Policy
@@ -507,35 +375,53 @@ nsAboutCacheEntry::WriteCacheEntryDescription(nsIOutputStream *outputStream,
     mBuffer = &buffer;  // make it available for VisitMetaDataElement()
     descriptor->VisitMetaData(this);
     mBuffer = nsnull;
-    
 
-    buffer.AppendLiteral("</table>\n");
+    buffer.AppendLiteral("</table>\n"
+                         "<hr />\n<pre>");
+    outputStream->Write(buffer.get(), buffer.Length(), &n);
 
+    buffer.Truncate();
+
+    // Provide a hexdump of the data
+    nsCOMPtr<nsIInputStream> stream;
+    descriptor->OpenInputStream(0, getter_AddRefs(stream));
+    if (stream) {
+        PRUint32 hexDumpState = 0;
+        char chunk[4096];
+        while (dataSize) {
+            PRUint32 count = PR_MIN(dataSize, sizeof(chunk));
+            if (NS_FAILED(stream->Read(chunk, count, &n)) || n == 0)
+                break;
+            dataSize -= n;
+            HexDump(&hexDumpState, chunk, n, buffer);
+            outputStream->Write(buffer.get(), buffer.Length(), &n);
+            buffer.Truncate();
+        }
+    }
+
+    buffer.AssignLiteral("</pre>");
     outputStream->Write(buffer.get(), buffer.Length(), &n);
     return NS_OK;
 }
 
 nsresult
-nsAboutCacheEntry::WriteCacheEntryUnavailable(nsIOutputStream *outputStream,
-                                              nsresult reason)
+nsAboutCacheEntry::WriteCacheEntryUnavailable(nsIOutputStream *outputStream)
 {
     PRUint32 n;
-    NS_NAMED_LITERAL_CSTRING(buffer, "The cache entry you selected is no longer available.");
+    NS_NAMED_LITERAL_CSTRING(buffer,
+        "The cache entry you selected is not available.");
     outputStream->Write(buffer.get(), buffer.Length(), &n);
     return NS_OK;
 }
 
 nsresult
-nsAboutCacheEntry::ParseURI(nsCString &clientID, PRBool &streamBased, nsCString &key)
+nsAboutCacheEntry::ParseURI(nsIURI *uri, nsCString &clientID,
+                            PRBool &streamBased, nsCString &key)
 {
     //
     // about:cache-entry?client=[string]&sb=[boolean]&key=[string]
     //
     nsresult rv;
-
-    nsCOMPtr<nsIURI> uri;
-    rv = mStreamChannel->GetURI(getter_AddRefs(uri));
-    if (NS_FAILED(rv)) return rv;
 
     nsCAutoString path;
     rv = uri->GetPath(path);

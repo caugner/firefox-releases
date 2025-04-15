@@ -36,6 +36,11 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * Object that can be used to serialize selections, ranges, or nodes
+ * to strings in a gazillion different ways.
+ */
+ 
 #include "nsIDocumentEncoder.h"
 
 #include "nscore.h"
@@ -60,12 +65,10 @@
 #include "nsIDOMRange.h"
 #include "nsIDOMDocument.h"
 #include "nsICharsetConverterManager.h"
-#include "nsHTMLAtoms.h"
-#include "nsITextContent.h"
+#include "nsGkAtoms.h"
+#include "nsIContent.h"
 #include "nsIEnumerator.h"
 #include "nsISelectionPrivate.h"
-#include "nsIFrameSelection.h"
-#include "nsISupportsArray.h"
 #include "nsIParserService.h"
 #include "nsIScriptContext.h"
 #include "nsIScriptGlobalObject.h"
@@ -81,45 +84,23 @@ enum nsRangeIterationDirection {
   kDirectionIn = 1
 };
 
-#ifdef XP_MAC
-#pragma mark -
-#pragma mark  nsDocumentEncoder declaration 
-#pragma mark -
-#endif
-
 class nsDocumentEncoder : public nsIDocumentEncoder
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IDOCUMENT_ENCODER_IID)
-
   nsDocumentEncoder();
   virtual ~nsDocumentEncoder();
 
-  NS_IMETHOD Init(nsIDocument* aDocument, const nsAString& aMimeType, PRUint32 aFlags);
-
-  /* Interfaces for addref and release and queryinterface */
   NS_DECL_ISUPPORTS
 
-  // Inherited methods from nsIDocumentEncoder
-  NS_IMETHOD SetSelection(nsISelection* aSelection);
-  NS_IMETHOD SetRange(nsIDOMRange* aRange);
-  NS_IMETHOD SetNode(nsIDOMNode* aNode);
-  NS_IMETHOD SetWrapColumn(PRUint32 aWC);
-  NS_IMETHOD SetCharset(const nsACString& aCharset);
-  NS_IMETHOD GetMimeType(nsAString& aMimeType);
-  NS_IMETHOD EncodeToStream(nsIOutputStream* aStream);
-  NS_IMETHOD EncodeToString(nsAString& aOutputString);
-  NS_IMETHOD EncodeToStringWithContext(nsAString& aEncodedString, 
-                                       nsAString& aContextString,
-                                       nsAString& aInfoString);
-  NS_IMETHOD SetNodeFixup(nsIDocumentEncoderNodeFixup *aFixup);
-                                       
+  NS_DECL_NSIDOCUMENTENCODER
+
 protected:
   void Initialize();
   nsresult SerializeNodeStart(nsIDOMNode* aNode, PRInt32 aStartOffset,
                               PRInt32 aEndOffset, nsAString& aStr);
   nsresult SerializeToStringRecursive(nsIDOMNode* aNode,
-                                      nsAString& aStr);
+                                      nsAString& aStr,
+                                      PRBool aDontSerializeRoot);
   nsresult SerializeNodeEnd(nsIDOMNode* aNode, nsAString& aStr);
   nsresult SerializeRangeToString(nsIDOMRange *aRange,
                                   nsAString& aOutputString);
@@ -164,12 +145,8 @@ protected:
   nsAutoVoidArray   mEndOffsets;
   PRPackedBool      mHaltRangeHint;  
   PRPackedBool      mIsCopying;  // Set to PR_TRUE only while copying
+  PRPackedBool      mNodeIsContainer;
 };
-
-#ifdef XP_MAC
-#pragma mark  nsDocumentEncoder implementation 
-#pragma mark -
-#endif
 
 NS_IMPL_ADDREF(nsDocumentEncoder)
 NS_IMPL_RELEASE(nsDocumentEncoder)
@@ -195,6 +172,7 @@ void nsDocumentEncoder::Initialize()
   mStartRootIndex = 0;
   mEndRootIndex = 0;
   mHaltRangeHint = PR_FALSE;
+  mNodeIsContainer = PR_FALSE;
 }
 
 nsDocumentEncoder::~nsDocumentEncoder()
@@ -202,7 +180,7 @@ nsDocumentEncoder::~nsDocumentEncoder()
 }
 
 NS_IMETHODIMP
-nsDocumentEncoder::Init(nsIDocument* aDocument,
+nsDocumentEncoder::Init(nsIDOMDocument* aDocument,
                         const nsAString& aMimeType,
                         PRUint32 aFlags)
 {
@@ -211,7 +189,8 @@ nsDocumentEncoder::Init(nsIDocument* aDocument,
 
   Initialize();
 
-  mDocument = aDocument;
+  mDocument = do_QueryInterface(aDocument);
+  NS_ENSURE_TRUE(mDocument, NS_ERROR_FAILURE);
 
   mMimeType = aMimeType;
 
@@ -245,7 +224,16 @@ nsDocumentEncoder::SetRange(nsIDOMRange* aRange)
 NS_IMETHODIMP
 nsDocumentEncoder::SetNode(nsIDOMNode* aNode)
 {
+  mNodeIsContainer = PR_FALSE;
   mNode = aNode;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocumentEncoder::SetContainerNode(nsIDOMNode *aContainer)
+{
+  mNodeIsContainer = PR_TRUE;
+  mNode = aContainer;
   return NS_OK;
 }
 
@@ -292,14 +280,8 @@ nsDocumentEncoder::SerializeNodeStart(nsIDOMNode* aNode, PRInt32 aStartOffset,
     case nsIDOMNode::ELEMENT_NODE:
     {
       nsCOMPtr<nsIDOMElement> element = do_QueryInterface(node);
-      // Because FixupNode() may have done a shallow copy of aNode
-      // we need to tell the serializer if the original had children.
-      // Some serializers (notably XML) need this information 
-      // in order to handle empty tags properly.
-      PRBool hasChildren;
-      mSerializer->AppendElementStart(element, 
-                                      NS_SUCCEEDED(aNode->HasChildNodes(&hasChildren)) && hasChildren,
-                                      aStr);
+      nsCOMPtr<nsIDOMElement> originalElement = do_QueryInterface(aNode);
+      mSerializer->AppendElementStart(element, originalElement, aStr);
       break;
     }
     case nsIDOMNode::TEXT_NODE:
@@ -359,10 +341,14 @@ nsDocumentEncoder::SerializeNodeEnd(nsIDOMNode* aNode,
 
 nsresult
 nsDocumentEncoder::SerializeToStringRecursive(nsIDOMNode* aNode,
-                                              nsAString& aStr)
+                                              nsAString& aStr,
+                                              PRBool aDontSerializeRoot)
 {
-  nsresult rv = SerializeNodeStart(aNode, 0, -1, aStr);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsresult rv = NS_OK;
+  if (!aDontSerializeRoot) {
+    rv = SerializeNodeStart(aNode, 0, -1, aStr);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   PRBool hasChildren = PR_FALSE;
 
@@ -382,13 +368,15 @@ nsDocumentEncoder::SerializeToStringRecursive(nsIDOMNode* aNode,
       rv = childNodes->Item(index, getter_AddRefs(child));
       NS_ENSURE_SUCCESS(rv, rv);
 
-      rv = SerializeToStringRecursive(child, aStr);
+      rv = SerializeToStringRecursive(child, aStr, PR_FALSE);
       NS_ENSURE_SUCCESS(rv, rv);     
     }
   }
 
-  rv = SerializeNodeEnd(aNode, aStr);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (!aDontSerializeRoot) {
+    rv = SerializeNodeEnd(aNode, aStr);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   return FlushText(aStr, PR_FALSE);
 }
@@ -460,8 +448,8 @@ ConvertAndWrite(const nsAString& aString,
       NS_ENSURE_SUCCESS(rv, rv);
 
       nsCAutoString entString("&#");
-      if (IS_HIGH_SURROGATE(unicodeBuf[unicodeLength - 1]) && 
-          unicodeLength < startLength && IS_LOW_SURROGATE(unicodeBuf[unicodeLength]))  {
+      if (NS_IS_HIGH_SURROGATE(unicodeBuf[unicodeLength - 1]) && 
+          unicodeLength < startLength && NS_IS_LOW_SURROGATE(unicodeBuf[unicodeLength]))  {
         entString.AppendInt(SURROGATE_TO_UCS4(unicodeBuf[unicodeLength - 1],
                                               unicodeBuf[unicodeLength]));
         unicodeLength += 1;
@@ -660,17 +648,17 @@ nsDocumentEncoder::SerializeRangeNodes(nsIDOMRange* aRange,
   nsCOMPtr<nsIContent> startNode, endNode;
   PRInt32 start = mStartRootIndex - aDepth;
   if (start >= 0 && start <= mStartNodes.Count())
-    startNode = NS_STATIC_CAST(nsIContent *, mStartNodes[start]);
+    startNode = static_cast<nsIContent *>(mStartNodes[start]);
 
   PRInt32 end = mEndRootIndex - aDepth;
   if (end >= 0 && end <= mEndNodes.Count())
-    endNode = NS_STATIC_CAST(nsIContent *, mEndNodes[end]);
+    endNode = static_cast<nsIContent *>(mEndNodes[end]);
 
   if ((startNode != content) && (endNode != content))
   {
     // node is completely contained in range.  Serialize the whole subtree
     // rooted by this node.
-    rv = SerializeToStringRecursive(aNode, aString);
+    rv = SerializeToStringRecursive(aNode, aString, PR_FALSE);
     NS_ENSURE_SUCCESS(rv, rv);
   }
   else
@@ -749,7 +737,7 @@ nsDocumentEncoder::SerializeRangeNodes(nsIDOMRange* aRange,
         if ((j==startOffset) || (j==endOffset-1))
           rv = SerializeRangeNodes(aRange, childAsNode, aString, aDepth+1);
         else
-          rv = SerializeToStringRecursive(childAsNode, aString);
+          rv = SerializeToStringRecursive(childAsNode, aString, PR_FALSE);
 
         NS_ENSURE_SUCCESS(rv, rv);
       }
@@ -904,7 +892,9 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
       NS_ENSURE_SUCCESS(rv, rv);
     }
   }
-  mSerializer->Init(mFlags, mWrapColumn, mCharset.get(), mIsCopying);
+  
+  PRBool isWholeDocument = !(mSelection || mRange || mNode);
+  mSerializer->Init(mFlags, mWrapColumn, mCharset.get(), mIsCopying, isWholeDocument);
 
   if (mSelection) {
     nsCOMPtr<nsIDOMRange> range;
@@ -913,10 +903,34 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
     rv = mSelection->GetRangeCount(&count);
     NS_ENSURE_SUCCESS(rv, rv);
 
+    nsCOMPtr<nsIDOMNode> node, prevNode;
     for (i = 0; i < count; i++) {
       mSelection->GetRangeAt(i, getter_AddRefs(range));
 
+      // Bug 236546: newlines not added when copying table cells into clipboard
+      // Each selected cell shows up as a range containing a row with a single cell
+      // get the row, compare it to previous row and emit </tr><tr> as needed
+      range->GetStartContainer(getter_AddRefs(node));
+      NS_ENSURE_TRUE(node, NS_ERROR_FAILURE);
+      if (node != prevNode) {
+        if (prevNode) {
+          rv = SerializeNodeEnd(prevNode, aOutputString);
+          NS_ENSURE_SUCCESS(rv, rv);
+          prevNode = nsnull;
+        }
+        nsCOMPtr<nsIContent> content = do_QueryInterface(node);
+        if (content && content->Tag() == nsGkAtoms::tr) {
+          rv = SerializeNodeStart(node, 0, -1, aOutputString);
+          NS_ENSURE_SUCCESS(rv, rv);
+          prevNode = node;
+        }
+      }
+
       rv = SerializeRangeToString(range, aOutputString);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    if (prevNode) {
+      rv = SerializeNodeEnd(prevNode, aOutputString);
       NS_ENSURE_SUCCESS(rv, rv);
     }
 
@@ -926,7 +940,7 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
 
       mRange = nsnull;
   } else if (mNode) {
-    rv = SerializeToStringRecursive(mNode, aOutputString);
+    rv = SerializeToStringRecursive(mNode, aOutputString, mNodeIsContainer);
     mNode = nsnull;
   } else {
     nsCOMPtr<nsIDOMDocument> domdoc(do_QueryInterface(mDocument));
@@ -935,7 +949,7 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
     if (NS_SUCCEEDED(rv)) {
       nsCOMPtr<nsIDOMNode> doc(do_QueryInterface(mDocument));
 
-      rv = SerializeToStringRecursive(doc, aOutputString);
+      rv = SerializeToStringRecursive(doc, aOutputString, PR_FALSE);
     }
   }
 
@@ -983,9 +997,9 @@ nsDocumentEncoder::EncodeToStream(nsIOutputStream* aStream)
 }
 
 NS_IMETHODIMP
-nsDocumentEncoder::EncodeToStringWithContext(nsAString& aEncodedString, 
-                                             nsAString& aContextString,
-                                             nsAString& aInfoString)
+nsDocumentEncoder::EncodeToStringWithContext(nsAString& aContextString,
+                                             nsAString& aInfoString,
+                                             nsAString& aEncodedString)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -1010,13 +1024,6 @@ NS_NewTextEncoder(nsIDocumentEncoder** aResult)
  return NS_OK;
 }
 
-
-#ifdef XP_MAC
-#pragma mark -
-#pragma mark  nsDocumentEncoder declaration 
-#pragma mark -
-#endif
-
 class nsHTMLCopyEncoder : public nsDocumentEncoder
 {
 public:
@@ -1024,13 +1031,13 @@ public:
   nsHTMLCopyEncoder();
   virtual ~nsHTMLCopyEncoder();
 
-  NS_IMETHOD Init(nsIDocument* aDocument, const nsAString& aMimeType, PRUint32 aFlags);
+  NS_IMETHOD Init(nsIDOMDocument* aDocument, const nsAString& aMimeType, PRUint32 aFlags);
 
   // overridden methods from nsDocumentEncoder
   NS_IMETHOD SetSelection(nsISelection* aSelection);
-  NS_IMETHOD EncodeToStringWithContext(nsAString& aEncodedString, 
-                                       nsAString& aContextString,
-                                       nsAString& aInfoString);
+  NS_IMETHOD EncodeToStringWithContext(nsAString& aContextString,
+                                       nsAString& aInfoString,
+                                       nsAString& aEncodedString);
 
 protected:
 
@@ -1058,11 +1065,6 @@ protected:
   PRBool mIsTextWidget;
 };
 
-#ifdef XP_MAC
-#pragma mark  nsDocumentEncoder implementation 
-#pragma mark -
-#endif
-
 nsHTMLCopyEncoder::nsHTMLCopyEncoder()
 {
   mIsTextWidget = PR_FALSE;
@@ -1073,7 +1075,7 @@ nsHTMLCopyEncoder::~nsHTMLCopyEncoder()
 }
 
 NS_IMETHODIMP
-nsHTMLCopyEncoder::Init(nsIDocument* aDocument,
+nsHTMLCopyEncoder::Init(nsIDOMDocument* aDocument,
                         const nsAString& aMimetype,
                         PRUint32 aFlags)
 {
@@ -1084,8 +1086,8 @@ nsHTMLCopyEncoder::Init(nsIDocument* aDocument,
   Initialize();
 
   mIsCopying = PR_TRUE;
-  mDocument = aDocument;
-
+  mDocument = do_QueryInterface(aDocument);
+  NS_ENSURE_TRUE(mDocument, NS_ERROR_FAILURE);
 
   mMimeType.AssignLiteral("text/html");
   
@@ -1135,13 +1137,13 @@ nsHTMLCopyEncoder::SetSelection(nsISelection* aSelection)
   {
     // checking for selection inside a plaintext form widget
     nsIAtom *atom = selContent->Tag();
-    if (atom == nsHTMLAtoms::input ||
-        atom == nsHTMLAtoms::textarea)
+    if (atom == nsGkAtoms::input ||
+        atom == nsGkAtoms::textarea)
     {
       mIsTextWidget = PR_TRUE;
       break;
     }
-    else if (atom == nsHTMLAtoms::body)
+    else if (atom == nsGkAtoms::body)
     {
       // check for moz prewrap style on body.  If it's there we are 
       // in a plaintext editor.  This is pretty cheezy but I haven't 
@@ -1149,7 +1151,7 @@ nsHTMLCopyEncoder::SetSelection(nsISelection* aSelection)
       nsCOMPtr<nsIDOMElement> bodyElem = do_QueryInterface(selContent);
       nsAutoString wsVal;
       rv = bodyElem->GetAttribute(NS_LITERAL_STRING("style"), wsVal);
-      if (NS_SUCCEEDED(rv) && (kNotFound != wsVal.Find(NS_LITERAL_STRING("-moz-pre-wrap"))))
+      if (NS_SUCCEEDED(rv) && (kNotFound != wsVal.Find(NS_LITERAL_STRING("pre-wrap"))))
       {
         mIsTextWidget = PR_TRUE;
         break;
@@ -1213,9 +1215,9 @@ nsHTMLCopyEncoder::SetSelection(nsISelection* aSelection)
 }
 
 NS_IMETHODIMP
-nsHTMLCopyEncoder::EncodeToStringWithContext(nsAString& aEncodedString, 
-                                             nsAString& aContextString,
-                                             nsAString& aInfoString)
+nsHTMLCopyEncoder::EncodeToStringWithContext(nsAString& aContextString,
+                                             nsAString& aInfoString,
+                                             nsAString& aEncodedString)
 {
   nsresult rv = EncodeToString(aEncodedString);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1235,7 +1237,7 @@ nsHTMLCopyEncoder::EncodeToStringWithContext(nsAString& aEncodedString,
   PRInt32 i;
   nsCOMPtr<nsIDOMNode> node;
   if (count > 0)
-    node = NS_STATIC_CAST(nsIDOMNode *, mCommonAncestors.ElementAt(0));
+    node = static_cast<nsIDOMNode *>(mCommonAncestors.ElementAt(0));
 
   if (node && IsTextNode(node)) 
   {
@@ -1250,13 +1252,13 @@ nsHTMLCopyEncoder::EncodeToStringWithContext(nsAString& aEncodedString,
   i = count;
   while (i > 0)
   {
-    node = NS_STATIC_CAST(nsIDOMNode *, mCommonAncestors.ElementAt(--i));
+    node = static_cast<nsIDOMNode *>(mCommonAncestors.ElementAt(--i));
     SerializeNodeStart(node, 0, -1, aContextString);
   }
   //i = 0; guaranteed by above
   while (i < count)
   {
-    node = NS_STATIC_CAST(nsIDOMNode *, mCommonAncestors.ElementAt(i++));
+    node = static_cast<nsIDOMNode *>(mCommonAncestors.ElementAt(i++));
     SerializeNodeEnd(node, aContextString);
   }
 
@@ -1283,32 +1285,32 @@ nsHTMLCopyEncoder::IncludeInContext(nsIDOMNode *aNode)
 
   nsIAtom *tag = content->Tag();
 
-  return (tag == nsHTMLAtoms::b        ||
-          tag == nsHTMLAtoms::i        ||
-          tag == nsHTMLAtoms::u        ||
-          tag == nsHTMLAtoms::a        ||
-          tag == nsHTMLAtoms::tt       ||
-          tag == nsHTMLAtoms::s        ||
-          tag == nsHTMLAtoms::big      ||
-          tag == nsHTMLAtoms::small    ||
-          tag == nsHTMLAtoms::strike   ||
-          tag == nsHTMLAtoms::em       ||
-          tag == nsHTMLAtoms::strong   ||
-          tag == nsHTMLAtoms::dfn      ||
-          tag == nsHTMLAtoms::code     ||
-          tag == nsHTMLAtoms::cite     ||
-          tag == nsHTMLAtoms::variable ||
-          tag == nsHTMLAtoms::abbr     ||
-          tag == nsHTMLAtoms::font     ||
-          tag == nsHTMLAtoms::script   ||
-          tag == nsHTMLAtoms::span     ||
-          tag == nsHTMLAtoms::pre      ||
-          tag == nsHTMLAtoms::h1       ||
-          tag == nsHTMLAtoms::h2       ||
-          tag == nsHTMLAtoms::h3       ||
-          tag == nsHTMLAtoms::h4       ||
-          tag == nsHTMLAtoms::h5       ||
-          tag == nsHTMLAtoms::h6);
+  return (tag == nsGkAtoms::b        ||
+          tag == nsGkAtoms::i        ||
+          tag == nsGkAtoms::u        ||
+          tag == nsGkAtoms::a        ||
+          tag == nsGkAtoms::tt       ||
+          tag == nsGkAtoms::s        ||
+          tag == nsGkAtoms::big      ||
+          tag == nsGkAtoms::small    ||
+          tag == nsGkAtoms::strike   ||
+          tag == nsGkAtoms::em       ||
+          tag == nsGkAtoms::strong   ||
+          tag == nsGkAtoms::dfn      ||
+          tag == nsGkAtoms::code     ||
+          tag == nsGkAtoms::cite     ||
+          tag == nsGkAtoms::variable ||
+          tag == nsGkAtoms::abbr     ||
+          tag == nsGkAtoms::font     ||
+          tag == nsGkAtoms::script   ||
+          tag == nsGkAtoms::span     ||
+          tag == nsGkAtoms::pre      ||
+          tag == nsGkAtoms::h1       ||
+          tag == nsGkAtoms::h2       ||
+          tag == nsGkAtoms::h3       ||
+          tag == nsGkAtoms::h4       ||
+          tag == nsGkAtoms::h5       ||
+          tag == nsGkAtoms::h6);
 }
 
 
@@ -1383,7 +1385,7 @@ nsHTMLCopyEncoder::PromoteAncestorChain(nsCOMPtr<nsIDOMNode> *ioNode,
     else
     {
       // passing parent as last param to GetPromotedPoint() allows it to promote only one level
-      // up the heirarchy.
+      // up the hierarchy.
       rv = GetPromotedPoint( kStart, *ioNode, *ioStartOffset, address_of(frontNode), &frontOffset, parent);
       NS_ENSURE_SUCCESS(rv, rv);
       // then we make the same attempt with the endpoint
@@ -1456,8 +1458,7 @@ nsHTMLCopyEncoder::GetPromotedPoint(Endpoint aWhere, nsIDOMNode *aNode, PRInt32 
       rv = GetNodeLocation(node, address_of(parent), &offset);
       NS_ENSURE_SUCCESS(rv, rv);
       if (offset == -1) return NS_OK; // we hit generated content; STOP
-      nsIParserService *parserService =
-        nsContentUtils::GetParserServiceWeakRef();
+      nsIParserService *parserService = nsContentUtils::GetParserService();
       if (!parserService)
         return NS_ERROR_OUT_OF_MEMORY;
       while ((IsFirstNode(node)) && (!IsRoot(parent)) && (parent != common))
@@ -1539,8 +1540,7 @@ nsHTMLCopyEncoder::GetPromotedPoint(Endpoint aWhere, nsIDOMNode *aNode, PRInt32 
       rv = GetNodeLocation(node, address_of(parent), &offset);
       NS_ENSURE_SUCCESS(rv, rv);
       if (offset == -1) return NS_OK; // we hit generated content; STOP
-      nsIParserService *parserService =
-        nsContentUtils::GetParserServiceWeakRef();
+      nsIParserService *parserService = nsContentUtils::GetParserService();
       if (!parserService)
         return NS_ERROR_OUT_OF_MEMORY;
       while ((IsLastNode(node)) && (!IsRoot(parent)) && (parent != common))
@@ -1607,7 +1607,7 @@ nsHTMLCopyEncoder::GetChildAt(nsIDOMNode *aParent, PRInt32 aOffset)
 PRBool 
 nsHTMLCopyEncoder::IsMozBR(nsIDOMNode* aNode)
 {
-  if (IsTag(aNode, nsHTMLAtoms::br))
+  if (IsTag(aNode, nsGkAtoms::br))
   {
     nsCOMPtr<nsIDOMElement> elem = do_QueryInterface(aNode);
     if (elem)
@@ -1653,11 +1653,11 @@ nsHTMLCopyEncoder::IsRoot(nsIDOMNode* aNode)
   if (aNode)
   {
     if (mIsTextWidget) 
-      return (IsTag(aNode, nsHTMLAtoms::div));
+      return (IsTag(aNode, nsGkAtoms::div));
     else
-      return (IsTag(aNode, nsHTMLAtoms::body) || 
-              IsTag(aNode, nsHTMLAtoms::td)   ||
-              IsTag(aNode, nsHTMLAtoms::th));
+      return (IsTag(aNode, nsGkAtoms::body) || 
+              IsTag(aNode, nsGkAtoms::td)   ||
+              IsTag(aNode, nsGkAtoms::th));
   }
   return PR_FALSE;
 }
@@ -1749,12 +1749,8 @@ nsHTMLCopyEncoder::IsLastNode(nsIDOMNode *aNode)
 PRBool
 nsHTMLCopyEncoder::IsEmptyTextContent(nsIDOMNode* aNode)
 {
-  PRBool result = PR_FALSE;
-  nsCOMPtr<nsITextContent> tc(do_QueryInterface(aNode));
-  if (tc) {
-    result = tc->IsOnlyWhitespace();
-  }
-  return result;
+  nsCOMPtr<nsIContent> cont = do_QueryInterface(aNode);
+  return cont && cont->TextIsOnlyWhitespace();
 }
 
 nsresult NS_NewHTMLCopyTextEncoder(nsIDocumentEncoder** aResult); // make mac compiler happy

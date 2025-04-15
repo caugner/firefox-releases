@@ -98,7 +98,6 @@ void CNsIHistory::OnStartTests(UINT nMenuID)
    //nsCOMPtr<nsIURI> theURI;
    // do_QueryInterface
    // NS_HISTORYENTRY_CONTRACTID
-   // NS_SHISTORYLISTENER_CONTRACTID
 
 	// get Session History through web nav iface
    if (qaWebNav) {
@@ -406,7 +405,7 @@ void CNsIHistory::GetTitleHistTest(nsIHistoryEntry* theHistoryEntry,
 	}
 
 	FormatAndPrintOutput("The title = ",
-                        NS_ConvertUCS2toUTF8(theTitle).get(), displayMode);
+                        NS_ConvertUTF16toUTF8(theTitle).get(), displayMode);
 }
 
 void CNsIHistory::GetIsSubFrameTest(nsIHistoryEntry* theHistoryEntry,

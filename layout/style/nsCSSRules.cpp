@@ -35,17 +35,18 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* rules in a CSS stylesheet other than style rules (e.g., @import rules) */
+
 #include "nsCSSRules.h"
 #include "nsICSSImportRule.h"
 #include "nsICSSNameSpaceRule.h"
 
 #include "nsString.h"
 #include "nsIAtom.h"
-#include "nsISupportsArray.h"
 #include "nsIURL.h"
 
 #include "nsCSSRule.h"
-#include "nsLayoutAtoms.h"
 #include "nsICSSStyleSheet.h"
 
 #include "nsCOMPtr.h"
@@ -231,7 +232,7 @@ CSSCharsetRuleImpl::List(FILE* out, PRInt32 aIndent) const
   for (PRInt32 indent = aIndent; --indent >= 0; ) fputs("  ", out);
 
   fputs("@charset \"", out);
-  fputs(NS_LossyConvertUCS2toASCII(mEncoding).get(), out);
+  fputs(NS_LossyConvertUTF16toASCII(mEncoding).get(), out);
   fputs("\"\n", out);
 
   return NS_OK;
@@ -375,7 +376,7 @@ public:
 
 protected:
   nsString  mURLSpec;
-  nsCOMPtr<nsMediaList> mMedia;
+  nsRefPtr<nsMediaList> mMedia;
   nsCOMPtr<nsICSSStyleSheet> mChildSheet;
 };
 
@@ -433,12 +434,12 @@ CSSImportRuleImpl::List(FILE* out, PRInt32 aIndent) const
   for (PRInt32 indent = aIndent; --indent >= 0; ) fputs("  ", out);
 
   fputs("@import \"", out);
-  fputs(NS_LossyConvertUCS2toASCII(mURLSpec).get(), out);
+  fputs(NS_LossyConvertUTF16toASCII(mURLSpec).get(), out);
   fputs("\" ", out);
 
   nsAutoString mediaText;
   mMedia->GetText(mediaText);
-  fputs(NS_LossyConvertUCS2toASCII(mediaText).get(), out);
+  fputs(NS_LossyConvertUTF16toASCII(mediaText).get(), out);
   fputs("\n", out);
 
   return NS_OK;
@@ -514,7 +515,7 @@ CSSImportRuleImpl::SetSheet(nsICSSStyleSheet* aSheet)
   nsCOMPtr<nsIDOMMediaList> mediaList;
   rv = sheet->GetMedia(getter_AddRefs(mediaList));
   NS_ENSURE_SUCCESS(rv, rv);
-  mMedia = do_QueryInterface(mediaList);
+  mMedia = static_cast<nsMediaList*>(mediaList.get());
   
   return NS_OK;
 }
@@ -605,7 +606,7 @@ CSSImportRuleImpl::GetMedia(nsIDOMMediaList * *aMedia)
     return NS_OK;
   }
 
-  return CallQueryInterface(mMedia, aMedia);
+  return CallQueryInterface(mMedia.get(), aMedia);
 }
 
 NS_IMETHODIMP
@@ -627,25 +628,22 @@ nsCSSGroupRule::nsCSSGroupRule()
 }
 
 static PRBool
-CloneRuleInto(nsISupports* aRule, void* aArray)
+CloneRuleInto(nsICSSRule* aRule, void* aArray)
 {
-  nsICSSRule* rule = (nsICSSRule*)aRule;
   nsICSSRule* clone = nsnull;
-  rule->Clone(clone);
+  aRule->Clone(clone);
   if (clone) {
-    nsISupportsArray* array = (nsISupportsArray*)aArray;
-    array->AppendElement(clone);
+    static_cast<nsCOMArray<nsICSSRule>*>(aArray)->AppendObject(clone);
     NS_RELEASE(clone);
   }
   return PR_TRUE;
 }
 
 static PRBool
-SetParentRuleReference(nsISupports* aRule, void* aParentRule)
+SetParentRuleReference(nsICSSRule* aRule, void* aParentRule)
 {
-  nsICSSRule* rule = NS_STATIC_CAST(nsICSSRule*, aRule);
-  nsCSSGroupRule* parentRule = NS_STATIC_CAST(nsCSSGroupRule*, aParentRule);
-  rule->SetParentRule(parentRule);
+  nsCSSGroupRule* parentRule = static_cast<nsCSSGroupRule*>(aParentRule);
+  aRule->SetParentRule(parentRule);
   return PR_TRUE;
 }
 
@@ -653,20 +651,13 @@ nsCSSGroupRule::nsCSSGroupRule(const nsCSSGroupRule& aCopy)
   : nsCSSRule(aCopy)
   , mRuleCollection(nsnull) // lazily constructed
 {
-  if (aCopy.mRules) {
-    NS_NewISupportsArray(getter_AddRefs(mRules));
-    if (mRules) {
-      aCopy.mRules->EnumerateForwards(CloneRuleInto, mRules);
-      mRules->EnumerateForwards(SetParentRuleReference, this);
-    }
-  }
+  const_cast<nsCSSGroupRule&>(aCopy).mRules.EnumerateForwards(CloneRuleInto, &mRules);
+  mRules.EnumerateForwards(SetParentRuleReference, this);
 }
 
 nsCSSGroupRule::~nsCSSGroupRule()
 {
-  if (mRules) {
-    mRules->EnumerateForwards(SetParentRuleReference, nsnull);
-  }
+  mRules.EnumerateForwards(SetParentRuleReference, nsnull);
   if (mRuleCollection) {
     mRuleCollection->DropReference();
     NS_RELEASE(mRuleCollection);
@@ -676,21 +667,17 @@ nsCSSGroupRule::~nsCSSGroupRule()
 IMPL_STYLE_RULE_INHERIT2(nsCSSGroupRule, nsCSSRule)
 
 static PRBool
-SetStyleSheetReference(nsISupports* aRule, void* aSheet)
+SetStyleSheetReference(nsICSSRule* aRule, void* aSheet)
 {
-  nsICSSRule* rule = (nsICSSRule*)aRule;
   nsICSSStyleSheet* sheet = (nsICSSStyleSheet*)aSheet;
-  rule->SetStyleSheet(sheet);
+  aRule->SetStyleSheet(sheet);
   return PR_TRUE;
 }
 
 NS_IMETHODIMP
 nsCSSGroupRule::SetStyleSheet(nsICSSStyleSheet* aSheet)
 {
-  if (mRules) {
-    mRules->EnumerateForwards(SetStyleSheetReference, aSheet);
-  }
-
+  mRules.EnumerateForwards(SetStyleSheetReference, aSheet);
   return nsCSSRule::SetStyleSheet(aSheet);
 }
 
@@ -700,14 +687,8 @@ nsCSSGroupRule::List(FILE* out, PRInt32 aIndent) const
 {
   fputs(" {\n", out);
 
-  if (mRules) {
-    PRUint32 index = 0;
-    PRUint32 count;
-    mRules->Count(&count);
-    while (index < count) {
-      nsCOMPtr<nsICSSRule> rule = dont_AddRef((nsICSSRule*)mRules->ElementAt(index++));
-      rule->List(out, aIndent + 1);
-    }
+  for (PRInt32 index = 0, count = mRules.Count(); index < count; ++index) {
+    mRules.ObjectAt(index)->List(out, aIndent + 1);
   }
   fputs("}\n", out);
   return NS_OK;
@@ -717,61 +698,41 @@ nsCSSGroupRule::List(FILE* out, PRInt32 aIndent) const
 NS_IMETHODIMP
 nsCSSGroupRule::AppendStyleRule(nsICSSRule* aRule)
 {
-  nsresult result = NS_OK;
-  if (!mRules) {
-    result = NS_NewISupportsArray(getter_AddRefs(mRules));
+  mRules.AppendObject(aRule);
+  aRule->SetStyleSheet(mSheet);
+  aRule->SetParentRule(this);
+  if (mSheet) {
+    // XXXldb Shouldn't we be using |WillDirty| and |DidDirty| (and
+    // shouldn't |SetModified| be removed?
+    mSheet->SetModified(PR_TRUE);
   }
-  if (NS_SUCCEEDED(result) && mRules) {
-    mRules->AppendElement(aRule);
-    aRule->SetStyleSheet(mSheet);
-    aRule->SetParentRule(this);
-    if (mSheet) {
-      // XXXldb Shouldn't we be using |WillDirty| and |DidDirty| (and
-      // shouldn't |SetModified| be removed?
-      mSheet->SetModified(PR_TRUE);
-    }
-  }
-  return result;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 nsCSSGroupRule::StyleRuleCount(PRInt32& aCount) const
 {
-  if (mRules) {
-    PRUint32 count;
-    mRules->Count(&count);
-    aCount = (PRInt32)count;
-  }
-  else {
-    aCount = 0;
-  }
+  aCount = mRules.Count();
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsCSSGroupRule::GetStyleRuleAt(PRInt32 aIndex, nsICSSRule*& aRule) const
 {
-  if (mRules) {
-    PRInt32 count = 0;
-    nsresult rv = StyleRuleCount(count);
-    NS_ENSURE_SUCCESS(rv, rv);
-    if (aIndex >= count) {
-      aRule = nsnull;
-      return NS_ERROR_ILLEGAL_VALUE;
-    }      
-    aRule = (nsICSSRule*)mRules->ElementAt(aIndex);
-    return NS_OK;
+  if (aIndex < 0 || aIndex >= mRules.Count()) {
+    aRule = nsnull;
+    return NS_ERROR_ILLEGAL_VALUE;
   }
-  return NS_ERROR_ILLEGAL_VALUE;
+
+  NS_ADDREF(aRule = mRules.ObjectAt(aIndex));
+  return NS_OK;
 }
 
-NS_IMETHODIMP
-nsCSSGroupRule::EnumerateRulesForwards(nsISupportsArrayEnumFunc aFunc, void * aData) const
+NS_IMETHODIMP_(PRBool)
+nsCSSGroupRule::EnumerateRulesForwards(RuleEnumFunc aFunc, void * aData) const
 {
-  if (mRules) {
-    return ((mRules->EnumerateForwards(aFunc, aData)) ? NS_OK : NS_ENUMERATOR_FALSE);
-  }
-  return NS_OK;
+  return
+    const_cast<nsCSSGroupRule*>(this)->mRules.EnumerateForwards(aFunc, aData);
 }
 
 /*
@@ -783,25 +744,21 @@ nsCSSGroupRule::EnumerateRulesForwards(nsISupportsArrayEnumFunc aFunc, void * aD
 NS_IMETHODIMP
 nsCSSGroupRule::DeleteStyleRuleAt(PRUint32 aIndex)
 {
-  NS_ENSURE_TRUE(mRules, NS_ERROR_FAILURE);
-
-  nsCOMPtr<nsICSSRule> rule = dont_AddRef((nsICSSRule*)mRules->ElementAt(aIndex));
+  nsICSSRule* rule = mRules.SafeObjectAt(aIndex);
   if (rule) {
     rule->SetStyleSheet(nsnull);
     rule->SetParentRule(nsnull);
   }
-  return mRules->DeleteElementAt(aIndex);
+  return mRules.RemoveObjectAt(aIndex) ? NS_OK : NS_ERROR_ILLEGAL_VALUE;
 }
 
 NS_IMETHODIMP
-nsCSSGroupRule::InsertStyleRulesAt(PRUint32 aIndex, nsISupportsArray* aRules)
+nsCSSGroupRule::InsertStyleRulesAt(PRUint32 aIndex,
+                                   nsCOMArray<nsICSSRule>& aRules)
 {
-  NS_ENSURE_TRUE(mRules, NS_ERROR_FAILURE);
-
-  aRules->EnumerateForwards(SetStyleSheetReference, mSheet);
-  aRules->EnumerateForwards(SetParentRuleReference, this);
-  // There is no xpcom-compatible version of InsertElementsAt.... :(
-  if (! mRules->InsertElementsAt(aRules, aIndex)) {
+  aRules.EnumerateForwards(SetStyleSheetReference, mSheet);
+  aRules.EnumerateForwards(SetParentRuleReference, this);
+  if (! mRules.InsertObjectsAt(aRules, aIndex)) {
     return NS_ERROR_FAILURE;
   }
   return NS_OK;
@@ -810,9 +767,9 @@ nsCSSGroupRule::InsertStyleRulesAt(PRUint32 aIndex, nsISupportsArray* aRules)
 NS_IMETHODIMP
 nsCSSGroupRule::ReplaceStyleRule(nsICSSRule* aOld, nsICSSRule* aNew)
 {
-  PRInt32 index = mRules->IndexOf(aOld);
+  PRInt32 index = mRules.IndexOf(aOld);
   NS_ENSURE_TRUE(index != -1, NS_ERROR_UNEXPECTED);
-  mRules->ReplaceElementAt(aNew, index);
+  mRules.ReplaceObjectAt(aNew, index);
   aNew->SetStyleSheet(mSheet);
   aNew->SetParentRule(this);
   aOld->SetStyleSheet(nsnull);
@@ -826,21 +783,16 @@ nsCSSGroupRule::AppendRulesToCssText(nsAString& aCssText)
   aCssText.AppendLiteral(" {\n");
 
   // get all the rules
-  if (mRules) {
-    PRUint32 count;
-    mRules->Count(&count);
-    for (PRUint32 index = 0; index < count; index++) {
-      nsCOMPtr<nsICSSRule> rule;
-      mRules->GetElementAt(index, getter_AddRefs(rule));
-      nsCOMPtr<nsIDOMCSSRule> domRule;
-      rule->GetDOMRule(getter_AddRefs(domRule));
-      if (domRule) {
-        nsAutoString cssText;
-        domRule->GetCssText(cssText);
-        aCssText.Append(NS_LITERAL_STRING("  ") +
-                        cssText +
-                        NS_LITERAL_STRING("\n"));
-      }
+  for (PRInt32 index = 0, count = mRules.Count(); index < count; ++index) {
+    nsICSSRule* rule = mRules.ObjectAt(index);
+    nsCOMPtr<nsIDOMCSSRule> domRule;
+    rule->GetDOMRule(getter_AddRefs(domRule));
+    if (domRule) {
+      nsAutoString cssText;
+      domRule->GetCssText(cssText);
+      aCssText.Append(NS_LITERAL_STRING("  ") +
+                      cssText +
+                      NS_LITERAL_STRING("\n"));
     }
   }
 
@@ -889,17 +841,12 @@ nsCSSGroupRule::InsertRule(const nsAString & aRule, PRUint32 aIndex, PRUint32* _
 {
   NS_ENSURE_TRUE(mSheet, NS_ERROR_FAILURE);
   
-  if (!mRules) {
-    nsresult rv = NS_NewISupportsArray(getter_AddRefs(mRules));
-    if (NS_FAILED(rv))
-      return rv;
-  }
-
-  PRUint32 count;
-  mRules->Count(&count);
-  if (aIndex > count)
+  if (aIndex > PRUint32(mRules.Count()))
     return NS_ERROR_DOM_INDEX_SIZE_ERR;
-  
+
+  NS_ASSERTION(PRUint32(mRules.Count()) <= PR_INT32_MAX,
+               "Too many style rules!");
+
   return mSheet->InsertRuleIntoGroup(aRule, this, aIndex, _retval);
 }
 
@@ -907,14 +854,12 @@ nsresult
 nsCSSGroupRule::DeleteRule(PRUint32 aIndex)
 {
   NS_ENSURE_TRUE(mSheet, NS_ERROR_FAILURE);
-  if (!mRules)  {
+
+  if (aIndex >= PRUint32(mRules.Count()))
     return NS_ERROR_DOM_INDEX_SIZE_ERR;
-  }
-  
-  PRUint32 count;
-  mRules->Count(&count);
-  if (aIndex >= count)
-    return NS_ERROR_DOM_INDEX_SIZE_ERR;
+
+  NS_ASSERTION(PRUint32(mRules.Count()) <= PR_INT32_MAX,
+               "Too many style rules!");
 
   return mSheet->DeleteRuleFromGroup(this, aIndex);
 }
@@ -984,7 +929,7 @@ nsCSSMediaRule::List(FILE* out, PRInt32 aIndent) const
   if (mMedia) {
     nsAutoString mediaText;
     mMedia->GetText(mediaText);
-    fputs(NS_LossyConvertUCS2toASCII(mediaText).get(), out);
+    fputs(NS_LossyConvertUTF16toASCII(mediaText).get(), out);
   }
 
   return nsCSSGroupRule::List(out, aIndent);
@@ -1253,7 +1198,7 @@ nsCSSDocumentRule::DeleteRule(PRUint32 aIndex)
 NS_IMETHODIMP_(PRBool)
 nsCSSDocumentRule::UseForPresentation(nsPresContext* aPresContext)
 {
-  nsIURI *docURI = aPresContext->GetDocument()->GetDocumentURI();
+  nsIURI *docURI = aPresContext->Document()->GetDocumentURI();
   nsCAutoString docURISpec;
   if (docURI)
     docURI->GetSpec(docURISpec);
@@ -1376,12 +1321,12 @@ CSSNameSpaceRuleImpl::List(FILE* out, PRInt32 aIndent) const
 
   if (mPrefix) {
     mPrefix->ToString(buffer);
-    fputs(NS_LossyConvertUCS2toASCII(buffer).get(), out);
+    fputs(NS_LossyConvertUTF16toASCII(buffer).get(), out);
     fputs(" ", out);
   }
 
   fputs("url(", out);
-  fputs(NS_LossyConvertUCS2toASCII(mURLSpec).get(), out);
+  fputs(NS_LossyConvertUTF16toASCII(mURLSpec).get(), out);
   fputs(")\n", out);
   return NS_OK;
 }
@@ -1504,4 +1449,3 @@ CSSNameSpaceRuleImpl::GetParentRule(nsIDOMCSSRule** aParentRule)
   *aParentRule = nsnull;
   return NS_OK;
 }
-

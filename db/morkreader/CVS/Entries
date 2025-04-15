@@ -1,5 +1,5 @@
-/.cvsignore/1.1.2.2/Mon Jan 23 22:25:10 2006//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.1.2.4/Tue Feb 21 16:18:56 2006//TFIREFOX_2_0_RELEASE
-/nsMorkReader.cpp/1.2.2.5/Thu Jun 22 19:13:00 2006//TFIREFOX_2_0_RELEASE
-/nsMorkReader.h/1.2.2.4/Mon Mar  6 20:38:13 2006//TFIREFOX_2_0_RELEASE
-D
+/.cvsignore/1.1/Wed Jan 18 01:00:22 2006//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.4/Thu Apr 27 13:37:14 2006//TFIREFOX_3_0rc3_RELEASE
+/nsMorkReader.cpp/1.6/Sun Jul  8 07:08:12 2007//TFIREFOX_3_0rc3_RELEASE
+/nsMorkReader.h/1.5/Tue Mar 27 15:34:59 2007//TFIREFOX_3_0rc3_RELEASE
+D/external////

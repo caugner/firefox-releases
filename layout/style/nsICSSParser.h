@@ -34,13 +34,17 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-#ifndef nsCSS1Parser_h___
-#define nsCSS1Parser_h___
+
+/* parsing of CSS stylesheets, based on a token stream from the CSS scanner */
+
+#ifndef nsICSSParser_h___
+#define nsICSSParser_h___
 
 #include "nsISupports.h"
 #include "nsAString.h"
 #include "nsCSSProperty.h"
 #include "nsColor.h"
+#include "nsCOMArray.h"
 
 class nsICSSStyleRule;
 class nsICSSStyleSheet;
@@ -49,12 +53,12 @@ class nsIURI;
 class nsCSSDeclaration;
 class nsICSSLoader;
 class nsICSSRule;
-class nsISupportsArray;
 class nsMediaList;
+class nsIPrincipal;
 
 #define NS_ICSS_PARSER_IID    \
-{ 0x94d1d921, 0xd6f6, 0x435f, \
-  {0xa5, 0xe8, 0x85, 0x3f, 0x6e, 0x34, 0x57, 0xf6} }
+{ 0xad4a3778, 0xdae0, 0x4640, \
+ { 0xb2, 0x5a, 0x24, 0xff, 0x09, 0xc3, 0x70, 0xef } }
 
 // Rule processing function
 typedef void (*PR_CALLBACK RuleAppendFunc) (nsICSSRule* aRule, void* aData);
@@ -62,10 +66,11 @@ typedef void (*PR_CALLBACK RuleAppendFunc) (nsICSSRule* aRule, void* aData);
 // Interface to the css parser.
 class nsICSSParser : public nsISupports {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICSS_PARSER_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICSS_PARSER_IID)
 
   // Set a style sheet for the parser to fill in. The style sheet must
-  // implement the nsICSSStyleSheet interface
+  // implement the nsICSSStyleSheet interface.  Null can be passed in to clear
+  // out an existing stylesheet reference.
   NS_IMETHOD SetStyleSheet(nsICSSStyleSheet* aSheet) = 0;
 
   // Set whether or not tags & classes are case sensitive or uppercased
@@ -82,11 +87,28 @@ public:
   // Set loader to use for child sheets
   NS_IMETHOD SetChildLoader(nsICSSLoader* aChildLoader) = 0;
 
+  /**
+   * Parse aInput into the stylesheet that was previously set by calling
+   * SetStyleSheet.  Calling this method without calling SetStyleSheet first is
+   * an error.
+   *
+   * @param aInput the data to parse
+   * @param aSheetURL the URI to use as the sheet URI (for error reporting).
+   *                  This must match the URI of the sheet passed to
+   *                  SetStyleSheet.
+   * @param aBaseURI the URI to use for relative URI resolution
+   * @param aSheetPrincipal the principal of the stylesheet.  This must match
+   *                        the principal of the sheet passed to SetStyleSheet.
+   * @param aLineNumber the line number of the first line of the sheet.   
+   * @param aAllowUnsafeRules see aEnableUnsafeRules in
+   *                          nsICSSLoader::LoadSheetSync
+   */
   NS_IMETHOD Parse(nsIUnicharInputStream* aInput,
                    nsIURI*                aSheetURL,
                    nsIURI*                aBaseURI,
+                   nsIPrincipal*          aSheetPrincipal,
                    PRUint32               aLineNumber,
-                   nsICSSStyleSheet*&     aResult) = 0;
+                   PRBool                 aAllowUnsafeRules) = 0;
 
   // Parse HTML style attribute or its equivalent in other markup
   // languages.  aBaseURL is the base url to use for relative links in
@@ -94,25 +116,29 @@ public:
   NS_IMETHOD ParseStyleAttribute(const nsAString&         aAttributeValue,
                                  nsIURI*                  aDocURL,
                                  nsIURI*                  aBaseURL,
+                                 nsIPrincipal*            aNodePrincipal,
                                  nsICSSStyleRule**        aResult) = 0;
 
   NS_IMETHOD ParseAndAppendDeclaration(const nsAString&         aBuffer,
                                        nsIURI*                  aSheetURL,
                                        nsIURI*                  aBaseURL,
+                                       nsIPrincipal*            aSheetPrincipal,
                                        nsCSSDeclaration*        aDeclaration,
                                        PRBool                   aParseOnlyOneDecl,
                                        PRBool*                  aChanged,
                                        PRBool                   aClearOldDecl) = 0;
 
-  NS_IMETHOD ParseRule(const nsAString&   aRule,
-                       nsIURI*            aSheetURL,
-                       nsIURI*            aBaseURL,
-                       nsISupportsArray** aResult) = 0;
+  NS_IMETHOD ParseRule(const nsAString&        aRule,
+                       nsIURI*                 aSheetURL,
+                       nsIURI*                 aBaseURL,
+                       nsIPrincipal*           aSheetPrincipal,
+                       nsCOMArray<nsICSSRule>& aResult) = 0;
 
   NS_IMETHOD ParseProperty(const nsCSSProperty aPropID,
                            const nsAString& aPropValue,
                            nsIURI* aSheetURL,
                            nsIURI* aBaseURL,
+                           nsIPrincipal* aSheetPrincipal,
                            nsCSSDeclaration* aDeclaration,
                            PRBool* aChanged) = 0;
 
@@ -130,9 +156,9 @@ public:
                             PRBool aHTMLMode) = 0;
 
   /**
-   * Parse aBuffer into a nscolor |aColor|.  If aHandleAlphaColors is
-   * set, handle rgba()/hsla(). Will return NS_ERROR_FAILURE if
-   * aBuffer is not a valid CSS color specification.
+   * Parse aBuffer into a nscolor |aColor|.  The alpha component of the
+   * resulting aColor may vary due to rgba()/hsla().  Will return
+   * NS_ERROR_FAILURE if aBuffer is not a valid CSS color specification.
    *
    * Will also currently return NS_ERROR_FAILURE if it is not
    * self-contained (i.e.  doesn't reference any external style state,
@@ -141,32 +167,12 @@ public:
   NS_IMETHOD ParseColorString(const nsSubstring& aBuffer,
                               nsIURI* aURL, // for error reporting
                               PRUint32 aLineNumber, // for error reporting
-                              PRBool aHandleAlphaColors,
                               nscolor* aColor) = 0;
 };
 
-// IID for the nsICSSParser_MOZILLA_1_8_BRANCH interface
-// fcef7cd9-9ac4-4283-91f6-8eea74c15892
-#define NS_ICSS_PARSER_MOZILLA_1_8_BRANCH_IID     \
-{0xfcef7cd9, 0x9ac4, 0x4283, {0x91, 0xf6, 0x8e, 0xea, 0x74, 0xc1, 0x58, 0x92}}
-
-class nsICSSParser_MOZILLA_1_8_BRANCH : public nsISupports {
-public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICSS_PARSER_MOZILLA_1_8_BRANCH_IID)
-
-  /**
-   * @param aAllowUnsafeRules see aEnableUnsafeRules in
-   * nsICSSLoader::LoadSheetSync
-   */
-  NS_IMETHOD Parse(nsIUnicharInputStream* aInput,
-                   nsIURI*                aSheetURL,
-                   nsIURI*                aBaseURI,
-                   PRUint32               aLineNumber,
-                   PRBool                 aAllowUnsafeRules,
-                   nsICSSStyleSheet*&     aResult) = 0;
-};
+NS_DEFINE_STATIC_IID_ACCESSOR(nsICSSParser, NS_ICSS_PARSER_IID)
 
 nsresult
 NS_NewCSSParser(nsICSSParser** aInstancePtrResult);
 
-#endif /* nsCSS1Parser_h___ */
+#endif /* nsICSSParser_h___ */

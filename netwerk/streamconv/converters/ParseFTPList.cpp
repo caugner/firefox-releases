@@ -81,7 +81,7 @@ int ParseFTPList(const char *line, struct list_state *state,
   if (linelen > 0 && *p == '\n' && *(p-1) == '\r')
     linelen--;
 
-  /* DONT strip trailing whitespace. */
+  /* DON'T strip trailing whitespace. */
 
   if (linelen > 0)
   {
@@ -1072,20 +1072,24 @@ int ParseFTPList(const char *line, struct list_state *state,
 
             /* check that size is numeric */
             p = tokens[tokmarker];
-            for (pos = 0; lstyle && pos < toklen[tokmarker]; pos++)
+            unsigned int i;
+            for (i = 0; i < toklen[tokmarker]; i++)
             {
               if (!isdigit(*p++))
+              {
                 lstyle = 0;
+                break;
+              }
             }
             if (lstyle)
             {
               month_num = 0;
               p = tokens[tokmarker+1];
-              for (pos = 0;pos < (12*3); pos+=3)
+              for (i = 0; i < (12*3); i+=3)
               {
-                if (p[0] == month_names[pos+0] && 
-                    p[1] == month_names[pos+1] && 
-                    p[2] == month_names[pos+2])
+                if (p[0] == month_names[i+0] && 
+                    p[1] == month_names[i+1] && 
+                    p[2] == month_names[i+2])
                   break;
                 month_num++;
               }
@@ -1093,8 +1097,8 @@ int ParseFTPList(const char *line, struct list_state *state,
                 lstyle = 0;
             }
           } /* relative position test */
-        } /* while (pos+5) < numtoks */
-      } /* if (numtoks >= 4) */
+        } /* for (pos = (numtoks-5); !lstyle && pos > 1; pos--) */
+      } /* if (lstyle == 'U') */
 
       if (lstyle == 'U')
       {
@@ -1629,7 +1633,7 @@ int ParseFTPList(const char *line, struct list_state *state,
   } /* if (linelen > 0) */
 
   if (state->parsed_one || state->lstyle) /* junk if we fail to parse */
-    return '?';      /* this time but had previously parsed sucessfully */
+    return '?';      /* this time but had previously parsed successfully */
   return '"';        /* its part of a comment or error message */
 }
 

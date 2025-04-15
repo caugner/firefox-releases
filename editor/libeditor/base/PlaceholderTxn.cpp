@@ -39,6 +39,7 @@
 #include "PlaceholderTxn.h"
 #include "nsEditor.h"
 #include "IMETextTxn.h"
+#include "nsGkAtoms.h"
 
 PlaceholderTxn::PlaceholderTxn() :  EditAggregateTxn(), 
                                     mAbsorb(PR_TRUE), 
@@ -52,31 +53,8 @@ PlaceholderTxn::PlaceholderTxn() :  EditAggregateTxn(),
 }
 
 
-PlaceholderTxn::~PlaceholderTxn()
-{
-  delete mStartSel;
-}
-
-NS_IMPL_ADDREF_INHERITED(PlaceholderTxn, EditAggregateTxn)
-NS_IMPL_RELEASE_INHERITED(PlaceholderTxn, EditAggregateTxn)
-
-//NS_IMPL_QUERY_INTERFACE_INHERITED1(Class, Super, AdditionalInterface)
-NS_IMETHODIMP PlaceholderTxn::QueryInterface(REFNSIID aIID, void** aInstancePtr)
-{
-  if (!aInstancePtr) return NS_ERROR_NULL_POINTER;
- 
-  if (aIID.Equals(NS_GET_IID(nsIAbsorbingTransaction))) {
-    *aInstancePtr = (nsISupports*)(nsIAbsorbingTransaction*)(this);
-    NS_ADDREF_THIS();
-    return NS_OK;
-  }
-  if (aIID.Equals(NS_GET_IID(nsISupportsWeakReference))) {
-    *aInstancePtr = (nsISupports*)(nsISupportsWeakReference*) this;
-    NS_ADDREF_THIS();
-    return NS_OK;
-  }
-  return EditAggregateTxn::QueryInterface(aIID, aInstancePtr);
-}
+NS_IMPL_ISUPPORTS_INHERITED2(PlaceholderTxn, EditAggregateTxn,
+                             nsIAbsorbingTransaction, nsISupportsWeakReference)
 
 NS_IMETHODIMP PlaceholderTxn::Init(nsIAtom *aName, nsSelectionState *aSelState, nsIEditor *aEditor)
 {
@@ -149,15 +127,15 @@ NS_IMETHODIMP PlaceholderTxn::Merge(nsITransaction *aTransaction, PRBool *aDidMe
   EditTxn *editTxn = (EditTxn*)aTransaction;  //XXX: hack, not safe!  need nsIEditTransaction!
   // determine if this incoming txn is a placeholder txn
   nsCOMPtr<nsIAbsorbingTransaction> plcTxn;// = do_QueryInterface(editTxn);
-  // cant do_QueryInterface() above due to our broken transaction interfaces.
+  // can't do_QueryInterface() above due to our broken transaction interfaces.
   // instead have to brute it below. ugh. 
   editTxn->QueryInterface(NS_GET_IID(nsIAbsorbingTransaction), getter_AddRefs(plcTxn));
 
   // we are absorbing all txn's if mAbsorb is lit.
   if (mAbsorb)
   { 
-    IMETextTxn*  otherTxn = nsnull;
-    if (NS_SUCCEEDED(aTransaction->QueryInterface(IMETextTxn::GetCID(),(void**)&otherTxn)) && otherTxn)
+    nsRefPtr<IMETextTxn> otherTxn;
+    if (NS_SUCCEEDED(aTransaction->QueryInterface(IMETextTxn::GetCID(), getter_AddRefs(otherTxn))) && otherTxn)
     {
       // special handling for IMETextTxn's: they need to merge with any previous
       // IMETextTxn in this placeholder, if possible.
@@ -173,14 +151,13 @@ NS_IMETHODIMP PlaceholderTxn::Merge(nsITransaction *aTransaction, PRBool *aDidMe
         mIMETextTxn->Merge(otherTxn, &didMerge);
         if (!didMerge)
         {
-          // it wouldn't merge.  Earlier IME txn is already commited and will 
+          // it wouldn't merge.  Earlier IME txn is already committed and will
           // not absorb further IME txns.  So just stack this one after it
           // and remember it as a candidate for further merges.
           mIMETextTxn =otherTxn;
           AppendChild(editTxn);
         }
       }
-      NS_IF_RELEASE(otherTxn);
     }
     else if (!plcTxn)  // see bug 171243: just drop incoming placeholders on the floor.
     {                  // their children will be swallowed by this preexisting one.
@@ -189,14 +166,14 @@ NS_IMETHODIMP PlaceholderTxn::Merge(nsITransaction *aTransaction, PRBool *aDidMe
     *aDidMerge = PR_TRUE;
 //  RememberEndingSelection();
 //  efficiency hack: no need to remember selection here, as we haven't yet 
-//  finished the inital batch and we know we will be told when the batch ends.
+//  finished the initial batch and we know we will be told when the batch ends.
 //  we can remeber the selection then.
   }
   else
   { // merge typing or IME or deletion transactions if the selection matches
-    if (((mName.get() == nsEditor::gTypingTxnName) ||
-         (mName.get() == nsEditor::gIMETxnName)    ||
-         (mName.get() == nsEditor::gDeleteTxnName)) 
+    if (((mName.get() == nsGkAtoms::TypingTxnName) ||
+         (mName.get() == nsGkAtoms::IMETxnName)    ||
+         (mName.get() == nsGkAtoms::DeleteTxnName)) 
          && !mCommitted ) 
     {
       nsCOMPtr<nsIAbsorbingTransaction> plcTxn;// = do_QueryInterface(editTxn);

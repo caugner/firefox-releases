@@ -39,7 +39,6 @@
 
 // Interfaces
 #include "nsCOMPtr.h"
-#include "nsAutoPtr.h"
 #include "nsIContent.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
@@ -48,9 +47,6 @@
 #include "nsIDocShell.h"
 #include "nsIDocument.h"
 #include "nsIWidget.h"
-
-// Other Includes
-#include "nsRect.h"
 
 // nsPrintObject Document Type
 enum PrintObjectType  {eDoc = 0, eFrame = 1, eIFrame = 2, eFrameSet = 3};
@@ -73,42 +69,26 @@ public:
 
   // Data Members
   nsCOMPtr<nsIDocShell>    mDocShell;
-  nsCOMPtr<nsIPresShell>   mDisplayPresShell;
-  nsCOMPtr<nsPresContext> mDisplayPresContext;
   nsCOMPtr<nsIDocument>    mDocument;
 
-  PrintObjectType mFrameType;
-  nsCOMPtr<nsPresContext> mPresContext;
-  nsStyleSet              *mStyleSet;
+  nsCOMPtr<nsPresContext>  mPresContext;
   nsCOMPtr<nsIPresShell>   mPresShell;
   nsCOMPtr<nsIViewManager> mViewManager;
   nsCOMPtr<nsIWidget>      mWindow;
-  nsIView         *mRootView;
 
-  nsIContent      *mContent;
-  nsIFrame        *mSeqFrame;
-  nsIFrame        *mPageFrame;
-  PRInt32          mPageNum;
-  nsRect           mRect;
-  nsRect           mReflowRect;
-
+  nsIContent*      mContent;
+  PrintObjectType  mFrameType;
+  
   nsVoidArray      mKids;
-  nsPrintObject*     mParent;
+  nsPrintObject*   mParent;
   PRPackedBool     mHasBeenPrinted;
   PRPackedBool     mDontPrint;
   PRPackedBool     mPrintAsIs;
-  PRPackedBool     mSkippedPageEject;
   PRPackedBool     mSharedPresShell;
-  PRPackedBool     mIsHidden;         // Indicates PO is hidden, not reflowed, not shown
   PRPackedBool     mInvisible;        // Indicates PO is set to not visible by CSS
 
-  nsRect           mClipRect;
-
-  PRUint16         mImgAnimationMode;
-  PRUnichar*       mDocTitle;
-  PRUnichar*       mDocURL;
   float            mShrinkRatio;
-  nscoord          mXMost;
+  float            mZoomRatio;
 
 private:
   nsPrintObject& operator=(const nsPrintObject& aOther); // not implemented

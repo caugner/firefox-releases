@@ -122,6 +122,7 @@
 #include "prlog.h"
 #include "nsNameSpaceMap.h"
 #include "nsCRT.h"
+#include "nsCycleCollectionParticipant.h"
 
 #include "rdfIDataSource.h"
 
@@ -133,80 +134,6 @@ static NS_DEFINE_CID(kRDFServiceCID,            NS_RDFSERVICE_CID);
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gLog;
 #endif
-
-//----------------------------------------------------------------------
-//
-// ProxyStream
-//
-//   A silly little stub class that lets us do blocking parses
-//
-
-class ProxyStream : public nsIInputStream
-{
-private:
-    const char* mBuffer;
-    PRUint32    mSize;
-    PRUint32    mIndex;
-
-public:
-    ProxyStream(void) : mBuffer(nsnull)
-    {
-    }
-
-    virtual ~ProxyStream(void) {
-    }
-
-    // nsISupports
-    NS_DECL_ISUPPORTS
-
-    // nsIBaseStream
-    NS_IMETHOD Close(void) {
-        return NS_OK;
-    }
-
-    // nsIInputStream
-    NS_IMETHOD Available(PRUint32 *aLength) {
-        *aLength = mSize - mIndex;
-        return NS_OK;
-    }
-
-    NS_IMETHOD Read(char* aBuf, PRUint32 aCount, PRUint32 *aReadCount) {
-        PRUint32 readCount = PR_MIN(aCount, (mSize-mIndex));
-        
-        memcpy(aBuf, mBuffer+mIndex, readCount);
-        mIndex += readCount;
-        
-        *aReadCount = readCount;
-        
-        return NS_OK;
-    }
-
-    NS_IMETHOD ReadSegments(nsWriteSegmentFun writer, void * closure, PRUint32 count, PRUint32 *_retval) {
-        PRUint32 readCount = PR_MIN(count, (mSize-mIndex));
-
-        *_retval = 0;
-        nsresult rv = writer (this, closure, mBuffer+mIndex, mIndex, readCount, _retval);
-        if (NS_SUCCEEDED(rv))
-            mIndex += *_retval;
-
-        // do not propogate errors returned from writer!
-        return NS_OK;
-    }
-
-    NS_IMETHOD IsNonBlocking(PRBool *aNonBlocking) {
-        *aNonBlocking = PR_TRUE;
-        return NS_OK;
-    }
-
-    // Implementation
-    void SetBuffer(const char* aBuffer, PRUint32 aSize) {
-        mBuffer = aBuffer;
-        mSize = aSize;
-        mIndex = 0;
-    }
-};
-
-NS_IMPL_ISUPPORTS1(ProxyStream, nsIInputStream)
 
 //----------------------------------------------------------------------
 //
@@ -228,7 +155,7 @@ protected:
         eLoadState_Loaded
     };
 
-    nsIRDFDataSource*   mInner;         // OWNER
+    nsCOMPtr<nsIRDFDataSource> mInner;
     PRPackedBool        mIsWritable;    // true if the document can be written back
     PRPackedBool        mIsDirty;       // true if the document should be written back
     LoadState           mLoadState;     // what we're doing now
@@ -256,7 +183,9 @@ protected:
 
 public:
     // nsISupports
-    NS_DECL_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(RDFXMLDataSourceImpl,
+                                             nsIRDFDataSource)
 
     // nsIRDFDataSource
     NS_IMETHOD GetURI(char* *uri);
@@ -487,8 +416,7 @@ NS_NewRDFXMLDataSource(nsIRDFDataSource** aResult)
 
 
 RDFXMLDataSourceImpl::RDFXMLDataSourceImpl(void)
-    : mInner(nsnull),
-      mIsWritable(PR_TRUE),
+    : mIsWritable(PR_TRUE),
       mIsDirty(PR_FALSE),
       mLoadState(eLoadState_Unloaded)
 {
@@ -503,7 +431,7 @@ nsresult
 RDFXMLDataSourceImpl::Init()
 {
     nsresult rv;
-    rv = CallCreateInstance(kRDFInMemoryDataSourceCID, &mInner);
+    mInner = do_CreateInstance(kRDFInMemoryDataSourceCID, &rv);
     if (NS_FAILED(rv)) return rv;
 
     if (gRefCnt++ == 0) {
@@ -530,21 +458,31 @@ RDFXMLDataSourceImpl::~RDFXMLDataSourceImpl(void)
     // Release RDF/XML sink observers
     mObservers.Clear();
 
-    NS_RELEASE(mInner);
-
     if (--gRefCnt == 0)
         NS_IF_RELEASE(gRDFService);
 }
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(RDFXMLDataSourceImpl)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_0(RDFXMLDataSourceImpl)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(RDFXMLDataSourceImpl)
+    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mInner)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_ISUPPORTS7(RDFXMLDataSourceImpl,
-                   nsIRDFDataSource,
-                   nsIRDFRemoteDataSource,
-                   nsIRDFXMLSink,
-                   nsIRDFXMLSource,
-                   nsIRequestObserver,
-                   nsIStreamListener,
-                   rdfIDataSource)
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(RDFXMLDataSourceImpl,
+                                          nsIRDFDataSource)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(RDFXMLDataSourceImpl,
+                                           nsIRDFDataSource)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(RDFXMLDataSourceImpl)
+    NS_INTERFACE_MAP_ENTRY(nsIRDFDataSource)
+    NS_INTERFACE_MAP_ENTRY(nsIRDFRemoteDataSource)
+    NS_INTERFACE_MAP_ENTRY(nsIRDFXMLSink)
+    NS_INTERFACE_MAP_ENTRY(nsIRDFXMLSource)
+    NS_INTERFACE_MAP_ENTRY(nsIRequestObserver)
+    NS_INTERFACE_MAP_ENTRY(nsIStreamListener)
+    NS_INTERFACE_MAP_ENTRY(rdfIDataSource)
+    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIRDFDataSource)
+NS_INTERFACE_MAP_END
 
 
 nsresult
@@ -562,21 +500,25 @@ RDFXMLDataSourceImpl::BlockingParse(nsIURI* aURL, nsIStreamListener* aConsumer)
     // Null LoadGroup ?
     rv = NS_NewChannel(getter_AddRefs(channel), aURL, nsnull);
     if (NS_FAILED(rv)) return rv;
-    nsIInputStream* in;
+    nsCOMPtr<nsIInputStream> in;
     PRUint32 sourceOffset = 0;
-    rv = channel->Open(&in);
+    rv = channel->Open(getter_AddRefs(in));
 
     // Report success if the file doesn't exist, but propagate other errors.
     if (rv == NS_ERROR_FILE_NOT_FOUND) return NS_OK;
     if (NS_FAILED(rv)) return rv;
 
-    NS_ASSERTION(in != nsnull, "no input stream");
-    if (! in) return NS_ERROR_FAILURE;
+    if (! in) {
+        NS_ERROR("no input stream");
+        return NS_ERROR_FAILURE;
+    }
 
-    rv = NS_ERROR_OUT_OF_MEMORY;
-    ProxyStream* proxy = new ProxyStream();
-    if (! proxy)
-        goto done;
+    // Wrap the channel's input stream in a buffered stream to ensure that
+    // ReadSegments is implemented (which OnDataAvailable expects).
+    nsCOMPtr<nsIInputStream> bufStream;
+    rv = NS_NewBufferedInputStream(getter_AddRefs(bufStream), in,
+                                   4096 /* buffer size */);
+    if (NS_FAILED(rv)) return rv;
 
     // Notify load observers
     PRInt32 i;
@@ -591,27 +533,31 @@ RDFXMLDataSourceImpl::BlockingParse(nsIURI* aURL, nsIStreamListener* aConsumer)
         }
     }
 
-    request = do_QueryInterface(channel);
+    rv = aConsumer->OnStartRequest(channel, nsnull);
 
-    aConsumer->OnStartRequest(request, nsnull);
-    while (PR_TRUE) {
-        char buf[4096];
-        PRUint32 readCount;
-
-        if (NS_FAILED(rv = in->Read(buf, sizeof(buf), &readCount)))
-            break; // error
-
-        if (readCount == 0)
-            break; // eof
-
-        proxy->SetBuffer(buf, readCount);
-
-        rv = aConsumer->OnDataAvailable(request, nsnull, proxy, sourceOffset, readCount);
-        sourceOffset += readCount;
+    PRUint32 offset = 0;
+    while (NS_SUCCEEDED(rv)) {
+        // Skip ODA if the channel is canceled
+        channel->GetStatus(&rv);
         if (NS_FAILED(rv))
             break;
+
+        PRUint32 avail;
+        if (NS_FAILED(rv = bufStream->Available(&avail)))
+            break; // error
+
+        if (avail == 0)
+            break; // eof
+
+        rv = aConsumer->OnDataAvailable(channel, nsnull, bufStream, offset, avail);
+        if (NS_SUCCEEDED(rv))
+            offset += avail;
     }
 
+    if (NS_FAILED(rv))
+        channel->Cancel(rv);
+
+    channel->GetStatus(&rv);
     aConsumer->OnStopRequest(channel, nsnull, rv);
 
     // Notify load observers
@@ -629,13 +575,6 @@ RDFXMLDataSourceImpl::BlockingParse(nsIURI* aURL, nsIStreamListener* aConsumer)
         }
     }
 
-	// don't leak proxy!
-	proxy->Close();
-	delete proxy;
-	proxy = nsnull;
-
-done:
-    NS_RELEASE(in);
     return rv;
 }
 
@@ -830,17 +769,32 @@ RDFXMLDataSourceImpl::rdfXMLFlush(nsIURI *aURI)
         nsCOMPtr<nsIFile> file;
         fileURL->GetFile(getter_AddRefs(file));
         if (file) {
-            // if file doesn't exist, create it
-            (void)file->Create(nsIFile::NORMAL_FILE_TYPE, 0666);
-
+            // get a safe output stream, so we don't clobber the datasource file unless
+            // all the writes succeeded.
             nsCOMPtr<nsIOutputStream> out;
-            rv = NS_NewLocalFileOutputStream(getter_AddRefs(out), file);
+            rv = NS_NewSafeLocalFileOutputStream(getter_AddRefs(out),
+                                                 file,
+                                                 PR_WRONLY | PR_CREATE_FILE,
+                                                 /*octal*/ 0666,
+                                                 0);
+            if (NS_FAILED(rv)) return rv;
+
             nsCOMPtr<nsIOutputStream> bufferedOut;
-            if (out)
-                NS_NewBufferedOutputStream(getter_AddRefs(bufferedOut), out, 4096);
-            if (bufferedOut) {
-                rv = Serialize(bufferedOut);
-                if (NS_FAILED(rv)) return rv;
+            rv = NS_NewBufferedOutputStream(getter_AddRefs(bufferedOut), out, 4096);
+            if (NS_FAILED(rv)) return rv;
+
+            rv = Serialize(bufferedOut);
+            if (NS_FAILED(rv)) return rv;
+            
+            // All went ok. Maybe except for problems in Write(), but the stream detects
+            // that for us
+            nsCOMPtr<nsISafeOutputStream> safeStream = do_QueryInterface(bufferedOut, &rv);
+            if (NS_FAILED(rv)) return rv;
+
+            rv = safeStream->Finish();
+            if (NS_FAILED(rv)) {
+                NS_WARNING("failed to save datasource file! possible dataloss");
+                return rv;
             }
         }
     }

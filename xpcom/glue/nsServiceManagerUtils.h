@@ -112,8 +112,8 @@ CallGetService( const nsCID &aClass,
     NS_PRECONDITION(aDestination, "null parameter");
     
     return CallGetService(aClass,
-                          NS_GET_IID(DestinationType),
-                          NS_REINTERPRET_CAST(void**, aDestination));
+                          NS_GET_TEMPLATE_IID(DestinationType),
+                          reinterpret_cast<void**>(aDestination));
 }
 
 template <class DestinationType>
@@ -126,8 +126,8 @@ CallGetService( const char *aContractID,
     NS_PRECONDITION(aDestination, "null parameter");
     
     return CallGetService(aContractID,
-                          NS_GET_IID(DestinationType),
-                          NS_REINTERPRET_CAST(void**, aDestination));
+                          NS_GET_TEMPLATE_IID(DestinationType),
+                          reinterpret_cast<void**>(aDestination));
 }
 
 #endif

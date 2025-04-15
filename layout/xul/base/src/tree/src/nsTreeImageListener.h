@@ -43,7 +43,7 @@
 #include "nsString.h"
 #include "nsCOMPtr.h"
 #include "nsITreeColumns.h"
-#include "imgIDecoderObserver.h"
+#include "nsStubImageDecoderObserver.h"
 
 class nsITreeBoxObject;
 
@@ -55,28 +55,35 @@ class nsITreeBoxObject;
 class nsITreeImageListener : public nsISupports
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ITREEIMAGELISTENER_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ITREEIMAGELISTENER_IID)
 
   NS_IMETHOD AddCell(PRInt32 aIndex, nsITreeColumn* aCol) = 0;
 };
 
+NS_DEFINE_STATIC_IID_ACCESSOR(nsITreeImageListener, NS_ITREEIMAGELISTENER_IID)
+
 // This class handles image load observation.
-class nsTreeImageListener : public imgIDecoderObserver, public nsITreeImageListener
+class nsTreeImageListener : public nsStubImageDecoderObserver, public nsITreeImageListener
 {
 public:
   nsTreeImageListener(nsITreeBoxObject* aTree);
   ~nsTreeImageListener();
 
   NS_DECL_ISUPPORTS
-  NS_DECL_IMGIDECODEROBSERVER
-  NS_DECL_IMGICONTAINEROBSERVER
+  // imgIDecoderObserver (override nsStubImageDecoderObserver)
+  NS_IMETHOD OnStartContainer(imgIRequest *aRequest, imgIContainer *aImage);
+  NS_IMETHOD OnDataAvailable(imgIRequest *aRequest, gfxIImageFrame *aFrame,
+                             const nsRect *aRect);
+  // imgIContainerObserver (override nsStubImageDecoderObserver)
+  NS_IMETHOD FrameChanged(imgIContainer *aContainer, gfxIImageFrame *newframe,
+                          nsRect * dirtyRect);
 
   NS_IMETHOD AddCell(PRInt32 aIndex, nsITreeColumn* aCol);
  
   friend class nsTreeBodyFrame;
 
 protected:
-  void UnsuppressInvalidation() { mInvalidationSuppressed = PR_FALSE; };
+  void UnsuppressInvalidation() { mInvalidationSuppressed = PR_FALSE; }
   void Invalidate();
 
 private:
@@ -88,17 +95,17 @@ private:
   class InvalidationArea {
     public:
       InvalidationArea(nsITreeColumn* aCol);
-      ~InvalidationArea() { delete mNext; };
+      ~InvalidationArea() { delete mNext; }
 
       friend class nsTreeImageListener;
 
     protected:
       void AddRow(PRInt32 aIndex);
-      nsITreeColumn* GetCol() { return mCol.get(); };
-      PRInt32 GetMin() { return mMin; };
-      PRInt32 GetMax() { return mMax; };
-      InvalidationArea* GetNext() { return mNext; };
-      void SetNext(InvalidationArea* aNext) { mNext = aNext; };
+      nsITreeColumn* GetCol() { return mCol.get(); }
+      PRInt32 GetMin() { return mMin; }
+      PRInt32 GetMax() { return mMax; }
+      InvalidationArea* GetNext() { return mNext; }
+      void SetNext(InvalidationArea* aNext) { mNext = aNext; }
 
     private:
       nsCOMPtr<nsITreeColumn> mCol;

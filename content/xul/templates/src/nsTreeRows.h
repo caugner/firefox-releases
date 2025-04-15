@@ -40,10 +40,12 @@
 #define nsTreeRows_h__
 
 #include "nsCOMPtr.h"
-#include "nsIRDFResource.h"
+#include "nsTArray.h"
 #include "pldhash.h"
-class nsConflictSet;
-class nsTemplateMatch;
+#include "nsIXULTemplateResult.h"
+#include "nsTemplateMatch.h"
+#include "nsIRDFResource.h"
+
 
 /**
  * This class maintains the state of the XUL tree builder's
@@ -185,8 +187,6 @@ public:
 
     friend class Subtree;
 
-    enum { kMaxDepth = 32 };
-
 protected:
     /**
      * A link in the path through the view's tree.
@@ -221,9 +221,8 @@ public:
      */
     class iterator {
     protected:
-        PRInt32 mTop;
         PRInt32 mRowIndex;
-        Link    mLink[kMaxDepth];
+        nsAutoTArray<Link, 8> mLink;
 
         void Next();
         void Prev();
@@ -246,8 +245,14 @@ public:
          */
         void SetRowIndex(PRInt32 aRowIndex) { mRowIndex = aRowIndex; }
 
+        /**
+         * Handy accessors to the top element.
+         */
+        Link& GetTop() { return mLink[mLink.Length() - 1]; }
+        const Link& GetTop() const { return mLink[mLink.Length() - 1]; }
+
     public:
-        iterator() : mTop(-1), mRowIndex(-1) {}
+        iterator() : mRowIndex(-1) {}
 
         iterator(const iterator& aIterator);
         iterator& operator=(const iterator& aIterator);
@@ -257,11 +262,11 @@ public:
         PRBool operator!=(const iterator& aIterator) const {
             return !aIterator.operator==(*this); }
 
-        const Row& operator*() const { return mLink[mTop].GetRow(); }
-        Row& operator*() { return mLink[mTop].GetRow(); }
+        const Row& operator*() const { return GetTop().GetRow(); }
+        Row& operator*() { return GetTop().GetRow(); }
 
-        const Row* operator->() const { return &(mLink[mTop].GetRow()); }
-        Row* operator->() { return &(mLink[mTop].GetRow()); }
+        const Row* operator->() const { return &(GetTop().GetRow()); }
+        Row* operator->() { return &(GetTop().GetRow()); }
 
         iterator& operator++() { Next(); return *this; }
         iterator operator++(int) { iterator temp(*this); Next(); return temp; }
@@ -271,23 +276,20 @@ public:
         /**
          * Return the current parent link
          */
-        Subtree* GetParent() {
-            return mLink[mTop].GetParent(); }
+        Subtree* GetParent() { return GetTop().GetParent(); }
 
-        const Subtree* GetParent() const {
-            return mLink[mTop].GetParent(); }
+        const Subtree* GetParent() const { return GetTop().GetParent(); }
 
         /**
          * Return the current child index
          */
-        PRInt32 GetChildIndex() const {
-            return mLink[mTop].GetChildIndex(); }
+        PRInt32 GetChildIndex() const { return GetTop().GetChildIndex(); }
 
         /**
          * Return the depth of the path the iterator is maintaining
          * into the tree.
          */
-        PRInt32 GetDepth() const { return mTop + 1; }
+        PRInt32 GetDepth() const { return mLink.Length(); }
 
         /**
          * Return the current row index of the iterator
@@ -297,7 +299,7 @@ public:
         /**
          * Pop the iterator up a level.
          */
-        iterator& Pop() { --mTop; return *this; }
+        iterator& Pop() { mLink.SetLength(GetDepth() - 1); return *this; }
     };
 
     /**
@@ -311,17 +313,21 @@ public:
     iterator Last();
 
     /**
-     * Find the row that contains the match with the specified member
-     * resource.
+     * Find the row that contains the given resource
      */
-    iterator Find(nsConflictSet& aConflictSet, nsIRDFResource* aMember);
+    iterator FindByResource(nsIRDFResource* aResource);
+
+    /**
+     * Find the row that contains the result
+     */
+    iterator Find(nsIXULTemplateResult* aResult);
 
     /**
      * Retrieve the ith element in the view
      */
     iterator operator[](PRInt32 aIndex);
 
-    nsTreeRows() : mRoot(nsnull), mRootResource(nsnull) {}
+    nsTreeRows() : mRoot(nsnull) {}
     ~nsTreeRows() {}
 
     /**
@@ -431,7 +437,7 @@ public:
         mRootResource = aResource; }
 
     /**
-     * Retrieve hte root resource for the view
+     * Retrieve the root resource for the view
      */
     nsIRDFResource* GetRootResource() {
         return mRootResource.get(); }

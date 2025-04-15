@@ -1,5 +1,5 @@
-/.cvsignore/1.1/Mon Nov 29 21:20:28 1999//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.28/Tue Apr  5 17:40:29 2005//TFIREFOX_2_0_RELEASE
-/nsResProtocolHandler.cpp/1.64.18.3/Mon Sep 11 18:32:27 2006//TFIREFOX_2_0_RELEASE
-/nsResProtocolHandler.h/1.18/Fri Dec  3 04:19:48 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Mon Nov 29 21:20:28 1999//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.28/Tue Apr  5 17:40:29 2005//TFIREFOX_3_0rc3_RELEASE
+/nsResProtocolHandler.cpp/1.70/Mon Feb 26 16:57:48 2007//TFIREFOX_3_0rc3_RELEASE
+/nsResProtocolHandler.h/1.18/Fri Dec  3 04:19:48 2004//TFIREFOX_3_0rc3_RELEASE
 D

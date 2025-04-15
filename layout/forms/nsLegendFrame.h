@@ -54,9 +54,7 @@ struct nsRect;
 
 class nsLegendFrame : public nsAreaFrame {
 public:
-
-  nsLegendFrame();
-  virtual ~nsLegendFrame();
+  nsLegendFrame(nsStyleContext* aContext) : nsAreaFrame(aContext) {}
 
   NS_IMETHOD QueryInterface(const nsIID& aIID, void** aInstancePtr);
 
@@ -65,13 +63,7 @@ public:
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
 
-  NS_IMETHOD Destroy(nsPresContext *aPresContext);
-
-  NS_IMETHOD Paint(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext,
-                   const nsRect&        aDirtyRect,
-                   nsFramePaintLayer    aWhichLayer,
-                   PRUint32             aFlags = 0);
+  virtual void Destroy();
 
   virtual nsIAtom* GetType() const;
 
@@ -80,8 +72,6 @@ public:
 #endif
 
   PRInt32 GetAlign();
-
-  nsPresContext * mPresContext;
 };
 
 

@@ -57,24 +57,14 @@ REQUIRES	= \
 		locale \
 		unicharutil \
 		webshell \
-		uriloader \
-		htmlparser \
 		necko \
-		view \
 		pref \
 		docshell \
 		xpconnect \
-		xuldoc \
 		caps \
-		editor \
 		imglib2 \
-		mimetype \
-		exthandler \
-		uconv \
-		intl \
-		plugin \
 		cairo \
-		libpixman \
+		thebes \
 		$(NULL)
 
 # XXX some platforms can't handle building
@@ -95,15 +85,5 @@ FORCE_STATIC_LIB = 1
 include $(topsrcdir)/config/rules.mk
 
 CXXFLAGS	+= $(MOZ_CAIRO_CFLAGS) $(TK_CFLAGS)
-
-ifneq (,$(filter mac cocoa,$(MOZ_GFX_TOOLKIT)))
-# needed for nsDrawingSurfaceMac.h
-CXXFLAGS += -I$(topsrcdir)/gfx/src/mac
-endif
-
-ifeq ($(MOZ_WIDGET_TOOLKIT), os2)
-# needed for nsDrawingSurfaceOS2.h
-CXXFLAGS += -I$(topsrcdir)/gfx/src/os2
-endif
 
 DEFINES += -D_IMPL_NS_LAYOUT

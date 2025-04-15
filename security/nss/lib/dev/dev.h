@@ -44,7 +44,7 @@
  */
 
 #ifdef DEBUG
-static const char DEV_CVS_ID[] = "@(#) $RCSfile: dev.h,v $ $Revision: 1.37 $ $Date: 2005/03/07 21:20:38 $";
+static const char DEV_CVS_ID[] = "@(#) $RCSfile: dev.h,v $ $Revision: 1.39 $ $Date: 2007/11/16 05:29:25 $";
 #endif /* DEBUG */
 
 #ifndef NSSCKT_H
@@ -520,7 +520,7 @@ nssToken_FindCertificatesByNickname
 (
   NSSToken *token,
   nssSession *sessionOpt,
-  NSSUTF8 *name,
+  const NSSUTF8 *name,
   nssTokenSearchType searchType,
   PRUint32 maximumOpt,
   PRStatus *statusOpt
@@ -952,8 +952,6 @@ nssSlotList_GetBestSlotForAlgorithmsAndParameters
   NSSAlgorithmAndParameters **ap
 );
 
-#ifdef NSS_3_4_CODE
-
 NSS_EXTERN PRBool
 nssToken_IsPresent
 (
@@ -995,9 +993,6 @@ nssToken_IsPrivateKeyAvailable
   NSSCertificate *c,
   nssCryptokiObject *instance
 );
-
-
-#endif
 
 PR_END_EXTERN_C
 

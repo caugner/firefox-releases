@@ -36,56 +36,49 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsPLDOMEvent.h"
-#include "nsEventQueueUtils.h"
 #include "nsIDOMEvent.h"
 #include "nsIPrivateDOMEvent.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMDocumentEvent.h"
 #include "nsIDOMEventTarget.h"
+#include "nsContentUtils.h"
 
-void nsPLDOMEvent::HandleEvent()
+NS_IMETHODIMP nsPLDOMEvent::Run()
 {
   if (!mEventNode) {
-    return;
+    return NS_OK;
   }
-  
-  nsCOMPtr<nsIDOMDocument> domDoc;
-  mEventNode->GetOwnerDocument(getter_AddRefs(domDoc));
-  nsCOMPtr<nsIDOMDocumentEvent> domEventDoc = do_QueryInterface(domDoc);
-  if (domEventDoc) {
-    nsCOMPtr<nsIDOMEvent> domEvent;
-    domEventDoc->CreateEvent(NS_LITERAL_STRING("Events"),
-                        getter_AddRefs(domEvent));
 
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(domEvent));
-    if (privateEvent && NS_SUCCEEDED(domEvent->InitEvent(mEventType, PR_TRUE, PR_TRUE))) {
-      privateEvent->SetTrusted(PR_TRUE);
+  nsCOMPtr<nsIDOMEvent> domEvent(mEvent);
+  if (!domEvent) {
+    nsCOMPtr<nsIDOMDocument> domDoc;
+    mEventNode->GetOwnerDocument(getter_AddRefs(domDoc));
+    nsCOMPtr<nsIDOMDocumentEvent> domEventDoc = do_QueryInterface(domDoc);
+    if (domEventDoc) {
+      domEventDoc->CreateEvent(NS_LITERAL_STRING("Events"),
+                               getter_AddRefs(domEvent));
 
-      nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mEventNode);
-      PRBool defaultActionEnabled; // This is not used because the caller is async
-      target->DispatchEvent(domEvent, &defaultActionEnabled);
+      nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(domEvent));
+      if (privateEvent &&
+          NS_SUCCEEDED(domEvent->InitEvent(mEventType, PR_TRUE, PR_TRUE))) {
+        privateEvent->SetTrusted(PR_TRUE);
+      }
     }
   }
+
+  nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mEventNode);
+  PRBool defaultActionEnabled; // This is not used because the caller is async
+  target->DispatchEvent(domEvent, &defaultActionEnabled);
+
+  return NS_OK;
 }
 
 nsresult nsPLDOMEvent::PostDOMEvent()
 {
-  nsCOMPtr<nsIEventQueue> eventQueue;
-  nsresult rv = NS_GetCurrentEventQ(getter_AddRefs(eventQueue));
-  if (NS_SUCCEEDED(rv)) {
-    PL_InitEvent(this, nsnull, (PLHandleEventProc) ::HandlePLDOMEvent, (PLDestroyEventProc) ::DestroyPLDOMEvent);
-    rv = eventQueue->PostEvent(this);
-  }
-
-  return rv;
+  return NS_DispatchToCurrentThread(this);
 }
 
-static void PR_CALLBACK HandlePLDOMEvent(nsPLDOMEvent* aEvent)
+nsresult nsPLDOMEvent::RunDOMEventWhenSafe()
 {
-  aEvent->HandleEvent();
-}
-
-static void PR_CALLBACK DestroyPLDOMEvent(nsPLDOMEvent* aEvent)
-{
-  delete aEvent;
+  return nsContentUtils::AddScriptRunner(this) ? NS_OK : NS_ERROR_FAILURE;
 }

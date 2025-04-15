@@ -57,28 +57,17 @@ REQUIRES	= xpcom \
 		  docshell \
 		  layout \
 		  widget \
-		  libbz2 \
+		  $(BZ2_REQUIRES) \
 		  xulapp \
 		  extensions \
 		  rdf \
 		  plugin \
 		  content \
 		  autocomplete \
+		  places \
+		  toolkitcomps \
+		  locale \
 		  $(NULL)
-
-# nsIScreenManager has moved to widget on the trunk
-# nsIDOMParser and nsIDOMSerializer have moved to content.
-ifdef MOZILLA_1_8_BRANCH
-REQUIRES	+= gfx xmlextras
-else
-REQUIRES	+= widget
-endif
-
-ifdef MOZ_PLACES
-REQUIRES	+= places toolkitcomps
-else
-REQUIRES	+= bookmarks
-endif
 
 CSRCS		= \
 		md5.c \
@@ -101,7 +90,15 @@ CPPSRCS		= \
 FORCE_STATIC_LIB = 1
 
 # md5.c requires NSS headers
-LOCAL_INCLUDES = -I$(DIST)/public/nss -I$(DIST)/private/nss
+LOCAL_INCLUDES = -I$(topsrcdir)/security/nss/lib/freebl
+
+# Link against the static CRT
+ifeq ($(OS_ARCH)_$(GNU_CC), WINNT_)
+USE_STATIC_LIBS = 1
+EXTRA_DSO_LDOPTS += -NODEFAULTLIB:MSVCRT \
+		    -NODEFAULTLIB:MSVCRTD \
+		    $(NULL)
+endif
 
 # Enable logging in release builds
 ifneq (,$(findstring -DMOZ_LOGGING=1, $(ACDEFINES)))

@@ -38,6 +38,7 @@
 #include "nsSOAPException.h"
 #include "nsReadableUtils.h"
 #include "nsIXPConnect.h"
+#include "nsIClassInfoImpl.h"
 
 nsSOAPException::nsSOAPException(nsresult aStatus, const nsAString & aName, 
                                  const nsAString & aMessage, nsIException* aInner) :
@@ -59,7 +60,7 @@ NS_IMPL_ISUPPORTS1_CI(nsSOAPException, nsIException)
 
 /* readonly attribute string message; */
 NS_IMETHODIMP 
-nsSOAPException::GetMessage(char * *aMessage)
+nsSOAPException::GetMessageMoz(char * *aMessage)
 {
   NS_ENSURE_ARG_POINTER(aMessage);
 
@@ -173,7 +174,7 @@ nsSOAPException::ToString(char **_retval)
     if (str) {
       s.AppendLiteral(", called by ");
       nsAutoString i;
-      CopyASCIItoUCS2(nsDependentCString(str),i);
+      CopyASCIItoUTF16(nsDependentCString(str),i);
       nsMemory::Free(str);
       s.Append(i);
     }
@@ -183,7 +184,7 @@ nsSOAPException::ToString(char **_retval)
     mInner->ToString(&str);
     if (str) {
       nsAutoString i;
-      CopyASCIItoUCS2(nsDependentCString(str),i);
+      CopyASCIItoUTF16(nsDependentCString(str),i);
       nsMemory::Free(str);
       s.AppendLiteral(", caused by ");
       s.Append(i);

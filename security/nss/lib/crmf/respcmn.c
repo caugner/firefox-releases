@@ -35,7 +35,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nssrenam.h"
 #include "cmmf.h"
 #include "cmmfi.h"
 #include "secitem.h"
@@ -267,14 +266,14 @@ CMMF_DestroyCertifiedKeyPair(CMMFCertifiedKeyPair *inCertKeyPair)
     PORT_Assert(inCertKeyPair != NULL);
     if (inCertKeyPair != NULL) {
         cmmf_DestroyCertOrEncCert(&inCertKeyPair->certOrEncCert, PR_FALSE);
+        if (inCertKeyPair->privateKey) {
+            crmf_destroy_encrypted_value(inCertKeyPair->privateKey, PR_TRUE);
+        }
+        if (inCertKeyPair->derPublicationInfo.data) {
+            PORT_Free(inCertKeyPair->derPublicationInfo.data);
+        }
+        PORT_Free(inCertKeyPair);
     }
-    if (inCertKeyPair->privateKey) {
-        crmf_destroy_encrypted_value(inCertKeyPair->privateKey, PR_TRUE);
-    }
-    if (inCertKeyPair->derPublicationInfo.data) {
-        PORT_Free(inCertKeyPair->derPublicationInfo.data);
-    }
-    PORT_Free(inCertKeyPair);
     return SECSuccess;
 }
 

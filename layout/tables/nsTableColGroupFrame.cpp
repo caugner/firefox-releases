@@ -38,16 +38,14 @@
 #include "nsTableColFrame.h"
 #include "nsTableFrame.h"
 #include "nsIDOMHTMLTableColElement.h"
-#include "nsReflowPath.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"
 #include "nsHTMLParts.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsCOMPtr.h"
 #include "nsCSSRendering.h"
 #include "nsIPresShell.h"
-#include "nsLayoutAtoms.h"
 
 #define COL_GROUP_TYPE_BITS          0xC0000000 // uses bits 31-32 from mState
 #define COL_GROUP_TYPE_OFFSET        30
@@ -71,8 +69,8 @@ void nsTableColGroupFrame::ResetColIndices(nsIFrame*       aFirstColGroup,
   nsTableColGroupFrame* colGroupFrame = (nsTableColGroupFrame*)aFirstColGroup;
   PRInt32 colIndex = aFirstColIndex;
   while (colGroupFrame) {
-    if (nsLayoutAtoms::tableColGroupFrame == colGroupFrame->GetType()) {
-       // reset the starting col index for the first cg only if we should reset
+    if (nsGkAtoms::tableColGroupFrame == colGroupFrame->GetType()) {
+      // reset the starting col index for the first cg only if we should reset
       // the whole colgroup (aStartColFrame defaults to nsnull) or if
       // aFirstColIndex is smaller than the existing starting col index
       if ((colIndex != aFirstColIndex) ||
@@ -85,15 +83,15 @@ void nsTableColGroupFrame::ResetColIndices(nsIFrame*       aFirstColGroup,
         colFrame = colGroupFrame->GetFirstChild(nsnull);
       }
       while (colFrame) {
-        if (nsLayoutAtoms::tableColFrame == colFrame->GetType()) {
+        if (nsGkAtoms::tableColFrame == colFrame->GetType()) {
           ((nsTableColFrame*)colFrame)->SetColIndex(colIndex);
           colIndex++;
         }
         colFrame = colFrame->GetNextSibling();
       }
     }
-    colGroupFrame = NS_STATIC_CAST(nsTableColGroupFrame*,
-                                   colGroupFrame->GetNextSibling());
+    colGroupFrame = static_cast<nsTableColGroupFrame*>
+                               (colGroupFrame->GetNextSibling());
   }
 }
 
@@ -105,16 +103,16 @@ nsTableColGroupFrame::AddColsToTable(PRInt32          aFirstColIndex,
                                      nsIFrame*        aLastFrame)
 {
   nsresult rv = NS_OK;
-  nsTableFrame* tableFrame = nsnull;
-  rv = nsTableFrame::GetTableFrame(this, tableFrame);
-  if (!tableFrame || !aFirstFrame) return NS_ERROR_NULL_POINTER;
+  nsTableFrame* tableFrame = nsTableFrame::GetTableFrame(this);
+  if (!tableFrame || !aFirstFrame)
+    return NS_ERROR_NULL_POINTER;
 
   // set the col indices of the col frames and and add col info to the table
   PRInt32 colIndex = aFirstColIndex;
   nsIFrame* kidFrame = aFirstFrame;
   PRBool foundLastFrame = PR_FALSE;
   while (kidFrame) {
-    if (nsLayoutAtoms::tableColFrame == kidFrame->GetType()) {
+    if (nsGkAtoms::tableColFrame == kidFrame->GetType()) {
       ((nsTableColFrame*)kidFrame)->SetColIndex(colIndex);
       if (!foundLastFrame) {
         mColCount++;
@@ -175,20 +173,30 @@ nsTableColGroupFrame::GetLastRealColGroup(nsTableFrame* aTableFrame,
 
 // don't set mColCount here, it is done in AddColsToTable
 NS_IMETHODIMP
-nsTableColGroupFrame::SetInitialChildList(nsPresContext* aPresContext,
-                                          nsIAtom*        aListName,
+nsTableColGroupFrame::SetInitialChildList(nsIAtom*        aListName,
                                           nsIFrame*       aChildList)
 {
-  nsTableFrame* tableFrame;
-  nsTableFrame::GetTableFrame(this, tableFrame);
-  if (!tableFrame) return NS_ERROR_NULL_POINTER;
+  if (!mFrames.IsEmpty()) {
+    // We already have child frames which means we've already been
+    // initialized
+    NS_NOTREACHED("unexpected second call to SetInitialChildList");
+    return NS_ERROR_UNEXPECTED;
+  }
+  if (aListName) {
+    // All we know about is the unnamed principal child list
+    NS_NOTREACHED("unknown frame list");
+    return NS_ERROR_INVALID_ARG;
+  } 
+  nsTableFrame* tableFrame = nsTableFrame::GetTableFrame(this);
+  if (!tableFrame)
+    return NS_ERROR_NULL_POINTER;
 
   if (!aChildList) {
     nsIFrame* firstChild;
     tableFrame->CreateAnonymousColFrames(this, GetSpan(), eColAnonymousColGroup, 
                                          PR_FALSE, nsnull, &firstChild);
     if (firstChild) {
-      SetInitialChildList(aPresContext, aListName, firstChild);
+      SetInitialChildList(aListName, firstChild);
     }
     return NS_OK; 
   }
@@ -201,11 +209,15 @@ NS_IMETHODIMP
 nsTableColGroupFrame::AppendFrames(nsIAtom*        aListName,
                                    nsIFrame*       aFrameList)
 {
+  NS_ASSERTION(!aListName, "unexpected child list");
+
   nsTableColFrame* col = GetFirstColumn();
   nsTableColFrame* nextCol;
   while (col && col->GetColType() == eColAnonymousColGroup) {
     // this colgroup spans one or more columns but now that there is a
-    // real column below, spanned anonymous columns should be removed
+    // real column below, spanned anonymous columns should be removed,
+    // since the HTML spec says to ignore the span of a colgroup if it
+    // has content columns in it.
     nextCol = col->GetNextCol();
     RemoveFrame(nsnull, col);
     col = nextCol;
@@ -218,25 +230,38 @@ nsTableColGroupFrame::AppendFrames(nsIAtom*        aListName,
 
 NS_IMETHODIMP
 nsTableColGroupFrame::InsertFrames(nsIAtom*        aListName,
-                                   nsIFrame*       aPrevFrameIn,
+                                   nsIFrame*       aPrevFrame,
                                    nsIFrame*       aFrameList)
 {
+  NS_ASSERTION(!aListName, "unexpected child list");
+  NS_ASSERTION(!aPrevFrame || aPrevFrame->GetParent() == this,
+               "inserting after sibling frame with different parent");
+
   nsFrameList frames(aFrameList); // convience for getting last frame
   nsIFrame* lastFrame = frames.LastChild();
 
   nsTableColFrame* col = GetFirstColumn();
   nsTableColFrame* nextCol;
   while (col && col->GetColType() == eColAnonymousColGroup) {
-    // this colgroup spans one or more columns but now that there is 
-    // real column below, spanned anonymous columns should be removed
+    // this colgroup spans one or more columns but now that there is a
+    // real column below, spanned anonymous columns should be removed,
+    // since the HTML spec says to ignore the span of a colgroup if it
+    // has content columns in it.
+    NS_ASSERTION(col != aPrevFrame, "Bad aPrevFrame");
     nextCol = col->GetNextCol();
     RemoveFrame(nsnull, col);
     col = nextCol;
   }
 
-  mFrames.InsertFrames(this, aPrevFrameIn, aFrameList);
-  nsIFrame* prevFrame = nsTableFrame::GetFrameAtOrBefore(this, aPrevFrameIn,
-                                                         nsLayoutAtoms::tableColFrame);
+  NS_ASSERTION(!aPrevFrame || aPrevFrame == aPrevFrame->GetLastContinuation(),
+               "Prev frame should be last in continuation chain");
+  NS_ASSERTION(!aPrevFrame || !GetNextColumn(aPrevFrame) ||
+               GetNextColumn(aPrevFrame)->GetColType() != eColAnonymousCol,
+               "Shouldn't be inserting before a spanned colframe");
+
+  mFrames.InsertFrames(this, aPrevFrame, aFrameList);
+  nsIFrame* prevFrame = nsTableFrame::GetFrameAtOrBefore(this, aPrevFrame,
+                                                         nsGkAtoms::tableColFrame);
 
   PRInt32 colIndex = (prevFrame) ? ((nsTableColFrame*)prevFrame)->GetColIndex() + 1 : GetStartColumnIndex();
   InsertColsReflow(colIndex, aFrameList, lastFrame);
@@ -251,15 +276,13 @@ nsTableColGroupFrame::InsertColsReflow(PRInt32         aColIndex,
 {
   AddColsToTable(aColIndex, PR_TRUE, aFirstFrame, aLastFrame);
 
-  nsTableFrame* tableFrame;
-  nsTableFrame::GetTableFrame(this, tableFrame);
-  if (!tableFrame) return;
+  nsTableFrame* tableFrame = nsTableFrame::GetTableFrame(this);
+  if (!tableFrame)
+    return;
 
-  // XXX this could be optimized with much effort
-  tableFrame->SetNeedStrategyInit(PR_TRUE);
-
-  // Generate a reflow command so we reflow the table
-  nsTableFrame::AppendDirtyReflowCommand(tableFrame);
+  PresContext()->PresShell()->FrameNeedsReflow(tableFrame,
+                                               nsIPresShell::eTreeChange,
+                                               NS_FRAME_HAS_DIRTY_CHILDREN);
 }
 
 void
@@ -272,7 +295,7 @@ nsTableColGroupFrame::RemoveChild(nsTableColFrame& aChild,
     colIndex = aChild.GetColIndex();
     nextChild = aChild.GetNextSibling();
   }
-  if (mFrames.DestroyFrame(GetPresContext(), (nsIFrame*)&aChild)) {
+  if (mFrames.DestroyFrame((nsIFrame*)&aChild)) {
     mColCount--;
     if (aResetSubsequentColIndices) {
       if (nextChild) { // reset inside this and all following colgroups
@@ -285,58 +308,56 @@ nsTableColGroupFrame::RemoveChild(nsTableColFrame& aChild,
       }
     }
   }
-  nsTableFrame* tableFrame;
-  nsTableFrame::GetTableFrame(this, tableFrame);
-  if (!tableFrame) return;
+  nsTableFrame* tableFrame = nsTableFrame::GetTableFrame(this);
+  if (!tableFrame)
+    return;
 
-  // XXX this could be optimized with much effort
-  tableFrame->SetNeedStrategyInit(PR_TRUE);
-  // Generate a reflow command so we reflow the table
-  nsTableFrame::AppendDirtyReflowCommand(tableFrame);
+  PresContext()->PresShell()->FrameNeedsReflow(tableFrame,
+                                               nsIPresShell::eTreeChange,
+                                               NS_FRAME_HAS_DIRTY_CHILDREN);
 }
 
 NS_IMETHODIMP
 nsTableColGroupFrame::RemoveFrame(nsIAtom*        aListName,
                                   nsIFrame*       aOldFrame)
 {
+  NS_ASSERTION(!aListName, "unexpected child list");
+
   if (!aOldFrame) return NS_OK;
 
-  if (nsLayoutAtoms::tableColFrame == aOldFrame->GetType()) {
+  if (nsGkAtoms::tableColFrame == aOldFrame->GetType()) {
     nsTableColFrame* colFrame = (nsTableColFrame*)aOldFrame;
+    if (colFrame->GetColType() == eColContent) {
+      // Remove any anonymous column frames this <col> produced via a colspan
+      nsTableColFrame* col = colFrame->GetNextCol();
+      nsTableColFrame* nextCol;
+      while (col && col->GetColType() == eColAnonymousCol) {
+        NS_ASSERTION(col->GetStyleContext() == colFrame->GetStyleContext() &&
+                     col->GetContent() == colFrame->GetContent(),
+                     "How did that happen??");
+        nextCol = col->GetNextCol();
+        RemoveFrame(nsnull, col);
+        col = nextCol;
+      }
+    }
+    
     PRInt32 colIndex = colFrame->GetColIndex();
     RemoveChild(*colFrame, PR_TRUE);
     
-    nsTableFrame* tableFrame;
-    nsTableFrame::GetTableFrame(this, tableFrame);
-    if (!tableFrame) return NS_ERROR_NULL_POINTER;
+    nsTableFrame* tableFrame = nsTableFrame::GetTableFrame(this);
+    if (!tableFrame)
+      return NS_ERROR_NULL_POINTER;
 
     tableFrame->RemoveCol(this, colIndex, PR_TRUE, PR_TRUE);
 
-    // XXX This could probably be optimized with much effort
-    tableFrame->SetNeedStrategyInit(PR_TRUE);
-    // Generate a reflow command so we reflow the table
-    nsTableFrame::AppendDirtyReflowCommand(tableFrame);
+    PresContext()->PresShell()->FrameNeedsReflow(tableFrame,
+                                                 nsIPresShell::eTreeChange,
+                                                 NS_FRAME_HAS_DIRTY_CHILDREN);
   }
   else {
-    mFrames.DestroyFrame(GetPresContext(), aOldFrame);
+    mFrames.DestroyFrame(aOldFrame);
   }
 
-  return NS_OK;
-}
-
-NS_METHOD 
-nsTableColGroupFrame::Paint(nsPresContext*      aPresContext,
-                            nsIRenderingContext& aRenderingContext,
-                            const nsRect&        aDirtyRect,
-                            nsFramePaintLayer    aWhichLayer,
-                            PRUint32             aFlags)
-{
-  PRBool isVisible;
-  if (NS_SUCCEEDED(IsVisibleForPainting(aPresContext, aRenderingContext, PR_FALSE, &isVisible)) && !isVisible) {
-    return NS_OK;
-  }
-
-  PaintChildren(aPresContext, aRenderingContext, aDirtyRect, aWhichLayer);
   return NS_OK;
 }
 
@@ -344,22 +365,13 @@ PRIntn
 nsTableColGroupFrame::GetSkipSides() const
 {
   PRIntn skip = 0;
-  if (nsnull != mPrevInFlow) {
+  if (nsnull != GetPrevInFlow()) {
     skip |= 1 << NS_SIDE_TOP;
   }
-  if (nsnull != mNextInFlow) {
+  if (nsnull != GetNextInFlow()) {
     skip |= 1 << NS_SIDE_BOTTOM;
   }
   return skip;
-}
-
-NS_IMETHODIMP
-nsTableColGroupFrame::GetFrameForPoint(const nsPoint& aPoint, 
-                                   nsFramePaintLayer aWhichLayer,
-                                   nsIFrame**     aFrame)
-{
-  // this should act like a block, so we need to override
-  return GetFrameForPointUsing(aPoint, nsnull, aWhichLayer, PR_FALSE, aFrame);
 }
 
 NS_METHOD nsTableColGroupFrame::Reflow(nsPresContext*          aPresContext,
@@ -367,7 +379,7 @@ NS_METHOD nsTableColGroupFrame::Reflow(nsPresContext*          aPresContext,
                                        const nsHTMLReflowState& aReflowState,
                                        nsReflowStatus&          aStatus)
 {
-  DO_GLOBAL_REFLOW_COUNT("nsTableColGroupFrame", aReflowState.reason);
+  DO_GLOBAL_REFLOW_COUNT("nsTableColGroupFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
   NS_ASSERTION(nsnull!=mContent, "bad state -- null content for frame");
   nsresult rv=NS_OK;
@@ -375,28 +387,20 @@ NS_METHOD nsTableColGroupFrame::Reflow(nsPresContext*          aPresContext,
   const nsStyleVisibility* groupVis = GetStyleVisibility();
   PRBool collapseGroup = (NS_STYLE_VISIBILITY_COLLAPSE == groupVis->mVisible);
   if (collapseGroup) {
-    nsTableFrame* tableFrame = nsnull;
-    nsTableFrame::GetTableFrame(this, tableFrame);
+    nsTableFrame* tableFrame = nsTableFrame::GetTableFrame(this);
     if (tableFrame)  {
-      tableFrame->SetNeedToCollapseColumns(PR_TRUE);
+      tableFrame->SetNeedToCollapse(PR_TRUE);;
     }
   }
   // for every content child that (is a column thingy and does not already have a frame)
   // create a frame and adjust it's style
-  nsIFrame* kidFrame = nsnull;
   
-  
-  if (eReflowReason_Incremental == aReflowState.reason) {
-    rv = IncrementalReflow(aDesiredSize, aReflowState, aStatus);
-  }
-
-  for (kidFrame = mFrames.FirstChild(); kidFrame;
+  for (nsIFrame *kidFrame = mFrames.FirstChild(); kidFrame;
        kidFrame = kidFrame->GetNextSibling()) {
     // Give the child frame a chance to reflow, even though we know it'll have 0 size
-    nsHTMLReflowMetrics kidSize(nsnull);
-    // XXX Use a valid reason...
+    nsHTMLReflowMetrics kidSize;
     nsHTMLReflowState kidReflowState(aPresContext, aReflowState, kidFrame,
-                                     nsSize(0,0), eReflowReason_Initial);
+                                     nsSize(0,0));
 
     nsReflowStatus status;
     ReflowChild(kidFrame, aPresContext, kidSize, kidReflowState, 0, 0, 0, status);
@@ -405,105 +409,15 @@ NS_METHOD nsTableColGroupFrame::Reflow(nsPresContext*          aPresContext,
 
   aDesiredSize.width=0;
   aDesiredSize.height=0;
-  aDesiredSize.ascent=aDesiredSize.height;
-  aDesiredSize.descent=0;
-  if (aDesiredSize.mComputeMEW)
-  {
-    aDesiredSize.mMaxElementWidth=0;
-  }
   aStatus = NS_FRAME_COMPLETE;
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
   return rv;
 }
 
-NS_METHOD nsTableColGroupFrame::IncrementalReflow(nsHTMLReflowMetrics&     aDesiredSize,
-                                                  const nsHTMLReflowState& aReflowState,
-                                                  nsReflowStatus&          aStatus)
+/* virtual */ PRBool
+nsTableColGroupFrame::IsContainingBlock() const
 {
-
-  // the col group is a target if its path has a reflow command
-  nsHTMLReflowCommand* command = aReflowState.path->mReflowCommand;
-  if (command)
-    IR_TargetIsMe(aDesiredSize, aReflowState, aStatus);
-
-  // see if the chidren are targets as well
-  nsReflowPath::iterator iter = aReflowState.path->FirstChild();
-  nsReflowPath::iterator end  = aReflowState.path->EndChildren();
-  for (; iter != end; ++iter)
-    IR_TargetIsChild(aDesiredSize, aReflowState, aStatus, *iter);
-
-  return NS_OK;
-}
-
-NS_METHOD nsTableColGroupFrame::IR_TargetIsMe(nsHTMLReflowMetrics&     aDesiredSize,
-                                              const nsHTMLReflowState& aReflowState,
-                                              nsReflowStatus&          aStatus)
-{
-  nsresult rv = NS_OK;
-  aStatus = NS_FRAME_COMPLETE;
-  switch (aReflowState.path->mReflowCommand->Type())
-  {
-  case eReflowType_StyleChanged :
-    rv = IR_StyleChanged(aDesiredSize, aReflowState, aStatus);
-    break;
-
-  case eReflowType_ContentChanged :
-    NS_ASSERTION(PR_FALSE, "illegal reflow type: ContentChanged");
-    rv = NS_ERROR_ILLEGAL_VALUE;
-    break;
-  
-  default:
-    NS_NOTYETIMPLEMENTED("unexpected reflow command type");
-    rv = NS_ERROR_NOT_IMPLEMENTED;
-    break;
-  }
-
-  return rv;
-}
-
-NS_METHOD nsTableColGroupFrame::IR_StyleChanged(nsHTMLReflowMetrics&     aDesiredSize,
-                                                const nsHTMLReflowState& aReflowState,
-                                                nsReflowStatus&          aStatus)
-{
-  nsresult rv = NS_OK;
-  // we presume that all the easy optimizations were done in the nsHTMLStyleSheet before we were called here
-  // XXX: we can optimize this when we know which style attribute changed
-  nsTableFrame* tableFrame = nsnull;
-  rv = nsTableFrame::GetTableFrame(this, tableFrame);
-  if (tableFrame)  {
-    tableFrame->SetNeedStrategyInit(PR_TRUE);
-  }
-  return rv;
-}
-
-NS_METHOD nsTableColGroupFrame::IR_TargetIsChild(nsHTMLReflowMetrics&     aDesiredSize,
-                                                 const nsHTMLReflowState& aReflowState,
-                                                 nsReflowStatus&          aStatus,
-                                                 nsIFrame *               aNextFrame)
-{
-  nsresult rv;
- 
-  // Pass along the reflow command
-  nsHTMLReflowMetrics desiredSize(nsnull);
-  nsPresContext* presContext = GetPresContext();
-  nsHTMLReflowState kidReflowState(presContext, aReflowState, aNextFrame,
-                                   nsSize(aReflowState.availableWidth,
-                                          aReflowState.availableHeight));
-  rv = ReflowChild(aNextFrame, presContext, desiredSize, kidReflowState, 0, 0, 0, aStatus);
-  aNextFrame->DidReflow(presContext, nsnull, NS_FRAME_REFLOW_FINISHED);
-  if (NS_FAILED(rv))
-    return rv;
-
-  nsTableFrame *tableFrame=nsnull;
-  rv = nsTableFrame::GetTableFrame(this, tableFrame);
-  if (tableFrame) {
-    // compare the new col count to the old col count.  
-    // If they are the same, we just need to rebalance column widths
-    // If they differ, we need to fix up other column groups and the column cache
-    // XXX for now assume the worse
-    tableFrame->SetNeedStrategyInit(PR_TRUE);
-  }
-  return rv;
+  return PR_TRUE;
 }
 
 nsTableColFrame * nsTableColGroupFrame::GetFirstColumn()
@@ -515,9 +429,13 @@ nsTableColFrame * nsTableColGroupFrame::GetNextColumn(nsIFrame *aChildFrame)
 {
   nsTableColFrame *result = nsnull;
   nsIFrame *childFrame = aChildFrame;
-  if (nsnull==childFrame)
+  if (!childFrame) {
     childFrame = mFrames.FirstChild();
-  while (nsnull!=childFrame)
+  }
+  else {
+    childFrame = childFrame->GetNextSibling();
+  }
+  while (childFrame)
   {
     if (NS_STYLE_DISPLAY_TABLE_COLUMN ==
         childFrame->GetStyleDisplay()->mDisplay)
@@ -532,23 +450,7 @@ nsTableColFrame * nsTableColGroupFrame::GetNextColumn(nsIFrame *aChildFrame)
 
 PRInt32 nsTableColGroupFrame::GetSpan()
 {
-  PRInt32 span = 1;
-  nsIContent* iContent = GetContent();
-  if (!iContent) return NS_OK;
-
-  // col group element derives from col element
-  nsIDOMHTMLTableColElement* cgContent = nsnull;
-  nsresult rv = iContent->QueryInterface(NS_GET_IID(nsIDOMHTMLTableColElement), 
-                                         (void **)&cgContent);
-  if (cgContent && NS_SUCCEEDED(rv)) { 
-    cgContent->GetSpan(&span);
-    // XXX why does this work!!
-    if (span == -1) {
-      span = 1;
-    }
-    NS_RELEASE(cgContent);
-  }
-  return span;
+  return GetStyleTable()->mSpan;
 }
 
 void nsTableColGroupFrame::SetContinuousBCBorderWidth(PRUint8     aForSide,
@@ -566,13 +468,12 @@ void nsTableColGroupFrame::SetContinuousBCBorderWidth(PRUint8     aForSide,
   }
 }
 
-void nsTableColGroupFrame::GetContinuousBCBorderWidth(float     aPixelsToTwips,
-                                                      nsMargin& aBorder)
+void nsTableColGroupFrame::GetContinuousBCBorderWidth(nsMargin& aBorder)
 {
-  nsTableFrame* table;
-  nsTableFrame::GetTableFrame(this, table);
+  PRInt32 aPixelsToTwips = nsPresContext::AppUnitsPerCSSPixel();
+  nsTableFrame* table = nsTableFrame::GetTableFrame(this);
   nsTableColFrame* col = table->GetColFrame(mStartColIndex + mColCount - 1);
-  col->GetContinuousBCBorderWidth(aPixelsToTwips, aBorder);
+  col->GetContinuousBCBorderWidth(aBorder);
   aBorder.top = BC_BORDER_BOTTOM_HALF_COORD(aPixelsToTwips,
                                             mTopContBorderWidth);
   aBorder.bottom = BC_BORDER_TOP_HALF_COORD(aPixelsToTwips,
@@ -582,33 +483,21 @@ void nsTableColGroupFrame::GetContinuousBCBorderWidth(float     aPixelsToTwips,
 
 /* ----- global methods ----- */
 
-nsresult 
-NS_NewTableColGroupFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
+nsIFrame*
+NS_NewTableColGroupFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsTableColGroupFrame* it = new (aPresShell) nsTableColGroupFrame;
-  if (nsnull == it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  *aNewFrame = it;
-  return NS_OK;
+  return new (aPresShell) nsTableColGroupFrame(aContext);
 }
 
 NS_IMETHODIMP
-nsTableColGroupFrame::Init(nsPresContext*  aPresContext,
-                           nsIContent*      aContent,
+nsTableColGroupFrame::Init(nsIContent*      aContent,
                            nsIFrame*        aParent,
-                           nsStyleContext*  aContext,
                            nsIFrame*        aPrevInFlow)
 {
   nsresult  rv;
 
   // Let the base class do its processing
-  rv = nsHTMLContainerFrame::Init(aPresContext, aContent, aParent, aContext,
-                                  aPrevInFlow);
+  rv = nsHTMLContainerFrame::Init(aContent, aParent, aPrevInFlow);
 
   // record that children that are ignorable whitespace should be excluded 
   mState |= NS_FRAME_EXCLUDE_IGNORABLE_WHITESPACE;
@@ -619,7 +508,7 @@ nsTableColGroupFrame::Init(nsPresContext*  aPresContext,
 nsIAtom*
 nsTableColGroupFrame::GetType() const
 {
-  return nsLayoutAtoms::tableColGroupFrame;
+  return nsGkAtoms::tableColGroupFrame;
 }
 
 #ifdef DEBUG

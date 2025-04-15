@@ -2,6 +2,7 @@
 
 <commandset id="mainCommandSet"/>
 <commandset id="baseMenuCommandSet"/>
+<commandset id="placesCommands"/>
 
 <broadcasterset id="mainBroadcasterSet"/>
 
@@ -9,7 +10,3 @@
 <keyset id="baseMenuKeyset"/>
 
 <menubar id="main-menubar"/>
-
-<template id="bookmarks-template"/>
-
-<tree id="hiddenHistoryTree"/>

@@ -66,6 +66,16 @@ public:
 
 protected:
   /**
+   * Equivalent to nsIURILoader::openChannel, but allows specifying whether the
+   * channel is opened already.
+   */
+  NS_HIDDEN_(nsresult) OpenChannel(nsIChannel* channel,
+                                   PRUint32 aFlags,
+                                   nsIInterfaceRequestor* aWindowContext,
+                                   PRBool aChannelOpen,
+                                   nsIStreamListener** aListener);
+
+  /**
    * we shouldn't need to have an owning ref count on registered
    * content listeners because they are supposed to unregister themselves
    * when they go away. This array stores weak references
@@ -81,5 +91,18 @@ protected:
   
   friend class nsDocumentOpenInfo;
 };
+
+/**
+ * The load has been cancelled because it was found on a malware or phishing blacklist.
+ * XXX: this belongs in an nsDocShellErrors.h file of some sort.
+ */
+#define NS_ERROR_MALWARE_URI   NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_URILOADER, 30)
+#define NS_ERROR_PHISHING_URI  NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_URILOADER, 31)
+
+/**
+ * Used when "Save Link As..." doesn't see the headers quickly enough to choose
+ * a filename.  See nsContextMenu.js. 
+ */
+#define NS_ERROR_SAVE_LINK_AS_TIMEOUT  NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_URILOADER, 32);
 
 #endif /* nsURILoader_h__ */

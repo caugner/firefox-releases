@@ -39,15 +39,15 @@
 #ifndef nsProtocolProxyService_h__
 #define nsProtocolProxyService_h__
 
-#include "plevent.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsVoidArray.h"
 #include "nsIPrefBranch.h"
-#include "nsPIProtocolProxyService.h"
+#include "nsIProtocolProxyService2.h"
 #include "nsIProtocolProxyFilter.h"
 #include "nsIProxyAutoConfig.h"
+#include "nsISystemProxySettings.h"
 #include "nsIProxyInfo.h"
 #include "nsIObserver.h"
 #include "nsDataHashtable.h"
@@ -62,12 +62,12 @@ typedef nsDataHashtable<nsCStringHashKey, PRUint32> nsFailedProxyTable;
 class nsProxyInfo;
 struct nsProtocolInfo;
 
-class nsProtocolProxyService : public nsPIProtocolProxyService
+class nsProtocolProxyService : public nsIProtocolProxyService2
                              , public nsIObserver
 {
 public:
     NS_DECL_ISUPPORTS
-    NS_DECL_NSPIPROTOCOLPROXYSERVICE
+    NS_DECL_NSIPROTOCOLPROXYSERVICE2
     NS_DECL_NSIPROTOCOLPROXYSERVICE
     NS_DECL_NSIOBSERVER
 
@@ -107,6 +107,14 @@ protected:
      */
     NS_HIDDEN_(const char *) ExtractProxyInfo(const char *proxy,
                                               nsProxyInfo **result);
+
+    /**
+     * Load the specified PAC file.
+     * 
+     * @param pacURI
+     *        The URI spec of the PAC file to load.
+     */
+    NS_HIDDEN_(nsresult) ConfigureFromPAC(const nsCString &pacURI, PRBool forceReload);
 
     /**
      * This method builds a list of nsProxyInfo objects from the given PAC-
@@ -283,8 +291,6 @@ protected:
     NS_HIDDEN_(PRBool) CanUseProxy(nsIURI *uri, PRInt32 defaultPort);
 
     static PRBool PR_CALLBACK CleanupFilterArray(void *aElement, void *aData);
-    static void*  PR_CALLBACK HandlePACLoadEvent(PLEvent* aEvent);
-    static void   PR_CALLBACK DestroyPACLoadEvent(PLEvent* aEvent);
 
 public:
     // The Sun Forte compiler and others implement older versions of the
@@ -310,6 +316,7 @@ protected:
         eProxyConfig_PAC,
         eProxyConfig_Direct4x,
         eProxyConfig_WPAD,
+        eProxyConfig_System, // use system proxy settings if available, otherwise DIRECT
         eProxyConfig_Last
     };
 
@@ -371,6 +378,7 @@ protected:
     PRBool                       mSOCKSProxyRemoteDNS;
 
     nsRefPtr<nsPACMan>           mPACMan;  // non-null if we are using PAC
+    nsCOMPtr<nsISystemProxySettings> mSystemProxySettings;
 
     PRTime                       mSessionStart;
     nsFailedProxyTable           mFailedProxies;

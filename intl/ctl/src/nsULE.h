@@ -14,7 +14,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is mozilla.org code. The Initial Developer of the Original Code is Sun Microsystems, Inc.  Portions created by SUN are Copyright (C) 2000 SUN Microsystems, Inc. All Rights Reserved.
+ * The Original Code is mozilla.org code.
  *
  * The Initial Developer of the Original Code is
  * Sun Microsystems, Inc.
@@ -52,7 +52,7 @@
 /* Class nsULE : Declaration */
 class nsULE : public nsILE {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ULE_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ULE_IID)
   NS_DEFINE_STATIC_CID_ACCESSOR(NS_ULE_CID)
   NS_DECL_ISUPPORTS
 
@@ -98,4 +98,7 @@ public:
                            PangoliteGlyphString*,
                            const char* = (const char*)NULL);
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsULE, NS_ULE_IID)
+
 #endif /* !nsULE_H */

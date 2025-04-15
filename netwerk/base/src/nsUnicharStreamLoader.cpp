@@ -37,8 +37,6 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsUnicharStreamLoader.h"
-#include "nsIPipe.h"
-#include "nsIChannel.h"
 #include "nsNetUtil.h"
 #include "nsProxiedService.h"
 #include "nsIChannel.h"
@@ -50,52 +48,21 @@
 #include "nsReadableUtils.h"
 #endif // DEBUG
 
-static NS_DEFINE_CID(kProxyObjectManagerCID, NS_PROXYEVENT_MANAGER_CID);
-
 NS_IMETHODIMP
-nsUnicharStreamLoader::Init(nsIChannel *aChannel,
-                            nsIUnicharStreamLoaderObserver *aObserver,
-                            nsISupports *aContext,
+nsUnicharStreamLoader::Init(nsIUnicharStreamLoaderObserver *aObserver,
                             PRUint32 aSegmentSize)
 {
-  NS_ENSURE_ARG_POINTER(aChannel);
   NS_ENSURE_ARG_POINTER(aObserver);
 
   if (aSegmentSize <= 0) {
     aSegmentSize = nsIUnicharStreamLoader::DEFAULT_SEGMENT_SIZE;
   }
   
-  nsresult rv = aChannel->AsyncOpen(this, aContext);
-
-  if (NS_FAILED(rv)) {
-    // don't callback synchronously as it puts the caller
-    // in a recursive situation and breaks the asynchronous
-    // semantics of nsIStreamLoader
-    nsresult rv2 = NS_OK;
-    nsCOMPtr<nsIProxyObjectManager> pIProxyObjectManager = 
-      do_GetService(kProxyObjectManagerCID, &rv2);
-    if (NS_FAILED(rv2))
-      return rv2;
-
-    nsCOMPtr<nsIUnicharStreamLoaderObserver> pObserver;
-    rv2 =
-      pIProxyObjectManager->GetProxyForObject(NS_CURRENT_EVENTQ, 
-                                              NS_GET_IID(nsIUnicharStreamLoaderObserver),
-                                              aObserver, 
-                                              PROXY_ASYNC | PROXY_ALWAYS,
-                                              getter_AddRefs(pObserver));
-    if (NS_FAILED(rv2))
-      return rv2;
-
-    rv = pObserver->OnStreamComplete(this, aContext, rv, nsnull);
-  }
-
   mObserver = aObserver;
-  mContext = aContext;
   mCharset.Truncate();
   mChannel = nsnull; // Leave this null till OnStopRequest
   mSegmentSize = aSegmentSize;
-  return rv;
+  return NS_OK;
 }
 
 NS_METHOD
@@ -138,6 +105,7 @@ NS_IMETHODIMP
 nsUnicharStreamLoader::OnStartRequest(nsIRequest* request,
                                       nsISupports *ctxt)
 {
+  mContext = ctxt;
   return NS_OK;
 }
 
@@ -154,13 +122,13 @@ nsUnicharStreamLoader::OnStopRequest(nsIRequest *request,
     return NS_ERROR_UNEXPECTED;
   }
 
+  // Make sure mChannel points to the channel that we ended up with
+  mChannel = do_QueryInterface(request);
+
   if (mInputStream) {
     nsresult rv;
     // We got some data at some point.  I guess we should tell our
     // observer about it or something....
-
-    // Make sure mChannel points to the channel that we ended up with
-    mChannel = do_QueryInterface(request);
 
     // Determine the charset
     PRUint32 readCount = 0;

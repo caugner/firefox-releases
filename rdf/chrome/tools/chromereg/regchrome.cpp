@@ -15,7 +15,7 @@
  * The Original Code is mozilla.org code.
  *
  * The Initial Developer of the Original Code is
- * Christopher Blizzard. Portions created by Christopher Blizzard are Copyright (C) Christopher Blizzard.  All Rights Reserved.
+ * Christopher Blizzard.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
@@ -212,7 +212,7 @@ WriteAttributes(nsIRDFDataSource* aDataSource,
         if (literal) {
             const PRUnichar* literalValue;
             literal->GetValueConst(&literalValue);
-            fprintf(out, "%s.%s.%s=%s\n", aProviderType, aProvider, arcValue, NS_ConvertUCS2toUTF8(literalValue).get());
+            fprintf(out, "%s.%s.%s=%s\n", aProviderType, aProvider, arcValue, NS_ConvertUTF16toUTF8(literalValue).get());
         }
 
         nsCOMPtr<nsIRDFResource> resource = do_QueryInterface(valueNode);

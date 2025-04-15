@@ -35,6 +35,12 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * Class that represents a prefix/namespace/localName triple; a single
+ * nodeinfo is shared by all elements in a document that have that
+ * prefix, namespace, and localName.
+ */
+
 #ifndef nsNodeInfo_h___
 #define nsNodeInfo_h___
 
@@ -44,10 +50,13 @@
 #include "nsIAtom.h"
 #include "nsCOMPtr.h"
 
+class nsFixedSizeAllocator;
+
 class nsNodeInfo : public nsINodeInfo
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS(nsNodeInfo)
 
   // nsINodeInfo
   virtual void GetQualifiedName(nsAString &aQualifiedName) const;
@@ -60,17 +69,8 @@ public:
   virtual PRBool Equals(const nsAString& aName, const nsAString& aPrefix,
                         PRInt32 aNamespaceID) const;
   virtual PRBool NamespaceEquals(const nsAString& aNamespaceURI) const;
-  virtual PRBool QualifiedNameEquals(const nsACString& aQualifiedName) const;
-
-  nsIDocument* GetDocument() const
-  {
-    return mOwnerManager->GetDocument();
-  }
-
-  nsIPrincipal *GetDocumentPrincipal() const
-  {
-    return mOwnerManager->GetDocumentPrincipal();
-  }
+  virtual PRBool
+    QualifiedNameEqualsInternal(const nsACString& aQualifiedName) const;
 
   // nsNodeInfo
   // Create objects with Create
@@ -98,9 +98,7 @@ public:
   static void ClearCache();
 
 private:
-  void Clear();
-
-  static nsNodeInfo *sCachedNodeInfo;
+  static nsFixedSizeAllocator* sNodeInfoPool;
 
   /**
    * This method gets called by Release() when it's time to delete 

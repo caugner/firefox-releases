@@ -96,6 +96,7 @@
 #define NS_ERROR_MODULE_SVG        29
 #define NS_ERROR_MODULE_STORAGE    30
 #define NS_ERROR_MODULE_SCHEMA     31
+#define NS_ERROR_MODULE_DOM_FILE   32
 
 /* NS_ERROR_MODULE_GENERAL should be used by modules that do not
  * care if return code values overlap. Callers of methods that
@@ -108,6 +109,7 @@
 
 /**
  * @name Standard Error Handling Macros
+ * @return 0 or 1
  */
 
 #define NS_FAILED(_nsresult) (NS_UNLIKELY((_nsresult) & 0x80000000))
@@ -295,6 +297,11 @@
 
 #define NS_SUCCESS_LOSS_OF_INSIGNIFICANT_DATA   NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_XPCOM,  1)
 
+/**
+ * Various operations are not permitted during XPCOM shutdown and will fail
+ * with this exception.
+ */
+#define NS_ERROR_ILLEGAL_DURING_SHUTDOWN        NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_XPCOM, 30)
 
  /*
   * This will return the nsresult corresponding to the most recent NSPR failure

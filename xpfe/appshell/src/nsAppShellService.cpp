@@ -44,7 +44,6 @@
 #include "nsIURL.h"
 #include "nsNetUtil.h"
 #include "nsIServiceManager.h"
-#include "nsIEventQueueService.h"
 #include "nsIObserverService.h"
 #include "nsIObserver.h"
 #include "nsIXPConnect.h"
@@ -63,7 +62,6 @@
 #include "nsCRT.h"
 #include "nsITimelineService.h"
 #include "prprf.h"    
-#include "plevent.h"
 
 #include "nsWidgetsCID.h"
 #include "nsIRequestObserver.h"
@@ -79,11 +77,15 @@
 #include "nsICharsetConverterManager.h"
 #include "nsIUnicodeDecoder.h"
 
+// Default URL for the hidden window, can be overridden by a pref on Mac
+#define DEFAULT_HIDDENWINDOW_URL "resource://gre/res/hiddenWindow.html"
+
 class nsIAppShell;
 
 nsAppShellService::nsAppShellService() : 
   mXPCOMShuttingDown(PR_FALSE),
-  mModalWindowCount(0)
+  mModalWindowCount(0),
+  mApplicationProvidedHiddenWindow(PR_FALSE)
 {
   nsCOMPtr<nsIObserverService> obs
     (do_GetService("@mozilla.org/observer-service;1"));
@@ -153,17 +155,17 @@ nsAppShellService::CreateHiddenWindow(nsIAppShell* aAppShell)
   nsresult rv;
   PRInt32 initialHeight = 100, initialWidth = 100;
     
-#if defined(XP_MAC) || defined(XP_MACOSX)
-  static const char defaultHiddenWindowURL[] = "chrome://global/content/hiddenWindow.xul";
+#ifdef XP_MACOSX
   PRUint32    chromeMask = 0;
   nsCOMPtr<nsIPrefBranch> prefBranch;
   nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
   prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
   nsXPIDLCString prefVal;
   rv = prefBranch->GetCharPref("browser.hiddenWindowChromeURL", getter_Copies(prefVal));
-  const char* hiddenWindowURL = prefVal.get() ? prefVal.get() : defaultHiddenWindowURL;
+  const char* hiddenWindowURL = prefVal.get() ? prefVal.get() : DEFAULT_HIDDENWINDOW_URL;
+  mApplicationProvidedHiddenWindow = prefVal.get() ? PR_TRUE : PR_FALSE;
 #else
-  static const char hiddenWindowURL[] = "resource://gre/res/hiddenWindow.html";
+  static const char hiddenWindowURL[] = DEFAULT_HIDDENWINDOW_URL;
   PRUint32    chromeMask =  nsIWebBrowserChrome::CHROME_ALL;
 #endif
 
@@ -179,7 +181,7 @@ nsAppShellService::CreateHiddenWindow(nsIAppShell* aAppShell)
 
   mHiddenWindow.swap(newWindow);
 
-#if defined(XP_MAC) || defined(XP_MACOSX)
+#ifdef XP_MACOSX
   // hide the hidden window by launching it into outer space. This
   // way, we can keep it visible and let the OS send it activates
   // to keep menus happy. This will cause it to show up in window
@@ -255,7 +257,7 @@ nsAppShellService::CalculateWindowZLevel(nsIXULWindow *aParent,
   else if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_LOWERED)
     zLevel = nsIXULWindow::loweredZ;
 
-#if defined(XP_MAC) || defined(XP_MACOSX)
+#ifdef XP_MACOSX
   /* Platforms on which modal windows are always application-modal, not
      window-modal (that's just the Mac, right?) want modal windows to
      be stacked on top of everyone else.
@@ -310,8 +312,14 @@ nsAppShellService::JustCreateTopWindow(nsIXULWindow *aParent,
 
 #ifdef XP_MACOSX
   // Mac OS X sheet support
+  // Adding CHROME_OPENAS_CHROME to sheetMask makes modal windows opened from
+  // nsGlobalWindow::ShowModalDialog() be dialogs (not sheets), while modal
+  // windows opened from nsPromptService::DoDialog() still are sheets.  This
+  // fixes bmo bug 395465 (see nsCocoaWindow::StandardCreate() and
+  // nsCocoaWindow::SetModal()).
   PRUint32 sheetMask = nsIWebBrowserChrome::CHROME_OPENAS_DIALOG |
-    nsIWebBrowserChrome::CHROME_MODAL;
+                       nsIWebBrowserChrome::CHROME_MODAL |
+                       nsIWebBrowserChrome::CHROME_OPENAS_CHROME;
   if (aParent && ((aChromeMask & sheetMask) == sheetMask))
     widgetInitData.mWindowType = eWindowType_sheet;
 #endif
@@ -327,23 +335,23 @@ nsAppShellService::JustCreateTopWindow(nsIXULWindow *aParent,
   else {
     widgetInitData.mBorderStyle = eBorderStyle_none; // assumes none == 0x00
     if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_BORDERS)
-      widgetInitData.mBorderStyle = NS_STATIC_CAST(enum nsBorderStyle, widgetInitData.mBorderStyle | eBorderStyle_border);
+      widgetInitData.mBorderStyle = static_cast<enum nsBorderStyle>(widgetInitData.mBorderStyle | eBorderStyle_border);
     if (aChromeMask & nsIWebBrowserChrome::CHROME_TITLEBAR)
-      widgetInitData.mBorderStyle = NS_STATIC_CAST(enum nsBorderStyle, widgetInitData.mBorderStyle | eBorderStyle_title);
+      widgetInitData.mBorderStyle = static_cast<enum nsBorderStyle>(widgetInitData.mBorderStyle | eBorderStyle_title);
     if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_CLOSE)
-      widgetInitData.mBorderStyle = NS_STATIC_CAST(enum nsBorderStyle, widgetInitData.mBorderStyle | eBorderStyle_close);
+      widgetInitData.mBorderStyle = static_cast<enum nsBorderStyle>(widgetInitData.mBorderStyle | eBorderStyle_close);
     if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_RESIZE) {
-      widgetInitData.mBorderStyle = NS_STATIC_CAST(enum nsBorderStyle, widgetInitData.mBorderStyle | eBorderStyle_resizeh);
+      widgetInitData.mBorderStyle = static_cast<enum nsBorderStyle>(widgetInitData.mBorderStyle | eBorderStyle_resizeh);
       // only resizable windows get the maximize button (but not dialogs)
       if (!(aChromeMask & nsIWebBrowserChrome::CHROME_OPENAS_DIALOG))
-        widgetInitData.mBorderStyle = NS_STATIC_CAST(enum nsBorderStyle, widgetInitData.mBorderStyle | eBorderStyle_maximize);
+        widgetInitData.mBorderStyle = static_cast<enum nsBorderStyle>(widgetInitData.mBorderStyle | eBorderStyle_maximize);
     }
     // all windows (except dialogs) get minimize buttons and the system menu
     if (!(aChromeMask & nsIWebBrowserChrome::CHROME_OPENAS_DIALOG))
-      widgetInitData.mBorderStyle = NS_STATIC_CAST(enum nsBorderStyle, widgetInitData.mBorderStyle | eBorderStyle_minimize | eBorderStyle_menu);
+      widgetInitData.mBorderStyle = static_cast<enum nsBorderStyle>(widgetInitData.mBorderStyle | eBorderStyle_minimize | eBorderStyle_menu);
     // but anyone can explicitly ask for a minimize button
     if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_MIN) {
-      widgetInitData.mBorderStyle = NS_STATIC_CAST(enum nsBorderStyle, widgetInitData.mBorderStyle | eBorderStyle_minimize );
+      widgetInitData.mBorderStyle = static_cast<enum nsBorderStyle>(widgetInitData.mBorderStyle | eBorderStyle_minimize);
     }  
   }
 
@@ -446,6 +454,13 @@ nsAppShellService::GetHiddenWindowAndJSContext(nsIDOMWindowInternal **aWindow,
     return rv;
 }
 
+NS_IMETHODIMP
+nsAppShellService::GetApplicationProvidedHiddenWindow(PRBool* aAPHW)
+{
+    *aAPHW = mApplicationProvidedHiddenWindow;
+    return NS_OK;
+}
+
 /*
  * Register a new top level window (created elsewhere)
  */
@@ -503,6 +518,11 @@ nsAppShellService::UnregisterTopLevelWindow(nsIXULWindow* aWindow)
   }
   
   NS_ENSURE_ARG_POINTER(aWindow);
+
+  if (aWindow == mHiddenWindow) {
+    // CreateHiddenWindow() does not register the window, so we're done.
+    return NS_OK;
+  }
 
   // tell the window mediator
   nsCOMPtr<nsIWindowMediator> mediator

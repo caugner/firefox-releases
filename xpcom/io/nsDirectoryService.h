@@ -156,9 +156,19 @@ public:
     static nsIAtom *sLocalAppdata;
     static nsIAtom *sPrinthood;
     static nsIAtom *sWinCookiesDirectory;
+    static nsIAtom *sDefaultDownloadDirectory;
 #elif defined (XP_UNIX)
     static nsIAtom *sLocalDirectory;
     static nsIAtom *sLibDirectory;
+    static nsIAtom *sXDGDesktop;
+    static nsIAtom *sXDGDocuments;
+    static nsIAtom *sXDGDownload;
+    static nsIAtom *sXDGMusic;
+    static nsIAtom *sXDGPictures;
+    static nsIAtom *sXDGPublicShare;
+    static nsIAtom *sXDGTemplates;
+    static nsIAtom *sXDGVideos;
+    static nsIAtom *sDefaultDownloadDirectory;
 #elif defined (XP_OS2)
     static nsIAtom *sSystemDirectory;
     static nsIAtom *sOS2Directory;

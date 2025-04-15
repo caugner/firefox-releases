@@ -51,34 +51,31 @@
 #include "nsIDOM3Node.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMText.h"
-#include "nsIXTFXMLVisualWrapper.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 #include "nsIXFormsUIWidget.h"
 #include "nsIDocument.h"
 #include "nsNetUtil.h"
-#include "nsIXFormsLabelElement.h"
 #include "nsIXFormsItemElement.h"
 
 class nsXFormsLabelElement : public nsXFormsDelegateStub,
                              public nsIStreamListener,
-                             public nsIInterfaceRequestor,
-                             public nsIXFormsLabelElement
+                             public nsIInterfaceRequestor
 {
 public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIREQUESTOBSERVER
   NS_DECL_NSISTREAMLISTENER
   NS_DECL_NSIINTERFACEREQUESTOR
-  NS_DECL_NSIXFORMSLABELELEMENT
 
   // nsIXFormsDelegate
   NS_IMETHOD GetValue(nsAString& aValue);
+  NS_IMETHOD WidgetAttached();
 
   // nsIXFormsControl
   NS_IMETHOD IsEventTarget(PRBool *aOK);
   NS_IMETHOD Refresh();
 
-  NS_IMETHOD OnCreated(nsIXTFBindableElementWrapper *aWrapper);
+  NS_IMETHOD OnCreated(nsIXTFElementWrapper *aWrapper);
   NS_IMETHOD OnDestroyed();
 
   // nsIXTFElement overrides
@@ -87,6 +84,9 @@ public:
   NS_IMETHOD ChildRemoved(PRUint32 aIndex);
   NS_IMETHOD AttributeSet(nsIAtom *aName, const nsAString &aSrc);
   NS_IMETHOD AttributeRemoved(nsIAtom *aName);
+  NS_IMETHOD PerformAccesskey();
+
+  nsXFormsLabelElement() : mWidgetLoaded(PR_FALSE) {};
 
 #ifdef DEBUG_smaug
   virtual const char* Name() { return "label"; }
@@ -94,19 +94,28 @@ public:
 private:
   NS_HIDDEN_(void) LoadExternalLabel(const nsAString& aValue);
 
+  /** Set context info for events.
+   *
+   * @param aName     Name of the context property.
+   * @param aValue    Value of the context property.
+   */
+  nsresult SetContextInfo(const char *aName, const nsAString &aValue);
+
   nsCString            mSrcAttrText;
   nsCOMPtr<nsIChannel> mChannel;
+  PRBool               mWidgetLoaded;
+  // Context Info for events.
+  nsCOMArray<nsIXFormsContextInfo> mContextInfo;
 };
 
-NS_IMPL_ISUPPORTS_INHERITED4(nsXFormsLabelElement,
+NS_IMPL_ISUPPORTS_INHERITED3(nsXFormsLabelElement,
                              nsXFormsDelegateStub,
                              nsIRequestObserver,
                              nsIStreamListener,
-                             nsIInterfaceRequestor,
-                             nsIXFormsLabelElement)
+                             nsIInterfaceRequestor)
 
 NS_IMETHODIMP
-nsXFormsLabelElement::OnCreated(nsIXTFBindableElementWrapper *aWrapper)
+nsXFormsLabelElement::OnCreated(nsIXTFElementWrapper *aWrapper)
 {
   nsresult rv = nsXFormsDelegateStub::OnCreated(aWrapper);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -114,7 +123,8 @@ nsXFormsLabelElement::OnCreated(nsIXTFBindableElementWrapper *aWrapper)
   aWrapper->SetNotificationMask(kStandardNotificationMask |
                                 nsIXTFElement::NOTIFY_CHILD_INSERTED |
                                 nsIXTFElement::NOTIFY_CHILD_APPENDED |
-                                nsIXTFElement::NOTIFY_CHILD_REMOVED);
+                                nsIXTFElement::NOTIFY_CHILD_REMOVED |
+                                nsIXTFElement::NOTIFY_PERFORM_ACCESSKEY);
   return NS_OK;
 }
 
@@ -189,6 +199,21 @@ nsXFormsLabelElement::AttributeRemoved(nsIAtom *aName)
 }
 
 NS_IMETHODIMP
+nsXFormsLabelElement::PerformAccesskey()
+{
+  nsCOMPtr<nsIDOMNode> node(do_QueryInterface(mElement));
+  nsCOMPtr<nsIDOMNode> parent;
+  node->GetParentNode(getter_AddRefs(parent));
+  if (parent) {
+    nsCOMPtr<nsIXTFElement> parentElm(do_QueryInterface(parent));
+    if (parentElm)
+      parentElm->PerformAccesskey();
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsXFormsLabelElement::GetValue(nsAString& aValue)
 {
   // The order of precedence for determining the label is:
@@ -199,6 +224,28 @@ nsXFormsLabelElement::GetValue(nsAString& aValue)
     // handle linking ('src') attribute
     aValue = NS_ConvertUTF8toUTF16(mSrcAttrText);
   }
+  if (aValue.IsVoid()) {
+    NS_ENSURE_STATE(mElement);
+
+    nsCOMPtr<nsIDOM3Node> inner(do_QueryInterface(mElement));
+    if (inner) {
+      inner->GetTextContent(aValue);
+    }
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXFormsLabelElement::WidgetAttached()
+{
+  mWidgetLoaded = PR_TRUE;
+
+  // We shouldn't report to model that label is ready to work
+  // if label is loading external resource. We will report
+  // about it later when external resource will be loaded.
+  if (!mChannel)
+    nsXFormsDelegateStub::WidgetAttached();
 
   return NS_OK;
 }
@@ -213,8 +260,7 @@ nsXFormsLabelElement::LoadExternalLabel(const nsAString& aSrc)
   nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
   if (doc) {
     nsCOMPtr<nsIURI> uri;
-    NS_NewURI(getter_AddRefs(uri), aSrc, doc->GetDocumentCharacterSet().get(),
-              doc->GetDocumentURI());
+    nsXFormsUtils::GetNewURI(doc, aSrc, getter_AddRefs(uri));
     if (uri) {
       if (nsXFormsUtils::CheckConnectionAllowed(mElement, uri)) {
         nsCOMPtr<nsILoadGroup> loadGroup;
@@ -233,7 +279,7 @@ nsXFormsLabelElement::LoadExternalLabel(const nsAString& aSrc)
             // URI doesn't exist; report error.
             mChannel = nsnull;
 
-            const nsPromiseFlatString& flat = PromiseFlatString(aSrc);
+            const nsString& flat = PromiseFlatString(aSrc);
             const PRUnichar *strings[] = { flat.get(),
                                            NS_LITERAL_STRING("label").get() };
             nsXFormsUtils::ReportError(NS_LITERAL_STRING("externalLink1Error"),
@@ -242,8 +288,13 @@ nsXFormsLabelElement::LoadExternalLabel(const nsAString& aSrc)
             nsCOMPtr<nsIModelElementPrivate> modelPriv =
                                               nsXFormsUtils::GetModel(mElement);
             nsCOMPtr<nsIDOMNode> model = do_QueryInterface(modelPriv);
+
+            // Context Info: 'resource-uri'
+            // The URI associated with the failed link.
+            nsAutoString resourceURI(aSrc);
+            SetContextInfo("resource-uri", resourceURI);
             nsXFormsUtils::DispatchEvent(model, eEvent_LinkError, nsnull,
-                                         mElement);
+                                         mElement, &mContextInfo);
           }
         }
       } else {
@@ -253,7 +304,13 @@ nsXFormsLabelElement::LoadExternalLabel(const nsAString& aSrc)
         nsCOMPtr<nsIModelElementPrivate> modelPriv =
           nsXFormsUtils::GetModel(mElement);
         nsCOMPtr<nsIDOMNode> model = do_QueryInterface(modelPriv);
-        nsXFormsUtils::DispatchEvent(model, eEvent_LinkError, nsnull, mElement);
+
+        // Context Info: 'resource-uri'
+        // The URI associated with the failed link.
+        nsAutoString resourceURI(aSrc);
+        SetContextInfo("resource-uri", resourceURI);
+        nsXFormsUtils::DispatchEvent(model, eEvent_LinkError, nsnull, mElement,
+                                     &mContextInfo);
       }
     }
   }
@@ -270,20 +327,6 @@ nsXFormsLabelElement::Refresh()
 
   nsCOMPtr<nsIDOMNode> parent;
   mElement->GetParentNode(getter_AddRefs(parent));
-
-  // If <label> is inside <select1> its parent is <item>
-  // or <contextcontainer> (which parent is <item>).
-  nsCOMPtr<nsIXFormsItemElement> item(do_QueryInterface(parent));
-  if (item) {
-    item->LabelRefreshed();
-  } else if (parent) {
-    nsCOMPtr<nsIDOMNode> grandparent;
-    parent->GetParentNode(getter_AddRefs(grandparent));
-    item = do_QueryInterface(grandparent);
-    if (item) {
-      item->LabelRefreshed();
-    }
-  }
 
   return NS_OK;
 }
@@ -393,30 +436,29 @@ nsXFormsLabelElement::OnStopRequest(nsIRequest *aRequest,
     nsCOMPtr<nsIModelElementPrivate> modelPriv =
       nsXFormsUtils::GetModel(mElement);
     nsCOMPtr<nsIDOMNode> model = do_QueryInterface(modelPriv);
-    nsXFormsUtils::DispatchEvent(model, eEvent_LinkError, nsnull, mElement);
+
+    // Context Info: 'resource-uri'
+    // The URI associated with the failed link.
+    SetContextInfo("resource-uri", src);
+    nsXFormsUtils::DispatchEvent(model, eEvent_LinkError, nsnull, mElement,
+                                 &mContextInfo);
 
     mSrcAttrText.Truncate();
   }
 
-  nsCOMPtr<nsIXFormsUIWidget> widget = do_QueryInterface(mElement);
-  if (widget)
-    widget->Refresh();
+  if (mWidgetLoaded)
+    nsXFormsDelegateStub::WidgetAttached();
 
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsXFormsLabelElement::GetTextValue(nsAString& aValue)
+nsresult
+nsXFormsLabelElement::SetContextInfo(const char *aName, const nsAString &aValue)
 {
-  NS_ENSURE_STATE(mElement);
-  GetValue(aValue);
-
-  if (aValue.IsVoid()) {
-    nsCOMPtr<nsIDOM3Node> inner(do_QueryInterface(mElement));
-    if (inner) {
-      inner->GetTextContent(aValue);
-    }
-  }
+  nsCOMPtr<nsXFormsContextInfo> contextInfo = new nsXFormsContextInfo(mElement);
+  NS_ENSURE_TRUE(contextInfo, NS_ERROR_OUT_OF_MEMORY);
+  contextInfo->SetStringValue(aName, aValue);
+  mContextInfo.AppendObject(contextInfo);
 
   return NS_OK;
 }

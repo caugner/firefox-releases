@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -48,7 +49,7 @@
 
 class nsMathMLmfencedFrame : public nsMathMLContainerFrame {
 public:
-  friend nsresult NS_NewMathMLmfencedFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmfencedFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
   virtual void
   SetAdditionalStyleContext(PRInt32          aIndex, 
@@ -60,8 +61,7 @@ public:
   InheritAutomaticData(nsIFrame* aParent);
 
   NS_IMETHOD
-  SetInitialChildList(nsPresContext* aPresContext,
-                      nsIAtom*        aListName,
+  SetInitialChildList(nsIAtom*        aListName,
                       nsIFrame*       aChildList);
 
   NS_IMETHOD
@@ -70,16 +70,15 @@ public:
          const nsHTMLReflowState& aReflowState,
          nsReflowStatus&          aStatus);
 
-  NS_IMETHOD 
-  Paint(nsPresContext*      aPresContext,
-        nsIRenderingContext& aRenderingContext,
-        const nsRect&        aDirtyRect,
-        nsFramePaintLayer    aWhichLayer,
-        PRUint32             aFlags = 0);
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
+
+  virtual nscoord
+  GetIntrinsicWidth(nsIRenderingContext* aRenderingContext);
 
   NS_IMETHOD
-  AttributeChanged(nsIContent*     aContent,
-                   PRInt32         aNameSpaceID,
+  AttributeChanged(PRInt32         aNameSpaceID,
                    nsIAtom*        aAttribute,
                    PRInt32         aModType);
 
@@ -91,18 +90,26 @@ public:
   virtual nscoord
   FixInterFrameSpacing(nsHTMLReflowMetrics& aDesiredSize);
 
-  // exported routine that both mfenced and mfrac share.
-  // mfrac uses this when its bevelled attribute is set.
+  // exported routines that both mfenced and mfrac share.
+  // mfrac uses these when its bevelled attribute is set.
   static nsresult
   doReflow(nsPresContext*          aPresContext,
            const nsHTMLReflowState& aReflowState,
            nsHTMLReflowMetrics&     aDesiredSize,
            nsReflowStatus&          aStatus,
-           nsIFrame*                aForFrame,
+           nsMathMLContainerFrame*  aForFrame,
            nsMathMLChar*            aOpenChar,
            nsMathMLChar*            aCloseChar,
            nsMathMLChar*            aSeparatorsChar,
            PRInt32                  aSeparatorsCount);
+
+  static nscoord
+  doGetIntrinsicWidth(nsIRenderingContext*    aRenderingContext,
+                      nsMathMLContainerFrame* aForFrame,
+                      nsMathMLChar*           aOpenChar,
+                      nsMathMLChar*           aCloseChar,
+                      nsMathMLChar*           aSeparatorsChar,
+                      PRInt32                 aSeparatorsCount);
 
   // helper routines to format the MathMLChars involved here
   static nsresult
@@ -115,7 +122,8 @@ public:
              nscoord              leading,
              nscoord              em,
              nsBoundingMetrics&   aContainerSize,
-             nsHTMLReflowMetrics& aDesiredSize);
+             nscoord&             aAscent,
+             nscoord&             aDescent);
 
   static void
   PlaceChar(nsMathMLChar*      aMathMLChar,
@@ -124,7 +132,7 @@ public:
             nscoord&           dx);
 
 protected:
-  nsMathMLmfencedFrame();
+  nsMathMLmfencedFrame(nsStyleContext* aContext) : nsMathMLContainerFrame(aContext) {}
   virtual ~nsMathMLmfencedFrame();
   
   virtual PRIntn GetSkipSides() const { return 0; }

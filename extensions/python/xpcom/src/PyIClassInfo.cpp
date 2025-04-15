@@ -14,7 +14,7 @@
  * The Original Code is the Python XPCOM language bindings.
  *
  * The Initial Developer of the Original Code is
- * ActiveState Tool Corp. Portions created by ActiveState Tool Corp. are Copyright (C)  2001 ActiveState Tool Corp.  All Rights Reserved.
+ * ActiveState Tool Corp.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
@@ -47,6 +47,7 @@
 
 #include "PyXPCOM_std.h"
 #include "nsIClassInfo.h"
+#include "nsIProgrammingLanguage.h"
 
 static nsIClassInfo *_GetI(PyObject *self) {
 	nsIID iid = NS_GET_IID(nsIClassInfo);
@@ -69,6 +70,7 @@ static PyObject *PyGetInterfaces(PyObject *self, PyObject *args)
 	nsIID** iidArray = nsnull;
 	PRUint32 iidCount = 0;
 	nsresult r;
+	PRUint32 i;
 	Py_BEGIN_ALLOW_THREADS;
 	r = pI->GetInterfaces(&iidCount, &iidArray);
 	Py_END_ALLOW_THREADS;
@@ -77,9 +79,11 @@ static PyObject *PyGetInterfaces(PyObject *self, PyObject *args)
 
 	PyObject *ret = PyTuple_New(iidCount);
 	if (ret==NULL)
-		return NULL;
-	for (PRUint32 i=0;i<iidCount;i++)
+		goto done;
+	for (i=0;i<iidCount;i++)
 		PyTuple_SET_ITEM( ret, i, Py_nsIID::PyObjectFromIID(*(iidArray[i])) );
+done:
+	NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(iidCount, iidArray);
 	return ret;
 }
 
@@ -93,14 +97,14 @@ static PyObject *PyGetHelperForLanguage(PyObject *self, PyObject *args)
 		return NULL;
 
 	nsresult r;
-	nsISupports *pi;
+	nsCOMPtr<nsISupports> pi;
 	Py_BEGIN_ALLOW_THREADS;
-	r = pI->GetHelperForLanguage(language, &pi);
+	r = pI->GetHelperForLanguage(language, getter_AddRefs(pi));
 	Py_END_ALLOW_THREADS;
 	if ( NS_FAILED(r) )
 		return PyXPCOM_BuildPyException(r);
 
-	return Py_nsISupports::PyObjectFromInterface(pi, NS_GET_IID(nsISupports), PR_FALSE);
+	return Py_nsISupports::PyObjectFromInterface(pi, NS_GET_IID(nsISupports));
 }
 
 static PyObject *MakeStringOrNone(char *v)

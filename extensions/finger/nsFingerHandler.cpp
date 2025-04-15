@@ -49,8 +49,6 @@
 #include "nsIProgressEventSink.h"
 #include "nsNetCID.h"
 
-static NS_DEFINE_CID(kSimpleURICID, NS_SIMPLEURI_CID);
-
 ////////////////////////////////////////////////////////////////////////////////
 
 nsFingerHandler::nsFingerHandler() {
@@ -92,7 +90,8 @@ nsFingerHandler::GetDefaultPort(PRInt32 *result) {
 
 NS_IMETHODIMP
 nsFingerHandler::GetProtocolFlags(PRUint32 *result) {
-    *result = URI_NORELATIVE | URI_NOAUTH | ALLOWS_PROXY;
+    *result = URI_NORELATIVE | URI_NOAUTH | ALLOWS_PROXY |
+        URI_LOADABLE_BY_ANYONE;
     return NS_OK;
 }
 
@@ -104,7 +103,7 @@ nsFingerHandler::NewURI(const nsACString &aSpec,
     nsresult rv;
 
     nsIURI* url;
-    rv = CallCreateInstance(kSimpleURICID, &url);
+    rv = CallCreateInstance(NS_SIMPLEURI_CONTRACTID, &url);
     if (NS_FAILED(rv)) return rv;
 
     rv = url->SetSpec(aSpec);

@@ -39,19 +39,23 @@
 #ifndef NSSVGGFRAME_H
 #define NSSVGGFRAME_H
 
-#include "nsSVGDefsFrame.h"
+#include "nsSVGContainerFrame.h"
 
-typedef nsSVGDefsFrame nsSVGGFrameBase;
+typedef nsSVGDisplayContainerFrame nsSVGGFrameBase;
 
 class nsSVGGFrame : public nsSVGGFrameBase
 {
-public:
-  nsSVGGFrame() : mPropagateTransform(PR_TRUE) {}
+  friend nsIFrame*
+  NS_NewSVGGFrame(nsIPresShell* aPresShell, nsIContent* aContent, nsStyleContext* aContext);
+protected:
+  nsSVGGFrame(nsStyleContext* aContext) :
+    nsSVGGFrameBase(aContext), mPropagateTransform(PR_TRUE) {}
 
+public:
   /**
    * Get the "type" of the frame
    *
-   * @see nsLayoutAtoms::svgGFrame
+   * @see nsGkAtoms::svgGFrame
    */
   virtual nsIAtom* GetType() const;
 
@@ -62,21 +66,25 @@ public:
   }
 #endif
 
-protected:
-  friend nsresult
-  NS_NewSVGGFrame(nsIPresShell* aPresShell, nsIContent* aContent, nsIFrame** aNewFrame);
+  // nsIFrame interface:
+  NS_IMETHOD DidSetStyleContext();
+  NS_IMETHOD AttributeChanged(PRInt32         aNameSpaceID,
+                              nsIAtom*        aAttribute,
+                              PRInt32         aModType);
 
   // nsISVGChildFrame interface:
-  NS_IMETHOD PaintSVG(nsISVGRendererCanvas* canvas, const nsRect& dirtyRectTwips);
-  NS_IMETHOD GetFrameForPointSVG(float x, float y, nsIFrame** hit);  
-  NS_IMETHOD_(already_AddRefed<nsISVGRendererRegion>) GetCoveredRegion();
+  virtual void NotifySVGChanged(PRUint32 aFlags);
   NS_IMETHOD SetMatrixPropagation(PRBool aPropagate);
-  NS_IMETHOD GetBBox(nsIDOMSVGRect **_retval);
+  NS_IMETHOD SetOverrideCTM(nsIDOMSVGMatrix *aCTM);
+  virtual already_AddRefed<nsIDOMSVGMatrix> GetOverrideCTM();
 
-  // nsISVGContainerFrame interface:
-  already_AddRefed<nsIDOMSVGMatrix> GetCanvasTM();
+  // nsSVGContainerFrame methods:
+  virtual already_AddRefed<nsIDOMSVGMatrix> GetCanvasTM();
 
-  PRBool mPropagateTransform;
+  nsCOMPtr<nsIDOMSVGMatrix> mCanvasTM;
+  nsCOMPtr<nsIDOMSVGMatrix> mOverrideCTM;
+
+  PRPackedBool mPropagateTransform;
 };
 
 #endif

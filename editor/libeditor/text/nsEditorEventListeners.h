@@ -223,6 +223,8 @@ public:
   NS_IMETHOD DragExit(nsIDOMEvent* aDragEvent);
   NS_IMETHOD DragDrop(nsIDOMEvent* aDragEvent);
   NS_IMETHOD DragGesture(nsIDOMEvent* aDragEvent);
+  NS_IMETHOD Drag(nsIDOMEvent* aDragEvent);
+  NS_IMETHOD DragEnd(nsIDOMEvent* aDragEvent);
 /*END implementations of dragevent handler interface*/
 
 protected:
@@ -236,7 +238,6 @@ protected:
   
   nsCOMPtr<nsICaret> mCaret;
   PRBool             mCaretDrawn;
-
 };
 
 /** editor Implementation of the FocusListener interface
@@ -246,15 +247,10 @@ class nsTextEditorFocusListener : public nsIDOMFocusListener
 public:
   /** default constructor
    */
-  nsTextEditorFocusListener();
+  nsTextEditorFocusListener(nsIEditor *aEditor, nsIPresShell *aPresShell);
   /** default destructor
    */
   virtual ~nsTextEditorFocusListener();
-
-  /** SetEditor gives an address to the editor that will be accessed
-   *  @param aEditor the editor this listener calls for editing operations
-   */
-  void SetEditor(nsIEditor *aEditor){mEditor = aEditor;}
 
 /*interfaces for addref and release and queryinterface*/
   NS_DECL_ISUPPORTS
@@ -267,6 +263,8 @@ public:
 
 protected:
   nsIEditor*     mEditor;		// weak reference
+  nsWeakPtr mPresShell;
+  PRBool mIsFocused;
 };
 
 
@@ -294,7 +292,9 @@ extern nsresult NS_NewEditorCompositionListener(nsIDOMEventListener** aInstanceP
 
 /** factory for the editor composition listener 
  */
-extern nsresult NS_NewEditorFocusListener(nsIDOMEventListener** aInstancePtrResult, nsIEditor *aEditor);
+extern nsresult
+NS_NewEditorFocusListener(nsIDOMEventListener** aInstancePtrResult,
+                          nsIEditor *aEditor, nsIPresShell *aPresShell);
 
 #endif //editorInterfaces_h__
 

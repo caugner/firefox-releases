@@ -46,12 +46,11 @@
 #include "nsISocketTransport.h"
 #include "nsIServiceManager.h"
 #include "nsISSLSocketControl.h"
-#include "nsIStringStream.h"
+#include "nsStringStream.h"
 #include "netCore.h"
 #include "nsNetCID.h"
 #include "nsAutoLock.h"
 #include "prmem.h"
-#include "plevent.h"
 
 #ifdef DEBUG
 // defined by the socket transport service while active
@@ -319,7 +318,14 @@ nsHttpConnection::OnHeadersAvailable(nsAHttpTransaction *trans,
             mKeepAlive = PR_FALSE;
         else {
             mKeepAlive = PR_TRUE;
-            mSupportsPipelining = SupportsPipelining(responseHead);
+
+            // Do not support pipelining when we are establishing
+            // an SSL tunnel though an HTTP proxy. Pipelining support
+            // determination must be based on comunication with the
+            // target server in this case. See bug 422016 for futher
+            // details.
+            if (!mSSLProxyConnectStream)
+              mSupportsPipelining = SupportsPipelining(responseHead);
         }
     }
     mKeepAliveMask = mKeepAlive;
@@ -366,7 +372,7 @@ nsHttpConnection::OnHeadersAvailable(nsAHttpTransaction *trans,
             // processing a transaction pipeline until after the first HTTP/1.1
             // response.
             nsHttpTransaction *trans =
-                    NS_STATIC_CAST(nsHttpTransaction *, mTransaction);
+                    static_cast<nsHttpTransaction *>(mTransaction);
             trans->SetSSLConnectFailed();
         }
     }
@@ -694,7 +700,7 @@ nsHttpConnection::SetupSSLProxyConnect()
 
     // NOTE: this cast is valid since this connection cannot be processing a
     // transaction pipeline until after the first HTTP/1.1 response.
-    nsHttpTransaction *trans = NS_STATIC_CAST(nsHttpTransaction *, mTransaction);
+    nsHttpTransaction *trans = static_cast<nsHttpTransaction *>(mTransaction);
     
     val = trans->RequestHead()->PeekHeader(nsHttp::Host);
     if (val) {

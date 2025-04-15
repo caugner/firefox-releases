@@ -34,6 +34,13 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/*
+ * nsBaseContentList is a basic list of content nodes; nsContentList
+ * is a commonly used NodeList implementation (used for
+ * getElementsByTagName, some properties on nsIDOMHTMLDocument, etc).
+ */
+
 #ifndef nsContentList_h___
 #define nsContentList_h___
 
@@ -42,9 +49,14 @@
 #include "nsString.h"
 #include "nsIDOMHTMLCollection.h"
 #include "nsIDOMNodeList.h"
-#include "nsStubDocumentObserver.h"
+#include "nsStubMutationObserver.h"
 #include "nsIAtom.h"
 #include "nsINameSpaceManager.h"
+#include "nsCycleCollectionParticipant.h"
+
+// Magic namespace id that means "match all namespaces".  This is
+// negative so it won't collide with actual namespace constants.
+#define kNameSpaceID_Wildcard PR_INT32_MIN
 
 // This is a callback function type that can be used to implement an
 // arbitrary matching algorithm.  aContent is the content that may
@@ -53,7 +65,9 @@
 typedef PRBool (*nsContentListMatchFunc)(nsIContent* aContent,
                                          PRInt32 aNamespaceID,
                                          nsIAtom* aAtom,
-                                         const nsAString& aData);
+                                         void* aData);
+
+typedef void (*nsContentListDestroyFunc)(void* aData);
 
 class nsIDocument;
 class nsIDOMHTMLFormElement;
@@ -65,15 +79,16 @@ public:
   nsBaseContentList();
   virtual ~nsBaseContentList();
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
 
   // nsIDOMNodeList
   NS_DECL_NSIDOMNODELIST
+  NS_DECL_CYCLE_COLLECTION_CLASS(nsBaseContentList)
 
-  virtual void AppendElement(nsIContent *aContent);
-  virtual void RemoveElement(nsIContent *aContent);
+  void AppendElement(nsIContent *aContent);
+  void RemoveElement(nsIContent *aContent);
   virtual PRInt32 IndexOf(nsIContent *aContent, PRBool aDoFlush);
-  virtual void Reset();
+  void Reset();
 
   static void Shutdown();
 
@@ -99,22 +114,19 @@ public:
 class nsContentListKey
 {
 public:
-  nsContentListKey(nsIDocument *aDocument,
+  nsContentListKey(nsINode* aRootNode,
                    nsIAtom* aMatchAtom, 
-                   PRInt32 aMatchNameSpaceId,
-                   nsIContent* aRootContent)
+                   PRInt32 aMatchNameSpaceId)
     : mMatchAtom(aMatchAtom),
       mMatchNameSpaceId(aMatchNameSpaceId),
-      mDocument(aDocument),
-      mRootContent(aRootContent)
+      mRootNode(aRootNode)
   {
   }
   
   nsContentListKey(const nsContentListKey& aContentListKey)
     : mMatchAtom(aContentListKey.mMatchAtom),
       mMatchNameSpaceId(aContentListKey.mMatchNameSpaceId),
-      mDocument(aContentListKey.mDocument),
-      mRootContent(aContentListKey.mRootContent)
+      mRootNode(aContentListKey.mRootNode)
   {
   }
 
@@ -123,214 +135,20 @@ public:
     return
       mMatchAtom == aContentListKey.mMatchAtom &&
       mMatchNameSpaceId == aContentListKey.mMatchNameSpaceId &&
-      mDocument == aContentListKey.mDocument &&
-      mRootContent == aContentListKey.mRootContent;
+      mRootNode == aContentListKey.mRootNode;
   }
   inline PRUint32 GetHash(void) const
   {
     return
       NS_PTR_TO_INT32(mMatchAtom.get()) ^
-      (NS_PTR_TO_INT32(mRootContent) << 8) ^
-      (NS_PTR_TO_INT32(mDocument) << 16) ^
+      (NS_PTR_TO_INT32(mRootNode) << 12) ^
       (mMatchNameSpaceId << 24);
   }
   
 protected:
   nsCOMPtr<nsIAtom> mMatchAtom;
   PRInt32 mMatchNameSpaceId;
-  nsIDocument* mDocument;   // Weak ref
-  // XXX What if the mRootContent is detached from the doc and _then_
-  // goes away (so we never get notified)?  Note that we work around
-  // that a little by not caching lists with an mRootContent in
-  // gCachedContentList.  If we fix this, we can remove that check.
-  nsIContent* mRootContent; // Weak ref
-};
-
-/**
- * Class that implements a live NodeList that matches nodes in the
- * tree based on some criterion
- */
-class nsContentList : public nsBaseContentList,
-                      protected nsContentListKey,
-                      public nsIDOMHTMLCollection,
-                      public nsStubDocumentObserver
-{
-public:
-  NS_DECL_ISUPPORTS_INHERITED
-
-  nsContentList(nsIDocument *aDocument, 
-                nsIAtom* aMatchAtom, 
-                PRInt32 aMatchNameSpaceId,
-                nsIContent* aRootContent = nsnull,
-                PRBool aDeep = PR_TRUE);
-  nsContentList(nsIDocument *aDocument, 
-                nsContentListMatchFunc aFunc,
-                const nsAString& aData,
-                nsIContent* aRootContent = nsnull,
-                PRBool aDeep = PR_TRUE,
-                nsIAtom* aMatchAtom = nsnull,
-                PRInt32 aMatchNameSpaceId = kNameSpaceID_None);
-  virtual ~nsContentList();
-
-  // nsIDOMHTMLCollection
-  NS_DECL_NSIDOMHTMLCOLLECTION
-
-  // nsBaseContentList overrides
-  virtual PRInt32 IndexOf(nsIContent *aContent, PRBool aDoFlush);
-
-  // nsContentList public methods
-  NS_HIDDEN_(nsISupports*) GetParentObject();
-  NS_HIDDEN_(PRUint32) Length(PRBool aDoFlush);
-  NS_HIDDEN_(nsIContent*) Item(PRUint32 aIndex, PRBool aDoFlush);
-  NS_HIDDEN_(nsIContent*) NamedItem(const nsAString& aName, PRBool aDoFlush);
-  NS_HIDDEN_(void) RootDestroyed();
-
-  nsContentListKey* GetKey() {
-    return NS_STATIC_CAST(nsContentListKey*, this);
-  }
-  
-
-  // nsIDocumentObserver
-  virtual void AttributeChanged(nsIDocument *aDocument, nsIContent* aContent,
-                                PRInt32 aNameSpaceID, nsIAtom* aAttribute,
-                                PRInt32 aModType);
-  virtual void ContentAppended(nsIDocument *aDocument, nsIContent* aContainer,
-                               PRInt32 aNewIndexInContainer);
-  virtual void ContentInserted(nsIDocument *aDocument, nsIContent* aContainer,
-                               nsIContent* aChild, PRInt32 aIndexInContainer);
-  virtual void ContentRemoved(nsIDocument *aDocument, nsIContent* aContainer,
-                              nsIContent* aChild, PRInt32 aIndexInContainer);
-  virtual void DocumentWillBeDestroyed(nsIDocument *aDocument);
-
-  static void OnDocumentDestroy(nsIDocument *aDocument);
-
-protected:
-  void Init(nsIDocument *aDocument);
-  /**
-   * Returns whether the content element matches our criterion
-   *
-   * @param  aContent the content to attempt to match
-   * @return whether we match
-   */
-  PRBool Match(nsIContent *aContent);
-  /**
-   * Match recursively. See if anything in the subtree rooted at
-   * aContent matches our criterion.
-   *
-   * @param  aContent the root of the subtree to match against
-   * @return whether we match something in the tree rooted at aContent
-   */
-  PRBool MatchSelf(nsIContent *aContent);
-
-  /**
-   * Add elements in the subtree rooted in aContent that match our
-   * criterion to our list until we've picked up aElementsToAppend
-   * elements.  This function enforces the invariant that
-   * |aElementsToAppend + mElements.Count()| is a constant.
-   *
-   * @param aContent the root of the subtree we want to traverse
-   * @param aIncludeRoot whether to include the root in the traversal
-   * @param aElementsToAppend how many elements to append to the list
-   *        before stopping
-   */
-  void PopulateWith(nsIContent *aContent, PRBool aIncludeRoot,
-                    PRUint32 & aElementsToAppend);
-  /**
-   * Populate our list starting at the child of aStartRoot that comes
-   * after aStartChild (if such exists) and continuing in document
-   * order. Stop once we've picked up aElementsToAppend elements.
-   * This function enforces the invariant that |aElementsToAppend +
-   * mElements.Count()| is a constant.
-   *
-   * @param aStartRoot the node with whose children we want to start traversal
-   * @param aStartChild the child after which we want to start
-   * @param aElementsToAppend how many elements to append to the list
-   *        before stopping
-   */
-  void PopulateWithStartingAfter(nsIContent *aStartRoot,
-                                 nsIContent *aStartChild,
-                                 PRUint32 & aElementsToAppend);
-  /**
-   * Populate our list.  Stop once we have at least aNeededLength
-   * elements.  At the end of PopulateSelf running, either the last
-   * node we examined is the last node in our array or we have
-   * traversed the whole document (or both).
-   *
-   * @param aNeededLength the length the list should have when we are
-   *        done (unless it exhausts the document)   
-   */
-  void PopulateSelf(PRUint32 aNeededLength);
-
-  /**
-   * Our root content has been disconnected from the document, so stop
-   * observing. From this point on, if someone asks us something we
-   * walk the tree rooted at mRootContent starting at the beginning
-   * and going as far as we need to to answer the question.
-   */
-  void DisconnectFromDocument();
-
-  /**
-   * @param  aContainer a content node which could be a descendant of
-   *         mRootContent
-   * @return PR_TRUE if mRootContent is null, PR_FALSE if aContainer
-   *         is null, PR_TRUE if aContainer is a descendant of mRootContent
-   *         (though if mDeep is false, only aContainer == mRootContent
-   *         counts), PR_FALSE otherwise
-   */
-  PRBool MayContainRelevantNodes(nsIContent* aContainer);
-  /**
-   * Does this subtree contain our mRootContent?
-   *
-   * @param  aContainer the root of the subtree
-   * @return PR_FALSE if mRootContent is null, otherwise whether
-   *         mRootContent is a descendant of aContainer
-   */
-  PRBool ContainsRoot(nsIContent* aContent);
-  /**
-   * If we have no document and we have a root content, then check if
-   * our content has been added to a document. If so, we'll become an
-   * observer of the document.
-   */
-  void CheckDocumentExistence();
-  /**
-   * Remove ourselves from the hashtable that caches commonly accessed
-   * content lists.  Generally done on destruction.
-   */
-  void RemoveFromHashtable();
-  /**
-   * If state is not LIST_UP_TO_DATE, fully populate ourselves with
-   * all the nodes we can find.
-   */
-  inline void BringSelfUpToDate(PRBool aDoFlush);
-  /**
-   * A function to check whether aContent is anonymous from our point
-   * of view.  If it is, we don't care about it, since we should never
-   * contain it or any of its kids.
-   */
-  PRBool IsContentAnonymous(nsIContent* aContent);
-  /**
-   * Function to use to determine whether a piece of content matches
-   * our criterion
-   */
-  nsContentListMatchFunc mFunc;
-  /**
-   * Closure data to pass to mFunc when we call it
-   */
-  const nsAFlatString* mData;
-  /**
-   * True if we are looking for elements named "*"
-   */
-  PRPackedBool mMatchAll;
-  /**
-   * The current state of the list (possible values are:
-   * LIST_UP_TO_DATE, LIST_LAZY, LIST_DIRTY
-   */
-  PRUint8 mState;
-  /**
-   * Whether to actually descend the tree.  If this is false, we won't
-   * consider grandkids of mRootContent.
-   */
-  PRPackedBool mDeep;
+  nsINode* mRootNode; // Weak ref
 };
 
 /**
@@ -353,8 +171,218 @@ protected:
  */
 #define LIST_LAZY 2
 
+/**
+ * Class that implements a live NodeList that matches nodes in the
+ * tree based on some criterion
+ */
+class nsContentList : public nsBaseContentList,
+                      protected nsContentListKey,
+                      public nsIDOMHTMLCollection,
+                      public nsStubMutationObserver
+{
+public:
+  NS_DECL_ISUPPORTS_INHERITED
+
+  /**
+   * @param aRootNode The node under which to limit our search.
+   * @param aMatchAtom An atom whose meaning depends on aMatchNameSpaceId.
+   *                   The special value "*" always matches whatever aMatchAtom
+   *                   is matched against.
+   * @param aMatchNameSpaceId If kNameSpaceID_Unknown, then aMatchAtom is the
+   *                          tagName to match.
+   *                          If kNameSpaceID_Wildcard, then aMatchAtom is the
+   *                          localName to match.
+   *                          Otherwise we match nodes whose namespace is
+   *                          aMatchNameSpaceId and localName matches
+   *                          aMatchAtom.
+   * @param aDeep If false, then look only at children of the root, nothing
+   *              deeper.  If true, then look at the whole subtree rooted at
+   *              our root.
+   */  
+  nsContentList(nsINode* aRootNode,
+                nsIAtom* aMatchAtom, 
+                PRInt32 aMatchNameSpaceId,
+                PRBool aDeep = PR_TRUE);
+
+  /**
+   * @param aRootNode The node under which to limit our search.
+   * @param aFunc the function to be called to determine whether we match
+   * @param aDestroyFunc the function that will be called to destroy aData
+   * @param aData closure data that will need to be passed back to aFunc
+   * @param aDeep If false, then look only at children of the root, nothing
+   *              deeper.  If true, then look at the whole subtree rooted at
+   *              our root.
+   * @param aMatchAtom an atom to be passed back to aFunc
+   * @param aMatchNameSpaceId a namespace id to be passed back to aFunc
+   * @param aFuncMayDependOnAttr a boolean that indicates whether this list is
+   *                             sensitive to attribute changes.
+   */  
+  nsContentList(nsINode* aRootNode,
+                nsContentListMatchFunc aFunc,
+                nsContentListDestroyFunc aDestroyFunc,
+                void* aData,
+                PRBool aDeep = PR_TRUE,
+                nsIAtom* aMatchAtom = nsnull,
+                PRInt32 aMatchNameSpaceId = kNameSpaceID_None,
+                PRBool aFuncMayDependOnAttr = PR_TRUE);
+  virtual ~nsContentList();
+
+  // nsIDOMHTMLCollection
+  NS_DECL_NSIDOMHTMLCOLLECTION
+
+  // nsBaseContentList overrides
+  virtual PRInt32 IndexOf(nsIContent *aContent, PRBool aDoFlush);
+
+  // nsContentList public methods
+  NS_HIDDEN_(nsISupports*) GetParentObject();
+  NS_HIDDEN_(PRUint32) Length(PRBool aDoFlush);
+  NS_HIDDEN_(nsIContent*) Item(PRUint32 aIndex, PRBool aDoFlush);
+  NS_HIDDEN_(nsIContent*) NamedItem(const nsAString& aName, PRBool aDoFlush);
+
+  nsContentListKey* GetKey() {
+    return static_cast<nsContentListKey*>(this);
+  }
+  
+
+  // nsIMutationObserver
+  NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTECHANGED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTAPPENDED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTINSERTED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
+  NS_DECL_NSIMUTATIONOBSERVER_NODEWILLBEDESTROYED
+  
+  static void OnDocumentDestroy(nsIDocument *aDocument);
+
+protected:
+  /**
+   * Returns whether the content element matches our criterion
+   *
+   * @param  aContent the content to attempt to match
+   * @return whether we match
+   */
+  PRBool Match(nsIContent *aContent);
+  /**
+   * Match recursively. See if anything in the subtree rooted at
+   * aContent matches our criterion.
+   *
+   * @param  aContent the root of the subtree to match against
+   * @return whether we match something in the tree rooted at aContent
+   */
+  PRBool MatchSelf(nsIContent *aContent);
+
+  /**
+   * Add elements in the subtree rooted in aContent that match our
+   * criterion to our list until we've picked up aElementsToAppend
+   * elements.  This function enforces the invariant that
+   * |aElementsToAppend + mElements.Count()| is a constant.
+   *
+   * @param aContent the root of the subtree we want to traverse. This node
+   *                 is always included in the traversal and is thus the
+   *                 first node tested.
+   * @param aElementsToAppend how many elements to append to the list
+   *        before stopping
+   */
+
+  void PopulateWith(nsIContent *aContent, PRUint32 & aElementsToAppend);
+  /**
+   * Populate our list starting at the child of aStartRoot that comes
+   * after aStartChild (if such exists) and continuing in document
+   * order. Stop once we've picked up aElementsToAppend elements.
+   * This function enforces the invariant that |aElementsToAppend +
+   * mElements.Count()| is a constant.
+   *
+   * @param aStartRoot the node with whose children we want to start traversal
+   * @param aStartChild the child after which we want to start
+   * @param aElementsToAppend how many elements to append to the list
+   *        before stopping
+   */
+  void PopulateWithStartingAfter(nsINode *aStartRoot,
+                                 nsINode *aStartChild,
+                                 PRUint32 & aElementsToAppend);
+  /**
+   * Populate our list.  Stop once we have at least aNeededLength
+   * elements.  At the end of PopulateSelf running, either the last
+   * node we examined is the last node in our array or we have
+   * traversed the whole document (or both).
+   *
+   * @param aNeededLength the length the list should have when we are
+   *        done (unless it exhausts the document)   
+   */
+  void PopulateSelf(PRUint32 aNeededLength);
+
+  /**
+   * @param  aContainer a content node which must be a descendant of
+   *         mRootNode
+   * @return PR_TRUE if children or descendants of aContainer could match our
+   *                 criterion.
+   *         PR_FALSE otherwise.
+   */
+  PRBool MayContainRelevantNodes(nsINode* aContainer)
+  {
+    return mDeep || aContainer == mRootNode;
+  }
+
+  /**
+   * Remove ourselves from the hashtable that caches commonly accessed
+   * content lists.  Generally done on destruction.
+   */
+  void RemoveFromHashtable();
+  /**
+   * If state is not LIST_UP_TO_DATE, fully populate ourselves with
+   * all the nodes we can find.
+   */
+  inline void BringSelfUpToDate(PRBool aDoFlush);
+
+  /**
+   * Sets the state to LIST_DIRTY and clears mElements array.
+   * @note This is the only acceptable way to set state to LIST_DIRTY.
+   */
+  void SetDirty()
+  {
+    mState = LIST_DIRTY;
+    Reset();
+  }
+
+  /**
+   * Function to use to determine whether a piece of content matches
+   * our criterion
+   */
+  nsContentListMatchFunc mFunc;
+  /**
+   * Cleanup closure data with this.
+   */
+  nsContentListDestroyFunc mDestroyFunc;
+  /**
+   * Closure data to pass to mFunc when we call it
+   */
+  void* mData;
+  /**
+   * True if we are looking for elements named "*"
+   */
+  PRPackedBool mMatchAll;
+  /**
+   * The current state of the list (possible values are:
+   * LIST_UP_TO_DATE, LIST_LAZY, LIST_DIRTY
+   */
+  PRUint8 mState;
+  /**
+   * Whether to actually descend the tree.  If this is false, we won't
+   * consider grandkids of mRootNode.
+   */
+  PRPackedBool mDeep;
+  /**
+   * Whether the return value of mFunc could depend on the values of
+   * attributes.
+   */
+  PRPackedBool mFuncMayDependOnAttr;
+
+#ifdef DEBUG_CONTENT_LIST
+  void AssertInSync();
+#endif
+};
+
 already_AddRefed<nsContentList>
-NS_GetContentList(nsIDocument* aDocument, nsIAtom* aMatchAtom,
-                  PRInt32 aMatchNameSpaceId, nsIContent* aRootContent);
+NS_GetContentList(nsINode* aRootNode, nsIAtom* aMatchAtom,
+                  PRInt32 aMatchNameSpaceId);
 
 #endif // nsContentList_h___

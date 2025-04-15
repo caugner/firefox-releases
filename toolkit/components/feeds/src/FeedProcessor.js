@@ -21,6 +21,8 @@
  * Contributor(s):
  *   Ben Goodger <beng@google.com>
  *   Myk Melez <myk@mozilla.org>
+ *   Michael Ventnor <m.ventnor@gmail.com>
+ *   Will Guaraldi <will.guaraldi@pculture.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -43,6 +45,32 @@ function LOG(str) {
 const Ci = Components.interfaces;
 const Cc = Components.classes;
 const Cr = Components.results;
+Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+Components.utils.import("resource://gre/modules/ISO8601DateUtils.jsm");
+
+const FP_CONTRACTID = "@mozilla.org/feed-processor;1";
+const FP_CLASSID = Components.ID("{26acb1f0-28fc-43bc-867a-a46aabc85dd4}");
+const FP_CLASSNAME = "Feed Processor";
+const FR_CONTRACTID = "@mozilla.org/feed-result;1";
+const FR_CLASSID = Components.ID("{072a5c3d-30c6-4f07-b87f-9f63d51403f2}");
+const FR_CLASSNAME = "Feed Result";
+const FEED_CONTRACTID = "@mozilla.org/feed;1";
+const FEED_CLASSID = Components.ID("{5d0cfa97-69dd-4e5e-ac84-f253162e8f9a}");
+const FEED_CLASSNAME = "Feed";
+const ENTRY_CONTRACTID = "@mozilla.org/feed-entry;1";
+const ENTRY_CLASSID = Components.ID("{8e4444ff-8e99-4bdd-aa7f-fb3c1c77319f}");
+const ENTRY_CLASSNAME = "Feed Entry";
+const TEXTCONSTRUCT_CONTRACTID = "@mozilla.org/feed-textconstruct;1";
+const TEXTCONSTRUCT_CLASSID =
+  Components.ID("{b992ddcd-3899-4320-9909-924b3e72c922}");
+const TEXTCONSTRUCT_CLASSNAME = "Feed Text Construct";
+const GENERATOR_CONTRACTID = "@mozilla.org/feed-generator;1";
+const GENERATOR_CLASSID =
+  Components.ID("{414af362-9ad8-4296-898e-62247f25a20e}");
+const GENERATOR_CLASSNAME = "Feed Generator";
+const PERSON_CONTRACTID = "@mozilla.org/feed-person;1";
+const PERSON_CLASSID = Components.ID("{95c963b7-20b2-11db-92f6-001422106990}");
+const PERSON_CLASSNAME = "Feed Person";
 
 const IO_CONTRACTID = "@mozilla.org/network/io-service;1"
 const BAG_CONTRACTID = "@mozilla.org/hash-property-bag;1"
@@ -50,16 +78,18 @@ const ARRAY_CONTRACTID = "@mozilla.org/array;1";
 const SAX_CONTRACTID = "@mozilla.org/saxparser/xmlreader;1";
 const UNESCAPE_CONTRACTID = "@mozilla.org/feed-unescapehtml;1";
 
-var gIoService = Cc[IO_CONTRACTID].getService(Ci.nsIIOService);
-var gUnescapeHTML = Cc[UNESCAPE_CONTRACTID].
-                    getService(Ci.nsIScriptableUnescapeHTML);
+
+var gIoService = null;
 
 const XMLNS = "http://www.w3.org/XML/1998/namespace";
 const RSS090NS = "http://my.netscape.com/rdf/simple/0.9/";
+const WAIROLE_NS = "http://www.w3.org/2005/01/wai-rdf/GUIRoleTaxonomy#";
 
 /***** Some general utils *****/
 function strToURI(link, base) {
   var base = base || null;
+  if (!gIoService)
+    gIoService = Cc[IO_CONTRACTID].getService(Ci.nsIIOService);
   try {
     return gIoService.newURI(link, null, base);
   }
@@ -170,98 +200,8 @@ function makePropGetter(key) {
   }
 }
 
-
-
-/**
- * XXX Thunderbird's W3C-DTF function
- *
- * Converts a W3C-DTF (subset of ISO 8601) date string to an IETF date
- * string.  W3C-DTF is described in this note:
- * http://www.w3.org/TR/NOTE-datetime IETF is obtained via the Date
- * object's toUTCString() method.  The object's toString() method is
- * insufficient because it spells out timezones on Win32
- * (f.e. "Pacific Standard Time" instead of "PST"), which Mail doesn't
- * grok.  For info, see
- * http://lxr.mozilla.org/mozilla/source/js/src/jsdate.c#1526.
- */
-const HOURS_TO_MINUTES = 60;
-const MINUTES_TO_SECONDS = 60;
-const SECONDS_TO_MILLISECONDS = 1000;
-const MINUTES_TO_MILLISECONDS = MINUTES_TO_SECONDS * SECONDS_TO_MILLISECONDS;
-const HOURS_TO_MILLISECONDS = HOURS_TO_MINUTES * MINUTES_TO_MILLISECONDS;
 function W3CToIETFDate(dateString) {
-
-  var parts = dateString.match(/(\d\d\d\d)(-(\d\d))?(-(\d\d))?(T(\d\d):(\d\d)(:(\d\d)(\.(\d+))?)?(Z|([+-])(\d\d):(\d\d))?)?/);
-
-  // Here's an example of a W3C-DTF date string and what .match returns for it.
-  // 
-  // date: 2003-05-30T11:18:50.345-08:00
-  // date.match returns array values:
-  //
-  //   0: 2003-05-30T11:18:50-08:00,
-  //   1: 2003,
-  //   2: -05,
-  //   3: 05,
-  //   4: -30,
-  //   5: 30,
-  //   6: T11:18:50-08:00,
-  //   7: 11,
-  //   8: 18,
-  //   9: :50,
-  //   10: 50,
-  //   11: .345,
-  //   12: 345,
-  //   13: -08:00,
-  //   14: -,
-  //   15: 08,
-  //   16: 00
-
-  // Create a Date object from the date parts.  Note that the Date
-  // object apparently can't deal with empty string parameters in lieu
-  // of numbers, so optional values (like hours, minutes, seconds, and
-  // milliseconds) must be forced to be numbers.
-  var date = new Date(parts[1], parts[3] - 1, parts[5], parts[7] || 0,
-                      parts[8] || 0, parts[10] || 0, parts[12] || 0);
-
-  // We now have a value that the Date object thinks is in the local
-  // timezone but which actually represents the date/time in the
-  // remote timezone (f.e. the value was "10:00 EST", and we have
-  // converted it to "10:00 PST" instead of "07:00 PST").  We need to
-  // correct that.  To do so, we're going to add the offset between
-  // the remote timezone and UTC (to convert the value to UTC), then
-  // add the offset between UTC and the local timezone //(to convert
-  // the value to the local timezone).
-
-  // Ironically, W3C-DTF gives us the offset between UTC and the
-  // remote timezone rather than the other way around, while the
-  // getTimezoneOffset() method of a Date object gives us the offset
-  // between the local timezone and UTC rather than the other way
-  // around.  Both of these are the additive inverse (i.e. -x for x)
-  // of what we want, so we have to invert them to use them by
-  // multipying by -1 (f.e. if "the offset between UTC and the remote
-  // timezone" is -5 hours, then "the offset between the remote
-  // timezone and UTC" is -5*-1 = 5 hours).
-
-  // Note that if the timezone portion of the date/time string is
-  // absent (which violates W3C-DTF, although ISO 8601 allows it), we
-  // assume the value to be in UTC.
-
-  // The offset between the remote timezone and UTC in milliseconds.
-  var remoteToUTCOffset = 0;
-  if (parts[13] && parts[13] != "Z") {
-    var direction = (parts[14] == "+" ? 1 : -1);
-    if (parts[15])
-      remoteToUTCOffset += direction * parts[15] * HOURS_TO_MILLISECONDS;
-    if (parts[16])
-      remoteToUTCOffset += direction * parts[16] * MINUTES_TO_MILLISECONDS;
-  }
-  remoteToUTCOffset = remoteToUTCOffset * -1; // invert it
-
-  // The offset between UTC and the local timezone in milliseconds.
-  var UTCToLocalOffset = date.getTimezoneOffset() * MINUTES_TO_MILLISECONDS;
-  UTCToLocalOffset = UTCToLocalOffset * -1; // invert it
-  date.setTime(date.getTime() + remoteToUTCOffset + UTCToLocalOffset);
-
+  var date = ISO8601DateUtils.parse(dateString);
   return date.toUTCString();
 }
 
@@ -281,9 +221,21 @@ var gNamespaces = {
   "http://my.netscape.com/rdf/simple/0.9/":"rss1",
   "http://wellformedweb.org/CommentAPI/":"wfw",                              
   "http://purl.org/rss/1.0/modules/wiki/":"wiki", 
-  "http://www.w3.org/XML/1998/namespace":"xml"
+  "http://www.w3.org/XML/1998/namespace":"xml",
+  "http://search.yahoo.com/mrss/":"media",
+  "http://search.yahoo.com/mrss":"media"
 }
 
+// We allow a very small set of namespaces in XHTML content,
+// for attributes only
+var gAllowedXHTMLNamespaces = {
+  "http://www.w3.org/XML/1998/namespace":"xml",
+  "http://www.w3.org/TR/xhtml2":"xhtml2",
+  "http://www.w3.org/2005/07/aaa":"aaa",
+  // if someone ns qualifies XHTML, we have to prefix it to avoid an
+  // attribute collision.
+  "http://www.w3.org/1999/xhtml":"xhtml"
+}
 
 function FeedResult() {}
 FeedResult.prototype = {
@@ -298,13 +250,11 @@ FeedResult.prototype = {
     throw Cr.NS_ERROR_NOT_IMPLEMENTED;
   },
 
-  QueryInterface: function FR_QI(iid) {
-    if (iid.equals(Ci.nsIFeedResult) ||
-        iid.equals(Ci.nsISupports))
-      return this;
-
-    throw Cr.NS_ERROR_NOINTERFACE;
-  },
+  // XPCOM stuff
+  classDescription: FR_CLASSNAME,
+  classID: FR_CLASSID,
+  contractID: FR_CONTRACTID,
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIFeedResult])
 }  
 
 function Feed() {
@@ -317,10 +267,13 @@ function Feed() {
   this.authors = Cc[ARRAY_CONTRACTID].createInstance(Ci.nsIMutableArray);
   this.contributors = Cc[ARRAY_CONTRACTID].createInstance(Ci.nsIMutableArray);
   this.baseURI = null;
+  this.enclosureCount = 0;
+  this.type = Ci.nsIFeed.TYPE_FEED;
 }
 
 Feed.prototype = {
   searchLists: {
+    title: ["title", "rss1:title", "atom03:title", "atom:title"],
     subtitle: ["description","dc:description","rss1:description",
                "atom03:tagline","atom:subtitle"],
     items: ["items","atom03_entries","entries"],
@@ -333,12 +286,12 @@ Feed.prototype = {
     categories: ["categories", "dc:subject"],
     rights: ["atom03:rights","atom:rights"],
     cloud: ["cloud"],
-    image: ["image", "rss1:image"],
+    image: ["image", "rss1:image", "atom:logo"],
     textInput: ["textInput", "rss1:textinput"],
     skipDays: ["skipDays"],
     skipHours: ["skipHours"],
-    updated: ["pubDate", "atom03:modified", "dc:date", "dcterms:modified",
-              "atom:updated"]
+    updated: ["pubDate", "lastBuildDate", "atom03:modified", "dc:date",
+              "dcterms:modified", "atom:updated"]
   },
 
   normalize: function Feed_normalize() {
@@ -355,28 +308,109 @@ Feed.prototype = {
     if (bagHasKey(this.fields, "links"))
       this._atomLinksToURI();
 
+    this._calcEnclosureCountAndFeedType();
+
+    // Resolve relative image links
+    if (this.image && bagHasKey(this.image, "url"))
+      this._resolveImageLink();
+
     this._resetBagMembersToRawText([this.searchLists.subtitle, 
                                     this.searchLists.title]);
+  },
+
+  _calcEnclosureCountAndFeedType: function Feed_calcEnclosureCountAndFeedType() {
+    var entries_with_enclosures = 0;
+    var audio_count = 0;
+    var image_count = 0;
+    var video_count = 0;
+    var other_count = 0;
+
+    for (var i = 0; i < this.items.length; ++i) {
+      var entry = this.items.queryElementAt(i, Ci.nsIFeedEntry);
+      entry.QueryInterface(Ci.nsIFeedContainer);
+
+      if (entry.enclosures && entry.enclosures.length > 0) {
+        ++entries_with_enclosures;
+
+        for (var e = 0; e < entry.enclosures.length; ++e) {
+          var enc = entry.enclosures.queryElementAt(e, Ci.nsIWritablePropertyBag2);
+          if (enc.hasKey("type")) {
+            var enctype = enc.get("type");
+
+            if (/^audio/.test(enctype)) {
+              ++audio_count;
+            } else if (/^image/.test(enctype)) {
+              ++image_count;
+            } else if (/^video/.test(enctype)) {
+              ++video_count;
+            } else {
+              ++other_count;
+            }
+          } else {
+            ++other_count;
+          }
+        }
+      }
+    }
+
+    var feedtype = Ci.nsIFeed.TYPE_FEED;
+
+    // For a feed to be marked as TYPE_VIDEO, TYPE_AUDIO and TYPE_IMAGE, 
+    // we enforce two things:
+    //
+    //    1. all entries must have at least one enclosure
+    //    2. all enclosures must be video for TYPE_VIDEO, audio for TYPE_AUDIO or image
+    //       for TYPE_IMAGE
+    //
+    // Otherwise it's a TYPE_FEED.
+    if (entries_with_enclosures == this.items.length && other_count == 0) {
+      if (audio_count > 0 && !video_count && !image_count) {
+        feedtype = Ci.nsIFeed.TYPE_AUDIO;
+
+      } else if (image_count > 0 && !audio_count && !video_count) {
+        feedtype = Ci.nsIFeed.TYPE_IMAGE;
+
+      } else if (video_count > 0 && !audio_count && !image_count) {
+        feedtype = Ci.nsIFeed.TYPE_VIDEO;
+      }
+    }
+
+    this.type = feedtype;
+    this.enclosureCount = other_count + video_count + audio_count + image_count;
   },
 
   _atomLinksToURI: function Feed_linkToURI() {
     var links = this.fields.getPropertyAsInterface("links", Ci.nsIArray);
     var alternates = findAtomLinks("alternate", links);
     if (alternates.length > 0) {
-      try {
-        var href = alternates[0].getPropertyAsAString("href");
-        var base;
-        if (bagHasKey(alternates[0], "xml:base"))
-          base = strToURI(alternates[0].getPropertyAsAString("xml:base"),
-                          this.baseURI);
-        else
-          base = this.baseURI;
-        this.link = strToURI(alternates[0].getPropertyAsAString("href"), base);
-      }
-      catch(e) {
-        LOG(e);
-      }
+      var href = alternates[0].getPropertyAsAString("href");
+      var base;
+      if (bagHasKey(alternates[0], "xml:base"))
+        base = alternates[0].getPropertyAsAString("xml:base");
+      this.link = this._resolveURI(href, base);
     }
+  },
+
+  _resolveImageLink: function Feed_resolveImageLink() {
+    var base;
+    if (bagHasKey(this.image, "xml:base"))
+      base = this.image.getPropertyAsAString("xml:base");
+    var url = this._resolveURI(this.image.getPropertyAsAString("url"), base);
+    if (url)
+      this.image.setPropertyAsAString("url", url.spec);
+  },
+
+  _resolveURI: function Feed_resolveURI(linkSpec, baseSpec) {
+    var uri = null;
+    try {
+      var base = baseSpec ? strToURI(baseSpec, this.baseURI) : this.baseURI;
+      uri = strToURI(linkSpec, base);
+    }
+    catch(e) {
+      LOG(e);
+    }
+
+    return uri;
   },
 
   // reset the bag to raw contents, not text constructs
@@ -391,14 +425,12 @@ Feed.prototype = {
       }
     }
   },
-   
-  QueryInterface: function Feed_QI(iid) {
-    if (iid.equals(Ci.nsIFeed) ||
-        iid.equals(Ci.nsIFeedContainer) ||
-        iid.equals(Ci.nsISupports))
-    return this;
-    throw Cr.NS_ERROR_NOINTERFACE;
-  }
+  
+  // XPCOM stuff
+  classDescription: FEED_CLASSNAME,
+  classID: FEED_CLASSID,
+  contractID: FEED_CONTRACTID,
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIFeed, Ci.nsIFeedContainer])
 }
 
 function Entry() {
@@ -432,7 +464,7 @@ Entry.prototype = {
               "atom03:summary", "atom:summary"],
     content: ["content:encoded","atom03:content","atom:content"],
     rights: ["atom03:rights","atom:rights"],
-    published: ["atom03:issued", "dcterms:issued", "atom:published"],
+    published: ["pubDate", "atom03:issued", "dcterms:issued", "atom:published"],
     updated: ["pubDate", "atom03:modified", "dc:date", "dcterms:modified",
               "atom:updated"]
   },
@@ -443,14 +475,17 @@ Entry.prototype = {
     // Assign Atom link if needed
     if (bagHasKey(this.fields, "links"))
       this._atomLinksToURI();
- 
+
+    // Populate enclosures array
+    this._populateEnclosures();
+
     // The link might be a guid w/ permalink=true
     if (!this.link && bagHasKey(this.fields, "guid")) {
       var guid = this.fields.getProperty("guid");
       var isPermaLink = true;
       
       if (bagHasKey(guid, "isPermaLink"))
-        isPermaLink = new Boolean(guid.getProperty("isPermaLink"));
+        isPermaLink = guid.getProperty("isPermaLink").toLowerCase() != "false";
       
       if (guid && isPermaLink)
         this.link = strToURI(guid.getProperty("guid"));
@@ -465,18 +500,156 @@ Entry.prototype = {
                                     this.searchLists.summary, 
                                     this.searchLists.title]);
   },
-  
-  QueryInterface: function(iid) {
-    if (iid.equals(Ci.nsIFeedEntry) ||
-        iid.equals(Ci.nsIFeedContainer) ||
-        iid.equals(Ci.nsISupports))
-    return this;
 
-    throw Cr.NS_ERROR_NOINTERFACE;
-  }
+  _populateEnclosures: function Entry_populateEnclosures() {
+    if (bagHasKey(this.fields, "links"))
+      this._atomLinksToEnclosures();
+
+    // Add RSS2 enclosure to enclosures
+    if (bagHasKey(this.fields, "enclosure"))
+      this._enclosureToEnclosures();
+
+    // Add media:content to enclosures
+    if (bagHasKey(this.fields, "mediacontent"))
+      this._mediacontentToEnclosures();
+
+    // Add media:content in media:group to enclosures
+    if (bagHasKey(this.fields, "mediagroup"))
+      this._mediagroupToEnclosures();
+  },
+
+  __enclosure_map: null,
+
+  _addToEnclosures: function Entry_addToEnclosures(new_enc) {
+    // items we add to the enclosures array get displayed in the FeedWriter and
+    // they must have non-empty urls.
+    if (!bagHasKey(new_enc, "url") || new_enc.getPropertyAsAString("url") == "")
+      return;
+
+    if (this.__enclosure_map == null)
+      this.__enclosure_map = {};
+
+    var previous_enc = this.__enclosure_map[new_enc.getPropertyAsAString("url")];
+
+    if (previous_enc != undefined) {
+      previous_enc.QueryInterface(Ci.nsIWritablePropertyBag2);
+
+      if (!bagHasKey(previous_enc, "type") && bagHasKey(new_enc, "type"))
+        previous_enc.setPropertyAsAString("type", new_enc.getPropertyAsAString("type"));
+
+      if (!bagHasKey(previous_enc, "length") && bagHasKey(new_enc, "length"))
+        previous_enc.setPropertyAsAString("length", new_enc.getPropertyAsAString("length"));
+      
+      return;
+    }
+
+    if (this.enclosures == null) {
+      this.enclosures = Cc[ARRAY_CONTRACTID].createInstance(Ci.nsIMutableArray);
+      this.enclosures.QueryInterface(Ci.nsIMutableArray);
+    }
+
+    this.enclosures.appendElement(new_enc, false);
+    this.__enclosure_map[new_enc.getPropertyAsAString("url")] = new_enc;
+  },
+
+  _atomLinksToEnclosures: function Entry_linkToEnclosure() {
+    var links = this.fields.getPropertyAsInterface("links", Ci.nsIArray);
+    var enc_links = findAtomLinks("enclosure", links);
+    if (enc_links.length == 0)
+      return;
+
+    for (var i = 0; i < enc_links.length; ++i) {
+      var link = enc_links[i];
+
+      // an enclosure must have an href
+      if (!(link.getProperty("href")))
+        return;
+
+      var enc = Cc[BAG_CONTRACTID].createInstance(Ci.nsIWritablePropertyBag2);
+
+      // copy Atom bits over to equivalent enclosure bits
+      enc.setPropertyAsAString("url", link.getPropertyAsAString("href"));
+      if (bagHasKey(link, "type"))
+        enc.setPropertyAsAString("type", link.getPropertyAsAString("type"));
+      if (bagHasKey(link, "length"))
+        enc.setPropertyAsAString("length", link.getPropertyAsAString("length"));
+
+      this._addToEnclosures(enc);
+    }
+  },
+
+  _enclosureToEnclosures: function Entry_enclosureToEnclosures() {
+    var enc = this.fields.getPropertyAsInterface("enclosure", Ci.nsIPropertyBag2);
+
+    if (!(enc.getProperty("url")))
+      return;
+
+    this._addToEnclosures(enc);
+  },
+
+  _mediacontentToEnclosures: function Entry_mediacontentToEnclosures() {
+    var mediacontent = this.fields.getPropertyAsInterface("mediacontent", Ci.nsIArray);
+
+    for (var i = 0; i < mediacontent.length; ++i) {
+      var contentElement = mediacontent.queryElementAt(i, Ci.nsIWritablePropertyBag2);
+
+      // media:content don't require url, but if it's not there, we should
+      // skip it.
+      if (!bagHasKey(contentElement, "url"))
+        continue;
+
+      var enc = Cc[BAG_CONTRACTID].createInstance(Ci.nsIWritablePropertyBag2);
+
+      // copy media:content bits over to equivalent enclosure bits
+      enc.setPropertyAsAString("url", contentElement.getPropertyAsAString("url"));
+      if (bagHasKey(contentElement, "type")) {
+        enc.setPropertyAsAString("type", contentElement.getPropertyAsAString("type"));
+      }
+      if (bagHasKey(contentElement, "fileSize")) {
+        enc.setPropertyAsAString("length", contentElement.getPropertyAsAString("fileSize"));
+      }
+
+      this._addToEnclosures(enc);
+    }
+  },
+
+  _mediagroupToEnclosures: function Entry_mediagroupToEnclosures() {
+    var group = this.fields.getPropertyAsInterface("mediagroup", Ci.nsIPropertyBag2);
+
+    var content = group.getPropertyAsInterface("mediacontent", Ci.nsIArray);
+    for (var i = 0; i < content.length; ++i) {
+      var contentElement = content.queryElementAt(i, Ci.nsIWritablePropertyBag2);
+      // media:content don't require url, but if it's not there, we should
+      // skip it.
+      if (!bagHasKey(contentElement, "url"))
+        continue;
+
+      var enc = Cc[BAG_CONTRACTID].createInstance(Ci.nsIWritablePropertyBag2);
+
+      // copy media:content bits over to equivalent enclosure bits
+      enc.setPropertyAsAString("url", contentElement.getPropertyAsAString("url"));
+      if (bagHasKey(contentElement, "type")) {
+        enc.setPropertyAsAString("type", contentElement.getPropertyAsAString("type"));
+      }
+      if (bagHasKey(contentElement, "fileSize")) {
+        enc.setPropertyAsAString("length", contentElement.getPropertyAsAString("fileSize"));
+      }
+
+      this._addToEnclosures(enc);
+    }
+  },
+
+  // XPCOM stuff
+  classDescription: ENTRY_CLASSNAME,
+  classID: ENTRY_CLASSID,
+  contractID: ENTRY_CONTRACTID,
+  QueryInterface: XPCOMUtils.generateQI(
+    [Ci.nsIFeedEntry, Ci.nsIFeedContainer]
+  )
 }
 
 Entry.prototype._atomLinksToURI = Feed.prototype._atomLinksToURI;
+Entry.prototype._resolveURI = Feed.prototype._resolveURI;
 Entry.prototype._resetBagMembersToRawText = 
    Feed.prototype._resetBagMembersToRawText;
 
@@ -486,12 +659,14 @@ function TextConstruct() {
   this.base = null;
   this.type = "text";
   this.text = null;
+  this.unescapeHTML = Cc[UNESCAPE_CONTRACTID].
+                      getService(Ci.nsIScriptableUnescapeHTML);
 }
 
 TextConstruct.prototype = {
   plainText: function TC_plainText() {
     if (this.type != "text") {
-      return gUnescapeHTML.unescape(stripTags(this.text));
+      return this.unescapeHTML.unescape(stripTags(this.text));
     }
     return this.text;
   },
@@ -512,16 +687,15 @@ TextConstruct.prototype = {
     else
       return null;
 
-    return gUnescapeHTML.parseFragment(this.text, isXML, this.base, element);
+    return this.unescapeHTML.parseFragment(this.text, isXML,
+                                           this.base, element);
   },
  
-  QueryInterface: function(iid) {
-    if (iid.equals(Ci.nsIFeedTextConstruct) ||
-        iid.equals(Ci.nsISupports))
-    return this;
-
-    throw Cr.NS_ERROR_NOINTERFACE;
-  }
+  // XPCOM stuff
+  classDescription: TEXTCONSTRUCT_CLASSNAME,
+  classID: TEXTCONSTRUCT_CLASSID,
+  contractID: TEXTCONSTRUCT_CONTRACTID,
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIFeedTextConstruct])
 }
 
 // Generator represents the software that produced the feed
@@ -557,14 +731,13 @@ Generator.prototype = {
     }
   },
 
-  QueryInterface: function(iid) {
-    if (iid.equals(Ci.nsIFeedGenerator) ||
-        iid.equals(Ci.nsIFeedElementBase) ||
-        iid.equals(Ci.nsISupports))
-    return this;
-
-    throw Cr.NS_ERROR_NOINTERFACE;
-  }
+  // XPCOM stuff
+  classDescription: GENERATOR_CLASSNAME,
+  classID: GENERATOR_CLASSID,
+  contractID: GENERATOR_CONTRACTID,
+  QueryInterface: XPCOMUtils.generateQI(
+    [Ci.nsIFeedGenerator, Ci.nsIFeedElementBase]
+  )
 }
 
 function Person() {
@@ -578,14 +751,13 @@ function Person() {
 }
 
 Person.prototype = {
-  QueryInterface: function(iid) {
-    if (iid.equals(Ci.nsIFeedPerson) ||
-        iid.equals(Ci.nsIFeedElementBase) ||
-        iid.equals(Ci.nsISupports))
-    return this;
-
-    throw Cr.NS_ERROR_NOINTERFACE;
-  }
+  // XPCOM stuff
+  classDescription: PERSON_CLASSNAME,
+  classID: PERSON_CLASSID,
+  contractID: PERSON_CONTRACTID,
+  QueryInterface: XPCOMUtils.generateQI(
+    [Ci.nsIFeedPerson, Ci.nsIFeedElementBase]
+  )
 }
 
 /** 
@@ -633,7 +805,12 @@ function atomGenerator(s, generator) {
   generator.QueryInterface(Ci.nsIFeedGenerator);
   generator.agent = trimString(s);
   return generator;
-} 
+}
+
+// post-process atom:logo to create an RSS2-like structure
+function atomLogo(s, logo) {
+  logo.setPropertyAsAString("url", trimString(s));
+}
 
 // post-process an RSS category, map it to the Atom fields.
 function rssCatTerm(s, cat) {
@@ -730,10 +907,10 @@ function trimString(s) {
 }
 
 // Regular expression matching RFC822 dates 
-const RFC822_RE = "^(((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun)), *)?\\d\\d?"
-+ " +((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))"
-+ " +\\d\\d(\\d\\d)? +\\d\\d:\\d\\d(:\\d\\d)? +(([+-]?\\d\\d\\d\\d)|(UT)|(GMT)"
-+ "|(EST)|(EDT)|(CST)|(CDT)|(MST)|(MDT)|(PST)|(PDT)|\\w)$";
+const RFC822_RE = "^((Mon|Tue|Wed|Thu|Fri|Sat|Sun)([a-z]+)?,? *)?\\d\\d?"
++ " +(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)([a-z]+)?"
++ " +\\d\\d(\\d\\d)? +\\d?\\d:\\d\\d(:\\d\\d)?"
++ " +([+-]?\\d\\d\\d\\d|GMT|UT[C]?|(E|C|M|P)(ST|DT)|[A-IK-Z])$";
 
 /**
  * XXX -- need to decide what this should return. 
@@ -773,22 +950,39 @@ function dateParse(dateString) {
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
 // The XHTMLHandler handles inline XHTML found in things like atom:summary
-function XHTMLHandler(processor, isAtom) {
+function XHTMLHandler(processor, isAtom, waiPrefixes) {
   this._buf = "";
   this._processor = processor;
   this._depth = 0;
   this._isAtom = isAtom;
+  // a stack of lists tracking in-scope namespaces
+  this._inScopeNS = [];
+  this._waiPrefixes = waiPrefixes;
 }
 
 // The fidelity can be improved here, to allow handling of stuff like
 // SVG and MathML. XXX
 XHTMLHandler.prototype = {
+
+   // look back up at the declared namespaces 
+   // we always use the same prefixes for our safe stuff
+  _isInScope: function XH__isInScope(ns) {
+    for (var i in this._inScopeNS) {
+      for (var uri in this._inScopeNS[i]) {
+        if (this._inScopeNS[i][uri] == ns)
+          return true;
+      }
+    }
+    return false;
+  },
+
   startDocument: function XH_startDocument() {
   },
   endDocument: function XH_endDocument() {
   },
   startElement: function XH_startElement(uri, localName, qName, attributes) {
     ++this._depth;
+    this._inScopeNS.push([]);
 
     // RFC4287 requires XHTML to be wrapped in a div that is *not* part of 
     // the content. This prevents people from screwing up namespaces, but
@@ -799,11 +993,65 @@ XHTMLHandler.prototype = {
     // If it's an XHTML element, record it. Otherwise, it's ignored.
     if (uri == XHTML_NS) {
       this._buf += "<" + localName;
+      var uri;
       for (var i=0; i < attributes.length; ++i) {
+        uri = attributes.getURI(i);
         // XHTML attributes aren't in a namespace
-        if (attributes.getURI(i) == "") { 
+        if (uri == "") { 
           this._buf += (" " + attributes.getLocalName(i) + "='" +
                         xmlEscape(attributes.getValue(i)) + "'");
+        } else {
+          // write a small set of allowed attribute namespaces
+          var prefix = gAllowedXHTMLNamespaces[uri];
+          if (prefix != null) {
+            // The attribute value we'll attempt to write
+            var attributeValue = xmlEscape(attributes.getValue(i));
+
+            // More QName abuse from W3C
+            var rolePrefix = "";
+            if (attributes.getLocalName(i) == "role") {
+              for (var aPrefix in this._waiPrefixes) {
+                if (attributeValue.indexOf(aPrefix + ":") == 0) {     
+                  // Now, due to the terrible layer mismatch 
+                  // that is QNames in content, we have to see
+                  // if the attribute value clashes with our 
+                  // namespace declarations.
+                  var isCollision = false;
+                  for (var uriKey in gAllowedXHTMLNamespaces) {
+                    if (gAllowedXHTMLNamespaces[uriKey] == aPrefix)
+                      isCollision = true;
+                  }
+                  
+                  if (isCollision) {
+                    rolePrefix = aPrefix + i;
+                    attributeValue = 
+                      rolePrefix + ":" + 
+                      attributeValue.substring(aPrefix.length + 1);
+                  } else {
+                    rolePrefix = aPrefix;
+                  }
+
+                  break;
+                }
+              }
+
+              if (rolePrefix)
+                this._buf += (" xmlns:" + rolePrefix + 
+                              "='" + WAIROLE_NS + "'");
+            }
+
+            // it's an allowed attribute NS.            
+            // write the attribute
+            this._buf += (" " + prefix + ":" + 
+                          attributes.getLocalName(i) + 
+                          "='" + attributeValue + "'");
+
+            // write an xmlns declaration if necessary
+            if (prefix != "xml" && !this._isInScope(uri)) {
+              this._inScopeNS[this._inScopeNS.length - 1].push(uri);
+              this._buf += " xmlns:" + prefix + "='" + uri + "'";
+            }
+          }
         }
       }
       this._buf += ">";
@@ -811,7 +1059,8 @@ XHTMLHandler.prototype = {
   },
   endElement: function XH_endElement(uri, localName, qName) {
     --this._depth;
-    
+    this._inScopeNS.pop();
+
     // We need to skip outer divs in Atom. See comment in startElement.
     if (this._isAtom && this._depth == 0 && localName == "div")
       return;
@@ -830,9 +1079,13 @@ XHTMLHandler.prototype = {
   characters: function XH_characters(data) {
     this._buf += xmlEscape(data);
   },
-  startPrefixMapping: function XH_startPrefixMapping() {
+  startPrefixMapping: function XH_startPrefixMapping(prefix, uri) {
+    if (prefix && uri == WAIROLE_NS) 
+      this._waiPrefixes[prefix] = WAIROLE_NS;
   },
-  endPrefixMapping: function XH_endPrefixMapping() {
+  endPrefixMapping: function FP_endPrefixMapping(prefix) {
+    if (prefix)
+      delete this._waiPrefixes[prefix];
   },
   processingInstruction: function XH_processingInstruction() {
   }, 
@@ -944,6 +1197,10 @@ function FeedProcessor() {
   this._result = null;
   this._extensionHandler = null;
   this._xhtmlHandler = null;
+  this._haveSentResult = false;
+  
+  // http://www.w3.org/WAI/PF/GUI/ uses QNames in content :(
+  this._waiPrefixes = {};
 
   // The nsIFeedResultListener waiting for the parse results
   this.listener = null;
@@ -1018,7 +1275,9 @@ function FeedProcessor() {
       "dc:contributor": new ElementInfo("contributors", Cc[PERSON_CONTRACTID],
                                          rssAuthor, true),
       "category": new ElementInfo("categories", null, rssCatTerm, true),
-      "enclosure": new ElementInfo("enclosure", null, null, true),
+      "enclosure": new ElementInfo("enclosure", null, null, false),
+      "media:content": new ElementInfo("mediacontent", null, null, true),
+      "media:group": new ElementInfo("mediagroup", null, null, false),
       "guid": new ElementInfo("guid", null, rssGuid, false)
     },
 
@@ -1030,6 +1289,10 @@ function FeedProcessor() {
       "hour": new ElementInfo("hours", null, rssArrayElement, true)
     },
 
+    "IN_MEDIAGROUP": {
+      "media:content": new ElementInfo("mediacontent", null, null, true)
+    },
+ 
     /********* RSS1 **********/
     "IN_RDF": {
       // If we hit a rss1:channel, we can verify that we have RSS1
@@ -1060,6 +1323,7 @@ function FeedProcessor() {
       "atom:contributor": new ElementInfo("contributors",  Cc[PERSON_CONTRACTID],
                                           null, true),
       "atom:link": new ElementInfo("links", null, null, true),
+      "atom:logo": new ElementInfo("atom:logo", null, atomLogo, false),
       "atom:entry": new ElementInfo("entries", Cc[ENTRY_CONTRACTID],
                                     null, true)
     },
@@ -1128,6 +1392,7 @@ FeedProcessor.prototype = {
   // When we're done with the feed, let the listener know what
   // happened.
   _sendResult: function FP_sendResult() {
+    this._haveSentResult = true;
     try {
       // Can be null when a non-feed is fed to us
       if (this._result.doc)
@@ -1143,7 +1408,6 @@ FeedProcessor.prototype = {
     }
     finally {
       this._result = null;
-      this._reader = null;
     }
   },
 
@@ -1171,11 +1435,19 @@ FeedProcessor.prototype = {
   // The XMLReader will throw sensible exceptions if these get called
   // out of order.
   onStartRequest: function FP_onStartRequest(request, context) {
+    // this will throw if the request is not a channel, but so will nsParser.
+    var channel = request.QueryInterface(Ci.nsIChannel);
+    channel.contentType = "application/vnd.mozilla.maybe.feed";
     this._reader.onStartRequest(request, context);
   },
 
   onStopRequest: function FP_onStopRequest(request, context, statusCode) {
-    this._reader.onStopRequest(request, context, statusCode);
+    try {
+      this._reader.onStopRequest(request, context, statusCode);
+    }
+    finally {
+      this._reader = null;
+    }
   },
 
   onDataAvailable:
@@ -1193,7 +1465,8 @@ FeedProcessor.prototype = {
   fatalError: function FP_reportError() {
     this._result.bozo = true;
     //XXX need to QI to FeedProgressListener
-    this._sendResult();
+    if (!this._haveSentResult)
+      this._sendResult();
   },
 
   // nsISAXContentHandler
@@ -1203,7 +1476,8 @@ FeedProcessor.prototype = {
   },
 
   endDocument: function FP_endDocument() {
-    this._sendResult();
+    if (!this._haveSentResult)
+      this._sendResult();
   },
 
   // The transitions defined above identify elements that contain more
@@ -1277,7 +1551,8 @@ FeedProcessor.prototype = {
       var type = attributes.getValueFromName("","type");
       if (type != null && type.indexOf("xhtml") >= 0) {
         this._xhtmlHandler = 
-          new XHTMLHandler(this, (this._result.version == "atom"));
+          new XHTMLHandler(this, (this._result.version == "atom"), 
+                           this._waiPrefixes);
         this._reader.contentHandler = this._xhtmlHandler;
         return;
       }
@@ -1349,20 +1624,27 @@ FeedProcessor.prototype = {
   characters: function FP_characters(data) {
     this._buf += data;
   },
-
   // TODO: It would be nice to check new prefixes here, and if they
   // don't conflict with the ones we've defined, throw them in a 
   // dictionary to check.
-  startPrefixMapping: function FP_startPrefixMapping() {
+  startPrefixMapping: function FP_startPrefixMapping(prefix, uri) {
+    // Thanks for QNames in content, W3C
+    // This will even be a perf hit for every single feed
+    // http://www.w3.org/WAI/PF/GUI/
+    if (prefix && uri == WAIROLE_NS) 
+      this._waiPrefixes[prefix] = WAIROLE_NS;
   },
-  endPrefixMapping: function FP_endPrefixMapping() {
+  
+  endPrefixMapping: function FP_endPrefixMapping(prefix) {
+    if (prefix)
+      delete this._waiPrefixes[prefix];
   },
+  
   processingInstruction: function FP_processingInstruction(target, data) {
     if (target == "xml-stylesheet") {
       var hrefAttribute = data.match(/href=[\"\'](.*?)[\"\']/);
       if (hrefAttribute && hrefAttribute.length == 2) 
-        this._result.stylesheet = gIoService.newURI(hrefAttribute[1], null,
-                                                    this._result.uri);
+        this._result.stylesheet = strToURI(hrefAttribute[1], this._result.uri);
     }
   },
 
@@ -1542,12 +1824,15 @@ FeedProcessor.prototype = {
           el.QueryInterface(Ci.nsIFeedPerson);
         else
           return; // don't know about this interface
-        
+
         var propName = localName;
+        var prefix = gNamespaces[uri];
+
         // synonyms
-        if ((uri == "" ||
-             (gNamespaces[uri].indexOf("atom") > -1) ||
-             (gNamespaces[uri].indexOf("rss") > -1)) && 
+        if ((uri == "" || 
+             prefix &&
+             ((prefix.indexOf("atom") > -1) ||
+              (prefix.indexOf("rss") > -1))) && 
             (propName == "url" || propName == "href"))
           propName = "uri";
         
@@ -1607,7 +1892,6 @@ FeedProcessor.prototype = {
           this._handlerStack[this._depth].containerClass != ENTRY_CONTRACTID) {
         type = "text";
       }
-
       newProp.type = type;
       newProp.base = this._xmlBaseStack[this._xmlBaseStack.length - 1];
       container.setPropertyAsInterface(propName, newProp);
@@ -1615,7 +1899,6 @@ FeedProcessor.prototype = {
     else {
       container.setPropertyAsAString(propName, chars);
     }
-    
   },
 
   // Sometimes, we'll hand off SAX handling duties to an XHTMLHandler
@@ -1649,148 +1932,19 @@ FeedProcessor.prototype = {
     this.endElement(uri, localName, qName);
   },
 
-  // nsISupports
-  QueryInterface: function FP_QueryInterface(iid) {
-    if (iid.equals(Ci.nsIFeedProcessor) ||
-        iid.equals(Ci.nsISAXContentHandler) ||
-        iid.equals(Ci.nsISAXErrorHandler) ||
-        iid.equals(Ci.nsIStreamListener) ||
-        iid.equals(Ci.nsIRequestObserver) ||
-        iid.equals(Ci.nsISupports))
-      return this;
-
-    throw Cr.NS_ERROR_NOINTERFACE;
-  },
+  // XPCOM stuff
+  classDescription: FP_CLASSNAME,
+  classID: FP_CLASSID,
+  contractID: FP_CONTRACTID,
+  QueryInterface: XPCOMUtils.generateQI(
+    [Ci.nsIFeedProcessor, Ci.nsISAXContentHandler, Ci.nsISAXErrorHandler,
+     Ci.nsIStreamListener, Ci.nsIRequestObserver]
+  )
 }
 
-const FP_CONTRACTID = "@mozilla.org/feed-processor;1";
-const FP_CLASSID = Components.ID("{26acb1f0-28fc-43bc-867a-a46aabc85dd4}");
-const FP_CLASSNAME = "Feed Processor";
-const FR_CONTRACTID = "@mozilla.org/feed-result;1";
-const FR_CLASSID = Components.ID("{072a5c3d-30c6-4f07-b87f-9f63d51403f2}");
-const FR_CLASSNAME = "Feed Result";
-const FEED_CONTRACTID = "@mozilla.org/feed;1";
-const FEED_CLASSID = Components.ID("{5d0cfa97-69dd-4e5e-ac84-f253162e8f9a}");
-const FEED_CLASSNAME = "Feed";
-const ENTRY_CONTRACTID = "@mozilla.org/feed-entry;1";
-const ENTRY_CLASSID = Components.ID("{8e4444ff-8e99-4bdd-aa7f-fb3c1c77319f}");
-const ENTRY_CLASSNAME = "Feed Entry";
-const TEXTCONSTRUCT_CONTRACTID = "@mozilla.org/feed-textconstruct;1";
-const TEXTCONSTRUCT_CLASSID =
-  Components.ID("{b992ddcd-3899-4320-9909-924b3e72c922}");
-const TEXTCONSTRUCT_CLASSNAME = "Feed Text Construct";
-const GENERATOR_CONTRACTID = "@mozilla.org/feed-generator;1";
-const GENERATOR_CLASSID =
-  Components.ID("{414af362-9ad8-4296-898e-62247f25a20e}");
-const GENERATOR_CLASSNAME = "Feed Generator";
-const PERSON_CONTRACTID = "@mozilla.org/feed-person;1";
-const PERSON_CLASSID = Components.ID("{95c963b7-20b2-11db-92f6-001422106990}");
-const PERSON_CLASSNAME = "Feed Person";
-
-function GenericComponentFactory(ctor) {
-  this._ctor = ctor;
-}
-
-GenericComponentFactory.prototype = {
-
-  _ctor: null,
-
-  // nsIFactory
-  createInstance: function(outer, iid) {
-    if (outer != null)
-      throw Cr.NS_ERROR_NO_AGGREGATION;
-    return (new this._ctor()).QueryInterface(iid);
-  },
-
-  // nsISupports
-  QueryInterface: function(iid) {
-    if (iid.equals(Ci.nsIFactory) ||
-        iid.equals(Ci.nsISupports))
-      return this;
-    throw Cr.NS_ERROR_NO_INTERFACE;
-  },
-
-};
-
-var Module = {
-  QueryInterface: function(iid) {
-    if (iid.equals(Ci.nsIModule) || 
-        iid.equals(Ci.nsISupports))
-      return this;
-
-    throw Cr.NS_ERROR_NO_INTERFACE;
-  },
-
-  getClassObject: function(cm, cid, iid) {
-    if (!iid.equals(Ci.nsIFactory))
-      throw Cr.NS_ERROR_NOT_IMPLEMENTED;
-
-    if (cid.equals(FP_CLASSID))
-      return new GenericComponentFactory(FeedProcessor);
-    if (cid.equals(FR_CLASSID))
-      return new GenericComponentFactory(FeedResult);
-    if (cid.equals(FEED_CLASSID))
-      return new GenericComponentFactory(Feed);
-    if (cid.equals(ENTRY_CLASSID))
-      return new GenericComponentFactory(Entry);
-    if (cid.equals(TEXTCONSTRUCT_CLASSID))
-      return new GenericComponentFactory(TextConstruct);
-    if (cid.equals(GENERATOR_CLASSID))
-      return new GenericComponentFactory(Generator);
-    if (cid.equals(PERSON_CLASSID))
-      return new GenericComponentFactory(Person);
-
-    throw Cr.NS_ERROR_NO_INTERFACE;
-  },
-
-  registerSelf: function(cm, file, location, type) {
-    var cr = cm.QueryInterface(Ci.nsIComponentRegistrar);
-    // Feed Processor
-    cr.registerFactoryLocation(FP_CLASSID, FP_CLASSNAME,
-      FP_CONTRACTID, file, location, type);
-    // Feed Result
-    cr.registerFactoryLocation(FR_CLASSID, FR_CLASSNAME,
-      FR_CONTRACTID, file, location, type);
-    // Feed
-    cr.registerFactoryLocation(FEED_CLASSID, FEED_CLASSNAME,
-      FEED_CONTRACTID, file, location, type);
-    // Entry
-    cr.registerFactoryLocation(ENTRY_CLASSID, ENTRY_CLASSNAME,
-      ENTRY_CONTRACTID, file, location, type);
-    // Text Construct
-    cr.registerFactoryLocation(TEXTCONSTRUCT_CLASSID, TEXTCONSTRUCT_CLASSNAME,
-      TEXTCONSTRUCT_CONTRACTID, file, location, type);
-    // Generator
-    cr.registerFactoryLocation(GENERATOR_CLASSID, GENERATOR_CLASSNAME,
-      GENERATOR_CONTRACTID, file, location, type);
-    // Person
-    cr.registerFactoryLocation(PERSON_CLASSID, PERSON_CLASSNAME,
-      PERSON_CONTRACTID, file, location, type);
-  },
-
-  unregisterSelf: function(cm, location, type) {
-    var cr = cm.QueryInterface(Ci.nsIComponentRegistrar);
-    // Feed Processor
-    cr.unregisterFactoryLocation(FP_CLASSID, location);
-    // Feed Result
-    cr.unregisterFactoryLocation(FR_CLASSID, location);
-    // Feed
-    cr.unregisterFactoryLocation(FEED_CLASSID, location);
-    // Entry
-    cr.unregisterFactoryLocation(ENTRY_CLASSID, location);
-    // Text Construct
-    cr.unregisterFactoryLocation(TEXTCONSTRUCT_CLASSID, location);
-    // Generator
-    cr.unregisterFactoryLocation(GENERATOR_CLASSID, location);
-    // Person
-    cr.unregisterFactoryLocation(PERSON_CLASSID, location);
-  },
-
-  canUnload: function(cm) {
-    return true;
-  },
-};
-
-function NSGetModule(cm, file) {
-  return Module;
+var components = [FeedProcessor, FeedResult, Feed, Entry,
+                  TextConstruct, Generator, Person];
+function NSGetModule(compMgr, fileSpec) {
+  return XPCOMUtils.generateModule(components);
+  
 }

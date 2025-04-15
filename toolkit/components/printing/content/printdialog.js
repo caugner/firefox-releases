@@ -19,7 +19,7 @@
 # Portions created by the Initial Developer are Copyright (C) 2002
 # the Initial Developer. All Rights Reserved.
 #
-# Contributor(s): 
+# Contributor(s):
 #   Masaki Katakai <katakai@japan.sun.com>
 #   Jessica Blanco <jblanco@us.ibm.com>
 #   Asko Tontti <atontti@cc.hut.fi>
@@ -27,22 +27,21 @@
 #   Peter Weilbacher <mozilla@weilbacher.org>
 #
 # Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or 
+# either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
 # in which case the provisions of the GPL or the LGPL are applicable instead
 # of those above. If you wish to allow use of your version of this file only
 # under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the NPL, indicate your
+# use your version of this file under the terms of the MPL, indicate your
 # decision by deleting the provisions above and replace them with the notice
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
-# the terms of any one of the NPL, the GPL or the LGPL.
+# the terms of any one of the MPL, the GPL or the LGPL.
 #
 # ***** END LICENSE BLOCK *****
 
 var dialog;
 var printService       = null;
-var printOptions       = null;
 var gOriginalNumCopies = 1;
 
 var paramBlock;
@@ -148,49 +147,46 @@ listElement.prototype =
     appendPrinterNames: 
       function (aDataObject) 
         { 
-          var list = document.getElementById("printerList"); 
-          var strDefaultPrinterName = "";
-          var printerName;
-
-          // build popup menu from printer names
-          while (aDataObject.hasMoreElements()) {
-            printerName = aDataObject.getNext();
-            printerName = printerName.QueryInterface(Components.interfaces.nsISupportsString);
-            var printerNameStr = printerName.toString();
-            if (strDefaultPrinterName == "")
-               strDefaultPrinterName = printerNameStr;
-
-            list.appendItem(printerNameStr, printerNameStr, getPrinterDescription(printerNameStr));
-          }
-          if (strDefaultPrinterName != "") {
-            this.listElement.removeAttribute("disabled");
-          } else {
+          if ((null == aDataObject) || !aDataObject.hasMore()) {
+            // disable dialog
             var stringBundle = srGetStrBundle("chrome://global/locale/printing.properties");
-            this.listElement.setAttribute("value", strDefaultPrinterName);
+            this.listElement.setAttribute("value", "");
             this.listElement.setAttribute("label", stringBundle.GetStringFromName("noprinter"));
 
-            // disable dialog
             this.listElement.setAttribute("disabled", "true");
             dialog.printerLabel.setAttribute("disabled","true");
             dialog.propertiesButton.setAttribute("disabled","true");
             dialog.fileCheck.setAttribute("disabled","true");
             dialog.printButton.setAttribute("disabled","true");
           }
-
-          return strDefaultPrinterName;
+          else {
+            // build popup menu from printer names
+            var list = document.getElementById("printerList"); 
+            do {
+              printerNameStr = aDataObject.getNext();
+              list.appendItem(printerNameStr, printerNameStr, getPrinterDescription(printerNameStr));
+            } while (aDataObject.hasMore());
+            this.listElement.removeAttribute("disabled");
+          }
         } 
   };
 
 //---------------------------------------------------
 function getPrinters()
 {
-  var printerEnumerator = printOptions.availablePrinters();
-
   var selectElement = new listElement(dialog.printerList);
   selectElement.clearList();
-  var strDefaultPrinterName = selectElement.appendPrinterNames(printerEnumerator);
 
-  selectElement.listElement.value = strDefaultPrinterName;
+  var printerEnumerator;
+  try {
+    printerEnumerator =
+        Components.classes["@mozilla.org/gfx/printerenumerator;1"]
+                  .getService(Components.interfaces.nsIPrinterEnumerator)
+                  .printerNameList;
+  } catch(e) { printerEnumerator = null; }
+
+  selectElement.appendPrinterNames(printerEnumerator);
+  selectElement.listElement.value = printService.defaultPrinterName;
 
   // make sure we load the prefs for the initially selected printer
   setPrinterDefaultsForSelectedPrinter();
@@ -265,12 +261,11 @@ function loadDialog()
       printService = printService.getService();
       if (printService) {
         printService = printService.QueryInterface(Components.interfaces.nsIPrintSettingsService);
-        printOptions = printService.QueryInterface(Components.interfaces.nsIPrintOptions);
       }
     }
   } catch(e) {}
 
-  // Note: getPrinters sets up the PrintToFile radio buttons and initalises gPrintSettings
+  // Note: getPrinters sets up the PrintToFile control
   getPrinters();
 
   if (gPrintSettings) {
@@ -411,12 +406,9 @@ function onAccept()
   saveToPrefs = gPrefs.getBoolPref("print.save_print_settings");
 
   if (saveToPrefs && printService != null) {
-    var flags = gPrintSetInterface.kInitSavePaperSizeType  | 
-                gPrintSetInterface.kInitSavePaperSizeUnit  |
-                gPrintSetInterface.kInitSavePaperWidth     | 
-                gPrintSetInterface.kInitSavePaperHeight    |
-                gPrintSetInterface.kInitSavePaperName      | 
+    var flags = gPrintSetInterface.kInitSavePaperSize      | 
                 gPrintSetInterface.kInitSaveColorSpace     |
+                gPrintSetInterface.kInitSaveEdges          |
                 gPrintSetInterface.kInitSaveInColor        |
                 gPrintSetInterface.kInitSaveResolutionName |
                 gPrintSetInterface.kInitSaveDownloadFonts  |

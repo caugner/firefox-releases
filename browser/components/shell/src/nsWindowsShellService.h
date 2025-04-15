@@ -40,38 +40,33 @@
 #define nswindowsshellservice_h____
 
 #include "nscore.h"
+#include "nsStringAPI.h"
 #include "nsIWindowsShellService.h"
-#include "nsIObserver.h"
-#include "nsIGenericFactory.h"
 
 #include <windows.h>
+#include <ole2.h>
 
-class nsWindowsShellService : public nsIWindowsShellService,
-                              public nsIObserver,
-                              public nsIShellService_MOZILLA_1_8_BRANCH
+class nsWindowsShellService : public nsIWindowsShellService
 {
 public:
-  nsWindowsShellService();
+  nsWindowsShellService() : mCheckedThisSession(PR_FALSE) {}; 
   virtual ~nsWindowsShellService() {};
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSISHELLSERVICE
   NS_DECL_NSIWINDOWSSHELLSERVICE
-  NS_DECL_NSIOBSERVER
-  NS_DECL_NSISHELLSERVICE_MOZILLA_1_8_BRANCH
-
-  static NS_METHOD Register(nsIComponentManager *aCompMgr, nsIFile *aPath, const char *registryLocation,
-                            const char *componentType, const nsModuleComponentInfo *info);
 
 protected:
-  PRBool    GetMailAccountKey(HKEY* aResult);
-  void      SetRegKey(const char* aKeyName, const char* aValueName, 
-                      const char* aValue, PRBool aBackup, HKEY aBackupKey,
-                      PRBool aReplaceExisting, PRBool aForAllUsers);
-  DWORD     DeleteRegKey(HKEY baseKey, const char *keyName);
+  PRBool    IsDefaultBrowserVista(PRBool aStartupCheck, PRBool* aIsDefaultBrowser);
 
-  nsresult  RegisterDDESupport();
-  nsresult  UnregisterDDESupport();
+  PRBool    GetMailAccountKey(HKEY* aResult);
+  void      SetRegKey(const nsString& aKeyName,
+                      const nsString& aValueName,
+                      const nsString& aValue, PRBool aHKLMOnly);
+
+  DWORD     DeleteRegKey(HKEY baseKey, const nsString& keyName);
+  DWORD     DeleteRegKeyDefaultValue(HKEY baseKey,
+                                     const nsString& keyName);
 
 private:
   PRBool    mCheckedThisSession;

@@ -43,21 +43,21 @@
 #include "nsIDOMCSSStyleDeclaration.h"
 #include "nsIDOMViewCSS.h"
 #include "nsIDOMDocumentXBL.h"
-#include "nsIBindingManager.h"
 #include "nsIObserver.h"
 #include "nsIXSLTProcessor.h"
-#include "nsISyncLoadDOMService.h"
-#include "nsIScriptGlobalObject.h"
-#include "nsIDOMWindowInternal.h"
+#include "nsSyncLoadService.h"
+#include "nsPIDOMWindow.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMDocument.h"
 #include "nsIServiceManager.h"
 #include "nsNetUtil.h"
 #include "nsIContent.h"
 #include "nsIDOMDocumentFragment.h"
+#include "nsBindingManager.h"
 
-NS_IMPL_ISUPPORTS1(nsXMLPrettyPrinter,
-                   nsIDocumentObserver)
+NS_IMPL_ISUPPORTS2(nsXMLPrettyPrinter,
+                   nsIDocumentObserver,
+                   nsIMutationObserver)
 
 nsXMLPrettyPrinter::nsXMLPrettyPrinter() : mDocument(nsnull),
                                            mUpdateDepth(0),
@@ -71,15 +71,18 @@ nsXMLPrettyPrinter::~nsXMLPrettyPrinter()
 }
 
 nsresult
-nsXMLPrettyPrinter::PrettyPrint(nsIDocument* aDocument)
+nsXMLPrettyPrinter::PrettyPrint(nsIDocument* aDocument,
+                                PRBool* aDidPrettyPrint)
 {
+    *aDidPrettyPrint = PR_FALSE;
+    
     // Check for iframe with display:none. Such iframes don't have presshells
-    if (!aDocument->GetNumberOfShells()) {
+    if (!aDocument->GetPrimaryShell()) {
         return NS_OK;
     }
 
     // check if we're in an invisible iframe
-    nsCOMPtr<nsIDOMWindowInternal> internalWin = do_QueryInterface(aDocument->GetScriptGlobalObject());
+    nsPIDOMWindow *internalWin = aDocument->GetWindow();
     nsCOMPtr<nsIDOMElement> frameElem;
     if (internalWin) {
         internalWin->GetFrameElement(getter_AddRefs(frameElem));
@@ -119,6 +122,7 @@ nsXMLPrettyPrinter::PrettyPrint(nsIDocument* aDocument)
     }
 
     // Ok, we should prettyprint. Let's do it!
+    *aDidPrettyPrint = PR_TRUE;
     nsresult rv = NS_OK;
 
     // Load the XSLT
@@ -127,15 +131,9 @@ nsXMLPrettyPrinter::PrettyPrint(nsIDocument* aDocument)
                    NS_LITERAL_CSTRING("chrome://global/content/xml/XMLPrettyPrint.xsl"));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIChannel> channel;
-    rv = NS_NewChannel(getter_AddRefs(channel), xslUri, nsnull, nsnull);
-    NS_ENSURE_SUCCESS(rv, rv);
-
     nsCOMPtr<nsIDOMDocument> xslDocument;
-    nsCOMPtr<nsISyncLoadDOMService> loader =
-       do_GetService("@mozilla.org/content/syncload-dom-service;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = loader->LoadLocalDocument(channel, nsnull, getter_AddRefs(xslDocument));
+    rv = nsSyncLoadService::LoadDocument(xslUri, nsnull, nsnull, PR_TRUE,
+                                         getter_AddRefs(xslDocument));
     NS_ENSURE_SUCCESS(rv, rv);
 
     // Transform the document
@@ -157,9 +155,7 @@ nsXMLPrettyPrinter::PrettyPrint(nsIDocument* aDocument)
     NS_ASSERTION(xblDoc, "xml document doesn't implement nsIDOMDocumentXBL");
     NS_ENSURE_TRUE(xblDoc, NS_ERROR_FAILURE);
 
-    nsCOMPtr<nsIDOMDocument> dummy;
-    xblDoc->LoadBindingDocument(NS_LITERAL_STRING("chrome://global/content/xml/XMLPrettyPrint.xml"),
-                                getter_AddRefs(dummy));
+    xblDoc->LoadBindingDocument(NS_LITERAL_STRING("chrome://global/content/xml/XMLPrettyPrint.xml"));
 
     nsCOMPtr<nsIDOMElement> rootElem;
     sourceDocument->GetDocumentElement(getter_AddRefs(rootElem));
@@ -242,7 +238,8 @@ nsXMLPrettyPrinter::AttributeChanged(nsIDocument* aDocument,
                                      nsIContent* aContent,
                                      PRInt32 aNameSpaceID,
                                      nsIAtom* aAttribute,
-                                     PRInt32 aModType)
+                                     PRInt32 aModType,
+                                     PRUint32 aStateMask)
 {
     MaybeUnhook(aContent);
 }
@@ -274,7 +271,7 @@ nsXMLPrettyPrinter::ContentRemoved(nsIDocument* aDocument,
 }
 
 void
-nsXMLPrettyPrinter::DocumentWillBeDestroyed(nsIDocument* aDocument)
+nsXMLPrettyPrinter::NodeWillBeDestroyed(const nsINode* aNode)
 {
     mDocument = nsnull;
     NS_RELEASE_THIS();

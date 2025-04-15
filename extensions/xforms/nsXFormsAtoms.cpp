@@ -36,6 +36,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "nsIAtomService.h"
+#include "nsServiceManagerUtils.h"
 #include "nsXFormsAtoms.h"
 #include "nsMemory.h"
 
@@ -51,23 +53,31 @@ nsIAtom* nsXFormsAtoms::p3ptype;
 nsIAtom* nsXFormsAtoms::modelListProperty;
 nsIAtom* nsXFormsAtoms::uploadFileProperty;
 nsIAtom* nsXFormsAtoms::messageProperty;
-nsIAtom *nsXFormsAtoms::ref;
-nsIAtom *nsXFormsAtoms::value;
-nsIAtom *nsXFormsAtoms::nodeset;
-nsIAtom *nsXFormsAtoms::model;
-nsIAtom *nsXFormsAtoms::selected;
-nsIAtom *nsXFormsAtoms::appearance;
-nsIAtom *nsXFormsAtoms::incremental;
-nsIAtom *nsXFormsAtoms::clazz;
-nsIAtom *nsXFormsAtoms::deferredBindListProperty;
-nsIAtom *nsXFormsAtoms::readyForBindProperty;
-nsIAtom *nsXFormsAtoms::fatalError;
-nsIAtom *nsXFormsAtoms::isInstanceDocument;
-nsIAtom *nsXFormsAtoms::instanceDocumentOwner;
-nsIAtom *nsXFormsAtoms::externalMessagesProperty;
+nsIAtom* nsXFormsAtoms::ref;
+nsIAtom* nsXFormsAtoms::value;
+nsIAtom* nsXFormsAtoms::nodeset;
+nsIAtom* nsXFormsAtoms::model;
+nsIAtom* nsXFormsAtoms::selected;
+nsIAtom* nsXFormsAtoms::appearance;
+nsIAtom* nsXFormsAtoms::incremental;
+nsIAtom* nsXFormsAtoms::clazz;
+nsIAtom* nsXFormsAtoms::deferredBindListProperty;
+nsIAtom* nsXFormsAtoms::readyForBindProperty;
+nsIAtom* nsXFormsAtoms::fatalError;
+nsIAtom* nsXFormsAtoms::isInstanceDocument;
+nsIAtom* nsXFormsAtoms::instanceDocumentOwner;
+nsIAtom* nsXFormsAtoms::externalMessagesProperty;
 nsIAtom* nsXFormsAtoms::deferredEventListProperty;
+nsIAtom* nsXFormsAtoms::attrBased;
+nsIAtom* nsXFormsAtoms::resource;
 
-const nsStaticAtom nsXFormsAtoms::Atoms_info[] = {
+nsIAtom* nsXFormsAtoms::choices;
+nsIAtom* nsXFormsAtoms::item;
+nsIAtom* nsXFormsAtoms::itemset;
+nsIAtom* nsXFormsAtoms::select;
+nsIAtom* nsXFormsAtoms::select1;
+
+const nsXFormsStaticAtom nsXFormsAtoms::Atoms_info[] = {
   { "src",                      &nsXFormsAtoms::src },
   { "bind",                     &nsXFormsAtoms::bind },
   { "type",                     &nsXFormsAtoms::type },
@@ -94,11 +104,30 @@ const nsStaticAtom nsXFormsAtoms::Atoms_info[] = {
   { "isInstanceDocument",       &nsXFormsAtoms::isInstanceDocument },
   { "instanceDocumentOwner",    &nsXFormsAtoms::instanceDocumentOwner },
   { "ExternalMessagesProperty", &nsXFormsAtoms::externalMessagesProperty },
-  { "DeferredEventListProperty",&nsXFormsAtoms::deferredEventListProperty }
+  { "DeferredEventListProperty",&nsXFormsAtoms::deferredEventListProperty },
+  { "attrBased",                &nsXFormsAtoms::attrBased },
+  { "resource",                 &nsXFormsAtoms::resource },
+
+  { "choices",                  &nsXFormsAtoms::choices },
+  { "item",                     &nsXFormsAtoms::item },
+  { "itemset",                  &nsXFormsAtoms::itemset },
+  { "select",                   &nsXFormsAtoms::select },
+  { "select1",                  &nsXFormsAtoms::select1 }
 };
 
 void
 nsXFormsAtoms::InitAtoms()
 {
-  NS_RegisterStaticAtoms(Atoms_info, NS_ARRAY_LENGTH(Atoms_info));
+  PRUint32 numAtoms = NS_ARRAY_LENGTH(Atoms_info);
+
+  nsCOMPtr<nsIAtomService> atomServ =
+    do_GetService(NS_ATOMSERVICE_CONTRACTID);
+  if (!atomServ) {
+    return;
+  }
+
+  for (PRUint32 i = 0; i < numAtoms; ++i) {
+    atomServ->GetPermanentAtomUTF8(Atoms_info[i].mString,
+                                   Atoms_info[i].mAtom);
+  }
 }

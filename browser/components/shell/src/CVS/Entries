@@ -1,10 +1,10 @@
-/Makefile.in/1.14/Thu Jun 23 02:25:06 2005//TFIREFOX_2_0_RELEASE
-/nsGNOMEShellService.cpp/1.10.4.1/Wed Jun 28 23:44:17 2006//TFIREFOX_2_0_RELEASE
-/nsGNOMEShellService.h/1.3.22.1/Wed Jun 28 23:44:17 2006//TFIREFOX_2_0_RELEASE
-/nsMacShellService.cpp/1.7.2.1/Wed Jun 28 23:44:17 2006//TFIREFOX_2_0_RELEASE
-/nsMacShellService.h/1.3.4.1/Wed Jun 28 23:44:17 2006//TFIREFOX_2_0_RELEASE
-/nsSetDefaultBrowser.js/1.7/Mon Jun  6 21:09:59 2005//TFIREFOX_2_0_RELEASE
-/nsShellService.h/1.3/Thu Mar 10 04:38:13 2005//TFIREFOX_2_0_RELEASE
-/nsWindowsShellService.cpp/1.21.2.2/Wed Jun 28 23:44:17 2006//TFIREFOX_2_0_RELEASE
-/nsWindowsShellService.h/1.4.18.1/Wed Jun 28 23:44:17 2006//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.26/Thu Mar 13 18:34:14 2008//TFIREFOX_3_0rc3_RELEASE
+/nsGNOMEShellService.cpp/1.22/Fri Mar 21 06:48:36 2008//TFIREFOX_3_0rc3_RELEASE
+/nsGNOMEShellService.h/1.10/Mon Nov 13 17:53:01 2006//TFIREFOX_3_0rc3_RELEASE
+/nsMacShellService.cpp/1.18/Wed Jan 31 17:19:39 2007//TFIREFOX_3_0rc3_RELEASE
+/nsMacShellService.h/1.10/Mon Nov 13 17:53:01 2006//TFIREFOX_3_0rc3_RELEASE
+/nsSetDefaultBrowser.js/1.9/Tue Aug 28 15:41:33 2007//TFIREFOX_3_0rc3_RELEASE
+/nsShellService.h/1.5/Sun Dec  4 21:02:38 2005//TFIREFOX_3_0rc3_RELEASE
+/nsWindowsShellService.cpp/1.56/Fri Apr 25 16:44:16 2008//TFIREFOX_3_0rc3_RELEASE
+/nsWindowsShellService.h/1.15/Fri Apr 25 16:44:16 2008//TFIREFOX_3_0rc3_RELEASE
 D

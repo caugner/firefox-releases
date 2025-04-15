@@ -44,18 +44,16 @@
 #include "nsVoidArray.h"
 #include "nsCOMPtr.h"
 #include "nsISupportsUtils.h"
-#include "nsIFileSpec.h"
 #include "nsILocalFile.h"
 #include "nsIOutputStream.h"
 #include "jsapi.h"
 #include "prthread.h"
-#include "plevent.h"
 #include "nsIXPConnect.h"
 #include "nsICryptoHash.h"
 #include "nsIPrincipal.h"
+#include "nsThreadUtils.h"
 
-typedef struct XPITriggerEvent {
-    PLEvent     e;
+struct XPITriggerEvent : public nsRunnable {
     nsString    URL;
     PRInt32     status;
     JSContext*  cx;
@@ -63,9 +61,10 @@ typedef struct XPITriggerEvent {
     jsval       cbval;
     nsCOMPtr<nsISupports> ref;
     nsCOMPtr<nsIPrincipal> princ;
-} XPITriggerEvent;
 
-
+    virtual ~XPITriggerEvent();
+    NS_IMETHOD Run();
+};
 
 class nsXPITriggerItem
 {
@@ -115,7 +114,7 @@ class nsXPITriggerInfo
     nsXPITriggerInfo();
     ~nsXPITriggerInfo();
 
-    void                Add( nsXPITriggerItem *aItem ) 
+    void                Add( nsXPITriggerItem *aItem )
                         { if ( aItem ) mItems.AppendElement( (void*)aItem ); }
 
     nsXPITriggerItem*   Get( PRUint32 aIndex )
@@ -135,7 +134,7 @@ class nsXPITriggerInfo
     JSContext   *mCx;
     nsCOMPtr<nsIXPConnectJSObjectHolder> mGlobalWrapper;
     jsval       mCbval;
-    PRThread*   mThread;
+    nsCOMPtr<nsIThread> mThread;
 
     nsCOMPtr<nsIPrincipal>      mPrincipal;
 

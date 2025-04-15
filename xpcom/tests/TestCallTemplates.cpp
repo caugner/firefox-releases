@@ -50,6 +50,8 @@
 #include "nsWeakReference.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
+#include "nsComponentManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 
 #define NS_ITESTSERVICE_IID \
   {0x127b5253, 0x37b1, 0x43c7, \
@@ -57,8 +59,10 @@
 
 class NS_NO_VTABLE nsITestService : public nsISupports {
   public: 
-    NS_DEFINE_STATIC_IID_ACCESSOR(NS_ITESTSERVICE_IID)
+    NS_DECLARE_STATIC_IID_ACCESSOR(NS_ITESTSERVICE_IID)
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsITestService, NS_ITESTSERVICE_IID)
 
 class nsTestService : public nsITestService, public nsSupportsWeakReference
 {
@@ -88,20 +92,20 @@ int main()
 
     /* Test CallQueryInterface */
 
-    nsISupports *mySupportsPtr = NS_REINTERPRET_CAST(nsISupports*, 0x1000);
+    nsISupports *mySupportsPtr = reinterpret_cast<nsISupports*>(0x1000);
 
     nsITestService *myITestService = nsnull;
     CallQueryInterface(mySupportsPtr, &myITestService);
 
     nsTestService *myTestService =
-        NS_REINTERPRET_CAST(nsTestService*, mySupportsPtr);
+        reinterpret_cast<nsTestService*>(mySupportsPtr);
     nsISupportsWeakReference *mySupportsWeakRef;
     CallQueryInterface(myTestService, &mySupportsWeakRef);
 
     /* Test CallQueryReferent */
 
     nsIWeakReference *myWeakRef =
-        NS_STATIC_CAST(nsIWeakReference*, mySupportsPtr);
+        static_cast<nsIWeakReference*>(mySupportsPtr);
     CallQueryReferent(myWeakRef, &myITestService);
 
     /* Test CallCreateInstance */
@@ -118,7 +122,7 @@ int main()
 
     /* Test CallGetInterface */
     nsIInterfaceRequestor *myInterfaceRequestor =
-        NS_STATIC_CAST(nsIInterfaceRequestor*, mySupportsPtr);
+        static_cast<nsIInterfaceRequestor*>(mySupportsPtr);
     CallGetInterface(myInterfaceRequestor, &myITestService);
 
     return 0;

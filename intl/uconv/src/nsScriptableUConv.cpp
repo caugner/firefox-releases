@@ -123,11 +123,9 @@ nsScriptableUnicodeConverter::FinishWithLength(char **_retval, PRInt32* aLength)
 
   nsresult rv = mEncoder->Finish(*_retval, &finLength);
   if (NS_SUCCEEDED(rv))
-    (*_retval)[finLength] = '\0';
+    *aLength = finLength;
   else
     nsMemory::Free(*_retval);
-
-  *aLength = finLength;
 
   return rv;
 
@@ -154,7 +152,7 @@ nsScriptableUnicodeConverter::ConvertToUnicode(const nsACString& aSrc, nsAString
 {
   nsACString::const_iterator i;
   aSrc.BeginReading(i);
-  return ConvertFromByteArray(NS_REINTERPRET_CAST(const PRUint8*, i.get()),
+  return ConvertFromByteArray(reinterpret_cast<const PRUint8*>(i.get()),
                               aSrc.Length(),
                               _retval);
 }
@@ -173,7 +171,7 @@ nsScriptableUnicodeConverter::ConvertFromByteArray(const PRUint8* aData,
   nsresult rv = NS_OK;
   PRInt32 inLength = aCount;
   PRInt32 outLength;
-  rv = mDecoder->GetMaxLength(NS_REINTERPRET_CAST(const char*, aData),
+  rv = mDecoder->GetMaxLength(reinterpret_cast<const char*>(aData),
                               inLength, &outLength);
   if (NS_SUCCEEDED(rv))
   {
@@ -181,7 +179,7 @@ nsScriptableUnicodeConverter::ConvertFromByteArray(const PRUint8* aData,
     if (!buf)
       return NS_ERROR_OUT_OF_MEMORY;
 
-    rv = mDecoder->Convert(NS_REINTERPRET_CAST(const char*, aData),
+    rv = mDecoder->Convert(reinterpret_cast<const char*>(aData),
                            &inLength, buf, &outLength);
     if (NS_SUCCEEDED(rv))
     {
@@ -217,9 +215,10 @@ nsScriptableUnicodeConverter::ConvertToByteArray(const nsAString& aString,
     return rv;
 
   str.Append(data, len);
+  nsMemory::Free(data);
   // NOTE: this being a byte array, it needs no null termination
-  *_aData = NS_REINTERPRET_CAST(PRUint8*,
-                                nsMemory::Clone(str.get(), str.Length()));
+  *_aData = reinterpret_cast<PRUint8*>
+                            (nsMemory::Clone(str.get(), str.Length()));
   if (!*_aData)
     return NS_ERROR_OUT_OF_MEMORY;
   *aLen = str.Length();
@@ -243,7 +242,7 @@ nsScriptableUnicodeConverter::ConvertToInputStream(const nsAString& aString,
   if (NS_FAILED(rv))
     return rv;
 
-  rv = inputStream->AdoptData(NS_REINTERPRET_CAST(char*, data), dataLen);
+  rv = inputStream->AdoptData(reinterpret_cast<char*>(data), dataLen);
   if (NS_FAILED(rv)) {
     nsMemory::Free(data);
     return rv;

@@ -44,9 +44,7 @@
 //#define FORCE_PR_LOG /* Allow logging in the release build */
 
 #include "nsITimer.h"
-#include "nsVoidArray.h"
 #include "nsIThread.h"
-#include "nsITimerInternal.h"
 #include "nsIObserver.h"
 
 #include "nsCOMPtr.h"
@@ -85,7 +83,7 @@ enum {
 // Is interval-time t less than u, even if t has wrapped PRIntervalTime?
 #define TIMER_LESS_THAN(t, u)   ((t) - (u) > DELAY_INTERVAL_LIMIT)
 
-class nsTimerImpl : public nsITimer, public nsITimerInternal
+class nsTimerImpl : public nsITimer
 {
 public:
 
@@ -97,25 +95,29 @@ public:
   friend class TimerThread;
 
   void Fire();
-  void PostTimerEvent();
+  nsresult PostTimerEvent();
   void SetDelayInternal(PRUint32 aDelay);
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSITIMER
-  NS_DECL_NSITIMERINTERNAL
 
   PRInt32 GetGeneration() { return mGeneration; }
 
 private:
   ~nsTimerImpl();
-
   nsresult InitCommon(PRUint32 aType, PRUint32 aDelay);
 
   void ReleaseCallback()
   {
-    if (mCallbackType == CALLBACK_TYPE_INTERFACE)
+    // if we're the last owner of the callback object, make
+    // sure that we don't recurse into ReleaseCallback in case
+    // the callback's destructor calls Cancel() or similar.
+    PRUint8 cbType = mCallbackType;
+    mCallbackType = CALLBACK_TYPE_UNKNOWN; 
+
+    if (cbType == CALLBACK_TYPE_INTERFACE)
       NS_RELEASE(mCallback.i);
-    else if (mCallbackType == CALLBACK_TYPE_OBSERVER)
+    else if (cbType == CALLBACK_TYPE_OBSERVER)
       NS_RELEASE(mCallback.o);
   }
 
@@ -123,15 +125,18 @@ private:
 
   void *                mClosure;
 
-  union {
+  union CallbackUnion {
     nsTimerCallbackFunc c;
     nsITimerCallback *  i;
     nsIObserver *       o;
   } mCallback;
 
+  // Some callers expect to be able to access the callback while the
+  // timer is firing.
+  nsCOMPtr<nsITimerCallback> mTimerCallbackWhileFiring;
+
   // These members are set by Init (called from NS_NewTimer) and never reset.
   PRUint8               mCallbackType;
-  PRPackedBool          mIdle;
 
   // These members are set by the initiating thread, when the timer's type is
   // changed and during the period where it fires on that thread.
@@ -162,34 +167,5 @@ private:
 #endif
 
 };
-
-#define NS_TIMERMANAGER_CONTRACTID "@mozilla.org/timer/manager;1"
-#define NS_TIMERMANAGER_CLASSNAME "Timer Manager"
-#define NS_TIMERMANAGER_CID \
-{ /* 4fe206fa-1dd2-11b2-8a0a-88bacbecc7d2 */         \
-     0x4fe206fa,                                     \
-     0x1dd2,                                         \
-     0x11b2,                                         \
-    {0x8a, 0x0a, 0x88, 0xba, 0xcb, 0xec, 0xc7, 0xd2} \
-}
-
-#include "nsITimerManager.h"
-
-class nsTimerManager : nsITimerManager
-{
-public:
-  nsTimerManager();
-
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSITIMERMANAGER
-
-  nsresult AddIdleTimer(nsITimer* timer);
-private:
-  ~nsTimerManager();
-
-  PRLock *mLock;
-  nsVoidArray mIdleTimers;
-};
-
 
 #endif /* nsTimerImpl_h___ */

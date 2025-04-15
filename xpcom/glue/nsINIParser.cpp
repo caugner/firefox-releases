@@ -41,6 +41,7 @@
 #include "nsINIParser.h"
 #include "nsError.h"
 #include "nsILocalFile.h"
+#include "nsCRTGlue.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -60,6 +61,7 @@ public:
   ~AutoFILE() { if (fp_) fclose(fp_); }
   operator FILE *() { return fp_; }
   FILE** operator &() { return &fp_; }
+  void operator=(FILE *fp) { fp_ = fp; }
 private:
   FILE *fp_;
 };
@@ -69,11 +71,27 @@ nsINIParser::Init(nsILocalFile* aFile)
 {
     nsresult rv;
 
-    /* open the file */
+    /* open the file. Don't use OpenANSIFileDesc, because you mustn't
+       pass FILE* across shared library boundaries, which may be using
+       different CRTs */
+
     AutoFILE fd;
-    rv = aFile->OpenANSIFileDesc("r" BINARY_MODE, &fd);
-    if (NS_FAILED(rv))
-      return rv;
+
+#ifdef XP_WIN
+    nsAutoString path;
+    rv = aFile->GetPath(path);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    fd = _wfopen(path.get(), L"rb");
+#else
+    nsCAutoString path;
+    rv = aFile->GetNativePath(path);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    fd = fopen(path.get(), "r" BINARY_MODE);
+#endif
+    if (!fd)
+      return NS_ERROR_FAILURE;
 
     return InitFromFILE(fd);
 }
@@ -87,59 +105,6 @@ nsINIParser::Init(const char *aPath)
         return NS_ERROR_FAILURE;
 
     return InitFromFILE(fd);
-}
-
-// Based on toolkit/mozapps/updater/src/updater/updater.cpp
-// we could use nsCRT::strtok except that nsCRT isn't part of the glue,
-// and may never be due to NSPR dependencies. This should probably be declared
-// and exported in a string-management glue header.
-
-/**
- * Scan "str" for the first character that is not in "delims".
- */
-static char*
-mstrspnp(const char *delims, char *str)
-{
-  const char *d;
-  do {
-    for (d = delims; *d != '\0'; ++d) {
-      if (*str == *d) {
-        ++str;
-        break;
-      }
-    }
-  } while (*d);
-
-  return str;
-}
-
-static char*
-mstrtok(const char *delims, char **str)
-{
-  if (!*str)
-    return NULL;
-
-  char *ret = mstrspnp(delims, *str);
-
-  if (!*ret) {
-    *str = ret;
-    return NULL;
-  }
-
-  char *i = ret;
-  do {
-    for (const char *d = delims; *d != '\0'; ++d) {
-      if (*i == *d) {
-        *i = '\0';
-        *str = ++i;
-        return ret;
-      }
-    }
-    ++i;
-  } while (*i);
-
-  *str = NULL;
-  return ret;
 }
 
 static const char kNL[] = "\r\n";
@@ -181,11 +146,11 @@ nsINIParser::InitFromFILE(FILE *fd)
     INIValue *last = nsnull;
 
     // outer loop tokenizes into lines
-    while (char *token = mstrtok(kNL, &buffer)) {
+    while (char *token = NS_strtok(kNL, &buffer)) {
         if (token[0] == '#' || token[0] == ';') // it's a comment
             continue;
 
-        token = mstrspnp(kWhitespace, token);
+        token = (char*) NS_strspnp(kWhitespace, token);
         if (!*token) // empty line
             continue;
 
@@ -194,8 +159,8 @@ nsINIParser::InitFromFILE(FILE *fd)
             currSection = token;
             last = nsnull;
 
-            char *rb = mstrtok(kRBracket, &token);
-            if (!rb || mstrtok(kWhitespace, &token)) {
+            char *rb = NS_strtok(kRBracket, &token);
+            if (!rb || NS_strtok(kWhitespace, &token)) {
                 // there's either an unclosed [Section or a [Section]Moretext!
                 // we could frankly decide that this INI file is malformed right
                 // here and stop, but we won't... keep going, looking for
@@ -213,7 +178,7 @@ nsINIParser::InitFromFILE(FILE *fd)
         }
 
         char *key = token;
-        char *e = mstrtok(kEquals, &token);
+        char *e = NS_strtok(kEquals, &token);
         if (!e)
             continue;
 
@@ -290,7 +255,7 @@ PLDHashOperator
 nsINIParser::GetSectionsCB(const char *aKey, INIValue *aData,
                            void *aClosure)
 {
-    GSClosureStruct *cs = NS_REINTERPRET_CAST(GSClosureStruct*, aClosure);
+    GSClosureStruct *cs = reinterpret_cast<GSClosureStruct*>(aClosure);
 
     return cs->usercb(aKey, cs->userclosure) ? PL_DHASH_NEXT : PL_DHASH_STOP;
 }

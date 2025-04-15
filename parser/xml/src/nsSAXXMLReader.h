@@ -48,6 +48,7 @@
 #include "nsISAXDTDHandler.h"
 #include "nsISAXErrorHandler.h"
 #include "nsISAXLexicalHandler.h"
+#include "nsCycleCollectionParticipant.h"
 
 #define NS_SAXXMLREADER_CONTRACTID "@mozilla.org/saxparser/xmlreader;1"
 #define NS_SAXXMLREADER_CLASSNAME "SAX XML Reader"
@@ -60,7 +61,8 @@ class nsSAXXMLReader : public nsISAXXMLReader,
                        public nsIContentSink
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsSAXXMLReader, nsISAXXMLReader)
   NS_DECL_NSIEXPATSINK
   NS_DECL_NSIEXTENDEDEXPATSINK
   NS_DECL_NSISAXXMLREADER
@@ -70,6 +72,11 @@ public:
   nsSAXXMLReader();
 
   //nsIContentSink
+  NS_IMETHOD WillTokenize()
+  {
+    return NS_OK;
+  }
+
   NS_IMETHOD WillBuildModel();
   NS_IMETHOD DidBuildModel();
   NS_IMETHOD SetParser(nsIParser* aParser);
@@ -116,6 +123,8 @@ private:
                           nsString &aURI,
                           nsString &aLocalName,
                           nsString &aQName);
+  nsString mPublicId;
+  nsString mSystemId;
 };
 
 #endif // nsSAXXMLReader_h__

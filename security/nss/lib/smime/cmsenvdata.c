@@ -37,7 +37,7 @@
 /*
  * CMS envelopedData methods.
  *
- * $Id: cmsenvdata.c,v 1.10.18.1 2006/02/03 22:31:43 wtchang%redhat.com Exp $
+ * $Id: cmsenvdata.c,v 1.11 2005/10/03 22:01:57 relyea%netscape.com Exp $
  */
 
 #include "cmslocal.h"

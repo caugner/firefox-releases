@@ -43,16 +43,11 @@ VPATH = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = places
-XPIDL_MODULE = places
+MODULE = browserplaces
+XPIDL_MODULE = browserplaces
 
-XPIDLSRCS  = \
-  nsIAnnotationService.idl \
-  nsIFaviconService.idl \
-  nsINavHistoryService.idl \
-  nsINavBookmarksService.idl \
-  nsILivemarkService.idl \
-  nsIRemoteContainer.idl \
-  $(NULL)
+XPIDLSRCS  = nsIPlacesImportExportService.idl \
+             nsIPlacesTransactionsService.idl \
+             $(NULL)
 
 include $(topsrcdir)/config/rules.mk

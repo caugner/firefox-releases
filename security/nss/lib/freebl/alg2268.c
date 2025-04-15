@@ -37,7 +37,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-/* $Id: alg2268.c,v 1.6.18.1 2006/02/03 22:31:09 wtchang%redhat.com Exp $ */
+/* $Id: alg2268.c,v 1.7 2005/08/06 07:24:21 nelsonb%netscape.com Exp $ */
 
 #include "blapi.h"
 #include "secerr.h"

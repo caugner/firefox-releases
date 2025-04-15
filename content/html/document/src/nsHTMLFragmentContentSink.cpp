@@ -42,7 +42,7 @@
 #include "nsIHTMLContentSink.h"
 #include "nsIParser.h"
 #include "nsIParserService.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsHTMLTokens.h"
 #include "nsGenericHTMLElement.h"
 #include "nsIDOMText.h"
@@ -50,7 +50,6 @@
 #include "nsIDOMHTMLFormElement.h"
 #include "nsIDOMDocumentFragment.h"
 #include "nsVoidArray.h"
-#include "nsITextContent.h"
 #include "nsINameSpaceManager.h"
 #include "nsIDocument.h"
 #include "nsINodeInfo.h"
@@ -61,10 +60,12 @@
 #include "nsEscape.h"
 #include "nsNodeInfoManager.h"
 #include "nsContentCreatorFunctions.h"
+#include "nsNetUtil.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsContentSink.h"
 #include "nsTHashtable.h"
-#include "nsNetUtil.h"
+#include "nsCycleCollectionParticipant.h"
+
 //
 // XXX THIS IS TEMPORARY CODE
 // There's a considerable amount of copied code from the
@@ -79,9 +80,14 @@ public:
   virtual ~nsHTMLFragmentContentSink();
 
   // nsISupports
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsHTMLFragmentContentSink,
+                                           nsIContentSink)
+
+  NS_DECL_AND_IMPL_ZEROING_OPERATOR_NEW
 
   // nsIContentSink
+  NS_IMETHOD WillTokenize(void) { return NS_OK; }
   NS_IMETHOD WillBuildModel(void);
   NS_IMETHOD DidBuildModel(void);
   NS_IMETHOD WillInterrupt(void);
@@ -94,24 +100,12 @@ public:
   // nsIHTMLContentSink
   NS_IMETHOD BeginContext(PRInt32 aID);
   NS_IMETHOD EndContext(PRInt32 aID);
-  NS_IMETHOD SetTitle(const nsString& aValue);
-  NS_IMETHOD OpenHTML(const nsIParserNode& aNode);
-  NS_IMETHOD CloseHTML();
-  NS_IMETHOD OpenHead(const nsIParserNode& aNode);
-  NS_IMETHOD CloseHead();
-  NS_IMETHOD OpenBody(const nsIParserNode& aNode);
-  NS_IMETHOD CloseBody();
-  NS_IMETHOD OpenForm(const nsIParserNode& aNode);
-  NS_IMETHOD CloseForm();
-  NS_IMETHOD OpenFrameset(const nsIParserNode& aNode);
-  NS_IMETHOD CloseFrameset();
+  NS_IMETHOD OpenHead();
   NS_IMETHOD IsEnabled(PRInt32 aTag, PRBool* aReturn) {
     *aReturn = PR_TRUE;
     return NS_OK;
   }
   NS_IMETHOD_(PRBool) IsFormOnStack() { return PR_FALSE; }
-  NS_IMETHOD OpenMap(const nsIParserNode& aNode);
-  NS_IMETHOD CloseMap();
   NS_IMETHOD WillProcessTokens(void) { return NS_OK; }
   NS_IMETHOD DidProcessTokens(void) { return NS_OK; }
   NS_IMETHOD WillProcessAToken(void) { return NS_OK; }
@@ -119,14 +113,14 @@ public:
   NS_IMETHOD NotifyTagObservers(nsIParserNode* aNode) { return NS_OK; }
   NS_IMETHOD OpenContainer(const nsIParserNode& aNode);
   NS_IMETHOD CloseContainer(const nsHTMLTag aTag);
-  NS_IMETHOD AddHeadContent(const nsIParserNode& aNode);
   NS_IMETHOD AddLeaf(const nsIParserNode& aNode);
   NS_IMETHOD AddComment(const nsIParserNode& aNode);
   NS_IMETHOD AddProcessingInstruction(const nsIParserNode& aNode);
   NS_IMETHOD AddDocTypeDecl(const nsIParserNode& aNode);
 
   // nsIFragmentContentSink
-  NS_IMETHOD GetFragment(nsIDOMDocumentFragment** aFragment);
+  NS_IMETHOD GetFragment(PRBool aWillOwnFragment,
+                         nsIDOMDocumentFragment** aFragment);
   NS_IMETHOD SetTargetDocument(nsIDocument* aDocument);
   NS_IMETHOD WillBuildContent();
   NS_IMETHOD DidBuildContent();
@@ -147,12 +141,12 @@ public:
   void AddBaseTagInfo(nsIContent* aContent);
 
   nsresult Init();
-  nsresult SetDocumentTitle(const nsAString& aString, const nsIParserNode* aNode);
 
   PRPackedBool mAllContent;
   PRPackedBool mProcessing;
   PRPackedBool mSeenBody;
   PRPackedBool mIgnoreContainer;
+  PRPackedBool mIgnoreNextCloseHead;
 
   nsCOMPtr<nsIContent> mRoot;
   nsCOMPtr<nsIParser> mParser;
@@ -163,11 +157,13 @@ public:
   PRInt32 mTextLength;
   PRInt32 mTextSize;
 
-  nsString mBaseHREF;
-  nsString mBaseTarget;
+  nsCOMPtr<nsIURI> mBaseHref;
+  nsCOMPtr<nsIAtom> mBaseTarget;
 
   nsCOMPtr<nsIDocument> mTargetDocument;
   nsRefPtr<nsNodeInfoManager> mNodeInfoManager;
+
+  nsINodeInfo* mNodeInfoCache[NS_HTML_TAG_MAX + 1];
 };
 
 static nsresult
@@ -203,13 +199,9 @@ NS_NewHTMLFragmentContentSink(nsIFragmentContentSink** aResult)
 nsHTMLFragmentContentSink::nsHTMLFragmentContentSink(PRBool aAllContent)
   : mAllContent(aAllContent),
     mProcessing(aAllContent),
-    mSeenBody(!aAllContent),
-    mIgnoreContainer(PR_FALSE),
-    mContentStack(nsnull),
-    mText(nsnull),
-    mTextLength(0),
-    mTextSize(0)
+    mSeenBody(!aAllContent)
 {
+  // Note: operator new zeros our memory
 }
 
 nsHTMLFragmentContentSink::~nsHTMLFragmentContentSink()
@@ -228,20 +220,47 @@ nsHTMLFragmentContentSink::~nsHTMLFragmentContentSink()
   }
 
   PR_FREEIF(mText);
+
+  PRUint32 i;
+  for (i = 0; i < NS_ARRAY_LENGTH(mNodeInfoCache); ++i) {
+    NS_IF_RELEASE(mNodeInfoCache[i]);
+  }
 }
 
-NS_IMPL_ADDREF(nsHTMLFragmentContentSink)
-NS_IMPL_RELEASE(nsHTMLFragmentContentSink)
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsHTMLFragmentContentSink,
+                                          nsIContentSink)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsHTMLFragmentContentSink,
+                                           nsIContentSink)
 
-NS_INTERFACE_MAP_BEGIN(nsHTMLFragmentContentSink)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsHTMLFragmentContentSink)
   NS_INTERFACE_MAP_ENTRY(nsIFragmentContentSink)
   NS_INTERFACE_MAP_ENTRY(nsIHTMLContentSink)
   NS_INTERFACE_MAP_ENTRY(nsIContentSink)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIFragmentContentSink)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIContentSink)
 NS_INTERFACE_MAP_END
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLFragmentContentSink)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsHTMLFragmentContentSink)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mParser)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTargetDocument)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRoot)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mNodeInfoManager)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsHTMLFragmentContentSink)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mParser)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mTargetDocument)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mRoot)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_MEMBER(mNodeInfoManager,
+                                                  nsNodeInfoManager)
+  {
+    PRUint32 i;
+    for (i = 0; i < NS_ARRAY_LENGTH(tmp->mNodeInfoCache); ++i) {
+      cb.NoteXPCOMChild(tmp->mNodeInfoCache[i]);
+    }
+  }
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsHTMLFragmentContentSink::WillBuildModel(void)
 {
   if (mRoot) {
@@ -304,144 +323,67 @@ nsHTMLFragmentContentSink::EndContext(PRInt32 aID)
 }
 
 NS_IMETHODIMP
-nsHTMLFragmentContentSink::SetTitle(const nsString& aValue)
+nsHTMLFragmentContentSink::OpenHead()
 {
-  return SetDocumentTitle(aValue, nsnull);
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::OpenHTML(const nsIParserNode& aNode)
-{
+  mIgnoreNextCloseHead = PR_TRUE;
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::CloseHTML()
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::OpenHead(const nsIParserNode& aNode)
-{
-  return OpenContainer(aNode);
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::CloseHead()
-{
-  return CloseContainer(eHTMLTag_head);
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::OpenBody(const nsIParserNode& aNode)
-{
-  // Ignore repeated BODY elements. The DTD is just sending them
-  // to us for compatibility reasons that don't apply here.
-  if (!mSeenBody) {
-    mSeenBody = PR_TRUE;
-    return OpenContainer(aNode);
-  }
-  else {
-    return NS_OK;
-  }
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::CloseBody()
-{
-  return CloseContainer(eHTMLTag_body);
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::OpenForm(const nsIParserNode& aNode)
-{
-  return OpenContainer(aNode);
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::CloseForm()
-{
-  return CloseContainer(eHTMLTag_form);
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::OpenFrameset(const nsIParserNode& aNode)
-{
-  return OpenContainer(aNode);
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::CloseFrameset()
-{
-  return CloseContainer(eHTMLTag_frameset);
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::OpenMap(const nsIParserNode& aNode)
-{
-  return OpenContainer(aNode);
-}
-
-NS_IMETHODIMP
-nsHTMLFragmentContentSink::CloseMap()
-{
-  return CloseContainer(eHTMLTag_map);
 }
 
 void
 nsHTMLFragmentContentSink::ProcessBaseTag(nsIContent* aContent)
 {
   nsAutoString value;
-  if (NS_CONTENT_ATTR_HAS_VALUE == aContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::href, value)) {
-    mBaseHREF = value;
+  if (aContent->GetAttr(kNameSpaceID_None, nsGkAtoms::href, value)) {
+    nsCOMPtr<nsIURI> baseHrefURI;
+    nsresult rv = 
+      nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(baseHrefURI),
+                                                value, mTargetDocument,
+                                                nsnull);
+    if (NS_FAILED(rv))
+      return;
+
+    nsIScriptSecurityManager *securityManager =
+      nsContentUtils::GetSecurityManager();
+
+    NS_ASSERTION(aContent->NodePrincipal() == mTargetDocument->NodePrincipal(),
+                 "How'd that happpen?");
+    
+    rv = securityManager->
+      CheckLoadURIWithPrincipal(mTargetDocument->NodePrincipal(), baseHrefURI,
+                                nsIScriptSecurityManager::STANDARD);
+    if (NS_SUCCEEDED(rv)) {
+      mBaseHref = baseHrefURI;
+    }
   }
-  if (NS_CONTENT_ATTR_HAS_VALUE == aContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::target, value)) {
-    mBaseTarget = value;
+  if (aContent->GetAttr(kNameSpaceID_None, nsGkAtoms::target, value)) {
+    mBaseTarget = do_GetAtom(value);
   }
 }
 
 void
 nsHTMLFragmentContentSink::AddBaseTagInfo(nsIContent* aContent)
 {
-  if (aContent) {
-    if (!mBaseHREF.IsEmpty()) {
-      aContent->SetAttr(kNameSpaceID_None, nsHTMLAtoms::_baseHref, mBaseHREF, PR_FALSE);
+  if (!aContent) {
+    return;
+  }
+
+  nsresult rv;
+  if (mBaseHref) {
+    rv = aContent->SetProperty(nsGkAtoms::htmlBaseHref, mBaseHref,
+                               nsPropertyTable::SupportsDtorFunc, PR_TRUE);
+    if (NS_SUCCEEDED(rv)) {
+      // circumvent nsDerivedSafe
+      NS_ADDREF(static_cast<nsIURI*>(mBaseHref));
     }
-    if (!mBaseTarget.IsEmpty()) {
-      aContent->SetAttr(kNameSpaceID_None, nsHTMLAtoms::_baseTarget, mBaseTarget, PR_FALSE);
+  }
+  if (mBaseTarget) {
+    rv = aContent->SetProperty(nsGkAtoms::htmlBaseTarget, mBaseTarget,
+                               nsPropertyTable::SupportsDtorFunc, PR_TRUE);
+    if (NS_SUCCEEDED(rv)) {
+      // circumvent nsDerivedSafe
+      NS_ADDREF(static_cast<nsIAtom*>(mBaseTarget));
     }
   }
-}
-
-nsresult
-nsHTMLFragmentContentSink::SetDocumentTitle(const nsAString& aString, const nsIParserNode* aNode)
-{
-  NS_ENSURE_TRUE(mNodeInfoManager, NS_ERROR_NOT_INITIALIZED);
-
-  nsCOMPtr<nsINodeInfo> nodeInfo;
-  nsresult rv = mNodeInfoManager->GetNodeInfo(nsHTMLAtoms::title, nsnull,
-                                              kNameSpaceID_None,
-                                              getter_AddRefs(nodeInfo));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsRefPtr<nsGenericHTMLElement> content = NS_NewHTMLTitleElement(nodeInfo);
-  NS_ENSURE_TRUE(content, NS_ERROR_OUT_OF_MEMORY);
-
-  nsIContent *parent = GetCurrentContent();
-
-  if (!parent) {
-    parent = mRoot;
-  }
-
-  if (aNode) {
-    AddAttributes(*aNode, content);
-  }
-
-  rv = parent->AppendChildTo(content, PR_FALSE);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return AddTextToContent(content, aString);
 }
 
 NS_IMETHODIMP
@@ -451,22 +393,42 @@ nsHTMLFragmentContentSink::OpenContainer(const nsIParserNode& aNode)
 
   nsresult result = NS_OK;
 
+  nsHTMLTag nodeType = nsHTMLTag(aNode.GetNodeType());
+
+  if (nodeType == eHTMLTag_html) {
+    return NS_OK;
+  }
+
+  // Ignore repeated BODY elements. The DTD is just sending them
+  // to us for compatibility reasons that don't apply here.
+  if (nodeType == eHTMLTag_body) {
+    if (mSeenBody) {
+      return NS_OK;
+    }
+    mSeenBody = PR_TRUE;
+  }
+
   if (mProcessing && !mIgnoreContainer) {
     FlushText();
 
-    nsHTMLTag nodeType = nsHTMLTag(aNode.GetNodeType());
     nsIContent *content = nsnull;
 
     nsCOMPtr<nsINodeInfo> nodeInfo;
 
     if (nodeType == eHTMLTag_userdefined) {
-      result =
-        mNodeInfoManager->GetNodeInfo(aNode.GetText(), nsnull,
-                                      kNameSpaceID_None,
-                                      getter_AddRefs(nodeInfo));
-    } else {
-      nsIParserService* parserService =
-        nsContentUtils::GetParserServiceWeakRef();
+      NS_ConvertUTF16toUTF8 tmp(aNode.GetText());
+      ToLowerCase(tmp);
+
+      nsCOMPtr<nsIAtom> name = do_GetAtom(tmp);
+      result = mNodeInfoManager->GetNodeInfo(name, nsnull, kNameSpaceID_None,
+                                             getter_AddRefs(nodeInfo));
+      NS_ENSURE_SUCCESS(result, result);
+    }
+    else if (mNodeInfoCache[nodeType]) {
+      nodeInfo = mNodeInfoCache[nodeType];
+    }
+    else {
+      nsIParserService* parserService = nsContentUtils::GetParserService();
       if (!parserService)
         return NS_ERROR_OUT_OF_MEMORY;
 
@@ -475,25 +437,27 @@ nsHTMLFragmentContentSink::OpenContainer(const nsIParserNode& aNode)
 
       result = mNodeInfoManager->GetNodeInfo(name, nsnull, kNameSpaceID_None,
                                              getter_AddRefs(nodeInfo));
+      NS_ENSURE_SUCCESS(result, result);
+
+      NS_ADDREF(mNodeInfoCache[nodeType] = nodeInfo);
     }
 
-    NS_ENSURE_SUCCESS(result, result);
+    content = CreateHTMLElement(nodeType, nodeInfo, PR_FALSE).get();
+    NS_ENSURE_TRUE(content, NS_ERROR_OUT_OF_MEMORY);
 
-    result = NS_NewHTMLElement(&content, nodeInfo);
-
-    if (NS_OK == result) {
-      result = AddAttributes(aNode, content);
-      if (NS_OK == result) {
-        nsIContent *parent = GetCurrentContent();
-
-        if (nsnull == parent) {
-          parent = mRoot;
-        }
-
-        parent->AppendChildTo(content, PR_FALSE);
-        PushContent(content);
-      }
+    result = AddAttributes(aNode, content);
+    if (NS_FAILED(result)) {
+      NS_RELEASE(content);
+      return result;
     }
+
+    nsIContent *parent = GetCurrentContent();
+    if (!parent) {
+      parent = mRoot;
+    }
+
+    parent->AppendChildTo(content, PR_FALSE);
+    PushContent(content);
 
     if (nodeType == eHTMLTag_table
         || nodeType == eHTMLTag_thead
@@ -515,6 +479,14 @@ nsHTMLFragmentContentSink::OpenContainer(const nsIParserNode& aNode)
 NS_IMETHODIMP
 nsHTMLFragmentContentSink::CloseContainer(const nsHTMLTag aTag)
 {
+  if (aTag == eHTMLTag_html) {
+    return NS_OK;
+  }
+  if (mIgnoreNextCloseHead && aTag == eHTMLTag_head) {
+    mIgnoreNextCloseHead = PR_FALSE;
+    return NS_OK;
+  }
+
   if (mProcessing && (nsnull != GetCurrentContent())) {
     nsIContent* content;
     FlushText();
@@ -525,27 +497,8 @@ nsHTMLFragmentContentSink::CloseContainer(const nsHTMLTag aTag)
 }
 
 NS_IMETHODIMP
-nsHTMLFragmentContentSink::AddHeadContent(const nsIParserNode& aNode)
-{
-  return AddLeaf(aNode);
-}
-
-NS_IMETHODIMP
 nsHTMLFragmentContentSink::AddLeaf(const nsIParserNode& aNode)
 {
-  if (eHTMLTag_title == aNode.GetNodeType()) {
-    nsCOMPtr<nsIDTD> dtd;
-    mParser->GetDTD(getter_AddRefs(dtd));
-    NS_ENSURE_TRUE(dtd, NS_ERROR_FAILURE);
-
-    nsAutoString skippedContent;
-    PRInt32 lineNo = 0;
-
-    dtd->CollectSkippedContent(eHTMLTag_title, skippedContent, lineNo);
-
-    return SetDocumentTitle(skippedContent, &aNode);
-  }
-
   NS_ENSURE_TRUE(mNodeInfoManager, NS_ERROR_NOT_INITIALIZED);
 
   nsresult result = NS_OK;
@@ -556,69 +509,57 @@ nsHTMLFragmentContentSink::AddLeaf(const nsIParserNode& aNode)
         FlushText();
 
         // Create new leaf content object
-        nsCOMPtr<nsIContent> content;
+        nsRefPtr<nsGenericHTMLElement> content;
         nsHTMLTag nodeType = nsHTMLTag(aNode.GetNodeType());
 
-        nsIParserService* parserService =
-          nsContentUtils::GetParserServiceWeakRef();
+        nsIParserService* parserService = nsContentUtils::GetParserService();
         if (!parserService)
           return NS_ERROR_OUT_OF_MEMORY;
 
         nsCOMPtr<nsINodeInfo> nodeInfo;
 
         if (nodeType == eHTMLTag_userdefined) {
-          result =
-            mNodeInfoManager->GetNodeInfo(aNode.GetText(), nsnull,
-                                          kNameSpaceID_None,
-                                          getter_AddRefs(nodeInfo));
-        } else {
+          NS_ConvertUTF16toUTF8 tmp(aNode.GetText());
+          ToLowerCase(tmp);
+
+          nsCOMPtr<nsIAtom> name = do_GetAtom(tmp);
+          result = mNodeInfoManager->GetNodeInfo(name, nsnull,
+                                                 kNameSpaceID_None,
+                                                 getter_AddRefs(nodeInfo));
+          NS_ENSURE_SUCCESS(result, result);
+        }
+        else if (mNodeInfoCache[nodeType]) {
+          nodeInfo = mNodeInfoCache[nodeType];
+        }
+        else {
           nsIAtom *name = parserService->HTMLIdToAtomTag(nodeType);
           NS_ASSERTION(name, "This should not happen!");
 
           result = mNodeInfoManager->GetNodeInfo(name, nsnull,
                                                  kNameSpaceID_None,
                                                  getter_AddRefs(nodeInfo));
+          NS_ENSURE_SUCCESS(result, result);
+          NS_ADDREF(mNodeInfoCache[nodeType] = nodeInfo);
         }
 
+        content = CreateHTMLElement(nodeType, nodeInfo, PR_FALSE);
+        NS_ENSURE_TRUE(content, NS_ERROR_OUT_OF_MEMORY);
+
+        result = AddAttributes(aNode, content);
         NS_ENSURE_SUCCESS(result, result);
 
-        if(NS_SUCCEEDED(result)) {
-          result = NS_NewHTMLElement(getter_AddRefs(content), nodeInfo);
-
-          if (NS_OK == result) {
-            result = AddAttributes(aNode, content);
-            if (NS_OK == result) {
-              nsIContent *parent = GetCurrentContent();
-
-              if (nsnull == parent) {
-                parent = mRoot;
-              }
-
-              parent->AppendChildTo(content, PR_FALSE);
-            }
-          }
-
-          if(nodeType == eHTMLTag_script    ||
-             nodeType == eHTMLTag_style     ||
-             nodeType == eHTMLTag_server) {
-
-            // Create a text node holding the content
-            nsCOMPtr<nsIDTD> dtd;
-            mParser->GetDTD(getter_AddRefs(dtd));
-            NS_ENSURE_TRUE(dtd, NS_ERROR_FAILURE);
-
-            nsAutoString skippedContent;
-            PRInt32 lineNo = 0;
-
-            dtd->CollectSkippedContent(nodeType, skippedContent, lineNo);
-            result=AddTextToContent(content, skippedContent);
-          }
-          else if (nodeType == eHTMLTag_img || nodeType == eHTMLTag_frame
-              || nodeType == eHTMLTag_input)    // elements with 'SRC='
-              AddBaseTagInfo(content);
-          else if (nodeType == eHTMLTag_base)
-              ProcessBaseTag(content);
+        nsIContent *parent = GetCurrentContent();
+        if (!parent) {
+          parent = mRoot;
         }
+
+        parent->AppendChildTo(content, PR_FALSE);
+
+        if (nodeType == eHTMLTag_img || nodeType == eHTMLTag_frame
+            || nodeType == eHTMLTag_input)    // elements with 'SRC='
+            AddBaseTagInfo(content);
+        else if (nodeType == eHTMLTag_base)
+            ProcessBaseTag(content);
       }
       break;
     case eToken_text:
@@ -647,28 +588,22 @@ nsHTMLFragmentContentSink::AddLeaf(const nsIParserNode& aNode)
 NS_IMETHODIMP
 nsHTMLFragmentContentSink::AddComment(const nsIParserNode& aNode)
 {
-  nsIContent *comment;
-  nsIDOMComment *domComment;
+  nsCOMPtr<nsIContent> comment;
   nsresult result = NS_OK;
 
   FlushText();
 
-  result = NS_NewCommentNode(&comment, mNodeInfoManager);
+  result = NS_NewCommentNode(getter_AddRefs(comment), mNodeInfoManager);
   if (NS_SUCCEEDED(result)) {
-    result = CallQueryInterface(comment, &domComment);
-    if (NS_SUCCEEDED(result)) {
-      domComment->AppendData(aNode.GetText());
-      NS_RELEASE(domComment);
+    comment->SetText(aNode.GetText(), PR_FALSE);
 
-      nsIContent *parent = GetCurrentContent();
+    nsIContent *parent = GetCurrentContent();
 
-      if (nsnull == parent) {
-        parent = mRoot;
-      }
-
-      parent->AppendChildTo(comment, PR_FALSE);
+    if (nsnull == parent) {
+      parent = mRoot;
     }
-    NS_RELEASE(comment);
+
+    parent->AppendChildTo(comment, PR_FALSE);
   }
 
   return NS_OK;
@@ -692,10 +627,15 @@ nsHTMLFragmentContentSink::AddDocTypeDecl(const nsIParserNode& aNode)
 }
 
 NS_IMETHODIMP
-nsHTMLFragmentContentSink::GetFragment(nsIDOMDocumentFragment** aFragment)
+nsHTMLFragmentContentSink::GetFragment(PRBool aWillOwnFragment,
+                                       nsIDOMDocumentFragment** aFragment)
 {
   if (mRoot) {
-    return CallQueryInterface(mRoot, aFragment);
+    nsresult rv = CallQueryInterface(mRoot, aFragment);
+    if (NS_SUCCEEDED(rv) && aWillOwnFragment) {
+      mRoot = nsnull;
+    }
+    return rv;
   }
 
   *aFragment = nsnull;
@@ -831,7 +771,7 @@ nsHTMLFragmentContentSink::AddTextToContent(nsIContent* aContent, const nsAStrin
 
   if(aContent) {
     if (!aText.IsEmpty()) {
-      nsCOMPtr<nsITextContent> text;
+      nsCOMPtr<nsIContent> text;
       result = NS_NewTextNode(getter_AddRefs(text), mNodeInfoManager);
       if (NS_SUCCEEDED(result)) {
         text->SetText(aText, PR_TRUE);
@@ -850,7 +790,7 @@ nsHTMLFragmentContentSink::FlushText()
     return NS_OK;
   }
 
-  nsCOMPtr<nsITextContent> content;
+  nsCOMPtr<nsIContent> content;
   nsresult rv = NS_NewTextNode(getter_AddRefs(content), mNodeInfoManager);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -914,9 +854,9 @@ nsHTMLFragmentContentSink::AddAttributes(const nsIParserNode& aNode,
     const nsAString& v =
       nsContentUtils::TrimCharsInSet(kWhitespace, aNode.GetValueAt(i));
 
-    if (nodeType == eHTMLTag_a && keyAtom == nsHTMLAtoms::name) {
-      NS_ConvertUCS2toUTF8 cname(v);
-      NS_ConvertUTF8toUCS2 uv(nsUnescape(cname.BeginWriting()));
+    if (nodeType == eHTMLTag_a && keyAtom == nsGkAtoms::name) {
+      NS_ConvertUTF16toUTF8 cname(v);
+      NS_ConvertUTF8toUTF16 uv(nsUnescape(cname.BeginWriting()));
 
       // Add attribute to content
       aContent->SetAttr(kNameSpaceID_None, keyAtom, uv, PR_FALSE);
@@ -984,22 +924,21 @@ nsHTMLParanoidFragmentSink::Init()
     return NS_OK;
   }
 
-  PRUint32 size = NS_ARRAY_LENGTH(kDefaultAllowedTags);
   sAllowedTags = new nsTHashtable<nsISupportsHashKey>();
   if (sAllowedTags) {
-    rv = sAllowedTags->Init(size);
-    for (PRUint32 i = 0; i < size && NS_SUCCEEDED(rv); i++) {
+    rv = sAllowedTags->Init(80);
+    for (PRUint32 i = 0; kDefaultAllowedTags[i] && NS_SUCCEEDED(rv); i++) {
       if (!sAllowedTags->PutEntry(*kDefaultAllowedTags[i])) {
         rv = NS_ERROR_OUT_OF_MEMORY;
       }
     }
   }
 
-  size = NS_ARRAY_LENGTH(kDefaultAllowedAttributes);
   sAllowedAttributes = new nsTHashtable<nsISupportsHashKey>();
   if (sAllowedAttributes && NS_SUCCEEDED(rv)) {
-    rv = sAllowedAttributes->Init(size);
-    for (PRUint32 i = 0; i < size && NS_SUCCEEDED(rv); i++) {
+    rv = sAllowedAttributes->Init(80);
+    for (PRUint32 i = 0;
+         kDefaultAllowedAttributes[i] && NS_SUCCEEDED(rv); i++) {
       if (!sAllowedAttributes->PutEntry(*kDefaultAllowedAttributes[i])) {
         rv = NS_ERROR_OUT_OF_MEMORY;
       }
@@ -1056,7 +995,7 @@ nsresult
 nsHTMLParanoidFragmentSink::NameFromType(const nsHTMLTag aTag,
                                          nsIAtom **aResult)
 {
-  nsIParserService* parserService = nsContentUtils::GetParserServiceWeakRef();
+  nsIParserService* parserService = nsContentUtils::GetParserService();
   if (!parserService) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -1133,9 +1072,10 @@ nsHTMLParanoidFragmentSink::AddAttributes(const nsIParserNode& aNode,
       nsCOMPtr<nsIURI> attrURI;
       rv = NS_NewURI(getter_AddRefs(attrURI), v, nsnull, baseURI);
       if (NS_SUCCEEDED(rv)) {
-        rv = secMan->CheckLoadURIWithPrincipal(mTargetDocument->GetPrincipal(),
-                                               attrURI,
-                                               nsIScriptSecurityManager::DISALLOW_SCRIPT_OR_DATA);
+        rv = secMan->
+          CheckLoadURIWithPrincipal(mTargetDocument->NodePrincipal(),
+                attrURI,
+                nsIScriptSecurityManager::DISALLOW_INHERIT_PRINCIPAL);
       }
     }
     
@@ -1145,7 +1085,7 @@ nsHTMLParanoidFragmentSink::AddAttributes(const nsIParserNode& aNode,
       continue;
     }
 
-    if (nodeType == eHTMLTag_a && keyAtom == nsHTMLAtoms::name) {
+    if (nodeType == eHTMLTag_a && keyAtom == nsGkAtoms::name) {
       NS_ConvertUTF16toUTF8 cname(v);
       NS_ConvertUTF8toUTF16 uv(nsUnescape(cname.BeginWriting()));
       // Add attribute to content
@@ -1227,7 +1167,7 @@ nsHTMLParanoidFragmentSink::AddLeaf(const nsIParserNode& aNode)
     return rv;
   }
 #endif
-
+  
   if (aNode.GetTokenType() == eToken_start) {
     nsCOMPtr<nsIAtom> name;
     rv = NameFromNode(aNode, getter_AddRefs(name));
@@ -1235,31 +1175,30 @@ nsHTMLParanoidFragmentSink::AddLeaf(const nsIParserNode& aNode)
 
 #ifdef MOZILLA_1_8_BRANCH
     // we have to do this on the branch for some late 90s reason
-    if (name == nsHTMLAtoms::script || name == nsHTMLAtoms::style) {
+    if (name == nsGkAtoms::script || name == nsGkAtoms::style) {
       nsCOMPtr<nsIDTD> dtd;
       mParser->GetDTD(getter_AddRefs(dtd));
       NS_ENSURE_TRUE(dtd, NS_ERROR_FAILURE);
 
       nsAutoString skippedContent;
       PRInt32 lineNo = 0;                
-      dtd->CollectSkippedContent(aNode.GetTokenType(),
-                                 skippedContent, lineNo);
+      dtd->CollectSkippedContent(nodeType, skippedContent, lineNo);
     }
 #endif
 
     // We will process base tags, but we won't include them
     // in the output
-    if (name == nsHTMLAtoms::base) {
+    if (name == nsGkAtoms::base) {
       nsCOMPtr<nsIContent> content;
       nsCOMPtr<nsINodeInfo> nodeInfo;
-      nsIParserService* parserService = nsContentUtils::GetParserServiceWeakRef();
+      nsIParserService* parserService = nsContentUtils::GetParserService();
       if (!parserService)
         return NS_ERROR_OUT_OF_MEMORY;
       rv = mNodeInfoManager->GetNodeInfo(name, nsnull,
                                          kNameSpaceID_None,
                                          getter_AddRefs(nodeInfo));
       NS_ENSURE_SUCCESS(rv, rv);
-      NS_NewHTMLElement(getter_AddRefs(content), nodeInfo);
+      rv = NS_NewHTMLElement(getter_AddRefs(content), nodeInfo, PR_FALSE);
       NS_ENSURE_SUCCESS(rv, rv);
       AddAttributes(aNode, content);
       ProcessBaseTag(content);

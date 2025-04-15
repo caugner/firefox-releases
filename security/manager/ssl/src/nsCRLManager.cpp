@@ -47,7 +47,7 @@
 #include "nsCOMPtr.h"
 #include "nsIPrompt.h"
 #include "nsICertificateDialogs.h"
-#include "nsArray.h"
+#include "nsIMutableArray.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsNSSShutDown.h"
@@ -68,7 +68,6 @@ extern "C" {
 #include "ocsp.h"
 #include "plbase64.h"
 
-static NS_DEFINE_CID(kDateTimeFormatCID, NS_DATETIMEFORMAT_CID);
 static NS_DEFINE_CID(kNSSComponentCID, NS_NSSCOMPONENT_CID);
 
 NS_IMPL_ISUPPORTS1(nsCRLManager, nsICRLManager)
@@ -135,7 +134,7 @@ nsCRLManager::ImportCrl (PRUint8 *aData, PRUint32 aLength, nsIURI * aURI, PRUint
     }
   }
   
-  crl = SEC_NewCrl(CERT_GetDefaultCertDB(), NS_CONST_CAST(char*, url.get()), &derCrl,
+  crl = SEC_NewCrl(CERT_GetDefaultCertDB(), const_cast<char*>(url.get()), &derCrl,
                    aType);
   
   if (!crl) {
@@ -189,7 +188,7 @@ done:
       nsCOMPtr<nsIPrompt> prompter;
       if (wwatch){
         wwatch->GetNewPrompter(0, getter_AddRefs(prompter));
-        nssComponent->GetPIPNSSBundleString("CrlImportFailure1", message);
+        nssComponent->GetPIPNSSBundleString("CrlImportFailure1x", message);
         message.Append(NS_LITERAL_STRING("\n").get());
         message.Append(errorMessage);
         nssComponent->GetPIPNSSBundleString("CrlImportFailure2", temp);
@@ -358,9 +357,9 @@ nsCRLManager::GetCrls(nsIArray ** aCrls)
   SECStatus sec_rv;
   CERTCrlHeadNode *head = nsnull;
   CERTCrlNode *node = nsnull;
-  nsCOMPtr<nsIMutableArray> crlsArray;
   nsresult rv;
-  rv = NS_NewArray(getter_AddRefs(crlsArray));
+  nsCOMPtr<nsIMutableArray> crlsArray =
+    do_CreateInstance(NS_ARRAY_CONTRACTID, &rv);
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -488,7 +487,7 @@ nsCRLManager::ComputeNextAutoUpdateTime(nsICRLInfo *info,
 
   nsAutoString nextAutoUpdateDate;
   PRExplodedTime explodedTime;
-  nsCOMPtr<nsIDateTimeFormat> dateFormatter = do_CreateInstance(kDateTimeFormatCID, &rv);
+  nsCOMPtr<nsIDateTimeFormat> dateFormatter = do_CreateInstance(NS_DATETIMEFORMAT_CONTRACTID, &rv);
   if (NS_FAILED(rv))
     return rv;
   PR_ExplodeTime(tempTime, PR_GMTParameters, &explodedTime);

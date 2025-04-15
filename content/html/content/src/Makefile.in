@@ -49,6 +49,7 @@ LIBXUL_LIBRARY	= 1
 REQUIRES	= xpcom \
 		  string \
 		  gfx \
+		  thebes \
 		  layout \
 		  widget \
 		  dom \
@@ -69,25 +70,22 @@ REQUIRES	= xpcom \
 		  imglib2 \
 		  mimetype \
 		  exthandler \
+		  chardet \
 		  uconv \
 		  intl \
 		  plugin \
 		  $(NULL)
 
 EXPORTS		= \
-		nsHTMLAtomList.h \
-		nsHTMLAtoms.h \
 		nsImageMapUtils.h \
 		$(NULL)
 
 CPPSRCS		= \
+		nsClientRect.cpp \
 		nsGenericHTMLElement.cpp \
-		nsGenericDOMHTMLCollection.cpp \
 		nsFormSubmission.cpp \
-		nsHTMLAtoms.cpp \
 		nsImageMapUtils.cpp \
 		nsHTMLAnchorElement.cpp \
-		nsHTMLAppletElement.cpp \
 		nsHTMLAreaElement.cpp \
 		nsHTMLBRElement.cpp \
 		nsHTMLBodyElement.cpp \
@@ -113,8 +111,9 @@ CPPSRCS		= \
 		nsHTMLLinkElement.cpp \
 		nsHTMLMapElement.cpp \
 		nsHTMLMetaElement.cpp \
-		nsHTMLOListElement.cpp \
 		nsHTMLObjectElement.cpp \
+		nsHTMLOListElement.cpp \
+		nsHTMLSharedObjectElement.cpp \
 		nsHTMLOptionElement.cpp \
 		nsHTMLOptGroupElement.cpp \
 		nsHTMLParagraphElement.cpp \

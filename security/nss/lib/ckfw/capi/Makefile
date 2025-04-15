@@ -34,7 +34,7 @@
 # the terms of any one of the MPL, the GPL or the LGPL.
 #
 # ***** END LICENSE BLOCK *****
-MAKEFILE_CVS_ID = "@(#) $RCSfile: Makefile,v $ $Revision: 1.2.6.2 $ $Date: 2006/02/03 22:30:52 $"
+MAKEFILE_CVS_ID = "@(#) $RCSfile: Makefile,v $ $Revision: 1.5 $ $Date: 2007/05/09 00:09:37 $"
 
 include manifest.mn
 include $(CORE_DEPTH)/coreconf/config.mk
@@ -80,7 +80,7 @@ include $(CORE_DEPTH)/coreconf/rules.mk
 
 # Generate certdata.c.
 generate:
-	perl certdata.perl < certdata.txt
+	$(PERL) certdata.perl < certdata.txt
 
 # This'll need some help from a build person.
 

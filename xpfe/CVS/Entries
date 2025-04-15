@@ -1,6 +1,6 @@
-/.cvsignore/1.1/Sat Dec  5 09:07:27 1998//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.33.18.2/Sun Mar 26 17:03:23 2006//TFIREFOX_2_0_RELEASE
-/xpfe.pkg/1.2/Wed Jan  7 01:22:25 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Dec  5 09:07:27 1998//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.39/Wed Aug 29 14:19:31 2007//TFIREFOX_3_0rc3_RELEASE
+/xpfe.pkg/1.2/Wed Jan  7 01:22:25 2004//TFIREFOX_3_0rc3_RELEASE
 D/appshell////
 D/bootstrap////
 D/browser////

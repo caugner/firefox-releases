@@ -38,16 +38,15 @@
 // Force references to all of the symbols that we want exported from
 // the dll that are located in the .lib files we link with
 
+#ifndef XP_OS2
 #include <windows.h>
+#endif
 #include "nsXPCOMGlue.h"
 #include "nsVoidArray.h"
 #include "nsTArray.h"
-#include "nsValueArray.h"
 #include "nsIAtom.h"
-#include "nsIByteArrayInputStream.h"
 #include "nsFixedSizeAllocator.h"
 #include "nsRecyclingAllocator.h"
-#include "nsIThread.h"
 #include "nsDeque.h"
 #include "nsTraceRefcnt.h"
 #include "nsTraceRefcntImpl.h"
@@ -58,7 +57,6 @@
 #include "nsString.h"
 #include "nsPrintfCString.h"
 #include "nsSupportsArray.h"
-#include "nsArray.h"
 #include "nsArrayEnumerator.h"
 #include "nsProxyRelease.h"
 #include "xpt_xdr.h"
@@ -70,6 +68,7 @@
 #include "nsWeakReference.h"
 #include "nsTextFormatter.h"
 #include "nsIStorageStream.h"
+#include "nsStringStream.h"
 #include "nsLinebreakConverter.h"
 #include "nsIBinaryInputStream.h"
 #include "nsIInterfaceRequestor.h"
@@ -80,7 +79,7 @@
 #include "nsStringEnumerator.h"
 #include "nsIInputStreamTee.h"
 #include "nsCheapSets.h"
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(XP_OS2)
 #include "pure.h"
 #endif
 #include "nsHashKeys.h"
@@ -92,13 +91,20 @@
 #include "nsNativeCharsetUtils.h"
 #include "nsInterfaceRequestorAgg.h"
 #include "nsHashPropertyBag.h"
-#include "nsStringAPI.h"
+#include "nsXPCOMStrings.h"
 #include "nsStringBuffer.h"
 #include "nsCategoryCache.h"
+#include "nsCycleCollectionParticipant.h"
+#include "nsCycleCollector.h"
+#include "nsThreadUtils.h"
+#include "nsTObserverArray.h"
 
-#ifndef WINCE
+#if !defined(WINCE) && !defined(XP_OS2)
 #include "nsWindowsRegKey.h"
 #endif
+
+class nsCStringContainer : private nsStringContainer_base { };
+class nsStringContainer : private nsStringContainer_base { };
 
 void XXXNeverCalled()
 {
@@ -117,15 +123,22 @@ void XXXNeverCalled()
       array2.InsertElementAt(c, 0);
       array1.AppendElements(array2);
     }
+    {
+      nsTObserverArray<PRBool> dummyObserverArray;
+      PRBool a = PR_FALSE;
+      dummyObserverArray.AppendElement(a);
+      dummyObserverArray.RemoveElement(a);
+      dummyObserverArray.Clear();
+    }
     nsStringHashSet();
     nsCStringHashSet();
     nsInt32HashSet();
     nsVoidHashSet();
     nsCheapStringSet();
     nsCheapInt32Set();
-    nsValueArray(0);
     nsSupportsArray();
     NS_GetNumberOfAtoms();
+    NS_NewPipe(nsnull, nsnull, 0, 0, PR_FALSE, PR_FALSE, nsnull);
     NS_NewPipe2(nsnull, nsnull, PR_FALSE, PR_FALSE, 0, 0, nsnull);
     NS_NewInputStreamReadyEvent(nsnull, nsnull, nsnull);
     NS_NewOutputStreamReadyEvent(nsnull, nsnull, nsnull);
@@ -140,6 +153,9 @@ void XXXNeverCalled()
     NS_CopySegmentToBuffer(nsnull, nsnull, nsnull, 0, 0, nsnull);
     NS_DiscardSegment(nsnull, nsnull, nsnull, 0, 0, nsnull);
     NS_WriteSegmentThunk(nsnull, nsnull, nsnull, 0, 0, 0);
+    NS_NewByteInputStream(nsnull, nsnull, 0, NS_ASSIGNMENT_COPY);
+    NS_NewCStringInputStream(nsnull, nsCString());
+    NS_NewStringInputStream(nsnull, nsString());
     PL_DHashStubEnumRemove(nsnull, nsnull, nsnull, nsnull);
     nsIDHashKey::HashKey(nsnull);
     nsFixedSizeAllocator a;
@@ -147,30 +163,24 @@ void XXXNeverCalled()
     a.Init(0, 0, 0, 0, 0);
     a.Alloc(0);
     a.Free(0, 0);
-    nsIThread::GetCurrent(nsnull);
     nsDeque d(nsnull);
     nsDequeIterator di(d);
     nsTraceRefcnt::LogAddCOMPtr(nsnull, nsnull);
     nsTraceRefcntImpl::DumpStatistics();
     NS_NewEmptyEnumerator(nsnull);
-    new nsArrayEnumerator(nsnull);
     NS_QuickSort(nsnull, 0, 0, nsnull, nsnull);
     nsString();
     NS_ProxyRelease(nsnull, nsnull, PR_FALSE);
     XPT_DoString(nsnull, nsnull, nsnull);
     XPT_DoHeader(nsnull, nsnull, nsnull);
-#if defined (DEBUG) && !defined (WINCE)
+#if defined (DEBUG) && !defined (WINCE) && !defined(XP_OS2)
     PurePrintf(0);
 #endif
-    XPTC_InvokeByIndex(nsnull, 0, 0, nsnull);
-    xptc_dummy();
-    xptc_dummy2();
-    XPTI_GetInterfaceInfoManager();
+    NS_InvokeByIndex(nsnull, 0, 0, nsnull);
     NS_NewGenericFactory(nsnull, nsnull);
     NS_NewGenericModule2(nsnull, nsnull);
     NS_GetWeakReference(nsnull);
     nsCOMPtr<nsISupports> dummyFoo(do_GetInterface(nsnull));
-    NS_NewByteArrayInputStream(nsnull, nsnull, 0);
     NS_NewStorageStream(0,0, nsnull);
     nsString foo;
     nsPrintfCString bar("");
@@ -189,9 +199,7 @@ void XXXNeverCalled()
     ToNewCString(str2);
     PL_DHashTableFinish(nsnull);
     NS_NewInputStreamTee(nsnull, nsnull, nsnull);
-    NS_NewArray(nsnull);
     nsCOMArray<nsISupports> dummyArray;
-    NS_NewArray(nsnull, dummyArray);
     NS_NewArrayEnumerator(nsnull, dummyArray);
     new nsVariant();
     nsUnescape(nsnull);
@@ -270,7 +278,20 @@ void XXXNeverCalled()
       b.ToString(0, y);
     }
 
-#ifndef WINCE
+    nsXPCOMCycleCollectionParticipant();
+    nsCycleCollector_collect();
+
+#if !defined(WINCE) && !defined(XP_OS2)
     NS_NewWindowsRegKey(nsnull);
 #endif
+
+    NS_NewThread(nsnull, nsnull);
+    NS_GetCurrentThread(nsnull);
+    NS_GetCurrentThread();
+    NS_GetMainThread(nsnull);
+    NS_DispatchToCurrentThread(nsnull);
+    NS_DispatchToMainThread(nsnull, 0);
+    NS_ProcessPendingEvents(nsnull, 0);
+    NS_HasPendingEvents(nsnull);
+    NS_ProcessNextEvent(nsnull, PR_FALSE);
 }

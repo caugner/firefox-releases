@@ -41,10 +41,11 @@
 #include "nsIObserverService.h"
 #include "nsIObserver.h"
 #include "nsIEnumerator.h"
-#include "nsString.h"
-#include "nsReadableUtils.h"
-#include "prprf.h"
+#include "nsStringGlue.h"
 #include "nsWeakReference.h"
+#include "nsComponentManagerUtils.h"
+
+#include <stdio.h>
 
 static nsIObserverService *anObserverService = NULL;
 
@@ -58,9 +59,7 @@ static void testResult( nsresult rv ) {
 }
 
 void printString(nsString &str) {
-    const char *cstr = ToNewCString(str);
-    printf("%s", cstr);
-    delete [] (char*)cstr;
+    printf("%s", NS_ConvertUTF16toUTF8(str).get());
 }
 
 class TestObserver : public nsIObserver, public nsSupportsWeakReference {
@@ -92,7 +91,7 @@ TestObserver::Observe( nsISupports     *aSubject,
     printString(mName);
     printf(" has observed something: subject@%p", (void*)aSubject);
     printf(" name=");
-    printString(NS_REINTERPRET_CAST(TestObserver*, NS_REINTERPRET_CAST(void*, aSubject))->mName);
+    printString(reinterpret_cast<TestObserver*>(reinterpret_cast<void*>(aSubject))->mName);
     printf(" aTopic=%s", topic.get());
     printf(" someData=");
     printString(data);
@@ -153,8 +152,8 @@ int main(int argc, char *argv[])
           {
               e->GetNext(getter_AddRefs(observer));
               printf("Calling observe on enumerated observer ");
-              printString(NS_REINTERPRET_CAST(TestObserver*,
-                                              NS_REINTERPRET_CAST(void*, observer.get()))->mName);
+              printString(reinterpret_cast<TestObserver*>
+                                          (reinterpret_cast<void*>(observer.get()))->mName);
               printf("...\n");
               rv = observer->Observe( observer, 
                                       topicA.get(), 

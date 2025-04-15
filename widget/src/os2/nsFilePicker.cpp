@@ -51,7 +51,6 @@
 #include "nsFilePicker.h"
 #include "nsILocalFile.h"
 #include "nsIURL.h"
-#include "nsIFileURL.h"
 #include "nsIStringBundle.h"
 #include "nsEnumeratorUtils.h"
 #include "nsCRT.h"
@@ -65,8 +64,6 @@ typedef struct _MyData
    ULONG    ulCurExt;
    ULONG    ulNumFilters;
 }MYDATA, *PMYDATA;
-
-static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
 
 NS_IMPL_ISUPPORTS1(nsFilePicker, nsIFilePicker)
 
@@ -127,13 +124,13 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
   NS_ENSURE_ARG_POINTER(retval);
 
   PRBool result = PR_FALSE;
-  char fileBuffer[MAX_PATH+1] = "";
+  nsCAutoString fileBuffer;
   char *converted = ConvertToFileSystemCharset(mDefault);
   if (nsnull == converted) {
-    mDefault.ToCString(fileBuffer,MAX_PATH);
+    LossyCopyUTF16toASCII(mDefault, fileBuffer);
   }
   else {
-    PL_strncpyz(fileBuffer, converted, MAX_PATH+1);
+    fileBuffer.Assign(converted);
     nsMemory::Free( converted );
   }
 
@@ -164,7 +161,8 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
     WinFileDlg(HWND_DESKTOP, mWnd, &filedlg);
     DosError(FERR_ENABLEHARDERR);
     char* tempptr = strstr(filedlg.szFullFile, "^");
-    *tempptr = '\0';
+    if (tempptr)
+      *tempptr = '\0';
     if (filedlg.lReturn == DID_OK) {
       result = PR_TRUE;
       if (!mDisplayDirectory)
@@ -177,7 +175,7 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
   else {
     PL_strncpy(filedlg.szFullFile, initialDir.get(), MAX_PATH);
     PL_strncat(filedlg.szFullFile, "\\", 1);
-    PL_strncat(filedlg.szFullFile, fileBuffer, MAX_PATH);
+    PL_strncat(filedlg.szFullFile, fileBuffer.get(), MAX_PATH);
     filedlg.fl = FDS_CENTER;
     if (mMode == modeSave) {
        filedlg.fl |= FDS_SAVEAS_DIALOG | FDS_ENABLEFILELB;
@@ -202,7 +200,7 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
       PRInt32 bufLength;
       WideCharToMultiByte(0, typeWide.get(), typeWide.Length(),
                           buffer, bufLength);
-      apszTypeList[i] = ToNewCString(nsDependentCString(buffer.get()));
+      apszTypeList[i] = ToNewCString(nsDependentCString(buffer.Elements()));
     }
     apszTypeList[i] = 0;
     filedlg.papszITypeList = (PAPSZ)apszTypeList;
@@ -401,20 +399,15 @@ NS_IMETHODIMP nsFilePicker::GetFile(nsILocalFile **aFile)
 }
 
 //-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::GetFileURL(nsIFileURL **aFileURL)
+NS_IMETHODIMP nsFilePicker::GetFileURL(nsIURI **aFileURL)
 {
-  nsCOMPtr<nsILocalFile> file(do_CreateInstance("@mozilla.org/file/local;1"));
-  NS_ENSURE_TRUE(file, NS_ERROR_FAILURE);
-  file->InitWithNativePath(mFile);
+  *aFileURL = nsnull;
+  nsCOMPtr<nsILocalFile> file;
+  nsresult rv = GetFile(getter_AddRefs(file));
+  if (!file)
+    return rv;
 
-  nsCOMPtr<nsIURI> uri;
-  NS_NewFileURI(getter_AddRefs(uri), file);
-  nsCOMPtr<nsIFileURL> fileURL(do_QueryInterface(uri));
-  NS_ENSURE_TRUE(fileURL, NS_ERROR_FAILURE);
-  
-  NS_ADDREF(*aFileURL = fileURL);
-
-  return NS_OK;
+  return NS_NewFileURI(aFileURL, file);
 }
 
 NS_IMETHODIMP nsFilePicker::GetFiles(nsISimpleEnumerator **aFiles)
@@ -548,7 +541,7 @@ char * nsFilePicker::ConvertToFileSystemCharset(const nsAString& inString)
     GetFileSystemCharset(fileSystemCharset);
 
     nsCOMPtr<nsICharsetConverterManager> ccm = 
-             do_GetService(kCharsetConverterManagerCID, &rv); 
+             do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv); 
     if (NS_SUCCEEDED(rv)) {
       rv = ccm->GetUnicodeEncoderRaw(fileSystemCharset.get(), &mUnicodeEncoder);
     }
@@ -564,7 +557,7 @@ char * nsFilePicker::ConvertToFileSystemCharset(const nsAString& inString)
     rv = mUnicodeEncoder->GetMaxLength(flatInString.get(), inLength,
                                        &outLength);
     if (NS_SUCCEEDED(rv)) {
-      outString = NS_STATIC_CAST( char*, nsMemory::Alloc( outLength+1 ) );
+      outString = static_cast<char*>(nsMemory::Alloc( outLength+1 ));
       if (nsnull == outString) {
         return nsnull;
       }
@@ -591,7 +584,7 @@ PRUnichar * nsFilePicker::ConvertFromFileSystemCharset(const char *inString)
     GetFileSystemCharset(fileSystemCharset);
 
     nsCOMPtr<nsICharsetConverterManager> ccm = 
-             do_GetService(kCharsetConverterManagerCID, &rv); 
+             do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv); 
     if (NS_SUCCEEDED(rv)) {
       rv = ccm->GetUnicodeDecoderRaw(fileSystemCharset.get(), &mUnicodeDecoder);
     }
@@ -603,7 +596,7 @@ PRUnichar * nsFilePicker::ConvertFromFileSystemCharset(const char *inString)
     PRInt32 outLength;
     rv = mUnicodeDecoder->GetMaxLength(inString, inLength, &outLength);
     if (NS_SUCCEEDED(rv)) {
-      outString = NS_STATIC_CAST( PRUnichar*, nsMemory::Alloc( (outLength+1) * sizeof( PRUnichar ) ) );
+      outString = static_cast<PRUnichar*>(nsMemory::Alloc( (outLength+1) * sizeof( PRUnichar ) ));
       if (nsnull == outString) {
         return nsnull;
       }
@@ -622,9 +615,12 @@ PRUnichar * nsFilePicker::ConvertFromFileSystemCharset(const char *inString)
 NS_IMETHODIMP
 nsFilePicker::AppendFilter(const nsAString& aTitle, const nsAString& aFilter)
 {
-  mFilters.AppendString(aFilter);
+  if (aFilter.EqualsLiteral("..apps"))
+    mFilters.AppendString(NS_LITERAL_STRING("*.exe;*.cmd;*.com;*.bat"));
+  else
+    mFilters.AppendString(aFilter);
   mTitles.AppendString(aTitle);
-  
+
   return NS_OK;
 }
 

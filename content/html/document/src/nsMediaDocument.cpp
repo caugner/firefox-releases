@@ -37,7 +37,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsMediaDocument.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsRect.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
@@ -233,7 +233,7 @@ nsMediaDocument::CreateSyntheticDocument()
   nsresult rv;
 
   nsCOMPtr<nsINodeInfo> nodeInfo;
-  rv = mNodeInfoManager->GetNodeInfo(nsHTMLAtoms::html, nsnull,
+  rv = mNodeInfoManager->GetNodeInfo(nsGkAtoms::html, nsnull,
                                      kNameSpaceID_None,
                                      getter_AddRefs(nodeInfo));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -243,10 +243,11 @@ nsMediaDocument::CreateSyntheticDocument()
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  rv = SetRootContent(root);
+  NS_ASSERTION(GetChildCount() == 0, "Shouldn't have any kids");
+  rv = AppendChildTo(root, PR_FALSE);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = mNodeInfoManager->GetNodeInfo(nsHTMLAtoms::body, nsnull,
+  rv = mNodeInfoManager->GetNodeInfo(nsGkAtoms::body, nsnull,
                                      kNameSpaceID_None,
                                      getter_AddRefs(nodeInfo));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -255,7 +256,6 @@ nsMediaDocument::CreateSyntheticDocument()
   if (!body) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
-  mBodyContent = do_QueryInterface(body);
 
   root->AppendChildTo(body, PR_FALSE);
 
@@ -265,18 +265,17 @@ nsMediaDocument::CreateSyntheticDocument()
 nsresult
 nsMediaDocument::StartLayout()
 {
-  PRUint32 numberOfShells = GetNumberOfShells();
-  for (PRUint32 i = 0; i < numberOfShells; i++) {
-    nsIPresShell *shell = GetShellAt(i);
-
-    // Make shell an observer for next time.
-    shell->BeginObservingDocument();
-
-    // Initial-reflow this time.
+  mMayStartLayout = PR_TRUE;
+  nsPresShellIterator iter(this);
+  nsCOMPtr<nsIPresShell> shell;
+  while ((shell = iter.GetNextShell())) {
     nsRect visibleArea = shell->GetPresContext()->GetVisibleArea();
-    shell->InitialReflow(visibleArea.width, visibleArea.height);
+    nsCOMPtr<nsIPresShell> shellGrip = shell;
+    nsresult rv = shell->InitialReflow(visibleArea.width, visibleArea.height);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-    // Now trigger a refresh.
+    // Now trigger a refresh.  vm might be null if the presshell got
+    // Destroy() called already.
     nsIViewManager* vm = shell->GetViewManager();
     if (vm) {
       vm->EnableRefresh(NS_VMREFRESH_IMMEDIATE);
@@ -328,7 +327,7 @@ nsMediaDocument::UpdateTitleAndCharset(const nsACString& aTypeStr,
   }
 
 
-  NS_ConvertASCIItoUCS2 typeStr(aTypeStr);
+  NS_ConvertASCIItoUTF16 typeStr(aTypeStr);
   nsXPIDLString title;
 
   if (mStringBundle) {
@@ -342,14 +341,14 @@ nsMediaDocument::UpdateTitleAndCharset(const nsACString& aTypeStr,
       if (!fileStr.IsEmpty()) {
         const PRUnichar *formatStrings[4]  = {fileStr.get(), typeStr.get(), 
           widthStr.get(), heightStr.get()};
-        NS_ConvertASCIItoUCS2 fmtName(aFormatNames[eWithDimAndFile]);
+        NS_ConvertASCIItoUTF16 fmtName(aFormatNames[eWithDimAndFile]);
         mStringBundle->FormatStringFromName(fmtName.get(), formatStrings, 4,
                                             getter_Copies(title));
       } 
       else {
         const PRUnichar *formatStrings[3]  = {typeStr.get(), widthStr.get(), 
           heightStr.get()};
-        NS_ConvertASCIItoUCS2 fmtName(aFormatNames[eWithDim]);
+        NS_ConvertASCIItoUTF16 fmtName(aFormatNames[eWithDim]);
         mStringBundle->FormatStringFromName(fmtName.get(), formatStrings, 3,
                                             getter_Copies(title));
       }
@@ -358,13 +357,13 @@ nsMediaDocument::UpdateTitleAndCharset(const nsACString& aTypeStr,
     // If we got a filename, display it
       if (!fileStr.IsEmpty()) {
         const PRUnichar *formatStrings[2] = {fileStr.get(), typeStr.get()};
-        NS_ConvertASCIItoUCS2 fmtName(aFormatNames[eWithFile]);
+        NS_ConvertASCIItoUTF16 fmtName(aFormatNames[eWithFile]);
         mStringBundle->FormatStringFromName(fmtName.get(), formatStrings, 2,
                                             getter_Copies(title));
       }
       else {
         const PRUnichar *formatStrings[1] = {typeStr.get()};
-        NS_ConvertASCIItoUCS2 fmtName(aFormatNames[eWithNoInfo]);
+        NS_ConvertASCIItoUTF16 fmtName(aFormatNames[eWithNoInfo]);
         mStringBundle->FormatStringFromName(fmtName.get(), formatStrings, 1,
                                             getter_Copies(title));
       }

@@ -33,42 +33,12 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: secdig.c,v 1.5.18.1 2006/09/01 21:03:20 kaie%kuix.de Exp $ */
+/* $Id: secdig.c,v 1.9 2007/11/07 02:37:22 julien.pierre.boogz%sun.com Exp $ */
 #include "secdig.h"
 
 #include "secoid.h"
 #include "secasn1.h" 
 #include "secerr.h"
-
-/*
- * XXX OLD Template.  Once all uses have been switched over to new one,
- * remove this.
- */
-DERTemplate SGNDigestInfoTemplate[] = {
-    { DER_SEQUENCE,
-	  0, NULL, sizeof(SGNDigestInfo) },
-    { DER_INLINE,
-	  offsetof(SGNDigestInfo,digestAlgorithm),
-	  SECAlgorithmIDTemplate, },
-    { DER_OCTET_STRING,
-	  offsetof(SGNDigestInfo,digest), },
-    { 0, }
-};
-
-/* XXX See comment below about SGN_DecodeDigestInfo -- keep this static! */
-/* XXX Changed from static -- need to change name? */
-const SEC_ASN1Template sgn_DigestInfoTemplate[] = {
-    { SEC_ASN1_SEQUENCE,
-	  0, NULL, sizeof(SGNDigestInfo) },
-    { SEC_ASN1_INLINE,
-	  offsetof(SGNDigestInfo,digestAlgorithm),
-	  SECOID_AlgorithmIDTemplate },
-    { SEC_ASN1_OCTET_STRING,
-	  offsetof(SGNDigestInfo,digest) },
-    { 0 }
-};
-
-SEC_ASN1_CHOOSER_IMPLEMENT(sgn_DigestInfoTemplate)
 
 /*
  * XXX Want to have a SGN_DecodeDigestInfo, like:

@@ -1,7 +1,9 @@
-/.cvsignore/1.1/Sat Dec  5 09:01:30 1998//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.9.4.3/Fri May 19 18:23:10 2006//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Dec  5 09:01:30 1998//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.12/Thu Dec 27 21:34:04 2007//TFIREFOX_3_0rc3_RELEASE
 D/base////
 D/events////
+D/json////
 D/jsurl////
+D/offline////
 D/res////
 D/storage////

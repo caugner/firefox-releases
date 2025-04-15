@@ -1,11 +1,13 @@
-/nsDecodeAppleFile.cpp/1.9/Sat Apr 17 16:52:02 2004//TFIREFOX_2_0_RELEASE
-/nsDecodeAppleFile.h/1.6/Sat Apr 17 16:52:02 2004//TFIREFOX_2_0_RELEASE
-/nsInternetConfig.cpp/1.11/Sat Apr 17 16:52:02 2004//TFIREFOX_2_0_RELEASE
-/nsInternetConfig.h/1.10/Sat Apr 17 16:52:02 2004//TFIREFOX_2_0_RELEASE
-/nsInternetConfigService.cpp/1.39/Wed Jul 20 19:44:52 2005//TFIREFOX_2_0_RELEASE
-/nsInternetConfigService.h/1.11/Wed Jul 20 19:44:54 2005//TFIREFOX_2_0_RELEASE
-/nsMIMEInfoMac.cpp/1.5/Sat Apr 17 16:52:02 2004//TFIREFOX_2_0_RELEASE
-/nsMIMEInfoMac.h/1.3/Fri Jun 11 15:47:56 2004//TFIREFOX_2_0_RELEASE
-/nsOSHelperAppService.cpp/1.44/Wed Jul 20 19:03:41 2005//TFIREFOX_2_0_RELEASE
-/nsOSHelperAppService.h/1.15/Wed Jul 20 19:03:41 2005//TFIREFOX_2_0_RELEASE
+/nsDecodeAppleFile.cpp/1.9/Sat Apr 17 16:52:02 2004//TFIREFOX_3_0rc3_RELEASE
+/nsDecodeAppleFile.h/1.6/Sat Apr 17 16:52:02 2004//TFIREFOX_3_0rc3_RELEASE
+/nsInternetConfig.h/1.10/Sat Apr 17 16:52:02 2004//TFIREFOX_3_0rc3_RELEASE
+/nsInternetConfig.mm/1.2/Tue Mar  4 08:14:47 2008//TFIREFOX_3_0rc3_RELEASE
+/nsInternetConfigService.h/1.11/Wed Jul 20 19:44:54 2005//TFIREFOX_3_0rc3_RELEASE
+/nsInternetConfigService.mm/1.6/Thu Mar 20 23:22:41 2008//TFIREFOX_3_0rc3_RELEASE
+/nsLocalHandlerAppMac.h/1.1/Thu Oct  4 06:10:48 2007//TFIREFOX_3_0rc3_RELEASE
+/nsLocalHandlerAppMac.mm/1.2/Tue Mar  4 08:14:47 2008//TFIREFOX_3_0rc3_RELEASE
+/nsMIMEInfoMac.h/1.13/Fri Feb 22 02:24:42 2008//TFIREFOX_3_0rc3_RELEASE
+/nsMIMEInfoMac.mm/1.2/Tue Mar  4 08:14:47 2008//TFIREFOX_3_0rc3_RELEASE
+/nsOSHelperAppService.h/1.20/Wed Feb 20 04:46:36 2008//TFIREFOX_3_0rc3_RELEASE
+/nsOSHelperAppService.mm/1.2/Tue Mar  4 08:14:47 2008//TFIREFOX_3_0rc3_RELEASE
 D

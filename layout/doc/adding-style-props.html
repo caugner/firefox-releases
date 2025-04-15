@@ -28,7 +28,7 @@
   </blockquote>
   <h2>Overview</h2>
 When a new style property is needed there are many places in the code that
-need to be updated. This document outlines the proceedure used to add a new
+need to be updated. This document outlines the procedure used to add a new
 property, in this case the property is a proprietary one called '-moz-force-broken-image-icons'
 and is used as a way for a stylesheet to force broken image icons to be displayed.
 This is all being done in the context of <a href="http://bugzilla.mozilla.org/show_bug.cgi?id=58646">
@@ -242,7 +242,7 @@ the 'List' method to output the property value.<br>
 
  <b> <a name="ListCase"></a>mForceBrokenImageIcon.AppendToString(buffer,eCSSProperty_force_broken_image_icons);</b>
 
-  fputs(NS_LossyConvertUCS2toASCII(buffer).get(), out);
+  fputs(NS_LossyConvertUTF16toASCII(buffer).get(), out);
 }
 
 </pre>
@@ -288,7 +288,7 @@ however there is also a class nsStyleUIReset that holds the non-inherited
 values, so we will use that one (remember, our property is not inherited).
 Add a <a href="#StyleContextMember">data member</a>
  to hold the value:
-  <pre>struct nsStyleUIReset: public nsStyleStruct {
+  <pre>struct nsStyleUIReset {
   nsStyleUIReset(void);
   nsStyleUIReset(const nsStyleUIReset&amp; aOther);
   ~nsStyleUIReset(void);
@@ -471,9 +471,7 @@ style context. Access the new property and get its value. It is that simple.
 For this example, it looks like this, in nsImageFrame:<br>
   <pre>        PRBool forceIcon = PR_FALSE;
 
-        const nsStyleUIReset* styleData;
-        GetStyleData(eStyleStruct_UIReset, (const nsStyleStruct*&amp;) styleData);
-        if (styleData-&gt;mForceBrokenImageIcon) {
+        if (GetStyleUIReset()-&gt;mForceBrokenImageIcon) {
           forceIcon = PR_TRUE;
         }
 

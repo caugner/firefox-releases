@@ -41,15 +41,12 @@
 #include "nsString.h"
 #include "nscore.h"
 #include "nsCoord.h"
-#include "nsUnitConversion.h"
 #include "nsCOMPtr.h"
 #include "nsIServiceManager.h"
-#include "nsIScreen.h"
-#include "nsIScreenManager.h"
 #include <math.h>
 #include "prprf.h"
 
-static int ComponentValue(const char* aColorSpec, int aLen, int color, int dpc)
+static int ComponentValue(const PRUnichar* aColorSpec, int aLen, int color, int dpc)
 {
   int component = 0;
   int index = (color * dpc);
@@ -57,7 +54,7 @@ static int ComponentValue(const char* aColorSpec, int aLen, int color, int dpc)
     dpc = 2;
   }
   while (--dpc >= 0) {
-    char ch = ((index < aLen) ? aColorSpec[index++] : '0');
+    PRUnichar ch = ((index < aLen) ? aColorSpec[index++] : '0');
     if (('0' <= ch) && (ch <= '9')) {
       component = (component * 16) + (ch - '0');
     } else if ((('a' <= ch) && (ch <= 'f')) || 
@@ -72,24 +69,16 @@ static int ComponentValue(const char* aColorSpec, int aLen, int color, int dpc)
   return component;
 }
 
-extern "C" NS_GFX_(PRBool) NS_HexToRGB(const nsString& aColorSpec,
+NS_GFX_(PRBool) NS_HexToRGB(const nsString& aColorSpec,
                                        nscolor* aResult)
 {
-  // XXXldb nsStackString<10>
-  NS_LossyConvertUCS2toASCII bufferStr(aColorSpec);
-  return NS_ASCIIHexToRGB(bufferStr, aResult);
-}
-
-extern "C" NS_GFX_(PRBool) NS_ASCIIHexToRGB(const nsCString& aColorSpec,
-                                            nscolor* aResult)
-{
-  const char* buffer = aColorSpec.get();
+  const PRUnichar* buffer = aColorSpec.get();
 
   int nameLen = aColorSpec.Length();
   if ((nameLen == 3) || (nameLen == 6)) {
     // Make sure the digits are legal
     for (int i = 0; i < nameLen; i++) {
-      char ch = buffer[i];
+      PRUnichar ch = buffer[i];
       if (((ch >= '0') && (ch <= '9')) ||
           ((ch >= 'a') && (ch <= 'f')) ||
           ((ch >= 'A') && (ch <= 'F'))) {
@@ -127,13 +116,10 @@ extern "C" NS_GFX_(PRBool) NS_ASCIIHexToRGB(const nsCString& aColorSpec,
 }
 
 // compatible with legacy Nav behavior
-extern "C" NS_GFX_(PRBool) NS_LooseHexToRGB(const nsString& aColorSpec, nscolor* aResult)
+NS_GFX_(PRBool) NS_LooseHexToRGB(const nsString& aColorSpec, nscolor* aResult)
 {
-  // XXXldb nsStackString<30>
-  NS_LossyConvertUCS2toASCII buffer(aColorSpec);
-
-  int nameLen = buffer.Length();
-  const char* colorSpec = buffer.get();
+  int nameLen = aColorSpec.Length();
+  const PRUnichar* colorSpec = aColorSpec.get();
   if ('#' == colorSpec[0]) {
     ++colorSpec;
     --nameLen;
@@ -165,7 +151,7 @@ extern "C" NS_GFX_(PRBool) NS_LooseHexToRGB(const nsString& aColorSpec, nscolor*
   return PR_TRUE;
 }
 
-extern "C" NS_GFX_(void) NS_RGBToHex(nscolor aColor, nsAString& aResult)
+NS_GFX_(void) NS_RGBToHex(nscolor aColor, nsAString& aResult)
 {
   char buf[10];
   PR_snprintf(buf, sizeof(buf), "#%02x%02x%02x",
@@ -173,17 +159,7 @@ extern "C" NS_GFX_(void) NS_RGBToHex(nscolor aColor, nsAString& aResult)
   CopyASCIItoUTF16(buf, aResult);
 }
 
-extern "C" NS_GFX_(void) NS_RGBToASCIIHex(nscolor aColor,
-                                          nsAFlatCString& aResult)
-{
-  aResult.SetLength(7);
-  NS_ASSERTION(aResult.Length() == 7, "small SetLength failed, use an autostring instead!");
-  char *buf = aResult.BeginWriting();
-  PR_snprintf(buf, 8, "#%02x%02x%02x",
-              NS_GET_R(aColor), NS_GET_G(aColor), NS_GET_B(aColor));
-}
-
-extern "C" NS_GFX_(PRBool) NS_ColorNameToRGB(const nsAString& aColorName, nscolor* aResult)
+NS_GFX_(PRBool) NS_ColorNameToRGB(const nsAString& aColorName, nscolor* aResult)
 {
   nsColorName id = nsColorNames::LookupName(aColorName);
   if (eColorName_UNKNOWN < id) {
@@ -196,131 +172,7 @@ extern "C" NS_GFX_(PRBool) NS_ColorNameToRGB(const nsAString& aColorName, nscolo
   return PR_FALSE;
 }
 
-extern "C" NS_GFX_(nscolor) NS_BrightenColor(nscolor inColor)
-{
-  PRIntn r, g, b, max, over;
-
-  r = NS_GET_R(inColor);
-  g = NS_GET_G(inColor);
-  b = NS_GET_B(inColor);
-
-  //10% of max color increase across the board
-  r += 25;
-  g += 25;
-  b += 25;
-
-  //figure out which color is largest
-  if (r > g)
-  {
-    if (b > r)
-      max = b;
-    else
-      max = r;
-  }
-  else
-  {
-    if (b > g)
-      max = b;
-    else
-      max = g;
-  }
-
-  //if we overflowed on this max color, increase
-  //other components by the overflow amount
-  if (max > 255)
-  {
-    over = max - 255;
-
-    if (max == r)
-    {
-      g += over;
-      b += over;
-    }
-    else if (max == g)
-    {
-      r += over;
-      b += over;
-    }
-    else
-    {
-      r += over;
-      g += over;
-    }
-  }
-
-  //clamp
-  if (r > 255)
-    r = 255;
-  if (g > 255)
-    g = 255;
-  if (b > 255)
-    b = 255;
-
-  return NS_RGBA(r, g, b, NS_GET_A(inColor));
-}
-
-extern "C" NS_GFX_(nscolor) NS_DarkenColor(nscolor inColor)
-{
-  PRIntn r, g, b, max;
-
-  r = NS_GET_R(inColor);
-  g = NS_GET_G(inColor);
-  b = NS_GET_B(inColor);
-
-  //10% of max color decrease across the board
-  r -= 25;
-  g -= 25;
-  b -= 25;
-
-  //figure out which color is largest
-  if (r > g)
-  {
-    if (b > r)
-      max = b;
-    else
-      max = r;
-  }
-  else
-  {
-    if (b > g)
-      max = b;
-    else
-      max = g;
-  }
-
-  //if we underflowed on this max color, decrease
-  //other components by the underflow amount
-  if (max < 0)
-  {
-    if (max == r)
-    {
-      g += max;
-      b += max;
-    }
-    else if (max == g)
-    {
-      r += max;
-      b += max;
-    }
-    else
-    {
-      r += max;
-      g += max;
-    }
-  }
-
-  //clamp
-  if (r < 0)
-    r = 0;
-  if (g < 0)
-    g = 0;
-  if (b < 0)
-    b = 0;
-
-  return NS_RGBA(r, g, b, NS_GET_A(inColor));
-}
-
-extern "C" NS_GFX_(nscolor)
+NS_GFX_(nscolor)
 NS_ComposeColors(nscolor aBG, nscolor aFG)
 {
   PRIntn bgAlpha = NS_GET_A(aBG);
@@ -363,7 +215,7 @@ HSL_HueToRGB(float m1, float m2, float h)
 }
 
 // The float parameters are all expected to be in the range 0-1
-extern "C" NS_GFX_(nscolor)
+NS_GFX_(nscolor)
 NS_HSL2RGB(float h, float s, float l)
 {
   PRUint8 r, g, b;

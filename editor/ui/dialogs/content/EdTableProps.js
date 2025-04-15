@@ -445,7 +445,7 @@ function SelectCellHAlign()
 {
   SetCheckbox("CellHAlignCheckbox");
   // Once user changes the alignment,
-  //  we loose their original "CharAt" alignment"
+  //  we lose their original "CharAt" alignment"
   gAlignWasChar = false;
 }
 
@@ -1301,11 +1301,6 @@ function Apply()
     return true;
   }
   return false;
-}
-
-function doHelpButton()
-{
-  openHelp("table_properties");
 }
 
 function onAccept()

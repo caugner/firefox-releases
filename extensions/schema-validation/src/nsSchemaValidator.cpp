@@ -49,10 +49,11 @@
 #include "nsIParserService.h"
 #include "nsIDOMNamedNodeMap.h"
 #include "nsDataHashtable.h"
+#include "nsIVariant.h"
+#include "nsIAttribute.h"
 
 // string includes
-#include "nsReadableUtils.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 #include "nsUnicharUtils.h"
 
 // XPCOM includes
@@ -60,8 +61,8 @@
 #include "nsIServiceManager.h"
 #include "nsIComponentManager.h"
 
-#include "nsISchema.h"
-#include "nsISchemaLoader.h"
+#include "nsISVSchema.h"
+#include "nsISVSchemaLoader.h"
 #include "nsSchemaValidatorUtils.h"
 
 #include "nsNetUtil.h"
@@ -70,10 +71,12 @@
 
 #include <stdlib.h>
 #include <math.h>
+#include <float.h>
 #include "prprf.h"
 #include "prtime.h"
 #include "plbase64.h"
 #include <ctype.h>
+#include "nsIAtomService.h"
 
 #define NS_SCHEMA_1999_NAMESPACE "http://www.w3.org/1999/XMLSchema"
 #define NS_SCHEMA_2001_NAMESPACE "http://www.w3.org/2001/XMLSchema"
@@ -88,7 +91,7 @@ PRLogModuleInfo *gSchemaValidationLog = PR_NewLogModule("schemaValidation");
 #define LOG(x)
 #endif
 
-NS_IMPL_ISUPPORTS1_CI(nsSchemaValidator, nsISchemaValidator)
+NS_IMPL_ISUPPORTS1(nsSchemaValidator, nsISchemaValidator)
 
 nsSchemaValidator::nsSchemaValidator() : mForceInvalid(PR_FALSE)
 {
@@ -105,7 +108,7 @@ nsSchemaValidator::~nsSchemaValidator()
 ////////////////////////////////////////////////////////////
 
 NS_IMETHODIMP
-nsSchemaValidator::LoadSchema(nsISchema* aSchema)
+nsSchemaValidator::LoadSchema(nsISVSchema* aSchema)
 {
   if (aSchema)
     aSchema->GetCollection(getter_AddRefs(mSchema));
@@ -130,7 +133,7 @@ nsSchemaValidator::ValidateString(const nsAString & aValue,
     return NS_ERROR_SCHEMAVALIDATOR_NO_SCHEMA_LOADED;
 
   // figure out if it's a simple or complex type
-  nsCOMPtr<nsISchemaType> type;
+  nsCOMPtr<nsISVSchemaType> type;
   nsresult rv = GetType(aType, aNamespace, getter_AddRefs(type));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -139,8 +142,8 @@ nsSchemaValidator::ValidateString(const nsAString & aValue,
   NS_ENSURE_SUCCESS(rv, rv);
 
   PRBool isValid = PR_FALSE;
-  if (typevalue == nsISchemaType::SCHEMA_TYPE_SIMPLE) {
-    nsCOMPtr<nsISchemaSimpleType> simpleType = do_QueryInterface(type);
+  if (typevalue == nsISVSchemaType::SCHEMA_TYPE_SIMPLE) {
+    nsCOMPtr<nsISVSchemaSimpleType> simpleType = do_QueryInterface(type);
     NS_ENSURE_TRUE(simpleType, NS_ERROR_FAILURE);
 
     LOG((" Type is a simple type! \n String to validate is: |%s|",
@@ -150,7 +153,13 @@ nsSchemaValidator::ValidateString(const nsAString & aValue,
   } else {
     // if its not a simpletype, validating a string makes no sense.
     rv = NS_ERROR_UNEXPECTED;
+    LOG(("  -- unexpected type"));
   }
+
+#ifdef PR_LOGGING
+  if (!isValid)
+    LOG(("  *** INVALID ***"));
+#endif
 
   *aResult = isValid;
   return rv;
@@ -167,75 +176,19 @@ nsSchemaValidator::Validate(nsIDOMNode* aElement, PRBool *aResult)
   // init the override
   mForceInvalid = PR_FALSE;
 
-  nsCOMPtr<nsIDOMElement> domElement = do_QueryInterface(aElement);
-  NS_ENSURE_STATE(domElement);
+  // will hold the type to validate against
+  nsCOMPtr<nsISVSchemaType> type;
 
-  PRBool hasTypeAttribute = PR_FALSE;
-  nsresult rv = domElement->HasAttributeNS(NS_LITERAL_STRING(NS_SCHEMA_1999_NAMESPACE),
-                                           NS_LITERAL_STRING("type"),
-                                           &hasTypeAttribute);
+  nsresult rv = GetElementXsiType(aElement, getter_AddRefs(type));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // will hold the type to validate against
-  nsCOMPtr<nsISchemaType> type;
-
-  if (hasTypeAttribute) {
-    LOG(("  -- found type attribute"));
-
-    nsAutoString typeAttribute;
-    rv = domElement->GetAttributeNS(NS_LITERAL_STRING(NS_SCHEMA_1999_NAMESPACE),
-                                    NS_LITERAL_STRING("type"),
-                                    typeAttribute);
-    NS_ENSURE_SUCCESS(rv, rv);
-    LOG(("  Type is: %s", NS_ConvertUTF16toUTF8(typeAttribute).get()));
-
-    if (typeAttribute.IsEmpty())
-      return NS_ERROR_SCHEMAVALIDATOR_NO_TYPE_FOUND;
-
-    // split type (ns:type) into namespace and type.
-    nsCOMPtr<nsIParserService> parserService =
-      do_GetService("@mozilla.org/parser/parser-service;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    const nsAFlatString& qName = PromiseFlatString(typeAttribute);
-    const PRUnichar *colon;
-    rv = parserService->CheckQName(qName, PR_TRUE, &colon);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    const PRUnichar* end;
-    qName.EndReading(end);
-
-    nsAutoString schemaTypePrefix, schemaType, schemaTypeNamespace;
-    if (!colon) {
-      // colon not found, so no prefix
-      schemaType.Assign(typeAttribute);
-
-      // get namespace from node
-      aElement->GetNamespaceURI(schemaTypeNamespace);
-    } else {
-      schemaTypePrefix.Assign(Substring(qName.get(), colon));
-      schemaType.Assign(Substring(colon + 1, end));
-
-      // get the namespace url from the prefix
-      nsCOMPtr<nsIDOM3Node> domNode3 = do_QueryInterface(aElement);
-      rv = domNode3->LookupNamespaceURI(schemaTypePrefix, schemaTypeNamespace);
-      NS_ENSURE_SUCCESS(rv, rv);
+  if (!type) {
+    if (!mSchema) {
+      // no type attribute and no loaded schemas, so abort
+      // XXX: needed better error here
+      return NS_ERROR_SCHEMAVALIDATOR_NO_SCHEMA_LOADED;
     }
 
-    LOG(("  Type to validate against is %s:%s",
-      NS_LossyConvertUTF16toASCII(schemaTypePrefix).get(),
-      NS_LossyConvertUTF16toASCII(schemaType).get()));
-
-    // no schemas loaded and type is not builtin, abort
-    if (!mSchema &&
-        !schemaTypeNamespace.EqualsLiteral(NS_SCHEMA_1999_NAMESPACE) &&
-        !schemaTypeNamespace.EqualsLiteral(NS_SCHEMA_2001_NAMESPACE))
-      return NS_ERROR_SCHEMAVALIDATOR_NO_SCHEMA_LOADED;
-
-    // get the type
-    rv = GetType(schemaType, schemaTypeNamespace, getter_AddRefs(type));
-    NS_ENSURE_SUCCESS(rv, rv);
-  } else if (mSchema) {
     // no type attribute, look for an xsd:element in the schema that matches
     LOG(("   -- no type attribute found, so looking for matching xsd:element"));
 
@@ -248,7 +201,7 @@ nsSchemaValidator::Validate(nsIDOMNode* aElement, PRBool *aResult)
     rv = aElement->GetLocalName(localName);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsISchemaElement> element;
+    nsCOMPtr<nsISVSchemaElement> element;
     mSchema->GetElement(localName, schemaTypeNamespace, getter_AddRefs(element));
 
     if (!element) {
@@ -259,17 +212,13 @@ nsSchemaValidator::Validate(nsIDOMNode* aElement, PRBool *aResult)
 
     rv = element->GetType(getter_AddRefs(type));
     NS_ENSURE_SUCCESS(rv, rv);
-  } else {
-    // no type attribute and no loaded schemas, so abort
-    // XXX: needed better error here
-    return NS_ERROR_SCHEMAVALIDATOR_NO_SCHEMA_LOADED;
   }
 
-  /* 
+  /*
    * We allow the schema validator to continue validating a structure
    * even if the nodevalue is invalid per its simpletype binding.  This is done
    * so that we continue to mark nodes with their types, even if we encounter
-   * an invalid nodevalue.  We remember that we had an invalid nodevalue by 
+   * an invalid nodevalue.  We remember that we had an invalid nodevalue by
    * using mForceInvalid as an override for the final return.
    */
 
@@ -280,9 +229,22 @@ nsSchemaValidator::Validate(nsIDOMNode* aElement, PRBool *aResult)
   return rv;
 }
 
+// This is passed into setProperty so that the variant passed as
+// an xsdtype is released when the property is destroyed
+static void VariantDTor(void           *aObject,
+                        nsIAtom        *aPropertyName,
+                        void           *aPropertyValue,
+                        void           *aData)
+{
+  nsIVariant *pVariant = static_cast<nsIVariant *>(aPropertyValue);
+  NS_IF_RELEASE(pVariant);
+}
+
+
+
 NS_IMETHODIMP
 nsSchemaValidator::ValidateAgainstType(nsIDOMNode* aElement,
-                                       nsISchemaType* aType,
+                                       nsISVSchemaType* aType,
                                        PRBool *aResult)
 {
   if (!aElement)
@@ -295,8 +257,9 @@ nsSchemaValidator::ValidateAgainstType(nsIDOMNode* aElement,
   NS_ENSURE_SUCCESS(rv, rv);
 
   PRBool isValid = PR_FALSE;
-  if (typevalue == nsISchemaType::SCHEMA_TYPE_SIMPLE) {
-    nsCOMPtr<nsISchemaSimpleType> simpleType = do_QueryInterface(aType);
+
+  if (typevalue == nsISVSchemaType::SCHEMA_TYPE_SIMPLE) {
+    nsCOMPtr<nsISVSchemaSimpleType> simpleType = do_QueryInterface(aType);
 
     if (simpleType) {
       // get the nodevalue using DOM 3's textContent
@@ -324,20 +287,33 @@ nsSchemaValidator::ValidateAgainstType(nsIDOMNode* aElement,
         isValid = PR_TRUE;
       }
 
-      // set the property so that callers can check validity of nodes
-      nsCOMPtr<nsIContent> content = do_QueryInterface(aElement);
+      nsCOMPtr<nsIWritableVariant> holder =
+        do_CreateInstance("@mozilla.org/variant;1");
+      NS_ENSURE_STATE(holder);
+
+      holder->SetAsInterface(nsISVSchemaType::GetIID(), aType);
+
+      // and save on the node
+      nsCOMPtr<nsIContent> content = do_QueryInterface(domNode3);
       NS_ENSURE_STATE(content);
 
-      nsCOMPtr<nsIAtom> myAtom = do_GetAtom("xsdtype");
+      // we have to be really careful to set the destructor function correctly.
+      // this also has to be a pointer to a variant
+      nsCOMPtr<nsIAtomService> atomServ =
+        do_GetService(NS_ATOMSERVICE_CONTRACTID, &rv);
+      NS_ENSURE_SUCCESS(rv, rv);
 
-      // We need to make aType live one cycle longer, so that getProperty
-      // can access it.  ReleaseObject will take care of the releasing.
-      NS_ADDREF(aType);
-      rv = content->SetProperty(myAtom, aType, ReleaseObject);
+      nsCOMPtr<nsIAtom> key;
+      rv = atomServ->GetAtomUTF8("xsdtype", getter_AddRefs(key));
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsIVariant *pVariant = holder;
+      NS_IF_ADDREF(pVariant);
+      rv = content->SetProperty(key, pVariant, &VariantDTor);
       NS_ENSURE_SUCCESS(rv, rv);
     }
-  } else if (typevalue == nsISchemaType::SCHEMA_TYPE_COMPLEX) {
-    nsCOMPtr<nsISchemaComplexType> complexType = do_QueryInterface(aType);
+  } else if (typevalue == nsISVSchemaType::SCHEMA_TYPE_COMPLEX) {
+    nsCOMPtr<nsISVSchemaComplexType> complexType = do_QueryInterface(aType);
     if (complexType) {
       LOG(("  Type is a complex type!"));
       rv = ValidateComplextype(aElement, complexType, &isValid);
@@ -351,32 +327,32 @@ nsSchemaValidator::ValidateAgainstType(nsIDOMNode* aElement,
 }
 
 /*
-  Returns the nsISchemaType for a given value/type/namespace pair.
+  Returns the nsISVSchemaType for a given value/type/namespace pair.
 */
 NS_IMETHODIMP
 nsSchemaValidator::GetType(const nsAString & aType,
                            const nsAString & aNamespace,
-                           nsISchemaType ** aSchemaType)
+                           nsISVSchemaType ** aSchemaType)
 {
   nsresult rv;
 
   if (!mSchema) {
-    // if we are a built-in type, we can get a nsISchemaType for it from
-    // nsISchemaCollection->GetType.
-    nsCOMPtr<nsISchemaLoader> schemaLoader =
-      do_CreateInstance("@mozilla.org/xmlextras/schemas/schemaloader;1", &rv);
+    // if we are a built-in type, we can get a nsISVSchemaType for it from
+    // nsISVSchemaCollection->GetType.
+    nsCOMPtr<nsISVSchemaLoader> schemaLoader =
+      do_CreateInstance(NS_SVSCHEMALOADER_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
     mSchema = do_QueryInterface(schemaLoader);
     NS_ENSURE_STATE(mSchema);
   }
 
-  // First try looking for xsd:type
+  // First try looking for xsi:type
   rv = mSchema->GetType(aType, aNamespace, aSchemaType);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // maybe its a xsd:element
   if (!*aSchemaType) {
-    nsCOMPtr<nsISchemaElement> schemaElement;
+    nsCOMPtr<nsISVSchemaElement> schemaElement;
     rv = mSchema->GetElement(aType, aNamespace, getter_AddRefs(schemaElement));
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -397,7 +373,7 @@ nsSchemaValidator::GetType(const nsAString & aType,
 
 nsresult
 nsSchemaValidator::ValidateSimpletype(const nsAString & aNodeValue,
-                                      nsISchemaSimpleType *aSchemaSimpleType,
+                                      nsISVSchemaSimpleType *aSchemaSimpleType,
                                       PRBool *aResult)
 {
   NS_ENSURE_ARG(aSchemaSimpleType);
@@ -409,26 +385,26 @@ nsSchemaValidator::ValidateSimpletype(const nsAString & aNodeValue,
 
   PRBool isValid = PR_FALSE;
   switch (simpleTypeValue) {
-    case nsISchemaSimpleType::SIMPLE_TYPE_RESTRICTION: {
+    case nsISVSchemaSimpleType::SIMPLE_TYPE_RESTRICTION: {
       // handle simpletypes with restrictions
       rv = ValidateRestrictionSimpletype(aNodeValue, aSchemaSimpleType, &isValid);
       break;
     }
 
-    case nsISchemaSimpleType::SIMPLE_TYPE_BUILTIN: {
+    case nsISVSchemaSimpleType::SIMPLE_TYPE_BUILTIN: {
       // handle built-in types
       rv = ValidateBuiltinType(aNodeValue, aSchemaSimpleType, &isValid);
       break;
     }
 
-    case nsISchemaSimpleType::SIMPLE_TYPE_LIST: {
+    case nsISVSchemaSimpleType::SIMPLE_TYPE_LIST: {
       // handle lists
       rv = ValidateListSimpletype(aNodeValue, aSchemaSimpleType, nsnull,
                                   &isValid);
       break;
     }
 
-    case nsISchemaSimpleType::SIMPLE_TYPE_UNION: {
+    case nsISVSchemaSimpleType::SIMPLE_TYPE_UNION: {
       // handle unions
       rv = ValidateUnionSimpletype(aNodeValue, aSchemaSimpleType, &isValid);
       break;
@@ -453,12 +429,12 @@ nsSchemaValidator::ValidateDerivedSimpletype(const nsAString & aNodeValue,
   nsresult rv = aDerived->mBaseType->GetSimpleType(&simpleTypeValue);
 
   switch (simpleTypeValue) {
-    case nsISchemaSimpleType::SIMPLE_TYPE_BUILTIN: {
+    case nsISVSchemaSimpleType::SIMPLE_TYPE_BUILTIN: {
       rv = ValidateDerivedBuiltinType(aNodeValue, aDerived, &isValid);
       break;
     }
 
-    case nsISchemaSimpleType::SIMPLE_TYPE_RESTRICTION: {
+    case nsISVSchemaSimpleType::SIMPLE_TYPE_RESTRICTION: {
       // this happens when for example someone derives from a union which then
       // derives from another type.
       rv = nsSchemaValidatorUtils::GetDerivedSimpleType(aDerived->mBaseType,
@@ -467,13 +443,13 @@ nsSchemaValidator::ValidateDerivedSimpletype(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaSimpleType::SIMPLE_TYPE_LIST: {
+    case nsISVSchemaSimpleType::SIMPLE_TYPE_LIST: {
       rv = ValidateListSimpletype(aNodeValue, aDerived->mBaseType, aDerived,
                                   &isValid);
       break;
     }
 
-    case nsISchemaSimpleType::SIMPLE_TYPE_UNION: {
+    case nsISVSchemaSimpleType::SIMPLE_TYPE_UNION: {
       rv = ValidateDerivedUnionSimpletype(aNodeValue, aDerived, &isValid);
       break;
     }
@@ -489,17 +465,17 @@ nsSchemaValidator::ValidateDerivedSimpletype(const nsAString & aNodeValue,
  */
 nsresult
 nsSchemaValidator::ValidateRestrictionSimpletype(const nsAString & aNodeValue,
-                                                 nsISchemaSimpleType *aType,
+                                                 nsISVSchemaSimpleType *aType,
                                                  PRBool *aResult)
 {
   PRBool isValid = PR_FALSE;
 
-  nsCOMPtr<nsISchemaRestrictionType> restrictionType = do_QueryInterface(aType);
+  nsCOMPtr<nsISVSchemaRestrictionType> restrictionType = do_QueryInterface(aType);
   NS_ENSURE_STATE(restrictionType);
 
   LOG(("  The simpletype definition contains restrictions."));
 
-  nsCOMPtr<nsISchemaSimpleType> simpleBaseType;
+  nsCOMPtr<nsISVSchemaSimpleType> simpleBaseType;
   nsresult rv = restrictionType->GetBaseType(getter_AddRefs(simpleBaseType));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -518,7 +494,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
   PRBool isValid = PR_FALSE;
   // now that we have loaded all the restriction facets,
   // check the base type and validate
-  nsCOMPtr<nsISchemaBuiltinType> schemaBuiltinType =
+  nsCOMPtr<nsISVSchemaBuiltinType> schemaBuiltinType =
     do_QueryInterface(aDerived->mBaseType);
   NS_ENSURE_STATE(schemaBuiltinType);
 
@@ -530,7 +506,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
 #endif
 
   switch (builtinTypeValue) {
-    case nsISchemaBuiltinType::BUILTIN_TYPE_STRING: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_STRING: {
       rv = ValidateBuiltinTypeString(aNodeValue,
                                      aDerived->length.value,
                                      aDerived->length.isDefined,
@@ -543,7 +519,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_NORMALIZED_STRING: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NORMALIZED_STRING: {
       if (nsSchemaValidatorUtils::IsValidSchemaNormalizedString(aNodeValue)) {
         rv = ValidateBuiltinTypeString(aNodeValue,
                                        aDerived->length.value,
@@ -558,7 +534,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_TOKEN: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_TOKEN: {
       if (nsSchemaValidatorUtils::IsValidSchemaToken(aNodeValue)) {
         rv = ValidateBuiltinTypeString(aNodeValue,
                                        aDerived->length.value,
@@ -573,7 +549,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_LANGUAGE: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_LANGUAGE: {
       if (nsSchemaValidatorUtils::IsValidSchemaLanguage(aNodeValue)) {
         rv = ValidateBuiltinTypeString(aNodeValue,
                                        aDerived->length.value,
@@ -588,12 +564,12 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_BOOLEAN: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_BOOLEAN: {
       rv = ValidateBuiltinTypeBoolean(aNodeValue, &isValid);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GDAY: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GDAY: {
       rv = ValidateBuiltinTypeGDay(aNodeValue,
                                    aDerived->maxExclusive.value,
                                    aDerived->minExclusive.value,
@@ -603,7 +579,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GMONTH: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GMONTH: {
       rv = ValidateBuiltinTypeGMonth(aNodeValue,
                                      aDerived->maxExclusive.value,
                                      aDerived->minExclusive.value,
@@ -613,7 +589,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GYEAR: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GYEAR: {
       rv = ValidateBuiltinTypeGYear(aNodeValue,
                                     aDerived->maxExclusive.value,
                                     aDerived->minExclusive.value,
@@ -623,7 +599,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GYEARMONTH: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GYEARMONTH: {
       rv = ValidateBuiltinTypeGYearMonth(aNodeValue,
                                          aDerived->maxExclusive.value,
                                          aDerived->minExclusive.value,
@@ -633,7 +609,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GMONTHDAY: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GMONTHDAY: {
       rv = ValidateBuiltinTypeGMonthDay(aNodeValue,
                                         aDerived->maxExclusive.value,
                                         aDerived->minExclusive.value,
@@ -643,7 +619,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_DATE: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DATE: {
       rv = ValidateBuiltinTypeDate(aNodeValue,
                                    aDerived->maxExclusive.value,
                                    aDerived->minExclusive.value,
@@ -653,7 +629,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_TIME: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_TIME: {
       rv = ValidateBuiltinTypeTime(aNodeValue,
                                    aDerived->maxExclusive.value,
                                    aDerived->minExclusive.value,
@@ -663,7 +639,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_DATETIME: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DATETIME: {
       rv = ValidateBuiltinTypeDateTime(aNodeValue,
                                        aDerived->maxExclusive.value,
                                        aDerived->minExclusive.value,
@@ -673,7 +649,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_DURATION: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DURATION: {
       rv = ValidateBuiltinTypeDuration(aNodeValue,
                                        aDerived->maxExclusive.value,
                                        aDerived->minExclusive.value,
@@ -683,7 +659,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_INTEGER: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_INTEGER: {
       rv = ValidateBuiltinTypeInteger(aNodeValue,
                                       aDerived->totalDigits.value,
                                       aDerived->maxExclusive.value,
@@ -696,7 +672,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://w3.org/TR/xmlschema-2/#nonPositiveInteger */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_NONPOSITIVEINTEGER: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NONPOSITIVEINTEGER: {
       if (aDerived->maxExclusive.value.IsEmpty()) {
         aDerived->maxExclusive.value.AssignLiteral("1");
       } else if (aDerived->maxInclusive.value.IsEmpty()) {
@@ -714,8 +690,27 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
+    /* http://w3.org/TR/xmlschema-2/#nonNegativeInteger */
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NONNEGATIVEINTEGER: {
+      if (aDerived->minExclusive.value.IsEmpty()) {
+        aDerived->minExclusive.value.AssignLiteral("-1");
+      } else if (aDerived->minInclusive.value.IsEmpty()) {
+        aDerived->minInclusive.value.AssignLiteral("0");
+      }
+
+      rv = ValidateBuiltinTypeInteger(aNodeValue,
+                                      aDerived->totalDigits.value,
+                                      aDerived->maxExclusive.value,
+                                      aDerived->minExclusive.value,
+                                      aDerived->maxInclusive.value,
+                                      aDerived->minInclusive.value,
+                                      &aDerived->enumerationList,
+                                      &isValid);
+      break;
+    }
+
     /* http://www.w3.org/TR/xmlschema-2/#negativeInteger */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_NEGATIVEINTEGER: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NEGATIVEINTEGER: {
       if (aDerived->maxExclusive.value.IsEmpty()) {
         aDerived->maxExclusive.value.AssignLiteral("0");
       } else if (aDerived->maxInclusive.value.IsEmpty()) {
@@ -734,7 +729,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://w3.org/TR/xmlschema-2/#positiveInteger */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_POSITIVEINTEGER: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_POSITIVEINTEGER: {
       if (aDerived->minInclusive.value.IsEmpty()) {
         aDerived->minInclusive.value.AssignLiteral("1");
       } else if (aDerived->minExclusive.value.IsEmpty()) {
@@ -753,7 +748,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#long */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_LONG: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_LONG: {
       if (aDerived->maxInclusive.value.IsEmpty()) {
         aDerived->maxInclusive.value.AssignLiteral("9223372036854775807");
       }
@@ -774,7 +769,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#int */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_INT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_INT: {
       if (aDerived->maxInclusive.value.IsEmpty()) {
         aDerived->maxInclusive.value.AssignLiteral("2147483647");
       }
@@ -795,7 +790,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#short */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_SHORT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_SHORT: {
       if (aDerived->maxInclusive.value.IsEmpty()) {
         aDerived->maxInclusive.value.AssignLiteral("32767");
       }
@@ -816,7 +811,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#unsignedLong */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDLONG: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDLONG: {
       if (aDerived->maxInclusive.value.IsEmpty()) {
         aDerived->maxInclusive.value.AssignLiteral("18446744073709551615");
       }
@@ -837,7 +832,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#unsignedInt */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDINT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDINT: {
       if (aDerived->maxInclusive.value.IsEmpty()) {
         aDerived->maxInclusive.value.AssignLiteral("4294967295");
       }
@@ -858,7 +853,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#unsignedShort */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDSHORT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDSHORT: {
       if (aDerived->maxInclusive.value.IsEmpty()) {
         aDerived->maxInclusive.value.AssignLiteral("65535");
       }
@@ -879,7 +874,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#unsignedByte */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDBYTE: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDBYTE: {
       if (aDerived->maxInclusive.value.IsEmpty()) {
         aDerived->maxInclusive.value.AssignLiteral("255");
       }
@@ -899,7 +894,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_BYTE: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_BYTE: {
       rv = ValidateBuiltinTypeByte(aNodeValue,
                                    aDerived->totalDigits.value,
                                    aDerived->maxExclusive.value,
@@ -911,7 +906,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_FLOAT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_FLOAT: {
       rv = ValidateBuiltinTypeFloat(aNodeValue,
                                     aDerived->totalDigits.value,
                                     aDerived->maxExclusive.value,
@@ -923,7 +918,19 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_DECIMAL: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DOUBLE: {
+      rv = ValidateBuiltinTypeDouble(aNodeValue,
+                                    aDerived->totalDigits.value,
+                                    aDerived->maxExclusive.value,
+                                    aDerived->minExclusive.value,
+                                    aDerived->maxInclusive.value,
+                                    aDerived->minInclusive.value,
+                                    &aDerived->enumerationList,
+                                    &isValid);
+      break;
+    }
+
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DECIMAL: {
       rv = ValidateBuiltinTypeDecimal(aNodeValue,
                                       aDerived->totalDigits.value,
                                       aDerived->fractionDigits.value,
@@ -937,7 +944,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_ANYURI: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_ANYURI: {
       rv = ValidateBuiltinTypeAnyURI(aNodeValue,
                                      aDerived->length.value,
                                      aDerived->minLength.value,
@@ -947,7 +954,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_BASE64BINARY: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_BASE64BINARY: {
       rv = ValidateBuiltinTypeBase64Binary(aNodeValue,
                                            aDerived->length.value,
                                            aDerived->length.isDefined,
@@ -960,7 +967,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_HEXBINARY: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_HEXBINARY: {
       rv = ValidateBuiltinTypeHexBinary(aNodeValue,
                                         aDerived->length.value,
                                         aDerived->length.isDefined,
@@ -973,7 +980,7 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_QNAME: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_QNAME: {
       rv = ValidateBuiltinTypeQName(aNodeValue,
                                     aDerived->length.value,
                                     aDerived->length.isDefined,
@@ -983,6 +990,105 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
                                     aDerived->maxLength.isDefined,
                                     &aDerived->enumerationList,
                                     &isValid);
+      break;
+    }
+    /* http://www.w3.org/TR/xmlschema-2/#name */
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NAME: {
+      if (nsSchemaValidatorUtils::IsValidSchemaName(aNodeValue)) {
+        rv = ValidateBuiltinTypeString(aNodeValue,
+                                       aDerived->length.value,
+                                       aDerived->length.isDefined,
+                                       aDerived->minLength.value,
+                                       aDerived->minLength.isDefined,
+                                       aDerived->maxLength.value,
+                                       aDerived->maxLength.isDefined,
+                                       &aDerived->enumerationList,
+                                       &isValid);
+      }
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NCNAME: {
+      if (nsSchemaValidatorUtils::IsValidSchemaNCName(aNodeValue)) {
+        rv = ValidateBuiltinTypeString(aNodeValue,
+                                       aDerived->length.value,
+                                       aDerived->length.isDefined,
+                                       aDerived->minLength.value,
+                                       aDerived->minLength.isDefined,
+                                       aDerived->maxLength.value,
+                                       aDerived->maxLength.isDefined,
+                                       &aDerived->enumerationList,
+                                       &isValid);
+      }
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_ID: {
+      if (nsSchemaValidatorUtils::IsValidSchemaID(aNodeValue)) {
+        rv = ValidateBuiltinTypeString(aNodeValue,
+                                       aDerived->length.value,
+                                       aDerived->length.isDefined,
+                                       aDerived->minLength.value,
+                                       aDerived->minLength.isDefined,
+                                       aDerived->maxLength.value,
+                                       aDerived->maxLength.isDefined,
+                                       &aDerived->enumerationList,
+                                       &isValid);
+      }
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_IDREF: {
+      if (nsSchemaValidatorUtils::IsValidSchemaIDRef(aNodeValue)) {
+        rv = ValidateBuiltinTypeString(aNodeValue,
+                                       aDerived->length.value,
+                                       aDerived->length.isDefined,
+                                       aDerived->minLength.value,
+                                       aDerived->minLength.isDefined,
+                                       aDerived->maxLength.value,
+                                       aDerived->maxLength.isDefined,
+                                       &aDerived->enumerationList,
+                                       &isValid);
+      }
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_IDREFS: {
+      if (nsSchemaValidatorUtils::IsValidSchemaIDRefs(aNodeValue)) {
+        rv = ValidateBuiltinTypeString(aNodeValue,
+                                       aDerived->length.value,
+                                       aDerived->length.isDefined,
+                                       aDerived->minLength.value,
+                                       aDerived->minLength.isDefined,
+                                       aDerived->maxLength.value,
+                                       aDerived->maxLength.isDefined,
+                                       &aDerived->enumerationList,
+                                       &isValid);
+      }
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NMTOKEN: {
+      if (nsSchemaValidatorUtils::IsValidSchemaNMToken(aNodeValue)) {
+        rv = ValidateBuiltinTypeString(aNodeValue,
+                                       aDerived->length.value,
+                                       aDerived->length.isDefined,
+                                       aDerived->minLength.value,
+                                       aDerived->minLength.isDefined,
+                                       aDerived->maxLength.value,
+                                       aDerived->maxLength.isDefined,
+                                       &aDerived->enumerationList,
+                                       &isValid);
+      }
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NMTOKENS: {
+      if (nsSchemaValidatorUtils::IsValidSchemaNMTokens(aNodeValue)) {
+        rv = ValidateBuiltinTypeString(aNodeValue,
+                                       aDerived->length.value,
+                                       aDerived->length.isDefined,
+                                       aDerived->minLength.value,
+                                       aDerived->minLength.isDefined,
+                                       aDerived->maxLength.value,
+                                       aDerived->maxLength.isDefined,
+                                       &aDerived->enumerationList,
+                                       &isValid);
+      }
       break;
     }
 
@@ -1018,10 +1124,10 @@ nsSchemaValidator::ValidateDerivedBuiltinType(const nsAString & aNodeValue,
 */
 nsresult
 nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
-                                       nsISchemaSimpleType *aSchemaSimpleType,
+                                       nsISVSchemaSimpleType *aSchemaSimpleType,
                                        PRBool *aResult)
 {
-  nsCOMPtr<nsISchemaBuiltinType> builtinType =
+  nsCOMPtr<nsISVSchemaBuiltinType> builtinType =
     do_QueryInterface(aSchemaSimpleType);
   NS_ENSURE_STATE(builtinType);
 
@@ -1036,12 +1142,12 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
   PRBool isValid = PR_FALSE;
 
   switch(builtinTypeValue) {
-    case nsISchemaBuiltinType::BUILTIN_TYPE_STRING: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_STRING: {
       isValid = PR_TRUE;
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_NORMALIZED_STRING: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NORMALIZED_STRING: {
       if (nsSchemaValidatorUtils::IsValidSchemaNormalizedString(aNodeValue)) {
         rv = ValidateBuiltinTypeString(aNodeValue, 0, PR_FALSE, 0, PR_FALSE, 0,
                                        PR_FALSE, nsnull, &isValid);
@@ -1049,7 +1155,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_TOKEN: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_TOKEN: {
       if (nsSchemaValidatorUtils::IsValidSchemaToken(aNodeValue)) {
         rv = ValidateBuiltinTypeString(aNodeValue, 0, PR_FALSE, 0, PR_FALSE, 0,
                                        PR_FALSE, nsnull, &isValid);
@@ -1057,7 +1163,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_LANGUAGE: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_LANGUAGE: {
       if (nsSchemaValidatorUtils::IsValidSchemaLanguage(aNodeValue)) {
         rv = ValidateBuiltinTypeString(aNodeValue, 0, PR_FALSE, 0, PR_FALSE, 0,
                                        PR_FALSE, nsnull, &isValid);
@@ -1065,67 +1171,67 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_BOOLEAN: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_BOOLEAN: {
       rv = ValidateBuiltinTypeBoolean(aNodeValue, &isValid);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GDAY: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GDAY: {
       isValid = IsValidSchemaGDay(aNodeValue, nsnull);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GMONTH: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GMONTH: {
       isValid = IsValidSchemaGMonth(aNodeValue, nsnull);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GYEAR: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GYEAR: {
       isValid = IsValidSchemaGYear(aNodeValue, nsnull);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GYEARMONTH: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GYEARMONTH: {
       isValid = IsValidSchemaGYearMonth(aNodeValue, nsnull);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_GMONTHDAY: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_GMONTHDAY: {
       isValid = IsValidSchemaGMonthDay(aNodeValue, nsnull);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_DATE: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DATE: {
       nsSchemaDate tmp;
       isValid = IsValidSchemaDate(aNodeValue, &tmp);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_TIME: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_TIME: {
       nsSchemaTime tmp;
       isValid = IsValidSchemaTime(aNodeValue, &tmp);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_DATETIME: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DATETIME: {
       nsSchemaDateTime tmp;
       isValid = IsValidSchemaDateTime(aNodeValue, &tmp);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_DURATION: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DURATION: {
       nsCOMPtr<nsISchemaDuration> temp;
       isValid = IsValidSchemaDuration(aNodeValue, getter_AddRefs(temp));
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_INTEGER: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_INTEGER: {
       isValid = nsSchemaValidatorUtils::IsValidSchemaInteger(aNodeValue, nsnull);
       break;
     }
 
     /* http://w3.org/TR/xmlschema-2/#nonPositiveInteger */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_NONPOSITIVEINTEGER: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NONPOSITIVEINTEGER: {
       // nonPositiveInteger inherits from integer, with maxInclusive
       // being 0
       ValidateBuiltinTypeInteger(aNodeValue, nsnull, EmptyString(),
@@ -1134,8 +1240,18 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
+    /* http://w3.org/TR/xmlschema-2/#nonNegativeInteger */
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NONNEGATIVEINTEGER: {
+      // nonNegativeInteger inherits from integer, with minInclusive
+      // being 0 (only positive integers)
+      ValidateBuiltinTypeInteger(aNodeValue, nsnull, EmptyString(),
+                                 EmptyString(), EmptyString(),
+                                 NS_LITERAL_STRING("0"), nsnull, &isValid);
+      break;
+    }
+
     /* http://www.w3.org/TR/xmlschema-2/#negativeInteger */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_NEGATIVEINTEGER: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NEGATIVEINTEGER: {
       // negativeInteger inherits from integer, with maxInclusive
       // being -1 (only negative integers)
       ValidateBuiltinTypeInteger(aNodeValue, nsnull, EmptyString(),
@@ -1145,7 +1261,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://w3.org/TR/xmlschema-2/#positiveInteger */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_POSITIVEINTEGER: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_POSITIVEINTEGER: {
       // positiveInteger inherits from integer, with minInclusive
       // being 1
       ValidateBuiltinTypeInteger(aNodeValue, nsnull, EmptyString(),
@@ -1155,7 +1271,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#long */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_LONG: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_LONG: {
       // maxInclusive is 9223372036854775807 and minInclusive is
       // -9223372036854775808
       ValidateBuiltinTypeInteger(aNodeValue, nsnull,
@@ -1167,7 +1283,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#int */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_INT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_INT: {
       // maxInclusive is 2147483647 and minInclusive is -2147483648
       ValidateBuiltinTypeInteger(aNodeValue, nsnull,
                                  EmptyString(), EmptyString(),
@@ -1178,7 +1294,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#short */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_SHORT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_SHORT: {
       // maxInclusive is 32767 and minInclusive is -32768
       ValidateBuiltinTypeInteger(aNodeValue, nsnull,
                                  EmptyString(), EmptyString(),
@@ -1189,7 +1305,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#unsignedLong */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDLONG: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDLONG: {
       // maxInclusive is 18446744073709551615. and minInclusive is 0
       ValidateBuiltinTypeInteger(aNodeValue, nsnull,
                                  EmptyString(), EmptyString(),
@@ -1200,7 +1316,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#unsignedInt */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDINT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDINT: {
       // maxInclusive is 4294967295. and minInclusive is 0
       ValidateBuiltinTypeInteger(aNodeValue, nsnull,
                                  EmptyString(), EmptyString(),
@@ -1211,7 +1327,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#unsignedShort */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDSHORT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDSHORT: {
       // maxInclusive is 65535. and minInclusive is 0
       ValidateBuiltinTypeInteger(aNodeValue, nsnull,
                                  EmptyString(), EmptyString(),
@@ -1222,7 +1338,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
     }
 
     /* http://www.w3.org/TR/xmlschema-2/#unsignedByte */
-    case nsISchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDBYTE: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_UNSIGNEDBYTE: {
       // maxInclusive is 255. and minInclusive is 0
       ValidateBuiltinTypeInteger(aNodeValue, nsnull,
                                  EmptyString(), EmptyString(),
@@ -1232,41 +1348,75 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_BYTE: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_BYTE: {
       isValid = IsValidSchemaByte(aNodeValue, nsnull);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_FLOAT: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_FLOAT: {
       isValid = IsValidSchemaFloat(aNodeValue, nsnull);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_DECIMAL: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DOUBLE: {
+      isValid = IsValidSchemaDouble(aNodeValue, nsnull);
+      break;
+    }
+
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_DECIMAL: {
       nsAutoString wholePart, fractionPart;
       isValid = IsValidSchemaDecimal(aNodeValue, wholePart, fractionPart);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_ANYURI: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_ANYURI: {
       isValid = IsValidSchemaAnyURI(aNodeValue);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_BASE64BINARY: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_BASE64BINARY: {
       char* decodedString;
       isValid = IsValidSchemaBase64Binary(aNodeValue, &decodedString);
       nsMemory::Free(decodedString);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_HEXBINARY: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_HEXBINARY: {
       isValid = IsValidSchemaHexBinary(aNodeValue);
       break;
     }
 
-    case nsISchemaBuiltinType::BUILTIN_TYPE_QNAME: {
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_QNAME: {
       isValid = IsValidSchemaQName(aNodeValue);
+      break;
+    }
+    /* http://www.w3.org/TR/xmlschema-2/#name */
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NAME: {
+      isValid = nsSchemaValidatorUtils::IsValidSchemaName(aNodeValue);
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NCNAME: {
+      isValid = nsSchemaValidatorUtils::IsValidSchemaNCName(aNodeValue);
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_ID: {
+      isValid = nsSchemaValidatorUtils::IsValidSchemaID(aNodeValue);
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_IDREF: {
+      isValid = nsSchemaValidatorUtils::IsValidSchemaIDRef(aNodeValue);
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_IDREFS: {
+      isValid = nsSchemaValidatorUtils::IsValidSchemaIDRefs(aNodeValue);
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NMTOKEN: {
+      isValid = nsSchemaValidatorUtils::IsValidSchemaNMToken(aNodeValue);
+      break;
+    }
+    case nsISVSchemaBuiltinType::BUILTIN_TYPE_NMTOKENS: {
+      isValid = nsSchemaValidatorUtils::IsValidSchemaNMTokens(aNodeValue);
       break;
     }
 
@@ -1282,7 +1432,7 @@ nsSchemaValidator::ValidateBuiltinType(const nsAString & aNodeValue,
 /* http://www.w3.org/TR/xmlschema-2/#dt-list */
 nsresult
 nsSchemaValidator::ValidateListSimpletype(const nsAString & aNodeValue,
-                                          nsISchemaSimpleType *aSchemaSimpleType,
+                                          nsISVSchemaSimpleType *aSchemaSimpleType,
                                           nsSchemaDerivedSimpleType *aFacets,
                                           PRBool *aResult)
 {
@@ -1296,10 +1446,10 @@ nsSchemaValidator::ValidateListSimpletype(const nsAString & aNodeValue,
   PRBool isValid = PR_FALSE;
 
   nsresult rv;
-  nsCOMPtr<nsISchemaListType> listType = do_QueryInterface(aSchemaSimpleType, &rv);
+  nsCOMPtr<nsISVSchemaListType> listType = do_QueryInterface(aSchemaSimpleType, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISchemaSimpleType> listSimpleType;
+  nsCOMPtr<nsISVSchemaSimpleType> listSimpleType;
   rv = listType->GetListType(getter_AddRefs(listSimpleType));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1362,7 +1512,7 @@ nsSchemaValidator::ValidateListSimpletype(const nsAString & aNodeValue,
     if (facetsValid) {
       nsAutoString tmp;
       for (PRUint32 i=0; i < count; ++i) {
-        CopyUTF8toUTF16(stringArray[i]->get(), tmp);
+        CopyUTF8toUTF16(*stringArray[i], tmp);
         LOG(("  Validating List Item (%d): %s", i, NS_ConvertUTF16toUTF8(tmp).get()));
         rv = ValidateSimpletype(tmp, listSimpleType, &isValid);
 
@@ -1379,17 +1529,17 @@ nsSchemaValidator::ValidateListSimpletype(const nsAString & aNodeValue,
 /* http://www.w3.org/TR/xmlschema-2/#dt-union */
 nsresult
 nsSchemaValidator::ValidateUnionSimpletype(const nsAString & aNodeValue,
-                                           nsISchemaSimpleType *aSchemaSimpleType,
+                                           nsISVSchemaSimpleType *aSchemaSimpleType,
                                            PRBool *aResult)
 {
   PRBool isValid = PR_FALSE;
 
   nsresult rv;
-  nsCOMPtr<nsISchemaUnionType> unionType = do_QueryInterface(aSchemaSimpleType,
+  nsCOMPtr<nsISVSchemaUnionType> unionType = do_QueryInterface(aSchemaSimpleType,
                                                              &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISchemaSimpleType> unionSimpleType;
+  nsCOMPtr<nsISVSchemaSimpleType> unionSimpleType;
   PRUint32 count;
   unionType->GetUnionTypeCount(&count);
 
@@ -1424,11 +1574,11 @@ nsSchemaValidator::ValidateDerivedUnionSimpletype(const nsAString & aNodeValue,
   PRBool isValid = PR_FALSE;
 
   nsresult rv;
-  nsCOMPtr<nsISchemaUnionType> unionType = do_QueryInterface(aDerived->mBaseType,
+  nsCOMPtr<nsISVSchemaUnionType> unionType = do_QueryInterface(aDerived->mBaseType,
                                                              &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISchemaSimpleType> unionSimpleType;
+  nsCOMPtr<nsISVSchemaSimpleType> unionSimpleType;
   PRUint32 count;
   unionType->GetUnionTypeCount(&count);
 
@@ -1500,7 +1650,7 @@ nsSchemaValidator::ValidateBuiltinTypeString(const nsAString & aNodeValue,
 }
 
 /* http://www.w3.org/TR/xmlschema-2/#boolean */
-nsresult 
+nsresult
 nsSchemaValidator::ValidateBuiltinTypeBoolean(const nsAString & aNodeValue,
                                               PRBool *aResult)
 {
@@ -1609,21 +1759,20 @@ nsSchemaValidator::IsValidSchemaGDay(const nsAString & aNodeValue,
   int dayInt;
 
   // iterate over the string and parse/validate
-  nsAString::const_iterator start, end;
-  aNodeValue.BeginReading(start);
-  aNodeValue.EndReading(end);
+  const PRUnichar *start, *end;
+  aNodeValue.BeginReading(&start, &end);
   nsAutoString nodeValue(aNodeValue);
 
   // validate the ---DD part
-  PRBool isValid = Substring(start.get(), start.get()+3).EqualsLiteral("---") &&
-                   IsValidSchemaGType(Substring(start.get()+3, start.get()+5),
+  PRBool isValid = Substring(start, start + 3).EqualsLiteral("---") &&
+                   IsValidSchemaGType(Substring(start + 3, start + 5),
                                       1, 31, &dayInt);
   if (isValid) {
     tzSign = nodeValue.CharAt(5);
     if (strLength == 6) {
       isValid &= (tzSign == 'Z');
     } else if (strLength == 11) {
-      const nsAString &tz = Substring(start.get()+6, end.get());
+      const nsAString &tz = Substring(start + 6, end);
 
       isValid &= ((tzSign == '+' || tzSign == '-') &&
                   nsSchemaValidatorUtils::ParseSchemaTimeZone(tz, timezoneHour,
@@ -1671,7 +1820,7 @@ nsSchemaValidator::ValidateBuiltinTypeGMonth(const nsAString & aNodeValue,
   if (isValid && !aMaxExclusive.IsEmpty()) {
     nsSchemaGMonth maxExclusive;
 
-    if(IsValidSchemaGMonth(aMaxExclusive, &maxExclusive) &&
+    if (IsValidSchemaGMonth(aMaxExclusive, &maxExclusive) &&
        gmonth.month >= maxExclusive.month) {
       isValid = PR_FALSE;
       LOG(("  Not valid: Value (%d) is too large", gmonth.month));
@@ -1732,21 +1881,20 @@ nsSchemaValidator::IsValidSchemaGMonth(const nsAString & aNodeValue,
   PRUnichar tzSign = 0;
   int monthInt;
 
-  nsAString::const_iterator start, end;
-  aNodeValue.BeginReading(start);
-  aNodeValue.EndReading(end);
+  const PRUnichar *start, *end;
+  aNodeValue.BeginReading(&start, &end);
   nsAutoString nodeValue(aNodeValue);
 
   // validate the --MM part
-  PRBool isValid = Substring(start.get(), start.get()+2).EqualsLiteral("--") &&
-                   IsValidSchemaGType(Substring(start.get()+2, start.get()+4),
+  PRBool isValid = Substring(start, start + 2).EqualsLiteral("--") &&
+                   IsValidSchemaGType(Substring(start + 2, start + 4),
                                       1, 12, &monthInt);
   if (isValid) {
     tzSign = nodeValue.CharAt(4);
     if (strLength == 5) {
       isValid &= (tzSign == 'Z');
     } else if (strLength == 10) {
-      const nsAString &tz = Substring(start.get()+5, end.get());
+      const nsAString &tz = Substring(start + 5, end);
 
       isValid &= ((tzSign == '+' || tzSign == '-') &&
                   nsSchemaValidatorUtils::ParseSchemaTimeZone(tz, timezoneHour,
@@ -1837,10 +1985,9 @@ nsSchemaValidator::IsValidSchemaGYear(const nsAString & aNodeValue,
   char timezoneMinute[3] = "";
   PRUnichar tzSign = 0;
 
-  nsAString::const_iterator start, end, buffStart;
-  aNodeValue.BeginReading(start);
-  aNodeValue.BeginReading(buffStart);
-  aNodeValue.EndReading(end);
+  const PRUnichar *start, *end, *buffStart;
+  aNodeValue.BeginReading(&start, &end);
+  aNodeValue.BeginReading(&buffStart);
   PRUint32 state = 0;
   PRUint32 buffLength = 0, yearLength = 0;
   PRBool done = PR_FALSE;
@@ -1929,12 +2076,12 @@ nsresult
 nsSchemaValidator::ValidateBuiltinTypeGYearMonth(const nsAString & aNodeValue,
                                                  const nsAString & aMaxExclusive,
                                                  const nsAString & aMinExclusive,
-                                                 const nsAString & aMaxInclusive, 
+                                                 const nsAString & aMaxInclusive,
                                                  const nsAString & aMinInclusive,
                                                  PRBool *aResult)
 {
   nsSchemaGYearMonth gyearmonth;
-  
+
   PRBool isValid = IsValidSchemaGYearMonth(aNodeValue, &gyearmonth);
 
   if (isValid && !aMaxExclusive.IsEmpty()) {
@@ -1996,10 +2143,9 @@ nsSchemaValidator::IsValidSchemaGYearMonth(const nsAString & aNodeValue,
   // GYearMonth looks like this: (-)CCYY-MM(Z|(+|-)hh:mm)
   PRBool isValid = PR_FALSE;
 
-  nsAString::const_iterator start, end, buffStart;
-  aNodeValue.BeginReading(start);
-  aNodeValue.BeginReading(buffStart);
-  aNodeValue.EndReading(end);
+  const PRUnichar *start, *end, *buffStart;
+  aNodeValue.BeginReading(&start, &end);
+  aNodeValue.BeginReading(&buffStart);
   PRUint32 buffLength = 0;
   PRBool done = PR_FALSE;
 
@@ -2119,10 +2265,9 @@ nsSchemaValidator::IsValidSchemaGMonthDay(const nsAString & aNodeValue,
   // GMonthDay looks like this: --MM-DD(Z|(+|-)hh:mm)
   PRBool isValid = PR_FALSE;
 
-  nsAString::const_iterator start, end, buffStart;
-  aNodeValue.BeginReading(start);
-  aNodeValue.BeginReading(buffStart);
-  aNodeValue.EndReading(end);
+  const PRUnichar *start, *end, *buffStart;
+  aNodeValue.BeginReading(&start, &end);
+  aNodeValue.BeginReading(&buffStart);
   PRUint32 buffLength = 0;
   PRUint32 state = 0;
   PRBool done = PR_FALSE;
@@ -2150,7 +2295,8 @@ nsSchemaValidator::IsValidSchemaGMonthDay(const nsAString & aNodeValue,
 
       nsAutoString month;
       month.AppendLiteral("--");
-      month.Append(Substring(buffStart, start.advance(2)));
+      start += 2;
+      month.Append(Substring(buffStart, start));
       isValid = IsValidSchemaGMonth(month,
                                     aMonthDay ? &aMonthDay->gMonth : nsnull);
 
@@ -2261,9 +2407,10 @@ nsSchemaValidator::ValidateBuiltinTypeTime(const nsAString & aValue,
 
     // 22-AUG-1993 10:59:12.82
     sprintf(fulldate, "22-AUG-1993 %d:%d:%d.%u", time.hour, time.minute,
-            time.second, time.milisecond);
+            time.second, time.millisecond);
 
-    PR_ParseTimeString(fulldate, PR_TRUE, aResult);
+    PRBool isGMT = nsSchemaValidatorUtils::IsGMT(aValue);
+    PR_ParseTimeString(fulldate, isGMT ? PR_TRUE : PR_FALSE, aResult);
   } else {
     *aResult = nsnull;
     rv = NS_ERROR_ILLEGAL_VALUE;
@@ -2279,12 +2426,18 @@ nsSchemaValidator::IsValidSchemaTime(const nsAString & aNodeValue,
   PRBool isValid = PR_FALSE;
 
   nsAutoString timeString(aNodeValue);
+  PRUint32 len = timeString.Length();
+  PRUnichar end = 0;
+  if (len > 0) {
+    // length counts null terminator
+    end = timeString.CharAt(len - 1);
+  }
 
   // if no timezone ([+/-]hh:ss) or no timezone Z, add a Z to the end so that
   // nsSchemaValidatorUtils::ParseSchemaTime can parse it
   if ((timeString.FindChar('-') == kNotFound) &&
       (timeString.FindChar('+') == kNotFound) &&
-       timeString.Last() != 'Z'){
+      end != 'Z') {
     timeString.Append('Z');
   }
 
@@ -2383,7 +2536,8 @@ nsSchemaValidator::ValidateBuiltinTypeDate(const nsAString & aValue,
     sprintf(fulldate, "%d-%s-%u 00:00:00", date.day,
             monthShorthand.get(), date.year);
 
-    PR_ParseTimeString(fulldate, PR_TRUE, aResult);
+    PRBool isGMT = nsSchemaValidatorUtils::IsGMT(aValue);
+    PR_ParseTimeString(fulldate, isGMT ? PR_TRUE : PR_FALSE, aResult);
   } else {
     *aResult = nsnull;
     rv = NS_ERROR_ILLEGAL_VALUE;
@@ -2468,9 +2622,10 @@ nsSchemaValidator::ValidateBuiltinTypeDateTime(const nsAString & aValue,
       dateTime.time.hour,
       dateTime.time.minute,
       dateTime.time.second,
-      dateTime.time.milisecond);
+      dateTime.time.millisecond);
 
-    PR_ParseTimeString(fulldate, PR_TRUE, aResult);
+    PRBool isGMT = nsSchemaValidatorUtils::IsGMT(aValue);
+    PR_ParseTimeString(fulldate, isGMT ? PR_TRUE : PR_FALSE, aResult);
   } else {
     *aResult = nsnull;
     rv = NS_ERROR_ILLEGAL_VALUE;
@@ -2497,22 +2652,20 @@ nsSchemaValidator::IsValidSchemaDate(const nsAString & aNodeValue,
   if (aNodeValue.IsEmpty())
     return PR_FALSE;
 
-  nsAutoString dateString(aNodeValue); 
+  nsAutoString dateString(aNodeValue);
   if (dateString.First() == '-') {
     aResult->isNegative = PR_TRUE;
   }
 
  /*
     http://www.w3.org/TR/xmlschema-2/#date
-    (-)CCYY-MM-DDT
-      then either: Z
-      or [+/-]hh:mm
+    (-)CCYY-MM-DD
+      then optionally either: 
+        Z
+        or [+/-]hh:mm
   */
 
-  // append 'T' to end to make ParseSchemaDate happy.
-  dateString.Append('T');
-
-  isValid = nsSchemaValidatorUtils::ParseSchemaDate(dateString, aResult);
+  isValid = nsSchemaValidatorUtils::ParseSchemaDate(dateString, PR_TRUE, aResult);
 
   return isValid;
 }
@@ -2561,7 +2714,7 @@ nsSchemaValidator::ValidateBuiltinTypeDuration(const nsAString & aNodeValue,
   if (isValid && !aMaxInclusive.IsEmpty()) {
     nsCOMPtr<nsISchemaDuration> maxInclusiveDuration;
 
-    if (IsValidSchemaDuration(aMaxInclusive, getter_AddRefs(maxInclusiveDuration)) && 
+    if (IsValidSchemaDuration(aMaxInclusive, getter_AddRefs(maxInclusiveDuration)) &&
         nsSchemaValidatorUtils::CompareDurations(duration, maxInclusiveDuration) == 1){
       isValid = PR_FALSE;
       LOG(("  Not valid: Value is too large or indeterminate"));
@@ -2800,42 +2953,70 @@ nsSchemaValidator::ValidateBuiltinTypeFloat(const nsAString & aNodeValue,
   isValid = IsValidSchemaFloat(aNodeValue, &floatValue);
 
   if (isValid && !aMaxExclusive.IsEmpty()){
-    float maxExclusive;
-
-    if (IsValidSchemaFloat(aMaxExclusive, &maxExclusive) &&
-        (floatValue >= maxExclusive)) {
+    // If there is a facet and value is NaN,
+    // then it is not valid.
+    if (aNodeValue.EqualsLiteral("NaN")) {
       isValid = PR_FALSE;
-      LOG(("  Not valid: Value (%f) is too big", floatValue));
+      LOG(("  Not valid: Value NaN can't be constrained by facets"));
+    } else {
+      float maxExclusive;
+
+      if (IsValidSchemaFloat(aMaxExclusive, &maxExclusive) &&
+          (floatValue >= maxExclusive)) {
+        isValid = PR_FALSE;
+        LOG(("  Not valid: Value (%f) is too big", floatValue));
+      }
     }
   }
 
   if (isValid && !aMinExclusive.IsEmpty()){
-    float minExclusive;
-
-    if (IsValidSchemaFloat(aMinExclusive, &minExclusive) &&
-        (floatValue <= minExclusive)) {
+    // If there is a facet and value is NaN,
+    // then it is not valid.
+    if (aNodeValue.EqualsLiteral("NaN")) {
       isValid = PR_FALSE;
-      LOG(("  Not valid: Value (%f) is too small", floatValue));
+      LOG(("  Not valid: Value NaN can't be constrained by facets"));
+    } else {
+      float minExclusive;
+
+      if (IsValidSchemaFloat(aMinExclusive, &minExclusive) &&
+          (floatValue <= minExclusive)) {
+        isValid = PR_FALSE;
+        LOG(("  Not valid: Value (%f) is too small", floatValue));
+      }
     }
   }
 
   if (isValid && !aMaxInclusive.IsEmpty()){
-    float maxInclusive;
-
-    if (IsValidSchemaFloat(aMaxInclusive, &maxInclusive) &&
-        (floatValue > maxInclusive)) {
+    // If there is a facet and value is NaN,
+    // then it is not valid.
+    if (aNodeValue.EqualsLiteral("NaN")) {
       isValid = PR_FALSE;
-      LOG(("  Not valid: Value (%f) is too big", floatValue));
+      LOG(("  Not valid: Value NaN can't be constrained by facets"));
+    } else {
+      float maxInclusive;
+
+      if (IsValidSchemaFloat(aMaxInclusive, &maxInclusive) &&
+          (floatValue > maxInclusive)) {
+        isValid = PR_FALSE;
+        LOG(("  Not valid: Value (%f) is too big", floatValue));
+      }
     }
   }
 
   if (isValid && !aMinInclusive.IsEmpty()){
-    float minInclusive;
-
-    if (IsValidSchemaFloat(aMinInclusive, &minInclusive) &&
-        (floatValue < minInclusive)) {
+    // If there is a facet and value is NaN,
+    // then it is not valid.
+    if (aNodeValue.EqualsLiteral("NaN")) {
       isValid = PR_FALSE;
-      LOG(("  Not valid: Value (%f) is too small", floatValue));
+      LOG(("  Not valid: Value NaN can't be constrained by facets"));
+    } else {
+      float minInclusive;
+
+      if (IsValidSchemaFloat(aMinInclusive, &minInclusive) &&
+          (floatValue < minInclusive)) {
+        isValid = PR_FALSE;
+        LOG(("  Not valid: Value (%f) is too small", floatValue));
+      }
     }
   }
 
@@ -2857,22 +3038,144 @@ nsSchemaValidator::IsValidSchemaFloat(const nsAString & aNodeValue,
                                       float *aResult)
 {
   PRBool isValid = PR_TRUE;
-  nsAutoString temp(aNodeValue);
+  nsresult rv = NS_ERROR_ILLEGAL_VALUE;
+  float floatValue = 0.0f;
 
-  PRInt32 errorCode;
-  float floatValue = temp.ToFloat(&errorCode);
-  if (NS_FAILED(errorCode)) {
+  // took most of this float conversion code from nsCString::ToFloat
+  // which isn't frozen so we can't use it directly
+  NS_LossyConvertUTF16toASCII convertedValue(aNodeValue);
+  const char *value = convertedValue.get();
+  PRUint32 length = strlen(value);
+  if (length > 0) {
+    char *conv_stopped;
+
+    floatValue = (float)PR_strtod(value, &conv_stopped);
+    if (conv_stopped == value+length) {
+      rv = NS_OK;
+    } else {
+      // the scan failed somewhere before completion
+      rv = NS_ERROR_ILLEGAL_VALUE;
+      floatValue = 0.0f;
+    }
+  }
+
+  if (NS_FAILED(rv)) {
     // floats may be INF, -INF and NaN
-    if (!aNodeValue.EqualsLiteral("INF") && !aNodeValue.EqualsLiteral("-INF") &&
-        !aNodeValue.EqualsLiteral("NaN")) {
+    if (aNodeValue.EqualsLiteral("INF")) {
+      floatValue = FLT_MAX;
+    } else if (aNodeValue.EqualsLiteral("-INF")) {
+      floatValue = - FLT_MAX;
+    } else if (!aNodeValue.EqualsLiteral("NaN")) {
       isValid = PR_FALSE;
     }
   }
 
-  if (aResult)
-    *aResult = floatValue;
-
+  *aResult = floatValue;
   return isValid;
+}
+
+/* http://www.w3.org/TR/xmlschema-2/#double */
+nsresult
+nsSchemaValidator::ValidateBuiltinTypeDouble(const nsAString & aNodeValue,
+                                            PRUint32 aTotalDigits,
+                                            const nsAString & aMaxExclusive,
+                                            const nsAString & aMinExclusive,
+                                            const nsAString & aMaxInclusive,
+                                            const nsAString & aMinInclusive,
+                                            nsStringArray *aEnumerationList,
+                                            PRBool *aResult)
+{
+  PRBool isValid = PR_FALSE;
+
+  double doubleValue;
+  isValid = IsValidSchemaDouble(aNodeValue, &doubleValue);
+
+  if (isValid && !aMaxExclusive.IsEmpty()) {
+    // If there is a facet and value is NaN,
+    // then it is not valid.
+    if (aNodeValue.EqualsLiteral("NaN")) {
+      isValid = PR_FALSE;
+      LOG(("  Not valid: Value NaN can't be constrained by facets"));
+    } else {
+      double maxExclusive;
+
+      if (IsValidSchemaDouble(aMaxExclusive, &maxExclusive) &&
+          (doubleValue >= maxExclusive)) {
+        isValid = PR_FALSE;
+        LOG(("  Not valid: Value (%f) is too big", doubleValue));
+      }
+    }
+  }
+
+  if (isValid && !aMinExclusive.IsEmpty()) {
+    // If there is a facet and value is NaN,
+    // then it is not valid.
+    if (aNodeValue.EqualsLiteral("NaN")) {
+      isValid = PR_FALSE;
+      LOG(("  Not valid: Value NaN can't be constrained by facets"));
+    } else {
+      double minExclusive;
+
+      if (IsValidSchemaDouble(aMinExclusive, &minExclusive) &&
+          (doubleValue <= minExclusive)) {
+        isValid = PR_FALSE;
+        LOG(("  Not valid: Value (%f) is too small", doubleValue));
+      }
+    }
+  }
+
+  if (isValid && !aMaxInclusive.IsEmpty()) {
+    // If there is a facet and value is NaN,
+    // then it is not valid.
+    if (aNodeValue.EqualsLiteral("NaN")) {
+      isValid = PR_FALSE;
+      LOG(("  Not valid: Value NaN can't be constrained by facets"));
+    } else {
+      double maxInclusive;
+
+      if (IsValidSchemaDouble(aMaxInclusive, &maxInclusive) &&
+          (doubleValue > maxInclusive)) {
+        isValid = PR_FALSE;
+        LOG(("  Not valid: Value (%f) is too big", doubleValue));
+      }
+    }
+  }
+
+  if (isValid && !aMinInclusive.IsEmpty()) {
+    // If there is a facet and value is NaN,
+    // then it is not valid.
+    if (aNodeValue.EqualsLiteral("NaN")) {
+      isValid = PR_FALSE;
+      LOG(("  Not valid: Value NaN can't be constrained by facets"));
+    } else {
+      double minInclusive;
+
+      if (IsValidSchemaDouble(aMinInclusive, &minInclusive) &&
+          (doubleValue < minInclusive)) {
+        isValid = PR_FALSE;
+        LOG(("  Not valid: Value (%f) is too small", doubleValue));
+      }
+    }
+  }
+
+  if (isValid && aEnumerationList && (aEnumerationList->Count() > 0)) {
+    isValid = nsSchemaValidatorUtils::HandleEnumeration(aNodeValue,
+                                                        *aEnumerationList);
+  }
+
+#ifdef PR_LOGGING
+  LOG((isValid ? ("  Value is valid!") : ("  Value is not valid!")));
+#endif
+
+ *aResult = isValid;
+  return NS_OK;
+}
+
+PRBool
+nsSchemaValidator::IsValidSchemaDouble(const nsAString & aNodeValue,
+                                      double *aResult)
+{
+  return nsSchemaValidatorUtils::IsValidSchemaDouble(aNodeValue, aResult);
 }
 
 /* http://www.w3.org/TR/xmlschema-2/#decimal */
@@ -3009,7 +3312,7 @@ nsSchemaValidator::IsValidSchemaDecimal(const nsAString & aNodeValue,
                               aNodeValue.Length() - findString - 1);
   }
 
-  // to make test easier for example 
+  // to make test easier for example
   //   nsAutoString wh1, wh2, fr1, fr2;
   //   IsValidSchemaDecimal(NS_LITERAL_STRING("123.456"), wh1,fr1);
   //   IsValidSchemaDecimal(NS_LITERAL_STRING("000123.4560000"), wh2,fr2);
@@ -3063,12 +3366,10 @@ nsSchemaValidator::CompareFractionStrings(const nsAString & aString1,
     compareString2.Assign(aString1);
   }
 
-  nsAString::const_iterator start1, end1, start2, end2;
-  compareString1.BeginReading(start1);
-  compareString1.EndReading(end1);
+  const PRUnichar *start1, *end1, *start2, *end2;
+  compareString1.BeginReading(&start1, &end1);
 
-  compareString2.BeginReading(start2);
-  compareString2.EndReading(end2);
+  compareString2.BeginReading(&start2, &end2);
 
   PRBool done = PR_FALSE;
 
@@ -3126,11 +3427,19 @@ nsSchemaValidator::IsValidSchemaAnyURI(const nsAString & aString)
 {
   PRBool isValid = PR_FALSE;
 
-  nsCOMPtr<nsIURI> uri;
-  nsresult rv = NS_NewURI(getter_AddRefs(uri), aString);
-
-  if (rv == NS_OK)
+  if (aString.IsEmpty()) {
     isValid = PR_TRUE;
+  } else {
+    nsCOMPtr<nsIURI> uri, absUri;
+
+    // Need to supply a baseURI to allow relative URIs
+    NS_NewURI(getter_AddRefs(absUri), NS_LITERAL_STRING("http://a"));
+    nsresult rv = NS_NewURI(getter_AddRefs(uri), aString,
+                            (const char*)nsnull, absUri);
+
+    if (rv == NS_OK)
+      isValid = PR_TRUE;
+  }
 
   return isValid;
 }
@@ -3215,7 +3524,7 @@ nsSchemaValidator::ValidateBuiltinTypeQName(const nsAString & aNodeValue,
   if (isValid) {
     length = aNodeValue.Length();
 
-    if (aLengthDefined && (length != aLength)) {  
+    if (aLengthDefined && (length != aLength)) {
       isValid = PR_FALSE;
       LOG(("  Not valid: Not the right length (%d)", length));
     }
@@ -3256,7 +3565,7 @@ nsSchemaValidator::IsValidSchemaQName(const nsAString & aString)
   NS_ENSURE_SUCCESS(rv, PR_FALSE);
 
   const PRUnichar *colon;
-  const nsAFlatString& qName = PromiseFlatString(aString);
+  const nsString& qName = PromiseFlatString(aString);
   rv = parserService->CheckQName(qName, PR_TRUE, &colon);
   if (NS_SUCCEEDED(rv)) {
     isValid = PR_TRUE;
@@ -3319,12 +3628,11 @@ nsSchemaValidator::IsValidSchemaHexBinary(const nsAString & aString)
   // hex binary length has to be even
   PRUint32 length = aString.Length();
 
-  if (length % 2 != 0) 
+  if (length % 2 != 0)
     return PR_FALSE;
 
-  nsAString::const_iterator start, end;
-  aString.BeginReading(start);
-  aString.EndReading(end);
+  const PRUnichar *start, *end;
+  aString.BeginReading(&start, &end);
 
   PRBool isValid = PR_TRUE;
 
@@ -3343,7 +3651,7 @@ nsSchemaValidator::IsValidSchemaHexBinary(const nsAString & aString)
 
 #ifdef DEBUG
 void
-nsSchemaValidator::DumpBaseType(nsISchemaBuiltinType *aBuiltInType)
+nsSchemaValidator::DumpBaseType(nsISVSchemaBuiltinType *aBuiltInType)
 {
   nsAutoString typeName;
   aBuiltInType->GetName(typeName);
@@ -3363,7 +3671,7 @@ nsSchemaValidator::DumpBaseType(nsISchemaBuiltinType *aBuiltInType)
 // http://w3c.org/TR/xmlschema-1/#Complex_Type_Definitions
 nsresult
 nsSchemaValidator::ValidateComplextype(nsIDOMNode* aNode,
-                                       nsISchemaComplexType *aSchemaComplexType,
+                                       nsISVSchemaComplexType *aSchemaComplexType,
                                        PRBool *aResult)
 {
   PRBool isValid = PR_FALSE;
@@ -3374,26 +3682,27 @@ nsSchemaValidator::ValidateComplextype(nsIDOMNode* aNode,
   NS_ENSURE_SUCCESS(rv, rv);
 
   switch(contentModel) {
-    case nsISchemaComplexType::CONTENT_MODEL_EMPTY: {
-      // element has no children
-      rv = NS_ERROR_NOT_IMPLEMENTED;
+    case nsISVSchemaComplexType::CONTENT_MODEL_EMPTY: {
+      LOG(("    complex type, empty content"));
+      rv = ValidateComplexModelEmpty(aNode, aSchemaComplexType, &isValid);
       break;
     }
 
-    case nsISchemaComplexType::CONTENT_MODEL_SIMPLE: {
+    case nsISVSchemaComplexType::CONTENT_MODEL_SIMPLE: {
       LOG(("    complex type, simple content"));
       rv = ValidateComplexModelSimple(aNode, aSchemaComplexType, &isValid);
       break;
     }
 
-    case nsISchemaComplexType::CONTENT_MODEL_ELEMENT_ONLY: {
+    case nsISVSchemaComplexType::CONTENT_MODEL_ELEMENT_ONLY: {
       LOG(("    xsd:element only"));
       rv = ValidateComplexModelElement(aNode, aSchemaComplexType, &isValid);
       break;
     }
 
-    case nsISchemaComplexType::CONTENT_MODEL_MIXED: {
-      rv = NS_ERROR_NOT_IMPLEMENTED;
+    case nsISVSchemaComplexType::CONTENT_MODEL_MIXED: {
+      LOG(("    complex type, mixed content"));
+      rv = ValidateComplexModelElement(aNode, aSchemaComplexType, &isValid);
       break;
     }
   }
@@ -3455,7 +3764,7 @@ nsSchemaValidator::ValidateComplextype(nsIDOMNode* aNode,
   // iterate through all the attribute definitions on the schema and check
   // if they pass
   PRUint32 count = 0;
-  nsCOMPtr<nsISchemaAttributeComponent> attrComp;
+  nsCOMPtr<nsISVSchemaAttributeComponent> attrComp;
 
   while (isValid && (count < attrCount)) {
     rv = aSchemaComplexType->GetAttributeByIndex(count,
@@ -3483,12 +3792,12 @@ nsSchemaValidator::ValidateComplextype(nsIDOMNode* aNode,
 // http://w3c.org/TR/xmlschema-1/#cElement_Declarations
 nsresult
 nsSchemaValidator::ValidateComplexModelElement(nsIDOMNode* aNode,
-                                               nsISchemaComplexType *aSchemaComplexType,
+                                               nsISVSchemaComplexType *aSchemaComplexType,
                                                PRBool *aResult)
 {
   PRBool isValid = PR_FALSE;
 
-  nsCOMPtr<nsISchemaModelGroup> modelGroup;
+  nsCOMPtr<nsISVSchemaModelGroup> modelGroup;
   nsresult rv = aSchemaComplexType->GetModelGroup(getter_AddRefs(modelGroup));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -3514,8 +3823,38 @@ nsSchemaValidator::ValidateComplexModelElement(nsIDOMNode* aNode,
 }
 
 nsresult
+nsSchemaValidator::ValidateComplexModelEmpty(nsIDOMNode* aNode,
+                                    nsISVSchemaComplexType *aSchemaComplexType,
+                                    PRBool *aResult)
+{
+  PRBool isValid = PR_TRUE;
+  nsresult rv = NS_OK;
+
+  nsCOMPtr<nsIDOMNode> currentNode;
+  rv = aNode->GetFirstChild(getter_AddRefs(currentNode));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  while (isValid && currentNode) {
+    PRUint16 nodeType;
+    currentNode->GetNodeType(&nodeType);
+    if (nodeType == nsIDOMNode::ELEMENT_NODE ||
+        nodeType == nsIDOMNode::TEXT_NODE) {
+      LOG(("  --  Empty content model contains element or text!"));
+      isValid = PR_FALSE;
+      break;
+    }
+
+    nsCOMPtr<nsIDOMNode> node;
+    currentNode->GetNextSibling(getter_AddRefs(node));
+    currentNode.swap(node);
+  }
+  *aResult = isValid;
+  return rv;
+}
+
+nsresult
 nsSchemaValidator::ValidateComplexModelSimple(nsIDOMNode* aNode,
-                                              nsISchemaComplexType *aSchemaComplexType,
+                                              nsISVSchemaComplexType *aSchemaComplexType,
                                               PRBool *aResult)
 {
   PRBool isValid = PR_FALSE;
@@ -3527,17 +3866,17 @@ nsSchemaValidator::ValidateComplexModelSimple(nsIDOMNode* aNode,
   // two choices for complex model with simple content: derivation through
   // extension or through restriction
   switch(derivation) {
-    case nsISchemaComplexType::DERIVATION_EXTENSION_SIMPLE:
-    case nsISchemaComplexType::DERIVATION_RESTRICTION_SIMPLE: {
+    case nsISVSchemaComplexType::DERIVATION_EXTENSION_SIMPLE:
+    case nsISVSchemaComplexType::DERIVATION_RESTRICTION_SIMPLE: {
 
 #ifdef PR_LOGGING
-      if (derivation == nsISchemaComplexType::DERIVATION_EXTENSION_SIMPLE)
+      if (derivation == nsISVSchemaComplexType::DERIVATION_EXTENSION_SIMPLE)
         LOG(("      -- deriviation by extension of a simple type"));
       else
         LOG(("      -- deriviation by restriction of a simple type"));
 #endif
 
-      nsCOMPtr<nsISchemaSimpleType> simpleBaseType;
+      nsCOMPtr<nsISVSchemaSimpleType> simpleBaseType;
       rv = aSchemaComplexType->GetSimpleBaseType(getter_AddRefs(simpleBaseType));
       NS_ENSURE_SUCCESS(rv, rv);
 
@@ -3559,7 +3898,7 @@ nsSchemaValidator::ValidateComplexModelSimple(nsIDOMNode* aNode,
 
 nsresult
 nsSchemaValidator::ValidateComplexModelGroup(nsIDOMNode* aNode,
-                                             nsISchemaModelGroup *aSchemaModelGroup,
+                                             nsISVSchemaModelGroup *aSchemaModelGroup,
                                              nsIDOMNode **aLeftOvers,
                                              PRBool *aResult)
 {
@@ -3572,6 +3911,7 @@ nsSchemaValidator::ValidateComplexModelGroup(nsIDOMNode* aNode,
   rv = aSchemaModelGroup->GetCompositor(&compositor);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  PRUint32 validatedNodes = 0;
   PRUint32 minOccurs;
   aSchemaModelGroup->GetMinOccurs(&minOccurs);
 
@@ -3584,7 +3924,7 @@ nsSchemaValidator::ValidateComplexModelGroup(nsIDOMNode* aNode,
   nsCOMPtr<nsIDOMNode> currentNode(aNode), leftOvers;
 
   switch(compositor) {
-    case nsISchemaModelGroup::COMPOSITOR_ALL: {
+    case nsISVSchemaModelGroup::COMPOSITOR_ALL: {
       LOG(("      - It is a All Compositor (%d)", particleCount));
       // xsd:all has several limitations:
       //  - order does not matter
@@ -3602,7 +3942,7 @@ nsSchemaValidator::ValidateComplexModelGroup(nsIDOMNode* aNode,
       if (isValid && notFound && minOccurs == 1) {
         isValid = PR_FALSE;
 #ifdef PR_LOGGING
-        nsCOMPtr<nsISchemaParticle> particle;
+        nsCOMPtr<nsISVSchemaParticle> particle;
         aSchemaModelGroup->GetParticle(0, getter_AddRefs(particle));
         if (particle) {
           nsAutoString name;
@@ -3616,7 +3956,7 @@ nsSchemaValidator::ValidateComplexModelGroup(nsIDOMNode* aNode,
       break;
     }
 
-    case nsISchemaModelGroup::COMPOSITOR_SEQUENCE: {
+    case nsISVSchemaModelGroup::COMPOSITOR_SEQUENCE: {
       LOG(("      - It is a Sequence (%d)", particleCount));
       PRUint32 iterations = 0;
       isValid = PR_TRUE;
@@ -3624,18 +3964,21 @@ nsSchemaValidator::ValidateComplexModelGroup(nsIDOMNode* aNode,
       while (currentNode && isValid && (iterations < maxOccurs) && !notFound) {
         rv = ValidateComplexSequence(currentNode, aSchemaModelGroup,
                                      getter_AddRefs(leftOvers), &notFound,
-                                     &isValid);
+                                     &isValid, &validatedNodes);
         if (isValid && !notFound) {
           iterations++;
         }
         currentNode = leftOvers;
       }
 
-      // if we didn't hit minOccurs, invalid
-      if (isValid && (iterations < minOccurs)) {
+      // Special case of found nothing and expected nothing, so it's easy
+      if (validatedNodes == 0 && iterations == 0 && minOccurs == 0) {
+        isValid = PR_TRUE;
+      } else if (isValid && (iterations < minOccurs) && (validatedNodes > 0)) {
+        // if we didn't hit minOccurs and not empty sequence, invalid
         isValid = PR_FALSE;
 #ifdef PR_LOGGING
-        nsCOMPtr<nsISchemaParticle> particle;
+        nsCOMPtr<nsISVSchemaParticle> particle;
         nsAutoString name;
         aSchemaModelGroup->GetParticle(0, getter_AddRefs(particle));
 
@@ -3650,7 +3993,7 @@ nsSchemaValidator::ValidateComplexModelGroup(nsIDOMNode* aNode,
       break;
     }
 
-    case nsISchemaModelGroup::COMPOSITOR_CHOICE: {
+    case nsISVSchemaModelGroup::COMPOSITOR_CHOICE: {
       LOG(("      - It is a Choice"));
 
       PRUint32 iterations = 0;
@@ -3670,7 +4013,7 @@ nsSchemaValidator::ValidateComplexModelGroup(nsIDOMNode* aNode,
       if (isValid && (iterations < minOccurs)) {
         isValid = PR_FALSE;
 #ifdef PR_LOGGING
-        nsCOMPtr<nsISchemaParticle> particle;
+        nsCOMPtr<nsISVSchemaParticle> particle;
         nsAutoString name;
         aSchemaModelGroup->GetParticle(0, getter_AddRefs(particle));
 
@@ -3693,9 +4036,10 @@ nsSchemaValidator::ValidateComplexModelGroup(nsIDOMNode* aNode,
 
 nsresult
 nsSchemaValidator::ValidateComplexSequence(nsIDOMNode* aStartNode,
-                                           nsISchemaModelGroup *aSchemaModelGroup,
+                                           nsISVSchemaModelGroup *aSchemaModelGroup,
                                            nsIDOMNode **aLeftOvers,
-                                           PRBool *aNotFound, PRBool *aResult)
+                                           PRBool *aNotFound, PRBool *aResult,
+                                           PRUint32 *aValidatedNodes)
 {
   if (!aStartNode || !aSchemaModelGroup)
     return NS_ERROR_UNEXPECTED;
@@ -3721,7 +4065,7 @@ nsSchemaValidator::ValidateComplexSequence(nsIDOMNode* aStartNode,
   PRUint32 particleCounter = 0;
   PRUint16 nodeType;
   PRBool done = PR_FALSE;
-  nsCOMPtr<nsISchemaParticle> particle;
+  nsCOMPtr<nsISVSchemaParticle> particle;
   nsCOMPtr<nsIDOMNode> currentNode(aStartNode), leftOvers, tmpNode;
 
   LOG(("====================== New Sequence ==========================="));
@@ -3773,37 +4117,39 @@ nsSchemaValidator::ValidateComplexSequence(nsIDOMNode* aStartNode,
     currentNode = leftOvers;
   }
 
+  *aValidatedNodes = validatedNodes;
+
   if (validatedNodes == 0) {
     // we didn't walk through any nodes, thus empty sequence.  The caller
-    // will check if enough occurances (minOccurs) happened.  We don't want to
-    // check remaining particles, since we could have met minOccurs already,
-    // and the sequence is now over.
+    // will check if enough occurances (minOccurs) on the sequence happened.
+    // We need to continue to make sure we don't have all element
+    // declarations with each having minOccurs=0, thus empty content is allowed.
     isValid = PR_TRUE;
     notFound = PR_TRUE;
-  } else if (isValid && (particleCounter < particleCount)) {
-    // check if any of the remaining particles are required
-    while (isValid && (particleCounter < particleCount)) {
-      nsCOMPtr<nsISchemaParticle> tmpParticle;
-      rv = aSchemaModelGroup->GetParticle(particleCounter,
-                                          getter_AddRefs(tmpParticle));
-      NS_ENSURE_SUCCESS(rv, rv);
+  }
 
-      PRUint32 tmpMinOccurs;
-      rv = tmpParticle->GetMinOccurs(&tmpMinOccurs);
-      NS_ENSURE_SUCCESS(rv, rv);
+  // check if any of the remaining particles are required
+  while (isValid && (particleCounter < particleCount)) {
+    nsCOMPtr<nsISVSchemaParticle> tmpParticle;
+    rv = aSchemaModelGroup->GetParticle(particleCounter,
+                                        getter_AddRefs(tmpParticle));
+    NS_ENSURE_SUCCESS(rv, rv);
 
-      if (tmpMinOccurs == 0) {
-        // this particle isn't required
-        particleCounter++;
-      } else {
-        isValid = PR_FALSE;
+    PRUint32 tmpMinOccurs;
+    rv = tmpParticle->GetMinOccurs(&tmpMinOccurs);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (tmpMinOccurs == 0) {
+      // this particle isn't required
+      particleCounter++;
+    } else {
+      isValid = PR_FALSE;
 #ifdef PR_LOGGING
-        nsAutoString particleName;
-        tmpParticle->GetName(particleName);
-        LOG(("        - Nodelist missing required element (%s)",
-             NS_ConvertUTF16toUTF8(particleName).get()));
+      nsAutoString particleName;
+      tmpParticle->GetName(particleName);
+      LOG(("        - Nodelist missing required element (%s)",
+           NS_ConvertUTF16toUTF8(particleName).get()));
 #endif
-      }
     }
   }
 
@@ -3817,7 +4163,7 @@ nsSchemaValidator::ValidateComplexSequence(nsIDOMNode* aStartNode,
 
 nsresult
 nsSchemaValidator::ValidateComplexParticle(nsIDOMNode* aNode,
-                                           nsISchemaParticle *aSchemaParticle,
+                                           nsISVSchemaParticle *aSchemaParticle,
                                            nsIDOMNode **aLeftOvers,
                                            PRBool *aNotFound,
                                            PRBool *aResult)
@@ -3840,7 +4186,7 @@ nsSchemaValidator::ValidateComplexParticle(nsIDOMNode* aNode,
   nsCOMPtr<nsIDOMNode> leftOvers, tmpNode;
 
   switch(particleType) {
-    case nsISchemaParticle::PARTICLE_TYPE_ELEMENT: {
+    case nsISVSchemaParticle::PARTICLE_TYPE_ELEMENT: {
       LOG(("            -- Particle is an Element"));
       PRUint32 iterations = 0;
       PRBool done = PR_FALSE;
@@ -3867,8 +4213,12 @@ nsSchemaValidator::ValidateComplexParticle(nsIDOMNode* aNode,
         NS_ENSURE_SUCCESS(rv, rv);
 
         if (nodeName.Equals(particleName)) {
+          LOG(("<%s>", NS_ConvertUTF16toUTF8(nodeName).get()));
           rv = ValidateComplexElement(leftOvers, aSchemaParticle, &isValid);
           NS_ENSURE_SUCCESS(rv, rv);
+          LOG(("</%s> (Valid = %s)",
+              NS_ConvertUTF16toUTF8(nodeName).get(),
+                                    (isValid ? "true" : "false")));
 
           // set rest to the next element if node is valid
           if (isValid) {
@@ -3899,9 +4249,9 @@ nsSchemaValidator::ValidateComplexParticle(nsIDOMNode* aNode,
       break;
     }
 
-    case nsISchemaParticle::PARTICLE_TYPE_MODEL_GROUP: {
+    case nsISVSchemaParticle::PARTICLE_TYPE_MODEL_GROUP: {
       LOG(("            -- Particle is an Model Group"));
-      nsCOMPtr<nsISchemaModelGroup> modelGroup =
+      nsCOMPtr<nsISVSchemaModelGroup> modelGroup =
         do_QueryInterface(aSchemaParticle);
 
       rv = ValidateComplexModelGroup(aNode, modelGroup,
@@ -3909,10 +4259,8 @@ nsSchemaValidator::ValidateComplexParticle(nsIDOMNode* aNode,
       break;
     }
 
-    case nsISchemaParticle::PARTICLE_TYPE_ANY: {
-      rv = NS_ERROR_NOT_IMPLEMENTED;
-      break;
-    }
+    case nsISVSchemaParticle::PARTICLE_TYPE_ANY:
+      return Validate(aNode, aResult);
   }
 
   leftOvers.swap(*aLeftOvers);
@@ -3922,31 +4270,120 @@ nsSchemaValidator::ValidateComplexParticle(nsIDOMNode* aNode,
 }
 
 nsresult
+nsSchemaValidator::GetElementXsiType(nsIDOMNode*     aNode,
+                                     nsISVSchemaType** aType)
+{
+
+  nsCOMPtr<nsIDOMElement> domElement = do_QueryInterface(aNode);
+  NS_ENSURE_STATE(domElement);
+
+  PRBool hasTypeAttribute = PR_FALSE;
+  nsresult rv = domElement->HasAttributeNS(NS_LITERAL_STRING(
+                                             NS_SCHEMA_INSTANCE_NAMESPACE),
+                                           NS_LITERAL_STRING("type"),
+                                           &hasTypeAttribute);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  /* XXX: This all may need to change when
+     element.GetSchemaTypeInfo() is implemented from DOM Level 3 Core,
+     see:
+     http://www.w3.org/TR/DOM-Level-3-Core/core.html#Attr-schemaTypeInfo
+  */
+
+  if (hasTypeAttribute) {
+    LOG(("  -- found xsi:type attribute"));
+
+    nsAutoString typeAttribute;
+    rv = domElement->GetAttributeNS(NS_LITERAL_STRING(
+                                      NS_SCHEMA_INSTANCE_NAMESPACE),
+                                    NS_LITERAL_STRING("type"),
+                                    typeAttribute);
+    NS_ENSURE_SUCCESS(rv, rv);
+    LOG(("  Type is: %s", NS_ConvertUTF16toUTF8(typeAttribute).get()));
+
+    if (typeAttribute.IsEmpty())
+      return NS_ERROR_SCHEMAVALIDATOR_NO_TYPE_FOUND;
+
+    // split type (ns:type) into namespace and type.
+    nsCOMPtr<nsIParserService> parserService =
+      do_GetService("@mozilla.org/parser/parser-service;1", &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    const nsString& qName = PromiseFlatString(typeAttribute);
+    const PRUnichar *colon;
+    rv = parserService->CheckQName(qName, PR_TRUE, &colon);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    const PRUnichar* end = qName.EndReading();
+
+    nsAutoString schemaTypePrefix, schemaType, schemaTypeNamespace;
+    if (!colon) {
+      // colon not found, so no prefix
+      schemaType.Assign(typeAttribute);
+
+      // get namespace from node
+      aNode->GetNamespaceURI(schemaTypeNamespace);
+    } else {
+      schemaTypePrefix.Assign(Substring(qName.get(), colon));
+      schemaType.Assign(Substring(colon + 1, end));
+
+      // get the namespace url from the prefix
+      nsCOMPtr<nsIDOM3Node> domNode3 = do_QueryInterface(aNode);
+      rv = domNode3->LookupNamespaceURI(schemaTypePrefix, schemaTypeNamespace);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    LOG(("  Type to validate against is %s:%s",
+      NS_LossyConvertUTF16toASCII(schemaTypePrefix).get(),
+      NS_LossyConvertUTF16toASCII(schemaType).get()));
+
+    // no schemas loaded and type is not builtin, abort
+    if (!mSchema &&
+        !schemaTypeNamespace.EqualsLiteral(NS_SCHEMA_1999_NAMESPACE) &&
+        !schemaTypeNamespace.EqualsLiteral(NS_SCHEMA_2001_NAMESPACE))
+      return NS_ERROR_SCHEMAVALIDATOR_NO_SCHEMA_LOADED;
+
+    // get the type
+    rv = GetType(schemaType, schemaTypeNamespace, aType);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return rv;
+}
+
+nsresult
 nsSchemaValidator::ValidateComplexElement(nsIDOMNode* aNode,
-                                          nsISchemaParticle *aSchemaParticle,
+                                          nsISVSchemaParticle *aSchemaParticle,
                                           PRBool *aResult)
 {
   PRBool isValid = PR_FALSE;
 
-  nsCOMPtr<nsISchemaElement> schemaElement(do_QueryInterface(aSchemaParticle));
+  nsCOMPtr<nsISVSchemaElement> schemaElement(do_QueryInterface(aSchemaParticle));
 
   if (!schemaElement)
     return NS_ERROR_UNEXPECTED;
 
-  nsCOMPtr<nsISchemaType> type;
-  nsresult rv = schemaElement->GetType(getter_AddRefs(type));
+  // will hold the type to validate against
+  nsCOMPtr<nsISVSchemaType> type;
+
+  nsresult rv = GetElementXsiType(aNode, getter_AddRefs(type));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!type)
-    return NS_ERROR_UNEXPECTED;
+  if (!type) {
+    rv = schemaElement->GetType(getter_AddRefs(type));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (!type)
+      return NS_ERROR_UNEXPECTED;
+  }
 
   PRUint16 typeValue;
   rv = type->GetSchemaType(&typeValue);
   NS_ENSURE_SUCCESS(rv, rv);
 
   switch(typeValue) {
-    case nsISchemaType::SCHEMA_TYPE_SIMPLE: {
-      nsCOMPtr<nsISchemaSimpleType> simpleType(do_QueryInterface(type));
+    case nsISVSchemaType::SCHEMA_TYPE_SIMPLE: {
+      nsCOMPtr<nsISVSchemaSimpleType> simpleType(do_QueryInterface(type));
       if (simpleType) {
         LOG(("  Element is a simple type!"));
         rv = ValidateAgainstType(aNode, simpleType, &isValid);
@@ -3954,8 +4391,8 @@ nsSchemaValidator::ValidateComplexElement(nsIDOMNode* aNode,
       break;
     }
 
-    case nsISchemaType::SCHEMA_TYPE_COMPLEX: {
-      nsCOMPtr<nsISchemaComplexType> complexType(do_QueryInterface(type));
+    case nsISVSchemaType::SCHEMA_TYPE_COMPLEX: {
+      nsCOMPtr<nsISVSchemaComplexType> complexType(do_QueryInterface(type));
       if (complexType) {
         LOG(("  Element is a complex type!"));
         rv = ValidateAgainstType(aNode, complexType, &isValid);
@@ -3963,7 +4400,7 @@ nsSchemaValidator::ValidateComplexElement(nsIDOMNode* aNode,
       break;
     }
 
-    case nsISchemaType::SCHEMA_TYPE_PLACEHOLDER: {
+    case nsISVSchemaType::SCHEMA_TYPE_PLACEHOLDER: {
       rv = NS_ERROR_NOT_IMPLEMENTED;
       break;
     }
@@ -3975,7 +4412,7 @@ nsSchemaValidator::ValidateComplexElement(nsIDOMNode* aNode,
 
 nsresult
 nsSchemaValidator::ValidateComplexChoice(nsIDOMNode* aStartNode,
-                                         nsISchemaModelGroup *aSchemaModelGroup,
+                                         nsISVSchemaModelGroup *aSchemaModelGroup,
                                          nsIDOMNode **aLeftOvers,
                                          PRBool *aNotFound, PRBool *aResult)
 {
@@ -4008,7 +4445,7 @@ nsSchemaValidator::ValidateComplexChoice(nsIDOMNode* aStartNode,
   */
   PRBool isValid = PR_FALSE;
   PRBool notFound = PR_FALSE;
-  nsCOMPtr<nsISchemaParticle> particle;
+  nsCOMPtr<nsISVSchemaParticle> particle;
   nsCOMPtr<nsIDOMNode> currentNode(aStartNode), leftOvers, tmpNode;
   nsAutoString localName, particleName;
   PRUint32 particleCounter = 0;
@@ -4071,7 +4508,7 @@ nsSchemaValidator::ValidateComplexChoice(nsIDOMNode* aStartNode,
 
 nsresult
 nsSchemaValidator::ValidateComplexAll(nsIDOMNode* aStartNode,
-                                      nsISchemaModelGroup *aSchemaModelGroup,
+                                      nsISVSchemaModelGroup *aSchemaModelGroup,
                                       nsIDOMNode **aLeftOvers, PRBool *aNotFound,
                                       PRBool *aResult)
 {
@@ -4102,7 +4539,7 @@ nsSchemaValidator::ValidateComplexAll(nsIDOMNode* aStartNode,
   PRBool isValid = PR_FALSE;
   PRBool notFound = PR_FALSE;
   PRBool done = PR_FALSE;
-  nsCOMPtr<nsISchemaParticle> particle;
+  nsCOMPtr<nsISVSchemaParticle> particle;
   nsCOMPtr<nsIDOMNode> currentNode(aStartNode), leftOvers, tmpNode;
   nsAutoString localName, particleName;
 
@@ -4233,7 +4670,7 @@ nsSchemaValidator::ValidateComplexAll(nsIDOMNode* aStartNode,
 
 nsresult
 nsSchemaValidator::ValidateAttributeComponent(nsIDOMNode* aNode,
-                                              nsISchemaAttributeComponent *aAttrComp,
+                                              nsISVSchemaAttributeComponent *aAttrComp,
                                               PRUint32 *aFoundAttrCount,
                                               PRBool *aResult)
 {
@@ -4248,8 +4685,8 @@ nsSchemaValidator::ValidateAttributeComponent(nsIDOMNode* aNode,
   NS_ENSURE_SUCCESS(rv, rv);
 
   switch(componentType) {
-    case nsISchemaAttributeComponent::COMPONENT_TYPE_ATTRIBUTE: {
-      nsCOMPtr<nsISchemaAttribute> attr(do_QueryInterface(aAttrComp, &rv));
+    case nsISVSchemaAttributeComponent::COMPONENT_TYPE_ATTRIBUTE: {
+      nsCOMPtr<nsISVSchemaAttribute> attr(do_QueryInterface(aAttrComp, &rv));
       NS_ENSURE_SUCCESS(rv, rv);
 
       LOG(("      Attribute Component (%s) is an attribute!",
@@ -4261,8 +4698,8 @@ nsSchemaValidator::ValidateAttributeComponent(nsIDOMNode* aNode,
       break;
     }
 
-    case nsISchemaAttributeComponent::COMPONENT_TYPE_GROUP: {
-      nsCOMPtr<nsISchemaAttributeGroup> attrGroup(do_QueryInterface(aAttrComp, &rv));
+    case nsISVSchemaAttributeComponent::COMPONENT_TYPE_GROUP: {
+      nsCOMPtr<nsISVSchemaAttributeGroup> attrGroup(do_QueryInterface(aAttrComp, &rv));
       NS_ENSURE_SUCCESS(rv, rv);
 
       LOG(("      Attribute Component (%s) is an attribute group!",
@@ -4275,8 +4712,12 @@ nsSchemaValidator::ValidateAttributeComponent(nsIDOMNode* aNode,
       break;
     }
 
-    case nsISchemaAttributeComponent::COMPONENT_TYPE_ANY: {
-      rv = NS_ERROR_NOT_IMPLEMENTED;
+    case nsISVSchemaAttributeComponent::COMPONENT_TYPE_ANY: {
+      // for now we just accept this one as being valid.
+      // should look at the attribute namespace and validate the
+      // attribute against it
+      // XXX: implement this
+      isValid = PR_TRUE;
       break;
     }
   }
@@ -4287,7 +4728,7 @@ nsSchemaValidator::ValidateAttributeComponent(nsIDOMNode* aNode,
 
 nsresult
 nsSchemaValidator::ValidateSchemaAttribute(nsIDOMNode* aNode,
-                                           nsISchemaAttribute *aAttr,
+                                           nsISVSchemaAttribute *aAttr,
                                            const nsAString & aAttrName,
                                            PRUint32 *aFoundAttrCount,
                                            PRBool *aResult)
@@ -4300,33 +4741,28 @@ nsSchemaValidator::ValidateSchemaAttribute(nsIDOMNode* aNode,
   rv = aAttr->GetFixedValue(fixedValue);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISchemaSimpleType> simpleType;
+  nsCOMPtr<nsISVSchemaSimpleType> simpleType;
   rv = aAttr->GetType(getter_AddRefs(simpleType));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDOMElement> elm(do_QueryInterface(aNode));
 
+  // check if the attribute is to be qualified or not
+  nsAutoString qualifiedNamespace;
+  aAttr->GetQualifiedNamespace(qualifiedNamespace);
+
   PRBool hasAttr = PR_FALSE;
   PRBool isValid = PR_FALSE;
 
-  // XXX: We don't know if the attribute needs to be qualified or not, since
-  // nsISchema on the 1.8.0/1.8 branches doesn't support it.  So try both
-  // options.
-
-  nsAutoString targetNamespace;
-  aAttr->GetTargetNamespace(targetNamespace);
-
-  if (!targetNamespace.IsEmpty()) {
-    rv = elm->HasAttributeNS(targetNamespace, aAttrName, &hasAttr);
+  if (!qualifiedNamespace.IsEmpty()) {
+    rv = elm->HasAttributeNS(qualifiedNamespace, aAttrName, &hasAttr);
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (hasAttr) {
-      rv = elm->GetAttributeNS(targetNamespace, aAttrName, attrValue);
+      rv = elm->GetAttributeNS(qualifiedNamespace, aAttrName, attrValue);
       NS_ENSURE_SUCCESS(rv, rv);
     }
-  }
-
-  if (!hasAttr) {
+  } else {
     rv = elm->HasAttribute(aAttrName, &hasAttr);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -4338,13 +4774,13 @@ nsSchemaValidator::ValidateSchemaAttribute(nsIDOMNode* aNode,
 
   if (!hasAttr) {
     // no attribute found
-    if (use == nsISchemaAttribute::USE_OPTIONAL) {
+    if (use == nsISVSchemaAttribute::USE_OPTIONAL) {
       isValid = PR_TRUE;
       LOG(("        -- attribute not found, but optional, so fine!"));
-    } else if (use == nsISchemaAttribute::USE_REQUIRED) {
+    } else if (use == nsISVSchemaAttribute::USE_REQUIRED) {
       // we default to invalid
       LOG(("        -- attribute not found, but required!"));
-    } else if (use == nsISchemaAttribute::USE_PROHIBITED) {
+    } else if (use == nsISVSchemaAttribute::USE_PROHIBITED) {
       // prohibited and doesn't exist is valid
       isValid = PR_TRUE;
       LOG(("        -- attribute not found, but prohibited, so fine!"));
@@ -4362,15 +4798,47 @@ nsSchemaValidator::ValidateSchemaAttribute(nsIDOMNode* aNode,
     }
   } else {
     (*aFoundAttrCount)++;
-    if (use == nsISchemaAttribute::USE_PROHIBITED) {
+    if (use == nsISVSchemaAttribute::USE_PROHIBITED) {
       // If it is is prohibited and it exists, we don't have to do anything,
       // since we default to invalid.
       LOG(("        -- attribute prohibited!"));
     } else {
       if (simpleType) {
+        // save the type on the attribute
+        nsCOMPtr<nsIDOMAttr> attrNode;
+
+        if (NS_SUCCEEDED(elm->GetAttributeNode(aAttrName,
+                                               getter_AddRefs(attrNode)))) {
+          nsCOMPtr<nsIWritableVariant> holder =
+            do_CreateInstance("@mozilla.org/variant;1");
+          NS_ENSURE_STATE(holder);
+
+          holder->SetAsInterface(nsISVSchemaType::GetIID(), simpleType);
+
+          // and save on the node
+          nsCOMPtr<nsIAttribute> pAttribute(do_QueryInterface(attrNode));
+
+          if (pAttribute) {
+            // we have to be really careful to set the destructor function
+            // correctly. this also has to be a pointer to a variant
+            nsCOMPtr<nsIAtomService> atomServ =
+              do_GetService(NS_ATOMSERVICE_CONTRACTID, &rv);
+            NS_ENSURE_SUCCESS(rv, rv);
+      
+            nsCOMPtr<nsIAtom> key;
+            rv = atomServ->GetAtomUTF8("xsdtype", getter_AddRefs(key));
+            NS_ENSURE_SUCCESS(rv, rv);
+
+            nsIVariant *pVariant = holder;
+            NS_IF_ADDREF(pVariant);
+            rv = pAttribute->SetProperty(key, pVariant, &VariantDTor);
+            NS_ENSURE_SUCCESS(rv, rv);
+          }
+        }
+
         rv = ValidateSimpletype(attrValue, simpleType, &isValid);
       } else {
-       // If no type exists (ergo no simpleType), we should use the
+        // If no type exists (ergo no simpleType), we should use the
         // simple ur-type definition defined at:
         // (http://www.w3.org/TR/xmlschema-1/#simple-ur-type-itself).
         // XXX: So for now, we default to true.
@@ -4385,7 +4853,7 @@ nsSchemaValidator::ValidateSchemaAttribute(nsIDOMNode* aNode,
 
 nsresult
 nsSchemaValidator::ValidateSchemaAttributeGroup(nsIDOMNode* aNode,
-                                                nsISchemaAttributeGroup *aAttrGroup,
+                                                nsISVSchemaAttributeGroup *aAttrGroup,
                                                 const nsAString & aAttrName,
                                                 PRUint32 *aFoundAttrCount,
                                                 PRBool *aResult)
@@ -4396,7 +4864,7 @@ nsSchemaValidator::ValidateSchemaAttributeGroup(nsIDOMNode* aNode,
   nsresult rv = aAttrGroup->GetAttributeCount(&attrCount);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISchemaAttributeComponent> attrComp;
+  nsCOMPtr<nsISVSchemaAttributeComponent> attrComp;
 
   while (isValid && (count < attrCount)) {
     rv = aAttrGroup->GetAttributeByIndex(count, getter_AddRefs(attrComp));

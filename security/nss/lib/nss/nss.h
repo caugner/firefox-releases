@@ -36,7 +36,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: nss.h,v 1.40.10.6 2006/09/23 19:41:21 wtchang%redhat.com Exp $ */
+/* $Id: nss.h,v 1.56.2.2 2008/05/28 18:08:20 kaie%kuix.de Exp $ */
 
 #ifndef __nss_h_
 #define __nss_h_
@@ -45,25 +45,35 @@
 
 SEC_BEGIN_PROTOS
 
+/* The private macro _NSS_ECC_STRING is for NSS internal use only. */
+#ifdef NSS_ENABLE_ECC
+#ifdef NSS_ECC_MORE_THAN_SUITE_B
+#define _NSS_ECC_STRING " Extended ECC"
+#else
+#define _NSS_ECC_STRING " Basic ECC"
+#endif
+#else
+#define _NSS_ECC_STRING ""
+#endif
+
+/* The private macro _NSS_CUSTOMIZED is for NSS internal use only. */
+#if defined(NSS_ALLOW_UNSUPPORTED_CRITICAL)
+#define _NSS_CUSTOMIZED " (Customized build)"
+#else
+#define _NSS_CUSTOMIZED 
+#endif
+
 /*
  * NSS's major version, minor version, patch level, and whether
  * this is a beta release.
  *
  * The format of the version string should be
- *     "<major version>.<minor version>[.<patch level>] [<Beta>]"
+ *     "<major version>.<minor version>[.<patch level>][ <ECC>][ <Beta>]"
  */
-#ifdef NSS_ENABLE_ECC
-#ifdef NSS_ECC_MORE_THAN_SUITE_B
-#define NSS_VERSION  "3.11.3 Extended ECC"
-#else
-#define NSS_VERSION  "3.11.3 Basic ECC"
-#endif
-#else
-#define NSS_VERSION  "3.11.3"
-#endif
+#define NSS_VERSION  "3.12.0.3" _NSS_ECC_STRING _NSS_CUSTOMIZED
 #define NSS_VMAJOR   3
-#define NSS_VMINOR   11
-#define NSS_VPATCH   3
+#define NSS_VMINOR   12
+#define NSS_VPATCH   0
 #define NSS_BETA     PR_FALSE
 
 /*
@@ -186,6 +196,21 @@ extern SECStatus NSS_Initialize(const char *configdir,
 	const char *certPrefix, const char *keyPrefix, 
 	const char *secmodName, PRUint32 flags);
 
+/*
+ * same as NSS_Init, but checks to see if we need to merge an
+ * old database in.
+ *   updatedir is the directory where the old database lives.
+ *   updCertPrefix is the certPrefix for the old database.
+ *   updKeyPrefix is the keyPrefix for the old database.
+ *   updateID is a unique identifier chosen by the application for
+ *      the specific database.
+ *   updatName is the name the user will be prompted for when
+ *      asking to authenticate to the old database  */
+extern SECStatus NSS_InitWithMerge(const char *configdir, 
+	const char *certPrefix, const char *keyPrefix, const char *secmodName,
+	const char *updatedir,  const char *updCertPrefix, 
+	const char *updKeyPrefix, const char *updateID, 
+	const char *updateName, PRUint32 flags);
 /*
  * initialize NSS without a creating cert db's, key db's, or secmod db's.
  */

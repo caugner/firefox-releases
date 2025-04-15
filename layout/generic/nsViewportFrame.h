@@ -34,24 +34,20 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/*
+ * rendering object that is the root of the frame tree, which contains
+ * the document's scrollbars and contains fixed-positioned elements
+ */
+
 #ifndef nsViewportFrame_h___
 #define nsViewportFrame_h___
 
 #include "nsContainerFrame.h"
-#include "nsLayoutAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsPresContext.h"
-#include "nsReflowPath.h"
 #include "nsIPresShell.h"
 #include "nsAbsoluteContainingBlock.h"
-
-class nsFixedContainingBlock : public nsAbsoluteContainingBlock {
-public:
-  nsFixedContainingBlock() { }          // useful for debugging
-
-  virtual ~nsFixedContainingBlock() { } // useful for debugging
-
-  virtual nsIAtom* GetChildListName() const { return nsLayoutAtoms::fixedList; }
-};
 
 /**
   * ViewportFrame is the parent of a single child - the doc root frame or a scroll frame 
@@ -61,19 +57,22 @@ public:
   */
 class ViewportFrame : public nsContainerFrame {
 public:
-  ViewportFrame() { }          // useful for debugging
+  typedef nsContainerFrame Super;
 
+  ViewportFrame(nsStyleContext* aContext)
+    : nsContainerFrame(aContext)
+    , mFixedContainer(nsGkAtoms::fixedList)
+  {}
   virtual ~ViewportFrame() { } // useful for debugging
 
-  NS_IMETHOD Destroy(nsPresContext* aPresContext);
+  virtual void Destroy();
 
-  NS_IMETHOD SetInitialChildList(nsPresContext* aPresContext,
-                                 nsIAtom*        aListName,
+  NS_IMETHOD Init(nsIContent*      aContent,
+                  nsIFrame*        aParent,
+                  nsIFrame*        asPrevInFlow);
+
+  NS_IMETHOD SetInitialChildList(nsIAtom*        aListName,
                                  nsIFrame*       aChildList);
-
-  NS_IMETHOD GetFrameForPoint(const nsPoint&    aPoint, 
-                              nsFramePaintLayer aWhichLayer,
-                              nsIFrame**        aFrame);
 
   NS_IMETHOD AppendFrames(nsIAtom*        aListName,
                           nsIFrame*       aFrameList);
@@ -89,21 +88,29 @@ public:
 
   virtual nsIFrame* GetFirstChild(nsIAtom* aListName) const;
 
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
+
+  virtual nscoord GetMinWidth(nsIRenderingContext *aRenderingContext);
+  virtual nscoord GetPrefWidth(nsIRenderingContext *aRenderingContext);
   NS_IMETHOD Reflow(nsPresContext*          aPresContext,
                     nsHTMLReflowMetrics&     aDesiredSize,
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
 
-  virtual PRBool CanPaintBackground() { return PR_FALSE; }
-  
   /**
    * Get the "type" of the frame
    *
-   * @see nsLayoutAtoms::viewportFrame
+   * @see nsGkAtoms::viewportFrame
    */
   virtual nsIAtom* GetType() const;
   
   virtual PRBool IsContainingBlock() const;
+
+  virtual void InvalidateInternal(const nsRect& aDamageRect,
+                                  nscoord aX, nscoord aY, nsIFrame* aForChild,
+                                  PRBool aImmediate);
 
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
@@ -113,7 +120,9 @@ protected:
   nsPoint AdjustReflowStateForScrollbars(nsHTMLReflowState* aReflowState) const;
 
 protected:
-  nsFixedContainingBlock mFixedContainer;
+  // position: fixed content is really content which is absolutely positioned with
+  // respect to the viewport.
+  nsAbsoluteContainingBlock mFixedContainer;
 };
 
 

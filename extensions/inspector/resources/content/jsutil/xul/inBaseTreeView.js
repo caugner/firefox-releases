@@ -42,6 +42,7 @@
 * Usage example: MyView.prototype = new inBaseTreeView();
 ****************************************************************/
 
+//XXX Don't use anonymous functions
 function inBaseTreeView() { }
 
 inBaseTreeView.prototype = 
@@ -71,6 +72,7 @@ inBaseTreeView.prototype =
   cycleHeader: function(aCol) {},
   cycleCell: function(aRow, aCol) {},
   isEditable: function(aRow, aCol) {},
+  isSelectable: function(aRow, aCol) {},
   setCellValue: function(aRow, aCol, aValue) {},
   setCellText: function(aRow, aCol, aValue) {},
   performAction: function(aAction) {},
@@ -80,7 +82,7 @@ inBaseTreeView.prototype =
   
   // extra utility stuff
 
-  createAtom: function(aVal)
+  createAtom: function createAtom(aVal)
   {
     try {
       var i = Components.interfaces.nsIAtomService;
@@ -89,6 +91,39 @@ inBaseTreeView.prototype =
     } catch(ex) {
       return null;
     }
+  },
+
+ /**
+  * Returns an array of selected indices in the tree.
+  * @return an array of indices
+  */
+  getSelectedIndices: function getSelectedIndices()
+  {
+    var indices = [];
+    var rangeCount = this.selection.getRangeCount();
+    for (var i = 0; i < rangeCount; i++) {
+      var start = {};
+      var end = {};
+      this.selection.getRangeAt(i,start,end);
+      for (var c = start.value; c <= end.value; c++) {
+        indices.push(c);
+      }
+    }
+    return indices;
+  },
+
+ /**
+  * Returns an array of row objects selected in the tree.
+  * @return an array of row objects
+  */
+  getSelectedRowObjects: function getSelectedRowObjects()
+  {
+    var declarations = [];
+    var indices = this.getSelectedIndices();
+    for (var i = 0; i < indices.length; i++) {
+      declarations.push(this.getRowObjectFromIndex(indices[i]));
+    }
+    return declarations;
   }
   
 };

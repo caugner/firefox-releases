@@ -60,13 +60,14 @@
 #include "nsIDOMElement.h"
 #include "nsIDOMDocument.h"
 #include "nsIHTMLDocument.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 
 // image copy stuff
 #include "nsIImageLoadingContent.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIImage.h"
 #include "nsContentUtils.h"
+#include "nsContentCID.h"
 
 static NS_DEFINE_CID(kCClipboardCID,           NS_CLIPBOARD_CID);
 static NS_DEFINE_CID(kCTransferableCID,        NS_TRANSFERABLE_CID);
@@ -107,7 +108,10 @@ nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 
   mimeType.AssignLiteral(kUnicodeMime);
   PRUint32 flags = nsIDocumentEncoder::OutputPreformatted;
 
-  rv = docEncoder->Init(aDoc, mimeType, flags);
+  nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(aDoc);
+  NS_ASSERTION(domDoc, "Need a document");
+
+  rv = docEncoder->Init(domDoc, mimeType, flags);
   if (NS_FAILED(rv)) 
     return rv;
   rv = docEncoder->SetSelection(aSel);
@@ -144,14 +148,14 @@ nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 
 
     flags = 0;
 
-    rv = docEncoder->Init(aDoc, mimeType, flags);
+    rv = docEncoder->Init(domDoc, mimeType, flags);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = docEncoder->SetSelection(aSel);
     NS_ENSURE_SUCCESS(rv, rv);
 
     // encode the selection as html with contextual info
-    rv = docEncoder->EncodeToStringWithContext(buffer, parents, info);
+    rv = docEncoder->EncodeToStringWithContext(parents, info, buffer);
     NS_ENSURE_SUCCESS(rv, rv);
   }
   
@@ -209,12 +213,12 @@ nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 
             nsAutoString shortcut;
             AppendUTF8toUTF16(spec, shortcut);
 
-            // Add the URL DataFlavor to the transferable. Don't use kURLMime,
-            // as it will cause an unnecessary UniformResourceLocator to be
-            // added which confuses some apps eg. Outlook 2000 - (See Bug
-            // 315370). Don't use kURLDataMime, as it will cause a bogus
-            // 'url ' flavor to show up on the Mac clipboard, confusing other
-            // apps, like Terminal (see Bug 336012)
+            // Add the URL DataFlavor to the transferable. Don't use kURLMime, as it will
+            // cause an unnecessary UniformResourceLocator to be added which confuses
+            // some apps eg. Outlook 2000 - (See Bug 315370). Don't use
+            // kURLDataMime, as it will cause a bogus 'url ' flavor to
+            // show up on the Mac clipboard, confusing other apps, like
+            // Terminal (see bug 336012).
             rv = AppendString(trans, shortcut, kURLPrivateMime);
             NS_ENSURE_SUCCESS(rv, rv);
           }
@@ -319,20 +323,20 @@ nsresult nsCopySupport::IsPlainTextContext(nsISelection *aSel, nsIDocument *aDoc
   {
     // checking for selection inside a plaintext form widget
 
-    if (!selContent->IsContentOfType(nsIContent::eHTML)) {
+    if (!selContent->IsNodeOfType(nsINode::eHTML)) {
       continue;
     }
 
     nsIAtom *atom = selContent->Tag();
 
-    if (atom == nsHTMLAtoms::input ||
-        atom == nsHTMLAtoms::textarea)
+    if (atom == nsGkAtoms::input ||
+        atom == nsGkAtoms::textarea)
     {
       *aIsPlainTextContext = PR_TRUE;
       break;
     }
 
-    if (atom == nsHTMLAtoms::body)
+    if (atom == nsGkAtoms::body)
     {
       // check for moz prewrap style on body.  If it's there we are 
       // in a plaintext editor.  This is pretty cheezy but I haven't 
@@ -340,7 +344,7 @@ nsresult nsCopySupport::IsPlainTextContext(nsISelection *aSel, nsIDocument *aDoc
       nsCOMPtr<nsIDOMElement> bodyElem = do_QueryInterface(selContent);
       nsAutoString wsVal;
       rv = bodyElem->GetAttribute(NS_LITERAL_STRING("style"), wsVal);
-      if (NS_SUCCEEDED(rv) && (kNotFound != wsVal.Find(NS_LITERAL_STRING("-moz-pre-wrap"))))
+      if (NS_SUCCEEDED(rv) && (kNotFound != wsVal.Find(NS_LITERAL_STRING("pre-wrap"))))
       {
         *aIsPlainTextContext = PR_TRUE;
         break;
@@ -377,8 +381,12 @@ nsCopySupport::GetContents(const nsACString& aMimeType, PRUint32 aFlags, nsISele
   if (aMimeType.Equals("text/plain"))
     flags |= nsIDocumentEncoder::OutputPreformatted;
 
-  NS_ConvertASCIItoUCS2 unicodeMimeType(aMimeType);
-  rv = docEncoder->Init(aDoc, unicodeMimeType, flags);
+  NS_ConvertASCIItoUTF16 unicodeMimeType(aMimeType);
+
+  nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(aDoc);
+  NS_ASSERTION(domDoc, "Need a document");
+
+  rv = docEncoder->Init(domDoc, unicodeMimeType, flags);
   if (NS_FAILED(rv)) return rv;
   
   if (aSel)
@@ -504,12 +512,13 @@ static nsresult AppendDOMNode(nsITransferable *aTransferable,
   // Note that XHTML is not counted as HTML here, because we can't copy it
   // properly (all the copy code for non-plaintext assumes using HTML
   // serializers and parsers is OK, and those mess up XHTML).
-  nsCOMPtr<nsIHTMLDocument> htmlDoc = do_QueryInterface(document, &rv);
+  nsCOMPtr<nsIHTMLDocument> htmlDoc = do_QueryInterface(domDocument, &rv);
   NS_ENSURE_SUCCESS(rv, NS_OK);
+
   NS_ENSURE_TRUE(!(document->IsCaseSensitive()), NS_OK);
 
   // init encoder with document and node
-  rv = docEncoder->Init(document, NS_LITERAL_STRING(kHTMLMime),
+  rv = docEncoder->Init(domDocument, NS_LITERAL_STRING(kHTMLMime),
                         nsIDocumentEncoder::OutputAbsoluteLinks |
                         nsIDocumentEncoder::OutputEncodeW3CEntities);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -519,7 +528,7 @@ static nsresult AppendDOMNode(nsITransferable *aTransferable,
 
   // serialize to string
   nsAutoString html, context, info;
-  rv = docEncoder->EncodeToStringWithContext(html, context, info);
+  rv = docEncoder->EncodeToStringWithContext(context, info, html);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // copy them to the transferable
@@ -535,4 +544,28 @@ static nsresult AppendDOMNode(nsITransferable *aTransferable,
 
   // add a special flavor, even if we don't have html context data
   return AppendString(aTransferable, context, kHTMLContext);
+}
+
+// Find the target that onbefore[copy,cut,paste] and on[copy,cut,paste]
+// events will fire on -- the start node of the copy selection.
+nsresult nsCopySupport::GetClipboardEventTarget(nsISelection *aSel,
+                                                nsIDOMNode **aEventTarget)
+{
+  NS_ENSURE_ARG(aSel);
+  NS_ENSURE_ARG_POINTER(aEventTarget);
+  *aEventTarget = nsnull;
+
+  nsCOMPtr<nsIDOMRange> range;
+  nsresult rv = aSel->GetRangeAt(0, getter_AddRefs(range));
+  if (rv == NS_ERROR_INVALID_ARG) // empty selection
+    return NS_ERROR_FAILURE;
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!range)
+    return NS_ERROR_FAILURE;
+
+  rv = range->GetStartContainer(aEventTarget);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return (*aEventTarget) ? NS_OK : NS_ERROR_FAILURE;
 }

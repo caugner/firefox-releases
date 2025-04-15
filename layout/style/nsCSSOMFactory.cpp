@@ -37,6 +37,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* an XPCOM service for cross-module creation of DOM .style objects */
+
 #include "nsCSSOMFactory.h"
 #include "nsDOMCSSAttrDeclaration.h"
 
@@ -51,7 +53,7 @@ nsCSSOMFactory::~nsCSSOMFactory()
 NS_IMPL_ISUPPORTS1(nsCSSOMFactory, nsICSSOMFactory)
 
 NS_IMETHODIMP
-nsCSSOMFactory::CreateDOMCSSAttributeDeclaration(nsIStyledContent *aContent,
+nsCSSOMFactory::CreateDOMCSSAttributeDeclaration(nsIContent *aContent,
                                                  nsDOMCSSDeclaration **aResult)
 {
     nsDOMCSSDeclaration *result = new nsDOMCSSAttributeDeclaration(aContent);

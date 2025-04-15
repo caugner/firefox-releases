@@ -40,35 +40,29 @@
 #ifndef __NS_ISVGVALUEOBSERVER_H__
 #define __NS_ISVGVALUEOBSERVER_H__
 
-#include "nsISupports.h"
-
-class nsISVGValue;
+#include "nsWeakReference.h"
 #include "nsISVGValue.h"
 
 ////////////////////////////////////////////////////////////////////////
 // nsISVGValueObserver
 
-/*
-  Implementors of this interface also need to implement
-  nsISupportsWeakReference so that svg-values can store safe owning
-  refs.
-*/
-
-// {62fa63b3-d94b-47f3-8dc1-56353a0ee7ff}
+// {485029a4-2449-45c1-9814-08f38132ca4c}
 #define NS_ISVGVALUEOBSERVER_IID \
-{ 0x62fa63b3, 0xd94b, 0x47f3, { 0x8d, 0xc1, 0x56, 0x35, 0x3a, 0xe, 0xe7, 0xff } }
+  { 0x485029a4, 0x2449, 0x45c1, \
+    { 0x98, 0x14, 0x08, 0xf3, 0x81, 0x32, 0xca, 0x4c } }
 
-
-class nsISVGValueObserver : public nsISupports
+class nsISVGValueObserver : public nsSupportsWeakReference
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ISVGVALUEOBSERVER_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ISVGVALUEOBSERVER_IID)
   
   NS_IMETHOD WillModifySVGObservable(nsISVGValue* observable,
                                      nsISVGValue::modificationType)=0;
   NS_IMETHOD DidModifySVGObservable (nsISVGValue* observable,
                                      nsISVGValue::modificationType)=0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsISVGValueObserver, NS_ISVGVALUEOBSERVER_IID)
 
 #endif // __NS_ISVGVALUEOBSERVER_H__
 

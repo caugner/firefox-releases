@@ -37,17 +37,17 @@
 
 #include "nsTXTToHTMLConv.h"
 #include "nsNetUtil.h"
-#include "nsIStringStream.h"
+#include "nsStringStream.h"
 #include "nsAutoPtr.h"
 
 #define TOKEN_DELIMITERS NS_LITERAL_STRING("\t\r\n ").get()
 
 // nsISupports methods
-NS_IMPL_THREADSAFE_ISUPPORTS4(nsTXTToHTMLConv,
-                              nsIStreamConverter,
-                              nsITXTToHTMLConv,
-                              nsIRequestObserver,
-                              nsIStreamListener)
+NS_IMPL_ISUPPORTS4(nsTXTToHTMLConv,
+                   nsIStreamConverter,
+                   nsITXTToHTMLConv,
+                   nsIRequestObserver,
+                   nsIStreamListener)
 
 
 // nsIStreamConverter methods

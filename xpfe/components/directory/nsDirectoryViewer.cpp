@@ -57,20 +57,21 @@
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
 #include "nsEscape.h"
-#include "nsIDocumentLoader.h"
 #include "nsIEnumerator.h"
+#ifdef MOZ_RDF
 #include "nsIRDFService.h"
+#include "nsRDFCID.h"
+#include "rdf.h"
+#endif
 #include "nsIScriptContext.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIServiceManager.h"
 #include "nsISupportsArray.h"
 #include "nsIXPConnect.h"
 #include "nsEnumeratorUtils.h"
-#include "nsRDFCID.h"
 #include "nsString.h"
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
-#include "rdf.h"
 #include "nsITextToSubURI.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -90,6 +91,7 @@
 #include "nsIStreamConverterService.h"
 #include "nsICategoryManager.h"
 #include "nsXPCOMCID.h"
+#include "nsIDocument.h"
 
 static const int FORMAT_HTML = 2;
 static const int FORMAT_XUL = 3;
@@ -99,7 +101,9 @@ static const int FORMAT_XUL = 3;
 // Common CIDs
 //
 
+#ifdef MOZ_RDF
 static NS_DEFINE_CID(kRDFServiceCID,             NS_RDFSERVICE_CID);
+#endif
 
 // Various protocols we have to special case
 static const char               kFTPProtocol[] = "ftp://";
@@ -110,14 +114,21 @@ static const char               kGopherProtocol[] = "gopher://";
 // nsHTTPIndex
 //
 
-NS_IMPL_THREADSAFE_ISUPPORTS7(nsHTTPIndex,
-                              nsIHTTPIndex,
-                              nsIRDFDataSource,
-                              nsIStreamListener,
-                              nsIDirIndexListener,
-                              nsIRequestObserver,
-                              nsIInterfaceRequestor,
-                              nsIFTPEventSink)
+#ifdef MOZ_RDF
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsHTTPIndex)
+    NS_INTERFACE_MAP_ENTRY(nsIHTTPIndex)
+    NS_INTERFACE_MAP_ENTRY(nsIRDFDataSource)
+    NS_INTERFACE_MAP_ENTRY(nsIStreamListener)
+    NS_INTERFACE_MAP_ENTRY(nsIDirIndexListener)
+    NS_INTERFACE_MAP_ENTRY(nsIRequestObserver)
+    NS_INTERFACE_MAP_ENTRY(nsIInterfaceRequestor)
+    NS_INTERFACE_MAP_ENTRY(nsIFTPEventSink)
+    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIHTTPIndex)
+NS_INTERFACE_MAP_END
+
+NS_IMPL_CYCLE_COLLECTION_1(nsHTTPIndex, mInner)
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsHTTPIndex, nsIHttpIndex)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsHTTPIndex, nsIHttpIndex)
 
 NS_IMETHODIMP
 nsHTTPIndex::GetInterface(const nsIID &anIID, void **aResult ) 
@@ -128,7 +139,7 @@ nsHTTPIndex::GetInterface(const nsIID &anIID, void **aResult )
 
         if (!mRequestor)
           return NS_ERROR_NO_INTERFACE;
-        *aResult = NS_STATIC_CAST(nsIFTPEventSink*, this);
+        *aResult = static_cast<nsIFTPEventSink*>(this);
         NS_ADDREF(this);
         return NS_OK;
     }
@@ -189,8 +200,8 @@ nsHTTPIndex::OnFTPControlLog(PRBool server, const char *msg)
     nsIScriptContext *context = scriptGlobal->GetContext();
     NS_ENSURE_TRUE(context, NS_OK);
 
-    JSContext* jscontext = NS_REINTERPRET_CAST(JSContext*,
-                                               context->GetNativeContext());
+    JSContext* jscontext = reinterpret_cast<JSContext*>
+                                           (context->GetNativeContext());
     NS_ENSURE_TRUE(jscontext, NS_OK);
 
     JSObject* global = JS_GetGlobalObject(jscontext);
@@ -266,8 +277,8 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
     nsIScriptContext *context = scriptGlobal->GetContext();
     NS_ENSURE_TRUE(context, NS_ERROR_FAILURE);
 
-    JSContext* jscontext = NS_REINTERPRET_CAST(JSContext*,
-                                               context->GetNativeContext());
+    JSContext* jscontext = reinterpret_cast<JSContext*>
+                                           (context->GetNativeContext());
     JSObject* global = JS_GetGlobalObject(jscontext);
 
     // Using XPConnect, wrap the HTTP index object...
@@ -278,7 +289,7 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
     nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
     rv = xpc->WrapNative(jscontext,
                          global,
-                         NS_STATIC_CAST(nsIHTTPIndex*, this),
+                         static_cast<nsIHTTPIndex*>(this),
                          NS_GET_IID(nsIHTTPIndex),
                          getter_AddRefs(wrapper));
 
@@ -318,7 +329,7 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
     nsCOMPtr<nsIRDFResource> entry;
     rv = mDirRDF->GetResource(entryuriC, getter_AddRefs(entry));
     
-    NS_ConvertUTF8toUCS2 uriUnicode(entryuriC);
+    NS_ConvertUTF8toUTF16 uriUnicode(entryuriC);
 
     nsCOMPtr<nsIRDFLiteral> URLVal;
     rv = mDirRDF->GetLiteral(uriUnicode.get(), getter_AddRefs(URLVal));
@@ -365,7 +376,7 @@ nsHTTPIndex::OnStopRequest(nsIRequest *request,
   mParser->GetComment(getter_Copies(commentStr));
 
   nsCOMPtr<nsIRDFLiteral> comment;
-  rv = mDirRDF->GetLiteral(NS_ConvertASCIItoUCS2(commentStr).get(), getter_AddRefs(comment));
+  rv = mDirRDF->GetLiteral(NS_ConvertASCIItoUTF16(commentStr).get(), getter_AddRefs(comment));
   if (NS_FAILED(rv)) return rv;
 
   rv = Assert(mDirectory, kNC_Comment, comment, PR_TRUE);
@@ -435,7 +446,7 @@ nsHTTPIndex::OnIndexAvailable(nsIRequest* aRequest, nsISupports *aContext,
 
   PRBool isDirType = (type == nsIDirIndex::TYPE_DIRECTORY);
 
-  if (isDirType) {
+  if (isDirType && entryuriC.Last() != '/') {
       entryuriC.Append('/');
   }
 
@@ -471,6 +482,8 @@ nsHTTPIndex::OnIndexAvailable(nsIRequest* aRequest, nsISupports *aContext,
       // description
       rv = aIndex->GetDescription(getter_Copies(xpstr));
       if (NS_FAILED(rv)) return rv;
+      if (xpstr.Last() == '/')
+        xpstr.Truncate(xpstr.Length() - 1);
 
       rv = mDirRDF->GetLiteral(xpstr.get(), getter_AddRefs(lit));
       if (NS_FAILED(rv)) return rv;
@@ -994,7 +1007,7 @@ nsHTTPIndex::AddElement(nsIRDFResource *parent, nsIRDFResource *prop, nsIRDFNode
 void
 nsHTTPIndex::FireTimer(nsITimer* aTimer, void* aClosure)
 {
-  nsHTTPIndex *httpIndex = NS_STATIC_CAST(nsHTTPIndex *, aClosure);
+  nsHTTPIndex *httpIndex = static_cast<nsHTTPIndex *>(aClosure);
   if (!httpIndex)	return;
   
   // don't return out of this loop as mTimer may need to be cancelled afterwards
@@ -1275,13 +1288,7 @@ nsHTTPIndex::ArcLabelsOut(nsIRDFResource *aSource, nsISimpleEnumerator **_retval
 		}
 	}
 
-	nsISimpleEnumerator* result = new nsArrayEnumerator(array);
-	if (! result)
-	return NS_ERROR_OUT_OF_MEMORY;
-
-	NS_ADDREF(result);
-	*_retval = result;
-	return(NS_OK);
+        return NS_NewArrayEnumerator(_retval, array);
 }
 
 NS_IMETHODIMP
@@ -1342,6 +1349,7 @@ nsHTTPIndex::GetAllCmds(nsIRDFResource *aSource, nsISimpleEnumerator **_retval)
 	return(rv);
 }
 
+#endif /* MOZ_RDF */
 
 
 //----------------------------------------------------------------------
@@ -1379,14 +1387,15 @@ nsDirectoryViewerFactory::CreateInstance(const char *aCommand,
   nsCOMPtr<nsIPrefBranch> prefSrv = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
   if (NS_FAILED(rv)) return rv;
 
-  PRBool useXUL = PR_FALSE;
+  PRBool useXUL = PR_FALSE;  
+  PRBool viewSource = (PL_strstr(aContentType,"view-source") != 0);
+  
+#ifdef MOZ_RDF
   PRInt32 dirPref;
   rv = prefSrv->GetIntPref("network.dir.format", &dirPref);
   if (NS_SUCCEEDED(rv) && dirPref == FORMAT_XUL) {
     useXUL = PR_TRUE;
   }
-
-  PRBool viewSource = (PL_strstr(aContentType,"view-source") != 0);
 
   if ((NS_FAILED(rv) || useXUL) && !viewSource) {
     // ... and setup the original channel's content type
@@ -1446,6 +1455,7 @@ nsDirectoryViewerFactory::CreateInstance(const char *aCommand,
     
     return NS_OK;
   }
+#endif
 
   // setup the original channel's content type
   (void)aChannel->SetContentType(NS_LITERAL_CSTRING("text/html"));
@@ -1505,6 +1515,7 @@ nsDirectoryViewerFactory::CreateInstanceForDocument(nsISupports* aContainer,
 
 NS_IMETHODIMP
 nsDirectoryViewerFactory::CreateBlankDocument(nsILoadGroup *aLoadGroup,
+                                              nsIPrincipal *aPrincipal,
                                               nsIDocument **_retval) {
 
   NS_NOTYETIMPLEMENTED("didn't expect to get here");

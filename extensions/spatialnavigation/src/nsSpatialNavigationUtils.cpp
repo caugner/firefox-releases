@@ -199,14 +199,18 @@ nscoord* lo_parse_coord_list(char *str, PRInt32* value_cnt)
   return value_list;
 }
 
-nsresult createFrameTraversal(PRUint32 type, nsPresContext* presContext, 
+nsresult createFrameTraversal(nsPresContext* aPresContext,
+                              PRInt32 aType,
+                              PRBool aVisual,
+                              PRBool aLockInScrollView,
+                              PRBool aFollowOOFs,
                               nsIBidirectionalEnumerator** outTraversal)
 {
   nsresult result;
-  if (!presContext)
+  if (!aPresContext)
     return NS_ERROR_FAILURE;    
   
-  nsIPresShell* presShell = presContext->PresShell();
+  nsIPresShell* presShell = aPresContext->PresShell();
   if (!presShell)
     return NS_ERROR_FAILURE;
   
@@ -230,9 +234,8 @@ nsresult createFrameTraversal(PRUint32 type, nsPresContext* presContext,
     return result;
   
   result = trav->NewFrameTraversal(getter_AddRefs(frameTraversal),
-                                   type, 
-                                   presContext, 
-                                   frame);
+                                   aPresContext, frame,
+                                   aType, aVisual, aLockInScrollView, aFollowOOFs);
   if (NS_FAILED(result))
     return result;
   
@@ -248,15 +251,14 @@ nsresult getEventTargetFromWindow(nsIDOMWindow* aWindow, nsIDOM3EventTarget** aE
   if (!privateWindow)
     return NS_ERROR_UNEXPECTED; // assert
   
-  nsIChromeEventHandler *chromeEventHandler = privateWindow->GetChromeEventHandler();
-  
-  nsCOMPtr<nsIDOMEventReceiver> receiver(do_QueryInterface(chromeEventHandler));
-  if (!receiver)
+  nsPIDOMEventTarget *chromeEventHandler = privateWindow->GetChromeEventHandler();
+
+  if (!chromeEventHandler)
     return NS_ERROR_UNEXPECTED; // assert
   
   nsCOMPtr<nsIDOMEventGroup> systemGroup;
-  receiver->GetSystemEventGroup(getter_AddRefs(systemGroup));
-  nsCOMPtr<nsIDOM3EventTarget> target(do_QueryInterface(receiver));
+  chromeEventHandler->GetSystemEventGroup(getter_AddRefs(systemGroup));
+  nsCOMPtr<nsIDOM3EventTarget> target(do_QueryInterface(chromeEventHandler));
   
   if (!target || !systemGroup)
     return NS_ERROR_FAILURE;
@@ -303,9 +305,8 @@ nsresult getFrameForContent(nsIContent* aContent, nsIFrame** aFrame)
   if (!doc)
     return NS_ERROR_FAILURE;
   
-  nsIFrame* frame;
-  nsIPresShell *presShell = doc->GetShellAt(0);
-  presShell->GetPrimaryFrameFor(aContent, &frame);
+  nsIPresShell *presShell = doc->GetPrimaryShell();
+  nsIFrame* frame = presShell->GetPrimaryFrameFor(aContent);
   
   if (!frame)
     return NS_ERROR_FAILURE;
@@ -320,10 +321,9 @@ isContentOfType(nsIContent* content, const char* type)
   if (!content)
 	return PR_FALSE;
 
-  nsINodeInfo *nodeInfo = content->GetNodeInfo();
-  if (nodeInfo)
+  if (content->IsNodeOfType(nsINode::eELEMENT))
   {
-    nsIAtom* atom =  nodeInfo->NameAtom();
+    nsIAtom* atom =  content->NodeInfo()->NameAtom();
     if (atom)
       return atom->EqualsUTF8(nsDependentCString(type));
   }
@@ -333,7 +333,7 @@ isContentOfType(nsIContent* content, const char* type)
 PRBool
 isArea(nsIContent* content)
 {
-  if (!content || !content->IsContentOfType(nsIContent::eHTML))
+  if (!content || !content->IsNodeOfType(nsINode::eHTML))
       return PR_FALSE;
 
   return isContentOfType(content, "area");
@@ -344,7 +344,7 @@ isMap(nsIFrame* frame)
 {
   nsIContent* content = frame->GetContent();
 
-  if (!content || !content->IsContentOfType(nsIContent::eHTML))
+  if (!content || !content->IsNodeOfType(nsINode::eHTML))
       return PR_FALSE;
 
   return isContentOfType(content, "map");
@@ -358,7 +358,7 @@ isTargetable(PRBool focusDocuments, nsIFrame* frame)
   if (!currentContent)
     return PR_FALSE;
 
-  if (!currentContent->IsContentOfType(nsIContent::eHTML))
+  if (!currentContent->IsNodeOfType(nsINode::eHTML))
       return PR_FALSE;
 
   if (isContentOfType(currentContent, "map"))
@@ -810,11 +810,10 @@ PRBool IsPartiallyVisible(nsIPresShell* shell, nsIFrame* frame)
      relFrameRect.y = frameOffset.y;
    }
  
-   float p2t;
-   p2t = presContext->PixelsToTwips();
+   PRUint16 minPixels = PRUint16(nsPresContext::CSSPixelsToAppUnits(kMinPixels));
    nsRectVisibility rectVisibility;
    viewManager->GetRectVisibility(containingView, relFrameRect, 
-                                  NS_STATIC_CAST(PRUint16, (kMinPixels * p2t)), 
+                                  minPixels, 
                                   &rectVisibility);
  
    if (rectVisibility == nsRectVisibility_kVisible ||

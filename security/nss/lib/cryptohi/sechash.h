@@ -35,7 +35,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: sechash.h,v 1.5 2004/04/27 23:04:35 gerv%gerv.net Exp $ */
+/* $Id: sechash.h,v 1.8 2008/02/22 21:14:20 nelson%bolyard.com Exp $ */
 
 #include "seccomon.h"
 #include "hasht.h"
@@ -56,7 +56,7 @@ extern unsigned int  HASH_ResultLenByOidTag(SECOidTag hashOid);
 extern SECStatus     HASH_HashBuf(HASH_HashType type,
 				 unsigned char *dest,
 				 unsigned char *src,
-				 uint32 src_len);
+				 PRUint32 src_len);
 
 extern HASHContext * HASH_Create(HASH_HashType type);
 
@@ -74,12 +74,16 @@ extern void          HASH_End(HASHContext *context,
 			     unsigned char *result,
 			     unsigned int *result_len,
 			     unsigned int max_result_len);
+			     
+extern HASH_HashType HASH_GetType(HASHContext *context);
 
 extern const SECHashObject * HASH_GetHashObject(HASH_HashType type);
 
 extern const SECHashObject * HASH_GetHashObjectByOidTag(SECOidTag hashOid);
 
 extern HASH_HashType HASH_GetHashTypeByOidTag(SECOidTag hashOid);
+extern SECOidTag HASH_GetHashOidTagByHMACOidTag(SECOidTag hmacOid);
+extern SECOidTag HASH_GetHMACOidTagByHashOidTag(SECOidTag hashOid);
 
 SEC_END_PROTOS
 

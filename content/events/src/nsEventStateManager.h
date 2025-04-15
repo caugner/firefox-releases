@@ -49,10 +49,12 @@
 #include "nsCOMPtr.h"
 #include "nsIDocument.h"
 #include "nsCOMArray.h"
+#include "nsIFrame.h"
+#include "nsCycleCollectionParticipant.h"
+#include "nsIMarkupDocumentViewer.h"
 
 class nsIScrollableView;
 class nsIPresShell;
-class nsIFrameSelection;
 class nsIDocShell;
 class nsIDocShellTreeNode;
 class nsIDocShellTreeItem;
@@ -60,7 +62,7 @@ class nsIFocusController;
 class imgIContainer;
 
 // mac uses click-hold context menus, a holdover from 4.x
-#if defined(XP_MAC) || defined(XP_MACOSX)
+#ifdef XP_MACOSX
 #define CLICK_HOLD_CONTEXT_MENUS 1
 #endif
 
@@ -77,7 +79,7 @@ public:
   nsEventStateManager();
   virtual ~nsEventStateManager();
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_NSIOBSERVER
 
   NS_IMETHOD Init();
@@ -107,15 +109,15 @@ public:
                              nsEventStatus* aStatus,
                              nsIView* aView);
 
+  NS_IMETHOD NotifyDestroyPresContext(nsPresContext* aPresContext);
   NS_IMETHOD SetPresContext(nsPresContext* aPresContext);
   NS_IMETHOD ClearFrameRefs(nsIFrame* aFrame);
 
   NS_IMETHOD GetEventTarget(nsIFrame **aFrame);
   NS_IMETHOD GetEventTargetContent(nsEvent* aEvent, nsIContent** aContent);
-  NS_IMETHOD GetEventRelatedContent(nsIContent** aContent);
 
   NS_IMETHOD GetContentState(nsIContent *aContent, PRInt32& aState);
-  NS_IMETHOD SetContentState(nsIContent *aContent, PRInt32 aState);
+  virtual PRBool SetContentState(nsIContent *aContent, PRInt32 aState);
   NS_IMETHOD GetFocusedContent(nsIContent **aContent);
   NS_IMETHOD SetFocusedContent(nsIContent* aContent);
   NS_IMETHOD GetLastFocusedContent(nsIContent **aContent);
@@ -123,19 +125,14 @@ public:
   NS_IMETHOD ContentRemoved(nsIContent* aContent);
   NS_IMETHOD EventStatusOK(nsGUIEvent* aEvent, PRBool *aOK);
 
-  // This is an experiement and may be temporary
-  NS_IMETHOD ConsumeFocusEvents(PRBool aDoConsume) { mConsumeFocusEvents = aDoConsume; return NS_OK; }
-
   // Access Key Registration
   NS_IMETHOD RegisterAccessKey(nsIContent* aContent, PRUint32 aKey);
   NS_IMETHOD UnregisterAccessKey(nsIContent* aContent, PRUint32 aKey);
+  NS_IMETHOD GetRegisteredAccessKey(nsIContent* aContent, PRUint32* aKey);
 
   NS_IMETHOD SetCursor(PRInt32 aCursor, imgIContainer* aContainer,
                        PRBool aHaveHotspot, float aHotspotX, float aHotspotY,
                        nsIWidget* aWidget, PRBool aLockCursor);
-
-  //Method for centralized distribution of new DOM events
-  NS_IMETHOD DispatchNewEvent(nsISupports* aTarget, nsIDOMEvent* aEvent, PRBool *aDefaultActionEnabled);
 
   NS_IMETHOD ShiftFocus(PRBool aForward, nsIContent* aStart=nsnull);
 
@@ -160,6 +157,11 @@ public:
   {
     return sUserInputEventDepth > 0;
   }
+
+  NS_IMETHOD_(PRBool) IsHandlingUserInputExternal() { return IsHandlingUserInput(); }
+  
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsEventStateManager,
+                                           nsIEventStateManager)
 
 protected:
   /**
@@ -200,6 +202,20 @@ protected:
    */
   void NotifyMouseOut(nsGUIEvent* aEvent, nsIContent* aMovingInto);
   void GenerateDragDropEnterExit(nsPresContext* aPresContext, nsGUIEvent* aEvent);
+  /**
+   * Fire the dragenter and dragexit/dragleave events when the mouse moves to a
+   * new target.
+   *
+   * @param aRelatedTarget relatedTarget to set for the event
+   * @param aTargetContent target to set for the event
+   * @param aTargetFrame target frame for the event
+   */
+  void FireDragEnterOrExit(nsPresContext* aPresContext,
+                           nsGUIEvent* aEvent,
+                           PRUint32 aMsg,
+                           nsIContent* aRelatedTarget,
+                           nsIContent* aTargetContent,
+                           nsWeakFrame& aTargetFrame);
   nsresult SetClickCount(nsPresContext* aPresContext, nsMouseEvent *aEvent, nsEventStatus* aStatus);
   nsresult CheckForAndDispatchClick(nsPresContext* aPresContext, nsMouseEvent *aEvent, nsEventStatus* aStatus);
   nsresult GetNextTabbableContent(nsIContent* aRootContent,
@@ -217,17 +233,43 @@ protected:
   void FlushPendingEvents(nsPresContext* aPresContext);
   nsIFocusController* GetFocusControllerForDocument(nsIDocument* aDocument);
 
+  /**
+   * The phases of HandleAccessKey processing. See below.
+   */
   typedef enum {
     eAccessKeyProcessingNormal = 0,
     eAccessKeyProcessingUp,
     eAccessKeyProcessingDown
   } ProcessingAccessKeyState;
+
+  /**
+   * Access key handling.  If there is registered content for the accesskey
+   * given by the key event and modifier mask then call
+   * content.PerformAccesskey(), otherwise call HandleAccessKey() recursively,
+   * on descendant docshells first, then on the ancestor (with |aBubbledFrom|
+   * set to the docshell associated with |this|), until something matches.
+   *
+   * @param aPresContext the presentation context
+   * @param aEvent the key event
+   * @param aStatus the event status
+   * @param aBubbledFrom is used by an ancestor to avoid calling HandleAccessKey()
+   *        on the child the call originally came from, i.e. this is the child
+   *        that recursively called us in it's Up phase. The initial caller
+   *        passes |nsnull| here. This is to avoid an infinite loop.
+   * @param aAccessKeyState Normal, Down or Up processing phase (see enums
+   *        above). The initial event reciever uses 'normal', then 'down' when
+   *        processing children and Up when recursively calling its ancestor.
+   * @param aModifierMask modifier mask for the key event
+   */
   void HandleAccessKey(nsPresContext* aPresContext,
                        nsKeyEvent* aEvent,
                        nsEventStatus* aStatus,
-                       PRInt32 aChildOffset,
+                       nsIDocShellTreeItem* aBubbledFrom,
                        ProcessingAccessKeyState aAccessKeyState,
                        PRInt32 aModifierMask);
+
+  PRBool ExecuteAccessKey(nsTArray<PRUint32>& aAccessCharCodes,
+                          PRBool aIsTrustedEvent);
 
   //---------------------------------------------
   // DocShell Focus Traversal Methods
@@ -265,8 +307,10 @@ protected:
                         ScrollQuantity aScrollQuantity);
   void ForceViewUpdate(nsIView* aView);
   void DoScrollHistory(PRInt32 direction);
-  void DoScrollTextsize(nsIFrame *aTargetFrame, PRInt32 adjustment);
+  void DoScrollZoom(nsIFrame *aTargetFrame, PRInt32 adjustment);
+  nsresult GetMarkupDocumentViewer(nsIMarkupDocumentViewer** aMv);
   nsresult ChangeTextSize(PRInt32 change);
+  nsresult ChangeFullZoom(PRInt32 change);
   // end mousewheel functions
 
   // routines for the d&d gesture tracking state machine
@@ -293,22 +337,13 @@ protected:
   nsresult GetDocSelectionLocation(nsIContent **start, nsIContent **end, 
                                    nsIFrame **startFrame, PRUint32 *startOffset);
 
-  void GetSelection ( nsIFrame* inFrame, nsPresContext* inPresContext, nsIFrameSelection** outSelection ) ;
-
-  // To be called before and after you fire an event, to update booleans and
-  // such
-  void BeforeDispatchEvent() { ++mDOMEventLevel; }
-  void AfterDispatchEvent();
-
   PRInt32     mLockCursor;
 
-  //Any frames here must be checked for validity in ClearFrameRefs
-  nsIFrame* mCurrentTarget;
+  nsWeakFrame mCurrentTarget;
   nsCOMPtr<nsIContent> mCurrentTargetContent;
-  nsCOMPtr<nsIContent> mCurrentRelatedContent;
-  nsIFrame* mLastMouseOverFrame;
+  nsWeakFrame mLastMouseOverFrame;
   nsCOMPtr<nsIContent> mLastMouseOverElement;
-  nsIFrame* mLastDragOverFrame;
+  nsWeakFrame mLastDragOverFrame;
 
   // member variables for the d&d gesture state machine
   nsPoint mGestureDownPoint; // screen coordinates
@@ -334,7 +369,7 @@ protected:
   nsCOMPtr<nsIContent> mURLTargetContent;
   nsCOMPtr<nsIContent> mCurrentFocus;
   nsCOMPtr<nsIContent> mLastFocus;
-  nsIFrame* mCurrentFocusFrame;
+  nsWeakFrame mCurrentFocusFrame;
   PRInt32 mCurrentTabIndex;
   EFocusedWithType mLastFocusedWith;
 
@@ -361,15 +396,9 @@ protected:
   PRUint32 mMClickCount;
   PRUint32 mRClickCount;
 
-  PRPackedBool mConsumeFocusEvents;
-
   PRPackedBool mNormalLMouseEventInProcess;
 
   PRPackedBool m_haveShutdown;
-
-  // To inform people that dispatched events that frames have been cleared and
-  // they need to drop frame refs
-  PRPackedBool mClearedFrameRefsDuringEvent;
 
   // So we don't have to keep checking accessibility.browsewithcaret pref
   PRPackedBool mBrowseWithCaret;
@@ -377,12 +406,8 @@ protected:
   // Recursion guard for tabbing
   PRPackedBool mTabbedThroughDocument;
 
-  // The number of events we are currently nested in (currently just applies to
-  // those handlers that care about clearing frame refs)
-  PRInt32 mDOMEventLevel;
-
-  //Hashtable for accesskey support
-  nsSupportsHashtable *mAccessKeys;
+  // Array for accesskey support
+  nsCOMArray<nsIContent> mAccessKeys;
 
   nsCOMArray<nsIDocShell> mTabbingFromDocShells;
 

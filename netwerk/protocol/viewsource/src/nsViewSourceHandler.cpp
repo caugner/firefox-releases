@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* vim:set ts=4 sw=4 sts=4 et: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
@@ -41,6 +41,9 @@
 #include "nsViewSourceHandler.h"
 #include "nsViewSourceChannel.h"
 #include "nsNetUtil.h"
+#include "nsSimpleNestedURI.h"
+
+#define VIEW_SOURCE "view-source"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -52,7 +55,7 @@ NS_IMPL_ISUPPORTS1(nsViewSourceHandler, nsIProtocolHandler)
 NS_IMETHODIMP
 nsViewSourceHandler::GetScheme(nsACString &result)
 {
-    result.AssignLiteral("view-source");
+    result.AssignLiteral(VIEW_SOURCE);
     return NS_OK;
 }
 
@@ -66,7 +69,8 @@ nsViewSourceHandler::GetDefaultPort(PRInt32 *result)
 NS_IMETHODIMP
 nsViewSourceHandler::GetProtocolFlags(PRUint32 *result)
 {
-    *result = URI_NORELATIVE | URI_NOAUTH;
+    *result = URI_NORELATIVE | URI_NOAUTH | URI_LOADABLE_BY_ANYONE |
+        URI_NON_PERSISTABLE;
     return NS_OK;
 }
 
@@ -76,7 +80,7 @@ nsViewSourceHandler::NewURI(const nsACString &aSpec,
                             nsIURI *aBaseURI,
                             nsIURI **aResult)
 {
-    nsresult rv;
+    *aResult = nsnull;
 
     // Extract inner URL and normalize to ASCII.  This is done to properly
     // support IDN in cases like "view-source:http://www.szalagavató.hu/"
@@ -86,7 +90,8 @@ nsViewSourceHandler::NewURI(const nsACString &aSpec,
         return NS_ERROR_MALFORMED_URI;
 
     nsCOMPtr<nsIURI> innerURI;
-    rv = NS_NewURI(getter_AddRefs(innerURI), Substring(aSpec, colon + 1), aCharset);
+    nsresult rv = NS_NewURI(getter_AddRefs(innerURI),
+                            Substring(aSpec, colon + 1), aCharset);
     if (NS_FAILED(rv))
         return rv;
 
@@ -97,18 +102,24 @@ nsViewSourceHandler::NewURI(const nsACString &aSpec,
 
     // put back our scheme and construct a simple-uri wrapper
 
-    asciiSpec.Insert("view-source:", 0);
+    asciiSpec.Insert(VIEW_SOURCE ":", 0);
 
-    nsIURI *uri;
-    rv = CallCreateInstance(NS_SIMPLEURI_CONTRACTID, nsnull, &uri);
+    // We can't swap() from an nsRefPtr<nsSimpleNestedURI> to an nsIURI**,
+    // sadly.
+    nsSimpleNestedURI* ourURI = new nsSimpleNestedURI(innerURI);
+    nsCOMPtr<nsIURI> uri = ourURI;
+    if (!uri)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    rv = ourURI->SetSpec(asciiSpec);
     if (NS_FAILED(rv))
         return rv;
-    
-    rv = uri->SetSpec(asciiSpec);
-    if (NS_FAILED(rv))
-        NS_RELEASE(uri);
-    else
-        *aResult = uri;
+
+    // Make the URI immutable so it's impossible to get it out of sync
+    // with its inner URI.
+    ourURI->SetMutable(PR_FALSE);
+
+    uri.swap(*aResult);
     return rv;
 }
 
@@ -127,7 +138,7 @@ nsViewSourceHandler::NewChannel(nsIURI* uri, nsIChannel* *result)
         return rv;
     }
 
-    *result = NS_STATIC_CAST(nsIViewSourceChannel*, channel);
+    *result = static_cast<nsIViewSourceChannel*>(channel);
     return NS_OK;
 }
 

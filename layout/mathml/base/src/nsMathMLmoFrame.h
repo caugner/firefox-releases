@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -49,9 +50,9 @@
 
 class nsMathMLmoFrame : public nsMathMLTokenFrame {
 public:
-  friend nsresult NS_NewMathMLmoFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmoFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
-  virtual nsIAtom* GetType() const;
+  virtual eMathMLFrameType GetMathMLFrameType();
 
   virtual void
   SetAdditionalStyleContext(PRInt32          aIndex, 
@@ -59,12 +60,9 @@ public:
   virtual nsStyleContext*
   GetAdditionalStyleContext(PRInt32 aIndex) const;
 
-  NS_IMETHOD
-  Paint(nsPresContext*      aPresContext,
-        nsIRenderingContext& aRenderingContext,
-        const nsRect&        aDirtyRect,
-        nsFramePaintLayer    aWhichLayer,
-        PRUint32             aFlags = 0);
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
 
   NS_IMETHOD
   InheritAutomaticData(nsIFrame* aParent);
@@ -78,13 +76,13 @@ public:
          const nsHTMLReflowState& aReflowState,
          nsReflowStatus&          aStatus);
 
-  NS_IMETHOD
-  ReflowDirtyChild(nsIPresShell* aPresShell,
-                   nsIFrame*     aChild);
+  virtual void MarkIntrinsicWidthsDirty();
+
+  virtual nscoord
+  GetIntrinsicWidth(nsIRenderingContext *aRenderingContext);
 
   NS_IMETHOD
-  AttributeChanged(nsIContent*     aContent,
-                   PRInt32         aNameSpaceID,
+  AttributeChanged(PRInt32         aNameSpaceID,
                    nsIAtom*        aAttribute,
                    PRInt32         aModType);
 
@@ -97,7 +95,7 @@ public:
           nsHTMLReflowMetrics& aDesiredStretchSize);
 
 protected:
-  nsMathMLmoFrame();
+  nsMathMLmoFrame(nsStyleContext* aContext) : nsMathMLTokenFrame(aContext) {}
   virtual ~nsMathMLmoFrame();
   
   virtual PRIntn GetSkipSides() const { return 0; }
@@ -107,9 +105,10 @@ protected:
   float            mMinSize;
   float            mMaxSize;
 
+  PRBool UseMathMLChar();
+
   // overload the base method so that we can setup our nsMathMLChar
-  virtual void
-  ProcessTextData(nsPresContext* aPresContext);
+  virtual void ProcessTextData();
 
   // helper to get our 'form' and lookup in the Operator Dictionary to fetch 
   // our default data that may come from there, and to complete the setup

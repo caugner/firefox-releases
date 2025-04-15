@@ -44,21 +44,30 @@ VPATH		= @srcdir@
 include $(DEPTH)/config/autoconf.mk
 include $(srcdir)/objs.mk
 
+DIRS   =
+
+ifdef MOZ_ZIPWRITER
+DIRS  += zipwriter
+endif
+
 ifdef MOZ_INSTALLER
 # Linux and Solaris installer needs standalone libjar
-DIRS		= standalone
+DIRS  += standalone
 
 # Make this a true dynamic component even in static builds because
 # this component is shared by installer
 ifndef MINIMO
 # we don't care about the installer for MINIMO
 ifndef MOZ_ENABLE_LIBXUL
-MOZ_STATIC_COMPONENT_LIBS=
 BUILD_STATIC_LIBS=
-BUILD_SHARED_LIBS=1
 endif
 endif
 endif
+
+ifdef ENABLE_TESTS
+TOOL_DIRS += test
+endif
+
 
 MODULE		= jar
 LIBRARY_NAME	= jar$(VERSION_NUMBER)

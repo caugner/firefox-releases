@@ -40,7 +40,7 @@
 #define CKCAPI_H 1
 
 #ifdef DEBUG
-static const char CKCAPI_CVS_ID[] = "@(#) $RCSfile: ckcapi.h,v $ $Revision: 1.2.6.2 $ $Date: 2006/02/03 22:30:52 $";
+static const char CKCAPI_CVS_ID[] = "@(#) $RCSfile: ckcapi.h,v $ $Revision: 1.2 $ $Date: 2005/11/15 00:13:58 $";
 #endif /* DEBUG */
 
 #include "nssckmdt.h"

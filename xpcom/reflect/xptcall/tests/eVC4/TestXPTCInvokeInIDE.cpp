@@ -50,7 +50,7 @@
 #include "nsID.h"
 #include "nsIProxyObjectManager.h"
 #include "nsEmbedAPI.h"
-//#include "nsString.h"
+#include "nsString.h"
 
 #include "InvokeTestTargetInterface.h"
 static NS_DEFINE_IID(kTheCID, INVOKETESTTARGETINTERFACE_IID);
@@ -86,14 +86,13 @@ InvokeTestTarget::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 
 
   if (aIID.Equals(kTheCID)) {
-    *aInstancePtr = (void*) NS_STATIC_CAST(InvokeTestTargetInterface*,this);
+    *aInstancePtr = (void*) static_cast<InvokeTestTargetInterface*>(this);
     NS_ADDREF_THIS();
     return NS_OK;
   }
 
   if (aIID.Equals(NS_GET_IID(nsISupports))) {
-    *aInstancePtr = (void*) NS_STATIC_CAST(nsISupports*,
-                                           NS_STATIC_CAST(InvokeTestTargetInterface*,this));
+    *aInstancePtr = (void*) static_cast<nsISupports*>(static_cast<InvokeTestTargetInterface*>(this));
     NS_ADDREF_THIS();
     return NS_OK;
   }
@@ -241,10 +240,9 @@ NS_IMETHODIMP
 InvokeTestTarget::PassTwoStrings(const char *ignore, const char* s1, const char* s2, char** retval)
 {
     const char milk[] = "milk";
-    char *ret = (char*)malloc(sizeof(milk));
+    char *ret = (char*)nsMemory::Alloc(sizeof(milk));
     if (!ret)
       return NS_ERROR_OUT_OF_MEMORY;
-
     strncpy(ret, milk, sizeof(milk));
     printf("\t%s %s", s1, s2);
     *retval = ret;
@@ -254,7 +252,7 @@ InvokeTestTarget::PassTwoStrings(const char *ignore, const char* s1, const char*
 int main()
 {
 
-	int x = NS_InitEmbedding(NULL, NULL);
+	NS_InitEmbedding(NULL, NULL);
 
     InvokeTestTarget *test = new InvokeTestTarget();
 
@@ -271,8 +269,8 @@ int main()
                          (void**)(&proxy));
 
 
-	char *buffer;
-	proxy->PassTwoStrings("", "a", "b",&buffer);
+	char* buffer;
+	proxy->PassTwoStrings("", "a", "b", &buffer);
 
 
     NS_RELEASE(test);
@@ -373,9 +371,12 @@ int x_main()
 
      if (NS_SUCCEEDED(test->PassTwoStrings("", "moo","cow",&outS))) {
        printf(" = %s\n", outS);
-        free(outS);
+        nsMemory::Free(outS);
       } else
         printf("\tFAILED");
+
+
+
 
     printf("calling via invoke:\n");
 
@@ -1049,19 +1050,18 @@ FooBarImpl::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 
 
   if (aIID.Equals(NS_GET_IID(nsIFoo))) {
-    *aInstancePtr = (void*) NS_STATIC_CAST(nsIFoo*,this);
+    *aInstancePtr = (void*) static_cast<nsIFoo*>(this);
     NS_ADDREF_THIS();
     return NS_OK;
   }
   if (aIID.Equals(NS_GET_IID(nsIBar))) {
-    *aInstancePtr = (void*) NS_STATIC_CAST(nsIBar*,this);
+    *aInstancePtr = (void*) static_cast<nsIBar*>(this);
     NS_ADDREF_THIS();
     return NS_OK;
   }
 
   if (aIID.Equals(NS_GET_IID(nsISupports))) {
-    *aInstancePtr = (void*) NS_STATIC_CAST(nsISupports*,
-                                           NS_STATIC_CAST(nsIFoo*,this));
+    *aInstancePtr = (void*) static_cast<nsISupports*>(static_cast<nsIFoo*>(this));
     NS_ADDREF_THIS();
     return NS_OK;
   }
@@ -1220,19 +1220,18 @@ FooBarImpl2::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 
 
   if (aIID.Equals(NS_GET_IID(nsIFoo))) {
-    *aInstancePtr = (void*) NS_STATIC_CAST(nsIFoo2*,this);
+    *aInstancePtr = (void*) static_cast<nsIFoo2*>(this);
     NS_ADDREF_THIS();
     return NS_OK;
   }
   if (aIID.Equals(NS_GET_IID(nsIBar))) {
-    *aInstancePtr = (void*) NS_STATIC_CAST(nsIBar2*,this);
+    *aInstancePtr = (void*) static_cast<nsIBar2*>(this);
     NS_ADDREF_THIS();
     return NS_OK;
   }
 
   if (aIID.Equals(NS_GET_IID(nsISupports))) {
-    *aInstancePtr = (void*) NS_STATIC_CAST(nsISupports*,
-                                           NS_STATIC_CAST(nsIFoo2*,this));
+    *aInstancePtr = (void*) static_cast<nsISupports*>(static_cast<nsIFoo2*>(this));
     NS_ADDREF_THIS();
     return NS_OK;
   }

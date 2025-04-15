@@ -35,6 +35,10 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * Implementation of DOM Core's nsIDOMDocumentType node.
+ */
+
 #ifndef nsDOMDocumentType_h___
 #define nsDOMDocumentType_h___
 
@@ -53,7 +57,7 @@ class nsDOMDocumentType : public nsGenericDOMDataNode,
                           public nsIDOMDocumentType
 {
 public:
-  nsDOMDocumentType(nsNodeInfoManager *aNodeInfoManager,
+  nsDOMDocumentType(nsINodeInfo* aNodeInfo,
                     nsIAtom *aName,
                     nsIDOMNamedNodeMap *aEntities,
                     nsIDOMNamedNodeMap *aNotations,
@@ -72,8 +76,13 @@ public:
   // nsIDOMDocumentType
   NS_DECL_NSIDOMDOCUMENTTYPE
 
-  // nsIContent
-  virtual nsIAtom *Tag() const;
+  // nsIContent overrides
+  virtual PRBool IsNodeOfType(PRUint32 aFlags) const;
+  virtual const nsTextFragment* GetText();
+  virtual nsresult BindToTree(nsIDocument *aDocument, nsIContent *aParent,
+                              nsIContent *aBindingParent,
+                              PRBool aCompileEventHandlers);
+
 
 protected:
   nsCOMPtr<nsIAtom> mName;

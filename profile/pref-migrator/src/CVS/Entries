@@ -1,9 +1,8 @@
-/.cvsignore/1.1/Sat Sep 11 16:10:24 1999//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.38/Tue Apr  5 14:13:01 2005//TFIREFOX_2_0_RELEASE
-/nsPrefMigration.cpp/1.198.8.1/Tue Sep 12 18:26:48 2006//TFIREFOX_2_0_RELEASE
-/nsPrefMigration.h/1.53/Sat Apr 17 18:29:43 2004//TFIREFOX_2_0_RELEASE
-/nsPrefMigrationFactory.cpp/1.18/Sat Apr 17 18:29:43 2004//TFIREFOX_2_0_RELEASE
-/nsPrefMigrationFactory.h/1.7/Sat Apr 17 18:29:43 2004//TFIREFOX_2_0_RELEASE
-/prefmigr.pkg/1.2/Wed Jan  7 01:22:11 2004//TFIREFOX_2_0_RELEASE
-/win32.order/1.1/Tue Feb 13 02:45:05 2001//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Sep 11 16:10:24 1999//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.40/Thu Feb 15 23:46:37 2007//TFIREFOX_3_0rc3_RELEASE
+/nsPrefMigration.cpp/1.209/Tue Nov 13 03:20:39 2007//TFIREFOX_3_0rc3_RELEASE
+/nsPrefMigration.h/1.55/Tue Nov 13 03:20:39 2007//TFIREFOX_3_0rc3_RELEASE
+/nsPrefMigrationFactory.cpp/1.18/Sat Apr 17 18:29:43 2004//TFIREFOX_3_0rc3_RELEASE
+/nsPrefMigrationFactory.h/1.7/Sat Apr 17 18:29:43 2004//TFIREFOX_3_0rc3_RELEASE
+/prefmigr.pkg/1.2/Wed Jan  7 01:22:11 2004//TFIREFOX_3_0rc3_RELEASE
 D

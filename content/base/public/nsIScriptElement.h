@@ -42,18 +42,26 @@
 #include "nsISupports.h"
 #include "nsIURI.h"
 #include "nsCOMPtr.h"
+#include "nsIScriptLoaderObserver.h"
 
-#define NS_ISCRIPTELEMENT_IID                      \
-{ /*fa304da4-5e9c-45a6-a017-8cb011dc46b4 */        \
- 0xfa304da4, 0x5e9c, 0x45a6,                       \
- {0xa0, 0x17, 0x8c, 0xb0, 0x11, 0xdc, 0x46, 0xb4}} \
+#define NS_ISCRIPTELEMENT_IID \
+{ 0x4b916da5, 0x82c4, 0x45ab, \
+  { 0x99, 0x15, 0xcc, 0xcd, 0x9e, 0x2c, 0xb1, 0xe6 } }
 
 /**
  * Internal interface implemented by script elements
  */
-class nsIScriptElement : public nsISupports {
+class nsIScriptElement : public nsIScriptLoaderObserver {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ISCRIPTELEMENT_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ISCRIPTELEMENT_IID)
+
+  nsIScriptElement()
+    : mLineNumber(0),
+      mIsEvaluated(PR_FALSE),
+      mMalformed(PR_FALSE),
+      mDoneAddingChildren(PR_TRUE)
+  {
+  }
 
   /**
    * Content type identifying the scripting language. Can be empty, in
@@ -74,8 +82,42 @@ public:
 
   virtual void GetScriptCharset(nsAString& charset) = 0;
   
-  virtual void SetScriptLineNumber(PRUint32 aLineNumber) = 0;
-  virtual PRUint32 GetScriptLineNumber() = 0;
+  void SetScriptLineNumber(PRUint32 aLineNumber)
+  {
+    mLineNumber = aLineNumber;
+  }
+  PRUint32 GetScriptLineNumber()
+  {
+    return mLineNumber;
+  }
+
+  void SetIsMalformed()
+  {
+    mMalformed = PR_TRUE;
+  }
+  PRBool IsMalformed()
+  {
+    return mMalformed;
+  }
+
+  void PreventExecution()
+  {
+    mIsEvaluated = PR_TRUE;
+  }
+
+  void WillCallDoneAddingChildren()
+  {
+    NS_ASSERTION(mDoneAddingChildren, "unexpected, but not fatal");
+    mDoneAddingChildren = PR_FALSE;
+  }
+
+protected:
+  PRUint32 mLineNumber;
+  PRPackedBool mIsEvaluated;
+  PRPackedBool mMalformed;
+  PRPackedBool mDoneAddingChildren;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIScriptElement, NS_ISCRIPTELEMENT_IID)
 
 #endif // nsIScriptElement_h___

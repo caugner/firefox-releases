@@ -4,8 +4,8 @@
   "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd" [
 <!ENTITY % brandDTD SYSTEM "chrome://branding/locale/brand.dtd" >
 %brandDTD;
-<!ENTITY % licenseDTD SYSTEM "chrome://global/locale/license.dtd" >
-%licenseDTD;
+<!ENTITY % aboutDTD SYSTEM "chrome://global/locale/about.dtd" >
+%aboutDTD;
 <!ENTITY % globalDTD SYSTEM "chrome://global/locale/global.dtd">
 %globalDTD;
 ]>
@@ -60,8 +60,8 @@
 <body dir="&locale.dir;">
 <div id="aboutPageContainer">
   <div id="aboutLogoContainer">
-    <a href="http://www.mozilla.org/">
-      <img src="chrome://branding/content/about.png" alt="&brandShortName;"/>
+    <a id="vendorURL" href="http://www.mozilla.org/">
+      <img src="about:logo" alt="&brandShortName;"/>
 #expand <p id="version">&about.version; __MOZ_APP_VERSION__</p>
     </a>
   </div>
@@ -69,9 +69,11 @@
   <ul id="aboutPageList">
     <li>&about.copy.beforeLink; <a href="about:credits">&about.copy.linkTitle;</a> &about.copy.afterLink;</li>
     <li>&about.license.beforeLink; <a href="about:license">&about.license.linkTitle;</a> &about.license.afterLink;</li>
+    <!-- Release notes link removed pending fix for bug 349985
     <li>&about.relnotes.beforeLink; <a id="releaseNotesURL" href="">&about.relnotes.linkTitle;</a> &about.relnotes.afterLink;</li>
+    -->
     <li>&about.buildconfig.beforeLink; <a href="about:buildconfig">&about.buildconfig.linkTitle;</a> &about.buildconfig.afterLink;</li>
-    <script type="application/x-javascript">
+    <script type="application/javascript">
       // get release notes URL from prefs
       try {
         var formatter = Components.classes["@mozilla.org/toolkit/URLFormatterService;1"]
@@ -79,19 +81,19 @@
         var releaseNotesURL = formatter.formatURLPref("app.releaseNotesURL");
         var relnotes = document.getElementById("releaseNotesURL");
         relnotes.setAttribute("href", releaseNotesURL);
-      }
-      catch (ex) { /* no release notes URL for you without bug 349985 being fixed */ }
 
-      // add build identifier
+        var vendorURL = formatter.formatURLPref("app.vendorURL");
+        var vendor = document.getElementById("vendorURL");
+        vendor.setAttribute("href", vendorURL);
+      }
+      catch (ex) { /* no release notes and vendor URL for you without bug 349985 being fixed */ }
+
       var ua = navigator.userAgent;
       if (ua) {
         var list = document.getElementById("aboutPageList");
         var listItem = list.appendChild(document.createElement("li"));
         listItem.appendChild(document.createTextNode("&about.buildIdentifier;"));
-        // replace the shortened 8-digit build id in the UA with the full 10-digit 
-        // build id from navigator.buildID
-        var newUA = ua.replace(/\/\d{8}/, '/'+navigator.buildID);
-        listItem.appendChild(document.createTextNode(newUA));
+        listItem.appendChild(document.createTextNode(ua));
       }
     </script>
   </ul>

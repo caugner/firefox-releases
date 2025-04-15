@@ -61,15 +61,13 @@
 
 #include "prthread.h"
 #include "prprf.h"
-#include "plevent.h"
 #include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
 #include "nsWidgetsCID.h"
 #include "nsGfxCIID.h"
 #include "nsViewsCID.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 #include "nsCOMPtr.h"
-#include "nsXPIDLString.h"
 
 #include "nsIHTTPChannel.h"
 
@@ -92,10 +90,8 @@
 #include "nsIContentViewerEdit.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsIPresShell.h"
 #include "nsCOMPtr.h"
 #include "nsISelection.h"
-#include "nsPresContext.h"
 #include "nsIPrompt.h"
 #include "nsIEditor.h"
 #include "nsIEditingSession.h"
@@ -104,9 +100,7 @@
 #include "nsIDocument.h"
 #include "nsIDocumentObserver.h"
 #include "nsIStreamListener.h"
-#include "nsUnitConversion.h"
 #include "nsVoidArray.h"
-#include "nsCRT.h"
 
 #include "nsIDocumentViewer.h"
 #include "nsIDOMNode.h"
@@ -116,8 +110,9 @@
 #include "nsIDOMElement.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMMouseEvent.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 
+#undef _WIN32_WINNT
 #define _WIN32_WINNT 0x0400
 #define _ATL_APARTMENT_THREADED
 #define _ATL_STATIC_REGISTRY

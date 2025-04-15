@@ -38,20 +38,21 @@
  * ***** END LICENSE BLOCK ***** */
 
 // string includes
-#include "nsReadableUtils.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 #include "nsUnicharUtils.h"
 
-#include "nsISchema.h"
+#include "nsISVSchema.h"
 #include "nsSchemaValidator.h"
 #include "nsSchemaValidatorUtils.h"
 #include "nsISchemaValidatorRegexp.h"
 #include "nsSchemaDuration.h"
+#include "nsServiceManagerUtils.h"
 
 #include <stdlib.h>
 #include <math.h>
 #include <errno.h>
 #include <limits.h>
+#include <float.h>
 #include "prlog.h"
 #include "prprf.h"
 #include "prdtoa.h"
@@ -114,16 +115,33 @@ PRBool
 nsSchemaValidatorUtils::IsValidSchemaDouble(const char* aString,
                                             double *aResult)
 {
+  PRBool isValid = PR_TRUE;
+
   if (*aString == 0)
     return PR_FALSE;
 
   char * pEnd;
   double value = PR_strtod(aString, &pEnd);
 
+  // If the end pointer desn't point at the end, it wasn't a true double (could
+  // be INF, -INF or NaN though)
+  if (*pEnd != '\0') {
+    nsCAutoString temp(aString);
+
+    // doubles may be INF, -INF or NaN
+    if (temp.EqualsLiteral("INF")) {
+      value = DBL_MAX;
+    } else if (temp.EqualsLiteral("-INF")) {
+      value = - DBL_MAX;
+    } else if (!temp.EqualsLiteral("NaN")) {
+      isValid = PR_FALSE;
+    }
+  }
+
   if (aResult)
     *aResult = value;
 
-  return (pEnd != aString);
+  return isValid;
 }
 
 PRBool
@@ -152,9 +170,11 @@ nsSchemaValidatorUtils::ParseDateTime(const nsAString & aNodeValue,
 
   // if no T, invalid
   if (findString >= 0) {
-    isValid = ParseSchemaDate(Substring(aNodeValue, 0, findString+1), &aResult->date);
+    // we get the date part (from 0 to before 'T')
+    isValid = ParseSchemaDate(Substring(aNodeValue, 0, findString), PR_FALSE, &aResult->date);
 
     if (isValid) {
+      // we get the time part (from after the 'T' till the end)
       isValid = ParseSchemaTime(
                   Substring(aNodeValue, findString + 1, aNodeValue.Length()),
                   &aResult->time);
@@ -166,19 +186,21 @@ nsSchemaValidatorUtils::ParseDateTime(const nsAString & aNodeValue,
 
 PRBool
 nsSchemaValidatorUtils::ParseSchemaDate(const nsAString & aStrValue,
+                                        PRBool aAllowTimeZone,
                                         nsSchemaDate *aDate)
 {
   PRBool isValid = PR_FALSE;
 
   /*
     http://www.w3.org/TR/xmlschema-2/#date
-    (-)CCYY-MM-DDT
+    (-)CCYY-MM-DD
+    then optionally: Z
+      or [+/-]hh:mm
   */
 
-  nsAString::const_iterator start, end, buffStart;
-  aStrValue.BeginReading(start);
-  aStrValue.BeginReading(buffStart);
-  aStrValue.EndReading(end);
+  const PRUnichar *start, *end, *buffStart;
+  aStrValue.BeginReading(&start, &end);
+  aStrValue.BeginReading(&buffStart);
   PRUint32 state = 0;
   PRUint32 buffLength = 0;
   PRBool done = PR_FALSE;
@@ -187,6 +209,8 @@ nsSchemaValidatorUtils::ParseSchemaDate(const nsAString & aStrValue,
   nsAutoString year;
   char month[3] = "";
   char day[3] = "";
+  char timezoneHour[3] = "";
+  char timezoneMinute[3] = "";
 
   // if year is negative, skip it
   if (aStrValue.First() == '-') {
@@ -244,10 +268,24 @@ nsSchemaValidatorUtils::ParseSchemaDate(const nsAString & aStrValue,
         // day
         if (buffLength > 2) {
           done = PR_TRUE;
-        } else if (currentChar == 'T') {
-          if ((start == end) && (buffLength == 2) && (strcmp(day, "31") < 1))
+        } else if (currentChar == 'Z') {
+          if (aAllowTimeZone) {
+            if ((start == end) && (buffLength == 2) && (strcmp(day, "31") < 1)) {
             isValid = PR_TRUE;
+            }
+          }
+
           done = PR_TRUE;
+        } else if ((currentChar == '+') || (currentChar == '-')) {
+          // timezone
+          if (aAllowTimeZone) {
+            state = 3;
+            buffLength = 0;
+            buffStart = start;
+          } else {
+            // no timezones allowed
+            done = PR_TRUE;
+          }
         } else {
           // has to be a numerical character or else abort
           if ((currentChar > '9') || (currentChar < '0'))
@@ -256,10 +294,26 @@ nsSchemaValidatorUtils::ParseSchemaDate(const nsAString & aStrValue,
             day[buffLength] = currentChar;
           }
           buffLength++;
+
+          // are we at the end?
+          if (start == end && buffLength == 2) {
+            isValid = PR_TRUE;
+            done = PR_TRUE;
+          }
         }
         break;
       }
 
+      case 3: {
+        // timezone hh:mm
+        if (end-buffStart == 5) {
+          isValid = ParseSchemaTimeZone(Substring(buffStart, end), timezoneHour,
+                                        timezoneMinute);
+        }
+
+        done = PR_TRUE;
+        break;
+      }
     }
   }
 
@@ -271,18 +325,25 @@ nsSchemaValidatorUtils::ParseSchemaDate(const nsAString & aStrValue,
       isValid = PR_FALSE;
     } else {
       PRUint8 monthval = strtol(month, &pEnd, 10);
-      PRUint8 dayval = strtol(day, &pEnd, 10);
-
-      // check for leap years
-      PRUint8 maxDay = GetMaximumDayInMonthFor(yearval, monthval);
-      if (maxDay >= dayval) {
-        aDate->year = yearval;
-
-        // month/day are validated in the parsing code above
-        aDate->month = monthval;
-        aDate->day = dayval;
-      } else {
+      if (monthval < 1 || monthval > 12) {
         isValid = PR_FALSE;
+      } else {
+        PRUint8 dayval = strtol(day, &pEnd, 10);
+        if (dayval < 1) {
+          isValid = PR_FALSE;
+        } else {
+          // check for leap years
+          PRUint8 maxDay = GetMaximumDayInMonthFor(yearval, monthval);
+          if (maxDay >= dayval) {
+            aDate->year = yearval;
+
+            // month/day are validated in the parsing code above
+            aDate->month = monthval;
+            aDate->day = dayval;
+          } else {
+            isValid = PR_FALSE;
+          }
+        }
       }
     }
   }
@@ -312,10 +373,9 @@ nsSchemaValidatorUtils::ParseSchemaTime(const nsAString & aStrValue,
   // we store the fraction seconds because PR_ExplodeTime seems to skip them.
   nsAutoString usec;
 
-  nsAString::const_iterator start, end, buffStart;
-  aStrValue.BeginReading(start);
-  aStrValue.BeginReading(buffStart);
-  aStrValue.EndReading(end);
+  const PRUnichar *start, *end, *buffStart;
+  aStrValue.BeginReading(&start, &end);
+  aStrValue.BeginReading(&buffStart);
   PRUint32 state = 0;
   PRUint32 buffLength = 0;
   PRBool done = PR_FALSE;
@@ -408,8 +468,13 @@ nsSchemaValidatorUtils::ParseSchemaTime(const nsAString & aStrValue,
           // has to be a numerical character or else abort
           if ((currentChar > '9') || (currentChar < '0'))
             done = PR_TRUE;
-          else
+          else {
             second[buffLength] = currentChar;
+            if (start == end) {
+              isValid = PR_TRUE;
+              done = PR_TRUE;
+            }
+          }
           buffLength++;
         }
 
@@ -426,10 +491,10 @@ nsSchemaValidatorUtils::ParseSchemaTime(const nsAString & aStrValue,
           else
             done = PR_TRUE;
           tzSign = currentChar;
-          usec.Assign(Substring(buffStart.get(), start.get()-1));
+          usec.Assign(Substring(buffStart, start - 1));
         } else if ((currentChar == '+') || (currentChar == '-')) {
           // timezone exists
-          usec.Assign(Substring(buffStart.get(), start.get()-1));
+          usec.Assign(Substring(buffStart, start - 1));
           state = 4;
           buffLength = 0;
           buffStart = start;
@@ -438,6 +503,11 @@ nsSchemaValidatorUtils::ParseSchemaTime(const nsAString & aStrValue,
           // has to be a numerical character or else abort
           if ((currentChar > '9') || (currentChar < '0'))
             done = PR_TRUE;
+          else if (start == end) {
+            usec.Assign(Substring(buffStart, end));
+            isValid = PR_TRUE;
+            done = PR_TRUE;
+          }
           buffLength++;
         }
         break;
@@ -445,7 +515,7 @@ nsSchemaValidatorUtils::ParseSchemaTime(const nsAString & aStrValue,
 
       case 4: {
         // timezone hh:mm
-       if (buffStart.size_forward() == 5)
+       if (end-buffStart == 5)
          isValid = ParseSchemaTimeZone(Substring(buffStart, end), timezoneHour,
                                        timezoneMinute);
 
@@ -466,7 +536,7 @@ nsSchemaValidatorUtils::ParseSchemaTime(const nsAString & aStrValue,
       aTime->hour = strtol(hour, &pEnd, 10);
       aTime->minute = strtol(minute, &pEnd, 10);
       aTime->second = strtol(second, &pEnd, 10);
-      aTime->milisecond = usecval;
+      aTime->millisecond = usecval;
 
       if (tzSign == '+')
         aTime->tzIsNegative = PR_FALSE;
@@ -491,10 +561,9 @@ nsSchemaValidatorUtils::ParseSchemaTimeZone(const nsAString & aStrValue,
   char timezoneHour[3] = "";
   char timezoneMinute[3] = "";
 
-  nsAString::const_iterator start, end, buffStart;
-  aStrValue.BeginReading(start);
-  aStrValue.BeginReading(buffStart);
-  aStrValue.EndReading(end);
+  const PRUnichar *start, *end, *buffStart;
+  aStrValue.BeginReading(&start, &end);
+  aStrValue.BeginReading(&buffStart);
   PRUint32 state = 0;
   PRUint32 buffLength = 0;
   PRBool done = PR_FALSE;
@@ -671,9 +740,9 @@ nsSchemaValidatorUtils::CompareTime(nsSchemaTime aTime1, nsSchemaTime aTime2)
       } else if (aTime1.second > aTime2.second) {
         result = 1;
       } else {
-        if (aTime1.milisecond < aTime2.milisecond) {
+        if (aTime1.millisecond < aTime2.millisecond) {
           result = -1;
-        } else if (aTime1.milisecond > aTime2.milisecond) {
+        } else if (aTime1.millisecond > aTime2.millisecond) {
           result = 1;
         } else {
           result = 0;
@@ -697,7 +766,7 @@ nsSchemaValidatorUtils::AddTimeZoneToDateTime(nsSchemaDateTime aDateTime,
   int hour = aDateTime.time.hour;
   int minute = aDateTime.time.minute;
   PRUint8 second = aDateTime.time.second;
-  PRUint32 milisecond = aDateTime.time.milisecond;
+  PRUint32 millisecond = aDateTime.time.millisecond;
 
   if (aDateTime.time.tzIsNegative) {
     hour = hour + aDateTime.time.tzhour;
@@ -767,14 +836,14 @@ nsSchemaValidatorUtils::AddTimeZoneToDateTime(nsSchemaDateTime aDateTime,
   aDestDateTime->time.hour = hour;
   aDestDateTime->time.minute = minute;
   aDestDateTime->time.second = second;
-  aDestDateTime->time.milisecond = milisecond;
+  aDestDateTime->time.millisecond = millisecond;
   aDestDateTime->time.tzIsNegative = aDateTime.time.tzIsNegative;
 }
 
 void
 nsSchemaValidatorUtils::GetMonthShorthand(PRUint8 aMonth, nsACString & aReturn)
 {
-  aReturn.AssignASCII(monthShortHand[aMonth - 1].shortHand);
+  aReturn.Assign(monthShortHand[aMonth - 1].shortHand);
 }
 
 /*
@@ -839,10 +908,9 @@ nsSchemaValidatorUtils::ParseSchemaDuration(const nsAString & aStrValue,
 {
   PRBool isValid = PR_FALSE;
 
-  nsAString::const_iterator start, end, buffStart;
-  aStrValue.BeginReading(start);
-  aStrValue.BeginReading(buffStart);
-  aStrValue.EndReading(end);
+  const PRUnichar *start, *end, *buffStart;
+  aStrValue.BeginReading(&start, &end);
+  aStrValue.BeginReading(&buffStart);
   PRUint32 state = 0;
   PRUint32 buffLength = 0;
   PRBool done = PR_FALSE;
@@ -852,7 +920,7 @@ nsSchemaValidatorUtils::ParseSchemaDuration(const nsAString & aStrValue,
 
   // make sure leading P is present.  Take negative durations into consideration.
   if (*start == '-') {
-    start.advance(1);
+    ++start;
     if (*start != 'P') {
       return PR_FALSE;
     } else {
@@ -1043,7 +1111,7 @@ nsSchemaValidatorUtils::ParseSchemaDuration(const nsAString & aStrValue,
                 done = PR_TRUE;
               } else {
                 fractionSecond = modf(temp2, &intpart);
-                second = NS_STATIC_CAST(PRUint32, intpart);
+                second = static_cast<PRUint32>(intpart);
               }
             } else {
               if (!IsValidSchemaInteger(parseBuffer, &temp, PR_TRUE))
@@ -1115,11 +1183,9 @@ nsSchemaValidatorUtils::CompareStrings(const nsAString & aString1,
     return 1;
   }
 
-  nsAString::const_iterator start1, start2, end1, end2;
-  aString1.BeginReading(start1);
-  aString1.EndReading(end1);
-  aString2.BeginReading(start2);
-  aString2.EndReading(end2);
+  const PRUnichar *start1, *start2, *end1, *end2;
+  aString1.BeginReading(&start1, &end1);
+  aString2.BeginReading(&start2, &end2);
 
   // skip negative sign
   if (isNegative1)
@@ -1185,8 +1251,8 @@ nsSchemaValidatorUtils::GetMaximumDayInMonthFor(PRUint32 aYearValue, PRUint8 aMo
     Return Value      Condition
     31                month is either 1, 3, 5, 7, 8, 10, 12
     30                month is either 4, 6, 9, 11
-    29                month is 2 AND either (year % 400 == 0) OR (year % 100 == 0)
-                                            AND (year % 4 == 0)
+    29                month is 2 AND either ((year % 4 == 0) AND (year % 100 != 0))
+                                            OR (year % 400 == 0)
     28                Otherwise
   */
 
@@ -1195,7 +1261,7 @@ nsSchemaValidatorUtils::GetMaximumDayInMonthFor(PRUint32 aYearValue, PRUint8 aMo
     maxDay = 31;
   else if ((month == 4) || (month == 6) || (month == 9) || (month == 11))
     maxDay = 30;
-  else if ((month == 2) && ((year % 400 == 0) || (year % 100 == 0) && (year % 4 == 0)))
+  else if ((month == 2) && (((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0)))
     maxDay = 29;
 
   return maxDay;
@@ -1275,7 +1341,7 @@ nsSchemaValidatorUtils::AddDurationToDatetime(nsSchemaDateTime aDatetime,
    */
   double dblValue;
   aDuration->GetFractionSeconds(&dblValue);
-  aResultDateTime->time.milisecond = (int) dblValue * 1000000;
+  aResultDateTime->time.millisecond = (int) dblValue * 1000000;
 
   // seconds
   aDuration->GetSeconds(&temp);
@@ -1353,9 +1419,8 @@ nsSchemaValidatorUtils::IsValidSchemaNormalizedString(const nsAString &aStrValue
   nsAutoString string(aStrValue);
 
   // may not contain carriage return, line feed nor tab characters
-  if (string.FindCharInSet("\t\r\n") == kNotFound)
+  if (FindCharInSet(string, "\t\r\n") == kNotFound)
     isValid = PR_TRUE;
-
   return isValid;
 }
 
@@ -1369,10 +1434,10 @@ nsSchemaValidatorUtils::IsValidSchemaToken(const nsAString &aStrValue)
   // may not contain carriage return, line feed, tab characters.  Also can
   // not contain leading/trailing whitespace and no internal sequences of
   // two or more spaces.
-  if ((string.FindCharInSet("\t\r\n") == kNotFound) &&
+  if ((FindCharInSet(string, "\t\r\n") == kNotFound) &&
       (string.Find(NS_LITERAL_STRING("  ")) == kNotFound) &&
       (string.First() != ' ') &&
-      (string.Last() != ' '))
+      (string.CharAt(string.Length() - 1) != ' '))
     isValid = PR_TRUE;
 
   return isValid;
@@ -1391,6 +1456,177 @@ nsSchemaValidatorUtils::IsValidSchemaLanguage(const nsAString &aStrValue)
   nsCOMPtr<nsISchemaValidatorRegexp> regexp = do_GetService(kREGEXP_CID);
   nsresult rv = regexp->RunRegexp(aStrValue, pattern, "g", &isValid);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  return isValid;
+}
+
+// http://www.w3.org/TR/xmlschema-2/#name
+PRBool
+nsSchemaValidatorUtils::IsValidSchemaName(const nsAString &aStrValue)
+{
+  PRBool isValid = PR_FALSE;
+
+  // xsd:Name is restriction on xsd:token
+  if (IsValidSchemaToken(aStrValue)) {
+    /* http://www.w3.org/TR/2000/WD-xml-2e-20000814
+    [4]	NameChar ::=  Letter | Digit | '.' | '-' | '_' | ':' |
+                      CombiningChar | Extender
+    [5]	Name     ::= (Letter | '_' | ':') ( NameChar)*
+    */
+    // XXX Need to handling CombiningChar and Extender as well
+    // XXX Additional Unicode testing needed?
+    nsAutoString pattern;
+    pattern.AssignLiteral("^[a-zA-Z_:][\\w\\.\\-:]*$");
+    nsCOMPtr<nsISchemaValidatorRegexp> regexp = do_GetService(kREGEXP_CID);
+    nsresult rv = regexp->RunRegexp(aStrValue, pattern, "g", &isValid);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return isValid;
+}
+
+// http://www.w3.org/TR/xmlschema-2/#ncname
+PRBool
+nsSchemaValidatorUtils::IsValidSchemaNCName(const nsAString &aStrValue)
+{
+  PRBool isValid = PR_FALSE;
+  
+  // xsd:NCNAME is a restriction on xsd:Name
+  if (IsValidSchemaToken(aStrValue)) {
+    /* http://www.w3.org/TR/1999/REC-xml-names-19990114/#NT-NCName
+      NCNameChar ::=  Letter | Digit | '.' | '-' | '_' |
+                      CombiningChar | Extender
+      NCName     ::= (Letter | '_') (NCNameChar)*
+     */
+    nsAutoString pattern;
+    // XXX Need to handle Combining|Extender and Unicode Letters
+    // xsd:Name minus the ":"
+    pattern.AssignLiteral("^[a-zA-Z_][\\w\\.\\-]*$");
+    nsCOMPtr<nsISchemaValidatorRegexp> regexp = do_GetService(kREGEXP_CID);
+    nsresult rv = regexp->RunRegexp(aStrValue, pattern, "g", &isValid);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return isValid;
+}
+
+// http://www.w3.org/TR/xmlschema-2/#id
+PRBool
+nsSchemaValidatorUtils::IsValidSchemaID(const nsAString &aStrValue)
+{
+  PRBool isValid = PR_FALSE;
+
+  // xsd:ID is a restriction of xsd:NCNAME
+  if (IsValidSchemaNCName(aStrValue)) {
+    isValid = PR_TRUE;
+    // XXX Uniqueness tests per
+    //   http://www.w3.org/TR/2000/WD-xml-2e-20000814#NT-TokenizedType
+  }
+
+  return isValid;
+}
+
+// http://www.w3.org/TR/xmlschema-2/#idref
+PRBool
+nsSchemaValidatorUtils::IsValidSchemaIDRef(const nsAString &aStrValue)
+{
+  PRBool isValid = PR_FALSE;
+
+  // xsd:IDREF is a restriction of xsd:NCName
+  if (IsValidSchemaNCName(aStrValue)) {
+    isValid = PR_TRUE;
+    // XXX Ensure IDREF really references an ID,
+    //   http://www.w3.org/TR/2000/WD-xml-2e-20000814#idref
+  }
+
+  return isValid;
+}
+
+// http://www.w3.org/TR/xmlschema-2/#idrefs
+PRBool
+nsSchemaValidatorUtils::IsValidSchemaIDRefs(const nsAString &aStrValue)
+{
+  PRBool isValid = PR_FALSE;
+
+  // Need to validate each IDREF
+  const PRUnichar *iter, *end, *tokenStart;
+  nsAutoString idref;
+  aStrValue.BeginReading(&iter, &end);
+  aStrValue.BeginReading(&tokenStart);
+  while (iter != end) {
+    for (;IsWhitespace(*iter) && iter != end; ++iter);
+    tokenStart = iter;
+
+    // Find end of token
+    for (;!IsWhitespace(*iter) && iter != end; ++iter);
+
+    // Get the token/idref and validate
+    idref = Substring(tokenStart, iter);
+    isValid = IsValidSchemaIDRef(idref);
+    if (!isValid) break; // No need to continue
+
+    if (iter != end) ++iter;
+  }
+
+  return isValid;
+}
+
+PRBool
+nsSchemaValidatorUtils::IsWhitespace(PRUnichar aChar)
+{
+  return aChar == ' '  || aChar == '\t' || aChar == '\n' ||
+         aChar == '\r' || aChar == '\v';
+}
+
+// http://www.w3.org/TR/xmlschema-2/#nmtoken
+PRBool
+nsSchemaValidatorUtils::IsValidSchemaNMToken(const nsAString &aStrValue)
+{
+  PRBool isValid = PR_FALSE;
+
+  // xsd:NMTOKEN is a restriction on xsd:token
+  if (IsValidSchemaToken(aStrValue)) {
+    /*
+      NameChar ::= 	Letter | Digit | '.' | '-' | '_' | ':' |
+                    CombiningChar | Extender
+      Nmtoken	 ::= (NameChar)+
+    */
+    nsAutoString pattern;
+    // XXX Need to handle Combining|Extender and possibly unicode letters
+    pattern.AssignLiteral("^[\\w\\.\\-_:]*$");
+    nsCOMPtr<nsISchemaValidatorRegexp> regexp = do_GetService(kREGEXP_CID);
+    nsresult rv = regexp->RunRegexp(aStrValue, pattern, "g", &isValid);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return isValid;
+}
+
+// http://www.w3.org/TR/xmlschema-2/#nmtokens
+PRBool
+nsSchemaValidatorUtils::IsValidSchemaNMTokens(const nsAString &aStrValue)
+{
+  PRBool isValid = PR_FALSE;
+
+  // Need to validate each NNTOKEN
+  const PRUnichar *iter, *end, *tokenStart;
+  nsAutoString idref;
+  aStrValue.BeginReading(&iter, &end);
+  aStrValue.BeginReading(&tokenStart);
+  while (iter != end) {
+    for (;IsWhitespace(*iter) && iter != end; ++iter);
+    tokenStart = iter;
+
+    // Find end of token
+    for (;!IsWhitespace(*iter) && iter != end; ++iter);
+
+    // Get the token/idref and validate
+    idref = Substring(tokenStart, iter);
+    isValid = IsValidSchemaNMToken(idref);
+    if (!isValid) break; // No need to continue
+
+    if (iter != end) ++iter;
+  }
 
   return isValid;
 }
@@ -1421,9 +1657,8 @@ nsSchemaValidatorUtils::HandleEnumeration(const nsAString &aStrValue,
 void
 nsSchemaValidatorUtils::RemoveLeadingZeros(nsAString & aString)
 {
-  nsAString::const_iterator start, end;
-  aString.BeginReading(start);
-  aString.EndReading(end);
+  const PRUnichar *start, *end;
+  aString.BeginReading(&start, &end);
 
   PRBool done = PR_FALSE;
   PRUint32 count = 0, indexstart = 0;
@@ -1456,9 +1691,8 @@ nsSchemaValidatorUtils::RemoveLeadingZeros(nsAString & aString)
 void
 nsSchemaValidatorUtils::RemoveTrailingZeros(nsAString & aString)
 {
-  nsAString::const_iterator start, end;
-  aString.BeginReading(start);
-  aString.EndReading(end);
+  const PRUnichar *start, *end;
+  aString.BeginReading(&start, &end);
 
   PRUint32 length = aString.Length();
 
@@ -1486,11 +1720,11 @@ nsSchemaValidatorUtils::RemoveTrailingZeros(nsAString & aString)
 // it makes sure that it won't be overwritten by the same facet defined in one
 // of the inherited types.
 nsresult
-nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
+nsSchemaValidatorUtils::GetDerivedSimpleType(nsISVSchemaSimpleType *aSimpleType,
                                              nsSchemaDerivedSimpleType *aDerived)
 {
   PRBool done = PR_FALSE, hasEnumerations = PR_FALSE;
-  nsCOMPtr<nsISchemaSimpleType> simpleType(aSimpleType);
+  nsCOMPtr<nsISVSchemaSimpleType> simpleType(aSimpleType);
   PRUint16 simpleTypeValue;
   PRUint32 facetCount;
 
@@ -1503,13 +1737,13 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
     NS_ENSURE_SUCCESS(rv, rv);
 
     switch (simpleTypeValue) {
-      case nsISchemaSimpleType::SIMPLE_TYPE_RESTRICTION: {
+      case nsISVSchemaSimpleType::SIMPLE_TYPE_RESTRICTION: {
         // handle the facets
 
-        nsCOMPtr<nsISchemaRestrictionType> restrictionType =
+        nsCOMPtr<nsISVSchemaRestrictionType> restrictionType =
           do_QueryInterface(simpleType);
 
-        nsCOMPtr<nsISchemaFacet> facet;
+        nsCOMPtr<nsISVSchemaFacet> facet;
         PRUint32 facetCounter;
         PRUint16 facetType;
 
@@ -1529,7 +1763,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
           facet->GetFacetType(&facetType);
 
           switch (facetType) {
-            case nsISchemaFacet::FACET_TYPE_LENGTH: {
+            case nsISVSchemaFacet::FACET_TYPE_LENGTH: {
               nsSchemaIntFacet *length = &aDerived->length;
               if (!length->isDefined) {
                 length->isDefined = PR_TRUE;
@@ -1540,7 +1774,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_MINLENGTH: {
+            case nsISVSchemaFacet::FACET_TYPE_MINLENGTH: {
               nsSchemaIntFacet *minLength = &aDerived->minLength;
               if (!minLength->isDefined) {
                 minLength->isDefined = PR_TRUE;
@@ -1551,7 +1785,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_MAXLENGTH: {
+            case nsISVSchemaFacet::FACET_TYPE_MAXLENGTH: {
               nsSchemaIntFacet *maxLength = &aDerived->maxLength;
               if (!maxLength->isDefined) {
                 maxLength->isDefined = PR_TRUE;
@@ -1562,7 +1796,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_PATTERN: {
+            case nsISVSchemaFacet::FACET_TYPE_PATTERN: {
               nsSchemaStringFacet *pattern = &aDerived->pattern;
               if (!pattern->isDefined) {
                 pattern->isDefined = PR_TRUE;
@@ -1573,7 +1807,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_ENUMERATION: {
+            case nsISVSchemaFacet::FACET_TYPE_ENUMERATION: {
               if (!hasEnumerations) {
                 facet->GetValue(enumeration);
                 aDerived->enumerationList.AppendString(enumeration);
@@ -1583,13 +1817,13 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_WHITESPACE: {
+            case nsISVSchemaFacet::FACET_TYPE_WHITESPACE: {
               if (!aDerived->isWhitespaceDefined)
                 facet->GetWhitespaceValue(&aDerived->whitespace);
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_MAXINCLUSIVE: {
+            case nsISVSchemaFacet::FACET_TYPE_MAXINCLUSIVE: {
               nsSchemaStringFacet *maxInclusive = &aDerived->maxInclusive;
               if (!maxInclusive->isDefined) {
                 maxInclusive->isDefined = PR_TRUE;
@@ -1600,7 +1834,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_MININCLUSIVE: {
+            case nsISVSchemaFacet::FACET_TYPE_MININCLUSIVE: {
               nsSchemaStringFacet *minInclusive = &aDerived->minInclusive;
               if (!minInclusive->isDefined) {
                 minInclusive->isDefined = PR_TRUE;
@@ -1611,7 +1845,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_MAXEXCLUSIVE: {
+            case nsISVSchemaFacet::FACET_TYPE_MAXEXCLUSIVE: {
               nsSchemaStringFacet *maxExclusive = &aDerived->maxExclusive;
               if (!maxExclusive->isDefined) {
                 maxExclusive->isDefined = PR_TRUE;
@@ -1622,7 +1856,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_MINEXCLUSIVE: {
+            case nsISVSchemaFacet::FACET_TYPE_MINEXCLUSIVE: {
               nsSchemaStringFacet *minExclusive = &aDerived->minExclusive;
               if (!minExclusive->isDefined) {
                 minExclusive->isDefined = PR_TRUE;
@@ -1633,7 +1867,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_TOTALDIGITS: {
+            case nsISVSchemaFacet::FACET_TYPE_TOTALDIGITS: {
               nsSchemaIntFacet *totalDigits = &aDerived->totalDigits;
               if (!totalDigits->isDefined) {
                 totalDigits->isDefined = PR_TRUE;
@@ -1644,7 +1878,7 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
               break;
             }
 
-            case nsISchemaFacet::FACET_TYPE_FRACTIONDIGITS: {
+            case nsISVSchemaFacet::FACET_TYPE_FRACTIONDIGITS: {
               nsSchemaIntFacet *fractionDigits = &aDerived->fractionDigits;
               if (!fractionDigits->isDefined) {
                 fractionDigits->isDefined = PR_TRUE;
@@ -1663,21 +1897,21 @@ nsSchemaValidatorUtils::GetDerivedSimpleType(nsISchemaSimpleType *aSimpleType,
         break;
       }
 
-      case nsISchemaSimpleType::SIMPLE_TYPE_BUILTIN: {
+      case nsISVSchemaSimpleType::SIMPLE_TYPE_BUILTIN: {
         // we are done
         aDerived->mBaseType = simpleType;
         done = PR_TRUE;
         break;
       }
 
-      case nsISchemaSimpleType::SIMPLE_TYPE_LIST: {
+      case nsISVSchemaSimpleType::SIMPLE_TYPE_LIST: {
         // set as base type
         aDerived->mBaseType = simpleType;
         done = PR_TRUE;
         break;
       }
 
-      case nsISchemaSimpleType::SIMPLE_TYPE_UNION: {
+      case nsISVSchemaSimpleType::SIMPLE_TYPE_UNION: {
         // set as base type
         aDerived->mBaseType = simpleType;
         done = PR_TRUE;
@@ -1750,3 +1984,44 @@ nsSchemaValidatorUtils::SetToNullOrElement(nsIDOMNode *aNode,
   }
 }
 
+PRInt32
+nsSchemaValidatorUtils::FindCharInSet(const nsAString & aString,
+                                      const char *aSet, PRInt32 aOffset)
+{
+  if (aString.IsEmpty()) {
+    return kNotFound;
+  }
+
+  if (aOffset < 0) {
+    aOffset = 0;
+  } else if (aOffset > (PRInt32)aString.Length()) {
+    return kNotFound;
+  }
+
+  const PRUnichar *start, *end;
+  aString.BeginReading(&start, &end);
+
+  for (; start != end; ++start) {
+    for (const char *temp = aSet; *temp; ++temp) {
+      if (*start == PRUnichar(*temp)) {
+        return (temp - aSet + aOffset) ;
+      }
+    }
+  }
+
+  return kNotFound;
+}
+
+PRBool
+nsSchemaValidatorUtils::IsGMT(const nsAString & aDateTime)
+{
+  if (!aDateTime.IsEmpty()) {
+    PRInt32 end = aDateTime.Length() - 1;
+    PRUnichar c = aDateTime.CharAt(end);
+    if (c == 'Z') {
+      return PR_TRUE;
+    }
+  }
+
+  return PR_FALSE;
+}

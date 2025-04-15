@@ -53,8 +53,6 @@
 
 static NS_DEFINE_CID(kCSSLoaderCID, NS_CSS_LOADER_CID);
 
-MOZ_DECL_CTOR_COUNTER(nsXBLPrototypeResources)
-
 nsXBLPrototypeResources::nsXBLPrototypeResources(nsXBLPrototypeBinding* aBinding)
 {
   MOZ_COUNT_CTOR(nsXBLPrototypeResources);
@@ -132,7 +130,7 @@ nsXBLPrototypeResources::FlushSkinSheets()
 
     nsCOMPtr<nsICSSStyleSheet> newSheet;
     if (IsChromeURI(uri)) {
-      if (NS_FAILED(loader->LoadAgentSheet(uri, getter_AddRefs(newSheet))))
+      if (NS_FAILED(loader->LoadSheetSync(uri, getter_AddRefs(newSheet))))
         continue;
     }
     else {

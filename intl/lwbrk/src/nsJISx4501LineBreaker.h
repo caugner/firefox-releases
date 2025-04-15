@@ -45,27 +45,21 @@ class nsJISx4051LineBreaker : public nsILineBreaker
   NS_DECL_ISUPPORTS
 
 public:
-  nsJISx4051LineBreaker(const PRUnichar *aNoBegin, PRInt32 aNoBeginLen, 
-                        const PRUnichar* aNoEnd, PRInt32 aNoEndLen);
+  nsJISx4051LineBreaker();
   virtual ~nsJISx4051LineBreaker();
 
-  NS_IMETHOD BreakInBetween(const PRUnichar* aText1 , PRUint32 aTextLen1,
-                            const PRUnichar* aText2 , PRUint32 aTextLen2,
-                            PRBool *oCanBreak);
+  PRInt32 Next( const PRUnichar* aText, PRUint32 aLen, PRUint32 aPos);
 
-  NS_IMETHOD Next( const PRUnichar* aText, PRUint32 aLen, PRUint32 aPos,
-                   PRUint32* oNext, PRBool *oNeedMoreText);
+  PRInt32 Prev( const PRUnichar* aText, PRUint32 aLen, PRUint32 aPos);
 
-  NS_IMETHOD Prev( const PRUnichar* aText, PRUint32 aLen, PRUint32 aPos,
-                   PRUint32* oPrev, PRBool *oNeedMoreText);
+  virtual void GetJISx4051Breaks(const PRUnichar* aText, PRUint32 aLength,
+                                 PRPackedBool* aBreakBefore);
+  virtual void GetJISx4051Breaks(const PRUint8* aText, PRUint32 aLength,
+                                 PRPackedBool* aBreakBefore);
 
-
-protected:
-
-  PRInt8   GetClass(PRUnichar u);
-  PRInt8   ContextualAnalysis(PRUnichar prev, PRUnichar cur, PRUnichar next );
-  PRBool   GetPair(PRInt8 c1, PRInt8 c2);
-
+private:
+  PRInt32 WordMove(const PRUnichar* aText, PRUint32 aLen, PRUint32 aPos,
+                   PRInt8 aDirection);
 };
 
 #endif  /* nsJISx4501LineBreaker_h__ */

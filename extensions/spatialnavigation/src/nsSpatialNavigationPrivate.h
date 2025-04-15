@@ -46,15 +46,12 @@
 
 #include "nsISpatialNavigation.h"
 
-#include "nsArray.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsFrameTraversal.h"
-#include "nsHTMLAtoms.h"
 #include "nsIArray.h"
 #include "nsIBaseWindow.h"
 #include "nsICategoryManager.h"
-#include "nsIChromeEventHandler.h"
 #include "nsIComponentManager.h"
 #include "nsIDOM3EventTarget.h"
 #include "nsIDOMAbstractView.h"
@@ -65,7 +62,7 @@
 #include "nsIDOMElementCSSInlineStyle.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMEventGroup.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsIDOMHTMLAnchorElement.h"
 #include "nsIDOMHTMLAreaElement.h"
 #include "nsIDOMHTMLCollection.h"
@@ -82,6 +79,8 @@
 #include "nsIDOMNSEvent.h"
 #include "nsIDOMNSHTMLElement.h"
 #include "nsIDOMNSUIEvent.h"
+#include "nsIDOMNSHTMLInputElement.h"
+#include "nsIDOMNSHTMLTextAreaElement.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMWindowInternal.h"
@@ -106,7 +105,6 @@
 #include "nsILineIterator.h"
 #include "nsILocalFile.h"
 #include "nsINameSpaceManager.h"
-#include "nsINodeInfo.h"
 #include "nsIObserver.h"
 #include "nsIPrefBranchInternal.h"
 #include "nsIPrefService.h"
@@ -120,7 +118,6 @@
 #include "nsIWebBrowser.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsIWindowWatcher.h"
-#include "nsLayoutAtoms.h"
 #include "nsLayoutCID.h"
 #include "nsPIDOMWindow.h"
 #include "nsStyleContext.h"
@@ -205,7 +202,12 @@ enum {
 // Utils
 
 nscoord* lo_parse_coord_list          (char *str, PRInt32* value_cnt);
-nsresult createFrameTraversal         (PRUint32 type, nsPresContext* presContext, nsIBidirectionalEnumerator** outTraversal);
+nsresult createFrameTraversal         (nsPresContext* aPresContext,
+                                       PRInt32 aType,
+                                       PRBool aVisual,
+                                       PRBool aLockInScrollView,
+                                       PRBool aFollowOOFs,
+                                       nsIBidirectionalEnumerator** outTraversal);
 nsresult getEventTargetFromWindow     (nsIDOMWindow* aWindow, nsIDOM3EventTarget** aEventTarget, nsIDOMEventGroup** aSystemGroup);
 void     getContentFromFrame          (nsIContent* c, nsIContent** outContent);
 nsresult getFrameForContent           (nsIContent* aContent, nsIFrame** aFrame);

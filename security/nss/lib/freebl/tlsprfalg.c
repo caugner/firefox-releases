@@ -35,7 +35,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: tlsprfalg.c,v 1.5.6.2 2006/02/03 22:31:10 wtchang%redhat.com Exp $ */
+/* $Id: tlsprfalg.c,v 1.5 2005/11/05 01:00:14 wtchang%redhat.com Exp $ */
 
 #include "sechash.h"
 #include "alghmac.h"

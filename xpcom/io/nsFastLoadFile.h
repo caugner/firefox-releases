@@ -163,7 +163,7 @@ typedef PRUint32 NSFastLoadOID;         // nsFastLoadFooter::mObjectMap index
  *  while (NS_SUCCEEDED(rv = Read(buf + rem, sizeof buf - rem, &len)) && len) {
  *      len += rem;
  *      rem = NS_AccumulateFastLoadChecksum(&checksum,
- *                                          NS_REINTERPRET_CAST(PRUint8*, buf),
+ *                                          reinterpret_cast<PRUint8*>(buf),
  *                                          len,
  *                                          PR_FALSE);
  *      if (rem)
@@ -172,20 +172,20 @@ typedef PRUint32 NSFastLoadOID;         // nsFastLoadFooter::mObjectMap index
  *
  *  if (rem) {
  *      NS_AccumulateFastLoadChecksum(&checksum,
- *                                    NS_REINTERPRET_CAST(PRUint8*, buf),
+ *                                    reinterpret_cast<PRUint8*>(buf),
  *                                    rem,
  *                                    PR_TRUE);
  *  }
  *
  * After this, if NS_SUCCEEDED(rv), checksum contains a valid FastLoad sum.
  */
-PR_EXTERN(PRUint32)
+NS_COM PRUint32
 NS_AccumulateFastLoadChecksum(PRUint32 *aChecksum,
                               const PRUint8* aBuffer,
                               PRUint32 aLength,
                               PRBool aLastBuffer);
 
-PR_EXTERN(PRUint32)
+NS_COM PRUint32
 NS_AddFastLoadChecksums(PRUint32 sum1, PRUint32 sum2, PRUint32 sum2ByteCount);
 
 /**
@@ -245,8 +245,10 @@ struct nsDocumentMapWriteEntry;
     {0x7d37d1bb,0xcef3,0x4c5f,{0x97,0x68,0x0f,0x89,0x7f,0x1a,0xe1,0x40}}
 
 struct nsIFastLoadFileReader : public nsISupports {
-    NS_DEFINE_STATIC_IID_ACCESSOR(NS_FASTLOADFILEREADER_IID)
+    NS_DECLARE_STATIC_IID_ACCESSOR(NS_FASTLOADFILEREADER_IID)
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIFastLoadFileReader, NS_FASTLOADFILEREADER_IID)
 
 /**
  * Inherit from the concrete class nsBinaryInputStream, which inherits from

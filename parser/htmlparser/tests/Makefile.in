@@ -42,9 +42,20 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-DIRS            = outsinks \
-                  grabpage \
-                  html \
-                  $(NULL)
+DIRS = \
+	grabpage \
+	html \
+	$(NULL)
+
+ifndef MOZ_ENABLE_LIBXUL
+DIRS += \
+	outsinks \
+	$(NULL)
+endif
+
+ifdef MOZ_MOCHITEST
+DIRS += mochitest \
+        $(NULL)
+endif
 
 include $(topsrcdir)/config/rules.mk

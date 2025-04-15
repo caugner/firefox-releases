@@ -36,45 +36,29 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsPrintObject.h"
-#include "imgIContainer.h"
+#include "nsIContentViewer.h"
+#include "nsIDOMDocument.h"
 
 //---------------------------------------------------
 //-- nsPrintObject Class Impl
 //---------------------------------------------------
 nsPrintObject::nsPrintObject() :
-  mFrameType(eFrame), mStyleSet(nsnull),
-  mRootView(nsnull), mContent(nsnull),
-  mSeqFrame(nsnull), mPageFrame(nsnull), mPageNum(-1),
-  mRect(0,0,0,0), mReflowRect(0,0,0,0),
-  mParent(nsnull), mHasBeenPrinted(PR_FALSE), mDontPrint(PR_TRUE),
-  mPrintAsIs(PR_FALSE), mSkippedPageEject(PR_FALSE), mSharedPresShell(PR_FALSE), mIsHidden(PR_FALSE), mInvisible(PR_FALSE),
-  mClipRect(-1,-1, -1, -1),
-  mImgAnimationMode(imgIContainer::kNormalAnimMode),
-  mDocTitle(nsnull), mDocURL(nsnull), mShrinkRatio(1.0), mXMost(0)
+  mContent(nsnull), mFrameType(eFrame), mParent(nsnull),
+  mHasBeenPrinted(PR_FALSE), mDontPrint(PR_TRUE), mPrintAsIs(PR_FALSE),
+  mSharedPresShell(PR_FALSE), mInvisible(PR_FALSE),
+  mShrinkRatio(1.0), mZoomRatio(1.0)
 {
 }
 
 
 nsPrintObject::~nsPrintObject()
 {
-  if (mPresContext) {
-    mPresContext->SetImageAnimationMode(mImgAnimationMode);
-  }
-
   for (PRInt32 i=0;i<mKids.Count();i++) {
     nsPrintObject* po = (nsPrintObject*)mKids[i];
-    NS_ASSERTION(po, "nsPrintObject can't be null!");
     delete po;
   }
 
-  if (mPresShell && !mSharedPresShell) {
-    mPresShell->EndObservingDocument();
-    mPresShell->Destroy();
-  }
-
-  if (mDocTitle) nsMemory::Free(mDocTitle);
-  if (mDocURL) nsMemory::Free(mDocURL);
-
+  DestroyPresentation();
 }
 
 //------------------------------------------------------------------
@@ -84,14 +68,17 @@ nsPrintObject::Init(nsIDocShell* aDocShell)
 {
   mDocShell = aDocShell;
   NS_ENSURE_TRUE(mDocShell, NS_ERROR_FAILURE);
-
-  mDocShell->GetPresShell(getter_AddRefs(mDisplayPresShell));
-  NS_ENSURE_TRUE(mDisplayPresShell, NS_ERROR_FAILURE);
-
-  mDocShell->GetPresContext(getter_AddRefs(mDisplayPresContext));
-  NS_ENSURE_TRUE(mDisplayPresContext, NS_ERROR_FAILURE);
-
-  mDocument = mDisplayPresShell->GetDocument();
+  
+  nsresult rv;
+  nsCOMPtr<nsIContentViewer> viewer;
+  rv = mDocShell->GetContentViewer(getter_AddRefs(viewer));
+  NS_ENSURE_SUCCESS(rv, rv);
+  
+  nsCOMPtr<nsIDOMDocument> doc;
+  viewer->GetDOMDocument(getter_AddRefs(doc));
+  NS_ENSURE_SUCCESS(rv, rv);
+  
+  mDocument = do_QueryInterface(doc);
   NS_ENSURE_TRUE(mDocument, NS_ERROR_FAILURE);
 
   return NS_OK;
@@ -104,9 +91,11 @@ nsPrintObject::DestroyPresentation()
 {
   mWindow      = nsnull;
   mPresContext = nsnull;
-  if (mPresShell) mPresShell->Destroy();
+  if (mPresShell) {
+    mPresShell->EndObservingDocument();
+    mPresShell->Destroy();
+  }
   mPresShell   = nsnull;
   mViewManager = nsnull;
-  mStyleSet    = nsnull;
 }
 

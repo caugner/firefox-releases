@@ -40,8 +40,8 @@
 
 #include "nsILookAndFeel.h"
 #include "nsCOMPtr.h"
-
-class nsIPref;
+#include "nsIObserver.h"
+#include "nsIPrefBranch.h"
 
 #ifdef NS_DEBUG
 struct nsSize;
@@ -79,13 +79,15 @@ struct nsLookAndFeelFloatPref
 #define CACHE_COLOR(x, y)  nsXPLookAndFeel::sCachedColors[(x)] = y; \
               nsXPLookAndFeel::sCachedColorBits[CACHE_BLOCK(x)] |= CACHE_BIT(x);
 
-class nsXPLookAndFeel: public nsILookAndFeel
+class nsXPLookAndFeel: public nsILookAndFeel, public nsIObserver
 {
 public:
   nsXPLookAndFeel();
   virtual ~nsXPLookAndFeel();
 
   NS_DECL_ISUPPORTS
+
+  NS_DECL_NSIOBSERVER
 
   void Init();
 
@@ -109,10 +111,14 @@ public:
 #endif
 
 protected:
-  nsresult InitFromPref(nsLookAndFeelIntPref* aPref, nsIPref* aPrefService);
-  nsresult InitFromPref(nsLookAndFeelFloatPref* aPref, nsIPref* aPrefService);
-  nsresult InitColorFromPref(PRInt32 aIndex, nsIPref* aPrefService);
+  void IntPrefChanged(nsLookAndFeelIntPref *data);
+  void FloatPrefChanged(nsLookAndFeelFloatPref *data);
+  void ColorPrefChanged(unsigned int index, const char *prefName);
+  void InitFromPref(nsLookAndFeelIntPref* aPref, nsIPrefBranch* aPrefBranch);
+  void InitFromPref(nsLookAndFeelFloatPref* aPref, nsIPrefBranch* aPrefBranch);
+  void InitColorFromPref(PRInt32 aIndex, nsIPrefBranch* aPrefBranch);
   virtual nsresult NativeGetColor(const nsColorID aID, nscolor& aColor) = 0;
+  PRBool IsSpecialColor(const nsColorID aID, nscolor &aColor);
 
   static PRBool sInitialized;
   static nsLookAndFeelIntPref sIntPrefs[];
@@ -120,11 +126,9 @@ protected:
   /* this length must not be shorter than the length of the longest string in the array
    * see nsXPLookAndFeel.cpp
    */
-  static const char sColorPrefs[][36];
+  static const char sColorPrefs[][38];
   static PRInt32 sCachedColors[nsILookAndFeel::eColor_LAST_COLOR];
   static PRInt32 sCachedColorBits[COLOR_CACHE_SIZE];
-
-  friend int colorPrefChanged(const char* aPref, void* aData);
 };
 
 extern nsresult NS_NewXPLookAndFeel(nsILookAndFeel**);

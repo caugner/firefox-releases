@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=2 sw=2 et tw=80: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -36,7 +37,11 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-// Removes potentially insecure or offending HTML
+/*
+ * A serializer and content sink that removes potentially insecure or
+ * otherwise dangerous or offending HTML (eg for display of HTML
+ * e-mail attachments or something).
+ */
 
 /* I used nsPlaintextSerializer as base for this class. I don't understand
    all of the functions in the beginning. Possible that I fail to do
@@ -47,10 +52,8 @@
 
 #include "mozSanitizingSerializer.h"
 #include "nsIServiceManager.h"
-#include "nsHTMLAtoms.h"
 #include "nsIDOMText.h"
 #include "nsIDOMElement.h"
-#include "nsITextContent.h"
 #include "nsTextFragment.h"
 #include "nsContentUtils.h"
 #include "nsReadableUtils.h"
@@ -89,7 +92,8 @@ nsresult NS_NewSanitizingHTMLSerializer(nsIContentSerializer** aSerializer)
 }
 
 mozSanitizingHTMLSerializer::mozSanitizingHTMLSerializer()
-  : mAllowedTags(30) // Just some initial buffer size
+  : mSkipLevel(0),
+    mAllowedTags(30) // Just some initial buffer size
 {
   mOutputString = nsnull;
 }
@@ -97,7 +101,7 @@ mozSanitizingHTMLSerializer::mozSanitizingHTMLSerializer()
 mozSanitizingHTMLSerializer::~mozSanitizingHTMLSerializer()
 {
 #ifdef DEBUG_BenB
-  printf("Output:\n%s\n", NS_LossyConvertUCS2toASCII(*mOutputString).get());
+  printf("Output:\n%s\n", NS_LossyConvertUTF16toASCII(*mOutputString).get());
 #endif
   mAllowedTags.Enumerate(ReleaseProperties);
 }
@@ -122,10 +126,10 @@ NS_IMPL_ISUPPORTS4(mozSanitizingHTMLSerializer,
 
 NS_IMETHODIMP 
 mozSanitizingHTMLSerializer::Init(PRUint32 aFlags, PRUint32 dummy,
-                                  const char* aCharSet, PRBool aIsCopying)
+                                  const char* aCharSet, PRBool aIsCopying,
+                                  PRBool aIsWholeDocument)
 {
-  NS_ENSURE_TRUE(nsContentUtils::GetParserServiceWeakRef(),
-                 NS_ERROR_UNEXPECTED);
+  NS_ENSURE_TRUE(nsContentUtils::GetParserService(), NS_ERROR_UNEXPECTED);
 
   return NS_OK;
 }
@@ -135,7 +139,7 @@ mozSanitizingHTMLSerializer::Initialize(nsAString* aOutString,
                                         PRUint32 aFlags,
                                         const nsAString& allowedTags)
 {
-  nsresult rv = Init(aFlags, 0, nsnull, PR_FALSE);
+  nsresult rv = Init(aFlags, 0, nsnull, PR_FALSE, PR_FALSE);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // XXX This is wrong. It violates XPCOM string ownership rules.
@@ -154,7 +158,7 @@ NS_IMETHODIMP
 mozSanitizingHTMLSerializer::Flush(nsAString& aStr)
 {
 #ifdef DEBUG_BenB
-  printf("Flush: -%s-", NS_LossyConvertUCS2toASCII(aStr).get());
+  printf("Flush: -%s-", NS_LossyConvertUTF16toASCII(aStr).get());
 #endif
   Write(aStr);
   return NS_OK;
@@ -190,7 +194,7 @@ mozSanitizingHTMLSerializer::IsContainer(PRInt32 aId)
 {
   PRBool isContainer = PR_FALSE;
 
-  nsIParserService* parserService = nsContentUtils::GetParserServiceWeakRef();
+  nsIParserService* parserService = nsContentUtils::GetParserService();
   if (parserService) {
     parserService->IsContainer(aId, isContainer);
   }
@@ -210,11 +214,11 @@ mozSanitizingHTMLSerializer::IsContainer(PRInt32 aId)
 PRInt32
 mozSanitizingHTMLSerializer::GetIdForContent(nsIContent* aContent)
 {
-  if (!aContent->IsContentOfType(nsIContent::eHTML)) {
+  if (!aContent->IsNodeOfType(nsINode::eHTML)) {
     return eHTMLTag_unknown;
   }
 
-  nsIParserService* parserService = nsContentUtils::GetParserServiceWeakRef();
+  nsIParserService* parserService = nsContentUtils::GetParserService();
 
   return parserService ? parserService->HTMLAtomTagToId(aContent->Tag()) :
                          eHTMLTag_unknown;
@@ -238,7 +242,7 @@ mozSanitizingHTMLSerializer::AppendText(nsIDOMText* aText,
 
 NS_IMETHODIMP 
 mozSanitizingHTMLSerializer::AppendElementStart(nsIDOMElement *aElement,
-                                                PRBool aHasChildren,
+                                                nsIDOMElement *aOriginalElement,
                                                 nsAString& aStr)
 {
   NS_ENSURE_ARG(aElement);
@@ -297,48 +301,14 @@ mozSanitizingHTMLSerializer::OpenContainer(const nsIParserNode& aNode)
 {
   PRInt32 type = aNode.GetNodeType();
 
-  mParserNode = NS_CONST_CAST(nsIParserNode *, &aNode);
+  mParserNode = const_cast<nsIParserNode *>(&aNode);
   return DoOpenContainer(type);
 }
 
 NS_IMETHODIMP 
 mozSanitizingHTMLSerializer::CloseContainer(const nsHTMLTag aTag)
 {
-  // XXX Why do we need this?
-  // mParserNode = NS_CONST_CAST(nsIParserNode*, &aNode);
   return DoCloseContainer(aTag);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::AddHeadContent(const nsIParserNode& aNode)
-{
-  nsresult rv = NS_OK;
-  eHTMLTags type = (eHTMLTags)aNode.GetNodeType();
-  if (eHTMLTag_whitespace == type || 
-      eHTMLTag_newline == type    ||
-      eHTMLTag_text == type       ||
-      eHTMLTag_entity == type) {
-    rv = AddLeaf(aNode);
-  }
-  else if (eHTMLTag_title == type) {
-    NS_ASSERTION(mParser, "Only CNavDTD treats title this way.");
-
-    nsString skippedContent;
-    PRInt32 lineNo;
-
-    nsCOMPtr<nsIDTD> dtd;
-    mParser->GetDTD(getter_AddRefs(dtd));
-    NS_ENSURE_TRUE(dtd, NS_ERROR_UNEXPECTED);
-
-    dtd->CollectSkippedContent(type, skippedContent, lineNo);
-    SetTitle(skippedContent);
-  }
-  else {
-    rv = OpenContainer(aNode);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = CloseContainer(type);
-  }
-  return rv;
 }
 
 NS_IMETHODIMP 
@@ -347,36 +317,8 @@ mozSanitizingHTMLSerializer::AddLeaf(const nsIParserNode& aNode)
   eHTMLTags type = (eHTMLTags)aNode.GetNodeType();
   const nsAString& text = aNode.GetText();
 
-  mParserNode = NS_CONST_CAST(nsIParserNode*, &aNode);
+  mParserNode = const_cast<nsIParserNode*>(&aNode);
   return DoAddLeaf(type, text);
-}
-
-NS_IMETHODIMP
-mozSanitizingHTMLSerializer::OpenHTML(const nsIParserNode& aNode)
-{
-  return OpenContainer(aNode);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::CloseHTML()
-{
-  return CloseContainer(eHTMLTag_html);
-}
-
-NS_IMETHODIMP
-mozSanitizingHTMLSerializer::SetTitle(const nsString& aValue)
-{
-  if (IsAllowedTag(eHTMLTag_title))
-  {
-    // See bug 195020 for a good reason to output the tags.
-    // It will make sure we have a closing tag, and a
-    // missing </title> tag won't result in everything
-    // being eaten up as the title.
-    Write(NS_LITERAL_STRING("<title>"));
-    Write(nsAdoptingString(escape(aValue)));
-    Write(NS_LITERAL_STRING("</title>"));
-  }
-  return NS_OK;
 }
 
 NS_IMETHODIMP 
@@ -392,71 +334,18 @@ mozSanitizingHTMLSerializer::SetDocumentCharset(nsACString& aCharset)
   Write(NS_LITERAL_STRING("\n<meta http-equiv=\"Context-Type\" content=\"text/html; charset=")
         /* Danger: breaking the line within the string literal, like
            "foo"\n"bar", breaks win32! */
-        + nsAdoptingString(escape(NS_ConvertASCIItoUCS2(aCharset)))
+        + nsAdoptingString(escape(NS_ConvertASCIItoUTF16(aCharset)))
         + NS_LITERAL_STRING("\">\n"));
   return NS_OK;
 }
 
 NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::OpenHead(const nsIParserNode& aNode)
+mozSanitizingHTMLSerializer::OpenHead()
 {
-  return OpenContainer(aNode);
+  // XXX We don't have a parser node here, is it okay to ignore this?
+  // return OpenContainer(aNode);
+  return NS_OK;
 }
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::CloseHead()
-{
-  return CloseContainer(eHTMLTag_head);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::OpenBody(const nsIParserNode& aNode)
-{
-  return OpenContainer(aNode);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::CloseBody()
-{
-  return CloseContainer(eHTMLTag_body);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::OpenForm(const nsIParserNode& aNode)
-{
-  return OpenContainer(aNode);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::CloseForm()
-{
-  return CloseContainer(eHTMLTag_form);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::OpenMap(const nsIParserNode& aNode)
-{
-  return OpenContainer(aNode);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::CloseMap()
-{
-  return CloseContainer(eHTMLTag_map);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::OpenFrameset(const nsIParserNode& aNode)
-{
-  return OpenContainer(aNode);
-}
-
-NS_IMETHODIMP 
-mozSanitizingHTMLSerializer::CloseFrameset()
-{
-  return CloseContainer(eHTMLTag_frameset);
-}
-
 
 // Here comes the actual code...
 
@@ -465,10 +354,9 @@ mozSanitizingHTMLSerializer::DoOpenContainer(PRInt32 aTag)
 {
   eHTMLTags type = (eHTMLTags)aTag;
 
-  if (IsAllowedTag(type))
+  if (mSkipLevel == 0 && IsAllowedTag(type))
   {
-    nsIParserService* parserService =
-      nsContentUtils::GetParserServiceWeakRef();
+    nsIParserService* parserService = nsContentUtils::GetParserService();
     if (!parserService)
       return NS_ERROR_OUT_OF_MEMORY;
     const PRUnichar* tag_name = parserService->HTMLIdToStringTag(aTag);
@@ -501,6 +389,8 @@ mozSanitizingHTMLSerializer::DoOpenContainer(PRInt32 aTag)
 
     Write(NS_LITERAL_STRING(">"));
   }
+  else if (mSkipLevel != 0 || type == eHTMLTag_script || type == eHTMLTag_style)
+    ++mSkipLevel;
   else
     Write(NS_LITERAL_STRING(" "));
 
@@ -513,9 +403,8 @@ mozSanitizingHTMLSerializer::DoCloseContainer(PRInt32 aTag)
 {
   eHTMLTags type = (eHTMLTags)aTag;
 
-  if (IsAllowedTag(type)) {
-    nsIParserService* parserService =
-      nsContentUtils::GetParserServiceWeakRef();
+  if (mSkipLevel == 0 && IsAllowedTag(type)) {
+    nsIParserService* parserService = nsContentUtils::GetParserService();
     if (!parserService)
       return NS_ERROR_OUT_OF_MEMORY;
     const PRUnichar* tag_name = parserService->HTMLIdToStringTag(aTag);
@@ -524,8 +413,10 @@ mozSanitizingHTMLSerializer::DoCloseContainer(PRInt32 aTag)
     Write(NS_LITERAL_STRING("</") + nsDependentString(tag_name)
           + NS_LITERAL_STRING(">"));
   }
-  else
+  else if (mSkipLevel == 0)
     Write(NS_LITERAL_STRING(" "));
+  else
+    --mSkipLevel;
 
   return NS_OK;
 }
@@ -534,6 +425,9 @@ nsresult
 mozSanitizingHTMLSerializer::DoAddLeaf(PRInt32 aTag,
                                        const nsAString& aText)
 {
+  if (mSkipLevel != 0)
+    return NS_OK;
+
   eHTMLTags type = (eHTMLTags)aTag;
 
   nsresult rv = NS_OK;
@@ -558,36 +452,6 @@ mozSanitizingHTMLSerializer::DoAddLeaf(PRInt32 aTag,
     Write(aText); // sure to be safe?
     // using + operator here might give an infinitive loop, see above.
     // not adding ";", because Gecko delivers that as part of |aText| (freaky)
-  }
-  else if (type == eHTMLTag_script ||
-           type == eHTMLTag_style ||
-           type == eHTMLTag_server)
-  {
-    // These special tags require some extra care. The parser gives them
-    // to us as leaves, but they're really containers. Their content is
-    // contained in the "skipped content" of the parser. This code is
-    // adapted from nsHTMLContentSink.cpp
-    nsString skippedContent;
-    PRInt32 lineNo;
-
-    NS_ASSERTION(mParser, "We are receiving containers as leaves with "
-                          "no skipped content.");
-
-    nsCOMPtr<nsIDTD> dtd;
-    mParser->GetDTD(getter_AddRefs(dtd));
-    NS_ENSURE_TRUE(dtd, NS_ERROR_UNEXPECTED);
-
-    // Note: we want to collect the skipped content no matter what. We
-    // may end up throwing it away anyway, but the DTD doesn't care
-    // about that.
-    dtd->CollectSkippedContent(type, skippedContent, lineNo);
-
-    DoOpenContainer(type);
-    if (IsAllowedTag(type))
-    {
-      Write(skippedContent);
-    }
-    DoCloseContainer(type);
   }
   else
   {
@@ -651,7 +515,7 @@ mozSanitizingHTMLSerializer::SanitizeAttrValue(nsHTMLTag aTag,
     nsCOMPtr<nsIIOService> ioService = do_GetIOService(&rv);
     NS_ENSURE_SUCCESS(rv, rv);
     nsCAutoString scheme;
-    rv = ioService->ExtractScheme(NS_LossyConvertUCS2toASCII(aValue), scheme);
+    rv = ioService->ExtractScheme(NS_LossyConvertUTF16toASCII(aValue), scheme);
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (!scheme.Equals("cid", nsCaseInsensitiveCStringComparator()))
@@ -660,8 +524,8 @@ mozSanitizingHTMLSerializer::SanitizeAttrValue(nsHTMLTag aTag,
 
 #ifdef DEBUG_BenB
   printf("attribute value for %s: -%s-\n",
-         NS_LossyConvertUCS2toASCII(anAttrName).get(),
-         NS_LossyConvertUCS2toASCII(aValue).get());
+         NS_LossyConvertUTF16toASCII(anAttrName).get(),
+         NS_LossyConvertUTF16toASCII(aValue).get());
 #endif
 
   return NS_OK;
@@ -692,7 +556,7 @@ mozSanitizingHTMLSerializer::IsAllowedAttribute(nsHTMLTag aTag,
 #ifdef DEBUG_BenB
   printf("IsAllowedAttribute %d, -%s-\n",
          aTag,
-         NS_LossyConvertUCS2toASCII(anAttributeName).get());
+         NS_LossyConvertUTF16toASCII(anAttributeName).get());
 #endif
   nsresult rv;
 
@@ -703,7 +567,7 @@ mozSanitizingHTMLSerializer::IsAllowedAttribute(nsHTMLTag aTag,
   PRBool allowed;
   nsAutoString attr(anAttributeName);
   ToLowerCase(attr);
-  rv = attr_bag->Has(NS_LossyConvertUCS2toASCII(attr).get(),
+  rv = attr_bag->Has(NS_LossyConvertUTF16toASCII(attr).get(),
                      &allowed);
   if (NS_FAILED(rv))
     return PR_FALSE;
@@ -755,7 +619,7 @@ mozSanitizingHTMLSerializer::ParsePrefs(const nsAString& aPref)
 nsresult
 mozSanitizingHTMLSerializer::ParseTagPref(const nsCAutoString& tagpref)
 {
-  nsIParserService* parserService = nsContentUtils::GetParserServiceWeakRef();
+  nsIParserService* parserService = nsContentUtils::GetParserService();
   if (!parserService)
     return NS_ERROR_OUT_OF_MEMORY;
 

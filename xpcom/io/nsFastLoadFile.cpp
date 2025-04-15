@@ -52,6 +52,7 @@
 #include "nsISeekableStream.h"
 #include "nsISerializable.h"
 #include "nsIStreamBufferAccess.h"
+#include "nsIClassInfo.h"
 
 #include "nsBinaryStream.h"
 #include "nsFastLoadFile.h"
@@ -103,7 +104,7 @@ static void trace_mux(char mode, const char *format, ...)
 #define FLETCHER_ACCUMULATE(A,B,U)      ONES_COMPLEMENT_ACCUMULATE(A, U);     \
                                         ONES_COMPLEMENT_ACCUMULATE(B, A)
 
-PR_IMPLEMENT(PRUint32)
+PRUint32
 NS_AccumulateFastLoadChecksum(PRUint32 *aChecksum,
                               const PRUint8* aBuffer,
                               PRUint32 aLength,
@@ -142,7 +143,7 @@ NS_AccumulateFastLoadChecksum(PRUint32 *aChecksum,
         PRUint32 W;
         if (odd) {
             while (aLength > 3) {
-                W = *NS_REINTERPRET_CAST(const PRUint32*, aBuffer);
+                W = *reinterpret_cast<const PRUint32*>(aBuffer);
                 U <<= 8;
 #ifdef IS_BIG_ENDIAN
                 U |= W >> 24;
@@ -165,7 +166,7 @@ NS_AccumulateFastLoadChecksum(PRUint32 *aChecksum,
             aLength++;
         } else {
             while (aLength > 3) {
-                W = *NS_REINTERPRET_CAST(const PRUint32*, aBuffer);
+                W = *reinterpret_cast<const PRUint32*>(aBuffer);
 #ifdef IS_BIG_ENDIAN
                 U = W >> 16;
                 FLETCHER_ACCUMULATE(A, B, U);
@@ -224,7 +225,7 @@ NS_AccumulateFastLoadChecksum(PRUint32 *aChecksum,
     return aLength;
 }
 
-PR_IMPLEMENT(PRUint32)
+PRUint32
 NS_AddFastLoadChecksums(PRUint32 sum1, PRUint32 sum2, PRUint32 sum2ByteCount)
 {
     PRUint32 A1 = sum1 & 0xffff;
@@ -266,15 +267,13 @@ NS_IMPL_ISUPPORTS_INHERITED5(nsFastLoadFileReader,
                              nsISeekableStream,
                              nsIFastLoadFileReader)
 
-MOZ_DECL_CTOR_COUNTER(nsFastLoadFileReader)
-
 nsresult
 nsFastLoadFileReader::ReadHeader(nsFastLoadHeader *aHeader)
 {
     nsresult rv;
     PRUint32 bytesRead;
 
-    rv = Read(NS_REINTERPRET_CAST(char*, aHeader), sizeof *aHeader, &bytesRead);
+    rv = Read(reinterpret_cast<char*>(aHeader), sizeof *aHeader, &bytesRead);
     if (NS_FAILED(rv))
         return rv;
 
@@ -330,7 +329,7 @@ struct nsDocumentMapReadEntry : public nsDocumentMapEntry {
 PR_STATIC_CALLBACK(void)
 strmap_ClearEntry(PLDHashTable *aTable, PLDHashEntryHdr *aHdr)
 {
-    nsStringMapEntry* entry = NS_STATIC_CAST(nsStringMapEntry*, aHdr);
+    nsStringMapEntry* entry = static_cast<nsStringMapEntry*>(aHdr);
 
     if (entry->mString)
         nsMemory::Free((void*) entry->mString);
@@ -341,7 +340,6 @@ strmap_ClearEntry(PLDHashTable *aTable, PLDHashEntryHdr *aHdr)
 static const PLDHashTableOps strmap_DHashTableOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
-    PL_DHashGetKeyStub,
     PL_DHashStringKey,
     PL_DHashMatchStringKey,
     PL_DHashMoveEntryStub,
@@ -365,7 +363,7 @@ struct nsURIMapReadEntry : public nsObjectMapEntry {
 PR_STATIC_CALLBACK(void)
 objmap_ClearEntry(PLDHashTable *aTable, PLDHashEntryHdr *aHdr)
 {
-    nsObjectMapEntry* entry = NS_STATIC_CAST(nsObjectMapEntry*, aHdr);
+    nsObjectMapEntry* entry = static_cast<nsObjectMapEntry*>(aHdr);
 
     // Ignore tagged object ids stored as object pointer keys (the updater
     // code does this).
@@ -377,7 +375,6 @@ objmap_ClearEntry(PLDHashTable *aTable, PLDHashEntryHdr *aHdr)
 static const PLDHashTableOps objmap_DHashTableOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
-    PL_DHashGetKeyStub,
     PL_DHashVoidPtrKeyStub,
     PL_DHashMatchEntryStub,
     PL_DHashMoveEntryStub,
@@ -390,8 +387,8 @@ NS_IMETHODIMP
 nsFastLoadFileReader::HasMuxedDocument(const char* aURISpec, PRBool *aResult)
 {
     nsDocumentMapReadEntry* docMapEntry =
-        NS_STATIC_CAST(nsDocumentMapReadEntry*,
-                       PL_DHashTableOperate(&mFooter.mDocumentMap, aURISpec,
+        static_cast<nsDocumentMapReadEntry*>
+                   (PL_DHashTableOperate(&mFooter.mDocumentMap, aURISpec,
                                             PL_DHASH_LOOKUP));
 
     *aResult = PL_DHASH_ENTRY_IS_BUSY(docMapEntry);
@@ -402,8 +399,8 @@ NS_IMETHODIMP
 nsFastLoadFileReader::StartMuxedDocument(nsISupports* aURI, const char* aURISpec)
 {
     nsDocumentMapReadEntry* docMapEntry =
-        NS_STATIC_CAST(nsDocumentMapReadEntry*,
-                       PL_DHashTableOperate(&mFooter.mDocumentMap, aURISpec,
+        static_cast<nsDocumentMapReadEntry*>
+                   (PL_DHashTableOperate(&mFooter.mDocumentMap, aURISpec,
                                             PL_DHASH_LOOKUP));
 
     // If the spec isn't in the map, return NS_ERROR_NOT_AVAILABLE so the
@@ -413,8 +410,8 @@ nsFastLoadFileReader::StartMuxedDocument(nsISupports* aURI, const char* aURISpec
 
     nsCOMPtr<nsISupports> key(do_QueryInterface(aURI));
     nsURIMapReadEntry* uriMapEntry =
-        NS_STATIC_CAST(nsURIMapReadEntry*,
-                       PL_DHashTableOperate(&mFooter.mURIMap, key,
+        static_cast<nsURIMapReadEntry*>
+                   (PL_DHashTableOperate(&mFooter.mURIMap, key,
                                             PL_DHASH_ADD));
     if (!uriMapEntry)
         return NS_ERROR_OUT_OF_MEMORY;
@@ -442,8 +439,8 @@ nsFastLoadFileReader::SelectMuxedDocument(nsISupports* aURI,
     // Find the given URI's entry and select it for more reading.
     nsCOMPtr<nsISupports> key(do_QueryInterface(aURI));
     nsURIMapReadEntry* uriMapEntry =
-        NS_STATIC_CAST(nsURIMapReadEntry*,
-                       PL_DHashTableOperate(&mFooter.mURIMap, key,
+        static_cast<nsURIMapReadEntry*>
+                   (PL_DHashTableOperate(&mFooter.mURIMap, key,
                                             PL_DHASH_LOOKUP));
 
     // If the URI isn't in the map, return NS_ERROR_NOT_AVAILABLE so the
@@ -505,8 +502,8 @@ nsFastLoadFileReader::EndMuxedDocument(nsISupports* aURI)
 {
     nsCOMPtr<nsISupports> key(do_QueryInterface(aURI));
     nsURIMapReadEntry* uriMapEntry =
-        NS_STATIC_CAST(nsURIMapReadEntry*,
-                       PL_DHashTableOperate(&mFooter.mURIMap, key,
+        static_cast<nsURIMapReadEntry*>
+                   (PL_DHashTableOperate(&mFooter.mURIMap, key,
                                             PL_DHASH_LOOKUP));
 
     // If the URI isn't in the map, return NS_ERROR_NOT_AVAILABLE so the
@@ -582,7 +579,7 @@ nsFastLoadFileReader::Read(char* aBuffer, PRUint32 aCount, PRUint32 *aBytesRead)
         }
     }
 
-    rv = mInputStream->Read(aBuffer, aCount, aBytesRead);
+    rv = nsBinaryInputStream::Read(aBuffer, aCount, aBytesRead);
 
     if (NS_SUCCEEDED(rv) && entry) {
         NS_ASSERTION(entry->mBytesLeft >= *aBytesRead, "demux Read underflow!");
@@ -633,9 +630,9 @@ nsFastLoadFileReader::SetInputStream(nsIInputStream *aInputStream)
 }
 
 /**
- * XXX tuneme
+ * FIXME: bug #411579 (tune this macro!) Last updated: Jan 2008
  */
-#define MFL_CHECKSUM_BUFSIZE    8192
+#define MFL_CHECKSUM_BUFSIZE    (6 * 8192)
 
 NS_IMETHODIMP
 nsFastLoadFileReader::ComputeChecksum(PRUint32 *aResult)
@@ -683,7 +680,7 @@ nsFastLoadFileReader::ComputeChecksum(PRUint32 *aResult)
            len) {
         len += rem;
         rem = NS_AccumulateFastLoadChecksum(&checksum,
-                                            NS_REINTERPRET_CAST(PRUint8*, buf),
+                                            reinterpret_cast<PRUint8*>(buf),
                                             len,
                                             PR_FALSE);
         if (rem)
@@ -694,7 +691,7 @@ nsFastLoadFileReader::ComputeChecksum(PRUint32 *aResult)
 
     if (rem) {
         NS_AccumulateFastLoadChecksum(&checksum,
-                                      NS_REINTERPRET_CAST(PRUint8*, buf),
+                                      reinterpret_cast<PRUint8*>(buf),
                                       rem,
                                       PR_TRUE);
     }
@@ -772,8 +769,8 @@ nsFastLoadFileReader::ReadFooter(nsFastLoadFooter *aFooter)
             return rv;
 
         nsDocumentMapReadEntry* entry =
-            NS_STATIC_CAST(nsDocumentMapReadEntry*,
-                           PL_DHashTableOperate(&aFooter->mDocumentMap,
+            static_cast<nsDocumentMapReadEntry*>
+                       (PL_DHashTableOperate(&aFooter->mDocumentMap,
                                                 info.mURISpec,
                                                 PL_DHASH_ADD));
         if (!entry) {
@@ -803,7 +800,7 @@ nsFastLoadFileReader::ReadFooter(nsFastLoadFooter *aFooter)
             return rv;
 
         PRInt64 fastLoadMtime;
-        rv = Read64(NS_REINTERPRET_CAST(PRUint64*, &fastLoadMtime));
+        rv = Read64(reinterpret_cast<PRUint64*>(&fastLoadMtime));
         if (NS_FAILED(rv))
             return rv;
 
@@ -878,7 +875,7 @@ nsFastLoadFileReader::ReadSlowID(nsID *aID)
         return rv;
 
     PRUint32 bytesRead;
-    rv = Read(NS_REINTERPRET_CAST(char*, aID->m3), sizeof aID->m3, &bytesRead);
+    rv = Read(reinterpret_cast<char*>(aID->m3), sizeof aID->m3, &bytesRead);
     if (NS_FAILED(rv))
         return rv;
 
@@ -1170,7 +1167,7 @@ nsFastLoadFileReader::ReadObject(PRBool aIsStrongRef, nsISupports* *aObject)
             return rv;
 
         rv = object->QueryInterface(mFooter.GetID(iid),
-                                    NS_REINTERPRET_CAST(void**, aObject));
+                                    reinterpret_cast<void**>(aObject));
         if (NS_FAILED(rv))
             return rv;
     } else {
@@ -1243,25 +1240,15 @@ NS_IMPL_ISUPPORTS_INHERITED4(nsFastLoadFileWriter,
                              nsIFastLoadWriteControl,
                              nsISeekableStream)
 
-MOZ_DECL_CTOR_COUNTER(nsFastLoadFileWriter)
-
 struct nsIDMapEntry : public PLDHashEntryHdr {
     NSFastLoadID    mFastID;            // 1 + nsFastLoadFooter::mIDMap index
     nsID            mSlowID;            // key, used by PLDHashTableOps below
 };
 
-PR_STATIC_CALLBACK(const void *)
-idmap_GetKey(PLDHashTable *aTable, PLDHashEntryHdr *aHdr)
-{
-    nsIDMapEntry* entry = NS_STATIC_CAST(nsIDMapEntry*, aHdr);
-
-    return &entry->mSlowID;
-}
-
 PR_STATIC_CALLBACK(PLDHashNumber)
 idmap_HashKey(PLDHashTable *aTable, const void *aKey)
 {
-    const nsID *idp = NS_REINTERPRET_CAST(const nsID*, aKey);
+    const nsID *idp = reinterpret_cast<const nsID*>(aKey);
 
     return idp->m0;
 }
@@ -1271,8 +1258,8 @@ idmap_MatchEntry(PLDHashTable *aTable,
                 const PLDHashEntryHdr *aHdr,
                 const void *aKey)
 {
-    const nsIDMapEntry* entry = NS_STATIC_CAST(const nsIDMapEntry*, aHdr);
-    const nsID *idp = NS_REINTERPRET_CAST(const nsID*, aKey);
+    const nsIDMapEntry* entry = static_cast<const nsIDMapEntry*>(aHdr);
+    const nsID *idp = reinterpret_cast<const nsID*>(aKey);
 
     return memcmp(&entry->mSlowID, idp, sizeof(nsID)) == 0;
 }
@@ -1280,7 +1267,6 @@ idmap_MatchEntry(PLDHashTable *aTable,
 static const PLDHashTableOps idmap_DHashTableOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
-    idmap_GetKey,
     idmap_HashKey,
     idmap_MatchEntry,
     PL_DHashMoveEntryStub,
@@ -1293,8 +1279,8 @@ nsresult
 nsFastLoadFileWriter::MapID(const nsID& aSlowID, NSFastLoadID *aResult)
 {
     nsIDMapEntry* entry =
-        NS_STATIC_CAST(nsIDMapEntry*,
-                       PL_DHashTableOperate(&mIDMap, &aSlowID, PL_DHASH_ADD));
+        static_cast<nsIDMapEntry*>
+                   (PL_DHashTableOperate(&mIDMap, &aSlowID, PL_DHASH_ADD));
     if (!entry)
         return NS_ERROR_OUT_OF_MEMORY;
 
@@ -1375,8 +1361,8 @@ NS_IMETHODIMP
 nsFastLoadFileWriter::HasMuxedDocument(const char* aURISpec, PRBool *aResult)
 {
     nsDocumentMapWriteEntry* docMapEntry =
-        NS_STATIC_CAST(nsDocumentMapWriteEntry*,
-                       PL_DHashTableOperate(&mDocumentMap, aURISpec,
+        static_cast<nsDocumentMapWriteEntry*>
+                   (PL_DHashTableOperate(&mDocumentMap, aURISpec,
                                             PL_DHASH_LOOKUP));
 
     *aResult = PL_DHASH_ENTRY_IS_BUSY(docMapEntry);
@@ -1395,8 +1381,8 @@ nsFastLoadFileWriter::StartMuxedDocument(nsISupports* aURI,
                               : nsnull;
 
     nsDocumentMapWriteEntry* docMapEntry =
-        NS_STATIC_CAST(nsDocumentMapWriteEntry*,
-                       PL_DHashTableOperate(&mDocumentMap, aURISpec,
+        static_cast<nsDocumentMapWriteEntry*>
+                   (PL_DHashTableOperate(&mDocumentMap, aURISpec,
                                             PL_DHASH_ADD));
     if (!docMapEntry)
         return NS_ERROR_OUT_OF_MEMORY;
@@ -1404,8 +1390,8 @@ nsFastLoadFileWriter::StartMuxedDocument(nsISupports* aURI,
     // If the generation number changed, refresh mCurrentDocumentMapEntry.
     if (mCurrentDocumentMapEntry && mDocumentMap.generation != saveGeneration) {
         mCurrentDocumentMapEntry =
-            NS_STATIC_CAST(nsDocumentMapWriteEntry*,
-                           PL_DHashTableOperate(&mDocumentMap, saveURISpec,
+            static_cast<nsDocumentMapWriteEntry*>
+                       (PL_DHashTableOperate(&mDocumentMap, saveURISpec,
                                                 PL_DHASH_LOOKUP));
         NS_ASSERTION(PL_DHASH_ENTRY_IS_BUSY(mCurrentDocumentMapEntry),
                      "mCurrentDocumentMapEntry lost during table growth?!");
@@ -1414,22 +1400,22 @@ nsFastLoadFileWriter::StartMuxedDocument(nsISupports* aURI,
         saveGeneration = mDocumentMap.generation;
     }
 
-    NS_ASSERTION(docMapEntry->mString == nsnull,
-                 "redundant multiplexed document?");
+    NS_WARN_IF_FALSE(docMapEntry->mString == nsnull,
+                     "redundant multiplexed document?");
     if (docMapEntry->mString)
         return NS_ERROR_UNEXPECTED;
 
     void* spec = nsMemory::Clone(aURISpec, strlen(aURISpec) + 1);
     if (!spec)
         return NS_ERROR_OUT_OF_MEMORY;
-    docMapEntry->mString = NS_REINTERPRET_CAST(const char*, spec);
+    docMapEntry->mString = reinterpret_cast<const char*>(spec);
     docMapEntry->mURI = aURI;
     NS_ADDREF(docMapEntry->mURI);
 
     nsCOMPtr<nsISupports> key(do_QueryInterface(aURI));
     nsURIMapWriteEntry* uriMapEntry =
-        NS_STATIC_CAST(nsURIMapWriteEntry*,
-                       PL_DHashTableOperate(&mURIMap, key, PL_DHASH_ADD));
+        static_cast<nsURIMapWriteEntry*>
+                   (PL_DHashTableOperate(&mURIMap, key, PL_DHASH_ADD));
     if (!uriMapEntry)
         return NS_ERROR_OUT_OF_MEMORY;
 
@@ -1442,7 +1428,7 @@ nsFastLoadFileWriter::StartMuxedDocument(nsISupports* aURI,
     NS_ADDREF(uriMapEntry->mObject);
     uriMapEntry->mDocMapEntry = docMapEntry;
     uriMapEntry->mGeneration = saveGeneration;
-    uriMapEntry->mURISpec = NS_REINTERPRET_CAST(const char*, spec);
+    uriMapEntry->mURISpec = reinterpret_cast<const char*>(spec);
     TRACE_MUX(('w', "start %p (%p) %s\n", aURI, key.get(), aURISpec));
     return NS_OK;
 }
@@ -1462,8 +1448,8 @@ nsFastLoadFileWriter::SelectMuxedDocument(nsISupports* aURI,
     // Look for an existing entry keyed by aURI, added by StartMuxedDocument.
     nsCOMPtr<nsISupports> key(do_QueryInterface(aURI));
     nsURIMapWriteEntry* uriMapEntry =
-        NS_STATIC_CAST(nsURIMapWriteEntry*,
-                       PL_DHashTableOperate(&mURIMap, key, PL_DHASH_LOOKUP));
+        static_cast<nsURIMapWriteEntry*>
+                   (PL_DHashTableOperate(&mURIMap, key, PL_DHASH_LOOKUP));
     NS_ASSERTION(PL_DHASH_ENTRY_IS_BUSY(uriMapEntry),
                  "SelectMuxedDocument without prior StartMuxedDocument?");
     if (PL_DHASH_ENTRY_IS_FREE(uriMapEntry))
@@ -1477,8 +1463,8 @@ nsFastLoadFileWriter::SelectMuxedDocument(nsISupports* aURI,
     nsDocumentMapWriteEntry* docMapEntry = uriMapEntry->mDocMapEntry;
     if (uriMapEntry->mGeneration != mDocumentMap.generation) {
         docMapEntry =
-            NS_STATIC_CAST(nsDocumentMapWriteEntry*,
-                           PL_DHashTableOperate(&mDocumentMap,
+            static_cast<nsDocumentMapWriteEntry*>
+                       (PL_DHashTableOperate(&mDocumentMap,
                                                 uriMapEntry->mURISpec,
                                                 PL_DHASH_LOOKUP));
         NS_ASSERTION(PL_DHASH_ENTRY_IS_BUSY(docMapEntry), "lost mDocMapEntry!?");
@@ -1572,8 +1558,8 @@ nsFastLoadFileWriter::EndMuxedDocument(nsISupports* aURI)
 {
     nsCOMPtr<nsISupports> key(do_QueryInterface(aURI));
     nsURIMapWriteEntry* uriMapEntry =
-        NS_STATIC_CAST(nsURIMapWriteEntry*,
-                       PL_DHashTableOperate(&mURIMap, key, PL_DHASH_LOOKUP));
+        static_cast<nsURIMapWriteEntry*>
+                   (PL_DHashTableOperate(&mURIMap, key, PL_DHASH_LOOKUP));
 
     // If the URI isn't in the map, nsFastLoadFileWriter::StartMuxedDocument
     // must have been called with a redundant URI, *and* its caller must have
@@ -1612,8 +1598,8 @@ nsFastLoadFileWriter::AddDependency(nsIFile* aFile)
         return rv;
 
     nsDependencyMapEntry* entry =
-        NS_STATIC_CAST(nsDependencyMapEntry*,
-                       PL_DHashTableOperate(&mDependencyMap, path.get(),
+        static_cast<nsDependencyMapEntry*>
+                   (PL_DHashTableOperate(&mDependencyMap, path.get(),
                                             PL_DHASH_ADD));
     if (!entry)
         return NS_ERROR_OUT_OF_MEMORY;
@@ -1682,7 +1668,7 @@ nsFastLoadFileWriter::WriteSlowID(const nsID& aID)
         return rv;
 
     PRUint32 bytesWritten;
-    rv = Write(NS_REINTERPRET_CAST(const char*, aID.m3), sizeof aID.m3,
+    rv = Write(reinterpret_cast<const char*>(aID.m3), sizeof aID.m3,
                &bytesWritten);
     if (NS_FAILED(rv))
         return rv;
@@ -1743,9 +1729,9 @@ nsFastLoadFileWriter::IDMapEnumerate(PLDHashTable *aTable,
                                      PRUint32 aNumber,
                                      void *aData)
 {
-    nsIDMapEntry* entry = NS_STATIC_CAST(nsIDMapEntry*, aHdr);
+    nsIDMapEntry* entry = static_cast<nsIDMapEntry*>(aHdr);
     PRUint32 index = entry->mFastID - 1;
-    nsID* vector = NS_REINTERPRET_CAST(nsID*, aData);
+    nsID* vector = reinterpret_cast<nsID*>(aData);
 
     NS_ASSERTION(index < aTable->entryCount, "bad nsIDMap index!");
     vector[index] = entry->mSlowID;
@@ -1763,10 +1749,10 @@ nsFastLoadFileWriter::ObjectMapEnumerate(PLDHashTable *aTable,
                                          PRUint32 aNumber,
                                          void *aData)
 {
-    nsSharpObjectMapEntry* entry = NS_STATIC_CAST(nsSharpObjectMapEntry*, aHdr);
+    nsSharpObjectMapEntry* entry = static_cast<nsSharpObjectMapEntry*>(aHdr);
     PRUint32 index = MFL_OID_TO_SHARP_INDEX(entry->mOID);
     nsFastLoadSharpObjectInfo* vector =
-        NS_REINTERPRET_CAST(nsFastLoadSharpObjectInfo*, aData);
+        reinterpret_cast<nsFastLoadSharpObjectInfo*>(aData);
 
     NS_ASSERTION(index < aTable->entryCount, "bad nsObjectMap index!");
     vector[index] = entry->mInfo;
@@ -1788,10 +1774,10 @@ nsFastLoadFileWriter::DocumentMapEnumerate(PLDHashTable *aTable,
                                            void *aData)
 {
     nsFastLoadFileWriter* writer =
-        NS_REINTERPRET_CAST(nsFastLoadFileWriter*, aTable->data);
+        reinterpret_cast<nsFastLoadFileWriter*>(aTable->data);
     nsDocumentMapWriteEntry* entry =
-        NS_STATIC_CAST(nsDocumentMapWriteEntry*, aHdr);
-    nsresult* rvp = NS_REINTERPRET_CAST(nsresult*, aData);
+        static_cast<nsDocumentMapWriteEntry*>(aHdr);
+    nsresult* rvp = reinterpret_cast<nsresult*>(aData);
 
     nsFastLoadMuxedDocumentInfo info;
     info.mURISpec = entry->mString;
@@ -1808,9 +1794,9 @@ nsFastLoadFileWriter::DependencyMapEnumerate(PLDHashTable *aTable,
                                              void *aData)
 {
     nsFastLoadFileWriter* writer =
-        NS_REINTERPRET_CAST(nsFastLoadFileWriter*, aTable->data);
-    nsDependencyMapEntry* entry = NS_STATIC_CAST(nsDependencyMapEntry*, aHdr);
-    nsresult* rvp = NS_REINTERPRET_CAST(nsresult*, aData);
+        reinterpret_cast<nsFastLoadFileWriter*>(aTable->data);
+    nsDependencyMapEntry* entry = static_cast<nsDependencyMapEntry*>(aHdr);
+    nsresult* rvp = reinterpret_cast<nsresult*>(aData);
 
     *rvp = writer->WriteStringZ(entry->mString);
     if (NS_SUCCEEDED(*rvp))
@@ -2037,8 +2023,8 @@ nsFastLoadFileWriter::Close()
                len) {
             len += rem;
             rem = NS_AccumulateFastLoadChecksum(&checksum,
-                                                NS_REINTERPRET_CAST(PRUint8*,
-                                                                    buf),
+                                                reinterpret_cast<PRUint8*>
+                                                                (buf),
                                                 len,
                                                 PR_FALSE);
             if (rem)
@@ -2049,7 +2035,7 @@ nsFastLoadFileWriter::Close()
 
         if (rem) {
             NS_AccumulateFastLoadChecksum(&checksum,
-                                          NS_REINTERPRET_CAST(PRUint8*, buf),
+                                          reinterpret_cast<PRUint8*>(buf),
                                           rem,
                                           PR_TRUE);
         }
@@ -2065,7 +2051,7 @@ nsFastLoadFileWriter::Close()
         mHeader.mChecksum = checksum;
         checksum = NS_SWAP32(checksum);
         PRUint32 bytesWritten;
-        rv = output->Write(NS_REINTERPRET_CAST(char*, &checksum),
+        rv = output->Write(reinterpret_cast<char*>(&checksum),
                            sizeof checksum,
                            &bytesWritten);
         if (NS_FAILED(rv))
@@ -2109,8 +2095,8 @@ nsFastLoadFileWriter::WriteObjectCommon(nsISupports* aObject,
         // Object is presumed to be multiply connected through some combo of
         // strong and weak refs.  Hold onto it via mObjectMap.
         nsSharpObjectMapEntry* entry =
-            NS_STATIC_CAST(nsSharpObjectMapEntry*,
-                           PL_DHashTableOperate(&mObjectMap, aObject,
+            static_cast<nsSharpObjectMapEntry*>
+                       (PL_DHashTableOperate(&mObjectMap, aObject,
                                                 PL_DHASH_ADD));
         if (!entry) {
             aObject->Release();
@@ -2357,9 +2343,9 @@ nsFastLoadFileUpdater::CopyReadDocumentMapEntryToUpdater(PLDHashTable *aTable,
                                                          void *aData)
 {
     nsDocumentMapReadEntry* readEntry =
-        NS_STATIC_CAST(nsDocumentMapReadEntry*, aHdr);
+        static_cast<nsDocumentMapReadEntry*>(aHdr);
     nsFastLoadFileUpdater* updater =
-        NS_REINTERPRET_CAST(nsFastLoadFileUpdater*, aData);
+        reinterpret_cast<nsFastLoadFileUpdater*>(aData);
 
     void* spec = nsMemory::Clone(readEntry->mString,
                                  strlen(readEntry->mString) + 1);
@@ -2367,15 +2353,15 @@ nsFastLoadFileUpdater::CopyReadDocumentMapEntryToUpdater(PLDHashTable *aTable,
         return PL_DHASH_STOP;
 
     nsDocumentMapWriteEntry* writeEntry =
-        NS_STATIC_CAST(nsDocumentMapWriteEntry*,
-                       PL_DHashTableOperate(&updater->mDocumentMap, spec,
+        static_cast<nsDocumentMapWriteEntry*>
+                   (PL_DHashTableOperate(&updater->mDocumentMap, spec,
                                             PL_DHASH_ADD));
     if (!writeEntry) {
         nsMemory::Free(spec);
         return PL_DHASH_STOP;
     }
 
-    writeEntry->mString = NS_REINTERPRET_CAST(const char*, spec);
+    writeEntry->mString = reinterpret_cast<const char*>(spec);
     writeEntry->mURI = nsnull;
     writeEntry->mInitialSegmentOffset = readEntry->mInitialSegmentOffset;
     writeEntry->mCurrentSegmentOffset = 0;
@@ -2471,12 +2457,12 @@ nsFastLoadFileUpdater::Open(nsFastLoadFileReader* aReader)
 
         NSFastLoadOID oid = MFL_SHARP_INDEX_TO_OID(i);
         void* key = obj
-                    ? NS_REINTERPRET_CAST(void*, obj)
-                    : NS_REINTERPRET_CAST(void*, (oid | MFL_OBJECT_DEF_TAG));
+                    ? reinterpret_cast<void*>(obj)
+                    : reinterpret_cast<void*>((oid | MFL_OBJECT_DEF_TAG));
 
         nsSharpObjectMapEntry* writeEntry =
-            NS_STATIC_CAST(nsSharpObjectMapEntry*,
-                           PL_DHashTableOperate(&mObjectMap, key,
+            static_cast<nsSharpObjectMapEntry*>
+                       (PL_DHashTableOperate(&mObjectMap, key,
                                                 PL_DHASH_ADD));
         if (!writeEntry)
             return NS_ERROR_OUT_OF_MEMORY;
@@ -2484,7 +2470,7 @@ nsFastLoadFileUpdater::Open(nsFastLoadFileReader* aReader)
         // Hold the object if there is one, so that objmap_ClearEntry can
         // release the reference.
         NS_IF_ADDREF(obj);
-        writeEntry->mObject = NS_REINTERPRET_CAST(nsISupports*, key);
+        writeEntry->mObject = reinterpret_cast<nsISupports*>(key);
         writeEntry->mOID = oid;
         writeEntry->mInfo.mCIDOffset = readEntry->mCIDOffset;
         writeEntry->mInfo.mStrongRefCnt = readEntry->mSaveStrongRefCnt;
@@ -2582,8 +2568,8 @@ NS_NewFastLoadFileUpdater(nsIObjectOutputStream* *aResult,
     // Stabilize updater's refcnt.
     nsCOMPtr<nsIObjectOutputStream> stream(updater);
 
-    nsresult rv = updater->Open(NS_STATIC_CAST(nsFastLoadFileReader*,
-                                               aReaderAsStream));
+    nsresult rv = updater->Open(static_cast<nsFastLoadFileReader*>
+                                           (aReaderAsStream));
     if (NS_FAILED(rv))
         return rv;
 

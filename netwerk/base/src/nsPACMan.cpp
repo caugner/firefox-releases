@@ -37,6 +37,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsPACMan.h"
+#include "nsThreadUtils.h"
 #include "nsIDNSService.h"
 #include "nsIDNSListener.h"
 #include "nsICancelable.h"
@@ -44,7 +45,6 @@
 #include "nsIHttpChannel.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsEventQueueUtils.h"
 #include "nsNetUtil.h"
 #include "nsAutoLock.h"
 #include "nsAutoPtr.h"
@@ -119,12 +119,8 @@ PendingPACQuery::Start()
   if (NS_FAILED(rv))
     return rv;
 
-  nsCOMPtr<nsIEventQueue> eventQ;
-  rv = NS_GetCurrentEventQ(getter_AddRefs(eventQ));
-  if (NS_FAILED(rv))
-    return rv;
-
-  rv = dns->AsyncResolve(host, 0, this, eventQ, getter_AddRefs(mDNSRequest));
+  rv = dns->AsyncResolve(host, 0, this, NS_GetCurrentThread(),
+                         getter_AddRefs(mDNSRequest));
   if (NS_FAILED(rv))
     NS_WARNING("DNS AsyncResolve failed");
 
@@ -174,7 +170,7 @@ PendingPACQuery::OnLookupComplete(nsICancelable *request,
 //-----------------------------------------------------------------------------
 
 nsPACMan::nsPACMan()
-  : mLoadEvent(nsnull)
+  : mLoadPending(PR_FALSE)
   , mShutdown(PR_FALSE)
   , mScheduledReload(LL_MAXINT)
   , mLoadFailureCount(0)
@@ -254,26 +250,11 @@ nsPACMan::AsyncGetProxyForURI(nsIURI *uri, nsPACManCallback *callback)
   return rv;
 }
 
-void *PR_CALLBACK
-nsPACMan::LoadEvent_Handle(PLEvent *ev)
-{
-  NS_REINTERPRET_CAST(nsPACMan *, PL_GetEventOwner(ev))->StartLoading();
-  return nsnull;
-}
-
-void PR_CALLBACK
-nsPACMan::LoadEvent_Destroy(PLEvent *ev)
-{
-  nsPACMan *self = NS_REINTERPRET_CAST(nsPACMan *, PL_GetEventOwner(ev));
-  self->mLoadEvent = nsnull;
-  self->Release();
-  delete ev;
-}
-
 nsresult
 nsPACMan::LoadPACFromURI(nsIURI *pacURI)
 {
   NS_ENSURE_STATE(!mShutdown);
+  NS_ENSURE_ARG(pacURI || mPACURI);
 
   nsCOMPtr<nsIStreamLoader> loader =
       do_CreateInstance(NS_STREAMLOADER_CONTRACTID);
@@ -285,58 +266,58 @@ nsPACMan::LoadPACFromURI(nsIURI *pacURI)
   // But, we need to flag ourselves as loading, so that we queue up any PAC
   // queries the enter between now and when we actually load the PAC file.
 
-  if (!mLoadEvent) {
-    mLoadEvent = new PLEvent;
-    if (!mLoadEvent)
-      return NS_ERROR_OUT_OF_MEMORY;
-
-    NS_ADDREF_THIS();
-    PL_InitEvent(mLoadEvent, this, LoadEvent_Handle, LoadEvent_Destroy);
-
-    nsCOMPtr<nsIEventQueue> eventQ;
-    nsresult rv = NS_GetCurrentEventQ(getter_AddRefs(eventQ));
-    if (NS_FAILED(rv) || NS_FAILED(rv = eventQ->PostEvent(mLoadEvent))) {
-      PL_DestroyEvent(mLoadEvent);
+  if (!mLoadPending) {
+    nsCOMPtr<nsIRunnable> event =
+        NS_NEW_RUNNABLE_METHOD(nsPACMan, this, StartLoading);
+    nsresult rv;
+    if (NS_FAILED(rv = NS_DispatchToCurrentThread(event)))
       return rv;
-    }
+    mLoadPending = PR_TRUE;
   }
 
   CancelExistingLoad();
 
   mLoader = loader;
-  mPACURI = pacURI;
+  if (pacURI) {
+    mPACURI = pacURI;
+    mLoadFailureCount = 0;  // reset
+  }
+  mScheduledReload = LL_MAXINT;
   mPAC = nsnull;
   return NS_OK;
 }
 
-nsresult
+void
 nsPACMan::StartLoading()
 {
+  mLoadPending = PR_FALSE;
+
   // CancelExistingLoad was called...
   if (!mLoader) {
     ProcessPendingQ(NS_ERROR_ABORT);
-    return NS_OK;
+    return;
   }
 
-  // Always hit the origin server when loading PAC.
-  nsCOMPtr<nsIIOService> ios = do_GetIOService();
-  if (ios) {
-    nsCOMPtr<nsIChannel> channel;
+  if (NS_SUCCEEDED(mLoader->Init(this))) {
+    // Always hit the origin server when loading PAC.
+    nsCOMPtr<nsIIOService> ios = do_GetIOService();
+    if (ios) {
+      nsCOMPtr<nsIChannel> channel;
 
-    // NOTE: This results in GetProxyForURI being called
-    ios->NewChannelFromURI(mPACURI, getter_AddRefs(channel));
+      // NOTE: This results in GetProxyForURI being called
+      ios->NewChannelFromURI(mPACURI, getter_AddRefs(channel));
 
-    if (channel) {
-      channel->SetLoadFlags(nsIRequest::LOAD_BYPASS_CACHE);
-      channel->SetNotificationCallbacks(this);
-      if (NS_SUCCEEDED(mLoader->Init(channel, this, nsnull)))
-        return NS_OK;
+      if (channel) {
+        channel->SetLoadFlags(nsIRequest::LOAD_BYPASS_CACHE);
+        channel->SetNotificationCallbacks(this);
+        if (NS_SUCCEEDED(channel->AsyncOpen(mLoader, nsnull)))
+          return;
+      }
     }
   }
 
   CancelExistingLoad();
   ProcessPendingQ(NS_ERROR_UNEXPECTED);
-  return NS_OK;
 }
 
 void
@@ -345,10 +326,8 @@ nsPACMan::MaybeReloadPAC()
   if (!mPACURI)
     return;
 
-  if (PR_Now() > mScheduledReload) {
-    mScheduledReload = LL_MAXINT;
-    LoadPACFromURI(mPACURI);
-  }
+  if (PR_Now() > mScheduledReload)
+    LoadPACFromURI(nsnull);
 }
 
 void
@@ -394,7 +373,7 @@ nsPACMan::ProcessPendingQ(nsresult status)
   // Now, start any pending queries
   PRCList *node = PR_LIST_HEAD(&mPendingQ);
   while (node != &mPendingQ) {
-    PendingPACQuery *query = NS_STATIC_CAST(PendingPACQuery *, node);
+    PendingPACQuery *query = static_cast<PendingPACQuery *>(node);
     node = PR_NEXT_LINK(node);
     if (NS_SUCCEEDED(status)) {
       // keep the query in the list (so we can complete it from Shutdown if
@@ -487,7 +466,7 @@ nsPACMan::GetInterface(const nsIID &iid, void **result)
   // In case loading the PAC file results in a redirect.
   if (iid.Equals(NS_GET_IID(nsIChannelEventSink))) {
     NS_ADDREF_THIS();
-    *result = NS_STATIC_CAST(nsIChannelEventSink *, this);
+    *result = static_cast<nsIChannelEventSink *>(this);
     return NS_OK;
   }
 

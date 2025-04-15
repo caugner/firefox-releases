@@ -38,22 +38,20 @@
 #ifndef nsTraceRefcnt_h___
 #define nsTraceRefcnt_h___
 
-#include "nscore.h"
+#include "nsXPCOM.h"
 
-class nsISupports;
-
-// By default refcnt logging is not part of the build.
+/* By default refcnt logging is not part of the build. */
 #undef NS_BUILD_REFCNT_LOGGING
 
 #if (defined(DEBUG) || defined(FORCE_BUILD_REFCNT_LOGGING))
-// Make refcnt logging part of the build. This doesn't mean that
-// actual logging will occur (that requires a separate enable; see
-// nsTraceRefcnt.h for more information).
+/* Make refcnt logging part of the build. This doesn't mean that
+ * actual logging will occur (that requires a separate enable; see
+ * nsTraceRefcnt.h for more information).  */
 #define NS_BUILD_REFCNT_LOGGING 1
 #endif
 
-// If NO_BUILD_REFCNT_LOGGING is defined then disable refcnt logging
-// in the build. This overrides FORCE_BUILD_REFCNT_LOGGING.
+/* If NO_BUILD_REFCNT_LOGGING is defined then disable refcnt logging
+ * in the build. This overrides FORCE_BUILD_REFCNT_LOGGING. */
 #if defined(NO_BUILD_REFCNT_LOGGING)
 #undef NS_BUILD_REFCNT_LOGGING
 #endif
@@ -61,38 +59,33 @@ class nsISupports;
 #ifdef NS_BUILD_REFCNT_LOGGING
 
 #define NS_LOG_ADDREF(_p, _rc, _type, _size) \
-  nsTraceRefcnt::LogAddRef((_p), (_rc), (_type), (PRUint32) (_size))
+  NS_LogAddRef((_p), (_rc), (_type), (PRUint32) (_size))
 
 #define NS_LOG_RELEASE(_p, _rc, _type) \
-  nsTraceRefcnt::LogRelease((_p), (_rc), (_type))
+  NS_LogRelease((_p), (_rc), (_type))
 
 #define MOZ_DECL_CTOR_COUNTER(_type)
 
 #define MOZ_COUNT_CTOR(_type)                                 \
 PR_BEGIN_MACRO                                                \
-  nsTraceRefcnt::LogCtor((void*)this, #_type, sizeof(*this)); \
+  NS_LogCtor((void*)this, #_type, sizeof(*this));             \
 PR_END_MACRO
 
 #define MOZ_COUNT_DTOR(_type)                                 \
 PR_BEGIN_MACRO                                                \
-  nsTraceRefcnt::LogDtor((void*)this, #_type, sizeof(*this)); \
+  NS_LogDtor((void*)this, #_type, sizeof(*this));             \
 PR_END_MACRO
 
-#ifdef HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR  // from autoconf (XXX needs to be
-                                          // set for non-autoconf platforms)
-
-// nsCOMPtr.h allows these macros to be defined by clients
-// These logging functions require dynamic_cast<void *>, so we don't
-// define these macros if we don't have dynamic_cast.
+/* nsCOMPtr.h allows these macros to be defined by clients
+ * These logging functions require dynamic_cast<void*>, so they don't
+ * do anything useful if we don't have dynamic_cast<void*>. */
 #define NSCAP_LOG_ASSIGNMENT(_c, _p)                                \
   if (_p)                                                           \
-    nsTraceRefcnt::LogAddCOMPtr((_c),NS_STATIC_CAST(nsISupports*,_p))
+    NS_LogCOMPtrAddRef((_c),static_cast<nsISupports*>(_p))
 
 #define NSCAP_LOG_RELEASE(_c, _p)                                   \
   if (_p)                                                           \
-    nsTraceRefcnt::LogReleaseCOMPtr((_c), NS_STATIC_CAST(nsISupports*,_p))
-
-#endif /* HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR */
+    NS_LogCOMPtrRelease((_c), static_cast<nsISupports*>(_p))
 
 #else /* !NS_BUILD_REFCNT_LOGGING */
 
@@ -104,32 +97,39 @@ PR_END_MACRO
 
 #endif /* NS_BUILD_REFCNT_LOGGING */
 
-//----------------------------------------------------------------------
+#ifdef __cplusplus
 
-/**
- * Note: The implementations for these methods are no-ops in a build
- * where NS_BUILD_REFCNT_LOGGING is disabled.
- */
 class nsTraceRefcnt {
 public:
-  static NS_COM_GLUE void LogAddRef(void* aPtr,
-                                    nsrefcnt aNewRefCnt,
-                                    const char* aTypeName,
-                                    PRUint32 aInstanceSize);
+  inline static void LogAddRef(void* aPtr, nsrefcnt aNewRefCnt,
+                               const char* aTypeName, PRUint32 aInstanceSize) {
+    NS_LogAddRef(aPtr, aNewRefCnt, aTypeName, aInstanceSize);
+  }
 
-  static NS_COM_GLUE void LogRelease(void* aPtr,
-                                     nsrefcnt aNewRefCnt,
-                                     const char* aTypeName);
+  inline static void LogRelease(void* aPtr, nsrefcnt aNewRefCnt,
+                                const char* aTypeName) {
+    NS_LogRelease(aPtr, aNewRefCnt, aTypeName);
+  }
 
-  static NS_COM_GLUE void LogCtor(void* aPtr, const char* aTypeName,
-                                  PRUint32 aInstanceSize);
+  inline static void LogCtor(void* aPtr, const char* aTypeName,
+                             PRUint32 aInstanceSize) {
+    NS_LogCtor(aPtr, aTypeName, aInstanceSize);
+  }
 
-  static NS_COM_GLUE void LogDtor(void* aPtr, const char* aTypeName,
-                                  PRUint32 aInstanceSize);
+  inline static void LogDtor(void* aPtr, const char* aTypeName,
+                             PRUint32 aInstanceSize) {
+    NS_LogDtor(aPtr, aTypeName, aInstanceSize);
+  }
 
-  static NS_COM_GLUE void LogAddCOMPtr(void *aCOMPtr, nsISupports *aObject);
+  inline static void LogAddCOMPtr(void *aCOMPtr, nsISupports *aObject) {
+    NS_LogCOMPtrAddRef(aCOMPtr, aObject);
+  }
 
-  static NS_COM_GLUE void LogReleaseCOMPtr(void *aCOMPtr, nsISupports *aObject);
-
+  inline static void LogReleaseCOMPtr(void *aCOMPtr, nsISupports *aObject) {
+    NS_LogCOMPtrRelease(aCOMPtr, aObject);
+  }
 };
+
+#endif /* defined(__cplusplus) */
+
 #endif /* nsTraceRefcnt_h___ */

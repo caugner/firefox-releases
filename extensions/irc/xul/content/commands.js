@@ -23,6 +23,7 @@
  * Contributor(s):
  *   Robert Ginda, <rginda@netscape.com>, original author
  *   Chiaki Koufugata, chiaki@mozilla.gr.jp, UI i18n
+ *   James Ross, silver@warwickcompsoc.co.uk
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -92,6 +93,7 @@ function initCommands()
          ["dehop",             cmdChanUserMode,    CMD_NEED_CHAN | CMD_CONSOLE],
          ["voice",             cmdChanUserMode,    CMD_NEED_CHAN | CMD_CONSOLE],
          ["devoice",           cmdChanUserMode,    CMD_NEED_CHAN | CMD_CONSOLE],
+         ["ceip",              cmdCEIP,                            CMD_CONSOLE],
          ["clear-view",        cmdClearView,                       CMD_CONSOLE],
          ["client",            cmdClient,                          CMD_CONSOLE],
          ["commands",          cmdCommands,                        CMD_CONSOLE],
@@ -119,6 +121,8 @@ function initCommands()
          ["goto-url-external", cmdGotoURL,                                   0],
          ["help",              cmdHelp,                            CMD_CONSOLE],
          ["hide-view",         cmdHideView,                        CMD_CONSOLE],
+         ["idle-away",         cmdAway,                                      0],
+         ["idle-back",         cmdAway,                                      0],
          ["ignore",            cmdIgnore,           CMD_NEED_NET | CMD_CONSOLE],
          ["input-text-direction", cmdInputTextDirection,                     0],
          ["invite",            cmdInvite,           CMD_NEED_SRV | CMD_CONSOLE],
@@ -134,6 +138,7 @@ function initCommands()
          ["load",              cmdLoad,                            CMD_CONSOLE],
          ["log",               cmdLog,                             CMD_CONSOLE],
          ["map",               cmdSimpleCommand,    CMD_NEED_SRV | CMD_CONSOLE],
+         ["match-users",       cmdMatchUsers,      CMD_NEED_CHAN | CMD_CONSOLE],
          ["me",                cmdMe,                              CMD_CONSOLE],
          ["motd",              cmdSimpleCommand,    CMD_NEED_SRV | CMD_CONSOLE],
          ["mode",              cmdMode,             CMD_NEED_SRV | CMD_CONSOLE],
@@ -150,14 +155,13 @@ function initCommands()
          ["notify",            cmdNotify,           CMD_NEED_SRV | CMD_CONSOLE],
          ["open-at-startup",   cmdOpenAtStartup,                   CMD_CONSOLE],
          ["oper",              cmdOper,             CMD_NEED_SRV | CMD_CONSOLE],
-         ["pass",              cmdPass,             CMD_NEED_NET | CMD_CONSOLE],
          ["ping",              cmdPing,             CMD_NEED_SRV | CMD_CONSOLE],
          ["plugin-pref",       cmdPref,                            CMD_CONSOLE],
          ["pref",              cmdPref,                            CMD_CONSOLE],
          ["print",             cmdPrint,                           CMD_CONSOLE],
          ["query",             cmdQuery,            CMD_NEED_SRV | CMD_CONSOLE],
          ["quit",              cmdQuit,                            CMD_CONSOLE],
-         ["quote",             cmdQuote,            CMD_NEED_SRV | CMD_CONSOLE],
+         ["quote",             cmdQuote,            CMD_NEED_NET | CMD_CONSOLE],
          ["reload-plugin",     cmdReload,                          CMD_CONSOLE],
          ["rlist",             cmdRlist,            CMD_NEED_SRV | CMD_CONSOLE],
          ["reconnect",         cmdReconnect,        CMD_NEED_NET | CMD_CONSOLE],
@@ -166,7 +170,7 @@ function initCommands()
                                    CMD_NEED_SRV |  CMD_NEED_CHAN | CMD_CONSOLE],
          ["reload-ui",         cmdReloadUI,                                  0],
          ["save",              cmdSave,                            CMD_CONSOLE],
-         ["say",               cmdSay,              CMD_NEED_SRV | CMD_CONSOLE],
+         ["say",               cmdSay,                             CMD_CONSOLE],
          ["server",            cmdServer,                          CMD_CONSOLE],
          ["set-current-view",  cmdSetCurrentView,                            0],
          ["stats",             cmdSimpleCommand,    CMD_NEED_SRV | CMD_CONSOLE],
@@ -184,7 +188,6 @@ function initCommands()
          ["text-direction",    cmdTextDirection,                             0],
          ["time",              cmdTime,             CMD_NEED_SRV | CMD_CONSOLE],
          ["timestamps",        cmdTimestamps,                      CMD_CONSOLE],
-         ["timestamp-format",  cmdTimestampFormat,                 CMD_CONSOLE],
          ["toggle-ui",         cmdToggleUI,                        CMD_CONSOLE],
          ["toggle-pref",       cmdTogglePref,                                0],
          ["topic",             cmdTopic,           CMD_NEED_CHAN | CMD_CONSOLE],
@@ -206,16 +209,17 @@ function initCommands()
          ["wii",               cmdWhoIsIdle,        CMD_NEED_SRV | CMD_CONSOLE],
 
          /* aliases */
-         ["css",              "motif",                             CMD_CONSOLE],
          ["exit",             "quit",                              CMD_CONSOLE],
          ["j",                "join",                              CMD_CONSOLE],
+         ["pass",             "quote PASS",                        CMD_CONSOLE],
          ["part",             "leave",                             CMD_CONSOLE],
          ["raw",              "quote",                             CMD_CONSOLE],
          // Shortcuts to useful URLs:
-         ["faq",              "goto-url http://chatzilla.hacksrus.com/faq/", 0],
-         ["homepage",         "goto-url http://chatzilla.hacksrus.com/",     0],
+         ["faq",              "goto-url faq",                                0],
+         ["homepage",         "goto-url homepage",                           0],
          // Used to display a nickname in the menu only.
          ["label-user",       "echo",                                        0],
+         ["label-user-multi", "echo",                                        0],
          // These are all the font family/size menu commands...
          ["font-family-default",    "font-family default",                   0],
          ["font-family-serif",      "font-family serif",                     0],
@@ -252,8 +256,12 @@ function initCommands()
          ["irtl",             "input-text-direction rtl",          CMD_CONSOLE],
          ["iltr",             "input-text-direction ltr",          CMD_CONSOLE],
          // Instrumentation aliases
-         ["allow-inst1",      "pref instrumentation.inst1 1",                0],
-         ["deny-inst1",       "pref instrumentation.inst1 2",                0]
+         ["allow-ceip",       "ceip on; ceip",                               0],
+         ["deny-ceip",        "ceip off",                                    0],
+         // Services aliases
+         ["cs",               "quote cs",                                    0],
+         ["ms",               "quote ms",                                    0],
+         ["ns",               "quote ns",                                    0]
         ];
 
     // set the stringbundle associated with these commands.
@@ -265,8 +273,8 @@ function initCommands()
     client.commandManager.defineCommands(cmdary);
 
     var restList = ["reason", "action", "text", "message", "params", "font",
-                    "expression", "ircCommand", "prefValue", "newTopic",
-                    "commandList", "file", "commands", "description"];
+                    "expression", "ircCommand", "prefValue", "newTopic", "file",
+                    "password", "commandList", "commands", "description"];
     client.commandManager.argTypes.__aliasTypes__(restList, "rest");
     client.commandManager.argTypes["plugin"] = parsePlugin;
 }
@@ -838,6 +846,7 @@ function cmdAblePlugin(e)
             e.plugin.scope.disablePlugin();
         }
 
+        display(getMsg(MSG_PLUGIN_DISABLED, e.plugin.id));
         e.plugin.enabled = false;
     }
     else
@@ -868,12 +877,37 @@ function cmdAblePlugin(e)
             e.plugin.scope.enablePlugin();
         }
 
+        display(getMsg(MSG_PLUGIN_ENABLED, e.plugin.id));
         e.plugin.enabled = true;
     }
 }
 
 function cmdBanOrExcept(e)
 {
+    var modestr;
+    switch (e.command.name)
+    {
+        case "ban":
+            modestr = "+bbbb";
+            break;
+
+        case "unban":
+            modestr = "-bbbb";
+            break;
+
+        case "except":
+            modestr = "+eeee";
+            break;
+
+        case "unexcept":
+            modestr = "-eeee";
+            break;
+
+        default:
+            ASSERT(0, "Dispatch from unknown name " + e.command.name);
+            return;
+    }
+
     /* If we're unbanning, or banning in odd cases, we may actually be talking
      * about a user who is not in the channel, so we need to check the server
      * for information as well.
@@ -883,11 +917,17 @@ function cmdBanOrExcept(e)
     if (!e.user && e.nickname)
         e.user = e.server.getUser(e.nickname);
 
-    var mask = "";
-    if (e.user)
+    var masks = new Array();
+
+    if (e.userList)
+    {
+        for (var i = 0; i < e.userList.length; i++)
+            masks.push(fromUnicode(e.userList[i].getBanMask(), e.server));
+    }
+    else if (e.user)
     {
         // We have a real user object, so get their proper 'ban mask'.
-        mask = fromUnicode(e.user.getBanMask(), e.server);
+        masks = [fromUnicode(e.user.getBanMask(), e.server)];
     }
     else if (e.nickname)
     {
@@ -895,41 +935,38 @@ function cmdBanOrExcept(e)
          * us a complete mask and pass it directly, otherwise assume it is
          * only the nickname and use * for username/host.
          */
-        mask = fromUnicode(e.nickname, e.server);
+        masks = [fromUnicode(e.nickname, e.server)];
         if (!/[!@]/.test(e.nickname))
-            mask = mask + "!*@*";
+            masks[0] = masks[0] + "!*@*";
+    }
+    else
+    {
+        // Nothing specified, so we want to list the bans/excepts.
+        masks = [""];
     }
 
-    var op;
-    switch (e.command.name)
+    // Collapses into groups we can do individually.
+    masks = combineNicks(masks);
+
+    for (var i = 0; i < masks.length; i++)
     {
-        case "ban":
-            op = " +b ";
-            break;
-        case "unban":
-            op = " -b ";
-            break;
-        case "except":
-            op = " +e ";
-            break;
-        case "unexcept":
-            op = " -e ";
-            break;
+        e.server.sendData("MODE " + e.channel.encodedName + " " +
+                          modestr.substr(0, masks[i].count + 1) +
+                          " " + masks[i] + "\n");
     }
-    e.server.sendData("MODE " + e.channel.encodedName + op + mask + "\n");
 }
 
 function cmdCancel(e)
 {
     var network = e.network;
-    
-    if ((network.state == NET_ONLINE) && network.isRunningList())
+
+    if (network.isRunningList())
     {
-        // We're running a /list, terminate the output so we return to sanity
+        // We're running a /list, terminate the output so we return to sanity.
         display(MSG_CANCELLING_LIST);
         network.abortList();
     }
-    else if ((network.state == NET_CONNECTING) || 
+    else if ((network.state == NET_CONNECTING) ||
              (network.state == NET_WAITING))
     {
         // We're trying to connect to a network, and want to cancel. Do so:
@@ -981,15 +1018,26 @@ function cmdChanUserMode(e)
 
     var nicks;
     var user;
-    // Prefer pre-canonicalised list, then a normal list, then finally a
-    // sigular item (canon. or otherwise).
+    var nickList = new Array();
+    // Prefer pre-canonicalised list, then a * passed to the command directly,
+    // then a normal list, then finally a singular item (canon. or otherwise).
     if (e.canonNickList)
     {
         nicks = combineNicks(e.canonNickList);
     }
+    else if (e.nickname && (e.nickname == "*"))
+    {
+        var me = e.server.me;
+        for (user in e.channel.users)
+        {
+            var user2 = e.channel.users[user];
+            if (user2.encodedName != me.encodedName)
+                nickList.push(user2.encodedName);
+        }
+        nicks = combineNicks(nickList);
+    }
     else if (e.nicknameList)
     {
-        var nickList = new Array();
         for (i = 0; i < e.nicknameList.length; i++)
         {
             user = e.channel.getUser(e.nicknameList[i]);
@@ -1084,8 +1132,7 @@ function cmdSync(e)
                   {
                       if (view.prefs["displayHeader"])
                           view.setHeaderState(false);
-                      view.changeCSS(view.getFontCSS("data"),
-                                     "cz-fonts");
+                      view.changeCSS(view.getFontCSS("data"), "cz-fonts");
                       if (view.prefs["displayHeader"])
                           view.setHeaderState(true);
                   };
@@ -1102,6 +1149,7 @@ function cmdSync(e)
             fun = function ()
                   {
                       view.changeCSS(view.prefs["motif.current"]);
+                      updateAppMotif(view.prefs["motif.current"]);
                       // Refresh the motif settings.
                       view.updateMotifSettings();
                   };
@@ -1110,8 +1158,7 @@ function cmdSync(e)
         case "sync-timestamp":
             fun = function ()
                   {
-                      view.changeCSS(view.getTimestampCSS("data"),
-                                     "cz-timestamp-format");
+                      updateTimestamps(view);
                   };
             break;
 
@@ -1143,7 +1190,7 @@ function cmdSync(e)
     var view = e.sourceObject;
     var window;
     if (("frame" in view) && view.frame)
-        window = view.frame.contentWindow;
+        window = getContentWindow(view.frame);
 
     try
     {
@@ -1391,16 +1438,14 @@ function cmdNetwork(e)
     var network = client.networks[e.networkName];
 
     if (!("messages" in network))
-        network.displayHere(getMsg(MSG_NETWORK_OPENED, network.name));
+        network.displayHere(getMsg(MSG_NETWORK_OPENED, network.unicodeName));
 
     dispatch("set-current-view", { view: network });
 }
 
 function cmdNetworks(e)
 {
-    const ns = "http://www.w3.org/1999/xhtml";
-
-    var span = document.createElementNS(ns, "html:span");
+    var span = document.createElementNS(XHTML_NS, "html:span");
 
     span.appendChild(newInlineText(MSG_NETWORKS_HEADA));
 
@@ -1410,7 +1455,7 @@ function cmdNetworks(e)
     for (n in netnames)
     {
         var net = client.networks[netnames[n]];
-        var a = document.createElementNS(ns, "html:a");
+        var a = document.createElementNS(XHTML_NS, "html:a");
         /* Test for an all-SSL network */
         var isSecure = true;
         for (var s in client.networks[netnames[n]].serverList)
@@ -1630,6 +1675,19 @@ function cmdHideView(e)
         return;
     }
 
+    if ("messages" in e.view)
+    {
+        // Detach messages from output window content.
+        if (e.view.messages.parentNode)
+            e.view.messages.parentNode.removeChild(e.view.messages);
+
+        /* XXX Bug 335998: Adopt the messages into our own internal document
+         * so that when the real one the messages were in gets incorrectly
+         * GC-collected (see bug) the nodes still have an ownerDocument.
+         */
+        client.adoptNode(e.view.messages, client.hiddenDocument);
+    }
+
     var tb = getTabForObject(e.view);
 
     if (tb)
@@ -1800,41 +1858,12 @@ function cmdToggleUI(e)
     var newState;
     var elem = document.getElementById(ids[0]);
     var sourceObject = e.sourceObject;
-
-    if (elem.getAttribute("collapsed") == "true")
-    {
-        if (e.thing == "userlist")
-        {
-            if (sourceObject.TYPE == "IRCChannel")
-            {
-                client.rdf.setTreeRoot("user-list",
-                                       sourceObject.getGraphResource());
-                setSelectedNicknames(document.getElementById("user-list"),
-                                     sourceObject.userlistSelection);
-                
-            }
-            else
-            {
-                client.rdf.setTreeRoot("user-list", client.rdf.resNullChan);
-            }
-        }
-
-        newState = "false";
-    }
-    else
-    {
-        if ((e.thing == "userlist") && (sourceObject.TYPE == "IRCChannel"))
-        {
-            var rv = getSelectedNicknames(document.getElementById("user-list"));
-            sourceObject.userlistSelection = rv;
-        }
-        newState = "true";
-    }
+    var newState = !elem.collapsed;
 
     for (var i in ids)
     {
         elem = document.getElementById(ids[i]);
-        elem.setAttribute ("collapsed", newState);
+        elem.collapsed = newState;
     }
 
     updateTitle();
@@ -1869,6 +1898,29 @@ function cmdAttach(e)
     gotoIRCURL(e.ircUrl);
 }
 
+function cmdMatchUsers(e)
+{
+    var matches = e.channel.findUsers(e.mask);
+    var uc = matches.unchecked;
+    var msgNotChecked = "";
+
+    // Get a pretty list of nicknames:
+    var nicknames = [];
+    for (var i = 0; i < matches.users.length; i++)
+        nicknames.push(matches.users[i].unicodeName);
+
+    var nicknameStr = arraySpeak(nicknames);
+
+    // Were we unable to check one or more of the users?
+    if (uc != 0)
+        msgNotChecked = getMsg(MSG_MATCH_UNCHECKED, uc);
+
+    if (matches.users.length == 0)
+        display(getMsg(MSG_NO_MATCHING_NICKS, msgNotChecked));
+    else 
+        display(getMsg(MSG_MATCHING_NICKS, [nicknameStr, msgNotChecked]));
+}
+
 function cmdMe(e)
 {
     if (!("act" in e.sourceObject))
@@ -1876,19 +1928,13 @@ function cmdMe(e)
         display(getMsg(MSG_ERR_IMPROPER_VIEW, "me"), MT_ERROR);
         return;
     }
-
-    var msg = filterOutput(e.action, "ACTION", e.sourceObject);
-    e.sourceObject.display(msg, "ACTION", "ME!", e.sourceObject);
-    e.sourceObject.act(msg);
+    _sendMsgTo(e.action, "ACTION", e.sourceObject);
 }
 
 function cmdDescribe(e)
 {
     var target = e.server.addTarget(e.target);
-
-    var msg = filterOutput(e.action, "ACTION", target);
-    e.sourceObject.display(msg, "ACTION", "ME!", target);
-    target.act(msg);
+    _sendMsgTo(e.action, "ACTION", target, e.sourceObject);
 }
 
 function cmdMode(e)
@@ -1978,7 +2024,7 @@ function cmdMotif(e)
             pm.clearPref("motif.current");
             e.motif = pm.prefs["motif.current"];
         }
-        else if (e.motif.search(/\.css$/i) != -1)
+        else if (e.motif.search(/^(file|https?|ftp):/i) != -1)
         {
             // specific css file
             pm.prefs["motif.current"] = e.motif;
@@ -2008,7 +2054,19 @@ function cmdMotif(e)
 function cmdList(e)
 {
     if (!e.channelName)
+    {
         e.channelName = "";
+        var c = e.server.channelCount;
+        if ((c > client.SAFE_LIST_COUNT) && !("listWarned" in e.network))
+        {
+            client.munger.getRule(".inline-buttons").enabled = true;
+            display(getMsg(MSG_LIST_CHANCOUNT, [c, "list"]), MT_WARN);
+            client.munger.getRule(".inline-buttons").enabled = false;
+            e.network.listWarned = true;
+            return;
+        }
+    }
+
     e.network.list(e.channelName);
 }
 
@@ -2047,7 +2105,26 @@ function cmdListPlugins(e)
 
 function cmdRlist(e)
 {
-    e.network.list(new RegExp(e.regexp, "i"));
+    try
+    {
+        var re = new RegExp(e.regexp, "i");
+    }
+    catch (ex)
+    {
+        display(MSG_ERR_INVALID_REGEX, MT_ERROR);
+        return;
+    }
+
+    var c = e.server.channelCount;
+    if ((c > client.SAFE_LIST_COUNT) && !("listWarned" in e.network))
+    {
+        client.munger.getRule(".inline-buttons").enabled = true;
+        display(getMsg(MSG_LIST_CHANCOUNT, [c, "rlist " + e.regexp]), MT_WARN);
+        client.munger.getRule(".inline-buttons").enabled = false;
+        e.network.listWarned = true;
+        return;
+    }
+    e.network.list(re);
 }
 
 function cmdReloadUI(e)
@@ -2067,11 +2144,7 @@ function cmdQuery(e)
     dispatch("set-current-view", { view: user });
 
     if (e.message)
-    {
-        e.message = filterOutput(e.message, "PRIVMSG", user);
-        user.display(e.message, "PRIVMSG", "ME!", user);
-        user.say(e.message);
-    }
+        _sendMsgTo(e.message, "PRIVMSG", user);
 
     return user;
 }
@@ -2084,18 +2157,38 @@ function cmdSay(e)
         return;
     }
 
-    var msg = filterOutput(e.message, "PRIVMSG", e.sourceObject);
-    e.sourceObject.display(msg, "PRIVMSG", "ME!", e.sourceObject);
-    e.sourceObject.say(msg);
+    _sendMsgTo(e.message, "PRIVMSG", e.sourceObject)
 }
 
 function cmdMsg(e)
 {
     var target = e.server.addTarget(e.nickname);
+    _sendMsgTo(e.message, "PRIVMSG", target, e.sourceObject);
+}
 
-    var msg = filterOutput(e.message, "PRIVMSG", target);
-    e.sourceObject.display(msg, "PRIVMSG", "ME!", target);
-    target.say(msg);
+function _sendMsgTo(message, msgType, target, displayObj)
+{
+    if (!displayObj)
+        displayObj = target;
+
+    var msg = filterOutput(message, msgType, target);
+
+    var o = getObjectDetails(target);
+    var lines = o.server ? o.server.splitLinesForSending(msg) : [msg];
+
+    for (var i = 0; i < lines.length; i++)
+    {
+        msg = lines[i];
+        client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
+        displayObj.display(msg, msgType, "ME!", target);
+        client.munger.getRule(".mailto").enabled = false;
+        if (msgType == "PRIVMSG")
+            target.say(msg);
+        else if (msgType == "NOTICE")
+            target.notice(msg);
+        else if (msgType == "ACTION")
+            target.act(msg);
+    }
 }
 
 function cmdNick(e)
@@ -2103,7 +2196,9 @@ function cmdNick(e)
     if (!e.nickname)
     {
         var curNick;
-        if (e.network)
+        if (e.server && e.server.isConnected)
+            curNick = e.server.me.unicodeName;
+        else if (e.network)
             curNick = e.network.prefs["nickname"];
         else
             curNick = client.prefs["nickname"];
@@ -2111,28 +2206,53 @@ function cmdNick(e)
         e.nickname = prompt(MSG_NICK_PROMPT, curNick);
         if (e.nickname == null)
             return;
+        e.nickname = e.nickname.replace(/ /g, "_");
     }
 
-    if (e.server)
+    if (e.server && e.server.isConnected)
         e.server.changeNick(e.nickname);
 
     if (e.network)
-        e.network.prefs["nickname"] = e.nickname;
+    {
+        /* We want to save in all non-online cases, including NET_CONNECTING,
+         * as we will only get a NICK reply if we are completely connected.
+         */
+        if (e.network.state == NET_ONLINE)
+        {
+            e.network.pendingNickChange = e.nickname;
+        }
+        else
+        {
+            e.network.prefs["nickname"] = e.nickname;
+            e.network.preferredNick = e.nickname;
+        }
+    }
     else
+    {
         client.prefs["nickname"] = e.nickname;
+        updateTitle(client);
+    }
 }
 
 function cmdNotice(e)
 {
     var target = e.server.addTarget(e.nickname);
-
-    var msg = filterOutput(e.message, "NOTICE", target);
-    e.sourceObject.display(msg, "NOTICE", "ME!", target);
-    target.notice(msg);
+    _sendMsgTo(e.message, "NOTICE", target, e.sourceObject);
 }
 
 function cmdQuote(e)
 {
+    /* Check we are connected, or at least pretending to be connected, so this
+     * can actually send something. The only thing that's allowed to send
+     * before the 001 is PASS, so if the command is not that and the net is not
+     * online, we stop too.
+     */
+    if ((e.network.state != NET_ONLINE) &&
+        (!e.server.isConnected || !e.ircCommand.match(/^\s*PASS/i)))
+    {
+        feedback(e, MSG_ERR_NOT_CONNECTED);
+        return;
+    }
     e.server.sendData(fromUnicode(e.ircCommand) + "\n", e.sourceObject);
 }
 
@@ -2169,7 +2289,6 @@ function cmdFocusInput(e)
 
 function cmdGotoURL(e)
 {
-    const IO_SVC = "@mozilla.org/network/io-service;1";
     const EXT_PROTO_SVC = "@mozilla.org/uriloader/external-protocol-service;1";
 
     if (e.url.search(/^ircs?:/i) == 0)
@@ -2181,29 +2300,45 @@ function cmdGotoURL(e)
     if (e.url.search(/^x-cz-command:/i) == 0)
     {
         var ary = e.url.match(/^x-cz-command:(.*)$/i);
-        e.sourceObject.frame.contentWindow.location.href = 
-            "javascript:void(view.dispatch('" + decodeURI(ary[1]) + "', null, true))";
+        // Do the escaping dance:
+        var commandStr = decodeURI(ary[1]).quote();
+        var jsStr = "void(view.dispatch(" + commandStr + ", null, true))";
+        var jsURI = "javascript:" + encodeURI(jsStr);
+        getContentWindow(e.sourceObject.frame).location.href = jsURI;
         return;
     }
 
-    if ((e.command.name == "goto-url-external") || (client.host == "XULrunner"))
+    try
     {
-        const ioSvc = getService(IO_SVC, "nsIIOService");
-        const extProtoSvc = getService(EXT_PROTO_SVC,
-                                       "nsIExternalProtocolService");
-        var uri = ioSvc.newURI(e.url, "UTF-8", null);
-        extProtoSvc.loadUrl(uri);
-        return;
+        var uri = client.iosvc.newURI(e.url, "UTF-8", null);
     }
-
-    if (e.command.name == "goto-url-newwin")
+    catch (ex)
     {
-        openTopWin(e.url);
+        // Given "goto-url faq bar", expand to "http://.../faq/#bar"
+        var localeURLKey = "msg.localeurl." + e.url;
+        var hash = (("anchor" in e) && e.anchor) ? "#" + e.anchor : "";
+        if (localeURLKey != getMsg(localeURLKey))
+            dispatch(e.command.name + " " + getMsg(localeURLKey) + hash);
+        else
+            display(getMsg(MSG_ERR_INVALID_URL, e.url), MT_ERROR);
+
         dispatch("focus-input");
         return;
     }
 
-    var window = getWindowByType("navigator:browser");
+    if ((e.command.name == "goto-url-external") || (client.host == "XULRunner"))
+    {
+        const extProtoSvc = getService(EXT_PROTO_SVC,
+                                       "nsIExternalProtocolService");
+        extProtoSvc.loadUrl(uri);
+        dispatch("focus-input");
+        return;
+    }
+
+    if (client.host == "Songbird")
+        var window = getWindowByType("Songbird:Main");
+    else
+        window = getWindowByType("navigator:browser");
 
     if (!window)
     {
@@ -2225,6 +2360,23 @@ function cmdGotoURL(e)
         
     }
 
+    if (e.command.name == "goto-url-newwin")
+    {
+        try
+        {
+            if (client.host == "Mozilla")
+                window.openNewWindowWith(e.url, false);
+            else
+                window.openNewWindowWith(e.url, null, null, null);
+        }
+        catch (ex)
+        {
+            dd(formatException(ex));
+        }
+        dispatch("focus-input");
+        return;
+    }
+
     if (e.command.name == "goto-url-newtab")
     {
         try
@@ -2232,7 +2384,7 @@ function cmdGotoURL(e)
             if (client.host == "Mozilla")
                 window.openNewTabWith(e.url, false, false);
             else
-                window.openNewTabWith(e.url, null, null, null, null, false);
+                window.openNewTabWith(e.url, null, null, null, null);
         }
         catch (ex)
         {
@@ -2273,69 +2425,79 @@ function cmdJoin(e)
      * ignore any contextual information, like the channel the command was
      * run on.
      */
-    if (!e.hasOwnProperty("channelName") || !e.channelName)
+    if ((!e.hasOwnProperty("channelName") || !e.channelName) &&
+        !e.channelToJoin)
     {
+        if (e.network.joinDialog)
+            return e.network.joinDialog.focus();
+
         window.openDialog("chrome://chatzilla/content/channels.xul", "",
-                          "modal,resizable=yes",
-                          { client: client, network: e.network })
+                          "resizable=yes",
+                          { client: client, network: e.network,
+                            opener: window });
         return null;
     }
 
-    if (!("charset" in e))
+    var chan;
+    if (!e.channelToJoin)
     {
-        e.charset = null;
-    }
-    else if (e.charset && !checkCharset(e.charset))
-    {
-        display (getMsg(MSG_ERR_INVALID_CHARSET, e.charset), MT_ERROR);
-        return null;
-    }
-
-    if (e.channelName.search(",") != -1)
-    {
-        // We can join multiple channels! Woo!
-        var chan;
-        var chans = e.channelName.split(",");
-        var keys = [];
-        if (e.key)
-            keys = e.key.split(",");
-        for (var c in chans)
+        if (!("charset" in e))
         {
-            chan = dispatch("join", { charset: e.charset,
-                                      channelName: chans[c],
-                                      key: keys.shift() });
+            e.charset = null;
         }
-        return chan;
+        else if (e.charset && !checkCharset(e.charset))
+        {
+            display (getMsg(MSG_ERR_INVALID_CHARSET, e.charset), MT_ERROR);
+            return null;
+        }
+    
+        if (e.channelName.search(",") != -1)
+        {
+            // We can join multiple channels! Woo!
+            var chans = e.channelName.split(",");
+            var keys = [];
+            if (e.key)
+                keys = e.key.split(",");
+            for (var c in chans)
+            {
+                chan = dispatch("join", { charset: e.charset,
+                                          channelName: chans[c],
+                                          key: keys.shift() });
+            }
+            return chan;
+        }
+    
+        if ((arrayIndexOf(["#", "&", "+", "!"], e.channelName[0]) == -1) &&
+            (arrayIndexOf(e.server.channelTypes, e.channelName[0]) == -1))
+        {
+            e.channelName = e.server.channelTypes[0] + e.channelName;
+        }
+    
+        var charset = e.charset ? e.charset : e.network.prefs["charset"];
+        chan = e.server.addChannel(e.channelName, charset);
+        if (e.charset)
+            chan.prefs["charset"] = e.charset;
     }
-
-    if ((arrayIndexOf(["#", "&", "+", "!"], e.channelName[0]) == -1) &&
-        (arrayIndexOf(e.server.channelTypes, e.channelName[0]) == -1))
+    else
     {
-        e.channelName = e.server.channelTypes[0] + e.channelName;
+        chan = e.channelToJoin;
     }
 
-    var charset = e.charset ? e.charset : e.network.prefs["charset"];
-    e.channel = e.server.addChannel(e.channelName, charset);
-    if (e.charset)
-        e.channel.prefs["charset"] = e.charset;
-
-    e.channel.join(e.key);
+    chan.join(e.key);
 
     /* !-channels are "safe" channels, and get a server-generated prefix. For
      * this reason, we shouldn't do anything client-side until the server
      * replies (since the reply will have the appropriate prefix). */
-    if (e.channelName[0] != "!")
+    if (chan.unicodeName[0] != "!")
     {
-        if (!("messages" in e.channel))
-        {
-            e.channel.displayHere(getMsg(MSG_CHANNEL_OPENED,
-                                         e.channel.unicodeName), MT_INFO);
-        }
+        var chanName = chan.unicodeName;
+        if (!("messages" in chan))
+            chan.displayHere(getMsg(MSG_CHANNEL_OPENED, chanName), MT_INFO);
 
-        dispatch("set-current-view", { view: e.channel });
+        dispatch("set-current-view", { view: chan });
     }
 
-    return e.channel;
+    return chan;
 }
 
 function cmdLeave(e)
@@ -2446,7 +2608,7 @@ function cmdLoad(e)
                 if (!oldPlugin.disable())
                 {
                     display(getMsg(MSG_CANT_DISABLE, oldPlugin.id));
-                    display (getMsg(MSG_ERR_SCRIPTLOAD, e.url));
+                    display(getMsg(MSG_ERR_SCRIPTLOAD, e.url));
                     return null;
                 }
                 client.prefManager.removeObserver(oldPlugin.prefManager);
@@ -2459,9 +2621,10 @@ function cmdLoad(e)
             else
             {
                 display(getMsg(MSG_CANT_DISABLE, oldPlugin.id));
-                display (getMsg(MSG_ERR_SCRIPTLOAD, e.url));
+                display(getMsg(MSG_ERR_SCRIPTLOAD, e.url));
                 return null;
             }
+            display(getMsg(MSG_PLUGIN_DISABLED, oldPlugin.id));
         }
 
         return i;
@@ -2492,10 +2655,20 @@ function cmdLoad(e)
 
         if ("init" in plugin)
         {
+            // Sanity check plugin's methods and properties:
+            if (!("id" in plugin) || (plugin.id == MSG_UNKNOWN))
+                display(getMsg(MSG_ERR_PLUGINAPI_NOID, e.url));
+            else if (!(plugin.id.match(/^[A-Za-z-_]+$/)))
+                display(getMsg(MSG_ERR_PLUGINAPI_FAULTYID, e.url));
+            else if (!("enable" in plugin))
+                display(getMsg(MSG_ERR_PLUGINAPI_NOENABLE, e.url));
+            else if (!("disable" in plugin))
+                display(getMsg(MSG_ERR_PLUGINAPI_NODISABLE, e.url));
+
             if (!("enable" in plugin) || !("disable" in plugin) ||
-                !("id" in plugin) || !(plugin.id.match(/^[A-Za-z-_]+$/)))
+                !("id" in plugin) || (plugin.id == MSG_UNKNOWN) ||
+                !(plugin.id.match(/^[A-Za-z-_]+$/)))
             {
-                display (getMsg(MSG_ERR_PLUGINAPI, e.url));
                 display (getMsg(MSG_ERR_SCRIPTLOAD, e.url));
                 return null;
             }
@@ -2555,6 +2728,9 @@ function cmdWho(e)
 
 function cmdWhoIs(e)
 {
+    if (!isinstance(e.network.whoisList, Object))
+        e.network.whoisList = {};
+
     for (var i = 0; i < e.nicknameList.length; i++)
     {
         if ((i < e.nicknameList.length - 1) &&
@@ -2568,6 +2744,7 @@ function cmdWhoIs(e)
         {
             e.server.whois(e.nicknameList[i]);
         }
+        e.network.whoisList[e.server.toLowerCase(e.nicknameList[i])] = null;
     }
 }
 
@@ -2670,15 +2847,25 @@ function cmdAway(e)
     {
         for (var n in client.networks)
         {
-            if (client.networks[n].primServ &&
-                (client.networks[n].state == NET_ONLINE))
+            var net = client.networks[n];
+            if (net.primServ && (net.state == NET_ONLINE))
             {
-                client.networks[n].dispatch(command, { reason: reason });
+                // If we can override the network's away state, or they are
+                // already idly-away, or they're not away to begin with:
+                if (overrideAway || net.isIdleAway || !net.prefs["away"])
+                {
+                    net.dispatch(command, {reason: reason });
+                    net.isIdleAway = (e.command.name == "idle-away");
+                }
             }
         }
     };
 
-    if ((e.command.name == "away") || (e.command.name == "custom-away"))
+    // Idle away shouldn't override away state set by the user.
+    var overrideAway = (e.command.name.indexOf("idle") != 0);
+
+    if ((e.command.name == "away") || (e.command.name == "custom-away") ||
+        (e.command.name == "idle-away"))
     {
         /* going away */
         if (e.command.name == "custom-away")
@@ -2724,22 +2911,43 @@ function cmdAway(e)
             display(getMsg(MSG_ERR_AWAY_SAVE, formatException(ex)), MT_ERROR);
         }
 
+        // Actually do away stuff, is this on a specific network?
         if (e.server)
         {
+            var normalNick = e.network.prefs["nickname"];
+            var awayNick = e.network.prefs["awayNick"];
             if (e.network.state == NET_ONLINE)
             {
-                if (e.network.prefs["awayNick"])
-                    e.server.sendData("NICK " + e.network.prefs["awayNick"] + "\n");
-
-                e.server.sendData("AWAY :" + fromUnicode(e.reason, e.network) + "\n");
+                // Postulate that if normal nick and away nick are the same,
+                // user doesn't want to change nicks:
+                if (awayNick && (normalNick != awayNick))
+                    e.server.changeNick(awayNick);
+                e.server.sendData("AWAY :" + fromUnicode(e.reason, e.network) +
+                                  "\n");
             }
+            if (awayNick && (normalNick != awayNick))
+                e.network.preferredNick = awayNick;
             e.network.prefs["away"] = e.reason;
         }
         else
         {
             // Client view, do command for all networks.
             sendToAllNetworks("away", e.reason);
-            display(getMsg(MSG_AWAY_ON, e.reason));
+            client.prefs["away"] = e.reason;
+
+            // Don't tell people how to get back if they're idle:
+            var idleMsgParams = [e.reason, client.prefs["awayIdleTime"]];
+            if (e.command.name == "idle-away")
+                var msg = getMsg(MSG_IDLE_AWAY_ON, idleMsgParams);
+            else
+                msg = getMsg(MSG_AWAY_ON, e.reason);
+
+            // Display on the *client* tab, or on the current tab iff
+            // there's nowhere else they'll hear about it:
+            if (("frame" in client) && client.frame)
+                client.display(msg);
+            else if (!client.getConnectedNetworks())
+                display(msg);
         }
     }
     else
@@ -2749,27 +2957,70 @@ function cmdAway(e)
         {
             if (e.network.state == NET_ONLINE)
             {
-                if (e.network.prefs["awayNick"])
-                    e.server.sendData("NICK " + e.network.prefs["nickname"] + "\n");
-
+                var curNick = e.server.me.unicodeName;
+                var awayNick = e.network.prefs["awayNick"];
+                if (awayNick && (curNick == awayNick))
+                    e.server.changeNick(e.network.prefs["nickname"]);
                 e.server.sendData("AWAY\n");
             }
+            // Go back to old nick, even if not connected:
+            if (awayNick && (curNick == awayNick))
+                e.network.preferredNick = e.network.prefs["nickname"];
             e.network.prefs["away"] = "";
         }
         else
         {
+            client.prefs["away"] = "";
             // Client view, do command for all networks.
             sendToAllNetworks("back");
-            display(MSG_AWAY_OFF);
+            if (("frame" in client) && client.frame)
+                client.display(MSG_AWAY_OFF);
+            else if (!client.getConnectedNetworks())
+                display(MSG_AWAY_OFF);
         }
+    }
+}
+
+function cmdCEIP(e)
+{
+    const INST_URL = "chrome://chatzilla/content/ceip/config.xul";
+    const INST_OPT = "chrome,resizable=no,dialog=no";
+
+    if (e.state != null)
+    {
+        // Stop us from ever asking the user about this now.
+        client.prefs["instrumentation.ceip"] = true;
+        // We have a state, so set all options accordingly.
+        var prefs = client.prefManager.listPrefs("ceip.");
+        for (var i = 0; i < prefs.length; i++)
+        {
+            if (typeof client.prefs[prefs[i]] == "boolean")
+                client.prefs[prefs[i]] = e.state;
+        }
+        if (e.state)
+            feedback(e, MSG_CEIP_ENABLED);
+        else
+            feedback(e, MSG_CEIP_DISABLED);
+    }
+    else if (client.ceip.dialog)
+    {
+        // No state, so show the existing dialog.
+        client.ceip.dialog.focus();
+    }
+    else
+    {
+        // No existing dialog either, create the dialog.
+        window.openDialog(INST_URL, "", INST_OPT, window);
     }
 }
 
 function cmdOpenAtStartup(e)
 {
-    var url = e.sourceObject.getURL();
+    var origURL = e.sourceObject.getURL();
+    var url = makeCanonicalIRCURL(origURL);
     var list = client.prefs["initialURLs"];
-    var index = arrayIndexOf(list, url);
+    ensureCachedCanonicalURLs(list);
+    var index = arrayIndexOf(list.canonicalURLs, url);
 
     if (e.toggle == null)
     {
@@ -2787,7 +3038,7 @@ function cmdOpenAtStartup(e)
         // yes, please open at startup
         if (index == -1)
         {
-            list.push(url);
+            list.push(origURL);
             list.update();
             display(getMsg(MSG_STARTUP_ADDED, url));
         }
@@ -2816,27 +3067,13 @@ function cmdOper(e)
 {
     // Password is optional, if it is not given, we use a safe prompt.
     if (!e.password)
-        e.password = promptPassword(getMsg(MSG_NEED_OPER_PASSWORD), "");
+        e.password = promptPassword(MSG_NEED_OPER_PASSWORD, "");
 
     if (!e.password)
         return;
 
     e.server.sendData("OPER " + fromUnicode(e.opername, e.server) + " " + 
                       fromUnicode(e.password, e.server) + "\n");
-}
-
-function cmdPass(e)
-{
-    /* Check we are connected, or at least pretending to be connected, so this
-     * can actually send something.
-     */
-   if ((e.network.state != NET_ONLINE) && !e.server.isConnected)
-   {
-       feedback(e, MSG_ERR_NOT_CONNECTED);
-       return;
-   }
-
-   e.server.sendData("PASS " + fromUnicode(e.password, e.server) + "\n");
 }
 
 function cmdPing (e)
@@ -2974,10 +3211,9 @@ function cmdPref (e)
 function cmdPrint(e)
 {
     if (("frame" in e.sourceObject) && e.sourceObject.frame &&
-        ("contentWindow" in e.sourceObject.frame) &&
-        e.sourceObject.frame.contentWindow)
+        getContentWindow(e.sourceObject.frame))
     {
-        e.sourceObject.frame.contentWindow.print();
+        getContentWindow(e.sourceObject.frame).print();
     }
     else
     {
@@ -2995,18 +3231,16 @@ function cmdVersion(e)
 
 function cmdEcho(e)
 {
+    client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
     display(e.message);
+    client.munger.getRule(".mailto").enabled = false;
 }
 
 function cmdInvite(e)
 {
     var channel;
 
-    if (!e.channelName)
-    {
-        channel = e.channel;
-    }
-    else
+    if (e.channelName)
     {
         channel = e.server.getChannel(e.channelName);
         if (!channel)
@@ -3015,12 +3249,46 @@ function cmdInvite(e)
             return;
         }
     }
+    else if (e.channel)
+    {
+        channel = e.channel;
+    }
+    else
+    {
+        display(getMsg(MSG_ERR_NO_CHANNEL, e.command.name), MT_ERROR);
+        return;
+    }
 
     channel.invite(e.nickname);
 }
 
 function cmdKick(e)
 {
+    if (e.userList)
+    {
+        if (e.command.name == "kick-ban")
+        {
+            e.sourceObject.dispatch("ban", { userList: e.userList,
+                                             canonNickList: e.canonNickList,
+                                             user: e.user,
+                                             nickname: e.user.encodedName });
+        }
+
+        /* Note that we always do /kick below; the /ban is covered above.
+         * Also note that we are required to pass the nickname, to satisfy
+         * the dispatching of the command (which is defined with a required
+         * <nickname> parameter). It's not required for /ban, above, but it
+         * seems prudent to include it anyway.
+         */
+        for (var i = 0; i < e.userList.length; i++)
+        {
+            var e2 = { user: e.userList[i],
+                       nickname: e.userList[i].encodedName };
+            e.sourceObject.dispatch("kick", e2);
+        }
+        return;
+    }
+
     if (!e.user)
         e.user = e.channel.getUser(e.nickname);
 
@@ -3311,6 +3579,8 @@ function cmdSave(e)
                  */
                 else if (!requestSpec && saveType > 0)
                 {
+                    if (wbp)
+                        wbp.progressListener = null;
                     pm = [e.sourceObject.viewName, e.filename];
                     display(getMsg(MSG_SAVE_SUCCESSFUL, pm), MT_INFO);
                 }
@@ -3449,7 +3719,7 @@ function cmdSave(e)
                         | nsIWBP.PERSIST_FLAGS_DONT_CHANGE_FILENAMES;
 
     // Set the document from the current view, and set a usable title
-    docToBeSaved = e.sourceObject.frame.contentDocument;
+    docToBeSaved = getContentDocument(e.sourceObject.frame);
     var headElement = docToBeSaved.getElementsByTagName("HEAD")[0];
     var titleElements = docToBeSaved.getElementsByTagName("title");
     // Remove an existing title, there shouldn't be more than one.
@@ -3571,6 +3841,16 @@ function cmdDoCommand(e)
         window.openDialog('chrome://chatzilla/content/config.xul', '',
                           'chrome,resizable,dialog=no', window);
     }
+    else if (e.cmdName == "cmd_selectAll")
+    {
+        var userList = document.getElementById("user-list");
+        var elemFocused = document.commandDispatcher.focusedElement;
+
+        if (userList.view && (elemFocused == userList))
+            userList.view.selection.selectAll();
+        else
+            doCommand("cmd_selectAll");
+    }
     else
     {
         doCommand(e.cmdName);
@@ -3598,21 +3878,6 @@ function cmdTimestamps(e)
     {
         display(getMsg(MSG_FMT_PREF, ["timestamps",
                                       view.prefs["timestamps"]]));
-    }
-}
-
-function cmdTimestampFormat(e)
-{
-    var view = e.sourceObject;
-
-    if (e.format != null)
-    {
-        view.prefs["timestampFormat"] = e.format;
-    }
-    else
-    {
-        display(getMsg(MSG_FMT_PREF, ["timestampFormat",
-                                      view.prefs["timestampFormat"]]));
     }
 }
 
@@ -3771,11 +4036,11 @@ function cmdDCCChat(e)
     var c = client.dcc.addChat(u, client.dcc.getNextPort());
     c.request();
 
-    client.munger.entries[".inline-buttons"].enabled = true;
+    client.munger.getRule(".inline-buttons").enabled = true;
     var cmd = getMsg(MSG_DCC_COMMAND_CANCEL, "dcc-close " + c.id);
     display(getMsg(MSG_DCCCHAT_SENT_REQUEST, c._getParams().concat(cmd)),
             "DCC-CHAT");
-    client.munger.entries[".inline-buttons"].enabled = false;
+    client.munger.getRule(".inline-buttons").enabled = false;
 
     return true;
 }
@@ -3890,13 +4155,13 @@ function cmdDCCSend(e)
     var c = client.dcc.addFileTransfer(u, client.dcc.getNextPort());
     c.request(file);
 
-    client.munger.entries[".inline-buttons"].enabled = true;
+    client.munger.getRule(".inline-buttons").enabled = true;
     var cmd = getMsg(MSG_DCC_COMMAND_CANCEL, "dcc-close " + c.id);
     display(getMsg(MSG_DCCFILE_SENT_REQUEST, [c.user.unicodeName, c.localIP,
                                               c.port, c.filename,
                                               getSISize(c.size), cmd]),
             "DCC-FILE");
-    client.munger.entries[".inline-buttons"].enabled = false;
+    client.munger.getRule(".inline-buttons").enabled = false;
 
     return true;
 }
@@ -3960,7 +4225,7 @@ function cmdDCCList(e) {
                 if (c.TYPE == "IRCDCCFileTransfer")
                 {
                     state = getMsg(MSG_DCC_STATE_CONNECTPRO,
-                                   [Math.floor(100 * c.position / c.size),
+                                   [c.progress,
                                     getSISize(c.position), getSISize(c.size),
                                     getSISpeed(c.speed)]);
                 }
@@ -3978,11 +4243,11 @@ function cmdDCCList(e) {
                 counts.failed++;
                 break;
         }
-        client.munger.entries[".inline-buttons"].enabled = true;
+        client.munger.getRule(".inline-buttons").enabled = true;
         display(getMsg(MSG_DCCLIST_LINE, [k + 1, state, dir, type, tf,
                                           c.unicodeName, c.remoteIP, c.port,
                                           cmds]));
-        client.munger.entries[".inline-buttons"].enabled = false;
+        client.munger.getRule(".inline-buttons").enabled = false;
     }
     display(getMsg(MSG_DCCLIST_SUMMARY, [counts.pending, counts.connected,
                                          counts.failed]));
@@ -4185,7 +4450,7 @@ function cmdDCCDecline(e)
 function cmdTextDirection(e)
 {
     var direction;
-    var sourceObject = e.sourceObject.frame.contentDocument.body;
+    var sourceObject = getContentDocument(e.sourceObject.frame).body;
 
     switch (e.dir)
     {

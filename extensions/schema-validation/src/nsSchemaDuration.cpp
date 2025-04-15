@@ -39,8 +39,7 @@
 #include "nsSchemaDuration.h"
 
 // string includes
-#include "nsReadableUtils.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 #include "nsUnicharUtils.h"
 
 // XPCOM includes
@@ -54,7 +53,7 @@
 #include "prtime.h"
 #include "plbase64.h"
 
-NS_IMPL_ISUPPORTS1_CI(nsSchemaDuration, nsISchemaDuration)
+NS_IMPL_ISUPPORTS1(nsSchemaDuration, nsISchemaDuration)
 
 nsSchemaDuration::nsSchemaDuration(PRUint32 aYears, PRUint32 aMonths,
                                    PRUint32 aDays, PRUint32 aHours,
@@ -136,4 +135,3 @@ nsSchemaDuration::GetNegative(PRBool *aResult)
   *aResult = negative;
   return NS_OK;
 }
-

@@ -38,7 +38,7 @@
 #
 # ***** END LICENSE BLOCK *****
 #
-#ident  "$Id: prototype,v 1.2.2.2.12.1 2006/02/03 14:41:26 gerv%gerv.net Exp $"
+#ident  "$Id: prototype,v 1.4 2006/04/05 20:57:09 wtchang%redhat.com Exp $"
 #
 # This required package information file contains a list of package contents.
 # The 'pkgmk' command uses this file to identify the contents of a package

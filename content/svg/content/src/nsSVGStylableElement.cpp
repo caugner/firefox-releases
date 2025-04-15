@@ -39,8 +39,9 @@
 #include "nsSVGStylableElement.h"
 #include "nsICSSOMFactory.h"
 #include "nsSVGAnimatedString.h"
-#include "nsSVGAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsDOMCSSDeclaration.h"
+#include "nsIDOMClassInfo.h"
 
 static NS_DEFINE_CID(kCSSOMFactoryCID, NS_CSSOMFACTORY_CID);
 
@@ -66,7 +67,8 @@ nsSVGStylableElement::nsSVGStylableElement(nsINodeInfo *aNodeInfo)
 nsresult
 nsSVGStylableElement::Init()
 {
-  nsresult rv;
+  nsresult rv = nsSVGStylableElementBase::Init();
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Create mapped properties:
 
@@ -74,8 +76,8 @@ nsSVGStylableElement::Init()
   {
     mClassName = new nsSVGClassValue;
     NS_ENSURE_TRUE(mClassName, NS_ERROR_OUT_OF_MEMORY);
-    rv = AddMappedSVGValue(nsSVGAtoms::_class,
-			   NS_STATIC_CAST(nsIDOMSVGAnimatedString*, mClassName),
+    rv = AddMappedSVGValue(nsGkAtoms::_class,
+			   static_cast<nsIDOMSVGAnimatedString*>(mClassName),
 			   kNameSpaceID_None);
     NS_ENSURE_SUCCESS(rv, rv);
   }
@@ -84,28 +86,12 @@ nsSVGStylableElement::Init()
 }
 
 //----------------------------------------------------------------------
-// nsIStyledContent methods
+// nsIContent methods
 
 const nsAttrValue*
 nsSVGStylableElement::GetClasses() const
 {
   return mClassName->GetAttrValue();
-}
-
-NS_IMETHODIMP_(PRBool)
-nsSVGStylableElement::HasClass(nsIAtom* aClass, PRBool aCaseSensitive) const
-{
-  NS_ASSERTION(aCaseSensitive, "svg should always be casesensitive");
-
-  const nsAttrValue* val = mClassName->GetAttrValue();
-  if (val->Type() == nsAttrValue::eAtom) {
-    return aClass == val->GetAtomValue();
-  }
-  if (val->Type() == nsAttrValue::eAtomArray) {
-    return val->GetAtomArrayValue()->IndexOf(aClass) >= 0;
-  }
-
-  return PR_FALSE;
 }
 
 //----------------------------------------------------------------------
@@ -124,23 +110,7 @@ nsSVGStylableElement::GetClassName(nsIDOMSVGAnimatedString** aClassName)
 NS_IMETHODIMP
 nsSVGStylableElement::GetStyle(nsIDOMCSSStyleDeclaration** aStyle)
 {
-  nsDOMSlots *slots = GetDOMSlots();
-
-  if (!slots->mStyle) {
-    nsICSSOMFactory* cssOMFactory = nsnull;
-    // We could cache the factory here, but lets wait with that until
-    // we share code with html here.
-    nsresult rv = CallGetService(kCSSOMFactoryCID, &cssOMFactory);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = cssOMFactory->
-      CreateDOMCSSAttributeDeclaration(this, getter_AddRefs(slots->mStyle));
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
-  NS_ADDREF(*aStyle = slots->mStyle);
-
-  return NS_OK;
+  return nsSVGStylableElementBase::GetStyle(aStyle);
 }
 
 /* nsIDOMCSSValue getPresentationAttribute (in DOMString name); */

@@ -40,22 +40,19 @@
 #ifndef nsIAttribute_h___
 #define nsIAttribute_h___
 
-#include "nsISupports.h"
-#include "nsINodeInfo.h"
-#include "nsIContent.h"
-#include "nsPropertyTable.h"
+#include "nsINode.h"
 
-class nsIAtom;
 class nsDOMAttributeMap;
+class nsIContent;
 
 #define NS_IATTRIBUTE_IID  \
- {0x4940cc50, 0x2ede, 0x4883,        \
- {0x95, 0xf5, 0x53, 0xdb, 0x50, 0x50, 0x13, 0x3e}}
+{ 0x68b13198, 0x6d81, 0x4ab6, \
+  { 0xb9, 0x98, 0xd0, 0xa4, 0x55, 0x82, 0x5f, 0xb1 } }
 
-class nsIAttribute : public nsISupports
+class nsIAttribute : public nsINode
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IATTRIBUTE_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IATTRIBUTE_IID)
 
   virtual void SetMap(nsDOMAttributeMap *aMap) = 0;
   
@@ -71,39 +68,23 @@ public:
 
   virtual nsIContent* GetContent() const = 0;
 
-  nsIDocument *GetOwnerDoc() const
-  {
-    nsIContent* content = GetContent();
-    return content ? content->GetOwnerDoc() : mNodeInfo->GetDocument();
-  }
-
-  /*
-   * Methods for manipulating content node properties.  For documentation on
-   * properties, see nsPropertyTable.h.
+  /**
+   * Called when our ownerElement is moved into a new document.
+   * Updates the nodeinfo of this node.
    */
-  virtual void* GetProperty(nsIAtom  *aPropertyName,
-                            nsresult *aStatus = nsnull) = 0;
-
-  virtual nsresult SetProperty(nsIAtom                   *aPropertyName,
-                               void                      *aValue,
-                               NSPropertyDtorFunc         aDtor = nsnull) = 0;
-
-  virtual nsresult DeleteProperty(nsIAtom *aPropertyName) = 0;
-
-  virtual void* UnsetProperty(nsIAtom  *aPropertyName,
-                              nsresult *aStatus = nsnull) = 0;
+  virtual nsresult SetOwnerDocument(nsIDocument* aDocument) = 0;
 
 protected:
+#ifdef MOZILLA_INTERNAL_API
   nsIAttribute(nsDOMAttributeMap *aAttrMap, nsINodeInfo *aNodeInfo)
-    : mAttrMap(aAttrMap), mNodeInfo(aNodeInfo)
+    : nsINode(aNodeInfo), mAttrMap(aAttrMap)
   {
   }
+#endif //MOZILLA_INTERNAL_API
 
   nsDOMAttributeMap *mAttrMap; // WEAK
-  nsCOMPtr<nsINodeInfo> mNodeInfo; // STRONG
-
-private:
-  nsIAttribute(); // Not to be implemented.
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIAttribute, NS_IATTRIBUTE_IID)
 
 #endif /* nsIAttribute_h___ */

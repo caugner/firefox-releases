@@ -52,28 +52,7 @@
 #include "nsIDOMDocument.h"
 
 // Hack around internal string usage in nsIDocument.h on the branch
-#ifdef MOZILLA_1_8_BRANCH
-// nsAFlat[C]String is a deprecated synonym for ns[C]String
-typedef nsString nsAFlatString;
-typedef nsCString nsAFlatCString;
-// nsXPIDLCString is a subclass of nsCString, but they're equivalent for the
-// purposes of nsIDocument.h.
-typedef nsCString nsXPIDLCString;
-// This utility method isn't in the string glue on the branch.
-inline void CopyASCIItoUCS2(const nsACString &src, nsAString &dest) {
-  NS_CStringToUTF16(src, NS_CSTRING_ENCODING_ASCII, dest);
-}
-// Suppress inclusion of these headers
-#define nsAString_h___
-#define nsString_h___
-#define nsReadableUtils_h___
-#endif
 #include "nsIDocument.h"
-#ifdef MOZILLA_1_8_BRANCH
-#undef nsAString_h___
-#undef nsString_h___
-#undef nsReadableUtils_h___
-#endif
 
 // This is needed to gain access to the LOAD_ defines in this file.
 #define MOZILLA_INTERNAL_API
@@ -221,9 +200,9 @@ nsLoadCollector::~nsLoadCollector()
   GetMemUsage_Shutdown();
 }
 
-NS_IMPL_ISUPPORTS4(nsLoadCollector, nsIMetricsCollector,
+NS_IMPL_ISUPPORTS5(nsLoadCollector, nsIMetricsCollector,
                    nsIWebProgressListener, nsISupportsWeakReference,
-                   nsIDocumentObserver)
+                   nsIDocumentObserver, nsIMutationObserver)
 
 NS_IMETHODIMP
 nsLoadCollector::OnStateChange(nsIWebProgress *webProgress,
@@ -475,8 +454,8 @@ nsLoadCollector::OnAttach()
 nsLoadCollector::RemoveDocumentFromMap(const nsIDocument *document,
                                        DocumentEntry &entry, void *userData)
 {
-  nsIDocument *mutable_doc = NS_CONST_CAST(nsIDocument*, document);
-  mutable_doc->RemoveObserver(NS_STATIC_CAST(nsLoadCollector*, userData));
+  nsIDocument *mutable_doc = const_cast<nsIDocument*>(document);
+  mutable_doc->RemoveObserver(static_cast<nsLoadCollector*>(userData));
   return PL_DHASH_REMOVE;
 }
 
@@ -506,9 +485,6 @@ nsLoadCollector::OnNewLog()
 }
 
 NS_IMPL_NSIDOCUMENTOBSERVER_LOAD_STUB(nsLoadCollector)
-#ifdef MOZILLA_1_8_BRANCH
-NS_IMPL_NSIDOCUMENTOBSERVER_REFLOW_STUB(nsLoadCollector)
-#endif
 NS_IMPL_NSIDOCUMENTOBSERVER_STATE_STUB(nsLoadCollector)
 NS_IMPL_NSIDOCUMENTOBSERVER_CONTENT(nsLoadCollector)
 NS_IMPL_NSIDOCUMENTOBSERVER_STYLE_STUB(nsLoadCollector)
@@ -524,8 +500,9 @@ nsLoadCollector::EndUpdate(nsIDocument *document, nsUpdateType updateType)
 }
 
 void
-nsLoadCollector::DocumentWillBeDestroyed(nsIDocument *document)
+nsLoadCollector::NodeWillBeDestroyed(const nsINode *node)
 {
+  const nsIDocument* document = static_cast<const nsIDocument*>(node);
   // Look up the document to get its id.
   DocumentEntry entry;
   if (!mDocumentMap.Get(document, &entry)) {

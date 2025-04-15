@@ -40,11 +40,10 @@
 #define nsRDFPropertyTestNode_h__
 
 #include "nscore.h"
-#include "nsFixedSizeAllocator.h"
 #include "nsRDFTestNode.h"
 #include "nsIRDFDataSource.h"
 #include "nsIRDFResource.h"
-class nsConflictSet;
+#include "nsXULTemplateQueryProcessorRDF.h"
 
 class nsRDFPropertyTestNode : public nsRDFTestNode
 {
@@ -52,36 +51,32 @@ public:
     /**
      * Both source and target unbound (?source ^property ?target)
      */
-    nsRDFPropertyTestNode(InnerNode* aParent,
-                          nsConflictSet& aConflictSet,
-                          nsIRDFDataSource* aDataSource,
-                          PRInt32 aSourceVariable,
+    nsRDFPropertyTestNode(TestNode* aParent,
+                          nsXULTemplateQueryProcessorRDF* aProcessor,
+                          nsIAtom* aSourceVariable,
                           nsIRDFResource* aProperty,
-                          PRInt32 aTargetVariable);
+                          nsIAtom* aTargetVariable);
 
     /**
      * Source bound, target unbound (source ^property ?target)
      */
-    nsRDFPropertyTestNode(InnerNode* aParent,
-                          nsConflictSet& aConflictSet,
-                          nsIRDFDataSource* aDataSource,
+    nsRDFPropertyTestNode(TestNode* aParent,
+                          nsXULTemplateQueryProcessorRDF* aProcessor,
                           nsIRDFResource* aSource,
                           nsIRDFResource* aProperty,
-                          PRInt32 aTargetVariable);
+                          nsIAtom* aTargetVariable);
 
     /**
      * Source unbound, target bound (?source ^property target)
      */
-    nsRDFPropertyTestNode(InnerNode* aParent,
-                          nsConflictSet& aConflictSet,
-                          nsIRDFDataSource* aDataSource,
-                          PRInt32 aSourceVariable,
+    nsRDFPropertyTestNode(TestNode* aParent,
+                          nsXULTemplateQueryProcessorRDF* aProcessor,
+                          nsIAtom* aSourceVariable,
                           nsIRDFResource* aProperty,
                           nsIRDFNode* aTarget);
 
-    virtual nsresult FilterInstantiations(InstantiationSet& aInstantiations, void* aClosure) const;
-
-    virtual nsresult GetAncestorVariables(VariableSet& aVariables) const;
+    virtual nsresult FilterInstantiations(InstantiationSet& aInstantiations,
+                                          PRBool* aCantHandleYet) const;
 
     virtual PRBool
     CanPropagate(nsIRDFResource* aSource,
@@ -92,9 +87,7 @@ public:
     virtual void
     Retract(nsIRDFResource* aSource,
             nsIRDFResource* aProperty,
-            nsIRDFNode* aTarget,
-            nsTemplateMatchSet& aFirings,
-            nsTemplateMatchSet& aRetractions) const;
+            nsIRDFNode* aTarget) const;
 
 
     class Element : public MemoryElement {
@@ -116,17 +109,16 @@ public:
         virtual ~Element() { MOZ_COUNT_DTOR(nsRDFPropertyTestNode::Element); }
 
         static Element*
-        Create(nsFixedSizeAllocator& aPool,
-               nsIRDFResource* aSource,
+        Create(nsIRDFResource* aSource,
                nsIRDFResource* aProperty,
                nsIRDFNode* aTarget) {
-            void* place = aPool.Alloc(sizeof(Element));
+            void* place = MemoryElement::gPool.Alloc(sizeof(Element));
             return place ? ::new (place) Element(aSource, aProperty, aTarget) : nsnull; }
 
-        static void
-        Destroy(nsFixedSizeAllocator& aPool, Element* aElement) {
-            aElement->~Element();
-            aPool.Free(aElement, sizeof(*aElement)); }
+        void Destroy() {
+            this->~Element();
+            MemoryElement::gPool.Free(this, sizeof(Element));
+        }
 
         virtual const char* Type() const {
             return "nsRDFPropertyTestNode::Element"; }
@@ -138,16 +130,12 @@ public:
 
         virtual PRBool Equals(const MemoryElement& aElement) const {
             if (aElement.Type() == Type()) {
-                const Element& element = NS_STATIC_CAST(const Element&, aElement);
+                const Element& element = static_cast<const Element&>(aElement);
                 return mSource == element.mSource
                     && mProperty == element.mProperty
                     && mTarget == element.mTarget;
             }
             return PR_FALSE; }
-
-        virtual MemoryElement* Clone(void* aPool) const {
-            return Create(*NS_STATIC_CAST(nsFixedSizeAllocator*, aPool),
-                          mSource, mProperty, mTarget); }
 
     protected:
         nsCOMPtr<nsIRDFResource> mSource;
@@ -156,12 +144,11 @@ public:
     };
 
 protected:
-    nsConflictSet&             mConflictSet;
-    nsCOMPtr<nsIRDFDataSource> mDataSource;
-    PRInt32                  mSourceVariable;
+    nsXULTemplateQueryProcessorRDF* mProcessor;
+    nsCOMPtr<nsIAtom>        mSourceVariable;
     nsCOMPtr<nsIRDFResource> mSource;
     nsCOMPtr<nsIRDFResource> mProperty;
-    PRInt32                  mTargetVariable;
+    nsCOMPtr<nsIAtom>        mTargetVariable;
     nsCOMPtr<nsIRDFNode>     mTarget;
 };
 

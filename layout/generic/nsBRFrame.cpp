@@ -34,89 +34,78 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* rendering object for HTML <br> elements */
+
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
 #include "nsHTMLParts.h"
 #include "nsPresContext.h"
 #include "nsLineLayout.h"
 #include "nsStyleConsts.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsIFontMetrics.h"
 #include "nsIRenderingContext.h"
-#include "nsLayoutAtoms.h"
-#include "nsTextTransformer.h"
+#include "nsLayoutUtils.h"
+
+#ifdef ACCESSIBILITY
+#include "nsIServiceManager.h"
+#include "nsIAccessible.h"
+#include "nsIAccessibilityService.h"
+#endif
 
 //FOR SELECTION
 #include "nsIContent.h"
-#include "nsIFrameSelection.h"
+#include "nsFrameSelection.h"
 //END INCLUDES FOR SELECTION
 
 class BRFrame : public nsFrame {
 public:
-  // nsIFrame
-#ifdef NS_DEBUG
-  NS_IMETHOD Paint(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext,
-                   const nsRect&        aDirtyRect,
-                   nsFramePaintLayer    aWhichLayer,
-                   PRUint32             aFlags = 0);
-#endif
-  NS_IMETHOD GetContentAndOffsetsFromPoint(nsPresContext* aCX,
-                         const nsPoint& aPoint,
-                         nsIContent** aNewContent,
-                         PRInt32& aContentOffset,
-                         PRInt32& aContentOffsetEnd,
-                         PRBool&  aBeginFrameContent);
-  NS_IMETHOD PeekOffset(nsPresContext* aPresContext, 
-                         nsPeekOffsetStruct *aPos);
+  friend nsIFrame* NS_NewBRFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
-  // nsIHTMLReflow
+  virtual ContentOffsets CalcContentOffsetsFromFramePoint(nsPoint aPoint);
+
+  virtual PRBool PeekOffsetNoAmount(PRBool aForward, PRInt32* aOffset);
+  virtual PRBool PeekOffsetCharacter(PRBool aForward, PRInt32* aOffset);
+  virtual PRBool PeekOffsetWord(PRBool aForward, PRBool aWordSelectEatSpace, PRBool aIsKeyboardSelect,
+                                PRInt32* aOffset, PeekWordState* aState);
+
   NS_IMETHOD Reflow(nsPresContext* aPresContext,
                     nsHTMLReflowMetrics& aDesiredSize,
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus& aStatus);
+  virtual void AddInlineMinWidth(nsIRenderingContext *aRenderingContext,
+                                 InlineMinWidthData *aData);
+  virtual void AddInlinePrefWidth(nsIRenderingContext *aRenderingContext,
+                                  InlinePrefWidthData *aData);
+  virtual nscoord GetMinWidth(nsIRenderingContext *aRenderingContext);
+  virtual nscoord GetPrefWidth(nsIRenderingContext *aRenderingContext);
   virtual nsIAtom* GetType() const;
+
+  virtual PRBool IsFrameOfType(PRUint32 aFlags) const
+  {
+    return nsFrame::IsFrameOfType(aFlags & ~(nsIFrame::eReplaced |
+                                             nsIFrame::eLineParticipant));
+  }
+
+#ifdef ACCESSIBILITY  
+  NS_IMETHOD GetAccessible(nsIAccessible** aAccessible);
+#endif
+
 protected:
+  BRFrame(nsStyleContext* aContext) : nsFrame(aContext) {}
   virtual ~BRFrame();
 };
 
-nsresult
-NS_NewBRFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
+nsIFrame*
+NS_NewBRFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsIFrame* frame = new (aPresShell) BRFrame;
-  if (nsnull == frame) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  *aNewFrame = frame;
-  return NS_OK;
+  return new (aPresShell) BRFrame(aContext);
 }
 
 BRFrame::~BRFrame()
 {
 }
-
-#ifdef NS_DEBUG
-NS_IMETHODIMP
-BRFrame::Paint(nsPresContext*      aPresContext,
-               nsIRenderingContext& aRenderingContext,
-               const nsRect&        aDirtyRect,
-               nsFramePaintLayer    aWhichLayer,
-               PRUint32             aFlags)
-{
-  if ((NS_FRAME_PAINT_LAYER_DEBUG == aWhichLayer) && GetShowFrameBorders()) {
-    float p2t;
-    p2t = aPresContext->PixelsToTwips();
-    nscoord five = NSIntPixelsToTwips(5, p2t);
-    aRenderingContext.SetColor(NS_RGB(0, 255, 255));
-    aRenderingContext.FillRect(0, 0, five, five*2);
-  }
-  return NS_OK;
-}
-#endif
 
 NS_IMETHODIMP
 BRFrame::Reflow(nsPresContext* aPresContext,
@@ -124,17 +113,13 @@ BRFrame::Reflow(nsPresContext* aPresContext,
                 const nsHTMLReflowState& aReflowState,
                 nsReflowStatus& aStatus)
 {
-  DO_GLOBAL_REFLOW_COUNT("BRFrame", aReflowState.reason);
+  DO_GLOBAL_REFLOW_COUNT("BRFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aMetrics, aStatus);
-  if (aMetrics.mComputeMEW) {
-    aMetrics.mMaxElementWidth = 0;
-  }
   aMetrics.height = 0; // BR frames with height 0 are ignored in quirks
                        // mode by nsLineLayout::VerticalAlignFrames .
                        // However, it's not always 0.  See below.
   aMetrics.width = 0;
   aMetrics.ascent = 0;
-  aMetrics.descent = 0;
 
   // Only when the BR is operating in a line-layout situation will it
   // behave like a BR.
@@ -143,7 +128,7 @@ BRFrame::Reflow(nsPresContext* aPresContext,
     // Note that the compatibility mode check excludes AlmostStandards
     // mode, since this is the inline box model.  See bug 161691.
     if ( ll->CanPlaceFloatNow() ||
-         ll->GetCompatMode() == eCompatibility_FullStandards ) {
+         aPresContext->CompatibilityMode() == eCompatibility_FullStandards ) {
       // If we can place a float on the line now it means that the
       // line is effectively empty (there may be zero sized compressed
       // white-space frames on the line, but they are to be ignored).
@@ -160,7 +145,7 @@ BRFrame::Reflow(nsPresContext* aPresContext,
       // We also do this in strict mode because BR should act like a
       // normal inline frame.  That line-height is used is important
       // here for cases where the line-height is less that 1.
-      SetFontFromStyle(aReflowState.rendContext, mStyleContext);
+      nsLayoutUtils::SetFontFromStyle(aReflowState.rendContext, mStyleContext);
       nsCOMPtr<nsIFontMetrics> fm;
       aReflowState.rendContext->GetFontMetrics(*getter_AddRefs(fm));
       if (fm) {
@@ -168,14 +153,10 @@ BRFrame::Reflow(nsPresContext* aPresContext,
         fm->GetMaxAscent(ascent);
         fm->GetMaxDescent(descent);
         nscoord logicalHeight =
-          aReflowState.CalcLineHeight(aPresContext,
-                                       aReflowState.rendContext,
-                                       this);
+          aReflowState.CalcLineHeight(aReflowState.rendContext, this);
         nscoord leading = logicalHeight - ascent - descent;
         aMetrics.height = logicalHeight;
         aMetrics.ascent = ascent + (leading/2);
-        aMetrics.descent = logicalHeight - aMetrics.ascent;
-                      // = descent + (leading/2), but without rounding error
       }
       else {
         aMetrics.ascent = aMetrics.height = 0;
@@ -188,11 +169,6 @@ BRFrame::Reflow(nsPresContext* aPresContext,
       // Warning: nsTextControlFrame::CalculateSizeStandard depends on
       // the following line, see bug 228752.
       aMetrics.width = 1;
-
-      // Update max-element-width to keep us honest
-      if (aMetrics.mComputeMEW && aMetrics.width > aMetrics.mMaxElementWidth) {
-        aMetrics.mMaxElementWidth = aMetrics.width;
-      }
     }
 
     // Return our reflow status
@@ -208,57 +184,105 @@ BRFrame::Reflow(nsPresContext* aPresContext,
   else {
     aStatus = NS_FRAME_COMPLETE;
   }
+  
+  aMetrics.mOverflowArea = nsRect(0, 0, aMetrics.width, aMetrics.height);
 
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aMetrics);
   return NS_OK;
 }
 
+/* virtual */ void
+BRFrame::AddInlineMinWidth(nsIRenderingContext *aRenderingContext,
+                           nsIFrame::InlineMinWidthData *aData)
+{
+  aData->ForceBreak(aRenderingContext);
+}
+
+/* virtual */ void
+BRFrame::AddInlinePrefWidth(nsIRenderingContext *aRenderingContext,
+                            nsIFrame::InlinePrefWidthData *aData)
+{
+  aData->ForceBreak(aRenderingContext);
+}
+
+/* virtual */ nscoord
+BRFrame::GetMinWidth(nsIRenderingContext *aRenderingContext)
+{
+  nscoord result = 0;
+  DISPLAY_MIN_WIDTH(this, result);
+  return result;
+}
+
+/* virtual */ nscoord
+BRFrame::GetPrefWidth(nsIRenderingContext *aRenderingContext)
+{
+  nscoord result = 0;
+  DISPLAY_PREF_WIDTH(this, result);
+  return result;
+}
+
 nsIAtom*
 BRFrame::GetType() const
 {
-  return nsLayoutAtoms::brFrame;
+  return nsGkAtoms::brFrame;
 }
 
-NS_IMETHODIMP BRFrame::GetContentAndOffsetsFromPoint(nsPresContext* aCX,
-                                                     const nsPoint&  aPoint,
-                                                     nsIContent **   aContent,
-                                                     PRInt32&        aOffsetBegin,
-                                                     PRInt32&        aOffsetEnd,
-                                                     PRBool&         aBeginFrameContent)
+nsIFrame::ContentOffsets BRFrame::CalcContentOffsetsFromFramePoint(nsPoint aPoint)
 {
-  if (!mContent)
-    return NS_ERROR_NULL_POINTER;
-  NS_IF_ADDREF(*aContent = mContent->GetParent());
-
-  if (*aContent)
-    aOffsetBegin = (*aContent)->IndexOf(mContent);
-  aOffsetEnd = aOffsetBegin;
-  aBeginFrameContent = PR_TRUE;
-  return NS_OK;
-}
-
-NS_IMETHODIMP BRFrame::PeekOffset(nsPresContext* aPresContext, nsPeekOffsetStruct *aPos)
-{
-  if (!aPos)
-    return NS_ERROR_NULL_POINTER;
-
-  //BR is also a whitespace, but sometimes GetNextWord() can't handle this
-  //See bug 304891
-  nsTextTransformer::Initialize();
-  if (nsTextTransformer::GetWordSelectEatSpaceAfter() &&
-      aPos->mDirection == eDirNext)
-    aPos->mEatingWS = PR_TRUE;
-
- //offset of this content in its parents child list. base 0
-  PRInt32 offsetBegin = mContent->GetParent()->IndexOf(mContent);
-
-  if (aPos->mAmount != eSelectLine && aPos->mAmount != eSelectBeginLine 
-      && aPos->mAmount != eSelectEndLine) //then we must do the adjustment to make sure we leave this frame
-  {
-    if (aPos->mDirection == eDirNext)
-      aPos->mStartOffset = offsetBegin +1;//go to end to make sure we jump to next node.
-    else
-      aPos->mStartOffset = offsetBegin; //we start at beginning to make sure we leave this frame.
+  ContentOffsets offsets;
+  offsets.content = mContent->GetParent();
+  if (offsets.content) {
+    offsets.offset = offsets.content->IndexOf(mContent);
+    offsets.secondaryOffset = offsets.offset;
+    offsets.associateWithNext = PR_TRUE;
   }
-  return nsFrame::PeekOffset(aPresContext, aPos);//now we let the default take over.
+  return offsets;
 }
+
+PRBool
+BRFrame::PeekOffsetNoAmount(PRBool aForward, PRInt32* aOffset)
+{
+  NS_ASSERTION (aOffset && *aOffset <= 1, "aOffset out of range");
+  PRInt32 startOffset = *aOffset;
+  // If we hit the end of a BR going backwards, go to its beginning and stay there.
+  if (!aForward && startOffset != 0) {
+    *aOffset = 0;
+    return PR_TRUE;
+  }
+  // Otherwise, stop if we hit the beginning, continue (forward) if we hit the end.
+  return (startOffset == 0);
+}
+
+PRBool
+BRFrame::PeekOffsetCharacter(PRBool aForward, PRInt32* aOffset)
+{
+  NS_ASSERTION (aOffset && *aOffset <= 1, "aOffset out of range");
+  // Keep going. The actual line jumping will stop us.
+  return PR_FALSE;
+}
+
+PRBool
+BRFrame::PeekOffsetWord(PRBool aForward, PRBool aWordSelectEatSpace, PRBool aIsKeyboardSelect,
+                        PRInt32* aOffset, PeekWordState* aState)
+{
+  NS_ASSERTION (aOffset && *aOffset <= 1, "aOffset out of range");
+  // Keep going. The actual line jumping will stop us.
+  return PR_FALSE;
+}
+
+#ifdef ACCESSIBILITY
+NS_IMETHODIMP BRFrame::GetAccessible(nsIAccessible** aAccessible)
+{
+  NS_ENSURE_TRUE(mContent, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIAccessibilityService> accService = do_GetService("@mozilla.org/accessibilityService;1");
+  NS_ENSURE_TRUE(accService, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIContent> parent = mContent->GetBindingParent();
+  if (parent && parent->IsNativeAnonymous() && parent->GetChildCount() == 1) {
+    // This <br> is the only node in a text control, therefore it is the hacky
+    // "bogus node" used when there is no text in the control
+    return NS_ERROR_FAILURE;
+  }
+  return accService->CreateHTMLBRAccessible(static_cast<nsIFrame*>(this), aAccessible);
+}
+#endif
+

@@ -156,19 +156,15 @@ nsPrimitiveHelpers :: ConvertUnicodeToPlatformPlainText ( PRUnichar* inUnicode, 
   if ( !outPlainTextData || !outPlainTextLen )
     return NS_ERROR_INVALID_ARG;
 
-  // Get the appropriate unicode encoder. We're guaranteed that this won't change
-  // through the life of the app so we can cache it.
-  nsresult rv;
-  nsCOMPtr<nsIUnicodeEncoder> encoder;
-
   // get the charset
-  nsCAutoString platformCharset;
+  nsresult rv;
   nsCOMPtr <nsIPlatformCharset> platformCharsetService = do_GetService(NS_PLATFORMCHARSET_CONTRACTID, &rv);
+
+  nsCAutoString platformCharset;
   if (NS_SUCCEEDED(rv))
     rv = platformCharsetService->GetCharset(kPlatformCharsetSel_PlainTextInClipboard, platformCharset);
   if (NS_FAILED(rv))
     platformCharset.AssignLiteral("ISO-8859-1");
-  
 
   // use transliterate to convert things like smart quotes to normal quotes for plain text
 
@@ -207,7 +203,7 @@ nsPrimitiveHelpers :: ConvertPlatformPlainTextToUnicode ( const char* inText, PR
 
   // Get the appropriate unicode decoder. We're guaranteed that this won't change
   // through the life of the app so we can cache it.
-  nsresult rv;
+  nsresult rv = NS_OK;
   static nsCOMPtr<nsIUnicodeDecoder> decoder;
   static PRBool hasConverter = PR_FALSE;
   if ( !hasConverter ) {
@@ -236,7 +232,7 @@ nsPrimitiveHelpers :: ConvertPlatformPlainTextToUnicode ( const char* inText, PR
   // the conversion. 
   decoder->GetMaxLength(inText, inTextLen, outUnicodeLen);   // |outUnicodeLen| is number of chars
   if ( *outUnicodeLen ) {
-    *outUnicode = NS_REINTERPRET_CAST(PRUnichar*, nsMemory::Alloc((*outUnicodeLen + 1) * sizeof(PRUnichar)));
+    *outUnicode = reinterpret_cast<PRUnichar*>(nsMemory::Alloc((*outUnicodeLen + 1) * sizeof(PRUnichar)));
     if ( *outUnicode ) {
       rv = decoder->Convert(inText, &inTextLen, *outUnicode, outUnicodeLen);
       (*outUnicode)[*outUnicodeLen] = '\0';                   // null terminate. Convert() doesn't do it for us
@@ -275,7 +271,7 @@ nsLinebreakHelpers :: ConvertPlatformToDOMLinebreaks ( const char* inFlavor, voi
   nsresult retVal = NS_OK;
   
   if ( strcmp(inFlavor, "text/plain") == 0 ) {
-    char* buffAsChars = NS_REINTERPRET_CAST(char*, *ioData);
+    char* buffAsChars = reinterpret_cast<char*>(*ioData);
     char* oldBuffer = buffAsChars;
     retVal = nsLinebreakConverter::ConvertLineBreaksInSitu ( &buffAsChars, nsLinebreakConverter::eLinebreakAny, 
                                                               nsLinebreakConverter::eLinebreakContent, 
@@ -290,7 +286,7 @@ nsLinebreakHelpers :: ConvertPlatformToDOMLinebreaks ( const char* inFlavor, voi
     // I'd assume we don't want to do anything for binary data....
   }
   else {       
-    PRUnichar* buffAsUnichar = NS_REINTERPRET_CAST(PRUnichar*, *ioData);
+    PRUnichar* buffAsUnichar = reinterpret_cast<PRUnichar*>(*ioData);
     PRUnichar* oldBuffer = buffAsUnichar;
     PRInt32 newLengthInChars;
     retVal = nsLinebreakConverter::ConvertUnicharLineBreaksInSitu ( &buffAsUnichar, nsLinebreakConverter::eLinebreakAny, 

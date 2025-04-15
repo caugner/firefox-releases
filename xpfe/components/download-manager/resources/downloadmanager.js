@@ -48,7 +48,8 @@ var gFileHandler = null;
 var gStatusBar = null;
 var gCannotLaunch = ((navigator.platform.indexOf("Win") == -1) &&
                      (navigator.platform.indexOf("OS/2") == -1) &&
-                     (navigator.platform.indexOf("Mac") == -1));
+                     (navigator.platform.indexOf("Mac") == -1) &&
+                     (navigator.platform.indexOf("BeOS") == -1));
 
 const dlObserver = {
   observe: function(subject, topic, state) {
@@ -104,7 +105,14 @@ function DLManagerStartup()
   gDownloadView.builder.rebuild();
   window.setTimeout(onRebuild, 0);
 
-  var key;
+  // correct keybinding command attributes which don't do our business yet
+  var key = document.getElementById("key_delete");
+  if (key.getAttribute("command"))
+    key.setAttribute("command", "cmd_remove");
+  key = document.getElementById("key_delete2");
+  if (key.getAttribute("command"))
+    key.setAttribute("command", "cmd_remove");
+  
   document.getElementById("btn_openfile").hidden = gCannotLaunch;
   document.getElementById("downloadPaneContext-openfile").hidden = gCannotLaunch;
 }
@@ -261,8 +269,8 @@ var downloadViewController = {
         // on unix, open a browser window rooted at the parent
         if ((navigator.platform.indexOf("Win") == -1) &&
             (navigator.platform.indexOf("Mac") == -1) &&
-            (navigator.platform.indexOf("OS/2") == -1)) {
-          file = file.QueryInterface(Components.interfaces.nsIFile);
+            (navigator.platform.indexOf("OS/2") == -1) &&
+            (navigator.platform.indexOf("BeOS") == -1)) {
           var parent = file.parent;
           if (parent) {
             const browserURL = "chrome://navigator/content/navigator.xul";

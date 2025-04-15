@@ -20,6 +20,7 @@
 # the Initial Developer. All Rights Reserved.
 #
 # Contributor(s):
+#   Benjamin Smedberg <benjamin@smedbergs.us>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -61,11 +62,22 @@ include $(topsrcdir)/config/insure.mk
 endif
 endif
 
-# SUBMAKEFILES: List of Makefiles for next level down.
-#   This is used to update or create the Makefiles before invoking them.
-ifneq ($(DIRS)$(TOOL_DIRS),)
-SUBMAKEFILES		:= $(addsuffix /Makefile, $(TOOL_DIRS) $(filter-out $(STATIC_MAKEFILES), $(DIRS)))
-endif
+# Sanity check some variables
+CHECK_VARS := \
+ XPI_NAME \
+ LIBRARY_NAME \
+ MODULE \
+ DEPTH \
+ SHORT_LIBNAME \
+ XPI_PKGNAME \
+ INSTALL_EXTENSION_ID \
+ $(NULL)
+
+# checks for internal spaces or trailing spaces in the variable
+# named by $x
+check-variable = $(if $(filter-out 0 1,$(words $($(x))z)),$(error Spaces are not allowed in $(x)))
+
+$(foreach x,$(CHECK_VARS),$(check-variable))
 
 # FINAL_TARGET specifies the location into which we copy end-user-shipped
 # build products (typelibs, components, chrome).
@@ -136,8 +148,7 @@ FINAL_LINK_LIBS = $(DEPTH)/config/final-link-libs
 FINAL_LINK_COMPS = $(DEPTH)/config/final-link-comps
 FINAL_LINK_COMP_NAMES = $(DEPTH)/config/final-link-comp-names
 
-MOZ_UNICHARUTIL_LIBS = $(DIST)/lib/$(LIB_PREFIX)unicharutil_s.$(LIB_SUFFIX)
-MOZ_REGISTRY_LIBS          = $(DIST)/lib/$(LIB_PREFIX)mozreg_s.$(LIB_SUFFIX)
+MOZ_UNICHARUTIL_LIBS = $(LIBXUL_DIST)/lib/$(LIB_PREFIX)unicharutil_s.$(LIB_SUFFIX)
 MOZ_WIDGET_SUPPORT_LIBS    = $(DIST)/lib/$(LIB_PREFIX)widgetsupport_s.$(LIB_SUFFIX)
 
 # determine debug-related options
@@ -160,8 +171,10 @@ endif
 
 ifdef MOZ_DEBUG
   _DEBUG_CFLAGS += $(MOZ_DEBUG_ENABLE_DEFS)
+  XULPPFLAGS += $(MOZ_DEBUG_ENABLE_DEFS)
 else
   _DEBUG_CFLAGS += $(MOZ_DEBUG_DISABLE_DEFS)
+  XULPPFLAGS += $(MOZ_DEBUG_DISABLE_DEFS)
 endif
 
 # determine if -g should be passed to the compiler, based on
@@ -220,25 +233,22 @@ OS_CFLAGS += $(_DEBUG_CFLAGS)
 OS_CXXFLAGS += $(_DEBUG_CFLAGS)
 OS_LDFLAGS += $(_DEBUG_LDFLAGS)
 
-# MOZ_PROFILE & MOZ_COVERAGE equivs for win32
+# MOZ_PROFILE equivs for win32
 ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_)
 ifdef MOZ_DEBUG
 ifneq (,$(MOZ_BROWSE_INFO)$(MOZ_BSCFILE))
 OS_CFLAGS += -FR
 OS_CXXFLAGS += -FR
 endif
-else
-# if MOZ_DEBUG is not set and MOZ_PROFILE is set, then we generate
-# an optimized build with debugging symbols. Useful for debugging
-# compiler optimization bugs, as well as running with Quantify.
-# MOZ_DEBUG_SYMBOLS works the same way as MOZ_PROFILE, but generates debug
-# symbols in separate PDB files, rather than embedded into the binary.
-ifneq (,$(MOZ_PROFILE)$(MOZ_DEBUG_SYMBOLS))
-MOZ_OPTIMIZE_FLAGS=-Zi -O1 -UDEBUG -DNDEBUG
-OS_LDFLAGS = -DEBUG -OPT:REF -OPT:nowin98
-ifdef MOZ_PROFILE
-OS_LDFLAGS += -PDB:NONE
-endif
+else # ! MOZ_DEBUG
+
+# MOZ_DEBUG_SYMBOLS generates debug symbols in separate PDB files.
+# Used for generating an optimized build with debugging symbols.
+# Used in the Windows nightlies to generate symbols for crash reporting.
+ifdef MOZ_DEBUG_SYMBOLS
+OS_CXXFLAGS += -Zi -UDEBUG -DNDEBUG
+OS_CFLAGS += -Zi -UDEBUG -DNDEBUG
+OS_LDFLAGS += -DEBUG -OPT:REF -OPT:nowin98
 endif
 
 ifdef MOZ_QUANTIFY
@@ -252,17 +262,6 @@ WIN32_EXE_LDFLAGS += -FIXED:NO
 OS_LDFLAGS += -OPT:NOICF
 endif
 
-# if MOZ_COVERAGE is set, we handle pdb files slightly differently
-ifdef MOZ_COVERAGE
-MOZ_OPTIMIZE_FLAGS=-Zi -O1 -UDEBUG -DNDEBUG
-OS_LDFLAGS = -DEBUG -PDB:NONE -OPT:REF -OPT:nowin98
-_ORDERFILE := $(wildcard $(srcdir)/win32.order)
-ifneq (,$(_ORDERFILE))
-OS_LDFLAGS += -ORDER:@$(srcdir)/win32.order
-endif
-endif
-# MOZ_COVERAGE
-
 #
 # Handle trace-malloc in optimized builds.
 # No opt to give sane callstacks.
@@ -270,54 +269,40 @@ endif
 ifdef NS_TRACE_MALLOC
 MOZ_OPTIMIZE_FLAGS=-Zi -Od -UDEBUG -DNDEBUG
 OS_LDFLAGS = -DEBUG -PDB:NONE -OPT:REF -OPT:nowin98
-endif
-# NS_TRACE_MALLOC
+endif # NS_TRACE_MALLOC
 
 endif # MOZ_DEBUG
 endif # WINNT && !GNU_CC
-
-
-#
-# -ffunction-sections is needed to reorder functions using a GNU ld
-# script.
-#
-ifeq ($(MOZ_REORDER),1)
-  OS_CFLAGS += -ffunction-sections
-  OS_CXXFLAGS += -ffunction-sections
-endif
-
-# If we're applying MOZ_PROFILE_GENERATE to a non-static build, then we
-# need to create a static build _with_ PIC.  This allows us to generate
-# profile data that will still be valid when the object files are linked into
-# shared libraries.
-ifdef MOZ_PROFILE_GENERATE
-ifdef BUILD_SHARED_LIBS
-BUILD_SHARED_LIBS=
-BUILD_STATIC_LIBS=1
-MOZ_STATIC_COMPONENT_LIBS=1
-STATIC_BUILD_PIC=1
-endif
-endif
 
 #
 # Build using PIC by default
 # Do not use PIC if not building a shared lib (see exceptions below)
 #
-#ifeq (,$(PROGRAM)$(SIMPLE_PROGRAMS)$(HOST_PROGRAM)$(HOST_SIMPLE_PROGRAMS))
-ifneq (,$(BUILD_SHARED_LIBS)$(FORCE_SHARED_LIB)$(FORCE_USE_PIC))
+
+ifndef BUILD_STATIC_LIBS
 _ENABLE_PIC=1
 endif
-#endif
+ifneq (,$(FORCE_SHARED_LIB)$(FORCE_USE_PIC))
+_ENABLE_PIC=1
+endif
+
+# In Firefox, all components are linked into either libxul or the static
+# meta-component, and should be compiled with PIC.
+ifdef MOZ_META_COMPONENT
+_ENABLE_PIC=1
+endif
 
 # If module is going to be merged into the nsStaticModule, 
 # make sure that the entry points are translated and 
 # the module is built static.
 
 ifdef IS_COMPONENT
-ifneq (,$(MOZ_STATIC_COMPONENT_LIBS))
+ifdef EXPORT_LIBRARY
+ifneq (,$(BUILD_STATIC_LIBS))
 ifdef MODULE_NAME
 DEFINES += -DXPCOM_TRANSLATE_NSGM_ENTRY_POINT=1
 FORCE_STATIC_LIB=1
+endif
 endif
 endif
 endif
@@ -334,7 +319,6 @@ else
 $(error Component makefile does not specify MODULE_NAME.)
 endif
 endif
-EXPORT_LIBRARY=
 FORCE_STATIC_LIB=1
 _ENABLE_PIC=1
 SHORT_LIBNAME=
@@ -354,20 +338,6 @@ FORCE_SHARED_LIB=1
 endif
 endif
 
-ifdef STATIC_BUILD_PIC
-ifndef _ENABLE_PIC
-# If PIC hasn't been enabled now, object files in this directory will not
-# ever be linked into a DSO.  Turn PIC on and set ENABLE_PROFILE_GENERATE.
-ENABLE_PROFILE_GENERATE=1
-_ENABLE_PIC=1
-endif
-else
-# For static builds, always enable profile generation for non-PIC objects.
-ifndef _ENABLE_PIC
-ENABLE_PROFILE_GENERATE=1
-endif
-endif
-
 #
 # Disable PIC if necessary
 #
@@ -379,23 +349,39 @@ DSO_PIC_CFLAGS=-mdynamic-no-pic
 else
 DSO_PIC_CFLAGS=
 endif
-
-MKSHLIB=
 endif
 
-# Enable profile-based feedback for non-PIC objects
-ifdef ENABLE_PROFILE_GENERATE
+# This comes from configure
+ifdef MOZ_PROFILE_GUIDED_OPTIMIZE_DISABLE
+NO_PROFILE_GUIDED_OPTIMIZE = 1
+endif
+
+# Enable profile-based feedback
+ifndef NO_PROFILE_GUIDED_OPTIMIZE
 ifdef MOZ_PROFILE_GENERATE
-DSO_PIC_CFLAGS += $(PROFILE_GEN_CFLAGS)
+# No sense in profiling tools
+ifndef INTERNAL_TOOLS
+OS_CFLAGS += $(PROFILE_GEN_CFLAGS)
+OS_CXXFLAGS += $(PROFILE_GEN_CFLAGS)
+OS_LDFLAGS += $(PROFILE_GEN_LDFLAGS)
+ifeq (WINNT,$(OS_ARCH))
+AR_FLAGS += -LTCG
 endif
-endif
-# We always use the profile-use flags, even in cases where we didn't use the
-# profile-generate flags.  It's harmless, and it saves us from having to
-# answer the question "Would these objects have been built using
-# the profile-generate flags?" which is not trivial.
+endif # INTERNAL_TOOLS
+endif # MOZ_PROFILE_GENERATE
+
 ifdef MOZ_PROFILE_USE
-DSO_PIC_CFLAGS += $(PROFILE_USE_CFLAGS)
+ifndef INTERNAL_TOOLS
+OS_CFLAGS += $(PROFILE_USE_CFLAGS)
+OS_CXXFLAGS += $(PROFILE_USE_CFLAGS)
+OS_LDFLAGS += $(PROFILE_USE_LDFLAGS)
+ifeq (WINNT,$(OS_ARCH))
+AR_FLAGS += -LTCG
 endif
+endif # INTERNAL_TOOLS
+endif # MOZ_PROFILE_USE
+endif # NO_PROFILE_GUIDED_OPTIMIZE
+
 
 # Does the makefile specifies the internal XPCOM API linkage?
 ifneq (,$(MOZILLA_INTERNAL_API)$(LIBXUL_LIBRARY))
@@ -410,12 +396,12 @@ DEFINES += \
 		-D_IMPL_NS_COM \
 		-DEXPORT_XPT_API \
 		-DEXPORT_XPTC_API \
-		-DEXPORT_XPTI_API \
 		-D_IMPL_NS_COM_OBSOLETE \
 		-D_IMPL_NS_GFX \
 		-D_IMPL_NS_WIDGET \
-		-DIMPL_XULAPI \
+		-DIMPL_XREAPI \
 		-DIMPL_NS_NET \
+		-DIMPL_THEBES \
 		$(NULL)
 
 ifndef MOZ_NATIVE_ZLIB
@@ -434,8 +420,9 @@ DEFINES += \
 		-D_IMPL_NS_COM_OBSOLETE \
 		-D_IMPL_NS_GFX \
 		-D_IMPL_NS_WIDGET \
-		-DIMPL_XULAPI \
+		-DIMPL_XREAPI \
 		-DIMPL_NS_NET \
+		-DIMPL_THEBES \
 		$(NULL)
 endif
 
@@ -448,8 +435,8 @@ endif
 # Force _all_ exported methods to be |_declspec(dllexport)| when we're
 # building them into the executable.
 
-ifeq (,$(filter-out WINNT WINCE, $(OS_ARCH)))
-ifdef MOZ_STATIC_COMPONENT_LIBS
+ifeq (,$(filter-out WINNT WINCE OS2, $(OS_ARCH)))
+ifdef BUILD_STATIC_LIBS
 DEFINES += \
         -D_IMPL_NS_GFX \
         -D_IMPL_NS_MSG_BASE \
@@ -477,7 +464,7 @@ ifeq ($(OS_TARGET),WIN95)
 MAKE_JARS_FLAGS += -l
 endif
 
-ifneq (,$(filter gtk gtk2 xlib,$(MOZ_WIDGET_TOOLKIT)))
+ifneq (,$(filter gtk2,$(MOZ_WIDGET_TOOLKIT)))
 MAKE_JARS_FLAGS += -x
 endif
 
@@ -509,29 +496,32 @@ NFSPWD		= $(CONFIG_TOOLS)/nfspwd
 PURIFY		= purify $(PURIFYOPTIONS)
 QUANTIFY	= quantify $(QUANTIFYOPTIONS)
 ifdef CROSS_COMPILE
-XPIDL_COMPILE 	= $(CYGWIN_WRAPPER) $(DIST)/host/bin/host_xpidl$(HOST_BIN_SUFFIX)
-XPIDL_LINK	= $(CYGWIN_WRAPPER) $(DIST)/host/bin/host_xpt_link$(HOST_BIN_SUFFIX)
+XPIDL_COMPILE 	= $(CYGWIN_WRAPPER) $(LIBXUL_DIST)/host/bin/host_xpidl$(HOST_BIN_SUFFIX)
+XPIDL_LINK	= $(CYGWIN_WRAPPER) $(LIBXUL_DIST)/host/bin/host_xpt_link$(HOST_BIN_SUFFIX)
 else
-XPIDL_COMPILE 	= $(CYGWIN_WRAPPER) $(DIST)/bin/xpidl$(BIN_SUFFIX)
-XPIDL_LINK	= $(CYGWIN_WRAPPER) $(DIST)/bin/xpt_link$(BIN_SUFFIX)
+XPIDL_COMPILE 	= $(CYGWIN_WRAPPER) $(LIBXUL_DIST)/bin/xpidl$(BIN_SUFFIX)
+XPIDL_LINK	= $(CYGWIN_WRAPPER) $(LIBXUL_DIST)/bin/xpt_link$(BIN_SUFFIX)
 endif
 
 # Java macros
 JAVA_GEN_DIR  = _javagen
 JAVA_DIST_DIR = $(DEPTH)/$(JAVA_GEN_DIR)
-JAVA_IFACES_PKG_NAME = org/mozilla/xpcom
+JAVA_IFACES_PKG_NAME = org/mozilla/interfaces
 
-REQ_INCLUDES	= $(foreach d,$(REQUIRES),-I$(DIST)/include/$d)
+REQ_INCLUDES	= -I$(srcdir) -I. $(foreach d,$(REQUIRES),-I$(DIST)/include/$d) -I$(DIST)/include 
+ifdef LIBXUL_SDK
+REQ_INCLUDES_SDK = $(foreach d,$(REQUIRES),-I$(LIBXUL_SDK)/include/$d) -I$(LIBXUL_SDK)/include
+endif
 
-INCLUDES	= $(LOCAL_INCLUDES) $(REQ_INCLUDES) -I$(PUBLIC) -I$(DIST)/include $(OS_INCLUDES)
+INCLUDES	= $(LOCAL_INCLUDES) $(REQ_INCLUDES) $(REQ_INCLUDES_SDK) -I$(PUBLIC) $(OS_INCLUDES)
 
 ifndef MOZILLA_INTERNAL_API
-INCLUDES	+= -I$(DIST)/sdk/include
+INCLUDES	+= -I$(LIBXUL_DIST)/sdk/include
 endif
 
 CFLAGS		= $(OS_CFLAGS)
 CXXFLAGS	= $(OS_CXXFLAGS)
-LDFLAGS		= $(OS_LDFLAGS)
+LDFLAGS		= $(OS_LDFLAGS) $(MOZ_FIX_LINK_PATHS)
 
 # Allow each module to override the *default* optimization settings
 # by setting MODULE_OPTIMIZE_FLAGS if the developer has not given
@@ -601,10 +591,22 @@ endif # MOZ_DEBUG || NS_TRACE_MALLOC
 endif # USE_STATIC_LIBS
 endif # WINNT && !GNU_CC
 
+ifeq ($(OS_ARCH),Darwin)
+# Darwin doesn't cross-compile, so just set both types of flags here.
+HOST_CMFLAGS += -fobjc-exceptions
+HOST_CMMFLAGS += -fobjc-exceptions
+OS_COMPILE_CMFLAGS += -fobjc-exceptions
+OS_COMPILE_CMMFLAGS += -fobjc-exceptions
+endif
 
 COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(XCFLAGS) $(PROFILER_CFLAGS) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(CFLAGS) $(RTL_FLAGS) $(OS_COMPILE_CFLAGS)
 COMPILE_CXXFLAGS = $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(XCFLAGS) $(PROFILER_CFLAGS) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS)  $(CXXFLAGS) $(RTL_FLAGS) $(OS_COMPILE_CXXFLAGS)
+COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS)
+COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS)
+
+ifndef CROSS_COMPILE
 HOST_CFLAGS += $(RTL_FLAGS)
+endif
 
 #
 # Name of the binary code directories
@@ -619,6 +621,9 @@ ifneq ($(MOZ_OS2_TOOLS),VACPP)
 ifneq (WINNT_,$(OS_ARCH)_$(GNU_CC))
 ifneq (,$(filter-out WINCE,$(OS_ARCH)))
 LIBS_DIR	= -L$(DIST)/bin -L$(DIST)/lib
+ifdef LIBXUL_SDK
+LIBS_DIR	+= -L$(LIBXUL_SDK)/bin -L$(LIBXUL_SDK)/lib
+endif
 endif
 endif
 endif
@@ -629,6 +634,11 @@ ifdef MODULE
 PUBLIC		= $(DIST)/include/$(MODULE)
 else
 PUBLIC		= $(DIST)/include
+endif
+
+XPIDL_FLAGS = -I$(srcdir) -I$(IDL_DIR)
+ifdef LIBXUL_SDK
+XPIDL_FLAGS += -I$(LIBXUL_SDK)/idl
 endif
 
 SDK_PUBLIC  = $(DIST)/sdk/include
@@ -657,7 +667,7 @@ endif
 ifndef CROSS_COMPILE
 ifdef USE_ELF_DYNSTR_GC
 ifdef MOZ_COMPONENTS_VERSION_SCRIPT_LDFLAGS
-ELF_DYNSTR_GC 	= $(DIST)/bin/elf-dynstr-gc
+ELF_DYNSTR_GC 	= $(DEPTH)/config/elf-dynstr-gc
 endif
 endif
 endif
@@ -673,10 +683,7 @@ PBBUILD = NEXT_ROOT= $(PBBUILD_BIN)
 else # NEXT_ROOT
 PBBUILD = $(PBBUILD_BIN)
 endif # NEXT_ROOT
-PBBUILD_SETTINGS = GCC_VERSION="$(GCC_VERSION)" SYMROOT=build
-ifdef CROSS_COMPILE
-PBBUILD_SETTINGS += ARCHS="$(OS_TEST)"
-endif # CROSS_COMPILE
+PBBUILD_SETTINGS = GCC_VERSION="$(GCC_VERSION)" SYMROOT=build ARCHS="$(OS_TEST)"
 ifdef MACOS_SDK_DIR
 PBBUILD_SETTINGS += SDKROOT="$(MACOS_SDK_DIR)"
 endif # MACOS_SDK_DIR
@@ -755,8 +762,8 @@ endif
 # static version of the same library.
 ifeq ($(GNU_LD)$(OS_ARCH),WINNT)
 ifdef IS_COMPONENT
-LDFLAGS += -IMPLIB:fake-import
-DELETE_AFTER_LINK = fake-import.exp
+LDFLAGS += -IMPLIB:fake.lib
+DELETE_AFTER_LINK = fake.lib fake.exp
 endif
 endif
 
@@ -769,7 +776,7 @@ endif
 # Now test variables that might have been set or overridden by $(MY_CONFIG).
 
 DEFINES		+= -DOSTYPE=\"$(OS_CONFIG)\"
-DEFINES		+= -DOSARCH=\"$(OS_ARCH)\"
+DEFINES		+= -DOSARCH=$(OS_ARCH)
 
 # For profiling
 ifdef ENABLE_EAZEL_PROFILER
@@ -862,12 +869,6 @@ endif
 ifdef LOCALE_SRCDIR
 MAKE_JARS_FLAGS += -c $(LOCALE_SRCDIR)
 endif
-
-#
-# Add BUILD_ID to set of DEFINES
-#
-BUILD_ID := $(shell cat $(DEPTH)/config/build_number)
-DEFINES += -DBUILD_ID=$(BUILD_ID)
 
 ifeq (,$(filter WINCE WINNT OS2,$(OS_ARCH)))
 RUN_TEST_PROGRAM = $(DIST)/bin/run-mozilla.sh

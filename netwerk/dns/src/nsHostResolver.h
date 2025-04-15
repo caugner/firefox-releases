@@ -51,18 +51,21 @@ class nsHostRecord;
 class nsResolveHostCallback;
 
 /* XXX move this someplace more generic */
-#define NS_DECL_REFCOUNTED_THREADSAFE                     \
-  private:                                                \
-    nsAutoRefCnt _refc;                                   \
-  public:                                                 \
-    PRInt32 AddRef() {                                    \
-        return PR_AtomicIncrement((PRInt32*)&_refc);      \
-    }                                                     \
-    PRInt32 Release() {                                   \
-        PRInt32 n = PR_AtomicDecrement((PRInt32*)&_refc); \
-        if (n == 0)                                       \
-            delete this;                                  \
-        return n;                                         \
+#define NS_DECL_REFCOUNTED_THREADSAFE(classname)                             \
+  private:                                                                   \
+    nsAutoRefCnt _refc;                                                      \
+  public:                                                                    \
+    PRInt32 AddRef() {                                                       \
+        PRInt32 n = PR_AtomicIncrement((PRInt32*)&_refc);                    \
+        NS_LOG_ADDREF(this, n, #classname, sizeof(classname));               \
+        return n;                                                            \
+    }                                                                        \
+    PRInt32 Release() {                                                      \
+        PRInt32 n = PR_AtomicDecrement((PRInt32*)&_refc);                    \
+        NS_LOG_RELEASE(this, n, #classname);                                 \
+        if (n == 0)                                                          \
+            delete this;                                                     \
+        return n;                                                            \
     }
 
 struct nsHostKey
@@ -78,7 +81,7 @@ struct nsHostKey
 class nsHostRecord : public PRCList, public nsHostKey
 {
 public:
-    NS_DECL_REFCOUNTED_THREADSAFE
+    NS_DECL_REFCOUNTED_THREADSAFE(nsHostRecord)
 
     /* instantiates a new host record */
     static nsresult Create(const nsHostKey *key, nsHostRecord **record);
@@ -92,11 +95,21 @@ public:
      * |af| is the address family of the record we are querying for.
      */
 
+    /* the lock protects |addr_info| and |addr_info_gencnt| because they
+     * are mutable and accessed by the resolver worker thread and the
+     * nsDNSService2 class.  |addr| doesn't change after it has been
+     * assigned a value.  only the resolver worker thread modifies
+     * nsHostRecord (and only in nsHostResolver::OnLookupComplete);
+     * the other threads just read it.  therefore the resolver worker
+     * thread doesn't need to lock when reading |addr_info|.
+     */
+    PRLock      *addr_info_lock;
     PRAddrInfo  *addr_info;
+    int          addr_info_gencnt; /* generation count of |addr_info| */
     PRNetAddr   *addr;
     PRUint32     expiration; /* measured in minutes since epoch */
 
-    PRBool HasResult() const { return (addr_info || addr) != nsnull; }
+    PRBool HasResult() const { return addr_info || addr; }
 
 private:
     friend class nsHostResolver;
@@ -148,7 +161,7 @@ public:
     /**
      * host resolver instances are reference counted.
      */
-    NS_DECL_REFCOUNTED_THREADSAFE
+    NS_DECL_REFCOUNTED_THREADSAFE(nsHostResolver)
 
     /**
      * creates an addref'd instance of a nsHostResolver object.

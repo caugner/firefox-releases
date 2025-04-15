@@ -62,9 +62,9 @@ nsOSHelperAppService::nsOSHelperAppService() : nsExternalHelperAppService()
 nsOSHelperAppService::~nsOSHelperAppService()
 {}
 
-NS_IMETHODIMP nsOSHelperAppService::ExternalProtocolHandlerExists(const char * aProtocolScheme, PRBool * aHandlerExists)
+nsresult nsOSHelperAppService::OSProtocolHandlerExists(const char * aProtocolScheme, PRBool * aHandlerExists)
 {
-	LOG(("-- nsOSHelperAppService::ExternalProtocolHandlerExists for '%s'\n",
+	LOG(("-- nsOSHelperAppService::OSProtocolHandlerExists for '%s'\n",
 	     aProtocolScheme));
 	// look up the protocol scheme in the MIME database
 	*aHandlerExists = PR_FALSE;
@@ -90,40 +90,6 @@ NS_IMETHODIMP nsOSHelperAppService::ExternalProtocolHandlerExists(const char * a
 	}
 
 	return NS_OK;
-}
-
-nsresult nsOSHelperAppService::LoadUriInternal(nsIURI * aURL)
-{
-	LOG(("-- nsOSHelperAppService::LoadUrl\n"));
-	nsresult rv = NS_OK;
-
-	if (aURL) {
-		// Get the Protocol
-		nsCAutoString scheme;
-		aURL->GetScheme(scheme);
-		BString protoStr(scheme.get());
-		protoStr.Prepend("application/x-vnd.Be.URL.");
-		// Get the Spec
-		nsCAutoString spec;
-		aURL->GetSpec(spec);
-		char* arg[1];
-		arg[0] = (char *) spec.get();
-		
-		//Launch the app		
-		BMimeType protocol;
-		bool isInstalled = false;
-		if (protocol.SetTo(protoStr.String()) == B_OK)
-		{
-			if(protocol.IsInstalled())
-			{
-				isInstalled = true;	
-				be_roster->Launch(protoStr.String(), 1, arg);
-			}
-		}
-		if ((!isInstalled) && (!strcmp("mailto", scheme.get())))
-			be_roster->Launch("text/x-email", 1, arg);
-	}
-	return rv;
 }
 
 
@@ -155,12 +121,12 @@ nsresult nsOSHelperAppService::SetMIMEInfoForType(const char *aMIMEType, nsMIMEI
 
 		char desc[B_MIME_TYPE_LENGTH + 1];
 		if (mimeType.GetShortDescription(desc) == B_OK) {
-			mimeInfo->SetDescription(NS_ConvertUTF8toUCS2(desc));
+			mimeInfo->SetDescription(NS_ConvertUTF8toUTF16(desc));
 		} else {
 			if (mimeType.GetLongDescription(desc) == B_OK) {
-				mimeInfo->SetDescription(NS_ConvertUTF8toUCS2(desc));
+				mimeInfo->SetDescription(NS_ConvertUTF8toUTF16(desc));
 			} else {
-				mimeInfo->SetDescription(NS_ConvertUTF8toUCS2(aMIMEType));
+				mimeInfo->SetDescription(NS_ConvertUTF8toUTF16(aMIMEType));
 			}
 		}
 		
@@ -181,12 +147,12 @@ nsresult nsOSHelperAppService::SetMIMEInfoForType(const char *aMIMEType, nsMIMEI
 
 				LOG(("    Got our path!\n"));
 				nsCOMPtr<nsIFile> handlerFile;
-				rv = GetFileTokenForPath(NS_ConvertUTF8toUCS2(path.Path()).get(), getter_AddRefs(handlerFile));
+				rv = GetFileTokenForPath(NS_ConvertUTF8toUTF16(path.Path()).get(), getter_AddRefs(handlerFile));
 
 				if (NS_SUCCEEDED(rv)) {
 					mimeInfo->SetDefaultApplication(handlerFile);
 					mimeInfo->SetPreferredAction(nsIMIMEInfo::useSystemDefault);
-					mimeInfo->SetDefaultDescription(NS_ConvertUTF8toUCS2(path.Leaf()));
+					mimeInfo->SetDefaultDescription(NS_ConvertUTF8toUTF16(path.Leaf()));
 					LOG(("    Preferred App: %s\n",path.Leaf()));
 					doSave = false;
 				}
@@ -214,41 +180,10 @@ nsresult nsOSHelperAppService::GetMimeInfoFromExtension(const char *aFileExt,
 
 	LOG(("Here we do an extension lookup for '%s'\n", aFileExt));
 
-	BString fileExtToUse(aFileExt);
-	if (fileExtToUse.ByteAt(0) != '.')
-		fileExtToUse.Prepend(".");
-
-
-	BMessage mimeData;
-	BMessage extData;
 	BMimeType mimeType;
-	int32 mimeIndex = 0;
-	int32 extIndex = 0;
-	bool found = false;
-	BString mimeStr;
-	BString extStr;
-	// Get a list of all registered MIME types
-	if (BMimeType::GetInstalledTypes(&mimeData) == B_OK) {
-		// check to see if the given MIME type is registerred
-		while (!found && mimeData.FindString("types",mimeIndex,&mimeStr) == B_OK) {
-			if ((mimeType.SetTo(mimeStr.String()) == B_OK) &&
-			        (mimeType.GetFileExtensions(&extData) == B_OK)) {
-				extIndex = 0;
-				while (!found && extData.FindString("extensions",extIndex,&extStr) == B_OK) {
-					if (extStr.ByteAt(0) != '.')
-						extStr.Prepend(".");
-					if (fileExtToUse.ICompare(extStr) == 0)
-						found = true;
-					else
-						extIndex++;
-				}
-			}
-			mimeIndex++;
-		}
-		if (found) {
-			return SetMIMEInfoForType(mimeStr.String(), _retval);
-		}
-	}
+
+	if (BMimeType::GuessMimeType(aFileExt, &mimeType)  == B_OK)
+		return SetMIMEInfoForType(mimeType.Type(), _retval);
 
 	// Extension not found
 	return NS_ERROR_FAILURE;
@@ -261,25 +196,11 @@ nsresult nsOSHelperAppService::GetMimeInfoFromMIMEType(const char *aMIMEType,
 		return NS_ERROR_INVALID_ARG;
 
 	LOG(("Here we do a mimetype lookup for '%s'\n", aMIMEType));
-
-	BMessage data;
-	int32 index = 0;
-	bool found = false;
-	BString strData;
-	// Get a list of all registerred MIME types
-	if (BMimeType::GetInstalledTypes(&data) == B_OK) {
-		// check to see if the given MIME type is registerred
-		while (!found && data.FindString("types",index,&strData) == B_OK) {
-			if (strData == aMIMEType)
-				found = true;
-			else
-				index++;
-		}
-		if (found) {
-			return SetMIMEInfoForType(aMIMEType, _retval);
-		}
-	}
-
+	
+	BMimeType mimeType(aMIMEType);
+	if (mimeType.IsInstalled())
+		return SetMIMEInfoForType(aMIMEType, _retval);
+	
 	return NS_ERROR_FAILURE;
 }
 
@@ -310,3 +231,34 @@ nsOSHelperAppService::GetMIMEInfoFromOS(const nsACString& aMIMEType, const nsACS
 
   return mi;
 }
+
+NS_IMETHODIMP
+nsOSHelperAppService::GetProtocolHandlerInfoFromOS(const nsACString &aScheme,
+                                                   PRBool *found,
+                                                   nsIHandlerInfo **_retval)
+{
+  NS_ASSERTION(!aScheme.IsEmpty(), "No scheme was specified!");
+
+  nsresult rv = OSProtocolHandlerExists(nsPromiseFlatCString(aScheme).get(),
+                                        found);
+  if (NS_FAILED(rv))
+    return rv;
+
+  nsMIMEInfoBeOS *handlerInfo =
+	new nsMIMEInfoBeOS(aScheme, nsMIMEInfoBase::eProtocolInfo);
+  NS_ENSURE_TRUE(handlerInfo, NS_ERROR_OUT_OF_MEMORY);
+  NS_ADDREF(*_retval = handlerInfo);
+
+  if (!*found) {
+    // Code that calls this requires an object regardless if the OS has
+    // something for us, so we return the empty object.
+    return rv;
+  }
+
+  nsAutoString desc;
+  GetApplicationDescription(aScheme, desc);
+  handlerInfo->SetDefaultDescription(desc);
+
+  return rv;
+}
+

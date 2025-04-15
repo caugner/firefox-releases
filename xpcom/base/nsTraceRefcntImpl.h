@@ -47,8 +47,6 @@ public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSITRACEREFCNT
 
-  nsTraceRefcntImpl();
-
   static NS_COM void Startup();  
   static NS_COM void Shutdown();
 
@@ -61,10 +59,6 @@ public:
                                         FILE* out = 0);
   
   static NS_COM void ResetStatistics(void);
-
-  static NS_COM void LoadLibrarySymbols(const char* aLibraryName,
-                                        void* aLibrayHandle);
-
 
   static NS_COM void DemangleSymbol(const char * aSymbol, 
                                     char * aBuffer,
@@ -79,9 +73,6 @@ public:
   static NS_COM void SetActivityIsLegal(PRBool aLegal);
 
   static NS_METHOD Create(nsISupports* outer, const nsIID& aIID, void* *aInstancePtr);
-
-private:
-  ~nsTraceRefcntImpl() {}
 };
 
 #define NS_TRACE_REFCNT_CONTRACTID "@mozilla.org/xpcom/trace-refcnt;1"

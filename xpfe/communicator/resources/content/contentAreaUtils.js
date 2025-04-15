@@ -264,6 +264,48 @@ function saveDocument(aDocument)
                aDocument.contentType, false, null, null);
 }
 
+function DownloadListener(win, transfer) {
+  function makeClosure(name) {
+    return function() {
+      transfer[name].apply(transfer, arguments);
+    }
+  }
+
+  this.window = win;
+
+  // Now... we need to forward all calls to our transfer
+  for (var i in transfer) {
+    if (i != "QueryInterface")
+      this[i] = makeClosure(i);
+  }
+}
+
+DownloadListener.prototype = {
+  QueryInterface: function dl_qi(aIID)
+  {
+    if (aIID.equals(Components.interfaces.nsIInterfaceRequestor) ||
+        aIID.equals(Components.interfaces.nsIWebProgressListener) ||
+        aIID.equals(Components.interfaces.nsIWebProgressListener2) ||
+        aIID.equals(Components.interfaces.nsISupports)) {
+      return this;
+    }
+    throw Components.results.NS_ERROR_NO_INTERFACE;
+  },
+
+  getInterface: function dl_gi(aIID)
+  {
+    if (aIID.equals(Components.interfaces.nsIAuthPrompt) ||
+        aIID.equals(Components.interfaces.nsIAuthPrompt2)) {
+      var ww =
+        Components.classes["@mozilla.org/embedcomp/window-watcher;1"]
+                  .getService(Components.interfaces.nsIPromptFactory);
+      return ww.getPrompt(this.window, aIID);
+    }
+
+    throw Components.results.NS_ERROR_NO_INTERFACE;
+  }
+}
+
 const SAVETYPE_COMPLETE_PAGE = 0x00;
 const SAVETYPE_TEXT_ONLY     = 0x02;
 /**
@@ -354,7 +396,7 @@ function internalSave(aURL, aDocument, aDefaultFileName, aContentDisposition,
     source      : source,
     contentType : (!aChosenData && useSaveDocument &&
                    saveAsType == SAVETYPE_TEXT_ONLY) ?
-                  "text/plain" : aContentType,
+                  "text/plain" : null,
     target      : fileURL,
     postData    : isDocument ? getPostData() : null,
     bypassCache : aShouldBypassCache
@@ -404,13 +446,13 @@ function internalSave(aURL, aDocument, aDefaultFileName, aContentDisposition,
     const kWrapColumn = 80;
     tr.init((aChosenData ? aChosenData.uri : fileInfo.uri),
             persistArgs.target, "", null, null, null, persist);
-    persist.progressListener = tr;
+    persist.progressListener = new DownloadListener(window, tr);
     persist.saveDocument(persistArgs.source, persistArgs.target, filesFolder,
                          persistArgs.contentType, encodingFlags, kWrapColumn);
   } else {
     tr.init((aChosenData ? aChosenData.uri : source),
             persistArgs.target, "", null, null, null, persist);
-    persist.progressListener = tr;
+    persist.progressListener = new DownloadListener(window, tr);
     persist.saveURI((aChosenData ? aChosenData.uri : source),
                     null, aReferrer, persistArgs.postData, null,
                     persistArgs.target);
@@ -512,7 +554,8 @@ function poseFilePicker(aFpP)
   // Try and pull in download directory pref
   try {
     dir = branch.getComplexValue(kDownloadDirPref, nsILocalFile);
-  } catch (e) { }
+  } catch (e) {
+  }
 
   var autoDownload = branch.getBoolPref("autoDownload");
   if (autoDownload && dir && dir.exists()) {
@@ -531,7 +574,8 @@ function poseFilePicker(aFpP)
   try {
     if (dir.exists())
       fp.displayDirectory = dir;
-  } catch (e) { }
+  } catch (e) {
+  }
 
   fp.defaultExtension = aFpP.fileInfo.fileExt;
   fp.defaultString = getNormalizedLeafName(aFpP.fileInfo.fileName,
@@ -613,6 +657,11 @@ function appendFiltersForContentType(aFilePicker, aContentType, aFileExtension, 
   case "application/xhtml+xml":
     bundleName   = "WebPageXHTMLOnlyFilter";
     filterString = "*.xht; *.xhtml";
+    break;
+
+  case "image/svg+xml":
+    bundleName   = "WebPageSVGOnlyFilter";
+    filterString = "*.svg; *.svgz";
     break;
 
   case "text/xml":
@@ -899,13 +948,14 @@ function getDefaultExtension(aFilename, aURI, aContentType)
   }
   else {
     try {
-      return mimeInfo.primaryExtension;
+      if (mimeInfo)
+        return mimeInfo.primaryExtension;
     }
     catch (e) {
-      // Fall back on the extensions in the filename and URI for lack
-      // of anything better.
-      return ext || urlext;
     }
+    // Fall back on the extensions in the filename and URI for lack
+    // of anything better.
+    return ext || urlext;
   }
 }
 
@@ -915,6 +965,7 @@ function GetSaveModeForContentType(aContentType)
   switch (aContentType) {
   case "text/html":
   case "application/xhtml+xml":
+  case "image/svg+xml":
     saveMode |= SAVEMODE_COMPLETE_TEXT;
     // Fall through
   case "text/xml":

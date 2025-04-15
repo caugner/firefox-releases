@@ -305,14 +305,14 @@ EventsPluginInstance::RegisterSelf(nsIComponentManager* aCompMgr,
 
     nsIServiceManager *svcMgr;
     rv = aCompMgr->QueryInterface(NS_GET_IID(nsIServiceManager),
-                                  NS_REINTERPRET_CAST(void**, &svcMgr));
+                                  reinterpret_cast<void**>(&svcMgr));
     if (NS_FAILED(rv))
         return rv;
 
     nsIPluginManager* pm;
     rv = svcMgr->GetService(kPluginManagerCID,
                             NS_GET_IID(nsIPluginManager),
-                            NS_REINTERPRET_CAST(void**, &pm));
+                            reinterpret_cast<void**>(&pm));
     NS_RELEASE(svcMgr);
 
     if (NS_SUCCEEDED(rv)) {
@@ -341,14 +341,14 @@ EventsPluginInstance::UnregisterSelf(nsIComponentManager* aCompMgr,
 
     nsIServiceManager *svcMgr;
     rv = aCompMgr->QueryInterface(NS_GET_IID(nsIServiceManager),
-                                  NS_REINTERPRET_CAST(void**, &svcMgr));
+                                  reinterpret_cast<void**>(&svcMgr));
     if (NS_FAILED(rv))
         return rv;
 
     nsIPluginManager* pm;
     rv = svcMgr->GetService(kPluginManagerCID,
                             NS_GET_IID(nsIPluginManager),
-                            NS_REINTERPRET_CAST(void**, &pm));
+                            reinterpret_cast<void**>(&pm));
     NS_RELEASE(svcMgr);
 
     if (NS_SUCCEEDED(rv)) {
@@ -853,7 +853,7 @@ LRESULT CALLBACK EventsPluginInstance::WndProcChild(HWND hWnd, UINT Msg, WPARAM 
 	EventsPluginInstance* inst = (EventsPluginInstance*) GetProp(hWnd, gInstanceLookupString);
 	NS_ABORT_IF_FALSE(inst, "Could not get the inst from the Window!!");
 	switch (Msg) {
-	// NOTE: We DONT pass on DBLCLK messages, as both Scintilla and
+	// NOTE: We DON'T pass on DBLCLK messages, as both Scintilla and
 	// Mozilla have their own special logic, and they step on each other.
 	// (causing our child to see a double-click as a triple-click)
 		case WM_KEYDOWN:

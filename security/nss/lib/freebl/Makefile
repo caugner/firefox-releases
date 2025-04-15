@@ -88,6 +88,7 @@ ifeq ($(OS_TARGET),OSF1)
 endif
 
 ifeq (,$(filter-out WINNT WIN95,$(OS_TARGET)))  #omits WIN16 and WINCE
+ifndef USE_64
 ifdef NS_USE_GCC
 # Ideally, we want to use assembler
 #     ASFILES  = mpi_x86.s
@@ -104,6 +105,7 @@ else
     ifdef BUILD_OPT
 	OPTIMIZER += -Ox  # maximum optimization for freebl
     endif
+endif
 endif
 endif
 
@@ -192,7 +194,7 @@ endif
 # to bind the blapi function references in FREEBLVector vector
 # (ldvector.c) to the blapi functions defined in the freebl
 # shared libraries.
-ifeq (,$(filter-out BSD_OS FreeBSD Linux NetBSD, $(OS_TARGET)))
+ifeq (,$(filter-out BSD_OS FreeBSD Linux NetBSD OpenBSD, $(OS_TARGET)))
     MKSHLIB += -Wl,-Bsymbolic
 endif
 
@@ -374,11 +376,12 @@ else
 	    ASFILES  = arcfour-amd64-sun.s mpi_amd64_sun.s sha-fast-amd64-sun.s
  	    ASFILES += mp_comba_amd64_sun.s mpcpucache_amd64.s
 	    ASFLAGS += -xarch=generic64 -K PIC
+            SOL_CFLAGS += -xprefetch=no
 	    SHA_SRCS =
  	    MPCPU_SRCS =
 	endif
 	DEFINES += -DNSS_BEVAND_ARCFOUR -DMPI_AMD64 -DMP_ASSEMBLY_MULTIPLY
-	DEFINES += -DNSS_USE_COMBA
+	DEFINES += -DNSS_USE_COMBA -DMP_CHAR_STORE_SLOW -DMP_IS_LITTLE_ENDIAN
 	MPI_SRCS += mpi_amd64.c
     else
 	# Solaris x86
@@ -566,14 +569,6 @@ endif
 endif  # FREEBL_CHILD_BUILD
 
 
-# Bugzilla Bug 209827: disable optimization to work around what appears
-# to be a VACPP optimizer bug.
-ifdef XP_OS2_VACPP
-$(OBJDIR)/alg2268.obj: alg2268.c
-	@$(MAKE_OBJDIR)
-	$(CC) -Fo$@ -c $(filter-out /O+, $(CFLAGS)) $(call abspath,$<)
-endif
-
 # Bugzilla Bug 333917: the non-x86 code in desblapi.c seems to violate
 # ANSI C's strict aliasing rules.
 ifeq ($(OS_TARGET),Linux)
@@ -581,7 +576,7 @@ ifneq ($(CPU_ARCH),x86)
 $(OBJDIR)/$(PROG_PREFIX)desblapi$(OBJ_SUFFIX): desblapi.c
 	@$(MAKE_OBJDIR)
 ifdef NEED_ABSOLUTE_PATH
-	$(CC) -o $@ -c $(CFLAGS) -fno-strict-aliasing $(call abspath,$<)
+	$(CC) -o $@ -c $(CFLAGS) -fno-strict-aliasing $(call core_abspath,$<)
 else
 	$(CC) -o $@ -c $(CFLAGS) -fno-strict-aliasing $<
 endif

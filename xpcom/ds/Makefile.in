@@ -58,17 +58,14 @@ CPPSRCS		= \
 		nsByteBuffer.cpp \
 		nsCheapSets.cpp \
 		nsCRT.cpp \
-		nsDeque.cpp \
-		nsEmptyEnumerator.cpp \
-		nsEnumeratorUtils.cpp \
 		nsFixedSizeAllocator.cpp \
 		nsHashSets.cpp \
 		nsHashtable.cpp \
+		nsINIParserImpl.cpp \
 		nsObserverList.cpp \
 		nsObserverService.cpp \
 		nsProperties.cpp \
 		nsPersistentProperties.cpp \
-		nsQuickSort.cpp \
 		nsRecyclingAllocator.cpp \
 		nsStaticNameTable.cpp \
 		nsStringEnumerator.cpp \
@@ -77,13 +74,8 @@ CPPSRCS		= \
 		nsSupportsPrimitives.cpp \
 		nsUnicharBuffer.cpp \
 		nsVariant.cpp \
-		nsVoidArray.cpp \
-		nsTextFormatter.cpp \
 		nsTimelineService.cpp \
-		nsValueArray.cpp \
-		nsCOMArray.cpp \
 		nsArray.cpp \
-		nsArrayEnumerator.cpp \
 		nsHashPropertyBag.cpp \
 		$(NULL)
 
@@ -92,34 +84,26 @@ EXPORTS		= \
 		nsCheapSets.h \
 		nsCppSharedAllocator.h \
 		nsCRT.h \
-		nsDeque.h \
 		nsDoubleHashtable.h \
-		nsEnumeratorUtils.h \
+		nsExpirationTracker.h \
 		nsFixedSizeAllocator.h \
 		nsHashSets.h \
 		nsHashtable.h \
 		nsIByteBuffer.h \
 		nsIUnicharBuffer.h \
 		nsInt64.h \
+		nsMathUtils.h \
 		nsObserverService.h \
-		nsQuickSort.h \
 		nsRecyclingAllocator.h \
 		nsStaticNameTable.h \
 		nsStaticAtom.h \
 		nsSupportsArray.h \
 		nsSupportsPrimitives.h \
 		nsTime.h \
-		nsUnitConversion.h \
 		nsVariant.h \
-		nsVoidArray.h \
-		nsTextFormatter.h \
-		nsValueArray.h \
-		nsArray.h \
-		nsArrayEnumerator.h \
-		nsCOMArray.h \
 		nsStringEnumerator.h \
-		nsAutoBuffer.h \
 		nsHashPropertyBag.h \
+		nsWhitespaceTokenizer.h \
 		$(NULL)			
 
 XPIDLSRCS	= \
@@ -127,6 +111,7 @@ XPIDLSRCS	= \
 		nsIAtomService.idl \
 		nsICollection.idl \
 		nsIEnumerator.idl \
+		nsIINIParser.idl \
 		nsIPersistentProperties2.idl \
 		nsIProperty.idl \
 		nsIPropertyBag.idl \
@@ -140,10 +125,12 @@ XPIDLSRCS	= \
 		nsISupportsArray.idl \
 		nsISupportsIterators.idl \
 		nsITimelineService.idl \
-		nsIArray.idl \
 		$(NULL)
 
 SDK_XPIDLSRCS   = \
+		nsIArray.idl               \
+		nsIHashable.idl            \
+		nsIMutableArray.idl        \
 		nsIObserverService.idl	   \
 		nsIObserver.idl		   \
 		nsIProperties.idl          \
@@ -167,5 +154,6 @@ FORCE_USE_PIC	= 1
 
 include $(topsrcdir)/config/rules.mk
 
+LOCAL_INCLUDES += -I$(srcdir)/../io
 
 DEFINES		+= -D_IMPL_NS_COM

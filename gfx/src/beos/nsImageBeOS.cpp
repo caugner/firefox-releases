@@ -183,7 +183,7 @@ NS_IMETHODIMP nsImageBeOS::Draw(nsIRenderingContext &aContext, nsIDrawingSurface
 	if (mDecodedX2 < mDecodedX1 || mDecodedY2 < mDecodedY1)
 		return NS_OK;
 
-	// As we do all scaling with Be API (DrawBitmap), using float is safe and convinient	
+	// As we do all scaling with Be API (DrawBitmap), using float is safe and convenient
 	float srcX = aSX, srcY = aSY, srcMostX = aSX + aSWidth, srcMostY = aSY + aSHeight;
 	float dstX = aDX, dstY = aDY, dstMostX = aDX + aDWidth, dstMostY = aDY + aDHeight;
 	float  scaleX = float(aDWidth)/float(aSWidth), scaleY = float(aDHeight)/float(aSHeight);
@@ -607,7 +607,7 @@ NS_IMETHODIMP nsImageBeOS::DrawToImage(nsIImage* aDstImage,
 										nscoord aDX, nscoord aDY, 
 										nscoord aDWidth, nscoord aDHeight)
 {
-	nsImageBeOS *dest = NS_STATIC_CAST(nsImageBeOS *, aDstImage);
+	nsImageBeOS *dest = static_cast<nsImageBeOS *>(aDstImage);
 
 	if (!dest)
 		return NS_ERROR_FAILURE;

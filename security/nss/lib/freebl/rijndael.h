@@ -33,7 +33,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: rijndael.h,v 1.10.18.1 2006/02/03 22:31:09 wtchang%redhat.com Exp $ */
+/* $Id: rijndael.h,v 1.11 2005/08/06 07:24:21 nelsonb%netscape.com Exp $ */
 
 #ifndef _RIJNDAEL_H_
 #define _RIJNDAEL_H_ 1

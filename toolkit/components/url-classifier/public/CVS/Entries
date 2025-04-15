@@ -1,6 +1,8 @@
-/Makefile.in/1.1.2.5/Thu Jun 15 18:12:14 2006//TFIREFOX_2_0_RELEASE
-/nsIUrlClassifierDBService.idl/1.1.2.3/Wed Aug  2 17:35:31 2006//TFIREFOX_2_0_RELEASE
-/nsIUrlClassifierStreamUpdater.idl/1.2.2.2/Sat Aug 26 22:18:24 2006//TFIREFOX_2_0_RELEASE
-/nsIUrlClassifierTable.idl/1.1.2.3/Fri May  5 21:23:02 2006//TFIREFOX_2_0_RELEASE
-/nsIUrlListManager.idl/1.1.2.6/Thu Jul 20 18:45:51 2006//TFIREFOX_2_0_RELEASE
+/Makefile.in/1.15/Tue Jan 29 20:57:18 2008//TFIREFOX_3_0rc3_RELEASE
+/nsIUrlClassifierDBService.idl/1.25/Wed May  7 20:33:45 2008//TFIREFOX_3_0rc3_RELEASE
+/nsIUrlClassifierHashCompleter.idl/1.4/Wed Feb 27 08:51:04 2008//TFIREFOX_3_0rc3_RELEASE
+/nsIUrlClassifierStreamUpdater.idl/1.9/Tue Apr 15 22:39:45 2008//TFIREFOX_3_0rc3_RELEASE
+/nsIUrlClassifierTable.idl/1.6/Thu Jul 26 03:11:44 2007//TFIREFOX_3_0rc3_RELEASE
+/nsIUrlClassifierUtils.idl/1.5/Thu Jul 26 06:38:44 2007//TFIREFOX_3_0rc3_RELEASE
+/nsIUrlListManager.idl/1.21/Tue Jan 29 20:57:18 2008//TFIREFOX_3_0rc3_RELEASE
 D

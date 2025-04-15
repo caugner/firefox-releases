@@ -38,22 +38,29 @@
 
 DEPTH   =../../..
 
+include $(DEPTH)/config/autoconf.mk
+
 DIRS = \
         src \
-        test/test_component \
+        components \
         $(NULL)
+
+ifdef ENABLE_TESTS
+        DIRS += test $(NULL)
+endif
 
 topsrcdir	= @top_srcdir@
 srcdir		= @srcdir@
 VPATH		= @srcdir@
-pyexecdir	= @libdir@/python$(PYTHON_VER_DOTTED)/site-packages
+pyexecdir	= @libdir@/python$(MOZ_PYTHON_VER_DOTTED)/site-packages
 
 PYSRCS_XPCOM = \
 	__init__.py \
 	components.py \
 	file.py \
 	nsError.py \
-	register.py \
+	primitives.py \
+	shutdown.py \
 	xpcom_consts.py \
 	xpt.py \
 	$(NULL)

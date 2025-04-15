@@ -34,7 +34,7 @@
 # the terms of any one of the MPL, the GPL or the LGPL.
 #
 # ***** END LICENSE BLOCK *****
-CONFIG_CVS_ID = "@(#) $RCSfile: config.mk,v $ $Revision: 1.1.6.2 $ $Date: 2006/02/03 22:30:52 $"
+CONFIG_CVS_ID = "@(#) $RCSfile: config.mk,v $ $Revision: 1.1 $ $Date: 2005/11/04 02:05:04 $"
 
 #
 #  Override TARGETS variable so that only shared libraries

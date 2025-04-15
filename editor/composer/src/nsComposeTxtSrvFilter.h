@@ -52,7 +52,7 @@ class nsComposeTxtSrvFilter : public nsITextServicesFilter
 {
 public:
   nsComposeTxtSrvFilter();
-  virtual ~nsComposeTxtSrvFilter() {};
+  virtual ~nsComposeTxtSrvFilter() {}
 
   // nsISupports interface...
   NS_DECL_ISUPPORTS
@@ -76,7 +76,9 @@ protected:
   nsCOMPtr<nsIAtom> mTextAreaAtom;
   nsCOMPtr<nsIAtom> mSelectAreaAtom;
   nsCOMPtr<nsIAtom> mMapAtom;
-
+  nsCOMPtr<nsIAtom> mCiteAtom;
+  nsCOMPtr<nsIAtom> mTrueAtom;
+  nsCOMPtr<nsIAtom> mMozSignatureAtom;
 };
 
 #define NS_COMPOSERTXTSRVFILTER_CID \

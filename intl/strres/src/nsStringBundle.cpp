@@ -45,7 +45,7 @@
 #include "nsStringBundleTextOverride.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
-#include "nsArray.h"
+#include "nsIMutableArray.h"
 #include "nsArrayEnumerator.h"
 #include "nscore.h"
 #include "nsHashtable.h"
@@ -73,9 +73,6 @@
 #include "nsIBinaryInputStream.h"
 #include "nsIStringStream.h"
 #endif
-
-// eventQ
-#include "nsIEventQueueService.h"
 
 #include "prenv.h"
 #include "nsCRT.h"
@@ -186,12 +183,12 @@ nsStringBundle::GetStringFromName(const nsAString& aName,
   // try override first
   if (mOverrideStrings) {
     rv = mOverrideStrings->GetStringFromName(mPropertiesURL,
-                                             NS_ConvertUCS2toUTF8(aName),
+                                             NS_ConvertUTF16toUTF8(aName),
                                              aResult);
     if (NS_SUCCEEDED(rv)) return rv;
   }
   
-  rv = mProps->GetStringProperty(NS_ConvertUCS2toUTF8(aName), aResult);
+  rv = mProps->GetStringProperty(NS_ConvertUTF16toUTF8(aName), aResult);
 #ifdef DEBUG_tao_
   char *s = ToNewCString(aResult),
        *ss = ToNewCString(aName);
@@ -247,7 +244,7 @@ nsStringBundle::GetStringFromID(PRInt32 aID, PRUnichar **aResult)
 {
   nsresult rv;
   rv = LoadProperties();
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) return rv;
   
   *aResult = nsnull;
   nsAutoString tmpstr;
@@ -270,7 +267,7 @@ nsStringBundle::GetStringFromName(const PRUnichar *aName, PRUnichar **aResult)
 
   nsresult rv;
   rv = LoadProperties();
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) return rv;
 
   nsAutoCMonitor(this);
   *aResult = nsnull;
@@ -282,7 +279,7 @@ nsStringBundle::GetStringFromName(const PRUnichar *aName, PRUnichar **aResult)
     // it is not uncommon for apps to request a string name which may not exist
     // so be quiet about it. 
     NS_WARNING("String missing from string bundle");
-    printf("  '%s' missing from bundle %s\n", NS_ConvertUCS2toUTF8(aName).get(), mPropertiesURL.get());
+    printf("  '%s' missing from bundle %s\n", NS_ConvertUTF16toUTF8(aName).get(), mPropertiesURL.get());
 #endif
     return rv;
   }
@@ -302,8 +299,8 @@ nsStringBundle::GetCombinedEnumeration(nsIStringBundleOverride* aOverrideStrings
   
   nsresult rv;
 
-  nsCOMPtr<nsIMutableArray> resultArray;
-  rv = NS_NewArray(getter_AddRefs(resultArray));
+  nsCOMPtr<nsIMutableArray> resultArray =
+    do_CreateInstance(NS_ARRAY_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // first, append the override elements
@@ -388,7 +385,7 @@ nsStringBundle::FormatString(const PRUnichar *aFormatStr,
   // Don't believe me? See:
   //   http://www.eskimo.com/~scs/C-faq/q15.13.html
   // -alecf
-  *aResult = 
+  PRUnichar *text = 
     nsTextFormatter::smprintf(aFormatStr,
                               aLength >= 1 ? aParams[0] : nsnull,
                               aLength >= 2 ? aParams[1] : nsnull,
@@ -400,7 +397,21 @@ nsStringBundle::FormatString(const PRUnichar *aFormatStr,
                               aLength >= 8 ? aParams[7] : nsnull,
                               aLength >= 9 ? aParams[8] : nsnull,
                               aLength >= 10 ? aParams[9] : nsnull);
-  return NS_OK;
+
+  if (!text) {
+    *aResult = nsnull;
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+
+  // nsTextFormatter does not use the shared nsMemory allocator.
+  // Instead it is required to free the memory it allocates using
+  // nsTextFormatter::smprintf_free.  Let's instead use nsMemory based
+  // allocation for the result that we give out and free the string
+  // returned by smprintf ourselves!
+  *aResult = NS_strdup(text);
+  nsTextFormatter::smprintf_free(text);
+
+  return *aResult ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
 NS_IMPL_ISUPPORTS1(nsExtensibleStringBundle, nsIStringBundle)
@@ -573,6 +584,7 @@ nsStringBundleService::Init()
     os->AddObserver(this, "memory-pressure", PR_TRUE);
     os->AddObserver(this, "profile-do-change", PR_TRUE);
     os->AddObserver(this, "chrome-flush-caches", PR_TRUE);
+    os->AddObserver(this, "xpcom-category-entry-added", PR_TRUE);
   }
 
   // instantiate the override service, if there is any.
@@ -591,7 +603,15 @@ nsStringBundleService::Observe(nsISupports* aSubject,
   if (strcmp("memory-pressure", aTopic) == 0 ||
       strcmp("profile-do-change", aTopic) == 0 ||
       strcmp("chrome-flush-caches", aTopic) == 0)
+  {
     flushBundleCache();
+  }
+  else if (strcmp("xpcom-category-entry-added", aTopic) == 0 &&
+           NS_LITERAL_STRING("xpcom-autoregistration").Equals(aSomeData)) 
+  {
+    mOverrideStrings = do_GetService(NS_STRINGBUNDLETEXTOVERRIDE_CONTRACTID);
+  }
+  
   return NS_OK;
 }
 
@@ -751,7 +771,7 @@ nsStringBundleService::CreateExtensibleBundle(const char* aCategory,
   return res;
 }
 
-#define GLOBAL_PROPERTIES "chrome://global/locale/xpcom.properties"
+#define GLOBAL_PROPERTIES "chrome://global/locale/global-strres.properties"
 
 nsresult
 nsStringBundleService::FormatWithBundle(nsIStringBundle* bundle, nsresult aStatus,
@@ -766,7 +786,7 @@ nsStringBundleService::FormatWithBundle(nsIStringBundle* bundle, nsresult aStatu
 
   // first try looking up the error message with the string key:
   if (NS_SUCCEEDED(rv)) {
-    rv = bundle->FormatStringFromName(NS_ConvertASCIItoUCS2(key).get(),
+    rv = bundle->FormatStringFromName(NS_ConvertASCIItoUTF16(key).get(),
                                       (const PRUnichar**)argArray, 
                                       argCount, result);
   }

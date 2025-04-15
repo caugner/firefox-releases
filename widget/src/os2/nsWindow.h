@@ -58,7 +58,10 @@
 #include "nsBaseWidget.h"
 #include "nsToolkit.h"
 #include "nsSwitchToUIThread.h"
+#include "gfxOS2Surface.h"
+#include "gfxContext.h"
 
+class nsIMenuBar;
 class imgIContainer;
 
 //#define DEBUG_FOCUS
@@ -72,12 +75,9 @@ class imgIContainer;
 // Base widget class.
 // This is abstract.  Controls (labels, radio buttons, listboxen) derive
 // from here.  A thing called a child window derives from here, and the
-// frame window class derives from the child.  The content-displaying
-// classes are off on their own branch to avoid creating a palette for
-// every window we create.  This may turn out to be what's required, in
-// which case the paint & palette code from nsChildWindow needs to be
-// munged in here.  nsFrameWindow is separate because work needs to be done
-// there to decide whether methods apply to frame or client.
+// frame window class derives from the child.
+// nsFrameWindow is separate because work needs to be done there to decide
+// whether methods apply to frame or client.
 
 /* Possible states of the window, used to emulate windows better... */
    // default state; Create() not called 
@@ -123,6 +123,7 @@ class nsWindow : public nsBaseWidget,
                       nsIAppShell *aAppShell = nsnull,
                       nsIToolkit *aToolkit = nsnull,
                       nsWidgetInitData *aInitData = nsnull);
+   gfxASurface* GetThebesSurface();
    NS_IMETHOD Destroy(); // call before releasing
 
    // Hierarchy: only interested in widget children (it seems)
@@ -148,9 +149,9 @@ class nsWindow : public nsBaseWidget,
    NS_IMETHOD SetFocus(PRBool aRaise);
    NS_IMETHOD GetBounds(nsRect &aRect);
    NS_IMETHOD IsVisible( PRBool &aState);
-   PRBool     IsShown();
    NS_IMETHOD PlaceBehind(nsTopLevelWidgetZPlacement aPlacement,
                           nsIWidget *aWidget, PRBool aActivate);
+   NS_IMETHOD SetZIndex(PRInt32 aZIndex);
 
    NS_IMETHOD CaptureMouse(PRBool aCapture);
 
@@ -170,8 +171,6 @@ class nsWindow : public nsBaseWidget,
    NS_IMETHOD              GetLastInputEventTime(PRUint32& aTime);
 
    // Widget appearance
-   virtual nsIFontMetrics *GetFont();
-   NS_IMETHOD              SetFont( const nsFont &aFont);
    NS_IMETHOD              SetColorMap( nsColorMap *aColorMap);
    NS_IMETHOD              SetCursor( nsCursor aCursor);
    NS_IMETHOD              SetCursor(imgIContainer* aCursor,
@@ -188,13 +187,6 @@ class nsWindow : public nsBaseWidget,
    NS_IMETHOD              Scroll( PRInt32 aDx, PRInt32 aDy, nsRect *aClipRect);
    NS_IMETHOD              ScrollWidgets(PRInt32 aDx, PRInt32 aDy);
    NS_IMETHOD              ScrollRect(nsRect &aRect, PRInt32 aDx, PRInt32 aDy);
-
-#if 0 // Handled by XP code now
-   // Tooltips
-   NS_IMETHOD SetTooltips( PRUint32 aNumberOfTips, nsRect *aTooltipAreas[]);   
-   NS_IMETHOD RemoveTooltips();
-   NS_IMETHOD UpdateTooltips( nsRect* aNewTips[]);
-#endif
 
    // Get a HWND or a HPS.
    virtual void  *GetNativeData( PRUint32 aDataType);
@@ -238,7 +230,7 @@ protected:
                                   long cx, long cy, unsigned long flags);
 
    // Message handlers - may wish to override.  Default implementation for
-   // palette, control, paint & scroll is to do nothing.
+   // control, paint & scroll is to do nothing.
 
    // Return whether message has been processed.
    virtual PRBool ProcessMessage( ULONG m, MPARAM p1, MPARAM p2, MRESULT &r);
@@ -248,14 +240,11 @@ protected:
    virtual PRBool OnResize( PRInt32 aX, PRInt32 aY);
    virtual PRBool OnMove( PRInt32 aX, PRInt32 aY);
    virtual PRBool OnKey( MPARAM mp1, MPARAM mp2);
-   virtual PRBool OnRealizePalette();
    virtual PRBool DispatchFocus( PRUint32 aEventType, PRBool isMozWindowTakingFocus);
    virtual PRBool OnScroll( ULONG msgid, MPARAM mp1, MPARAM mp2);
    virtual PRBool OnVScroll( MPARAM mp1, MPARAM mp2);
    virtual PRBool OnHScroll( MPARAM mp1, MPARAM mp2);
    virtual PRBool OnControl( MPARAM mp1, MPARAM mp2);
-//   virtual PRBool OnMenuClick( USHORT aCmd);
-//   virtual PRBool OnActivateMenu( HWND aMenu, BOOL aActivate);
    // called after param has been set...
    virtual PRBool OnPresParamChanged( MPARAM mp1, MPARAM mp2);
    virtual PRBool OnDragDropMsg(ULONG msg, MPARAM mp1, MPARAM mp2, MRESULT &mr);
@@ -283,7 +272,6 @@ protected:
    PRUint32  mDragStatus;     // set while this object is being dragged over
    HPOINTER  mCssCursorHPtr;  // created by SetCursor(imgIContainer*)
    nsCOMPtr<imgIContainer> mCssCursorImg;  // saved by SetCursor(imgIContainer*)
-   BOOL      mIsVisible;
 
    HWND      GetParentHWND() const;
    HWND      GetHWND() const   { return mWnd; }
@@ -293,9 +281,9 @@ protected:
    PRInt32        mPreferredHeight;
    PRInt32        mPreferredWidth;
    nsToolkit     *mOS2Toolkit;
-   nsFont        *mFont;
    nsIMenuBar    *mMenuBar;
    PRInt32        mWindowState;
+   nsRefPtr<gfxOS2Surface> mThebesSurface;
 
    // Implementation ------------------------------
    void DoCreate( HWND hwndP, nsWindow *wndP, const nsRect &rect,
@@ -316,14 +304,17 @@ protected:
 
    virtual void SubclassWindow(BOOL bState);
 
-   PRBool  ConvertStatus( nsEventStatus aStatus);
+   PRBool  ConvertStatus( nsEventStatus aStatus)
+                        { return aStatus == nsEventStatus_eConsumeNoDefault; }
    void    InitEvent( nsGUIEvent &event, nsPoint *pt = 0);
    virtual PRBool DispatchWindowEvent(nsGUIEvent* event);
    virtual PRBool DispatchWindowEvent(nsGUIEvent*event, nsEventStatus &aStatus);
    PRBool  DispatchStandardEvent( PRUint32 aMsg);
-   PRBool  DispatchAppCommandEvent(PRUint32 aEventCommand);
-   PRBool  DispatchDragDropEvent(PRUint32 aMsg);
-   virtual PRBool DispatchMouseEvent( PRUint32 aEventType, MPARAM mp1, MPARAM mp2);
+   PRBool  DispatchCommandEvent(PRUint32 aEventCommand);
+   PRBool  DispatchDragDropEvent( PRUint32 aMsg);
+   virtual PRBool DispatchMouseEvent(PRUint32 aEventType, MPARAM mp1, MPARAM mp2, 
+                                     PRBool aIsContextMenuKey = PR_FALSE,
+                                     PRInt16 aButton = nsMouseEvent::eLeftButton);
    virtual PRBool DispatchResizeEvent( PRInt32 aClientX, PRInt32 aClientY);
    void GetNonClientBounds(nsRect &aRect);
    void    DeferPosition( HWND, HWND, long, long, long, long, ULONG);
@@ -334,11 +325,15 @@ protected:
 
    HBITMAP DataToBitmap(PRUint8* aImageData, PRUint32 aWidth,
                         PRUint32 aHeight, PRUint32 aDepth);
+   HBITMAP CreateBitmapRGB(PRUint8* aImageData, PRUint32 aWidth, PRUint32 aHeight);
    // 'format' should be 'gfx_format' which is a PRInt32
    HBITMAP CreateTransparencyMask(PRInt32  format, PRUint8* aImageData,
                                   PRUint32 aWidth, PRUint32 aHeight);
 
-   // Enumeration of the methods which are accessable on the PM thread
+   BOOL NotifyForeignChildWindows(HWND aWnd);
+   void ScrollChildWindows(PRInt32 aX, PRInt32 aY);
+
+   // Enumeration of the methods which are accessible on the PM thread
    enum {
       CREATE,
       DESTROY,
@@ -357,6 +352,7 @@ protected:
 #define PM2NS_PARENT NS2PM_PARENT
 #define PM2NS NS2PM
 
+#define PMSCAN_PADMULT      0x37
 #define PMSCAN_PAD7         0x47
 #define PMSCAN_PAD8         0x48
 #define PMSCAN_PAD9         0x49
@@ -370,38 +366,18 @@ protected:
 #define PMSCAN_PAD3         0x51
 #define PMSCAN_PAD0         0x52
 #define PMSCAN_PADPERIOD    0x53
+#define PMSCAN_PADDIV       0x5c
 
 #define isNumPadScanCode(scanCode) !( (scanCode < PMSCAN_PAD7) ||      \
                                       (scanCode > PMSCAN_PADPERIOD) || \
+                                      (scanCode == PMSCAN_PADMULT) ||  \
+                                      (scanCode == PMSCAN_PADDIV) ||   \
                                       (scanCode == PMSCAN_PADMINUS) || \
                                       (scanCode == PMSCAN_PADPLUS) )
+#define isNumlockOn (BOOL)WinGetKeyState(HWND_DESKTOP, VK_NUMLOCK) & 0x0001
 
 extern PRUint32 WMChar2KeyCode( MPARAM mp1, MPARAM mp2);
 
 extern nsWindow *NS_HWNDToWindow( HWND hwnd);
-
-#define NSCANVASCLASS "WarpzillaCanvas"
-
-#if 0
-
-// Need to do this because the cross-platform widgets (toolbars) assume
-// that the name of the NS_CHILD_CID is ChildWindow and that it gets
-// defined in "nsWindow.h".
-//
-// However, if we've included this header *from nsCanvas.h*, then we
-// get a lovely circular dependency, and so special-case this.
-//
-// Yes, I suppose I'm just being perverse by having three separate classes
-// here, but I just baulk at naming a class 'ChildWindow'.
-//
-// (and don't tell me there's a JLib class called JMother.  Believe me,
-//  I know, and I regret it at least twice a week...)
-//
-#ifndef _nscanvas_h
-#include "nsCanvas.h"
-typedef nsCanvas ChildWindow;
-#endif
-
-#endif
 
 #endif

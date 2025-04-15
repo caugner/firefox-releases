@@ -80,27 +80,6 @@ nsAboutCache::NewChannel(nsIURI *aURI, nsIChannel **result)
     PRUint32 bytesWritten;
 
     *result = nsnull;
-/*
-    nsXPIDLCString path;
-    rv = aURI->GetPath(getter_Copies(path));
-    if (NS_FAILED(rv)) return rv;
-
-    PRBool clear = PR_FALSE;
-    PRBool leaks = PR_FALSE;
-
-    nsCAutoString p(path);
-    PRInt32 pos = p.Find("?");
-    if (pos > 0) {
-        nsCAutoString param;
-        (void)p.Right(param, p.Length() - (pos+1));
-        if (param.Equals("new"))
-            statType = nsTraceRefcnt::NEW_STATS;
-        else if (param.Equals("clear"))
-            clear = PR_TRUE;
-        else if (param.Equals("leaks"))
-            leaks = PR_TRUE;
-    }
-*/
     // Get the cache manager service
     nsCOMPtr<nsICacheService> cacheService = 
              do_GetService(NS_CACHESERVICE_CONTRACTID, &rv);
@@ -131,13 +110,16 @@ nsAboutCache::NewChannel(nsIURI *aURI, nsIChannel **result)
 
     mStream = outputStream;
     rv = cacheService->VisitEntries(this);
-    if (NS_FAILED(rv)) return rv;
+    mBuffer.Truncate();
+    if (rv == NS_ERROR_NOT_AVAILABLE) {
+        mBuffer.AppendLiteral("<h2>The cache is disabled.</h2>\n");
+    }
+    else if (NS_FAILED(rv)) {
+        return rv;
+    }
 
     if (!mDeviceID.IsEmpty()) {
-        mBuffer.AssignLiteral("</pre>\n");
-    }
-    else {
-        mBuffer.Truncate();
+        mBuffer.AppendLiteral("</pre>\n");
     }
     mBuffer.AppendLiteral("</div>\n</body>\n</html>\n");
     outputStream->Write(mBuffer.get(), mBuffer.Length(), &bytesWritten);
@@ -157,6 +139,12 @@ nsAboutCache::NewChannel(nsIURI *aURI, nsIChannel **result)
     return rv;
 }
 
+NS_IMETHODIMP
+nsAboutCache::GetURIFlags(nsIURI *aURI, PRUint32 *result)
+{
+    *result = 0;
+    return NS_OK;
+}
 
 NS_IMETHODIMP
 nsAboutCache::VisitDevice(const char *deviceID,
@@ -173,7 +161,7 @@ nsAboutCache::VisitDevice(const char *deviceID,
         // We need mStream for this
         if (!mStream)
           return NS_ERROR_FAILURE;
-
+	
         // Write out the Cache Name
         deviceInfo->GetDescription(getter_Copies(str));
 

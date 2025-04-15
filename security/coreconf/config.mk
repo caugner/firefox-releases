@@ -181,3 +181,25 @@ endif
 ifdef NSS_ECC_MORE_THAN_SUITE_B
 DEFINES += -DNSS_ECC_MORE_THAN_SUITE_B
 endif
+
+ifdef NSS_ALLOW_UNSUPPORTED_CRITICAL
+DEFINES += -DNSS_ALLOW_UNSUPPORTED_CRITICAL
+endif
+
+ifdef BUILD_LIBPKIX_TESTS
+DEFINES += -DBUILD_LIBPKIX_TESTS
+endif
+
+# Avoid building object leak test code for optimized library
+ifndef BUILD_OPT
+ifdef PKIX_OBJECT_LEAK_TEST
+DEFINES += -DPKIX_OBJECT_LEAK_TEST
+endif
+endif
+
+# This allows all library and tools code to use the util function
+# implementations directly from libnssutil3, rather than the wrappers
+# in libnss3 which are present for binary compatibility only
+DEFINES += -DUSE_UTIL_DIRECTLY
+USE_UTIL_DIRECTLY = 1
+

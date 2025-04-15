@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -49,7 +50,7 @@
 
 class nsMathMLmrootFrame : public nsMathMLContainerFrame {
 public:
-  friend nsresult NS_NewMathMLmrootFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmrootFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
   virtual void
   SetAdditionalStyleContext(PRInt32          aIndex, 
@@ -58,10 +59,8 @@ public:
   GetAdditionalStyleContext(PRInt32 aIndex) const;
 
   NS_IMETHOD
-  Init(nsPresContext*  aPresContext,
-       nsIContent*      aContent,
+  Init(nsIContent*      aContent,
        nsIFrame*        aParent,
-       nsStyleContext*  aContext,
        nsIFrame*        aPrevInFlow);
 
   NS_IMETHOD
@@ -73,15 +72,15 @@ public:
          const nsHTMLReflowState& aReflowState,
          nsReflowStatus&          aStatus);
 
-  NS_IMETHOD 
-  Paint(nsPresContext*      aPresContext,
-        nsIRenderingContext& aRenderingContext,
-        const nsRect&        aDirtyRect,
-        nsFramePaintLayer    aWhichLayer,
-        PRUint32             aFlags = 0);
+  virtual nscoord
+  GetIntrinsicWidth(nsIRenderingContext* aRenderingContext);
+
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
 
 protected:
-  nsMathMLmrootFrame();
+  nsMathMLmrootFrame(nsStyleContext* aContext);
   virtual ~nsMathMLmrootFrame();
   
   virtual PRIntn GetSkipSides() const { return 0; }

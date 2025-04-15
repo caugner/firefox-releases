@@ -69,6 +69,8 @@
 		 <1>	 1/25/02	JL		MoreFilesX 1.0
 */
 
+// Modified 2006-01-23 - added this comment.
+
 #if defined(__MACH__)
 	#include <Carbon/Carbon.h>
 	#include <string.h>
@@ -2314,8 +2316,12 @@ BadParameter:
 
 /*****************************************************************************/
 
+/* Renamed from FSVolumeMount to MFX_FSVolumeMount to avoid a conflict with
+ * the FSVolumeMount function present in the system library since Mac OS X
+ * 10.5. */
+
 OSErr
-FSVolumeMount(
+MFX_FSVolumeMount(
 	const void *volMountInfo,
 	FSVolumeRefNum *volRefNum)
 {

@@ -35,12 +35,16 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * A class for handing out nodeinfos and ensuring sharing of them as needed.
+ */
+
 #ifndef nsNodeInfoManager_h___
 #define nsNodeInfoManager_h___
 
-#include "nsCOMArray.h"
-#include "nsCOMPtr.h"
+#include "nsCOMPtr.h" // for already_AddRefed
 #include "plhash.h"
+#include "nsCycleCollectionParticipant.h"
 
 class nsIAtom;
 class nsIDocument;
@@ -48,12 +52,21 @@ class nsINodeInfo;
 class nsNodeInfo;
 class nsIPrincipal;
 class nsIURI;
+class nsDocument;
+class nsIDOMDocumentType;
+class nsIDOMDocument;
+class nsAString;
+class nsIDOMNamedNodeMap;
+class nsXULPrototypeDocument;
+class nsBindingManager;
 
 class nsNodeInfoManager
 {
 public:
   nsNodeInfoManager();
   ~nsNodeInfoManager();
+
+  NS_DECL_CYCLE_COLLECTION_NATIVE_CLASS(nsNodeInfoManager)
 
   nsrefcnt AddRef(void);
   nsrefcnt Release(void);
@@ -81,6 +94,21 @@ public:
                        nsINodeInfo** aNodeInfo);
 
   /**
+   * Returns the nodeinfo for text nodes. Can return null if OOM.
+   */
+  already_AddRefed<nsINodeInfo> GetTextNodeInfo();
+
+  /**
+   * Returns the nodeinfo for comment nodes. Can return null if OOM.
+   */
+  already_AddRefed<nsINodeInfo> GetCommentNodeInfo();
+
+  /**
+   * Returns the nodeinfo for the document node. Can return null if OOM.
+   */
+  already_AddRefed<nsINodeInfo> GetDocumentNodeInfo();     
+
+  /**
    * Retrieve a pointer to the document that owns this node info
    * manager.
    */
@@ -90,23 +118,37 @@ public:
   }
 
   /**
-   * Gets the principal of the document associated with this.
+   * Gets the principal of the document this nodeinfo manager belongs to.
    */
-  nsIPrincipal *GetDocumentPrincipal();
-
-  /**
-   * Sets the principal of the nodeinfo manager. This should only be called
-   * when this nodeinfo manager isn't connected to an nsIDocument.
-   */
-  void SetDocumentPrincipal(nsIPrincipal *aPrincipal);
-
-  /**
-   * Populate the given nsCOMArray with all of the nsINodeInfos
-   * managed by this manager.
-   */
-  nsresult GetNodeInfos(nsCOMArray<nsINodeInfo> *aArray);
+  nsIPrincipal *DocumentPrincipal() const {
+    NS_ASSERTION(mPrincipal, "How'd that happen?");
+    return mPrincipal;
+  }
 
   void RemoveNodeInfo(nsNodeInfo *aNodeInfo);
+
+  nsBindingManager* GetBindingManager() const
+  {
+    return mBindingManager;
+  }
+
+protected:
+  friend class nsDocument;
+  friend class nsXULPrototypeDocument;
+  friend nsresult NS_NewDOMDocumentType(nsIDOMDocumentType** ,
+                                        nsNodeInfoManager *,
+                                        nsIPrincipal *,
+                                        nsIAtom *,
+                                        nsIDOMNamedNodeMap *,
+                                        nsIDOMNamedNodeMap *,
+                                        const nsAString& ,
+                                        const nsAString& ,
+                                        const nsAString& );
+
+  /**
+   * Sets the principal of the document this nodeinfo manager belongs to.
+   */
+  void SetDocumentPrincipal(nsIPrincipal *aPrincipal);
 
 private:
   static PRIntn PR_CALLBACK NodeInfoInnerKeyCompare(const void *key1,
@@ -118,9 +160,16 @@ private:
 
   PLHashTable *mNodeInfoHash;
   nsIDocument *mDocument; // WEAK
-  nsCOMPtr<nsIPrincipal> mPrincipal;
-
-  static PRUint32 gNodeManagerCount;
+  nsIPrincipal *mPrincipal; // STRONG, but not nsCOMPtr to avoid include hell
+                            // while inlining DocumentPrincipal().  Never null
+                            // after Init() succeeds.
+  nsCOMPtr<nsIPrincipal> mDefaultPrincipal; // Never null after Init() succeeds
+  nsINodeInfo *mTextNodeInfo; // WEAK to avoid circular ownership
+  nsINodeInfo *mCommentNodeInfo; // WEAK to avoid circular ownership
+  nsINodeInfo *mDocumentNodeInfo; // WEAK to avoid circular ownership
+  nsBindingManager* mBindingManager; // STRONG, but not nsCOMPtr to avoid
+                                     // include hell while inlining
+                                     // GetBindingManager().
 };
 
 #endif /* nsNodeInfoManager_h___ */

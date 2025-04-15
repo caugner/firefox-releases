@@ -56,8 +56,7 @@
 #include "nsString.h"
 
 #include "nsVoidArray.h"
-
-#include <imm.h>
+#include "nsTArray.h"
 
 class nsNativeDragTarget;
 class nsIRollupListener;
@@ -67,10 +66,15 @@ class nsIFile;
 
 class imgIContainer;
 
+struct nsAlternativeCharCode;
+struct nsFakeCharMessage;
+
 #ifdef ACCESSIBILITY
 #include "OLEACC.H"
 #include "nsIAccessible.h"
 #endif
+
+#include "gfxWindowsSurface.h"
 
 #define IME_MAX_CHAR_POS       64
 
@@ -78,6 +82,13 @@ class imgIContainer;
             RGB(NS_GET_R(color),NS_GET_G(color),NS_GET_B(color))
 #define COLOREF_2_NSRGB(color) \
             NS_RGB(GetRValue(color), GetGValue(color), GetBValue(color))
+
+#define WIN2K_VERSION   0x500
+#define WINXP_VERSION   0x501
+#define WIN2K3_VERSION  0x502
+#define VISTA_VERSION   0x600
+
+PRInt32 GetWindowsVersion();
 
 /*
  * ::: IMPORTANT :::
@@ -91,190 +102,13 @@ const LPCWSTR kWClassNameUI           = L"MozillaUIWindowClass";
 const LPCWSTR kWClassNameContent      = L"MozillaContentWindowClass";
 const LPCWSTR kWClassNameContentFrame = L"MozillaContentFrameWindowClass";
 const LPCWSTR kWClassNameGeneral      = L"MozillaWindowClass";
+const LPCWSTR kWClassNameDialog       = L"MozillaDialogClass";
 const LPCSTR kClassNameHidden         = "MozillaHiddenWindowClass";
 const LPCSTR kClassNameUI             = "MozillaUIWindowClass";
 const LPCSTR kClassNameContent        = "MozillaContentWindowClass";
 const LPCSTR kClassNameContentFrame   = "MozillaContentFrameWindowClass";
 const LPCSTR kClassNameGeneral        = "MozillaWindowClass";
-
-/**
-* Native IMM wrapper
-*/
-class nsIMM
-{
-  //prototypes for DLL function calls...
-  typedef LONG (CALLBACK *GetCompStrPtr)  (HIMC, DWORD, LPVOID, DWORD);
-  typedef LONG (CALLBACK *GetContextPtr)  (HWND);
-  typedef LONG (CALLBACK *RelContextPtr)  (HWND, HIMC);
-  typedef LONG (CALLBACK *NotifyIMEPtr)   (HIMC, DWORD, DWORD, DWORD);
-  typedef LONG (CALLBACK *SetCandWindowPtr)(HIMC, LPCANDIDATEFORM);
-  typedef LONG (CALLBACK *SetCompWindowPtr)(HIMC, LPCOMPOSITIONFORM);
-  typedef LONG (CALLBACK *GetCompWindowPtr)(HIMC, LPCOMPOSITIONFORM);
-  typedef LONG (CALLBACK *GetPropertyPtr)  (HKL, DWORD);
-  typedef LONG (CALLBACK *GetDefaultIMEWndPtr) (HWND);
-  typedef BOOL (CALLBACK *GetOpenStatusPtr)  (HIMC);
-  typedef BOOL (CALLBACK *SetOpenStatusPtr)  (HIMC, BOOL);
-public:
-
-  static nsIMM& LoadModule() {
-    static nsIMM gIMM;
-    return gIMM;
-  }
-
-  nsIMM(const char* aModuleName="IMM32.DLL") {
-#ifndef WINCE
-    mInstance=::LoadLibrary(aModuleName);
-    NS_ASSERTION(mInstance!=NULL, "nsIMM.LoadLibrary failed.");
-
-    mGetCompositionStringA=(mInstance) ? (GetCompStrPtr)GetProcAddress(mInstance, "ImmGetCompositionStringA") : 0;
-    NS_ASSERTION(mGetCompositionStringA!=NULL, "nsIMM.ImmGetCompositionStringA failed.");
-
-    mGetCompositionStringW=(mInstance) ? (GetCompStrPtr)GetProcAddress(mInstance, "ImmGetCompositionStringW") : 0;
-    NS_ASSERTION(mGetCompositionStringW!=NULL, "nsIMM.ImmGetCompositionStringW failed.");
-
-    mGetContext=(mInstance) ? (GetContextPtr)GetProcAddress(mInstance, "ImmGetContext") : 0;
-    NS_ASSERTION(mGetContext!=NULL, "nsIMM.ImmGetContext failed.");
-
-    mReleaseContext=(mInstance) ? (RelContextPtr)GetProcAddress(mInstance, "ImmReleaseContext") : 0;
-    NS_ASSERTION(mReleaseContext!=NULL, "nsIMM.ImmReleaseContext failed.");
-
-    mNotifyIME=(mInstance) ? (NotifyIMEPtr)GetProcAddress(mInstance, "ImmNotifyIME") : 0;
-    NS_ASSERTION(mNotifyIME!=NULL, "nsIMM.ImmNotifyIME failed.");
-
-    mSetCandiateWindow=(mInstance) ? (SetCandWindowPtr)GetProcAddress(mInstance, "ImmSetCandidateWindow") : 0;
-    NS_ASSERTION(mSetCandiateWindow!=NULL, "nsIMM.ImmSetCandidateWindow failed.");
-
-    mGetCompositionWindow=(mInstance) ? (GetCompWindowPtr)GetProcAddress(mInstance, "ImmGetCompositionWindow") : 0;
-    NS_ASSERTION(mGetCompositionWindow!=NULL, "nsIMM.ImmGetCompositionWindow failed.");
-
-    mSetCompositionWindow=(mInstance) ? (SetCompWindowPtr)GetProcAddress(mInstance, "ImmSetCompositionWindow") : 0;
-    NS_ASSERTION(mSetCompositionWindow!=NULL, "nsIMM.ImmSetCompositionWindow failed.");
-
-    mGetProperty=(mInstance) ? (GetPropertyPtr)GetProcAddress(mInstance, "ImmGetProperty") : 0;
-    NS_ASSERTION(mGetProperty!=NULL, "nsIMM.ImmGetProperty failed.");
-
-    mGetDefaultIMEWnd=(mInstance) ? (GetDefaultIMEWndPtr)GetProcAddress(mInstance, "ImmGetDefaultIMEWnd") : 0;
-    NS_ASSERTION(mGetDefaultIMEWnd!=NULL, "nsIMM.ImmGetDefaultIMEWnd failed.");
-
-    mGetOpenStatus=(mInstance) ? (GetOpenStatusPtr)GetProcAddress(mInstance,"ImmGetOpenStatus") : 0;
-    NS_ASSERTION(mGetOpenStatus!=NULL, "nsIMM.ImmGetOpenStatus failed.");
-
-    mSetOpenStatus=(mInstance) ? (SetOpenStatusPtr)GetProcAddress(mInstance,"ImmSetOpenStatus") : 0;
-    NS_ASSERTION(mSetOpenStatus!=NULL, "nsIMM.ImmSetOpenStatus failed.");
-#elif WINCE_EMULATOR
-    mInstance=NULL;
-    mGetCompositionStringA=NULL;
-    mGetCompositionStringW=NULL;
-    mGetContext=NULL;
-    mReleaseContext=NULL;
-    mNotifyIME=NULL;
-    mSetCandiateWindow=NULL;
-    mGetCompositionWindow=NULL;
-    mSetCompositionWindow=NULL;
-    mGetProperty=NULL;
-    mGetDefaultIMEWnd=NULL;
-    mGetOpenStatus=NULL;
-    mSetOpenStatus=NULL;
-#else // WinCE
-    mInstance=NULL;
-
-    mGetCompositionStringA=NULL;
-    mGetCompositionStringW=(GetCompStrPtr)ImmGetCompositionStringW;
-    mGetContext=(GetContextPtr)ImmGetContext;
-    mReleaseContext=(RelContextPtr)ImmReleaseContext;
-    mNotifyIME=(NotifyIMEPtr)ImmNotifyIME;
-    mSetCandiateWindow=(SetCandWindowPtr)ImmSetCandidateWindow;
-    mGetCompositionWindow=(GetCompWindowPtr)ImmGetCompositionWindow;
-    mSetCompositionWindow=(SetCompWindowPtr)ImmSetCompositionWindow;
-    mGetProperty=(GetPropertyPtr)ImmGetProperty;
-    mGetDefaultIMEWnd=(GetDefaultIMEWndPtr)ImmGetDefaultIMEWnd;
-    mGetOpenStatus=(GetOpenStatusPtr)ImmGetOpenStatus;
-    mSetOpenStatus=(SetOpenStatusPtr)ImmSetOpenStatus;
-#endif
-  }
-
-  ~nsIMM() {
-    if(mInstance) {
-      ::FreeLibrary(mInstance);
-    }
-    mGetCompositionStringA=0;
-    mGetCompositionStringW=0;
-    mGetContext=0;
-    mReleaseContext=0;
-    mNotifyIME=0;
-    mSetCandiateWindow=0;
-    mGetCompositionWindow=0;
-    mSetCompositionWindow=0;
-    mGetProperty=0;
-    mGetDefaultIMEWnd=0;
-    mGetOpenStatus=0;
-    mSetOpenStatus=0;
-  }
-
-  LONG GetCompositionStringA(HIMC h, DWORD d1, LPVOID v, DWORD d2) {
-    return (mGetCompositionStringA) ? mGetCompositionStringA(h, d1, v, d2) : 0L;
-  }
-
-  LONG GetCompositionStringW(HIMC h, DWORD d1, LPVOID v, DWORD d2) {
-    return (mGetCompositionStringW) ? mGetCompositionStringW(h, d1, v, d2) : 0L;
-  }
-
-  LONG GetContext(HWND anHWND) {
-    return (mGetContext) ? mGetContext(anHWND) : 0L;
-  }
-
-  LONG ReleaseContext(HWND anHWND, HIMC anIMC) {
-    return (mReleaseContext) ? mReleaseContext(anHWND, anIMC) : 0L;
-  }
-
-  LONG NotifyIME(HIMC h, DWORD d1, DWORD d2, DWORD d3) {
-    return (mNotifyIME) ? mNotifyIME(h, d1, d2, d3) : 0L;
-  }
-
-  LONG SetCandidateWindow(HIMC h, LPCANDIDATEFORM l) {
-    return (mSetCandiateWindow) ? mSetCandiateWindow(h, l) : 0L;
-  }
-
-  LONG SetCompositionWindow(HIMC h, LPCOMPOSITIONFORM l) {
-    return (mSetCompositionWindow) ? mSetCompositionWindow(h, l) : 0L;
-  }
-
-  LONG GetCompositionWindow(HIMC h,LPCOMPOSITIONFORM l) {
-    return (mGetCompositionWindow) ? mGetCompositionWindow(h, l) : 0L;
-  }
-
-  LONG GetProperty(HKL hKL, DWORD dwIndex) {
-    return (mGetProperty) ? mGetProperty(hKL, dwIndex) : 0L;
-  }
-
-  LONG GetDefaultIMEWnd(HWND hWnd) {
-    return (mGetDefaultIMEWnd) ? mGetDefaultIMEWnd(hWnd) : 0L;
-  }
-
-  BOOL GetOpenStatus(HIMC h) {
-    return (mGetOpenStatus) ? mGetOpenStatus(h) : FALSE;
-  }
-
-  BOOL SetOpenStatus(HIMC h, BOOL b) {
-    return (mSetOpenStatus) ? mSetOpenStatus(h,b) : FALSE;
-  }
-
-private:
-
-  HINSTANCE           mInstance;
-  GetCompStrPtr       mGetCompositionStringA;
-  GetCompStrPtr       mGetCompositionStringW;
-  GetContextPtr       mGetContext;
-  RelContextPtr       mReleaseContext;
-  NotifyIMEPtr        mNotifyIME;
-  SetCandWindowPtr    mSetCandiateWindow;
-  SetCompWindowPtr    mSetCompositionWindow;
-  GetCompWindowPtr    mGetCompositionWindow;
-  GetPropertyPtr      mGetProperty;
-  GetDefaultIMEWndPtr mGetDefaultIMEWnd;
-  GetOpenStatusPtr    mGetOpenStatus;
-  SetOpenStatusPtr    mSetOpenStatus;
-};
+const LPCSTR kClassNameDialog         = "MozillaDialogClass";
 
 /**
  * Native WIN32 window wrapper.
@@ -288,10 +122,7 @@ public:
   nsWindow();
   virtual ~nsWindow();
 
-  // nsISupports
-  NS_IMETHOD_(nsrefcnt) AddRef(void);
-  NS_IMETHOD_(nsrefcnt) Release(void);
-  NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
+  NS_DECL_ISUPPORTS_INHERITED
 
   // nsIWidget interface
   NS_IMETHOD              Create(nsIWidget *aParent,
@@ -341,8 +172,6 @@ public:
   NS_IMETHOD              GetClientBounds(nsRect &aRect);
   NS_IMETHOD              GetScreenBounds(nsRect &aRect);
   NS_IMETHOD              SetBackgroundColor(const nscolor &aColor);
-  virtual nsIFontMetrics* GetFont(void);
-  NS_IMETHOD              SetFont(const nsFont &aFont);
   NS_IMETHOD              SetCursor(nsCursor aCursor);
   NS_IMETHOD              SetCursor(imgIContainer* aCursor,
                                     PRUint32 aHotspotX, PRUint32 aHotspotY);
@@ -381,18 +210,17 @@ public:
   NS_IMETHOD              GetLastInputEventTime(PRUint32& aTime);
   nsWindow*               GetTopLevelWindow();
 
+  gfxASurface             *GetThebesSurface();
+
 #ifdef MOZ_XUL
-  NS_IMETHOD              SetWindowTranslucency(PRBool aTransparent);
-  NS_IMETHOD              GetWindowTranslucency(PRBool& aTransparent);
-  NS_IMETHOD              UpdateTranslucentWindowAlpha(const nsRect& aRect, PRUint8* aAlphas);
+  NS_IMETHOD              SetHasTransparentBackground(PRBool aTransparent);
+  NS_IMETHOD              GetHasTransparentBackground(PRBool& aTransparent);
 private:
   nsresult                SetWindowTranslucencyInner(PRBool aTransparent);
-  PRBool                  GetWindowTranslucencyInner() { return mIsTranslucent; }
-  void                    UpdateTranslucentWindowAlphaInner(const nsRect& aRect, PRUint8* aAlphas);
-  void                    ResizeTranslucentWindow(PRInt32 aNewWidth, PRInt32 aNewHeight);
+  PRBool                  GetWindowTranslucencyInner() { return mIsTransparent; }
+  void                    ResizeTranslucentWindow(PRInt32 aNewWidth, PRInt32 aNewHeight, PRBool force = PR_FALSE);
   nsresult                UpdateTranslucentWindow();
-  nsresult                SetupTranslucentWindowMemoryBitmap(PRBool aTranslucent);
-  void                    SetWindowRegionToAlphaMask();
+  nsresult                SetupTranslucentWindowMemoryBitmap(PRBool aTransparent);
 public:
 #endif
 
@@ -401,10 +229,13 @@ public:
   NS_IMETHOD ResetInputState();
   NS_IMETHOD SetIMEOpenState(PRBool aState);
   NS_IMETHOD GetIMEOpenState(PRBool* aState);
+  NS_IMETHOD SetIMEEnabled(PRUint32 aState);
+  NS_IMETHOD GetIMEEnabled(PRUint32* aState);
   NS_IMETHOD CancelIMEComposition();
+  NS_IMETHOD GetToggledKeyState(PRUint32 aKeyCode, PRBool* aLEDState);
 
-  PRBool IMEMouseHandling(PRUint32 aEventType, PRInt32 aAction, LPARAM lParam);
-  PRBool IMECompositionHitTest(PRUint32 aEventType, POINT * ptPos);
+  PRBool IMEMouseHandling(PRInt32 aAction, LPARAM lParam);
+  PRBool IMECompositionHitTest(POINT * ptPos);
   PRBool HandleMouseActionOfIME(PRInt32 aAction, POINT* ptPos);
   void GetCompositionWindowPos(HIMC hIMC, PRUint32 aEventType, COMPOSITIONFORM *cpForm);
 
@@ -414,7 +245,10 @@ public:
   HWND                    GetWindowHandle() { return mWnd; }
   WNDPROC                 GetPrevWindowProc() { return mPrevWndProc; }
 
-  virtual PRBool          DispatchMouseEvent(PRUint32 aEventType, WPARAM wParam = NULL, nsPoint* aPoint = nsnull);
+  virtual PRBool          DispatchMouseEvent(PRUint32 aEventType, WPARAM wParam,
+                                             LPARAM lParam,
+                                             PRBool aIsContextMenuKey = PR_FALSE,
+                                             PRInt16 aButton = nsMouseEvent::eLeftButton);
 #ifdef ACCESSIBILITY
   virtual PRBool          DispatchAccessibleEvent(PRUint32 aEventType, nsIAccessible** aAccessible, nsPoint* aPoint = nsnull);
   already_AddRefed<nsIAccessible> GetRootAccessible();
@@ -445,6 +279,7 @@ protected:
 
   static void             PostSleepWakeNotification(const char* aNotification);
 #endif
+
   static BOOL             DealWithPopups (HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLParam, LRESULT* outResult);
 
   static PRBool           EventIsInsideWindow(UINT Msg, nsWindow* aWindow);
@@ -474,11 +309,12 @@ protected:
   virtual PRBool          OnMove(PRInt32 aX, PRInt32 aY);
   virtual PRBool          OnPaint(HDC aDC = nsnull);
   virtual PRBool          OnResize(nsRect &aWindowRect);
-
-  BOOL                    OnChar(UINT charCode, PRUint32 aFlags = 0);
-
-  BOOL                    OnKeyDown( UINT aVirtualKeyCode, UINT aScanCode, LPARAM aKeyCode);
-  BOOL                    OnKeyUp( UINT aVirtualKeyCode, UINT aScanCode, LPARAM aKeyCode);
+  
+  void                    SetupModKeyState();
+  BOOL                    OnChar(UINT charCode, UINT aScanCode, PRUint32 aFlags = 0);
+  BOOL                    OnKeyDown( UINT aVirtualKeyCode, LPARAM aKeyCode,
+                                     nsFakeCharMessage* aFakeCharMessage);
+  BOOL                    OnKeyUp( UINT aVirtualKeyCode, LPARAM aKeyCode);
   UINT                    MapFromNativeToDOM(UINT aNativeKeyCode);
 
 
@@ -488,17 +324,22 @@ protected:
   BOOL                    OnIMECompositionFull();
   BOOL                    OnIMEEndComposition();
   BOOL                    OnIMENotify(WPARAM  aIMN, LPARAM aData, LRESULT *oResult);
-  BOOL                    OnIMERequest(WPARAM  aIMR, LPARAM aData, LRESULT *oResult, PRBool aUseUnicode);
+  BOOL                    OnIMERequest(WPARAM  aIMR, LPARAM aData, LRESULT *oResult);
   BOOL                    OnIMESelect(BOOL  aSelected, WORD aLangID);
   BOOL                    OnIMESetContext(BOOL aActive, LPARAM& aISC);
   BOOL                    OnIMEStartComposition();
-  BOOL                    OnIMEReconvert(LPARAM aData, LRESULT *oResult, PRBool aUseUnicode);
-  BOOL                    OnIMEQueryCharPosition(LPARAM aData, LRESULT *oResult, PRBool aUseUnicode);
+  BOOL                    OnIMEReconvert(LPARAM aData, LRESULT *oResult);
+  BOOL                    OnIMEQueryCharPosition(LPARAM aData, LRESULT *oResult);
 
-  void                    GetCompositionString(HIMC aHIMC, DWORD aIndex, nsString* aStrUnicode, nsCString* aStrAnsi);
+  void                    GetCompositionString(HIMC aHIMC, DWORD aIndex, nsString* aStrUnicode);
+  void                    ResolveIMECaretPos(nsWindow* aClient,
+                                             nsRect&   aEventResult,
+                                             nsRect&   aResult);
 
-  virtual PRBool          DispatchKeyEvent(PRUint32 aEventType, WORD aCharCode, UINT aVirtualCharCode,
-                                           LPARAM aKeyCode, PRUint32 aFlags = 0);
+  virtual PRBool          DispatchKeyEvent(PRUint32 aEventType, WORD aCharCode,
+                            const nsTArray<nsAlternativeCharCode>* aAlternativeChars,
+                            UINT aVirtualCharCode, LPARAM aKeyCode,
+                            PRUint32 aFlags = 0);
 
   virtual PRBool          DispatchFocus(PRUint32 aEventType, PRBool isMozWindowTakingFocus);
   virtual PRBool          OnScroll(UINT scrollCode, int cPos);
@@ -507,10 +348,12 @@ protected:
   static LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
   static LRESULT CALLBACK DefaultWindowProc(HWND hWns, UINT msg, WPARAM wParam, LPARAM lParam);
 
-  static PRBool ConvertStatus(nsEventStatus aStatus);
+  // Convert nsEventStatus value to a windows boolean
+  static PRBool ConvertStatus(nsEventStatus aStatus)
+                       { return aStatus == nsEventStatus_eConsumeNoDefault; }
 
   PRBool DispatchStandardEvent(PRUint32 aMsg);
-  PRBool DispatchAppCommandEvent(PRUint32 aEventCommand);
+  PRBool DispatchCommandEvent(PRUint32 aEventCommand);
   void RelayMouseEvent(UINT aMsg, WPARAM wParam, LPARAM lParam);
 
   void GetNonClientBounds(nsRect &aRect);
@@ -521,7 +364,16 @@ protected:
 
   void ConstrainZLevel(HWND *aAfter);
 
+  LPARAM lParamToScreen(LPARAM lParam);
+  LPARAM lParamToClient(LPARAM lParam);
+
   PRBool CanTakeFocus();
+
+  virtual nsresult SynthesizeNativeKeyEvent(PRInt32 aNativeKeyboardLayout,
+                                            PRInt32 aNativeKeyCode,
+                                            PRUint32 aModifierFlags,
+                                            const nsAString& aCharacters,
+                                            const nsAString& aUnmodifiedCharacters);
 
 private:
 
@@ -554,11 +406,13 @@ protected:
   static RECT*      sIMECompCharPos;
   static PRInt32    sIMECaretHeight;
 
+  static PRBool     sIsInEndSession;
+
   nsSize        mLastSize;
   static        nsWindow* gCurrentWindow;
   nsPoint       mLastPoint;
   HWND          mWnd;
-  HWND          mBorderlessParent;
+  HDC           mPaintDC; // only set during painting
 #if 0
   HPALETTE      mPalette;
 #endif
@@ -566,25 +420,17 @@ protected:
   HBRUSH        mBrush;
 
 #ifdef MOZ_XUL
-  union
-  {
-    // Windows 2000 and newer use layered windows to support full 256 level alpha translucency
-    struct
-    {
-      HDC       mMemoryDC;
-      HBITMAP   mMemoryBitmap;
-      PRUint8*  mMemoryBits;
-    } w2k;
-    // Windows NT and 9x use complex shaped window regions to support 1-bit transparency masks
-    struct
-    {
-      PRPackedBool mPerformingSetWindowRgn;
-    } w9x;
-  };
+  // use layered windows to support full 256 level alpha translucency
+  nsRefPtr<gfxWindowsSurface> mTransparentSurface;
+
+  HDC           mMemoryDC;
+  HBITMAP       mMemoryBitmap;
+  PRUint8*      mMemoryBits;
   PRUint8*      mAlphaMask;
-  PRPackedBool  mIsTranslucent;
-  PRPackedBool  mIsTopTranslucent;     // Topmost window itself or any of it's child windows has tranlucency enabled
+  PRPackedBool  mIsTransparent;
+  PRPackedBool  mIsTopTransparent;     // Topmost window itself or any of it's child windows has tranlucency enabled
 #endif
+  PRPackedBool  mHasAeroGlass;
   PRPackedBool  mIsTopWidgetWindow;
   PRPackedBool  mHas3DBorder;
   PRPackedBool  mIsShiftDown;
@@ -602,19 +448,19 @@ protected:
   PRUint32      mBlurEventSuppressionLevel;
   nsContentType mContentType;
 
-  // XXX Temporary, should not be caching the font
-  nsFont *      mFont;
-
   PRInt32       mPreferredWidth;
   PRInt32       mPreferredHeight;
 
   PRInt32       mMenuCmdId;
 
-    // Window styles used by this window before chrome was hidden
+  // Window styles used by this window before chrome was hidden
   DWORD         mOldStyle;
   DWORD         mOldExStyle;
 
-  static UINT   gCurrentKeyboardCP;
+  // To enable/disable IME
+  HIMC          mOldIMC;
+  PRUint32      mIMEEnabled;
+
   static HKL    gKeyboardLayout;
   static PRBool gSwitchKeyboardLayout;
 
@@ -637,14 +483,10 @@ protected:
 
   static BOOL   sIsRegistered;
   static BOOL   sIsPopupClassRegistered;
+  static BOOL   sIsOleInitialized; // OLE is needed for clipboard and drag & drop support
 
   HDWP mDeferredPositioner;
-  static UINT   uMSH_MOUSEWHEEL;
-
-  // IME special message
-  static UINT   uWM_MSIME_RECONVERT; // reconvert message for MSIME
   static UINT   uWM_MSIME_MOUSE;     // mouse message for MSIME
-  static UINT   uWM_ATOK_RECONVERT;  // reconvert message for ATOK
 
   // Heap dump
   static UINT   uWM_HEAP_DUMP;       // Dump heap to a file
@@ -652,58 +494,6 @@ protected:
   // Cursor caching
   static HCURSOR        gHCursor;
   static imgIContainer* gCursorImgContainer;
-
-  /**
-   * Create a 1 bit mask out of a 8 bit alpha layer.
-   *
-   * @param aAlphaData        8 bit alpha data
-   * @param aAlphaBytesPerRow How many bytes one row of data is
-   * @param aWidth            Width of the alpha data, in pixels
-   * @param aHeight           Height of the alpha data, in pixels
-   *
-   * @return 1 bit mask.  Must be delete[]d. On failure, NULL will be returned.
-   */
-  static PRUint8* Data8BitTo1Bit(PRUint8* aAlphaData, PRUint32 aAlphaBytesPerRow,
-                                 PRUint32 aWidth, PRUint32 aHeight);
-
-  /**
-   * Combine the given image data with a separate alpha channel to image data
-   * with the alpha channel interleaved with the image data (BGRA).
-   *
-   * @return BGRA data. Must be delete[]d. On failure, NULL will be returned.
-   */
-  static PRUint8* DataToAData(PRUint8* aImageData, PRUint32 aImageBytesPerRow,
-                              PRUint8* aAlphaData, PRUint32 aAlphaBytesPerRow,
-                              PRUint32 aWidth, PRUint32 aHeight);
-  /**
-   * Convert the given image data to a HBITMAP. If the requested depth is
-   * 32 bit and the OS supports translucency, a bitmap with an alpha channel
-   * will be returned.
-   *
-   * @param aImageData The image data to convert. Must use the format accepted
-   *                   by CreateDIBitmap.
-   * @param aWidth     With of the bitmap, in pixels.
-   * @param aHeight    Height of the image, in pixels.
-   * @param aDepth     Image depth, in bits. Should be one of 1, 24 and 32.
-   *
-   * @return The HBITMAP representing the image. Caller should call
-   *         DeleteObject when done with the bitmap.
-   *         On failure, NULL will be returned.
-   */
-  static HBITMAP DataToBitmap(PRUint8* aImageData,
-                              PRUint32 aWidth,
-                              PRUint32 aHeight,
-                              PRUint32 aDepth);
-
-  /**
-   * Create a bitmap representing an opaque alpha channel (filled with 0xff).
-   * @param aWidth  Desired with of the bitmap
-   * @param aHeight Desired height of the bitmap
-   * @return        The bitmap. Caller should call DeleteObject when done with
-   *                the bitmap. On failure, NULL will be returned.
-   */
-  static HBITMAP CreateOpaqueAlphaChannel(PRUint32 aWidth, PRUint32 aHeight);
-
 
 #ifdef ACCESSIBILITY
   static BOOL gIsAccessibilityOn;
@@ -715,6 +505,7 @@ protected:
   static BOOL CALLBACK BroadcastMsgToChildren(HWND aWnd, LPARAM aMsg);
   static BOOL CALLBACK BroadcastMsg(HWND aTopWindow, LPARAM aMsg);
   static BOOL CALLBACK DispatchStarvedPaints(HWND aTopWindow, LPARAM aMsg);
+  static BOOL CALLBACK InvalidateForeignChildWindows(HWND aWnd, LPARAM aMsg);
 
 public:
   static void GlobalMsgWindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -728,7 +519,9 @@ class ChildWindow : public nsWindow {
 
 public:
   ChildWindow() {}
-  PRBool DispatchMouseEvent(PRUint32 aEventType, WPARAM wParam = NULL, nsPoint* aPoint = nsnull);
+  PRBool DispatchMouseEvent(PRUint32 aEventType, WPARAM wParam, LPARAM lParam,
+                            PRBool aIsContextMenuKey = PR_FALSE,
+                            PRInt16 aButton = nsMouseEvent::eLeftButton);
 
 protected:
   virtual DWORD WindowStyle();

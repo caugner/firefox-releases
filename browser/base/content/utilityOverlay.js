@@ -21,6 +21,7 @@
 #
 # Contributor(s):
 #   Alec Flett <alecf@netscape.com>
+#   Ehsan Akhgari <ehsan.akhgari@gmail.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -89,11 +90,34 @@ function getBoolPref ( prefname, def )
   }
 }
 
+// Change focus for this browser window to |aElement|, without focusing the
+// window itself.
+function focusElement(aElement) {
+  // This is a redo of the fix for jag bug 91884
+  var ww = Components.classes["@mozilla.org/embedcomp/window-watcher;1"]
+                     .getService(Components.interfaces.nsIWindowWatcher);
+  if (window == ww.activeWindow)
+    aElement.focus();
+  else {
+    // set the element in command dispatcher so focus will restore properly
+    // when the window does become active
+    var cmdDispatcher = document.commandDispatcher;
+    if (aElement instanceof Window) {
+      cmdDispatcher.focusedWindow = aElement;
+      cmdDispatcher.focusedElement = null;
+    }
+    else if (aElement instanceof Element) {
+      cmdDispatcher.focusedWindow = aElement.ownerDocument.defaultView;
+      cmdDispatcher.focusedElement = aElement;
+    }
+  }
+}
+
 // openUILink handles clicks on UI elements that cause URLs to load.
-function openUILink( url, e, ignoreButton, ignoreAlt, allowKeywordFixup, postData )
+function openUILink( url, e, ignoreButton, ignoreAlt, allowKeywordFixup, postData, referrerUrl )
 {
   var where = whereToOpenLink(e, ignoreButton, ignoreAlt);
-  openUILinkIn(url, where, allowKeywordFixup, postData);
+  openUILinkIn(url, where, allowKeywordFixup, postData, referrerUrl);
 }
 
 
@@ -171,21 +195,43 @@ function whereToOpenLink( e, ignoreButton, ignoreAlt )
  * I Feel Lucky are allowed to interpret this URL. This parameter may be
  * undefined, which is treated as false.
  */
-function openUILinkIn( url, where, allowThirdPartyFixup, postData )
+function openUILinkIn( url, where, allowThirdPartyFixup, postData, referrerUrl )
 {
   if (!where || !url)
     return;
 
   if (where == "save") {
-    saveURL(url, null, null, true);
+    saveURL(url, null, null, true, null, referrerUrl);
     return;
   }
+  const Cc = Components.classes;
+  const Ci = Components.interfaces;
 
   var w = getTopWin();
 
   if (!w || where == "window") {
-    openDialog(getBrowserURL(), "_blank", "chrome,all,dialog=no", url,
-               null, null, postData, allowThirdPartyFixup);
+    var sa = Cc["@mozilla.org/supports-array;1"].
+             createInstance(Ci.nsISupportsArray);
+
+    var wuri = Cc["@mozilla.org/supports-string;1"].
+               createInstance(Ci.nsISupportsString);
+    wuri.data = url;
+
+    sa.AppendElement(wuri);
+    sa.AppendElement(null);
+    sa.AppendElement(referrerUrl);
+    sa.AppendElement(postData);
+    sa.AppendElement(allowThirdPartyFixup);
+
+    var ww = Cc["@mozilla.org/embedcomp/window-watcher;1"].
+             getService(Ci.nsIWindowWatcher);
+
+    ww.openWindow(w || window,
+                  getBrowserURL(),
+                  null,
+                  "chrome,dialog=no,all",
+                  sa);
+
     return;
   }
 
@@ -193,18 +239,22 @@ function openUILinkIn( url, where, allowThirdPartyFixup, postData )
 
   switch (where) {
   case "current":
-    w.loadURI(url, null, postData, allowThirdPartyFixup);
-    w.content.focus();
+    w.loadURI(url, referrerUrl, postData, allowThirdPartyFixup);
     break;
   case "tabshifted":
     loadInBackground = !loadInBackground;
     // fall through
   case "tab":
     var browser = w.getBrowser();
-    browser.loadOneTab(url, null, null, postData, loadInBackground,
+    browser.loadOneTab(url, referrerUrl, null, postData, loadInBackground,
                        allowThirdPartyFixup || false);
     break;
   }
+
+  // Call focusElement(w.content) instead of w.content.focus() to make sure
+  // that we don't raise the old window, since the URI we just loaded may have
+  // resulted in a new frontmost window (e.g. "javascript:window.open('');").
+  focusElement(w.content);
 }
 
 // Used as an onclick handler for UI elements with link-like behavior.
@@ -241,42 +291,6 @@ function closeMenus(node)
 
     closeMenus(node.parentNode);
   }
-}
-
-// update menu items that rely on focus
-function goUpdateGlobalEditMenuItems()
-{
-  goUpdateCommand('cmd_undo');
-  goUpdateCommand('cmd_redo');
-  goUpdateCommand('cmd_cut');
-  goUpdateCommand('cmd_copy');
-  goUpdateCommand('cmd_paste');
-  goUpdateCommand('cmd_selectAll');
-  goUpdateCommand('cmd_delete');
-  if (gBidiUI)
-    goUpdateCommand('cmd_switchTextDirection');
-}
-
-// update menu items that rely on the current selection
-function goUpdateSelectEditMenuItems()
-{
-  goUpdateCommand('cmd_cut');
-  goUpdateCommand('cmd_copy');
-  goUpdateCommand('cmd_delete');
-  goUpdateCommand('cmd_selectAll');
-}
-
-// update menu items that relate to undo/redo
-function goUpdateUndoEditMenuItems()
-{
-  goUpdateCommand('cmd_undo');
-  goUpdateCommand('cmd_redo');
-}
-
-// update menu items that depend on clipboard contents
-function goUpdatePasteMenuItems()
-{
-  goUpdateCommand('cmd_paste');
 }
 
 // Gather all descendent text under given document node.
@@ -374,11 +388,11 @@ function openAboutDialog()
                 "chrome, resizable=no, minimizable=no");
   }
 #else
-  window.openDialog("chrome://browser/content/aboutDialog.xul", "About", "modal,centerscreen,chrome,resizable=no");
+  window.openDialog("chrome://browser/content/aboutDialog.xul", "About", "centerscreen,chrome,resizable=no");
 #endif
 }
 
-function openPreferences(paneID)
+function openPreferences(paneID, extraArgs)
 {
   var instantApply = getBoolPref("browser.preferences.instantApply", false);
   var features = "chrome,titlebar,toolbar,centerscreen" + (instantApply ? ",dialog=no" : ",modal");
@@ -392,10 +406,22 @@ function openPreferences(paneID)
       var pane = win.document.getElementById(paneID);
       win.document.documentElement.showPane(pane);
     }
+
+    if (extraArgs && extraArgs["advancedTab"]) {
+      var advancedPaneTabs = win.document.getElementById("advancedPrefs");
+      advancedPaneTabs.selectedTab = win.document.getElementById(extraArgs["advancedTab"]);
+    }
+
+    return win;
   }
-  else
-    openDialog("chrome://browser/content/preferences/preferences.xul",
-               "Preferences", features, paneID);
+
+  return openDialog("chrome://browser/content/preferences/preferences.xul",
+                    "Preferences", features, paneID, extraArgs);
+}
+
+function openAdvancedPreferences(tabID)
+{
+  return openPreferences("paneAdvanced", { "advancedTab" : tabID });
 }
 
 /**
@@ -407,10 +433,10 @@ function openPreferences(paneID)
  */
 function openReleaseNotes(event)
 {
-  var appInfo = Components.classes["@mozilla.org/xre/app-info;1"]
-                          .getService(Components.interfaces.nsIXULAppInfo);
-  var regionBundle = document.getElementById("bundle_browser_region");
-  var relnotesURL = formatURL("app.releaseNotesURL", true);
+  var formatter = Components.classes["@mozilla.org/toolkit/URLFormatterService;1"]
+                            .getService(Components.interfaces.nsIURLFormatter);
+  var relnotesURL = formatter.formatURLPref("app.releaseNotesURL");
+  
   openUILink(relnotesURL, event, false, true);
 }
   
@@ -437,6 +463,11 @@ function checkForUpdates()
 
 function buildHelpMenu()
 {
+  // Enable/disable the "Report Web Forgery" menu item.  safebrowsing object
+  // may not exist in OSX
+  if (typeof safebrowsing != "undefined")
+    safebrowsing.setReportPhishingMenu();
+
   var updates = 
       Components.classes["@mozilla.org/updates/update-service;1"].
       getService(Components.interfaces.nsIApplicationUpdateService);
@@ -485,4 +516,181 @@ function buildHelpMenu()
     checkForUpdates.setAttribute("loading", "true");
   else
     checkForUpdates.removeAttribute("loading");
+}
+
+function isElementVisible(aElement)
+{
+  if (!aElement)
+    return false;
+
+  // If aElement or a direct or indirect parent is hidden or collapsed,
+  // height, width or both will be 0.
+  var bo = aElement.boxObject;
+  return (bo.height > 0 && bo.width > 0);
+}
+
+function makeURLAbsolute(aBase, aUrl)
+{
+  // Note:  makeURI() will throw if aUri is not a valid URI
+  return makeURI(aUrl, null, makeURI(aBase)).spec;
+}
+
+function getBrowserFromContentWindow(aContentWindow)
+{
+  var browsers = gBrowser.browsers;
+  for (var i = 0; i < browsers.length; i++) {
+    if (browsers[i].contentWindow == aContentWindow)
+      return browsers[i];
+  }
+  return null;
+}
+
+
+/**
+ * openNewTabWith: opens a new tab with the given URL.
+ *
+ * @param aURL
+ *        The URL to open (as a string).
+ * @param aDocument
+ *        The document from which the URL came, or null. This is used to set the
+ *        referrer header and to do a security check of whether the document is
+ *        allowed to reference the URL. If null, there will be no referrer
+ *        header and no security check.
+ * @param aPostData
+ *        Form POST data, or null.
+ * @param aEvent
+ *        The triggering event (for the purpose of determining whether to open
+ *        in the background), or null.
+ * @param aAllowThirdPartyFixup
+ *        If true, then we allow the URL text to be sent to third party services
+ *        (e.g., Google's I Feel Lucky) for interpretation. This parameter may
+ *        be undefined in which case it is treated as false.
+ * @param [optional] aReferrer
+ *        If aDocument is null, then this will be used as the referrer.
+ *        There will be no security check.
+ */ 
+function openNewTabWith(aURL, aDocument, aPostData, aEvent,
+                        aAllowThirdPartyFixup, aReferrer)
+{
+  if (aDocument)
+    urlSecurityCheck(aURL, aDocument.nodePrincipal);
+
+  var prefSvc = Components.classes["@mozilla.org/preferences-service;1"]
+                          .getService(Components.interfaces.nsIPrefService);
+  prefSvc = prefSvc.getBranch(null);
+
+  // should we open it in a new tab?
+  var loadInBackground = true;
+  try {
+    loadInBackground = prefSvc.getBoolPref("browser.tabs.loadInBackground");
+  }
+  catch(ex) {
+  }
+
+  if (aEvent && aEvent.shiftKey)
+    loadInBackground = !loadInBackground;
+
+  // As in openNewWindowWith(), we want to pass the charset of the
+  // current document over to a new tab. 
+  var wintype = document.documentElement.getAttribute("windowtype");
+  var originCharset;
+  if (wintype == "navigator:browser")
+    originCharset = window.content.document.characterSet;
+
+  // open link in new tab
+  var referrerURI = aDocument ? aDocument.documentURIObject : aReferrer;
+  var browser = top.document.getElementById("content");
+  return browser.loadOneTab(aURL, referrerURI, originCharset, aPostData,
+                            loadInBackground, aAllowThirdPartyFixup || false);
+}
+
+function openNewWindowWith(aURL, aDocument, aPostData, aAllowThirdPartyFixup,
+                           aReferrer)
+{
+  if (aDocument)
+    urlSecurityCheck(aURL, aDocument.nodePrincipal);
+
+  // if and only if the current window is a browser window and it has a
+  // document with a character set, then extract the current charset menu
+  // setting from the current document and use it to initialize the new browser
+  // window...
+  var charsetArg = null;
+  var wintype = document.documentElement.getAttribute("windowtype");
+  if (wintype == "navigator:browser")
+    charsetArg = "charset=" + window.content.document.characterSet;
+
+  var referrerURI = aDocument ? aDocument.documentURIObject : aReferrer;
+  return window.openDialog(getBrowserURL(), "_blank", "chrome,all,dialog=no",
+                           aURL, charsetArg, referrerURI, aPostData,
+                           aAllowThirdPartyFixup);
+}
+
+/**
+ * isValidFeed: checks whether the given data represents a valid feed.
+ *
+ * @param  aData
+ *         An object representing a feed with title, href and type.
+ * @param  aPrincipal
+ *         The principal of the document, used for security check.
+ * @param  aIsFeed
+ *         Whether this is already a known feed or not, if true only a security
+ *         check will be performed.
+ */ 
+function isValidFeed(aData, aPrincipal, aIsFeed)
+{
+  if (!aData || !aPrincipal)
+    return false;
+
+  if (!aIsFeed) {
+    var type = aData.type && aData.type.toLowerCase();
+    type = type.replace(/^\s+|\s*(?:;.*)?$/g, "");
+
+    aIsFeed = (type == "application/rss+xml" ||
+               type == "application/atom+xml");
+
+    if (!aIsFeed) {
+      // really slimy: general XML types with magic letters in the title
+      const titleRegex = /(^|\s)rss($|\s)/i;
+      aIsFeed = ((type == "text/xml" || type == "application/rdf+xml" ||
+                  type == "application/xml") && titleRegex.test(aData.title));
+    }
+  }
+
+  if (aIsFeed) {
+    try {
+      urlSecurityCheck(aData.href, aPrincipal,
+                       Components.interfaces.nsIScriptSecurityManager.DISALLOW_INHERIT_PRINCIPAL);
+    }
+    catch(ex) {
+      aIsFeed = false;
+    }
+  }
+
+  if (type)
+    aData.type = type;
+
+  return aIsFeed;
+}
+
+// aCalledFromModal is optional
+function openHelpLink(aHelpTopic, aCalledFromModal) {
+  var url = Components.classes["@mozilla.org/toolkit/URLFormatterService;1"]
+                      .getService(Components.interfaces.nsIURLFormatter)
+                      .formatURLPref("app.support.baseURL");
+  url += aHelpTopic;
+
+  var where = aCalledFromModal ? "window" : "tab";
+  openUILinkIn(url, where);
+}
+
+function openPrefsHelp() {
+  var prefs = Components.classes["@mozilla.org/preferences-service;1"]
+                        .getService(Components.interfaces.nsIPrefBranch2);
+
+  // non-instant apply prefwindows are usually modal, so we can't open in the topmost window, 
+  // since its probably behind the window.
+  var instantApply = prefs.getBoolPref("browser.preferences.instantApply");
+
+  var helpTopic = document.getElementsByTagName("prefwindow")[0].currentPane.helpTopic;
+  openHelpLink(helpTopic, !instantApply);
 }

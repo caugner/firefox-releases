@@ -52,6 +52,7 @@
 #include "nsIIOService.h"
 #include "nsCOMPtr.h"
 #include "nsURLHelper.h"
+#include "nsIClassInfo.h"
 
 class nsIBinaryInputStream;
 class nsIBinaryOutputStream;
@@ -76,6 +77,7 @@ public:
     NS_DECL_NSISTANDARDURL
     NS_DECL_NSISERIALIZABLE
     NS_DECL_NSICLASSINFO
+    NS_DECL_NSIMUTABLE
 
     nsStandardURL(PRBool aSupportsFileURL = PR_FALSE);
     virtual ~nsStandardURL();
@@ -219,11 +221,6 @@ private:
 
     static void PrefsChanged(nsIPrefBranch *prefs, const char *pref);
 
-    // IDN routines
-    static nsresult ACEtoDisplayIDN(const nsCSubstring &in, nsCString &out);
-    static nsresult UTF8toDisplayIDN(const nsCSubstring &in, nsCString &out);
-    static PRBool IsInWhitelist(const nsCSubstring &host);
-
     // mSpec contains the normalized version of the URL spec (UTF-8 encoded).
     nsCString mSpec;
     PRInt32   mDefaultPort;
@@ -273,8 +270,7 @@ private:
     static PRBool                       gInitialized;
     static PRBool                       gEscapeUTF8;
     static PRBool                       gAlwaysEncodeInUTF8;
-    static PRBool                       gShowPunycode;
-    static nsIPrefBranch               *gIDNWhitelistPrefBranch;
+    static PRBool                       gEncodeQueryInUTF8;
 };
 
 #define NS_THIS_STANDARDURL_IMPL_CID                 \

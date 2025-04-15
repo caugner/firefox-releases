@@ -42,21 +42,19 @@
 #endif
 
 #include "nsCOMPtr.h"
+#include "nsIComponentManager.h"
 #include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
 
 #include "nsIMozAxPlugin.h"
-#include "nsIClassInfo.h"
 #include "nsIVariant.h"
 #include "nsMemory.h"
-
-#include "nsIAtom.h"
 
 #include "nsIDOMDocument.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMElement.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsIDOMWindow.h"
 
 #include "nsIInterfaceRequestorUtils.h"
@@ -109,11 +107,11 @@ nsScriptablePeer::QueryInterface(const nsIID & aIID, void **aInstancePtr)
 
     nsISupports* foundInterface = nsnull;
     if (aIID.Equals(NS_GET_IID(nsISupports)))
-        foundInterface = NS_STATIC_CAST(nsISupports *, NS_STATIC_CAST(nsIClassInfo *, this));
+        foundInterface = static_cast<nsISupports *>(static_cast<nsIClassInfo *>(this));
     else if (aIID.Equals(NS_GET_IID(nsIClassInfo)))
-        foundInterface = NS_STATIC_CAST(nsIClassInfo*, this);
+        foundInterface = static_cast<nsIClassInfo*>(this);
     else if (aIID.Equals(NS_GET_IID(nsIMozAxPlugin)))
-        foundInterface = NS_STATIC_CAST(nsIMozAxPlugin*, this);
+        foundInterface = static_cast<nsIMozAxPlugin*>(this);
     else if (memcmp(&aIID, &__uuidof(IDispatch), sizeof(nsID)) == 0)
     {
         HRESULT hr = mTearOff->QueryInterface(__uuidof(IDispatch), aInstancePtr);
@@ -281,9 +279,10 @@ nsScriptablePeer::ConvertVariants(nsIVariant *aIn, VARIANT *aOut)
     case nsIDataType::VTYPE_STRING_SIZE_IS:
     case nsIDataType::VTYPE_CHAR_STR:
         {
-            nsXPIDLCString value;
+            nsCString value;
             aIn->GetAsString(getter_Copies(value));
-            nsAutoString valueWide; valueWide.AssignWithConversion(value);
+            nsString valueWide;
+            NS_CStringToUTF16(value, NS_CSTRING_ENCODING_ASCII, valueWide);
             aOut->vt = VT_BSTR;
             aOut->bstrVal = SysAllocString(valueWide.get());
         }
@@ -291,7 +290,7 @@ nsScriptablePeer::ConvertVariants(nsIVariant *aIn, VARIANT *aOut)
     case nsIDataType::VTYPE_WSTRING_SIZE_IS:
     case nsIDataType::VTYPE_WCHAR_STR:
         {
-            nsXPIDLString value;
+            nsString value;
             aIn->GetAsWString(getter_Copies(value));
             aOut->vt = VT_BSTR;
             aOut->bstrVal = SysAllocString(value.get());
@@ -320,7 +319,8 @@ nsScriptablePeer::ConvertVariants(nsIVariant *aIn, VARIANT *aOut)
         {
             nsCAutoString value;
             aIn->GetAsACString(value);
-            nsAutoString valueWide; valueWide.AssignWithConversion(value.get());
+            nsAutoString valueWide;
+            NS_CStringToUTF16(value, NS_CSTRING_ENCODING_ASCII, valueWide);
             aOut->vt = VT_BSTR;
             aOut->bstrVal = SysAllocString(valueWide.get());
         }
@@ -751,7 +751,7 @@ nsEventSink::InternalInvoke(DISPID dispIdMember, REFIID riid, LCID lcid, WORD wF
 
     nsCOMPtr<nsIDOMElement> element;
     NPN_GetValue(mPlugin->pPluginInstance, NPNVDOMElement, 
-        NS_STATIC_CAST(nsIDOMElement **, getter_AddRefs(element)));
+        static_cast<nsIDOMElement **>(getter_AddRefs(element)));
     if (!element)
     {
         NS_ERROR("can't get the object element");
@@ -770,7 +770,7 @@ nsEventSink::InternalInvoke(DISPID dispIdMember, REFIID riid, LCID lcid, WORD wF
     // Fire the script event handler...
     nsCOMPtr<nsIDOMWindow> window;
     NPN_GetValue(mPlugin->pPluginInstance, NPNVDOMWindow, 
-        NS_STATIC_CAST(nsIDOMWindow **, getter_AddRefs(window)));
+        static_cast<nsIDOMWindow **>(getter_AddRefs(window)));
     
     nsCOMPtr<nsIScriptEventManager> eventManager(do_GetInterface(window));
     if (!eventManager) return S_OK;
@@ -1132,6 +1132,3 @@ MozAxPlugin::GetValue(NPP instance, NPPVariable variable, void *value)
     }
     return NPERR_GENERIC_ERROR;
 }
-
-
-

@@ -41,6 +41,7 @@ function initProfiler ()
 {
     var prefs =
         [
+         ["profile.forceScriptLoad", false],
          ["profile.template.xml", "chrome://venkman/locale/profile.xml.tpl"],
          ["profile.template.html", "chrome://venkman/locale/profile.html.tpl"],
          ["profile.template.csv", "chrome://venkman/locale/profile.csv.tpl"],
@@ -59,6 +60,14 @@ function ProfileReport (reportTemplate, file, rangeList, scriptInstanceList)
     this.rangeList = rangeList;
     this.scriptInstanceList = scriptInstanceList;
     this.key = "total";
+
+    // Escape bad characters for HTML, XML and CSV profiles.
+    if (/\.(html|xml)\.tpl$/.test(this.reportTemplate.__url__))
+        this.escape = safeHTML;
+    else if (/\.csv\.tpl$/.test(this.reportTemplate.__url__))
+        this.escape = safeCSV;
+    else
+        this.escape = function _nop_escape(s) { return s };
 }
 
 console.profiler = new Object();
@@ -205,6 +214,7 @@ function pro_rptinst (profileReport, scriptInstance, sectionData)
     var rangeIndex = 0;
     var K = 1;
     var i;
+    var esc = profileReport.escape;
     
     if (typeof summaryList[0].key == "number")
     {
@@ -223,8 +233,7 @@ function pro_rptinst (profileReport, scriptInstance, sectionData)
         var summary = summaryList[i];
         var rangeData;
         
-        while (summary.key &&
-               rangeIndex < finalRangeIndex &&
+        while (rangeIndex <= finalRangeIndex &&
                summary.key < rangeList[rangeIndex])
         {
             ++rangeIndex;
@@ -240,8 +249,8 @@ function pro_rptinst (profileReport, scriptInstance, sectionData)
 
             var maxRange = (rangeIndex > 0 ?
                             rangeList[rangeIndex - 1] : summary.key);
-            var minRange = (rangeIndex < finalRangeIndex ? 
-                            rangeList[rangeIndex + 1] : summary.key);
+            var minRange = (rangeIndex <= finalRangeIndex ? 
+                            rangeList[rangeIndex] : summary.key);
             K = MAX_WIDTH / maxRange;
 
             rangeData = {
@@ -267,8 +276,8 @@ function pro_rptinst (profileReport, scriptInstance, sectionData)
             "\\$item-number-next": i + 1,
             "\\$item-number-prev": i - 1,
             "\\$item-number"     : i,
-            "\\$item-name"       : summary.url,
-            "\\$item-summary"    : fromUnicode(summary.str, MSG_REPORT_CHARSET),
+            "\\$item-name"       : esc(summary.url),
+            "\\$item-summary"    : esc(fromUnicode(summary.str, MSG_REPORT_CHARSET)),
             "\\$item-min-pct"    : scale(K, summary.min),
             "\\$item-below-pct"  : scale(K, summary.avg - summary.min),
             "\\$item-above-pct"  : scale(K, summary.max - summary.avg),
@@ -276,13 +285,13 @@ function pro_rptinst (profileReport, scriptInstance, sectionData)
             "\\$min-time"        : summary.min,
             "\\$avg-time"        : summary.avg,
             "\\$total-time"      : summary.total,
-            "\\$own-max-time"   : summary.own_max,
-            "\\$own-min-time"   : summary.own_min,
-            "\\$own-avg-time"   : summary.own_avg,
-            "\\$own-total-time" : summary.own_total,
+            "\\$own-max-time"    : summary.own_max,
+            "\\$own-min-time"    : summary.own_min,
+            "\\$own-avg-time"    : summary.own_avg,
+            "\\$own-total-time"  : summary.own_total,
             "\\$call-count"      : summary.ccount,
             "\\$recurse-depth"   : summary.recurse,
-            "\\$function-name"   : fromUnicode(summary.fun, MSG_REPORT_CHARSET),
+            "\\$function-name"   : esc(fromUnicode(summary.fun, MSG_REPORT_CHARSET)),
             "\\$start-line"      : summary.base,
             "\\$end-line"        : summary.end,
             "__proto__"          : rangeData
@@ -313,6 +322,7 @@ function pro_rptall (profileReport)
 {
     var profiler = this;
     var sectionCount = 0;
+    var esc = profileReport.escape;
     
     function generateReportChunk (i)
     {
@@ -321,14 +331,16 @@ function pro_rptall (profileReport)
         var scriptInstance = profileReport.scriptInstanceList[i];
         var url = scriptInstance.url;
         
+        var sectionLink = url ? "<a class='section-link' href='" +
+                                esc(url) + "'>" + esc(url) + "</a>"
+                              : MSG_VAL_NA;
         var sectionData = {
             "\\$section-number-prev": (sectionCount > 0) ? sectionCount - 1 : 0,
             "\\$section-number-next": sectionCount + 1,
             "\\$section-number"     : sectionCount,
-            "\\$section-link"       : (url ? "<a class='section-link' href='" +
-                                       url + "'>" + url + "</a>" : MSG_VAL_NA),
-            "\\$full-url"           : url,
-            "\\$file-name"          : getFileFromPath(url),
+            "\\$section-link"       : sectionLink,
+            "\\$full-url"           : esc(url),
+            "\\$file-name"          : esc(getFileFromPath(url)),
             "__proto__"             : reportData
         };
         
@@ -349,7 +361,7 @@ function pro_rptall (profileReport)
             {
                 ++sectionCount;
                 console.status = getMsg(MSN_PROFILE_SAVING, [i, last]);
-                setTimeout (generateReportChunk, 10, i);                
+                setTimeout (generateReportChunk, 10, i);
             }
             else
             {
@@ -361,9 +373,9 @@ function pro_rptall (profileReport)
     var reportData = {
         "\\$report-charset": MSG_REPORT_CHARSET,
         "\\$full-date"     : String(Date()),
-        "\\$user-agent"    : navigator.userAgent,
-        "\\$venkman-agent" : console.userAgent,
-        "\\$sort-key"      : profileReport.key
+        "\\$user-agent"    : esc(navigator.userAgent),
+        "\\$venkman-agent" : esc(console.userAgent),
+        "\\$sort-key"      : esc(profileReport.key)
     };
 
     var reportTemplate = profileReport.reportTemplate;
@@ -375,7 +387,29 @@ function pro_rptall (profileReport)
     var length = profileReport.scriptInstanceList.length;
     var last = length - 1;
 
-    generateReportChunk (0);
+    // If the user asks for it, load all scripts so we can guess function names
+    if (console.prefs["profile.forceScriptLoad"])
+    {
+        function loadedScript(status)
+        {
+            if (++scriptsLoaded == length)
+                generateReportChunk(0);
+        };
+
+        var scriptsLoaded = 0;
+        for (var j = 0; j < length; j++)
+        {
+            var src = profileReport.scriptInstanceList[j].sourceText;
+            if (!src.isLoaded)
+                src.loadSource(loadedScript);
+            else
+                ++scriptsLoaded;
+        }
+    }
+    else
+    {
+        generateReportChunk(0);
+    }
 }
 
 console.profiler.loadTemplate =
@@ -396,6 +430,7 @@ function pro_load (url)
     };
 
     var reportTemplate = parseSections (lines, sections);
+    reportTemplate.__url__ = url;
     
     //dd(dumpObjectTree (reportTemplate));
     return reportTemplate;

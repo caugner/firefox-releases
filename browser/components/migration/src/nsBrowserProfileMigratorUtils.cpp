@@ -37,12 +37,10 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsBrowserProfileMigratorUtils.h"
-#ifdef MOZ_PLACES
 #include "nsINavBookmarksService.h"
 #include "nsBrowserCompsCID.h"
-#else
-#include "nsIBookmarksService.h"
-#endif
+#include "nsToolkitCompsCID.h"
+#include "nsIPlacesImportExportService.h"
 #include "nsIFile.h"
 #include "nsIInputStream.h"
 #include "nsILineInputStream.h"
@@ -61,7 +59,7 @@
 
 #define MIGRATION_BUNDLE "chrome://browser/locale/migration/migration.properties"
 
-static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
+#define BOOKMARKS_FILE_NAME NS_LITERAL_STRING("bookmarks.html")
 
 void SetUnicharPref(const char* aPref, const nsAString& aValue,
                     nsIPrefBranch* aPrefs)
@@ -96,9 +94,10 @@ void SetProxyPref(const nsAString& aHostPort, const char* aPref,
     if (portDelimOffset > 0) {
       SetUnicharPref(aPref, Substring(hostPort, 0, portDelimOffset), aPrefs);
       nsAutoString port(Substring(hostPort, portDelimOffset + 1));
-      PRInt32 stringErr;
+      nsresult stringErr;
       portValue = port.ToInteger(&stringErr);
-      aPrefs->SetIntPref(aPortPref, portValue);
+      if (NS_SUCCEEDED(stringErr))
+        aPrefs->SetIntPref(aPortPref, portValue);
     }
     else
       SetUnicharPref(aPref, hostPort, aPrefs); 
@@ -220,107 +219,69 @@ AnnotatePersonalToolbarFolder(nsIFile* aSourceBookmarksFile,
 
 nsresult
 ImportBookmarksHTML(nsIFile* aBookmarksFile, 
+                    PRBool aImportIntoRoot,
+                    PRBool aOverwriteDefaults,
                     const PRUnichar* aImportSourceNameKey)
 {
   nsresult rv;
 
-#ifndef MOZ_PLACES
-  nsCOMPtr<nsIBookmarksService> bms = 
-    do_GetService("@mozilla.org/browser/bookmarks-service;1", &rv);
+  nsCOMPtr<nsILocalFile> localFile(do_QueryInterface(aBookmarksFile));
+  NS_ENSURE_TRUE(localFile, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIPlacesImportExportService> importer = do_GetService(NS_PLACESIMPORTEXPORTSERVICE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISupportsArray> params;
-  rv = NS_NewISupportsArray(getter_AddRefs(params));
-  NS_ENSURE_SUCCESS(rv, rv);
+  // Import file directly into the bookmarks root folder.
+  if (aImportIntoRoot) {
+    rv = importer->ImportHTMLFromFile(localFile, aOverwriteDefaults);
+    NS_ENSURE_SUCCESS(rv, rv);
+    return NS_OK;
+  }
 
-  nsCOMPtr<nsIRDFService> rdfs =
-    do_GetService("@mozilla.org/rdf/rdf-service;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIRDFResource> prop;
-  rv = rdfs->GetResource(NC_URI(URL), getter_AddRefs(prop));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIRDFLiteral> url;
-  nsAutoString path;
-  aBookmarksFile->GetPath(path);
-  rdfs->GetLiteral(path.get(), getter_AddRefs(url));
-
-  params->AppendElement(prop);
-  params->AppendElement(url);
-  
-  nsCOMPtr<nsIRDFResource> importCmd;
-  rv = rdfs->GetResource(NC_URI(command?cmd=import), getter_AddRefs(importCmd));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIRDFResource> root;
-  rv = rdfs->GetResource(NS_LITERAL_CSTRING("NC:BookmarksRoot"),
-                         getter_AddRefs(root));
-  NS_ENSURE_SUCCESS(rv, rv);
-#endif // MOZ_PLACES
-
-  // Look for the localized name of the bookmarks toolbar
+  // Get the source application name.
   nsCOMPtr<nsIStringBundleService> bundleService =
-    do_GetService(kStringBundleServiceCID, &rv);
+    do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIStringBundle> bundle;
   rv = bundleService->CreateBundle(MIGRATION_BUNDLE, getter_AddRefs(bundle));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsXPIDLString sourceName;
+  nsString sourceName;
   bundle->GetStringFromName(aImportSourceNameKey, getter_Copies(sourceName));
 
   const PRUnichar* sourceNameStrings[] = { sourceName.get() };
-  nsXPIDLString importedBookmarksTitle;
+  nsString importedBookmarksTitle;
   bundle->FormatStringFromName(NS_LITERAL_STRING("importedBookmarksFolder").get(),
                                sourceNameStrings, 1, 
                                getter_Copies(importedBookmarksTitle));
 
-#ifdef MOZ_PLACES
-  // Get the bookmarks service
+  // Get the bookmarks service.
   nsCOMPtr<nsINavBookmarksService> bms =
     do_GetService(NS_NAVBOOKMARKSSERVICE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Get the file:// uri for the bookmarks file.
-  nsCOMPtr<nsIURI> fileURI;
-  rv = NS_NewFileURI(getter_AddRefs(fileURI), aBookmarksFile);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   // Create an imported bookmarks folder under the bookmarks menu.
   PRInt64 root;
-  rv = bms->GetBookmarksRoot(&root);
+  rv = bms->GetBookmarksMenuFolder(&root);
   NS_ENSURE_SUCCESS(rv, rv);
 
   PRInt64 folder;
-  rv = bms->CreateFolder(root, importedBookmarksTitle, -1, &folder);
+  rv = bms->CreateFolder(root, NS_ConvertUTF16toUTF8(importedBookmarksTitle),
+                         -1, &folder);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Import the bookmarks into the folder.
-  rv = bms->ImportBookmarksHTMLToFolder(fileURI, folder);
+  return importer->ImportHTMLFromFileToFolder(localFile, folder, PR_FALSE);
+}
+
+nsresult
+InitializeBookmarks(nsIFile* aTargetProfile)
+{
+  nsCOMPtr<nsIFile> bookmarksFile;
+  aTargetProfile->Clone(getter_AddRefs(bookmarksFile));
+  bookmarksFile->Append(BOOKMARKS_FILE_NAME);
+  
+  nsresult rv = ImportBookmarksHTML(bookmarksFile, PR_TRUE, PR_TRUE, EmptyString().get());
   NS_ENSURE_SUCCESS(rv, rv);
-#else
-  nsCOMPtr<nsIRDFResource> folder;
-  bms->CreateFolderInContainer(importedBookmarksTitle.get(), root, -1,
-                               getter_AddRefs(folder));
-
-  nsCOMPtr<nsIRDFResource> folderProp;
-  rv = rdfs->GetResource(NC_URI(Folder), getter_AddRefs(folderProp));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  params->AppendElement(folderProp);
-  params->AppendElement(folder);
-
-  nsCOMPtr<nsISupportsArray> sources;
-  rv = NS_NewISupportsArray(getter_AddRefs(sources));
-  NS_ENSURE_SUCCESS(rv, rv);
-  sources->AppendElement(folder);
-
-  nsCOMPtr<nsIRDFDataSource> ds = do_QueryInterface(bms, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = ds->DoCommand(sources, importCmd, params);
-#endif
-  return rv;
+  return NS_OK;
 }

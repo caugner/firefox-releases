@@ -62,6 +62,9 @@ public:
   
 protected:
   float mA, mB, mC, mD, mE, mF;
+
+  // implementation helpers:
+  nsresult RotateRadians(float rad, nsIDOMSVGMatrix **_retval);
 };
 
 //----------------------------------------------------------------------
@@ -112,6 +115,7 @@ NS_IMETHODIMP nsSVGMatrix::GetA(float *aA)
 }
 NS_IMETHODIMP nsSVGMatrix::SetA(float aA)
 {
+  NS_ENSURE_FINITE(aA, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mA = aA;
   DidModify();
@@ -126,6 +130,7 @@ NS_IMETHODIMP nsSVGMatrix::GetB(float *aB)
 }
 NS_IMETHODIMP nsSVGMatrix::SetB(float aB)
 {
+  NS_ENSURE_FINITE(aB, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mB = aB;
   DidModify();
@@ -140,6 +145,7 @@ NS_IMETHODIMP nsSVGMatrix::GetC(float *aC)
 }
 NS_IMETHODIMP nsSVGMatrix::SetC(float aC)
 {
+  NS_ENSURE_FINITE(aC, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mC = aC;
   DidModify();
@@ -154,6 +160,7 @@ NS_IMETHODIMP nsSVGMatrix::GetD(float *aD)
 }
 NS_IMETHODIMP nsSVGMatrix::SetD(float aD)
 {
+  NS_ENSURE_FINITE(aD, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mD = aD;
   DidModify();
@@ -168,6 +175,7 @@ NS_IMETHODIMP nsSVGMatrix::GetE(float *aE)
 }
 NS_IMETHODIMP nsSVGMatrix::SetE(float aE)
 {
+  NS_ENSURE_FINITE(aE, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mE = aE;
   DidModify();
@@ -182,6 +190,7 @@ NS_IMETHODIMP nsSVGMatrix::GetF(float *aF)
 }
 NS_IMETHODIMP nsSVGMatrix::SetF(float aF)
 {
+  NS_ENSURE_FINITE(aF, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mF = aF;
   DidModify();
@@ -225,6 +234,7 @@ NS_IMETHODIMP nsSVGMatrix::Inverse(nsIDOMSVGMatrix **_retval)
 /* nsIDOMSVGMatrix translate (in float x, in float y); */
 NS_IMETHODIMP nsSVGMatrix::Translate(float x, float y, nsIDOMSVGMatrix **_retval)
 {
+  NS_ENSURE_FINITE2(x, y, NS_ERROR_ILLEGAL_VALUE);
   return NS_NewSVGMatrix(_retval,
                          mA,               mB,
                          mC,               mD,
@@ -234,6 +244,7 @@ NS_IMETHODIMP nsSVGMatrix::Translate(float x, float y, nsIDOMSVGMatrix **_retval
 /* nsIDOMSVGMatrix scale (in float scaleFactor); */
 NS_IMETHODIMP nsSVGMatrix::Scale(float scaleFactor, nsIDOMSVGMatrix **_retval)
 {
+  NS_ENSURE_FINITE(scaleFactor, NS_ERROR_ILLEGAL_VALUE);
   return NS_NewSVGMatrix(_retval,
                          mA*scaleFactor, mB*scaleFactor,
                          mC*scaleFactor, mD*scaleFactor,
@@ -243,6 +254,7 @@ NS_IMETHODIMP nsSVGMatrix::Scale(float scaleFactor, nsIDOMSVGMatrix **_retval)
 /* nsIDOMSVGMatrix scaleNonUniform (in float scaleFactorX, in float scaleFactorY); */
 NS_IMETHODIMP nsSVGMatrix::ScaleNonUniform(float scaleFactorX, float scaleFactorY, nsIDOMSVGMatrix **_retval)
 {
+  NS_ENSURE_FINITE2(scaleFactorX, scaleFactorY, NS_ERROR_ILLEGAL_VALUE);
   return NS_NewSVGMatrix(_retval,
                          mA*scaleFactorX, mB*scaleFactorX,
                          mC*scaleFactorY, mD*scaleFactorY,
@@ -252,39 +264,46 @@ NS_IMETHODIMP nsSVGMatrix::ScaleNonUniform(float scaleFactorX, float scaleFactor
 /* nsIDOMSVGMatrix rotate (in float angle); */
 NS_IMETHODIMP nsSVGMatrix::Rotate(float angle, nsIDOMSVGMatrix **_retval)
 {
-  double ca = cos( angle*radPerDegree );
-  double sa = sin( angle*radPerDegree );
-  
-  return NS_NewSVGMatrix(_retval,
-                         (float) (mA*ca + mC*sa), (float) (mB*ca + mD*sa),
-                         (float) (mC*ca - mA*sa), (float) (mD*ca - mB*sa),
-                         mE,                      mF);  
+  NS_ENSURE_FINITE(angle, NS_ERROR_ILLEGAL_VALUE);
+  return RotateRadians(angle*radPerDegree, _retval);
 }
 
 /* nsIDOMSVGMatrix rotateFromVector (in float x, in float y); */
 NS_IMETHODIMP nsSVGMatrix::RotateFromVector(float x, float y, nsIDOMSVGMatrix **_retval)
 {
-  NS_NOTYETIMPLEMENTED("nsSVGMatrix::RotateFromVector");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  NS_ENSURE_FINITE2(x, y, NS_ERROR_ILLEGAL_VALUE);
+
+  if (x == 0.0 || y == 0.0)
+    return NS_ERROR_DOM_SVG_INVALID_VALUE_ERR;
+
+  double rad = atan2(y, x);
+
+  return RotateRadians(rad, _retval);
 }
 
 /* nsIDOMSVGMatrix flipX (); */
 NS_IMETHODIMP nsSVGMatrix::FlipX(nsIDOMSVGMatrix **_retval)
 {
-  NS_NOTYETIMPLEMENTED("nsSVGMatrix::FlipX");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return NS_NewSVGMatrix(_retval,
+                          -mA, -mB,
+                           mC,  mD,
+                           mE,  mF);
 }
 
 /* nsIDOMSVGMatrix flipY (); */
 NS_IMETHODIMP nsSVGMatrix::FlipY(nsIDOMSVGMatrix **_retval)
 {
-  NS_NOTYETIMPLEMENTED("nsSVGMatrix::FlipY");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return NS_NewSVGMatrix(_retval,
+                           mA,  mB,
+                          -mC, -mD,
+                           mE,  mF);
 }
 
 /* nsIDOMSVGMatrix skewX (in float angle); */
 NS_IMETHODIMP nsSVGMatrix::SkewX(float angle, nsIDOMSVGMatrix **_retval)
 {
+  NS_ENSURE_FINITE(angle, NS_ERROR_ILLEGAL_VALUE);
+
   double ta = tan( angle*radPerDegree );
 
   return NS_NewSVGMatrix(_retval,
@@ -296,6 +315,8 @@ NS_IMETHODIMP nsSVGMatrix::SkewX(float angle, nsIDOMSVGMatrix **_retval)
 /* nsIDOMSVGMatrix skewY (in float angle); */
 NS_IMETHODIMP nsSVGMatrix::SkewY(float angle, nsIDOMSVGMatrix **_retval)
 {
+  NS_ENSURE_FINITE(angle, NS_ERROR_ILLEGAL_VALUE);
+
   double ta = tan( angle*radPerDegree );
 
   return NS_NewSVGMatrix(_retval,
@@ -319,4 +340,19 @@ nsSVGMatrix::GetValueString(nsAString& aValue)
 {
   NS_NOTYETIMPLEMENTED("nsSVGMatrix::GetValueString");
   return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+
+//----------------------------------------------------------------------
+// Implementation helpers:
+nsresult
+nsSVGMatrix::RotateRadians(float rad, nsIDOMSVGMatrix **_retval)
+{
+  double ca = cos(rad);
+  double sa = sin(rad);
+
+  return NS_NewSVGMatrix(_retval,
+                         (float) (mA*ca + mC*sa), (float) (mB*ca + mD*sa),
+                         (float) (mC*ca - mA*sa), (float) (mD*ca - mB*sa),
+                         mE,                      mF);
 }

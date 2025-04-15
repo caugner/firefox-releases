@@ -43,7 +43,7 @@
 #include "nsIFactory.h"
 #include "nsISupports.h"
 #include "nsFileSpec.h"
-#include "nsIPref.h"
+#include "nsIPrefBranch.h"
 #include "nsIServiceManager.h"
 #include "nsCOMPtr.h"
 #include "nsIDOMWindowInternal.h"
@@ -62,7 +62,7 @@
 
 //Interfaces Needed
 
-#if defined(XP_MAC) || defined(XP_MACOSX)
+#if defined(XP_MACOSX)
 #define IMAP_MAIL_FILTER_FILE_NAME_FORMAT_IN_4x "%s Rules" 
 #endif
 
@@ -176,7 +176,7 @@ class nsPrefMigration: public nsIPrefMigration
 
       nsresult getPrefService();
 
-      nsCOMPtr<nsIPref>         m_prefs;
+      nsCOMPtr<nsIPrefBranch>    m_prefBranch;
       nsCOMPtr<nsILocalFile>     m_prefsFile; 
       nsCOMPtr<nsIDOMWindowInternal>    m_parentWindow;
       nsCOMPtr<nsIDOMWindow>    mPMProgressWindow;

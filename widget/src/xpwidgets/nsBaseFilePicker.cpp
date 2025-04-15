@@ -39,16 +39,13 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
-#include "nsIDOMWindow.h"
-#include "nsIScriptGlobalObject.h"
+#include "nsPIDOMWindow.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIBaseWindow.h"
 #include "nsIContentViewer.h"
 #include "nsIDocumentViewer.h"
-#include "nsIViewManager.h"
-#include "nsIView.h"
 #include "nsIWidget.h"
 
 #include "nsIStringBundle.h"
@@ -60,10 +57,7 @@
 
 #include "nsBaseFilePicker.h"
 
-
-static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
 #define FILEPICKER_PROPERTIES "chrome://global/locale/filepicker.properties"
-
 
 nsBaseFilePicker::nsBaseFilePicker()
 {
@@ -75,13 +69,15 @@ nsBaseFilePicker::~nsBaseFilePicker()
 
 }
 
+// XXXdholbert -- this function is duplicated in nsPrintDialogGTK.cpp
+// and needs to be unified in some generic utility class.
 nsIWidget *nsBaseFilePicker::DOMWindowToWidget(nsIDOMWindow *dw)
 {
   nsCOMPtr<nsIWidget> widget;
 
-  nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(dw);
-  if (sgo) {
-    nsCOMPtr<nsIBaseWindow> baseWin(do_QueryInterface(sgo->GetDocShell()));
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(dw);
+  if (window) {
+    nsCOMPtr<nsIBaseWindow> baseWin(do_QueryInterface(window->GetDocShell()));
 
     while (!widget && baseWin) {
       baseWin->GetParentWidget(getter_AddRefs(widget));
@@ -93,11 +89,11 @@ nsIWidget *nsBaseFilePicker::DOMWindowToWidget(nsIDOMWindow *dw)
         nsCOMPtr<nsIDocShellTreeItem> parent;
         docShellAsItem->GetSameTypeParent(getter_AddRefs(parent));
 
-        sgo = do_GetInterface(parent);
-        if (!sgo)
+        window = do_GetInterface(parent);
+        if (!window)
           return nsnull;
 
-        baseWin = do_QueryInterface(sgo->GetDocShell());
+        baseWin = do_QueryInterface(window->GetDocShell());
       }
     }
   }
@@ -128,7 +124,7 @@ NS_IMETHODIMP
 nsBaseFilePicker::AppendFilters(PRInt32 aFilterMask)
 {
   nsresult rv;
-  nsCOMPtr<nsIStringBundleService> stringService = do_GetService(kStringBundleServiceCID);
+  nsCOMPtr<nsIStringBundleService> stringService = do_GetService(NS_STRINGBUNDLE_CONTRACTID);
   nsCOMPtr<nsIStringBundle> stringBundle;
 
   rv = stringService->CreateBundle(FILEPICKER_PROPERTIES, getter_AddRefs(stringBundle));

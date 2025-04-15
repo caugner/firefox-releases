@@ -34,34 +34,29 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* rendering object that goes directly inside the document's scrollbars */
+
 #include "nsIServiceManager.h"
 #include "nsHTMLParts.h"
 #include "nsHTMLContainerFrame.h"
 #include "nsCSSRendering.h"
-#include "nsIDocument.h"
-#include "nsReflowPath.h"
 #include "nsPresContext.h"
 #include "nsStyleContext.h"
-#include "nsViewsCID.h"
 #include "nsIView.h"
 #include "nsIViewManager.h"
-#include "nsIWidget.h"
-#include "nsPageFrame.h"
 #include "nsIRenderingContext.h"
 #include "nsGUIEvent.h"
-#include "nsIDOMEvent.h"
 #include "nsStyleConsts.h"
-#include "nsIViewManager.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsIEventStateManager.h"
 #include "nsIDeviceContext.h"
-#include "nsLayoutAtoms.h"
 #include "nsIPresShell.h"
 #include "nsIScrollPositionListener.h"
+#include "nsDisplayList.h"
 
 // for focus
 #include "nsIDOMWindowInternal.h"
-#include "nsIScriptGlobalObject.h"
 #include "nsIFocusController.h"
 #include "nsIScrollableFrame.h"
 #include "nsIScrollableView.h"
@@ -85,17 +80,16 @@ class CanvasFrame : public nsHTMLContainerFrame,
                     public nsIScrollPositionListener, 
                     public nsICanvasFrame {
 public:
-  CanvasFrame() : mDoPaintFocus(PR_FALSE) {}
+  CanvasFrame(nsStyleContext* aContext)
+  : nsHTMLContainerFrame(aContext), mDoPaintFocus(PR_FALSE) {}
 
    // nsISupports
   NS_IMETHOD QueryInterface(const nsIID& aIID, void** aInstancePtr);
 
-  NS_IMETHOD Init(nsPresContext*  aPresContext,
-              nsIContent*      aContent,
-              nsIFrame*        aParent,
-              nsStyleContext*  aContext,
-              nsIFrame*        aPrevInFlow);
-  NS_IMETHOD Destroy(nsPresContext* aPresContext);
+  NS_IMETHOD Init(nsIContent*      aContent,
+                  nsIFrame*        aParent,
+                  nsIFrame*        aPrevInFlow);
+  virtual void Destroy();
 
   NS_IMETHOD AppendFrames(nsIAtom*        aListName,
                           nsIFrame*       aFrameList);
@@ -105,23 +99,19 @@ public:
   NS_IMETHOD RemoveFrame(nsIAtom*        aListName,
                          nsIFrame*       aOldFrame);
 
+  virtual nscoord GetMinWidth(nsIRenderingContext *aRenderingContext);
+  virtual nscoord GetPrefWidth(nsIRenderingContext *aRenderingContext);
   NS_IMETHOD Reflow(nsPresContext*          aPresContext,
                     nsHTMLReflowMetrics&     aDesiredSize,
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
-  NS_IMETHOD HandleEvent(nsPresContext* aPresContext, 
-                         nsGUIEvent*     aEvent,
-                         nsEventStatus*  aEventStatus);
-  NS_IMETHOD GetFrameForPoint(const nsPoint& aPoint, 
-                              nsFramePaintLayer aWhichLayer,
-                              nsIFrame**     aFrame);
   virtual PRBool IsContainingBlock() const { return PR_TRUE; }
 
-  NS_IMETHOD Paint(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext,
-                   const nsRect&        aDirtyRect,
-                   nsFramePaintLayer    aWhichLayer,
-                   PRUint32             aFlags);
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
+
+  void PaintFocus(nsIRenderingContext& aRenderingContext, nsPoint aPt);
 
   // nsIScrollPositionListener
   NS_IMETHOD ScrollPositionWillChange(nsIScrollableView* aScrollable, nscoord aX, nscoord aY);
@@ -133,7 +123,7 @@ public:
   /**
    * Get the "type" of the frame
    *
-   * @see nsLayoutAtoms::canvasFrame
+   * @see nsGkAtoms::canvasFrame
    */
   virtual nsIAtom* GetType() const;
 
@@ -143,6 +133,8 @@ public:
   NS_IMETHOD GetContentForEvent(nsPresContext* aPresContext,
                                 nsEvent* aEvent,
                                 nsIContent** aContent);
+
+  nsRect CanvasArea() const;
 
 protected:
   virtual PRIntn GetSkipSides() const;
@@ -159,19 +151,10 @@ private:
 
 //----------------------------------------------------------------------
 
-nsresult
-NS_NewCanvasFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
+nsIFrame*
+NS_NewCanvasFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  CanvasFrame* it = new (aPresShell)CanvasFrame;
-  if (nsnull == it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  *aNewFrame = it;
-  return NS_OK;
+  return new (aPresShell)CanvasFrame(aContext);
 }
 
 //--------------------------------------------------------------
@@ -179,35 +162,28 @@ NS_NewCanvasFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
 NS_IMETHODIMP
 CanvasFrame::QueryInterface(const nsIID& aIID, void** aInstancePtr)
 {
-  NS_PRECONDITION(0 != aInstancePtr, "null ptr");
-  if (NULL == aInstancePtr) {
-    return NS_ERROR_NULL_POINTER;
-  }
+  NS_PRECONDITION(aInstancePtr, "null out param");
 
   if (aIID.Equals(NS_GET_IID(nsIScrollPositionListener))) {
-    *aInstancePtr = (void*) ((nsIScrollPositionListener*) this);
+    *aInstancePtr = static_cast<nsIScrollPositionListener*>(this);
     return NS_OK;
   } 
-  
   if (aIID.Equals(NS_GET_IID(nsICanvasFrame))) {
-    *aInstancePtr = (void*) ((nsICanvasFrame*) this);
+    *aInstancePtr = static_cast<nsICanvasFrame*>(this);
     return NS_OK;
   } 
-  
 
   return nsHTMLContainerFrame::QueryInterface(aIID, aInstancePtr);
 }
 
 NS_IMETHODIMP
-CanvasFrame::Init(nsPresContext*  aPresContext,
-              nsIContent*      aContent,
-              nsIFrame*        aParent,
-              nsStyleContext*  aContext,
-              nsIFrame*        aPrevInFlow)
+CanvasFrame::Init(nsIContent*      aContent,
+                  nsIFrame*        aParent,
+                  nsIFrame*        aPrevInFlow)
 {
-  nsresult rv = nsHTMLContainerFrame::Init(aPresContext,aContent,aParent,aContext,aPrevInFlow);
+  nsresult rv = nsHTMLContainerFrame::Init(aContent, aParent, aPrevInFlow);
 
-  mViewManager = aPresContext->GetViewManager();
+  mViewManager = PresContext()->GetViewManager();
 
   nsIScrollableView* scrollingView = nsnull;
   mViewManager->GetRootScrollableView(&scrollingView);
@@ -218,8 +194,8 @@ CanvasFrame::Init(nsPresContext*  aPresContext,
   return rv;
 }
 
-NS_IMETHODIMP
-CanvasFrame::Destroy(nsPresContext* aPresContext)
+void
+CanvasFrame::Destroy()
 {
   nsIScrollableView* scrollingView = nsnull;
   mViewManager->GetRootScrollableView(&scrollingView);
@@ -227,7 +203,7 @@ CanvasFrame::Destroy(nsPresContext* aPresContext)
     scrollingView->RemoveScrollPositionListener(this);
   }
 
-  return nsHTMLContainerFrame::Destroy(aPresContext);
+  nsHTMLContainerFrame::Destroy();
 }
 
 NS_IMETHODIMP
@@ -269,14 +245,13 @@ CanvasFrame::SetHasFocus(PRBool aHasFocus)
 {
   if (mDoPaintFocus != aHasFocus) {
     mDoPaintFocus = aHasFocus;
-    nsIViewManager* vm = GetPresContext()->PresShell()->GetViewManager();
+    nsIViewManager* vm = PresContext()->PresShell()->GetViewManager();
     if (vm) {
       vm->UpdateAllViews(NS_VMREFRESH_NO_SYNC);
     }
   }
   return NS_OK;
 }
-
 
 NS_IMETHODIMP
 CanvasFrame::AppendFrames(nsIAtom*        aListName,
@@ -301,9 +276,9 @@ CanvasFrame::AppendFrames(nsIAtom*        aListName,
 #endif
     mFrames.AppendFrame(nsnull, aFrameList);
 
-    // Generate a reflow command to reflow the newly inserted frame
-    rv = GetPresContext()->PresShell()->
-          AppendReflowCommand(this, eReflowType_ReflowDirty, nsnull);
+    rv = PresContext()->PresShell()->
+           FrameNeedsReflow(this, nsIPresShell::eTreeChange,
+                            NS_FRAME_HAS_DIRTY_CHILDREN);
   }
 
   return rv;
@@ -347,11 +322,11 @@ CanvasFrame::RemoveFrame(nsIAtom*        aListName,
     Invalidate(aOldFrame->GetOverflowRect() + aOldFrame->GetPosition(), PR_FALSE);
 
     // Remove the frame and destroy it
-    mFrames.DestroyFrame(GetPresContext(), aOldFrame);
+    mFrames.DestroyFrame(aOldFrame);
 
-    // Generate a reflow command so we get reflowed
-    rv = GetPresContext()->PresShell()->
-          AppendReflowCommand(this, eReflowType_ReflowDirty, nsnull);
+    rv = PresContext()->PresShell()->
+           FrameNeedsReflow(this, nsIPresShell::eTreeChange,
+                            NS_FRAME_HAS_DIRTY_CHILDREN);
   } else {
     rv = NS_ERROR_FAILURE;
   }
@@ -359,97 +334,213 @@ CanvasFrame::RemoveFrame(nsIAtom*        aListName,
   return rv;
 }
 
-NS_IMETHODIMP
-CanvasFrame::Paint(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext,
-                   const nsRect&        aDirtyRect,
-                   nsFramePaintLayer    aWhichLayer,
-                   PRUint32             aFlags)
+nsRect CanvasFrame::CanvasArea() const
 {
-  // We are wrapping the root frame of a document. We
-  // need to check the pres shell to find out if painting is locked
-  // down (because we're still in the early stages of document
-  // and frame construction.  If painting is locked down, then we
-  // do not paint our children.  
-  PRBool paintingSuppressed = PR_FALSE;
-  aPresContext->PresShell()->IsPaintingSuppressed(&paintingSuppressed);
-  if (paintingSuppressed) {
-    if (NS_FRAME_PAINT_LAYER_BACKGROUND == aWhichLayer) {
-      PaintSelf(aPresContext, aRenderingContext, aDirtyRect);
-    }
-    return NS_OK;
+  nsRect result(GetOverflowRect());
+
+  nsIScrollableFrame *scrollableFrame;
+  CallQueryInterface(GetParent(), &scrollableFrame);
+  if (scrollableFrame) {
+    nsIScrollableView* scrollableView = scrollableFrame->GetScrollableView();
+    nsRect vcr = scrollableView->View()->GetBounds();
+    result.UnionRect(result, nsRect(nsPoint(0, 0), vcr.Size()));
+  }
+  return result;
+}
+
+/*
+ * Override nsDisplayBackground methods so that we pass aBGClipRect to
+ * PaintBackground, covering the whole overflow area.
+ */
+class nsDisplayCanvasBackground : public nsDisplayBackground {
+public:
+  nsDisplayCanvasBackground(nsIFrame *aFrame)
+    : nsDisplayBackground(aFrame)
+  {
   }
 
-  nsresult rv = nsHTMLContainerFrame::Paint(aPresContext, aRenderingContext, aDirtyRect, aWhichLayer);
+  virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder)
+  {
+    CanvasFrame* frame = static_cast<CanvasFrame*>(mFrame);
+    return frame->CanvasArea() + aBuilder->ToReferenceFrame(mFrame);
+  }
 
-  if (NS_FRAME_PAINT_LAYER_FOREGROUND == aWhichLayer) {
+  virtual void Paint(nsDisplayListBuilder* aBuilder,
+                     nsIRenderingContext* aCtx, const nsRect& aDirtyRect)
+  {
+    CanvasFrame* frame = static_cast<CanvasFrame*>(mFrame);
+    nsPoint offset = aBuilder->ToReferenceFrame(mFrame);
+    nsRect bgClipRect = frame->CanvasArea() + offset;
+    nsCSSRendering::PaintBackground(mFrame->PresContext(), *aCtx, mFrame,
+                                    aDirtyRect,
+                                    nsRect(offset, mFrame->GetSize()),
+                                    *mFrame->GetStyleBorder(),
+                                    *mFrame->GetStylePadding(),
+                                    mFrame->HonorPrintBackgroundSettings(),
+                                    &bgClipRect);
+  }
+
+  NS_DISPLAY_DECL_NAME("CanvasBackground")
+};
+
+/**
+ * A display item to paint the focus ring for the document.
+ *
+ * The only reason this can't use nsDisplayGeneric is overriding GetBounds.
+ */
+class nsDisplayCanvasFocus : public nsDisplayItem {
+public:
+  nsDisplayCanvasFocus(CanvasFrame *aFrame)
+    : nsDisplayItem(aFrame)
+  {
+  }
+
+  virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder)
+  {
+    // This is an overestimate, but that's not a problem.
+    CanvasFrame* frame = static_cast<CanvasFrame*>(mFrame);
+    return frame->CanvasArea() + aBuilder->ToReferenceFrame(mFrame);
+  }
+
+  virtual void Paint(nsDisplayListBuilder* aBuilder,
+                     nsIRenderingContext* aCtx, const nsRect& aDirtyRect)
+  {
+    CanvasFrame* frame = static_cast<CanvasFrame*>(mFrame);
+    frame->PaintFocus(*aCtx, aBuilder->ToReferenceFrame(mFrame));
+  }
+
+  NS_DISPLAY_DECL_NAME("CanvasFocus")
+};
+
+NS_IMETHODIMP
+CanvasFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists)
+{
+  nsresult rv;
+  // Force a background to be shown. We may have a background propagated to us,
+  // in which case GetStyleBackground wouldn't have the right background
+  // and the code in nsFrame::DisplayBorderBackgroundOutline might not give us
+  // a background.
+  // We don't have any border or outline, and our background draws over
+  // the overflow area, so just add nsDisplayCanvasBackground instead of
+  // calling DisplayBorderBackgroundOutline.
+  if (IsVisibleForPainting(aBuilder)) { 
+    rv = aLists.BorderBackground()->AppendNewToTop(new (aBuilder)
+           nsDisplayCanvasBackground(this));
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  nsIFrame* kid = GetFirstChild(nsnull);
+  if (kid) {
+    // Put our child into its own pseudo-stack.
+    rv = BuildDisplayListForChild(aBuilder, kid, aDirtyRect, aLists,
+                                  DISPLAY_CHILD_FORCE_PSEUDO_STACKING_CONTEXT);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
 #ifdef DEBUG_CANVAS_FOCUS
-    nsCOMPtr<nsIContent> focusContent;
-    aPresContext->EventStateManager()->
-      GetFocusedContent(getter_AddRefs(focusContent));
+  nsCOMPtr<nsIContent> focusContent;
+  aPresContext->EventStateManager()->
+    GetFocusedContent(getter_AddRefs(focusContent));
 
-    PRBool hasFocus = PR_FALSE;
-    nsCOMPtr<nsISupports> container;
-    aPresContext->GetContainer(getter_AddRefs(container));
-    nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
-    if (docShell) {
-      docShell->GetHasFocus(&hasFocus);
-      printf("%p - CanvasFrame::Paint R:%d,%d,%d,%d  DR: %d,%d,%d,%d\n", this, 
-              mRect.x, mRect.y, mRect.width, mRect.height,
-              aDirtyRect.x, aDirtyRect.y, aDirtyRect.width, aDirtyRect.height);
-    }
-    printf("%p - Focus: %s   c: %p  DoPaint:%s\n", docShell.get(), hasFocus?"Y":"N", 
-           focusContent.get(), mDoPaintFocus?"Y":"N");
+  PRBool hasFocus = PR_FALSE;
+  nsCOMPtr<nsISupports> container;
+  aPresContext->GetContainer(getter_AddRefs(container));
+  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
+  if (docShell) {
+    docShell->GetHasFocus(&hasFocus);
+    printf("%p - CanvasFrame::Paint R:%d,%d,%d,%d  DR: %d,%d,%d,%d\n", this, 
+            mRect.x, mRect.y, mRect.width, mRect.height,
+            aDirtyRect.x, aDirtyRect.y, aDirtyRect.width, aDirtyRect.height);
+  }
+  printf("%p - Focus: %s   c: %p  DoPaint:%s\n", docShell.get(), hasFocus?"Y":"N", 
+         focusContent.get(), mDoPaintFocus?"Y":"N");
 #endif
 
-    if (mDoPaintFocus) {
-      nsRect focusRect = GetRect();
-      /////////////////////
-      // draw focus
-      // XXX This is only temporary
-      // Only paint the focus if we're visible
-      if (GetStyleVisibility()->IsVisible()) {
-        nsIFrame * parentFrame = GetParent();
-        nsIView* parentView = parentFrame->GetView();
+  if (!mDoPaintFocus)
+    return NS_OK;
+  // Only paint the focus if we're visible
+  if (!GetStyleVisibility()->IsVisible())
+    return NS_OK;
+  
+  return aLists.Outlines()->AppendNewToTop(new (aBuilder)
+      nsDisplayCanvasFocus(this));
+}
 
-        nsIScrollableView* scrollableView = parentView->ToScrollableView();
-        if (scrollableView) {
-          nscoord width, height;
-          scrollableView->GetContainerSize(&width, &height);
-          nsRect vcr = parentView->GetBounds();
-          focusRect.width = vcr.width;
-          focusRect.height = vcr.height;
-          nscoord x,y;
-          scrollableView->GetScrollPosition(x, y);
-          focusRect.x += x;
-          focusRect.y += y;
-        }
+void
+CanvasFrame::PaintFocus(nsIRenderingContext& aRenderingContext, nsPoint aPt)
+{
+  nsRect focusRect(aPt, GetSize());
 
-        nsStyleOutline outlineStyle(aPresContext);
-        outlineStyle.SetOutlineStyle(NS_STYLE_BORDER_STYLE_DOTTED);
-        outlineStyle.SetOutlineInvert();
+  nsIScrollableFrame *scrollableFrame;
+  CallQueryInterface(GetParent(), &scrollableFrame);
 
-        float p2t = aPresContext->PixelsToTwips();
-        // XXX the CSS border for links is specified as 2px, but it
-        // is only drawn as 1px.  Match this here.
-        nscoord onePixel = NSIntPixelsToTwips(1, p2t);
-
-        nsRect borderInside(focusRect.x + onePixel,
-                            focusRect.y + onePixel,
-                            focusRect.width - 2 * onePixel,
-                            focusRect.height - 2 * onePixel);
-
-        nsCSSRendering::DrawDashedSides(0, aRenderingContext, 
-                                        focusRect, nsnull,
-                                        nsnull, &outlineStyle,
-                                        PR_TRUE, focusRect,
-                                        borderInside, 0, 
-                                        nsnull);
-      }
-    }
+  if (scrollableFrame) {
+    nsIScrollableView* scrollableView = scrollableFrame->GetScrollableView();
+    nsRect vcr = scrollableView->View()->GetBounds();
+    focusRect.width = vcr.width;
+    focusRect.height = vcr.height;
+    nscoord x,y;
+    scrollableView->GetScrollPosition(x, y);
+    focusRect.x += x;
+    focusRect.y += y;
   }
-  return rv;
+
+  nsStyleOutline outlineStyle(PresContext());
+  outlineStyle.SetOutlineStyle(NS_STYLE_BORDER_STYLE_DOTTED);
+  outlineStyle.SetOutlineInitialColor();
+
+ // XXX use the root frame foreground color, but should we find BODY frame
+ // for HTML documents?
+  nsIFrame* root = mFrames.FirstChild();
+  const nsStyleColor* color =
+    root ? root->GetStyleContext()->GetStyleColor() :
+           mStyleContext->GetStyleColor();
+  if (!color) {
+    NS_ERROR("current color cannot be found");
+    return;
+  }
+
+  // XXX the CSS border for links is specified as 2px, but it
+  // is only drawn as 1px.  Match this here.
+  nscoord onePixel = nsPresContext::CSSPixelsToAppUnits(1);
+
+  nsRect borderInside(focusRect.x + onePixel,
+                      focusRect.y + onePixel,
+                      focusRect.width - 2 * onePixel,
+                      focusRect.height - 2 * onePixel);
+
+  nsCSSRendering::DrawDashedSides(0, aRenderingContext, 
+                                  focusRect, color,
+                                  nsnull, &outlineStyle,
+                                  PR_TRUE, focusRect,
+                                  borderInside, 0, 
+                                  nsnull);
+}
+
+/* virtual */ nscoord
+CanvasFrame::GetMinWidth(nsIRenderingContext *aRenderingContext)
+{
+  nscoord result;
+  DISPLAY_MIN_WIDTH(this, result);
+  if (mFrames.IsEmpty())
+    result = 0;
+  else
+    result = mFrames.FirstChild()->GetMinWidth(aRenderingContext);
+  return result;
+}
+
+/* virtual */ nscoord
+CanvasFrame::GetPrefWidth(nsIRenderingContext *aRenderingContext)
+{
+  nscoord result;
+  DISPLAY_PREF_WIDTH(this, result);
+  if (mFrames.IsEmpty())
+    result = 0;
+  else
+    result = mFrames.FirstChild()->GetPrefWidth(aRenderingContext);
+  return result;
 }
 
 NS_IMETHODIMP
@@ -458,73 +549,35 @@ CanvasFrame::Reflow(nsPresContext*          aPresContext,
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus)
 {
-  DO_GLOBAL_REFLOW_COUNT("CanvasFrame", aReflowState.reason);
+  DO_GLOBAL_REFLOW_COUNT("CanvasFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
   NS_FRAME_TRACE_REFLOW_IN("CanvasFrame::Reflow");
-  //NS_PRECONDITION(!aDesiredSize.mComputeMEW, "unexpected request");
 
   // Initialize OUT parameter
   aStatus = NS_FRAME_COMPLETE;
 
-  PRBool  isStyleChange = PR_FALSE;
-  PRBool  isDirtyChildReflow = PR_FALSE;
-
-  // Check for an incremental reflow
-  if (eReflowReason_Incremental == aReflowState.reason) {
-    // See if we're the target frame
-    nsHTMLReflowCommand *command = aReflowState.path->mReflowCommand;
-    if (command) {
-      // Get the reflow type
-      switch (command->Type()) {
-      case eReflowType_ReflowDirty:
-        isDirtyChildReflow = PR_TRUE;
-        break;
-
-      case eReflowType_StyleChanged:
-        // Remember it's a style change so we can set the reflow reason below
-        isStyleChange = PR_TRUE;
-        break;
-
-      default:
-        NS_ASSERTION(PR_FALSE, "unexpected reflow command type");
-      }
-    }
-    else {
-#ifdef DEBUG
-      nsReflowPath::iterator iter = aReflowState.path->FirstChild();
-      NS_ASSERTION(*iter == mFrames.FirstChild(), "unexpected next reflow command frame");
-#endif
-    }
-  }
-
   // Reflow our one and only child frame
-  nsHTMLReflowMetrics kidDesiredSize(nsnull);
+  nsHTMLReflowMetrics kidDesiredSize;
   if (mFrames.IsEmpty()) {
     // We have no child frame, so return an empty size
     aDesiredSize.width = aDesiredSize.height = 0;
-    aDesiredSize.ascent = aDesiredSize.descent = 0;
-
   } else {
     nsIFrame* kidFrame = mFrames.FirstChild();
-
-    nsReflowReason reason;
-    if (isDirtyChildReflow) {
-      // Note: the only reason the frame would be dirty would be if it had
-      // just been inserted or appended
-      reason = eReflowReason_Initial;
-    } else if (isStyleChange) {
-      reason = eReflowReason_StyleChange;
-    } else {
-      reason = aReflowState.reason;
-    }
+    PRBool kidDirty = (kidFrame->GetStateBits() & NS_FRAME_IS_DIRTY) != 0;
 
     // We must specify an unconstrained available height, because constrained
     // is only for when we're paginated...
     nsHTMLReflowState kidReflowState(aPresContext, aReflowState, kidFrame,
                                      nsSize(aReflowState.availableWidth,
-                                            NS_UNCONSTRAINEDSIZE),
-                                     reason);
+                                            NS_UNCONSTRAINEDSIZE));
 
+    if (aReflowState.mFlags.mVResize &&
+        (kidFrame->GetStateBits() & NS_FRAME_CONTAINS_RELATIVE_HEIGHT)) {
+      // Tell our kid it's being vertically resized too.  Bit of a
+      // hack for framesets.
+      kidReflowState.mFlags.mVResize = PR_TRUE;
+    }
+    
     // Reflow the frame
     ReflowChild(kidFrame, aPresContext, kidDesiredSize, kidReflowState,
                 kidReflowState.mComputedMargin.left, kidReflowState.mComputedMargin.top,
@@ -537,7 +590,7 @@ CanvasFrame::Reflow(nsPresContext*          aPresContext,
 
     // If the child frame was just inserted, then we're responsible for making sure
     // it repaints
-    if (isDirtyChildReflow) {
+    if (kidDirty) {
       // But we have a new child, which will affect our background, so
       // invalidate our whole rect.
       // Note: Even though we request to be sized to our child's size, our
@@ -546,33 +599,21 @@ CanvasFrame::Reflow(nsPresContext*          aPresContext,
       // (0, 0). We only want to invalidate GetRect() since GetOverflowRect()
       // could also include overflow to our top and left (out of the viewport)
       // which doesn't need to be painted.
-      Invalidate(GetRect(), PR_FALSE);
+      nsIFrame* viewport = PresContext()->GetPresShell()->GetRootFrame();
+      viewport->Invalidate(nsRect(nsPoint(0, 0), viewport->GetSize()));
     }
 
-    // Return our desired size
-    // First check the combined area
-    if (NS_FRAME_OUTSIDE_CHILDREN & kidFrame->GetStateBits()) {
-      // Size ourselves to the size of the overflow area
-      // XXXbz this ignores overflow up and left
-      aDesiredSize.width = kidReflowState.mComputedMargin.left +
-        PR_MAX(kidDesiredSize.mOverflowArea.XMost(),
-               kidDesiredSize.width + kidReflowState.mComputedMargin.right);
-      aDesiredSize.height = kidReflowState.mComputedMargin.top +
-        PR_MAX(kidDesiredSize.mOverflowArea.YMost(),
-               kidDesiredSize.height + kidReflowState.mComputedMargin.bottom);
-    } else {
-      aDesiredSize.width = kidDesiredSize.width +
-        kidReflowState.mComputedMargin.left +
-        kidReflowState.mComputedMargin.right;
-      aDesiredSize.height = kidDesiredSize.height +
-        kidReflowState.mComputedMargin.top +
-        kidReflowState.mComputedMargin.bottom;
-    }
-    aDesiredSize.mOverflowArea.SetRect(0, 0, aDesiredSize.width, aDesiredSize.height);
-    aDesiredSize.ascent = aDesiredSize.height;
-    aDesiredSize.descent = 0;
-    // XXX Don't completely ignore NS_FRAME_OUTSIDE_CHILDREN for child frames
-    // that stick out on the left or top edges...
+    // Return our desired size (which doesn't matter)
+    aDesiredSize.width = aReflowState.availableWidth;
+    aDesiredSize.height = kidDesiredSize.height +
+                          kidReflowState.mComputedMargin.TopBottom();
+
+    aDesiredSize.mOverflowArea.UnionRect(
+      nsRect(0, 0, aDesiredSize.width, aDesiredSize.height),
+      kidDesiredSize.mOverflowArea +
+        nsPoint(kidReflowState.mComputedMargin.left,
+                kidReflowState.mComputedMargin.top));
+    FinishAndStoreOverflow(&aDesiredSize);
   }
 
   NS_FRAME_TRACE_REFLOW_OUT("CanvasFrame::Reflow", aStatus);
@@ -586,55 +627,10 @@ CanvasFrame::GetSkipSides() const
   return 0;
 }
 
-NS_IMETHODIMP
-CanvasFrame::HandleEvent(nsPresContext* aPresContext, 
-                         nsGUIEvent* aEvent,
-                         nsEventStatus* aEventStatus)
-{
-  NS_ENSURE_ARG_POINTER(aEventStatus);
-  if (nsEventStatus_eConsumeNoDefault == *aEventStatus) {
-    return NS_OK;
-  }
-
-  if (aEvent->message == NS_MOUSE_LEFT_BUTTON_UP ||
-      aEvent->message == NS_MOUSE_MIDDLE_BUTTON_UP ||
-      aEvent->message == NS_MOUSE_RIGHT_BUTTON_UP ||
-      aEvent->message == NS_MOUSE_MOVE ) {
-    nsIFrame *firstChild = GetFirstChild(nsnull);
-    //canvas frame needs to pass mouse events to its area frame so that mouse movement
-    //and selection code will work properly. this will still have the necessary effects
-    //that would have happened if nsFrame::HandleEvent was called.
-    if (firstChild) {
-      nsIView* eventView;
-      nsIView* newEventView;
-      nsPoint pt1, pt2;
-      GetOffsetFromView(pt1, &eventView);
-      firstChild->GetOffsetFromView(pt2, &newEventView);
-      nsPoint offset = eventView->GetOffsetTo(newEventView);
-      aEvent->point += offset;
-      firstChild->HandleEvent(aPresContext, aEvent, aEventStatus);
-      aEvent->point -= offset;
-    } else {
-      nsFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
-    }
-  }
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-CanvasFrame::GetFrameForPoint(const nsPoint& aPoint, 
-                              nsFramePaintLayer aWhichLayer,
-                              nsIFrame**     aFrame)
-{
-  // this should act like a block, so we need to override
-  return GetFrameForPointUsing(aPoint, nsnull, aWhichLayer, (aWhichLayer == NS_FRAME_PAINT_LAYER_BACKGROUND), aFrame);
-}
-
 nsIAtom*
 CanvasFrame::GetType() const
 {
-  return nsLayoutAtoms::canvasFrame;
+  return nsGkAtoms::canvasFrame;
 }
 
 NS_IMETHODIMP 

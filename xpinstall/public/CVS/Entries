@@ -1,16 +1,11 @@
-/.cvsignore/1.1/Sat Mar 27 00:03:53 1999//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.23/Wed Dec  1 05:59:03 2004//TFIREFOX_2_0_RELEASE
-/nsIDOMInstallTriggerGlobal.h/1.16/Tue Sep 14 00:56:13 2004//TFIREFOX_2_0_RELEASE
-/nsIDOMInstallVersion.h/1.9/Sat Apr 17 14:37:27 2004//TFIREFOX_2_0_RELEASE
-/nsISoftwareUpdate.h/1.38/Wed Apr  6 20:13:32 2005//TFIREFOX_2_0_RELEASE
-/nsIUpdateNotification.idl/1.2/Sat Apr 17 14:37:27 2004//TFIREFOX_2_0_RELEASE
-/nsIXPIDialogService.idl/1.2/Tue Dec 17 00:59:25 2002//TFIREFOX_2_0_RELEASE
-/nsIXPINotifier.idl/1.8/Sat Apr 17 14:37:27 2004//TFIREFOX_2_0_RELEASE
-/nsIXPIProgressDialog.idl/1.2/Sun Jan  9 20:43:35 2005//TFIREFOX_2_0_RELEASE
-/nsIXPInstallManager.idl/1.2.18.1/Fri Aug 26 06:41:51 2005//TFIREFOX_2_0_RELEASE
-/nsPICertNotification.idl/1.1/Tue Dec 17 00:59:25 2002//TFIREFOX_2_0_RELEASE
-/nsPIXPIProxy.idl/1.5/Sun Feb  6 12:05:02 2005//TFIREFOX_2_0_RELEASE
-/nsPIXPIStubHook.idl/1.7/Sat Apr 17 14:37:27 2004//TFIREFOX_2_0_RELEASE
-/nsSoftwareUpdateIIDs.h/1.8/Wed Dec  1 05:59:03 2004//TFIREFOX_2_0_RELEASE
-/xpinstall.js/1.5/Mon Jun  7 14:46:15 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Mar 27 00:03:53 1999//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.25/Wed Jan 30 02:00:46 2008//TFIREFOX_3_0rc3_RELEASE
+/nsIDOMInstallTriggerGlobal.h/1.19/Wed Jan 30 02:00:46 2008//TFIREFOX_3_0rc3_RELEASE
+/nsIXPIDialogService.idl/1.2/Tue Dec 17 00:59:25 2002//TFIREFOX_3_0rc3_RELEASE
+/nsIXPIInstallInfo.idl/1.1/Fri Aug 31 19:29:19 2007//TFIREFOX_3_0rc3_RELEASE
+/nsIXPIProgressDialog.idl/1.2/Sun Jan  9 20:43:35 2005//TFIREFOX_3_0rc3_RELEASE
+/nsIXPInstallManager.idl/1.4/Fri Aug 31 19:29:19 2007//TFIREFOX_3_0rc3_RELEASE
+/nsPICertNotification.idl/1.1/Tue Dec 17 00:59:25 2002//TFIREFOX_3_0rc3_RELEASE
+/nsSoftwareUpdateIIDs.h/1.9/Wed Jan 30 02:00:46 2008//TFIREFOX_3_0rc3_RELEASE
+/xpinstall.js/1.5/Mon Jun  7 14:46:15 2004//TFIREFOX_3_0rc3_RELEASE
 D

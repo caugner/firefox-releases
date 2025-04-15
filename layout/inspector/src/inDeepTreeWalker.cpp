@@ -53,8 +53,6 @@
 
 ////////////////////////////////////////////////////
 
-MOZ_DECL_CTOR_COUNTER(DeepTreeStackItem)
-
 struct DeepTreeStackItem 
 {
   DeepTreeStackItem()  { MOZ_COUNT_CTOR(DeepTreeStackItem); }
@@ -77,11 +75,13 @@ inDeepTreeWalker::inDeepTreeWalker()
 inDeepTreeWalker::~inDeepTreeWalker() 
 { 
   for (PRInt32 i = mStack.Count() - 1; i >= 0; --i) {
-    delete NS_STATIC_CAST(DeepTreeStackItem*, mStack[i]);
+    delete static_cast<DeepTreeStackItem*>(mStack[i]);
   }
 }
 
-NS_IMPL_ISUPPORTS1(inDeepTreeWalker, inIDeepTreeWalker)
+NS_IMPL_ISUPPORTS2(inDeepTreeWalker,
+                   inIDeepTreeWalker,
+                   nsIDOMTreeWalker)
 
 ////////////////////////////////////////////////////
 // inIDeepTreeWalker
@@ -273,7 +273,7 @@ inDeepTreeWalker::PushNode(nsIDOMNode* aNode)
   if (!kids) {
     if (mShowAnonymousContent) {
       nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
-      nsCOMPtr<nsIBindingManager> bindingManager;
+      nsRefPtr<nsBindingManager> bindingManager;
       if (content &&
           (bindingManager = inLayoutUtils::GetBindingManagerFor(aNode))) {
         bindingManager->GetAnonymousNodesFor(content, getter_AddRefs(kids));

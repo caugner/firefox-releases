@@ -34,6 +34,13 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/*
+ * A class which represents a fragment of text (eg inside a text
+ * node); if only codepoints below 256 are used, the text is stored as
+ * a char*; otherwise the text is stored as a PRUnichar*
+ */
+
 #ifndef nsTextFragment_h___
 #define nsTextFragment_h___
 
@@ -72,63 +79,25 @@ class nsCString;
  */
 class nsTextFragment {
 public:
+  static nsresult Init();
+  static void Shutdown();
+
   /**
    * Default constructor. Initialize the fragment to be empty.
    */
   nsTextFragment()
     : m1b(nsnull), mAllBits(0)
   {
+    NS_ASSERTION(sizeof(FragmentBits) == 4, "Bad field packing!");
   }
 
   ~nsTextFragment();
-
-  /**
-   * Initialize the contents of this fragment to be a copy of
-   * the argument fragment.
-   */
-  nsTextFragment(const nsTextFragment& aOther);
-
-  /**
-   * Initialize the contents of this fragment to be a copy of
-   * the argument 7bit ascii string.
-   */
-  nsTextFragment(const char *aString);
-
-  /**
-   * Initialize the contents of this fragment to be a copy of
-   * the argument ucs2 string.
-   */
-  nsTextFragment(const PRUnichar *aString);
-
-  /**
-   * Initialize the contents of this fragment to be a copy of
-   * the argument string.
-   */
-  nsTextFragment(const nsString& aString);
 
   /**
    * Change the contents of this fragment to be a copy of the
    * the argument fragment.
    */
   nsTextFragment& operator=(const nsTextFragment& aOther);
-
-  /**
-   * Change the contents of this fragment to be a copy of the
-   * the argument 7bit ascii string.
-   */
-  nsTextFragment& operator=(const char *aString);
-
-  /**
-   * Change the contents of this fragment to be a copy of the
-   * the argument ucs2 string.
-   */
-  nsTextFragment& operator=(const PRUnichar *aString);
-
-  /**
-   * Change the contents of this fragment to be a copy of the
-   * the argument string.
-   */
-  nsTextFragment& operator=(const nsAString& aString);
 
   /**
    * Return PR_TRUE if this fragment is represented by PRUnichar data
@@ -170,32 +139,21 @@ public:
    * Get the length of the fragment. The length is the number of logical
    * characters, not the number of bytes to store the characters.
    */
-  PRInt32 GetLength() const
+  PRUint32 GetLength() const
   {
-    return PRInt32(mState.mLength);
+    return mState.mLength;
   }
 
   /**
-   * Change the contents of this fragment to be the given buffer and
-   * length. The memory becomes owned by the fragment. In addition,
-   * the memory for aBuffer must have been allocated using the 
-   * nsIMemory interface.
-   */
-  void SetTo(PRUnichar *aBuffer, PRInt32 aLength, PRBool aRelease);
-
-  /**
    * Change the contents of this fragment to be a copy of the given
-   * buffer. Like operator= except a length is specified instead of
-   * assuming 0 termination.
+   * buffer.
    */
   void SetTo(const PRUnichar* aBuffer, PRInt32 aLength);
 
   /**
-   * Change the contents of this fragment to be a copy of the given
-   * buffer. Like operator= except a length is specified instead of
-   * assuming 0 termination.
+   * Append aData to the end of this fragment.
    */
-  void SetTo(const char *aBuffer, PRInt32 aLength);
+  void Append(const PRUnichar* aBuffer, PRUint32 aLength);
 
   /**
    * Append the contents of this string fragment to aString
@@ -203,10 +161,11 @@ public:
   void AppendTo(nsAString& aString) const;
 
   /**
-   * Append the contents of this string fragment to aCString. This
-   * method will do a lossy conversion from UTF-16 to ASCII.
+   * Append a substring of the contents of this string fragment to aString.
+   * @param aOffset where to start the substring in this text fragment
+   * @param aLength the length of the substring
    */
-  void AppendTo(nsACString& aCString) const;
+  void AppendTo(nsAString& aString, PRInt32 aOffset, PRInt32 aLength) const;
 
   /**
    * Make a copy of the fragments contents starting at offset for
@@ -217,21 +176,13 @@ public:
   void CopyTo(PRUnichar *aDest, PRInt32 aOffset, PRInt32 aCount);
 
   /**
-   * Make a copy of the fragments contents starting at offset for
-   * count characters. The offset and count will be adjusted to
-   * lie within the fragments data. The fragments data is converted if
-   * necessary.
-   */
-  void CopyTo(char *aDest, PRInt32 aOffset, PRInt32 aCount);
-
-  /**
    * Return the character in the text-fragment at the given
    * index. This always returns a PRUnichar.
    */
   PRUnichar CharAt(PRInt32 aIndex) const
   {
     NS_ASSERTION(PRUint32(aIndex) < mState.mLength, "bad index");
-    return mState.mIs2b ? m2b[aIndex] : PRUnichar(m1b[aIndex]);
+    return mState.mIs2b ? m2b[aIndex] : static_cast<unsigned char>(m1b[aIndex]);
   }
 
   /**
@@ -241,18 +192,23 @@ public:
   void SetBidiFlag();
 
   struct FragmentBits {
-    PRBool mInHeap : 1;
-    PRBool mIs2b : 1;
-    PRBool mIsBidi : 1;
+    // PRUint32 to ensure that the values are unsigned, because we
+    // want 0/1, not 0/-1!
+    // Making these PRPackedBool causes Windows to not actually pack them,
+    // which causes crashes because we assume this structure is no more than
+    // 32 bits!
+    PRUint32 mInHeap : 1;
+    PRUint32 mIs2b : 1;
+    PRUint32 mIsBidi : 1;
     PRUint32 mLength : 29;
   };
 
-protected:
+private:
   void ReleaseText();
 
   union {
-    const PRUnichar *m2b;
-    const unsigned char *m1b;
+    PRUnichar *m2b;
+    const char *m1b; // This is const since it can point to shared data
   };
 
   union {

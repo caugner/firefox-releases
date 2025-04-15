@@ -38,7 +38,7 @@
 #
 # ***** END LICENSE BLOCK *****
 #
-#ident	"$Id: prototype_i386,v 1.2.2.3 2005/03/08 02:17:45 wtchang%redhat.com Exp $"
+#ident	"$Id: prototype_i386,v 1.4 2005/02/25 20:20:52 christophe.ravel.bugs%sun.com Exp $"
 #
 # This required package information file contains a list of package contents.
 # The 'pkgmk' command uses this file to identify the contents of a package

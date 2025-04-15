@@ -43,19 +43,18 @@ VPATH     = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-DIRS      = public src
+DIRS      = src
 
-ifdef ENABLE_TESTS
-DIRS     += tests
+ifdef MOZ_MOCHITEST
+DIRS += content/test
 endif
 
-ifneq ($(origin BUILD_OFFICIAL)_$(origin MOZILLA_OFFICIAL),undefined_undefined)
+ifneq (,$(BUILD_OFFICIAL)$(MOZILLA_OFFICIAL))
 DEFINES += -DOFFICIAL_BUILD=1
 endif
 
 # EXTRA_COMPONENTS installs components written in JS to dist/bin/components
 EXTRA_PP_COMPONENTS = \
-         content/globalstore.js \
          src/nsSafebrowsingApplication.js \
          $(NULL)
 

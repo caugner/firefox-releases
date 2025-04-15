@@ -49,11 +49,7 @@
 #include <glib.h>
 #include <string.h> /* After glib.h to avoid warnings about shadowing 'index'. */
 
-#ifndef XP_MAC
 #include <libIDL/IDL.h>
-#else
-#include <IDL.h>
-#endif
 
 #include <xpt_struct.h>
 
@@ -85,6 +81,7 @@ extern gboolean enable_warnings;
 extern gboolean verbose_mode;
 extern gboolean emit_typelib_annotations;
 extern gboolean explicit_output_filename;
+extern FILE *deps;
 
 extern PRUint8  major_version;
 extern PRUint8  minor_version;
@@ -277,5 +274,8 @@ check_native(TreeState *state);
 
 void
 printlist(FILE *outfile, GSList *slist);
+
+gboolean
+is_method_scriptable(IDL_tree method_tree, IDL_tree ident);
 
 #endif /* __xpidl_h */

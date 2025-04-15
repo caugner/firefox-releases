@@ -40,28 +40,44 @@
 
 #include "nsISupports.h"
 #include "nsIDOMClassInfo.h"
-#include "nsString.h"
+#include "nsStringGlue.h"
 
 #define NS_IDOM_SCRIPT_OBJECT_FACTORY_IID   \
-{ 0xbac2482a, 0x456e, 0x4ea5,               \
-  { 0x83, 0xfb, 0x16, 0xe1, 0x24, 0x9c, 0x16, 0x6f } }
+{ 0xd5a4f935, 0xe428, 0x47ec, \
+  { 0x8f, 0x36, 0x44, 0x23, 0xfa, 0xa2, 0x21, 0x90 } }
 
 class nsIScriptContext;
 class nsIScriptGlobalObject;
+class nsIScriptRuntime;
 class nsIDOMEventListener;
 
 class nsIDOMScriptObjectFactory : public nsISupports {
 public:  
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IDOM_SCRIPT_OBJECT_FACTORY_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IDOM_SCRIPT_OBJECT_FACTORY_IID)
 
-  NS_IMETHOD NewScriptContext(nsIScriptGlobalObject *aGlobal,
-                              nsIScriptContext **aContext) = 0;
+  // Get a script language given its "name" (ie, the mime-type)
+  // Note that to fetch javascript from this function, you must currently
+  // use the name "application/javascript" (but also note that all existing
+  // callers of this function optimize the detection of JS, so do not
+  // ask this function for JS)
+  NS_IMETHOD GetScriptRuntime(const nsAString &aLanguageName,
+                              nsIScriptRuntime **aLanguage) = 0;
+
+  // Get a script language given its nsIProgrammingLanguage ID.
+  NS_IMETHOD GetScriptRuntimeByID(PRUint32 aScriptTypeID, 
+                                  nsIScriptRuntime **aLanguage) = 0;
+
+  // Get the ID for a language given its name - but like GetScriptRuntime,
+  // only "application/javascript" is currently supported for JS.
+  NS_IMETHOD GetIDForScriptType(const nsAString &aLanguageName,
+                                PRUint32 *aScriptTypeID) = 0;
 
   NS_IMETHOD NewScriptGlobalObject(PRBool aIsChrome,
+                                   PRBool aIsModalContentWindow,
                                    nsIScriptGlobalObject **aGlobal) = 0;
 
-  NS_IMETHOD_(nsISupports *)GetClassInfoInstance(nsDOMClassInfoID aID) = 0;
-  NS_IMETHOD_(nsISupports *)GetExternalClassInfoInstance(const nsAString& aName) = 0;
+  NS_IMETHOD_(nsISupports *) GetClassInfoInstance(nsDOMClassInfoID aID) = 0;
+  NS_IMETHOD_(nsISupports *) GetExternalClassInfoInstance(const nsAString& aName) = 0;
 
   // Register the info for an external class. aName must be static
   // data, it will not be deleted by the DOM code. aProtoChainInterface
@@ -76,5 +92,8 @@ public:
                                   PRBool aHasClassInterface,
                                   const nsCID *aConstructorCID) = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIDOMScriptObjectFactory,
+                              NS_IDOM_SCRIPT_OBJECT_FACTORY_IID)
 
 #endif /* nsIDOMScriptObjectFactory_h__ */

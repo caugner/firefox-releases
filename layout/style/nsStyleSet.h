@@ -37,14 +37,21 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * the container for the style sheets that apply to a presentation, and
+ * the internal API that the style system exposes for creating (and
+ * potentially re-creating) style contexts
+ */
+
 #ifndef nsStyleSet_h_
 #define nsStyleSet_h_
 
 #include "nsIStyleRuleProcessor.h"
 #include "nsICSSStyleSheet.h"
-#include "nsVoidArray.h"
-#include "nsIStyleRuleSupplier.h"
+#include "nsBindingManager.h"
 #include "nsRuleNode.h"
+#include "nsTArray.h"
+#include "nsCOMArray.h"
 
 class nsIURI;
 
@@ -66,9 +73,6 @@ class nsStyleSet
   // To be used only by nsRuleNode.
   nsCachedStyleData* DefaultStyleData() { return &mDefaultStyleData; }
 
-  // clear out all of the computed style data
-  void ClearStyleData(nsPresContext *aPresContext);
-
   // enable / disable the Quirk style sheet
   void EnableQuirkStyleSheet(PRBool aEnable);
 
@@ -76,30 +80,33 @@ class nsStyleSet
   already_AddRefed<nsStyleContext>
   ResolveStyleFor(nsIContent* aContent, nsStyleContext* aParentContext);
 
-  // Get a style context for a non-element (which no rules will match).
-  // Eventually, this should go away and we shouldn't even create style
+  // get a style context from some rules
+  already_AddRefed<nsStyleContext>
+  ResolveStyleForRules(nsStyleContext* aParentContext, const nsCOMArray<nsIStyleRule> &rules);
+
+  // Get a style context for a non-element (which no rules will match),
+  // such as text nodes, placeholder frames, and the nsFirstLetterFrame
+  // for everything after the first letter.
+  //
+  // Perhaps this should go away and we shouldn't even create style
   // contexts for such content nodes.  However, not doing any rule
   // matching for them is a first step.
-  //
-  // XXX This is temporary.  It should go away when we stop creating
-  // style contexts for text nodes and placeholder frames.  (We also use
-  // it once to create a style context for the nsFirstLetterFrame that
-  // represents everything except the first letter.)
-  //
   already_AddRefed<nsStyleContext>
   ResolveStyleForNonElement(nsStyleContext* aParentContext);
 
   // get a style context for a pseudo-element (i.e.,
-  // |aPseudoTag == nsCOMPtr<nsIAtom>(do_GetAtom(":first-line"))|;
+  // |aPseudoTag == nsCOMPtr<nsIAtom>(do_GetAtom(":first-line"))|, in
+  // which case aParentContent must be non-null, or an anonymous box, in
+  // which case it may be null or non-null.
   already_AddRefed<nsStyleContext>
   ResolvePseudoStyleFor(nsIContent* aParentContent,
                         nsIAtom* aPseudoTag,
                         nsStyleContext* aParentContext,
                         nsICSSPseudoComparator* aComparator = nsnull);
 
-  // This funtions just like ResolvePseudoStyleFor except that it will
+  // This functions just like ResolvePseudoStyleFor except that it will
   // return nsnull if there are no explicit style rules for that
-  // pseudo element.
+  // pseudo element.  It should be used only for pseudo-elements.
   already_AddRefed<nsStyleContext>
   ProbePseudoStyleFor(nsIContent* aParentContent,
                       nsIAtom* aPseudoTag,
@@ -131,20 +138,16 @@ class nsStyleSet
 
   // Test if style is dependent on the presence of an attribute.
   nsReStyleHint HasAttributeDependentStyle(nsPresContext* aPresContext,
-                                           nsIContent*     aContent,
-                                           nsIAtom*        aAttribute,
-                                           PRInt32         aModType);
+                                           nsIContent*    aContent,
+                                           nsIAtom*       aAttribute,
+                                           PRInt32        aModType,
+                                           PRUint32       aStateMask);
 
   // APIs for registering objects that can supply additional
   // rules during processing.
-  void SetStyleRuleSupplier(nsIStyleRuleSupplier* aSupplier)
+  void SetBindingManager(nsBindingManager* aBindingManager)
   {
-    mStyleRuleSupplier = aSupplier;
-  }
-
-  nsIStyleRuleSupplier* GetStyleRuleSupplier() const
-  {
-    return mStyleRuleSupplier;
+    mBindingManager = aBindingManager;
   }
 
   // Free global data at module shutdown
@@ -161,8 +164,9 @@ class nsStyleSet
     eStyleAttrSheet,
     eOverrideSheet, // CSS
     eSheetTypeCount
-    // be sure to keep the number of bits in |mDirty| below updated when
-    // changing the number of sheet types
+    // be sure to keep the number of bits in |mDirty| below and in
+    // NS_RULE_NODE_LEVEL_MASK updated when changing the number of sheet
+    // types
   };
 
   // APIs to manipulate the style sheet lists.  The sheets in each
@@ -189,6 +193,13 @@ class nsStyleSet
 
   void     BeginUpdate();
   nsresult EndUpdate();
+
+  // Methods for reconstructing the tree; BeginReconstruct basically moves the
+  // old rule tree root and style context roots out of the way,
+  // and EndReconstruct destroys the old rule tree when we're done
+  nsresult BeginReconstruct();
+  // Note: EndReconstruct should not be called if BeginReconstruct fails
+  void EndReconstruct();
 
  private:
   // Not to be implemented
@@ -236,6 +247,8 @@ class nsStyleSet
 
   static nsIURI  *gQuirkURI;
 
+  // The sheets in each array in mSheets are stored with the most significant
+  // sheet last.
   nsCOMArray<nsIStyleSheet> mSheets[eSheetTypeCount];
 
   nsCOMPtr<nsIStyleRuleProcessor> mRuleProcessors[eSheetTypeCount];
@@ -243,7 +256,7 @@ class nsStyleSet
   // cached instance for enabling/disabling
   nsCOMPtr<nsIStyleSheet> mQuirkStyleSheet;
 
-  nsCOMPtr<nsIStyleRuleSupplier> mStyleRuleSupplier;
+  nsRefPtr<nsBindingManager> mBindingManager;
 
   // To be used only in case of emergency, such as being out of memory
   // or operating on a deleted rule node.  The latter should never
@@ -257,13 +270,17 @@ class nsStyleSet
                              // be used to navigate through our tree.
 
   PRInt32 mDestroyedCount; // used to batch style context GC
-  nsVoidArray mRoots; // style contexts with no parent
+  nsTArray<nsStyleContext*> mRoots; // style contexts with no parent
 
   PRUint16 mBatching;
+
+  nsRuleNode* mOldRuleTree; // Old rule tree; used during tree reconstruction
+                            // (See BeginReconstruct and EndReconstruct)
 
   unsigned mInShutdown : 1;
   unsigned mAuthorStyleDisabled: 1;
   unsigned mDirty : 7;  // one dirty bit is used per sheet type
+
 };
 
 #endif

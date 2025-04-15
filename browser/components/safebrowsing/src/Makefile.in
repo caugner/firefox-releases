@@ -41,19 +41,4 @@ VPATH     = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = safebrowsing
-LIBRARY_NAME = safebrowsing_s
-MOZILLA_INTERNAL_API = 1
-FORCE_STATIC_LIB = 1
-
-REQUIRES = \
-						jar \
-						necko \
-						safebrowsing \
-						string \
-						uriloader \
-						xpcom
-
-CPPSRCS = nsDocNavStartProgressListener.cpp
-
 include $(topsrcdir)/config/rules.mk

@@ -67,7 +67,10 @@ class Module:
         fname = os.path.basename(location.path)
         for klass in self.components.values():
             reg_contractid = klass._reg_contractid_
-            print "Registering '%s' (%s)" % (reg_contractid, fname)
+            try:
+                print "Registering '%s' (%s)" % (reg_contractid, fname)
+            except IOError:
+                pass # stdout may not be valid for windows apps!
             reg_desc = getattr(klass, "_reg_desc_", reg_contractid)
             compMgr = compMgr.queryInterface(components.interfaces.nsIComponentRegistrar)
             compMgr.registerFactoryLocation(klass._reg_clsid_,
@@ -97,12 +100,14 @@ class Module:
                     extra_func(klass, compMgr, location, loaderStr)
                 except Exception:
                     ok = 0
-            if ok:
-                print "Successfully unregistered", klass.__name__
-            else:
-                print "Unregistration of", klass.__name__, "failed. (probably just not already registered)"
-        
+            try:
+                if ok:
+                    print "Successfully unregistered", klass.__name__
+                else:
+                    print "Unregistration of", klass.__name__, "failed (not previously registered?)"
+            except IOError:
+                pass
+
     def canUnload(self, compMgr):
         # single bool result
         return 0 # we can never unload!
-

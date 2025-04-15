@@ -34,6 +34,12 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/*
+ * style sheet and style rule processor representing style attributes
+ * and some additional overrides
+ */
+
 #ifndef nsIHTMLCSSStyleSheet_h___
 #define nsIHTMLCSSStyleSheet_h___
 
@@ -45,11 +51,13 @@
 
 class nsIHTMLCSSStyleSheet : public nsIStyleSheet {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IHTML_CSS_STYLE_SHEET_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IHTML_CSS_STYLE_SHEET_IID)
 
   NS_IMETHOD Init(nsIURI* aURL, nsIDocument* aDocument) = 0;
   NS_IMETHOD Reset(nsIURI* aURL) = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIHTMLCSSStyleSheet, NS_IHTML_CSS_STYLE_SHEET_IID)
 
 // XXX for convenience and backward compatibility
 nsresult

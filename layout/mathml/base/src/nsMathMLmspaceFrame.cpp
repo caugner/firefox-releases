@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -39,7 +40,6 @@
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
 #include "nsPresContext.h"
-#include "nsUnitConversion.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
 #include "nsIRenderingContext.h"
@@ -52,27 +52,20 @@
 // <mspace> -- space - implementation
 //
 
-nsresult
-NS_NewMathMLmspaceFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
+nsIFrame*
+NS_NewMathMLmspaceFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsMathMLmspaceFrame* it = new (aPresShell) nsMathMLmspaceFrame;
-  if (nsnull == it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  *aNewFrame = it;
-  return NS_OK;
-}
-
-nsMathMLmspaceFrame::nsMathMLmspaceFrame()
-{
+  return new (aPresShell) nsMathMLmspaceFrame(aContext);
 }
 
 nsMathMLmspaceFrame::~nsMathMLmspaceFrame()
 {
+}
+
+PRBool
+nsMathMLmspaceFrame::IsLeaf() const
+{
+  return PR_TRUE;
 }
 
 void
@@ -91,8 +84,9 @@ nsMathMLmspaceFrame::ProcessAttributes(nsPresContext* aPresContext)
 
   // width 
   mWidth = 0;
-  if (NS_CONTENT_ATTR_HAS_VALUE == GetAttribute(mContent, mPresentationData.mstyle,
-                   nsMathMLAtoms::width_, value)) {
+  GetAttribute(mContent, mPresentationData.mstyle, nsGkAtoms::width,
+               value);
+  if (!value.IsEmpty()) {
     if ((ParseNumericValue(value, cssValue) ||
          ParseNamedSpaceValue(mPresentationData.mstyle, value, cssValue)) &&
          cssValue.IsLengthUnit()) {
@@ -102,8 +96,9 @@ nsMathMLmspaceFrame::ProcessAttributes(nsPresContext* aPresContext)
 
   // height
   mHeight = 0;
-  if (NS_CONTENT_ATTR_HAS_VALUE == GetAttribute(mContent, mPresentationData.mstyle,
-                   nsMathMLAtoms::height_, value)) {
+  GetAttribute(mContent, mPresentationData.mstyle, nsGkAtoms::height,
+               value);
+  if (!value.IsEmpty()) {
     if ((ParseNumericValue(value, cssValue) ||
          ParseNamedSpaceValue(mPresentationData.mstyle, value, cssValue)) &&
          cssValue.IsLengthUnit()) {
@@ -113,8 +108,9 @@ nsMathMLmspaceFrame::ProcessAttributes(nsPresContext* aPresContext)
 
   // depth
   mDepth = 0;
-  if (NS_CONTENT_ATTR_HAS_VALUE == GetAttribute(mContent, mPresentationData.mstyle,
-                   nsMathMLAtoms::depth_, value)) {
+  GetAttribute(mContent, mPresentationData.mstyle, nsGkAtoms::depth_,
+               value);
+  if (!value.IsEmpty()) {
     if ((ParseNumericValue(value, cssValue) ||
          ParseNamedSpaceValue(mPresentationData.mstyle, value, cssValue)) &&
          cssValue.IsLengthUnit()) {
@@ -135,14 +131,12 @@ nsMathMLmspaceFrame::Reflow(nsPresContext*          aPresContext,
   mBoundingMetrics.width = mWidth;
   mBoundingMetrics.ascent = mHeight;
   mBoundingMetrics.descent = mDepth;
+  mBoundingMetrics.leftBearing = 0;
+  mBoundingMetrics.rightBearing = mWidth;
 
   aDesiredSize.ascent = mHeight;
-  aDesiredSize.descent = mDepth;
   aDesiredSize.width = mWidth;
-  aDesiredSize.height = aDesiredSize.ascent + aDesiredSize.descent;
-  if (aDesiredSize.mComputeMEW) {
-    aDesiredSize.mMaxElementWidth = aDesiredSize.width;
-  }
+  aDesiredSize.height = aDesiredSize.ascent + mDepth;
   // Also return our bounding metrics
   aDesiredSize.mBoundingMetrics = mBoundingMetrics;
 

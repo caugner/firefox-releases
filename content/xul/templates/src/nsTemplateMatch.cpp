@@ -44,14 +44,32 @@ nsTemplateMatch::nsTemplateMatch(const nsTemplateMatch& aMatch) {}
 void nsTemplateMatch::operator=(const nsTemplateMatch& aMatch) {}
 #endif
 
-PRBool
-nsTemplateMatch::GetAssignmentFor(nsConflictSet& aConflictSet, PRInt32 aVariable, Value* aValue)
-{
-    if (mAssignments.GetAssignmentFor(aVariable, aValue)) {
-        return PR_TRUE;
-    }
-    else {
-        return mRule->ComputeAssignmentFor(aConflictSet, this, aVariable, aValue);
-    }
+// static
+void
+nsTemplateMatch::Destroy(nsFixedSizeAllocator& aPool,
+                         nsTemplateMatch*& aMatch,
+                         PRBool aRemoveResult) {
+    if (aRemoveResult && aMatch->mResult)
+        aMatch->mResult->HasBeenRemoved();
+    aMatch->~nsTemplateMatch();
+    aPool.Free(aMatch, sizeof(*aMatch));
+    aMatch = nsnull;
 }
 
+nsresult
+nsTemplateMatch::RuleMatched(nsTemplateQuerySet* aQuerySet,
+                             nsTemplateRule* aRule,
+                             PRInt16 aRuleIndex,
+                             nsIXULTemplateResult* aResult)
+{
+    // assign the rule index, used to indicate that a match is active, and
+    // so the tree builder can get the right action body to generate
+    mRuleIndex = aRuleIndex;
+
+    nsCOMPtr<nsIDOMNode> rulenode;
+    aRule->GetRuleNode(getter_AddRefs(rulenode));
+    if (rulenode)
+        return aResult->RuleMatched(aQuerySet->mCompiledQuery, rulenode);
+
+    return NS_OK;
+}

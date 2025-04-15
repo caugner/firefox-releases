@@ -1657,23 +1657,23 @@ function SaveDocument(aSaveAs, aSaveCopy, aMimeType)
 {
   var editor = GetCurrentEditor();
   if (!aMimeType || aMimeType == "" || !editor)
-    throw NS_ERROR_NOT_INITIALIZED;
+    throw Components.results.NS_ERROR_NOT_INITIALIZED;
 
   var editorDoc = editor.document;
   if (!editorDoc)
-    throw NS_ERROR_NOT_INITIALIZED;
+    throw Components.results.NS_ERROR_NOT_INITIALIZED;
 
   // if we don't have the right editor type bail (we handle text and html)
   var editorType = GetCurrentEditorType();
   if (editorType != "text" && editorType != "html" 
       && editorType != "htmlmail" && editorType != "textmail")
-    throw NS_ERROR_NOT_IMPLEMENTED;
+    throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
 
   var saveAsTextFile = IsSupportedTextMimeType(aMimeType);
 
   // check if the file is to be saved is a format we don't understand; if so, bail
   if (aMimeType != "text/html" && !saveAsTextFile)
-    throw NS_ERROR_NOT_IMPLEMENTED;
+    throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
 
   if (saveAsTextFile)
     aMimeType = "text/plain";
@@ -1928,9 +1928,8 @@ function StartPublishing()
     if (gPublishData.otherFilesURI)
     {
       try {
-        // (256 = Output encoded entities)
         gRestoreDocumentSource = 
-          editor.outputToString(editor.contentsMIMEType, 256);
+          editor.outputToString(editor.contentsMIMEType, kOutputEncodeW3CEntities);
       } catch (e) {}
     }
 
@@ -2308,7 +2307,7 @@ var nsPrintCommand =
     // In editor.js
     FinishHTMLSource();
     try {
-      NSPrint();
+      PrintUtils.print();
     } catch (e) {}
   }
 };
@@ -2328,7 +2327,7 @@ var nsPrintSetupCommand =
   {
     // In editor.js
     FinishHTMLSource();
-    NSPrintSetup();
+    PrintUtils.showPageSetup();
   }
 };
 
@@ -2698,7 +2697,7 @@ var nsIsIndexCommand =
     try {
       var editor = GetCurrentEditor();
       var isindexElement = editor.createElementWithDefaults("isindex");
-      isindexElement.setAttribute("prompt", editor.outputToString("text/plain", 1)); // OutputSelectionOnly
+      isindexElement.setAttribute("prompt", editor.outputToString("text/plain", kOutputSelectionOnly));
       editor.insertElementAtSelection(isindexElement, true);
     } catch (e) {}
   }
@@ -3862,7 +3861,7 @@ var nsPreferencesCommand =
 
   doCommand: function(aCommand)
   {
-    goPreferences('editor', 'chrome://editor/content/pref-composer.xul','editor');
+    goPreferences('composer_pane');
     window.content.focus();
   }
 };

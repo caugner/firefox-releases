@@ -58,8 +58,10 @@
 
 class nsICOMPtrEqTestFoo : public nsISupports {
   public:
-    NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICOMPTREQTESTFOO_IID)
+    NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICOMPTREQTESTFOO_IID)
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsICOMPtrEqTestFoo, NS_ICOMPTREQTESTFOO_IID)
 
 #ifdef NSCAP_EQTEST_TEST_ACROSS_TYPES
 
@@ -69,8 +71,10 @@ class nsICOMPtrEqTestFoo : public nsISupports {
 
 class nsICOMPtrEqTestFoo2 : public nsISupports {
   public:
-    NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICOMPTREQTESTFOO2_IID)
+    NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICOMPTREQTESTFOO2_IID)
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsICOMPtrEqTestFoo2, NS_ICOMPTREQTESTFOO2_IID)
 
 #endif
 
@@ -83,7 +87,7 @@ main()
     const nsICOMPtrEqTestFoo* rc = 0;
     nsICOMPtrEqTestFoo* const rk = 0;
     const nsICOMPtrEqTestFoo* const rkc = 0;
-    nsDerivedSafe<nsICOMPtrEqTestFoo>* d = s.get();
+    nsDerivedSafe<nsICOMPtrEqTestFoo>* d = s;
     
 #ifdef NSCAP_EQTEST_TEST_ACROSS_TYPES
     nsCOMPtr<nsICOMPtrEqTestFoo2> s2;
@@ -92,7 +96,7 @@ main()
     const nsICOMPtrEqTestFoo2* rc2 = 0;
     nsICOMPtrEqTestFoo2* const rk2 = 0;
     const nsICOMPtrEqTestFoo2* const rkc2 = 0;
-    nsDerivedSafe<nsICOMPtrEqTestFoo2>* d2 = s2.get();
+    nsDerivedSafe<nsICOMPtrEqTestFoo2>* d2 = s2;
 #endif
 
     return (!(PR_TRUE &&

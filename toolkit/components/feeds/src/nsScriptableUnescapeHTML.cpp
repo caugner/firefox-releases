@@ -35,15 +35,13 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsString.h"
-#include "nsCRT.h"
-#include "nsISupportsArray.h"
 #include "nsIComponentManager.h"
 #include "nsCOMPtr.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
 #include "nsXPIDLString.h"
-#include "nsIScriptLoader.h"
-
+#include "nsScriptLoader.h"
+#include "nsEscape.h"
 #include "nsIParser.h"
 #include "nsIDTD.h"
 #include "nsNetCID.h"
@@ -61,10 +59,12 @@
 #include "nsIDOMElement.h"
 #include "nsIDocument.h"
 #include "nsIContent.h"
+#include "nsAttrName.h"
 #include "nsHTMLParts.h"
 #include "nsContentCID.h"
 #include "nsIScriptableUnescapeHTML.h"
 #include "nsScriptableUnescapeHTML.h"
+#include "nsAutoPtr.h"
 
 #define XHTML_DIV_TAG "div xmlns=\"http://www.w3.org/1999/xhtml\""
 #define HTML_BODY_TAG "BODY"
@@ -132,15 +132,13 @@ nsScriptableUnescapeHTML::ParseFragment(const nsAString &aFragment,
   contextNode->GetOwnerDocument(getter_AddRefs(domDocument));
   document = do_QueryInterface(domDocument);
   NS_ENSURE_TRUE(document, NS_ERROR_NOT_AVAILABLE);
-  
+
   // stop scripts
-  nsCOMPtr<nsIScriptLoader> loader;
+  nsRefPtr<nsScriptLoader> loader;
   PRBool scripts_enabled = PR_FALSE;
   if (document) {
-    loader = document->GetScriptLoader();
-    if (loader) {
-      loader->GetEnabled(&scripts_enabled);
-    }
+    loader = document->ScriptLoader();
+    scripts_enabled = loader->GetEnabled();
   }
   if (scripts_enabled) {
     loader->SetEnabled(PR_FALSE);
@@ -148,7 +146,7 @@ nsScriptableUnescapeHTML::ParseFragment(const nsAString &aFragment,
 
   // Wrap things in a div or body for parsing, but it won't show up in
   // the fragment.
-  nsVoidArray tagStack;
+  nsAutoTArray<nsString, 2> tagStack;
   nsCAutoString base, spec;
   if (aIsXML) {
     // XHTML
@@ -156,22 +154,27 @@ nsScriptableUnescapeHTML::ParseFragment(const nsAString &aFragment,
       base.Append(NS_LITERAL_CSTRING(XHTML_DIV_TAG));
       base.Append(NS_LITERAL_CSTRING(" xml:base=\""));
       aBaseURI->GetSpec(spec);
-      base = base + spec;
+      // nsEscapeHTML is good enough, because we only need to get
+      // quotes, ampersands, and angle brackets
+      char* escapedSpec = nsEscapeHTML(spec.get());
+      if (escapedSpec)
+        base += escapedSpec;
+      NS_Free(escapedSpec);
       base.Append(NS_LITERAL_CSTRING("\""));
-      tagStack.AppendElement(ToNewUnicode(base));
+      tagStack.AppendElement(NS_ConvertUTF8toUTF16(base));
     }  else {
-      tagStack.AppendElement(ToNewUnicode(NS_LITERAL_CSTRING(XHTML_DIV_TAG)));
+      tagStack.AppendElement(NS_LITERAL_STRING(XHTML_DIV_TAG));
     }
   } else {
     // HTML
-    tagStack.AppendElement(ToNewUnicode(NS_LITERAL_CSTRING(HTML_BODY_TAG)));
+    tagStack.AppendElement(NS_LITERAL_STRING(HTML_BODY_TAG));
     if (aBaseURI) {
       base.Append(NS_LITERAL_CSTRING((HTML_BASE_TAG)));
       base.Append(NS_LITERAL_CSTRING(" href=\""));
       aBaseURI->GetSpec(spec);
       base = base + spec;
       base.Append(NS_LITERAL_CSTRING("\""));
-      tagStack.AppendElement(ToNewUnicode(base));
+      tagStack.AppendElement(NS_ConvertUTF8toUTF16(base));
     }
   }
 
@@ -195,19 +198,11 @@ nsScriptableUnescapeHTML::ParseFragment(const nsAString &aFragment,
       rv = parser->ParseFragment(aFragment, nsnull, tagStack,
                                  aIsXML, contentType, mode);
       if (NS_SUCCEEDED(rv))
-        rv = sink->GetFragment(aReturn);
+        rv = sink->GetFragment(PR_TRUE, aReturn);
 
     } else {
       rv = NS_ERROR_FAILURE;
     }
-  }
-
-  // from nsContentUtils XXX Ick! Delete strings we allocated above.
-  PRInt32 count = tagStack.Count();
-  for (PRInt32 i = 0; i < count; i++) {
-    PRUnichar* str = (PRUnichar*)tagStack.ElementAt(i);
-    if (str)
-      NS_Free(str);
   }
 
   if (scripts_enabled)

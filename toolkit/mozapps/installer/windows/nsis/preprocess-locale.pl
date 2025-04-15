@@ -51,48 +51,38 @@ my $RTL = "-";
 my $line;
 my $lnum;
 
-# RTL Locales. This also needs to be specified in locales.nsi
-if ($AB_CD eq "ar" || $AB_CD eq "he") {
-  $RTL = "RTL";
-}
+# Read the codepage for the locale and the optional font name, font size, and
+# whether the locale is right to left from locales.nsi.
+my $inFile = "$topsrcdir/toolkit/mozapps/installer/windows/nsis/locales.nsi";
+open(locales, "<$inFile");
 
-# The MS Shell Dlg font is not mapped to the appropriate font for East Asian
-# locales on Win98 so the font is specified below for 1.8.1.x. If the font
-# changes the window size an image should also be specified in locales.nsi.
-if ($AB_CD eq "ja") {
-  $fontName = "‚l‚r ‚oƒSƒVƒbƒN";
-  $fontSize = "10";
+$lnum = 1;
+while( $line = <locales> ) {
+  $line =~ s/[\r\n]*//g;    # remove \r and \n
+  if ($line =~ m|^!define $AB_CD\_rtl|) {
+    $RTL = "RTL";
+  }
+  $lnum++;
 }
-elsif ($AB_CD eq "ko") {
-  $fontName = "±¼¸²";
-  $fontSize = "9";
-}
-elsif ($AB_CD eq "zh-CN") {
-  $fontName = "ËÎÌå";
-  $fontSize = "9";
-}
-elsif ($AB_CD eq "zh-TW") {
-  $fontName = "·s²Ó©úÅé";
-  $fontSize = "9";
-}
+close locales;
 
-# CP1252 is specified with a '-'. For all other locales specify the number for
-# the locales code page.
+# In NSIS codepage CP1252 is specified with a '-'. For all other locales
+# specify the number for the locales codepage.
 if ($langCP ne "CP1252") {
   $nsisCP = $langCP;
   $nsisCP =~ s/^CP(.*)$/$1/g;
 }
 
-
 # Create the main NSIS language file with just the codepage, font, and
 # RTL information
-open(outfile, ">$configDir/baseLocale.nlf");
+open(outfile, ">$configDir/nlf.in");
 print outfile "# Header, don't edit\r\nNLF $nsisVer\r\n# Start editing here\r\n";
 print outfile "# Language ID\r\n$langID\r\n";
 print outfile "# Font and size - dash (-) means default\r\n$fontName\r\n$fontSize\r\n";
 print outfile "# Codepage - dash (-) means ANSI code page\r\n$nsisCP\r\n";
 print outfile "# RTL - anything else than RTL means LTR\r\n$RTL\r\n";
 close outfile;
+&cpConvert("nlf.in", "baseLocale.nlf", $langCP);
 
 
 # Create the main NSIS language file
@@ -113,6 +103,7 @@ while( $line = <infile> ) {
   $value =~ s/\s+$//; # trim whitespace from the end of the string
   $value =~ s/^"(.*)"$/$1/g; # remove " at the beginning and end of the value
   $value =~ s/(")/\$\\$1/g;  # prefix " with $\
+  $value =~ s/â€¦/.../g;     # replace … (unicode ellipsis) with ...
   print outfile "LangString  ^@values[0] $langID \"$value\"\r\n";
   $lnum++;
 }
@@ -144,6 +135,7 @@ while( $line = <infile> ) {
   $value =~ s/(")/\$\\$1/g;  # prefix " with $\
   $value =~ s/(\\n)/\\r$1/g; # insert \\r before each occurence of \\n
   $value =~ s/(\\r)\\r/$1/g; # replace all ocurrences of \\r\\r with \\r
+  $value =~ s/â€¦/.../g;     # replace … (unicode ellipsis) with ...
   print outfile "!define @values[0] \"$value\"\r\n";
   $lnum++;
 }
@@ -172,6 +164,7 @@ while( $line = <infile> ) {
   $string =~ s/(\\n)/\\r$1/g;   # insert \\r before each occurence of \\n
   $string =~ s/(\\r)\\r/$1/g;   # replace all ocurrences of \\r\\r with \\r
   $string =~ s/(\\[rn])/\$$1/g; # prefix all occurences of \\r and \\n with $
+  $string =~ s/â€¦/.../g;       # replace … (unicode ellipsis) with ...
   print outfile "LangString @values[0] $langID \"$string\"\r\n";
   $lnum++;
 }

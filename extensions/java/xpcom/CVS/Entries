@@ -1,21 +1,4 @@
-/Makefile.in/1.15.6.4/Thu Sep 14 18:07:03 2006//TFIREFOX_2_0_RELEASE
-/XPCOMException.java/1.4.18.1/Mon Jan  9 19:03:05 2006//TFIREFOX_2_0_RELEASE
-/XPCOMJavaProxy.java/1.1.8.2/Tue May 30 16:21:02 2006//TFIREFOX_2_0_RELEASE
-/XPCOMJavaProxyBase.java/1.1.8.1/Mon Jan  9 19:03:05 2006//TFIREFOX_2_0_RELEASE
-/XPCOMPrivate.java/1.1/Fri Dec 17 23:52:42 2004//TFIREFOX_2_0_RELEASE
-/gen-nsError.pl/1.2.8.2/Thu Mar 30 22:38:20 2006//TFIREFOX_2_0_RELEASE
-/nsAppFileLocProviderProxy.cpp/1.7/Wed Jul 13 22:15:08 2005//TFIREFOX_2_0_RELEASE
-/nsAppFileLocProviderProxy.h/1.4/Wed Jul 13 22:15:09 2005//TFIREFOX_2_0_RELEASE
-/nsJavaInterfaces.cpp/1.26.2.3/Tue Oct  3 20:02:10 2006//TFIREFOX_2_0_RELEASE
-/nsJavaWrapper.cpp/1.33.6.7/Tue Oct  3 20:02:10 2006//TFIREFOX_2_0_RELEASE
-/nsJavaWrapper.h/1.3.8.1/Tue Oct  3 20:02:10 2006//TFIREFOX_2_0_RELEASE
-/nsJavaXPCOMBindingUtils.cpp/1.33.6.7/Tue Oct  3 20:02:10 2006//TFIREFOX_2_0_RELEASE
-/nsJavaXPCOMBindingUtils.h/1.27.6.7/Tue Oct  3 20:02:10 2006//TFIREFOX_2_0_RELEASE
-/nsJavaXPTCStub.cpp/1.33.4.6/Tue Oct  3 20:02:10 2006//TFIREFOX_2_0_RELEASE
-/nsJavaXPTCStub.h/1.11.6.2/Thu Jun 15 16:16:12 2006//TFIREFOX_2_0_RELEASE
-/nsJavaXPTCStubWeakRef.cpp/1.7.6.1/Tue Jun  6 17:15:02 2006//TFIREFOX_2_0_RELEASE
-/nsJavaXPTCStubWeakRef.h/1.5.6.1/Tue Jun  6 17:15:02 2006//TFIREFOX_2_0_RELEASE
-D/build////
+/Makefile.in/1.24/Sat Mar 31 19:37:52 2007//TFIREFOX_3_0rc3_RELEASE
 D/glue////
 D/interfaces////
 D/package////

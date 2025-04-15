@@ -1,9 +1,9 @@
-/.cvsignore/1.1/Sat Feb 24 06:22:16 2001//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.17.4.1/Sun Jan 29 16:50:52 2006//TFIREFOX_2_0_RELEASE
-/browser-base.inc/1.2/Fri Dec 31 03:12:16 2004//TFIREFOX_2_0_RELEASE
-/editor-base.inc/1.2/Mon Sep 13 22:35:39 2004//TFIREFOX_2_0_RELEASE
-/input-fields-base.inc/1.2/Mon Sep 13 22:35:39 2004//TFIREFOX_2_0_RELEASE
-/textareas-base.inc/1.2/Mon Sep 13 22:35:39 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Feb 24 06:22:16 2001//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.18/Wed Nov 30 18:34:56 2005//TFIREFOX_3_0rc3_RELEASE
+/browser-base.inc/1.3/Fri Sep  2 15:54:18 2005//TFIREFOX_3_0rc3_RELEASE
+/editor-base.inc/1.2/Mon Sep 13 22:35:39 2004//TFIREFOX_3_0rc3_RELEASE
+/input-fields-base.inc/1.2/Mon Sep 13 22:35:39 2004//TFIREFOX_3_0rc3_RELEASE
+/textareas-base.inc/1.2/Mon Sep 13 22:35:39 2004//TFIREFOX_3_0rc3_RELEASE
 D/gtk2////
 D/mac////
 D/unix////

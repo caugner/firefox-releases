@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -47,20 +48,17 @@
 
 class nsMathMLTokenFrame : public nsMathMLContainerFrame {
 public:
-  friend nsresult NS_NewMathMLTokenFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLTokenFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
-  virtual nsIAtom* GetType() const;
+  virtual eMathMLFrameType GetMathMLFrameType();
 
   NS_IMETHOD
-  Init(nsPresContext*  aPresContext,
-       nsIContent*      aContent,
+  Init(nsIContent*      aContent,
        nsIFrame*        aParent,
-       nsStyleContext*  aContext,
        nsIFrame*        aPrevInFlow);
 
   NS_IMETHOD
-  SetInitialChildList(nsPresContext* aPresContext,
-                      nsIAtom*        aListName,
+  SetInitialChildList(nsIAtom*        aListName,
                       nsIFrame*       aChildList);
 
   NS_IMETHOD
@@ -69,36 +67,40 @@ public:
          const nsHTMLReflowState& aReflowState,
          nsReflowStatus&          aStatus);
 
-  NS_IMETHOD
+  virtual nsresult
   Place(nsIRenderingContext& aRenderingContext,
         PRBool               aPlaceOrigin,
         nsHTMLReflowMetrics& aDesiredSize);
 
-  NS_IMETHOD
-  ReflowDirtyChild(nsIPresShell* aPresShell,
-                   nsIFrame*     aChild);
+  virtual void MarkIntrinsicWidthsDirty();
 
   NS_IMETHOD
-  AttributeChanged(nsIContent*     aChild,
-                   PRInt32         aNameSpaceID,
+  AttributeChanged(PRInt32         aNameSpaceID,
                    nsIAtom*        aAttribute,
                    PRInt32         aModType);
+
+  virtual nsresult
+  ChildListChanged(PRInt32 aModType)
+  {
+    ProcessTextData();
+    return nsMathMLContainerFrame::ChildListChanged(aModType);
+  }
+
 protected:
-  nsMathMLTokenFrame();
+  nsMathMLTokenFrame(nsStyleContext* aContext) : nsMathMLContainerFrame(aContext) {}
   virtual ~nsMathMLTokenFrame();
 
   virtual PRIntn GetSkipSides() const { return 0; }
 
   // hook to perform MathML-specific actions depending on the tag
-  virtual void
-  ProcessTextData(nsPresContext* aPresContext);
+  virtual void ProcessTextData();
 
   // helper to set the style of <mi> which has to be italic or normal
   // depending on its textual content
-  void SetTextStyle(nsPresContext* aPresContext);
+  PRBool SetTextStyle();
 
   // helper to set the quotes of <ms>
-  void SetQuotes(nsPresContext* aPresContext);
+  void SetQuotes();
 };
 
 #endif /* nsMathMLTokentFrame_h___ */

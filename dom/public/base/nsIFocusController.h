@@ -52,13 +52,14 @@ class nsIController;
 class nsIControllers;
 class nsAString;
 
-// {AC71F479-17E1-4ee0-8EFD-0ECF2AA2F827}
+// 58be9aa6-edec-46be-a9f5-6d8b572418d5
 #define NS_IFOCUSCONTROLLER_IID \
-{ 0xac71f479, 0x17e1, 0x4ee0, { 0x8e, 0xfd, 0xe, 0xcf, 0x2a, 0xa2, 0xf8, 0x27 } }
+{ 0x58be9aa6, 0xedec, 0x46be, \
+  { 0xa9, 0xf5, 0x6d, 0x8b, 0x57, 0x24, 0x18, 0xd5 } }
 
 class nsIFocusController : public nsISupports {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IFOCUSCONTROLLER_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IFOCUSCONTROLLER_IID)
 
   NS_IMETHOD GetFocusedElement(nsIDOMElement** aResult)=0;
   NS_IMETHOD SetFocusedElement(nsIDOMElement* aElement)=0;
@@ -87,18 +88,7 @@ public:
   NS_IMETHOD ResetElementFocus() = 0;
 };
 
-// {884e474a-bb6b-4cbf-89ea-47e0ec1f67c3}
-#define NS_IFOCUSCONTROLLER_MOZILLA_1_8_BRANCH_IID \
-{ 0x884e474a, 0xbb6b, 0x4cbf, { 0x89, 0xea, 0x47, 0xe0, 0xec, 0x1f, 0x67, 0xc3 } }
-
-class nsIFocusController_MOZILLA_1_8_BRANCH : public nsIFocusController
-{
-public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IFOCUSCONTROLLER_MOZILLA_1_8_BRANCH_IID)
-
-  NS_IMETHOD GetPopupEvent(nsIDOMEvent** aEvent)=0;
-  NS_IMETHOD SetPopupEvent(nsIDOMEvent* aEvent)=0;
-};
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIFocusController, NS_IFOCUSCONTROLLER_IID)
 
 class nsFocusSuppressor {
 public:
@@ -136,6 +126,39 @@ public:
 private:
   nsCOMPtr<nsIFocusController> mController;
   const char *mReason;
+};
+
+class nsFocusScrollSuppressor
+{
+public:
+  nsFocusScrollSuppressor(nsIFocusController* aController = nsnull)
+  : mWasSuppressed(PR_FALSE)
+  {
+    Init(aController);
+  }
+
+  ~nsFocusScrollSuppressor()
+  {
+    Init(nsnull);
+  }
+
+  void Init(nsIFocusController* aController)
+  {
+    if (mController) {
+      mController->SetSuppressFocusScroll(mWasSuppressed);
+    }
+
+    mController = aController;
+    if (mController) {
+      mController->GetSuppressFocusScroll(&mWasSuppressed);
+      if (!mWasSuppressed) {
+        mController->SetSuppressFocusScroll(PR_TRUE);
+      }
+    }
+  }
+private:
+  nsCOMPtr<nsIFocusController> mController;
+  PRBool                       mWasSuppressed;
 };
 
 #endif // nsIFocusController_h__

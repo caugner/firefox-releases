@@ -58,6 +58,7 @@
 #include "nsIEnumerator.h"
 #include "nsIContent.h"
 #include "nsIContentIterator.h"
+#include "nsAttrName.h"
 
 
 NS_IMETHODIMP nsHTMLEditor::AddDefaultProperty(nsIAtom *aProperty, 
@@ -451,7 +452,7 @@ nsHTMLEditor::SetInlinePropertyOnNode( nsIDOMNode *aNode,
     }
   }
   
-  // dont need to do anything if property already set on node
+  // don't need to do anything if property already set on node
   PRBool bHasProp;
   nsCOMPtr<nsIDOMNode> styleNode;
   IsTextPropertySetByContent(aNode, aProperty, aAttribute, aValue, bHasProp, getter_AddRefs(styleNode));
@@ -782,25 +783,20 @@ PRBool nsHTMLEditor::IsOnlyAttribute(nsIDOMNode *aNode,
   nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
   if (!content) return PR_FALSE;  // ooops
   
-  PRInt32 nameSpaceID;
-  nsCOMPtr<nsIAtom> attrName, prefix;
-
   PRUint32 i, attrCount = content->GetAttrCount();
-  
-  for (i = 0; i < attrCount; ++i)
-  {
-    content->GetAttrNameAt(i, &nameSpaceID, getter_AddRefs(attrName),
-                           getter_AddRefs(prefix));
-    nsAutoString attrString, tmp;
-    if (!attrName) continue;  // ooops
-    attrName->ToString(attrString);
-    // if it's the attribute we know about, keep looking
-    if (attrString.Equals(*aAttribute,nsCaseInsensitiveStringComparator())) continue;
-    // if it's a special _moz... attribute, keep looking
-    attrString.Left(tmp,4);
-    if (tmp.LowerCaseEqualsLiteral("_moz")) continue;
-    // otherwise, it's another attribute, so return false
-    return PR_FALSE;
+  for (i = 0; i < attrCount; ++i) {
+    nsAutoString attrString;
+    const nsAttrName* name = content->GetAttrNameAt(i);
+    if (!name->NamespaceEquals(kNameSpaceID_None)) {
+      return PR_FALSE;
+    }
+    name->LocalName()->ToString(attrString);
+    // if it's the attribute we know about, or a special _moz attribute,
+    // keep looking
+    if (!attrString.Equals(*aAttribute, nsCaseInsensitiveStringComparator()) &&
+        !StringBeginsWith(attrString, NS_LITERAL_STRING("_moz"))) {
+      return PR_FALSE;
+    }
   }
   // if we made it through all of them without finding a real attribute
   // other than aAttribute, then return PR_TRUE
@@ -1145,7 +1141,7 @@ nsHTMLEditor::GetInlinePropertyBase(nsIAtom *aProperty,
           skipNode = PR_TRUE;
         }
       }
-      else if (content->IsContentOfType(nsIContent::eELEMENT))
+      else if (content->IsNodeOfType(nsINode::eELEMENT))
       { // handle non-text leaf nodes here
         skipNode = PR_TRUE;
       }
@@ -1635,7 +1631,7 @@ nsHTMLEditor::RelativeFontChangeOnTextNode( PRInt32 aSizeChange,
     return NS_ERROR_ILLEGAL_VALUE;
   if (!aTextNode) return NS_ERROR_NULL_POINTER;
   
-  // dont need to do anything if no characters actually selected
+  // don't need to do anything if no characters actually selected
   if (aStartOffset == aEndOffset) return NS_OK;
   
   nsresult res = NS_OK;
@@ -1669,7 +1665,7 @@ nsHTMLEditor::RelativeFontChangeOnTextNode( PRInt32 aSizeChange,
 
   NS_NAMED_LITERAL_STRING(bigSize, "big");
   NS_NAMED_LITERAL_STRING(smallSize, "small");
-  const nsAString& nodeType = (aSizeChange==1) ? NS_STATIC_CAST(const nsAString&, bigSize) : NS_STATIC_CAST(const nsAString&, smallSize);
+  const nsAString& nodeType = (aSizeChange==1) ? static_cast<const nsAString&>(bigSize) : static_cast<const nsAString&>(smallSize);
   // look for siblings that are correct type of node
   nsCOMPtr<nsIDOMNode> sibling;
   GetPriorHTMLSibling(node, address_of(sibling));

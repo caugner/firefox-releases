@@ -35,6 +35,7 @@
  */
 
 #include "cairoint.h"
+#include "cairo-path-fixed-private.h"
 
 typedef struct cairo_filler {
     double tolerance;
@@ -87,37 +88,28 @@ _cairo_filler_fini (cairo_filler_t *filler)
 static cairo_status_t
 _cairo_filler_move_to (void *closure, cairo_point_t *point)
 {
-    cairo_status_t status;
     cairo_filler_t *filler = closure;
     cairo_polygon_t *polygon = &filler->polygon;
 
-    status = _cairo_polygon_close (polygon);
-    if (status)
-	return status;
-      
-    status = _cairo_polygon_move_to (polygon, point);
-    if (status)
-	return status;
+    _cairo_polygon_close (polygon);
+    _cairo_polygon_move_to (polygon, point);
 
     filler->current_point = *point;
 
-    return CAIRO_STATUS_SUCCESS;
+    return _cairo_polygon_status (&filler->polygon);
 }
 
 static cairo_status_t
 _cairo_filler_line_to (void *closure, cairo_point_t *point)
 {
-    cairo_status_t status;
     cairo_filler_t *filler = closure;
     cairo_polygon_t *polygon = &filler->polygon;
 
-    status = _cairo_polygon_line_to (polygon, point);
-    if (status)
-	return status;
+    _cairo_polygon_line_to (polygon, point);
 
     filler->current_point = *point;
 
-    return CAIRO_STATUS_SUCCESS;
+    return _cairo_polygon_status (&filler->polygon);
 }
 
 static cairo_status_t
@@ -137,15 +129,12 @@ _cairo_filler_curve_to (void *closure,
     if (status == CAIRO_INT_STATUS_DEGENERATE)
 	return CAIRO_STATUS_SUCCESS;
 
-    _cairo_spline_decompose (&spline, filler->tolerance);
+    status = _cairo_spline_decompose (&spline, filler->tolerance);
     if (status)
 	goto CLEANUP_SPLINE;
 
-    for (i = 1; i < spline.num_points; i++) {
-	status = _cairo_polygon_line_to (polygon, &spline.points[i]);
-	if (status)
-	    break;
-    }
+    for (i = 1; i < spline.num_points; i++)
+	_cairo_polygon_line_to (polygon, &spline.points[i]);
 
   CLEANUP_SPLINE:
     _cairo_spline_fini (&spline);
@@ -158,16 +147,17 @@ _cairo_filler_curve_to (void *closure,
 static cairo_status_t
 _cairo_filler_close_path (void *closure)
 {
-    cairo_status_t status;
     cairo_filler_t *filler = closure;
     cairo_polygon_t *polygon = &filler->polygon;
 
-    status = _cairo_polygon_close (polygon);
-    if (status)
-	return status;
+    _cairo_polygon_close (polygon);
 
-    return CAIRO_STATUS_SUCCESS;
+    return _cairo_polygon_status (polygon);
 }
+
+static cairo_int_status_t
+_cairo_path_fixed_fill_rectangle (cairo_path_fixed_t	*path,
+				  cairo_traps_t		*traps);
 
 cairo_status_t
 _cairo_path_fixed_fill_to_traps (cairo_path_fixed_t *path,
@@ -177,6 +167,12 @@ _cairo_path_fixed_fill_to_traps (cairo_path_fixed_t *path,
 {
     cairo_status_t status = CAIRO_STATUS_SUCCESS;
     cairo_filler_t filler;
+
+    /* Before we do anything else, we use a special-case filler for
+     * a device-axis aligned rectangle if possible. */
+    status = _cairo_path_fixed_fill_rectangle (path, traps);
+    if (status != CAIRO_INT_STATUS_UNSUPPORTED)
+	return status;
 
     _cairo_filler_init (&filler, tolerance, traps);
 
@@ -190,13 +186,14 @@ _cairo_path_fixed_fill_to_traps (cairo_path_fixed_t *path,
     if (status)
 	goto BAIL;
 
-    status = _cairo_polygon_close (&filler.polygon);
+    _cairo_polygon_close (&filler.polygon);
+    status = _cairo_polygon_status (&filler.polygon);
     if (status)
 	goto BAIL;
 
-    status = _cairo_traps_tessellate_polygon (filler.traps,
-					      &filler.polygon,
-					      fill_rule);
+    status = _cairo_bentley_ottmann_tessellate_polygon (filler.traps,
+							&filler.polygon,
+							fill_rule);
     if (status)
 	goto BAIL;
 
@@ -206,3 +203,21 @@ BAIL:
     return status;
 }
 
+/* This special-case filler supports only a path that describes a
+ * device-axis aligned rectangle. It exists to avoid the overhead of
+ * the general tessellator when drawing very common rectangles.
+ *
+ * If the path described anything but a device-axis aligned rectangle,
+ * this function will return %CAIRO_INT_STATUS_UNSUPPORTED.
+ */
+static cairo_int_status_t
+_cairo_path_fixed_fill_rectangle (cairo_path_fixed_t	*path,
+				  cairo_traps_t		*traps)
+{
+    if (_cairo_path_fixed_is_box (path, NULL)) {
+	return _cairo_traps_tessellate_convex_quad (traps,
+                                                    path->buf_head.base.points);
+    }
+
+    return CAIRO_INT_STATUS_UNSUPPORTED;
+}

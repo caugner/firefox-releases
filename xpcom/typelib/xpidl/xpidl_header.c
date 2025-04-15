@@ -146,7 +146,7 @@ interface(TreeState *state)
     char *classNameImpl = NULL;
     char *cp;
     gboolean ok = TRUE;
-    gboolean keepvtable;
+    gboolean keepvtable, scriptable, deprecated;
     const char *iid;
     const char *name_space;
     struct nsID id;
@@ -233,11 +233,20 @@ interface(TreeState *state)
         if (IDL_NODE_TYPE(data) == IDLN_CODEFRAG)
             keepvtable = TRUE;
     }
-    
+   
+    scriptable = deprecated = FALSE;
+    if (IDL_tree_property_get(IDL_INTERFACE(iface).ident, "scriptable"))
+        scriptable = TRUE;
+    if (IDL_tree_property_get(IDL_INTERFACE(iface).ident, "deprecated"))
+        deprecated = TRUE;
+
     /* The interface declaration itself. */
     fprintf(state->file,
-            "class %s%s",
-            (keepvtable ? "" : "NS_NO_VTABLE "), className);
+            "class %s%s%s%s",
+            (keepvtable ? "" : "NS_NO_VTABLE "),
+            (scriptable ? "NS_SCRIPTABLE " : ""),
+            (deprecated ? "NS_DEPRECATED " : ""),
+            className);
     
     if ((iter = IDL_INTERFACE(iface).inheritance_spec)) {
         fputs(" : ", state->file);
@@ -251,7 +260,7 @@ interface(TreeState *state)
     fputs(" {\n"
           " public: \n\n", state->file);
     if (iid) {
-        fputs("  NS_DEFINE_STATIC_IID_ACCESSOR(", state->file);
+        fputs("  NS_DECLARE_STATIC_IID_ACCESSOR(", state->file);
         write_classname_iid_define(state->file, className);
         fputs(")\n\n", state->file);
     }
@@ -265,6 +274,13 @@ interface(TreeState *state)
 
     fputs("};\n", state->file);
     fputc('\n', state->file);
+
+    if (iid) {
+        fprintf(state->file, "  NS_DEFINE_STATIC_IID_ACCESSOR(%s, ",
+                 className);
+        write_classname_iid_define(state->file, className);
+        fputs(")\n\n", state->file);
+    }
 
     /*
      * #define NS_DECL_NSIFOO - create method prototypes that can be used in
@@ -726,6 +742,7 @@ write_type(IDL_tree type_tree, gboolean is_out, FILE *outfile)
 #define ATTR_IDENT(tree) (IDL_IDENT(IDL_LIST(IDL_ATTR_DCL(tree).simple_declarations).data))
 #define ATTR_TYPE_DECL(tree) (IDL_ATTR_DCL(tree).param_type_spec)
 #define ATTR_TYPE(tree) (IDL_NODE_TYPE(ATTR_TYPE_DECL(tree)))
+#define ATTR_DECLS(tree) (IDL_LIST(IDL_ATTR_DCL(tree).simple_declarations).data)
 
 /*
  *  AS_DECL writes 'NS_IMETHOD foo(string bar, long sil)'
@@ -737,15 +754,30 @@ write_attr_accessor(IDL_tree attr_tree, FILE * outfile,
                     gboolean getter, int mode, const char *className)
 {
     char *attrname = ATTR_IDENT(attr_tree).str;
+    const char *binaryname;
+    IDL_tree ident = IDL_LIST(IDL_ATTR_DCL(attr_tree).simple_declarations).data;
 
     if (mode == AS_DECL) {
+        if (IDL_tree_property_get(ident, "deprecated"))
+            fputs("NS_DEPRECATED ", outfile);
+        if (is_method_scriptable(attr_tree, ident))
+            fputs("NS_SCRIPTABLE ", outfile);
+
         fputs("NS_IMETHOD ", outfile);
     } else if (mode == AS_IMPL) {
         fprintf(outfile, "NS_IMETHODIMP %s::", className);
     }
-    fprintf(outfile, "%cet%c%s(",
-            getter ? 'G' : 'S',
-            toupper(*attrname), attrname + 1);
+    fprintf(outfile, "%cet",
+            getter ? 'G' : 'S');
+    binaryname = IDL_tree_property_get(ATTR_DECLS(attr_tree), "binaryname");
+    if (binaryname) {
+        fprintf(outfile, "%s(",
+                binaryname);
+    } else {
+        fprintf(outfile, "%c%s(",
+                toupper(*attrname),
+                attrname + 1);
+    }
     if (mode == AS_DECL || mode == AS_IMPL) {
         /* Setters for string, wstring, nsid, domstring, utf8string, 
          * cstring and astring get const. 
@@ -1002,9 +1034,15 @@ write_method_signature(IDL_tree method_tree, FILE *outfile, int mode,
     gboolean op_notxpcom =
         (IDL_tree_property_get(op->ident, "notxpcom") != NULL);
     const char *name;
+    const char *binaryname;
     IDL_tree iter;
 
     if (mode == AS_DECL) {
+        if (IDL_tree_property_get(op->ident, "deprecated"))
+            fputs("NS_DEPRECATED ", outfile);
+        if (is_method_scriptable(method_tree, op->ident))
+            fputs("NS_SCRIPTABLE ", outfile);
+
         if (op_notxpcom) {
             fputs("NS_IMETHOD_(", outfile);
             if (!write_type(op->op_type_spec, FALSE, outfile))
@@ -1028,7 +1066,11 @@ write_method_signature(IDL_tree method_tree, FILE *outfile, int mode,
     }
     name = IDL_IDENT(op->ident).str;
     if (mode == AS_IMPL) {
-        fprintf(outfile, "%s::%c%s(", className, toupper(*name), name + 1);
+        fprintf(outfile, "%s::", className);
+    }
+    binaryname = IDL_tree_property_get(op->ident, "binaryname");
+    if (binaryname) {
+        fprintf(outfile, "%s(", binaryname);
     } else {
         fprintf(outfile, "%c%s(", toupper(*name), name + 1);
     }

@@ -3,10 +3,10 @@
 <!ENTITY caption.label         "Element Properties">
 <!ENTITY image-sec.label       "Image Properties">
 <!ENTITY image-url.label       "Location:">
+<!ENTITY image-type.label      "Type:">
 <!ENTITY image-desc.label      "Description:">
 <!ENTITY image-alt.label       "Alternate text:">
-<!ENTITY image-width.label     "Width:">
-<!ENTITY image-height.label    "Height:">
+<!ENTITY image-size.label      "Image Dimensions:">
 <!ENTITY image-filesize.label  "Size of File:">
 <!ENTITY insdel-sec.label      "Insert/Delete Properties">
 <!ENTITY insdel-cite.label     "Info:">
@@ -18,6 +18,7 @@
 <!ENTITY link-lang.label       "Target language:">
 <!ENTITY link-rel.label        "Relation:">
 <!ENTITY link-rev.label        "Reversed relation:">
+<!ENTITY link-ping.label       "Will notify:">
 <!ENTITY misc-sec.label        "Miscellaneous Properties">
 <!ENTITY misc-lang.label       "Text language:">
 <!ENTITY misc-title.label      "Title:">

@@ -49,14 +49,10 @@ class nsIAccessible;
 #define NS_GFX_CHECKBOX_CONTROL_FRAME_LAST_CONTEXT_INDEX   0
 
 class nsGfxCheckboxControlFrame : public nsFormControlFrame,
-                                  public nsICheckboxControlFrame//,
-                                  //public nsIAccessible
+                                  public nsICheckboxControlFrame
 {
 public:
-
-  //NS_DECL_NSIACCESSIBLE
-
-  nsGfxCheckboxControlFrame();
+  nsGfxCheckboxControlFrame(nsStyleContext* aContext);
   virtual ~nsGfxCheckboxControlFrame();
   
 #ifdef DEBUG
@@ -65,11 +61,9 @@ public:
   }
 #endif
 
-  NS_IMETHOD Paint(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext,
-                   const nsRect&        aDirtyRect,
-                   nsFramePaintLayer    aWhichLayer,
-                   PRUint32             aFlags = 0);
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
 
 #ifdef ACCESSIBILITY
   NS_IMETHOD GetAccessible(nsIAccessible** aAccessible);
@@ -84,32 +78,19 @@ public:
   virtual void SetAdditionalStyleContext(PRInt32 aIndex,
                                          nsStyleContext* aStyleContext);
 
-    // nsIFormControlFrame
-  NS_IMETHOD OnContentReset();
-
   NS_IMETHOD QueryInterface(const nsIID& aIID, void** aInstancePtr);
 
-#ifdef DEBUG_rodsXXX
-  NS_IMETHOD Reflow(nsPresContext*          aCX,
-                    nsHTMLReflowMetrics&     aDesiredSize,
-                    const nsHTMLReflowState& aReflowState,
-                    nsReflowStatus&          aStatus);
-#endif
+  void PaintCheckBox(nsIRenderingContext& aRenderingContext,
+                     nsPoint aPt, const nsRect& aDirtyRect);
+
+  void PaintCheckBoxFromStyle(nsIRenderingContext& aRenderingContext,
+                              nsPoint aPt, const nsRect& aDirtyRect);
 
 protected:
 
   PRBool GetCheckboxState();
 
-protected:
-
-  virtual void PaintCheckBox(nsPresContext* aPresContext,
-                             nsIRenderingContext& aRenderingContext,
-                             const nsRect& aDirtyRect,
-                             nsFramePaintLayer aWhichLayer);
-
-  //GFX-rendered state variables
-  PRBool           mInClickEvent;
-  nsStyleContext*  mCheckButtonFaceStyle;
+  nsRefPtr<nsStyleContext> mCheckButtonFaceStyle;
 
 private:
   NS_IMETHOD_(nsrefcnt) AddRef() { return NS_OK; }
@@ -118,3 +99,4 @@ private:
 };
 
 #endif
+

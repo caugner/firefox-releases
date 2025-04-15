@@ -34,7 +34,7 @@
 ! 
 ! ***** END LICENSE BLOCK *****
 
-! $Id: mpv_sparcv8x.s,v 1.2.6.2 2006/02/03 22:31:27 wtchang%redhat.com Exp $
+! $Id: mpv_sparcv8x.s,v 1.2 2005/08/06 11:08:41 nelsonb%netscape.com Exp $
 
 	.file	"mpv_sparcv8x.s"
 	.align	8

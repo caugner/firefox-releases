@@ -39,11 +39,11 @@
 #ifdef IBMBIDI
 
 #include "nsBidiFrames.h"
-#include "nsLayoutAtoms.h"
+#include "nsGkAtoms.h"
 
 
-nsDirectionalFrame::nsDirectionalFrame(PRUnichar aChar)
-  : mChar(aChar)
+nsDirectionalFrame::nsDirectionalFrame(nsStyleContext* aContext, PRUnichar aChar)
+  : nsFrame(aContext), mChar(aChar)
 {
 }
 
@@ -51,68 +51,24 @@ nsDirectionalFrame::~nsDirectionalFrame()
 {
 }
 
-PRUnichar
-nsDirectionalFrame::GetChar(void) const
-{
-  return mChar;
-}
-
-/**
- * Get the "type" of the frame
- *
- * @see nsLayoutAtoms::directionalFrame
- */
 nsIAtom*
 nsDirectionalFrame::GetType() const
 { 
-  return nsLayoutAtoms::directionalFrame; 
+  return nsGkAtoms::directionalFrame;
 }
   
-const nsIID&
-nsDirectionalFrame::GetIID()
-{
-  static nsIID iid = NS_DIRECTIONAL_FRAME_IID;
-  return iid;
-}
-
+#ifdef NS_DEBUG
 NS_IMETHODIMP
-nsDirectionalFrame::QueryInterface(const nsIID& aIID, void** aInstancePtr)
+nsDirectionalFrame::GetFrameName(nsAString& aResult) const
 {
-  nsresult rv = NS_NOINTERFACE;
-
-  if (!aInstancePtr) {
-    rv = NS_ERROR_NULL_POINTER;
-  }
-  else if (aIID.Equals(NS_GET_IID(nsDirectionalFrame) ) ) {
-    *aInstancePtr = (void*) this;
-    rv = NS_OK;
-  }
-  return rv;
+  return MakeFrameName(NS_LITERAL_STRING("Directional"), aResult);
 }
+#endif
 
-void*
-nsDirectionalFrame::operator new(size_t aSize) CPP_THROW_NEW
+nsIFrame*
+NS_NewDirectionalFrame(nsIPresShell* aPresShell, nsStyleContext* aContext, PRUnichar aChar)
 {
-  void* frame = ::operator new(aSize);
-  if (frame) {
-    memset(frame, 0, aSize);
-  }
-  return frame;
-}
-
-nsresult
-NS_NewDirectionalFrame(nsIFrame** aNewFrame, PRUnichar aChar)
-{
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsDirectionalFrame* frame = new nsDirectionalFrame(aChar);
-  *aNewFrame = frame;
-  if (nsnull == frame) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  return NS_OK;
+  return new (aPresShell) nsDirectionalFrame(aContext, aChar);
 }
 
 #endif /* IBMBIDI */

@@ -52,42 +52,40 @@ nsOuterDocAccessible::nsOuterDocAccessible(nsIDOMNode* aNode,
 {
 }
 
-  /* attribute wstring accName; */
-NS_IMETHODIMP nsOuterDocAccessible::GetName(nsAString& aName) 
-{ 
-  nsCOMPtr<nsIAccessibleDocument> accDoc(do_QueryInterface(mFirstChild));
-  if (!accDoc) {
+/* unsigned long getRole (); */
+NS_IMETHODIMP nsOuterDocAccessible::GetRole(PRUint32 *aRole)
+{
+  *aRole = nsIAccessibleRole::ROLE_INTERNAL_FRAME;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsOuterDocAccessible::GetState(PRUint32 *aState, PRUint32 *aExtraState)
+{
+  nsAccessible::GetState(aState, aExtraState);
+  *aState &= ~nsIAccessibleStates::STATE_FOCUSABLE;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsOuterDocAccessible::GetChildAtPoint(PRInt32 aX, PRInt32 aY,
+                                      nsIAccessible **aAccessible)
+{
+  NS_ENSURE_ARG_POINTER(aAccessible);
+  *aAccessible = nsnull;
+  if (!mDOMNode) {
     return NS_ERROR_FAILURE;
   }
-  nsresult rv = accDoc->GetTitle(aName);
-  if (NS_FAILED(rv) || aName.IsEmpty()) {
-    rv = nsAccessible::GetName(aName);
-    if (aName.IsEmpty()) {
-      rv = accDoc->GetURL(aName);
-    }
+  PRInt32 docX, docY, docWidth, docHeight;
+  GetBounds(&docX, &docY, &docWidth, &docHeight);
+  if (aX < docX || aX >= docX + docWidth || aY < docY || aY >= docY + docHeight) {
+    return NS_ERROR_FAILURE;
   }
-  return rv;
+
+  return GetFirstChild(aAccessible);  // Always return the inner doc unless bounds outside of it
 }
 
-/* unsigned long getRole (); */
-NS_IMETHODIMP nsOuterDocAccessible::GetRole(PRUint32 *_retval)
-{
-#ifndef MOZ_ACCESSIBILITY_ATK
-  *_retval = ROLE_CLIENT;
-#else
-  *_retval = ROLE_PANE;
-#endif
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsOuterDocAccessible::GetState(PRUint32 *aState)
-{
-  nsAccessible::GetState(aState);
-  *aState &= ~STATE_FOCUSABLE;
-  return NS_OK;
-}
-
-void nsOuterDocAccessible::CacheChildren(PRBool aWalkAnonContent)
+void nsOuterDocAccessible::CacheChildren()
 {  
   // An outer doc accessible usually has 1 nsDocAccessible child,
   // but could have none if we can't get to the inner documnet
@@ -99,8 +97,8 @@ void nsOuterDocAccessible::CacheChildren(PRBool aWalkAnonContent)
     return;
   }
 
+  InvalidateChildren();
   mAccChildCount = 0;
-  SetFirstChild(nsnull);
 
   // In these variable names, "outer" relates to the nsOuterDocAccessible
   // as opposed to the nsDocAccessibleWrap which is "inner".
@@ -138,3 +136,15 @@ void nsOuterDocAccessible::CacheChildren(PRBool aWalkAnonContent)
   privateInnerAccessible->SetNextSibling(nsnull);
 }
 
+nsresult
+nsOuterDocAccessible::GetAttributesInternal(nsIPersistentProperties *aAttributes)
+{
+  nsAutoString tag;
+  aAttributes->GetStringProperty(NS_LITERAL_CSTRING("tag"), tag);
+  if (!tag.IsEmpty()) {
+    // We're overriding the ARIA attributes on an sub document, but we don't want to
+    // override the other attributes
+    return NS_OK;
+  }
+  return nsAccessible::GetAttributesInternal(aAttributes);
+}

@@ -48,6 +48,47 @@
 #include "nsBidiUtils.h"
 #include "nsCOMPtr.h"
 #include "nsDataHashtable.h"
+#include "nsBlockFrame.h"
+#include "nsTHashtable.h"
+
+/**
+ * A structure representing some continuation state for each frame on the line,
+ * used to determine the first and the last continuation frame for each
+ * continuation chain on the line.
+ */
+struct nsFrameContinuationState : public nsVoidPtrHashKey
+{
+  nsFrameContinuationState(const void *aFrame) : nsVoidPtrHashKey(aFrame) {}
+
+  /**
+   * The first visual frame in the continuation chain containing this frame, or
+   * nsnull if this frame is the first visual frame in the chain.
+   */
+  nsIFrame* mFirstVisualFrame;
+
+  /**
+   * The number of frames in the continuation chain containing this frame, if
+   * this frame is the first visual frame of the chain, or 0 otherwise.
+   */
+  PRUint32 mFrameCount;
+
+  /**
+   * TRUE if this frame is the first visual frame of its continuation chain on
+   * this line and the chain has some frames on the previous lines.
+   */
+  PRPackedBool mHasContOnPrevLines;
+
+  /**
+   * TRUE if this frame is the first visual frame of its continuation chain on
+   * this line and the chain has some frames left for next lines.
+   */
+  PRPackedBool mHasContOnNextLines;
+};
+
+/*
+ * Following type is used to pass needed hashtable to reordering methods
+ */
+typedef nsTHashtable<nsFrameContinuationState> nsContinuationStates;
 
 /**
  * A structure representing a logical position which should be resolved
@@ -76,21 +117,14 @@ public:
    * Make Bidi engine calculate the embedding levels of the frames that are
    * descendants of a given block frame.
    *
-   * @param aPresContext         The presContext
    * @param aBlockFrame          The block frame
-   * @param aFirstChild          The first child frame of aBlockFrame
-   * @param aForceReflow         [OUT] Set if we delete frames and will need to
-   *                                   reflow the block frame
    * @param aIsVisualFormControl [IN]  Set if we are in a form control on a
    *                                   visual page.
-   *                                   @see nsHTMLReflowState::IsBidiFormControl
+   *                                   @see nsBlockFrame::IsVisualFormControl
    *
    *  @lina 06/18/2000
    */
-  nsresult Resolve(nsPresContext* aPresContext,
-                   nsIFrame*       aBlockFrame,
-                   nsIFrame*       aFirstChild,
-                   PRBool&         aForceReflow,
+  nsresult Resolve(nsBlockFrame*   aBlockFrame,
                    PRBool          aIsVisualFormControl);
 
   /**
@@ -99,11 +133,8 @@ public:
    * 
    * @lina 05/02/2000
    */
-  void ReorderFrames(nsPresContext*      aPresContext,
-                     nsIRenderingContext* aRendContext,
-                     nsIFrame*            aFirstChild,
-                     nsIFrame*            aNextInFlow,
-                     PRInt32              aChildCount);
+  void ReorderFrames(nsIFrame*            aFirstFrameOnLine,
+                     PRInt32              aNumFramesOnLine);
 
   /**
    * Format Unicode text, taking into account bidi capabilities
@@ -117,7 +148,8 @@ public:
                              PRInt32&        aTextLength,
                              nsCharType      aCharType,
                              PRBool          aIsOddLevel,
-                             PRBool          aIsBidiSystem);
+                             PRBool          aIsBidiSystem,
+                             PRBool          aIsNewTextRunSystem);
 
   /**
    * Reorder Unicode text, taking into account bidi capabilities of the
@@ -128,7 +160,8 @@ public:
                               PRInt32&        aTextLength,
                               nsCharType      aCharType,
                               PRBool          aIsOddLevel,
-                              PRBool          aIsBidiSystem);
+                              PRBool          aIsBidiSystem,
+                              PRBool          aIsNewTextRunSystem);
 
   /**
    * Return our nsBidi object (bidi reordering engine)
@@ -151,87 +184,220 @@ public:
    * @param[in,out] aPosResolve array of logical positions to resolve into visual positions; can be nsnull if this functionality is not required
    * @param aPosResolveCount number of items in the aPosResolve array
    */
-  nsresult RenderText(const PRUnichar*     aText,
-                      PRInt32              aLength,
-                      nsBidiDirection      aBaseDirection,
-                      nsPresContext*      aPresContext,
-                      nsIRenderingContext& aRenderingContext,
-                      nscoord              aX,
-                      nscoord              aY,
+  nsresult RenderText(const PRUnichar*       aText,
+                      PRInt32                aLength,
+                      nsBidiDirection        aBaseDirection,
+                      nsPresContext*         aPresContext,
+                      nsIRenderingContext&   aRenderingContext,
+                      nscoord                aX,
+                      nscoord                aY,
                       nsBidiPositionResolve* aPosResolve = nsnull,
-                      PRInt32              aPosResolveCount = 0);
+                      PRInt32                aPosResolveCount = 0)
+  {
+    return ProcessText(aText, aLength, aBaseDirection, aPresContext, aRenderingContext,
+                       MODE_DRAW, aX, aY, aPosResolve, aPosResolveCount, nsnull);
+  }
+  
+  nscoord MeasureTextWidth(const PRUnichar*     aText,
+                           PRInt32              aLength,
+                           nsBidiDirection      aBaseDirection,
+                           nsPresContext*       aPresContext,
+                           nsIRenderingContext& aRenderingContext)
+  {
+    nscoord length;
+    nsresult rv = ProcessText(aText, aLength, aBaseDirection, aPresContext, aRenderingContext,
+                              MODE_MEASURE, 0, 0, nsnull, 0, &length);
+    return NS_SUCCEEDED(rv) ? length : 0;
+  }
+
+  /**
+   * Check if a line is reordered, i.e., if the child frames are not
+   * all laid out left-to-right.
+   * @param aFirstFrameOnLine : first frame of the line to be tested
+   * @param aNumFramesOnLine : number of frames on this line
+   * @param[out] aLeftMost : leftmost frame on this line
+   * @param[out] aRightMost : rightmost frame on this line
+   */
+  PRBool CheckLineOrder(nsIFrame*  aFirstFrameOnLine,
+                        PRInt32    aNumFramesOnLine,
+                        nsIFrame** aLeftmost,
+                        nsIFrame** aRightmost);
+
+  /**
+   * Get the frame to the right of the given frame, on the same line.
+   * @param aFrame : We're looking for the frame to the right of this frame.
+   *                 If null, return the leftmost frame on the line.
+   * @param aFirstFrameOnLine : first frame of the line to be tested
+   * @param aNumFramesOnLine : number of frames on this line
+   */
+  nsIFrame* GetFrameToRightOf(const nsIFrame*  aFrame,
+                              nsIFrame*        aFirstFrameOnLine,
+                              PRInt32          aNumFramesOnLine);
+    
+  /**
+   * Get the frame to the left of the given frame, on the same line.
+   * @param aFrame : We're looking for the frame to the left of this frame.
+   *                 If null, return the rightmost frame on the line.
+   * @param aFirstFrameOnLine : first frame of the line to be tested
+   * @param aNumFramesOnLine : number of frames on this line
+   */
+  nsIFrame* GetFrameToLeftOf(const nsIFrame*  aFrame,
+                             nsIFrame*        aFirstFrameOnLine,
+                             PRInt32          aNumFramesOnLine);
+    
+  /**
+   * Get the bidi embedding level of the given (inline) frame.
+   */
+  static nsBidiLevel GetFrameEmbeddingLevel(nsIFrame* aFrame);
+
+  /**
+   * Get the bidi base level of the given (inline) frame.
+   */
+  static nsBidiLevel GetFrameBaseLevel(nsIFrame* aFrame);
 
 private:
+  enum Mode { MODE_DRAW, MODE_MEASURE };
+  nsresult ProcessText(const PRUnichar*       aText,
+                       PRInt32                aLength,
+                       nsBidiDirection        aBaseDirection,
+                       nsPresContext*         aPresContext,
+                       nsIRenderingContext&   aRenderingContext,
+                       Mode                   aMode,
+                       nscoord                aX, // DRAW only
+                       nscoord                aY, // DRAW only
+                       nsBidiPositionResolve* aPosResolve,  /* may be null */
+                       PRInt32                aPosResolveCount,
+                       nscoord*               aWidth /* may be null */);
+
   /**
    *  Create a string containing entire text content of this block.
    *
    *  @lina 05/02/2000
    */
-  void CreateBlockBuffer(nsPresContext* aPresContext);
+  void CreateBlockBuffer();
 
   /**
    * Set up an array of the frames after splitting frames so that each frame has
    * consistent directionality. At this point the frames are still in logical
    * order
    */
-  nsresult InitLogicalArray(nsPresContext* aPresContext,
-                            nsIFrame*       aCurrentFrame,
-                            nsIFrame*       aNextInFlow,
-                            PRBool          aAddMarkers = PR_FALSE);
+  void InitLogicalArray(nsIFrame* aCurrentFrame);
+
+  /**
+   * Initialize the logically-ordered array of frames
+   * using the top-level frames of a single line
+   */
+  void InitLogicalArrayFromLine(nsIFrame* aFirstFrameOnLine,
+                                PRInt32   aNumFramesOnLine);
+
   /**
    * Reorder the frame array from logical to visual order
-   *
-   * @param aPresContext the presentation context
-   * @param aBidiEnabled TRUE on return if the visual order is different from
-   *                      the logical order
+   * 
+   * @param aReordered TRUE on return if the visual order is different from
+   *                   the logical order
+   * @param aHasRTLFrames TRUE on return if at least one of the frames is RTL
+   *                      (and therefore might have reordered descendents)
    */
-  nsresult Reorder(nsPresContext* aPresContext,
-                   PRBool&         aBidiEnabled);
+  nsresult Reorder(PRBool& aReordered, PRBool& aHasRTLFrames);
   
+  /*
+   * Position aFrame and it's descendants to their visual places. Also if aFrame
+   * is not leaf, resize it to embrace it's children.
+   *
+   * @param aFrame               The frame which itself and its children are going
+   *                             to be repositioned
+   * @param aIsOddLevel          TRUE means the embedding level of this frame is odd
+   * @param[in,out] aLeft        IN value is the starting position of aFrame(without
+   *                             considering its left margin)
+   *                             OUT value will be the ending position of aFrame(after
+   *                             adding its right margin)
+   * @param aContinuationStates  A map from nsIFrame* to nsFrameContinuationState
+   */
+  void RepositionFrame(nsIFrame*              aFrame,
+                       PRBool                 aIsOddLevel,
+                       nscoord&               aLeft,
+                       nsContinuationStates*  aContinuationStates) const;
+
+  /*
+   * Initialize the continuation state(nsFrameContinuationState) to
+   * (nsnull, 0) for aFrame and its descendants.
+   *
+   * @param aFrame               The frame which itself and its descendants will
+   *                             be initialized
+   * @param aContinuationStates  A map from nsIFrame* to nsFrameContinuationState
+   */
+  void InitContinuationStates(nsIFrame*              aFrame,
+                              nsContinuationStates*  aContinuationStates) const;
+
+  /*
+   * Determine if aFrame is leftmost or rightmost, and set aIsLeftMost and
+   * aIsRightMost values. Also set continuation states of aContinuationStates.
+   *
+   * A frame is leftmost if it's the first appearance of its continuation chain
+   * on the line and the chain is on its first line if it's LTR or the chain is
+   * on its last line if it's RTL.
+   * A frame is rightmost if it's the last appearance of its continuation chain
+   * on the line and the chain is on its first line if it's RTL or the chain is
+   * on its last line if it's LTR.
+   *
+   * @param aContinuationStates  A map from nsIFrame* to nsFrameContinuationState
+   * @param[out] aIsLeftMost     TRUE means aFrame is leftmost frame or continuation
+   * @param[out] aIsRightMost    TRUE means aFrame is rightmost frame or continuation
+   */
+   void IsLeftOrRightMost(nsIFrame*              aFrame,
+                          nsContinuationStates*  aContinuationStates,
+                          PRBool&                aIsLeftMost /* out */,
+                          PRBool&                aIsRightMost /* out */) const;
+
   /**
    *  Adjust frame positions following their visual order
    *
-   *  @param  <code>nsPresContext*</code>, the first kid
+   *  @param aFirstChild the first kid
    *
    *  @lina 04/11/2000
    */
-  void RepositionInlineFrames(nsPresContext*      aPresContext,
-                              nsIRenderingContext* aRendContext,
-                              nsIFrame*            aFirstChild,
-                              PRInt32              aChildCount) const;
+  void RepositionInlineFrames(nsIFrame* aFirstChild) const;
   
-  void RepositionContainerFrame(nsPresContext* aPresContext,
-                                nsIFrame*       aContainer,
-                                PRInt32&        aMinX,
-                                PRInt32&        aMaxX) const;
   /**
    * Helper method for Resolve()
-   * Truncate a text frame and possibly create a continuation frame with the
-   * remainder of its content.
+   * Truncate a text frame to the end of a single-directional run and possibly
+   * create a continuation frame for the remainder of its content.
    *
-   * @param aPresContext the pres context
-   * @param aContent     the content of the frame
    * @param aFrame       the original frame
    * @param aNewFrame    [OUT] the new frame that was created
    * @param aFrameIndex  [IN/OUT] index of aFrame in mLogicalFrames
+   * @param aStart       [IN] the start of the content mapped by aFrame (and 
+   *                          any fluid continuations)
+   * @param aEnd         [IN] the offset of the end of the single-directional
+   *                          text run.
+   * @param aLineNeedsUpdate [OUT] set to true if we're re-using a frame (which
+   *                               might be on another line).
    *
    * If there is already a bidi continuation for this frame in mLogicalFrames,
    * no new frame will be created. On exit aNewFrame will point to the existing
    * bidi continuation and aFrameIndex will contain its index.
+   *
+   * If aFrame has fluid continuations (which can happen when re-resolving
+   * after line breaking) all the frames in the continuation chain except for
+   * the last one will be set to zero length and the last one will be truncated
+   * at aEnd.
+   *
+   * aFrame must always be a first-in-flow.
+   *
    * @see Resolve()
    * @see RemoveBidiContinuation()
    */
-  PRBool EnsureBidiContinuation(nsPresContext* aPresContext,
-                                nsIContent*     aContent,
-                                nsIFrame*       aFrame,
+  PRBool EnsureBidiContinuation(nsIFrame*       aFrame,
                                 nsIFrame**      aNewFrame,
-                                PRInt32&        aFrameIndex);
+                                PRInt32&        aFrameIndex,
+                                PRInt32         aStart,
+                                PRInt32         aEnd,
+                                PRBool&         aLineNeedsUpdate);
 
   /**
    * Helper method for Resolve()
-   * Delete one or more bidi continuation frames created in a previous reflow by
-   * EnsureBidiContinuation().
-   * @param aPresContext the pres context
+   * Convert one or more bidi continuation frames created in a previous reflow by
+   * EnsureBidiContinuation() into fluid continuations.
    * @param aFrame       the frame whose continuations are to be removed
    * @param aFirstIndex  index of aFrame in mLogicalFrames
    * @param aLastIndex   index of the last frame to be removed
@@ -244,8 +410,7 @@ private:
    * @see Resolve()
    * @see EnsureBidiContinuation()
    */
-  void RemoveBidiContinuation(nsPresContext* aPresContext,
-                              nsIFrame*       aFrame,
+  void RemoveBidiContinuation(nsIFrame*       aFrame,
                               PRInt32         aFirstIndex,
                               PRInt32         aLastIndex,
                               PRInt32&        aOffset) const;

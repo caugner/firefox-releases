@@ -36,14 +36,14 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsString.h"
+#include "nsHTMLFormatConverter.h"
+
 #include "nsCRT.h"
 #include "nsISupportsArray.h"
 #include "nsIComponentManager.h"
 #include "nsCOMPtr.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
-#include "nsXPIDLString.h"
 
 #include "nsITransferable.h" // for mime defs, this is BAD
 
@@ -52,39 +52,21 @@
 #include "nsIDTD.h"
 #include "nsParserCIID.h"
 #include "nsIContentSink.h"
-
-#include "nsString.h"
-#include "nsWidgetsCID.h"
-#include "nsHTMLFormatConverter.h"
 #include "nsPrimitiveHelpers.h"
 #include "nsIDocumentEncoder.h"
 #include "nsIHTMLToTextSink.h"
 
 static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
 
-NS_IMPL_ADDREF(nsHTMLFormatConverter)
-NS_IMPL_RELEASE(nsHTMLFormatConverter)
-NS_IMPL_QUERY_INTERFACE1(nsHTMLFormatConverter, nsIFormatConverter)
-
-
-//-------------------------------------------------------------------------
-//
-// HTMLFormatConverter constructor
-//
-//-------------------------------------------------------------------------
 nsHTMLFormatConverter::nsHTMLFormatConverter()
 {
 }
 
-//-------------------------------------------------------------------------
-//
-// HTMLFormatConverter destructor
-//
-//-------------------------------------------------------------------------
 nsHTMLFormatConverter::~nsHTMLFormatConverter()
 {
 }
 
+NS_IMPL_ISUPPORTS1(nsHTMLFormatConverter, nsIFormatConverter)
 
 //
 // GetInputDataFlavors
@@ -212,7 +194,7 @@ nsHTMLFormatConverter::CanConvert(const char *aFromDataFlavor, const char *aToDa
 // Convert
 //
 // Convert data from one flavor to another. The data is wrapped in primitive objects so that it is
-// accessable from JS. Currently, this only accepts HTML input, so anything else is invalid.
+// accessible from JS. Currently, this only accepts HTML input, so anything else is invalid.
 //
 //XXX This method copies the data WAAAAY too many time for my liking. Grrrrrr. Mostly it's because
 //XXX we _must_ put things into nsStrings so that the parser will accept it. Lame lame lame lame. We
@@ -313,16 +295,12 @@ nsHTMLFormatConverter::ConvertFromHTMLToUnicode(const nsAutoString & aFromStr, n
 
   parser->SetContentSink(sink);
 
-  parser->Parse(aFromStr, 0, NS_LITERAL_CSTRING("text/html"), PR_FALSE, PR_TRUE, eDTDMode_fragment);
+  parser->Parse(aFromStr, 0, NS_LITERAL_CSTRING("text/html"), PR_TRUE, eDTDMode_fragment);
   
   return NS_OK;
 } // ConvertFromHTMLToUnicode
 
 
-/**
-  * 
-  *
-  */
 NS_IMETHODIMP
 nsHTMLFormatConverter::ConvertFromHTMLToAOLMail(const nsAutoString & aFromStr,
                                                 nsAutoString & aToStr)

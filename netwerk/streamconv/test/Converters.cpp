@@ -1,13 +1,18 @@
 #include "Converters.h"
 #include "nsIStringStream.h"
 #include "nsCOMPtr.h"
-#include "nsReadableUtils.h"
+#include "nsComponentManagerUtils.h"
+
+#include <stdio.h>
 
 //////////////////////////////////////////////////
 // TestConverter
 //////////////////////////////////////////////////
 
-NS_IMPL_ISUPPORTS2(TestConverter, nsIStreamConverter, nsIStreamListener)
+NS_IMPL_ISUPPORTS3(TestConverter,
+                   nsIStreamConverter,
+                   nsIStreamListener,
+                   nsIRequestObserver)
 
 TestConverter::TestConverter() {
 }
@@ -44,7 +49,15 @@ TestConverter::Convert(nsIInputStream *aFromStream,
 
     buf[read] = '\0';
 
-    return NS_NewCStringInputStream(_retval, nsDependentCString(buf));
+    nsCOMPtr<nsIStringInputStream> str
+      (do_CreateInstance("@mozilla.org/io/string-input-stream;1", &rv));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = str->SetData(buf, read);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    NS_ADDREF(*_retval = str);
+    return NS_OK;
 }
 
 /* This method initializes any internal state before the stream converter

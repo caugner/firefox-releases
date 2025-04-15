@@ -36,6 +36,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* base class for DOM objects for element.style and cssStyleRule.style */
+
 #include "nsDOMCSSDeclaration.h"
 #include "nsIDOMCSSRule.h"
 #include "nsICSSParser.h"
@@ -46,6 +48,7 @@
 #include "nsCOMPtr.h"
 #include "nsIURL.h"
 #include "nsReadableUtils.h"
+#include "nsIPrincipal.h"
 
 #include "nsContentUtils.h"
 
@@ -251,9 +254,11 @@ nsDOMCSSDeclaration::ParsePropertyValue(const nsCSSProperty aPropID,
   nsCOMPtr<nsICSSLoader> cssLoader;
   nsCOMPtr<nsICSSParser> cssParser;
   nsCOMPtr<nsIURI> baseURI, sheetURI;
+  nsCOMPtr<nsIPrincipal> sheetPrincipal;
   
   result = GetCSSParsingEnvironment(getter_AddRefs(sheetURI),
                                     getter_AddRefs(baseURI),
+                                    getter_AddRefs(sheetPrincipal),
                                     getter_AddRefs(cssLoader),
                                     getter_AddRefs(cssParser));
   if (NS_FAILED(result)) {
@@ -262,7 +267,7 @@ nsDOMCSSDeclaration::ParsePropertyValue(const nsCSSProperty aPropID,
 
   PRBool changed;
   result = cssParser->ParseProperty(aPropID, aPropValue, sheetURI, baseURI,
-                                    decl, &changed);
+                                    sheetPrincipal, decl, &changed);
   if (NS_SUCCEEDED(result) && changed) {
     result = DeclarationChanged();
   }
@@ -288,9 +293,11 @@ nsDOMCSSDeclaration::ParseDeclaration(const nsAString& aDecl,
   nsCOMPtr<nsICSSLoader> cssLoader;
   nsCOMPtr<nsICSSParser> cssParser;
   nsCOMPtr<nsIURI> baseURI, sheetURI;
+  nsCOMPtr<nsIPrincipal> sheetPrincipal;
 
   result = GetCSSParsingEnvironment(getter_AddRefs(sheetURI),
                                     getter_AddRefs(baseURI),
+                                    getter_AddRefs(sheetPrincipal),
                                     getter_AddRefs(cssLoader),
                                     getter_AddRefs(cssParser));
 
@@ -299,7 +306,8 @@ nsDOMCSSDeclaration::ParseDeclaration(const nsAString& aDecl,
   }
 
   PRBool changed;
-  result = cssParser->ParseAndAppendDeclaration(aDecl, sheetURI, baseURI, decl,
+  result = cssParser->ParseAndAppendDeclaration(aDecl, sheetURI, baseURI,
+                                                sheetPrincipal, decl,
                                                 aParseOnlyOneDecl,
                                                 &changed,
                                                 aClearOldDecl);

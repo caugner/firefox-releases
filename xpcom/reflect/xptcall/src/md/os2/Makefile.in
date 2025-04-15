@@ -37,25 +37,25 @@
 
 DEPTH		= ../../../../../..
 topsrcdir		= @top_srcdir@
-srcdir		= @srcdir@
+srcdir			= @srcdir@
 VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
 MODULE		= xpcom
 LIBRARY_NAME	= xptcmd
+MOZILLA_INTERNAL_API = 1
 
-ifdef GNU_CXX
 CPPSRCS		= \
 		../unix/xptcinvoke_gcc_x86_unix.cpp \
-		../unix/xptcstubs_gcc_x86_unix.cpp \
+		xptcstubs_gcc_x86_os2.cpp \
 		$(NULL)
-LOCAL_INCLUDES	= -I$(srcdir)/../unix
+REQUIRES = string
+LOCAL_INCLUDES = \
+		-I$(srcdir)/../unix \
+		-I$(srcdir)/../../../../xptinfo/src \
+		$(NULL)
 DEFINES		+= -DMOZ_NEED_LEADING_UNDERSCORE
-else
-CPPSRCS		= xptcstubs_os2.cpp
-ASFILES		= xptcinvoke_vacpp.asm xptcstubs_vacpp.asm
-endif
 
 # Force use of PIC
 FORCE_USE_PIC	= 1
@@ -69,4 +69,7 @@ include $(topsrcdir)/config/rules.mk
 
 DEFINES		+= -DEXPORT_XPTC_API
 
-INCLUDES	+= -I$(srcdir)/../..
+LOCAL_INCLUDES	+= -I$(srcdir)/../..
+
+libs:: $(LIBRARY)
+	$(INSTALL) $(LIBRARY) ../..

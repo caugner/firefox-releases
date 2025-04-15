@@ -191,12 +191,11 @@ protected:
 
   nsresult CreateMozBR(nsIDOMNode *inParent, PRInt32 inOffset, nsCOMPtr<nsIDOMNode> *outBRNode);
 
-  nsresult CheckBidiLevelForDeletion(nsIDOMNode           *aSelNode, 
+  nsresult CheckBidiLevelForDeletion(nsISelection         *aSelection,
+                                     nsIDOMNode           *aSelNode, 
                                      PRInt32               aSelOffset, 
                                      nsIEditor::EDirection aAction,
                                      PRBool               *aCancel);
-
-  nsIDOMNode *GetBody();
 
   // data members
   nsPlaintextEditor   *mEditor;        // note that we do not refcount the editor
@@ -204,13 +203,16 @@ protected:
   nsString             mPasswordIMEText;  // a buffer we use to track the IME composition string
   PRUint32             mPasswordIMEIndex;
   nsCOMPtr<nsIDOMNode> mBogusNode;     // magic node acts as placeholder in empty doc
-  nsCOMPtr<nsIDOMNode> mBody;          // cached root node
   nsCOMPtr<nsIDOMNode> mCachedSelectionNode;    // cached selected node
   PRInt32              mCachedSelectionOffset;  // cached selected offset
   PRUint32             mFlags;
   PRUint32             mActionNesting;
   PRPackedBool         mLockRulesSniffing;
   PRPackedBool         mDidExplicitlySetInterline;
+  PRPackedBool         mDeleteBidiImmediately; // in bidirectional text, delete
+                                               // characters not visually 
+                                               // adjacent to the caret without
+                                               // moving the caret first.
   PRInt32              mTheAction;     // the top level editor action
   // friends
   friend class nsAutoLockRulesSniffing;
@@ -236,9 +238,9 @@ class nsTextRulesInfo : public nsRulesInfo
     alignType(0),
     blockType(0),
     insertElement(0)
-    {};
+    {}
 
-  virtual ~nsTextRulesInfo() {};
+  virtual ~nsTextRulesInfo() {}
   
   // kInsertText
   const nsAString *inString;

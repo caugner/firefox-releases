@@ -131,7 +131,7 @@ ER3(SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE,	(SEC_ERROR_BASE + 30),
 "The certificate issuer's certificate has expired.  Check your system date and time.")
 
 ER3(SEC_ERROR_CRL_EXPIRED,			(SEC_ERROR_BASE + 31),
-"The CRL for the certificate's issuer has expired.  Update it or check your system data and time.")
+"The CRL for the certificate's issuer has expired.  Update it or check your system date and time.")
 
 ER3(SEC_ERROR_CRL_BAD_SIGNATURE,		(SEC_ERROR_BASE + 32),
 "The CRL for the certificate's issuer has an invalid signature.")
@@ -476,7 +476,7 @@ ER3(SEC_ERROR_UNSUPPORTED_EC_POINT_FORM,	(SEC_ERROR_BASE + 142),
 "Unsupported elliptic curve point form.")
 
 ER3(SEC_ERROR_UNRECOGNIZED_OID,			(SEC_ERROR_BASE + 143),
-"Unrecognized Object IDentifier.")
+"Unrecognized Object Identifier.")
 
 ER3(SEC_ERROR_OCSP_INVALID_SIGNING_CERT,	(SEC_ERROR_BASE + 144),
 "Invalid OCSP signing certificate in OCSP response.")
@@ -514,3 +514,35 @@ ER3(SEC_ERROR_NOT_INITIALIZED,      		(SEC_ERROR_BASE + 154),
 ER3(SEC_ERROR_TOKEN_NOT_LOGGED_IN,  		(SEC_ERROR_BASE + 155),
 "The operation failed because the PKCS#11 token is not logged in.")
 
+ER3(SEC_ERROR_OCSP_RESPONDER_CERT_INVALID,  	(SEC_ERROR_BASE + 156),
+"Configured OCSP responder's certificate is invalid.")
+
+ER3(SEC_ERROR_OCSP_BAD_SIGNATURE,      		(SEC_ERROR_BASE + 157),
+"OCSP response has an invalid signature.")
+
+ER3(SEC_ERROR_OUT_OF_SEARCH_LIMITS,      		(SEC_ERROR_BASE + 158),
+"Cert validation search is out of search limits")
+
+ER3(SEC_ERROR_INVALID_POLICY_MAPPING,      		(SEC_ERROR_BASE + 159),
+"Policy mapping contains anypolicy")
+
+ER3(SEC_ERROR_POLICY_VALIDATION_FAILED,    		(SEC_ERROR_BASE + 160),
+"Cert chain fails policy validation")
+
+ER3(SEC_ERROR_UNKNOWN_AIA_LOCATION_TYPE,    		(SEC_ERROR_BASE + 161),
+"Unknown location type in cert AIA extension")
+
+ER3(SEC_ERROR_BAD_HTTP_RESPONSE,    		(SEC_ERROR_BASE + 162),
+"Server returned bad HTTP response")
+
+ER3(SEC_ERROR_BAD_LDAP_RESPONSE,    		(SEC_ERROR_BASE + 163),
+"Server returned bad LDAP response")
+
+ER3(SEC_ERROR_FAILED_TO_ENCODE_DATA,    		(SEC_ERROR_BASE + 164),
+"Failed to encode data with ASN1 encoder")
+
+ER3(SEC_ERROR_BAD_INFO_ACCESS_LOCATION,    		(SEC_ERROR_BASE + 165),
+"Bad information access location in cert extension")
+
+ER3(SEC_ERROR_LIBPKIX_INTERNAL,      		(SEC_ERROR_BASE + 166),
+"Libpkix internal error occured during cert validation.")

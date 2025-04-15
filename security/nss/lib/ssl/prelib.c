@@ -39,7 +39,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: prelib.c,v 1.6.14.1 2006/02/03 22:31:45 wtchang%redhat.com Exp $ */
+/* $Id: prelib.c,v 1.7 2005/08/16 03:42:26 nelsonb%netscape.com Exp $ */
 
 #include "cert.h"
 #include "ssl.h"

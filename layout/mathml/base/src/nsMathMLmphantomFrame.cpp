@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -40,7 +41,6 @@
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
 #include "nsPresContext.h"
-#include "nsUnitConversion.h"
 #include "nsStyleConsts.h"
 #include "nsIRenderingContext.h"
 #include "nsIFontMetrics.h"
@@ -51,23 +51,10 @@
 // <mphantom> -- make content invisible but preserve its size
 //
 
-nsresult
-NS_NewMathMLmphantomFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
+nsIFrame*
+NS_NewMathMLmphantomFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsMathMLmphantomFrame* it = new (aPresShell) nsMathMLmphantomFrame;
-  if (nsnull == it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  *aNewFrame = it;
-  return NS_OK;
-}
-
-nsMathMLmphantomFrame::nsMathMLmphantomFrame()
-{
+  return new (aPresShell) nsMathMLmphantomFrame(aContext);
 }
 
 nsMathMLmphantomFrame::~nsMathMLmphantomFrame()
@@ -82,16 +69,5 @@ nsMathMLmphantomFrame::InheritAutomaticData(nsIFrame* aParent)
 
   mPresentationData.flags |= NS_MATHML_STRETCH_ALL_CHILDREN_VERTICALLY;
 
-  return NS_OK;
-}
-
-NS_METHOD
-nsMathMLmphantomFrame::Paint(nsPresContext*      aPresContext,
-                             nsIRenderingContext& aRenderingContext,
-                             const nsRect&        aDirtyRect,
-                             nsFramePaintLayer    aWhichLayer,
-                             PRUint32             aFlags)
-{
-  // do nothing, this is not a bug.
   return NS_OK;
 }

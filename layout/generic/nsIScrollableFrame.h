@@ -35,6 +35,11 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * interface for rendering objects that wrap rendering objects that should
+ * be scrollable
+ */
+
 #ifndef nsIScrollFrame_h___
 #define nsIScrollFrame_h___
 
@@ -55,7 +60,7 @@ class nsBoxLayoutState;
 class nsIScrollableFrame : public nsIScrollableViewProvider {
 public:
 
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ISCROLLABLE_FRAME_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ISCROLLABLE_FRAME_IID)
 
   /**
    * Get the frame that we are scrolling within the scrollable frame.
@@ -80,7 +85,9 @@ public:
    * be visible due to overflowing content, are.
    */
   virtual nsMargin GetDesiredScrollbarSizes(nsBoxLayoutState* aState) = 0;
-
+  virtual nsMargin GetDesiredScrollbarSizes(nsPresContext* aPresContext,
+                                            nsIRenderingContext* aRC) = 0;
+  
   /**
    * Get the position of the scrolled view.
    */
@@ -118,5 +125,7 @@ public:
    */
   virtual void ScrollToRestoredPosition() = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIScrollableFrame, NS_ISCROLLABLE_FRAME_IID)
 
 #endif

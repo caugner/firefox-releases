@@ -37,15 +37,16 @@
 
 #include "nsXPCOM.h"
 #include "nsIComponentManager.h"
+#include "nsComponentManagerUtils.h"
 #include "nsParserCIID.h"
 #include "nsIParser.h"
 #include "nsILoggingSink.h"
 #include "nsIInputStream.h"
+#include "nsCOMPtr.h"
 
 // Class IID's
 static NS_DEFINE_CID(kParserCID, NS_PARSER_CID);
 static NS_DEFINE_CID(kLoggingSinkCID, NS_LOGGING_SINK_CID);
-static NS_DEFINE_CID(kNavDTDCID, NS_CNAVDTD_CID);
 
 //----------------------------------------------------------------------
 
@@ -67,20 +68,15 @@ nsresult ParseData(char* anInputStream,char* anOutputStream) {
     printf("\nUnable to create a sink\n");
     return result;
   }
-  // Create a dtd
-  nsCOMPtr<nsIDTD> dtd(do_CreateInstance(kNavDTDCID, &result));
-  if(NS_FAILED(result)) {
-    printf("Unable to create a dtd\n");
-    return result;
-  }
-     
-  PRFileDesc* in = PR_Open(anInputStream, PR_RDONLY, 777);
+
+  PRFileDesc* in = PR_Open(anInputStream, PR_RDONLY, 0777);
   if (!in) {
     printf("\nUnable to open input file - %s\n", anInputStream);
     return result;
   }
   
-  PRFileDesc* out = PR_Open(anOutputStream, PR_CREATE_FILE|PR_WRONLY, 777);
+  PRFileDesc* out = PR_Open(anOutputStream,
+                            PR_CREATE_FILE|PR_TRUNCATE|PR_RDWR, 0777);
   if (!out) {
     printf("\nUnable to open output file - %s\n", anOutputStream);
     return result;
@@ -93,7 +89,7 @@ nsresult ParseData(char* anInputStream,char* anOutputStream) {
   while(!done) {
     length = PR_Read(in, buffer, sizeof(buffer));
     if (length != 0) {
-      stream.AppendWithConversion(buffer, length);
+      stream.Append(NS_ConvertUTF8toUTF16(buffer, length));
     }
     else {
       done=PR_TRUE;
@@ -101,9 +97,8 @@ nsresult ParseData(char* anInputStream,char* anOutputStream) {
   }
 
   sink->SetOutputStream(out);
-  parser->RegisterDTD(dtd);
-	parser->SetContentSink(sink);
-  result = parser->Parse(stream, 0, NS_LITERAL_CSTRING("text/html"), PR_FALSE, PR_TRUE);
+  parser->SetContentSink(sink);
+  result = parser->Parse(stream, 0, NS_LITERAL_CSTRING("text/html"), PR_TRUE);
   
   PR_Close(in);
   PR_Close(out);
@@ -117,7 +112,7 @@ nsresult ParseData(char* anInputStream,char* anOutputStream) {
 int main(int argc, char** argv)
 {
   if (argc < 3) {
-		printf("\nUsage: <inputfile> <outputfile>\n"); 
+    printf("\nUsage: <inputfile> <outputfile>\n"); 
     return -1;
   }
 

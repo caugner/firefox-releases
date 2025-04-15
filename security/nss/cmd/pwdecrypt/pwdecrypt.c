@@ -37,7 +37,7 @@
 /*
  * Test program for SDR (Secret Decoder Ring) functions.
  *
- * $Id: pwdecrypt.c,v 1.3.18.1 2006/02/03 22:29:22 wtchang%redhat.com Exp $
+ * $Id: pwdecrypt.c,v 1.4 2005/11/15 23:40:18 nelsonb%netscape.com Exp $
  */
 
 #include "nspr.h"

@@ -36,7 +36,7 @@
  * ***** END LICENSE BLOCK ***** */
 #include "nsIDOMHTMLFrameElement.h"
 #include "nsGenericHTMLElement.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsIPresShell.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
@@ -54,7 +54,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLFrameElement::)
+  NS_FORWARD_NSIDOMNODE(nsGenericHTMLFrameElement::)
 
   // nsIDOMElement
   NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLFrameElement::)
@@ -66,11 +66,13 @@ public:
   NS_DECL_NSIDOMHTMLFRAMEELEMENT
 
   // nsIContent
-  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
+  virtual PRBool ParseAttribute(PRInt32 aNamespaceID,
+                                nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult);
   NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
   nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 };
 
 
@@ -92,14 +94,13 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLFrameElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLFrameElement
-NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLFrameElement,
-                                    nsGenericHTMLFrameElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLFrameElement)
-  NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLFrameElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLFrameElement,
+                                     nsGenericHTMLFrameElement)
+  NS_INTERFACE_TABLE_INHERITED1(nsHTMLFrameElement, nsIDOMHTMLFrameElement)
+NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLFrameElement)
 
 
-NS_IMPL_DOM_CLONENODE(nsHTMLFrameElement)
+NS_IMPL_ELEMENT_CLONE(nsHTMLFrameElement)
 
 
 NS_IMPL_STRING_ATTR(nsHTMLFrameElement, FrameBorder, frameborder)
@@ -119,27 +120,31 @@ nsHTMLFrameElement::GetContentDocument(nsIDOMDocument** aContentDocument)
 }
 
 PRBool
-nsHTMLFrameElement::ParseAttribute(nsIAtom* aAttribute,
+nsHTMLFrameElement::ParseAttribute(PRInt32 aNamespaceID,
+                                   nsIAtom* aAttribute,
                                    const nsAString& aValue,
                                    nsAttrValue& aResult)
 {
-  if (aAttribute == nsHTMLAtoms::bordercolor) {
-    return aResult.ParseColor(aValue, nsGenericHTMLFrameElement::GetOwnerDoc());
-  }
-  if (aAttribute == nsHTMLAtoms::frameborder) {
-    return ParseFrameborderValue(aValue, aResult);
-  }
-  if (aAttribute == nsHTMLAtoms::marginwidth) {
-    return aResult.ParseSpecialIntValue(aValue, PR_TRUE, PR_FALSE);
-  }
-  if (aAttribute == nsHTMLAtoms::marginheight) {
-    return aResult.ParseSpecialIntValue(aValue, PR_TRUE, PR_FALSE);
-  }
-  if (aAttribute == nsHTMLAtoms::scrolling) {
-    return ParseScrollingValue(aValue, aResult);
+  if (aNamespaceID == kNameSpaceID_None) {
+    if (aAttribute == nsGkAtoms::bordercolor) {
+      return aResult.ParseColor(aValue, GetOwnerDoc());
+    }
+    if (aAttribute == nsGkAtoms::frameborder) {
+      return ParseFrameborderValue(aValue, aResult);
+    }
+    if (aAttribute == nsGkAtoms::marginwidth) {
+      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+    }
+    if (aAttribute == nsGkAtoms::marginheight) {
+      return aResult.ParseSpecialIntValue(aValue, PR_TRUE);
+    }
+    if (aAttribute == nsGkAtoms::scrolling) {
+      return ParseScrollingValue(aValue, aResult);
+    }
   }
 
-  return nsGenericHTMLFrameElement::ParseAttribute(aAttribute, aValue, aResult);
+  return nsGenericHTMLFrameElement::ParseAttribute(aNamespaceID, aAttribute,
+                                                   aValue, aResult);
 }
 
 static void

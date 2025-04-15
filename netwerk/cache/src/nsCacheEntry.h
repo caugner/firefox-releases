@@ -43,6 +43,7 @@
 
 #include "nsICache.h"
 #include "nsICacheEntryDescriptor.h"
+#include "nsIThread.h"
 #include "nsCacheMetaData.h"
 
 #include "nspr.h"
@@ -103,15 +104,13 @@ public:
      * Data accessors
      */
     nsISupports *Data()                           { return mData; }
-    void         SetData( nsISupports *  data)    { mData = data; }
+    void         SetData( nsISupports * data);
 
     PRUint32 DataSize()                           { return mDataSize; }
     void     SetDataSize( PRUint32  size)         { mDataSize = size; }
 
     void     TouchData();
     
-    void     SetThread(PRThread *aThread)         { mThread = aThread; }
-
     /**
      * Meta data accessors
      */
@@ -129,7 +128,7 @@ public:
     /**
      * Security Info accessors
      */
-    nsresult GetSecurityInfo( nsISupports ** result);
+    nsISupports* SecurityInfo() { return mSecurityInfo; }
     void     SetSecurityInfo( nsISupports *  info) { mSecurityInfo = info; }
 
 
@@ -193,6 +192,11 @@ public:
             (StoragePolicy() == nsICache::STORE_ON_DISK_AS_FILE);
     }
 
+    PRBool IsAllowedOffline()
+    {
+        return (StoragePolicy() == nsICache::STORE_OFFLINE);
+    }
+
     nsCacheStoragePolicy  StoragePolicy()
     {
         return (nsCacheStoragePolicy)(mFlags & eStoragePolicyMask);
@@ -240,8 +244,8 @@ private:
     PRUint32                mDataSize;       // 4
     nsCacheDevice *         mCacheDevice;    // 4
     nsCOMPtr<nsISupports>   mSecurityInfo;   // 
-    nsCOMPtr<nsISupports>   mData;           // 
-    PRThread *              mThread;
+    nsISupports *           mData;           // strong ref
+    nsCOMPtr<nsIThread>     mThread;
     nsCacheMetaData         mMetaData;       // 4
     PRCList                 mRequestQ;       // 8
     PRCList                 mDescriptorQ;    // 8
@@ -291,20 +295,10 @@ public:
     nsresult      AddEntry( nsCacheEntry *entry);
     void          RemoveEntry( nsCacheEntry *entry);
     
-    // XXX enumerate entries?
-    class Visitor {
-    public:
-        virtual PRBool VisitEntry( nsCacheEntry *entry) = 0;
-    };
-    
-    void          VisitEntries( Visitor *visitor);
-    
+    void          VisitEntries( PLDHashEnumerator etor, void *arg);
+
 private:
-    friend class nsCacheService; // XXX redefine interface so this isn't necessary
-
     // PLDHashTable operation callbacks
-    static const void *   PR_CALLBACK GetKey( PLDHashTable *table, PLDHashEntryHdr *entry);
-
     static PLDHashNumber  PR_CALLBACK HashKey( PLDHashTable *table, const void *key);
 
     static PRBool         PR_CALLBACK MatchEntry( PLDHashTable *           table,
@@ -337,4 +331,3 @@ private:
 };
 
 #endif // _nsCacheEntry_h_
-

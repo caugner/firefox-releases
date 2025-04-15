@@ -59,7 +59,6 @@ REQUIRES	= xpcom \
 		  dom \
 		  widget \
 		  gfx \
-		  layout \
 		  content \
 		  necko \
 		  uriloader \
@@ -78,7 +77,7 @@ CPPSRCS		= \
 		$(NULL)
 
 SHARED_LIBRARY_LIBS= \
-		$(DIST)/lib/$(LIB_PREFIX)nsWebBrowser_s.$(LIB_SUFFIX) \
+		../webBrowser/$(LIB_PREFIX)nsWebBrowser_s.$(LIB_SUFFIX) \
 		$(NULL)
 
 EXTRA_DSO_LDOPTS= \

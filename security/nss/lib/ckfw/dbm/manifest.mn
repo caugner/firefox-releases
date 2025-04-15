@@ -34,7 +34,7 @@
 # the terms of any one of the MPL, the GPL or the LGPL.
 #
 # ***** END LICENSE BLOCK *****
-MANIFEST_CVS_ID = "@(#) $RCSfile: manifest.mn,v $ $Revision: 1.3.18.1 $ $Date: 2006/02/03 14:41:19 $"
+MANIFEST_CVS_ID = "@(#) $RCSfile: manifest.mn,v $ $Revision: 1.4 $ $Date: 2006/03/02 22:48:54 $"
 
 CORE_DEPTH = ../../../..
 

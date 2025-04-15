@@ -37,7 +37,6 @@
  
 /**
  * MODULE NOTES:
- * @update  gess 4/1/98
  * 
  *  This class does two primary jobs:
  *    1) It iterates the tokens provided during the 
@@ -84,12 +83,15 @@
 #include "nsHTMLTags.h"
 #include "nsDTDUtils.h"
 #include "nsTimer.h"
-#include "nsIEventQueue.h"
+#include "nsThreadUtils.h"
 #include "nsIContentSink.h"
 #include "nsIParserFilter.h"
 #include "nsCOMArray.h"
 #include "nsIUnicharStreamListener.h"
+#include "nsCycleCollectionParticipant.h"
 
+class nsICharsetConverterManager;
+class nsICharsetAlias;
 class nsIDTD;
 class nsScanner;
 class nsIProgressEventSink;
@@ -115,15 +117,14 @@ class nsParser : public nsIParser,
      */
     static void Shutdown();
 
-    NS_DECL_ISUPPORTS
-
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsParser, nsIParser)
 
     /**
      * default constructor
      * @update	gess5/11/98
      */
     nsParser();
-
 
     /**
      * Destructor
@@ -179,8 +180,6 @@ class nsParser : public nsIParser,
 
 
     NS_IMETHOD_(void) SetParserFilter(nsIParserFilter* aFilter);
-    
-    NS_IMETHOD RegisterDTD(nsIDTD* aDTD);
 
     /**
      *  Retrieve the scanner from the topmost parser context
@@ -199,19 +198,6 @@ class nsParser : public nsIParser,
      */
     NS_IMETHOD Parse(nsIURI* aURL,
                      nsIRequestObserver* aListener = nsnull,
-                     PRBool aEnableVerify = PR_FALSE,
-                     void* aKey = 0,
-                     nsDTDMode aMode = eDTDMode_autodetect);
-
-    /**
-     * Cause parser to parse input from given stream 
-     * @update	gess5/11/98
-     * @param   aStream is the i/o source
-     * @return  TRUE if all went well -- FALSE otherwise
-     */
-    NS_IMETHOD Parse(nsIInputStream* aStream,
-                     const nsACString& aMimeType,
-                     PRBool aEnableVerify = PR_FALSE,
                      void* aKey = 0,
                      nsDTDMode aMode = eDTDMode_autodetect);
 
@@ -224,16 +210,17 @@ class nsParser : public nsIParser,
     NS_IMETHOD Parse(const nsAString& aSourceBuffer,
                      void* aKey,
                      const nsACString& aContentType,
-                     PRBool aEnableVerify,
                      PRBool aLastCall,
                      nsDTDMode aMode = eDTDMode_autodetect);
+
+    NS_IMETHOD_(void *) GetRootContextKey();
 
     /**
      * This method needs documentation
      */
     NS_IMETHOD ParseFragment(const nsAString& aSourceBuffer,
                              void* aKey,
-                             nsVoidArray& aTagStack,
+                             nsTArray<nsString>& aTagStack,
                              PRBool aXMLMode,
                              const nsACString& aContentType,
                              nsDTDMode aMode = eDTDMode_autodetect);
@@ -313,14 +300,6 @@ class nsParser : public nsIParser,
     CParserContext*   PopContext();
     CParserContext*   PeekContext() {return mParserContext;}
 
-    /**
-     * 
-     * @update	gess 1/22/99
-     * @param 
-     * @return
-     */
-    nsresult GetTokenizer(nsITokenizer*& aTokenizer);
-
     /** 
      * Get the channel associated with this parser
      * @update harishd,gagan 07/17/01
@@ -384,7 +363,7 @@ class nsParser : public nsIParser,
      *  Fired when the continue parse event is triggered.
      *  @update  kmcclusk 5/18/98
      */
-    void HandleParserContinueEvent(void);
+    void HandleParserContinueEvent(class nsParserContinueEvent *);
 
     /**
      * Called by top-level scanners when data from necko is added to
@@ -394,7 +373,23 @@ class nsParser : public nsIParser,
 
     static nsCOMArray<nsIUnicharStreamListener> *sParserDataListeners;
 
-protected:
+    static nsICharsetAlias* GetCharsetAliasService() {
+      return sCharsetAliasService;
+    }
+
+    static nsICharsetConverterManager* GetCharsetConverterManager() {
+      return sCharsetConverterManager;
+    }
+
+    virtual void Reset() {
+      Cleanup();
+      Initialize();
+    }
+
+ protected:
+
+    void Initialize(PRBool aConstructor = PR_FALSE);
+    void Cleanup();
 
     /**
      * 
@@ -458,10 +453,10 @@ protected:
     //*********************************************
     
       
-    nsCOMPtr<nsIEventQueue>      mEventQueue;
     CParserContext*              mParserContext;
     nsCOMPtr<nsIRequestObserver> mObserver;
     nsCOMPtr<nsIContentSink>     mSink;
+    nsIRunnable*                 mContinueEvent;  // weak ref
    
     nsCOMPtr<nsIParserFilter> mParserFilter;
     nsTokenAllocator          mTokenAllocator;
@@ -477,7 +472,8 @@ protected:
     nsCString           mCharset;
     nsCString           mCommandStr;
 
-    
+    static nsICharsetAlias*            sCharsetAliasService;
+    static nsICharsetConverterManager* sCharsetConverterManager;
    
 public:  
    

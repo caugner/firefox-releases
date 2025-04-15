@@ -1,15 +1,9 @@
-/application.js/1.1.2.5/Mon Jul 24 23:50:21 2006//TFIREFOX_2_0_RELEASE
-/browser-view.js/1.1.2.2/Sat Aug 26 21:51:40 2006//TFIREFOX_2_0_RELEASE
-/controller.js/1.1.2.7/Sun Jun 25 19:07:32 2006//TFIREFOX_2_0_RELEASE
-/firefox-commands.js/1.1.2.1/Wed May  3 20:35:51 2006//TFIREFOX_2_0_RELEASE
-/globalstore.js/1.1.2.9/Mon Aug 14 18:32:59 2006//TFIREFOX_2_0_RELEASE
-/list-warden.js/1.1.2.7/Thu Aug 24 01:08:28 2006//TFIREFOX_2_0_RELEASE
-/phishing-afterload-displayer.js/1.1.2.13/Mon Sep 11 20:38:11 2006//TFIREFOX_2_0_RELEASE
-/phishing-warden.js/1.1.2.21/Fri Sep  1 19:39:57 2006//TFIREFOX_2_0_RELEASE
-/report-phishing-overlay.xul/1.2.2.2/Wed Aug 16 23:48:28 2006//TFIREFOX_2_0_RELEASE
-/reporter.js/1.1.2.3/Wed Jun  7 21:33:38 2006//TFIREFOX_2_0_RELEASE
-/sb-loader.js/1.1.2.10/Thu Aug  3 23:40:55 2006//TFIREFOX_2_0_RELEASE
-/tr-fetcher.js/1.1.2.7/Fri Sep  1 19:39:57 2006//TFIREFOX_2_0_RELEASE
-/warning-overlay.xul/1.2.2.10/Tue Sep  5 23:11:18 2006//TFIREFOX_2_0_RELEASE
-D/js////
-D/moz////
+/application.js/1.16/Fri Mar  7 22:46:56 2008//TFIREFOX_3_0rc3_RELEASE
+/blockedSite.xhtml/1.5/Tue Apr  8 19:30:01 2008//TFIREFOX_3_0rc3_RELEASE
+/globalstore.js/1.22/Wed Apr 23 16:57:55 2008//TFIREFOX_3_0rc3_RELEASE
+/list-warden.js/1.18/Tue Feb 26 06:48:55 2008//TFIREFOX_3_0rc3_RELEASE
+/malware-warden.js/1.11/Tue Apr 15 22:39:45 2008//TFIREFOX_3_0rc3_RELEASE
+/phishing-warden.js/1.29/Tue Feb 26 06:48:55 2008//TFIREFOX_3_0rc3_RELEASE
+/report-phishing-overlay.xul/1.12/Tue Mar  4 16:05:13 2008//TFIREFOX_3_0rc3_RELEASE
+/sb-loader.js/1.28/Thu Mar  6 14:05:34 2008//TFIREFOX_3_0rc3_RELEASE
+D/test////

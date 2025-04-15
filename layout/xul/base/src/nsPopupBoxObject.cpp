@@ -38,7 +38,6 @@
  * ***** END LICENSE BLOCK ***** */
 #include "nsCOMPtr.h"
 #include "nsIPopupBoxObject.h"
-#include "nsIPopupSetFrame.h"
 #include "nsIRootBox.h"
 #include "nsBoxObject.h"
 #include "nsIPresShell.h"
@@ -49,173 +48,110 @@
 #include "nsIDOMElement.h"
 #include "nsIFrame.h"
 #include "nsINameSpaceManager.h"
-#include "nsHTMLAtoms.h"
-#include "nsXULAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsMenuPopupFrame.h"
-#include "nsIViewManager.h"
-#include "nsIWidget.h"
 
 
-class nsPopupBoxObject : public nsIPopupBoxObject, public nsBoxObject
+class nsPopupBoxObject : public nsBoxObject,
+                         public nsIPopupBoxObject
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIPOPUPBOXOBJECT
 
-  nsPopupBoxObject();
-  virtual ~nsPopupBoxObject();
+  nsPopupBoxObject() {}
+protected:
+  virtual ~nsPopupBoxObject() {}
 
+  nsPopupSetFrame* GetPopupSetFrame();
+  nsMenuPopupFrame* GetMenuPopupFrame()
+  {
+    nsIFrame* frame = GetFrame(PR_FALSE);
+    if (frame && frame->GetType() == nsGkAtoms::menuPopupFrame)
+      return static_cast<nsMenuPopupFrame*>(frame);
+    return nsnull;
+  }
 };
 
-/* Implementation file */
-NS_IMPL_ADDREF(nsPopupBoxObject)
-NS_IMPL_RELEASE(nsPopupBoxObject)
+NS_IMPL_ISUPPORTS_INHERITED1(nsPopupBoxObject, nsBoxObject, nsIPopupBoxObject)
 
-NS_IMETHODIMP 
-nsPopupBoxObject::QueryInterface(REFNSIID iid, void** aResult)
+nsPopupSetFrame*
+nsPopupBoxObject::GetPopupSetFrame()
 {
-  if (!aResult)
-    return NS_ERROR_NULL_POINTER;
-  
-  if (iid.Equals(NS_GET_IID(nsIPopupBoxObject))) {
-    *aResult = (nsIPopupBoxObject*)this;
-    NS_ADDREF(this);
-    return NS_OK;
-  }
+  nsIRootBox* rootBox = nsIRootBox::GetRootBox(GetPresShell(PR_FALSE));
+  if (!rootBox)
+    return nsnull;
 
-  return nsBoxObject::QueryInterface(iid, aResult);
+  return rootBox->GetPopupSetFrame();
 }
-  
-nsPopupBoxObject::nsPopupBoxObject()
-{
-}
-
-nsPopupBoxObject::~nsPopupBoxObject()
-{
-  /* destructor code */
-}
-
-/* void openPopup (in boolean openFlag); */
 
 NS_IMETHODIMP
 nsPopupBoxObject::HidePopup()
 {
-  nsIFrame* ourFrame = GetFrame();
-  if (!ourFrame)
-    return NS_OK;
+  nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
+  if (pm)
+    pm->HidePopup(mContent, PR_FALSE, PR_TRUE, PR_FALSE);
 
-  nsCOMPtr<nsIPresShell> shell = GetPresShell();
-  if (!shell) {
-    return NS_OK;
-  }
-  
-  nsIFrame* rootFrame = shell->FrameManager()->GetRootFrame();
-  if (!rootFrame)
-    return NS_OK;
+  return NS_OK;
+}
 
-  if (rootFrame) {
-    rootFrame = rootFrame->GetFirstChild(nsnull);
-  }
+NS_IMETHODIMP
+nsPopupBoxObject::ShowPopup(nsIDOMElement* aAnchorElement,
+                            nsIDOMElement* aPopupElement,
+                            PRInt32 aXPos, PRInt32 aYPos,
+                            const PRUnichar *aPopupType,
+                            const PRUnichar *aAnchorAlignment,
+                            const PRUnichar *aPopupAlignment)
+{
+  NS_ENSURE_TRUE(aPopupElement, NS_ERROR_INVALID_ARG);
+  // srcContent can be null.
 
-  nsIRootBox* rootBox = nsnull;
-  CallQueryInterface(rootFrame, &rootBox);
-  if (!rootBox)
-    return NS_OK;
-
-  nsIFrame* popupSetFrame;
-  rootBox->GetPopupSetFrame(&popupSetFrame);
-  if (!popupSetFrame)
-    return NS_OK;
-
-  nsIPopupSetFrame* popupSet = nsnull;
-  CallQueryInterface(popupSetFrame, &popupSet);
-  if (!popupSet)
-    return NS_OK;
-
-  nsWeakFrame weakOurFrame(ourFrame);
-  nsWeakFrame weakPopupSetFrame(popupSetFrame);
-  popupSet->HidePopup(ourFrame);
-  if (weakOurFrame.IsAlive() && weakPopupSetFrame.IsAlive()) {
-    popupSet->DestroyPopup(ourFrame, PR_TRUE);
+  nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
+  if (pm) {
+    nsCOMPtr<nsIContent> anchorContent(do_QueryInterface(aAnchorElement));
+    nsAutoString popupType(aPopupType);
+    nsAutoString anchor(aAnchorAlignment);
+    nsAutoString align(aPopupAlignment);
+    pm->ShowPopupWithAnchorAlign(mContent, anchorContent, anchor, align,
+                                 aXPos, aYPos, popupType.EqualsLiteral("context"));
   }
 
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsPopupBoxObject::ShowPopup(nsIDOMElement* aSrcContent, 
-                            nsIDOMElement* aPopupContent, 
-                            PRInt32 aXPos, PRInt32 aYPos, 
-                            const PRUnichar *aPopupType, const PRUnichar *anAnchorAlignment, 
-                            const PRUnichar *aPopupAlignment)
+nsPopupBoxObject::OpenPopup(nsIDOMElement* aAnchorElement,
+                            const nsAString& aPosition,
+                            PRInt32 aXPos, PRInt32 aYPos,
+                            PRBool aIsContextMenu,
+                            PRBool aAttributesOverride)
 {
-  nsCOMPtr<nsIPresShell> shell = GetPresShell();
-  if (!shell) {
-    return NS_OK;
-  }
-  
-  nsIFrame* rootFrame = shell->FrameManager()->GetRootFrame();
-  if (!rootFrame)
-    return NS_OK;
-
-  if (rootFrame) {
-    rootFrame = rootFrame->GetFirstChild(nsnull);
+  nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
+  if (pm) {
+    nsCOMPtr<nsIContent> anchorContent(do_QueryInterface(aAnchorElement));
+    pm->ShowPopup(mContent, anchorContent, aPosition, aXPos, aYPos,
+                  aIsContextMenu, aAttributesOverride, PR_FALSE, nsnull);
   }
 
-  nsIRootBox* rootBox = nsnull;
-  CallQueryInterface(rootFrame, &rootBox);
-  if (!rootBox)
-    return NS_OK;
+  return NS_OK;
+}
 
-  nsIFrame* popupSetFrame;
-  rootBox->GetPopupSetFrame(&popupSetFrame);
-  if (!popupSetFrame)
-    return NS_OK;
-
-  nsIPopupSetFrame* popupSet = nsnull;
-  CallQueryInterface(popupSetFrame, &popupSet);
-  if (!popupSet)
-    return NS_OK;
-
-  nsCOMPtr<nsIContent> srcContent(do_QueryInterface(aSrcContent));
-  nsCOMPtr<nsIContent> popupContent(do_QueryInterface(aPopupContent));
-
-  nsAutoString popupType(aPopupType);
-  nsAutoString anchorAlign(anAnchorAlignment);
-  nsAutoString popupAlign(aPopupAlignment);
-
-  // Use |left| and |top| dimension attributes to position the popup if
-  // present, as they may have been persisted. 
-  nsAutoString left, top;
-  popupContent->GetAttr(kNameSpaceID_None, nsXULAtoms::left, left);
-  popupContent->GetAttr(kNameSpaceID_None, nsXULAtoms::top, top);
-  
-  PRInt32 err;
-  if (!left.IsEmpty()) {
-    aXPos = left.ToInteger(&err);
-    if (NS_FAILED(err))
-      return err;
-  }
-  if (!top.IsEmpty()) {
-    aYPos = top.ToInteger(&err);
-    if (NS_FAILED(err))
-      return err;
-  }
-
-  return popupSet->ShowPopup(srcContent, popupContent, aXPos, aYPos, 
-                             popupType, anchorAlign, popupAlign);
+NS_IMETHODIMP
+nsPopupBoxObject::OpenPopupAtScreen(PRInt32 aXPos, PRInt32 aYPos, PRBool aIsContextMenu)
+{
+  nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
+  if (pm)
+    pm->ShowPopupAtScreen(mContent, aXPos, aYPos, aIsContextMenu, nsnull);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 nsPopupBoxObject::MoveTo(PRInt32 aLeft, PRInt32 aTop)
 {
-  nsIFrame* frame = GetFrame();
-  if (!frame) return NS_OK;
-
-  nsMenuPopupFrame* menuPopupFrame = NS_STATIC_CAST(nsMenuPopupFrame*, frame);
-  if (!menuPopupFrame) return NS_OK;
-
-  menuPopupFrame->MoveTo(aLeft, aTop);
+  nsMenuPopupFrame *menuPopupFrame = GetMenuPopupFrame();
+  if (menuPopupFrame) {
+    menuPopupFrame->MoveTo(aLeft, aTop);
+  }
 
   return NS_OK;
 }
@@ -226,9 +162,10 @@ nsPopupBoxObject::SizeTo(PRInt32 aWidth, PRInt32 aHeight)
   nsAutoString width, height;
   width.AppendInt(aWidth);
   height.AppendInt(aHeight);
-  
-  mContent->SetAttr(kNameSpaceID_None, nsHTMLAtoms::width, width, PR_FALSE);
-  mContent->SetAttr(kNameSpaceID_None, nsHTMLAtoms::height, height, PR_TRUE);
+
+  nsCOMPtr<nsIContent> content = mContent;
+  content->SetAttr(kNameSpaceID_None, nsGkAtoms::width, width, PR_FALSE);
+  content->SetAttr(kNameSpaceID_None, nsGkAtoms::height, height, PR_TRUE);
 
   return NS_OK;
 }
@@ -236,13 +173,10 @@ nsPopupBoxObject::SizeTo(PRInt32 aWidth, PRInt32 aHeight)
 NS_IMETHODIMP
 nsPopupBoxObject::GetAutoPosition(PRBool* aShouldAutoPosition)
 {
-  nsIFrame* frame = GetFrame();
-  if (!frame) return NS_OK;
-
-  nsMenuPopupFrame* menuPopupFrame = NS_STATIC_CAST(nsMenuPopupFrame*, frame);
-  if (!menuPopupFrame) return NS_OK;
-
-  menuPopupFrame->GetAutoPosition(aShouldAutoPosition);
+  nsMenuPopupFrame *menuPopupFrame = GetMenuPopupFrame();
+  if (menuPopupFrame) {
+    *aShouldAutoPosition = menuPopupFrame->GetAutoPosition();
+  }
 
   return NS_OK;
 }
@@ -250,13 +184,10 @@ nsPopupBoxObject::GetAutoPosition(PRBool* aShouldAutoPosition)
 NS_IMETHODIMP
 nsPopupBoxObject::SetAutoPosition(PRBool aShouldAutoPosition)
 {
-  nsIFrame* frame = GetFrame();
-  if (!frame) return NS_OK;
-
-  nsMenuPopupFrame* menuPopupFrame = NS_STATIC_CAST(nsMenuPopupFrame*, frame);
-  if (!menuPopupFrame) return NS_OK;
-
-  menuPopupFrame->SetAutoPosition(aShouldAutoPosition);
+  nsMenuPopupFrame *menuPopupFrame = GetMenuPopupFrame();
+  if (menuPopupFrame) {
+    menuPopupFrame->SetAutoPosition(aShouldAutoPosition);
+  }
 
   return NS_OK;
 }
@@ -264,13 +195,17 @@ nsPopupBoxObject::SetAutoPosition(PRBool aShouldAutoPosition)
 NS_IMETHODIMP
 nsPopupBoxObject::EnableRollup(PRBool aShouldRollup)
 {
-  nsIFrame* frame = GetFrame();
-  if (!frame) return NS_OK;
+  // this does nothing nows
+  return NS_OK;
+}
 
-  nsMenuPopupFrame* menuPopupFrame = NS_STATIC_CAST(nsMenuPopupFrame*, frame);
-  if (!menuPopupFrame) return NS_OK;
-
-  menuPopupFrame->EnableRollup(aShouldRollup);
+NS_IMETHODIMP
+nsPopupBoxObject::SetConsumeRollupEvent(PRUint32 aConsume)
+{
+  nsMenuPopupFrame *menuPopupFrame = GetMenuPopupFrame();
+  if (menuPopupFrame) {
+    menuPopupFrame->SetConsumeRollupEvent(aConsume);
+  }
 
   return NS_OK;
 }
@@ -278,19 +213,41 @@ nsPopupBoxObject::EnableRollup(PRBool aShouldRollup)
 NS_IMETHODIMP
 nsPopupBoxObject::EnableKeyboardNavigator(PRBool aEnableKeyboardNavigator)
 {
-  nsIFrame* frame = GetFrame();
-  if (!frame) return NS_OK;
-
-  nsMenuPopupFrame* menuPopupFrame = NS_STATIC_CAST(nsMenuPopupFrame*, frame);
-  if (!menuPopupFrame) return NS_OK;
-
+  // Use ignorekeys="true" on the popup instead of using this function.
   if (aEnableKeyboardNavigator)
-    menuPopupFrame->InstallKeyboardNavigator();
+    mContent->UnsetAttr(kNameSpaceID_None, nsGkAtoms::ignorekeys, PR_TRUE);
   else
-    menuPopupFrame->RemoveKeyboardNavigator();
-  
+    mContent->SetAttr(kNameSpaceID_None, nsGkAtoms::ignorekeys,
+                      NS_LITERAL_STRING("true"), PR_TRUE);
+
   return NS_OK;
 }
+
+NS_IMETHODIMP
+nsPopupBoxObject::GetPopupState(nsAString& aState)
+{
+  aState.AssignLiteral("closed");
+
+  nsMenuPopupFrame *menuPopupFrame = GetMenuPopupFrame();
+  if (menuPopupFrame) {
+    switch (menuPopupFrame->PopupState()) {
+      case ePopupShowing:
+      case ePopupOpen:
+        aState.AssignLiteral("showing");
+        break;
+      case ePopupOpenAndVisible:
+        aState.AssignLiteral("open");
+        break;
+      case ePopupHiding:
+      case ePopupInvisible:
+        aState.AssignLiteral("hiding");
+        break;
+    }
+  }
+
+  return NS_OK;
+}
+
 
 // Creation Routine ///////////////////////////////////////////////////////////////////////
 
@@ -303,4 +260,3 @@ NS_NewPopupBoxObject(nsIBoxObject** aResult)
   NS_ADDREF(*aResult);
   return NS_OK;
 }
-

@@ -53,6 +53,7 @@
 
 nsTAString_CharT::~nsTAString_CharT()
   {
+    NS_ASSERTION(mVTable, "mVTable is null! Is this a static string instance?!");
     if (mVTable == obsolete_string_type::sCanonicalVTable)
       AsSubstring()->Finalize();
     else
@@ -475,19 +476,33 @@ nsTAString_CharT::GetReadableBuffer( const char_type **data ) const
   }
 
 nsTAString_CharT::size_type
-nsTAString_CharT::GetWritableBuffer(char_type **data)
+nsTAString_CharT::GetWritableBuffer(char_type** data, size_type size)
   {
     if (mVTable == obsolete_string_type::sCanonicalVTable)
+      return AsSubstring()->GetMutableData(data, size);
+    
+    if (size != size_type(-1) && size != AsObsoleteString()->Length())
       {
-        substring_type* str = AsSubstring();
-        str->BeginWriting(*data);
-        return str->Length();
+        AsObsoleteString()->SetLength(size);
+        if (AsObsoleteString()->Length() != size) {
+          *data = nsnull;
+          return 0;
+        }
       }
+
+    size_type len = AsObsoleteString()->Length();
 
     obsolete_string_type::fragment_type frag;
     AsObsoleteString()->GetWritableFragment(frag, obsolete_string_type::kFirstFragment, 0);
+
+    if (size_type(frag.mEnd - frag.mStart) != len)
+      {
+        *data = nsnull;
+        return 0;
+      }
+
     *data = frag.mStart;
-    return (frag.mEnd - frag.mStart);
+    return len;
   }
 
 PRBool
@@ -505,5 +520,5 @@ nsTAString_CharT::ToSubstring() const
   {
     const char_type* data;
     size_type length = GetReadableBuffer(&data);
-    return substring_type(NS_CONST_CAST(char_type*, data), length, 0);
+    return substring_type(const_cast<char_type*>(data), length, 0);
   }

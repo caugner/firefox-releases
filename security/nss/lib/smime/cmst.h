@@ -37,7 +37,7 @@
 /*
  * Header for CMS types.
  *
- * $Id: cmst.h,v 1.9.18.1 2005/10/10 23:22:51 wtchang%redhat.com Exp $
+ * $Id: cmst.h,v 1.10 2005/06/27 22:21:19 julien.pierre.bugs%sun.com Exp $
  */
 
 #ifndef _CMST_H_

@@ -46,9 +46,8 @@
 #include "nsIInterfaceRequestor.h"
 #include "nsIProgressEventSink.h"
 #include "nsIAsyncInputStream.h"
-#include "nsIEventQueue.h"
+#include "nsIThread.h"
 #include "nsCOMPtr.h"
-#include "nsInt64.h"
 
 class nsInputStreamPump : public nsIInputStreamPump
                         , public nsIInputStreamCallback
@@ -83,7 +82,7 @@ public:
      *
      * Do not call before asyncRead. Do not call after onStopRequest.
      */
-    NS_HIDDEN_(void) PeekStream(PeekSegmentFun callback, void *closure);
+    NS_HIDDEN_(nsresult) PeekStream(PeekSegmentFun callback, void *closure);
 
 protected:
 
@@ -103,11 +102,11 @@ protected:
     nsCOMPtr<nsILoadGroup>        mLoadGroup;
     nsCOMPtr<nsIStreamListener>   mListener;
     nsCOMPtr<nsISupports>         mListenerContext;
-    nsCOMPtr<nsIEventQueue>       mEventQ;
+    nsCOMPtr<nsIThread>           mTargetThread;
     nsCOMPtr<nsIInputStream>      mStream;
     nsCOMPtr<nsIAsyncInputStream> mAsyncStream;
-    nsUint64                      mStreamOffset;
-    nsUint64                      mStreamLength;
+    PRUint64                      mStreamOffset;
+    PRUint64                      mStreamLength;
     PRUint32                      mSegSize;
     PRUint32                      mSegCount;
     nsresult                      mStatus;

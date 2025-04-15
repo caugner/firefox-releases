@@ -6,6 +6,8 @@
   <!ENTITY % dtd3 SYSTEM "chrome://inspector/locale/viewers/styleRules.dtd"> %dtd3;
 ]>
 
+<?xul-overlay href="chrome://inspector/content/editingOverlay.xul"?>
+
 <?xml-stylesheet href="chrome://inspector/skin/viewers/styleRules/styleRules.css"?>
 
 <page id="winStyleRules"
@@ -13,13 +15,21 @@
   
   <!--============================= SCRIPTS ============================= -->
 
+  <script type="application/x-javascript" src="chrome://inspector/content/utils.js"/>
   <script type="application/x-javascript" src="chrome://inspector/content/jsutil/xul/inBaseTreeView.js"/>
   <script type="application/x-javascript" src="chrome://inspector/content/viewers/styleRules/styleRules.js"/>
   <script type="application/x-javascript" src="chrome://global/content/XPCNativeWrapper.js"/>
-  <script type="application/x-javascript" src="chrome://inspector/content/utils.js"/>
   <script type="application/x-javascript" src="chrome://inspector/content/jsutil/xpcom/XPCU.js"/>
   <script type="application/x-javascript" src="chrome://inspector/content/jsutil/rdf/RDFU.js"/>
   <script type="application/x-javascript" src="chrome://inspector/content/jsutil/events/ObserverManager.js"/>
+
+  <!--============================ COMMANDS ============================= -->
+
+  <commandset id="cmdsEditing"/>
+  <commandset id="cmdsProps">
+    <command id="cmdTogglePriority"
+             oncommand="viewer.pane.panelset.execCommand('cmdTogglePriority')"/>
+  </commandset>
 
   <!--============================= POPUPS ============================== -->
 
@@ -32,19 +42,23 @@
       <menuitem label="&openSelectedFileInEditor.label;" oncommand="viewer.cmdOpenSelectedFileInEditor()"/>
     </popup>
 
-    <popup id="ppStylePropsContext">
-      <menuitem label="&newProperty.label;" oncommand="viewer.cmdNewProperty()"/>
-      <menuitem label="&editSelectedProperty.label;" oncommand="viewer.cmdEditSelectedProperty()"/>
-      <menuitem label="&deleteSelectedProperty.label;" oncommand="viewer.cmdDeleteSelectedProperty()"/>
+    <popup id="ppStylePropsContext"
+           onpopupshowing="viewer.propOnPopupShowing(this)">
+      <menuitem id="mnEditCopy"/>
       <menuseparator/>
-      <menuitem label="&toggleSelectedImportant.label;" oncommand="viewer.cmdToggleSelectedImportant()"/>
+      <menuitem id="mnEditInsert"/>
+      <menuitem id="mnEditEdit"/>
+      <menuitem id="mnEditDelete"/>
+      <menuseparator/>
+      <menuitem label="&toggleSelectedImportant.label;"
+                command="cmdTogglePriority"/>
     </popup>
   </popupset>
 
   <!--============================= CONTENT ============================== -->
 
   <tree id="olStyleRules" class="plain" flex="1" persist="height"
-            onselect="viewer.onRuleSelect()">
+        seltype="single" onselect="viewer.onRuleSelect()">
     <treecols>
       <treecol id="olcRule" label="&styleRule.label;" flex="1"/>
       <splitter class="tree-splitter"/>
@@ -64,7 +78,8 @@
         class="plain"
         flex="1"
         persist="height"
-        contextmenu="ppStylePropsContext">
+        contextmenu="ppStylePropsContext"
+        onselect="viewer.onPropSelect()">
     <treecols>
       <treecol id="olcPropPriority" label="&styleRulePropPriority.label;" class="treecol-image"/>
       <splitter class="tree-splitter"/>
@@ -74,7 +89,7 @@
     </treecols>
     <treechildren id="olbStyleProps"
                   alternatingbackground="true"
-                  ondblclick="viewer.cmdEditSelectedProperty()"/>
+                  ondblclick="viewer.pane.panelset.execCommand('cmdEditEdit')"/>
   </tree>
 
 </page>

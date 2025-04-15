@@ -34,6 +34,9 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* class for maintaining a linked list of child frames */
+
 #ifndef nsFrameList_h___
 #define nsFrameList_h___
 
@@ -43,6 +46,7 @@
  * A class for managing a singly linked list of frames. Frames are
  * linked together through their next-sibling pointer.
  */
+
 class nsFrameList {
 public:
   nsFrameList() {
@@ -59,7 +63,10 @@ public:
   ~nsFrameList() {
   }
 
-  void DestroyFrames(nsPresContext* aPresContext);
+  void DestroyFrames();
+
+  // Delete this and destroy all its frames
+  void Destroy();
 
   void SetFrames(nsIFrame* aFrameList) {
     mFirstChild = aFrameList;
@@ -68,6 +75,8 @@ public:
 #endif
   }
 
+  // Appends frames from aFrameList to this list. If aParent
+  // is not null, reparents the newly-added frames.
   void AppendFrames(nsIFrame* aParent, nsIFrame* aFrameList);
 
   void AppendFrames(nsIFrame* aParent, nsFrameList& aFrameList) {
@@ -81,23 +90,32 @@ public:
   // from the sibling list. This will return PR_FALSE if aFrame is
   // nsnull or if aFrame is not in the list. The second frame is
   // a hint for the prev-sibling of aFrame; if the hint is correct,
-  // then this is O(1) time.
+  // then this is O(1) time. If successfully removed, the child's
+  // NextSibling pointer is cleared.
   PRBool RemoveFrame(nsIFrame* aFrame, nsIFrame* aPrevSiblingHint = nsnull);
 
   // Remove the first child from the list. The caller is assumed to be
   // holding a reference to the first child. This call is equivalent
-  // in behavior to calling RemoveFrame(FirstChild()).
+  // in behavior to calling RemoveFrame(FirstChild()). If successfully
+  // removed the first child's NextSibling pointer is cleared.
   PRBool RemoveFirstChild();
 
   // Take aFrame out of the frame list and then destroy it. This also
   // disconnects aFrame from the sibling list. This will return
   // PR_FALSE if aFrame is nsnull or if aFrame is not in the list.
-  PRBool DestroyFrame(nsPresContext* aPresContext, nsIFrame* aFrame);
+  PRBool DestroyFrame(nsIFrame* aFrame);
 
+  // Inserts aNewFrame right after aPrevSibling, or prepends to
+  // list if aPrevSibling is null. If aParent is not null, also
+  // reparents newly-added frame. Note that this method always
+  // sets the frame's nextSibling pointer.
   void InsertFrame(nsIFrame* aParent,
                    nsIFrame* aPrevSibling,
                    nsIFrame* aNewFrame);
 
+  // Inserts aFrameList right after aPrevSibling, or prepends to
+  // list if aPrevSibling is null. If aParent is not null, also
+  // reparents newly-added frame.
   void InsertFrames(nsIFrame* aParent,
                     nsIFrame* aPrevSibling,
                     nsIFrame* aFrameList);
@@ -108,11 +126,6 @@ public:
     aFrameList.mFirstChild = nsnull;
   }
 
-  PRBool ReplaceFrame(nsIFrame* aParent,
-                      nsIFrame* aOldFrame,
-                      nsIFrame* aNewFrame,
-                      PRBool aDestroy);
-
   PRBool Split(nsIFrame* aAfterFrame, nsIFrame** aNextFrameResult);
 
   /**
@@ -122,10 +135,6 @@ public:
    * comes before its next in flow.
    */
   void SortByContentOrder();
-
-  nsIFrame* PullFrame(nsIFrame* aParent,
-                      nsIFrame* aLastChild,
-                      nsFrameList& aFromList);
 
   nsIFrame* FirstChild() const {
     return mFirstChild;
@@ -144,6 +153,7 @@ public:
   }
 
   PRBool ContainsFrame(const nsIFrame* aFrame) const;
+  PRBool ContainsFrameBefore(const nsIFrame* aFrame, const nsIFrame* aEnd) const;
 
   PRInt32 GetLength() const;
 
@@ -151,12 +161,14 @@ public:
 
 #ifdef IBMBIDI
   /**
-   * Return the frame before this frame in visual order (after Bidi reordering)
+   * Return the frame before this frame in visual order (after Bidi reordering).
+   * If aFrame is null, return the last frame in visual order.
    */
   nsIFrame* GetPrevVisualFor(nsIFrame* aFrame) const;
 
   /**
-   * Return the frame after this frame in visual order (after Bidi reordering)
+   * Return the frame after this frame in visual order (after Bidi reordering).
+   * If aFrame is null, return the first frame in visual order.
    */
   nsIFrame* GetNextVisualFor(nsIFrame* aFrame) const;
 #endif // IBMBIDI
@@ -164,14 +176,10 @@ public:
   void VerifyParent(nsIFrame* aParent) const;
 
 #ifdef NS_DEBUG
-  void List(nsPresContext* aPresContext, FILE* out) const;
+  void List(FILE* out) const;
 #endif
 
 private:
-  PRBool DoReplaceFrame(nsIFrame* aParent,
-                        nsIFrame* aOldFrame,
-                        nsIFrame* aNewFrame);
-
 #ifdef DEBUG
   void CheckForLoops();
 #endif

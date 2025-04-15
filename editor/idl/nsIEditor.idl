@@ -43,6 +43,7 @@
 
 interface nsIURI;
 interface nsIAtom;
+interface nsIContent;
 interface nsISelection;
 interface nsISelectionController;
 interface nsIDocumentStateListener;
@@ -55,15 +56,12 @@ interface nsIInlineSpellChecker;
 
 %{C++
 class nsIPresShell;
-class nsIContent;
 typedef short EDirection;
 %}
 
-
 [ptr] native nsIPresShellPtr(nsIPresShell);
-[ptr] native nsIContentPtr(nsIContent);
 
-[scriptable, uuid(D4882FFB-E927-408b-96BE-D4391B456FA9)]
+[scriptable, uuid(2f76d0bb-d90d-4454-905e-9b0cc39a701c)]
 
 interface nsIEditor  : nsISupports
 {
@@ -96,7 +94,7 @@ interface nsIEditor  : nsISupports
    *                      of the editor.
    */
   [noscript] void init(in nsIDOMDocument doc, in nsIPresShellPtr shell,
-                       in nsIContentPtr aRoot,
+                       in nsIContent aRoot,
                        in nsISelectionController aSelCon,
                        in unsigned long aFlags);
 
@@ -189,7 +187,7 @@ interface nsIEditor  : nsISupports
 
   /** transactionManager Get the transaction manager the editor is using.
     */
-  readonly attribute nsITransactionManager transactionManager;
+  attribute nsITransactionManager transactionManager;
 
   /** doTransaction() fires a transaction.
     * It is provided here so clients can create their own transactions.
@@ -285,7 +283,28 @@ interface nsIEditor  : nsISupports
 
   /* ------------ Inline Spell Checking methods -------------- */
 
-  readonly attribute nsIInlineSpellChecker inlineSpellChecker;
+  /** Returns the inline spell checker associated with this object. The spell
+    * checker is lazily created, so this function may create the object for
+    * you during this call.
+    * @param  autoCreate  If true, this will create a spell checker object
+    *                     if one does not exist yet for this editor. If false
+    *                     and the object has not been created, this function
+    *                     WILL RETURN NULL.
+    */
+  nsIInlineSpellChecker getInlineSpellChecker(in boolean autoCreate);
+
+  /** Resyncs spellchecking state (enabled/disabled).  This should be called
+    * when anything that affects spellchecking state changes, such as the
+    * spellcheck attribute value.
+    */
+  void syncRealTimeSpell();
+
+  /** Called when the user manually overrides the spellchecking state for this
+    * editor.
+    * @param  enable  The new state of spellchecking in this editor, as
+    *                 requested by the user.
+    */
+  void setSpellcheckUserOverride(in boolean enable);
 
   /* ------------ Clipboard methods -------------- */
 
@@ -509,7 +528,10 @@ interface nsIEditor  : nsISupports
                       in unsigned long flags);
 
 
-  /* ------------ Various listeners methods -------------- */
+  /* ------------ Various listeners methods --------------
+   * nsIEditor holds strong references to the editor observers, action listeners
+   * and document state listeners.
+   */
 
   /** add an EditorObserver to the editors list of observers. */
   void addEditorObserver(in nsIEditorObserver observer);
@@ -542,40 +564,7 @@ interface nsIEditor  : nsISupports
 
   /* Run unit tests. Noop in optimized builds */
   void debugUnitTests(out long outNumTests, out long  outNumTestsFailed);
-};
 
-/**
- * This enables optional lazy creation of the spellchecking object. On the
- * trunk getInlineSpellChecker replaces the attribute inlineSpellChecker. Here,
- * we support that on a special interface to avoid changing branch interfaces,
- * and rename it to getInlineSpellCheckerOptionally to avoid conflicting with
- * the automatically generated getter for the attribute.
- *
- * @status TEMPORARY
- */
-[scriptable, uuid(60fbf998-e021-4f81-bdf0-749cc651e221)]
-interface nsIEditor_MOZILLA_1_8_BRANCH : nsIEditor
-{
-  /** Returns the inline spell checker associated with this object. The spell
-   * checker is lazily created, so this function may create the object for
-   * you during this call.
-   * @param  autoCreate  If true, this will create a spell checker object
-   *                     if one does not exist yet for this editor. If false
-   *                     and the object has not been created, this function
-   *                     WILL RETURN NULL.
-   */
-  nsIInlineSpellChecker getInlineSpellCheckerOptionally(in boolean autoCreate);
-
-  /** Resyncs spellchecking state (enabled/disabled).  This should be called
-    * when anything that affects spellchecking state changes, such as the
-    * spellcheck attribute value.
-    */
-  void syncRealTimeSpell();
-
-  /** Called when the user manually overrides the spellchecking state for this
-    * editor.
-    * @param  enable  The new state of spellchecking in this editor, as
-    *                 requested by the user.
-    */
-  void setSpellcheckUserOverride(in boolean enable);
+  /* checks if a node is read-only or not */
+  [notxpcom] boolean isModifiableNode(in nsIDOMNode aNode);
 };

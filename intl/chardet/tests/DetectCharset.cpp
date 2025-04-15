@@ -39,6 +39,9 @@
 #include "nsIComponentManager.h"
 #include "nsICharsetDetector.h"
 #include "nsICharsetDetectionObserver.h"
+#include "nsComponentManagerUtils.h"
+#include "nsServiceManagerUtils.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #if defined(XP_WIN) || defined(XP_OS2)
@@ -349,9 +352,13 @@ int main(int argc, char** argv) {
     sz = read(0, buf, bs); 
     if(sz > 0) {
       if(! done) {
-printf("call DoIt %d\n",sz);
+#ifdef DEBUG_DetectCharset
+        printf("call DoIt %d\n",sz);
+#endif
         rev = det->DoIt( buf, sz, &done);
-printf("DoIt return Done = %d\n",done);
+#ifdef DEBUG_DetectCharset
+        printf("DoIt return Done = %d\n",done);
+#endif
         if(NS_FAILED(rev))
         {
           printf("XPCOM ERROR CODE = %x\n", rev);
@@ -365,8 +372,10 @@ printf("DoIt return Done = %d\n",done);
   } while(sz > 0);
   if(!done)
   {
-printf("Done = %d\n",done);
-printf("call Done %d\n",sz);
+#ifdef DEBUG_DetectCharset
+    printf("Done = %d\n",done);
+    printf("call Done %d\n",sz);
+#endif
     rev = det->Done();
     if(NS_FAILED(rev))
     {
@@ -378,9 +387,13 @@ printf("call Done %d\n",sz);
     stat[i]->DataEnd();
     stat[i]->Report();
   }
-printf( "Done\n");
+#ifdef DEBUG_DetectCharset
+  printf( "Done\n");
+#endif
   
   NS_IF_RELEASE(det);
-printf( "Done 2\n");
+#ifdef DEBUG_DetectCharset
+  printf( "Done 2\n");
+#endif
   return (0);
 }

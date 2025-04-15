@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 
-<!DOCTYPE window SYSTEM "chrome://global/locale/console.dtd">
+<!DOCTYPE bindings SYSTEM "chrome://global/locale/console.dtd">
 
 <bindings id="consoleBindings"
           xmlns="http://www.mozilla.org/xbl"
@@ -44,8 +44,11 @@
       <property name="mode">
         <getter>return this.mMode;</getter>
         <setter><![CDATA[
-          this.mMode = val || "All";
-          this.setAttribute("mode", this.mMode);
+          if (this.mode != val) {
+            this.mMode = val || "All";
+            this.setAttribute("mode", this.mMode);
+            this.selectedItem = null;
+          }
           return val;
         ]]></setter>
       </property>
@@ -62,7 +65,12 @@
             this.mSelectedItem.removeAttribute("selected");
           
           this.mSelectedItem = val;
-          val.setAttribute("selected", "true");
+          if (val)
+            val.setAttribute("selected", "true");
+
+          // Update edit commands
+          window.updateCommands("focus");
+          return val;
         ]]></setter>
       </property>
     
@@ -80,7 +88,7 @@
           
           try {
             var isupports = Components.classes['@mozilla.org/consoleservice;1'].getService();
-            this.mCService = isupports.QueryInterface(Components.interfaces.nsIConsoleService_MOZILLA_1_8_BRANCH);
+            this.mCService = isupports.QueryInterface(Components.interfaces.nsIConsoleService);
             this.mCService.registerListener(this.mConsoleListener);
           } catch (ex) {
             appendItem(
@@ -92,15 +100,17 @@
           this.mMode = this.getAttribute("mode") || "All";
 
           this.appendInitialItems();
+          window.controllers.insertControllerAt(0, this._controller);
         ]]></body>
       </method>
-    
+
       <method name="destroy">
         <body><![CDATA[
           this.mCService.unregisterListener(this.mConsoleListener);
+          window.controllers.removeController(this._controller);
         ]]></body>
       </method>
-    
+
       <method name="appendInitialItems">
         <body><![CDATA[
           var out = {}; // Throwaway references to support 'out' parameters.
@@ -174,7 +184,7 @@
             row.setAttribute("hideSource", "true");
           }
           if (aObject.sourceLine) {
-            row.setAttribute("code", aObject.sourceLine.replace("\n", "", "g"));
+            row.setAttribute("code", aObject.sourceLine.replace(/\s/g, " "));
             if (aObject.columnNumber) {
               row.setAttribute("col", aObject.columnNumber);
               row.setAttribute("errorDots", this.repeatChar(" ", aObject.columnNumber));
@@ -257,6 +267,7 @@
           var newRows = this.mConsoleRowBox.cloneNode(false);
           this.mConsoleRowBox.parentNode.replaceChild(newRows, this.mConsoleRowBox);
           this.mConsoleRowBox = newRows;
+          this.selectedItem = null;
         ]]></body>
       </method>
       
@@ -266,17 +277,45 @@
         <parameter name="aChar"/>
         <parameter name="aCol"/>
         <body><![CDATA[
-          var str = "";
-          if (aCol)
-            for (var i = 1; i < aCol; ++i)
-              str += aChar;
-          
-          return str;
+          if (--aCol <= 0)
+            return "";
+
+          for (var i = 2; i < aCol; i += i)
+            aChar += aChar;
+
+          return aChar + aChar.slice(0, aCol - aChar.length);
         ]]></body>
       </method>
           
       <constructor> this.init(); </constructor>
       <destructor> this.destroy(); </destructor>
+
+      <!-- Command controller for the copy command -->
+      <field name="_controller"><![CDATA[({
+        _outer: this,
+
+        QueryInterface: function(aIID) {
+          if (aIID.equals(Components.interfaces.nsIController) ||
+              aIID.equals(Components.interfaces.nsISupports))
+            return this;
+          throw Components.results.NS_NOINTERFACE;
+        },
+
+        supportsCommand: function(aCommand) {
+          return aCommand == "cmd_copy";
+        },
+
+        isCommandEnabled: function(aCommand) {
+          return aCommand == "cmd_copy" && this._outer.selectedItem;
+        },
+
+        doCommand: function(aCommand) {
+          if (aCommand == "cmd_copy")
+            this._outer.copySelectedItem();
+        },
+
+        onEvent: function() { }
+      });]]></field>
     </implementation>
     
     <handlers>
@@ -308,7 +347,7 @@
           <xul:box class="console-row-file" xbl:inherits="hidden=hideSource">
             <xul:label class="label" value="&errFile.label;"/>
             <xul:box class="console-error-source" xbl:inherits="href,line"/>
-            <spacer flex="1"/>
+            <xul:spacer flex="1"/>
             <xul:hbox class="lineNumberRow" xbl:inherits="line">
               <xul:label class="label" value="&errLine.label;"/>
               <xul:label class="label" xbl:inherits="value=line"/>
@@ -350,9 +389,8 @@
           return msg;
         ]]></body>
       </method>
-      
     </implementation>
-    
+
   </binding>
   
   <binding id="message" extends="xul:box">
@@ -390,7 +428,7 @@
           var line = getAttribute("line");  
           window.openDialog(
             "chrome://global/content/viewSource.xul", "_blank", 
-            "all,dialog=no", url, null, null, line);
+            "all,dialog=no", url, null, null, line, false);
         ]]>
       </handler>
     </handlers>

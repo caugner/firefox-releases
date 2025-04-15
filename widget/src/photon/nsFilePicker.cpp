@@ -47,13 +47,9 @@
 #include "nsFilePicker.h"
 #include "nsILocalFile.h"
 #include "nsIURL.h"
-#include "nsIFileURL.h"
 #include "nsIStringBundle.h"
 #include "nsEnumeratorUtils.h"
 #include "nsCRT.h"
-
-
-static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
 
 NS_IMPL_ISUPPORTS1(nsFilePicker, nsIFilePicker)
 
@@ -146,11 +142,11 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *aReturnVal)
     initialDir.AppendWithConversion( mDefault );
   }
 
-	char extensionBuffer[MAX_EXTENSION_LENGTH+1] = "*";
+	nsCAutoString extensionBuffer('*');
 	if( !mFilterList.IsEmpty() ) {
 		char *text = ToNewUTF8String( mFilterList );
 		if( text ) {
-			extensionBuffer[0] = 0;
+			extensionBuffer.Truncate(0);
 
 			/* eliminate the ';' and the duplicates */
 			char buffer[MAX_EXTENSION_LENGTH+1], buf[MAX_EXTENSION_LENGTH+1], *q, *delims = "; ", *dummy;
@@ -158,8 +154,8 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *aReturnVal)
 			q = strtok_r( buffer, delims, &dummy );
 			while( q ) {
 				sprintf( buf, "%s ", q );
-				if( !strstr( extensionBuffer, buf ) )
-					strcat( extensionBuffer, buf );
+				if ( !strstr(extensionBuffer.get(), buf ) )
+					extensionBuffer.Append(buf);
 				q = strtok_r( NULL, delims, &dummy );
 				}
 
@@ -170,10 +166,10 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *aReturnVal)
 		// Someone was cool and told us what to do
 		char *convertedExt = ToNewUTF8String( mDefaultExtension );
 		if (!convertedExt) {
-			mDefaultExtension.ToCString(extensionBuffer, MAX_EXTENSION_LENGTH);
+			LossyCopyUTF16toASCII(mDefaultExtension, extensionBuffer);
 			}
 		else {
-			PL_strncpyz(extensionBuffer, convertedExt, MAX_EXTENSION_LENGTH+1);
+			extensionBuffer.Assign(convertedExt);
 			nsMemory::Free( convertedExt );
 			}
 		}
@@ -182,7 +178,7 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *aReturnVal)
 	memset( &info, 0, sizeof( info ) );
 
 	if( PtFileSelection( mParentWidget, NULL, title, initialDir.get(),
-		extensionBuffer, btn1, "&Cancel", "nsd", &info, flags ) ) {
+		extensionBuffer.get(), btn1, "&Cancel", "nsd", &info, flags ) ) {
 			if (title) nsMemory::Free( title );
 			return NS_ERROR_FAILURE;
 			}
@@ -270,20 +266,15 @@ NS_IMETHODIMP nsFilePicker::GetFiles(nsISimpleEnumerator **aFiles)
 }
 
 //-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::GetFileURL(nsIFileURL **aFileURL)
+NS_IMETHODIMP nsFilePicker::GetFileURL(nsIURI **aFileURL)
 {
-  nsCOMPtr<nsILocalFile> file(do_CreateInstance("@mozilla.org/file/local;1"));
-  NS_ENSURE_TRUE(file, NS_ERROR_FAILURE);
-  file->InitWithNativePath(mFile);
+  *aFileURL = nsnull;
+  nsCOMPtr<nsILocalFile> file;
+  nsresult rv = GetFile(getter_AddRefs(file));
+  if (!file)
+    return rv;
 
-  nsCOMPtr<nsIURI> uri;
-  NS_NewFileURI(getter_AddRefs(uri), file);
-  nsCOMPtr<nsIFileURL> fileURL(do_QueryInterface(uri));
-  NS_ENSURE_TRUE(fileURL, NS_ERROR_FAILURE);
-  
-  NS_ADDREF(*aFileURL = fileURL);
-
-  return NS_OK;
+  return NS_NewFileURI(aFileURL, file);
 }
 
 //-------------------------------------------------------------------------

@@ -35,6 +35,9 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* class that a parent frame uses to reflow a block frame */
+
 #ifndef nsBlockReflowContext_h___
 #define nsBlockReflowContext_h___
 
@@ -57,9 +60,7 @@ struct nsBlockHorizontalAlign;
 class nsBlockReflowContext {
 public:
   nsBlockReflowContext(nsPresContext* aPresContext,
-                       const nsHTMLReflowState& aParentRS,
-                       PRBool aComputeMaxElementWidth,
-                       PRBool aComputeMaximumWidth);
+                       const nsHTMLReflowState& aParentRS);
   ~nsBlockReflowContext() { }
 
   nsresult ReflowBlock(const nsRect&       aSpace,
@@ -67,20 +68,18 @@ public:
                        nsCollapsingMargin& aPrevMargin,
                        nscoord             aClearance,
                        PRBool              aIsAdjacentWithTop,
-                       nsMargin&           aComputedOffsets,
+                       nsLineBox*          aLine,
                        nsHTMLReflowState&  aReflowState,
-                       nsReflowStatus&     aReflowStatus);
+                       nsReflowStatus&     aReflowStatus,
+                       nsBlockReflowState& aState);
 
   PRBool PlaceBlock(const nsHTMLReflowState& aReflowState,
                     PRBool                   aForceFit,
                     nsLineBox*               aLine,
-                    const nsMargin&          aComputedOffsets,
                     nsCollapsingMargin&      aBottomMarginResult /* out */,
                     nsRect&                  aInFlowBounds,
                     nsRect&                  aCombinedRect,
                     nsReflowStatus           aReflowStatus);
-
-  void AlignBlockHorizontally(nscoord aWidth, nsBlockHorizontalAlign&);
 
   nsCollapsingMargin& GetCarriedOutBottomMargin() {
     return mMetrics.mCarriedOutBottomMargin;
@@ -90,20 +89,8 @@ public:
     return mTopMargin.get();
   }
 
-  const nsMargin& GetMargin() const {
-    return mMargin;
-  }
-
   const nsHTMLReflowMetrics& GetMetrics() const {
     return mMetrics;
-  }
-
-  nscoord GetMaxElementWidth() const {
-    return mMetrics.mMaxElementWidth;
-  }
-  
-  nscoord GetMaximumWidth() const {
-    return mMetrics.mMaximumWidth;
   }
 
   /**
@@ -122,7 +109,7 @@ public:
    */
   static PRBool ComputeCollapsedTopMargin(const nsHTMLReflowState& aRS,
                                           nsCollapsingMargin* aMargin, nsIFrame* aClearanceFrame,
-                                          PRBool* aMayNeedRetry);
+                                          PRBool* aMayNeedRetry, PRBool* aIsEmpty = nsnull);
 
 protected:
   nsPresContext* mPresContext;
@@ -131,17 +118,9 @@ protected:
   nsIFrame* mFrame;
   nsRect mSpace;
 
-  // Spacing style for the frame we are reflowing; only valid after reflow
-  const nsStyleBorder* mStyleBorder;
-  const nsStyleMargin* mStyleMargin;
-  const nsStylePadding* mStylePadding;
-
-  nscoord mComputedWidth;               // copy of reflowstate's computedWidth
-  nsMargin mMargin;
   nscoord mX, mY;
   nsHTMLReflowMetrics mMetrics;
   nsCollapsingMargin mTopMargin;
-  PRPackedBool mComputeMaximumWidth;
 };
 
 #endif /* nsBlockReflowContext_h___ */

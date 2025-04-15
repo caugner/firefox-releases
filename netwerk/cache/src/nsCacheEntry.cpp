@@ -44,6 +44,7 @@
 #include "nsCacheEntryDescriptor.h"
 #include "nsCacheMetaData.h"
 #include "nsCacheRequest.h"
+#include "nsThreadUtils.h"
 #include "nsError.h"
 #include "nsICacheService.h"
 #include "nsCache.h"
@@ -80,16 +81,8 @@ nsCacheEntry::~nsCacheEntry()
     MOZ_COUNT_DTOR(nsCacheEntry);
     delete mKey;
     
-    if (IsStreamData())  return;
-
-    // proxy release of of memory cache nsISupports objects
-    if (!mData)  return;
-    
-    nsISupports * data = mData;
-    NS_ADDREF(data);    // this reference will be owned by the proxy
-    mData = nsnull;     // release our reference before switching threads
-
-    nsCacheService::ProxyObjectRelease(data, mThread);
+    if (mData)
+        nsCacheService::ReleaseObject_Locked(mData, mThread);
 }
 
 
@@ -139,19 +132,25 @@ nsCacheEntry::TouchData()
 
 
 void
+nsCacheEntry::SetData(nsISupports * data)
+{
+    if (mData) {
+        nsCacheService::ReleaseObject_Locked(mData, mThread);
+        mData = nsnull;
+    }
+
+    if (data) {
+        NS_ADDREF(mData = data);
+        mThread = do_GetCurrentThread();
+    }
+}
+
+
+void
 nsCacheEntry::TouchMetaData()
 {
     mLastModified = SecondsFromPRTime(PR_Now());
     MarkMetaDataDirty();
-}
-
-
-nsresult
-nsCacheEntry::GetSecurityInfo( nsISupports ** result)
-{
-    NS_ENSURE_ARG_POINTER(result);
-    NS_IF_ADDREF(*result = mSecurityInfo);
-    return NS_OK;
 }
 
 
@@ -299,8 +298,8 @@ nsCacheEntryInfo::GetDeviceID(char ** deviceID)
 {
     NS_ENSURE_ARG_POINTER(deviceID);
     if (!mCacheEntry)  return NS_ERROR_NOT_AVAILABLE;
-    
-    *deviceID = nsCRT::strdup(mCacheEntry->GetDeviceID());
+
+    *deviceID = NS_strdup(mCacheEntry->GetDeviceID());
     return *deviceID ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
@@ -389,7 +388,6 @@ nsCacheEntryHashTable::ops =
 {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
-    GetKey,
     HashKey,
     MatchEntry,
     MoveEntry,
@@ -490,35 +488,17 @@ nsCacheEntryHashTable::RemoveEntry( nsCacheEntry *cacheEntry)
 
 
 void
-nsCacheEntryHashTable::VisitEntries( nsCacheEntryHashTable::Visitor *visitor)
+nsCacheEntryHashTable::VisitEntries( PLDHashEnumerator etor, void *arg)
 {
     NS_ASSERTION(initialized, "nsCacheEntryHashTable not initialized");
     if (!initialized)  return; // NS_ERROR_NOT_INITIALIZED
-    PL_DHashTableEnumerate(&table, VisitEntry, visitor);
+    PL_DHashTableEnumerate(&table, etor, arg);
 }
 
-
-PLDHashOperator PR_CALLBACK
-nsCacheEntryHashTable::VisitEntry(PLDHashTable *table,
-                                  PLDHashEntryHdr *hashEntry,
-                                  PRUint32 number,
-                                  void *arg)
-{
-    nsCacheEntry *cacheEntry = ((nsCacheEntryHashTableEntry *)hashEntry)->cacheEntry;
-    nsCacheEntryHashTable::Visitor *visitor = (nsCacheEntryHashTable::Visitor*) arg;
-    return (visitor->VisitEntry(cacheEntry) ? PL_DHASH_NEXT : PL_DHASH_STOP);
-}
 
 /**
  *  hash table operation callback functions
  */
-const void * PR_CALLBACK
-nsCacheEntryHashTable::GetKey( PLDHashTable * /*table*/, PLDHashEntryHdr *hashEntry)
-{
-    nsCacheEntry *cacheEntry = ((nsCacheEntryHashTableEntry *)hashEntry)->cacheEntry;
-    return cacheEntry->mKey;
-}
-
 
 PLDHashNumber PR_CALLBACK
 nsCacheEntryHashTable::HashKey( PLDHashTable *table, const void *key)
@@ -554,4 +534,3 @@ nsCacheEntryHashTable::ClearEntry(PLDHashTable * /* table */,
 {
     ((nsCacheEntryHashTableEntry *)hashEntry)->cacheEntry = 0;
 }
-

@@ -42,24 +42,25 @@
 #include "nsString.h"
 #include "nsIInputStream.h"
 #include "nsCOMPtr.h"
-#include "nsVoidArray.h"
+#include "nsCOMArray.h"
 #include "nsITextToSubURI.h"
 
 class nsDirectoryIndexStream : public nsIInputStream
 {
-protected:
+private:
     nsCAutoString mBuf;
     PRInt32 mOffset;
+    nsresult mStatus;
 
-    PRInt32 mPos;
-    nsVoidArray mArray;
+    PRInt32             mPos;   // position within mArray
+    nsCOMArray<nsIFile> mArray; // file objects within the directory
 
     nsDirectoryIndexStream();
     /**
      * aDir will only be used on the calling thread.
      */ 
     nsresult Init(nsIFile* aDir);
-    virtual ~nsDirectoryIndexStream();
+    ~nsDirectoryIndexStream();
 
 public:
     /**

@@ -38,9 +38,9 @@
 
 /*
  *  nsXmlRpcClient XPCOM component
- *  Version: $Revision: 1.34.28.2 $
+ *  Version: $Revision: 1.39 $
  *
- *  $Id: nsXmlRpcClient.js,v 1.34.28.2 2006/08/06 22:30:02 samuel%sieb.net Exp $
+ *  $Id: nsXmlRpcClient.js,v 1.39 2006/10/24 16:02:01 silver%warwickcompsoc.co.uk Exp $
  */
 
 /*
@@ -165,7 +165,8 @@ nsXmlRpcClient.prototype = {
 
         debug('Request: ' + requestBody);
 
-        this.xmlhttp = new XMLHttpRequest();
+        this.xmlhttp = Components.classes[XMLHTTPREQUEST_CONTRACTID]
+            .createInstance(Components.interfaces.nsIXMLHttpRequest);
         if (this._useAuth) {
             this.xmlhttp.open('POST', this._serverUrl, true,
                               this._username, this._password);

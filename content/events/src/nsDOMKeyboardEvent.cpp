@@ -57,6 +57,14 @@ nsDOMKeyboardEvent::nsDOMKeyboardEvent(nsPresContext* aPresContext,
   }
 }
 
+nsDOMKeyboardEvent::~nsDOMKeyboardEvent()
+{
+  if (mEventIsInternal) {
+    delete static_cast<nsKeyEvent*>(mEvent);
+    mEvent = nsnull;
+  }
+}
+
 NS_IMPL_ADDREF_INHERITED(nsDOMKeyboardEvent, nsDOMUIEvent)
 NS_IMPL_RELEASE_INHERITED(nsDOMKeyboardEvent, nsDOMUIEvent)
 
@@ -105,9 +113,7 @@ nsDOMKeyboardEvent::GetCharCode(PRUint32* aCharCode)
   switch (mEvent->message) {
   case NS_KEY_UP:
   case NS_KEY_DOWN:
-#if defined(NS_DEBUG) && defined(DEBUG_brade)
-    printf("GetCharCode used for wrong key event; should use onkeypress.\n");
-#endif
+    NS_WARNING("GetCharCode used for wrong key event; should use onkeypress.");
     *aCharCode = 0;
     break;
   case NS_KEY_PRESS:
@@ -176,7 +182,7 @@ nsDOMKeyboardEvent::InitKeyEvent(const nsAString& aType, PRBool aCanBubble, PRBo
   nsresult rv = nsDOMUIEvent::InitUIEvent(aType, aCanBubble, aCancelable, aView, 0);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsKeyEvent* keyEvent = NS_STATIC_CAST(nsKeyEvent*, mEvent);
+  nsKeyEvent* keyEvent = static_cast<nsKeyEvent*>(mEvent);
   keyEvent->isControl = aCtrlKey;
   keyEvent->isAlt = aAltKey;
   keyEvent->isShift = aShiftKey;

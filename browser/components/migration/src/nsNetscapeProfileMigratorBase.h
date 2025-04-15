@@ -41,7 +41,7 @@
 #include "nsILocalFile.h"
 #include "nsIStringBundle.h"
 #include "nsISupportsArray.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 
 class nsIFile;
 class nsIPrefBranch;
@@ -50,7 +50,7 @@ class nsNetscapeProfileMigratorBase
 {
 public:
   nsNetscapeProfileMigratorBase();
-  virtual ~nsNetscapeProfileMigratorBase() { };
+  virtual ~nsNetscapeProfileMigratorBase() { }
 
 public:
   typedef nsresult(*prefConverter)(void*, nsIPrefBranch*);

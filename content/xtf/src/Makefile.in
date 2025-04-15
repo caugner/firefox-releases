@@ -50,6 +50,7 @@ REQUIRES	= xpcom \
 		  layout \
 		  widget \
 		  gfx \
+		  thebes \
 		  dom \
 		  js \
 		  locale \
@@ -57,26 +58,16 @@ REQUIRES	= xpcom \
 		  necko \
 		  xpconnect \
 		  webshell \
+		  unicharutil \
 		  $(NULL)
 
 CPPSRCS		= \
 		nsXMLContentBuilder.cpp \
 		nsXTFElementWrapper.cpp \
-		nsXTFGenericElementWrapper.cpp \
 		nsXTFInterfaceAggregator.cpp \
 		nsXTFService.cpp \
-		nsXTFVisualWrapper.cpp \
 		nsXTFWeakTearoff.cpp \
-		nsXTFXMLVisualWrapper.cpp \
-		nsXTFXULVisualWrapper.cpp \
-		nsXTFBindableElementWrapper.cpp \
 		$(NULL)
-
-ifdef MOZ_SVG
-CPPSRCS		+= \
-		nsXTFSVGVisualWrapper.cpp \
-		$(NULL)
-endif
 
 include $(topsrcdir)/config/config.mk
 
@@ -85,8 +76,6 @@ FORCE_STATIC_LIB = 1
 
 EXPORTS 	=  \
 		nsIXTFService.h  \
-		nsIXTFElementWrapperPrivate.h \
-		nsIXTFVisualWrapperPrivate.h \
 		$(NULL)
 
 

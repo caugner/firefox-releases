@@ -35,7 +35,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #ifdef DEBUG
-static const char CVS_ID[] = "@(#) $RCSfile: binst.c,v $ $Revision: 1.3.18.1 $ $Date: 2006/08/04 19:10:50 $";
+static const char CVS_ID[] = "@(#) $RCSfile: binst.c,v $ $Revision: 1.5 $ $Date: 2008/01/23 07:34:49 $";
 #endif /* DEBUG */
 
 #include "builtins.h"
@@ -121,7 +121,7 @@ builtins_mdInstance_GetSlots
   return CKR_OK;
 }
 
-NSS_IMPLEMENT_DATA const NSSCKMDInstance
+const NSSCKMDInstance
 nss_builtins_mdInstance = {
   (void *)NULL, /* etc */
   NULL, /* Initialize */

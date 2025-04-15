@@ -51,12 +51,14 @@ class nsINodeInfo;
 class nsIXTFService : public nsISupports
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IXTFSERVICE_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IXTFSERVICE_IID)
 
     // try to create an xtf element based on namespace
     virtual nsresult CreateElement(nsIContent** aResult,
                                    nsINodeInfo* aNodeInfo)=0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIXTFService, NS_IXTFSERVICE_IID)
 
 //----------------------------------------------------------------------
 // The one class implementing this interface:

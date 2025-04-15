@@ -47,7 +47,6 @@
 #include "nsCOMPtr.h"
 #include "nsString.h"
 #include "prclist.h"
-#include "plevent.h"
 
 /**
  * This class defines a callback interface used by AsyncGetProxyForURI.
@@ -119,7 +118,8 @@ public:
    * processed once the PAC file finishes loading.
    *
    * @param pacURI
-   *        The nsIURI of the PAC file to load.
+   *        The nsIURI of the PAC file to load.  If this parameter is null,
+   *        then the previous PAC URI is simply reloaded.
    */
   nsresult LoadPACFromURI(nsIURI *pacURI);
 
@@ -127,6 +127,14 @@ public:
    * Returns true if we are currently loading the PAC file.
    */
   PRBool IsLoading() { return mLoader != nsnull; }
+
+  /**
+   * Returns true if the given URI matches the URI of our PAC file.
+   */
+  PRBool IsPACURI(nsIURI *uri) {
+    PRBool result;
+    return mPACURI && NS_SUCCEEDED(mPACURI->Equals(uri, &result)) && result;
+  }
 
 private:
   NS_DECL_NSISTREAMLOADEROBSERVER
@@ -150,7 +158,7 @@ private:
   /**
    * Start loading the PAC file.
    */
-  nsresult StartLoading();
+  void StartLoading();
 
   /**
    * Reload the PAC file if there is reason to.
@@ -162,27 +170,13 @@ private:
    */
   void OnLoadFailure();
 
-  /**
-   * Returns true if the given URI matches the URI of our PAC file.
-   */
-  PRBool IsPACURI(nsIURI *uri) {
-    PRBool result;
-    return mPACURI && NS_SUCCEEDED(mPACURI->Equals(uri, &result)) && result;
-  }
-
-  /**
-   * Event fu for calling StartLoading asynchronously.
-   */
-  PR_STATIC_CALLBACK(void *) LoadEvent_Handle(PLEvent *);
-  PR_STATIC_CALLBACK(void) LoadEvent_Destroy(PLEvent *);
-
 private:
   nsCOMPtr<nsIProxyAutoConfig> mPAC;
   nsCOMPtr<nsIURI>             mPACURI;
   PRCList                      mPendingQ;
   nsCOMPtr<nsIStreamLoader>    mLoader;
-  PLEvent                     *mLoadEvent;
-  PRBool                       mShutdown;
+  PRPackedBool                 mLoadPending;
+  PRPackedBool                 mShutdown;
   PRTime                       mScheduledReload;
   PRUint32                     mLoadFailureCount;
 };

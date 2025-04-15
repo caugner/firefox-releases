@@ -38,9 +38,6 @@
 #define nsIHTMLContentSink_h___
 
 /**
- * MODULE NOTES:
- * @update  gess 4/1/98
- * 
  * This file declares the concrete HTMLContentSink class.
  * This class is used during the parsing process as the
  * primary interface between the parser and the content
@@ -86,7 +83,9 @@
 #include "nsHTMLTags.h"
 
 #define NS_IHTML_CONTENT_SINK_IID \
- { 0x59929de5, 0xe60b, 0x48b1,{0x81, 0x69, 0x48, 0x47, 0xb5, 0xc9, 0x44, 0x29}}
+{ 0x73b5a072, 0x0f87, 0x4d07, \
+  { 0xa8, 0x16, 0xe6, 0xac, 0x73, 0xa7, 0x04, 0x3c } }
+
 
 #if defined(XP_MAC) || defined(WINCE) 
 #define MAX_REFLOW_DEPTH  75    //setting to 75 to prevent layout from crashing on mac. Bug 55095.
@@ -100,99 +99,14 @@ class nsIHTMLContentSink : public nsIContentSink
 {
 public:
 
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IHTML_CONTENT_SINK_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IHTML_CONTENT_SINK_IID)
 
   /**
-   * This method gets called by the parser when it encounters
-   * a title tag and wants to set the document title in the sink.
-   *
-   * @update 4/1/98 gess
-   * @param  nsString reference to new title value
-   */     
-  NS_IMETHOD SetTitle(const nsString& aValue) = 0;
-
-  /**
-   * This method is used to open the outer HTML container.
-   *
-   * @update 4/1/98 gess
-   * @param  nsIParserNode reference to parser node interface
-   */     
-  NS_IMETHOD OpenHTML(const nsIParserNode& aNode) = 0;
-
-  /**
-   * This method is used to close the outer HTML container.
-   *
-   */     
-  NS_IMETHOD CloseHTML() = 0;
-
-  /**
-   * This method is used to open the only HEAD container.
-   *
-   * @update 4/1/98 gess
-   * @param  nsIParserNode reference to parser node interface
-   */     
-  NS_IMETHOD OpenHead(const nsIParserNode& aNode) = 0;
-
-  /**
-   * This method is used to close the only HEAD container.
-   */     
-  NS_IMETHOD CloseHead() = 0;
-  
-  /**
-   * This method is used to open the main BODY container.
-   *
-   * @update 4/1/98 gess
-   * @param  nsIParserNode reference to parser node interface
-   */     
-  NS_IMETHOD OpenBody(const nsIParserNode& aNode) = 0;
-
-  /**
-   * This method is used to close the main BODY container.
-   *
-   */     
-  NS_IMETHOD CloseBody() = 0;
-
-  /**
-   * This method is used to open a new FORM container.
-   *
-   * @update 4/1/98 gess
-   * @param  nsIParserNode reference to parser node interface
-   */     
-  NS_IMETHOD OpenForm(const nsIParserNode& aNode) = 0;
-
-  /**
-   * This method is used to close the outer FORM container.
-   *
-   */     
-  NS_IMETHOD CloseForm() = 0;
-
-  /**
-   * This method is used to open a new MAP container.
-   *
-   * @update 4/1/98 gess
-   * @param  nsIParserNode reference to parser node interface
-   */     
-  NS_IMETHOD OpenMap(const nsIParserNode& aNode) = 0;
-
-  /**
-   * This method is used to close the MAP container.
-   *
-   */     
-  NS_IMETHOD CloseMap() = 0;
-        
-  /**
-   * This method is used to open the FRAMESET container.
-   *
-   * @update 4/1/98 gess
-   * @param  nsIParserNode reference to parser node interface
-   */     
-  NS_IMETHOD OpenFrameset(const nsIParserNode& aNode) = 0;
-
-  /**
-   * This method is used to close the FRAMESET container.
-   *
-   */     
-  NS_IMETHOD CloseFrameset() = 0;
+   * This method is used to open the HEAD container. It is useful if a tag
+   * is forcing us to open the head (probably again), like if we find a <meta>
+   * tag in the body.
+   */
+  NS_IMETHOD OpenHead() = 0;
 
   /**
    * This gets called when handling illegal contents, especially
@@ -263,11 +177,16 @@ public:
   NS_IMETHOD CloseContainer(const nsHTMLTag aTag) = 0;
 
   /**
-   * This gets called by the parser to contents to 
-   * the head container
+   * This method is used when we're closing a tag that was malformed
+   * in some way. This way, the content sink can do special processing
+   * (e.g., not execute a malformed script tag).
    *
-   */     
-  NS_IMETHOD AddHeadContent(const nsIParserNode& aNode) = 0;
+   * @param aTag The tag to be closed.
+   */
+  NS_IMETHOD CloseMalformedContainer(const nsHTMLTag aTag)
+  {
+    return CloseContainer(aTag);
+  }
 
   /**
    * This gets called by the parser when you want to add
@@ -303,7 +222,7 @@ public:
    * This method is called by the parser when it encounters
    * a document type declaration.
    *
-   * XXX Should the parser also part the internal subset?
+   * XXX Should the parser also parse the internal subset?
    *
    * @param  nsIParserNode reference to parser node interface
    */
@@ -325,6 +244,8 @@ public:
   NS_IMETHOD_(PRBool) IsFormOnStack() = 0;
 
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIHTMLContentSink, NS_IHTML_CONTENT_SINK_IID)
 
 #endif /* nsIHTMLContentSink_h___ */
 

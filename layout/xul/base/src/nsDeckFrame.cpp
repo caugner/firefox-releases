@@ -47,37 +47,27 @@
 #include "nsPresContext.h"
 #include "nsIContent.h"
 #include "nsCOMPtr.h"
-#include "nsUnitConversion.h"
 #include "nsINameSpaceManager.h"
-#include "nsXULAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsHTMLParts.h"
 #include "nsIPresShell.h"
 #include "nsCSSRendering.h"
 #include "nsIViewManager.h"
 #include "nsBoxLayoutState.h"
 #include "nsStackLayout.h"
+#include "nsDisplayList.h"
 
-nsresult
-NS_NewDeckFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame,
-                nsIBoxLayout* aLayoutManager)
+nsIFrame*
+NS_NewDeckFrame(nsIPresShell* aPresShell, nsStyleContext* aContext, nsIBoxLayout* aLayoutManager)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (!aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsDeckFrame* it = new (aPresShell) nsDeckFrame(aPresShell, aLayoutManager);
-  if (!it)
-    return NS_ERROR_OUT_OF_MEMORY;
-
-  *aNewFrame = it;
-  return NS_OK;
-  
+  return new (aPresShell) nsDeckFrame(aPresShell, aContext, aLayoutManager);
 } // NS_NewDeckFrame
 
 
 nsDeckFrame::nsDeckFrame(nsIPresShell* aPresShell,
+                         nsStyleContext* aContext,
                          nsIBoxLayout* aLayoutManager)
-  : nsBoxFrame(aPresShell), mIndex(0)
+  : nsBoxFrame(aPresShell, aContext), mIndex(0)
 {
      // if no layout manager specified us the static sprocket layout
   nsCOMPtr<nsIBoxLayout> layout = aLayoutManager;
@@ -89,44 +79,35 @@ nsDeckFrame::nsDeckFrame(nsIPresShell* aPresShell,
   SetLayoutManager(layout);
 }
 
-/**
- * Hack for deck who requires that all its children has widgets
- */
-NS_IMETHODIMP
-nsDeckFrame::ChildrenMustHaveWidgets(PRBool& aMust) const
+nsIAtom*
+nsDeckFrame::GetType() const
 {
-  aMust = PR_TRUE;
-  return NS_OK;
+  return nsGkAtoms::deckFrame;
 }
 
 NS_IMETHODIMP
-nsDeckFrame::AttributeChanged(nsIContent*     aChild,
-                              PRInt32         aNameSpaceID,
+nsDeckFrame::AttributeChanged(PRInt32         aNameSpaceID,
                               nsIAtom*        aAttribute,
                               PRInt32         aModType)
 {
-  nsresult rv = nsBoxFrame::AttributeChanged(aChild, aNameSpaceID,
-                                             aAttribute, aModType);
+  nsresult rv = nsBoxFrame::AttributeChanged(aNameSpaceID, aAttribute,
+                                             aModType);
 
 
-   // if the index changed hide the old element and make the now element visible
-  if (aAttribute == nsXULAtoms::selectedIndex) {
-    IndexChanged(GetPresContext());
+   // if the index changed hide the old element and make the new element visible
+  if (aAttribute == nsGkAtoms::selectedIndex) {
+    IndexChanged(PresContext());
   }
 
   return rv;
 }
 
 NS_IMETHODIMP
-nsDeckFrame::Init(nsPresContext* aPresContext,
-                  nsIContent*     aContent,
+nsDeckFrame::Init(nsIContent*     aContent,
                   nsIFrame*       aParent,
-                  nsStyleContext* aStyleContext,
                   nsIFrame*       aPrevInFlow)
 {
-  nsresult rv = nsBoxFrame::Init(aPresContext, aContent,
-                                 aParent, aStyleContext,
-                                 aPrevInFlow);
+  nsresult rv = nsBoxFrame::Init(aContent, aParent, aPrevInFlow);
 
   mIndex = GetSelectedIndex();
 
@@ -171,16 +152,16 @@ nsDeckFrame::IndexChanged(nsPresContext* aPresContext)
   Redraw(state);
 
   // hide the currently showing box
-  nsIBox* currentBox = GetBoxAt(mIndex);
+  nsIBox* currentBox = GetSelectedBox();
   if (currentBox) // only hide if it exists
      HideBox(aPresContext, currentBox);
 
+  mIndex = index;
+
   // show the new box
-  nsIBox* newBox = GetBoxAt(index);
+  nsIBox* newBox = GetSelectedBox();
   if (newBox) // only show if it exists
      ShowBox(aPresContext, newBox);
-
-  mIndex = index;
 }
 
 PRInt32
@@ -191,7 +172,7 @@ nsDeckFrame::GetSelectedIndex()
 
   // get the index attribute
   nsAutoString value;
-  if (NS_CONTENT_ATTR_HAS_VALUE == mContent->GetAttr(kNameSpaceID_None, nsXULAtoms::selectedIndex, value))
+  if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::selectedIndex, value))
   {
     PRInt32 error;
 
@@ -205,69 +186,38 @@ nsDeckFrame::GetSelectedIndex()
 nsIBox* 
 nsDeckFrame::GetSelectedBox()
 {
- // ok we want to paint only the child that as at the given index
-  PRInt32 index = GetSelectedIndex();
- 
-  // get the child at that index. 
-  return GetBoxAt(index); 
+  return (mIndex >= 0) ? mFrames.FrameAt(mIndex) : nsnull; 
 }
 
-
 NS_IMETHODIMP
-nsDeckFrame::Paint(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext,
-                   const nsRect&        aDirtyRect,
-                   nsFramePaintLayer    aWhichLayer,
-                   PRUint32             aFlags)
+nsDeckFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists)
 {
   // if a tab is hidden all its children are too.
-
   if (!GetStyleVisibility()->mVisible)
     return NS_OK;
-
-  if (NS_FRAME_PAINT_LAYER_BACKGROUND == aWhichLayer) {
-    PaintSelf(aPresContext, aRenderingContext, aDirtyRect);
-  }
-
-  // only paint the seleced box
-  nsIBox* box = GetSelectedBox();
-  if (box) {
-    PaintChild(aPresContext, aRenderingContext, aDirtyRect, box, aWhichLayer);
-  }
-
-  return NS_OK;
-
+    
+  // REVIEW: The old code skipped painting of background/borders/outline for this
+  // frame and painting of debug boxes ... I've put it back.
+  return nsBoxFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
 }
-
 
 NS_IMETHODIMP
-nsDeckFrame::GetFrameForPoint(const nsPoint&    aPoint, 
-                              nsFramePaintLayer aWhichLayer,    
-                              nsIFrame**        aFrame)
+nsDeckFrame::BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
+                                         const nsRect&           aDirtyRect,
+                                         const nsDisplayListSet& aLists)
 {
-  // if it is not inside us fail
-  if (!mRect.Contains(aPoint)) {
-    return NS_ERROR_FAILURE;
-  }
+  // only paint the selected box
+  nsIBox* box = GetSelectedBox();
+  if (!box)
+    return NS_OK;
 
-  // get the selected frame and see if the point is in it.
-  nsIBox* selectedBox = GetSelectedBox();
-  if (selectedBox) {
-    nsPoint tmp(aPoint.x - mRect.x, aPoint.y - mRect.y);
-
-    if (NS_SUCCEEDED(selectedBox->GetFrameForPoint(tmp, aWhichLayer, aFrame)))
-      return NS_OK;
-  }
-    
-  // if its not in our child just return us.
-  if (aWhichLayer == NS_FRAME_PAINT_LAYER_BACKGROUND) {
-      *aFrame = this;
-      return NS_OK;
-  }
-
-  return NS_ERROR_FAILURE;
+  // Putting the child in the background list. This is a little weird but
+  // it matches what we were doing before.
+  nsDisplayListSet set(aLists, aLists.BlockBorderBackgrounds());
+  return BuildDisplayListForChild(aBuilder, box, aDirtyRect, set);
 }
-
 
 NS_IMETHODIMP
 nsDeckFrame::DoLayout(nsBoxLayoutState& aState)
@@ -281,8 +231,7 @@ nsDeckFrame::DoLayout(nsBoxLayoutState& aState)
   nsresult rv = nsBoxFrame::DoLayout(aState);
 
   // run though each child. Hide all but the selected one
-  nsIBox* box = nsnull;
-  GetChildBox(&box);
+  nsIBox* box = GetChildBox();
 
   nscoord count = 0;
   while (box) 
@@ -293,8 +242,7 @@ nsDeckFrame::DoLayout(nsBoxLayoutState& aState)
     else
       HideBox(aState.PresContext(), box);
 
-    nsresult rv2 = box->GetNextBox(&box);
-    NS_ASSERTION(NS_SUCCEEDED(rv2), "failed to get next child");
+    box = box->GetNextBox();
     count++;
   }
 

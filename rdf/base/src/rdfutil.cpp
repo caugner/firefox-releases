@@ -86,99 +86,17 @@ rdf_MakeRelativeRef(const nsCSubstring& aBaseURI, nsCString& aURI)
     return NS_OK;
 }
 
-static PRBool
-rdf_RequiresAbsoluteURI(const nsString& uri)
-{
-    // cheap shot at figuring out if this requires an absolute url translation
-    return !(StringBeginsWith(uri, NS_LITERAL_STRING("urn:")) ||
-             StringBeginsWith(uri, NS_LITERAL_STRING("chrome:")) ||
-             StringBeginsWith(uri, NS_LITERAL_STRING("nc:"),
-                              nsCaseInsensitiveStringComparator()));
-}
-
-nsresult
-rdf_MakeAbsoluteURI(const nsString& aBaseURI, nsString& aURI)
-{
-    nsresult rv;
-    nsAutoString result;
-
-    if (!rdf_RequiresAbsoluteURI(aURI))
-        return NS_OK;
-    
-    nsCOMPtr<nsIURI> base;
-    rv = NS_NewURI(getter_AddRefs(base), aBaseURI);
-    if (NS_FAILED(rv)) return rv;
-
-    rv = NS_MakeAbsoluteURI(result, aURI, base);
-
-    if (NS_SUCCEEDED(rv)) {
-        aURI = result;
-    }
-    else {
-        // There are some ugly URIs (e.g., "NC:Foo") that netlib can't
-        // parse. If NS_MakeAbsoluteURL fails, then just punt and
-        // assume that aURI was already absolute.
-    }
-
-    return NS_OK;
-}
-
-
-nsresult
-rdf_MakeAbsoluteURI(nsIURI* aBase, nsString& aURI)
-{
-    nsresult rv;
-
-    if (!rdf_RequiresAbsoluteURI(aURI))
-        return NS_OK;
-
-    nsAutoString result;
-
-    rv = NS_MakeAbsoluteURI(result, aURI, aBase);
-
-    if (NS_SUCCEEDED(rv)) {
-        aURI = result;
-    }
-    else {
-        // There are some ugly URIs (e.g., "NC:Foo") that netlib can't
-        // parse. If NS_MakeAbsoluteURL fails, then just punt and
-        // assume that aURI was already absolute.
-    }
-
-    return NS_OK;
-}
-
-nsresult
-rdf_MakeAbsoluteURI(nsIURI* aBase, nsCString& aURI)
-{
-    nsresult rv;
-    nsXPIDLCString result;
-
-    rv = NS_MakeAbsoluteURI(getter_Copies(result), aURI.get(), aBase);
-
-    if (NS_SUCCEEDED(rv)) {
-        aURI.Assign(result);
-    }
-    else {
-        // There are some ugly URIs (e.g., "NC:Foo") that netlib can't
-        // parse. If NS_MakeAbsoluteURL fails, then just punt and
-        // assume that aURI was already absolute.
-    }
-
-    return NS_OK;
-}
-
 void
 rdf_FormatDate(PRTime aTime, nsACString &aResult)
 {
     // Outputs Unixish date in GMT plus usecs; e.g.,
-    //   Wed Jan  9 19:15:13 GMT 2002 +002441
+    //   Wed Jan  9 19:15:13 2002 +002441
     //
     PRExplodedTime t;
-    PR_ExplodeTime(aTime, PR_LocalTimeParameters, &t);
+    PR_ExplodeTime(aTime, PR_GMTParameters, &t);
 
     char buf[256];
-    PR_FormatTimeUSEnglish(buf, sizeof buf, "%a %b %d %H:%M:%S %Z %Y", &t);
+    PR_FormatTimeUSEnglish(buf, sizeof buf, "%a %b %d %H:%M:%S %Y", &t);
     aResult.Append(buf);
 
     // usecs

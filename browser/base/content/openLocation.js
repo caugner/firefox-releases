@@ -112,10 +112,7 @@ function open()
                                         url, postData.value, null, null, true);
         break;
       case "3":
-        if (browser.getBrowser && browser.getBrowser().localName == "tabbrowser")
-          browser.delayedOpenTab(url, null, null, postData.value, true);
-        else
-          browser.loadURI(url, null, postData.value, true); // Just do a normal load.
+        browser.delayedOpenTab(url, null, null, postData.value, true);
         break;
     }
   }
@@ -158,12 +155,3 @@ function onChooseFile()
   }
   doEnabling();
 }
-
-function useUBHistoryItem(aMenuItem)
-{
-  var urlbar = document.getElementById("dialog.input");
-  urlbar.value = aMenuItem.getAttribute("label");
-  urlbar.focus();
-  doEnabling();
-}
-

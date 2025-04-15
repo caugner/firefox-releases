@@ -34,39 +34,42 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsSVGDefsFrame.h"
-#include "nsLayoutAtoms.h"
+#ifndef __NS_SVGCLIPPATHFRAME_H__
+#define __NS_SVGCLIPPATHFRAME_H__
 
-#define NS_SVGCLIPPATHFRAME_CID \
-{0xb497bbe2, 0x4434, 0x4d96, {0x9c, 0xe8, 0xf2, 0xad, 0xd1, 0x1f, 0x1d, 0x26}}
+#include "nsSVGContainerFrame.h"
 
-typedef nsSVGDefsFrame nsSVGClipPathFrameBase;
+typedef nsSVGContainerFrame nsSVGClipPathFrameBase;
 
 class nsSVGClipPathFrame : public nsSVGClipPathFrameBase
 {
-  friend nsresult
-  NS_NewSVGClipPathFrame(nsIPresShell* aPresShell, nsIContent* aContent, nsIFrame** aNewFrame);
+  friend nsIFrame*
+  NS_NewSVGClipPathFrame(nsIPresShell* aPresShell, nsIContent* aContent, nsStyleContext* aContext);
+protected:
+  nsSVGClipPathFrame(nsStyleContext* aContext) :
+    nsSVGClipPathFrameBase(aContext),
+    mClipParentMatrix(nsnull),
+    mInUse(PR_FALSE) {}
 
-  virtual ~nsSVGClipPathFrame();
-  NS_IMETHOD InitSVG();
+public:
+  // nsSVGClipPathFrame methods:
+  nsresult ClipPaint(nsSVGRenderState* aContext,
+                     nsISVGChildFrame* aParent,
+                     nsIDOMSVGMatrix *aMatrix);
 
- public:
-  NS_DECL_ISUPPORTS
+  PRBool ClipHitTest(nsISVGChildFrame* aParent,
+                     nsIDOMSVGMatrix *aMatrix,
+                     float aX, float aY);
 
-  NS_DEFINE_STATIC_CID_ACCESSOR(NS_SVGCLIPPATHFRAME_CID)
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_SVGCLIPPATHFRAME_CID)
+  // Check if this clipPath is made up of more than one geometry object.
+  // If so, the clipping API in cairo isn't enough and we need to use
+  // mask based clipping.
+  PRBool IsTrivial();
 
-  NS_IMETHOD ClipPaint(nsISVGRendererCanvas* canvas,
-                       nsISVGChildFrame* aParent,
-                       nsCOMPtr<nsIDOMSVGMatrix> aMatrix);
-
-  NS_IMETHOD ClipHitTest(nsISVGChildFrame* aParent,
-                         nsCOMPtr<nsIDOMSVGMatrix> aMatrix,
-                         float aX, float aY, PRBool *aHit);
   /**
    * Get the "type" of the frame
    *
-   * @see nsLayoutAtoms::svgClipPathFrame
+   * @see nsGkAtoms::svgClipPathFrame
    */
   virtual nsIAtom* GetType() const;
 
@@ -78,15 +81,36 @@ class nsSVGClipPathFrame : public nsSVGClipPathFrameBase
 #endif
 
  private:
+  // A helper class to allow us to paint clip paths safely. The helper
+  // automatically sets and clears the mInUse flag on the clip path frame
+  // (to prevent nasty reference loops). It's easy to mess this up
+  // and break things, so this helper makes the code far more robust.
+  class AutoClipPathReferencer
+  {
+  public:
+    AutoClipPathReferencer(nsSVGClipPathFrame *aFrame)
+       : mFrame(aFrame) {
+      NS_ASSERTION(mFrame->mInUse == PR_FALSE, "reference loop!");
+      mFrame->mInUse = PR_TRUE;
+    }
+    ~AutoClipPathReferencer() {
+      mFrame->mInUse = PR_FALSE;
+    }
+  private:
+    nsSVGClipPathFrame *mFrame;
+  };
+
   nsISVGChildFrame *mClipParent;
   nsCOMPtr<nsIDOMSVGMatrix> mClipParentMatrix;
 
-  // nsISVGContainerFrame interface:
-  already_AddRefed<nsIDOMSVGMatrix> GetCanvasTM();
+  // nsSVGContainerFrame methods:
+  virtual already_AddRefed<nsIDOMSVGMatrix> GetCanvasTM();
 
   // recursion prevention flag
-  PRPackedBool mInUse;  
+  PRPackedBool mInUse;
 };
 
-nsresult
-NS_GetSVGClipPathFrame(nsSVGClipPathFrame **aResult, nsIURI *aURI, nsIContent *aContent);
+nsIContent *
+NS_GetSVGClipPathElement(nsIURI *aURI, nsIContent *aContent);
+
+#endif

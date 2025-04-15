@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -49,12 +50,12 @@
 
 class nsMathMLmsubFrame : public nsMathMLContainerFrame {
 public:
-  friend nsresult NS_NewMathMLmsubFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmsubFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
   NS_IMETHOD
   TransmitAutomaticData();
 
-  NS_IMETHOD
+  virtual nsresult
   Place(nsIRenderingContext& aRenderingContext,
         PRBool               aPlaceOrigin,
         nsHTMLReflowMetrics& aDesiredSize);
@@ -64,12 +65,12 @@ public:
                   nsIRenderingContext& aRenderingContext,
                   PRBool               aPlaceOrigin,
                   nsHTMLReflowMetrics& aDesiredSize,
-                  nsIFrame*            aForFrame,
-                  nscoord              aUserSubScriptShift = 0,
-                  nscoord              aScriptSpace = NSFloatPointsToTwips(0.5f));
+                  nsMathMLContainerFrame* aForFrame,
+                  nscoord              aUserSubScriptShift,
+                  nscoord              aScriptSpace);
 
  protected:
-  nsMathMLmsubFrame();
+  nsMathMLmsubFrame(nsStyleContext* aContext) : nsMathMLContainerFrame(aContext) {}
   virtual ~nsMathMLmsubFrame();
   
   virtual PRIntn GetSkipSides() const { return 0; }

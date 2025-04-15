@@ -869,7 +869,7 @@ CIRCDCCChat.prototype.onCTCP =
 function serv_ctcp(e)
 {
     // The \x0D? is a BIG HACK to make this work with X-Chat.
-    var ary = e.line.match(/^\x01(\S+) ?(.*)\x01\x0D?$/i);
+    var ary = e.line.match(/^\x01([^ ]+) ?(.*)\x01\x0D?$/i);
     if (ary == null)
         return false;
 
@@ -1296,3 +1296,14 @@ function dfile_say(data)
 {
     this.connection.sendData(data);
 }
+
+CIRCDCCFileTransfer.prototype.size = 0;
+CIRCDCCFileTransfer.prototype.position = 0;
+CIRCDCCFileTransfer.prototype.__defineGetter__("progress",
+    function dfile_get_progress()
+    {
+        if (this.size > 0)
+            return Math.floor(100 * this.position / this.size);
+        return 0;
+    });
+

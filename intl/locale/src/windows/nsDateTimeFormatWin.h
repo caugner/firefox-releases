@@ -56,28 +56,28 @@ public:
                         const nsDateFormatSelector  dateFormatSelector, 
                         const nsTimeFormatSelector timeFormatSelector, 
                         const time_t  timetTime, 
-                        nsString& stringOut); 
+                        nsAString& stringOut); 
 
   // performs a locale sensitive date formatting operation on the struct tm parameter
   NS_IMETHOD FormatTMTime(nsILocale* locale, 
                           const nsDateFormatSelector  dateFormatSelector, 
                           const nsTimeFormatSelector timeFormatSelector, 
                           const struct tm*  tmTime, 
-                          nsString& stringOut); 
+                          nsAString& stringOut); 
 
   // performs a locale sensitive date formatting operation on the PRTime parameter
   NS_IMETHOD FormatPRTime(nsILocale* locale, 
                           const nsDateFormatSelector  dateFormatSelector, 
                           const nsTimeFormatSelector timeFormatSelector, 
                           const PRTime  prTime, 
-                          nsString& stringOut);
+                          nsAString& stringOut);
 
   // performs a locale sensitive date formatting operation on the PRExplodedTime parameter
   NS_IMETHOD FormatPRExplodedTime(nsILocale* locale, 
                                   const nsDateFormatSelector  dateFormatSelector, 
                                   const nsTimeFormatSelector timeFormatSelector, 
                                   const PRExplodedTime*  explodedTime, 
-                                  nsString& stringOut); 
+                                  nsAString& stringOut); 
 
   nsDateTimeFormatWin() {mLocale.SetLength(0);mAppLocale.SetLength(0);}
 
@@ -98,7 +98,6 @@ private:
 
   nsString    mLocale;
   nsString    mAppLocale;
-  PRBool      mW_API;            // W or A API
   PRUint32    mLCID;             // Windows platform locale ID
 };
 

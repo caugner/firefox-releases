@@ -69,8 +69,14 @@ xptiInterfaceInfoManager::GetInterfaceInfoManagerNoAddRef()
         }
 
         gInterfaceInfoManager = new xptiInterfaceInfoManager(searchPath);
-        if(gInterfaceInfoManager)
-            NS_ADDREF(gInterfaceInfoManager);
+        if(!gInterfaceInfoManager)
+        {
+            NS_ERROR("can't instantiate xptiInterfaceInfoManager");
+            return nsnull;
+        }
+
+        NS_ADDREF(gInterfaceInfoManager);
+
         if(!gInterfaceInfoManager->IsValid())
         {
             NS_RELEASE(gInterfaceInfoManager);
@@ -126,7 +132,7 @@ xptiInterfaceInfoManager::xptiInterfaceInfoManager(nsISupportsArray* aSearchPath
         mSearchPath(aSearchPath)
 {
     const char* statsFilename = PR_GetEnv("MOZILLA_XPTI_STATS");
-    if(statsFilename)
+    if(statsFilename && *statsFilename)
     {
         mStatsLogFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID);         
         if(mStatsLogFile && 
@@ -142,7 +148,7 @@ xptiInterfaceInfoManager::xptiInterfaceInfoManager(nsISupportsArray* aSearchPath
     }
 
     const char* autoRegFilename = PR_GetEnv("MOZILLA_XPTI_REGLOG");
-    if(autoRegFilename)
+    if(autoRegFilename && *autoRegFilename)
     {
         mAutoRegLogFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID);         
         if(mAutoRegLogFile && 
@@ -1720,8 +1726,16 @@ EntryToInfo(xptiInterfaceEntry* entry, nsIInterfaceInfo **_retval)
         return rv;
 
     // Transfer the AddRef done by GetInterfaceInfo.
-    *_retval = NS_STATIC_CAST(nsIInterfaceInfo*, info);
+    *_retval = static_cast<nsIInterfaceInfo*>(info);
     return NS_OK;    
+}
+
+xptiInterfaceEntry*
+xptiInterfaceInfoManager::GetInterfaceEntryForIID(const nsIID *iid)
+{
+    xptiHashEntry *hashEntry = (xptiHashEntry*)
+        PL_DHashTableOperate(mWorkingSet.mIIDTable, iid, PL_DHASH_LOOKUP);
+    return PL_DHASH_ENTRY_IS_FREE(hashEntry) ? nsnull : hashEntry->value;
 }
 
 /* nsIInterfaceInfo getInfoForIID (in nsIIDPtr iid); */
@@ -1730,12 +1744,7 @@ NS_IMETHODIMP xptiInterfaceInfoManager::GetInfoForIID(const nsIID * iid, nsIInte
     NS_ASSERTION(iid, "bad param");
     NS_ASSERTION(_retval, "bad param");
 
-    xptiHashEntry* hashEntry = (xptiHashEntry*)
-        PL_DHashTableOperate(mWorkingSet.mIIDTable, iid, PL_DHASH_LOOKUP);
-
-    xptiInterfaceEntry* entry = 
-        PL_DHASH_ENTRY_IS_FREE(hashEntry) ? nsnull : hashEntry->value;
-
+    xptiInterfaceEntry* entry = GetInterfaceEntryForIID(iid);
     return EntryToInfo(entry, _retval);
 }
 
@@ -1980,7 +1989,7 @@ xptiAdditionalManagersEnumerator::xptiAdditionalManagersEnumerator()
 
 PRBool xptiAdditionalManagersEnumerator::AppendElement(nsIInterfaceInfoManager* element)
 {
-    if(!mArray.AppendElement(NS_STATIC_CAST(nsISupports*, element)))
+    if(!mArray.AppendElement(static_cast<nsISupports*>(element)))
         return PR_FALSE;
     mCount++;
     return PR_TRUE;
@@ -2013,8 +2022,8 @@ NS_IMETHODIMP xptiInterfaceInfoManager::AddAdditionalManager(nsIInterfaceInfoMan
 {
     nsCOMPtr<nsIWeakReference> weakRef = do_GetWeakReference(manager);
     nsISupports* ptrToAdd = weakRef ? 
-                    NS_STATIC_CAST(nsISupports*, weakRef) :
-                    NS_STATIC_CAST(nsISupports*, manager);
+                    static_cast<nsISupports*>(weakRef) :
+                    static_cast<nsISupports*>(manager);
     { // scoped lock...
         nsAutoLock lock(mAdditionalManagersLock);
         PRInt32 index;
@@ -2032,8 +2041,8 @@ NS_IMETHODIMP xptiInterfaceInfoManager::RemoveAdditionalManager(nsIInterfaceInfo
 {
     nsCOMPtr<nsIWeakReference> weakRef = do_GetWeakReference(manager);
     nsISupports* ptrToRemove = weakRef ? 
-                    NS_STATIC_CAST(nsISupports*, weakRef) :
-                    NS_STATIC_CAST(nsISupports*, manager);
+                    static_cast<nsISupports*>(weakRef) :
+                    static_cast<nsISupports*>(manager);
     { // scoped lock...
         nsAutoLock lock(mAdditionalManagersLock);
         if(!mAdditionalManagers.RemoveElement(ptrToRemove))
@@ -2098,7 +2107,7 @@ NS_IMETHODIMP xptiInterfaceInfoManager::EnumerateAdditionalManagers(nsISimpleEnu
             // an nsIInterfaceInfoManager into the array, so we can avoid an
             // extra QI here and just do a cast.
             if(!enumerator->AppendElement(
-                    NS_REINTERPRET_CAST(nsIInterfaceInfoManager*, raw.get())))
+                    reinterpret_cast<nsIInterfaceInfoManager*>(raw.get())))
                 return NS_ERROR_FAILURE;
         }
     }
@@ -2106,21 +2115,3 @@ NS_IMETHODIMP xptiInterfaceInfoManager::EnumerateAdditionalManagers(nsISimpleEnu
     NS_ADDREF(*_retval = enumerator);
     return NS_OK;
 }
-
-/***************************************************************************/
-
-XPTI_PUBLIC_API(nsIInterfaceInfoManager*)
-XPTI_GetInterfaceInfoManager()
-{
-    nsIInterfaceInfoManager* iim =
-        xptiInterfaceInfoManager::GetInterfaceInfoManagerNoAddRef();
-    NS_IF_ADDREF(iim);
-    return iim;
-}
-
-XPTI_PUBLIC_API(void)
-XPTI_FreeInterfaceInfoManager()
-{
-    xptiInterfaceInfoManager::FreeInterfaceInfoManager();
-}
-

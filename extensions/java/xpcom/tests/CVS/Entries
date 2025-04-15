@@ -1,12 +1,9 @@
-/Foo.java/1.4/Thu Feb 24 21:53:46 2005//TFIREFOX_2_0_RELEASE
-/IFoo.idl/1.1/Thu Oct  7 15:48:38 2004//TFIREFOX_2_0_RELEASE
-/ITestParams.idl/1.1/Wed Apr 13 19:20:56 2005//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.8.6.2/Tue Oct  3 19:50:21 2006//TFIREFOX_2_0_RELEASE
-/TestArray.java/1.10/Mon May  2 16:30:02 2005//TFIREFOX_2_0_RELEASE
-/TestINIParser.java/1.1.4.2/Mon Jan  9 19:03:07 2006//TFIREFOX_2_0_RELEASE
-/TestJavaProxy.java/1.2.8.1/Mon Jan  9 19:03:07 2006//TFIREFOX_2_0_RELEASE
-/TestParams.java/1.2/Mon May  2 16:30:02 2005//TFIREFOX_2_0_RELEASE
-/TestProps.java/1.4.6.1/Mon Jan  9 19:03:07 2006//TFIREFOX_2_0_RELEASE
-/TestQI.java/1.2/Mon May  2 16:30:02 2005//TFIREFOX_2_0_RELEASE
-/TestVersionComparator.java/1.1.4.2/Mon Jan  9 19:03:07 2006//TFIREFOX_2_0_RELEASE
-D/dll////
+/LocationProvider.java/1.1/Fri Mar  2 21:28:57 2007//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.13/Wed Mar  7 22:44:16 2007//TFIREFOX_3_0rc3_RELEASE
+/TestArray.java/1.12/Fri Mar  2 21:28:57 2007//TFIREFOX_3_0rc3_RELEASE
+/TestINIParser.java/1.1/Fri Oct 28 01:59:05 2005//TFIREFOX_3_0rc3_RELEASE
+/TestJavaProxy.java/1.5/Fri Mar  2 21:28:57 2007//TFIREFOX_3_0rc3_RELEASE
+/TestProps.java/1.6/Fri Mar  2 21:28:57 2007//TFIREFOX_3_0rc3_RELEASE
+/TestQI.java/1.3/Fri Mar  2 21:28:57 2007//TFIREFOX_3_0rc3_RELEASE
+/TestVersionComparator.java/1.1/Fri Oct 28 01:59:05 2005//TFIREFOX_3_0rc3_RELEASE
+D/testparams////

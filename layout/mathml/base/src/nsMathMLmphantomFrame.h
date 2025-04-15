@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -48,20 +49,18 @@
 
 class nsMathMLmphantomFrame : public nsMathMLContainerFrame {
 public:
-  friend nsresult NS_NewMathMLmphantomFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmphantomFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
   NS_IMETHOD
   InheritAutomaticData(nsIFrame* aParent);
 
-  NS_IMETHOD
-  Paint(nsPresContext*      aPresContext,
-        nsIRenderingContext& aRenderingContext,
-        const nsRect&        aDirtyRect,
-        nsFramePaintLayer    aWhichLayer,
-        PRUint32             aFlags = 0);
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists) { return NS_OK; }
 
 protected:
-  nsMathMLmphantomFrame();
+  nsMathMLmphantomFrame(nsStyleContext* aContext)
+    : nsMathMLContainerFrame(aContext) {}
   virtual ~nsMathMLmphantomFrame();
   
   virtual PRIntn GetSkipSides() const { return 0; }

@@ -42,502 +42,66 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-include $(topsrcdir)/build/unix/modules.mk
+include $(topsrcdir)/config/config.mk
 
-ifeq ($(BUILD_MODULES),all)
-#
-# And now for something completely different...
-# Divide the default build into tiers. 
-# Tiers must be defined on module boundaries 
-#
-SUPPRESS_DEFAULT_RULES = 1
-
-default alldep all:: $(SUBMAKEFILES)
+default alldep all::
 	$(RM) -rf $(DIST)/sdk
 	$(RM) -rf $(DIST)/include
-	$(MAKE) -C config export
-	$(MAKE) nspr
-	$(MAKE) ldap
-	$(MAKE) tier_0
-	$(MAKE) tier_1
-	$(MAKE) tier_2
-	$(MAKE) tier_9
-	$(MAKE) tier_50
-	$(MAKE) tier_99
+	$(RM) -rf $(DIST)/private
+	$(RM) -rf $(DIST)/public
+	$(RM) -rf _tests
 
-# Make sure that the existing rulesets work
-DIRS = \
-	$(tier_0_dirs) \
-	$(tier_1_dirs) \
-	$(tier_2_dirs) \
-	$(tier_9_dirs) \
-	$(tier_50_dirs) \
-	$(NULL)
-
-ifdef GC_LEAK_DETECTOR
-DIRS += gc/boehm
-endif
-
-DIRS	+= $(tier_99_dirs)
+TIERS += base
 
 #
-# tier 0 - base build config dirs
-# 
-tier_0_dirs = \
+# tier "base" - basic setup
+#
+tier_base_dirs = \
 	config \
 	build \
+	probes \
 	$(NULL)
 
-#
-# tier 1 -  3rd party individual libraries
-#
-tier_1_dirs	+= dbm
-
-ifndef MOZ_NATIVE_JPEG
-tier_1_dirs	+= jpeg
+ifdef MOZ_MEMORY
+tier_base_dirs += memory/jemalloc
 endif
 
-ifndef MOZ_NATIVE_ZLIB
-tier_1_dirs	+= modules/zlib
-endif
+include $(topsrcdir)/$(MOZ_BUILD_APP)/build.mk
 
-# Installer needs standalone libjar, hence standalone zlib
-ifdef MOZ_INSTALLER
-tier_1_dirs	+= modules/zlib/standalone
-endif
+TIERS += testharness
 
-ifdef MOZ_UPDATER
-tier_1_dirs += modules/libbz2
-tier_1_dirs += modules/libmar
-endif
-
-ifdef MOZ_SVG_RENDERER_LIBART
-tier_1_dirs	+= other-licenses/libart_lgpl
-endif
-
-#
-# tier 2 - base libraries
-# 
-tier_2_dirs	= \
-		js \
-		xpcom \
-		$(NULL)
-
-ifndef MOZ_NO_XPCOM_OBSOLETE
-tier_2_dirs += modules/libreg xpcom/obsolete
-endif
-
-ifdef NS_TRACE_MALLOC
-tier_2_dirs	+= tools/trace-malloc/lib
-endif
-
-#
-# tier 9 - core components (necko,gecko)
-#
-
-tier_9_dirs += \
-		js/src/xpconnect \
-		intl \
-		db \
-		$(NULL)
-
-ifdef MOZ_STORAGE
-tier_9_dirs += storage
-endif
-
-ifdef MOZ_ENABLE_XLIB
-tier_9_dirs	+= gfx/src/xlibrgb widget/src/xlibxtbin
-endif
-
-ifdef MOZ_ENABLE_GTK
-tier_9_dirs	+= widget/src/gtksuperwin widget/src/gtkxtbin
-endif
-
-ifdef MOZ_ENABLE_GTK2
-tier_9_dirs     += widget/src/gtkxtbin
-endif
-
-ifdef MOZ_IPCD
-tier_9_dirs += ipc/ipcd
-endif
-
-ifdef MOZ_JSDEBUGGER
-tier_9_dirs += js/jsd
-endif
-
-tier_9_dirs	+= \
-		modules/libutil \
-		netwerk \
-		modules/libjar \
-		uriloader \
-		modules/libpref \
-		modules/libimg \
-		caps \
-		rdf \
-		parser/expat \
-		parser/xml \
-		parser/htmlparser \
-		gfx \
-		modules/libpr0n \
-		sun-java \
-		modules/plugin \
-		dom \
-		view \
-		widget \
-		content \
-		layout \
-		xpfe/components/shistory \
-		docshell \
-		webshell \
-		embedding \
-		editor \
-		xpfe/appshell \
-		$(NULL)
-
-ifdef MOZ_OJI
-tier_9_dirs	+= \
-		js/src/liveconnect \
-		modules/oji \
-		$(NULL)
-endif
-
-ifdef ACCESSIBILITY
-tier_9_dirs    += accessible
-endif
-
-# 
-# tier 50 - xpfe & toolkit
-#
-
-ifdef MOZ_XUL
-ifdef MOZ_XUL_APP
-tier_50_dirs += chrome
-else
-tier_50_dirs += rdf/chrome
-endif
-else
-tier_50_dirs += embedding/minimo/chromelite
-endif
-
-tier_50_dirs += profile
-
-# This must preceed xpfe
-ifdef MOZ_JPROF
-tier_50_dirs        += tools/jprof
-endif
-
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
-tier_50_dirs	+= xpfe/bootstrap/appleevents
-endif
-
-tier_50_dirs	+= \
-	xpfe \
-	toolkit/components \
-	$(NULL)
-
-ifndef MOZ_XUL_APP
-tier_50_dirs += themes
-endif
-
-ifdef MOZ_ENABLE_XREMOTE
-tier_50_dirs += widget/src/xremoteclient
-endif
-
-ifdef MOZ_XUL_APP
-tier_50_dirs	+= toolkit
-endif
-
-ifdef MOZ_PHOENIX
-#XXXBlake this shell path is a temp hack; toolkit shouldn't depend on browser
-tier_50_dirs    += browser/components/shell/public
-endif
-
-ifdef MOZ_XPINSTALL
-tier_50_dirs     +=  xpinstall
-endif
-
-ifdef MOZ_JAVAXPCOM
-tier_50_dirs += extensions/java
-endif
-
-ifdef MOZ_ENABLE_LIBXUL
-tier_50_dirs += \
-		toolkit/library \
-		xpcom/stub \
-		$(NULL)
-endif
-
-ifdef NS_TRACE_MALLOC
-tier_50_dirs += tools/trace-malloc
-endif
-
-ifdef MOZ_PSM
-tier_50_dirs	+= security/manager
-else
-tier_50_dirs	+= security/manager/boot/public security/manager/ssl/public
-endif
-
-ifdef MOZ_LDAP_XPCOM
-tier_50_dirs	+= directory/xpcom
-endif
-
-ifndef MINIMO
-ifdef MOZ_XUL_APP
-ifdef MOZ_ENABLE_GTK2
-tier_50_dirs    += toolkit/components/gnome
-endif
-endif
-endif
-
-ifdef MOZ_LEAKY
-tier_50_dirs        += tools/leaky
-endif
-
-ifdef MOZ_MAPINFO
-tier_50_dirs	+= tools/codesighs
-endif
-
-#
-# tier 99 - application features
-#
-
-ifdef MOZ_MAIL_NEWS
-tier_99_dirs	+= mailnews
-endif
-
-ifdef MOZ_CALENDAR
-tier_99_dirs	+= calendar
-endif
-
-ifdef MOZ_EXTENSIONS
-tier_99_dirs	+= extensions
-endif
-
-# axcontrol
-ifeq ($(OS_ARCH),WINNT)
-ifndef MOZ_NO_ACTIVEX_SUPPORT
-tier_99_dirs += \
-		embedding/browser/activex/src/control \
-		embedding/browser/activex/src/control_kicker \
-		$(NULL)
-endif
-endif
-
-# Java Embedding Plugin
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
-tier_99_dirs += plugin/oji/JEP
-endif
-
-ifneq (,$(filter browser suite,$(MOZ_BUILD_APP)))
-tier_99_dirs += xpfe/components/search
-endif
-
-ifdef MOZ_BRANDING_DIRECTORY
-tier_99_dirs += $(MOZ_BRANDING_DIRECTORY)
-endif
-
-ifdef MOZ_PHOENIX
-tier_99_dirs	+= browser xpfe/bootstrap/init.d
-endif
-
-ifdef MOZ_XULRUNNER
-tier_99_dirs	+= xulrunner
-endif
-
-ifdef MOZ_COMPOSER
-tier_99_dirs	+= editor/ui
-endif
-
-ifdef MOZ_THUNDERBIRD
-tier_99_dirs	+= mail xpfe/bootstrap/init.d
-endif
-
-ifdef MOZ_STANDALONE_COMPOSER
-tier_99_dirs	+= composer
-endif
-
-ifdef MOZ_SUNBIRD
-tier_99_dirs	+= calendar/sunbird
-endif
-
-ifdef MOZ_SUITE
-tier_99_dirs	+= suite
-endif
-
-ifdef MINIMO
-tier_99_dirs	+= minimo
-endif
-
-ifdef MOZ_XUL_APP
-ifdef MOZ_INSTALLER
-tier_99_dirs     +=  toolkit/mozapps/installer
-endif
-else
-ifneq (,$(MOZ_XPFE_COMPONENTS)$(MOZ_XUL))
-ifndef MINIMO
-tier_99_dirs	+= xpfe/bootstrap
-endif
-endif
-endif
-
-ifneq (,$(MOZ_ENABLE_GTK)$(MOZ_ENABLE_GTK2))
-tier_99_dirs	+= embedding/browser/gtk
-endif
-
-# viewer
-ifneq (,$(ENABLE_TESTS))
-ifndef MOZ_ENABLE_LIBXUL
-tier_99_dirs += webshell/tests
-endif
-endif
-
-# winembed, mfcembed
-ifeq ($(OS_ARCH),WINNT)
-ifneq (,$(ENABLE_TESTS)$(MOZILLA_OFFICIAL))
-tier_99_dirs += embedding/tests
-endif
-endif
-
-# os2embed
-ifeq ($(OS_ARCH),OS2)
-ifneq (,$(ENABLE_TESTS)$(MOZILLA_OFFICIAL))
-tier_99_dirs += embedding/tests
-endif
-endif
-
-ifeq ($(MOZ_BUILD_APP),macbrowser)
-tier_99_dirs += \
-	embedding/config \
-	camino \
-	$(NULL)
-endif
-
-# test harnesses 
+# test harnesses
 ifdef ENABLE_TESTS
-tier_99_dirs += tools/test-harness
+tier_testharness_dirs += tools/test-harness
 endif
 
-# This should be built last, after all IDL files in the tree have been processed
-ifdef MOZ_JAVAXPCOM
-tier_99_dirs += extensions/java/xpcom/interfaces
-endif
-
-else
-
-# Standalone build
-
-DIRS		= $(BUILD_MODULE_DIRS)
-
-# Hack to generate xpidl Makefile
-ifneq ($(BUILD_MODULES),all)
-ifneq (,$(findstring xpcom, $(BUILD_MODULE_DIRS)))
-DIRS		:= xpcom/typelib $(DIRS)
-SUBMAKEFILES	:= xpcom/typelib/Makefile
-endif
-endif
-
-default:: $(SUBMAKEFILES)
-	$(MAKE) export
-	$(MAKE) libs
-
-endif # BUILD_MODULES == all
-
-STATIC_MAKEFILES := nsprpub directory/c-sdk security/nss
-
-GARBAGE_DIRS += dist
+GARBAGE_DIRS += dist _javagen _profile _tests staticlib
 DIST_GARBAGE = config.cache config.log config.status config-defs.h \
    dependencies.beos config/autoconf.mk config/myrules.mk config/myconfig.mk \
    unallmakefiles mozilla-config.h \
-   $(topsrcdir)/.mozconfig.mk $(topsrcdir)/.mozconfig.out 
+   netwerk/necko-config.h xpcom/xpcom-config.h xpcom/xpcom-private.h \
+   $(topsrcdir)/.mozconfig.mk $(topsrcdir)/.mozconfig.out
 
 # Build pseudo-external modules first when export is explicitly called
 export::
 	$(RM) -rf $(DIST)/sdk
 	$(MAKE) -C config export
-	$(MAKE) nspr
-	$(MAKE) ldap
-ifneq ($(BUILD_MODULES),all)
-ifneq (,$(findstring xpcom, $(BUILD_MODULE_DIRS)))
-	$(MAKE) -C xpcom/typelib
-	$(MAKE) export-idl
-endif
-endif
-
-install::
-ifndef MOZ_NATIVE_NSPR
-	$(MAKE) -C nsprpub real_install DESTDIR=$(DESTDIR) libdir=$(mozappdir) includedir=$(includedir)/nspr
-	$(RM) -f $(addprefix $(DESTDIR)$(mozappdir)/$(LIB_PREFIX), $(addsuffix .$(LIB_SUFFIX), nspr4 plds4 plc4))
-	$(RM) -f $(addprefix $(DESTDIR)$(bindir)/,nspr-config compile-et.pl prerr.properties)
-endif
-ifdef MOZ_LDAP_XPCOM
-	$(MAKE) -C directory/c-sdk real_install DESTDIR=$(DESTDIR) libdir=$(mozappdir) includedir=$(includedir)/ldap
-endif
+	$(MAKE) tier_nspr
 
 include $(topsrcdir)/config/rules.mk
 
-# Clean up after pseudo-external modules
-clean clobber realclean clobber_all distclean::
-ifndef MOZ_NATIVE_NSPR
-	$(MAKE) -C nsprpub $@
-endif
-ifdef MOZ_LDAP_XPCOM
-	$(MAKE) -C directory/c-sdk $@
-endif
+# After we build tier toolkit, go back and build the tools from previous dirs
+tier_toolkit::
+	$(MAKE) tools_tier_js
+	$(MAKE) tools_tier_xpcom
+	$(MAKE) tools_tier_necko
+	$(MAKE) tools_tier_gecko
+	$(MAKE) tools_tier_toolkit
 
-# Map mozilla targets to standard automake target
-ifdef MOZ_ENABLE_LIBXUL
-tier_50: $(addsuffix /Makefile, $(filter-out $(STATIC_MAKEFILES), $($@_dirs)))
-	@echo "tier_50: $(tier_50_dirs)"
-	@$(EXIT_ON_ERROR) \
-	for d in $(tier_50_dirs); do \
-	    $(UPDATE_TITLE) \
-	    if test ! -f $$d/Makefile; then \
-	      $(PERL) $(AUTOCONF_TOOLS)/make-makefile -t $(topsrcdir) -d $(DEPTH) $(CYGWIN_TOPSRCDIR) $$d/Makefile; \
-	    fi; \
-	    $(MAKE) -C $$d export; \
-	done ; \
-	for d in $(tier_50_dirs); do \
-	    $(UPDATE_TITLE) \
-	    $(MAKE) -C $$d libs; \
-	done
-	@echo "Building tools from tier 2/9/50"
-	@$(EXIT_ON_ERROR) \
-	for d in $(tier_2_dirs) $(tier_9_dirs) $(tier_50_dirs); do \
-	    $(UPDATE_TITLE) \
-	    $(MAKE) -C $$d tools; \
-	done;
-endif
-
-tier_%:
-	@echo "$@: $($@_dirs)"
-	@$(EXIT_ON_ERROR) \
-	  for d in $($@_dirs); do \
-	    $(UPDATE_TITLE) \
-	    if test ! -f $$d/Makefile; then \
-	      $(PERL) $(AUTOCONF_TOOLS)/make-makefile -t $(topsrcdir) -d $(DEPTH) $(CYGWIN_TOPSRCDIR) $$d/Makefile; \
-	    fi; \
-	    $(MAKE) -C $$d export; \
-	  done ; \
-	  for d in $($@_dirs); do $(UPDATE_TITLE) \
-	    $(MAKE) -C $$d libs; \
-	  done
-
-#
-# Individual modules
-#
-boehm:
-ifdef GC_LEAK_DETECTOR
-	$(MAKE) -C gc/boehm
-endif
-
-nspr: boehm
-ifndef MOZ_NATIVE_NSPR
-	$(MAKE) -C nsprpub
-endif
-
-ldap:
-ifdef MOZ_LDAP_XPCOM
-	$(MAKE) -C directory/c-sdk
+ifeq (netwerk,$(MOZ_BUILD_APP))
+tier_necko::
+	$(EXIT_ON_ERROR) \
+	$(foreach tier,$(TIERS),$(MAKE) tools_tier_$(tier); )
 endif
 
 distclean::
@@ -548,7 +112,7 @@ ifeq ($(OS_ARCH),WINNT)
 rebase:
 ifdef MOZILLA_OFFICIAL
 	echo rebasing $(DIST)
-	/bin/find $(DIST) -name "*.dll" > rebase.lst
+	/bin/find $(DIST) -name "*.dll" -a -not -name "msvc*" > rebase.lst
 	rebase -b 60000000 -R . -G rebase.lst
 	rm rebase.lst
 endif
@@ -571,7 +135,69 @@ ifdef MOZ_PROFILE
 	/bin/find $(DIST) -name "*.dbg" -exec mv {} $(DIST)/$(BUILDID) \;
 endif # MOZ_PROFILE
 endif # MOZILLA_OFFICIAL
+endif # WINNT
 
+ifeq ($(OS_ARCH),WINNT)
+# we want to copy PDB files on Windows
+MAKE_SYM_STORE_ARGS := -c
+ifdef PDBSTR_PATH
+MAKE_SYM_STORE_ARGS += -i
+endif
+ifeq (,$(CYGWIN_WRAPPER))
+# this doesn't work with Cygwin Python
+MAKE_SYM_STORE_ARGS += --vcs-info
+endif
+DUMP_SYMS_BIN ?= $(topsrcdir)/toolkit/crashreporter/tools/win32/dump_syms.exe
+# PDB files don't get moved to dist, so we need to scan the whole objdir
+MAKE_SYM_STORE_PATH := .
+endif
+ifeq ($(OS_ARCH),Darwin)
+# need to pass arch flags for universal builds
+ifdef UNIVERSAL_BINARY
+MAKE_SYM_STORE_ARGS := -a "ppc i386" --vcs-info
+MAKE_SYM_STORE_PATH := $(DIST)/universal
+else
+MAKE_SYM_STORE_ARGS := -a $(OS_TEST) --vcs-info
+MAKE_SYM_STORE_PATH := $(DIST)/bin
+endif
+DUMP_SYMS_BIN ?= $(DIST)/host/bin/dump_syms
+endif
+ifeq (,$(filter-out Linux SunOS,$(OS_ARCH)))
+MAKE_SYM_STORE_ARGS := --vcs-info
+DUMP_SYMS_BIN ?= $(DIST)/host/bin/dump_syms
+MAKE_SYM_STORE_PATH := $(DIST)/bin
+endif
+
+ifdef MOZ_SYMBOLS_EXTRA_BUILDID
+EXTRA_BUILDID := -$(MOZ_SYMBOLS_EXTRA_BUILDID)
+endif
+
+SYMBOL_ARCHIVE_BASENAME = \
+  $(MOZ_APP_NAME)-$(MOZ_APP_VERSION)-$(OS_ARCH)-$(BUILDID)$(EXTRA_BUILDID)
+
+buildsymbols:
+ifdef MOZ_CRASHREPORTER
+	echo building symbol store
+	mkdir -p $(DIST)/crashreporter-symbols/$(BUILDID)
+	$(PYTHON) $(topsrcdir)/toolkit/crashreporter/tools/symbolstore.py    \
+	  $(MAKE_SYM_STORE_ARGS) -s $(topsrcdir) $(DUMP_SYMS_BIN)     \
+	  $(DIST)/crashreporter-symbols/$(BUILDID)                    \
+	  $(MAKE_SYM_STORE_PATH) >                                    \
+	  $(DIST)/crashreporter-symbols/$(BUILDID)/$(SYMBOL_ARCHIVE_BASENAME)-symbols.txt
+	echo packing symbols
+	mkdir -p $(topsrcdir)/../$(BUILDID)
+	cd $(DIST)/crashreporter-symbols/$(BUILDID) && \
+          zip -r9D ../crashreporter-symbols-$(SYMBOL_ARCHIVE_BASENAME).zip .
+	mv $(DIST)/crashreporter-symbols/crashreporter-symbols-$(SYMBOL_ARCHIVE_BASENAME).zip \
+          $(topsrcdir)/../$(BUILDID)
+endif # MOZ_CRASHREPORTER
+
+uploadsymbols:
+ifdef MOZ_CRASHREPORTER
+	$(topsrcdir)/toolkit/crashreporter/tools/upload_symbols.sh $(topsrcdir)/../$(BUILDID)/crashreporter-symbols-$(SYMBOL_ARCHIVE_BASENAME).zip
+endif
+
+ifeq ($(OS_ARCH),WINNT)
 signnss:
 ifdef MOZILLA_OFFICIAL
 	echo signing NSS libs
@@ -579,8 +205,27 @@ ifdef MOZILLA_OFFICIAL
 	cd $(DIST)/bin; ./shlibsign.exe -v -i freebl3.dll
 endif # MOZILLA_OFFICIAL
 
-BUILDID = $(shell cat $(DEPTH)/config/build_number)
 deliver: splitsymbols rebase signnss
 
 endif # WINNT
 
+ifneq (,$(wildcard $(DIST)/bin/application.ini))
+BUILDID = $(shell $(PYTHON) $(srcdir)/config/printconfigsetting.py $(DIST)/bin/application.ini App BuildID)
+else
+BUILDID = $(shell $(PYTHON) $(srcdir)/config/printconfigsetting.py $(DIST)/bin/platform.ini Build BuildID)
+endif
+
+#XXX: this is a hack, since we don't want to clobber for MSVC
+# PGO support, but we can't do this test in client.mk
+ifneq ($(OS_ARCH)_$(GNU_CC), WINNT_)
+# No point in clobbering if PGO has been explicitly disabled.
+ifndef NO_PROFILE_GUIDED_OPTIMIZE
+maybe_clobber_profiledbuild: clobber_all
+else
+maybe_clobber_profiledbuild:
+endif
+else
+maybe_clobber_profiledbuild:
+endif
+
+.PHONY: maybe_clobber_profiledbuild

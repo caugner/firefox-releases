@@ -33,7 +33,7 @@
 ! the terms of any one of the MPL, the GPL or the LGPL.
 ! 
 ! ***** END LICENSE BLOCK *****
-! $Id: mpv_sparcv8.s,v 1.3.178.1 2006/02/03 22:31:27 wtchang%redhat.com Exp $
+! $Id: mpv_sparcv8.s,v 1.4 2005/08/06 11:06:55 nelsonb%netscape.com Exp $
 
 	.section	".text",#alloc,#execinstr
 /* 000000	   3 ( 0  0) */		.file	"mpv_sparc.c"

@@ -86,7 +86,7 @@
   nsCOMPtr<nsILoadGroup> theLoadGroup(do_CreateInstance(NS_LOADGROUP_CONTRACTID));
   if (!theLoadGroup)
     error;
-		nsCOMPtr<nsIStreamListener> listener(NS_STATIC_CAST(nsIStreamListener*, qaBrowserImpl));
+		nsCOMPtr<nsIStreamListener> listener(static_cast<nsIStreamListener*>(qaBrowserImpl));
 		//nsCOMPtr<nsIWeakReference> thisListener(do_GetWeakReference(listener));
 		//qaWebBrowser->AddWebBrowserListener(thisListener, NS_GET_IID(nsIStreamListener));
 
@@ -157,7 +157,7 @@ nsHTMLURIRefObject::GetNextURI(nsAString & aURI)
   }
 #ifdef DEBUG_akkana
   printf("Looking at tag '%s'\n",
-         NS_LossyConvertUCS2toASCII(tagName).get());
+         NS_LossyConvertUTF16toASCII(tagName).get());
 #endif
   while (mCurAttrIndex < mAttributeCnt)
   {
@@ -176,7 +176,7 @@ nsHTMLURIRefObject::GetNextURI(nsAString & aURI)
     // href >> A, AREA, BASE, LINK
 #ifdef DEBUG_akkana
     printf("Trying to match attribute '%s'\n",
-           NS_LossyConvertUCS2toASCII(curAttr).get());
+           NS_LossyConvertUTF16toASCII(curAttr).get());
 #endif
     if (MATCHES(curAttr, "href"))
     {

@@ -50,6 +50,7 @@
 #include "nsInterfaceHashtable.h"
 #include "nsString.h"
 #include "nsIDOMElement.h"
+#include "nsIClassInfoImpl.h"
 
 #define NS_SCHEMA_2001_NAMESPACE "http://www.w3.org/2001/XMLSchema"
 #define NS_SCHEMA_1999_NAMESPACE "http://www.w3.org/1999/XMLSchema"
@@ -91,6 +92,7 @@ public:
                                   nsISchemaType* aPlaceholder,
                                   nsISchemaType** aType);
   PRBool IsElementFormQualified() { return mElementFormQualified; }
+  PRBool IsAttributeFormDefaultQualified() { return mAttributeFormDefaultQualified; }
 
 protected:
   nsString mTargetNamespace;
@@ -107,6 +109,7 @@ protected:
   nsInterfaceHashtable<nsStringHashKey, nsISchemaModelGroup> mModelGroupsHash;
   nsISchemaCollection* mCollection;  // [WEAK] it owns me
   PRPackedBool mElementFormQualified;
+  PRBool mAttributeFormDefaultQualified;
 };
 
 class nsSchemaComponentBase {
@@ -239,6 +242,8 @@ public:
   {
     return mAttributesHash.Init() ? NS_OK : NS_ERROR_FAILURE;
   }
+
+  nsresult ProcessExtension(nsIWebServiceErrorHandler* aErrorHandler);
 
   NS_IMETHOD SetContentModel(PRUint16 aContentModel);
   NS_IMETHOD SetDerivation(PRUint16 aDerivation, nsISchemaType* aBaseType);
@@ -435,6 +440,7 @@ public:
   NS_IMETHOD SetConstraints(const nsAString& aDefaultValue,
                             const nsAString& aFixedValue);
   NS_IMETHOD SetUse(PRUint16 aUse);
+  nsresult SetAttributeFormQualified(PRBool aAttributeFormQualified);
 
 protected:
   nsString mName;
@@ -442,13 +448,14 @@ protected:
   nsString mDefaultValue;
   nsString mFixedValue;
   PRUint16 mUse;
+  PRBool mAttributeFormQualified;
 };
 
 class nsSchemaAttributeRef : public nsSchemaComponentBase,
                              public nsISchemaAttribute 
 {
 public:
-  nsSchemaAttributeRef(nsSchema* aSchema, const nsAString& aRef, 
+  nsSchemaAttributeRef(nsSchema* aSchema, const nsAString& aRef,
                        const nsAString& aRefNS);
   virtual ~nsSchemaAttributeRef();
   
@@ -460,6 +467,7 @@ public:
   NS_IMETHOD SetConstraints(const nsAString& aDefaultValue,
                             const nsAString& aFixedValue);
   NS_IMETHOD SetUse(PRUint16 aUse);
+  nsresult SetAttributeFormQualified(PRBool aAttributeFormQualified);
 
 protected:
   nsString mRef, mRefNS;
@@ -467,6 +475,7 @@ protected:
   nsString mDefaultValue;
   nsString mFixedValue;
   PRUint16 mUse;
+  PRBool mAttributeFormQualified;
 };
 
 class nsSchemaAttributeGroup : public nsSchemaComponentBase,
@@ -746,5 +755,3 @@ public:
 "@mozilla.org/xmlextras/schemas/soaparraytype;1"
 
 #endif // __nsSchemaPrivate_h__
-
-

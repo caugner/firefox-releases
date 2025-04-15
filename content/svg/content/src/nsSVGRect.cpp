@@ -48,36 +48,18 @@
 #include "nsContentUtils.h"
 #include "nsDOMError.h"
 
-////////////////////////////////////////////////////////////////////////
-// nsSVGRect class
-
-class nsSVGRect : public nsIDOMSVGRect,
-                  public nsSVGValue
-{
-public:
-  nsSVGRect(float x=0.0f, float y=0.0f, float w=0.0f, float h=0.0f);
-  
-  // nsISupports interface:
-  NS_DECL_ISUPPORTS
-
-  // nsIDOMSVGRect interface:
-  NS_DECL_NSIDOMSVGRECT
-
-  // nsISVGValue interface:
-  NS_IMETHOD SetValueString(const nsAString& aValue);
-  NS_IMETHOD GetValueString(nsAString& aValue);
-
-
-protected:
-  float mX, mY, mWidth, mHeight;
-};
-
 //----------------------------------------------------------------------
 // implementation:
 
 nsSVGRect::nsSVGRect(float x, float y, float w, float h)
     : mX(x), mY(y), mWidth(w), mHeight(h)
 {
+}
+
+void
+nsSVGRect::Clear()
+{
+  mX = mY = mWidth = mHeight = 0.0f;
 }
 
 //----------------------------------------------------------------------
@@ -158,6 +140,7 @@ NS_IMETHODIMP nsSVGRect::GetX(float *aX)
 }
 NS_IMETHODIMP nsSVGRect::SetX(float aX)
 {
+  NS_ENSURE_FINITE(aX, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mX = aX;
   DidModify();
@@ -172,6 +155,7 @@ NS_IMETHODIMP nsSVGRect::GetY(float *aY)
 }
 NS_IMETHODIMP nsSVGRect::SetY(float aY)
 {
+  NS_ENSURE_FINITE(aY, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mY = aY;
   DidModify();
@@ -186,6 +170,7 @@ NS_IMETHODIMP nsSVGRect::GetWidth(float *aWidth)
 }
 NS_IMETHODIMP nsSVGRect::SetWidth(float aWidth)
 {
+  NS_ENSURE_FINITE(aWidth, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mWidth = aWidth;
   DidModify();
@@ -200,6 +185,7 @@ NS_IMETHODIMP nsSVGRect::GetHeight(float *aHeight)
 }
 NS_IMETHODIMP nsSVGRect::SetHeight(float aHeight)
 {
+  NS_ENSURE_FINITE(aHeight, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mHeight = aHeight;
   DidModify();
@@ -220,7 +206,7 @@ public:
   nsSVGReadonlyRect(float x, float y, float width, float height)
     : nsSVGRect(x, y, width, height)
   {
-  };
+  }
 
   // override setters to make the whole object readonly
   NS_IMETHODIMP SetX(float) { return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR; }
@@ -229,152 +215,6 @@ public:
   NS_IMETHODIMP SetHeight(float) { return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR; }
   NS_IMETHODIMP SetValueString(const nsAString&) { return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR; }
 };
-
-
-
-////////////////////////////////////////////////////////////////////////
-// nsSVGViewBox : a special kind of nsIDOMSVGRect that defaults to
-// (0,0,viewportWidth.value,viewportHeight.value) until set explicitly.
-
-class nsSVGViewBox : public nsSVGRect,
-                     public nsISVGValueObserver,
-                     public nsSupportsWeakReference
-{
-public:
-  nsSVGViewBox(nsIDOMSVGLength* viewportWidth,
-               nsIDOMSVGLength* viewportHeight);
-  virtual ~nsSVGViewBox();
-
-  // nsISupports interface:
-  NS_DECL_ISUPPORTS
-  
-  // nsISVGValueObserver interface:
-  NS_IMETHOD WillModifySVGObservable(nsISVGValue* observable,
-                                     modificationType aModType);
-  NS_IMETHOD DidModifySVGObservable (nsISVGValue* observable,
-                                     modificationType aModType);
-
-  // nsIDOMSVGRect specializations:
-  NS_IMETHOD SetX(float aX);
-  NS_IMETHOD SetY(float aY);
-  NS_IMETHOD SetWidth(float aWidth);
-  NS_IMETHOD SetHeight(float aHeight);
-
-  // nsISVGValue specializations:
-  NS_IMETHOD SetValueString(const nsAString& aValue);
-  
-private:
-  void MarkSet();
-  
-  PRBool mIsSet;
-  nsCOMPtr<nsIDOMSVGLength> mViewportWidth;
-  nsCOMPtr<nsIDOMSVGLength> mViewportHeight;
-};
-
-//----------------------------------------------------------------------
-// implementation:
-nsSVGViewBox::nsSVGViewBox(nsIDOMSVGLength* viewportWidth, nsIDOMSVGLength* viewportHeight)
-    : mIsSet(PR_FALSE),
-      mViewportWidth(viewportWidth),
-      mViewportHeight(viewportHeight)
-{
-  mViewportWidth->GetValue(&mWidth);
-  mViewportHeight->GetValue(&mHeight);
-  NS_ADDREF(this);
-  NS_ADD_SVGVALUE_OBSERVER(mViewportWidth);
-  NS_ADD_SVGVALUE_OBSERVER(mViewportHeight);
-}
-
-nsSVGViewBox::~nsSVGViewBox()
-{
-  if (!mIsSet) {
-    NS_REMOVE_SVGVALUE_OBSERVER(mViewportWidth);
-    NS_REMOVE_SVGVALUE_OBSERVER(mViewportHeight);
-  }
-}
-
-void nsSVGViewBox::MarkSet()
-{
-  if (mIsSet) return;
-  mIsSet = PR_TRUE;
-  NS_REMOVE_SVGVALUE_OBSERVER(mViewportWidth);
-  NS_REMOVE_SVGVALUE_OBSERVER(mViewportHeight);
-}
-
-//----------------------------------------------------------------------
-// nsISupports:
-
-NS_IMPL_ADDREF_INHERITED(nsSVGViewBox, nsSVGRect)
-NS_IMPL_RELEASE_INHERITED(nsSVGViewBox, nsSVGRect)
-
-NS_INTERFACE_MAP_BEGIN(nsSVGViewBox)
-  NS_INTERFACE_MAP_ENTRY(nsISVGValueObserver)
-  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
-NS_INTERFACE_MAP_END_INHERITING(nsSVGRect)
-
-//----------------------------------------------------------------------
-// nsISVGValueObserver methods:
-
-NS_IMETHODIMP
-nsSVGViewBox::WillModifySVGObservable(nsISVGValue* observable,
-                                      modificationType aModType)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSVGViewBox::DidModifySVGObservable(nsISVGValue* observable,
-                                     modificationType aModType)
-{
-  NS_ASSERTION(!mIsSet, "inconsistent state");
-  WillModify(aModType);
-  mViewportWidth->GetValue(&mWidth);
-  mViewportHeight->GetValue(&mHeight);  
-  DidModify(aModType);
-  return NS_OK;
-}
-
-//----------------------------------------------------------------------
-// nsIDOMSVGRect specializations:
-NS_IMETHODIMP
-nsSVGViewBox::SetX(float aX)
-{
-  MarkSet();
-  return nsSVGRect::SetX(aX);
-}
-
-NS_IMETHODIMP
-nsSVGViewBox::SetY(float aY)
-{
-  MarkSet();
-  return nsSVGRect::SetY(aY);
-}
-
-NS_IMETHODIMP
-nsSVGViewBox::SetWidth(float aWidth)
-{
-  MarkSet();
-  return nsSVGRect::SetWidth(aWidth);
-}
-
-NS_IMETHODIMP
-nsSVGViewBox::SetHeight(float aHeight)
-{
-  MarkSet();
-  return nsSVGRect::SetHeight(aHeight);
-}
-
-
-//----------------------------------------------------------------------
-// nsISVGValue specializations:
-
-NS_IMETHODIMP
-nsSVGViewBox::SetValueString(const nsAString& aValue)
-{
-  MarkSet();
-  return nsSVGRect::SetValueString(aValue);
-}
-
 
 ////////////////////////////////////////////////////////////////////////
 // Exported creation functions:
@@ -390,6 +230,14 @@ NS_NewSVGRect(nsIDOMSVGRect** result, float x, float y,
 }
 
 nsresult
+NS_NewSVGRect(nsIDOMSVGRect** result, const gfxRect& rect)
+{
+  return NS_NewSVGRect(result,
+                       rect.X(), rect.Y(),
+                       rect.Width(), rect.Height());
+}
+
+nsresult
 NS_NewSVGReadonlyRect(nsIDOMSVGRect** result, float x, float y,
                       float width, float height)
 {
@@ -399,18 +247,3 @@ NS_NewSVGReadonlyRect(nsIDOMSVGRect** result, float x, float y,
   return NS_OK;
 }
 
-nsresult
-NS_NewSVGViewBox(nsIDOMSVGRect** result,
-                 nsIDOMSVGLength *viewportWidth,
-                 nsIDOMSVGLength *viewportHeight)
-{
-  if (!viewportHeight || !viewportWidth) {
-    NS_ERROR("need viewport height/width for viewbox");
-    return NS_ERROR_FAILURE;
-  }
-  
-  *result = new nsSVGViewBox(viewportWidth, viewportHeight);
-  if (!*result) return NS_ERROR_OUT_OF_MEMORY;
-
-  return NS_OK;  
-}

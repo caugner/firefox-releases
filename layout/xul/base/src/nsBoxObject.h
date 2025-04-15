@@ -35,17 +35,17 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+#ifndef nsBoxObject_h_
+#define nsBoxObject_h_
+
 #include "nsCOMPtr.h"
 #include "nsIBoxObject.h"
 #include "nsPIBoxObject.h"
-#include "nsPresState.h"
 #include "nsPoint.h"
 #include "nsAutoPtr.h"
-#include "nsIWeakReference.h"
-#include "nsIWeakReferenceUtils.h"
+#include "nsHashKeys.h"
+#include "nsInterfaceHashtable.h"
 
-class nsIBoxLayoutManager;
-class nsIBoxPaintManager;
 class nsIFrame;
 class nsIDocShell;
 struct nsRect;
@@ -60,12 +60,12 @@ public:
   virtual ~nsBoxObject();
 
   // nsPIBoxObject
-  NS_IMETHOD Init(nsIContent* aContent, nsIPresShell* aPresShell);
-  NS_IMETHOD SetDocument(nsIDocument* aDocument);
-  NS_IMETHOD InvalidatePresentationStuff();
+  virtual nsresult Init(nsIContent* aContent);
+  virtual void Clear();
+  virtual void ClearCachedValues();
 
-  virtual nsIFrame* GetFrame();
-  already_AddRefed<nsIPresShell> GetPresShell();
+  nsIFrame* GetFrame(PRBool aFlushLayout);
+  nsIPresShell* GetPresShell(PRBool aFlushLayout);
   nsresult GetOffsetRect(nsRect& aRect);
   nsresult GetScreenPosition(nsIntPoint& aPoint);
 
@@ -75,14 +75,10 @@ public:
                                      nsIDOMElement** aResult);
 
 protected:
-  // Helper for some of the subclasses of nsBoxObject
-  nsresult GetDocShell(nsIDocShell **aDocShell);
 
-// MEMBER VARIABLES
-  nsCOMPtr<nsIBoxLayoutManager> mLayoutManager; // [OWNER]
-  nsCOMPtr<nsIBoxPaintManager> mPaintManager; // [OWNER]
-  nsAutoPtr<nsPresState> mPresState; // [OWNER]
+  nsAutoPtr<nsInterfaceHashtable<nsStringHashKey,nsISupports> > mPropertyTable; //[OWNER]
 
   nsIContent* mContent; // [WEAK]
-  nsWeakPtr mPresShell;
 };
+
+#endif

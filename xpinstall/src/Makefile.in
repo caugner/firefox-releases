@@ -23,6 +23,7 @@
 # Contributor(s):
 #   Daniel Veditz <dveditz@netscape.com>
 #   Douglas Turner <dougt@netscape.com>
+#   Dave Townsend <dtownsend@oxymoronical.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -52,8 +53,10 @@ ifndef MOZ_ENABLE_LIBXUL
 # Make this a true dynamic component even in static builds because
 # this component is shared by installer
 FORCE_SHARED_LIB	= 1
-MOZ_STATIC_COMPONENT_LIBS=
+BUILD_STATIC_LIBS=
 SHORT_LIBNAME	= xpinstal
+else
+EXPORT_LIBRARY = 1
 endif
 IS_COMPONENT	= 1
 MODULE_NAME	= nsSoftwareUpdate
@@ -63,15 +66,11 @@ LIBXUL_LIBRARY	= 1
 PACKAGE_FILE = base.pkg
 
 REQUIRES	= xpcom \
-		  xpcom_obsolete \
 		  string \
 		  jar \
 		  caps \
 		  content \
 		  necko \
-		  intl \
-		  locale \
-		  libreg \
 		  js \
 		  pref \
 		  widget \
@@ -79,14 +78,13 @@ REQUIRES	= xpcom \
 		  xpconnect \
 		  dom \
 		  windowwatcher \
-		  plugin \
-		  unicharutil \
 		  appshell \
 		  docshell \
 		  layout \
 		  chrome \
 		  extensions \
-		  embed_base \
+		  pipnss \
+		  pipboot \
 		  $(ZLIB_REQUIRES) \
 		  $(NULL)
 
@@ -95,74 +93,22 @@ EXPORTS		= nsXPITriggerInfo.h
 
 CPPSRCS		= \
 		CertReader.cpp \
-		nsInstall.cpp \
 		nsInstallTrigger.cpp \
-		nsInstallVersion.cpp \
-		nsInstallFolder.cpp \
-		nsJSInstall.cpp \
-		nsJSFile.cpp \
 		nsJSInstallTriggerGlobal.cpp \
-		nsJSInstallVersion.cpp \
 		nsSoftwareUpdate.cpp \
-		nsSoftwareUpdateRun.cpp \
-		nsInstallFile.cpp \
-		nsInstallExecute.cpp \
-		nsInstallPatch.cpp \
-		nsInstallUninstall.cpp \
-		nsInstallResources.cpp \
-		nsRegisterItem.cpp \
-		nsTopProgressNotifier.cpp \
-		nsLoggingProgressNotifier.cpp \
-		ScheduledTasks.cpp \
-		nsXPIProxy.cpp \
 		nsXPITriggerInfo.cpp \
 		nsXPInstallManager.cpp \
-		nsInstallFileOpItem.cpp \
-		nsJSFileSpecObj.cpp \
-		nsInstallLogComment.cpp \
-		nsInstallBitwise.cpp \
+		nsXPIInstallInfo.cpp \
 		$(NULL)
-
-ifeq ($(OS_ARCH),WINNT)
-CPPSRCS		+= \
-		nsWinReg.cpp \
-		nsJSWinReg.cpp \
-		nsWinRegItem.cpp \
-		nsWinProfile.cpp \
-		nsJSWinProfile.cpp \
-		nsWinProfileItem.cpp \
-		nsWinShortcut.cpp \
-		$(NULL)
-
-OS_LIBS		+= $(call EXPAND_LIBNAME,ole32 version uuid)
-endif	
-
-# Support AppleSingle decoding on Mac OS X
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
-REQUIRES	+= macmorefiles
-
-CPPSRCS		+= \
-		nsAppleSingleDecoder.cpp \
-		$(NULL)
-
-EXTRA_DSO_LDOPTS += $(DEPTH)/dist/lib/libmacmorefiles_s.a
-endif
 
 LOCAL_INCLUDES	= -I$(srcdir)/../public
 
 EXTRA_DSO_LDOPTS = \
-		$(LIBS_DIR) \
-		$(EXTRA_DSO_LIBS) \
 		$(MOZ_JS_LIBS) \
-		$(MOZ_COMPONENT_LIBS) \
 		$(MOZ_UNICHARUTIL_LIBS) \
+		$(MOZ_COMPONENT_LIBS) \
 		$(ZLIB_LIBS) \
-		$(MOZ_XPCOM_OBSOLETE_LIBS) \
 		$(NULL)
-
-ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
-EXTRA_DSO_LDOPTS += $(TK_LIBS)
-endif
 
 include $(topsrcdir)/config/rules.mk
 

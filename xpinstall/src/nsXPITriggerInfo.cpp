@@ -22,6 +22,7 @@
  *
  * Contributor(s):
  *   Daniel Veditz <dveditz@netscape.com>
+ *   Dave Townsend <dtownsend@oxymoronical.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -38,28 +39,27 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nscore.h"
+#include "plstr.h"
 #include "nsXPITriggerInfo.h"
 #include "nsNetUtil.h"
 #include "nsDebug.h"
+#include "nsAutoPtr.h"
+#include "nsThreadUtils.h"
 #include "nsIServiceManager.h"
-#include "nsIEventQueueService.h"
 #include "nsIJSContextStack.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsICryptoHash.h"
 
-static NS_DEFINE_IID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
-
 //
 // nsXPITriggerItem
 //
-MOZ_DECL_CTOR_COUNTER(nsXPITriggerItem)
 
 nsXPITriggerItem::nsXPITriggerItem( const PRUnichar* aName,
                                     const PRUnichar* aURL,
                                     const PRUnichar* aIconURL,
                                     const char* aHash,
                                     PRInt32 aFlags)
-    : mName(aName), mURL(aURL), mIconURL(aIconURL), mFlags(aFlags), mHashFound(PR_FALSE)
+    : mName(aName), mURL(aURL), mIconURL(aIconURL), mHashFound(PR_FALSE), mFlags(aFlags)
 {
     MOZ_COUNT_CTOR(nsXPITriggerItem);
 
@@ -97,13 +97,12 @@ nsXPITriggerItem::nsXPITriggerItem( const PRUnichar* aName,
     {
         mHashFound = PR_TRUE;
 
-        PRUint32 htype = 1;
         char * colon = PL_strchr(aHash, ':');
         if (colon)
         {
             mHasher = do_CreateInstance("@mozilla.org/security/hash;1");
             if (!mHasher) return;
-            
+
             *colon = '\0'; // null the colon so that aHash is just the type.
             nsresult rv = mHasher->InitWithString(nsDependentCString(aHash));
             *colon = ':';  // restore the colon
@@ -177,8 +176,6 @@ nsXPITriggerItem::SetPrincipal(nsIPrincipal* aPrincipal)
 // nsXPITriggerInfo
 //
 
-MOZ_DECL_CTOR_COUNTER(nsXPITriggerInfo)
-
 nsXPITriggerInfo::nsXPITriggerInfo()
   : mCx(0), mCbval(JSVAL_NULL)
 {
@@ -214,11 +211,7 @@ void nsXPITriggerInfo::SaveCallback( JSContext *aCx, jsval aVal )
 
     JSClass* clazz;
 
-#ifdef JS_THREADSAFE
-    clazz = ::JS_GetClass(aCx, obj);
-#else
-    clazz = ::JS_GetClass(obj);
-#endif
+    clazz = ::JS_GET_CLASS(aCx, obj);
 
     if (clazz &&
         (clazz->flags & JSCLASS_HAS_PRIVATE) &&
@@ -228,7 +221,7 @@ void nsXPITriggerInfo::SaveCallback( JSContext *aCx, jsval aVal )
     }
 
     mCbval = aVal;
-    mThread = PR_GetCurrentThread();
+    mThread = do_GetCurrentThread();
 
     if ( !JSVAL_IS_NULL(mCbval) ) {
         JS_BeginRequest(mCx);
@@ -237,24 +230,24 @@ void nsXPITriggerInfo::SaveCallback( JSContext *aCx, jsval aVal )
     }
 }
 
-static void  destroyTriggerEvent(XPITriggerEvent* event)
+XPITriggerEvent::~XPITriggerEvent()
 {
-    JS_BeginRequest(event->cx);
-    JS_RemoveRoot( event->cx, &event->cbval );
-    JS_EndRequest(event->cx);
-    delete event;
+    JS_BeginRequest(cx);
+    JS_RemoveRoot(cx, &cbval);
+    JS_EndRequest(cx);
 }
 
-static void* handleTriggerEvent(XPITriggerEvent* event)
+NS_IMETHODIMP
+XPITriggerEvent::Run()
 {
     jsval  ret;
     void*  mark;
     jsval* args;
 
-    JS_BeginRequest(event->cx);
-    args = JS_PushArguments( event->cx, &mark, "Wi",
-                             event->URL.get(),
-                             event->status );
+    JS_BeginRequest(cx);
+    args = JS_PushArguments(cx, &mark, "Wi",
+                            URL.get(),
+                            status);
     if ( args )
     {
         // This code is all in a JS request, and here we're about to
@@ -267,11 +260,11 @@ static void* handleTriggerEvent(XPITriggerEvent* event)
         nsCOMPtr<nsIJSContextStack> stack =
             do_GetService("@mozilla.org/js/xpc/ContextStack;1");
         if (stack)
-            stack->Push(event->cx);
-        
-        nsCOMPtr<nsIScriptSecurityManager> secman = 
+            stack->Push(cx);
+
+        nsCOMPtr<nsIScriptSecurityManager> secman =
             do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
-        
+
         if (!secman)
         {
             errorStr = "Could not get script security manager service";
@@ -290,7 +283,7 @@ static void* handleTriggerEvent(XPITriggerEvent* event)
         if (!errorStr)
         {
             PRBool equals = PR_FALSE;
-            principal->Equals(event->princ, &equals);
+            principal->Equals(princ, &equals);
 
             if (!equals)
             {
@@ -300,13 +293,13 @@ static void* handleTriggerEvent(XPITriggerEvent* event)
 
         if (errorStr)
         {
-            JS_ReportError(event->cx, errorStr);
+            JS_ReportError(cx, errorStr);
         }
         else
         {
-            JS_CallFunctionValue(event->cx,
-                                 JSVAL_TO_OBJECT(event->global),
-                                 event->cbval,
+            JS_CallFunctionValue(cx,
+                                 JSVAL_TO_OBJECT(global),
+                                 cbval,
                                  2,
                                  args,
                                  &ret);
@@ -315,9 +308,9 @@ static void* handleTriggerEvent(XPITriggerEvent* event)
         if (stack)
             stack->Pop(nsnull);
 
-        JS_PopArguments( event->cx, mark );
+        JS_PopArguments(cx, mark);
     }
-    JS_EndRequest(event->cx);
+    JS_EndRequest(cx);
 
     return 0;
 }
@@ -325,59 +318,45 @@ static void* handleTriggerEvent(XPITriggerEvent* event)
 
 void nsXPITriggerInfo::SendStatus(const PRUnichar* URL, PRInt32 status)
 {
-    nsCOMPtr<nsIEventQueue> eq;
     nsresult rv;
 
-    if ( mCx && mGlobalWrapper && mCbval )
+    if ( mCx && mGlobalWrapper && !JSVAL_IS_NULL(mCbval) )
     {
-        nsCOMPtr<nsIEventQueueService> EQService =
-                 do_GetService(kEventQueueServiceCID, &rv);
-        if ( NS_SUCCEEDED( rv ) )
+        // create event and post it
+        nsRefPtr<XPITriggerEvent> event = new XPITriggerEvent();
+        if (event)
         {
-            rv = EQService->GetThreadEventQueue(mThread, getter_AddRefs(eq));
-            if ( NS_SUCCEEDED(rv) )
-            {
-                // create event and post it
-                XPITriggerEvent* event = new XPITriggerEvent();
-                if (event)
-                {
-                    PL_InitEvent(&event->e, 0,
-                        (PLHandleEventProc)handleTriggerEvent,
-                        (PLDestroyEventProc)destroyTriggerEvent);
+            event->URL      = URL;
+            event->status   = status;
+            event->cx       = mCx;
+            event->princ    = mPrincipal;
 
-                    event->URL      = URL;
-                    event->status   = status;
-                    event->cx       = mCx;
-                    event->princ    = mPrincipal;
+            JSObject *obj = nsnull;
 
-                    JSObject *obj = nsnull;
+            mGlobalWrapper->GetJSObject(&obj);
 
-                    mGlobalWrapper->GetJSObject(&obj);
+            event->global   = OBJECT_TO_JSVAL(obj);
 
-                    event->global   = OBJECT_TO_JSVAL(obj);
+            event->cbval    = mCbval;
+            JS_BeginRequest(event->cx);
+            JS_AddNamedRoot(event->cx, &event->cbval,
+                            "XPITriggerEvent::cbval" );
+            JS_EndRequest(event->cx);
 
-                    event->cbval    = mCbval;
-                    JS_BeginRequest(event->cx);
-                    JS_AddNamedRoot( event->cx, &event->cbval,
-                                     "XPITriggerEvent::cbval" );
-                    JS_EndRequest(event->cx);
+            // Hold a strong reference to keep the underlying
+            // JSContext from dying before we handle this event.
+            event->ref      = mGlobalWrapper;
 
-                    // Hold a strong reference to keep the underlying
-                    // JSContext from dying before we handle this event.
-                    event->ref      = mGlobalWrapper;
-
-                    eq->PostEvent(&event->e);
-                }
-                else
-                    rv = NS_ERROR_OUT_OF_MEMORY;
-            }
+            rv = mThread->Dispatch(event, NS_DISPATCH_NORMAL);
         }
+        else
+            rv = NS_ERROR_OUT_OF_MEMORY;
 
         if ( NS_FAILED( rv ) )
         {
             // couldn't get event queue -- maybe window is gone or
             // some similarly catastrophic occurrance
+            NS_WARNING("failed to dispatch XPITriggerEvent");
         }
     }
 }
-

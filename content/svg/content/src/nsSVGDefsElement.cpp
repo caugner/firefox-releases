@@ -38,7 +38,6 @@
 
 #include "nsSVGGraphicElement.h"
 #include "nsIDOMSVGDefsElement.h"
-#include "nsSVGAtoms.h"
 
 typedef nsSVGGraphicElement nsSVGDefsElementBase;
 
@@ -49,7 +48,6 @@ protected:
   friend nsresult NS_NewSVGDefsElement(nsIContent **aResult,
                                     nsINodeInfo *aNodeInfo);
   nsSVGDefsElement(nsINodeInfo *aNodeInfo);
-  virtual ~nsSVGDefsElement();
   
 public:
   // interfaces:
@@ -58,13 +56,14 @@ public:
   NS_DECL_NSIDOMSVGDEFSELEMENT
 
   // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsSVGDefsElementBase::)
+  NS_FORWARD_NSIDOMNODE(nsSVGDefsElementBase::)
   NS_FORWARD_NSIDOMELEMENT(nsSVGDefsElementBase::)
   NS_FORWARD_NSIDOMSVGELEMENT(nsSVGDefsElementBase::)
 
-  // nsIStyledContent
+  // nsIContent
   NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
-protected:
+
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 };
 
 ////////////////////////////////////////////////////////////////////////
@@ -96,28 +95,28 @@ nsSVGDefsElement::nsSVGDefsElement(nsINodeInfo *aNodeInfo)
 
 }
 
-nsSVGDefsElement::~nsSVGDefsElement()
-{
-
-}
-
 //----------------------------------------------------------------------
 // nsIDOMNode methods
 
 
-NS_IMPL_DOM_CLONENODE_WITH_INIT(nsSVGDefsElement)
+NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGDefsElement)
 
 
 //----------------------------------------------------------------------
-// nsIStyledContent methods
+// nsIContent methods
 
 NS_IMETHODIMP_(PRBool)
 nsSVGDefsElement::IsAttributeMapped(const nsIAtom* name) const
 {
   static const MappedAttributeEntry* const map[] = {
-    sTextContentElementsMap,
+    sFEFloodMap,
+    sFiltersMap,
     sFontSpecificationMap,
-    sColorMap
+    sGradientStopMap,
+    sLightingEffectsMap,
+    sMarkersMap,
+    sTextContentElementsMap,
+    sViewportsMap
   };
   
   return FindAttributeDependence(name, map, NS_ARRAY_LENGTH(map)) ||

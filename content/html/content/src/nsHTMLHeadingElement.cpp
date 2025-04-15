@@ -35,13 +35,14 @@
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsIDOMHTMLHeadingElement.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsGenericHTMLElement.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"
 #include "nsMappedAttributes.h"
 #include "nsRuleData.h"
+#include "mozAutoDocUpdate.h"
 
 class nsHTMLHeadingElement : public nsGenericHTMLElement,
                              public nsIDOMHTMLHeadingElement
@@ -54,7 +55,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMNODE(nsGenericHTMLElement::)
 
   // nsIDOMElement
   NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
@@ -65,11 +66,13 @@ public:
   // nsIDOMHTMLHeadingElement
   NS_DECL_NSIDOMHTMLHEADINGELEMENT
 
-  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
+  virtual PRBool ParseAttribute(PRInt32 aNamespaceID,
+                                nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult);
   NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
   nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 };
 
 
@@ -91,28 +94,30 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLHeadingElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLHeadingElement
-NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLHeadingElement, nsGenericHTMLElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLHeadingElement)
-  NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLHeadingElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLHeadingElement,
+                                     nsGenericHTMLElement)
+  NS_INTERFACE_TABLE_INHERITED1(nsHTMLHeadingElement, nsIDOMHTMLHeadingElement)
+NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLHeadingElement)
 
 
-NS_IMPL_DOM_CLONENODE(nsHTMLHeadingElement)
+NS_IMPL_ELEMENT_CLONE(nsHTMLHeadingElement)
 
 
 NS_IMPL_STRING_ATTR(nsHTMLHeadingElement, Align, align)
 
 
 PRBool
-nsHTMLHeadingElement::ParseAttribute(nsIAtom* aAttribute,
+nsHTMLHeadingElement::ParseAttribute(PRInt32 aNamespaceID,
+                                     nsIAtom* aAttribute,
                                      const nsAString& aValue,
                                      nsAttrValue& aResult)
 {
-  if (aAttribute == nsHTMLAtoms::align) {
+  if (aAttribute == nsGkAtoms::align && aNamespaceID == kNameSpaceID_None) {
     return ParseDivAlignValue(aValue, aResult);
   }
 
-  return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
+  return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
+                                              aResult);
 }
 
 static void

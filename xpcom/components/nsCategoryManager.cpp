@@ -59,6 +59,7 @@
 #include "nsQuickSort.h"
 #include "nsEnumeratorUtils.h"
 #include "nsIProxyObjectManager.h"
+#include "nsThreadUtils.h"
 
 class nsIComponentLoaderManager;
 
@@ -167,8 +168,8 @@ int
 BaseStringEnumerator::SortCallback(const void *e1, const void *e2,
                                    void * /*unused*/)
 {
-  char const *const *s1 = NS_REINTERPRET_CAST(char const *const *, e1);
-  char const *const *s2 = NS_REINTERPRET_CAST(char const *const *, e2);
+  char const *const *s1 = reinterpret_cast<char const *const *>(e1);
+  char const *const *s2 = reinterpret_cast<char const *const *>(e2);
 
   return strcmp(*s1, *s2);
 }
@@ -197,8 +198,9 @@ private:
 PLDHashOperator PR_CALLBACK
 EntryEnumerator::enumfunc_createenumerator(CategoryLeaf* aLeaf, void* userArg)
 {
-  EntryEnumerator* mythis = NS_STATIC_CAST(EntryEnumerator*, userArg);
-  mythis->mArray[mythis->mCount++] = aLeaf->GetKey();
+  EntryEnumerator* mythis = static_cast<EntryEnumerator*>(userArg);
+  if (aLeaf->nonpValue)
+    mythis->mArray[mythis->mCount++] = aLeaf->GetKey();
 
   return PL_DHASH_NEXT;
 }
@@ -316,6 +318,18 @@ CategoryNode::AddLeaf(const char* aEntryName,
     if (!arenaValue) {
       rv = NS_ERROR_OUT_OF_MEMORY;
     } else {
+      if (_retval) {
+        const char *toDup = leaf->nonpValue ? leaf->nonpValue : leaf->pValue;
+        if (toDup) {
+          *_retval = ToNewCString(nsDependentCString(toDup));
+          if (!*_retval)
+            return NS_ERROR_OUT_OF_MEMORY;
+        }
+        else {
+          *_retval = nsnull;
+        }
+      }
+
       leaf->nonpValue = arenaValue;
       if (aPersist)
         leaf->pValue = arenaValue;
@@ -382,7 +396,7 @@ PLDHashOperator PR_CALLBACK
 enumfunc_pentries(CategoryLeaf* aLeaf, void* userArg)
 {
   persistent_userstruct* args =
-    NS_STATIC_CAST(persistent_userstruct*, userArg);
+    static_cast<persistent_userstruct*>(userArg);
 
   PLDHashOperator status = PL_DHASH_NEXT;
 
@@ -455,7 +469,7 @@ CategoryEnumerator::Create(nsClassHashtable<nsDepCharHashKey, CategoryNode>& aTa
 PLDHashOperator PR_CALLBACK
 CategoryEnumerator::enumfunc_createenumerator(const char* aStr, CategoryNode* aNode, void* userArg)
 {
-  CategoryEnumerator* mythis = NS_STATIC_CAST(CategoryEnumerator*, userArg);
+  CategoryEnumerator* mythis = static_cast<CategoryEnumerator*>(userArg);
 
   // if a category has no entries, we pretend it doesn't exist
   if (aNode->Count())
@@ -533,12 +547,13 @@ nsCategoryManager::NotifyObservers( const char *aTopic,
     return;
 
   nsCOMPtr<nsIObserverService> obsProxy;
-  NS_GetProxyForObject(NS_UI_THREAD_EVENTQ,
+  NS_GetProxyForObject(NS_PROXY_TO_MAIN_THREAD,
                        NS_GET_IID(nsIObserverService),
                        observerService,
-                       PROXY_ASYNC,
+                       NS_PROXY_ASYNC,
                        getter_AddRefs(obsProxy));
-  if (!obsProxy) return;
+  if (!obsProxy)
+    return;
 
   if (aEntryName) {
     nsCOMPtr<nsISupportsCString> entry
@@ -609,16 +624,28 @@ nsCategoryManager::AddCategoryEntry( const char *aCategoryName,
   if (!category)
     return NS_ERROR_OUT_OF_MEMORY;
 
+  // We will need the return value of AddLeaf even if the called doesn't want it
+  char *oldEntry = nsnull;
+
   nsresult rv = category->AddLeaf(aEntryName,
                                   aValue,
                                   aPersist,
                                   aReplace,
-                                  _retval,
+                                  &oldEntry,
                                   &mArena);
 
   if (NS_SUCCEEDED(rv)) {
+    if (oldEntry) {
+      NotifyObservers(NS_XPCOM_CATEGORY_ENTRY_REMOVED_OBSERVER_ID,
+                      aCategoryName, oldEntry);
+    }
     NotifyObservers(NS_XPCOM_CATEGORY_ENTRY_ADDED_OBSERVER_ID,
                     aCategoryName, aEntryName);
+
+    if (_retval)
+      *_retval = oldEntry;
+    else if (oldEntry)
+      nsMemory::Free(oldEntry);
   }
 
   return rv;
@@ -721,7 +748,7 @@ struct writecat_struct {
 PLDHashOperator PR_CALLBACK
 enumfunc_categories(const char* aKey, CategoryNode* aCategory, void* userArg)
 {
-  writecat_struct* args = NS_STATIC_CAST(writecat_struct*, userArg);
+  writecat_struct* args = static_cast<writecat_struct*>(userArg);
 
   PLDHashOperator result = PL_DHASH_NEXT;
 
@@ -808,7 +835,7 @@ NS_CategoryManagerGetFactory( nsIFactory** aFactory )
     nsresult status;
 
     *aFactory = 0;
-    nsIFactory* new_factory = NS_STATIC_CAST(nsIFactory*, new nsCategoryManagerFactory);
+    nsIFactory* new_factory = static_cast<nsIFactory*>(new nsCategoryManagerFactory);
     if (new_factory)
       {
         *aFactory = new_factory;

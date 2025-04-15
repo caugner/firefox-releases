@@ -1,8 +1,7 @@
-/.cvsignore/1.1/Sat Dec  5 09:06:54 1998//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.54.8.2/Tue May 23 10:18:41 2006//TFIREFOX_2_0_RELEASE
-/nsWidgetSupport.cpp/1.17/Tue May 18 18:09:13 2004//TFIREFOX_2_0_RELEASE
-/nsWinWidgetFactory.cpp/1.66.2.2/Mon Feb 13 02:38:24 2006//TFIREFOX_2_0_RELEASE
-/widget.rc/1.16/Sun Sep 19 19:49:27 2004//TFIREFOX_2_0_RELEASE
-/widget_win.pkg/1.2/Wed Jan  7 01:22:18 2004//TFIREFOX_2_0_RELEASE
-/win32.order/1.4/Thu Apr  5 06:02:12 2001//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Dec  5 09:06:54 1998//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.73/Mon Jan 28 23:07:35 2008//TFIREFOX_3_0rc3_RELEASE
+/nsWidgetSupport.cpp/1.18/Wed Feb  8 20:06:32 2006//TFIREFOX_3_0rc3_RELEASE
+/nsWinWidgetFactory.cpp/1.78/Sat Feb 23 06:44:06 2008//TFIREFOX_3_0rc3_RELEASE
+/widget.rc/1.19/Fri Jan 18 18:39:51 2008//TFIREFOX_3_0rc3_RELEASE
+/widget_win.pkg/1.2/Wed Jan  7 01:22:18 2004//TFIREFOX_3_0rc3_RELEASE
 D/res////

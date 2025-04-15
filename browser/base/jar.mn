@@ -1,6 +1,5 @@
 browser.jar:
-%  content browser %content/browser/ xpcnativewrappers=yes
-%  overlay chrome://browser/content/pageInfo.xul chrome://pippki/content/PageInfoOverlay.xul
+%  content browser %content/browser/ xpcnativewrappers=yes contentaccessible=yes
 #ifdef XP_MACOSX
 %  overlay chrome://mozapps/content/downloads/downloads.xul chrome://browser/content/downloadManagerOverlay.xul
 %  overlay chrome://mozapps/content/extensions/extensions.xul chrome://browser/content/extensionsManagerOverlay.xul
@@ -9,9 +8,15 @@ browser.jar:
 #endif
 %  overlay chrome://global/content/viewSource.xul chrome://browser/content/viewSourceOverlay.xul
 %  overlay chrome://global/content/viewPartialSource.xul chrome://browser/content/viewSourceOverlay.xul
+%  style chrome://global/content/customizeToolbar.xul chrome://browser/content/browser.css
+%  style chrome://global/content/customizeToolbar.xul chrome://browser/skin/
 *       content/browser/aboutDialog.xul               (content/aboutDialog.xul)
 *       content/browser/aboutDialog.js                (content/aboutDialog.js)
         content/browser/aboutDialog.css               (content/aboutDialog.css)
+*       content/browser/aboutRobots.xhtml             (content/aboutRobots.xhtml)
+        content/browser/aboutRobots-icon.png          (content/aboutRobots-icon.png)
+        content/browser/aboutRobots-widget-left.png   (content/aboutRobots-widget-left.png)
+        content/browser/aboutRobots-widget-right.png  (content/aboutRobots-widget-right.png)
 *       content/browser/browser.css                   (content/browser.css)
 *       content/browser/browser.js                    (content/browser.js)
 *       content/browser/browser.xul                   (content/browser.xul)
@@ -21,22 +26,30 @@ browser.jar:
 *       content/browser/EULA.xul                      (content/EULA.xul)
 *       content/browser/metaData.js                   (content/metaData.js)
 *       content/browser/metaData.xul                  (content/metaData.xul)
-        content/browser/monitor.png                   (content/monitor.png)
+*       content/browser/pageinfo/pageInfo.xul         (content/pageinfo/pageInfo.xul)
+*       content/browser/pageinfo/pageInfo.js          (content/pageinfo/pageInfo.js)
+*       content/browser/pageinfo/pageInfo.css         (content/pageinfo/pageInfo.css)
+*       content/browser/pageinfo/feeds.js             (content/pageinfo/feeds.js)
+*       content/browser/pageinfo/feeds.xml            (content/pageinfo/feeds.xml)
+*       content/browser/pageinfo/permissions.js       (content/pageinfo/permissions.js)
+*       content/browser/pageinfo/security.js          (content/pageinfo/security.js)
 *       content/browser/openLocation.js               (content/openLocation.js)
 *       content/browser/openLocation.xul              (content/openLocation.xul)
-*       content/browser/pageInfo.js                   (content/pageInfo.js)
-*       content/browser/pageInfo.xul                  (content/pageInfo.xul)
 *       content/browser/pageReport.js                 (content/pageReport.js)
 *       content/browser/pageReport.xul                (content/pageReport.xul)
-*       content/browser/pageReportFirstTime.xul       (content/pageReportFirstTime.xul)   
+*       content/browser/pageReportFirstTime.xul       (content/pageReportFirstTime.xul)
 *       content/browser/safeMode.js                   (content/safeMode.js)
 *       content/browser/safeMode.xul                  (content/safeMode.xul)
 *       content/browser/sanitize.js                   (content/sanitize.js)
 *       content/browser/sanitize.xul                  (content/sanitize.xul)
+*       content/browser/tabbrowser.css                (content/tabbrowser.css)
+*       content/browser/tabbrowser.xml                (content/tabbrowser.xml)
+*       content/browser/urlbarBindings.xml            (content/urlbarBindings.xml)
 *       content/browser/utilityOverlay.js             (content/utilityOverlay.js)
 *       content/browser/web-panels.js                 (content/web-panels.js)
 *       content/browser/web-panels.xul                (content/web-panels.xul)
 *       content/browser/baseMenuOverlay.xul           (content/baseMenuOverlay.xul)
+*       content/browser/nsContextMenu.js              (content/nsContextMenu.js)
 # XXX: We should exclude this one as well (bug 71895)
 *       content/browser/hiddenWindow.xul              (content/hiddenWindow.xul)
 #ifdef XP_MACOSX
@@ -55,13 +68,12 @@ browser.jar:
   content/branding/about.png                     (branding/about.png)
   content/branding/aboutCredits.png              (branding/aboutCredits.png)
   content/branding/aboutFooter.png               (branding/aboutFooter.png)
-  content/branding/searchconfig.properties       (branding/searchconfig.properties)
   content/branding/icon48.png                    (branding/icon48.png)
   content/branding/icon64.png                    (branding/icon64.png)
-#ifdef XP_WIN
-  content/branding/uninstall.properties          (branding/uninstall.properties)
 #endif
-#endif
+# the following files are browser-specific overrides
+*       content/browser/license.html                  (/toolkit/content/license.html)
+% override chrome://global/content/license.html chrome://browser/content/license.html
 
 #ifdef TOOLBAR_CUSTOMIZATION_SHEET
 toolkit.jar:

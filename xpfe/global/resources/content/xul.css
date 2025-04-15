@@ -76,6 +76,7 @@ treechildren, treeitem, treeseparator, treerow, treecell {
 button,
 checkbox,
 colorpicker[type="button"],
+datepicker[type="grid"],
 menulist,
 radiogroup,
 tree,
@@ -85,7 +86,7 @@ iframe {
   -moz-user-focus: normal;
 }
 
-menulist[editable] {
+menulist[editable="true"] {
   -moz-user-focus: ignore;
 }
 
@@ -109,6 +110,10 @@ button {
   -moz-binding: url("chrome://global/content/bindings/button.xml#button");
 }
 
+button[type="repeat"] {
+  -moz-binding: url("chrome://global/content/bindings/button.xml#button-repeat");
+}
+
 button[type="menu"] {
   -moz-binding: url("chrome://global/content/bindings/button.xml#menu");
 }
@@ -129,10 +134,6 @@ toolbarbutton[type="menu"] {
 
 toolbarbutton[type="menu-button"] {
   -moz-binding: url("chrome://global/content/bindings/toolbarbutton.xml#menu-button");
-}
-
-dropmarker[type="menu-button"] {
-  -moz-binding: url("chrome://global/content/bindings/toolbarbutton.xml#dropmarker");
 }
 
 /******** browser, editor, iframe ********/
@@ -211,12 +212,26 @@ toolbar {
   -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbar");
 }
 
-toolbargrippy {
-  -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbargrippy");
+toolbarseparator {
+  -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbardecoration");
 }
 
-toolbarseparator {
-  -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbarseparator");
+toolbarspacer {
+  -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbardecoration");
+}
+
+toolbarspring {
+  -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbardecoration");
+  -moz-box-flex: 1000;
+}
+
+toolbarpaletteitem {
+  -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbarpaletteitem");
+}
+
+toolbarpaletteitem[place="palette"] {
+  -moz-box-orient: vertical;
+  -moz-binding: url("chrome://global/content/bindings/toolbar.xml#toolbarpaletteitem-palette");
 }
 
 /********* menubar ***********/
@@ -281,27 +296,22 @@ menuseparator {
 /* <popup> is deprecated.  Only <menupopup> and <tooltip> are still valid. */ 
 
 popup,
-menupopup {
+menupopup,
+panel {
   -moz-binding: url("chrome://global/content/bindings/popup.xml#popup");
   -moz-box-orient: vertical;
-  display: none;
 }
 
 popup,
 menupopup,
+panel,
 tooltip {
-  z-index: 2147483647; 
-}
-
-menupopup[menugenerated="true"],
-popup[menugenerated="true"],
-tooltip[menugenerated="true"] {
   display: -moz-popup;
+  z-index: 2147483647; 
 }
 
 tooltip {
   -moz-binding: url("chrome://global/content/bindings/popup.xml#tooltip");
-  display: -moz-popup;
   margin-top: 21px;
 }
 
@@ -506,7 +516,6 @@ treecolpicker {
 
 tree {
   -moz-box-orient: vertical;
-  -moz-user-select: none;
   min-width: 0px;
   min-height: 0px;
   width: 10px;
@@ -524,6 +533,11 @@ treecol {
 treecol[hidden="true"] {
   visibility: collapse;
   display: -moz-box;
+}
+
+.tree-scrollable-columns {
+  /* Yes, Virginia, this makes it scrollable */
+  overflow: hidden;
 }
 
 /********** deck & stack *********/
@@ -582,10 +596,6 @@ progressmeter {
 
 /********** label **********/
 
-spacer {
-  display: inline;
-}
-
 description {
   -moz-binding: url("chrome://global/content/bindings/text.xml#text-base");
 }
@@ -635,22 +645,22 @@ textbox[type="timed"] {
   -moz-binding: url("chrome://global/content/bindings/textbox.xml#timed-textbox");
 }
 
+textbox[type="number"] {
+  -moz-binding: url("chrome://global/content/bindings/numberbox.xml#numberbox");
+}
+
 /********** autocomplete textbox **********/
 
 textbox[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete");
 }
 
-.autocomplete-result-popup {
+panel[type="autocomplete"] {
   -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete-result-popup");
 }
 
 .autocomplete-history-popup {
   -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete-history-popup");
-}
-
-.autocomplete-tree {
-  -moz-binding: url("chrome://global/content/autocomplete.xml#autocomplete-tree");
 }
 
 .autocomplete-treebody {
@@ -681,7 +691,7 @@ menulist {
   -moz-binding: url("chrome://global/content/bindings/menulist.xml#menulist");
 }
 
-menulist[editable] {
+menulist[editable="true"] {
   -moz-binding: url("chrome://global/content/bindings/menulist.xml#menulist-editable");
 }
 
@@ -697,7 +707,7 @@ menulist > menupopup > menuitem {
   -moz-binding: url("chrome://global/content/bindings/menu.xml#menuitem-iconic-noaccel");
 }
 
-dropmarker[type="menu"] {
+dropmarker {
   -moz-binding: url("chrome://global/content/bindings/general.xml#dropmarker");
 }
 
@@ -726,13 +736,16 @@ scrollbar {
   direction: ltr;
 }
 
-thumb 
-{
+thumb {
   -moz-binding: url(chrome://global/content/bindings/scrollbar.xml#thumb);
   display: -moz-box !important;
 }
 
-scrollbar, scrollbarbutton, scrollcorner, slider, thumb {
+.scale-thumb {
+  -moz-binding: url(chrome://global/content/bindings/scale.xml#scalethumb);
+}
+
+scrollbar, scrollbarbutton, scrollcorner, slider, thumb, scale {
   -moz-user-select: none;
 }
 
@@ -746,6 +759,26 @@ scrollcorner[hidden="true"] {
 
 scrollbar[value="hidden"] {
   visibility: hidden;
+}
+
+scale {
+  -moz-binding: url(chrome://global/content/bindings/scale.xml#scale);
+}
+
+.scale-slider {
+  -moz-binding: url(chrome://global/content/bindings/scale.xml#scaleslider);
+  -moz-user-focus: normal;
+}
+
+scrollbarbutton[sbattr="scrollbar-up-top"]:not(:-moz-system-metric(scrollbar-start-backward)),
+scrollbarbutton[sbattr="scrollbar-down-top"]:not(:-moz-system-metric(scrollbar-start-forward)),
+scrollbarbutton[sbattr="scrollbar-up-bottom"]:not(:-moz-system-metric(scrollbar-end-backward)),
+scrollbarbutton[sbattr="scrollbar-down-bottom"]:not(:-moz-system-metric(scrollbar-end-forward)) {
+  display: none;
+}
+
+thumb[sbattr="scrollbar-thumb"]:-moz-system-metric(scrollbar-thumb-proportional) {
+  -moz-box-flex: 1;
 }
 
 /******** scrollbox ********/
@@ -791,6 +824,10 @@ statusbarpanel {
 
 spinbuttons {
   -moz-binding: url("chrome://global/content/bindings/spinbuttons.xml#spinbuttons");
+}
+
+.spinbuttons-button {
+  -moz-user-focus: ignore;
 }
 
 /********** stringbundle **********/
@@ -843,4 +880,22 @@ wizardpage {
 
 .wizard-buttons {
   -moz-binding: url("chrome://global/content/bindings/wizard.xml#wizard-buttons");
+}
+
+/********** datepicker and timepicker ********/
+
+datepicker {
+  -moz-binding: url('chrome://global/content/bindings/datetimepicker.xml#datepicker');
+}
+
+datepicker[type="popup"] {
+  -moz-binding: url('chrome://global/content/bindings/datetimepicker.xml#datepicker-popup');
+}
+
+datepicker[type="grid"] {
+  -moz-binding: url('chrome://global/content/bindings/datetimepicker.xml#datepicker-grid');
+}
+
+timepicker {
+  -moz-binding: url('chrome://global/content/bindings/datetimepicker.xml#timepicker');
 }

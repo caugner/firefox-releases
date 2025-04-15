@@ -68,13 +68,17 @@ class TableBackgroundPainter
       * @param aOrigin           - what type of table frame is creating this instance
       * @param aPresContext      - the presentation context
       * @param aRenderingContext - the rendering context
-      * @param aDirtyRect        - the area that needs to be painted
+      * @param aDirtyRect        - the area that needs to be painted,
+      * relative to aRenderingContext
+      * @param aPt               - offset of the table frame relative to
+      * aRenderingContext
       */
     TableBackgroundPainter(nsTableFrame*        aTableFrame,
                            Origin               aOrigin,
-                           nsPresContext*      aPresContext,
+                           nsPresContext*       aPresContext,
                            nsIRenderingContext& aRenderingContext,
-                           const nsRect&        aDirtyRect);
+                           const nsRect&        aDirtyRect,
+                           const nsPoint&       aPt);
 
     /** Destructor */
     ~TableBackgroundPainter();
@@ -84,10 +88,6 @@ class TableBackgroundPainter
        In border-collapse, the *table* paints the cells' borders,
        so we need to make sure the backgrounds get painted first
        (underneath) by doing a cell-background-only painting pass.
-       The table must then do a no-cell-background pass that
-       continues as a normal background paint call in the cell
-       descendants.) This method doesn't handle views very well,
-       but then, nothing about BC table painting really does.
     */
 
     /* ~*~ Using nsTablePainter Background Painting ~*~
@@ -172,7 +172,6 @@ class TableBackgroundPainter
 
     struct TableBackgroundData;
     friend struct TableBackgroundData;
-    MOZ_DECL_CTOR_COUNTER(TableBackgroundData)
     struct TableBackgroundData {
       nsIFrame*                 mFrame;
       /** mRect is the rect of mFrame in the current coordinate system */
@@ -197,16 +196,13 @@ class TableBackgroundPainter
       void Clear();
 
       /** Calculate and set all data values to represent aFrame */
-      void SetFull(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext,
-                   nsIFrame*            aFrame);
+      void SetFull(nsIFrame* aFrame);
 
       /** Set frame data (mFrame, mRect) but leave style data empty */
       void SetFrame(nsIFrame* aFrame);
 
       /** Calculate the style data for mFrame */
-      void SetData(nsPresContext*      aPresContext,
-                   nsIRenderingContext& aRenderingContext);
+      void SetData();
 
       /** True if need to set border-collapse border; must call SetFull beforehand */
       PRBool ShouldSetBCBorder();
@@ -231,6 +227,7 @@ class TableBackgroundPainter
 
     nsPresContext*      mPresContext;
     nsIRenderingContext& mRenderingContext;
+    nsPoint              mRenderPt;
     nsRect               mDirtyRect;
 #ifdef DEBUG
     nsCompatibility      mCompatMode;
@@ -247,9 +244,7 @@ class TableBackgroundPainter
 
     nsStyleBorder        mZeroBorder;  //cached zero-width border
     nsStylePadding       mZeroPadding; //cached zero-width padding
-    float                mP2t;         //pixels to twips
 
 };
-MOZ_DECL_CTOR_COUNTER(TableBackgroundPainter)
 
 #endif

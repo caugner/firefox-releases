@@ -38,12 +38,16 @@
 #include "nsISupports.idl"
 
 /**
- * nsIDOMWindowUtils is intended for giving privileged script access to
- * additional properties and methods of nsIDOMWindow unavailable to
- * content script. Access this interface by calling getInterface on a DOMWindow.
+ * nsIDOMWindowUtils is intended for infrequently-used methods related
+ * to the current nsIDOMWindow.  Some of the methods may require
+ * elevated privileges; the method implementations should contain the
+ * necessary security checks.  Access this interface by calling
+ * getInterface on a DOMWindow.
  */
 
-[scriptable, uuid(8a157a4f-a81e-489f-baf2-bc8970d60472)]
+interface nsIDOMElement;
+
+[scriptable, uuid(1cfc1a0a-e348-4b18-b61b-935c192f85c4)]
 interface nsIDOMWindowUtils : nsISupports {
 
   /**
@@ -66,9 +70,112 @@ interface nsIDOMWindowUtils : nsISupports {
   attribute unsigned short imageAnimationMode;
 
   /**
+   * Whether the charset of the window's current document has been forced by
+   * the user.
+   * Cannot be accessed from unprivileged context (not content-accessible)
+   */
+  readonly attribute boolean docCharsetIsForced;
+
+  /**
    * Function to get metadata associated with the window's current document
    * @param aName the name of the metadata.  This should be all lowercase.
    * @return the value of the metadata, or the empty string if it's not set
+   *
+   * Will throw a DOM security error if called without UniversalXPConnect
+   * privileges.
    */
   AString getDocumentMetadata(in AString aName);
+
+  /**
+   * Force an immediate redraw of this window.
+   */
+  void redraw();
+
+  /** Synthesize a mouse event for a window. The event types supported
+   *  are: 
+   *    mousedown, mouseup, mousemove, mouseover, mouseout, contextmenu
+   *
+   * Events are sent in coordinates offset by aX and aY from the window.
+   *
+   * Note that additional events may be fired as a result of this call. For
+   * instance, typically a click event will be fired as a result of a
+   * mousedown and mouseup in sequence.
+   *
+   * Normally at this level of events, the mouseover and mouseout events are
+   * only fired when the window is entered or exited. For inter-element
+   * mouseover and mouseout events, a movemove event fired on the new element
+   * should be sufficient to generate the correct over and out events as well.
+   *
+   * Cannot be accessed from unprivileged context (not content-accessible)
+   * Will throw a DOM security error if called without UniversalXPConnect
+   * privileges.
+   *
+   * @param aType event type
+   * @param aX x offset
+   * @param aY y offset
+   * @param aButton button to synthesize
+   * @param aClickCount number of clicks that have been performed
+   * @param aModifiers modifiers pressed, using constants defined in nsIDOMNSEvent
+   */
+  void sendMouseEvent(in AString aType,
+                      in long aX,
+                      in long aY,
+                      in long aButton,
+                      in long aClickCount,
+                      in long aModifiers);
+
+  /**
+   * Synthesize a key event to the window. The event types supported are:
+   *   keydown, keyup, keypress
+   *
+   * Key events generally end up being sent to the focused node.
+   *
+   * Cannot be accessed from unprivileged context (not content-accessible)
+   * Will throw a DOM security error if called without UniversalXPConnect
+   * privileges.
+   *
+   * @param aType event type
+   * @param aKeyCode key code
+   * @param aCharCode character code
+   * @param aModifiers modifiers pressed, using constants defined in nsIDOMNSEvent
+   */
+  void sendKeyEvent(in AString aType,
+                    in long aKeyCode,
+                    in long aCharCode,
+                    in long aModifiers);
+
+  /**
+   * See nsIWidget::SynthesizeNativeKeyEvent
+   *
+   * Cannot be accessed from unprivileged context (not content-accessible)
+   * Will throw a DOM security error if called without UniversalXPConnect
+   * privileges.
+   */
+  void sendNativeKeyEvent(in long aNativeKeyboardLayout,
+                          in long aNativeKeyCode,
+                          in long aModifierFlags,
+                          in AString aCharacters,
+                          in AString aUnmodifiedCharacters);
+
+  /**
+   * Focus the element aElement. The element should be in the same document
+   * that the window is displaying. Pass null to blur the element, if any,
+   * that currently has focus, and focus the document.
+   *
+   * Cannot be accessed from unprivileged context (not content-accessible)
+   * Will throw a DOM security error if called without UniversalXPConnect
+   * privileges.
+   *
+   * @param aElement the element to focus
+   */
+  void focus(in nsIDOMElement aElement);
+
+  /**
+   * Force a garbage collection. This will run the cycle-collector twice to
+   * make sure all garbage is collected.
+   *
+   * Will throw a DOM security error if called without UniversalXPConnect
+   * privileges in non-debug builds. Available to all callers in debug builds.
+   */
+  void garbageCollect();
 };

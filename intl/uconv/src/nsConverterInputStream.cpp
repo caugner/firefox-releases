@@ -63,7 +63,7 @@ nsConverterInputStream::Init(nsIInputStream* aStream,
     // get the decoder
     nsCOMPtr<nsICharsetConverterManager> ccm =
         do_GetService(kCharsetConverterManagerCID, &rv);
-    if (NS_FAILED(rv)) return nsnull;
+    if (NS_FAILED(rv)) return rv;
 
     rv = ccm->GetUnicodeDecoder(aCharset ? aCharset : "ISO-8859-1", getter_AddRefs(mConverter));
     if (NS_FAILED(rv)) return rv;
@@ -178,8 +178,7 @@ nsConverterInputStream::ReadString(PRUint32 aCount, nsAString& aString,
   if (readCount > aCount) {
     readCount = aCount;
   }
-  const PRUnichar* buf = NS_REINTERPRET_CAST(const PRUnichar*, 
-                                             mUnicharData->GetBuffer() +
+  const PRUnichar* buf = reinterpret_cast<const PRUnichar*>(mUnicharData->GetBuffer() +
                                              mUnicharDataOffset);
   aString.Assign(buf, readCount);
   mUnicharDataOffset += readCount;

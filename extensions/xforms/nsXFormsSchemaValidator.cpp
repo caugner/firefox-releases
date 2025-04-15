@@ -38,7 +38,7 @@
 
 // XPCOM includes
 #include "nsIServiceManager.h"
-#include "nsString.h"
+#include "nsStringAPI.h"
 
 #include "nsXFormsUtils.h"
 #include "nsISchemaValidator.h"
@@ -46,6 +46,7 @@
 #include "nsXFormsSchemaValidator.h"
 
 #include "nsIDOM3Node.h"
+#include "nsComponentManagerUtils.h"
 
 #define NS_SCHEMAVALIDATOR_CONTRACTID "@mozilla.org/schemavalidator;1"
 
@@ -55,7 +56,7 @@ nsXFormsSchemaValidator::nsXFormsSchemaValidator()
 }
 
 nsresult
-nsXFormsSchemaValidator::LoadSchema(nsISchema* aSchema)
+nsXFormsSchemaValidator::LoadSchema(nsISVSchema* aSchema)
 {
   NS_ENSURE_TRUE(mSchemaValidator, NS_ERROR_UNEXPECTED);
 
@@ -96,7 +97,7 @@ nsXFormsSchemaValidator::Validate(nsIDOMNode* aElement)
 PRBool
 nsXFormsSchemaValidator::GetType(const nsAString & aType,
                                  const nsAString & aNamespace,
-                                 nsISchemaType **aSchemaType)
+                                 nsISVSchemaType **aSchemaType)
 {
   NS_ENSURE_TRUE(mSchemaValidator, PR_FALSE);
 
@@ -124,6 +125,8 @@ nsXFormsSchemaValidator::ValidateXFormsTypeString(const nsAString & aValue,
     isValid = IsValidSchemaListItem(aValue);
   } else if (aType.EqualsLiteral("listItems")) {
     isValid = IsValidSchemaListItems(aValue);
+  } else if (aType.EqualsLiteral("card-number")) {
+    isValid = IsValidSchemaCardNumber(aValue);
   }
 
   return isValid;
@@ -196,7 +199,7 @@ nsXFormsSchemaValidator::IsValidSchemaListItem(const nsAString & aValue)
 
   // like a string, but no whitespace
   nsAutoString string(aValue);
-  if (string.FindCharInSet(" \t\r\n") == kNotFound) {
+  if (nsXFormsUtils::FindCharInSet(string, " \t\r\n") == kNotFound) {
     mSchemaValidator->ValidateString(aValue, NS_LITERAL_STRING("string"),
                                      NS_LITERAL_STRING("http://www.w3.org/1999/XMLSchema"),
                                      &isValid);
@@ -220,3 +223,19 @@ nsXFormsSchemaValidator::IsValidSchemaListItems(const nsAString & aValue)
   return isValid;
 }
 
+PRBool
+nsXFormsSchemaValidator::IsValidSchemaCardNumber(const nsAString & aValue)
+{
+  // A valid card-number is between 12 and 19 digits in length.
+  PRInt32 len = aValue.Length();
+  if ((len < 12) || (len > 19))
+    return PR_FALSE;
+
+  for (PRInt32 i = 0; i < len; ++i) {
+    PRUnichar c = aValue.CharAt(i);
+    if ((c > '9') || (c < '0'))
+        return PR_FALSE;
+  }
+
+  return PR_TRUE;
+}

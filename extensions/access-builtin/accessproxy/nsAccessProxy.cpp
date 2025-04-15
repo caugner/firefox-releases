@@ -42,7 +42,6 @@
 #include "nsIObserverService.h"
 #include "nsIGenericFactory.h"
 #include "nsIWebProgress.h"
-#include "nsIDocumentLoader.h"
 #include "nsCURILoader.h"
 #include "nsIDocShell.h"
 #include "nsIDOMWindow.h"
@@ -113,7 +112,7 @@ NS_IMETHODIMP nsAccessProxy::HandleEvent(nsIDOMEvent* aEvent)
     return rv;
   // Print event name and styles debugging messages
   #ifdef NS_DEBUG_ACCESS_BUILTIN
-  printf("\n==== %s event occurred ====\n",NS_ConvertUCS2toUTF8(eventNameStr).get());
+  printf("\n==== %s event occurred ====\n",NS_ConvertUTF16toUTF8(eventNameStr).get());
   #endif
 
   ////////// Get Target Node - place in document where event was fired ////////////
@@ -141,8 +140,8 @@ NS_IMETHODIMP nsAccessProxy::HandleEvent(nsIDOMEvent* aEvent)
   domNode->GetOwnerDocument(getter_AddRefs(domDoc));
   if (domDoc) {
     doc = do_QueryInterface(domDoc);
-    if (doc && doc->GetNumberOfShells()>0) {
-      presShell = doc->GetShellAt(0);
+    if (doc) {
+      presShell = doc->GetPrimaryShell();
     }
   }
   //return  NS_OK;
@@ -190,7 +189,7 @@ NS_IMETHODIMP nsAccessProxy::Observe(nsISupports *aSubject, const char *aTopic, 
     nsCOMPtr<nsIWebProgress> progress(do_GetService(NS_DOCUMENTLOADER_SERVICE_CONTRACTID));
     rv = NS_ERROR_FAILURE;
     if (progress) {
-      rv = progress->AddProgressListener(NS_STATIC_CAST(nsIWebProgressListener*,this),
+      rv = progress->AddProgressListener(static_cast<nsIWebProgressListener*>(this),
                                          nsIWebProgress::NOTIFY_STATE_DOCUMENT);
       if (NS_SUCCEEDED(rv))
         AddRef();

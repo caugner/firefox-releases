@@ -1,5 +1,5 @@
-/.cvsignore/1.1/Sat Jul  3 08:32:37 1999//TFIREFOX_2_0_RELEASE
-/Makefile.in/1.6.8.1/Wed Sep 14 04:18:36 2005//TFIREFOX_2_0_RELEASE
-/nsAboutProtocolUtils.h/1.1.2.2/Wed Sep 14 04:18:36 2005//TFIREFOX_2_0_RELEASE
-/nsIAboutModule.idl/1.13/Fri Jul 15 21:49:25 2005//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Sat Jul  3 08:32:37 1999//TFIREFOX_3_0rc3_RELEASE
+/Makefile.in/1.7/Wed Sep 14 04:16:25 2005//TFIREFOX_3_0rc3_RELEASE
+/nsAboutProtocolUtils.h/1.2/Thu Jun 22 02:19:48 2006//TFIREFOX_3_0rc3_RELEASE
+/nsIAboutModule.idl/1.16/Thu Jun 22 02:19:48 2006//TFIREFOX_3_0rc3_RELEASE
 D

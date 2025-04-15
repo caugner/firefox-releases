@@ -70,21 +70,16 @@ function initMenus()
                "Math.abs((cx.fontSizeDefault - cx.fontSize) / 2) != 1";
     };
 
-    function onMenuCommand (event, window)
+    function onMenuCommand(event, window)
     {
-        var params;
         var commandName = event.originalTarget.getAttribute("commandname");
+        var params = new Object();
         if ("cx" in client.menuManager && client.menuManager.cx)
-        {
-            client.menuManager.cx.sourceWindow = window;
             params = client.menuManager.cx;
-        }
-        else
-        {
-            params = { sourceWindow: window };
-        }
+        params.sourceWindow = window;
+        params.source = "menu";
 
-        dispatch (commandName, params);
+        dispatch(commandName, params, true);
 
         delete client.menuManager.cx;
     };
@@ -118,7 +113,7 @@ function initMenus()
     var Mozilla    = "(client.host == 'Mozilla')";
     var NotMozilla = "(client.host != 'Mozilla')";
     var Toolkit    = NotMozilla;
-    var XULRunner  = "(client.host == 'XULrunner')";
+    var XULRunner  = "(client.host == 'XULRunner')";
 
     // Useful combinations
     var ToolkitOnLinux    = "(" + Toolkit + " and " + Linux + ")";
@@ -269,6 +264,7 @@ function initMenus()
          ["homepage"],
          ["faq"],
          ["-"],
+         ["ceip"],
          ["about"]
         ]
     };
@@ -335,7 +331,7 @@ function initMenus()
         label: MSG_MNU_USERCOMMANDS,
         items:
         [
-         ["query",    {visibleif: "cx.user"}],
+         ["query",    {visibleif: "cx.channel && cx.user"}],
          ["whois",    {visibleif: "cx.user"}],
          ["whowas",   {visibleif: "cx.nickname && !cx.user"}],
          ["ping",     {visibleif: "cx.user"}],
@@ -357,10 +353,14 @@ function initMenus()
          ["toggle-umode", {type: "checkbox",
                            checkedif: "client.prefs['showModeSymbols']"}],
          ["-", {visibleif: "cx.nickname"}],
-         ["label-user", {visibleif: "cx.nickname", header: true}],
+         ["label-user", {visibleif: "cx.nickname && (cx.userCount == 1)",
+                         header: true}],
+         ["label-user-multi", {visibleif: "cx.nickname && (cx.userCount != 1)",
+                               header: true}],
          [">popup:opcommands", {visibleif: "cx.nickname",
                                 enabledif: isopish + "true"}],
-         [">popup:usercommands", {visibleif: "cx.nickname"}],
+         [">popup:usercommands", {visibleif: "cx.nickname",
+                                  enabledif: "cx.userCount == 1"}],
         ]
     };
 
@@ -378,11 +378,11 @@ function initMenus()
          ["cmd-copy-link-url", {visibleif: urlenabled}],
          ["cmd-copy", {visibleif: "!" + urlenabled, enabledif: textselected }],
          ["cmd-selectall", {visibleif: "!" + urlenabled }],
-         ["-", {visibleif: "cx.channel && cx.nickname"}],
-         ["label-user", {visibleif: "cx.channel && cx.nickname", header: true}],
+         ["-", {visibleif: "cx.nickname"}],
+         ["label-user", {visibleif: "cx.nickname", header: true}],
          [">popup:opcommands", {visibleif: "cx.channel && cx.nickname",
                                 enabledif: isopish + "cx.user"}],
-         [">popup:usercommands", {visibleif: "cx.channel && cx.nickname"}],
+         [">popup:usercommands", {visibleif: "cx.nickname"}],
          ["-"],
          ["clear-view"],
          ["hide-view", {enabledif: "client.viewsArray.length > 1"}],
@@ -420,9 +420,14 @@ function initMenus()
         ]
     };
 
-    var net          = "cx.network";
+    // Gross hacks to figure out if we're away:
     var netAway      = "cx.network.prefs['away']";
-    var awayChecked = "cx.network and (cx.network.prefs.away == item.message)";
+    var cliAway      = "client.prefs['away']";
+    var awayCheckNet = "(cx.network and (" + netAway + " == item.message))";
+    var awayCheckCli = "(!cx.network and (" + cliAway + " == item.message))";
+    var awayChecked = awayCheckNet + " or " + awayCheckCli;
+    var areBack = "(cx.network and !" + netAway + ") or " +
+                  "(!cx.network and !" + cliAway + ")";
 
     client.menuSpecs["mainmenu:nickname"] = {
         label: client.prefs["nickname"],
@@ -432,7 +437,7 @@ function initMenus()
         [
          ["nick"],
          ["-"],
-         ["back", {type: "checkbox", checkedif: net + " and !" + netAway}],
+         ["back", {type: "checkbox", checkedif: areBack}],
          ["away", {type: "checkbox",
                      checkedif: awayChecked,
                      repeatfor: "client.awayMsgs",
@@ -467,7 +472,7 @@ function createMenus()
         comBar.collapsed = false;
     }
 
-    if (client.host == "XULrunner")
+    if (client.host == "XULRunner")
     {
         // This is a hack to work around Gecko bug 98997, which means that
         // :empty causes menus to be hidden until we force a reflow.

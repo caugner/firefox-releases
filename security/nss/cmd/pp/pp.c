@@ -38,7 +38,7 @@
  * Pretty-print some well-known BER or DER encoded data (e.g. certificates,
  * keys, pkcs7)
  *
- * $Id: pp.c,v 1.7.18.1 2006/05/15 17:45:10 wtchang%redhat.com Exp $
+ * $Id: pp.c,v 1.9 2007/09/25 03:46:23 nelson%bolyard.com Exp $
  */
 
 #include "secutil.h"
@@ -162,7 +162,7 @@ int main(int argc, char **argv)
 	rv = SECU_PrintPrivateKey(outFile, &data, "Private Key", 0);
 #endif
     } else if (PORT_Strcmp(typeTag, SEC_CT_PUBLIC_KEY) == 0) {
-	rv = SECU_PrintPublicKey(outFile, &data, "Public Key", 0);
+	rv = SECU_PrintSubjectPublicKeyInfo(outFile, &data, "Public Key", 0);
     } else if (PORT_Strcmp(typeTag, SEC_CT_PKCS7) == 0) {
 	rv = SECU_PrintPKCS7ContentInfo(outFile, &data,
 					"PKCS #7 Content Info", 0);

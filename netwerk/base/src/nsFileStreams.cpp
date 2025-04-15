@@ -37,8 +37,6 @@
 
 #if defined(XP_UNIX) || defined(XP_BEOS)
 #include <unistd.h>
-#elif defined(XP_MAC)
-#include <Files.h>
 #elif defined(XP_WIN)
 #include <windows.h>
 #elif defined(XP_OS2)
@@ -48,11 +46,7 @@
 // XXX add necessary include file for ftruncate (or equivalent)
 #endif
 
-#if defined(XP_MAC)
-#include "pprio.h"
-#else
 #include "private/pprio.h"
-#endif
 
 #include "nsFileStreams.h"
 #include "nsILocalFile.h"
@@ -68,22 +62,6 @@
 //#include "nsFileTransportService.h"
 
 #define NS_NO_INPUT_BUFFERING 1 // see http://bugzilla.mozilla.org/show_bug.cgi?id=41067
-
-#if defined(PR_LOGGING)
-//
-// Log module for nsFileTransport logging...
-//
-// To enable logging (see prlog.h for full details):
-//
-//    set NSPR_LOG_MODULES=nsFileIO:5
-//    set NSPR_LOG_FILE=nspr.log
-//
-// this enables PR_LOG_DEBUG level information and places all output in
-// the file nspr.log
-//
-PRLogModuleInfo* gFileIOLog = nsnull;
-
-#endif /* PR_LOGGING */
 
 ////////////////////////////////////////////////////////////////////////////////
 // nsFileStream
@@ -163,7 +141,7 @@ nsFileStream::SetEOF()
     if (mFD == nsnull)
         return NS_BASE_STREAM_CLOSED;
 
-#if defined(XP_UNIX) || defined(XP_MAC) || defined(XP_OS2) || defined(XP_BEOS)
+#if defined(XP_UNIX) || defined(XP_OS2) || defined(XP_BEOS)
     // Some system calls require an EOF offset.
     PRInt64 offset;
     nsresult rv = Tell(&offset);
@@ -173,11 +151,6 @@ nsFileStream::SetEOF()
 #if defined(XP_UNIX) || defined(XP_BEOS)
     if (ftruncate(PR_FileDesc2NativeHandle(mFD), offset) != 0) {
         NS_ERROR("ftruncate failed");
-        return NS_ERROR_FAILURE;
-    }
-#elif defined(XP_MAC)
-    if (::SetEOF(PR_FileDesc2NativeHandle(mFD), offset) != 0) {
-        NS_ERROR("SetEOF failed");
         return NS_ERROR_FAILURE;
     }
 #elif defined(XP_WIN)
@@ -317,7 +290,8 @@ NS_IMETHODIMP
 nsFileInputStream::Read(char* aBuf, PRUint32 aCount, PRUint32* aResult)
 {
     if (!mFD) {
-        return NS_BASE_STREAM_CLOSED;
+        *aResult = 0;
+        return NS_OK;
     }
 
     PRInt32 bytesRead = PR_Read(mFD, aBuf, aCount);
@@ -578,12 +552,16 @@ nsSafeFileOutputStream::Finish()
             if (NS_FAILED(mTargetFile->Equals(mTempFile, &equal)) || !equal)
                 NS_ERROR("mTempFile not equal to mTargetFile");
 #endif
-        } else {
-          nsCAutoString targetFilename;
-          rv = mTargetFile->GetNativeLeafName(targetFilename);
-
-          if (NS_SUCCEEDED(rv))
-              rv = mTempFile->MoveToNative(nsnull, targetFilename); // This will replace target
+        }
+        else {
+            nsCAutoString targetFilename;
+            rv = mTargetFile->GetNativeLeafName(targetFilename);
+            if (NS_SUCCEEDED(rv)) {
+                // This will replace target.
+                rv = mTempFile->MoveToNative(nsnull, targetFilename);
+                if (NS_FAILED(rv))
+                    mTempFile->Remove(PR_FALSE);
+            }
         }
     }
     else {

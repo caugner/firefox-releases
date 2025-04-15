@@ -1,27 +1,27 @@
 # -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
 # ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
-# 
+#
 # The contents of this file are subject to the Mozilla Public License Version
 # 1.1 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
 # http://www.mozilla.org/MPL/
-# 
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is The Update Service.
-# 
+#
 # The Initial Developer of the Original Code is Ben Goodger.
 # Portions created by the Initial Developer are Copyright (C) 2004
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
 #   Ben Goodger <ben@bengoodger.com>
 #   Robert Strong <robert.bugzilla@gmail.com>
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -33,11 +33,12 @@
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
-# 
+#
 # ***** END LICENSE BLOCK *****
 
 // This UI is only opened from the Extension Manager when the app is upgraded.
 
+const nsIExtensionManager = Components.interfaces.nsIExtensionManager;
 const nsIUpdateItem = Components.interfaces.nsIUpdateItem;
 const nsIAUCL = Components.interfaces.nsIAddonUpdateCheckListener;
 
@@ -55,19 +56,19 @@ var gUpdateWizard = {
   shouldAutoCheck: false,
   xpinstallEnabled: false,
   xpinstallLocked: false,
-  
+
   init: function ()
   {
     var em = Components.classes["@mozilla.org/extensions/manager;1"]
-                        .getService(Components.interfaces.nsIExtensionManager);
+                        .getService(nsIExtensionManager);
     // Retrieve all items in order to sync their app compatibility information
-    this.items = em.getItemList(nsIUpdateItem.TYPE_ADDON, { });
-    var pref = 
+    this.items = em.getItemList(nsIUpdateItem.TYPE_ANY, { });
+    var pref =
         Components.classes["@mozilla.org/preferences-service;1"].
         getService(Components.interfaces.nsIPrefBranch);
 
     try {
-      this.shouldSuggestAutoChecking = 
+      this.shouldSuggestAutoChecking =
         !pref.getBoolPref(PREF_UPDATE_EXTENSIONS_ENABLED);
     }
     catch (e) {
@@ -82,13 +83,13 @@ var gUpdateWizard = {
     var ioService = Components.classes["@mozilla.org/network/io-service;1"]
                               .getService(Components.interfaces.nsIIOService);
     if (ioService.offline)
-      document.documentElement.currentPage = 
+      document.documentElement.currentPage =
         document.getElementById("offline");
     else
-      document.documentElement.currentPage = 
+      document.documentElement.currentPage =
         document.getElementById("versioninfo");
   },
-  
+
   onWizardFinish: function ()
   {
     var pref = Components.classes["@mozilla.org/preferences-service;1"]
@@ -96,7 +97,7 @@ var gUpdateWizard = {
     if (this.shouldSuggestAutoChecking)
       pref.setBoolPref(PREF_UPDATE_EXTENSIONS_ENABLED, this.shouldAutoCheck);
   },
-  
+
   _setUpButton: function (aButtonID, aButtonKey, aDisabled)
   {
     var strings = document.getElementById("updateStrings");
@@ -111,8 +112,8 @@ var gUpdateWizard = {
     }
     button.disabled = aDisabled;
   },
-  
-  setButtonLabels: function (aBackButton, aBackButtonIsDisabled, 
+
+  setButtonLabels: function (aBackButton, aBackButtonIsDisabled,
                              aNextButton, aNextButtonIsDisabled,
                              aCancelButton, aCancelButtonIsDisabled)
   {
@@ -120,16 +121,16 @@ var gUpdateWizard = {
     this._setUpButton("next", aNextButton, aNextButtonIsDisabled);
     this._setUpButton("cancel", aCancelButton, aCancelButtonIsDisabled);
   },
-  
+
   /////////////////////////////////////////////////////////////////////////////
   // Update Errors
   errorItems: [],
   showErrors: function (aState, aErrors)
   {
-    openDialog("chrome://mozapps/content/update/errors.xul", "", 
+    openDialog("chrome://mozapps/content/update/errors.xul", "",
                "modal", { state: aState, errors: aErrors });
   },
-  
+
   // Displays a list of items that had an error during the update check. We
   // don't display the actual error that occured since
   // nsIAddonUpdateCheckListener doesn't return the error details.
@@ -146,7 +147,7 @@ var gUpdateWizard = {
     if (this.errorItems.length > 0)
       document.getElementById(aElementIDToShow).hidden = false;
   },
-  
+
   onWizardClose: function (aEvent)
   {
     if (gInstallingPage._installing) {
@@ -154,7 +155,7 @@ var gUpdateWizard = {
                          .getService(Components.interfaces.nsIObserverService);
       os.notifyObservers(null, "xpinstall-progress", "cancel");
       return false;
-    }    
+    }
     return true;
   }
 };
@@ -167,7 +168,7 @@ var gOfflinePage = {
     ioService.offline = false;
     return true;
   },
-  
+
   toggleOffline: function ()
   {
     var nextbtn = document.documentElement.getButton("next");
@@ -180,14 +181,13 @@ var gVersionInfoPage = {
   _totalCount: 0,
   onPageShow: function ()
   {
-    gUpdateWizard.setButtonLabels(null, true, 
-                                  "nextButtonText", true, 
+    gUpdateWizard.setButtonLabels(null, true,
+                                  "nextButtonText", true,
                                   "cancelButtonText", false);
     var em = Components.classes["@mozilla.org/extensions/manager;1"]
-                       .getService(Components.interfaces.nsIExtensionManager);
-    // Synchronize the app compatibility info for all items by specifying 2 for
-    // the versionUpdateOnly parameter.
-    em.update([], 0, 2, this);
+                       .getService(nsIExtensionManager);
+    // Synchronize the app compatibility info for all items.
+    em.update([], 0, nsIExtensionManager.UPDATE_SYNC_COMPATIBILITY, this);
   },
 
   /////////////////////////////////////////////////////////////////////////////
@@ -195,17 +195,17 @@ var gVersionInfoPage = {
   onUpdateStarted: function() {
     this._totalCount = gUpdateWizard.items.length;
   },
-  
+
   onUpdateEnded: function() {
     var em = Components.classes["@mozilla.org/extensions/manager;1"]
-                       .getService(Components.interfaces.nsIExtensionManager);
+                       .getService(nsIExtensionManager);
     // Retrieve the remaining incompatible items.
-    gUpdateWizard.items = em.getIncompatibleItemList(null, null,
-                                                     nsIUpdateItem.TYPE_ADDON,
+    gUpdateWizard.items = em.getIncompatibleItemList(null, null, null,
+                                                     nsIUpdateItem.TYPE_ANY,
                                                      true, { });
     if (gUpdateWizard.items.length > 0) {
       // There are still incompatible addons, inform the user.
-      document.documentElement.currentPage = 
+      document.documentElement.currentPage =
         document.getElementById("mismatch");
     }
     else {
@@ -216,10 +216,10 @@ var gVersionInfoPage = {
       setTimeout(close, 0);
     }
   },
-  
+
   onAddonUpdateStarted: function(addon) {
   },
-  
+
   onAddonUpdateEnded: function(addon, status) {
     if (status == nsIAUCL.STATUS_VERSIONINFO) {
       for (var i = 0; i < gUpdateWizard.items.length; ++i) {
@@ -246,11 +246,11 @@ var gVersionInfoPage = {
     progress.mode = "normal";
     progress.value = Math.ceil((this._completeCount / this._totalCount) * 100);
   },
-  
+
   /////////////////////////////////////////////////////////////////////////////
   // nsISupports
   QueryInterface: function(iid) {
-    if (!iid.equals(Components.interfaces.nsIAddonUpdateCheckListener) && 
+    if (!iid.equals(Components.interfaces.nsIAddonUpdateCheckListener) &&
         !iid.equals(Components.interfaces.nsISupports))
       throw Components.results.NS_ERROR_NO_INTERFACE;
     return this;
@@ -260,8 +260,8 @@ var gVersionInfoPage = {
 var gMismatchPage = {
   onPageShow: function ()
   {
-    gUpdateWizard.setButtonLabels(null, true, 
-                                  "mismatchCheckNow", false, 
+    gUpdateWizard.setButtonLabels(null, true,
+                                  "mismatchCheckNow", false,
                                   "mismatchDontCheck", false);
     document.documentElement.getButton("next").focus();
 
@@ -285,40 +285,41 @@ var gUpdatePage = {
       return;
     }
 
-    gUpdateWizard.setButtonLabels(null, true, 
-                                  "nextButtonText", true, 
+    gUpdateWizard.setButtonLabels(null, true,
+                                  "nextButtonText", true,
                                   "cancelButtonText", false);
     document.documentElement.getButton("next").focus();
 
     gUpdateWizard.errorItems = [];
-    
+
     this._totalCount = gUpdateWizard.items.length;
     var em = Components.classes["@mozilla.org/extensions/manager;1"]
-                       .getService(Components.interfaces.nsIExtensionManager);
-    em.update(gUpdateWizard.items, this._totalCount, false, this);
+                       .getService(nsIExtensionManager);
+    em.update(gUpdateWizard.items, this._totalCount,
+              nsIExtensionManager.UPDATE_CHECK_NEWVERSION, this);
   },
 
   /////////////////////////////////////////////////////////////////////////////
   // nsIAddonUpdateCheckListener
   onUpdateStarted: function() {
   },
-  
+
   onUpdateEnded: function() {
     var nextPage = document.getElementById("noupdates");
     if (gUpdateWizard.itemsToUpdate.length > 0)
       nextPage = document.getElementById("found");
     document.documentElement.currentPage = nextPage;
   },
-  
+
   onAddonUpdateStarted: function(addon) {
   },
-  
+
   onAddonUpdateEnded: function(addon, status) {
     if (status == nsIAUCL.STATUS_UPDATE)
       gUpdateWizard.itemsToUpdate.push(addon);
     else if (status == nsIAUCL.STATUS_FAILURE)
       gUpdateWizard.errorItems.push(addon);
-      
+
     ++this._completeCount;
 
     // Update the status text and progress bar
@@ -330,22 +331,22 @@ var gUpdatePage = {
     var progress = document.getElementById("checking.progress");
     progress.value = Math.ceil((this._completeCount / this._totalCount) * 100);
   },
-  
+
   /////////////////////////////////////////////////////////////////////////////
   // nsISupports
   QueryInterface: function(iid) {
-    if (!iid.equals(Components.interfaces.nsIAddonUpdateCheckListener) && 
+    if (!iid.equals(Components.interfaces.nsIAddonUpdateCheckListener) &&
         !iid.equals(Components.interfaces.nsISupports))
       throw Components.results.NS_ERROR_NO_INTERFACE;
     return this;
   }
 };
- 
+
 var gFoundPage = {
   onPageShow: function ()
   {
-    gUpdateWizard.setButtonLabels(null, true, 
-                                  "installButtonText", false, 
+    gUpdateWizard.setButtonLabels(null, true,
+                                  "installButtonText", false,
                                   null, false);
 
     var foundUpdates = document.getElementById("found.updates");
@@ -370,7 +371,7 @@ var gFoundPage = {
       document.documentElement.getButton("next").disabled = false;
     }
   },
-    
+
   toggleXPInstallEnable: function(aEvent)
   {
     var enabled = aEvent.target.checked;
@@ -398,10 +399,10 @@ var gFoundPage = {
       break;
     }
 
-    gUpdateWizard.setButtonLabels(null, true, 
-                                  "installButtonText", true, 
+    gUpdateWizard.setButtonLabels(null, true,
+                                  "installButtonText", true,
                                   null, false);
-    document.getElementById("found").setAttribute("next", "installing"); 
+    document.getElementById("found").setAttribute("next", "installing");
     document.documentElement.getButton("next").disabled = !oneChecked;
   }
 };
@@ -413,12 +414,12 @@ var gInstallingPage = {
 
   onPageShow: function ()
   {
-    gUpdateWizard.setButtonLabels(null, true, 
-                                  "nextButtonText", true, 
+    gUpdateWizard.setButtonLabels(null, true,
+                                  "nextButtonText", true,
                                   null, true);
 
-    // Get XPInstallManager and kick off download/install 
-    // process, registering us as an observer. 
+    // Get XPInstallManager and kick off download/install
+    // process, registering us as an observer.
     var items = [];
     var hashes = [];
     this._objs = [];
@@ -433,12 +434,12 @@ var gInstallingPage = {
       hashes.push(updates[i].getAttribute("hash") ? updates[i].getAttribute("hash") : null);
       this._objs.push({ name: updates[i].label });
     }
-    
+
     var xpimgr = Components.classes["@mozilla.org/xpinstall/install-manager;1"]
                            .createInstance(Components.interfaces.nsIXPInstallManager);
     xpimgr.initManagerWithHashes(items, hashes, items.length, this);
   },
-  
+
   /////////////////////////////////////////////////////////////////////////////
   // nsIXPIProgressDialog
   onStateChange: function (aIndex, aState, aValue)
@@ -476,7 +477,7 @@ var gInstallingPage = {
       break;
     }
   },
-  
+
   onProgress: function (aIndex, aValue, aMaxValue)
   {
     var downloadProgress = document.getElementById("downloadProgress");
@@ -490,7 +491,7 @@ var gInstallErrorsPage = {
     gUpdateWizard.setButtonLabels(null, true, null, true, null, true);
     document.documentElement.getButton("finish").focus();
   },
-  
+
   onShowErrors: function ()
   {
     gUpdateWizard.showErrors("install", gInstallingPage._errors);
@@ -502,7 +503,7 @@ var gInstallErrorsPage = {
 var gAdminDisabledPage = {
   onPageShow: function ()
   {
-    gUpdateWizard.setButtonLabels(null, true, null, true, 
+    gUpdateWizard.setButtonLabels(null, true, null, true,
                                   "cancelButtonText", true);
     document.documentElement.getButton("finish").focus();
   }
@@ -515,7 +516,7 @@ var gFinishedPage = {
   {
     gUpdateWizard.setButtonLabels(null, true, null, true, null, true);
     document.documentElement.getButton("finish").focus();
-    
+
     if (gUpdateWizard.shouldSuggestAutoChecking) {
       document.getElementById("finishedCheckDisabled").hidden = false;
       gUpdateWizard.shouldAutoCheck = true;
@@ -544,4 +545,3 @@ var gNoUpdatesPage = {
     document.documentElement.getButton("finish").focus();
   }
 };
-

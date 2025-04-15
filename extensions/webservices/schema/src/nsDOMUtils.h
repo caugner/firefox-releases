@@ -41,7 +41,6 @@
 
 // content includes
 #include "nsIContent.h"
-#include "nsINodeInfo.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMNodeList.h"
@@ -137,7 +136,7 @@ public:
       else if (mNumNamespaces) {
         PRUint32 i;
         for (i = 0; i < mNumNamespaces; i++) {
-          if (!namespaceURI.Equals(NS_ConvertASCIItoUCS2(mNamespaceArray[i]))) {
+          if (!namespaceURI.Equals(NS_ConvertASCIItoUTF16(mNamespaceArray[i]))) {
             continue;
           }
         }
@@ -149,12 +148,7 @@ public:
         return NS_ERROR_FAILURE;
       }
       
-      nsINodeInfo *nodeInfo = content->GetNodeInfo();
-      if (!nodeInfo) {
-        return NS_ERROR_FAILURE;
-      }
-
-      NS_ADDREF(*aElementName = nodeInfo->NameAtom());
+      NS_ADDREF(*aElementName = content->Tag());
 
       *aChildElement = childElement;
       NS_ADDREF(*aChildElement);

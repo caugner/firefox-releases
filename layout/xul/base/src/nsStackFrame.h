@@ -52,7 +52,7 @@ class nsStackFrame : public nsBoxFrame
 {
 public:
 
-  friend nsresult NS_NewStackFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame, nsIBoxLayout* aLayout = nsnull);
+  friend nsIFrame* NS_NewStackFrame(nsIPresShell* aPresShell, nsStyleContext* aContext, nsIBoxLayout* aLayout = nsnull);
 
 #ifdef NS_DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const
@@ -61,37 +61,12 @@ public:
   }
 #endif
 
-      // Paint one child frame
-  virtual void PaintChild(nsPresContext*         aPresContext,
-                             nsIRenderingContext& aRenderingContext,
-                             const nsRect&        aDirtyRect,
-                             nsIFrame*            aFrame,
-                             nsFramePaintLayer    aWhichLayer,
-                             PRUint32             aFlags = 0);
-
-  virtual void PaintChildren(nsPresContext*      aPresContext,
-                             nsIRenderingContext& aRenderingContext,
-                             const nsRect&        aDirtyRect,
-                             nsFramePaintLayer    aWhichLayer,
-                             PRUint32             aFlags = 0);
-
-  NS_IMETHOD GetFrameForPoint(const nsPoint& aPoint,
-                              nsFramePaintLayer aWhichLayer,    
-                              nsIFrame**     aFrame);
+  NS_IMETHOD BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
+                                         const nsRect&           aDirtyRect,
+                                         const nsDisplayListSet& aLists);
 
 protected:
-
-  virtual nsresult GetFrameForPointChild(const nsPoint&    aPoint,
-                                         nsFramePaintLayer aWhichLayer,    
-                                         nsIFrame*         aChild,
-                                         PRBool            aCheckMouseThrough,
-                                         nsIFrame**        aFrame);
-
-  nsStackFrame(nsIPresShell* aPresShell, nsIBoxLayout* aLayout = nsnull);
-
-
-  //nsStackFrame(nsIPresShell* aPresShell);
-
+  nsStackFrame(nsIPresShell* aPresShell, nsStyleContext* aContext, nsIBoxLayout* aLayout = nsnull);
 }; // class nsStackFrame
 
 

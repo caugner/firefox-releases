@@ -86,6 +86,7 @@ NS_IMPL_THREADSAFE_RELEASE(nsLoadSaveContentSink)
 
 NS_INTERFACE_MAP_BEGIN(nsLoadSaveContentSink)
   NS_INTERFACE_MAP_ENTRY(nsIXMLContentSink)
+  NS_INTERFACE_MAP_ENTRY(nsIContentSink)
   NS_INTERFACE_MAP_ENTRY(nsIExpatSink)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIXMLContentSink)
 NS_INTERFACE_MAP_END
@@ -200,10 +201,17 @@ nsLoadSaveContentSink::HandleXMLDeclaration(const PRUnichar *aVersion,
 
 NS_IMETHODIMP
 nsLoadSaveContentSink::ReportError(const PRUnichar* aErrorText, 
-                                   const PRUnichar* aSourceText)
+                                   const PRUnichar* aSourceText,
+                                   nsIScriptError *aError,
+                                   PRBool *_retval)
 {
+  NS_PRECONDITION(aError && aSourceText && aErrorText, "Check arguments!!!");
+
   // XXX Do error reporting here.  I see no reason to call ReportError
   // on the "base" sink; all we need to do is drop the document on the
   // floor...
+
+  // The expat driver should report the error.
+  *_retval = PR_TRUE;
   return NS_OK;
 }

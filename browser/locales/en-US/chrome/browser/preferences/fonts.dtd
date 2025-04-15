@@ -7,8 +7,8 @@
 <!ENTITY  language.accesskey                      "F">
 
 <!ENTITY  size.label                              "Size:">
-<!ENTITY  size.accesskey1                         "z">
-<!ENTITY  size.accesskey2                         "e">
+<!ENTITY  sizeProportional.accesskey              "z">
+<!ENTITY  sizeMonospace.accesskey                 "e">
 
 <!ENTITY  proportional.label                      "Proportional:">
 <!ENTITY  proportional.accesskey                  "P">
@@ -19,13 +19,6 @@
 <!ENTITY  sans-serif.accesskey                    "n">
 <!ENTITY  monospace.label                         "Monospace:">
 <!ENTITY  monospace.accesskey                     "M">
-<!-- LOCALIZATION NOTE (fantasy.label): 'Fantasy' means 'Ornate' -->
-<!ENTITY  fantasy.label                           "Fantasy:">
-<!ENTITY  fantasy.accesskey                       "F">
-<!ENTITY  cursive.label                           "Cursive:">
-<!ENTITY  cursive.accesskey                       "C">
-
-<!ENTITY  fontsize.units                          "pixels">
 
 <!ENTITY  font.langGroup.latin1                   "Western">
 <!ENTITY  font.langGroup.latin2                   "Central European">
@@ -54,6 +47,10 @@
 <!ENTITY  font.langGroup.gurmukhi                 "Gurmukhi">
 <!ENTITY  font.langGroup.khmer                    "Khmer">
 <!ENTITY  font.langGroup.malayalam                "Malayalam">
+<!ENTITY  font.langGroup.oriya                    "Oriya">
+<!ENTITY  font.langGroup.telugu                   "Telugu">
+<!ENTITY  font.langGroup.kannada                  "Kannada">
+<!ENTITY  font.langGroup.sinhala                  "Sinhala">
 <!-- Minimum font size -->
 <!ENTITY minSize.label                            "Minimum font size:">
 <!ENTITY minSize.accesskey                        "o">

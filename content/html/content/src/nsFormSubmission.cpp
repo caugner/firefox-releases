@@ -43,10 +43,9 @@
 #include "nsIForm.h"
 #include "nsILinkHandler.h"
 #include "nsIDocument.h"
-#include "nsHTMLAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsIHTMLDocument.h"
 #include "nsIFormControl.h"
-#include "nsIScriptGlobalObject.h"
 #include "nsIDOMHTMLFormElement.h"
 #include "nsDOMError.h"
 #include "nsGenericHTMLElement.h"
@@ -55,8 +54,10 @@
 // JBK added for submit move from content frame
 #include "nsIFile.h"
 #include "nsDirectoryServiceDefs.h"
+#include "nsStringStream.h"
 #include "nsIFormProcessor.h"
 #include "nsIURI.h"
+#include "nsIURL.h"
 #include "nsNetUtil.h"
 #include "nsLinebreakConverter.h"
 #include "nsICharsetConverterManager.h"
@@ -74,7 +75,6 @@
 //end
 
 static NS_DEFINE_CID(kFormProcessorCID, NS_FORMPROCESSOR_CID);
-static NS_DEFINE_CID(kCharsetAliasCID, NS_CHARSETALIAS_CID);
 
 /**
  * Helper superclass implementation of nsIFormSubmission, providing common
@@ -100,10 +100,10 @@ public:
       mFormProcessor(aFormProcessor),
       mBidiOptions(aBidiOptions)
   {
-  };
+  }
   virtual ~nsFormSubmission()
   {
-  };
+  }
 
   NS_DECL_ISUPPORTS
 
@@ -111,7 +111,7 @@ public:
   // nsIFormSubmission
   //
   virtual nsresult SubmitTo(nsIURI* aActionURI, const nsAString& aTarget,
-                            nsIContent* aSource, nsPresContext* aPresContext,
+                            nsIContent* aSource, nsILinkHandler* aLinkHandler,
                             nsIDocShell** aDocShell, nsIRequest** aRequest);
 
   /**
@@ -191,18 +191,16 @@ public:
   /**
    * Get the encoder for a form (suitable to pass in to the constructor).
    * @param aForm the form in question
-   * @param aPresContext the pres context in which we are submitting
    * @param aCharset the charset of the form
    * @param aEncoder the returned encoder [OUT]
    */
   static nsresult GetEncoder(nsGenericHTMLElement* aForm,
-                             nsPresContext* aPresContext,
                              const nsACString& aCharset,
                              nsISaveAsCharset** aEncoder);
   /**
    * Get an attribute of a form as int, provided that it is an enumerated value.
    * @param aForm the form in question
-   * @param aAtom the attribute (for example, nsHTMLAtoms::enctype) to get
+   * @param aAtom the attribute (for example, nsGkAtoms::enctype) to get
    * @param aValue the result (will not be set at all if the attribute does not
    *        exist on the form, so *make sure you provide a default value*.)
    *        [OUT]
@@ -274,8 +272,6 @@ public:
   {
   }
 
-  NS_DECL_ISUPPORTS_INHERITED
-
   // nsIFormSubmission
   virtual nsresult AddNameValuePair(nsIDOMHTMLElement* aSource,
                                     const nsAString& aName,
@@ -322,10 +318,6 @@ private:
   /** Whether or not we have warned about a file control not being submitted */
   PRBool mWarnedFileControl;
 };
-
-NS_IMPL_RELEASE_INHERITED(nsFSURLEncoded, nsFormSubmission)
-NS_IMPL_ADDREF_INHERITED(nsFSURLEncoded, nsFormSubmission)
-NS_IMPL_QUERY_INTERFACE_INHERITED0(nsFSURLEncoded, nsFormSubmission)
 
 nsresult
 nsFSURLEncoded::AddNameValuePair(nsIDOMHTMLElement* aSource,
@@ -430,8 +422,8 @@ HandleMailtoSubject(nsCString& aPath) {
     }
 
     if (nameEnd != kNotFound) {
-      if (Substring(aPath, paramSep+1, nameEnd-(paramSep+1)) ==
-          NS_LITERAL_CSTRING("subject")) {
+      if (Substring(aPath, paramSep+1, nameEnd-(paramSep+1)).
+          LowerCaseEqualsLiteral("subject")) {
         hasSubject = PR_TRUE;
         break;
       }
@@ -541,29 +533,35 @@ nsFSURLEncoded::GetEncodedSubmission(nsIURI* aURI,
       return NS_OK;
     }
 
-    nsCAutoString path;
-    rv = aURI->GetPath(path);
-    NS_ENSURE_SUCCESS(rv, rv);
-    // Bug 42616: Trim off named anchor and save it to add later
-    PRInt32 namedAnchorPos = path.FindChar('#');
-    nsCAutoString namedAnchor;
-    if (kNotFound != namedAnchorPos) {
-      path.Right(namedAnchor, (path.Length() - namedAnchorPos));
-      path.Truncate(namedAnchorPos);
+    nsCOMPtr<nsIURL> url = do_QueryInterface(aURI);
+    if (url) {
+      url->SetQuery(mQueryString);
     }
+    else {
+      nsCAutoString path;
+      rv = aURI->GetPath(path);
+      NS_ENSURE_SUCCESS(rv, rv);
+      // Bug 42616: Trim off named anchor and save it to add later
+      PRInt32 namedAnchorPos = path.FindChar('#');
+      nsCAutoString namedAnchor;
+      if (kNotFound != namedAnchorPos) {
+        path.Right(namedAnchor, (path.Length() - namedAnchorPos));
+        path.Truncate(namedAnchorPos);
+      }
 
-    // Chop off old query string (bug 25330, 57333)
-    // Only do this for GET not POST (bug 41585)
-    PRInt32 queryStart = path.FindChar('?');
-    if (kNotFound != queryStart) {
-      path.Truncate(queryStart);
+      // Chop off old query string (bug 25330, 57333)
+      // Only do this for GET not POST (bug 41585)
+      PRInt32 queryStart = path.FindChar('?');
+      if (kNotFound != queryStart) {
+        path.Truncate(queryStart);
+      }
+
+      path.Append('?');
+      // Bug 42616: Add named anchor to end after query string
+      path.Append(mQueryString + namedAnchor);
+
+      aURI->SetPath(path);
     }
-
-    path.Append('?');
-    // Bug 42616: Add named anchor to end after query string
-    path.Append(mQueryString + namedAnchor);
-
-    aURI->SetPath(path);
   }
 
   return rv;
@@ -614,8 +612,6 @@ public:
                         PRInt32 aBidiOptions);
   virtual ~nsFSMultipartFormData() { }
  
-  NS_DECL_ISUPPORTS_INHERITED
-
   // nsIFormSubmission
   virtual nsresult AddNameValuePair(nsIDOMHTMLElement* aSource,
                                     const nsAString& aName,
@@ -694,10 +690,6 @@ private:
    */
   nsCString mBoundary;
 };
-
-NS_IMPL_RELEASE_INHERITED(nsFSMultipartFormData, nsFormSubmission)
-NS_IMPL_ADDREF_INHERITED(nsFSMultipartFormData, nsFormSubmission)
-NS_IMPL_QUERY_INTERFACE_INHERITED0(nsFSMultipartFormData, nsFormSubmission)
 
 //
 // Constructor
@@ -937,8 +929,6 @@ public:
   {
   }
 
-  NS_DECL_ISUPPORTS_INHERITED
-
   // nsIFormSubmission
   virtual nsresult AddNameValuePair(nsIDOMHTMLElement* aSource,
                                     const nsAString& aName,
@@ -964,10 +954,6 @@ protected:
 private:
   nsString mBody;
 };
-
-NS_IMPL_RELEASE_INHERITED(nsFSTextPlain, nsFormSubmission)
-NS_IMPL_ADDREF_INHERITED(nsFSTextPlain, nsFormSubmission)
-NS_IMPL_QUERY_INTERFACE_INHERITED0(nsFSTextPlain, nsFormSubmission)
 
 nsresult
 nsFSTextPlain::AddNameValuePair(nsIDOMHTMLElement* aSource,
@@ -1065,7 +1051,6 @@ nsFSTextPlain::GetEncodedSubmission(nsIURI* aURI,
     mimeStream->SetAddContentLength(PR_TRUE);
     mimeStream->SetData(bodyStream);
     CallQueryInterface(mimeStream, aPostDataStream);
-    NS_ADDREF(*aPostDataStream);
   }
 
   return rv;
@@ -1080,14 +1065,7 @@ nsFSTextPlain::GetEncodedSubmission(nsIURI* aURI,
 // nsISupports stuff
 //
 
-NS_IMPL_ADDREF(nsFormSubmission)
-NS_IMPL_RELEASE(nsFormSubmission)
-
-NS_INTERFACE_MAP_BEGIN(nsFormSubmission)
-  NS_INTERFACE_MAP_ENTRY(nsIFormSubmission)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
-
+NS_IMPL_ISUPPORTS1(nsFormSubmission, nsIFormSubmission)
 
 // JBK moved from nsFormFrame - bug 34297
 // submission
@@ -1133,7 +1111,6 @@ SendJSWarning(nsIContent* aContent,
 
 nsresult
 GetSubmissionFromForm(nsGenericHTMLElement* aForm,
-                      nsPresContext* aPresContext,
                       nsIFormSubmission** aFormSubmission)
 {
   nsresult rv = NS_OK;
@@ -1141,19 +1118,21 @@ GetSubmissionFromForm(nsGenericHTMLElement* aForm,
   //
   // Get all the information necessary to encode the form data
   //
+  nsIDocument* doc = aForm->GetCurrentDoc();
+  NS_ASSERTION(doc, "Should have doc if we're building submission!");
 
   // Get BIDI options
   PRUint8 ctrlsModAtSubmit = 0;
-  PRUint32 bidiOptions = aPresContext->GetBidi();
+  PRUint32 bidiOptions = doc->GetBidiOptions();
   ctrlsModAtSubmit = GET_BIDI_OPTION_CONTROLSTEXTMODE(bidiOptions);
 
   // Get encoding type (default: urlencoded)
   PRInt32 enctype = NS_FORM_ENCTYPE_URLENCODED;
-  nsFormSubmission::GetEnumAttr(aForm, nsHTMLAtoms::enctype, &enctype);
+  nsFormSubmission::GetEnumAttr(aForm, nsGkAtoms::enctype, &enctype);
 
   // Get method (default: GET)
   PRInt32 method = NS_FORM_METHOD_GET;
-  nsFormSubmission::GetEnumAttr(aForm, nsHTMLAtoms::method, &method);
+  nsFormSubmission::GetEnumAttr(aForm, nsGkAtoms::method, &method);
 
   // Get charset
   nsCAutoString charset;
@@ -1161,8 +1140,7 @@ GetSubmissionFromForm(nsGenericHTMLElement* aForm,
 
   // Get unicode encoder
   nsCOMPtr<nsISaveAsCharset> encoder;
-  nsFormSubmission::GetEncoder(aForm, aPresContext, charset,
-                               getter_AddRefs(encoder));
+  nsFormSubmission::GetEncoder(aForm, charset, getter_AddRefs(encoder));
 
   // Get form processor
   nsCOMPtr<nsIFormProcessor> formProcessor =
@@ -1188,7 +1166,7 @@ GetSubmissionFromForm(nsGenericHTMLElement* aForm,
     if (enctype == NS_FORM_ENCTYPE_MULTIPART ||
         enctype == NS_FORM_ENCTYPE_TEXTPLAIN) {
       nsAutoString enctypeStr;
-      aForm->GetAttr(kNameSpaceID_None, nsHTMLAtoms::enctype, enctypeStr);
+      aForm->GetAttr(kNameSpaceID_None, nsGkAtoms::enctype, enctypeStr);
       SendJSWarning(aForm, "ForgotPostWarning", PromiseFlatString(enctypeStr));
     }
     *aFormSubmission = new nsFSURLEncoded(charset, encoder,
@@ -1200,14 +1178,14 @@ GetSubmissionFromForm(nsGenericHTMLElement* aForm,
 
   // This ASSUMES that all encodings above inherit from nsFormSubmission, which
   // they currently do.  If that changes, change this too.
-  NS_STATIC_CAST(nsFormSubmission*, *aFormSubmission)->Init();
+  static_cast<nsFormSubmission*>(*aFormSubmission)->Init();
 
   return NS_OK;
 }
 
 nsresult
 nsFormSubmission::SubmitTo(nsIURI* aActionURI, const nsAString& aTarget,
-                           nsIContent* aSource, nsPresContext* aPresContext,
+                           nsIContent* aSource, nsILinkHandler* aLinkHandler,
                            nsIDocShell** aDocShell, nsIRequest** aRequest)
 {
   nsresult rv;
@@ -1222,14 +1200,12 @@ nsFormSubmission::SubmitTo(nsIURI* aActionURI, const nsAString& aTarget,
   //
   // Actually submit the data
   //
-  nsILinkHandler *handler = aPresContext->GetLinkHandler();
-  NS_ENSURE_TRUE(handler, NS_ERROR_FAILURE);
+  NS_ENSURE_ARG_POINTER(aLinkHandler);
 
-  return handler->OnLinkClickSync(aSource, eLinkVerb_Replace,
-                                  aActionURI,
-                                  PromiseFlatString(aTarget).get(),
-                                  postDataStream, nsnull,
-                                  aDocShell, aRequest);
+  return aLinkHandler->OnLinkClickSync(aSource, aActionURI,
+                                       PromiseFlatString(aTarget).get(),
+                                       postDataStream, nsnull,
+                                       aDocShell, aRequest);
 }
 
 // JBK moved from nsFormFrame - bug 34297
@@ -1243,7 +1219,7 @@ nsFormSubmission::GetSubmitCharset(nsGenericHTMLElement* aForm,
 
   nsresult rv = NS_OK;
   nsAutoString acceptCharsetValue;
-  aForm->GetAttr(kNameSpaceID_None, nsHTMLAtoms::acceptcharset,
+  aForm->GetAttr(kNameSpaceID_None, nsGkAtoms::acceptcharset,
                  acceptCharsetValue);
 
   PRInt32 charsetLen = acceptCharsetValue.Length();
@@ -1251,7 +1227,7 @@ nsFormSubmission::GetSubmitCharset(nsGenericHTMLElement* aForm,
     PRInt32 offset=0;
     PRInt32 spPos=0;
     // get charset from charsets one by one
-    nsCOMPtr<nsICharsetAlias> calias(do_GetService(kCharsetAliasCID, &rv));
+    nsCOMPtr<nsICharsetAlias> calias(do_GetService(NS_CHARSETALIAS_CONTRACTID, &rv));
     if (NS_FAILED(rv)) {
       return;
     }
@@ -1307,7 +1283,6 @@ nsFormSubmission::GetSubmitCharset(nsGenericHTMLElement* aForm,
 // static
 nsresult
 nsFormSubmission::GetEncoder(nsGenericHTMLElement* aForm,
-                             nsPresContext* aPresContext,
                              const nsACString& aCharset,
                              nsISaveAsCharset** aEncoder)
 {

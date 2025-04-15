@@ -54,15 +54,12 @@
         title="&dialog.title;"
         style="&dialog.style;"
         onload="gCustomizeToolbarSheet.init();"
-        onclose="gCustomizeToolbarSheet.done();"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
 
   <script type="application/x-javascript"
           src="chrome://global/content/customizeToolbar.js"/>
   <script type="application/x-javascript"
           src="chrome://global/content/nsDragAndDrop.js"/>
-  <script type="application/x-javascript"
-          src="chrome://global/content/nsTransferable.js"/>
   <script type="application/x-javascript"
           src="chrome://browser/content/customizeToolbarSheet.js"/>
 
@@ -72,18 +69,18 @@
   <keyset id="CustomizeToolbarSheetKeyset">
     <key id="cmd_close_sheet"
          keycode="VK_ESCAPE"
-         oncommand="window.close();"/>
+         oncommand="finishToolbarCustomization();"/>
     <key id="cmd_close_sheet" keycode="VK_RETURN"
-         oncommand="window.close();"/>
+         oncommand="finishToolbarCustomization();"/>
     <key id="cmd_close_sheet" keycode="VK_ENTER"
-         oncommand="window.close();"/>
+         oncommand="finishToolbarCustomization();"/>
   </keyset>
 
-  <vbox id="main-box" flex="1" collapsed="true">
+  <vbox id="main-box" flex="1">
     <label id="instructions" value="&instructions.description;"/>
 
     <vbox flex="1" id="palette-box"
-          ondraggesture="gDraggingFromPalette = true; nsDragAndDrop.startDrag(event, dragStartObserver);"
+          ondraggesture="nsDragAndDrop.startDrag(event, dragStartObserver);"
           ondragover="nsDragAndDrop.dragOver(event, paletteDNDObserver);"
           ondragdrop="nsDragAndDrop.drop(event, paletteDNDObserver);"/>
 
@@ -115,7 +112,8 @@
 
     <hbox align="center" pack="end">
       <button label="&saveChanges.label;"
-              oncommand="gCustomizeToolbarSheet.done();"
+              id="donebutton"
+              oncommand="finishToolbarCustomization();"
               default="true"
               icon="close"/>
     </hbox>

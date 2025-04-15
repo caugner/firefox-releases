@@ -105,13 +105,11 @@ NS_INTERFACE_MAP_END
 NS_IMETHODIMP
 nsSVGNumber::GetValueString(nsAString& aValue)
 {
-  aValue.Truncate();
-
   PRUnichar buf[24];
   nsTextFormatter::snprintf(buf, sizeof(buf)/sizeof(PRUnichar),
                             NS_LITERAL_STRING("%g").get(),
                             (double)mValue);
-  aValue.Append(buf);
+  aValue.Assign(buf);
   
   return NS_OK;
 }
@@ -166,6 +164,7 @@ NS_IMETHODIMP nsSVGNumber::GetValue(float *aValue)
 }
 NS_IMETHODIMP nsSVGNumber::SetValue(float aValue)
 {
+  NS_ENSURE_FINITE(aValue, NS_ERROR_ILLEGAL_VALUE);
   WillModify();
   mValue = aValue;
   DidModify();

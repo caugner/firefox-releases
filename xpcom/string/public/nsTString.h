@@ -266,18 +266,6 @@ class nsTString_CharT : public nsTSubstring_CharT
       NS_COM PRBool EqualsIgnoreCase( const char* aString, PRInt32 aCount=-1 ) const;
 
 
-        /**
-         * Copies data from internal buffer onto given char* buffer
-         *
-         * NOTE: This only copies as many chars as will fit in given buffer (clips)
-         * @param aBuf is the buffer where data is stored
-         * @param aBuflength is the max # of chars to move to buffer
-         * @param aOffset is the offset to copy from
-         * @return ptr to given buffer
-         */
-
-      NS_COM char* ToCString( char* aBuf, PRUint32 aBufLength, PRUint32 aOffset=0 ) const;
-
 #endif // !CharT_is_PRUnichar
 
         /**
@@ -341,7 +329,7 @@ class nsTString_CharT : public nsTSubstring_CharT
 
 
         /**
-         *  These methods are used to remove all occurances of the
+         *  These methods are used to remove all occurrences of the
          *  characters found in aSet from this string.
          *  
          *  @param  aSet -- characters to be cut from this
@@ -422,6 +410,8 @@ class nsTString_CharT : public nsTSubstring_CharT
          * Append the given float to this string 
          */
 
+      NS_COM void AppendFloat( float aFloat );
+
       NS_COM void AppendFloat( double aFloat );
 
 #endif // !MOZ_STRING_WITH_OBSOLETE_API
@@ -459,7 +449,7 @@ class nsTFixedString_CharT : public nsTString_CharT
          */
 
       nsTFixedString_CharT( char_type* data, size_type storageSize )
-        : string_type(data, char_traits::length(data), F_TERMINATED | F_FIXED | F_CLASS_FIXED)
+        : string_type(data, PRUint32(char_traits::length(data)), F_TERMINATED | F_FIXED | F_CLASS_FIXED)
         , mFixedCapacity(storageSize - 1)
         , mFixedBuf(data)
         {}
@@ -589,11 +579,11 @@ class nsTXPIDLString_CharT : public nsTString_CharT
     public:
 
       nsTXPIDLString_CharT()
-        : string_type(NS_CONST_CAST(char_type*, char_traits::sEmptyBuffer), 0, F_TERMINATED | F_VOIDED) {}
+        : string_type(const_cast<char_type*>(char_traits::sEmptyBuffer), 0, F_TERMINATED | F_VOIDED) {}
 
         // copy-constructor required to avoid default
       nsTXPIDLString_CharT( const self_type& str )
-        : string_type(NS_CONST_CAST(char_type*, char_traits::sEmptyBuffer), 0, F_TERMINATED | F_VOIDED)
+        : string_type(const_cast<char_type*>(char_traits::sEmptyBuffer), 0, F_TERMINATED | F_VOIDED)
         {
           Assign(str);
         }
@@ -646,7 +636,7 @@ class nsTGetterCopies_CharT
     public:
       typedef CharT char_type;
 
-      nsTGetterCopies_CharT(nsTXPIDLString_CharT& str)
+      nsTGetterCopies_CharT(nsTSubstring_CharT& str)
         : mString(str), mData(nsnull) {}
 
       ~nsTGetterCopies_CharT()
@@ -660,13 +650,13 @@ class nsTGetterCopies_CharT
         }
 
     private:
-      nsTXPIDLString_CharT& mString;
+      nsTSubstring_CharT&      mString;
       char_type*            mData;
   };
 
 inline
 nsTGetterCopies_CharT
-getter_Copies( nsTXPIDLString_CharT& aString )
+getter_Copies( nsTSubstring_CharT& aString )
   {
     return nsTGetterCopies_CharT(aString);
   }

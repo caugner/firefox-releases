@@ -35,11 +35,11 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* DOM object for element.style */
+
 #include "nsDOMCSSAttrDeclaration.h"
 #include "nsCSSDeclaration.h"
 #include "nsIDocument.h"
-#include "nsHTMLAtoms.h"
-#include "nsIStyledContent.h"
 #include "nsIDOMMutationEvent.h"
 #include "nsICSSStyleRule.h"
 #include "nsICSSLoader.h"
@@ -48,15 +48,17 @@
 #include "nsINameSpaceManager.h"
 #include "nsStyleConsts.h"
 #include "nsContentUtils.h"
+#include "nsIContent.h"
+#include "nsIPrincipal.h"
 
-MOZ_DECL_CTOR_COUNTER(nsDOMCSSAttributeDeclaration)
-
-nsDOMCSSAttributeDeclaration::nsDOMCSSAttributeDeclaration(nsIStyledContent *aContent)
+nsDOMCSSAttributeDeclaration::nsDOMCSSAttributeDeclaration(nsIContent *aContent)
 {
   MOZ_COUNT_CTOR(nsDOMCSSAttributeDeclaration);
 
   // This reference is not reference-counted. The content
   // object tells us when its about to go away.
+  NS_ASSERTION(aContent && aContent->IsNodeOfType(nsINode::eELEMENT),
+               "Inline style for non-element content?");
   mContent = aContent;
 }
 
@@ -135,6 +137,7 @@ nsDOMCSSAttributeDeclaration::GetCSSDeclaration(nsCSSDeclaration **aDecl,
 nsresult
 nsDOMCSSAttributeDeclaration::GetCSSParsingEnvironment(nsIURI** aSheetURI,
                                                        nsIURI** aBaseURI,
+                                                       nsIPrincipal** aSheetPrincipal,
                                                        nsICSSLoader** aCSSLoader,
                                                        nsICSSParser** aCSSParser)
 {
@@ -142,6 +145,7 @@ nsDOMCSSAttributeDeclaration::GetCSSParsingEnvironment(nsIURI** aSheetURI,
   // null out the out params since some of them may not get initialized below
   *aSheetURI = nsnull;
   *aBaseURI = nsnull;
+  *aSheetPrincipal = nsnull;
   *aCSSLoader = nsnull;
   *aCSSParser = nsnull;
 
@@ -167,6 +171,7 @@ nsDOMCSSAttributeDeclaration::GetCSSParsingEnvironment(nsIURI** aSheetURI,
   
   baseURI.swap(*aBaseURI);
   sheetURI.swap(*aSheetURI);
+  NS_ADDREF(*aSheetPrincipal = mContent->NodePrincipal());
 
   return NS_OK;
 }

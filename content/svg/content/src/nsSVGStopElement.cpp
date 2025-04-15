@@ -37,13 +37,11 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsSVGStylableElement.h"
-#include "nsSVGAtoms.h"
 #include "nsIDOMSVGStopElement.h"
-#include "nsCOMPtr.h"
 #include "nsSVGAnimatedNumberList.h"
-#include "nsISVGSVGElement.h"
-#include "nsSVGNumber.h"
-#include "nsSVGAnimatedNumber.h"
+#include "nsSVGNumber2.h"
+#include "nsGenericHTMLElement.h"
+#include "prdtoa.h"
 
 typedef nsSVGStylableElement nsSVGStopElementBase;
 
@@ -54,30 +52,36 @@ protected:
   friend nsresult NS_NewSVGStopElement(nsIContent **aResult,
                                        nsINodeInfo *aNodeInfo);
   nsSVGStopElement(nsINodeInfo* aNodeInfo);
-  virtual ~nsSVGStopElement();
-  nsresult Init();
-  
+
 public:
   // interfaces:
-  
+
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIDOMSVGSTOPELEMENT
 
   // xxx If xpcom allowed virtual inheritance we wouldn't need to
   // forward here :-(
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsSVGStopElementBase::)
+  NS_FORWARD_NSIDOMNODE(nsSVGStopElementBase::)
   NS_FORWARD_NSIDOMELEMENT(nsSVGStopElementBase::)
   NS_FORWARD_NSIDOMSVGELEMENT(nsSVGStopElementBase::)
 
-  // nsIStyledContent interface
+  // nsIContent interface
   NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
+  PRBool ParseAttribute(PRInt32 aNamespaceID, nsIAtom* aAttribute,
+                        const nsAString& aValue, nsAttrValue& aResult);
+
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
 protected:
 
+  virtual NumberAttributesInfo GetNumberInfo();
   // nsIDOMSVGStopElement properties:
-  nsCOMPtr<nsIDOMSVGAnimatedNumber> mOffset;
+  nsSVGNumber2 mOffset;
+  static NumberInfo sNumberInfo;
 };
 
+nsSVGElement::NumberInfo nsSVGStopElement::sNumberInfo = { &nsGkAtoms::offset, 
+                                                           0 };
 NS_IMPL_NS_NEW_SVG_ELEMENT(Stop)
 
 //----------------------------------------------------------------------
@@ -103,34 +107,10 @@ nsSVGStopElement::nsSVGStopElement(nsINodeInfo* aNodeInfo)
 
 }
 
-nsSVGStopElement::~nsSVGStopElement()
-{
-}
-
-  
-nsresult
-nsSVGStopElement::Init()
-{
-  nsresult rv = nsSVGStopElementBase::Init();
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  // Create mapped properties:
-
-  // DOM property: nsIDOMSVGStopElement::offset, #IMPLIED attrib: offset
-  {
-    rv = NS_NewSVGAnimatedNumber(getter_AddRefs(mOffset),
-                                 0.0);
-    NS_ENSURE_SUCCESS(rv,rv);
-    rv = AddMappedSVGValue(nsSVGAtoms::offset, mOffset);
-    NS_ENSURE_SUCCESS(rv,rv);
-  }
-  return NS_OK;
-}
-
 //----------------------------------------------------------------------
 // nsIDOMNode methods
 
-NS_IMPL_DOM_CLONENODE_WITH_INIT(nsSVGStopElement)
+NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGStopElement)
 
 //----------------------------------------------------------------------
 // nsIDOMSVGStopElement methods
@@ -138,13 +118,50 @@ NS_IMPL_DOM_CLONENODE_WITH_INIT(nsSVGStopElement)
 /* readonly attribute nsIDOMSVGAnimatedLengthList x; */
 NS_IMETHODIMP nsSVGStopElement::GetOffset(nsIDOMSVGAnimatedNumber * *aOffset)
 {
-  *aOffset = mOffset;
-  NS_IF_ADDREF(*aOffset);
-  return NS_OK;
+  return mOffset.ToDOMAnimatedNumber(aOffset,this);
 }
 
 //----------------------------------------------------------------------
-// nsIStyledContent methods
+// nsSVGElement methods
+
+nsSVGElement::NumberAttributesInfo
+nsSVGStopElement::GetNumberInfo()
+{
+  return NumberAttributesInfo(&mOffset, &sNumberInfo, 1);
+}
+
+PRBool
+nsSVGStopElement::ParseAttribute(PRInt32 aNamespaceID,
+								 nsIAtom* aAttribute,
+								 const nsAString& aValue,
+								 nsAttrValue& aResult)
+{
+  if (aNamespaceID == kNameSpaceID_None) {
+    if (aAttribute == nsGkAtoms::offset) {
+      NS_ConvertUTF16toUTF8 value(aValue);
+      const char *str = value.get();
+
+      char *rest;
+      float offset = static_cast<float>(PR_strtod(str, &rest));
+      if (str != rest) {
+        if (*rest == '%') {
+          offset /= 100;
+          ++rest;
+        }
+        if (*rest == '\0') {
+          mOffset.SetBaseValue(offset, this, PR_FALSE);
+          aResult.SetTo(aValue);
+          return PR_TRUE;
+        }
+      }
+    }
+  }
+  return nsSVGElement::ParseAttribute(aNamespaceID, aAttribute,
+                                      aValue, aResult);
+}
+
+//----------------------------------------------------------------------
+// nsIContent methods
 
 NS_IMETHODIMP_(PRBool)
 nsSVGStopElement::IsAttributeMapped(const nsIAtom* name) const

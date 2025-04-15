@@ -63,10 +63,7 @@ nsCommonWidget::~nsCommonWidget()
 nsIWidget *
 nsCommonWidget::GetParent(void)
 {
-    nsIWidget *retval;
-    retval = mParent;
-    NS_IF_ADDREF(retval);
-    return retval;
+    return mParent;
 }
 
 void
@@ -75,72 +72,6 @@ nsCommonWidget::CommonCreate(nsIWidget *aParent, PRBool aListenForResizes)
     mParent = aParent;
     mListenForResizes = aListenForResizes;
     mCreated = PR_TRUE;
-}
-
-void
-nsCommonWidget::InitButtonEvent(nsMouseEvent &aEvent,
-                                GdkEventButton *aGdkEvent)
-{
-    aEvent.point.x = nscoord(aGdkEvent->x);
-    aEvent.point.y = nscoord(aGdkEvent->y);
-
-    aEvent.isShift   = (aGdkEvent->state & GDK_SHIFT_MASK)
-        ? PR_TRUE : PR_FALSE;
-    aEvent.isControl = (aGdkEvent->state & GDK_CONTROL_MASK)
-        ? PR_TRUE : PR_FALSE;
-    aEvent.isAlt     = (aGdkEvent->state & GDK_MOD1_MASK)
-        ? PR_TRUE : PR_FALSE;
-    aEvent.isMeta    = (aGdkEvent->state & GDK_MOD4_MASK)
-        ? PR_TRUE : PR_FALSE;
-
-    switch (aGdkEvent->type) {
-    case GDK_2BUTTON_PRESS:
-        aEvent.clickCount = 2;
-        break;
-    case GDK_3BUTTON_PRESS:
-        aEvent.clickCount = 3;
-        break;
-        // default is one click
-    default:
-        aEvent.clickCount = 1;
-    }
-}
-
-void
-nsCommonWidget::InitMouseScrollEvent(nsMouseScrollEvent &aEvent,
-                                     GdkEventScroll *aGdkEvent)
-{
-    switch (aGdkEvent->direction) {
-    case GDK_SCROLL_UP:
-        aEvent.scrollFlags = nsMouseScrollEvent::kIsVertical;
-        aEvent.delta = -3;
-        break;
-    case GDK_SCROLL_DOWN:
-        aEvent.scrollFlags = nsMouseScrollEvent::kIsVertical;
-        aEvent.delta = 3;
-        break;
-    case GDK_SCROLL_LEFT:
-        aEvent.scrollFlags = nsMouseScrollEvent::kIsHorizontal;
-        aEvent.delta = -3;
-        break;
-    case GDK_SCROLL_RIGHT:
-        aEvent.scrollFlags = nsMouseScrollEvent::kIsHorizontal;
-        aEvent.delta = 3;
-        break;
-    }
-
-    aEvent.point.x = nscoord(aGdkEvent->x);
-    aEvent.point.y = nscoord(aGdkEvent->y);
-
-    aEvent.isShift   = (aGdkEvent->state & GDK_SHIFT_MASK)
-        ? PR_TRUE : PR_FALSE;
-    aEvent.isControl = (aGdkEvent->state & GDK_CONTROL_MASK)
-        ? PR_TRUE : PR_FALSE;
-    aEvent.isAlt     = (aGdkEvent->state & GDK_MOD1_MASK)
-        ? PR_TRUE : PR_FALSE;
-    aEvent.isMeta    = (aGdkEvent->state & GDK_MOD4_MASK)
-        ? PR_TRUE : PR_FALSE;
-    
 }
 
 void
@@ -155,6 +86,12 @@ nsCommonWidget::InitKeyEvent(nsKeyEvent &aEvent, GdkEventKey *aGdkEvent)
         ? PR_TRUE : PR_FALSE;
     aEvent.isMeta    = (aGdkEvent->state & GDK_MOD4_MASK)
         ? PR_TRUE : PR_FALSE;
+    // The transformations above and in gdk for the keyval are not invertible
+    // so link to the GdkEvent (which will vanish soon after return from the
+    // event callback) to give plugins access to hardware_keycode and state.
+    // (An XEvent would be nice but the GdkEvent is good enough.)
+    aEvent.nativeMsg = (void *)aGdkEvent;
+
     aEvent.time      = aGdkEvent->time;
 }
 
@@ -196,8 +133,8 @@ nsCommonWidget::DispatchResizeEvent(nsRect &aRect, nsEventStatus &aStatus)
     nsSizeEvent event(PR_TRUE, NS_SIZE, this);
 
     event.windowSize = &aRect;
-    event.point.x = aRect.x;
-    event.point.y = aRect.y;
+    event.refPoint.x = aRect.x;
+    event.refPoint.y = aRect.y;
     event.mWinWidth = aRect.width;
     event.mWinHeight = aRect.height;
 
@@ -209,10 +146,12 @@ NS_IMETHODIMP
 nsCommonWidget::DispatchEvent(nsGUIEvent *aEvent,
                               nsEventStatus &aStatus)
 {
-    aStatus = nsEventStatus_eIgnore;
+#ifdef DEBUG
+    debug_DumpEvent(stdout, aEvent->widget, aEvent,
+                    nsCAutoString("something"), 0);
+#endif
 
-    // hold a widget reference while we dispatch this event
-    NS_ADDREF(aEvent->widget);
+    aStatus = nsEventStatus_eIgnore;
 
     // send it to the standard callback
     if (mEventCallback)
@@ -221,8 +160,6 @@ nsCommonWidget::DispatchEvent(nsGUIEvent *aEvent,
     // dispatch to event listener if event was not consumed
     if ((aStatus != nsEventStatus_eIgnore) && mEventListener)
         aStatus = mEventListener->ProcessEvent(*aEvent);
-
-    NS_IF_RELEASE(aEvent->widget);
 
     return NS_OK;
 }

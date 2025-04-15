@@ -47,65 +47,48 @@
 #include "nsIAtom.h"
 #include "nsGenericHTMLElement.h"
 #include "nsHTMLParts.h"
-#include "nsHTMLAtoms.h"
-#include "nsLayoutAtoms.h"
+#include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsFont.h"
 #include "nsFormControlFrame.h"
 
 static NS_DEFINE_IID(kLegendFrameCID, NS_LEGEND_FRAME_CID);
  
-nsresult
-NS_NewLegendFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
+nsIFrame*
+NS_NewLegendFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
+  nsIFrame* f = new (aPresShell) nsLegendFrame(aContext);
+  if (f) {
+    f->AddStateBits(NS_BLOCK_SPACE_MGR | NS_BLOCK_MARGIN_ROOT);
   }
-  nsLegendFrame* it = new (aPresShell) nsLegendFrame;
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  *aNewFrame = it;
-  return NS_OK;
-}
-
-nsLegendFrame::nsLegendFrame()
-  : nsAreaFrame()
-{
-  mPresContext    = nsnull;
-}
-
-nsLegendFrame::~nsLegendFrame()
-{
+  return f;
 }
 
 nsIAtom*
 nsLegendFrame::GetType() const
 {
-  return nsLayoutAtoms::legendFrame; 
+  return nsGkAtoms::legendFrame; 
 }
 
-NS_IMETHODIMP
-nsLegendFrame::Destroy(nsPresContext *aPresContext)
+void
+nsLegendFrame::Destroy()
 {
-  nsFormControlFrame::RegUnRegAccessKey(aPresContext, NS_STATIC_CAST(nsIFrame*, this), PR_FALSE);
-  return nsAreaFrame::Destroy(aPresContext);
+  nsFormControlFrame::RegUnRegAccessKey(static_cast<nsIFrame*>(this), PR_FALSE);
+  nsAreaFrame::Destroy();
 }
 
 // Frames are not refcounted, no need to AddRef
 NS_IMETHODIMP
-nsLegendFrame::QueryInterface(REFNSIID aIID, void** aInstancePtrResult)
+nsLegendFrame::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 {
-  NS_PRECONDITION(nsnull != aInstancePtrResult, "null pointer");
-  if (nsnull == aInstancePtrResult) {
-    return NS_ERROR_NULL_POINTER;
-  }
+  NS_PRECONDITION(aInstancePtr, "null out param");
+
   if (aIID.Equals(kLegendFrameCID)) {
-    *aInstancePtrResult = (void*) ((nsLegendFrame*)this);
+    *aInstancePtr = this;
     return NS_OK;
   }
-  return nsHTMLContainerFrame::QueryInterface(aIID, aInstancePtrResult);
+
+  return nsAreaFrame::QueryInterface(aIID, aInstancePtr);
 }
 
 NS_IMETHODIMP 
@@ -114,35 +97,21 @@ nsLegendFrame::Reflow(nsPresContext*          aPresContext,
                      const nsHTMLReflowState& aReflowState,
                      nsReflowStatus&          aStatus)
 {
-  DO_GLOBAL_REFLOW_COUNT("nsLegendFrame", aReflowState.reason);
+  DO_GLOBAL_REFLOW_COUNT("nsLegendFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
-  if (eReflowReason_Initial == aReflowState.reason) {
-    mPresContext = aPresContext;
-    nsFormControlFrame::RegUnRegAccessKey(aPresContext, NS_STATIC_CAST(nsIFrame*, this), PR_TRUE);
-  } 
+  if (mState & NS_FRAME_FIRST_REFLOW) {
+    nsFormControlFrame::RegUnRegAccessKey(static_cast<nsIFrame*>(this), PR_TRUE);
+  }
   return nsAreaFrame::Reflow(aPresContext, aDesiredSize, aReflowState, aStatus);
 }
 
-
-NS_IMETHODIMP
-nsLegendFrame::Paint(nsPresContext*      aPresContext,
-                     nsIRenderingContext& aRenderingContext,
-                     const nsRect&        aDirtyRect,
-                     nsFramePaintLayer    aWhichLayer,
-                     PRUint32             aFlags)
-{
-  PRBool isVisible;
-  if (NS_SUCCEEDED(IsVisibleForPainting(aPresContext, aRenderingContext, PR_TRUE, &isVisible)) && !isVisible) {
-    return NS_OK;
-  }
-  return nsAreaFrame::Paint(aPresContext, aRenderingContext, aDirtyRect, aWhichLayer);
-}
-
+// REVIEW: We don't need to override BuildDisplayList, nsAreaFrame will honour
+// our visibility setting
 PRInt32 nsLegendFrame::GetAlign()
 {
   PRInt32 intValue = NS_STYLE_TEXT_ALIGN_LEFT;
 #ifdef IBMBIDI
-  if (NS_STYLE_DIRECTION_RTL == GetStyleVisibility()->mDirection) {
+  if (mParent && NS_STYLE_DIRECTION_RTL == mParent->GetStyleVisibility()->mDirection) {
     intValue = NS_STYLE_TEXT_ALIGN_RIGHT;
   }
 #endif // IBMBIDI
@@ -150,7 +119,7 @@ PRInt32 nsLegendFrame::GetAlign()
   nsGenericHTMLElement *content = nsGenericHTMLElement::FromContent(mContent);
 
   if (content) {
-    const nsAttrValue* attr = content->GetParsedAttr(nsHTMLAtoms::align);
+    const nsAttrValue* attr = content->GetParsedAttr(nsGkAtoms::align);
     if (attr && attr->Type() == nsAttrValue::eEnum) {
       intValue = attr->GetEnumValue();
     }

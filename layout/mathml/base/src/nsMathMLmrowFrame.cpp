@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -40,7 +41,6 @@
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
 #include "nsPresContext.h"
-#include "nsUnitConversion.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
 #include "nsIRenderingContext.h"
@@ -52,23 +52,10 @@
 // <mrow> -- horizontally group any number of subexpressions - implementation
 //
 
-nsresult
-NS_NewMathMLmrowFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
+nsIFrame*
+NS_NewMathMLmrowFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
-  NS_PRECONDITION(aNewFrame, "null OUT ptr");
-  if (nsnull == aNewFrame) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  nsMathMLmrowFrame* it = new (aPresShell) nsMathMLmrowFrame;
-  if (nsnull == it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  *aNewFrame = it;  
-  return NS_OK;
-}
-
-nsMathMLmrowFrame::nsMathMLmrowFrame()
-{
+  return new (aPresShell) nsMathMLmrowFrame(aContext);
 }
 
 nsMathMLmrowFrame::~nsMathMLmrowFrame()
@@ -84,4 +71,25 @@ nsMathMLmrowFrame::InheritAutomaticData(nsIFrame* aParent)
   mPresentationData.flags |= NS_MATHML_STRETCH_ALL_CHILDREN_VERTICALLY;
 
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMathMLmrowFrame::AttributeChanged(PRInt32  aNameSpaceID,
+                                    nsIAtom* aAttribute,
+                                    PRInt32  aModType)
+{
+  // Special for <mtable>: In the frame construction code, we also use
+  // this frame class as a wrapper for mtable. Hence, we should pass the
+  // notification to the real mtable
+  if (mContent->Tag() == nsGkAtoms::mtable_) {
+    nsIFrame* frame = mFrames.FirstChild();
+    for ( ; frame; frame = frame->GetFirstChild(nsnull)) {
+      // drill down to the real mtable
+      if (frame->GetType() == nsGkAtoms::tableOuterFrame)
+        return frame->AttributeChanged(aNameSpaceID, aAttribute, aModType);
+    }
+    NS_NOTREACHED("mtable wrapper without the real table frame");
+  }
+
+  return nsMathMLContainerFrame::AttributeChanged(aNameSpaceID, aAttribute, aModType);
 }

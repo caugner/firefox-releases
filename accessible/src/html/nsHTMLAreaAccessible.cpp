@@ -37,7 +37,6 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsHTMLAreaAccessible.h"
-#include "nsIAccessibilityService.h"
 #include "nsIServiceManager.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMHTMLAreaElement.h"
@@ -46,79 +45,89 @@
 #include "nsIImageMap.h"
 
 
-// --- area -----
+////////////////////////////////////////////////////////////////////////////////
+// nsHTMLAreaAccessible
 
-nsHTMLAreaAccessible::nsHTMLAreaAccessible(nsIDOMNode *aDomNode, nsIAccessible *aParent, nsIWeakReference* aShell):
-nsLinkableAccessible(aDomNode, aShell)
+nsHTMLAreaAccessible::
+  nsHTMLAreaAccessible(nsIDOMNode *aDomNode, nsIAccessible *aParent,
+                       nsIWeakReference* aShell):
+  nsHTMLLinkAccessible(aDomNode, aShell)
 { 
 }
 
-/* wstring getName (); */
-NS_IMETHODIMP nsHTMLAreaAccessible::GetName(nsAString & aName)
-{
-  nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
-  if (!content) {
-    return NS_ERROR_FAILURE;
-  }
+////////////////////////////////////////////////////////////////////////////////
+// nsIAccessible
 
+NS_IMETHODIMP
+nsHTMLAreaAccessible::GetName(nsAString & aName)
+{
   aName.Truncate();
+
+  if (IsDefunct())
+    return NS_ERROR_FAILURE;
+  
   if (mRoleMapEntry) {
     nsresult rv = nsAccessible::GetName(aName);
-    if (!aName.IsEmpty()) {
-      return rv;
-    }
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (!aName.IsEmpty()) 
+      return NS_OK;
   }
-  if (NS_CONTENT_ATTR_NO_VALUE ==
-      content->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::alt, aName) &&  
-      NS_CONTENT_ATTR_NO_VALUE ==
-      content->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::title, aName)) {
+
+  nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
+  if (!content->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::alt,
+                        aName) &&  
+      !content->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::title,
+                        aName)) {
     return GetValue(aName);
   }
 
   return NS_OK;
 }
 
-/* unsigned long getRole (); */
-NS_IMETHODIMP nsHTMLAreaAccessible::GetRole(PRUint32 *_retval)
+NS_IMETHODIMP
+nsHTMLAreaAccessible::GetDescription(nsAString& aDescription)
 {
-  *_retval = ROLE_LINK;
-  return NS_OK;
-}
+  aDescription.Truncate();
 
-/* wstring getDescription (); */
-NS_IMETHODIMP nsHTMLAreaAccessible::GetDescription(nsAString& _retval)
-{
   // Still to do - follow IE's standard here
   nsCOMPtr<nsIDOMHTMLAreaElement> area(do_QueryInterface(mDOMNode));
   if (area) 
-    area->GetShape(_retval);
+    area->GetShape(aDescription);
+
   return NS_OK;
 }
 
-
-/* nsIAccessible getFirstChild (); */
-NS_IMETHODIMP nsHTMLAreaAccessible::GetFirstChild(nsIAccessible **_retval)
+NS_IMETHODIMP
+nsHTMLAreaAccessible::GetFirstChild(nsIAccessible **aChild)
 {
-  *_retval = nsnull;
+  NS_ENSURE_ARG_POINTER(aChild);
+
+  *aChild = nsnull;
   return NS_OK;
 }
 
-/* nsIAccessible getLastChild (); */
-NS_IMETHODIMP nsHTMLAreaAccessible::GetLastChild(nsIAccessible **_retval)
+NS_IMETHODIMP
+nsHTMLAreaAccessible::GetLastChild(nsIAccessible **aChild)
 {
-  *_retval = nsnull;
+  NS_ENSURE_ARG_POINTER(aChild);
+
+  *aChild = nsnull;
   return NS_OK;
 }
 
-/* long getAccChildCount (); */
-NS_IMETHODIMP nsHTMLAreaAccessible::GetChildCount(PRInt32 *_retval)
+NS_IMETHODIMP
+nsHTMLAreaAccessible::GetChildCount(PRInt32 *aCount)
 {
-  *_retval = 0;
+  NS_ENSURE_ARG_POINTER(aCount);
+
+  *aCount = 0;
   return NS_OK;
 }
 
-/* void accGetBounds (out long x, out long y, out long width, out long height); */
-NS_IMETHODIMP nsHTMLAreaAccessible::GetBounds(PRInt32 *x, PRInt32 *y, PRInt32 *width, PRInt32 *height)
+NS_IMETHODIMP
+nsHTMLAreaAccessible::GetBounds(PRInt32 *x, PRInt32 *y,
+                                PRInt32 *width, PRInt32 *height)
 {
   // Essentially this uses GetRect on mAreas of nsImageMap from nsImageFrame
 
@@ -140,23 +149,20 @@ NS_IMETHODIMP nsHTMLAreaAccessible::GetBounds(PRInt32 *x, PRInt32 *y, PRInt32 *w
   imageFrame->GetImageMap(presContext, getter_AddRefs(map));
   NS_ENSURE_TRUE(map, NS_ERROR_FAILURE);
 
-  nsRect rect, orgRectPixels, pageRectPixels;
+  nsRect rect, orgRectPixels;
   rv = map->GetBoundsForAreaContent(ourContent, presContext, rect);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Convert from twips to pixels
-  float t2p;
-  t2p = presContext->TwipsToPixels();   // Get pixels conversion factor
-  *x      = NSTwipsToIntPixels(rect.x, t2p); 
-  *y      = NSTwipsToIntPixels(rect.y, t2p); 
+  *x      = presContext->AppUnitsToDevPixels(rect.x); 
+  *y      = presContext->AppUnitsToDevPixels(rect.y); 
 
-  // XXX aaronl not sure why we have to subtract the x,y from the width, height
-  //     -- but it works perfectly!
-  *width  = NSTwipsToIntPixels(rect.width, t2p) - *x;
-  *height = NSTwipsToIntPixels(rect.height, t2p) - *y;
+  // XXX Areas are screwy; they return their rects as a pair of points, one pair
+  // stored into the width and height.
+  *width  = presContext->AppUnitsToDevPixels(rect.width - rect.x);
+  *height = presContext->AppUnitsToDevPixels(rect.height - rect.y);
 
   // Put coords in absolute screen coords
-  GetScreenOrigin(presContext, frame, &orgRectPixels);
+  orgRectPixels = frame->GetScreenRectExternal();
   *x += orgRectPixels.x;
   *y += orgRectPixels.y;
 

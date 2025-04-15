@@ -188,11 +188,11 @@ nsHTMLEditorMouseListener::MouseDown(nsIDOMEvent* aMouseEvent)
 
             res = selection->GetRangeAt(i, getter_AddRefs(range));
             if (NS_FAILED(res) || !range) 
-              continue;//dont bail yet, iterate through them all
+              continue;//don't bail yet, iterate through them all
 
             nsCOMPtr<nsIDOMNSRange> nsrange(do_QueryInterface(range));
             if (NS_FAILED(res) || !nsrange) 
-              continue;//dont bail yet, iterate through them all
+              continue;//don't bail yet, iterate through them all
 
             res = nsrange->IsPointInRange(parent, offset, &nodeIsInSelection);
 
@@ -275,7 +275,7 @@ nsHTMLEditorMouseListener::MouseDown(nsIDOMEvent* aMouseEvent)
       PRInt32 clientX, clientY;
       mouseEvent->GetClientX(&clientX);
       mouseEvent->GetClientY(&clientY);
-      objectResizer->MouseDown(clientX, clientY, element);
+      objectResizer->MouseDown(clientX, clientY, element, aMouseEvent);
     }
   }
 

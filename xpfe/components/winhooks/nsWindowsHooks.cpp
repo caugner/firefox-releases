@@ -55,7 +55,6 @@
 #include "nsString.h"
 #include "nsMemory.h"
 #include "nsNetUtil.h"
-#include "nsWindowsHooksUtil.cpp"
 #include "nsWindowsHooks.h"
 #include <windows.h>
 #include <shlobj.h>
@@ -84,39 +83,7 @@
 
 #define RUNKEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 
-// Objects that describe the Windows registry entries that we need to tweak.
-static ProtocolRegistryEntry
-    http( "http" ),
-    https( "https" ),
-    ftp( "ftp" ),
-    chrome( "chrome" ),
-    gopher( "gopher" );
-const char *jpgExts[]  = { ".jpg", ".jpe", ".jpeg", ".jfif", ".pjpeg", ".pjp", 0 };
-const char *gifExts[]  = { ".gif", 0 };
-const char *pngExts[]  = { ".png", 0 };
-const char *mngExts[]  = { ".mng", 0 };
-const char *xbmExts[]  = { ".xbm", 0 };
-const char *bmpExts[]  = { ".bmp", ".rle", ".dib", 0 };
-const char *icoExts[]  = { ".ico", 0 };
-const char *xmlExts[]  = { ".xml", 0 };
-const char *xhtmExts[] = { ".xht", ".xhtml", 0 };
-const char *xulExts[]  = { ".xul", 0 };
-const char *htmExts[]  = { ".htm", ".html", ".shtml", 0 };
-
-static FileTypeRegistryEntry
-    jpg(   jpgExts,  "MozillaJPEG",  "JPEG Image",           "jpegfile", "jpeg-file.ico"),
-    gif(   gifExts,  "MozillaGIF",   "GIF Image",            "giffile",  "gif-file.ico"),
-    png(   pngExts,  "MozillaPNG",   "PNG Image",            "pngfile",  "image-file.ico"),
-    mng(   mngExts,  "MozillaMNG",   "MNG Image",            "",         "image-file.ico"),
-    xbm(   xbmExts,  "MozillaXBM",   "XBM Image",            "xbmfile",  "image-file.ico"),
-    bmp(   bmpExts,  "MozillaBMP",   "BMP Image",            "",         "image-file.ico"),
-    ico(   icoExts,  "MozillaICO",   "Icon",                 "icofile",  "%1"),
-    xml(   xmlExts,  "MozillaXML",   "XML Document",         "xmlfile",  "xml-file.ico"),
-    xhtml( xhtmExts, "MozillaXHTML", "XHTML Document",       "",         "misc-file.ico"),
-    xul(   xulExts,  "MozillaXUL",   "Mozilla XUL Document", "",         "xul-file.ico");
-
-static EditableFileTypeRegistryEntry
-    mozillaMarkup( htmExts, "MozillaHTML", "HTML Document", "htmlfile",  "html-file.ico");
+static nsWindowsHooks *gWindowsHooks = nsnull;
 
 // Implementation of the nsIWindowsHooksSettings interface.
 // Use standard implementation of nsISupports stuff.
@@ -161,7 +128,6 @@ DEFINE_GETTER_AND_SETTER( IsHandlingHTML,   mHandleHTML   )
 DEFINE_GETTER_AND_SETTER( IsHandlingJPEG,   mHandleJPEG   )
 DEFINE_GETTER_AND_SETTER( IsHandlingGIF,    mHandleGIF    )
 DEFINE_GETTER_AND_SETTER( IsHandlingPNG,    mHandlePNG    )
-DEFINE_GETTER_AND_SETTER( IsHandlingMNG,    mHandleMNG    )
 DEFINE_GETTER_AND_SETTER( IsHandlingXBM,    mHandleXBM    )
 DEFINE_GETTER_AND_SETTER( IsHandlingBMP,    mHandleBMP    )
 DEFINE_GETTER_AND_SETTER( IsHandlingICO,    mHandleICO    )
@@ -181,10 +147,41 @@ DEFINE_GETTER_AND_SETTER( HaveBeenSet,      mHaveBeenSet  )
 // Use standard implementation of nsISupports stuff.
 NS_IMPL_ISUPPORTS1( nsWindowsHooks, nsIWindowsHooks )
 
-nsWindowsHooks::nsWindowsHooks() {
+static const char *jpgExts[]  = { ".jpg", ".jpe", ".jpeg", ".jfif", ".pjpeg", ".pjp", 0 };
+static const char *gifExts[]  = { ".gif", 0 };
+static const char *pngExts[]  = { ".png", 0 };
+static const char *xbmExts[]  = { ".xbm", 0 };
+static const char *bmpExts[]  = { ".bmp", ".rle", ".dib", 0 };
+static const char *icoExts[]  = { ".ico", 0 };
+static const char *xmlExts[]  = { ".xml", 0 };
+static const char *xhtmExts[] = { ".xht", ".xhtml", 0 };
+static const char *xulExts[]  = { ".xul", 0 };
+static const char *htmExts[]  = { ".htm", ".html", ".shtml", 0 };
+
+nsWindowsHooks::nsWindowsHooks()
+  : http( "http" ),
+    https( "https" ),
+    ftp( "ftp" ),
+    chrome( "chrome" ),
+    gopher( "gopher" ),
+
+    jpg(   jpgExts,  "MozillaJPEG",  "JPEG Image",           "jpegfile", "jpeg-file.ico"),
+    gif(   gifExts,  "MozillaGIF",   "GIF Image",            "giffile",  "gif-file.ico"),
+    png(   pngExts,  "MozillaPNG",   "PNG Image",            "pngfile",  "image-file.ico"),
+    xbm(   xbmExts,  "MozillaXBM",   "XBM Image",            "xbmfile",  "image-file.ico"),
+    bmp(   bmpExts,  "MozillaBMP",   "BMP Image",            "",         "image-file.ico"),
+    ico(   icoExts,  "MozillaICO",   "Icon",                 "icofile",  "%1"),
+    xml(   xmlExts,  "MozillaXML",   "XML Document",         "xmlfile",  "xml-file.ico"),
+    xhtml( xhtmExts, "MozillaXHTML", "XHTML Document",       "",         "misc-file.ico"),
+    xul(   xulExts,  "MozillaXUL",   "Mozilla XUL Document", "",         "xul-file.ico"),
+
+    mozillaMarkup( htmExts, "MozillaHTML", "HTML Document", "htmlfile",  "html-file.ico")
+{
+    gWindowsHooks = this;
 }
 
 nsWindowsHooks::~nsWindowsHooks() {
+    gWindowsHooks = nsnull;
 }
 
 // Internal GetPreferences.
@@ -212,7 +209,6 @@ nsWindowsHooks::GetSettings( nsWindowsHooksSettings **result ) {
     prefs->mHandleJPEG   = BoolRegistryEntry( "isHandlingJPEG"   );
     prefs->mHandleGIF    = BoolRegistryEntry( "isHandlingGIF"    );
     prefs->mHandlePNG    = BoolRegistryEntry( "isHandlingPNG"    );
-    prefs->mHandleMNG    = BoolRegistryEntry( "isHandlingMNG"    );
     prefs->mHandleXBM    = BoolRegistryEntry( "isHandlingXBM"    );
     prefs->mHandleBMP    = BoolRegistryEntry( "isHandlingBMP"    );
     prefs->mHandleICO    = BoolRegistryEntry( "isHandlingICO"    );
@@ -223,7 +219,7 @@ nsWindowsHooks::GetSettings( nsWindowsHooksSettings **result ) {
     prefs->mHaveBeenSet  = BoolRegistryEntry( "haveBeenSet"      );
 
 #ifdef DEBUG_law
-NS_WARN_IF_FALSE( NS_SUCCEEDED( rv ), "GetPreferences failed" );
+NS_ASSERTION( NS_SUCCEEDED( rv ), "GetPreferences failed" );
 #endif
 
     return rv;
@@ -305,37 +301,35 @@ nsWindowsHooksSettings::GetRegistryMatches( PRBool *_retval ) {
     NS_ENSURE_ARG( _retval );
     *_retval = PR_TRUE;
     // Test registry for all selected attributes.
-    if ( misMatch( mHandleHTTP,   http )
+    if ( misMatch( mHandleHTTP,   gWindowsHooks->http )
          ||
-         misMatch( mHandleHTTPS,  https )
+         misMatch( mHandleHTTPS,  gWindowsHooks->https )
          ||
-         misMatch( mHandleFTP,    ftp )
+         misMatch( mHandleFTP,    gWindowsHooks->ftp )
          ||
-         misMatch( mHandleCHROME, chrome )
+         misMatch( mHandleCHROME, gWindowsHooks->chrome )
          ||
-         misMatch( mHandleGOPHER, gopher )
+         misMatch( mHandleGOPHER, gWindowsHooks->gopher )
          ||
-         misMatch( mHandleHTML,   mozillaMarkup )
+         misMatch( mHandleHTML,   gWindowsHooks->mozillaMarkup )
          ||
-         misMatch( mHandleJPEG,   jpg )
+         misMatch( mHandleJPEG,   gWindowsHooks->jpg )
          ||
-         misMatch( mHandleGIF,    gif )
+         misMatch( mHandleGIF,    gWindowsHooks->gif )
          ||
-         misMatch( mHandlePNG,    png )
+         misMatch( mHandlePNG,    gWindowsHooks->png )
          ||
-         misMatch( mHandleMNG,    mng )
+         misMatch( mHandleXBM,    gWindowsHooks->xbm )
          ||
-         misMatch( mHandleXBM,    xbm )
+         misMatch( mHandleBMP,    gWindowsHooks->bmp )
          ||
-         misMatch( mHandleBMP,    bmp )
+         misMatch( mHandleICO,    gWindowsHooks->ico )
          ||
-         misMatch( mHandleICO,    ico )
+         misMatch( mHandleXML,    gWindowsHooks->xml )
          ||
-         misMatch( mHandleXML,    xml )
+         misMatch( mHandleXHTML,  gWindowsHooks->xhtml )
          ||
-         misMatch( mHandleXHTML,  xhtml )
-         ||
-         misMatch( mHandleXUL,    xul ) ) {
+         misMatch( mHandleXUL,    gWindowsHooks->xul ) ) {
         // Registry is out of synch.
         *_retval = PR_FALSE;
     }
@@ -379,7 +373,6 @@ nsWindowsHooks::CheckSettings( nsIDOMWindowInternal *aParent,
             settings->mHandleJPEG   = PR_FALSE;
             settings->mHandleGIF    = PR_FALSE;
             settings->mHandlePNG    = PR_FALSE;
-            settings->mHandleMNG    = PR_FALSE;
             settings->mHandleXBM    = PR_FALSE;
             settings->mHandleBMP    = PR_FALSE;
             settings->mHandleICO    = PR_FALSE;
@@ -568,7 +561,6 @@ nsWindowsHooks::SetSettings(nsIWindowsHooksSettings *prefs) {
     putPRBoolIntoRegistry( "isHandlingJPEG",   prefs, &nsIWindowsHooksSettings::GetIsHandlingJPEG );
     putPRBoolIntoRegistry( "isHandlingGIF",    prefs, &nsIWindowsHooksSettings::GetIsHandlingGIF );
     putPRBoolIntoRegistry( "isHandlingPNG",    prefs, &nsIWindowsHooksSettings::GetIsHandlingPNG );
-    putPRBoolIntoRegistry( "isHandlingMNG",    prefs, &nsIWindowsHooksSettings::GetIsHandlingMNG );
     putPRBoolIntoRegistry( "isHandlingXBM",    prefs, &nsIWindowsHooksSettings::GetIsHandlingXBM );
     putPRBoolIntoRegistry( "isHandlingBMP",    prefs, &nsIWindowsHooksSettings::GetIsHandlingBMP );
     putPRBoolIntoRegistry( "isHandlingICO",    prefs, &nsIWindowsHooksSettings::GetIsHandlingICO );
@@ -615,11 +607,6 @@ nsWindowsHooks::SetRegistry() {
         (void) png.set();
     } else {
         (void) png.reset();
-    }
-    if ( prefs->mHandleMNG ) {
-        (void) mng.set();
-    } else {
-        (void) mng.reset();
     }
     if ( prefs->mHandleXBM ) {
         (void) xbm.set();
@@ -847,34 +834,38 @@ WriteBitmap(nsIFile* aFile, gfxIImageFrame* aImage)
   
   PRUint8* bits;
   PRUint32 length;
+  aImage->LockImageData();
   aImage->GetImageData(&bits, &length);
-  if (!bits) return NS_ERROR_FAILURE;
-  
+  if (!bits) {
+      aImage->UnlockImageData();
+      return NS_ERROR_FAILURE;
+  }
+ 
   PRUint32 bpr;
   aImage->GetImageBytesPerRow(&bpr);
   PRInt32 bitCount = bpr/width;
   
   // initialize these bitmap structs which we will later
   // serialize directly to the head of the bitmap file
-  LPBITMAPINFOHEADER bmi = (LPBITMAPINFOHEADER)new BITMAPINFO;
-  bmi->biSize = sizeof(BITMAPINFOHEADER);
-  bmi->biWidth = width;
-  bmi->biHeight = height;
-  bmi->biPlanes = 1;
-  bmi->biBitCount = (WORD)bitCount*8;
-  bmi->biCompression = BI_RGB;
-  bmi->biSizeImage = 0; // don't need to set this if bmp is uncompressed
-  bmi->biXPelsPerMeter = 0;
-  bmi->biYPelsPerMeter = 0;
-  bmi->biClrUsed = 0;
-  bmi->biClrImportant = 0;
+  BITMAPINFOHEADER bmi;
+  bmi.biSize = sizeof(BITMAPINFOHEADER);
+  bmi.biWidth = width;
+  bmi.biHeight = height;
+  bmi.biPlanes = 1;
+  bmi.biBitCount = (WORD)bitCount*8;
+  bmi.biCompression = BI_RGB;
+  bmi.biSizeImage = length;
+  bmi.biXPelsPerMeter = 0;
+  bmi.biYPelsPerMeter = 0;
+  bmi.biClrUsed = 0;
+  bmi.biClrImportant = 0;
   
   BITMAPFILEHEADER bf;
   bf.bfType = 0x4D42; // 'BM'
   bf.bfReserved1 = 0;
   bf.bfReserved2 = 0;
   bf.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-  bf.bfSize = bf.bfOffBits + bmi->biSizeImage;
+  bf.bfSize = bf.bfOffBits + bmi.biSizeImage;
 
   // get a file output stream
   nsresult rv;
@@ -888,17 +879,28 @@ WriteBitmap(nsIFile* aFile, gfxIImageFrame* aImage)
     PRUint32 written;
     stream->Write((const char*)&bf, sizeof(BITMAPFILEHEADER), &written);
     if (written == sizeof(BITMAPFILEHEADER)) {
-      stream->Write((const char*)bmi, sizeof(BITMAPINFOHEADER), &written);
+      stream->Write((const char*)&bmi, sizeof(BITMAPINFOHEADER), &written);
       if (written == sizeof(BITMAPINFOHEADER)) {
-        stream->Write((const char*)bits, length, &written);
-        if (written == length)
-          rv = NS_OK;
+        // write out the image data backwards because the desktop won't
+        // show bitmaps with negative heights for top-to-bottom
+        PRUint32 i = length;
+        rv = NS_OK;
+        do {
+          i -= bpr;
+
+          stream->Write(((const char*)bits) + i, bpr, &written);
+          if (written != bpr) {
+            rv = NS_ERROR_FAILURE;
+            break;
+          }
+        } while (i != 0);
       }
     }
   
     stream->Close();
   }
-  
+
+  aImage->UnlockImageData(); 
   return rv;
 }
 

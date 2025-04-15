@@ -20,6 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *      michaelp   09-25-97 1:56pm
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -40,219 +41,76 @@
 
 #include "gfxCore.h"
 #include "nsCoord.h"
-#include "nsUnitConversion.h"
-
-#define MG_2DIDENTITY     0
-#define MG_2DTRANSLATION  1
-#define MG_2DSCALE        2
-#define MG_2DGENERAL      4
 
 class NS_GFX nsTransform2D
 {
 private:
-  //accelerators
+ /**
+  * This represents the following matrix (note that the order of row/column
+  * indices is opposite to usual notation)
+  *
+  *      / m00   0   m20  \
+  * M =  |  0   m11  m21  |
+  *      \  0    0    1   /
+  *
+  * Transformation of a coordinate (x, y) is obtained by setting
+  * v = (x, y, 1)^T and evaluating  M . v
+  **/
 
-  float     m00, m01, m10, m11, m20, m21;
-  PRUint16  type;
+  float     m00, m11, m20, m21;
 
 public:
-  //constructors
-
-  nsTransform2D(void)                         { SetToIdentity(); }
-  nsTransform2D(nsTransform2D *aTransform2D)  { SetMatrix(aTransform2D); }
-
-  //destructor
+  nsTransform2D(void)                         { m20 = m21 = 0.0f; m00 = m11 = 1.0f; }
+  nsTransform2D(nsTransform2D *aTransform2D)  {
+    m00 = aTransform2D->m00;
+    m11 = aTransform2D->m11;
+    m20 = aTransform2D->m20;
+    m21 = aTransform2D->m21;
+  }
 
   ~nsTransform2D(void)                        { }
-
- /**
-  * get the type of this transform
-  *
-  * @param
-  * @return     type from above set
-  * @exception
-  * @author     michaelp   09-25-97 1:56pm
-  **/
-
-  PRUint16 GetType(void)                      { return type; }
-
- /**
-  * set this transform to identity
-  *
-  * @param
-  * @exception
-  * @author     michaelp   09-25-97 1:56pm
-  **/
-
-  void SetToIdentity(void)                    { m01 = m10 = m20 = m21 = 0.0f; m00 = m11 = 1.0f; type = MG_2DIDENTITY; }
-
- /**
-  * set this transform to a scale
-  *
-  * @param      sx, x scale
-  * @param      sy, y scale
-  * @exception
-  * @author     michaelp   09-25-97 1:56pm
-  **/
-
-  void SetToScale(float sx, float sy);
 
  /**
   * set this transform to a translation
   *
   * @param      tx, x translation
   * @param      ty, y translation
-  * @exception
-  * @author     michaelp   09-25-97 1:56pm
   **/
 
-  void SetToTranslate(float tx, float ty);
-
+  void SetToTranslate(float tx, float ty)    { m00 = m11 = 1.0f; m20 = tx; m21 = ty; }
+  
  /**
   * get the translation portion of this transform
   *
   * @param      pt, Point to return translation values in
-  * @exception
-  * @author     michaelp   09-25-97 1:56pm
   **/
 
-  void GetTranslation(float *ptX, float *ptY) { *ptX = m20; *ptY = m21; }
-  void GetTranslationCoord(nscoord *ptX, nscoord *ptY) { *ptX = NSToCoordRound(m20); *ptY = NSToCoordRound(m21); }
-
- /**
-  * set the translation portion of this transform
-  *
-  * @param      tx, x translation
-  * @param      ty, y translation
-  * @exception
-  **/
-
-  void SetTranslation(float tX, float tY) {
-    m20 = tX;
-    m21 = tY;
-    type |= MG_2DTRANSLATION;
-  }
-
- /**
-  * get the X translation portion of this transform
-  *
-  * @param
-  * @returns x component of translation
-  * @exception
-  **/
-
-  float GetXTranslation(void)                 { return m20; }
-  nscoord GetXTranslationCoord(void)          { return NSToCoordRound(m20); }
-
- /**
-  * get the Y translation portion of this transform
-  *
-  * @param
-  * @returns y component of translation
-  * @exception
-  **/
-
-  float GetYTranslation(void)               { return m21; }
-  nscoord GetYTranslationCoord(void)        { return NSToCoordRound(m21); }
-
- /**
-  * set this matrix and type from another Transform2D
-  *
-  * @param    aTransform2D is the Transform2D to be copied from
-  * @exception
-  * @author   michaelp   09-25-97 1:56pm
-  **/
-
-  void SetMatrix(nsTransform2D *aTransform2D);
-
- /**
-  * post-multiply a new Transform
-  *
-  * @param    newxform new Transform2D
-  * @exception
-  * @author   michaelp   09-25-97 1:56pm
-  **/
-
-  void Concatenate(nsTransform2D *newxform);
-
- /**
-  * pre-multiply a new Transform
-  *
-  * @param    newxform new Transform2D
-  * @exception
-  * @author   michaelp   09-25-97 1:56pm
-  **/
-
-  void PreConcatenate(nsTransform2D *newxform);
-
- /**
-  * apply nontranslation portion of matrix to vector
-  *
-  * @param    pt  Point to transform
-  * @exception
-  * @author   michaelp   09-25-97 1:56pm
-  **/
-
-  void TransformNoXLate(float *ptX, float *ptY);
-  void TransformNoXLateCoord(nscoord *ptX, nscoord *ptY);
+  void GetTranslationCoord(nscoord *ptX, nscoord *ptY) const { *ptX = NSToCoordRound(m20); *ptY = NSToCoordRound(m21); }
 
  /**
   * apply matrix to vector
   *
   * @param    pt Point to transform
-  * @exception
-  * @author   michaelp   09-25-97 1:56pm
   **/
 
-  void Transform(float *ptX, float *ptY);
-  void TransformCoord(nscoord *ptX, nscoord *ptY);
+  void TransformCoord(nscoord *ptX, nscoord *ptY) const;
 
  /**
   * apply matrix to rect
   *
   * @param    rect Rect to transform
-  * @exception
-  * @author   michaelp   09-25-97 1:56pm
   **/
 
-  void Transform(float *aX, float *aY, float *aWidth, float *aHeight);
-  void TransformCoord(nscoord *aX, nscoord *aY, nscoord *aWidth, nscoord *aHeight);
-
-  /**
-   * Scale an array of X/Y coordinates by the X/Y scale factor in the
-   * matrix. The scale is done as if the other coordinate were zero.
-   *
-   * @param aSrc Base of coordinate input array
-   * @param aDst Base of coordinate output array
-   * @param aNumCoords Number of coordinates to scale
-   */
-  void ScaleXCoords(const nscoord* aSrc, PRUint32 aNumCoords, PRIntn* aDst);
-  void ScaleYCoords(const nscoord* aSrc, PRUint32 aNumCoords, PRIntn* aDst);
-
- /**
-  * add a translation to a Transform via x, y pair
-  *
-  * @param    ptX x value to add as x translation
-  * @param    ptY y value to add as y translation
-  * @exception
-  * @author   michaelp   09-25-97 1:56pm
-  **/
-
-  void AddTranslation(float ptX, float ptY);
+  void TransformCoord(nscoord *aX, nscoord *aY, nscoord *aWidth, nscoord *aHeight) const;
 
  /**
   * add a scale to a Transform via x, y pair
   *
   * @param    ptX x value to add as x scale
   * @param    ptY y value to add as y scale
-  * @exception
-  * @author   michaelp   09-25-97 1:56pm
   **/
 
-  void AddScale(float ptX, float ptY);
-
-private:
-  nscoord ToCoordRound(float aCoord);
+  void AddScale(float ptX, float ptY) { m00 *= ptX; m11 *= ptY; }
 };
 
 #endif

@@ -39,12 +39,12 @@
 
 
 #include "nsISupports.idl"
-#include "nsISupportsArray.idl"
 #include "nsITransferable.idl"
 #include "nsIClipboardOwner.idl"
 
+interface nsIArray;
 
-[scriptable, uuid(8B5314BA-DB01-11d2-96CE-0060B0FB9956)]
+[scriptable, uuid(38984945-8674-4d04-b786-5c0ca9434457)]
 interface nsIClipboard : nsISupports
 {
     const long kSelectionClipboard = 0;
@@ -88,12 +88,15 @@ interface nsIClipboard : nsISupports
     * inexpensive call. All it does is check if there is data on the clipboard matching
     * any of the flavors in the given list.
     *
-    * @aFlavorList - nsISupportsCString's in a nsISupportsArray (for JavaScript).
+    * @param  aFlavorList     An array of ASCII strings.
+    * @param  aLength         The length of the aFlavorList.
     * @param  aWhichClipboard Specifies the clipboard to which this operation applies.
     * @outResult - if data is present matching one of 
     * @result NS_OK if successful.
     */
-    boolean hasDataMatchingFlavors ( in nsISupportsArray aFlavorList, in long aWhichClipboard )  ;
+    boolean hasDataMatchingFlavors ( [array, size_is(aLength)] in string aFlavorList,
+                                     in unsigned long aLength,
+                                     in long aWhichClipboard ) ;
 
    /**
     * Allows clients to determine if the implementation supports the concept of a 
@@ -105,22 +108,6 @@ interface nsIClipboard : nsISupports
     boolean supportsSelectionClipboard ( ) ;
 };
 
-// Interface to a native image format such as the format stored on the clipboard
-[scriptable, uuid(DB21EB6C-AEBB-4d16-94EC-BCD8BBF513AE)]
-interface nsIClipboardImage : nsISupports
-{
-  // the idl compiler complains if these two methods are scriptable. need to figure out why
-  [noscript] void setNativeImage(in voidPtr aNativeImageData);
-
-  // caller must later call releaseNativeImage to release their reference to the image. nsIClipboardImage
-  // will keep its own reference until it is destroyed.
-  [noscript] void getNativeImage(in voidPtr aNativeImageData); 
-
-  // releaseNativeImage should only be called if you used getNativeImageData. You should pass in the same
-  // object to both methods. (this routine exists so callers do not have to link in urlmon.lib just to release
-  // the stgmedium object on windows).
-  [noscript] void releaseNativeImage(in voidPtr aNativeImageData);
-};
 
 %{ C++
 

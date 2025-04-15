@@ -97,8 +97,7 @@ nsDownloadProgressListener.prototype = {
       if (this.doc.getElementById("TimeElapsed").getAttribute("hidden") != "true") {
         elapsedCol = elt.nextSibling.nextSibling.nextSibling.nextSibling.nextSibling.nextSibling;
         // Update elapsed time display.
-        var elapsed = now - (aDownload.startTime / 1000);
-        elapsedCol.setAttribute("label", formatSeconds( elapsed / 1000, this.doc ));
+        elapsedCol.setAttribute("label", formatSeconds( now / 1000 - aDownload.startTime / 1000000, this.doc ));
       }
       // Calculate percentage.
       var percent;
@@ -136,7 +135,7 @@ nsDownloadProgressListener.prototype = {
          status = replaceInsert( status, 2, "??" );
       
       var rateMsg = getString( "rateMsg", this.doc );
-      var rate = aDownload.QueryInterface(Components.interfaces.nsIDownload_MOZILLA_1_8_BRANCH).speed;
+      var rate = aDownload.speed;
       if ( rate )
       {
         // rate is bytes/sec

@@ -76,15 +76,10 @@ from xpcom_consts import *
 class Interface:
     def __init__(self, iid):
         iim = xpcom._xpcom.XPTI_GetInterfaceInfoManager()
-        try:
-            if hasattr(iid, "upper"): # Is it a stringy thing.
-                item = iim.GetInfoForName(iid)
-            else:
-                item = iim.GetInfoForIID(iid)
-        except xpcom.COMException:
-            name = getattr(iid, "name", str(iid))
-            print "Failed to get info for IID '%s'" % (name,)
-            raise
+        if hasattr(iid, "upper"): # Is it a stringy thing.
+            item = iim.GetInfoForName(iid)
+        else:
+            item = iim.GetInfoForIID(iid)
         self.interface_info = item
         self.namespace = "" # where does this come from?
         self.methods = Methods(item)
@@ -115,11 +110,12 @@ class Interface:
         method_joiner = "\n"
         methods_repr = method_joiner.join(method_reprs)
         return \
-"""class %s:
+"""from xpcom import ServerException, nsError
+class %s:
     _com_interfaces_ = xpcom.components.interfaces.%s
     # If this object needs to be registered, the following 2 are also needed.
     # _reg_clsid_ = "{a new clsid generated for this object}"
-    # _reg_contractid_ = "The.Object.Name"\n%s""" % (self.GetName(), self.GetIID().name, methods_repr)
+    # _reg_contractid_ = "@providername.org/object-name;1"\n%s""" % (self.GetName(), self.GetIID().name, methods_repr)
 
     def Describe(self):
         # Make the IID look like xtp_dump - "(" instead of "{"
@@ -231,7 +227,7 @@ class Method:
 
         return """    def %s( %s ):
         # %s%s%s
-        pass""" % (name, ", ".join(param_decls), result_comment, in_comment, out_desc)
+        raise ServerException(nsError.NS_ERROR_NOT_IMPLEMENTED)""" % (name, ", ".join(param_decls), result_comment, in_comment, out_desc)
 
     def Describe(self):
         s = ''
@@ -366,7 +362,12 @@ def MakeReprForInvoke(param):
     elif tag == T_ARRAY:
         i_info = param.interface_info
         array_desc = i_info.GetTypeForParam(param.method_index, param.param_index, 1)
-        return param.type_desc[:-1] + array_desc[:1]
+        if XPT_TDP_TAG(array_desc[0]) in (T_INTERFACE, T_INTERFACE_IS):
+            iid = str(i_info.GetIIDForParam(param.method_index, param.param_index))
+        else:
+            iid = None
+        return param.type_desc[:-1] + (iid, array_desc[0])
+
     return param.type_desc
 
 
@@ -402,7 +403,7 @@ class TypeDescriber:
         if self.tag == T_ARRAY:
             # NOTE - Adding a type specifier to the array is different from xpt_dump.exe
             if self.param is None or self.param.interface_info is None:
-                type_desc = "" # Dont have explicit info about the array type :-(
+                type_desc = "" # Don't have explicit info about the array type :-(
             else:
                 i_info = self.param.interface_info
                 type_code = i_info.GetTypeForParam(self.param.method_index, self.param.param_index, 1)
@@ -410,7 +411,7 @@ class TypeDescriber:
             return self.GetName() + "[" + type_desc + "]" 
         elif self.tag == T_INTERFACE:
             if self.param is None or self.param.interface_info is None:
-                return "nsISomething" # Dont have explicit info about the IID :-(
+                return "nsISomething" # Don't have explicit info about the IID :-(
             i_info = self.param.interface_info
             m_index = self.param.method_index
             p_index = self.param.param_index
@@ -445,8 +446,11 @@ type_info_map = {
     T_INTERFACE         : ("reserved", "Interface"),
     T_INTERFACE_IS      : ("reserved", "InterfaceIs *"),
     T_ARRAY             : ("reserved", "Array"),
-    T_PSTRING_SIZE_IS   : ("reserved", "string_s"),
-    T_PWSTRING_SIZE_IS  : ("reserved", "wstring_s"),
+    T_PSTRING_SIZE_IS   : ("string", "string_s"),
+    T_PWSTRING_SIZE_IS  : ("unicode", "wstring_s"),
+    T_UTF8STRING        : ("utf8string", "utf8string"),
+    T_CSTRING           : ("string", "cstring"),
+    T_ASTRING           : ("unicode", "astring"),
 }
 
 def dump_interface(iid, mode):

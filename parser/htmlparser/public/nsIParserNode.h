@@ -57,7 +57,7 @@
 
 #include "nsISupports.h"
 #include "prtypes.h"
-#include "nsString.h"
+#include "nsStringGlue.h"
 #include "nsDebug.h"
 
 //#define HEAP_ALLOCATED_NODES 
@@ -167,7 +167,7 @@ class nsIParserNode { // XXX Should be nsAParserNode
      * @update	rickg 06June2000
      * @return  void
      */
-    virtual void GetSource(nsString& aString)=0;
+    virtual void GetSource(nsString& aString) const = 0;
 
     /** Release all the objects you're holding
      * @update	harishd 08/02/00

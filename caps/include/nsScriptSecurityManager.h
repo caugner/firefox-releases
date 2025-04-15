@@ -52,6 +52,7 @@
 #include "nsCOMPtr.h"
 #include "nsIPrefService.h"
 #include "nsISecurityPref.h"
+#include "nsIChannelEventSink.h"
 #include "nsIJSContextStack.h"
 #include "nsIObserver.h"
 #include "pldhash.h"
@@ -65,6 +66,7 @@ class nsIXPConnect;
 class nsIStringBundle;
 class nsSystemPrincipal;
 struct ClassPolicy;
+class ClassInfoData;
 class DomainPolicy;
 
 #if defined(DEBUG_mstoltz) || defined(DEBUG_caillon)
@@ -95,7 +97,7 @@ public:
     typedef const nsIPrincipal* KeyTypePointer;
 
     PrincipalKey(const nsIPrincipal* key)
-      : mKey(NS_CONST_CAST(nsIPrincipal*, key))
+      : mKey(const_cast<nsIPrincipal*>(key))
     {
     }
 
@@ -113,15 +115,10 @@ public:
         return mKey;
     }
 
-    KeyTypePointer GetKeyPointer() const
-    {
-        return mKey;
-    }
-
     PRBool KeyEquals(KeyTypePointer aKey) const
     {
         PRBool eq;
-        mKey->Equals(NS_CONST_CAST(nsIPrincipal*, aKey),
+        mKey->Equals(const_cast<nsIPrincipal*>(aKey),
                      &eq);
         return eq;
     }
@@ -134,7 +131,7 @@ public:
     static PLDHashNumber HashKey(KeyTypePointer aKey)
     {
         PRUint32 hash;
-        NS_CONST_CAST(nsIPrincipal*, aKey)->GetHashValue(&hash);
+        const_cast<nsIPrincipal*>(aKey)->GetHashValue(&hash);
         return PLDHashNumber(hash);
     }
 
@@ -243,7 +240,6 @@ InitClassPolicyEntry(PLDHashTable *table,
     {
         PL_DHashAllocTable,
         PL_DHashFreeTable,
-        PL_DHashGetKeyStub,
         PL_DHashVoidPtrKeyStub,
         PL_DHashMatchEntryStub,
         PL_DHashMoveEntryStub,
@@ -289,7 +285,6 @@ public:
         {
             PL_DHashAllocTable,
             PL_DHashFreeTable,
-            PL_DHashGetKeyStub,
             PL_DHashStringKey,
             PL_DHashMatchStringKey,
             MoveClassPolicyEntry,
@@ -357,10 +352,10 @@ MoveClassPolicyEntry(PLDHashTable *table,
     memcpy(to, from, table->entrySize);
 
     // Now update the mDefaultPolicy pointer that points to us, if any.
-    ClassPolicy* cp = NS_STATIC_CAST(ClassPolicy*, to);
+    ClassPolicy* cp = static_cast<ClassPolicy*>(to);
     if (cp->mDomainWeAreWildcardFor) {
         NS_ASSERTION(cp->mDomainWeAreWildcardFor->mWildcardPolicy ==
-                     NS_STATIC_CAST(const ClassPolicy*, from),
+                     static_cast<const ClassPolicy*>(from),
                      "Unexpected wildcard policy on mDomainWeAreWildcardFor");
         cp->mDomainWeAreWildcardFor->mWildcardPolicy = cp;
     }
@@ -375,6 +370,7 @@ MoveClassPolicyEntry(PLDHashTable *table,
 
 class nsScriptSecurityManager : public nsIScriptSecurityManager,
                                 public nsIPrefSecurityCheck,
+                                public nsIChannelEventSink,
                                 public nsIObserver
 {
 public:
@@ -386,6 +382,7 @@ public:
     NS_DECL_NSISCRIPTSECURITYMANAGER
     NS_DECL_NSIXPCSECURITYMANAGER
     NS_DECL_NSIPREFSECURITYCHECK
+    NS_DECL_NSICHANNELEVENTSINK
     NS_DECL_NSIOBSERVER
 
     static nsScriptSecurityManager*
@@ -397,6 +394,28 @@ public:
     JSContext* GetCurrentJSContext();
 
     JSContext* GetSafeJSContext();
+
+    /**
+     * Utility method for comparing two URIs.  For security purposes, two URIs
+     * are equivalent if their schemes, hosts, and ports (if any) match.  This
+     * method returns true if aSubjectURI and aObjectURI have the same origin,
+     * false otherwise.
+     */
+    static PRBool SecurityCompareURIs(nsIURI* aSourceURI, nsIURI* aTargetURI);
+
+    static nsresult 
+    ReportError(JSContext* cx, const nsAString& messageTag,
+                nsIURI* aSource, nsIURI* aTarget);
+    static nsresult
+    CheckSameOriginPrincipal(nsIPrincipal* aSubject,
+                             nsIPrincipal* aObject,
+                             PRBool aIsCheckConnect);
+
+    static PRBool
+    GetStrictFileOriginPolicy()
+    {
+        return sStrictFileOriginPolicy;
+    }
 
 private:
 
@@ -412,36 +431,25 @@ private:
     // Returns null if a principal cannot be found; generally callers
     // should error out at that point.
     static nsIPrincipal*
-    doGetObjectPrincipal(JSContext *cx, JSObject *obj);
+    doGetObjectPrincipal(JSObject *obj
+#ifdef DEBUG
+                         , PRBool aAllowShortCircuit = PR_TRUE
+#endif
+                         );
 
     // Returns null if a principal cannot be found.  Note that rv can be NS_OK
     // when this happens -- this means that there was no JS running.
     nsIPrincipal*
     doGetSubjectPrincipal(nsresult* rv);
     
-    static nsresult
-    GetBaseURIScheme(nsIURI* aURI, nsCString& aScheme);
-
-    static nsresult 
-    ReportError(JSContext* cx, const nsAString& messageTag,
-                nsIURI* aSource, nsIURI* aTarget);
-
-    nsresult
-    GetRootDocShell(JSContext* cx, nsIDocShell **result);
-
     nsresult
     CheckPropertyAccessImpl(PRUint32 aAction,
-                            nsIXPCNativeCallContext* aCallContext,
+                            nsAXPCNativeCallContext* aCallContext,
                             JSContext* cx, JSObject* aJSObject,
                             nsISupports* aObj, nsIURI* aTargetURI,
                             nsIClassInfo* aClassInfo,
                             const char* aClassName, jsval aProperty,
                             void** aCachedClassPolicy);
-
-    nsresult
-    CheckSameOriginPrincipalInternal(nsIPrincipal* aSubject,
-                                     nsIPrincipal* aObject,
-                                     PRBool aIsCheckConnect);
 
     nsresult
     CheckSameOriginDOMProp(nsIPrincipal* aSubject, 
@@ -451,7 +459,7 @@ private:
 
     nsresult
     LookupPolicy(nsIPrincipal* principal,
-                 const char* aClassName, jsval aProperty,
+                 ClassInfoData& aClassData, jsval aProperty,
                  PRUint32 aAction,
                  ClassPolicy** aCachedClassPolicy,
                  SecurityLevel* result);
@@ -544,6 +552,7 @@ private:
     InitPrincipals(PRUint32 prefCount, const char** prefNames,
                    nsISecurityPref* securityPref);
 
+
 #ifdef XPC_IDISPATCH_SUPPORT
     // While this header is included outside of caps, this class isn't 
     // referenced so this should be fine.
@@ -559,10 +568,11 @@ private:
     static jsval sEnabledID;
 
     inline void
-    JSEnabledPrefChanged(nsISecurityPref* aSecurityPref);
+    ScriptSecurityPrefChanged();
 
     static const char sJSEnabledPrefName[];
     static const char sJSMailEnabledPrefName[];
+    static const char sFileOriginPolicyPrefName[];
 
     nsObjectHashtable* mOriginToPolicyMap;
     DomainPolicy* mDefaultPolicy;
@@ -582,6 +592,8 @@ private:
     PRPackedBool mXPCDefaultGrantAll;
     static const char sXPCDefaultGrantAllName[];
 #endif
+
+    static PRBool sStrictFileOriginPolicy;
 
     static nsIIOService    *sIOService;
     static nsIXPConnect    *sXPConnect;

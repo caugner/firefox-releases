@@ -36,7 +36,10 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#import <AppKit/AppKit.h>
+#ifndef nsWindowMap_h_
+#define nsWindowMap_h_
+
+#import <Cocoa/Cocoa.h>
 
 // 
 //  WindowDataMap
@@ -85,6 +88,11 @@
 }
 
 - (id)initWithWindow:(NSWindow*)inWindow;
++ (void)activateInWindow:(NSWindow*)aWindow;
++ (void)deactivateInWindow:(NSWindow*)aWindow;
++ (void)activateInWindowViews:(NSWindow*)aWindow;
++ (void)deactivateInWindowViews:(NSWindow*)aWindow;
 
 @end
 
+#endif // nsWindowMap_h_

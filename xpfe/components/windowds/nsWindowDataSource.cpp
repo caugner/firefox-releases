@@ -41,8 +41,11 @@
 #include "nsIRDFContainerUtils.h"
 #include "nsIServiceManager.h"
 #include "nsReadableUtils.h"
-#include "nsObserverService.h"
+#include "nsIObserverService.h"
 #include "nsIWindowMediator.h"
+#include "nsXPCOMCID.h"
+#include "nsICategoryManager.h"
+#include "nsIGenericFactory.h"
 
 // just to do the reverse-lookup! sheesh.
 #include "nsIInterfaceRequestorUtils.h"
@@ -126,44 +129,25 @@ nsWindowDataSource::Observe(nsISupports *aSubject, const char* aTopic, const PRU
     return NS_OK;
 }
 
-#if 0
-NS_IMETHODIMP_(nsrefcnt)
-nsWindowMediator::Release()
-{
-	// We need a special implementation of Release() due to having
-	// two circular references:  mInner and mContainer
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsWindowDataSource)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_0(nsWindowDataSource)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsWindowDataSource)
+    // XXX mContainer?
+    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mInner)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-	NS_PRECONDITION(PRInt32(mRefCnt) > 0, "duplicate release");
-	--mRefCnt;
-	NS_LOG_RELEASE(this, mRefCnt, "nsWindowMediator");
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsWindowDataSource,
+                                          nsIObserver)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsWindowDataSource,
+                                           nsIObserver)
 
-	if (mInner && mRefCnt == 2)
-	{
-		NS_IF_RELEASE(mContainer);
-		mContainer = nsnull;
-
-		nsIRDFDataSource* tmp = mInner;
-		mInner = nsnull;
-		NS_IF_RELEASE(tmp);
-		return(0);
-	}
-	else if (mRefCnt == 0)
-	{
-		mRefCnt = 1;
-		delete this;
-		return(0);
-	}
-	return(mRefCnt);
-}
-
-#endif
-
-
-NS_IMPL_ISUPPORTS4(nsWindowDataSource,
-                   nsIObserver,
-                   nsIWindowMediatorListener,
-                   nsIWindowDataSource,
-                   nsIRDFDataSource)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsWindowDataSource)
+    NS_INTERFACE_MAP_ENTRY(nsIObserver)
+    NS_INTERFACE_MAP_ENTRY(nsIWindowMediatorListener)
+    NS_INTERFACE_MAP_ENTRY(nsIWindowDataSource)
+    NS_INTERFACE_MAP_ENTRY(nsIRDFDataSource)
+    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIObserver)
+NS_INTERFACE_MAP_END
 
 // nsIWindowMediatorListener implementation
 // handle notifications from the window mediator and reflect them into
@@ -331,18 +315,18 @@ struct findWindowClosure {
 PR_STATIC_CALLBACK(PRBool)
 findWindow(nsHashKey* aKey, void *aData, void* aClosure)
 {
-    nsVoidKey *thisKey = NS_STATIC_CAST(nsVoidKey*, aKey);
+    nsVoidKey *thisKey = static_cast<nsVoidKey*>(aKey);
 
     nsIRDFResource *resource =
-        NS_STATIC_CAST(nsIRDFResource*, aData);
+        static_cast<nsIRDFResource*>(aData);
     
     findWindowClosure* closure =
-        NS_STATIC_CAST(findWindowClosure*, aClosure);
+        static_cast<findWindowClosure*>(aClosure);
 
     if (resource == closure->targetResource) {
         closure->resultWindow =
-            NS_STATIC_CAST(nsIXULWindow*,
-                           thisKey->GetValue());
+            static_cast<nsIXULWindow*>
+                       (thisKey->GetValue());
         return PR_FALSE;         // stop enumerating
     }
     return PR_TRUE;
@@ -590,3 +574,33 @@ NS_IMETHODIMP nsWindowDataSource::EndUpdateBatch()
         return mInner->EndUpdateBatch();
     return NS_OK;
 }
+
+// The module goop
+
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsWindowDataSource, Init)
+
+static NS_METHOD
+RegisterWindowDS(nsIComponentManager *aCompMgr,
+                 nsIFile *aPath,
+                 const char *registryLocation,
+                 const char *componentType,
+                 const nsModuleComponentInfo *info)
+{
+    nsresult rv;
+    nsCOMPtr<nsICategoryManager> catman = do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
+    if (NS_FAILED(rv)) return rv;
+
+    return catman->AddCategoryEntry("app-startup", "Window Data Source",
+                                    "service," NS_RDF_DATASOURCE_CONTRACTID_PREFIX "window-mediator",
+                                    PR_TRUE, PR_TRUE, nsnull);
+    return NS_OK;
+}
+
+static const nsModuleComponentInfo components[] = {
+    { "nsWindowDataSource",
+      NS_WINDOWDATASOURCE_CID,
+      NS_RDF_DATASOURCE_CONTRACTID_PREFIX "window-mediator",
+      nsWindowDataSourceConstructor, RegisterWindowDS }
+};
+
+NS_IMPL_NSGETMODULE(nsWindowDataSourceModule, components)

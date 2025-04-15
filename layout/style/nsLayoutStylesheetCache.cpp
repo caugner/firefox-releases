@@ -80,20 +80,12 @@ nsLayoutStylesheetCache::ScrollbarsSheet()
   if (!gStyleCache->mScrollbarsSheet) {
     nsCOMPtr<nsIURI> sheetURI;
     NS_NewURI(getter_AddRefs(sheetURI),
-#ifdef XP_MACOSX
-              NS_LITERAL_CSTRING("chrome://global/skin/nativescrollbars.css"));
-#else
-              NS_LITERAL_CSTRING("chrome://global/skin/xulscrollbars.css"));
-#endif
+              NS_LITERAL_CSTRING("chrome://global/skin/scrollbars.css"));
 
     // Scrollbars don't need access to unsafe rules
     if (sheetURI)
       LoadSheet(sheetURI, gStyleCache->mScrollbarsSheet, PR_FALSE);
-#ifdef XP_MACOSX
-    NS_ASSERTION(gStyleCache->mScrollbarsSheet, "Could not load nativescrollbars.css.");
-#else
-    NS_ASSERTION(gStyleCache->mScrollbarsSheet, "Could not load xulscrollbars.css.");
-#endif
+    NS_ASSERTION(gStyleCache->mScrollbarsSheet, "Could not load scrollbars.css.");
   }
 
   return gStyleCache->mScrollbarsSheet;
@@ -144,6 +136,7 @@ nsLayoutStylesheetCache::UserChromeSheet()
 void
 nsLayoutStylesheetCache::Shutdown()
 {
+  NS_IF_RELEASE(gCSSLoader);
   NS_IF_RELEASE(gStyleCache);
 }
 
@@ -165,6 +158,7 @@ nsLayoutStylesheetCache::nsLayoutStylesheetCache()
 
 nsLayoutStylesheetCache::~nsLayoutStylesheetCache()
 {
+  gCSSLoader = nsnull;
   gStyleCache = nsnull;
 }
 
@@ -216,8 +210,6 @@ nsLayoutStylesheetCache::LoadSheetFile(nsIFile* aFile, nsCOMPtr<nsICSSStyleSheet
   LoadSheet(uri, aSheet, PR_FALSE);
 }
 
-static NS_DEFINE_CID(kCSSLoaderCID, NS_CSS_LOADER_CID);
-
 void
 nsLayoutStylesheetCache::LoadSheet(nsIURI* aURI, nsCOMPtr<nsICSSStyleSheet> &aSheet,
                                    PRBool aEnableUnsafeRules)
@@ -227,13 +219,16 @@ nsLayoutStylesheetCache::LoadSheet(nsIURI* aURI, nsCOMPtr<nsICSSStyleSheet> &aSh
     return;
   }
 
-  // note: CSS Loader is treated as a service here... slightly unusual,
-  // but within the rules.
-  nsCOMPtr<nsICSSLoader_MOZILLA_1_8_BRANCH> cssLoader = do_GetService(kCSSLoaderCID);
-  if (!cssLoader) return;
+  if (!gCSSLoader)
+    NS_NewCSSLoader(&gCSSLoader);
 
-  cssLoader->LoadSheetSync(aURI, aEnableUnsafeRules, getter_AddRefs(aSheet));
+  if (gCSSLoader) {
+    gCSSLoader->LoadSheetSync(aURI, aEnableUnsafeRules, getter_AddRefs(aSheet));
+  }
 }  
 
 nsLayoutStylesheetCache*
 nsLayoutStylesheetCache::gStyleCache = nsnull;
+
+nsICSSLoader*
+nsLayoutStylesheetCache::gCSSLoader = nsnull;

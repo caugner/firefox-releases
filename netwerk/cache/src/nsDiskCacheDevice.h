@@ -63,7 +63,7 @@ public:
     virtual nsresult        Shutdown();
 
     virtual const char *    GetDeviceID(void);
-    virtual nsCacheEntry *  FindEntry(nsCString * key);
+    virtual nsCacheEntry *  FindEntry(nsCString * key, PRBool *collision);
     virtual nsresult        DeactivateEntry(nsCacheEntry * entry);
     virtual nsresult        BindEntry(nsCacheEntry * entry);
     virtual void            DoomEntry( nsCacheEntry * entry );
@@ -93,7 +93,6 @@ public:
     void                    SetCacheParentDirectory(nsILocalFile * parentDir);
     void                    SetCapacity(PRUint32  capacity);
 
-
 /* private: */
 
     void                    getCacheDirectory(nsILocalFile ** result);
@@ -101,29 +100,30 @@ public:
     PRUint32                getCacheSize();
     PRUint32                getEntryCount();
     
-    PRBool                  Initialized() { return mInitialized; }
-    nsDiskCacheMap *        CacheMap()    { return mCacheMap; }
-    nsresult                Shutdown_Private(PRBool flush);
+    nsDiskCacheMap *        CacheMap()    { return &mCacheMap; }
     
 private:    
     /**
      *  Private methods
      */
 
-    nsresult    OpenDiskCache();
-    nsresult    ClearDiskCache();
-    nsresult    InitializeCacheDirectory();
+    PRBool                  Initialized() { return mInitialized; }
 
+    nsresult                Shutdown_Private(PRBool flush);
 
-    nsresult    EvictDiskCacheEntries(PRInt32  targetCapacity);
+    nsresult                OpenDiskCache();
+    nsresult                ClearDiskCache();
+
+    nsresult                EvictDiskCacheEntries(PRUint32  targetCapacity);
     
     /**
      *  Member variables
      */
     nsCOMPtr<nsILocalFile>  mCacheDirectory;
     nsDiskCacheBindery      mBindery;
-    PRUint32                mCacheCapacity;     // XXX need soft/hard limits, currentTotal
-    nsDiskCacheMap *        mCacheMap;
+    PRUint32                mCacheCapacity;     // Unit is KiB's
+    // XXX need soft/hard limits, currentTotal
+    nsDiskCacheMap          mCacheMap;
     PRPackedBool            mInitialized;
 };
 

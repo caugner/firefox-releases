@@ -79,13 +79,15 @@
 class nsIUnicharEncoder : public nsISupports
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IUNICHARENCODER_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IUNICHARENCODER_IID)
 
   /**
    * Converts a character from Unicode to a Charset.
    */
   NS_IMETHOD Convert(PRUnichar aChar, char * aDest, PRInt32 * aDestLength) = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIUnicharEncoder, NS_IUNICHARENCODER_IID)
 
 //
 // Malloc an Encoder (unicode -> charset) buffer if the
@@ -131,7 +133,7 @@ public:
 class nsIUnicodeEncoder : public nsISupports
 {
 public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_IUNICODEENCODER_IID)
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IUNICODEENCODER_IID)
 
   enum {
     kOnError_Signal,        // on an error, stop and signal
@@ -151,9 +153,7 @@ public:
    * SetOutputByteOrder() so that the reverse order can be used, too. That 
    * method would have as default the assumed network order.
    *
-   * Unless there is not enough output space, this method must consume all the
-   * available input data! We don't have partial input for the Unicode charset.
-   * And for the last converted char, even if there is not enought output 
+   * For the last converted char, even if there is not enough output 
    * space, a partial ouput must be done until all available space will be 
    * used. The rest of the output should be buffered until more space becomes
    * available. But this is not also true about the error handling method!!!
@@ -169,6 +169,10 @@ public:
    *                    written
    * @return            NS_OK_UENC_MOREOUTPUT if only  a partial conversion
    *                    was done; more output space is needed to continue
+   *                    NS_OK_UENC_MOREINPUT if only a partial conversion
+   *                    was done; more input is needed to continue. This can
+   *                    occur when the last UTF-16 code point in the input is
+   *                    the first of a surrogate pair.
    *                    NS_ERROR_UENC_NOMAPPING if character without mapping
    *                    was encountered and the behavior was set to "signal".
    */
@@ -215,5 +219,7 @@ public:
   NS_IMETHOD SetOutputErrorBehavior(PRInt32 aBehavior, 
       nsIUnicharEncoder * aEncoder, PRUnichar aChar) = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIUnicodeEncoder, NS_IUNICODEENCODER_IID)
 
 #endif /* nsIUnicodeEncoder_h___ */

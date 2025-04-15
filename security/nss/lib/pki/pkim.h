@@ -38,7 +38,7 @@
 #define PKIM_H
 
 #ifdef DEBUG
-static const char PKIM_CVS_ID[] = "@(#) $RCSfile: pkim.h,v $ $Revision: 1.26.18.2 $ $Date: 2006/09/01 21:03:18 $";
+static const char PKIM_CVS_ID[] = "@(#) $RCSfile: pkim.h,v $ $Revision: 1.30 $ $Date: 2007/11/16 05:29:27 $";
 #endif /* DEBUG */
 
 #ifndef BASE_H
@@ -186,13 +186,11 @@ nssPKIObject_DeleteStoredObject
   PRBool isFriendly
 );
 
-#ifdef NSS_3_4_CODE
 NSS_EXTERN nssCryptokiObject **
 nssPKIObject_GetInstances
 (
   nssPKIObject *object
 );
-#endif
 
 NSS_EXTERN NSSCertificate **
 nssTrustDomain_FindCertificatesByID
@@ -656,7 +654,7 @@ NSS_EXTERN NSSCertificate **
 nssTrustDomain_GetCertsForNicknameFromCache
 (
   NSSTrustDomain *td,
-  NSSUTF8 *nickname,
+  const NSSUTF8 *nickname,
   nssList *certListOpt
 );
 

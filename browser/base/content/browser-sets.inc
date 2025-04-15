@@ -22,6 +22,8 @@
 # Contributor(s):
 #   Ben Goodger <ben@bengoodger.com> (v2.0)
 #   Blake Ross <blakeross@telocity.com>
+#   Shawn Wilsher <me@shawnwilsher.com>
+#   Ehsan Akhgari <ehsan.akhgari@gmail.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -46,56 +48,21 @@
   <stringbundleset id="stringbundleset"> 
     <stringbundle id="bundle_brand" src="chrome://branding/locale/brand.properties"/>
     <stringbundle id="bundle_shell" src="chrome://browser/locale/shellservice.properties"/>
-    <stringbundle id="bundle_findBar" src="chrome://global/locale/findbar.properties"/>
     <stringbundle id="bundle_preferences" src="chrome://browser/locale/preferences/preferences.properties"/>
-#ifdef MOZ_PLACES
-    <stringbundle id="placeBundle" src="chrome://browser/locale/places/places.properties"/>
-#endif
   </stringbundleset>
 
-  <commandset id="globalEditCommandSet"
-              commandupdater="true"
-              events="focus"
-              oncommandupdate="goUpdateGlobalEditMenuItems()"/>
-  <commandset id="selectEditCommandSet"
-              commandupdater="true"
-              events="select"
-              oncommandupdate="goUpdateSelectEditMenuItems()"/>
-  <commandset id="undoEditCommandSet"
-              commandupdater="true"
-              events="undo"
-              oncommandupdate="goUpdateUndoEditMenuItems()"/>
-  <commandset id="pasteCommandSet"
-              commandupdater="true"
-              events="clipboard"
-              oncommandupdate="goUpdatePasteMenuItems()"/>
-  
   <commandset id="mainCommandSet">
     <command id="cmd_newNavigator"                 oncommand="OpenBrowserWindow()"/>
-    <command id="cmd_bm_open"                      oncommand="goDoCommand('cmd_bm_open');"/>
-    <command id="cmd_bm_openinnewwindow"           oncommand="goDoCommand('cmd_bm_openinnewwindow');"/>
-    <command id="cmd_bm_openinnewtab"              oncommand="goDoCommand('cmd_bm_openinnewtab');"/>
-    <command id="cmd_bm_openfolder"                oncommand="goDoCommand('cmd_bm_openfolder');"/>
-    <command id="cmd_bm_managefolder"              oncommand="goDoCommand('cmd_bm_managefolder');"/>
-    <command id="cmd_bm_newfolder"                 oncommand="goDoCommand('cmd_bm_newfolder');"/>
-    <command id="cmd_bm_newbookmark"               oncommand="goDoCommand('cmd_bm_newbookmark');"/>
-    <command id="cmd_bm_newseparator"              oncommand="goDoCommand('cmd_bm_newseparator');"/>
-    <command id="cmd_bm_properties"                oncommand="goDoCommand('cmd_bm_properties');"/>
-    <command id="cmd_bm_refreshlivemark"           oncommand="goDoCommand('cmd_bm_refreshlivemark');"/>
-    <command id="cmd_bm_refreshmicrosummary"       oncommand="goDoCommand('cmd_bm_refreshmicrosummary');"/>
-    <command id="cmd_bm_rename"                    oncommand="goDoCommand('cmd_bm_rename');"/>
-    <command id="cmd_bm_moveBookmark"              oncommand="goDoCommand('cmd_bm_moveBookmark');"/>
-    <command id="cmd_bm_sortbyname"                oncommand="goDoCommand('cmd_bm_sortbyname');"/>
-
-    <command id="cmd_handleBackspace" oncommand="BrowserHandleBackspace();"/>
-    <command id="cmd_handleShiftBackspace" oncommand="BrowserHandleShiftBackspace();"/>
+    <command id="cmd_handleBackspace" oncommand="BrowserHandleBackspace();" />
+    <command id="cmd_handleShiftBackspace" oncommand="BrowserHandleShiftBackspace();" />
 
     <command id="cmd_newNavigatorTab" oncommand="BrowserOpenTab();"/>
     <command id="Browser:OpenFile"  oncommand="BrowserOpenFileWindow();"/>
     <command id="Browser:SavePage" oncommand="saveDocument(window.content.document);"/>
     <command id="Browser:SaveFrame" oncommand="saveFrameDocument();"/>
 
-    <command id="Browser:SendLink" oncommand="MailIntegration.sendLinkForContent();"/>
+    <command id="Browser:SendLink"
+             oncommand="MailIntegration.sendLinkForWindow(window.content);"/>
 
     <command id="cmd_pageSetup" oncommand="PrintUtils.showPageSetup();"/>
     <command id="cmd_print" oncommand="PrintUtils.print();"/>
@@ -104,110 +71,74 @@
     <command id="cmd_closeWindow" oncommand="BrowserTryToCloseWindow()"/>
     <command id="cmd_toggleTaskbar" oncommand="goToggleToolbar('status-bar','toggle_taskbar');"/>
     <command id="cmd_CustomizeToolbars" oncommand="BrowserCustomizeToolbar()"/>
-  
-    <command id="cmd_copyLink"
-             oncommand="goDoCommand('cmd_copyLink')"
-             disabled="false"/>
-    <command id="cmd_copyImageLocation"
-             oncommand="goDoCommand('cmd_copyImageLocation')"
-             disabled="false"/>
-    <command id="cmd_copyImageContents"
-             oncommand="goDoCommand('cmd_copyImageContents')"
-             disabled="false"/>
-    <command id="cmd_undo" 
-             oncommand="goDoCommand('cmd_undo')"
-             disabled="true"/>
-    <command id="cmd_redo" 
-             oncommand="goDoCommand('cmd_redo')"
-             disabled="true"/>
-    <command id="cmd_cut" 
-             oncommand="goDoCommand('cmd_cut')"
-             disabled="true"/>
-    <command id="cmd_copy" 
-             oncommand="goDoCommand('cmd_copy')"
-             disabled="true"/>
-    <command id="cmd_paste" 
-             oncommand="goDoCommand('cmd_paste')"
-             disabled="true"/>
-    <command id="cmd_delete"
-             oncommand="goDoCommand('cmd_delete')"
-             valueDefault="&deleteCmd.label;"
-             disabled="true"/>
-    <command id="cmd_selectAll"
-             oncommand="goDoCommand('cmd_selectAll')"
-             disabled="true"/>
-    <command id="cmd_switchTextDirection"
-             oncommand="goDoCommand('cmd_switchTextDirection');"
-             disabled="true"/>
+    <command id="cmd_quitApplication" oncommand="goQuitApplication()"/>
+
+
+    <commandset id="editMenuCommands"/>
 
     <command id="View:PageSource" oncommand="BrowserViewSourceOfDocument(content.document);" observes="isImage"/>
     <command id="View:PageInfo" oncommand="BrowserPageInfo();"/>
     <command id="View:FullScreen" oncommand="BrowserFullScreen();"/>
-    <command id="cmd_find" oncommand="gFindBar.onFindCmd();" observes="isImage"/>
-    <command id="cmd_findAgain" oncommand="gFindBar.onFindAgainCmd();" observes="isImage"/>
-    <command id="cmd_findPrevious" oncommand="gFindBar.onFindPreviousCmd();" observes="isImage"/>    
-#ifdef MOZ_PLACES
+    <command id="cmd_find"
+             oncommand="gFindBar.onFindCommand();"
+             observes="isImage"/>
+    <command id="cmd_findAgain"
+             oncommand="gFindBar.onFindAgainCommand(false);"
+             observes="isImage"/>
+    <command id="cmd_findPrevious"
+             oncommand="gFindBar.onFindAgainCommand(true);"
+             observes="isImage"/>
+    <!-- work-around bug 392512 -->
     <command id="Browser:AddBookmarkAs" 
-             oncommand="PlacesCommandHook.bookmarkCurrentPage();"/>
-    <command id="Browser:BookmarkAllTabs" oncommand="BrowserController.doCommand('Browser:BookmarkAllTabs');"/>
-#else
-    <command id="Browser:AddBookmarkAs" oncommand="addBookmarkAs(document.getElementById('content'), false);"/>
-    <command id="Browser:BookmarkAllTabs" oncommand="addBookmarkAs(document.getElementById('content'), true);"/>
-#endif
+             oncommand="PlacesCommandHook.bookmarkCurrentPage(true, PlacesUtils.bookmarksMenuFolderId);"/>
+    <!-- The command is disabled for the hidden window. Otherwise its enabled
+         state is handled by the BookmarkAllTabsHandler object. -->
+    <command id="Browser:BookmarkAllTabs"
+             oncommand="gBookmarkAllTabsHandler.doCommand();"
+             disabled="true"/>
     <command id="Browser:Home"    oncommand="BrowserHome();"/>
     <command id="Browser:Back"    oncommand="BrowserBack();" disabled="true"/>
     <command id="Browser:Forward" oncommand="BrowserForward();" disabled="true"/>
     <command id="Browser:Stop"    oncommand="BrowserStop();" disabled="true"/>
     <command id="Browser:Reload"  oncommand="if (event.shiftKey) BrowserReloadSkipCache(); else BrowserReload()" disabled="true"/>
     <command id="Browser:ReloadSkipCache"  oncommand="BrowserReloadSkipCache()" disabled="true"/>
-    <command id="cmd_textZoomReduce"  oncommand="ZoomManager.prototype.getInstance().reduce();"/>
-    <command id="cmd_textZoomEnlarge" oncommand="ZoomManager.prototype.getInstance().enlarge();"/>
-    <command id="cmd_textZoomReset" oncommand="ZoomManager.prototype.getInstance().reset();"/>
+    <command id="cmd_fullZoomReduce"  oncommand="FullZoom.reduce()"/>
+    <command id="cmd_fullZoomEnlarge" oncommand="FullZoom.enlarge()"/>
+    <command id="cmd_fullZoomReset"   oncommand="FullZoom.reset()"/>
+    <command id="cmd_fullZoomToggle"  oncommand="ZoomManager.toggleZoom();"/>
     <command id="Browser:OpenLocation" oncommand="openLocation();"/>
 
     <command id="Tools:Search" oncommand="BrowserSearch.webSearch();"/>    
-    <command id="Tools:Downloads" oncommand="toOpenWindowByType('Download:Manager', 
-                                                                'chrome://mozapps/content/downloads/downloads.xul',
-                                                                'chrome,dialog=no,resizable');"/>
+    <command id="Tools:Downloads" oncommand="BrowserDownloadsUI();"/>
     <command id="Tools:Addons" oncommand="BrowserOpenAddonsMgr();"/>
-    <command id="Tools:Sanitize" oncommand="gBrowserGlue.sanitize(window || null);"/>
+    <command id="Tools:Sanitize"
+     oncommand="Cc[GLUE_CID].getService(Ci.nsIBrowserGlue).sanitize(window || null);"/>
     <command id="History:UndoCloseTab" oncommand="undoCloseTab();"/>
-#ifdef MOZ_PLACES
-#include ../../components/places/content/commands.inc
-    <command id="Browser:ShowBookmarks" 
-             oncommand="PlacesCommandHook.showPlacesOrganizer(ORGANIZER_ROOT_BOOKMARKS);"/>
-    <command id="Browser:ShowHistory" 
-             oncommand="PlacesCommandHook.showPlacesOrganizer(ORGANIZER_ROOT_HISTORY);"/>
-    <command id="Browser:SearchHistory" oncommand="HistoryMenu.showPlacesSearch();"/>
-
-#endif
   </commandset>
 
-#ifdef MOZ_PLACES
-  <commandset id="multipleTabsCommands" 
-              commandupdater="true" events="select"
-              oncommandupdate="BrowserController.onEvent('tab-select');">
-    <command id="Browser:BookmarkAllTabs" disabled="true"/>
+  <commandset id="placesCommands">
+    <command id="Browser:ShowAllBookmarks"
+             oncommand="PlacesCommandHook.showPlacesOrganizer('AllBookmarks');"/>
+    <command id="Browser:ShowAllHistory"
+             oncommand="PlacesCommandHook.showPlacesOrganizer('History');"/>
   </commandset>
-#endif
 
   <broadcasterset id="mainBroadcasterSet">
-#ifdef MOZ_PLACES
-    <broadcaster id="viewHistoryPlaces" autoCheck="false" label="&historyButton.label;"
-                 oncommand="PlacesCommandHook.showPlacesPopup(event);"/>
-#else
     <broadcaster id="viewBookmarksSidebar" autoCheck="false" label="&bookmarksButton.label;"
                  type="checkbox" group="sidebar" sidebarurl="chrome://browser/content/bookmarks/bookmarksPanel.xul"
                  oncommand="toggleSidebar('viewBookmarksSidebar');"/>
 
+    <!-- for both places and non-places, the sidebar lives at 
+         chrome://browser/content/history/history-panel.xul so there are no
+         problems when switching between versions -->
     <broadcaster id="viewHistorySidebar" autoCheck="false" sidebartitle="&historyButton.label;"
-                 type="checkbox" group="sidebar" sidebarurl="chrome://browser/content/history/history-panel.xul"
+                 type="checkbox" group="sidebar" 
+                 sidebarurl="chrome://browser/content/history/history-panel.xul"
                  oncommand="toggleSidebar('viewHistorySidebar');"/>
                  
     <broadcaster id="viewWebPanelsSidebar" autoCheck="false" 
                  type="checkbox" group="sidebar" sidebarurl="chrome://browser/content/web-panels.xul"
                  oncommand="toggleSidebar('viewWebPanelsSidebar');"/>
-#endif
 
     <!-- popup blocking menu items -->
     <broadcaster id="blockedPopupAllowSite" 
@@ -227,6 +158,7 @@
                  oncommand="gPopupBlockerObserver.dontShowMessage();"/>
     <broadcaster id="blockedPopupsSeparator"/>
     <broadcaster id="isImage"/>
+    <broadcaster id="isFrameImage"/>
   </broadcasterset>
 
   <keyset id="mainKeyset">
@@ -261,6 +193,9 @@
 # Do *not* tamper with these values without talking to ben@mozilla.org
 #
     <key id="key_search" key="&searchFocus.commandkey;" command="Tools:Search" modifiers="accel"/>
+#ifdef XP_MACOSX
+    <key id="key_search2" key="&findOnCmd.commandkey;" command="Tools:Search" modifiers="accel,alt"/>
+#endif
 #ifdef XP_WIN
     <key id="key_search2" key="&searchFocus.commandkey2;" command="Tools:Search" modifiers="accel"/>
 #endif
@@ -270,6 +205,7 @@
 #else
     <key id="key_openDownloads" key="&downloads.commandkey;" command="Tools:Downloads" modifiers="accel"/>
 #endif
+    <key id="key_errorConsole" key="&errorConsoleCmd.commandkey;" oncommand="toJavaScriptConsole();" modifiers="accel,shift"/>
     <key id="openFileKb" key="&openFileCmd.commandkey;" command="Browser:OpenFile"  modifiers="accel"/>
     <key id="key_savePage" key="&savePageCmd.commandkey;" command="Browser:SavePage" modifiers="accel"/>
     <key id="printKb" key="&printCmd.commandkey;" command="cmd_print"  modifiers="accel"/>
@@ -311,6 +247,7 @@
     <key id="goHome" keycode="VK_HOME" command="Browser:Home" modifiers="alt"/>
     <key keycode="VK_F5" command="Browser:Reload"/>
 #ifndef XP_MACOSX
+    <key id="showAllHistoryKb" key="&showAllHistoryCmd.commandkey;" command="Browser:ShowAllHistory" modifiers="accel,shift"/>
     <key keycode="VK_F5" command="Browser:ReloadSkipCache" modifiers="accel"/>
     <key id="key_fullScreen" keycode="VK_F11" command="View:FullScreen"/>
 #endif
@@ -326,16 +263,13 @@
     <key keycode="&findAgainCmd.commandkey2;" command="cmd_findAgain"/>
     <key keycode="&findAgainCmd.commandkey2;"  command="cmd_findPrevious" modifiers="shift"/>
 
-    <key id="addBookmarkAsKb" key="&addCurPageAsCmd.commandkey;" command="Browser:AddBookmarkAs" modifiers="accel"/>
+    <key id="addBookmarkAsKb" key="&bookmarkThisPageCmd.commandkey;" command="Browser:AddBookmarkAs" modifiers="accel"/>
 # Accel+Shift+A-F are reserved on GTK2
 #ifndef MOZ_WIDGET_GTK2
-    <key id="bookmarkAllTabsKb" key="&addCurPageAsCmd.commandkey;" command="Browser:BookmarkAllTabs" modifiers="accel,shift"/>
+    <key id="bookmarkAllTabsKb" key="&bookmarkThisPageCmd.commandkey;" command="Browser:BookmarkAllTabs" modifiers="accel,shift"/>
+    <key id="manBookmarkKb" key="&bookmarksSidebarCmd.commandkey;" command="Browser:ShowAllBookmarks" modifiers="accel,shift"/>
 #endif
-#ifdef MOZ_PLACES
-    <key id="searchBookmarksKb" key="&searchBookmarksCmd.commandkey;" command="Browser:ShowBookmarks" modifiers="accel"/>
-#else
     <key id="viewBookmarksSidebarKb" key="&bookmarksSidebarCmd.commandkey;" command="viewBookmarksSidebar" modifiers="accel"/>
-#endif
 #ifdef XP_WIN
 # Cmd+I is conventially mapped to Info on MacOS X, thus it should not be 
 # overridden for other purposes there. 
@@ -350,16 +284,6 @@
     <key id="key_stop_mac" modifiers="accel" key="&stopCmd.macCommandKey;" oncommand="BrowserStop();"/>
 #endif
 
-#ifdef MOZ_PLACES
-    <key id="searchHistoryKb"
-         key="&historySidebarCmd.commandKey;"
-#ifdef XP_MACOSX
-         modifiers="accel,shift"
-#else
-         modifiers="accel"
-#endif
-         command="viewHistoryPlaces"/>
-#else
     <key id="key_gotoHistory"
          key="&historySidebarCmd.commandKey;"
 #ifdef XP_MACOSX
@@ -368,20 +292,43 @@
          modifiers="accel"
 #endif
          command="viewHistorySidebar"/>
-#endif
 
-    <key id="key_textZoomReduce"  key="&textZoomReduceCmd.commandkey;"   command="cmd_textZoomReduce"  modifiers="accel"/>
-    <key id="key_textZoomEnlarge" key="&textZoomEnlargeCmd.commandkey;"  command="cmd_textZoomEnlarge" modifiers="accel"/>
-    <key                          key="&textZoomEnlargeCmd.commandkey2;" command="cmd_textZoomEnlarge" modifiers="accel"/>
-    <key id="key_textZoomReset"   key="&textZoomResetCmd.commandkey;"    command="cmd_textZoomReset"   modifiers="accel"/>
+    <key id="key_fullZoomReduce"  key="&fullZoomReduceCmd.commandkey;"   command="cmd_fullZoomReduce"  modifiers="accel"/>
+    <key                          key="&fullZoomReduceCmd.commandkey2;"  command="cmd_fullZoomReduce"  modifiers="accel"/>
+    <key id="key_fullZoomEnlarge" key="&fullZoomEnlargeCmd.commandkey;"  command="cmd_fullZoomEnlarge" modifiers="accel"/>
+    <key                          key="&fullZoomEnlargeCmd.commandkey2;" command="cmd_fullZoomEnlarge" modifiers="accel"/>
+    <key                          key="&fullZoomEnlargeCmd.commandkey3;" command="cmd_fullZoomEnlarge" modifiers="accel"/>
+    <key id="key_fullZoomReset"   key="&fullZoomResetCmd.commandkey;"    command="cmd_fullZoomReset"   modifiers="accel"/>
+    <key                          key="&fullZoomResetCmd.commandkey2;"   command="cmd_fullZoomReset"   modifiers="accel"/>
     
     <key id="key_switchTextDirection" key="&bidiSwitchTextDirectionItem.commandkey;" command="cmd_switchTextDirection" modifiers="accel,shift" />
 
     <key id="key_sanitize" command="Tools:Sanitize" keycode="VK_DELETE" modifiers="accel,shift"/>
-    <key id="key_undoCloseTab" command="History:UndoCloseTab" key="&tabCmd.commandkey;" modifiers="accel,shift"/>
 #ifdef XP_MACOSX
-    <key id="key_quitApplicationCmdMac" key="&quitApplicationCmdMac.key;" modifiers="accel"/>
+    <key id="key_sanitize_mac" command="Tools:Sanitize" keycode="VK_BACK" modifiers="accel,shift"/>
 #endif
+#ifdef XP_UNIX
+    <key id="key_quitApplication" key="&quitApplicationCmdMac.key;" command="cmd_quitApplication" modifiers="accel"/>
+#endif
+
+    <key id="key_undoCloseTab" command="History:UndoCloseTab" key="&tabCmd.commandkey;" modifiers="accel,shift"/>
+
+#ifdef XP_GNOME
+#define NUM_SELECT_TAB_MODIFIER alt
+#else
+#define NUM_SELECT_TAB_MODIFIER accel
+#endif
+
+#expand    <key id="key_selectTab1" oncommand="BrowserNumberTabSelection(event, 0);" key="1" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab2" oncommand="BrowserNumberTabSelection(event, 1);" key="2" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab3" oncommand="BrowserNumberTabSelection(event, 2);" key="3" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab4" oncommand="BrowserNumberTabSelection(event, 3);" key="4" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab5" oncommand="BrowserNumberTabSelection(event, 4);" key="5" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab6" oncommand="BrowserNumberTabSelection(event, 5);" key="6" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab7" oncommand="BrowserNumberTabSelection(event, 6);" key="7" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab8" oncommand="BrowserNumberTabSelection(event, 7);" key="8" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab9" oncommand="BrowserNumberTabSelection(event, 8);" key="9" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+
   </keyset>
 
 # Used by baseMenuOverlay

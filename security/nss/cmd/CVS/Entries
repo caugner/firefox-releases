@@ -1,8 +1,8 @@
-/.cvsignore/1.1/Fri Mar 31 20:10:14 2000//TFIREFOX_2_0_RELEASE
-/Makefile/1.4.18.2/Mon May 15 17:45:06 2006//TFIREFOX_2_0_RELEASE
-/manifest.mn/1.19.14.1/Fri Feb  3 22:26:47 2006//TFIREFOX_2_0_RELEASE
-/platlibs.mk/1.39.14.3/Sun May 21 20:49:03 2006//TFIREFOX_2_0_RELEASE
-/platrules.mk/1.3/Sun Apr 25 15:02:37 2004//TFIREFOX_2_0_RELEASE
+/.cvsignore/1.1/Fri Mar 31 20:10:14 2000//TFIREFOX_3_0rc3_RELEASE
+/Makefile/1.7/Fri May 25 07:28:30 2007//TFIREFOX_3_0rc3_RELEASE
+/manifest.mn/1.25/Thu Jan 25 19:04:56 2007//TFIREFOX_3_0rc3_RELEASE
+/platlibs.mk/1.56/Mon Feb 25 21:32:33 2008//TFIREFOX_3_0rc3_RELEASE
+/platrules.mk/1.3/Sun Apr 25 15:02:37 2004//TFIREFOX_3_0rc3_RELEASE
 D/SSLsample////
 D/addbuiltin////
 D/atob////
@@ -18,8 +18,10 @@ D/dbck////
 D/dbtest////
 D/derdump////
 D/digest////
+D/ecperf////
 D/fipstest////
 D/lib////
+D/libpkix////
 D/makepqg////
 D/modutil////
 D/ocspclnt////

@@ -40,7 +40,7 @@
 
 #include "gfxCore.h"
 #include "nsCoord.h"
-#include "nsString.h"
+#include "nsStringGlue.h"
 
 // XXX we need a method to enumerate all of the possible fonts on the
 // system across family, weight, style, size, etc. But not here!
@@ -79,7 +79,7 @@ struct NS_GFX nsFont {
 
   // True if the character set quirks (for treatment of "Symbol",
   // "Wingdings", etc.) should be applied.
-  PRPackedBool familyNameQuirks : 1;
+  PRUint8 familyNameQuirks : 1;
 
   // The weight of the font (0-999)
   PRUint16 weight;
@@ -97,7 +97,7 @@ struct NS_GFX nsFont {
   // needs to be done.
   float sizeAdjust;
 
-  // Initialize the font struct with an iso-latin1 name
+  // Initialize the font struct with an ASCII name
   nsFont(const char* aName, PRUint8 aStyle, PRUint8 aVariant,
          PRUint16 aWeight, PRUint8 aDecoration, nscoord aSize,
          float aSizeAdjust=0.0f);
@@ -118,6 +118,8 @@ struct NS_GFX nsFont {
   }
 
   PRBool Equals(const nsFont& aOther) const ;
+  // Compare ignoring differences in 'variant' and 'decoration'
+  PRBool BaseEquals(const nsFont& aOther) const;
 
   nsFont& operator=(const nsFont& aOther);
 

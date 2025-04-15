@@ -38,42 +38,76 @@
 #ifndef nsObserverList_h___
 #define nsObserverList_h___
 
+#include "nsISupports.h"
+#include "nsTArray.h"
+#include "nsCOMPtr.h"
+#include "nsCOMArray.h"
 #include "nsIObserver.h"
-#include "nsIEnumerator.h"
-#include "nsISupportsArray.h"
+#include "nsIWeakReference.h"
+#include "nsHashKeys.h"
 #include "nsISimpleEnumerator.h"
 
-class ObserverListEnumerator : public nsISimpleEnumerator
+struct ObserverRef
 {
-public:
-    // nsISupports interface
-    NS_DECL_ISUPPORTS
-    NS_DECL_NSISIMPLEENUMERATOR
+  ObserverRef(const ObserverRef& o) :
+    isWeakRef(o.isWeakRef), ref(o.ref) { }
+  
+  ObserverRef(nsIObserver* aObserver) : isWeakRef(PR_FALSE), ref(aObserver) { }
+  ObserverRef(nsIWeakReference* aWeak) : isWeakRef(PR_TRUE), ref(aWeak) { }
 
-    ObserverListEnumerator(nsISupportsArray* aValueArray);
+  PRBool isWeakRef;
+  nsCOMPtr<nsISupports> ref;
 
-private:
-    ~ObserverListEnumerator(void);
+  nsIObserver* asObserver() {
+    NS_ASSERTION(!isWeakRef, "Isn't a strong ref.");
+    return static_cast<nsIObserver*>((nsISupports*) ref);
+  }
 
-protected:
-    nsISupportsArray* mValueArray;
-    PRInt32 mIndex;
+  nsIWeakReference* asWeak() {
+    NS_ASSERTION(isWeakRef, "Isn't a weak ref.");
+    return static_cast<nsIWeakReference*>((nsISupports*) ref);
+  }
+
+  PRBool operator==(nsISupports* b) const { return ref == b; }
 };
 
-class nsObserverList
+class nsObserverList : public nsCharPtrHashKey
 {
 public:
-  nsObserverList();
-  ~nsObserverList();
+  nsObserverList(const char *key) : nsCharPtrHashKey(key)
+  { MOZ_COUNT_CTOR(nsObserverList); }
+
+  ~nsObserverList() { MOZ_COUNT_DTOR(nsObserverList); }
 
   nsresult AddObserver(nsIObserver* anObserver, PRBool ownsWeak);
   nsresult RemoveObserver(nsIObserver* anObserver);
+
+  void NotifyObservers(nsISupports *aSubject,
+                       const char *aTopic,
+                       const PRUnichar *someData);
   nsresult GetObserverList(nsISimpleEnumerator** anEnumerator);
-     
-protected:
-  PRLock* mLock;
-  nsCOMPtr<nsISupportsArray>  mObserverList;
+
+  // Fill an array with the observers of this category.
+  // The array is filled in last-added-first order.
+  void FillObserverArray(nsCOMArray<nsIObserver> &aArray);
+
+private:
+  nsTArray<ObserverRef> mObservers;
 };
 
+class nsObserverEnumerator : public nsISimpleEnumerator
+{
+public:
+    NS_DECL_ISUPPORTS
+    NS_DECL_NSISIMPLEENUMERATOR
+
+    nsObserverEnumerator(nsObserverList* aObserverList);
+
+private:
+    ~nsObserverEnumerator() { }
+
+    PRInt32 mIndex; // Counts up from 0
+    nsCOMArray<nsIObserver> mObservers;
+};
 
 #endif /* nsObserverList_h___ */

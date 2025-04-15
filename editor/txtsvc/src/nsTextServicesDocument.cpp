@@ -57,8 +57,8 @@
 #include "nsIDOMHTMLElement.h"
 #include "nsIDOMHTMLDocument.h"
 
-#include "nsIWordBreakerFactory.h"
 #include "nsLWBrkCIID.h"
+#include "nsIWordBreaker.h"
 #include "nsIServiceManager.h"
 
 #define LOCK_DOC(doc)
@@ -467,13 +467,6 @@ nsTextServicesDocument::ExpandRangeToWordBoundaries(nsIDOMRange *aRange)
   result = CreateDocumentContentIterator(getter_AddRefs(docIter));
   NS_ENSURE_SUCCESS(result, result);
 
-  // Get a word breaker to use.
-
-  nsCOMPtr<nsIWordBreaker> wordBreaker;
-  result = GetWordBreaker(getter_AddRefs(wordBreaker));
-  NS_ENSURE_SUCCESS(result, result);
-  NS_ENSURE_TRUE(wordBreaker, NS_ERROR_FAILURE);
-
   // Grab all the text in the block containing our
   // first text node.
 
@@ -496,7 +489,7 @@ nsTextServicesDocument::ExpandRangeToWordBoundaries(nsIDOMRange *aRange)
   nsCOMPtr<nsIDOMNode> wordStartNode, wordEndNode;
   PRInt32 wordStartOffset, wordEndOffset;
 
-  result = FindWordBounds(&offsetTable, &blockStr, wordBreaker,
+  result = FindWordBounds(&offsetTable, &blockStr,
                           rngStartNode, rngStartOffset,
                           getter_AddRefs(wordStartNode), &wordStartOffset,
                           getter_AddRefs(wordEndNode), &wordEndOffset);
@@ -524,7 +517,7 @@ nsTextServicesDocument::ExpandRangeToWordBoundaries(nsIDOMRange *aRange)
     return result;
   }
 
-  result = FindWordBounds(&offsetTable, &blockStr, wordBreaker,
+  result = FindWordBounds(&offsetTable, &blockStr,
                           rngEndNode, rngEndOffset,
                           getter_AddRefs(wordStartNode), &wordStartOffset,
                           getter_AddRefs(wordEndNode), &wordEndOffset);
@@ -1838,6 +1831,8 @@ nsTextServicesDocument::ScrollSelectionIntoView()
 
   LOCK_DOC(this);
 
+  // After ScrollSelectionIntoView(), the pending notifications might be flushed
+  // and PresShell/PresContext/Frames may be dead. See bug 418470.
   result = mSelCon->ScrollSelectionIntoView(nsISelectionController::SELECTION_NORMAL, nsISelectionController::SELECTION_FOCUS_REGION, PR_TRUE);
 
   UNLOCK_DOC(this);
@@ -2633,9 +2628,9 @@ nsTextServicesDocument::JoinNodes(nsIDOMNode  *aLeftNode,
 
   if (!leftHasEntry)
   {
-    // XXX: Not sure if we should be throwing an error here!
-    NS_ASSERTION(0, "JoinNode called with node not listed in offset table.");
-    return NS_ERROR_FAILURE;
+    // It's okay if the node isn't in the offset table, the
+    // editor could be cleaning house.
+    return NS_OK;
   }
 
   result = NodeHasOffsetEntry(&mOffsetTable, aRightNode, &rightHasEntry, &rightIndex);
@@ -2645,7 +2640,9 @@ nsTextServicesDocument::JoinNodes(nsIDOMNode  *aLeftNode,
 
   if (!rightHasEntry)
   {
-    return NS_ERROR_FAILURE;
+    // It's okay if the node isn't in the offset table, the
+    // editor could be cleaning house.
+    return NS_OK;
   }
 
   NS_ASSERTION(leftIndex < rightIndex, "Indexes out of order.");
@@ -2731,7 +2728,7 @@ nsTextServicesDocument::CreateContentIterator(nsIDOMRange *aRange, nsIContentIte
   // This class wraps the ContentIterator in order to give itself a chance 
   // to filter out certain content nodes
   nsFilteredContentIterator* filter = new nsFilteredContentIterator(mTxtSvcFilter);
-  *aIterator = NS_STATIC_CAST(nsIContentIterator *, filter);
+  *aIterator = static_cast<nsIContentIterator *>(filter);
   if (*aIterator) {
     NS_IF_ADDREF(*aIterator);
     result = filter ? NS_OK : NS_ERROR_FAILURE;
@@ -3074,7 +3071,7 @@ nsTextServicesDocument::DidSkip(nsIContentIterator* aFilteredIter)
   // So if the iterator bailed on one of the "filtered" content nodes then we 
   // consider that to be a block and bail with PR_TRUE
   if (aFilteredIter) {
-    nsFilteredContentIterator* filter = NS_STATIC_CAST(nsFilteredContentIterator *, aFilteredIter);
+    nsFilteredContentIterator* filter = static_cast<nsFilteredContentIterator *>(aFilteredIter);
     if (filter && filter->DidSkip()) {
       return PR_TRUE;
     }
@@ -3087,7 +3084,7 @@ nsTextServicesDocument::ClearDidSkip(nsIContentIterator* aFilteredIter)
 {
   // Clear filter's skip flag
   if (aFilteredIter) {
-    nsFilteredContentIterator* filter = NS_STATIC_CAST(nsFilteredContentIterator *, aFilteredIter);
+    nsFilteredContentIterator* filter = static_cast<nsFilteredContentIterator *>(aFilteredIter);
     filter->ClearDidSkip();
   }
 }
@@ -4615,24 +4612,6 @@ nsTextServicesDocument::NodeHasOffsetEntry(nsVoidArray *aOffsetTable, nsIDOMNode
   return NS_OK;
 }
 
-nsresult
-nsTextServicesDocument::GetWordBreaker(nsIWordBreaker** aResult)
-{
-  NS_ENSURE_ARG_POINTER(aResult);
-
-  *aResult = nsnull;
-
-  nsresult result;
-  nsCOMPtr<nsIWordBreakerFactory> wbf(do_GetService(NS_LWBRK_CONTRACTID, &result));
-  if (NS_SUCCEEDED(result) && wbf)
-  {
-    nsString wbarg;
-    result = wbf->GetBreaker(wbarg, aResult);
-  }
-
-  return result;
-}
-
 // Spellchecker code has this. See bug 211343
 #ifdef XP_MAC
 #define IS_NBSP_CHAR(c) (((unsigned char)0xca)==(c))
@@ -4643,7 +4622,6 @@ nsTextServicesDocument::GetWordBreaker(nsIWordBreaker** aResult)
 nsresult
 nsTextServicesDocument::FindWordBounds(nsVoidArray *aOffsetTable,
                                        nsString *aBlockStr,
-                                       nsIWordBreaker *aWordBreaker,
                                        nsIDOMNode *aNode,
                                        PRInt32 aNodeOffset,
                                        nsIDOMNode **aWordStartNode,
@@ -4683,22 +4661,32 @@ nsTextServicesDocument::FindWordBounds(nsVoidArray *aOffsetTable,
 
   const PRUnichar *str = aBlockStr->get();
   PRUint32 strLen = aBlockStr->Length();
-  PRUint32 beginWord=0, endWord=0;
 
-  result = aWordBreaker->FindWord(str, strLen, strOffset,
-                                 &beginWord, &endWord);
+  nsIWordBreaker *aWordBreaker;
+
+  result = CallGetService(NS_WBRK_CONTRACTID, &aWordBreaker);
   NS_ENSURE_SUCCESS(result, result);
 
-  // Strip out the NBSPs at the ends
-  while ((beginWord <= endWord) && (IS_NBSP_CHAR(str[beginWord]))) 
-    beginWord++;
-  if (str[endWord] == (unsigned char)0x20)
+  nsWordRange res = aWordBreaker->FindWord(str, strLen, strOffset);
+  NS_IF_RELEASE(aWordBreaker);
+  if(res.mBegin > strLen)
   {
-    PRUint32 realEndWord = endWord - 1;
-    while ((realEndWord > beginWord) && (IS_NBSP_CHAR(str[realEndWord]))) 
+    if(!str)
+      return NS_ERROR_NULL_POINTER;
+    else
+      return NS_ERROR_ILLEGAL_VALUE;
+  }
+
+  // Strip out the NBSPs at the ends
+  while ((res.mBegin <= res.mEnd) && (IS_NBSP_CHAR(str[res.mBegin]))) 
+    res.mBegin++;
+  if (str[res.mEnd] == (unsigned char)0x20)
+  {
+    PRUint32 realEndWord = res.mEnd - 1;
+    while ((realEndWord > res.mBegin) && (IS_NBSP_CHAR(str[realEndWord]))) 
       realEndWord--;
-    if (realEndWord < endWord - 1) 
-      endWord = realEndWord + 1;
+    if (realEndWord < res.mEnd - 1) 
+      res.mEnd = realEndWord + 1;
   }
 
   // Now that we have the string offsets for the beginning
@@ -4713,13 +4701,13 @@ nsTextServicesDocument::FindWordBounds(nsVoidArray *aOffsetTable,
 
     PRInt32 strEndOffset = entry->mStrOffset + entry->mLength;
 
-    // Check to see if beginWord is within the range covered
-    // by this entry. Note that if beginWord is after the last
+    // Check to see if res.mBegin is within the range covered
+    // by this entry. Note that if res.mBegin is after the last
     // character covered by this entry, we will use the next
     // entry if there is one.
 
-    if (entry->mStrOffset <= beginWord &&
-       (beginWord < strEndOffset || (beginWord == strEndOffset && i == lastIndex)))
+    if (entry->mStrOffset <= res.mBegin &&
+       (res.mBegin < strEndOffset || (res.mBegin == strEndOffset && i == lastIndex)))
     {
       if (aWordStartNode)
       {
@@ -4728,7 +4716,7 @@ nsTextServicesDocument::FindWordBounds(nsVoidArray *aOffsetTable,
       }
 
       if (aWordStartOffset)
-        *aWordStartOffset = entry->mNodeOffset + beginWord - entry->mStrOffset;
+        *aWordStartOffset = entry->mNodeOffset + res.mBegin - entry->mStrOffset;
 
       if (!aWordEndNode && !aWordEndOffset)
       {
@@ -4739,12 +4727,12 @@ nsTextServicesDocument::FindWordBounds(nsVoidArray *aOffsetTable,
       }
     }
 
-    // Check to see if endWord is within the range covered
+    // Check to see if res.mEnd is within the range covered
     // by this entry.
 
-    if (entry->mStrOffset <= endWord && endWord <= strEndOffset)
+    if (entry->mStrOffset <= res.mEnd && res.mEnd <= strEndOffset)
     {
-      if (beginWord == endWord && endWord == strEndOffset && i != lastIndex)
+      if (res.mBegin == res.mEnd && res.mEnd == strEndOffset && i != lastIndex)
       {
         // Wait for the next round so that we use the same entry
         // we did for aWordStartNode.
@@ -4759,7 +4747,7 @@ nsTextServicesDocument::FindWordBounds(nsVoidArray *aOffsetTable,
       }
 
       if (aWordEndOffset)
-        *aWordEndOffset = entry->mNodeOffset + endWord - entry->mStrOffset;
+        *aWordEndOffset = entry->mNodeOffset + res.mEnd - entry->mStrOffset;
 
       break;
     }
@@ -4795,7 +4783,7 @@ nsTextServicesDocument::PrintContentNode(nsIContent *aContent)
   nsresult result;
 
   aContent->Tag()->ToString(tmpStr);
-  printf("%s", NS_LossyConvertUCS2toASCII(tmpStr).get());
+  printf("%s", NS_LossyConvertUTF16toASCII(tmpStr).get());
 
   nsCOMPtr<nsIDOMNode> node = do_QueryInterface(aContent);
 
@@ -4815,7 +4803,7 @@ nsTextServicesDocument::PrintContentNode(nsIContent *aContent)
       if (NS_FAILED(result))
         return;
 
-      printf(":  \"%s\"", NS_LossyConvertUCS2toASCII(str).get());
+      printf(":  \"%s\"", NS_LossyConvertUTF16toASCII(str).get());
     }
   }
 

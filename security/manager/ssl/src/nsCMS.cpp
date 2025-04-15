@@ -43,7 +43,8 @@
 #include "smime.h"
 #include "cms.h"
 #include "nsICMSMessageErrors.h"
-#include "nsArray.h"
+#include "nsIArray.h"
+#include "nsArrayUtils.h"
 #include "nsCertVerificationThread.h"
 
 #include "prlog.h"
@@ -528,7 +529,7 @@ NS_IMETHODIMP nsCMSMessage::CreateEncrypted(nsIArray * aRecipientCerts)
   SECOidTag bulkAlgTag;
   int keySize;
   PRUint32 i;
-  nsNSSCertificate *nssRecipientCert;
+  nsCOMPtr<nsIX509Cert2> nssRecipientCert;
   nsresult rv = NS_ERROR_FAILURE;
 
   // Check the recipient certificates //
@@ -543,9 +544,7 @@ NS_IMETHODIMP nsCMSMessage::CreateEncrypted(nsIArray * aRecipientCerts)
   for (i=0; i<recipientCertCount; i++) {
     nsCOMPtr<nsIX509Cert> x509cert = do_QueryElementAt(aRecipientCerts, i);
 
-    nssRecipientCert = 
-      NS_STATIC_CAST(nsNSSCertificate*, 
-                     NS_STATIC_CAST(nsIX509Cert*, x509cert));
+    nssRecipientCert = do_QueryInterface(x509cert);
 
     if (!nssRecipientCert)
       return NS_ERROR_FAILURE;
@@ -622,16 +621,22 @@ NS_IMETHODIMP nsCMSMessage::CreateSigned(nsIX509Cert* aSigningCert, nsIX509Cert*
   NSSCMSSignedData *sigd;
   NSSCMSSignerInfo *signerinfo;
   CERTCertificate *scert = nsnull, *ecert = nsnull;
+  nsCOMPtr<nsIX509Cert2> aSigningCert2 = do_QueryInterface(aSigningCert);
   nsresult rv = NS_ERROR_FAILURE;
 
   /* Get the certs */
-  scert = NS_STATIC_CAST(nsNSSCertificate*, aSigningCert)->GetCert();
+  if (aSigningCert2) {
+    scert = aSigningCert2->GetCert();
+  }
   if (!scert) {
     return NS_ERROR_FAILURE;
   }
 
   if (aEncryptCert) {
-    ecert = NS_STATIC_CAST(nsNSSCertificate*, aEncryptCert)->GetCert();
+    nsCOMPtr<nsIX509Cert2> aEncryptCert2 = do_QueryInterface(aEncryptCert);
+    if (aEncryptCert2) {
+      ecert = aEncryptCert2->GetCert();
+    }
   }
 
   CERTCertificateCleaner ecertCleaner(ecert);
@@ -872,7 +877,7 @@ NS_IMETHODIMP nsCMSEncoder::Start(nsICMSMessage *aMsg, NSSCMSContentCallback cb,
     return NS_ERROR_NOT_AVAILABLE;
 
   PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("nsCMSEncoder::Start\n"));
-  nsCMSMessage *cmsMsg = NS_STATIC_CAST(nsCMSMessage*, aMsg);
+  nsCMSMessage *cmsMsg = static_cast<nsCMSMessage*>(aMsg);
   m_ctx = new PipUIContext();
 
   m_ecx = NSS_CMSEncoder_Start(cmsMsg->getCMS(), cb, arg, 0, 0, 0, m_ctx, 0, 0, 0, 0);

@@ -1,7 +1,3 @@
-# ###### BEGIN LICENSE BLOCK ######
-# Version: NPL 1.1/GPL 2.0/LGPL 2.1
-#
-#
 # ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
@@ -23,7 +19,7 @@
 # the Initial Developer. All Rights Reserved.
 #
 # Contributor(s):
-#   Original Author: Bolian Yin (bolian.yin@sun.com)
+#   Bolian Yin <bolian.yin@sun.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -54,7 +50,7 @@ endif
 
 # We want to force the creation of a static lib.
 FORCE_STATIC_LIB = 1
-MOZILLA_INTERNAL_API = 1
+LIBXUL_LIBRARY = 1
 
 REQUIRES        = xpcom \
 		  string \

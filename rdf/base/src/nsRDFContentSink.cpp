@@ -84,7 +84,6 @@
 #include "nsIURL.h"
 #include "nsIXMLContentSink.h"
 #include "nsRDFCID.h"
-#include "nsRDFParserUtils.h"
 #include "nsVoidArray.h"
 #include "nsXPIDLString.h"
 #include "prlog.h"
@@ -96,6 +95,7 @@
 #include "nsCRT.h"
 #include "nsIAtom.h"
 #include "nsStaticAtom.h"
+#include "nsIScriptError.h"
 
 ////////////////////////////////////////////////////////////////////////
 // XPCOM IIDs
@@ -135,8 +135,6 @@ enum RDFContentSinkParseMode {
     eRDFContentSinkParseMode_Date
 };
 
-MOZ_DECL_CTOR_COUNTER(RDFContentSinkImpl::NameSpaceEntry)
-
 typedef
 NS_STDCALL_FUNCPROTO(nsresult,
                      nsContainerTestFn,
@@ -161,6 +159,7 @@ public:
     NS_DECL_NSIEXPATSINK
 
     // nsIContentSink
+    NS_IMETHOD WillTokenize(void);
     NS_IMETHOD WillBuildModel(void);
     NS_IMETHOD DidBuildModel(void);
     NS_IMETHOD WillInterrupt(void);
@@ -211,8 +210,7 @@ protected:
     // Text management
     void ParseText(nsIRDFNode **aResult);
 
-    nsresult FlushText(PRBool aCreateTextNode=PR_TRUE,
-                       PRBool* aDidFlush=nsnull);
+    nsresult FlushText();
     nsresult AddText(const PRUnichar* aText, PRInt32 aLength);
 
     // RDF-specific parsing
@@ -438,12 +436,12 @@ RDFContentSinkImpl::QueryInterface(REFNSIID iid, void** result)
         iid.Equals(kIXMLContentSinkIID) ||
         iid.Equals(kIContentSinkIID) ||
         iid.Equals(kISupportsIID)) {
-        *result = NS_STATIC_CAST(nsIXMLContentSink*, this);
+        *result = static_cast<nsIXMLContentSink*>(this);
         AddRef();
         return NS_OK;
     }
     else if (iid.Equals(kIExpatSinkIID)) {
-      *result = NS_STATIC_CAST(nsIExpatSink*, this);
+      *result = static_cast<nsIExpatSink*>(this);
        AddRef();
        return NS_OK;
     }
@@ -594,13 +592,26 @@ RDFContentSinkImpl::HandleXMLDeclaration(const PRUnichar *aVersion,
 
 NS_IMETHODIMP
 RDFContentSinkImpl::ReportError(const PRUnichar* aErrorText, 
-                                const PRUnichar* aSourceText)
+                                const PRUnichar* aSourceText,
+                                nsIScriptError *aError,
+                                PRBool *_retval)
 {
+  NS_PRECONDITION(aError && aSourceText && aErrorText, "Check arguments!!!");
+
+  // The expat driver should report the error.
+  *_retval = PR_TRUE;
   return NS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////
 // nsIContentSink interface
+
+NS_IMETHODIMP 
+RDFContentSinkImpl::WillTokenize(void)
+{
+    return NS_OK;
+}
+
 
 NS_IMETHODIMP 
 RDFContentSinkImpl::WillBuildModel(void)
@@ -743,7 +754,7 @@ RDFContentSinkImpl::ParseText(nsIRDFNode **aResult)
 
     case eRDFContentSinkParseMode_Date:
         {
-            PRTime t = rdf_ParseDate(nsDependentCString(NS_LossyConvertUCS2toASCII(value).get(), value.Length()));
+            PRTime t = rdf_ParseDate(nsDependentCString(NS_LossyConvertUTF16toASCII(value).get(), value.Length()));
             nsIRDFDate *result;
             gRDFService->GetDateLiteral(t, &result);
             *aResult = result;
@@ -757,12 +768,11 @@ RDFContentSinkImpl::ParseText(nsIRDFNode **aResult)
 }
 
 nsresult
-RDFContentSinkImpl::FlushText(PRBool aCreateTextNode, PRBool* aDidFlush)
+RDFContentSinkImpl::FlushText()
 {
     nsresult rv = NS_OK;
-    PRBool didFlush = PR_FALSE;
     if (0 != mTextLength) {
-        if (aCreateTextNode && rdf_IsDataInBuffer(mText, mTextLength)) {
+        if (rdf_IsDataInBuffer(mText, mTextLength)) {
             // XXX if there's anything but whitespace, then we'll
             // create a text node.
 
@@ -791,10 +801,6 @@ RDFContentSinkImpl::FlushText(PRBool aCreateTextNode, PRBool* aDidFlush)
             }
         }
         mTextLength = 0;
-        didFlush = PR_TRUE;
-    }
-    if (nsnull != aDidFlush) {
-        *aDidFlush = didFlush;
     }
     return rv;
 }
@@ -835,6 +841,14 @@ RDFContentSinkImpl::AddText(const PRUnichar* aText, PRInt32 aLength)
     return NS_OK;
 }
 
+PRBool
+rdf_RequiresAbsoluteURI(const nsString& uri)
+{
+    // cheap shot at figuring out if this requires an absolute url translation
+    return !(StringBeginsWith(uri, NS_LITERAL_STRING("urn:")) ||
+             StringBeginsWith(uri, NS_LITERAL_STRING("chrome:")));
+}
+
 nsresult
 RDFContentSinkImpl::GetIdAboutAttribute(const PRUnichar** aAttributes,
                                         nsIRDFResource** aResource,
@@ -842,10 +856,6 @@ RDFContentSinkImpl::GetIdAboutAttribute(const PRUnichar** aAttributes,
 {
     // This corresponds to the dirty work of production [6.5]
     nsresult rv = NS_OK;
-
-    nsCAutoString docURI;
-    rv = mDocumentURL->GetSpec(docURI);
-    if (NS_FAILED(rv)) return rv;
 
     nsAutoString nodeID;
 
@@ -869,20 +879,21 @@ RDFContentSinkImpl::GetIdAboutAttribute(const PRUnichar** aAttributes,
             if (aIsAnonymous)
                 *aIsAnonymous = PR_FALSE;
 
-            nsAutoString uri(aAttributes[1]);
-            nsRDFParserUtils::StripAndConvert(uri);
-
-            rdf_MakeAbsoluteURI(NS_ConvertUTF8toUCS2(docURI), uri);
-
-            return gRDFService->GetUnicodeResource(uri, aResource);
+            nsAutoString relURI(aAttributes[1]);
+            if (rdf_RequiresAbsoluteURI(relURI)) {
+                nsCAutoString uri;
+                rv = mDocumentURL->Resolve(NS_ConvertUTF16toUTF8(aAttributes[1]), uri);
+                if (NS_FAILED(rv)) return rv;
+                
+                return gRDFService->GetResource(uri, 
+                                                aResource);
+            } 
+            return gRDFService->GetResource(NS_ConvertUTF16toUTF8(aAttributes[1]), 
+                                            aResource);
         }
         else if (localName == kIdAtom) {
             if (aIsAnonymous)
                 *aIsAnonymous = PR_FALSE;
-
-            nsAutoString name(aAttributes[1]);
-            nsRDFParserUtils::StripAndConvert(name);
-
             // In the spirit of leniency, we do not bother trying to
             // enforce that this be a valid "XML Name" (see
             // http://www.w3.org/TR/REC-xml#NT-Nmtoken), as per
@@ -891,11 +902,14 @@ RDFContentSinkImpl::GetIdAboutAttribute(const PRUnichar** aAttributes,
             // Construct an in-line resource whose URI is the
             // document's URI plus the XML name specified in the ID
             // attribute.
-            name.Insert(PRUnichar('#'), 0);
-          
-            rdf_MakeAbsoluteURI(NS_ConvertUTF8toUCS2(docURI), name);
+            nsCAutoString name;
+            nsCAutoString ref('#');
+            AppendUTF16toUTF8(aAttributes[1], ref);
 
-            return gRDFService->GetUnicodeResource(name, aResource);
+            rv = mDocumentURL->Resolve(ref, name);
+            if (NS_FAILED(rv)) return rv;
+
+            return gRDFService->GetResource(name, aResource);
         }
         else if (localName == kNodeIdAtom) {
             nodeID.Assign(aAttributes[1]);
@@ -953,23 +967,27 @@ RDFContentSinkImpl::GetResourceAttribute(const PRUnichar** aAttributes,
       // first thing that was specified and ignore the other.
 
       if (localName == kResourceAtom) {
-          nsAutoString uri(aAttributes[1]);
-          nsRDFParserUtils::StripAndConvert(uri);
-
           // XXX Take the URI and make it fully qualified by
           // sticking it into the document's URL. This may not be
           // appropriate...
-          nsCAutoString documentURL;
-          mDocumentURL->GetSpec(documentURL);
-          rdf_MakeAbsoluteURI(NS_ConvertUTF8toUCS2(documentURL), uri);
+          nsAutoString relURI(aAttributes[1]);
+          if (rdf_RequiresAbsoluteURI(relURI)) {
+              nsresult rv;
+              nsCAutoString uri;
 
-          return gRDFService->GetUnicodeResource(uri, aResource);
+              rv = mDocumentURL->Resolve(NS_ConvertUTF16toUTF8(aAttributes[1]), uri);
+              if (NS_FAILED(rv)) return rv;
+
+              return gRDFService->GetResource(uri, aResource);
+          } 
+          return gRDFService->GetResource(NS_ConvertUTF16toUTF8(aAttributes[1]), 
+                                          aResource);
       }
       else if (localName == kNodeIdAtom) {
           nodeID.Assign(aAttributes[1]);
       }
   }
-
+    
   // If nodeID is present, check if we already know about it. If we've seen
   // the nodeID before, use the same resource, otherwise generate a new one.
   if (!nodeID.IsEmpty()) {
@@ -1023,9 +1041,6 @@ RDFContentSinkImpl::AddProperties(const PRUnichar** aAttributes,
           }
       }
 
-      nsAutoString v(aAttributes[1]);
-      nsRDFParserUtils::StripAndConvert(v);
-
       const char* attrName;
       localName->GetUTF8String(&attrName);
 
@@ -1037,7 +1052,8 @@ RDFContentSinkImpl::AddProperties(const PRUnichar** aAttributes,
       gRDFService->GetResource(propertyStr, getter_AddRefs(property));
 
       nsCOMPtr<nsIRDFLiteral> target;
-      gRDFService->GetLiteral(v.get(), getter_AddRefs(target));
+      gRDFService->GetLiteral(aAttributes[1], 
+                              getter_AddRefs(target));
 
       mDataSource->Assert(aSubject, property, target, PR_TRUE);
   }
@@ -1053,8 +1069,7 @@ RDFContentSinkImpl::SetParseMode(const PRUnichar **aAttributes)
             SplitExpatName(aAttributes[0], getter_AddRefs(localName));
 
         if (localName == kParseTypeAtom) {
-            nsAutoString v(aAttributes[1]);
-            nsRDFParserUtils::StripAndConvert(v);
+            nsDependentString v(aAttributes[1]);
 
             if (nameSpaceURI.IsEmpty() ||
                 nameSpaceURI.EqualsLiteral(RDF_NAMESPACE_URI)) {
@@ -1475,7 +1490,7 @@ RDFContentSinkImpl::GetContextElement(PRInt32 ancestor /* = 0 */)
     }
 
     RDFContextStackElement* e =
-        NS_STATIC_CAST(RDFContextStackElement*, mContextStack->ElementAt(mContextStack->Count()-ancestor-1));
+        static_cast<RDFContextStackElement*>(mContextStack->ElementAt(mContextStack->Count()-ancestor-1));
 
     return e->mResource;
 }
@@ -1500,7 +1515,7 @@ RDFContentSinkImpl::PushContext(nsIRDFResource         *aResource,
     e->mState     = aState;
     e->mParseMode = aParseMode;
   
-    mContextStack->AppendElement(NS_STATIC_CAST(void*, e));
+    mContextStack->AppendElement(static_cast<void*>(e));
     return mContextStack->Count();
 }
  
@@ -1516,7 +1531,7 @@ RDFContentSinkImpl::PopContext(nsIRDFResource         *&aResource,
     }
 
     PRInt32 i = mContextStack->Count() - 1;
-    e = NS_STATIC_CAST(RDFContextStackElement*, mContextStack->ElementAt(i));
+    e = static_cast<RDFContextStackElement*>(mContextStack->ElementAt(i));
     mContextStack->RemoveElementAt(i);
 
     // don't bother Release()-ing: call it our implicit AddRef().

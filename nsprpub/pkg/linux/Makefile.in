@@ -38,7 +38,7 @@
 #
 # ***** END LICENSE BLOCK *****
 #
-#ident	"$Id: Makefile.in,v 1.2.2.3.12.3 2006/02/07 19:33:12 wtchang%redhat.com Exp $"
+#ident	"$Id: Makefile.in,v 1.10 2005/11/18 21:50:20 christophe.ravel.bugs%sun.com Exp $"
 #
 
 MOD_DEPTH = ../..

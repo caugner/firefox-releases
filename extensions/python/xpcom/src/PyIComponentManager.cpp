@@ -54,7 +54,7 @@ static nsIComponentManager *GetI(PyObject *self) {
 		PyErr_SetString(PyExc_TypeError, "This object is not the correct interface");
 		return NULL;
 	}
-	return NS_STATIC_CAST(nsIComponentManager*, Py_nsISupports::GetI(self));
+	return static_cast<nsIComponentManager*>(Py_nsISupports::GetI(self));
 }
 
 static PyObject *PyCreateInstanceByContractID(PyObject *self, PyObject *args)
@@ -81,16 +81,16 @@ static PyObject *PyCreateInstanceByContractID(PyObject *self, PyObject *args)
 		if (!Py_nsIID::IIDFromPyObject(obIID, &iid))
 			return NULL;
 
-	nsISupports *pis;
+	nsCOMPtr<nsISupports> pis;
 	nsresult r;
 	Py_BEGIN_ALLOW_THREADS;
-	r = pI->CreateInstanceByContractID(pid, NULL, iid, (void **)&pis);
+	r = pI->CreateInstanceByContractID(pid, NULL, iid, getter_AddRefs(pis));
 	Py_END_ALLOW_THREADS;
 	if ( NS_FAILED(r) )
 		return PyXPCOM_BuildPyException(r);
 
 	/* Return a type based on the IID (with no extra ref) */
-	return Py_nsISupports::PyObjectFromInterface(pis, iid, PR_FALSE, PR_FALSE);
+	return Py_nsISupports::PyObjectFromInterface(pis, iid, PR_FALSE);
 }
 
 static PyObject *PyCreateInstance(PyObject *self, PyObject *args)
@@ -117,16 +117,16 @@ static PyObject *PyCreateInstance(PyObject *self, PyObject *args)
 		if (!Py_nsIID::IIDFromPyObject(obIID, &iid))
 			return NULL;
 
-	nsISupports *pis;
+	nsCOMPtr<nsISupports> pis;
 	nsresult r;
 	Py_BEGIN_ALLOW_THREADS;
-	r = pI->CreateInstance(classID, NULL, iid, (void **)&pis);
+	r = pI->CreateInstance(classID, NULL, iid, getter_AddRefs(pis));
 	Py_END_ALLOW_THREADS;
 	if ( NS_FAILED(r) )
 		return PyXPCOM_BuildPyException(r);
 
 	/* Return a type based on the IID (with no extra ref) */
-	return Py_nsISupports::PyObjectFromInterface(pis, iid, PR_FALSE, PR_FALSE);
+	return Py_nsISupports::PyObjectFromInterface(pis, iid, PR_FALSE);
 }
 
 struct PyMethodDef 

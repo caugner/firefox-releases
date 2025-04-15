@@ -41,59 +41,43 @@
 #include "nsNetUtil.h"
 #include "nsIIOService.h"
 #include "nsIURL.h"
-#include "nsCRT.h"
-#include "nsReadableUtils.h"
-#include "nsPrintfCString.h"
-#include "nsIAtom.h"
-#include "nsStaticAtom.h"
+#include "prprf.h"
+#include "plstr.h"
+#include <stdlib.h>
 
-static NS_DEFINE_CID(kIOServiceCID,     NS_IOSERVICE_CID);
 #define DEFAULT_IMAGE_SIZE          16
 
 // helper function for parsing out attributes like size, and contentType
 // from the icon url.
-static void extractAttributeValue(const char * searchString, const char * attributeName, char ** result);
+static void extractAttributeValue(const char * searchString, const char * attributeName, nsCString& aResult);
  
-static nsIAtom *sStockSizeButton = nsnull;
-static nsIAtom *sStockSizeToolbar = nsnull;
-static nsIAtom *sStockSizeToolbarsmall = nsnull;
-static nsIAtom *sStockSizeMenu = nsnull;
-static nsIAtom *sStockSizeDialog = nsnull;
-static nsIAtom *sStockStateNormal = nsnull;
-static nsIAtom *sStockStateDisabled = nsnull;
-
-/* static */ const nsStaticAtom nsMozIconURI::sSizeAtoms[] =
+static const char *kSizeStrings[] =
 {
-  { "button", &sStockSizeButton },
-  { "toolbar", &sStockSizeToolbar },
-  { "toolbarsmall", &sStockSizeToolbarsmall },
-  { "menu", &sStockSizeMenu },
-  { "dialog", &sStockSizeDialog }
+  "button",
+  "toolbar",
+  "toolbarsmall",
+  "menu",
+  "dnd",
+  "dialog"
 };
 
-/* static */ const nsStaticAtom nsMozIconURI::sStateAtoms[] =
+static const char *kStateStrings[] =
 {
-  { "normal", &sStockStateNormal },
-  { "disabled", &sStockStateDisabled }
+  "normal",
+  "disabled"
 };
 
 ////////////////////////////////////////////////////////////////////////////////
  
 nsMozIconURI::nsMozIconURI()
-  : mSize(DEFAULT_IMAGE_SIZE)
+  : mSize(DEFAULT_IMAGE_SIZE),
+    mIconSize(-1),
+    mIconState(-1)
 {
 }
  
 nsMozIconURI::~nsMozIconURI()
 {
-}
-
-
-/* static */ void
-nsMozIconURI::InitAtoms()
-{
-  NS_RegisterStaticAtoms(sSizeAtoms, NS_ARRAY_LENGTH(sSizeAtoms));
-  NS_RegisterStaticAtoms(sStateAtoms, NS_ARRAY_LENGTH(sStateAtoms));
 }
 
 NS_IMPL_THREADSAFE_ISUPPORTS2(nsMozIconURI, nsIMozIconURI, nsIURI)
@@ -102,106 +86,94 @@ NS_IMPL_THREADSAFE_ISUPPORTS2(nsMozIconURI, nsIMozIconURI, nsIURI)
 #define NS_MOZ_ICON_DELIMITER        '?'
 
 
-nsresult
-nsMozIconURI::FormatSpec(nsACString &spec)
-{
-  nsresult rv = NS_OK;
-  spec = NS_MOZICON_SCHEME;
-
-  if (mFileIcon)
-  {
-    nsCAutoString fileIconSpec;
-    rv = mFileIcon->GetSpec(fileIconSpec);
-    NS_ENSURE_SUCCESS(rv, rv);
-    spec += fileIconSpec;
-  }
-  else if (!mStockIcon.IsEmpty())
-  {
-    spec += "//stock/";
-    spec += mStockIcon;
-  }
-  else
-  {
-    spec += "//";
-    spec += mDummyFilePath;
-  }
-
-  if (mIconSize)
-  {
-    spec += NS_MOZ_ICON_DELIMITER;
-    spec += "size=";
-    const char *size_string;
-    mIconSize->GetUTF8String(&size_string);
-    spec.Append(size_string);
-  }
-  else
-  {
-    spec += NS_MOZ_ICON_DELIMITER;
-    spec += "size=";
-    spec.Append(nsPrintfCString("%d", mSize));
-  }
-
-  if (mIconState) {
-    spec += "&state=";
-    const char *state_string;
-    mIconState->GetUTF8String(&state_string);
-    spec.Append(state_string);
-  }
-
-  if (!mContentType.IsEmpty())
-  {
-    spec += "&contentType=";
-    spec += mContentType.get();
-  }
-  
-  return NS_OK;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // nsURI methods:
 
 NS_IMETHODIMP
 nsMozIconURI::GetSpec(nsACString &aSpec)
 {
-  return FormatSpec(aSpec);
+  aSpec = NS_MOZICON_SCHEME;
+
+  if (mFileIcon)
+  {
+    nsCAutoString fileIconSpec;
+    nsresult rv = mFileIcon->GetSpec(fileIconSpec);
+    NS_ENSURE_SUCCESS(rv, rv);
+    aSpec += fileIconSpec;
+  }
+  else if (!mStockIcon.IsEmpty())
+  {
+    aSpec += "//stock/";
+    aSpec += mStockIcon;
+  }
+  else
+  {
+    aSpec += "//";
+    aSpec += mDummyFilePath;
+  }
+
+  aSpec += "?size=";
+  if (mIconSize >= 0)
+  {
+    aSpec += kSizeStrings[mIconSize];
+  }
+  else
+  {
+    char buf[20];
+    PR_snprintf(buf, sizeof(buf), "%d", mSize);
+    aSpec.Append(buf);
+  }
+
+  if (mIconState >= 0) {
+    aSpec += "&state=";
+    aSpec += kStateStrings[mIconState];
+  }
+
+  if (!mContentType.IsEmpty())
+  {
+    aSpec += "&contentType=";
+    aSpec += mContentType.get();
+  }
+  
+  return NS_OK;
 }
 
 // takes a string like ?size=32&contentType=text/html and returns a new string 
 // containing just the attribute value. i.e you could pass in this string with
-// an attribute name of size, this will return 32
+// an attribute name of 'size=', this will return 32
 // Assumption: attribute pairs in the string are separated by '&'.
-void extractAttributeValue(const char * searchString, const char * attributeName, char ** result)
+void extractAttributeValue(const char * searchString, const char * attributeName, nsCString& result)
 {
   //NS_ENSURE_ARG_POINTER(extractAttributeValue);
 
-	char * attributeValue = nsnull;
-	if (searchString && attributeName)
-	{
-		// search the string for attributeName
-		PRUint32 attributeNameSize = PL_strlen(attributeName);
-		char * startOfAttribute = PL_strcasestr(searchString, attributeName);
-		if (startOfAttribute)
-		{
-			startOfAttribute += attributeNameSize; // skip over the attributeName
-			if (startOfAttribute) // is there something after the attribute name
-			{
-				char * endofAttribute = startOfAttribute ? PL_strchr(startOfAttribute, '&') : nsnull;
-				if (startOfAttribute && endofAttribute) // is there text after attribute value
-					attributeValue = PL_strndup(startOfAttribute, endofAttribute - startOfAttribute);
-				else // there is nothing left so eat up rest of line.
-					attributeValue = PL_strdup(startOfAttribute);
-			} // if we have a attribute value
-		} // if we have a attribute name
-	} // if we got non-null search string and attribute name values
+  result.Truncate();
 
-  *result = attributeValue; // passing ownership of attributeValue into result...no need to 
+  if (searchString && attributeName)
+  {
+    // search the string for attributeName
+    PRUint32 attributeNameSize = strlen(attributeName);
+    const char * startOfAttribute = PL_strcasestr(searchString, attributeName);
+    if (startOfAttribute &&
+       ( *(startOfAttribute-1) == '?' || *(startOfAttribute-1) == '&') )
+    {
+      startOfAttribute += attributeNameSize; // skip over the attributeName
+      if (*startOfAttribute) // is there something after the attribute name
+      {
+        const char * endofAttribute = strchr(startOfAttribute, '&');
+        if (endofAttribute)
+          result.Assign(Substring(startOfAttribute, endofAttribute));
+        else
+          result.Assign(startOfAttribute);
+      } // if we have a attribute value
+    } // if we have a attribute name
+  } // if we got non-null search string and attribute name values
 }
 
 NS_IMETHODIMP
 nsMozIconURI::SetSpec(const nsACString &aSpec)
 {
   nsresult rv;
-  nsCOMPtr<nsIIOService> ioService (do_GetService(kIOServiceCID, &rv));
+  nsCOMPtr<nsIIOService> ioService (do_GetService(NS_IOSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCAutoString scheme;
@@ -211,35 +183,36 @@ nsMozIconURI::SetSpec(const nsACString &aSpec)
   if (strcmp("moz-icon", scheme.get()) != 0) 
     return NS_ERROR_MALFORMED_URI;
 
-  nsXPIDLCString sizeString;
-  nsXPIDLCString stateString;
+  nsCAutoString sizeString;
+  nsCAutoString stateString;
   nsCAutoString mozIconPath(aSpec);
-  PRInt32 endPos = mozIconPath.FindChar(':') + 1; // guaranteed to exist!
-  PRInt32 pos = mozIconPath.FindChar(NS_MOZ_ICON_DELIMITER);
 
-  if (pos == -1) // no size or content type specified
+  // guaranteed to exist!
+  const char *path = strchr(mozIconPath.get(), ':') + 1;
+  const char *question = strchr(mozIconPath.get(), NS_MOZ_ICON_DELIMITER);
+
+  if (!question) // no size or content type specified
   {
-    mozIconPath.Right(mDummyFilePath, mozIconPath.Length() - endPos);
+    mDummyFilePath.Assign(path);
   }
   else
   {
-    mozIconPath.Mid(mDummyFilePath, endPos, pos - endPos);
+    mDummyFilePath.Assign(Substring(path, question));
+
     // fill in any size and content type values...
-    nsXPIDLCString contentTypeString;
-    extractAttributeValue(mozIconPath.get() + pos, "size=", getter_Copies(sizeString));
-    extractAttributeValue(mozIconPath.get() + pos, "state=", getter_Copies(stateString));
-    extractAttributeValue(mozIconPath.get() + pos, "contentType=", getter_Copies(contentTypeString));
-    mContentType = contentTypeString;
+    extractAttributeValue(question, "size=", sizeString);
+    extractAttributeValue(question, "state=", stateString);
+    extractAttributeValue(question, "contentType=", mContentType);
   }
 
   if (!sizeString.IsEmpty())
   {
-    nsCOMPtr<nsIAtom> atom = do_GetAtom(sizeString);
-    for (PRUint32 i = 0; i < NS_ARRAY_LENGTH(sSizeAtoms); i++)
+    const char *sizeStr = sizeString.get();
+    for (PRInt32 i = 0; i < NS_ARRAY_LENGTH(kSizeStrings); i++)
     {
-      if (atom == *(sSizeAtoms[i].mAtom))
+      if (PL_strcasecmp(sizeStr, kSizeStrings[i]) == 0)
       {
-        mIconSize = atom;
+        mIconSize = i;
         break;
       }
     }
@@ -247,12 +220,12 @@ nsMozIconURI::SetSpec(const nsACString &aSpec)
 
   if (!stateString.IsEmpty())
   {
-    nsCOMPtr<nsIAtom> atom = do_GetAtom(stateString);
-    for (PRUint32 i = 0; i < NS_ARRAY_LENGTH(sStateAtoms); i++)
+    const char *stateStr = stateString.get();
+    for (PRInt32 i = 0; i < NS_ARRAY_LENGTH(kStateStrings); i++)
     {
-      if (atom == *(sStateAtoms[i].mAtom))
+      if (PL_strcasecmp(stateStr, kStateStrings[i]) == 0)
       {
-        mIconState = atom;
+        mIconState = i;
         break;
       }
     }
@@ -280,12 +253,17 @@ nsMozIconURI::SetSpec(const nsACString &aSpec)
       }
       if (!strncmp("file://", mDummyFilePath.get(), 7))
       { 
-        // we have a file url.....so store it...
-        rv = ioService->NewURI(mDummyFilePath, nsnull, nsnull, getter_AddRefs(mFileIcon));
+        // we have a file url, let the IOService normalize it
+        nsCOMPtr<nsIURI> tmpURI;
+        rv = ioService->NewURI(mDummyFilePath, nsnull, nsnull, getter_AddRefs(tmpURI));
+        if (NS_SUCCEEDED(rv) && tmpURI)
+        {
+          mFileIcon = tmpURI;
+        }
       }
       if (!sizeString.IsEmpty())
       {
-        PRInt32 sizeValue = atoi(sizeString);
+        PRInt32 sizeValue = atoi(sizeString.get());
         // if the size value we got back is > 0 then use it
         if (sizeValue)
           mSize = sizeValue;
@@ -414,7 +392,7 @@ nsMozIconURI::Equals(nsIURI *other, PRBool *result)
 
   other->GetSpec(spec2);
   GetSpec(spec1);
-  if (!nsCRT::strcasecmp(spec1.get(), spec2.get()))
+  if (!PL_strcasecmp(spec1.get(), spec2.get()))
     *result = PR_TRUE;
   else
     *result = PR_FALSE;
@@ -434,7 +412,28 @@ nsMozIconURI::SchemeIs(const char *i_Scheme, PRBool *o_Equals)
 NS_IMETHODIMP
 nsMozIconURI::Clone(nsIURI **result)
 {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  nsCOMPtr<nsIURI> newFileIcon;
+  if (mFileIcon)
+  {
+    nsresult rv = mFileIcon->Clone(getter_AddRefs(newFileIcon));
+    if (NS_FAILED(rv)) 
+      return rv;
+  }
+
+  nsMozIconURI *uri = new nsMozIconURI();
+  if (!uri)
+    return NS_ERROR_OUT_OF_MEMORY;
+ 
+  newFileIcon.swap(uri->mFileIcon);
+  uri->mSize = mSize;
+  uri->mContentType = mContentType;
+  uri->mDummyFilePath = mDummyFilePath;
+  uri->mStockIcon = mStockIcon;
+  uri->mIconSize = mIconSize;
+  uri->mIconState = mIconState;
+  NS_ADDREF(*result = uri);
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -476,8 +475,8 @@ nsMozIconURI::GetIconFile(nsIURI* * aFileUrl)
 NS_IMETHODIMP
 nsMozIconURI::SetIconFile(nsIURI* aFileUrl)
 {
-  mFileIcon = aFileUrl;
-  return NS_OK;
+  // this isn't called anywhere, needs to go through SetSpec parsing
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -526,7 +525,8 @@ nsMozIconURI::GetFileExtension(nsACString &aFileExtension)
       {
         // unfortunately, this code doesn't give us the required '.' in front of the extension
         // so we have to do it ourselves..
-        aFileExtension = NS_LITERAL_CSTRING(".") + fileExt;
+        aFileExtension.Assign('.');
+        aFileExtension.Append(fileExt);
         return NS_OK;
       }
     }
@@ -544,34 +544,34 @@ nsMozIconURI::GetFileExtension(nsACString &aFileExtension)
   const char * fileExt = strrchr(chFileName, '.');
   if (!fileExt) return NS_ERROR_FAILURE; // no file extension to work from.
 
-  aFileExtension = nsDependentCString(fileExt);
-
+  aFileExtension = fileExt;
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMozIconURI::GetStockIcon(nsACString &aStockIcon)
 {
-  aStockIcon.Assign(mStockIcon);
-
+  aStockIcon = mStockIcon;
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMozIconURI::GetIconSize(nsACString &aSize)
 {
-  if (mIconSize)
-    return mIconSize->ToUTF8String(aSize);
-  aSize.Truncate();
+  if (mIconSize >= 0)
+    aSize = kSizeStrings[mIconSize];
+  else
+    aSize.Truncate();
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMozIconURI::GetIconState(nsACString &aState)
 {
-  if (mIconState)
-    return mIconState->ToUTF8String(aState);
-  aState.Truncate();
+  if (mIconState >= 0)
+    aState = kStateStrings[mIconState];
+  else
+    aState.Truncate();
   return NS_OK;
 }
 ////////////////////////////////////////////////////////////////////////////////

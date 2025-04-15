@@ -35,7 +35,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #ifdef DEBUG
-static const char CVS_ID[] = "@(#) $RCSfile: mutex.c,v $ $Revision: 1.6.18.1 $ $Date: 2006/02/03 22:30:50 $";
+static const char CVS_ID[] = "@(#) $RCSfile: mutex.c,v $ $Revision: 1.7 $ $Date: 2005/08/25 20:08:26 $";
 #endif /* DEBUG */
 
 /*

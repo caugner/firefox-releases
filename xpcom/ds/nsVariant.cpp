@@ -45,6 +45,7 @@
 #include "prdtoa.h"
 #include <math.h>
 #include "nsCRT.h"
+#include "nsCycleCollectionParticipant.h"
 
 /***************************************************************************/
 // Helpers for static convert functions...
@@ -874,7 +875,7 @@ nsVariant::ConvertToAString(const nsDiscriminatedUnion& data,
         _retval.Assign(*data.u.mAStringValue);
         return NS_OK;
     case nsIDataType::VTYPE_CSTRING:
-        CopyASCIItoUCS2(*data.u.mCStringValue, _retval);
+        CopyASCIItoUTF16(*data.u.mCStringValue, _retval);
         return NS_OK;
     case nsIDataType::VTYPE_UTF8STRING:
         CopyUTF8toUTF16(*data.u.mUTF8StringValue, _retval);
@@ -886,7 +887,7 @@ nsVariant::ConvertToAString(const nsDiscriminatedUnion& data,
         _retval.Assign(data.u.wstr.mWStringValue);
         return NS_OK;
     case nsIDataType::VTYPE_STRING_SIZE_IS:
-        CopyASCIItoUCS2(nsDependentCString(data.u.str.mStringValue,
+        CopyASCIItoUTF16(nsDependentCString(data.u.str.mStringValue,
                                            data.u.str.mStringLength),
                         _retval);
         return NS_OK;
@@ -916,7 +917,7 @@ nsVariant::ConvertToACString(const nsDiscriminatedUnion& data,
     {
     case nsIDataType::VTYPE_ASTRING:
     case nsIDataType::VTYPE_DOMSTRING:
-        CopyUCS2toASCII(*data.u.mAStringValue, _retval);
+        LossyCopyUTF16toASCII(*data.u.mAStringValue, _retval);
         return NS_OK;
     case nsIDataType::VTYPE_CSTRING:
         _retval.Assign(*data.u.mCStringValue);
@@ -925,27 +926,27 @@ nsVariant::ConvertToACString(const nsDiscriminatedUnion& data,
         // XXX This is an extra copy that should be avoided
         // once Jag lands support for UTF8String and associated
         // conversion methods.
-        CopyUCS2toASCII(NS_ConvertUTF8toUCS2(*data.u.mUTF8StringValue),
+        LossyCopyUTF16toASCII(NS_ConvertUTF8toUTF16(*data.u.mUTF8StringValue),
                         _retval);
         return NS_OK;
     case nsIDataType::VTYPE_CHAR_STR:
         _retval.Assign(*data.u.str.mStringValue);
         return NS_OK;
     case nsIDataType::VTYPE_WCHAR_STR:
-        CopyUCS2toASCII(nsDependentString(data.u.wstr.mWStringValue),
+        LossyCopyUTF16toASCII(nsDependentString(data.u.wstr.mWStringValue),
                         _retval);
         return NS_OK;
     case nsIDataType::VTYPE_STRING_SIZE_IS:
         _retval.Assign(data.u.str.mStringValue, data.u.str.mStringLength);
         return NS_OK;
     case nsIDataType::VTYPE_WSTRING_SIZE_IS:
-        CopyUCS2toASCII(nsDependentString(data.u.wstr.mWStringValue,
+        LossyCopyUTF16toASCII(nsDependentString(data.u.wstr.mWStringValue,
                         data.u.wstr.mWStringLength), _retval);
         return NS_OK;
     case nsIDataType::VTYPE_WCHAR:
     {
         const PRUnichar* str = &data.u.mWCharValue;
-        CopyUCS2toASCII(Substring(str, str + 1), _retval);
+        LossyCopyUTF16toASCII(Substring(str, str + 1), _retval);
         return NS_OK;
     }
     default:
@@ -1054,7 +1055,7 @@ nsVariant::ConvertToStringWithSize(const nsDiscriminatedUnion& data,
         // *size = *data.mUTF8StringValue->Length();
         // *str = ToNewCString(*data.mUTF8StringValue);
         // But this will have to do for now.
-        NS_ConvertUTF8toUCS2 tempString(*data.u.mUTF8StringValue);
+        NS_ConvertUTF8toUTF16 tempString(*data.u.mUTF8StringValue);
         *size = tempString.Length();
         *str = ToNewCString(tempString);
         break;
@@ -1657,6 +1658,33 @@ nsVariant::Cleanup(nsDiscriminatedUnion* data)
     return NS_OK;
 }
 
+/* static */ void
+nsVariant::Traverse(const nsDiscriminatedUnion& data,
+                    nsCycleCollectionTraversalCallback &cb)
+{
+    switch(data.mType)
+    {
+        case nsIDataType::VTYPE_INTERFACE:
+        case nsIDataType::VTYPE_INTERFACE_IS:
+            cb.NoteXPCOMChild(data.u.iface.mInterfaceValue);
+            break;
+        case nsIDataType::VTYPE_ARRAY:
+            switch(data.u.array.mArrayType) {
+                case nsIDataType::VTYPE_INTERFACE:
+                case nsIDataType::VTYPE_INTERFACE_IS:
+                {
+                    nsISupports** p = (nsISupports**) data.u.array.mArrayValue;
+                    for(PRUint32 i = data.u.array.mArrayCount; i > 0; p++, i--)
+                        cb.NoteXPCOMChild(*p);
+                }
+                default:
+                    break;
+            }
+        default:
+            break;
+    }
+}
+
 /***************************************************************************/
 /***************************************************************************/
 // members...
@@ -2011,9 +2039,10 @@ NS_IMETHODIMP nsVariant::SetAsDOMString(const nsAString & aValue)
 {
     if(!mWritable) return NS_ERROR_OBJECT_IS_IMMUTABLE;
 
-    // A DOMString maps to an AString internally, so we can re-use
-    // SetFromAString here.
-    return nsVariant::SetFromAString(&mData, aValue);
+    DATA_SETTER_PROLOGUE((&mData));
+    if(!(mData.u.mAStringValue = new nsString(aValue)))
+        return NS_ERROR_OUT_OF_MEMORY;
+    DATA_SETTER_EPILOGUE((&mData), VTYPE_DOMSTRING);
 }
 
 /* void setAsACString (in ACString aValue); */

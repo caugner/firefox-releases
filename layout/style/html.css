@@ -90,8 +90,8 @@ center {
 blockquote[type=cite] {
   display: block;
   margin: 1em 0px;
-  padding-left: 1em;
-  border-left: solid;
+  -moz-padding-start: 1em;
+  -moz-border-start: solid;
   border-color: blue;
   border-width: thin;
 }
@@ -168,6 +168,7 @@ table {
   border-collapse: separate;
   margin-top: 0;
   margin-bottom: 0;
+  /* XXXldb do we want this if we're border-collapse:collapse ? */
   -moz-box-sizing: border-box;
   text-indent: 0;
 }
@@ -340,7 +341,6 @@ ol {
 
 li {
   display: list-item;
-  -moz-float-edge: margin-box;
 }
 
 /* nested lists have no top/bottom margins */
@@ -385,18 +385,51 @@ dir ol dir,   dir ul dir,   dir menu dir,   dir dir dir {
 hr {
   display: block;
   height: 2px;
-  border: 1px -moz-bg-inset;
+  border: 1px inset;
   margin: 0.5em auto 0.5em auto;
+  color: gray;
   -moz-float-edge: margin-box;
   -moz-box-sizing: border-box;
 }
 
 hr[size="1"] {
-  border-style: -moz-bg-solid none none none;
+  border-style: solid none none none;
 }
 
 *|*:-moz-any-link img, img[usemap], object[usemap] {
   border: 2px solid;
+}
+
+img:-moz-broken::before, input:-moz-broken::before,
+img:-moz-user-disabled::before, input:-moz-user-disabled::before,
+img:-moz-loading::before, input:-moz-loading::before,
+applet:-moz-empty-except-children-with-localname(param):-moz-broken::before,
+applet:-moz-empty-except-children-with-localname(param):-moz-user-disabled::before {
+  content: -moz-alt-content !important;
+  unicode-bidi: embed;
+}
+
+object:-moz-broken > *|*, applet:-moz-broken > *|*
+object:-moz-user-disabled > *|*, applet:-moz-user-disabled > *|* {
+  /*
+    Inherit in the object's alignment so that if we aren't aligned explicitly
+    we'll end up in the right place vertically.  See bug 36997.  Note that this
+    is not !important because we _might_ be aligned explicitly.
+  */
+  vertical-align: inherit;
+}
+
+img:-moz-suppressed, input:-moz-suppressed, object:-moz-suppressed,
+embed:-moz-suppressed, applet:-moz-suppressed {
+  /*
+    Set visibility too in case the page changes display.  Note that we _may_
+    want to just set visibility and not display, in general, if we find that
+    display:none breaks too many layouts.  And if we decide we really do want
+    people to be able to right-click blocked images, etc, we need to set
+    neither one, and hack the painting code.... :(
+   */
+  display: none !important;
+  visibility: hidden !important;
 }
 
 img[usemap], object[usemap] {
@@ -444,7 +477,8 @@ object:focus, ol:focus, p:focus, pre:focus, q:focus, s:focus, samp:focus,
 small:focus, span:focus, strike:focus, strong:focus, sub:focus, sup:focus, 
 table:focus, tbody:focus, td:focus, tfoot:focus, th:focus, thead:focus, 
 tr:focus, tt:focus, u:focus, ul:focus, var:focus {
-   outline: 1px dotted invert;
+  /* Don't specify the outline-color, we should always use initial value. */
+   outline: 1px dotted;
 }
 
 /* hidden elements */
@@ -455,7 +489,10 @@ noembed, param {
 
 /* emulation of non-standard HTML <marquee> tag */
 marquee {
-  display: block;
+  width: -moz-available;
+  display: inline-block;
+  vertical-align: text-bottom;
+  text-align: start;
   -moz-binding: url('chrome://xbl-marquee/content/xbl-marquee.xml#marquee-horizontal');
 }
 

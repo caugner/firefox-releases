@@ -144,12 +144,12 @@ nsresult nsCollationOS2::AllocateRawSortKey(PRInt32 strength,
     UniCreateLocaleObject(UNI_UCS_STRING_POINTER, (UniChar *)L"C", &locObj);
 
   res = NS_ERROR_FAILURE;               // From here on out assume failure...
-  int length = UniStrxfrm(locObj, NULL, NS_REINTERPRET_CAST(const UniChar *,stringNormalized.get()),0);
+  int length = UniStrxfrm(locObj, NULL, reinterpret_cast<const UniChar *>(stringNormalized.get()),0);
   if (length >= 0) {
     length += 5;                        // Allow for the "extra" chars UniStrxfrm()
                                         //  will out put (overrunning the buffer if
                                         // you let it...)
-    // Magic, persistant buffer.  If it's not twice the size we need,
+    // Magic, persistent buffer.  If it's not twice the size we need,
     // we grow/reallocate it 4X so it doesn't grow often.
     static UniChar* pLocalBuffer = NULL;
     static int iBufferLength = 100;
@@ -164,7 +164,7 @@ nsresult nsCollationOS2::AllocateRawSortKey(PRInt32 strength,
       pLocalBuffer = (UniChar*) malloc(sizeof(UniChar) * iBufferLength);
     if (pLocalBuffer) {
       // Do the Xfrm
-      int uLen = UniStrxfrm(locObj, pLocalBuffer, NS_REINTERPRET_CAST(const UniChar *,stringNormalized.get()), iBufferLength);
+      int uLen = UniStrxfrm(locObj, pLocalBuffer, reinterpret_cast<const UniChar *>(stringNormalized.get()), iBufferLength);
       // See how big the result really is
       uLen = UniStrlen(pLocalBuffer);
       // make sure it will fit in the output buffer...

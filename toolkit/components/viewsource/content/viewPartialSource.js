@@ -75,8 +75,6 @@ function onLoadViewPartialSource()
   } else {
     document.getElementById("menu_highlightSyntax").setAttribute("hidden", "true");
   }
-  
-  gFindBar.initFindBar();
 
   if (window.arguments[3] == 'selection')
     viewPartialSourceForSelection(window.arguments[2]);
@@ -84,11 +82,6 @@ function onLoadViewPartialSource()
     viewPartialSourceForFragment(window.arguments[2], window.arguments[3]);
 
   window._content.focus();
-}
-
-function onUnloadViewPartialSource()
-{
-  gFindBar.uninitFindBar();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -203,11 +196,11 @@ function viewPartialSourceForSelection(selection)
   // the load is aynchronous and so we will wait until the view-source DOM is done
   // before drawing the selection.
   if (canDrawSelection) {
-    window.document.getElementById("appcontent").addEventListener("load", drawSelection, true);
+    window.document.getElementById("content").addEventListener("load", drawSelection, true);
   }
 
   // all our content is held by the data:URI and URIs are internally stored as utf-8 (see nsIURI.idl)
-  var loadFlags = Components.interfaces.nsIWebNavigation.LOAD_FLAGS_BYPASS_CACHE;
+  var loadFlags = Components.interfaces.nsIWebNavigation.LOAD_FLAGS_NONE;
   getBrowser().webNavigation
               .loadURI("view-source:data:text/html;charset=utf-8," + encodeURIComponent(tmpNode.innerHTML),
                        loadFlags, null, null, null);
@@ -374,7 +367,7 @@ function viewPartialSourceForFragment(node, context)
   ; // end
 
   // display
-  var doc = getBrowser().contentDocument;
+  var doc = getBrowser().contentDocument.wrappedJSObject;
   doc.open("text/html", "replace");
   doc.write(source);
   doc.close();

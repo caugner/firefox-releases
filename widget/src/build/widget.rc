@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -39,7 +40,6 @@
 #include <winresrc.h>
 #include <dlgs.h>
 
-IDC_SELECTANCHOR        CURSOR  DISCARDABLE     "res/select.cur"
 IDC_GRAB                CURSOR  DISCARDABLE     "res/grab.cur"
 IDC_GRABBING            CURSOR  DISCARDABLE     "res/grabbing.cur"
 IDC_CELL                CURSOR  DISCARDABLE     "res/cell.cur"
@@ -50,6 +50,7 @@ IDC_ZOOMOUT             CURSOR  DISCARDABLE     "res/zoom_out.cur"
 IDC_COLRESIZE           CURSOR  DISCARDABLE     "res/col_resize.cur"
 IDC_ROWRESIZE           CURSOR  DISCARDABLE     "res/row_resize.cur"
 IDC_VERTICALTEXT        CURSOR  DISCARDABLE     "res/vertical_text.cur"
+IDC_NONE                CURSOR  DISCARDABLE     "res/none.cur"
 
 OPTPROPSHEET DIALOG DISCARDABLE  32, 32, 288, 226
 STYLE DS_MODALFRAME | DS_3DLOOK | DS_CONTEXTHELP | WS_POPUP | WS_VISIBLE | 
@@ -59,4 +60,3 @@ FONT 8, "MS Sans Serif"
 BEGIN
 
 END
-

@@ -56,8 +56,6 @@
 #include "nsReadableUtils.h"
 #include "nsIPref.h"
 
-static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
-
 nsDeviceContextSpecPh :: nsDeviceContextSpecPh()
 {
 	mPC = PpCreatePC();
@@ -87,7 +85,7 @@ NS_IMETHODIMP nsDeviceContextSpecPh :: Init(nsIWidget* aWidget,
 
 	if( printer ) {
 		int res = 111;
-		NS_ConvertUCS2toUTF8 pname(printer);
+		NS_ConvertUTF16toUTF8 pname(printer);
 		if( !strcmp( pname.get(), "<Preview>" ) ) {
 			char preview = 1;
 			PpSetPC( mPC, Pp_PC_DO_PREVIEW, &preview, 0 );
@@ -108,7 +106,7 @@ NS_IMETHODIMP nsDeviceContextSpecPh :: Init(nsIWidget* aWidget,
 		aPS->GetPrintToFile(&tofile);
 		if( tofile == PR_TRUE ) {
 			aPS->GetToFileName(&printfile);
-			if( printfile ) PpSetPC( mPC, Pp_PC_FILENAME, NS_ConvertUCS2toUTF8(printfile).get(), 0 );
+			if( printfile ) PpSetPC( mPC, Pp_PC_FILENAME, NS_ConvertUTF16toUTF8(printfile).get(), 0 );
 			}
 
 		aPS->GetNumCopies(&copies);
@@ -174,7 +172,7 @@ NS_IMETHODIMP nsDeviceContextSpecPh :: Init(nsIWidget* aWidget,
 
 		/* set the print frame / BG colors and images settings, according to the Pt_ARG_WEB_OPTION setting */
 		nsresult res;
-		nsCOMPtr<nsIPref> prefs(do_GetService(kPrefCID, &res));
+		nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &res));
 
     PRInt16 howToEnableFrameUI = nsIPrintSettings::kFrameEnableNone;
     aPS->GetHowToEnableFrameUI(&howToEnableFrameUI);
@@ -259,7 +257,7 @@ NS_IMETHODIMP nsPrinterEnumeratorPh::GetDefaultPrinterName(PRUnichar * *aDefault
 	if( pc ) {
 		PpLoadDefaultPrinter( pc );
 		PpGetPC( pc, Pp_PC_NAME, &printer );
-  	if( printer ) *aDefaultPrinterName = ToNewUnicode( NS_LITERAL_STRING( printer ) );
+  	if( printer ) *aDefaultPrinterName = ToNewUnicode( static_cast<const nsAFlatString&>(NS_MULTILINE_LITERAL_STRING(printer)) );
 		PpReleasePC( pc );
 		}
 
@@ -323,7 +321,7 @@ nsPrinterEnumeratorPh::DoEnumeratePrinters(PRBool aDoExtended, PRUint32* aCount,
 
 		if( count < pcount-1 )
 			newName.AssignWithConversion(plist[count]);
-		else newName.AssignWithConversion( "<Preview>" );
+		else newName.AssignLiteral( "<Preview>" );
 
 		PRUnichar *str = ToNewUnicode(newName);
 		if (!str) 

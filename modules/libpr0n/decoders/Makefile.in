@@ -43,10 +43,10 @@ VPATH		= @srcdir@
 include $(DEPTH)/config/autoconf.mk
 
 ifneq (,$(filter icon,$(MOZ_IMG_DECODERS)))
-ifdef MOZ_ENABLE_GNOMEUI
+ifneq (,$(filter gtk2,$(MOZ_WIDGET_TOOLKIT)))
 TOOL_DIRS = icon/gtk icon
 endif
-ifneq (,$(filter WINCE WINNT,$(OS_ARCH)))
+ifeq ($(OS_ARCH),WINNT)
 DIRS = icon/win icon
 endif
 ifeq ($(OS_ARCH),OS2)

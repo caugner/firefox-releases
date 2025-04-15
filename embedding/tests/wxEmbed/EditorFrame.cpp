@@ -71,7 +71,7 @@ EditorFrame::EditorFrame(wxWindow* aParent)
     mCommandManager = do_GetInterface(mWebBrowser);
 
     nsCOMPtr<nsIWebNavigation> webNav = do_QueryInterface(mWebBrowser);
-    webNav->LoadURI(NS_ConvertASCIItoUCS2("www.mozilla.org").get(),
+    webNav->LoadURI(NS_ConvertASCIItoUTF16("www.mozilla.org").get(),
         nsIWebNavigation::LOAD_FLAGS_NONE, nsnull, nsnull, nsnull);
 
 }
@@ -84,7 +84,8 @@ void EditorFrame::MakeEditable()
     nsCOMPtr<nsIEditingSession> editingSession = do_GetInterface(mWebBrowser);
     if (!editingSession)
         return;// NS_ERROR_FAILURE;
-    editingSession->MakeWindowEditable(domWindow, NULL, PR_TRUE);
+    editingSession->MakeWindowEditable(domWindow, NULL, PR_TRUE, PR_TRUE,
+                                       PR_FALSE);
 }
 
 nsresult EditorFrame::DoCommand(const char *aCommand, nsICommandParams *aCommandParams)

@@ -112,7 +112,7 @@ JSBool XPCDispConvert::JSArrayToCOMArray(XPCCallContext& ccx, JSObject *obj,
                         err = NS_ERROR_OUT_OF_MEMORY;
                         return JS_FALSE;
                     }
-                    if(FAILED(SafeArrayAccessData(array, NS_REINTERPRET_CAST(void**,&varArray))))
+                    if(FAILED(SafeArrayAccessData(array, reinterpret_cast<void**>(&varArray))))
                     {
                         err = NS_ERROR_FAILURE;
                         return JS_FALSE;
@@ -131,7 +131,19 @@ JSBool XPCDispConvert::JSArrayToCOMArray(XPCCallContext& ccx, JSObject *obj,
                 ++varArray;
         }
     }
-    SafeArrayUnaccessData(array);
+    if(!array)
+    {
+        array = SafeArrayCreateVector(VT_VARIANT, 0, 0);
+        if(!array)
+        {
+            err = NS_ERROR_OUT_OF_MEMORY;
+            return JS_FALSE;
+        }
+    }
+    else
+    {
+        SafeArrayUnaccessData(array);
+    }
     var.vt = VT_ARRAY | VT_VARIANT;
     var.parray = array;
     return JS_TRUE;
@@ -284,7 +296,7 @@ JSBool XPCDispConvert::JSToCOM(XPCCallContext& ccx,
             }
 
             CComBSTR val(JS_GetStringLength(str),
-                         NS_REINTERPRET_CAST(const WCHAR *, chars));
+                         reinterpret_cast<const WCHAR *>(chars));
             varDest->bstrVal = val.Detach();
         }
         break;
@@ -327,8 +339,8 @@ JSBool XPCDispConvert::JSToCOM(XPCCallContext& ccx,
             }
             varDest->vt = VT_DISPATCH;
             pUnknown->QueryInterface(IID_IDispatch, 
-                                     NS_REINTERPRET_CAST(void**,
-                                                         &varDest->pdispVal));
+                                     reinterpret_cast<void**>
+                                                     (&varDest->pdispVal));
             NS_IF_RELEASE(pUnknown);
         }
         break;
@@ -406,10 +418,18 @@ JSBool XPCDispConvert::COMArrayToJSArray(XPCCallContext& ccx,
     AUTO_MARK_JSVAL(ccx, &val);
     for(long index = lbound; index <= ubound; ++index)
     {
-        // Divine the type of our array
+        HRESULT hr;
         _variant_t var;
-        var.vt = vartype;
-        if(FAILED(SafeArrayGetElement(src.parray, &index, &var.byref)))
+        if(vartype == VT_VARIANT)
+        {
+            hr = SafeArrayGetElement(src.parray, &index, &var);
+        }
+        else
+        {
+            var.vt = vartype;
+            hr = SafeArrayGetElement(src.parray, &index, &var.byref);
+        }
+        if(FAILED(hr))
         {
             err = NS_ERROR_FAILURE;
             return JS_FALSE;
@@ -433,7 +453,7 @@ inline
 jsval StringToJSVal(JSContext* cx, const PRUnichar * str, PRUint32 len)
 {
     JSString * s = JS_NewUCStringCopyN(cx,
-                                       NS_REINTERPRET_CAST(const jschar *, str),
+                                       reinterpret_cast<const jschar *>(str),
                                        len);
     if(s)
         return STRING_TO_JSVAL(s);
@@ -541,8 +561,8 @@ JSBool XPCDispConvert::COMToJS(XPCCallContext& ccx, const VARIANT& src,
         {
             return JS_NewNumberValue(
                 ccx, 
-                NS_STATIC_CAST(double,
-                               isPtr ? src.pcyVal->int64 : 
+                static_cast<double>
+                           (isPtr ? src.pcyVal->int64 : 
                                        src.cyVal.int64) / 100.0,
                 &dest);
         }
@@ -554,8 +574,8 @@ JSBool XPCDispConvert::COMToJS(XPCCallContext& ccx, const VARIANT& src,
         default:
         {
             // Last ditch effort to convert to string
-            if(FAILED(VariantChangeType(NS_CONST_CAST(VARIANT*,&src), 
-                                         NS_CONST_CAST(VARIANT*,&src), 
+            if(FAILED(VariantChangeType(const_cast<VARIANT*>(&src), 
+                                         const_cast<VARIANT*>(&src), 
                                          VARIANT_ALPHABOOL, VT_BSTR)))
             {
                 err = NS_ERROR_XPC_BAD_CONVERT_JS;

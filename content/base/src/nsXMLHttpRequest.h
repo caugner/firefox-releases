@@ -49,7 +49,6 @@
 #include "nsIHttpChannel.h"
 #include "nsIDocument.h"
 #include "nsIStreamListener.h"
-#include "nsIEventQueueService.h"
 #include "nsWeakReference.h"
 #include "jsapi.h"
 #include "nsIScriptContext.h"
@@ -57,11 +56,17 @@
 #include "nsIInterfaceRequestor.h"
 #include "nsIHttpHeaderVisitor.h"
 #include "nsIProgressEventSink.h"
+#include "nsCOMArray.h"
 #include "nsJSUtils.h"
 #include "nsTArray.h"
-#include "nsIDOMGCParticipant.h"
-
+#include "nsCycleCollectionParticipant.h"
+#include "nsIJSNativeInitializer.h"
+#include "nsPIDOMWindow.h"
 #include "nsIDOMLSProgressEvent.h"
+#include "nsClassHashtable.h"
+#include "nsHashKeys.h"
+#include "prclist.h"
+#include "prtime.h"
 
 class nsILoadGroup;
 
@@ -73,14 +78,14 @@ class nsXMLHttpRequest : public nsIXMLHttpRequest,
                          public nsIChannelEventSink,
                          public nsIProgressEventSink,
                          public nsIInterfaceRequestor,
-                         public nsIDOMGCParticipant,
-                         public nsSupportsWeakReference
+                         public nsSupportsWeakReference,
+                         public nsIJSNativeInitializer
 {
 public:
   nsXMLHttpRequest();
   virtual ~nsXMLHttpRequest();
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
 
   // nsIXMLHttpRequest
   NS_DECL_NSIXMLHTTPREQUEST
@@ -116,16 +121,17 @@ public:
   // nsIInterfaceRequestor
   NS_DECL_NSIINTERFACEREQUESTOR
 
-  // nsIDOMGCParticipant
-  virtual nsIDOMGCParticipant* GetSCCIndex();
-  virtual void AppendReachableList(nsCOMArray<nsIDOMGCParticipant>& aArray);
+  // nsIJSNativeInitializer
+  NS_IMETHOD Initialize(nsISupports* aOwner, JSContext* cx, JSObject* obj,
+                       PRUint32 argc, jsval* argv);
+
+  // This is called by the factory constructor.
+  nsresult Init();
+
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsXMLHttpRequest, nsIXMLHttpRequest)
 
 protected:
-  typedef nsMarkedJSFunctionHolder<nsIDOMEventListener> ListenerHolder;
 
-  nsresult GetStreamForWString(const PRUnichar* aStr,
-                               PRInt32 aLength,
-                               nsIInputStream** aStream);
   nsresult DetectCharset(nsACString& aCharset);
   nsresult ConvertBodyToText(nsAString& aOutBuffer);
   static NS_METHOD StreamReaderFunc(nsIInputStream* in,
@@ -145,30 +151,69 @@ protected:
   nsresult RequestCompleted();
   nsresult GetLoadGroup(nsILoadGroup **aLoadGroup);
   nsIURI *GetBaseURI();
-  nsresult CreateEvent(nsEvent* event, nsIDOMEvent** domevent);
-  void NotifyEventListeners(nsIDOMEventListener* aHandler,
-                            const nsCOMArray<nsIDOMEventListener>* aListeners,
+
+  // This creates a trusted event, which is not cancelable and doesn't
+  // bubble. Don't call this if we have no event listeners, since this may
+  // use our script context, which is not set in that case.
+  nsresult CreateEvent(const nsAString& aType, nsIDOMEvent** domevent);
+
+  // Make a copy of a pair of members to be passed to NotifyEventListeners.
+  void CopyEventListeners(nsCOMPtr<nsIDOMEventListener>& aListener,
+                          const nsCOMArray<nsIDOMEventListener>& aListenerArray,
+                          nsCOMArray<nsIDOMEventListener>& aCopy);
+
+  // aListeners must be a "non-live" list (i.e., addEventListener and
+  // removeEventListener should not affect it).  It should be built from
+  // member variables by calling CopyEventListeners.
+  void NotifyEventListeners(const nsCOMArray<nsIDOMEventListener>& aListeners,
                             nsIDOMEvent* aEvent);
   void ClearEventListeners();
   already_AddRefed<nsIHttpChannel> GetCurrentHttpChannel();
 
+  /**
+   * Check if mChannel is ok for a cross-site request by making sure no
+   * inappropriate headers are set, and no username/password is set.
+   *
+   * Also updates the XML_HTTP_REQUEST_USE_XSITE_AC bit.
+   */
+  nsresult CheckChannelForCrossSiteRequest();
+
+  nsresult CheckInnerWindowCorrectness()
+  {
+    if (mOwner) {
+      NS_ASSERTION(mOwner->IsInnerWindow(), "Should have inner window here!\n");
+      nsPIDOMWindow* outer = mOwner->GetOuterWindow();
+      if (!outer || outer->GetCurrentInnerWindow() != mOwner) {
+        return NS_ERROR_FAILURE;
+      }
+    }
+    return NS_OK;
+  }
+
   nsCOMPtr<nsISupports> mContext;
+  nsCOMPtr<nsIPrincipal> mPrincipal;
   nsCOMPtr<nsIChannel> mChannel;
+  // mReadRequest is different from mChannel for multipart requests
   nsCOMPtr<nsIRequest> mReadRequest;
   nsCOMPtr<nsIDOMDocument> mDocument;
 
-  nsTArray<ListenerHolder*> mLoadEventListeners;
-  nsTArray<ListenerHolder*> mErrorEventListeners;
+  nsCOMArray<nsIDOMEventListener> mLoadEventListeners;
+  nsCOMArray<nsIDOMEventListener> mErrorEventListeners;
+  nsCOMArray<nsIDOMEventListener> mProgressEventListeners;
+  nsCOMArray<nsIDOMEventListener> mUploadProgressEventListeners;
+  nsCOMArray<nsIDOMEventListener> mReadystatechangeEventListeners;
+
+  // These may be null (native callers or xpcshell).
   nsCOMPtr<nsIScriptContext> mScriptContext;
+  nsCOMPtr<nsPIDOMWindow>    mOwner; // Inner window.
 
-  nsMarkedJSFunctionHolder<nsIDOMEventListener> mOnLoadListener;
-  nsMarkedJSFunctionHolder<nsIDOMEventListener> mOnErrorListener;
-  nsMarkedJSFunctionHolder<nsIDOMEventListener> mOnProgressListener;
-
-  nsMarkedJSFunctionHolder<nsIOnReadyStateChangeHandler> mOnReadystatechangeListener;
+  nsCOMPtr<nsIDOMEventListener> mOnLoadListener;
+  nsCOMPtr<nsIDOMEventListener> mOnErrorListener;
+  nsCOMPtr<nsIDOMEventListener> mOnProgressListener;
+  nsCOMPtr<nsIDOMEventListener> mOnUploadProgressListener;
+  nsCOMPtr<nsIDOMEventListener> mOnReadystatechangeListener;
 
   nsCOMPtr<nsIStreamListener> mXMLParserStreamListener;
-  nsCOMPtr<nsIEventQueueService> mEventQService;
 
   // used to implement getAllResponseHeaders()
   class nsHeaderVisitor : public nsIHttpHeaderVisitor {
@@ -200,6 +245,10 @@ protected:
   nsCOMPtr<nsIProgressEventSink> mProgressEventSink;
 
   PRUint32 mState;
+
+  // List of potentially dangerous headers explicitly set using
+  // SetRequestHeader.
+  nsTArray<nsCString> mExtraRequestHeaders;
 };
 
 

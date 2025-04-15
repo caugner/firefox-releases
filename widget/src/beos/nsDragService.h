@@ -41,13 +41,9 @@
 
 #include "nsBaseDragService.h"
 #include "nsIDragSessionBeOS.h"
-#include "nsWindow.h"
-#include <Message.h>
-#include <Rect.h>
 #include <String.h>
-#include <View.h>
 
-class nsDragView;
+class BMessage;
 
 /**
  * Native BeOS DragService wrapper
@@ -68,7 +64,7 @@ public:
                                nsIScriptableRegion * aRegion,
                                PRUint32 aActionType);
   NS_IMETHOD StartDragSession();
-  NS_IMETHOD EndDragSession();
+  NS_IMETHOD EndDragSession(PRBool aDoneDrag);
   
   // nsIDragSession
   NS_IMETHOD GetNumDropItems      (PRUint32 * aNumItems);

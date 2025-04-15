@@ -49,7 +49,7 @@ class SmoothScroll;
 //this is a class that acts as a container for other views and provides
 //automatic management of scrolling of the views it contains.
 
-class nsScrollPortView : public nsView, public nsIScrollableView_MOZILLA_1_8_BRANCH
+class nsScrollPortView : public nsView, public nsIScrollableView
 {
 public:
   nsScrollPortView(nsViewManager* aViewManager = nsnull);
@@ -58,8 +58,6 @@ public:
 
   NS_IMETHOD QueryInterface(REFNSIID aIID,
                             void** aInstancePtr);
-
-  NS_IMETHOD  SetWidget(nsIWidget *aWidget);
 
   //nsIScrollableView interface
   NS_IMETHOD  CreateScrollControls(nsNativeWidget aNative = nsnull);
@@ -87,10 +85,6 @@ public:
 
   // local to the view module
 
-  NS_IMETHOD  Paint(nsIRenderingContext& rc, const nsRect& rect,
-                    PRUint32 aPaintFlags, PRBool &Result);
-  NS_IMETHOD  Paint(nsIRenderingContext& aRC, const nsIRegion& aRegion,
-                    PRUint32 aPaintFlags, PRBool &Result);
   nsView*     GetScrolledView() const { return GetFirstChild(); }
 
 private:
@@ -108,11 +102,10 @@ protected:
   virtual ~nsScrollPortView();
 
   //private
-  void Scroll(nsView *aScrolledView, nsPoint aTwipsDelta, nsPoint aPixDelta, float aT2P);
+  void Scroll(nsView *aScrolledView, nsPoint aTwipsDelta, nsPoint aPixDelta, PRInt32 p2a);
   PRBool CannotBitBlt(nsView* aScrolledView);
 
   nscoord             mOffsetX, mOffsetY;
-  nscoord             mOffsetXpx, mOffsetYpx;
   PRUint32            mScrollProperties;
   nscoord             mLineHeight;
   nsISupportsArray   *mListeners;

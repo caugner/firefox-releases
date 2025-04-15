@@ -45,22 +45,27 @@
 #include "nsIController.h"
 #include "nsAutoPtr.h"
 #include "nsXBLEventHandler.h"
+#include "nsIWeakReference.h"
+#include "nsIScriptGlobalObject.h"
+#include "nsDOMScriptObjectHolder.h"
+#include "nsCycleCollectionParticipant.h"
 
 class nsIDOMEvent;
 class nsIContent;
 class nsIDOMUIEvent;
 class nsIDOMKeyEvent;
 class nsIDOMMouseEvent;
-class nsIDOMEventReceiver;
+class nsPIDOMEventTarget;
 class nsIDOM3EventTarget;
 class nsXBLPrototypeBinding;
 
-#define NS_HANDLER_TYPE_XBL_JS          (1 << 0)
-#define NS_HANDLER_TYPE_XBL_COMMAND     (1 << 1)
-#define NS_HANDLER_TYPE_XUL             (1 << 2)
-#define NS_HANDLER_ALLOW_UNTRUSTED      (1 << 5)
-#define NS_HANDLER_TYPE_SYSTEM          (1 << 6)
-#define NS_HANDLER_TYPE_PREVENTDEFAULT  (1 << 7)
+#define NS_HANDLER_TYPE_XBL_JS              (1 << 0)
+#define NS_HANDLER_TYPE_XBL_COMMAND         (1 << 1)
+#define NS_HANDLER_TYPE_XUL                 (1 << 2)
+#define NS_HANDLER_HAS_ALLOW_UNTRUSTED_ATTR (1 << 4)
+#define NS_HANDLER_ALLOW_UNTRUSTED          (1 << 5)
+#define NS_HANDLER_TYPE_SYSTEM              (1 << 6)
+#define NS_HANDLER_TYPE_PREVENTDEFAULT      (1 << 7)
 
 // XXX Use nsIDOMEvent:: codes?
 #define NS_PHASE_CAPTURING          1
@@ -78,21 +83,27 @@ public:
                         const PRUnichar* aClickCount, const PRUnichar* aGroup,
                         const PRUnichar* aPreventDefault,
                         const PRUnichar* aAllowUntrusted,
-                        nsXBLPrototypeBinding* aBinding);
+                        nsXBLPrototypeBinding* aBinding,
+                        PRUint32 aLineNumber);
 
   // This constructor is used only by XUL key handlers (e.g., <key>)
   nsXBLPrototypeHandler(nsIContent* aKeyElement);
 
   ~nsXBLPrototypeHandler();
 
-  PRBool KeyEventMatched(nsIDOMKeyEvent* aKeyEvent);
+  // if aCharCode is not zero, it is used instead of the charCode of aKeyEvent.
+  PRBool KeyEventMatched(nsIDOMKeyEvent* aKeyEvent,
+                         PRUint32 aCharCode = 0,
+                         PRBool aIgnoreShiftKey = PR_FALSE);
   inline PRBool KeyEventMatched(nsIAtom* aEventType,
-                                nsIDOMKeyEvent* aEvent)
+                                nsIDOMKeyEvent* aEvent,
+                                PRUint32 aCharCode = 0,
+                                PRBool aIgnoreShiftKey = PR_FALSE)
   {
     if (aEventType != mEventName)
       return PR_FALSE;
 
-    return KeyEventMatched(aEvent);
+    return KeyEventMatched(aEvent, aCharCode, aIgnoreShiftKey);
   }
 
   PRBool MouseEventMatched(nsIDOMMouseEvent* aMouseEvent);
@@ -109,17 +120,13 @@ public:
 
   void AppendHandlerText(const nsAString& aText);
 
-  void SetLineNumber(PRUint32 aLineNumber) {
-    mLineNumber = aLineNumber;
-  }
-
   PRUint8 GetPhase() { return mPhase; }
   PRUint8 GetType() { return mType; }
 
   nsXBLPrototypeHandler* GetNextHandler() { return mNextHandler; }
   void SetNextHandler(nsXBLPrototypeHandler* aHandler) { mNextHandler = aHandler; }
 
-  nsresult ExecuteHandler(nsIDOMEventReceiver* aReceiver, nsIDOMEvent* aEvent);
+  nsresult ExecuteHandler(nsPIDOMEventTarget* aTarget, nsIDOMEvent* aEvent);
 
   already_AddRefed<nsIAtom> GetEventName();
   void SetEventName(nsIAtom* aName) { mEventName = aName; }
@@ -139,6 +146,13 @@ public:
     return mHandler;
   }
 
+  PRBool HasAllowUntrustedAttr()
+  {
+    return (mType & NS_HANDLER_HAS_ALLOW_UNTRUSTED_ATTR) != 0;
+  }
+
+  // This returns a valid value only if HasAllowUntrustedEventsAttr returns
+  // PR_TRUE.
   PRBool AllowUntrustedEvents()
   {
     return (mType & NS_HANDLER_ALLOW_UNTRUSTED) != 0;
@@ -148,7 +162,7 @@ public:
   static PRUint32 gRefCnt;
   
 protected:
-  already_AddRefed<nsIController> GetController(nsIDOMEventReceiver* aReceiver);
+  already_AddRefed<nsIController> GetController(nsPIDOMEventTarget* aTarget);
   
   inline PRInt32 GetMatchingKeyCode(const nsAString& aKeyName);
   void ConstructPrototype(nsIContent* aKeyElement, 
@@ -160,9 +174,15 @@ protected:
                           const PRUnichar* aPreventDefault=nsnull,
                           const PRUnichar* aAllowUntrusted=nsnull);
 
+  void ReportKeyConflict(const PRUnichar* aKey, const PRUnichar* aModifiers, nsIContent* aElement, const char *aMessageName);
   void GetEventType(nsAString& type);
-  PRBool ModifiersMatchMask(nsIDOMUIEvent* aEvent);
-
+  PRBool ModifiersMatchMask(nsIDOMUIEvent* aEvent,
+                            PRBool aIgnoreShiftKey = PR_FALSE);
+  nsresult DispatchXBLCommand(nsPIDOMEventTarget* aTarget, nsIDOMEvent* aEvent);
+  nsresult DispatchXULKeyCommand(nsIDOMEvent* aEvent);
+  nsresult EnsureEventHandler(nsIScriptGlobalObject* aGlobal,
+                              nsIScriptContext *aBoundContext, nsIAtom *aName,
+                              nsScriptObjectHolder &aHandler);
   static PRInt32 KeyToMask(PRInt32 key);
   
   static PRInt32 kAccelKey;
@@ -183,11 +203,11 @@ protected:
 
 protected:
   union {
-    nsIContent* mHandlerElement;  // For XUL <key> element handlers.
-    PRUnichar* mHandlerText;      // For XBL handlers (we don't build an
-                                  // element for the <handler>, and instead we
-                                  // cache the JS text or command name that we
-                                  // should use.
+    nsIWeakReference* mHandlerElement;  // For XUL <key> element handlers. [STRONG]
+    PRUnichar*        mHandlerText;     // For XBL handlers (we don't build an
+                                        // element for the <handler>, and instead
+                                        // we cache the JS text or command name
+                                        // that we should use.
   };
 
   PRUint32 mLineNumber;  // The line number we started at in the XBL file
@@ -207,8 +227,6 @@ protected:
   // The primary filter information for mouse/key events.
   PRInt32 mDetail;           // For key events, contains a charcode or keycode. For
                              // mouse events, stores the button info.
-  
-  
 
   // Prototype handlers are chained. We own the next handler in the chain.
   nsXBLPrototypeHandler* mNextHandler;

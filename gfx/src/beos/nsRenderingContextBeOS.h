@@ -40,7 +40,6 @@
 #define nsRenderingContextBeOS_h___
 
 #include "nsRenderingContextImpl.h"
-#include "nsUnitConversion.h"
 #include "nsFont.h"
 #include "nsIFontMetrics.h"
 #include "nsPoint.h"
@@ -174,7 +173,6 @@ public:
 	
 	NS_IMETHOD CopyOffScreenBits(nsIDrawingSurface* aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY,
 		const nsRect &aDestBounds, PRUint32 aCopyFlags);
-	NS_IMETHOD RetrieveCurrentNativeGraphicData(void** ngd);
 	
 	void CreateClipRegion();
 
@@ -194,6 +192,7 @@ public:
                                 nsBoundingMetrics& aBoundingMetrics,
                                 PRInt32*           aFontID = nsnull);
 #endif /* MOZ_MATHML */
+
   //LockAndUpdateView() - method, similar to UpdateGC (from gtk gfx).
   //Acquires "fresh" drawable mView (BView) from drawing surface, locks it (BeOS specifics),
   //updates font, color and sets clipping region. 
@@ -226,6 +225,8 @@ protected:
 	rgb_color mRGB_color;
 	BFont *mCurrentBFont;
 	nsLineStyle mCurrentLineStyle;
+	pattern mCurrentLinePattern;
+	
 	float mP2T;
 };
 

@@ -38,14 +38,16 @@
 #define nsJSEnvironment_h___
 
 #include "nsIScriptContext.h"
+#include "nsIScriptRuntime.h"
 #include "nsCOMPtr.h"
 #include "jsapi.h"
-#include "nsCOMPtr.h"
 #include "nsIObserver.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsIXPCScriptNotify.h"
 #include "nsITimer.h"
 #include "prtime.h"
+#include "nsCycleCollectionParticipant.h"
+#include "nsScriptNameSpaceManager.h"
+
 class nsIXPConnectJSObjectHolder;
 
 class nsJSContext : public nsIScriptContext,
@@ -56,14 +58,18 @@ public:
   nsJSContext(JSRuntime *aRuntime);
   virtual ~nsJSContext();
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsJSContext, nsIScriptContext)
+
+  virtual PRUint32 GetScriptTypeID()
+    { return nsIProgrammingLanguage::JAVASCRIPT; }
 
   virtual nsresult EvaluateString(const nsAString& aScript,
                                   void *aScopeObject,
                                   nsIPrincipal *principal,
                                   const char *aURL,
                                   PRUint32 aLineNo,
-                                  const char* aVersion,
+                                  PRUint32 aVersion,
                                   nsAString *aRetValue,
                                   PRBool* aIsUndefined);
   virtual nsresult EvaluateStringWithValue(const nsAString& aScript,
@@ -71,7 +77,7 @@ public:
                                      nsIPrincipal *aPrincipal,
                                      const char *aURL,
                                      PRUint32 aLineNo,
-                                     const char* aVersion,
+                                     PRUint32 aVersion,
                                      void* aRetValue,
                                      PRBool* aIsUndefined);
 
@@ -81,25 +87,30 @@ public:
                                  nsIPrincipal *principal,
                                  const char *aURL,
                                  PRUint32 aLineNo,
-                                 const char* aVersion,
-                                 void** aScriptObject);
+                                 PRUint32 aVersion,
+                                 nsScriptObjectHolder &aScriptObject);
   virtual nsresult ExecuteScript(void* aScriptObject,
                                  void *aScopeObject,
                                  nsAString* aRetValue,
                                  PRBool* aIsUndefined);
-  virtual nsresult CompileEventHandler(void *aTarget,
-                                       nsIAtom *aName,
-                                       const char *aEventName,
+
+  virtual nsresult CompileEventHandler(nsIAtom *aName,
+                                       PRUint32 aArgCount,
+                                       const char** aArgNames,
                                        const nsAString& aBody,
-                                       const char *aURL,
-                                       PRUint32 aLineNo,
-                                       PRBool aShared,
-                                       void** aHandler);
-  virtual nsresult CallEventHandler(JSObject *aTarget, JSObject *aHandler, 
-                                    uintN argc, jsval *argv, jsval* rval);
-  virtual nsresult BindCompiledEventHandler(void *aTarget,
+                                       const char *aURL, PRUint32 aLineNo,
+                                       PRUint32 aVersion,
+                                       nsScriptObjectHolder &aHandler);
+  virtual nsresult CallEventHandler(nsISupports* aTarget, void *aScope,
+                                    void* aHandler,
+                                    nsIArray *argv, nsIVariant **rv);
+  virtual nsresult BindCompiledEventHandler(nsISupports *aTarget,
+                                            void *aScope,
                                             nsIAtom *aName,
                                             void *aHandler);
+  virtual nsresult GetBoundEventHandler(nsISupports* aTarget, void *aScope,
+                                        nsIAtom* aName,
+                                        nsScriptObjectHolder &aHandler);
   virtual nsresult CompileFunction(void* aTarget,
                                    const nsACString& aName,
                                    PRUint32 aArgCount,
@@ -107,51 +118,109 @@ public:
                                    const nsAString& aBody,
                                    const char* aURL,
                                    PRUint32 aLineNo,
+                                   PRUint32 aVersion,
                                    PRBool aShared,
                                    void** aFunctionObject);
 
-  virtual void SetDefaultLanguageVersion(const char* aVersion);
+  virtual void SetDefaultLanguageVersion(PRUint32 aVersion);
   virtual nsIScriptGlobalObject *GetGlobalObject();
   virtual void *GetNativeContext();
+  virtual void *GetNativeGlobal();
+  virtual nsresult CreateNativeGlobalForInner(
+                                      nsIScriptGlobalObject *aGlobal,
+                                      PRBool aIsChrome,
+                                      void **aNativeGlobal,
+                                      nsISupports **aHolder);
+  virtual nsresult ConnectToInner(nsIScriptGlobalObject *aNewInner,
+                                  void *aOuterGlobal);
   virtual nsresult InitContext(nsIScriptGlobalObject *aGlobalObject);
   virtual PRBool IsContextInitialized();
+  virtual void FinalizeContext();
+
   virtual void GC();
 
   virtual void ScriptEvaluated(PRBool aTerminated);
-  virtual void SetOwner(nsIScriptContextOwner* owner);
-  virtual nsIScriptContextOwner *GetOwner();
   virtual nsresult SetTerminationFunction(nsScriptTerminationFunc aFunc,
                                           nsISupports* aRef);
   virtual PRBool GetScriptsEnabled();
   virtual void SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts);
+
+  virtual nsresult SetProperty(void *aTarget, const char *aPropName, nsISupports *aVal);
 
   virtual PRBool GetProcessingScriptTag();
   virtual void SetProcessingScriptTag(PRBool aResult);
 
   virtual void SetGCOnDestruction(PRBool aGCOnDestruction);
 
-  virtual nsresult InitClasses(JSObject *aGlobalObj);
+  virtual nsresult InitClasses(void *aGlobalObj);
+  virtual void ClearScope(void* aGlobalObj, PRBool bClearPolluters);
 
   virtual void WillInitializeContext();
   virtual void DidInitializeContext();
+  virtual void DidSetDocument(nsISupports *aDocdoc, void *aGlobal) {;}
+
+  virtual nsresult Serialize(nsIObjectOutputStream* aStream, void *aScriptObject);
+  virtual nsresult Deserialize(nsIObjectInputStream* aStream,
+                               nsScriptObjectHolder &aResult);
+
+  virtual nsresult DropScriptObject(void *object);
+  virtual nsresult HoldScriptObject(void *object);
+
+  virtual void ReportPendingException();
 
   NS_DECL_NSIXPCSCRIPTNOTIFY
 
   NS_DECL_NSITIMERCALLBACK
 
+  static void LoadStart();
+  static void LoadEnd();
+
+  // CC does always call cycle collector and it also updates the counters
+  // that MaybeCC uses.
+  static void CC();
+
+  // MaybeCC calls cycle collector if certain conditions are fulfilled.
+  // The conditions are:
+  // - The timer related to page load (sGCTimer) must not be active.
+  // - At least NS_MIN_CC_INTERVAL milliseconds must have elapsed since the
+  //   previous cycle collector call.
+  // - Certain number of MaybeCC calls have occurred.
+  //   The number of needed MaybeCC calls depends on the aHigherProbability
+  //   parameter. If the parameter is true, probability for calling cycle
+  //   collector rises increasingly. If the parameter is all the time false,
+  //   at least NS_MAX_DELAYED_CCOLLECT MaybeCC calls are needed.
+  //   If the previous call to cycle collector did collect something,
+  //   MaybeCC works effectively as if aHigherProbability was true.
+  // @return PR_TRUE if cycle collector was called.
+  static PRBool MaybeCC(PRBool aHigherProbability);
+
+  // Calls CC() if user is currently inactive, otherwise MaybeCC(PR_TRUE)
+  static void CCIfUserInactive();
 protected:
   nsresult InitializeExternalClasses();
-  nsresult InitializeLiveConnectClasses(JSObject *aGlobalObj);
   // aHolder should be holding our global object
   nsresult FindXPCNativeWrapperClass(nsIXPConnectJSObjectHolder *aHolder);
 
-  void FireGCTimer();
+  // Helper to convert xpcom datatypes to jsvals.
+  nsresult ConvertSupportsTojsvals(nsISupports *aArgs,
+                                   void *aScope,
+                                   PRUint32 *aArgc, void **aArgv,
+                                   void **aMarkp);
+
+  nsresult AddSupportsPrimitiveTojsvals(nsISupports *aArg, jsval *aArgv);
+
+  void FireGCTimer(PRBool aLoadInProgress);
+
+  // given an nsISupports object (presumably an event target or some other
+  // DOM object), get (or create) the JSObject wrapping it.
+  nsresult JSObjectFromInterface(nsISupports *aSup, void *aScript, 
+                                 JSObject **aRet);
 
 private:
+  void Unlink();
+
   JSContext *mContext;
   PRUint32 mNumEvaluations;
-
-  nsIScriptContextOwner* mOwner;  /* NB: weak reference, not ADDREF'd */
 
 protected:
   struct TerminationFuncHolder;
@@ -212,11 +281,9 @@ private:
   PRPackedBool mScriptsEnabled;
   PRPackedBool mGCOnDestruction;
   PRPackedBool mProcessingScriptTag;
-  PRPackedBool mIsTrackingChromeCodeTime;
 
-  PRUint32 mBranchCallbackCount;
-  PRTime mBranchCallbackTime;
   PRUint32 mDefaultJSOptions;
+  PRTime mOperationCallbackTime;
 
   // mGlobalWrapperRef is used only to hold a strong reference to the
   // global object wrapper while the nsJSContext is alive. This cuts
@@ -227,31 +294,67 @@ private:
 
   static int PR_CALLBACK JSOptionChangedCallback(const char *pref, void *data);
 
-  static JSBool JS_DLL_CALLBACK DOMBranchCallback(JSContext *cx,
-                                                  JSScript *script);
+  static JSBool JS_DLL_CALLBACK DOMOperationCallback(JSContext *cx);
 };
 
 class nsIJSRuntimeService;
 
-class nsJSEnvironment
+class nsJSRuntime : public nsIScriptRuntime
 {
-private:
+public:
+  // let people who can see us use our runtime for convenience.
   static JSRuntime *sRuntime;
 
 public:
-  // called from the module Ctor to initialize statics
+  // nsISupports
+  NS_DECL_ISUPPORTS
+
+  // nsIScriptRuntime
+  virtual void ShutDown();
+
+  virtual PRUint32 GetScriptTypeID() {
+            return nsIProgrammingLanguage::JAVASCRIPT;
+  }
+
+  virtual nsresult CreateContext(nsIScriptContext **ret);
+
+  virtual nsresult ParseVersion(const nsString &aVersionStr, PRUint32 *flags);
+
+  virtual nsresult DropScriptObject(void *object);
+  virtual nsresult HoldScriptObject(void *object);
+  
+  // Private stuff.
+  // called by the nsDOMScriptObjectFactory to initialize statics
   static void Startup();
-
+  // Setup all the statics etc - safe to call multiple times after Startup()
   static nsresult Init();
-
-  static nsresult CreateNewContext(nsIScriptContext **aContext);
-
-  static void ShutDown();
+  // Get the NameSpaceManager, creating if necessary
+  static nsScriptNameSpaceManager* GetNameSpaceManager();
 };
 
-/* factory function */
-nsresult NS_CreateScriptContext(nsIScriptGlobalObject *aGlobal,
-                                nsIScriptContext **aContext);
+// An interface for fast and native conversion to/from nsIArray. If an object
+// supports this interface, JS can reach directly in for the argv, and avoid
+// nsISupports conversion. If this interface is not supported, the object will
+// be queried for nsIArray, and everything converted via xpcom objects.
+#define NS_IJSARGARRAY_IID \
+ { /*{E96FB2AE-CB4F-44a0-81F8-D91C80AFE9A3} */ \
+ 0xe96fb2ae, 0xcb4f, 0x44a0, \
+ { 0x81, 0xf8, 0xd9, 0x1c, 0x80, 0xaf, 0xe9, 0xa3 } }
+
+class nsIJSArgArray: public nsISupports
+{
+public:
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IJSARGARRAY_IID)
+  // Bug 312003 describes why this must be "void **", but after calling argv
+  // may be cast to jsval* and the args found at:
+  //    ((jsval*)argv)[0], ..., ((jsval*)argv)[argc - 1]
+  virtual nsresult GetArgs(PRUint32 *argc, void **argv) = 0;
+};
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIJSArgArray, NS_IJSARGARRAY_IID)
+
+/* factory functions */
+nsresult NS_CreateJSRuntime(nsIScriptRuntime **aRuntime);
 
 /* prototypes */
 void JS_DLL_CALLBACK NS_ScriptErrorReporter(JSContext *cx, const char *message, JSErrorReport *report);

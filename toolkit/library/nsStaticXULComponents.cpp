@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * 	 Christopher Seawood <cls@seawood.org>
+ *   Christopher Seawood <cls@seawood.org>
  *   Chris Waterson <waterson@netscape.com>
  *   Benjamin Smedberg <bsmedberg@covad.net>
  *
@@ -47,22 +47,30 @@
 
 #define NSGETMODULE(_name) _name##_NSGetModule
 
+#ifdef MOZ_AUTH_EXTENSION
+#define AUTH_MODULE    MODULE(nsAuthModule)
+#else
+#define AUTH_MODULE
+#endif
+
+#ifdef MOZ_PERMISSIONS
+#define PERMISSIONS_MODULES                  \
+    MODULE(nsCookieModule)                   \
+    MODULE(nsPermissionsModule)
+#else
+#define PERMISSIONS_MODULES
+#endif
+
+#ifdef MOZ_UNIVERSALCHARDET
+#define UNIVERSALCHARDET_MODULE MODULE(nsUniversalCharDetModule)
+#else
+#define UNIVERSALCHARDET_MODULE
+#endif
+
 #ifdef MOZ_MATHML
 #define MATHML_MODULES MODULE(nsUCvMathModule)
 #else
 #define MATHML_MODULES
-#endif
-
-#ifdef XP_WIN
-#define INTL_COMPAT_MODULES MODULE(I18nCompatibility)
-#else
-#define INTL_COMPAT_MODULES
-#endif
-
-#ifdef NECKO2
-#define NECKO2_MODULES MODULE(necko_secondary_protocols)
-#else
-#define NECKO2_MODULES
 #endif
 
 #ifdef MOZ_IPCD
@@ -71,38 +79,22 @@
 #define IPC_MODULE
 #endif
 
-#ifdef MOZ_ENABLE_POSTSCRIPT
-#define POSTSCRIPT_MODULES MODULE(nsGfxPSModule)
-#else
-#define POSTSCRIPT_MODULES
-#endif
+#define GFX_MODULES MODULE(nsGfxModule)
 
 #ifdef XP_WIN
-#  define GFX_MODULES MODULE(nsGfxModule)
 #  define WIDGET_MODULES MODULE(nsWidgetModule)
 #elif defined(XP_MACOSX)
-#  define GFX_MODULES MODULE(nsGfxMacModule)
 #  define WIDGET_MODULES MODULE(nsWidgetMacModule)
 #elif defined(XP_BEOS)
-#  define GFX_MODULES MODULE(nsGfxBeOSModule)
 #  define WIDGET_MODULES MODULE(nsWidgetBeOSModule)
 #elif defined(XP_OS2)
-#  define GFX_MODULES MODULE(nsGfxOS2Module)
 #  define WIDGET_MODULES MODULE(nsWidgetOS2Module)
-#endif
-
-#ifdef MOZ_ENABLE_CAIRO_GFX
-#define GFX_MODULES MODULE(nsGfxModule)
+#elif defined(MOZ_WIDGET_GTK2)
+#  define WIDGET_MODULES MODULE(nsWidgetGtk2Module)
+#elif defined(MOZ_WIDGET_PHOTON)
+#  define WIDGET_MODULES MODULE(nsWidgetPhModule)
 #else
-#  if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_GTK2)
-#  define GFX_MODULES MODULE(nsGfxGTKModule)
-#  elif defined(MOZ_WIDGET_QT)
-#  define GFX_MODULES MODULE(nsGfxQtModule)
-#  elif defined(MOZ_WIDGET_XLIB)
-#  define GFX_MODULES MODULE(nsGfxXlibModule)
-#  elif defined(MOZ_WIDGET_PHOTON)
-#  define GFX_MODULES MODULE(nsGfxPhModule)
-#  endif
+#  error Unknown widget module.
 #endif
 
 #ifdef ICON_DECODER
@@ -111,32 +103,22 @@
 #define ICON_MODULE
 #endif
 
-#ifdef MOZ_WIDGET_GTK
-#define WIDGET_MODULES MODULE(nsWidgetGTKModule)
-#endif
-#ifdef MOZ_WIDGET_GTK2
-#define WIDGET_MODULES MODULE(nsWidgetGtk2Module)
-#endif
-#ifdef MOZ_WIDGET_XLIB
-#define WIDGET_MODULES MODULE(nsWidgetXLIBModule)
-#endif
-#ifdef MOZ_WIDGET_PHOTON
-#define WIDGET_MODULES MODULE(nsWidgetPhModule)
-#endif
-#ifdef MOZ_WIDGET_QT
-#define WIDGET_MODULES MODULE(nsWidgetQtModule)
-#endif
-
-#ifdef MOZ_ENABLE_XPRINT
-#define XPRINT_MODULES MODULE(nsGfxXprintModule)
+#ifdef MOZ_RDF
+#define RDF_MODULE MODULE(nsRDFModule)
 #else
-#define XPRINT_MODULES
+#define RDF_MODULE
 #endif
 
 #ifdef OJI
 #define OJI_MODULES MODULE(nsCJVMManagerModule)
 #else
 #define OJI_MODULES
+#endif
+
+#ifdef MOZ_PLAINTEXT_EDITOR_ONLY
+#define COMPOSER_MODULE
+#else
+#define COMPOSER_MODULE MODULE(nsComposerModule)
 #endif
 
 #ifdef ACCESSIBILITY
@@ -151,55 +133,180 @@
 #define XREMOTE_MODULES
 #endif
 
+#ifdef MOZ_ENABLE_GTK2
+#ifdef MOZ_PREF_EXTENSIONS
+#define SYSTEMPREF_MODULES MODULE(nsSystemPrefModule)
+#else
+#define SYSTEMPREF_MODULES
+#endif
+#else
+#define SYSTEMPREF_MODULES
+#endif
+
+#ifdef MOZ_ENABLE_EXTENSION_LAYOUT_DEBUG
+#define LAYOUT_DEBUG_MODULE MODULE(nsLayoutDebugModule)
+#else
+#define LAYOUT_DEBUG_MODULE
+#endif
+
+#ifdef MOZ_PLUGINS
+#define PLUGINS_MODULES \
+    MODULE(nsPluginModule)
+#else
+#define PLUGINS_MODULES
+#endif
+
+#ifdef MOZ_WEBSERVICES
+#define WEBSERVICES_MODULES \
+    MODULE(nsWebServicesModule)
+#else
+#define WEBSERVICES_MODULES
+#endif
+
+#ifdef MOZ_XPFE_COMPONENTS
+#ifdef MOZ_RDF
+#define RDFAPP_MODULES \
+    MODULE(nsXPIntlModule) \
+    MODULE(nsWindowDataSourceModule)
+#else
+#define RDFAPP_MODULES
+#endif
+#define APPLICATION_MODULES \
+    MODULE(application) \
+    MODULE(nsFindComponent)
+#else
+#define APPLICATION_MODULES
+#define RDFAPP_MODULES
+#endif
+
+#ifdef MOZ_XPINSTALL
+#define XPINSTALL_MODULES \
+    MODULE(nsSoftwareUpdate)
+#else
+#define XPINSTALL_MODULES
+#endif
+
+#ifdef MOZ_JSDEBUGGER
+#define JSDEBUGGER_MODULES \
+    MODULE(JavaScript_Debugger)
+#else
+#define JSDEBUGGER_MODULES
+#endif
+
+#if defined(MOZ_FILEVIEW) && defined(MOZ_XPFE_COMPONENTS) && defined(MOZ_XUL)
+#define FILEVIEW_MODULE MODULE(nsFileViewModule)
+#else
+#define FILEVIEW_MODULE
+#endif
+
+#ifdef MOZ_STORAGE
+#define STORAGE_MODULE MODULE(mozStorageModule)
+#else
+#define STORAGE_MODULE
+#endif
+
+#ifdef MOZ_ZIPWRITER
+#define ZIPWRITER_MODULE MODULE(ZipWriterModule)
+#else
+#define ZIPWRITER_MODULE
+#endif
+
 #ifdef MOZ_PLACES
 #define PLACES_MODULES \
-    MODULE(mozStorageModule)
+    MODULE(nsPlacesModule)
 #else
+#if (defined(MOZ_MORK) && defined(MOZ_XUL))
 #define PLACES_MODULES \
-    MODULE(nsMorkModule)
+    MODULE(nsMorkModule)                     \
+    MODULE(nsToolkitHistory)
+#else
+#define PLACES_MODULES
+#endif
 #endif    
 
+#ifdef MOZ_XUL
+#define XULENABLED_MODULES                   \
+    MODULE(tkAutoCompleteModule)             \
+    MODULE(satchel)                          \
+    MODULE(PKI)
+#else
+#define XULENABLED_MODULES
+#endif
+
+#ifdef MOZ_SPELLCHECK
+#define SPELLCHECK_MODULE MODULE(mozSpellCheckerModule)
+#else
+#define SPELLCHECK_MODULE
+#endif
+
+#ifdef MOZ_XMLEXTRAS
+#define XMLEXTRAS_MODULE MODULE(nsXMLExtrasModule)
+#else
+#define XMLEXTRAS_MODULE
+#endif
+
+#ifdef MOZ_XUL
+#ifdef MOZ_ENABLE_GTK2
+#define UNIXPROXY_MODULE MODULE(nsUnixProxyModule)
+#endif
+#endif
+#ifndef UNIXPROXY_MODULE
+#define UNIXPROXY_MODULE
+#endif
+
 #define XUL_MODULES                          \
-    MODULE(xpcomObsoleteModule)              \
     MODULE(xpconnect)                        \
     MATHML_MODULES                           \
     MODULE(nsUConvModule)                    \
     MODULE(nsI18nModule)                     \
-    INTL_COMPAT_MODULES                      \
-    MODULE(necko_core_and_primary_protocols) \
-    NECKO2_MODULES                           \
+    MODULE(nsChardetModule)                  \
+    UNIVERSALCHARDET_MODULE                  \
+    MODULE(necko)                            \
+    PERMISSIONS_MODULES                      \
+    AUTH_MODULE                              \
     IPC_MODULE                               \
     MODULE(nsJarModule)                      \
+    ZIPWRITER_MODULE                         \
     MODULE(nsPrefModule)                     \
     MODULE(nsSecurityManagerModule)          \
-    MODULE(nsRDFModule)                      \
+    RDF_MODULE                               \
+    RDFAPP_MODULES                           \
     MODULE(nsParserModule)                   \
-    POSTSCRIPT_MODULES                       \
     GFX_MODULES                              \
     WIDGET_MODULES                           \
     MODULE(nsImageLib2Module)                \
     ICON_MODULE                              \
-    MODULE(nsPluginModule)                   \
+    PLUGINS_MODULES                          \
     MODULE(nsLayoutModule)                   \
+    WEBSERVICES_MODULES                      \
     MODULE(docshell_provider)                \
     MODULE(embedcomponents)                  \
     MODULE(Browser_Embedding_Module)         \
-    MODULE(nsEditorModule)                   \
     OJI_MODULES                              \
     ACCESS_MODULES                           \
     MODULE(appshell)                         \
     MODULE(nsTransactionManagerModule)       \
-    MODULE(nsComposerModule)                 \
+    COMPOSER_MODULE                          \
     MODULE(nsChromeModule)                   \
-    MODULE(nsFindComponent)                  \
-    MODULE(application)                      \
+    APPLICATION_MODULES                      \
     MODULE(Apprunner)                        \
     MODULE(CommandLineModule)                \
+    FILEVIEW_MODULE                          \
+    STORAGE_MODULE                           \
     PLACES_MODULES                           \
+    XULENABLED_MODULES                       \
     MODULE(nsToolkitCompsModule)             \
     XREMOTE_MODULES                          \
-    MODULE(nsSoftwareUpdate)                 \
-    MODULE(JavaScript_Debugger)              \
+    XPINSTALL_MODULES                        \
+    JSDEBUGGER_MODULES                       \
+    MODULE(BOOT)                             \
+    MODULE(NSS)                              \
+    MODULE(nsAutoConfigModule)               \
+    SYSTEMPREF_MODULES                       \
+    SPELLCHECK_MODULE                        \
+    XMLEXTRAS_MODULE                         \
+    LAYOUT_DEBUG_MODULE                      \
+    UNIXPROXY_MODULE                         \
     /* end of list */
 
 #define MODULE(_name) \
@@ -215,7 +322,7 @@ XUL_MODULES
  * The nsStaticModuleInfo
  */
 static nsStaticModuleInfo const gStaticModuleInfo[] = {
-	XUL_MODULES
+    XUL_MODULES
 };
 
 nsStaticModuleInfo const *const kPStaticModules = gStaticModuleInfo;

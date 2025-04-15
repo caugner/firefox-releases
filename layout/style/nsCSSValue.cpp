@@ -34,6 +34,9 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+/* representation of simple property values within CSS declarations */
+
 #include "nsCSSValue.h"
 #include "nsString.h"
 #include "nsCSSProps.h"
@@ -41,20 +44,18 @@
 #include "imgIRequest.h"
 #include "nsIDocument.h"
 #include "nsContentUtils.h"
+#include "nsIPrincipal.h"
 
 // Paint forcing
 #include "prenv.h"
 
-//#include "nsStyleConsts.h"
-
-
 nsCSSValue::nsCSSValue(PRInt32 aValue, nsCSSUnit aUnit)
   : mUnit(aUnit)
 {
-  NS_ASSERTION((eCSSUnit_Integer == aUnit) ||
-               (eCSSUnit_Enumerated == aUnit), "not an int value");
-  if ((eCSSUnit_Integer == aUnit) ||
-      (eCSSUnit_Enumerated == aUnit)) {
+  NS_ASSERTION(aUnit == eCSSUnit_Integer || aUnit == eCSSUnit_Enumerated ||
+               aUnit == eCSSUnit_EnumColor, "not an int value");
+  if (aUnit == eCSSUnit_Integer || aUnit == eCSSUnit_Enumerated ||
+      aUnit == eCSSUnit_EnumColor) {
     mValue.mInt = aValue;
   }
   else {
@@ -76,12 +77,17 @@ nsCSSValue::nsCSSValue(float aValue, nsCSSUnit aUnit)
   }
 }
 
-nsCSSValue::nsCSSValue(const nsAString& aValue, nsCSSUnit aUnit)
+nsCSSValue::nsCSSValue(const nsString& aValue, nsCSSUnit aUnit)
   : mUnit(aUnit)
 {
   NS_ASSERTION((eCSSUnit_String <= aUnit) && (aUnit <= eCSSUnit_Attr), "not a string value");
   if ((eCSSUnit_String <= aUnit) && (aUnit <= eCSSUnit_Attr)) {
-    mValue.mString = ToNewUnicode(aValue);
+    mValue.mString = BufferFromString(aValue);
+    if (NS_UNLIKELY(!mValue.mString)) {
+      // XXXbz not much we can do here; just make sure that our promise of a
+      // non-null mValue.mString holds for string units.
+      mUnit = eCSSUnit_Null;
+    }
   }
   else {
     mUnit = eCSSUnit_Null;
@@ -121,40 +127,37 @@ nsCSSValue::nsCSSValue(nsCSSValue::Image* aValue)
 nsCSSValue::nsCSSValue(const nsCSSValue& aCopy)
   : mUnit(aCopy.mUnit)
 {
-  if ((eCSSUnit_String <= mUnit) && (mUnit <= eCSSUnit_Attr)) {
-    if (nsnull != aCopy.mValue.mString) {
-      mValue.mString = ToNewUnicode(nsDependentString(aCopy.mValue.mString));
-    }
-    else {
-      mValue.mString = nsnull;
-    }
+  if (mUnit <= eCSSUnit_Dummy) {
+    // nothing to do, but put this important case first
   }
-  else if ((eCSSUnit_Integer <= mUnit) && (mUnit <= eCSSUnit_Enumerated)) {
+  else if (eCSSUnit_Percent <= mUnit) {
+    mValue.mFloat = aCopy.mValue.mFloat;
+  }
+  else if (eCSSUnit_String <= mUnit && mUnit <= eCSSUnit_Attr) {
+    mValue.mString = aCopy.mValue.mString;
+    mValue.mString->AddRef();
+  }
+  else if (eCSSUnit_Integer <= mUnit && mUnit <= eCSSUnit_EnumColor) {
     mValue.mInt = aCopy.mValue.mInt;
   }
-  else if (eCSSUnit_Color == mUnit){
+  else if (eCSSUnit_Color == mUnit) {
     mValue.mColor = aCopy.mValue.mColor;
   }
   else if (eCSSUnit_Array <= mUnit && mUnit <= eCSSUnit_Counters) {
     mValue.mArray = aCopy.mValue.mArray;
     mValue.mArray->AddRef();
   }
-  else if (eCSSUnit_URL == mUnit){
+  else if (eCSSUnit_URL == mUnit) {
     mValue.mURL = aCopy.mValue.mURL;
     mValue.mURL->AddRef();
   }
-  else if (eCSSUnit_Image == mUnit){
+  else if (eCSSUnit_Image == mUnit) {
     mValue.mImage = aCopy.mValue.mImage;
     mValue.mImage->AddRef();
   }
   else {
-    mValue.mFloat = aCopy.mValue.mFloat;
+    NS_NOTREACHED("unknown unit");
   }
-}
-
-nsCSSValue::~nsCSSValue()
-{
-  Reset();
 }
 
 nsCSSValue& nsCSSValue::operator=(const nsCSSValue& aCopy)
@@ -169,17 +172,14 @@ nsCSSValue& nsCSSValue::operator=(const nsCSSValue& aCopy)
 PRBool nsCSSValue::operator==(const nsCSSValue& aOther) const
 {
   if (mUnit == aOther.mUnit) {
-    if ((eCSSUnit_String <= mUnit) && (mUnit <= eCSSUnit_Attr)) {
-      if (nsnull == mValue.mString) {
-        if (nsnull == aOther.mValue.mString) {
-          return PR_TRUE;
-        }
-      }
-      else if (nsnull != aOther.mValue.mString) {
-        return (nsCRT::strcmp(mValue.mString, aOther.mValue.mString) == 0);
-      }
+    if (mUnit <= eCSSUnit_Dummy) {
+      return PR_TRUE;
     }
-    else if ((eCSSUnit_Integer <= mUnit) && (mUnit <= eCSSUnit_Enumerated)) {
+    else if ((eCSSUnit_String <= mUnit) && (mUnit <= eCSSUnit_Attr)) {
+      return (NS_strcmp(GetBufferValue(mValue.mString),
+                        GetBufferValue(aOther.mValue.mString)) == 0);
+    }
+    else if ((eCSSUnit_Integer <= mUnit) && (mUnit <= eCSSUnit_EnumColor)) {
       return mValue.mInt == aOther.mValue.mInt;
     }
     else if (eCSSUnit_Color == mUnit) {
@@ -230,7 +230,7 @@ nscoord nsCSSValue::GetLengthTwips() const
       return NS_KILOMETERS_TO_TWIPS(mValue.mFloat);
 
     case eCSSUnit_Point:
-      return NSFloatPointsToTwips(mValue.mFloat);
+      return NS_POINTS_TO_TWIPS(mValue.mFloat);
     case eCSSUnit_Pica:
       return NS_PICAS_TO_TWIPS(mValue.mFloat);
     case eCSSUnit_Didot:
@@ -245,13 +245,27 @@ nscoord nsCSSValue::GetLengthTwips() const
   return 0;
 }
 
+void nsCSSValue::DoReset()
+{
+  if (eCSSUnit_String <= mUnit && mUnit <= eCSSUnit_Attr) {
+    mValue.mString->Release();
+  } else if (eCSSUnit_Array <= mUnit && mUnit <= eCSSUnit_Counters) {
+    mValue.mArray->Release();
+  } else if (eCSSUnit_URL == mUnit) {
+    mValue.mURL->Release();
+  } else if (eCSSUnit_Image == mUnit) {
+    mValue.mImage->Release();
+  }
+  mUnit = eCSSUnit_Null;
+}
+
 void nsCSSValue::SetIntValue(PRInt32 aValue, nsCSSUnit aUnit)
 {
-  NS_ASSERTION((eCSSUnit_Integer == aUnit) ||
-               (eCSSUnit_Enumerated == aUnit), "not an int value");
+  NS_ASSERTION(aUnit == eCSSUnit_Integer || aUnit == eCSSUnit_Enumerated ||
+               aUnit == eCSSUnit_EnumColor, "not an int value");
   Reset();
-  if ((eCSSUnit_Integer == aUnit) ||
-      (eCSSUnit_Enumerated == aUnit)) {
+  if (aUnit == eCSSUnit_Integer || aUnit == eCSSUnit_Enumerated ||
+      aUnit == eCSSUnit_EnumColor) {
     mUnit = aUnit;
     mValue.mInt = aValue;
   }
@@ -274,14 +288,19 @@ void nsCSSValue::SetFloatValue(float aValue, nsCSSUnit aUnit)
   }
 }
 
-void nsCSSValue::SetStringValue(const nsAString& aValue,
+void nsCSSValue::SetStringValue(const nsString& aValue,
                                 nsCSSUnit aUnit)
 {
   NS_ASSERTION((eCSSUnit_String <= aUnit) && (aUnit <= eCSSUnit_Attr), "not a string unit");
   Reset();
   if ((eCSSUnit_String <= aUnit) && (aUnit <= eCSSUnit_Attr)) {
     mUnit = aUnit;
-    mValue.mString = ToNewUnicode(aValue);
+    mValue.mString = BufferFromString(aValue);
+    if (NS_UNLIKELY(!mValue.mString)) {
+      // XXXbz not much we can do here; just make sure that our promise of a
+      // non-null mValue.mString holds for string units.
+      mUnit = eCSSUnit_Null;
+    }
   }
 }
 
@@ -348,52 +367,117 @@ void nsCSSValue::SetNormalValue()
   mUnit = eCSSUnit_Normal;
 }
 
-void nsCSSValue::StartImageLoad(nsIDocument* aDocument, PRBool aIsBGImage) const
+void nsCSSValue::SetSystemFontValue()
+{
+  Reset();
+  mUnit = eCSSUnit_System_Font;
+}
+
+void nsCSSValue::SetDummyValue()
+{
+  Reset();
+  mUnit = eCSSUnit_Dummy;
+}
+
+void nsCSSValue::StartImageLoad(nsIDocument* aDocument) const
 {
   NS_PRECONDITION(eCSSUnit_URL == mUnit, "Not a URL value!");
   nsCSSValue::Image* image =
     new nsCSSValue::Image(mValue.mURL->mURI,
                           mValue.mURL->mString,
                           mValue.mURL->mReferrer,
-                          aDocument, aIsBGImage);
+                          mValue.mURL->mOriginPrincipal,
+                          aDocument);
   if (image) {
-    if (image->mString) {
-      nsCSSValue* writable = NS_CONST_CAST(nsCSSValue*, this);
-      writable->SetImageValue(image);
-    } else {
-      delete image;
-    }
+    nsCSSValue* writable = const_cast<nsCSSValue*>(this);
+    writable->SetImageValue(image);
   }
 }
 
-nsCSSValue::Image::Image(nsIURI* aURI, const PRUnichar* aString,
-                         nsIURI* aReferrer, nsIDocument* aDocument,
-                         PRBool aIsBGImage)
-  : URL(aURI, aString, aReferrer)
+// static
+nsStringBuffer*
+nsCSSValue::BufferFromString(const nsString& aValue)
+{
+  nsStringBuffer* buffer = nsStringBuffer::FromString(aValue);
+  if (buffer) {
+    buffer->AddRef();
+    return buffer;
+  }
+  
+  PRUnichar length = aValue.Length();
+  buffer = nsStringBuffer::Alloc((length + 1) * sizeof(PRUnichar));
+  if (NS_LIKELY(buffer != 0)) {
+    PRUnichar* data = static_cast<PRUnichar*>(buffer->Data());
+    nsCharTraits<PRUnichar>::copy(data, aValue.get(), length);
+    // Null-terminate.
+    data[length] = 0;
+  }
+
+  return buffer;
+}
+
+nsCSSValue::URL::URL(nsIURI* aURI, nsStringBuffer* aString, nsIURI* aReferrer,
+                     nsIPrincipal* aOriginPrincipal)
+  : mURI(aURI),
+    mString(aString),
+    mReferrer(aReferrer),
+    mOriginPrincipal(aOriginPrincipal),
+    mRefCnt(0)
+{
+  NS_PRECONDITION(aOriginPrincipal, "Must have an origin principal");
+  
+  mString->AddRef();
+  MOZ_COUNT_CTOR(nsCSSValue::URL);
+}
+
+nsCSSValue::URL::~URL()
+{
+  mString->Release();
+  MOZ_COUNT_DTOR(nsCSSValue::URL);
+}
+
+PRBool
+nsCSSValue::URL::operator==(const URL& aOther) const
+{
+  PRBool eq;
+  return NS_strcmp(GetBufferValue(mString),
+                   GetBufferValue(aOther.mString)) == 0 &&
+          (mURI == aOther.mURI || // handles null == null
+           (mURI && aOther.mURI &&
+            NS_SUCCEEDED(mURI->Equals(aOther.mURI, &eq)) &&
+            eq)) &&
+          (mOriginPrincipal == aOther.mOriginPrincipal ||
+           (NS_SUCCEEDED(mOriginPrincipal->Equals(aOther.mOriginPrincipal,
+                                                  &eq)) && eq));
+}
+
+PRBool
+nsCSSValue::URL::URIEquals(const URL& aOther) const
+{
+  PRBool eq;
+  // Worth comparing mURI to aOther.mURI and mOriginPrincipal to
+  // aOther.mOriginPrincipal, because in the (probably common) case when this
+  // value was one of the ones that in fact did not change this will be our
+  // fast path to equality
+  return (mURI == aOther.mURI ||
+          (NS_SUCCEEDED(mURI->Equals(aOther.mURI, &eq)) && eq)) &&
+         (mOriginPrincipal == aOther.mOriginPrincipal ||
+          (NS_SUCCEEDED(mOriginPrincipal->Equals(aOther.mOriginPrincipal,
+                                                 &eq)) && eq));
+}
+
+nsCSSValue::Image::Image(nsIURI* aURI, nsStringBuffer* aString,
+                         nsIURI* aReferrer, nsIPrincipal* aOriginPrincipal,
+                         nsIDocument* aDocument)
+  : URL(aURI, aString, aReferrer, aOriginPrincipal)
 {
   MOZ_COUNT_CTOR(nsCSSValue::Image);
 
-  // Check for failed mString allocation first
-  if (!mString)
-    return;
-
-  // If the pref is enabled, force all background image loads to
-  // complete before firing onload for the document.  Otherwise, background
-  // image loads are special and don't block onload.
-  PRInt32 loadFlag = (PRInt32)nsIRequest::LOAD_NORMAL;
-  if (aIsBGImage) {
-    static PRBool onloadAfterImageBackgroundLoads =
-      nsContentUtils::GetBoolPref
-        ("layout.fire_onload_after_image_background_loads");
-    if (!onloadAfterImageBackgroundLoads) {
-      loadFlag = (PRInt32)nsIRequest::LOAD_BACKGROUND;
-    }
-  }
-
   if (mURI &&
-      nsContentUtils::CanLoadImage(mURI, aDocument, aDocument)) {
-    nsContentUtils::LoadImage(mURI, aDocument, aReferrer, nsnull,
-                              loadFlag,
+      nsContentUtils::CanLoadImage(mURI, aDocument, aDocument,
+                                   aOriginPrincipal)) {
+    nsContentUtils::LoadImage(mURI, aDocument, aOriginPrincipal, aReferrer,
+                              nsnull, nsIRequest::LOAD_NORMAL,
                               getter_AddRefs(mRequest));
   }
 }
@@ -402,154 +486,3 @@ nsCSSValue::Image::~Image()
 {
   MOZ_COUNT_DTOR(nsCSSValue::Image);
 }
-
-#ifdef DEBUG
-
-void nsCSSValue::AppendToString(nsAString& aBuffer,
-                                nsCSSProperty aPropID) const
-{
-  if (eCSSUnit_Null == mUnit) {
-    return;
-  }
-
-  if (-1 < aPropID) {
-    AppendASCIItoUTF16(nsCSSProps::GetStringValue(aPropID), aBuffer);
-    aBuffer.AppendLiteral(": ");
-  }
-
-  switch (mUnit) {
-    case eCSSUnit_Image:
-    case eCSSUnit_URL:      aBuffer.AppendLiteral("url(");       break;
-    case eCSSUnit_Attr:     aBuffer.AppendLiteral("attr(");      break;
-    case eCSSUnit_Counter:  aBuffer.AppendLiteral("counter(");   break;
-    case eCSSUnit_Counters: aBuffer.AppendLiteral("counters(");  break;
-    default:  break;
-  }
-  if ((eCSSUnit_String <= mUnit) && (mUnit <= eCSSUnit_Attr)) {
-    if (nsnull != mValue.mString) {
-      aBuffer.Append(PRUnichar('"'));
-      aBuffer.Append(mValue.mString);
-      aBuffer.Append(PRUnichar('"'));
-    }
-    else {
-      aBuffer.AppendLiteral("null str");
-    }
-  }
-  else if ((eCSSUnit_Integer <= mUnit) && (mUnit <= eCSSUnit_Enumerated)) {
-    nsAutoString intStr;
-    intStr.AppendInt(mValue.mInt, 10);
-    aBuffer.Append(intStr);
-
-    aBuffer.AppendLiteral("[0x");
-
-    intStr.Truncate();
-    intStr.AppendInt(mValue.mInt, 16);
-    aBuffer.Append(intStr);
-
-    aBuffer.Append(PRUnichar(']'));
-  }
-  else if (eCSSUnit_Color == mUnit) {
-    aBuffer.AppendLiteral("(0x");
-
-    nsAutoString intStr;
-    intStr.AppendInt(NS_GET_R(mValue.mColor), 16);
-    aBuffer.Append(intStr);
-
-    aBuffer.AppendLiteral(" 0x");
-
-    intStr.Truncate();
-    intStr.AppendInt(NS_GET_G(mValue.mColor), 16);
-    aBuffer.Append(intStr);
-
-    aBuffer.AppendLiteral(" 0x");
-
-    intStr.Truncate();
-    intStr.AppendInt(NS_GET_B(mValue.mColor), 16);
-    aBuffer.Append(intStr);
-
-    aBuffer.AppendLiteral(" 0x");
-
-    intStr.Truncate();
-    intStr.AppendInt(NS_GET_A(mValue.mColor), 16);
-    aBuffer.Append(intStr);
-
-    aBuffer.Append(PRUnichar(')'));
-  }
-  else if (eCSSUnit_Array <= mUnit && mUnit <= eCSSUnit_Counters) {
-    for (PRUint16 i = 0, i_end = mValue.mArray->Count(); i != i_end; ++i) {
-      (*mValue.mArray)[i].AppendToString(aBuffer, aPropID);
-    }
-  }
-  else if (eCSSUnit_URL == mUnit) {
-    aBuffer.Append(mValue.mURL->mString);
-  }
-  else if (eCSSUnit_Image == mUnit) {
-    aBuffer.Append(mValue.mImage->mString);
-  }
-  else if (eCSSUnit_Percent == mUnit) {
-    nsAutoString floatString;
-    floatString.AppendFloat(mValue.mFloat * 100.0f);
-    aBuffer.Append(floatString);
-  }
-  else if (eCSSUnit_Percent < mUnit) {
-    nsAutoString floatString;
-    floatString.AppendFloat(mValue.mFloat);
-    aBuffer.Append(floatString);
-  }
-
-  switch (mUnit) {
-    case eCSSUnit_Null:         break;
-    case eCSSUnit_Auto:         aBuffer.AppendLiteral("auto");     break;
-    case eCSSUnit_Inherit:      aBuffer.AppendLiteral("inherit");  break;
-    case eCSSUnit_Initial:      aBuffer.AppendLiteral("-moz-initial"); break;
-    case eCSSUnit_None:         aBuffer.AppendLiteral("none");     break;
-    case eCSSUnit_Normal:       aBuffer.AppendLiteral("normal");   break;
-    case eCSSUnit_Array:
-    case eCSSUnit_String:       break;
-    case eCSSUnit_URL:
-    case eCSSUnit_Image:
-    case eCSSUnit_Attr:
-    case eCSSUnit_Counter:
-    case eCSSUnit_Counters:     aBuffer.Append(NS_LITERAL_STRING(")"));    break;
-    case eCSSUnit_Integer:      aBuffer.AppendLiteral("int");  break;
-    case eCSSUnit_Enumerated:   aBuffer.AppendLiteral("enum"); break;
-    case eCSSUnit_Color:        aBuffer.AppendLiteral("rbga"); break;
-    case eCSSUnit_Percent:      aBuffer.AppendLiteral("%");    break;
-    case eCSSUnit_Number:       aBuffer.AppendLiteral("#");    break;
-    case eCSSUnit_Inch:         aBuffer.AppendLiteral("in");   break;
-    case eCSSUnit_Foot:         aBuffer.AppendLiteral("ft");   break;
-    case eCSSUnit_Mile:         aBuffer.AppendLiteral("mi");   break;
-    case eCSSUnit_Millimeter:   aBuffer.AppendLiteral("mm");   break;
-    case eCSSUnit_Centimeter:   aBuffer.AppendLiteral("cm");   break;
-    case eCSSUnit_Meter:        aBuffer.AppendLiteral("m");    break;
-    case eCSSUnit_Kilometer:    aBuffer.AppendLiteral("km");   break;
-    case eCSSUnit_Point:        aBuffer.AppendLiteral("pt");   break;
-    case eCSSUnit_Pica:         aBuffer.AppendLiteral("pc");   break;
-    case eCSSUnit_Didot:        aBuffer.AppendLiteral("dt");   break;
-    case eCSSUnit_Cicero:       aBuffer.AppendLiteral("cc");   break;
-    case eCSSUnit_EM:           aBuffer.AppendLiteral("em");   break;
-    case eCSSUnit_EN:           aBuffer.AppendLiteral("en");   break;
-    case eCSSUnit_XHeight:      aBuffer.AppendLiteral("ex");   break;
-    case eCSSUnit_CapHeight:    aBuffer.AppendLiteral("cap");  break;
-    case eCSSUnit_Char:         aBuffer.AppendLiteral("ch");   break;
-    case eCSSUnit_Pixel:        aBuffer.AppendLiteral("px");   break;
-    case eCSSUnit_Proportional: aBuffer.AppendLiteral("*");    break;
-    case eCSSUnit_Degree:       aBuffer.AppendLiteral("deg");  break;
-    case eCSSUnit_Grad:         aBuffer.AppendLiteral("grad"); break;
-    case eCSSUnit_Radian:       aBuffer.AppendLiteral("rad");  break;
-    case eCSSUnit_Hertz:        aBuffer.AppendLiteral("Hz");   break;
-    case eCSSUnit_Kilohertz:    aBuffer.AppendLiteral("kHz");  break;
-    case eCSSUnit_Seconds:      aBuffer.AppendLiteral("s");    break;
-    case eCSSUnit_Milliseconds: aBuffer.AppendLiteral("ms");   break;
-  }
-  aBuffer.AppendLiteral(" ");
-}
-
-void nsCSSValue::ToString(nsAString& aBuffer,
-                          nsCSSProperty aPropID) const
-{
-  aBuffer.Truncate();
-  AppendToString(aBuffer, aPropID);
-}
-
-#endif /* defined(DEBUG) */

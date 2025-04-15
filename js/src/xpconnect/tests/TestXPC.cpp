@@ -42,6 +42,8 @@
 
 #include <stdio.h>
 
+#include "nsComponentManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 #include "nsIXPConnect.h"
 #include "nsIScriptError.h"
 #include "nsIServiceManager.h"
@@ -52,8 +54,9 @@
 #include "nsMemory.h"
 #include "nsIXPCSecurityManager.h"
 #include "nsICategoryManager.h"
-#include "nsString.h"
 #include "nsIVariant.h"
+#include "nsStringAPI.h"
+#include "nsEmbedString.h"
 
 #include "jsapi.h"
 
@@ -113,9 +116,9 @@ Load(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
 }
 
 static JSFunctionSpec glob_functions[] = {
-    {"print",           Print,          0},
-    {"load",            Load,           1},
-    {0}
+    {"print",           Print,          0,0,0},
+    {"load",            Load,           1,0,0},
+    {nsnull,nsnull,0,0,0}
 };
 
 static JSClass global_class = {
@@ -279,7 +282,7 @@ MySecMan::CanGetService(JSContext * aJSContext, const nsCID & aCID)
 
 /* void CanAccess (in PRUint32 aAction, in nsIXPCNativeCallContext aCallContext, in JSContextPtr aJSContext, in JSObjectPtr aJSObject, in nsISupports aObj, in nsIClassInfo aClassInfo, in JSVal aName, inout voidPtr aPolicy); */
 NS_IMETHODIMP 
-MySecMan::CanAccess(PRUint32 aAction, nsIXPCNativeCallContext *aCallContext, JSContext * aJSContext, JSObject * aJSObject, nsISupports *aObj, nsIClassInfo *aClassInfo, jsval aName, void * *aPolicy)
+MySecMan::CanAccess(PRUint32 aAction, nsAXPCNativeCallContext *aCallContext, JSContext * aJSContext, JSObject * aJSObject, nsISupports *aObj, nsIClassInfo *aClassInfo, jsval aName, void * *aPolicy)
 {
     switch(mMode)
     {
@@ -464,7 +467,7 @@ TestArgFormatter(JSContext* jscontext, JSObject* glob, nsIXPConnect* xpc)
                             a_in, 
                             &NS_GET_IID(nsITestXPCFoo2), b_in.get(), 
                             c_in.get(),
-                            NS_STATIC_CAST(const nsAString*, &d_in), 
+                            static_cast<const nsAString*>(&d_in), 
                             e_in);
 
     if(!argv)
@@ -475,9 +478,9 @@ TestArgFormatter(JSContext* jscontext, JSObject* glob, nsIXPConnect* xpc)
 
     if(!JS_ConvertArguments(jscontext, 5, argv, "s %ip %iv %is s",
                             &a_out, 
-                            NS_STATIC_CAST(nsISupports**, getter_AddRefs(b_out)), 
-                            NS_STATIC_CAST(nsIVariant**, getter_AddRefs(c_out)),
-                            NS_STATIC_CAST(nsAString*, &d_out), 
+                            static_cast<nsISupports**>(getter_AddRefs(b_out)), 
+                            static_cast<nsIVariant**>(getter_AddRefs(c_out)),
+                            static_cast<nsAString*>(&d_out), 
                             &e_out))
     {
         printf(" could not convert from JS to native -- FAILED!\n");
@@ -515,7 +518,7 @@ TestArgFormatter(JSContext* jscontext, JSObject* glob, nsIXPConnect* xpc)
         goto out;
     }
 
-    if(d_in != d_out)
+    if(!d_in.Equals(d_out))
     {
         printf(" JS to native for %%is returned the wrong value -- FAILED!\n");
         goto out;

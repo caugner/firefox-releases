@@ -56,7 +56,14 @@
 
 #include "nsReadableUtils.h"
 #include "nsISupportsPrimitives.h"
-#include "nsArray.h"
+#include "nsIMutableArray.h"
+#include "nsTraceRefcntImpl.h"
+
+#define CHECK_mWorkingPath()                    \
+    PR_BEGIN_MACRO                              \
+        if (mWorkingPath.IsEmpty())             \
+            return NS_ERROR_NOT_INITIALIZED;    \
+    PR_END_MACRO
 
 //-----------------------------------------------------------------------------
 // static helper functions
@@ -174,7 +181,7 @@ _mbsstr(const unsigned char* stringToSearch, const unsigned char* subString)
 }
 
 // Locates last occurence of charToSearchFor in the stringToSearch
-extern unsigned char*
+NS_EXPORT unsigned char*
 _mbsrchr(const unsigned char* stringToSearch, int charToSearchFor)
 {
     int length = strlen((const char*)stringToSearch);
@@ -608,7 +615,11 @@ nsLocalFile::nsLocalFileConstructor(nsISupports* outer, const nsIID& aIID, void*
 // nsLocalFile::nsISupports
 //-----------------------------------------------------------------------------
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(nsLocalFile, nsILocalFile, nsIFile, nsILocalFileOS2)
+NS_IMPL_THREADSAFE_ISUPPORTS4(nsLocalFile,
+                              nsILocalFile,
+                              nsIFile,
+                              nsILocalFileOS2,
+                              nsIHashable)
 
 
 //-----------------------------------------------------------------------------
@@ -799,7 +810,7 @@ nsLocalFile::Create(PRUint32 type, PRUint32 attributes)
         {
             *slash = '\0';
 
-            rv = CreateDirectoryA(NS_CONST_CAST(char*, mWorkingPath.get()), NULL);
+            rv = CreateDirectoryA(const_cast<char*>(mWorkingPath.get()), NULL);
             if (rv) {
                 rv = ConvertOS2Error(rv);
                 if (rv != NS_ERROR_FILE_ALREADY_EXISTS)
@@ -814,7 +825,8 @@ nsLocalFile::Create(PRUint32 type, PRUint32 attributes)
     if (type == NORMAL_FILE_TYPE)
     {
         PRFileDesc* file = PR_Open(mWorkingPath.get(), PR_RDONLY | PR_CREATE_FILE | PR_APPEND | PR_EXCL, attributes);
-        if (!file) return NS_ERROR_FILE_ALREADY_EXISTS;
+        if (!file)
+            return NS_ERROR_FILE_ALREADY_EXISTS;
 
         PR_Close(file);
         return NS_OK;
@@ -822,7 +834,7 @@ nsLocalFile::Create(PRUint32 type, PRUint32 attributes)
 
     if (type == DIRECTORY_TYPE)
     {
-        rv = CreateDirectoryA(NS_CONST_CAST(char*, mWorkingPath.get()), NULL);
+        rv = CreateDirectoryA(const_cast<char*>(mWorkingPath.get()), NULL);
         if (rv)
             return ConvertOS2Error(rv);
         else
@@ -1140,10 +1152,9 @@ nsLocalFile::GetFileTypes(nsIArray **_retval)
         return rv;
 
     // create an array that's scriptable
-    nsCOMPtr<nsIMutableArray> mutArray;
-    rv = NS_NewArray(getter_AddRefs(mutArray));
-    if (NS_FAILED(rv))
-        return rv;
+    nsCOMPtr<nsIMutableArray> mutArray =
+        do_CreateInstance(NS_ARRAY_CONTRACTID);
+    NS_ENSURE_STATE(mutArray);
 
     PRInt32  cnt;
     PRUint32 lth;
@@ -1204,6 +1215,162 @@ nsLocalFile::IsFileType(const nsACString& fileType, PRBool *_retval)
 
 //-----------------------------------------------------------------------------
 
+// this struct combines an FEA2LIST, an FEA2, plus additional fields
+// needed to write a .TYPE EA in the correct EAT_MVMT format
+#pragma pack(1)
+    typedef struct _TYPEEA {
+        struct {
+            ULONG   ulcbList;
+            ULONG   uloNextEntryOffset;
+            BYTE    bfEA;
+            BYTE    bcbName;
+            USHORT  uscbValue;
+            char    chszName[sizeof(".TYPE")];
+        } hdr;
+        struct {
+            USHORT  usEAType;
+            USHORT  usCodePage;
+            USHORT  usNumEntries;
+            USHORT  usDataType;
+            USHORT  usDataLth;
+        } info;
+        char    data[1];
+    } TYPEEA;
+
+    typedef struct _TYPEEA2 {
+        USHORT  usDataType;
+        USHORT  usDataLth;
+    } TYPEEA2;
+#pragma pack()
+
+// writes one or more .TYPE extended attributes taken
+// from a comma-delimited string
+NS_IMETHODIMP
+nsLocalFile::SetFileTypes(const nsACString& fileTypes)
+{
+    if (fileTypes.IsEmpty())
+        return NS_ERROR_FAILURE;
+
+    PRUint32 cnt = CountCharInReadable(fileTypes, ',');
+    PRUint32 lth = fileTypes.Length() - cnt + (cnt * sizeof(TYPEEA2));
+    PRUint32 size = sizeof(TYPEEA) + lth;
+
+    char *pBuf = (char*)NS_Alloc(size);
+    if (!pBuf)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    TYPEEA *pEA = (TYPEEA *)pBuf;
+
+    // the buffer has an extra byte due to TYPEEA.data[1]
+    pEA->hdr.ulcbList = size - 1;
+    pEA->hdr.uloNextEntryOffset = 0;
+    pEA->hdr.bfEA = 0;
+    pEA->hdr.bcbName = sizeof(".TYPE") - 1;
+    pEA->hdr.uscbValue = sizeof(pEA->info) + lth;
+    strcpy(pEA->hdr.chszName, ".TYPE");
+
+    pEA->info.usEAType = EAT_MVMT;
+    pEA->info.usCodePage = 0;
+    pEA->info.usNumEntries = ++cnt;
+
+    nsACString::const_iterator begin, end, delim;
+    fileTypes.BeginReading(begin);
+    fileTypes.EndReading(end);
+    delim = begin;
+
+    // fill in type & length, copy the current type name (which
+    // is not zero-terminated), then advance the ptr so the next
+    // iteration can reuse the trailing members of the structure
+    do {
+        FindCharInReadable( ',', delim, end);
+        lth = delim.get() - begin.get();
+        pEA->info.usDataType = EAT_ASCII;
+        pEA->info.usDataLth = lth;
+        memcpy(pEA->data, begin.get(), lth);
+        pEA = (TYPEEA *)((char*)pEA + lth + sizeof(TYPEEA2));
+        begin = ++delim;
+    } while (--cnt);
+
+    // write the EA, then free the buffer
+    EAOP2 eaop2;
+    eaop2.fpGEA2List = 0;
+    eaop2.fpFEA2List = (PFEA2LIST)pBuf;
+
+    int rc = DosSetPathInfo(mWorkingPath.get(), FIL_QUERYEASIZE,
+                            &eaop2, sizeof(eaop2), 0);
+    NS_Free(pBuf);
+
+    if (rc)
+        return ConvertOS2Error(rc);
+
+    return NS_OK;
+}
+
+//-----------------------------------------------------------------------------
+
+// this struct combines an FEA2LIST, an FEA2, plus additional fields
+// needed to write a .SUBJECT EA in the correct EAT_ASCII format;
+#pragma pack(1)
+    typedef struct _SUBJEA {
+        struct {
+            ULONG   ulcbList;
+            ULONG   uloNextEntryOffset;
+            BYTE    bfEA;
+            BYTE    bcbName;
+            USHORT  uscbValue;
+            char    chszName[sizeof(".SUBJECT")];
+        } hdr;
+        struct {
+            USHORT  usEAType;
+            USHORT  usDataLth;
+        } info;
+        char    data[1];
+    } SUBJEA;
+#pragma pack()
+
+// saves the file's source URI in its .SUBJECT extended attribute
+NS_IMETHODIMP
+nsLocalFile::SetFileSource(const nsACString& aURI)
+{
+    if (aURI.IsEmpty())
+        return NS_ERROR_FAILURE;
+
+    // this includes an extra character for the spec's trailing null
+    PRUint32 lth = sizeof(SUBJEA) + aURI.Length();
+    char *   pBuf = (char*)NS_Alloc(lth);
+    if (!pBuf)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    SUBJEA *pEA = (SUBJEA *)pBuf;
+
+    // the trailing null doesn't get saved, so don't include it in the size
+    pEA->hdr.ulcbList = lth - 1;
+    pEA->hdr.uloNextEntryOffset = 0;
+    pEA->hdr.bfEA = 0;
+    pEA->hdr.bcbName = sizeof(".SUBJECT") - 1;
+    pEA->hdr.uscbValue = sizeof(pEA->info) + aURI.Length();
+    strcpy(pEA->hdr.chszName, ".SUBJECT");
+    pEA->info.usEAType = EAT_ASCII;
+    pEA->info.usDataLth = aURI.Length();
+    strcpy(pEA->data, PromiseFlatCString(aURI).get());
+
+    // write the EA, then free the buffer
+    EAOP2 eaop2;
+    eaop2.fpGEA2List = 0;
+    eaop2.fpFEA2List = (PFEA2LIST)pEA;
+
+    int rc = DosSetPathInfo(mWorkingPath.get(), FIL_QUERYEASIZE,
+                            &eaop2, sizeof(eaop2), 0);
+    NS_Free(pBuf);
+
+    if (rc)
+        return ConvertOS2Error(rc);
+
+    return NS_OK;
+}
+
+//-----------------------------------------------------------------------------
+
 nsresult
 nsLocalFile::CopySingleFile(nsIFile *sourceFile, nsIFile *destParent,
                             const nsACString &newName, PRBool move)
@@ -1235,7 +1402,7 @@ nsLocalFile::CopySingleFile(nsIFile *sourceFile, nsIFile *destParent,
     APIRET rc = NO_ERROR;
 
     if (move)
-        rc = DosMove(filePath.get(), (PSZ)NS_CONST_CAST(char*, destPath.get()));
+        rc = DosMove(filePath.get(), (PSZ)const_cast<char*>(destPath.get()));
 
     if (!move || rc == ERROR_NOT_SAME_DEVICE || rc == ERROR_ACCESS_DENIED)
     {
@@ -1244,7 +1411,7 @@ nsLocalFile::CopySingleFile(nsIFile *sourceFile, nsIFile *destParent,
         // the file without error, so we need to do the same   IBM-AKR
 
         do {
-            rc = DosCopy(filePath.get(), (PSZ)NS_CONST_CAST(char*, destPath.get()), DCPY_EXISTING);
+            rc = DosCopy(filePath.get(), (PSZ)const_cast<char*>(destPath.get()), DCPY_EXISTING);
             if (rc == ERROR_TOO_MANY_OPEN_FILES) {
                 ULONG CurMaxFH = 0;
                 LONG ReqCount = 20;
@@ -1265,7 +1432,7 @@ nsLocalFile::CopySingleFile(nsIFile *sourceFile, nsIFile *destParent,
             strcat(achProgram, """COPY ");
             strcat(achProgram, filePath.get());
             strcat(achProgram, " ");
-            strcat(achProgram, (PSZ)NS_CONST_CAST(char*, destPath.get()));
+            strcat(achProgram, (PSZ)const_cast<char*>(destPath.get()));
             strcat(achProgram, """");
             achProgram[strlen(achProgram) + 1] = '\0';
             achProgram[7] = '\0';
@@ -1293,6 +1460,9 @@ nsLocalFile::CopySingleFile(nsIFile *sourceFile, nsIFile *destParent,
 nsresult
 nsLocalFile::CopyMove(nsIFile *aParentDir, const nsACString &newName, PRBool move)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     nsCOMPtr<nsIFile> newParentDir = aParentDir;
 
     nsresult rv  = Stat();
@@ -1409,7 +1579,7 @@ nsLocalFile::CopyMove(nsIFile *aParentDir, const nsACString &newName, PRBool mov
 
         rv = dirEnum.Init(this);
         if (NS_FAILED(rv)) {
-            NS_WARNING("dirEnum initalization failed");
+            NS_WARNING("dirEnum initialization failed");
             return rv;
         }
 
@@ -1498,16 +1668,27 @@ nsLocalFile::MoveToNative(nsIFile *newParentDir, const nsACString &newName)
 NS_IMETHODIMP
 nsLocalFile::Load(PRLibrary * *_retval)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     PRBool isFile;
     nsresult rv = IsFile(&isFile);
 
     if (NS_FAILED(rv))
         return rv;
 
-    if (! isFile)
+    if (!isFile)
         return NS_ERROR_FILE_IS_DIRECTORY;
 
+#ifdef NS_BUILD_REFCNT_LOGGING
+    nsTraceRefcntImpl::SetActivityIsLegal(PR_FALSE);
+#endif
+
     *_retval =  PR_LoadLibrary(mWorkingPath.get());
+
+#ifdef NS_BUILD_REFCNT_LOGGING
+    nsTraceRefcntImpl::SetActivityIsLegal(PR_TRUE);
+#endif
 
     if (*_retval)
         return NS_OK;
@@ -1518,6 +1699,9 @@ nsLocalFile::Load(PRLibrary * *_retval)
 NS_IMETHODIMP
 nsLocalFile::Remove(PRBool recursive)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     PRBool isDir = PR_FALSE;
 
     nsresult rv = IsDirectory(&isDir);
@@ -1562,6 +1746,9 @@ nsLocalFile::Remove(PRBool recursive)
 NS_IMETHODIMP
 nsLocalFile::GetLastModifiedTime(PRInt64 *aLastModifiedTime)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     NS_ENSURE_ARG(aLastModifiedTime);
 
     *aLastModifiedTime = 0;
@@ -1587,6 +1774,9 @@ nsLocalFile::GetLastModifiedTimeOfLink(PRInt64 *aLastModifiedTime)
 NS_IMETHODIMP
 nsLocalFile::SetLastModifiedTime(PRInt64 aLastModifiedTime)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     return nsLocalFile::SetModDate(aLastModifiedTime);
 }
 
@@ -1679,6 +1869,9 @@ nsLocalFile::GetPermissionsOfLink(PRUint32 *aPermissionsOfLink)
 NS_IMETHODIMP
 nsLocalFile::SetPermissions(PRUint32 aPermissions)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     nsresult rv = Stat();
     if (NS_FAILED(rv))
         return rv;
@@ -1721,6 +1914,9 @@ nsLocalFile::SetPermissionsOfLink(PRUint32 aPermissions)
 NS_IMETHODIMP
 nsLocalFile::GetFileSize(PRInt64 *aFileSize)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     NS_ENSURE_ARG(aFileSize);
     *aFileSize = 0;
 
@@ -1783,6 +1979,9 @@ nsLocalFile::SetFileSize(PRInt64 aFileSize)
 NS_IMETHODIMP
 nsLocalFile::GetDiskSpaceAvailable(PRInt64 *aDiskSpaceAvailable)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     NS_ENSURE_ARG(aDiskSpaceAvailable);
     *aDiskSpaceAvailable = 0;
 
@@ -1810,6 +2009,9 @@ nsLocalFile::GetDiskSpaceAvailable(PRInt64 *aDiskSpaceAvailable)
 NS_IMETHODIMP
 nsLocalFile::GetParent(nsIFile * *aParent)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     NS_ENSURE_ARG_POINTER(aParent);
 
     nsCAutoString parentPath(mWorkingPath);
@@ -1846,6 +2048,9 @@ nsLocalFile::GetParent(nsIFile * *aParent)
 NS_IMETHODIMP
 nsLocalFile::Exists(PRBool *_retval)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     NS_ENSURE_ARG(_retval);
     *_retval = PR_FALSE;
 
@@ -1859,6 +2064,9 @@ nsLocalFile::Exists(PRBool *_retval)
 NS_IMETHODIMP
 nsLocalFile::IsWritable(PRBool *_retval)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     NS_ENSURE_ARG(_retval);
     *_retval = PR_FALSE;
 
@@ -1888,6 +2096,9 @@ nsLocalFile::IsWritable(PRBool *_retval)
 NS_IMETHODIMP
 nsLocalFile::IsReadable(PRBool *_retval)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     NS_ENSURE_ARG(_retval);
     *_retval = PR_FALSE;
 
@@ -1903,6 +2114,9 @@ nsLocalFile::IsReadable(PRBool *_retval)
 NS_IMETHODIMP
 nsLocalFile::IsExecutable(PRBool *_retval)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     NS_ENSURE_ARG(_retval);
     *_retval = PR_FALSE;
 
@@ -1944,12 +2158,10 @@ nsLocalFile::IsExecutable(PRBool *_retval)
     if (!ext)
         return NS_OK;
 
-    // upper-case the extension, then see if it claims to be an executable
-    WinUpper(0, 0, 0, ext);
-    if (strcmp(ext, ".EXE") == 0 ||
-        strcmp(ext, ".CMD") == 0 ||
-        strcmp(ext, ".COM") == 0 ||
-        strcmp(ext, ".BAT") == 0)
+    if (stricmp(ext, ".exe") == 0 ||
+        stricmp(ext, ".cmd") == 0 ||
+        stricmp(ext, ".com") == 0 ||
+        stricmp(ext, ".bat") == 0)
         *_retval = PR_TRUE;
 
     return NS_OK;
@@ -2015,6 +2227,9 @@ nsLocalFile::IsHidden(PRBool *_retval)
 NS_IMETHODIMP
 nsLocalFile::IsSymlink(PRBool *_retval)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     NS_ENSURE_ARG_POINTER(_retval);
 
     // No Symlinks on OS/2
@@ -2048,6 +2263,9 @@ nsLocalFile::Equals(nsIFile *inFile, PRBool *_retval)
 NS_IMETHODIMP
 nsLocalFile::Contains(nsIFile *inFile, PRBool recur, PRBool *_retval)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     *_retval = PR_FALSE;
 
     nsCAutoString myFilePath;
@@ -2078,6 +2296,9 @@ nsLocalFile::Contains(nsIFile *inFile, PRBool recur, PRBool *_retval)
 NS_IMETHODIMP
 nsLocalFile::GetNativeTarget(nsACString &_retval)
 {
+    // Check we are correctly initialized.
+    CHECK_mWorkingPath();
+
     _retval = mWorkingPath;
     return NS_OK;
 }
@@ -2343,6 +2564,27 @@ nsLocalFile::GetTarget(nsAString &_retval)
         rv = NS_CopyNativeToUnicode(tmp, _retval);
 
     return rv;
+}
+
+// nsIHashable
+
+NS_IMETHODIMP
+nsLocalFile::Equals(nsIHashable* aOther, PRBool *aResult)
+{
+    nsCOMPtr<nsIFile> otherfile(do_QueryInterface(aOther));
+    if (!otherfile) {
+        *aResult = PR_FALSE;
+        return NS_OK;
+    }
+
+    return Equals(otherfile, aResult);
+}
+
+NS_IMETHODIMP
+nsLocalFile::GetHashCode(PRUint32 *aResult)
+{
+    *aResult = nsCRT::HashCode(mWorkingPath.get());
+    return NS_OK;
 }
 
 nsresult

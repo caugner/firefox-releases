@@ -48,7 +48,6 @@ protected:
   friend nsresult NS_NewSVGDescElement(nsIContent **aResult,
                                        nsINodeInfo *aNodeInfo);
   nsSVGDescElement(nsINodeInfo *aNodeInfo);
-  virtual ~nsSVGDescElement();
   nsresult Init();
 
 public:
@@ -58,9 +57,11 @@ public:
   NS_DECL_NSIDOMSVGDESCELEMENT
 
   // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsSVGDescElementBase::)
+  NS_FORWARD_NSIDOMNODE(nsSVGDescElementBase::)
   NS_FORWARD_NSIDOMELEMENT(nsSVGDescElementBase::)
   NS_FORWARD_NSIDOMSVGELEMENT(nsSVGDescElementBase::)
+
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 };
 
 NS_IMPL_NS_NEW_SVG_ELEMENT(Desc)
@@ -89,9 +90,6 @@ nsSVGDescElement::nsSVGDescElement(nsINodeInfo *aNodeInfo)
 {
 }
 
-nsSVGDescElement::~nsSVGDescElement()
-{
-}
 
 nsresult
 nsSVGDescElement::Init()
@@ -103,5 +101,5 @@ nsSVGDescElement::Init()
 //----------------------------------------------------------------------
 // nsIDOMNode methods
 
-NS_IMPL_DOM_CLONENODE_WITH_INIT(nsSVGDescElement)
+NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGDescElement)
 

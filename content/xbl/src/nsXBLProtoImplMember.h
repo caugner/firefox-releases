@@ -47,12 +47,11 @@
 #include "nsIJSRuntimeService.h"
 #include "nsIServiceManager.h"
 #include "nsReadableUtils.h"
+#include "nsCycleCollectionParticipant.h"
 
 class nsIScriptContext;
 struct JSRuntime;
 class nsIJSRuntimeService;
-
-MOZ_DECL_CTOR_COUNTER(nsXBLTextWithLineNumber)
 
 struct nsXBLTextWithLineNumber
 {
@@ -99,12 +98,11 @@ struct nsXBLTextWithLineNumber
 class nsXBLProtoImplMember
 {
 public:
-  nsXBLProtoImplMember(const PRUnichar* aName) :mNext(nsnull) { mName = ToNewUnicode(nsDependentString(aName)); };
-  virtual ~nsXBLProtoImplMember() { nsMemory::Free(mName); delete mNext; };
-  virtual void Destroy(PRBool aIsCompiled)=0;
+  nsXBLProtoImplMember(const PRUnichar* aName) :mNext(nsnull) { mName = ToNewUnicode(nsDependentString(aName)); }
+  virtual ~nsXBLProtoImplMember() { nsMemory::Free(mName); delete mNext; }
 
-  nsXBLProtoImplMember* GetNext() { return mNext; };
-  void SetNext(nsXBLProtoImplMember* aNext) { mNext = aNext; };
+  nsXBLProtoImplMember* GetNext() { return mNext; }
+  void SetNext(nsXBLProtoImplMember* aNext) { mNext = aNext; }
 
   virtual nsresult InstallMember(nsIScriptContext* aContext,
                                  nsIContent* aBoundElement, 
@@ -115,8 +113,10 @@ public:
                                  const nsCString& aClassStr,
                                  void* aClassObject)=0;
 
+  virtual void Trace(TraceCallback aCallback, void *aClosure) const = 0;
+
 protected:
-  friend struct nsAutoGCRoot;
+  friend class nsAutoGCRoot;
   
   nsXBLProtoImplMember* mNext;  // The members of an implementation are chained.
   PRUnichar* mName;               // The name of the field, method, or property.

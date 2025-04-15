@@ -67,10 +67,8 @@
 
   /*
    * BSD/OS ships no header that defines uint32_t, nor bool (for C)
-   * OpenBSD ships no header that defines uint32_t and using its bool macro is
-   * unsafe.
    */
-  #if defined(bsdi) || defined(OPENBSD)
+  #if defined(bsdi)
   typedef u_int32_t uint32_t;
 
   #if !defined(__cplusplus)
@@ -78,7 +76,7 @@
   #endif
   #else
   /*
-   * FreeBSD defines uint32_t and bool.
+   * FreeBSD and OpenBSD define uint32_t and bool.
    */
     #include <inttypes.h>
     #include <stdbool.h>
@@ -93,13 +91,15 @@
    */
   #include <stdint.h>
 
-  #if !defined(__GNUC__) || (__GNUC__ > 2 || __GNUC_MINOR__ > 95)
-    #include <stdbool.h>
-  #else
-    /*
-     * GCC 2.91 can't deal with a typedef for bool, but a #define
-     * works.
-     */
-    #define bool int
+  #ifndef __cplusplus
+    #if !defined(__GNUC__) || (__GNUC__ > 2 || __GNUC_MINOR__ > 95)
+      #include <stdbool.h>
+    #else
+      /*
+       * GCC 2.91 can't deal with a typedef for bool, but a #define
+       * works.
+       */
+      #define bool int
+    #endif
   #endif
 #endif

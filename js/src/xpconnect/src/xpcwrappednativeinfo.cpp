@@ -110,6 +110,27 @@ XPCNativeMember::GetCallInfo(XPCCallContext& ccx,
 }
 
 JSBool
+XPCNativeMember::NewFunctionObject(XPCCallContext& ccx,
+                                   XPCNativeInterface* iface, JSObject *parent,
+                                   jsval* pval)
+{
+    NS_ASSERTION(!IsConstant(),
+                 "Only call this if you're sure this is not a constant!");
+    if(!IsResolved() && !Resolve(ccx, iface))
+        return JS_FALSE;
+
+    AUTO_MARK_JSVAL(ccx, &mVal);
+    JSObject* funobj =
+        xpc_CloneJSFunction(ccx, JSVAL_TO_OBJECT(mVal), parent);
+    if(!funobj)
+        return JS_FALSE;
+
+    *pval = OBJECT_TO_JSVAL(funobj);
+
+    return JS_TRUE;
+}
+
+JSBool
 XPCNativeMember::Resolve(XPCCallContext& ccx, XPCNativeInterface* iface)
 {
     if(IsConstant())
@@ -180,6 +201,8 @@ XPCNativeMember::Resolve(XPCCallContext& ccx, XPCNativeInterface* iface)
         callback = XPC_WN_GetterSetter;
     }
 
+    JSAutoRequest ar(cx);
+
     JSFunction *fun = JS_NewFunction(cx, callback, argc, flags, nsnull,
                                      iface->GetMemberName(ccx, this));
     if(!fun)
@@ -190,6 +213,9 @@ XPCNativeMember::Resolve(XPCCallContext& ccx, XPCNativeInterface* iface)
         return JS_FALSE;
 
     AUTO_MARK_JSVAL(ccx, OBJECT_TO_JSVAL(funobj));
+
+    STOBJ_SET_PARENT(funobj, nsnull);
+    STOBJ_SET_PROTO(funobj, nsnull);
 
     if(!JS_SetReservedSlot(ccx, funobj, 0, PRIVATE_TO_JSVAL(iface))||
        !JS_SetReservedSlot(ccx, funobj, 1, PRIVATE_TO_JSVAL(this)))

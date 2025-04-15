@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=2 sw=2 et tw=78: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -71,7 +72,6 @@
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
 #include "nsIStyleSheet.h"
-#include "nsICSSLoader.h"
 #include "nsICSSStyleSheet.h"
 #include "nsIPresShell.h"
 #include "nsIDocShell.h"
@@ -79,9 +79,9 @@
 #include "nsIDocumentObserver.h"
 #include "nsIIOService.h"
 #include "nsLayoutCID.h"
-#include "nsIBindingManager.h"
 #include "prio.h"
 #include "nsInt64.h"
+#include "nsEscape.h"
 #include "nsIDirectoryService.h"
 #include "nsILocalFile.h"
 #include "nsAppDirectoryServiceDefs.h"
@@ -96,6 +96,7 @@
 #include "nsIJARURI.h"
 #include "nsIFileURL.h"
 #include "nsIXPConnect.h"
+#include "nsPresShellIterator.h"
 
 static char kChromePrefix[] = "chrome://";
 nsIAtom* nsChromeRegistry::sCPrefix; // atom for "c"
@@ -103,7 +104,6 @@ nsIAtom* nsChromeRegistry::sCPrefix; // atom for "c"
 #define kChromeFileName           NS_LITERAL_CSTRING("chrome.rdf")
 #define kInstalledChromeFileName  NS_LITERAL_CSTRING("installed-chrome.txt")
 
-static NS_DEFINE_CID(kWindowMediatorCID, NS_WINDOWMEDIATOR_CID);
 static NS_DEFINE_CID(kRDFServiceCID, NS_RDFSERVICE_CID);
 static NS_DEFINE_CID(kRDFXMLDataSourceCID, NS_RDFXMLDATASOURCE_CID);
 static NS_DEFINE_CID(kRDFContainerUtilsCID,      NS_RDFCONTAINERUTILS_CID);
@@ -306,6 +306,8 @@ nsChromeRegistry::Init()
   }
 
   CheckForNewChrome();
+  // CheckForNewChrome suppresses these during chrome registration
+  FlagXPCNativeWrappers();
 
   return NS_OK;
 }
@@ -387,25 +389,33 @@ SplitURL(nsIURI *aChromeURI, nsCString& aPackage, nsCString& aProvider, nsCStrin
   } else {
     // Protect against URIs containing .. that reach up out of the
     // chrome directory to grant chrome privileges to non-chrome files.
-    int depth = 0;
-    PRBool sawSlash = PR_TRUE;  // .. at the beginning is suspect as well as /..
-    for (const char* p=aFile.get(); *p; p++) {
-      if (sawSlash) {
-        if (p[0] == '.' && p[1] == '.'){
-          depth--;    // we have /.., decrement depth.
-        } else {
-          static const char escape[] = "%2E%2E";
-          if (PL_strncasecmp(p, escape, sizeof(escape)-1) == 0)
-            depth--;   // we have the HTML-escaped form of /.., decrement depth.
-        }
-      } else if (p[0] != '/') {
-        depth++;        // we have /x for some x that is not /
+    // XXX: If we find %-escaped dot or % in a chrome URI we assume
+    // someone is trying to trick us.
+    const char* pos = aFile.BeginReading();
+    const char* end = aFile.EndReading();
+    while (pos < end) {
+      switch (*pos) {
+        case ':':
+          return NS_ERROR_FAILURE;
+        case '.':
+          if (pos[1] == '.')
+            return NS_ERROR_FAILURE;
+          break;
+        case '%':
+          // chrome: URIs with escaped dots are trying to trick us.
+          // Double-escapes (%25) doubly so
+          if (pos[1] == '2' &&
+               ( pos[2] == 'e' || pos[2] == 'E' || 
+                 pos[2] == '5' ))
+            return NS_ERROR_FAILURE;
+          break;
+        case '?':
+        case '#':
+          // leave any query or ref section alone
+          pos = end;
+          continue;
       }
-      sawSlash = (p[0] == '/');
-
-      if (depth < 0) {
-        return NS_ERROR_FAILURE;
-      }
+      ++pos;
     }
   }
   if (aModified)
@@ -681,15 +691,13 @@ nsChromeRegistry::GetOverrideURL(const nsACString& aPackage,
   
   aResult += aPath;
 
-  nsCOMPtr<nsIZipEntry> zipEntry;
-  rv = mOverrideJAR->GetEntry(PromiseFlatCString(aResult).get(),
-                              getter_AddRefs(zipEntry));
-  if (NS_FAILED(rv)) {
+  // Check if the item exists in the JAR
+  PRBool ok;
+  rv = mOverrideJAR->HasEntry(aResult, &ok);
+  if (NS_FAILED(rv) || !ok) {
     aResult.Truncate();
-    return rv;
   }
-
-  return NS_OK;
+  return rv;
 }
 
 nsresult
@@ -933,7 +941,7 @@ nsChromeRegistry::SelectPackageInProvider(nsIRDFResource *aPackageList,
                                  // install dir for the packages required to bring up the profile UI.
         rv = SelectProviderForPackage(aProvider,
                                       aProviderName,
-                                      NS_ConvertASCIItoUCS2(packageName).get(),
+                                      NS_ConvertASCIItoUTF16(packageName).get(),
                                       aArc, useProfile, PR_TRUE);
         if (NS_FAILED(rv))
           return NS_ERROR_FAILURE;
@@ -1163,7 +1171,7 @@ nsChromeRegistry::LoadDataSource(const nsACString &aFileName,
   {
     nsCStringKey skey(key);
     nsCOMPtr<nsISupports> supports =
-      getter_AddRefs(NS_STATIC_CAST(nsISupports*, mDataSourceTable->Get(&skey)));
+      getter_AddRefs(static_cast<nsISupports*>(mDataSourceTable->Get(&skey)));
 
     if (supports)
     {
@@ -1184,7 +1192,7 @@ nsChromeRegistry::LoadDataSource(const nsACString &aFileName,
   // Seed the datasource with the ``chrome'' namespace
   nsCOMPtr<nsIRDFXMLSink> sink = do_QueryInterface(*aResult);
   if (sink)
-    sink->AddNameSpace(sCPrefix, NS_ConvertASCIItoUCS2(CHROME_URI));
+    sink->AddNameSpace(sCPrefix, NS_ConvertASCIItoUTF16(CHROME_URI));
 
   nsCOMPtr<nsIRDFRemoteDataSource> remote = do_QueryInterface(*aResult);
   if (! remote)
@@ -1308,13 +1316,13 @@ static void FlushSkinBindingsForWindow(nsIDOMWindowInternal* aWindow)
     return;
 
   // Annihilate all XBL bindings.
-  document->BindingManager()->FlushSkinBindings();
+  document->FlushSkinBindings();
 }
 
 // XXXbsmedberg: move this to nsIWindowMediator
 NS_IMETHODIMP nsChromeRegistry::RefreshSkins()
 {
-  nsCOMPtr<nsIWindowMediator> windowMediator(do_GetService(kWindowMediatorCID));
+  nsCOMPtr<nsIWindowMediator> windowMediator(do_GetService(NS_WINDOWMEDIATOR_CONTRACTID));
   if (!windowMediator)
     return NS_OK;
 
@@ -1399,10 +1407,9 @@ nsresult nsChromeRegistry::RefreshWindow(nsIDOMWindowInternal* aWindow)
     return NS_OK;
 
   // Deal with the agent sheets first.  Have to do all the style sets by hand.
-  PRUint32 shellCount = document->GetNumberOfShells();
-  for (PRUint32 k = 0; k < shellCount; k++) {
-    nsIPresShell *shell = document->GetShellAt(k);
-
+  nsPresShellIterator iter(document);
+  nsCOMPtr<nsIPresShell> shell;
+  while ((shell = iter.GetNextShell())) {
     // Reload only the chrome URL agent style sheets.
     nsCOMArray<nsIStyleSheet> agentSheets;
     rv = shell->GetAgentStyleSheets(agentSheets);
@@ -1712,13 +1719,13 @@ NS_IMETHODIMP nsChromeRegistry::SelectLocaleForProfile(const nsACString& aLocale
                                                        const PRUnichar *aProfilePath)
 {
   // to be changed to use given path
-  return SetProvider(NS_LITERAL_CSTRING("locale"), mSelectedLocale, aLocale, PR_TRUE, NS_ConvertUCS2toUTF8(aProfilePath).get(), PR_TRUE);
+  return SetProvider(NS_LITERAL_CSTRING("locale"), mSelectedLocale, aLocale, PR_TRUE, NS_ConvertUTF16toUTF8(aProfilePath).get(), PR_TRUE);
 }
 
 NS_IMETHODIMP nsChromeRegistry::SelectSkinForProfile(const nsACString& aSkin,
                                                      const PRUnichar *aProfilePath)
 {
-  return SetProvider(NS_LITERAL_CSTRING("skin"), mSelectedSkin, aSkin, PR_TRUE, NS_ConvertUCS2toUTF8(aProfilePath).get(), PR_TRUE);
+  return SetProvider(NS_LITERAL_CSTRING("skin"), mSelectedSkin, aSkin, PR_TRUE, NS_ConvertUTF16toUTF8(aProfilePath).get(), PR_TRUE);
 }
 
 /* void setRuntimeProvider (in boolean runtimeProvider); */
@@ -1930,7 +1937,7 @@ nsChromeRegistry::SetProviderForPackage(const nsACString& aProvider,
   
   if (aUseProfile && !mProfileInitialized) {
     rv = LoadProfileDataSource();
-    NS_ENSURE_TRUE(rv, rv);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // Figure out which file we're needing to modify, e.g., is it the install
@@ -2368,7 +2375,7 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
         }
 
         nsCOMPtr<nsIRDFLiteral> baseLiteral;
-        mRDFService->GetLiteral(NS_ConvertASCIItoUCS2(baseURL).get(), getter_AddRefs(baseLiteral));
+        mRDFService->GetLiteral(NS_ConvertASCIItoUTF16(baseURL).get(), getter_AddRefs(baseLiteral));
 
         rv = nsChromeRegistry::UpdateArc(installSource, resource, mBaseURL, baseLiteral, aRemove);
         if (NS_FAILED(rv)) return rv;
@@ -2479,7 +2486,7 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
               }
 
               nsCOMPtr<nsIRDFLiteral> baseLiteral;
-              mRDFService->GetLiteral(NS_ConvertASCIItoUCS2(baseURL).get(), getter_AddRefs(baseLiteral));
+              mRDFService->GetLiteral(NS_ConvertASCIItoUTF16(baseURL).get(), getter_AddRefs(baseLiteral));
 
               rv = nsChromeRegistry::UpdateArc(installSource, entry, mBaseURL, baseLiteral, aRemove);
               if (NS_FAILED(rv)) return rv;
@@ -2570,7 +2577,7 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
                   if (imageURL.FindChar(':') == -1) {
                     // We're relative. Prepend the base URL of the
                     // package.
-                    NS_ConvertUTF8toUCS2 fullURL(aBaseURL);
+                    NS_ConvertUTF8toUTF16 fullURL(aBaseURL);
                     fullURL += imageURL;
                     mRDFService->GetLiteral(fullURL.get(), getter_AddRefs(literal));
                     newTarget = do_QueryInterface(literal);
@@ -2600,8 +2607,11 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
   if (NS_FAILED(rv))
     return NS_OK;
 
-  if (!mBatchInstallFlushes)
+  if (!mBatchInstallFlushes) {
     rv = remoteInstall->Flush();
+    if (NS_SUCCEEDED(rv) && aProviderType.Equals("package"))
+      rv = FlagXPCNativeWrappers();
+  }
 
   // XXX Handle the installation of overlays.
 
@@ -2811,7 +2821,7 @@ nsChromeRegistry::GetProfileRoot(nsACString& aFileURL)
        const nsAFlatCString& empty = EmptyCString();
 
        // copy along
-       // It aint an error if these files dont exist
+       // It ain't an error if these files don't exist
        defaultUserContentFile->CopyToNative(userChromeDir, empty);
        defaultUserChromeFile->CopyToNative(userChromeDir, empty);
      }
@@ -2849,7 +2859,7 @@ nsChromeRegistry::ReloadChrome()
   nsresult rv = NS_OK;
 
   // Get the window mediator
-  nsCOMPtr<nsIWindowMediator> windowMediator = do_GetService(kWindowMediatorCID, &rv);
+  nsCOMPtr<nsIWindowMediator> windowMediator = do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv);
   if (NS_SUCCEEDED(rv)) {
     nsCOMPtr<nsISimpleEnumerator> windowEnumerator;
 
@@ -2942,6 +2952,13 @@ nsChromeRegistry::AddToCompositeDataSource(PRBool aUseProfile)
   LoadDataSource(kChromeFileName, getter_AddRefs(mInstallDirChromeDataSource), PR_FALSE, nsnull);
   mChromeDataSource->AddDataSource(mInstallDirChromeDataSource);
 
+  return rv;
+}
+
+nsresult
+nsChromeRegistry::FlagXPCNativeWrappers()
+{
+  nsresult rv;
   // List all packages that want XPC native wrappers
   nsCOMPtr<nsIXPConnect> xpc(do_GetService("@mozilla.org/js/xpc/XPConnect;1", &rv));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2969,7 +2986,7 @@ nsChromeRegistry::AddToCompositeDataSource(PRBool aUseProfile)
         uri.AssignLiteral("chrome://");
         uri.Append(source + sizeof urn - 1);
         uri.Append('/');
-        rv = xpc->FlagSystemFilenamePrefix(uri.get());
+        rv = xpc->FlagSystemFilenamePrefix(uri.get(), PR_TRUE);
         NS_ENSURE_SUCCESS(rv, rv);
       }
     }
@@ -2980,16 +2997,17 @@ nsChromeRegistry::AddToCompositeDataSource(PRBool aUseProfile)
   return NS_OK;
 }
 
-nsresult nsChromeRegistry::LoadStyleSheetWithURL(nsIURI* aURL,
-                                                 PRBool aAllowUnsafeRules,
-                                                 nsICSSStyleSheet** aSheet)
+nsresult nsChromeRegistry::LoadStyleSheetWithURL(nsIURI* aURL, PRBool aEnableUnsafeRules, nsICSSStyleSheet** aSheet)
 {
   *aSheet = nsnull;
 
-  nsCOMPtr<nsICSSLoader_MOZILLA_1_8_BRANCH> cssLoader = do_GetService(kCSSLoaderCID);
-  if (!cssLoader) return NS_ERROR_FAILURE;
+  if (!mCSSLoader) {
+    nsresult rv;
+    mCSSLoader = do_CreateInstance(kCSSLoaderCID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
-  return cssLoader->LoadSheetSync(aURL, aAllowUnsafeRules, aSheet);
+  return mCSSLoader->LoadSheetSync(aURL, aEnableUnsafeRules, aSheet);
 }
 
 nsresult nsChromeRegistry::LoadInstallDataSource()
@@ -3016,6 +3034,8 @@ nsresult nsChromeRegistry::LoadProfileDataSource()
     mProfileInitialized = mInstallInitialized = PR_TRUE;
     mChromeDataSource = nsnull;
     rv = AddToCompositeDataSource(PR_TRUE);
+    if (NS_FAILED(rv)) return rv;
+    rv = FlagXPCNativeWrappers();
     if (NS_FAILED(rv)) return rv;
 
     // XXX this sucks ASS. This is a temporary hack until we get
@@ -3107,6 +3127,13 @@ nsChromeRegistry::AllowScriptsForPackage(nsIURI* aChromeURI, PRBool *aResult)
 }
 
 NS_IMETHODIMP
+nsChromeRegistry::AllowContentToAccess(nsIURI*, PRBool *aResult)
+{
+  *aResult = PR_TRUE;
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
 nsChromeRegistry::CheckForNewChrome()
 {
   nsresult rv;
@@ -3156,7 +3183,9 @@ nsChromeRegistry::CheckForNewChrome()
     if (dataBuffer) {
       PRInt32 bufferSize = PR_Read(file, dataBuffer, finfo.size);
       if (bufferSize > 0) {
+        mBatchInstallFlushes = PR_TRUE;
         rv = ProcessNewChromeBuffer(dataBuffer, bufferSize);
+        mBatchInstallFlushes = PR_FALSE;
       }
       delete [] dataBuffer;
     }
@@ -3188,8 +3217,6 @@ nsChromeRegistry::ProcessNewChromeBuffer(char *aBuffer, PRInt32 aLength)
   NS_NAMED_LITERAL_CSTRING(path, "path");
   nsCAutoString fileURL;
   nsCAutoString chromeURL;
-
-  mBatchInstallFlushes = PR_TRUE;
 
   // process chromeType, chromeProfile, chromeLocType, chromeLocation
   while (aBuffer < bufferEnd) {
@@ -3306,7 +3333,6 @@ nsChromeRegistry::ProcessNewChromeBuffer(char *aBuffer, PRInt32 aLength)
       ++aBuffer;
   }
 
-  mBatchInstallFlushes = PR_FALSE;
   nsCOMPtr<nsIRDFDataSource> dataSource;
   LoadDataSource(kChromeFileName, getter_AddRefs(dataSource), PR_FALSE, nsnull);
   nsCOMPtr<nsIRDFRemoteDataSource> remote(do_QueryInterface(dataSource));
@@ -3352,7 +3378,7 @@ NS_IMETHODIMP nsChromeRegistry::Observe(nsISupports *aSubject, const char *aTopi
     mChromeDataSource = nsnull;
     mInstallInitialized = mProfileInitialized = PR_FALSE;
 
-    if (!strcmp("shutdown-cleanse", NS_ConvertUCS2toUTF8(someData).get())) {
+    if (!strcmp("shutdown-cleanse", NS_ConvertUTF16toUTF8(someData).get())) {
       nsCOMPtr<nsIFile> userChromeDir;
       rv = NS_GetSpecialDirectory(NS_APP_USER_CHROME_DIR, getter_AddRefs(userChromeDir));
       if (NS_SUCCEEDED(rv) && userChromeDir)

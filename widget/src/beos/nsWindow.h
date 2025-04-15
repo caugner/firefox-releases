@@ -63,6 +63,8 @@
 #include <Messenger.h>
 #endif
 
+#include <gfxBeOSSurface.h>
+
 #define NSRGB_2_COLOREF(color) \
             RGB(NS_GET_R(color),NS_GET_G(color),NS_GET_B(color))
 
@@ -72,6 +74,7 @@ class nsIRollupListener;
 #if defined(BeIME)
 class nsIMEBeOS;
 #endif
+
 /**
  * Native BeOS window wrapper. 
  */
@@ -112,6 +115,8 @@ public:
 	// Utility method for implementing both Create(nsIWidget ...) and
 	// Create(nsNativeWidget...)
 
+	NS_IMETHOD          PreCreateWidget(nsWidgetInitData *aWidgetInitData);
+
 	virtual nsresult        StandardWindowCreate(nsIWidget *aParent,
 	                                             const nsRect &aRect,
 	                                             EVENT_CALLBACK aHandleEventFunction,
@@ -120,6 +125,8 @@ public:
 	                                             nsIToolkit *aToolkit,
 	                                             nsWidgetInitData *aInitData,
 	                                             nsNativeWidget aNativeParent = nsnull);
+
+	gfxASurface*            GetThebesSurface();
 
 	NS_IMETHOD              Destroy();
 	virtual nsIWidget*        GetParent(void);
@@ -141,13 +148,12 @@ public:
 	                               PRInt32 aWidth,
 	                               PRInt32 aHeight,
 	                               PRBool   aRepaint);
+	NS_IMETHOD              SetModal(PRBool aModal);
 	NS_IMETHOD              Enable(PRBool aState);
 	NS_IMETHOD              IsEnabled(PRBool *aState);
 	NS_IMETHOD              SetFocus(PRBool aRaise);
 	NS_IMETHOD              GetScreenBounds(nsRect &aRect);
 	NS_IMETHOD              SetBackgroundColor(const nscolor &aColor);
-	virtual nsIFontMetrics* GetFont(void);
-	NS_IMETHOD              SetFont(const nsFont &aFont);
 	NS_IMETHOD              SetCursor(nsCursor aCursor);
 	NS_IMETHOD              Invalidate(PRBool aIsSynchronous);
 	NS_IMETHOD              Invalidate(const nsRect & aRect, PRBool aIsSynchronous);
@@ -167,8 +173,9 @@ public:
 	NS_IMETHOD              GetPreferredSize(PRInt32& aWidth, PRInt32& aHeight);
 	NS_IMETHOD              SetPreferredSize(PRInt32 aWidth, PRInt32 aHeight);
 	NS_IMETHOD              DispatchEvent(nsGUIEvent* event, nsEventStatus & aStatus);
+	NS_IMETHOD              HideWindowChrome(PRBool aShouldHide);
 
-	virtual void            ConvertToDeviceCoordinates(nscoord &aX, nscoord &aY) {}
+	virtual void            ConvertToDeviceCoordinates(nscoord	&aX,nscoord	&aY) {}
 
 
 	// nsSwitchToUIThread interface
@@ -176,7 +183,8 @@ public:
 	virtual PRBool          DispatchMouseEvent(PRUint32 aEventType, 
 	                                           nsPoint aPoint, 
 	                                           PRUint32 clicks, 
-	                                           PRUint32 mod);
+	                                           PRUint32 mod,
+	                                           PRUint16 aButton = nsMouseEvent::eLeftButton);
 
 
 	void                   InitEvent(nsGUIEvent& event, nsPoint* aPoint = nsnull);
@@ -206,56 +214,37 @@ protected:
 	PRBool                  DispatchKeyEvent(PRUint32 aEventType, PRUint32 aCharCode,
                                            PRUint32 aKeyCode, PRUint32 aFlags = 0);
 	PRBool                  DispatchFocus(PRUint32 aEventType);
-	static PRBool           ConvertStatus(nsEventStatus aStatus);
+	static PRBool           ConvertStatus(nsEventStatus aStatus)
+	                        { return aStatus == nsEventStatus_eConsumeNoDefault; }
 	PRBool                  DispatchStandardEvent(PRUint32 aMsg);
 
 	PRBool                  DispatchWindowEvent(nsGUIEvent* event);
 	void                    HideKids(PRBool state);
 
 
-	nsViewBeOS*      mView;
-	PRBool           mIsTopWidgetWindow;
 	nsCOMPtr<nsIWidget> mParent;
+	nsWindow*        mWindowParent;
 	nsCOMPtr<nsIRegion> mUpdateArea;
-	PRBool           mIsMetaDown;
-	PRBool           mOnDestroyCalled;
-	PRBool           mIsVisible;
 	nsIFontMetrics*  mFontMetrics;
+
+	nsViewBeOS*      mView;
 	PRInt32          mPreferredWidth;
 	PRInt32          mPreferredHeight;
-	PRBool           mEnabled;
-	PRBool           mJustGotActivate;
-	PRBool           mJustGotDeactivate;	
-	PRBool           mIsScrolling;
+	window_feel      mBWindowFeel;
+	window_look      mBWindowLook;
+
+	nsRefPtr<gfxBeOSSurface> mThebesSurface;
+
+	//Just for saving space we use packed bools.
+	PRPackedBool           mIsTopWidgetWindow;
+	PRPackedBool           mIsMetaDown;
+	PRPackedBool           mIsVisible;
+	PRPackedBool           mEnabled;
+	PRPackedBool           mIsScrolling;
+	PRPackedBool           mListenForResizes;
+	
 public:	// public on BeOS to allow BViews to access it
-	// Enumeration of the methods which are accessable on the "main GUI thread"
-	// via the CallMethod(...) mechanism...
-	// see nsSwitchToUIThread
-	enum
-	{
-	    CREATE       = 0x0101,
-	    CREATE_NATIVE,
-	    DESTROY,
-	    SET_FOCUS,
-	    GOT_FOCUS,
-	    KILL_FOCUS,
-	    SET_CURSOR,
-	    ONMOUSE,
-	    ONDROP,
-	    ONWHEEL,
-	    ONPAINT,
-	    ONRESIZE,
-	    CLOSEWINDOW,
-	    ONKEY,
-	    BTNCLICK,
-	    ONACTIVATE,
-	    ONMOVE,
-	    ONWORKSPACE
-#if defined(BeIME)
-	    ,
-		ONIME
-#endif
-	};
+
 	nsToolkit *GetToolkit() { return (nsToolkit *)nsBaseWidget::GetToolkit(); }
 };
 
@@ -296,7 +285,6 @@ public:
 	virtual void            FrameMoved(BPoint origin);
 	virtual void            WorkspacesChanged(uint32 oldworkspace, uint32 newworkspace);
 	virtual void            FrameResized(float width, float height);
-
 	bool                    fJustGotBounds;	
 private:
 	BPoint          lastWindowPoint;
@@ -338,22 +326,12 @@ private:
 #endif
 	BPoint               mousePos;
 	uint32               mouseMask;
-	// actually it is delta, not point, using it as convinient x,y storage
+	// actually it is delta, not point, using it as convenient x,y storage
 	BPoint               wheel;
 	bool                 fRestoreMouseMask;	
 	bool                 fJustValidated;
 	bool                 fWheelDispatched;
 	bool                 fVisible;
-};
-
-//
-// A child window is a window with different style
-//
-class ChildWindow : public nsWindow 
-{
-public:
-	                        ChildWindow() {};
-	virtual PRBool          IsChild() { return(PR_TRUE); };
 };
 
 #if defined(BeIME)
@@ -369,7 +347,7 @@ public:
 	PRBool	DispatchWindowEvent(nsGUIEvent* event);
 	
 	static  nsIMEBeOS *GetIME();
- 
+
 private:
 	nsWindow*	imeTarget;
 	BMessenger	imeMessenger;

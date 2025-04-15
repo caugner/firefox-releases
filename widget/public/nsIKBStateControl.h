@@ -41,10 +41,10 @@
 
 #include "nsISupports.h"
 
-// {6A9AC731-988A-11d3-86CC-005004832142}
+// {AC4EBF71-86B6-4dab-A7FD-177501ADEC98}
 #define NS_IKBSTATECONTROL_IID \
-{ 0x6a9ac731, 0x988a, 0x11d3, \
-{ 0x86, 0xcc, 0x0, 0x50, 0x4, 0x83, 0x21, 0x42 } }
+{ 0xac4ebf71, 0x86b6, 0x4dab, \
+{ 0xa7, 0xfd, 0x17, 0x75, 0x01, 0xad, 0xec, 0x98 } }
 
 
 /**
@@ -54,7 +54,7 @@ class nsIKBStateControl : public nsISupports {
 
   public:
 
-    NS_DEFINE_STATIC_IID_ACCESSOR(NS_IKBSTATECONTROL_IID)
+    NS_DECLARE_STATIC_IID_ACCESSOR(NS_IKBSTATECONTROL_IID)
 
     /*
      * Force Input Method Editor to commit the uncommited input
@@ -86,9 +86,55 @@ class nsIKBStateControl : public nsISupports {
     NS_IMETHOD GetIMEOpenState(PRBool* aState) = 0;
 
     /*
+     * IME enabled states, the aState value of SetIMEEnabled/GetIMEEnabled
+     * should be one value of following values.
+     */
+    enum {
+      /*
+       * 'Disabled' means the user cannot use IME. So, the open state should be
+       * 'closed' during 'disabled'.
+       */
+      IME_STATUS_DISABLED = 0,
+      /*
+       * 'Enabled' means the user can use IME.
+       */
+      IME_STATUS_ENABLED = 1,
+      /*
+       * 'Password' state is a special case for the password editors.
+       * E.g., on mac, the password editors should disable the non-Roman
+       * keyboard layouts at getting focus. Thus, the password editor may have
+       * special rules on some platforms.
+       */
+      IME_STATUS_PASSWORD = 2
+    };
+
+    /*
+     * Set the state to 'Enabled' or 'Disabled' or 'Password'.
+     */
+    NS_IMETHOD SetIMEEnabled(PRUint32 aState) = 0;
+
+    /*
+     * Get IME is 'Enabled' or 'Disabled' or 'Password'.
+     */
+    NS_IMETHOD GetIMEEnabled(PRUint32* aState) = 0;
+
+    /*
      * Destruct and don't commit the IME composition string.
      */
     NS_IMETHOD CancelIMEComposition() = 0;
+
+    /*
+     * Get toggled key states.
+     * aKeyCode should be NS_VK_CAPS_LOCK or  NS_VK_NUM_LOCK or
+     * NS_VK_SCROLL_LOCK.
+     * aLEDState is the result for current LED state of the key.
+     * If the LED is 'ON', it returns TRUE, otherwise, FALSE.
+     * If the platform doesn't support the LED state (or we cannot get the
+     * state), this method returns NS_ERROR_NOT_IMPLEMENTED.
+     */
+    NS_IMETHOD GetToggledKeyState(PRUint32 aKeyCode, PRBool* aLEDState) = 0;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(nsIKBStateControl, NS_IKBSTATECONTROL_IID)
 
 #endif // nsIKBStateControl_h__

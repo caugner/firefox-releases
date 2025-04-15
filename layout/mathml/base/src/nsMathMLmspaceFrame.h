@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -47,7 +48,9 @@
 
 class nsMathMLmspaceFrame : public nsMathMLContainerFrame {
 public:
-  friend nsresult NS_NewMathMLmspaceFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+  friend nsIFrame* NS_NewMathMLmspaceFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
+
+  virtual PRBool IsLeaf() const;
 
   NS_IMETHOD
   Reflow(nsPresContext*          aPresContext,
@@ -56,7 +59,7 @@ public:
          nsReflowStatus&          aStatus);
   
 protected:
-  nsMathMLmspaceFrame();
+  nsMathMLmspaceFrame(nsStyleContext* aContext) : nsMathMLContainerFrame(aContext) {}
   virtual ~nsMathMLmspaceFrame();
   
   virtual PRIntn GetSkipSides() const { return 0; }

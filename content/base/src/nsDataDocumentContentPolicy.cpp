@@ -35,9 +35,15 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/*
+ * Content policy implementation that prevents all loads of images,
+ * subframes, etc from documents loaded as data (eg documents loaded
+ * via XMLHttpRequest).
+ */
+
 #include "nsDataDocumentContentPolicy.h"
 #include "nsIDocument.h"
-#include "nsIContent.h"
+#include "nsINode.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMDocument.h"
 
@@ -53,24 +59,20 @@ nsDataDocumentContentPolicy::ShouldLoad(PRUint32 aContentType,
                                         PRInt16 *aDecision)
 {
   *aDecision = nsIContentPolicy::ACCEPT;
-  // Look for the document.  In most cases, aRequestingContext is a
-  // content node.
+  // Look for the document.  In most cases, aRequestingContext is a node.
   nsCOMPtr<nsIDocument> doc;
-  nsCOMPtr<nsIContent> content = do_QueryInterface(aRequestingContext);
-  if (content) {
-    doc = content->GetOwnerDoc();
+  nsCOMPtr<nsINode> node = do_QueryInterface(aRequestingContext);
+  if (node) {
+    doc = node->GetOwnerDoc();
   } else {
-    doc = do_QueryInterface(aRequestingContext);
-    if (!doc) {
-      nsCOMPtr<nsIDOMWindow> window = do_QueryInterface(aRequestingContext);
-      if (window) {
-        nsCOMPtr<nsIDOMDocument> domDoc;
-        window->GetDocument(getter_AddRefs(domDoc));
-        doc = do_QueryInterface(domDoc);
-      }
+    nsCOMPtr<nsIDOMWindow> window = do_QueryInterface(aRequestingContext);
+    if (window) {
+      nsCOMPtr<nsIDOMDocument> domDoc;
+      window->GetDocument(getter_AddRefs(domDoc));
+      doc = do_QueryInterface(domDoc);
     }
   }
-  if (doc && doc->IsLoadedAsData()) {
+  if (aContentType != nsIContentPolicy::TYPE_DTD && doc && doc->IsLoadedAsData()) {
     *aDecision = nsIContentPolicy::REJECT_TYPE;
   }
 

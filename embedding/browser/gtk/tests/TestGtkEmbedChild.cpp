@@ -14,7 +14,7 @@
  * The Original Code is mozilla.org code.
  *
  * The Initial Developer of the Original Code is
- * Christopher Blizzard. Portions created by Christopher Blizzard are Copyright (C) Christopher Blizzard.  All Rights Reserved.
+ * Christopher Blizzard.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
@@ -40,6 +40,9 @@
 #include <gdk/gdkx.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#include "nsStringAPI.h"
+#include "gtkmozembed_glue.cpp"
 
 int (*old_handler) (Display *, XErrorEvent *);
 
@@ -86,6 +89,38 @@ main(int argc, char **argv)
   GtkWidget *button;
 
   gtk_init(&argc, &argv);
+
+  static const GREVersionRange greVersion = {
+    "1.9a", PR_TRUE,
+    "2", PR_TRUE
+  };
+
+  char xpcomPath[PATH_MAX];
+
+  nsresult rv = GRE_GetGREPathWithProperties(&greVersion, 1, nsnull, 0,
+                                             xpcomPath, sizeof(xpcomPath));
+  if (NS_FAILED(rv)) {
+    fprintf(stderr, "Couldn't find a compatible GRE.\n");
+    return 1;
+  }
+
+  rv = XPCOMGlueStartup(xpcomPath);
+  if (NS_FAILED(rv)) {
+    fprintf(stderr, "Couldn't start XPCOM.");
+    return 1;
+  }
+
+  rv = GTKEmbedGlueStartup();
+  if (NS_FAILED(rv)) {
+    fprintf(stderr, "Couldn't find GTKMozEmbed symbols.");
+    return 1;
+  }
+
+  char *lastSlash = strrchr(xpcomPath, '/');
+  if (lastSlash)
+    *lastSlash = '\0';
+
+  gtk_moz_embed_set_path(xpcomPath);
 
   old_handler = XSetErrorHandler (error_handler);
 

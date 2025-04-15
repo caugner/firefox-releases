@@ -40,32 +40,35 @@
 #include "nsBoxFrame.h"
 #include "nsGridRowLeafFrame.h"
 
-nsresult NS_NewListItemFrame(nsIPresShell* aPresShell, 
-                             nsIFrame** aNewFrame, 
-                             PRBool aIsRoot = PR_FALSE,
-                             nsIBoxLayout* aLayoutManager = nsnull);
+nsIFrame* NS_NewListItemFrame(nsIPresShell* aPresShell,
+                              nsStyleContext *aContext,
+                              PRBool aIsRoot = PR_FALSE,
+                              nsIBoxLayout* aLayoutManager = nsnull);
 
 class nsListItemFrame : public nsGridRowLeafFrame
 {
 public:
   NS_DECL_ISUPPORTS
 
-  friend nsresult NS_NewListItemFrame(nsIPresShell* aPresShell, 
-                                      nsIFrame** aNewFrame, 
-                                      PRBool aIsRoot,
-                                      nsIBoxLayout* aLayoutManager);
+  friend nsIFrame* NS_NewListItemFrame(nsIPresShell* aPresShell,
+                                       nsStyleContext *aContext,
+                                       PRBool aIsRoot,
+                                       nsIBoxLayout* aLayoutManager);
 
   // overridden so that children of listitems don't handle mouse events,
   // unless allowevents="true" is specified on the listitem
-  NS_IMETHOD GetFrameForPoint(const nsPoint& aPoint, 
-                              nsFramePaintLayer aWhichLayer,
-                              nsIFrame**     aFrame);
+  NS_IMETHOD BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
+                                         const nsRect&           aDirtyRect,
+                                         const nsDisplayListSet& aLists);
 
   // nsIBox
-  NS_IMETHOD GetPrefSize(nsBoxLayoutState& aState, nsSize& aSize);
+  virtual nsSize GetPrefSize(nsBoxLayoutState& aState);
   
 protected:
-  nsListItemFrame(nsIPresShell* aPresShell, PRBool aIsRoot = nsnull, nsIBoxLayout* aLayoutManager = nsnull);
+  nsListItemFrame(nsIPresShell* aPresShell,
+                  nsStyleContext *aContext,
+                  PRBool aIsRoot = nsnull,
+                  nsIBoxLayout* aLayoutManager = nsnull);
   virtual ~nsListItemFrame();
 
 }; // class nsListItemFrame

@@ -35,6 +35,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* representation of length values in computed style data */
+
 #include "nsStyleCoord.h"
 #include "nsString.h"
 #include "nsCRT.h"
@@ -60,11 +62,9 @@ nsStyleCoord::nsStyleCoord(PRInt32 aValue, nsStyleUnit aUnit)
 {
   //if you want to pass in eStyleUnit_Coord, don't. instead, use the
   //constructor just above this one... MMP
-  NS_ASSERTION((aUnit == eStyleUnit_Proportional) ||
-               (aUnit == eStyleUnit_Enumerated) ||
+  NS_ASSERTION((aUnit == eStyleUnit_Enumerated) ||
                (aUnit == eStyleUnit_Integer), "not an int value");
-  if ((aUnit == eStyleUnit_Proportional) ||
-      (aUnit == eStyleUnit_Enumerated) ||
+  if ((aUnit == eStyleUnit_Enumerated) ||
       (aUnit == eStyleUnit_Integer)) {
     mValue.mInt = aValue;
   }
@@ -86,17 +86,6 @@ nsStyleCoord::nsStyleCoord(float aValue, nsStyleUnit aUnit)
   else {
     mUnit = eStyleUnit_Null;
     mValue.mInt = 0;
-  }
-}
-
-nsStyleCoord::nsStyleCoord(const nsStyleCoord& aCopy)
-  : mUnit(aCopy.mUnit)
-{
-  if ((eStyleUnit_Percent <= mUnit) && (mUnit < eStyleUnit_Coord)) {
-    mValue.mFloat = aCopy.mValue.mFloat;
-  }
-  else {
-    mValue.mInt = aCopy.mValue.mInt;
   }
 }
 
@@ -139,12 +128,10 @@ void nsStyleCoord::SetCoordValue(nscoord aValue)
 
 void nsStyleCoord::SetIntValue(PRInt32 aValue, nsStyleUnit aUnit)
 {
-  NS_ASSERTION((aUnit == eStyleUnit_Proportional) ||
-               (aUnit == eStyleUnit_Enumerated) ||
+  NS_ASSERTION((aUnit == eStyleUnit_Enumerated) ||
                (aUnit == eStyleUnit_Chars) ||
                (aUnit == eStyleUnit_Integer), "not an int value");
-  if ((aUnit == eStyleUnit_Proportional) ||
-      (aUnit == eStyleUnit_Enumerated) ||
+  if ((aUnit == eStyleUnit_Enumerated) ||
       (aUnit == eStyleUnit_Chars) ||
       (aUnit == eStyleUnit_Integer)) {
     mUnit = aUnit;
@@ -179,14 +166,10 @@ void nsStyleCoord::SetAutoValue(void)
   mValue.mInt = 0;
 }
 
-void nsStyleCoord::SetUnionValue(const nsStyleUnion& aValue, nsStyleUnit aUnit)
+void nsStyleCoord::SetNoneValue(void)
 {
-  mUnit = aUnit;
-#if PR_BYTES_PER_INT == PR_BYTES_PER_FLOAT
-  mValue.mInt = aValue.mInt;
-#else
-  memcpy(&mValue, &aValue, sizeof(nsStyleUnion));
-#endif
+  mUnit = eStyleUnit_None;
+  mValue.mInt = 0;
 }
 
 void nsStyleCoord::AppendToString(nsString& aBuffer) const
@@ -195,7 +178,6 @@ void nsStyleCoord::AppendToString(nsString& aBuffer) const
     aBuffer.AppendFloat(mValue.mFloat);
   }
   else if ((eStyleUnit_Coord == mUnit) || 
-           (eStyleUnit_Proportional == mUnit) ||
            (eStyleUnit_Enumerated == mUnit) ||
            (eStyleUnit_Integer == mUnit)) {
     aBuffer.AppendInt(mValue.mInt, 10);
@@ -211,7 +193,7 @@ void nsStyleCoord::AppendToString(nsString& aBuffer) const
     case eStyleUnit_Factor:       aBuffer.AppendLiteral("f");        break;
     case eStyleUnit_Normal:       aBuffer.AppendLiteral("Normal");   break;
     case eStyleUnit_Auto:         aBuffer.AppendLiteral("Auto");     break;
-    case eStyleUnit_Proportional: aBuffer.AppendLiteral("*");        break;
+    case eStyleUnit_None:         aBuffer.AppendLiteral("None");     break;
     case eStyleUnit_Enumerated:   aBuffer.AppendLiteral("enum");     break;
     case eStyleUnit_Integer:      aBuffer.AppendLiteral("int");      break;
     case eStyleUnit_Chars:        aBuffer.AppendLiteral("chars");    break;
@@ -266,23 +248,17 @@ void nsStyleSides::Reset(void)
 
 void nsStyleSides::AppendToString(nsString& aBuffer) const
 {
-  nsStyleCoord  temp;
-
-  GetLeft(temp);
   aBuffer.AppendLiteral("left: ");
-  temp.AppendToString(aBuffer);
+  GetLeft().AppendToString(aBuffer);
 
-  GetTop(temp);
   aBuffer.AppendLiteral("top: ");
-  temp.AppendToString(aBuffer);
+  GetTop().AppendToString(aBuffer);
 
-  GetRight(temp);
   aBuffer.AppendLiteral("right: ");
-  temp.AppendToString(aBuffer);
+  GetRight().AppendToString(aBuffer);
 
-  GetBottom(temp);
   aBuffer.AppendLiteral("bottom: ");
-  temp.AppendToString(aBuffer);
+  GetBottom().AppendToString(aBuffer);
 }
 
 void nsStyleSides::ToString(nsString& aBuffer) const

@@ -36,410 +36,71 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "nsIDOMSVGTSpanElement.h"
 #include "nsSVGTSpanFrame.h"
 #include "nsSVGUtils.h"
+#include "nsSVGTextFrame.h"
+#include "nsSVGOuterSVGFrame.h"
+#include "nsSVGMatrix.h"
 
 //----------------------------------------------------------------------
 // Implementation
 
-nsresult
+nsIFrame*
 NS_NewSVGTSpanFrame(nsIPresShell* aPresShell, nsIContent* aContent,
-                    nsIFrame* parentFrame, nsIFrame** aNewFrame)
+                    nsIFrame* parentFrame, nsStyleContext* aContext)
 {
-  *aNewFrame = nsnull;
-
   NS_ASSERTION(parentFrame, "null parent");
-  nsISVGTextContainerFrame *text_container;
-  parentFrame->QueryInterface(NS_GET_IID(nsISVGTextContainerFrame),
-                              (void**)&text_container);
-  if (!text_container) {
+  nsISVGTextContentMetrics *metrics;
+  CallQueryInterface(parentFrame, &metrics);
+  if (!metrics) {
     NS_ERROR("trying to construct an SVGTSpanFrame for an invalid container");
-    return NS_ERROR_FAILURE;
+    return nsnull;
   }
   
-  nsCOMPtr<nsIDOMSVGTSpanElement> tspan_elem = do_QueryInterface(aContent);
-  if (!tspan_elem) {
-    NS_ERROR("Trying to construct an SVGTSpanFrame for a "
-             "content element that doesn't support the right interfaces");
-    return NS_ERROR_FAILURE;
-  }
-  
-  nsSVGTSpanFrame* it = new (aPresShell) nsSVGTSpanFrame;
-  if (nsnull == it)
-    return NS_ERROR_OUT_OF_MEMORY;
-
-  *aNewFrame = it;
-  
-  return NS_OK;
-}
-
-nsSVGTSpanFrame::nsSVGTSpanFrame()
-  : mCharOffset(0), mFragmentTreeDirty(PR_FALSE), mPropagateTransform(PR_TRUE)
-{
-}
-
-nsSVGTSpanFrame::~nsSVGTSpanFrame()
-{
-  nsCOMPtr<nsIDOMSVGTextPositioningElement> element = do_QueryInterface(mContent);
-
-  // clean up our listener refs:
-  if (element) {
-    nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
-    element->GetX(getter_AddRefs(animLengthList));
-    if (animLengthList) {
-      nsCOMPtr<nsIDOMSVGLengthList> lengthList;
-      animLengthList->GetAnimVal(getter_AddRefs(lengthList));
-      if (lengthList)
-        NS_REMOVE_SVGVALUE_OBSERVER(lengthList);
-    }
-  }
- 
-  if (element) {
-    nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
-    element->GetY(getter_AddRefs(animLengthList));
-    if (animLengthList) {
-      nsCOMPtr<nsIDOMSVGLengthList> lengthList;
-      animLengthList->GetAnimVal(getter_AddRefs(lengthList));
-      if (lengthList)
-        NS_REMOVE_SVGVALUE_OBSERVER(lengthList);
-    }
+  nsCOMPtr<nsIDOMSVGTSpanElement> tspan = do_QueryInterface(aContent);
+  if (!tspan) {
+    NS_ERROR("Can't create frame! Content is not an SVG tspan");
+    return nsnull;
   }
 
-  {
-    nsCOMPtr<nsIDOMSVGLengthList> lengthList = GetDy();
-    if (lengthList)
-      NS_REMOVE_SVGVALUE_OBSERVER(lengthList);
-  }
-}
-
-nsresult nsSVGTSpanFrame::InitSVG()
-{
-  nsCOMPtr<nsIDOMSVGTextPositioningElement> element = do_QueryInterface(mContent);
-
-  // set us up as a listener for various <tspan>-properties: 
-  {
-  nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
-  element->GetX(getter_AddRefs(animLengthList));
-  if (animLengthList) {
-    nsCOMPtr<nsIDOMSVGLengthList> lengthList;
-    animLengthList->GetAnimVal(getter_AddRefs(lengthList));
-    if (lengthList)
-      NS_ADD_SVGVALUE_OBSERVER(lengthList);
-    }
-  }
- 
-  {
-    nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
-    element->GetY(getter_AddRefs(animLengthList));
-    if (animLengthList) {
-      nsCOMPtr<nsIDOMSVGLengthList> lengthList;
-      animLengthList->GetAnimVal(getter_AddRefs(lengthList));
-      if (lengthList)
-        NS_ADD_SVGVALUE_OBSERVER(lengthList);
-    }
-  }
-    
-
-  {
-    nsCOMPtr<nsIDOMSVGLengthList> lengthList = GetDx();
-    if (lengthList)
-      NS_ADD_SVGVALUE_OBSERVER(lengthList);
-  }
-
-  {
-    nsCOMPtr<nsIDOMSVGLengthList> lengthList = GetDy();
-    if (lengthList)
-      NS_ADD_SVGVALUE_OBSERVER(lengthList);
-  }
-
-  return NS_OK;
+  return new (aPresShell) nsSVGTSpanFrame(aContext);
 }
 
 nsIAtom *
 nsSVGTSpanFrame::GetType() const
 {
-  return nsLayoutAtoms::svgTSpanFrame;
-}
-
-PRBool
-nsSVGTSpanFrame::IsFrameOfType(PRUint32 aFlags) const
-{
-  return !(aFlags & ~nsIFrame::eSVG);
+  return nsGkAtoms::svgTSpanFrame;
 }
 
 //----------------------------------------------------------------------
 // nsISupports methods
 
 NS_INTERFACE_MAP_BEGIN(nsSVGTSpanFrame)
-  NS_INTERFACE_MAP_ENTRY(nsISVGTextContainerFrame)
   NS_INTERFACE_MAP_ENTRY(nsISVGGlyphFragmentNode)
-  NS_INTERFACE_MAP_ENTRY(nsISVGContainerFrame)
-  NS_INTERFACE_MAP_ENTRY(nsISVGChildFrame)
-  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
-  NS_INTERFACE_MAP_ENTRY(nsISVGValueObserver)
 NS_INTERFACE_MAP_END_INHERITING(nsSVGTSpanFrameBase)
-
 
 //----------------------------------------------------------------------
 // nsIFrame methods
-NS_IMETHODIMP
-nsSVGTSpanFrame::Init(nsPresContext*  aPresContext,
-                      nsIContent*      aContent,
-                      nsIFrame*        aParent,
-                      nsStyleContext*  aContext,
-                      nsIFrame*        aPrevInFlow)
-{
-  nsresult rv;
-  rv = nsSVGTSpanFrameBase::Init(aPresContext, aContent, aParent,
-                                 aContext, aPrevInFlow);
-
-  InitSVG();
-  
-  return rv;
-}
 
 NS_IMETHODIMP
-nsSVGTSpanFrame::AppendFrames(nsIAtom*        aListName,
-                              nsIFrame*       aFrameList)
+nsSVGTSpanFrame::AttributeChanged(PRInt32         aNameSpaceID,
+                                  nsIAtom*        aAttribute,
+                                  PRInt32         aModType)
 {
-  // append == insert at end:
-  return InsertFrames(aListName, mFrames.LastChild(), aFrameList);  
-}
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::InsertFrames(nsIAtom*        aListName,
-                              nsIFrame*       aPrevFrame,
-                              nsIFrame*       aFrameList)
-{
-  // memorize last new frame
-  nsIFrame* lastNewFrame = nsnull;
-  {
-    nsFrameList tmpList(aFrameList);
-    lastNewFrame = tmpList.LastChild();
+  if (aNameSpaceID == kNameSpaceID_None &&
+      (aAttribute == nsGkAtoms::x ||
+       aAttribute == nsGkAtoms::y ||
+       aAttribute == nsGkAtoms::dx ||
+       aAttribute == nsGkAtoms::dy)) {
+    NotifyGlyphMetricsChange();
   }
-  
-  // Insert the new frames
-  mFrames.InsertFrames(this, aPrevFrame, aFrameList);
 
-  // call InitialUpdate() on all new frames:
-  nsIFrame* kid = aFrameList;
-  nsIFrame* end = nsnull;
-  if (lastNewFrame)
-    end = lastNewFrame->GetNextSibling();
-  
-  while (kid != end) {
-    nsISVGChildFrame* SVGFrame=nsnull;
-    kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
-    if (SVGFrame) {
-      SVGFrame->InitialUpdate(); 
-    }
-    kid = kid->GetNextSibling();
-  }
-  
   return NS_OK;
 }
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::RemoveFrame(nsIAtom*        aListName,
-                             nsIFrame*       aOldFrame)
-{
-  nsCOMPtr<nsISVGRendererRegion> dirty_region;
-
-  nsISVGChildFrame* SVGFrame=nsnull;
-  aOldFrame->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
-
-  if (SVGFrame)
-    dirty_region = SVGFrame->GetCoveredRegion();
-  
-  PRBool result = mFrames.DestroyFrame(GetPresContext(), aOldFrame);
-
-  nsISVGOuterSVGFrame* outerSVGFrame = GetOuterSVGFrame();
-  NS_ASSERTION(outerSVGFrame, "no outer svg frame");
-
-  if (SVGFrame && outerSVGFrame) {
-    // XXX We need to rebuild the fragment tree starting from the
-    // removed frame. Let's just rebuild the whole tree for now
-    outerSVGFrame->SuspendRedraw();
-    mFragmentTreeDirty = PR_TRUE;
-    
-    if (dirty_region) {
-      outerSVGFrame->InvalidateRegion(dirty_region, PR_FALSE);
-    }
-
-    outerSVGFrame->UnsuspendRedraw();
-  }
-  
-  NS_ASSERTION(result, "didn't find frame to delete");
-  return result ? NS_OK : NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::ReplaceFrame(nsIAtom*        aListName,
-                              nsIFrame*       aOldFrame,
-                              nsIFrame*       aNewFrame)
-{
-  NS_NOTYETIMPLEMENTED("nsSVGTSpanFrame::ReplaceFrame");
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-//----------------------------------------------------------------------
-// nsISVGValueObserver methods:
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::WillModifySVGObservable(nsISVGValue* observable,
-                                         nsISVGValue::modificationType aModType)
-{
-  return NS_OK;
-}
-
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::DidModifySVGObservable (nsISVGValue* observable,
-                                         nsISVGValue::modificationType aModType)
-{
-  nsISVGTextFrame* text_frame = GetTextFrame();
-  if (text_frame)
-    text_frame->NotifyGlyphMetricsChange(this);
-  
-  return NS_OK;
-}
-
 
 //----------------------------------------------------------------------
 // nsISVGChildFrame methods
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::PaintSVG(nsISVGRendererCanvas* canvas, const nsRect& dirtyRectTwips)
-{
-#ifdef DEBUG
-//  printf("nsSVGTSpanFrame(%p)::Paint\n", this);
-#endif
-
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGChildFrame* SVGFrame=0;
-    kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
-    if (SVGFrame)
-      SVGFrame->PaintSVG(canvas, dirtyRectTwips);
-    kid = kid->GetNextSibling();
-  }
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::GetFrameForPointSVG(float x, float y, nsIFrame** hit)
-{
-#ifdef DEBUG
-//  printf("nsSVGTSpanFrame(%p)::GetFrameForPoint\n", this);
-#endif
-  *hit = nsnull;
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGChildFrame* SVGFrame=0;
-    kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
-    if (SVGFrame) {
-      nsIFrame* temp=nsnull;
-      nsresult rv = SVGFrame->GetFrameForPointSVG(x, y, &temp);
-      if (NS_SUCCEEDED(rv) && temp) {
-        *hit = temp;
-        // return NS_OK; can't return. we need reverse order but only
-        // have a singly linked list...
-      }
-    }
-    kid = kid->GetNextSibling();
-  }
-  
-  return *hit ? NS_OK : NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP_(already_AddRefed<nsISVGRendererRegion>)
-nsSVGTSpanFrame::GetCoveredRegion()
-{
-  nsISVGRendererRegion *accu_region=nsnull;
-  
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGChildFrame* SVGFrame=0;
-    kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
-    if (SVGFrame) {
-      nsCOMPtr<nsISVGRendererRegion> dirty_region = SVGFrame->GetCoveredRegion();
-      if (accu_region) {
-        if (dirty_region) {
-          nsCOMPtr<nsISVGRendererRegion> temp = dont_AddRef(accu_region);
-          dirty_region->Combine(temp, &accu_region);
-        }
-      }
-      else {
-        accu_region = dirty_region;
-        NS_IF_ADDREF(accu_region);
-      }
-    }
-    kid = kid->GetNextSibling();
-  }
-  
-  return accu_region;
-}
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::InitialUpdate()
-{
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGChildFrame* SVGFrame=0;
-    kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
-    if (SVGFrame) {
-      SVGFrame->InitialUpdate();
-    }
-    kid = kid->GetNextSibling();
-  }
-  return NS_OK;
-}  
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::NotifyCanvasTMChanged()
-{
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGChildFrame* SVGFrame=0;
-    kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
-    if (SVGFrame) {
-      SVGFrame->NotifyCanvasTMChanged();
-    }
-    kid = kid->GetNextSibling();
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::NotifyRedrawSuspended()
-{
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGChildFrame* SVGFrame=0;
-    kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
-    if (SVGFrame) {
-      SVGFrame->NotifyRedrawSuspended();
-    }
-    kid = kid->GetNextSibling();
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSVGTSpanFrame::NotifyRedrawUnsuspended()
-{
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGChildFrame* SVGFrame=0;
-    kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
-    if (SVGFrame) {
-      SVGFrame->NotifyRedrawUnsuspended();
-    }
-    kid = kid->GetNextSibling();
-  }
-  return NS_OK;
-}
 
 NS_IMETHODIMP
 nsSVGTSpanFrame::SetMatrixPropagation(PRBool aPropagate)
@@ -449,109 +110,69 @@ nsSVGTSpanFrame::SetMatrixPropagation(PRBool aPropagate)
 }
 
 NS_IMETHODIMP
-nsSVGTSpanFrame::GetBBox(nsIDOMSVGRect **_retval)
+nsSVGTSpanFrame::SetOverrideCTM(nsIDOMSVGMatrix *aCTM)
 {
-  return nsSVGUtils::GetBBox(&mFrames, _retval);
+  mOverrideCTM = aCTM;
+  return NS_OK;
+}
+
+already_AddRefed<nsIDOMSVGMatrix>
+nsSVGTSpanFrame::GetOverrideCTM()
+{
+  nsIDOMSVGMatrix *matrix = mOverrideCTM.get();
+  NS_IF_ADDREF(matrix);
+  return matrix;
 }
 
 //----------------------------------------------------------------------
-// nsISVGContainerFrame methods:
-
-nsISVGOuterSVGFrame *
-nsSVGTSpanFrame::GetOuterSVGFrame()
-{
-  NS_ASSERTION(mParent, "null parent");
-  
-  nsISVGContainerFrame *containerFrame;
-  mParent->QueryInterface(NS_GET_IID(nsISVGContainerFrame), (void**)&containerFrame);
-  if (!containerFrame) {
-    NS_ERROR("invalid container");
-    return nsnull;
-  }
-
-  return containerFrame->GetOuterSVGFrame();  
-}
+// nsSVGContainerFrame methods:
 
 already_AddRefed<nsIDOMSVGMatrix>
 nsSVGTSpanFrame::GetCanvasTM()
 {
   if (!mPropagateTransform) {
     nsIDOMSVGMatrix *retval;
-    NS_NewSVGMatrix(&retval);
+    if (mOverrideCTM) {
+      retval = mOverrideCTM;
+      NS_ADDREF(retval);
+    } else {
+      NS_NewSVGMatrix(&retval);
+    }
     return retval;
   }
 
   NS_ASSERTION(mParent, "null parent");
-  
-  nsISVGContainerFrame *containerFrame;
-  mParent->QueryInterface(NS_GET_IID(nsISVGContainerFrame), (void**)&containerFrame);
-  if (!containerFrame) {
-    NS_ERROR("invalid container");
-    return nsnull;
-  }
-
+  nsSVGContainerFrame *containerFrame = static_cast<nsSVGContainerFrame*>
+                                                   (mParent);
   return containerFrame->GetCanvasTM();  
 }
 
-already_AddRefed<nsSVGCoordCtxProvider>
-nsSVGTSpanFrame::GetCoordContextProvider()
-{
-  NS_ASSERTION(mParent, "null parent");
-  
-  nsISVGContainerFrame *containerFrame;
-  mParent->QueryInterface(NS_GET_IID(nsISVGContainerFrame), (void**)&containerFrame);
-  if (!containerFrame) {
-    NS_ERROR("invalid container");
-    return nsnull;
-  }
-
-  return containerFrame->GetCoordContextProvider();  
-}
-
-
-//----------------------------------------------------------------------
-// nsISVGTextContainerFrame methods:
-
-NS_IMETHODIMP_(nsISVGTextFrame *)
-nsSVGTSpanFrame::GetTextFrame()
-{
-  NS_ASSERTION(mParent, "null parent");
-  nsISVGTextContainerFrame *containerFrame;
-  mParent->QueryInterface(NS_GET_IID(nsISVGTextContainerFrame), (void**)&containerFrame);
-  if (!containerFrame) {
-    return nsnull;
-  }
-
-  return containerFrame->GetTextFrame();  
-}
-
-NS_IMETHODIMP_(PRBool)
-nsSVGTSpanFrame::GetAbsolutePositionAdjustmentX(float &x, PRUint32 charNum)
-{
-  return PR_FALSE;  
-}
-
-NS_IMETHODIMP_(PRBool)
-nsSVGTSpanFrame::GetAbsolutePositionAdjustmentY(float &y, PRUint32 charNum)
-{
-  return PR_FALSE;    
-}
-
-NS_IMETHODIMP_(PRBool)
-nsSVGTSpanFrame::GetRelativePositionAdjustmentX(float &dx, PRUint32 charNum)
-{
-  return PR_FALSE;    
-}
-
-NS_IMETHODIMP_(PRBool)
-nsSVGTSpanFrame::GetRelativePositionAdjustmentY(float &dy, PRUint32 charNum)
-{
-  return PR_FALSE;    
-}
-
-
 //----------------------------------------------------------------------
 // nsISVGGlyphFragmentNode methods:
+
+NS_IMETHODIMP_(PRUint32)
+nsSVGTSpanFrame::GetNumberOfChars()
+{
+  return nsSVGTSpanFrameBase::GetNumberOfChars();
+}
+
+NS_IMETHODIMP_(float)
+nsSVGTSpanFrame::GetComputedTextLength()
+{
+  return nsSVGTSpanFrameBase::GetComputedTextLength();
+}
+
+NS_IMETHODIMP_(float)
+nsSVGTSpanFrame::GetSubStringLength(PRUint32 charnum, PRUint32 nchars)
+{
+  return nsSVGTSpanFrameBase::GetSubStringLengthNoValidation(charnum, nchars);
+}
+
+NS_IMETHODIMP_(PRInt32)
+nsSVGTSpanFrame::GetCharNumAtPosition(nsIDOMSVGPoint *point)
+{
+  return nsSVGTSpanFrameBase::GetCharNumAtPosition(point);
+}
 
 NS_IMETHODIMP_(nsISVGGlyphFragmentLeaf *)
 nsSVGTSpanFrame::GetFirstGlyphFragment()
@@ -560,7 +181,7 @@ nsSVGTSpanFrame::GetFirstGlyphFragment()
   nsIFrame* kid = mFrames.FirstChild();
   while (kid) {
     nsISVGGlyphFragmentNode *node = nsnull;
-    kid->QueryInterface(NS_GET_IID(nsISVGGlyphFragmentNode),(void**)&node);
+    CallQueryInterface(kid, &node);
     if (node)
       return node->GetFirstGlyphFragment();
     kid = kid->GetNextSibling();
@@ -577,7 +198,7 @@ nsSVGTSpanFrame::GetNextGlyphFragment()
   nsIFrame* sibling = mNextSibling;
   while (sibling) {
     nsISVGGlyphFragmentNode *node = nsnull;
-    sibling->QueryInterface(NS_GET_IID(nsISVGGlyphFragmentNode), (void**)&node);
+    CallQueryInterface(sibling, &node);
     if (node)
       return node->GetFirstGlyphFragment();
     sibling = sibling->GetNextSibling();
@@ -587,179 +208,12 @@ nsSVGTSpanFrame::GetNextGlyphFragment()
   
   NS_ASSERTION(mParent, "null parent");
   nsISVGGlyphFragmentNode *node = nsnull;
-  mParent->QueryInterface(NS_GET_IID(nsISVGGlyphFragmentNode), (void**)&node);
+  CallQueryInterface(mParent, &node);
   return node ? node->GetNextGlyphFragment() : nsnull;
 }
 
-NS_IMETHODIMP_(PRUint32)
-nsSVGTSpanFrame::BuildGlyphFragmentTree(PRUint32 charNum, PRBool lastBranch)
-{
-  mCharOffset = charNum;
-
-  // init children:
-  nsISVGGlyphFragmentNode* node = GetFirstGlyphFragmentChildNode();
-  nsISVGGlyphFragmentNode* next;
-  while (node) {
-    next = GetNextGlyphFragmentChildNode(node);
-    charNum = node->BuildGlyphFragmentTree(charNum, lastBranch && !next);
-    node = next;
-  }
-  
-  return charNum;
-}
-
-
 NS_IMETHODIMP_(void)
-nsSVGTSpanFrame::NotifyMetricsSuspended()
+nsSVGTSpanFrame::SetWhitespaceHandling(PRUint8 aWhitespaceHandling)
 {
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGGlyphFragmentNode *node = nsnull;
-    kid->QueryInterface(NS_GET_IID(nsISVGGlyphFragmentNode), (void**)&node);
-    if (node)
-      node->NotifyMetricsSuspended();
-    kid = kid->GetNextSibling();
-  }
-}
-
-NS_IMETHODIMP_(void)
-nsSVGTSpanFrame::NotifyMetricsUnsuspended()
-{
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGGlyphFragmentNode *node = nsnull;
-    kid->QueryInterface(NS_GET_IID(nsISVGGlyphFragmentNode), (void**)&node);
-    if (node)
-      node->NotifyMetricsUnsuspended();
-    kid = kid->GetNextSibling();
-  }
-}
-
-NS_IMETHODIMP_(void)
-nsSVGTSpanFrame::NotifyGlyphFragmentTreeSuspended()
-{
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGGlyphFragmentNode *node = nsnull;
-    kid->QueryInterface(NS_GET_IID(nsISVGGlyphFragmentNode), (void**)&node);
-    if (node)
-      node->NotifyGlyphFragmentTreeSuspended();
-    kid = kid->GetNextSibling();
-  }
-}
-
-NS_IMETHODIMP_(void)
-nsSVGTSpanFrame::NotifyGlyphFragmentTreeUnsuspended()
-{
-  if (mFragmentTreeDirty) {
-    nsISVGTextFrame* text_frame = GetTextFrame();
-    NS_ASSERTION(text_frame, "null text frame");
-    if (text_frame)
-      text_frame->NotifyGlyphFragmentTreeChange(this);
-    mFragmentTreeDirty = PR_FALSE;
-  }    
-  
-  nsIFrame* kid = mFrames.FirstChild();
-  while (kid) {
-    nsISVGGlyphFragmentNode *node = nsnull;
-    kid->QueryInterface(NS_GET_IID(nsISVGGlyphFragmentNode), (void**)&node);
-    if (node)
-      node->NotifyGlyphFragmentTreeUnsuspended();
-    kid = kid->GetNextSibling();
-  }
-}
-
-
-//----------------------------------------------------------------------
-//
-
-NS_IMETHODIMP_(already_AddRefed<nsIDOMSVGLengthList>)
-nsSVGTSpanFrame::GetX()
-{
-  nsCOMPtr<nsIDOMSVGTextPositioningElement> tpElement = do_QueryInterface(mContent);
-  if (!tpElement)
-    return nsnull;
-
-  if (!mContent->HasAttr(kNameSpaceID_None, nsSVGAtoms::x))
-      return nsnull;
-
-  nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
-  tpElement->GetX(getter_AddRefs(animLengthList));
-  nsIDOMSVGLengthList *retval;
-  animLengthList->GetAnimVal(&retval);
-  return retval;
-}
-
-NS_IMETHODIMP_(already_AddRefed<nsIDOMSVGLengthList>)
-nsSVGTSpanFrame::GetY()
-{
-  nsCOMPtr<nsIDOMSVGTextPositioningElement> tpElement = do_QueryInterface(mContent);
-  if (!tpElement)
-    return nsnull;
-
-  if (!mContent->HasAttr(kNameSpaceID_None, nsSVGAtoms::y))
-      return nsnull;
-
-  nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
-  tpElement->GetY(getter_AddRefs(animLengthList));
-  nsIDOMSVGLengthList *retval;
-  animLengthList->GetAnimVal(&retval);
-  return retval;
-}
-
-NS_IMETHODIMP_(already_AddRefed<nsIDOMSVGLengthList>)
-nsSVGTSpanFrame::GetDx()
-{
-  nsCOMPtr<nsIDOMSVGTextPositioningElement> tpElement = do_QueryInterface(mContent);
-  if (!tpElement)
-    return nsnull;
-
-  nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
-  tpElement->GetDx(getter_AddRefs(animLengthList));
-  nsIDOMSVGLengthList *retval;
-  animLengthList->GetAnimVal(&retval);
-  return retval;
-}
-
-NS_IMETHODIMP_(already_AddRefed<nsIDOMSVGLengthList>)
-nsSVGTSpanFrame::GetDy()
-{
-  nsCOMPtr<nsIDOMSVGTextPositioningElement> tpElement = do_QueryInterface(mContent);
-  if (!tpElement)
-    return nsnull;
-
-  nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
-  tpElement->GetDy(getter_AddRefs(animLengthList));
-  nsIDOMSVGLengthList *retval;
-  animLengthList->GetAnimVal(&retval);
-  return retval;
-}
-
-nsISVGGlyphFragmentNode *
-nsSVGTSpanFrame::GetFirstGlyphFragmentChildNode()
-{
-  nsISVGGlyphFragmentNode* retval = nsnull;
-  nsIFrame* frame = mFrames.FirstChild();
-  while (frame) {
-    frame->QueryInterface(NS_GET_IID(nsISVGGlyphFragmentNode),(void**)&retval);
-    if (retval) break;
-    frame = frame->GetNextSibling();
-  }
-  return retval;
-}
-
-nsISVGGlyphFragmentNode *
-nsSVGTSpanFrame::GetNextGlyphFragmentChildNode(nsISVGGlyphFragmentNode*node)
-{
-  nsISVGGlyphFragmentNode* retval = nsnull;
-  nsIFrame* frame = nsnull;
-  node->QueryInterface(NS_GET_IID(nsIFrame), (void**)&frame);
-  NS_ASSERTION(frame, "interface not implemented");
-  frame = frame->GetNextSibling();
-  while (frame) {
-    frame->QueryInterface(NS_GET_IID(nsISVGGlyphFragmentNode),(void**)&retval);
-    if (retval) break;
-    frame = frame->GetNextSibling();
-  }
-  return retval;
+  nsSVGTSpanFrameBase::SetWhitespaceHandling();
 }

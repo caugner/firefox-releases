@@ -35,7 +35,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #ifdef DEBUG
-static const char CVS_ID[] = "@(#) $RCSfile: arena.c,v $ $Revision: 1.8.18.1 $ $Date: 2006/08/04 19:10:36 $";
+static const char CVS_ID[] = "@(#) $RCSfile: arena.c,v $ $Revision: 1.11 $ $Date: 2008/02/23 06:18:27 $";
 #endif /* DEBUG */
 
 /*
@@ -1142,4 +1142,14 @@ nss_ZRealloc
     return rv;
   }
   /*NOTREACHED*/
+}
+
+PRStatus 
+nssArena_Shutdown(void)
+{
+  PRStatus rv = PR_SUCCESS;
+#ifdef DEBUG
+  rv = nssPointerTracker_finalize(&arena_pointer_tracker);
+#endif
+  return rv;
 }

@@ -39,7 +39,7 @@
 #
 # ***** END LICENSE BLOCK *****
 #
-#ident	"$Id: bld_awk_pkginfo.ksh,v 1.2.2.2 2005/03/08 02:17:36 wtchang%redhat.com Exp $"
+#ident	"$Id: bld_awk_pkginfo.ksh,v 1.3 2005/02/25 20:20:52 christophe.ravel.bugs%sun.com Exp $"
 #
 # Simple script which builds the awk_pkginfo awk script.  This awk script
 # is used to convert the pkginfo.tmpl files into pkginfo files

@@ -215,6 +215,37 @@ function dumpObjectTree (o, recurse, compress, level)
     
 }
 
+function getService(contractID, iface)
+{
+    var rv;
+    var cls = Components.classes[contractID];
+
+    if (!cls)
+        return null;
+
+    switch (typeof iface)
+    {
+        case "undefined":
+            rv = cls.getService();
+            break;
+
+        case "string":
+            rv = cls.getService(Components.interfaces[iface]);
+            break;
+
+        case "object":
+            rv = cls.getService(iface);
+            break;
+
+        default:
+            rv = null;
+            break;
+    }
+
+    return rv;
+
+}
+
 function safeHTML(str)
 {
     function replaceChars(ch)
@@ -229,12 +260,34 @@ function safeHTML(str)
                     
             case "&":
                 return "&amp;";
+                    
+            case "'":
+                return "&#39;";
+                    
+            case '"':
+                return "&quot;";
         }
 
         return "?";
     };
-        
-    return String(str).replace(/[<>&]/g, replaceChars);
+
+    return String(str).replace(/[<>&"']/g, replaceChars);
+}
+
+function safeCSV(str)
+{
+    function replaceChars(ch)
+    {
+        switch (ch)
+        {
+            case '"':
+                return '""';
+        }
+
+        return "?";
+    }
+
+    return '"' + String(str).replace(/"/g, replaceChars) + '"';
 }
 
 function alert(msg, parent, title)
@@ -270,13 +323,29 @@ function prompt(msg, initial, parent, title)
         parent = window;
     if (!title)
         title = MSG_PROMPT;
-    rv = { value: initial };
+    var rv = { value: initial };
 
     if (!ps.prompt (parent, title, msg, rv, null, {value: null}))
         return null;
 
-    return rv.value
+    return rv.value;
 }
+
+function alertCheck(msg, checkMsg, checkVal, parent, title)
+{
+    const PROMPT_CTRID = "@mozilla.org/embedcomp/prompt-service;1";
+    const nsIPromptService = Components.interfaces.nsIPromptService;
+    var ps = Components.classes[PROMPT_CTRID].getService(nsIPromptService);
+    if (!parent)
+        parent = window;
+    if (!title)
+        title = MSG_ALERT;
+    
+    var checkBoxWrapper = {value: !!checkVal};
+    ps.alertCheck(parent, title, msg, checkMsg, checkBoxWrapper);
+    return checkBoxWrapper.value;
+}
+
 
 function getChildById (element, id)
 {
@@ -617,7 +686,7 @@ function getSpecialDirectory(name)
 
 function getPathFromURL (url)
 {
-    var ary = url.match(/^(.*\/)([^\/?#]+)(\?|#|$)/);
+    var ary = url.match(/^(.*\/)([^\/?#]*)(\?|#|$)/);
     if (ary)
         return ary[1];
 
@@ -1009,7 +1078,7 @@ function makeExpression (items)
         if (item.match(/^[0-9]+$/i))
             return "[" + item + "]";
         // Words/other items that don't need quoting.
-        if (item.match(/^[a-z_][a-z0-9_]+$/i))
+        if (item.match(/^[a-z_][a-z0-9_]*$/i))
             return (!first ? "." : "") + item;
         // Quote everything else.
         return "[" + item.quote() + "]";
@@ -1021,4 +1090,16 @@ function makeExpression (items)
         expression += escapeItem(items[i], false);
     
     return expression;
+}
+
+function isinstance(inst, base)
+{
+    /* Returns |true| if |inst| was constructed by |base|. Not 100% accurate,
+     * but plenty good enough for us. This is to work around the fix for bug
+     * 254067 which makes instanceof fail if the two sides are 'from'
+     * different windows (something we don't care about).
+     */
+    return (inst && base &&
+            ((inst instanceof base) ||
+             (inst.constructor && (inst.constructor.name == base.name))));
 }

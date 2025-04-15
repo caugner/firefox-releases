@@ -42,6 +42,7 @@
 #include "nsIDOMWindowInternal.h"
 #include "nsILocalFile.h"
 #include "nsIObserverService.h"
+#include "nsIProperties.h"
 #include "nsIServiceManager.h"
 #include "nsISupportsPrimitives.h"
 #include "nsISupportsArray.h"
@@ -51,13 +52,13 @@
 
 #include "nsCOMPtr.h"
 #include "nsBrowserCompsCID.h"
+#include "nsComponentManagerUtils.h"
 #include "nsDirectoryServiceDefs.h"
+#include "nsServiceManagerUtils.h"
 
-#include "nsCRT.h"
 #include "NSReg.h"
-#include "nsReadableUtils.h"
+#include "nsStringAPI.h"
 #include "nsUnicharUtils.h"
-#include "nsString.h"
 #ifdef XP_WIN
 #include <windows.h>
 #include "nsIWindowsRegKey.h"
@@ -65,7 +66,6 @@
 #endif
 
 #include "nsAutoPtr.h"
-#include "nsNativeCharsetUtils.h"
 
 #ifndef MAXPATHLEN
 #ifdef _MAX_PATH
@@ -95,8 +95,8 @@ nsProfileMigrator::Migrate(nsIProfileStartup* aStartup)
   if (NS_FAILED(rv)) return rv;
 
   if (!bpm) {
-    nsCAutoString contractID =
-      NS_LITERAL_CSTRING(NS_BROWSERPROFILEMIGRATOR_CONTRACTID_PREFIX) + key;
+    nsCAutoString contractID(NS_BROWSERPROFILEMIGRATOR_CONTRACTID_PREFIX);
+    contractID.Append(key);
 
     bpm = do_CreateInstance(contractID.get());
     if (!bpm) return NS_ERROR_FAILURE;
@@ -123,8 +123,8 @@ nsProfileMigrator::Migrate(nsIProfileStartup* aStartup)
   // By opening the Migration FE with a supplied bpm, it will automatically
   // migrate from it. 
   nsCOMPtr<nsIWindowWatcher> ww(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
-  nsCOMPtr<nsISupportsArray> params;
-  NS_NewISupportsArray(getter_AddRefs(params));
+  nsCOMPtr<nsISupportsArray> params = 
+    do_CreateInstance(NS_SUPPORTSARRAY_CONTRACTID);
   if (!ww || !params) return NS_ERROR_FAILURE;
 
   params->AppendElement(cstr);
@@ -160,7 +160,8 @@ NS_IMPL_ISUPPORTS1(nsProfileMigrator, nsIProfileMigrator)
 #define INTERNAL_NAME_FIREFOX         "firefox"
 #define INTERNAL_NAME_PHOENIX         "phoenix"
 #define INTERNAL_NAME_IEXPLORE        "iexplore"
-#define INTERNAL_NAME_SEAMONKEY       "apprunner"
+#define INTERNAL_NAME_MOZILLA_SUITE   "apprunner"
+#define INTERNAL_NAME_SEAMONKEY       "seamonkey"
 #define INTERNAL_NAME_DOGBERT         "netscape"
 #define INTERNAL_NAME_OPERA           "opera"
 #endif
@@ -187,20 +188,21 @@ nsProfileMigrator::GetDefaultBrowserMigratorKey(nsACString& aKey,
   if (NS_FAILED(regKey->ReadStringValue(EmptyString(), value)))
     return NS_ERROR_FAILURE;
 
-  nsAString::const_iterator start, end;
-  value.BeginReading(start);
-  value.EndReading(end);
-  nsAString::const_iterator tmp = start;
-
-  if (!FindInReadable(NS_LITERAL_STRING(".exe"), tmp, end, 
-                      nsCaseInsensitiveStringComparator()))
+  PRInt32 len = value.Find(NS_LITERAL_STRING(".exe"), CaseInsensitiveCompare);
+  if (len == -1)
     return NS_ERROR_FAILURE;
 
-  // skip an opening quotation mark if present
-  if (value.CharAt(1) != ':')
-    ++start;
+  // Move past ".exe"
+  len += 4;
 
-  nsDependentSubstring filePath(start, end); 
+  PRUint32 start = 0;
+  // skip an opening quotation mark if present
+  if (value.get()[1] != ':') {
+    start = 1;
+    --len;
+  }
+
+  const nsDependentSubstring filePath(Substring(value, start, len)); 
 
   // We want to find out what the default browser is but the path in and of itself
   // isn't enough. Why? Because sometimes on Windows paths get truncated like so:
@@ -241,7 +243,8 @@ nsProfileMigrator::GetDefaultBrowserMigratorKey(nsACString& aKey,
     aKey = "ie";
     return NS_OK;
   }
-  if (internalName.LowerCaseEqualsLiteral(INTERNAL_NAME_SEAMONKEY)) {
+  if (internalName.LowerCaseEqualsLiteral(INTERNAL_NAME_MOZILLA_SUITE) ||
+      internalName.LowerCaseEqualsLiteral(INTERNAL_NAME_SEAMONKEY)) {
     aKey = "seamonkey";
     return NS_OK;
   }
